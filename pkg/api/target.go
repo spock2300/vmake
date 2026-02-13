@@ -1,18 +1,19 @@
 package api
 
 type Target struct {
-	name      string
-	kind      TargetKind
-	isDefault bool
-	files     []string
-	includes  []string
-	defines   []string
-	languages []string
-	links     []string
-	deps      []string
-	cflags    []string
-	cxxflags  []string
-	ldflags   []string
+	name           string
+	kind           TargetKind
+	isDefault      bool
+	files          []string
+	includes       []string
+	publicIncludes []string
+	defines        []string
+	languages      []string
+	links          []string
+	deps           []string
+	cflags         []string
+	cxxflags       []string
+	ldflags        []string
 }
 
 func (t *Target) SetKind(kind TargetKind) *Target {
@@ -32,6 +33,11 @@ func (t *Target) AddFiles(files ...any) *Target {
 
 func (t *Target) AddIncludes(dirs ...any) *Target {
 	t.includes = append(t.includes, flattenAny(dirs)...)
+	return t
+}
+
+func (t *Target) AddPublicIncludes(dirs ...any) *Target {
+	t.publicIncludes = append(t.publicIncludes, flattenAny(dirs)...)
 	return t
 }
 
@@ -70,18 +76,19 @@ func (t *Target) AddLdFlags(flags ...any) *Target {
 	return t
 }
 
-func (t *Target) Name() string        { return t.name }
-func (t *Target) Kind() TargetKind    { return t.kind }
-func (t *Target) IsDefault() bool     { return t.isDefault }
-func (t *Target) Files() []string     { return t.files }
-func (t *Target) Includes() []string  { return t.includes }
-func (t *Target) Defines() []string   { return t.defines }
-func (t *Target) Languages() []string { return t.languages }
-func (t *Target) Links() []string     { return t.links }
-func (t *Target) Deps() []string      { return t.deps }
-func (t *Target) CFlags() []string    { return t.cflags }
-func (t *Target) CxxFlags() []string  { return t.cxxflags }
-func (t *Target) LdFlags() []string   { return t.ldflags }
+func (t *Target) Name() string             { return t.name }
+func (t *Target) Kind() TargetKind         { return t.kind }
+func (t *Target) IsDefault() bool          { return t.isDefault }
+func (t *Target) Files() []string          { return t.files }
+func (t *Target) Includes() []string       { return t.includes }
+func (t *Target) PublicIncludes() []string { return t.publicIncludes }
+func (t *Target) Defines() []string        { return t.defines }
+func (t *Target) Languages() []string      { return t.languages }
+func (t *Target) Links() []string          { return t.links }
+func (t *Target) Deps() []string           { return t.deps }
+func (t *Target) CFlags() []string         { return t.cflags }
+func (t *Target) CxxFlags() []string       { return t.cxxflags }
+func (t *Target) LdFlags() []string        { return t.ldflags }
 
 func flattenAny(items []any) []string {
 	var result []string

@@ -7,6 +7,7 @@ func Main(b *api.Builder) {
 		ctx.Target("utils").
 			SetKind(api.TargetStatic).
 			AddFiles("*.c").
-			AddIncludes("../include")
+			AddIncludes("internal").        // 私有头文件目录
+			AddPublicIncludes("../include") // 公开头文件，依赖方自动继承
 	})
 }

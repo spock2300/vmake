@@ -280,6 +280,7 @@ func (t *Target) SetDefault(isDefault bool) *Target
 // 源码与头文件
 func (t *Target) AddFiles(files ...string) *Target
 func (t *Target) AddIncludes(dirs ...string) *Target
+func (t *Target) AddPublicIncludes(dirs ...string) *Target
 
 // 编译配置
 func (t *Target) AddDefines(defines ...string) *Target
@@ -302,7 +303,8 @@ func (t *Target) AddLdFlags(flags ...string) *Target
 | `set_kind` | `SetKind` | 目标类型 |
 | `set_default` | `SetDefault` | 是否默认构建 |
 | `add_files` | `AddFiles` | 源文件 |
-| `add_includedirs` | `AddIncludes` | 头文件目录 |
+| `add_includedirs` | `AddIncludes` | 头文件目录（私有） |
+| `add_sysincludedirs` | `AddPublicIncludes` | 头文件目录（公开，依赖方继承） |
 | `add_defines` | `AddDefines` | 宏定义 |
 | `add_links` | `AddLinks` | 链接库 |
 | `add_deps` | `AddDeps` | 依赖目标 |
@@ -593,12 +595,13 @@ package main
 import "gitee.com/spock2300/vmake/pkg/api"
 
 func Main(b *api.Builder) {
-    b.OnBuild(func(ctx *api.BuildContext) {
-        ctx.Target("mylib").
-            SetKind(api.TargetStatic).
-            AddFiles("*.c").
-            AddIncludes("../include")
-    })
+	b.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("mylib").
+			SetKind(api.TargetStatic).
+			AddFiles("*.c").
+			AddIncludes("internal").      // 私有头文件，仅本目标使用
+			AddPublicIncludes("../include") // 公开头文件，依赖方自动继承
+	})
 }
 ```
 
@@ -609,13 +612,12 @@ package main
 import "gitee.com/spock2300/vmake/pkg/api"
 
 func Main(b *api.Builder) {
-    b.OnBuild(func(ctx *api.BuildContext) {
-        ctx.Target("myapp").
-            SetKind(api.TargetBinary).
-            AddFiles("*.c").
-            AddDeps("lib:mylib").  // 跨包依赖：package:target
-            AddIncludes("../include")
-    })
+	b.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("myapp").
+			SetKind(api.TargetBinary).
+			AddFiles("*.c").
+			AddDeps("lib:mylib")  // 自动继承 mylib 的 PublicIncludes
+	})
 }
 ```
 

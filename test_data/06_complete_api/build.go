@@ -90,7 +90,8 @@ func Main(b *api.Builder) {
 			ctx.Target("mylib").
 				SetKind(api.TargetShared).
 				AddFiles("src/library.cpp").
-				AddIncludes("include").
+				AddIncludes("src/internal").  // 私有头文件
+				AddPublicIncludes("include"). // 公开头文件，依赖方继承
 				SetLanguages(cppStd).
 				AddDeps("core_obj", "utils_obj").
 				AddDefines(ctx.If("ssl", "USE_SSL")).
@@ -101,7 +102,8 @@ func Main(b *api.Builder) {
 			ctx.Target("mylib").
 				SetKind(api.TargetStatic).
 				AddFiles("src/library.cpp").
-				AddIncludes("include").
+				AddIncludes("src/internal").  // 私有头文件
+				AddPublicIncludes("include"). // 公开头文件，依赖方继承
 				SetLanguages(cppStd).
 				AddDeps("core_obj", "utils_obj").
 				AddDefines(ctx.If("ssl", "USE_SSL")).
@@ -111,7 +113,6 @@ func Main(b *api.Builder) {
 		ctx.Target("myapp").
 			SetKind(api.TargetBinary).
 			AddFiles("src/main.cpp").
-			AddIncludes("include").
 			SetLanguages(cppStd).
 			AddDeps("mylib").
 			AddDefines("PREFIX=\"" + prefix + "\"").
@@ -126,7 +127,6 @@ func Main(b *api.Builder) {
 		ctx.Target("benchmark").
 			SetKind(api.TargetBinary).
 			AddFiles("src/benchmark.cpp").
-			AddIncludes("include").
 			SetLanguages(cppStd).
 			AddDeps("core_obj").
 			AddCxxFlags("-O3", "-DNDEBUG").
@@ -136,7 +136,6 @@ func Main(b *api.Builder) {
 			ctx.Target("debug_info").
 				SetKind(api.TargetBinary).
 				AddFiles("src/debug.cpp").
-				AddIncludes("include").
 				AddDefines("VERBOSE_MODE").
 				SetDefault(false)
 		}
