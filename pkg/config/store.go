@@ -9,8 +9,9 @@ import (
 const ConfigVersion = "1"
 
 type ConfigFile struct {
-	Version  string                    `json:"version"`
-	Packages map[string]*PackageConfig `json:"packages"`
+	Version   string                    `json:"version"`
+	Toolchain string                    `json:"toolchain,omitempty"`
+	Packages  map[string]*PackageConfig `json:"packages"`
 }
 
 type PackageConfig struct {

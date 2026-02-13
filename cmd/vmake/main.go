@@ -4,20 +4,146 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/config"
 	"gitee.com/spock2300/vmake/pkg/plugin"
+	"gitee.com/spock2300/vmake/pkg/toolchain"
 	"gitee.com/spock2300/vmake/pkg/tui"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "config" {
-		runConfig()
+	if len(os.Args) < 2 {
+		runBuild()
 		return
 	}
-	runBuild()
+
+	cmd := os.Args[1]
+	switch cmd {
+	case "config":
+		runConfig()
+	case "build":
+		runBuild()
+	case "toolchain":
+		runToolchain(os.Args[2:])
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
+		fmt.Println("Usage: vmake [build|config|toolchain]")
+		os.Exit(1)
+	}
+}
+
+func runToolchain(args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: vmake toolchain <init|list|show>")
+		os.Exit(1)
+	}
+
+	subCmd := args[0]
+	switch subCmd {
+	case "init":
+		runToolchainInit()
+	case "list":
+		runToolchainList()
+	case "show":
+		name := ""
+		if len(args) > 1 {
+			name = args[1]
+		}
+		runToolchainShow(name)
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown toolchain command: %s\n", subCmd)
+		os.Exit(1)
+	}
+}
+
+func runToolchainInit() {
+	path := toolchain.GetGlobalConfigPath()
+
+	if toolchain.ExistsGlobalConfig() {
+		fmt.Printf("Config already exists: %s\n", path)
+		fmt.Println("Delete it first if you want to regenerate")
+		os.Exit(1)
+	}
+
+	tmpl := toolchain.GetDefaultTemplate()
+	if err := toolchain.SaveGlobal(tmpl); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create config: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Created %s\n", path)
+	fmt.Println("Please edit the file to configure your toolchains")
+}
+
+func runToolchainList() {
+	mgr := toolchain.GetManager()
+	toolchains, err := mgr.ListToolchains()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load toolchains: %v\n", err)
+		os.Exit(1)
+	}
+
+	defaultTC := mgr.GetDefaultToolchain()
+	fmt.Println("Available toolchains:")
+	for name, tc := range toolchains {
+		mark := ""
+		if name == defaultTC {
+			mark = " (default)"
+		}
+		fmt.Printf("  %s%s\n", name, mark)
+		fmt.Printf("    Display: %s\n", tc.DisplayName)
+		fmt.Printf("    Host:    %s\n", tc.Host)
+		fmt.Printf("    CC:      %s\n", tc.Tools.CC)
+		fmt.Printf("    CXX:     %s\n", tc.Tools.CXX)
+	}
+}
+
+func runToolchainShow(name string) {
+	mgr := toolchain.GetManager()
+
+	if name == "" {
+		name = mgr.GetDefaultToolchain()
+	}
+
+	tc, err := mgr.GetToolchain(name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Toolchain: %s\n", tc.Name)
+	fmt.Printf("Display Name: %s\n", tc.DisplayName)
+	fmt.Printf("Host: %s\n", tc.Host)
+	fmt.Println()
+	fmt.Println("Tools:")
+	fmt.Printf("  CC:     %s\n", tc.Tools.CC)
+	fmt.Printf("  CXX:    %s\n", tc.Tools.CXX)
+	fmt.Printf("  AR:     %s\n", tc.Tools.AR)
+	fmt.Printf("  LD:     %s\n", tc.Tools.LD)
+	fmt.Printf("  STRIP:  %s\n", tc.Tools.STRIP)
+	fmt.Printf("  RANLIB: %s\n", tc.Tools.RANLIB)
+	fmt.Println()
+	fmt.Println("Default Flags:")
+	fmt.Printf("  CFlags:   [%s]\n", strings.Join(tc.DefaultFlags.CFlags, ", "))
+	fmt.Printf("  CxxFlags: [%s]\n", strings.Join(tc.DefaultFlags.CxxFlags, ", "))
+	fmt.Printf("  LdFlags:  [%s]\n", strings.Join(tc.DefaultFlags.LdFlags, ", "))
+	fmt.Println()
+	fmt.Println("Download URL:", tc.DownloadURL)
+	fmt.Println("Install Path:", tc.InstallPath)
+
+	fmt.Println()
+	fmt.Println("Validation:")
+	errs := toolchain.ValidateToolchain(tc)
+	if len(errs) == 0 {
+		fmt.Println("  All tools found")
+	} else {
+		for _, err := range errs {
+			fmt.Printf("  ERROR: %s\n", err)
+		}
+	}
 }
 
 func runConfig() {
@@ -27,9 +153,12 @@ func runConfig() {
 		os.Exit(1)
 	}
 
-	if len(allOptions) == 0 {
-		fmt.Println("No configuration options found")
-		return
+	if len(allOptions) == 0 && len(packages) > 0 {
+		mgr := toolchain.GetManager()
+		if tcs, err := mgr.ListToolchains(); err != nil || len(tcs) == 0 {
+			fmt.Println("No configuration options found")
+			return
+		}
 	}
 
 	values := make(map[string]map[string]any)
@@ -38,7 +167,12 @@ func runConfig() {
 		values[pkgName] = pc.Options
 	}
 
-	result, err := tui.Run(packages, allOptions, values, workDir)
+	currentTC := cfg.Toolchain
+	if currentTC == "" {
+		currentTC = toolchain.GetManager().GetDefaultToolchain()
+	}
+
+	result, err := tui.Run(packages, allOptions, values, workDir, currentTC)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 		os.Exit(1)
@@ -55,6 +189,8 @@ func runConfig() {
 		}
 		cfg.Packages[pkgName].Options = opts
 	}
+
+	cfg.Toolchain = result.Toolchain
 
 	if err := config.Save(configPath, cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to save config: %v\n", err)

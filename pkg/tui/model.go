@@ -7,6 +7,7 @@ import (
 
 	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/plugin"
+	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
 
 type TreeNode struct {
@@ -21,6 +22,8 @@ type OptionItem struct {
 	Group string
 	Opt   *api.Option
 }
+
+const ToolchainOptionName = "__toolchain__"
 
 type Model struct {
 	packages []plugin.Package
@@ -47,20 +50,37 @@ type Model struct {
 	confirmQuit bool
 	origValues  map[string]map[string]any
 	workDir     string
+
+	toolchains        map[string]*toolchain.Toolchain
+	toolchainList     []string
+	selectedToolchain string
+	origToolchain     string
 }
 
-func NewModel(packages []plugin.Package, options map[string]map[string]*api.Option, values map[string]map[string]any, workDir string) Model {
+func NewModel(packages []plugin.Package, options map[string]map[string]*api.Option, values map[string]map[string]any, workDir string, currentToolchain string) Model {
 	m := Model{
-		packages:   packages,
-		options:    options,
-		values:     values,
-		treeCursor: 0,
-		optCursor:  0,
-		focusArea:  0,
-		workDir:    workDir,
+		packages:          packages,
+		options:           options,
+		values:            values,
+		treeCursor:        0,
+		optCursor:         0,
+		focusArea:         0,
+		workDir:           workDir,
+		selectedToolchain: currentToolchain,
+		origToolchain:     currentToolchain,
 	}
 	m.origValues = deepCopyValues(values)
 	m.tree = buildTree(packages, workDir)
+
+	mgr := toolchain.GetManager()
+	if tcs, err := mgr.ListToolchains(); err == nil {
+		m.toolchains = tcs
+		for name := range tcs {
+			m.toolchainList = append(m.toolchainList, name)
+		}
+		sort.Strings(m.toolchainList)
+	}
+
 	if len(m.tree) > 0 {
 		m.selectFirstPkg()
 	}
@@ -158,6 +178,22 @@ func (m *Model) selectFirstPkg() {
 
 func (m *Model) buildOptionItems() {
 	m.optItems = nil
+
+	if len(m.toolchainList) > 0 {
+		toolchainOpt := &api.Option{}
+		toolchainOpt.SetType(api.OptionChoice).
+			SetDefault(m.selectedToolchain).
+			SetDescription("Build toolchain").
+			SetValues(m.toolchainList...).
+			SetGroup("Global")
+
+		m.optItems = append(m.optItems, OptionItem{
+			Name:  ToolchainOptionName,
+			Group: "Global",
+			Opt:   toolchainOpt,
+		})
+	}
+
 	opts, ok := m.options[m.selectedPkg]
 	if !ok {
 		return
@@ -192,6 +228,9 @@ func (m *Model) buildOptionItems() {
 }
 
 func (m *Model) getValue(name string) any {
+	if name == ToolchainOptionName {
+		return m.selectedToolchain
+	}
 	if vals, ok := m.values[m.selectedPkg]; ok {
 		if v, ok := vals[name]; ok {
 			return v
@@ -206,6 +245,13 @@ func (m *Model) getValue(name string) any {
 }
 
 func (m *Model) setValue(name string, val any) {
+	if name == ToolchainOptionName {
+		if s, ok := val.(string); ok {
+			m.selectedToolchain = s
+		}
+		m.checkChanges()
+		return
+	}
 	if m.values[m.selectedPkg] == nil {
 		m.values[m.selectedPkg] = make(map[string]any)
 	}
@@ -214,7 +260,7 @@ func (m *Model) setValue(name string, val any) {
 }
 
 func (m *Model) checkChanges() {
-	m.hasChanges = !valuesEqual(m.values, m.origValues)
+	m.hasChanges = !valuesEqual(m.values, m.origValues) || m.selectedToolchain != m.origToolchain
 }
 
 func valuesEqual(a, b map[string]map[string]any) bool {

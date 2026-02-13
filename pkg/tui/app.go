@@ -11,19 +11,21 @@ import (
 )
 
 type ConfigResult struct {
-	Saved  bool
-	Values map[string]map[string]any
+	Saved     bool
+	Values    map[string]map[string]any
+	Toolchain string
 }
 
-func Run(packages []plugin.Package, options map[string]map[string]*api.Option, values map[string]map[string]any, workDir string) (*ConfigResult, error) {
-	m := NewModel(packages, options, values, workDir)
+func Run(packages []plugin.Package, options map[string]map[string]*api.Option, values map[string]map[string]any, workDir string, currentToolchain string) (*ConfigResult, error) {
+	m := NewModel(packages, options, values, workDir, currentToolchain)
 	p := tea.NewProgram(&m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		return nil, err
 	}
 	return &ConfigResult{
-		Saved:  m.saved,
-		Values: m.values,
+		Saved:     m.saved,
+		Values:    m.values,
+		Toolchain: m.selectedToolchain,
 	}, nil
 }
 
@@ -351,7 +353,11 @@ func (m *Model) renderOptions() string {
 }
 
 func (m *Model) renderOption(item OptionItem, selected bool) string {
-	name := optionNameStyle.Render(item.Name)
+	displayName := item.Name
+	if item.Name == ToolchainOptionName {
+		displayName = "toolchain"
+	}
+	name := optionNameStyle.Render(displayName)
 	desc := optionDescStyle.Render(item.Opt.Description())
 
 	var val string
@@ -381,7 +387,7 @@ func (m *Model) renderOption(item OptionItem, selected bool) string {
 	}
 
 	if selected && !m.editing {
-		name = selectedOptStyle.Render(item.Name)
+		name = selectedOptStyle.Render(displayName)
 	}
 
 	return fmt.Sprintf("  %s %s %s", name, val, desc)
