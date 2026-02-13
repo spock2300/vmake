@@ -6,6 +6,7 @@
 
 - [概述](#概述)
 - [整体架构](#整体架构)
+- [核心概念](#核心概念)
 - [执行流程](#执行流程)
 - [API 设计](#api-设计)
 - [条件表达式](#条件表达式)
@@ -45,6 +46,83 @@ VMake 是一个基于 Go 语言实现的 C/C++ 构建系统，灵感来源于 xm
 │                                    └─────────────────┘     │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## 核心概念
+
+### Package
+
+每个 `build.go` 文件对应一个 Package，是配置和构建的基本单元。
+
+**命名规则**：
+- Package 名称 = `build.go` 所在目录的最后一层目录名
+- 隐式声明，无需 API 设置
+- 名称必须全局唯一，冲突时报错
+
+| 目录结构 | Package 名称 |
+|---------|-------------|
+| `/myproject/build.go` | `myproject` |
+| `/myproject/lib/build.go` | `lib` |
+| `/myproject/core/utils/build.go` | `utils` |
+| `/lib/build.go` + `/sub/lib/build.go` | 报错（冲突） |
+
+**Package 的作用**：
+- 配置隔离：每个 Package 的 Options 完全独立
+- 配置存储：按 Package 名称分组保存
+- Target 归属：Target 属于定义它的 Package
+
+### Target
+
+Target 是构建目标，定义在 `OnBuild` 中，归属于当前 Package。
+
+| 属性 | 说明 |
+|-----|------|
+| 名称 | 在 Package 内唯一 |
+| 类型 | binary / static / shared / object |
+| 依赖 | 可依赖同包或跨包 Target |
+
+**依赖引用规则**：
+- 同包依赖：直接用 Target 名称，如 `AddDeps("utils")`
+- 跨包依赖：使用全限定名 `package:target`，如 `AddDeps("lib:utils")`
+
+### 配置存储
+
+配置按 Package 分组存储，没有 Target 级别的配置：
+
+```
+.vmake/
+└── config.json
+```
+
+```json
+{
+  "version": "1",
+  "packages": {
+    "myproject": {
+      "options": {
+        "debug": false,
+        "optimization": "O2"
+      }
+    },
+    "lib": {
+      "options": {
+        "shared": true
+      }
+    },
+    "app": {
+      "options": {
+        "enable_ssl": true
+      }
+    }
+  }
+}
+```
+
+**设计要点**：
+- 单一配置文件：所有 Package 的配置集中在 `.vmake/config.json`
+- Package 独立：每个 Package 的 Options 互不影响
+- 无 Target 配置：Target 的启用/禁用由代码逻辑控制（如 `SetDefault(false)`）
 
 ---
 
@@ -535,31 +613,9 @@ func Main(b *api.Builder) {
         ctx.Target("myapp").
             SetKind(api.TargetBinary).
             AddFiles("*.c").
-            AddDeps("mylib").
+            AddDeps("lib:mylib").  // 跨包依赖：package:target
             AddIncludes("../include")
     })
-}
-```
-
----
-
-## 配置存储格式
-
-**.vmake/config.json**:
-```json
-{
-  "version": "1",
-  "options": {
-    "debug": false,
-    "optimization": "O2",
-    "ssl": true,
-    "ssl_version": "1.1.1"
-  },
-  "targets": {
-    "mylib": { "enabled": true },
-    "myapp": { "enabled": true },
-    "tests": { "enabled": false }
-  }
 }
 ```
 

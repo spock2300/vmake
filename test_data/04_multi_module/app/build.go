@@ -8,6 +8,6 @@ func Main(b *api.Builder) {
 			SetKind(api.TargetBinary).
 			AddFiles("*.c").
 			AddIncludes("../include").
-			AddDeps("utils")
+			AddDeps("lib:utils")
 	})
 }
