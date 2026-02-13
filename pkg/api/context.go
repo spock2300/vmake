@@ -95,14 +95,23 @@ type BuildContext struct {
 	targets map[string]*Target
 	pkgName string
 	cfgVals map[string]any
+	options map[string]*Option
 }
 
 func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext {
+	if cfgVals == nil {
+		cfgVals = make(map[string]any)
+	}
 	return &BuildContext{
 		targets: make(map[string]*Target),
 		pkgName: pkgName,
 		cfgVals: cfgVals,
+		options: make(map[string]*Option),
 	}
+}
+
+func (ctx *BuildContext) SetOptions(options map[string]*Option) {
+	ctx.options = options
 }
 
 func (ctx *BuildContext) Target(name string) *Target {
@@ -147,6 +156,11 @@ func (ctx *BuildContext) Bool(name string) bool {
 			return b
 		}
 	}
+	if opt, ok := ctx.options[name]; ok {
+		if d, ok := opt.defaultVal.(bool); ok {
+			return d
+		}
+	}
 	return false
 }
 
@@ -156,12 +170,27 @@ func (ctx *BuildContext) String(name string) string {
 			return s
 		}
 	}
+	if opt, ok := ctx.options[name]; ok {
+		if d, ok := opt.defaultVal.(string); ok {
+			return d
+		}
+	}
 	return ""
 }
 
 func (ctx *BuildContext) Int(name string) int {
 	if val, ok := ctx.cfgVals[name]; ok {
 		switch v := val.(type) {
+		case int:
+			return v
+		case int64:
+			return int(v)
+		case float64:
+			return int(v)
+		}
+	}
+	if opt, ok := ctx.options[name]; ok {
+		switch v := opt.defaultVal.(type) {
 		case int:
 			return v
 		case int64:

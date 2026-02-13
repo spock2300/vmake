@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"gitee.com/spock2300/vmake/pkg/api"
+	"gitee.com/spock2300/vmake/pkg/config"
 	"gitee.com/spock2300/vmake/pkg/plugin"
 )
 
@@ -76,6 +77,33 @@ func main() {
 		fmt.Printf("  %s: OnConfig(%d), OnBuild(%d)\n", lr.Package.Name, cfgCount, buildCount)
 	}
 
+	configPath := filepath.Join(workDir, ".vmake", "config.json")
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("\nExecuting OnConfig...")
+	allOptions := make(map[string]map[string]*api.Option)
+	for _, lr := range loadResults {
+		if !lr.Success {
+			continue
+		}
+
+		pkgName := lr.Package.Name
+		cfgCtx := api.NewConfigContext(pkgName)
+
+		for _, fn := range lr.Loaded.Builder.GetConfigFuncs() {
+			fn(cfgCtx)
+		}
+
+		allOptions[pkgName] = cfgCtx.GetOptions()
+		if len(cfgCtx.GetOptions()) > 0 {
+			fmt.Printf("  %s: %d option(s)\n", pkgName, len(cfgCtx.GetOptions()))
+		}
+	}
+
 	fmt.Println("\nExecuting OnBuild...")
 	allTargets := make(map[string]map[string]*api.Target)
 
@@ -85,13 +113,15 @@ func main() {
 		}
 
 		pkgName := lr.Package.Name
-		ctx := api.NewBuildContext(pkgName, nil)
+		pc := config.GetPackageConfig(cfg, pkgName)
+		buildCtx := api.NewBuildContext(pkgName, pc.Options)
+		buildCtx.SetOptions(allOptions[pkgName])
 
 		for _, fn := range lr.Loaded.Builder.GetBuildFuncs() {
-			fn(ctx)
+			fn(buildCtx)
 		}
 
-		allTargets[pkgName] = ctx.GetTargets()
+		allTargets[pkgName] = buildCtx.GetTargets()
 	}
 
 	fmt.Println("\nTargets found:")
