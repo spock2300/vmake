@@ -135,7 +135,7 @@ func (b *Builder) OnBuild(fn BuildFunc)
 ```go
 package main
 
-import "github.com/vmake/api"
+import "gitee.com/spock2300/vmake/pkg/api"
 
 func Main(b *api.Builder) {
     b.OnConfig(func(ctx *api.ConfigContext) { ... })
@@ -399,7 +399,7 @@ vmake/
 ```go
 package main
 
-import "github.com/vmake/api"
+import "gitee.com/spock2300/vmake/pkg/api"
 
 func Main(b *api.Builder) {
     b.OnBuild(func(ctx *api.BuildContext) {
@@ -416,7 +416,7 @@ func Main(b *api.Builder) {
 ```go
 package main
 
-import "github.com/vmake/api"
+import "gitee.com/spock2300/vmake/pkg/api"
 
 func Main(b *api.Builder) {
     b.OnConfig(func(ctx *api.ConfigContext) {
@@ -496,7 +496,7 @@ project/
 ```go
 package main
 
-import "github.com/vmake/api"
+import "gitee.com/spock2300/vmake/pkg/api"
 
 func Main(b *api.Builder) {
     b.OnConfig(func(ctx *api.ConfigContext) {
@@ -512,7 +512,7 @@ func Main(b *api.Builder) {
 ```go
 package main
 
-import "github.com/vmake/api"
+import "gitee.com/spock2300/vmake/pkg/api"
 
 func Main(b *api.Builder) {
     b.OnBuild(func(ctx *api.BuildContext) {
@@ -528,7 +528,7 @@ func Main(b *api.Builder) {
 ```go
 package main
 
-import "github.com/vmake/api"
+import "gitee.com/spock2300/vmake/pkg/api"
 
 func Main(b *api.Builder) {
     b.OnBuild(func(ctx *api.BuildContext) {

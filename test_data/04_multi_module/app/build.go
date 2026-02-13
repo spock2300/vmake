@@ -1,6 +1,6 @@
 package main
 
-import "github.com/vmake/api"
+import "gitee.com/spock2300/vmake/pkg/api"
 
 func Main(b *api.Builder) {
 	b.OnBuild(func(ctx *api.BuildContext) {
