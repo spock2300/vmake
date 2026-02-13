@@ -1,0 +1,10 @@
+{
+    "version": "1",
+    "options": {
+        "debug": false,
+        "verbose": true,
+        "feature_a": true,
+        "feature_b": true,
+        "platform": "linux"
+    }
+}

@@ -1,0 +1,8 @@
+{
+    "version": "1",
+    "options": {
+        "debug": true,
+        "optimization": "O2",
+        "ssl": false
+    }
+}
