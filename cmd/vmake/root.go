@@ -64,7 +64,7 @@ func init() {
 	RootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "quiet mode")
 }
 
-func PrepareBuild() (*BuildContext, error) {
+func PrepareBase() (*BuildContext, error) {
 	workDir, err := os.Getwd()
 	if err != nil {
 		return nil, err
@@ -87,14 +87,34 @@ func PrepareBuild() (*BuildContext, error) {
 	}
 	vlog.Info("Found %d package(s): %s", len(packages), strings.Join(pkgNames, ", "))
 
+	configPath := filepath.Join(workDir, ".vmake", "config.json")
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return &BuildContext{
+		WorkDir:    workDir,
+		Packages:   packages,
+		Config:     cfg,
+		ConfigPath: configPath,
+	}, nil
+}
+
+func PrepareFull() (*BuildContext, error) {
+	ctx, err := PrepareBase()
+	if err != nil {
+		return nil, err
+	}
+
 	vlog.Info("")
 	vlog.Info("Compiling...")
-	compileResults := plugin.CompileAll(packages)
+	compileResults := plugin.CompileAll(ctx.Packages)
 
 	hasError := false
 	for _, cr := range compileResults {
 		if cr.Success {
-			relPath, _ := filepath.Rel(workDir, cr.PluginPath)
+			relPath, _ := filepath.Rel(ctx.WorkDir, cr.PluginPath)
 			vlog.Info("  %s -> %s", cr.Package.Name, relPath)
 		} else {
 			vlog.Info("  %s -> FAILED", cr.Package.Name)
@@ -120,12 +140,6 @@ func PrepareBuild() (*BuildContext, error) {
 		cfgCount := len(lr.Loaded.Builder.GetConfigFuncs())
 		buildCount := len(lr.Loaded.Builder.GetBuildFuncs())
 		vlog.Info("  %s: OnConfig(%d), OnBuild(%d)", lr.Package.Name, cfgCount, buildCount)
-	}
-
-	configPath := filepath.Join(workDir, ".vmake", "config.json")
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		return nil, err
 	}
 
 	vlog.Info("")
@@ -163,15 +177,10 @@ func PrepareBuild() (*BuildContext, error) {
 		return nil, fmt.Errorf("global options error: %w", err)
 	}
 
-	return &BuildContext{
-		WorkDir:       workDir,
-		Packages:      packages,
-		LoadResults:   loadResults,
-		AllOptions:    allOptions,
-		GlobalOptions: globalOptions,
-		Config:        cfg,
-		ConfigPath:    configPath,
-	}, nil
+	ctx.LoadResults = loadResults
+	ctx.AllOptions = allOptions
+	ctx.GlobalOptions = globalOptions
+	return ctx, nil
 }
 
 func GetToolchain(cfg *config.ConfigFile) (*toolchain.Toolchain, string, error) {

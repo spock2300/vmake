@@ -23,7 +23,7 @@ func init() {
 }
 
 func runConfig(cmd *cobra.Command, args []string) {
-	ctx, err := PrepareBuild()
+	ctx, err := PrepareFull()
 	if err != nil {
 		vlog.Error("Error: %v", err)
 		os.Exit(1)

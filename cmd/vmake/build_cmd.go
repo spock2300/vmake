@@ -23,12 +23,19 @@ func init() {
 }
 
 func runBuild(cmd *cobra.Command, args []string) {
-	ctx, err := PrepareBuild()
+	ctx, err := PrepareFull()
 	if err != nil {
 		vlog.Error("Error: %v", err)
 		os.Exit(1)
 	}
 
+	if err := executeBuild(ctx); err != nil {
+		vlog.Error("Error: %v", err)
+		os.Exit(1)
+	}
+}
+
+func executeBuild(ctx *BuildContext) error {
 	globalValues := make(map[string]any)
 	if ctx.Config.Global != nil {
 		globalValues["toolchain"] = ctx.Config.Global.Toolchain
@@ -83,16 +90,14 @@ func runBuild(cmd *cobra.Command, args []string) {
 
 	tc, tcName, err := GetToolchain(ctx.Config)
 	if err != nil {
-		vlog.Error("Toolchain error: %v", err)
-		os.Exit(1)
+		return err
 	}
 	vlog.Info("")
 	vlog.Info("Using toolchain: %s, mode: %s", tcName, mode)
 
 	graph, err := build.NewBuildGraph(allTargets)
 	if err != nil {
-		vlog.Error("Dependency error: %v", err)
-		os.Exit(1)
+		return err
 	}
 
 	vlog.Info("")
@@ -105,17 +110,16 @@ func runBuild(cmd *cobra.Command, args []string) {
 
 	scheduler, err := build.NewScheduler(graph, tc, pkgDirs, mode)
 	if err != nil {
-		vlog.Error("Scheduler error: %v", err)
-		os.Exit(1)
+		return err
 	}
 
 	vlog.Info("")
 	vlog.Info("Building...")
 	if err := scheduler.BuildAll(); err != nil {
-		vlog.Error("Build failed: %v", err)
-		os.Exit(1)
+		return err
 	}
 
 	vlog.Info("")
 	vlog.Info("Build succeeded!")
+	return nil
 }

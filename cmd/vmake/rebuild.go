@@ -18,9 +18,21 @@ func init() {
 }
 
 func runRebuild(cmd *cobra.Command, args []string) {
-	runClean(cmd, args)
+	ctx, err := PrepareFull()
+	if err != nil {
+		vlog.Error("Error: %v", err)
+		return
+	}
+
+	if err := executeClean(ctx, false); err != nil {
+		vlog.Error("Error: %v", err)
+		return
+	}
 
 	vlog.Info("")
 
-	runBuild(cmd, args)
+	if err := executeBuild(ctx); err != nil {
+		vlog.Error("Error: %v", err)
+		return
+	}
 }

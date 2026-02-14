@@ -28,18 +28,24 @@ func init() {
 }
 
 func runClean(cmd *cobra.Command, args []string) {
-	ctx, err := PrepareBuild()
+	ctx, err := PrepareBase()
 	if err != nil {
 		vlog.Error("Error: %v", err)
 		os.Exit(1)
 	}
 
+	if err := executeClean(ctx, cleanAll); err != nil {
+		vlog.Error("Error: %v", err)
+		os.Exit(1)
+	}
+}
+
+func executeClean(ctx *BuildContext, cleanAll bool) error {
 	origDir, _ := os.Getwd()
 
 	_, tcName, err := GetToolchain(ctx.Config)
 	if err != nil {
-		vlog.Error("Toolchain error: %v", err)
-		os.Exit(1)
+		return err
 	}
 
 	mode := ""
@@ -67,6 +73,7 @@ func runClean(cmd *cobra.Command, args []string) {
 
 	os.Chdir(origDir)
 	vlog.Info("Clean completed!")
+	return nil
 }
 
 func cleanCurrentToolchain(pkgName, buildDir string) {
