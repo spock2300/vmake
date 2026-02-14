@@ -29,6 +29,23 @@ func runBuild(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	globalValues := make(map[string]any)
+	if ctx.Config.Global != nil {
+		globalValues["toolchain"] = ctx.Config.Global.Toolchain
+		globalValues["mode"] = ctx.Config.Global.Mode
+		for k, v := range ctx.Config.Global.Options {
+			globalValues[k] = v
+		}
+	}
+
+	mode := ""
+	if m, ok := globalValues["mode"].(string); ok {
+		mode = m
+	}
+	if mode == "" {
+		mode = api.ModeDebug
+	}
+
 	vlog.Info("")
 	vlog.Info("Executing OnBuild...")
 	allTargets := make(map[string]map[string]*api.Target)
@@ -42,6 +59,8 @@ func runBuild(cmd *cobra.Command, args []string) {
 		pc := config.GetPackageConfig(ctx.Config, pkgName)
 		buildCtx := api.NewBuildContext(pkgName, pc.Options)
 		buildCtx.SetOptions(ctx.AllOptions[pkgName])
+		buildCtx.SetGlobalOptions(ctx.GlobalOptions)
+		buildCtx.SetGlobalValues(globalValues)
 
 		for _, fn := range lr.Loaded.Builder.GetBuildFuncs() {
 			fn(buildCtx)
@@ -68,7 +87,7 @@ func runBuild(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 	vlog.Info("")
-	vlog.Info("Using toolchain: %s", tcName)
+	vlog.Info("Using toolchain: %s, mode: %s", tcName, mode)
 
 	graph, err := build.NewBuildGraph(allTargets)
 	if err != nil {
@@ -84,7 +103,7 @@ func runBuild(cmd *cobra.Command, args []string) {
 
 	pkgDirs := GetPackageDirs(ctx.Packages)
 
-	scheduler, err := build.NewScheduler(graph, tc, pkgDirs)
+	scheduler, err := build.NewScheduler(graph, tc, pkgDirs, mode)
 	if err != nil {
 		vlog.Error("Scheduler error: %v", err)
 		os.Exit(1)

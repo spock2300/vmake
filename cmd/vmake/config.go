@@ -30,8 +30,7 @@ func runConfig(cmd *cobra.Command, args []string) {
 	}
 
 	if len(ctx.AllOptions) == 0 && len(ctx.Packages) > 0 {
-		mgr := toolchain.GetManager()
-		if tcs, err := mgr.ListToolchains(); err != nil || len(tcs) == 0 {
+		if len(ctx.GlobalOptions) == 0 {
 			vlog.Info("No configuration options found")
 			return
 		}
@@ -43,12 +42,24 @@ func runConfig(cmd *cobra.Command, args []string) {
 		values[pkgName] = pc.Options
 	}
 
-	currentTC := ctx.Config.Toolchain
+	globalValues := make(map[string]any)
+	if ctx.Config.Global != nil {
+		globalValues["toolchain"] = ctx.Config.Global.Toolchain
+		globalValues["mode"] = ctx.Config.Global.Mode
+		for k, v := range ctx.Config.Global.Options {
+			globalValues[k] = v
+		}
+	}
+
+	currentTC := ""
+	if ctx.Config.Global != nil {
+		currentTC = ctx.Config.Global.Toolchain
+	}
 	if currentTC == "" {
 		currentTC = toolchain.GetManager().GetDefaultToolchain()
 	}
 
-	result, err := tui.Run(ctx.Packages, ctx.AllOptions, values, ctx.WorkDir, currentTC)
+	result, err := tui.Run(ctx.Packages, ctx.AllOptions, values, ctx.WorkDir, currentTC, ctx.GlobalOptions, globalValues)
 	if err != nil {
 		vlog.Error("TUI error: %v", err)
 		os.Exit(1)
@@ -66,7 +77,26 @@ func runConfig(cmd *cobra.Command, args []string) {
 		ctx.Config.Packages[pkgName].Options = opts
 	}
 
-	ctx.Config.Toolchain = result.Toolchain
+	if ctx.Config.Global == nil {
+		ctx.Config.Global = &config.GlobalConfig{Options: make(map[string]any)}
+	}
+	ctx.Config.Global.Toolchain = result.Toolchain
+
+	for k, v := range result.GlobalValues {
+		if k == "toolchain" {
+			continue
+		}
+		if k == "mode" {
+			if s, ok := v.(string); ok {
+				ctx.Config.Global.Mode = s
+			}
+		} else {
+			if ctx.Config.Global.Options == nil {
+				ctx.Config.Global.Options = make(map[string]any)
+			}
+			ctx.Config.Global.Options[k] = v
+		}
+	}
 
 	if err := config.Save(ctx.ConfigPath, ctx.Config); err != nil {
 		vlog.Error("Failed to save config: %v", err)

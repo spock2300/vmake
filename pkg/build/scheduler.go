@@ -44,6 +44,8 @@ type Scheduler struct {
 	linker    *Linker
 	toolchain *toolchain.Toolchain
 	tcName    string
+	mode      string
+	buildDir  string
 	pkgs      map[string]*PkgInfo
 	origDir   string
 	ccWriter  *CompileCommandsWriter
@@ -53,6 +55,7 @@ func NewScheduler(
 	graph *BuildGraph,
 	tc *toolchain.Toolchain,
 	pkgDirs map[string]string,
+	mode string,
 ) (*Scheduler, error) {
 	compiler, err := NewCompiler(tc)
 	if err != nil {
@@ -67,6 +70,10 @@ func NewScheduler(
 	origDir, _ := os.Getwd()
 
 	tcName := tc.Name
+	if mode == "" {
+		mode = api.ModeDebug
+	}
+	buildDir := fmt.Sprintf("%s-%s", tcName, mode)
 
 	ccWriter, err := NewCompileCommandsWriter(tc)
 	if err != nil {
@@ -79,6 +86,8 @@ func NewScheduler(
 		linker:    linker,
 		toolchain: tc,
 		tcName:    tcName,
+		mode:      mode,
+		buildDir:  buildDir,
 		pkgs:      make(map[string]*PkgInfo),
 		origDir:   origDir,
 		ccWriter:  ccWriter,
@@ -90,14 +99,15 @@ func NewScheduler(
 			return nil, fmt.Errorf("failed to chdir to %s: %w", pkgDir, err)
 		}
 
-		cache, err := LoadCache(tcName)
+		cache, err := LoadCache(buildDir)
 		if err != nil {
 			cache = NewBuildCache(tc)
 		}
 
-		if cache.NeedFullRebuild(tc) {
-			CleanObjects(tcName)
+		if cache.NeedFullRebuild(tc) || cache.Mode != mode {
+			CleanObjects(buildDir)
 			cache = NewBuildCache(tc)
+			cache.Mode = mode
 		}
 
 		s.pkgs[pkgName] = &PkgInfo{
@@ -155,7 +165,7 @@ func (s *Scheduler) Build(fullName string) error {
 		return err
 	}
 
-	os.MkdirAll(fmt.Sprintf("build/%s/objects", s.tcName), 0755)
+	os.MkdirAll(fmt.Sprintf("build/%s/objects", s.buildDir), 0755)
 
 	numFiles := len(resolved.SourceFiles)
 	if numFiles == 0 {
@@ -202,7 +212,7 @@ func (s *Scheduler) Build(fullName string) error {
 		}
 	}
 
-	return pkgInfo.Cache.Save(s.tcName)
+	return pkgInfo.Cache.Save(s.buildDir)
 }
 
 func (s *Scheduler) compileWorker(resolved *ResolvedTarget, jobs <-chan string, results chan<- compileResult, wg *sync.WaitGroup) {
@@ -214,6 +224,8 @@ func (s *Scheduler) compileWorker(resolved *ResolvedTarget, jobs <-chan string, 
 }
 
 func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
+	modeFlags, modeDefines := api.GetModeFlags(s.mode)
+
 	resolved := &ResolvedTarget{
 		Node:        node,
 		AllDefines:  append([]string{}, node.Target.Defines()...),
@@ -221,6 +233,10 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 		AllCxxFlags: append([]string{}, s.toolchain.DefaultFlags.CxxFlags...),
 		AllLdFlags:  append([]string{}, s.toolchain.DefaultFlags.LdFlags...),
 	}
+
+	resolved.AllCFlags = append(resolved.AllCFlags, modeFlags...)
+	resolved.AllCxxFlags = append(resolved.AllCxxFlags, modeFlags...)
+	resolved.AllDefines = append(resolved.AllDefines, modeDefines...)
 
 	for _, inc := range node.Target.Includes() {
 		resolved.AllIncludes = append(resolved.AllIncludes, inc)
@@ -284,13 +300,13 @@ func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
 		name = node.Target.Name()
 	}
 
-	return filepath.Join("build", s.tcName, name)
+	return filepath.Join("build", s.buildDir, name)
 }
 
 func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string, []string, error) {
 	pkgInfo := s.pkgs[resolved.Node.PkgName]
 
-	objRel := fmt.Sprintf("build/%s/objects/%s.o", s.tcName, strings.ReplaceAll(src, "/", "_"))
+	objRel := fmt.Sprintf("build/%s/objects/%s.o", s.buildDir, strings.ReplaceAll(src, "/", "_"))
 
 	if cached := pkgInfo.Cache.GetIfValid(src); cached != nil {
 		return cached.ObjPath, cached.Deps, nil
@@ -309,6 +325,7 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string,
 		CFlags:   resolved.AllCFlags,
 		CxxFlags: resolved.AllCxxFlags,
 		Language: lang,
+		Mode:     s.mode,
 	}
 
 	s.ccWriter.AddCommand(src, objRel, opts)

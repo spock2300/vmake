@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
@@ -22,12 +23,13 @@ var (
 )
 
 type BuildContext struct {
-	WorkDir     string
-	Packages    []plugin.Package
-	LoadResults []plugin.LoadResult
-	AllOptions  map[string]map[string]*api.Option
-	Config      *config.ConfigFile
-	ConfigPath  string
+	WorkDir       string
+	Packages      []plugin.Package
+	LoadResults   []plugin.LoadResult
+	AllOptions    map[string]map[string]*api.Option
+	GlobalOptions map[string]*api.Option
+	Config        *config.ConfigFile
+	ConfigPath    string
 }
 
 var RootCmd = &cobra.Command{
@@ -147,19 +149,34 @@ func PrepareBuild() (*BuildContext, error) {
 		}
 	}
 
+	mgr := toolchain.GetManager()
+	var tcList []string
+	if tcs, err := mgr.ListToolchains(); err == nil {
+		for name := range tcs {
+			tcList = append(tcList, name)
+		}
+		sort.Strings(tcList)
+	}
+
+	globalOptions, err := api.MergeGlobalOptions(allOptions, tcList)
+	if err != nil {
+		return nil, fmt.Errorf("global options error: %w", err)
+	}
+
 	return &BuildContext{
-		WorkDir:     workDir,
-		Packages:    packages,
-		LoadResults: loadResults,
-		AllOptions:  allOptions,
-		Config:      cfg,
-		ConfigPath:  configPath,
+		WorkDir:       workDir,
+		Packages:      packages,
+		LoadResults:   loadResults,
+		AllOptions:    allOptions,
+		GlobalOptions: globalOptions,
+		Config:        cfg,
+		ConfigPath:    configPath,
 	}, nil
 }
 
 func GetToolchain(cfg *config.ConfigFile) (*toolchain.Toolchain, string, error) {
 	mgr := toolchain.GetManager()
-	tcName := cfg.Toolchain
+	tcName := cfg.Global.Toolchain
 	if tcName == "" {
 		tcName = mgr.GetDefaultToolchain()
 	}

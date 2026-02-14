@@ -11,22 +11,39 @@ import (
 )
 
 type ConfigResult struct {
-	Saved     bool
-	Values    map[string]map[string]any
-	Toolchain string
+	Saved        bool
+	Values       map[string]map[string]any
+	Toolchain    string
+	GlobalValues map[string]any
 }
 
-func Run(packages []plugin.Package, options map[string]map[string]*api.Option, values map[string]map[string]any, workDir string, currentToolchain string) (*ConfigResult, error) {
-	m := NewModel(packages, options, values, workDir, currentToolchain)
+func Run(
+	packages []plugin.Package,
+	options map[string]map[string]*api.Option,
+	values map[string]map[string]any,
+	workDir string,
+	currentToolchain string,
+	globalOptions map[string]*api.Option,
+	globalValues map[string]any,
+) (*ConfigResult, error) {
+	m := NewModel(packages, options, values, workDir, currentToolchain, globalOptions, globalValues)
 	p := tea.NewProgram(&m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		return nil, err
 	}
 	return &ConfigResult{
-		Saved:     m.saved,
-		Values:    m.values,
-		Toolchain: m.selectedToolchain,
+		Saved:        m.saved,
+		Values:       m.values,
+		Toolchain:    getToolchainValue(m.globalValues),
+		GlobalValues: m.globalValues,
 	}, nil
+}
+
+func getToolchainValue(globalValues map[string]any) string {
+	if tc, ok := globalValues["toolchain"].(string); ok {
+		return tc
+	}
+	return ""
 }
 
 func (m *Model) Init() tea.Cmd {
@@ -281,7 +298,9 @@ func (m *Model) renderTree() string {
 		}
 
 		icon := "📄"
-		if len(node.Children) > 0 {
+		if node.PkgName == GlobalPkgName {
+			icon = "⚙️"
+		} else if len(node.Children) > 0 {
 			if node.Expanded {
 				icon = "📂"
 			} else {
@@ -353,11 +372,7 @@ func (m *Model) renderOptions() string {
 }
 
 func (m *Model) renderOption(item OptionItem, selected bool) string {
-	displayName := item.Name
-	if item.Name == ToolchainOptionName {
-		displayName = "toolchain"
-	}
-	name := optionNameStyle.Render(displayName)
+	name := optionNameStyle.Render(item.Name)
 	desc := optionDescStyle.Render(item.Opt.Description())
 
 	var val string
@@ -387,7 +402,7 @@ func (m *Model) renderOption(item OptionItem, selected bool) string {
 	}
 
 	if selected && !m.editing {
-		name = selectedOptStyle.Render(displayName)
+		name = selectedOptStyle.Render(item.Name)
 	}
 
 	return fmt.Sprintf("  %s %s %s", name, val, desc)

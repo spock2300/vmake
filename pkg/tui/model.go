@@ -7,7 +7,6 @@ import (
 
 	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/plugin"
-	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
 
 type TreeNode struct {
@@ -23,13 +22,16 @@ type OptionItem struct {
 	Opt   *api.Option
 }
 
-const ToolchainOptionName = "__toolchain__"
+const GlobalPkgName = "__global__"
 
 type Model struct {
 	packages []plugin.Package
 	tree     []*TreeNode
 	options  map[string]map[string]*api.Option
 	values   map[string]map[string]any
+
+	globalOptions map[string]*api.Option
+	globalValues  map[string]any
 
 	selectedPkg string
 	focusArea   int
@@ -49,42 +51,63 @@ type Model struct {
 	hasChanges  bool
 	confirmQuit bool
 	origValues  map[string]map[string]any
+	origGlobal  map[string]any
 	workDir     string
-
-	toolchains        map[string]*toolchain.Toolchain
-	toolchainList     []string
-	selectedToolchain string
-	origToolchain     string
 }
 
-func NewModel(packages []plugin.Package, options map[string]map[string]*api.Option, values map[string]map[string]any, workDir string, currentToolchain string) Model {
+func NewModel(
+	packages []plugin.Package,
+	options map[string]map[string]*api.Option,
+	values map[string]map[string]any,
+	workDir string,
+	currentToolchain string,
+	globalOptions map[string]*api.Option,
+	globalValues map[string]any,
+) Model {
+	if globalValues == nil {
+		globalValues = make(map[string]any)
+	}
+	if _, ok := globalValues["toolchain"]; !ok && currentToolchain != "" {
+		globalValues["toolchain"] = currentToolchain
+	}
+	if _, ok := globalValues["mode"]; !ok {
+		if opt, ok := globalOptions["mode"]; ok {
+			if d, ok := opt.Default().(string); ok {
+				globalValues["mode"] = d
+			}
+		}
+	}
+	if _, ok := globalValues["mode"]; !ok {
+		globalValues["mode"] = api.ModeDebug
+	}
+
 	m := Model{
-		packages:          packages,
-		options:           options,
-		values:            values,
-		treeCursor:        0,
-		optCursor:         0,
-		focusArea:         0,
-		workDir:           workDir,
-		selectedToolchain: currentToolchain,
-		origToolchain:     currentToolchain,
+		packages:      packages,
+		options:       options,
+		values:        values,
+		treeCursor:    0,
+		optCursor:     0,
+		focusArea:     0,
+		workDir:       workDir,
+		globalOptions: globalOptions,
+		globalValues:  globalValues,
 	}
 	m.origValues = deepCopyValues(values)
+	m.origGlobal = deepCopyGlobal(globalValues)
 	m.tree = buildTree(packages, workDir)
-
-	mgr := toolchain.GetManager()
-	if tcs, err := mgr.ListToolchains(); err == nil {
-		m.toolchains = tcs
-		for name := range tcs {
-			m.toolchainList = append(m.toolchainList, name)
-		}
-		sort.Strings(m.toolchainList)
-	}
 
 	if len(m.tree) > 0 {
 		m.selectFirstPkg()
 	}
 	return m
+}
+
+func deepCopyGlobal(src map[string]any) map[string]any {
+	dst := make(map[string]any)
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 func deepCopyValues(src map[string]map[string]any) map[string]map[string]any {
@@ -99,6 +122,12 @@ func deepCopyValues(src map[string]map[string]any) map[string]map[string]any {
 }
 
 func buildTree(packages []plugin.Package, baseDir string) []*TreeNode {
+	globalNode := &TreeNode{
+		Name:     "[Global]",
+		PkgName:  GlobalPkgName,
+		Expanded: true,
+	}
+
 	nodeMap := make(map[string]*TreeNode)
 
 	for _, pkg := range packages {
@@ -152,7 +181,8 @@ func buildTree(packages []plugin.Package, baseDir string) []*TreeNode {
 		return roots[i].Name < roots[j].Name
 	})
 
-	return flattenChildren(roots)
+	result := []*TreeNode{globalNode}
+	return append(result, flattenChildren(roots)...)
 }
 
 func flattenChildren(nodes []*TreeNode) []*TreeNode {
@@ -167,6 +197,11 @@ func flattenChildren(nodes []*TreeNode) []*TreeNode {
 }
 
 func (m *Model) selectFirstPkg() {
+	if len(m.tree) > 0 && m.tree[0].PkgName == GlobalPkgName {
+		m.selectedPkg = GlobalPkgName
+		m.buildOptionItems()
+		return
+	}
 	for _, node := range m.tree {
 		if node.PkgName != "" {
 			m.selectedPkg = node.PkgName
@@ -179,19 +214,34 @@ func (m *Model) selectFirstPkg() {
 func (m *Model) buildOptionItems() {
 	m.optItems = nil
 
-	if len(m.toolchainList) > 0 {
-		toolchainOpt := &api.Option{}
-		toolchainOpt.SetType(api.OptionChoice).
-			SetDefault(m.selectedToolchain).
-			SetDescription("Build toolchain").
-			SetValues(m.toolchainList...).
-			SetGroup("Global")
+	if m.selectedPkg == GlobalPkgName {
+		groups := make(map[string][]OptionItem)
+		for name, opt := range m.globalOptions {
+			group := opt.Group()
+			if group == "" {
+				group = "General"
+			}
+			groups[group] = append(groups[group], OptionItem{
+				Name:  name,
+				Group: group,
+				Opt:   opt,
+			})
+		}
 
-		m.optItems = append(m.optItems, OptionItem{
-			Name:  ToolchainOptionName,
-			Group: "Global",
-			Opt:   toolchainOpt,
-		})
+		var groupNames []string
+		for g := range groups {
+			groupNames = append(groupNames, g)
+		}
+		sort.Strings(groupNames)
+
+		for _, g := range groupNames {
+			items := groups[g]
+			sort.Slice(items, func(i, j int) bool {
+				return items[i].Name < items[j].Name
+			})
+			m.optItems = append(m.optItems, items...)
+		}
+		return
 	}
 
 	opts, ok := m.options[m.selectedPkg]
@@ -228,9 +278,16 @@ func (m *Model) buildOptionItems() {
 }
 
 func (m *Model) getValue(name string) any {
-	if name == ToolchainOptionName {
-		return m.selectedToolchain
+	if m.selectedPkg == GlobalPkgName {
+		if v, ok := m.globalValues[name]; ok {
+			return v
+		}
+		if opt, ok := m.globalOptions[name]; ok {
+			return opt.Default()
+		}
+		return nil
 	}
+
 	if vals, ok := m.values[m.selectedPkg]; ok {
 		if v, ok := vals[name]; ok {
 			return v
@@ -245,13 +302,12 @@ func (m *Model) getValue(name string) any {
 }
 
 func (m *Model) setValue(name string, val any) {
-	if name == ToolchainOptionName {
-		if s, ok := val.(string); ok {
-			m.selectedToolchain = s
-		}
+	if m.selectedPkg == GlobalPkgName {
+		m.globalValues[name] = val
 		m.checkChanges()
 		return
 	}
+
 	if m.values[m.selectedPkg] == nil {
 		m.values[m.selectedPkg] = make(map[string]any)
 	}
@@ -260,7 +316,21 @@ func (m *Model) setValue(name string, val any) {
 }
 
 func (m *Model) checkChanges() {
-	m.hasChanges = !valuesEqual(m.values, m.origValues) || m.selectedToolchain != m.origToolchain
+	globalChanged := !globalValuesEqual(m.globalValues, m.origGlobal)
+	m.hasChanges = !valuesEqual(m.values, m.origValues) || globalChanged
+}
+
+func globalValuesEqual(a, b map[string]any) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, vA := range a {
+		vB, ok := b[k]
+		if !ok || vA != vB {
+			return false
+		}
+	}
+	return true
 }
 
 func valuesEqual(a, b map[string]map[string]any) bool {
@@ -296,6 +366,17 @@ func (m *Model) shouldShow(opt *api.Option) bool {
 	showIf := opt.ShowIf()
 	if showIf == nil {
 		return true
+	}
+
+	if m.selectedPkg == GlobalPkgName {
+		cfgCtx := api.NewConfigContext(GlobalPkgName)
+		for name, val := range m.globalValues {
+			cfgCtx.SetConfigValue(name, val)
+		}
+		for name, o := range m.globalOptions {
+			cfgCtx.Option(name).SetType(o.Type()).SetDefault(o.Default())
+		}
+		return showIf(cfgCtx)
 	}
 
 	cfgCtx := api.NewConfigContext(m.selectedPkg)

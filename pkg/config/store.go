@@ -9,9 +9,15 @@ import (
 const ConfigVersion = "1"
 
 type ConfigFile struct {
-	Version   string                    `json:"version"`
-	Toolchain string                    `json:"toolchain,omitempty"`
-	Packages  map[string]*PackageConfig `json:"packages"`
+	Version  string                    `json:"version"`
+	Global   *GlobalConfig             `json:"global,omitempty"`
+	Packages map[string]*PackageConfig `json:"packages"`
+}
+
+type GlobalConfig struct {
+	Toolchain string         `json:"toolchain,omitempty"`
+	Mode      string         `json:"mode,omitempty"`
+	Options   map[string]any `json:"options,omitempty"`
 }
 
 type PackageConfig struct {
@@ -21,6 +27,7 @@ type PackageConfig struct {
 func newConfigFile() *ConfigFile {
 	return &ConfigFile{
 		Version:  ConfigVersion,
+		Global:   &GlobalConfig{Options: make(map[string]any)},
 		Packages: make(map[string]*PackageConfig),
 	}
 }
@@ -40,16 +47,50 @@ func Load(path string) (*ConfigFile, error) {
 		return nil, err
 	}
 
-	var cfg ConfigFile
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, err
 	}
 
-	if cfg.Packages == nil {
-		cfg.Packages = make(map[string]*PackageConfig)
+	cfg := newConfigFile()
+	if v, ok := raw["version"].(string); ok {
+		cfg.Version = v
 	}
 
-	return &cfg, nil
+	if g, ok := raw["global"].(map[string]any); ok {
+		cfg.Global = &GlobalConfig{Options: make(map[string]any)}
+		if tc, ok := g["toolchain"].(string); ok {
+			cfg.Global.Toolchain = tc
+		}
+		if mode, ok := g["mode"].(string); ok {
+			cfg.Global.Mode = mode
+		}
+		if opts, ok := g["options"].(map[string]any); ok {
+			cfg.Global.Options = opts
+		}
+	} else {
+		if tc, ok := raw["toolchain"].(string); ok {
+			cfg.Global.Toolchain = tc
+		}
+	}
+
+	if pkgs, ok := raw["packages"].(map[string]any); ok {
+		for name, p := range pkgs {
+			if pm, ok := p.(map[string]any); ok {
+				pc := &PackageConfig{Options: make(map[string]any)}
+				if opts, ok := pm["options"].(map[string]any); ok {
+					pc.Options = opts
+				}
+				cfg.Packages[name] = pc
+			}
+		}
+	}
+
+	if cfg.Global == nil {
+		cfg.Global = &GlobalConfig{Options: make(map[string]any)}
+	}
+
+	return cfg, nil
 }
 
 func Save(path string, cfg *ConfigFile) error {
@@ -87,4 +128,21 @@ func GetOptionValue(pc *PackageConfig, name string) any {
 		return nil
 	}
 	return pc.Options[name]
+}
+
+func GetGlobalOption(cfg *ConfigFile, name string) any {
+	if cfg.Global == nil || cfg.Global.Options == nil {
+		return nil
+	}
+	return cfg.Global.Options[name]
+}
+
+func SetGlobalOption(cfg *ConfigFile, name string, value any) {
+	if cfg.Global == nil {
+		cfg.Global = &GlobalConfig{Options: make(map[string]any)}
+	}
+	if cfg.Global.Options == nil {
+		cfg.Global.Options = make(map[string]any)
+	}
+	cfg.Global.Options[name] = value
 }

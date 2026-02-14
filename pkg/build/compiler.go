@@ -24,6 +24,7 @@ type CompileOptions struct {
 	CFlags   []string
 	CxxFlags []string
 	Language string
+	Mode     string
 }
 
 func NewCompiler(tc *toolchain.Toolchain) (*Compiler, error) {

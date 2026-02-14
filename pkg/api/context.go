@@ -91,11 +91,28 @@ func (ctx *ConfigContext) PackageName() string {
 	return ctx.pkgName
 }
 
+func (ctx *ConfigContext) GlobalOption(name string) *Option {
+	opt := ctx.Option(name)
+	opt.isGlobal = true
+	opt.group = "Global"
+	return opt
+}
+
+func (ctx *ConfigContext) GlobalMode() *Option {
+	return ctx.GlobalOption(ModeOptionName).
+		SetType(OptionChoice).
+		SetDefault(ModeDebug).
+		SetDescription("Build mode").
+		SetValues(ModeDebug, ModeRelease)
+}
+
 type BuildContext struct {
-	targets map[string]*Target
-	pkgName string
-	cfgVals map[string]any
-	options map[string]*Option
+	targets       map[string]*Target
+	pkgName       string
+	cfgVals       map[string]any
+	options       map[string]*Option
+	globalVals    map[string]any
+	globalOptions map[string]*Option
 }
 
 func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext {
@@ -103,15 +120,25 @@ func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext {
 		cfgVals = make(map[string]any)
 	}
 	return &BuildContext{
-		targets: make(map[string]*Target),
-		pkgName: pkgName,
-		cfgVals: cfgVals,
-		options: make(map[string]*Option),
+		targets:       make(map[string]*Target),
+		pkgName:       pkgName,
+		cfgVals:       cfgVals,
+		options:       make(map[string]*Option),
+		globalVals:    make(map[string]any),
+		globalOptions: make(map[string]*Option),
 	}
 }
 
 func (ctx *BuildContext) SetOptions(options map[string]*Option) {
 	ctx.options = options
+}
+
+func (ctx *BuildContext) SetGlobalOptions(options map[string]*Option) {
+	ctx.globalOptions = options
+}
+
+func (ctx *BuildContext) SetGlobalValues(vals map[string]any) {
+	ctx.globalVals = vals
 }
 
 func (ctx *BuildContext) Target(name string) *Target {
@@ -208,6 +235,53 @@ func (ctx *BuildContext) GetTargets() map[string]*Target {
 
 func (ctx *BuildContext) PackageName() string {
 	return ctx.pkgName
+}
+
+func (ctx *BuildContext) GlobalBool(name string) bool {
+	if val, ok := ctx.globalVals[name]; ok {
+		if b, ok := val.(bool); ok {
+			return b
+		}
+	}
+	if opt, ok := ctx.globalOptions[name]; ok {
+		if d, ok := opt.Default().(bool); ok {
+			return d
+		}
+	}
+	return false
+}
+
+func (ctx *BuildContext) GlobalString(name string) string {
+	if val, ok := ctx.globalVals[name]; ok {
+		if s, ok := val.(string); ok {
+			return s
+		}
+	}
+	if opt, ok := ctx.globalOptions[name]; ok {
+		if d, ok := opt.Default().(string); ok {
+			return d
+		}
+	}
+	return ""
+}
+
+func (ctx *BuildContext) IfGlobal(option string, then ...string) []string {
+	if ctx.GlobalBool(option) {
+		return then
+	}
+	return nil
+}
+
+func (ctx *BuildContext) SelectGlobal(option string, mapping map[string]string) string {
+	val := ctx.GlobalString(option)
+	if mapped, ok := mapping[val]; ok {
+		return mapped
+	}
+	return ""
+}
+
+func (ctx *BuildContext) Mode() string {
+	return ctx.GlobalString(ModeOptionName)
 }
 
 func flattenStrings(slices ...[]string) []string {

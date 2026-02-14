@@ -9,11 +9,12 @@ import (
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
 
-const CacheVersion = 2
+const CacheVersion = 3
 
 type BuildCache struct {
 	Version   int                `json:"version"`
 	Toolchain ToolchainMeta      `json:"toolchain"`
+	Mode      string             `json:"mode,omitempty"`
 	Sources   map[string]*Source `json:"sources"`
 	mu        sync.RWMutex       `json:"-"`
 }

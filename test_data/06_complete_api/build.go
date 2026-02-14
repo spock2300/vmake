@@ -8,6 +8,19 @@ import (
 
 func Main(b *api.Builder) {
 	b.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.GlobalMode()
+
+		ctx.GlobalOption("customer").
+			SetType(api.OptionString).
+			SetDefault("default").
+			SetDescription("Customer name for branding")
+
+		ctx.GlobalOption("product").
+			SetType(api.OptionChoice).
+			SetDefault("standard").
+			SetValues("lite", "standard", "professional", "enterprise").
+			SetDescription("Product edition")
+
 		ctx.Option("debug").
 			SetType(api.OptionBool).
 			SetDefault(false).
