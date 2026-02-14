@@ -20,7 +20,7 @@ VMake 是一个现代化的 C/C++ 项目构建工具，采用 Go 语言开发。
 ### 安装
 
 ```bash
-go install github.com/spock2300/vmake@latest
+go install gitee.com/spock2300/vmake@latest
 ```
 
 ### 基本用法
@@ -30,7 +30,7 @@ go install github.com/spock2300/vmake@latest
 ```go
 package main
 
-import "github.com/spock2300/vmake/pkg/api"
+import "gitee.com/spock2300/vmake/pkg/api"
 
 func Main(b *api.Builder) {
     b.OnConfig(func(ctx *api.ConfigContext) {
@@ -137,8 +137,10 @@ VMake 内置以下全局选项：
 ```go
 b.OnBuild(func(ctx *api.BuildContext) {
     ctx.Target("app").
-        AddDefines(ctx.If("mode", "DEBUG")...).
-        AddCFlags(ctx.If("optimization", "O3", "-DNDEBUG")...)
+        AddDefines(ctx.If("debug", "DEBUG")...).
+        AddCFlags(ctx.Select("optimization", map[string]string{
+            "O3": "-DNDEBUG",
+        }))
 })
 ```
 
@@ -194,9 +196,6 @@ func Main(b *api.Builder) {
 # 构建当前模块
 vmake build
 
-# 构建指定目标
-vmake build --target=app
-
 # 详细输出
 vmake build -v
 
@@ -209,9 +208,6 @@ vmake build -vv
 ```bash
 # 进入交互式配置界面
 vmake config
-
-# 查看当前配置
-vmake config --show
 ```
 
 ### 工具链管理
@@ -330,6 +326,7 @@ ctx.Target("app").
 | `test_data/04_multi_module` | 多模块项目 |
 | `test_data/05_conditional` | 条件编译项目 |
 | `test_data/06_complete_api` | 完整 API 测试 |
+| `test_data/07_parallel_test` | 并行编译测试 |
 
 运行测试：
 
