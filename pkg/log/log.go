@@ -36,12 +36,6 @@ func Info(format string, args ...any) {
 	}
 }
 
-func InfoNormal(format string, args ...any) {
-	if level == Normal || level == Verbose {
-		fmt.Printf(format+"\n", args...)
-	}
-}
-
 func Error(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 }

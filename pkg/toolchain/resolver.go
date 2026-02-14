@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	iexec "gitee.com/spock2300/vmake/internal/exec"
 )
 
 func ResolveToolPath(tool string, installPath string) (string, error) {
@@ -63,8 +65,7 @@ func GetToolchainHost(tc *Toolchain) string {
 		return "unknown"
 	}
 
-	cmd := exec.Command(cc, "-dumpmachine")
-	output, err := cmd.Output()
+	output, err := iexec.Run(cc, "-dumpmachine")
 	if err != nil {
 		return "unknown"
 	}

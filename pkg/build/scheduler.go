@@ -312,7 +312,7 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string,
 		return cached.ObjPath, cached.Deps, nil
 	}
 
-	vlog.InfoNormal("  CC %s", src)
+	vlog.Info("  CC %s", src)
 
 	lang := "c"
 	if glob.IsCppFile(src) {
@@ -376,7 +376,7 @@ func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 
 	switch kind {
 	case api.TargetBinary:
-		vlog.InfoNormal("  LINK %s", outputName)
+		vlog.Info("  LINK %s", outputName)
 		allObjs := append([]string{}, objs...)
 		for _, artifact := range resolved.DepArtifacts {
 			allObjs = append(allObjs, artifact)
@@ -384,16 +384,17 @@ func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 		links := unique(resolved.Node.Target.Links())
 		return s.linker.LinkBinary(allObjs, links, resolved.AllLdFlags, resolved.OutputPath)
 	case api.TargetStatic:
-		vlog.InfoNormal("  AR %s", outputName)
+		vlog.Info("  AR %s", outputName)
 		allObjs := append([]string{}, objs...)
 		for _, artifact := range resolved.DepArtifacts {
 			allObjs = append(allObjs, artifact)
 		}
 		return s.linker.LinkStatic(allObjs, resolved.OutputPath)
 	case api.TargetShared:
-		vlog.InfoNormal("  LINK %s", outputName)
+		vlog.Info("  LINK %s", outputName)
 		return s.linker.LinkShared(objs, resolved.AllLdFlags, resolved.OutputPath)
 	case api.TargetObject:
+		vlog.Info("  OBJ %s", outputName)
 		if len(objs) == 1 {
 			if objs[0] == resolved.OutputPath {
 				return nil

@@ -4,11 +4,10 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
-	vlog "gitee.com/spock2300/vmake/pkg/log"
+	iexec "gitee.com/spock2300/vmake/internal/exec"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -64,14 +63,10 @@ func (c *Compiler) Compile(src, objPath string, opts *CompileOptions) ([]string,
 	}
 
 	args := c.buildArgs(opts, objPath, depPath, src, flags)
-	cmdLine := compiler + " " + strings.Join(args, " ")
 
-	vlog.Debug("  %s", cmdLine)
-
-	cmd := exec.Command(compiler, args...)
-	output, err := cmd.CombinedOutput()
+	_, err := iexec.Run(compiler, args...)
 	if err != nil {
-		return nil, fmt.Errorf("%s\n%s", cmdLine, string(output))
+		return nil, err
 	}
 
 	deps, err := parseDepFile(depPath)

@@ -3,11 +3,9 @@ package build
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 
-	vlog "gitee.com/spock2300/vmake/pkg/log"
+	iexec "gitee.com/spock2300/vmake/internal/exec"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -49,16 +47,8 @@ func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath string) err
 
 	args = append(args, ldflags...)
 
-	cmdLine := l.ccPath + " " + strings.Join(args, " ")
-	vlog.Debug("  %s", cmdLine)
-
-	cmd := exec.Command(l.ccPath, args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%s\n%s", cmdLine, string(output))
-	}
-
-	return nil
+	_, err := iexec.Run(l.ccPath, args...)
+	return err
 }
 
 func (l *Linker) LinkStatic(objs []string, outputPath string) error {
@@ -70,16 +60,8 @@ func (l *Linker) LinkStatic(objs []string, outputPath string) error {
 	args := []string{"rcs", outputPath}
 	args = append(args, objs...)
 
-	cmdLine := l.arPath + " " + strings.Join(args, " ")
-	vlog.Debug("  %s", cmdLine)
-
-	cmd := exec.Command(l.arPath, args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%s\n%s", cmdLine, string(output))
-	}
-
-	return nil
+	_, err := iexec.Run(l.arPath, args...)
+	return err
 }
 
 func (l *Linker) LinkShared(objs, ldflags []string, outputPath string) error {
@@ -92,14 +74,6 @@ func (l *Linker) LinkShared(objs, ldflags []string, outputPath string) error {
 	args = append(args, objs...)
 	args = append(args, ldflags...)
 
-	cmdLine := l.ccPath + " " + strings.Join(args, " ")
-	vlog.Debug("  %s", cmdLine)
-
-	cmd := exec.Command(l.ccPath, args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%s\n%s", cmdLine, string(output))
-	}
-
-	return nil
+	_, err := iexec.Run(l.ccPath, args...)
+	return err
 }

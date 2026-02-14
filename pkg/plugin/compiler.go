@@ -3,8 +3,9 @@ package plugin
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+
+	iexec "gitee.com/spock2300/vmake/internal/exec"
 )
 
 type CompileResult struct {
@@ -26,15 +27,14 @@ func Compile(pkg Package) CompileResult {
 
 	pluginPath := filepath.Join(buildDir, "plugin.so")
 
-	cmd := exec.Command("go", "build", "-buildmode=plugin", "-o", pluginPath, pkg.Path)
-	cmd.Dir = pkg.Dir
-	output, err := cmd.CombinedOutput()
+	args := []string{"build", "-buildmode=plugin", "-o", pluginPath, pkg.Path}
+	_, err := iexec.RunInDir("go", pkg.Dir, args...)
 	if err != nil {
 		return CompileResult{
 			Package:    pkg,
 			PluginPath: pluginPath,
 			Success:    false,
-			Error:      fmt.Errorf("compilation failed: %w\n%s", err, string(output)),
+			Error:      fmt.Errorf("compilation failed: %w", err),
 		}
 	}
 
