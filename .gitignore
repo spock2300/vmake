@@ -1,2 +1,5 @@
 bin/
 test_data
+pkg/build/scheduler.go
+vmake
+.vmake

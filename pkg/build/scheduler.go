@@ -268,8 +268,38 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string,
 	return objRel, deps, nil
 }
 
+func (s *Scheduler) needRelink(resolved *ResolvedTarget, objs []string) bool {
+	outputInfo, err := os.Stat(resolved.OutputPath)
+	if err != nil {
+		return true
+	}
+
+	outputTime := outputInfo.ModTime()
+
+	for _, obj := range objs {
+		objInfo, err := os.Stat(obj)
+		if err != nil || objInfo.ModTime().After(outputTime) {
+			return true
+		}
+	}
+
+	for _, artifact := range resolved.DepArtifacts {
+		artifactInfo, err := os.Stat(artifact)
+		if err != nil || artifactInfo.ModTime().After(outputTime) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 	kind := resolved.Node.Target.Kind()
+
+	if !s.needRelink(resolved, objs) {
+		return nil
+	}
+
 	outputName := filepath.Base(resolved.OutputPath)
 
 	switch kind {
