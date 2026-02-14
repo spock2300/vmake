@@ -37,6 +37,7 @@ type Scheduler struct {
 	tcName    string
 	pkgs      map[string]*PkgInfo
 	origDir   string
+	ccWriter  *CompileCommandsWriter
 }
 
 func NewScheduler(
@@ -58,6 +59,11 @@ func NewScheduler(
 
 	tcName := tc.Name
 
+	ccWriter, err := NewCompileCommandsWriter(tc)
+	if err != nil {
+		return nil, err
+	}
+
 	s := &Scheduler{
 		graph:     graph,
 		compiler:  compiler,
@@ -66,6 +72,7 @@ func NewScheduler(
 		tcName:    tcName,
 		pkgs:      make(map[string]*PkgInfo),
 		origDir:   origDir,
+		ccWriter:  ccWriter,
 	}
 
 	for pkgName, pkgDir := range pkgDirs {
@@ -109,7 +116,8 @@ func (s *Scheduler) BuildAll() error {
 			return err
 		}
 	}
-	return nil
+
+	return s.ccWriter.Save("build/compile_commands.json")
 }
 
 func (s *Scheduler) Build(fullName string) error {
@@ -128,6 +136,8 @@ func (s *Scheduler) Build(fullName string) error {
 		return err
 	}
 	defer os.Chdir(s.origDir)
+
+	s.ccWriter.SetPackageDir(pkgInfo.Dir)
 
 	vlog.Info("[%s]", fullName)
 
@@ -261,6 +271,8 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string,
 		CxxFlags: resolved.AllCxxFlags,
 		Language: lang,
 	}
+
+	s.ccWriter.AddCommand(src, objRel, opts)
 
 	deps, err := s.compiler.Compile(src, objRel, opts)
 	if err != nil {
