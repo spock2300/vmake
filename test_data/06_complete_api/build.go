@@ -1,6 +1,10 @@
 package main
 
-import "gitee.com/spock2300/vmake/pkg/api"
+import (
+	"strconv"
+
+	"gitee.com/spock2300/vmake/pkg/api"
+)
 
 func Main(b *api.Builder) {
 	b.OnConfig(func(ctx *api.ConfigContext) {
@@ -68,6 +72,7 @@ func Main(b *api.Builder) {
 		threads := ctx.Int("thread_count")
 		prefix := ctx.String("custom_prefix")
 		cppStd := ctx.String("c++standard")
+		sslVersion := ctx.String("ssl_version")
 
 		ctx.Target("core_obj").
 			SetKind(api.TargetObject).
@@ -90,24 +95,28 @@ func Main(b *api.Builder) {
 			ctx.Target("mylib").
 				SetKind(api.TargetShared).
 				AddFiles("src/library.cpp").
-				AddIncludes("src/internal").  // 私有头文件
-				AddPublicIncludes("include"). // 公开头文件，依赖方继承
+				AddIncludes("src/internal").
+				AddPublicIncludes("include").
 				SetLanguages(cppStd).
 				AddDeps("core_obj", "utils_obj").
 				AddDefines(ctx.If("ssl", "USE_SSL")).
-				AddDefines("THREAD_COUNT=" + string(rune(threads+'0'))).
+				AddDefines(ctx.If("ssl", "SSL_VERSION=\""+sslVersion+"\"")).
+				AddDefines("THREAD_COUNT=" + strconv.Itoa(threads)).
+				AddDefines("PREFIX=\"" + prefix + "\"").
 				AddCxxFlags("-fPIC").
 				AddLdFlags("-Wl,-soname,libmylib.so")
 		} else {
 			ctx.Target("mylib").
 				SetKind(api.TargetStatic).
 				AddFiles("src/library.cpp").
-				AddIncludes("src/internal").  // 私有头文件
-				AddPublicIncludes("include"). // 公开头文件，依赖方继承
+				AddIncludes("src/internal").
+				AddPublicIncludes("include").
 				SetLanguages(cppStd).
 				AddDeps("core_obj", "utils_obj").
 				AddDefines(ctx.If("ssl", "USE_SSL")).
-				AddDefines("THREAD_COUNT=" + string(rune(threads+'0')))
+				AddDefines(ctx.If("ssl", "SSL_VERSION=\""+sslVersion+"\"")).
+				AddDefines("THREAD_COUNT=" + strconv.Itoa(threads)).
+				AddDefines("PREFIX=\"" + prefix + "\"")
 		}
 
 		ctx.Target("myapp").
@@ -117,7 +126,7 @@ func Main(b *api.Builder) {
 			AddDeps("mylib").
 			AddDefines("PREFIX=\"" + prefix + "\"").
 			AddDefines(ctx.If("ssl", "USE_SSL")).
-			AddDefines(ctx.If("ssl", "SSL_VERSION=\""+ctx.String("ssl_version")+"\"")).
+			AddDefines(ctx.If("ssl", "SSL_VERSION=\""+sslVersion+"\"")).
 			AddCxxFlags(ctx.If("debug", "-g", "-fsanitize=address")).
 			AddCxxFlags(ctx.If("verbose", "-v")).
 			AddLinks(ctx.If("ssl", "ssl", "crypto")).

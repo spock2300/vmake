@@ -8,6 +8,7 @@ import (
 
 	"gitee.com/spock2300/vmake/internal/glob"
 	"gitee.com/spock2300/vmake/pkg/api"
+	vlog "gitee.com/spock2300/vmake/pkg/log"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -108,6 +109,8 @@ func (s *Scheduler) Build(fullName string) error {
 		return nil
 	}
 
+	vlog.Info("[%s]", fullName)
+
 	resolved, err := s.resolveTarget(node)
 	if err != nil {
 		return err
@@ -195,6 +198,12 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 
 	resolved.OutputPath = s.getTargetOutputPath(node)
 
+	resolved.AllDefines = unique(resolved.AllDefines)
+	resolved.AllIncludes = unique(resolved.AllIncludes)
+	resolved.AllCFlags = unique(resolved.AllCFlags)
+	resolved.AllCxxFlags = unique(resolved.AllCxxFlags)
+	resolved.AllLdFlags = unique(resolved.AllLdFlags)
+
 	return resolved, nil
 }
 
@@ -232,6 +241,8 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string,
 		}
 	}
 
+	vlog.InfoNormal("  CC %s", srcRel)
+
 	lang := "c"
 	if glob.IsCppFile(src) {
 		lang = "cxx"
@@ -256,17 +267,27 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string,
 }
 
 func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
-	switch resolved.Node.Target.Kind() {
+	kind := resolved.Node.Target.Kind()
+	outputName := filepath.Base(resolved.OutputPath)
+
+	switch kind {
 	case api.TargetBinary:
+		vlog.InfoNormal("  LINK %s", outputName)
 		allObjs := append([]string{}, objs...)
 		for _, artifact := range resolved.DepArtifacts {
 			allObjs = append(allObjs, artifact)
 		}
-		return s.linker.LinkBinary(allObjs, resolved.Node.Target.Links(),
-			resolved.AllLdFlags, resolved.OutputPath)
+		links := unique(resolved.Node.Target.Links())
+		return s.linker.LinkBinary(allObjs, links, resolved.AllLdFlags, resolved.OutputPath)
 	case api.TargetStatic:
-		return s.linker.LinkStatic(objs, resolved.OutputPath)
+		vlog.InfoNormal("  AR %s", outputName)
+		allObjs := append([]string{}, objs...)
+		for _, artifact := range resolved.DepArtifacts {
+			allObjs = append(allObjs, artifact)
+		}
+		return s.linker.LinkStatic(allObjs, resolved.OutputPath)
 	case api.TargetShared:
+		vlog.InfoNormal("  LINK %s", outputName)
 		return s.linker.LinkShared(objs, resolved.AllLdFlags, resolved.OutputPath)
 	case api.TargetObject:
 		if len(objs) == 1 {
@@ -275,4 +296,19 @@ func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 		return fmt.Errorf("object target requires exactly one source file")
 	}
 	return nil
+}
+
+func unique(s []string) []string {
+	if len(s) == 0 {
+		return s
+	}
+	seen := make(map[string]bool, len(s))
+	result := make([]string, 0, len(s))
+	for _, v := range s {
+		if !seen[v] {
+			seen[v] = true
+			result = append(result, v)
+		}
+	}
+	return result
 }

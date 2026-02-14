@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	vlog "gitee.com/spock2300/vmake/pkg/log"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -50,7 +51,6 @@ func (c *Compiler) Compile(src, objPath string, opts *CompileOptions) ([]string,
 
 	depPath := objPath + ".d"
 
-	var cmd *exec.Cmd
 	var compiler string
 	var flags []string
 
@@ -63,11 +63,14 @@ func (c *Compiler) Compile(src, objPath string, opts *CompileOptions) ([]string,
 	}
 
 	args := c.buildArgs(opts, objPath, depPath, src, flags)
-	cmd = exec.Command(compiler, args...)
+	cmdLine := compiler + " " + strings.Join(args, " ")
 
+	vlog.Debug("  %s", cmdLine)
+
+	cmd := exec.Command(compiler, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("compilation failed: %w\n%s", err, string(output))
+		return nil, fmt.Errorf("%s\n%s", cmdLine, string(output))
 	}
 
 	deps, err := parseDepFile(depPath)
@@ -85,11 +88,11 @@ func (c *Compiler) buildArgs(opts *CompileOptions, objPath, depPath, src string,
 	args = append(args, "-MF", depPath)
 
 	for _, inc := range opts.Includes {
-		args = append(args, "-I", inc)
+		args = append(args, "-I"+inc)
 	}
 
 	for _, def := range opts.Defines {
-		args = append(args, "-D", def)
+		args = append(args, "-D"+def)
 	}
 
 	args = append(args, flags...)

@@ -5,7 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
+	vlog "gitee.com/spock2300/vmake/pkg/log"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -47,10 +49,13 @@ func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath string) err
 
 	args = append(args, ldflags...)
 
+	cmdLine := l.ccPath + " " + strings.Join(args, " ")
+	vlog.Debug("  %s", cmdLine)
+
 	cmd := exec.Command(l.ccPath, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("link failed: %w\n%s", err, string(output))
+		return fmt.Errorf("%s\n%s", cmdLine, string(output))
 	}
 
 	return nil
@@ -65,10 +70,13 @@ func (l *Linker) LinkStatic(objs []string, outputPath string) error {
 	args := []string{"rcs", outputPath}
 	args = append(args, objs...)
 
+	cmdLine := l.arPath + " " + strings.Join(args, " ")
+	vlog.Debug("  %s", cmdLine)
+
 	cmd := exec.Command(l.arPath, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("static library creation failed: %w\n%s", err, string(output))
+		return fmt.Errorf("%s\n%s", cmdLine, string(output))
 	}
 
 	return nil
@@ -84,10 +92,13 @@ func (l *Linker) LinkShared(objs, ldflags []string, outputPath string) error {
 	args = append(args, objs...)
 	args = append(args, ldflags...)
 
+	cmdLine := l.ccPath + " " + strings.Join(args, " ")
+	vlog.Debug("  %s", cmdLine)
+
 	cmd := exec.Command(l.ccPath, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("shared library creation failed: %w\n%s", err, string(output))
+		return fmt.Errorf("%s\n%s", cmdLine, string(output))
 	}
 
 	return nil
