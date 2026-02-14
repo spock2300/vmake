@@ -206,12 +206,6 @@ func (s *Scheduler) Build(fullName string) error {
 		return err
 	}
 
-	if node.Target.Kind() == api.TargetObject && len(resolved.SourceFiles) == 1 {
-		if cachedSrc := pkgInfo.Cache.Sources[resolved.SourceFiles[0]]; cachedSrc != nil {
-			cachedSrc.ObjPath = resolved.OutputPath
-		}
-	}
-
 	return pkgInfo.Cache.Save(s.buildDir)
 }
 
@@ -392,16 +386,21 @@ func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 		return s.linker.LinkStatic(allObjs, resolved.OutputPath)
 	case api.TargetShared:
 		vlog.Info("  LINK %s", outputName)
-		return s.linker.LinkShared(objs, resolved.AllLdFlags, resolved.OutputPath)
-	case api.TargetObject:
-		vlog.Info("  OBJ %s", outputName)
-		if len(objs) == 1 {
-			if objs[0] == resolved.OutputPath {
-				return nil
-			}
-			return os.Rename(objs[0], resolved.OutputPath)
+		allObjs := append([]string{}, objs...)
+		for _, artifact := range resolved.DepArtifacts {
+			allObjs = append(allObjs, artifact)
 		}
-		return fmt.Errorf("object target requires exactly one source file")
+		return s.linker.LinkShared(allObjs, resolved.AllLdFlags, resolved.OutputPath)
+	case api.TargetObject:
+		vlog.Info("  LD -r %s", outputName)
+		allObjs := append([]string{}, objs...)
+		for _, artifact := range resolved.DepArtifacts {
+			allObjs = append(allObjs, artifact)
+		}
+		if len(allObjs) == 0 {
+			return fmt.Errorf("object target requires at least one source file")
+		}
+		return s.linker.LinkObject(allObjs, resolved.OutputPath)
 	}
 	return nil
 }

@@ -77,3 +77,16 @@ func (l *Linker) LinkShared(objs, ldflags []string, outputPath string) error {
 	_, err := iexec.Run(l.ccPath, args...)
 	return err
 }
+
+func (l *Linker) LinkObject(objs []string, outputPath string) error {
+	outputDir := filepath.Dir(outputPath)
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	args := []string{"-r", "-o", outputPath}
+	args = append(args, objs...)
+
+	_, err := iexec.Run(l.ccPath, args...)
+	return err
+}
