@@ -88,7 +88,7 @@ Target 是构建目标，定义在 `OnBuild` 中，归属于当前 Package。
 
 ### 配置存储
 
-配置按 Package 分组存储，没有 Target 级别的配置：
+配置按 Package 分组存储，全局选项存储在 `global` 字段：
 
 ```
 .vmake/
@@ -98,6 +98,13 @@ Target 是构建目标，定义在 `OnBuild` 中，归属于当前 Package。
 ```json
 {
   "version": "1",
+  "global": {
+    "toolchain": "gcc",
+    "mode": "debug",
+    "options": {
+      "my_global": true
+    }
+  },
   "packages": {
     "myproject": {
       "options": {
@@ -121,6 +128,7 @@ Target 是构建目标，定义在 `OnBuild` 中，归属于当前 Package。
 
 **设计要点**：
 - 单一配置文件：所有 Package 的配置集中在 `.vmake/config.json`
+- `global` 字段：存储 toolchain、mode 和用户定义的全局选项
 - Package 独立：每个 Package 的 Options 互不影响
 - 无 Target 配置：Target 的启用/禁用由代码逻辑控制（如 `SetDefault(false)`）
 
@@ -241,6 +249,7 @@ func (o *Option) SetDescription(desc string) *Option
 func (o *Option) SetValues(vals ...string) *Option
 func (o *Option) SetShowIf(fn func(ctx *ConfigContext) bool) *Option
 func (o *Option) SetGroup(group string) *Option
+func (o *Option) SetGlobal() *Option          // 标记为全局选项（跨 Package 共享）
 ```
 
 ### ConfigContext
@@ -250,9 +259,19 @@ type ConfigContext struct{}
 
 func (ctx *ConfigContext) Option(name string) *Option
 
+// 获取选项值（优先配置值，其次默认值）
 func (ctx *ConfigContext) Bool(name string) bool
 func (ctx *ConfigContext) String(name string) string
 func (ctx *ConfigContext) Int(name string) int
+
+// 其他方法
+func (ctx *ConfigContext) PackageName() string
+func (ctx *ConfigContext) SetConfigValue(name string, val any)
+func (ctx *ConfigContext) GetOptions() map[string]*Option
+
+// 全局选项快捷方法
+func (ctx *ConfigContext) GlobalOption(name string) *Option  // 创建并标记为全局选项
+func (ctx *ConfigContext) GlobalMode() *Option               // 内置 mode 选项快捷方法
 ```
 
 ### Target 类型
@@ -277,23 +296,23 @@ type Target struct {
 func (t *Target) SetKind(kind TargetKind) *Target
 func (t *Target) SetDefault(isDefault bool) *Target
 
-// 源码与头文件
-func (t *Target) AddFiles(files ...string) *Target
-func (t *Target) AddIncludes(dirs ...string) *Target
-func (t *Target) AddPublicIncludes(dirs ...string) *Target
+// 源码与头文件（接受 string 或 []string，支持条件表达式返回的 []string）
+func (t *Target) AddFiles(files ...any) *Target
+func (t *Target) AddIncludes(dirs ...any) *Target
+func (t *Target) AddPublicIncludes(dirs ...any) *Target
 
 // 编译配置
-func (t *Target) AddDefines(defines ...string) *Target
+func (t *Target) AddDefines(defines ...any) *Target
 func (t *Target) SetLanguages(langs ...string) *Target
 
 // 链接配置
-func (t *Target) AddLinks(libs ...string) *Target
+func (t *Target) AddLinks(libs ...any) *Target
 func (t *Target) AddDeps(targets ...string) *Target
 
 // 编译/链接选项
-func (t *Target) AddCFlags(flags ...string) *Target
-func (t *Target) AddCxxFlags(flags ...string) *Target
-func (t *Target) AddLdFlags(flags ...string) *Target
+func (t *Target) AddCFlags(flags ...any) *Target
+func (t *Target) AddCxxFlags(flags ...any) *Target
+func (t *Target) AddLdFlags(flags ...any) *Target
 ```
 
 ### API 与 xmake 对照
@@ -320,12 +339,67 @@ type BuildContext struct{}
 
 func (ctx *BuildContext) Target(name string) *Target
 
-// 条件表达式
+// 条件表达式（Package 内选项）
 func (ctx *BuildContext) If(option string, then ...string) []string
 func (ctx *BuildContext) IfNot(option string, then ...string) []string
 func (ctx *BuildContext) Select(option string, mapping map[string]string) string
 func (ctx *BuildContext) When(option string, value any) bool
+
+// 获取选项值（Package 内选项）
+func (ctx *BuildContext) Bool(name string) bool
+func (ctx *BuildContext) String(name string) string
+func (ctx *BuildContext) Int(name string) int
+
+// 全局选项方法
+func (ctx *BuildContext) GlobalBool(name string) bool
+func (ctx *BuildContext) GlobalString(name string) string
+func (ctx *BuildContext) IfGlobal(option string, then ...string) []string
+func (ctx *BuildContext) SelectGlobal(option string, mapping map[string]string) string
+func (ctx *BuildContext) Mode() string  // 获取当前构建模式（debug/release）
+
+// 其他方法
+func (ctx *BuildContext) PackageName() string
+func (ctx *BuildContext) GetTargets() map[string]*Target
 ```
+
+### 全局选项
+
+全局选项是跨 Package 共享的配置项，所有 Package 使用相同的值。
+
+```go
+// 内置常量
+const (
+    ModeOptionName      = "mode"
+    ToolchainOptionName = "toolchain"
+    ModeDebug           = "debug"
+    ModeRelease         = "release"
+)
+
+// 在 OnConfig 中创建全局选项
+b.OnConfig(func(ctx *api.ConfigContext) {
+    ctx.GlobalOption("my_global").
+        SetType(api.OptionBool).
+        SetDefault(true).
+        SetDescription("A global option shared across all packages")
+})
+
+// 在 OnBuild 中使用全局选项
+b.OnBuild(func(ctx *api.BuildContext) {
+    ctx.Target("app").
+        SetKind(api.TargetBinary).
+        AddDefines(ctx.IfGlobal("my_global", "ENABLE_FEATURE")).
+        AddCFlags(ctx.SelectGlobal("mode", map[string]string{
+            api.ModeDebug:   "-O0 -g",
+            api.ModeRelease: "-O2",
+        }))
+})
+```
+
+**全局选项特性**：
+- 使用 `GlobalOption()` 创建，自动设置 `group: "Global"`
+- 在所有 Package 间共享，值统一
+- 如果多个 Package 定义同名全局选项，类型和默认值必须一致
+- 内置 `mode` 和 `toolchain` 选项
 
 ---
 
@@ -354,8 +428,22 @@ b.OnBuild(func(ctx *api.BuildContext) {
                 "O3": "-O3",
                 "Os": "-Os",
             }),
-        )
+        ).
+        AddCFlags(ctx.SelectGlobal("mode", map[string]string{
+            api.ModeDebug:   "-O0 -g",
+            api.ModeRelease: "-O2",
+        }))
 })
+```
+
+### 内置模式标志
+
+`GetModeFlags()` 函数根据模式返回默认编译标志：
+
+```go
+cflags, defines := api.GetModeFlags(ctx.Mode())
+// debug:    cflags=["-O0", "-g"], defines=nil
+// release:  cflags=["-O2"], defines=["NDEBUG"]
 ```
 
 ---
@@ -628,29 +716,39 @@ func Main(b *api.Builder) {
 ```bash
 vmake                           # 构建所有默认目标（默认模式）
 vmake build                     # 构建所有默认目标
-vmake build <target>            # 构建指定目标
-vmake build -j4                 # 并行构建（4 jobs）
 vmake build -v                  # 详细输出
+vmake build -V                  # 非常详细输出
+vmake build -q                  # 安静模式
 
 vmake config                    # 打开 TUI 配置界面
-vmake config --list             # 列出所有配置选项
-vmake config --set <key>=<value># 命令行设置配置
 
 vmake clean                     # 清理构建产物
 vmake rebuild                   # 完全重新构建
 
-vmake targets                   # 列出所有目标
-vmake show <target>             # 显示目标详细信息
+vmake toolchain init            # 生成全局配置模板
+vmake toolchain list            # 列出所有工具链
+vmake toolchain show [name]     # 显示工具链详情
+
+vmake version                   # 显示版本信息
 ```
+
+### 命令行选项
+
+| 选项 | 说明 |
+|------|------|
+| `-v, --verbose` | 详细输出 |
+| `-V, --very-verbose` | 非常详细输出 |
+| `-q, --quiet` | 安静模式 |
 
 ---
 
 ## 开发计划
 
-1. [ ] 实现核心 API 框架
-2. [ ] 实现插件扫描与加载
-3. [ ] 实现 TUI 配置界面
-4. [ ] 实现 GCC/Clang 工具链支持
-5. [ ] 实现增量构建
-6. [ ] 添加 MSVC 工具链支持
-7. [ ] 添加跨平台编译支持
+1. [x] 实现核心 API 框架
+2. [x] 实现插件扫描与加载
+3. [x] 实现 TUI 配置界面
+4. [x] 实现 GCC/Clang 工具链支持
+5. [x] 实现增量构建
+6. [x] 添加全局选项支持
+7. [ ] 添加 MSVC 工具链支持
+8. [ ] 添加跨平台编译支持

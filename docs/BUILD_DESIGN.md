@@ -25,36 +25,41 @@
 ```
 project/
 ├── .vmake/
-│   └── config.json              # 全局配置（含 toolchain 字段）
+│   └── config.json              # 全局配置（含 toolchain、mode 字段）
 │
 ├── build.go                     # 根 package
 ├── build/
 │   ├── plugin.so               # Go 插件
-│   ├── cache.json              # 编译缓存
-│   ├── objects/
-│   │   ├── main.o
-│   │   └── main.o.d            # GCC 生成的依赖文件
-│   └── myapp                   # 输出产物
+│   ├── compile_commands.json   # LSP 编译数据库
+│   ├── gcc-debug/              # gcc 工具链 debug 模式
+│   │   ├── cache.json
+│   │   ├── objects/
+│   │   │   ├── main.o
+│   │   │   └── main.o.d
+│   │   └── myapp
+│   └── gcc-release/            # gcc 工具链 release 模式
+│       ├── cache.json
+│       ├── objects/
+│       └── myapp
 │
 ├── lib/
 │   ├── build.go
 │   └── build/
 │       ├── plugin.so
-│       ├── cache.json
-│       ├── objects/
-│       │   ├── utils.o
-│       │   ├── utils.o.d
-│       │   ├── core.o
-│       │   └── core.o.d
-│       └── libutils.a
+│       ├── gcc-debug/
+│       │   ├── cache.json
+│       │   ├── objects/
+│       │   └── libutils.a
+│       └── gcc-release/
 │
 └── app/
     ├── build.go
     └── build/
         ├── plugin.so
-        ├── cache.json
-        ├── objects/
-        └── app
+        └── gcc-debug/
+            ├── cache.json
+            ├── objects/
+            └── app
 ```
 
 ---
@@ -67,9 +72,11 @@ project/
 package build
 
 type BuildCache struct {
-    Version   int                `json:"version"`    // 缓存格式版本 = 1
+    Version   int                `json:"version"`    // 缓存格式版本 = 3
     Toolchain ToolchainMeta      `json:"toolchain"`  // 工具链信息
+    Mode      string             `json:"mode,omitempty"` // 构建模式（debug/release）
     Sources   map[string]*Source `json:"sources"`    // 源文件路径 -> 编译信息
+    mu        sync.RWMutex       `json:"-"`          // 并发锁（不序列化）
 }
 
 type ToolchainMeta struct {
@@ -80,17 +87,18 @@ type ToolchainMeta struct {
 }
 
 type Source struct {
-    ModTime int64    `json:"mod_time"`  // 编译时源文件的 mtime
-    ObjPath string   `json:"obj_path"`  // "objects/main.o" (相对 buildDir)
+    ModTime int64    `json:"mod_time"`  // 编译时源文件及依赖的最大 mtime
+    ObjPath string   `json:"obj_path"`  // "build/gcc-debug/objects/main.o" (相对路径)
     Deps    []string `json:"deps"`      // 依赖的头文件绝对路径列表
 }
 
 // 方法
 func NewBuildCache(tc *toolchain.Toolchain) *BuildCache
-func LoadCache(buildDir string) (*BuildCache, error)
-func (c *BuildCache) Save(buildDir string) error
+func LoadCache(tcName string) (*BuildCache, error)  // 从 build/{tcName}/cache.json 加载
+func (c *BuildCache) Save(tcName string) error     // 保存到 build/{tcName}/cache.json
 func (c *BuildCache) NeedFullRebuild(tc *toolchain.Toolchain) bool
 func (c *BuildCache) NeedRebuild(sourcePath string) bool
+func (c *BuildCache) GetIfValid(sourcePath string) *Source  // 返回有效的缓存或 nil
 func (c *BuildCache) Update(sourcePath, objPath string, deps []string)
 ```
 
@@ -124,15 +132,20 @@ package build
 // ResolvedTarget 解析后的目标（包含展开后的所有信息）
 type ResolvedTarget struct {
     Node         *BuildNode
-    BuildDir     string   // 绝对路径：/path/to/pkg/build
-    SourceFiles  []string // 解析 glob 后的源文件绝对路径
-    AllIncludes  []string // 自身 Includes + 依赖的 PublicIncludes
-    AllDefines   []string // 自身 Defines
-    AllCFlags    []string // 工具链默认 + 自身 CFlags
-    AllCxxFlags  []string // 工具链默认 + 自身 CxxFlags
+    SourceFiles  []string // 解析 glob 后的源文件相对路径
+    AllIncludes  []string // 自身 Includes + PublicIncludes + 依赖的 PublicIncludes
+    AllDefines   []string // 自身 Defines + 模式相关定义
+    AllCFlags    []string // 工具链默认 + 模式标志 + 自身 CFlags
+    AllCxxFlags  []string // 工具链默认 + 模式标志 + 自身 CxxFlags
     AllLdFlags   []string // 工具链默认 + 自身 LdFlags
     DepArtifacts []string // 依赖的产物路径（.a/.so）
-    OutputPath   string   // 输出文件绝对路径
+    OutputPath   string   // 输出文件相对路径
+}
+
+// PkgInfo Package 构建信息
+type PkgInfo struct {
+    Dir   string      // Package 目录绝对路径
+    Cache *BuildCache // 该 Package 的构建缓存
 }
 ```
 
@@ -247,11 +260,15 @@ gcc -shared -o build/libutils.so objects/utils.o -Wl,-soname,libutils.so
 ```go
 package build
 
-const CacheVersion = 1
+const CacheVersion = 3
 
 func NewBuildCache(tc *toolchain.Toolchain) *BuildCache {
     ccPath, _ := toolchain.ResolveToolPath(tc.Tools.CC, tc.InstallPath)
     cxxPath, _ := toolchain.ResolveToolPath(tc.Tools.CXX, tc.InstallPath)
+    host := tc.Host
+    if host == "" {
+        host = toolchain.GetToolchainHost(tc)
+    }
     
     return &BuildCache{
         Version: CacheVersion,
@@ -259,14 +276,14 @@ func NewBuildCache(tc *toolchain.Toolchain) *BuildCache {
             Name:    tc.Name,
             CCPath:  ccPath,
             CXXPath: cxxPath,
-            Host:    tc.Host,
+            Host:    host,
         },
         Sources: make(map[string]*Source),
     }
 }
 
 func LoadCache(buildDir string) (*BuildCache, error) {
-    path := filepath.Join(buildDir, "cache.json")
+    path := fmt.Sprintf("build/%s/cache.json", buildDir)
     data, err := os.ReadFile(path)
     if err != nil {
         return nil, err
@@ -274,18 +291,21 @@ func LoadCache(buildDir string) (*BuildCache, error) {
     
     var cache BuildCache
     if err := json.Unmarshal(data, &cache); err != nil {
-        return nil, err
+        return nil, fmt.Errorf("failed to parse cache: %w", err)
     }
     return &cache, nil
 }
 
 func (c *BuildCache) Save(buildDir string) error {
-    path := filepath.Join(buildDir, "cache.json")
+    dir := fmt.Sprintf("build/%s", buildDir)
+    if err := os.MkdirAll(dir, 0755); err != nil {
+        return err
+    }
     data, err := json.MarshalIndent(c, "", "  ")
     if err != nil {
         return err
     }
-    return os.WriteFile(path, data, 0644)
+    return os.WriteFile(fmt.Sprintf("%s/cache.json", dir), data, 0644)
 }
 
 func (c *BuildCache) NeedFullRebuild(tc *toolchain.Toolchain) bool {
@@ -298,56 +318,76 @@ func (c *BuildCache) NeedFullRebuild(tc *toolchain.Toolchain) bool {
 }
 
 func (c *BuildCache) NeedRebuild(sourcePath string) bool {
+    return c.GetIfValid(sourcePath) == nil
+}
+
+func (c *BuildCache) GetIfValid(sourcePath string) *Source {
+    c.mu.RLock()
+    defer c.mu.RUnlock()
+    
     src, ok := c.Sources[sourcePath]
     if !ok {
-        return true
+        return nil
     }
     
     // .o 不存在
     if _, err := os.Stat(src.ObjPath); os.IsNotExist(err) {
-        return true
+        return nil
     }
     
     // 获取源文件 mtime
     info, err := os.Stat(sourcePath)
     if err != nil {
-        return true
-    }
-    srcModTime := info.ModTime().Unix()
-    
-    // 源文件变化
-    if srcModTime > src.ModTime {
-        return true
+        return nil
     }
     
-    // 头文件变化（使用源文件 mtime 作为参考）
+    // 源文件或头文件变化（使用最大 mtime 比较）
+    if info.ModTime().Unix() > src.ModTime {
+        return nil
+    }
+    
     for _, dep := range src.Deps {
         depInfo, err := os.Stat(dep)
-        if err != nil {
-            return true  // 头文件被删除
-        }
-        if depInfo.ModTime().Unix() > src.ModTime {
-            return true
+        if err != nil || depInfo.ModTime().Unix() > src.ModTime {
+            return nil
         }
     }
     
-    return false
+    return &Source{
+        ModTime: src.ModTime,
+        ObjPath: src.ObjPath,
+        Deps:    src.Deps,
+    }
 }
 
 func (c *BuildCache) Update(sourcePath, objPath string, deps []string) {
-    info, _ := os.Stat(sourcePath)
+    // 使用源文件和所有依赖的最大 mtime
+    maxModTime := int64(0)
     
+    if info, err := os.Stat(sourcePath); err == nil {
+        maxModTime = info.ModTime().Unix()
+    }
+    
+    for _, dep := range deps {
+        if info, err := os.Stat(dep); err == nil {
+            if t := info.ModTime().Unix(); t > maxModTime {
+                maxModTime = t
+            }
+        }
+    }
+    
+    c.mu.Lock()
     c.Sources[sourcePath] = &Source{
-        ModTime: info.ModTime().Unix(),
+        ModTime: maxModTime,
         ObjPath: objPath,
         Deps:    deps,
     }
+    c.mu.Unlock()
 }
 
 // CleanObjects 清理 objects 目录
 func CleanObjects(buildDir string) error {
-    objectsDir := filepath.Join(buildDir, "objects")
-    return os.RemoveAll(objectsDir)
+    return os.RemoveAll(fmt.Sprintf("build/%s/objects", buildDir))
 }
 ```
 
@@ -361,20 +401,24 @@ type Scheduler struct {
     compiler  *Compiler
     linker    *Linker
     toolchain *toolchain.Toolchain
-    
-    // 每个 package 的缓存和构建目录
-    pkgInfos map[string]*PkgInfo
+    tcName    string            // 工具链名称
+    mode      string            // 构建模式（debug/release）
+    buildDir  string            // 构建目录名（{tcName}-{mode}）
+    pkgs      map[string]*PkgInfo
+    origDir   string            // 原始工作目录
+    ccWriter  *CompileCommandsWriter  // compile_commands.json 生成器
 }
 
 type PkgInfo struct {
-    BuildDir string
-    Cache    *BuildCache
+    Dir   string      // Package 目录绝对路径
+    Cache *BuildCache // 该 Package 的构建缓存
 }
 
 func NewScheduler(
     graph *BuildGraph,
     tc *toolchain.Toolchain,
-    pkgBuildDirs map[string]string,  // pkgName -> buildDir
+    pkgDirs map[string]string,  // pkgName -> 绝对路径
+    mode string,                // "debug" 或 "release"
 ) (*Scheduler, error) {
     
     compiler, err := NewCompiler(tc)
@@ -387,33 +431,58 @@ func NewScheduler(
         return nil, err
     }
     
+    origDir, _ := os.Getwd()
+    
+    tcName := tc.Name
+    if mode == "" {
+        mode = api.ModeDebug
+    }
+    buildDir := fmt.Sprintf("%s-%s", tcName, mode)
+    
+    ccWriter, err := NewCompileCommandsWriter(tc)
+    if err != nil {
+        return nil, err
+    }
+    
     s := &Scheduler{
         graph:     graph,
         compiler:  compiler,
         linker:    linker,
         toolchain: tc,
-        pkgInfos:  make(map[string]*PkgInfo),
+        tcName:    tcName,
+        mode:      mode,
+        buildDir:  buildDir,
+        pkgs:      make(map[string]*PkgInfo),
+        origDir:   origDir,
+        ccWriter:  ccWriter,
     }
     
     // 加载每个 package 的缓存
-    for pkgName, buildDir := range pkgBuildDirs {
+    for pkgName, pkgDir := range pkgDirs {
+        if err := os.Chdir(pkgDir); err != nil {
+            os.Chdir(origDir)
+            return nil, fmt.Errorf("failed to chdir to %s: %w", pkgDir, err)
+        }
+        
         cache, err := LoadCache(buildDir)
         if err != nil {
             cache = NewBuildCache(tc)
         }
         
-        // 检测工具链变化
-        if cache.NeedFullRebuild(tc) {
+        // 检测工具链变化或模式变化
+        if cache.NeedFullRebuild(tc) || cache.Mode != mode {
             CleanObjects(buildDir)
             cache = NewBuildCache(tc)
+            cache.Mode = mode
         }
         
-        s.pkgInfos[pkgName] = &PkgInfo{
-            BuildDir: buildDir,
-            Cache:    cache,
+        s.pkgs[pkgName] = &PkgInfo{
+            Dir:   pkgDir,
+            Cache: cache,
         }
     }
     
+    os.Chdir(origDir)
     return s, nil
 }
 
@@ -424,7 +493,9 @@ func (s *Scheduler) BuildAll() error {
             return err
         }
     }
-    return nil
+    
+    // 生成 compile_commands.json
+    return s.ccWriter.Save("build/compile_commands.json")
 }
 
 // Build 构建单个目标
@@ -439,47 +510,157 @@ func (s *Scheduler) Build(fullName string) error {
         return nil
     }
     
-    // 解析目标信息
+    pkgInfo := s.pkgs[node.PkgName]
+    
+    // 切换到 Package 目录
+    if err := os.Chdir(pkgInfo.Dir); err != nil {
+        return err
+    }
+    defer os.Chdir(s.origDir)
+    
+    s.ccWriter.SetPackageDir(pkgInfo.Dir)
+    
+    vlog.Info("[%s]", fullName)
+    
     resolved, err := s.resolveTarget(node)
     if err != nil {
         return err
     }
     
-    // 确保目录存在
-    os.MkdirAll(filepath.Join(resolved.BuildDir, "objects"), 0755)
+    os.MkdirAll(fmt.Sprintf("build/%s/objects", s.buildDir), 0755)
     
-    // 编译每个源文件
-    var objs []string
-    for _, src := range resolved.SourceFiles {
-        objRel, deps, err := s.compileSource(resolved, src)
-        if err != nil {
-            return err
-        }
-        objs = append(objs, filepath.Join(resolved.BuildDir, objRel))
+    numFiles := len(resolved.SourceFiles)
+    if numFiles == 0 {
+        return s.link(resolved, nil)
     }
     
-    // 链接
+    // 并行编译
+    numWorkers := runtime.NumCPU()
+    if numWorkers > numFiles {
+        numWorkers = numFiles
+    }
+    
+    jobs := make(chan string, numFiles)
+    results := make(chan compileResult, numFiles)
+    
+    var wg sync.WaitGroup
+    for i := 0; i < numWorkers; i++ {
+        wg.Add(1)
+        go s.compileWorker(resolved, jobs, results, &wg)
+    }
+    
+    for _, src := range resolved.SourceFiles {
+        jobs <- src
+    }
+    close(jobs)
+    
+    wg.Wait()
+    close(results)
+    
+    objs := make([]string, 0, numFiles)
+    for r := range results {
+        if r.err != nil {
+            return r.err
+        }
+        objs = append(objs, r.objPath)
+    }
+    
     if err := s.link(resolved, objs); err != nil {
         return err
     }
     
-    // 保存缓存
-    pkgInfo := s.pkgInfos[node.PkgName]
-    return pkgInfo.Cache.Save(pkgInfo.BuildDir)
+    return pkgInfo.Cache.Save(s.buildDir)
 }
 
 func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
-    pkgInfo := s.pkgInfos[node.PkgName]
+    // 获取模式相关标志
+    modeFlags, modeDefines := api.GetModeFlags(s.mode)
     
     resolved := &ResolvedTarget{
         Node:        node,
-        BuildDir:    pkgInfo.BuildDir,
-        AllIncludes: append([]string{}, node.Target.Includes()...),
         AllDefines:  append([]string{}, node.Target.Defines()...),
         AllCFlags:   append([]string{}, s.toolchain.DefaultFlags.CFlags...),
         AllCxxFlags: append([]string{}, s.toolchain.DefaultFlags.CxxFlags...),
         AllLdFlags:  append([]string{}, s.toolchain.DefaultFlags.LdFlags...),
     }
+    
+    // 添加模式相关标志
+    resolved.AllCFlags = append(resolved.AllCFlags, modeFlags...)
+    resolved.AllCxxFlags = append(resolved.AllCxxFlags, modeFlags...)
+    resolved.AllDefines = append(resolved.AllDefines, modeDefines...)
+    
+    // 添加 Includes 和 PublicIncludes
+    for _, inc := range node.Target.Includes() {
+        resolved.AllIncludes = append(resolved.AllIncludes, inc)
+    }
+    for _, pubInc := range node.Target.PublicIncludes() {
+        resolved.AllIncludes = append(resolved.AllIncludes, pubInc)
+    }
+    
+    // 添加用户自定义 flags
+    resolved.AllCFlags = append(resolved.AllCFlags, node.Target.CFlags()...)
+    resolved.AllCxxFlags = append(resolved.AllCxxFlags, node.Target.CxxFlags()...)
+    resolved.AllLdFlags = append(resolved.AllLdFlags, node.Target.LdFlags()...)
+    
+    // 收集依赖的 PublicIncludes 和产物路径
+    for _, depName := range node.Deps {
+        depNode := s.graph.Nodes[depName]
+        if depNode == nil {
+            return nil, fmt.Errorf("dependency not found: %s", depName)
+        }
+        
+        depPkg := s.pkgs[depNode.PkgName]
+        
+        // 继承公开头文件（转为绝对路径）
+        for _, pubInc := range depNode.Target.PublicIncludes() {
+            absInc := filepath.Join(depPkg.Dir, pubInc)
+            resolved.AllIncludes = append(resolved.AllIncludes, absInc)
+        }
+        
+        // 收集依赖产物
+        depOutput := filepath.Join(depPkg.Dir, s.getTargetOutputPath(depNode))
+        resolved.DepArtifacts = append(resolved.DepArtifacts, depOutput)
+    }
+    
+    // 解析 glob
+    for _, pattern := range node.Target.Files() {
+        files, err := glob.Match(pattern, ".")
+        if err != nil {
+            return nil, err
+        }
+        resolved.SourceFiles = append(resolved.SourceFiles, files...)
+    }
+    
+    // 设置输出路径
+    resolved.OutputPath = s.getTargetOutputPath(node)
+    
+    // 去重
+    resolved.AllDefines = unique(resolved.AllDefines)
+    resolved.AllIncludes = unique(resolved.AllIncludes)
+    resolved.AllCFlags = unique(resolved.AllCFlags)
+    resolved.AllCxxFlags = unique(resolved.AllCxxFlags)
+    resolved.AllLdFlags = unique(resolved.AllLdFlags)
+    
+    return resolved, nil
+}
+
+func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
+    var name string
+    switch node.Target.Kind() {
+    case api.TargetBinary:
+        name = node.Target.Name()
+    case api.TargetStatic:
+        name = "lib" + node.Target.Name() + ".a"
+    case api.TargetShared:
+        name = "lib" + node.Target.Name() + ".so"
+    case api.TargetObject:
+        name = node.Target.Name() + ".o"
+    default:
+        name = node.Target.Name()
+    }
+    
+    return filepath.Join("build", s.buildDir, name)
+}
     
     // 添加用户自定义 flags
     resolved.AllCFlags = append(resolved.AllCFlags, node.Target.CFlags()...)
@@ -536,57 +717,78 @@ func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
 }
 
 func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string, []string, error) {
-    pkgInfo := s.pkgInfos[resolved.Node.PkgName]
+    pkgInfo := s.pkgs[resolved.Node.PkgName]
     
-    // 计算对象文件路径
-    srcRel, _ := filepath.Rel(filepath.Dir(resolved.BuildDir), src)
-    objRel := "objects/" + strings.ReplaceAll(srcRel, "/", "_") + ".o"
-    objPath := filepath.Join(resolved.BuildDir, objRel)
+    objRel := fmt.Sprintf("build/%s/objects/%s.o", s.buildDir, strings.ReplaceAll(src, "/", "_"))
     
-    // 检查是否需要重编译
-    if !pkgInfo.Cache.NeedRebuild(src) {
-        return objRel, pkgInfo.Cache.Sources[src].Deps, nil
+    // 检查缓存
+    if cached := pkgInfo.Cache.GetIfValid(src); cached != nil {
+        return cached.ObjPath, cached.Deps, nil
     }
+    
+    vlog.Info("  CC %s", src)
     
     // 判断语言
     lang := "c"
-    if strings.HasSuffix(src, ".cpp") || strings.HasSuffix(src, ".cc") || 
-       strings.HasSuffix(src, ".cxx") || strings.HasSuffix(src, ".C") {
+    if glob.IsCppFile(src) {
         lang = "cxx"
     }
     
-    // 编译
     opts := &CompileOptions{
         Includes: resolved.AllIncludes,
         Defines:  resolved.AllDefines,
         CFlags:   resolved.AllCFlags,
         CxxFlags: resolved.AllCxxFlags,
         Language: lang,
+        Mode:     s.mode,
     }
     
-    deps, err := s.compiler.Compile(src, objPath, opts)
+    // 记录到 compile_commands.json
+    s.ccWriter.AddCommand(src, objRel, opts)
+    
+    deps, err := s.compiler.Compile(src, objRel, opts)
     if err != nil {
         return "", nil, err
     }
     
-    // 更新缓存
     pkgInfo.Cache.Update(src, objRel, deps)
     
     return objRel, deps, nil
 }
 
 func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
+    // 检查是否需要重新链接
+    if !s.needRelink(resolved, objs) {
+        return nil
+    }
+    
+    outputName := filepath.Base(resolved.OutputPath)
+    
     switch resolved.Node.Target.Kind() {
     case api.TargetBinary:
-        return s.linker.LinkBinary(objs, resolved.Node.Target.Links(), 
-                                   resolved.AllLdFlags, resolved.OutputPath)
+        vlog.Info("  LINK %s", outputName)
+        allObjs := append([]string{}, objs...)
+        for _, artifact := range resolved.DepArtifacts {
+            allObjs = append(allObjs, artifact)
+        }
+        links := unique(resolved.Node.Target.Links())
+        return s.linker.LinkBinary(allObjs, links, resolved.AllLdFlags, resolved.OutputPath)
     case api.TargetStatic:
-        return s.linker.LinkStatic(objs, resolved.OutputPath)
+        vlog.Info("  AR %s", outputName)
+        allObjs := append([]string{}, objs...)
+        for _, artifact := range resolved.DepArtifacts {
+            allObjs = append(allObjs, artifact)
+        }
+        return s.linker.LinkStatic(allObjs, resolved.OutputPath)
     case api.TargetShared:
+        vlog.Info("  LINK %s", outputName)
         return s.linker.LinkShared(objs, resolved.AllLdFlags, resolved.OutputPath)
     case api.TargetObject:
-        // 单文件目标，直接复制
+        vlog.Info("  OBJ %s", outputName)
         if len(objs) == 1 {
+            if objs[0] == resolved.OutputPath {
+                return nil
+            }
             return os.Rename(objs[0], resolved.OutputPath)
         }
         return fmt.Errorf("object target requires exactly one source file")
@@ -597,29 +799,59 @@ func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 
 ---
 
-## 5. CLI 集成（`cmd/vmake/main.go`）
+## 5. CLI 集成（`cmd/vmake/`）
 
 ### 5.1 更新 runBuild
 
 ```go
-func runBuild() {
-    workDir, packages, loadResults, allOptions, cfg, _, err := prepareBuild()
+func runBuild(cmd *cobra.Command, args []string) {
+    ctx, err := PrepareFull()
     if err != nil {
-        fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+        vlog.Error("Error: %v", err)
         os.Exit(1)
     }
 
-    // 收集所有 Targets
+    if err := executeBuild(ctx); err != nil {
+        vlog.Error("Error: %v", err)
+        os.Exit(1)
+    }
+}
+
+func executeBuild(ctx *BuildContext) error {
+    // 获取全局配置值
+    globalValues := make(map[string]any)
+    if ctx.Config.Global != nil {
+        globalValues["toolchain"] = ctx.Config.Global.Toolchain
+        globalValues["mode"] = ctx.Config.Global.Mode
+        for k, v := range ctx.Config.Global.Options {
+            globalValues[k] = v
+        }
+    }
+
+    mode := ""
+    if m, ok := globalValues["mode"].(string); ok {
+        mode = m
+    }
+    if mode == "" {
+        mode = api.ModeDebug
+    }
+
+    vlog.Info("")
+    vlog.Info("Executing OnBuild...")
     allTargets := make(map[string]map[string]*api.Target)
-    for _, lr := range loadResults {
+
+    for _, lr := range ctx.LoadResults {
         if !lr.Success {
             continue
         }
+
         pkgName := lr.Package.Name
-        pc := config.GetPackageConfig(cfg, pkgName)
+        pc := config.GetPackageConfig(ctx.Config, pkgName)
         buildCtx := api.NewBuildContext(pkgName, pc.Options)
-        buildCtx.SetOptions(allOptions[pkgName])
-        
+        buildCtx.SetOptions(ctx.AllOptions[pkgName])
+        buildCtx.SetGlobalOptions(ctx.GlobalOptions)
+        buildCtx.SetGlobalValues(globalValues)
+
         for _, fn := range lr.Loaded.Builder.GetBuildFuncs() {
             fn(buildCtx)
         }
@@ -627,114 +859,103 @@ func runBuild() {
     }
 
     // 选择工具链
-    mgr := toolchain.GetManager()
-    tcName := cfg.Toolchain
-    if tcName == "" {
-        tcName = mgr.GetDefaultToolchain()
-    }
-    tc, err := mgr.SelectToolchain(tcName)
+    tc, tcName, err := GetToolchain(ctx.Config)
     if err != nil {
-        fmt.Fprintf(os.Stderr, "Toolchain error: %v\n", err)
-        os.Exit(1)
+        return err
     }
+    vlog.Info("")
+    vlog.Info("Using toolchain: %s, mode: %s", tcName, mode)
 
     // 构建依赖图
-    graph, err := build.BuildGraph(allTargets)
+    graph, err := build.NewBuildGraph(allTargets)
     if err != nil {
-        fmt.Fprintf(os.Stderr, "Dependency error: %v\n", err)
-        os.Exit(1)
+        return err
     }
 
-    // 收集每个 package 的 buildDir
-    pkgBuildDirs := make(map[string]string)
-    for _, pkg := range packages {
-        pkgBuildDirs[pkg.Name] = filepath.Join(filepath.Dir(pkg.Path), "build")
+    vlog.Info("")
+    vlog.Info("Build order:")
+    for _, fullName := range graph.Order {
+        vlog.Info("  - %s", fullName)
     }
+
+    pkgDirs := GetPackageDirs(ctx.Packages)
 
     // 创建调度器并构建
-    scheduler, err := build.NewScheduler(graph, tc, pkgBuildDirs)
+    scheduler, err := build.NewScheduler(graph, tc, pkgDirs, mode)
     if err != nil {
-        fmt.Fprintf(os.Stderr, "Scheduler error: %v\n", err)
-        os.Exit(1)
+        return err
     }
 
+    vlog.Info("")
+    vlog.Info("Building...")
     if err := scheduler.BuildAll(); err != nil {
-        fmt.Fprintf(os.Stderr, "Build failed: %v\n", err)
-        os.Exit(1)
+        return err
     }
 
-    fmt.Println("Build succeeded!")
+    vlog.Info("")
+    vlog.Info("Build succeeded!")
+    return nil
 }
 ```
 
 ### 5.2 添加 clean 命令
 
 ```go
-func runClean() {
-    workDir, packages, _, _, _, _, err := prepareBuild()
+func runClean(cmd *cobra.Command, args []string) {
+    // 清理所有工具链/模式组合的构建目录
+    entries, err := os.ReadDir("build")
     if err != nil {
-        fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-        os.Exit(1)
+        vlog.Info("Nothing to clean")
+        return
     }
 
-    for _, pkg := range packages {
-        buildDir := filepath.Join(filepath.Dir(pkg.Path), "build")
-        objectsDir := filepath.Join(buildDir, "objects")
-        
-        if _, err := os.Stat(objectsDir); err == nil {
-            if err := os.RemoveAll(objectsDir); err != nil {
-                fmt.Fprintf(os.Stderr, "Failed to clean %s: %v\n", pkg.Name, err)
-                continue
+    for _, entry := range entries {
+        if entry.IsDir() {
+            objectsDir := filepath.Join("build", entry.Name(), "objects")
+            if _, err := os.Stat(objectsDir); err == nil {
+                if err := os.RemoveAll(objectsDir); err != nil {
+                    vlog.Error("Failed to clean %s: %v", objectsDir, err)
+                    continue
+                }
+                vlog.Info("Cleaned %s", objectsDir)
             }
-            fmt.Printf("Cleaned %s/objects/\n", pkg.Name)
         }
-        
-        // 同时删除 cache.json
-        cachePath := filepath.Join(buildDir, "cache.json")
-        os.Remove(cachePath)
     }
 
-    fmt.Println("Clean completed!")
+    vlog.Info("Clean completed!")
 }
 ```
 
 ### 5.3 添加 rebuild 命令
 
 ```go
-func runRebuild() {
-    runClean()
-    runBuild()
+func runRebuild(cmd *cobra.Command, args []string) {
+    runClean(cmd, args)
+    runBuild(cmd, args)
 }
 ```
 
-### 5.4 更新 main 函数
+### 5.4 CLI 结构
 
-```go
-func main() {
-    if len(os.Args) < 2 {
-        runBuild()
-        return
-    }
+使用 cobra 库实现 CLI，命令结构如下：
 
-    cmd := os.Args[1]
-    switch cmd {
-    case "config":
-        runConfig()
-    case "build":
-        runBuild()
-    case "clean":
-        runClean()
-    case "rebuild":
-        runRebuild()
-    case "toolchain":
-        runToolchain(os.Args[2:])
-    default:
-        fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
-        fmt.Println("Usage: vmake [build|config|clean|rebuild|toolchain]")
-        os.Exit(1)
-    }
-}
 ```
+RootCmd (vmake)
+├── buildCmd (build)     # 或直接运行 vmake
+├── configCmd (config)
+├── cleanCmd (clean)
+├── rebuildCmd (rebuild)
+├── toolchainCmd (toolchain)
+│   ├── init
+│   ├── list
+│   └── show
+└── versionCmd (version)
+```
+
+全局选项：
+- `-v, --verbose`: 详细输出
+- `-V, --very-verbose`: 非常详细输出
+- `-q, --quiet`: 安静模式
 
 ---
 
@@ -742,29 +963,34 @@ func main() {
 
 | 文件 | 职责 |
 |------|------|
-| `internal/glob/glob.go` | Glob 模式匹配（`*.c`, `**/*.cpp`） |
+| `internal/glob/glob.go` | Glob 模式匹配（`*.c`, `**/*.cpp`），IsCppFile/IsCFile |
 | `pkg/build/graph.go` | 依赖图构建、拓扑排序、循环检测 |
 | `pkg/build/compiler.go` | 编译器封装，`-MMD -MP` 生成 .d 文件 |
 | `pkg/build/linker.go` | 链接器封装 |
-| `pkg/build/cache.go` | 缓存管理，工具链感知，头文件依赖 |
-| `pkg/build/scheduler.go` | 构建调度，整合所有组件 |
-| `cmd/vmake/main.go` | CLI 更新，添加 clean/rebuild |
+| `pkg/build/cache.go` | 缓存管理，工具链感知，模式感知，头文件依赖 |
+| `pkg/build/scheduler.go` | 构建调度，并行编译，整合所有组件 |
+| `pkg/build/compile_commands.go` | compile_commands.json 生成 |
+| `cmd/vmake/root.go` | CLI 入口，PrepareBase/PrepareFull |
+| `cmd/vmake/build_cmd.go` | build 命令实现 |
+| `cmd/vmake/clean.go` | clean 命令实现 |
+| `cmd/vmake/rebuild.go` | rebuild 命令实现 |
 
 ---
 
-## 7. 实现步骤
+## 7. 实现状态
 
-| 步骤 | 内容 | 依赖 |
+| 步骤 | 内容 | 状态 |
 |------|------|------|
-| 1 | `internal/glob/glob.go` | 无 |
-| 2 | `pkg/build/graph.go` | 无 |
-| 3 | `pkg/build/cache.go` | 无 |
-| 4 | `pkg/build/compiler.go` | 步骤 1 |
-| 5 | `pkg/build/linker.go` | 无 |
-| 6 | `pkg/build/scheduler.go` | 步骤 2-5 |
-| 7 | `cmd/vmake/main.go` 更新 | 步骤 6 |
-| 8 | 测试：`test_data/01_simple_c` | 步骤 7 |
-| 9 | 测试：`test_data/04_multi_module` | 步骤 8 |
+| 1 | `internal/glob/glob.go` | ✅ 完成 |
+| 2 | `pkg/build/graph.go` | ✅ 完成 |
+| 3 | `pkg/build/cache.go` | ✅ 完成 |
+| 4 | `pkg/build/compiler.go` | ✅ 完成 |
+| 5 | `pkg/build/linker.go` | ✅ 完成 |
+| 6 | `pkg/build/scheduler.go` | ✅ 完成 |
+| 7 | `pkg/build/compile_commands.go` | ✅ 完成 |
+| 8 | `cmd/vmake/` CLI 更新 | ✅ 完成 |
+| 9 | 全局选项支持 | ✅ 完成 |
+| 10 | 模式支持（debug/release） | ✅ 完成 |
 
 ---
 
@@ -776,6 +1002,7 @@ func main() {
 // internal/glob/glob_test.go
 func TestMatch_SingleStar(t *testing.T)
 func TestMatch_DoubleStar(t *testing.T)
+func TestIsCppFile(t *testing.T)
 
 // pkg/build/graph_test.go
 func TestBuildGraph_NoDeps(t *testing.T)
@@ -784,6 +1011,7 @@ func TestBuildGraph_Circular(t *testing.T)
 
 // pkg/build/cache_test.go
 func TestCache_ToolchainChange(t *testing.T)
+func TestCache_ModeChange(t *testing.T)
 func TestCache_HeaderChange(t *testing.T)
 ```
 
@@ -793,24 +1021,27 @@ func TestCache_HeaderChange(t *testing.T)
 # 1. 简单 C 项目
 cd test_data/01_simple_c
 vmake build
-./build/hello
+./build/gcc-debug/hello
 
 # 2. 多模块项目
 cd test_data/04_multi_module
 vmake build
-./app/build/app
+./app/build/gcc-debug/app
 
 # 3. 增量编译
 touch lib/utils.c
 vmake build  # 只重编译 utils.c
 
 # 4. 工具链切换
-vmake config  # 选择 arm-gcc
+vmake config  # 选择不同的工具链或模式
 vmake build   # 全量重建
 
 # 5. clean/rebuild
 vmake clean
 vmake rebuild
+
+# 6. compile_commands.json
+ls build/compile_commands.json
 ```
 
 ---
@@ -821,47 +1052,50 @@ vmake rebuild
 ┌─────────────────────────────────────────────────────────────────┐
 │                          runBuild()                              │
 ├─────────────────────────────────────────────────────────────────┤
-│  1. prepareBuild()                                               │
+│  1. PrepareFull()                                                │
 │     ├── Scan build.go files                                      │
 │     ├── Compile plugins                                          │
 │     ├── Load plugins                                             │
 │     ├── Execute OnConfig (collect options)                       │
-│     └── Execute OnBuild (collect targets)                        │
+│     └── Merge global options                                     │
 │                                                                  │
-│  2. Select toolchain                                             │
-│     project config → global default → builtin gcc                │
+│  2. executeBuild()                                               │
+│     ├── Get global values (toolchain, mode, options)             │
+│     ├── Execute OnBuild (collect targets)                        │
+│     ├── Select toolchain                                         │
+│     ├── BuildGraph(targets)                                      │
+│     │   ├── Parse Deps (resolve "pkg:target" format)             │
+│     │   ├── Build nodes                                          │
+│     │   └── Topological sort → Order                             │
+│     │                                                            │
+│     ├── NewScheduler(graph, toolchain, pkgDirs, mode)            │
+│     │   ├── Load cache per package (build/{tc}-{mode}/cache.json)│
+│     │   ├── Check toolchain/mode change → full rebuild           │
+│     │   └── Init Compiler & Linker                               │
+│     │                                                            │
+│     └── scheduler.BuildAll()                                     │
+│         └── For each target in Order:                            │
+│             ├── resolveTarget()                                  │
+│             │   ├── Add mode flags (GetModeFlags)                │
+│             │   ├── Merge includes (self + deps' PublicIncludes) │
+│             │   ├── Resolve glob → source files                  │
+│             │   └── Collect dep artifacts (.a/.so)               │
+│             │                                                    │
+│             ├── Parallel compile (workers = NumCPU)              │
+│             │   ├── cache.GetIfValid()?                          │
+│             │   │   ├── Hit → return cached .o                  │
+│             │   │   └── Miss → Compiler.Compile() with -MMD -MP │
+│             │   │             → parse .d file → deps             │
+│             │   │             → cache.Update()                   │
+│             │   └── ccWriter.AddCommand() for compile_commands  │
+│             │                                                    │
+│             └── Linker.Link*(objs, output)                       │
+│                 └── Binary: gcc -o ...                           │
+│                 └── Static: ar rcs ...                           │
+│                 └── Shared: gcc -shared ...                      │
 │                                                                  │
-│  3. BuildGraph(targets)                                          │
-│     ├── Parse Deps (resolve "pkg:target" format)                 │
-│     ├── Build nodes                                              │
-│     └── Topological sort → Order                                 │
-│                                                                  │
-│  4. NewScheduler(graph, toolchain, pkgBuildDirs)                 │
-│     ├── Load cache per package                                   │
-│     ├── Check toolchain change → full rebuild                    │
-│     └── Init Compiler & Linker                                   │
-│                                                                  │
-│  5. scheduler.BuildAll()                                         │
-│     └── For each target in Order:                                │
-│         ├── resolveTarget()                                      │
-│         │   ├── Merge includes (self + deps' PublicIncludes)     │
-│         │   ├── Resolve glob → source files                      │
-│         │   └── Collect dep artifacts (.a/.so)                   │
-│         │                                                        │
-│         ├── For each source file:                                │
-│         │   ├── cache.NeedRebuild()?                             │
-│         │   │   ├── Yes → Compiler.Compile() with -MMD -MP       │
-│         │   │   │         → parse .d file → deps                 │
-│         │   │   │         → cache.Update()                       │
-│         │   │   └── No  → skip, use cached .o                   │
-│         │   └── collect .o paths                                 │
-│         │                                                        │
-│         └── Linker.Link*(objs, output)                           │
-│             └── Binary: gcc -o ...                               │
-│             └── Static: ar rcs ...                               │
-│             └── Shared: gcc -shared ...                          │
-│                                                                  │
-│  6. Save cache per package                                       │
+│  3. Save compile_commands.json                                   │
+│  4. Save cache per package                                       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -904,35 +1138,43 @@ vmake rebuild
 
 ---
 
-## 11. 工具链变化检测
+## 11. 工具链和模式变化检测
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                  NeedFullRebuild(toolchain)                  │
+│                  NeedFullRebuild(toolchain, mode)            │
 ├──────────────────────────────────────────────────────────────┤
 │                                                              │
 │  缓存中的工具链信息：                                         │
 │  {                                                           │
-│    "name": "gcc",                                            │
-│    "cc_path": "/usr/bin/gcc",                                │
-│    "cxx_path": "/usr/bin/g++",                               │
-│    "host": "x86_64-linux-gnu"                                │
+│    "version": 3,                                             │
+│    "toolchain": {                                            │
+│      "name": "gcc",                                          │
+│      "cc_path": "/usr/bin/gcc",                              │
+│      "cxx_path": "/usr/bin/g++",                             │
+│      "host": "x86_64-linux-gnu"                              │
+│    },                                                        │
+│    "mode": "debug"                                           │
 │  }                                                           │
 │                                                              │
-│  当前选择的工具链：                                           │
+│  当前选择的工具链和模式：                                     │
 │  {                                                           │
-│    "name": "arm-gcc",          ← 变化！                      │
-│    "cc_path": "/opt/arm/bin/arm-gcc",                        │
-│    ...                                                       │
+│    "toolchain": {                                            │
+│      "name": "arm-gcc",          ← 变化！                    │
+│      "cc_path": "/opt/arm/bin/arm-gcc",                      │
+│      ...                                                     │
+│    },                                                        │
+│    "mode": "release"             ← 变化！                    │
 │  }                                                           │
 │                                                              │
 │  检测条件（任一满足则触发全量重建）：                          │
-│  1. name 不同                                                │
-│  2. cc_path 不同（编译器升级/更换）                          │
-│  3. cxx_path 不同                                            │
+│  1. toolchain.name 不同                                      │
+│  2. toolchain.cc_path 不同（编译器升级/更换）                │
+│  3. toolchain.cxx_path 不同                                  │
+│  4. mode 不同（debug ↔ release）                             │
 │                                                              │
 │  全量重建操作：                                               │
-│  1. 删除 objects/ 目录                                       │
+│  1. 删除 build/{tc}-{mode}/objects/ 目录                     │
 │  2. 重置缓存                                                 │
 │  3. 重新编译所有源文件                                       │
 │                                                              │
