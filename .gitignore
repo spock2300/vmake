@@ -3,3 +3,4 @@ test_data
 vmake
 .vmake
 .cache
+build/compile_commands.json

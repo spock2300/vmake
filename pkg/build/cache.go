@@ -86,51 +86,63 @@ func (c *BuildCache) NeedFullRebuild(tc *toolchain.Toolchain) bool {
 }
 
 func (c *BuildCache) NeedRebuild(sourcePath string) bool {
-	c.mu.RLock()
-	src, ok := c.Sources[sourcePath]
-	c.mu.RUnlock()
+	return c.GetIfValid(sourcePath) == nil
+}
 
+func (c *BuildCache) GetIfValid(sourcePath string) *Source {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	src, ok := c.Sources[sourcePath]
 	if !ok {
-		return true
+		return nil
 	}
 
 	if _, err := os.Stat(src.ObjPath); os.IsNotExist(err) {
-		return true
+		return nil
 	}
 
 	info, err := os.Stat(sourcePath)
 	if err != nil {
-		return true
+		return nil
 	}
-	srcModTime := info.ModTime().Unix()
 
-	if srcModTime > src.ModTime {
-		return true
+	if info.ModTime().Unix() > src.ModTime {
+		return nil
 	}
 
 	for _, dep := range src.Deps {
 		depInfo, err := os.Stat(dep)
-		if err != nil {
-			return true
-		}
-		if depInfo.ModTime().Unix() > src.ModTime {
-			return true
+		if err != nil || depInfo.ModTime().Unix() > src.ModTime {
+			return nil
 		}
 	}
 
-	return false
+	return &Source{
+		ModTime: src.ModTime,
+		ObjPath: src.ObjPath,
+		Deps:    src.Deps,
+	}
 }
 
 func (c *BuildCache) Update(sourcePath, objPath string, deps []string) {
-	info, _ := os.Stat(sourcePath)
-	var modTime int64
-	if info != nil {
-		modTime = info.ModTime().Unix()
+	maxModTime := int64(0)
+
+	if info, err := os.Stat(sourcePath); err == nil {
+		maxModTime = info.ModTime().Unix()
+	}
+
+	for _, dep := range deps {
+		if info, err := os.Stat(dep); err == nil {
+			if t := info.ModTime().Unix(); t > maxModTime {
+				maxModTime = t
+			}
+		}
 	}
 
 	c.mu.Lock()
 	c.Sources[sourcePath] = &Source{
-		ModTime: modTime,
+		ModTime: maxModTime,
 		ObjPath: objPath,
 		Deps:    deps,
 	}

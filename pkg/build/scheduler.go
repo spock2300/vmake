@@ -292,11 +292,8 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string,
 
 	objRel := fmt.Sprintf("build/%s/objects/%s.o", s.tcName, strings.ReplaceAll(src, "/", "_"))
 
-	if !pkgInfo.Cache.NeedRebuild(src) {
-		cachedSrc := pkgInfo.Cache.Sources[src]
-		if cachedSrc != nil {
-			return cachedSrc.ObjPath, cachedSrc.Deps, nil
-		}
+	if cached := pkgInfo.Cache.GetIfValid(src); cached != nil {
+		return cached.ObjPath, cached.Deps, nil
 	}
 
 	vlog.InfoNormal("  CC %s", src)
