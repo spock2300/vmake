@@ -34,6 +34,7 @@ type Scheduler struct {
 	compiler  *Compiler
 	linker    *Linker
 	toolchain *toolchain.Toolchain
+	tcName    string
 	pkgs      map[string]*PkgInfo
 	origDir   string
 }
@@ -55,11 +56,14 @@ func NewScheduler(
 
 	origDir, _ := os.Getwd()
 
+	tcName := tc.Name
+
 	s := &Scheduler{
 		graph:     graph,
 		compiler:  compiler,
 		linker:    linker,
 		toolchain: tc,
+		tcName:    tcName,
 		pkgs:      make(map[string]*PkgInfo),
 		origDir:   origDir,
 	}
@@ -70,13 +74,13 @@ func NewScheduler(
 			return nil, fmt.Errorf("failed to chdir to %s: %w", pkgDir, err)
 		}
 
-		cache, err := LoadCache()
+		cache, err := LoadCache(tcName)
 		if err != nil {
 			cache = NewBuildCache(tc)
 		}
 
 		if cache.NeedFullRebuild(tc) {
-			CleanObjects()
+			CleanObjects(tcName)
 			cache = NewBuildCache(tc)
 		}
 
@@ -132,7 +136,7 @@ func (s *Scheduler) Build(fullName string) error {
 		return err
 	}
 
-	os.MkdirAll("build/objects", 0755)
+	os.MkdirAll(fmt.Sprintf("build/%s/objects", s.tcName), 0755)
 
 	var objs []string
 	for _, src := range resolved.SourceFiles {
@@ -154,7 +158,7 @@ func (s *Scheduler) Build(fullName string) error {
 		}
 	}
 
-	return pkgInfo.Cache.Save()
+	return pkgInfo.Cache.Save(s.tcName)
 }
 
 func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
@@ -228,13 +232,13 @@ func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
 		name = node.Target.Name()
 	}
 
-	return filepath.Join("build", name)
+	return filepath.Join("build", s.tcName, name)
 }
 
 func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string, []string, error) {
 	pkgInfo := s.pkgs[resolved.Node.PkgName]
 
-	objRel := "build/objects/" + strings.ReplaceAll(src, "/", "_") + ".o"
+	objRel := fmt.Sprintf("build/%s/objects/%s.o", s.tcName, strings.ReplaceAll(src, "/", "_"))
 
 	if !pkgInfo.Cache.NeedRebuild(src) {
 		cachedSrc := pkgInfo.Cache.Sources[src]

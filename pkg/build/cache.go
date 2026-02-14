@@ -49,8 +49,8 @@ func NewBuildCache(tc *toolchain.Toolchain) *BuildCache {
 	}
 }
 
-func LoadCache() (*BuildCache, error) {
-	data, err := os.ReadFile("build/cache.json")
+func LoadCache(tcName string) (*BuildCache, error) {
+	data, err := os.ReadFile(fmt.Sprintf("build/%s/cache.json", tcName))
 	if err != nil {
 		return nil, err
 	}
@@ -62,15 +62,16 @@ func LoadCache() (*BuildCache, error) {
 	return &cache, nil
 }
 
-func (c *BuildCache) Save() error {
-	if err := os.MkdirAll("build", 0755); err != nil {
+func (c *BuildCache) Save(tcName string) error {
+	dir := fmt.Sprintf("build/%s", tcName)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile("build/cache.json", data, 0644)
+	return os.WriteFile(fmt.Sprintf("%s/cache.json", dir), data, 0644)
 }
 
 func (c *BuildCache) NeedFullRebuild(tc *toolchain.Toolchain) bool {
@@ -129,6 +130,6 @@ func (c *BuildCache) Update(sourcePath, objPath string, deps []string) {
 	}
 }
 
-func CleanObjects() error {
-	return os.RemoveAll("build/objects")
+func CleanObjects(tcName string) error {
+	return os.RemoveAll(fmt.Sprintf("build/%s/objects", tcName))
 }
