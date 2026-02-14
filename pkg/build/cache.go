@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
@@ -14,6 +15,7 @@ type BuildCache struct {
 	Version   int                `json:"version"`
 	Toolchain ToolchainMeta      `json:"toolchain"`
 	Sources   map[string]*Source `json:"sources"`
+	mu        sync.RWMutex       `json:"-"`
 }
 
 type ToolchainMeta struct {
@@ -84,7 +86,10 @@ func (c *BuildCache) NeedFullRebuild(tc *toolchain.Toolchain) bool {
 }
 
 func (c *BuildCache) NeedRebuild(sourcePath string) bool {
+	c.mu.RLock()
 	src, ok := c.Sources[sourcePath]
+	c.mu.RUnlock()
+
 	if !ok {
 		return true
 	}
@@ -123,11 +128,13 @@ func (c *BuildCache) Update(sourcePath, objPath string, deps []string) {
 		modTime = info.ModTime().Unix()
 	}
 
+	c.mu.Lock()
 	c.Sources[sourcePath] = &Source{
 		ModTime: modTime,
 		ObjPath: objPath,
 		Deps:    deps,
 	}
+	c.mu.Unlock()
 }
 
 func CleanObjects(tcName string) error {

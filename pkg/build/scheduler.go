@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 
 	"gitee.com/spock2300/vmake/internal/glob"
 	"gitee.com/spock2300/vmake/pkg/api"
@@ -22,6 +24,13 @@ type ResolvedTarget struct {
 	AllLdFlags   []string
 	DepArtifacts []string
 	OutputPath   string
+}
+
+type compileResult struct {
+	src     string
+	objPath string
+	deps    []string
+	err     error
 }
 
 type PkgInfo struct {
@@ -148,14 +157,39 @@ func (s *Scheduler) Build(fullName string) error {
 
 	os.MkdirAll(fmt.Sprintf("build/%s/objects", s.tcName), 0755)
 
-	var objs []string
+	numFiles := len(resolved.SourceFiles)
+	if numFiles == 0 {
+		return s.link(resolved, nil)
+	}
+
+	numWorkers := runtime.NumCPU()
+	if numWorkers > numFiles {
+		numWorkers = numFiles
+	}
+
+	jobs := make(chan string, numFiles)
+	results := make(chan compileResult, numFiles)
+
+	var wg sync.WaitGroup
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go s.compileWorker(resolved, jobs, results, &wg)
+	}
+
 	for _, src := range resolved.SourceFiles {
-		objPath, deps, err := s.compileSource(resolved, src)
-		if err != nil {
-			return err
+		jobs <- src
+	}
+	close(jobs)
+
+	wg.Wait()
+	close(results)
+
+	objs := make([]string, 0, numFiles)
+	for r := range results {
+		if r.err != nil {
+			return r.err
 		}
-		objs = append(objs, objPath)
-		_ = deps
+		objs = append(objs, r.objPath)
 	}
 
 	if err := s.link(resolved, objs); err != nil {
@@ -169,6 +203,14 @@ func (s *Scheduler) Build(fullName string) error {
 	}
 
 	return pkgInfo.Cache.Save(s.tcName)
+}
+
+func (s *Scheduler) compileWorker(resolved *ResolvedTarget, jobs <-chan string, results chan<- compileResult, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for src := range jobs {
+		objPath, deps, err := s.compileSource(resolved, src)
+		results <- compileResult{src: src, objPath: objPath, deps: deps, err: err}
+	}
 }
 
 func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {

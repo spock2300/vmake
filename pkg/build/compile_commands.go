@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
@@ -21,6 +22,7 @@ type CompileCommandsWriter struct {
 	ccPath   string
 	cxxPath  string
 	pkgDir   string
+	mu       sync.Mutex
 }
 
 func NewCompileCommandsWriter(tc *toolchain.Toolchain) (*CompileCommandsWriter, error) {
@@ -60,11 +62,13 @@ func (w *CompileCommandsWriter) AddCommand(src, objPath string, opts *CompileOpt
 	args := w.buildArgs(opts, objPath, src, flags)
 	cmdStr := compiler + " " + joinArgs(args)
 
+	w.mu.Lock()
 	w.commands = append(w.commands, CompileCommand{
 		Directory: w.pkgDir,
 		Command:   cmdStr,
 		File:      filepath.Join(w.pkgDir, src),
 	})
+	w.mu.Unlock()
 }
 
 func (w *CompileCommandsWriter) buildArgs(opts *CompileOptions, objPath, src string, flags []string) []string {
