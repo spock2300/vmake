@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"path/filepath"
 
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 
@@ -27,21 +26,28 @@ func runClean(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	for _, pkg := range ctx.Packages {
-		buildDir := filepath.Join(filepath.Dir(pkg.Path), "build")
-		objectsDir := filepath.Join(buildDir, "objects")
+	origDir, _ := os.Getwd()
 
+	for _, pkg := range ctx.Packages {
+		if err := os.Chdir(pkg.Dir); err != nil {
+			vlog.Error("Failed to chdir to %s: %v", pkg.Name, err)
+			continue
+		}
+
+		objectsDir := "build/objects"
 		if _, err := os.Stat(objectsDir); err == nil {
 			if err := os.RemoveAll(objectsDir); err != nil {
 				vlog.Error("Failed to clean %s: %v", pkg.Name, err)
+				os.Chdir(origDir)
 				continue
 			}
-			vlog.Info("Cleaned %s/objects/", pkg.Name)
+			vlog.Info("Cleaned %s/build/objects/", pkg.Name)
 		}
 
-		cachePath := filepath.Join(buildDir, "cache.json")
+		cachePath := "build/cache.json"
 		os.Remove(cachePath)
 	}
 
+	os.Chdir(origDir)
 	vlog.Info("Clean completed!")
 }

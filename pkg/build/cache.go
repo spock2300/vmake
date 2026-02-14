@@ -4,12 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
 
-const CacheVersion = 1
+const CacheVersion = 2
 
 type BuildCache struct {
 	Version   int                `json:"version"`
@@ -50,9 +49,8 @@ func NewBuildCache(tc *toolchain.Toolchain) *BuildCache {
 	}
 }
 
-func LoadCache(buildDir string) (*BuildCache, error) {
-	path := filepath.Join(buildDir, "cache.json")
-	data, err := os.ReadFile(path)
+func LoadCache() (*BuildCache, error) {
+	data, err := os.ReadFile("build/cache.json")
 	if err != nil {
 		return nil, err
 	}
@@ -64,13 +62,15 @@ func LoadCache(buildDir string) (*BuildCache, error) {
 	return &cache, nil
 }
 
-func (c *BuildCache) Save(buildDir string) error {
-	path := filepath.Join(buildDir, "cache.json")
+func (c *BuildCache) Save() error {
+	if err := os.MkdirAll("build", 0755); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile("build/cache.json", data, 0644)
 }
 
 func (c *BuildCache) NeedFullRebuild(tc *toolchain.Toolchain) bool {
@@ -129,7 +129,6 @@ func (c *BuildCache) Update(sourcePath, objPath string, deps []string) {
 	}
 }
 
-func CleanObjects(buildDir string) error {
-	objectsDir := filepath.Join(buildDir, "objects")
-	return os.RemoveAll(objectsDir)
+func CleanObjects() error {
+	return os.RemoveAll("build/objects")
 }

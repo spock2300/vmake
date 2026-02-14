@@ -12,11 +12,32 @@ func Match(pattern, dir string) ([]string, error) {
 		return nil, err
 	}
 
+	var matches []string
 	if strings.Contains(pattern, "**") {
-		return matchDoubleStar(pattern, absDir)
+		matches, err = matchDoubleStar(pattern, absDir)
+	} else {
+		matches, err = matchSingleStar(pattern, absDir)
+	}
+	if err != nil {
+		return nil, err
 	}
 
-	return matchSingleStar(pattern, absDir)
+	relDir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []string
+	for _, m := range matches {
+		rel, err := filepath.Rel(relDir, m)
+		if err != nil {
+			result = append(result, m)
+		} else {
+			result = append(result, rel)
+		}
+	}
+
+	return result, nil
 }
 
 func matchSingleStar(pattern, dir string) ([]string, error) {

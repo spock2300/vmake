@@ -14,7 +14,6 @@ import (
 
 type ResolvedTarget struct {
 	Node         *BuildNode
-	BuildDir     string
 	SourceFiles  []string
 	AllIncludes  []string
 	AllDefines   []string
@@ -26,8 +25,8 @@ type ResolvedTarget struct {
 }
 
 type PkgInfo struct {
-	BuildDir string
-	Cache    *BuildCache
+	Dir   string
+	Cache *BuildCache
 }
 
 type Scheduler struct {
@@ -35,13 +34,14 @@ type Scheduler struct {
 	compiler  *Compiler
 	linker    *Linker
 	toolchain *toolchain.Toolchain
-	pkgInfos  map[string]*PkgInfo
+	pkgs      map[string]*PkgInfo
+	origDir   string
 }
 
 func NewScheduler(
 	graph *BuildGraph,
 	tc *toolchain.Toolchain,
-	pkgBuildDirs map[string]string,
+	pkgDirs map[string]string,
 ) (*Scheduler, error) {
 	compiler, err := NewCompiler(tc)
 	if err != nil {
@@ -53,31 +53,40 @@ func NewScheduler(
 		return nil, err
 	}
 
+	origDir, _ := os.Getwd()
+
 	s := &Scheduler{
 		graph:     graph,
 		compiler:  compiler,
 		linker:    linker,
 		toolchain: tc,
-		pkgInfos:  make(map[string]*PkgInfo),
+		pkgs:      make(map[string]*PkgInfo),
+		origDir:   origDir,
 	}
 
-	for pkgName, buildDir := range pkgBuildDirs {
-		cache, err := LoadCache(buildDir)
+	for pkgName, pkgDir := range pkgDirs {
+		if err := os.Chdir(pkgDir); err != nil {
+			os.Chdir(origDir)
+			return nil, fmt.Errorf("failed to chdir to %s: %w", pkgDir, err)
+		}
+
+		cache, err := LoadCache()
 		if err != nil {
 			cache = NewBuildCache(tc)
 		}
 
 		if cache.NeedFullRebuild(tc) {
-			CleanObjects(buildDir)
+			CleanObjects()
 			cache = NewBuildCache(tc)
 		}
 
-		s.pkgInfos[pkgName] = &PkgInfo{
-			BuildDir: buildDir,
-			Cache:    cache,
+		s.pkgs[pkgName] = &PkgInfo{
+			Dir:   pkgDir,
+			Cache: cache,
 		}
 	}
 
+	os.Chdir(origDir)
 	return s, nil
 }
 
@@ -109,6 +118,13 @@ func (s *Scheduler) Build(fullName string) error {
 		return nil
 	}
 
+	pkgInfo := s.pkgs[node.PkgName]
+
+	if err := os.Chdir(pkgInfo.Dir); err != nil {
+		return err
+	}
+	defer os.Chdir(s.origDir)
+
 	vlog.Info("[%s]", fullName)
 
 	resolved, err := s.resolveTarget(node)
@@ -116,15 +132,15 @@ func (s *Scheduler) Build(fullName string) error {
 		return err
 	}
 
-	os.MkdirAll(filepath.Join(resolved.BuildDir, "objects"), 0755)
+	os.MkdirAll("build/objects", 0755)
 
 	var objs []string
 	for _, src := range resolved.SourceFiles {
-		objRel, deps, err := s.compileSource(resolved, src)
+		objPath, deps, err := s.compileSource(resolved, src)
 		if err != nil {
 			return err
 		}
-		objs = append(objs, filepath.Join(resolved.BuildDir, objRel))
+		objs = append(objs, objPath)
 		_ = deps
 	}
 
@@ -132,17 +148,18 @@ func (s *Scheduler) Build(fullName string) error {
 		return err
 	}
 
-	pkgInfo := s.pkgInfos[node.PkgName]
-	return pkgInfo.Cache.Save(pkgInfo.BuildDir)
+	if node.Target.Kind() == api.TargetObject && len(resolved.SourceFiles) == 1 {
+		if cachedSrc := pkgInfo.Cache.Sources[resolved.SourceFiles[0]]; cachedSrc != nil {
+			cachedSrc.ObjPath = resolved.OutputPath
+		}
+	}
+
+	return pkgInfo.Cache.Save()
 }
 
 func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
-	pkgInfo := s.pkgInfos[node.PkgName]
-	srcDir := filepath.Dir(pkgInfo.BuildDir)
-
 	resolved := &ResolvedTarget{
 		Node:        node,
-		BuildDir:    pkgInfo.BuildDir,
 		AllDefines:  append([]string{}, node.Target.Defines()...),
 		AllCFlags:   append([]string{}, s.toolchain.DefaultFlags.CFlags...),
 		AllCxxFlags: append([]string{}, s.toolchain.DefaultFlags.CxxFlags...),
@@ -150,19 +167,11 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	}
 
 	for _, inc := range node.Target.Includes() {
-		absInc := inc
-		if !filepath.IsAbs(inc) {
-			absInc = filepath.Join(srcDir, inc)
-		}
-		resolved.AllIncludes = append(resolved.AllIncludes, absInc)
+		resolved.AllIncludes = append(resolved.AllIncludes, inc)
 	}
 
 	for _, pubInc := range node.Target.PublicIncludes() {
-		absInc := pubInc
-		if !filepath.IsAbs(pubInc) {
-			absInc = filepath.Join(srcDir, pubInc)
-		}
-		resolved.AllIncludes = append(resolved.AllIncludes, absInc)
+		resolved.AllIncludes = append(resolved.AllIncludes, pubInc)
 	}
 
 	resolved.AllCFlags = append(resolved.AllCFlags, node.Target.CFlags()...)
@@ -175,21 +184,18 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 			return nil, fmt.Errorf("dependency not found: %s", depName)
 		}
 
-		depSrcDir := filepath.Dir(s.pkgInfos[depNode.PkgName].BuildDir)
+		depPkg := s.pkgs[depNode.PkgName]
 		for _, pubInc := range depNode.Target.PublicIncludes() {
-			absInc := pubInc
-			if !filepath.IsAbs(pubInc) {
-				absInc = filepath.Join(depSrcDir, pubInc)
-			}
+			absInc := filepath.Join(depPkg.Dir, pubInc)
 			resolved.AllIncludes = append(resolved.AllIncludes, absInc)
 		}
 
-		depOutput := s.getTargetOutputPath(depNode)
+		depOutput := filepath.Join(depPkg.Dir, s.getTargetOutputPath(depNode))
 		resolved.DepArtifacts = append(resolved.DepArtifacts, depOutput)
 	}
 
 	for _, pattern := range node.Target.Files() {
-		files, err := glob.Match(pattern, srcDir)
+		files, err := glob.Match(pattern, ".")
 		if err != nil {
 			return nil, err
 		}
@@ -208,8 +214,6 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 }
 
 func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
-	pkgInfo := s.pkgInfos[node.PkgName]
-
 	var name string
 	switch node.Target.Kind() {
 	case api.TargetBinary:
@@ -224,24 +228,22 @@ func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
 		name = node.Target.Name()
 	}
 
-	return filepath.Join(pkgInfo.BuildDir, name)
+	return filepath.Join("build", name)
 }
 
 func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string, []string, error) {
-	pkgInfo := s.pkgInfos[resolved.Node.PkgName]
+	pkgInfo := s.pkgs[resolved.Node.PkgName]
 
-	srcRel, _ := filepath.Rel(filepath.Dir(resolved.BuildDir), src)
-	objRel := "objects/" + strings.ReplaceAll(srcRel, "/", "_") + ".o"
-	objPath := filepath.Join(resolved.BuildDir, objRel)
+	objRel := "build/objects/" + strings.ReplaceAll(src, "/", "_") + ".o"
 
 	if !pkgInfo.Cache.NeedRebuild(src) {
 		cachedSrc := pkgInfo.Cache.Sources[src]
 		if cachedSrc != nil {
-			return objRel, cachedSrc.Deps, nil
+			return cachedSrc.ObjPath, cachedSrc.Deps, nil
 		}
 	}
 
-	vlog.InfoNormal("  CC %s", srcRel)
+	vlog.InfoNormal("  CC %s", src)
 
 	lang := "c"
 	if glob.IsCppFile(src) {
@@ -256,7 +258,7 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string,
 		Language: lang,
 	}
 
-	deps, err := s.compiler.Compile(src, objPath, opts)
+	deps, err := s.compiler.Compile(src, objRel, opts)
 	if err != nil {
 		return "", nil, err
 	}
@@ -291,6 +293,9 @@ func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 		return s.linker.LinkShared(objs, resolved.AllLdFlags, resolved.OutputPath)
 	case api.TargetObject:
 		if len(objs) == 1 {
+			if objs[0] == resolved.OutputPath {
+				return nil
+			}
 			return os.Rename(objs[0], resolved.OutputPath)
 		}
 		return fmt.Errorf("object target requires exactly one source file")

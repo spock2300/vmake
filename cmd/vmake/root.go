@@ -170,12 +170,12 @@ func GetToolchain(cfg *config.ConfigFile) (*toolchain.Toolchain, string, error) 
 	return tc, tcName, nil
 }
 
-func GetPackageBuildDirs(packages []plugin.Package) map[string]string {
-	pkgBuildDirs := make(map[string]string)
+func GetPackageDirs(packages []plugin.Package) map[string]string {
+	dirs := make(map[string]string)
 	for _, pkg := range packages {
-		pkgBuildDirs[pkg.Name] = filepath.Join(filepath.Dir(pkg.Path), "build")
+		dirs[pkg.Name] = pkg.Dir
 	}
-	return pkgBuildDirs
+	return dirs
 }
 
 var _ = fmt.Sprintf

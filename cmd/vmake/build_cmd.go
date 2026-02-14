@@ -82,9 +82,9 @@ func runBuild(cmd *cobra.Command, args []string) {
 		vlog.Info("  - %s", fullName)
 	}
 
-	pkgBuildDirs := GetPackageBuildDirs(ctx.Packages)
+	pkgDirs := GetPackageDirs(ctx.Packages)
 
-	scheduler, err := build.NewScheduler(graph, tc, pkgBuildDirs)
+	scheduler, err := build.NewScheduler(graph, tc, pkgDirs)
 	if err != nil {
 		vlog.Error("Scheduler error: %v", err)
 		os.Exit(1)
