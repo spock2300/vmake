@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
+	"gitee.com/spock2300/vmake/pkg/build"
 	"gitee.com/spock2300/vmake/pkg/config"
 	"gitee.com/spock2300/vmake/pkg/plugin"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
@@ -26,11 +27,15 @@ func main() {
 		runConfig()
 	case "build":
 		runBuild()
+	case "clean":
+		runClean()
+	case "rebuild":
+		runRebuild()
 	case "toolchain":
 		runToolchain(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
-		fmt.Println("Usage: vmake [build|config|toolchain]")
+		fmt.Println("Usage: vmake [build|config|clean|rebuild|toolchain]")
 		os.Exit(1)
 	}
 }
@@ -202,12 +207,11 @@ func runConfig() {
 }
 
 func runBuild() {
-	workDir, _, loadResults, allOptions, cfg, _, err := prepareBuild()
+	workDir, packages, loadResults, allOptions, cfg, _, err := prepareBuild()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	_ = workDir
 
 	fmt.Println("\nExecuting OnBuild...")
 	allTargets := make(map[string]map[string]*api.Target)
@@ -239,6 +243,81 @@ func runBuild() {
 			fmt.Printf("  - %s:%s (%s)%s\n", pkgName, t.Name(), t.Kind(), defaultMark)
 		}
 	}
+
+	mgr := toolchain.GetManager()
+	tcName := cfg.Toolchain
+	if tcName == "" {
+		tcName = mgr.GetDefaultToolchain()
+	}
+	tc, err := mgr.SelectToolchain(tcName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Toolchain error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("\nUsing toolchain: %s\n", tcName)
+
+	graph, err := build.NewBuildGraph(allTargets)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Dependency error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("\nBuild order:")
+	for _, fullName := range graph.Order {
+		fmt.Printf("  - %s\n", fullName)
+	}
+
+	pkgBuildDirs := make(map[string]string)
+	for _, pkg := range packages {
+		pkgBuildDirs[pkg.Name] = filepath.Join(filepath.Dir(pkg.Path), "build")
+	}
+
+	scheduler, err := build.NewScheduler(graph, tc, pkgBuildDirs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Scheduler error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("\nBuilding...")
+	if err := scheduler.BuildAll(); err != nil {
+		fmt.Fprintf(os.Stderr, "Build failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("\nBuild succeeded!")
+	_ = workDir
+}
+
+func runClean() {
+	workDir, packages, _, _, _, _, err := prepareBuild()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	for _, pkg := range packages {
+		buildDir := filepath.Join(filepath.Dir(pkg.Path), "build")
+		objectsDir := filepath.Join(buildDir, "objects")
+
+		if _, err := os.Stat(objectsDir); err == nil {
+			if err := os.RemoveAll(objectsDir); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to clean %s: %v\n", pkg.Name, err)
+				continue
+			}
+			fmt.Printf("Cleaned %s/objects/\n", pkg.Name)
+		}
+
+		cachePath := filepath.Join(buildDir, "cache.json")
+		os.Remove(cachePath)
+	}
+
+	fmt.Println("Clean completed!")
+	_ = workDir
+}
+
+func runRebuild() {
+	runClean()
+	runBuild()
 }
 
 func prepareBuild() (string, []plugin.Package, []plugin.LoadResult, map[string]map[string]*api.Option, *config.ConfigFile, string, error) {

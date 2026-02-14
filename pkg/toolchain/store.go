@@ -75,8 +75,8 @@ func GetBuiltinDefault() *GlobalConfig {
 					RANLIB: "ranlib",
 				},
 				DefaultFlags: DefaultFlags{
-					CFlags:   []string{"-O2", "-Wall", "-Wstrict-prototypes", "-fno-strict-aliasing", "-fno-common", "-fno-pic"},
-					CxxFlags: []string{"-O2", "-Wall", "-Wextra", "-fno-strict-aliasing", "-fno-common", "-fno-pic"},
+					CFlags:   []string{"-O2", "-Wall", "-Wstrict-prototypes", "-fno-strict-aliasing", "-fno-common", "-fPIC"},
+					CxxFlags: []string{"-O2", "-Wall", "-Wextra", "-fno-strict-aliasing", "-fno-common", "-fPIC"},
 					LdFlags:  []string{"-Wl,--as-needed"},
 				},
 			},
@@ -102,8 +102,8 @@ func GetDefaultTemplate() *GlobalConfig {
 					RANLIB: "ranlib",
 				},
 				DefaultFlags: DefaultFlags{
-					CFlags:   []string{"-O2", "-Wall", "-Wstrict-prototypes", "-fno-strict-aliasing", "-fno-common", "-fno-pic"},
-					CxxFlags: []string{"-O2", "-Wall", "-Wextra", "-fno-strict-aliasing", "-fno-common", "-fno-pic"},
+					CFlags:   []string{"-O2", "-Wall", "-Wstrict-prototypes", "-fno-strict-aliasing", "-fno-common", "-fPIC"},
+					CxxFlags: []string{"-O2", "-Wall", "-Wextra", "-fno-strict-aliasing", "-fno-common", "-fPIC"},
 					LdFlags:  []string{"-Wl,--as-needed"},
 				},
 				DownloadURL: "",
