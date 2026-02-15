@@ -1791,58 +1791,338 @@ func Package(p *api.Package) {
 
 ---
 
+## 已确认的设计决策
+
+> 以下设计决策已经过讨论和确认，实现时应严格遵守。
+
+| 决策项 | 结论 | 原因 |
+|--------|------|------|
+| OnRequire 必要性 | **必要** | config 阶段需要知道所有依赖才能收集 options，否则依赖声明的条件逻辑会阻止正确收集 |
+| 条件依赖 | **不支持** | 所有依赖在 OnRequire 中无条件声明，简化依赖解析和配置管理 |
+| 别名机制 | **删除** | 同一个包在一个项目中只能有一种配置，避免 ABI 不兼容和配置复杂度 |
+| AddPackages | **保留** | 用于 vmake 管理的包，自动注入 includes + links |
+| AddLinks | **保留** | 用于系统库（如 `m`, `pthread`, `dl`），不自动注入 includes |
+| 缓存 Hash | **toolchain + mode + options** | 确保不同编译环境产物隔离，避免 ABI 不兼容问题 |
+
+### 执行流程确认
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  统一流程（config 和 build 共享）                                      │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  1. 扫描 build.go → 编译 → 加载插件                                   │
+│                                                                     │
+│  2. 执行 Main() → 执行 OnRequire → 收集项目直接依赖                    │
+│     │                                                               │
+│     ▼                                                               │
+│  3. Resolver 递归解析依赖                                             │
+│     ├─ 加载 package.go → 执行 Package()                              │
+│     ├─ 执行 OnRequire → 收集包的依赖                                  │
+│     ├─ 收集所有 Option() 定义                                        │
+│     └─ 拓扑排序 → 确定安装顺序                                        │
+│     │                                                               │
+│     ▼                                                               │
+│  4. 执行项目 OnConfig() → 收集项目 options                            │
+│                                                                     │
+│  5. 从 .vmake/config.json 加载已保存值                                │
+│                                                                     │
+├─────────────────────────────────────────────────────────────────────┤
+│  config 命令: 渲染 TUI → 用户配置 → 保存配置                           │
+│  build 命令:  安装依赖 → 执行 OnBuild → 构建 Target                    │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## 实现计划
 
-### 阶段 1: 核心 API（预计文件：5 个）
+### 阶段总览
 
-| 文件 | 内容 |
-|------|------|
-| `pkg/api/require.go` | RequireContext, RequireFunc, RequireInfo, PackageRequireContext |
-| `pkg/api/package.go` | Package, PackageContext, InstalledPackage |
-| `pkg/api/toolchain.go` | Toolchain 类型，编译器信息 |
-| `pkg/api/builder.go` | 添加 requireFuncs, OnRequire |
-| `pkg/api/context.go` | BuildContext.AddPackages, Target.AddPackages |
+| 阶段 | 名称 | 新增文件 | 修改文件 | 依赖 |
+|------|------|---------|---------|------|
+| 1 | 核心 API | 3 | 2 | 无 |
+| 2 | Repo 管理 | 5 | 0 | 阶段 1 |
+| 3 | 包安装 | 4 | 0 | 阶段 1-2 |
+| 4 | CLI 命令 | 2 | 1 | 阶段 1-3 |
+| 5 | 构建集成 | 0 | 4 | 阶段 1-4 |
+| 6 | 官方 Repo | N | 0 | 阶段 1-5 |
 
-### 阶段 2: Repo 管理（预计文件：5 个）
+---
 
-| 文件 | 内容 |
-|------|------|
-| `pkg/repo/manager.go` | Repo 管理（目录扫描查找包） |
-| `pkg/repo/resolver.go` | 递归依赖解析, 循环检测, 拓扑排序, semver 匹配 |
-| `pkg/repo/cache.go` | 缓存管理, CacheHash（含 toolchain+mode+options） |
-| `pkg/repo/source.go` | 源代码管理, SourceManager, DistClean |
-| `pkg/repo/git.go` | Git 操作封装 |
+### 阶段 1: 核心 API
 
-### 阶段 3: 包安装（预计文件：4 个）
+**目标**: 定义包管理系统的基础类型，无外部依赖
 
-| 文件 | 内容 |
-|------|------|
-| `pkg/repo/installer.go` | 包安装，注入 deps 到 PackageContext |
-| `pkg/repo/package_loader.go` | 加载 package.go 插件，执行 OnRequire/Build |
-| `pkg/repo/semver.go` | Semver 版本匹配 |
-| `pkg/build/native_builder.go` | NativeBuilder，复用 Compiler/Linker 实现原生构建 |
+#### 新增文件
 
-### 阶段 4: CLI 命令（预计文件：2 个）
+| 文件 | 类型/函数 | 说明 |
+|------|----------|------|
+| `pkg/api/require.go` | `RequireFunc` | 项目依赖声明回调类型 |
+| | `RequireContext` | 项目依赖声明上下文 |
+| | `RequireInfo` | 依赖信息 `{Name, Version}` |
+| | `PackageRequireContext` | 包依赖声明上下文 |
+| `pkg/api/package.go` | `Package` | 包定义 API |
+| | `PackageContext` | 包构建上下文 |
+| | `InstalledPackage` | 已安装包信息 |
+| `pkg/api/toolchain.go` | `Toolchain` | 工具链信息（可复用现有） |
 
-| 文件 | 内容 |
-|------|------|
-| `cmd/vmake/repo_cmd.go` | repo 子命令 |
-| `cmd/vmake/pkg_cmd.go` | pkg 子命令（含源代码管理、distclean） |
+#### 修改文件
 
-### 阶段 5: 构建集成（预计修改：4 个）
+| 文件 | 修改内容 |
+|------|---------|
+| `pkg/api/builder.go` | 添加 `requireFuncs []RequireFunc`，添加 `OnRequire()` 方法 |
+| `pkg/api/context.go` | BuildContext 添加 `packages []string`，添加 `AddPackages()` 方法；Target 同理 |
 
-| 文件 | 修改 |
-|------|------|
-| `pkg/plugin/loader.go` | 执行 OnRequire，收集顶层依赖 |
-| `pkg/config/store.go` | 添加 requires 字段支持 |
-| `pkg/tui/model.go` | 支持包 options 分组显示 |
-| `pkg/build/scheduler.go` | 解析 Target.packages, 注入 includes/links |
+#### 关键 API 签名
 
-### 阶段 6: 官方 Repo（预计文件：N 个）
+```go
+// pkg/api/require.go
+type RequireFunc func(ctx *RequireContext)
+type RequireContext struct{}
+func (ctx *RequireContext) AddRequires(deps ...string)
+func (ctx *RequireContext) GetRequires() []RequireInfo
 
-- 创建 `vmake-repo` 仓库
-- 添加常用包定义（zlib, openssl, curl 等）
-- 文档更新
+type PackageRequireContext struct{}
+func (ctx *PackageRequireContext) AddRequires(deps ...string)
+func (ctx *PackageRequireContext) GetRequires() []RequireInfo
+
+// pkg/api/package.go
+type Package struct{}
+func (p *Package) SetGit(url string) *Package
+func (p *Package) AddVersion(version, ref string) *Package
+func (p *Package) OnRequire(fn func(ctx *PackageRequireContext)) *Package
+func (p *Package) Option(name string) *Option
+func (p *Package) Build(fn func(ctx *PackageContext)) *Package
+
+type PackageContext struct{}
+func (ctx *PackageContext) Dep(name string) *InstalledPackage
+func (ctx *PackageContext) SourceDir() string
+func (ctx *PackageContext) BuildDir() string
+func (ctx *PackageContext) InstallDir() string
+func (ctx *PackageContext) CMakeConfigure(args ...string) error
+func (ctx *PackageContext) CMakeBuild(args ...string) error
+func (ctx *PackageContext) CMakeInstall() error
+// ... 其他方法见文档
+
+// pkg/api/builder.go (扩展)
+func (b *Builder) OnRequire(fn RequireFunc)
+func (b *Builder) GetRequireFuncs() []RequireFunc
+
+// pkg/api/context.go (扩展)
+func (ctx *BuildContext) AddPackages(packages ...string) *BuildContext
+func (t *Target) AddPackages(packages ...string) *Target
+```
+
+---
+
+### 阶段 2: Repo 管理
+
+**目标**: 实现 repo 目录管理和包定义扫描
+
+#### 新增文件
+
+| 文件 | 类型/函数 | 说明 |
+|------|----------|------|
+| `pkg/repo/manager.go` | `RepoManager` | repo add/remove/list/update |
+| | `FindPackage` | 按 repo/name 查找包定义目录 |
+| `pkg/repo/resolver.go` | `Resolver` | 递归依赖解析 |
+| | `DependencyGraph` | 依赖图（拓扑排序结果） |
+| | `ResolvedPackage` | 解析后的包信息 |
+| `pkg/repo/semver.go` | `MatchVersion` | Semver 版本匹配 |
+| | `ParseConstraint` | 解析版本约束 |
+| `pkg/repo/cache.go` | `CacheHash` | 计算缓存目录名 |
+| | `ParseCacheHash` | 从目录名还原参数 |
+| `pkg/repo/git.go` | `Clone` | Git clone 封装 |
+| | `FetchTags` | Git fetch --tags |
+| | `Checkout` | Git checkout |
+
+#### 关键 API 签名
+
+```go
+// pkg/repo/manager.go
+type RepoManager struct {
+    reposDir string  // ~/.vmake/repos
+}
+func NewRepoManager() *RepoManager
+func (m *RepoManager) Add(name, gitURL string) error
+func (m *RepoManager) Remove(name string) error
+func (m *RepoManager) List() []string
+func (m *RepoManager) Update(name string) error
+func (m *RepoManager) FindPackage(repo, name string) (string, error)
+
+// pkg/repo/resolver.go
+type Resolver struct {
+    reposDir string
+}
+func (r *Resolver) Resolve(initial []api.RequireInfo) (*DependencyGraph, error)
+
+type DependencyGraph struct {
+    Order    []string
+    Packages map[string]*ResolvedPackage
+}
+
+// pkg/repo/cache.go
+func CacheHash(toolchain, mode string, options map[string]any) string
+func ParseCacheHash(hash string) (toolchain, mode string, options map[string]any, err error)
+```
+
+---
+
+### 阶段 3: 包安装
+
+**目标**: 实现包的源代码管理和编译安装
+
+#### 新增文件
+
+| 文件 | 类型/函数 | 说明 |
+|------|----------|------|
+| `pkg/repo/source.go` | `SourceManager` | 源代码 clone/fetch/checkout |
+| | `DistClean` | 清理 autotools 生成文件 |
+| `pkg/repo/installer.go` | `Installer` | 检查缓存、安装依赖 |
+| | `InstallPackage` | 执行单个包的安装 |
+| `pkg/repo/package_loader.go` | `LoadPackagePlugin` | 加载 package.go 插件 |
+| | `ExecutePackage` | 执行 Package() 入口函数 |
+| `pkg/build/native_builder.go` | `NativeBuilder` | vmake 原生构建 |
+| | `Build` | 编译 Target |
+
+#### 关键 API 签名
+
+```go
+// pkg/repo/source.go
+type SourceManager struct {
+    sourcesDir string  // ~/.vmake/sources
+}
+func (m *SourceManager) EnsureSource(pkg *PackageDef, version string) (string, error)
+func (m *SourceManager) DistClean(repo, name string) error
+
+// pkg/repo/installer.go
+type Installer struct {
+    sourceMgr *SourceManager
+    packagesDir string  // ~/.vmake/packages
+}
+func (i *Installer) Install(graph *DependencyGraph, cfg *config.ConfigFile) error
+
+// pkg/build/native_builder.go
+type NativeBuilder struct {
+    compiler *Compiler
+    linker   *Linker
+    toolchain *toolchain.Toolchain
+    sourceDir string
+    buildDir  string
+}
+func NewNativeBuilder(tc *toolchain.Toolchain, sourceDir, buildDir string) *NativeBuilder
+func (b *NativeBuilder) Build(t *api.Target) error
+```
+
+---
+
+### 阶段 4: CLI 命令
+
+**目标**: 实现 repo 和 pkg 子命令
+
+#### 新增文件
+
+| 文件 | 命令 | 说明 |
+|------|------|------|
+| `cmd/vmake/repo_cmd.go` | `vmake repo add` | 添加 repo |
+| | `vmake repo remove` | 移除 repo |
+| | `vmake repo list` | 列出所有 repo |
+| | `vmake repo update` | 更新 repo |
+| `cmd/vmake/pkg_cmd.go` | `vmake pkg install` | 手动安装包 |
+| | `vmake pkg list` | 列出已安装包 |
+| | `vmake pkg search` | 搜索包 |
+| | `vmake pkg info` | 显示包信息 |
+| | `vmake pkg update` | 更新源代码 |
+| | `vmake pkg clean-source` | 清理源代码 |
+| | `vmake pkg clean-build` | 清理编译缓存 |
+| | `vmake pkg clean` | 清理全部 |
+
+#### 修改文件
+
+| 文件 | 修改内容 |
+|------|---------|
+| `cmd/vmake/root.go` | 注册 repoCmd 和 pkgCmd |
+
+---
+
+### 阶段 5: 构建集成
+
+**目标**: 将包管理集成到现有构建流程
+
+#### 修改文件
+
+| 文件 | 修改内容 |
+|------|---------|
+| `pkg/plugin/loader.go` | 执行 OnRequire，收集顶层依赖；返回 `[]api.RequireInfo` |
+| `pkg/config/store.go` | 添加 `Requires map[string]*RequireConfig` 字段 |
+| `pkg/tui/model.go` | 支持包 options 分组显示（official/zlib 作为 TreeNode） |
+| `pkg/build/scheduler.go` | 解析 `Target.packages`，注入 includes/links |
+
+#### config/store.go 扩展
+
+```go
+type ConfigFile struct {
+    Version  string                    `json:"version"`
+    Global   *GlobalConfig             `json:"global,omitempty"`
+    Packages map[string]*PackageConfig `json:"packages"`
+    Requires map[string]*RequireConfig `json:"requires,omitempty"`  // 新增
+}
+
+type RequireConfig struct {
+    Version string         `json:"version"`
+    Options map[string]any `json:"options,omitempty"`
+}
+```
+
+#### TUI 树结构扩展
+
+```
+[Global]              ← 现有
+  ├── toolchain
+  └── mode
+[myproject]           ← 现有项目节点
+  ├── feature_x
+[official/zlib]       ← 新增：包节点
+  ├── shared
+  └── minizip
+[official/openssl]    ← 新增：包节点
+  └── shared
+```
+
+---
+
+### 阶段 6: 官方 Repo
+
+**目标**: 创建独立的包定义仓库
+
+#### 任务
+
+1. 创建 `vmake-official-repo` Git 仓库
+2. 添加常用包定义:
+   - `z/zlib/package.go`
+   - `o/openssl/package.go`
+   - `c/curl/package.go`
+   - `j/json-c/package.go`
+   - ...
+3. 更新 README 和使用文档
+
+#### 包定义示例
+
+```
+vmake-official-repo/
+├── README.md
+└── packages/
+    ├── z/
+    │   └── zlib/
+    │       └── package.go
+    ├── o/
+    │   └── openssl/
+    │       └── package.go
+    └── c/
+        └── curl/
+            └── package.go
+```
 
 ---
 
@@ -2097,10 +2377,43 @@ func (r *Resolver) resolveRecursive(req api.RequireInfo, graph *DependencyGraph,
 
 ### 为什么删除别名机制？
 
+> **已确认**: 不支持别名机制，同一个包在一个项目中只能有一种配置。
+
 - **简化心智模型**：一个包只有一种配置，不需要跟踪别名
 - **避免配置冲突**：同一个包的不同配置可能导致 ABI 不兼容
 - **简化 TUI**：用户不需要为每个别名单独配置
 - **简化实现**：无需处理别名解析、缓存隔离等复杂逻辑
+
+### 为什么 OnRequire 是必要的？
+
+> **已确认**: OnRequire 回调是必要的，不可省略。
+
+- **config 阶段需要完整依赖树**：在用户配置之前，系统需要知道所有依赖包及其 options
+- **避免先有鸡还是先有蛋的问题**：如果在 OnBuild 中声明依赖，那么配置值（决定是否声明）在 config 阶段还未确定
+- **三阶段分离**：OnRequire（依赖声明）→ OnConfig（选项定义）→ OnBuild（构建执行）
+- **统一 API 风格**：项目和包都使用 OnRequire，风格一致
+
+### 为什么不支持条件依赖？
+
+> **已确认**: 所有依赖在 OnRequire 中无条件声明。
+
+- **config 阶段需要完整依赖树**：如果支持条件依赖，config 阶段无法知道所有需要的包
+- **简化依赖解析**：无需在配置解析阶段处理条件逻辑
+- **配置与依赖分离**：依赖声明是静态的，配置选项只影响包的构建参数
+- **替代方案**：用户可以在 OnBuild 中根据配置选择是否使用某个包的功能
+
+### 为什么同时保留 AddPackages 和 AddLinks？
+
+> **已确认**: 两个方法各有用途，不可合并。
+
+- **AddPackages**：用于 vmake 管理的第三方包
+  - 自动注入 includes（`{InstallDir}/include`）
+  - 自动注入 links（`{InstallDir}/lib/libxxx.a`）
+  - 路径由 vmake 自动管理
+- **AddLinks**：用于系统库
+  - 传递给链接器的 `-l` 参数
+  - 如 `m`（数学库）、`pthread`（线程库）、`dl`（动态链接库）
+  - 不自动注入 includes
 
 ### 为什么 git fetch 失败时静默继续？
 
