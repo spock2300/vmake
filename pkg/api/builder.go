@@ -20,10 +20,12 @@ const (
 
 type ConfigFunc func(ctx *ConfigContext)
 type BuildFunc func(ctx *BuildContext)
+type InstallFunc func(ctx *InstallContext)
 
 type Builder struct {
-	configFuncs []ConfigFunc
-	buildFuncs  []BuildFunc
+	configFuncs  []ConfigFunc
+	buildFuncs   []BuildFunc
+	installFuncs []InstallFunc
 }
 
 func (b *Builder) OnConfig(fn ConfigFunc) {
@@ -40,4 +42,12 @@ func (b *Builder) GetConfigFuncs() []ConfigFunc {
 
 func (b *Builder) GetBuildFuncs() []BuildFunc {
 	return b.buildFuncs
+}
+
+func (b *Builder) OnInstall(fn InstallFunc) {
+	b.installFuncs = append(b.installFuncs, fn)
+}
+
+func (b *Builder) GetInstallFuncs() []InstallFunc {
+	return b.installFuncs
 }

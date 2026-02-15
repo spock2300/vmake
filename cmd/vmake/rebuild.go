@@ -15,6 +15,8 @@ var rebuildCmd = &cobra.Command{
 
 func init() {
 	RootCmd.AddCommand(rebuildCmd)
+	rebuildCmd.Flags().BoolVarP(&installFlag, "install", "i", false, "install after build")
+	rebuildCmd.Flags().StringVarP(&prefixFlag, "prefix", "p", "", "installation prefix (default: ./install)")
 }
 
 func runRebuild(cmd *cobra.Command, args []string) {
@@ -31,8 +33,16 @@ func runRebuild(cmd *cobra.Command, args []string) {
 
 	vlog.Info("")
 
-	if err := executeBuild(ctx); err != nil {
+	result, err := executeBuild(ctx)
+	if err != nil {
 		vlog.Error("Error: %v", err)
 		return
+	}
+
+	if installFlag {
+		if err := executeInstall(ctx, result); err != nil {
+			vlog.Error("Install error: %v", err)
+			return
+		}
 	}
 }

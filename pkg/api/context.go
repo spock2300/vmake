@@ -113,6 +113,8 @@ type BuildContext struct {
 	options       map[string]*Option
 	globalVals    map[string]any
 	globalOptions map[string]*Option
+	installItems  []InstallItem
+	installFilter InstallFilterFunc
 }
 
 func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext {
@@ -126,6 +128,7 @@ func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext {
 		options:       make(map[string]*Option),
 		globalVals:    make(map[string]any),
 		globalOptions: make(map[string]*Option),
+		installItems:  make([]InstallItem, 0),
 	}
 }
 
@@ -281,6 +284,152 @@ func (ctx *BuildContext) SelectGlobal(option string, mapping map[string]string) 
 }
 
 func (ctx *BuildContext) Mode() string {
+	return ctx.GlobalString(ModeOptionName)
+}
+
+type InstallItem struct {
+	Src  string
+	Dest string
+}
+
+type InstallFilterFunc func(path string, isTargetOutput bool) bool
+
+func (ctx *BuildContext) AddInstalls(src, dest string) *BuildContext {
+	ctx.installItems = append(ctx.installItems, InstallItem{Src: src, Dest: dest})
+	return ctx
+}
+
+func (ctx *BuildContext) GetInstallItems() []InstallItem {
+	return ctx.installItems
+}
+
+func (ctx *BuildContext) SetInstallFilter(filter InstallFilterFunc) *BuildContext {
+	ctx.installFilter = filter
+	return ctx
+}
+
+func (ctx *BuildContext) GetInstallFilter() InstallFilterFunc {
+	return ctx.installFilter
+}
+
+type InstallContext struct {
+	pkgName       string
+	cfgVals       map[string]any
+	options       map[string]*Option
+	globalVals    map[string]any
+	globalOptions map[string]*Option
+	installItems  []InstallItem
+	prefix        string
+	prefixSet     bool
+	installFilter InstallFilterFunc
+}
+
+func NewInstallContext(pkgName string, cfgVals map[string]any) *InstallContext {
+	if cfgVals == nil {
+		cfgVals = make(map[string]any)
+	}
+	return &InstallContext{
+		pkgName:       pkgName,
+		cfgVals:       cfgVals,
+		options:       make(map[string]*Option),
+		globalVals:    make(map[string]any),
+		globalOptions: make(map[string]*Option),
+		installItems:  make([]InstallItem, 0),
+	}
+}
+
+func (ctx *InstallContext) SetOptions(options map[string]*Option) {
+	ctx.options = options
+}
+
+func (ctx *InstallContext) SetGlobalOptions(options map[string]*Option) {
+	ctx.globalOptions = options
+}
+
+func (ctx *InstallContext) SetGlobalValues(vals map[string]any) {
+	ctx.globalVals = vals
+}
+
+func (ctx *InstallContext) SetPrefix(prefix string) {
+	ctx.prefix = prefix
+	ctx.prefixSet = true
+}
+
+func (ctx *InstallContext) Prefix() string      { return ctx.prefix }
+func (ctx *InstallContext) PrefixSet() bool     { return ctx.prefixSet }
+func (ctx *InstallContext) PackageName() string { return ctx.pkgName }
+
+func (ctx *InstallContext) AddInstalls(src, dest string) {
+	ctx.installItems = append(ctx.installItems, InstallItem{Src: src, Dest: dest})
+}
+
+func (ctx *InstallContext) GetInstallItems() []InstallItem { return ctx.installItems }
+
+func (ctx *InstallContext) SetInstallFilter(filter InstallFilterFunc) {
+	ctx.installFilter = filter
+}
+
+func (ctx *InstallContext) GetInstallFilter() InstallFilterFunc {
+	return ctx.installFilter
+}
+
+func (ctx *InstallContext) Bool(name string) bool {
+	if val, ok := ctx.cfgVals[name]; ok {
+		if b, ok := val.(bool); ok {
+			return b
+		}
+	}
+	if opt, ok := ctx.options[name]; ok {
+		if d, ok := opt.defaultVal.(bool); ok {
+			return d
+		}
+	}
+	return false
+}
+
+func (ctx *InstallContext) String(name string) string {
+	if val, ok := ctx.cfgVals[name]; ok {
+		if s, ok := val.(string); ok {
+			return s
+		}
+	}
+	if opt, ok := ctx.options[name]; ok {
+		if d, ok := opt.defaultVal.(string); ok {
+			return d
+		}
+	}
+	return ""
+}
+
+func (ctx *InstallContext) GlobalBool(name string) bool {
+	if val, ok := ctx.globalVals[name]; ok {
+		if b, ok := val.(bool); ok {
+			return b
+		}
+	}
+	if opt, ok := ctx.globalOptions[name]; ok {
+		if d, ok := opt.Default().(bool); ok {
+			return d
+		}
+	}
+	return false
+}
+
+func (ctx *InstallContext) GlobalString(name string) string {
+	if val, ok := ctx.globalVals[name]; ok {
+		if s, ok := val.(string); ok {
+			return s
+		}
+	}
+	if opt, ok := ctx.globalOptions[name]; ok {
+		if d, ok := opt.Default().(string); ok {
+			return d
+		}
+	}
+	return ""
+}
+
+func (ctx *InstallContext) Mode() string {
 	return ctx.GlobalString(ModeOptionName)
 }
 

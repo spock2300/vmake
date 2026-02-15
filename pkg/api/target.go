@@ -14,6 +14,8 @@ type Target struct {
 	cflags         []string
 	cxxflags       []string
 	ldflags        []string
+	installDir     string
+	noInstall      bool
 }
 
 func (t *Target) SetKind(kind TargetKind) *Target {
@@ -89,6 +91,19 @@ func (t *Target) Deps() []string           { return t.deps }
 func (t *Target) CFlags() []string         { return t.cflags }
 func (t *Target) CxxFlags() []string       { return t.cxxflags }
 func (t *Target) LdFlags() []string        { return t.ldflags }
+func (t *Target) InstallDir() string       { return t.installDir }
+
+func (t *Target) SetInstallDir(dir string) *Target {
+	t.installDir = dir
+	return t
+}
+
+func (t *Target) SetInstall(install bool) *Target {
+	t.noInstall = !install
+	return t
+}
+
+func (t *Target) NoInstall() bool { return t.noInstall }
 
 func flattenAny(items []any) []string {
 	var result []string
