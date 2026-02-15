@@ -105,6 +105,46 @@ func (t *Target) SetInstall(install bool) *Target {
 
 func (t *Target) NoInstall() bool { return t.noInstall }
 
+func (t *Target) RemoveCFlags(flags ...string) *Target {
+	t.cflags = removeStrings(t.cflags, flags...)
+	return t
+}
+
+func (t *Target) RemoveCxxFlags(flags ...string) *Target {
+	t.cxxflags = removeStrings(t.cxxflags, flags...)
+	return t
+}
+
+func (t *Target) RemoveLdFlags(flags ...string) *Target {
+	t.ldflags = removeStrings(t.ldflags, flags...)
+	return t
+}
+
+func (t *Target) RemoveDefines(defines ...string) *Target {
+	t.defines = removeStrings(t.defines, defines...)
+	return t
+}
+
+func (t *Target) RemoveIncludes(dirs ...string) *Target {
+	t.includes = removeStrings(t.includes, dirs...)
+	return t
+}
+
+func (t *Target) RemovePublicIncludes(dirs ...string) *Target {
+	t.publicIncludes = removeStrings(t.publicIncludes, dirs...)
+	return t
+}
+
+func (t *Target) RemoveLinks(libs ...string) *Target {
+	t.links = removeStrings(t.links, libs...)
+	return t
+}
+
+func (t *Target) RemoveDeps(targets ...string) *Target {
+	t.deps = removeStrings(t.deps, targets...)
+	return t
+}
+
 func flattenAny(items []any) []string {
 	var result []string
 	for _, item := range items {
@@ -119,6 +159,23 @@ func flattenAny(items []any) []string {
 					result = append(result, s)
 				}
 			}
+		}
+	}
+	return result
+}
+
+func removeStrings(slice []string, remove ...string) []string {
+	if len(remove) == 0 {
+		return slice
+	}
+	removeSet := make(map[string]bool, len(remove))
+	for _, r := range remove {
+		removeSet[r] = true
+	}
+	var result []string
+	for _, s := range slice {
+		if !removeSet[s] {
+			result = append(result, s)
 		}
 	}
 	return result
