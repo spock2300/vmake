@@ -42,7 +42,6 @@ type BuildContext struct {
 	ConfigPath    string
 	Requires      []api.RequireInfo
 	ResolvedPkgs  map[string]*repo.PackageDef
-	DepGraph      *repo.DependencyGraph
 }
 
 var RootCmd = &cobra.Command{
@@ -159,35 +158,35 @@ func PrepareFull() (*BuildContext, error) {
 		allRequires = append(allRequires, requires...)
 	}
 
+	var registry *repo.PackageRegistry
 	if len(allRequires) > 0 {
 		vlog.Info("")
-		vlog.Info("Resolving dependencies...")
+		vlog.Info("Collecting package declarations...")
 		reposDir := filepath.Join(vmakeDir, "repos")
 		cacheDir := filepath.Join(vmakeDir, "cache")
 		repoMgr := repo.NewRepoManager(reposDir)
 		loader := repo.NewPackageLoader(cacheDir)
 		resolver := repo.NewResolverWithLoader(repoMgr, loader)
 
-		graph, err := resolver.Resolve(allRequires)
+		registry, err = resolver.CollectDeclarations(allRequires)
 		if err != nil {
-			return nil, fmt.Errorf("failed to resolve dependencies: %w", err)
+			return nil, fmt.Errorf("failed to collect declarations: %w", err)
 		}
 
-		for _, name := range graph.Order {
+		for _, name := range registry.Order {
 			vlog.Info("  %s", name)
 		}
 
 		resolvedPkgs := make(map[string]*repo.PackageDef)
-		for name, rp := range graph.Packages {
+		for name, pkg := range registry.Definitions {
 			resolvedPkgs[name] = &repo.PackageDef{
 				Name: name,
 			}
-			if rp.Definition != nil {
-				resolvedPkgs[name].SetPackage(rp.Definition)
+			if pkg != nil {
+				resolvedPkgs[name].SetPackage(pkg)
 			}
 		}
 		ctx.ResolvedPkgs = resolvedPkgs
-		ctx.DepGraph = graph
 	}
 	ctx.Requires = allRequires
 
@@ -212,34 +211,12 @@ func PrepareFull() (*BuildContext, error) {
 		}
 	}
 
-	if len(ctx.ResolvedPkgs) > 0 {
+	if registry != nil {
 		vlog.Info("")
 		vlog.Info("Loading package definitions...")
-		for fullName, pkgDef := range ctx.ResolvedPkgs {
-			var pkg *api.Package
-			if pkgDef.Package != nil {
-				pkg = pkgDef.Package
-			} else {
-				parts := strings.Split(fullName, "/")
-				if len(parts) != 2 {
-					continue
-				}
-				repoName, pkgName := parts[0], parts[1]
-				reposDir := filepath.Join(vmakeDir, "repos")
-				repoMgr := repo.NewRepoManager(reposDir)
-				loader := repo.NewPackageLoader(filepath.Join(vmakeDir, "cache"))
-
-				pkgGoPath, err := repoMgr.FindPackageGo(repoName, pkgName)
-				if err != nil {
-					vlog.Error("  %s: %v", fullName, err)
-					continue
-				}
-
-				pkg, err = loader.Load(pkgGoPath)
-				if err != nil {
-					vlog.Error("  %s: failed to load: %v", fullName, err)
-					continue
-				}
+		for fullName, pkg := range registry.Definitions {
+			if pkg == nil {
+				continue
 			}
 
 			opts := pkg.GetOptions()

@@ -21,6 +21,11 @@ type ResolvedPackage struct {
 	Deps       []string
 }
 
+type PackageRegistry struct {
+	Definitions map[string]*api.Package
+	Order       []string
+}
+
 type Resolver struct {
 	repoMgr   *RepoManager
 	pkgLoader *PackageLoader
@@ -157,4 +162,68 @@ func (r *Resolver) parsePkgName(fullName string) string {
 		return parts[1]
 	}
 	return fullName
+}
+
+func (r *Resolver) CollectDeclarations(initial []api.RequireInfo) (*PackageRegistry, error) {
+	registry := &PackageRegistry{
+		Definitions: make(map[string]*api.Package),
+		Order:       []string{},
+	}
+
+	for _, req := range initial {
+		if err := r.collectRecursive(req.Name, registry, nil); err != nil {
+			return nil, err
+		}
+	}
+
+	return registry, nil
+}
+
+func (r *Resolver) collectRecursive(name string, registry *PackageRegistry, path []string) error {
+	for _, p := range path {
+		if p == name {
+			return fmt.Errorf("circular declaration: %s → ... → %s",
+				strings.Join(path, " → "), name)
+		}
+	}
+
+	if _, exists := registry.Definitions[name]; exists {
+		return nil
+	}
+
+	pkgPath, err := r.repoMgr.FindPackageGo(r.parseRepo(name), r.parsePkgName(name))
+	if err != nil {
+		return fmt.Errorf("failed to find package %s: %w", name, err)
+	}
+
+	var pkgDef *api.Package
+	if r.pkgLoader != nil {
+		pkgDef, err = r.pkgLoader.Load(pkgPath)
+		if err != nil {
+			return fmt.Errorf("failed to load package %s: %w", name, err)
+		}
+
+		for _, declared := range pkgDef.GetDeclaredPackages() {
+			if err := r.collectRecursive(declared, registry, append(path, name)); err != nil {
+				return err
+			}
+		}
+	}
+
+	registry.Definitions[name] = pkgDef
+	registry.Order = append(registry.Order, name)
+	return nil
+}
+
+func (r *Resolver) LoadDefinition(name string) (*api.Package, error) {
+	pkgPath, err := r.repoMgr.FindPackageGo(r.parseRepo(name), r.parsePkgName(name))
+	if err != nil {
+		return nil, fmt.Errorf("failed to find package %s: %w", name, err)
+	}
+
+	if r.pkgLoader == nil {
+		return nil, fmt.Errorf("no package loader configured")
+	}
+
+	return r.pkgLoader.Load(pkgPath)
 }

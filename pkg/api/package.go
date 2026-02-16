@@ -12,15 +12,16 @@ import (
 type PackageBuildFunc func(ctx *PackageContext)
 
 type Package struct {
-	git         string
-	homepage    string
-	description string
-	license     string
-	versions    map[string]string
-	options     map[string]*Option
-	requireCtx  *PackageRequireContext
-	buildFunc   PackageBuildFunc
-	libs        []string
+	git              string
+	homepage         string
+	description      string
+	license          string
+	versions         map[string]string
+	options          map[string]*Option
+	requireCtx       *PackageRequireContext
+	buildFunc        PackageBuildFunc
+	libs             []string
+	declaredPackages []string
 }
 
 func NewPackage() *Package {
@@ -80,6 +81,11 @@ func (p *Package) SetLibs(libs ...string) *Package {
 	return p
 }
 
+func (p *Package) DeclarePackages(packages ...string) *Package {
+	p.declaredPackages = append(p.declaredPackages, packages...)
+	return p
+}
+
 func (p *Package) Git() string                               { return p.git }
 func (p *Package) Homepage() string                          { return p.homepage }
 func (p *Package) Description() string                       { return p.description }
@@ -90,6 +96,7 @@ func (p *Package) GetRequireContext() *PackageRequireContext { return p.requireC
 func (p *Package) GetBuildFunc() PackageBuildFunc            { return p.buildFunc }
 func (p *Package) GetRef(version string) string              { return p.versions[version] }
 func (p *Package) Libs() []string                            { return p.libs }
+func (p *Package) GetDeclaredPackages() []string             { return p.declaredPackages }
 
 type InstalledPackage struct {
 	Name       string
@@ -99,6 +106,7 @@ type InstalledPackage struct {
 	LibDir     string
 	BinDir     string
 	Libs       []string
+	Deps       []string
 }
 
 func NewInstalledPackage(name, version, installDir string, libs []string) *InstalledPackage {
@@ -113,6 +121,10 @@ func NewInstalledPackage(name, version, installDir string, libs []string) *Insta
 	}
 }
 
+type OnDemandInstaller interface {
+	EnsureInstalled(name string) *InstalledPackage
+}
+
 type PackageContext struct {
 	pkgName    string
 	version    string
@@ -125,6 +137,7 @@ type PackageContext struct {
 	installDir string
 	targets    map[string]*Target
 	buildFunc  func(*Target) error
+	installer  OnDemandInstaller
 }
 
 func NewPackageContext(pkgName, version string, tc *Toolchain, cfgVals map[string]any) *PackageContext {
@@ -150,6 +163,10 @@ func (ctx *PackageContext) SetDeps(deps map[string]*InstalledPackage) {
 	ctx.deps = deps
 }
 
+func (ctx *PackageContext) SetInstaller(installer OnDemandInstaller) {
+	ctx.installer = installer
+}
+
 func (ctx *PackageContext) SetDirs(sourceDir, buildDir, installDir string) {
 	ctx.sourceDir = sourceDir
 	ctx.buildDir = buildDir
@@ -161,7 +178,17 @@ func (ctx *PackageContext) SetBuildFunc(fn func(*Target) error) {
 }
 
 func (ctx *PackageContext) Dep(name string) *InstalledPackage {
-	return ctx.deps[name]
+	if pkg, ok := ctx.deps[name]; ok {
+		return pkg
+	}
+	if ctx.installer != nil {
+		pkg := ctx.installer.EnsureInstalled(name)
+		if pkg != nil {
+			ctx.deps[name] = pkg
+		}
+		return pkg
+	}
+	return nil
 }
 
 func (ctx *PackageContext) Deps() map[string]*InstalledPackage {

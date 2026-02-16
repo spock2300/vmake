@@ -80,9 +80,11 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 	}
 
 	var pkgProvider *packageProvider
+	var registry *repo.PackageRegistry
+
 	if len(ctx.Requires) > 0 {
 		vlog.Info("")
-		vlog.Info("Installing packages...")
+		vlog.Info("Collecting package declarations...")
 
 		reposDir := filepath.Join(vmakeDir, "repos")
 		packagesDir := filepath.Join(vmakeDir, "packages")
@@ -91,14 +93,14 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 		repoMgr := repo.NewRepoManager(reposDir)
 		loader := repo.NewPackageLoader(cacheDir)
 		resolver := repo.NewResolverWithLoader(repoMgr, loader)
-		graph, err := resolver.Resolve(ctx.Requires)
+
+		registry, err = resolver.CollectDeclarations(ctx.Requires)
 		if err != nil {
 			return nil, err
 		}
 
-		constraints := make(map[string]string)
-		for _, req := range ctx.Requires {
-			constraints[req.Name] = req.Constraint
+		for _, name := range registry.Order {
+			vlog.Info("  %s", name)
 		}
 
 		configs := make(map[string]*repo.InstallConfig)
@@ -107,6 +109,12 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 			configs[req.Name] = &repo.InstallConfig{
 				Version: rc.Version,
 				Options: rc.Options,
+			}
+		}
+
+		for _, name := range registry.Order {
+			if _, ok := configs[name]; !ok {
+				configs[name] = &repo.InstallConfig{Options: make(map[string]any)}
 			}
 		}
 
@@ -123,64 +131,34 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 
 		sourceMgr := repo.NewSourceManager(cacheDir)
 		installer := repo.NewInstaller(sourceMgr, packagesDir, cacheDir)
+		installer.SetRepoManager(repoMgr)
+		installer.SetConfigs(configs)
+		installer.SetToolchain(apiTC)
 
-		for _, name := range graph.Order {
-			pkgResolved := graph.Packages[name]
-			if pkgResolved == nil {
-				continue
-			}
+		vlog.Info("")
+		vlog.Info("Installing packages...")
 
+		for _, req := range ctx.Requires {
+			name := req.Name
 			cfg := configs[name]
-			if cfg == nil {
-				cfg = &repo.InstallConfig{Options: make(map[string]any)}
-				configs[name] = cfg
+
+			pkgDef := repo.NewPackageDef(splitPackagePath(name)[0], splitPackagePath(name)[1])
+			if pkg, ok := registry.Definitions[name]; ok && pkg != nil {
+				pkgDef.SetPackage(pkg)
+				installer.SetPackage(name, pkg)
 			}
-
-			parts := splitPackagePath(name)
-			if len(parts) != 2 {
-				continue
-			}
-
-			pkg := pkgResolved.Definition
-			if pkg == nil {
-				pkgGoPath, err := repoMgr.FindPackageGo(parts[0], parts[1])
-				if err != nil {
-					return nil, err
-				}
-				pkg, err = loader.Load(pkgGoPath)
-				if err != nil {
-					return nil, err
-				}
-			}
-
-			installer.SetPackage(name, pkg)
-
-			pkgDef := repo.NewPackageDef(parts[0], parts[1])
-			pkgDef.SetPackage(pkg)
 
 			if cfg.Version == "" {
-				constraint := constraints[name]
-				selected, err := pkgDef.SelectVersion(constraint)
+				selected, err := pkgDef.SelectVersion(req.Constraint)
 				if err != nil {
 					return nil, err
 				}
 				cfg.Version = selected
 			}
 
-			if installer.IsInstalled(name, cfg.Version, apiTC, cfg.Options) {
-				vlog.Info("  %s (cached)", name)
-				continue
-			}
-
-			vlog.Info("  %s...", name)
-
-			sourceDir, err := sourceMgr.EnsureSource(pkgDef, cfg.Version)
-			if err != nil {
-				return nil, err
-			}
-
-			if err := installer.InstallPackage(pkgDef, cfg, apiTC, graph, sourceDir, configs); err != nil {
-				return nil, err
+			installedPkg := installer.EnsureInstalled(name)
+			if installedPkg != nil {
+				vlog.Info("  %s@%s", name, cfg.Version)
 			}
 		}
 
@@ -194,7 +172,6 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 			config:    ctx.Config,
 			tc:        apiTC,
 			versions:  versions,
-			graph:     graph,
 		}
 	}
 
@@ -281,7 +258,6 @@ type packageProvider struct {
 	config    *config.ConfigFile
 	tc        *api.Toolchain
 	versions  map[string]string
-	graph     *repo.DependencyGraph
 }
 
 func (p *packageProvider) GetInstalledPackage(name string) *api.InstalledPackage {
@@ -294,32 +270,29 @@ func (p *packageProvider) GetInstalledPackage(name string) *api.InstalledPackage
 }
 
 func (p *packageProvider) GetTransitivePackageNames(name string) []string {
-	if p.graph == nil {
-		return []string{name}
-	}
-
 	visited := make(map[string]bool)
+	var order []string
+
 	var collect func(string)
 	collect = func(n string) {
 		if visited[n] {
 			return
 		}
 		visited[n] = true
-		pkg := p.graph.Packages[n]
+
+		pkg := p.GetInstalledPackage(n)
 		if pkg != nil {
 			for _, dep := range pkg.Deps {
 				collect(dep)
 			}
 		}
+		order = append(order, n)
 	}
 	collect(name)
 
 	var result []string
-	for i := len(p.graph.Order) - 1; i >= 0; i-- {
-		n := p.graph.Order[i]
-		if visited[n] {
-			result = append(result, n)
-		}
+	for i := len(order) - 1; i >= 0; i-- {
+		result = append(result, order[i])
 	}
 	return result
 }

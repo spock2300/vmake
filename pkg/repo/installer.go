@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,6 +19,11 @@ type Installer struct {
 	packagesDir string
 	loader      *PackageLoader
 	pkgs        map[string]*api.Package
+	repoMgr     *RepoManager
+	configs     map[string]*InstallConfig
+	tc          *api.Toolchain
+	installed   map[string]*api.InstalledPackage
+	installing  map[string]bool
 }
 
 func NewInstaller(sourceMgr *SourceManager, packagesDir, cacheDir string) *Installer {
@@ -26,7 +32,21 @@ func NewInstaller(sourceMgr *SourceManager, packagesDir, cacheDir string) *Insta
 		packagesDir: packagesDir,
 		loader:      NewPackageLoader(cacheDir),
 		pkgs:        make(map[string]*api.Package),
+		installed:   make(map[string]*api.InstalledPackage),
+		installing:  make(map[string]bool),
 	}
+}
+
+func (i *Installer) SetRepoManager(mgr *RepoManager) {
+	i.repoMgr = mgr
+}
+
+func (i *Installer) SetConfigs(configs map[string]*InstallConfig) {
+	i.configs = configs
+}
+
+func (i *Installer) SetToolchain(tc *api.Toolchain) {
+	i.tc = tc
 }
 
 func (i *Installer) SetPackage(name string, pkg *api.Package) {
@@ -166,6 +186,10 @@ func (i *Installer) exists(path string) bool {
 }
 
 func (i *Installer) GetInstalledPackage(name, version string, tc *api.Toolchain, options map[string]any) *api.InstalledPackage {
+	if pkg, ok := i.installed[name]; ok {
+		return pkg
+	}
+
 	installDir := i.GetInstallDir(name, version, tc, options)
 	if !i.hasInstalledFiles(installDir) {
 		return nil
@@ -174,5 +198,190 @@ func (i *Installer) GetInstalledPackage(name, version string, tc *api.Toolchain,
 	if pkg, ok := i.pkgs[name]; ok {
 		libs = pkg.Libs()
 	}
-	return api.NewInstalledPackage(name, version, installDir, libs)
+
+	pkg := api.NewInstalledPackage(name, version, installDir, libs)
+	pkg.Deps = i.loadDeps(installDir)
+	i.installed[name] = pkg
+	return pkg
+}
+
+func (i *Installer) loadDeps(installDir string) []string {
+	metaPath := filepath.Join(installDir, "vmake.json")
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		return nil
+	}
+
+	var meta struct {
+		Deps []string `json:"deps"`
+	}
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return nil
+	}
+	return meta.Deps
+}
+
+func (i *Installer) saveDeps(installDir string, deps []string) {
+	meta := struct {
+		Deps []string `json:"deps"`
+	}{Deps: deps}
+
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return
+	}
+	metaPath := filepath.Join(installDir, "vmake.json")
+	os.WriteFile(metaPath, data, 0644)
+}
+
+func (i *Installer) EnsureInstalled(name string) *api.InstalledPackage {
+	if pkg, ok := i.installed[name]; ok {
+		return pkg
+	}
+
+	if i.installing[name] {
+		return nil
+	}
+	i.installing[name] = true
+	defer delete(i.installing, name)
+
+	if i.repoMgr == nil || i.tc == nil {
+		return nil
+	}
+
+	pkgDef := NewPackageDef(i.parseRepo(name), i.parsePkgName(name))
+	pkgPath, err := i.repoMgr.FindPackageGo(pkgDef.Repo, pkgDef.Name)
+	if err != nil {
+		return nil
+	}
+
+	pkg, err := i.loader.Load(pkgPath)
+	if err != nil {
+		return nil
+	}
+	pkgDef.SetPackage(pkg)
+	i.pkgs[name] = pkg
+
+	config := i.configs[name]
+	if config == nil {
+		config = &InstallConfig{Options: make(map[string]any)}
+		i.configs[name] = config
+	}
+
+	if config.Version == "" {
+		selected, err := pkgDef.SelectVersion("")
+		if err != nil {
+			return nil
+		}
+		config.Version = selected
+	}
+
+	if i.IsInstalled(name, config.Version, i.tc, config.Options) {
+		installDir := i.GetInstallDir(name, config.Version, i.tc, config.Options)
+		installedPkg := api.NewInstalledPackage(name, config.Version, installDir, pkg.Libs())
+		installedPkg.Deps = i.loadDeps(installDir)
+		for _, depName := range installedPkg.Deps {
+			i.EnsureInstalled(depName)
+		}
+		i.installed[name] = installedPkg
+		return installedPkg
+	}
+
+	sourceDir, err := i.sourceMgr.EnsureSource(pkgDef, config.Version)
+	if err != nil {
+		return nil
+	}
+
+	installedPkg, err := i.doInstall(pkgDef, config, sourceDir)
+	if err != nil {
+		return nil
+	}
+
+	i.installed[name] = installedPkg
+	return installedPkg
+}
+
+func (i *Installer) doInstall(pkgDef *PackageDef, config *InstallConfig, sourceDir string) (*api.InstalledPackage, error) {
+	mode := "release"
+	cacheHash := CacheHash(i.tc.CC, mode, config.Options)
+
+	installDir := filepath.Join(i.packagesDir, pkgDef.FullName(), config.Version, cacheHash, "install")
+	buildDir := filepath.Join(i.packagesDir, pkgDef.FullName(), config.Version, cacheHash, "build")
+
+	if i.hasInstalledFiles(installDir) {
+		pkg := api.NewInstalledPackage(pkgDef.FullName(), config.Version, installDir, pkgDef.Package.Libs())
+		pkg.Deps = i.loadDeps(installDir)
+		return pkg, nil
+	}
+
+	if err := os.MkdirAll(buildDir, 0755); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(installDir, 0755); err != nil {
+		return nil, err
+	}
+
+	pkg := pkgDef.Package
+	if pkg == nil {
+		return nil, fmt.Errorf("package definition has no Package loaded")
+	}
+
+	buildFunc := pkg.GetBuildFunc()
+	if buildFunc == nil {
+		return api.NewInstalledPackage(pkgDef.FullName(), config.Version, installDir, pkg.Libs()), nil
+	}
+
+	opts := pkg.GetOptions()
+	cfgVals := make(map[string]any)
+	for name, opt := range opts {
+		if opt.Default() != nil {
+			cfgVals[name] = opt.Default()
+		}
+	}
+	for k, v := range config.Options {
+		cfgVals[k] = v
+	}
+
+	pkgCtx := api.NewPackageContext(pkgDef.Name, config.Version, i.tc, cfgVals)
+	pkgCtx.SetOptions(opts)
+	pkgCtx.SetDirs(sourceDir, buildDir, installDir)
+	pkgCtx.SetInstaller(i)
+
+	buildFunc(pkgCtx)
+
+	var deps []string
+	for depName := range pkgCtx.Deps() {
+		deps = append(deps, depName)
+	}
+
+	i.saveDeps(installDir, deps)
+
+	installedPkg := api.NewInstalledPackage(pkgDef.FullName(), config.Version, installDir, pkg.Libs())
+	installedPkg.Deps = deps
+	return installedPkg, nil
+}
+
+func (i *Installer) parseRepo(fullName string) string {
+	parts := splitPackagePath(fullName)
+	if len(parts) >= 1 {
+		return parts[0]
+	}
+	return ""
+}
+
+func (i *Installer) parsePkgName(fullName string) string {
+	parts := splitPackagePath(fullName)
+	if len(parts) >= 2 {
+		return parts[1]
+	}
+	return fullName
+}
+
+func splitPackagePath(path string) []string {
+	for i := 0; i < len(path); i++ {
+		if path[i] == '/' {
+			return []string{path[:i], path[i+1:]}
+		}
+	}
+	return nil
 }
