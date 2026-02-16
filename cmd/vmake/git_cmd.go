@@ -29,10 +29,10 @@ var gitTagCmd = &cobra.Command{
 	Long: `Create a new version tag, move the 'latest' tag to point to it, and push to remote.
 
 Examples:
-  vmake git tag              Bump patch version (1.0.0 -> 1.0.1)
-  vmake git tag --minor      Bump minor version (1.0.0 -> 1.1.0)
-  vmake git tag --major      Bump major version (1.0.0 -> 2.0.0)
-  vmake git tag 1.2.3        Create specific version
+  vmake git tag              Bump patch version (v1.0.0 -> v1.0.1)
+  vmake git tag --minor      Bump minor version (v1.0.0 -> v1.1.0)
+  vmake git tag --major      Bump major version (v1.0.0 -> v2.0.0)
+  vmake git tag v1.2.3       Create specific version
   vmake git tag --no-push    Create tags without pushing`,
 	Args: cobra.MaximumNArgs(1),
 	Run:  runGitTag,
@@ -56,8 +56,9 @@ func runGitTag(cmd *cobra.Command, args []string) {
 
 	var newVersion string
 	if len(args) > 0 {
-		newVersion = args[0]
-		if err := validateVersion(newVersion); err != nil {
+		var err error
+		newVersion, err = normalizeVersion(args[0])
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -134,24 +135,29 @@ func getLatestTag() (string, error) {
 		}
 	}
 
-	return "0.0.0", nil
+	return "v0.0.0", nil
 }
 
 func isValidVersion(s string) bool {
-	matched, _ := regexp.MatchString(`^\d+\.\d+\.\d+$`, s)
+	matched, _ := regexp.MatchString(`^v\d+\.\d+\.\d+$`, s)
 	return matched
 }
 
-func validateVersion(s string) error {
-	if !isValidVersion(s) {
-		return fmt.Errorf("invalid version format '%s', expected X.Y.Z", s)
+func normalizeVersion(s string) (string, error) {
+	matched, _ := regexp.MatchString(`^v?\d+\.\d+\.\d+$`, s)
+	if !matched {
+		return "", fmt.Errorf("invalid version format '%s', expected vX.Y.Z", s)
 	}
-	return nil
+	if !strings.HasPrefix(s, "v") {
+		s = "v" + s
+	}
+	return s, nil
 }
 
 func bumpVersion(tag string, major, minor bool) (string, error) {
+	tag = strings.TrimPrefix(tag, "v")
 	if tag == "0.0.0" {
-		return "0.0.1", nil
+		return "v0.0.1", nil
 	}
 
 	parts := strings.Split(tag, ".")
@@ -174,7 +180,7 @@ func bumpVersion(tag string, major, minor bool) (string, error) {
 		patchNum++
 	}
 
-	return fmt.Sprintf("%d.%d.%d", majorNum, minorNum, patchNum), nil
+	return fmt.Sprintf("v%d.%d.%d", majorNum, minorNum, patchNum), nil
 }
 
 func createAnnotatedTag(version, msg string) error {
