@@ -101,11 +101,3 @@ var repoUpdateCmd = &cobra.Command{
 		fmt.Printf("Updated repository '%s'\n", name)
 	},
 }
-
-func init() {
-	repoCmd.AddCommand(repoAddCmd)
-	repoCmd.AddCommand(repoRemoveCmd)
-	repoCmd.AddCommand(repoListCmd)
-	repoCmd.AddCommand(repoUpdateCmd)
-	RootCmd.AddCommand(repoCmd)
-}
