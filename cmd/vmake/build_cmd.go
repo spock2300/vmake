@@ -95,9 +95,6 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 			return nil, err
 		}
 
-		loader := repo.NewPackageLoader(cacheDir)
-		loader.SetVMakeDir(getVMakeSourceDir())
-
 		constraints := make(map[string]string)
 		for _, req := range ctx.Requires {
 			constraints[req.Name] = req.Constraint
@@ -148,7 +145,6 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 			}
 
 			loader := repo.NewPackageLoader(cacheDir)
-			loader.SetVMakeDir(getVMakeSourceDir())
 			pkg, err := loader.Load(pkgGoPath)
 			if err != nil {
 				return nil, err

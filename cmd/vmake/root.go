@@ -210,7 +210,6 @@ func PrepareFull() (*BuildContext, error) {
 		vlog.Info("Loading package definitions...")
 		reposDir := filepath.Join(vmakeDir, "repos")
 		loader := repo.NewPackageLoader(filepath.Join(vmakeDir, "cache"))
-		loader.SetVMakeDir(getVMakeSourceDir())
 		repoMgr := repo.NewRepoManager(reposDir)
 
 		for fullName := range ctx.ResolvedPkgs {
