@@ -350,7 +350,10 @@ func (ctx *PackageContext) Run(name string, args ...string) error {
 	cmd.Dir = ctx.buildDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		vlog.Fatal("command failed: %s %s", name, strings.Join(args, " "))
+	}
+	return nil
 }
 
 func (ctx *PackageContext) RunIn(dir, name string, args ...string) error {
@@ -359,7 +362,10 @@ func (ctx *PackageContext) RunIn(dir, name string, args ...string) error {
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		vlog.Fatal("command failed: %s %s", name, strings.Join(args, " "))
+	}
+	return nil
 }
 
 func (ctx *PackageContext) RunWithEnv(env map[string]string, name string, args ...string) error {
@@ -372,7 +378,10 @@ func (ctx *PackageContext) RunWithEnv(env map[string]string, name string, args .
 	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		vlog.Fatal("command failed: %s %s", name, strings.Join(args, " "))
+	}
+	return nil
 }
 
 func (ctx *PackageContext) CopyDir(src, dest string) error {
