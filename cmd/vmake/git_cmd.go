@@ -49,7 +49,7 @@ func init() {
 }
 
 func runGitTag(cmd *cobra.Command, args []string) {
-	if err := checkGitClean(); err != nil {
+	if err := checkStagedChanges(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -105,14 +105,10 @@ func runGitTag(cmd *cobra.Command, args []string) {
 	fmt.Printf("Done!\n")
 }
 
-func checkGitClean() error {
-	cmd := exec.Command("git", "status", "--porcelain")
-	output, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("failed to check git status: %w", err)
-	}
-	if len(output) > 0 {
-		return fmt.Errorf("working directory is not clean, please commit or stash changes first")
+func checkStagedChanges() error {
+	cmd := exec.Command("git", "diff", "--cached", "--quiet")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("staging area has uncommitted changes, please commit first")
 	}
 	return nil
 }
