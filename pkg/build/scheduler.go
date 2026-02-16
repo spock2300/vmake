@@ -40,6 +40,7 @@ type PkgInfo struct {
 
 type PackageProvider interface {
 	GetInstalledPackage(name string) *api.InstalledPackage
+	GetTransitivePackageNames(name string) []string
 }
 
 type Scheduler struct {
@@ -271,18 +272,21 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 
 	if s.pkgProvider != nil {
 		for _, pkgRef := range node.Target.Packages() {
-			pkg := s.pkgProvider.GetInstalledPackage(pkgRef)
-			if pkg != nil {
-				resolved.AllIncludes = append(resolved.AllIncludes, pkg.IncludeDir)
-				resolved.AllLdFlags = append(resolved.AllLdFlags, "-L"+pkg.LibDir)
-				if len(pkg.Libs) > 0 {
-					for _, lib := range pkg.Libs {
-						resolved.AllLdFlags = append(resolved.AllLdFlags, "-l"+lib)
+			allPkgNames := s.pkgProvider.GetTransitivePackageNames(pkgRef)
+			for _, name := range allPkgNames {
+				pkg := s.pkgProvider.GetInstalledPackage(name)
+				if pkg != nil {
+					resolved.AllIncludes = append(resolved.AllIncludes, pkg.IncludeDir)
+					resolved.AllLdFlags = append(resolved.AllLdFlags, "-L"+pkg.LibDir)
+					if len(pkg.Libs) > 0 {
+						for _, lib := range pkg.Libs {
+							resolved.AllLdFlags = append(resolved.AllLdFlags, "-l"+lib)
+						}
+					} else {
+						parts := strings.Split(name, "/")
+						libName := parts[len(parts)-1]
+						resolved.AllLdFlags = append(resolved.AllLdFlags, "-l"+libName)
 					}
-				} else {
-					parts := strings.Split(pkgRef, "/")
-					libName := parts[len(parts)-1]
-					resolved.AllLdFlags = append(resolved.AllLdFlags, "-l"+libName)
 				}
 			}
 		}

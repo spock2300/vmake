@@ -22,11 +22,16 @@ type ResolvedPackage struct {
 }
 
 type Resolver struct {
-	repoMgr *RepoManager
+	repoMgr   *RepoManager
+	pkgLoader *PackageLoader
 }
 
 func NewResolver(repoMgr *RepoManager) *Resolver {
 	return &Resolver{repoMgr: repoMgr}
+}
+
+func NewResolverWithLoader(repoMgr *RepoManager, loader *PackageLoader) *Resolver {
+	return &Resolver{repoMgr: repoMgr, pkgLoader: loader}
 }
 
 func (r *Resolver) Resolve(initial []api.RequireInfo) (*DependencyGraph, error) {
@@ -59,20 +64,34 @@ func (r *Resolver) resolveRecursive(req api.RequireInfo, graph *DependencyGraph,
 		return nil
 	}
 
-	pkgPath, err := r.repoMgr.FindPackage(r.parseRepo(name), r.parsePkgName(name))
+	pkgPath, err := r.repoMgr.FindPackageGo(r.parseRepo(name), r.parsePkgName(name))
 	if err != nil {
 		return fmt.Errorf("failed to find package %s: %w", name, err)
 	}
 
-	_ = pkgPath
+	var subDeps []string
+	var pkgDef *api.Package
 
-	subDeps := []string{}
+	if r.pkgLoader != nil {
+		pkgDef, err = r.pkgLoader.Load(pkgPath)
+		if err != nil {
+			return fmt.Errorf("failed to load package %s: %w", name, err)
+		}
+
+		requireCtx := pkgDef.GetRequireContext()
+		for _, dep := range requireCtx.GetRequires() {
+			if err := r.resolveRecursive(dep, graph, append(path, name)); err != nil {
+				return err
+			}
+			subDeps = append(subDeps, dep.Name)
+		}
+	}
 
 	graph.Packages[name] = &ResolvedPackage{
 		Name:       name,
 		Constraint: req.Constraint,
 		Options:    make(map[string]any),
-		Definition: nil,
+		Definition: pkgDef,
 		Deps:       subDeps,
 	}
 

@@ -77,7 +77,7 @@ func (i *Installer) installPackage(pkg *ResolvedPackage, config *InstallConfig, 
 	return nil
 }
 
-func (i *Installer) InstallPackage(pkgDef *PackageDef, config *InstallConfig, tc *api.Toolchain, graph *DependencyGraph, sourceDir string) error {
+func (i *Installer) InstallPackage(pkgDef *PackageDef, config *InstallConfig, tc *api.Toolchain, graph *DependencyGraph, sourceDir string, configs map[string]*InstallConfig) error {
 	mode := "release"
 	cacheHash := CacheHash(tc.CC, mode, config.Options)
 
@@ -122,9 +122,13 @@ func (i *Installer) InstallPackage(pkgDef *PackageDef, config *InstallConfig, tc
 
 	for _, depName := range graph.Order {
 		if _, ok := graph.Packages[depName]; ok && depName != pkgDef.Name {
-			depInstallDir := i.GetInstallDir(depName, config.Version, tc, config.Options)
+			depCfg := configs[depName]
+			if depCfg == nil {
+				depCfg = &InstallConfig{Version: "", Options: make(map[string]any)}
+			}
+			depInstallDir := i.GetInstallDir(depName, depCfg.Version, tc, depCfg.Options)
 			if i.exists(depInstallDir) {
-				pkgCtx.Deps()[depName] = api.NewInstalledPackage(depName, config.Version, depInstallDir, nil)
+				pkgCtx.Deps()[depName] = api.NewInstalledPackage(depName, depCfg.Version, depInstallDir, nil)
 			}
 		}
 	}

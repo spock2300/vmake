@@ -42,6 +42,7 @@ type BuildContext struct {
 	ConfigPath    string
 	Requires      []api.RequireInfo
 	ResolvedPkgs  map[string]*repo.PackageDef
+	DepGraph      *repo.DependencyGraph
 }
 
 var RootCmd = &cobra.Command{
@@ -162,8 +163,10 @@ func PrepareFull() (*BuildContext, error) {
 		vlog.Info("")
 		vlog.Info("Resolving dependencies...")
 		reposDir := filepath.Join(vmakeDir, "repos")
+		cacheDir := filepath.Join(vmakeDir, "cache")
 		repoMgr := repo.NewRepoManager(reposDir)
-		resolver := repo.NewResolver(repoMgr)
+		loader := repo.NewPackageLoader(cacheDir)
+		resolver := repo.NewResolverWithLoader(repoMgr, loader)
 
 		graph, err := resolver.Resolve(allRequires)
 		if err != nil {
@@ -175,12 +178,16 @@ func PrepareFull() (*BuildContext, error) {
 		}
 
 		resolvedPkgs := make(map[string]*repo.PackageDef)
-		for name := range graph.Packages {
+		for name, rp := range graph.Packages {
 			resolvedPkgs[name] = &repo.PackageDef{
 				Name: name,
 			}
+			if rp.Definition != nil {
+				resolvedPkgs[name].SetPackage(rp.Definition)
+			}
 		}
 		ctx.ResolvedPkgs = resolvedPkgs
+		ctx.DepGraph = graph
 	}
 	ctx.Requires = allRequires
 
@@ -208,27 +215,31 @@ func PrepareFull() (*BuildContext, error) {
 	if len(ctx.ResolvedPkgs) > 0 {
 		vlog.Info("")
 		vlog.Info("Loading package definitions...")
-		reposDir := filepath.Join(vmakeDir, "repos")
-		loader := repo.NewPackageLoader(filepath.Join(vmakeDir, "cache"))
-		repoMgr := repo.NewRepoManager(reposDir)
+		for fullName, pkgDef := range ctx.ResolvedPkgs {
+			var pkg *api.Package
+			if pkgDef.Package != nil {
+				pkg = pkgDef.Package
+			} else {
+				parts := strings.Split(fullName, "/")
+				if len(parts) != 2 {
+					continue
+				}
+				repoName, pkgName := parts[0], parts[1]
+				reposDir := filepath.Join(vmakeDir, "repos")
+				repoMgr := repo.NewRepoManager(reposDir)
+				loader := repo.NewPackageLoader(filepath.Join(vmakeDir, "cache"))
 
-		for fullName := range ctx.ResolvedPkgs {
-			parts := strings.Split(fullName, "/")
-			if len(parts) != 2 {
-				continue
-			}
-			repoName, pkgName := parts[0], parts[1]
+				pkgGoPath, err := repoMgr.FindPackageGo(repoName, pkgName)
+				if err != nil {
+					vlog.Error("  %s: %v", fullName, err)
+					continue
+				}
 
-			pkgGoPath, err := repoMgr.FindPackageGo(repoName, pkgName)
-			if err != nil {
-				vlog.Error("  %s: %v", fullName, err)
-				continue
-			}
-
-			pkg, err := loader.Load(pkgGoPath)
-			if err != nil {
-				vlog.Error("  %s: failed to load: %v", fullName, err)
-				continue
+				pkg, err = loader.Load(pkgGoPath)
+				if err != nil {
+					vlog.Error("  %s: failed to load: %v", fullName, err)
+					continue
+				}
 			}
 
 			opts := pkg.GetOptions()

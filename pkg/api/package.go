@@ -1,8 +1,12 @@
 package api
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+
+	vlog "gitee.com/spock2300/vmake/pkg/log"
 )
 
 type PackageBuildFunc func(ctx *PackageContext)
@@ -314,24 +318,33 @@ func (ctx *PackageContext) Make(args ...string) error {
 }
 
 func (ctx *PackageContext) Run(name string, args ...string) error {
+	vlog.Info("  %s %s", name, strings.Join(args, " "))
 	cmd := exec.Command(name, args...)
 	cmd.Dir = ctx.buildDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
 func (ctx *PackageContext) RunIn(dir, name string, args ...string) error {
+	vlog.Info("  cd %s && %s %s", dir, name, strings.Join(args, " "))
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
 func (ctx *PackageContext) RunWithEnv(env map[string]string, name string, args ...string) error {
+	vlog.Info("  %s %s", name, strings.Join(args, " "))
 	cmd := exec.Command(name, args...)
 	cmd.Dir = ctx.buildDir
 	cmd.Env = append(cmd.Environ())
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 

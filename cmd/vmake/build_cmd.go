@@ -89,7 +89,8 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 		cacheDir := filepath.Join(vmakeDir, "cache")
 
 		repoMgr := repo.NewRepoManager(reposDir)
-		resolver := repo.NewResolver(repoMgr)
+		loader := repo.NewPackageLoader(cacheDir)
+		resolver := repo.NewResolverWithLoader(repoMgr, loader)
 		graph, err := resolver.Resolve(ctx.Requires)
 		if err != nil {
 			return nil, err
@@ -132,6 +133,7 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 			cfg := configs[name]
 			if cfg == nil {
 				cfg = &repo.InstallConfig{Options: make(map[string]any)}
+				configs[name] = cfg
 			}
 
 			parts := splitPackagePath(name)
@@ -139,15 +141,16 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 				continue
 			}
 
-			pkgGoPath, err := repoMgr.FindPackageGo(parts[0], parts[1])
-			if err != nil {
-				return nil, err
-			}
-
-			loader := repo.NewPackageLoader(cacheDir)
-			pkg, err := loader.Load(pkgGoPath)
-			if err != nil {
-				return nil, err
+			pkg := pkgResolved.Definition
+			if pkg == nil {
+				pkgGoPath, err := repoMgr.FindPackageGo(parts[0], parts[1])
+				if err != nil {
+					return nil, err
+				}
+				pkg, err = loader.Load(pkgGoPath)
+				if err != nil {
+					return nil, err
+				}
 			}
 
 			installer.SetPackage(name, pkg)
@@ -176,7 +179,7 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 				return nil, err
 			}
 
-			if err := installer.InstallPackage(pkgDef, cfg, apiTC, graph, sourceDir); err != nil {
+			if err := installer.InstallPackage(pkgDef, cfg, apiTC, graph, sourceDir, configs); err != nil {
 				return nil, err
 			}
 		}
@@ -191,6 +194,7 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 			config:    ctx.Config,
 			tc:        apiTC,
 			versions:  versions,
+			graph:     graph,
 		}
 	}
 
@@ -277,6 +281,7 @@ type packageProvider struct {
 	config    *config.ConfigFile
 	tc        *api.Toolchain
 	versions  map[string]string
+	graph     *repo.DependencyGraph
 }
 
 func (p *packageProvider) GetInstalledPackage(name string) *api.InstalledPackage {
@@ -286,6 +291,37 @@ func (p *packageProvider) GetInstalledPackage(name string) *api.InstalledPackage
 		version = p.versions[name]
 	}
 	return p.installer.GetInstalledPackage(name, version, p.tc, rc.Options)
+}
+
+func (p *packageProvider) GetTransitivePackageNames(name string) []string {
+	if p.graph == nil {
+		return []string{name}
+	}
+
+	visited := make(map[string]bool)
+	var collect func(string)
+	collect = func(n string) {
+		if visited[n] {
+			return
+		}
+		visited[n] = true
+		pkg := p.graph.Packages[n]
+		if pkg != nil {
+			for _, dep := range pkg.Deps {
+				collect(dep)
+			}
+		}
+	}
+	collect(name)
+
+	var result []string
+	for i := len(p.graph.Order) - 1; i >= 0; i-- {
+		n := p.graph.Order[i]
+		if visited[n] {
+			result = append(result, n)
+		}
+	}
+	return result
 }
 
 func splitPackagePath(path string) []string {
