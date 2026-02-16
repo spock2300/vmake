@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 
+	"gitee.com/spock2300/vmake/pkg/version"
 	"github.com/spf13/cobra"
 )
 
@@ -26,15 +27,15 @@ func init() {
 }
 
 func runUpdate(cmd *cobra.Command, args []string) {
-	version := "latest"
+	targetVer := "latest"
 	if len(args) > 0 {
-		version = args[0]
+		targetVer = args[0]
 	}
 
-	fmt.Printf("Current version: %s\n", Version)
-	fmt.Printf("Installing vmake@%s...\n", version)
+	fmt.Printf("Current version: %s\n", version.Version)
+	fmt.Printf("Installing vmake@%s...\n", targetVer)
 
-	pkg := fmt.Sprintf("gitee.com/spock2300/vmake/cmd/vmake@%s", version)
+	pkg := fmt.Sprintf("gitee.com/spock2300/vmake/cmd/vmake@%s", targetVer)
 
 	goCmd, err := exec.LookPath("go")
 	if err != nil {
@@ -51,5 +52,5 @@ func runUpdate(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("Update to %s completed!\n", version)
+	fmt.Printf("Update to %s completed!\n", targetVer)
 }
