@@ -21,7 +21,7 @@ type LoadResult struct {
 }
 
 func Load(pluginPath string, pkg Package) LoadResult {
-	p, err := plugin.Open(pluginPath)
+	p, err := GlobalManager.Open(pluginPath)
 	if err != nil {
 		return LoadResult{
 			Package: pkg,
