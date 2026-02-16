@@ -107,6 +107,11 @@ func (i *Installer) InstallPackage(pkgDef *PackageDef, config *InstallConfig, tc
 
 	opts := pkg.GetOptions()
 	cfgVals := make(map[string]any)
+	for name, opt := range opts {
+		if opt.Default() != nil {
+			cfgVals[name] = opt.Default()
+		}
+	}
 	for k, v := range config.Options {
 		cfgVals[k] = v
 	}

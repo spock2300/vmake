@@ -95,7 +95,7 @@ func NewModel(
 	}
 	m.origValues = deepCopyValues(values)
 	m.origGlobal = deepCopyGlobal(globalValues)
-	m.tree = buildTree(packages, workDir)
+	m.tree = buildTreeWithPackages(packages, workDir, options)
 
 	if len(m.tree) > 0 {
 		m.selectFirstPkg()
