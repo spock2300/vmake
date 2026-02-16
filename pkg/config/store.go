@@ -12,6 +12,7 @@ type ConfigFile struct {
 	Version  string                    `json:"version"`
 	Global   *GlobalConfig             `json:"global,omitempty"`
 	Packages map[string]*PackageConfig `json:"packages"`
+	Requires map[string]*RequireConfig `json:"requires,omitempty"`
 }
 
 type GlobalConfig struct {
@@ -24,11 +25,17 @@ type PackageConfig struct {
 	Options map[string]any `json:"options"`
 }
 
+type RequireConfig struct {
+	Version string         `json:"version"`
+	Options map[string]any `json:"options,omitempty"`
+}
+
 func newConfigFile() *ConfigFile {
 	return &ConfigFile{
 		Version:  ConfigVersion,
 		Global:   &GlobalConfig{Options: make(map[string]any)},
 		Packages: make(map[string]*PackageConfig),
+		Requires: make(map[string]*RequireConfig),
 	}
 }
 
@@ -82,6 +89,21 @@ func Load(path string) (*ConfigFile, error) {
 					pc.Options = opts
 				}
 				cfg.Packages[name] = pc
+			}
+		}
+	}
+
+	if reqs, ok := raw["requires"].(map[string]any); ok {
+		for name, r := range reqs {
+			if rm, ok := r.(map[string]any); ok {
+				rc := &RequireConfig{Options: make(map[string]any)}
+				if ver, ok := rm["version"].(string); ok {
+					rc.Version = ver
+				}
+				if opts, ok := rm["options"].(map[string]any); ok {
+					rc.Options = opts
+				}
+				cfg.Requires[name] = rc
 			}
 		}
 	}
@@ -145,4 +167,28 @@ func SetGlobalOption(cfg *ConfigFile, name string, value any) {
 		cfg.Global.Options = make(map[string]any)
 	}
 	cfg.Global.Options[name] = value
+}
+
+func GetRequireConfig(cfg *ConfigFile, pkgName string) *RequireConfig {
+	if cfg.Requires == nil {
+		return &RequireConfig{Options: make(map[string]any)}
+	}
+
+	rc, ok := cfg.Requires[pkgName]
+	if !ok {
+		return &RequireConfig{Options: make(map[string]any)}
+	}
+
+	if rc.Options == nil {
+		rc.Options = make(map[string]any)
+	}
+
+	return rc
+}
+
+func SetRequireConfig(cfg *ConfigFile, pkgName string, rc *RequireConfig) {
+	if cfg.Requires == nil {
+		cfg.Requires = make(map[string]*RequireConfig)
+	}
+	cfg.Requires[pkgName] = rc
 }

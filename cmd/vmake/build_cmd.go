@@ -2,11 +2,14 @@ package main
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/build"
 	"gitee.com/spock2300/vmake/pkg/config"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
+	"gitee.com/spock2300/vmake/pkg/repo"
 
 	"github.com/spf13/cobra"
 )
@@ -71,6 +74,130 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 		mode = api.ModeDebug
 	}
 
+	tc, tcName, err := GetToolchain(ctx.Config)
+	if err != nil {
+		return nil, err
+	}
+
+	var pkgProvider *packageProvider
+	if len(ctx.Requires) > 0 {
+		vlog.Info("")
+		vlog.Info("Installing packages...")
+
+		reposDir := filepath.Join(vmakeDir, "repos")
+		packagesDir := filepath.Join(vmakeDir, "packages")
+		cacheDir := filepath.Join(vmakeDir, "cache")
+
+		repoMgr := repo.NewRepoManager(reposDir)
+		resolver := repo.NewResolver(repoMgr)
+		graph, err := resolver.Resolve(ctx.Requires)
+		if err != nil {
+			return nil, err
+		}
+
+		loader := repo.NewPackageLoader(cacheDir)
+		loader.SetVMakeDir(getVMakeSourceDir())
+
+		constraints := make(map[string]string)
+		for _, req := range ctx.Requires {
+			constraints[req.Name] = req.Constraint
+		}
+
+		configs := make(map[string]*repo.InstallConfig)
+		for _, req := range ctx.Requires {
+			rc := config.GetRequireConfig(ctx.Config, req.Name)
+			configs[req.Name] = &repo.InstallConfig{
+				Version: rc.Version,
+				Options: rc.Options,
+			}
+		}
+
+		apiTC := &api.Toolchain{
+			CC:       tc.Tools.CC,
+			CXX:      tc.Tools.CXX,
+			AR:       tc.Tools.AR,
+			Target:   tc.Host,
+			SysRoot:  "",
+			CFlags:   strings.Join(tc.DefaultFlags.CFlags, " "),
+			CXXFlags: strings.Join(tc.DefaultFlags.CxxFlags, " "),
+			LDFlags:  strings.Join(tc.DefaultFlags.LdFlags, " "),
+		}
+
+		sourceMgr := repo.NewSourceManager(cacheDir)
+		installer := repo.NewInstaller(sourceMgr, packagesDir, cacheDir)
+
+		for _, name := range graph.Order {
+			pkgResolved := graph.Packages[name]
+			if pkgResolved == nil {
+				continue
+			}
+
+			cfg := configs[name]
+			if cfg == nil {
+				cfg = &repo.InstallConfig{Options: make(map[string]any)}
+			}
+
+			parts := splitPackagePath(name)
+			if len(parts) != 2 {
+				continue
+			}
+
+			pkgGoPath, err := repoMgr.FindPackageGo(parts[0], parts[1])
+			if err != nil {
+				return nil, err
+			}
+
+			loader := repo.NewPackageLoader(cacheDir)
+			loader.SetVMakeDir(getVMakeSourceDir())
+			pkg, err := loader.Load(pkgGoPath)
+			if err != nil {
+				return nil, err
+			}
+
+			installer.SetPackage(name, pkg)
+
+			pkgDef := repo.NewPackageDef(parts[0], parts[1])
+			pkgDef.SetPackage(pkg)
+
+			if cfg.Version == "" {
+				constraint := constraints[name]
+				selected, err := pkgDef.SelectVersion(constraint)
+				if err != nil {
+					return nil, err
+				}
+				cfg.Version = selected
+			}
+
+			if installer.IsInstalled(name, cfg.Version, apiTC, cfg.Options) {
+				vlog.Info("  %s (cached)", name)
+				continue
+			}
+
+			vlog.Info("  %s...", name)
+
+			sourceDir, err := sourceMgr.EnsureSource(pkgDef, cfg.Version)
+			if err != nil {
+				return nil, err
+			}
+
+			if err := installer.InstallPackage(pkgDef, cfg, apiTC, graph, sourceDir); err != nil {
+				return nil, err
+			}
+		}
+
+		versions := make(map[string]string)
+		for name, cfg := range configs {
+			versions[name] = cfg.Version
+		}
+
+		pkgProvider = &packageProvider{
+			installer: installer,
+			config:    ctx.Config,
+			tc:        apiTC,
+			versions:  versions,
+		}
+	}
+
 	vlog.Info("")
 	vlog.Info("Executing OnBuild...")
 	allTargets := make(map[string]map[string]*api.Target)
@@ -106,10 +233,6 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 		}
 	}
 
-	tc, tcName, err := GetToolchain(ctx.Config)
-	if err != nil {
-		return nil, err
-	}
 	vlog.Info("")
 	vlog.Info("Using toolchain: %s, mode: %s", tcName, mode)
 
@@ -131,6 +254,10 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 		return nil, err
 	}
 
+	if pkgProvider != nil {
+		scheduler.SetPackageProvider(pkgProvider)
+	}
+
 	vlog.Info("")
 	vlog.Info("Building...")
 	if err := scheduler.BuildAll(); err != nil {
@@ -147,6 +274,31 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 		TcName:     tcName,
 		Mode:       mode,
 	}, nil
+}
+
+type packageProvider struct {
+	installer *repo.Installer
+	config    *config.ConfigFile
+	tc        *api.Toolchain
+	versions  map[string]string
+}
+
+func (p *packageProvider) GetInstalledPackage(name string) *api.InstalledPackage {
+	rc := config.GetRequireConfig(p.config, name)
+	version := rc.Version
+	if version == "" {
+		version = p.versions[name]
+	}
+	return p.installer.GetInstalledPackage(name, version, p.tc, rc.Options)
+}
+
+func splitPackagePath(path string) []string {
+	for i := 0; i < len(path); i++ {
+		if path[i] == '/' {
+			return []string{path[:i], path[i+1:]}
+		}
+	}
+	return nil
 }
 
 func executeInstall(ctx *BuildContext, result *BuildResult) error {

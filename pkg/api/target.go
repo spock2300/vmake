@@ -16,6 +16,7 @@ type Target struct {
 	ldflags        []string
 	installDir     string
 	noInstall      bool
+	packages       []string
 }
 
 func (t *Target) SetKind(kind TargetKind) *Target {
@@ -78,6 +79,11 @@ func (t *Target) AddLdFlags(flags ...any) *Target {
 	return t
 }
 
+func (t *Target) AddPackages(packages ...string) *Target {
+	t.packages = append(t.packages, packages...)
+	return t
+}
+
 func (t *Target) Name() string             { return t.name }
 func (t *Target) Kind() TargetKind         { return t.kind }
 func (t *Target) IsDefault() bool          { return t.isDefault }
@@ -92,6 +98,7 @@ func (t *Target) CFlags() []string         { return t.cflags }
 func (t *Target) CxxFlags() []string       { return t.cxxflags }
 func (t *Target) LdFlags() []string        { return t.ldflags }
 func (t *Target) InstallDir() string       { return t.installDir }
+func (t *Target) Packages() []string       { return t.packages }
 
 func (t *Target) SetInstallDir(dir string) *Target {
 	t.installDir = dir

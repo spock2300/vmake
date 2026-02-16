@@ -115,6 +115,7 @@ type BuildContext struct {
 	globalOptions map[string]*Option
 	installItems  []InstallItem
 	installFilter InstallFilterFunc
+	packages      []string
 }
 
 func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext {
@@ -310,6 +311,15 @@ func (ctx *BuildContext) SetInstallFilter(filter InstallFilterFunc) *BuildContex
 
 func (ctx *BuildContext) GetInstallFilter() InstallFilterFunc {
 	return ctx.installFilter
+}
+
+func (ctx *BuildContext) AddPackages(packages ...string) *BuildContext {
+	ctx.packages = append(ctx.packages, packages...)
+	return ctx
+}
+
+func (ctx *BuildContext) GetPackages() []string {
+	return ctx.packages
 }
 
 type InstallContext struct {

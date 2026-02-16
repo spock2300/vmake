@@ -77,3 +77,16 @@ func LoadAll(compileResults []CompileResult) []LoadResult {
 	}
 	return results
 }
+
+func (l *LoadedPlugin) GetRequires() []api.RequireInfo {
+	requireFuncs := l.Builder.GetRequireFuncs()
+	if len(requireFuncs) == 0 {
+		return nil
+	}
+
+	ctx := api.NewRequireContext()
+	for _, fn := range requireFuncs {
+		fn(ctx)
+	}
+	return ctx.GetRequires()
+}

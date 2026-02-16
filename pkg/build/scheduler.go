@@ -38,17 +38,22 @@ type PkgInfo struct {
 	Cache *BuildCache
 }
 
+type PackageProvider interface {
+	GetInstalledPackage(name string) *api.InstalledPackage
+}
+
 type Scheduler struct {
-	graph     *BuildGraph
-	compiler  *Compiler
-	linker    *Linker
-	toolchain *toolchain.Toolchain
-	tcName    string
-	mode      string
-	buildDir  string
-	pkgs      map[string]*PkgInfo
-	origDir   string
-	ccWriter  *CompileCommandsWriter
+	graph       *BuildGraph
+	compiler    *Compiler
+	linker      *Linker
+	toolchain   *toolchain.Toolchain
+	tcName      string
+	mode        string
+	buildDir    string
+	pkgs        map[string]*PkgInfo
+	origDir     string
+	ccWriter    *CompileCommandsWriter
+	pkgProvider PackageProvider
 }
 
 func NewScheduler(
@@ -118,6 +123,10 @@ func NewScheduler(
 
 	os.Chdir(origDir)
 	return s, nil
+}
+
+func (s *Scheduler) SetPackageProvider(provider PackageProvider) {
+	s.pkgProvider = provider
 }
 
 func (s *Scheduler) BuildAll() error {
@@ -258,6 +267,25 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 
 		depOutput := filepath.Join(depPkg.Dir, s.getTargetOutputPath(depNode))
 		resolved.DepArtifacts = append(resolved.DepArtifacts, depOutput)
+	}
+
+	if s.pkgProvider != nil {
+		for _, pkgRef := range node.Target.Packages() {
+			pkg := s.pkgProvider.GetInstalledPackage(pkgRef)
+			if pkg != nil {
+				resolved.AllIncludes = append(resolved.AllIncludes, pkg.IncludeDir)
+				resolved.AllLdFlags = append(resolved.AllLdFlags, "-L"+pkg.LibDir)
+				if len(pkg.Libs) > 0 {
+					for _, lib := range pkg.Libs {
+						resolved.AllLdFlags = append(resolved.AllLdFlags, "-l"+lib)
+					}
+				} else {
+					parts := strings.Split(pkgRef, "/")
+					libName := parts[len(parts)-1]
+					resolved.AllLdFlags = append(resolved.AllLdFlags, "-l"+libName)
+				}
+			}
+		}
 	}
 
 	for _, pattern := range node.Target.Files() {

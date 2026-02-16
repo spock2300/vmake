@@ -18,6 +18,21 @@ const (
 	OptionChoice
 )
 
+func (t OptionType) String() string {
+	switch t {
+	case OptionBool:
+		return "bool"
+	case OptionString:
+		return "string"
+	case OptionInt:
+		return "int"
+	case OptionChoice:
+		return "choice"
+	default:
+		return "unknown"
+	}
+}
+
 type ConfigFunc func(ctx *ConfigContext)
 type BuildFunc func(ctx *BuildContext)
 type InstallFunc func(ctx *InstallContext)
@@ -26,6 +41,15 @@ type Builder struct {
 	configFuncs  []ConfigFunc
 	buildFuncs   []BuildFunc
 	installFuncs []InstallFunc
+	requireFuncs []RequireFunc
+}
+
+func (b *Builder) OnRequire(fn RequireFunc) {
+	b.requireFuncs = append(b.requireFuncs, fn)
+}
+
+func (b *Builder) GetRequireFuncs() []RequireFunc {
+	return b.requireFuncs
 }
 
 func (b *Builder) OnConfig(fn ConfigFunc) {

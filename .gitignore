@@ -4,3 +4,5 @@ vmake
 .vmake
 .cache
 build/compile_commands.json
+cmd/vmake/vmake
+official_repo

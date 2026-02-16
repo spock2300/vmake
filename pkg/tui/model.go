@@ -10,10 +10,11 @@ import (
 )
 
 type TreeNode struct {
-	Name     string
-	PkgName  string
-	Children []*TreeNode
-	Expanded bool
+	Name       string
+	PkgName    string
+	Children   []*TreeNode
+	Expanded   bool
+	IsExternal bool
 }
 
 type OptionItem struct {
@@ -380,12 +381,66 @@ func (m *Model) shouldShow(opt *api.Option) bool {
 	}
 
 	cfgCtx := api.NewConfigContext(m.selectedPkg)
-	for name, val := range m.values[m.selectedPkg] {
-		cfgCtx.SetConfigValue(name, val)
+	vals, ok := m.values[m.selectedPkg]
+	if ok {
+		for name, val := range vals {
+			cfgCtx.SetConfigValue(name, val)
+		}
 	}
-	for name, o := range m.options[m.selectedPkg] {
-		cfgCtx.Option(name).SetType(o.Type()).SetDefault(o.Default())
+	opts, ok := m.options[m.selectedPkg]
+	if ok {
+		for name, o := range opts {
+			cfgCtx.Option(name).SetType(o.Type()).SetDefault(o.Default())
+		}
 	}
 
 	return showIf(cfgCtx)
+}
+
+func (m *Model) AddPackageOptions(pkgName string, opts map[string]*api.Option, values map[string]any) {
+	if m.options == nil {
+		m.options = make(map[string]map[string]*api.Option)
+	}
+	m.options[pkgName] = opts
+
+	if m.values == nil {
+		m.values = make(map[string]map[string]any)
+	}
+	if m.values[pkgName] == nil {
+		m.values[pkgName] = make(map[string]any)
+	}
+
+	for name, val := range values {
+		m.values[pkgName][name] = val
+	}
+
+	m.tree = buildTreeWithPackages(m.packages, m.workDir, m.options)
+}
+
+func (m *Model) GetRequireValues() map[string]map[string]any {
+	result := make(map[string]map[string]any)
+	for pkgName, vals := range m.values {
+		if strings.Contains(pkgName, "/") {
+			result[pkgName] = vals
+		}
+	}
+	return result
+}
+
+func buildTreeWithPackages(packages []plugin.Package, baseDir string, allOptions map[string]map[string]*api.Option) []*TreeNode {
+	result := buildTree(packages, baseDir)
+
+	for pkgName := range allOptions {
+		if strings.Contains(pkgName, "/") {
+			node := &TreeNode{
+				Name:       "[" + pkgName + "]",
+				PkgName:    pkgName,
+				Expanded:   true,
+				IsExternal: true,
+			}
+			result = append(result, node)
+		}
+	}
+
+	return result
 }
