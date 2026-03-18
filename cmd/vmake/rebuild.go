@@ -1,6 +1,10 @@
 package main
 
 import (
+	"fmt"
+	"os"
+
+	"gitee.com/spock2300/vmake/pkg/api"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 
 	"github.com/spf13/cobra"
@@ -20,29 +24,85 @@ func init() {
 }
 
 func runRebuild(cmd *cobra.Command, args []string) {
-	ctx, err := PrepareFull()
+	ctx, err := initContext()
 	if err != nil {
 		vlog.Error("Error: %v", err)
-		return
+		os.Exit(1)
 	}
 
-	if err := executeClean(ctx, false); err != nil {
-		vlog.Error("Error: %v", err)
-		return
+	if err := runRequirePhase(ctx); err != nil {
+		vlog.Error("Phase 1 (OnRequire) failed: %v", err)
+		os.Exit(1)
 	}
+
+	executeCleanLocal(ctx)
 
 	vlog.Info("")
 
-	result, err := executeBuild(ctx)
+	if err := runConfigPhase(ctx); err != nil {
+		vlog.Error("Phase 2 (OnConfig) failed: %v", err)
+		os.Exit(1)
+	}
+
+	result, err := runBuildPhase(ctx)
 	if err != nil {
-		vlog.Error("Error: %v", err)
-		return
+		vlog.Error("Phase 3 (OnBuild) failed: %v", err)
+		os.Exit(1)
 	}
 
 	if installFlag {
 		if err := executeInstall(ctx, result); err != nil {
 			vlog.Error("Install error: %v", err)
+			os.Exit(1)
+		}
+	}
+}
+
+func executeCleanLocal(ctx *RuntimeContext) {
+	origDir, _ := os.Getwd()
+
+	_, tcName, err := GetToolchain(ctx.Config)
+	if err != nil {
+		vlog.Error("Error: %v", err)
+		return
+	}
+
+	mode := ""
+	if ctx.Config.Global != nil {
+		mode = ctx.Config.Global.Mode
+	}
+	if mode == "" {
+		mode = api.ModeDebug
+	}
+
+	buildDir := fmt.Sprintf("%s-%s", tcName, mode)
+
+	for _, name := range ctx.DepGraph.Order {
+		node := ctx.DepGraph.Packages[name]
+		if !node.IsLocal() {
+			continue
+		}
+
+		pkg := node.Plugin.Package
+		if err := os.Chdir(pkg.Dir); err != nil {
+			vlog.Error("Failed to chdir to %s: %v", pkg.Name, err)
+			continue
+		}
+
+		cleanCurrentToolchain(pkg.Name, buildDir)
+	}
+
+	os.Chdir(origDir)
+	vlog.Info("Clean completed!")
+}
+
+func cleanCurrentToolchain(pkgName, buildDir string) {
+	tcDir := fmt.Sprintf("build/%s", buildDir)
+	if _, err := os.Stat(tcDir); err == nil {
+		if err := os.RemoveAll(tcDir); err != nil {
+			vlog.Error("Failed to clean %s/%s: %v", pkgName, tcDir, err)
 			return
 		}
+		vlog.Info("Cleaned %s/%s/", pkgName, tcDir)
 	}
 }

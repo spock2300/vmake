@@ -32,10 +32,14 @@ test_data/
 │       ├── build.go
 │       └── main.c
 │
-└── 05_conditional/       # 条件表达式示例
+├── 05_conditional/       # 条件表达式示例
+│   ├── build.go
+│   ├── src/main.c
+│   └── .vmake/config.json
+│
+└── 09_with_curl/         # 远程包依赖示例（curl + mbedtls）
     ├── build.go
-    ├── src/main.c
-    └── .vmake/config.json
+    └── src/main.c
 ```
 
 ## 测试场景说明
@@ -81,6 +85,16 @@ test_data/
 - If / IfNot 条件
 - Select 映射
 - 复杂的编译选项组合
+
+### 09_with_curl
+远程包依赖示例，使用 curl 库（依赖 mbedtls SSL 后端）。
+
+**验证要点：**
+- 远程包依赖声明 (OnRequire + AddRequires)
+- 版本约束 (>=8.5)
+- 传递依赖解析 (curl → mbedtls)
+- CMake 包构建
+- AddPackages 链接
 
 ## 预期行为
 

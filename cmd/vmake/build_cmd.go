@@ -28,15 +28,25 @@ func init() {
 }
 
 func runBuild(cmd *cobra.Command, args []string) {
-	ctx, err := PrepareFull()
+	ctx, err := initContext()
 	if err != nil {
 		vlog.Error("Error: %v", err)
 		os.Exit(1)
 	}
 
-	result, err := executeBuild(ctx)
+	if err := runRequirePhase(ctx); err != nil {
+		vlog.Error("Phase 1 (OnRequire) failed: %v", err)
+		os.Exit(1)
+	}
+
+	if err := runConfigPhase(ctx); err != nil {
+		vlog.Error("Phase 2 (OnConfig) failed: %v", err)
+		os.Exit(1)
+	}
+
+	result, err := runBuildPhase(ctx)
 	if err != nil {
-		vlog.Error("Error: %v", err)
+		vlog.Error("Phase 3 (OnBuild) failed: %v", err)
 		os.Exit(1)
 	}
 
@@ -49,14 +59,15 @@ func runBuild(cmd *cobra.Command, args []string) {
 }
 
 type BuildResult struct {
-	AllTargets map[string]map[string]*api.Target
-	Graph      *build.BuildGraph
-	PkgDirs    map[string]string
-	TcName     string
-	Mode       string
+	AllTargets    map[string]map[string]*api.Target
+	Graph         *build.BuildGraph
+	PkgDirs       map[string]string
+	TcName        string
+	Mode          string
+	InstalledPkgs map[string]*api.InstalledPackage
 }
 
-func executeBuild(ctx *BuildContext) (*BuildResult, error) {
+func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 	globalValues := make(map[string]any)
 	if ctx.Config.Global != nil {
 		globalValues["toolchain"] = ctx.Config.Global.Toolchain
@@ -79,54 +90,46 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 		return nil, err
 	}
 
+	apiTC := &api.Toolchain{
+		CC:       tc.Tools.CC,
+		CXX:      tc.Tools.CXX,
+		AR:       tc.Tools.AR,
+		Target:   tc.Host,
+		SysRoot:  "",
+		CFlags:   strings.Join(tc.DefaultFlags.CFlags, " "),
+		CXXFlags: strings.Join(tc.DefaultFlags.CxxFlags, " "),
+		LDFlags:  strings.Join(tc.DefaultFlags.LdFlags, " "),
+	}
+
+	installedPkgs := make(map[string]*api.InstalledPackage)
 	var pkgProvider *packageProvider
-	var registry *repo.PackageRegistry
 
-	if len(ctx.Requires) > 0 {
-		vlog.Info("")
-		vlog.Info("Collecting package declarations...")
+	hasDeps := false
+	for _, name := range ctx.DepGraph.Order {
+		node := ctx.DepGraph.Packages[name]
+		if !node.IsLocal() {
+			hasDeps = true
+			break
+		}
+	}
 
+	if hasDeps {
 		reposDir := filepath.Join(vmakeDir, "repos")
 		packagesDir := filepath.Join(vmakeDir, "packages")
 		cacheDir := filepath.Join(vmakeDir, "cache")
 
 		repoMgr := repo.NewRepoManager(reposDir)
-		loader := repo.NewPackageLoader(cacheDir)
-		resolver := repo.NewResolverWithLoader(repoMgr, loader)
-
-		registry, err = resolver.CollectDeclarations(ctx.Requires)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, name := range registry.Order {
-			vlog.Info("  %s", name)
-		}
 
 		configs := make(map[string]*repo.InstallConfig)
-		for _, req := range ctx.Requires {
-			rc := config.GetRequireConfig(ctx.Config, req.Name)
-			configs[req.Name] = &repo.InstallConfig{
-				Version: rc.Version,
-				Options: rc.Options,
+		for _, name := range ctx.DepGraph.Order {
+			node := ctx.DepGraph.Packages[name]
+			if !node.IsLocal() {
+				rc := config.GetRequireConfig(ctx.Config, name)
+				configs[name] = &repo.InstallConfig{
+					Version: rc.Version,
+					Options: rc.Options,
+				}
 			}
-		}
-
-		for _, name := range registry.Order {
-			if _, ok := configs[name]; !ok {
-				configs[name] = &repo.InstallConfig{Options: make(map[string]any)}
-			}
-		}
-
-		apiTC := &api.Toolchain{
-			CC:       tc.Tools.CC,
-			CXX:      tc.Tools.CXX,
-			AR:       tc.Tools.AR,
-			Target:   tc.Host,
-			SysRoot:  "",
-			CFlags:   strings.Join(tc.DefaultFlags.CFlags, " "),
-			CXXFlags: strings.Join(tc.DefaultFlags.CxxFlags, " "),
-			LDFlags:  strings.Join(tc.DefaultFlags.LdFlags, " "),
 		}
 
 		sourceMgr := repo.NewSourceManager(cacheDir)
@@ -135,30 +138,35 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 		installer.SetConfigs(configs)
 		installer.SetToolchain(apiTC)
 
+		for _, name := range ctx.DepGraph.Order {
+			node := ctx.DepGraph.Packages[name]
+			if !node.IsLocal() && node.Definition != nil {
+				installer.SetPackage(name, node.Definition)
+			}
+		}
+
 		vlog.Info("")
 		vlog.Info("Installing packages...")
 
-		for _, req := range ctx.Requires {
-			name := req.Name
-			cfg := configs[name]
-
-			pkgDef := repo.NewPackageDef(splitPackagePath(name)[0], splitPackagePath(name)[1])
-			if pkg, ok := registry.Definitions[name]; ok && pkg != nil {
-				pkgDef.SetPackage(pkg)
-				installer.SetPackage(name, pkg)
-			}
-
-			if cfg.Version == "" {
-				selected, err := pkgDef.SelectVersion(req.Constraint)
-				if err != nil {
-					return nil, err
+		for _, name := range ctx.DepGraph.Order {
+			node := ctx.DepGraph.Packages[name]
+			if !node.IsLocal() {
+				cfg := configs[name]
+				if cfg.Version == "" && node.Definition != nil {
+					pkgDef := repo.NewPackageDef(splitPackagePath(name)[0], splitPackagePath(name)[1])
+					pkgDef.SetPackage(node.Definition)
+					selected, err := pkgDef.SelectVersion(node.Constraint)
+					if err != nil {
+						return nil, err
+					}
+					cfg.Version = selected
 				}
-				cfg.Version = selected
-			}
 
-			installedPkg := installer.EnsureInstalled(name)
-			if installedPkg != nil {
-				vlog.Info("  %s@%s", name, cfg.Version)
+				installedPkg := installer.EnsureInstalled(name)
+				if installedPkg != nil {
+					vlog.Info("  %s@%s", name, cfg.Version)
+					installedPkgs[name] = installedPkg
+				}
 			}
 		}
 
@@ -179,23 +187,29 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 	vlog.Info("Executing OnBuild...")
 	allTargets := make(map[string]map[string]*api.Target)
 
-	for _, lr := range ctx.LoadResults {
-		if !lr.Success {
+	for _, name := range ctx.DepGraph.Order {
+		node := ctx.DepGraph.Packages[name]
+		if !node.IsLocal() {
 			continue
 		}
 
-		pkgName := lr.Package.Name
-		pc := config.GetPackageConfig(ctx.Config, pkgName)
-		buildCtx := api.NewBuildContext(pkgName, pc.Options)
-		buildCtx.SetOptions(ctx.AllOptions[pkgName])
+		pc := config.GetPackageConfig(ctx.Config, name)
+		buildCtx := api.NewBuildContext(name, pc.Options)
+		buildCtx.SetOptions(ctx.AllOptions[name])
 		buildCtx.SetGlobalOptions(ctx.GlobalOptions)
 		buildCtx.SetGlobalValues(globalValues)
 
-		for _, fn := range lr.Loaded.Builder.GetBuildFuncs() {
+		for _, dep := range node.Deps {
+			if pkg, ok := installedPkgs[dep]; ok {
+				buildCtx.AddPackages(pkg.Name)
+			}
+		}
+
+		for _, fn := range node.Plugin.Builder.GetBuildFuncs() {
 			fn(buildCtx)
 		}
 
-		allTargets[pkgName] = buildCtx.GetTargets()
+		allTargets[name] = buildCtx.GetTargets()
 	}
 
 	vlog.Info("")
@@ -224,7 +238,7 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 		vlog.Info("  - %s", fullName)
 	}
 
-	pkgDirs := GetPackageDirs(ctx.Packages)
+	pkgDirs := GetPackageDirs(ctx.DepGraph)
 
 	scheduler, err := build.NewScheduler(graph, tc, pkgDirs, mode)
 	if err != nil {
@@ -245,11 +259,12 @@ func executeBuild(ctx *BuildContext) (*BuildResult, error) {
 	vlog.Info("Build succeeded!")
 
 	return &BuildResult{
-		AllTargets: allTargets,
-		Graph:      graph,
-		PkgDirs:    pkgDirs,
-		TcName:     tcName,
-		Mode:       mode,
+		AllTargets:    allTargets,
+		Graph:         graph,
+		PkgDirs:       pkgDirs,
+		TcName:        tcName,
+		Mode:          mode,
+		InstalledPkgs: installedPkgs,
 	}, nil
 }
 
@@ -306,7 +321,7 @@ func splitPackagePath(path string) []string {
 	return nil
 }
 
-func executeInstall(ctx *BuildContext, result *BuildResult) error {
+func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 	globalValues := make(map[string]any)
 	if ctx.Config.Global != nil {
 		globalValues["toolchain"] = ctx.Config.Global.Toolchain
@@ -321,28 +336,28 @@ func executeInstall(ctx *BuildContext, result *BuildResult) error {
 
 	installer := build.NewInstaller(result.Graph, result.PkgDirs, prefixFlag)
 
-	for _, lr := range ctx.LoadResults {
-		if !lr.Success {
+	for _, name := range ctx.DepGraph.Order {
+		node := ctx.DepGraph.Packages[name]
+		if !node.IsLocal() {
 			continue
 		}
 
-		pkgName := lr.Package.Name
-		pc := config.GetPackageConfig(ctx.Config, pkgName)
+		pc := config.GetPackageConfig(ctx.Config, name)
 
-		installCtx := api.NewInstallContext(pkgName, pc.Options)
-		installCtx.SetOptions(ctx.AllOptions[pkgName])
+		installCtx := api.NewInstallContext(name, pc.Options)
+		installCtx.SetOptions(ctx.AllOptions[name])
 		installCtx.SetGlobalOptions(ctx.GlobalOptions)
 		installCtx.SetGlobalValues(globalValues)
 
-		for _, fn := range lr.Loaded.Builder.GetInstallFuncs() {
+		for _, fn := range node.Plugin.Builder.GetInstallFuncs() {
 			fn(installCtx)
 		}
 
-		buildCtx := api.NewBuildContext(pkgName, pc.Options)
-		buildCtx.SetOptions(ctx.AllOptions[pkgName])
+		buildCtx := api.NewBuildContext(name, pc.Options)
+		buildCtx.SetOptions(ctx.AllOptions[name])
 		buildCtx.SetGlobalOptions(ctx.GlobalOptions)
 		buildCtx.SetGlobalValues(globalValues)
-		for _, fn := range lr.Loaded.Builder.GetBuildFuncs() {
+		for _, fn := range node.Plugin.Builder.GetBuildFuncs() {
 			fn(buildCtx)
 		}
 
@@ -361,12 +376,12 @@ func executeInstall(ctx *BuildContext, result *BuildResult) error {
 			installFilter = buildCtx.GetInstallFilter()
 		}
 
-		installer.SetPackageInfo(pkgName, &build.PkgInstallInfo{
+		installer.SetPackageInfo(name, &build.PkgInstallInfo{
 			Prefix:        prefix,
 			PrefixSet:     installCtx.PrefixSet(),
-			Targets:       result.AllTargets[pkgName],
+			Targets:       result.AllTargets[name],
 			InstallItems:  installItems,
-			BuildDir:      result.PkgDirs[pkgName],
+			BuildDir:      result.PkgDirs[name],
 			Mode:          result.Mode,
 			TcName:        result.TcName,
 			InstallFilter: installFilter,

@@ -32,16 +32,13 @@ func init() {
 	RootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "quiet mode")
 }
 
-type BuildContext struct {
+type RuntimeContext struct {
 	WorkDir       string
-	Packages      []plugin.Package
-	LoadResults   []plugin.LoadResult
-	AllOptions    map[string]map[string]*api.Option
-	GlobalOptions map[string]*api.Option
 	Config        *config.ConfigFile
 	ConfigPath    string
-	Requires      []api.RequireInfo
-	ResolvedPkgs  map[string]*repo.PackageDef
+	DepGraph      *repo.DependencyGraph
+	AllOptions    map[string]map[string]*api.Option
+	GlobalOptions map[string]*api.Option
 }
 
 var RootCmd = &cobra.Command{
@@ -70,21 +67,35 @@ func Execute() {
 	}
 }
 
-func PrepareBase() (*BuildContext, error) {
+func initContext() (*RuntimeContext, error) {
 	workDir, err := os.Getwd()
 	if err != nil {
 		return nil, err
 	}
 
-	vlog.Info("Scanning %s...", workDir)
-
-	packages, err := plugin.Scan(workDir)
+	configPath := filepath.Join(workDir, ".vmake", "config.json")
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		return nil, err
 	}
 
+	return &RuntimeContext{
+		WorkDir:    workDir,
+		Config:     cfg,
+		ConfigPath: configPath,
+	}, nil
+}
+
+func runRequirePhase(ctx *RuntimeContext) error {
+	vlog.Info("Scanning %s...", ctx.WorkDir)
+
+	packages, err := plugin.Scan(ctx.WorkDir)
+	if err != nil {
+		return err
+	}
+
 	if len(packages) == 0 {
-		return nil, fmt.Errorf("no build.go files found")
+		return fmt.Errorf("no build.go files found")
 	}
 
 	var pkgNames []string
@@ -93,137 +104,58 @@ func PrepareBase() (*BuildContext, error) {
 	}
 	vlog.Info("Found %d package(s): %s", len(packages), strings.Join(pkgNames, ", "))
 
-	configPath := filepath.Join(workDir, ".vmake", "config.json")
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		return nil, err
-	}
+	reposDir := filepath.Join(vmakeDir, "repos")
+	cacheDir := filepath.Join(vmakeDir, "cache")
 
-	return &BuildContext{
-		WorkDir:    workDir,
-		Packages:   packages,
-		Config:     cfg,
-		ConfigPath: configPath,
-	}, nil
-}
-
-func PrepareFull() (*BuildContext, error) {
-	ctx, err := PrepareBase()
-	if err != nil {
-		return nil, err
-	}
+	repoMgr := repo.NewRepoManager(reposDir)
+	loader := repo.NewPackageLoader(cacheDir)
+	resolver := repo.NewResolverWithLoader(repoMgr, loader)
 
 	vlog.Info("")
-	vlog.Info("Compiling...")
-	compileResults := plugin.CompileAll(ctx.Packages)
+	vlog.Info("Resolving dependencies...")
 
-	hasError := false
-	for _, cr := range compileResults {
-		if cr.Success {
-			relPath, _ := filepath.Rel(ctx.WorkDir, cr.PluginPath)
-			vlog.Info("  %s -> %s", cr.Package.Name, relPath)
+	graph, err := resolver.ResolveWithLocal(packages)
+	if err != nil {
+		return err
+	}
+
+	ctx.DepGraph = graph
+
+	for _, name := range graph.Order {
+		node := graph.Packages[name]
+		if node.IsLocal() {
+			vlog.Info("  %s (local)", name)
 		} else {
-			vlog.Info("  %s -> FAILED", cr.Package.Name)
-			vlog.Error("    %v", cr.Error)
-			hasError = true
-		}
-	}
-
-	if hasError {
-		return nil, fmt.Errorf("compilation failed")
-	}
-
-	vlog.Info("")
-	vlog.Info("Loading plugins...")
-	loadResults := plugin.LoadAll(compileResults)
-
-	for _, lr := range loadResults {
-		if !lr.Success {
-			vlog.Info("  %s -> FAILED: %v", lr.Package.Name, lr.Error)
-			continue
-		}
-
-		cfgCount := len(lr.Loaded.Builder.GetConfigFuncs())
-		buildCount := len(lr.Loaded.Builder.GetBuildFuncs())
-		reqCount := len(lr.Loaded.Builder.GetRequireFuncs())
-		vlog.Info("  %s: OnConfig(%d), OnBuild(%d), OnRequire(%d)", lr.Package.Name, cfgCount, buildCount, reqCount)
-	}
-
-	var allRequires []api.RequireInfo
-	for _, lr := range loadResults {
-		if !lr.Success {
-			continue
-		}
-		requires := lr.Loaded.GetRequires()
-		allRequires = append(allRequires, requires...)
-	}
-
-	var registry *repo.PackageRegistry
-	if len(allRequires) > 0 {
-		vlog.Info("")
-		vlog.Info("Collecting package declarations...")
-		reposDir := filepath.Join(vmakeDir, "repos")
-		cacheDir := filepath.Join(vmakeDir, "cache")
-		repoMgr := repo.NewRepoManager(reposDir)
-		loader := repo.NewPackageLoader(cacheDir)
-		resolver := repo.NewResolverWithLoader(repoMgr, loader)
-
-		registry, err = resolver.CollectDeclarations(allRequires)
-		if err != nil {
-			return nil, fmt.Errorf("failed to collect declarations: %w", err)
-		}
-
-		for _, name := range registry.Order {
 			vlog.Info("  %s", name)
 		}
-
-		resolvedPkgs := make(map[string]*repo.PackageDef)
-		for name, pkg := range registry.Definitions {
-			resolvedPkgs[name] = &repo.PackageDef{
-				Name: name,
-			}
-			if pkg != nil {
-				resolvedPkgs[name].SetPackage(pkg)
-			}
-		}
-		ctx.ResolvedPkgs = resolvedPkgs
 	}
-	ctx.Requires = allRequires
 
+	return nil
+}
+
+func runConfigPhase(ctx *RuntimeContext) error {
 	vlog.Info("")
 	vlog.Info("Executing OnConfig...")
-	allOptions := make(map[string]map[string]*api.Option)
-	for _, lr := range loadResults {
-		if !lr.Success {
-			continue
-		}
 
-		pkgName := lr.Package.Name
-		cfgCtx := api.NewConfigContext(pkgName)
+	ctx.AllOptions = make(map[string]map[string]*api.Option)
 
-		for _, fn := range lr.Loaded.Builder.GetConfigFuncs() {
-			fn(cfgCtx)
-		}
+	for _, name := range ctx.DepGraph.Order {
+		node := ctx.DepGraph.Packages[name]
 
-		allOptions[pkgName] = cfgCtx.GetOptions()
-		if len(cfgCtx.GetOptions()) > 0 {
-			vlog.Info("  %s: %d option(s)", pkgName, len(cfgCtx.GetOptions()))
-		}
-	}
-
-	if registry != nil {
-		vlog.Info("")
-		vlog.Info("Loading package definitions...")
-		for fullName, pkg := range registry.Definitions {
-			if pkg == nil {
-				continue
+		var opts map[string]*api.Option
+		if node.IsLocal() {
+			cfgCtx := api.NewConfigContext(name)
+			for _, fn := range node.Plugin.Builder.GetConfigFuncs() {
+				fn(cfgCtx)
 			}
+			opts = cfgCtx.GetOptions()
+		} else if node.Definition != nil {
+			opts = node.Definition.GetOptions()
+		}
 
-			opts := pkg.GetOptions()
-			if len(opts) > 0 {
-				allOptions[fullName] = opts
-				vlog.Info("  %s: %d option(s)", fullName, len(opts))
-			}
+		if len(opts) > 0 {
+			ctx.AllOptions[name] = opts
+			vlog.Info("  %s: %d option(s)", name, len(opts))
 		}
 	}
 
@@ -236,15 +168,13 @@ func PrepareFull() (*BuildContext, error) {
 		sort.Strings(tcList)
 	}
 
-	globalOptions, err := api.MergeGlobalOptions(allOptions, tcList)
+	var err error
+	ctx.GlobalOptions, err = api.MergeGlobalOptions(ctx.AllOptions, tcList)
 	if err != nil {
-		return nil, fmt.Errorf("global options error: %w", err)
+		return fmt.Errorf("global options error: %w", err)
 	}
 
-	ctx.LoadResults = loadResults
-	ctx.AllOptions = allOptions
-	ctx.GlobalOptions = globalOptions
-	return ctx, nil
+	return nil
 }
 
 func GetToolchain(cfg *config.ConfigFile) (*toolchain.Toolchain, string, error) {
@@ -260,10 +190,12 @@ func GetToolchain(cfg *config.ConfigFile) (*toolchain.Toolchain, string, error) 
 	return tc, tcName, nil
 }
 
-func GetPackageDirs(packages []plugin.Package) map[string]string {
+func GetPackageDirs(graph *repo.DependencyGraph) map[string]string {
 	dirs := make(map[string]string)
-	for _, pkg := range packages {
-		dirs[pkg.Name] = pkg.Dir
+	for name, node := range graph.Packages {
+		if node.IsLocal() {
+			dirs[name] = node.Plugin.Package.Dir
+		}
 	}
 	return dirs
 }

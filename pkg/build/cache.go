@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"gitee.com/spock2300/vmake/pkg/toolchain"
@@ -53,7 +54,7 @@ func NewBuildCache(tc *toolchain.Toolchain) *BuildCache {
 }
 
 func LoadCache(tcName string) (*BuildCache, error) {
-	data, err := os.ReadFile(fmt.Sprintf("build/%s/cache.json", tcName))
+	data, err := os.ReadFile(filepath.Join("build", tcName, "cache.json"))
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +67,7 @@ func LoadCache(tcName string) (*BuildCache, error) {
 }
 
 func (c *BuildCache) Save(tcName string) error {
-	dir := fmt.Sprintf("build/%s", tcName)
+	dir := filepath.Join("build", tcName)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
@@ -74,7 +75,7 @@ func (c *BuildCache) Save(tcName string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(fmt.Sprintf("%s/cache.json", dir), data, 0644)
+	return os.WriteFile(filepath.Join(dir, "cache.json"), data, 0644)
 }
 
 func (c *BuildCache) NeedFullRebuild(tc *toolchain.Toolchain) bool {
@@ -151,5 +152,5 @@ func (c *BuildCache) Update(sourcePath, objPath string, deps []string) {
 }
 
 func CleanObjects(tcName string) error {
-	return os.RemoveAll(fmt.Sprintf("build/%s/objects", tcName))
+	return os.RemoveAll(filepath.Join("build", tcName, "objects"))
 }

@@ -6,6 +6,7 @@ import (
 
 	"gitee.com/spock2300/vmake/pkg/config"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
+	"gitee.com/spock2300/vmake/pkg/plugin"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 	"gitee.com/spock2300/vmake/pkg/tui"
 
@@ -24,17 +25,26 @@ func init() {
 }
 
 func runConfig(cmd *cobra.Command, args []string) {
-	ctx, err := PrepareFull()
+	ctx, err := initContext()
 	if err != nil {
 		vlog.Error("Error: %v", err)
 		os.Exit(1)
 	}
 
-	if len(ctx.AllOptions) == 0 && len(ctx.Packages) > 0 {
-		if len(ctx.GlobalOptions) == 0 {
-			vlog.Info("No configuration options found")
-			return
-		}
+	if err := runRequirePhase(ctx); err != nil {
+		vlog.Error("Phase 1 (OnRequire) failed: %v", err)
+		os.Exit(1)
+	}
+
+	if err := runConfigPhase(ctx); err != nil {
+		vlog.Error("Phase 2 (OnConfig) failed: %v", err)
+		os.Exit(1)
+	}
+
+	hasOptions := len(ctx.AllOptions) > 0
+	if !hasOptions && len(ctx.GlobalOptions) == 0 {
+		vlog.Info("No configuration options found")
+		return
 	}
 
 	values := make(map[string]map[string]any)
@@ -65,7 +75,15 @@ func runConfig(cmd *cobra.Command, args []string) {
 		currentTC = toolchain.GetManager().GetDefaultToolchain()
 	}
 
-	result, err := tui.Run(ctx.Packages, ctx.AllOptions, values, ctx.WorkDir, currentTC, ctx.GlobalOptions, globalValues)
+	var packages []plugin.Package
+	for _, name := range ctx.DepGraph.Order {
+		node := ctx.DepGraph.Packages[name]
+		if node.IsLocal() {
+			packages = append(packages, node.Plugin.Package)
+		}
+	}
+
+	result, err := tui.Run(packages, ctx.AllOptions, values, ctx.WorkDir, currentTC, ctx.GlobalOptions, globalValues)
 	if err != nil {
 		vlog.Error("TUI error: %v", err)
 		os.Exit(1)

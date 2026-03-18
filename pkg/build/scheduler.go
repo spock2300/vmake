@@ -146,7 +146,7 @@ func (s *Scheduler) BuildAll() error {
 		}
 	}
 
-	return s.ccWriter.Save("build/compile_commands.json")
+	return s.ccWriter.Save(filepath.Join("build", "compile_commands.json"))
 }
 
 func (s *Scheduler) Build(fullName string) error {
@@ -175,7 +175,7 @@ func (s *Scheduler) Build(fullName string) error {
 		return err
 	}
 
-	os.MkdirAll(fmt.Sprintf("build/%s/objects", s.buildDir), 0755)
+	os.MkdirAll(filepath.Join("build", s.buildDir, "objects"), 0755)
 
 	numFiles := len(resolved.SourceFiles)
 	if numFiles == 0 {
@@ -332,7 +332,7 @@ func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
 func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string, []string, error) {
 	pkgInfo := s.pkgs[resolved.Node.PkgName]
 
-	objRel := fmt.Sprintf("build/%s/objects/%s.o", s.buildDir, strings.ReplaceAll(src, "/", "_"))
+	objRel := filepath.Join("build", s.buildDir, "objects", strings.ReplaceAll(src, "/", "_")+".o")
 
 	if cached := pkgInfo.Cache.GetIfValid(src); cached != nil {
 		return cached.ObjPath, cached.Deps, nil
