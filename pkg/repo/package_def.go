@@ -9,7 +9,7 @@ import (
 type PackageDef struct {
 	Repo        string
 	Name        string
-	GitURL      string
+	GitURLs     []string
 	Homepage    string
 	Description string
 	License     string
@@ -25,14 +25,14 @@ func NewPackageDef(repo, name string) *PackageDef {
 	}
 }
 
-func (p *PackageDef) SetGit(url string) *PackageDef {
-	p.GitURL = url
+func (p *PackageDef) SetGit(urls ...string) *PackageDef {
+	p.GitURLs = urls
 	return p
 }
 
 func (p *PackageDef) SetPackage(pkg *api.Package) *PackageDef {
 	p.Package = pkg
-	p.GitURL = pkg.Git()
+	p.GitURLs = pkg.GitURLs()
 	p.Homepage = pkg.Homepage()
 	p.Description = pkg.Description()
 	p.License = pkg.License()

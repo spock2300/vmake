@@ -17,6 +17,7 @@ type Target struct {
 	installDir     string
 	noInstall      bool
 	packages       []string
+	buildFunc      func(ctx *PackageContext) error
 }
 
 func (t *Target) SetKind(kind TargetKind) *Target {
@@ -82,6 +83,15 @@ func (t *Target) AddLdFlags(flags ...any) *Target {
 func (t *Target) AddPackages(packages ...string) *Target {
 	t.packages = append(t.packages, packages...)
 	return t
+}
+
+func (t *Target) SetBuildFunc(fn func(ctx *PackageContext) error) *Target {
+	t.buildFunc = fn
+	return t
+}
+
+func (t *Target) BuildFunc() func(ctx *PackageContext) error {
+	return t.buildFunc
 }
 
 func (t *Target) Name() string             { return t.name }

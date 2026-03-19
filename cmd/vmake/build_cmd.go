@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"gitee.com/spock2300/vmake/pkg/config"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 	"gitee.com/spock2300/vmake/pkg/repo"
+	"gitee.com/spock2300/vmake/pkg/toolchain"
 
 	"github.com/spf13/cobra"
 )
@@ -94,15 +96,15 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		CC:       tc.Tools.CC,
 		CXX:      tc.Tools.CXX,
 		AR:       tc.Tools.AR,
-		Target:   tc.Host,
+		Target:   "",
 		SysRoot:  "",
 		CFlags:   strings.Join(tc.DefaultFlags.CFlags, " "),
 		CXXFlags: strings.Join(tc.DefaultFlags.CxxFlags, " "),
 		LDFlags:  strings.Join(tc.DefaultFlags.LdFlags, " "),
 	}
-
-	installedPkgs := make(map[string]*api.InstalledPackage)
-	var pkgProvider *packageProvider
+	if toolchain.IsCrossCompiling(tc) {
+		apiTC.Target = tc.Host
+	}
 
 	hasDeps := false
 	for _, name := range ctx.DepGraph.Order {
@@ -113,14 +115,19 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		}
 	}
 
+	packagesDir := filepath.Join(vmakeDir, "packages")
+	cacheDir := filepath.Join(vmakeDir, "cache")
+
+	pkgSourceDirs := make(map[string]string)
+	pkgBuildDirs := make(map[string]string)
+	pkgInstallDirs := make(map[string]string)
+	configs := make(map[string]*repo.InstallConfig)
+	var repoInstaller *repo.Installer
+
 	if hasDeps {
 		reposDir := filepath.Join(vmakeDir, "repos")
-		packagesDir := filepath.Join(vmakeDir, "packages")
-		cacheDir := filepath.Join(vmakeDir, "cache")
-
 		repoMgr := repo.NewRepoManager(reposDir)
 
-		configs := make(map[string]*repo.InstallConfig)
 		for _, name := range ctx.DepGraph.Order {
 			node := ctx.DepGraph.Packages[name]
 			if !node.IsLocal() {
@@ -133,28 +140,31 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		}
 
 		sourceMgr := repo.NewSourceManager(cacheDir)
-		installer := repo.NewInstaller(sourceMgr, packagesDir, cacheDir)
-		installer.SetRepoManager(repoMgr)
-		installer.SetConfigs(configs)
-		installer.SetToolchain(apiTC)
+		repoInstaller = repo.NewInstaller(sourceMgr, packagesDir, cacheDir)
+		repoInstaller.SetRepoManager(repoMgr)
+		repoInstaller.SetConfigs(configs)
+		repoInstaller.SetToolchain(apiTC)
 
 		for _, name := range ctx.DepGraph.Order {
 			node := ctx.DepGraph.Packages[name]
 			if !node.IsLocal() && node.Definition != nil {
-				installer.SetPackage(name, node.Definition)
+				repoInstaller.SetPackage(name, node.Definition)
 			}
 		}
 
 		vlog.Info("")
-		vlog.Info("Installing packages...")
+		vlog.Info("Downloading package sources...")
 
 		for _, name := range ctx.DepGraph.Order {
 			node := ctx.DepGraph.Packages[name]
 			if !node.IsLocal() {
 				cfg := configs[name]
-				if cfg.Version == "" && node.Definition != nil {
-					pkgDef := repo.NewPackageDef(splitPackagePath(name)[0], splitPackagePath(name)[1])
+				pkgDef := repo.NewPackageDef(splitPackagePath(name)[0], splitPackagePath(name)[1])
+				if node.Definition != nil {
 					pkgDef.SetPackage(node.Definition)
+				}
+
+				if cfg.Version == "" && node.Definition != nil {
 					selected, err := pkgDef.SelectVersion(node.Constraint)
 					if err != nil {
 						return nil, err
@@ -162,24 +172,17 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 					cfg.Version = selected
 				}
 
-				installedPkg := installer.EnsureInstalled(name)
-				if installedPkg != nil {
-					vlog.Info("  %s@%s", name, cfg.Version)
-					installedPkgs[name] = installedPkg
+				sourceDir, err := sourceMgr.EnsureSource(pkgDef, cfg.Version)
+				if err != nil {
+					return nil, fmt.Errorf("failed to download %s: %w", name, err)
 				}
+				vlog.Info("  %s@%s -> %s", name, cfg.Version, sourceDir)
+
+				cacheHash := repo.CacheHash(apiTC.CC, "release", cfg.Options)
+				pkgSourceDirs[name] = sourceDir
+				pkgBuildDirs[name] = filepath.Join(packagesDir, name, cfg.Version, cacheHash, "build")
+				pkgInstallDirs[name] = filepath.Join(packagesDir, name, cfg.Version, cacheHash, "install")
 			}
-		}
-
-		versions := make(map[string]string)
-		for name, cfg := range configs {
-			versions[name] = cfg.Version
-		}
-
-		pkgProvider = &packageProvider{
-			installer: installer,
-			config:    ctx.Config,
-			tc:        apiTC,
-			versions:  versions,
 		}
 	}
 
@@ -189,27 +192,44 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 
 	for _, name := range ctx.DepGraph.Order {
 		node := ctx.DepGraph.Packages[name]
-		if !node.IsLocal() {
-			continue
-		}
 
-		pc := config.GetPackageConfig(ctx.Config, name)
-		buildCtx := api.NewBuildContext(name, pc.Options)
-		buildCtx.SetOptions(ctx.AllOptions[name])
-		buildCtx.SetGlobalOptions(ctx.GlobalOptions)
-		buildCtx.SetGlobalValues(globalValues)
+		if node.IsLocal() {
+			pc := config.GetPackageConfig(ctx.Config, name)
+			buildCtx := api.NewBuildContext(name, pc.Options)
+			buildCtx.SetOptions(ctx.AllOptions[name])
+			buildCtx.SetGlobalOptions(ctx.GlobalOptions)
+			buildCtx.SetGlobalValues(globalValues)
 
-		for _, dep := range node.Deps {
-			if pkg, ok := installedPkgs[dep]; ok {
-				buildCtx.AddPackages(pkg.Name)
+			for _, fn := range node.Plugin.Builder.GetBuildFuncs() {
+				fn(buildCtx)
+			}
+
+			allTargets[name] = buildCtx.GetTargets()
+		} else {
+			pkg := node.Definition
+			if pkg != nil && pkg.GetBuildFunc() != nil {
+				cfg := configs[name]
+				cfgVals := make(map[string]any)
+				for optName, opt := range pkg.GetOptions() {
+					if opt.Default() != nil {
+						cfgVals[optName] = opt.Default()
+					}
+				}
+				for k, v := range cfg.Options {
+					cfgVals[k] = v
+				}
+
+				pkgCtx := api.NewPackageContext(name, cfg.Version, apiTC, cfgVals)
+				pkgCtx.SetOptions(pkg.GetOptions())
+				pkgCtx.SetDirs(pkgSourceDirs[name], pkgBuildDirs[name], pkgInstallDirs[name])
+				if repoInstaller != nil {
+					pkgCtx.SetInstaller(repoInstaller)
+				}
+
+				pkg.GetBuildFunc()(pkgCtx)
+				allTargets[name] = pkgCtx.GetTargets()
 			}
 		}
-
-		for _, fn := range node.Plugin.Builder.GetBuildFuncs() {
-			fn(buildCtx)
-		}
-
-		allTargets[name] = buildCtx.GetTargets()
 	}
 
 	vlog.Info("")
@@ -245,9 +265,29 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		return nil, err
 	}
 
-	if pkgProvider != nil {
-		scheduler.SetPackageProvider(pkgProvider)
+	for _, name := range ctx.DepGraph.Order {
+		node := ctx.DepGraph.Packages[name]
+
+		if node.IsLocal() {
+			scheduler.SetPkgDirs(name, pkgDirs[name], "", "")
+		} else {
+			scheduler.SetPkgDirs(name, pkgSourceDirs[name], pkgBuildDirs[name], pkgInstallDirs[name])
+		}
 	}
+
+	versions := make(map[string]string)
+	for name, cfg := range configs {
+		versions[name] = cfg.Version
+	}
+
+	pkgProvider := &packageProvider{
+		installer: repoInstaller,
+		config:    ctx.Config,
+		tc:        apiTC,
+		versions:  versions,
+		pkgDirs:   pkgInstallDirs,
+	}
+	scheduler.SetPackageProvider(pkgProvider)
 
 	vlog.Info("")
 	vlog.Info("Building...")
@@ -257,6 +297,11 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 
 	vlog.Info("")
 	vlog.Info("Build succeeded!")
+
+	installedPkgs := make(map[string]*api.InstalledPackage)
+	for name, installDir := range pkgInstallDirs {
+		installedPkgs[name] = api.NewInstalledPackage(name, configs[name].Version, installDir, nil)
+	}
 
 	return &BuildResult{
 		AllTargets:    allTargets,
@@ -273,15 +318,15 @@ type packageProvider struct {
 	config    *config.ConfigFile
 	tc        *api.Toolchain
 	versions  map[string]string
+	pkgDirs   map[string]string
 }
 
 func (p *packageProvider) GetInstalledPackage(name string) *api.InstalledPackage {
-	rc := config.GetRequireConfig(p.config, name)
-	version := rc.Version
-	if version == "" {
-		version = p.versions[name]
+	if installDir, ok := p.pkgDirs[name]; ok {
+		version := p.versions[name]
+		return api.NewInstalledPackage(name, version, installDir, nil)
 	}
-	return p.installer.GetInstalledPackage(name, version, p.tc, rc.Options)
+	return nil
 }
 
 func (p *packageProvider) GetTransitivePackageNames(name string) []string {

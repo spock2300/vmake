@@ -1,76 +1,77 @@
 # VMake - AGENTS.md
 
-AI 编码代理在 VMake 代码库中工作时的重要设计原则和约定。
+AI coding agents working in the VMake codebase should follow these guidelines.
 
 ## Build / Lint / Test Commands
 
 ```bash
-# Build vmake binary
 go build -o vmake ./cmd/vmake
 
-# Format code
 gofmt -w .
 
-# Run manual tests (no unit tests exist)
-cd test_data/01_simple_c && ../../vmake build
+cd test_data/01_simple_c && ../../vmake build && ./hello
+cd test_data/02_with_config && ../../vmake build
+cd test_data/03_multi_target && ../../vmake build
+cd test_data/04_multi_module && ../../vmake build
 cd test_data/08_with_package && ../../vmake build
 
-# Clean and rebuild
 ./vmake clean && ./vmake build
 ```
 
-## 核心设计哲学
+For plugin development, set `VMAKE_DIR` to match plugin versions:
 
-**少即是多 (Less is More)**
+```bash
+export VMAKE_DIR=/home/spock/git/vmake
+cd test_data/01_simple_c && ../../vmake build
+```
 
-每添加一个新功能或 API，都需要回答：
-- 这是绝对必要的吗？
-- 用户 80% 的场景是否只需要 20% 的功能？
-- 能否通过更简单的方式达成目标？
+## Core Philosophy
 
-## Official Repository
-
-`official_repo/` 是一个**独立的 git 仓库**，用于索引和管理第三方包。
-- 路径格式：`{repo_name}/{package_name}` (如 `official/zlib`)
-- 包定义位于 `official_repo/packages/{first_letter}/{package_name}/package.go`
+**Less is More** - Before adding any new feature or API, ask:
+- Is this absolutely necessary?
+- Can 80% of use cases be achieved with 20% of the functionality?
+- Is there a simpler way to achieve the goal?
 
 ## Code Style
 
 ### No Comments
 
-**禁止添加任何注释**，除非用户明确要求。代码应自解释。
+**Never add comments** unless explicitly requested by the user. Code should be self-explanatory.
 
 ### Imports Ordering
 
+Group imports in three sections, separated by blank lines:
+
 ```go
 import (
-    // 1. Standard library
     "context"
     "fmt"
     "os/exec"
-    
-    // 2. External packages
+    "path/filepath"
+
     "github.com/spf13/cobra"
-    
-    // 3. Local packages
+
     "gitee.com/spock2300/vmake/pkg/api"
+    "gitee.com/spock2300/vmake/pkg/plugin"
 )
 ```
 
+Order: standard library → external packages → local packages
+
 ### Naming Conventions
 
-- **SetXxx**: 设置单一值 (SetKind, SetDefault, SetLanguages)
-- **AddXxx**: 添加多个值 (AddFiles, AddIncludes, AddDefines)
-- **类型别名**: 使用类型别名增强可读性
+- **SetXxx**: Set a single value (SetKind, SetDefault, SetLanguages)
+- **AddXxx**: Add multiple values (AddFiles, AddIncludes, AddDefines)
+- **Type aliases**: Use type aliases for readability
   ```go
-  type TargetKind string  // 而非 string
-  type OptionType int     // 而非 int
-  type ConfigFunc func(ctx *ConfigContext)  // 而非裸函数类型
+  type TargetKind string
+  type OptionType int
+  type ConfigFunc func(ctx *ConfigContext)
   ```
 
 ### Fluent API
 
-所有 API 使用链式调用：
+All APIs use method chaining:
 
 ```go
 ctx.Target("app").
@@ -81,76 +82,143 @@ ctx.Target("app").
 
 ### Error Handling
 
-- 库代码不 panic，始终返回 error
-- 错误信息包含上下文：
+- Library code never panics, always return error
+- Include context in error messages:
   ```go
   return fmt.Errorf("git clone %s -> %s: %w", url, dir, err)
   return fmt.Errorf("failed to find package %s: %w", name, err)
+  return fmt.Errorf("compile %s failed: %w", name, cr.Error)
   ```
-- 使用 `%w` 包装错误，支持 `errors.Is` / `errors.As`
+- Use `%w` for error wrapping to support `errors.Is` / `errors.As`
+
+### Cross-Platform Paths
+
+Use `filepath.Join()` for all file system paths:
+
+```go
+buildDir := filepath.Join(pkg.Dir, "build")
+pluginPath := filepath.Join(buildDir, "plugin.so")
+```
+
+Do NOT use `filepath.Join()` for logical identifiers:
+- Package identifiers: `repo/name` (use string concatenation)
+- Target identifiers: `pkg:target` (use `:` as delimiter)
 
 ## Package Structure
 
-| 包 | 职责 | 可被插件导入 |
-|---|---|---|
-| `pkg/api` | 核心 API (Builder, Target, Option, Package) | **是** |
-| `pkg/plugin` | 插件扫描、编译、加载 | 否 |
-| `pkg/config` | 配置存储 | 否 |
-| `pkg/tui` | 终端 UI | 否 |
-| `pkg/build` | 构建执行、编译、链接 | 否 |
-| `pkg/toolchain` | 工具链抽象 (GCC, Clang) | 否 |
-| `pkg/repo` | 包管理、Git 操作、依赖解析 | 否 |
-| `pkg/log` | 日志系统 | 否 |
-| `internal/*` | 内部实现细节 | 否 |
+| Package | Responsibility | Plugin Importable |
+|---------|---------------|-------------------|
+| `pkg/api` | Core API (Builder, Target, Option, Package) | **Yes** |
+| `pkg/plugin` | Plugin scan, compile, load | No |
+| `pkg/config` | Config storage | No |
+| `pkg/tui` | Terminal UI | No |
+| `pkg/build` | Build execution, compile, link | No |
+| `pkg/toolchain` | Toolchain abstraction (GCC, Clang) | No |
+| `pkg/repo` | Package management, Git, dependency resolution | No |
+| `pkg/log` | Logging system | No |
+| `internal/*` | Internal implementation details | No |
 
-**原则**: `pkg/api` 是唯一需要保持稳定的公开 API。
+**Principle**: `pkg/api` is the only public API that must remain stable.
 
-## 执行流程
+## Runtime Execution Flow
 
-```
-Scan → Compile → Load → OnConfig → 加载已有配置值
-                                    ↓
-                          ┌─────────┴─────────┐
-                          ↓                   ↓
-                    vmake config        vmake / vmake build
-                    渲染 TUI            OnBuild → 生成 Target → 编译链接
-```
-
-### Package Management Flow
+Three-phase architecture:
 
 ```
-OnRequire → Resolver → Collect Constraints → Load Package Definitions → 
-SelectVersion(constraint) → IsInstalled? → (no) EnsureSource → InstallPackage → Build
+Phase 1: OnRequire
+    Scan build.go → Compile plugins → Load plugins → Collect dependencies
+    ↓
+Phase 2: OnConfig  
+    Execute OnConfig callbacks → Collect Option definitions → Load saved config
+    ↓
+Phase 3: OnBuild (or vmake config for TUI)
+    Execute OnBuild callbacks → Generate Targets → Compile/Link
+```
+
+### Dependency Resolution
+
+```
+ResolveWithLocal → resolveLocal → Compile plugin → Load plugin → 
+    GetRequires → resolveRecursive → FindPackageGo → Load package definition
 ```
 
 ### Config Storage
 
-- 本地包选项 → `config.Packages[pkgName].options`
-- 第三方包 (名称含 `/`) → `config.Requires[pkgName]`
-- 全局选项 → `config.Global.Options`
+- Local package options → `config.Packages[pkgName].options`
+- Third-party packages (name contains `/`) → `config.Requires[pkgName]`
+- Global options → `config.Global.Options`
 
-## 条件表达式
+## Conditional Expressions
 
-使用函数式条件表达式而非 if 语句：
+Use functional conditionals instead of if statements:
 
 ```go
-// 好的方式
-AddDefines(ctx.If("debug", "DEBUG=1"))
+ctx.Target("app").
+    AddDefines(ctx.If("debug", "DEBUG=1")).
+    AddLinks(ctx.If("ssl", "ssl", "crypto")).
+    AddCFlags(ctx.Select("optimization", map[string]string{
+        "O0": "-O0",
+        "O2": "-O2",
+    }))
+```
 
-// 避免
-if ctx.Bool("debug") {
-    AddDefines("DEBUG=1")
+## Official Repository
+
+`official_repo/` is a **separate git repository** for indexing third-party packages.
+- Path format: `{repo_name}/{package_name}` (e.g., `official/zlib`)
+- Package definitions: `official_repo/packages/{first_letter}/{package_name}/package.go`
+
+## Target Dependencies
+
+- Same-package: `AddDeps("utils")`
+- Cross-package: `AddDeps("lib:utils")` using `package:target` format
+
+## Key Types
+
+```go
+type TargetKind string
+const (
+    TargetBinary TargetKind = "binary"
+    TargetStatic TargetKind = "static"
+    TargetShared TargetKind = "shared"
+    TargetObject TargetKind = "object"
+)
+
+type OptionType int
+const (
+    OptionBool OptionType = iota
+    OptionString
+    OptionInt
+    OptionChoice
+)
+```
+
+## Plugin System
+
+Each `build.go` is compiled to a Go plugin (`.so`):
+
+```go
+package main
+
+import "gitee.com/spock2300/vmake/pkg/api"
+
+func Main(b *api.Builder) {
+    b.OnConfig(func(ctx *api.ConfigContext) { ... })
+    b.OnBuild(func(ctx *api.BuildContext) { ... })
 }
 ```
 
-## 不做什么
+Plugin naming: Package name = directory name of `build.go` location.
 
-- IDE 集成插件
-- 远程构建
-- 分布式编译
-- MSVC 工具链 (暂不支持)
+## What Not To Do
 
-## 参考
+- IDE integration plugins
+- Remote builds
+- Distributed compilation
+- MSVC toolchain (not yet supported)
+- Add new data structures without necessity
 
-- 详细 API 设计: `docs/API_DESIGN.md`
-- 测试项目: `test_data/01_simple_c` 到 `test_data/08_with_package`
+## References
+
+- API Design: `docs/API_DESIGN.md`
+- Test projects: `test_data/01_simple_c` through `test_data/10_local_repo`

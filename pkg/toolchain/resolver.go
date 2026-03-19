@@ -72,3 +72,22 @@ func GetToolchainHost(tc *Toolchain) string {
 
 	return strings.TrimSpace(string(output))
 }
+
+func IsCrossCompiling(tc *Toolchain) bool {
+	if tc.Host == "" {
+		return false
+	}
+
+	cc, err := ResolveToolPath(tc.Tools.CC, tc.InstallPath)
+	if err != nil {
+		return false
+	}
+
+	output, err := iexec.Run(cc, "-dumpmachine")
+	if err != nil {
+		return false
+	}
+
+	hostTriple := strings.TrimSpace(string(output))
+	return tc.Host != hostTriple
+}

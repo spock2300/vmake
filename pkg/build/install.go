@@ -2,7 +2,6 @@ package build
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -239,63 +238,11 @@ func (i *Installer) ensureDir(dir string) error {
 }
 
 func (i *Installer) copyFile(src, dest string) error {
-	srcFile, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("failed to open source file: %w", err)
-	}
-	defer srcFile.Close()
-
-	destFile, err := os.Create(dest)
-	if err != nil {
-		return fmt.Errorf("failed to create dest file: %w", err)
-	}
-	defer destFile.Close()
-
-	if _, err := io.Copy(destFile, srcFile); err != nil {
-		return fmt.Errorf("failed to copy file: %w", err)
-	}
-
-	srcInfo, err := os.Stat(src)
-	if err != nil {
-		return fmt.Errorf("failed to stat source file: %w", err)
-	}
-
-	if err := os.Chmod(dest, srcInfo.Mode()); err != nil {
-		return fmt.Errorf("failed to set file mode: %w", err)
-	}
-
-	return nil
+	return CopyFile(src, dest)
 }
 
 func (i *Installer) copyDir(src, dest string) error {
-	if err := i.ensureDir(dest); err != nil {
-		return err
-	}
-
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return fmt.Errorf("failed to read directory: %w", err)
-	}
-
-	for _, entry := range entries {
-		srcPath := filepath.Join(src, entry.Name())
-		destPath := filepath.Join(dest, entry.Name())
-
-		if entry.IsDir() {
-			if err := i.copyDir(srcPath, destPath); err != nil {
-				return err
-			}
-		} else {
-			if strings.HasSuffix(entry.Name(), ".go") {
-				continue
-			}
-			if err := i.copyFile(srcPath, destPath); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
+	return CopyDir(src, dest)
 }
 
 func (i *Installer) copyDirWithFilter(src, dest string, filter api.InstallFilterFunc) error {

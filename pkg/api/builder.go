@@ -7,6 +7,7 @@ const (
 	TargetStatic TargetKind = "static"
 	TargetShared TargetKind = "shared"
 	TargetObject TargetKind = "object"
+	TargetVoid   TargetKind = "void"
 )
 
 type OptionType int
@@ -36,12 +37,14 @@ func (t OptionType) String() string {
 type ConfigFunc func(ctx *ConfigContext)
 type BuildFunc func(ctx *BuildContext)
 type InstallFunc func(ctx *InstallContext)
+type PackageFunc func(ctx *PackageContext)
 
 type Builder struct {
 	configFuncs  []ConfigFunc
 	buildFuncs   []BuildFunc
 	installFuncs []InstallFunc
 	requireFuncs []RequireFunc
+	packageFunc  PackageFunc
 }
 
 func (b *Builder) OnRequire(fn RequireFunc) {
@@ -74,4 +77,12 @@ func (b *Builder) OnInstall(fn InstallFunc) {
 
 func (b *Builder) GetInstallFuncs() []InstallFunc {
 	return b.installFuncs
+}
+
+func (b *Builder) OnPackage(fn PackageFunc) {
+	b.packageFunc = fn
+}
+
+func (b *Builder) GetPackageFunc() PackageFunc {
+	return b.packageFunc
 }

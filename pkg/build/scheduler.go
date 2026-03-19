@@ -34,8 +34,10 @@ type compileResult struct {
 }
 
 type PkgInfo struct {
-	Dir   string
-	Cache *BuildCache
+	Dir        string
+	OutputDir  string
+	InstallDir string
+	Cache      *BuildCache
 }
 
 type PackageProvider interface {
@@ -130,6 +132,15 @@ func (s *Scheduler) SetPackageProvider(provider PackageProvider) {
 	s.pkgProvider = provider
 }
 
+func (s *Scheduler) SetPkgDirs(pkgName, sourceDir, outputDir, installDir string) {
+	s.pkgs[pkgName] = &PkgInfo{
+		Dir:        sourceDir,
+		OutputDir:  outputDir,
+		InstallDir: installDir,
+		Cache:      NewBuildCache(s.toolchain),
+	}
+}
+
 func (s *Scheduler) BuildAll() error {
 	for _, fullName := range s.graph.Order {
 		node := s.graph.Nodes[fullName]
@@ -214,6 +225,12 @@ func (s *Scheduler) Build(fullName string) error {
 
 	if err := s.link(resolved, objs); err != nil {
 		return err
+	}
+
+	if pkgInfo.InstallDir != "" {
+		if err := s.installTarget(resolved, pkgInfo); err != nil {
+			return err
+		}
 	}
 
 	return pkgInfo.Cache.Save(s.buildDir)
@@ -312,6 +329,8 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 }
 
 func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
+	pkgInfo := s.pkgs[node.PkgName]
+
 	var name string
 	switch node.Target.Kind() {
 	case api.TargetBinary:
@@ -326,13 +345,21 @@ func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
 		name = node.Target.Name()
 	}
 
+	if pkgInfo.OutputDir != "" {
+		return filepath.Join(pkgInfo.OutputDir, name)
+	}
 	return filepath.Join("build", s.buildDir, name)
 }
 
 func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string, []string, error) {
 	pkgInfo := s.pkgs[resolved.Node.PkgName]
 
-	objRel := filepath.Join("build", s.buildDir, "objects", strings.ReplaceAll(src, "/", "_")+".o")
+	var objRel string
+	if pkgInfo.OutputDir != "" {
+		objRel = filepath.Join(pkgInfo.OutputDir, "objects", strings.ReplaceAll(src, "/", "_")+".o")
+	} else {
+		objRel = filepath.Join("build", s.buildDir, "objects", strings.ReplaceAll(src, "/", "_")+".o")
+	}
 
 	if cached := pkgInfo.Cache.GetIfValid(src); cached != nil {
 		return cached.ObjPath, cached.Deps, nil
@@ -433,7 +460,53 @@ func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 			return fmt.Errorf("object target requires at least one source file")
 		}
 		return s.linker.LinkObject(allObjs, resolved.OutputPath)
+	case api.TargetVoid:
+		return nil
 	}
+	return nil
+}
+
+func (s *Scheduler) installTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) error {
+	t := resolved.Node.Target
+	kind := t.Kind()
+
+	if kind == api.TargetVoid || kind == api.TargetObject {
+		return nil
+	}
+
+	libDir := filepath.Join(pkgInfo.InstallDir, "lib")
+	includeDir := filepath.Join(pkgInfo.InstallDir, "include")
+	os.MkdirAll(libDir, 0755)
+	os.MkdirAll(includeDir, 0755)
+
+	if resolved.OutputPath != "" {
+		if _, err := os.Stat(resolved.OutputPath); err == nil {
+			dest := filepath.Join(libDir, filepath.Base(resolved.OutputPath))
+			vlog.Info("  INSTALL %s -> %s", filepath.Base(resolved.OutputPath), dest)
+			if err := CopyFile(resolved.OutputPath, dest); err != nil {
+				return fmt.Errorf("install library failed: %w", err)
+			}
+		}
+	}
+
+	for _, inc := range t.PublicIncludes() {
+		srcPath := filepath.Join(pkgInfo.Dir, inc)
+		if info, err := os.Stat(srcPath); err == nil {
+			if info.IsDir() {
+				vlog.Info("  INSTALL DIR %s -> %s", inc, includeDir)
+				if err := CopyDir(srcPath, includeDir); err != nil {
+					return fmt.Errorf("install headers failed: %w", err)
+				}
+			} else {
+				dest := filepath.Join(includeDir, filepath.Base(srcPath))
+				vlog.Info("  INSTALL %s -> %s", filepath.Base(srcPath), dest)
+				if err := CopyFile(srcPath, dest); err != nil {
+					return fmt.Errorf("install header failed: %w", err)
+				}
+			}
+		}
+	}
+
 	return nil
 }
 

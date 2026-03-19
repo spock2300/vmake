@@ -86,12 +86,12 @@ func (m *RepoManager) FindPackageGo(repo, name string) (string, error) {
 		return "", err
 	}
 
-	packageGo := filepath.Join(pkgPath, "package.go")
-	if !m.exists(packageGo) {
-		return "", fmt.Errorf("package.go not found in '%s'", pkgPath)
+	buildGo := filepath.Join(pkgPath, "build.go")
+	if !m.exists(buildGo) {
+		return "", fmt.Errorf("build.go not found in '%s'", pkgPath)
 	}
 
-	return packageGo, nil
+	return buildGo, nil
 }
 
 func (m *RepoManager) exists(path string) bool {

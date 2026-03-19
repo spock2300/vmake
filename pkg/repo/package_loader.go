@@ -36,12 +36,12 @@ func (l *PackageLoader) Load(pkgPath string) (*api.Package, error) {
 		return nil, fmt.Errorf("failed to compile package: %w", err)
 	}
 
-	pkg, err := l.loadPlugin(pluginPath)
+	builder, err := l.loadPlugin(pluginPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load package: %w", err)
 	}
 
-	return pkg, nil
+	return l.extractPackageFromBuilder(builder)
 }
 
 func (l *PackageLoader) compile(pkgPath, pkgName string) (string, error) {
@@ -161,26 +161,112 @@ require gitee.com/spock2300/vmake %s
 	return pluginPath, nil
 }
 
-func (l *PackageLoader) loadPlugin(pluginPath string) (*api.Package, error) {
+func (l *PackageLoader) loadPlugin(pluginPath string) (*api.Builder, error) {
 	p, err := plugin.GlobalManager.Open(pluginPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open plugin: %w", err)
 	}
 
-	pkgSym, err := p.Lookup("Package")
+	mainSym, err := p.Lookup("Main")
 	if err != nil {
-		return nil, fmt.Errorf("Package function not found: %w", err)
+		return nil, fmt.Errorf("Main function not found: %w", err)
 	}
 
-	pkgFunc, ok := pkgSym.(func(*api.Package))
+	mainFunc, ok := mainSym.(func(*api.Builder))
 	if !ok {
-		return nil, fmt.Errorf("Package has wrong type signature")
+		return nil, fmt.Errorf("Main has wrong type signature")
 	}
 
+	builder := &api.Builder{}
+	mainFunc(builder)
+	return builder, nil
+}
+
+func (l *PackageLoader) extractPackageFromBuilder(builder *api.Builder) (*api.Package, error) {
 	pkg := api.NewPackage()
-	pkgFunc(pkg)
+
+	requireCtx := api.NewRequireContext()
+	for _, fn := range builder.GetRequireFuncs() {
+		fn(requireCtx)
+	}
+	for _, req := range requireCtx.GetRequires() {
+		pkg.GetRequireContext().AddRequires(req.Name)
+	}
+
+	if fn := builder.GetPackageFunc(); fn != nil {
+		ctx := api.NewPackageContextForDefinition()
+		fn(ctx)
+
+		pkg.SetGit(ctx.GitURLs()...)
+		pkg.SetHomepage(ctx.Homepage())
+		pkg.SetDescription(ctx.Description())
+		pkg.SetLicense(ctx.License())
+		pkg.SetLibs(ctx.Libs()...)
+
+		for _, declared := range ctx.DeclaredPackages() {
+			pkg.DeclarePackages(declared)
+		}
+
+		for ver, ref := range ctx.Versions() {
+			pkg.AddVersion(ver, ref)
+		}
+
+		for name, opt := range ctx.GetOptions() {
+			pkgOpt := pkg.Option(name)
+			pkgOpt.SetType(opt.Type()).
+				SetDefault(opt.Default()).
+				SetDescription(opt.Description())
+			if opt.Values() != nil {
+				pkgOpt.SetValues(opt.Values()...)
+			}
+		}
+	}
+
+	if len(builder.GetBuildFuncs()) > 0 {
+		pkg.Build(l.createBuildFunc(builder))
+	}
 
 	return pkg, nil
+}
+
+func (l *PackageLoader) createBuildFunc(builder *api.Builder) func(ctx *api.PackageContext) {
+	return func(ctx *api.PackageContext) {
+		buildCtx := api.NewBuildContext(ctx.PackageName(), ctx.GetConfigValues())
+		buildCtx.SetOptions(ctx.GetOptions())
+
+		for _, fn := range builder.GetBuildFuncs() {
+			fn(buildCtx)
+		}
+
+		for name, t := range buildCtx.GetTargets() {
+			pt := ctx.Target(name)
+			pt.SetKind(t.Kind())
+			pt.AddFiles(toAnySlice(t.Files())...)
+			pt.AddIncludes(toAnySlice(t.Includes())...)
+			pt.AddPublicIncludes(toAnySlice(t.PublicIncludes())...)
+			pt.AddDefines(toAnySlice(t.Defines())...)
+			pt.AddCFlags(toAnySlice(t.CFlags())...)
+			pt.AddCxxFlags(toAnySlice(t.CxxFlags())...)
+			pt.AddLdFlags(toAnySlice(t.LdFlags())...)
+			if t.BuildFunc() != nil {
+				pt.SetBuildFunc(t.BuildFunc())
+			}
+		}
+
+		for _, t := range buildCtx.GetTargets() {
+			if t.Kind() == api.TargetVoid && t.BuildFunc() != nil {
+				t.BuildFunc()(ctx)
+			}
+		}
+	}
+}
+
+func toAnySlice(s []string) []any {
+	result := make([]any, len(s))
+	for i, v := range s {
+		result[i] = v
+	}
+	return result
 }
 
 func hashPath(path string) string {

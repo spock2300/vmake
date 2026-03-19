@@ -18,11 +18,22 @@ func NewSourceManager(sourcesDir string) *SourceManager {
 func (m *SourceManager) EnsureSource(pkg *PackageDef, version string) (string, error) {
 	repoDir := filepath.Join(m.sourcesDir, pkg.Repo, pkg.Name, "repo")
 
-	if !m.exists(repoDir) {
-		if err := Clone(pkg.GitURL, repoDir); err != nil {
-			return "", fmt.Errorf("clone failed for %s: %w", pkg.FullName(), err)
+	if !m.exists(repoDir) || !m.exists(filepath.Join(repoDir, ".git")) {
+		var lastErr error
+		for _, url := range pkg.GitURLs {
+			if err := Clone(url, repoDir); err == nil {
+				break
+			} else {
+				lastErr = err
+				os.RemoveAll(repoDir)
+			}
+		}
+		if lastErr != nil {
+			return "", fmt.Errorf("all mirrors failed for %s: %w", pkg.FullName(), lastErr)
 		}
 	}
+
+	_ = InitSubmodules(repoDir)
 
 	_ = FetchTags(repoDir)
 
@@ -50,7 +61,16 @@ func (m *SourceManager) UpdateSource(pkg *PackageDef) error {
 	repoDir := filepath.Join(m.sourcesDir, pkg.Repo, pkg.Name, "repo")
 
 	if !m.exists(repoDir) {
-		return Clone(pkg.GitURL, repoDir)
+		var lastErr error
+		for _, url := range pkg.GitURLs {
+			if err := Clone(url, repoDir); err == nil {
+				return nil
+			} else {
+				lastErr = err
+				os.RemoveAll(repoDir)
+			}
+		}
+		return lastErr
 	}
 
 	return FetchAndReset(repoDir)

@@ -1,40 +1,52 @@
 package repo
 
 import (
-	"context"
 	"fmt"
-	"os/exec"
+	"os"
 	"strings"
 	"time"
+
+	exec "gitee.com/spock2300/vmake/internal/exec"
 )
 
 func Clone(url, dir string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "git", "clone", url, dir)
-	if err := cmd.Run(); err != nil {
+	_, err := exec.RunWithOptions("git", []string{"clone", url, dir}, exec.RunOptions{
+		Timeout: 5 * time.Minute,
+	})
+	if err != nil {
+		os.RemoveAll(dir)
 		return fmt.Errorf("git clone %s -> %s: %w", url, dir, err)
 	}
 	return nil
 }
 
-func FetchTags(dir string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+func InitSubmodules(dir string) error {
+	_, err := exec.RunWithOptions("git", []string{"submodule", "update", "--init", "--recursive"}, exec.RunOptions{
+		Dir:     dir,
+		Timeout: 2 * time.Minute,
+	})
+	if err != nil {
+		return fmt.Errorf("git submodule init in %s: %w", dir, err)
+	}
+	return nil
+}
 
-	cmd := exec.CommandContext(ctx, "git", "fetch", "--all", "--tags")
-	cmd.Dir = dir
-	if err := cmd.Run(); err != nil {
+func FetchTags(dir string) error {
+	_, err := exec.RunWithOptions("git", []string{"fetch", "--all", "--tags"}, exec.RunOptions{
+		Dir:     dir,
+		Timeout: 30 * time.Second,
+	})
+	if err != nil {
 		return fmt.Errorf("git fetch in %s: %w", dir, err)
 	}
 	return nil
 }
 
 func Checkout(dir, ref string) error {
-	cmd := exec.Command("git", "checkout", "--force", ref)
-	cmd.Dir = dir
-	if err := cmd.Run(); err != nil {
+	_, err := exec.RunWithOptions("git", []string{"checkout", "--force", ref}, exec.RunOptions{
+		Dir: dir,
+	})
+	if err != nil {
 		return fmt.Errorf("git checkout %s in %s: %w", ref, dir, err)
 	}
 	return nil
@@ -42,23 +54,20 @@ func Checkout(dir, ref string) error {
 
 func FetchAndReset(dir string) error {
 	cmds := [][]string{
-		{"git", "fetch", "--all", "--tags"},
-		{"git", "reset", "--hard", "origin/HEAD"},
+		{"fetch", "--all", "--tags"},
+		{"reset", "--hard", "origin/HEAD"},
 	}
 	for _, args := range cmds {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = dir
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("%v in %s: %w", args, dir, err)
+		_, err := exec.RunWithOptions("git", args, exec.RunOptions{Dir: dir})
+		if err != nil {
+			return fmt.Errorf("git %v in %s: %w", args[0], dir, err)
 		}
 	}
 	return nil
 }
 
 func GetCurrentCommit(dir string) (string, error) {
-	cmd := exec.Command("git", "rev-parse", "HEAD")
-	cmd.Dir = dir
-	output, err := cmd.Output()
+	output, err := exec.RunWithOptions("git", []string{"rev-parse", "HEAD"}, exec.RunOptions{Dir: dir})
 	if err != nil {
 		return "", err
 	}
@@ -66,9 +75,7 @@ func GetCurrentCommit(dir string) (string, error) {
 }
 
 func GetCurrentTag(dir string) (string, error) {
-	cmd := exec.Command("git", "describe", "--tags", "--exact-match")
-	cmd.Dir = dir
-	output, err := cmd.Output()
+	output, err := exec.RunWithOptions("git", []string{"describe", "--tags", "--exact-match"}, exec.RunOptions{Dir: dir})
 	if err != nil {
 		return "", err
 	}
@@ -76,9 +83,7 @@ func GetCurrentTag(dir string) (string, error) {
 }
 
 func ListTags(dir string) ([]string, error) {
-	cmd := exec.Command("git", "tag", "-l")
-	cmd.Dir = dir
-	output, err := cmd.Output()
+	output, err := exec.RunWithOptions("git", []string{"tag", "-l"}, exec.RunOptions{Dir: dir})
 	if err != nil {
 		return nil, err
 	}

@@ -12,7 +12,7 @@ import (
 type PackageBuildFunc func(ctx *PackageContext)
 
 type Package struct {
-	git              string
+	gitURLs          []string
 	homepage         string
 	description      string
 	license          string
@@ -32,8 +32,8 @@ func NewPackage() *Package {
 	}
 }
 
-func (p *Package) SetGit(url string) *Package {
-	p.git = url
+func (p *Package) SetGit(urls ...string) *Package {
+	p.gitURLs = urls
 	return p
 }
 
@@ -86,7 +86,7 @@ func (p *Package) DeclarePackages(packages ...string) *Package {
 	return p
 }
 
-func (p *Package) Git() string                               { return p.git }
+func (p *Package) GitURLs() []string                         { return p.gitURLs }
 func (p *Package) Homepage() string                          { return p.homepage }
 func (p *Package) Description() string                       { return p.description }
 func (p *Package) License() string                           { return p.license }
@@ -126,18 +126,25 @@ type OnDemandInstaller interface {
 }
 
 type PackageContext struct {
-	pkgName    string
-	version    string
-	toolchain  *Toolchain
-	cfgVals    map[string]any
-	options    map[string]*Option
-	deps       map[string]*InstalledPackage
-	sourceDir  string
-	buildDir   string
-	installDir string
-	targets    map[string]*Target
-	buildFunc  func(*Target) error
-	installer  OnDemandInstaller
+	gitURLs          []string
+	homepage         string
+	description      string
+	license          string
+	versions         map[string]string
+	libs             []string
+	declaredPackages []string
+	options          map[string]*Option
+	pkgName          string
+	version          string
+	toolchain        *Toolchain
+	cfgVals          map[string]any
+	deps             map[string]*InstalledPackage
+	sourceDir        string
+	buildDir         string
+	installDir       string
+	targets          map[string]*Target
+	buildFunc        func(*Target) error
+	installer        OnDemandInstaller
 }
 
 func NewPackageContext(pkgName, version string, tc *Toolchain, cfgVals map[string]any) *PackageContext {
@@ -152,7 +159,78 @@ func NewPackageContext(pkgName, version string, tc *Toolchain, cfgVals map[strin
 		options:   make(map[string]*Option),
 		deps:      make(map[string]*InstalledPackage),
 		targets:   make(map[string]*Target),
+		versions:  make(map[string]string),
 	}
+}
+
+func NewPackageContextForDefinition() *PackageContext {
+	return &PackageContext{
+		options:  make(map[string]*Option),
+		versions: make(map[string]string),
+	}
+}
+
+func (ctx *PackageContext) SetGit(urls ...string) *PackageContext {
+	ctx.gitURLs = urls
+	return ctx
+}
+
+func (ctx *PackageContext) SetHomepage(url string) *PackageContext {
+	ctx.homepage = url
+	return ctx
+}
+
+func (ctx *PackageContext) SetDescription(desc string) *PackageContext {
+	ctx.description = desc
+	return ctx
+}
+
+func (ctx *PackageContext) SetLicense(license string) *PackageContext {
+	ctx.license = license
+	return ctx
+}
+
+func (ctx *PackageContext) AddVersion(version, ref string) *PackageContext {
+	ctx.versions[version] = ref
+	return ctx
+}
+
+func (ctx *PackageContext) SetLibs(libs ...string) *PackageContext {
+	ctx.libs = libs
+	return ctx
+}
+
+func (ctx *PackageContext) DeclarePackages(packages ...string) *PackageContext {
+	ctx.declaredPackages = append(ctx.declaredPackages, packages...)
+	return ctx
+}
+
+func (ctx *PackageContext) Option(name string) *Option {
+	if opt, ok := ctx.options[name]; ok {
+		return opt
+	}
+	opt := &Option{name: name}
+	ctx.options[name] = opt
+	return opt
+}
+
+func (ctx *PackageContext) GitURLs() []string   { return ctx.gitURLs }
+func (ctx *PackageContext) Homepage() string    { return ctx.homepage }
+func (ctx *PackageContext) Description() string { return ctx.description }
+func (ctx *PackageContext) License() string     { return ctx.license }
+func (ctx *PackageContext) Versions() map[string]string {
+	return ctx.versions
+}
+func (ctx *PackageContext) Libs() []string { return ctx.libs }
+func (ctx *PackageContext) DeclaredPackages() []string {
+	return ctx.declaredPackages
+}
+func (ctx *PackageContext) GetOptions() map[string]*Option {
+	return ctx.options
+}
+func (ctx *PackageContext) PackageName() string { return ctx.pkgName }
+func (ctx *PackageContext) GetConfigValues() map[string]any {
+	return ctx.cfgVals
 }
 
 func (ctx *PackageContext) SetOptions(options map[string]*Option) {
