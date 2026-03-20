@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
+	"gitee.com/spock2300/vmake/pkg/plugin"
 )
 
 type InstallConfig struct {
@@ -17,7 +19,7 @@ type InstallConfig struct {
 type Installer struct {
 	sourceMgr   *SourceManager
 	packagesDir string
-	loader      *PackageLoader
+	cacheDir    string
 	pkgs        map[string]*api.Package
 	repoMgr     *RepoManager
 	configs     map[string]*InstallConfig
@@ -30,7 +32,7 @@ func NewInstaller(sourceMgr *SourceManager, packagesDir, cacheDir string) *Insta
 	return &Installer{
 		sourceMgr:   sourceMgr,
 		packagesDir: packagesDir,
-		loader:      NewPackageLoader(cacheDir),
+		cacheDir:    cacheDir,
 		pkgs:        make(map[string]*api.Package),
 		installed:   make(map[string]*api.InstalledPackage),
 		installing:  make(map[string]bool),
@@ -255,10 +257,25 @@ func (i *Installer) EnsureInstalled(name string) *api.InstalledPackage {
 		return nil
 	}
 
-	pkg, err := i.loader.Load(pkgPath)
+	src := plugin.Source{
+		Name:      name,
+		Path:      pkgPath,
+		Dir:       filepath.Dir(pkgPath),
+		OutputDir: i.pluginOutputDir(name),
+		Origin:    plugin.SourceRemote,
+	}
+
+	cr := plugin.Compile(src)
+	if !cr.Success {
+		return nil
+	}
+
+	loaded, err := plugin.Load(cr.PluginPath, src)
 	if err != nil {
 		return nil
 	}
+
+	pkg := loaded.ExtractPackage()
 	pkgDef.SetPackage(pkg)
 	i.pkgs[name] = pkg
 
@@ -384,4 +401,8 @@ func splitPackagePath(path string) []string {
 		}
 	}
 	return nil
+}
+
+func (i *Installer) pluginOutputDir(name string) string {
+	return fmt.Sprintf("%s/plugins/%s", i.cacheDir, strings.ReplaceAll(name, "/", "_"))
 }

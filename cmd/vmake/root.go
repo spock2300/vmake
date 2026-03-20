@@ -86,7 +86,7 @@ func initContext() (*RuntimeContext, error) {
 	}, nil
 }
 
-func runRequirePhase(ctx *RuntimeContext) error {
+func runRequirePhase(ctx *RuntimeContext, force bool) error {
 	vlog.Info("Scanning %s...", ctx.WorkDir)
 
 	packages, err := plugin.Scan(ctx.WorkDir)
@@ -96,6 +96,10 @@ func runRequirePhase(ctx *RuntimeContext) error {
 
 	if len(packages) == 0 {
 		return fmt.Errorf("no build.go files found")
+	}
+
+	for i := range packages {
+		packages[i].Force = force
 	}
 
 	var pkgNames []string
@@ -108,13 +112,12 @@ func runRequirePhase(ctx *RuntimeContext) error {
 	cacheDir := filepath.Join(vmakeDir, "cache")
 
 	repoMgr := repo.NewRepoManager(reposDir)
-	loader := repo.NewPackageLoader(cacheDir)
-	resolver := repo.NewResolverWithLoader(repoMgr, loader)
+	resolver := repo.NewResolver(repoMgr, cacheDir)
 
 	vlog.Info("")
 	vlog.Info("Resolving dependencies...")
 
-	graph, err := resolver.ResolveWithLocal(packages)
+	graph, err := resolver.ResolveWithLocal(packages, force)
 	if err != nil {
 		return err
 	}
@@ -145,7 +148,7 @@ func runConfigPhase(ctx *RuntimeContext) error {
 		var opts map[string]*api.Option
 		if node.IsLocal() {
 			cfgCtx := api.NewConfigContext(name)
-			for _, fn := range node.Plugin.Builder.GetConfigFuncs() {
+			for _, fn := range node.Definition.GetConfigFuncs() {
 				fn(cfgCtx)
 			}
 			opts = cfgCtx.GetOptions()
@@ -193,8 +196,8 @@ func GetToolchain(cfg *config.ConfigFile) (*toolchain.Toolchain, string, error) 
 func GetPackageDirs(graph *repo.DependencyGraph) map[string]string {
 	dirs := make(map[string]string)
 	for name, node := range graph.Packages {
-		if node.IsLocal() {
-			dirs[name] = node.Plugin.Package.Dir
+		if node.IsLocal() && node.Source != nil {
+			dirs[name] = node.Source.Dir
 		}
 	}
 	return dirs

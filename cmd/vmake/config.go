@@ -31,7 +31,7 @@ func runConfig(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	if err := runRequirePhase(ctx); err != nil {
+	if err := runRequirePhase(ctx, false); err != nil {
 		vlog.Error("Phase 1 (OnRequire) failed: %v", err)
 		os.Exit(1)
 	}
@@ -75,15 +75,15 @@ func runConfig(cmd *cobra.Command, args []string) {
 		currentTC = toolchain.GetManager().GetDefaultToolchain()
 	}
 
-	var packages []plugin.Package
+	var sources []plugin.Source
 	for _, name := range ctx.DepGraph.Order {
 		node := ctx.DepGraph.Packages[name]
-		if node.IsLocal() {
-			packages = append(packages, node.Plugin.Package)
+		if node.IsLocal() && node.Source != nil {
+			sources = append(sources, *node.Source)
 		}
 	}
 
-	result, err := tui.Run(packages, ctx.AllOptions, values, ctx.WorkDir, currentTC, ctx.GlobalOptions, globalValues)
+	result, err := tui.Run(sources, ctx.AllOptions, values, ctx.WorkDir, currentTC, ctx.GlobalOptions, globalValues)
 	if err != nil {
 		vlog.Error("TUI error: %v", err)
 		os.Exit(1)

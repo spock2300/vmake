@@ -22,6 +22,10 @@ type Package struct {
 	buildFunc        PackageBuildFunc
 	libs             []string
 	declaredPackages []string
+	configFuncs      []ConfigFunc
+	buildFuncs       []BuildFunc
+	installFuncs     []InstallFunc
+	packageBuildFunc func(*PackageContext)
 }
 
 func NewPackage() *Package {
@@ -76,6 +80,26 @@ func (p *Package) Build(fn PackageBuildFunc) *Package {
 	return p
 }
 
+func (p *Package) SetConfigFuncs(funcs []ConfigFunc) *Package {
+	p.configFuncs = funcs
+	return p
+}
+
+func (p *Package) SetBuildFuncs(funcs []BuildFunc) *Package {
+	p.buildFuncs = funcs
+	return p
+}
+
+func (p *Package) SetInstallFuncs(funcs []InstallFunc) *Package {
+	p.installFuncs = funcs
+	return p
+}
+
+func (p *Package) SetPackageBuildFunc(fn func(*PackageContext)) *Package {
+	p.packageBuildFunc = fn
+	return p
+}
+
 func (p *Package) SetLibs(libs ...string) *Package {
 	p.libs = libs
 	return p
@@ -86,17 +110,21 @@ func (p *Package) DeclarePackages(packages ...string) *Package {
 	return p
 }
 
-func (p *Package) GitURLs() []string                         { return p.gitURLs }
-func (p *Package) Homepage() string                          { return p.homepage }
-func (p *Package) Description() string                       { return p.description }
-func (p *Package) License() string                           { return p.license }
-func (p *Package) Versions() map[string]string               { return p.versions }
-func (p *Package) GetOptions() map[string]*Option            { return p.options }
-func (p *Package) GetRequireContext() *PackageRequireContext { return p.requireCtx }
-func (p *Package) GetBuildFunc() PackageBuildFunc            { return p.buildFunc }
-func (p *Package) GetRef(version string) string              { return p.versions[version] }
-func (p *Package) Libs() []string                            { return p.libs }
-func (p *Package) GetDeclaredPackages() []string             { return p.declaredPackages }
+func (p *Package) GitURLs() []string                          { return p.gitURLs }
+func (p *Package) Homepage() string                           { return p.homepage }
+func (p *Package) Description() string                        { return p.description }
+func (p *Package) License() string                            { return p.license }
+func (p *Package) Versions() map[string]string                { return p.versions }
+func (p *Package) GetOptions() map[string]*Option             { return p.options }
+func (p *Package) GetRequireContext() *PackageRequireContext  { return p.requireCtx }
+func (p *Package) GetBuildFunc() PackageBuildFunc             { return p.buildFunc }
+func (p *Package) GetRef(version string) string               { return p.versions[version] }
+func (p *Package) Libs() []string                             { return p.libs }
+func (p *Package) GetDeclaredPackages() []string              { return p.declaredPackages }
+func (p *Package) GetConfigFuncs() []ConfigFunc               { return p.configFuncs }
+func (p *Package) GetBuildFuncs() []BuildFunc                 { return p.buildFuncs }
+func (p *Package) GetInstallFuncs() []InstallFunc             { return p.installFuncs }
+func (p *Package) GetPackageBuildFunc() func(*PackageContext) { return p.packageBuildFunc }
 
 type InstalledPackage struct {
 	Name       string

@@ -26,7 +26,7 @@ type OptionItem struct {
 const GlobalPkgName = "__global__"
 
 type Model struct {
-	packages []plugin.Package
+	packages []plugin.Source
 	tree     []*TreeNode
 	options  map[string]map[string]*api.Option
 	values   map[string]map[string]any
@@ -57,7 +57,7 @@ type Model struct {
 }
 
 func NewModel(
-	packages []plugin.Package,
+	packages []plugin.Source,
 	options map[string]map[string]*api.Option,
 	values map[string]map[string]any,
 	workDir string,
@@ -122,7 +122,7 @@ func deepCopyValues(src map[string]map[string]any) map[string]map[string]any {
 	return dst
 }
 
-func buildTree(packages []plugin.Package, baseDir string) []*TreeNode {
+func buildTree(packages []plugin.Source, baseDir string) []*TreeNode {
 	globalNode := &TreeNode{
 		Name:     "[Global]",
 		PkgName:  GlobalPkgName,
@@ -427,7 +427,7 @@ func (m *Model) GetRequireValues() map[string]map[string]any {
 	return result
 }
 
-func buildTreeWithPackages(packages []plugin.Package, baseDir string, allOptions map[string]map[string]*api.Option) []*TreeNode {
+func buildTreeWithPackages(packages []plugin.Source, baseDir string, allOptions map[string]map[string]*api.Option) []*TreeNode {
 	result := buildTree(packages, baseDir)
 
 	for pkgName := range allOptions {

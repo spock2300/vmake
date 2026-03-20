@@ -2,6 +2,7 @@ package repo
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -10,9 +11,8 @@ import (
 )
 
 type DependencyGraph struct {
-	Order        []string
-	Packages     map[string]*ResolvedPackage
-	LocalPlugins map[string]*plugin.LoadedPlugin
+	Order    []string
+	Packages map[string]*ResolvedPackage
 }
 
 type ResolvedPackage struct {
@@ -20,12 +20,12 @@ type ResolvedPackage struct {
 	Constraint string
 	Options    map[string]any
 	Definition *api.Package
-	Plugin     *plugin.LoadedPlugin
+	Source     *plugin.Source
 	Deps       []string
 }
 
 func (p *ResolvedPackage) IsLocal() bool {
-	return p.Plugin != nil
+	return p.Source != nil && p.Source.Origin == plugin.SourceLocal
 }
 
 type PackageRegistry struct {
@@ -34,23 +34,18 @@ type PackageRegistry struct {
 }
 
 type Resolver struct {
-	repoMgr   *RepoManager
-	pkgLoader *PackageLoader
+	repoMgr  *RepoManager
+	cacheDir string
 }
 
-func NewResolver(repoMgr *RepoManager) *Resolver {
-	return &Resolver{repoMgr: repoMgr}
-}
-
-func NewResolverWithLoader(repoMgr *RepoManager, loader *PackageLoader) *Resolver {
-	return &Resolver{repoMgr: repoMgr, pkgLoader: loader}
+func NewResolver(repoMgr *RepoManager, cacheDir string) *Resolver {
+	return &Resolver{repoMgr: repoMgr, cacheDir: cacheDir}
 }
 
 func (r *Resolver) Resolve(initial []api.RequireInfo) (*DependencyGraph, error) {
 	graph := &DependencyGraph{
-		Order:        []string{},
-		Packages:     make(map[string]*ResolvedPackage),
-		LocalPlugins: make(map[string]*plugin.LoadedPlugin),
+		Order:    []string{},
+		Packages: make(map[string]*ResolvedPackage),
 	}
 
 	for _, req := range initial {
@@ -63,15 +58,14 @@ func (r *Resolver) Resolve(initial []api.RequireInfo) (*DependencyGraph, error) 
 	return graph, nil
 }
 
-func (r *Resolver) ResolveWithLocal(localPkgs []plugin.Package) (*DependencyGraph, error) {
+func (r *Resolver) ResolveWithLocal(localPkgs []plugin.Source, force bool) (*DependencyGraph, error) {
 	graph := &DependencyGraph{
-		Order:        []string{},
-		Packages:     make(map[string]*ResolvedPackage),
-		LocalPlugins: make(map[string]*plugin.LoadedPlugin),
+		Order:    []string{},
+		Packages: make(map[string]*ResolvedPackage),
 	}
 
-	for _, pkg := range localPkgs {
-		if err := r.resolveLocal(pkg, graph, nil); err != nil {
+	for _, src := range localPkgs {
+		if err := r.resolveLocal(src, graph, nil, force); err != nil {
 			return nil, err
 		}
 	}
@@ -80,8 +74,8 @@ func (r *Resolver) ResolveWithLocal(localPkgs []plugin.Package) (*DependencyGrap
 	return graph, nil
 }
 
-func (r *Resolver) resolveLocal(pkg plugin.Package, graph *DependencyGraph, path []string) error {
-	name := pkg.Name
+func (r *Resolver) resolveLocal(src plugin.Source, graph *DependencyGraph, path []string, force bool) error {
+	name := src.Name
 
 	for _, p := range path {
 		if p == name {
@@ -93,25 +87,27 @@ func (r *Resolver) resolveLocal(pkg plugin.Package, graph *DependencyGraph, path
 		return nil
 	}
 
-	cr := plugin.Compile(pkg)
+	src.Force = force
+	cr := plugin.Compile(src)
 	if !cr.Success {
 		return fmt.Errorf("compile %s failed: %w", name, cr.Error)
 	}
 
-	lr := plugin.Load(cr.PluginPath, pkg)
-	if !lr.Success {
-		return fmt.Errorf("load %s failed: %w", name, lr.Error)
+	loaded, err := plugin.Load(cr.PluginPath, src)
+	if err != nil {
+		return fmt.Errorf("load %s failed: %w", name, err)
 	}
 
-	graph.LocalPlugins[name] = lr.Loaded
+	pkg := loaded.ExtractPackage()
 
 	node := &ResolvedPackage{
-		Name:   name,
-		Plugin: lr.Loaded,
-		Deps:   []string{},
+		Name:       name,
+		Definition: pkg,
+		Source:     &src,
+		Deps:       []string{},
 	}
 
-	requires := lr.Loaded.GetRequires()
+	requires := pkg.GetRequireContext().GetRequires()
 	for _, req := range requires {
 		if err := r.resolveRecursive(req, graph, append(path, name)); err != nil {
 			return err
@@ -145,19 +141,32 @@ func (r *Resolver) resolveRecursive(req api.RequireInfo, graph *DependencyGraph,
 	var subDeps []string
 	var pkgDef *api.Package
 
-	if r.pkgLoader != nil {
-		pkgDef, err = r.pkgLoader.Load(pkgPath)
-		if err != nil {
-			return fmt.Errorf("failed to load package %s: %w", name, err)
-		}
+	src := plugin.Source{
+		Name:      name,
+		Path:      pkgPath,
+		Dir:       filepath.Dir(pkgPath),
+		OutputDir: r.pluginOutputDir(name),
+		Origin:    plugin.SourceRemote,
+	}
 
-		requireCtx := pkgDef.GetRequireContext()
-		for _, dep := range requireCtx.GetRequires() {
-			if err := r.resolveRecursive(dep, graph, append(path, name)); err != nil {
-				return err
-			}
-			subDeps = append(subDeps, dep.Name)
+	cr := plugin.Compile(src)
+	if !cr.Success {
+		return fmt.Errorf("compile %s failed: %w", name, cr.Error)
+	}
+
+	loaded, err := plugin.Load(cr.PluginPath, src)
+	if err != nil {
+		return fmt.Errorf("load %s failed: %w", name, err)
+	}
+
+	pkgDef = loaded.ExtractPackage()
+
+	requireCtx := pkgDef.GetRequireContext()
+	for _, dep := range requireCtx.GetRequires() {
+		if err := r.resolveRecursive(dep, graph, append(path, name)); err != nil {
+			return err
 		}
+		subDeps = append(subDeps, dep.Name)
 	}
 
 	graph.Packages[name] = &ResolvedPackage{
@@ -165,10 +174,15 @@ func (r *Resolver) resolveRecursive(req api.RequireInfo, graph *DependencyGraph,
 		Constraint: req.Constraint,
 		Options:    make(map[string]any),
 		Definition: pkgDef,
+		Source:     &src,
 		Deps:       subDeps,
 	}
 
 	return nil
+}
+
+func (r *Resolver) pluginOutputDir(name string) string {
+	return fmt.Sprintf("%s/plugins/%s", r.cacheDir, strings.ReplaceAll(name, "/", "_"))
 }
 
 func (r *Resolver) topologicalSort(graph *DependencyGraph) []string {
@@ -264,17 +278,29 @@ func (r *Resolver) collectRecursive(name string, registry *PackageRegistry, path
 		return fmt.Errorf("failed to find package %s: %w", name, err)
 	}
 
-	var pkgDef *api.Package
-	if r.pkgLoader != nil {
-		pkgDef, err = r.pkgLoader.Load(pkgPath)
-		if err != nil {
-			return fmt.Errorf("failed to load package %s: %w", name, err)
-		}
+	src := plugin.Source{
+		Name:      name,
+		Path:      pkgPath,
+		Dir:       filepath.Dir(pkgPath),
+		OutputDir: r.pluginOutputDir(name),
+		Origin:    plugin.SourceRemote,
+	}
 
-		for _, declared := range pkgDef.GetDeclaredPackages() {
-			if err := r.collectRecursive(declared, registry, append(path, name)); err != nil {
-				return err
-			}
+	cr := plugin.Compile(src)
+	if !cr.Success {
+		return fmt.Errorf("compile %s failed: %w", name, cr.Error)
+	}
+
+	loaded, err := plugin.Load(cr.PluginPath, src)
+	if err != nil {
+		return fmt.Errorf("load %s failed: %w", name, err)
+	}
+
+	pkgDef := loaded.ExtractPackage()
+
+	for _, declared := range pkgDef.GetDeclaredPackages() {
+		if err := r.collectRecursive(declared, registry, append(path, name)); err != nil {
+			return err
 		}
 	}
 
@@ -289,9 +315,23 @@ func (r *Resolver) LoadDefinition(name string) (*api.Package, error) {
 		return nil, fmt.Errorf("failed to find package %s: %w", name, err)
 	}
 
-	if r.pkgLoader == nil {
-		return nil, fmt.Errorf("no package loader configured")
+	src := plugin.Source{
+		Name:      name,
+		Path:      pkgPath,
+		Dir:       filepath.Dir(pkgPath),
+		OutputDir: r.pluginOutputDir(name),
+		Origin:    plugin.SourceRemote,
 	}
 
-	return r.pkgLoader.Load(pkgPath)
+	cr := plugin.Compile(src)
+	if !cr.Success {
+		return nil, fmt.Errorf("compile %s failed: %w", name, cr.Error)
+	}
+
+	loaded, err := plugin.Load(cr.PluginPath, src)
+	if err != nil {
+		return nil, fmt.Errorf("load %s failed: %w", name, err)
+	}
+
+	return loaded.ExtractPackage(), nil
 }

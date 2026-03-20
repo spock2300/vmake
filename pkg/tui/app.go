@@ -18,7 +18,7 @@ type ConfigResult struct {
 }
 
 func Run(
-	packages []plugin.Package,
+	packages []plugin.Source,
 	options map[string]map[string]*api.Option,
 	values map[string]map[string]any,
 	workDir string,

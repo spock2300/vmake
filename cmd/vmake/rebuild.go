@@ -30,7 +30,7 @@ func runRebuild(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	if err := runRequirePhase(ctx); err != nil {
+	if err := runRequirePhase(ctx, false); err != nil {
 		vlog.Error("Phase 1 (OnRequire) failed: %v", err)
 		os.Exit(1)
 	}
@@ -83,13 +83,13 @@ func executeCleanLocal(ctx *RuntimeContext) {
 			continue
 		}
 
-		pkg := node.Plugin.Package
-		if err := os.Chdir(pkg.Dir); err != nil {
-			vlog.Error("Failed to chdir to %s: %v", pkg.Name, err)
+		src := node.Source
+		if err := os.Chdir(src.Dir); err != nil {
+			vlog.Error("Failed to chdir to %s: %v", src.Name, err)
 			continue
 		}
 
-		cleanCurrentToolchain(pkg.Name, buildDir)
+		cleanCurrentToolchain(src.Name, buildDir)
 	}
 
 	os.Chdir(origDir)

@@ -6,12 +6,6 @@ import (
 	"strings"
 )
 
-type Package struct {
-	Name string
-	Path string
-	Dir  string
-}
-
 var skipDirs = map[string]bool{
 	".git":         true,
 	".vmake":       true,
@@ -20,8 +14,8 @@ var skipDirs = map[string]bool{
 	"node_modules": true,
 }
 
-func Scan(rootDir string) ([]Package, error) {
-	var packages []Package
+func Scan(rootDir string) ([]Source, error) {
+	var sources []Source
 	seen := make(map[string]bool)
 
 	err := filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
@@ -46,15 +40,16 @@ func Scan(rootDir string) ([]Package, error) {
 			}
 			seen[pkgName] = true
 
-			packages = append(packages, Package{
-				Name: pkgName,
-				Path: path,
-				Dir:  dir,
+			sources = append(sources, Source{
+				Name:   pkgName,
+				Path:   path,
+				Dir:    dir,
+				Origin: SourceLocal,
 			})
 		}
 
 		return nil
 	})
 
-	return packages, err
+	return sources, err
 }

@@ -27,6 +27,7 @@ func init() {
 	RootCmd.AddCommand(buildCmd)
 	buildCmd.Flags().BoolVarP(&installFlag, "install", "i", false, "install after build")
 	buildCmd.Flags().StringVarP(&prefixFlag, "prefix", "p", "", "installation prefix (default: ./install)")
+	buildCmd.Flags().BoolVarP(&forceFlag, "force", "f", false, "force plugin recompilation")
 }
 
 func runBuild(cmd *cobra.Command, args []string) {
@@ -36,7 +37,7 @@ func runBuild(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	if err := runRequirePhase(ctx); err != nil {
+	if err := runRequirePhase(ctx, forceFlag); err != nil {
 		vlog.Error("Phase 1 (OnRequire) failed: %v", err)
 		os.Exit(1)
 	}
@@ -200,14 +201,14 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 			buildCtx.SetGlobalOptions(ctx.GlobalOptions)
 			buildCtx.SetGlobalValues(globalValues)
 
-			for _, fn := range node.Plugin.Builder.GetBuildFuncs() {
+			for _, fn := range node.Definition.GetBuildFuncs() {
 				fn(buildCtx)
 			}
 
 			allTargets[name] = buildCtx.GetTargets()
 		} else {
 			pkg := node.Definition
-			if pkg != nil && pkg.GetBuildFunc() != nil {
+			if pkg != nil && pkg.GetPackageBuildFunc() != nil {
 				cfg := configs[name]
 				cfgVals := make(map[string]any)
 				for optName, opt := range pkg.GetOptions() {
@@ -226,7 +227,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 					pkgCtx.SetInstaller(repoInstaller)
 				}
 
-				pkg.GetBuildFunc()(pkgCtx)
+				pkg.GetPackageBuildFunc()(pkgCtx)
 				allTargets[name] = pkgCtx.GetTargets()
 			}
 		}
@@ -394,7 +395,7 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 		installCtx.SetGlobalOptions(ctx.GlobalOptions)
 		installCtx.SetGlobalValues(globalValues)
 
-		for _, fn := range node.Plugin.Builder.GetInstallFuncs() {
+		for _, fn := range node.Definition.GetInstallFuncs() {
 			fn(installCtx)
 		}
 
@@ -402,7 +403,7 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 		buildCtx.SetOptions(ctx.AllOptions[name])
 		buildCtx.SetGlobalOptions(ctx.GlobalOptions)
 		buildCtx.SetGlobalValues(globalValues)
-		for _, fn := range node.Plugin.Builder.GetBuildFuncs() {
+		for _, fn := range node.Definition.GetBuildFuncs() {
 			fn(buildCtx)
 		}
 
