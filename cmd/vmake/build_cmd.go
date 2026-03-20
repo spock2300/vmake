@@ -209,6 +209,9 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		} else {
 			pkg := node.Definition
 			if pkg != nil && pkg.GetPackageBuildFunc() != nil {
+				if hasInstalledFiles(pkgInstallDirs[name]) {
+					continue
+				}
 				cfg := configs[name]
 				cfgVals := make(map[string]any)
 				for optName, opt := range pkg.GetOptions() {
@@ -287,6 +290,13 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		tc:        apiTC,
 		versions:  versions,
 		pkgDirs:   pkgInstallDirs,
+		pkgDefs:   make(map[string]*api.Package),
+	}
+	for _, name := range ctx.DepGraph.Order {
+		node := ctx.DepGraph.Packages[name]
+		if !node.IsLocal() && node.Definition != nil {
+			pkgProvider.pkgDefs[name] = node.Definition
+		}
 	}
 	scheduler.SetPackageProvider(pkgProvider)
 
@@ -320,12 +330,17 @@ type packageProvider struct {
 	tc        *api.Toolchain
 	versions  map[string]string
 	pkgDirs   map[string]string
+	pkgDefs   map[string]*api.Package
 }
 
 func (p *packageProvider) GetInstalledPackage(name string) *api.InstalledPackage {
 	if installDir, ok := p.pkgDirs[name]; ok {
 		version := p.versions[name]
-		return api.NewInstalledPackage(name, version, installDir, nil)
+		var libs []string
+		if pkg, ok := p.pkgDefs[name]; ok {
+			libs = pkg.Libs()
+		}
+		return api.NewInstalledPackage(name, version, installDir, libs)
 	}
 	return nil
 }
@@ -365,6 +380,14 @@ func splitPackagePath(path string) []string {
 		}
 	}
 	return nil
+}
+
+func hasInstalledFiles(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	return len(entries) > 0
 }
 
 func executeInstall(ctx *RuntimeContext, result *BuildResult) error {

@@ -18,6 +18,21 @@ func NewSourceManager(sourcesDir string) *SourceManager {
 func (m *SourceManager) EnsureSource(pkg *PackageDef, version string) (string, error) {
 	repoDir := filepath.Join(m.sourcesDir, pkg.Repo, pkg.Name, "repo")
 
+	tag := pkg.GetRef(version)
+	if tag == "" {
+		tag = version
+	}
+	if tag == "" {
+		return "", fmt.Errorf("no version or tag available for %s", pkg.FullName())
+	}
+
+	if m.exists(repoDir) && m.exists(filepath.Join(repoDir, ".git")) {
+		currentTag, _ := GetCurrentTag(repoDir)
+		if currentTag == tag {
+			return repoDir, nil
+		}
+	}
+
 	if !m.exists(repoDir) || !m.exists(filepath.Join(repoDir, ".git")) {
 		var lastErr error
 		for _, url := range pkg.GitURLs {
@@ -36,19 +51,6 @@ func (m *SourceManager) EnsureSource(pkg *PackageDef, version string) (string, e
 	_ = InitSubmodules(repoDir)
 
 	_ = FetchTags(repoDir)
-
-	tag := pkg.GetRef(version)
-	if tag == "" {
-		tag = version
-	}
-	if tag == "" {
-		return "", fmt.Errorf("no version or tag available for %s", pkg.FullName())
-	}
-
-	currentTag, _ := GetCurrentTag(repoDir)
-	if currentTag == tag {
-		return repoDir, nil
-	}
 
 	if err := Checkout(repoDir, tag); err != nil {
 		return "", fmt.Errorf("checkout %s failed for %s: %w", tag, pkg.FullName(), err)

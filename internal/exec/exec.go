@@ -29,7 +29,7 @@ func RunInDir(name, dir string, args ...string) ([]byte, error) {
 
 func RunWithOptions(name string, args []string, opts RunOptions) ([]byte, error) {
 	cmdLine := formatCommandLine(name, args)
-	vlog.Debug("  %s", cmdLine)
+	vlog.Debug("%s  %s", opts.Dir, cmdLine)
 
 	ctx := opts.Context
 	if ctx == nil && opts.Timeout > 0 {

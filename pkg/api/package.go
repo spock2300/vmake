@@ -138,12 +138,17 @@ type InstalledPackage struct {
 }
 
 func NewInstalledPackage(name, version, installDir string, libs []string) *InstalledPackage {
+	libDir := filepath.Join(installDir, "lib")
+	lib64Dir := filepath.Join(installDir, "lib64")
+	if _, err := os.Stat(lib64Dir); err == nil {
+		libDir = lib64Dir
+	}
 	return &InstalledPackage{
 		Name:       name,
 		Version:    version,
 		InstallDir: installDir,
 		IncludeDir: filepath.Join(installDir, "include"),
-		LibDir:     filepath.Join(installDir, "lib"),
+		LibDir:     libDir,
 		BinDir:     filepath.Join(installDir, "bin"),
 		Libs:       libs,
 	}
