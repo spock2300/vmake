@@ -291,11 +291,15 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		versions:  versions,
 		pkgDirs:   pkgInstallDirs,
 		pkgDefs:   make(map[string]*api.Package),
+		pkgDeps:   make(map[string][]string),
 	}
 	for _, name := range ctx.DepGraph.Order {
 		node := ctx.DepGraph.Packages[name]
 		if !node.IsLocal() && node.Definition != nil {
 			pkgProvider.pkgDefs[name] = node.Definition
+		}
+		if len(node.Deps) > 0 {
+			pkgProvider.pkgDeps[name] = node.Deps
 		}
 	}
 	scheduler.SetPackageProvider(pkgProvider)
@@ -331,6 +335,7 @@ type packageProvider struct {
 	versions  map[string]string
 	pkgDirs   map[string]string
 	pkgDefs   map[string]*api.Package
+	pkgDeps   map[string][]string
 }
 
 func (p *packageProvider) GetInstalledPackage(name string) *api.InstalledPackage {
@@ -340,7 +345,9 @@ func (p *packageProvider) GetInstalledPackage(name string) *api.InstalledPackage
 		if pkg, ok := p.pkgDefs[name]; ok {
 			libs = pkg.Libs()
 		}
-		return api.NewInstalledPackage(name, version, installDir, libs)
+		installedPkg := api.NewInstalledPackage(name, version, installDir, libs)
+		installedPkg.Deps = p.pkgDeps[name]
+		return installedPkg
 	}
 	return nil
 }
