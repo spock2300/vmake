@@ -2,6 +2,7 @@ package repo
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -22,6 +23,7 @@ type ResolvedPackage struct {
 	Definition *api.Package
 	Source     *plugin.Source
 	Deps       []string
+	Deferred   bool
 }
 
 func (p *ResolvedPackage) IsLocal() bool {
@@ -133,13 +135,71 @@ func (r *Resolver) resolveRecursive(req api.RequireInfo, graph *DependencyGraph,
 		return nil
 	}
 
+	pluginDir := r.pluginOutputDir(name)
+	pluginPath := filepath.Join(pluginDir, "plugin.so")
+
+	src := plugin.Source{
+		Name:      name,
+		OutputDir: pluginDir,
+		Origin:    plugin.SourceRemote,
+	}
+
+	if r.hasCachedPlugin(pluginPath) {
+		loaded, err := plugin.Load(pluginPath, src)
+		if err != nil {
+			return fmt.Errorf("load cached %s failed: %w", name, err)
+		}
+
+		pkgDef := loaded.ExtractPackage()
+		var subDeps []string
+
+		requireCtx := pkgDef.GetRequireContext()
+		for _, dep := range requireCtx.GetRequires() {
+			if err := r.resolveRecursive(dep, graph, append(path, name)); err != nil {
+				return err
+			}
+			subDeps = append(subDeps, dep.Name)
+		}
+
+		graph.Packages[name] = &ResolvedPackage{
+			Name:       name,
+			Constraint: req.Constraint,
+			Options:    make(map[string]any),
+			Definition: pkgDef,
+			Source:     &src,
+			Deps:       subDeps,
+		}
+		return nil
+	}
+
+	graph.Packages[name] = &ResolvedPackage{
+		Name:       name,
+		Constraint: req.Constraint,
+		Options:    make(map[string]any),
+		Source:     &src,
+		Deferred:   true,
+	}
+	return nil
+}
+
+func (r *Resolver) hasCachedPlugin(pluginPath string) bool {
+	info, err := os.Stat(pluginPath)
+	return err == nil && info.Size() > 0
+}
+
+func (r *Resolver) ResolveSingle(name string, graph *DependencyGraph) error {
+	node, exists := graph.Packages[name]
+	if !exists {
+		return fmt.Errorf("package %s not in dependency graph", name)
+	}
+	if !node.Deferred {
+		return nil
+	}
+
 	pkgPath, err := r.repoMgr.FindPackageGo(r.parseRepo(name), r.parsePkgName(name))
 	if err != nil {
 		return fmt.Errorf("failed to find package %s: %w", name, err)
 	}
-
-	var subDeps []string
-	var pkgDef *api.Package
 
 	src := plugin.Source{
 		Name:      name,
@@ -159,25 +219,21 @@ func (r *Resolver) resolveRecursive(req api.RequireInfo, graph *DependencyGraph,
 		return fmt.Errorf("load %s failed: %w", name, err)
 	}
 
-	pkgDef = loaded.ExtractPackage()
+	pkgDef := loaded.ExtractPackage()
+	var subDeps []string
 
 	requireCtx := pkgDef.GetRequireContext()
 	for _, dep := range requireCtx.GetRequires() {
-		if err := r.resolveRecursive(dep, graph, append(path, name)); err != nil {
+		if err := r.resolveRecursive(dep, graph, nil); err != nil {
 			return err
 		}
 		subDeps = append(subDeps, dep.Name)
 	}
 
-	graph.Packages[name] = &ResolvedPackage{
-		Name:       name,
-		Constraint: req.Constraint,
-		Options:    make(map[string]any),
-		Definition: pkgDef,
-		Source:     &src,
-		Deps:       subDeps,
-	}
-
+	node.Definition = pkgDef
+	node.Source = &src
+	node.Deps = subDeps
+	node.Deferred = false
 	return nil
 }
 

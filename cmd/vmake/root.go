@@ -39,6 +39,7 @@ type RuntimeContext struct {
 	DepGraph      *repo.DependencyGraph
 	AllOptions    map[string]map[string]*api.Option
 	GlobalOptions map[string]*api.Option
+	Resolver      *repo.Resolver
 }
 
 var RootCmd = &cobra.Command{
@@ -113,6 +114,7 @@ func runRequirePhase(ctx *RuntimeContext, force bool) error {
 
 	repoMgr := repo.NewRepoManager(reposDir)
 	resolver := repo.NewResolver(repoMgr, cacheDir)
+	ctx.Resolver = resolver
 
 	vlog.Info("")
 	vlog.Info("Resolving dependencies...")
@@ -153,7 +155,11 @@ func runConfigPhase(ctx *RuntimeContext) error {
 			}
 			opts = cfgCtx.GetOptions()
 		} else if node.Definition != nil {
-			opts = node.Definition.GetOptions()
+			cfgCtx := api.NewConfigContext(name)
+			for _, fn := range node.Definition.GetConfigFuncs() {
+				fn(cfgCtx)
+			}
+			opts = cfgCtx.GetOptions()
 		}
 
 		if len(opts) > 0 {

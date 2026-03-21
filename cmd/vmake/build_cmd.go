@@ -107,6 +107,34 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		apiTC.Target = tc.Host
 	}
 
+	if ctx.Resolver != nil {
+		for _, name := range ctx.DepGraph.Order {
+			node := ctx.DepGraph.Packages[name]
+			if !node.IsLocal() && node.Deferred {
+				vlog.Info("Resolving %s...", name)
+				if err := ctx.Resolver.ResolveSingle(name, ctx.DepGraph); err != nil {
+					return nil, fmt.Errorf("resolve %s: %w", name, err)
+				}
+			}
+		}
+		for _, name := range ctx.DepGraph.Order {
+			node := ctx.DepGraph.Packages[name]
+			if !node.IsLocal() && node.Definition != nil {
+				if _, exists := ctx.AllOptions[name]; !exists {
+					cfgCtx := api.NewConfigContext(name)
+					for _, fn := range node.Definition.GetConfigFuncs() {
+						fn(cfgCtx)
+					}
+					opts := cfgCtx.GetOptions()
+					if len(opts) > 0 {
+						ctx.AllOptions[name] = opts
+						vlog.Info("  %s: %d option(s) (deferred)", name, len(opts))
+					}
+				}
+			}
+		}
+	}
+
 	hasDeps := false
 	for _, name := range ctx.DepGraph.Order {
 		node := ctx.DepGraph.Packages[name]
