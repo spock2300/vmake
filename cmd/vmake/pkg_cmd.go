@@ -171,7 +171,7 @@ var pkgUpdateCmd = &cobra.Command{
 		}
 
 		reposDir := filepath.Join(vmakeDir, "repos")
-		sourcesDir := filepath.Join(vmakeDir, "sources")
+		sourcesDir := filepath.Join(vmakeDir, "cache")
 
 		repoMgr := repo.NewRepoManager(reposDir)
 		pkgPath, err := repoMgr.FindPackage(parts[0], parts[1])
