@@ -104,59 +104,12 @@ func (i *Installer) InstallPackage(pkgDef *PackageDef, config *InstallConfig, tc
 	cacheHash := CacheHash(tc.CC, mode, config.Options)
 
 	installDir := filepath.Join(i.packagesDir, pkgDef.FullName(), config.Version, cacheHash, "install")
-	buildDir := filepath.Join(i.packagesDir, pkgDef.FullName(), config.Version, cacheHash, "build")
 
 	if i.hasInstalledFiles(installDir) {
 		return nil
 	}
 
-	if err := os.MkdirAll(buildDir, 0755); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(installDir, 0755); err != nil {
-		return err
-	}
-
-	pkg := pkgDef.Package
-	if pkg == nil {
-		return fmt.Errorf("package definition has no Package loaded")
-	}
-
-	buildFunc := pkg.GetBuildFunc()
-	if buildFunc == nil {
-		return nil
-	}
-
-	opts := pkg.GetOptions()
-	cfgVals := make(map[string]any)
-	for name, opt := range opts {
-		if opt.Default() != nil {
-			cfgVals[name] = opt.Default()
-		}
-	}
-	for k, v := range config.Options {
-		cfgVals[k] = v
-	}
-
-	pkgCtx := api.NewPackageContext(pkgDef.Name, config.Version, tc, cfgVals)
-	pkgCtx.SetOptions(opts)
-	pkgCtx.SetDirs(sourceDir, buildDir, installDir)
-
-	for _, depName := range graph.Order {
-		if _, ok := graph.Packages[depName]; ok && depName != pkgDef.Name {
-			depCfg := configs[depName]
-			if depCfg == nil {
-				depCfg = &InstallConfig{Version: "", Options: make(map[string]any)}
-			}
-			depInstallDir := i.GetInstallDir(depName, depCfg.Version, tc, depCfg.Options)
-			if i.exists(depInstallDir) {
-				pkgCtx.Deps()[depName] = api.NewInstalledPackage(depName, depCfg.Version, depInstallDir, nil)
-			}
-		}
-	}
-
-	buildFunc(pkgCtx)
-	return nil
+	return fmt.Errorf("package %s not installed; run vmake build first", pkgDef.FullName())
 }
 
 func (i *Installer) hasInstalledFiles(installDir string) bool {
@@ -323,7 +276,6 @@ func (i *Installer) doInstall(pkgDef *PackageDef, config *InstallConfig, sourceD
 	cacheHash := CacheHash(i.tc.CC, mode, config.Options)
 
 	installDir := filepath.Join(i.packagesDir, pkgDef.FullName(), config.Version, cacheHash, "install")
-	buildDir := filepath.Join(i.packagesDir, pkgDef.FullName(), config.Version, cacheHash, "build")
 
 	if i.hasInstalledFiles(installDir) {
 		pkg := api.NewInstalledPackage(pkgDef.FullName(), config.Version, installDir, pkgDef.Package.Libs())
@@ -331,51 +283,12 @@ func (i *Installer) doInstall(pkgDef *PackageDef, config *InstallConfig, sourceD
 		return pkg, nil
 	}
 
-	if err := os.MkdirAll(buildDir, 0755); err != nil {
-		return nil, err
-	}
-	if err := os.MkdirAll(installDir, 0755); err != nil {
-		return nil, err
-	}
-
 	pkg := pkgDef.Package
 	if pkg == nil {
 		return nil, fmt.Errorf("package definition has no Package loaded")
 	}
 
-	buildFunc := pkg.GetBuildFunc()
-	if buildFunc == nil {
-		return api.NewInstalledPackage(pkgDef.FullName(), config.Version, installDir, pkg.Libs()), nil
-	}
-
-	opts := pkg.GetOptions()
-	cfgVals := make(map[string]any)
-	for name, opt := range opts {
-		if opt.Default() != nil {
-			cfgVals[name] = opt.Default()
-		}
-	}
-	for k, v := range config.Options {
-		cfgVals[k] = v
-	}
-
-	pkgCtx := api.NewPackageContext(pkgDef.Name, config.Version, i.tc, cfgVals)
-	pkgCtx.SetOptions(opts)
-	pkgCtx.SetDirs(sourceDir, buildDir, installDir)
-	pkgCtx.SetInstaller(i)
-
-	buildFunc(pkgCtx)
-
-	var deps []string
-	for depName := range pkgCtx.Deps() {
-		deps = append(deps, depName)
-	}
-
-	i.saveDeps(installDir, deps)
-
-	installedPkg := api.NewInstalledPackage(pkgDef.FullName(), config.Version, installDir, pkg.Libs())
-	installedPkg.Deps = deps
-	return installedPkg, nil
+	return api.NewInstalledPackage(pkgDef.FullName(), config.Version, installDir, pkg.Libs()), nil
 }
 
 func (i *Installer) parseRepo(fullName string) string {

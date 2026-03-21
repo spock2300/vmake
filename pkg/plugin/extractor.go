@@ -60,47 +60,11 @@ func ExtractPackage(loaded *LoadedPlugin) *api.Package {
 	}
 
 	pkg.SetConfigFuncs(builder.GetConfigFuncs())
+	pkg.SetBuildFuncs(builder.GetBuildFuncs())
 	pkg.SetInstallFuncs(builder.GetInstallFuncs())
-
-	if len(builder.GetBuildFuncs()) > 0 {
-		pkg.SetBuildFuncs(builder.GetBuildFuncs())
-		pkg.SetPackageBuildFunc(createPackageBuildFunc(builder))
-	}
 
 	loaded.pkg = pkg
 	return pkg
-}
-
-func createPackageBuildFunc(builder *api.Builder) func(*api.PackageContext) {
-	return func(ctx *api.PackageContext) {
-		buildCtx := api.NewBuildContext(ctx.PackageName(), ctx.GetConfigValues())
-		buildCtx.SetOptions(ctx.GetOptions())
-
-		for _, fn := range builder.GetBuildFuncs() {
-			fn(buildCtx)
-		}
-
-		for name, t := range buildCtx.GetTargets() {
-			pt := ctx.Target(name)
-			pt.SetKind(t.Kind())
-			pt.AddFiles(toAnySlice(t.Files())...)
-			pt.AddIncludes(toAnySlice(t.Includes())...)
-			pt.AddPublicIncludes(toAnySlice(t.PublicIncludes())...)
-			pt.AddDefines(toAnySlice(t.Defines())...)
-			pt.AddCFlags(toAnySlice(t.CFlags())...)
-			pt.AddCxxFlags(toAnySlice(t.CxxFlags())...)
-			pt.AddLdFlags(toAnySlice(t.LdFlags())...)
-			if t.BuildFunc() != nil {
-				pt.SetBuildFunc(t.BuildFunc())
-			}
-		}
-
-		for _, t := range buildCtx.GetTargets() {
-			if t.Kind() == api.TargetVoid && t.BuildFunc() != nil {
-				t.BuildFunc()(ctx)
-			}
-		}
-	}
 }
 
 func lookupMain(p *plugin.Plugin) func(*api.Builder) {
@@ -113,12 +77,4 @@ func lookupMain(p *plugin.Plugin) func(*api.Builder) {
 		return nil
 	}
 	return mainFunc
-}
-
-func toAnySlice(s []string) []any {
-	result := make([]any, len(s))
-	for i, v := range s {
-		result[i] = v
-	}
-	return result
 }

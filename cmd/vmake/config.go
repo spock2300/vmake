@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/config"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
@@ -49,13 +48,8 @@ func runConfig(cmd *cobra.Command, args []string) {
 
 	values := make(map[string]map[string]any)
 	for pkgName := range ctx.AllOptions {
-		if strings.Contains(pkgName, "/") {
-			rc := config.GetRequireConfig(ctx.Config, pkgName)
-			values[pkgName] = rc.Options
-		} else {
-			pc := config.GetPackageConfig(ctx.Config, pkgName)
-			values[pkgName] = pc.Options
-		}
+		entry := config.GetEntry(ctx.Config, pkgName)
+		values[pkgName] = entry.Options
 	}
 
 	globalValues := make(map[string]any)
@@ -95,22 +89,9 @@ func runConfig(cmd *cobra.Command, args []string) {
 	}
 
 	for pkgName, opts := range result.Values {
-		if strings.Contains(pkgName, "/") {
-			if ctx.Config.Requires == nil {
-				ctx.Config.Requires = make(map[string]*config.RequireConfig)
-			}
-			rc := ctx.Config.Requires[pkgName]
-			if rc == nil {
-				rc = &config.RequireConfig{Options: make(map[string]any)}
-			}
-			rc.Options = opts
-			ctx.Config.Requires[pkgName] = rc
-		} else {
-			if ctx.Config.Packages[pkgName] == nil {
-				ctx.Config.Packages[pkgName] = &config.PackageConfig{Options: make(map[string]any)}
-			}
-			ctx.Config.Packages[pkgName].Options = opts
-		}
+		entry := config.GetEntry(ctx.Config, pkgName)
+		entry.Options = opts
+		config.SetEntry(ctx.Config, pkgName, entry)
 	}
 
 	if ctx.Config.Global == nil {

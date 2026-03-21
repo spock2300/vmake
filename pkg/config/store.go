@@ -9,10 +9,9 @@ import (
 const ConfigVersion = "1"
 
 type ConfigFile struct {
-	Version  string                    `json:"version"`
-	Global   *GlobalConfig             `json:"global,omitempty"`
-	Packages map[string]*PackageConfig `json:"packages"`
-	Requires map[string]*RequireConfig `json:"requires,omitempty"`
+	Version string                  `json:"version"`
+	Global  *GlobalConfig           `json:"global,omitempty"`
+	Entries map[string]*EntryConfig `json:"entries"`
 }
 
 type GlobalConfig struct {
@@ -21,27 +20,16 @@ type GlobalConfig struct {
 	Options   map[string]any `json:"options,omitempty"`
 }
 
-type PackageConfig struct {
-	Options map[string]any `json:"options"`
-}
-
-type RequireConfig struct {
-	Version string         `json:"version"`
+type EntryConfig struct {
+	Version string         `json:"version,omitempty"`
 	Options map[string]any `json:"options,omitempty"`
 }
 
 func newConfigFile() *ConfigFile {
 	return &ConfigFile{
-		Version:  ConfigVersion,
-		Global:   &GlobalConfig{Options: make(map[string]any)},
-		Packages: make(map[string]*PackageConfig),
-		Requires: make(map[string]*RequireConfig),
-	}
-}
-
-func newPackageConfig() *PackageConfig {
-	return &PackageConfig{
-		Options: make(map[string]any),
+		Version: ConfigVersion,
+		Global:  &GlobalConfig{Options: make(map[string]any)},
+		Entries: make(map[string]*EntryConfig),
 	}
 }
 
@@ -81,29 +69,17 @@ func Load(path string) (*ConfigFile, error) {
 		}
 	}
 
-	if pkgs, ok := raw["packages"].(map[string]any); ok {
-		for name, p := range pkgs {
-			if pm, ok := p.(map[string]any); ok {
-				pc := &PackageConfig{Options: make(map[string]any)}
-				if opts, ok := pm["options"].(map[string]any); ok {
-					pc.Options = opts
+	if entries, ok := raw["entries"].(map[string]any); ok {
+		for name, e := range entries {
+			if em, ok := e.(map[string]any); ok {
+				entry := &EntryConfig{Options: make(map[string]any)}
+				if ver, ok := em["version"].(string); ok {
+					entry.Version = ver
 				}
-				cfg.Packages[name] = pc
-			}
-		}
-	}
-
-	if reqs, ok := raw["requires"].(map[string]any); ok {
-		for name, r := range reqs {
-			if rm, ok := r.(map[string]any); ok {
-				rc := &RequireConfig{Options: make(map[string]any)}
-				if ver, ok := rm["version"].(string); ok {
-					rc.Version = ver
+				if opts, ok := em["options"].(map[string]any); ok {
+					entry.Options = opts
 				}
-				if opts, ok := rm["options"].(map[string]any); ok {
-					rc.Options = opts
-				}
-				cfg.Requires[name] = rc
+				cfg.Entries[name] = entry
 			}
 		}
 	}
@@ -128,28 +104,25 @@ func Save(path string, cfg *ConfigFile) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-func GetPackageConfig(cfg *ConfigFile, pkgName string) *PackageConfig {
-	if cfg.Packages == nil {
-		return newPackageConfig()
+func GetEntry(cfg *ConfigFile, name string) *EntryConfig {
+	if cfg.Entries == nil {
+		return &EntryConfig{Options: make(map[string]any)}
 	}
-
-	pc, ok := cfg.Packages[pkgName]
+	entry, ok := cfg.Entries[name]
 	if !ok {
-		return newPackageConfig()
+		return &EntryConfig{Options: make(map[string]any)}
 	}
-
-	if pc.Options == nil {
-		pc.Options = make(map[string]any)
+	if entry.Options == nil {
+		entry.Options = make(map[string]any)
 	}
-
-	return pc
+	return entry
 }
 
-func GetOptionValue(pc *PackageConfig, name string) any {
-	if pc == nil || pc.Options == nil {
-		return nil
+func SetEntry(cfg *ConfigFile, name string, entry *EntryConfig) {
+	if cfg.Entries == nil {
+		cfg.Entries = make(map[string]*EntryConfig)
 	}
-	return pc.Options[name]
+	cfg.Entries[name] = entry
 }
 
 func GetGlobalOption(cfg *ConfigFile, name string) any {
@@ -167,28 +140,4 @@ func SetGlobalOption(cfg *ConfigFile, name string, value any) {
 		cfg.Global.Options = make(map[string]any)
 	}
 	cfg.Global.Options[name] = value
-}
-
-func GetRequireConfig(cfg *ConfigFile, pkgName string) *RequireConfig {
-	if cfg.Requires == nil {
-		return &RequireConfig{Options: make(map[string]any)}
-	}
-
-	rc, ok := cfg.Requires[pkgName]
-	if !ok {
-		return &RequireConfig{Options: make(map[string]any)}
-	}
-
-	if rc.Options == nil {
-		rc.Options = make(map[string]any)
-	}
-
-	return rc
-}
-
-func SetRequireConfig(cfg *ConfigFile, pkgName string, rc *RequireConfig) {
-	if cfg.Requires == nil {
-		cfg.Requires = make(map[string]*RequireConfig)
-	}
-	cfg.Requires[pkgName] = rc
 }

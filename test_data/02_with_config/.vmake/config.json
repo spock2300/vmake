@@ -1,8 +1,12 @@
 {
     "version": "1",
-    "options": {
-        "debug": true,
-        "optimization": "O2",
-        "ssl": false
+    "entries": {
+        "02_with_config": {
+            "options": {
+                "debug": true,
+                "optimization": "O2",
+                "ssl": false
+            }
+        }
     }
 }

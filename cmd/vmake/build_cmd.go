@@ -121,11 +121,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 			node := ctx.DepGraph.Packages[name]
 			if !node.IsLocal() && node.Definition != nil {
 				if _, exists := ctx.AllOptions[name]; !exists {
-					cfgCtx := api.NewConfigContext(name)
-					for _, fn := range node.Definition.GetConfigFuncs() {
-						fn(cfgCtx)
-					}
-					opts := cfgCtx.GetOptions()
+					opts := collectOptions(name, node.Definition)
 					if len(opts) > 0 {
 						ctx.AllOptions[name] = opts
 						vlog.Info("  %s: %d option(s) (deferred)", name, len(opts))
@@ -160,10 +156,10 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		for _, name := range ctx.DepGraph.Order {
 			node := ctx.DepGraph.Packages[name]
 			if !node.IsLocal() {
-				rc := config.GetRequireConfig(ctx.Config, name)
+				entry := config.GetEntry(ctx.Config, name)
 				configs[name] = &repo.InstallConfig{
-					Version: rc.Version,
-					Options: rc.Options,
+					Version: entry.Version,
+					Options: entry.Options,
 				}
 			}
 		}
@@ -218,49 +214,44 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 	vlog.Info("")
 	vlog.Info("Executing OnBuild...")
 	allTargets := make(map[string]map[string]*api.Target)
+	packageContexts := make(map[string]*api.PackageContext)
 
 	for _, name := range ctx.DepGraph.Order {
 		node := ctx.DepGraph.Packages[name]
 
-		if node.IsLocal() {
-			pc := config.GetPackageConfig(ctx.Config, name)
-			buildCtx := api.NewBuildContext(name, pc.Options)
-			buildCtx.SetOptions(ctx.AllOptions[name])
-			buildCtx.SetGlobalOptions(ctx.GlobalOptions)
-			buildCtx.SetGlobalValues(globalValues)
+		entry := config.GetEntry(ctx.Config, name)
+		buildCtx := api.NewBuildContext(name, entry.Options)
+		buildCtx.SetOptions(ctx.AllOptions[name])
+		buildCtx.SetGlobalOptions(ctx.GlobalOptions)
+		buildCtx.SetGlobalValues(globalValues)
 
-			for _, fn := range node.Definition.GetBuildFuncs() {
-				fn(buildCtx)
-			}
+		for _, fn := range node.Definition.GetBuildFuncs() {
+			fn(buildCtx)
+		}
 
-			allTargets[name] = buildCtx.GetTargets()
-		} else {
+		allTargets[name] = buildCtx.GetTargets()
+
+		if !node.IsLocal() && node.Definition != nil {
 			pkg := node.Definition
-			if pkg != nil && pkg.GetPackageBuildFunc() != nil {
-				if hasInstalledFiles(pkgInstallDirs[name]) {
-					continue
+			cfg := configs[name]
+			cfgVals := make(map[string]any)
+			for optName, opt := range pkg.GetOptions() {
+				if opt.Default() != nil {
+					cfgVals[optName] = opt.Default()
 				}
-				cfg := configs[name]
-				cfgVals := make(map[string]any)
-				for optName, opt := range pkg.GetOptions() {
-					if opt.Default() != nil {
-						cfgVals[optName] = opt.Default()
-					}
-				}
-				for k, v := range cfg.Options {
-					cfgVals[k] = v
-				}
-
-				pkgCtx := api.NewPackageContext(name, cfg.Version, apiTC, cfgVals)
-				pkgCtx.SetOptions(pkg.GetOptions())
-				pkgCtx.SetDirs(pkgSourceDirs[name], pkgBuildDirs[name], pkgInstallDirs[name])
-				if repoInstaller != nil {
-					pkgCtx.SetInstaller(repoInstaller)
-				}
-
-				pkg.GetPackageBuildFunc()(pkgCtx)
-				allTargets[name] = pkgCtx.GetTargets()
 			}
+			for k, v := range cfg.Options {
+				cfgVals[k] = v
+			}
+
+			pkgCtx := api.NewPackageContext(name, cfg.Version, apiTC, cfgVals)
+			pkgCtx.SetOptions(pkg.GetOptions())
+			pkgCtx.SetDirs(pkgSourceDirs[name], pkgBuildDirs[name], pkgInstallDirs[name])
+			if repoInstaller != nil {
+				pkgCtx.SetInstaller(repoInstaller)
+			}
+
+			packageContexts[name] = pkgCtx
 		}
 	}
 
@@ -305,6 +296,10 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		} else {
 			scheduler.SetPkgDirs(name, pkgSourceDirs[name], pkgBuildDirs[name], pkgInstallDirs[name])
 		}
+	}
+
+	for name, pkgCtx := range packageContexts {
+		scheduler.SetPackageContext(name, pkgCtx)
 	}
 
 	versions := make(map[string]string)
@@ -446,9 +441,9 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 			continue
 		}
 
-		pc := config.GetPackageConfig(ctx.Config, name)
+		entry := config.GetEntry(ctx.Config, name)
 
-		installCtx := api.NewInstallContext(name, pc.Options)
+		installCtx := api.NewInstallContext(name, entry.Options)
 		installCtx.SetOptions(ctx.AllOptions[name])
 		installCtx.SetGlobalOptions(ctx.GlobalOptions)
 		installCtx.SetGlobalValues(globalValues)
@@ -457,7 +452,7 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 			fn(installCtx)
 		}
 
-		buildCtx := api.NewBuildContext(name, pc.Options)
+		buildCtx := api.NewBuildContext(name, entry.Options)
 		buildCtx.SetOptions(ctx.AllOptions[name])
 		buildCtx.SetGlobalOptions(ctx.GlobalOptions)
 		buildCtx.SetGlobalValues(globalValues)

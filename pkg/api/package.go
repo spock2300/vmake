@@ -9,8 +9,6 @@ import (
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 )
 
-type PackageBuildFunc func(ctx *PackageContext)
-
 type Package struct {
 	gitURLs          []string
 	homepage         string
@@ -19,13 +17,11 @@ type Package struct {
 	versions         map[string]string
 	options          map[string]*Option
 	requireCtx       *PackageRequireContext
-	buildFunc        PackageBuildFunc
 	libs             []string
 	declaredPackages []string
 	configFuncs      []ConfigFunc
 	buildFuncs       []BuildFunc
 	installFuncs     []InstallFunc
-	packageBuildFunc func(*PackageContext)
 }
 
 func NewPackage() *Package {
@@ -75,11 +71,6 @@ func (p *Package) Option(name string) *Option {
 	return opt
 }
 
-func (p *Package) Build(fn PackageBuildFunc) *Package {
-	p.buildFunc = fn
-	return p
-}
-
 func (p *Package) SetConfigFuncs(funcs []ConfigFunc) *Package {
 	p.configFuncs = funcs
 	return p
@@ -95,11 +86,6 @@ func (p *Package) SetInstallFuncs(funcs []InstallFunc) *Package {
 	return p
 }
 
-func (p *Package) SetPackageBuildFunc(fn func(*PackageContext)) *Package {
-	p.packageBuildFunc = fn
-	return p
-}
-
 func (p *Package) SetLibs(libs ...string) *Package {
 	p.libs = libs
 	return p
@@ -110,21 +96,19 @@ func (p *Package) DeclarePackages(packages ...string) *Package {
 	return p
 }
 
-func (p *Package) GitURLs() []string                          { return p.gitURLs }
-func (p *Package) Homepage() string                           { return p.homepage }
-func (p *Package) Description() string                        { return p.description }
-func (p *Package) License() string                            { return p.license }
-func (p *Package) Versions() map[string]string                { return p.versions }
-func (p *Package) GetOptions() map[string]*Option             { return p.options }
-func (p *Package) GetRequireContext() *PackageRequireContext  { return p.requireCtx }
-func (p *Package) GetBuildFunc() PackageBuildFunc             { return p.buildFunc }
-func (p *Package) GetRef(version string) string               { return p.versions[version] }
-func (p *Package) Libs() []string                             { return p.libs }
-func (p *Package) GetDeclaredPackages() []string              { return p.declaredPackages }
-func (p *Package) GetConfigFuncs() []ConfigFunc               { return p.configFuncs }
-func (p *Package) GetBuildFuncs() []BuildFunc                 { return p.buildFuncs }
-func (p *Package) GetInstallFuncs() []InstallFunc             { return p.installFuncs }
-func (p *Package) GetPackageBuildFunc() func(*PackageContext) { return p.packageBuildFunc }
+func (p *Package) GitURLs() []string                         { return p.gitURLs }
+func (p *Package) Homepage() string                          { return p.homepage }
+func (p *Package) Description() string                       { return p.description }
+func (p *Package) License() string                           { return p.license }
+func (p *Package) Versions() map[string]string               { return p.versions }
+func (p *Package) GetOptions() map[string]*Option            { return p.options }
+func (p *Package) GetRequireContext() *PackageRequireContext { return p.requireCtx }
+func (p *Package) GetRef(version string) string              { return p.versions[version] }
+func (p *Package) Libs() []string                            { return p.libs }
+func (p *Package) GetDeclaredPackages() []string             { return p.declaredPackages }
+func (p *Package) GetConfigFuncs() []ConfigFunc              { return p.configFuncs }
+func (p *Package) GetBuildFuncs() []BuildFunc                { return p.buildFuncs }
+func (p *Package) GetInstallFuncs() []InstallFunc            { return p.installFuncs }
 
 type InstalledPackage struct {
 	Name       string
@@ -159,6 +143,7 @@ type OnDemandInstaller interface {
 }
 
 type PackageContext struct {
+	ConfigAccessor
 	gitURLs          []string
 	homepage         string
 	description      string
@@ -166,40 +151,33 @@ type PackageContext struct {
 	versions         map[string]string
 	libs             []string
 	declaredPackages []string
-	options          map[string]*Option
 	pkgName          string
 	version          string
 	toolchain        *Toolchain
-	cfgVals          map[string]any
 	deps             map[string]*InstalledPackage
 	sourceDir        string
 	buildDir         string
 	installDir       string
 	targets          map[string]*Target
-	buildFunc        func(*Target) error
 	installer        OnDemandInstaller
 }
 
 func NewPackageContext(pkgName, version string, tc *Toolchain, cfgVals map[string]any) *PackageContext {
-	if cfgVals == nil {
-		cfgVals = make(map[string]any)
-	}
 	return &PackageContext{
-		pkgName:   pkgName,
-		version:   version,
-		toolchain: tc,
-		cfgVals:   cfgVals,
-		options:   make(map[string]*Option),
-		deps:      make(map[string]*InstalledPackage),
-		targets:   make(map[string]*Target),
-		versions:  make(map[string]string),
+		ConfigAccessor: NewConfigAccessor(cfgVals, nil),
+		pkgName:        pkgName,
+		version:        version,
+		toolchain:      tc,
+		deps:           make(map[string]*InstalledPackage),
+		targets:        make(map[string]*Target),
+		versions:       make(map[string]string),
 	}
 }
 
 func NewPackageContextForDefinition() *PackageContext {
 	return &PackageContext{
-		options:  make(map[string]*Option),
-		versions: make(map[string]string),
+		ConfigAccessor: NewConfigAccessor(nil, nil),
+		versions:       make(map[string]string),
 	}
 }
 
@@ -239,11 +217,11 @@ func (ctx *PackageContext) DeclarePackages(packages ...string) *PackageContext {
 }
 
 func (ctx *PackageContext) Option(name string) *Option {
-	if opt, ok := ctx.options[name]; ok {
+	if opt, ok := ctx.Options[name]; ok {
 		return opt
 	}
 	opt := &Option{name: name}
-	ctx.options[name] = opt
+	ctx.Options[name] = opt
 	return opt
 }
 
@@ -258,16 +236,16 @@ func (ctx *PackageContext) Libs() []string { return ctx.libs }
 func (ctx *PackageContext) DeclaredPackages() []string {
 	return ctx.declaredPackages
 }
-func (ctx *PackageContext) GetOptions() map[string]*Option {
-	return ctx.options
-}
 func (ctx *PackageContext) PackageName() string { return ctx.pkgName }
+func (ctx *PackageContext) GetOptions() map[string]*Option {
+	return ctx.Options
+}
 func (ctx *PackageContext) GetConfigValues() map[string]any {
-	return ctx.cfgVals
+	return ctx.CfgVals
 }
 
 func (ctx *PackageContext) SetOptions(options map[string]*Option) {
-	ctx.options = options
+	ctx.Options = options
 }
 
 func (ctx *PackageContext) SetDeps(deps map[string]*InstalledPackage) {
@@ -282,10 +260,6 @@ func (ctx *PackageContext) SetDirs(sourceDir, buildDir, installDir string) {
 	ctx.sourceDir = sourceDir
 	ctx.buildDir = buildDir
 	ctx.installDir = installDir
-}
-
-func (ctx *PackageContext) SetBuildFunc(fn func(*Target) error) {
-	ctx.buildFunc = fn
 }
 
 func (ctx *PackageContext) Dep(name string) *InstalledPackage {
@@ -322,87 +296,6 @@ func (ctx *PackageContext) Env() map[string]string {
 func (ctx *PackageContext) SourceDir() string  { return ctx.sourceDir }
 func (ctx *PackageContext) BuildDir() string   { return ctx.buildDir }
 func (ctx *PackageContext) InstallDir() string { return ctx.installDir }
-
-func (ctx *PackageContext) Bool(name string) bool {
-	if val, ok := ctx.cfgVals[name]; ok {
-		if b, ok := val.(bool); ok {
-			return b
-		}
-	}
-	if opt, ok := ctx.options[name]; ok {
-		if d, ok := opt.defaultVal.(bool); ok {
-			return d
-		}
-	}
-	return false
-}
-
-func (ctx *PackageContext) String(name string) string {
-	if val, ok := ctx.cfgVals[name]; ok {
-		if s, ok := val.(string); ok {
-			return s
-		}
-	}
-	if opt, ok := ctx.options[name]; ok {
-		if d, ok := opt.defaultVal.(string); ok {
-			return d
-		}
-	}
-	return ""
-}
-
-func (ctx *PackageContext) Int(name string) int {
-	if val, ok := ctx.cfgVals[name]; ok {
-		switch v := val.(type) {
-		case int:
-			return v
-		case int64:
-			return int(v)
-		case float64:
-			return int(v)
-		}
-	}
-	if opt, ok := ctx.options[name]; ok {
-		switch v := opt.defaultVal.(type) {
-		case int:
-			return v
-		case int64:
-			return int(v)
-		case float64:
-			return int(v)
-		}
-	}
-	return 0
-}
-
-func (ctx *PackageContext) BoolStr(name string) string {
-	if ctx.Bool(name) {
-		return "ON"
-	}
-	return "OFF"
-}
-
-func (ctx *PackageContext) If(option string, then ...string) []string {
-	if ctx.Bool(option) {
-		return then
-	}
-	return nil
-}
-
-func (ctx *PackageContext) IfNot(option string, then ...string) []string {
-	if !ctx.Bool(option) {
-		return then
-	}
-	return nil
-}
-
-func (ctx *PackageContext) Select(option string, mapping map[string]string) string {
-	val := ctx.String(option)
-	if mapped, ok := mapping[val]; ok {
-		return mapped
-	}
-	return ""
-}
 
 func (ctx *PackageContext) CMakeConfigure(extraArgs ...string) error {
 	args := []string{
@@ -483,7 +376,7 @@ func (ctx *PackageContext) RunWithEnv(env map[string]string, name string, args .
 	vlog.Info("  %s %s", name, strings.Join(args, " "))
 	cmd := exec.Command(name, args...)
 	cmd.Dir = ctx.buildDir
-	cmd.Env = append(cmd.Environ())
+	cmd.Env = append([]string{}, cmd.Environ()...)
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
@@ -495,18 +388,6 @@ func (ctx *PackageContext) RunWithEnv(env map[string]string, name string, args .
 	return nil
 }
 
-func (ctx *PackageContext) CopyDir(src, dest string) error {
-	return nil
-}
-
-func (ctx *PackageContext) CopyFile(src, dest string) error {
-	return nil
-}
-
-func (ctx *PackageContext) MkdirAll(path string) error {
-	return nil
-}
-
 func (ctx *PackageContext) Target(name string) *Target {
 	if t, ok := ctx.targets[name]; ok {
 		return t
@@ -514,13 +395,6 @@ func (ctx *PackageContext) Target(name string) *Target {
 	t := &Target{name: name, isDefault: true}
 	ctx.targets[name] = t
 	return t
-}
-
-func (ctx *PackageContext) Build(t *Target) error {
-	if ctx.buildFunc != nil {
-		return ctx.buildFunc(t)
-	}
-	return nil
 }
 
 func (ctx *PackageContext) GetTargets() map[string]*Target {

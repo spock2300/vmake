@@ -138,6 +138,14 @@ func runRequirePhase(ctx *RuntimeContext, force bool) error {
 	return nil
 }
 
+func collectOptions(name string, pkg *api.Package) map[string]*api.Option {
+	cfgCtx := api.NewConfigContext(name)
+	for _, fn := range pkg.GetConfigFuncs() {
+		fn(cfgCtx)
+	}
+	return cfgCtx.GetOptions()
+}
+
 func runConfigPhase(ctx *RuntimeContext) error {
 	vlog.Info("")
 	vlog.Info("Executing OnConfig...")
@@ -148,18 +156,8 @@ func runConfigPhase(ctx *RuntimeContext) error {
 		node := ctx.DepGraph.Packages[name]
 
 		var opts map[string]*api.Option
-		if node.IsLocal() {
-			cfgCtx := api.NewConfigContext(name)
-			for _, fn := range node.Definition.GetConfigFuncs() {
-				fn(cfgCtx)
-			}
-			opts = cfgCtx.GetOptions()
-		} else if node.Definition != nil {
-			cfgCtx := api.NewConfigContext(name)
-			for _, fn := range node.Definition.GetConfigFuncs() {
-				fn(cfgCtx)
-			}
-			opts = cfgCtx.GetOptions()
+		if node.Definition != nil {
+			opts = collectOptions(name, node.Definition)
 		}
 
 		if len(opts) > 0 {

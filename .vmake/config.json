@@ -1,0 +1,77 @@
+{
+  "version": "1",
+  "global": {
+    "toolchain": "gcc",
+    "mode": "release",
+    "options": {
+      "customer": "hihihihi",
+      "product": "professional"
+    }
+  },
+  "entries": {
+    "01_simple_c": {
+      "options": {}
+    },
+    "02_with_config": {
+      "options": {}
+    },
+    "03_multi_target": {
+      "options": {}
+    },
+    "04_multi_module": {
+      "options": {
+        "feature_x": false
+      }
+    },
+    "05_conditional": {
+      "options": {}
+    },
+    "06_complete_api": {
+      "options": {
+        "c++standard": "c++20",
+        "custom_prefix": "/123123",
+        "debug": true,
+        "shared_lib": false,
+        "ssl": true,
+        "thread_count": 40,
+        "verbose": true
+      }
+    },
+    "07_parallel_test": {
+      "options": {}
+    },
+    "08_with_package": {
+      "options": {}
+    },
+    "09_with_curl": {
+      "options": {}
+    },
+    "app": {
+      "options": {}
+    },
+    "lib": {
+      "options": {}
+    },
+    "official/curl": {
+      "version": "",
+      "options": {
+        "ssl": "mbedtls"
+      }
+    },
+    "official/mbedtls": {
+      "version": ""
+    },
+    "official/openssl": {
+      "version": ""
+    },
+    "official/wolfssl": {
+      "version": ""
+    },
+    "official/zlib": {
+      "version": "",
+      "options": {
+        "shared": false
+      }
+    }
+  }
+}

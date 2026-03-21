@@ -66,22 +66,24 @@ OnBuild 回调 ──▶ 生成 Target ──▶ BuildGraph ──▶ Scheduler.
 ## 第三方包流程
 
 ```
-OnRequire          Resolver            SourceManager       Installer
+OnRequire          Resolver            SourceManager       Scheduler
 声明依赖           解析依赖树           下载源码            构建安装
     │                 │                    │                  │
     ▼                 ▼                    ▼                  ▼
-AddRequires      DependencyGraph    cache/<repo>/<pkg>/  packages/<repo>/<pkg>/
-"official/zlib"  ├─ Order []        repo/                <ver>/<hash>/
-                 └─ Packages map                          ├─ build/
-                                                          └─ install/
+AddRequires      DependencyGraph    cache/<repo>/<pkg>/  TargetVoid.BuildFunc()
+"official/zlib"  ├─ Order []        repo/                → CMakeConfigure
+                 └─ Packages map                           → CMakeBuild
+                                                            → CMakeInstall
 ```
 
 1. `OnRequire` 回调调用 `AddRequires("official/zlib >=1.2")`
 2. `Resolver` 在 `repos/` 中查找包定义，递归解析依赖
 3. `SourceManager.EnsureSource` 通过 git clone 下载源码到 `cache/<repo>/<pkg>/repo/`
-4. `Installer` 按拓扑顺序构建安装，产物存放在 `packages/`
+4. `Scheduler` 按拓扑顺序构建所有目标，包括 `TargetVoid` 目标
 
-源码：`pkg/repo/resolver.go`, `pkg/repo/source.go`, `pkg/repo/installer.go`
+对于 `TargetVoid` 类型的目标（第三方包），Scheduler 调用 `Target.BuildFunc()` 并传入 `PackageContext`，执行 CMake/Autotools 等构建命令。
+
+源码：`pkg/repo/resolver.go`, `pkg/repo/source.go`, `pkg/build/scheduler.go`
 
 ## CLI 命令树
 
@@ -154,8 +156,11 @@ BuildNode
 ConfigFile
 ├── Version  string
 ├── Global   *GlobalConfig
-├── Packages map[string]*PackageConfig
-└── Requires map[string]*RequireConfig
+└── Entries  map[string]*EntryConfig
+
+EntryConfig
+├── Version  string                  // 第三方包的版本（可选）
+└── Options  map[string]any          // 配置选项
 ```
 
 ## 关键文件位置

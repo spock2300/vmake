@@ -46,17 +46,18 @@ type PackageProvider interface {
 }
 
 type Scheduler struct {
-	graph       *BuildGraph
-	compiler    *Compiler
-	linker      *Linker
-	toolchain   *toolchain.Toolchain
-	tcName      string
-	mode        string
-	buildDir    string
-	pkgs        map[string]*PkgInfo
-	origDir     string
-	ccWriter    *CompileCommandsWriter
-	pkgProvider PackageProvider
+	graph           *BuildGraph
+	compiler        *Compiler
+	linker          *Linker
+	toolchain       *toolchain.Toolchain
+	tcName          string
+	mode            string
+	buildDir        string
+	pkgs            map[string]*PkgInfo
+	origDir         string
+	ccWriter        *CompileCommandsWriter
+	pkgProvider     PackageProvider
+	packageContexts map[string]*api.PackageContext
 }
 
 func NewScheduler(
@@ -89,16 +90,17 @@ func NewScheduler(
 	}
 
 	s := &Scheduler{
-		graph:     graph,
-		compiler:  compiler,
-		linker:    linker,
-		toolchain: tc,
-		tcName:    tcName,
-		mode:      mode,
-		buildDir:  buildDir,
-		pkgs:      make(map[string]*PkgInfo),
-		origDir:   origDir,
-		ccWriter:  ccWriter,
+		graph:           graph,
+		compiler:        compiler,
+		linker:          linker,
+		toolchain:       tc,
+		tcName:          tcName,
+		mode:            mode,
+		buildDir:        buildDir,
+		pkgs:            make(map[string]*PkgInfo),
+		origDir:         origDir,
+		ccWriter:        ccWriter,
+		packageContexts: make(map[string]*api.PackageContext),
 	}
 
 	for pkgName, pkgDir := range pkgDirs {
@@ -130,6 +132,10 @@ func NewScheduler(
 
 func (s *Scheduler) SetPackageProvider(provider PackageProvider) {
 	s.pkgProvider = provider
+}
+
+func (s *Scheduler) SetPackageContext(pkgName string, ctx *api.PackageContext) {
+	s.packageContexts[pkgName] = ctx
 }
 
 func (s *Scheduler) SetPkgDirs(pkgName, sourceDir, outputDir, installDir string) {
@@ -461,6 +467,24 @@ func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 		}
 		return s.linker.LinkObject(allObjs, resolved.OutputPath)
 	case api.TargetVoid:
+		if fn := resolved.Node.Target.BuildFunc(); fn != nil {
+			pkgCtx := s.packageContexts[resolved.Node.PkgName]
+			if pkgCtx == nil {
+				return fmt.Errorf("no PackageContext for TargetVoid target %s", resolved.Node.FullName)
+			}
+			if pkgCtx.InstallDir() != "" {
+				if info, err := os.Stat(pkgCtx.InstallDir()); err == nil && info.IsDir() {
+					entries, _ := os.ReadDir(pkgCtx.InstallDir())
+					if len(entries) > 0 {
+						vlog.Info("  SKIP (already installed)")
+						return nil
+					}
+				}
+				os.MkdirAll(pkgCtx.BuildDir(), 0755)
+				os.MkdirAll(pkgCtx.InstallDir(), 0755)
+			}
+			return fn(pkgCtx)
+		}
 		return nil
 	}
 	return nil

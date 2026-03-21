@@ -1,90 +1,32 @@
 package api
 
-import (
-	"strings"
-)
-
 type ConfigContext struct {
-	options map[string]*Option
+	ConfigAccessor
 	pkgName string
-	cfgVals map[string]any
 }
 
 func NewConfigContext(pkgName string) *ConfigContext {
 	return &ConfigContext{
-		options: make(map[string]*Option),
-		pkgName: pkgName,
-		cfgVals: make(map[string]any),
+		ConfigAccessor: NewConfigAccessor(nil, nil),
+		pkgName:        pkgName,
 	}
 }
 
 func (ctx *ConfigContext) Option(name string) *Option {
-	if opt, ok := ctx.options[name]; ok {
+	if opt, ok := ctx.Options[name]; ok {
 		return opt
 	}
 	opt := &Option{name: name}
-	ctx.options[name] = opt
+	ctx.Options[name] = opt
 	return opt
 }
 
-func (ctx *ConfigContext) Bool(name string) bool {
-	if val, ok := ctx.cfgVals[name]; ok {
-		if b, ok := val.(bool); ok {
-			return b
-		}
-	}
-	if opt, ok := ctx.options[name]; ok {
-		if d, ok := opt.defaultVal.(bool); ok {
-			return d
-		}
-	}
-	return false
-}
-
-func (ctx *ConfigContext) String(name string) string {
-	if val, ok := ctx.cfgVals[name]; ok {
-		if s, ok := val.(string); ok {
-			return s
-		}
-	}
-	if opt, ok := ctx.options[name]; ok {
-		if d, ok := opt.defaultVal.(string); ok {
-			return d
-		}
-	}
-	return ""
-}
-
-func (ctx *ConfigContext) Int(name string) int {
-	if val, ok := ctx.cfgVals[name]; ok {
-		switch v := val.(type) {
-		case int:
-			return v
-		case int64:
-			return int(v)
-		case float64:
-			return int(v)
-		}
-	}
-	if opt, ok := ctx.options[name]; ok {
-		switch v := opt.defaultVal.(type) {
-		case int:
-			return v
-		case int64:
-			return int(v)
-		case float64:
-			return int(v)
-		}
-	}
-	return 0
-}
-
 func (ctx *ConfigContext) SetConfigValue(name string, val any) {
-	ctx.cfgVals[name] = val
+	ctx.CfgVals[name] = val
 }
 
 func (ctx *ConfigContext) GetOptions() map[string]*Option {
-	return ctx.options
+	return ctx.Options
 }
 
 func (ctx *ConfigContext) PackageName() string {
@@ -107,10 +49,9 @@ func (ctx *ConfigContext) GlobalMode() *Option {
 }
 
 type BuildContext struct {
+	ConfigAccessor
 	targets       map[string]*Target
 	pkgName       string
-	cfgVals       map[string]any
-	options       map[string]*Option
 	globalVals    map[string]any
 	globalOptions map[string]*Option
 	installItems  []InstallItem
@@ -119,22 +60,18 @@ type BuildContext struct {
 }
 
 func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext {
-	if cfgVals == nil {
-		cfgVals = make(map[string]any)
-	}
 	return &BuildContext{
-		targets:       make(map[string]*Target),
-		pkgName:       pkgName,
-		cfgVals:       cfgVals,
-		options:       make(map[string]*Option),
-		globalVals:    make(map[string]any),
-		globalOptions: make(map[string]*Option),
-		installItems:  make([]InstallItem, 0),
+		ConfigAccessor: NewConfigAccessor(cfgVals, nil),
+		targets:        make(map[string]*Target),
+		pkgName:        pkgName,
+		globalVals:     make(map[string]any),
+		globalOptions:  make(map[string]*Option),
+		installItems:   make([]InstallItem, 0),
 	}
 }
 
 func (ctx *BuildContext) SetOptions(options map[string]*Option) {
-	ctx.options = options
+	ctx.Options = options
 }
 
 func (ctx *BuildContext) SetGlobalOptions(options map[string]*Option) {
@@ -152,85 +89,6 @@ func (ctx *BuildContext) Target(name string) *Target {
 	t := &Target{name: name, isDefault: true}
 	ctx.targets[name] = t
 	return t
-}
-
-func (ctx *BuildContext) If(option string, then ...string) []string {
-	if ctx.Bool(option) {
-		return then
-	}
-	return nil
-}
-
-func (ctx *BuildContext) IfNot(option string, then ...string) []string {
-	if !ctx.Bool(option) {
-		return then
-	}
-	return nil
-}
-
-func (ctx *BuildContext) Select(option string, mapping map[string]string) string {
-	val := ctx.String(option)
-	if mapped, ok := mapping[val]; ok {
-		return mapped
-	}
-	return ""
-}
-
-func (ctx *BuildContext) When(option string, value any) bool {
-	val := ctx.cfgVals[option]
-	return val == value
-}
-
-func (ctx *BuildContext) Bool(name string) bool {
-	if val, ok := ctx.cfgVals[name]; ok {
-		if b, ok := val.(bool); ok {
-			return b
-		}
-	}
-	if opt, ok := ctx.options[name]; ok {
-		if d, ok := opt.defaultVal.(bool); ok {
-			return d
-		}
-	}
-	return false
-}
-
-func (ctx *BuildContext) String(name string) string {
-	if val, ok := ctx.cfgVals[name]; ok {
-		if s, ok := val.(string); ok {
-			return s
-		}
-	}
-	if opt, ok := ctx.options[name]; ok {
-		if d, ok := opt.defaultVal.(string); ok {
-			return d
-		}
-	}
-	return ""
-}
-
-func (ctx *BuildContext) Int(name string) int {
-	if val, ok := ctx.cfgVals[name]; ok {
-		switch v := val.(type) {
-		case int:
-			return v
-		case int64:
-			return int(v)
-		case float64:
-			return int(v)
-		}
-	}
-	if opt, ok := ctx.options[name]; ok {
-		switch v := opt.defaultVal.(type) {
-		case int:
-			return v
-		case int64:
-			return int(v)
-		case float64:
-			return int(v)
-		}
-	}
-	return 0
 }
 
 func (ctx *BuildContext) GetTargets() map[string]*Target {
@@ -323,9 +181,8 @@ func (ctx *BuildContext) GetPackages() []string {
 }
 
 type InstallContext struct {
+	ConfigAccessor
 	pkgName       string
-	cfgVals       map[string]any
-	options       map[string]*Option
 	globalVals    map[string]any
 	globalOptions map[string]*Option
 	installItems  []InstallItem
@@ -335,21 +192,17 @@ type InstallContext struct {
 }
 
 func NewInstallContext(pkgName string, cfgVals map[string]any) *InstallContext {
-	if cfgVals == nil {
-		cfgVals = make(map[string]any)
-	}
 	return &InstallContext{
-		pkgName:       pkgName,
-		cfgVals:       cfgVals,
-		options:       make(map[string]*Option),
-		globalVals:    make(map[string]any),
-		globalOptions: make(map[string]*Option),
-		installItems:  make([]InstallItem, 0),
+		ConfigAccessor: NewConfigAccessor(cfgVals, nil),
+		pkgName:        pkgName,
+		globalVals:     make(map[string]any),
+		globalOptions:  make(map[string]*Option),
+		installItems:   make([]InstallItem, 0),
 	}
 }
 
 func (ctx *InstallContext) SetOptions(options map[string]*Option) {
-	ctx.options = options
+	ctx.Options = options
 }
 
 func (ctx *InstallContext) SetGlobalOptions(options map[string]*Option) {
@@ -383,34 +236,6 @@ func (ctx *InstallContext) GetInstallFilter() InstallFilterFunc {
 	return ctx.installFilter
 }
 
-func (ctx *InstallContext) Bool(name string) bool {
-	if val, ok := ctx.cfgVals[name]; ok {
-		if b, ok := val.(bool); ok {
-			return b
-		}
-	}
-	if opt, ok := ctx.options[name]; ok {
-		if d, ok := opt.defaultVal.(bool); ok {
-			return d
-		}
-	}
-	return false
-}
-
-func (ctx *InstallContext) String(name string) string {
-	if val, ok := ctx.cfgVals[name]; ok {
-		if s, ok := val.(string); ok {
-			return s
-		}
-	}
-	if opt, ok := ctx.options[name]; ok {
-		if d, ok := opt.defaultVal.(string); ok {
-			return d
-		}
-	}
-	return ""
-}
-
 func (ctx *InstallContext) GlobalBool(name string) bool {
 	if val, ok := ctx.globalVals[name]; ok {
 		if b, ok := val.(bool); ok {
@@ -441,32 +266,4 @@ func (ctx *InstallContext) GlobalString(name string) string {
 
 func (ctx *InstallContext) Mode() string {
 	return ctx.GlobalString(ModeOptionName)
-}
-
-func flattenStrings(slices ...[]string) []string {
-	var result []string
-	for _, s := range slices {
-		for _, item := range s {
-			if item != "" && !containsString(result, item) {
-				result = append(result, item)
-			}
-		}
-	}
-	return result
-}
-
-func containsString(slice []string, s string) bool {
-	for _, item := range slice {
-		if item == s {
-			return true
-		}
-	}
-	return false
-}
-
-func ExpandGlob(pattern string) []string {
-	if !strings.Contains(pattern, "*") {
-		return []string{pattern}
-	}
-	return []string{pattern}
 }

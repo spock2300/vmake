@@ -135,12 +135,10 @@ project/
     "mode": "debug",
     "options": { "ssl": true }
   },
-  "packages": {
+  "entries": {
     "myproject": {
       "options": { "verbose": false }
-    }
-  },
-  "requires": {
+    },
     "official/zlib": {
       "version": "1.3.1",
       "options": { "shared": false }
