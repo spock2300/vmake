@@ -90,33 +90,26 @@ func (r *Resolver) resolveLocal(src plugin.Source, graph *DependencyGraph, path 
 	}
 
 	src.Force = force
+
+	pluginPath := pluginCachePath(src)
+	if !force && src.Path != "" && r.hasCachedPlugin(pluginPath, src.Path) {
+		node, err := r.resolveFromPlugin(name, pluginPath, src, graph, path)
+		if err != nil {
+			return err
+		}
+		graph.Packages[name] = node
+		return nil
+	}
+
 	cr := plugin.Compile(src)
 	if !cr.Success {
 		return fmt.Errorf("compile %s failed: %w", name, cr.Error)
 	}
 
-	loaded, err := plugin.Load(cr.PluginPath, src)
+	node, err := r.resolveFromPlugin(name, cr.PluginPath, src, graph, path)
 	if err != nil {
-		return fmt.Errorf("load %s failed: %w", name, err)
+		return err
 	}
-
-	pkg := loaded.ExtractPackage()
-
-	node := &ResolvedPackage{
-		Name:       name,
-		Definition: pkg,
-		Source:     &src,
-		Deps:       []string{},
-	}
-
-	requires := pkg.GetRequireContext().GetRequires()
-	for _, req := range requires {
-		if err := r.resolveRecursive(req, graph, append(path, name)); err != nil {
-			return err
-		}
-		node.Deps = append(node.Deps, req.Name)
-	}
-
 	graph.Packages[name] = node
 	return nil
 }
@@ -138,37 +131,24 @@ func (r *Resolver) resolveRecursive(req api.RequireInfo, graph *DependencyGraph,
 	pluginDir := r.pluginOutputDir(name)
 	pluginPath := filepath.Join(pluginDir, "plugin.so")
 
+	pkgPath, findErr := r.repoMgr.FindPackageGo(r.parseRepo(name), r.parsePkgName(name))
+
 	src := plugin.Source{
 		Name:      name,
 		OutputDir: pluginDir,
 		Origin:    plugin.SourceRemote,
 	}
 
-	if r.hasCachedPlugin(pluginPath) {
-		loaded, err := plugin.Load(pluginPath, src)
+	if findErr == nil && r.hasCachedPlugin(pluginPath, pkgPath) {
+		src.Path = pkgPath
+		src.Dir = filepath.Dir(pkgPath)
+		node, err := r.resolveFromPlugin(name, pluginPath, src, graph, path)
 		if err != nil {
-			return fmt.Errorf("load cached %s failed: %w", name, err)
+			return err
 		}
-
-		pkgDef := loaded.ExtractPackage()
-		var subDeps []string
-
-		requireCtx := pkgDef.GetRequireContext()
-		for _, dep := range requireCtx.GetRequires() {
-			if err := r.resolveRecursive(dep, graph, append(path, name)); err != nil {
-				return err
-			}
-			subDeps = append(subDeps, dep.Name)
-		}
-
-		graph.Packages[name] = &ResolvedPackage{
-			Name:       name,
-			Constraint: req.Constraint,
-			Options:    make(map[string]any),
-			Definition: pkgDef,
-			Source:     &src,
-			Deps:       subDeps,
-		}
+		node.Constraint = req.Constraint
+		node.Options = make(map[string]any)
+		graph.Packages[name] = node
 		return nil
 	}
 
@@ -182,9 +162,59 @@ func (r *Resolver) resolveRecursive(req api.RequireInfo, graph *DependencyGraph,
 	return nil
 }
 
-func (r *Resolver) hasCachedPlugin(pluginPath string) bool {
+func (r *Resolver) resolveFromPlugin(name, pluginPath string, src plugin.Source, graph *DependencyGraph, path []string) (*ResolvedPackage, error) {
+	loaded, err := plugin.Load(pluginPath, src)
+	if err != nil {
+		return nil, fmt.Errorf("load %s failed: %w", name, err)
+	}
+
+	pkg := loaded.ExtractPackage()
+
+	node := &ResolvedPackage{
+		Name:       name,
+		Definition: pkg,
+		Source:     &src,
+		Deps:       []string{},
+	}
+
+	for _, req := range pkg.GetRequireContext().GetRequires() {
+		if err := r.resolveRecursive(req, graph, append(path, name)); err != nil {
+			return nil, err
+		}
+		node.Deps = append(node.Deps, req.Name)
+	}
+
+	return node, nil
+}
+
+func (r *Resolver) hasCachedPlugin(pluginPath, buildGoPath string) bool {
 	info, err := os.Stat(pluginPath)
-	return err == nil && info.Size() > 0
+	if err != nil || info.Size() == 0 {
+		return false
+	}
+	if exe, err := os.Executable(); err == nil {
+		if exeStat, err := os.Stat(exe); err == nil {
+			if exeStat.ModTime().After(info.ModTime()) {
+				return false
+			}
+		}
+	}
+	if buildGoPath != "" {
+		if src, err := os.Stat(buildGoPath); err == nil {
+			if src.ModTime().After(info.ModTime()) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func pluginCachePath(src plugin.Source) string {
+	outputDir := src.OutputDir
+	if outputDir == "" {
+		outputDir = filepath.Join(src.Dir, "build")
+	}
+	return filepath.Join(outputDir, "plugin.so")
 }
 
 func (r *Resolver) ResolveSingle(name string, graph *DependencyGraph) error {
@@ -214,25 +244,14 @@ func (r *Resolver) ResolveSingle(name string, graph *DependencyGraph) error {
 		return fmt.Errorf("compile %s failed: %w", name, cr.Error)
 	}
 
-	loaded, err := plugin.Load(cr.PluginPath, src)
+	resolved, err := r.resolveFromPlugin(name, cr.PluginPath, src, graph, nil)
 	if err != nil {
-		return fmt.Errorf("load %s failed: %w", name, err)
+		return err
 	}
 
-	pkgDef := loaded.ExtractPackage()
-	var subDeps []string
-
-	requireCtx := pkgDef.GetRequireContext()
-	for _, dep := range requireCtx.GetRequires() {
-		if err := r.resolveRecursive(dep, graph, nil); err != nil {
-			return err
-		}
-		subDeps = append(subDeps, dep.Name)
-	}
-
-	node.Definition = pkgDef
-	node.Source = &src
-	node.Deps = subDeps
+	node.Definition = resolved.Definition
+	node.Source = resolved.Source
+	node.Deps = resolved.Deps
 	node.Deferred = false
 	return nil
 }
