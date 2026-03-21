@@ -1,35 +1,36 @@
 # ~/.vmake 目录结构
 
-`~/.vmake` 是 vmake 的全局数据目录，存储工具链配置、包仓库定义、已安装包产物和各类缓存。
+`~/.vmake` 是 vmake 的全局数据目录，存储工具链配置、包仓库、已安装包产物和缓存。
 
 ## 目录总览
 
 ```
 ~/.vmake/
-├── config.json
-├── repos/
+├── config.json                    # 全局工具链配置
+├── repos/                         # 包仓库索引（git clone）
 │   └── <repo>/
 │       └── packages/
 │           └── <first-char>/
 │               └── <pkg>/
 │                   └── build.go
-├── packages/
+├── packages/                      # 已安装包的构建产物
 │   └── <repo>/<pkg>/
 │       └── <version>/
 │           └── <cacheHash>/
-│               ├── build/
-│               └── install/
+│               ├── build/         # 中间产物（.o 文件等）
+│               └── install/       # 最终产物（库、头文件）
 └── cache/
-    ├── plugins/
-    │   └── <name>/
-    │       └── plugin.so
-    └── <repo>/<pkg>/
-        └── repo/
+    ├── plugins/                   # 编译后的 Go 插件缓存
+    │   └── <name>/plugin.so
+    └── <repo>/<pkg>/repo/         # 包源码的 git clone
 ```
 
 ## config.json
 
-全局工具链配置文件。存储可用工具链定义（编译器路径、默认编译选项）和默认工具链选择。
+全局工具链配置，存储编译器路径和默认编译选项。
+
+源码：`pkg/toolchain/store.go`
+CLI：`vmake toolchain init|list|show`
 
 ```json
 {
@@ -41,12 +42,8 @@
       "display_name": "System GCC",
       "host": "x86_64-linux-gnu",
       "tools": {
-        "cc": "gcc",
-        "cxx": "g++",
-        "ar": "ar",
-        "ld": "ld",
-        "strip": "strip",
-        "ranlib": "ranlib"
+        "cc": "gcc", "cxx": "g++", "ar": "ar",
+        "ld": "ld", "strip": "strip", "ranlib": "ranlib"
       },
       "default_flags": {
         "cflags": ["-O2", "-Wall"],
@@ -58,12 +55,9 @@
 }
 ```
 
-源码：`pkg/toolchain/store.go`
-CLI：`vmake toolchain init|list|show`
-
 ## repos/
 
-通过 `git clone` 克隆的包仓库。每个仓库是一个独立的 Git 仓库，包含多个包的定义。
+通过 `git clone` 克隆的包仓库，包含 `build.go` 形式的包定义。
 
 路径规则：`repos/<repo>/packages/<first-char>/<pkg>/build.go`
 
@@ -80,17 +74,15 @@ CLI：`vmake repo add|remove|list|update`
 
 ```
 packages/<repo>/<pkg>/<version>/<cacheHash>/
-├── build/      # 中间构建产物（.o 文件等）
-└── install/    # 最终安装文件（静态库/动态库/头文件/vmake.json）
+├── build/                         # 中间构建产物
+└── install/                       # 最终安装文件
+    ├── include/                   # 头文件
+    └── lib/                       # 静态库/动态库
 ```
 
-`cacheHash` 由工具链、构建模式、选项组合生成（`pkg/repo/cache.go`）：
+`cacheHash` 由工具链、构建模式、选项组合生成（`pkg/repo/cache.go`）。
 
-```
-cacheHash = base64-URL({"toolchain":"gcc","mode":"release","options":{"ssl":"openssl"}})
-```
-
-不同工具链或选项组合会产生不同的 `cacheHash`，实现配置隔离。
+不同工具链或选项组合产生不同的 `cacheHash`，实现配置隔离。
 
 源码：`pkg/repo/installer.go`
 CLI：`vmake pkg list|clean`
@@ -115,4 +107,44 @@ CLI：`vmake pkg list|clean`
 
 源码：`pkg/repo/source.go`
 
+## 项目目录
 
+每个项目可有独立的配置文件，存储在 `.vmake/config.json`。
+
+```
+project/
+├── build.go                       # 项目插件定义
+├── .vmake/
+│   └── config.json                # 项目配置
+└── build/                         # 构建输出
+    ├── plugin.so                  # 编译后的插件
+    ├── compile_commands.json      # LSP 编译数据库
+    └── <tc>-<mode>/               # 如 gcc-debug
+        ├── cache.json             # 增量构建缓存
+        ├── objects/               # 中间目标文件
+        └── <target>               # 最终产物
+```
+
+项目配置结构（`pkg/config/store.go`）：
+
+```json
+{
+  "version": "1",
+  "global": {
+    "toolchain": "gcc",
+    "mode": "debug",
+    "options": { "ssl": true }
+  },
+  "packages": {
+    "myproject": {
+      "options": { "verbose": false }
+    }
+  },
+  "requires": {
+    "official/zlib": {
+      "version": "1.3.1",
+      "options": { "shared": false }
+    }
+  }
+}
+```

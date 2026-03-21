@@ -180,5 +180,7 @@ Plugin naming: Package name = directory name of `build.go` location.
 - Add new data structures without necessity
 
 ## References
-- API Design: `docs/API_DESIGN.md`
+- Storage Structure: `docs/VMAKE_HOME.md`
+- Architecture: `docs/ARCHITECTURE.md`
+- Plugin API: `docs/PLUGIN_API.md`
 - Test projects: `test_data/01_simple_c` through `test_data/10_local_repo`
