@@ -29,8 +29,8 @@ cd test_data/03_multi_target && ../../vmake build
 cd test_data/04_multi_module && ../../vmake build
 cd test_data/08_with_package && ../../vmake build
 
-# Debug third-party plugin development
-export VMAKE_DIR=/home/spock/git/vmake
+# Debug third-party plugin development (set to your repo path)
+export VMAKE_DIR=/path/to/vmake
 cd test_data/01_simple_c && ../../vmake build
 ```
 
@@ -63,6 +63,7 @@ import (
 - **SetXxx**: Set a single value (SetKind, SetDefault)
 - **AddXxx**: Append multiple values (AddFiles, AddIncludes)
 - **Type aliases**: Use type aliases for readability (e.g., `type TargetKind string`)
+- **Logging**: Always use alias `vlog "gitee.com/spock2300/vmake/pkg/log"`
 
 ### Fluent API
 All public APIs use method chaining - return `*Target`, `*Package`, `*Option` from setter methods:
@@ -95,9 +96,19 @@ Use `filepath.Join()` for file system paths. Do NOT use for logical identifiers:
 | `pkg/toolchain` | Toolchain abstraction (GCC, Clang) | No |
 | `pkg/repo` | Package management, Git, dependency resolution | No |
 | `pkg/log` | Logging (use `vlog "gitee.com/spock2300/vmake/pkg/log"`) | No |
-| `internal/*` | Internal implementation details | No |
+| `pkg/tui` | TUI components (bubbletea) | No |
+| `pkg/version` | Version info | No |
+| `internal/exec` | OS command execution | No |
+| `internal/glob` | Glob pattern matching | No |
 
 **Principle**: `pkg/api` is the only public API that must remain stable. Other packages are internal and may change.
+
+## CLI Architecture
+- CLI uses `github.com/spf13/cobra`
+- Commands defined in `cmd/vmake/` as package-level vars (e.g., `var buildCmd = &cobra.Command{...}`)
+- Register commands in `init()` via `RootCmd.AddCommand()`
+- Flags bound with `Flags().BoolVarP/StringVarP` etc.
+- CLI may call `os.Exit(1)` for fatal errors
 
 ## Runtime Execution Flow
 ```
