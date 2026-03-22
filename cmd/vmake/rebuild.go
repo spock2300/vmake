@@ -24,38 +24,14 @@ func init() {
 }
 
 func runRebuild(cmd *cobra.Command, args []string) {
-	ctx, err := initContext()
-	if err != nil {
-		vlog.Error("Error: %v", err)
-		os.Exit(1)
-	}
-
-	if err := runRequirePhase(ctx, false); err != nil {
-		vlog.Error("Phase 1 (OnRequire) failed: %v", err)
-		os.Exit(1)
-	}
-
-	executeCleanLocal(ctx)
-
-	vlog.Info("")
-
-	if err := runConfigPhase(ctx); err != nil {
-		vlog.Error("Phase 2 (OnConfig) failed: %v", err)
-		os.Exit(1)
-	}
-
-	result, err := runBuildPhase(ctx)
-	if err != nil {
-		vlog.Error("Phase 3 (OnBuild) failed: %v", err)
-		os.Exit(1)
-	}
-
-	if installFlag {
-		if err := executeInstall(ctx, result); err != nil {
-			vlog.Error("Install error: %v", err)
-			os.Exit(1)
-		}
-	}
+	runPipeline(pipelineOptions{
+		force: false,
+		afterPhase1: func(ctx *RuntimeContext) {
+			executeCleanLocal(ctx)
+			vlog.Info("")
+		},
+		installAfter: installFlag,
+	})
 }
 
 func executeCleanLocal(ctx *RuntimeContext) {

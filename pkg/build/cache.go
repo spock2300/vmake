@@ -1,12 +1,12 @@
 package build
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 
+	"gitee.com/spock2300/vmake/internal/jsonio"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -54,28 +54,15 @@ func NewBuildCache(tc *toolchain.Toolchain) *BuildCache {
 }
 
 func LoadCache(tcName string) (*BuildCache, error) {
-	data, err := os.ReadFile(filepath.Join("build", tcName, "cache.json"))
-	if err != nil {
-		return nil, err
-	}
-
 	var cache BuildCache
-	if err := json.Unmarshal(data, &cache); err != nil {
+	if err := jsonio.Load(filepath.Join("build", tcName, "cache.json"), &cache); err != nil {
 		return nil, fmt.Errorf("failed to parse cache: %w", err)
 	}
 	return &cache, nil
 }
 
 func (c *BuildCache) Save(tcName string) error {
-	dir := filepath.Join("build", tcName)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(dir, "cache.json"), data, 0644)
+	return jsonio.Save(filepath.Join("build", tcName, "cache.json"), c)
 }
 
 func (c *BuildCache) NeedFullRebuild(tc *toolchain.Toolchain) bool {

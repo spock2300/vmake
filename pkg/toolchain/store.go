@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"gitee.com/spock2300/vmake/internal/jsonio"
 )
 
 const GlobalConfigVersion = "1"
@@ -40,21 +42,7 @@ func LoadGlobal() (*GlobalConfig, error) {
 }
 
 func SaveGlobal(cfg *GlobalConfig) error {
-	path := GetGlobalConfigPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("failed to create config directory: %w", err)
-	}
-
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal global config: %w", err)
-	}
-
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("failed to write global config: %w", err)
-	}
-
-	return nil
+	return jsonio.Save(GetGlobalConfigPath(), cfg)
 }
 
 func GetBuiltinDefault() *GlobalConfig {

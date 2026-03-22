@@ -31,34 +31,7 @@ func init() {
 }
 
 func runBuild(cmd *cobra.Command, args []string) {
-	ctx, err := initContext()
-	if err != nil {
-		vlog.Error("Error: %v", err)
-		os.Exit(1)
-	}
-
-	if err := runRequirePhase(ctx, forceFlag); err != nil {
-		vlog.Error("Phase 1 (OnRequire) failed: %v", err)
-		os.Exit(1)
-	}
-
-	if err := runConfigPhase(ctx); err != nil {
-		vlog.Error("Phase 2 (OnConfig) failed: %v", err)
-		os.Exit(1)
-	}
-
-	result, err := runBuildPhase(ctx)
-	if err != nil {
-		vlog.Error("Phase 3 (OnBuild) failed: %v", err)
-		os.Exit(1)
-	}
-
-	if installFlag {
-		if err := executeInstall(ctx, result); err != nil {
-			vlog.Error("Install error: %v", err)
-			os.Exit(1)
-		}
-	}
+	runPipeline(pipelineOptions{force: forceFlag, installAfter: installFlag})
 }
 
 type BuildResult struct {
@@ -71,14 +44,7 @@ type BuildResult struct {
 }
 
 func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
-	globalValues := make(map[string]any)
-	if ctx.Config.Global != nil {
-		globalValues["toolchain"] = ctx.Config.Global.Toolchain
-		globalValues["mode"] = ctx.Config.Global.Mode
-		for k, v := range ctx.Config.Global.Options {
-			globalValues[k] = v
-		}
-	}
+	globalValues := config.BuildGlobalValues(ctx.Config)
 
 	mode := ""
 	if m, ok := globalValues["mode"].(string); ok {
@@ -489,14 +455,7 @@ func hasInstalledFiles(dir string) bool {
 }
 
 func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
-	globalValues := make(map[string]any)
-	if ctx.Config.Global != nil {
-		globalValues["toolchain"] = ctx.Config.Global.Toolchain
-		globalValues["mode"] = ctx.Config.Global.Mode
-		for k, v := range ctx.Config.Global.Options {
-			globalValues[k] = v
-		}
-	}
+	globalValues := config.BuildGlobalValues(ctx.Config)
 
 	vlog.Info("")
 	vlog.Info("Installing...")

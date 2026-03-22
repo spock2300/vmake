@@ -3,7 +3,8 @@ package config
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
+
+	"gitee.com/spock2300/vmake/internal/jsonio"
 )
 
 const ConfigVersion = "1"
@@ -92,16 +93,7 @@ func Load(path string) (*ConfigFile, error) {
 }
 
 func Save(path string, cfg *ConfigFile) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(path, data, 0644)
+	return jsonio.Save(path, cfg)
 }
 
 func GetEntry(cfg *ConfigFile, name string) *EntryConfig {
@@ -140,4 +132,16 @@ func SetGlobalOption(cfg *ConfigFile, name string, value any) {
 		cfg.Global.Options = make(map[string]any)
 	}
 	cfg.Global.Options[name] = value
+}
+
+func BuildGlobalValues(cfg *ConfigFile) map[string]any {
+	vals := make(map[string]any)
+	if cfg.Global != nil {
+		vals["toolchain"] = cfg.Global.Toolchain
+		vals["mode"] = cfg.Global.Mode
+		for k, v := range cfg.Global.Options {
+			vals[k] = v
+		}
+	}
+	return vals
 }

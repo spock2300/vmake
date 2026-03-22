@@ -131,7 +131,7 @@ func (r *Resolver) resolveRecursive(req api.RequireInfo, graph *DependencyGraph,
 	pluginDir := r.pluginOutputDir(name)
 	pluginPath := filepath.Join(pluginDir, "plugin.so")
 
-	pkgPath, findErr := r.repoMgr.FindPackageGo(r.parseRepo(name), r.parsePkgName(name))
+	pkgPath, findErr := r.repoMgr.FindPackageGo(ParseRepo(name), ParsePkgName(name))
 
 	src := plugin.Source{
 		Name:      name,
@@ -226,32 +226,17 @@ func (r *Resolver) ResolveSingle(name string, graph *DependencyGraph) error {
 		return nil
 	}
 
-	pkgPath, err := r.repoMgr.FindPackageGo(r.parseRepo(name), r.parsePkgName(name))
-	if err != nil {
-		return fmt.Errorf("failed to find package %s: %w", name, err)
-	}
-
-	src := plugin.Source{
-		Name:      name,
-		Path:      pkgPath,
-		Dir:       filepath.Dir(pkgPath),
-		OutputDir: r.pluginOutputDir(name),
-		Origin:    plugin.SourceRemote,
-	}
-
-	cr := plugin.Compile(src)
-	if !cr.Success {
-		return fmt.Errorf("compile %s failed: %w", name, cr.Error)
-	}
-
-	resolved, err := r.resolveFromPlugin(name, cr.PluginPath, src, graph, nil)
+	pkg, src, err := r.loadRemotePackage(name)
 	if err != nil {
 		return err
 	}
 
-	node.Definition = resolved.Definition
-	node.Source = resolved.Source
-	node.Deps = resolved.Deps
+	node.Definition = pkg
+	node.Source = &src
+	node.Deps = []string{}
+	for _, req := range pkg.GetRequireContext().GetRequires() {
+		node.Deps = append(node.Deps, req.Name)
+	}
 	node.Deferred = false
 	return nil
 }
@@ -285,6 +270,33 @@ func (r *Resolver) FilterDeps(name string, graph *DependencyGraph, cfgVals map[s
 
 func (r *Resolver) pluginOutputDir(name string) string {
 	return fmt.Sprintf("%s/plugins/%s", r.cacheDir, strings.ReplaceAll(name, "/", "_"))
+}
+
+func (r *Resolver) loadRemotePackage(name string) (*api.Package, plugin.Source, error) {
+	pkgPath, err := r.repoMgr.FindPackageGo(ParseRepo(name), ParsePkgName(name))
+	if err != nil {
+		return nil, plugin.Source{}, fmt.Errorf("failed to find package %s: %w", name, err)
+	}
+
+	src := plugin.Source{
+		Name:      name,
+		Path:      pkgPath,
+		Dir:       filepath.Dir(pkgPath),
+		OutputDir: r.pluginOutputDir(name),
+		Origin:    plugin.SourceRemote,
+	}
+
+	cr := plugin.Compile(src)
+	if !cr.Success {
+		return nil, src, fmt.Errorf("compile %s failed: %w", name, cr.Error)
+	}
+
+	loaded, err := plugin.Load(cr.PluginPath, src)
+	if err != nil {
+		return nil, src, fmt.Errorf("load %s failed: %w", name, err)
+	}
+
+	return loaded.ExtractPackage(), src, nil
 }
 
 func (r *Resolver) topologicalSort(graph *DependencyGraph) []string {
@@ -332,22 +344,6 @@ func (r *Resolver) topologicalSort(graph *DependencyGraph) []string {
 	return result
 }
 
-func (r *Resolver) parseRepo(fullName string) string {
-	parts := strings.Split(fullName, "/")
-	if len(parts) >= 1 {
-		return parts[0]
-	}
-	return ""
-}
-
-func (r *Resolver) parsePkgName(fullName string) string {
-	parts := strings.Split(fullName, "/")
-	if len(parts) >= 2 {
-		return parts[1]
-	}
-	return fullName
-}
-
 func (r *Resolver) CollectDeclarations(initial []api.RequireInfo) (*PackageRegistry, error) {
 	registry := &PackageRegistry{
 		Definitions: make(map[string]*api.Package),
@@ -375,30 +371,10 @@ func (r *Resolver) collectRecursive(name string, registry *PackageRegistry, path
 		return nil
 	}
 
-	pkgPath, err := r.repoMgr.FindPackageGo(r.parseRepo(name), r.parsePkgName(name))
+	pkgDef, _, err := r.loadRemotePackage(name)
 	if err != nil {
-		return fmt.Errorf("failed to find package %s: %w", name, err)
+		return err
 	}
-
-	src := plugin.Source{
-		Name:      name,
-		Path:      pkgPath,
-		Dir:       filepath.Dir(pkgPath),
-		OutputDir: r.pluginOutputDir(name),
-		Origin:    plugin.SourceRemote,
-	}
-
-	cr := plugin.Compile(src)
-	if !cr.Success {
-		return fmt.Errorf("compile %s failed: %w", name, cr.Error)
-	}
-
-	loaded, err := plugin.Load(cr.PluginPath, src)
-	if err != nil {
-		return fmt.Errorf("load %s failed: %w", name, err)
-	}
-
-	pkgDef := loaded.ExtractPackage()
 
 	for _, declared := range pkgDef.GetDeclaredPackages() {
 		if err := r.collectRecursive(declared, registry, append(path, name)); err != nil {
@@ -412,28 +388,9 @@ func (r *Resolver) collectRecursive(name string, registry *PackageRegistry, path
 }
 
 func (r *Resolver) LoadDefinition(name string) (*api.Package, error) {
-	pkgPath, err := r.repoMgr.FindPackageGo(r.parseRepo(name), r.parsePkgName(name))
+	pkg, _, err := r.loadRemotePackage(name)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find package %s: %w", name, err)
+		return nil, err
 	}
-
-	src := plugin.Source{
-		Name:      name,
-		Path:      pkgPath,
-		Dir:       filepath.Dir(pkgPath),
-		OutputDir: r.pluginOutputDir(name),
-		Origin:    plugin.SourceRemote,
-	}
-
-	cr := plugin.Compile(src)
-	if !cr.Success {
-		return nil, fmt.Errorf("compile %s failed: %w", name, cr.Error)
-	}
-
-	loaded, err := plugin.Load(cr.PluginPath, src)
-	if err != nil {
-		return nil, fmt.Errorf("load %s failed: %w", name, err)
-	}
-
-	return loaded.ExtractPackage(), nil
+	return pkg, nil
 }

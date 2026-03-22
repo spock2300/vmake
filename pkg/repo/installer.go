@@ -211,7 +211,7 @@ func (i *Installer) EnsureInstalled(name string) *api.InstalledPackage {
 		return nil
 	}
 
-	pkgDef := NewPackageDef(i.parseRepo(name), i.parsePkgName(name))
+	pkgDef := NewPackageDef(ParseRepo(name), ParsePkgName(name))
 	pkgPath, err := i.repoMgr.FindPackageGo(pkgDef.Repo, pkgDef.Name)
 	if err != nil {
 		return nil
@@ -298,22 +298,6 @@ func (i *Installer) doInstall(pkgDef *PackageDef, config *InstallConfig, sourceD
 	return api.NewInstalledPackage(pkgDef.FullName(), config.Version, installDir, pkg.Libs()), nil
 }
 
-func (i *Installer) parseRepo(fullName string) string {
-	parts := splitPackagePath(fullName)
-	if len(parts) >= 1 {
-		return parts[0]
-	}
-	return ""
-}
-
-func (i *Installer) parsePkgName(fullName string) string {
-	parts := splitPackagePath(fullName)
-	if len(parts) >= 2 {
-		return parts[1]
-	}
-	return fullName
-}
-
 func splitPackagePath(path string) []string {
 	for i := 0; i < len(path); i++ {
 		if path[i] == '/' {
@@ -321,6 +305,22 @@ func splitPackagePath(path string) []string {
 		}
 	}
 	return nil
+}
+
+func ParseRepo(fullName string) string {
+	parts := splitPackagePath(fullName)
+	if len(parts) >= 1 {
+		return parts[0]
+	}
+	return ""
+}
+
+func ParsePkgName(fullName string) string {
+	parts := splitPackagePath(fullName)
+	if len(parts) >= 2 {
+		return parts[1]
+	}
+	return fullName
 }
 
 func (i *Installer) pluginOutputDir(name string) string {

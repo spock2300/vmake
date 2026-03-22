@@ -87,6 +87,52 @@ func initContext() (*RuntimeContext, error) {
 	}, nil
 }
 
+func mustInitContext() *RuntimeContext {
+	ctx, err := initContext()
+	if err != nil {
+		vlog.Error("Error: %v", err)
+		os.Exit(1)
+	}
+	return ctx
+}
+
+type pipelineOptions struct {
+	force        bool
+	afterPhase1  func(ctx *RuntimeContext)
+	installAfter bool
+}
+
+func runPipeline(opts pipelineOptions) {
+	ctx := mustInitContext()
+
+	if err := runRequirePhase(ctx, opts.force); err != nil {
+		vlog.Error("Phase 1 (OnRequire) failed: %v", err)
+		os.Exit(1)
+	}
+
+	if opts.afterPhase1 != nil {
+		opts.afterPhase1(ctx)
+	}
+
+	if err := runConfigPhase(ctx); err != nil {
+		vlog.Error("Phase 2 (OnConfig) failed: %v", err)
+		os.Exit(1)
+	}
+
+	result, err := runBuildPhase(ctx)
+	if err != nil {
+		vlog.Error("Phase 3 (OnBuild) failed: %v", err)
+		os.Exit(1)
+	}
+
+	if opts.installAfter {
+		if err := executeInstall(ctx, result); err != nil {
+			vlog.Error("Install error: %v", err)
+			os.Exit(1)
+		}
+	}
+}
+
 func runRequirePhase(ctx *RuntimeContext, force bool) error {
 	vlog.Info("Scanning %s...", ctx.WorkDir)
 

@@ -15,6 +15,14 @@ type Linker struct {
 	arPath string
 }
 
+func ensureParentDir(path string) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+	return nil
+}
+
 func NewLinker(tc *toolchain.Toolchain) (*Linker, error) {
 	ccPath, err := toolchain.ResolveToolPath(tc.Tools.CC, tc.InstallPath)
 	if err != nil {
@@ -33,9 +41,8 @@ func NewLinker(tc *toolchain.Toolchain) (*Linker, error) {
 }
 
 func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath string) error {
-	outputDir := filepath.Dir(outputPath)
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
+	if err := ensureParentDir(outputPath); err != nil {
+		return err
 	}
 
 	args := []string{"-o", outputPath}
@@ -52,9 +59,8 @@ func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath string) err
 }
 
 func (l *Linker) LinkStatic(objs []string, outputPath string) error {
-	outputDir := filepath.Dir(outputPath)
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
+	if err := ensureParentDir(outputPath); err != nil {
+		return err
 	}
 
 	args := []string{"rcs", outputPath}
@@ -65,9 +71,8 @@ func (l *Linker) LinkStatic(objs []string, outputPath string) error {
 }
 
 func (l *Linker) LinkShared(objs, ldflags []string, outputPath string) error {
-	outputDir := filepath.Dir(outputPath)
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
+	if err := ensureParentDir(outputPath); err != nil {
+		return err
 	}
 
 	args := []string{"-shared", "-o", outputPath}
@@ -79,9 +84,8 @@ func (l *Linker) LinkShared(objs, ldflags []string, outputPath string) error {
 }
 
 func (l *Linker) LinkObject(objs []string, outputPath string) error {
-	outputDir := filepath.Dir(outputPath)
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
+	if err := ensureParentDir(outputPath); err != nil {
+		return err
 	}
 
 	args := []string{"-r", "-o", outputPath}

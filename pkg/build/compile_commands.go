@@ -1,12 +1,11 @@
 package build
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 
+	"gitee.com/spock2300/vmake/internal/jsonio"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -91,21 +90,7 @@ func (w *CompileCommandsWriter) buildArgs(opts *CompileOptions, objPath, src str
 }
 
 func (w *CompileCommandsWriter) Save(outputPath string) error {
-	dir := filepath.Dir(outputPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory for compile_commands.json: %w", err)
-	}
-
-	data, err := json.MarshalIndent(w.commands, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal compile_commands.json: %w", err)
-	}
-
-	if err := os.WriteFile(outputPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write compile_commands.json: %w", err)
-	}
-
-	return nil
+	return jsonio.Save(outputPath, w.commands)
 }
 
 func joinArgs(args []string) string {

@@ -24,11 +24,7 @@ func init() {
 }
 
 func runConfig(cmd *cobra.Command, args []string) {
-	ctx, err := initContext()
-	if err != nil {
-		vlog.Error("Error: %v", err)
-		os.Exit(1)
-	}
+	ctx := mustInitContext()
 
 	if err := runRequirePhase(ctx, false); err != nil {
 		vlog.Error("Phase 1 (OnRequire) failed: %v", err)
@@ -52,14 +48,7 @@ func runConfig(cmd *cobra.Command, args []string) {
 		values[pkgName] = entry.Options
 	}
 
-	globalValues := make(map[string]any)
-	if ctx.Config.Global != nil {
-		globalValues["toolchain"] = ctx.Config.Global.Toolchain
-		globalValues["mode"] = ctx.Config.Global.Mode
-		for k, v := range ctx.Config.Global.Options {
-			globalValues[k] = v
-		}
-	}
+	globalValues := config.BuildGlobalValues(ctx.Config)
 
 	currentTC := ""
 	if ctx.Config.Global != nil {

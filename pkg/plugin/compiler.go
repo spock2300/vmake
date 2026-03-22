@@ -44,36 +44,22 @@ func Compile(src Source) CompileResult {
 	return compileWithGoModVersion(src, pluginPath, src.Dir)
 }
 
-func compileWithGoModReplace(src Source, pluginPath, workDir, vmakeDir string) CompileResult {
-	moduleName := "vmake_plugin_" + sanitizeModuleName(src.Name)
-	goModContent := fmt.Sprintf(`module %s
-
-go 1.22
-
-require gitee.com/spock2300/vmake v0.0.0
-
-replace gitee.com/spock2300/vmake => %s
-`, moduleName, vmakeDir)
-
+func writeGoModIfMissing(workDir, content string) bool {
 	goModPath := filepath.Join(workDir, "go.mod")
-	needCleanup := false
 	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
-		if err := os.WriteFile(goModPath, []byte(goModContent), 0644); err != nil {
-			return CompileResult{
-				Source:  src,
-				Success: false,
-				Error:   fmt.Errorf("failed to create go.mod: %w", err),
-			}
-		}
-		needCleanup = true
+		os.WriteFile(goModPath, []byte(content), 0644)
+		return true
 	}
+	return false
+}
 
+func buildPlugin(src Source, pluginPath, workDir string, needCleanup bool) CompileResult {
 	tidyCmd := exec.Command("go", "mod", "tidy")
 	tidyCmd.Dir = workDir
 	tidyCmd.Env = append(os.Environ(), "GO111MODULE=on")
 	if tidyOutput, err := tidyCmd.CombinedOutput(); err != nil {
 		if needCleanup {
-			os.Remove(goModPath)
+			os.Remove(filepath.Join(workDir, "go.mod"))
 		}
 		return CompileResult{
 			Source:  src,
@@ -89,7 +75,7 @@ replace gitee.com/spock2300/vmake => %s
 	output, err := cmd.CombinedOutput()
 
 	if needCleanup {
-		os.Remove(goModPath)
+		os.Remove(filepath.Join(workDir, "go.mod"))
 		os.Remove(filepath.Join(workDir, "go.sum"))
 	}
 
@@ -109,6 +95,21 @@ replace gitee.com/spock2300/vmake => %s
 	}
 }
 
+func compileWithGoModReplace(src Source, pluginPath, workDir, vmakeDir string) CompileResult {
+	moduleName := "vmake_plugin_" + sanitizeModuleName(src.Name)
+	goModContent := fmt.Sprintf(`module %s
+
+go 1.22
+
+require gitee.com/spock2300/vmake v0.0.0
+
+replace gitee.com/spock2300/vmake => %s
+`, moduleName, vmakeDir)
+
+	needCleanup := writeGoModIfMissing(workDir, goModContent)
+	return buildPlugin(src, pluginPath, workDir, needCleanup)
+}
+
 func compileWithGoModVersion(src Source, pluginPath, workDir string) CompileResult {
 	vmakeVersion := version.Version
 	if vmakeVersion == "dev" {
@@ -123,58 +124,8 @@ go 1.22
 require gitee.com/spock2300/vmake %s
 `, moduleName, vmakeVersion)
 
-	goModPath := filepath.Join(workDir, "go.mod")
-	needCleanup := false
-	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
-		if err := os.WriteFile(goModPath, []byte(goModContent), 0644); err != nil {
-			return CompileResult{
-				Source:  src,
-				Success: false,
-				Error:   fmt.Errorf("failed to create go.mod: %w", err),
-			}
-		}
-		needCleanup = true
-	}
-
-	tidyCmd := exec.Command("go", "mod", "tidy")
-	tidyCmd.Dir = workDir
-	tidyCmd.Env = append(os.Environ(), "GO111MODULE=on")
-	if tidyOutput, err := tidyCmd.CombinedOutput(); err != nil {
-		if needCleanup {
-			os.Remove(goModPath)
-		}
-		return CompileResult{
-			Source:  src,
-			Success: false,
-			Error:   fmt.Errorf("go mod tidy failed: %s", string(tidyOutput)),
-		}
-	}
-
-	cmd := exec.Command("go", "build", "-buildmode=plugin", "-o", pluginPath, "build.go")
-	cmd.Dir = workDir
-	cmd.Env = append(os.Environ(), "GO111MODULE=on")
-
-	output, err := cmd.CombinedOutput()
-
-	if needCleanup {
-		os.Remove(goModPath)
-		os.Remove(filepath.Join(workDir, "go.sum"))
-	}
-
-	if err != nil {
-		return CompileResult{
-			Source:     src,
-			PluginPath: pluginPath,
-			Success:    false,
-			Error:      fmt.Errorf("compilation failed: %s", string(output)),
-		}
-	}
-
-	return CompileResult{
-		Source:     src,
-		PluginPath: pluginPath,
-		Success:    true,
-	}
+	needCleanup := writeGoModIfMissing(workDir, goModContent)
+	return buildPlugin(src, pluginPath, workDir, needCleanup)
 }
 
 func CompileAll(sources []Source) []CompileResult {

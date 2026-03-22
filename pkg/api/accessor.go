@@ -127,3 +127,68 @@ func (a *ConfigAccessor) When(option string, value any) bool {
 	val := a.CfgVals[option]
 	return val == value
 }
+
+func (a *ConfigAccessor) Option(name string) *Option {
+	if opt, ok := a.Options[name]; ok {
+		return opt
+	}
+	opt := &Option{name: name}
+	a.Options[name] = opt
+	return opt
+}
+
+func (a *ConfigAccessor) SetOptions(options map[string]*Option) {
+	a.Options = options
+}
+
+type GlobalAccessor struct {
+	globalVals    map[string]any
+	globalOptions map[string]*Option
+}
+
+func NewGlobalAccessor() GlobalAccessor {
+	return GlobalAccessor{
+		globalVals:    make(map[string]any),
+		globalOptions: make(map[string]*Option),
+	}
+}
+
+func (g *GlobalAccessor) SetGlobalOptions(options map[string]*Option) {
+	g.globalOptions = options
+}
+
+func (g *GlobalAccessor) SetGlobalValues(vals map[string]any) {
+	g.globalVals = vals
+}
+
+func (g *GlobalAccessor) GlobalBool(name string) bool {
+	if val, ok := g.globalVals[name]; ok {
+		if b, ok := val.(bool); ok {
+			return b
+		}
+	}
+	if opt, ok := g.globalOptions[name]; ok {
+		if d, ok := opt.Default().(bool); ok {
+			return d
+		}
+	}
+	return false
+}
+
+func (g *GlobalAccessor) GlobalString(name string) string {
+	if val, ok := g.globalVals[name]; ok {
+		if s, ok := val.(string); ok {
+			return s
+		}
+	}
+	if opt, ok := g.globalOptions[name]; ok {
+		if d, ok := opt.Default().(string); ok {
+			return d
+		}
+	}
+	return ""
+}
+
+func (g *GlobalAccessor) Mode() string {
+	return g.GlobalString(ModeOptionName)
+}

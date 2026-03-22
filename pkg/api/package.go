@@ -237,15 +237,6 @@ func (ctx *PackageContext) DeclarePackages(packages ...string) *PackageContext {
 	return ctx
 }
 
-func (ctx *PackageContext) Option(name string) *Option {
-	if opt, ok := ctx.Options[name]; ok {
-		return opt
-	}
-	opt := &Option{name: name}
-	ctx.Options[name] = opt
-	return opt
-}
-
 func (ctx *PackageContext) GitURLs() []string   { return ctx.gitURLs }
 func (ctx *PackageContext) Homepage() string    { return ctx.homepage }
 func (ctx *PackageContext) Description() string { return ctx.description }

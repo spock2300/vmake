@@ -28,11 +28,7 @@ func init() {
 }
 
 func runClean(cmd *cobra.Command, args []string) {
-	ctx, err := initContext()
-	if err != nil {
-		vlog.Error("Error: %v", err)
-		os.Exit(1)
-	}
+	ctx := mustInitContext()
 
 	packages, err := plugin.Scan(ctx.WorkDir)
 	if err != nil {
