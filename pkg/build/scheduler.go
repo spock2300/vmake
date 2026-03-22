@@ -311,6 +311,16 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 						resolved.AllLdFlags = append(resolved.AllLdFlags, "-l"+libName)
 					}
 				}
+				// Also include deps that the build function actually used (via Dep())
+				if pkgCtx := s.packageContexts[name]; pkgCtx != nil {
+					for _, dep := range pkgCtx.Deps() {
+						resolved.AllIncludes = append(resolved.AllIncludes, dep.IncludeDir)
+						resolved.AllLdFlags = append(resolved.AllLdFlags, "-L"+dep.LibDir)
+						for _, lib := range dep.Libs {
+							resolved.AllLdFlags = append(resolved.AllLdFlags, "-l"+lib)
+						}
+					}
+				}
 			}
 		}
 	}

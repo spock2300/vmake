@@ -256,6 +256,33 @@ func (r *Resolver) ResolveSingle(name string, graph *DependencyGraph) error {
 	return nil
 }
 
+// FilterDeps re-runs OnRequire with actual config values and updates node.Deps.
+func (r *Resolver) FilterDeps(name string, graph *DependencyGraph, cfgVals map[string]any, options map[string]*api.Option) error {
+	node, exists := graph.Packages[name]
+	if !exists {
+		return fmt.Errorf("package %s not in dependency graph", name)
+	}
+	if node.Definition == nil {
+		return nil
+	}
+
+	pkg := node.Definition
+	requireFuncs := pkg.GetRequireFuncs()
+	if len(requireFuncs) == 0 {
+		return nil
+	}
+
+	pkg.UpdateRequireContext(cfgVals, options)
+
+	deps := pkg.GetRequireContext().GetRequires()
+	newDeps := make([]string, 0, len(deps))
+	for _, req := range deps {
+		newDeps = append(newDeps, req.Name)
+	}
+	node.Deps = newDeps
+	return nil
+}
+
 func (r *Resolver) pluginOutputDir(name string) string {
 	return fmt.Sprintf("%s/plugins/%s", r.cacheDir, strings.ReplaceAll(name, "/", "_"))
 }

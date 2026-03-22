@@ -130,6 +130,8 @@ func runRequirePhase(ctx *RuntimeContext, force bool) error {
 		node := graph.Packages[name]
 		if node.IsLocal() {
 			vlog.Info("  %s (local)", name)
+		} else if node.Deferred {
+			vlog.Info("  %s (deferred)", name)
 		} else {
 			vlog.Info("  %s", name)
 		}
@@ -151,6 +153,17 @@ func runConfigPhase(ctx *RuntimeContext) error {
 	vlog.Info("Executing OnConfig...")
 
 	ctx.AllOptions = make(map[string]map[string]*api.Option)
+
+	if ctx.Resolver != nil {
+		for _, name := range ctx.DepGraph.Order {
+			node := ctx.DepGraph.Packages[name]
+			if !node.IsLocal() && node.Deferred {
+				if err := ctx.Resolver.ResolveSingle(name, ctx.DepGraph); err != nil {
+					vlog.Info("  %s: resolve deferred: %v", name, err)
+				}
+			}
+		}
+	}
 
 	for _, name := range ctx.DepGraph.Order {
 		node := ctx.DepGraph.Packages[name]

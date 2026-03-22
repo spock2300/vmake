@@ -22,13 +22,25 @@ func ExtractPackage(loaded *LoadedPlugin) *api.Package {
 
 	pkg := api.NewPackage()
 
-	requireCtx := api.NewRequireContext()
+	// Run OnConfig first to collect option definitions (needed by OnRequire discoverAll)
+	optDefs := make(map[string]*api.Option)
+	for _, fn := range builder.GetConfigFuncs() {
+		cfgCtx := api.NewConfigContext("")
+		fn(cfgCtx)
+		for k, v := range cfgCtx.GetOptions() {
+			optDefs[k] = v
+		}
+	}
+
+	// Phase 1: OnRequire with discoverAll mode (cfgVals=nil, option definitions available)
+	requireCtx := api.NewRequireContextForConfig(nil, optDefs, nil)
 	for _, fn := range builder.GetRequireFuncs() {
 		fn(requireCtx)
 	}
 	for _, req := range requireCtx.GetRequires() {
 		pkg.GetRequireContext().AddRequires(req.Name)
 	}
+	pkg.SetRequireFuncs(builder.GetRequireFuncs())
 
 	if fn := builder.GetPackageFunc(); fn != nil {
 		ctx := api.NewPackageContextForDefinition()

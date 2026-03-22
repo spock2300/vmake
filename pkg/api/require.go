@@ -8,17 +8,37 @@ type RequireInfo struct {
 }
 
 type RequireContext struct {
-	requires []RequireInfo
+	ConfigAccessor
+	requires     []RequireInfo
+	requireFuncs []RequireFunc
 }
 
 func NewRequireContext() *RequireContext {
 	return &RequireContext{
-		requires: make([]RequireInfo, 0),
+		ConfigAccessor: NilCfgAccessor(),
+		requires:       make([]RequireInfo, 0),
+	}
+}
+
+// NewRequireContextForConfig creates a RequireContext with config values.
+// When cfgVals is nil (discoverAll mode), If/IfNot/Select return all values.
+func NewRequireContextForConfig(cfgVals map[string]any, options map[string]*Option, funcs []RequireFunc) *RequireContext {
+	if options == nil {
+		options = make(map[string]*Option)
+	}
+	accessor := ConfigAccessor{CfgVals: cfgVals, Options: options}
+	return &RequireContext{
+		ConfigAccessor: accessor,
+		requires:       make([]RequireInfo, 0),
+		requireFuncs:   funcs,
 	}
 }
 
 func (ctx *RequireContext) AddRequires(deps ...string) {
 	for _, dep := range deps {
+		if dep == "" {
+			continue
+		}
 		name, constraint := parseRequire(dep)
 		ctx.requires = append(ctx.requires, RequireInfo{
 			Name:       name,
@@ -29,6 +49,20 @@ func (ctx *RequireContext) AddRequires(deps ...string) {
 
 func (ctx *RequireContext) GetRequires() []RequireInfo {
 	return ctx.requires
+}
+
+func (ctx *RequireContext) ResetRequires() {
+	ctx.requires = make([]RequireInfo, 0)
+}
+
+func (ctx *RequireContext) GetRequireFuncs() []RequireFunc {
+	return ctx.requireFuncs
+}
+
+func (ctx *RequireContext) RunFuncs() {
+	for _, fn := range ctx.requireFuncs {
+		fn(ctx)
+	}
 }
 
 type PackageRequireContext struct {
@@ -43,6 +77,9 @@ func NewPackageRequireContext() *PackageRequireContext {
 
 func (ctx *PackageRequireContext) AddRequires(deps ...string) {
 	for _, dep := range deps {
+		if dep == "" {
+			continue
+		}
 		name, constraint := parseRequire(dep)
 		ctx.requires = append(ctx.requires, RequireInfo{
 			Name:       name,

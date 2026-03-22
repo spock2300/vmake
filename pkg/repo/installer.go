@@ -47,6 +47,13 @@ func (i *Installer) SetConfigs(configs map[string]*InstallConfig) {
 	i.configs = configs
 }
 
+func (i *Installer) SetConfig(name string, cfg *InstallConfig) {
+	if i.configs == nil {
+		i.configs = make(map[string]*InstallConfig)
+	}
+	i.configs[name] = cfg
+}
+
 func (i *Installer) SetToolchain(tc *api.Toolchain) {
 	i.tc = tc
 }

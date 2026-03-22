@@ -107,7 +107,9 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		apiTC.Target = tc.Host
 	}
 
+	var needed map[string]bool
 	if ctx.Resolver != nil {
+		// Step 1: Resolve deferred packages
 		for _, name := range ctx.DepGraph.Order {
 			node := ctx.DepGraph.Packages[name]
 			if !node.IsLocal() && node.Deferred {
@@ -117,6 +119,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 				}
 			}
 		}
+		// Step 2: Collect options for all non-local packages
 		for _, name := range ctx.DepGraph.Order {
 			node := ctx.DepGraph.Packages[name]
 			if !node.IsLocal() && node.Definition != nil {
@@ -129,12 +132,37 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 				}
 			}
 		}
+		// Step 3: Filter deps with actual config (AFTER resolve + options)
+		vlog.Info("")
+		vlog.Info("Filtering dependencies...")
+		for _, name := range ctx.DepGraph.Order {
+			node := ctx.DepGraph.Packages[name]
+			if node.Definition == nil {
+				continue
+			}
+			entry := config.GetEntry(ctx.Config, name)
+			opts := ctx.AllOptions[name]
+			if err := ctx.Resolver.FilterDeps(name, ctx.DepGraph, entry.Options, opts); err != nil {
+				vlog.Error("  %s: filter deps: %v", name, err)
+			} else if len(node.Deps) > 0 {
+				vlog.Info("  %s: deps=%v", name, node.Deps)
+			}
+		}
+		// Recompute needed AFTER filtering
+		needed = collectNeeded(ctx.DepGraph)
+		for _, name := range ctx.DepGraph.Order {
+			node := ctx.DepGraph.Packages[name]
+			if !node.IsLocal() && !needed[name] {
+				vlog.Info("  %s: skipped (not needed)", name)
+			}
+		}
+	} else {
+		needed = collectNeeded(ctx.DepGraph)
 	}
 
 	hasDeps := false
 	for _, name := range ctx.DepGraph.Order {
-		node := ctx.DepGraph.Packages[name]
-		if !node.IsLocal() {
+		if needed[name] && !ctx.DepGraph.Packages[name].IsLocal() {
 			hasDeps = true
 			break
 		}
@@ -155,7 +183,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 
 		for _, name := range ctx.DepGraph.Order {
 			node := ctx.DepGraph.Packages[name]
-			if !node.IsLocal() {
+			if needed[name] && !node.IsLocal() {
 				entry := config.GetEntry(ctx.Config, name)
 				configs[name] = &repo.InstallConfig{
 					Version: entry.Version,
@@ -172,7 +200,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 
 		for _, name := range ctx.DepGraph.Order {
 			node := ctx.DepGraph.Packages[name]
-			if !node.IsLocal() && node.Definition != nil {
+			if needed[name] && !node.IsLocal() && node.Definition != nil {
 				repoInstaller.SetPackage(name, node.Definition)
 			}
 		}
@@ -182,7 +210,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 
 		for _, name := range ctx.DepGraph.Order {
 			node := ctx.DepGraph.Packages[name]
-			if !node.IsLocal() {
+			if needed[name] && !node.IsLocal() {
 				cfg := configs[name]
 				pkgDef := repo.NewPackageDef(splitPackagePath(name)[0], splitPackagePath(name)[1])
 				if node.Definition != nil {
@@ -218,6 +246,9 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 
 	for _, name := range ctx.DepGraph.Order {
 		node := ctx.DepGraph.Packages[name]
+		if !node.IsLocal() && !needed[name] {
+			continue
+		}
 
 		entry := config.GetEntry(ctx.Config, name)
 		buildCtx := api.NewBuildContext(name, entry.Options)
@@ -252,6 +283,17 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 			}
 
 			packageContexts[name] = pkgCtx
+		}
+	}
+
+	// Inject active package configs into installer so Dep() builds with correct options
+	if repoInstaller != nil {
+		for _, name := range ctx.DepGraph.Order {
+			if needed[name] && !ctx.DepGraph.Packages[name].IsLocal() {
+				if _, ok := configs[name]; ok {
+					repoInstaller.SetConfig(name, configs[name])
+				}
+			}
 		}
 	}
 
@@ -290,10 +332,9 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 
 	for _, name := range ctx.DepGraph.Order {
 		node := ctx.DepGraph.Packages[name]
-
 		if node.IsLocal() {
 			scheduler.SetPkgDirs(name, pkgDirs[name], "", "")
-		} else {
+		} else if needed[name] {
 			scheduler.SetPkgDirs(name, pkgSourceDirs[name], pkgBuildDirs[name], pkgInstallDirs[name])
 		}
 	}
@@ -318,6 +359,9 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 	}
 	for _, name := range ctx.DepGraph.Order {
 		node := ctx.DepGraph.Packages[name]
+		if !needed[name] {
+			continue
+		}
 		if !node.IsLocal() && node.Definition != nil {
 			pkgProvider.pkgDefs[name] = node.Definition
 		}
@@ -349,6 +393,30 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		Mode:          mode,
 		InstalledPkgs: installedPkgs,
 	}, nil
+}
+
+func collectNeeded(graph *repo.DependencyGraph) map[string]bool {
+	needed := make(map[string]bool)
+	var queue []string
+	for _, node := range graph.Packages {
+		if node.IsLocal() {
+			needed[node.Name] = true
+			queue = append(queue, node.Name)
+		}
+	}
+	for len(queue) > 0 {
+		name := queue[0]
+		queue = queue[1:]
+		if node, ok := graph.Packages[name]; ok {
+			for _, dep := range node.Deps {
+				if !needed[dep] {
+					needed[dep] = true
+					queue = append(queue, dep)
+				}
+			}
+		}
+	}
+	return needed
 }
 
 type packageProvider struct {

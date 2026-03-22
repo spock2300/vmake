@@ -17,6 +17,7 @@ type Package struct {
 	versions         map[string]string
 	options          map[string]*Option
 	requireCtx       *PackageRequireContext
+	requireFuncs     []RequireFunc
 	libs             []string
 	declaredPackages []string
 	configFuncs      []ConfigFunc
@@ -84,6 +85,26 @@ func (p *Package) SetBuildFuncs(funcs []BuildFunc) *Package {
 func (p *Package) SetInstallFuncs(funcs []InstallFunc) *Package {
 	p.installFuncs = funcs
 	return p
+}
+
+func (p *Package) SetRequireFuncs(funcs []RequireFunc) *Package {
+	p.requireFuncs = funcs
+	return p
+}
+
+func (p *Package) GetRequireFuncs() []RequireFunc { return p.requireFuncs }
+
+// UpdateRequireContext re-runs OnRequire callbacks with actual config values.
+// The result replaces the existing requireCtx.
+func (p *Package) UpdateRequireContext(cfgVals map[string]any, options map[string]*Option) {
+	if len(p.requireFuncs) == 0 {
+		return
+	}
+	ctx := NewRequireContextForConfig(cfgVals, options, nil)
+	for _, fn := range p.requireFuncs {
+		fn(ctx)
+	}
+	p.requireCtx = &PackageRequireContext{requires: ctx.GetRequires()}
 }
 
 func (p *Package) SetLibs(libs ...string) *Package {

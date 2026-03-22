@@ -15,6 +15,13 @@ func NewConfigAccessor(cfgVals map[string]any, options map[string]*Option) Confi
 	return ConfigAccessor{CfgVals: cfgVals, Options: options}
 }
 
+// NilCfgAccessor creates a ConfigAccessor with nil CfgVals.
+// Used by RequireContext in discoverAll mode: If/IfNot/Select
+// return all possible values when CfgVals is nil.
+func NilCfgAccessor() ConfigAccessor {
+	return ConfigAccessor{CfgVals: nil, Options: make(map[string]*Option)}
+}
+
 func (a *ConfigAccessor) Bool(name string) bool {
 	if val, ok := a.CfgVals[name]; ok {
 		if b, ok := val.(bool); ok {
@@ -75,6 +82,9 @@ func (a *ConfigAccessor) BoolStr(name string) string {
 }
 
 func (a *ConfigAccessor) If(option string, then ...string) []string {
+	if a.CfgVals == nil {
+		return then
+	}
 	if a.Bool(option) {
 		return then
 	}
@@ -82,13 +92,30 @@ func (a *ConfigAccessor) If(option string, then ...string) []string {
 }
 
 func (a *ConfigAccessor) IfNot(option string, then ...string) []string {
+	if a.CfgVals == nil {
+		return then
+	}
 	if !a.Bool(option) {
 		return then
 	}
 	return nil
 }
 
+// Equal returns dep when CfgVals[option] == value. In discoverAll mode (CfgVals==nil), always returns dep.
+func (a *ConfigAccessor) Equal(option, value, dep string) string {
+	if a.CfgVals == nil {
+		return dep
+	}
+	if a.String(option) == value {
+		return dep
+	}
+	return ""
+}
+
 func (a *ConfigAccessor) Select(option string, mapping map[string]string) string {
+	if a.CfgVals == nil {
+		return ""
+	}
 	val := a.String(option)
 	if mapped, ok := mapping[val]; ok {
 		return mapped
