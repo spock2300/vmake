@@ -249,16 +249,6 @@ func (ctx *PackageContext) DeclaredPackages() []string {
 	return ctx.declaredPackages
 }
 func (ctx *PackageContext) PackageName() string { return ctx.pkgName }
-func (ctx *PackageContext) GetOptions() map[string]*Option {
-	return ctx.Options
-}
-func (ctx *PackageContext) GetConfigValues() map[string]any {
-	return ctx.CfgVals
-}
-
-func (ctx *PackageContext) SetOptions(options map[string]*Option) {
-	ctx.Options = options
-}
 
 func (ctx *PackageContext) SetDeps(deps map[string]*InstalledPackage) {
 	ctx.deps = deps

@@ -27,7 +27,7 @@ func ExtractPackage(loaded *LoadedPlugin) *api.Package {
 	for _, fn := range builder.GetConfigFuncs() {
 		cfgCtx := api.NewConfigContext("")
 		fn(cfgCtx)
-		for k, v := range cfgCtx.GetOptions() {
+		for k, v := range cfgCtx.Options {
 			optDefs[k] = v
 		}
 	}
@@ -60,7 +60,7 @@ func ExtractPackage(loaded *LoadedPlugin) *api.Package {
 			pkg.AddVersion(ver, ref)
 		}
 
-		for name, opt := range ctx.GetOptions() {
+		for name, opt := range ctx.Options {
 			pkgOpt := pkg.Option(name)
 			pkgOpt.SetType(opt.Type()).
 				SetDefault(opt.Default()).
