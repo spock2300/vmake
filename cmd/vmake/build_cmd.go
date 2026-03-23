@@ -154,23 +154,25 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 			if needed[name] && !node.IsLocal() {
 				cfg := configs[name]
 				parts := splitPackagePath(name)
-				pkgDef := repo.NewPackageDef(parts[0], parts[1])
+				pkg := api.NewPackage()
+				pkg.SetRepo(parts[0]).SetName(parts[1])
 				if node.Pkg != nil {
-					pkgDef.SetPackage(node.Pkg)
+					pkg.SetGit(node.Pkg.GitURLs()...)
+					pkg.SetVersions(node.Pkg.Versions())
 				} else if node.Source != nil && node.Source.BuildGo != "" {
-					pkgDef.Versions = extractVersionsFromBuildGo(node.Source.BuildGo)
-					pkgDef.GitURLs = extractGitURLs(node.Source.BuildGo)
+					pkg.SetVersions(extractVersionsFromBuildGo(node.Source.BuildGo))
+					pkg.SetGit(extractGitURLs(node.Source.BuildGo)...)
 				}
 
-				if cfg.Version == "" && len(pkgDef.Versions) > 0 {
-					selected, err := pkgDef.SelectVersion("")
+				if cfg.Version == "" && len(pkg.GetVersions()) > 0 {
+					selected, err := pkg.SelectVersion("")
 					if err != nil {
 						return nil, err
 					}
 					cfg.Version = selected
 				}
 
-				sourceDir, err := sourceMgr.EnsureSource(pkgDef, cfg.Version)
+				sourceDir, err := sourceMgr.EnsureSource(pkg, cfg.Version)
 				if err != nil {
 					return nil, fmt.Errorf("failed to download %s: %w", name, err)
 				}

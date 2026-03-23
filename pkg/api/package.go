@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,7 +56,20 @@ const (
 	SourceRemote
 )
 
+type PackageMeta struct {
+	Repo string
+	Name string
+}
+
+func (m *PackageMeta) FullName() string {
+	if m.Repo == "" {
+		return m.Name
+	}
+	return m.Repo + "/" + m.Name
+}
+
 type Package struct {
+	PackageMeta
 	ConfigAccessor
 	gitURLs       []string
 	homepage      string
@@ -139,6 +153,11 @@ func (p *Package) AddVersion(version, ref string) *Package {
 	return p
 }
 
+func (p *Package) SetVersions(versions map[string]string) *Package {
+	p.versions = versions
+	return p
+}
+
 func (p *Package) SetSubmodules(v bool) *Package {
 	p.submodules = v
 	return p
@@ -147,6 +166,36 @@ func (p *Package) SetSubmodules(v bool) *Package {
 func (p *Package) SetLibs(libs ...string) *Package {
 	p.libs = libs
 	return p
+}
+
+func (p *Package) SetRepo(repo string) *Package {
+	p.Repo = repo
+	return p
+}
+
+func (p *Package) SetName(name string) *Package {
+	p.Name = name
+	return p
+}
+
+func (p *Package) GetVersions() []string {
+	versions := make([]string, 0, len(p.versions))
+	for v := range p.versions {
+		versions = append(versions, v)
+	}
+	return versions
+}
+
+func (p *Package) SelectVersion(constraint string) (string, error) {
+	versions := p.GetVersions()
+	if len(versions) == 0 {
+		return "", fmt.Errorf("no versions available for %s", p.FullName())
+	}
+	version, ok := MatchVersion(versions, constraint)
+	if !ok {
+		return "", fmt.Errorf("no version matching %s for %s (available: %v)", constraint, p.FullName(), versions)
+	}
+	return version, nil
 }
 
 func (p *Package) PackageName() string { return "" }

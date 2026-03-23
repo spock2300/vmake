@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"gitee.com/spock2300/vmake/pkg/api"
 )
 
 type SourceManager struct {
@@ -15,7 +17,7 @@ func NewSourceManager(sourcesDir string) *SourceManager {
 	return &SourceManager{sourcesDir: sourcesDir}
 }
 
-func (m *SourceManager) EnsureSource(pkg *PackageDef, version string) (string, error) {
+func (m *SourceManager) EnsureSource(pkg *api.Package, version string) (string, error) {
 	repoDir := filepath.Join(m.sourcesDir, pkg.Repo, pkg.Name, "repo")
 
 	tag := pkg.GetRef(version)
@@ -38,7 +40,7 @@ func (m *SourceManager) EnsureSource(pkg *PackageDef, version string) (string, e
 		return repoDir, nil
 	}
 
-	if pkg.Submodules {
+	if pkg.Submodules() {
 		_ = InitSubmodules(repoDir)
 	}
 
@@ -66,9 +68,9 @@ func (m *SourceManager) EnsureSource(pkg *PackageDef, version string) (string, e
 	return repoDir, nil
 }
 
-func (m *SourceManager) ensureRepo(pkg *PackageDef, repoDir string) error {
+func (m *SourceManager) ensureRepo(pkg *api.Package, repoDir string) error {
 	var lastErr error
-	for _, url := range pkg.GitURLs {
+	for _, url := range pkg.GitURLs() {
 		lastErr = Clone(url, repoDir)
 		if lastErr == nil {
 			return nil
@@ -78,12 +80,12 @@ func (m *SourceManager) ensureRepo(pkg *PackageDef, repoDir string) error {
 	return fmt.Errorf("all mirrors failed for %s: %w", pkg.FullName(), lastErr)
 }
 
-func (m *SourceManager) UpdateSource(pkg *PackageDef) error {
+func (m *SourceManager) UpdateSource(pkg *api.Package) error {
 	repoDir := filepath.Join(m.sourcesDir, pkg.Repo, pkg.Name, "repo")
 
 	if !m.exists(repoDir) {
 		var lastErr error
-		for _, url := range pkg.GitURLs {
+		for _, url := range pkg.GitURLs() {
 			if err := Clone(url, repoDir); err == nil {
 				return nil
 			} else {

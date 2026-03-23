@@ -102,17 +102,17 @@ func (i *Installer) installPackage(pkg *ResolvedPackage, config *InstallConfig, 
 	return nil
 }
 
-func (i *Installer) InstallPackage(pkgDef *PackageDef, config *InstallConfig, tc *api.Toolchain, graph *DependencyGraph, sourceDir string, configs map[string]*InstallConfig) error {
+func (i *Installer) InstallPackage(pkg *api.Package, config *InstallConfig, tc *api.Toolchain, graph *DependencyGraph, sourceDir string, configs map[string]*InstallConfig) error {
 	mode := "release"
 	cacheHash := CacheHash(tc.CC, mode, config.Options)
 
-	installDir := filepath.Join(i.packagesDir, pkgDef.FullName(), config.Version, cacheHash, "install")
+	installDir := filepath.Join(i.packagesDir, pkg.FullName(), config.Version, cacheHash, "install")
 
 	if i.hasInstalledFiles(installDir) {
 		return nil
 	}
 
-	return fmt.Errorf("package %s not installed; run vmake build first", pkgDef.FullName())
+	return fmt.Errorf("package %s not installed; run vmake build first", pkg.FullName())
 }
 
 func (i *Installer) hasInstalledFiles(installDir string) bool {

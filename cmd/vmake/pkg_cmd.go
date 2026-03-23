@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/repo"
 
 	"github.com/spf13/cobra"
@@ -183,9 +184,10 @@ var pkgUpdateCmd = &cobra.Command{
 		_ = pkgPath
 
 		sourceMgr := repo.NewSourceManager(sourcesDir)
-		pkgDef := repo.NewPackageDef(parts[0], parts[1])
+		pkg := api.NewPackage()
+		pkg.SetRepo(parts[0]).SetName(parts[1])
 
-		if err := sourceMgr.UpdateSource(pkgDef); err != nil {
+		if err := sourceMgr.UpdateSource(pkg); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
