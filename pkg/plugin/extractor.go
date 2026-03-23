@@ -14,74 +14,35 @@ func ExtractPackage(loaded *LoadedPlugin) *api.Package {
 		return loaded.pkg
 	}
 
-	builder := &api.Builder{}
-	mainFunc := lookupMain(loaded.Plugin)
-	if mainFunc != nil {
-		mainFunc(builder)
-	}
-
 	pkg := api.NewPackage()
+	if mainFunc := lookupMain(loaded.Plugin); mainFunc != nil {
+		mainFunc(pkg)
+	}
 
-	// Run OnConfig first to collect option definitions (needed by OnRequire discoverAll)
-	optDefs := make(map[string]*api.Option)
-	for _, fn := range builder.GetConfigFuncs() {
-		cfgCtx := api.NewConfigContext("")
-		fn(cfgCtx)
-		for k, v := range cfgCtx.Options {
-			optDefs[k] = v
+	if fn := pkg.GetPackageFunc(); fn != nil {
+		fn(pkg)
+	}
+
+	if len(pkg.GetRequireFuncs()) > 0 {
+		ctx := api.NewRequireContextForConfig(nil, pkg.Options, pkg.GetRequireFuncs())
+		for _, fn := range pkg.GetRequireFuncs() {
+			fn(ctx)
+		}
+		for _, req := range ctx.GetRequires() {
+			pkg.GetRequireContext().AddRequires(req.Name)
 		}
 	}
-
-	// Phase 1: OnRequire with discoverAll mode (cfgVals=nil, option definitions available)
-	requireCtx := api.NewRequireContextForConfig(nil, optDefs, nil)
-	for _, fn := range builder.GetRequireFuncs() {
-		fn(requireCtx)
-	}
-	for _, req := range requireCtx.GetRequires() {
-		pkg.GetRequireContext().AddRequires(req.Name)
-	}
-	pkg.SetRequireFuncs(builder.GetRequireFuncs())
-
-	if fn := builder.GetPackageFunc(); fn != nil {
-		ctx := api.NewPackageContextForDefinition()
-		fn(ctx)
-
-		pkg.SetGit(ctx.GitURLs()...)
-		pkg.SetHomepage(ctx.Homepage())
-		pkg.SetDescription(ctx.Description())
-		pkg.SetLicense(ctx.License())
-		pkg.SetSubmodules(ctx.Submodules())
-		pkg.SetLibs(ctx.Libs()...)
-
-		for ver, ref := range ctx.Versions() {
-			pkg.AddVersion(ver, ref)
-		}
-
-		for name, opt := range ctx.Options {
-			pkgOpt := pkg.Option(name)
-			pkgOpt.SetType(opt.Type()).
-				SetDefault(opt.Default()).
-				SetDescription(opt.Description())
-			if opt.Values() != nil {
-				pkgOpt.SetValues(opt.Values()...)
-			}
-		}
-	}
-
-	pkg.SetConfigFuncs(builder.GetConfigFuncs())
-	pkg.SetBuildFuncs(builder.GetBuildFuncs())
-	pkg.SetInstallFuncs(builder.GetInstallFuncs())
 
 	loaded.pkg = pkg
 	return pkg
 }
 
-func lookupMain(p *plugin.Plugin) func(*api.Builder) {
+func lookupMain(p *plugin.Plugin) func(*api.Package) {
 	mainSym, err := p.Lookup("Main")
 	if err != nil {
 		return nil
 	}
-	mainFunc, ok := mainSym.(func(*api.Builder))
+	mainFunc, ok := mainSym.(func(*api.Package))
 	if !ok {
 		return nil
 	}

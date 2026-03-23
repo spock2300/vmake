@@ -6,8 +6,8 @@ import (
 	"gitee.com/spock2300/vmake/pkg/api"
 )
 
-func Main(b *api.Builder) {
-	b.OnConfig(func(ctx *api.ConfigContext) {
+func Main(p *api.Package) {
+	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.GlobalMode()
 
 		ctx.GlobalOption("customer").
@@ -81,7 +81,7 @@ func Main(b *api.Builder) {
 			SetGroup("Installation")
 	})
 
-	b.OnBuild(func(ctx *api.BuildContext) {
+	p.OnBuild(func(ctx *api.BuildContext) {
 		threads := ctx.Int("thread_count")
 		prefix := ctx.String("custom_prefix")
 		cppStd := ctx.String("c++standard")

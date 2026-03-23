@@ -46,18 +46,18 @@ type PackageProvider interface {
 }
 
 type Scheduler struct {
-	graph           *BuildGraph
-	compiler        *Compiler
-	linker          *Linker
-	toolchain       *toolchain.Toolchain
-	tcName          string
-	mode            string
-	buildDir        string
-	pkgs            map[string]*PkgInfo
-	origDir         string
-	ccWriter        *CompileCommandsWriter
-	pkgProvider     PackageProvider
-	packageContexts map[string]*api.PackageContext
+	graph       *BuildGraph
+	compiler    *Compiler
+	linker      *Linker
+	toolchain   *toolchain.Toolchain
+	tcName      string
+	mode        string
+	buildDir    string
+	pkgs        map[string]*PkgInfo
+	origDir     string
+	ccWriter    *CompileCommandsWriter
+	pkgProvider PackageProvider
+	packages    map[string]*api.Package
 }
 
 func NewScheduler(
@@ -90,17 +90,17 @@ func NewScheduler(
 	}
 
 	s := &Scheduler{
-		graph:           graph,
-		compiler:        compiler,
-		linker:          linker,
-		toolchain:       tc,
-		tcName:          tcName,
-		mode:            mode,
-		buildDir:        buildDir,
-		pkgs:            make(map[string]*PkgInfo),
-		origDir:         origDir,
-		ccWriter:        ccWriter,
-		packageContexts: make(map[string]*api.PackageContext),
+		graph:     graph,
+		compiler:  compiler,
+		linker:    linker,
+		toolchain: tc,
+		tcName:    tcName,
+		mode:      mode,
+		buildDir:  buildDir,
+		pkgs:      make(map[string]*PkgInfo),
+		origDir:   origDir,
+		ccWriter:  ccWriter,
+		packages:  make(map[string]*api.Package),
 	}
 
 	for pkgName, pkgDir := range pkgDirs {
@@ -134,8 +134,8 @@ func (s *Scheduler) SetPackageProvider(provider PackageProvider) {
 	s.pkgProvider = provider
 }
 
-func (s *Scheduler) SetPackageContext(pkgName string, ctx *api.PackageContext) {
-	s.packageContexts[pkgName] = ctx
+func (s *Scheduler) SetPackage(pkgName string, pkg *api.Package) {
+	s.packages[pkgName] = pkg
 }
 
 func (s *Scheduler) SetPkgDirs(pkgName, sourceDir, outputDir, installDir string) {
@@ -313,9 +313,9 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 						resolved.AllLdFlags = append(resolved.AllLdFlags, "-l"+libName)
 					}
 				}
-				// Also include deps that the build function actually used (via Dep())
-				if pkgCtx := s.packageContexts[name]; pkgCtx != nil {
-					for _, dep := range pkgCtx.Deps() {
+				// Also include deps that the build function actually used
+				if pkg := s.packages[name]; pkg != nil {
+					for _, dep := range pkg.Deps() {
 						resolved.AllIncludes = append(resolved.AllIncludes, dep.IncludeDir)
 						resolved.AllLdFlags = append(resolved.AllLdFlags, "-L"+dep.LibDir)
 						for _, lib := range dep.Libs {
@@ -480,33 +480,33 @@ func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 		return s.linker.LinkObject(allObjs, resolved.OutputPath)
 	case api.TargetVoid:
 		if fn := resolved.Node.Target.BuildFunc(); fn != nil {
-			pkgCtx := s.packageContexts[resolved.Node.PkgName]
-			if pkgCtx == nil {
-				return fmt.Errorf("no PackageContext for TargetVoid target %s", resolved.Node.FullName)
+			pkg := s.packages[resolved.Node.PkgName]
+			if pkg == nil {
+				return fmt.Errorf("no Package for TargetVoid target %s", resolved.Node.FullName)
 			}
-			s.populateDepsFromGraph(pkgCtx, resolved.Node)
-			if pkgCtx.InstallDir() != "" {
-				if info, err := os.Stat(pkgCtx.InstallDir()); err == nil && info.IsDir() {
-					entries, _ := os.ReadDir(pkgCtx.InstallDir())
+			s.populateDepsFromGraph(pkg, resolved.Node)
+			if pkg.InstallDir() != "" {
+				if info, err := os.Stat(pkg.InstallDir()); err == nil && info.IsDir() {
+					entries, _ := os.ReadDir(pkg.InstallDir())
 					if len(entries) > 0 {
 						vlog.Info("  SKIP (already installed)")
 						return nil
 					}
 				}
-				os.MkdirAll(pkgCtx.BuildDir(), 0755)
-				os.MkdirAll(pkgCtx.InstallDir(), 0755)
+				os.MkdirAll(pkg.BuildDir(), 0755)
+				os.MkdirAll(pkg.InstallDir(), 0755)
 			}
-			if err := fn(pkgCtx); err != nil {
+			if err := fn(pkg); err != nil {
 				return err
 			}
 			pkgName := resolved.Node.PkgName
-			for _, dep := range pkgCtx.Deps() {
+			for _, dep := range pkg.Deps() {
 				if dep.Name == pkgName {
 					dep.UpdateLibDir()
 				}
 			}
-			for _, otherCtx := range s.packageContexts {
-				if dep, ok := otherCtx.Deps()[pkgName]; ok {
+			for _, otherPkg := range s.packages {
+				if dep, ok := otherPkg.Deps()[pkgName]; ok {
 					dep.UpdateLibDir()
 				}
 			}
@@ -517,14 +517,14 @@ func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 	return nil
 }
 
-func (s *Scheduler) populateDepsFromGraph(pkgCtx *api.PackageContext, node *BuildNode) {
+func (s *Scheduler) populateDepsFromGraph(pkg *api.Package, node *BuildNode) {
 	for _, depFullName := range node.Deps {
 		depNode := s.graph.Nodes[depFullName]
 		if depNode == nil {
 			continue
 		}
 		depPkgName := depNode.PkgName
-		if _, ok := pkgCtx.Deps()[depPkgName]; ok {
+		if _, ok := pkg.Deps()[depPkgName]; ok {
 			continue
 		}
 		pkgInfo := s.pkgs[depPkgName]
@@ -532,13 +532,13 @@ func (s *Scheduler) populateDepsFromGraph(pkgCtx *api.PackageContext, node *Buil
 			continue
 		}
 		var depLibs []string
-		if depPkgCtx := s.packageContexts[depPkgName]; depPkgCtx != nil {
-			if depPkgCtx.Libs() != nil {
-				depLibs = depPkgCtx.Libs()
+		if depPkg := s.packages[depPkgName]; depPkg != nil {
+			if depPkg.Libs() != nil {
+				depLibs = depPkg.Libs()
 			}
 		}
 		ip := api.NewInstalledPackage(depPkgName, "", pkgInfo.InstallDir, depLibs)
-		pkgCtx.SetDep(depPkgName, ip)
+		pkg.SetDep(depPkgName, ip)
 	}
 }
 

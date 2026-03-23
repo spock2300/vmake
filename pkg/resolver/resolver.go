@@ -17,7 +17,7 @@ type Source struct {
 	BuildGo   string
 	Dir       string
 	OutputDir string
-	Origin    plugin.SourceOrigin
+	Origin    api.SourceOrigin
 	Force     bool
 }
 
@@ -30,7 +30,7 @@ type PackageNode struct {
 }
 
 func (n *PackageNode) IsLocal() bool {
-	return n.Source != nil && n.Source.Origin == plugin.SourceLocal
+	return n.Source != nil && n.Source.Origin == api.SourceLocal
 }
 
 type Graph struct {
@@ -77,7 +77,7 @@ func (r *Resolver) ResolveAll(localSources []plugin.Source) error {
 			ID:      src.Name,
 			BuildGo: src.Path,
 			Dir:     src.Dir,
-			Origin:  plugin.SourceLocal,
+			Origin:  api.SourceLocal,
 			Force:   r.force,
 		}
 		r.sources[s.ID] = s
@@ -182,7 +182,7 @@ func (r *Resolver) resolveRecursive(id string, path []string) (*PackageNode, err
 		return r.resolveFromCache(id, pluginPath, src, path)
 	}
 
-	if src.Origin == plugin.SourceRemote {
+	if src.Origin == api.SourceRemote {
 		node := &PackageNode{
 			ID:       id,
 			Source:   src,
@@ -263,7 +263,7 @@ func (r *Resolver) findSource(id string) (*Source, error) {
 		BuildGo:   buildGo,
 		Dir:       filepath.Dir(buildGo),
 		OutputDir: r.pluginOutputDir(id),
-		Origin:    plugin.SourceRemote,
+		Origin:    api.SourceRemote,
 		Force:     r.force,
 	}
 	r.sources[id] = src

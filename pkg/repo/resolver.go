@@ -1,9 +1,6 @@
 package repo
 
-import (
-	"gitee.com/spock2300/vmake/pkg/api"
-	"gitee.com/spock2300/vmake/pkg/plugin"
-)
+import "gitee.com/spock2300/vmake/pkg/api"
 
 type DependencyGraph struct {
 	Order    []string
@@ -15,11 +12,11 @@ type ResolvedPackage struct {
 	Constraint string
 	Options    map[string]any
 	Definition *api.Package
-	Source     *plugin.Source
+	Source     *api.Package
 	Deps       []string
 	Deferred   bool
 }
 
 func (p *ResolvedPackage) IsLocal() bool {
-	return p.Source != nil && p.Source.Origin == plugin.SourceLocal
+	return p.Source != nil && p.Source.IsLocal()
 }

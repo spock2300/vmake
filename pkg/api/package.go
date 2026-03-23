@@ -9,29 +9,109 @@ import (
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 )
 
+type TargetKind string
+
+const (
+	TargetBinary TargetKind = "binary"
+	TargetStatic TargetKind = "static"
+	TargetShared TargetKind = "shared"
+	TargetObject TargetKind = "object"
+	TargetVoid   TargetKind = "void"
+)
+
+type OptionType int
+
+const (
+	OptionBool OptionType = iota
+	OptionString
+	OptionInt
+	OptionChoice
+)
+
+func (t OptionType) String() string {
+	switch t {
+	case OptionBool:
+		return "bool"
+	case OptionString:
+		return "string"
+	case OptionInt:
+		return "int"
+	case OptionChoice:
+		return "choice"
+	default:
+		return "unknown"
+	}
+}
+
+type ConfigFunc func(ctx *ConfigContext)
+type BuildFunc func(ctx *BuildContext)
+type InstallFunc func(ctx *InstallContext)
+type PackageFunc func(p *Package)
+
+type SourceOrigin int
+
+const (
+	SourceLocal SourceOrigin = iota
+	SourceRemote
+)
+
 type Package struct {
-	gitURLs          []string
-	homepage         string
-	description      string
-	license          string
-	versions         map[string]string
-	submodules       bool
-	options          map[string]*Option
-	requireCtx       *PackageRequireContext
-	requireFuncs     []RequireFunc
-	libs             []string
-	declaredPackages []string
-	configFuncs      []ConfigFunc
-	buildFuncs       []BuildFunc
-	installFuncs     []InstallFunc
+	ConfigAccessor
+	gitURLs       []string
+	homepage      string
+	description   string
+	license       string
+	versions      map[string]string
+	submodules    bool
+	requireCtx    *PackageRequireContext
+	requireFuncs  []RequireFunc
+	libs          []string
+	configFuncs   []ConfigFunc
+	buildFuncs    []BuildFunc
+	installFuncs  []InstallFunc
+	packageFunc   PackageFunc
+	targets       map[string]*Target
+	packages      []string
+	installItems  []InstallItem
+	installFilter InstallFilterFunc
+	sourceDir     string
+	buildDir      string
+	installDir    string
+	outputDir     string
+	sourceOrigin  SourceOrigin
+	cfgVals       map[string]any
+	tc            *Toolchain
+	deps          map[string]*InstalledPackage
 }
 
 func NewPackage() *Package {
 	return &Package{
-		versions:   make(map[string]string),
-		options:    make(map[string]*Option),
-		requireCtx: NewPackageRequireContext(),
+		ConfigAccessor: NewConfigAccessor(nil, nil),
+		versions:       make(map[string]string),
+		requireCtx:     NewPackageRequireContext(),
+		targets:        make(map[string]*Target),
+		deps:           make(map[string]*InstalledPackage),
 	}
+}
+
+func (p *Package) OnRequire(fn RequireFunc) {
+	p.requireFuncs = append(p.requireFuncs, fn)
+}
+
+func (p *Package) OnConfig(fn ConfigFunc) {
+	p.configFuncs = append(p.configFuncs, fn)
+}
+
+func (p *Package) OnBuild(fn BuildFunc) {
+	p.buildFuncs = append(p.buildFuncs, fn)
+}
+
+func (p *Package) OnInstall(fn InstallFunc) {
+	p.installFuncs = append(p.installFuncs, fn)
+}
+
+func (p *Package) OnPackage(fn PackageFunc) {
+	p.packageFunc = fn
 }
 
 func (p *Package) SetGit(urls ...string) *Package {
@@ -64,44 +144,29 @@ func (p *Package) SetSubmodules(v bool) *Package {
 	return p
 }
 
-func (p *Package) OnRequire(fn func(ctx *PackageRequireContext)) *Package {
-	fn(p.requireCtx)
+func (p *Package) SetLibs(libs ...string) *Package {
+	p.libs = libs
 	return p
 }
 
-func (p *Package) Option(name string) *Option {
-	if opt, ok := p.options[name]; ok {
-		return opt
-	}
-	opt := &Option{name: name}
-	p.options[name] = opt
-	return opt
-}
+func (p *Package) PackageName() string { return "" }
 
-func (p *Package) SetConfigFuncs(funcs []ConfigFunc) *Package {
-	p.configFuncs = funcs
-	return p
-}
+func (p *Package) GitURLs() []string                         { return p.gitURLs }
+func (p *Package) Homepage() string                          { return p.homepage }
+func (p *Package) Description() string                       { return p.description }
+func (p *Package) License() string                           { return p.license }
+func (p *Package) Versions() map[string]string               { return p.versions }
+func (p *Package) Submodules() bool                          { return p.submodules }
+func (p *Package) GetOptions() map[string]*Option            { return p.Options }
+func (p *Package) GetRequireContext() *PackageRequireContext { return p.requireCtx }
+func (p *Package) GetRef(version string) string              { return p.versions[version] }
+func (p *Package) Libs() []string                            { return p.libs }
+func (p *Package) GetRequireFuncs() []RequireFunc            { return p.requireFuncs }
+func (p *Package) GetConfigFuncs() []ConfigFunc              { return p.configFuncs }
+func (p *Package) GetBuildFuncs() []BuildFunc                { return p.buildFuncs }
+func (p *Package) GetInstallFuncs() []InstallFunc            { return p.installFuncs }
+func (p *Package) GetPackageFunc() PackageFunc               { return p.packageFunc }
 
-func (p *Package) SetBuildFuncs(funcs []BuildFunc) *Package {
-	p.buildFuncs = funcs
-	return p
-}
-
-func (p *Package) SetInstallFuncs(funcs []InstallFunc) *Package {
-	p.installFuncs = funcs
-	return p
-}
-
-func (p *Package) SetRequireFuncs(funcs []RequireFunc) *Package {
-	p.requireFuncs = funcs
-	return p
-}
-
-func (p *Package) GetRequireFuncs() []RequireFunc { return p.requireFuncs }
-
-// UpdateRequireContext re-runs OnRequire callbacks with actual config values.
-// The result replaces the existing requireCtx.
 func (p *Package) UpdateRequireContext(cfgVals map[string]any, options map[string]*Option) {
 	if len(p.requireFuncs) == 0 {
 		return
@@ -113,30 +178,190 @@ func (p *Package) UpdateRequireContext(cfgVals map[string]any, options map[strin
 	p.requireCtx = &PackageRequireContext{requires: ctx.GetRequires()}
 }
 
-func (p *Package) SetLibs(libs ...string) *Package {
-	p.libs = libs
+func (p *Package) Target(name string) *Target {
+	if t, ok := p.targets[name]; ok {
+		return t
+	}
+	t := &Target{name: name, isDefault: true}
+	p.targets[name] = t
+	return t
+}
+
+func (p *Package) GetTargets() map[string]*Target {
+	return p.targets
+}
+
+func (p *Package) AddInstalls(src, dest string) *Package {
+	p.installItems = append(p.installItems, InstallItem{Src: src, Dest: dest})
 	return p
 }
 
-func (p *Package) DeclarePackages(packages ...string) *Package {
-	p.declaredPackages = append(p.declaredPackages, packages...)
+func (p *Package) GetInstallItems() []InstallItem { return p.installItems }
+
+func (p *Package) SetInstallFilter(filter InstallFilterFunc) *Package {
+	p.installFilter = filter
 	return p
 }
 
-func (p *Package) GitURLs() []string                         { return p.gitURLs }
-func (p *Package) Homepage() string                          { return p.homepage }
-func (p *Package) Description() string                       { return p.description }
-func (p *Package) License() string                           { return p.license }
-func (p *Package) Versions() map[string]string               { return p.versions }
-func (p *Package) Submodules() bool                          { return p.submodules }
-func (p *Package) GetOptions() map[string]*Option            { return p.options }
-func (p *Package) GetRequireContext() *PackageRequireContext { return p.requireCtx }
-func (p *Package) GetRef(version string) string              { return p.versions[version] }
-func (p *Package) Libs() []string                            { return p.libs }
-func (p *Package) GetDeclaredPackages() []string             { return p.declaredPackages }
-func (p *Package) GetConfigFuncs() []ConfigFunc              { return p.configFuncs }
-func (p *Package) GetBuildFuncs() []BuildFunc                { return p.buildFuncs }
-func (p *Package) GetInstallFuncs() []InstallFunc            { return p.installFuncs }
+func (p *Package) GetInstallFilter() InstallFilterFunc { return p.installFilter }
+
+func (p *Package) AddPackages(packages ...string) *Package {
+	p.packages = append(p.packages, packages...)
+	return p
+}
+
+func (p *Package) GetPackages() []string { return p.packages }
+
+func (p *Package) SetDeps(deps map[string]*InstalledPackage) {
+	p.deps = deps
+}
+
+func (p *Package) SetDep(name string, pkg *InstalledPackage) {
+	if p.deps == nil {
+		p.deps = make(map[string]*InstalledPackage)
+	}
+	p.deps[name] = pkg
+}
+
+func (p *Package) Deps() map[string]*InstalledPackage {
+	return p.deps
+}
+
+func (p *Package) SetDirs(sourceDir, buildDir, installDir string) {
+	p.sourceDir = sourceDir
+	p.buildDir = buildDir
+	p.installDir = installDir
+}
+
+func (p *Package) SetOutputDir(dir string) *Package {
+	p.outputDir = dir
+	return p
+}
+
+func (p *Package) SetSourceOrigin(o SourceOrigin) *Package {
+	p.sourceOrigin = o
+	return p
+}
+
+func (p *Package) SetCfgVals(vals map[string]any) *Package {
+	p.cfgVals = vals
+	return p
+}
+
+func (p *Package) SetToolchain(tc *Toolchain) *Package {
+	p.tc = tc
+	return p
+}
+
+func (p *Package) SourceDir() string  { return p.sourceDir }
+func (p *Package) BuildDir() string   { return p.buildDir }
+func (p *Package) InstallDir() string { return p.installDir }
+func (p *Package) OutputDir() string  { return p.outputDir }
+func (p *Package) IsLocal() bool      { return p.sourceOrigin == SourceLocal }
+
+func (p *Package) CC() string          { return p.tc.CC }
+func (p *Package) CXX() string         { return p.tc.CXX }
+func (p *Package) AR() string          { return p.tc.AR }
+func (p *Package) CrossTarget() string { return p.tc.Target }
+func (p *Package) SysRoot() string     { return p.tc.SysRoot }
+func (p *Package) CFlags() string      { return p.tc.CFlags }
+func (p *Package) CXXFlags() string    { return p.tc.CXXFlags }
+func (p *Package) LDFlags() string     { return p.tc.LDFlags }
+
+func (p *Package) Env() map[string]string {
+	return p.tc.Env()
+}
+
+func (p *Package) CMakeConfigure(extraArgs ...string) error {
+	args := []string{
+		"-S", p.sourceDir,
+		"-B", p.buildDir,
+		"-DCMAKE_INSTALL_PREFIX=" + p.installDir,
+	}
+	if p.tc.CC != "" {
+		args = append(args, "-DCMAKE_C_COMPILER="+p.tc.CC)
+	}
+	if p.tc.CXX != "" {
+		args = append(args, "-DCMAKE_CXX_COMPILER="+p.tc.CXX)
+	}
+	args = append(args, "-DCMAKE_BUILD_TYPE=Release")
+	if p.CrossTarget() != "" {
+		args = append(args,
+			"-DCMAKE_SYSTEM_NAME=Linux",
+			"-DCMAKE_C_COMPILER_TARGET="+p.CrossTarget(),
+			"-DCMAKE_CXX_COMPILER_TARGET="+p.CrossTarget())
+	}
+	if p.tc.SysRoot != "" {
+		args = append(args, "-DCMAKE_SYSROOT="+p.tc.SysRoot)
+	}
+	args = append(args, extraArgs...)
+	return p.Run("cmake", args...)
+}
+
+func (p *Package) CMakeBuild(args ...string) error {
+	buildArgs := []string{"--build", p.buildDir}
+	buildArgs = append(buildArgs, args...)
+	return p.Run("cmake", buildArgs...)
+}
+
+func (p *Package) CMakeInstall() error {
+	return p.Run("cmake", "--install", p.buildDir)
+}
+
+func (p *Package) Configure(extraArgs ...string) error {
+	args := []string{"--prefix=" + p.installDir}
+	if p.CrossTarget() != "" {
+		args = append(args, "--host="+p.CrossTarget())
+	}
+	args = append(args, extraArgs...)
+	return p.RunWithEnv(p.Env(), p.sourceDir+"/configure", args...)
+}
+
+func (p *Package) Make(args ...string) error {
+	makeArgs := []string{"-C", p.buildDir}
+	makeArgs = append(makeArgs, args...)
+	return p.Run("make", makeArgs...)
+}
+
+func (p *Package) Run(name string, args ...string) error {
+	vlog.Info("  %s %s", name, strings.Join(args, " "))
+	cmd := exec.Command(name, args...)
+	cmd.Dir = p.buildDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		vlog.Fatal("command failed: %s %s", name, strings.Join(args, " "))
+	}
+	return nil
+}
+
+func (p *Package) RunIn(dir, name string, args ...string) error {
+	vlog.Info("  cd %s && %s %s", dir, name, strings.Join(args, " "))
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		vlog.Fatal("command failed: %s %s", name, strings.Join(args, " "))
+	}
+	return nil
+}
+
+func (p *Package) RunWithEnv(env map[string]string, name string, args ...string) error {
+	vlog.Info("  %s %s", name, strings.Join(args, " "))
+	cmd := exec.Command(name, args...)
+	cmd.Dir = p.buildDir
+	cmd.Env = append([]string{}, cmd.Environ()...)
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		vlog.Fatal("command failed: %s %s", name, strings.Join(args, " "))
+	}
+	return nil
+}
 
 type InstalledPackage struct {
 	Name       string
@@ -149,13 +374,12 @@ type InstalledPackage struct {
 	Deps       []string
 }
 
-func (p *InstalledPackage) UpdateLibDir() {
-	lib64Dir := filepath.Join(p.InstallDir, "lib64")
+func (ip *InstalledPackage) UpdateLibDir() {
+	lib64Dir := filepath.Join(ip.InstallDir, "lib64")
 	if _, err := os.Stat(lib64Dir); err == nil {
-		p.LibDir = lib64Dir
+		ip.LibDir = lib64Dir
 	} else {
-
-		p.LibDir = filepath.Join(p.InstallDir, "lib")
+		ip.LibDir = filepath.Join(ip.InstallDir, "lib")
 	}
 }
 
@@ -174,230 +398,4 @@ func NewInstalledPackage(name, version, installDir string, libs []string) *Insta
 		BinDir:     filepath.Join(installDir, "bin"),
 		Libs:       libs,
 	}
-}
-
-type PackageContext struct {
-	ConfigAccessor
-	gitURLs     []string
-	homepage    string
-	description string
-	license     string
-	versions    map[string]string
-	submodules  bool
-	libs        []string
-	pkgName     string
-	version     string
-	toolchain   *Toolchain
-	deps        map[string]*InstalledPackage
-	sourceDir   string
-	buildDir    string
-	installDir  string
-	targets     map[string]*Target
-}
-
-func NewPackageContext(pkgName, version string, tc *Toolchain, cfgVals map[string]any) *PackageContext {
-	return &PackageContext{
-		ConfigAccessor: NewConfigAccessor(cfgVals, nil),
-		pkgName:        pkgName,
-		version:        version,
-		toolchain:      tc,
-		deps:           make(map[string]*InstalledPackage),
-		targets:        make(map[string]*Target),
-		versions:       make(map[string]string),
-	}
-}
-
-func NewPackageContextForDefinition() *PackageContext {
-	return &PackageContext{
-		ConfigAccessor: NewConfigAccessor(nil, nil),
-		versions:       make(map[string]string),
-	}
-}
-
-func (ctx *PackageContext) SetGit(urls ...string) *PackageContext {
-	ctx.gitURLs = urls
-	return ctx
-}
-
-func (ctx *PackageContext) SetHomepage(url string) *PackageContext {
-	ctx.homepage = url
-	return ctx
-}
-
-func (ctx *PackageContext) SetDescription(desc string) *PackageContext {
-	ctx.description = desc
-	return ctx
-}
-
-func (ctx *PackageContext) SetLicense(license string) *PackageContext {
-	ctx.license = license
-	return ctx
-}
-
-func (ctx *PackageContext) SetSubmodules(v bool) *PackageContext {
-	ctx.submodules = v
-	return ctx
-}
-
-func (ctx *PackageContext) AddVersion(version, ref string) *PackageContext {
-	ctx.versions[version] = ref
-	return ctx
-}
-
-func (ctx *PackageContext) SetLibs(libs ...string) *PackageContext {
-	ctx.libs = libs
-	return ctx
-}
-
-func (ctx *PackageContext) GitURLs() []string   { return ctx.gitURLs }
-func (ctx *PackageContext) Homepage() string    { return ctx.homepage }
-func (ctx *PackageContext) Description() string { return ctx.description }
-func (ctx *PackageContext) License() string     { return ctx.license }
-func (ctx *PackageContext) Versions() map[string]string {
-	return ctx.versions
-}
-func (ctx *PackageContext) Submodules() bool    { return ctx.submodules }
-func (ctx *PackageContext) Libs() []string      { return ctx.libs }
-func (ctx *PackageContext) PackageName() string { return ctx.pkgName }
-
-func (ctx *PackageContext) SetDeps(deps map[string]*InstalledPackage) {
-	ctx.deps = deps
-}
-
-func (ctx *PackageContext) SetDep(name string, pkg *InstalledPackage) {
-	if ctx.deps == nil {
-		ctx.deps = make(map[string]*InstalledPackage)
-	}
-	ctx.deps[name] = pkg
-}
-
-func (ctx *PackageContext) SetDirs(sourceDir, buildDir, installDir string) {
-	ctx.sourceDir = sourceDir
-	ctx.buildDir = buildDir
-	ctx.installDir = installDir
-}
-
-func (ctx *PackageContext) Deps() map[string]*InstalledPackage {
-	return ctx.deps
-}
-
-func (ctx *PackageContext) CC() string          { return ctx.toolchain.CC }
-func (ctx *PackageContext) CXX() string         { return ctx.toolchain.CXX }
-func (ctx *PackageContext) AR() string          { return ctx.toolchain.AR }
-func (ctx *PackageContext) CrossTarget() string { return ctx.toolchain.Target }
-func (ctx *PackageContext) SysRoot() string     { return ctx.toolchain.SysRoot }
-func (ctx *PackageContext) CFlags() string      { return ctx.toolchain.CFlags }
-func (ctx *PackageContext) CXXFlags() string    { return ctx.toolchain.CXXFlags }
-func (ctx *PackageContext) LDFlags() string     { return ctx.toolchain.LDFlags }
-
-func (ctx *PackageContext) Env() map[string]string {
-	return ctx.toolchain.Env()
-}
-
-func (ctx *PackageContext) SourceDir() string  { return ctx.sourceDir }
-func (ctx *PackageContext) BuildDir() string   { return ctx.buildDir }
-func (ctx *PackageContext) InstallDir() string { return ctx.installDir }
-
-func (ctx *PackageContext) CMakeConfigure(extraArgs ...string) error {
-	args := []string{
-		"-S", ctx.sourceDir,
-		"-B", ctx.buildDir,
-		"-DCMAKE_INSTALL_PREFIX=" + ctx.installDir,
-	}
-	if ctx.toolchain.CC != "" {
-		args = append(args, "-DCMAKE_C_COMPILER="+ctx.toolchain.CC)
-	}
-	if ctx.toolchain.CXX != "" {
-		args = append(args, "-DCMAKE_CXX_COMPILER="+ctx.toolchain.CXX)
-	}
-	args = append(args, "-DCMAKE_BUILD_TYPE=Release")
-	if ctx.CrossTarget() != "" {
-		args = append(args,
-			"-DCMAKE_SYSTEM_NAME=Linux",
-			"-DCMAKE_C_COMPILER_TARGET="+ctx.CrossTarget(),
-			"-DCMAKE_CXX_COMPILER_TARGET="+ctx.CrossTarget())
-	}
-	if ctx.toolchain.SysRoot != "" {
-		args = append(args, "-DCMAKE_SYSROOT="+ctx.toolchain.SysRoot)
-	}
-	args = append(args, extraArgs...)
-	return ctx.Run("cmake", args...)
-}
-
-func (ctx *PackageContext) CMakeBuild(args ...string) error {
-	buildArgs := []string{"--build", ctx.buildDir}
-	buildArgs = append(buildArgs, args...)
-	return ctx.Run("cmake", buildArgs...)
-}
-
-func (ctx *PackageContext) CMakeInstall() error {
-	return ctx.Run("cmake", "--install", ctx.buildDir)
-}
-
-func (ctx *PackageContext) Configure(extraArgs ...string) error {
-	args := []string{"--prefix=" + ctx.installDir}
-	if ctx.CrossTarget() != "" {
-		args = append(args, "--host="+ctx.CrossTarget())
-	}
-	args = append(args, extraArgs...)
-	return ctx.RunWithEnv(ctx.Env(), ctx.sourceDir+"/configure", args...)
-}
-
-func (ctx *PackageContext) Make(args ...string) error {
-	makeArgs := []string{"-C", ctx.buildDir}
-	makeArgs = append(makeArgs, args...)
-	return ctx.Run("make", makeArgs...)
-}
-
-func (ctx *PackageContext) Run(name string, args ...string) error {
-	vlog.Info("  %s %s", name, strings.Join(args, " "))
-	cmd := exec.Command(name, args...)
-	cmd.Dir = ctx.buildDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		vlog.Fatal("command failed: %s %s", name, strings.Join(args, " "))
-	}
-	return nil
-}
-
-func (ctx *PackageContext) RunIn(dir, name string, args ...string) error {
-	vlog.Info("  cd %s && %s %s", dir, name, strings.Join(args, " "))
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		vlog.Fatal("command failed: %s %s", name, strings.Join(args, " "))
-	}
-	return nil
-}
-
-func (ctx *PackageContext) RunWithEnv(env map[string]string, name string, args ...string) error {
-	vlog.Info("  %s %s", name, strings.Join(args, " "))
-	cmd := exec.Command(name, args...)
-	cmd.Dir = ctx.buildDir
-	cmd.Env = append([]string{}, cmd.Environ()...)
-	for k, v := range env {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		vlog.Fatal("command failed: %s %s", name, strings.Join(args, " "))
-	}
-	return nil
-}
-
-func (ctx *PackageContext) Target(name string) *Target {
-	if t, ok := ctx.targets[name]; ok {
-		return t
-	}
-	t := &Target{name: name, isDefault: true}
-	ctx.targets[name] = t
-	return t
-}
-
-func (ctx *PackageContext) GetTargets() map[string]*Target {
-	return ctx.targets
 }

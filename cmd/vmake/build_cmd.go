@@ -187,10 +187,12 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 	vlog.Info("")
 	vlog.Info("Executing OnBuild...")
 	allTargets := make(map[string]map[string]*api.Target)
-	packageContexts := make(map[string]*api.PackageContext)
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
+		if node == nil {
+			continue
+		}
 		if !node.IsLocal() && !needed[name] {
 			continue
 		}
@@ -223,13 +225,9 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 				cfgVals[k] = v
 			}
 
-			pkgCtx := api.NewPackageContext(name, cfg.Version, apiTC, cfgVals)
-			pkgCtx.SetOptions(pkg.GetOptions())
-			pkgCtx.SetDirs(pkgSourceDirs[name], pkgBuildDirs[name], pkgInstallDirs[name])
-
-			// Deps populated by scheduler from build graph (AddPackages edges)
-
-			packageContexts[name] = pkgCtx
+			pkg.SetDirs(pkgSourceDirs[name], pkgBuildDirs[name], pkgInstallDirs[name])
+			pkg.SetCfgVals(cfgVals)
+			pkg.SetToolchain(apiTC)
 		}
 	}
 
@@ -277,8 +275,11 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		}
 	}
 
-	for name, pkgCtx := range packageContexts {
-		scheduler.SetPackageContext(name, pkgCtx)
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if !node.IsLocal() && needed[name] && node.Pkg != nil {
+			scheduler.SetPackage(name, node.Pkg)
+		}
 	}
 
 	versions := make(map[string]string)

@@ -2,8 +2,8 @@ package main
 
 import "gitee.com/spock2300/vmake/pkg/api"
 
-func Main(b *api.Builder) {
-	b.OnConfig(func(ctx *api.ConfigContext) {
+func Main(p *api.Package) {
+	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.Option("debug").
 			SetType(api.OptionBool).
 			SetDefault(false).
@@ -24,7 +24,7 @@ func Main(b *api.Builder) {
 			SetGroup("SSL")
 	})
 
-	b.OnBuild(func(ctx *api.BuildContext) {
+	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("config_app").
 			SetKind(api.TargetBinary).
 			AddFiles("src/*.c").

@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"gitee.com/spock2300/vmake/pkg/api"
 )
 
 var skipDirs = map[string]bool{
@@ -44,7 +46,7 @@ func Scan(rootDir string) ([]Source, error) {
 				Name:   pkgName,
 				Path:   path,
 				Dir:    dir,
-				Origin: SourceLocal,
+				Origin: api.SourceLocal,
 			})
 		}
 
