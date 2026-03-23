@@ -53,7 +53,7 @@ func executeCleanLocal(ctx *RuntimeContext) {
 
 	buildDir := fmt.Sprintf("%s-%s", tcName, mode)
 
-	for _, name := range ctx.DepGraph.Order {
+	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if !node.IsLocal() {
 			continue
@@ -61,11 +61,11 @@ func executeCleanLocal(ctx *RuntimeContext) {
 
 		src := node.Source
 		if err := os.Chdir(src.Dir); err != nil {
-			vlog.Error("Failed to chdir to %s: %v", src.Name, err)
+			vlog.Error("Failed to chdir to %s: %v", src.ID, err)
 			continue
 		}
 
-		cleanCurrentToolchain(src.Name, buildDir)
+		cleanCurrentToolchain(src.ID, buildDir)
 	}
 
 	os.Chdir(origDir)

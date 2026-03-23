@@ -14,6 +14,7 @@ type PackageDef struct {
 	Description string
 	License     string
 	Versions    map[string]string
+	Submodules  bool
 	Package     *api.Package
 }
 
@@ -37,6 +38,7 @@ func (p *PackageDef) SetPackage(pkg *api.Package) *PackageDef {
 	p.Description = pkg.Description()
 	p.License = pkg.License()
 	p.Versions = pkg.Versions()
+	p.Submodules = pkg.Submodules()
 	return p
 }
 

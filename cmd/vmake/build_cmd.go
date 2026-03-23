@@ -11,6 +11,7 @@ import (
 	"gitee.com/spock2300/vmake/pkg/config"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 	"gitee.com/spock2300/vmake/pkg/repo"
+	"gitee.com/spock2300/vmake/pkg/resolver"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 
 	"github.com/spf13/cobra"
@@ -73,61 +74,35 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		apiTC.Target = tc.Host
 	}
 
-	var needed map[string]bool
-	if ctx.Resolver != nil {
-		// Step 1: Resolve deferred packages
-		for _, name := range ctx.DepGraph.Order {
-			node := ctx.DepGraph.Packages[name]
-			if !node.IsLocal() && node.Deferred {
-				vlog.Info("Resolving %s...", name)
-				if err := ctx.Resolver.ResolveSingle(name, ctx.DepGraph); err != nil {
-					return nil, fmt.Errorf("resolve %s: %w", name, err)
-				}
-			}
+	// Filter deps with actual config values
+	vlog.Info("")
+	vlog.Info("Filtering dependencies...")
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if node.Pkg == nil {
+			continue
 		}
-		// Step 2: Collect options for all non-local packages
-		for _, name := range ctx.DepGraph.Order {
-			node := ctx.DepGraph.Packages[name]
-			if !node.IsLocal() && node.Definition != nil {
-				if _, exists := ctx.AllOptions[name]; !exists {
-					opts := collectOptions(name, node.Definition)
-					if len(opts) > 0 {
-						ctx.AllOptions[name] = opts
-						vlog.Info("  %s: %d option(s) (deferred)", name, len(opts))
-					}
-				}
-			}
+		entry := config.GetEntry(ctx.Config, name)
+		opts := ctx.AllOptions[name]
+		if err := ctx.Resolver.FilterDeps(name, entry.Options, opts); err != nil {
+			vlog.Error("  %s: filter deps: %v", name, err)
+		} else if len(node.Deps) > 0 {
+			vlog.Info("  %s: deps=%v", name, node.Deps)
 		}
-		// Step 3: Filter deps with actual config (AFTER resolve + options)
-		vlog.Info("")
-		vlog.Info("Filtering dependencies...")
-		for _, name := range ctx.DepGraph.Order {
-			node := ctx.DepGraph.Packages[name]
-			if node.Definition == nil {
-				continue
-			}
-			entry := config.GetEntry(ctx.Config, name)
-			opts := ctx.AllOptions[name]
-			if err := ctx.Resolver.FilterDeps(name, ctx.DepGraph, entry.Options, opts); err != nil {
-				vlog.Error("  %s: filter deps: %v", name, err)
-			} else if len(node.Deps) > 0 {
-				vlog.Info("  %s: deps=%v", name, node.Deps)
-			}
+	}
+	// Recompute order after filtering
+	ctx.Resolver.UpdateOrder()
+
+	needed := collectNeeded(ctx.DepGraph)
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if !node.IsLocal() && !needed[name] {
+			vlog.Info("  %s: skipped (not needed)", name)
 		}
-		// Recompute needed AFTER filtering
-		needed = collectNeeded(ctx.DepGraph)
-		for _, name := range ctx.DepGraph.Order {
-			node := ctx.DepGraph.Packages[name]
-			if !node.IsLocal() && !needed[name] {
-				vlog.Info("  %s: skipped (not needed)", name)
-			}
-		}
-	} else {
-		needed = collectNeeded(ctx.DepGraph)
 	}
 
 	hasDeps := false
-	for _, name := range ctx.DepGraph.Order {
+	for _, name := range ctx.Resolver.GetOrder() {
 		if needed[name] && !ctx.DepGraph.Packages[name].IsLocal() {
 			hasDeps = true
 			break
@@ -147,7 +122,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		reposDir := filepath.Join(vmakeDir, "repos")
 		repoMgr := repo.NewRepoManager(reposDir)
 
-		for _, name := range ctx.DepGraph.Order {
+		for _, name := range ctx.Resolver.GetOrder() {
 			node := ctx.DepGraph.Packages[name]
 			if needed[name] && !node.IsLocal() {
 				entry := config.GetEntry(ctx.Config, name)
@@ -164,27 +139,31 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		repoInstaller.SetConfigs(configs)
 		repoInstaller.SetToolchain(apiTC)
 
-		for _, name := range ctx.DepGraph.Order {
+		for _, name := range ctx.Resolver.GetOrder() {
 			node := ctx.DepGraph.Packages[name]
-			if needed[name] && !node.IsLocal() && node.Definition != nil {
-				repoInstaller.SetPackage(name, node.Definition)
+			if needed[name] && !node.IsLocal() && node.Pkg != nil {
+				repoInstaller.SetPackage(name, node.Pkg)
 			}
 		}
 
 		vlog.Info("")
 		vlog.Info("Downloading package sources...")
 
-		for _, name := range ctx.DepGraph.Order {
+		for _, name := range ctx.Resolver.GetOrder() {
 			node := ctx.DepGraph.Packages[name]
 			if needed[name] && !node.IsLocal() {
 				cfg := configs[name]
-				pkgDef := repo.NewPackageDef(splitPackagePath(name)[0], splitPackagePath(name)[1])
-				if node.Definition != nil {
-					pkgDef.SetPackage(node.Definition)
+				parts := splitPackagePath(name)
+				pkgDef := repo.NewPackageDef(parts[0], parts[1])
+				if node.Pkg != nil {
+					pkgDef.SetPackage(node.Pkg)
+				} else if node.Source != nil && node.Source.BuildGo != "" {
+					pkgDef.Versions = extractVersionsFromBuildGo(node.Source.BuildGo)
+					pkgDef.GitURLs = extractGitURLs(node.Source.BuildGo)
 				}
 
-				if cfg.Version == "" && node.Definition != nil {
-					selected, err := pkgDef.SelectVersion(node.Constraint)
+				if cfg.Version == "" && len(pkgDef.Versions) > 0 {
+					selected, err := pkgDef.SelectVersion("")
 					if err != nil {
 						return nil, err
 					}
@@ -210,9 +189,12 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 	allTargets := make(map[string]map[string]*api.Target)
 	packageContexts := make(map[string]*api.PackageContext)
 
-	for _, name := range ctx.DepGraph.Order {
+	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if !node.IsLocal() && !needed[name] {
+			continue
+		}
+		if node.Pkg == nil {
 			continue
 		}
 
@@ -222,14 +204,14 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		buildCtx.SetGlobalOptions(ctx.GlobalOptions)
 		buildCtx.SetGlobalValues(globalValues)
 
-		for _, fn := range node.Definition.GetBuildFuncs() {
+		for _, fn := range node.Pkg.GetBuildFuncs() {
 			fn(buildCtx)
 		}
 
 		allTargets[name] = buildCtx.GetTargets()
 
-		if !node.IsLocal() && node.Definition != nil {
-			pkg := node.Definition
+		if !node.IsLocal() && node.Pkg != nil {
+			pkg := node.Pkg
 			cfg := configs[name]
 			cfgVals := make(map[string]any)
 			for optName, opt := range pkg.GetOptions() {
@@ -244,22 +226,10 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 			pkgCtx := api.NewPackageContext(name, cfg.Version, apiTC, cfgVals)
 			pkgCtx.SetOptions(pkg.GetOptions())
 			pkgCtx.SetDirs(pkgSourceDirs[name], pkgBuildDirs[name], pkgInstallDirs[name])
-			if repoInstaller != nil {
-				pkgCtx.SetInstaller(repoInstaller)
-			}
+
+			// Deps populated by scheduler from build graph (AddPackages edges)
 
 			packageContexts[name] = pkgCtx
-		}
-	}
-
-	// Inject active package configs into installer so Dep() builds with correct options
-	if repoInstaller != nil {
-		for _, name := range ctx.DepGraph.Order {
-			if needed[name] && !ctx.DepGraph.Packages[name].IsLocal() {
-				if _, ok := configs[name]; ok {
-					repoInstaller.SetConfig(name, configs[name])
-				}
-			}
 		}
 	}
 
@@ -277,6 +247,8 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 
 	vlog.Info("")
 	vlog.Info("Using toolchain: %s, mode: %s", tcName, mode)
+
+	resolvePackageDeps(allTargets)
 
 	graph, err := build.NewBuildGraph(allTargets)
 	if err != nil {
@@ -296,7 +268,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		return nil, err
 	}
 
-	for _, name := range ctx.DepGraph.Order {
+	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if node.IsLocal() {
 			scheduler.SetPkgDirs(name, pkgDirs[name], "", "")
@@ -315,21 +287,20 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 	}
 
 	pkgProvider := &packageProvider{
-		installer: repoInstaller,
-		config:    ctx.Config,
-		tc:        apiTC,
-		versions:  versions,
-		pkgDirs:   pkgInstallDirs,
-		pkgDefs:   make(map[string]*api.Package),
-		pkgDeps:   make(map[string][]string),
+		config:   ctx.Config,
+		tc:       apiTC,
+		versions: versions,
+		pkgDirs:  pkgInstallDirs,
+		pkgDefs:  make(map[string]*api.Package),
+		pkgDeps:  make(map[string][]string),
 	}
-	for _, name := range ctx.DepGraph.Order {
+	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if !needed[name] {
 			continue
 		}
-		if !node.IsLocal() && node.Definition != nil {
-			pkgProvider.pkgDefs[name] = node.Definition
+		if !node.IsLocal() && node.Pkg != nil {
+			pkgProvider.pkgDefs[name] = node.Pkg
 		}
 		if len(node.Deps) > 0 {
 			pkgProvider.pkgDeps[name] = node.Deps
@@ -361,13 +332,13 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 	}, nil
 }
 
-func collectNeeded(graph *repo.DependencyGraph) map[string]bool {
+func collectNeeded(graph *resolver.Graph) map[string]bool {
 	needed := make(map[string]bool)
 	var queue []string
-	for _, node := range graph.Packages {
+	for id, node := range graph.Packages {
 		if node.IsLocal() {
-			needed[node.Name] = true
-			queue = append(queue, node.Name)
+			needed[id] = true
+			queue = append(queue, id)
 		}
 	}
 	for len(queue) > 0 {
@@ -386,13 +357,12 @@ func collectNeeded(graph *repo.DependencyGraph) map[string]bool {
 }
 
 type packageProvider struct {
-	installer *repo.Installer
-	config    *config.ConfigFile
-	tc        *api.Toolchain
-	versions  map[string]string
-	pkgDirs   map[string]string
-	pkgDefs   map[string]*api.Package
-	pkgDeps   map[string][]string
+	config   *config.ConfigFile
+	tc       *api.Toolchain
+	versions map[string]string
+	pkgDirs  map[string]string
+	pkgDefs  map[string]*api.Package
+	pkgDeps  map[string][]string
 }
 
 func (p *packageProvider) GetInstalledPackage(name string) *api.InstalledPackage {
@@ -446,6 +416,82 @@ func splitPackagePath(path string) []string {
 	return nil
 }
 
+func extractVersionsFromBuildGo(buildGoPath string) map[string]string {
+	data, err := os.ReadFile(buildGoPath)
+	if err != nil {
+		return nil
+	}
+	versions := make(map[string]string)
+	content := string(data)
+	for i := 0; i < len(content); i++ {
+		if i+11 < len(content) && content[i:i+11] == "AddVersion(" {
+			args := extractCallArgs(content[i+11:])
+			if len(args) >= 2 {
+				versions[args[0]] = args[1]
+			}
+		}
+	}
+	return versions
+}
+
+func extractGitURLs(buildGoPath string) []string {
+	data, err := os.ReadFile(buildGoPath)
+	if err != nil {
+		return nil
+	}
+	content := string(data)
+	for i := 0; i < len(content); i++ {
+		if i+7 < len(content) && content[i:i+7] == "SetGit(" {
+			args := extractCallArgs(content[i+7:])
+			if len(args) > 0 {
+				return args
+			}
+		}
+	}
+	return nil
+}
+
+func extractCallArgs(s string) []string {
+	var args []string
+	for i := 0; i < len(s); i++ {
+		if s[i] == '"' {
+			i++
+			start := i
+			for i < len(s) && s[i] != '"' {
+				if s[i] == '\\' {
+					i++
+				}
+				i++
+			}
+			args = append(args, s[start:i])
+			if len(args) >= 3 {
+				break
+			}
+		} else if s[i] == ')' {
+			break
+		}
+	}
+	return args
+}
+
+func resolvePackageDeps(allTargets map[string]map[string]*api.Target) {
+	pkgTargets := make(map[string][]string)
+	for pkgName, targets := range allTargets {
+		for tName := range targets {
+			pkgTargets[pkgName] = append(pkgTargets[pkgName], tName)
+		}
+	}
+	for _, targets := range allTargets {
+		for _, t := range targets {
+			for _, pkgRef := range t.Packages() {
+				for _, tName := range pkgTargets[pkgRef] {
+					t.AddDeps(pkgRef + ":" + tName)
+				}
+			}
+		}
+	}
+}
+
 func hasInstalledFiles(dir string) bool {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -475,7 +521,7 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 		installCtx.SetGlobalOptions(ctx.GlobalOptions)
 		installCtx.SetGlobalValues(globalValues)
 
-		for _, fn := range node.Definition.GetInstallFuncs() {
+		for _, fn := range node.Pkg.GetInstallFuncs() {
 			fn(installCtx)
 		}
 
@@ -483,7 +529,7 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 		buildCtx.SetOptions(ctx.AllOptions[name])
 		buildCtx.SetGlobalOptions(ctx.GlobalOptions)
 		buildCtx.SetGlobalValues(globalValues)
-		for _, fn := range node.Definition.GetBuildFuncs() {
+		for _, fn := range node.Pkg.GetBuildFuncs() {
 			fn(buildCtx)
 		}
 

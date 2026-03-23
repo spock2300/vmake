@@ -50,11 +50,8 @@ func ExtractPackage(loaded *LoadedPlugin) *api.Package {
 		pkg.SetHomepage(ctx.Homepage())
 		pkg.SetDescription(ctx.Description())
 		pkg.SetLicense(ctx.License())
+		pkg.SetSubmodules(ctx.Submodules())
 		pkg.SetLibs(ctx.Libs()...)
-
-		for _, declared := range ctx.DeclaredPackages() {
-			pkg.DeclarePackages(declared)
-		}
 
 		for ver, ref := range ctx.Versions() {
 			pkg.AddVersion(ver, ref)

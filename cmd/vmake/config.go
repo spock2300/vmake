@@ -59,10 +59,15 @@ func runConfig(cmd *cobra.Command, args []string) {
 	}
 
 	var sources []plugin.Source
-	for _, name := range ctx.DepGraph.Order {
+	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if node.IsLocal() && node.Source != nil {
-			sources = append(sources, *node.Source)
+			sources = append(sources, plugin.Source{
+				Name:   node.Source.ID,
+				Path:   node.Source.BuildGo,
+				Dir:    node.Source.Dir,
+				Origin: node.Source.Origin,
+			})
 		}
 	}
 

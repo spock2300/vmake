@@ -289,8 +289,10 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 			resolved.AllIncludes = append(resolved.AllIncludes, absInc)
 		}
 
-		depOutput := filepath.Join(depPkg.Dir, s.getTargetOutputPath(depNode))
-		resolved.DepArtifacts = append(resolved.DepArtifacts, depOutput)
+		if depNode.Target.Kind() != api.TargetVoid {
+			depOutput := filepath.Join(depPkg.Dir, s.getTargetOutputPath(depNode))
+			resolved.DepArtifacts = append(resolved.DepArtifacts, depOutput)
+		}
 	}
 
 	if s.pkgProvider != nil {
@@ -482,6 +484,7 @@ func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 			if pkgCtx == nil {
 				return fmt.Errorf("no PackageContext for TargetVoid target %s", resolved.Node.FullName)
 			}
+			s.populateDepsFromGraph(pkgCtx, resolved.Node)
 			if pkgCtx.InstallDir() != "" {
 				if info, err := os.Stat(pkgCtx.InstallDir()); err == nil && info.IsDir() {
 					entries, _ := os.ReadDir(pkgCtx.InstallDir())
@@ -493,11 +496,50 @@ func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 				os.MkdirAll(pkgCtx.BuildDir(), 0755)
 				os.MkdirAll(pkgCtx.InstallDir(), 0755)
 			}
-			return fn(pkgCtx)
+			if err := fn(pkgCtx); err != nil {
+				return err
+			}
+			pkgName := resolved.Node.PkgName
+			for _, dep := range pkgCtx.Deps() {
+				if dep.Name == pkgName {
+					dep.UpdateLibDir()
+				}
+			}
+			for _, otherCtx := range s.packageContexts {
+				if dep, ok := otherCtx.Deps()[pkgName]; ok {
+					dep.UpdateLibDir()
+				}
+			}
+			return nil
 		}
 		return nil
 	}
 	return nil
+}
+
+func (s *Scheduler) populateDepsFromGraph(pkgCtx *api.PackageContext, node *BuildNode) {
+	for _, depFullName := range node.Deps {
+		depNode := s.graph.Nodes[depFullName]
+		if depNode == nil {
+			continue
+		}
+		depPkgName := depNode.PkgName
+		if _, ok := pkgCtx.Deps()[depPkgName]; ok {
+			continue
+		}
+		pkgInfo := s.pkgs[depPkgName]
+		if pkgInfo == nil || pkgInfo.InstallDir == "" {
+			continue
+		}
+		var depLibs []string
+		if depPkgCtx := s.packageContexts[depPkgName]; depPkgCtx != nil {
+			if depPkgCtx.Libs() != nil {
+				depLibs = depPkgCtx.Libs()
+			}
+		}
+		ip := api.NewInstalledPackage(depPkgName, "", pkgInfo.InstallDir, depLibs)
+		pkgCtx.SetDep(depPkgName, ip)
+	}
 }
 
 func (s *Scheduler) installTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) error {

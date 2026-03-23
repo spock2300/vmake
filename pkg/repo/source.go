@@ -22,9 +22,6 @@ func (m *SourceManager) EnsureSource(pkg *PackageDef, version string) (string, e
 	if tag == "" {
 		tag = version
 	}
-	if tag == "" {
-		return "", fmt.Errorf("no version or tag available for %s", pkg.FullName())
-	}
 
 	if m.exists(repoDir) && m.exists(filepath.Join(repoDir, ".git")) {
 		currentTag, _ := GetCurrentTag(repoDir)
@@ -33,30 +30,52 @@ func (m *SourceManager) EnsureSource(pkg *PackageDef, version string) (string, e
 		}
 	}
 
-	if !m.exists(repoDir) || !m.exists(filepath.Join(repoDir, ".git")) {
-		var lastErr error
-		for _, url := range pkg.GitURLs {
-			if err := Clone(url, repoDir); err == nil {
-				break
-			} else {
-				lastErr = err
-				os.RemoveAll(repoDir)
-			}
+	if err := m.ensureRepo(pkg, repoDir); err != nil {
+		return "", err
+	}
+
+	if tag == "" {
+		return repoDir, nil
+	}
+
+	if pkg.Submodules {
+		_ = InitSubmodules(repoDir)
+	}
+
+	if err := FetchTags(repoDir); err != nil {
+		os.RemoveAll(repoDir)
+		if err := m.ensureRepo(pkg, repoDir); err != nil {
+			return "", err
 		}
-		if lastErr != nil {
-			return "", fmt.Errorf("all mirrors failed for %s: %w", pkg.FullName(), lastErr)
+		if err := FetchTags(repoDir); err != nil {
+			return "", fmt.Errorf("fetch tags for %s: %w", pkg.FullName(), err)
 		}
 	}
 
-	_ = InitSubmodules(repoDir)
-
-	_ = FetchTags(repoDir)
-
 	if err := Checkout(repoDir, tag); err != nil {
-		return "", fmt.Errorf("checkout %s failed for %s: %w", tag, pkg.FullName(), err)
+		os.RemoveAll(repoDir)
+		if err := m.ensureRepo(pkg, repoDir); err != nil {
+			return "", err
+		}
+		_ = FetchTags(repoDir)
+		if err := Checkout(repoDir, tag); err != nil {
+			return "", fmt.Errorf("checkout %s failed for %s: %w", tag, pkg.FullName(), err)
+		}
 	}
 
 	return repoDir, nil
+}
+
+func (m *SourceManager) ensureRepo(pkg *PackageDef, repoDir string) error {
+	var lastErr error
+	for _, url := range pkg.GitURLs {
+		lastErr = Clone(url, repoDir)
+		if lastErr == nil {
+			return nil
+		}
+		os.RemoveAll(repoDir)
+	}
+	return fmt.Errorf("all mirrors failed for %s: %w", pkg.FullName(), lastErr)
 }
 
 func (m *SourceManager) UpdateSource(pkg *PackageDef) error {

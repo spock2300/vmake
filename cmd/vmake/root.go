@@ -12,6 +12,7 @@ import (
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 	"gitee.com/spock2300/vmake/pkg/plugin"
 	"gitee.com/spock2300/vmake/pkg/repo"
+	"gitee.com/spock2300/vmake/pkg/resolver"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 
 	"github.com/spf13/cobra"
@@ -36,10 +37,10 @@ type RuntimeContext struct {
 	WorkDir       string
 	Config        *config.ConfigFile
 	ConfigPath    string
-	DepGraph      *repo.DependencyGraph
+	DepGraph      *resolver.Graph
 	AllOptions    map[string]map[string]*api.Option
 	GlobalOptions map[string]*api.Option
-	Resolver      *repo.Resolver
+	Resolver      *resolver.Resolver
 }
 
 var RootCmd = &cobra.Command{
@@ -114,6 +115,12 @@ func runPipeline(opts pipelineOptions) {
 		opts.afterPhase1(ctx)
 	}
 
+	if err := ctx.Resolver.ResolveDeferred(); err != nil {
+		vlog.Error("Phase 2 (ResolveDeferred) failed: %v", err)
+		os.Exit(1)
+	}
+	ctx.Resolver.UpdateOrder()
+
 	if err := runConfigPhase(ctx); err != nil {
 		vlog.Error("Phase 2 (OnConfig) failed: %v", err)
 		os.Exit(1)
@@ -145,10 +152,6 @@ func runRequirePhase(ctx *RuntimeContext, force bool) error {
 		return fmt.Errorf("no build.go files found")
 	}
 
-	for i := range packages {
-		packages[i].Force = force
-	}
-
 	var pkgNames []string
 	for _, pkg := range packages {
 		pkgNames = append(pkgNames, pkg.Name)
@@ -159,21 +162,21 @@ func runRequirePhase(ctx *RuntimeContext, force bool) error {
 	cacheDir := filepath.Join(vmakeDir, "cache")
 
 	repoMgr := repo.NewRepoManager(reposDir)
-	resolver := repo.NewResolver(repoMgr, cacheDir)
-	ctx.Resolver = resolver
+	r := resolver.NewResolver(repoMgr, cacheDir)
+	r.SetForce(force)
+	ctx.Resolver = r
 
 	vlog.Info("")
 	vlog.Info("Resolving dependencies...")
 
-	graph, err := resolver.ResolveWithLocal(packages, force)
-	if err != nil {
+	if err := r.ResolveAll(packages); err != nil {
 		return err
 	}
 
-	ctx.DepGraph = graph
+	ctx.DepGraph = r.Graph()
 
-	for _, name := range graph.Order {
-		node := graph.Packages[name]
+	for _, name := range ctx.DepGraph.Order {
+		node := ctx.DepGraph.Packages[name]
 		if node.IsLocal() {
 			vlog.Info("  %s (local)", name)
 		} else if node.Deferred {
@@ -200,23 +203,12 @@ func runConfigPhase(ctx *RuntimeContext) error {
 
 	ctx.AllOptions = make(map[string]map[string]*api.Option)
 
-	if ctx.Resolver != nil {
-		for _, name := range ctx.DepGraph.Order {
-			node := ctx.DepGraph.Packages[name]
-			if !node.IsLocal() && node.Deferred {
-				if err := ctx.Resolver.ResolveSingle(name, ctx.DepGraph); err != nil {
-					vlog.Info("  %s: resolve deferred: %v", name, err)
-				}
-			}
-		}
-	}
-
-	for _, name := range ctx.DepGraph.Order {
+	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 
 		var opts map[string]*api.Option
-		if node.Definition != nil {
-			opts = collectOptions(name, node.Definition)
+		if node.Pkg != nil {
+			opts = collectOptions(name, node.Pkg)
 		}
 
 		if len(opts) > 0 {
@@ -256,7 +248,7 @@ func GetToolchain(cfg *config.ConfigFile) (*toolchain.Toolchain, string, error) 
 	return tc, tcName, nil
 }
 
-func GetPackageDirs(graph *repo.DependencyGraph) map[string]string {
+func GetPackageDirs(graph *resolver.Graph) map[string]string {
 	dirs := make(map[string]string)
 	for name, node := range graph.Packages {
 		if node.IsLocal() && node.Source != nil {

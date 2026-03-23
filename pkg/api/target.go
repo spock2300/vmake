@@ -81,7 +81,11 @@ func (t *Target) AddLdFlags(flags ...any) *Target {
 }
 
 func (t *Target) AddPackages(packages ...string) *Target {
-	t.packages = append(t.packages, packages...)
+	for _, p := range packages {
+		if p != "" {
+			t.packages = append(t.packages, p)
+		}
+	}
 	return t
 }
 

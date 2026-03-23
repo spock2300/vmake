@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
-	"gitee.com/spock2300/vmake/pkg/plugin"
 )
 
 type InstallConfig struct {
@@ -25,7 +23,6 @@ type Installer struct {
 	configs     map[string]*InstallConfig
 	tc          *api.Toolchain
 	installed   map[string]*api.InstalledPackage
-	installing  map[string]bool
 }
 
 func NewInstaller(sourceMgr *SourceManager, packagesDir, cacheDir string) *Installer {
@@ -35,7 +32,6 @@ func NewInstaller(sourceMgr *SourceManager, packagesDir, cacheDir string) *Insta
 		cacheDir:    cacheDir,
 		pkgs:        make(map[string]*api.Package),
 		installed:   make(map[string]*api.InstalledPackage),
-		installing:  make(map[string]bool),
 	}
 }
 
@@ -194,135 +190,4 @@ func (i *Installer) saveDeps(installDir string, deps []string) {
 	}
 	metaPath := filepath.Join(installDir, "vmake.json")
 	os.WriteFile(metaPath, data, 0644)
-}
-
-func (i *Installer) EnsureInstalled(name string) *api.InstalledPackage {
-	if pkg, ok := i.installed[name]; ok {
-		return pkg
-	}
-
-	if i.installing[name] {
-		return nil
-	}
-	i.installing[name] = true
-	defer delete(i.installing, name)
-
-	if i.repoMgr == nil || i.tc == nil {
-		return nil
-	}
-
-	pkgDef := NewPackageDef(ParseRepo(name), ParsePkgName(name))
-	pkgPath, err := i.repoMgr.FindPackageGo(pkgDef.Repo, pkgDef.Name)
-	if err != nil {
-		return nil
-	}
-
-	src := plugin.Source{
-		Name:      name,
-		Path:      pkgPath,
-		Dir:       filepath.Dir(pkgPath),
-		OutputDir: i.pluginOutputDir(name),
-		Origin:    plugin.SourceRemote,
-	}
-
-	cr := plugin.Compile(src)
-	if !cr.Success {
-		return nil
-	}
-
-	loaded, err := plugin.Load(cr.PluginPath, src)
-	if err != nil {
-		return nil
-	}
-
-	pkg := loaded.ExtractPackage()
-	pkgDef.SetPackage(pkg)
-	i.pkgs[name] = pkg
-
-	config := i.configs[name]
-	if config == nil {
-		config = &InstallConfig{Options: make(map[string]any)}
-		i.configs[name] = config
-	}
-
-	if config.Version == "" {
-		selected, err := pkgDef.SelectVersion("")
-		if err != nil {
-			return nil
-		}
-		config.Version = selected
-	}
-
-	if i.IsInstalled(name, config.Version, i.tc, config.Options) {
-		installDir := i.GetInstallDir(name, config.Version, i.tc, config.Options)
-		installedPkg := api.NewInstalledPackage(name, config.Version, installDir, pkg.Libs())
-		installedPkg.Deps = i.loadDeps(installDir)
-		for _, depName := range installedPkg.Deps {
-			i.EnsureInstalled(depName)
-		}
-		i.installed[name] = installedPkg
-		return installedPkg
-	}
-
-	sourceDir, err := i.sourceMgr.EnsureSource(pkgDef, config.Version)
-	if err != nil {
-		return nil
-	}
-
-	installedPkg, err := i.doInstall(pkgDef, config, sourceDir)
-	if err != nil {
-		return nil
-	}
-
-	i.installed[name] = installedPkg
-	return installedPkg
-}
-
-func (i *Installer) doInstall(pkgDef *PackageDef, config *InstallConfig, sourceDir string) (*api.InstalledPackage, error) {
-	mode := "release"
-	cacheHash := CacheHash(i.tc.CC, mode, config.Options)
-
-	installDir := filepath.Join(i.packagesDir, pkgDef.FullName(), config.Version, cacheHash, "install")
-
-	if i.hasInstalledFiles(installDir) {
-		pkg := api.NewInstalledPackage(pkgDef.FullName(), config.Version, installDir, pkgDef.Package.Libs())
-		pkg.Deps = i.loadDeps(installDir)
-		return pkg, nil
-	}
-
-	pkg := pkgDef.Package
-	if pkg == nil {
-		return nil, fmt.Errorf("package definition has no Package loaded")
-	}
-
-	return api.NewInstalledPackage(pkgDef.FullName(), config.Version, installDir, pkg.Libs()), nil
-}
-
-func splitPackagePath(path string) []string {
-	for i := 0; i < len(path); i++ {
-		if path[i] == '/' {
-			return []string{path[:i], path[i+1:]}
-		}
-	}
-	return nil
-}
-
-func ParseRepo(fullName string) string {
-	parts := splitPackagePath(fullName)
-	if len(parts) >= 1 {
-		return parts[0]
-	}
-	return ""
-}
-
-func ParsePkgName(fullName string) string {
-	parts := splitPackagePath(fullName)
-	if len(parts) >= 2 {
-		return parts[1]
-	}
-	return fullName
-}
-
-func (i *Installer) pluginOutputDir(name string) string {
-	return fmt.Sprintf("%s/plugins/%s", i.cacheDir, strings.ReplaceAll(name, "/", "_"))
 }

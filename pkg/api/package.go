@@ -15,6 +15,7 @@ type Package struct {
 	description      string
 	license          string
 	versions         map[string]string
+	submodules       bool
 	options          map[string]*Option
 	requireCtx       *PackageRequireContext
 	requireFuncs     []RequireFunc
@@ -55,6 +56,11 @@ func (p *Package) SetLicense(license string) *Package {
 
 func (p *Package) AddVersion(version, ref string) *Package {
 	p.versions[version] = ref
+	return p
+}
+
+func (p *Package) SetSubmodules(v bool) *Package {
+	p.submodules = v
 	return p
 }
 
@@ -122,6 +128,7 @@ func (p *Package) Homepage() string                          { return p.homepage
 func (p *Package) Description() string                       { return p.description }
 func (p *Package) License() string                           { return p.license }
 func (p *Package) Versions() map[string]string               { return p.versions }
+func (p *Package) Submodules() bool                          { return p.submodules }
 func (p *Package) GetOptions() map[string]*Option            { return p.options }
 func (p *Package) GetRequireContext() *PackageRequireContext { return p.requireCtx }
 func (p *Package) GetRef(version string) string              { return p.versions[version] }
@@ -142,6 +149,16 @@ type InstalledPackage struct {
 	Deps       []string
 }
 
+func (p *InstalledPackage) UpdateLibDir() {
+	lib64Dir := filepath.Join(p.InstallDir, "lib64")
+	if _, err := os.Stat(lib64Dir); err == nil {
+		p.LibDir = lib64Dir
+	} else {
+
+		p.LibDir = filepath.Join(p.InstallDir, "lib")
+	}
+}
+
 func NewInstalledPackage(name, version, installDir string, libs []string) *InstalledPackage {
 	libDir := filepath.Join(installDir, "lib")
 	lib64Dir := filepath.Join(installDir, "lib64")
@@ -159,28 +176,23 @@ func NewInstalledPackage(name, version, installDir string, libs []string) *Insta
 	}
 }
 
-type OnDemandInstaller interface {
-	EnsureInstalled(name string) *InstalledPackage
-}
-
 type PackageContext struct {
 	ConfigAccessor
-	gitURLs          []string
-	homepage         string
-	description      string
-	license          string
-	versions         map[string]string
-	libs             []string
-	declaredPackages []string
-	pkgName          string
-	version          string
-	toolchain        *Toolchain
-	deps             map[string]*InstalledPackage
-	sourceDir        string
-	buildDir         string
-	installDir       string
-	targets          map[string]*Target
-	installer        OnDemandInstaller
+	gitURLs     []string
+	homepage    string
+	description string
+	license     string
+	versions    map[string]string
+	submodules  bool
+	libs        []string
+	pkgName     string
+	version     string
+	toolchain   *Toolchain
+	deps        map[string]*InstalledPackage
+	sourceDir   string
+	buildDir    string
+	installDir  string
+	targets     map[string]*Target
 }
 
 func NewPackageContext(pkgName, version string, tc *Toolchain, cfgVals map[string]any) *PackageContext {
@@ -222,6 +234,11 @@ func (ctx *PackageContext) SetLicense(license string) *PackageContext {
 	return ctx
 }
 
+func (ctx *PackageContext) SetSubmodules(v bool) *PackageContext {
+	ctx.submodules = v
+	return ctx
+}
+
 func (ctx *PackageContext) AddVersion(version, ref string) *PackageContext {
 	ctx.versions[version] = ref
 	return ctx
@@ -232,11 +249,6 @@ func (ctx *PackageContext) SetLibs(libs ...string) *PackageContext {
 	return ctx
 }
 
-func (ctx *PackageContext) DeclarePackages(packages ...string) *PackageContext {
-	ctx.declaredPackages = append(ctx.declaredPackages, packages...)
-	return ctx
-}
-
 func (ctx *PackageContext) GitURLs() []string   { return ctx.gitURLs }
 func (ctx *PackageContext) Homepage() string    { return ctx.homepage }
 func (ctx *PackageContext) Description() string { return ctx.description }
@@ -244,38 +256,25 @@ func (ctx *PackageContext) License() string     { return ctx.license }
 func (ctx *PackageContext) Versions() map[string]string {
 	return ctx.versions
 }
-func (ctx *PackageContext) Libs() []string { return ctx.libs }
-func (ctx *PackageContext) DeclaredPackages() []string {
-	return ctx.declaredPackages
-}
+func (ctx *PackageContext) Submodules() bool    { return ctx.submodules }
+func (ctx *PackageContext) Libs() []string      { return ctx.libs }
 func (ctx *PackageContext) PackageName() string { return ctx.pkgName }
 
 func (ctx *PackageContext) SetDeps(deps map[string]*InstalledPackage) {
 	ctx.deps = deps
 }
 
-func (ctx *PackageContext) SetInstaller(installer OnDemandInstaller) {
-	ctx.installer = installer
+func (ctx *PackageContext) SetDep(name string, pkg *InstalledPackage) {
+	if ctx.deps == nil {
+		ctx.deps = make(map[string]*InstalledPackage)
+	}
+	ctx.deps[name] = pkg
 }
 
 func (ctx *PackageContext) SetDirs(sourceDir, buildDir, installDir string) {
 	ctx.sourceDir = sourceDir
 	ctx.buildDir = buildDir
 	ctx.installDir = installDir
-}
-
-func (ctx *PackageContext) Dep(name string) *InstalledPackage {
-	if pkg, ok := ctx.deps[name]; ok {
-		return pkg
-	}
-	if ctx.installer != nil {
-		pkg := ctx.installer.EnsureInstalled(name)
-		if pkg != nil {
-			ctx.deps[name] = pkg
-		}
-		return pkg
-	}
-	return nil
 }
 
 func (ctx *PackageContext) Deps() map[string]*InstalledPackage {
