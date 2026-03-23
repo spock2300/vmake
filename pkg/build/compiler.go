@@ -69,7 +69,7 @@ func (c *Compiler) Compile(src, objPath string, opts *CompileOptions) ([]string,
 		return nil, err
 	}
 
-	deps, err := parseDepFile(depPath)
+	deps, err := ParseDepFile(depPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse dep file: %w", err)
 	}
@@ -97,7 +97,7 @@ func (c *Compiler) buildArgs(opts *CompileOptions, objPath, depPath, src string,
 	return args
 }
 
-func parseDepFile(depPath string) ([]string, error) {
+func ParseDepFile(depPath string) ([]string, error) {
 	file, err := os.Open(depPath)
 	if err != nil {
 		return nil, err
@@ -132,4 +132,31 @@ func parseDepFile(depPath string) ([]string, error) {
 	}
 
 	return deps, scanner.Err()
+}
+
+func IsSourceValid(src, objPath string) (bool, []string) {
+	objInfo, err := os.Stat(objPath)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+
+	depPath := objPath + ".d"
+	deps, err := ParseDepFile(depPath)
+	if err != nil {
+		return false, nil
+	}
+
+	srcInfo, err := os.Stat(src)
+	if err != nil || srcInfo.ModTime().After(objInfo.ModTime()) {
+		return false, deps
+	}
+
+	for _, dep := range deps {
+		depInfo, err := os.Stat(dep)
+		if err != nil || depInfo.ModTime().After(objInfo.ModTime()) {
+			return false, deps
+		}
+	}
+
+	return true, deps
 }

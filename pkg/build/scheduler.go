@@ -37,7 +37,6 @@ type PkgInfo struct {
 	Dir        string
 	OutputDir  string
 	InstallDir string
-	Cache      *BuildCache
 }
 
 type PackageProvider interface {
@@ -58,6 +57,8 @@ type Scheduler struct {
 	ccWriter    *CompileCommandsWriter
 	pkgProvider PackageProvider
 	packages    map[string]*api.Package
+	state       *BuildState
+	stateDir    string
 }
 
 func NewScheduler(
@@ -89,6 +90,17 @@ func NewScheduler(
 		return nil, err
 	}
 
+	state, err := LoadState(buildDir)
+	if err != nil {
+		state = NewBuildState(tc)
+		state.Mode = mode
+	}
+	if state.NeedFullRebuild(tc) || state.Mode != mode {
+		CleanObjects(buildDir)
+		state = NewBuildState(tc)
+		state.Mode = mode
+	}
+
 	s := &Scheduler{
 		graph:     graph,
 		compiler:  compiler,
@@ -101,32 +113,14 @@ func NewScheduler(
 		origDir:   origDir,
 		ccWriter:  ccWriter,
 		packages:  make(map[string]*api.Package),
+		state:     state,
+		stateDir:  buildDir,
 	}
 
 	for pkgName, pkgDir := range pkgDirs {
-		if err := os.Chdir(pkgDir); err != nil {
-			os.Chdir(origDir)
-			return nil, fmt.Errorf("failed to chdir to %s: %w", pkgDir, err)
-		}
-
-		cache, err := LoadCache(buildDir)
-		if err != nil {
-			cache = NewBuildCache(tc)
-		}
-
-		if cache.NeedFullRebuild(tc) || cache.Mode != mode {
-			CleanObjects(buildDir)
-			cache = NewBuildCache(tc)
-			cache.Mode = mode
-		}
-
-		s.pkgs[pkgName] = &PkgInfo{
-			Dir:   pkgDir,
-			Cache: cache,
-		}
+		s.pkgs[pkgName] = &PkgInfo{Dir: pkgDir}
 	}
 
-	os.Chdir(origDir)
 	return s, nil
 }
 
@@ -143,7 +137,6 @@ func (s *Scheduler) SetPkgDirs(pkgName, sourceDir, outputDir, installDir string)
 		Dir:        sourceDir,
 		OutputDir:  outputDir,
 		InstallDir: installDir,
-		Cache:      NewBuildCache(s.toolchain),
 	}
 }
 
@@ -239,7 +232,7 @@ func (s *Scheduler) Build(fullName string) error {
 		}
 	}
 
-	return pkgInfo.Cache.Save(s.buildDir)
+	return s.state.Save(s.stateDir)
 }
 
 func (s *Scheduler) compileWorker(resolved *ResolvedTarget, jobs <-chan string, results chan<- compileResult, wg *sync.WaitGroup) {
@@ -379,8 +372,9 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string,
 		objRel = filepath.Join("build", s.buildDir, "objects", strings.ReplaceAll(src, "/", "_")+".o")
 	}
 
-	if cached := pkgInfo.Cache.GetIfValid(src); cached != nil {
-		return cached.ObjPath, cached.Deps, nil
+	valid, deps := IsSourceValid(src, objRel)
+	if valid {
+		return objRel, deps, nil
 	}
 
 	vlog.Info("  CC %s", src)
@@ -405,8 +399,6 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string,
 	if err != nil {
 		return "", nil, err
 	}
-
-	pkgInfo.Cache.Update(src, objRel, deps)
 
 	return objRel, deps, nil
 }
