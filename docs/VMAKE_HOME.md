@@ -97,7 +97,7 @@ CLI：`vmake pkg list|clean`
 
 `name` 中的 `/` 替换为 `_`（如 `official/curl` → `official_curl`）。
 
-源码：`pkg/repo/resolver.go`
+源码：`pkg/plugin/compiler.go`
 
 ### 源码缓存
 

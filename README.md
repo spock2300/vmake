@@ -50,15 +50,15 @@ package main
 
 import "gitee.com/spock2300/vmake/pkg/api"
 
-func Main(b *api.Builder) {
-    b.OnConfig(func(ctx *api.ConfigContext) {
+func Main(p *api.Package) {
+    p.OnConfig(func(ctx *api.ConfigContext) {
         ctx.Option("debug").
             SetType(api.OptionBool).
             SetDefault(true).
             SetDescription("Enable debug mode")
     })
 
-    b.OnBuild(func(ctx *api.BuildContext) {
+    p.OnBuild(func(ctx *api.BuildContext) {
         ctx.Target("app").
             SetKind(api.TargetBinary).
             AddFiles("src/main.c").
@@ -83,9 +83,15 @@ vmake/
 │   ├── build/           # 编译、链接、缓存管理
 │   ├── config/          # 配置存储
 │   ├── plugin/          # 插件加载器
+│   ├── resolver/        # 依赖解析
+│   ├── repo/            # 包仓库管理
 │   ├── toolchain/       # 工具链管理
+│   ├── log/             # 日志输出
 │   └── tui/             # 终端用户界面
-├── internal/glob/       # 文件匹配
+├── internal/
+│   ├── exec/            # 命令执行
+│   ├── glob/            # 文件匹配
+│   └── jsonio/          # JSON 序列化
 └── docs/                # 设计文档
 ```
 
@@ -134,7 +140,7 @@ ctx.Target(name string) *Target
 在 `build.go` 中通过 `OnConfig` 函数定义：
 
 ```go
-b.OnConfig(func(ctx *api.ConfigContext) {
+p.OnConfig(func(ctx *api.ConfigContext) {
     ctx.Option("optimization").
         SetType(api.OptionChoice).
         SetDefault("O2").
@@ -153,7 +159,7 @@ VMake 内置以下全局选项：
 ### 条件表达式
 
 ```go
-b.OnBuild(func(ctx *api.BuildContext) {
+p.OnBuild(func(ctx *api.BuildContext) {
     ctx.Target("app").
         AddDefines(ctx.If("debug", "DEBUG")...).
         AddCFlags(ctx.Select("optimization", map[string]string{
@@ -179,12 +185,12 @@ myproject/
 ### 根模块 build.go
 
 ```go
-func Main(b *api.Builder) {
-    b.OnConfig(func(ctx *api.ConfigContext) {
+func Main(p *api.Package) {
+    p.OnConfig(func(ctx *api.ConfigContext) {
         // 全局选项
     })
 
-    b.OnBuild(func(ctx *api.BuildContext) {
+    p.OnBuild(func(ctx *api.BuildContext) {
         ctx.Target("app").
             SetKind(api.TargetBinary).
             AddFiles("app/src/main.c").
@@ -196,8 +202,8 @@ func Main(b *api.Builder) {
 ### 子模块 build.go
 
 ```go
-func Main(b *api.Builder) {
-    b.OnBuild(func(ctx *api.BuildContext) {
+func Main(p *api.Package) {
+    p.OnBuild(func(ctx *api.BuildContext) {
         ctx.Target("mylib").
             SetKind(api.TargetStatic).
             AddFiles("src/*.c").
@@ -218,7 +224,7 @@ vmake build
 vmake build -v
 
 # 非常详细输出
-vmake build -vv
+vmake build -V
 ```
 
 ### 配置命令
@@ -260,12 +266,15 @@ vmake rebuild
 
 ```json
 {
-  "version": "1.0",
-  "packages": {
-    "app": {
-      "options": {
-        "debug": true
-      }
+  "version": "1",
+  "global": {
+    "toolchain": "gcc",
+    "mode": "debug",
+    "options": { "ssl": true }
+  },
+  "entries": {
+    "myproject": {
+      "options": { "verbose": false }
     }
   }
 }
@@ -275,13 +284,22 @@ vmake rebuild
 
 ```json
 {
-  "version": "1.0",
-  "defaultToolchain": "gcc",
+  "version": "1",
+  "default_toolchain": "gcc",
   "toolchains": {
     "gcc": {
-      "path": "/usr/bin",
-      "c compiler": "gcc",
-      "c++ compiler": "g++"
+      "name": "gcc",
+      "display_name": "System GCC",
+      "host": "x86_64-linux-gnu",
+      "tools": {
+        "cc": "gcc", "cxx": "g++", "ar": "ar",
+        "ld": "ld", "strip": "strip", "ranlib": "ranlib"
+      },
+      "default_flags": {
+        "cflags": ["-O2", "-Wall"],
+        "cxxflags": ["-O2", "-Wall", "-Wextra"],
+        "ldflags": ["-Wl,--as-needed"]
+      }
     }
   }
 }
@@ -292,7 +310,7 @@ vmake rebuild
 ### 条件编译
 
 ```go
-b.OnConfig(func(ctx *api.ConfigContext) {
+p.OnConfig(func(ctx *api.ConfigContext) {
     ctx.Option("platform").
         SetType(api.OptionChoice).
         SetValues("windows", "linux", "macos")
@@ -302,7 +320,7 @@ b.OnConfig(func(ctx *api.ConfigContext) {
         SetDefault(false)
 })
 
-b.OnBuild(func(ctx *api.BuildContext) {
+p.OnBuild(func(ctx *api.BuildContext) {
     ctx.Target("app").
         AddFiles("src/main.c").
         AddFiles(ctx.If("platform", "windows", "src/win32.c")...).
@@ -328,9 +346,9 @@ ctx.Target("app").
 
 详细的设计文档请参考 [docs](docs/) 目录：
 
-- [API 设计](docs/API_DESIGN.md)
-- [编译设计](docs/BUILD_DESIGN.md)
-- [数据结构](docs/DATA_STRUCTURES.md)
+- [插件 API](docs/PLUGIN_API.md)
+- [架构设计](docs/ARCHITECTURE.md)
+- [目录结构](docs/VMAKE_HOME.md)
 
 ## 测试用例
 
@@ -356,7 +374,7 @@ vmake build
 
 ### 核心组件
 
-1. **Builder**：构建器入口，负责注册配置和构建回调
+1. **Package**：插件主入口，负责注册配置和构建回调
 2. **ConfigContext**：配置上下文，管理选项定义和值
 3. **BuildContext**：构建上下文，管理目标和构建逻辑
 4. **BuildGraph**：构建依赖图，分析目标间依赖关系

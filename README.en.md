@@ -18,7 +18,7 @@ VMake is a modern C/C++ project build tool developed in Go. It provides a concis
 ### Installation
 
 ```bash
-go install github.com/spock2300/vmake@latest
+go install gitee.com/spock2300/vmake/cmd/vmake@latest
 ```
 
 ### Basic Usage
@@ -28,17 +28,17 @@ Create a `build.go` file:
 ```go
 package main
 
-import "github.com/spock2300/vmake/pkg/api"
+import "gitee.com/spock2300/vmake/pkg/api"
 
-func Main(b *api.Builder) {
-    b.OnConfig(func(ctx *api.ConfigContext) {
+func Main(p *api.Package) {
+    p.OnConfig(func(ctx *api.ConfigContext) {
         ctx.Option("debug").
             SetType(api.OptionBool).
             SetDefault(true).
             SetDescription("Enable debug mode")
     })
 
-    b.OnBuild(func(ctx *api.BuildContext) {
+    p.OnBuild(func(ctx *api.BuildContext) {
         ctx.Target("app").
             SetKind(api.TargetBinary).
             AddFiles("src/main.c").
@@ -63,9 +63,15 @@ vmake/
 │   ├── build/           # Compilation, linking, and cache management
 │   ├── config/          # Configuration storage
 │   ├── plugin/          # Plugin loader
+│   ├── resolver/        # Dependency resolution
+│   ├── repo/            # Package repository management
 │   ├── toolchain/       # Toolchain management
+│   ├── log/             # Logging
 │   └── tui/             # Terminal user interface
-├── internal/glob/       # File matching
+├── internal/
+│   ├── exec/            # Command execution
+│   ├── glob/            # File matching
+│   └── jsonio/          # JSON serialization
 └── docs/                # Design documentation
 ```
 
@@ -114,7 +120,7 @@ ctx.Target(name string) *Target
 Define in `build.go` via the `OnConfig` function:
 
 ```go
-b.OnConfig(func(ctx *api.ConfigContext) {
+p.OnConfig(func(ctx *api.ConfigContext) {
     ctx.Option("optimization").
         SetType(api.OptionChoice).
         SetDefault("O2").
@@ -133,7 +139,7 @@ VMake includes the following built-in global options:
 ### Conditional Expressions
 
 ```go
-b.OnBuild(func(ctx *api.BuildContext) {
+p.OnBuild(func(ctx *api.BuildContext) {
     ctx.Target("app").
         AddDefines(ctx.If("mode", "DEBUG")...).
         AddCFlags(ctx.If("optimization", "O3", "-DNDEBUG")...)
@@ -157,12 +163,12 @@ myproject/
 ### Root Module build.go
 
 ```go
-func Main(b *api.Builder) {
-    b.OnConfig(func(ctx *api.ConfigContext) {
+func Main(p *api.Package) {
+    p.OnConfig(func(ctx *api.ConfigContext) {
         // Global options
     })
 
-    b.OnBuild(func(ctx *api.BuildContext) {
+    p.OnBuild(func(ctx *api.BuildContext) {
         ctx.Target("app").
             SetKind(api.TargetBinary).
             AddFiles("app/src/main.c").
@@ -174,8 +180,8 @@ func Main(b *api.Builder) {
 ### Submodule build.go
 
 ```go
-func Main(b *api.Builder) {
-    b.OnBuild(func(ctx *api.BuildContext) {
+func Main(p *api.Package) {
+    p.OnBuild(func(ctx *api.BuildContext) {
         ctx.Target("mylib").
             SetKind(api.TargetStatic).
             AddFiles("src/*.c").
@@ -192,14 +198,11 @@ func Main(b *api.Builder) {
 # Build current module
 vmake build
 
-# Build specific target
-vmake build --target=app
-
 # Verbose output
 vmake build -v
 
 # Very verbose output
-vmake build -vv
+vmake build -V
 ```
 
 ### Configuration Commands
@@ -207,9 +210,6 @@ vmake build -vv
 ```bash
 # Enter interactive configuration interface
 vmake config
-
-# Show current configuration
-vmake config --show
 ```
 
 ### Toolchain Management
@@ -244,12 +244,15 @@ vmake rebuild
 
 ```json
 {
-  "version": "1.0",
-  "packages": {
-    "app": {
-      "options": {
-        "debug": true
-      }
+  "version": "1",
+  "global": {
+    "toolchain": "gcc",
+    "mode": "debug",
+    "options": { "ssl": true }
+  },
+  "entries": {
+    "myproject": {
+      "options": { "verbose": false }
     }
   }
 }
@@ -259,13 +262,22 @@ vmake rebuild
 
 ```json
 {
-  "version": "1.0",
-  "defaultToolchain": "gcc",
+  "version": "1",
+  "default_toolchain": "gcc",
   "toolchains": {
     "gcc": {
-      "path": "/usr/bin",
-      "c compiler": "gcc",
-      "c++ compiler": "g++"
+      "name": "gcc",
+      "display_name": "System GCC",
+      "host": "x86_64-linux-gnu",
+      "tools": {
+        "cc": "gcc", "cxx": "g++", "ar": "ar",
+        "ld": "ld", "strip": "strip", "ranlib": "ranlib"
+      },
+      "default_flags": {
+        "cflags": ["-O2", "-Wall"],
+        "cxxflags": ["-O2", "-Wall", "-Wextra"],
+        "ldflags": ["-Wl,--as-needed"]
+      }
     }
   }
 }
@@ -276,7 +288,7 @@ vmake rebuild
 ### Conditional Compilation
 
 ```go
-b.OnConfig(func(ctx *api.ConfigContext) {
+p.OnConfig(func(ctx *api.ConfigContext) {
     ctx.Option("platform").
         SetType(api.OptionChoice).
         SetValues("windows", "linux", "macos")
@@ -286,7 +298,7 @@ b.OnConfig(func(ctx *api.ConfigContext) {
         SetDefault(false)
 })
 
-b.OnBuild(func(ctx *api.BuildContext) {
+p.OnBuild(func(ctx *api.BuildContext) {
     ctx.Target("app").
         AddFiles("src/main.c").
         AddFiles(ctx.If("platform", "windows", "src/win32.c")...).
@@ -312,9 +324,9 @@ ctx.Target("app").
 
 Detailed design documents are available in the [docs](docs/) directory:
 
-- [API Design](docs/API_DESIGN.md)
-- [Build Design](docs/BUILD_DESIGN.md)
-- [Data Structures](docs/DATA_STRUCTURES.md)
+- [Plugin API](docs/PLUGIN_API.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Directory Structure](docs/VMAKE_HOME.md)
 
 ## Test Cases
 
@@ -339,7 +351,7 @@ vmake build
 
 ### Core Components
 
-1. **Builder**: Entry point for registering configuration and build callbacks
+1. **Package**: Plugin entry point for registering configuration and build callbacks
 2. **ConfigContext**: Configuration context managing option definitions and values
 3. **BuildContext**: Build context managing targets and build logic
 4. **BuildGraph**: Build dependency graph analyzing relationships between targets

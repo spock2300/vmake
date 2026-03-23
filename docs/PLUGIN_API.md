@@ -11,11 +11,11 @@ package main
 
 import "gitee.com/spock2300/vmake/pkg/api"
 
-func Main(b *api.Builder) {
-    b.OnRequire(func(ctx *api.RequireContext) { ... })  // 声明依赖
-    b.OnConfig(func(ctx *api.ConfigContext) { ... })     // 定义配置选项
-    b.OnBuild(func(ctx *api.BuildContext) { ... })       // 定义构建目标
-    b.OnInstall(func(ctx *api.InstallContext) { ... })   // 定义安装规则
+func Main(p *api.Package) {
+    p.OnRequire(func(ctx *api.RequireContext) { ... })  // 声明依赖
+    p.OnConfig(func(ctx *api.ConfigContext) { ... })     // 定义配置选项
+    p.OnBuild(func(ctx *api.BuildContext) { ... })       // 定义构建目标
+    p.OnInstall(func(ctx *api.InstallContext) { ... })   // 定义安装规则
 }
 ```
 
@@ -26,37 +26,92 @@ package main
 
 import "gitee.com/spock2300/vmake/pkg/api"
 
-func Main(b *api.Builder) {
-    b.OnPackage(func(ctx *api.PackageContext) {  // 包元信息
-        ctx.SetGit("https://github.com/...").
+func Main(p *api.Package) {
+    p.OnPackage(func(pkg *api.Package) {  // 包元信息
+        pkg.SetGit("https://github.com/...").
             AddVersion("1.0.0", "v1.0.0")
     })
 
-    b.OnConfig(func(ctx *api.ConfigContext) { ... })
+    p.OnConfig(func(ctx *api.ConfigContext) { ... })
 
-    b.OnBuild(func(ctx *api.BuildContext) {
+    p.OnBuild(func(ctx *api.BuildContext) {
         ctx.Target("lib").
             SetKind(api.TargetVoid).
-            SetBuildFunc(func(pctx *api.PackageContext) error {
-                pctx.CMakeConfigure()
-                pctx.CMakeBuild("-j4")
-                pctx.CMakeInstall()
+            SetBuildFunc(func(pkg *api.Package) error {
+                pkg.CMakeConfigure()
+                pkg.CMakeBuild("-j4")
+                pkg.CMakeInstall()
                 return nil
             })
     })
 }
 ```
 
-## Builder
+## Package（主类型）
+
+Package 是插件的主入口类型，包含生命周期方法和元信息设置。
 
 ```go
-type Builder struct{}
+type Package struct {
+    // 嵌入 ConfigAccessor，提供 If/IfNot/Select/When 等条件表达式
+    ConfigAccessor
+}
 
-func (b *Builder) OnRequire(fn func(ctx *RequireContext))   // 声明第三方依赖
-func (b *Builder) OnConfig(fn func(ctx *ConfigContext))      // 定义配置选项
-func (b *Builder) OnBuild(fn func(ctx *BuildContext))        // 定义构建目标
-func (b *Builder) OnInstall(fn func(ctx *InstallContext))    // 定义安装规则
-func (b *Builder) OnPackage(fn func(ctx *PackageContext))    // 包元信息（仅第三方包）
+// 生命周期方法（注册回调）
+func (p *Package) OnRequire(fn RequireFunc)    // 声明第三方依赖
+func (p *Package) OnConfig(fn ConfigFunc)      // 定义配置选项
+func (p *Package) OnBuild(fn BuildFunc)        // 定义构建目标
+func (p *Package) OnInstall(fn InstallFunc)    // 定义安装规则
+func (p *Package) OnPackage(fn PackageFunc)    // 包元信息（仅第三方包）
+
+// 元信息设置（第三方包）
+func (p *Package) SetGit(urls ...string) *Package
+func (p *Package) SetHomepage(url string) *Package
+func (p *Package) SetDescription(desc string) *Package
+func (p *Package) SetLicense(license string) *Package
+func (p *Package) AddVersion(version, ref string) *Package
+func (p *Package) SetSubmodules(v bool) *Package
+func (p *Package) SetLibs(libs ...string) *Package
+
+// 目标定义
+func (p *Package) Target(name string) *Target
+func (p *Package) GetTargets() map[string]*Target
+
+// 包依赖
+func (p *Package) AddPackages(packages ...string) *Package
+func (p *Package) GetPackages() []string
+func (p *Package) Deps() map[string]*InstalledPackage
+
+// 目录信息
+func (p *Package) SourceDir() string
+func (p *Package) BuildDir() string
+func (p *Package) InstallDir() string
+
+// 编译器信息（代理 Toolchain）
+func (p *Package) CC() string
+func (p *Package) CXX() string
+func (p *Package) AR() string
+func (p *Package) CrossTarget() string
+func (p *Package) SysRoot() string
+func (p *Package) CFlags() string
+func (p *Package) CXXFlags() string
+func (p *Package) LDFlags() string
+func (p *Package) Env() map[string]string
+
+// 构建辅助方法
+func (p *Package) CMakeConfigure(extraArgs ...string) error
+func (p *Package) CMakeBuild(args ...string) error
+func (p *Package) CMakeInstall() error
+func (p *Package) Configure(extraArgs ...string) error
+func (p *Package) Make(args ...string) error
+func (p *Package) Run(name string, args ...string) error
+func (p *Package) RunIn(dir, name string, args ...string) error
+func (p *Package) RunWithEnv(env map[string]string, name string, args ...string) error
+
+// 获取方法
+func (p *Package) PackageName() string
+func (p *Package) GetOptions() map[string]*Option
+func (p *Package) Versions() map[string]string
 ```
 
 ## ConfigContext
@@ -196,7 +251,7 @@ func (t *Target) AddLdFlags(flags ...any) *Target
 func (t *Target) AddPackages(packages ...string) *Target
 
 // 第三方包构建
-func (t *Target) SetBuildFunc(fn func(ctx *PackageContext) error) *Target
+func (t *Target) SetBuildFunc(fn func(p *Package) error) *Target
 
 // 安装控制
 func (t *Target) SetInstallDir(dir string) *Target
@@ -232,96 +287,6 @@ func (t *Target) Packages() []string
 ```
 
 `AddFiles/Includes/Defines/Links/CFlags/CxxFlags/LdFlags` 接受 `string` 或 `[]string`（条件表达式返回）。
-
-## Package（第三方包定义）
-
-```go
-func (p *Package) SetGit(urls ...string) *Package
-func (p *Package) SetHomepage(url string) *Package
-func (p *Package) SetDescription(desc string) *Package
-func (p *Package) SetLicense(license string) *Package
-
-func (p *Package) AddVersion(version, ref string) *Package
-func (p *Package) OnRequire(fn func(ctx *PackageRequireContext)) *Package
-func (p *Package) Option(name string) *Option
-func (p *Package) Build(fn func(ctx *PackageContext)) *Package
-
-func (p *Package) SetLibs(libs ...string) *Package
-func (p *Package) DeclarePackages(packages ...string) *Package
-```
-
-## PackageContext（第三方包构建上下文）
-
-```go
-// 元信息
-func (ctx *PackageContext) SetGit(urls ...string) *PackageContext
-func (ctx *PackageContext) SetHomepage(url string) *PackageContext
-func (ctx *PackageContext) SetDescription(desc string) *PackageContext
-func (ctx *PackageContext) SetLicense(license string) *PackageContext
-func (ctx *PackageContext) AddVersion(version, ref string) *PackageContext
-func (ctx *PackageContext) SetLibs(libs ...string) *PackageContext
-func (ctx *PackageContext) DeclarePackages(packages ...string) *PackageContext
-
-// 选项定义与读取
-func (ctx *PackageContext) Option(name string) *Option
-func (ctx *PackageContext) Bool(name string) bool
-func (ctx *PackageContext) String(name string) string
-func (ctx *PackageContext) Int(name string) int
-func (ctx *PackageContext) BoolStr(name string) string   // "ON" 或 "OFF"
-
-// 条件表达式
-func (ctx *PackageContext) If(option string, then ...string) []string
-func (ctx *PackageContext) IfNot(option string, then ...string) []string
-func (ctx *PackageContext) Select(option string, mapping map[string]string) string
-
-// 依赖访问
-func (ctx *PackageContext) Dep(name string) *InstalledPackage
-func (ctx *PackageContext) Deps() map[string]*InstalledPackage
-
-// 编译器信息
-func (ctx *PackageContext) CC() string
-func (ctx *PackageContext) CXX() string
-func (ctx *PackageContext) AR() string
-func (ctx *PackageContext) CrossTarget() string   // 交叉编译目标，如 "aarch64-linux-gnu"
-func (ctx *PackageContext) SysRoot() string
-func (ctx *PackageContext) CFlags() string
-func (ctx *PackageContext) CXXFlags() string
-func (ctx *PackageContext) LDFlags() string
-func (ctx *PackageContext) Env() map[string]string  // CC, CXX, CFLAGS 等
-
-// 目录
-func (ctx *PackageContext) SourceDir() string     // 源码目录
-func (ctx *PackageContext) BuildDir() string      // 编译目录
-func (ctx *PackageContext) InstallDir() string    // 安装目录
-
-// 构建辅助方法
-func (ctx *PackageContext) CMakeConfigure(extraArgs ...string) error
-func (ctx *PackageContext) CMakeBuild(args ...string) error
-func (ctx *PackageContext) CMakeInstall() error
-func (ctx *PackageContext) Configure(extraArgs ...string) error
-func (ctx *PackageContext) Make(args ...string) error
-
-// 命令执行（失败时调用 vlog.Fatal，不返回 error）
-func (ctx *PackageContext) Run(name string, args ...string) error
-func (ctx *PackageContext) RunIn(dir, name string, args ...string) error
-func (ctx *PackageContext) RunWithEnv(env map[string]string, name string, args ...string) error
-
-// 文件操作
-func (ctx *PackageContext) CopyDir(src, dest string) error
-func (ctx *PackageContext) CopyFile(src, dest string) error
-func (ctx *PackageContext) MkdirAll(path string) error
-
-// 原生构建
-func (ctx *PackageContext) Target(name string) *Target
-func (ctx *PackageContext) Build(t *Target) error
-func (ctx *PackageContext) GetTargets() map[string]*Target
-
-// 获取方法
-func (ctx *PackageContext) PackageName() string
-func (ctx *PackageContext) GetOptions() map[string]*Option
-func (ctx *PackageContext) GetConfigValues() map[string]any
-func (ctx *PackageContext) Versions() map[string]string
-```
 
 ## RequireContext（依赖声明）
 
@@ -410,7 +375,7 @@ const (
 用户定义全局选项：
 
 ```go
-b.OnConfig(func(ctx *api.ConfigContext) {
+p.OnConfig(func(ctx *api.ConfigContext) {
     ctx.GlobalOption("ssl").
         SetType(api.OptionBool).
         SetDefault(true).
@@ -425,8 +390,8 @@ b.OnConfig(func(ctx *api.ConfigContext) {
 ### 简单项目 (`test_data/01_simple_c`)
 
 ```go
-func Main(b *api.Builder) {
-    b.OnBuild(func(ctx *api.BuildContext) {
+func Main(p *api.Package) {
+    p.OnBuild(func(ctx *api.BuildContext) {
         ctx.Target("hello").
             SetKind(api.TargetBinary).
             AddFiles("src/*.c")
@@ -437,8 +402,8 @@ func Main(b *api.Builder) {
 ### 多目标项目 (`test_data/03_multi_target`)
 
 ```go
-func Main(b *api.Builder) {
-    b.OnBuild(func(ctx *api.BuildContext) {
+func Main(p *api.Package) {
+    p.OnBuild(func(ctx *api.BuildContext) {
         ctx.Target("mylib").
             SetKind(api.TargetStatic).
             AddFiles("src/mylib.c").
@@ -470,8 +435,8 @@ project/
 
 **build.go**:
 ```go
-func Main(b *api.Builder) {
-    b.OnConfig(func(ctx *api.ConfigContext) {
+func Main(p *api.Package) {
+    p.OnConfig(func(ctx *api.ConfigContext) {
         ctx.Option("feature_x").
             SetType(api.OptionBool).
             SetDefault(true).
@@ -482,8 +447,8 @@ func Main(b *api.Builder) {
 
 **app/build.go**:
 ```go
-func Main(b *api.Builder) {
-    b.OnBuild(func(ctx *api.BuildContext) {
+func Main(p *api.Package) {
+    p.OnBuild(func(ctx *api.BuildContext) {
         ctx.Target("app").
             SetKind(api.TargetBinary).
             AddFiles("*.c").
@@ -495,8 +460,8 @@ func Main(b *api.Builder) {
 ### 条件表达式 (`test_data/05_conditional`)
 
 ```go
-func Main(b *api.Builder) {
-    b.OnConfig(func(ctx *api.ConfigContext) {
+func Main(p *api.Package) {
+    p.OnConfig(func(ctx *api.ConfigContext) {
         ctx.Option("debug").
             SetType(api.OptionBool).
             SetDefault(false).
@@ -511,7 +476,7 @@ func Main(b *api.Builder) {
             SetGroup("Platform")
     })
 
-    b.OnBuild(func(ctx *api.BuildContext) {
+    p.OnBuild(func(ctx *api.BuildContext) {
         ctx.Target("app").
             SetKind(api.TargetBinary).
             AddFiles("src/*.c").
@@ -530,12 +495,12 @@ func Main(b *api.Builder) {
 ### 使用第三方包 (`test_data/08_with_package`)
 
 ```go
-func Main(b *api.Builder) {
-    b.OnRequire(func(ctx *api.RequireContext) {
+func Main(p *api.Package) {
+    p.OnRequire(func(ctx *api.RequireContext) {
         ctx.AddRequires("official/zlib >=1.2")
     })
 
-    b.OnBuild(func(ctx *api.BuildContext) {
+    p.OnBuild(func(ctx *api.BuildContext) {
         ctx.Target("zlib_test").
             SetKind(api.TargetBinary).
             AddFiles("src/*.c").
@@ -547,9 +512,9 @@ func Main(b *api.Builder) {
 ### 第三方包定义 (`official_repo/z/zlib`)
 
 ```go
-func Main(b *api.Builder) {
-    b.OnPackage(func(ctx *api.PackageContext) {
-        ctx.SetHomepage("http://www.zlib.net").
+func Main(p *api.Package) {
+    p.OnPackage(func(pkg *api.Package) {
+        pkg.SetHomepage("http://www.zlib.net").
             SetDescription("Compression library").
             SetLicense("zlib").
             SetGit(
@@ -561,22 +526,22 @@ func Main(b *api.Builder) {
             AddVersion("1.2.13", "v1.2.13")
     })
 
-    b.OnConfig(func(ctx *api.ConfigContext) {
+    p.OnConfig(func(ctx *api.ConfigContext) {
         ctx.Option("shared").
             SetType(api.OptionBool).
             SetDefault(false).
             SetDescription("Build shared library")
     })
 
-    b.OnBuild(func(ctx *api.BuildContext) {
+    p.OnBuild(func(ctx *api.BuildContext) {
         ctx.Target("zlib").
             SetKind(api.TargetVoid).
-            SetBuildFunc(func(pctx *api.PackageContext) error {
-                pctx.CMakeConfigure(
-                    "-DBUILD_SHARED_LIBS=" + pctx.BoolStr("shared"),
+            SetBuildFunc(func(pkg *api.Package) error {
+                pkg.CMakeConfigure(
+                    "-DBUILD_SHARED_LIBS=" + pkg.BoolStr("shared"),
                 )
-                pctx.CMakeBuild("-j4")
-                pctx.CMakeInstall()
+                pkg.CMakeBuild("-j4")
+                pkg.CMakeInstall()
                 return nil
             })
     })

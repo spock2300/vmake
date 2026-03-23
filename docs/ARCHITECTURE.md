@@ -29,10 +29,10 @@ Scan(root)          Compile             Load              Resolve
 
 1. `plugin.Scan(root)` 递归扫描 `build.go`，返回 `[]Source`
 2. `plugin.Compiler` 编译为 `.so`，缓存在 `cache/plugins/`
-3. `plugin.Loader` 加载 `.so`，调用 `Main(*api.Builder)` 获取 `*api.Package`
-4. `repo.Resolver` 递归解析依赖，生成 `DependencyGraph`（拓扑排序）
+3. `plugin.Loader` 加载 `.so`，调用 `Main(*api.Package)` 获取 `*api.Package`
+4. `resolver.Resolver` 递归解析依赖，生成 `Graph`（拓扑排序）
 
-源码：`pkg/plugin/scanner.go`, `compiler.go`, `loader.go`, `pkg/repo/resolver.go`
+源码：`pkg/plugin/scanner.go`, `compiler.go`, `loader.go`, `pkg/resolver/resolver.go`
 
 ### Phase 2: 配置收集
 
@@ -81,9 +81,9 @@ AddRequires      DependencyGraph    cache/<repo>/<pkg>/  TargetVoid.BuildFunc()
 3. `SourceManager.EnsureSource` 通过 git clone 下载源码到 `cache/<repo>/<pkg>/repo/`
 4. `Scheduler` 按拓扑顺序构建所有目标，包括 `TargetVoid` 目标
 
-对于 `TargetVoid` 类型的目标（第三方包），Scheduler 调用 `Target.BuildFunc()` 并传入 `PackageContext`，执行 CMake/Autotools 等构建命令。
+对于 `TargetVoid` 类型的目标（第三方包），Scheduler 调用 `Target.BuildFunc()` 并传入 `*api.Package`，执行 CMake/Autotools 等构建命令。
 
-源码：`pkg/repo/resolver.go`, `pkg/repo/source.go`, `pkg/build/scheduler.go`
+源码：`pkg/resolver/resolver.go`, `pkg/repo/source.go`, `pkg/build/scheduler.go`
 
 ## CLI 命令树
 
@@ -169,10 +169,14 @@ EntryConfig
 |------|----------|------|
 | API 定义 | `pkg/api/` | 公共 API，插件可导入 |
 | 插件系统 | `pkg/plugin/` | 扫描、编译、加载插件 |
+| 依赖解析 | `pkg/resolver/` | 依赖图解析、拓扑排序 |
 | 构建系统 | `pkg/build/` | 编译、链接、调度 |
-| 包管理 | `pkg/repo/` | 依赖解析、仓库管理、安装 |
+| 包管理 | `pkg/repo/` | 仓库管理、源码下载、安装 |
 | 工具链 | `pkg/toolchain/` | GCC/Clang 抽象 |
 | 配置 | `pkg/config/` | 配置文件读写 |
 | 日志 | `pkg/log/` | 日志输出 |
 | TUI | `pkg/tui/` | 终端界面 |
 | CLI | `cmd/vmake/` | 命令行入口 |
+| JSON I/O | `internal/jsonio/` | JSON 序列化工具 |
+| 命令执行 | `internal/exec/` | OS 命令执行 |
+| 文件匹配 | `internal/glob/` | Glob 模式匹配 |
