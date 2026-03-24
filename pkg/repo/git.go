@@ -79,7 +79,7 @@ func IsAlreadyAtRef(dir, ref string) bool {
 	if err != nil {
 		return false
 	}
-	output, err := exec.RunWithOptions("git", []string{"rev-parse", ref}, exec.RunOptions{Dir: dir})
+	output, err := exec.RunWithOptions("git", []string{"rev-parse", ref + "^{}"}, exec.RunOptions{Dir: dir})
 	if err != nil {
 		return false
 	}

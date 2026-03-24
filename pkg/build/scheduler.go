@@ -550,6 +550,18 @@ func (s *Scheduler) installTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 
 	libDir := filepath.Join(pkgInfo.InstallDir, "lib")
 	includeDir := filepath.Join(pkgInfo.InstallDir, "include")
+
+	if resolved.OutputPath != "" {
+		dest := filepath.Join(libDir, filepath.Base(resolved.OutputPath))
+		if info, err := os.Stat(dest); err == nil {
+			srcInfo, err2 := os.Stat(resolved.OutputPath)
+			if err2 == nil && info.Size() == srcInfo.Size() && !info.ModTime().Before(srcInfo.ModTime()) {
+				vlog.Info("  SKIP (already installed)")
+				return nil
+			}
+		}
+	}
+
 	os.MkdirAll(libDir, 0755)
 	os.MkdirAll(includeDir, 0755)
 
