@@ -232,7 +232,7 @@ func (t *Target) SetDefault(isDefault bool) *Target
 // 源文件与头文件
 func (t *Target) AddFiles(files ...any) *Target
 func (t *Target) AddIncludes(dirs ...any) *Target
-func (t *Target) AddPublicIncludes(dirs ...any) *Target
+func (t *Target) AddPublicIncludes(args ...any) *Target  // dirs + optional @"pattern"
 
 // 编译配置
 func (t *Target) AddDefines(defines ...any) *Target
@@ -287,6 +287,19 @@ func (t *Target) Packages() []string
 ```
 
 `AddFiles/Includes/Defines/Links/CFlags/CxxFlags/LdFlags` 接受 `string` 或 `[]string`（条件表达式返回）。
+
+`AddPublicIncludes` 支持 `@"pattern"` 作为最后一个参数进行 match。Pattern 应用到前面所有目录（省略目录默认为 `"."`）。Pattern 使用 `filepath.Match` 语法。
+
+```go
+// 安装所有 .h 文件到 dependents
+ctx.Target("mylib").AddPublicIncludes("include")
+
+// 只安装匹配 *.h 的文件
+ctx.Target("mylib").AddPublicIncludes("include", "@*.h")
+
+// 只匹配 foo*.h 到 src 目录
+ctx.Target("mylib").AddPublicIncludes("include", "src", "@foo*.h")
+```
 
 ## RequireContext（依赖声明）
 

@@ -161,7 +161,7 @@ All setters are fluent (return `*Target`).
 | `SetDefault` | `(isDefault bool)` | Include in default build |
 | `AddFiles` | `(files ...any)` | Source files (supports globs, []string) |
 | `AddIncludes` | `(dirs ...any)` | Include directories |
-| `AddPublicIncludes` | `(dirs ...any)` | Includes propagated to dependents |
+| `AddPublicIncludes` | `(args ...any)` | Includes propagated to dependents (use @"pattern" to match) |
 | `AddDefines` | `(defines ...any)` | Preprocessor defines |
 | `SetLanguages` | `(langs ...string)` | "c" or "c++" |
 | `AddLinks` | `(libs ...any)` | Libraries to link |
