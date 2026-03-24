@@ -199,7 +199,14 @@ func pushTags(version string) error {
 		return err
 	}
 
-	cmd := exec.Command("git", "push", "--atomic", remote, "HEAD", version, "latest")
+	cmd := exec.Command("git", "push", "--atomic", remote, "HEAD", version)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+
+	cmd = exec.Command("git", "push", "--force", remote, "latest")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
