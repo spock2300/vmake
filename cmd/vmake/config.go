@@ -31,6 +31,11 @@ func runConfig(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	if err := ctx.Resolver.ResolveDeferred(); err != nil {
+		vlog.Error("Resolve deferred packages failed: %v", err)
+		os.Exit(1)
+	}
+
 	if err := runConfigPhase(ctx); err != nil {
 		vlog.Error("Phase 2 (OnConfig) failed: %v", err)
 		os.Exit(1)
@@ -59,6 +64,7 @@ func runConfig(cmd *cobra.Command, args []string) {
 	}
 
 	var sources []plugin.Source
+	localPkgs := make(map[string]bool)
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if node.IsLocal() && node.Source != nil {
@@ -68,10 +74,17 @@ func runConfig(cmd *cobra.Command, args []string) {
 				Dir:    node.Source.Dir,
 				Origin: node.Source.Origin,
 			})
+			localPkgs[node.Source.ID] = true
 		}
 	}
 
-	result, err := tui.Run(sources, ctx.AllOptions, values, ctx.WorkDir, currentTC, ctx.GlobalOptions, globalValues)
+	deps := make(map[string][]string)
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		deps[name] = node.Deps
+	}
+
+	result, err := tui.Run(sources, deps, ctx.AllOptions, values, ctx.WorkDir, currentTC, ctx.GlobalOptions, globalValues)
 	if err != nil {
 		vlog.Error("TUI error: %v", err)
 		os.Exit(1)

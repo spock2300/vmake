@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -15,6 +14,8 @@ type TreeNode struct {
 	Children   []*TreeNode
 	Expanded   bool
 	IsExternal bool
+	Depth      int
+	Prefix     string
 }
 
 type OptionItem struct {
@@ -28,6 +29,8 @@ const GlobalPkgName = "__global__"
 type Model struct {
 	packages []plugin.Source
 	tree     []*TreeNode
+	flat     []*TreeNode
+	deps     map[string][]string
 	options  map[string]map[string]*api.Option
 	values   map[string]map[string]any
 
@@ -58,6 +61,7 @@ type Model struct {
 
 func NewModel(
 	packages []plugin.Source,
+	deps map[string][]string,
 	options map[string]map[string]*api.Option,
 	values map[string]map[string]any,
 	workDir string,
@@ -84,6 +88,7 @@ func NewModel(
 
 	m := Model{
 		packages:      packages,
+		deps:          deps,
 		options:       options,
 		values:        values,
 		treeCursor:    0,
@@ -95,9 +100,10 @@ func NewModel(
 	}
 	m.origValues = deepCopyValues(values)
 	m.origGlobal = deepCopyGlobal(globalValues)
-	m.tree = buildTreeWithPackages(packages, workDir, options)
+	m.tree = buildDepTree(packages, deps)
+	m.flat = flattenTree(m.tree)
 
-	if len(m.tree) > 0 {
+	if len(m.flat) > 0 {
 		m.selectFirstPkg()
 	}
 	return m
@@ -122,88 +128,112 @@ func deepCopyValues(src map[string]map[string]any) map[string]map[string]any {
 	return dst
 }
 
-func buildTree(packages []plugin.Source, baseDir string) []*TreeNode {
+func buildDepTree(packages []plugin.Source, deps map[string][]string) []*TreeNode {
 	globalNode := &TreeNode{
 		Name:     "[Global]",
 		PkgName:  GlobalPkgName,
 		Expanded: true,
+		Depth:    0,
 	}
 
-	nodeMap := make(map[string]*TreeNode)
-
+	localSet := make(map[string]bool)
 	for _, pkg := range packages {
-		relPath, err := filepath.Rel(baseDir, pkg.Dir)
-		if err != nil {
-			relPath = pkg.Dir
-		}
-		parts := strings.Split(relPath, string(filepath.Separator))
+		localSet[pkg.Name] = true
+	}
 
-		for i := 0; i < len(parts); i++ {
-			path := strings.Join(parts[:i+1], string(filepath.Separator))
-			if _, ok := nodeMap[path]; !ok {
-				nodeMap[path] = &TreeNode{
-					Name:     parts[i],
-					Expanded: true,
-				}
-			}
-			if i == len(parts)-1 {
-				nodeMap[path].PkgName = pkg.Name
-			}
+	pkgMap := make(map[string]plugin.Source)
+	for _, pkg := range packages {
+		pkgMap[pkg.Name] = pkg
+	}
+
+	depSet := make(map[string]bool)
+	for _, depList := range deps {
+		for _, d := range depList {
+			depSet[d] = true
 		}
 	}
 
-	childMap := make(map[string][]*TreeNode)
-	var rootKeys []string
+	var roots []string
+	for _, pkg := range packages {
+		if !depSet[pkg.Name] {
+			roots = append(roots, pkg.Name)
+		}
+	}
 
-	for path, node := range nodeMap {
-		parts := strings.Split(path, string(filepath.Separator))
-		if len(parts) == 1 {
-			rootKeys = append(rootKeys, path)
+	var localNodes []*TreeNode
+	for _, name := range roots {
+		localNodes = append(localNodes, buildDepSubtree(name, localSet, pkgMap, deps, 1))
+	}
+
+	for i, child := range localNodes {
+		if i < len(localNodes)-1 {
+			child.Prefix = "├─"
 		} else {
-			parentPath := strings.Join(parts[:len(parts)-1], string(filepath.Separator))
-			childMap[parentPath] = append(childMap[parentPath], node)
+			child.Prefix = "└─"
 		}
 	}
-
-	for path, children := range childMap {
-		sort.Slice(children, func(i, j int) bool {
-			return children[i].Name < children[j].Name
-		})
-		if node, ok := nodeMap[path]; ok {
-			node.Children = children
-		}
-	}
-
-	var roots []*TreeNode
-	for _, key := range rootKeys {
-		roots = append(roots, nodeMap[key])
-	}
-	sort.Slice(roots, func(i, j int) bool {
-		return roots[i].Name < roots[j].Name
-	})
 
 	result := []*TreeNode{globalNode}
-	return append(result, flattenChildren(roots)...)
+	result = append(result, localNodes...)
+	return result
 }
 
-func flattenChildren(nodes []*TreeNode) []*TreeNode {
+func buildDepSubtree(name string, localSet map[string]bool, pkgMap map[string]plugin.Source, deps map[string][]string, depth int) *TreeNode {
+	node := &TreeNode{
+		Name:    name,
+		PkgName: name,
+		Depth:   depth,
+	}
+
+	if depth <= 2 {
+		node.Expanded = true
+	}
+
+	if !localSet[name] {
+		node.IsExternal = true
+	}
+
+	depNames := deps[name]
+	if len(depNames) == 0 {
+		return node
+	}
+
+	for _, depName := range depNames {
+		child := buildDepSubtree(depName, localSet, pkgMap, deps, depth+1)
+		if child != nil {
+			node.Children = append(node.Children, child)
+		}
+	}
+
+	for i, child := range node.Children {
+		if i < len(node.Children)-1 {
+			child.Prefix = "├─"
+		} else {
+			child.Prefix = "└─"
+		}
+	}
+
+	return node
+}
+
+func flattenTree(nodes []*TreeNode) []*TreeNode {
 	var result []*TreeNode
 	for _, n := range nodes {
 		result = append(result, n)
 		if n.Expanded && len(n.Children) > 0 {
-			result = append(result, flattenChildren(n.Children)...)
+			result = append(result, flattenTree(n.Children)...)
 		}
 	}
 	return result
 }
 
 func (m *Model) selectFirstPkg() {
-	if len(m.tree) > 0 && m.tree[0].PkgName == GlobalPkgName {
+	if len(m.flat) > 0 && m.flat[0].PkgName == GlobalPkgName {
 		m.selectedPkg = GlobalPkgName
 		m.buildOptionItems()
 		return
 	}
-	for _, node := range m.tree {
+	for _, node := range m.flat {
 		if node.PkgName != "" {
 			m.selectedPkg = node.PkgName
 			m.buildOptionItems()
@@ -414,7 +444,8 @@ func (m *Model) AddPackageOptions(pkgName string, opts map[string]*api.Option, v
 		m.values[pkgName][name] = val
 	}
 
-	m.tree = buildTreeWithPackages(m.packages, m.workDir, m.options)
+	m.tree = buildDepTree(m.packages, m.deps)
+	m.flat = flattenTree(m.tree)
 }
 
 func (m *Model) GetRequireValues() map[string]map[string]any {
@@ -424,23 +455,5 @@ func (m *Model) GetRequireValues() map[string]map[string]any {
 			result[pkgName] = vals
 		}
 	}
-	return result
-}
-
-func buildTreeWithPackages(packages []plugin.Source, baseDir string, allOptions map[string]map[string]*api.Option) []*TreeNode {
-	result := buildTree(packages, baseDir)
-
-	for pkgName := range allOptions {
-		if strings.Contains(pkgName, "/") {
-			node := &TreeNode{
-				Name:       "[" + pkgName + "]",
-				PkgName:    pkgName,
-				Expanded:   true,
-				IsExternal: true,
-			}
-			result = append(result, node)
-		}
-	}
-
 	return result
 }

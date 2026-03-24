@@ -9,7 +9,7 @@ var (
 			Padding(0, 1)
 
 	treeStyle = lipgloss.NewStyle().
-			Width(20).
+			Width(36).
 			Padding(1, 1).
 			Border(lipgloss.NormalBorder(), false, true, false, false).
 			BorderForeground(lipgloss.Color("#3C3C3C"))

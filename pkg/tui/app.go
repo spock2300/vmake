@@ -19,6 +19,7 @@ type ConfigResult struct {
 
 func Run(
 	packages []plugin.Source,
+	deps map[string][]string,
 	options map[string]map[string]*api.Option,
 	values map[string]map[string]any,
 	workDir string,
@@ -26,7 +27,7 @@ func Run(
 	globalOptions map[string]*api.Option,
 	globalValues map[string]any,
 ) (*ConfigResult, error) {
-	m := NewModel(packages, options, values, workDir, currentToolchain, globalOptions, globalValues)
+	m := NewModel(packages, deps, options, values, workDir, currentToolchain, globalOptions, globalValues)
 	p := tea.NewProgram(&m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		return nil, err
@@ -127,19 +128,19 @@ func (m *Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selectCurrentNode()
 		}
 	case "down", "j":
-		if m.treeCursor < len(m.tree)-1 {
+		if m.treeCursor < len(m.flat)-1 {
 			m.treeCursor++
 			m.selectCurrentNode()
 		}
 	case "left", "h":
-		if m.treeCursor < len(m.tree) && m.tree[m.treeCursor].Expanded {
-			m.tree[m.treeCursor].Expanded = false
-			m.tree = buildTree(m.packages, m.workDir)
+		if m.treeCursor < len(m.flat) && m.flat[m.treeCursor].Expanded {
+			m.flat[m.treeCursor].Expanded = false
+			m.flat = flattenTree(m.tree)
 		}
 	case "right", "l":
-		if m.treeCursor < len(m.tree) && len(m.tree[m.treeCursor].Children) > 0 {
-			m.tree[m.treeCursor].Expanded = true
-			m.tree = buildTree(m.packages, m.workDir)
+		if m.treeCursor < len(m.flat) && len(m.flat[m.treeCursor].Children) > 0 {
+			m.flat[m.treeCursor].Expanded = true
+			m.flat = flattenTree(m.tree)
 		}
 	case "enter":
 		m.saved = true
@@ -149,8 +150,8 @@ func (m *Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) selectCurrentNode() {
-	if m.treeCursor < len(m.tree) && m.tree[m.treeCursor].PkgName != "" {
-		m.selectedPkg = m.tree[m.treeCursor].PkgName
+	if m.treeCursor < len(m.flat) && m.flat[m.treeCursor].PkgName != "" {
+		m.selectedPkg = m.flat[m.treeCursor].PkgName
 		m.buildOptionItems()
 		m.optCursor = 0
 	}
@@ -291,24 +292,21 @@ func (m *Model) View() string {
 func (m *Model) renderTree() string {
 	var b strings.Builder
 
-	for i, node := range m.tree {
-		prefix := "  "
-		for j := 0; j < depth(node, m.tree); j++ {
-			prefix += "  "
-		}
+	for i, node := range m.flat {
+		prefix := strings.Repeat("  ", node.Depth)
 
-		icon := "📄"
+		icon := " "
 		if node.PkgName == GlobalPkgName {
 			icon = "⚙️"
 		} else if len(node.Children) > 0 {
 			if node.Expanded {
-				icon = "📂"
+				icon = "▼"
 			} else {
-				icon = "📁"
+				icon = "▶"
 			}
 		}
 
-		line := prefix + icon + " " + node.Name
+		line := prefix + node.Prefix + icon + " " + node.Name
 		if i == m.treeCursor && m.focusArea == 0 {
 			b.WriteString(treeSelectedStyle.Render(line) + "\n")
 		} else {
@@ -317,32 +315,6 @@ func (m *Model) renderTree() string {
 	}
 
 	return b.String()
-}
-
-func depth(node *TreeNode, tree []*TreeNode) int {
-	for _, n := range tree {
-		if n == node {
-			return 0
-		}
-		d := findDepth(node, n.Children, 1)
-		if d >= 0 {
-			return d
-		}
-	}
-	return 0
-}
-
-func findDepth(target *TreeNode, nodes []*TreeNode, depth int) int {
-	for _, n := range nodes {
-		if n == target {
-			return depth
-		}
-		d := findDepth(target, n.Children, depth+1)
-		if d >= 0 {
-			return d
-		}
-	}
-	return -1
 }
 
 func (m *Model) renderOptions() string {
