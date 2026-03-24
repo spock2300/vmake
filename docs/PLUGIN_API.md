@@ -27,7 +27,7 @@ package main
 import "gitee.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-    p.OnPackage(func(pkg *api.Package) {  // 包元信息
+    p.OnPackage(func(pkg *api.Package) {  // 填充元数据
         pkg.SetGit("https://github.com/...").
             AddVersion("1.0.0", "v1.0.0")
     })
@@ -62,7 +62,7 @@ func (p *Package) OnRequire(fn RequireFunc)    // 声明第三方依赖
 func (p *Package) OnConfig(fn ConfigFunc)      // 定义配置选项
 func (p *Package) OnBuild(fn BuildFunc)        // 定义构建目标
 func (p *Package) OnInstall(fn InstallFunc)    // 定义安装规则
-func (p *Package) OnPackage(fn PackageFunc)    // 包元信息（仅第三方包）
+func (p *Package) OnPackage(fn PackageFunc)    // 填充包元数据（插件提取阶段执行）
 
 // 元信息设置（第三方包）
 func (p *Package) SetGit(urls ...string) *Package
