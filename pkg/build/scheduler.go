@@ -283,7 +283,12 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 		}
 
 		if depNode.Target.Kind() != api.TargetVoid {
-			depOutput := filepath.Join(depPkg.Dir, s.getTargetOutputPath(depNode))
+			var depOutput string
+			if depPkg.InstallDir != "" {
+				depOutput = filepath.Join(depPkg.InstallDir, "lib", targetFilename(depNode.Target.Kind(), depNode.Target.Name()))
+			} else {
+				depOutput = filepath.Join(depPkg.Dir, s.getTargetOutputPath(depNode))
+			}
 			resolved.DepArtifacts = append(resolved.DepArtifacts, depOutput)
 		}
 	}
@@ -339,22 +344,23 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	return resolved, nil
 }
 
+func targetFilename(kind api.TargetKind, name string) string {
+	switch kind {
+	case api.TargetStatic:
+		return "lib" + name + ".a"
+	case api.TargetShared:
+		return "lib" + name + ".so"
+	case api.TargetObject:
+		return name + ".o"
+	default:
+		return name
+	}
+}
+
 func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
 	pkgInfo := s.pkgs[node.PkgName]
 
-	var name string
-	switch node.Target.Kind() {
-	case api.TargetBinary:
-		name = node.Target.Name()
-	case api.TargetStatic:
-		name = "lib" + node.Target.Name() + ".a"
-	case api.TargetShared:
-		name = "lib" + node.Target.Name() + ".so"
-	case api.TargetObject:
-		name = node.Target.Name() + ".o"
-	default:
-		name = node.Target.Name()
-	}
+	name := targetFilename(node.Target.Kind(), node.Target.Name())
 
 	if pkgInfo.OutputDir != "" {
 		return filepath.Join(pkgInfo.OutputDir, name)

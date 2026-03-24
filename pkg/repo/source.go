@@ -9,6 +9,10 @@ import (
 	"gitee.com/spock2300/vmake/pkg/api"
 )
 
+func removeAllDir(path string) {
+	os.RemoveAll(path)
+}
+
 type SourceManager struct {
 	sourcesDir string
 }
@@ -26,10 +30,16 @@ func (m *SourceManager) EnsureSource(pkg *api.Package, version string) (string, 
 	}
 
 	if m.exists(repoDir) && m.exists(filepath.Join(repoDir, ".git")) {
-		currentTag, _ := GetCurrentTag(repoDir)
-		if currentTag == tag {
+		if IsAlreadyAtRef(repoDir, tag) {
 			return repoDir, nil
 		}
+		// Repo exists but at wrong ref — try fetch+checkout instead of re-cloning
+		if tag != "" {
+			if FetchTags(repoDir) == nil && Checkout(repoDir, tag) == nil {
+				return repoDir, nil
+			}
+		}
+		removeAllDir(repoDir)
 	}
 
 	if err := m.ensureRepo(pkg, repoDir); err != nil {
@@ -45,7 +55,7 @@ func (m *SourceManager) EnsureSource(pkg *api.Package, version string) (string, 
 	}
 
 	if err := FetchTags(repoDir); err != nil {
-		os.RemoveAll(repoDir)
+		removeAllDir(repoDir)
 		if err := m.ensureRepo(pkg, repoDir); err != nil {
 			return "", err
 		}
@@ -55,7 +65,7 @@ func (m *SourceManager) EnsureSource(pkg *api.Package, version string) (string, 
 	}
 
 	if err := Checkout(repoDir, tag); err != nil {
-		os.RemoveAll(repoDir)
+		removeAllDir(repoDir)
 		if err := m.ensureRepo(pkg, repoDir); err != nil {
 			return "", err
 		}

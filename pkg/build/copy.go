@@ -47,6 +47,9 @@ func CopyDir(src, dest string) error {
 		destPath := filepath.Join(dest, entry.Name())
 
 		if entry.IsDir() {
+			if entry.Name() == ".git" {
+				continue
+			}
 			if err := CopyDir(srcPath, destPath); err != nil {
 				return err
 			}

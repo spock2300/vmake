@@ -74,6 +74,18 @@ func GetCurrentCommit(dir string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+func IsAlreadyAtRef(dir, ref string) bool {
+	head, err := GetCurrentCommit(dir)
+	if err != nil {
+		return false
+	}
+	output, err := exec.RunWithOptions("git", []string{"rev-parse", ref}, exec.RunOptions{Dir: dir})
+	if err != nil {
+		return false
+	}
+	return head == strings.TrimSpace(string(output))
+}
+
 func GetCurrentTag(dir string) (string, error) {
 	output, err := exec.RunWithOptions("git", []string{"describe", "--tags", "--exact-match"}, exec.RunOptions{Dir: dir})
 	if err != nil {
