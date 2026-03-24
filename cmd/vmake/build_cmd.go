@@ -28,7 +28,7 @@ func init() {
 	RootCmd.AddCommand(buildCmd)
 	buildCmd.Flags().BoolVarP(&installFlag, "install", "i", false, "install after build")
 	buildCmd.Flags().StringVarP(&prefixFlag, "prefix", "p", "", "installation prefix (default: ./install)")
-	buildCmd.Flags().BoolVarP(&forceFlag, "force", "f", false, "force plugin recompilation")
+	buildCmd.Flags().BoolVarP(&forceFlag, "force", "f", false, "force buildscript recompilation")
 }
 
 func runBuild(cmd *cobra.Command, args []string) {

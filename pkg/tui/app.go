@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
-	"gitee.com/spock2300/vmake/pkg/plugin"
+	"gitee.com/spock2300/vmake/pkg/buildscript"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -18,7 +18,7 @@ type ConfigResult struct {
 }
 
 func Run(
-	packages []plugin.Source,
+	packages []buildscript.Source,
 	deps map[string][]string,
 	options map[string]map[string]*api.Option,
 	values map[string]map[string]any,

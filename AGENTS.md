@@ -85,7 +85,7 @@ Use `filepath.Join()` for filesystem paths. Do NOT use for logical identifiers:
 | Package | Responsibility | Plugin Importable |
 |---------|---------------|-------------------|
 | `pkg/api` | Core API (Builder, Target, Option, Package) | **Yes** |
-| `pkg/plugin` | Plugin scan, compile, load | No |
+| `pkg/buildscript` | Build script scan, compile, load | No |
 | `pkg/config` | Config storage | No |
 | `pkg/build` | Build execution, compile, link, scheduler | No |
 | `pkg/toolchain` | Toolchain abstraction (GCC, Clang) | No |
@@ -110,7 +110,7 @@ Use `filepath.Join()` for filesystem paths. Do NOT use for logical identifiers:
 ## Runtime Execution Flow
 ```
 Phase 1: OnRequire
-    Scan build.go -> Compile plugins -> Load plugins -> Collect dependencies
+    Scan build.go -> Compile buildscripts -> Load buildscripts -> Collect dependencies
 Phase 2: OnConfig
     Execute OnConfig callbacks -> Collect Option definitions -> Load saved config
 Phase 3: OnBuild
@@ -149,7 +149,7 @@ const (
 )
 ```
 
-## Plugin System
+## Build Script System
 Each `build.go` is compiled to a Go plugin (`.so`):
 ```go
 package main

@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
-	"gitee.com/spock2300/vmake/pkg/plugin"
+	"gitee.com/spock2300/vmake/pkg/buildscript"
 )
 
 type TreeNode struct {
@@ -27,7 +27,7 @@ type OptionItem struct {
 const GlobalPkgName = "__global__"
 
 type Model struct {
-	packages []plugin.Source
+	packages []buildscript.Source
 	tree     []*TreeNode
 	flat     []*TreeNode
 	deps     map[string][]string
@@ -60,7 +60,7 @@ type Model struct {
 }
 
 func NewModel(
-	packages []plugin.Source,
+	packages []buildscript.Source,
 	deps map[string][]string,
 	options map[string]map[string]*api.Option,
 	values map[string]map[string]any,
@@ -128,7 +128,7 @@ func deepCopyValues(src map[string]map[string]any) map[string]map[string]any {
 	return dst
 }
 
-func buildDepTree(packages []plugin.Source, deps map[string][]string) []*TreeNode {
+func buildDepTree(packages []buildscript.Source, deps map[string][]string) []*TreeNode {
 	globalNode := &TreeNode{
 		Name:     "[Global]",
 		PkgName:  GlobalPkgName,
@@ -141,7 +141,7 @@ func buildDepTree(packages []plugin.Source, deps map[string][]string) []*TreeNod
 		localSet[pkg.Name] = true
 	}
 
-	pkgMap := make(map[string]plugin.Source)
+	pkgMap := make(map[string]buildscript.Source)
 	for _, pkg := range packages {
 		pkgMap[pkg.Name] = pkg
 	}
@@ -178,7 +178,7 @@ func buildDepTree(packages []plugin.Source, deps map[string][]string) []*TreeNod
 	return result
 }
 
-func buildDepSubtree(name string, localSet map[string]bool, pkgMap map[string]plugin.Source, deps map[string][]string, depth int) *TreeNode {
+func buildDepSubtree(name string, localSet map[string]bool, pkgMap map[string]buildscript.Source, deps map[string][]string, depth int) *TreeNode {
 	node := &TreeNode{
 		Name:    name,
 		PkgName: name,

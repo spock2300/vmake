@@ -20,8 +20,8 @@
 │               ├── build/         # 中间产物（.o 文件等）
 │               └── install/       # 最终产物（库、头文件）
 └── cache/
-    ├── plugins/                   # 编译后的 Go 插件缓存
-    │   └── <name>/plugin.so
+    ├── buildscripts/                # 编译后的构建脚本缓存
+    │   └── <name>/build.so
     └── <repo>/<pkg>/repo/         # 包源码的 git clone
 ```
 
@@ -89,15 +89,15 @@ CLI：`vmake pkg list|clean`
 
 ## cache/
 
-### plugins/
+### buildscripts/
 
-编译后的 Go 插件缓存。每个包的 `build.go` 被编译为 `.so` 文件，按时间戳判断是否需要重新编译。
+编译后的构建脚本缓存。每个包的 `build.go` 被编译为 `.so` 文件，按时间戳判断是否需要重新编译。
 
-路径规则：`cache/plugins/<name>/plugin.so`
+路径规则：`cache/buildscripts/<name>/build.so`
 
 `name` 中的 `/` 替换为 `_`（如 `official/curl` → `official_curl`）。
 
-源码：`pkg/plugin/compiler.go`
+源码：`pkg/buildscript/compiler.go`
 
 ### 源码缓存
 
@@ -113,11 +113,11 @@ CLI：`vmake pkg list|clean`
 
 ```
 project/
-├── build.go                       # 项目插件定义
+├── build.go                       # 项目构建脚本
 ├── .vmake/
 │   └── config.json                # 项目配置
 └── build/                         # 构建输出
-    ├── plugin.so                  # 编译后的插件
+    ├── build.so                  # 编译后的构建脚本
     ├── compile_commands.json      # LSP 编译数据库
     └── <tc>-<mode>/               # 如 gcc-debug
         ├── cache.json             # 增量构建缓存

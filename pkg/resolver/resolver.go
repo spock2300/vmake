@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
-	"gitee.com/spock2300/vmake/pkg/plugin"
+	"gitee.com/spock2300/vmake/pkg/buildscript"
 	"gitee.com/spock2300/vmake/pkg/repo"
 )
 
@@ -71,7 +71,7 @@ func (r *Resolver) UpdateOrder() {
 	r.graph.Order = topologicalSort(r.graph.Packages)
 }
 
-func (r *Resolver) ResolveAll(localSources []plugin.Source) error {
+func (r *Resolver) ResolveAll(localSources []buildscript.Source) error {
 	for _, src := range localSources {
 		s := &Source{
 			ID:      src.Name,
@@ -126,9 +126,9 @@ func (r *Resolver) resolveDeferredNode(id string, node *PackageNode) (*PackageNo
 		return nil, fmt.Errorf("deferred node %s has no source", id)
 	}
 
-	pluginPath := r.pluginPath(src)
-	if !r.force && src.BuildGo != "" && r.hasCachedPlugin(pluginPath, src.BuildGo) {
-		return r.resolveFromCache(id, pluginPath, src, []string{id})
+	scriptPath := r.scriptPath(src)
+	if !r.force && src.BuildGo != "" && r.hasCachedScript(scriptPath, src.BuildGo) {
+		return r.resolveFromCache(id, scriptPath, src, []string{id})
 	}
 
 	return r.resolveOne(id, src, []string{id})
@@ -177,9 +177,9 @@ func (r *Resolver) resolveRecursive(id string, path []string) (*PackageNode, err
 		return nil, err
 	}
 
-	pluginPath := r.pluginPath(src)
-	if !r.force && src.BuildGo != "" && r.hasCachedPlugin(pluginPath, src.BuildGo) {
-		return r.resolveFromCache(id, pluginPath, src, path)
+	scriptPath := r.scriptPath(src)
+	if !r.force && src.BuildGo != "" && r.hasCachedScript(scriptPath, src.BuildGo) {
+		return r.resolveFromCache(id, scriptPath, src, path)
 	}
 
 	if src.Origin == api.SourceRemote {
@@ -197,9 +197,9 @@ func (r *Resolver) resolveRecursive(id string, path []string) (*PackageNode, err
 }
 
 func (r *Resolver) resolveOne(id string, src *Source, path []string) (*PackageNode, error) {
-	pluginPath := r.pluginPath(src)
+	scriptPath := r.scriptPath(src)
 
-	cr := plugin.Compile(plugin.Source{
+	cr := buildscript.Compile(buildscript.Source{
 		Name:      src.ID,
 		Path:      src.BuildGo,
 		Dir:       src.Dir,
@@ -211,11 +211,11 @@ func (r *Resolver) resolveOne(id string, src *Source, path []string) (*PackageNo
 		return nil, fmt.Errorf("compile %s: %w", id, cr.Error)
 	}
 
-	return r.resolveFromCache(id, pluginPath, src, path)
+	return r.resolveFromCache(id, scriptPath, src, path)
 }
 
-func (r *Resolver) resolveFromCache(id string, pluginPath string, src *Source, path []string) (*PackageNode, error) {
-	loaded, err := plugin.Load(pluginPath, plugin.Source{
+func (r *Resolver) resolveFromCache(id string, scriptPath string, src *Source, path []string) (*PackageNode, error) {
+	loaded, err := buildscript.Load(scriptPath, buildscript.Source{
 		Name:      src.ID,
 		Path:      src.BuildGo,
 		Dir:       src.Dir,
@@ -262,7 +262,7 @@ func (r *Resolver) findSource(id string) (*Source, error) {
 		ID:        id,
 		BuildGo:   buildGo,
 		Dir:       filepath.Dir(buildGo),
-		OutputDir: r.pluginOutputDir(id),
+		OutputDir: r.buildscriptOutputDir(id),
 		Origin:    api.SourceRemote,
 		Force:     r.force,
 	}
@@ -270,20 +270,20 @@ func (r *Resolver) findSource(id string) (*Source, error) {
 	return src, nil
 }
 
-func (r *Resolver) pluginPath(src *Source) string {
+func (r *Resolver) scriptPath(src *Source) string {
 	outputDir := src.OutputDir
 	if outputDir == "" {
 		outputDir = filepath.Join(src.Dir, "build")
 	}
-	return filepath.Join(outputDir, "plugin.so")
+	return filepath.Join(outputDir, "build.so")
 }
 
-func (r *Resolver) pluginOutputDir(name string) string {
-	return fmt.Sprintf("%s/plugins/%s", r.cacheDir, strings.ReplaceAll(name, "/", "_"))
+func (r *Resolver) buildscriptOutputDir(name string) string {
+	return fmt.Sprintf("%s/buildscripts/%s", r.cacheDir, strings.ReplaceAll(name, "/", "_"))
 }
 
-func (r *Resolver) hasCachedPlugin(pluginPath, buildGoPath string) bool {
-	info, err := os.Stat(pluginPath)
+func (r *Resolver) hasCachedScript(scriptPath, buildGoPath string) bool {
+	info, err := os.Stat(scriptPath)
 	if err != nil || info.Size() == 0 {
 		return false
 	}

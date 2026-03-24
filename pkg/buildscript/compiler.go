@@ -1,4 +1,4 @@
-package plugin
+package buildscript
 
 import (
 	"fmt"
@@ -12,7 +12,7 @@ import (
 
 type CompileResult struct {
 	Source     Source
-	PluginPath string
+	ScriptPath string
 	Success    bool
 	Error      error
 }
@@ -31,17 +31,17 @@ func Compile(src Source) CompileResult {
 		}
 	}
 
-	pluginPath := filepath.Join(outputDir, "plugin.so")
+	scriptPath := filepath.Join(outputDir, "build.so")
 
 	if src.Force {
-		os.Remove(pluginPath)
+		os.Remove(scriptPath)
 	}
 
 	vmakeDir := os.Getenv("VMAKE_DIR")
 	if vmakeDir != "" {
-		return compileWithGoModReplace(src, pluginPath, src.Dir, vmakeDir)
+		return compileWithGoModReplace(src, scriptPath, src.Dir, vmakeDir)
 	}
-	return compileWithGoModVersion(src, pluginPath, src.Dir)
+	return compileWithGoModVersion(src, scriptPath, src.Dir)
 }
 
 func writeGoModIfMissing(workDir, content string) bool {
@@ -53,7 +53,7 @@ func writeGoModIfMissing(workDir, content string) bool {
 	return false
 }
 
-func buildPlugin(src Source, pluginPath, workDir string, needCleanup bool) CompileResult {
+func buildScript(src Source, scriptPath, workDir string, needCleanup bool) CompileResult {
 	tidyCmd := exec.Command("go", "mod", "tidy")
 	tidyCmd.Dir = workDir
 	tidyCmd.Env = append(os.Environ(), "GO111MODULE=on")
@@ -68,7 +68,7 @@ func buildPlugin(src Source, pluginPath, workDir string, needCleanup bool) Compi
 		}
 	}
 
-	cmd := exec.Command("go", "build", "-buildmode=plugin", "-o", pluginPath, "build.go")
+	cmd := exec.Command("go", "build", "-buildmode=plugin", "-o", scriptPath, "build.go")
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(), "GO111MODULE=on")
 
@@ -82,7 +82,7 @@ func buildPlugin(src Source, pluginPath, workDir string, needCleanup bool) Compi
 	if err != nil {
 		return CompileResult{
 			Source:     src,
-			PluginPath: pluginPath,
+			ScriptPath: scriptPath,
 			Success:    false,
 			Error:      fmt.Errorf("compilation failed: %s", string(output)),
 		}
@@ -90,13 +90,13 @@ func buildPlugin(src Source, pluginPath, workDir string, needCleanup bool) Compi
 
 	return CompileResult{
 		Source:     src,
-		PluginPath: pluginPath,
+		ScriptPath: scriptPath,
 		Success:    true,
 	}
 }
 
-func compileWithGoModReplace(src Source, pluginPath, workDir, vmakeDir string) CompileResult {
-	moduleName := "vmake_plugin_" + sanitizeModuleName(src.Name)
+func compileWithGoModReplace(src Source, scriptPath, workDir, vmakeDir string) CompileResult {
+	moduleName := "vmake_buildscript_" + sanitizeModuleName(src.Name)
 	goModContent := fmt.Sprintf(`module %s
 
 go 1.22
@@ -107,16 +107,16 @@ replace gitee.com/spock2300/vmake => %s
 `, moduleName, vmakeDir)
 
 	needCleanup := writeGoModIfMissing(workDir, goModContent)
-	return buildPlugin(src, pluginPath, workDir, needCleanup)
+	return buildScript(src, scriptPath, workDir, needCleanup)
 }
 
-func compileWithGoModVersion(src Source, pluginPath, workDir string) CompileResult {
+func compileWithGoModVersion(src Source, scriptPath, workDir string) CompileResult {
 	vmakeVersion := version.Version
 	if vmakeVersion == "dev" {
 		vmakeVersion = "latest"
 	}
 
-	moduleName := "vmake_plugin_" + sanitizeModuleName(src.Name)
+	moduleName := "vmake_buildscript_" + sanitizeModuleName(src.Name)
 	goModContent := fmt.Sprintf(`module %s
 
 go 1.22
@@ -125,7 +125,7 @@ require gitee.com/spock2300/vmake %s
 `, moduleName, vmakeVersion)
 
 	needCleanup := writeGoModIfMissing(workDir, goModContent)
-	return buildPlugin(src, pluginPath, workDir, needCleanup)
+	return buildScript(src, scriptPath, workDir, needCleanup)
 }
 
 func CompileAll(sources []Source) []CompileResult {

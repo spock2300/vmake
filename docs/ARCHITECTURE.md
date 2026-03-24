@@ -6,7 +6,7 @@ vmake build 执行三个阶段：
 
 ```
 Phase 1: OnRequire
-    扫描 build.go → 编译插件 → 加载插件 → 收集依赖
+    扫描 build.go → 编译构建脚本 → 加载构建脚本 → 收集依赖
     |
 Phase 2: OnConfig
     执行 OnConfig 回调 → 收集 Option 定义 → 加载已保存配置
@@ -15,24 +15,24 @@ Phase 3: OnBuild
     执行 OnBuild 回调 → 生成 Target → 构建依赖图 → 编译/链接
 ```
 
-### Phase 1: 插件扫描与依赖解析
+### Phase 1: 构建脚本扫描与依赖解析
 
 ```
 Scan(root)          Compile             Load              Resolve
-递归扫描 build.go   编译为 .so          加载 Go 插件      解析依赖树
+递归扫描 build.go   编译为 .so          加载构建脚本      解析依赖树
     │                   │                  │                 │
     ▼                   ▼                  ▼                 ▼
-[]Source           plugin.so         LoadedPlugin      DependencyGraph
+[]Source           build.so         LoadedScript      DependencyGraph
                                      ├─ pkg *Package   ├─ Order []
                                      └─ Source          └─ Packages map
 ```
 
-1. `plugin.Scan(root)` 递归扫描 `build.go`，返回 `[]Source`
-2. `plugin.Compiler` 编译为 `.so`，缓存在 `cache/plugins/`
-3. `plugin.Loader` 加载 `.so`，调用 `Main(*api.Package)` 获取 `*api.Package`
+1. `buildscript.Scan(root)` 递归扫描 `build.go`，返回 `[]Source`
+2. `buildscript.Compiler` 编译为 `.so`，缓存在 `cache/buildscripts/`
+3. `buildscript.Loader` 加载 `.so`，调用 `Main(*api.Package)` 获取 `*api.Package`
 4. `resolver.Resolver` 递归解析依赖，生成 `Graph`（拓扑排序）
 
-源码：`pkg/plugin/scanner.go`, `compiler.go`, `loader.go`, `pkg/resolver/resolver.go`
+源码：`pkg/buildscript/scanner.go`, `compiler.go`, `loader.go`, `pkg/resolver/resolver.go`
 
 ### Phase 2: 配置收集
 
@@ -131,7 +131,7 @@ ResolvedPackage
 ├── Constraint string
 ├── Options    map[string]any
 ├── Definition *api.Package
-├── Source     *plugin.Source
+├── Source     *buildscript.Source
 ├── Deps       []string
 └── Deferred   bool
 ```
@@ -167,8 +167,8 @@ EntryConfig
 
 | 组件 | 文件路径 | 职责 |
 |------|----------|------|
-| API 定义 | `pkg/api/` | 公共 API，插件可导入 |
-| 插件系统 | `pkg/plugin/` | 扫描、编译、加载插件 |
+| API 定义 | `pkg/api/` | 公共 API，构建脚本可导入 |
+| 构建脚本系统 | `pkg/buildscript/` | 扫描、编译、加载构建脚本 |
 | 依赖解析 | `pkg/resolver/` | 依赖图解析、拓扑排序 |
 | 构建系统 | `pkg/build/` | 编译、链接、调度 |
 | 包管理 | `pkg/repo/` | 仓库管理、源码下载、安装 |

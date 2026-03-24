@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
+	"gitee.com/spock2300/vmake/pkg/buildscript"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
-	"gitee.com/spock2300/vmake/pkg/plugin"
 
 	"github.com/spf13/cobra"
 )
@@ -30,7 +30,7 @@ func init() {
 func runClean(cmd *cobra.Command, args []string) {
 	ctx := mustInitContext()
 
-	packages, err := plugin.Scan(ctx.WorkDir)
+	packages, err := buildscript.Scan(ctx.WorkDir)
 	if err != nil {
 		vlog.Error("Error: %v", err)
 		os.Exit(1)

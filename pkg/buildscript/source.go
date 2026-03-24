@@ -1,4 +1,4 @@
-package plugin
+package buildscript
 
 import "gitee.com/spock2300/vmake/pkg/api"
 

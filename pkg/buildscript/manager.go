@@ -1,4 +1,4 @@
-package plugin
+package buildscript
 
 import (
 	"path/filepath"
@@ -6,25 +6,25 @@ import (
 	"sync"
 )
 
-type PluginManager struct {
+type BuildscriptManager struct {
 	mu      sync.RWMutex
-	plugins map[string]*plugin.Plugin
+	scripts map[string]*plugin.Plugin
 	errors  map[string]error
 }
 
-var GlobalManager = &PluginManager{
-	plugins: make(map[string]*plugin.Plugin),
+var GlobalScript = &BuildscriptManager{
+	scripts: make(map[string]*plugin.Plugin),
 	errors:  make(map[string]error),
 }
 
-func (m *PluginManager) Open(path string) (*plugin.Plugin, error) {
+func (m *BuildscriptManager) Open(path string) (*plugin.Plugin, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
 
 	m.mu.RLock()
-	if p, ok := m.plugins[absPath]; ok {
+	if p, ok := m.scripts[absPath]; ok {
 		m.mu.RUnlock()
 		return p, nil
 	}
@@ -37,7 +37,7 @@ func (m *PluginManager) Open(path string) (*plugin.Plugin, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if p, ok := m.plugins[absPath]; ok {
+	if p, ok := m.scripts[absPath]; ok {
 		return p, nil
 	}
 	if cachedErr, ok := m.errors[absPath]; ok {
@@ -49,6 +49,6 @@ func (m *PluginManager) Open(path string) (*plugin.Plugin, error) {
 		m.errors[absPath] = loadErr
 		return nil, loadErr
 	}
-	m.plugins[absPath] = loaded
+	m.scripts[absPath] = loaded
 	return loaded, nil
 }

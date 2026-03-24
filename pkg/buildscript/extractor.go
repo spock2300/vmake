@@ -1,4 +1,4 @@
-package plugin
+package buildscript
 
 import (
 	"plugin"
@@ -6,8 +6,8 @@ import (
 	"gitee.com/spock2300/vmake/pkg/api"
 )
 
-func ExtractPackage(loaded *LoadedPlugin) *api.Package {
-	if loaded == nil || loaded.Plugin == nil {
+func ExtractPackage(loaded *LoadedScript) *api.Package {
+	if loaded == nil || loaded.Script == nil {
 		return nil
 	}
 	if loaded.pkg != nil {
@@ -15,7 +15,7 @@ func ExtractPackage(loaded *LoadedPlugin) *api.Package {
 	}
 
 	pkg := api.NewPackage()
-	if mainFunc := lookupMain(loaded.Plugin); mainFunc != nil {
+	if mainFunc := lookupMain(loaded.Script); mainFunc != nil {
 		mainFunc(pkg)
 	}
 

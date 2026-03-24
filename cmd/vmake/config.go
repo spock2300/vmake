@@ -3,9 +3,9 @@ package main
 import (
 	"os"
 
+	"gitee.com/spock2300/vmake/pkg/buildscript"
 	"gitee.com/spock2300/vmake/pkg/config"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
-	"gitee.com/spock2300/vmake/pkg/plugin"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 	"gitee.com/spock2300/vmake/pkg/tui"
 
@@ -63,12 +63,12 @@ func runConfig(cmd *cobra.Command, args []string) {
 		currentTC = toolchain.GetManager().GetDefaultToolchain()
 	}
 
-	var sources []plugin.Source
+	var sources []buildscript.Source
 	localPkgs := make(map[string]bool)
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if node.IsLocal() && node.Source != nil {
-			sources = append(sources, plugin.Source{
+			sources = append(sources, buildscript.Source{
 				Name:   node.Source.ID,
 				Path:   node.Source.BuildGo,
 				Dir:    node.Source.Dir,

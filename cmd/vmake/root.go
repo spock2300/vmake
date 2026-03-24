@@ -8,9 +8,9 @@ import (
 	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
+	"gitee.com/spock2300/vmake/pkg/buildscript"
 	"gitee.com/spock2300/vmake/pkg/config"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
-	"gitee.com/spock2300/vmake/pkg/plugin"
 	"gitee.com/spock2300/vmake/pkg/repo"
 	"gitee.com/spock2300/vmake/pkg/resolver"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
@@ -47,7 +47,7 @@ var RootCmd = &cobra.Command{
 	Use:   "vmake",
 	Short: "VMake - A Go-based C/C++ build system",
 	Long: `VMake is a minimal build system for C/C++ projects.
-It uses Go plugins for configuration and provides a TUI for option management.`,
+It uses Go buildscripts for configuration and provides a TUI for option management.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		runBuild(cmd, args)
 	},
@@ -143,7 +143,7 @@ func runPipeline(opts pipelineOptions) {
 func runRequirePhase(ctx *RuntimeContext, force bool) error {
 	vlog.Info("Scanning %s...", ctx.WorkDir)
 
-	packages, err := plugin.Scan(ctx.WorkDir)
+	packages, err := buildscript.Scan(ctx.WorkDir)
 	if err != nil {
 		return err
 	}
