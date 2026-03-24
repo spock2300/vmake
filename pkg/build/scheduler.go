@@ -578,12 +578,25 @@ func (s *Scheduler) installTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 	for _, inc := range t.PublicIncludes() {
 		srcPath := filepath.Join(pkgInfo.Dir, inc)
 		if info, err := os.Stat(srcPath); err == nil {
+			rule := t.IncludeRule(inc)
 			if info.IsDir() {
-				vlog.Info("  INSTALL DIR %s -> %s", inc, includeDir)
-				if err := CopyDir(srcPath, includeDir); err != nil {
-					return fmt.Errorf("install headers failed: %w", err)
+				if len(rule) > 0 {
+					vlog.Info("  INSTALL DIR %s (match: %s) -> %s", inc, rule, includeDir)
+					if err := CopyDirMatching(srcPath, includeDir, func(name string) bool {
+						return MatchPatterns(rule, name)
+					}); err != nil {
+						return fmt.Errorf("install headers failed: %w", err)
+					}
+				} else {
+					vlog.Info("  INSTALL DIR %s -> %s", inc, includeDir)
+					if err := CopyDir(srcPath, includeDir); err != nil {
+						return fmt.Errorf("install headers failed: %w", err)
+					}
 				}
 			} else {
+				if len(rule) > 0 && !MatchPatterns(rule, filepath.Base(srcPath)) {
+					break
+				}
 				dest := filepath.Join(includeDir, filepath.Base(srcPath))
 				vlog.Info("  INSTALL %s -> %s", filepath.Base(srcPath), dest)
 				if err := CopyFile(srcPath, dest); err != nil {

@@ -1,5 +1,7 @@
 package api
 
+import "strings"
+
 type Target struct {
 	name           string
 	kind           TargetKind
@@ -7,6 +9,7 @@ type Target struct {
 	files          []string
 	includes       []string
 	publicIncludes []string
+	includeRules   map[string][]string
 	defines        []string
 	languages      []string
 	links          []string
@@ -40,9 +43,42 @@ func (t *Target) AddIncludes(dirs ...any) *Target {
 	return t
 }
 
-func (t *Target) AddPublicIncludes(dirs ...any) *Target {
-	t.publicIncludes = append(t.publicIncludes, flattenAny(dirs)...)
+func (t *Target) AddPublicIncludes(args ...any) *Target {
+	strs := flattenAny(args)
+	if len(strs) == 0 {
+		return t
+	}
+
+	last := strs[len(strs)-1]
+	if isRule(last) {
+		pattern := last[1:]
+		dirs := strs[:len(strs)-1]
+		if len(dirs) == 0 {
+			dirs = []string{"."}
+		}
+		t.publicIncludes = append(t.publicIncludes, dirs...)
+		if t.includeRules == nil {
+			t.includeRules = make(map[string][]string)
+		}
+		for _, d := range dirs {
+			t.includeRules[d] = append(t.includeRules[d], pattern)
+		}
+	} else {
+		t.publicIncludes = append(t.publicIncludes, strs...)
+	}
+
 	return t
+}
+
+func (t *Target) IncludeRule(dir string) []string {
+	if t.includeRules == nil {
+		return nil
+	}
+	return t.includeRules[dir]
+}
+
+func isRule(s string) bool {
+	return strings.HasPrefix(s, "@")
 }
 
 func (t *Target) AddDefines(defines ...any) *Target {
