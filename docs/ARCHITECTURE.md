@@ -108,9 +108,17 @@ vmake (RootCmd)
 │   ├── search     # 搜索包
 │   ├── clean      # 清理包缓存
 │   └── update     # 更新包源码
+├── ext            # 扩展仓库管理
+│   ├── add        # 添加扩展仓库
+│   ├── remove     # 删除扩展仓库
+│   ├── list       # 列出扩展和插件
+│   └── update     # 更新扩展仓库
 ├── git
 │   └── tag        # Git 标签操作
-└── version        # 版本信息
+├── doc            # 文档查看（AI agents）
+├── version        # 版本信息
+└── <plugin>       # 扩展插件提供的命令
+    └── ...        # 插件自定义子命令
 ```
 
 全局选项：`-v` (verbose), `-V` (very verbose), `-q` (quiet)
@@ -180,3 +188,94 @@ EntryConfig
 | JSON I/O | `internal/jsonio/` | JSON 序列化工具 |
 | 命令执行 | `internal/exec/` | OS 命令执行 |
 | 文件匹配 | `internal/glob/` | Glob 模式匹配 |
+
+## 扩展系统
+
+VMake 支持通过 Go 插件扩展 CLI 命令。扩展仓库是包含一个或多个插件的 Git 仓库。
+
+### 扩展仓库结构
+
+```
+~/.vmake/extensions/
+└── <repo-name>/                  # 扩展仓库名
+    ├── <plugin-name>/            # 插件目录（成为 vmake 子命令）
+    │   ├── plugin.json           # 插件元信息
+    │   └── src/main.go           # 插件入口
+    └── assets/
+        └── toolchains/           # 工具链资源（可选）
+            ├── manifest.json     # 工具链清单
+            └── *.tar.gz          # 工具链压缩包（Git LFS）
+```
+
+### 插件加载流程
+
+```
+vmake 启动
+    │
+    ▼
+plugin.Manager.DiscoverPlugins()  ──▶ 扫描 extensions/*/
+    │
+    ▼
+plugin.Compiler.Compile()         ──▶ 编译 main.go → .so
+    │
+    ▼
+plugin.Loader.Load()              ──▶ 加载 .so，调用 Main(ctx)
+    │
+    ▼
+ctx.AddSubCommand()               ──▶ 注册 cobra.Command
+    │
+    ▼
+RootCmd.AddCommand(pluginCmd)     ──▶ 添加到 CLI 命令树
+```
+
+### 插件 API
+
+```go
+package main
+
+import (
+    "gitee.com/spock2300/vmake/pkg/plugin"
+    "github.com/spf13/cobra"
+)
+
+func Main(ctx *plugin.Context) {
+    ctx.AddSubCommand(&cobra.Command{
+        Use:   "mycommand",
+        Short: "Command description",
+        Run:   runMyCommand,
+    })
+}
+```
+
+**Context 方法**（`pkg/plugin/api.go`）：
+- `AddSubCommand(cmd)`: 注册子命令
+- `RegisterToolchain(name, tc)`: 注册工具链
+- `GetToolchains()`: 获取已注册工具链
+- `SetOnMissing(fn)`: 设置工具链缺失时的回调（用于自动下载）
+- `DownloadFile(url, dest)`: 下载文件
+- `ExtractArchive(archive, dest)`: 解压归档
+
+### 工具链自动下载
+
+扩展可提供工具链资源，通过 `manifest.json` 声明：
+
+```json
+{
+  "toolchains": [
+    {
+      "name": "aarch64-linux-gnu",
+      "version": "13.2.0",
+      "host": "x86_64-linux-gnu",
+      "prefix": "aarch64-linux-gnu",
+      "file": "aarch64-linux-gnu-13.2.0.tar.gz",
+      "cflags": ["-O2"],
+      "cxxflags": ["-O2"],
+      "ldflags": []
+    }
+  ]
+}
+```
+
+当用户选择未安装的工具链时，`SetOnMissing` 回调被触发，自动从扩展仓库下载并安装。
+
+源码：`pkg/plugin/`, `cmd/vmake/ext_cmd.go`

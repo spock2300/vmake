@@ -10,9 +10,11 @@ VMake 是一个现代化的 C/C++ 项目构建工具，采用 Go 语言开发。
 - **灵活的选项系统**：支持布尔、字符串、整数和枚举类型的配置选项
 - **条件构建支持**：通过 `If`、`When` 等方法实现条件编译
 - **多模块支持**：原生支持多模块项目的构建管理
+- **第三方包管理**：通过 Git 仓库管理第三方依赖，自动下载和构建
+- **扩展插件系统**：支持 CLI 命令扩展和交叉编译工具链管理
 - **增量编译**：基于依赖分析的智能增量编译，大幅提升构建效率
 - **TUI 配置界面**：提供交互式终端用户界面，方便配置项目选项
-- **工具链管理**：支持多种编译工具链的灵活切换
+- **工具链管理**：支持多种编译工具链的灵活切换，支持交叉编译
 - **缓存管理**：自动管理构建缓存，支持增量编译判断
 
 ## 快速开始
@@ -79,15 +81,17 @@ vmake build
 vmake/
 ├── cmd/vmake/           # CLI 命令入口
 ├── pkg/
-│   ├── api/             # 核心构建 API
+│   ├── api/             # 核心构建 API（构建脚本可导入）
+│   ├── plugin/          # 扩展插件系统（插件可导入）
 │   ├── build/           # 编译、链接、缓存管理
+│   ├── buildscript/     # 构建脚本扫描、编译、加载
 │   ├── config/          # 配置存储
-│   ├── plugin/          # 插件加载器
 │   ├── resolver/        # 依赖解析
 │   ├── repo/            # 包仓库管理
 │   ├── toolchain/       # 工具链管理
 │   ├── log/             # 日志输出
-│   └── tui/             # 终端用户界面
+│   ├── tui/             # 终端用户界面
+│   └── version/         # 版本信息
 ├── internal/
 │   ├── exec/            # 命令执行
 │   ├── glob/            # 文件匹配
@@ -247,6 +251,48 @@ vmake toolchain show
 vmake toolchain init <name>
 ```
 
+### 扩展管理
+
+VMake 支持通过扩展插件添加自定义 CLI 命令和交叉编译工具链。
+
+```bash
+# 添加扩展仓库
+vmake ext add vmake-extensions https://gitee.com/spock2300/vmake-extensions.git
+
+# 列出已安装的扩展和插件
+vmake ext list
+
+# 更新扩展仓库
+vmake ext update [name]
+
+# 删除扩展仓库
+vmake ext remove <name>
+```
+
+安装扩展后，插件提供的命令直接可用：
+
+```bash
+# 使用 tc 插件管理交叉编译工具链
+vmake tc list
+vmake tc download aarch64-linux-gnu
+```
+
+### 第三方包管理
+
+```bash
+# 列出已安装的包
+vmake pkg list
+
+# 搜索包
+vmake pkg search <keyword>
+
+# 清理包缓存
+vmake pkg clean
+
+# 更新包源码
+vmake pkg update
+```
+
 ### 清理命令
 
 ```bash
@@ -342,13 +388,73 @@ ctx.Target("app").
     AddLdFlags("-Wl,--gc-sections")
 ```
 
+### 使用第三方包
+
+在 `build.go` 中声明依赖：
+
+```go
+func Main(p *api.Package) {
+    p.OnRequire(func(ctx *api.RequireContext) {
+        ctx.AddRequires("official/zlib >=1.2")
+    })
+
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("myapp").
+            SetKind(api.TargetBinary).
+            AddFiles("src/*.c").
+            AddPackages("official/zlib")  // 链接第三方包
+    })
+}
+```
+
+### 开发扩展插件
+
+创建扩展插件目录结构：
+
+```
+my-plugin/
+├── plugin.json
+└── src/main.go
+```
+
+**plugin.json**:
+```json
+{
+  "name": "my-plugin",
+  "version": "1.0.0",
+  "description": "My custom plugin",
+  "entry": "src/main.go",
+  "enabled": true
+}
+```
+
+**src/main.go**:
+```go
+package main
+
+import (
+    "gitee.com/spock2300/vmake/pkg/plugin"
+    "github.com/spf13/cobra"
+)
+
+func Main(ctx *plugin.Context) {
+    ctx.AddSubCommand(&cobra.Command{
+        Use:   "hello",
+        Short: "Say hello",
+        Run: func(cmd *cobra.Command, args []string) {
+            println("Hello from plugin!")
+        },
+    })
+}
+```
+
 ## 开发文档
 
 详细的设计文档请参考 [docs](docs/) 目录：
 
-- [插件 API](docs/PLUGIN_API.md)
-- [架构设计](docs/ARCHITECTURE.md)
-- [目录结构](docs/VMAKE_HOME.md)
+- [插件 API](docs/PLUGIN_API.md) - 构建脚本和扩展插件 API
+- [架构设计](docs/ARCHITECTURE.md) - 系统架构和执行流程
+- [目录结构](docs/VMAKE_HOME.md) - ~/.vmake 目录结构
 
 ## 测试用例
 
@@ -362,7 +468,10 @@ ctx.Target("app").
 | `test_data/04_multi_module` | 多模块项目 |
 | `test_data/05_conditional` | 条件编译项目 |
 | `test_data/06_complete_api` | 完整 API 测试 |
-| `test_data/07_parallel_test` | 并行编译测试 |
+| `test_data/08_with_package` | 使用第三方包 |
+| `test_data/09_with_curl` | 使用 libcurl |
+| `test_data/10_local_repo` | 本地包仓库 |
+| `test_data/11_with_tinyexpr` | 使用 tinyexpr 库 |
 
 运行测试：
 

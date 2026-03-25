@@ -7,6 +7,16 @@
 ```
 ~/.vmake/
 ├── config.json                    # 全局工具链配置
+├── extensions/                    # 扩展仓库（git clone）
+│   └── <repo-name>/
+│       ├── <plugin-name>/         # 插件目录
+│       │   ├── plugin.json        # 插件元信息
+│       │   └── src/main.go        # 插件源码
+│       └── assets/toolchains/     # 工具链资源（可选）
+│           ├── manifest.json      # 工具链清单
+│           └── *.tar.gz           # 工具链压缩包（Git LFS）
+├── toolchains/                    # 已安装的交叉编译工具链
+│   └── <name>-<version>/          # 工具链安装目录
 ├── repos/                         # 包仓库索引（git clone）
 │   └── <repo>/
 │       └── packages/
@@ -20,8 +30,10 @@
 │               ├── build/         # 中间产物（.o 文件等）
 │               └── install/       # 最终产物（库、头文件）
 └── cache/
-    ├── buildscripts/                # 编译后的构建脚本缓存
+    ├── buildscripts/              # 编译后的构建脚本缓存
     │   └── <name>/build.so
+    ├── plugins/                   # 编译后的扩展插件缓存
+    │   └── <repo>/<plugin>.so
     └── <repo>/<pkg>/repo/         # 包源码的 git clone
 ```
 
@@ -65,6 +77,53 @@ CLI：`vmake toolchain init|list|show`
 
 源码：`pkg/repo/manager.go`
 CLI：`vmake repo add|remove|list|update`
+
+## extensions/
+
+扩展仓库，包含 CLI 插件和可选的工具链资源。
+
+```
+extensions/<repo-name>/
+├── <plugin-name>/
+│   ├── plugin.json              # 插件元信息
+│   └── src/main.go              # 插件入口
+└── assets/
+    └── toolchains/
+        ├── manifest.json        # 工具链清单
+        └── *.tar.gz             # 工具链压缩包（Git LFS）
+```
+
+**plugin.json 结构**：
+```json
+{
+  "name": "tc",
+  "version": "1.0.0",
+  "description": "Toolchain management",
+  "entry": "src/main.go",
+  "enabled": true
+}
+```
+
+源码：`pkg/plugin/manager.go`
+CLI：`vmake ext add|remove|list|update`
+
+## toolchains/
+
+已安装的交叉编译工具链，由扩展自动下载或手动安装。
+
+```
+toolchains/<name>-<version>/
+├── bin/
+│   ├── <prefix>-gcc
+│   ├── <prefix>-g++
+│   └── ...
+├── lib/
+└── <sysroot>/
+```
+
+工具链由 `manifest.json` 声明，首次使用时自动下载。
+
+源码：`cmd/vmake/ext_cmd.go` (`loadExtensionToolchains`)
 
 ## packages/
 

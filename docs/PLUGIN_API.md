@@ -560,3 +560,145 @@ func Main(p *api.Package) {
     })
 }
 ```
+
+## 扩展插件 API
+
+扩展插件用于扩展 vmake CLI 命令，位于 `~/.vmake/extensions/<repo>/<plugin>/`。
+
+### 扩展入口函数
+
+```go
+package main
+
+import (
+    "gitee.com/spock2300/vmake/pkg/plugin"
+    "github.com/spf13/cobra"
+)
+
+func Main(ctx *plugin.Context) {
+    ctx.AddSubCommand(&cobra.Command{
+        Use:   "mycommand",
+        Short: "Command description",
+        Run:   runMyCommand,
+    })
+}
+```
+
+### plugin.Context
+
+```go
+type Context struct {
+    VMakeDir    string      // ~/.vmake 路径
+    PluginDir   string      // 当前插件目录
+    CommandName string      // 插件命令名（目录名）
+
+    // 命令注册
+    AddSubCommand func(cmd *cobra.Command)
+
+    // 工具链管理
+    RegisterToolchain func(name string, tc *toolchain.Toolchain)
+    GetToolchains     func() map[string]*toolchain.Toolchain
+    SetOnMissing      func(onMissing func(name string) (*toolchain.Toolchain, error))
+
+    // 工具方法
+    DownloadFile   func(url, dest string) error
+    ExtractArchive func(archive, dest string) error
+    RunGitLFS      func(repoDir string, args ...string) error
+}
+```
+
+### plugin.Info
+
+插件元信息，定义在 `plugin.json`：
+
+```go
+type Info struct {
+    Name        string `json:"name"`        // 插件名
+    Version     string `json:"version"`     // 版本号
+    Description string `json:"description"` // 描述
+    Entry       string `json:"entry"`       // 入口文件（如 src/main.go）
+    Enabled     bool   `json:"enabled"`     // 是否启用
+}
+```
+
+### 扩展示例：工具链管理插件
+
+```go
+package main
+
+import (
+    "fmt"
+    "gitee.com/spock2300/vmake/pkg/plugin"
+    "gitee.com/spock2300/vmake/pkg/toolchain"
+    "github.com/spf13/cobra"
+)
+
+func Main(ctx *plugin.Context) {
+    ctx.AddSubCommand(&cobra.Command{
+        Use:   "list",
+        Short: "List available toolchains",
+        Run: func(cmd *cobra.Command, args []string) {
+            for name, tc := range ctx.GetToolchains() {
+                fmt.Printf("%s: %s\n", name, tc.DisplayName)
+            }
+        },
+    })
+
+    ctx.AddSubCommand(&cobra.Command{
+        Use:   "download <name>",
+        Short: "Download a toolchain",
+        Args:  cobra.ExactArgs(1),
+        Run: func(cmd *cobra.Command, args []string) {
+            name := args[0]
+            // 工具链会在首次使用时自动下载
+            fmt.Printf("Toolchain %s will be downloaded on first use\n", name)
+        },
+    })
+
+    // 注册工具链缺失时的自动下载回调
+    ctx.SetOnMissing(func(name string) (*toolchain.Toolchain, error) {
+        fmt.Printf("Auto-downloading toolchain: %s\n", name)
+        // 返回 nil 会触发默认的自动下载流程
+        return nil, nil
+    })
+}
+```
+
+### 工具链清单 (manifest.json)
+
+扩展可提供工具链资源，通过 `assets/toolchains/manifest.json` 声明：
+
+```json
+{
+  "toolchains": [
+    {
+      "name": "aarch64-linux-gnu",
+      "version": "13.2.0",
+      "host": "x86_64-linux-gnu",
+      "prefix": "aarch64-linux-gnu",
+      "file": "aarch64-linux-gnu-13.2.0.tar.gz",
+      "cflags": ["-O2"],
+      "cxxflags": ["-O2"],
+      "ldflags": []
+    }
+  ]
+}
+```
+
+工具链压缩包通过 Git LFS 存储，首次使用时自动下载并解压到 `~/.vmake/toolchains/`。
+
+### 扩展管理命令
+
+```bash
+# 添加扩展仓库
+vmake ext add vmake-extensions https://gitee.com/spock2300/vmake-extensions.git
+
+# 列出已安装的扩展和插件
+vmake ext list
+
+# 更新扩展仓库
+vmake ext update [name]
+
+# 删除扩展仓库
+vmake ext remove <name>
+```
