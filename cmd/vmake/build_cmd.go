@@ -65,6 +65,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		CXX:      tc.Tools.CXX,
 		AR:       tc.Tools.AR,
 		Target:   "",
+		Prefix:   tc.Prefix,
 		SysRoot:  "",
 		CFlags:   strings.Join(tc.DefaultFlags.CFlags, " "),
 		CXXFlags: strings.Join(tc.DefaultFlags.CxxFlags, " "),

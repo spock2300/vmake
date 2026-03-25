@@ -4,6 +4,7 @@ type Toolchain struct {
 	Name         string       `json:"name"`
 	DisplayName  string       `json:"display_name"`
 	Host         string       `json:"host"`
+	Prefix       string       `json:"prefix"`
 	Tools        Tools        `json:"tools"`
 	DefaultFlags DefaultFlags `json:"default_flags"`
 	InstallPath  string       `json:"install_path"`

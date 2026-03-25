@@ -2,6 +2,7 @@ package api
 
 type Toolchain struct {
 	Target   string
+	Prefix   string
 	CC       string
 	CXX      string
 	LD       string
@@ -18,6 +19,11 @@ func NewToolchain() *Toolchain {
 
 func (t *Toolchain) SetTarget(target string) *Toolchain {
 	t.Target = target
+	return t
+}
+
+func (t *Toolchain) SetPrefix(prefix string) *Toolchain {
+	t.Prefix = prefix
 	return t
 }
 
@@ -73,6 +79,9 @@ func (t *Toolchain) Env() map[string]string {
 	}
 	if t.SysRoot != "" {
 		env["SYSROOT"] = t.SysRoot
+	}
+	if t.Prefix != "" {
+		env["CROSS_COMPILE"] = t.Prefix
 	}
 	return env
 }

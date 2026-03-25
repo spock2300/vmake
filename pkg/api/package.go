@@ -312,6 +312,7 @@ func (p *Package) CC() string          { return p.tc.CC }
 func (p *Package) CXX() string         { return p.tc.CXX }
 func (p *Package) AR() string          { return p.tc.AR }
 func (p *Package) CrossTarget() string { return p.tc.Target }
+func (p *Package) Prefix() string      { return p.tc.Prefix }
 func (p *Package) SysRoot() string     { return p.tc.SysRoot }
 func (p *Package) CFlags() string      { return p.tc.CFlags }
 func (p *Package) CXXFlags() string    { return p.tc.CXXFlags }
