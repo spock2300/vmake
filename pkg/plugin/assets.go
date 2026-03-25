@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
+
+	"gitee.com/spock2300/vmake/internal/fs"
 )
 
 func RunGitLFS(repoDir string, args ...string) error {
@@ -32,8 +33,7 @@ func PullLFSFiles(repoDir string, files ...string) error {
 }
 
 func DownloadFile(url, dest string) error {
-	destDir := filepath.Dir(dest)
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := fs.EnsureParentDir(dest); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
@@ -49,7 +49,7 @@ func DownloadFile(url, dest string) error {
 }
 
 func ExtractArchive(archive, dest string) error {
-	if err := os.MkdirAll(dest, 0755); err != nil {
+	if err := fs.EnsureDir(dest); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 

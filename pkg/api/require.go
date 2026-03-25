@@ -34,7 +34,7 @@ func NewRequireContextForConfig(cfgVals map[string]any, options map[string]*Opti
 	}
 }
 
-func (ctx *RequireContext) AddRequires(deps ...string) {
+func (ctx *RequireContext) AddRequires(deps ...string) *RequireContext {
 	for _, dep := range deps {
 		if dep == "" {
 			continue
@@ -45,6 +45,7 @@ func (ctx *RequireContext) AddRequires(deps ...string) {
 			Constraint: constraint,
 		})
 	}
+	return ctx
 }
 
 func (ctx *RequireContext) GetRequires() []RequireInfo {
@@ -75,7 +76,7 @@ func NewPackageRequireContext() *PackageRequireContext {
 	}
 }
 
-func (ctx *PackageRequireContext) AddRequires(deps ...string) {
+func (ctx *PackageRequireContext) AddRequires(deps ...string) *PackageRequireContext {
 	for _, dep := range deps {
 		if dep == "" {
 			continue
@@ -86,6 +87,7 @@ func (ctx *PackageRequireContext) AddRequires(deps ...string) {
 			Constraint: constraint,
 		})
 	}
+	return ctx
 }
 
 func (ctx *PackageRequireContext) GetRequires() []RequireInfo {

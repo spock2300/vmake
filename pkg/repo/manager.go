@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"gitee.com/spock2300/vmake/internal/fs"
 )
 
 type RepoManager struct {
@@ -21,7 +23,7 @@ func (m *RepoManager) Add(name, gitURL string) error {
 		return fmt.Errorf("repo '%s' already exists", name)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(repoPath), 0755); err != nil {
+	if err := fs.EnsureParentDir(repoPath); err != nil {
 		return fmt.Errorf("failed to create repo directory: %w", err)
 	}
 
@@ -38,7 +40,7 @@ func (m *RepoManager) Remove(name string) error {
 		return fmt.Errorf("repo '%s' not found", name)
 	}
 
-	return os.RemoveAll(repoPath)
+	return fs.RemoveAll(repoPath)
 }
 
 func (m *RepoManager) List() []string {
@@ -95,6 +97,5 @@ func (m *RepoManager) FindPackageGo(repo, name string) (string, error) {
 }
 
 func (m *RepoManager) exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+	return fs.FileExists(path)
 }

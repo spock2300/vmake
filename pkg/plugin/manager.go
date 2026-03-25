@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/pkg/repo"
 )
 
@@ -34,7 +35,7 @@ func (m *Manager) AddRepo(name, gitURL string) error {
 		return fmt.Errorf("extension repo '%s' already exists", name)
 	}
 
-	if err := os.MkdirAll(m.extensionsDir, 0755); err != nil {
+	if err := fs.EnsureDir(m.extensionsDir); err != nil {
 		return fmt.Errorf("failed to create extensions directory: %w", err)
 	}
 
@@ -69,7 +70,7 @@ func (m *Manager) clearCompiledPlugins(repoPath string) error {
 			continue
 		}
 		soPath := filepath.Join(repoPath, entry.Name(), "plugin.so")
-		os.Remove(soPath)
+		fs.RemoveIfExists(soPath)
 	}
 	return nil
 }
@@ -80,7 +81,7 @@ func (m *Manager) RemoveRepo(name string) error {
 		return fmt.Errorf("extension repo '%s' not found", name)
 	}
 
-	return os.RemoveAll(repoPath)
+	return fs.RemoveAll(repoPath)
 }
 
 func (m *Manager) ListRepos() []ExtensionRepo {
@@ -173,6 +174,5 @@ func (m *Manager) CompilePlugin(pluginDir string, force bool) (string, error) {
 }
 
 func (m *Manager) exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+	return fs.FileExists(path)
 }

@@ -3,11 +3,12 @@ package jsonio
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
+
+	"gitee.com/spock2300/vmake/internal/fs"
 )
 
 func Save(path string, v any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := fs.EnsureParentDir(path); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(v, "", "  ")

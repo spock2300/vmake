@@ -12,8 +12,9 @@ func NewConfigContext(pkgName string) *ConfigContext {
 	}
 }
 
-func (ctx *ConfigContext) SetConfigValue(name string, val any) {
+func (ctx *ConfigContext) SetConfigValue(name string, val any) *ConfigContext {
 	ctx.CfgVals[name] = val
+	return ctx
 }
 
 func (ctx *ConfigContext) GetOptions() map[string]*Option {
@@ -144,23 +145,26 @@ func NewInstallContext(pkgName string, cfgVals map[string]any) *InstallContext {
 	}
 }
 
-func (ctx *InstallContext) SetPrefix(prefix string) {
+func (ctx *InstallContext) SetPrefix(prefix string) *InstallContext {
 	ctx.prefix = prefix
 	ctx.prefixSet = true
+	return ctx
 }
 
 func (ctx *InstallContext) Prefix() string      { return ctx.prefix }
 func (ctx *InstallContext) PrefixSet() bool     { return ctx.prefixSet }
 func (ctx *InstallContext) PackageName() string { return ctx.pkgName }
 
-func (ctx *InstallContext) AddInstalls(src, dest string) {
+func (ctx *InstallContext) AddInstalls(src, dest string) *InstallContext {
 	ctx.installItems = append(ctx.installItems, InstallItem{Src: src, Dest: dest})
+	return ctx
 }
 
 func (ctx *InstallContext) GetInstallItems() []InstallItem { return ctx.installItems }
 
-func (ctx *InstallContext) SetInstallFilter(filter InstallFilterFunc) {
+func (ctx *InstallContext) SetInstallFilter(filter InstallFilterFunc) *InstallContext {
 	ctx.installFilter = filter
+	return ctx
 }
 
 func (ctx *InstallContext) GetInstallFilter() InstallFilterFunc {

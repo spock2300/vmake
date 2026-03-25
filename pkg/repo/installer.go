@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/pkg/api"
 )
 
@@ -92,10 +93,10 @@ func (i *Installer) installPackage(pkg *ResolvedPackage, config *InstallConfig, 
 		return nil
 	}
 
-	if err := os.MkdirAll(buildDir, 0755); err != nil {
+	if err := fs.EnsureDir(buildDir); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(installDir, 0755); err != nil {
+	if err := fs.EnsureDir(installDir); err != nil {
 		return err
 	}
 
@@ -116,11 +117,7 @@ func (i *Installer) InstallPackage(pkg *api.Package, config *InstallConfig, tc *
 }
 
 func (i *Installer) hasInstalledFiles(installDir string) bool {
-	entries, err := os.ReadDir(installDir)
-	if err != nil {
-		return false
-	}
-	return len(entries) > 0
+	return fs.HasFiles(installDir)
 }
 
 func (i *Installer) GetInstallDir(name, version string, tc *api.Toolchain, options map[string]any) string {
@@ -135,12 +132,11 @@ func (i *Installer) IsInstalled(name, version string, tc *api.Toolchain, options
 }
 
 func (i *Installer) CleanBuild(name string) error {
-	return os.RemoveAll(filepath.Join(i.packagesDir, name))
+	return fs.RemoveAll(filepath.Join(i.packagesDir, name))
 }
 
 func (i *Installer) exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+	return fs.FileExists(path)
 }
 
 func (i *Installer) GetInstalledPackage(name, version string, tc *api.Toolchain, options map[string]any) *api.InstalledPackage {

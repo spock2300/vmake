@@ -2,11 +2,11 @@ package api
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"gitee.com/spock2300/vmake/internal/exec"
+	"gitee.com/spock2300/vmake/internal/fs"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 )
 
@@ -108,24 +108,29 @@ func NewPackage() *Package {
 	}
 }
 
-func (p *Package) OnRequire(fn RequireFunc) {
+func (p *Package) OnRequire(fn RequireFunc) *Package {
 	p.requireFuncs = append(p.requireFuncs, fn)
+	return p
 }
 
-func (p *Package) OnConfig(fn ConfigFunc) {
+func (p *Package) OnConfig(fn ConfigFunc) *Package {
 	p.configFuncs = append(p.configFuncs, fn)
+	return p
 }
 
-func (p *Package) OnBuild(fn BuildFunc) {
+func (p *Package) OnBuild(fn BuildFunc) *Package {
 	p.buildFuncs = append(p.buildFuncs, fn)
+	return p
 }
 
-func (p *Package) OnInstall(fn InstallFunc) {
+func (p *Package) OnInstall(fn InstallFunc) *Package {
 	p.installFuncs = append(p.installFuncs, fn)
+	return p
 }
 
-func (p *Package) OnPackage(fn PackageFunc) {
+func (p *Package) OnPackage(fn PackageFunc) *Package {
 	p.packageFunc = fn
+	return p
 }
 
 func (p *Package) SetGit(urls ...string) *Package {
@@ -261,8 +266,9 @@ func (p *Package) AddPackages(packages ...string) *Package {
 
 func (p *Package) GetPackages() []string { return p.packages }
 
-func (p *Package) SetDeps(deps map[string]*InstalledPackage) {
+func (p *Package) SetDeps(deps map[string]*InstalledPackage) *Package {
 	p.deps = deps
+	return p
 }
 
 func (p *Package) SetDep(name string, pkg *InstalledPackage) {
@@ -276,10 +282,11 @@ func (p *Package) Deps() map[string]*InstalledPackage {
 	return p.deps
 }
 
-func (p *Package) SetDirs(sourceDir, buildDir, installDir string) {
+func (p *Package) SetDirs(sourceDir, buildDir, installDir string) *Package {
 	p.sourceDir = sourceDir
 	p.buildDir = buildDir
 	p.installDir = installDir
+	return p
 }
 
 func (p *Package) SetOutputDir(dir string) *Package {
@@ -375,41 +382,19 @@ func (p *Package) Make(args ...string) error {
 
 func (p *Package) Run(name string, args ...string) error {
 	vlog.Info("  %s %s", name, strings.Join(args, " "))
-	cmd := exec.Command(name, args...)
-	cmd.Dir = p.buildDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		vlog.Fatal("command failed: %s %s", name, strings.Join(args, " "))
-	}
+	exec.RunFatal(p.buildDir, name, args...)
 	return nil
 }
 
 func (p *Package) RunIn(dir, name string, args ...string) error {
 	vlog.Info("  cd %s && %s %s", dir, name, strings.Join(args, " "))
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		vlog.Fatal("command failed: %s %s", name, strings.Join(args, " "))
-	}
+	exec.RunFatal(dir, name, args...)
 	return nil
 }
 
 func (p *Package) RunWithEnv(env map[string]string, name string, args ...string) error {
 	vlog.Info("  %s %s", name, strings.Join(args, " "))
-	cmd := exec.Command(name, args...)
-	cmd.Dir = p.buildDir
-	cmd.Env = append([]string{}, cmd.Environ()...)
-	for k, v := range env {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		vlog.Fatal("command failed: %s %s", name, strings.Join(args, " "))
-	}
+	exec.RunWithEnvFatal(p.buildDir, env, name, args...)
 	return nil
 }
 
@@ -425,26 +410,16 @@ type InstalledPackage struct {
 }
 
 func (ip *InstalledPackage) UpdateLibDir() {
-	lib64Dir := filepath.Join(ip.InstallDir, "lib64")
-	if _, err := os.Stat(lib64Dir); err == nil {
-		ip.LibDir = lib64Dir
-	} else {
-		ip.LibDir = filepath.Join(ip.InstallDir, "lib")
-	}
+	ip.LibDir = fs.DetectLibDir(ip.InstallDir)
 }
 
 func NewInstalledPackage(name, version, installDir string, libs []string) *InstalledPackage {
-	libDir := filepath.Join(installDir, "lib")
-	lib64Dir := filepath.Join(installDir, "lib64")
-	if _, err := os.Stat(lib64Dir); err == nil {
-		libDir = lib64Dir
-	}
 	return &InstalledPackage{
 		Name:       name,
 		Version:    version,
 		InstallDir: installDir,
 		IncludeDir: filepath.Join(installDir, "include"),
-		LibDir:     libDir,
+		LibDir:     fs.DetectLibDir(installDir),
 		BinDir:     filepath.Join(installDir, "bin"),
 		Libs:       libs,
 	}

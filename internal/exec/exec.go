@@ -63,6 +63,47 @@ func RunWithOptions(name string, args []string, opts RunOptions) ([]byte, error)
 	return output, nil
 }
 
+func RunToStdout(dir, name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func RunFatal(dir, name string, args ...string) {
+	if err := RunToStdout(dir, name, args...); err != nil {
+		vlog.Fatal("command failed: %s %s", name, strings.Join(args, " "))
+	}
+}
+
+func RunWithEnv(dir string, env map[string]string, name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	cmd.Env = append(os.Environ(), flattenEnv(env)...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func RunWithEnvFatal(dir string, env map[string]string, name string, args ...string) {
+	if err := RunWithEnv(dir, env, name, args...); err != nil {
+		vlog.Fatal("command failed: %s %s", name, strings.Join(args, " "))
+	}
+}
+
+func flattenEnv(env map[string]string) []string {
+	result := make([]string, 0, len(env))
+	for k, v := range env {
+		result = append(result, k+"="+v)
+	}
+	return result
+}
+
 func formatCommandLine(name string, args []string) string {
 	var sb strings.Builder
 	sb.WriteString(name)
