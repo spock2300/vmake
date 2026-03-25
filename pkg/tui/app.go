@@ -240,12 +240,20 @@ func (m *Model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "up", "k":
-		if item.Opt.Type() == api.OptionChoice && m.editIdx > 0 {
-			m.editIdx--
+		if item.Opt.Type() == api.OptionChoice {
+			if m.editIdx > 0 {
+				m.editIdx--
+			} else {
+				m.editIdx = len(m.editChoices) - 1
+			}
 		}
 	case "down", "j":
-		if item.Opt.Type() == api.OptionChoice && m.editIdx < len(m.editChoices)-1 {
-			m.editIdx++
+		if item.Opt.Type() == api.OptionChoice {
+			if m.editIdx < len(m.editChoices)-1 {
+				m.editIdx++
+			} else {
+				m.editIdx = 0
+			}
 		}
 	default:
 		if item.Opt.Type() == api.OptionString || item.Opt.Type() == api.OptionInt {

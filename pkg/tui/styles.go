@@ -55,7 +55,7 @@ var (
 			Foreground(lipgloss.Color("#F25D94"))
 
 	dropdownStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#7D56F4"))
+			Foreground(lipgloss.Color("#00D9FF"))
 
 	confirmStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#FF6B6B")).
