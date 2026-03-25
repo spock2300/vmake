@@ -1,18 +1,11 @@
 package toolchain
 
-type GlobalConfig struct {
-	Version          string                `json:"version"`
-	DefaultToolchain string                `json:"default_toolchain"`
-	Toolchains       map[string]*Toolchain `json:"toolchains"`
-}
-
 type Toolchain struct {
 	Name         string       `json:"name"`
 	DisplayName  string       `json:"display_name"`
 	Host         string       `json:"host"`
 	Tools        Tools        `json:"tools"`
 	DefaultFlags DefaultFlags `json:"default_flags"`
-	DownloadURL  string       `json:"download_url"`
 	InstallPath  string       `json:"install_path"`
 }
 

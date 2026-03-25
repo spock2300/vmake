@@ -5,10 +5,13 @@ import (
 	"sync"
 )
 
+type OnMissingToolchain func(name string) (*Toolchain, error)
+
 type Manager struct {
-	globalCfg *GlobalConfig
-	once      sync.Once
-	initErr   error
+	builtin    *Toolchain
+	extensions map[string]*Toolchain
+	onMissing  OnMissingToolchain
+	mu         sync.RWMutex
 }
 
 var defaultManager *Manager
@@ -16,46 +19,43 @@ var managerOnce sync.Once
 
 func GetManager() *Manager {
 	managerOnce.Do(func() {
-		defaultManager = &Manager{}
+		defaultManager = &Manager{
+			builtin:    GetBuiltinGCC(),
+			extensions: make(map[string]*Toolchain),
+		}
 	})
 	return defaultManager
 }
 
-func (m *Manager) loadOnce() {
-	m.once.Do(func() {
-		m.globalCfg, m.initErr = LoadGlobal()
-	})
-}
-
-func (m *Manager) SelectToolchain(projectToolchain string) (*Toolchain, error) {
-	m.loadOnce()
-	if m.initErr != nil {
-		return nil, m.initErr
+func (m *Manager) SelectToolchain(name string) (*Toolchain, error) {
+	if name == "" || name == "gcc" {
+		return m.builtin, nil
 	}
 
-	name := projectToolchain
-	if name == "" {
-		name = m.globalCfg.DefaultToolchain
-	}
-	if name == "" {
-		name = "gcc"
+	m.mu.RLock()
+	tc, ok := m.extensions[name]
+	m.mu.RUnlock()
+
+	if ok {
+		return tc, nil
 	}
 
-	tc, ok := m.globalCfg.Toolchains[name]
-	if !ok {
-		return nil, fmt.Errorf("toolchain '%s' not found", name)
+	if m.onMissing != nil {
+		return m.onMissing(name)
 	}
 
-	return tc, nil
+	return nil, fmt.Errorf("toolchain '%s' not found", name)
 }
 
 func (m *Manager) GetToolchain(name string) (*Toolchain, error) {
-	m.loadOnce()
-	if m.initErr != nil {
-		return nil, m.initErr
+	if name == "gcc" {
+		return m.builtin, nil
 	}
 
-	tc, ok := m.globalCfg.Toolchains[name]
+	m.mu.RLock()
+	tc, ok := m.extensions[name]
+	m.mu.RUnlock()
+
 	if !ok {
 		return nil, fmt.Errorf("toolchain '%s' not found", name)
 	}
@@ -64,18 +64,35 @@ func (m *Manager) GetToolchain(name string) (*Toolchain, error) {
 }
 
 func (m *Manager) ListToolchains() (map[string]*Toolchain, error) {
-	m.loadOnce()
-	if m.initErr != nil {
-		return nil, m.initErr
-	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	return m.globalCfg.Toolchains, nil
+	result := make(map[string]*Toolchain)
+	result["gcc"] = m.builtin
+	for name, tc := range m.extensions {
+		result[name] = tc
+	}
+	return result, nil
 }
 
 func (m *Manager) GetDefaultToolchain() string {
-	m.loadOnce()
-	if m.initErr != nil {
-		return "gcc"
-	}
-	return m.globalCfg.DefaultToolchain
+	return "gcc"
+}
+
+func (m *Manager) RegisterToolchain(name string, tc *Toolchain) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.extensions[name] = tc
+}
+
+func (m *Manager) SetOnMissing(fn OnMissingToolchain) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onMissing = fn
+}
+
+func (m *Manager) GetOnMissing() OnMissingToolchain {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.onMissing
 }
