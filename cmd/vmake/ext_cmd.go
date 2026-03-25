@@ -163,6 +163,9 @@ func loadPlugins() {
 				tcs, _ := toolchain.GetManager().ListToolchains()
 				return tcs
 			},
+			SetOnMissing: func(onMissing func(name string) (*toolchain.Toolchain, error)) {
+				toolchain.GetManager().SetOnMissing(onMissing)
+			},
 			DownloadFile:   plugin.DownloadFile,
 			ExtractArchive: plugin.ExtractArchive,
 			RunGitLFS:      plugin.RunGitLFS,
