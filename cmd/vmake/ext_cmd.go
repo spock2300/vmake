@@ -36,11 +36,20 @@ var extListCmd = &cobra.Command{
 	Run:   runExtList,
 }
 
+var extUpdateCmd = &cobra.Command{
+	Use:   "update [name]",
+	Short: "Update extension repositories",
+	Long: `Update extension repositories by pulling latest changes.
+If no name is given, all repositories are updated.`,
+	Run: runExtUpdate,
+}
+
 func init() {
 	RootCmd.AddCommand(extCmd)
 	extCmd.AddCommand(extAddCmd)
 	extCmd.AddCommand(extRemoveCmd)
 	extCmd.AddCommand(extListCmd)
+	extCmd.AddCommand(extUpdateCmd)
 }
 
 func runExtAdd(cmd *cobra.Command, args []string) {
@@ -123,6 +132,35 @@ func runExtList(cmd *cobra.Command, args []string) {
 			fmt.Println()
 		}
 	}
+}
+
+func runExtUpdate(cmd *cobra.Command, args []string) {
+	mgr := plugin.NewManager(vmakeDir)
+
+	if len(args) == 1 {
+		name := args[0]
+		fmt.Printf("Updating extension repository '%s'...\n", name)
+		if err := mgr.UpdateRepo(name); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Updated '%s'. Plugins will be recompiled on next run.\n", name)
+		return
+	}
+
+	repos := mgr.ListRepos()
+	if len(repos) == 0 {
+		fmt.Println("No extension repositories found")
+		return
+	}
+
+	for _, r := range repos {
+		fmt.Printf("Updating '%s'...\n", r.Name)
+		if err := mgr.UpdateRepo(r.Name); err != nil {
+			fmt.Fprintf(os.Stderr, "  Error: %v\n", err)
+		}
+	}
+	fmt.Println("Done. Plugins will be recompiled on next run.")
 }
 
 func loadPlugins() {

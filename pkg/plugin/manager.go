@@ -45,6 +45,35 @@ func (m *Manager) AddRepo(name, gitURL string) error {
 	return nil
 }
 
+func (m *Manager) UpdateRepo(name string) error {
+	repoPath := filepath.Join(m.extensionsDir, name)
+	if !m.exists(repoPath) {
+		return fmt.Errorf("extension repo '%s' not found", name)
+	}
+
+	if err := repo.Pull(repoPath); err != nil {
+		return err
+	}
+
+	return m.clearCompiledPlugins(repoPath)
+}
+
+func (m *Manager) clearCompiledPlugins(repoPath string) error {
+	entries, err := os.ReadDir(repoPath)
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		soPath := filepath.Join(repoPath, entry.Name(), "plugin.so")
+		os.Remove(soPath)
+	}
+	return nil
+}
+
 func (m *Manager) RemoveRepo(name string) error {
 	repoPath := filepath.Join(m.extensionsDir, name)
 	if !m.exists(repoPath) {

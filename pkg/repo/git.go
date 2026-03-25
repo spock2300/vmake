@@ -66,6 +66,17 @@ func FetchAndReset(dir string) error {
 	return nil
 }
 
+func Pull(dir string) error {
+	_, err := exec.RunWithOptions("git", []string{"pull", "--ff-only"}, exec.RunOptions{
+		Dir:     dir,
+		Timeout: 2 * time.Minute,
+	})
+	if err != nil {
+		return fmt.Errorf("git pull in %s: %w", dir, err)
+	}
+	return nil
+}
+
 func GetCurrentCommit(dir string) (string, error) {
 	output, err := exec.RunWithOptions("git", []string{"rev-parse", "HEAD"}, exec.RunOptions{Dir: dir})
 	if err != nil {
