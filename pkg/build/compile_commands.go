@@ -25,11 +25,12 @@ type CompileCommandsWriter struct {
 }
 
 func NewCompileCommandsWriter(tc *toolchain.Toolchain) (*CompileCommandsWriter, error) {
-	ccPath, err := toolchain.ResolveToolPath(tc.Tools.CC, tc.InstallPath)
+	mgr := toolchain.GetManager()
+	ccPath, err := mgr.EnsureToolPath(tc, tc.Tools.CC)
 	if err != nil {
 		return nil, err
 	}
-	cxxPath, err := toolchain.ResolveToolPath(tc.Tools.CXX, tc.InstallPath)
+	cxxPath, err := mgr.EnsureToolPath(tc, tc.Tools.CXX)
 	if err != nil {
 		return nil, err
 	}

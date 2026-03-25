@@ -2,6 +2,8 @@ package toolchain
 
 import (
 	"fmt"
+	"os/exec"
+	"path/filepath"
 	"sync"
 )
 
@@ -16,6 +18,11 @@ type Manager struct {
 
 var defaultManager *Manager
 var managerOnce sync.Once
+var onToolMissing func(name string) error
+
+func SetOnToolMissing(fn func(string) error) {
+	onToolMissing = fn
+}
 
 func GetManager() *Manager {
 	managerOnce.Do(func() {
@@ -95,4 +102,37 @@ func (m *Manager) GetOnMissing() OnMissingToolchain {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.onMissing
+}
+
+func (m *Manager) EnsureToolPath(tc *Toolchain, tool string) (string, error) {
+	if filepath.IsAbs(tool) {
+		return tool, nil
+	}
+
+	if tc.InstallPath != "" {
+		absPath := filepath.Join(tc.InstallPath, "bin", tool)
+		if _, err := exec.LookPath(absPath); err == nil {
+			return absPath, nil
+		}
+	}
+
+	if _, err := exec.LookPath(tool); err == nil {
+		return tool, nil
+	}
+
+	if onToolMissing != nil && tc.Name != "" {
+		if dlErr := onToolMissing(tc.Name); dlErr == nil {
+			if tc.InstallPath != "" {
+				absPath := filepath.Join(tc.InstallPath, "bin", tool)
+				if _, err := exec.LookPath(absPath); err == nil {
+					return absPath, nil
+				}
+			}
+			if _, err := exec.LookPath(tool); err == nil {
+				return tool, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("tool '%s' not found", tool)
 }

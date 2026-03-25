@@ -27,11 +27,12 @@ type CompileOptions struct {
 }
 
 func NewCompiler(tc *toolchain.Toolchain) (*Compiler, error) {
-	ccPath, err := toolchain.ResolveToolPath(tc.Tools.CC, tc.InstallPath)
+	mgr := toolchain.GetManager()
+	ccPath, err := mgr.EnsureToolPath(tc, tc.Tools.CC)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve CC: %w", err)
 	}
-	cxxPath, err := toolchain.ResolveToolPath(tc.Tools.CXX, tc.InstallPath)
+	cxxPath, err := mgr.EnsureToolPath(tc, tc.Tools.CXX)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve CXX: %w", err)
 	}
