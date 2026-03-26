@@ -38,19 +38,13 @@ func runUpdate(cmd *cobra.Command, args []string) {
 	pkg := fmt.Sprintf("gitee.com/spock2300/vmake/cmd/vmake@%s", targetVer)
 
 	goCmd, err := exec.LookPath("go")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: go command not found: %v\n", err)
-		os.Exit(1)
-	}
+	fatalErr(err)
 
 	installCmd := exec.Command(goCmd, "install", pkg)
 	installCmd.Stdout = os.Stdout
 	installCmd.Stderr = os.Stderr
 
-	if err := installCmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: update failed: %v\n", err)
-		os.Exit(1)
-	}
+	fatalErr(installCmd.Run())
 
 	fmt.Printf("Update to %s completed!\n", targetVer)
 }

@@ -49,30 +49,18 @@ func init() {
 }
 
 func runGitTag(cmd *cobra.Command, args []string) {
-	if err := checkStagedChanges(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	fatalErr(checkStagedChanges())
 
 	var newVersion string
 	if len(args) > 0 {
 		var err error
 		newVersion, err = normalizeVersion(args[0])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+		fatalErr(err)
 	} else {
 		latestTag, err := getLatestTag()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+		fatalErr(err)
 		newVersion, err = bumpVersion(latestTag, gitTagMajor, gitTagMinor)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+		fatalErr(err)
 	}
 
 	fmt.Printf("Creating tag %s...\n", newVersion)
@@ -82,23 +70,14 @@ func runGitTag(cmd *cobra.Command, args []string) {
 		msg = fmt.Sprintf("Release %s", newVersion)
 	}
 
-	if err := createAnnotatedTag(newVersion, msg); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	fatalErr(createAnnotatedTag(newVersion, msg))
 	fmt.Printf("  Created tag: %s\n", newVersion)
 
-	if err := updateLatestTag(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	fatalErr(updateLatestTag())
 	fmt.Printf("  Updated tag: latest -> %s\n", newVersion)
 
 	if !gitTagNoPush {
-		if err := pushTags(newVersion); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+		fatalErr(pushTags(newVersion))
 		fmt.Printf("  Pushed to remote\n")
 	}
 

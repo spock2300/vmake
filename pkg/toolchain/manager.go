@@ -2,8 +2,6 @@ package toolchain
 
 import (
 	"fmt"
-	"os/exec"
-	"path/filepath"
 	"sync"
 )
 
@@ -130,32 +128,14 @@ func (m *Manager) GetOnMissing() OnMissingToolchain {
 }
 
 func (m *Manager) EnsureToolPath(tc *Toolchain, tool string) (string, error) {
-	if filepath.IsAbs(tool) {
-		return tool, nil
-	}
-
-	if tc.InstallPath != "" {
-		absPath := filepath.Join(tc.InstallPath, "bin", tool)
-		if _, err := exec.LookPath(absPath); err == nil {
-			return absPath, nil
-		}
-	}
-
-	if _, err := exec.LookPath(tool); err == nil {
-		return tool, nil
+	path, err := ResolveToolPath(tool, tc.InstallPath)
+	if err == nil {
+		return path, nil
 	}
 
 	if onToolMissing != nil && tc.Name != "" {
 		if dlErr := onToolMissing(tc.Name); dlErr == nil {
-			if tc.InstallPath != "" {
-				absPath := filepath.Join(tc.InstallPath, "bin", tool)
-				if _, err := exec.LookPath(absPath); err == nil {
-					return absPath, nil
-				}
-			}
-			if _, err := exec.LookPath(tool); err == nil {
-				return tool, nil
-			}
+			return ResolveToolPath(tool, tc.InstallPath)
 		}
 	}
 

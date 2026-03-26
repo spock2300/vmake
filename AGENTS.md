@@ -14,6 +14,8 @@ go vet ./... && gofmt -w .       # Lint
 ```bash
 # Single integration test (run from repo root)
 cd test_data/01_simple_c && ../../vmake build && ./hello
+
+# Test with third-party package
 cd test_data/08_with_package && ../../vmake build
 
 # Run all integration tests
@@ -42,9 +44,18 @@ import (
 )
 ```
 
+Internal packages may use short aliases:
+```go
+import (
+    exec "gitee.com/spock2300/vmake/internal/exec"
+    vlog "gitee.com/spock2300/vmake/pkg/log"
+)
+```
+
 ### Naming Conventions
 - **SetXxx**: Set a single value (SetKind, SetDefault)
 - **AddXxx**: Append multiple values (AddFiles, AddIncludes)
+- **RemoveXxx**: Remove values from slice (RemoveCFlags, RemoveDefines)
 - **Type aliases**: Use for readability (`type TargetKind string`)
 - **Logging**: Always use alias `vlog "gitee.com/spock2300/vmake/pkg/log"`
 
@@ -58,6 +69,7 @@ ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c").AddIncludes("inc
 - Library code never panics, always return error
 - Include context: `return fmt.Errorf("git clone %s -> %s: %w", url, dir, err)`
 - CLI commands may call `os.Exit(1)` on fatal errors
+- Use `vlog.Fatal()` only in CLI/builder code, never in library code
 
 ### Cross-Platform Paths
 Use `filepath.Join()` for filesystem paths. Do NOT use for logical identifiers:
@@ -100,7 +112,7 @@ Phase 3: OnBuild    -> Execute callbacks -> Generate Targets -> Compile/Link
 Use functional conditionals instead of if statements:
 ```go
 ctx.Target("app").
-    AddDefines(ctx.If("debug", "DEBUG=1")).
+    AddDefines(ctx.If("debug", "DEBUG=1")...).
     AddCFlags(ctx.Select("optimization", map[string]string{"O0": "-O0", "O2": "-O2"}))
 ```
 
@@ -118,9 +130,9 @@ Each `build.go` is compiled to a Go plugin (`.so`):
 ```go
 package main
 import "gitee.com/spock2300/vmake/pkg/api"
-func Main(b *api.Builder) {
-    b.OnConfig(func(ctx *api.ConfigContext) { ... })
-    b.OnBuild(func(ctx *api.BuildContext) { ... })
+func Main(p *api.Package) {
+    p.OnConfig(func(ctx *api.ConfigContext) { ... })
+    p.OnBuild(func(ctx *api.BuildContext) { ... })
 }
 ```
 

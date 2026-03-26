@@ -2,10 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
-
-	"gitee.com/spock2300/vmake/pkg/repo"
 
 	"github.com/spf13/cobra"
 )
@@ -32,13 +28,9 @@ var repoAddCmd = &cobra.Command{
 		name := args[0]
 		gitURL := args[1]
 
-		reposDir := filepath.Join(vmakeDir, "repos")
-		mgr := repo.NewRepoManager(reposDir)
+		mgr := getRepoManager()
 
-		if err := mgr.Add(name, gitURL); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+		fatalErr(mgr.Add(name, gitURL))
 
 		fmt.Printf("Added repository '%s' from %s\n", name, gitURL)
 	},
@@ -51,13 +43,9 @@ var repoRemoveCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		name := args[0]
 
-		reposDir := filepath.Join(vmakeDir, "repos")
-		mgr := repo.NewRepoManager(reposDir)
+		mgr := getRepoManager()
 
-		if err := mgr.Remove(name); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+		fatalErr(mgr.Remove(name))
 
 		fmt.Printf("Removed repository '%s'\n", name)
 	},
@@ -67,8 +55,7 @@ var repoListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all package repositories",
 	Run: func(cmd *cobra.Command, args []string) {
-		reposDir := filepath.Join(vmakeDir, "repos")
-		mgr := repo.NewRepoManager(reposDir)
+		mgr := getRepoManager()
 
 		repos := mgr.List()
 		if len(repos) == 0 {
@@ -90,13 +77,9 @@ var repoUpdateCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		name := args[0]
 
-		reposDir := filepath.Join(vmakeDir, "repos")
-		mgr := repo.NewRepoManager(reposDir)
+		mgr := getRepoManager()
 
-		if err := mgr.Update(name); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+		fatalErr(mgr.Update(name))
 
 		fmt.Printf("Updated repository '%s'\n", name)
 	},

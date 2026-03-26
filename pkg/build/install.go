@@ -179,19 +179,7 @@ func (i *Installer) installExtraItems(node *BuildNode) error {
 }
 
 func (i *Installer) getOutputPath(pkgName string, pkgInfo *PkgInstallInfo, node *BuildNode) string {
-	var name string
-	switch node.Target.Kind() {
-	case api.TargetBinary:
-		name = node.Target.Name()
-	case api.TargetStatic:
-		name = "lib" + node.Target.Name() + ".a"
-	case api.TargetShared:
-		name = "lib" + node.Target.Name() + ".so"
-	case api.TargetObject:
-		name = node.Target.Name() + ".o"
-	default:
-		name = node.Target.Name()
-	}
+	name := targetFilename(node.Target.Kind(), node.Target.Name())
 
 	buildDir := fmt.Sprintf("%s-%s", pkgInfo.TcName, pkgInfo.Mode)
 	return filepath.Join(i.pkgDirs[pkgName], "build", buildDir, name)

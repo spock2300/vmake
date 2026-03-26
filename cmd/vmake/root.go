@@ -11,7 +11,6 @@ import (
 	"gitee.com/spock2300/vmake/pkg/buildscript"
 	"gitee.com/spock2300/vmake/pkg/config"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
-	"gitee.com/spock2300/vmake/pkg/repo"
 	"gitee.com/spock2300/vmake/pkg/resolver"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 
@@ -158,11 +157,7 @@ func runRequirePhase(ctx *RuntimeContext, force bool) error {
 	}
 	vlog.Info("Found %d package(s): %s", len(packages), strings.Join(pkgNames, ", "))
 
-	reposDir := filepath.Join(vmakeDir, "repos")
-	cacheDir := filepath.Join(vmakeDir, "cache")
-
-	repoMgr := repo.NewRepoManager(reposDir)
-	r := resolver.NewResolver(repoMgr, cacheDir)
+	r := resolver.NewResolver(getRepoManager(), getCacheDir())
 	r.SetForce(force)
 	ctx.Resolver = r
 

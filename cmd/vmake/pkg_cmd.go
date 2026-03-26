@@ -21,16 +21,13 @@ var pkgListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List installed packages",
 	Run: func(cmd *cobra.Command, args []string) {
-		packagesDir := filepath.Join(vmakeDir, "packages")
-
-		entries, err := os.ReadDir(packagesDir)
+		entries, err := readDirEntries(getPackagesDir())
 		if err != nil {
 			if os.IsNotExist(err) {
 				fmt.Println("No packages installed")
 				return
 			}
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			fatalErr(err)
 		}
 
 		if len(entries) == 0 {
@@ -40,29 +37,20 @@ var pkgListCmd = &cobra.Command{
 
 		fmt.Println("Installed packages:")
 		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
 			repoName := entry.Name()
-			repoPath := filepath.Join(packagesDir, repoName)
-			pkgs, err := os.ReadDir(repoPath)
+			repoPath := filepath.Join(getPackagesDir(), repoName)
+			pkgs, err := readDirEntries(repoPath)
 			if err != nil {
 				continue
 			}
 			for _, pkg := range pkgs {
-				if !pkg.IsDir() {
-					continue
-				}
 				pkgName := pkg.Name()
 				pkgPath := filepath.Join(repoPath, pkgName)
-				versions, err := os.ReadDir(pkgPath)
+				versions, err := readDirEntries(pkgPath)
 				if err != nil {
 					continue
 				}
 				for _, ver := range versions {
-					if !ver.IsDir() {
-						continue
-					}
 					fmt.Printf("  %s/%s %s\n", repoName, pkgName, ver.Name())
 				}
 			}
@@ -80,8 +68,7 @@ var pkgSearchCmd = &cobra.Command{
 			pattern = args[0]
 		}
 
-		reposDir := filepath.Join(vmakeDir, "repos")
-		mgr := repo.NewRepoManager(reposDir)
+		mgr := getRepoManager()
 
 		repos := mgr.List()
 		if len(repos) == 0 {
@@ -91,26 +78,20 @@ var pkgSearchCmd = &cobra.Command{
 
 		fmt.Println("Available packages:")
 		for _, repoName := range repos {
-			repoPath := filepath.Join(reposDir, repoName, "packages")
-			entries, err := os.ReadDir(repoPath)
+			repoPath := filepath.Join(getReposDir(), repoName, "packages")
+			letterDirs, err := readDirEntries(repoPath)
 			if err != nil {
 				continue
 			}
 
-			for _, letterDir := range entries {
-				if !letterDir.IsDir() {
-					continue
-				}
+			for _, letterDir := range letterDirs {
 				pkgDir := filepath.Join(repoPath, letterDir.Name())
-				pkgs, err := os.ReadDir(pkgDir)
+				pkgs, err := readDirEntries(pkgDir)
 				if err != nil {
 					continue
 				}
 
 				for _, pkg := range pkgs {
-					if !pkg.IsDir() {
-						continue
-					}
 					fullName := repoName + "/" + pkg.Name()
 					if pattern == "" || containsString(fullName, pattern) {
 						fmt.Printf("  %s\n", fullName)
@@ -130,27 +111,18 @@ var pkgCleanCmd = &cobra.Command{
 		pkgRef := args[0]
 		parts := splitPackageRef(pkgRef)
 		if len(parts) != 2 {
-			fmt.Fprintf(os.Stderr, "Error: invalid package reference\n")
-			os.Exit(1)
+			fatalMsg("Error: invalid package reference")
 		}
 
-		packagesDir := filepath.Join(vmakeDir, "packages")
-		installer := repo.NewInstaller(nil, packagesDir, "")
+		installer := repo.NewInstaller(nil, getPackagesDir(), "")
 
-		if err := installer.CleanBuild(pkgRef); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+		fatalErr(installer.CleanBuild(pkgRef))
 		fmt.Printf("Cleaned cache for '%s'\n", pkgRef)
 
 		if pkgCleanAll {
-			cacheDir := filepath.Join(vmakeDir, "cache")
-			sourceMgr := repo.NewSourceManager(cacheDir)
+			sourceMgr := repo.NewSourceManager(getCacheDir())
 
-			if err := sourceMgr.CleanSource(parts[0], parts[1]); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
+			fatalErr(sourceMgr.CleanSource(parts[0], parts[1]))
 			fmt.Printf("Cleaned source for '%s'\n", pkgRef)
 		}
 	},
@@ -167,30 +139,18 @@ var pkgUpdateCmd = &cobra.Command{
 
 		parts := splitPackageRef(pkgRef)
 		if len(parts) != 2 {
-			fmt.Fprintf(os.Stderr, "Error: invalid package reference\n")
-			os.Exit(1)
+			fatalMsg("Error: invalid package reference")
 		}
 
-		reposDir := filepath.Join(vmakeDir, "repos")
-		sourcesDir := filepath.Join(vmakeDir, "cache")
+		repoMgr := getRepoManager()
+		_, err := repoMgr.FindPackage(parts[0], parts[1])
+		fatalErr(err)
 
-		repoMgr := repo.NewRepoManager(reposDir)
-		pkgPath, err := repoMgr.FindPackage(parts[0], parts[1])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-		_ = pkgPath
-
-		sourceMgr := repo.NewSourceManager(sourcesDir)
+		sourceMgr := repo.NewSourceManager(getCacheDir())
 		pkg := api.NewPackage()
 		pkg.SetRepo(parts[0]).SetName(parts[1])
 
-		if err := sourceMgr.UpdateSource(pkg); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+		fatalErr(sourceMgr.UpdateSource(pkg))
 
 		fmt.Printf("Updated source for package '%s'\n", pkgRef)
 	},

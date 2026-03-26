@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/pkg/api"
 )
 
@@ -131,6 +132,5 @@ func (m *SourceManager) DistClean(repo, name string) error {
 }
 
 func (m *SourceManager) exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+	return fs.FileExists(path)
 }

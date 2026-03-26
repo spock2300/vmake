@@ -2,7 +2,6 @@ package api
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -72,6 +71,8 @@ func (m *PackageMeta) FullName() string {
 type Package struct {
 	PackageMeta
 	ConfigAccessor
+	*TargetRegistry
+	installHolder InstallItemHolder
 	gitURLs       []string
 	homepage      string
 	description   string
@@ -85,10 +86,7 @@ type Package struct {
 	buildFuncs    []BuildFunc
 	installFuncs  []InstallFunc
 	packageFunc   PackageFunc
-	targets       map[string]*Target
 	packages      []string
-	installItems  []InstallItem
-	installFilter InstallFilterFunc
 	sourceDir     string
 	buildDir      string
 	installDir    string
@@ -102,9 +100,9 @@ type Package struct {
 func NewPackage() *Package {
 	return &Package{
 		ConfigAccessor: NewConfigAccessor(nil, nil),
+		TargetRegistry: NewTargetRegistry(),
 		versions:       make(map[string]string),
 		requireCtx:     NewPackageRequireContext(),
-		targets:        make(map[string]*Target),
 		deps:           make(map[string]*InstalledPackage),
 	}
 }
@@ -223,48 +221,36 @@ func (p *Package) GetInstallFuncs() []InstallFunc            { return p.installF
 func (p *Package) GetPackageFunc() PackageFunc               { return p.packageFunc }
 
 func (p *Package) ExecConfigFuncs(dir string, fn func(ConfigFunc)) {
-	origDir, _ := os.Getwd()
-	defer os.Chdir(origDir)
-	if dir != "" {
-		os.Chdir(dir)
-	}
-	for _, f := range p.configFuncs {
-		fn(f)
-	}
+	execInDir(dir, func() {
+		for _, f := range p.configFuncs {
+			fn(f)
+		}
+	})
 }
 
 func (p *Package) ExecBuildFuncs(dir string, fn func(BuildFunc)) {
-	origDir, _ := os.Getwd()
-	defer os.Chdir(origDir)
-	if dir != "" {
-		os.Chdir(dir)
-	}
-	for _, f := range p.buildFuncs {
-		fn(f)
-	}
+	execInDir(dir, func() {
+		for _, f := range p.buildFuncs {
+			fn(f)
+		}
+	})
 }
 
 func (p *Package) ExecInstallFuncs(dir string, fn func(InstallFunc)) {
-	origDir, _ := os.Getwd()
-	defer os.Chdir(origDir)
-	if dir != "" {
-		os.Chdir(dir)
-	}
-	for _, f := range p.installFuncs {
-		fn(f)
-	}
+	execInDir(dir, func() {
+		for _, f := range p.installFuncs {
+			fn(f)
+		}
+	})
 }
 
 func (p *Package) ExecPackageFunc(dir string) {
 	if p.packageFunc == nil {
 		return
 	}
-	origDir, _ := os.Getwd()
-	defer os.Chdir(origDir)
-	if dir != "" {
-		os.Chdir(dir)
-	}
-	p.packageFunc(p)
+	execInDir(dir, func() {
+		p.packageFunc(p)
+	})
 }
 
 func (p *Package) UpdateRequireContext(cfgVals map[string]any, options map[string]*Option) {
@@ -278,32 +264,23 @@ func (p *Package) UpdateRequireContext(cfgVals map[string]any, options map[strin
 	p.requireCtx = &PackageRequireContext{requires: ctx.GetRequires()}
 }
 
-func (p *Package) Target(name string) *Target {
-	if t, ok := p.targets[name]; ok {
-		return t
-	}
-	t := &Target{name: name, isDefault: true}
-	p.targets[name] = t
-	return t
-}
-
-func (p *Package) GetTargets() map[string]*Target {
-	return p.targets
-}
-
 func (p *Package) AddInstalls(src, dest string) *Package {
-	p.installItems = append(p.installItems, InstallItem{Src: src, Dest: dest})
+	p.installHolder.addInstall(src, dest)
 	return p
 }
 
-func (p *Package) GetInstallItems() []InstallItem { return p.installItems }
+func (p *Package) GetInstallItems() []InstallItem {
+	return p.installHolder.getInstallItems()
+}
 
 func (p *Package) SetInstallFilter(filter InstallFilterFunc) *Package {
-	p.installFilter = filter
+	p.installHolder.setInstallFilter(filter)
 	return p
 }
 
-func (p *Package) GetInstallFilter() InstallFilterFunc { return p.installFilter }
+func (p *Package) GetInstallFilter() InstallFilterFunc {
+	return p.installHolder.getInstallFilter()
+}
 
 func (p *Package) AddPackages(packages ...string) *Package {
 	p.packages = append(p.packages, packages...)

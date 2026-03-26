@@ -89,7 +89,7 @@ func (i *Installer) installPackage(pkg *ResolvedPackage, config *InstallConfig, 
 	installDir := filepath.Join(i.packagesDir, pkg.Name, config.Version, cacheHash, "install")
 	buildDir := filepath.Join(i.packagesDir, pkg.Name, config.Version, cacheHash, "build")
 
-	if i.exists(installDir) {
+	if fs.FileExists(installDir) {
 		return nil
 	}
 
@@ -133,10 +133,6 @@ func (i *Installer) IsInstalled(name, version string, tc *api.Toolchain, options
 
 func (i *Installer) CleanBuild(name string) error {
 	return fs.RemoveAll(filepath.Join(i.packagesDir, name))
-}
-
-func (i *Installer) exists(path string) bool {
-	return fs.FileExists(path)
 }
 
 func (i *Installer) GetInstalledPackage(name, version string, tc *api.Toolchain, options map[string]any) *api.InstalledPackage {

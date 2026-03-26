@@ -357,6 +357,14 @@ func targetFilename(kind api.TargetKind, name string) string {
 	}
 }
 
+func collectAllObjects(objs []string, artifacts []string) []string {
+	allObjs := append([]string{}, objs...)
+	for _, artifact := range artifacts {
+		allObjs = append(allObjs, artifact)
+	}
+	return allObjs
+}
+
 func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
 	pkgInfo := s.pkgs[node.PkgName]
 
@@ -446,32 +454,16 @@ func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 	switch kind {
 	case api.TargetBinary:
 		vlog.Info("  LINK %s", outputName)
-		allObjs := append([]string{}, objs...)
-		for _, artifact := range resolved.DepArtifacts {
-			allObjs = append(allObjs, artifact)
-		}
-		links := unique(resolved.Node.Target.Links())
-		return s.linker.LinkBinary(allObjs, links, resolved.AllLdFlags, resolved.OutputPath)
+		return s.linker.LinkBinary(collectAllObjects(objs, resolved.DepArtifacts), unique(resolved.Node.Target.Links()), resolved.AllLdFlags, resolved.OutputPath)
 	case api.TargetStatic:
 		vlog.Info("  AR %s", outputName)
-		allObjs := append([]string{}, objs...)
-		for _, artifact := range resolved.DepArtifacts {
-			allObjs = append(allObjs, artifact)
-		}
-		return s.linker.LinkStatic(allObjs, resolved.OutputPath)
+		return s.linker.LinkStatic(collectAllObjects(objs, resolved.DepArtifacts), resolved.OutputPath)
 	case api.TargetShared:
 		vlog.Info("  LINK %s", outputName)
-		allObjs := append([]string{}, objs...)
-		for _, artifact := range resolved.DepArtifacts {
-			allObjs = append(allObjs, artifact)
-		}
-		return s.linker.LinkShared(allObjs, resolved.AllLdFlags, resolved.OutputPath)
+		return s.linker.LinkShared(collectAllObjects(objs, resolved.DepArtifacts), resolved.AllLdFlags, resolved.OutputPath)
 	case api.TargetObject:
 		vlog.Info("  LD -r %s", outputName)
-		allObjs := append([]string{}, objs...)
-		for _, artifact := range resolved.DepArtifacts {
-			allObjs = append(allObjs, artifact)
-		}
+		allObjs := collectAllObjects(objs, resolved.DepArtifacts)
 		if len(allObjs) == 0 {
 			return fmt.Errorf("object target requires at least one source file")
 		}

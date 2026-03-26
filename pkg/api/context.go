@@ -50,10 +50,9 @@ func (ctx *ConfigContext) GlobalMode() *Option {
 type BuildContext struct {
 	ConfigAccessor
 	GlobalAccessor
-	targets       map[string]*Target
+	*TargetRegistry
+	installHolder InstallItemHolder
 	pkgName       string
-	installItems  []InstallItem
-	installFilter InstallFilterFunc
 	packages      []string
 	subBuildFunc  func(tcName, dir string, args ...string) error
 }
@@ -62,23 +61,9 @@ func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext {
 	return &BuildContext{
 		ConfigAccessor: NewConfigAccessor(cfgVals, nil),
 		GlobalAccessor: NewGlobalAccessor(),
-		targets:        make(map[string]*Target),
+		TargetRegistry: NewTargetRegistry(),
 		pkgName:        pkgName,
-		installItems:   make([]InstallItem, 0),
 	}
-}
-
-func (ctx *BuildContext) Target(name string) *Target {
-	if t, ok := ctx.targets[name]; ok {
-		return t
-	}
-	t := &Target{name: name, isDefault: true}
-	ctx.targets[name] = t
-	return t
-}
-
-func (ctx *BuildContext) GetTargets() map[string]*Target {
-	return ctx.targets
 }
 
 func (ctx *BuildContext) PackageName() string {
@@ -108,21 +93,21 @@ type InstallItem struct {
 type InstallFilterFunc func(path string, isTargetOutput bool) bool
 
 func (ctx *BuildContext) AddInstalls(src, dest string) *BuildContext {
-	ctx.installItems = append(ctx.installItems, InstallItem{Src: src, Dest: dest})
+	ctx.installHolder.addInstall(src, dest)
 	return ctx
 }
 
 func (ctx *BuildContext) GetInstallItems() []InstallItem {
-	return ctx.installItems
+	return ctx.installHolder.getInstallItems()
 }
 
 func (ctx *BuildContext) SetInstallFilter(filter InstallFilterFunc) *BuildContext {
-	ctx.installFilter = filter
+	ctx.installHolder.setInstallFilter(filter)
 	return ctx
 }
 
 func (ctx *BuildContext) GetInstallFilter() InstallFilterFunc {
-	return ctx.installFilter
+	return ctx.installHolder.getInstallFilter()
 }
 
 func (ctx *BuildContext) AddPackages(packages ...string) *BuildContext {
@@ -155,11 +140,10 @@ func (ctx *BuildContext) Exec(name string, args ...string) {
 type InstallContext struct {
 	ConfigAccessor
 	GlobalAccessor
+	installHolder InstallItemHolder
 	pkgName       string
-	installItems  []InstallItem
 	prefix        string
 	prefixSet     bool
-	installFilter InstallFilterFunc
 }
 
 func NewInstallContext(pkgName string, cfgVals map[string]any) *InstallContext {
@@ -167,7 +151,6 @@ func NewInstallContext(pkgName string, cfgVals map[string]any) *InstallContext {
 		ConfigAccessor: NewConfigAccessor(cfgVals, nil),
 		GlobalAccessor: NewGlobalAccessor(),
 		pkgName:        pkgName,
-		installItems:   make([]InstallItem, 0),
 	}
 }
 
@@ -182,17 +165,19 @@ func (ctx *InstallContext) PrefixSet() bool     { return ctx.prefixSet }
 func (ctx *InstallContext) PackageName() string { return ctx.pkgName }
 
 func (ctx *InstallContext) AddInstalls(src, dest string) *InstallContext {
-	ctx.installItems = append(ctx.installItems, InstallItem{Src: src, Dest: dest})
+	ctx.installHolder.addInstall(src, dest)
 	return ctx
 }
 
-func (ctx *InstallContext) GetInstallItems() []InstallItem { return ctx.installItems }
+func (ctx *InstallContext) GetInstallItems() []InstallItem {
+	return ctx.installHolder.getInstallItems()
+}
 
 func (ctx *InstallContext) SetInstallFilter(filter InstallFilterFunc) *InstallContext {
-	ctx.installFilter = filter
+	ctx.installHolder.setInstallFilter(filter)
 	return ctx
 }
 
 func (ctx *InstallContext) GetInstallFilter() InstallFilterFunc {
-	return ctx.installFilter
+	return ctx.installHolder.getInstallFilter()
 }

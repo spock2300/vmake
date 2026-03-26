@@ -58,12 +58,9 @@ func runExtAdd(cmd *cobra.Command, args []string) {
 	name := args[0]
 	gitURL := args[1]
 
-	mgr := plugin.NewManager(vmakeDir)
+	mgr := getPluginManager()
 
-	if err := mgr.AddRepo(name, gitURL); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	fatalErr(mgr.AddRepo(name, gitURL))
 
 	fmt.Printf("Added extension repository '%s' from %s\n", name, gitURL)
 
@@ -88,18 +85,15 @@ func runExtAdd(cmd *cobra.Command, args []string) {
 func runExtRemove(cmd *cobra.Command, args []string) {
 	name := args[0]
 
-	mgr := plugin.NewManager(vmakeDir)
+	mgr := getPluginManager()
 
-	if err := mgr.RemoveRepo(name); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	fatalErr(mgr.RemoveRepo(name))
 
 	fmt.Printf("Removed extension repository '%s'\n", name)
 }
 
 func runExtList(cmd *cobra.Command, args []string) {
-	mgr := plugin.NewManager(vmakeDir)
+	mgr := getPluginManager()
 
 	repos := mgr.ListRepos()
 	if len(repos) == 0 {
@@ -137,15 +131,12 @@ func runExtList(cmd *cobra.Command, args []string) {
 }
 
 func runExtUpdate(cmd *cobra.Command, args []string) {
-	mgr := plugin.NewManager(vmakeDir)
+	mgr := getPluginManager()
 
 	if len(args) == 1 {
 		name := args[0]
 		fmt.Printf("Updating extension repository '%s'...\n", name)
-		if err := mgr.UpdateRepo(name); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+		fatalErr(mgr.UpdateRepo(name))
 		fmt.Printf("Updated '%s'. Plugins will be recompiled on next run.\n", name)
 		return
 	}
@@ -166,7 +157,7 @@ func runExtUpdate(cmd *cobra.Command, args []string) {
 }
 
 func loadPlugins() {
-	mgr := plugin.NewManager(vmakeDir)
+	mgr := getPluginManager()
 
 	plugins, err := mgr.DiscoverPlugins()
 	if err != nil {
@@ -239,21 +230,16 @@ type toolchainManifest struct {
 }
 
 func loadExtensionToolchains() {
-	reposDir := filepath.Join(vmakeDir, "extensions")
-	entries, err := os.ReadDir(reposDir)
+	entries, err := readDirEntries(getExtensionsDir())
 	if err != nil {
 		return
 	}
 
 	mgr := toolchain.GetManager()
-	toolchainsDir := filepath.Join(vmakeDir, "toolchains")
+	toolchainsDir := getToolchainsDir()
 
 	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		repoDir := filepath.Join(reposDir, entry.Name())
+		repoDir := filepath.Join(getExtensionsDir(), entry.Name())
 		manifestPath := filepath.Join(repoDir, "assets", "toolchains", "manifest.json")
 		data, err := os.ReadFile(manifestPath)
 		if err != nil {
@@ -293,20 +279,15 @@ func buildToolchainFromManifest(entry *toolchainManifestEntry, installPath strin
 }
 
 func handleAutoDownload(name string) error {
-	reposDir := filepath.Join(vmakeDir, "extensions")
-	entries, err := os.ReadDir(reposDir)
+	entries, err := readDirEntries(getExtensionsDir())
 	if err != nil {
 		return fmt.Errorf("no extension repositories found")
 	}
 
-	toolchainsDir := filepath.Join(vmakeDir, "toolchains")
+	toolchainsDir := getToolchainsDir()
 
 	for _, repoEntry := range entries {
-		if !repoEntry.IsDir() {
-			continue
-		}
-
-		repoDir := filepath.Join(reposDir, repoEntry.Name())
+		repoDir := filepath.Join(getExtensionsDir(), repoEntry.Name())
 		manifestPath := filepath.Join(repoDir, "assets", "toolchains", "manifest.json")
 		data, err := os.ReadFile(manifestPath)
 		if err != nil {

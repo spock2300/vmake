@@ -72,22 +72,7 @@ func (w *CompileCommandsWriter) AddCommand(src, objPath string, opts *CompileOpt
 }
 
 func (w *CompileCommandsWriter) buildArgs(opts *CompileOptions, objPath, src string, flags []string) []string {
-	args := []string{"-c"}
-
-	args = append(args, "-o", objPath)
-
-	for _, inc := range opts.Includes {
-		args = append(args, "-I"+inc)
-	}
-
-	for _, def := range opts.Defines {
-		args = append(args, "-D"+def)
-	}
-
-	args = append(args, flags...)
-	args = append(args, src)
-
-	return args
+	return BuildCompileArgs(opts, objPath, src, flags, "")
 }
 
 func (w *CompileCommandsWriter) Save(outputPath string) error {

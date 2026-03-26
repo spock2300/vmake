@@ -24,20 +24,15 @@ func ensureParentDir(path string) error {
 }
 
 func NewLinker(tc *toolchain.Toolchain) (*Linker, error) {
-	mgr := toolchain.GetManager()
-	ccPath, err := mgr.EnsureToolPath(tc, tc.Tools.CC)
+	tools, err := ResolveTools(tc)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve CC for linking: %w", err)
-	}
-	arPath, err := mgr.EnsureToolPath(tc, tc.Tools.AR)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve AR: %w", err)
+		return nil, err
 	}
 
 	return &Linker{
 		tc:     tc,
-		ccPath: ccPath,
-		arPath: arPath,
+		ccPath: tools.CC,
+		arPath: tools.AR,
 	}, nil
 }
 

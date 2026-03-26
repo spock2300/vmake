@@ -26,8 +26,7 @@ var buildCmd = &cobra.Command{
 
 func init() {
 	RootCmd.AddCommand(buildCmd)
-	buildCmd.Flags().BoolVarP(&installFlag, "install", "i", false, "install after build")
-	buildCmd.Flags().StringVarP(&prefixFlag, "prefix", "p", "", "installation prefix (default: ./install)")
+	addInstallFlags(buildCmd)
 	buildCmd.Flags().BoolVarP(&forceFlag, "force", "f", false, "force buildscript recompilation")
 	buildCmd.Flags().StringVar(&toolchainFlag, "toolchain", "", "override toolchain")
 	buildCmd.Flags().StringVar(&modeFlag, "mode", "", "override build mode")
@@ -114,8 +113,8 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		}
 	}
 
-	packagesDir := filepath.Join(vmakeDir, "packages")
-	cacheDir := filepath.Join(vmakeDir, "cache")
+	packagesDir := getPackagesDir()
+	cacheDir := getCacheDir()
 
 	pkgSourceDirs := make(map[string]string)
 	pkgBuildDirs := make(map[string]string)
@@ -124,8 +123,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 	var repoInstaller *repo.Installer
 
 	if hasDeps {
-		reposDir := filepath.Join(vmakeDir, "repos")
-		repoMgr := repo.NewRepoManager(reposDir)
+		repoMgr := getRepoManager()
 
 		for _, name := range ctx.Resolver.GetOrder() {
 			node := ctx.DepGraph.Packages[name]

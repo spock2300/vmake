@@ -27,20 +27,15 @@ type CompileOptions struct {
 }
 
 func NewCompiler(tc *toolchain.Toolchain) (*Compiler, error) {
-	mgr := toolchain.GetManager()
-	ccPath, err := mgr.EnsureToolPath(tc, tc.Tools.CC)
+	tools, err := ResolveTools(tc)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve CC: %w", err)
-	}
-	cxxPath, err := mgr.EnsureToolPath(tc, tc.Tools.CXX)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve CXX: %w", err)
+		return nil, err
 	}
 
 	return &Compiler{
 		tc:      tc,
-		ccPath:  ccPath,
-		cxxPath: cxxPath,
+		ccPath:  tools.CC,
+		cxxPath: tools.CXX,
 	}, nil
 }
 
@@ -80,23 +75,7 @@ func (c *Compiler) Compile(src, objPath string, opts *CompileOptions) ([]string,
 }
 
 func (c *Compiler) buildArgs(opts *CompileOptions, objPath, depPath, src string, flags []string) []string {
-	args := []string{"-c", "-MMD", "-MP"}
-
-	args = append(args, "-o", objPath)
-	args = append(args, "-MF", depPath)
-
-	for _, inc := range opts.Includes {
-		args = append(args, "-I"+inc)
-	}
-
-	for _, def := range opts.Defines {
-		args = append(args, "-D"+def)
-	}
-
-	args = append(args, flags...)
-	args = append(args, src)
-
-	return args
+	return BuildCompileArgs(opts, objPath, src, flags, depPath)
 }
 
 func ParseDepFile(depPath string) ([]string, error) {
