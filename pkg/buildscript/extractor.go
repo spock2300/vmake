@@ -1,6 +1,7 @@
 package buildscript
 
 import (
+	"os"
 	"plugin"
 
 	"gitee.com/spock2300/vmake/pkg/api"
@@ -15,6 +16,13 @@ func ExtractPackage(loaded *LoadedScript) *api.Package {
 	}
 
 	pkg := api.NewPackage()
+
+	origDir, _ := os.Getwd()
+	defer os.Chdir(origDir)
+	if dir := loaded.Source.Dir; dir != "" {
+		os.Chdir(dir)
+	}
+
 	if mainFunc := lookupMain(loaded.Script); mainFunc != nil {
 		mainFunc(pkg)
 	}

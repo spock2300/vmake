@@ -189,11 +189,9 @@ func runRequirePhase(ctx *RuntimeContext, force bool) error {
 	return nil
 }
 
-func collectOptions(name string, pkg *api.Package) map[string]*api.Option {
+func collectOptions(name, dir string, pkg *api.Package) map[string]*api.Option {
 	cfgCtx := api.NewConfigContext(name)
-	for _, fn := range pkg.GetConfigFuncs() {
-		fn(cfgCtx)
-	}
+	pkg.ExecConfigFuncs(dir, func(fn api.ConfigFunc) { fn(cfgCtx) })
 	return cfgCtx.GetOptions()
 }
 
@@ -202,13 +200,14 @@ func runConfigPhase(ctx *RuntimeContext) error {
 	vlog.Info("Executing OnConfig...")
 
 	ctx.AllOptions = make(map[string]map[string]*api.Option)
+	pkgDirs := GetPackageDirs(ctx.DepGraph)
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 
 		var opts map[string]*api.Option
 		if node.Pkg != nil {
-			opts = collectOptions(name, node.Pkg)
+			opts = collectOptions(name, pkgDirs[name], node.Pkg)
 		}
 
 		if len(opts) > 0 {

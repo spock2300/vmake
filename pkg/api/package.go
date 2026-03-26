@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -220,6 +221,51 @@ func (p *Package) GetConfigFuncs() []ConfigFunc              { return p.configFu
 func (p *Package) GetBuildFuncs() []BuildFunc                { return p.buildFuncs }
 func (p *Package) GetInstallFuncs() []InstallFunc            { return p.installFuncs }
 func (p *Package) GetPackageFunc() PackageFunc               { return p.packageFunc }
+
+func (p *Package) ExecConfigFuncs(dir string, fn func(ConfigFunc)) {
+	origDir, _ := os.Getwd()
+	defer os.Chdir(origDir)
+	if dir != "" {
+		os.Chdir(dir)
+	}
+	for _, f := range p.configFuncs {
+		fn(f)
+	}
+}
+
+func (p *Package) ExecBuildFuncs(dir string, fn func(BuildFunc)) {
+	origDir, _ := os.Getwd()
+	defer os.Chdir(origDir)
+	if dir != "" {
+		os.Chdir(dir)
+	}
+	for _, f := range p.buildFuncs {
+		fn(f)
+	}
+}
+
+func (p *Package) ExecInstallFuncs(dir string, fn func(InstallFunc)) {
+	origDir, _ := os.Getwd()
+	defer os.Chdir(origDir)
+	if dir != "" {
+		os.Chdir(dir)
+	}
+	for _, f := range p.installFuncs {
+		fn(f)
+	}
+}
+
+func (p *Package) ExecPackageFunc(dir string) {
+	if p.packageFunc == nil {
+		return
+	}
+	origDir, _ := os.Getwd()
+	defer os.Chdir(origDir)
+	if dir != "" {
+		os.Chdir(dir)
+	}
+	p.packageFunc(p)
+}
 
 func (p *Package) UpdateRequireContext(cfgVals map[string]any, options map[string]*Option) {
 	if len(p.requireFuncs) == 0 {

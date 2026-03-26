@@ -195,6 +195,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 	vlog.Info("Executing OnBuild...")
 	allTargets := make(map[string]map[string]*api.Target)
 	subBuildClaimed := make(map[string]bool)
+	pkgDirs := GetPackageDirs(ctx.DepGraph)
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
@@ -225,9 +226,9 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 			return build.SubBuild(tcName, dir, args...)
 		})
 
-		for _, fn := range node.Pkg.GetBuildFuncs() {
+		node.Pkg.ExecBuildFuncs(pkgDirs[name], func(fn api.BuildFunc) {
 			fn(buildCtx)
-		}
+		})
 
 		allTargets[name] = buildCtx.GetTargets()
 
@@ -285,8 +286,6 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 	for _, fullName := range graph.Order {
 		vlog.Info("  - %s", fullName)
 	}
-
-	pkgDirs := GetPackageDirs(ctx.DepGraph)
 
 	scheduler, err := build.NewScheduler(graph, tc, pkgDirs, mode)
 	if err != nil {
@@ -549,17 +548,17 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 		installCtx.SetGlobalOptions(ctx.GlobalOptions)
 		installCtx.SetGlobalValues(globalValues)
 
-		for _, fn := range node.Pkg.GetInstallFuncs() {
+		node.Pkg.ExecInstallFuncs(result.PkgDirs[name], func(fn api.InstallFunc) {
 			fn(installCtx)
-		}
+		})
 
 		buildCtx := api.NewBuildContext(name, entry.Options)
 		buildCtx.SetOptions(ctx.AllOptions[name])
 		buildCtx.SetGlobalOptions(ctx.GlobalOptions)
 		buildCtx.SetGlobalValues(globalValues)
-		for _, fn := range node.Pkg.GetBuildFuncs() {
+		node.Pkg.ExecBuildFuncs(result.PkgDirs[name], func(fn api.BuildFunc) {
 			fn(buildCtx)
-		}
+		})
 
 		installItems := installCtx.GetInstallItems()
 		installItems = append(installItems, buildCtx.GetInstallItems()...)
