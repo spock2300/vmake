@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/repo"
@@ -93,7 +94,7 @@ var pkgSearchCmd = &cobra.Command{
 
 				for _, pkg := range pkgs {
 					fullName := repoName + "/" + pkg.Name()
-					if pattern == "" || containsString(fullName, pattern) {
+					if pattern == "" || strings.Contains(fullName, pattern) {
 						fmt.Printf("  %s\n", fullName)
 					}
 				}
@@ -109,8 +110,8 @@ var pkgCleanCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		pkgRef := args[0]
-		parts := splitPackageRef(pkgRef)
-		if len(parts) != 2 {
+		repoName, pkgName, ok := api.SplitPackageRef(pkgRef)
+		if !ok {
 			fatalMsg("Error: invalid package reference")
 		}
 
@@ -122,7 +123,7 @@ var pkgCleanCmd = &cobra.Command{
 		if pkgCleanAll {
 			sourceMgr := repo.NewSourceManager(getCacheDir())
 
-			fatalErr(sourceMgr.CleanSource(parts[0], parts[1]))
+			fatalErr(sourceMgr.CleanSource(repoName, pkgName))
 			fmt.Printf("Cleaned source for '%s'\n", pkgRef)
 		}
 	},
@@ -137,41 +138,23 @@ var pkgUpdateCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		pkgRef := args[0]
 
-		parts := splitPackageRef(pkgRef)
-		if len(parts) != 2 {
+		repoName, pkgName, ok := api.SplitPackageRef(pkgRef)
+		if !ok {
 			fatalMsg("Error: invalid package reference")
 		}
 
 		repoMgr := getRepoManager()
-		_, err := repoMgr.FindPackage(parts[0], parts[1])
+		_, err := repoMgr.FindPackage(repoName, pkgName)
 		fatalErr(err)
 
 		sourceMgr := repo.NewSourceManager(getCacheDir())
 		pkg := api.NewPackage()
-		pkg.SetRepo(parts[0]).SetName(parts[1])
+		pkg.SetRepo(repoName).SetName(pkgName)
 
 		fatalErr(sourceMgr.UpdateSource(pkg))
 
 		fmt.Printf("Updated source for package '%s'\n", pkgRef)
 	},
-}
-
-func splitPackageRef(ref string) []string {
-	for i, c := range ref {
-		if c == '/' {
-			return []string{ref[:i], ref[i+1:]}
-		}
-	}
-	return nil
-}
-
-func containsString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 func init() {

@@ -12,18 +12,9 @@ import (
 	"gitee.com/spock2300/vmake/pkg/repo"
 )
 
-type Source struct {
-	ID        string
-	BuildGo   string
-	Dir       string
-	OutputDir string
-	Origin    api.SourceOrigin
-	Force     bool
-}
-
 type PackageNode struct {
 	ID       string
-	Source   *Source
+	Source   *buildscript.Source
 	Pkg      *api.Package
 	Deps     []string
 	Deferred bool
@@ -39,7 +30,7 @@ type Graph struct {
 }
 
 type Resolver struct {
-	sources  map[string]*Source
+	sources  map[string]*buildscript.Source
 	graph    *Graph
 	repoMgr  *repo.RepoManager
 	cacheDir string
@@ -48,7 +39,7 @@ type Resolver struct {
 
 func NewResolver(repoMgr *repo.RepoManager, cacheDir string) *Resolver {
 	return &Resolver{
-		sources:  make(map[string]*Source),
+		sources:  make(map[string]*buildscript.Source),
 		graph:    &Graph{Packages: make(map[string]*PackageNode)},
 		repoMgr:  repoMgr,
 		cacheDir: cacheDir,
@@ -73,14 +64,14 @@ func (r *Resolver) UpdateOrder() {
 
 func (r *Resolver) ResolveAll(localSources []buildscript.Source) error {
 	for _, src := range localSources {
-		s := &Source{
-			ID:      src.Name,
-			BuildGo: src.Path,
-			Dir:     src.Dir,
-			Origin:  api.SourceLocal,
-			Force:   r.force,
+		s := &buildscript.Source{
+			Name:   src.Name,
+			Path:   src.Path,
+			Dir:    src.Dir,
+			Origin: api.SourceLocal,
+			Force:  r.force,
 		}
-		r.sources[s.ID] = s
+		r.sources[s.Name] = s
 	}
 
 	for _, src := range localSources {
@@ -127,7 +118,7 @@ func (r *Resolver) resolveDeferredNode(id string, node *PackageNode) (*PackageNo
 	}
 
 	scriptPath := r.scriptPath(src)
-	if !r.force && src.BuildGo != "" && r.hasCachedScript(scriptPath, src.BuildGo) {
+	if !r.force && src.Path != "" && r.hasCachedScript(scriptPath, src.Path) {
 		return r.resolveFromCache(id, scriptPath, src, []string{id})
 	}
 
@@ -178,7 +169,7 @@ func (r *Resolver) resolveRecursive(id string, path []string) (*PackageNode, err
 	}
 
 	scriptPath := r.scriptPath(src)
-	if !r.force && src.BuildGo != "" && r.hasCachedScript(scriptPath, src.BuildGo) {
+	if !r.force && src.Path != "" && r.hasCachedScript(scriptPath, src.Path) {
 		return r.resolveFromCache(id, scriptPath, src, path)
 	}
 
@@ -196,17 +187,10 @@ func (r *Resolver) resolveRecursive(id string, path []string) (*PackageNode, err
 	return r.resolveOne(id, src, path)
 }
 
-func (r *Resolver) resolveOne(id string, src *Source, path []string) (*PackageNode, error) {
+func (r *Resolver) resolveOne(id string, src *buildscript.Source, path []string) (*PackageNode, error) {
 	scriptPath := r.scriptPath(src)
 
-	cr := buildscript.Compile(buildscript.Source{
-		Name:      src.ID,
-		Path:      src.BuildGo,
-		Dir:       src.Dir,
-		OutputDir: src.OutputDir,
-		Origin:    src.Origin,
-		Force:     src.Force,
-	})
+	cr := buildscript.Compile(*src)
 	if !cr.Success {
 		return nil, fmt.Errorf("compile %s: %w", id, cr.Error)
 	}
@@ -214,14 +198,8 @@ func (r *Resolver) resolveOne(id string, src *Source, path []string) (*PackageNo
 	return r.resolveFromCache(id, scriptPath, src, path)
 }
 
-func (r *Resolver) resolveFromCache(id string, scriptPath string, src *Source, path []string) (*PackageNode, error) {
-	loaded, err := buildscript.Load(scriptPath, buildscript.Source{
-		Name:      src.ID,
-		Path:      src.BuildGo,
-		Dir:       src.Dir,
-		OutputDir: src.OutputDir,
-		Origin:    src.Origin,
-	})
+func (r *Resolver) resolveFromCache(id string, scriptPath string, src *buildscript.Source, path []string) (*PackageNode, error) {
+	loaded, err := buildscript.Load(scriptPath, *src)
 	if err != nil {
 		return nil, fmt.Errorf("load %s: %w", id, err)
 	}
@@ -247,20 +225,20 @@ func (r *Resolver) resolveFromCache(id string, scriptPath string, src *Source, p
 	return node, nil
 }
 
-func (r *Resolver) findSource(id string) (*Source, error) {
+func (r *Resolver) findSource(id string) (*buildscript.Source, error) {
 	if src, ok := r.sources[id]; ok {
 		return src, nil
 	}
 
-	repoName, pkgName := parseRepoPkg(id)
+	repoName, pkgName, _ := api.SplitPackageRef(id)
 	buildGo, err := r.repoMgr.FindPackageGo(repoName, pkgName)
 	if err != nil {
 		return nil, fmt.Errorf("find %s: %w", id, err)
 	}
 
-	src := &Source{
-		ID:        id,
-		BuildGo:   buildGo,
+	src := &buildscript.Source{
+		Name:      id,
+		Path:      buildGo,
 		Dir:       filepath.Dir(buildGo),
 		OutputDir: r.buildscriptOutputDir(id),
 		Origin:    api.SourceRemote,
@@ -270,7 +248,7 @@ func (r *Resolver) findSource(id string) (*Source, error) {
 	return src, nil
 }
 
-func (r *Resolver) scriptPath(src *Source) string {
+func (r *Resolver) scriptPath(src *buildscript.Source) string {
 	outputDir := src.OutputDir
 	if outputDir == "" {
 		outputDir = filepath.Join(src.Dir, "build")
@@ -346,12 +324,4 @@ func topologicalSort(packages map[string]*PackageNode) []string {
 	}
 
 	return result
-}
-
-func parseRepoPkg(fullName string) (string, string) {
-	lastSlash := strings.LastIndex(fullName, "/")
-	if lastSlash < 0 {
-		return "", fullName
-	}
-	return fullName[:lastSlash], fullName[lastSlash+1:]
 }

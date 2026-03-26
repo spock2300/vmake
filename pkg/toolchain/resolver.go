@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	iexec "gitee.com/spock2300/vmake/internal/exec"
 )
@@ -70,24 +69,12 @@ func GetToolchainHost(tc *Toolchain) string {
 		return "unknown"
 	}
 
-	return strings.TrimSpace(string(output))
+	return iexec.TrimOutput(output)
 }
 
 func IsCrossCompiling(tc *Toolchain) bool {
 	if tc.Host == "" {
 		return false
 	}
-
-	cc, err := ResolveToolPath(tc.Tools.CC, tc.InstallPath)
-	if err != nil {
-		return false
-	}
-
-	output, err := iexec.Run(cc, "-dumpmachine")
-	if err != nil {
-		return false
-	}
-
-	hostTriple := strings.TrimSpace(string(output))
-	return tc.Host != hostTriple
+	return tc.Host != GetToolchainHost(tc)
 }

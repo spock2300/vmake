@@ -1,8 +1,6 @@
 package build
 
 import (
-	"fmt"
-	"os"
 	"path/filepath"
 
 	iexec "gitee.com/spock2300/vmake/internal/exec"
@@ -16,11 +14,7 @@ type Linker struct {
 }
 
 func ensureParentDir(path string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
-	}
-	return nil
+	return ensureDir(filepath.Dir(path))
 }
 
 func NewLinker(tc *toolchain.Toolchain) (*Linker, error) {

@@ -141,28 +141,18 @@ func (s *Scheduler) SetPkgDirs(pkgName, sourceDir, outputDir, installDir string)
 }
 
 func (s *Scheduler) BuildAll() error {
-	for _, fullName := range s.graph.Order {
-		node := s.graph.Nodes[fullName]
-		if node == nil {
-			return fmt.Errorf("target not found in graph: %s", fullName)
-		}
-
-		if !node.Target.IsDefault() {
-			continue
-		}
-
-		if err := s.Build(fullName); err != nil {
-			return err
-		}
+	if err := s.graph.ForEachDefault(func(node *BuildNode) error {
+		return s.Build(node.FullName)
+	}); err != nil {
+		return err
 	}
-
 	return s.ccWriter.Save(filepath.Join("build", "compile_commands.json"))
 }
 
 func (s *Scheduler) Build(fullName string) error {
-	node := s.graph.Nodes[fullName]
-	if node == nil {
-		return fmt.Errorf("target not found: %s", fullName)
+	node, err := s.graph.GetNode(fullName)
+	if err != nil {
+		return err
 	}
 
 	if !node.Target.IsDefault() {
@@ -185,7 +175,9 @@ func (s *Scheduler) Build(fullName string) error {
 		return err
 	}
 
-	os.MkdirAll(filepath.Join("build", s.buildDir, "objects"), 0755)
+	if err := os.MkdirAll(filepath.Join("build", s.buildDir, "objects"), 0755); err != nil {
+		return fmt.Errorf("create build directory: %w", err)
+	}
 
 	numFiles := len(resolved.SourceFiles)
 	if numFiles == 0 {
@@ -271,8 +263,8 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	resolved.AllLdFlags = append(resolved.AllLdFlags, node.Target.LdFlags()...)
 
 	for _, depName := range node.Deps {
-		depNode := s.graph.Nodes[depName]
-		if depNode == nil {
+		depNode, err := s.graph.GetNode(depName)
+		if err != nil {
 			return nil, fmt.Errorf("dependency not found: %s", depName)
 		}
 
@@ -483,8 +475,12 @@ func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 						return nil
 					}
 				}
-				os.MkdirAll(pkg.BuildDir(), 0755)
-				os.MkdirAll(pkg.InstallDir(), 0755)
+				if err := os.MkdirAll(pkg.BuildDir(), 0755); err != nil {
+					return fmt.Errorf("create build dir: %w", err)
+				}
+				if err := os.MkdirAll(pkg.InstallDir(), 0755); err != nil {
+					return fmt.Errorf("create install dir: %w", err)
+				}
 			}
 			if err := fn(pkg); err != nil {
 				return err
@@ -554,8 +550,12 @@ func (s *Scheduler) installTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 		}
 	}
 
-	os.MkdirAll(libDir, 0755)
-	os.MkdirAll(includeDir, 0755)
+	if err := os.MkdirAll(libDir, 0755); err != nil {
+		return fmt.Errorf("create lib dir: %w", err)
+	}
+	if err := os.MkdirAll(includeDir, 0755); err != nil {
+		return fmt.Errorf("create include dir: %w", err)
+	}
 
 	if resolved.OutputPath != "" {
 		if _, err := os.Stat(resolved.OutputPath); err == nil {

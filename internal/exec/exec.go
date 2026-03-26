@@ -27,6 +27,10 @@ func RunInDir(name, dir string, args ...string) ([]byte, error) {
 	return RunWithOptions(name, args, RunOptions{Dir: dir})
 }
 
+func TrimOutput(output []byte) string {
+	return strings.TrimSpace(string(output))
+}
+
 func RunWithOptions(name string, args []string, opts RunOptions) ([]byte, error) {
 	cmdLine := formatCommandLine(name, args)
 	vlog.Debug("%s  %s", opts.Dir, cmdLine)

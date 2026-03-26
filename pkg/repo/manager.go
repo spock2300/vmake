@@ -2,68 +2,39 @@ package repo
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"gitee.com/spock2300/vmake/internal/fs"
+	"gitee.com/spock2300/vmake/internal/gitstore"
 )
 
 type RepoManager struct {
-	reposDir string
+	*gitstore.Store
 }
 
 func NewRepoManager(reposDir string) *RepoManager {
-	return &RepoManager{reposDir: reposDir}
+	return &RepoManager{Store: gitstore.New(reposDir)}
 }
 
 func (m *RepoManager) Add(name, gitURL string) error {
-	repoPath := filepath.Join(m.reposDir, name)
-	if m.exists(repoPath) {
-		return fmt.Errorf("repo '%s' already exists", name)
-	}
-
-	if err := fs.EnsureParentDir(repoPath); err != nil {
-		return fmt.Errorf("failed to create repo directory: %w", err)
-	}
-
-	if err := Clone(gitURL, repoPath); err != nil {
-		return fmt.Errorf("failed to clone repo: %w", err)
-	}
-
-	return nil
+	return m.Store.Add(name, gitURL, Clone)
 }
 
 func (m *RepoManager) Remove(name string) error {
-	repoPath := filepath.Join(m.reposDir, name)
-	if !m.exists(repoPath) {
-		return fmt.Errorf("repo '%s' not found", name)
-	}
-
-	return fs.RemoveAll(repoPath)
+	return m.Store.Remove(name)
 }
 
 func (m *RepoManager) List() []string {
-	repos := []string{}
-	entries, err := os.ReadDir(m.reposDir)
-	if err != nil {
-		return repos
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			repos = append(repos, entry.Name())
-		}
-	}
-	return repos
+	names, _ := m.Store.List()
+	return names
 }
 
 func (m *RepoManager) Update(name string) error {
-	repoPath := filepath.Join(m.reposDir, name)
-	if !m.exists(repoPath) {
+	repoPath := m.Path(name)
+	if !m.Exists(name) {
 		return fmt.Errorf("repo '%s' not found", name)
 	}
-
 	return FetchAndReset(repoPath)
 }
 
@@ -73,9 +44,9 @@ func (m *RepoManager) FindPackage(repo, name string) (string, error) {
 	}
 
 	firstChar := strings.ToLower(string(name[0]))
-	pkgPath := filepath.Join(m.reposDir, repo, "packages", firstChar, name)
+	pkgPath := filepath.Join(m.BaseDir(), repo, "packages", firstChar, name)
 
-	if !m.exists(pkgPath) {
+	if !fs.FileExists(pkgPath) {
 		return "", fmt.Errorf("package '%s/%s' not found", repo, name)
 	}
 
@@ -89,13 +60,9 @@ func (m *RepoManager) FindPackageGo(repo, name string) (string, error) {
 	}
 
 	buildGo := filepath.Join(pkgPath, "build.go")
-	if !m.exists(buildGo) {
+	if !fs.FileExists(buildGo) {
 		return "", fmt.Errorf("build.go not found in '%s'", pkgPath)
 	}
 
 	return buildGo, nil
-}
-
-func (m *RepoManager) exists(path string) bool {
-	return fs.FileExists(path)
 }

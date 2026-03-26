@@ -1,5 +1,29 @@
 package api
 
+func getTypedValue[T any](
+	vals map[string]any,
+	opts map[string]*Option,
+	name string,
+	getDefault func(*Option) T,
+	zero T,
+	coerce func(any) (T, bool),
+) T {
+	if val, ok := vals[name]; ok {
+		if v, ok := val.(T); ok {
+			return v
+		}
+		if coerce != nil {
+			if v, ok := coerce(val); ok {
+				return v
+			}
+		}
+	}
+	if opt, ok := opts[name]; ok {
+		return getDefault(opt)
+	}
+	return zero
+}
+
 type ConfigAccessor struct {
 	CfgVals map[string]any
 	Options map[string]*Option
@@ -23,55 +47,40 @@ func NilCfgAccessor() ConfigAccessor {
 }
 
 func (a *ConfigAccessor) Bool(name string) bool {
-	if val, ok := a.CfgVals[name]; ok {
-		if b, ok := val.(bool); ok {
-			return b
-		}
-	}
-	if opt, ok := a.Options[name]; ok {
-		if d, ok := opt.defaultVal.(bool); ok {
+	return getTypedValue(a.CfgVals, a.Options, name, func(o *Option) bool {
+		if d, ok := o.defaultVal.(bool); ok {
 			return d
 		}
-	}
-	return false
+		return false
+	}, false, nil)
 }
 
 func (a *ConfigAccessor) String(name string) string {
-	if val, ok := a.CfgVals[name]; ok {
-		if s, ok := val.(string); ok {
-			return s
-		}
-	}
-	if opt, ok := a.Options[name]; ok {
-		if d, ok := opt.defaultVal.(string); ok {
+	return getTypedValue(a.CfgVals, a.Options, name, func(o *Option) string {
+		if d, ok := o.defaultVal.(string); ok {
 			return d
 		}
-	}
-	return ""
+		return ""
+	}, "", nil)
 }
 
 func (a *ConfigAccessor) Int(name string) int {
-	if val, ok := a.CfgVals[name]; ok {
+	return getTypedValue(a.CfgVals, a.Options, name, func(o *Option) int {
+		if d, ok := o.defaultVal.(int); ok {
+			return d
+		}
+		return 0
+	}, 0, func(val any) (int, bool) {
 		switch v := val.(type) {
 		case int:
-			return v
+			return v, true
 		case int64:
-			return int(v)
+			return int(v), true
 		case float64:
-			return int(v)
+			return int(v), true
 		}
-	}
-	if opt, ok := a.Options[name]; ok {
-		switch v := opt.defaultVal.(type) {
-		case int:
-			return v
-		case int64:
-			return int(v)
-		case float64:
-			return int(v)
-		}
-	}
-	return 0
+		return 0, false
+	})
 }
 
 func (a *ConfigAccessor) BoolStr(name string) string {
@@ -162,31 +171,21 @@ func (g *GlobalAccessor) SetGlobalValues(vals map[string]any) {
 }
 
 func (g *GlobalAccessor) GlobalBool(name string) bool {
-	if val, ok := g.globalVals[name]; ok {
-		if b, ok := val.(bool); ok {
-			return b
-		}
-	}
-	if opt, ok := g.globalOptions[name]; ok {
-		if d, ok := opt.Default().(bool); ok {
+	return getTypedValue(g.globalVals, g.globalOptions, name, func(o *Option) bool {
+		if d, ok := o.Default().(bool); ok {
 			return d
 		}
-	}
-	return false
+		return false
+	}, false, nil)
 }
 
 func (g *GlobalAccessor) GlobalString(name string) string {
-	if val, ok := g.globalVals[name]; ok {
-		if s, ok := val.(string); ok {
-			return s
-		}
-	}
-	if opt, ok := g.globalOptions[name]; ok {
-		if d, ok := opt.Default().(string); ok {
+	return getTypedValue(g.globalVals, g.globalOptions, name, func(o *Option) string {
+		if d, ok := o.Default().(string); ok {
 			return d
 		}
-	}
-	return ""
+		return ""
+	}, "", nil)
 }
 
 func (g *GlobalAccessor) Mode() string {

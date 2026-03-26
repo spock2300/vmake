@@ -220,28 +220,24 @@ func (p *Package) GetBuildFuncs() []BuildFunc                { return p.buildFun
 func (p *Package) GetInstallFuncs() []InstallFunc            { return p.installFuncs }
 func (p *Package) GetPackageFunc() PackageFunc               { return p.packageFunc }
 
-func (p *Package) ExecConfigFuncs(dir string, fn func(ConfigFunc)) {
+func execFuncs[T any](dir string, funcs []T, fn func(T)) {
 	execInDir(dir, func() {
-		for _, f := range p.configFuncs {
+		for _, f := range funcs {
 			fn(f)
 		}
 	})
+}
+
+func (p *Package) ExecConfigFuncs(dir string, fn func(ConfigFunc)) {
+	execFuncs(dir, p.configFuncs, fn)
 }
 
 func (p *Package) ExecBuildFuncs(dir string, fn func(BuildFunc)) {
-	execInDir(dir, func() {
-		for _, f := range p.buildFuncs {
-			fn(f)
-		}
-	})
+	execFuncs(dir, p.buildFuncs, fn)
 }
 
 func (p *Package) ExecInstallFuncs(dir string, fn func(InstallFunc)) {
-	execInDir(dir, func() {
-		for _, f := range p.installFuncs {
-			fn(f)
-		}
-	})
+	execFuncs(dir, p.installFuncs, fn)
 }
 
 func (p *Package) ExecPackageFunc(dir string) {
@@ -261,7 +257,7 @@ func (p *Package) UpdateRequireContext(cfgVals map[string]any, options map[strin
 	for _, fn := range p.requireFuncs {
 		fn(ctx)
 	}
-	p.requireCtx = &PackageRequireContext{requires: ctx.GetRequires()}
+	p.requireCtx = &PackageRequireContext{requiresHolder: requiresHolder{requires: ctx.GetRequires()}}
 }
 
 func (p *Package) AddInstalls(src, dest string) *Package {
@@ -446,4 +442,12 @@ func NewInstalledPackage(name, version, installDir string, libs []string) *Insta
 		BinDir:     filepath.Join(installDir, "bin"),
 		Libs:       libs,
 	}
+}
+
+func SplitPackageRef(ref string) (repo, name string, ok bool) {
+	idx := strings.Index(ref, "/")
+	if idx < 0 {
+		return "", ref, false
+	}
+	return ref[:idx], ref[idx+1:], true
 }

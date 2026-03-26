@@ -24,9 +24,18 @@ type ToolchainMeta struct {
 	Host    string `json:"host"`
 }
 
+func (s *BuildState) statePath(tcName string) string {
+	return filepath.Join("build", tcName, "state.json")
+}
+
+func resolveCCAndCXX(tc *toolchain.Toolchain) (string, string) {
+	cc, _ := toolchain.ResolveToolPath(tc.Tools.CC, tc.InstallPath)
+	cxx, _ := toolchain.ResolveToolPath(tc.Tools.CXX, tc.InstallPath)
+	return cc, cxx
+}
+
 func NewBuildState(tc *toolchain.Toolchain) *BuildState {
-	ccPath, _ := toolchain.ResolveToolPath(tc.Tools.CC, tc.InstallPath)
-	cxxPath, _ := toolchain.ResolveToolPath(tc.Tools.CXX, tc.InstallPath)
+	ccPath, cxxPath := resolveCCAndCXX(tc)
 	host := tc.Host
 	if host == "" {
 		host = toolchain.GetToolchainHost(tc)
@@ -45,19 +54,18 @@ func NewBuildState(tc *toolchain.Toolchain) *BuildState {
 
 func LoadState(tcName string) (*BuildState, error) {
 	var state BuildState
-	if err := jsonio.Load(filepath.Join("build", tcName, "state.json"), &state); err != nil {
+	if err := jsonio.Load((&BuildState{}).statePath(tcName), &state); err != nil {
 		return nil, fmt.Errorf("failed to load state: %w", err)
 	}
 	return &state, nil
 }
 
 func (s *BuildState) Save(tcName string) error {
-	return jsonio.Save(filepath.Join("build", tcName, "state.json"), s)
+	return jsonio.Save(s.statePath(tcName), s)
 }
 
 func (s *BuildState) NeedFullRebuild(tc *toolchain.Toolchain) bool {
-	ccPath, _ := toolchain.ResolveToolPath(tc.Tools.CC, tc.InstallPath)
-	cxxPath, _ := toolchain.ResolveToolPath(tc.Tools.CXX, tc.InstallPath)
+	ccPath, cxxPath := resolveCCAndCXX(tc)
 
 	return s.Toolchain.Name != tc.Name ||
 		s.Toolchain.CCPath != ccPath ||

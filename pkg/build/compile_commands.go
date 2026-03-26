@@ -25,12 +25,7 @@ type CompileCommandsWriter struct {
 }
 
 func NewCompileCommandsWriter(tc *toolchain.Toolchain) (*CompileCommandsWriter, error) {
-	mgr := toolchain.GetManager()
-	ccPath, err := mgr.EnsureToolPath(tc, tc.Tools.CC)
-	if err != nil {
-		return nil, err
-	}
-	cxxPath, err := mgr.EnsureToolPath(tc, tc.Tools.CXX)
+	tools, err := ResolveTools(tc)
 	if err != nil {
 		return nil, err
 	}
@@ -38,8 +33,8 @@ func NewCompileCommandsWriter(tc *toolchain.Toolchain) (*CompileCommandsWriter, 
 	return &CompileCommandsWriter{
 		commands: make([]CompileCommand, 0),
 		tc:       tc,
-		ccPath:   ccPath,
-		cxxPath:  cxxPath,
+		ccPath:   tools.CC,
+		cxxPath:  tools.CXX,
 	}, nil
 }
 
@@ -59,7 +54,7 @@ func (w *CompileCommandsWriter) AddCommand(src, objPath string, opts *CompileOpt
 		flags = append([]string{}, opts.CFlags...)
 	}
 
-	args := w.buildArgs(opts, objPath, src, flags)
+	args := BuildCompileArgs(opts, objPath, src, flags, "")
 	cmdStr := compiler + " " + joinArgs(args)
 
 	w.mu.Lock()
@@ -69,10 +64,6 @@ func (w *CompileCommandsWriter) AddCommand(src, objPath string, opts *CompileOpt
 		File:      filepath.Join(w.pkgDir, src),
 	})
 	w.mu.Unlock()
-}
-
-func (w *CompileCommandsWriter) buildArgs(opts *CompileOptions, objPath, src string, flags []string) []string {
-	return BuildCompileArgs(opts, objPath, src, flags, "")
 }
 
 func (w *CompileCommandsWriter) Save(outputPath string) error {

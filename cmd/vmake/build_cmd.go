@@ -63,17 +63,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		return nil, err
 	}
 
-	apiTC := &api.Toolchain{
-		CC:       tc.Tools.CC,
-		CXX:      tc.Tools.CXX,
-		AR:       tc.Tools.AR,
-		Target:   "",
-		Prefix:   tc.Prefix,
-		SysRoot:  "",
-		CFlags:   strings.Join(tc.DefaultFlags.CFlags, " "),
-		CXXFlags: strings.Join(tc.DefaultFlags.CxxFlags, " "),
-		LDFlags:  strings.Join(tc.DefaultFlags.LdFlags, " "),
-	}
+	apiTC := toolchainToAPI(tc)
 	if toolchain.IsCrossCompiling(tc) {
 		apiTC.Target = tc.Host
 	}
@@ -156,15 +146,18 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 			node := ctx.DepGraph.Packages[name]
 			if needed[name] && !node.IsLocal() {
 				cfg := configs[name]
-				parts := splitPackagePath(name)
+				repoName, pkgName, ok := api.SplitPackageRef(name)
+				if !ok {
+					continue
+				}
 				pkg := api.NewPackage()
-				pkg.SetRepo(parts[0]).SetName(parts[1])
+				pkg.SetRepo(repoName).SetName(pkgName)
 				if node.Pkg != nil {
 					pkg.SetGit(node.Pkg.GitURLs()...)
 					pkg.SetVersions(node.Pkg.Versions())
-				} else if node.Source != nil && node.Source.BuildGo != "" {
-					pkg.SetVersions(extractVersionsFromBuildGo(node.Source.BuildGo))
-					pkg.SetGit(extractGitURLs(node.Source.BuildGo)...)
+				} else if node.Source != nil && node.Source.Path != "" {
+					pkg.SetVersions(extractVersionsFromBuildGo(node.Source.Path))
+					pkg.SetGit(extractGitURLs(node.Source.Path)...)
 				}
 
 				if cfg.Version == "" && len(pkg.GetVersions()) > 0 {
@@ -432,13 +425,16 @@ func (p *packageProvider) GetTransitivePackageNames(name string) []string {
 	return result
 }
 
-func splitPackagePath(path string) []string {
-	for i := 0; i < len(path); i++ {
-		if path[i] == '/' {
-			return []string{path[:i], path[i+1:]}
-		}
+func toolchainToAPI(tc *toolchain.Toolchain) *api.Toolchain {
+	return &api.Toolchain{
+		CC:       tc.Tools.CC,
+		CXX:      tc.Tools.CXX,
+		AR:       tc.Tools.AR,
+		Prefix:   tc.Prefix,
+		CFlags:   strings.Join(tc.DefaultFlags.CFlags, " "),
+		CXXFlags: strings.Join(tc.DefaultFlags.CxxFlags, " "),
+		LDFlags:  strings.Join(tc.DefaultFlags.LdFlags, " "),
 	}
-	return nil
 }
 
 func extractVersionsFromBuildGo(buildGoPath string) map[string]string {
@@ -515,14 +511,6 @@ func resolvePackageDeps(allTargets map[string]map[string]*api.Target) {
 			}
 		}
 	}
-}
-
-func hasInstalledFiles(dir string) bool {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false
-	}
-	return len(entries) > 0
 }
 
 func executeInstall(ctx *RuntimeContext, result *BuildResult) error {

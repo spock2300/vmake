@@ -17,7 +17,13 @@ type PluginOptions struct {
 	OutputPath string
 	EntryFile  string
 	ModuleName string
-	Prefix     string // "vmake_plugin_" or "vmake_buildscript_"
+	Prefix     string
+}
+
+type CompileResult struct {
+	Success    bool
+	Error      error
+	OutputPath string
 }
 
 func CompilePlugin(opts PluginOptions) error {

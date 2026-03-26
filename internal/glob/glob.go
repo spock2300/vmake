@@ -22,14 +22,9 @@ func Match(pattern, dir string) ([]string, error) {
 		return nil, err
 	}
 
-	relDir, err := filepath.Abs(dir)
-	if err != nil {
-		return nil, err
-	}
-
 	var result []string
 	for _, m := range matches {
-		rel, err := filepath.Rel(relDir, m)
+		rel, err := filepath.Rel(absDir, m)
 		if err != nil {
 			result = append(result, m)
 		} else {

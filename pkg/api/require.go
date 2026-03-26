@@ -7,21 +7,44 @@ type RequireInfo struct {
 	Constraint string
 }
 
+type requiresHolder struct {
+	requires []RequireInfo
+}
+
+func (h *requiresHolder) addRequires(deps ...string) {
+	for _, dep := range deps {
+		if dep == "" {
+			continue
+		}
+		name, constraint := parseRequire(dep)
+		h.requires = append(h.requires, RequireInfo{
+			Name:       name,
+			Constraint: constraint,
+		})
+	}
+}
+
+func (h *requiresHolder) getRequires() []RequireInfo {
+	return h.requires
+}
+
+func (h *requiresHolder) resetRequires() {
+	h.requires = make([]RequireInfo, 0)
+}
+
 type RequireContext struct {
 	ConfigAccessor
-	requires     []RequireInfo
+	requiresHolder
 	requireFuncs []RequireFunc
 }
 
 func NewRequireContext() *RequireContext {
 	return &RequireContext{
 		ConfigAccessor: NilCfgAccessor(),
-		requires:       make([]RequireInfo, 0),
+		requireFuncs:   make([]RequireFunc, 0),
 	}
 }
 
-// NewRequireContextForConfig creates a RequireContext with config values.
-// When cfgVals is nil (discoverAll mode), If/IfNot/Select return all values.
 func NewRequireContextForConfig(cfgVals map[string]any, options map[string]*Option, funcs []RequireFunc) *RequireContext {
 	if options == nil {
 		options = make(map[string]*Option)
@@ -29,31 +52,21 @@ func NewRequireContextForConfig(cfgVals map[string]any, options map[string]*Opti
 	accessor := ConfigAccessor{CfgVals: cfgVals, Options: options}
 	return &RequireContext{
 		ConfigAccessor: accessor,
-		requires:       make([]RequireInfo, 0),
 		requireFuncs:   funcs,
 	}
 }
 
 func (ctx *RequireContext) AddRequires(deps ...string) *RequireContext {
-	for _, dep := range deps {
-		if dep == "" {
-			continue
-		}
-		name, constraint := parseRequire(dep)
-		ctx.requires = append(ctx.requires, RequireInfo{
-			Name:       name,
-			Constraint: constraint,
-		})
-	}
+	ctx.requiresHolder.addRequires(deps...)
 	return ctx
 }
 
 func (ctx *RequireContext) GetRequires() []RequireInfo {
-	return ctx.requires
+	return ctx.requiresHolder.getRequires()
 }
 
 func (ctx *RequireContext) ResetRequires() {
-	ctx.requires = make([]RequireInfo, 0)
+	ctx.requiresHolder.resetRequires()
 }
 
 func (ctx *RequireContext) GetRequireFuncs() []RequireFunc {
@@ -67,31 +80,20 @@ func (ctx *RequireContext) RunFuncs() {
 }
 
 type PackageRequireContext struct {
-	requires []RequireInfo
+	requiresHolder
 }
 
 func NewPackageRequireContext() *PackageRequireContext {
-	return &PackageRequireContext{
-		requires: make([]RequireInfo, 0),
-	}
+	return &PackageRequireContext{}
 }
 
 func (ctx *PackageRequireContext) AddRequires(deps ...string) *PackageRequireContext {
-	for _, dep := range deps {
-		if dep == "" {
-			continue
-		}
-		name, constraint := parseRequire(dep)
-		ctx.requires = append(ctx.requires, RequireInfo{
-			Name:       name,
-			Constraint: constraint,
-		})
-	}
+	ctx.requiresHolder.addRequires(deps...)
 	return ctx
 }
 
 func (ctx *PackageRequireContext) GetRequires() []RequireInfo {
-	return ctx.requires
+	return ctx.requiresHolder.getRequires()
 }
 
 func parseRequire(dep string) (name, constraint string) {

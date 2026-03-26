@@ -2,7 +2,6 @@ package repo
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -57,63 +56,6 @@ func (i *Installer) SetToolchain(tc *api.Toolchain) {
 
 func (i *Installer) SetPackage(name string, pkg *api.Package) {
 	i.pkgs[name] = pkg
-}
-
-func (i *Installer) Install(graph *DependencyGraph, configs map[string]*InstallConfig, tc *api.Toolchain) error {
-	for _, name := range graph.Order {
-		pkg, ok := graph.Packages[name]
-		if !ok {
-			return fmt.Errorf("package %s not found in graph", name)
-		}
-
-		config := configs[name]
-		if config == nil {
-			config = &InstallConfig{
-				Version: "",
-				Options: make(map[string]any),
-			}
-		}
-
-		if err := i.installPackage(pkg, config, tc, graph); err != nil {
-			return fmt.Errorf("failed to install %s: %w", name, err)
-		}
-	}
-
-	return nil
-}
-
-func (i *Installer) installPackage(pkg *ResolvedPackage, config *InstallConfig, tc *api.Toolchain, graph *DependencyGraph) error {
-	mode := "release"
-	cacheHash := CacheHash(tc.CC, mode, config.Options)
-
-	installDir := filepath.Join(i.packagesDir, pkg.Name, config.Version, cacheHash, "install")
-	buildDir := filepath.Join(i.packagesDir, pkg.Name, config.Version, cacheHash, "build")
-
-	if fs.FileExists(installDir) {
-		return nil
-	}
-
-	if err := fs.EnsureDir(buildDir); err != nil {
-		return err
-	}
-	if err := fs.EnsureDir(installDir); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (i *Installer) InstallPackage(pkg *api.Package, config *InstallConfig, tc *api.Toolchain, graph *DependencyGraph, sourceDir string, configs map[string]*InstallConfig) error {
-	mode := "release"
-	cacheHash := CacheHash(tc.CC, mode, config.Options)
-
-	installDir := filepath.Join(i.packagesDir, pkg.FullName(), config.Version, cacheHash, "install")
-
-	if i.hasInstalledFiles(installDir) {
-		return nil
-	}
-
-	return fmt.Errorf("package %s not installed; run vmake build first", pkg.FullName())
 }
 
 func (i *Installer) hasInstalledFiles(installDir string) bool {

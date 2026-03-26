@@ -82,7 +82,7 @@ func GetCurrentCommit(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(output)), nil
+	return exec.TrimOutput(output), nil
 }
 
 func IsAlreadyAtRef(dir, ref string) bool {
@@ -94,7 +94,7 @@ func IsAlreadyAtRef(dir, ref string) bool {
 	if err != nil {
 		return false
 	}
-	return head == strings.TrimSpace(string(output))
+	return head == exec.TrimOutput(output)
 }
 
 func GetCurrentTag(dir string) (string, error) {
@@ -102,7 +102,7 @@ func GetCurrentTag(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(output)), nil
+	return exec.TrimOutput(output), nil
 }
 
 func ListTags(dir string) ([]string, error) {
@@ -110,7 +110,7 @@ func ListTags(dir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	tags := strings.Split(strings.TrimSpace(string(output)), "\n")
+	tags := strings.Split(exec.TrimOutput(output), "\n")
 	if len(tags) == 1 && tags[0] == "" {
 		return nil, nil
 	}

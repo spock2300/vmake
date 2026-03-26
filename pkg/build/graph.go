@@ -2,6 +2,7 @@ package build
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
@@ -10,6 +11,30 @@ import (
 type BuildGraph struct {
 	Nodes map[string]*BuildNode
 	Order []string
+}
+
+func (g *BuildGraph) GetNode(name string) (*BuildNode, error) {
+	node, ok := g.Nodes[name]
+	if !ok {
+		return nil, fmt.Errorf("target not found: %s", name)
+	}
+	return node, nil
+}
+
+func (g *BuildGraph) ForEachDefault(fn func(node *BuildNode) error) error {
+	for _, fullName := range g.Order {
+		node, err := g.GetNode(fullName)
+		if err != nil {
+			return err
+		}
+		if !node.Target.IsDefault() {
+			continue
+		}
+		if err := fn(node); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type BuildNode struct {
@@ -100,4 +125,8 @@ func topologicalSort(nodes map[string]*BuildNode) ([]string, error) {
 	}
 
 	return result, nil
+}
+
+func ensureDir(dir string) error {
+	return os.MkdirAll(dir, 0755)
 }

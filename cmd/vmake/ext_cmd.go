@@ -229,32 +229,45 @@ type toolchainManifest struct {
 	Toolchains []toolchainManifestEntry `json:"toolchains"`
 }
 
-func loadExtensionToolchains() {
+type manifestEntry struct {
+	repoDir string
+	entry   *toolchainManifestEntry
+}
+
+func loadAllToolchainManifests() []manifestEntry {
 	entries, err := readDirEntries(getExtensionsDir())
 	if err != nil {
-		return
+		return nil
 	}
-
-	mgr := toolchain.GetManager()
-	toolchainsDir := getToolchainsDir()
-
-	for _, entry := range entries {
-		repoDir := filepath.Join(getExtensionsDir(), entry.Name())
+	var results []manifestEntry
+	for _, dirEntry := range entries {
+		repoDir := filepath.Join(getExtensionsDir(), dirEntry.Name())
 		manifestPath := filepath.Join(repoDir, "assets", "toolchains", "manifest.json")
 		data, err := os.ReadFile(manifestPath)
 		if err != nil {
 			continue
 		}
-
 		var manifest toolchainManifest
 		if err := json.Unmarshal(data, &manifest); err != nil {
 			continue
 		}
-
-		for _, tcEntry := range manifest.Toolchains {
-			installPath := filepath.Join(toolchainsDir, tcEntry.Name+"-"+tcEntry.Version)
-			mgr.RegisterToolchain(tcEntry.Name, buildToolchainFromManifest(&tcEntry, installPath, repoDir))
+		for i := range manifest.Toolchains {
+			results = append(results, manifestEntry{
+				repoDir: repoDir,
+				entry:   &manifest.Toolchains[i],
+			})
 		}
+	}
+	return results
+}
+
+func loadExtensionToolchains() {
+	mgr := toolchain.GetManager()
+	toolchainsDir := getToolchainsDir()
+
+	for _, me := range loadAllToolchainManifests() {
+		installPath := filepath.Join(toolchainsDir, me.entry.Name+"-"+me.entry.Version)
+		mgr.RegisterToolchain(me.entry.Name, buildToolchainFromManifest(me.entry, installPath, me.repoDir))
 	}
 
 	toolchain.SetOnToolMissing(func(name string) error {
@@ -279,50 +292,30 @@ func buildToolchainFromManifest(entry *toolchainManifestEntry, installPath strin
 }
 
 func handleAutoDownload(name string) error {
-	entries, err := readDirEntries(getExtensionsDir())
-	if err != nil {
-		return fmt.Errorf("no extension repositories found")
-	}
-
 	toolchainsDir := getToolchainsDir()
 
-	for _, repoEntry := range entries {
-		repoDir := filepath.Join(getExtensionsDir(), repoEntry.Name())
-		manifestPath := filepath.Join(repoDir, "assets", "toolchains", "manifest.json")
-		data, err := os.ReadFile(manifestPath)
-		if err != nil {
+	for _, me := range loadAllToolchainManifests() {
+		if me.entry.Name != name {
 			continue
 		}
 
-		var manifest toolchainManifest
-		if err := json.Unmarshal(data, &manifest); err != nil {
-			continue
+		installPath := filepath.Join(toolchainsDir, me.entry.Name+"-"+me.entry.Version)
+
+		fmt.Printf("Auto-downloading %s-%s...\n", me.entry.Name, me.entry.Version)
+
+		archivePath := filepath.Join(me.repoDir, "assets", "toolchains", me.entry.File)
+		if err := plugin.RunGitLFS(me.repoDir, "pull", "--include", "assets/toolchains/"+me.entry.File); err != nil {
+			return fmt.Errorf("failed to download: %w", err)
 		}
 
-		for _, tcEntry := range manifest.Toolchains {
-			if tcEntry.Name != name {
-				continue
-			}
-
-			installPath := filepath.Join(toolchainsDir, tcEntry.Name+"-"+tcEntry.Version)
-
-			fmt.Printf("Auto-downloading %s-%s...\n", tcEntry.Name, tcEntry.Version)
-
-			archivePath := filepath.Join(repoDir, "assets", "toolchains", tcEntry.File)
-			if err := plugin.RunGitLFS(repoDir, "pull", "--include", "assets/toolchains/"+tcEntry.File); err != nil {
-				return fmt.Errorf("failed to download: %w", err)
-			}
-
-			if err := plugin.ExtractArchive(archivePath, toolchainsDir); err != nil {
-				return fmt.Errorf("failed to extract: %w", err)
-			}
-
-			mgr := toolchain.GetManager()
-			mgr.RegisterToolchain(name, buildToolchainFromManifest(&tcEntry, installPath, repoDir))
-
-			fmt.Printf("Toolchain %s installed to %s\n", name, installPath)
-			return nil
+		if err := plugin.ExtractArchive(archivePath, toolchainsDir); err != nil {
+			return fmt.Errorf("failed to extract: %w", err)
 		}
+
+		toolchain.GetManager().RegisterToolchain(name, buildToolchainFromManifest(me.entry, installPath, me.repoDir))
+
+		fmt.Printf("Toolchain %s installed to %s\n", name, installPath)
+		return nil
 	}
 
 	return fmt.Errorf("toolchain '%s' not found in any extension repository", name)

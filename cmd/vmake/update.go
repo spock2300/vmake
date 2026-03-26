@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 
+	iexec "gitee.com/spock2300/vmake/internal/exec"
 	"gitee.com/spock2300/vmake/pkg/version"
 	"github.com/spf13/cobra"
 )
@@ -40,11 +40,7 @@ func runUpdate(cmd *cobra.Command, args []string) {
 	goCmd, err := exec.LookPath("go")
 	fatalErr(err)
 
-	installCmd := exec.Command(goCmd, "install", pkg)
-	installCmd.Stdout = os.Stdout
-	installCmd.Stderr = os.Stderr
-
-	fatalErr(installCmd.Run())
+	fatalErr(iexec.RunToStdout("", goCmd, "install", pkg))
 
 	fmt.Printf("Update to %s completed!\n", targetVer)
 }

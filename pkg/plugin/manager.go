@@ -3,23 +3,23 @@ package plugin
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 
+	iexec "gitee.com/spock2300/vmake/internal/exec"
 	"gitee.com/spock2300/vmake/internal/fs"
+	"gitee.com/spock2300/vmake/internal/gitstore"
 	"gitee.com/spock2300/vmake/pkg/repo"
 )
 
 type Manager struct {
-	extensionsDir string
-	vmakeDir      string
+	*gitstore.Store
+	vmakeDir string
 }
 
 func NewManager(vmakeDir string) *Manager {
 	return &Manager{
-		extensionsDir: filepath.Join(vmakeDir, "extensions"),
-		vmakeDir:      vmakeDir,
+		Store:    gitstore.New(filepath.Join(vmakeDir, "extensions")),
+		vmakeDir: vmakeDir,
 	}
 }
 
@@ -30,25 +30,12 @@ type ExtensionRepo struct {
 }
 
 func (m *Manager) AddRepo(name, gitURL string) error {
-	repoPath := filepath.Join(m.extensionsDir, name)
-	if m.exists(repoPath) {
-		return fmt.Errorf("extension repo '%s' already exists", name)
-	}
-
-	if err := fs.EnsureDir(m.extensionsDir); err != nil {
-		return fmt.Errorf("failed to create extensions directory: %w", err)
-	}
-
-	if err := repo.Clone(gitURL, repoPath); err != nil {
-		return fmt.Errorf("failed to clone extension repo: %w", err)
-	}
-
-	return nil
+	return m.Store.Add(name, gitURL, repo.Clone)
 }
 
 func (m *Manager) UpdateRepo(name string) error {
-	repoPath := filepath.Join(m.extensionsDir, name)
-	if !m.exists(repoPath) {
+	repoPath := m.Path(name)
+	if !m.Exists(name) {
 		return fmt.Errorf("extension repo '%s' not found", name)
 	}
 
@@ -76,25 +63,20 @@ func (m *Manager) clearCompiledPlugins(repoPath string) error {
 }
 
 func (m *Manager) RemoveRepo(name string) error {
-	repoPath := filepath.Join(m.extensionsDir, name)
-	if !m.exists(repoPath) {
-		return fmt.Errorf("extension repo '%s' not found", name)
-	}
-
-	return fs.RemoveAll(repoPath)
+	return m.Store.Remove(name)
 }
 
 func (m *Manager) ListRepos() []ExtensionRepo {
 	var repos []ExtensionRepo
 
-	entries, err := os.ReadDir(m.extensionsDir)
+	entries, err := os.ReadDir(m.BaseDir())
 	if err != nil {
 		return repos
 	}
 
 	for _, entry := range entries {
 		if entry.IsDir() {
-			repoPath := filepath.Join(m.extensionsDir, entry.Name())
+			repoPath := filepath.Join(m.BaseDir(), entry.Name())
 			url := m.getRepoURL(repoPath)
 			repos = append(repos, ExtensionRepo{
 				Name: entry.Name(),
@@ -108,13 +90,11 @@ func (m *Manager) ListRepos() []ExtensionRepo {
 }
 
 func (m *Manager) getRepoURL(repoPath string) string {
-	cmd := exec.Command("git", "config", "--get", "remote.origin.url")
-	cmd.Dir = repoPath
-	output, err := cmd.Output()
+	output, err := iexec.RunWithOptions("git", []string{"config", "--get", "remote.origin.url"}, iexec.RunOptions{Dir: repoPath})
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	return iexec.TrimOutput(output)
 }
 
 type DiscoveredPlugin struct {
@@ -171,8 +151,4 @@ func (m *Manager) CompilePlugin(pluginDir string, force bool) (string, error) {
 		return "", result.Error
 	}
 	return result.OutputPath, nil
-}
-
-func (m *Manager) exists(path string) bool {
-	return fs.FileExists(path)
 }

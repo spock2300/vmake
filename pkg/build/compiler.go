@@ -40,9 +40,8 @@ func NewCompiler(tc *toolchain.Toolchain) (*Compiler, error) {
 }
 
 func (c *Compiler) Compile(src, objPath string, opts *CompileOptions) ([]string, error) {
-	objDir := filepath.Dir(objPath)
-	if err := os.MkdirAll(objDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create object directory: %w", err)
+	if err := ensureDir(filepath.Dir(objPath)); err != nil {
+		return nil, err
 	}
 
 	depPath := objPath + ".d"
@@ -59,7 +58,7 @@ func (c *Compiler) Compile(src, objPath string, opts *CompileOptions) ([]string,
 		flags = append(mgr.GetGlobalCFlags(), opts.CFlags...)
 	}
 
-	args := c.buildArgs(opts, objPath, depPath, src, flags)
+	args := BuildCompileArgs(opts, objPath, src, flags, depPath)
 
 	_, err := iexec.Run(compiler, args...)
 	if err != nil {
@@ -72,10 +71,6 @@ func (c *Compiler) Compile(src, objPath string, opts *CompileOptions) ([]string,
 	}
 
 	return deps, nil
-}
-
-func (c *Compiler) buildArgs(opts *CompileOptions, objPath, depPath, src string, flags []string) []string {
-	return BuildCompileArgs(opts, objPath, src, flags, depPath)
 }
 
 func ParseDepFile(depPath string) ([]string, error) {

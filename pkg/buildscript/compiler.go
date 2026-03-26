@@ -9,10 +9,9 @@ import (
 )
 
 type CompileResult struct {
+	gocompile.CompileResult
 	Source     Source
 	ScriptPath string
-	Success    bool
-	Error      error
 }
 
 func Compile(src Source) CompileResult {
@@ -23,9 +22,8 @@ func Compile(src Source) CompileResult {
 
 	if err := fs.EnsureDir(outputDir); err != nil {
 		return CompileResult{
-			Source:  src,
-			Success: false,
-			Error:   err,
+			CompileResult: gocompile.CompileResult{Success: false, Error: err},
+			Source:        src,
 		}
 	}
 
@@ -45,17 +43,16 @@ func Compile(src Source) CompileResult {
 
 	if err := gocompile.CompilePlugin(opts); err != nil {
 		return CompileResult{
-			Source:     src,
-			ScriptPath: scriptPath,
-			Success:    false,
-			Error:      err,
+			CompileResult: gocompile.CompileResult{Success: false, Error: err, OutputPath: scriptPath},
+			Source:        src,
+			ScriptPath:    scriptPath,
 		}
 	}
 
 	return CompileResult{
-		Source:     src,
-		ScriptPath: scriptPath,
-		Success:    true,
+		CompileResult: gocompile.CompileResult{Success: true, OutputPath: scriptPath},
+		Source:        src,
+		ScriptPath:    scriptPath,
 	}
 }
 

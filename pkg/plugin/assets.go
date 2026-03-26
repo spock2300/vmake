@@ -2,23 +2,17 @@ package plugin
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 
+	iexec "gitee.com/spock2300/vmake/internal/exec"
 	"gitee.com/spock2300/vmake/internal/fs"
 )
 
 func RunGitLFS(repoDir string, args ...string) error {
-	cmd := exec.Command("git", append([]string{"lfs"}, args...)...)
-	cmd.Dir = repoDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
+	fullArgs := append([]string{"lfs"}, args...)
+	if err := iexec.RunToStdout(repoDir, "git", fullArgs...); err != nil {
 		return fmt.Errorf("git lfs failed: %w", err)
 	}
-
 	return nil
 }
 
@@ -37,11 +31,7 @@ func DownloadFile(url, dest string) error {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	cmd := exec.Command("curl", "-L", "-o", dest, url)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
+	if err := iexec.RunToStdout("", "curl", "-L", "-o", dest, url); err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
 
@@ -53,11 +43,7 @@ func ExtractArchive(archive, dest string) error {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	cmd := exec.Command("tar", "-xzf", archive, "-C", dest)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
+	if err := iexec.RunToStdout("", "tar", "-xzf", archive, "-C", dest); err != nil {
 		return fmt.Errorf("extraction failed: %w", err)
 	}
 

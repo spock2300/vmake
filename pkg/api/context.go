@@ -40,11 +40,14 @@ func (ctx *ConfigContext) GlobalOption(name string) *Option {
 }
 
 func (ctx *ConfigContext) GlobalMode() *Option {
-	return ctx.GlobalOption(ModeOptionName).
-		SetType(OptionChoice).
-		SetDefault(ModeDebug).
-		SetDescription("Build mode").
-		SetValues(ModeDebug, ModeRelease)
+	if builtIn, ok := BuiltInGlobalOptions[ModeOptionName]; ok {
+		return ctx.GlobalOption(ModeOptionName).
+			SetType(builtIn.Type()).
+			SetDefault(builtIn.Default()).
+			SetDescription(builtIn.Description()).
+			SetValues(builtIn.Values()...)
+	}
+	return ctx.GlobalOption(ModeOptionName)
 }
 
 type BuildContext struct {

@@ -10,30 +10,26 @@ import (
 )
 
 type CompileResult struct {
+	gocompile.CompileResult
 	PluginDir  string
 	PluginName string
-	OutputPath string
-	Success    bool
-	Error      error
 }
 
 func Compile(pluginDir string, force bool) CompileResult {
 	info, err := LoadPluginInfo(pluginDir)
 	if err != nil {
 		return CompileResult{
-			PluginDir: pluginDir,
-			Success:   false,
-			Error:     err,
+			CompileResult: gocompile.CompileResult{Success: false, Error: err},
+			PluginDir:     pluginDir,
 		}
 	}
 
 	entryPath := filepath.Join(pluginDir, info.Entry)
 	if !fs.FileExists(entryPath) {
 		return CompileResult{
-			PluginDir:  pluginDir,
-			PluginName: info.Name,
-			Success:    false,
-			Error:      fmt.Errorf("entry file not found: %s", entryPath),
+			CompileResult: gocompile.CompileResult{Success: false, Error: fmt.Errorf("entry file not found: %s", entryPath)},
+			PluginDir:     pluginDir,
+			PluginName:    info.Name,
 		}
 	}
 
@@ -45,10 +41,9 @@ func Compile(pluginDir string, force bool) CompileResult {
 
 	if fs.FileExists(outputPath) {
 		return CompileResult{
-			PluginDir:  pluginDir,
-			PluginName: info.Name,
-			OutputPath: outputPath,
-			Success:    true,
+			CompileResult: gocompile.CompileResult{Success: true, OutputPath: outputPath},
+			PluginDir:     pluginDir,
+			PluginName:    info.Name,
 		}
 	}
 
@@ -65,18 +60,15 @@ func Compile(pluginDir string, force bool) CompileResult {
 
 	if err := gocompile.CompilePlugin(opts); err != nil {
 		return CompileResult{
-			PluginDir:  pluginDir,
-			PluginName: info.Name,
-			OutputPath: outputPath,
-			Success:    false,
-			Error:      err,
+			CompileResult: gocompile.CompileResult{Success: false, Error: err, OutputPath: outputPath},
+			PluginDir:     pluginDir,
+			PluginName:    info.Name,
 		}
 	}
 
 	return CompileResult{
-		PluginDir:  pluginDir,
-		PluginName: info.Name,
-		OutputPath: outputPath,
-		Success:    true,
+		CompileResult: gocompile.CompileResult{Success: true, OutputPath: outputPath},
+		PluginDir:     pluginDir,
+		PluginName:    info.Name,
 	}
 }

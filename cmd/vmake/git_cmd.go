@@ -2,11 +2,12 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
+
+	iexec "gitee.com/spock2300/vmake/internal/exec"
 
 	"github.com/spf13/cobra"
 )
@@ -159,17 +160,11 @@ func bumpVersion(tag string, major, minor bool) (string, error) {
 }
 
 func createAnnotatedTag(version, msg string) error {
-	cmd := exec.Command("git", "tag", "-a", version, "-m", msg)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return iexec.RunToStdout("", "git", "tag", "-a", version, "-m", msg)
 }
 
 func updateLatestTag() error {
-	cmd := exec.Command("git", "tag", "-f", "latest")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return iexec.RunToStdout("", "git", "tag", "-f", "latest")
 }
 
 func pushTags(version string) error {
@@ -178,17 +173,11 @@ func pushTags(version string) error {
 		return err
 	}
 
-	cmd := exec.Command("git", "push", "--atomic", remote, "HEAD", version)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err := iexec.RunToStdout("", "git", "push", "--atomic", remote, "HEAD", version); err != nil {
 		return err
 	}
 
-	cmd = exec.Command("git", "push", "--force", remote, "latest")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return iexec.RunToStdout("", "git", "push", "--force", remote, "latest")
 }
 
 func getRemoteName() (string, error) {

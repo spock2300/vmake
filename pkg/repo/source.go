@@ -10,10 +10,6 @@ import (
 	"gitee.com/spock2300/vmake/pkg/api"
 )
 
-func removeAllDir(path string) {
-	os.RemoveAll(path)
-}
-
 type SourceManager struct {
 	sourcesDir string
 }
@@ -40,7 +36,7 @@ func (m *SourceManager) EnsureSource(pkg *api.Package, version string) (string, 
 				return repoDir, nil
 			}
 		}
-		removeAllDir(repoDir)
+		os.RemoveAll(repoDir)
 	}
 
 	if err := m.ensureRepo(pkg, repoDir); err != nil {
@@ -56,7 +52,7 @@ func (m *SourceManager) EnsureSource(pkg *api.Package, version string) (string, 
 	}
 
 	if err := FetchTags(repoDir); err != nil {
-		removeAllDir(repoDir)
+		os.RemoveAll(repoDir)
 		if err := m.ensureRepo(pkg, repoDir); err != nil {
 			return "", err
 		}
@@ -66,7 +62,7 @@ func (m *SourceManager) EnsureSource(pkg *api.Package, version string) (string, 
 	}
 
 	if err := Checkout(repoDir, tag); err != nil {
-		removeAllDir(repoDir)
+		os.RemoveAll(repoDir)
 		if err := m.ensureRepo(pkg, repoDir); err != nil {
 			return "", err
 		}

@@ -69,12 +69,12 @@ func runConfig(cmd *cobra.Command, args []string) {
 		node := ctx.DepGraph.Packages[name]
 		if node.IsLocal() && node.Source != nil {
 			sources = append(sources, buildscript.Source{
-				Name:   node.Source.ID,
-				Path:   node.Source.BuildGo,
+				Name:   node.Source.Name,
+				Path:   node.Source.Path,
 				Dir:    node.Source.Dir,
 				Origin: node.Source.Origin,
 			})
-			localPkgs[node.Source.ID] = true
+			localPkgs[node.Source.Name] = true
 		}
 	}
 

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
@@ -56,25 +55,12 @@ func (i *Installer) getEffectivePrefix(pkgName string, pkgInfo *PkgInstallInfo) 
 }
 
 func (i *Installer) InstallAll() error {
-	for _, fullName := range i.graph.Order {
-		node := i.graph.Nodes[fullName]
-		if node == nil {
-			return fmt.Errorf("target not found in graph: %s", fullName)
-		}
-
-		if !node.Target.IsDefault() {
-			continue
-		}
-
+	return i.graph.ForEachDefault(func(node *BuildNode) error {
 		if err := i.installTarget(node); err != nil {
 			return err
 		}
-
-		if err := i.installExtraItems(node); err != nil {
-			return err
-		}
-	}
-	return nil
+		return i.installExtraItems(node)
+	})
 }
 
 func (i *Installer) installTarget(node *BuildNode) error {
@@ -117,11 +103,11 @@ func (i *Installer) installTarget(node *BuildNode) error {
 
 	vlog.Info("  INSTALL %s -> %s", filepath.Base(outputPath), destPath)
 
-	if err := i.ensureDir(filepath.Dir(destPath)); err != nil {
+	if err := ensureDir(filepath.Dir(destPath)); err != nil {
 		return err
 	}
 
-	if err := i.copyFile(outputPath, destPath); err != nil {
+	if err := CopyFile(outputPath, destPath); err != nil {
 		return err
 	}
 
@@ -166,10 +152,10 @@ func (i *Installer) installExtraItems(node *BuildNode) error {
 			}
 		} else {
 			vlog.Info("  INSTALL %s -> %s", item.Src, destPath)
-			if err := i.ensureDir(filepath.Dir(destPath)); err != nil {
+			if err := ensureDir(filepath.Dir(destPath)); err != nil {
 				return err
 			}
-			if err := i.copyFile(srcPath, destPath); err != nil {
+			if err := CopyFile(srcPath, destPath); err != nil {
 				return err
 			}
 		}
@@ -186,85 +172,29 @@ func (i *Installer) getOutputPath(pkgName string, pkgInfo *PkgInstallInfo, node 
 }
 
 func (i *Installer) getInstallPath(prefix string, target *api.Target) string {
-	var destPath string
-
 	installDir := target.InstallDir()
-	name := target.Name()
-	kind := target.Kind()
+	basename := targetFilename(target.Kind(), target.Name())
 
 	if installDir != "" {
-		var basename string
-		switch kind {
-		case api.TargetBinary:
-			basename = name
-		case api.TargetStatic:
-			basename = "lib" + name + ".a"
-		case api.TargetShared:
-			basename = "lib" + name + ".so"
-		default:
-			basename = name
-		}
-		destPath = filepath.Join(prefix, installDir, basename)
-	} else {
-		switch kind {
-		case api.TargetBinary:
-			destPath = filepath.Join(prefix, "bin", name)
-		case api.TargetStatic:
-			destPath = filepath.Join(prefix, "lib", "lib"+name+".a")
-		case api.TargetShared:
-			destPath = filepath.Join(prefix, "lib", "lib"+name+".so")
-		default:
-			destPath = filepath.Join(prefix, name)
-		}
+		return filepath.Join(prefix, installDir, basename)
 	}
 
-	return destPath
-}
-
-func (i *Installer) ensureDir(dir string) error {
-	return os.MkdirAll(dir, 0755)
-}
-
-func (i *Installer) copyFile(src, dest string) error {
-	return CopyFile(src, dest)
-}
-
-func (i *Installer) copyDir(src, dest string) error {
-	return CopyDir(src, dest)
+	switch target.Kind() {
+	case api.TargetBinary:
+		return filepath.Join(prefix, "bin", basename)
+	case api.TargetStatic, api.TargetShared:
+		return filepath.Join(prefix, "lib", basename)
+	default:
+		return filepath.Join(prefix, basename)
+	}
 }
 
 func (i *Installer) copyDirWithFilter(src, dest string, filter api.InstallFilterFunc) error {
-	if err := i.ensureDir(dest); err != nil {
-		return err
-	}
-
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return fmt.Errorf("failed to read directory: %w", err)
-	}
-
-	for _, entry := range entries {
-		srcPath := filepath.Join(src, entry.Name())
-		destPath := filepath.Join(dest, entry.Name())
-
-		if entry.IsDir() {
-			if err := i.copyDirWithFilter(srcPath, destPath, filter); err != nil {
-				return err
-			}
-		} else {
-			if strings.HasSuffix(entry.Name(), ".go") {
-				continue
-			}
-			if filter != nil {
-				if !filter(srcPath, false) {
-					continue
-				}
-			}
-			if err := i.copyFile(srcPath, destPath); err != nil {
-				return err
-			}
+	var cf CopyFilter
+	if filter != nil {
+		cf = func(path string, isDir bool) bool {
+			return filter(path, isDir)
 		}
 	}
-
-	return nil
+	return CopyDirWithFilter(src, dest, cf)
 }

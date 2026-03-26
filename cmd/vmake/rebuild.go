@@ -60,11 +60,11 @@ func executeCleanLocal(ctx *RuntimeContext) {
 
 		src := node.Source
 		if err := os.Chdir(src.Dir); err != nil {
-			vlog.Error("Failed to chdir to %s: %v", src.ID, err)
+			vlog.Error("Failed to chdir to %s: %v", src.Name, err)
 			continue
 		}
 
-		cleanCurrentToolchain(src.ID, buildDir)
+		cleanCurrentToolchain(src.Name, buildDir)
 	}
 
 	os.Chdir(origDir)
