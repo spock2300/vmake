@@ -220,14 +220,15 @@ func loadPlugins() {
 }
 
 type toolchainManifestEntry struct {
-	Name     string   `json:"name"`
-	Version  string   `json:"version"`
-	Host     string   `json:"host"`
-	Prefix   string   `json:"prefix"`
-	File     string   `json:"file"`
-	CFlags   []string `json:"cflags"`
-	CxxFlags []string `json:"cxxflags"`
-	LdFlags  []string `json:"ldflags"`
+	Name     string          `json:"name"`
+	Version  string          `json:"version"`
+	Host     string          `json:"host"`
+	Prefix   string          `json:"prefix"`
+	File     string          `json:"file"`
+	Tools    toolchain.Tools `json:"tools"`
+	CFlags   []string        `json:"cflags"`
+	CxxFlags []string        `json:"cxxflags"`
+	LdFlags  []string        `json:"ldflags"`
 }
 
 type toolchainManifest struct {
@@ -278,14 +279,7 @@ func buildToolchainFromManifest(entry *toolchainManifestEntry, installPath strin
 		Host:        entry.Host,
 		Prefix:      entry.Prefix,
 		InstallPath: installPath,
-		Tools: toolchain.Tools{
-			CC:     entry.Prefix + "-gcc",
-			CXX:    entry.Prefix + "-g++",
-			AR:     entry.Prefix + "-ar",
-			LD:     entry.Prefix + "-ld",
-			STRIP:  entry.Prefix + "-strip",
-			RANLIB: entry.Prefix + "-ranlib",
-		},
+		Tools:       entry.Tools,
 		DefaultFlags: toolchain.DefaultFlags{
 			CFlags:   entry.CFlags,
 			CxxFlags: entry.CxxFlags,
