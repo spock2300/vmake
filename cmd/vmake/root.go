@@ -237,7 +237,10 @@ func runConfigPhase(ctx *RuntimeContext) error {
 
 func GetToolchain(cfg *config.ConfigFile) (*toolchain.Toolchain, string, error) {
 	mgr := toolchain.GetManager()
-	tcName := cfg.Global.Toolchain
+	tcName := toolchainFlag
+	if tcName == "" {
+		tcName = cfg.Global.Toolchain
+	}
 	if tcName == "" {
 		tcName = mgr.GetDefaultToolchain()
 	}

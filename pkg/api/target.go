@@ -21,6 +21,7 @@ type Target struct {
 	noInstall      bool
 	packages       []string
 	buildFunc      func(p *Package) error
+	output         string
 }
 
 func (t *Target) SetKind(kind TargetKind) *Target {
@@ -161,6 +162,9 @@ func (t *Target) SetInstall(install bool) *Target {
 }
 
 func (t *Target) NoInstall() bool { return t.noInstall }
+
+func (t *Target) Output() string        { return t.output }
+func (t *Target) SetOutput(path string) { t.output = path }
 
 func (t *Target) RemoveCFlags(flags ...string) *Target {
 	t.cflags = removeStrings(t.cflags, flags...)

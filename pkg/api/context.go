@@ -1,5 +1,12 @@
 package api
 
+import (
+	"strings"
+
+	"gitee.com/spock2300/vmake/internal/exec"
+	vlog "gitee.com/spock2300/vmake/pkg/log"
+)
+
 type ConfigContext struct {
 	ConfigAccessor
 	pkgName string
@@ -48,6 +55,7 @@ type BuildContext struct {
 	installItems  []InstallItem
 	installFilter InstallFilterFunc
 	packages      []string
+	subBuildFunc  func(tcName, dir string) error
 }
 
 func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext {
@@ -124,6 +132,24 @@ func (ctx *BuildContext) AddPackages(packages ...string) *BuildContext {
 
 func (ctx *BuildContext) GetPackages() []string {
 	return ctx.packages
+}
+
+func (ctx *BuildContext) SetSubBuildFunc(fn func(string, string) error) {
+	ctx.subBuildFunc = fn
+}
+
+func (ctx *BuildContext) SubBuild(tcName, dir string) {
+	if ctx.subBuildFunc == nil {
+		vlog.Fatal("SubBuild: not available")
+	}
+	if err := ctx.subBuildFunc(tcName, dir); err != nil {
+		vlog.Fatal("SubBuild %s (tc=%s): %v", dir, tcName, err)
+	}
+}
+
+func (ctx *BuildContext) Exec(name string, args ...string) {
+	vlog.Info("  %s %s", name, strings.Join(args, " "))
+	exec.RunFatal("", name, args...)
 }
 
 type InstallContext struct {

@@ -29,6 +29,8 @@ func init() {
 	buildCmd.Flags().BoolVarP(&installFlag, "install", "i", false, "install after build")
 	buildCmd.Flags().StringVarP(&prefixFlag, "prefix", "p", "", "installation prefix (default: ./install)")
 	buildCmd.Flags().BoolVarP(&forceFlag, "force", "f", false, "force buildscript recompilation")
+	buildCmd.Flags().StringVar(&toolchainFlag, "toolchain", "", "override toolchain")
+	buildCmd.Flags().StringVar(&modeFlag, "mode", "", "override build mode")
 }
 
 func runBuild(cmd *cobra.Command, args []string) {
@@ -47,9 +49,11 @@ type BuildResult struct {
 func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 	globalValues := config.BuildGlobalValues(ctx.Config)
 
-	mode := ""
-	if m, ok := globalValues["mode"].(string); ok {
-		mode = m
+	mode := modeFlag
+	if mode == "" {
+		if m, ok := globalValues["mode"].(string); ok {
+			mode = m
+		}
 	}
 	if mode == "" {
 		mode = api.ModeDebug
@@ -190,6 +194,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 	vlog.Info("")
 	vlog.Info("Executing OnBuild...")
 	allTargets := make(map[string]map[string]*api.Target)
+	subBuildClaimed := make(map[string]bool)
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
@@ -208,6 +213,11 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		buildCtx.SetOptions(ctx.AllOptions[name])
 		buildCtx.SetGlobalOptions(ctx.GlobalOptions)
 		buildCtx.SetGlobalValues(globalValues)
+		buildCtx.SetSubBuildFunc(func(tcName, dir string) error {
+			claimedPkg := filepath.Base(filepath.Clean(dir))
+			subBuildClaimed[claimedPkg] = true
+			return build.SubBuild(tcName, dir)
+		})
 
 		for _, fn := range node.Pkg.GetBuildFuncs() {
 			fn(buildCtx)
@@ -231,6 +241,14 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 			pkg.SetDirs(pkgSourceDirs[name], pkgBuildDirs[name], pkgInstallDirs[name])
 			pkg.SetCfgVals(cfgVals)
 			pkg.SetToolchain(apiTC)
+		}
+	}
+
+	for pkgName := range subBuildClaimed {
+		if targets, ok := allTargets[pkgName]; ok {
+			for _, t := range targets {
+				t.SetDefault(false)
+			}
 		}
 	}
 
