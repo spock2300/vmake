@@ -55,7 +55,7 @@ type BuildContext struct {
 	installItems  []InstallItem
 	installFilter InstallFilterFunc
 	packages      []string
-	subBuildFunc  func(tcName, dir string) error
+	subBuildFunc  func(tcName, dir string, args ...string) error
 }
 
 func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext {
@@ -134,15 +134,15 @@ func (ctx *BuildContext) GetPackages() []string {
 	return ctx.packages
 }
 
-func (ctx *BuildContext) SetSubBuildFunc(fn func(string, string) error) {
+func (ctx *BuildContext) SetSubBuildFunc(fn func(string, string, ...string) error) {
 	ctx.subBuildFunc = fn
 }
 
-func (ctx *BuildContext) SubBuild(tcName, dir string) {
+func (ctx *BuildContext) SubBuild(tcName, dir string, args ...string) {
 	if ctx.subBuildFunc == nil {
 		vlog.Fatal("SubBuild: not available")
 	}
-	if err := ctx.subBuildFunc(tcName, dir); err != nil {
+	if err := ctx.subBuildFunc(tcName, dir, args...); err != nil {
 		vlog.Fatal("SubBuild %s (tc=%s): %v", dir, tcName, err)
 	}
 }

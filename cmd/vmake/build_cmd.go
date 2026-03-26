@@ -213,10 +213,16 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		buildCtx.SetOptions(ctx.AllOptions[name])
 		buildCtx.SetGlobalOptions(ctx.GlobalOptions)
 		buildCtx.SetGlobalValues(globalValues)
-		buildCtx.SetSubBuildFunc(func(tcName, dir string) error {
+		buildCtx.SetSubBuildFunc(func(tcName, dir string, args ...string) error {
 			claimedPkg := filepath.Base(filepath.Clean(dir))
 			subBuildClaimed[claimedPkg] = true
-			return build.SubBuild(tcName, dir)
+			switch {
+			case veryVerbose:
+				args = append(args, "-V")
+			case verbose:
+				args = append(args, "-v")
+			}
+			return build.SubBuild(tcName, dir, args...)
 		})
 
 		for _, fn := range node.Pkg.GetBuildFuncs() {

@@ -8,13 +8,13 @@ import (
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 )
 
-func SubBuild(tcName, dir string) error {
+func SubBuild(tcName, dir string, extraArgs ...string) error {
 	vmakeBin, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("cannot find vmake binary: %w", err)
 	}
 
-	args := []string{"build", "--toolchain", tcName}
+	args := append([]string{"build", "--toolchain", tcName}, extraArgs...)
 	cmd := exec.Command(vmakeBin, args...)
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
