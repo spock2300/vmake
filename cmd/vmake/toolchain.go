@@ -26,7 +26,7 @@ var toolchainShowCmd = &cobra.Command{
 	Use:   "show [name]",
 	Short: "Show toolchain details",
 	Long: `Display detailed information about a specific toolchain.
-If no name is provided, shows the default toolchain (gcc).`,
+If no name is provided, shows the default toolchain (host).`,
 	Run: runToolchainShow,
 }
 
@@ -62,7 +62,7 @@ func runToolchainList(cmd *cobra.Command, args []string) {
 func runToolchainShow(cmd *cobra.Command, args []string) {
 	mgr := toolchain.GetManager()
 
-	name := "gcc"
+	name := mgr.GetDefaultToolchain()
 	if len(args) > 0 {
 		name = args[0]
 	}

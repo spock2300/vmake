@@ -1,9 +1,9 @@
 package toolchain
 
-func GetBuiltinGCC() *Toolchain {
+func GetBuiltinHost() *Toolchain {
 	return &Toolchain{
-		Name:        "gcc",
-		DisplayName: "System GCC",
+		Name:        "host",
+		DisplayName: "Host",
 		Tools: Tools{
 			CC:     "gcc",
 			CXX:    "g++",

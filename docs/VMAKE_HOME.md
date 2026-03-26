@@ -47,11 +47,11 @@ CLI：`vmake toolchain init|list|show`
 ```json
 {
   "version": "1",
-  "default_toolchain": "gcc",
+  "default_toolchain": "host",
   "toolchains": {
-    "gcc": {
-      "name": "gcc",
-      "display_name": "System GCC",
+    "host": {
+      "name": "host",
+      "display_name": "Host",
       "host": "x86_64-linux-gnu",
       "tools": {
         "cc": "gcc", "cxx": "g++", "ar": "ar",
@@ -178,7 +178,7 @@ project/
 └── build/                         # 构建输出
     ├── build.so                  # 编译后的构建脚本
     ├── compile_commands.json      # LSP 编译数据库
-    └── <tc>-<mode>/               # 如 gcc-debug
+    └── <tc>-<mode>/               # 如 host-debug
         ├── cache.json             # 增量构建缓存
         ├── objects/               # 中间目标文件
         └── <target>               # 最终产物
@@ -190,7 +190,7 @@ project/
 {
   "version": "1",
   "global": {
-    "toolchain": "gcc",
+    "toolchain": "host",
     "mode": "debug",
     "options": { "ssl": true }
   },

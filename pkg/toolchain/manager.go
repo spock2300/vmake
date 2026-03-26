@@ -27,7 +27,7 @@ func SetOnToolMissing(fn func(string) error) {
 func GetManager() *Manager {
 	managerOnce.Do(func() {
 		defaultManager = &Manager{
-			builtin:    GetBuiltinGCC(),
+			builtin:    GetBuiltinHost(),
 			extensions: make(map[string]*Toolchain),
 		}
 	})
@@ -35,7 +35,7 @@ func GetManager() *Manager {
 }
 
 func (m *Manager) SelectToolchain(name string) (*Toolchain, error) {
-	if name == "" || name == "gcc" {
+	if name == "" || name == "host" {
 		return m.builtin, nil
 	}
 
@@ -55,7 +55,7 @@ func (m *Manager) SelectToolchain(name string) (*Toolchain, error) {
 }
 
 func (m *Manager) GetToolchain(name string) (*Toolchain, error) {
-	if name == "gcc" {
+	if name == "host" {
 		return m.builtin, nil
 	}
 
@@ -75,7 +75,7 @@ func (m *Manager) ListToolchains() (map[string]*Toolchain, error) {
 	defer m.mu.RUnlock()
 
 	result := make(map[string]*Toolchain)
-	result["gcc"] = m.builtin
+	result["host"] = m.builtin
 	for name, tc := range m.extensions {
 		result[name] = tc
 	}
@@ -83,7 +83,7 @@ func (m *Manager) ListToolchains() (map[string]*Toolchain, error) {
 }
 
 func (m *Manager) GetDefaultToolchain() string {
-	return "gcc"
+	return "host"
 }
 
 func (m *Manager) RegisterToolchain(name string, tc *Toolchain) {

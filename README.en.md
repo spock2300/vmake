@@ -246,7 +246,7 @@ vmake rebuild
 {
   "version": "1",
   "global": {
-    "toolchain": "gcc",
+    "toolchain": "host",
     "mode": "debug",
     "options": { "ssl": true }
   },
@@ -263,11 +263,11 @@ vmake rebuild
 ```json
 {
   "version": "1",
-  "default_toolchain": "gcc",
+  "default_toolchain": "host",
   "toolchains": {
-    "gcc": {
-      "name": "gcc",
-      "display_name": "System GCC",
+    "host": {
+      "name": "host",
+      "display_name": "Host",
       "host": "x86_64-linux-gnu",
       "tools": {
         "cc": "gcc", "cxx": "g++", "ar": "ar",
