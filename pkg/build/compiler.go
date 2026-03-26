@@ -55,12 +55,13 @@ func (c *Compiler) Compile(src, objPath string, opts *CompileOptions) ([]string,
 	var compiler string
 	var flags []string
 
+	mgr := toolchain.GetManager()
 	if opts.Language == "cxx" {
 		compiler = c.cxxPath
-		flags = append([]string{}, opts.CxxFlags...)
+		flags = append(mgr.GetGlobalCxxFlags(), opts.CxxFlags...)
 	} else {
 		compiler = c.ccPath
-		flags = append([]string{}, opts.CFlags...)
+		flags = append(mgr.GetGlobalCFlags(), opts.CFlags...)
 	}
 
 	args := c.buildArgs(opts, objPath, depPath, src, flags)

@@ -10,10 +10,12 @@ import (
 type OnMissingToolchain func(name string) (*Toolchain, error)
 
 type Manager struct {
-	builtin    *Toolchain
-	extensions map[string]*Toolchain
-	onMissing  OnMissingToolchain
-	mu         sync.RWMutex
+	builtin        *Toolchain
+	extensions     map[string]*Toolchain
+	onMissing      OnMissingToolchain
+	globalCFlags   []string
+	globalCxxFlags []string
+	mu             sync.RWMutex
 }
 
 var defaultManager *Manager
@@ -84,6 +86,29 @@ func (m *Manager) ListToolchains() (map[string]*Toolchain, error) {
 
 func (m *Manager) GetDefaultToolchain() string {
 	return "host"
+}
+
+func (m *Manager) GetBuiltin() *Toolchain {
+	return m.builtin
+}
+
+func (m *Manager) AddGlobalFlags(cflags, cxxflags []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.globalCFlags = append(m.globalCFlags, cflags...)
+	m.globalCxxFlags = append(m.globalCxxFlags, cxxflags...)
+}
+
+func (m *Manager) GetGlobalCFlags() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append([]string{}, m.globalCFlags...)
+}
+
+func (m *Manager) GetGlobalCxxFlags() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append([]string{}, m.globalCxxFlags...)
 }
 
 func (m *Manager) RegisterToolchain(name string, tc *Toolchain) {

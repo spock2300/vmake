@@ -206,6 +206,9 @@ func loadPlugins() {
 			SetOnMissing: func(onMissing func(name string) (*toolchain.Toolchain, error)) {
 				toolchain.GetManager().SetOnMissing(onMissing)
 			},
+			AddGlobalFlags: func(cflags, cxxflags []string) {
+				toolchain.GetManager().AddGlobalFlags(cflags, cxxflags)
+			},
 			DownloadFile:   plugin.DownloadFile,
 			ExtractArchive: plugin.ExtractArchive,
 			RunGitLFS:      plugin.RunGitLFS,
@@ -250,7 +253,8 @@ func loadExtensionToolchains() {
 			continue
 		}
 
-		manifestPath := filepath.Join(reposDir, entry.Name(), "assets", "toolchains", "manifest.json")
+		repoDir := filepath.Join(reposDir, entry.Name())
+		manifestPath := filepath.Join(repoDir, "assets", "toolchains", "manifest.json")
 		data, err := os.ReadFile(manifestPath)
 		if err != nil {
 			continue
@@ -263,7 +267,7 @@ func loadExtensionToolchains() {
 
 		for _, tcEntry := range manifest.Toolchains {
 			installPath := filepath.Join(toolchainsDir, tcEntry.Name+"-"+tcEntry.Version)
-			mgr.RegisterToolchain(tcEntry.Name, buildToolchainFromManifest(&tcEntry, installPath))
+			mgr.RegisterToolchain(tcEntry.Name, buildToolchainFromManifest(&tcEntry, installPath, repoDir))
 		}
 	}
 
@@ -272,7 +276,7 @@ func loadExtensionToolchains() {
 	})
 }
 
-func buildToolchainFromManifest(entry *toolchainManifestEntry, installPath string) *toolchain.Toolchain {
+func buildToolchainFromManifest(entry *toolchainManifestEntry, installPath string, repoDir string) *toolchain.Toolchain {
 	return &toolchain.Toolchain{
 		Name:        entry.Name,
 		DisplayName: entry.Name + " " + entry.Version,
@@ -333,7 +337,7 @@ func handleAutoDownload(name string) error {
 			}
 
 			mgr := toolchain.GetManager()
-			mgr.RegisterToolchain(name, buildToolchainFromManifest(&tcEntry, installPath))
+			mgr.RegisterToolchain(name, buildToolchainFromManifest(&tcEntry, installPath, repoDir))
 
 			fmt.Printf("Toolchain %s installed to %s\n", name, installPath)
 			return nil

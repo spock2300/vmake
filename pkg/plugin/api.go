@@ -22,6 +22,7 @@ type Context struct {
 	RegisterToolchain func(name string, tc *toolchain.Toolchain)
 	GetToolchains     func() map[string]*toolchain.Toolchain
 	SetOnMissing      func(onMissing func(name string) (*toolchain.Toolchain, error))
+	AddGlobalFlags    func(cflags, cxxflags []string)
 	DownloadFile      func(url, dest string) error
 	ExtractArchive    func(archive, dest string) error
 	RunGitLFS         func(repoDir string, args ...string) error
