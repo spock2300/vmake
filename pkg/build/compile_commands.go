@@ -24,18 +24,13 @@ type CompileCommandsWriter struct {
 	mu       sync.Mutex
 }
 
-func NewCompileCommandsWriter(tc *toolchain.Toolchain) (*CompileCommandsWriter, error) {
-	tools, err := ResolveTools(tc)
-	if err != nil {
-		return nil, err
-	}
-
+func NewCompileCommandsWriter(tc *toolchain.Toolchain, tools *ResolvedTools) *CompileCommandsWriter {
 	return &CompileCommandsWriter{
 		commands: make([]CompileCommand, 0),
 		tc:       tc,
 		ccPath:   tools.CC,
 		cxxPath:  tools.CXX,
-	}, nil
+	}
 }
 
 func (w *CompileCommandsWriter) SetPackageDir(dir string) {

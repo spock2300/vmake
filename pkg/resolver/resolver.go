@@ -59,7 +59,12 @@ func (r *Resolver) GetOrder() []string {
 }
 
 func (r *Resolver) UpdateOrder() {
-	r.graph.Order = topologicalSort(r.graph.Packages)
+	order, err := topologicalSort(r.graph.Packages)
+	if err != nil {
+		r.graph.Order = []string{}
+		return
+	}
+	r.graph.Order = order
 }
 
 func (r *Resolver) ResolveAll(localSources []buildscript.Source) error {
@@ -282,8 +287,9 @@ func (r *Resolver) hasCachedScript(scriptPath, buildGoPath string) bool {
 	return true
 }
 
-func topologicalSort(packages map[string]*PackageNode) []string {
-	inDegree := make(map[string]int)
+func topologicalSort(packages map[string]*PackageNode) ([]string, error) {
+	inDegree := make(map[string]int, len(packages))
+	dependents := make(map[string][]string)
 	for name := range packages {
 		inDegree[name] = 0
 	}
@@ -292,6 +298,7 @@ func topologicalSort(packages map[string]*PackageNode) []string {
 		for _, dep := range pkg.Deps {
 			if _, exists := packages[dep]; exists {
 				inDegree[name]++
+				dependents[dep] = append(dependents[dep], name)
 			}
 		}
 	}
@@ -304,24 +311,31 @@ func topologicalSort(packages map[string]*PackageNode) []string {
 	}
 	sort.Strings(queue)
 
-	var result []string
+	result := make([]string, 0, len(packages))
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
 		result = append(result, current)
 
-		for name, pkg := range packages {
-			for _, dep := range pkg.Deps {
-				if dep == current {
-					inDegree[name]--
-					if inDegree[name] == 0 {
-						queue = append(queue, name)
-						sort.Strings(queue)
-					}
-				}
+		for _, dep := range dependents[current] {
+			inDegree[dep]--
+			if inDegree[dep] == 0 {
+				queue = append(queue, dep)
 			}
 		}
+		sort.Strings(queue)
 	}
 
-	return result
+	if len(result) != len(packages) {
+		remaining := make([]string, 0)
+		for name := range packages {
+			if inDegree[name] > 0 {
+				remaining = append(remaining, name)
+			}
+		}
+		sort.Strings(remaining)
+		return nil, fmt.Errorf("circular dependency detected involving: %s", strings.Join(remaining, ", "))
+	}
+
+	return result, nil
 }

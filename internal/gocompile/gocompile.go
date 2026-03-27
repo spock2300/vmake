@@ -3,11 +3,11 @@ package gocompile
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 
+	iexec "gitee.com/spock2300/vmake/internal/exec"
 	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/pkg/version"
 )
@@ -116,10 +116,7 @@ func SanitizeModuleName(name string) string {
 }
 
 func runGoModTidy(workDir string) error {
-	cmd := exec.Command("go", "mod", "tidy")
-	cmd.Dir = workDir
-	cmd.Env = append(os.Environ(), "GO111MODULE=on")
-	output, err := cmd.CombinedOutput()
+	output, err := iexec.RunWithEnvCaptured(workDir, map[string]string{"GO111MODULE": "on"}, "go", "mod", "tidy")
 	if err != nil {
 		return fmt.Errorf("go mod tidy failed: %s", string(output))
 	}
@@ -127,10 +124,7 @@ func runGoModTidy(workDir string) error {
 }
 
 func runGoBuild(workDir, outputPath, entryFile string) error {
-	cmd := exec.Command("go", "build", "-buildmode=plugin", "-o", outputPath, entryFile)
-	cmd.Dir = workDir
-	cmd.Env = append(os.Environ(), "GO111MODULE=on")
-	output, err := cmd.CombinedOutput()
+	output, err := iexec.RunWithEnvCaptured(workDir, map[string]string{"GO111MODULE": "on"}, "go", "build", "-buildmode=plugin", "-o", outputPath, entryFile)
 	if err != nil {
 		return fmt.Errorf("compilation failed: %s", string(output))
 	}

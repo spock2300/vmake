@@ -114,7 +114,6 @@ func (p *Package) CXX() string
 func (p *Package) AR() string
 func (p *Package) CrossTarget() string
 func (p *Package) Prefix() string
-func (p *Package) SysRoot() string
 func (p *Package) CFlags() string
 func (p *Package) CXXFlags() string
 func (p *Package) LDFlags() string
@@ -131,7 +130,7 @@ func (p *Package) Configure(extraArgs ...string) error
 func (p *Package) Make(args ...string) error
 func (p *Package) Run(name string, args ...string) error
 func (p *Package) RunIn(dir, name string, args ...string) error
-func (p *Package) RunWithEnv(env map[string]string, name string, args ...string) error
+func (p *Package) RunEnv(env map[string]string, name string, args ...string) error
 ```
 
 ### 获取方法
@@ -162,16 +161,7 @@ func (a *ConfigAccessor) When(option string, value any) bool
 
 // 选项管理
 func (a *ConfigAccessor) Option(name string) *Option
-```
-
-## GlobalAccessor（全局选项读取）
-
-`GlobalAccessor` 被嵌入到 `BuildContext` 和 `InstallContext` 中，提供全局选项读取。
-
-```go
-func (a *GlobalAccessor) GlobalBool(name string) bool
-func (a *GlobalAccessor) GlobalString(name string) string
-func (a *GlobalAccessor) Mode() string    // 等同于 GlobalString("mode")
+func (a *ConfigAccessor) MergeGlobals(globalOptions map[string]*Option, globalVals map[string]any)
 ```
 
 ## ConfigContext
@@ -232,7 +222,6 @@ func (o *Option) IsGlobal() bool
 ```go
 type BuildContext struct {
     ConfigAccessor
-    GlobalAccessor
     *TargetRegistry
     // ...
 }
@@ -251,13 +240,6 @@ func (ctx *BuildContext) When(option string, value any) bool
 func (ctx *BuildContext) Bool(name string) bool
 func (ctx *BuildContext) String(name string) string
 func (ctx *BuildContext) Int(name string) int
-
-// 全局选项（继承自 GlobalAccessor）
-func (ctx *BuildContext) GlobalBool(name string) bool
-func (ctx *BuildContext) GlobalString(name string) string
-func (ctx *BuildContext) Mode() string
-func (ctx *BuildContext) IfGlobal(option string, then ...string) []string
-func (ctx *BuildContext) SelectGlobal(option string, mapping map[string]string) string
 
 // 安装规则
 func (ctx *BuildContext) AddInstalls(src, dest string) *BuildContext
@@ -279,7 +261,6 @@ func (ctx *BuildContext) Exec(name string, args ...string) error
 ```go
 type InstallContext struct {
     ConfigAccessor
-    GlobalAccessor
     // ...
 }
 
@@ -294,9 +275,6 @@ func (ctx *InstallContext) GetInstallFilter() InstallFilterFunc
 
 func (ctx *InstallContext) Bool(name string) bool
 func (ctx *InstallContext) String(name string) string
-func (ctx *InstallContext) GlobalBool(name string) bool
-func (ctx *InstallContext) GlobalString(name string) string
-func (ctx *InstallContext) Mode() string
 ```
 
 ## Target
@@ -332,7 +310,6 @@ func (t *Target) SetBuildFunc(fn func(p *Package) error) *Target
 // 安装控制
 func (t *Target) SetInstallDir(dir string) *Target
 func (t *Target) SetInstall(install bool) *Target
-func (t *Target) SetOutput(output string) *Target
 
 // 移除方法
 func (t *Target) RemoveCFlags(flags ...string) *Target
@@ -361,7 +338,6 @@ func (t *Target) LdFlags() []string
 func (t *Target) InstallDir() string
 func (t *Target) NoInstall() bool
 func (t *Target) Packages() []string
-func (t *Target) Output() string
 func (t *Target) BuildFunc() func(*Package) error
 ```
 
@@ -417,19 +393,6 @@ const (
     SourceLocal  SourceOrigin = iota
     SourceRemote
 )
-
-type Toolchain struct {
-    Target    string   // 交叉编译目标
-    Prefix    string   // 工具前缀
-    CC        string
-    CXX       string
-    LD        string
-    AR        string
-    CFlags    string
-    CXXFlags  string
-    LDFlags   string
-    SysRoot   string
-}
 
 type InstalledPackage struct {
     Name       string
@@ -496,7 +459,7 @@ const (
 
 `GetModeFlags(mode string) (cflags, defines []string)` 返回上述值。
 
-全局选项合并：`MergeGlobalOptions(allDefs, toolchainList)` 合并内置 `mode` + `toolchain` + 用户定义的全局选项，验证类型一致性。
+全局选项合并：`ConfigAccessor.MergeGlobals(globalOptions, globalVals)` 合并全局选项/值作为回退。合并后 `ctx.Bool()` 和 `ctx.String()` 可同时读取本地和全局值。
 
 用户定义全局选项：
 

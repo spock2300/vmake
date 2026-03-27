@@ -62,15 +62,13 @@ func NewScheduler(
 	pkgDirs map[string]string,
 	mode string,
 ) (*Scheduler, error) {
-	compiler, err := NewCompiler(tc)
+	tools, err := ResolveTools(tc)
 	if err != nil {
 		return nil, err
 	}
 
-	linker, err := NewLinker(tc)
-	if err != nil {
-		return nil, err
-	}
+	compiler := NewCompiler(tc, tools)
+	linker := NewLinker(tc, tools)
 
 	origDir, _ := os.Getwd()
 
@@ -80,10 +78,7 @@ func NewScheduler(
 	}
 	buildDir := fmt.Sprintf("%s-%s", tcName, mode)
 
-	ccWriter, err := NewCompileCommandsWriter(tc)
-	if err != nil {
-		return nil, err
-	}
+	ccWriter := NewCompileCommandsWriter(tc, tools)
 
 	state, err := LoadState(buildDir)
 	if err != nil {
@@ -210,7 +205,7 @@ func (s *Scheduler) Build(fullName string) error {
 	}
 
 	if pkgInfo.InstallDir != "" {
-		if err := s.installTarget(resolved, pkgInfo); err != nil {
+		if err := s.publishTarget(resolved, pkgInfo); err != nil {
 			return err
 		}
 	}
@@ -522,7 +517,7 @@ func (s *Scheduler) populateDepsFromGraph(pkg *api.Package, node *BuildNode) {
 	}
 }
 
-func (s *Scheduler) installTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) error {
+func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) error {
 	t := resolved.Node.Target
 	kind := t.Kind()
 
@@ -538,7 +533,7 @@ func (s *Scheduler) installTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 		if info, err := os.Stat(dest); err == nil {
 			srcInfo, err2 := os.Stat(resolved.OutputPath)
 			if err2 == nil && info.Size() == srcInfo.Size() && !info.ModTime().Before(srcInfo.ModTime()) {
-				vlog.Info("  SKIP (already installed)")
+				vlog.Info("  SKIP (already published)")
 				return nil
 			}
 		}
@@ -546,9 +541,6 @@ func (s *Scheduler) installTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 
 	if err := os.MkdirAll(libDir, 0755); err != nil {
 		return fmt.Errorf("create lib dir: %w", err)
-	}
-	if err := os.MkdirAll(includeDir, 0755); err != nil {
-		return fmt.Errorf("create include dir: %w", err)
 	}
 
 	if resolved.OutputPath != "" {
@@ -561,33 +553,44 @@ func (s *Scheduler) installTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 		}
 	}
 
+	if _, err := os.Stat(includeDir); err == nil {
+		return nil
+	}
+
+	if err := os.MkdirAll(includeDir, 0755); err != nil {
+		return fmt.Errorf("create include dir: %w", err)
+	}
+
 	for _, inc := range t.PublicIncludes() {
 		srcPath := filepath.Join(pkgInfo.Dir, inc)
-		if info, err := os.Stat(srcPath); err == nil {
+		info, err := os.Stat(srcPath)
+		if err != nil {
+			continue
+		}
+		if info.IsDir() {
 			rule := t.IncludeRule(inc)
-			if info.IsDir() {
-				if len(rule) > 0 {
-					vlog.Info("  INSTALL DIR %s (match: %s) -> %s", inc, rule, includeDir)
-					if err := CopyDirMatching(srcPath, includeDir, func(name string) bool {
-						return MatchPatterns(rule, name)
-					}); err != nil {
-						return fmt.Errorf("install headers failed: %w", err)
-					}
-				} else {
-					vlog.Info("  INSTALL DIR %s -> %s", inc, includeDir)
-					if err := CopyDir(srcPath, includeDir); err != nil {
-						return fmt.Errorf("install headers failed: %w", err)
-					}
+			if len(rule) > 0 {
+				vlog.Info("  INSTALL DIR %s (match: %s) -> %s", inc, rule, includeDir)
+				if err := CopyDirMatching(srcPath, includeDir, func(name string) bool {
+					return MatchPatterns(rule, name)
+				}); err != nil {
+					return fmt.Errorf("install headers failed: %w", err)
 				}
 			} else {
-				if len(rule) > 0 && !MatchPatterns(rule, filepath.Base(srcPath)) {
-					break
+				vlog.Info("  INSTALL DIR %s -> %s", inc, includeDir)
+				if err := CopyDir(srcPath, includeDir); err != nil {
+					return fmt.Errorf("install headers failed: %w", err)
 				}
-				dest := filepath.Join(includeDir, filepath.Base(srcPath))
-				vlog.Info("  INSTALL %s -> %s", filepath.Base(srcPath), dest)
-				if err := CopyFile(srcPath, dest); err != nil {
-					return fmt.Errorf("install header failed: %w", err)
-				}
+			}
+		} else {
+			rule := t.IncludeRule(inc)
+			if len(rule) > 0 && !MatchPatterns(rule, filepath.Base(srcPath)) {
+				continue
+			}
+			dest := filepath.Join(includeDir, filepath.Base(srcPath))
+			vlog.Info("  INSTALL %s -> %s", filepath.Base(srcPath), dest)
+			if err := CopyFile(srcPath, dest); err != nil {
+				return fmt.Errorf("install header failed: %w", err)
 			}
 		}
 	}

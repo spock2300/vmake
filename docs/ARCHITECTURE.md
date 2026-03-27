@@ -49,7 +49,7 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 ```
 
 1. 执行所有 `OnConfig` 回调，收集 `Option` 定义
-2. `MergeGlobalOptions` 合并全局选项（内置 `mode` + `toolchain` + 用户定义）
+2. `ConfigAccessor.MergeGlobals` 合并全局选项（内置 `mode` + `toolchain` + 用户定义）作为回退
 3. 配置值在后续 TUI 或 CLI flag 中加载
 
 源码：`cmd/vmake/root.go:193-230`, `pkg/api/global.go`

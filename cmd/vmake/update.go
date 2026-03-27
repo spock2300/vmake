@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os/exec"
 
 	iexec "gitee.com/spock2300/vmake/internal/exec"
 	"gitee.com/spock2300/vmake/pkg/version"
@@ -37,7 +36,7 @@ func runUpdate(cmd *cobra.Command, args []string) {
 
 	pkg := fmt.Sprintf("gitee.com/spock2300/vmake/cmd/vmake@%s", targetVer)
 
-	goCmd, err := exec.LookPath("go")
+	goCmd, err := iexec.LookPath("go")
 	fatalErr(err)
 
 	fatalErr(iexec.RunToStdout("", goCmd, "install", pkg))

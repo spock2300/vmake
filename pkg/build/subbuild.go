@@ -3,8 +3,8 @@ package build
 import (
 	"fmt"
 	"os"
-	"os/exec"
 
+	iexec "gitee.com/spock2300/vmake/internal/exec"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 )
 
@@ -15,12 +15,8 @@ func SubBuild(tcName, dir string, extraArgs ...string) error {
 	}
 
 	args := append([]string{"build", "--toolchain", tcName}, extraArgs...)
-	cmd := exec.Command(vmakeBin, args...)
-	cmd.Dir = dir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 
 	vlog.Info("  [subbuild] %s (toolchain=%s)", dir, tcName)
 
-	return cmd.Run()
+	return iexec.RunToStdout(dir, vmakeBin, args...)
 }

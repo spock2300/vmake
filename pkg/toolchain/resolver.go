@@ -2,7 +2,6 @@ package toolchain
 
 import (
 	"errors"
-	"os/exec"
 	"path/filepath"
 
 	iexec "gitee.com/spock2300/vmake/internal/exec"
@@ -15,12 +14,12 @@ func ResolveToolPath(tool string, installPath string) (string, error) {
 
 	if installPath != "" {
 		absPath := filepath.Join(installPath, "bin", tool)
-		if _, err := exec.LookPath(absPath); err == nil {
+		if _, err := iexec.LookPath(absPath); err == nil {
 			return absPath, nil
 		}
 	}
 
-	resolved, err := exec.LookPath(tool)
+	resolved, err := iexec.LookPath(tool)
 	if err != nil {
 		return "", err
 	}

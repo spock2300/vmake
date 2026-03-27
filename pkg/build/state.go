@@ -28,14 +28,8 @@ func (s *BuildState) statePath(tcName string) string {
 	return filepath.Join("build", tcName, "state.json")
 }
 
-func resolveCCAndCXX(tc *toolchain.Toolchain) (string, string) {
-	cc, _ := toolchain.ResolveToolPath(tc.Tools.CC, tc.InstallPath)
-	cxx, _ := toolchain.ResolveToolPath(tc.Tools.CXX, tc.InstallPath)
-	return cc, cxx
-}
-
 func NewBuildState(tc *toolchain.Toolchain) *BuildState {
-	ccPath, cxxPath := resolveCCAndCXX(tc)
+	tools, _ := ResolveTools(tc)
 	host := tc.Host
 	if host == "" {
 		host = toolchain.GetToolchainHost(tc)
@@ -45,8 +39,8 @@ func NewBuildState(tc *toolchain.Toolchain) *BuildState {
 		Version: StateVersion,
 		Toolchain: ToolchainMeta{
 			Name:    tc.Name,
-			CCPath:  ccPath,
-			CXXPath: cxxPath,
+			CCPath:  tools.CC,
+			CXXPath: tools.CXX,
 			Host:    host,
 		},
 	}
@@ -65,11 +59,11 @@ func (s *BuildState) Save(tcName string) error {
 }
 
 func (s *BuildState) NeedFullRebuild(tc *toolchain.Toolchain) bool {
-	ccPath, cxxPath := resolveCCAndCXX(tc)
+	tools, _ := ResolveTools(tc)
 
 	return s.Toolchain.Name != tc.Name ||
-		s.Toolchain.CCPath != ccPath ||
-		s.Toolchain.CXXPath != cxxPath
+		s.Toolchain.CCPath != tools.CC ||
+		s.Toolchain.CXXPath != tools.CXX
 }
 
 func CleanObjects(tcName string) error {

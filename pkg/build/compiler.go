@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	iexec "gitee.com/spock2300/vmake/internal/exec"
+	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -26,21 +27,16 @@ type CompileOptions struct {
 	Mode     string
 }
 
-func NewCompiler(tc *toolchain.Toolchain) (*Compiler, error) {
-	tools, err := ResolveTools(tc)
-	if err != nil {
-		return nil, err
-	}
-
+func NewCompiler(tc *toolchain.Toolchain, tools *ResolvedTools) *Compiler {
 	return &Compiler{
 		tc:      tc,
 		ccPath:  tools.CC,
 		cxxPath: tools.CXX,
-	}, nil
+	}
 }
 
 func (c *Compiler) Compile(src, objPath string, opts *CompileOptions) ([]string, error) {
-	if err := ensureDir(filepath.Dir(objPath)); err != nil {
+	if err := fs.EnsureDir(filepath.Dir(objPath)); err != nil {
 		return nil, err
 	}
 

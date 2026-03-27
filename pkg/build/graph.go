@@ -2,13 +2,12 @@ package build
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
 )
 
-type PackageMeta struct {
+type PkgBuildMeta struct {
 	IsRemote bool
 	Deps     []string
 }
@@ -51,7 +50,7 @@ type BuildNode struct {
 
 func NewBuildGraph(
 	targets map[string]map[string]*api.Target,
-	pkgMeta map[string]PackageMeta,
+	pkgMeta map[string]PkgBuildMeta,
 ) (*BuildGraph, error) {
 	graph := &BuildGraph{
 		Nodes: make(map[string]*BuildNode),
@@ -95,7 +94,7 @@ func resolveDeps(
 	deps []string,
 	currentPkg string,
 	nodes map[string]*BuildNode,
-	pkgMeta map[string]PackageMeta,
+	pkgMeta map[string]PkgBuildMeta,
 	path []string,
 ) ([]string, error) {
 	var result []string
@@ -120,7 +119,7 @@ func resolveDep(
 	dep string,
 	currentPkg string,
 	nodes map[string]*BuildNode,
-	pkgMeta map[string]PackageMeta,
+	pkgMeta map[string]PkgBuildMeta,
 	path []string,
 ) ([]string, error) {
 	if strings.Contains(dep, "/") {
@@ -143,7 +142,7 @@ func resolveDep(
 func resolvePackageRef(
 	pkgRef string,
 	nodes map[string]*BuildNode,
-	pkgMeta map[string]PackageMeta,
+	pkgMeta map[string]PkgBuildMeta,
 	path []string,
 ) ([]string, error) {
 	for _, p := range path {
@@ -229,8 +228,4 @@ func topologicalSort(nodes map[string]*BuildNode) ([]string, error) {
 	}
 
 	return result, nil
-}
-
-func ensureDir(dir string) error {
-	return os.MkdirAll(dir, 0755)
 }

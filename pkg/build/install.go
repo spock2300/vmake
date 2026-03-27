@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/pkg/api"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 )
@@ -20,7 +21,7 @@ type PkgInstallInfo struct {
 	InstallFilter api.InstallFilterFunc
 }
 
-type Installer struct {
+type ArtifactInstaller struct {
 	graph         *BuildGraph
 	pkgDirs       map[string]string
 	pkgInfo       map[string]*PkgInstallInfo
@@ -28,8 +29,8 @@ type Installer struct {
 	installed     map[string]bool
 }
 
-func NewInstaller(graph *BuildGraph, pkgDirs map[string]string, defaultPrefix string) *Installer {
-	return &Installer{
+func NewArtifactInstaller(graph *BuildGraph, pkgDirs map[string]string, defaultPrefix string) *ArtifactInstaller {
+	return &ArtifactInstaller{
 		graph:         graph,
 		pkgDirs:       pkgDirs,
 		pkgInfo:       make(map[string]*PkgInstallInfo),
@@ -38,11 +39,11 @@ func NewInstaller(graph *BuildGraph, pkgDirs map[string]string, defaultPrefix st
 	}
 }
 
-func (i *Installer) SetPackageInfo(pkgName string, info *PkgInstallInfo) {
+func (i *ArtifactInstaller) SetPackageInfo(pkgName string, info *PkgInstallInfo) {
 	i.pkgInfo[pkgName] = info
 }
 
-func (i *Installer) getEffectivePrefix(pkgName string, pkgInfo *PkgInstallInfo) string {
+func (i *ArtifactInstaller) getEffectivePrefix(pkgName string, pkgInfo *PkgInstallInfo) string {
 	prefix := pkgInfo.Prefix
 	if !pkgInfo.PrefixSet {
 		prefix = i.defaultPrefix
@@ -54,7 +55,7 @@ func (i *Installer) getEffectivePrefix(pkgName string, pkgInfo *PkgInstallInfo) 
 	return prefix
 }
 
-func (i *Installer) InstallAll() error {
+func (i *ArtifactInstaller) InstallAll() error {
 	return i.graph.ForEachDefault(func(node *BuildNode) error {
 		if err := i.installTarget(node); err != nil {
 			return err
@@ -63,7 +64,7 @@ func (i *Installer) InstallAll() error {
 	})
 }
 
-func (i *Installer) installTarget(node *BuildNode) error {
+func (i *ArtifactInstaller) installTarget(node *BuildNode) error {
 	pkgName := node.PkgName
 	target := node.Target
 
@@ -103,19 +104,65 @@ func (i *Installer) installTarget(node *BuildNode) error {
 
 	vlog.Info("  INSTALL %s -> %s", filepath.Base(outputPath), destPath)
 
-	if err := ensureDir(filepath.Dir(destPath)); err != nil {
+	if err := fs.EnsureDir(filepath.Dir(destPath)); err != nil {
 		return err
 	}
 
 	if err := CopyFile(outputPath, destPath); err != nil {
-		return err
+		return fmt.Errorf("install library failed: %w", err)
 	}
 
 	i.installed[outputPath] = true
+	return i.installPublicIncludes(node, pkgInfo, prefix)
+}
+
+func (i *ArtifactInstaller) installPublicIncludes(node *BuildNode, pkgInfo *PkgInstallInfo, prefix string) error {
+	target := node.Target
+	pkgDir := i.pkgDirs[node.PkgName]
+	includeDir := filepath.Join(prefix, "include")
+
+	for _, inc := range target.PublicIncludes() {
+		srcPath := filepath.Join(pkgDir, inc)
+		info, err := os.Stat(srcPath)
+		if err != nil {
+			continue
+		}
+
+		if info.IsDir() {
+			rule := target.IncludeRule(inc)
+			if len(rule) > 0 {
+				vlog.Info("  INSTALL DIR %s (match: %s) -> %s", inc, rule, includeDir)
+				if err := CopyDirMatching(srcPath, includeDir, func(name string) bool {
+					return MatchPatterns(rule, name)
+				}); err != nil {
+					return fmt.Errorf("install headers failed: %w", err)
+				}
+			} else {
+				vlog.Info("  INSTALL DIR %s -> %s", inc, includeDir)
+				if err := CopyDir(srcPath, includeDir); err != nil {
+					return fmt.Errorf("install headers failed: %w", err)
+				}
+			}
+		} else {
+			rule := target.IncludeRule(inc)
+			if len(rule) > 0 && !MatchPatterns(rule, filepath.Base(srcPath)) {
+				continue
+			}
+			dest := filepath.Join(includeDir, filepath.Base(srcPath))
+			vlog.Info("  INSTALL %s -> %s", filepath.Base(srcPath), dest)
+			if err := fs.EnsureDir(includeDir); err != nil {
+				return err
+			}
+			if err := CopyFile(srcPath, dest); err != nil {
+				return fmt.Errorf("install header failed: %w", err)
+			}
+		}
+	}
+
 	return nil
 }
 
-func (i *Installer) installExtraItems(node *BuildNode) error {
+func (i *ArtifactInstaller) installExtraItems(node *BuildNode) error {
 	pkgName := node.PkgName
 	pkgInfo, ok := i.pkgInfo[pkgName]
 	if !ok {
@@ -152,7 +199,7 @@ func (i *Installer) installExtraItems(node *BuildNode) error {
 			}
 		} else {
 			vlog.Info("  INSTALL %s -> %s", item.Src, destPath)
-			if err := ensureDir(filepath.Dir(destPath)); err != nil {
+			if err := fs.EnsureDir(filepath.Dir(destPath)); err != nil {
 				return err
 			}
 			if err := CopyFile(srcPath, destPath); err != nil {
@@ -164,14 +211,14 @@ func (i *Installer) installExtraItems(node *BuildNode) error {
 	return nil
 }
 
-func (i *Installer) getOutputPath(pkgName string, pkgInfo *PkgInstallInfo, node *BuildNode) string {
+func (i *ArtifactInstaller) getOutputPath(pkgName string, pkgInfo *PkgInstallInfo, node *BuildNode) string {
 	name := targetFilename(node.Target.Kind(), node.Target.Name())
 
 	buildDir := fmt.Sprintf("%s-%s", pkgInfo.TcName, pkgInfo.Mode)
 	return filepath.Join(i.pkgDirs[pkgName], "build", buildDir, name)
 }
 
-func (i *Installer) getInstallPath(prefix string, target *api.Target) string {
+func (i *ArtifactInstaller) getInstallPath(prefix string, target *api.Target) string {
 	installDir := target.InstallDir()
 	basename := targetFilename(target.Kind(), target.Name())
 
@@ -189,7 +236,7 @@ func (i *Installer) getInstallPath(prefix string, target *api.Target) string {
 	}
 }
 
-func (i *Installer) copyDirWithFilter(src, dest string, filter api.InstallFilterFunc) error {
+func (i *ArtifactInstaller) copyDirWithFilter(src, dest string, filter api.InstallFilterFunc) error {
 	var cf CopyFilter
 	if filter != nil {
 		cf = func(path string, isDir bool) bool {

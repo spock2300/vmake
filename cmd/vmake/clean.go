@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
@@ -52,26 +53,20 @@ func runClean(cmd *cobra.Command, args []string) {
 
 	buildDir := fmt.Sprintf("%s-%s", tcName, mode)
 
-	origDir, _ := os.Getwd()
 	for _, pkg := range packages {
-		if err := os.Chdir(pkg.Dir); err != nil {
-			vlog.Error("Failed to chdir to %s: %v", pkg.Name, err)
-			continue
-		}
-
 		if cleanAllFlag {
-			cleanAllToolchains(pkg.Name)
+			cleanAllToolchains(pkg.Dir, pkg.Name)
 		} else {
-			cleanCurrentToolchain(pkg.Name, buildDir)
+			cleanCurrentToolchain(pkg.Dir, pkg.Name, buildDir)
 		}
 	}
 
-	os.Chdir(origDir)
 	vlog.Info("Clean completed!")
 }
 
-func cleanAllToolchains(pkgName string) {
-	entries, err := os.ReadDir("build")
+func cleanAllToolchains(dir, pkgName string) {
+	buildBase := filepath.Join(dir, "build")
+	entries, err := os.ReadDir(buildBase)
 	if err != nil {
 		return
 	}
@@ -85,11 +80,11 @@ func cleanAllToolchains(pkgName string) {
 			continue
 		}
 
-		tcDir := fmt.Sprintf("build/%s", name)
+		tcDir := filepath.Join(buildBase, name)
 		if err := os.RemoveAll(tcDir); err != nil {
-			vlog.Error("Failed to clean %s/%s: %v", pkgName, tcDir, err)
+			vlog.Error("Failed to clean %s/%s: %v", pkgName, name, err)
 			continue
 		}
-		vlog.Info("Cleaned %s/%s/", pkgName, tcDir)
+		vlog.Info("Cleaned %s/%s/", pkgName, name)
 	}
 }

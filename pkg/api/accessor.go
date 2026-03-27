@@ -150,44 +150,21 @@ func (a *ConfigAccessor) SetOptions(options map[string]*Option) {
 	a.Options = options
 }
 
-type GlobalAccessor struct {
-	globalVals    map[string]any
-	globalOptions map[string]*Option
-}
-
-func NewGlobalAccessor() GlobalAccessor {
-	return GlobalAccessor{
-		globalVals:    make(map[string]any),
-		globalOptions: make(map[string]*Option),
+func (a *ConfigAccessor) MergeGlobals(globalOptions map[string]*Option, globalVals map[string]any) {
+	if a.Options == nil {
+		a.Options = make(map[string]*Option)
 	}
-}
-
-func (g *GlobalAccessor) SetGlobalOptions(options map[string]*Option) {
-	g.globalOptions = options
-}
-
-func (g *GlobalAccessor) SetGlobalValues(vals map[string]any) {
-	g.globalVals = vals
-}
-
-func (g *GlobalAccessor) GlobalBool(name string) bool {
-	return getTypedValue(g.globalVals, g.globalOptions, name, func(o *Option) bool {
-		if d, ok := o.Default().(bool); ok {
-			return d
+	if a.CfgVals == nil {
+		a.CfgVals = make(map[string]any)
+	}
+	for name, opt := range globalOptions {
+		if _, exists := a.Options[name]; !exists {
+			a.Options[name] = opt
 		}
-		return false
-	}, false, nil)
-}
-
-func (g *GlobalAccessor) GlobalString(name string) string {
-	return getTypedValue(g.globalVals, g.globalOptions, name, func(o *Option) string {
-		if d, ok := o.Default().(string); ok {
-			return d
+	}
+	for name, val := range globalVals {
+		if _, exists := a.CfgVals[name]; !exists {
+			a.CfgVals[name] = val
 		}
-		return ""
-	}, "", nil)
-}
-
-func (g *GlobalAccessor) Mode() string {
-	return g.GlobalString(ModeOptionName)
+	}
 }

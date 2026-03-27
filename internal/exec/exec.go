@@ -94,10 +94,21 @@ func RunWithEnv(dir string, env map[string]string, name string, args ...string) 
 	return cmd.Run()
 }
 
-func RunWithEnvFatal(dir string, env map[string]string, name string, args ...string) {
-	if err := RunWithEnv(dir, env, name, args...); err != nil {
-		vlog.Fatal("command failed: %s %s", name, strings.Join(args, " "))
+func LookPath(name string) (string, error) {
+	return exec.LookPath(name)
+}
+
+func RunWithEnvCaptured(dir string, env map[string]string, name string, args ...string) ([]byte, error) {
+	cmd := exec.Command(name, args...)
+	if dir != "" {
+		cmd.Dir = dir
 	}
+	cmd.Env = append(os.Environ(), flattenEnv(env)...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("%s %s\n%s", name, strings.Join(args, " "), string(output))
+	}
+	return output, nil
 }
 
 func flattenEnv(env map[string]string) []string {

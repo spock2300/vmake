@@ -3,9 +3,9 @@ package repo
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 
+	iexec "gitee.com/spock2300/vmake/internal/exec"
 	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/pkg/api"
 )
@@ -121,10 +121,7 @@ func (m *SourceManager) CleanSource(repo, name string) error {
 
 func (m *SourceManager) DistClean(repo, name string) error {
 	repoDir := filepath.Join(m.sourcesDir, repo, name, "repo")
-	cmd := exec.Command("make", "distclean")
-	cmd.Dir = repoDir
-	cmd.Run()
-	return nil
+	return iexec.RunToStdout(repoDir, "make", "distclean")
 }
 
 func (m *SourceManager) exists(path string) bool {

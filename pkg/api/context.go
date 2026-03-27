@@ -52,7 +52,6 @@ func (ctx *ConfigContext) GlobalMode() *Option {
 
 type BuildContext struct {
 	ConfigAccessor
-	GlobalAccessor
 	*TargetRegistry
 	installHolder InstallItemHolder
 	pkgName       string
@@ -62,7 +61,6 @@ type BuildContext struct {
 func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext {
 	return &BuildContext{
 		ConfigAccessor: NewConfigAccessor(cfgVals, nil),
-		GlobalAccessor: NewGlobalAccessor(),
 		TargetRegistry: NewTargetRegistry(),
 		pkgName:        pkgName,
 	}
@@ -70,21 +68,6 @@ func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext {
 
 func (ctx *BuildContext) PackageName() string {
 	return ctx.pkgName
-}
-
-func (ctx *BuildContext) IfGlobal(option string, then ...string) []string {
-	if ctx.GlobalBool(option) {
-		return then
-	}
-	return nil
-}
-
-func (ctx *BuildContext) SelectGlobal(option string, mapping map[string]string) string {
-	val := ctx.GlobalString(option)
-	if mapped, ok := mapping[val]; ok {
-		return mapped
-	}
-	return ""
 }
 
 type InstallItem struct {
@@ -132,7 +115,6 @@ func (ctx *BuildContext) Exec(name string, args ...string) {
 
 type InstallContext struct {
 	ConfigAccessor
-	GlobalAccessor
 	installHolder InstallItemHolder
 	pkgName       string
 	prefix        string
@@ -142,7 +124,6 @@ type InstallContext struct {
 func NewInstallContext(pkgName string, cfgVals map[string]any) *InstallContext {
 	return &InstallContext{
 		ConfigAccessor: NewConfigAccessor(cfgVals, nil),
-		GlobalAccessor: NewGlobalAccessor(),
 		pkgName:        pkgName,
 	}
 }

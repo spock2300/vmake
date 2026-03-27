@@ -8,6 +8,7 @@ import (
 	"gitee.com/spock2300/vmake/internal/exec"
 	"gitee.com/spock2300/vmake/internal/fs"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
+	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
 
 type TargetKind string
@@ -92,7 +93,7 @@ type Package struct {
 	outputDir     string
 	sourceOrigin  SourceOrigin
 	cfgVals       map[string]any
-	tc            *Toolchain
+	tc            *toolchain.Toolchain
 	deps          map[string]*InstalledPackage
 }
 
@@ -315,7 +316,7 @@ func (p *Package) SetCfgVals(vals map[string]any) *Package {
 	return p
 }
 
-func (p *Package) SetToolchain(tc *Toolchain) *Package {
+func (p *Package) SetToolchain(tc *toolchain.Toolchain) *Package {
 	p.tc = tc
 	return p
 }
@@ -326,15 +327,14 @@ func (p *Package) InstallDir() string { return p.installDir }
 func (p *Package) OutputDir() string  { return p.outputDir }
 func (p *Package) IsLocal() bool      { return p.sourceOrigin == SourceLocal }
 
-func (p *Package) CC() string          { return p.tc.CC }
-func (p *Package) CXX() string         { return p.tc.CXX }
-func (p *Package) AR() string          { return p.tc.AR }
-func (p *Package) CrossTarget() string { return p.tc.Target }
+func (p *Package) CC() string          { return p.tc.Tools.CC }
+func (p *Package) CXX() string         { return p.tc.Tools.CXX }
+func (p *Package) AR() string          { return p.tc.Tools.AR }
+func (p *Package) CrossTarget() string { return p.tc.Host }
 func (p *Package) Prefix() string      { return p.tc.Prefix }
-func (p *Package) SysRoot() string     { return p.tc.SysRoot }
-func (p *Package) CFlags() string      { return p.tc.CFlags }
-func (p *Package) CXXFlags() string    { return p.tc.CXXFlags }
-func (p *Package) LDFlags() string     { return p.tc.LDFlags }
+func (p *Package) CFlags() string      { return strings.Join(p.tc.DefaultFlags.CFlags, " ") }
+func (p *Package) CXXFlags() string    { return strings.Join(p.tc.DefaultFlags.CxxFlags, " ") }
+func (p *Package) LDFlags() string     { return strings.Join(p.tc.DefaultFlags.LdFlags, " ") }
 
 func (p *Package) Env() map[string]string {
 	return p.tc.Env()
@@ -346,11 +346,11 @@ func (p *Package) CMakeConfigure(extraArgs ...string) error {
 		"-B", p.buildDir,
 		"-DCMAKE_INSTALL_PREFIX=" + p.installDir,
 	}
-	if p.tc.CC != "" {
-		args = append(args, "-DCMAKE_C_COMPILER="+p.tc.CC)
+	if p.tc.Tools.CC != "" {
+		args = append(args, "-DCMAKE_C_COMPILER="+p.tc.Tools.CC)
 	}
-	if p.tc.CXX != "" {
-		args = append(args, "-DCMAKE_CXX_COMPILER="+p.tc.CXX)
+	if p.tc.Tools.CXX != "" {
+		args = append(args, "-DCMAKE_CXX_COMPILER="+p.tc.Tools.CXX)
 	}
 	args = append(args, "-DCMAKE_BUILD_TYPE=Release")
 	if p.CrossTarget() != "" {
@@ -358,9 +358,6 @@ func (p *Package) CMakeConfigure(extraArgs ...string) error {
 			"-DCMAKE_SYSTEM_NAME=Linux",
 			"-DCMAKE_C_COMPILER_TARGET="+p.CrossTarget(),
 			"-DCMAKE_CXX_COMPILER_TARGET="+p.CrossTarget())
-	}
-	if p.tc.SysRoot != "" {
-		args = append(args, "-DCMAKE_SYSROOT="+p.tc.SysRoot)
 	}
 	args = append(args, extraArgs...)
 	return p.Run("cmake", args...)
@@ -382,7 +379,7 @@ func (p *Package) Configure(extraArgs ...string) error {
 		args = append(args, "--host="+p.CrossTarget())
 	}
 	args = append(args, extraArgs...)
-	return p.RunWithEnv(p.Env(), p.sourceDir+"/configure", args...)
+	return p.RunEnv(p.Env(), p.sourceDir+"/configure", args...)
 }
 
 func (p *Package) Make(args ...string) error {
@@ -403,10 +400,9 @@ func (p *Package) RunIn(dir, name string, args ...string) error {
 	return nil
 }
 
-func (p *Package) RunWithEnv(env map[string]string, name string, args ...string) error {
+func (p *Package) RunEnv(env map[string]string, name string, args ...string) error {
 	vlog.Info("  %s %s", name, strings.Join(args, " "))
-	exec.RunWithEnvFatal(p.buildDir, env, name, args...)
-	return nil
+	return exec.RunWithEnv(p.buildDir, env, name, args...)
 }
 
 type InstalledPackage struct {

@@ -115,7 +115,7 @@ var pkgCleanCmd = &cobra.Command{
 			fatalMsg("Error: invalid package reference")
 		}
 
-		installer := repo.NewInstaller(nil, getPackagesDir(), "")
+		installer := repo.NewPackageInstaller(nil, getPackagesDir(), "")
 
 		fatalErr(installer.CleanBuild(pkgRef))
 		fmt.Printf("Cleaned cache for '%s'\n", pkgRef)

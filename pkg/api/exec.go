@@ -5,10 +5,19 @@ import (
 )
 
 func execInDir(dir string, fn func()) {
-	origDir, _ := os.Getwd()
-	defer os.Chdir(origDir)
-	if dir != "" {
-		os.Chdir(dir)
+	if dir == "" {
+		fn()
+		return
 	}
+	origDir, err := os.Getwd()
+	if err != nil {
+		fn()
+		return
+	}
+	if err := os.Chdir(dir); err != nil {
+		fn()
+		return
+	}
+	defer os.Chdir(origDir)
 	fn()
 }

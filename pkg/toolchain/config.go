@@ -1,5 +1,7 @@
 package toolchain
 
+import "strings"
+
 type Toolchain struct {
 	Name         string       `json:"name"`
 	DisplayName  string       `json:"display_name"`
@@ -23,4 +25,20 @@ type DefaultFlags struct {
 	CFlags   []string `json:"cflags"`
 	CxxFlags []string `json:"cxxflags"`
 	LdFlags  []string `json:"ldflags"`
+}
+
+func (t *Toolchain) Env() map[string]string {
+	env := map[string]string{
+		"CC":       t.Tools.CC,
+		"CXX":      t.Tools.CXX,
+		"LD":       t.Tools.LD,
+		"AR":       t.Tools.AR,
+		"CFLAGS":   strings.Join(t.DefaultFlags.CFlags, " "),
+		"CXXFLAGS": strings.Join(t.DefaultFlags.CxxFlags, " "),
+		"LDFLAGS":  strings.Join(t.DefaultFlags.LdFlags, " "),
+	}
+	if t.Prefix != "" {
+		env["CROSS_COMPILE"] = t.Prefix
+	}
+	return env
 }

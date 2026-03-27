@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -86,16 +85,15 @@ func runGitTag(cmd *cobra.Command, args []string) {
 }
 
 func checkStagedChanges() error {
-	cmd := exec.Command("git", "diff", "--cached", "--quiet")
-	if err := cmd.Run(); err != nil {
+	_, err := iexec.Run("git", "diff", "--cached", "--quiet")
+	if err != nil {
 		return fmt.Errorf("staging area has uncommitted changes, please commit first")
 	}
 	return nil
 }
 
 func getLatestTag() (string, error) {
-	cmd := exec.Command("git", "tag", "--sort=-v:refname")
-	output, err := cmd.Output()
+	output, err := iexec.Run("git", "tag", "--sort=-v:refname")
 	if err != nil {
 		return "", fmt.Errorf("failed to list tags: %w", err)
 	}
@@ -181,8 +179,7 @@ func pushTags(version string) error {
 }
 
 func getRemoteName() (string, error) {
-	cmd := exec.Command("git", "remote")
-	output, err := cmd.Output()
+	output, err := iexec.Run("git", "remote")
 	if err != nil {
 		return "", fmt.Errorf("failed to get remote: %w", err)
 	}

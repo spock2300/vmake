@@ -63,7 +63,7 @@ Go-plugin-based C/C++ build system. Build instructions are written in Go (`build
 		})
 	}
 
-Conditional API: `If` (if bool then values), `IfNot` (if not), `Select` (map option value), `Equal` (match string), `When` (compare value, returns bool), `IfGlobal`/`SelectGlobal` (built-in global options: `mode`, `toolchain`).
+Conditional API: `If` (if bool then values), `IfNot` (if not), `Select` (map option value), `Equal` (match string), `When` (compare value, returns bool).
 
 All setter methods return the receiver for chaining. Use `filepath.Join()` for filesystem paths. Package IDs use `/` (e.g., `official/zlib`), target IDs use `:` (e.g., `lib:utils`). `SetBuildFunc` callback receives `*Package`, returns `error`.
 
@@ -125,7 +125,7 @@ Import: `gitee.com/spock2300/vmake/pkg/api`
 | `Make(args...)` | make -C build |
 | `Run(name, args...)` | Run command in BuildDir |
 | `RunIn(dir, name, args...)` | Run command in dir |
-| `RunWithEnv(env, name, args...)` | Run with extra env vars |
+| `RunEnv(env, name, args...)` | Run with extra env vars |
 
 All build helpers return `error`.
 
@@ -137,7 +137,6 @@ All build helpers return `error`.
 | `CXX()` | `string` | C++ compiler |
 | `AR()` | `string` | Archiver |
 | `CrossTarget()` | `string` | Cross-compilation target |
-| `SysRoot()` | `string` | Sysroot path |
 | `CFlags()` / `CXXFlags()` / `LDFlags()` | `string` | Compiler/linker flags |
 | `SourceDir()` / `BuildDir()` / `InstallDir()` | `string` | Directories |
 | `Env()` | `map[string]string` | Toolchain env vars |
@@ -171,7 +170,6 @@ All setters are fluent (return `*Target`).
 | `SetBuildFunc` | `(fn func(p *Package) error)` | Custom build logic (for third-party packages with external build systems) |
 | `SetInstallDir` | `(dir string)` | Install directory |
 | `SetInstall` | `(install bool)` | Control install |
-| `SetOutput` | `(output string)` | Custom output path |
 
 ### Removers
 
@@ -191,7 +189,6 @@ All setters are fluent (return `*Target`).
 | `Deps()` | `[]string` |
 | `CFlags()` / `CxxFlags()` / `LdFlags()` | `[]string` |
 | `BuildFunc()` | `func(p *Package) error` |
-| `Output()` | `string` |
 
 ---
 
@@ -230,15 +227,13 @@ Embedded: `ConfigAccessor`
 
 ## BuildContext
 
-Embedded: `ConfigAccessor`, `GlobalAccessor`
+Embedded: `ConfigAccessor`
 
 | Method | Description |
 |--------|-------------|
 | `Target(name) *Target` | Get or create target |
 | `GetTargets() map[string]*Target` | All targets |
 | `PackageName() string` | Package name |
-| `IfGlobal(option, then...) []string` | Conditional on global bool |
-| `SelectGlobal(option, mapping) string` | Map global option value |
 | `AddInstalls(src, dest)` | Install entry |
 | `SubBuild(tcName, dir, args...)` | Invoke vmake as subprocess |
 | `Exec(name, args...)` | Run command with logging |
@@ -247,7 +242,7 @@ Embedded: `ConfigAccessor`, `GlobalAccessor`
 
 ## InstallContext
 
-Embedded: `ConfigAccessor`, `GlobalAccessor`
+Embedded: `ConfigAccessor`
 
 | Method | Description |
 |--------|-------------|
@@ -288,18 +283,7 @@ Embedded by all context types. Provides option value access.
 | `Select` | `(option string, mapping map[string]string) string` | Map option value |
 | `When` | `(option string, value any) bool` | Compare option value |
 | `Option` | `(name string) *Option` | Get or create option |
-
----
-
-## GlobalAccessor
-
-Embedded by `BuildContext`, `InstallContext`.
-
-| Method | Description |
-|--------|-------------|
-| `GlobalBool(name) bool` | Global bool value |
-| `GlobalString(name) string` | Global string value |
-| `Mode() string` | Current build mode |
+| `MergeGlobals` | `(globalOptions map[string]*Option, globalVals map[string]any)` | Merge global options/values as fallback |
 
 ---
 
@@ -348,14 +332,8 @@ Embedded by `BuildContext`, `InstallContext`.
 		SourceRemote SourceOrigin = 1
 	)
 
-	type Toolchain struct {
-		Target, Prefix, CC, CXX, LD, AR string
-		CFlags, CXXFlags, LDFlags, SysRoot string
-	}
-
 	type Version struct { Major, Minor, Patch int; Pre string }
 	type Constraint struct { Op string; Version Version }
 
 	func NewPackage() *Package
 	func NewInstalledPackage(name, version, installDir string, libs []string) *InstalledPackage
-	func NewToolchain() *Toolchain
