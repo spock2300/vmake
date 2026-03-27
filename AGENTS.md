@@ -181,6 +181,32 @@ func Main(ctx *plugin.Context) {
 
 **Commands**: `vmake ext add|remove|list|update`
 
+## AI Skill System
+
+VMake provides an AI skill optimized for coding assistants (Claude Code, OpenCode, Cursor, etc.). The skill helps AI assistants understand VMake build configuration.
+
+**Installation**:
+```bash
+vmake skill install           # Install to ~/.claude/skills/vmake/ and ~/.agents/skills/vmake/
+vmake skill install --project # Also install to project-level .claude/skills/
+```
+
+**Commands**:
+- `vmake skill install` - Install the VMake skill
+- `vmake skill uninstall` - Remove installed skill
+- `vmake skill path` - Show installation paths
+
+**Skill content**:
+- `SKILL.md` - Core guide (~180 lines): lifecycle, target, option, conditional, packages, CLI quick ref
+- `references/api.md` - Full API reference (365 lines, from doc/en.md)
+- `references/cli.md` - CLI command tree (auto-generated from cobra)
+- `examples/*.md` - 7 annotated build.go examples
+
+**Updating**:
+```bash
+vmake update && vmake skill install  # Update vmake then reinstall skill
+```
+
 ## TUI Styling (`pkg/tui/styles.go`)
 
 Uses `lipgloss`. Color palette:

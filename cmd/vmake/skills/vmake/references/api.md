@@ -170,7 +170,7 @@ All setters are fluent (return `*Target`).
 | `AddCxxFlags` | `(flags ...any)` | C++ compiler flags |
 | `AddLdFlags` | `(flags ...any)` | Linker flags |
 | `AddPackages` | `(packages ...string)` | Third-party packages |
-| `SetBuildFunc` | `(fn func(p *Package) error)` | Custom build logic |
+| `SetBuildFunc` | `(fn func(p *Package) error)` | Custom build logic (for third-party packages with external build systems) |
 | `SetInstallDir` | `(dir string)` | Install directory |
 | `SetInstall` | `(install bool)` | Control install |
 | `SetOutput` | `(output string)` | Custom output path |
@@ -194,7 +194,7 @@ All setters are fluent (return `*Target`).
 | `CFlags()` / `CxxFlags()` / `LdFlags()` | `[]string` |
 | `Packages()` | `[]string` |
 | `BuildFunc()` | `func(p *Package) error` |
-| `Output()` | `string` | Custom output path |
+| `Output()` | `string` |
 
 ---
 
