@@ -80,7 +80,7 @@ Use `filepath.Join()` for filesystem paths. Do NOT use for logical identifiers:
 
 | Package | Responsibility | Plugin Importable |
 |---------|---------------|-------------------|
-| `pkg/api` | Core API (Package, Target, Option, Contexts, Toolchain, Semver) | **Yes** |
+| `pkg/api` | Core API (Package, Target, Option, Contexts, Semver) | **Yes** |
 | `pkg/plugin` | Extension/plugin system for custom commands | **Yes** |
 | `pkg/buildscript` | Build script scan, compile, load | No |
 | `pkg/config` | Config storage | No |
@@ -100,13 +100,12 @@ Use `filepath.Join()` for filesystem paths. Do NOT use for logical identifiers:
 
 **Principle**: `pkg/api` and `pkg/plugin` are public APIs that must remain stable.
 
-**Dependency DAG**: `internal/*` → `pkg/api` → `pkg/buildscript, pkg/repo` → `pkg/resolver, pkg/plugin, pkg/build` → `cmd/vmake`
+**Dependency DAG**: `internal/*` → `pkg/toolchain` → `pkg/api` → `pkg/buildscript, pkg/repo` → `pkg/resolver, pkg/plugin, pkg/build` → `cmd/vmake`
 
 **Key embedding**:
 - `RepoManager` and `plugin.Manager` embed `*gitstore.Store` for git repo CRUD
 - `buildscript.CompileResult` and `plugin.CompileResult` embed `gocompile.CompileResult`
 - `Package`, `ConfigContext`, `BuildContext`, `InstallContext` embed `ConfigAccessor`
-- `BuildContext` and `InstallContext` embed `GlobalAccessor`
 
 ## CLI Architecture
 - CLI uses `github.com/spf13/cobra`
@@ -198,7 +197,7 @@ vmake skill install --project # Also install to project-level .claude/skills/
 
 **Skill content**:
 - `SKILL.md` - Core guide (~180 lines): lifecycle, target, option, conditional, packages, CLI quick ref
-- `references/api.md` - Full API reference (365 lines, from doc/en.md)
+- `references/api.md` - Full API reference (from source code)
 - `references/cli.md` - CLI command tree (auto-generated from cobra)
 - `examples/*.md` - 7 annotated build.go examples
 

@@ -137,11 +137,13 @@ All build helpers return `error`.
 | `CXX()` | `string` | C++ compiler |
 | `AR()` | `string` | Archiver |
 | `CrossTarget()` | `string` | Cross-compilation target |
+| `Prefix()` | `string` | Toolchain prefix |
 | `CFlags()` / `CXXFlags()` / `LDFlags()` | `string` | Compiler/linker flags |
-| `SourceDir()` / `BuildDir()` / `InstallDir()` | `string` | Directories |
+| `SourceDir()` / `BuildDir()` / `InstallDir()` / `OutputDir()` | `string` | Directories |
 | `Env()` | `map[string]string` | Toolchain env vars |
 | `PackageName()` | `string` | Full package name |
 | `Libs()` | `[]string` | Library deps |
+| `IsLocal()` | `bool` | Whether source is local |
 | `Deps()` | `map[string]*InstalledPackage` | Resolved dependencies |
 | `SelectVersion(constraint)` | `(string, error)` | Best version match |
 
@@ -184,10 +186,14 @@ All setters are fluent (return `*Target`).
 | `IsDefault()` | `bool` |
 | `Files()` | `[]string` |
 | `Includes()` | `[]string` |
+| `PublicIncludes()` | `[]string` |
 | `Defines()` | `[]string` |
 | `Links()` | `[]string` |
 | `Deps()` | `[]string` |
 | `CFlags()` / `CxxFlags()` / `LdFlags()` | `[]string` |
+| `Languages()` | `[]string` |
+| `InstallDir()` | `string` |
+| `NoInstall()` | `bool` |
 | `BuildFunc()` | `func(p *Package) error` |
 
 ---
@@ -283,6 +289,7 @@ Embedded by all context types. Provides option value access.
 | `Select` | `(option string, mapping map[string]string) string` | Map option value |
 | `When` | `(option string, value any) bool` | Compare option value |
 | `Option` | `(name string) *Option` | Get or create option |
+| `SetOptions` | `(options map[string]*Option)` | Set options map |
 | `MergeGlobals` | `(globalOptions map[string]*Option, globalVals map[string]any)` | Merge global options/values as fallback |
 
 ---

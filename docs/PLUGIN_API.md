@@ -161,6 +161,7 @@ func (a *ConfigAccessor) When(option string, value any) bool
 
 // 选项管理
 func (a *ConfigAccessor) Option(name string) *Option
+func (a *ConfigAccessor) SetOptions(options map[string]*Option)
 func (a *ConfigAccessor) MergeGlobals(globalOptions map[string]*Option, globalVals map[string]any)
 ```
 
@@ -330,6 +331,9 @@ func (t *Target) Includes() []string
 func (t *Target) PublicIncludes() []string
 func (t *Target) Defines() []string
 func (t *Target) Languages() []string
+func (t *Target) PublicIncludes() []string
+func (t *Target) IncludeRule(dir string) []string
+func (t *Target) Languages() []string
 func (t *Target) Links() []string
 func (t *Target) Deps() []string
 func (t *Target) CFlags() []string
@@ -337,7 +341,8 @@ func (t *Target) CxxFlags() []string
 func (t *Target) LdFlags() []string
 func (t *Target) InstallDir() string
 func (t *Target) NoInstall() bool
-func (t *Target) Packages() []string
+func (t *Target) InstallDir() string
+func (t *Target) NoInstall() bool
 func (t *Target) BuildFunc() func(*Package) error
 ```
 
@@ -684,6 +689,9 @@ type Context struct {
     RegisterToolchain func(name string, tc *toolchain.Toolchain)
     GetToolchains     func() map[string]*toolchain.Toolchain
     SetOnMissing      func(onMissing func(name string) (*toolchain.Toolchain, error))
+
+    // 全局标志
+    AddGlobalFlags    func(cflags, cxxflags []string)
 
     // 工具方法
     DownloadFile   func(url, dest string) error
