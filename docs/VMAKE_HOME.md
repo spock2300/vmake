@@ -42,7 +42,7 @@
 全局工具链配置，存储编译器路径和默认编译选项。
 
 源码：`pkg/toolchain/store.go`
-CLI：`vmake toolchain init|list|show`
+CLI：`vmake toolchain list|show`
 
 ```json
 {
@@ -75,7 +75,7 @@ CLI：`vmake toolchain init|list|show`
 
 `first-char` 是包名首字母，用于避免单目录下文件过多。
 
-源码：`pkg/repo/manager.go`
+源码：`pkg/repo/manager.go`（嵌入 `*gitstore.Store`）
 CLI：`vmake repo add|remove|list|update`
 
 ## extensions/
@@ -104,7 +104,7 @@ extensions/<repo-name>/
 }
 ```
 
-源码：`pkg/plugin/manager.go`
+源码：`pkg/plugin/manager.go`（嵌入 `*gitstore.Store`）
 CLI：`vmake ext add|remove|list|update`
 
 ## toolchains/
@@ -123,7 +123,7 @@ toolchains/<name>-<version>/
 
 工具链由 `manifest.json` 声明，首次使用时自动下载。
 
-源码：`cmd/vmake/ext_cmd.go` (`loadExtensionToolchains`)
+源码：`cmd/vmake/ext_cmd.go` (`loadAllToolchainManifests`)
 
 ## packages/
 
@@ -158,6 +158,14 @@ CLI：`vmake pkg list|clean`
 
 源码：`pkg/buildscript/compiler.go`
 
+### plugins/
+
+编译后的扩展插件缓存。
+
+路径规则：`cache/plugins/<repo>/<plugin>.so`
+
+源码：`pkg/plugin/compiler.go`
+
 ### 源码缓存
 
 包源码的 Git 克隆，避免每次构建都重新下载。
@@ -179,7 +187,7 @@ project/
     ├── build.so                  # 编译后的构建脚本
     ├── compile_commands.json      # LSP 编译数据库
     └── <tc>-<mode>/               # 如 host-debug
-        ├── cache.json             # 增量构建缓存
+        ├── state.json             # 构建状态（工具链/模式）
         ├── objects/               # 中间目标文件
         └── <target>               # 最终产物
 ```

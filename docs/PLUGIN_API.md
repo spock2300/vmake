@@ -53,52 +53,79 @@ Package 是插件的主入口类型，包含生命周期方法和元信息设置
 
 ```go
 type Package struct {
-    // 嵌入 ConfigAccessor，提供 If/IfNot/Select/When 等条件表达式
+    PackageMeta
     ConfigAccessor
+    *TargetRegistry
+    InstallItemHolder
+    // ... 内部字段
 }
+```
 
-// 生命周期方法（注册回调）
+### 生命周期方法（注册回调）
+
+```go
 func (p *Package) OnRequire(fn RequireFunc)    // 声明第三方依赖
 func (p *Package) OnConfig(fn ConfigFunc)      // 定义配置选项
 func (p *Package) OnBuild(fn BuildFunc)        // 定义构建目标
 func (p *Package) OnInstall(fn InstallFunc)    // 定义安装规则
 func (p *Package) OnPackage(fn PackageFunc)    // 填充包元数据（插件提取阶段执行）
+```
 
-// 元信息设置（第三方包）
+### 元信息设置（第三方包）
+
+```go
 func (p *Package) SetGit(urls ...string) *Package
 func (p *Package) SetHomepage(url string) *Package
 func (p *Package) SetDescription(desc string) *Package
 func (p *Package) SetLicense(license string) *Package
 func (p *Package) AddVersion(version, ref string) *Package
+func (p *Package) SetVersions(versions map[string]string) *Package
 func (p *Package) SetSubmodules(v bool) *Package
 func (p *Package) SetLibs(libs ...string) *Package
+```
 
-// 目标定义
+### 目标定义
+
+```go
 func (p *Package) Target(name string) *Target
 func (p *Package) GetTargets() map[string]*Target
+```
 
-// 包依赖
+### 包依赖
+
+```go
 func (p *Package) AddPackages(packages ...string) *Package
 func (p *Package) GetPackages() []string
 func (p *Package) Deps() map[string]*InstalledPackage
+```
 
-// 目录信息
+### 目录信息
+
+```go
 func (p *Package) SourceDir() string
 func (p *Package) BuildDir() string
 func (p *Package) InstallDir() string
+func (p *Package) OutputDir() string
+```
 
-// 编译器信息（代理 Toolchain）
+### 编译器信息（代理 Toolchain）
+
+```go
 func (p *Package) CC() string
 func (p *Package) CXX() string
 func (p *Package) AR() string
 func (p *Package) CrossTarget() string
+func (p *Package) Prefix() string
 func (p *Package) SysRoot() string
 func (p *Package) CFlags() string
 func (p *Package) CXXFlags() string
 func (p *Package) LDFlags() string
 func (p *Package) Env() map[string]string
+```
 
-// 构建辅助方法
+### 构建辅助方法
+
+```go
 func (p *Package) CMakeConfigure(extraArgs ...string) error
 func (p *Package) CMakeBuild(args ...string) error
 func (p *Package) CMakeInstall() error
@@ -107,11 +134,46 @@ func (p *Package) Make(args ...string) error
 func (p *Package) Run(name string, args ...string) error
 func (p *Package) RunIn(dir, name string, args ...string) error
 func (p *Package) RunWithEnv(env map[string]string, name string, args ...string) error
+```
 
-// 获取方法
+### 获取方法
+
+```go
 func (p *Package) PackageName() string
 func (p *Package) GetOptions() map[string]*Option
 func (p *Package) Versions() map[string]string
+```
+
+## ConfigAccessor（条件表达式与值读取）
+
+`ConfigAccessor` 被嵌入到 `Package`、`ConfigContext`、`BuildContext`、`InstallContext`、`RequireContext` 中，提供选项值读取和条件表达式。
+
+```go
+// 值读取（优先配置值，其次默认值）
+func (a *ConfigAccessor) Bool(name string) bool
+func (a *ConfigAccessor) String(name string) string
+func (a *ConfigAccessor) Int(name string) int
+func (a *ConfigAccessor) BoolStr(name) string          // "ON" / "OFF"
+
+// 条件表达式
+func (a *ConfigAccessor) If(option string, then ...string) []string
+func (a *ConfigAccessor) IfNot(option string, then ...string) []string
+func (a *ConfigAccessor) Equal(option, value, dep string) string
+func (a *ConfigAccessor) Select(option string, mapping map[string]string) string
+func (a *ConfigAccessor) When(option string, value any) bool
+
+// 选项管理
+func (a *ConfigAccessor) Option(name string) *Option
+```
+
+## GlobalAccessor（全局选项读取）
+
+`GlobalAccessor` 被嵌入到 `BuildContext` 和 `InstallContext` 中，提供全局选项读取。
+
+```go
+func (a *GlobalAccessor) GlobalBool(name string) bool
+func (a *GlobalAccessor) GlobalString(name string) string
+func (a *GlobalAccessor) Mode() string    // 等同于 GlobalString("mode")
 ```
 
 ## ConfigContext
@@ -119,12 +181,17 @@ func (p *Package) Versions() map[string]string
 配置阶段上下文，用于定义选项和读取配置值。
 
 ```go
+type ConfigContext struct {
+    ConfigAccessor
+    // ...
+}
+
 // 选项定义
 func (ctx *ConfigContext) Option(name string) *Option
 func (ctx *ConfigContext) GlobalOption(name string) *Option  // 标记为全局选项
 func (ctx *ConfigContext) GlobalMode() *Option                // 内置 mode 选项
 
-// 读取值（优先配置值，其次默认值）
+// 读取值（继承自 ConfigAccessor）
 func (ctx *ConfigContext) Bool(name string) bool
 func (ctx *ConfigContext) String(name string) string
 func (ctx *ConfigContext) Int(name string) int
@@ -165,11 +232,18 @@ func (o *Option) IsGlobal() bool
 构建阶段上下文，用于定义构建目标和条件表达式。
 
 ```go
+type BuildContext struct {
+    ConfigAccessor
+    GlobalAccessor
+    *TargetRegistry
+    // ...
+}
+
 // 目标定义
 func (ctx *BuildContext) Target(name string) *Target
 func (ctx *BuildContext) GetTargets() map[string]*Target
 
-// 条件表达式（Package 内选项）
+// 条件表达式（继承自 ConfigAccessor）
 func (ctx *BuildContext) If(option string, then ...string) []string
 func (ctx *BuildContext) IfNot(option string, then ...string) []string
 func (ctx *BuildContext) Select(option string, mapping map[string]string) string
@@ -180,12 +254,12 @@ func (ctx *BuildContext) Bool(name string) bool
 func (ctx *BuildContext) String(name string) string
 func (ctx *BuildContext) Int(name string) int
 
-// 全局选项
+// 全局选项（继承自 GlobalAccessor）
 func (ctx *BuildContext) GlobalBool(name string) bool
 func (ctx *BuildContext) GlobalString(name string) string
+func (ctx *BuildContext) Mode() string
 func (ctx *BuildContext) IfGlobal(option string, then ...string) []string
 func (ctx *BuildContext) SelectGlobal(option string, mapping map[string]string) string
-func (ctx *BuildContext) Mode() string
 
 // 安装规则
 func (ctx *BuildContext) AddInstalls(src, dest string) *BuildContext
@@ -195,8 +269,13 @@ func (ctx *BuildContext) SetInstallFilter(filter InstallFilterFunc) *BuildContex
 func (ctx *BuildContext) AddPackages(packages ...string) *BuildContext
 func (ctx *BuildContext) GetPackages() []string
 
+// 子构建
+func (ctx *BuildContext) SetSubBuildFunc(fn func(tcName, dir string, args ...string) error)
+func (ctx *BuildContext) SubBuild(tcName, dir string, args ...string) error
+
 // 其他
 func (ctx *BuildContext) PackageName() string
+func (ctx *BuildContext) Exec(name string, args ...string) error
 ```
 
 ## InstallContext
@@ -204,6 +283,12 @@ func (ctx *BuildContext) PackageName() string
 安装阶段上下文。
 
 ```go
+type InstallContext struct {
+    ConfigAccessor
+    GlobalAccessor
+    // ...
+}
+
 func (ctx *InstallContext) SetPrefix(prefix string)
 func (ctx *InstallContext) Prefix() string
 func (ctx *InstallContext) PrefixSet() bool
@@ -256,6 +341,7 @@ func (t *Target) SetBuildFunc(fn func(p *Package) error) *Target
 // 安装控制
 func (t *Target) SetInstallDir(dir string) *Target
 func (t *Target) SetInstall(install bool) *Target
+func (t *Target) SetOutput(output string) *Target
 
 // 移除方法
 func (t *Target) RemoveCFlags(flags ...string) *Target
@@ -284,6 +370,8 @@ func (t *Target) LdFlags() []string
 func (t *Target) InstallDir() string
 func (t *Target) NoInstall() bool
 func (t *Target) Packages() []string
+func (t *Target) Output() string
+func (t *Target) BuildFunc() func(*Package) error
 ```
 
 `AddFiles/Includes/Defines/Links/CFlags/CxxFlags/LdFlags` 接受 `string` 或 `[]string`（条件表达式返回）。
@@ -333,8 +421,15 @@ const (
     OptionChoice
 )
 
+type SourceOrigin int
+const (
+    SourceLocal  SourceOrigin = iota
+    SourceRemote
+)
+
 type Toolchain struct {
     Target    string   // 交叉编译目标
+    Prefix    string   // 工具前缀
     CC        string
     CXX       string
     LD        string
@@ -361,11 +456,36 @@ type InstallItem struct {
     Dest string
 }
 type InstallFilterFunc func(path string, isTargetOutput bool) bool
+
+type RequireInfo struct {
+    Name       string
+    Constraint string
+}
+```
+
+### 语义版本 (`pkg/api/semver.go`)
+
+```go
+type Version struct {
+    Major, Minor, Patch int
+    Pre                 string
+}
+
+type Constraint struct {
+    Op      string    // ">=", "<=", ">", "<", "=", "~"
+    Version Version
+}
+
+func ParseVersion(s string) (Version, bool)
+func (v Version) Compare(other Version) int
+func ParseConstraint(s string) (Constraint, bool)
+func (c Constraint) Match(v Version) bool
+func MatchVersion(available, constraint string) (string, bool)
 ```
 
 ## 全局选项
 
-内置全局选项：
+内置全局选项（`pkg/api/global.go`）：
 
 ```go
 const (
@@ -385,6 +505,8 @@ const (
 
 `GetModeFlags(mode string) (cflags, defines []string)` 返回上述值。
 
+全局选项合并：`MergeGlobalOptions(allDefs, toolchainList)` 合并内置 `mode` + `toolchain` + 用户定义的全局选项，验证类型一致性。
+
 用户定义全局选项：
 
 ```go
@@ -397,6 +519,15 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 ```
 
 全局选项在所有 Package 间共享。如果多个 Package 定义同名全局选项，类型和默认值必须一致。
+
+## SplitPackageRef (`pkg/api/package.go`)
+
+```go
+func SplitPackageRef(ref string) (repo, name string, ok bool)
+// "official/zlib" -> ("official", "zlib", true)
+```
+
+用于解析 `repo/name` 格式的包引用。
 
 ## 使用示例
 
@@ -650,15 +781,12 @@ func Main(ctx *plugin.Context) {
         Args:  cobra.ExactArgs(1),
         Run: func(cmd *cobra.Command, args []string) {
             name := args[0]
-            // 工具链会在首次使用时自动下载
             fmt.Printf("Toolchain %s will be downloaded on first use\n", name)
         },
     })
 
-    // 注册工具链缺失时的自动下载回调
     ctx.SetOnMissing(func(name string) (*toolchain.Toolchain, error) {
         fmt.Printf("Auto-downloading toolchain: %s\n", name)
-        // 返回 nil 会触发默认的自动下载流程
         return nil, nil
     })
 }

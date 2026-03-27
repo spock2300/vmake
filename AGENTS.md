@@ -80,33 +80,50 @@ Use `filepath.Join()` for filesystem paths. Do NOT use for logical identifiers:
 
 | Package | Responsibility | Plugin Importable |
 |---------|---------------|-------------------|
-| `pkg/api` | Core API (Builder, Target, Option, Package) | **Yes** |
+| `pkg/api` | Core API (Package, Target, Option, Contexts, Toolchain, Semver) | **Yes** |
 | `pkg/plugin` | Extension/plugin system for custom commands | **Yes** |
 | `pkg/buildscript` | Build script scan, compile, load | No |
 | `pkg/config` | Config storage | No |
-| `pkg/build` | Build execution, compile, link, scheduler | No |
+| `pkg/build` | Build execution, compile, link, scheduler, install | No |
 | `pkg/toolchain` | Toolchain abstraction (GCC, Clang) | No |
-| `pkg/repo` | Package management, Git, dependency resolution | No |
+| `pkg/repo` | Package management, Git, source download | No |
 | `pkg/resolver` | Dependency graph, deferred resolution | No |
 | `pkg/log` | Logging (use alias `vlog`) | No |
 | `pkg/tui` | TUI components (bubbletea) | No |
+| `pkg/version` | Version info (GitCommit, BuildDate) | No |
 | `internal/exec` | OS command execution | No |
+| `internal/fs` | Filesystem utilities (EnsureDir, FileExists, etc.) | No |
+| `internal/gitstore` | Generic git-backed store (Add/Remove/List/Path) | No |
 | `internal/glob` | Glob pattern matching | No |
+| `internal/gocompile` | Go plugin compilation | No |
 | `internal/jsonio` | JSON read/write utilities | No |
 
 **Principle**: `pkg/api` and `pkg/plugin` are public APIs that must remain stable.
+
+**Dependency DAG**: `internal/*` → `pkg/api` → `pkg/buildscript, pkg/repo` → `pkg/resolver, pkg/plugin, pkg/build` → `cmd/vmake`
+
+**Key embedding**:
+- `RepoManager` and `plugin.Manager` embed `*gitstore.Store` for git repo CRUD
+- `buildscript.CompileResult` and `plugin.CompileResult` embed `gocompile.CompileResult`
+- `Package`, `ConfigContext`, `BuildContext`, `InstallContext` embed `ConfigAccessor`
+- `BuildContext` and `InstallContext` embed `GlobalAccessor`
 
 ## CLI Architecture
 - CLI uses `github.com/spf13/cobra`
 - Commands in `cmd/vmake/` as package-level vars, registered in `init()`
 - Flags bound with `Flags().BoolVarP/StringVarP`
+- Command factories (`newAddCmd`, `newRemoveCmd`, `newUpdateCmd`) in `cmd/vmake/helpers.go` for repo/ext commands
 
 ## Runtime Execution Flow
 ```
-Phase 1: OnRequire  -> Scan/Compile/Load buildscripts -> Collect dependencies
-Phase 2: OnConfig   -> Execute callbacks -> Collect Options -> Load saved config
-Phase 3: OnBuild    -> Execute callbacks -> Generate Targets -> Compile/Link
+Phase 1: OnRequire       -> Scan/Compile/Load buildscripts -> Resolve dependencies
+Phase 2a: ResolveDeferred -> Resolve remote (deferred) packages -> Update topological order
+Phase 2b: OnConfig       -> Execute callbacks -> Collect Options -> Merge global options
+Phase 3: OnBuild         -> Execute callbacks -> Generate Targets -> Compile/Link
+(Optional) Install       -> Install targets to prefix directory
 ```
+
+Pipeline: `cmd/vmake/root.go:runPipeline()`
 
 ## Conditional Expressions
 Use functional conditionals instead of if statements:
@@ -123,6 +140,9 @@ const (TargetBinary, TargetStatic, TargetShared, TargetObject, TargetVoid)
 
 type OptionType int
 const (OptionBool, OptionString, OptionInt, OptionChoice)
+
+type SourceOrigin int
+const (SourceLocal, SourceRemote)
 ```
 
 ## Build Script System
@@ -140,6 +160,11 @@ func Main(p *api.Package) {
 - Same-package: `AddDeps("utils")`
 - Cross-package: `AddDeps("lib:utils")` using `package:target` format
 
+## Package Reference Parsing
+```go
+repo, name, ok := api.SplitPackageRef("official/zlib")
+```
+
 ## Extension System
 
 Extensions are Go plugins that add CLI commands. Directory: `~/.vmake/extensions/<repo-name>/<plugin-name>/`
@@ -152,7 +177,7 @@ func Main(ctx *plugin.Context) {
 }
 ```
 
-**Plugin Context** (`pkg/plugin/api.go`): `VMakeDir`, `PluginDir`, `AddSubCommand`, `RegisterToolchain`, `DownloadFile`, `ExtractArchive`
+**Plugin Context** (`pkg/plugin/api.go`): `VMakeDir`, `PluginDir`, `CommandName`, `AddSubCommand`, `RegisterToolchain`, `GetToolchains`, `SetOnMissing`, `DownloadFile`, `ExtractArchive`, `RunGitLFS`
 
 **Commands**: `vmake ext add|remove|list|update`
 

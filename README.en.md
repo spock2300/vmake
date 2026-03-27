@@ -4,14 +4,16 @@ VMake is a modern C/C++ project build tool developed in Go. It provides a concis
 
 ## Features
 
-- **Simple API Design**: Only 11 core methods, enabling declarative build configuration via Fluent API
+- **Simple API Design**: Declarative build configuration via Fluent API
 - **Flexible Option System**: Supports configuration options of boolean, string, integer, and enum types
 - **Conditional Build Support**: Enables conditional compilation through methods like `If` and `When`
 - **Multi-Module Support**: Native support for managing builds of multi-module projects
-- **Incremental Compilation**: Intelligent incremental compilation based on dependency analysis, significantly improving build efficiency
-- **TUI Configuration Interface**: Provides an interactive terminal user interface for easy project configuration
-- **Toolchain Management**: Supports flexible switching between multiple compiler toolchains
-- **Cache Management**: Automatically manages build cache to enable incremental compilation decisions
+- **Third-Party Package Management**: Git-based package dependencies with automatic download and build
+- **Extension Plugin System**: CLI command extensions and cross-compilation toolchain management
+- **Incremental Compilation**: Intelligent incremental compilation based on dependency analysis
+- **TUI Configuration Interface**: Interactive terminal user interface for project configuration
+- **Toolchain Management**: Flexible switching between multiple compiler toolchains
+- **Semantic Versioning**: Built-in semver parsing and constraint matching
 
 ## Quick Start
 
@@ -19,6 +21,18 @@ VMake is a modern C/C++ project build tool developed in Go. It provides a concis
 
 ```bash
 go install gitee.com/spock2300/vmake/cmd/vmake@latest
+```
+
+### Debug Mode
+
+Set `VMAKE_DIR` to point to local source when developing vmake or debugging `build.go`:
+
+```bash
+export VMAKE_DIR=/path/to/vmake
+
+cd /path/to/vmake
+go build -o vmake ./cmd/vmake
+./vmake build
 ```
 
 ### Basic Usage
@@ -60,17 +74,22 @@ vmake/
 ├── cmd/vmake/           # CLI command entry
 ├── pkg/
 │   ├── api/             # Core build API
-│   ├── build/           # Compilation, linking, and cache management
-│   ├── config/          # Configuration storage
 │   ├── plugin/          # Plugin loader
+│   ├── build/           # Compilation, linking, and cache management
+│   ├── buildscript/     # Build script scan, compile, load
+│   ├── config/          # Configuration storage
 │   ├── resolver/        # Dependency resolution
 │   ├── repo/            # Package repository management
 │   ├── toolchain/       # Toolchain management
 │   ├── log/             # Logging
-│   └── tui/             # Terminal user interface
+│   ├── tui/             # Terminal user interface
+│   └── version/         # Version info
 ├── internal/
 │   ├── exec/            # Command execution
+│   ├── fs/              # Filesystem utilities
+│   ├── gitstore/        # Git repo store (shared infra)
 │   ├── glob/            # File matching
+│   ├── gocompile/       # Go plugin compilation
 │   └── jsonio/          # JSON serialization
 └── docs/                # Design documentation
 ```
@@ -94,6 +113,7 @@ vmake/
 | `TargetStatic` | Static library |
 | `TargetShared` | Shared library |
 | `TargetObject` | Object file |
+| `TargetVoid` | Third-party package build (with `SetBuildFunc`) |
 
 ### Core Methods
 
@@ -108,86 +128,10 @@ ctx.Int(name string) int
 ctx.If(option string, then ...string) []string
 ctx.IfNot(option string, then ...string) []string
 ctx.When(option string, value any) bool
+ctx.Select(option string, mapping map[string]string) string
 
 // Target configuration
 ctx.Target(name string) *Target
-```
-
-## Configuration Options
-
-### Project-Level Options
-
-Define in `build.go` via the `OnConfig` function:
-
-```go
-p.OnConfig(func(ctx *api.ConfigContext) {
-    ctx.Option("optimization").
-        SetType(api.OptionChoice).
-        SetDefault("O2").
-        SetValues("O0", "O1", "O2", "O3").
-        SetDescription("Compiler optimization level")
-})
-```
-
-### Global Options
-
-VMake includes the following built-in global options:
-
-- `mode`: Build mode (`debug` / `release`)
-- `toolchain`: Compiler toolchain
-
-### Conditional Expressions
-
-```go
-p.OnBuild(func(ctx *api.BuildContext) {
-    ctx.Target("app").
-        AddDefines(ctx.If("mode", "DEBUG")...).
-        AddCFlags(ctx.If("optimization", "O3", "-DNDEBUG")...)
-})
-```
-
-## Multi-Module Projects
-
-```
-myproject/
-├── build.go              # Root module configuration
-├── app/
-│   ├── build.go          # App module configuration
-│   └── src/
-├── lib/
-│   ├── build.go          # Lib module configuration
-│   └── src/
-└── include/
-```
-
-### Root Module build.go
-
-```go
-func Main(p *api.Package) {
-    p.OnConfig(func(ctx *api.ConfigContext) {
-        // Global options
-    })
-
-    p.OnBuild(func(ctx *api.BuildContext) {
-        ctx.Target("app").
-            SetKind(api.TargetBinary).
-            AddFiles("app/src/main.c").
-            AddDeps("lib")
-    })
-}
-```
-
-### Submodule build.go
-
-```go
-func Main(p *api.Package) {
-    p.OnBuild(func(ctx *api.BuildContext) {
-        ctx.Target("mylib").
-            SetKind(api.TargetStatic).
-            AddFiles("src/*.c").
-            AddIncludes("include")
-    })
-}
 ```
 
 ## Command-Line Usage
@@ -195,130 +139,62 @@ func Main(p *api.Package) {
 ### Build Commands
 
 ```bash
-# Build current module
-vmake build
-
-# Verbose output
-vmake build -v
-
-# Very verbose output
-vmake build -V
+vmake build [-f|--force] [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>]
+vmake clean [--all]
+vmake rebuild
 ```
 
 ### Configuration Commands
 
 ```bash
-# Enter interactive configuration interface
-vmake config
+vmake config    # Interactive TUI configuration
 ```
 
 ### Toolchain Management
 
 ```bash
-# List available toolchains
 vmake toolchain list
-
-# Show current toolchain info
-vmake toolchain show
-
-# Initialize new toolchain
+vmake toolchain show [name]
 vmake toolchain init <name>
 ```
 
-### Cleanup Commands
+### Package Repository Management
 
 ```bash
-# Clean build artifacts for current module
-vmake clean
-
-# Clean build artifacts for all modules
-vmake clean --all
-
-# Fully rebuild
-vmake rebuild
+vmake repo add <name> <url>
+vmake repo remove <name>
+vmake repo list
+vmake repo update <name>
 ```
 
-## Configuration Files
+### Package Management
 
-### Project Configuration (`.vmake/config.json`)
-
-```json
-{
-  "version": "1",
-  "global": {
-    "toolchain": "host",
-    "mode": "debug",
-    "options": { "ssl": true }
-  },
-  "entries": {
-    "myproject": {
-      "options": { "verbose": false }
-    }
-  }
-}
+```bash
+vmake pkg list
+vmake pkg search <keyword>
+vmake pkg clean <repo/name> [-a]
+vmake pkg update <repo/name>
 ```
 
-### Global Configuration (`~/.vmake/config.json`)
+### Extension Management
 
-```json
-{
-  "version": "1",
-  "default_toolchain": "host",
-  "toolchains": {
-    "host": {
-      "name": "host",
-      "display_name": "Host",
-      "host": "x86_64-linux-gnu",
-      "tools": {
-        "cc": "gcc", "cxx": "g++", "ar": "ar",
-        "ld": "ld", "strip": "strip", "ranlib": "ranlib"
-      },
-      "default_flags": {
-        "cflags": ["-O2", "-Wall"],
-        "cxxflags": ["-O2", "-Wall", "-Wextra"],
-        "ldflags": ["-Wl,--as-needed"]
-      }
-    }
-  }
-}
+```bash
+vmake ext add <name> <url>
+vmake ext remove <name>
+vmake ext list
+vmake ext update [name]
 ```
 
-## Advanced Features
+### Other Commands
 
-### Conditional Compilation
-
-```go
-p.OnConfig(func(ctx *api.ConfigContext) {
-    ctx.Option("platform").
-        SetType(api.OptionChoice).
-        SetValues("windows", "linux", "macos")
-    
-    ctx.Option("features.encryption").
-        SetType(api.OptionBool).
-        SetDefault(false)
-})
-
-p.OnBuild(func(ctx *api.BuildContext) {
-    ctx.Target("app").
-        AddFiles("src/main.c").
-        AddFiles(ctx.If("platform", "windows", "src/win32.c")...).
-        AddDefines(ctx.If("features.encryption", "ENABLE_ENCRYPTION")...)
-})
+```bash
+vmake git tag [version] [--major|--minor|--patch]    # Version tagging
+vmake update [version]                                # Self-update
+vmake version                                         # Version info
+vmake doc                                             # AI documentation
 ```
 
-### Custom Compilation Flags
-
-```go
-ctx.Target("app").
-    AddFiles("src/*.c").
-    AddIncludes("include", "thirdparty/include").
-    AddPublicIncludes("include").
-    AddDefines("VERSION=1.0").
-    AddLinks("pthread", "dl").
-    AddCFlags("-Wall", "-Wextra").
-    AddCxxFlags("-std=c++17").
-    AddLdFlags("-Wl,--gc-sections")
-```
+Global flags: `-v` (verbose), `-V` (very verbose), `-q` (quiet)
 
 ## Documentation
 
@@ -330,8 +206,6 @@ Detailed design documents are available in the [docs](docs/) directory:
 
 ## Test Cases
 
-The project includes the following test scenarios:
-
 | Directory | Description |
 |-----------|-------------|
 | `test_data/01_simple_c` | Simple C project |
@@ -340,46 +214,15 @@ The project includes the following test scenarios:
 | `test_data/04_multi_module` | Multi-module project |
 | `test_data/05_conditional` | Conditional compilation project |
 | `test_data/06_complete_api` | Complete API test |
-
-Run tests:
-
-```bash
-vmake build
-```
-
-## Architecture Design
-
-### Core Components
-
-1. **Package**: Plugin entry point for registering configuration and build callbacks
-2. **ConfigContext**: Configuration context managing option definitions and values
-3. **BuildContext**: Build context managing targets and build logic
-4. **BuildGraph**: Build dependency graph analyzing relationships between targets
-5. **Scheduler**: Scheduler coordinating compilation and linking tasks
-6. **Compiler**: Compiler handling source file compilation
-7. **Linker**: Linker handling object file linking
-
-### Execution Flow
-
-```
-1. Scan project structure and collect Packages
-2. Load and compile plugins
-3. Execute OnConfig callbacks to collect option definitions
-4. Load saved configuration values
-5. (Optional) Launch TUI for interactive configuration
-6. Execute OnBuild callbacks to build Target dependency graph
-7. Schedule compilation tasks
-8. Execute linking tasks
-9. Save configuration and cache
-```
+| `test_data/07_subbuild_codegen` | Sub-build / code generation |
+| `test_data/08_with_package` | Third-party package dependency |
+| `test_data/09_with_curl` | Package requiring curl download |
+| `test_data/10_local_repo` | Local repository test |
+| `test_data/11_with_tinyexpr` | Package with tinyexpr dependency |
 
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
-## Contribution Guidelines
-
-Issues and pull requests are welcome!
 
 ## Contact
 

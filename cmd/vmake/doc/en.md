@@ -173,6 +173,7 @@ All setters are fluent (return `*Target`).
 | `SetBuildFunc` | `(fn func(p *Package) error)` | Custom build logic |
 | `SetInstallDir` | `(dir string)` | Install directory |
 | `SetInstall` | `(install bool)` | Control install |
+| `SetOutput` | `(output string)` | Custom output path |
 
 ### Removers
 
@@ -193,6 +194,7 @@ All setters are fluent (return `*Target`).
 | `CFlags()` / `CxxFlags()` / `LdFlags()` | `[]string` |
 | `Packages()` | `[]string` |
 | `BuildFunc()` | `func(p *Package) error` |
+| `Output()` | `string` | Custom output path |
 
 ---
 
@@ -242,6 +244,8 @@ Embedded: `ConfigAccessor`, `GlobalAccessor`
 | `SelectGlobal(option, mapping) string` | Map global option value |
 | `AddInstalls(src, dest)` | Install entry |
 | `AddPackages(packages...)` | Third-party packages |
+| `SubBuild(tcName, dir, args...)` | Invoke vmake as subprocess |
+| `Exec(name, args...)` | Run command with logging |
 
 ---
 
@@ -342,8 +346,14 @@ Embedded by `BuildContext`, `InstallContext`.
 	type InstallItem struct { Src string; Dest string }
 	type RequireInfo struct { Name string; Constraint string }
 
+	type SourceOrigin int
+	const (
+		SourceLocal  SourceOrigin = 0
+		SourceRemote SourceOrigin = 1
+	)
+
 	type Toolchain struct {
-		Target, CC, CXX, LD, AR string
+		Target, Prefix, CC, CXX, LD, AR string
 		CFlags, CXXFlags, LDFlags, SysRoot string
 	}
 
