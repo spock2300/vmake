@@ -132,6 +132,49 @@ vmake (RootCmd)
 
 源码：`cmd/vmake/`
 
+## 统一依赖系统
+
+VMake 使用 `AddDeps` 统一管理所有依赖类型：
+
+| 类型 | 示例 | 识别规则 |
+|------|------|---------|
+| 同包 target | `AddDeps("utils")` | 不含 `:` 和 `/` |
+| 跨包 target | `AddDeps("lib:utils")` | 含 `:` |
+| 第三方包 | `AddDeps("official/zlib")` | 含 `/` |
+
+### 解析流程
+
+`BuildGraph` 构建时，包引用（含 `/`）被自动展开：
+
+1. 查找该包的所有 target 节点，添加为直接依赖
+2. 递归展开该包的传递依赖（来自 `resolver.Graph` 中的 `PackageNode.Deps`）
+3. 结果：每个 target 的 `Deps` 是扁平的传递闭包，包含所有直接和间接依赖的 target
+
+```
+Target.AddDeps("official/zlib")       Target.AddDeps("official/curl")
+         │                                       │
+         ▼                                       ▼
+    展开 zlib targets                     展开 curl targets
+    + zlib 传递依赖                        + curl 传递依赖 (zlib, ssl)
+         │                                       │
+         ▼                                       ▼
+    BuildGraph (统一拓扑排序)              同一个 BuildGraph
+         │                                       │
+         ▼                                       ▼
+    统一 resolveTarget 循环               PublicIncludes / artifact path / install dir
+```
+
+### 两阶段生命周期
+
+依赖声明仍在两个不同阶段完成：
+
+| 阶段 | API | 职责 |
+|------|-----|------|
+| Phase 1 (OnRequire) | `RequireContext.AddRequires()` | 声明包级别需求，触发源码下载，构建 `resolver.Graph` |
+| Phase 3 (OnBuild) | `Target.AddDeps()` | 将包引用关联到具体 target，`BuildGraph` 展开为 target 级依赖 |
+
+`resolver.Graph` 仍负责包级别的源码获取和版本管理，`BuildGraph` 负责统一的构建排序和依赖注入。
+
 ## 核心数据结构
 
 ### resolver.Graph (`pkg/resolver/resolver.go`)
@@ -172,7 +215,7 @@ BuildNode
 ├── FullName string                          // "pkg:target"
 ├── PkgName  string
 ├── Target   *api.Target
-└── Deps     []string
+└── Deps     []string                        // 统一依赖列表（含展开的第三方包 target）
 ```
 
 `BuildGraph` 提供辅助方法：

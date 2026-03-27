@@ -11,6 +11,6 @@ func Main(p *api.Package) {
 		ctx.Target("tinyexpr_test").
 			SetKind(api.TargetBinary).
 			AddFiles("src/*.c").
-			AddPackages("official/tinyexpr")
+			AddDeps("official/tinyexpr")
 	})
 }

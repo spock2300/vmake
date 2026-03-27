@@ -86,7 +86,6 @@ type Package struct {
 	buildFuncs    []BuildFunc
 	installFuncs  []InstallFunc
 	packageFunc   PackageFunc
-	packages      []string
 	sourceDir     string
 	buildDir      string
 	installDir    string
@@ -277,13 +276,6 @@ func (p *Package) SetInstallFilter(filter InstallFilterFunc) *Package {
 func (p *Package) GetInstallFilter() InstallFilterFunc {
 	return p.installHolder.getInstallFilter()
 }
-
-func (p *Package) AddPackages(packages ...string) *Package {
-	p.packages = append(p.packages, packages...)
-	return p
-}
-
-func (p *Package) GetPackages() []string { return p.packages }
 
 func (p *Package) SetDeps(deps map[string]*InstalledPackage) *Package {
 	p.deps = deps

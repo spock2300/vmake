@@ -53,7 +53,7 @@ Go-plugin-based C/C++ build system. Build instructions are written in Go (`build
 				})).
 				AddLinks(ctx.If("ssl", "ssl", "crypto")).
 				AddDeps("lib:utils").
-				AddPackages("official/zlib")
+				AddDeps("official/zlib")
 
 			ctx.Target("tests").
 				SetKind(api.TargetBinary).
@@ -111,7 +111,6 @@ Import: `gitee.com/spock2300/vmake/pkg/api`
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `Target` | `(name string) *Target` | Get or create a target |
-| `AddPackages` | `(packages ...string) *Package` | Third-party package deps |
 | `AddInstalls` | `(src, dest string) *Package` | Install entry |
 | `SetInstallFilter` | `(filter InstallFilterFunc) *Package` | Install file filter |
 
@@ -165,11 +164,10 @@ All setters are fluent (return `*Target`).
 | `AddDefines` | `(defines ...any)` | Preprocessor defines |
 | `SetLanguages` | `(langs ...string)` | "c" or "c++" |
 | `AddLinks` | `(libs ...any)` | Libraries to link |
-| `AddDeps` | `(targets ...string)` | Target dependencies (same pkg: `"name"`, cross pkg: `"pkg:name"`) |
+| `AddDeps` | `(targets ...string)` | Dependencies: same pkg (`"name"`), cross pkg (`"pkg:name"`), third-party (`"official/zlib"`) |
 | `AddCFlags` | `(flags ...any)` | C compiler flags |
 | `AddCxxFlags` | `(flags ...any)` | C++ compiler flags |
 | `AddLdFlags` | `(flags ...any)` | Linker flags |
-| `AddPackages` | `(packages ...string)` | Third-party packages |
 | `SetBuildFunc` | `(fn func(p *Package) error)` | Custom build logic (for third-party packages with external build systems) |
 | `SetInstallDir` | `(dir string)` | Install directory |
 | `SetInstall` | `(install bool)` | Control install |
@@ -192,7 +190,6 @@ All setters are fluent (return `*Target`).
 | `Links()` | `[]string` |
 | `Deps()` | `[]string` |
 | `CFlags()` / `CxxFlags()` / `LdFlags()` | `[]string` |
-| `Packages()` | `[]string` |
 | `BuildFunc()` | `func(p *Package) error` |
 | `Output()` | `string` |
 
@@ -243,7 +240,6 @@ Embedded: `ConfigAccessor`, `GlobalAccessor`
 | `IfGlobal(option, then...) []string` | Conditional on global bool |
 | `SelectGlobal(option, mapping) string` | Map global option value |
 | `AddInstalls(src, dest)` | Install entry |
-| `AddPackages(packages...)` | Third-party packages |
 | `SubBuild(tcName, dir, args...)` | Invoke vmake as subprocess |
 | `Exec(name, args...)` | Run command with logging |
 

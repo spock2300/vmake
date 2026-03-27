@@ -11,6 +11,6 @@ func Main(p *api.Package) {
 		ctx.Target("app").
 			SetKind(api.TargetBinary).
 			AddFiles("src/*.c").
-			AddPackages("local/mylib")
+			AddDeps("local/mylib")
 	})
 }

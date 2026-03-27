@@ -56,7 +56,6 @@ type BuildContext struct {
 	*TargetRegistry
 	installHolder InstallItemHolder
 	pkgName       string
-	packages      []string
 	subBuildFunc  func(tcName, dir string, args ...string) error
 }
 
@@ -111,15 +110,6 @@ func (ctx *BuildContext) SetInstallFilter(filter InstallFilterFunc) *BuildContex
 
 func (ctx *BuildContext) GetInstallFilter() InstallFilterFunc {
 	return ctx.installHolder.getInstallFilter()
-}
-
-func (ctx *BuildContext) AddPackages(packages ...string) *BuildContext {
-	ctx.packages = append(ctx.packages, packages...)
-	return ctx
-}
-
-func (ctx *BuildContext) GetPackages() []string {
-	return ctx.packages
 }
 
 func (ctx *BuildContext) SetSubBuildFunc(fn func(string, string, ...string) error) {

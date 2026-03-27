@@ -11,6 +11,6 @@ func Main(p *api.Package) {
 		ctx.Target("curl_test").
 			SetKind(api.TargetBinary).
 			AddFiles("src/*.c").
-			AddPackages("official/curl")
+			AddDeps("official/curl")
 	})
 }

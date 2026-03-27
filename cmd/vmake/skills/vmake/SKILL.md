@@ -62,8 +62,7 @@ ctx.Target("app").
     AddCxxFlags("-stdlib=libc++").       // C++ compiler flags
     AddLdFlags("-lm").                   // Linker flags
     AddLinks("ssl", "crypto").           // Libraries to link
-    AddDeps("lib:utils").                // Dependencies (pkg:target for cross-package)
-    AddPackages("official/zlib").        // Third-party packages
+    AddDeps("lib:utils").                // Dependencies (pkg:target for cross-package, pkg/name for third-party)
     SetDefault(false).                   // Exclude from default build
 ```
 
@@ -106,7 +105,7 @@ p.OnRequire(func(ctx *api.RequireContext) {
 })
 
 p.OnBuild(func(ctx *api.BuildContext) {
-    ctx.Target("app").AddPackages("official/zlib")
+    ctx.Target("app").AddDeps("official/zlib")
 })
 ```
 
@@ -118,6 +117,15 @@ p.OnPackage(func(p *api.Package) {
     p.SetLibs("z")
 })
 ```
+
+## Unified Dependencies
+
+`AddDeps` handles all dependency types:
+- `AddDeps("utils")` — same-package target
+- `AddDeps("lib:utils")` — cross-package target (controls build order, links artifact, propagates PublicIncludes)
+- `AddDeps("official/zlib")` — third-party package (declared via `OnRequire` + `AddRequires`; transitive deps automatically resolved)
+
+Package refs (containing `/`) are expanded into all targets defined by that package plus its transitive dependency targets.
 
 ## Multi-Module Projects
 

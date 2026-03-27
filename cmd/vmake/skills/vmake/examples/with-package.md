@@ -18,7 +18,7 @@ func Main(p *api.Package) {
 		ctx.Target("zlib_test").
 			SetKind(api.TargetBinary).
 			AddFiles("src/*.c").
-			AddPackages("official/zlib")
+			AddDeps("official/zlib")
 	})
 }
 ```
@@ -27,7 +27,7 @@ func Main(p *api.Package) {
 
 - **`p.OnRequire`** - Require phase hook (Phase 1)
 - **`ctx.AddRequires("repo/name >=version")`** - Declare dependency
-- **`ctx.AddPackages("repo/name")`** - Link against package in target
+- **`ctx.Target(...).AddDeps("repo/name")`** - Link against package in target
 - **Version constraints** - semver syntax
 
 ## How It Works
@@ -59,7 +59,7 @@ vmake repo add mylib https://github.com/user/mylib.git
 ## Consuming a Package
 
 After adding to `OnRequire`:
-- `AddPackages("official/zlib")` on target links against it
+- `AddDeps("official/zlib")` on target links against it
 - Auto-includes include dirs
 - Auto-links libraries
 - Works for static and shared builds
@@ -88,7 +88,7 @@ func Main(p *api.Package) {
 
 - Package refs use `/`: `repo/name`
 - Version constraints use semver syntax
-- `AddPackages` auto-links; no need for manual `-lz`
+- `AddDeps("official/zlib")` auto-links; no need for manual `-lz`
 - Packages first resolved in Phase 1, available in Phase 3
 
 ## See Also

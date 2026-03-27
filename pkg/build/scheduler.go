@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/internal/glob"
 	"gitee.com/spock2300/vmake/pkg/api"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
@@ -39,26 +40,20 @@ type PkgInfo struct {
 	InstallDir string
 }
 
-type PackageProvider interface {
-	GetInstalledPackage(name string) *api.InstalledPackage
-	GetTransitivePackageNames(name string) []string
-}
-
 type Scheduler struct {
-	graph       *BuildGraph
-	compiler    *Compiler
-	linker      *Linker
-	toolchain   *toolchain.Toolchain
-	tcName      string
-	mode        string
-	buildDir    string
-	pkgs        map[string]*PkgInfo
-	origDir     string
-	ccWriter    *CompileCommandsWriter
-	pkgProvider PackageProvider
-	packages    map[string]*api.Package
-	state       *BuildState
-	stateDir    string
+	graph     *BuildGraph
+	compiler  *Compiler
+	linker    *Linker
+	toolchain *toolchain.Toolchain
+	tcName    string
+	mode      string
+	buildDir  string
+	pkgs      map[string]*PkgInfo
+	origDir   string
+	ccWriter  *CompileCommandsWriter
+	packages  map[string]*api.Package
+	state     *BuildState
+	stateDir  string
 }
 
 func NewScheduler(
@@ -122,10 +117,6 @@ func NewScheduler(
 	}
 
 	return s, nil
-}
-
-func (s *Scheduler) SetPackageProvider(provider PackageProvider) {
-	s.pkgProvider = provider
 }
 
 func (s *Scheduler) SetPackage(pkgName string, pkg *api.Package) {
@@ -262,6 +253,8 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	resolved.AllCxxFlags = append(resolved.AllCxxFlags, node.Target.CxxFlags()...)
 	resolved.AllLdFlags = append(resolved.AllLdFlags, node.Target.LdFlags()...)
 
+	var voidLdFlags []string
+
 	for _, depName := range node.Deps {
 		depNode, err := s.graph.GetNode(depName)
 		if err != nil {
@@ -269,12 +262,31 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 		}
 
 		depPkg := s.pkgs[depNode.PkgName]
-		for _, pubInc := range depNode.Target.PublicIncludes() {
-			absInc := filepath.Join(depPkg.Dir, pubInc)
-			resolved.AllIncludes = append(resolved.AllIncludes, absInc)
+		if depPkg == nil {
+			continue
 		}
 
-		if depNode.Target.Kind() != api.TargetVoid {
+		if len(depNode.Target.PublicIncludes()) > 0 {
+			for _, pubInc := range depNode.Target.PublicIncludes() {
+				absInc := filepath.Join(depPkg.Dir, pubInc)
+				resolved.AllIncludes = append(resolved.AllIncludes, absInc)
+			}
+		} else if depPkg.InstallDir != "" {
+			resolved.AllIncludes = append(resolved.AllIncludes, filepath.Join(depPkg.InstallDir, "include"))
+		}
+
+		if depNode.Target.Kind() == api.TargetVoid && depPkg.InstallDir != "" {
+			libDir := fs.DetectLibDir(depPkg.InstallDir)
+			voidLdFlags = append(voidLdFlags, "-L"+libDir)
+			if depPkg := s.packages[depNode.PkgName]; depPkg != nil && len(depPkg.Libs()) > 0 {
+				for _, lib := range depPkg.Libs() {
+					voidLdFlags = append(voidLdFlags, "-l"+lib)
+				}
+			} else {
+				parts := strings.Split(depNode.PkgName, "/")
+				voidLdFlags = append(voidLdFlags, "-l"+parts[len(parts)-1])
+			}
+		} else if depNode.Target.Kind() != api.TargetVoid {
 			var depOutput string
 			if depPkg.InstallDir != "" {
 				depOutput = filepath.Join(depPkg.InstallDir, "lib", targetFilename(depNode.Target.Kind(), depNode.Target.Name()))
@@ -282,39 +294,21 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 				depOutput = filepath.Join(depPkg.Dir, s.getTargetOutputPath(depNode))
 			}
 			resolved.DepArtifacts = append(resolved.DepArtifacts, depOutput)
-		}
-	}
 
-	if s.pkgProvider != nil {
-		for _, pkgRef := range node.Target.Packages() {
-			allPkgNames := s.pkgProvider.GetTransitivePackageNames(pkgRef)
-			for _, name := range allPkgNames {
-				pkg := s.pkgProvider.GetInstalledPackage(name)
-				if pkg != nil {
-					resolved.AllIncludes = append(resolved.AllIncludes, pkg.IncludeDir)
-					resolved.AllLdFlags = append(resolved.AllLdFlags, "-L"+pkg.LibDir)
-					if len(pkg.Libs) > 0 {
-						for _, lib := range pkg.Libs {
-							resolved.AllLdFlags = append(resolved.AllLdFlags, "-l"+lib)
-						}
-					} else {
-						parts := strings.Split(name, "/")
-						libName := parts[len(parts)-1]
-						resolved.AllLdFlags = append(resolved.AllLdFlags, "-l"+libName)
-					}
-				}
-				// Also include deps that the build function actually used
-				if pkg := s.packages[name]; pkg != nil {
-					for _, dep := range pkg.Deps() {
-						resolved.AllIncludes = append(resolved.AllIncludes, dep.IncludeDir)
-						resolved.AllLdFlags = append(resolved.AllLdFlags, "-L"+dep.LibDir)
-						for _, lib := range dep.Libs {
-							resolved.AllLdFlags = append(resolved.AllLdFlags, "-l"+lib)
-						}
+			if pkg := s.packages[depNode.PkgName]; pkg != nil {
+				for _, lib := range pkg.Libs() {
+					if lib != depNode.Target.Name() {
+						voidLdFlags = append(voidLdFlags, "-l"+lib)
 					}
 				}
 			}
 		}
+	}
+
+	if len(voidLdFlags) > 0 {
+		resolved.AllLdFlags = append(resolved.AllLdFlags, "-Wl,--start-group")
+		resolved.AllLdFlags = append(resolved.AllLdFlags, voidLdFlags...)
+		resolved.AllLdFlags = append(resolved.AllLdFlags, "-Wl,--end-group")
 	}
 
 	for _, pattern := range node.Target.Files() {

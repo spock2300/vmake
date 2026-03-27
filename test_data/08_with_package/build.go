@@ -11,6 +11,6 @@ func Main(p *api.Package) {
 		ctx.Target("zlib_test").
 			SetKind(api.TargetBinary).
 			AddFiles("src/*.c").
-			AddPackages("official/zlib")
+			AddDeps("official/zlib")
 	})
 }

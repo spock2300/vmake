@@ -94,7 +94,7 @@ test_data/
 - 版本约束 (>=8.5)
 - 传递依赖解析 (curl → mbedtls)
 - CMake 包构建
-- AddPackages 链接
+- AddDeps 链接
 
 ## 预期行为
 

@@ -265,9 +265,19 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 	vlog.Info("")
 	vlog.Info("Using toolchain: %s, mode: %s", tcName, mode)
 
-	resolvePackageDeps(allTargets)
+	pkgMetaMap := make(map[string]build.PackageMeta)
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if !needed[name] {
+			continue
+		}
+		pkgMetaMap[name] = build.PackageMeta{
+			IsRemote: !node.IsLocal(),
+			Deps:     node.Deps,
+		}
+	}
 
-	graph, err := build.NewBuildGraph(allTargets)
+	graph, err := build.NewBuildGraph(allTargets, pkgMetaMap)
 	if err != nil {
 		return nil, err
 	}
@@ -298,33 +308,6 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 			scheduler.SetPackage(name, node.Pkg)
 		}
 	}
-
-	versions := make(map[string]string)
-	for name, cfg := range configs {
-		versions[name] = cfg.Version
-	}
-
-	pkgProvider := &packageProvider{
-		config:   ctx.Config,
-		tc:       apiTC,
-		versions: versions,
-		pkgDirs:  pkgInstallDirs,
-		pkgDefs:  make(map[string]*api.Package),
-		pkgDeps:  make(map[string][]string),
-	}
-	for _, name := range ctx.Resolver.GetOrder() {
-		node := ctx.DepGraph.Packages[name]
-		if !needed[name] {
-			continue
-		}
-		if !node.IsLocal() && node.Pkg != nil {
-			pkgProvider.pkgDefs[name] = node.Pkg
-		}
-		if len(node.Deps) > 0 {
-			pkgProvider.pkgDeps[name] = node.Deps
-		}
-	}
-	scheduler.SetPackageProvider(pkgProvider)
 
 	vlog.Info("")
 	vlog.Info("Building...")
@@ -372,57 +355,6 @@ func collectNeeded(graph *resolver.Graph) map[string]bool {
 		}
 	}
 	return needed
-}
-
-type packageProvider struct {
-	config   *config.ConfigFile
-	tc       *api.Toolchain
-	versions map[string]string
-	pkgDirs  map[string]string
-	pkgDefs  map[string]*api.Package
-	pkgDeps  map[string][]string
-}
-
-func (p *packageProvider) GetInstalledPackage(name string) *api.InstalledPackage {
-	if installDir, ok := p.pkgDirs[name]; ok {
-		version := p.versions[name]
-		var libs []string
-		if pkg, ok := p.pkgDefs[name]; ok {
-			libs = pkg.Libs()
-		}
-		installedPkg := api.NewInstalledPackage(name, version, installDir, libs)
-		installedPkg.Deps = p.pkgDeps[name]
-		return installedPkg
-	}
-	return nil
-}
-
-func (p *packageProvider) GetTransitivePackageNames(name string) []string {
-	visited := make(map[string]bool)
-	var order []string
-
-	var collect func(string)
-	collect = func(n string) {
-		if visited[n] {
-			return
-		}
-		visited[n] = true
-
-		pkg := p.GetInstalledPackage(n)
-		if pkg != nil {
-			for _, dep := range pkg.Deps {
-				collect(dep)
-			}
-		}
-		order = append(order, n)
-	}
-	collect(name)
-
-	var result []string
-	for i := len(order) - 1; i >= 0; i-- {
-		result = append(result, order[i])
-	}
-	return result
 }
 
 func toolchainToAPI(tc *toolchain.Toolchain) *api.Toolchain {
@@ -493,24 +425,6 @@ func extractCallArgs(s string) []string {
 		}
 	}
 	return args
-}
-
-func resolvePackageDeps(allTargets map[string]map[string]*api.Target) {
-	pkgTargets := make(map[string][]string)
-	for pkgName, targets := range allTargets {
-		for tName := range targets {
-			pkgTargets[pkgName] = append(pkgTargets[pkgName], tName)
-		}
-	}
-	for _, targets := range allTargets {
-		for _, t := range targets {
-			for _, pkgRef := range t.Packages() {
-				for _, tName := range pkgTargets[pkgRef] {
-					t.AddDeps(pkgRef + ":" + tName)
-				}
-			}
-		}
-	}
 }
 
 func executeInstall(ctx *RuntimeContext, result *BuildResult) error {

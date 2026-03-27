@@ -94,8 +94,6 @@ func (p *Package) GetTargets() map[string]*Target
 ### 包依赖
 
 ```go
-func (p *Package) AddPackages(packages ...string) *Package
-func (p *Package) GetPackages() []string
 func (p *Package) Deps() map[string]*InstalledPackage
 ```
 
@@ -265,10 +263,6 @@ func (ctx *BuildContext) SelectGlobal(option string, mapping map[string]string) 
 func (ctx *BuildContext) AddInstalls(src, dest string) *BuildContext
 func (ctx *BuildContext) SetInstallFilter(filter InstallFilterFunc) *BuildContext
 
-// 包依赖
-func (ctx *BuildContext) AddPackages(packages ...string) *BuildContext
-func (ctx *BuildContext) GetPackages() []string
-
 // 子构建
 func (ctx *BuildContext) SetSubBuildFunc(fn func(tcName, dir string, args ...string) error)
 func (ctx *BuildContext) SubBuild(tcName, dir string, args ...string) error
@@ -331,9 +325,6 @@ func (t *Target) AddDeps(targets ...string) *Target
 func (t *Target) AddCFlags(flags ...any) *Target
 func (t *Target) AddCxxFlags(flags ...any) *Target
 func (t *Target) AddLdFlags(flags ...any) *Target
-
-// 包依赖
-func (t *Target) AddPackages(packages ...string) *Target
 
 // 第三方包构建
 func (t *Target) SetBuildFunc(fn func(p *Package) error) *Target
@@ -648,7 +639,7 @@ func Main(p *api.Package) {
         ctx.Target("zlib_test").
             SetKind(api.TargetBinary).
             AddFiles("src/*.c").
-            AddPackages("official/zlib")
+            AddDeps("official/zlib")
     })
 }
 ```

@@ -8,6 +8,11 @@ import (
 	"gitee.com/spock2300/vmake/pkg/api"
 )
 
+type PackageMeta struct {
+	IsRemote bool
+	Deps     []string
+}
+
 type BuildGraph struct {
 	Nodes map[string]*BuildNode
 	Order []string
@@ -44,7 +49,10 @@ type BuildNode struct {
 	Deps     []string
 }
 
-func NewBuildGraph(targets map[string]map[string]*api.Target) (*BuildGraph, error) {
+func NewBuildGraph(
+	targets map[string]map[string]*api.Target,
+	pkgMeta map[string]PackageMeta,
+) (*BuildGraph, error) {
 	graph := &BuildGraph{
 		Nodes: make(map[string]*BuildNode),
 	}
@@ -52,24 +60,25 @@ func NewBuildGraph(targets map[string]map[string]*api.Target) (*BuildGraph, erro
 	for pkgName, pkgTargets := range targets {
 		for targetName, target := range pkgTargets {
 			fullName := fmt.Sprintf("%s:%s", pkgName, targetName)
-			node := &BuildNode{
+			graph.Nodes[fullName] = &BuildNode{
 				FullName: fullName,
 				PkgName:  pkgName,
 				Target:   target,
 				Deps:     make([]string, 0),
 			}
+		}
+	}
 
-			for _, dep := range target.Deps() {
-				var depFullName string
-				if strings.Contains(dep, ":") {
-					depFullName = dep
-				} else {
-					depFullName = fmt.Sprintf("%s:%s", pkgName, dep)
-				}
-				node.Deps = append(node.Deps, depFullName)
+	for pkgName, pkgTargets := range targets {
+		for targetName, target := range pkgTargets {
+			fullName := fmt.Sprintf("%s:%s", pkgName, targetName)
+			node := graph.Nodes[fullName]
+
+			resolved, err := resolveDeps(target.Deps(), pkgName, graph.Nodes, pkgMeta, nil)
+			if err != nil {
+				return nil, err
 			}
-
-			graph.Nodes[fullName] = node
+			node.Deps = resolved
 		}
 	}
 
@@ -80,6 +89,101 @@ func NewBuildGraph(targets map[string]map[string]*api.Target) (*BuildGraph, erro
 	graph.Order = order
 
 	return graph, nil
+}
+
+func resolveDeps(
+	deps []string,
+	currentPkg string,
+	nodes map[string]*BuildNode,
+	pkgMeta map[string]PackageMeta,
+	path []string,
+) ([]string, error) {
+	var result []string
+	seen := make(map[string]bool)
+
+	for _, dep := range deps {
+		expanded, err := resolveDep(dep, currentPkg, nodes, pkgMeta, path)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range expanded {
+			if !seen[d] {
+				seen[d] = true
+				result = append(result, d)
+			}
+		}
+	}
+	return result, nil
+}
+
+func resolveDep(
+	dep string,
+	currentPkg string,
+	nodes map[string]*BuildNode,
+	pkgMeta map[string]PackageMeta,
+	path []string,
+) ([]string, error) {
+	if strings.Contains(dep, "/") {
+		return resolvePackageRef(dep, nodes, pkgMeta, path)
+	}
+
+	var qualified string
+	if strings.Contains(dep, ":") {
+		qualified = dep
+	} else {
+		qualified = currentPkg + ":" + dep
+	}
+
+	if _, exists := nodes[qualified]; !exists {
+		return nil, fmt.Errorf("dependency not found: %s", dep)
+	}
+	return []string{qualified}, nil
+}
+
+func resolvePackageRef(
+	pkgRef string,
+	nodes map[string]*BuildNode,
+	pkgMeta map[string]PackageMeta,
+	path []string,
+) ([]string, error) {
+	for _, p := range path {
+		if p == pkgRef {
+			return nil, fmt.Errorf("circular package dependency: %s → %s",
+				strings.Join(path, " → "), pkgRef)
+		}
+	}
+
+	var result []string
+
+	meta, ok := pkgMeta[pkgRef]
+	if ok {
+		for _, transDep := range meta.Deps {
+			expanded, err := resolvePackageRef(transDep, nodes, pkgMeta, append(path, pkgRef))
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, expanded...)
+		}
+	}
+
+	pkgTargetNodes := findPackageTargetNodes(pkgRef, nodes)
+	if len(pkgTargetNodes) == 0 && len(meta.Deps) == 0 {
+		return nil, fmt.Errorf("package not found in build graph: %s", pkgRef)
+	}
+	result = append(result, pkgTargetNodes...)
+
+	return result, nil
+}
+
+func findPackageTargetNodes(pkgName string, nodes map[string]*BuildNode) []string {
+	var result []string
+	prefix := pkgName + ":"
+	for fullName := range nodes {
+		if strings.HasPrefix(fullName, prefix) {
+			result = append(result, fullName)
+		}
+	}
+	return result
 }
 
 func topologicalSort(nodes map[string]*BuildNode) ([]string, error) {

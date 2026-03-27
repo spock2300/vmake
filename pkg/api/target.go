@@ -19,7 +19,6 @@ type Target struct {
 	ldflags        []string
 	installDir     string
 	noInstall      bool
-	packages       []string
 	buildFunc      func(p *Package) error
 	output         string
 }
@@ -98,7 +97,11 @@ func (t *Target) AddLinks(libs ...any) *Target {
 }
 
 func (t *Target) AddDeps(targets ...string) *Target {
-	t.deps = append(t.deps, targets...)
+	for _, d := range targets {
+		if d != "" {
+			t.deps = append(t.deps, d)
+		}
+	}
 	return t
 }
 
@@ -114,15 +117,6 @@ func (t *Target) AddCxxFlags(flags ...any) *Target {
 
 func (t *Target) AddLdFlags(flags ...any) *Target {
 	t.ldflags = append(t.ldflags, flattenAny(flags)...)
-	return t
-}
-
-func (t *Target) AddPackages(packages ...string) *Target {
-	for _, p := range packages {
-		if p != "" {
-			t.packages = append(t.packages, p)
-		}
-	}
 	return t
 }
 
@@ -149,7 +143,6 @@ func (t *Target) CFlags() []string         { return t.cflags }
 func (t *Target) CxxFlags() []string       { return t.cxxflags }
 func (t *Target) LdFlags() []string        { return t.ldflags }
 func (t *Target) InstallDir() string       { return t.installDir }
-func (t *Target) Packages() []string       { return t.packages }
 
 func (t *Target) SetInstallDir(dir string) *Target {
 	t.installDir = dir
