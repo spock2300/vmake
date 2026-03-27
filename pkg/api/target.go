@@ -2,6 +2,11 @@ package api
 
 import "strings"
 
+type PostLinkStep struct {
+	Tool string
+	Args []string
+}
+
 type Target struct {
 	name           string
 	kind           TargetKind
@@ -20,6 +25,8 @@ type Target struct {
 	installDir     string
 	noInstall      bool
 	buildFunc      func(p *Package) error
+	linkerScript   string
+	postLinks      []PostLinkStep
 }
 
 func (t *Target) SetKind(kind TargetKind) *Target {
@@ -128,6 +135,36 @@ func (t *Target) BuildFunc() func(p *Package) error {
 	return t.buildFunc
 }
 
+func (t *Target) SetLinkerScript(path string) *Target {
+	t.linkerScript = path
+	return t
+}
+
+func (t *Target) AddPostLink(tool string, args ...string) *Target {
+	t.postLinks = append(t.postLinks, PostLinkStep{Tool: tool, Args: args})
+	return t
+}
+
+func (t *Target) AddPostLinkHex() *Target {
+	t.postLinks = append(t.postLinks, PostLinkStep{Tool: "objcopy", Args: []string{"-O", "ihex", "{output}", "{output}.hex"}})
+	return t
+}
+
+func (t *Target) AddPostLinkBin() *Target {
+	t.postLinks = append(t.postLinks, PostLinkStep{Tool: "objcopy", Args: []string{"-O", "binary", "{output}", "{output}.bin"}})
+	return t
+}
+
+func (t *Target) AddPostLinkSize() *Target {
+	t.postLinks = append(t.postLinks, PostLinkStep{Tool: "size", Args: []string{"{output}"}})
+	return t
+}
+
+func (t *Target) AddPostLinkStrip() *Target {
+	t.postLinks = append(t.postLinks, PostLinkStep{Tool: "strip", Args: []string{"-o", "{output}.stripped", "{output}"}})
+	return t
+}
+
 func (t *Target) Name() string             { return t.name }
 func (t *Target) Kind() TargetKind         { return t.kind }
 func (t *Target) IsDefault() bool          { return t.isDefault }
@@ -153,7 +190,9 @@ func (t *Target) SetInstall(install bool) *Target {
 	return t
 }
 
-func (t *Target) NoInstall() bool { return t.noInstall }
+func (t *Target) NoInstall() bool               { return t.noInstall }
+func (t *Target) LinkerScript() string          { return t.linkerScript }
+func (t *Target) PostLinkSteps() []PostLinkStep { return t.postLinks }
 
 func (t *Target) RemoveCFlags(flags ...string) *Target {
 	t.cflags = removeStrings(t.cflags, flags...)

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	iexec "gitee.com/spock2300/vmake/internal/exec"
 	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/internal/glob"
 	"gitee.com/spock2300/vmake/pkg/api"
@@ -41,19 +42,20 @@ type PkgInfo struct {
 }
 
 type Scheduler struct {
-	graph     *BuildGraph
-	compiler  *Compiler
-	linker    *Linker
-	toolchain *toolchain.Toolchain
-	tcName    string
-	mode      string
-	buildDir  string
-	pkgs      map[string]*PkgInfo
-	origDir   string
-	ccWriter  *CompileCommandsWriter
-	packages  map[string]*api.Package
-	state     *BuildState
-	stateDir  string
+	graph         *BuildGraph
+	compiler      *Compiler
+	linker        *Linker
+	toolchain     *toolchain.Toolchain
+	resolvedTools *ResolvedTools
+	tcName        string
+	mode          string
+	buildDir      string
+	pkgs          map[string]*PkgInfo
+	origDir       string
+	ccWriter      *CompileCommandsWriter
+	packages      map[string]*api.Package
+	state         *BuildState
+	stateDir      string
 }
 
 func NewScheduler(
@@ -92,19 +94,20 @@ func NewScheduler(
 	}
 
 	s := &Scheduler{
-		graph:     graph,
-		compiler:  compiler,
-		linker:    linker,
-		toolchain: tc,
-		tcName:    tcName,
-		mode:      mode,
-		buildDir:  buildDir,
-		pkgs:      make(map[string]*PkgInfo),
-		origDir:   origDir,
-		ccWriter:  ccWriter,
-		packages:  make(map[string]*api.Package),
-		state:     state,
-		stateDir:  buildDir,
+		graph:         graph,
+		compiler:      compiler,
+		linker:        linker,
+		toolchain:     tc,
+		resolvedTools: tools,
+		tcName:        tcName,
+		mode:          mode,
+		buildDir:      buildDir,
+		pkgs:          make(map[string]*PkgInfo),
+		origDir:       origDir,
+		ccWriter:      ccWriter,
+		packages:      make(map[string]*api.Package),
+		state:         state,
+		stateDir:      buildDir,
 	}
 
 	for pkgName, pkgDir := range pkgDirs {
@@ -167,7 +170,16 @@ func (s *Scheduler) Build(fullName string) error {
 
 	numFiles := len(resolved.SourceFiles)
 	if numFiles == 0 {
-		return s.link(resolved, nil)
+		if err := s.link(resolved, nil); err != nil {
+			return err
+		}
+		if err := s.postLink(resolved); err != nil {
+			return err
+		}
+		if pkgInfo.InstallDir != "" {
+			return s.publishTarget(resolved, pkgInfo)
+		}
+		return nil
 	}
 
 	numWorkers := runtime.NumCPU()
@@ -201,6 +213,10 @@ func (s *Scheduler) Build(fullName string) error {
 	}
 
 	if err := s.link(resolved, objs); err != nil {
+		return err
+	}
+
+	if err := s.postLink(resolved); err != nil {
 		return err
 	}
 
@@ -435,7 +451,7 @@ func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 	switch kind {
 	case api.TargetBinary:
 		vlog.Info("  LINK %s", outputName)
-		return s.linker.LinkBinary(collectAllObjects(objs, resolved.DepArtifacts), unique(resolved.Node.Target.Links()), resolved.AllLdFlags, resolved.OutputPath)
+		return s.linker.LinkBinary(collectAllObjects(objs, resolved.DepArtifacts), unique(resolved.Node.Target.Links()), resolved.AllLdFlags, resolved.OutputPath, resolved.Node.Target.LinkerScript())
 	case api.TargetStatic:
 		vlog.Info("  AR %s", outputName)
 		return s.linker.LinkStatic(collectAllObjects(objs, resolved.DepArtifacts), resolved.OutputPath)
@@ -490,6 +506,58 @@ func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 		return nil
 	}
 	return nil
+}
+
+func (s *Scheduler) postLink(resolved *ResolvedTarget) error {
+	steps := resolved.Node.Target.PostLinkSteps()
+	if len(steps) == 0 {
+		return nil
+	}
+
+	for _, step := range steps {
+		tool := s.resolvePostLinkTool(step.Tool)
+		if tool == "" {
+			return fmt.Errorf("post-link tool not found: %s", step.Tool)
+		}
+
+		args := make([]string, len(step.Args))
+		for i, a := range step.Args {
+			args[i] = strings.ReplaceAll(a, "{output}", resolved.OutputPath)
+		}
+
+		vlog.Info("  %s %s", filepath.Base(tool), strings.Join(args, " "))
+		if _, err := iexec.Run(tool, args...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Scheduler) resolvePostLinkTool(name string) string {
+	switch strings.ToUpper(name) {
+	case "OBJCOPY":
+		if s.resolvedTools.OBJCOPY != "" {
+			return s.resolvedTools.OBJCOPY
+		}
+	case "SIZE":
+		if s.resolvedTools.SIZE != "" {
+			return s.resolvedTools.SIZE
+		}
+	case "OBJDUMP":
+		if s.resolvedTools.OBJDUMP != "" {
+			return s.resolvedTools.OBJDUMP
+		}
+	case "NM":
+		if s.resolvedTools.NM != "" {
+			return s.resolvedTools.NM
+		}
+	case "STRIP":
+		if s.toolchain.Prefix != "" {
+			return s.toolchain.Prefix + "strip"
+		}
+		return "strip"
+	}
+	return ""
 }
 
 func (s *Scheduler) populateDepsFromGraph(pkg *api.Package, node *BuildNode) {

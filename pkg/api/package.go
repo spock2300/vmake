@@ -353,6 +353,10 @@ func (p *Package) Prefix() string      { return p.tc.Prefix }
 func (p *Package) CFlags() string      { return strings.Join(p.tc.DefaultFlags.CFlags, " ") }
 func (p *Package) CXXFlags() string    { return strings.Join(p.tc.DefaultFlags.CxxFlags, " ") }
 func (p *Package) LDFlags() string     { return strings.Join(p.tc.DefaultFlags.LdFlags, " ") }
+func (p *Package) ObjCopy() string     { return p.tc.Tools.OBJCOPY }
+func (p *Package) Size() string        { return p.tc.Tools.SIZE }
+func (p *Package) ObjDump() string     { return p.tc.Tools.OBJDUMP }
+func (p *Package) NM() string          { return p.tc.Tools.NM }
 
 func (p *Package) Env() map[string]string {
 	return p.tc.Env()

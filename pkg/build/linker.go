@@ -20,12 +20,15 @@ func NewLinker(tc *toolchain.Toolchain, tools *ResolvedTools) *Linker {
 	}
 }
 
-func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath string) error {
+func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScript string) error {
 	if err := fs.EnsureParentDir(outputPath); err != nil {
 		return err
 	}
 
 	args := []string{"-o", outputPath}
+	if linkerScript != "" {
+		args = append(args, "-T", linkerScript)
+	}
 	args = append(args, objs...)
 
 	for _, lib := range libs {

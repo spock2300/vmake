@@ -13,12 +13,16 @@ type Toolchain struct {
 }
 
 type Tools struct {
-	CC     string `json:"cc"`
-	CXX    string `json:"cxx"`
-	AR     string `json:"ar"`
-	LD     string `json:"ld"`
-	STRIP  string `json:"strip"`
-	RANLIB string `json:"ranlib"`
+	CC      string `json:"cc"`
+	CXX     string `json:"cxx"`
+	AR      string `json:"ar"`
+	LD      string `json:"ld"`
+	STRIP   string `json:"strip"`
+	RANLIB  string `json:"ranlib"`
+	OBJCOPY string `json:"objcopy"`
+	SIZE    string `json:"size"`
+	OBJDUMP string `json:"objdump"`
+	NM      string `json:"nm"`
 }
 
 type DefaultFlags struct {
@@ -39,6 +43,18 @@ func (t *Toolchain) Env() map[string]string {
 	}
 	if t.Prefix != "" {
 		env["CROSS_COMPILE"] = t.Prefix
+	}
+	if t.Tools.OBJCOPY != "" {
+		env["OBJCOPY"] = t.Tools.OBJCOPY
+	}
+	if t.Tools.SIZE != "" {
+		env["SIZE"] = t.Tools.SIZE
+	}
+	if t.Tools.OBJDUMP != "" {
+		env["OBJDUMP"] = t.Tools.OBJDUMP
+	}
+	if t.Tools.NM != "" {
+		env["NM"] = t.Tools.NM
 	}
 	return env
 }

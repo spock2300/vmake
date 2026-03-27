@@ -139,6 +139,10 @@ All build helpers return `error`.
 | `CrossTarget()` | `string` | Cross-compilation target |
 | `Prefix()` | `string` | Toolchain prefix |
 | `CFlags()` / `CXXFlags()` / `LDFlags()` | `string` | Compiler/linker flags |
+| `ObjCopy()` | `string` | objcopy tool path |
+| `Size()` | `string` | size tool path |
+| `ObjDump()` | `string` | objdump tool path |
+| `NM()` | `string` | nm tool path |
 | `SourceDir()` / `BuildDir()` / `InstallDir()` / `OutputDir()` | `string` | Directories |
 | `Env()` | `map[string]string` | Toolchain env vars |
 | `PackageName()` | `string` | Full package name |
@@ -172,6 +176,12 @@ All setters are fluent (return `*Target`).
 | `SetBuildFunc` | `(fn func(p *Package) error)` | Custom build logic (for third-party packages with external build systems) |
 | `SetInstallDir` | `(dir string)` | Install directory |
 | `SetInstall` | `(install bool)` | Control install |
+| `SetLinkerScript` | `(path string)` | Linker script for binary target (passes `-T` to linker) |
+| `AddPostLink` | `(tool string, args ...string)` | Post-link step: runs `tool args...` after linking, supports `{output}` placeholder |
+| `AddPostLinkHex` | `()` | Shorthand: `objcopy -O ihex {output} {output}.hex` |
+| `AddPostLinkBin` | `()` | Shorthand: `objcopy -O binary {output} {output}.bin` |
+| `AddPostLinkSize` | `()` | Shorthand: `size {output}` |
+| `AddPostLinkStrip` | `()` | Shorthand: `strip -o {output}.stripped {output}` |
 
 ### Removers
 
@@ -195,6 +205,8 @@ All setters are fluent (return `*Target`).
 | `InstallDir()` | `string` |
 | `NoInstall()` | `bool` |
 | `BuildFunc()` | `func(p *Package) error` |
+| `LinkerScript()` | `string` |
+| `PostLinkSteps()` | `[]PostLinkStep` |
 
 ---
 
@@ -332,6 +344,7 @@ Embedded by all context types. Provides option value access.
 
 	type InstallItem struct { Src string; Dest string }
 	type RequireInfo struct { Name string; Constraint string }
+	type PostLinkStep struct { Tool string; Args []string }
 
 	type SourceOrigin int
 	const (
