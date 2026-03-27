@@ -17,6 +17,10 @@ func ExtractPackage(loaded *LoadedScript) *api.Package {
 
 	pkg := api.NewPackage()
 
+	if dir := loaded.Source.Dir; dir != "" {
+		pkg.SetScriptDir(dir)
+	}
+
 	origDir, _ := os.Getwd()
 	defer os.Chdir(origDir)
 	if dir := loaded.Source.Dir; dir != "" {

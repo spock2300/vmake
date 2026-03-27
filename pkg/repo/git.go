@@ -116,3 +116,16 @@ func ListTags(dir string) ([]string, error) {
 	}
 	return tags, nil
 }
+
+func IsPatchApplied(dir, patchFile string) bool {
+	_, err := exec.RunWithOptions("git", []string{"apply", "--reverse", "--check", patchFile}, exec.RunOptions{Dir: dir})
+	return err == nil
+}
+
+func ApplyPatch(dir, patchFile string) error {
+	_, err := exec.RunWithOptions("git", []string{"apply", "--3way", patchFile}, exec.RunOptions{Dir: dir})
+	if err != nil {
+		return fmt.Errorf("git apply %s in %s: %w", patchFile, dir, err)
+	}
+	return nil
+}

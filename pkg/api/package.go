@@ -87,6 +87,7 @@ type Package struct {
 	buildFuncs    []BuildFunc
 	installFuncs  []InstallFunc
 	packageFunc   PackageFunc
+	scriptDir     string
 	sourceDir     string
 	buildDir      string
 	installDir    string
@@ -95,6 +96,7 @@ type Package struct {
 	cfgVals       map[string]any
 	tc            *toolchain.Toolchain
 	deps          map[string]*InstalledPackage
+	patches       []string
 }
 
 func NewPackage() *Package {
@@ -301,6 +303,20 @@ func (p *Package) SetDirs(sourceDir, buildDir, installDir string) *Package {
 	return p
 }
 
+func (p *Package) SetScriptDir(dir string) {
+	p.scriptDir = dir
+}
+
+func (p *Package) AddPatches(paths ...string) *Package {
+	p.patches = append(p.patches, paths...)
+	return p
+}
+
+func (p *Package) SetPatches(paths ...string) *Package {
+	p.patches = paths
+	return p
+}
+
 func (p *Package) SetOutputDir(dir string) *Package {
 	p.outputDir = dir
 	return p
@@ -321,11 +337,13 @@ func (p *Package) SetToolchain(tc *toolchain.Toolchain) *Package {
 	return p
 }
 
-func (p *Package) SourceDir() string  { return p.sourceDir }
-func (p *Package) BuildDir() string   { return p.buildDir }
-func (p *Package) InstallDir() string { return p.installDir }
-func (p *Package) OutputDir() string  { return p.outputDir }
-func (p *Package) IsLocal() bool      { return p.sourceOrigin == SourceLocal }
+func (p *Package) ScriptDir() string    { return p.scriptDir }
+func (p *Package) SourceDir() string    { return p.sourceDir }
+func (p *Package) BuildDir() string     { return p.buildDir }
+func (p *Package) InstallDir() string   { return p.installDir }
+func (p *Package) OutputDir() string    { return p.outputDir }
+func (p *Package) IsLocal() bool        { return p.sourceOrigin == SourceLocal }
+func (p *Package) GetPatches() []string { return p.patches }
 
 func (p *Package) CC() string          { return p.tc.Tools.CC }
 func (p *Package) CXX() string         { return p.tc.Tools.CXX }

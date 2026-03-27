@@ -234,6 +234,15 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		}
 	}
 
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if !node.IsLocal() && needed[name] && node.Pkg != nil {
+			if err := applyPatches(node.Pkg, pkgSourceDirs[name]); err != nil {
+				return nil, fmt.Errorf("apply patches for %s: %w", name, err)
+			}
+		}
+	}
+
 	for pkgName := range subBuildClaimed {
 		if targets, ok := allTargets[pkgName]; ok {
 			for _, t := range targets {
@@ -347,6 +356,30 @@ func collectNeeded(graph *resolver.Graph) map[string]bool {
 		}
 	}
 	return needed
+}
+
+func applyPatches(pkg *api.Package, sourceDir string) error {
+	patches := pkg.GetPatches()
+	if len(patches) == 0 {
+		return nil
+	}
+
+	scriptDir := pkg.ScriptDir()
+	vlog.Info("Applying patches for %s", pkg.FullName())
+
+	for _, patch := range patches {
+		absPath := filepath.Join(scriptDir, patch)
+		if repo.IsPatchApplied(sourceDir, absPath) {
+			vlog.Info("  %s (already applied)", patch)
+			continue
+		}
+		vlog.Info("  %s", patch)
+		if err := repo.ApplyPatch(sourceDir, absPath); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func extractVersionsFromBuildGo(buildGoPath string) map[string]string {
