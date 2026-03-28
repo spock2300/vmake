@@ -141,14 +141,6 @@ func BuildSubGraph(rootPkg string, tc *toolchain.Toolchain, tcName string, mode 
 		return fmt.Errorf("subgraph build %s: %w", rootPkg, err)
 	}
 
-	for pkgName := range subPkgs {
-		if targets, ok := params.AllTargets[pkgName]; ok {
-			for _, t := range targets {
-				t.SetDefault(false)
-			}
-		}
-	}
-
 	vlog.Info("  [subgraph] %s done", rootPkg)
 	return nil
 }

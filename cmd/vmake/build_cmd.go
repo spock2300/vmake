@@ -36,6 +36,13 @@ func runBuild(cmd *cobra.Command, args []string) {
 	runPipeline(pipelineOptions{force: forceFlag, installAfter: installFlag})
 }
 
+type buildConfig struct {
+	Mode         string
+	TcName       string
+	Tc           *toolchain.Toolchain
+	GlobalValues map[string]any
+}
+
 type BuildResult struct {
 	AllTargets    map[string]map[string]*api.Target
 	Graph         *build.BuildGraph
@@ -46,337 +53,25 @@ type BuildResult struct {
 }
 
 func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
-	globalValues := config.BuildGlobalValues(ctx.Config)
-
-	mode := modeFlag
-	if mode == "" {
-		if m, ok := globalValues["mode"].(string); ok {
-			mode = m
-		}
-	}
-	if mode == "" {
-		mode = api.ModeDebug
-	}
-
-	tc, tcName, err := GetToolchain(ctx.Config)
+	cfg, err := resolveBuildConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Filter deps with actual config values
-	vlog.Info("")
-	vlog.Info("Filtering dependencies...")
-	for _, name := range ctx.Resolver.GetOrder() {
-		node := ctx.DepGraph.Packages[name]
-		if node.Pkg == nil {
-			continue
-		}
-		entry := config.GetEntry(ctx.Config, name)
-		opts := ctx.AllOptions[name]
-		if err := ctx.Resolver.FilterDeps(name, entry.Options, opts); err != nil {
-			vlog.Error("  %s: filter deps: %v", name, err)
-		} else if len(node.Deps) > 0 {
-			vlog.Info("  %s: deps=%v", name, node.Deps)
-		}
-	}
-	// Recompute order after filtering
-	ctx.Resolver.UpdateOrder()
+	needed := filterAndCollectNeeded(ctx)
 
-	needed := collectNeeded(ctx.DepGraph)
-	for _, name := range ctx.Resolver.GetOrder() {
-		node := ctx.DepGraph.Packages[name]
-		if !node.IsLocal() && !needed[name] {
-			vlog.Info("  %s: skipped (not needed)", name)
-		}
+	remote, err := prepareRemotePackages(ctx, cfg.Tc, needed)
+	if err != nil {
+		return nil, err
 	}
 
-	hasDeps := false
-	for _, name := range ctx.Resolver.GetOrder() {
-		if needed[name] && !ctx.DepGraph.Packages[name].IsLocal() {
-			hasDeps = true
-			break
-		}
-	}
-
-	packagesDir := getPackagesDir()
-	cacheDir := getCacheDir()
-
-	pkgSourceDirs := make(map[string]string)
-	pkgBuildDirs := make(map[string]string)
-	pkgInstallDirs := make(map[string]string)
-	configs := make(map[string]*config.EntryConfig)
-	var repoInstaller *repo.PackageInstaller
-
-	if hasDeps {
-		repoMgr := getRepoManager()
-
-		for _, name := range ctx.Resolver.GetOrder() {
-			node := ctx.DepGraph.Packages[name]
-			if needed[name] && !node.IsLocal() {
-				entry := config.GetEntry(ctx.Config, name)
-				configs[name] = entry
-			}
-		}
-
-		sourceMgr := repo.NewSourceManager(cacheDir)
-		repoInstaller = repo.NewPackageInstaller(sourceMgr, packagesDir, cacheDir)
-		repoInstaller.SetRepoManager(repoMgr)
-		repoInstaller.SetConfigs(configs)
-		repoInstaller.SetToolchain(tc)
-
-		for _, name := range ctx.Resolver.GetOrder() {
-			node := ctx.DepGraph.Packages[name]
-			if needed[name] && !node.IsLocal() && node.Pkg != nil {
-				repoInstaller.SetPackage(name, node.Pkg)
-			}
-		}
-
-		vlog.Info("")
-		vlog.Info("Downloading package sources...")
-
-		for _, name := range ctx.Resolver.GetOrder() {
-			node := ctx.DepGraph.Packages[name]
-			if needed[name] && !node.IsLocal() {
-				cfg := configs[name]
-				repoName, pkgName, ok := api.SplitPackageRef(name)
-				if !ok {
-					continue
-				}
-				pkg := api.NewPackage()
-				pkg.SetRepo(repoName).SetName(pkgName)
-				if node.Pkg != nil {
-					pkg.SetGit(node.Pkg.GitURLs()...)
-					pkg.SetVersions(node.Pkg.Versions())
-				} else if node.Source != nil && node.Source.Path != "" {
-					pkg.SetVersions(extractVersionsFromBuildGo(node.Source.Path))
-					pkg.SetGit(extractGitURLs(node.Source.Path)...)
-				}
-
-				if cfg.Version == "" && len(pkg.GetVersions()) > 0 {
-					selected, err := pkg.SelectVersion("")
-					if err != nil {
-						return nil, err
-					}
-					cfg.Version = selected
-				}
-
-				sourceDir, err := sourceMgr.EnsureSource(pkg, cfg.Version)
-				if err != nil {
-					return nil, fmt.Errorf("failed to download %s: %w", name, err)
-				}
-				vlog.Info("  %s@%s -> %s", name, cfg.Version, sourceDir)
-
-				cacheHash := repo.CacheHash(tc.Tools.CC, "release", cfg.Options)
-				pkgSourceDirs[name] = sourceDir
-				pkgBuildDirs[name] = filepath.Join(packagesDir, name, cfg.Version, cacheHash, "build")
-				pkgInstallDirs[name] = filepath.Join(packagesDir, name, cfg.Version, cacheHash, "install")
-			}
-		}
-	}
-
-	vlog.Info("")
-	vlog.Info("Executing OnBuild...")
-	allTargets := make(map[string]map[string]*api.Target)
 	pkgDirs := GetPackageDirs(ctx.DepGraph)
-
-	pkgMetaMap := make(map[string]build.PkgBuildMeta)
-	for _, name := range ctx.Resolver.GetOrder() {
-		node := ctx.DepGraph.Packages[name]
-		if !needed[name] {
-			continue
-		}
-		pkgMetaMap[name] = build.PkgBuildMeta{
-			IsRemote: !node.IsLocal(),
-			Deps:     node.Deps,
-		}
-	}
-
-	subGraphBuilt := make(map[string]bool)
-
-	var depOutputFn func(depRef string) string
-	var buildSubGraphFn func(rootPkg string) error
-
-	buildSubGraphFn = func(rootPkg string) error {
-		if subGraphBuilt[rootPkg] {
-			return nil
-		}
-		subGraphBuilt[rootPkg] = true
-
-		subPkgs := build.CollectSubGraphPackages(rootPkg, pkgMetaMap, allTargets, needed)
-
-		for _, name := range ctx.Resolver.GetOrder() {
-			node := ctx.DepGraph.Packages[name]
-			if !subPkgs[name] {
-				continue
-			}
-			if node.Pkg == nil {
-				continue
-			}
-
-			if _, done := allTargets[name]; done {
-				continue
-			}
-
-			entry := config.GetEntry(ctx.Config, name)
-			buildCtx := api.NewBuildContext(name, entry.Options)
-			buildCtx.SetOptions(ctx.AllOptions[name])
-			buildCtx.MergeGlobals(ctx.GlobalOptions, globalValues)
-			buildCtx.SetBuildSubGraphFunc(buildSubGraphFn)
-			buildCtx.SetDepOutputFunc(depOutputFn)
-
-			node.Pkg.ExecBuildFuncs(pkgDirs[name], func(fn api.BuildFunc) {
-				fn(buildCtx)
-			})
-
-			allTargets[name] = buildCtx.GetTargets()
-
-			if !node.IsLocal() && node.Pkg != nil {
-				pkg := node.Pkg
-				cfg := configs[name]
-				cfgVals := make(map[string]any)
-				for optName, opt := range pkg.GetOptions() {
-					if opt.Default() != nil {
-						cfgVals[optName] = opt.Default()
-					}
-				}
-				for k, v := range cfg.Options {
-					cfgVals[k] = v
-				}
-				pkg.SetDirs(pkgSourceDirs[name], pkgBuildDirs[name], pkgInstallDirs[name])
-				pkg.SetCfgVals(cfgVals)
-			}
-		}
-
-		entry := config.GetEntry(ctx.Config, rootPkg)
-		subTcName := tcName
-		if v, ok := entry.Options["toolchain"].(string); ok && v != "" {
-			subTcName = v
-		}
-		subTc, err := toolchain.GetManager().SelectToolchain(subTcName)
-		if err != nil {
-			return err
-		}
-
-		subPkgBuildDirs := pkgBuildDirs
-		subPkgInstallDirs := pkgInstallDirs
-		if subTcName != tcName {
-			subPkgBuildDirs = make(map[string]string, len(pkgBuildDirs))
-			subPkgInstallDirs = make(map[string]string, len(pkgInstallDirs))
-			for name := range subPkgs {
-				if meta, ok := pkgMetaMap[name]; ok && meta.IsRemote {
-					cfg := configs[name]
-					subHash := repo.CacheHash(subTc.Tools.CC, "release", cfg.Options)
-					subPkgBuildDirs[name] = filepath.Join(packagesDir, name, cfg.Version, subHash, "build")
-					subPkgInstallDirs[name] = filepath.Join(packagesDir, name, cfg.Version, subHash, "install")
-				} else {
-					subPkgBuildDirs[name] = pkgBuildDirs[name]
-					subPkgInstallDirs[name] = pkgInstallDirs[name]
-				}
-			}
-		}
-
-		params := &build.SubGraphParams{
-			AllTargets:     allTargets,
-			PkgMeta:        pkgMetaMap,
-			PkgDirs:        pkgDirs,
-			Packages:       make(map[string]*api.Package),
-			PkgSourceDirs:  pkgSourceDirs,
-			PkgBuildDirs:   subPkgBuildDirs,
-			PkgInstallDirs: subPkgInstallDirs,
-			Needed:         needed,
-		}
-		for name, node := range ctx.DepGraph.Packages {
-			if node.Pkg != nil && subPkgs[name] {
-				params.Packages[name] = node.Pkg
-			}
-		}
-
-		return build.BuildSubGraph(rootPkg, subTc, subTcName, mode, params)
-	}
-
-	depOutputFn = func(depRef string) string {
-		pkgName, targetName, ok := strings.Cut(depRef, ":")
-		if !ok {
-			pkgName = depRef
-			targetName = ""
-		}
-		entry := config.GetEntry(ctx.Config, pkgName)
-		subTcName := tcName
-		if v, ok := entry.Options["toolchain"].(string); ok && v != "" {
-			subTcName = v
-		}
-		pkgDir := pkgDirs[pkgName]
-		if pkgDir == "" {
-			if d, ok := pkgSourceDirs[pkgName]; ok {
-				pkgDir = d
-			}
-		}
-		if targetName == "" {
-			targets := allTargets[pkgName]
-			if len(targets) == 1 {
-				for name := range targets {
-					targetName = name
-				}
-			}
-		}
-		if targetName == "" {
-			return ""
-		}
-		target := allTargets[pkgName][targetName]
-		return build.TargetOutputPath(pkgDir, subTcName, mode, target.Kind(), targetName)
-	}
-
-	for _, name := range ctx.Resolver.GetOrder() {
-		node := ctx.DepGraph.Packages[name]
-		if node == nil {
-			continue
-		}
-		if !node.IsLocal() && !needed[name] {
-			continue
-		}
-		if node.Pkg == nil {
-			continue
-		}
-		if _, done := allTargets[name]; done {
-			continue
-		}
-
-		entry := config.GetEntry(ctx.Config, name)
-		buildCtx := api.NewBuildContext(name, entry.Options)
-		buildCtx.SetOptions(ctx.AllOptions[name])
-		buildCtx.MergeGlobals(ctx.GlobalOptions, globalValues)
-		buildCtx.SetBuildSubGraphFunc(buildSubGraphFn)
-		buildCtx.SetDepOutputFunc(depOutputFn)
-
-		node.Pkg.ExecBuildFuncs(pkgDirs[name], func(fn api.BuildFunc) {
-			fn(buildCtx)
-		})
-
-		allTargets[name] = buildCtx.GetTargets()
-
-		if !node.IsLocal() && node.Pkg != nil {
-			pkg := node.Pkg
-			cfg := configs[name]
-			cfgVals := make(map[string]any)
-			for optName, opt := range pkg.GetOptions() {
-				if opt.Default() != nil {
-					cfgVals[optName] = opt.Default()
-				}
-			}
-			for k, v := range cfg.Options {
-				cfgVals[k] = v
-			}
-
-			pkg.SetDirs(pkgSourceDirs[name], pkgBuildDirs[name], pkgInstallDirs[name])
-			pkg.SetCfgVals(cfgVals)
-			pkg.SetToolchain(tc)
-		}
-	}
+	allTargets, pkgMetaMap := executeAllOnBuild(ctx, needed, remote, pkgDirs, cfg)
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if !node.IsLocal() && needed[name] && node.Pkg != nil {
-			if err := applyPatches(node.Pkg, pkgSourceDirs[name]); err != nil {
+			if err := applyPatches(node.Pkg, remote.sourceDirs[name]); err != nil {
 				return nil, fmt.Errorf("apply patches for %s: %w", name, err)
 			}
 		}
@@ -395,7 +90,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 	}
 
 	vlog.Info("")
-	vlog.Info("Using toolchain: %s, mode: %s", tcName, mode)
+	vlog.Info("Using toolchain: %s, mode: %s", cfg.TcName, cfg.Mode)
 
 	graph, err := build.NewBuildGraph(allTargets, pkgMetaMap)
 	if err != nil {
@@ -408,7 +103,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		vlog.Info("  - %s", fullName)
 	}
 
-	scheduler, err := build.NewScheduler(graph, tc, pkgDirs, mode)
+	scheduler, err := build.NewScheduler(graph, cfg.Tc, pkgDirs, cfg.Mode)
 	if err != nil {
 		return nil, err
 	}
@@ -418,7 +113,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		if node.IsLocal() {
 			scheduler.SetPkgDirs(name, pkgDirs[name], "", "")
 		} else if needed[name] {
-			scheduler.SetPkgDirs(name, pkgSourceDirs[name], pkgBuildDirs[name], pkgInstallDirs[name])
+			scheduler.SetPkgDirs(name, remote.sourceDirs[name], remote.buildDirs[name], remote.installDirs[name])
 		}
 	}
 
@@ -438,19 +133,370 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 	vlog.Info("")
 	vlog.Info("Build succeeded!")
 
-	installedPkgs := make(map[string]*api.InstalledPackage)
-	for name, installDir := range pkgInstallDirs {
-		installedPkgs[name] = api.NewInstalledPackage(name, configs[name].Version, installDir, nil)
-	}
-
 	return &BuildResult{
 		AllTargets:    allTargets,
 		Graph:         graph,
 		PkgDirs:       pkgDirs,
-		TcName:        tcName,
-		Mode:          mode,
-		InstalledPkgs: installedPkgs,
+		TcName:        cfg.TcName,
+		Mode:          cfg.Mode,
+		InstalledPkgs: remote.installedPkgs(),
 	}, nil
+}
+
+func resolveBuildConfig(ctx *RuntimeContext) (*buildConfig, error) {
+	globalValues := config.BuildGlobalValues(ctx.Config)
+
+	mode := modeFlag
+	if mode == "" {
+		if m, ok := globalValues["mode"].(string); ok {
+			mode = m
+		}
+	}
+	if mode == "" {
+		mode = api.ModeDebug
+	}
+
+	tc, tcName, err := GetToolchain(ctx.Config)
+	if err != nil {
+		return nil, err
+	}
+
+	return &buildConfig{
+		Mode:         mode,
+		TcName:       tcName,
+		Tc:           tc,
+		GlobalValues: globalValues,
+	}, nil
+}
+
+func filterAndCollectNeeded(ctx *RuntimeContext) map[string]bool {
+	vlog.Info("")
+	vlog.Info("Filtering dependencies...")
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if node.Pkg == nil {
+			continue
+		}
+		entry := config.GetEntry(ctx.Config, name)
+		opts := ctx.AllOptions[name]
+		if err := ctx.Resolver.FilterDeps(name, entry.Options, opts); err != nil {
+			vlog.Error("  %s: filter deps: %v", name, err)
+		} else if len(node.Deps) > 0 {
+			vlog.Info("  %s: deps=%v", name, node.Deps)
+		}
+	}
+	ctx.Resolver.UpdateOrder()
+
+	needed := collectNeeded(ctx.DepGraph)
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if !node.IsLocal() && !needed[name] {
+			vlog.Info("  %s: skipped (not needed)", name)
+		}
+	}
+
+	return needed
+}
+
+type remotePkgState struct {
+	configs     map[string]*config.EntryConfig
+	sourceDirs  map[string]string
+	buildDirs   map[string]string
+	installDirs map[string]string
+}
+
+func (r *remotePkgState) installedPkgs() map[string]*api.InstalledPackage {
+	if len(r.installDirs) == 0 {
+		return nil
+	}
+	result := make(map[string]*api.InstalledPackage)
+	for name, dir := range r.installDirs {
+		result[name] = api.NewInstalledPackage(name, r.configs[name].Version, dir, nil)
+	}
+	return result
+}
+
+func prepareRemotePackages(ctx *RuntimeContext, tc *toolchain.Toolchain, needed map[string]bool) (*remotePkgState, error) {
+	hasDeps := false
+	for _, name := range ctx.Resolver.GetOrder() {
+		if needed[name] && !ctx.DepGraph.Packages[name].IsLocal() {
+			hasDeps = true
+			break
+		}
+	}
+
+	remote := &remotePkgState{
+		configs:     make(map[string]*config.EntryConfig),
+		sourceDirs:  make(map[string]string),
+		buildDirs:   make(map[string]string),
+		installDirs: make(map[string]string),
+	}
+
+	if !hasDeps {
+		return remote, nil
+	}
+
+	packagesDir := getPackagesDir()
+	cacheDir := getCacheDir()
+	repoMgr := getRepoManager()
+
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if needed[name] && !node.IsLocal() {
+			remote.configs[name] = config.GetEntry(ctx.Config, name)
+		}
+	}
+
+	sourceMgr := repo.NewSourceManager(cacheDir)
+	installer := repo.NewPackageInstaller(sourceMgr, packagesDir, cacheDir)
+	installer.SetRepoManager(repoMgr)
+	installer.SetConfigs(remote.configs)
+	installer.SetToolchain(tc)
+
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if needed[name] && !node.IsLocal() && node.Pkg != nil {
+			installer.SetPackage(name, node.Pkg)
+		}
+	}
+
+	vlog.Info("")
+	vlog.Info("Downloading package sources...")
+
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if !needed[name] || node.IsLocal() {
+			continue
+		}
+
+		cfg := remote.configs[name]
+		repoName, pkgName, ok := api.SplitPackageRef(name)
+		if !ok {
+			continue
+		}
+
+		pkg := api.NewPackage()
+		pkg.SetRepo(repoName).SetName(pkgName)
+		if node.Pkg != nil {
+			pkg.SetGit(node.Pkg.GitURLs()...)
+			pkg.SetVersions(node.Pkg.Versions())
+		} else if node.Source != nil && node.Source.Path != "" {
+			pkg.SetVersions(extractVersionsFromBuildGo(node.Source.Path))
+			pkg.SetGit(extractGitURLs(node.Source.Path)...)
+		}
+
+		if cfg.Version == "" && len(pkg.GetVersions()) > 0 {
+			selected, err := pkg.SelectVersion("")
+			if err != nil {
+				return nil, err
+			}
+			cfg.Version = selected
+		}
+
+		sourceDir, err := sourceMgr.EnsureSource(pkg, cfg.Version)
+		if err != nil {
+			return nil, fmt.Errorf("failed to download %s: %w", name, err)
+		}
+		vlog.Info("  %s@%s -> %s", name, cfg.Version, sourceDir)
+
+		cacheHash := repo.CacheHash(tc.Tools.CC, "release", cfg.Options)
+		remote.sourceDirs[name] = sourceDir
+		remote.buildDirs[name] = filepath.Join(packagesDir, name, cfg.Version, cacheHash, "build")
+		remote.installDirs[name] = filepath.Join(packagesDir, name, cfg.Version, cacheHash, "install")
+	}
+
+	return remote, nil
+}
+
+func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.PackageNode, pkgDirs map[string]string,
+	allTargets map[string]map[string]*api.Target, remote *remotePkgState, globalValues map[string]any,
+	buildSubGraphFn func(string) error, depOutputFn func(string) string, tc *toolchain.Toolchain) {
+
+	entry := config.GetEntry(ctx.Config, name)
+	buildCtx := api.NewBuildContext(name, entry.Options)
+	buildCtx.SetOptions(ctx.AllOptions[name])
+	buildCtx.MergeGlobals(ctx.GlobalOptions, globalValues)
+	buildCtx.SetBuildSubGraphFunc(buildSubGraphFn)
+	buildCtx.SetDepOutputFunc(depOutputFn)
+
+	node.Pkg.ExecBuildFuncs(pkgDirs[name], func(fn api.BuildFunc) {
+		fn(buildCtx)
+	})
+
+	allTargets[name] = buildCtx.GetTargets()
+
+	if !node.IsLocal() && node.Pkg != nil && tc != nil {
+		pkg := node.Pkg
+		cfg := remote.configs[name]
+		cfgVals := make(map[string]any)
+		for optName, opt := range pkg.GetOptions() {
+			if opt.Default() != nil {
+				cfgVals[optName] = opt.Default()
+			}
+		}
+		for k, v := range cfg.Options {
+			cfgVals[k] = v
+		}
+		pkg.SetDirs(remote.sourceDirs[name], remote.buildDirs[name], remote.installDirs[name])
+		pkg.SetCfgVals(cfgVals)
+		pkg.SetToolchain(tc)
+	}
+}
+
+func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remotePkgState, pkgDirs map[string]string, cfg *buildConfig) (map[string]map[string]*api.Target, map[string]build.PkgBuildMeta) {
+	vlog.Info("")
+	vlog.Info("Executing OnBuild...")
+
+	allTargets := make(map[string]map[string]*api.Target)
+
+	pkgMetaMap := make(map[string]build.PkgBuildMeta)
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if !needed[name] {
+			continue
+		}
+		pkgMetaMap[name] = build.PkgBuildMeta{
+			IsRemote: !node.IsLocal(),
+			Deps:     node.Deps,
+		}
+	}
+
+	packagesDir := getPackagesDir()
+	subGraphBuilt := make(map[string]bool)
+
+	var buildSubGraphFn func(string) error
+	var depOutputFn func(string) string
+
+	buildSubGraphFn = func(rootPkg string) error {
+		if subGraphBuilt[rootPkg] {
+			return nil
+		}
+		subGraphBuilt[rootPkg] = true
+
+		subAllTargets := make(map[string]map[string]*api.Target, len(allTargets))
+		for k, v := range allTargets {
+			subAllTargets[k] = v
+		}
+
+		subPkgs := build.CollectSubGraphPackages(rootPkg, pkgMetaMap, subAllTargets, needed)
+
+		for _, name := range ctx.Resolver.GetOrder() {
+			node := ctx.DepGraph.Packages[name]
+			if !subPkgs[name] || node.Pkg == nil {
+				continue
+			}
+			if _, done := subAllTargets[name]; done {
+				continue
+			}
+			executePackageOnBuild(ctx, name, node, pkgDirs, subAllTargets, remote, cfg.GlobalValues, buildSubGraphFn, depOutputFn, nil)
+		}
+
+		entry := config.GetEntry(ctx.Config, rootPkg)
+		subTcName := cfg.TcName
+		if v, ok := entry.Options["toolchain"].(string); ok && v != "" {
+			subTcName = v
+		}
+		subTc, err := toolchain.GetManager().SelectToolchain(subTcName)
+		if err != nil {
+			return err
+		}
+
+		subBuildDirs := remote.buildDirs
+		subInstallDirs := remote.installDirs
+		if subTcName != cfg.TcName {
+			subBuildDirs = make(map[string]string, len(remote.buildDirs))
+			subInstallDirs = make(map[string]string, len(remote.installDirs))
+			for name := range subPkgs {
+				if meta, ok := pkgMetaMap[name]; ok && meta.IsRemote {
+					rcfg := remote.configs[name]
+					subHash := repo.CacheHash(subTc.Tools.CC, "release", rcfg.Options)
+					subBuildDirs[name] = filepath.Join(packagesDir, name, rcfg.Version, subHash, "build")
+					subInstallDirs[name] = filepath.Join(packagesDir, name, rcfg.Version, subHash, "install")
+				} else {
+					subBuildDirs[name] = remote.buildDirs[name]
+					subInstallDirs[name] = remote.installDirs[name]
+				}
+			}
+		}
+
+		params := &build.SubGraphParams{
+			AllTargets:     subAllTargets,
+			PkgMeta:        pkgMetaMap,
+			PkgDirs:        pkgDirs,
+			Packages:       make(map[string]*api.Package),
+			PkgSourceDirs:  remote.sourceDirs,
+			PkgBuildDirs:   subBuildDirs,
+			PkgInstallDirs: subInstallDirs,
+			Needed:         needed,
+		}
+		for name, node := range ctx.DepGraph.Packages {
+			if node.Pkg != nil && subPkgs[name] {
+				params.Packages[name] = node.Pkg
+			}
+		}
+
+		if err := build.BuildSubGraph(rootPkg, subTc, subTcName, cfg.Mode, params); err != nil {
+			return err
+		}
+
+		if targets, ok := subAllTargets[rootPkg]; ok {
+			allTargets[rootPkg] = targets
+		}
+
+		return nil
+	}
+
+	depOutputFn = func(depRef string) string {
+		pkgName, targetName, ok := strings.Cut(depRef, ":")
+		if !ok {
+			pkgName = depRef
+			targetName = ""
+		}
+		entry := config.GetEntry(ctx.Config, pkgName)
+		subTcName := cfg.TcName
+		if v, ok := entry.Options["toolchain"].(string); ok && v != "" {
+			subTcName = v
+		}
+		pkgDir := pkgDirs[pkgName]
+		if pkgDir == "" {
+			if d, ok := remote.sourceDirs[pkgName]; ok {
+				pkgDir = d
+			}
+		}
+		if targetName == "" {
+			targets := allTargets[pkgName]
+			if len(targets) == 1 {
+				for name := range targets {
+					targetName = name
+				}
+			}
+		}
+		if targetName == "" {
+			return ""
+		}
+		target := allTargets[pkgName][targetName]
+		return build.TargetOutputPath(pkgDir, subTcName, cfg.Mode, target.Kind(), targetName)
+	}
+
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if node == nil {
+			continue
+		}
+		if !node.IsLocal() && !needed[name] {
+			continue
+		}
+		if node.Pkg == nil {
+			continue
+		}
+		if _, done := allTargets[name]; done {
+			continue
+		}
+
+		executePackageOnBuild(ctx, name, node, pkgDirs, allTargets, remote, cfg.GlobalValues, buildSubGraphFn, depOutputFn, cfg.Tc)
+	}
+
+	return allTargets, pkgMetaMap
 }
 
 func collectNeeded(graph *resolver.Graph) map[string]bool {
