@@ -55,6 +55,7 @@ type BuildContext struct {
 	installHolder InstallItemHolder
 	pkgName       string
 	subBuildFunc  func(tcName, dir string, args ...string) error
+	dryRun        bool
 }
 
 func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext {
@@ -63,6 +64,11 @@ func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext {
 		TargetRegistry: NewTargetRegistry(),
 		pkgName:        pkgName,
 	}
+}
+
+func (ctx *BuildContext) SetDryRun(v bool) *BuildContext {
+	ctx.dryRun = v
+	return ctx
 }
 
 func (ctx *BuildContext) PackageName() string {
@@ -99,6 +105,9 @@ func (ctx *BuildContext) SetSubBuildFunc(fn func(string, string, ...string) erro
 }
 
 func (ctx *BuildContext) SubBuild(tcName, dir string, args ...string) {
+	if ctx.dryRun {
+		return
+	}
 	if ctx.subBuildFunc == nil {
 		vlog.Fatal("SubBuild: not available")
 	}
@@ -108,6 +117,9 @@ func (ctx *BuildContext) SubBuild(tcName, dir string, args ...string) {
 }
 
 func (ctx *BuildContext) Exec(name string, args ...string) {
+	if ctx.dryRun {
+		return
+	}
 	vlog.Info("  %s %s", name, strings.Join(args, " "))
 	exec.RunFatal("", name, args...)
 }

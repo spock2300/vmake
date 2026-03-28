@@ -90,7 +90,7 @@ func (m *Manager) ListRepos() []ExtensionRepo {
 }
 
 func (m *Manager) getRepoURL(repoPath string) string {
-	output, err := iexec.RunWithOptions("git", []string{"config", "--get", "remote.origin.url"}, iexec.RunOptions{Dir: repoPath})
+	output, err := iexec.RunWithEnvCaptured(repoPath, nil, "git", "config", "--get", "remote.origin.url")
 	if err != nil {
 		return ""
 	}

@@ -155,6 +155,7 @@ ctx.Target("utils").
 | `vmake pkg list` | List installed packages |
 | `vmake ext list` | List extensions |
 | `vmake toolchain list` | Show available toolchains |
+| `vmake query` | Show dependency tree (AI integration) |
 
 Flags: `-v` verbose, `-V` very-verbose, `-q` quiet.
 

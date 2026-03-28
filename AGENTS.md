@@ -180,6 +180,28 @@ func Main(ctx *plugin.Context) {
 
 **Commands**: `vmake ext add|remove|list|update`
 
+## Query Command (AI Integration)
+
+`vmake query` outputs a text-based dependency tree to stdout. Designed for AI tools to quickly understand the project structure without reading build.go files.
+
+**Pipeline depth**: Executes through Config phase (require → deferred → config → OnBuild for local targets). No compilation or linking.
+
+**Output format**:
+```
+app (binary) [src/app/] debug=false, ssl=openssl
+├── lib/utils (static) [src/lib/utils/]
+└── official/openssl (static) ssl=openssl
+    ├── official/zlib shared=false
+    └── official/mbedtls shared=false
+```
+
+- Local packages: `target_name (kind) [source_dir] option1=val1, option2=val2`
+- Remote packages: `package_name option1=val1, option2=val2`
+- Multiple targets each get their own line, first line includes source_dir and options
+- DAG dedup: packages already shown are not expanded again
+- Multiple root packages separated by blank lines
+- source_dir uses relative path for local packages, absolute for remote
+
 ## AI Skill System
 
 VMake provides an AI skill optimized for coding assistants (Claude Code, OpenCode, Cursor, etc.). The skill helps AI assistants understand VMake build configuration.
