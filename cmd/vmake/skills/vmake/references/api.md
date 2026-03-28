@@ -250,7 +250,8 @@ Embedded: `ConfigAccessor`
 | `GetTargets() map[string]*Target` | All targets |
 | `PackageName() string` | Package name |
 | `AddInstalls(src, dest)` | Install entry |
-| `SubBuild(tcName, dir, args...)` | Invoke vmake as subprocess |
+| `BuildSubGraph(pkgName)` | Build package as independent sub-graph |
+| `DepOutput(depRef) string` | Get output path of dependency target |
 | `Exec(name, args...)` | Run command with logging |
 
 ---

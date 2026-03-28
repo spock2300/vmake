@@ -2,6 +2,6 @@
 #include "output/generated.h"
 
 int main(void) {
-	printf("version=%s magic=%d\n", GENERATED_VERSION, GENERATED_MAGIC);
+	printf("magic=%d, tinyexpr=%.6f\n", GENERATED_MAGIC, TINYEXPR_RESULT);
 	return 0;
 }

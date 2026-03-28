@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/build"
@@ -11,6 +12,7 @@ import (
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 	"gitee.com/spock2300/vmake/pkg/repo"
 	"gitee.com/spock2300/vmake/pkg/resolver"
+	"gitee.com/spock2300/vmake/pkg/toolchain"
 
 	"github.com/spf13/cobra"
 )
@@ -175,8 +177,154 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 	vlog.Info("")
 	vlog.Info("Executing OnBuild...")
 	allTargets := make(map[string]map[string]*api.Target)
-	subBuildClaimed := make(map[string]bool)
 	pkgDirs := GetPackageDirs(ctx.DepGraph)
+
+	pkgMetaMap := make(map[string]build.PkgBuildMeta)
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if !needed[name] {
+			continue
+		}
+		pkgMetaMap[name] = build.PkgBuildMeta{
+			IsRemote: !node.IsLocal(),
+			Deps:     node.Deps,
+		}
+	}
+
+	subGraphBuilt := make(map[string]bool)
+
+	var depOutputFn func(depRef string) string
+	var buildSubGraphFn func(rootPkg string) error
+
+	buildSubGraphFn = func(rootPkg string) error {
+		if subGraphBuilt[rootPkg] {
+			return nil
+		}
+		subGraphBuilt[rootPkg] = true
+
+		subPkgs := build.CollectSubGraphPackages(rootPkg, pkgMetaMap, allTargets, needed)
+
+		for _, name := range ctx.Resolver.GetOrder() {
+			node := ctx.DepGraph.Packages[name]
+			if !subPkgs[name] {
+				continue
+			}
+			if node.Pkg == nil {
+				continue
+			}
+
+			if _, done := allTargets[name]; done {
+				continue
+			}
+
+			entry := config.GetEntry(ctx.Config, name)
+			buildCtx := api.NewBuildContext(name, entry.Options)
+			buildCtx.SetOptions(ctx.AllOptions[name])
+			buildCtx.MergeGlobals(ctx.GlobalOptions, globalValues)
+			buildCtx.SetBuildSubGraphFunc(buildSubGraphFn)
+			buildCtx.SetDepOutputFunc(depOutputFn)
+
+			node.Pkg.ExecBuildFuncs(pkgDirs[name], func(fn api.BuildFunc) {
+				fn(buildCtx)
+			})
+
+			allTargets[name] = buildCtx.GetTargets()
+
+			if !node.IsLocal() && node.Pkg != nil {
+				pkg := node.Pkg
+				cfg := configs[name]
+				cfgVals := make(map[string]any)
+				for optName, opt := range pkg.GetOptions() {
+					if opt.Default() != nil {
+						cfgVals[optName] = opt.Default()
+					}
+				}
+				for k, v := range cfg.Options {
+					cfgVals[k] = v
+				}
+				pkg.SetDirs(pkgSourceDirs[name], pkgBuildDirs[name], pkgInstallDirs[name])
+				pkg.SetCfgVals(cfgVals)
+			}
+		}
+
+		entry := config.GetEntry(ctx.Config, rootPkg)
+		subTcName := tcName
+		if v, ok := entry.Options["toolchain"].(string); ok && v != "" {
+			subTcName = v
+		}
+		subTc, err := toolchain.GetManager().SelectToolchain(subTcName)
+		if err != nil {
+			return err
+		}
+
+		subPkgBuildDirs := pkgBuildDirs
+		subPkgInstallDirs := pkgInstallDirs
+		if subTcName != tcName {
+			subPkgBuildDirs = make(map[string]string, len(pkgBuildDirs))
+			subPkgInstallDirs = make(map[string]string, len(pkgInstallDirs))
+			for name := range subPkgs {
+				if meta, ok := pkgMetaMap[name]; ok && meta.IsRemote {
+					cfg := configs[name]
+					subHash := repo.CacheHash(subTc.Tools.CC, "release", cfg.Options)
+					subPkgBuildDirs[name] = filepath.Join(packagesDir, name, cfg.Version, subHash, "build")
+					subPkgInstallDirs[name] = filepath.Join(packagesDir, name, cfg.Version, subHash, "install")
+				} else {
+					subPkgBuildDirs[name] = pkgBuildDirs[name]
+					subPkgInstallDirs[name] = pkgInstallDirs[name]
+				}
+			}
+		}
+
+		params := &build.SubGraphParams{
+			AllTargets:     allTargets,
+			PkgMeta:        pkgMetaMap,
+			PkgDirs:        pkgDirs,
+			Packages:       make(map[string]*api.Package),
+			PkgSourceDirs:  pkgSourceDirs,
+			PkgBuildDirs:   subPkgBuildDirs,
+			PkgInstallDirs: subPkgInstallDirs,
+			Needed:         needed,
+		}
+		for name, node := range ctx.DepGraph.Packages {
+			if node.Pkg != nil && subPkgs[name] {
+				params.Packages[name] = node.Pkg
+			}
+		}
+
+		return build.BuildSubGraph(rootPkg, subTc, subTcName, mode, params)
+	}
+
+	depOutputFn = func(depRef string) string {
+		pkgName, targetName, ok := strings.Cut(depRef, ":")
+		if !ok {
+			pkgName = depRef
+			targetName = ""
+		}
+		entry := config.GetEntry(ctx.Config, pkgName)
+		subTcName := tcName
+		if v, ok := entry.Options["toolchain"].(string); ok && v != "" {
+			subTcName = v
+		}
+		pkgDir := pkgDirs[pkgName]
+		if pkgDir == "" {
+			if d, ok := pkgSourceDirs[pkgName]; ok {
+				pkgDir = d
+			}
+		}
+		if targetName == "" {
+			targets := allTargets[pkgName]
+			if len(targets) == 1 {
+				for name := range targets {
+					targetName = name
+				}
+			}
+		}
+		if targetName == "" {
+			return ""
+		}
+		target := allTargets[pkgName][targetName]
+		return build.TargetOutputPath(pkgDir, subTcName, mode, target.Kind(), targetName)
+	}
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
@@ -189,22 +337,16 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		if node.Pkg == nil {
 			continue
 		}
+		if _, done := allTargets[name]; done {
+			continue
+		}
 
 		entry := config.GetEntry(ctx.Config, name)
 		buildCtx := api.NewBuildContext(name, entry.Options)
 		buildCtx.SetOptions(ctx.AllOptions[name])
 		buildCtx.MergeGlobals(ctx.GlobalOptions, globalValues)
-		buildCtx.SetSubBuildFunc(func(tcName, dir string, args ...string) error {
-			claimedPkg := filepath.Base(filepath.Clean(dir))
-			subBuildClaimed[claimedPkg] = true
-			switch {
-			case veryVerbose:
-				args = append(args, "-V")
-			case verbose:
-				args = append(args, "-v")
-			}
-			return build.SubBuild(tcName, dir, args...)
-		})
+		buildCtx.SetBuildSubGraphFunc(buildSubGraphFn)
+		buildCtx.SetDepOutputFunc(depOutputFn)
 
 		node.Pkg.ExecBuildFuncs(pkgDirs[name], func(fn api.BuildFunc) {
 			fn(buildCtx)
@@ -240,14 +382,6 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		}
 	}
 
-	for pkgName := range subBuildClaimed {
-		if targets, ok := allTargets[pkgName]; ok {
-			for _, t := range targets {
-				t.SetDefault(false)
-			}
-		}
-	}
-
 	vlog.Info("")
 	vlog.Info("Targets found:")
 	for pkgName, targets := range allTargets {
@@ -262,18 +396,6 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 
 	vlog.Info("")
 	vlog.Info("Using toolchain: %s, mode: %s", tcName, mode)
-
-	pkgMetaMap := make(map[string]build.PkgBuildMeta)
-	for _, name := range ctx.Resolver.GetOrder() {
-		node := ctx.DepGraph.Packages[name]
-		if !needed[name] {
-			continue
-		}
-		pkgMetaMap[name] = build.PkgBuildMeta{
-			IsRemote: !node.IsLocal(),
-			Deps:     node.Deps,
-		}
-	}
 
 	graph, err := build.NewBuildGraph(allTargets, pkgMetaMap)
 	if err != nil {

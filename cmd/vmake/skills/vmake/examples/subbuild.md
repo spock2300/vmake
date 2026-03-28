@@ -1,6 +1,6 @@
-# Sub-Build and Code Generation
+# BuildSubGraph and Code Generation
 
-Demonstrates the sub-build system - building a separate host tool, then executing it to produce generated source files.
+Demonstrates building a separate host tool as an independent sub-graph, then executing it to produce generated source files.
 
 ## build.go
 
@@ -8,31 +8,31 @@ Demonstrates the sub-build system - building a separate host tool, then executin
 package main
 
 import (
-	"os"
+    "os"
 
-	"gitee.com/spock2300/vmake/pkg/api"
+    "gitee.com/spock2300/vmake/pkg/api"
 )
 
 func Main(p *api.Package) {
-	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.SubBuild("host", "./tools")
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.BuildSubGraph("tools")
 
-		os.MkdirAll("output", 0755)
-		ctx.Exec("tools/build/host-debug/codegen", "output/generated.h")
+        os.MkdirAll("output", 0755)
+        ctx.Exec(ctx.DepOutput("tools:codegen"), "output/generated.h")
 
-		ctx.Target("app").
-			SetKind(api.TargetBinary).
-			AddFiles("src/*.c").
-			AddCFlags("-I.")
-	})
+        ctx.Target("app").
+            SetKind(api.TargetBinary).
+            AddFiles("src/*.c").
+            AddCFlags("-I.")
+    })
 }
 ```
 
 ## What This Demonstrates
 
-- **`ctx.SubBuild(tcName, dir)`** - Trigger nested build in another directory
+- **`ctx.BuildSubGraph(pkgName)`** - Build a package (and its deps) as an independent sub-graph
+- **`ctx.DepOutput(depRef)`** - Get the output path of a dependency target
 - **`ctx.Exec(binary, args...)`** - Run a built binary as build step
-- Standard library integration (`os.MkdirAll`)
 
 ## Use Cases
 
@@ -40,13 +40,41 @@ func Main(p *api.Package) {
 2. **Cross-compilation**: Build host tools with native toolchain, target binaries with cross toolchain
 3. **Build utilities**: Build helper tools (protoc, flex, bison) before main compile
 
+## Configuring Toolchain
+
+The sub-graph reads its toolchain from `vmake config`:
+
+```json
+{
+  "entries": {
+    "tools": {
+      "options": {
+        "toolchain": "host"
+      }
+    }
+  }
+}
+```
+
+Or declare it as an option in the tools package:
+
+```go
+// tools/build.go
+p.OnConfig(func(ctx *api.ConfigContext) {
+    ctx.Option("toolchain").
+        SetType(api.OptionChoice).
+        SetValues("host", "arm-gcc").
+        SetDefault("host")
+})
+```
+
 ## Project Structure
 
 ```
 myproject/
 ├── build.go
 ├── tools/
-│   ├── build.go          # Nested build for host tool
+│   ├── build.go          # Host tool package
 │   └── src/
 │       └── codegen.c     # Code generator source
 ├── src/
@@ -60,11 +88,15 @@ myproject/
 ```
 Phase 1-3: Main build.go
     │
-    ├── SubBuild("host", "./tools")
-    │       └── Phase 1-3: tools/build.go
-    │               └── builds tools/build/host-debug/codegen
+    ├── BuildSubGraph("tools")
+    │       └── OnBuild for tools → collects targets
+    │       └── NewBuildGraph → Scheduler with tools' toolchain
+    │       └── builds tools/build/<tc>-<mode>/codegen
     │
-    ├── Exec("tools/build/host-debug/codegen", "output/generated.h")
+    ├── DepOutput("tools:codegen")
+    │       └── Returns path: tools/build/host-debug/codegen
+    │
+    ├── Exec(path, "output/generated.h")
     │       └── Runs codegen to create generated.h
     │
     └── ctx.Target("app").AddFiles("src/*.c")
@@ -73,11 +105,10 @@ Phase 1-3: Main build.go
 
 ## Key Points
 
-- `SubBuild` runs a complete vmake build in subdirectory
-- First argument is toolchain name ("host" = native)
-- `Exec` runs after SubBuild completes
-- `Exec` logs the command and its output
-- Generated files must exist before main target compiles
+- `BuildSubGraph` runs in-process, sharing config with the parent build
+- Toolchain is read from the package's config entry (or global default)
+- `DepOutput("pkg:target")` returns the deterministic output path
+- Targets built by the sub-graph are excluded from the main build graph
 
 ## See Also
 

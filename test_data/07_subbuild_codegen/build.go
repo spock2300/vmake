@@ -8,10 +8,10 @@ import (
 
 func Main(p *api.Package) {
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.SubBuild("host", "./tools")
+		ctx.BuildSubGraph("tools")
 
 		os.MkdirAll("output", 0755)
-		ctx.Exec("tools/build/host-debug/codegen", "output/generated.h")
+		ctx.Exec(ctx.DepOutput("tools:codegen"), "output/generated.h")
 
 		ctx.Target("app").
 			SetKind(api.TargetBinary).
