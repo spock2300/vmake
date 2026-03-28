@@ -32,7 +32,7 @@ func TrimOutput(output []byte) string {
 }
 
 func RunWithOptions(name string, args []string, opts RunOptions) ([]byte, error) {
-	cmdLine := formatCommandLine(name, args)
+	cmdLine := FormatCommandLine(name, args)
 	vlog.Debug("%s  %s", opts.Dir, cmdLine)
 
 	ctx := opts.Context
@@ -119,7 +119,7 @@ func flattenEnv(env map[string]string) []string {
 	return result
 }
 
-func formatCommandLine(name string, args []string) string {
+func FormatCommandLine(name string, args []string) string {
 	var sb strings.Builder
 	sb.WriteString(name)
 

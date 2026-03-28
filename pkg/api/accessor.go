@@ -133,6 +133,9 @@ func (a *ConfigAccessor) Select(option string, mapping map[string]string) string
 }
 
 func (a *ConfigAccessor) When(option string, value any) bool {
+	if a.CfgVals == nil {
+		return false
+	}
 	val := a.CfgVals[option]
 	return val == value
 }

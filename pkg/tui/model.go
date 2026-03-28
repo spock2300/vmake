@@ -2,7 +2,6 @@ package tui
 
 import (
 	"sort"
-	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/buildscript"
@@ -425,35 +424,4 @@ func (m *Model) shouldShow(opt *api.Option) bool {
 	}
 
 	return showIf(cfgCtx)
-}
-
-func (m *Model) AddPackageOptions(pkgName string, opts map[string]*api.Option, values map[string]any) {
-	if m.options == nil {
-		m.options = make(map[string]map[string]*api.Option)
-	}
-	m.options[pkgName] = opts
-
-	if m.values == nil {
-		m.values = make(map[string]map[string]any)
-	}
-	if m.values[pkgName] == nil {
-		m.values[pkgName] = make(map[string]any)
-	}
-
-	for name, val := range values {
-		m.values[pkgName][name] = val
-	}
-
-	m.tree = buildDepTree(m.packages, m.deps)
-	m.flat = flattenTree(m.tree)
-}
-
-func (m *Model) GetRequireValues() map[string]map[string]any {
-	result := make(map[string]map[string]any)
-	for pkgName, vals := range m.values {
-		if strings.Contains(pkgName, "/") {
-			result[pkgName] = vals
-		}
-	}
-	return result
 }

@@ -70,10 +70,3 @@ func GetToolchainHost(tc *Toolchain) string {
 
 	return iexec.TrimOutput(output)
 }
-
-func IsCrossCompiling(tc *Toolchain) bool {
-	if tc.Host == "" {
-		return false
-	}
-	return tc.Host != GetToolchainHost(tc)
-}

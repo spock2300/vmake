@@ -34,7 +34,6 @@ func (ctx *ConfigContext) PackageName() string {
 
 func (ctx *ConfigContext) GlobalOption(name string) *Option {
 	opt := ctx.Option(name)
-	opt.isGlobal = true
 	opt.group = "Global"
 	return opt
 }

@@ -102,7 +102,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 	pkgSourceDirs := make(map[string]string)
 	pkgBuildDirs := make(map[string]string)
 	pkgInstallDirs := make(map[string]string)
-	configs := make(map[string]*repo.InstallConfig)
+	configs := make(map[string]*config.EntryConfig)
 	var repoInstaller *repo.PackageInstaller
 
 	if hasDeps {
@@ -112,10 +112,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 			node := ctx.DepGraph.Packages[name]
 			if needed[name] && !node.IsLocal() {
 				entry := config.GetEntry(ctx.Config, name)
-				configs[name] = &repo.InstallConfig{
-					Version: entry.Version,
-					Options: entry.Options,
-				}
+				configs[name] = entry
 			}
 		}
 

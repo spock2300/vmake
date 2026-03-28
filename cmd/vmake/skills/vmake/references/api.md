@@ -104,7 +104,6 @@ Import: `gitee.com/spock2300/vmake/pkg/api`
 | `SetRepo` | `(repo string)` | Repository name |
 | `SetName` | `(name string)` | Package name |
 | `SetOutputDir` | `(dir string)` | Output directory |
-| `SetSourceOrigin` | `(o SourceOrigin)` | Local or remote source |
 
 ### Targets & Dependencies
 
@@ -145,9 +144,7 @@ All build helpers return `error`.
 | `NM()` | `string` | nm tool path |
 | `SourceDir()` / `BuildDir()` / `InstallDir()` / `OutputDir()` | `string` | Directories |
 | `Env()` | `map[string]string` | Toolchain env vars |
-| `PackageName()` | `string` | Full package name |
 | `Libs()` | `[]string` | Library deps |
-| `IsLocal()` | `bool` | Whether source is local |
 | `Deps()` | `map[string]*InstalledPackage` | Resolved dependencies |
 | `SelectVersion(constraint)` | `(string, error)` | Best version match |
 

@@ -25,12 +25,9 @@ var extAddCmd = &cobra.Command{
 	Run:   runExtAdd,
 }
 
-var extRemoveCmd = &cobra.Command{
-	Use:   "remove <name>",
-	Short: "Remove an extension repository",
-	Args:  cobra.ExactArgs(1),
-	Run:   runExtRemove,
-}
+var extRemoveCmd = newRemoveCmd("remove <name>", "Remove an extension repository", "extension repository", func(name string) error {
+	return getPluginManager().RemoveRepo(name)
+})
 
 var extListCmd = &cobra.Command{
 	Use:   "list",
@@ -80,16 +77,6 @@ func runExtAdd(cmd *cobra.Command, args []string) {
 	if count > 0 {
 		fmt.Printf("Discovered %d plugin(s). Restart vmake to use them.\n", count)
 	}
-}
-
-func runExtRemove(cmd *cobra.Command, args []string) {
-	name := args[0]
-
-	mgr := getPluginManager()
-
-	fatalErr(mgr.RemoveRepo(name))
-
-	fmt.Printf("Removed extension repository '%s'\n", name)
 }
 
 func runExtList(cmd *cobra.Command, args []string) {
@@ -214,15 +201,13 @@ func loadPlugins() {
 }
 
 type toolchainManifestEntry struct {
-	Name     string          `json:"name"`
-	Version  string          `json:"version"`
-	Host     string          `json:"host"`
-	Prefix   string          `json:"prefix"`
-	File     string          `json:"file"`
-	Tools    toolchain.Tools `json:"tools"`
-	CFlags   []string        `json:"cflags"`
-	CxxFlags []string        `json:"cxxflags"`
-	LdFlags  []string        `json:"ldflags"`
+	Name         string                 `json:"name"`
+	Version      string                 `json:"version"`
+	Host         string                 `json:"host"`
+	Prefix       string                 `json:"prefix"`
+	File         string                 `json:"file"`
+	Tools        toolchain.Tools        `json:"tools"`
+	DefaultFlags toolchain.DefaultFlags `json:"default_flags"`
 }
 
 type toolchainManifest struct {
@@ -277,17 +262,13 @@ func loadExtensionToolchains() {
 
 func buildToolchainFromManifest(entry *toolchainManifestEntry, installPath string, repoDir string) *toolchain.Toolchain {
 	return &toolchain.Toolchain{
-		Name:        entry.Name,
-		DisplayName: entry.Name + " " + entry.Version,
-		Host:        entry.Host,
-		Prefix:      entry.Prefix,
-		InstallPath: installPath,
-		Tools:       entry.Tools,
-		DefaultFlags: toolchain.DefaultFlags{
-			CFlags:   entry.CFlags,
-			CxxFlags: entry.CxxFlags,
-			LdFlags:  entry.LdFlags,
-		},
+		Name:         entry.Name,
+		DisplayName:  entry.Name + " " + entry.Version,
+		Host:         entry.Host,
+		Prefix:       entry.Prefix,
+		InstallPath:  installPath,
+		Tools:        entry.Tools,
+		DefaultFlags: entry.DefaultFlags,
 	}
 }
 

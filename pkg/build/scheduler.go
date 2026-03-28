@@ -69,8 +69,8 @@ func NewScheduler(
 		return nil, err
 	}
 
-	compiler := NewCompiler(tc, tools)
-	linker := NewLinker(tc, tools)
+	compiler := NewCompiler(tools)
+	linker := NewLinker(tools)
 
 	origDir, _ := os.Getwd()
 
@@ -80,7 +80,7 @@ func NewScheduler(
 	}
 	buildDir := fmt.Sprintf("%s-%s", tcName, mode)
 
-	ccWriter := NewCompileCommandsWriter(tc, tools)
+	ccWriter := NewCompileCommandsWriter(tools)
 
 	state, err := LoadState(buildDir)
 	if err != nil {
@@ -401,7 +401,6 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string,
 		CFlags:   resolved.AllCFlags,
 		CxxFlags: resolved.AllCxxFlags,
 		Language: lang,
-		Mode:     s.mode,
 	}
 
 	s.ccWriter.AddCommand(src, objRel, opts)
@@ -629,41 +628,7 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 		return fmt.Errorf("create include dir: %w", err)
 	}
 
-	for _, inc := range t.PublicIncludes() {
-		srcPath := filepath.Join(pkgInfo.Dir, inc)
-		info, err := os.Stat(srcPath)
-		if err != nil {
-			continue
-		}
-		if info.IsDir() {
-			rule := t.IncludeRule(inc)
-			if len(rule) > 0 {
-				vlog.Info("  INSTALL DIR %s (match: %s) -> %s", inc, rule, includeDir)
-				if err := CopyDirMatching(srcPath, includeDir, func(name string) bool {
-					return MatchPatterns(rule, name)
-				}); err != nil {
-					return fmt.Errorf("install headers failed: %w", err)
-				}
-			} else {
-				vlog.Info("  INSTALL DIR %s -> %s", inc, includeDir)
-				if err := CopyDir(srcPath, includeDir); err != nil {
-					return fmt.Errorf("install headers failed: %w", err)
-				}
-			}
-		} else {
-			rule := t.IncludeRule(inc)
-			if len(rule) > 0 && !MatchPatterns(rule, filepath.Base(srcPath)) {
-				continue
-			}
-			dest := filepath.Join(includeDir, filepath.Base(srcPath))
-			vlog.Info("  INSTALL %s -> %s", filepath.Base(srcPath), dest)
-			if err := CopyFile(srcPath, dest); err != nil {
-				return fmt.Errorf("install header failed: %w", err)
-			}
-		}
-	}
-
-	return nil
+	return copyPublicIncludes(t, pkgInfo.Dir, includeDir)
 }
 
 func unique(s []string) []string {

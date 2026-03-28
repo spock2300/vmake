@@ -13,7 +13,6 @@ import (
 )
 
 type Compiler struct {
-	tc      *toolchain.Toolchain
 	ccPath  string
 	cxxPath string
 }
@@ -24,12 +23,10 @@ type CompileOptions struct {
 	CFlags   []string
 	CxxFlags []string
 	Language string
-	Mode     string
 }
 
-func NewCompiler(tc *toolchain.Toolchain, tools *ResolvedTools) *Compiler {
+func NewCompiler(tools *ResolvedTools) *Compiler {
 	return &Compiler{
-		tc:      tc,
 		ccPath:  tools.CC,
 		cxxPath: tools.CXX,
 	}

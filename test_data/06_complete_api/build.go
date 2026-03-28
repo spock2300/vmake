@@ -104,7 +104,7 @@ func Main(p *api.Package) {
 			AddIncludes("include").
 			SetLanguages(cppStd)
 
-		if ctx.When("shared_lib", true) {
+		if ctx.String("shared_lib") == "true" {
 			ctx.Target("mylib").
 				SetKind(api.TargetShared).
 				AddFiles("src/library.cpp").

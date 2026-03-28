@@ -86,10 +86,6 @@ func (m *Manager) GetDefaultToolchain() string {
 	return "host"
 }
 
-func (m *Manager) GetBuiltin() *Toolchain {
-	return m.builtin
-}
-
 func (m *Manager) AddGlobalFlags(cflags, cxxflags []string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -119,12 +115,6 @@ func (m *Manager) SetOnMissing(fn OnMissingToolchain) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onMissing = fn
-}
-
-func (m *Manager) GetOnMissing() OnMissingToolchain {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.onMissing
 }
 
 func (m *Manager) EnsureToolPath(tc *Toolchain, tool string) (string, error) {

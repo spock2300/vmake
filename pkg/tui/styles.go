@@ -22,9 +22,6 @@ var (
 				Bold(true).
 				PaddingLeft(1)
 
-	treeExpandedStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#F25D94"))
-
 	groupStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("#626262")).

@@ -92,7 +92,6 @@ type Package struct {
 	buildDir      string
 	installDir    string
 	outputDir     string
-	sourceOrigin  SourceOrigin
 	cfgVals       map[string]any
 	tc            *toolchain.Toolchain
 	deps          map[string]*InstalledPackage
@@ -203,8 +202,6 @@ func (p *Package) SelectVersion(constraint string) (string, error) {
 	}
 	return version, nil
 }
-
-func (p *Package) PackageName() string { return "" }
 
 func (p *Package) GitURLs() []string                         { return p.gitURLs }
 func (p *Package) Homepage() string                          { return p.homepage }
@@ -322,11 +319,6 @@ func (p *Package) SetOutputDir(dir string) *Package {
 	return p
 }
 
-func (p *Package) SetSourceOrigin(o SourceOrigin) *Package {
-	p.sourceOrigin = o
-	return p
-}
-
 func (p *Package) SetCfgVals(vals map[string]any) *Package {
 	p.cfgVals = vals
 	return p
@@ -342,7 +334,6 @@ func (p *Package) SourceDir() string    { return p.sourceDir }
 func (p *Package) BuildDir() string     { return p.buildDir }
 func (p *Package) InstallDir() string   { return p.installDir }
 func (p *Package) OutputDir() string    { return p.outputDir }
-func (p *Package) IsLocal() bool        { return p.sourceOrigin == SourceLocal }
 func (p *Package) GetPatches() []string { return p.patches }
 
 func (p *Package) CC() string          { return p.tc.Tools.CC }

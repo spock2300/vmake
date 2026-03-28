@@ -7,13 +7,9 @@ import (
 
 	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/pkg/api"
+	"gitee.com/spock2300/vmake/pkg/config"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
-
-type InstallConfig struct {
-	Version string
-	Options map[string]any
-}
 
 type PackageInstaller struct {
 	sourceMgr   *SourceManager
@@ -21,9 +17,8 @@ type PackageInstaller struct {
 	cacheDir    string
 	pkgs        map[string]*api.Package
 	repoMgr     *RepoManager
-	configs     map[string]*InstallConfig
+	configs     map[string]*config.EntryConfig
 	tc          *toolchain.Toolchain
-	installed   map[string]*api.InstalledPackage
 }
 
 func NewPackageInstaller(sourceMgr *SourceManager, packagesDir, cacheDir string) *PackageInstaller {
@@ -32,7 +27,6 @@ func NewPackageInstaller(sourceMgr *SourceManager, packagesDir, cacheDir string)
 		packagesDir: packagesDir,
 		cacheDir:    cacheDir,
 		pkgs:        make(map[string]*api.Package),
-		installed:   make(map[string]*api.InstalledPackage),
 	}
 }
 
@@ -40,13 +34,13 @@ func (i *PackageInstaller) SetRepoManager(mgr *RepoManager) {
 	i.repoMgr = mgr
 }
 
-func (i *PackageInstaller) SetConfigs(configs map[string]*InstallConfig) {
+func (i *PackageInstaller) SetConfigs(configs map[string]*config.EntryConfig) {
 	i.configs = configs
 }
 
-func (i *PackageInstaller) SetConfig(name string, cfg *InstallConfig) {
+func (i *PackageInstaller) SetConfig(name string, cfg *config.EntryConfig) {
 	if i.configs == nil {
-		i.configs = make(map[string]*InstallConfig)
+		i.configs = make(map[string]*config.EntryConfig)
 	}
 	i.configs[name] = cfg
 }
@@ -78,26 +72,6 @@ func (i *PackageInstaller) CleanBuild(name string) error {
 	return fs.RemoveAll(filepath.Join(i.packagesDir, name))
 }
 
-func (i *PackageInstaller) GetInstalledPackage(name, version string, tc *toolchain.Toolchain, options map[string]any) *api.InstalledPackage {
-	if pkg, ok := i.installed[name]; ok {
-		return pkg
-	}
-
-	installDir := i.GetInstallDir(name, version, tc, options)
-	if !i.hasInstalledFiles(installDir) {
-		return nil
-	}
-	var libs []string
-	if pkg, ok := i.pkgs[name]; ok {
-		libs = pkg.Libs()
-	}
-
-	pkg := api.NewInstalledPackage(name, version, installDir, libs)
-	pkg.Deps = i.loadDeps(installDir)
-	i.installed[name] = pkg
-	return pkg
-}
-
 func (i *PackageInstaller) loadDeps(installDir string) []string {
 	metaPath := filepath.Join(installDir, "vmake.json")
 	data, err := os.ReadFile(metaPath)
@@ -112,17 +86,4 @@ func (i *PackageInstaller) loadDeps(installDir string) []string {
 		return nil
 	}
 	return meta.Deps
-}
-
-func (i *PackageInstaller) saveDeps(installDir string, deps []string) {
-	meta := struct {
-		Deps []string `json:"deps"`
-	}{Deps: deps}
-
-	data, err := json.Marshal(meta)
-	if err != nil {
-		return
-	}
-	metaPath := filepath.Join(installDir, "vmake.json")
-	os.WriteFile(metaPath, data, 0644)
 }

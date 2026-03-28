@@ -3,18 +3,15 @@ package build
 import (
 	iexec "gitee.com/spock2300/vmake/internal/exec"
 	"gitee.com/spock2300/vmake/internal/fs"
-	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
 
 type Linker struct {
-	tc     *toolchain.Toolchain
 	ccPath string
 	arPath string
 }
 
-func NewLinker(tc *toolchain.Toolchain, tools *ResolvedTools) *Linker {
+func NewLinker(tools *ResolvedTools) *Linker {
 	return &Linker{
-		tc:     tc,
 		ccPath: tools.CC,
 		arPath: tools.AR,
 	}

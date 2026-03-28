@@ -116,13 +116,9 @@ func (i *ArtifactInstaller) installTarget(node *BuildNode) error {
 	return i.installPublicIncludes(node, pkgInfo, prefix)
 }
 
-func (i *ArtifactInstaller) installPublicIncludes(node *BuildNode, pkgInfo *PkgInstallInfo, prefix string) error {
-	target := node.Target
-	pkgDir := i.pkgDirs[node.PkgName]
-	includeDir := filepath.Join(prefix, "include")
-
+func copyPublicIncludes(target *api.Target, baseDir, includeDir string) error {
 	for _, inc := range target.PublicIncludes() {
-		srcPath := filepath.Join(pkgDir, inc)
+		srcPath := filepath.Join(baseDir, inc)
 		info, err := os.Stat(srcPath)
 		if err != nil {
 			continue
@@ -160,6 +156,10 @@ func (i *ArtifactInstaller) installPublicIncludes(node *BuildNode, pkgInfo *PkgI
 	}
 
 	return nil
+}
+
+func (i *ArtifactInstaller) installPublicIncludes(node *BuildNode, pkgInfo *PkgInstallInfo, prefix string) error {
+	return copyPublicIncludes(node.Target, i.pkgDirs[node.PkgName], filepath.Join(prefix, "include"))
 }
 
 func (i *ArtifactInstaller) installExtraItems(node *BuildNode) error {
