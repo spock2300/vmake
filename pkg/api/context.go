@@ -137,6 +137,9 @@ func (ctx *BuildContext) BuildSubGraph(pkgName string) {
 }
 
 func (ctx *BuildContext) DepOutput(depRef string) string {
+	if ctx.dryRun {
+		return ""
+	}
 	if ctx.depOutputFunc == nil {
 		vlog.Fatal("DepOutput: not available")
 	}

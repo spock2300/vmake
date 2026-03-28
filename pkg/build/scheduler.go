@@ -237,6 +237,67 @@ func (s *Scheduler) compileWorker(resolved *ResolvedTarget, jobs <-chan string, 
 	}
 }
 
+type depResolveResult struct {
+	includes    []string
+	voidLdFlags []string
+	artifacts   []string
+}
+
+func (s *Scheduler) resolveDeps(node *BuildNode) (*depResolveResult, error) {
+	result := &depResolveResult{}
+
+	for _, depName := range node.Deps {
+		depNode, err := s.graph.GetNode(depName)
+		if err != nil {
+			return nil, fmt.Errorf("dependency not found: %s", depName)
+		}
+
+		depPkg := s.pkgs[depNode.PkgName]
+		if depPkg == nil {
+			continue
+		}
+
+		if len(depNode.Target.PublicIncludes()) > 0 {
+			for _, pubInc := range depNode.Target.PublicIncludes() {
+				result.includes = append(result.includes, filepath.Join(depPkg.Dir, pubInc))
+			}
+		} else if depPkg.InstallDir != "" {
+			result.includes = append(result.includes, filepath.Join(depPkg.InstallDir, "include"))
+		}
+
+		if depNode.Target.Kind() == api.TargetVoid && depPkg.InstallDir != "" {
+			libDir := fs.DetectLibDir(depPkg.InstallDir)
+			result.voidLdFlags = append(result.voidLdFlags, "-L"+libDir)
+			if depPkg := s.packages[depNode.PkgName]; depPkg != nil && len(depPkg.Libs()) > 0 {
+				for _, lib := range depPkg.Libs() {
+					result.voidLdFlags = append(result.voidLdFlags, "-l"+lib)
+				}
+			} else {
+				parts := strings.Split(depNode.PkgName, "/")
+				result.voidLdFlags = append(result.voidLdFlags, "-l"+parts[len(parts)-1])
+			}
+		} else if depNode.Target.Kind() != api.TargetVoid {
+			var depOutput string
+			if depPkg.InstallDir != "" {
+				depOutput = filepath.Join(depPkg.InstallDir, "lib", targetFilename(depNode.Target.Kind(), depNode.Target.Name()))
+			} else {
+				depOutput = filepath.Join(depPkg.Dir, s.getTargetOutputPath(depNode))
+			}
+			result.artifacts = append(result.artifacts, depOutput)
+
+			if pkg := s.packages[depNode.PkgName]; pkg != nil {
+				for _, lib := range pkg.Libs() {
+					if lib != depNode.Target.Name() {
+						result.voidLdFlags = append(result.voidLdFlags, "-l"+lib)
+					}
+				}
+			}
+		}
+	}
+
+	return result, nil
+}
+
 func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	modeFlags, modeDefines := api.GetModeFlags(s.mode)
 
@@ -264,61 +325,16 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	resolved.AllCxxFlags = append(resolved.AllCxxFlags, node.Target.CxxFlags()...)
 	resolved.AllLdFlags = append(resolved.AllLdFlags, node.Target.LdFlags()...)
 
-	var voidLdFlags []string
-
-	for _, depName := range node.Deps {
-		depNode, err := s.graph.GetNode(depName)
-		if err != nil {
-			return nil, fmt.Errorf("dependency not found: %s", depName)
-		}
-
-		depPkg := s.pkgs[depNode.PkgName]
-		if depPkg == nil {
-			continue
-		}
-
-		if len(depNode.Target.PublicIncludes()) > 0 {
-			for _, pubInc := range depNode.Target.PublicIncludes() {
-				absInc := filepath.Join(depPkg.Dir, pubInc)
-				resolved.AllIncludes = append(resolved.AllIncludes, absInc)
-			}
-		} else if depPkg.InstallDir != "" {
-			resolved.AllIncludes = append(resolved.AllIncludes, filepath.Join(depPkg.InstallDir, "include"))
-		}
-
-		if depNode.Target.Kind() == api.TargetVoid && depPkg.InstallDir != "" {
-			libDir := fs.DetectLibDir(depPkg.InstallDir)
-			voidLdFlags = append(voidLdFlags, "-L"+libDir)
-			if depPkg := s.packages[depNode.PkgName]; depPkg != nil && len(depPkg.Libs()) > 0 {
-				for _, lib := range depPkg.Libs() {
-					voidLdFlags = append(voidLdFlags, "-l"+lib)
-				}
-			} else {
-				parts := strings.Split(depNode.PkgName, "/")
-				voidLdFlags = append(voidLdFlags, "-l"+parts[len(parts)-1])
-			}
-		} else if depNode.Target.Kind() != api.TargetVoid {
-			var depOutput string
-			if depPkg.InstallDir != "" {
-				depOutput = filepath.Join(depPkg.InstallDir, "lib", targetFilename(depNode.Target.Kind(), depNode.Target.Name()))
-			} else {
-				depOutput = filepath.Join(depPkg.Dir, s.getTargetOutputPath(depNode))
-			}
-			resolved.DepArtifacts = append(resolved.DepArtifacts, depOutput)
-
-			if pkg := s.packages[depNode.PkgName]; pkg != nil {
-				for _, lib := range pkg.Libs() {
-					if lib != depNode.Target.Name() {
-						voidLdFlags = append(voidLdFlags, "-l"+lib)
-					}
-				}
-			}
-		}
+	deps, err := s.resolveDeps(node)
+	if err != nil {
+		return nil, err
 	}
+	resolved.AllIncludes = append(resolved.AllIncludes, deps.includes...)
+	resolved.DepArtifacts = deps.artifacts
 
-	if len(voidLdFlags) > 0 {
+	if len(deps.voidLdFlags) > 0 {
 		resolved.AllLdFlags = append(resolved.AllLdFlags, "-Wl,--start-group")
-		resolved.AllLdFlags = append(resolved.AllLdFlags, voidLdFlags...)
+		resolved.AllLdFlags = append(resolved.AllLdFlags, deps.voidLdFlags...)
 		resolved.AllLdFlags = append(resolved.AllLdFlags, "-Wl,--end-group")
 	}
 
@@ -438,6 +454,52 @@ func (s *Scheduler) needRelink(resolved *ResolvedTarget, objs []string) bool {
 	return false
 }
 
+func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
+	fn := resolved.Node.Target.BuildFunc()
+	if fn == nil {
+		return nil
+	}
+
+	pkg := s.packages[resolved.Node.PkgName]
+	if pkg == nil {
+		return fmt.Errorf("no Package for TargetVoid target %s", resolved.Node.FullName)
+	}
+	s.populateDepsFromGraph(pkg, resolved.Node)
+
+	if pkg.InstallDir() != "" {
+		if info, err := os.Stat(pkg.InstallDir()); err == nil && info.IsDir() {
+			entries, _ := os.ReadDir(pkg.InstallDir())
+			if len(entries) > 0 {
+				vlog.Info("  SKIP (already installed)")
+				return nil
+			}
+		}
+		if err := os.MkdirAll(pkg.BuildDir(), 0755); err != nil {
+			return fmt.Errorf("create build dir: %w", err)
+		}
+		if err := os.MkdirAll(pkg.InstallDir(), 0755); err != nil {
+			return fmt.Errorf("create install dir: %w", err)
+		}
+	}
+
+	if err := fn(pkg); err != nil {
+		return err
+	}
+
+	pkgName := resolved.Node.PkgName
+	for _, dep := range pkg.Deps() {
+		if dep.Name == pkgName {
+			dep.UpdateLibDir()
+		}
+	}
+	for _, otherPkg := range s.packages {
+		if dep, ok := otherPkg.Deps()[pkgName]; ok {
+			dep.UpdateLibDir()
+		}
+	}
+	return nil
+}
+
 func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 	kind := resolved.Node.Target.Kind()
 
@@ -465,44 +527,7 @@ func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 		}
 		return s.linker.LinkObject(allObjs, resolved.OutputPath)
 	case api.TargetVoid:
-		if fn := resolved.Node.Target.BuildFunc(); fn != nil {
-			pkg := s.packages[resolved.Node.PkgName]
-			if pkg == nil {
-				return fmt.Errorf("no Package for TargetVoid target %s", resolved.Node.FullName)
-			}
-			s.populateDepsFromGraph(pkg, resolved.Node)
-			if pkg.InstallDir() != "" {
-				if info, err := os.Stat(pkg.InstallDir()); err == nil && info.IsDir() {
-					entries, _ := os.ReadDir(pkg.InstallDir())
-					if len(entries) > 0 {
-						vlog.Info("  SKIP (already installed)")
-						return nil
-					}
-				}
-				if err := os.MkdirAll(pkg.BuildDir(), 0755); err != nil {
-					return fmt.Errorf("create build dir: %w", err)
-				}
-				if err := os.MkdirAll(pkg.InstallDir(), 0755); err != nil {
-					return fmt.Errorf("create install dir: %w", err)
-				}
-			}
-			if err := fn(pkg); err != nil {
-				return err
-			}
-			pkgName := resolved.Node.PkgName
-			for _, dep := range pkg.Deps() {
-				if dep.Name == pkgName {
-					dep.UpdateLibDir()
-				}
-			}
-			for _, otherPkg := range s.packages {
-				if dep, ok := otherPkg.Deps()[pkgName]; ok {
-					dep.UpdateLibDir()
-				}
-			}
-			return nil
-		}
-		return nil
+		return s.buildVoidTarget(resolved)
 	}
 	return nil
 }

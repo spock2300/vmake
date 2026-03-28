@@ -87,6 +87,33 @@ func runQuery(cmd *cobra.Command, args []string) {
 	}
 }
 
+func formatPkgDir(pkgDir, workDir string) string {
+	if pkgDir == "" {
+		return ""
+	}
+	rel, err := filepath.Rel(workDir, pkgDir)
+	if err != nil {
+		rel = pkgDir
+	}
+	return fmt.Sprintf("[%s]", rel)
+}
+
+func formatPkgParts(name string, kinds []targetKindInfo, pkgDir, workDir string, ctx *RuntimeContext, globalValues map[string]any) []string {
+	var parts []string
+	if len(kinds) > 0 {
+		parts = append(parts, kinds[0].name, fmt.Sprintf("(%s)", kinds[0].kind))
+	} else {
+		parts = append(parts, name)
+	}
+	if dir := formatPkgDir(pkgDir, workDir); dir != "" {
+		parts = append(parts, dir)
+	}
+	if opts := formatOptions(ctx, name, globalValues); opts != "" {
+		parts = append(parts, opts)
+	}
+	return parts
+}
+
 func printTree(
 	w *os.File,
 	graph map[string]*resolver.PackageNode,
@@ -118,55 +145,21 @@ func printTree(
 	if isLocal {
 		kinds := collectTargetKinds(node.Pkg, name, pkgDirs[name], ctx, globalValues)
 		if len(kinds) > 0 {
-			for i, k := range kinds {
-				if i == 0 {
-					line := prefix + connector
-					var parts []string
-					parts = append(parts, k.name)
-					parts = append(parts, fmt.Sprintf("(%s)", k.kind))
-					if dir, ok := pkgDirs[name]; ok {
-						rel, err := filepath.Rel(workDir, dir)
-						if err != nil {
-							rel = dir
-						}
-						parts = append(parts, fmt.Sprintf("[%s]", rel))
-					}
-					opts := formatOptions(ctx, name, globalValues)
-					if opts != "" {
-						parts = append(parts, opts)
-					}
-					fmt.Fprintf(w, "%s%s\n", line, strings.Join(parts, " "))
-				} else {
-					indent := prefix
-					if !isRoot {
-						indent += "    "
-					}
-					fmt.Fprintf(w, "%s%s (%s)\n", indent, k.name, k.kind)
+			parts := formatPkgParts(name, kinds, pkgDirs[name], workDir, ctx, globalValues)
+			fmt.Fprintf(w, "%s%s%s\n", prefix, connector, strings.Join(parts, " "))
+			for _, k := range kinds[1:] {
+				indent := prefix
+				if !isRoot {
+					indent += "    "
 				}
+				fmt.Fprintf(w, "%s%s (%s)\n", indent, k.name, k.kind)
 			}
 		} else {
-			var parts []string
-			parts = append(parts, name)
-			if dir, ok := pkgDirs[name]; ok {
-				rel, err := filepath.Rel(workDir, dir)
-				if err != nil {
-					rel = dir
-				}
-				parts = append(parts, fmt.Sprintf("[%s]", rel))
-			}
-			opts := formatOptions(ctx, name, globalValues)
-			if opts != "" {
-				parts = append(parts, opts)
-			}
+			parts := formatPkgParts(name, nil, pkgDirs[name], workDir, ctx, globalValues)
 			fmt.Fprintf(w, "%s%s%s\n", prefix, connector, strings.Join(parts, " "))
 		}
 	} else {
-		var parts []string
-		parts = append(parts, name)
-		opts := formatOptions(ctx, name, globalValues)
-		if opts != "" {
-			parts = append(parts, opts)
-		}
+		parts := formatPkgParts(name, nil, "", workDir, ctx, globalValues)
 		fmt.Fprintf(w, "%s%s%s\n", prefix, connector, strings.Join(parts, " "))
 	}
 
