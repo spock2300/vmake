@@ -22,16 +22,6 @@ func FileExists(path string) bool {
 	return err == nil
 }
 
-func IsDir(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
-}
-
-func IsFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
-
 func RemoveAll(path string) error {
 	if err := os.RemoveAll(path); err != nil {
 		return fmt.Errorf("remove %s: %w", path, err)
@@ -41,14 +31,6 @@ func RemoveAll(path string) error {
 
 func RemoveIfExists(path string) {
 	_ = os.RemoveAll(path)
-}
-
-func HasFiles(dir string) bool {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false
-	}
-	return len(entries) > 0
 }
 
 func DetectLibDir(installDir string) string {

@@ -117,23 +117,6 @@ func SetEntry(cfg *ConfigFile, name string, entry *EntryConfig) {
 	cfg.Entries[name] = entry
 }
 
-func GetGlobalOption(cfg *ConfigFile, name string) any {
-	if cfg.Global == nil || cfg.Global.Options == nil {
-		return nil
-	}
-	return cfg.Global.Options[name]
-}
-
-func SetGlobalOption(cfg *ConfigFile, name string, value any) {
-	if cfg.Global == nil {
-		cfg.Global = &GlobalConfig{Options: make(map[string]any)}
-	}
-	if cfg.Global.Options == nil {
-		cfg.Global.Options = make(map[string]any)
-	}
-	cfg.Global.Options[name] = value
-}
-
 func BuildGlobalValues(cfg *ConfigFile) map[string]any {
 	vals := make(map[string]any)
 	if cfg.Global != nil {

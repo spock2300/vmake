@@ -20,10 +20,6 @@ func SetLevel(l Level) {
 	level = l
 }
 
-func GetLevel() Level {
-	return level
-}
-
 func Debug(format string, args ...any) {
 	if level >= VeryVerbose {
 		fmt.Printf(format+"\n", args...)

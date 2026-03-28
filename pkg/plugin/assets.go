@@ -2,7 +2,6 @@ package plugin
 
 import (
 	"fmt"
-	"strings"
 
 	iexec "gitee.com/spock2300/vmake/internal/exec"
 	"gitee.com/spock2300/vmake/internal/fs"
@@ -14,16 +13,6 @@ func RunGitLFS(repoDir string, args ...string) error {
 		return fmt.Errorf("git lfs failed: %w", err)
 	}
 	return nil
-}
-
-func PullLFSFiles(repoDir string, files ...string) error {
-	if len(files) == 0 {
-		return nil
-	}
-
-	args := []string{"pull", "--include"}
-	args = append(args, strings.Join(files, ","))
-	return RunGitLFS(repoDir, args...)
 }
 
 func DownloadFile(url, dest string) error {

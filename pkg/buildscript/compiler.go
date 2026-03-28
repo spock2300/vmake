@@ -55,11 +55,3 @@ func Compile(src Source) CompileResult {
 		ScriptPath:    scriptPath,
 	}
 }
-
-func CompileAll(sources []Source) []CompileResult {
-	results := make([]CompileResult, len(sources))
-	for i, src := range sources {
-		results[i] = Compile(src)
-	}
-	return results
-}

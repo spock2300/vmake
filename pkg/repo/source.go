@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 
-	iexec "gitee.com/spock2300/vmake/internal/exec"
 	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/pkg/api"
 )
@@ -106,22 +105,8 @@ func (m *SourceManager) UpdateSource(pkg *api.Package) error {
 	return FetchAndReset(repoDir)
 }
 
-func (m *SourceManager) GetSourceDir(repo, name string) string {
-	return filepath.Join(m.sourcesDir, repo, name, "repo")
-}
-
-func (m *SourceManager) HasSource(repo, name string) bool {
-	repoDir := filepath.Join(m.sourcesDir, repo, name, "repo")
-	return m.exists(repoDir) && m.exists(filepath.Join(repoDir, ".git"))
-}
-
 func (m *SourceManager) CleanSource(repo, name string) error {
 	return os.RemoveAll(filepath.Join(m.sourcesDir, repo, name))
-}
-
-func (m *SourceManager) DistClean(repo, name string) error {
-	repoDir := filepath.Join(m.sourcesDir, repo, name, "repo")
-	return iexec.RunToStdout(repoDir, "make", "distclean")
 }
 
 func (m *SourceManager) exists(path string) bool {

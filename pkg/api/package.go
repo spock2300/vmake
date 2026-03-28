@@ -214,9 +214,6 @@ func (p *Package) GetRequireContext() *PackageRequireContext { return p.requireC
 func (p *Package) GetRef(version string) string              { return p.versions[version] }
 func (p *Package) Libs() []string                            { return p.libs }
 func (p *Package) GetRequireFuncs() []RequireFunc            { return p.requireFuncs }
-func (p *Package) GetConfigFuncs() []ConfigFunc              { return p.configFuncs }
-func (p *Package) GetBuildFuncs() []BuildFunc                { return p.buildFuncs }
-func (p *Package) GetInstallFuncs() []InstallFunc            { return p.installFuncs }
 func (p *Package) GetPackageFunc() PackageFunc               { return p.packageFunc }
 
 func execFuncs[T any](dir string, funcs []T, fn func(T)) {
@@ -237,15 +234,6 @@ func (p *Package) ExecBuildFuncs(dir string, fn func(BuildFunc)) {
 
 func (p *Package) ExecInstallFuncs(dir string, fn func(InstallFunc)) {
 	execFuncs(dir, p.installFuncs, fn)
-}
-
-func (p *Package) ExecPackageFunc(dir string) {
-	if p.packageFunc == nil {
-		return
-	}
-	execInDir(dir, func() {
-		p.packageFunc(p)
-	})
 }
 
 func (p *Package) UpdateRequireContext(cfgVals map[string]any, options map[string]*Option) {

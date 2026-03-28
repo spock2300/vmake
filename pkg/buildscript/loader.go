@@ -31,8 +31,3 @@ func (l *LoadedScript) ExtractPackage() *api.Package {
 	}
 	return l.pkg
 }
-
-func (l *LoadedScript) GetRequires() []api.RequireInfo {
-	pkg := l.ExtractPackage()
-	return pkg.GetRequireContext().GetRequires()
-}

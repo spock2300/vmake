@@ -105,12 +105,3 @@ func IsCppFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	return ext == ".cpp" || ext == ".cc" || ext == ".cxx" || ext == ".C"
 }
-
-func IsCFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	return ext == ".c"
-}
-
-func IsSourceFile(path string) bool {
-	return IsCFile(path) || IsCppFile(path)
-}

@@ -3,7 +3,6 @@ package repo
 import (
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	exec "gitee.com/spock2300/vmake/internal/exec"
@@ -95,26 +94,6 @@ func IsAlreadyAtRef(dir, ref string) bool {
 		return false
 	}
 	return head == exec.TrimOutput(output)
-}
-
-func GetCurrentTag(dir string) (string, error) {
-	output, err := exec.RunWithOptions("git", []string{"describe", "--tags", "--exact-match"}, exec.RunOptions{Dir: dir})
-	if err != nil {
-		return "", err
-	}
-	return exec.TrimOutput(output), nil
-}
-
-func ListTags(dir string) ([]string, error) {
-	output, err := exec.RunWithOptions("git", []string{"tag", "-l"}, exec.RunOptions{Dir: dir})
-	if err != nil {
-		return nil, err
-	}
-	tags := strings.Split(exec.TrimOutput(output), "\n")
-	if len(tags) == 1 && tags[0] == "" {
-		return nil, nil
-	}
-	return tags, nil
 }
 
 func IsPatchApplied(dir, patchFile string) bool {

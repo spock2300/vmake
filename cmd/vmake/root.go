@@ -255,22 +255,4 @@ func GetPackageDirs(graph *resolver.Graph) map[string]string {
 	return dirs
 }
 
-func getVMakeSourceDir() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	exeDir := filepath.Dir(exe)
-	goMod := filepath.Join(exeDir, "go.mod")
-	if _, err := os.Stat(goMod); err == nil {
-		return exeDir
-	}
-	parent := filepath.Dir(exeDir)
-	goMod = filepath.Join(parent, "go.mod")
-	if _, err := os.Stat(goMod); err == nil {
-		return parent
-	}
-	return ""
-}
-
 var _ = fmt.Sprintf
