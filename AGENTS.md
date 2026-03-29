@@ -12,10 +12,15 @@ go vet ./... && gofmt -w .       # Lint
 No Go unit tests. Test via integration projects in `test_data/`:
 
 ```bash
-cd test_data/01_simple_c && ../../vmake build && ./hello          # Single test
-cd test_data/08_with_package && ../../vmake build                 # Third-party packages
-for d in test_data/0[1-9]_*/; do (cd "$d" && ../../vmake build) || break; done  # All tests
+# Single test (pick any numbered directory)
+cd test_data/01_simple_c && ../../vmake build && ./hello
+cd test_data/08_with_package && ../../vmake build
+
+# Run all tests (01-13)
+for d in test_data/0[1-9]_*/ test_data/1[0-9]_*/; do (cd "$d" && ../../vmake build) || break; done
 ```
+
+Known pre-existing failures (ignore): `09_with_curl` (mbedtls submodule), `10_local_repo` (package not found).
 
 ## Core Philosophy
 
@@ -64,7 +69,7 @@ ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c").AddIncludes("inc
 - Library code never panics, always return error
 - Include context: `return fmt.Errorf("git clone %s -> %s: %w", url, dir, err)`
 - CLI commands may call `os.Exit(1)` on fatal errors
-- Use `vlog.Fatal()` only in CLI/builder code, never in library code
+- `vlog.Fatal()` in CLI/builder code is acceptable; in `pkg/api` context helpers it exists for user-facing errors
 
 ### Cross-Platform Paths
 Use `filepath.Join()` for filesystem paths. Do NOT use for logical identifiers:
@@ -72,10 +77,14 @@ Use `filepath.Join()` for filesystem paths. Do NOT use for logical identifiers:
 - Target identifiers: `pkg:target` (`:` as delimiter)
 
 ### Code Organization
-- Struct fields are private; access via getter/setter methods (exceptions: `InstalledPackage`, `PackageMeta`, config types)
+- Struct fields are private; access via getter/setter methods
+- Exceptions with public fields: `InstalledPackage`, `PackageMeta`, config types (`Toolchain`, `Tools`), resolver types (`PackageNode`, `Graph`)
 - Within a file: setters first, then getters, then remove methods, then private helpers
 - Struct fields ordered by logical grouping, not alphabetically
 - Embedded types at the top of the struct definition
+
+### No Interfaces
+The codebase uses function type aliases (`type ConfigFunc func(...)`) and struct-embedded function fields instead of traditional Go interfaces.
 
 ## Package Structure
 
@@ -117,13 +126,6 @@ Phase 3: OnBuild         -> Execute callbacks -> Generate Targets -> Compile/Lin
 ```
 
 Pipeline: `cmd/vmake/root.go:runPipeline()`
-
-## Conditional Expressions
-```go
-ctx.Target("app").
-    AddDefines(ctx.If("debug", "DEBUG=1")...).
-    AddCFlags(ctx.Select("optimization", map[string]string{"O0": "-O0", "O2": "-O2"}))
-```
 
 ## Key Types
 ```go
@@ -167,7 +169,7 @@ Two ecosystem types coexist:
 | **Add command** | `vmake repo add name url` | `vmake repo add --prefix name "https://..../{name}.git"` |
 | **Update** | `vmake repo update name` | `vmake pkg update repo/name` |
 
-Index repos are checked first; prefix repos are fallback. Prefix build.go must NOT use `SetGit`/`AddVersion` — system handles automatically. Auto-fetch picks up new remote tags on cached repos.
+Index repos are checked first; prefix repos are fallback. Prefix build.go must NOT use `SetGit`/`AddVersion` — system handles automatically.
 
 ## Extension System
 
@@ -182,6 +184,11 @@ func Main(ctx *plugin.Context) {
 ```
 
 **Plugin Context** (`pkg/plugin/api.go`): `VMakeDir`, `PluginDir`, `CommandName`, `AddSubCommand`, `RegisterToolchain`, `GetToolchains`, `SetOnMissing`, `AddGlobalFlags`, `DownloadFile`, `ExtractArchive`, `RunGitLFS`
+
+## Known Gotchas
+- `cmd/vmake/mainfest_cmd.go` — filename is misspelled ("mainfest" not "manifest"), do NOT rename
+- `vlog` has `Debug`, `Info`, `Error`, `Fatal` — no `Warn` method
+- `test_data/09_with_curl` and `test_data/10_local_repo` have pre-existing failures unrelated to code changes
 
 ## What Not To Do
 - IDE integration plugins
