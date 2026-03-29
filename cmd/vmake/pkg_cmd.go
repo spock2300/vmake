@@ -71,36 +71,65 @@ var pkgSearchCmd = &cobra.Command{
 
 		mgr := getRepoManager()
 
-		repos := mgr.List()
-		if len(repos) == 0 {
+		infos := mgr.ListInfo()
+		if len(infos) == 0 {
 			fmt.Println("No repositories found. Use 'vmake repo add' to add one.")
 			return
 		}
 
 		fmt.Println("Available packages:")
-		for _, repoName := range repos {
-			repoPath := filepath.Join(getReposDir(), repoName, "packages")
-			letterDirs, err := readDirEntries(repoPath)
-			if err != nil {
-				continue
-			}
-
-			for _, letterDir := range letterDirs {
-				pkgDir := filepath.Join(repoPath, letterDir.Name())
-				pkgs, err := readDirEntries(pkgDir)
-				if err != nil {
-					continue
-				}
-
-				for _, pkg := range pkgs {
-					fullName := repoName + "/" + pkg.Name()
-					if pattern == "" || strings.Contains(fullName, pattern) {
-						fmt.Printf("  %s\n", fullName)
-					}
-				}
+		for _, info := range infos {
+			if !info.Prefix {
+				searchIndexRepo(info.Name, pattern)
+			} else {
+				searchPrefixRepo(info.Name, pattern)
 			}
 		}
 	},
+}
+
+func searchIndexRepo(repoName, pattern string) {
+	repoPath := filepath.Join(getReposDir(), repoName, "packages")
+	letterDirs, err := readDirEntries(repoPath)
+	if err != nil {
+		return
+	}
+
+	for _, letterDir := range letterDirs {
+		pkgDir := filepath.Join(repoPath, letterDir.Name())
+		pkgs, err := readDirEntries(pkgDir)
+		if err != nil {
+			continue
+		}
+
+		for _, pkg := range pkgs {
+			fullName := repoName + "/" + pkg.Name()
+			if pattern == "" || strings.Contains(fullName, pattern) {
+				fmt.Printf("  %s\n", fullName)
+			}
+		}
+	}
+}
+
+func searchPrefixRepo(repoName, pattern string) {
+	cacheDir := filepath.Join(getCacheDir(), repoName)
+	entries, err := readDirEntries(cacheDir)
+	if err != nil {
+		return
+	}
+
+	for _, entry := range entries {
+		pkgName := entry.Name()
+		repoDir := filepath.Join(cacheDir, pkgName, "repo")
+		buildGo := filepath.Join(repoDir, "build.go")
+		if _, err := os.Stat(buildGo); err != nil {
+			continue
+		}
+		fullName := repoName + "/" + pkgName
+		if pattern == "" || strings.Contains(fullName, pattern) {
+			fmt.Printf("  %s (cached)\n", fullName)
+		}
+	}
 }
 
 var pkgCleanCmd = &cobra.Command{
@@ -144,14 +173,23 @@ var pkgUpdateCmd = &cobra.Command{
 		}
 
 		repoMgr := getRepoManager()
-		_, err := repoMgr.FindPackage(repoName, pkgName)
-		fatalErr(err)
-
 		sourceMgr := repo.NewSourceManager(getCacheDir())
-		pkg := api.NewPackage()
-		pkg.SetRepo(repoName).SetName(pkgName)
 
-		fatalErr(sourceMgr.UpdateSource(pkg))
+		if repoMgr.IsPrefix(repoName) {
+			urlTemplate, err := repoMgr.GetPrefixURL(repoName)
+			fatalErr(err)
+			gitURL := repo.ResolvePrefixURL(urlTemplate, pkgName)
+			pkg := api.NewPackage()
+			pkg.SetRepo(repoName).SetName(pkgName)
+			pkg.SetGit(gitURL)
+			fatalErr(sourceMgr.UpdateSource(pkg))
+		} else {
+			_, err := repoMgr.FindPackage(repoName, pkgName)
+			fatalErr(err)
+			pkg := api.NewPackage()
+			pkg.SetRepo(repoName).SetName(pkgName)
+			fatalErr(sourceMgr.UpdateSource(pkg))
+		}
 
 		fmt.Printf("Updated source for package '%s'\n", pkgRef)
 	},

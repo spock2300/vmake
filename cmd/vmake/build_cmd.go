@@ -274,7 +274,14 @@ func prepareRemotePackages(ctx *RuntimeContext, tc *toolchain.Toolchain, needed 
 
 		pkg := api.NewPackage()
 		pkg.SetRepo(repoName).SetName(pkgName)
-		if node.Pkg != nil {
+
+		if node.IsPrefix() {
+			if cfg.Version == "" {
+				cfg.Version = node.PrefixSelected
+			}
+			pkg.SetGit(node.PrefixGitURL)
+			pkg.SetVersions(node.PrefixVersions)
+		} else if node.Pkg != nil {
 			pkg.SetGit(node.Pkg.GitURLs()...)
 			pkg.SetVersions(node.Pkg.Versions())
 		} else if node.Source != nil && node.Source.Path != "" {

@@ -7,21 +7,30 @@ import (
 	"sort"
 	"strings"
 
+	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/buildscript"
+	vlog "gitee.com/spock2300/vmake/pkg/log"
 	"gitee.com/spock2300/vmake/pkg/repo"
 )
 
 type PackageNode struct {
-	ID       string
-	Source   *buildscript.Source
-	Pkg      *api.Package
-	Deps     []string
-	Deferred bool
+	ID             string
+	Source         *buildscript.Source
+	Pkg            *api.Package
+	Deps           []string
+	Deferred       bool
+	PrefixGitURL   string
+	PrefixVersions map[string]string
+	PrefixSelected string
 }
 
 func (n *PackageNode) IsLocal() bool {
 	return n.Source != nil && n.Source.Origin == api.SourceLocal
+}
+
+func (n *PackageNode) IsPrefix() bool {
+	return n.PrefixGitURL != ""
 }
 
 type Graph struct {
@@ -83,7 +92,7 @@ func (r *Resolver) ResolveAll(localSources []buildscript.Source) error {
 		if _, exists := r.graph.Packages[src.Name]; exists {
 			continue
 		}
-		if _, err := r.resolveRecursive(src.Name, nil); err != nil {
+		if _, err := r.resolveRecursive(src.Name, "", nil); err != nil {
 			return err
 		}
 	}
@@ -123,11 +132,21 @@ func (r *Resolver) resolveDeferredNode(id string, node *PackageNode) (*PackageNo
 	}
 
 	scriptPath := r.scriptPath(src)
+	var newNode *PackageNode
+	var err error
 	if !r.force && src.Path != "" && r.hasCachedScript(scriptPath, src.Path) {
-		return r.resolveFromCache(id, scriptPath, src, []string{id})
+		newNode, err = r.resolveFromCache(id, scriptPath, src, []string{id})
+	} else {
+		newNode, err = r.resolveOne(id, src, []string{id})
+	}
+	if err != nil {
+		return nil, err
 	}
 
-	return r.resolveOne(id, src, []string{id})
+	newNode.PrefixGitURL = node.PrefixGitURL
+	newNode.PrefixVersions = node.PrefixVersions
+	newNode.PrefixSelected = node.PrefixSelected
+	return newNode, nil
 }
 
 func (r *Resolver) FilterDeps(id string, cfgVals map[string]any, options map[string]*api.Option) error {
@@ -156,7 +175,7 @@ func (r *Resolver) FilterDeps(id string, cfgVals map[string]any, options map[str
 	return nil
 }
 
-func (r *Resolver) resolveRecursive(id string, path []string) (*PackageNode, error) {
+func (r *Resolver) resolveRecursive(id string, constraint string, path []string) (*PackageNode, error) {
 	if err := api.CheckCycle(path, id); err != nil {
 		return nil, err
 	}
@@ -165,9 +184,13 @@ func (r *Resolver) resolveRecursive(id string, path []string) (*PackageNode, err
 		return node, nil
 	}
 
-	src, err := r.findSource(id)
+	src, err := r.findSource(id, constraint)
 	if err != nil {
 		return nil, err
+	}
+
+	if node, exists := r.graph.Packages[id]; exists {
+		return node, nil
 	}
 
 	scriptPath := r.scriptPath(src)
@@ -217,7 +240,7 @@ func (r *Resolver) resolveFromCache(id string, scriptPath string, src *buildscri
 	r.graph.Packages[id] = node
 
 	for _, req := range pkg.GetRequires().Get() {
-		depNode, err := r.resolveRecursive(req.Name, append(path, id))
+		depNode, err := r.resolveRecursive(req.Name, req.Constraint, append(path, id))
 		if err != nil {
 			return nil, err
 		}
@@ -227,26 +250,99 @@ func (r *Resolver) resolveFromCache(id string, scriptPath string, src *buildscri
 	return node, nil
 }
 
-func (r *Resolver) findSource(id string) (*buildscript.Source, error) {
+func (r *Resolver) findSource(id string, constraint string) (*buildscript.Source, error) {
 	if src, ok := r.sources[id]; ok {
 		return src, nil
 	}
 
 	repoName, pkgName, _ := api.SplitPackageRef(id)
+
 	buildGo, err := r.repoMgr.FindPackageGo(repoName, pkgName)
-	if err != nil {
+	if err == nil {
+		src := &buildscript.Source{
+			Name:      id,
+			Path:      buildGo,
+			Dir:       filepath.Dir(buildGo),
+			OutputDir: r.buildscriptOutputDir(id),
+			Origin:    api.SourceRemote,
+			Force:     r.force,
+		}
+		r.sources[id] = src
+		return src, nil
+	}
+
+	if !r.repoMgr.IsPrefix(repoName) {
 		return nil, fmt.Errorf("find %s: %w", id, err)
+	}
+
+	return r.findPrefixSource(id, repoName, pkgName, constraint)
+}
+
+func (r *Resolver) findPrefixSource(id, repoName, pkgName, constraint string) (*buildscript.Source, error) {
+	urlTemplate, err := r.repoMgr.GetPrefixURL(repoName)
+	if err != nil {
+		return nil, err
+	}
+
+	gitURL := repo.ResolvePrefixURL(urlTemplate, pkgName)
+	repoDir := filepath.Join(r.cacheDir, repoName, pkgName, "repo")
+
+	if !fs.FileExists(repoDir) || !fs.FileExists(filepath.Join(repoDir, ".git")) {
+		vlog.Info("  cloning %s -> %s", gitURL, repoDir)
+		if cloneErr := repo.Clone(gitURL, repoDir); cloneErr != nil {
+			return nil, fmt.Errorf("clone %s: %w", gitURL, cloneErr)
+		}
+	} else {
+		repo.FetchTags(repoDir)
+	}
+
+	tags, err := repo.ListTags(repoDir)
+	if err != nil {
+		return nil, fmt.Errorf("list tags for %s: %w", id, err)
+	}
+
+	versions := repo.FilterValidVersions(tags)
+	if len(versions) == 0 {
+		return nil, fmt.Errorf("no valid versions found for %s", id)
+	}
+
+	selectedVersion, selectedRef, err := repo.SelectPrefixVersion(versions, constraint)
+	if err != nil {
+		return nil, err
+	}
+
+	vlog.Info("  %s@%s (ref: %s)", id, selectedVersion, selectedRef)
+
+	if err := repo.Checkout(repoDir, selectedRef); err != nil {
+		return nil, fmt.Errorf("checkout %s for %s: %w", selectedRef, id, err)
+	}
+
+	buildGo := filepath.Join(repoDir, "build.go")
+	if !fs.FileExists(buildGo) {
+		return nil, fmt.Errorf("build.go not found in %s", repoDir)
 	}
 
 	src := &buildscript.Source{
 		Name:      id,
 		Path:      buildGo,
-		Dir:       filepath.Dir(buildGo),
+		Dir:       repoDir,
 		OutputDir: r.buildscriptOutputDir(id),
 		Origin:    api.SourceRemote,
 		Force:     r.force,
 	}
+
+	node := &PackageNode{
+		ID:             id,
+		Source:         src,
+		Deferred:       true,
+		Deps:           []string{},
+		PrefixGitURL:   gitURL,
+		PrefixVersions: versions,
+		PrefixSelected: selectedVersion,
+	}
+	r.graph.Packages[id] = node
 	r.sources[id] = src
+
 	return src, nil
 }
 

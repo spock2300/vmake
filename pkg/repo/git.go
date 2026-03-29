@@ -3,6 +3,7 @@ package repo
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	exec "gitee.com/spock2300/vmake/internal/exec"
@@ -48,6 +49,22 @@ func FetchAndReset(dir string) error {
 
 func Pull(dir string) error {
 	return gitRun(dir, []string{"pull", "--ff-only"}, 2*time.Minute)
+}
+
+func ListTags(dir string) ([]string, error) {
+	output, err := exec.RunWithOptions("git", []string{"tag", "--list"}, exec.RunOptions{Dir: dir})
+	if err != nil {
+		return nil, fmt.Errorf("git tag --list in %s: %w", dir, err)
+	}
+	lines := strings.Split(exec.TrimOutput(output), "\n")
+	var tags []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			tags = append(tags, line)
+		}
+	}
+	return tags, nil
 }
 
 func GetCurrentCommit(dir string) (string, error) {
