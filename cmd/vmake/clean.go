@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/buildscript"
+	"gitee.com/spock2300/vmake/pkg/config"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 
 	"github.com/spf13/cobra"
@@ -45,10 +46,35 @@ func runClean(cmd *cobra.Command, args []string) {
 			cleanAllToolchains(pkg.Dir, pkg.Name)
 		} else {
 			cleanCurrentToolchain(pkg.Dir, pkg.Name, buildDir)
+			cleanPkgToolchain(pkg.Dir, pkg.Name, ctx.Config, tcName, mode)
 		}
 	}
 
 	vlog.Info("Clean completed!")
+}
+
+func cleanPkgToolchain(dir, pkgName string, cfg *config.ConfigFile, defaultTc, mode string) {
+	pkgTc := resolvePkgToolchain(cfg, pkgName, defaultTc)
+	if pkgTc == defaultTc {
+		return
+	}
+	buildDir := fmt.Sprintf("%s-%s", pkgTc, mode)
+	cleanDir(filepath.Join(dir, "build", buildDir), pkgName, buildDir)
+}
+
+func cleanCurrentToolchain(dir, pkgName, buildDir string) {
+	cleanDir(filepath.Join(dir, "build", buildDir), pkgName, buildDir)
+}
+
+func cleanDir(path, pkgName, label string) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return
+	}
+	if err := os.RemoveAll(path); err != nil {
+		vlog.Error("Failed to clean %s/%s: %v", pkgName, label, err)
+		return
+	}
+	vlog.Info("Cleaned %s/%s/", pkgName, label)
 }
 
 func cleanAllToolchains(dir, pkgName string) {
@@ -67,11 +93,6 @@ func cleanAllToolchains(dir, pkgName string) {
 			continue
 		}
 
-		tcDir := filepath.Join(buildBase, name)
-		if err := os.RemoveAll(tcDir); err != nil {
-			vlog.Error("Failed to clean %s/%s: %v", pkgName, name, err)
-			continue
-		}
-		vlog.Info("Cleaned %s/%s/", pkgName, name)
+		cleanDir(filepath.Join(buildBase, name), pkgName, name)
 	}
 }

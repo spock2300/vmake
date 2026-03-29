@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 
@@ -51,18 +49,8 @@ func executeCleanLocal(ctx *RuntimeContext) {
 		}
 
 		cleanCurrentToolchain(node.Source.Dir, name, buildDir)
+		cleanPkgToolchain(node.Source.Dir, name, ctx.Config, tcName, mode)
 	}
 
 	vlog.Info("Clean completed!")
-}
-
-func cleanCurrentToolchain(dir, pkgName, buildDir string) {
-	tcDir := filepath.Join(dir, "build", buildDir)
-	if _, err := os.Stat(tcDir); err == nil {
-		if err := os.RemoveAll(tcDir); err != nil {
-			vlog.Error("Failed to clean %s/%s: %v", pkgName, buildDir, err)
-			return
-		}
-		vlog.Info("Cleaned %s/%s/", pkgName, buildDir)
-	}
 }

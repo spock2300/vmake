@@ -594,7 +594,7 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 		executePackageOnBuild(ctx, name, node, pkgDirs, allTargets, remote, cfg.GlobalValues, buildSubGraphFn, depOutputFn, cfg.Tc)
 	}
 
-	for pkgName := range subGraphPkgs {
+	for pkgName := range subGraphBuilt {
 		delete(allTargets, pkgName)
 	}
 
