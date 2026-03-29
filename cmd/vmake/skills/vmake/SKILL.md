@@ -151,11 +151,25 @@ ctx.Target("utils").
 | `vmake rebuild` | Clean and rebuild |
 | `vmake config` | Open TUI for option management |
 | `vmake clean` | Remove build artifacts |
-| `vmake repo add <name> <url>` | Add package repository |
-| `vmake pkg list` | List installed packages |
-| `vmake ext list` | List extensions |
-| `vmake toolchain list` | Show available toolchains |
 | `vmake query` | Show dependency tree (AI integration) |
+| `vmake toolchain list` | Show available toolchains |
+| `vmake toolchain show` | Show toolchain details |
+| `vmake repo add <name> <url>` | Add package repository |
+| `vmake repo remove <name>` | Remove package repository |
+| `vmake repo list` | List package repositories |
+| `vmake repo update <name>` | Update package repository |
+| `vmake pkg list` | List installed packages |
+| `vmake pkg search [pattern]` | Search for packages |
+| `vmake pkg clean <repo/name>` | Clean package cache |
+| `vmake pkg update <repo/name>` | Update package source |
+| `vmake ext add <name> <url>` | Add extension repository |
+| `vmake ext remove <name>` | Remove extension repository |
+| `vmake ext list` | List extensions |
+| `vmake ext update [name]` | Update extension repositories |
+| `vmake skill install` | Install AI assistant skill |
+| `vmake git tag [version]` | Create version tag |
+| `vmake update [version]` | Update vmake |
+| `vmake version` | Print version info |
 
 Flags: `-v` verbose, `-V` very-verbose, `-q` quiet.
 
@@ -164,7 +178,6 @@ Flags: `-v` verbose, `-V` very-verbose, `-q` quiet.
 - **API Reference**: See `references/api.md` for complete API documentation
 - **CLI Reference**: See `references/cli.md` for full CLI command tree
 - **Examples**: See `examples/` for annotated build.go files
-- **Runtime docs**: Run `vmake doc` (if installed) for live documentation
 
 ## Key Conventions
 

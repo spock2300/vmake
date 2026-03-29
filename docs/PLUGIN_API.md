@@ -243,12 +243,11 @@ func (ctx *BuildContext) String(name string) string
 func (ctx *BuildContext) Int(name string) int
 
 // 安装规则
-func (ctx *BuildContext) AddInstalls(src, dest string) *BuildContext
-func (ctx *BuildContext) SetInstallFilter(filter InstallFilterFunc) *BuildContext
+func (ctx *BuildContext) AddInstalls(src, dest string) *InstallItemHolder
+func (ctx *BuildContext) SetInstallFilter(filter InstallFilterFunc) *InstallItemHolder
 
 // 子构建
-func (ctx *BuildContext) SetSubBuildFunc(fn func(tcName, dir string, args ...string) error)
-func (ctx *BuildContext) SubBuild(tcName, dir string, args ...string) error
+func (ctx *BuildContext) BuildSubGraph(pkgName string)
 
 // 其他
 func (ctx *BuildContext) PackageName() string
@@ -331,9 +330,7 @@ func (t *Target) Includes() []string
 func (t *Target) PublicIncludes() []string
 func (t *Target) Defines() []string
 func (t *Target) Languages() []string
-func (t *Target) PublicIncludes() []string
 func (t *Target) IncludeRule(dir string) []string
-func (t *Target) Languages() []string
 func (t *Target) Links() []string
 func (t *Target) Deps() []string
 func (t *Target) CFlags() []string
@@ -341,9 +338,9 @@ func (t *Target) CxxFlags() []string
 func (t *Target) LdFlags() []string
 func (t *Target) InstallDir() string
 func (t *Target) NoInstall() bool
-func (t *Target) InstallDir() string
-func (t *Target) NoInstall() bool
 func (t *Target) BuildFunc() func(*Package) error
+func (t *Target) LinkerScript() string
+func (t *Target) PostLinkSteps() []PostLinkStep
 ```
 
 `AddFiles/Includes/Defines/Links/CFlags/CxxFlags/LdFlags` 接受 `string` 或 `[]string`（条件表达式返回）。

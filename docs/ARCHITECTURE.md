@@ -123,7 +123,13 @@ vmake (RootCmd)
 │   └── update     # 更新扩展仓库
 ├── git
 │   └── tag        # Git 标签操作（支持版本号自动递增）
-├── doc            # 文档查看（AI agents）
+├── query          # 显示依赖树（AI 集成）
+├── skill          # AI skill 管理
+│   ├── install    # 安装 AI skill
+│   ├── uninstall  # 卸载 AI skill
+│   └── path       # 显示安装路径
+├── version        # 版本信息
+├── update [ver]   # 自我更新
 └── <plugin>       # 扩展插件提供的命令
     └── ...        # 插件自定义子命令
 ```
@@ -320,8 +326,10 @@ func Main(ctx *plugin.Context) {
 - `RegisterToolchain(name, tc)`: 注册工具链
 - `GetToolchains()`: 获取已注册工具链
 - `SetOnMissing(fn)`: 设置工具链缺失时的回调（用于自动下载）
+- `AddGlobalFlags(cflags, cxxflags)`: 添加全局编译标志
 - `DownloadFile(url, dest)`: 下载文件
 - `ExtractArchive(archive, dest)`: 解压归档
+- `RunGitLFS(repoDir, args...)`: 执行 Git LFS 命令
 
 ### 工具链自动下载
 

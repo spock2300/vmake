@@ -104,14 +104,15 @@ Import: `gitee.com/spock2300/vmake/pkg/api`
 | `SetRepo` | `(repo string)` | Repository name |
 | `SetName` | `(name string)` | Package name |
 | `SetOutputDir` | `(dir string)` | Output directory |
+| `SetDirs` | `(dirs PkgDirs)` | Source/Build/Install directories |
 
 ### Targets & Dependencies
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `Target` | `(name string) *Target` | Get or create a target |
-| `AddInstalls` | `(src, dest string) *Package` | Install entry |
-| `SetInstallFilter` | `(filter InstallFilterFunc) *Package` | Install file filter |
+| `AddInstalls` | `(src, dest string) *InstallItemHolder` | Install entry |
+| `SetInstallFilter` | `(filter InstallFilterFunc) *InstallItemHolder` | Install file filter |
 
 ### Build Helpers (run in OnBuild/OnInstall)
 
@@ -143,6 +144,7 @@ All build helpers return `error`.
 | `ObjDump()` | `string` | objdump tool path |
 | `NM()` | `string` | nm tool path |
 | `SourceDir()` / `BuildDir()` / `InstallDir()` / `OutputDir()` | `string` | Directories |
+| `GetRequires()` | `*Requires` | Package requires |
 | `Env()` | `map[string]string` | Toolchain env vars |
 | `Libs()` | `[]string` | Library deps |
 | `Deps()` | `map[string]*InstalledPackage` | Resolved dependencies |
@@ -234,6 +236,7 @@ Embedded: `ConfigAccessor`
 | `Option(name) *Option` | Get or create option |
 | `GlobalOption(name) *Option` | Get or create global option |
 | `GlobalMode() *Option` | Built-in mode option |
+| `Toolchains() []string` | Available toolchain names |
 | `SetConfigValue(name, val)` | Set config value |
 | `GetOptions() map[string]*Option` | All options |
 | `PackageName() string` | Package name |
@@ -250,6 +253,7 @@ Embedded: `ConfigAccessor`
 | `GetTargets() map[string]*Target` | All targets |
 | `PackageName() string` | Package name |
 | `AddInstalls(src, dest)` | Install entry |
+| `SetInstallFilter(filter)` | Install file filter |
 | `BuildSubGraph(pkgName)` | Build package as independent sub-graph |
 | `DepOutput(depRef) string` | Get output path of dependency target |
 | `Exec(name, args...)` | Run command with logging |
@@ -331,6 +335,13 @@ Embedded by all context types. Provides option value access.
 ---
 
 ## Types
+
+	type PkgDirs struct { SourceDir string; BuildDir string; InstallDir string }
+
+	type Requires struct { ... }
+	func (r *Requires) Add(deps ...string)
+	func (r *Requires) Get() []RequireInfo
+	func (r *Requires) Reset()
 
 	type PackageMeta struct { Repo string; Name string }
 

@@ -9,17 +9,12 @@ go build -o vmake ./cmd/vmake    # Build
 go vet ./... && gofmt -w .       # Lint
 ```
 
-**Testing**: No Go unit tests. Test via integration projects in `test_data/`:
+No Go unit tests. Test via integration projects in `test_data/`:
 
 ```bash
-# Single integration test (run from repo root)
-cd test_data/01_simple_c && ../../vmake build && ./hello
-
-# Test with third-party package
-cd test_data/08_with_package && ../../vmake build
-
-# Run all integration tests
-for d in test_data/0[1-9]_*/; do (cd "$d" && ../../vmake build) || break; done
+cd test_data/01_simple_c && ../../vmake build && ./hello          # Single test
+cd test_data/08_with_package && ../../vmake build                 # Third-party packages
+for d in test_data/0[1-9]_*/; do (cd "$d" && ../../vmake build) || break; done  # All tests
 ```
 
 ## Core Philosophy
@@ -76,6 +71,12 @@ Use `filepath.Join()` for filesystem paths. Do NOT use for logical identifiers:
 - Package identifiers: `repo/name` (string concatenation)
 - Target identifiers: `pkg:target` (`:` as delimiter)
 
+### Code Organization
+- Struct fields are private; access via getter/setter methods (exceptions: `InstalledPackage`, `PackageMeta`, config types)
+- Within a file: setters first, then getters, then remove methods, then private helpers
+- Struct fields ordered by logical grouping, not alphabetically
+- Embedded types at the top of the struct definition
+
 ## Package Structure
 
 | Package | Responsibility | Plugin Importable |
@@ -98,20 +99,13 @@ Use `filepath.Join()` for filesystem paths. Do NOT use for logical identifiers:
 | `internal/gocompile` | Go plugin compilation | No |
 | `internal/jsonio` | JSON read/write utilities | No |
 
-**Principle**: `pkg/api` and `pkg/plugin` are public APIs that must remain stable.
+**Principle**: `pkg/api` and `pkg/plugin` are public APIs that must remain stable. `internal/` packages cannot be imported by `pkg/`.
 
-**Dependency DAG**: `internal/*` → `pkg/toolchain` → `pkg/api` → `pkg/buildscript, pkg/repo` → `pkg/resolver, pkg/plugin, pkg/build` → `cmd/vmake`
-
-**Key embedding**:
-- `RepoManager` and `plugin.Manager` embed `*gitstore.Store` for git repo CRUD
-- `buildscript.CompileResult` and `plugin.CompileResult` embed `gocompile.CompileResult`
-- `Package`, `ConfigContext`, `BuildContext`, `InstallContext` embed `ConfigAccessor`
+**Dependency DAG**: `internal/*` -> `pkg/toolchain` -> `pkg/api` -> `pkg/buildscript, pkg/repo` -> `pkg/resolver, pkg/plugin, pkg/build` -> `cmd/vmake`
 
 ## CLI Architecture
-- CLI uses `github.com/spf13/cobra`
-- Commands in `cmd/vmake/` as package-level vars, registered in `init()`
-- Flags bound with `Flags().BoolVarP/StringVarP`
-- Command factories (`newAddCmd`, `newRemoveCmd`, `newUpdateCmd`) in `cmd/vmake/helpers.go` for repo/ext commands
+- `github.com/spf13/cobra`, package-level vars, `init()` registration
+- Command factories (`newAddCmd`, `newRemoveCmd`, `newUpdateCmd`) in `cmd/vmake/helpers.go`
 
 ## Runtime Execution Flow
 ```
@@ -125,7 +119,6 @@ Phase 3: OnBuild         -> Execute callbacks -> Generate Targets -> Compile/Lin
 Pipeline: `cmd/vmake/root.go:runPipeline()`
 
 ## Conditional Expressions
-Use functional conditionals instead of if statements:
 ```go
 ctx.Target("app").
     AddDefines(ctx.If("debug", "DEBUG=1")...).
@@ -158,11 +151,7 @@ func Main(p *api.Package) {
 ## Target Dependencies
 - Same-package: `AddDeps("utils")`
 - Cross-package: `AddDeps("lib:utils")` using `package:target` format
-
-## Package Reference Parsing
-```go
-repo, name, ok := api.SplitPackageRef("official/zlib")
-```
+- Third-party: `AddDeps("official/zlib")` (declared via `OnRequire` + `AddRequires`)
 
 ## Extension System
 
@@ -176,75 +165,9 @@ func Main(ctx *plugin.Context) {
 }
 ```
 
-**Plugin Context** (`pkg/plugin/api.go`): `VMakeDir`, `PluginDir`, `CommandName`, `AddSubCommand`, `RegisterToolchain`, `GetToolchains`, `SetOnMissing`, `DownloadFile`, `ExtractArchive`, `RunGitLFS`
-
-**Commands**: `vmake ext add|remove|list|update`
-
-## Query Command (AI Integration)
-
-`vmake query` outputs a text-based dependency tree to stdout. Designed for AI tools to quickly understand the project structure without reading build.go files.
-
-**Pipeline depth**: Executes through Config phase (require → deferred → config → OnBuild for local targets). No compilation or linking.
-
-**Output format**:
-```
-app (binary) [src/app/] debug=false, ssl=openssl
-├── lib/utils (static) [src/lib/utils/]
-└── official/openssl (static) ssl=openssl
-    ├── official/zlib shared=false
-    └── official/mbedtls shared=false
-```
-
-- Local packages: `target_name (kind) [source_dir] option1=val1, option2=val2`
-- Remote packages: `package_name option1=val1, option2=val2`
-- Multiple targets each get their own line, first line includes source_dir and options
-- DAG dedup: packages already shown are not expanded again
-- Multiple root packages separated by blank lines
-- source_dir uses relative path for local packages, absolute for remote
-
-## AI Skill System
-
-VMake provides an AI skill optimized for coding assistants (Claude Code, OpenCode, Cursor, etc.). The skill helps AI assistants understand VMake build configuration.
-
-**Installation**:
-```bash
-vmake skill install           # Install to ~/.claude/skills/vmake/ and ~/.agents/skills/vmake/
-vmake skill install --project # Also install to project-level .claude/skills/
-```
-
-**Commands**:
-- `vmake skill install` - Install the VMake skill
-- `vmake skill uninstall` - Remove installed skill
-- `vmake skill path` - Show installation paths
-
-**Skill content**:
-- `SKILL.md` - Core guide (~180 lines): lifecycle, target, option, conditional, packages, CLI quick ref
-- `references/api.md` - Full API reference (from source code)
-- `references/cli.md` - CLI command tree (auto-generated from cobra)
-- `examples/*.md` - 7 annotated build.go examples
-
-**Updating**:
-```bash
-vmake update && vmake skill install  # Update vmake then reinstall skill
-```
-
-## TUI Styling (`pkg/tui/styles.go`)
-
-Uses `lipgloss`. Color palette:
-- Purple `#7D56F4`: Title, selection cursor, selected items
-- Cyan `#00D9FF`: Choice dropdown values
-- Pink `#F25D94`: Input fields, expanded tree nodes
-- Green `#04B575`: Option names, checkboxes (checked)
-- Gray `#626262`: Help text, descriptions
-- Red `#FF6B6B`: Confirmation prompts, modified values
+**Plugin Context** (`pkg/plugin/api.go`): `VMakeDir`, `PluginDir`, `CommandName`, `AddSubCommand`, `RegisterToolchain`, `GetToolchains`, `SetOnMissing`, `AddGlobalFlags`, `DownloadFile`, `ExtractArchive`, `RunGitLFS`
 
 ## What Not To Do
 - IDE integration plugins
 - Remote builds / distributed compilation
 - MSVC toolchain (not yet supported)
-
-## References
-- `docs/VMAKE_HOME.md` - Storage Structure
-- `docs/ARCHITECTURE.md` - Architecture
-- `docs/PLUGIN_API.md` - Plugin API
-- `test_data/01_simple_c` through `test_data/11_with_tinyexpr` - Test projects
