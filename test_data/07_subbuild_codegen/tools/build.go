@@ -12,10 +12,7 @@ func Main(p *api.Package) {
 	})
 
 	p.OnConfig(func(ctx *api.ConfigContext) {
-		ctx.Option("toolchain").
-			SetType(api.OptionChoice).
-			SetDefault("host").
-			SetValues(ctx.Toolchains()...)
+		ctx.ToolchainOption()
 
 		ctx.Option("magic").
 			SetType(api.OptionChoice).

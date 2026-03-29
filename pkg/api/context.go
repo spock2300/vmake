@@ -64,6 +64,14 @@ func (ctx *ConfigContext) GlobalMode() *Option {
 	return ctx.GlobalOption(ModeOptionName)
 }
 
+func (ctx *ConfigContext) ToolchainOption() *Option {
+	return ctx.Option(ToolchainOptionName).
+		SetType(OptionChoice).
+		SetDefault("host").
+		SetDescription("Build toolchain").
+		SetValues(ctx.Toolchains()...)
+}
+
 type BuildContext struct {
 	ConfigAccessor
 	*TargetRegistry

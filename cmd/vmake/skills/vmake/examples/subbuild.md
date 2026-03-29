@@ -61,10 +61,7 @@ Or declare it as an option in the tools package:
 ```go
 // tools/build.go
 p.OnConfig(func(ctx *api.ConfigContext) {
-    ctx.Option("toolchain").
-        SetType(api.OptionChoice).
-        SetValues("host", "arm-gcc").
-        SetDefault("host")
+    ctx.ToolchainOption()
 })
 ```
 

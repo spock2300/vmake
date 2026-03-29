@@ -17,7 +17,8 @@ Go-plugin-based C/C++ build system. Build instructions are written in Go (`build
 | Phase | Hook | Purpose |
 |-------|------|---------|
 | 1 | `OnRequire` | Declare third-party dependencies |
-| 2 | `OnConfig` | Define build options |
+| 2a | `ResolveDeferred` | Clone/compile remote packages (deferred resolution) |
+| 2b | `OnConfig` | Define build options |
 | 3 | `OnBuild` | Generate build targets |
 | 4 | `OnInstall` | Post-build install logic |
 
@@ -107,6 +108,9 @@ Import: `gitee.com/spock2300/vmake/pkg/api`
 | `SetName` | `(name string)` | Package name |
 | `SetOutputDir` | `(dir string)` | Output directory |
 | `SetDirs` | `(dirs PkgDirs)` | Source/Build/Install directories |
+| `SetToolchain` | `(tc *toolchain.Toolchain)` | Set toolchain |
+| `AddPatches` | `(paths ...string)` | Git patches to apply |
+| `SetPatches` | `(paths ...string)` | Set git patches |
 
 ### Targets & Dependencies
 
@@ -151,6 +155,16 @@ All build helpers return `error`.
 | `Libs()` | `[]string` | Library deps |
 | `Deps()` | `map[string]*InstalledPackage` | Resolved dependencies |
 | `SelectVersion(constraint)` | `(string, error)` | Best version match |
+| `GetVersions()` | `[]string` | Sorted version list |
+| `GitURLs()` | `[]string` | Git repository URLs |
+| `Homepage()` | `string` | Project homepage |
+| `Description()` | `string` | Package description |
+| `License()` | `string` | License identifier |
+| `Versions()` | `map[string]string` | Version to ref mapping |
+| `Submodules()` | `bool` | Git submodules enabled |
+| `ScriptDir()` | `string` | Build script directory |
+| `GetPatches()` | `[]string` | Git patch paths |
+| `SetDep(name, pkg)` | | Set resolved dependency |
 
 ---
 
@@ -223,7 +237,6 @@ All setters are fluent (return `*Option`).
 | `SetValues` | `(vals ...string)` | Choice values (OptionChoice) |
 | `SetShowIf` | `(fn func(ctx *ConfigContext) bool)` | Conditional visibility |
 | `SetGroup` | `(group string)` | Display group |
-| `SetGlobal` | `()` | Mark as global option |
 
 Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()`, `Group()`, `IsGlobal()`.
 
@@ -238,6 +251,7 @@ Embedded: `ConfigAccessor`
 | `Option(name) *Option` | Get or create option |
 | `GlobalOption(name) *Option` | Get or create global option |
 | `GlobalMode() *Option` | Built-in mode option |
+| `ToolchainOption() *Option` | Toolchain choice option (auto-populated from registered toolchains) |
 | `Toolchains() []string` | Available toolchain names |
 | `SetConfigValue(name, val)` | Set config value |
 | `GetOptions() map[string]*Option` | All options |
@@ -258,7 +272,7 @@ Embedded: `ConfigAccessor`
 | `SetInstallFilter(filter)` | Install file filter |
 | `BuildSubGraph(pkgName)` | Build package as independent sub-graph |
 | `DepOutput(depRef) string` | Get output path of dependency target |
-| `Exec(name, args...)` | Run command with logging |
+| `Exec(name, args...)` | Run command with logging (calls Fatal on error) |
 
 ---
 
@@ -302,8 +316,8 @@ Embedded by all context types. Provides option value access.
 | `If` | `(option string, then ...string) []string` | Values if bool is true |
 | `IfNot` | `(option string, then ...string) []string` | Values if bool is false |
 | `Equal` | `(option, value, dep string) string` | Return dep if String==value |
-| `Select` | `(option string, mapping map[string]string) string` | Map option value |
-| `When` | `(option string, value any) bool` | Compare option value |
+| `Select` | `(option string, mapping map[string]string) string` | Map option value (returns `""` in discoverAll mode) |
+| `When` | `(option string, value any) bool` | Compare option value (returns `true` in discoverAll mode) |
 | `Option` | `(name string) *Option` | Get or create option |
 | `SetOptions` | `(options map[string]*Option)` | Set options map |
 | `MergeGlobals` | `(globalOptions map[string]*Option, globalVals map[string]any)` | Merge global options/values as fallback |

@@ -43,7 +43,8 @@ func Main(p *api.Package) {
 | Phase | Hook | Purpose |
 |-------|------|---------|
 | 1 | `OnRequire` | Declare third-party dependencies |
-| 2 | `OnConfig` | Define build options |
+| 2a | `ResolveDeferred` | Clone/compile remote packages (deferred resolution) |
+| 2b | `OnConfig` | Define build options |
 | 3 | `OnBuild` | Generate build targets |
 | 4 | `OnInstall` | Post-build install logic |
 
@@ -93,6 +94,14 @@ Build a dependency package and its transitive deps as an independent sub-graph:
 ```go
 ctx.BuildSubGraph("codegen")                        // Build codegen + its deps
 path := ctx.DepOutput("codegen:codegen")             // Get output path of a dependency target
+```
+
+Use `ToolchainOption()` to allow switching the toolchain for sub-graph builds (e.g., building a code generator with the host toolchain while cross-compiling firmware with an embedded toolchain):
+
+```go
+p.OnConfig(func(ctx *api.ConfigContext) {
+    ctx.ToolchainOption()  // Auto-populates from registered toolchains, default "host"
+})
 ```
 
 ## Option & Conditional
@@ -223,14 +232,14 @@ ctx.Target("utils").
 | Command | Description |
 |---------|-------------|
 | `vmake build` | Build the project |
-| `vmake rebuild` | Clean and rebuild |
+| `vmake rebuild` | Clean and rebuild (supports `--install`, `--prefix`, `--install-type`) |
 | `vmake config` | Open TUI for option management |
-| `vmake clean` | Remove build artifacts |
-| `vmake query` | Show dependency tree (AI integration) |
+| `vmake clean` | Remove build artifacts (`--all` to clean all toolchains) |
+| `vmake query` | Show dependency tree |
 | `vmake manifest show <path>` | Show install manifest contents |
 | `vmake manifest checkout <path> [name]` | Restore packages to recorded versions |
 | `vmake toolchain list` | Show available toolchains |
-| `vmake toolchain show` | Show toolchain details |
+| `vmake toolchain show [name]` | Show toolchain details |
 | `vmake repo add <name> <url>` | Add package repository |
 | `vmake repo add --prefix <name> <url>` | Add prefix repository (URL template with `{name}`) |
 | `vmake repo remove <name>` | Remove package repository |
@@ -238,16 +247,16 @@ ctx.Target("utils").
 | `vmake repo update <name>` | Update package repository |
 | `vmake pkg list` | List installed packages |
 | `vmake pkg search [pattern]` | Search for packages |
-| `vmake pkg clean <repo/name>` | Clean package cache |
+| `vmake pkg clean <repo/name>` | Clean package cache (`--all` to also clean source) |
 | `vmake pkg update <repo/name>` | Update package source |
 | `vmake ext add <name> <url>` | Add extension repository |
 | `vmake ext remove <name>` | Remove extension repository |
 | `vmake ext list` | List extensions |
 | `vmake ext update [name]` | Update extension repositories |
-| `vmake skill install` | Install AI assistant skill |
+| `vmake skill install` | Install AI assistant skill (`--project` to also install locally) |
 | `vmake skill uninstall` | Uninstall AI assistant skill |
 | `vmake skill path` | Show skill installation paths |
-| `vmake git tag [version]` | Create version tag |
+| `vmake git tag [version]` | Create version tag (`--minor`, `--major`, `--no-push`, `-m msg`) |
 | `vmake update [version]` | Update vmake |
 | `vmake version` | Print version info |
 

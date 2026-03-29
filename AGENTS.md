@@ -242,6 +242,11 @@ ctx.BuildSubGraph("codegen")    // Build package and its deps as independent sub
 path := ctx.DepOutput("codegen:codegen")  // Get output path of dependency target
 ```
 
+Use `ToolchainOption()` to allow per-package toolchain switching for sub-graph builds (e.g., host toolchain for codegen, embedded toolchain for firmware):
+```go
+ctx.ToolchainOption()  // Auto-populates from registered toolchains, default "host"
+```
+
 ## Package Repositories
 
 Two ecosystem types coexist:

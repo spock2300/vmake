@@ -42,7 +42,8 @@ func Main(p *api.Package) {
 |--------|---------|
 | `>=1.2` | Version 1.2 or higher |
 | `<=1.2` | Version 1.2 or lower |
-| `>=1.0 <2.0` | Range |
+| `>1.0` | Version higher than 1.0 |
+| `<2.0` | Version lower than 2.0 |
 | `~1.2.0` | Pessimistic (>=1.2.0, <1.3.0) |
 | `=1.2.0` | Exact match |
 
