@@ -466,6 +466,7 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 
 	packagesDir := getPackagesDir()
 	subGraphBuilt := make(map[string]bool)
+	subGraphPkgs := make(map[string]bool)
 
 	var buildSubGraphFn func(string) error
 	var depOutputFn func(string) string
@@ -482,6 +483,10 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 		}
 
 		subPkgs := build.CollectSubGraphPackages(rootPkg, pkgMetaMap, subAllTargets, needed)
+
+		for pkgName := range subPkgs {
+			subGraphPkgs[pkgName] = true
+		}
 
 		for _, name := range ctx.Resolver.GetOrder() {
 			node := ctx.DepGraph.Packages[name]
@@ -587,6 +592,10 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 		}
 
 		executePackageOnBuild(ctx, name, node, pkgDirs, allTargets, remote, cfg.GlobalValues, buildSubGraphFn, depOutputFn, cfg.Tc)
+	}
+
+	for pkgName := range subGraphPkgs {
+		delete(allTargets, pkgName)
 	}
 
 	return allTargets, pkgMetaMap
