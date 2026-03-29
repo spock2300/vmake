@@ -10,7 +10,7 @@ import (
 )
 
 func gitRun(dir string, args []string, timeout time.Duration) error {
-	_, err := exec.RunWithOptions("git", args, exec.RunOptions{Dir: dir, Timeout: timeout})
+	_, err := exec.RunWithOptions("git", args, exec.RunOptions{Dir: dir, Timeout: timeout, Quiet: true})
 	if err != nil {
 		return fmt.Errorf("git %s in %s: %w", args[0], dir, err)
 	}
@@ -19,7 +19,7 @@ func gitRun(dir string, args []string, timeout time.Duration) error {
 
 func Clone(url, dir string) error {
 	_, err := exec.RunWithOptions("git", []string{"clone", url, dir}, exec.RunOptions{
-		Timeout: 5 * time.Minute,
+		Timeout: 5 * time.Minute, Quiet: true,
 	})
 	if err != nil {
 		os.RemoveAll(dir)
@@ -52,7 +52,7 @@ func Pull(dir string) error {
 }
 
 func ListTags(dir string) ([]string, error) {
-	output, err := exec.RunWithOptions("git", []string{"tag", "--list"}, exec.RunOptions{Dir: dir})
+	output, err := exec.RunWithOptions("git", []string{"tag", "--list"}, exec.RunOptions{Dir: dir, Quiet: true})
 	if err != nil {
 		return nil, fmt.Errorf("git tag --list in %s: %w", dir, err)
 	}

@@ -17,6 +17,7 @@ type RunOptions struct {
 	Dir     string
 	Context context.Context
 	Timeout time.Duration
+	Quiet   bool
 }
 
 func Run(name string, args ...string) ([]byte, error) {
@@ -54,8 +55,13 @@ func RunWithOptions(name string, args []string, opts RunOptions) ([]byte, error)
 	}
 
 	var buf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
-	cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
+	if opts.Quiet {
+		cmd.Stdout = &buf
+		cmd.Stderr = &buf
+	} else {
+		cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
+		cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
+	}
 
 	err := cmd.Run()
 	output := buf.Bytes()

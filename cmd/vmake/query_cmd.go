@@ -79,12 +79,20 @@ func formatPkgDir(pkgDir, workDir string) string {
 	return fmt.Sprintf("[%s]", rel)
 }
 
-func formatPkgParts(name string, kinds []targetKindInfo, pkgDir, workDir string, ctx *RuntimeContext, globalValues map[string]any) []string {
+func formatPkgParts(name string, kinds []targetKindInfo, pkgDir, workDir string, ctx *RuntimeContext, globalValues map[string]any, node *resolver.PackageNode) []string {
 	var parts []string
 	if len(kinds) > 0 {
 		parts = append(parts, kinds[0].name, fmt.Sprintf("(%s)", kinds[0].kind))
 	} else {
 		parts = append(parts, name)
+	}
+	if node.IsPrefix() {
+		parts = append(parts, fmt.Sprintf("@%s", node.PrefixSelected))
+	}
+	if node.Pkg != nil {
+		if desc := node.Pkg.Description(); desc != "" {
+			parts = append(parts, fmt.Sprintf("- %q", desc))
+		}
 	}
 	if dir := formatPkgDir(pkgDir, workDir); dir != "" {
 		parts = append(parts, dir)
@@ -126,7 +134,7 @@ func printTree(
 	if isLocal {
 		kinds := collectTargetKinds(node.Pkg, name, pkgDirs[name], ctx, globalValues)
 		if len(kinds) > 0 {
-			parts := formatPkgParts(name, kinds, pkgDirs[name], workDir, ctx, globalValues)
+			parts := formatPkgParts(name, kinds, pkgDirs[name], workDir, ctx, globalValues, node)
 			fmt.Fprintf(w, "%s%s%s\n", prefix, connector, strings.Join(parts, " "))
 			for _, k := range kinds[1:] {
 				indent := prefix
@@ -136,11 +144,11 @@ func printTree(
 				fmt.Fprintf(w, "%s%s (%s)\n", indent, k.name, k.kind)
 			}
 		} else {
-			parts := formatPkgParts(name, nil, pkgDirs[name], workDir, ctx, globalValues)
+			parts := formatPkgParts(name, nil, pkgDirs[name], workDir, ctx, globalValues, node)
 			fmt.Fprintf(w, "%s%s%s\n", prefix, connector, strings.Join(parts, " "))
 		}
 	} else {
-		parts := formatPkgParts(name, nil, "", workDir, ctx, globalValues)
+		parts := formatPkgParts(name, nil, "", workDir, ctx, globalValues, node)
 		fmt.Fprintf(w, "%s%s%s\n", prefix, connector, strings.Join(parts, " "))
 	}
 
