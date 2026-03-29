@@ -82,13 +82,13 @@ func (i *ArtifactInstaller) installTarget(node *BuildNode) error {
 		return nil
 	}
 
-	if !i.isSDK() && kind == api.TargetStatic {
-		vlog.Info("  SKIP %s (static lib, use --install-type sdk)", targetFilename(kind, target.Name()))
+	pkgInfo, ok := i.pkgInfo[pkgName]
+	if !ok {
 		return nil
 	}
 
-	pkgInfo, ok := i.pkgInfo[pkgName]
-	if !ok {
+	if !i.isSDK() && kind == api.TargetStatic {
+		vlog.Info("  SKIP %s (static lib, use --install-type sdk)", targetFilename(kind, target.Name()))
 		return nil
 	}
 
