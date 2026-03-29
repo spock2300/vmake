@@ -221,6 +221,7 @@ func Main(p *api.Package) {
 ctx.Target("firmware").
     SetKind(api.TargetBinary).
     AddFiles("src/*.c").
+    AddBinHeader("assets/logo.bin", "assets/font.bin").
     SetLinkerScript("ld/stm32f4.ld").
     AddPostLinkSize().
     AddPostLinkHex()
@@ -228,6 +229,7 @@ ctx.Target("firmware").
 - `SetLinkerScript(path)` — passes `-T` to linker
 - `AddPostLink(tool, args...)` — generic post-link step, supports `{output}` placeholder
 - Shorthands: `AddPostLinkHex()`, `AddPostLinkBin()`, `AddPostLinkSize()`, `AddPostLinkStrip()`
+- `AddBinHeader(inputs ...)` — converts binary files to `.h` headers with hex data; output to `build/<tc>-<mode>/generated/`, include path auto-added; incremental via mtime
 - RTOS tool accessors: `Package.ObjCopy()`, `Size()`, `ObjDump()`, `NM()`
 
 ## Git Patches

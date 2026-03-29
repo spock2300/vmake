@@ -197,6 +197,7 @@ All setters are fluent (return `*Target`).
 | `AddPostLinkBin` | `()` | Shorthand: `objcopy -O binary {output} {output}.bin` |
 | `AddPostLinkSize` | `()` | Shorthand: `size {output}` |
 | `AddPostLinkStrip` | `()` | Shorthand: `strip -o {output}.stripped {output}` |
+| `AddBinHeader` | `(inputs ...any)` | Convert binary files to `.h` hex headers (e.g. `AddBinHeader("assets/logo.bin")`); accepts `string` or `[]string`; output to `build/<tc>-<mode>/generated/<stem>.h`; include path auto-added; incremental via mtime |
 
 ### Removers
 

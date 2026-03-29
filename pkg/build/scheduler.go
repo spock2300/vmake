@@ -159,6 +159,14 @@ func (s *Scheduler) Build(fullName string) error {
 		return err
 	}
 
+	genRules := node.Target.GenRules()
+	if len(genRules) > 0 {
+		generatedDir := filepath.Join("build", s.buildDir, "generated")
+		if err := runGenRules(genRules, generatedDir); err != nil {
+			return err
+		}
+	}
+
 	if err := os.MkdirAll(filepath.Join("build", s.buildDir, "objects"), 0755); err != nil {
 		return fmt.Errorf("create build directory: %w", err)
 	}
@@ -342,6 +350,12 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	}
 
 	resolved.OutputPath = s.getTargetOutputPath(node)
+
+	genRules := node.Target.GenRules()
+	if len(genRules) > 0 {
+		generatedDir := filepath.Join("build", s.buildDir, "generated")
+		resolved.AllIncludes = append(resolved.AllIncludes, generatedDir)
+	}
 
 	resolved.AllDefines = unique(resolved.AllDefines)
 	resolved.AllIncludes = unique(resolved.AllIncludes)

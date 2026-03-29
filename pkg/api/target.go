@@ -1,6 +1,9 @@
 package api
 
-import "strings"
+import (
+	"path/filepath"
+	"strings"
+)
 
 type PostLinkStep struct {
 	Tool string
@@ -27,6 +30,7 @@ type Target struct {
 	buildFunc      func(p *Package) error
 	linkerScript   string
 	postLinks      []PostLinkStep
+	genRules       []GenRule
 }
 
 func (t *Target) SetKind(kind TargetKind) *Target {
@@ -164,6 +168,20 @@ func (t *Target) AddPostLinkStrip() *Target {
 	t.postLinks = append(t.postLinks, PostLinkStep{Tool: "strip", Args: []string{"-o", "{output}.stripped", "{output}"}})
 	return t
 }
+
+func (t *Target) AddBinHeader(inputs ...any) *Target {
+	for _, input := range flattenAny(inputs) {
+		stem := strings.TrimSuffix(filepath.Base(input), filepath.Ext(input))
+		t.genRules = append(t.genRules, GenRule{
+			kind:       GenRuleBinHeader,
+			input:      input,
+			outputStem: stem,
+		})
+	}
+	return t
+}
+
+func (t *Target) GenRules() []GenRule { return t.genRules }
 
 func (t *Target) Name() string             { return t.name }
 func (t *Target) Kind() TargetKind         { return t.kind }
