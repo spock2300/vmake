@@ -367,10 +367,6 @@ ctx.Target("mylib").AddPublicIncludes("include", "src", "@foo*.h")
 // 项目依赖声明
 func (ctx *RequireContext) AddRequires(deps ...string)       // "official/zlib >=1.2"
 func (ctx *RequireContext) GetRequires() []RequireInfo
-
-// 包依赖声明（相同的 API）
-func (ctx *PackageRequireContext) AddRequires(deps ...string)
-func (ctx *PackageRequireContext) GetRequires() []RequireInfo
 ```
 
 ## 关键类型

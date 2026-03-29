@@ -41,7 +41,7 @@ func ExtractPackage(loaded *LoadedScript) *api.Package {
 			fn(ctx)
 		}
 		for _, req := range ctx.GetRequires() {
-			pkg.GetRequireContext().AddRequires(req.Name)
+			pkg.GetRequires().Add(req.Name)
 		}
 	}
 

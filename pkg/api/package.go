@@ -69,6 +69,12 @@ func (m *PackageMeta) FullName() string {
 	return m.Repo + "/" + m.Name
 }
 
+type PkgDirs struct {
+	SourceDir  string
+	BuildDir   string
+	InstallDir string
+}
+
 type Package struct {
 	PackageMeta
 	ConfigAccessor
@@ -80,7 +86,7 @@ type Package struct {
 	license      string
 	versions     map[string]string
 	submodules   bool
-	requireCtx   *PackageRequireContext
+	requires     Requires
 	requireFuncs []RequireFunc
 	libs         []string
 	configFuncs  []ConfigFunc
@@ -88,9 +94,7 @@ type Package struct {
 	installFuncs []InstallFunc
 	packageFunc  PackageFunc
 	scriptDir    string
-	sourceDir    string
-	buildDir     string
-	installDir   string
+	dirs         PkgDirs
 	outputDir    string
 	cfgVals      map[string]any
 	tc           *toolchain.Toolchain
@@ -104,7 +108,7 @@ func NewPackage() *Package {
 		TargetRegistry:    NewTargetRegistry(),
 		InstallItemHolder: &InstallItemHolder{},
 		versions:          make(map[string]string),
-		requireCtx:        NewPackageRequireContext(),
+		requires:          Requires{},
 		deps:              make(map[string]*InstalledPackage),
 	}
 }
@@ -204,18 +208,18 @@ func (p *Package) SelectVersion(constraint string) (string, error) {
 	return version, nil
 }
 
-func (p *Package) GitURLs() []string                         { return p.gitURLs }
-func (p *Package) Homepage() string                          { return p.homepage }
-func (p *Package) Description() string                       { return p.description }
-func (p *Package) License() string                           { return p.license }
-func (p *Package) Versions() map[string]string               { return p.versions }
-func (p *Package) Submodules() bool                          { return p.submodules }
-func (p *Package) GetOptions() map[string]*Option            { return p.Options }
-func (p *Package) GetRequireContext() *PackageRequireContext { return p.requireCtx }
-func (p *Package) GetRef(version string) string              { return p.versions[version] }
-func (p *Package) Libs() []string                            { return p.libs }
-func (p *Package) GetRequireFuncs() []RequireFunc            { return p.requireFuncs }
-func (p *Package) GetPackageFunc() PackageFunc               { return p.packageFunc }
+func (p *Package) GitURLs() []string              { return p.gitURLs }
+func (p *Package) Homepage() string               { return p.homepage }
+func (p *Package) Description() string            { return p.description }
+func (p *Package) License() string                { return p.license }
+func (p *Package) Versions() map[string]string    { return p.versions }
+func (p *Package) Submodules() bool               { return p.submodules }
+func (p *Package) GetOptions() map[string]*Option { return p.Options }
+func (p *Package) GetRequires() *Requires         { return &p.requires }
+func (p *Package) GetRef(version string) string   { return p.versions[version] }
+func (p *Package) Libs() []string                 { return p.libs }
+func (p *Package) GetRequireFuncs() []RequireFunc { return p.requireFuncs }
+func (p *Package) GetPackageFunc() PackageFunc    { return p.packageFunc }
 
 func execFuncs[T any](dir string, funcs []T, fn func(T)) {
 	execInDir(dir, func() {
@@ -245,7 +249,7 @@ func (p *Package) UpdateRequireContext(cfgVals map[string]any, options map[strin
 	for _, fn := range p.requireFuncs {
 		fn(ctx)
 	}
-	p.requireCtx = &PackageRequireContext{requiresHolder: requiresHolder{requires: ctx.GetRequires()}}
+	p.requires = Requires{requires: ctx.GetRequires()}
 }
 
 func (p *Package) SetDeps(deps map[string]*InstalledPackage) *Package {
@@ -264,10 +268,8 @@ func (p *Package) Deps() map[string]*InstalledPackage {
 	return p.deps
 }
 
-func (p *Package) SetDirs(sourceDir, buildDir, installDir string) *Package {
-	p.sourceDir = sourceDir
-	p.buildDir = buildDir
-	p.installDir = installDir
+func (p *Package) SetDirs(dirs PkgDirs) *Package {
+	p.dirs = dirs
 	return p
 }
 
@@ -301,9 +303,9 @@ func (p *Package) SetToolchain(tc *toolchain.Toolchain) *Package {
 }
 
 func (p *Package) ScriptDir() string    { return p.scriptDir }
-func (p *Package) SourceDir() string    { return p.sourceDir }
-func (p *Package) BuildDir() string     { return p.buildDir }
-func (p *Package) InstallDir() string   { return p.installDir }
+func (p *Package) SourceDir() string    { return p.dirs.SourceDir }
+func (p *Package) BuildDir() string     { return p.dirs.BuildDir }
+func (p *Package) InstallDir() string   { return p.dirs.InstallDir }
 func (p *Package) OutputDir() string    { return p.outputDir }
 func (p *Package) GetPatches() []string { return p.patches }
 
@@ -326,9 +328,9 @@ func (p *Package) Env() map[string]string {
 
 func (p *Package) CMakeConfigure(extraArgs ...string) error {
 	args := []string{
-		"-S", p.sourceDir,
-		"-B", p.buildDir,
-		"-DCMAKE_INSTALL_PREFIX=" + p.installDir,
+		"-S", p.dirs.SourceDir,
+		"-B", p.dirs.BuildDir,
+		"-DCMAKE_INSTALL_PREFIX=" + p.dirs.InstallDir,
 	}
 	if p.tc.Tools.CC != "" {
 		args = append(args, "-DCMAKE_C_COMPILER="+p.tc.Tools.CC)
@@ -348,33 +350,33 @@ func (p *Package) CMakeConfigure(extraArgs ...string) error {
 }
 
 func (p *Package) CMakeBuild(args ...string) error {
-	buildArgs := []string{"--build", p.buildDir}
+	buildArgs := []string{"--build", p.dirs.BuildDir}
 	buildArgs = append(buildArgs, args...)
 	return p.Run("cmake", buildArgs...)
 }
 
 func (p *Package) CMakeInstall() error {
-	return p.Run("cmake", "--install", p.buildDir)
+	return p.Run("cmake", "--install", p.dirs.BuildDir)
 }
 
 func (p *Package) Configure(extraArgs ...string) error {
-	args := []string{"--prefix=" + p.installDir}
+	args := []string{"--prefix=" + p.dirs.InstallDir}
 	if p.CrossTarget() != "" {
 		args = append(args, "--host="+p.CrossTarget())
 	}
 	args = append(args, extraArgs...)
-	return p.RunEnv(p.Env(), p.sourceDir+"/configure", args...)
+	return p.RunEnv(p.Env(), p.dirs.SourceDir+"/configure", args...)
 }
 
 func (p *Package) Make(args ...string) error {
-	makeArgs := []string{"-C", p.buildDir}
+	makeArgs := []string{"-C", p.dirs.BuildDir}
 	makeArgs = append(makeArgs, args...)
 	return p.Run("make", makeArgs...)
 }
 
 func (p *Package) Run(name string, args ...string) error {
 	vlog.Info("  %s %s", name, strings.Join(args, " "))
-	exec.RunFatal(p.buildDir, name, args...)
+	exec.RunFatal(p.dirs.BuildDir, name, args...)
 	return nil
 }
 
@@ -386,7 +388,7 @@ func (p *Package) RunIn(dir, name string, args ...string) error {
 
 func (p *Package) RunEnv(env map[string]string, name string, args ...string) error {
 	vlog.Info("  %s %s", name, strings.Join(args, " "))
-	return exec.RunWithEnv(p.buildDir, env, name, args...)
+	return exec.RunWithEnv(p.dirs.BuildDir, env, name, args...)
 }
 
 type InstalledPackage struct {

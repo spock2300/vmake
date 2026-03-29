@@ -147,7 +147,7 @@ func (r *Resolver) FilterDeps(id string, cfgVals map[string]any, options map[str
 
 	pkg.UpdateRequireContext(cfgVals, options)
 
-	deps := pkg.GetRequireContext().GetRequires()
+	deps := pkg.GetRequires().Get()
 	newDeps := make([]string, 0, len(deps))
 	for _, req := range deps {
 		newDeps = append(newDeps, req.Name)
@@ -216,7 +216,7 @@ func (r *Resolver) resolveFromCache(id string, scriptPath string, src *buildscri
 	}
 	r.graph.Packages[id] = node
 
-	for _, req := range pkg.GetRequireContext().GetRequires() {
+	for _, req := range pkg.GetRequires().Get() {
 		depNode, err := r.resolveRecursive(req.Name, append(path, id))
 		if err != nil {
 			return nil, err

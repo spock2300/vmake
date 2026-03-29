@@ -7,34 +7,34 @@ type RequireInfo struct {
 	Constraint string
 }
 
-type requiresHolder struct {
+type Requires struct {
 	requires []RequireInfo
 }
 
-func (h *requiresHolder) addRequires(deps ...string) {
+func (r *Requires) Add(deps ...string) {
 	for _, dep := range deps {
 		if dep == "" {
 			continue
 		}
 		name, constraint := parseRequire(dep)
-		h.requires = append(h.requires, RequireInfo{
+		r.requires = append(r.requires, RequireInfo{
 			Name:       name,
 			Constraint: constraint,
 		})
 	}
 }
 
-func (h *requiresHolder) getRequires() []RequireInfo {
-	return h.requires
+func (r *Requires) Get() []RequireInfo {
+	return r.requires
 }
 
-func (h *requiresHolder) resetRequires() {
-	h.requires = make([]RequireInfo, 0)
+func (r *Requires) Reset() {
+	r.requires = make([]RequireInfo, 0)
 }
 
 type RequireContext struct {
 	ConfigAccessor
-	requiresHolder
+	Requires
 	requireFuncs []RequireFunc
 }
 
@@ -57,16 +57,16 @@ func NewRequireContextForConfig(cfgVals map[string]any, options map[string]*Opti
 }
 
 func (ctx *RequireContext) AddRequires(deps ...string) *RequireContext {
-	ctx.requiresHolder.addRequires(deps...)
+	ctx.Requires.Add(deps...)
 	return ctx
 }
 
 func (ctx *RequireContext) GetRequires() []RequireInfo {
-	return ctx.requiresHolder.getRequires()
+	return ctx.Requires.Get()
 }
 
 func (ctx *RequireContext) ResetRequires() {
-	ctx.requiresHolder.resetRequires()
+	ctx.Requires.Reset()
 }
 
 func (ctx *RequireContext) GetRequireFuncs() []RequireFunc {
@@ -77,23 +77,6 @@ func (ctx *RequireContext) RunFuncs() {
 	for _, fn := range ctx.requireFuncs {
 		fn(ctx)
 	}
-}
-
-type PackageRequireContext struct {
-	requiresHolder
-}
-
-func NewPackageRequireContext() *PackageRequireContext {
-	return &PackageRequireContext{}
-}
-
-func (ctx *PackageRequireContext) AddRequires(deps ...string) *PackageRequireContext {
-	ctx.requiresHolder.addRequires(deps...)
-	return ctx
-}
-
-func (ctx *PackageRequireContext) GetRequires() []RequireInfo {
-	return ctx.requiresHolder.getRequires()
 }
 
 func parseRequire(dep string) (name, constraint string) {

@@ -36,9 +36,8 @@ type compileResult struct {
 }
 
 type PkgInfo struct {
-	Dir        string
-	OutputDir  string
-	InstallDir string
+	api.PkgDirs
+	OutputDir string
 }
 
 type Scheduler struct {
@@ -111,7 +110,7 @@ func NewScheduler(
 	}
 
 	for pkgName, pkgDir := range pkgDirs {
-		s.pkgs[pkgName] = &PkgInfo{Dir: pkgDir}
+		s.pkgs[pkgName] = &PkgInfo{PkgDirs: api.PkgDirs{SourceDir: pkgDir}}
 	}
 
 	return s, nil
@@ -121,12 +120,8 @@ func (s *Scheduler) SetPackage(pkgName string, pkg *api.Package) {
 	s.packages[pkgName] = pkg
 }
 
-func (s *Scheduler) SetPkgDirs(pkgName, sourceDir, outputDir, installDir string) {
-	s.pkgs[pkgName] = &PkgInfo{
-		Dir:        sourceDir,
-		OutputDir:  outputDir,
-		InstallDir: installDir,
-	}
+func (s *Scheduler) SetPkgDirs(pkgName string, dirs *api.PkgDirs) {
+	s.pkgs[pkgName] = &PkgInfo{PkgDirs: *dirs}
 }
 
 func (s *Scheduler) BuildAll() error {
@@ -150,12 +145,12 @@ func (s *Scheduler) Build(fullName string) error {
 
 	pkgInfo := s.pkgs[node.PkgName]
 
-	if err := os.Chdir(pkgInfo.Dir); err != nil {
+	if err := os.Chdir(pkgInfo.SourceDir); err != nil {
 		return err
 	}
 	defer os.Chdir(s.origDir)
 
-	s.ccWriter.SetPackageDir(pkgInfo.Dir)
+	s.ccWriter.SetPackageDir(pkgInfo.SourceDir)
 
 	vlog.Info("[%s]", fullName)
 
@@ -259,7 +254,7 @@ func (s *Scheduler) resolveDeps(node *BuildNode) (*depResolveResult, error) {
 
 		if len(depNode.Target.PublicIncludes()) > 0 {
 			for _, pubInc := range depNode.Target.PublicIncludes() {
-				result.includes = append(result.includes, filepath.Join(depPkg.Dir, pubInc))
+				result.includes = append(result.includes, filepath.Join(depPkg.SourceDir, pubInc))
 			}
 		} else if depPkg.InstallDir != "" {
 			result.includes = append(result.includes, filepath.Join(depPkg.InstallDir, "include"))
@@ -281,7 +276,7 @@ func (s *Scheduler) resolveDeps(node *BuildNode) (*depResolveResult, error) {
 			if depPkg.InstallDir != "" {
 				depOutput = filepath.Join(depPkg.InstallDir, "lib", targetFilename(depNode.Target.Kind(), depNode.Target.Name()))
 			} else {
-				depOutput = filepath.Join(depPkg.Dir, s.getTargetOutputPath(depNode))
+				depOutput = filepath.Join(depPkg.SourceDir, s.getTargetOutputPath(depNode))
 			}
 			result.artifacts = append(result.artifacts, depOutput)
 
@@ -653,7 +648,7 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 		return fmt.Errorf("create include dir: %w", err)
 	}
 
-	return copyPublicIncludes(t, pkgInfo.Dir, includeDir)
+	return copyPublicIncludes(t, pkgInfo.SourceDir, includeDir)
 }
 
 func unique(s []string) []string {

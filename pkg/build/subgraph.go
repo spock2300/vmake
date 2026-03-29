@@ -12,14 +12,12 @@ import (
 )
 
 type SubGraphParams struct {
-	AllTargets     map[string]map[string]*api.Target
-	PkgMeta        map[string]PkgBuildMeta
-	PkgDirs        map[string]string
-	Packages       map[string]*api.Package
-	PkgSourceDirs  map[string]string
-	PkgBuildDirs   map[string]string
-	PkgInstallDirs map[string]string
-	Needed         map[string]bool
+	AllTargets    map[string]map[string]*api.Target
+	PkgMeta       map[string]PkgBuildMeta
+	PkgDirs       map[string]string
+	Packages      map[string]*api.Package
+	PkgRemoteDirs map[string]*api.PkgDirs
+	Needed        map[string]bool
 }
 
 func CollectSubGraphPackages(rootPkg string, pkgMeta map[string]PkgBuildMeta, allTargets map[string]map[string]*api.Target, needed map[string]bool) map[string]bool {
@@ -106,14 +104,9 @@ func BuildSubGraph(rootPkg string, tc *toolchain.Toolchain, tcName string, mode 
 
 	for pkgName := range subPkgs {
 		if meta, ok := filteredPkgMeta[pkgName]; ok && !meta.IsRemote {
-			scheduler.SetPkgDirs(pkgName, filteredPkgDirs[pkgName], "", "")
-		} else {
-			scheduler.SetPkgDirs(
-				pkgName,
-				params.PkgSourceDirs[pkgName],
-				params.PkgBuildDirs[pkgName],
-				params.PkgInstallDirs[pkgName],
-			)
+			scheduler.SetPkgDirs(pkgName, &api.PkgDirs{SourceDir: filteredPkgDirs[pkgName]})
+		} else if rd, ok := params.PkgRemoteDirs[pkgName]; ok {
+			scheduler.SetPkgDirs(pkgName, rd)
 		}
 	}
 

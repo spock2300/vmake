@@ -70,7 +70,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if !node.IsLocal() && needed[name] && node.Pkg != nil {
-			if err := applyPatches(node.Pkg, remote.sourceDirs[name]); err != nil {
+			if err := applyPatches(node.Pkg, remote.dirs[name].SourceDir); err != nil {
 				return nil, fmt.Errorf("apply patches for %s: %w", name, err)
 			}
 		}
@@ -110,9 +110,9 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if node.IsLocal() {
-			scheduler.SetPkgDirs(name, pkgDirs[name], "", "")
+			scheduler.SetPkgDirs(name, &api.PkgDirs{SourceDir: pkgDirs[name]})
 		} else if needed[name] {
-			scheduler.SetPkgDirs(name, remote.sourceDirs[name], remote.buildDirs[name], remote.installDirs[name])
+			scheduler.SetPkgDirs(name, remote.dirs[name])
 		}
 	}
 
@@ -198,19 +198,19 @@ func filterAndCollectNeeded(ctx *RuntimeContext) map[string]bool {
 }
 
 type remotePkgState struct {
-	configs     map[string]*config.EntryConfig
-	sourceDirs  map[string]string
-	buildDirs   map[string]string
-	installDirs map[string]string
+	configs map[string]*config.EntryConfig
+	dirs    map[string]*api.PkgDirs
 }
 
 func (r *remotePkgState) installedPkgs() map[string]*api.InstalledPackage {
-	if len(r.installDirs) == 0 {
+	if len(r.dirs) == 0 {
 		return nil
 	}
 	result := make(map[string]*api.InstalledPackage)
-	for name, dir := range r.installDirs {
-		result[name] = api.NewInstalledPackage(name, r.configs[name].Version, dir, nil)
+	for name, d := range r.dirs {
+		if d.InstallDir != "" {
+			result[name] = api.NewInstalledPackage(name, r.configs[name].Version, d.InstallDir, nil)
+		}
 	}
 	return result
 }
@@ -225,10 +225,8 @@ func prepareRemotePackages(ctx *RuntimeContext, tc *toolchain.Toolchain, needed 
 	}
 
 	remote := &remotePkgState{
-		configs:     make(map[string]*config.EntryConfig),
-		sourceDirs:  make(map[string]string),
-		buildDirs:   make(map[string]string),
-		installDirs: make(map[string]string),
+		configs: make(map[string]*config.EntryConfig),
+		dirs:    make(map[string]*api.PkgDirs),
 	}
 
 	if !hasDeps {
@@ -299,9 +297,11 @@ func prepareRemotePackages(ctx *RuntimeContext, tc *toolchain.Toolchain, needed 
 		vlog.Info("  %s@%s -> %s", name, cfg.Version, sourceDir)
 
 		cacheHash := repo.CacheHash(tc.Tools.CC, "release", cfg.Options)
-		remote.sourceDirs[name] = sourceDir
-		remote.buildDirs[name] = filepath.Join(packagesDir, name, cfg.Version, cacheHash, "build")
-		remote.installDirs[name] = filepath.Join(packagesDir, name, cfg.Version, cacheHash, "install")
+		remote.dirs[name] = &api.PkgDirs{
+			SourceDir:  sourceDir,
+			BuildDir:   filepath.Join(packagesDir, name, cfg.Version, cacheHash, "build"),
+			InstallDir: filepath.Join(packagesDir, name, cfg.Version, cacheHash, "install"),
+		}
 	}
 
 	return remote, nil
@@ -333,7 +333,7 @@ func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.Pack
 		for k, v := range cfg.Options {
 			cfgVals[k] = v
 		}
-		pkg.SetDirs(remote.sourceDirs[name], remote.buildDirs[name], remote.installDirs[name])
+		pkg.SetDirs(*remote.dirs[name])
 		pkg.SetCfgVals(cfgVals)
 		pkg.SetToolchain(tc)
 	}
@@ -393,33 +393,31 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 			return err
 		}
 
-		subBuildDirs := remote.buildDirs
-		subInstallDirs := remote.installDirs
+		subRemoteDirs := remote.dirs
 		if subTcName != cfg.TcName {
-			subBuildDirs = make(map[string]string, len(remote.buildDirs))
-			subInstallDirs = make(map[string]string, len(remote.installDirs))
+			subRemoteDirs = make(map[string]*api.PkgDirs, len(remote.dirs))
 			for name := range subPkgs {
 				if meta, ok := pkgMetaMap[name]; ok && meta.IsRemote {
 					rcfg := remote.configs[name]
 					subHash := repo.CacheHash(subTc.Tools.CC, "release", rcfg.Options)
-					subBuildDirs[name] = filepath.Join(packagesDir, name, rcfg.Version, subHash, "build")
-					subInstallDirs[name] = filepath.Join(packagesDir, name, rcfg.Version, subHash, "install")
+					subRemoteDirs[name] = &api.PkgDirs{
+						SourceDir:  remote.dirs[name].SourceDir,
+						BuildDir:   filepath.Join(packagesDir, name, rcfg.Version, subHash, "build"),
+						InstallDir: filepath.Join(packagesDir, name, rcfg.Version, subHash, "install"),
+					}
 				} else {
-					subBuildDirs[name] = remote.buildDirs[name]
-					subInstallDirs[name] = remote.installDirs[name]
+					subRemoteDirs[name] = remote.dirs[name]
 				}
 			}
 		}
 
 		params := &build.SubGraphParams{
-			AllTargets:     subAllTargets,
-			PkgMeta:        pkgMetaMap,
-			PkgDirs:        pkgDirs,
-			Packages:       make(map[string]*api.Package),
-			PkgSourceDirs:  remote.sourceDirs,
-			PkgBuildDirs:   subBuildDirs,
-			PkgInstallDirs: subInstallDirs,
-			Needed:         needed,
+			AllTargets:    subAllTargets,
+			PkgMeta:       pkgMetaMap,
+			PkgDirs:       pkgDirs,
+			Packages:      make(map[string]*api.Package),
+			PkgRemoteDirs: subRemoteDirs,
+			Needed:        needed,
 		}
 		for name, node := range ctx.DepGraph.Packages {
 			if node.Pkg != nil && subPkgs[name] {
@@ -447,8 +445,8 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 		subTcName := resolvePkgToolchain(ctx.Config, pkgName, cfg.TcName)
 		pkgDir := pkgDirs[pkgName]
 		if pkgDir == "" {
-			if d, ok := remote.sourceDirs[pkgName]; ok {
-				pkgDir = d
+			if d, ok := remote.dirs[pkgName]; ok {
+				pkgDir = d.SourceDir
 			}
 		}
 		if targetName == "" {
