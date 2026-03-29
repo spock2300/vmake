@@ -4,7 +4,12 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/spf13/cobra"
+
+	exec "gitee.com/spock2300/vmake/internal/exec"
+	"gitee.com/spock2300/vmake/internal/jsonio"
 	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/build"
 	"gitee.com/spock2300/vmake/pkg/config"
@@ -12,8 +17,7 @@ import (
 	"gitee.com/spock2300/vmake/pkg/repo"
 	"gitee.com/spock2300/vmake/pkg/resolver"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
-
-	"github.com/spf13/cobra"
+	"gitee.com/spock2300/vmake/pkg/version"
 )
 
 var buildCmd = &cobra.Command{
@@ -33,6 +37,92 @@ func init() {
 
 func runBuild(cmd *cobra.Command, args []string) {
 	runPipeline(pipelineOptions{force: forceFlag, installAfter: installFlag})
+}
+
+type installManifestEntry struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Source  string `json:"source"`
+	URL     string `json:"url,omitempty"`
+	Ref     string `json:"ref,omitempty"`
+}
+
+type installManifest struct {
+	VMake     string                 `json:"vmake"`
+	Toolchain string                 `json:"toolchain"`
+	Mode      string                 `json:"mode"`
+	Generated string                 `json:"generated"`
+	Packages  []installManifestEntry `json:"packages"`
+}
+
+type manifestFile struct {
+	VMake     string          `json:"vmake"`
+	Toolchain string          `json:"toolchain"`
+	Mode      string          `json:"mode"`
+	Generated string          `json:"generated"`
+	Packages  []manifestEntry `json:"packages"`
+}
+
+func gitDescribe(dir string) string {
+	out, err := exec.RunWithOptions("git", []string{"describe", "--tags", "--always", "--dirty"}, exec.RunOptions{Dir: dir, Quiet: true})
+	if err == nil {
+		return strings.TrimSpace(string(out))
+	}
+	out, err = exec.RunWithOptions("git", []string{"rev-parse", "--short", "HEAD"}, exec.RunOptions{Dir: dir, Quiet: true})
+	if err == nil {
+		return strings.TrimSpace(string(out))
+	}
+	return "unknown"
+}
+
+func writeManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix string) error {
+	var packages []installManifestEntry
+	for _, name := range ctx.DepGraph.Order {
+		node := ctx.DepGraph.Packages[name]
+		if node.IsLocal() {
+			sourceDir := result.PkgDirs[name]
+			packages = append(packages, installManifestEntry{
+				Name:    name,
+				Version: gitDescribe(sourceDir),
+				Source:  "local",
+			})
+			continue
+		}
+		ip, ok := result.InstalledPkgs[name]
+		if !ok {
+			continue
+		}
+		entry := installManifestEntry{
+			Name:    name,
+			Version: ip.Version,
+			Source:  "index",
+		}
+		if node.IsPrefix() {
+			entry.Source = "prefix"
+			entry.URL = node.PrefixGitURL
+			if ref, ok := node.PrefixVersions[ip.Version]; ok {
+				entry.Ref = ref
+			}
+		} else if node.Pkg != nil {
+			urls := node.Pkg.GitURLs()
+			if len(urls) > 0 {
+				entry.URL = urls[0]
+			}
+			if ref, ok := node.Pkg.Versions()[ip.Version]; ok {
+				entry.Ref = ref
+			}
+		}
+		packages = append(packages, entry)
+	}
+	mf := installManifest{
+		VMake:     version.Version,
+		Toolchain: result.TcName,
+		Mode:      result.Mode,
+		Generated: time.Now().UTC().Format(time.RFC3339),
+		Packages:  packages,
+	}
+	path := filepath.Join(effectivePrefix, "manifest.json")
+	return jsonio.Save(path, mf)
 }
 
 type buildConfig struct {
@@ -585,10 +675,16 @@ func extractCallArgs(s string) []string {
 func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 	globalValues := config.BuildGlobalValues(ctx.Config)
 
+	effectivePrefix := prefixFlag
+	if effectivePrefix == "" {
+		effectivePrefix = filepath.Join(ctx.WorkDir, "install")
+	}
+
 	vlog.Info("")
 	vlog.Info("Installing...")
 
-	installer := build.NewArtifactInstaller(result.Graph, result.PkgDirs, prefixFlag)
+	installer := build.NewArtifactInstaller(result.Graph, result.PkgDirs, effectivePrefix)
+	installer.SetInstallType(installTypeFlag)
 
 	for _, name := range ctx.DepGraph.Order {
 		node := ctx.DepGraph.Packages[name]
@@ -607,17 +703,13 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 		})
 
 		buildCtx := newBuildContext(ctx, name, globalValues)
+		buildCtx.SetDryRun(true)
 		node.Pkg.ExecBuildFuncs(result.PkgDirs[name], func(fn api.BuildFunc) {
 			fn(buildCtx)
 		})
 
 		installItems := installCtx.GetInstallItems()
 		installItems = append(installItems, buildCtx.GetInstallItems()...)
-
-		prefix := installCtx.Prefix()
-		if !installCtx.PrefixSet() {
-			prefix = prefixFlag
-		}
 
 		var installFilter api.InstallFilterFunc
 		if installCtx.GetInstallFilter() != nil {
@@ -627,8 +719,6 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 		}
 
 		installer.SetPackageInfo(name, &build.PkgInstallInfo{
-			Prefix:        prefix,
-			PrefixSet:     installCtx.PrefixSet(),
 			Targets:       result.AllTargets[name],
 			InstallItems:  installItems,
 			BuildDir:      result.PkgDirs[name],
@@ -640,6 +730,10 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 
 	if err := installer.InstallAll(); err != nil {
 		return err
+	}
+
+	if err := writeManifest(ctx, result, effectivePrefix); err != nil {
+		vlog.Info("  (manifest write failed: %v)", err)
 	}
 
 	vlog.Info("")

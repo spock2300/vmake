@@ -26,6 +26,7 @@ type ArtifactInstaller struct {
 	pkgDirs       map[string]string
 	pkgInfo       map[string]*PkgInstallInfo
 	defaultPrefix string
+	installType   string
 	installed     map[string]bool
 }
 
@@ -35,24 +36,28 @@ func NewArtifactInstaller(graph *BuildGraph, pkgDirs map[string]string, defaultP
 		pkgDirs:       pkgDirs,
 		pkgInfo:       make(map[string]*PkgInstallInfo),
 		defaultPrefix: defaultPrefix,
+		installType:   "runtime",
 		installed:     make(map[string]bool),
 	}
+}
+
+func (i *ArtifactInstaller) SetInstallType(t string) {
+	i.installType = t
 }
 
 func (i *ArtifactInstaller) SetPackageInfo(pkgName string, info *PkgInstallInfo) {
 	i.pkgInfo[pkgName] = info
 }
 
-func (i *ArtifactInstaller) getEffectivePrefix(pkgName string, pkgInfo *PkgInstallInfo) string {
-	prefix := pkgInfo.Prefix
-	if !pkgInfo.PrefixSet {
-		prefix = i.defaultPrefix
+func (i *ArtifactInstaller) isSDK() bool {
+	return i.installType == "sdk"
+}
+
+func (i *ArtifactInstaller) getEffectivePrefix(pkgInfo *PkgInstallInfo) string {
+	if pkgInfo.PrefixSet {
+		return pkgInfo.Prefix
 	}
-	if prefix == "" {
-		pkgDir := i.pkgDirs[pkgName]
-		prefix = filepath.Join(pkgDir, "install")
-	}
-	return prefix
+	return i.defaultPrefix
 }
 
 func (i *ArtifactInstaller) InstallAll() error {
@@ -77,12 +82,17 @@ func (i *ArtifactInstaller) installTarget(node *BuildNode) error {
 		return nil
 	}
 
-	pkgInfo, ok := i.pkgInfo[pkgName]
-	if !ok {
-		return fmt.Errorf("package info not found: %s", pkgName)
+	if !i.isSDK() && kind == api.TargetStatic {
+		vlog.Info("  SKIP %s (static lib, use --install-type sdk)", targetFilename(kind, target.Name()))
+		return nil
 	}
 
-	prefix := i.getEffectivePrefix(pkgName, pkgInfo)
+	pkgInfo, ok := i.pkgInfo[pkgName]
+	if !ok {
+		return nil
+	}
+
+	prefix := i.getEffectivePrefix(pkgInfo)
 
 	outputPath := i.getOutputPath(pkgName, pkgInfo, node)
 	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
@@ -159,6 +169,9 @@ func copyPublicIncludes(target *api.Target, baseDir, includeDir string) error {
 }
 
 func (i *ArtifactInstaller) installPublicIncludes(node *BuildNode, pkgInfo *PkgInstallInfo, prefix string) error {
+	if !i.isSDK() {
+		return nil
+	}
 	return copyPublicIncludes(node.Target, i.pkgDirs[node.PkgName], filepath.Join(prefix, "include"))
 }
 
@@ -169,7 +182,7 @@ func (i *ArtifactInstaller) installExtraItems(node *BuildNode) error {
 		return nil
 	}
 
-	prefix := i.getEffectivePrefix(pkgName, pkgInfo)
+	prefix := i.getEffectivePrefix(pkgInfo)
 	pkgDir := i.pkgDirs[pkgName]
 
 	for _, item := range pkgInfo.InstallItems {
