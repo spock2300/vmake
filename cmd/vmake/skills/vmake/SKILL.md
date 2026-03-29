@@ -1,24 +1,46 @@
 ---
 name: vmake
 description: >
-  VMake C/C++ build system assistant. Use when writing build.go files,
-  configuring build options, managing third-party packages, or using
-  vmake CLI commands.
+  VMake C/C++ build system assistant for writing build.go files, configuring
+  build options, managing third-party packages, using vmake CLI commands,
+  embedded/RTOS firmware builds, cross-compilation, linker scripts, and code
+  generation. Also use when the user is working on a C/C++ project that uses
+  vmake, modifying existing build.go files, debugging vmake build errors,
+  setting up package repositories, or asking about vmake concepts like targets,
+  dependencies, options, or lifecycle phases.
 ---
 
-# VMake AI Skill
+# VMake Build Assistant
 
-VMake is a Go-plugin-based C/C++ build system. Build instructions are written in Go (`build.go`) using a fluent API.
+VMake is a Go-plugin-based C/C++ build system. Build scripts are Go files
+(`build.go`) compiled to plugins and executed through a multi-phase lifecycle.
+It's an alternative to CMake/Meson/Bazel, using Go as the configuration language.
 
-## What is VMake
+## Mental Model: Build Phases
 
-VMake compiles `build.go` into a Go plugin (`.so`) and executes it through a multi-phase lifecycle. It's an alternative to CMake/Meson/Bazel, but uses Go as the configuration language.
+Every build.go follows the same lifecycle. You don't need all phases — only
+include the ones your project needs:
 
-Key concepts:
-- **Fluent API**: All setters return the receiver for chaining
-- **Option system**: Build-time options with bool/string/int/choice types
-- **Conditional expressions**: Adapt flags based on option values
-- **Package management**: Third-party packages via Git repositories
+| Phase | Hook | When you need it |
+|-------|------|-----------------|
+| 1 | `OnRequire` | Third-party dependencies (git packages) |
+| 2 | `OnConfig` | Build options (debug/release, features, etc.) |
+| 3 | `OnBuild` | Always — define compilation targets |
+| 4 | `OnInstall` | Custom install logic |
+
+`OnPackage` runs for all packages (local and remote). Use it to describe the package (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` is only for index repo packages — prefix repo and local packages should NOT use these.
+
+## Decision Guide
+
+- **New project, no options, no deps** → Only `OnBuild`. Start from `examples/simple.md`.
+- **Need configurable features** → Add `OnConfig`. See `examples/config.md`.
+- **Conditional compilation** → Options + `ctx.If()`/`ctx.Select()`. See `examples/conditional.md`.
+- **Multiple targets (lib + binary + tests)** → See `examples/multi-target.md`.
+- **Multi-module workspace** → Cross-package deps with `pkg:target` format. See `examples/multi-target.md`.
+- **Third-party packages** → `OnRequire` + `AddRequires` + `AddDeps`. See `examples/with-package.md`.
+- **Wrap external C/C++ library (CMake/Autotools)** → `TargetVoid` + `SetBuildFunc`. See `examples/third-party-wrapper.md`.
+- **Code generation / host tools** → `BuildSubGraph` + `DepOutput` + `Exec`. See `examples/subbuild.md`.
+- **Embedded / RTOS firmware** → `SetLinkerScript` + `AddPostLink*` + `AddBinHeader`. See RTOS section below.
 
 ## Build Script Template
 
@@ -29,33 +51,60 @@ import "gitee.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
     p.OnConfig(func(ctx *api.ConfigContext) {
-        // Phase 2: Define build options
+        // Phase 2: Define build options (optional)
     })
 
     p.OnBuild(func(ctx *api.BuildContext) {
-        // Phase 3: Define targets
+        // Phase 3: Define targets (required)
     })
 }
 ```
 
-## Lifecycle Phases
+## Key Patterns & Gotchas
 
-| Phase | Hook | Purpose |
-|-------|------|---------|
-| 1 | `OnRequire` | Declare third-party dependencies |
-| 2a | `ResolveDeferred` | Clone/compile remote packages (deferred resolution) |
-| 2b | `OnConfig` | Define build options |
-| 3 | `OnBuild` | Generate build targets |
-| 4 | `OnInstall` | Post-build install logic |
+### Fluent API
+All setters return the receiver for chaining:
+```go
+ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c")
+```
 
-`OnPackage` runs during plugin extraction for third-party packages.
+### Conditional expressions return slices
+`ctx.If()` and `ctx.Select()` return `[]string` — spread with `...`:
+```go
+AddCFlags(ctx.If("debug", "-g", "-O0")...)   // correct
+AddCFlags(ctx.If("debug", "-g", "-O0"))      // WRONG — compile error
+```
 
-## Target Quick Reference
+### `AddXxx` methods accept strings and []string
+```go
+AddFiles("src/main.c", "src/utils.c")         // individual strings
+AddFiles("src/*.c")                            // glob pattern
+files := []string{"a.c", "b.c"}
+AddFiles(files)                                // slice (via ...any)
+```
+
+### Third-party deps require TWO steps
+`AddDeps` alone is not enough — you must also declare the dependency:
+```go
+// Step 1: Declare (Phase 1)
+p.OnRequire(func(ctx *api.RequireContext) {
+    ctx.AddRequires("official/zlib >=1.2")
+})
+
+// Step 2: Use (Phase 3)
+ctx.Target("app").AddDeps("official/zlib")
+```
+
+### Prefix repo vs Index repo
+- **Index repo**: `build.go` wraps external C/C++ libs using `OnPackage` + `SetGit` + `AddVersion`
+- **Prefix repo**: `build.go` is a normal build descriptor, NO `SetGit`/`AddVersion` — system handles automatically
+
+## Target API at a Glance
 
 ```go
 ctx.Target("app").
     SetKind(api.TargetBinary).           // Binary/Static/Shared/Object/Void
-    AddFiles("src/*.c").                 // Source files (globs supported)
+    AddFiles("src/*.c").                 // Source files (globs, strings, []string)
     AddIncludes("include").              // Include directories
     AddPublicIncludes("include").        // Propagated to dependents
     AddDefines("DEBUG=1").               // Preprocessor defines
@@ -63,8 +112,9 @@ ctx.Target("app").
     AddCxxFlags("-stdlib=libc++").       // C++ compiler flags
     AddLdFlags("-lm").                   // Linker flags
     AddLinks("ssl", "crypto").           // Libraries to link
-    AddDeps("lib:utils").                // Dependencies (pkg:target for cross-package, pkg/name for third-party)
+    AddDeps("lib:utils").                // Dependencies (pkg:target / pkg/name / local)
     SetDefault(false).                   // Exclude from default build
+    SetLanguages("c++17").               // C/C++ standard
 ```
 
 Remove flags: `RemoveCFlags`, `RemoveDefines`, `RemoveIncludes`, etc.
@@ -77,73 +127,45 @@ Third-party packages with external build systems (CMake, Autotools, etc.) use `T
 ctx.Target("firmware").
     SetKind(api.TargetBinary).
     AddFiles("src/*.c").
-    SetLinkerScript("ld/stm32f4.ld").   // Passes -T to linker
-    AddPostLinkSize().                   // Print size info
-    AddPostLinkHex()                     // Generate .hex file
+    SetLinkerScript("ld/stm32f4.ld").
+    AddBinHeader("assets/logo.bin").      // Binary → .h hex header (auto-included)
+    AddPostLinkSize().                    // Print size info
+    AddPostLinkHex().                     // Generate .hex
+    AddPostLinkBin()                      // Generate .bin
 ```
 
 - `SetLinkerScript(path)` — passes `-T` to linker
-- `AddPostLink(tool, args...)` — generic post-link step, supports `{output}` placeholder
+- `AddPostLink(tool, args...)` — generic post-link step, `{output}` placeholder
 - Shorthands: `AddPostLinkHex()`, `AddPostLinkBin()`, `AddPostLinkSize()`, `AddPostLinkStrip()`
+- `AddBinHeader(inputs...)` — converts binary files to `.h` headers; output to `build/<tc>-<mode>/generated/`; include path auto-added; incremental via mtime
 - RTOS tool accessors: `Package.ObjCopy()`, `Size()`, `ObjDump()`, `NM()`
 
-## Sub-Graph Build
-
-Build a dependency package and its transitive deps as an independent sub-graph:
+## Sub-Graph Build (Code Generation)
 
 ```go
-ctx.BuildSubGraph("codegen")                        // Build codegen + its deps
-path := ctx.DepOutput("codegen:codegen")             // Get output path of a dependency target
-```
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.BuildSubGraph("codegen")                      // Build codegen + deps
+    ctx.Exec(ctx.DepOutput("codegen:codegen"), "output/generated.h")
 
-Use `ToolchainOption()` to allow switching the toolchain for sub-graph builds (e.g., building a code generator with the host toolchain while cross-compiling firmware with an embedded toolchain):
-
-```go
-p.OnConfig(func(ctx *api.ConfigContext) {
-    ctx.ToolchainOption()  // Auto-populates from registered toolchains, default "host"
+    ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c")
 })
 ```
 
-## Option & Conditional
-
-**Define options in OnConfig:**
-```go
-p.OnConfig(func(ctx *api.ConfigContext) {
-    ctx.Option("debug").
-        SetType(api.OptionBool).
-        SetDefault(false).
-        SetDescription("Enable debug mode")
-    
-    ctx.Option("optimization").
-        SetType(api.OptionChoice).
-        SetDefault("O2").
-        SetValues("O0", "O1", "O2", "O3")
-})
-```
-
-**Use conditional expressions in OnBuild:**
-```go
-AddCFlags(ctx.If("debug", "-g", "-O0")...)        // If bool is true
-AddCFlags(ctx.IfNot("debug", "-O2")...)           // If bool is false
-AddCFlags(ctx.Select("optimization", map[string]string{
-    "O0": "-O0", "O2": "-O2",
-}))                                              // Map option value
-```
+Use `ctx.ToolchainOption()` to allow per-package toolchain switching for sub-graph builds (e.g., building a code generator with the host toolchain while cross-compiling firmware with an embedded toolchain).
 
 ## Package Dependencies
 
-**In consuming package:**
+**Consuming a package:**
 ```go
 p.OnRequire(func(ctx *api.RequireContext) {
     ctx.AddRequires("official/zlib >=1.2")
 })
-
 p.OnBuild(func(ctx *api.BuildContext) {
     ctx.Target("app").AddDeps("official/zlib")
 })
 ```
 
-**In third-party package (defines metadata):**
+**Defining a package (index repo):**
 ```go
 p.OnPackage(func(p *api.Package) {
     p.SetGit("https://github.com/madler/zlib.git")
@@ -152,125 +174,75 @@ p.OnPackage(func(p *api.Package) {
 })
 ```
 
-## Git Patches
+## Unified Dependency Format
 
-Apply patches to third-party packages after source download:
-
-```go
-p.AddPatches("patches/fix-build.patch", "patches/add-feature.patch")
-```
-
-Patches are applied via `git apply --3way`. Already-applied patches are skipped automatically.
-
-## Package Repositories
-
-Two ecosystem types coexist:
-
-| | Index Repo | Prefix Repo |
-|--|--|--|
-| **Purpose** | Wrap third-party C/C++ libs | VMake-native packages, cross-project sharing |
-| **build.go** | Wrapper (calls CMake etc.) | True build descriptor (same as local) |
-| **Source** | build.go in repo, source elsewhere | build.go in the package git repo root |
-| **Versions** | `AddVersion()` manual mapping | git tags (auto-filtered for semver) |
-| **Add** | `vmake repo add name url` | `vmake repo add --prefix name "https://..../{name}.git"` |
-| **Update** | `vmake repo update name` | `vmake pkg update repo/name` |
-
-Index repos checked first; prefix repos are fallback. Prefix build.go must NOT use `SetGit`/`AddVersion`. Auto-fetch picks up new remote tags on cached repos.
-
-**Prefix repo usage:**
-```bash
-vmake repo add --prefix myorg "https://git.example.com/{name}.git"
-```
-```go
-p.OnRequire(func(ctx *api.RequireContext) {
-    ctx.AddRequires("myorg/somelib >=1.0")
-})
-```
-
-## Unified Dependencies
-
-`AddDeps` handles all dependency types:
-- `AddDeps("utils")` — same-package target
-- `AddDeps("lib:utils")` — cross-package target (controls build order, links artifact, propagates PublicIncludes)
-- `AddDeps("official/zlib")` — third-party package (declared via `OnRequire` + `AddRequires`; transitive deps automatically resolved)
+`AddDeps` handles all types:
+- `"utils"` — same-package target
+- `"lib:utils"` — cross-package target (build order + link + PublicIncludes)
+- `"official/zlib"` — third-party package (must also be in `OnRequire`)
 
 Package refs (containing `/`) are expanded into all targets defined by that package plus its transitive dependency targets.
 
-## Multi-Module Projects
+## Option & Conditional
 
-Cross-package dependencies use `package:target` format:
 ```go
-// In app/build.go
-ctx.Target("app").AddDeps("lib:utils")
+// Define (OnConfig)
+ctx.Option("debug").SetType(api.OptionBool).SetDefault(false)
+
+// Use (OnBuild)
+AddCFlags(ctx.If("debug", "-g", "-O0")...)        // bool → flags
+AddCFlags(ctx.IfNot("debug", "-O2")...)           // inverted
+AddCFlags(ctx.Select("opt", map[string]string{    // choice → flag
+    "O0": "-O0", "O2": "-O2",
+}))...
+
+ctx.String("name")    // read string
+ctx.Int("count")      // read int
+ctx.Bool("debug")     // read bool
+ctx.When("x", "val")  // compare → bool (for if statements)
 ```
 
-Public includes are automatically propagated:
-```go
-// In lib/build.go
-ctx.Target("utils").
-    SetKind(api.TargetStatic).
-    AddPublicIncludes("include")  // Consumers automatically get this
-```
+## Install
 
-## Build Flags
+| Flag | Description |
+|------|-------------|
+| `--install` / `-i` | Install after build |
+| `--prefix` / `-p` | Prefix (default: `./install/`) |
+| `--install-type` | `runtime` (binaries+shared) or `sdk` (everything) |
 
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--force` | `-f` | Force buildscript recompilation |
-| `--toolchain` | | Override toolchain |
-| `--mode` | | Override build mode (debug/release) |
-| `--install` | `-i` | Install after build |
-| `--prefix` | `-p` | Installation prefix (default: `./install/`) |
-| `--install-type` | | Install type: `runtime` (default) or `sdk` |
-
-`--install-type` controls what gets installed:
-- **runtime**: binaries + shared libs + AddInstalls files (no static libs, no headers)
-- **sdk**: everything (binaries + shared + static libs + public headers + AddInstalls files)
+Custom install entries: `p.AddInstalls("src/file.conf", "etc/file.conf")`
 
 ## CLI Quick Reference
 
 | Command | Description |
 |---------|-------------|
-| `vmake build` | Build the project |
-| `vmake rebuild` | Clean and rebuild (supports `--install`, `--prefix`, `--install-type`) |
-| `vmake config` | Open TUI for option management |
-| `vmake clean` | Remove build artifacts (`--all` to clean all toolchains) |
-| `vmake query` | Show dependency tree |
-| `vmake manifest show <path>` | Show install manifest contents |
-| `vmake manifest checkout <path> [name]` | Restore packages to recorded versions |
-| `vmake toolchain list` | Show available toolchains |
-| `vmake toolchain show [name]` | Show toolchain details |
-| `vmake repo add <name> <url>` | Add package repository |
-| `vmake repo add --prefix <name> <url>` | Add prefix repository (URL template with `{name}`) |
-| `vmake repo remove <name>` | Remove package repository |
-| `vmake repo list` | List package repositories |
-| `vmake repo update <name>` | Update package repository |
-| `vmake pkg list` | List installed packages |
-| `vmake pkg search [pattern]` | Search for packages |
-| `vmake pkg clean <repo/name>` | Clean package cache (`--all` to also clean source) |
-| `vmake pkg update <repo/name>` | Update package source |
-| `vmake ext add <name> <url>` | Add extension repository |
-| `vmake ext remove <name>` | Remove extension repository |
-| `vmake ext list` | List extensions |
-| `vmake ext update [name]` | Update extension repositories |
-| `vmake skill install` | Install AI assistant skill (`--project` to also install locally) |
-| `vmake skill uninstall` | Uninstall AI assistant skill |
-| `vmake skill path` | Show skill installation paths |
-| `vmake git tag [version]` | Create version tag (`--minor`, `--major`, `--no-push`, `-m msg`) |
-| `vmake update [version]` | Update vmake |
-| `vmake version` | Print version info |
+| `vmake build` | Build |
+| `vmake rebuild` | Clean + build |
+| `vmake config` | TUI for options |
+| `vmake clean` | Remove artifacts |
+| `vmake query` | Dependency tree |
+| `vmake toolchain list/show` | Toolchain info |
+| `vmake repo add/list/remove/update` | Package repos |
+| `vmake pkg list/search/clean/update` | Packages |
+| `vmake manifest show/checkout` | Install manifest |
+| `vmake git tag` | Version tagging |
+| `vmake skill install/uninstall/path` | AI skill management |
+| `vmake version` | Version info |
 
-Flags: `-v` verbose, `-V` very-verbose, `-q` quiet.
+Build flags: `--force/-f`, `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`
+Verbosity: `-v` verbose, `-V` very-verbose, `-q` quiet
 
-## For More Details
+## Reading Guide
 
-- **API Reference**: See `references/api.md` for complete API documentation
-- **CLI Reference**: See `references/cli.md` for full CLI command tree
-- **Examples**: See `examples/` for annotated build.go files
+- **Learning the basics** → Start with `examples/simple.md`, then `examples/config.md`
+- **Writing a build.go** → Follow the Decision Guide above to pick the right example
+- **Looking up a specific API** → See `references/api.md` for complete method signatures
+- **CLI usage** → See `references/cli.md` for full command tree
+- **Advanced patterns** → `examples/complete.md` (full API demo), `examples/subbuild.md` (code gen)
 
 ## Key Conventions
 
 - Use `filepath.Join()` for filesystem paths
 - Package IDs use `/`: `official/zlib`
 - Target IDs use `:`: `lib:utils`
-- All public API returns receiver for chaining
+- `OnPackage` with `SetGit`/`AddVersion` is ONLY for index repo packages

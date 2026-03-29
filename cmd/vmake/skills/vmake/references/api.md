@@ -70,12 +70,6 @@ Conditional API: `If` (if bool then values), `IfNot` (if not), `Select` (map opt
 
 All setter methods return the receiver for chaining. Use `filepath.Join()` for filesystem paths. Package IDs use `/` (e.g., `official/zlib`), target IDs use `:` (e.g., `lib:utils`). `SetBuildFunc` callback receives `*Package`, returns `error`.
 
-## Source Code
-
-For complete details, read the vmake source code: `pkg/api/` directory contains all type definitions and public API.
-
----
-
 # API Reference
 
 ## Package
@@ -223,6 +217,7 @@ All setters are fluent (return `*Target`).
 | `BuildFunc()` | `func(p *Package) error` |
 | `LinkerScript()` | `string` |
 | `PostLinkSteps()` | `[]PostLinkStep` |
+| `GenRules()` | `[]GenRule` |
 
 ---
 
