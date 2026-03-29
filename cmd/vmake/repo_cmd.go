@@ -16,6 +16,9 @@ func init() {
 	RootCmd.AddCommand(repoCmd)
 
 	repoAddCmd.Flags().BoolVarP(&repoAddPrefix, "prefix", "p", false, "add a prefix repository (URL template with {name} placeholder)")
+
+	repoRemoveCmd.ValidArgsFunction = completeRepoName
+	repoUpdateCmd.ValidArgsFunction = completeRepoName
 }
 
 var repoCmd = &cobra.Command{

@@ -10,7 +10,7 @@ import (
 )
 
 var configCmd = &cobra.Command{
-	Use:   "Configure project options",
+	Use:   "config",
 	Short: "Open a TUI to configure build options for all packages.",
 	Long:  `Open a TUI to configure build options for all packages.`,
 	Run:   runConfig,

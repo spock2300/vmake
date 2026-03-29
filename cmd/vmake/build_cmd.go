@@ -35,6 +35,8 @@ func init() {
 	buildCmd.Flags().BoolVarP(&forceFlag, "force", "f", false, "force buildscript recompilation")
 	buildCmd.Flags().StringVar(&toolchainFlag, "toolchain", "", "override toolchain")
 	buildCmd.Flags().StringVar(&modeFlag, "mode", "", "override build mode")
+	buildCmd.RegisterFlagCompletionFunc("toolchain", completeToolchain)
+	buildCmd.RegisterFlagCompletionFunc("mode", completeMode)
 }
 
 func runBuild(cmd *cobra.Command, args []string) {

@@ -50,6 +50,9 @@ func init() {
 	extCmd.AddCommand(extRemoveCmd)
 	extCmd.AddCommand(extListCmd)
 	extCmd.AddCommand(extUpdateCmd)
+
+	extRemoveCmd.ValidArgsFunction = completeExtRepoName
+	extUpdateCmd.ValidArgsFunction = completeExtRepoName
 }
 
 func runExtAdd(cmd *cobra.Command, args []string) {

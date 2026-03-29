@@ -34,6 +34,8 @@ func init() {
 	RootCmd.AddCommand(toolchainCmd)
 	toolchainCmd.AddCommand(toolchainListCmd)
 	toolchainCmd.AddCommand(toolchainShowCmd)
+
+	toolchainShowCmd.ValidArgsFunction = completeToolchain
 }
 
 func runToolchainList(cmd *cobra.Command, args []string) {

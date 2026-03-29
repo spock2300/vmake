@@ -194,4 +194,7 @@ func init() {
 	RootCmd.AddCommand(pkgCmd)
 
 	pkgCleanCmd.Flags().BoolVarP(&pkgCleanAll, "all", "a", false, "also clean source code")
+
+	pkgUpdateCmd.ValidArgsFunction = completePkgRef
+	pkgCleanCmd.ValidArgsFunction = completePkgRef
 }
