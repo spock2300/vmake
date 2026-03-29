@@ -80,8 +80,8 @@ OnRequire          Resolver            SourceManager       Scheduler
     ▼                 ▼                    ▼                  ▼
 AddRequires      Graph                cache/<repo>/<pkg>/  TargetVoid.BuildFunc()
 "official/zlib"  ├─ Order []          repo/                → CMakeConfigure
-                 └─ Packages map                           → CMakeBuild
-                  └─ *PackageNode                         → CMakeInstall
+                  └─ Packages map                           → CMakeBuild
+                   └─ *PackageNode                         → CMakeInstall
 ```
 
 1. `OnRequire` 回调调用 `AddRequires("official/zlib >=1.2")`
@@ -92,6 +92,65 @@ AddRequires      Graph                cache/<repo>/<pkg>/  TargetVoid.BuildFunc(
 对于 `TargetVoid` 类型的目标（第三方包），Scheduler 调用 `Target.BuildFunc()` 并传入 `*api.Package`，执行 CMake/Autotools 等构建命令。
 
 源码：`pkg/resolver/resolver.go`, `pkg/repo/source.go`, `pkg/build/scheduler.go`
+
+## Prefix 仓库流程
+
+Prefix 仓库是 VMake 原生的包生态系统，用于跨项目共享包。每个包是一个独立的 Git 仓库，`build.go` 位于仓库根目录。
+
+```
+OnRequire            Resolver.findPrefixSource          Phase 2a              Scheduler
+声明依赖             解析 prefix 源                      编译 build.go         构建
+    │                      │                                  │                  │
+    ▼                      ▼                                  ▼                  ▼
+AddRequires          1. 检查 index 仓库（未找到）         编译 build.so        同本地包
+"myorg/lib >=1.0"    2. 识别 prefix 仓库                  加载插件
+                      3. 解析 URL 模板 → clone/fetch      发现依赖
+                      4. git tag → filter semver
+                      5. 选择版本 → checkout
+                      6. 注册 PackageNode（含 prefix 字段）
+```
+
+### 两种仓库类型对比
+
+| | Index 仓库 | Prefix 仓库 |
+|--|--|--|
+| **用途** | 包装第三方 C/C++ 库（zlib、curl） | VMake 原生包，跨项目共享 |
+| **build.go** | 包装器（调用 CMake 等） | 真正的构建描述（与本地项目相同） |
+| **源码位置** | build.go 在 index 仓库中，源码在别处 | build.go 在包的 git 仓库根目录 |
+| **版本来源** | `AddVersion()` 手动映射 | git tag（自动过滤有效 semver） |
+| **版本选择时机** | Phase 3（build.go 编译后） | Phase 1（build.go 编译前 — 需先 clone） |
+| **添加命令** | `vmake repo add name url` | `vmake repo add --prefix name "https://..../{name}.git"` |
+| **更新** | `vmake repo update name` | `vmake pkg update repo/name` |
+| **搜索** | 列出仓库中所有包 | 仅显示已缓存的包 |
+
+### Prefix 源码解析流程 (`findPrefixSource`)
+
+1. `findSource` 先检查 index 仓库（`FindPackageGo`），未找到再检查 prefix
+2. 解析 URL 模板（`{name}` → 包名）
+3. 如果 clone 不存在 → git clone；如果已存在 → git fetch（自动获取新 tag）
+4. `git tag` → `FilterValidVersions`（过滤有效 semver）
+5. `SelectPrefixVersion`（按约束选择最高匹配版本）
+6. `git checkout` 到选中的 tag
+7. 在仓库根目录查找 `build.go`
+8. 创建 `PackageNode`，注册到 `graph.Packages`（含 `PrefixGitURL`/`PrefixVersions`/`PrefixSelected`）
+9. Phase 2a `resolveDeferredNode` 编译/加载 build.go，保留 prefix 字段
+
+### PackageNode Prefix 字段
+
+```go
+type PackageNode struct {
+    ID             string
+    Source         *buildscript.Source
+    Pkg            *api.Package
+    Deps           []string
+    Deferred       bool
+    PrefixGitURL   string              // 解析后的 git URL
+    PrefixVersions map[string]string   // version_string → git_tag
+    PrefixSelected string              // 选中的版本号
+}
+```
+
+源码：`pkg/resolver/resolver.go`, `pkg/repo/prefix.go`, `pkg/repo/manager.go`
 
 ## CLI 命令树
 
@@ -107,10 +166,11 @@ vmake (RootCmd)
 │   ├── list       # 列出工具链
 │   └── show       # 显示详情
 ├── repo           # 包仓库管理
-│   ├── add        # 添加仓库
+│   ├── add --prefix  # 添加 prefix 仓库（URL 模板，含 {name} 占位符）
+│   ├── add            # 添加 index 仓库
 │   ├── remove     # 删除仓库
-│   ├── list       # 列出仓库
-│   └── update     # 更新仓库
+│   ├── list       # 列出仓库（显示 index/prefix 类型）
+│   └── update     # 更新仓库（prefix 仓库提示使用 pkg update）
 ├── pkg            # 包管理
 │   ├── list       # 列出已安装包
 │   ├── search     # 搜索包
@@ -191,11 +251,14 @@ Graph
 └── Packages map[string]*PackageNode
 
 PackageNode
-├── ID       string
-├── Source   *buildscript.Source
-├── Pkg      *api.Package
-├── Deps     []string
-└── Deferred bool
+├── ID             string
+├── Source         *buildscript.Source
+├── Pkg            *api.Package
+├── Deps           []string
+├── Deferred       bool
+├── PrefixGitURL   string              // prefix 仓库：解析后的 git URL
+├── PrefixVersions map[string]string   // prefix 仓库：version_string → git_tag
+└── PrefixSelected string              // prefix 仓库：选中的版本号
 ```
 
 ### buildscript.Source (`pkg/buildscript/source.go`)
@@ -249,7 +312,7 @@ EntryConfig
 | 构建脚本系统 | `pkg/buildscript/` | 扫描、编译、加载构建脚本 |
 | 依赖解析 | `pkg/resolver/` | 依赖图解析、拓扑排序 |
 | 构建系统 | `pkg/build/` | 编译、链接、调度、安装 |
-| 包管理 | `pkg/repo/` | 仓库管理、源码下载、安装 |
+| 包管理 | `pkg/repo/` | 仓库管理、源码下载、安装、prefix 仓库 |
 | 工具链 | `pkg/toolchain/` | GCC/Clang 抽象 |
 | 配置 | `pkg/config/` | 配置文件读写 |
 | 日志 | `pkg/log/` | 日志输出 |

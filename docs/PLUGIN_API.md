@@ -644,6 +644,53 @@ func Main(p *api.Package) {
 }
 ```
 
+### Prefix 仓库包定义
+
+Prefix 仓库的 `build.go` 与本地项目完全相同 — 不需要 `OnPackage`、`SetGit`、`AddVersion`。版本由 git tag 自动提取。
+
+```go
+func Main(p *api.Package) {
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("mylib").
+            SetKind(api.TargetStatic).
+            AddFiles("src/*.c").
+            AddPublicIncludes("include")
+    })
+}
+```
+
+使用前需要添加 prefix 仓库：
+
+```bash
+vmake repo add --prefix myorg "https://git.example.com/{name}.git"
+```
+
+在消费方项目中声明依赖：
+
+```go
+p.OnRequire(func(ctx *api.RequireContext) {
+    ctx.AddRequires("myorg/mylib >=1.0")
+})
+
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.Target("app").
+        SetKind(api.TargetBinary).
+        AddFiles("src/main.c").
+        AddDeps("myorg/mylib")
+})
+```
+
+两种仓库类型对比：
+
+| | Index 仓库 | Prefix 仓库 |
+|--|--|--|
+| **用途** | 包装第三方 C/C++ 库 | VMake 原生包，跨项目共享 |
+| **build.go** | 包装器（调用 CMake 等） | 真正的构建描述（同本地项目） |
+| **源码位置** | build.go 在仓库中，源码在别处 | build.go 在包的 git 仓库根目录 |
+| **版本来源** | `AddVersion()` 手动映射 | git tag（自动过滤有效 semver） |
+| **添加命令** | `vmake repo add name url` | `vmake repo add --prefix name "https://..../{name}.git"` |
+| **更新** | `vmake repo update name` | `vmake pkg update repo/name` |
+
 ## 扩展插件 API
 
 扩展插件用于扩展 vmake CLI 命令，位于 `~/.vmake/extensions/<repo>/<plugin>/`。

@@ -87,7 +87,7 @@ Use `filepath.Join()` for filesystem paths. Do NOT use for logical identifiers:
 | `pkg/config` | Config storage | No |
 | `pkg/build` | Build execution, compile, link, scheduler, install | No |
 | `pkg/toolchain` | Toolchain abstraction (GCC, Clang) | No |
-| `pkg/repo` | Package management, Git, source download | No |
+| `pkg/repo` | Package management, Git, source download, prefix repos | No |
 | `pkg/resolver` | Dependency graph, deferred resolution | No |
 | `pkg/log` | Logging (use alias `vlog`) | No |
 | `pkg/tui` | TUI components (bubbletea) | No |
@@ -152,6 +152,22 @@ func Main(p *api.Package) {
 - Same-package: `AddDeps("utils")`
 - Cross-package: `AddDeps("lib:utils")` using `package:target` format
 - Third-party: `AddDeps("official/zlib")` (declared via `OnRequire` + `AddRequires`)
+
+## Package Repositories
+
+Two ecosystem types coexist:
+
+| | Index Repo | Prefix Repo |
+|--|--|--|
+| **Purpose** | Wrap third-party C/C++ libs | VMake-native packages, cross-project sharing |
+| **build.go role** | Wrapper (calls CMake etc.) | True build descriptor (identical to local) |
+| **Source location** | build.go in repo, source elsewhere | build.go IS in the package git repo root |
+| **Version source** | `AddVersion()` manual mapping | git tags (auto-filtered for semver) |
+| **Version selection** | Phase 3 (after build.go compiled) | Phase 1 (before build.go — clones first) |
+| **Add command** | `vmake repo add name url` | `vmake repo add --prefix name "https://..../{name}.git"` |
+| **Update** | `vmake repo update name` | `vmake pkg update repo/name` |
+
+Index repos are checked first; prefix repos are fallback. Prefix build.go must NOT use `SetGit`/`AddVersion` — system handles automatically. Auto-fetch picks up new remote tags on cached repos.
 
 ## Extension System
 

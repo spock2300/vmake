@@ -118,6 +118,31 @@ p.OnPackage(func(p *api.Package) {
 })
 ```
 
+## Package Repositories
+
+Two ecosystem types coexist:
+
+| | Index Repo | Prefix Repo |
+|--|--|--|
+| **Purpose** | Wrap third-party C/C++ libs | VMake-native packages, cross-project sharing |
+| **build.go** | Wrapper (calls CMake etc.) | True build descriptor (same as local) |
+| **Source** | build.go in repo, source elsewhere | build.go in the package git repo root |
+| **Versions** | `AddVersion()` manual mapping | git tags (auto-filtered for semver) |
+| **Add** | `vmake repo add name url` | `vmake repo add --prefix name "https://..../{name}.git"` |
+| **Update** | `vmake repo update name` | `vmake pkg update repo/name` |
+
+Index repos checked first; prefix repos are fallback. Prefix build.go must NOT use `SetGit`/`AddVersion`. Auto-fetch picks up new remote tags on cached repos.
+
+**Prefix repo usage:**
+```bash
+vmake repo add --prefix myorg "https://git.example.com/{name}.git"
+```
+```go
+p.OnRequire(func(ctx *api.RequireContext) {
+    ctx.AddRequires("myorg/somelib >=1.0")
+})
+```
+
 ## Unified Dependencies
 
 `AddDeps` handles all dependency types:
@@ -155,6 +180,7 @@ ctx.Target("utils").
 | `vmake toolchain list` | Show available toolchains |
 | `vmake toolchain show` | Show toolchain details |
 | `vmake repo add <name> <url>` | Add package repository |
+| `vmake repo add --prefix <name> <url>` | Add prefix repository (URL template with `{name}`) |
 | `vmake repo remove <name>` | Remove package repository |
 | `vmake repo list` | List package repositories |
 | `vmake repo update <name>` | Update package repository |

@@ -23,6 +23,8 @@ Go-plugin-based C/C++ build system. Build instructions are written in Go (`build
 
 `OnPackage` runs during plugin extraction, right after `Main()` is called and before any lifecycle phases. It populates the `*Package` with metadata (Git URLs, versions, libs, description, license) so the dependency resolver and source downloader can use it.
 
+**Note**: `OnPackage` with `SetGit`/`AddVersion` is for **index repo** packages only. **Prefix repo** packages do NOT use these — versions come from git tags automatically, and the git URL is resolved from the repository URL template.
+
 ## Usage Example
 
 	package main
