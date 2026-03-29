@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,6 +18,7 @@ var (
 	gitTagMajor  bool
 	gitTagNoPush bool
 	gitTagMsg    string
+	gitTagYes    bool
 )
 
 var gitCmd = &cobra.Command{
@@ -43,6 +46,7 @@ func init() {
 	gitTagCmd.Flags().BoolVar(&gitTagMajor, "major", false, "bump major version")
 	gitTagCmd.Flags().BoolVar(&gitTagNoPush, "no-push", false, "create tags without pushing")
 	gitTagCmd.Flags().StringVarP(&gitTagMsg, "message", "m", "", "custom tag message")
+	gitTagCmd.Flags().BoolVarP(&gitTagYes, "yes", "y", false, "skip confirmation")
 
 	gitCmd.AddCommand(gitTagCmd)
 	RootCmd.AddCommand(gitCmd)
@@ -63,12 +67,44 @@ func runGitTag(cmd *cobra.Command, args []string) {
 		fatalErr(err)
 	}
 
-	fmt.Printf("Creating tag %s...\n", newVersion)
-
 	msg := gitTagMsg
 	if msg == "" {
 		msg = fmt.Sprintf("Release %s", newVersion)
 	}
+
+	commit, err := iexec.Run("git", "rev-parse", "--short", "HEAD")
+	fatalErr(err)
+
+	pushInfo := "no (local only)"
+	if !gitTagNoPush {
+		remote, err := getRemoteName()
+		if err == nil {
+			pushInfo = fmt.Sprintf("yes (%s)", remote)
+		} else {
+			pushInfo = "yes (no remote found)"
+		}
+	}
+
+	fmt.Printf("  Version:   %s\n", newVersion)
+	fmt.Printf("  Message:   %s\n", msg)
+	fmt.Printf("  Commit:    %s\n", strings.TrimSpace(string(commit)))
+	fmt.Printf("  Push:      %s\n", pushInfo)
+
+	if !gitTagYes {
+		fmt.Printf("Confirm? [y/N]: ")
+		reader := bufio.NewReader(os.Stdin)
+		answer, err := reader.ReadString('\n')
+		if err != nil {
+			fatalErr(fmt.Errorf("failed to read input: %w", err))
+		}
+		answer = strings.TrimSpace(strings.ToLower(answer))
+		if answer != "y" && answer != "yes" {
+			fmt.Printf("Aborted.\n")
+			return
+		}
+	}
+
+	fmt.Printf("Creating tag %s...\n", newVersion)
 
 	fatalErr(createAnnotatedTag(newVersion, msg))
 	fmt.Printf("  Created tag: %s\n", newVersion)
