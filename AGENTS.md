@@ -116,13 +116,71 @@ The codebase uses function type aliases (`type ConfigFunc func(...)`) and struct
 - `github.com/spf13/cobra`, package-level vars, `init()` registration
 - Command factories (`newAddCmd`, `newRemoveCmd`, `newUpdateCmd`) in `cmd/vmake/helpers.go`
 
+### Build Flags
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--force` | `-f` | Force buildscript recompilation |
+| `--toolchain` | | Override toolchain |
+| `--mode` | | Override build mode (debug/release) |
+| `--install` | `-i` | Install after build |
+| `--prefix` | `-p` | Installation prefix (default: `./install/`) |
+| `--install-type` | | Install type: `runtime` (default) or `sdk` |
+
+### Install Type Filtering
+
+`--install-type` controls what gets installed:
+
+| File type | runtime | sdk |
+|---------|---------|-----|
+| binary → `bin/` | yes | yes |
+| shared (.so) → `lib/` | yes | yes |
+| static (.a) → `lib/` | no | yes |
+| public includes → `include/` | no | yes |
+| AddInstalls custom files | yes | yes |
+
+### Install Manifest
+
+`--install` generates `<prefix>/manifest.json` recording build metadata and per-package info:
+
+```json
+{
+  "vmake": "0.x.x",
+  "toolchain": "gcc",
+  "mode": "debug",
+  "generated": "2026-03-29T01:55:53Z",
+  "packages": [
+    {
+      "name": "myapp",
+      "version": "v1.0.0-2-g3a4b5c6",
+      "source": "local",
+      "ref": "3a4b5c6789abcdef...",
+      "path": "."
+    },
+    {
+      "name": "test_build/mathlib",
+      "version": "2.1.0",
+      "source": "prefix",
+      "url": "https://gitee.com/.../test_build_mathlib.git",
+      "ref": "v2.1.0"
+    }
+  ]
+}
+```
+
+- Local: `source: "local"`, version from `git describe`, `ref` from `git rev-parse HEAD`, `path` relative to cwd
+- Prefix: `source: "prefix"`, `url` from `PrefixGitURL`, `ref` from `PrefixVersions`
+- Index: `source: "index"`, `url` from first `GitURLs()`, `ref` from `Versions()`
+
+CLI: `vmake manifest show <path>` / `vmake manifest checkout <path> [name]`
+
 ## Runtime Execution Flow
 ```
 Phase 1: OnRequire       -> Scan/Compile/Load buildscripts -> Resolve dependencies
 Phase 2a: ResolveDeferred -> Resolve remote (deferred) packages -> Update topological order
 Phase 2b: OnConfig       -> Execute callbacks -> Collect Options -> Merge global options
 Phase 3: OnBuild         -> Execute callbacks -> Generate Targets -> Compile/Link
-(Optional) Install       -> Install targets to prefix directory
+(Optional) Install       -> Install targets to prefix directory + generate manifest.json
 ```
 
 Pipeline: `cmd/vmake/root.go:runPipeline()`
@@ -137,6 +195,9 @@ const (OptionBool, OptionString, OptionInt, OptionChoice)
 
 type SourceOrigin int
 const (SourceLocal, SourceRemote)
+
+type PkgDirs struct { SourceDir, BuildDir, InstallDir string }
+type PostLinkStep struct { Tool string; Args []string }
 ```
 
 ## Build Script System
@@ -154,6 +215,32 @@ func Main(p *api.Package) {
 - Same-package: `AddDeps("utils")`
 - Cross-package: `AddDeps("lib:utils")` using `package:target` format
 - Third-party: `AddDeps("official/zlib")` (declared via `OnRequire` + `AddRequires`)
+
+## RTOS / Embedded Support
+```go
+ctx.Target("firmware").
+    SetKind(api.TargetBinary).
+    AddFiles("src/*.c").
+    SetLinkerScript("ld/stm32f4.ld").
+    AddPostLinkSize().
+    AddPostLinkHex()
+```
+- `SetLinkerScript(path)` — passes `-T` to linker
+- `AddPostLink(tool, args...)` — generic post-link step, supports `{output}` placeholder
+- Shorthands: `AddPostLinkHex()`, `AddPostLinkBin()`, `AddPostLinkSize()`, `AddPostLinkStrip()`
+- RTOS tool accessors: `Package.ObjCopy()`, `Size()`, `ObjDump()`, `NM()`
+
+## Git Patches
+```go
+p.AddPatches("patches/fix-build.patch", "patches/add-feature.patch")
+```
+Patches are applied via `git apply --3way` after source download, before build. Already-applied patches are skipped.
+
+## Sub-Graph Build
+```go
+ctx.BuildSubGraph("codegen")    // Build package and its deps as independent sub-graph
+path := ctx.DepOutput("codegen:codegen")  // Get output path of dependency target
+```
 
 ## Package Repositories
 

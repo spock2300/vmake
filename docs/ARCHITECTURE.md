@@ -16,10 +16,70 @@ Phase 2b: OnConfig
     |
 Phase 3: OnBuild
     执行 OnBuild 回调 → 生成 Target → 构建依赖图 → 编译/链接
+    │                                                │
+    │  (远程包) git patch 应用 → 执行 TargetVoid.BuildFunc()   (RTOS) 后链接步骤
     |
 (Optional) Install
-    安装目标产物到指定目录
+    清理安装前缀 → 安装目标产物 → 生成 manifest.json
 ```
+
+### Build Flags
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--force` | `-f` | 强制重新编译构建脚本 |
+| `--toolchain` | | 覆盖工具链 |
+| `--mode` | | 覆盖构建模式（debug/release） |
+| `--install` | `-i` | 构建后安装 |
+| `--prefix` | `-p` | 安装前缀（默认: `./install/`） |
+| `--install-type` | | 安装类型: `runtime`（默认）或 `sdk` |
+
+### Install Type 过滤
+
+`--install-type` 控制安装内容：
+
+| 文件类型 | runtime | sdk |
+|---------|---------|-----|
+| binary → `bin/` | ✓ | ✓ |
+| shared (.so) → `lib/` | ✓ | ✓ |
+| static (.a) → `lib/` | ✗ | ✓ |
+| public includes → `include/` | ✗ | ✓ |
+| AddInstalls 自定义文件 | ✓ | ✓ |
+
+### Install Manifest
+
+`--install` 在安装前缀生成 `<prefix>/manifest.json`，记录构建元数据和每个包的信息：
+
+```json
+{
+  "vmake": "0.x.x",
+  "toolchain": "gcc",
+  "mode": "debug",
+  "generated": "2026-03-29T01:55:53Z",
+  "packages": [
+    {
+      "name": "myapp",
+      "version": "v1.0.0-2-g3a4b5c6",
+      "source": "local",
+      "ref": "3a4b5c6789abcdef...",
+      "path": "."
+    },
+    {
+      "name": "test_build/mathlib",
+      "version": "2.1.0",
+      "source": "prefix",
+      "url": "https://gitee.com/.../test_build_mathlib.git",
+      "ref": "v2.1.0"
+    }
+  ]
+}
+```
+
+- 本地包: `source: "local"`，版本来自 `git describe`，`ref` 来自 `git rev-parse HEAD`（完整哈希），`path` 相对于 cwd
+- Prefix 包: `source: "prefix"`，`url` 来自 `PrefixGitURL`，`ref` 来自 `PrefixVersions`
+- Index 包: `source: "index"`，`url` 来自首个 `GitURLs()`，`ref` 来自 `Versions()`
+
+CLI: `vmake manifest show <path>` / `vmake manifest checkout <path> [name]`
 
 ### Phase 1: 构建脚本扫描与依赖解析
 
@@ -35,10 +95,12 @@ Scan(root)          Compile             Load              Resolve
 ```
 
 1. `buildscript.Scan(root)` 递归扫描 `build.go`，返回 `[]buildscript.Source`
-2. `buildscript.Compiler` 编译为 `.so`，缓存在 `cache/buildscripts/`
-3. `buildscript.Loader` 加载 `.so`，调用 `Main(*api.Package)` 获取 `*api.Package`
+2. `buildscript.Compile()` 编译为 `.so`，缓存在 `cache/buildscripts/`
+3. `buildscript.Load()` 加载 `.so`，调用 `Main(*api.Package)` 获取 `*api.Package`
 4. `resolver.Resolver` 递归解析依赖，生成 `Graph`（拓扑排序）
 5. `Resolver.ResolveDeferred()` 解析远程（延迟）依赖
+
+远程包在 Phase 3 源码下载后、构建前会自动应用 git patch（`git apply --3way`），已应用的 patch 会被跳过。
 
 源码：`pkg/buildscript/scanner.go`, `compiler.go`, `loader.go`, `pkg/resolver/resolver.go`
 
@@ -52,7 +114,7 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 2. `ConfigAccessor.MergeGlobals` 合并全局选项（内置 `mode` + `toolchain` + 用户定义）作为回退
 3. 配置值在后续 TUI 或 CLI flag 中加载
 
-源码：`cmd/vmake/root.go:193-230`, `pkg/api/global.go`
+源码：`cmd/vmake/root.go`, `pkg/api/global.go`
 
 ### Phase 3: 构建执行
 
@@ -68,6 +130,8 @@ OnBuild 回调 ──▶ 生成 Target ──▶ BuildGraph ──▶ Scheduler.
 2. `build.NewBuildGraph` 构建依赖图，拓扑排序
 3. `build.NewScheduler` 初始化编译器、链接器、加载缓存
 4. `Scheduler.BuildAll` 通过 `ForEachDefault` 按拓扑顺序构建每个默认 Target
+5. RTOS 目标：链接后执行 `PostLinkStep`（如 `objcopy -O ihex` 生成 .hex 文件）
+6. 子图构建：`BuildContext.BuildSubGraph()` 将包及其依赖作为独立子图构建，`DepOutput()` 获取依赖目标输出路径
 
 源码：`pkg/build/scheduler.go`, `pkg/build/graph.go`
 
@@ -160,7 +224,7 @@ vmake (RootCmd)
 ├── clean          # 清理构建产物
 ├── rebuild        # 完全重新构建
 ├── config         # TUI 配置界面
-├── update         # 自我更新（go install）
+├── update [ver]   # 自我更新（go install）
 ├── version        # 版本信息
 ├── toolchain      # 工具链管理
 │   ├── list       # 列出工具链
@@ -183,13 +247,14 @@ vmake (RootCmd)
 │   └── update     # 更新扩展仓库
 ├── git
 │   └── tag        # Git 标签操作（支持版本号自动递增）
-├── query          # 显示依赖树（AI 集成）
+├── query          # 显示依赖树
+├── manifest       # 安装清单管理
+│   ├── show       # 显示清单内容
+│   └── checkout   # 按记录版本 checkout
 ├── skill          # AI skill 管理
 │   ├── install    # 安装 AI skill
 │   ├── uninstall  # 卸载 AI skill
 │   └── path       # 显示安装路径
-├── version        # 版本信息
-├── update [ver]   # 自我更新
 └── <plugin>       # 扩展插件提供的命令
     └── ...        # 插件自定义子命令
 ```
@@ -309,6 +374,7 @@ EntryConfig
 | 组件 | 文件路径 | 职责 |
 |------|----------|------|
 | API 定义 | `pkg/api/` | 公共 API，构建脚本可导入 |
+| 插件系统 | `pkg/plugin/` | 扩展插件管理、编译、加载 |
 | 构建脚本系统 | `pkg/buildscript/` | 扫描、编译、加载构建脚本 |
 | 依赖解析 | `pkg/resolver/` | 依赖图解析、拓扑排序 |
 | 构建系统 | `pkg/build/` | 编译、链接、调度、安装 |
@@ -353,10 +419,10 @@ vmake 启动
 plugin.Manager.DiscoverPlugins()  ──▶ 扫描 extensions/*/
     │
     ▼
-plugin.Compiler.Compile()         ──▶ 编译 main.go → .so
+plugin.Compile()                     ──▶ 编译 main.go → .so
     │
     ▼
-plugin.Loader.Load()              ──▶ 加载 .so，调用 Main(ctx)
+plugin.Load()                        ──▶ 加载 .so，调用 Main(ctx)
     │
     ▼
 ctx.AddSubCommand()               ──▶ 注册 cobra.Command
@@ -407,9 +473,16 @@ func Main(ctx *plugin.Context) {
       "host": "x86_64-linux-gnu",
       "prefix": "aarch64-linux-gnu",
       "file": "aarch64-linux-gnu-13.2.0.tar.gz",
-      "cflags": ["-O2"],
-      "cxxflags": ["-O2"],
-      "ldflags": []
+      "tools": {
+        "cc": "aarch64-linux-gnu-gcc",
+        "cxx": "aarch64-linux-gnu-g++",
+        "ar": "aarch64-linux-gnu-ar"
+      },
+      "default_flags": {
+        "cflags": ["-O2"],
+        "cxxflags": ["-O2"],
+        "ldflags": []
+      }
     }
   ]
 }
@@ -427,7 +500,7 @@ func Main(ctx *plugin.Context) {
 
 ```
 Store
-├── BaseDir  string
+├── baseDir  string（私有，通过 BaseDir() 访问）
 ├── Add(name, gitURL, clone CloneFunc) error   // git clone
 ├── Remove(name) error                         // 删除仓库
 ├── Exists(name) bool                          // 是否存在

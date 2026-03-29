@@ -70,6 +70,31 @@ Remove flags: `RemoveCFlags`, `RemoveDefines`, `RemoveIncludes`, etc.
 
 Third-party packages with external build systems (CMake, Autotools, etc.) use `TargetVoid` with `SetBuildFunc` to provide custom build logic.
 
+## RTOS / Embedded
+
+```go
+ctx.Target("firmware").
+    SetKind(api.TargetBinary).
+    AddFiles("src/*.c").
+    SetLinkerScript("ld/stm32f4.ld").   // Passes -T to linker
+    AddPostLinkSize().                   // Print size info
+    AddPostLinkHex()                     // Generate .hex file
+```
+
+- `SetLinkerScript(path)` — passes `-T` to linker
+- `AddPostLink(tool, args...)` — generic post-link step, supports `{output}` placeholder
+- Shorthands: `AddPostLinkHex()`, `AddPostLinkBin()`, `AddPostLinkSize()`, `AddPostLinkStrip()`
+- RTOS tool accessors: `Package.ObjCopy()`, `Size()`, `ObjDump()`, `NM()`
+
+## Sub-Graph Build
+
+Build a dependency package and its transitive deps as an independent sub-graph:
+
+```go
+ctx.BuildSubGraph("codegen")                        // Build codegen + its deps
+path := ctx.DepOutput("codegen:codegen")             // Get output path of a dependency target
+```
+
 ## Option & Conditional
 
 **Define options in OnConfig:**
@@ -117,6 +142,16 @@ p.OnPackage(func(p *api.Package) {
     p.SetLibs("z")
 })
 ```
+
+## Git Patches
+
+Apply patches to third-party packages after source download:
+
+```go
+p.AddPatches("patches/fix-build.patch", "patches/add-feature.patch")
+```
+
+Patches are applied via `git apply --3way`. Already-applied patches are skipped automatically.
 
 ## Package Repositories
 
@@ -168,6 +203,21 @@ ctx.Target("utils").
     AddPublicIncludes("include")  // Consumers automatically get this
 ```
 
+## Build Flags
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--force` | `-f` | Force buildscript recompilation |
+| `--toolchain` | | Override toolchain |
+| `--mode` | | Override build mode (debug/release) |
+| `--install` | `-i` | Install after build |
+| `--prefix` | `-p` | Installation prefix (default: `./install/`) |
+| `--install-type` | | Install type: `runtime` (default) or `sdk` |
+
+`--install-type` controls what gets installed:
+- **runtime**: binaries + shared libs + AddInstalls files (no static libs, no headers)
+- **sdk**: everything (binaries + shared + static libs + public headers + AddInstalls files)
+
 ## CLI Quick Reference
 
 | Command | Description |
@@ -177,6 +227,8 @@ ctx.Target("utils").
 | `vmake config` | Open TUI for option management |
 | `vmake clean` | Remove build artifacts |
 | `vmake query` | Show dependency tree (AI integration) |
+| `vmake manifest show <path>` | Show install manifest contents |
+| `vmake manifest checkout <path> [name]` | Restore packages to recorded versions |
 | `vmake toolchain list` | Show available toolchains |
 | `vmake toolchain show` | Show toolchain details |
 | `vmake repo add <name> <url>` | Add package repository |
@@ -193,6 +245,8 @@ ctx.Target("utils").
 | `vmake ext list` | List extensions |
 | `vmake ext update [name]` | Update extension repositories |
 | `vmake skill install` | Install AI assistant skill |
+| `vmake skill uninstall` | Uninstall AI assistant skill |
+| `vmake skill path` | Show skill installation paths |
 | `vmake git tag [version]` | Create version tag |
 | `vmake update [version]` | Update vmake |
 | `vmake version` | Print version info |

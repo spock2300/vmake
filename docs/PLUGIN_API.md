@@ -56,7 +56,7 @@ type Package struct {
     PackageMeta
     ConfigAccessor
     *TargetRegistry
-    InstallItemHolder
+    *InstallItemHolder
     // ... 内部字段
 }
 ```
@@ -64,11 +64,11 @@ type Package struct {
 ### 生命周期方法（注册回调）
 
 ```go
-func (p *Package) OnRequire(fn RequireFunc)    // 声明第三方依赖
-func (p *Package) OnConfig(fn ConfigFunc)      // 定义配置选项
-func (p *Package) OnBuild(fn BuildFunc)        // 定义构建目标
-func (p *Package) OnInstall(fn InstallFunc)    // 定义安装规则
-func (p *Package) OnPackage(fn PackageFunc)    // 填充包元数据（插件提取阶段执行）
+func (p *Package) OnRequire(fn RequireFunc) *Package    // 声明第三方依赖
+func (p *Package) OnConfig(fn ConfigFunc) *Package       // 定义配置选项
+func (p *Package) OnBuild(fn BuildFunc) *Package          // 定义构建目标
+func (p *Package) OnInstall(fn InstallFunc) *Package      // 定义安装规则
+func (p *Package) OnPackage(fn PackageFunc) *Package      // 填充包元数据（插件提取阶段执行）
 ```
 
 ### 元信息设置（第三方包）
@@ -83,6 +83,16 @@ func (p *Package) SetVersions(versions map[string]string) *Package
 func (p *Package) SetSubmodules(v bool) *Package
 func (p *Package) SetLibs(libs ...string) *Package
 ```
+
+### Git Patch
+
+```go
+func (p *Package) AddPatches(paths ...string) *Package
+func (p *Package) SetPatches(paths ...string) *Package
+func (p *Package) GetPatches() []string
+```
+
+Patch 文件在源码下载后、构建前通过 `git apply --3way` 自动应用。已应用的 patch 会被跳过。
 
 ### 目标定义
 
@@ -104,6 +114,7 @@ func (p *Package) SourceDir() string
 func (p *Package) BuildDir() string
 func (p *Package) InstallDir() string
 func (p *Package) OutputDir() string
+func (p *Package) ScriptDir() string
 ```
 
 ### 编译器信息（代理 Toolchain）
@@ -118,6 +129,15 @@ func (p *Package) CFlags() string
 func (p *Package) CXXFlags() string
 func (p *Package) LDFlags() string
 func (p *Package) Env() map[string]string
+```
+
+### RTOS 工具访问器
+
+```go
+func (p *Package) ObjCopy() string
+func (p *Package) Size() string
+func (p *Package) ObjDump() string
+func (p *Package) NM() string
 ```
 
 ### 构建辅助方法
@@ -136,7 +156,7 @@ func (p *Package) RunEnv(env map[string]string, name string, args ...string) err
 ### 获取方法
 
 ```go
-func (p *Package) PackageName() string
+func (p *Package) FullName() string                // 完整包名（repo/name 或 name）
 func (p *Package) GetOptions() map[string]*Option
 func (p *Package) Versions() map[string]string
 ```
@@ -150,7 +170,7 @@ func (p *Package) Versions() map[string]string
 func (a *ConfigAccessor) Bool(name string) bool
 func (a *ConfigAccessor) String(name string) string
 func (a *ConfigAccessor) Int(name string) int
-func (a *ConfigAccessor) BoolStr(name) string          // "ON" / "OFF"
+func (a *ConfigAccessor) BoolStr(name string) string          // "ON" / "OFF"
 
 // 条件表达式
 func (a *ConfigAccessor) If(option string, then ...string) []string
@@ -187,8 +207,9 @@ func (ctx *ConfigContext) Int(name string) int
 
 // 其他
 func (ctx *ConfigContext) PackageName() string
-func (ctx *ConfigContext) SetConfigValue(name string, val any)
+func (ctx *ConfigContext) SetConfigValue(name string, val any) *ConfigContext
 func (ctx *ConfigContext) GetOptions() map[string]*Option
+func (ctx *ConfigContext) Toolchains() []string
 ```
 
 ## Option
@@ -203,7 +224,7 @@ func (o *Option) SetDescription(desc string) *Option
 func (o *Option) SetValues(vals ...string) *Option        // OptionChoice 使用
 func (o *Option) SetShowIf(fn func(ctx *ConfigContext) bool) *Option  // 条件显示
 func (o *Option) SetGroup(group string) *Option
-func (o *Option) SetGlobal() *Option                       // 标记为全局选项
+func (o *Option) IsGlobal() bool                      // 是否为全局选项（group == "Global"）
 
 // 获取方法
 func (o *Option) Name() string
@@ -224,6 +245,7 @@ func (o *Option) IsGlobal() bool
 type BuildContext struct {
     ConfigAccessor
     *TargetRegistry
+    *InstallItemHolder
     // ...
 }
 
@@ -248,10 +270,11 @@ func (ctx *BuildContext) SetInstallFilter(filter InstallFilterFunc) *InstallItem
 
 // 子构建
 func (ctx *BuildContext) BuildSubGraph(pkgName string)
+func (ctx *BuildContext) DepOutput(depRef string) string
 
 // 其他
 func (ctx *BuildContext) PackageName() string
-func (ctx *BuildContext) Exec(name string, args ...string) error
+func (ctx *BuildContext) Exec(name string, args ...string)
 ```
 
 ## InstallContext
@@ -261,17 +284,19 @@ func (ctx *BuildContext) Exec(name string, args ...string) error
 ```go
 type InstallContext struct {
     ConfigAccessor
+    *InstallItemHolder
     // ...
 }
 
-func (ctx *InstallContext) SetPrefix(prefix string)
+func (ctx *InstallContext) SetPrefix(prefix string) *InstallContext
 func (ctx *InstallContext) Prefix() string
 func (ctx *InstallContext) PrefixSet() bool
 func (ctx *InstallContext) PackageName() string
 
-func (ctx *InstallContext) AddInstalls(src, dest string)
-func (ctx *InstallContext) SetInstallFilter(filter InstallFilterFunc)
+func (ctx *InstallContext) AddInstalls(src, dest string) *InstallItemHolder
+func (ctx *InstallContext) SetInstallFilter(filter InstallFilterFunc) *InstallItemHolder
 func (ctx *InstallContext) GetInstallFilter() InstallFilterFunc
+func (ctx *InstallContext) GetInstallItems() []InstallItem
 
 func (ctx *InstallContext) Bool(name string) bool
 func (ctx *InstallContext) String(name string) string
@@ -306,6 +331,14 @@ func (t *Target) AddLdFlags(flags ...any) *Target
 
 // 第三方包构建
 func (t *Target) SetBuildFunc(fn func(p *Package) error) *Target
+
+// RTOS/嵌入式
+func (t *Target) SetLinkerScript(path string) *Target    // 传递 -T 给链接器
+func (t *Target) AddPostLink(tool string, args ...string) *Target  // 通用后链接步骤，支持 {output} 占位符
+func (t *Target) AddPostLinkHex() *Target               // objcopy -O ihex {output} {output}.hex
+func (t *Target) AddPostLinkBin() *Target               // objcopy -O binary {output} {output}.bin
+func (t *Target) AddPostLinkSize() *Target              // size {output}
+func (t *Target) AddPostLinkStrip() *Target             // strip -o {output}.stripped {output}
 
 // 安装控制
 func (t *Target) SetInstallDir(dir string) *Target
@@ -342,7 +375,6 @@ func (t *Target) BuildFunc() func(*Package) error
 func (t *Target) LinkerScript() string
 func (t *Target) PostLinkSteps() []PostLinkStep
 ```
-
 `AddFiles/Includes/Defines/Links/CFlags/CxxFlags/LdFlags` 接受 `string` 或 `[]string`（条件表达式返回）。
 
 `AddPublicIncludes` 支持 `@"pattern"` 作为最后一个参数进行 match。Pattern 应用到前面所有目录（省略目录默认为 `"."`）。Pattern 使用 `filepath.Match` 语法。
@@ -362,8 +394,10 @@ ctx.Target("mylib").AddPublicIncludes("include", "src", "@foo*.h")
 
 ```go
 // 项目依赖声明
-func (ctx *RequireContext) AddRequires(deps ...string)       // "official/zlib >=1.2"
+func (ctx *RequireContext) AddRequires(deps ...string) *RequireContext   // "official/zlib >=1.2"
 func (ctx *RequireContext) GetRequires() []RequireInfo
+func (ctx *RequireContext) ResetRequires()
+func (ctx *RequireContext) RunFuncs()
 ```
 
 ## 关键类型
@@ -413,6 +447,11 @@ type RequireInfo struct {
     Name       string
     Constraint string
 }
+
+type PostLinkStep struct {
+    Tool string
+    Args []string
+}
 ```
 
 ### 语义版本 (`pkg/api/semver.go`)
@@ -432,7 +471,7 @@ func ParseVersion(s string) (Version, bool)
 func (v Version) Compare(other Version) int
 func ParseConstraint(s string) (Constraint, bool)
 func (c Constraint) Match(v Version) bool
-func MatchVersion(available, constraint string) (string, bool)
+func MatchVersion(available []string, constraint string) (string, bool)
 ```
 
 ## 全局选项
@@ -471,6 +510,30 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 ```
 
 全局选项在所有 Package 间共享。如果多个 Package 定义同名全局选项，类型和默认值必须一致。
+
+## 安装类型过滤
+
+`--install-type` 控制 `vmake build --install` 安装哪些文件：
+
+| 文件类型 | runtime | sdk |
+|---------|---------|-----|
+| binary → `bin/` | ✓ | ✓ |
+| shared (.so) → `lib/` | ✓ | ✓ |
+| static (.a) → `lib/` | ✗ | ✓ |
+| public includes → `include/` | ✗ | ✓ |
+| AddInstalls 自定义文件 | ✓ | ✓ |
+
+默认 `runtime`，只安装运行时所需文件（二进制和动态库）。`sdk` 安装全部内容（含静态库和公共头文件），适合需要二次开发的场景。
+
+## 安装清单
+
+`vmake build --install` 在安装前缀生成 `manifest.json`，记录构建元数据和每个包的版本信息：
+
+- 本地包：`source: "local"`，含 `ref`（git 完整哈希）和 `path`（相对路径）
+- Prefix 包：`source: "prefix"`，含 `url` 和 `ref`（git tag）
+- Index 包：`source: "index"`，含 `url` 和 `ref`
+
+通过 `vmake manifest show <path>` 查看，`vmake manifest checkout <path> [name]` 恢复到记录的版本。
 
 ## SplitPackageRef (`pkg/api/package.go`)
 
@@ -604,6 +667,27 @@ func Main(p *api.Package) {
     })
 }
 ```
+
+### 使用 Git Patch 修复第三方包
+
+```go
+func Main(p *api.Package) {
+    p.AddPatches("patches/fix-build.patch")
+
+    p.OnRequire(func(ctx *api.RequireContext) {
+        ctx.AddRequires("official/zlib >=1.2")
+    })
+
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("app").
+            SetKind(api.TargetBinary).
+            AddFiles("src/*.c").
+            AddDeps("official/zlib")
+    })
+}
+```
+
+Patch 文件在源码下载后、构建前通过 `git apply --3way` 自动应用。已应用的 patch 会被跳过。
 
 ### 第三方包定义 (`official_repo/z/zlib`)
 
@@ -807,9 +891,16 @@ func Main(ctx *plugin.Context) {
       "host": "x86_64-linux-gnu",
       "prefix": "aarch64-linux-gnu",
       "file": "aarch64-linux-gnu-13.2.0.tar.gz",
-      "cflags": ["-O2"],
-      "cxxflags": ["-O2"],
-      "ldflags": []
+      "tools": {
+        "cc": "aarch64-linux-gnu-gcc",
+        "cxx": "aarch64-linux-gnu-g++",
+        "ar": "aarch64-linux-gnu-ar"
+      },
+      "default_flags": {
+        "cflags": ["-O2"],
+        "cxxflags": ["-O2"],
+        "ldflags": []
+      }
     }
   ]
 }
