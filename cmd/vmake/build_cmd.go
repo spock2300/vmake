@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	exec "gitee.com/spock2300/vmake/internal/exec"
+	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/internal/jsonio"
 	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/build"
@@ -45,6 +47,7 @@ type installManifestEntry struct {
 	Source  string `json:"source"`
 	URL     string `json:"url,omitempty"`
 	Ref     string `json:"ref,omitempty"`
+	Path    string `json:"path,omitempty"`
 }
 
 type installManifest struct {
@@ -68,7 +71,11 @@ func gitDescribe(dir string) string {
 	if err == nil {
 		return strings.TrimSpace(string(out))
 	}
-	out, err = exec.RunWithOptions("git", []string{"rev-parse", "--short", "HEAD"}, exec.RunOptions{Dir: dir, Quiet: true})
+	return gitRevParse(dir)
+}
+
+func gitRevParse(dir string) string {
+	out, err := exec.RunWithOptions("git", []string{"rev-parse", "HEAD"}, exec.RunOptions{Dir: dir, Quiet: true})
 	if err == nil {
 		return strings.TrimSpace(string(out))
 	}
@@ -81,10 +88,13 @@ func writeManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 		node := ctx.DepGraph.Packages[name]
 		if node.IsLocal() {
 			sourceDir := result.PkgDirs[name]
+			relPath, _ := filepath.Rel(ctx.WorkDir, sourceDir)
 			packages = append(packages, installManifestEntry{
 				Name:    name,
 				Version: gitDescribe(sourceDir),
 				Source:  "local",
+				Ref:     gitRevParse(sourceDir),
+				Path:    relPath,
 			})
 			continue
 		}
@@ -682,6 +692,9 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 
 	vlog.Info("")
 	vlog.Info("Installing...")
+
+	os.RemoveAll(effectivePrefix)
+	fs.EnsureDir(effectivePrefix)
 
 	installer := build.NewArtifactInstaller(result.Graph, result.PkgDirs, effectivePrefix)
 	installer.SetInstallType(installTypeFlag)
