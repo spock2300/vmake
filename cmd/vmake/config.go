@@ -1,8 +1,6 @@
 package main
 
 import (
-	"os"
-
 	"gitee.com/spock2300/vmake/pkg/buildscript"
 	"gitee.com/spock2300/vmake/pkg/config"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
@@ -25,21 +23,7 @@ func init() {
 
 func runConfig(cmd *cobra.Command, args []string) {
 	ctx := mustInitContext()
-
-	if err := runRequirePhase(ctx, false); err != nil {
-		vlog.Error("Phase 1 (OnRequire) failed: %v", err)
-		os.Exit(1)
-	}
-
-	if err := ctx.Resolver.ResolveDeferred(); err != nil {
-		vlog.Error("Resolve deferred packages failed: %v", err)
-		os.Exit(1)
-	}
-
-	if err := runConfigPhase(ctx); err != nil {
-		vlog.Error("Phase 2 (OnConfig) failed: %v", err)
-		os.Exit(1)
-	}
+	runThroughConfigPhase(ctx, false)
 
 	hasOptions := len(ctx.AllOptions) > 0
 	if !hasOptions && len(ctx.GlobalOptions) == 0 {
@@ -85,10 +69,7 @@ func runConfig(cmd *cobra.Command, args []string) {
 	}
 
 	result, err := tui.Run(sources, deps, ctx.AllOptions, values, ctx.WorkDir, currentTC, ctx.GlobalOptions, globalValues)
-	if err != nil {
-		vlog.Error("TUI error: %v", err)
-		os.Exit(1)
-	}
+	fatalErr(err)
 
 	if !result.Saved {
 		vlog.Info("Configuration cancelled")
@@ -123,8 +104,7 @@ func runConfig(cmd *cobra.Command, args []string) {
 	}
 
 	if err := config.Save(ctx.ConfigPath, ctx.Config); err != nil {
-		vlog.Error("Failed to save config: %v", err)
-		os.Exit(1)
+		fatalMsg("Failed to save config: %v", err)
 	}
 
 	vlog.Info("Configuration saved to %s", ctx.ConfigPath)

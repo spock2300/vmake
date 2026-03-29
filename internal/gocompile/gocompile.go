@@ -26,6 +26,18 @@ type CompileResult struct {
 	OutputPath string
 }
 
+func NewFailResult(err error) CompileResult {
+	return CompileResult{Success: false, Error: err}
+}
+
+func NewFailResultAt(err error, outputPath string) CompileResult {
+	return CompileResult{Success: false, Error: err, OutputPath: outputPath}
+}
+
+func NewOkResult(outputPath string) CompileResult {
+	return CompileResult{Success: true, OutputPath: outputPath}
+}
+
 func CompilePlugin(opts PluginOptions) error {
 	vmakeDir := os.Getenv("VMAKE_DIR")
 	goModContent := BuildGoModContent(opts, vmakeDir)

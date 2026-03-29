@@ -18,19 +18,12 @@ type CompileResult struct {
 func Compile(pluginDir string, force bool) CompileResult {
 	info, err := LoadPluginInfo(pluginDir)
 	if err != nil {
-		return CompileResult{
-			CompileResult: gocompile.CompileResult{Success: false, Error: err},
-			PluginDir:     pluginDir,
-		}
+		return CompileResult{CompileResult: gocompile.NewFailResult(err), PluginDir: pluginDir}
 	}
 
 	entryPath := filepath.Join(pluginDir, info.Entry)
 	if !fs.FileExists(entryPath) {
-		return CompileResult{
-			CompileResult: gocompile.CompileResult{Success: false, Error: fmt.Errorf("entry file not found: %s", entryPath)},
-			PluginDir:     pluginDir,
-			PluginName:    info.Name,
-		}
+		return CompileResult{CompileResult: gocompile.NewFailResult(fmt.Errorf("entry file not found: %s", entryPath)), PluginDir: pluginDir, PluginName: info.Name}
 	}
 
 	outputPath := filepath.Join(pluginDir, "plugin.so")
@@ -40,11 +33,7 @@ func Compile(pluginDir string, force bool) CompileResult {
 	}
 
 	if fs.FileExists(outputPath) {
-		return CompileResult{
-			CompileResult: gocompile.CompileResult{Success: true, OutputPath: outputPath},
-			PluginDir:     pluginDir,
-			PluginName:    info.Name,
-		}
+		return CompileResult{CompileResult: gocompile.NewOkResult(outputPath), PluginDir: pluginDir, PluginName: info.Name}
 	}
 
 	entryFile := filepath.Base(filepath.Join(pluginDir, "src", "main.go"))
@@ -59,16 +48,8 @@ func Compile(pluginDir string, force bool) CompileResult {
 	}
 
 	if err := gocompile.CompilePlugin(opts); err != nil {
-		return CompileResult{
-			CompileResult: gocompile.CompileResult{Success: false, Error: err, OutputPath: outputPath},
-			PluginDir:     pluginDir,
-			PluginName:    info.Name,
-		}
+		return CompileResult{CompileResult: gocompile.NewFailResultAt(err, outputPath), PluginDir: pluginDir, PluginName: info.Name}
 	}
 
-	return CompileResult{
-		CompileResult: gocompile.CompileResult{Success: true, OutputPath: outputPath},
-		PluginDir:     pluginDir,
-		PluginName:    info.Name,
-	}
+	return CompileResult{CompileResult: gocompile.NewOkResult(outputPath), PluginDir: pluginDir, PluginName: info.Name}
 }

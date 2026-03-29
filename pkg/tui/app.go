@@ -388,35 +388,26 @@ func (m *Model) renderOption(item OptionItem, selected bool) string {
 	return fmt.Sprintf("  %s %s %s", name, val, desc)
 }
 
+func renderHelp(base string, modified bool) string {
+	if modified {
+		base += " " + modifiedStyle.Render("[Modified]")
+	}
+	return helpStyle.Render(base)
+}
+
 func (m *Model) renderHelp() string {
 	if m.editing {
 		visible := m.visibleOptions()
 		if m.optCursor < len(visible) {
 			item := visible[m.optCursor]
 			if item.Opt.Type() == api.OptionChoice {
-				base := "↑↓: select | Enter: confirm | Esc: cancel"
-				if m.hasChanges {
-					return helpStyle.Render(base + " " + modifiedStyle.Render("[Modified]"))
-				}
-				return helpStyle.Render(base)
+				return renderHelp("↑↓: select | Enter: confirm | Esc: cancel", m.hasChanges)
 			}
 		}
-		base := "Enter: confirm | Esc: cancel"
-		if m.hasChanges {
-			return helpStyle.Render(base + " " + modifiedStyle.Render("[Modified]"))
-		}
-		return helpStyle.Render(base)
+		return renderHelp("Enter: confirm | Esc: cancel", m.hasChanges)
 	}
 	if m.focusArea == 0 {
-		base := "↑↓: navigate | ←→: collapse/expand | Tab: options | Enter: Save | Esc: Cancel"
-		if m.hasChanges {
-			return helpStyle.Render(base + " " + modifiedStyle.Render("[Modified]"))
-		}
-		return helpStyle.Render(base)
+		return renderHelp("↑↓: navigate | ←→: collapse/expand | Tab: options | Enter: Save | Esc: Cancel", m.hasChanges)
 	}
-	base := "↑↓: navigate | Space: toggle | Enter: edit | Tab: tree | Esc: back"
-	if m.hasChanges {
-		return helpStyle.Render(base + " " + modifiedStyle.Render("[Modified]"))
-	}
-	return helpStyle.Render(base)
+	return renderHelp("↑↓: navigate | Space: toggle | Enter: edit | Tab: tree | Esc: back", m.hasChanges)
 }

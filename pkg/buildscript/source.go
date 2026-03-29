@@ -1,6 +1,10 @@
 package buildscript
 
-import "gitee.com/spock2300/vmake/pkg/api"
+import (
+	"path/filepath"
+
+	"gitee.com/spock2300/vmake/pkg/api"
+)
 
 type Source struct {
 	Path      string
@@ -9,4 +13,11 @@ type Source struct {
 	OutputDir string
 	Origin    api.SourceOrigin
 	Force     bool
+}
+
+func (s Source) GetOutputDir() string {
+	if s.OutputDir != "" {
+		return s.OutputDir
+	}
+	return filepath.Join(s.Dir, "build")
 }

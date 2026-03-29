@@ -8,8 +8,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var updateVersion string
-
 var updateCmd = &cobra.Command{
 	Use:   "update [version]",
 	Short: "Update vmake to latest or specified version",

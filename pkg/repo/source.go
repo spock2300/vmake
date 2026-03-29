@@ -90,16 +90,7 @@ func (m *SourceManager) UpdateSource(pkg *api.Package) error {
 	repoDir := filepath.Join(m.sourcesDir, pkg.Repo, pkg.Name, "repo")
 
 	if !m.exists(repoDir) {
-		var lastErr error
-		for _, url := range pkg.GitURLs() {
-			if err := Clone(url, repoDir); err == nil {
-				return nil
-			} else {
-				lastErr = err
-				os.RemoveAll(repoDir)
-			}
-		}
-		return lastErr
+		return m.ensureRepo(pkg, repoDir)
 	}
 
 	return FetchAndReset(repoDir)

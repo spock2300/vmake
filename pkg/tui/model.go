@@ -241,36 +241,45 @@ func (m *Model) selectFirstPkg() {
 	}
 }
 
+func groupAndSortOptions(opts map[string]*api.Option) []OptionItem {
+	groups := make(map[string][]OptionItem)
+	for name, opt := range opts {
+		group := opt.Group()
+		if group == "" {
+			group = "General"
+		}
+		groups[group] = append(groups[group], OptionItem{Name: name, Group: group, Opt: opt})
+	}
+	var groupNames []string
+	for g := range groups {
+		groupNames = append(groupNames, g)
+	}
+	sort.Strings(groupNames)
+	var items []OptionItem
+	for _, g := range groupNames {
+		gItems := groups[g]
+		sort.Slice(gItems, func(i, j int) bool { return gItems[i].Name < gItems[j].Name })
+		items = append(items, gItems...)
+	}
+	return items
+}
+
+func buildShowIfContext(pkgName string, values map[string]any, options map[string]*api.Option) *api.ConfigContext {
+	cfgCtx := api.NewConfigContext(pkgName)
+	for name, val := range values {
+		cfgCtx.SetConfigValue(name, val)
+	}
+	for name, o := range options {
+		cfgCtx.Option(name).SetType(o.Type()).SetDefault(o.Default())
+	}
+	return cfgCtx
+}
+
 func (m *Model) buildOptionItems() {
 	m.optItems = nil
 
 	if m.selectedPkg == GlobalPkgName {
-		groups := make(map[string][]OptionItem)
-		for name, opt := range m.globalOptions {
-			group := opt.Group()
-			if group == "" {
-				group = "General"
-			}
-			groups[group] = append(groups[group], OptionItem{
-				Name:  name,
-				Group: group,
-				Opt:   opt,
-			})
-		}
-
-		var groupNames []string
-		for g := range groups {
-			groupNames = append(groupNames, g)
-		}
-		sort.Strings(groupNames)
-
-		for _, g := range groupNames {
-			items := groups[g]
-			sort.Slice(items, func(i, j int) bool {
-				return items[i].Name < items[j].Name
-			})
-			m.optItems = append(m.optItems, items...)
-		}
+		m.optItems = groupAndSortOptions(m.globalOptions)
 		return
 	}
 
@@ -279,32 +288,7 @@ func (m *Model) buildOptionItems() {
 		return
 	}
 
-	groups := make(map[string][]OptionItem)
-	for name, opt := range opts {
-		group := opt.Group()
-		if group == "" {
-			group = "General"
-		}
-		groups[group] = append(groups[group], OptionItem{
-			Name:  name,
-			Group: group,
-			Opt:   opt,
-		})
-	}
-
-	var groupNames []string
-	for g := range groups {
-		groupNames = append(groupNames, g)
-	}
-	sort.Strings(groupNames)
-
-	for _, g := range groupNames {
-		items := groups[g]
-		sort.Slice(items, func(i, j int) bool {
-			return items[i].Name < items[j].Name
-		})
-		m.optItems = append(m.optItems, items...)
-	}
+	m.optItems = groupAndSortOptions(opts)
 }
 
 func (m *Model) getValue(name string) any {
@@ -399,29 +383,10 @@ func (m *Model) shouldShow(opt *api.Option) bool {
 	}
 
 	if m.selectedPkg == GlobalPkgName {
-		cfgCtx := api.NewConfigContext(GlobalPkgName)
-		for name, val := range m.globalValues {
-			cfgCtx.SetConfigValue(name, val)
-		}
-		for name, o := range m.globalOptions {
-			cfgCtx.Option(name).SetType(o.Type()).SetDefault(o.Default())
-		}
-		return showIf(cfgCtx)
+		return showIf(buildShowIfContext(GlobalPkgName, m.globalValues, m.globalOptions))
 	}
 
-	cfgCtx := api.NewConfigContext(m.selectedPkg)
-	vals, ok := m.values[m.selectedPkg]
-	if ok {
-		for name, val := range vals {
-			cfgCtx.SetConfigValue(name, val)
-		}
-	}
-	opts, ok := m.options[m.selectedPkg]
-	if ok {
-		for name, o := range opts {
-			cfgCtx.Option(name).SetType(o.Type()).SetDefault(o.Default())
-		}
-	}
-
-	return showIf(cfgCtx)
+	vals, _ := m.values[m.selectedPkg]
+	opts, _ := m.options[m.selectedPkg]
+	return showIf(buildShowIfContext(m.selectedPkg, vals, opts))
 }

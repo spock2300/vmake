@@ -6,19 +6,20 @@ import (
 
 	"github.com/spf13/cobra"
 
+	vlog "gitee.com/spock2300/vmake/pkg/log"
 	"gitee.com/spock2300/vmake/pkg/plugin"
 	"gitee.com/spock2300/vmake/pkg/repo"
 )
 
 func fatalErr(err error) {
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		vlog.Error("Error: %v", err)
 		os.Exit(1)
 	}
 }
 
 func fatalMsg(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	vlog.Error(format, args...)
 	os.Exit(1)
 }
 

@@ -5,18 +5,20 @@ type InstallItemHolder struct {
 	filter InstallFilterFunc
 }
 
-func (h *InstallItemHolder) addInstall(src, dest string) {
+func (h *InstallItemHolder) AddInstalls(src, dest string) *InstallItemHolder {
 	h.items = append(h.items, InstallItem{Src: src, Dest: dest})
+	return h
 }
 
-func (h *InstallItemHolder) getInstallItems() []InstallItem {
+func (h *InstallItemHolder) GetInstallItems() []InstallItem {
 	return h.items
 }
 
-func (h *InstallItemHolder) setInstallFilter(filter InstallFilterFunc) {
+func (h *InstallItemHolder) SetInstallFilter(filter InstallFilterFunc) *InstallItemHolder {
 	h.filter = filter
+	return h
 }
 
-func (h *InstallItemHolder) getInstallFilter() InstallFilterFunc {
+func (h *InstallItemHolder) GetInstallFilter() InstallFilterFunc {
 	return h.filter
 }

@@ -67,7 +67,7 @@ func (ctx *ConfigContext) GlobalMode() *Option {
 type BuildContext struct {
 	ConfigAccessor
 	*TargetRegistry
-	installHolder     InstallItemHolder
+	*InstallItemHolder
 	pkgName           string
 	buildSubGraphFunc func(pkgName string) error
 	depOutputFunc     func(depRef string) string
@@ -76,9 +76,10 @@ type BuildContext struct {
 
 func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext {
 	return &BuildContext{
-		ConfigAccessor: NewConfigAccessor(cfgVals, nil),
-		TargetRegistry: NewTargetRegistry(),
-		pkgName:        pkgName,
+		ConfigAccessor:    NewConfigAccessor(cfgVals, nil),
+		TargetRegistry:    NewTargetRegistry(),
+		InstallItemHolder: &InstallItemHolder{},
+		pkgName:           pkgName,
 	}
 }
 
@@ -97,24 +98,6 @@ type InstallItem struct {
 }
 
 type InstallFilterFunc func(path string, isTargetOutput bool) bool
-
-func (ctx *BuildContext) AddInstalls(src, dest string) *BuildContext {
-	ctx.installHolder.addInstall(src, dest)
-	return ctx
-}
-
-func (ctx *BuildContext) GetInstallItems() []InstallItem {
-	return ctx.installHolder.getInstallItems()
-}
-
-func (ctx *BuildContext) SetInstallFilter(filter InstallFilterFunc) *BuildContext {
-	ctx.installHolder.setInstallFilter(filter)
-	return ctx
-}
-
-func (ctx *BuildContext) GetInstallFilter() InstallFilterFunc {
-	return ctx.installHolder.getInstallFilter()
-}
 
 func (ctx *BuildContext) SetBuildSubGraphFunc(fn func(string) error) {
 	ctx.buildSubGraphFunc = fn
@@ -156,43 +139,26 @@ func (ctx *BuildContext) Exec(name string, args ...string) {
 
 type InstallContext struct {
 	ConfigAccessor
-	installHolder InstallItemHolder
-	pkgName       string
-	prefix        string
-	prefixSet     bool
+	*InstallItemHolder
+	pkgName   string
+	prefix    string
+	prefixSet bool
 }
 
 func NewInstallContext(pkgName string, cfgVals map[string]any) *InstallContext {
 	return &InstallContext{
-		ConfigAccessor: NewConfigAccessor(cfgVals, nil),
-		pkgName:        pkgName,
+		ConfigAccessor:    NewConfigAccessor(cfgVals, nil),
+		InstallItemHolder: &InstallItemHolder{},
+		pkgName:           pkgName,
 	}
-}
-
-func (ctx *InstallContext) SetPrefix(prefix string) *InstallContext {
-	ctx.prefix = prefix
-	ctx.prefixSet = true
-	return ctx
 }
 
 func (ctx *InstallContext) Prefix() string      { return ctx.prefix }
 func (ctx *InstallContext) PrefixSet() bool     { return ctx.prefixSet }
 func (ctx *InstallContext) PackageName() string { return ctx.pkgName }
 
-func (ctx *InstallContext) AddInstalls(src, dest string) *InstallContext {
-	ctx.installHolder.addInstall(src, dest)
+func (ctx *InstallContext) SetPrefix(prefix string) *InstallContext {
+	ctx.prefix = prefix
+	ctx.prefixSet = true
 	return ctx
-}
-
-func (ctx *InstallContext) GetInstallItems() []InstallItem {
-	return ctx.installHolder.getInstallItems()
-}
-
-func (ctx *InstallContext) SetInstallFilter(filter InstallFilterFunc) *InstallContext {
-	ctx.installHolder.setInstallFilter(filter)
-	return ctx
-}
-
-func (ctx *InstallContext) GetInstallFilter() InstallFilterFunc {
-	return ctx.installHolder.getInstallFilter()
 }

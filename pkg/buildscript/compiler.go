@@ -15,16 +15,10 @@ type CompileResult struct {
 }
 
 func Compile(src Source) CompileResult {
-	outputDir := src.OutputDir
-	if outputDir == "" {
-		outputDir = filepath.Join(src.Dir, "build")
-	}
+	outputDir := src.GetOutputDir()
 
 	if err := fs.EnsureDir(outputDir); err != nil {
-		return CompileResult{
-			CompileResult: gocompile.CompileResult{Success: false, Error: err},
-			Source:        src,
-		}
+		return CompileResult{CompileResult: gocompile.NewFailResult(err), Source: src}
 	}
 
 	scriptPath := filepath.Join(outputDir, "build.so")
@@ -42,16 +36,8 @@ func Compile(src Source) CompileResult {
 	}
 
 	if err := gocompile.CompilePlugin(opts); err != nil {
-		return CompileResult{
-			CompileResult: gocompile.CompileResult{Success: false, Error: err, OutputPath: scriptPath},
-			Source:        src,
-			ScriptPath:    scriptPath,
-		}
+		return CompileResult{CompileResult: gocompile.NewFailResultAt(err, scriptPath), Source: src, ScriptPath: scriptPath}
 	}
 
-	return CompileResult{
-		CompileResult: gocompile.CompileResult{Success: true, OutputPath: scriptPath},
-		Source:        src,
-		ScriptPath:    scriptPath,
-	}
+	return CompileResult{CompileResult: gocompile.NewOkResult(scriptPath), Source: src, ScriptPath: scriptPath}
 }

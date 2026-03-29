@@ -131,6 +131,16 @@ func MatchVersion(available []string, constraint string) (string, bool) {
 	return candidates[0].String(), true
 }
 
+func CheckCycle(path []string, current string) error {
+	for _, p := range path {
+		if p == current {
+			return fmt.Errorf("circular dependency: %s → %s",
+				strings.Join(path, " → "), current)
+		}
+	}
+	return nil
+}
+
 func atoi(s string) int {
 	var n int
 	for _, c := range s {

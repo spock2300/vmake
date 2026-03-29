@@ -145,11 +145,8 @@ func resolvePackageRef(
 	pkgMeta map[string]PkgBuildMeta,
 	path []string,
 ) ([]string, error) {
-	for _, p := range path {
-		if p == pkgRef {
-			return nil, fmt.Errorf("circular package dependency: %s → %s",
-				strings.Join(path, " → "), pkgRef)
-		}
+	if err := api.CheckCycle(path, pkgRef); err != nil {
+		return nil, err
 	}
 
 	var result []string

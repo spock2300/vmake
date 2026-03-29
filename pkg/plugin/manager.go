@@ -2,7 +2,6 @@ package plugin
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	iexec "gitee.com/spock2300/vmake/internal/exec"
@@ -47,17 +46,12 @@ func (m *Manager) UpdateRepo(name string) error {
 }
 
 func (m *Manager) clearCompiledPlugins(repoPath string) error {
-	entries, err := os.ReadDir(repoPath)
+	names, err := fs.ListDirs(repoPath)
 	if err != nil {
 		return err
 	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		soPath := filepath.Join(repoPath, entry.Name(), "plugin.so")
-		fs.RemoveIfExists(soPath)
+	for _, name := range names {
+		fs.RemoveIfExists(filepath.Join(repoPath, name, "plugin.so"))
 	}
 	return nil
 }
@@ -69,21 +63,19 @@ func (m *Manager) RemoveRepo(name string) error {
 func (m *Manager) ListRepos() []ExtensionRepo {
 	var repos []ExtensionRepo
 
-	entries, err := os.ReadDir(m.BaseDir())
+	names, err := fs.ListDirs(m.BaseDir())
 	if err != nil {
 		return repos
 	}
 
-	for _, entry := range entries {
-		if entry.IsDir() {
-			repoPath := filepath.Join(m.BaseDir(), entry.Name())
-			url := m.getRepoURL(repoPath)
-			repos = append(repos, ExtensionRepo{
-				Name: entry.Name(),
-				Path: repoPath,
-				URL:  url,
-			})
-		}
+	for _, name := range names {
+		repoPath := filepath.Join(m.BaseDir(), name)
+		url := m.getRepoURL(repoPath)
+		repos = append(repos, ExtensionRepo{
+			Name: name,
+			Path: repoPath,
+			URL:  url,
+		})
 	}
 
 	return repos
@@ -109,17 +101,13 @@ func (m *Manager) DiscoverPlugins() ([]DiscoveredPlugin, error) {
 
 	repos := m.ListRepos()
 	for _, r := range repos {
-		entries, err := os.ReadDir(r.Path)
+		names, err := fs.ListDirs(r.Path)
 		if err != nil {
 			continue
 		}
 
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-
-			pluginDir := filepath.Join(r.Path, entry.Name())
+		for _, name := range names {
+			pluginDir := filepath.Join(r.Path, name)
 			if !PluginInfoExists(pluginDir) {
 				continue
 			}

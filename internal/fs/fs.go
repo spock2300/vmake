@@ -33,6 +33,20 @@ func RemoveIfExists(path string) {
 	_ = os.RemoveAll(path)
 }
 
+func ListDirs(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			names = append(names, entry.Name())
+		}
+	}
+	return names, nil
+}
+
 func DetectLibDir(installDir string) string {
 	lib64Dir := filepath.Join(installDir, "lib64")
 	if FileExists(lib64Dir) {

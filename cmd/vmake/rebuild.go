@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"gitee.com/spock2300/vmake/pkg/api"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 
 	"github.com/spf13/cobra"
@@ -41,13 +40,7 @@ func executeCleanLocal(ctx *RuntimeContext) {
 		return
 	}
 
-	mode := ""
-	if ctx.Config.Global != nil {
-		mode = ctx.Config.Global.Mode
-	}
-	if mode == "" {
-		mode = api.ModeDebug
-	}
+	mode := resolveMode(ctx.Config)
 
 	buildDir := fmt.Sprintf("%s-%s", tcName, mode)
 

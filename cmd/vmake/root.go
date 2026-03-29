@@ -103,41 +103,76 @@ type pipelineOptions struct {
 	installAfter bool
 }
 
+func runThroughConfigPhase(ctx *RuntimeContext, force bool) {
+	fatalErr(runRequirePhase(ctx, force))
+	fatalErr(ctx.Resolver.ResolveDeferred())
+	ctx.Resolver.UpdateOrder()
+	fatalErr(runConfigPhase(ctx))
+}
+
 func runPipeline(opts pipelineOptions) {
 	ctx := mustInitContext()
 
-	if err := runRequirePhase(ctx, opts.force); err != nil {
-		vlog.Error("Phase 1 (OnRequire) failed: %v", err)
-		os.Exit(1)
-	}
+	fatalErr(runRequirePhase(ctx, opts.force))
 
 	if opts.afterPhase1 != nil {
 		opts.afterPhase1(ctx)
 	}
 
-	if err := ctx.Resolver.ResolveDeferred(); err != nil {
-		vlog.Error("Phase 2 (ResolveDeferred) failed: %v", err)
-		os.Exit(1)
-	}
+	fatalErr(ctx.Resolver.ResolveDeferred())
 	ctx.Resolver.UpdateOrder()
-
-	if err := runConfigPhase(ctx); err != nil {
-		vlog.Error("Phase 2 (OnConfig) failed: %v", err)
-		os.Exit(1)
-	}
+	fatalErr(runConfigPhase(ctx))
 
 	result, err := runBuildPhase(ctx)
-	if err != nil {
-		vlog.Error("Phase 3 (OnBuild) failed: %v", err)
-		os.Exit(1)
-	}
+	fatalErr(err)
 
 	if opts.installAfter {
-		if err := executeInstall(ctx, result); err != nil {
-			vlog.Error("Install error: %v", err)
-			os.Exit(1)
+		fatalErr(executeInstall(ctx, result))
+	}
+}
+
+func resolveMode(cfg *config.ConfigFile) string {
+	if cfg.Global != nil && cfg.Global.Mode != "" {
+		return cfg.Global.Mode
+	}
+	return api.ModeDebug
+}
+
+func resolvePkgToolchain(cfg *config.ConfigFile, pkgName, defaultTc string) string {
+	entry := config.GetEntry(cfg, pkgName)
+	if v, ok := entry.Options["toolchain"].(string); ok && v != "" {
+		return v
+	}
+	return defaultTc
+}
+
+func newBuildContext(ctx *RuntimeContext, name string, globalValues map[string]any) *api.BuildContext {
+	entry := config.GetEntry(ctx.Config, name)
+	buildCtx := api.NewBuildContext(name, entry.Options)
+	if opts, ok := ctx.AllOptions[name]; ok {
+		buildCtx.SetOptions(opts)
+	}
+	buildCtx.MergeGlobals(ctx.GlobalOptions, globalValues)
+	return buildCtx
+}
+
+func findAllCallsInBuildGo(buildGoPath, callName string) [][]string {
+	data, err := os.ReadFile(buildGoPath)
+	if err != nil {
+		return nil
+	}
+	content := string(data)
+	prefix := callName + "("
+	var results [][]string
+	for i := 0; i < len(content); i++ {
+		if i+len(prefix) <= len(content) && content[i:i+len(prefix)] == prefix {
+			args := extractCallArgs(content[i+len(prefix):])
+			if len(args) > 0 {
+				results = append(results, args)
+			}
 		}
 	}
+	return results
 }
 
 func runRequirePhase(ctx *RuntimeContext, force bool) error {
@@ -255,5 +290,3 @@ func GetPackageDirs(graph *resolver.Graph) map[string]string {
 	}
 	return dirs
 }
-
-var _ = fmt.Sprintf

@@ -73,38 +73,39 @@ type Package struct {
 	PackageMeta
 	ConfigAccessor
 	*TargetRegistry
-	installHolder InstallItemHolder
-	gitURLs       []string
-	homepage      string
-	description   string
-	license       string
-	versions      map[string]string
-	submodules    bool
-	requireCtx    *PackageRequireContext
-	requireFuncs  []RequireFunc
-	libs          []string
-	configFuncs   []ConfigFunc
-	buildFuncs    []BuildFunc
-	installFuncs  []InstallFunc
-	packageFunc   PackageFunc
-	scriptDir     string
-	sourceDir     string
-	buildDir      string
-	installDir    string
-	outputDir     string
-	cfgVals       map[string]any
-	tc            *toolchain.Toolchain
-	deps          map[string]*InstalledPackage
-	patches       []string
+	*InstallItemHolder
+	gitURLs      []string
+	homepage     string
+	description  string
+	license      string
+	versions     map[string]string
+	submodules   bool
+	requireCtx   *PackageRequireContext
+	requireFuncs []RequireFunc
+	libs         []string
+	configFuncs  []ConfigFunc
+	buildFuncs   []BuildFunc
+	installFuncs []InstallFunc
+	packageFunc  PackageFunc
+	scriptDir    string
+	sourceDir    string
+	buildDir     string
+	installDir   string
+	outputDir    string
+	cfgVals      map[string]any
+	tc           *toolchain.Toolchain
+	deps         map[string]*InstalledPackage
+	patches      []string
 }
 
 func NewPackage() *Package {
 	return &Package{
-		ConfigAccessor: NewConfigAccessor(nil, nil),
-		TargetRegistry: NewTargetRegistry(),
-		versions:       make(map[string]string),
-		requireCtx:     NewPackageRequireContext(),
-		deps:           make(map[string]*InstalledPackage),
+		ConfigAccessor:    NewConfigAccessor(nil, nil),
+		TargetRegistry:    NewTargetRegistry(),
+		InstallItemHolder: &InstallItemHolder{},
+		versions:          make(map[string]string),
+		requireCtx:        NewPackageRequireContext(),
+		deps:              make(map[string]*InstalledPackage),
 	}
 }
 
@@ -245,24 +246,6 @@ func (p *Package) UpdateRequireContext(cfgVals map[string]any, options map[strin
 		fn(ctx)
 	}
 	p.requireCtx = &PackageRequireContext{requiresHolder: requiresHolder{requires: ctx.GetRequires()}}
-}
-
-func (p *Package) AddInstalls(src, dest string) *Package {
-	p.installHolder.addInstall(src, dest)
-	return p
-}
-
-func (p *Package) GetInstallItems() []InstallItem {
-	return p.installHolder.getInstallItems()
-}
-
-func (p *Package) SetInstallFilter(filter InstallFilterFunc) *Package {
-	p.installHolder.setInstallFilter(filter)
-	return p
-}
-
-func (p *Package) GetInstallFilter() InstallFilterFunc {
-	return p.installHolder.getInstallFilter()
 }
 
 func (p *Package) SetDeps(deps map[string]*InstalledPackage) *Package {

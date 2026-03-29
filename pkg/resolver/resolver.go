@@ -157,11 +157,8 @@ func (r *Resolver) FilterDeps(id string, cfgVals map[string]any, options map[str
 }
 
 func (r *Resolver) resolveRecursive(id string, path []string) (*PackageNode, error) {
-	for _, p := range path {
-		if p == id {
-			return nil, fmt.Errorf("circular dependency: %s → %s",
-				strings.Join(path, " → "), id)
-		}
+	if err := api.CheckCycle(path, id); err != nil {
+		return nil, err
 	}
 
 	if node, exists := r.graph.Packages[id]; exists {
@@ -254,11 +251,7 @@ func (r *Resolver) findSource(id string) (*buildscript.Source, error) {
 }
 
 func (r *Resolver) scriptPath(src *buildscript.Source) string {
-	outputDir := src.OutputDir
-	if outputDir == "" {
-		outputDir = filepath.Join(src.Dir, "build")
-	}
-	return filepath.Join(outputDir, "build.so")
+	return filepath.Join(src.GetOutputDir(), "build.so")
 }
 
 func (r *Resolver) buildscriptOutputDir(name string) string {

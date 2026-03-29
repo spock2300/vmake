@@ -26,27 +26,8 @@ func newQueryCmd() *cobra.Command {
 func runQuery(cmd *cobra.Command, args []string) {
 	vlog.SetLevel(vlog.Quiet)
 
-	ctx, err := initContext()
-	if err != nil {
-		vlog.Error("%v", err)
-		os.Exit(1)
-	}
-
-	if err := runRequirePhase(ctx, false); err != nil {
-		vlog.Error("Phase 1 (OnRequire) failed: %v", err)
-		os.Exit(1)
-	}
-
-	if err := ctx.Resolver.ResolveDeferred(); err != nil {
-		vlog.Error("Phase 2 (ResolveDeferred) failed: %v", err)
-		os.Exit(1)
-	}
-	ctx.Resolver.UpdateOrder()
-
-	if err := runConfigPhase(ctx); err != nil {
-		vlog.Error("Phase 2 (OnConfig) failed: %v", err)
-		os.Exit(1)
-	}
+	ctx := mustInitContext()
+	runThroughConfigPhase(ctx, false)
 
 	pkgDirs := GetPackageDirs(ctx.DepGraph)
 	globalValues := config.BuildGlobalValues(ctx.Config)
@@ -196,12 +177,7 @@ func collectTargetKinds(pkg *api.Package, name, dir string, ctx *RuntimeContext,
 		return nil
 	}
 
-	entry := config.GetEntry(ctx.Config, name)
-	buildCtx := api.NewBuildContext(name, entry.Options)
-	if opts, ok := ctx.AllOptions[name]; ok {
-		buildCtx.SetOptions(opts)
-	}
-	buildCtx.MergeGlobals(ctx.GlobalOptions, globalValues)
+	buildCtx := newBuildContext(ctx, name, globalValues)
 	buildCtx.SetDryRun(true)
 
 	pkg.ExecBuildFuncs(dir, func(fn api.BuildFunc) {

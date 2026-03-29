@@ -19,33 +19,38 @@ type ResolvedTools struct {
 func ResolveTools(tc *toolchain.Toolchain) (*ResolvedTools, error) {
 	mgr := toolchain.GetManager()
 
-	ccPath, err := mgr.EnsureToolPath(tc, tc.Tools.CC)
+	ccPath, err := resolveRequired(mgr, tc, tc.Tools.CC, "CC")
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve CC: %w", err)
+		return nil, err
 	}
 
-	cxxPath, err := mgr.EnsureToolPath(tc, tc.Tools.CXX)
+	cxxPath, err := resolveRequired(mgr, tc, tc.Tools.CXX, "CXX")
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve CXX: %w", err)
+		return nil, err
 	}
 
-	arPath, err := mgr.EnsureToolPath(tc, tc.Tools.AR)
+	arPath, err := resolveRequired(mgr, tc, tc.Tools.AR, "AR")
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve AR: %w", err)
+		return nil, err
 	}
 
-	tools := &ResolvedTools{
-		CC:  ccPath,
-		CXX: cxxPath,
-		AR:  arPath,
+	return &ResolvedTools{
+		CC:      ccPath,
+		CXX:     cxxPath,
+		AR:      arPath,
+		OBJCOPY: resolveOptionalTool(mgr, tc, tc.Tools.OBJCOPY, "OBJCOPY"),
+		SIZE:    resolveOptionalTool(mgr, tc, tc.Tools.SIZE, "SIZE"),
+		OBJDUMP: resolveOptionalTool(mgr, tc, tc.Tools.OBJDUMP, "OBJDUMP"),
+		NM:      resolveOptionalTool(mgr, tc, tc.Tools.NM, "NM"),
+	}, nil
+}
+
+func resolveRequired(mgr *toolchain.Manager, tc *toolchain.Toolchain, tool, name string) (string, error) {
+	path, err := mgr.EnsureToolPath(tc, tool)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve %s: %w", name, err)
 	}
-
-	tools.OBJCOPY = resolveOptionalTool(mgr, tc, tc.Tools.OBJCOPY, "OBJCOPY")
-	tools.SIZE = resolveOptionalTool(mgr, tc, tc.Tools.SIZE, "SIZE")
-	tools.OBJDUMP = resolveOptionalTool(mgr, tc, tc.Tools.OBJDUMP, "OBJDUMP")
-	tools.NM = resolveOptionalTool(mgr, tc, tc.Tools.NM, "NM")
-
-	return tools, nil
+	return path, nil
 }
 
 func resolveOptionalTool(mgr *toolchain.Manager, tc *toolchain.Toolchain, configured, name string) string {

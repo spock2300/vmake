@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -312,10 +311,7 @@ func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.Pack
 	allTargets map[string]map[string]*api.Target, remote *remotePkgState, globalValues map[string]any,
 	buildSubGraphFn func(string) error, depOutputFn func(string) string, tc *toolchain.Toolchain) {
 
-	entry := config.GetEntry(ctx.Config, name)
-	buildCtx := api.NewBuildContext(name, entry.Options)
-	buildCtx.SetOptions(ctx.AllOptions[name])
-	buildCtx.MergeGlobals(ctx.GlobalOptions, globalValues)
+	buildCtx := newBuildContext(ctx, name, globalValues)
 	buildCtx.SetBuildSubGraphFunc(buildSubGraphFn)
 	buildCtx.SetDepOutputFunc(depOutputFn)
 
@@ -391,11 +387,7 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 			executePackageOnBuild(ctx, name, node, pkgDirs, subAllTargets, remote, cfg.GlobalValues, buildSubGraphFn, depOutputFn, nil)
 		}
 
-		entry := config.GetEntry(ctx.Config, rootPkg)
-		subTcName := cfg.TcName
-		if v, ok := entry.Options["toolchain"].(string); ok && v != "" {
-			subTcName = v
-		}
+		subTcName := resolvePkgToolchain(ctx.Config, rootPkg, cfg.TcName)
 		subTc, err := toolchain.GetManager().SelectToolchain(subTcName)
 		if err != nil {
 			return err
@@ -452,11 +444,7 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 			pkgName = depRef
 			targetName = ""
 		}
-		entry := config.GetEntry(ctx.Config, pkgName)
-		subTcName := cfg.TcName
-		if v, ok := entry.Options["toolchain"].(string); ok && v != "" {
-			subTcName = v
-		}
+		subTcName := resolvePkgToolchain(ctx.Config, pkgName, cfg.TcName)
 		pkgDir := pkgDirs[pkgName]
 		if pkgDir == "" {
 			if d, ok := remote.sourceDirs[pkgName]; ok {
@@ -548,36 +536,20 @@ func applyPatches(pkg *api.Package, sourceDir string) error {
 }
 
 func extractVersionsFromBuildGo(buildGoPath string) map[string]string {
-	data, err := os.ReadFile(buildGoPath)
-	if err != nil {
-		return nil
-	}
+	calls := findAllCallsInBuildGo(buildGoPath, "AddVersion")
 	versions := make(map[string]string)
-	content := string(data)
-	for i := 0; i < len(content); i++ {
-		if i+11 < len(content) && content[i:i+11] == "AddVersion(" {
-			args := extractCallArgs(content[i+11:])
-			if len(args) >= 2 {
-				versions[args[0]] = args[1]
-			}
+	for _, args := range calls {
+		if len(args) >= 2 {
+			versions[args[0]] = args[1]
 		}
 	}
 	return versions
 }
 
 func extractGitURLs(buildGoPath string) []string {
-	data, err := os.ReadFile(buildGoPath)
-	if err != nil {
-		return nil
-	}
-	content := string(data)
-	for i := 0; i < len(content); i++ {
-		if i+7 < len(content) && content[i:i+7] == "SetGit(" {
-			args := extractCallArgs(content[i+7:])
-			if len(args) > 0 {
-				return args
-			}
-		}
+	calls := findAllCallsInBuildGo(buildGoPath, "SetGit")
+	if len(calls) > 0 {
+		return calls[0]
 	}
 	return nil
 }
@@ -629,9 +601,7 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 			fn(installCtx)
 		})
 
-		buildCtx := api.NewBuildContext(name, entry.Options)
-		buildCtx.SetOptions(ctx.AllOptions[name])
-		buildCtx.MergeGlobals(ctx.GlobalOptions, globalValues)
+		buildCtx := newBuildContext(ctx, name, globalValues)
 		node.Pkg.ExecBuildFuncs(result.PkgDirs[name], func(fn api.BuildFunc) {
 			fn(buildCtx)
 		})

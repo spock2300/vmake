@@ -67,11 +67,19 @@ func RunWithOptions(name string, args []string, opts RunOptions) ([]byte, error)
 	return output, nil
 }
 
-func RunToStdout(dir, name string, args ...string) error {
+func buildCmd(name string, args []string, dir string, env map[string]string) *exec.Cmd {
 	cmd := exec.Command(name, args...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), flattenEnv(env)...)
+	}
+	return cmd
+}
+
+func RunToStdout(dir, name string, args ...string) error {
+	cmd := buildCmd(name, args, dir, nil)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -84,11 +92,7 @@ func RunFatal(dir, name string, args ...string) {
 }
 
 func RunWithEnv(dir string, env map[string]string, name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	if dir != "" {
-		cmd.Dir = dir
-	}
-	cmd.Env = append(os.Environ(), flattenEnv(env)...)
+	cmd := buildCmd(name, args, dir, env)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -99,11 +103,7 @@ func LookPath(name string) (string, error) {
 }
 
 func RunWithEnvCaptured(dir string, env map[string]string, name string, args ...string) ([]byte, error) {
-	cmd := exec.Command(name, args...)
-	if dir != "" {
-		cmd.Dir = dir
-	}
-	cmd.Env = append(os.Environ(), flattenEnv(env)...)
+	cmd := buildCmd(name, args, dir, env)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("%s %s\n%s", name, strings.Join(args, " "), string(output))

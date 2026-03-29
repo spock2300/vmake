@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/buildscript"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 
@@ -32,24 +31,12 @@ func runClean(cmd *cobra.Command, args []string) {
 	ctx := mustInitContext()
 
 	packages, err := buildscript.Scan(ctx.WorkDir)
-	if err != nil {
-		vlog.Error("Error: %v", err)
-		os.Exit(1)
-	}
+	fatalErr(err)
 
 	_, tcName, err := GetToolchain(ctx.Config)
-	if err != nil {
-		vlog.Error("Error: %v", err)
-		os.Exit(1)
-	}
+	fatalErr(err)
 
-	mode := ""
-	if ctx.Config.Global != nil {
-		mode = ctx.Config.Global.Mode
-	}
-	if mode == "" {
-		mode = api.ModeDebug
-	}
+	mode := resolveMode(ctx.Config)
 
 	buildDir := fmt.Sprintf("%s-%s", tcName, mode)
 
