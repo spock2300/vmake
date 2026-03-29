@@ -4,15 +4,14 @@ import (
 	"gitee.com/spock2300/vmake/pkg/buildscript"
 	"gitee.com/spock2300/vmake/pkg/config"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
-	"gitee.com/spock2300/vmake/pkg/toolchain"
 	"gitee.com/spock2300/vmake/pkg/tui"
 
 	"github.com/spf13/cobra"
 )
 
 var configCmd = &cobra.Command{
-	Use:   "config",
-	Short: "Configure project options",
+	Use:   "Configure project options",
+	Short: "Open a TUI to configure build options for all packages.",
 	Long:  `Open a TUI to configure build options for all packages.`,
 	Run:   runConfig,
 }
@@ -39,13 +38,7 @@ func runConfig(cmd *cobra.Command, args []string) {
 
 	globalValues := config.BuildGlobalValues(ctx.Config)
 
-	currentTC := ""
-	if ctx.Config.Global != nil {
-		currentTC = ctx.Config.Global.Toolchain
-	}
-	if currentTC == "" {
-		currentTC = toolchain.GetManager().GetDefaultToolchain()
-	}
+	currentTC := resolveToolchainName(ctx.Config, "")
 
 	var sources []buildscript.Source
 	localPkgs := make(map[string]bool)

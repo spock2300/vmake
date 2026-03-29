@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 
 	"github.com/spf13/cobra"
@@ -32,25 +30,12 @@ func runRebuild(cmd *cobra.Command, args []string) {
 }
 
 func executeCleanLocal(ctx *RuntimeContext) {
-	_, tcName, err := GetToolchain(ctx.Config)
-	if err != nil {
-		vlog.Error("Error: %v", err)
-		return
-	}
-
-	mode := resolveMode(ctx.Config)
-
-	buildDir := fmt.Sprintf("%s-%s", tcName, mode)
-
+	var entries []pkgCleanEntry
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
-		if !node.IsLocal() {
-			continue
+		if node.IsLocal() {
+			entries = append(entries, pkgCleanEntry{Dir: node.Source.Dir, Name: name})
 		}
-
-		cleanCurrentToolchain(node.Source.Dir, name, buildDir)
-		cleanPkgToolchain(node.Source.Dir, name, ctx.Config, tcName, mode)
 	}
-
-	vlog.Info("Clean completed!")
+	cleanPackages(entries, ctx.Config, false)
 }

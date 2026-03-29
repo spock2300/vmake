@@ -129,8 +129,7 @@ func checkoutRemote(sourceMgr *repo.SourceManager, entry installManifestEntry) {
 		return
 	}
 
-	pkg := api.NewPackage()
-	pkg.SetRepo(repoName).SetName(pkgName)
+	pkg := newPkgRef(repoName, pkgName)
 	if entry.URL != "" {
 		pkg.SetGit(entry.URL)
 	}

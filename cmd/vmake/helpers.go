@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"gitee.com/spock2300/vmake/pkg/api"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 	"gitee.com/spock2300/vmake/pkg/plugin"
 	"gitee.com/spock2300/vmake/pkg/repo"
@@ -45,17 +46,16 @@ func readDirEntries(dir string) ([]os.DirEntry, error) {
 	return result, nil
 }
 
-func newAddCmd(use, short, entityType string, addFn func(name, url string) error) *cobra.Command {
-	return &cobra.Command{
-		Use:   use,
-		Short: short,
-		Args:  cobra.ExactArgs(2),
-		Run: func(cmd *cobra.Command, args []string) {
-			name, gitURL := args[0], args[1]
-			fatalErr(addFn(name, gitURL))
-			fmt.Printf("Added %s '%s' from %s\n", entityType, name, gitURL)
-		},
+func newPkgRef(repoName, pkgName string) *api.Package {
+	return api.NewPackage().SetRepo(repoName).SetName(pkgName)
+}
+
+func mustSplitPkgRef(ref string) (string, string) {
+	repoName, pkgName, ok := api.SplitPackageRef(ref)
+	if !ok {
+		fatalMsg("Error: invalid package reference: %s", ref)
 	}
+	return repoName, pkgName
 }
 
 func newRemoveCmd(use, short, entityType string, removeFn func(name string) error) *cobra.Command {

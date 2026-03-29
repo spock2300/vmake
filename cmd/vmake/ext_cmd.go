@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	vlog "gitee.com/spock2300/vmake/pkg/log"
 	"gitee.com/spock2300/vmake/pkg/plugin"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 
@@ -137,7 +138,7 @@ func runExtUpdate(cmd *cobra.Command, args []string) {
 	for _, r := range repos {
 		fmt.Printf("Updating '%s'...\n", r.Name)
 		if err := mgr.UpdateRepo(r.Name); err != nil {
-			fmt.Fprintf(os.Stderr, "  Error: %v\n", err)
+			vlog.Error("  Error: %v", err)
 		}
 	}
 	fmt.Println("Done. Plugins will be recompiled on next run.")

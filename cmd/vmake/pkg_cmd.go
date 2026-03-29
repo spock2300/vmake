@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/repo"
 
 	"github.com/spf13/cobra"
@@ -139,10 +138,7 @@ var pkgCleanCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		pkgRef := args[0]
-		repoName, pkgName, ok := api.SplitPackageRef(pkgRef)
-		if !ok {
-			fatalMsg("Error: invalid package reference")
-		}
+		repoName, pkgName := mustSplitPkgRef(pkgRef)
 
 		installer := repo.NewPackageInstaller(nil, getPackagesDir(), "")
 
@@ -167,10 +163,7 @@ var pkgUpdateCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		pkgRef := args[0]
 
-		repoName, pkgName, ok := api.SplitPackageRef(pkgRef)
-		if !ok {
-			fatalMsg("Error: invalid package reference")
-		}
+		repoName, pkgName := mustSplitPkgRef(pkgRef)
 
 		repoMgr := getRepoManager()
 		sourceMgr := repo.NewSourceManager(getCacheDir())
@@ -179,15 +172,13 @@ var pkgUpdateCmd = &cobra.Command{
 			urlTemplate, err := repoMgr.GetPrefixURL(repoName)
 			fatalErr(err)
 			gitURL := repo.ResolvePrefixURL(urlTemplate, pkgName)
-			pkg := api.NewPackage()
-			pkg.SetRepo(repoName).SetName(pkgName)
+			pkg := newPkgRef(repoName, pkgName)
 			pkg.SetGit(gitURL)
 			fatalErr(sourceMgr.UpdateSource(pkg))
 		} else {
 			_, err := repoMgr.FindPackage(repoName, pkgName)
 			fatalErr(err)
-			pkg := api.NewPackage()
-			pkg.SetRepo(repoName).SetName(pkgName)
+			pkg := newPkgRef(repoName, pkgName)
 			fatalErr(sourceMgr.UpdateSource(pkg))
 		}
 

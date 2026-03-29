@@ -58,14 +58,6 @@ type installManifest struct {
 	Packages  []installManifestEntry `json:"packages"`
 }
 
-type manifestFile struct {
-	VMake     string          `json:"vmake"`
-	Toolchain string          `json:"toolchain"`
-	Mode      string          `json:"mode"`
-	Generated string          `json:"generated"`
-	Packages  []manifestEntry `json:"packages"`
-}
-
 func gitDescribe(dir string) string {
 	out, err := exec.RunWithOptions("git", []string{"describe", "--tags", "--always", "--dirty"}, exec.RunOptions{Dir: dir, Quiet: true})
 	if err == nil {
@@ -372,8 +364,7 @@ func prepareRemotePackages(ctx *RuntimeContext, tc *toolchain.Toolchain, needed 
 			continue
 		}
 
-		pkg := api.NewPackage()
-		pkg.SetRepo(repoName).SetName(pkgName)
+		pkg := newPkgRef(repoName, pkgName)
 
 		if node.IsPrefix() {
 			if cfg.Version == "" {

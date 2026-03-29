@@ -103,11 +103,15 @@ type pipelineOptions struct {
 	installAfter bool
 }
 
-func runThroughConfigPhase(ctx *RuntimeContext, force bool) {
-	fatalErr(runRequirePhase(ctx, force))
+func runPostPhase1(ctx *RuntimeContext) {
 	fatalErr(ctx.Resolver.ResolveDeferred())
 	ctx.Resolver.UpdateOrder()
 	fatalErr(runConfigPhase(ctx))
+}
+
+func runThroughConfigPhase(ctx *RuntimeContext, force bool) {
+	fatalErr(runRequirePhase(ctx, force))
+	runPostPhase1(ctx)
 }
 
 func runPipeline(opts pipelineOptions) {
@@ -119,9 +123,7 @@ func runPipeline(opts pipelineOptions) {
 		opts.afterPhase1(ctx)
 	}
 
-	fatalErr(ctx.Resolver.ResolveDeferred())
-	ctx.Resolver.UpdateOrder()
-	fatalErr(runConfigPhase(ctx))
+	runPostPhase1(ctx)
 
 	result, err := runBuildPhase(ctx)
 	fatalErr(err)
@@ -131,7 +133,10 @@ func runPipeline(opts pipelineOptions) {
 	}
 }
 
-func resolveMode(cfg *config.ConfigFile) string {
+func resolveMode(cfg *config.ConfigFile, flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
 	if cfg.Global != nil && cfg.Global.Mode != "" {
 		return cfg.Global.Mode
 	}
@@ -265,15 +270,19 @@ func runConfigPhase(ctx *RuntimeContext) error {
 	return nil
 }
 
+func resolveToolchainName(cfg *config.ConfigFile, flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	if cfg.Global != nil && cfg.Global.Toolchain != "" {
+		return cfg.Global.Toolchain
+	}
+	return toolchain.GetManager().GetDefaultToolchain()
+}
+
 func GetToolchain(cfg *config.ConfigFile) (*toolchain.Toolchain, string, error) {
 	mgr := toolchain.GetManager()
-	tcName := toolchainFlag
-	if tcName == "" {
-		tcName = cfg.Global.Toolchain
-	}
-	if tcName == "" {
-		tcName = mgr.GetDefaultToolchain()
-	}
+	tcName := resolveToolchainName(cfg, toolchainFlag)
 	tc, err := mgr.SelectToolchain(tcName)
 	if err != nil {
 		return nil, "", err

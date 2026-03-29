@@ -28,41 +28,49 @@ func init() {
 	cleanCmd.Flags().BoolVar(&cleanAllFlag, "all", false, "clean build directories for all toolchains")
 }
 
-func runClean(cmd *cobra.Command, args []string) {
-	ctx := mustInitContext()
+type pkgCleanEntry struct {
+	Dir, Name string
+}
 
-	packages, err := buildscript.Scan(ctx.WorkDir)
-	fatalErr(err)
+func cleanPackages(entries []pkgCleanEntry, cfg *config.ConfigFile, cleanAll bool) {
+	_, tcName, err := GetToolchain(cfg)
+	if err != nil {
+		vlog.Error("Error: %v", err)
+		return
+	}
 
-	_, tcName, err := GetToolchain(ctx.Config)
-	fatalErr(err)
+	mode := resolveMode(cfg, "")
 
-	mode := resolveMode(ctx.Config)
-
-	buildDir := fmt.Sprintf("%s-%s", tcName, mode)
-
-	for _, pkg := range packages {
-		if cleanAllFlag {
+	for _, pkg := range entries {
+		if cleanAll {
 			cleanAllToolchains(pkg.Dir, pkg.Name)
 		} else {
-			cleanCurrentToolchain(pkg.Dir, pkg.Name, buildDir)
-			cleanPkgToolchain(pkg.Dir, pkg.Name, ctx.Config, tcName, mode)
+			cleanToolchainDir(pkg.Dir, pkg.Name, tcName, mode)
+			pkgTc := resolvePkgToolchain(cfg, pkg.Name, tcName)
+			if pkgTc != tcName {
+				cleanToolchainDir(pkg.Dir, pkg.Name, pkgTc, mode)
+			}
 		}
 	}
 
 	vlog.Info("Clean completed!")
 }
 
-func cleanPkgToolchain(dir, pkgName string, cfg *config.ConfigFile, defaultTc, mode string) {
-	pkgTc := resolvePkgToolchain(cfg, pkgName, defaultTc)
-	if pkgTc == defaultTc {
-		return
+func runClean(cmd *cobra.Command, args []string) {
+	ctx := mustInitContext()
+
+	packages, err := buildscript.Scan(ctx.WorkDir)
+	fatalErr(err)
+
+	entries := make([]pkgCleanEntry, len(packages))
+	for i, pkg := range packages {
+		entries[i] = pkgCleanEntry{Dir: pkg.Dir, Name: pkg.Name}
 	}
-	buildDir := fmt.Sprintf("%s-%s", pkgTc, mode)
-	cleanDir(filepath.Join(dir, "build", buildDir), pkgName, buildDir)
+	cleanPackages(entries, ctx.Config, cleanAllFlag)
 }
 
-func cleanCurrentToolchain(dir, pkgName, buildDir string) {
+func cleanToolchainDir(dir, pkgName, tc, mode string) {
+	buildDir := fmt.Sprintf("%s-%s", tc, mode)
 	cleanDir(filepath.Join(dir, "build", buildDir), pkgName, buildDir)
 }
 
