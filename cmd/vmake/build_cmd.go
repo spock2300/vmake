@@ -35,12 +35,46 @@ func init() {
 	buildCmd.Flags().BoolVarP(&forceFlag, "force", "f", false, "force buildscript recompilation")
 	buildCmd.Flags().StringVar(&toolchainFlag, "toolchain", "", "override toolchain")
 	buildCmd.Flags().StringVar(&modeFlag, "mode", "", "override build mode")
+	buildCmd.Flags().StringVar(&manifestFlag, "manifest", "", "pin versions from manifest file")
 	buildCmd.RegisterFlagCompletionFunc("toolchain", completeToolchain)
 	buildCmd.RegisterFlagCompletionFunc("mode", completeMode)
 }
 
 func runBuild(cmd *cobra.Command, args []string) {
-	runPipeline(pipelineOptions{force: forceFlag, installAfter: installFlag})
+	opts := pipelineOptions{force: forceFlag, installAfter: installFlag}
+	if manifestFlag != "" {
+		opts.afterPhase1 = func(ctx *RuntimeContext) {
+			applyManifestVersions(ctx, manifestFlag)
+		}
+	}
+	runPipeline(opts)
+}
+
+func applyManifestVersions(ctx *RuntimeContext, manifestPath string) {
+	var mf installManifest
+	fatalErr(jsonio.Load(manifestPath, &mf))
+
+	cwd, err := os.Getwd()
+	fatalErr(err)
+
+	for _, entry := range mf.Packages {
+		switch entry.Source {
+		case "local":
+			if entry.Ref == "" || entry.Ref == "unknown" {
+				continue
+			}
+			fatalErr(repo.Checkout(filepath.Join(cwd, entry.Path), entry.Ref))
+			vlog.Info("  checkout %s -> %s", entry.Name, entry.Ref[:12]+"...")
+		case "prefix", "index":
+			if entry.Ref == "" {
+				continue
+			}
+			existing := config.GetEntry(ctx.Config, entry.Name)
+			existing.Version = entry.Ref
+			config.SetEntry(ctx.Config, entry.Name, existing)
+			vlog.Info("  pin %s -> %s", entry.Name, entry.Ref)
+		}
+	}
 }
 
 type installManifestEntry struct {

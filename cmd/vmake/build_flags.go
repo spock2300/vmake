@@ -7,4 +7,5 @@ var (
 	forceFlag       bool
 	toolchainFlag   string
 	modeFlag        string
+	manifestFlag    string
 )
