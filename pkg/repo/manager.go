@@ -21,12 +21,12 @@ func (m *RepoManager) Add(name, gitURL string) error {
 	return m.Store.Add(name, gitURL, Clone)
 }
 
-func (m *RepoManager) AddPrefix(name, urlTemplate string) error {
+func (m *RepoManager) AddNative(name, urlTemplate string) error {
 	repoPath := m.Path(name)
 	if m.Exists(name) {
 		return fmt.Errorf("'%s' already exists", name)
 	}
-	return SavePrefixConfig(repoPath, urlTemplate)
+	return SaveNativeConfig(repoPath, urlTemplate)
 }
 
 func (m *RepoManager) Remove(name string) error {
@@ -35,15 +35,15 @@ func (m *RepoManager) Remove(name string) error {
 
 type RepoInfo struct {
 	Name   string
-	Prefix bool
+	Native bool
 }
 
 func (m *RepoManager) ListInfo() []RepoInfo {
 	names, _ := m.Store.List()
 	result := make([]RepoInfo, 0, len(names))
 	for _, name := range names {
-		_, isPrefix, _ := LoadPrefixConfig(m.Path(name))
-		result = append(result, RepoInfo{Name: name, Prefix: isPrefix})
+		_, isNative, _ := LoadNativeConfig(m.Path(name))
+		result = append(result, RepoInfo{Name: name, Native: isNative})
 	}
 	return result
 }
@@ -58,30 +58,30 @@ func (m *RepoManager) Update(name string) error {
 	if !m.Exists(name) {
 		return fmt.Errorf("repo '%s' not found", name)
 	}
-	if _, isPrefix, _ := LoadPrefixConfig(repoPath); isPrefix {
-		return fmt.Errorf("prefix repo '%s' has no registry to update; use 'vmake pkg update <repo/name>' instead", name)
+	if _, isNative, _ := LoadNativeConfig(repoPath); isNative {
+		return fmt.Errorf("native repo '%s' has no registry to update; use 'vmake pkg update <repo/name>' instead", name)
 	}
 	return FetchAndReset(repoPath)
 }
 
-func (m *RepoManager) IsPrefix(name string) bool {
+func (m *RepoManager) IsNative(name string) bool {
 	if !m.Exists(name) {
 		return false
 	}
-	_, ok, _ := LoadPrefixConfig(m.Path(name))
+	_, ok, _ := LoadNativeConfig(m.Path(name))
 	return ok
 }
 
-func (m *RepoManager) GetPrefixURL(name string) (string, error) {
+func (m *RepoManager) GetNativeURL(name string) (string, error) {
 	if !m.Exists(name) {
 		return "", fmt.Errorf("repo '%s' not found", name)
 	}
-	cfg, ok, err := LoadPrefixConfig(m.Path(name))
+	cfg, ok, err := LoadNativeConfig(m.Path(name))
 	if err != nil {
 		return "", err
 	}
 	if !ok {
-		return "", fmt.Errorf("repo '%s' is not a prefix repo", name)
+		return "", fmt.Errorf("repo '%s' is not a native repo", name)
 	}
 	return cfg.URL, nil
 }

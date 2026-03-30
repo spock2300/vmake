@@ -78,16 +78,16 @@ var pkgSearchCmd = &cobra.Command{
 
 		fmt.Println("Available packages:")
 		for _, info := range infos {
-			if !info.Prefix {
-				searchIndexRepo(info.Name, pattern)
+			if !info.Native {
+				searchRegistryRepo(info.Name, pattern)
 			} else {
-				searchPrefixRepo(info.Name, pattern)
+				searchNativeRepo(info.Name, pattern)
 			}
 		}
 	},
 }
 
-func searchIndexRepo(repoName, pattern string) {
+func searchRegistryRepo(repoName, pattern string) {
 	repoPath := filepath.Join(getReposDir(), repoName, "packages")
 	letterDirs, err := readDirEntries(repoPath)
 	if err != nil {
@@ -110,7 +110,7 @@ func searchIndexRepo(repoName, pattern string) {
 	}
 }
 
-func searchPrefixRepo(repoName, pattern string) {
+func searchNativeRepo(repoName, pattern string) {
 	cacheDir := filepath.Join(getCacheDir(), repoName)
 	entries, err := readDirEntries(cacheDir)
 	if err != nil {
@@ -168,10 +168,10 @@ var pkgUpdateCmd = &cobra.Command{
 		repoMgr := getRepoManager()
 		sourceMgr := repo.NewSourceManager(getCacheDir())
 
-		if repoMgr.IsPrefix(repoName) {
-			urlTemplate, err := repoMgr.GetPrefixURL(repoName)
+		if repoMgr.IsNative(repoName) {
+			urlTemplate, err := repoMgr.GetNativeURL(repoName)
 			fatalErr(err)
-			gitURL := repo.ResolvePrefixURL(urlTemplate, pkgName)
+			gitURL := repo.ResolveNativeURL(urlTemplate, pkgName)
 			pkg := newPkgRef(repoName, pkgName)
 			pkg.SetGit(gitURL)
 			fatalErr(sourceMgr.UpdateSource(pkg))

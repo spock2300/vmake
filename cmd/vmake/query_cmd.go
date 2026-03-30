@@ -86,8 +86,8 @@ func formatPkgParts(name string, kinds []targetKindInfo, pkgDir, workDir string,
 	} else {
 		parts = append(parts, name)
 	}
-	if node.IsPrefix() {
-		parts = append(parts, fmt.Sprintf("@%s", node.PrefixSelected))
+	if node.IsNative() {
+		parts = append(parts, fmt.Sprintf("@%s", node.NativeSelected))
 	}
 	if node.Pkg != nil {
 		if desc := node.Pkg.Description(); desc != "" {

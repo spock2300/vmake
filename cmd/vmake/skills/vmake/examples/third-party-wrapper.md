@@ -1,6 +1,6 @@
 # Third-Party Package Wrapper
 
-Wrapping an external C/C++ library (CMake, Autotools, etc.) as a vmake package using `TargetVoid` and `SetBuildFunc`. This is the pattern used for **index repo** packages.
+Wrapping an external C/C++ library (CMake, Autotools, etc.) as a vmake package using `TargetVoid` and `SetBuildFunc`. This is the pattern used for **registry repo** packages.
 
 ## build.go
 
@@ -90,7 +90,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 - `p.BuildDir()` — scratch directory for intermediate files
 - `p.InstallDir()` — where headers/libs/binaries should be installed to
 - Already-installed packages are automatically skipped (non-empty `InstallDir`)
-- `OnPackage` with `SetGit`/`AddVersion` is ONLY for index repo packages — prefix repo packages must NOT use these
+- `OnPackage` with `SetGit`/`AddVersion` is ONLY for registry repo packages — native repo packages must NOT use these
 - Local packages can also use `OnPackage` for metadata (`SetDescription`, `SetLicense`, `SetHomepage`) — it runs for all packages
 
 ## Consuming This Package
@@ -110,4 +110,4 @@ p.OnBuild(func(ctx *api.BuildContext) {
 
 - references/api.md - Package metadata setters, TargetVoid, SetBuildFunc
 - examples/with-package.md - Consuming third-party packages
-- SKILL.md - Prefix repo vs Index repo
+- SKILL.md - Registry repo vs Native repo

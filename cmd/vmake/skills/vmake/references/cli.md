@@ -27,7 +27,7 @@ run `vmake <plugin> --help` or check the plugin documentation.
   `vmake query` - Show dependency tree
   `vmake rebuild [--install -i --prefix -p]` - Rebuild the project
   `vmake repo` - Manage package repositories
-    `vmake add <name> <git-url-or-template> [--prefix -p]` - Add a package repository
+    `vmake add <name> <git-url-or-template> [--native -n]` - Add a package repository
     `vmake list` - List all package repositories
     `vmake remove <name>` - Remove a package repository
     `vmake update <name>` - Update a package repository

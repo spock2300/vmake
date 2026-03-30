@@ -67,7 +67,7 @@ Phase 3: OnBuild
     {
       "name": "test_build/mathlib",
       "version": "2.1.0",
-      "source": "prefix",
+      "source": "native",
       "url": "https://gitee.com/.../test_build_mathlib.git",
       "ref": "v2.1.0"
     }
@@ -76,8 +76,9 @@ Phase 3: OnBuild
 ```
 
 - 本地包: `source: "local"`，版本来自 `git describe`，`ref` 来自 `git rev-parse HEAD`（完整哈希），`path` 相对于 cwd
-- Prefix 包: `source: "prefix"`，`url` 来自 `PrefixGitURL`，`ref` 来自 `PrefixVersions`
-- Index 包: `source: "index"`，`url` 来自首个 `GitURLs()`，`ref` 来自 `Versions()`
+- 本地包: `source: "local"`，版本来自 `git describe`，`ref` 来自 `git rev-parse HEAD`（完整哈希），`path` 相对于 cwd
+- Native 包: `source: "native"`，`url` 来自 `NativeGitURL`，`ref` 来自 `NativeVersions`
+- Registry 包: `source: "registry"`，`url` 来自首个 `GitURLs()`，`ref` 来自 `Versions()`
 
 CLI: `vmake manifest show <path>` / `vmake manifest checkout <path> [name]`
 
@@ -176,14 +177,14 @@ AddRequires          1. 检查 index 仓库（未找到）         编译 build.
 
 ### 两种仓库类型对比
 
-| | Index 仓库 | Prefix 仓库 |
+| | Registry 仓库 | Native 仓库 |
 |--|--|--|
 | **用途** | 包装第三方 C/C++ 库（zlib、curl） | VMake 原生包，跨项目共享 |
 | **build.go** | 包装器（调用 CMake 等） | 真正的构建描述（与本地项目相同） |
-| **源码位置** | build.go 在 index 仓库中，源码在别处 | build.go 在包的 git 仓库根目录 |
+| **源码位置** | build.go 在 registry 仓库中，源码在别处 | build.go 在包的 git 仓库根目录 |
 | **版本来源** | `AddVersion()` 手动映射 | git tag（自动过滤有效 semver） |
 | **版本选择时机** | Phase 3（build.go 编译后） | Phase 1（build.go 编译前 — 需先 clone） |
-| **添加命令** | `vmake repo add name url` | `vmake repo add --prefix name "https://..../{name}.git"` |
+| **添加命令** | `vmake repo add name url` | `vmake repo add --native name "https://..../{name}.git"` |
 | **更新** | `vmake repo update name` | `vmake pkg update repo/name` |
 | **搜索** | 列出仓库中所有包 | 仅显示已缓存的包 |
 
@@ -230,11 +231,11 @@ vmake (RootCmd)
 │   ├── list       # 列出工具链
 │   └── show       # 显示详情
 ├── repo           # 包仓库管理
-│   ├── add --prefix  # 添加 prefix 仓库（URL 模板，含 {name} 占位符）
-│   ├── add            # 添加 index 仓库
+│   ├── add --native  # 添加 native 仓库（URL 模板，含 {name} 占位符）
+│   ├── add            # 添加 registry 仓库
 │   ├── remove     # 删除仓库
-│   ├── list       # 列出仓库（显示 index/prefix 类型）
-│   └── update     # 更新仓库（prefix 仓库提示使用 pkg update）
+│   ├── list       # 列出仓库（显示 registry/native 类型）
+│   └── update     # 更新仓库（native 仓库提示使用 pkg update）
 ├── pkg            # 包管理
 │   ├── list       # 列出已安装包
 │   ├── search     # 搜索包
@@ -321,9 +322,9 @@ PackageNode
 ├── Pkg            *api.Package
 ├── Deps           []string
 ├── Deferred       bool
-├── PrefixGitURL   string              // prefix 仓库：解析后的 git URL
-├── PrefixVersions map[string]string   // prefix 仓库：version_string → git_tag
-└── PrefixSelected string              // prefix 仓库：选中的版本号
+├── NativeGitURL   string              // native 仓库：解析后的 git URL
+├── NativeVersions map[string]string   // native 仓库：version_string → git_tag
+└── NativeSelected string              // native 仓库：选中的版本号
 ```
 
 ### buildscript.Source (`pkg/buildscript/source.go`)

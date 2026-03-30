@@ -11,12 +11,12 @@ import (
 	"gitee.com/spock2300/vmake/pkg/api"
 )
 
-type PrefixConfig struct {
+type NativeConfig struct {
 	Type string `json:"type"`
 	URL  string `json:"url"`
 }
 
-func LoadPrefixConfig(dir string) (*PrefixConfig, bool, error) {
+func LoadNativeConfig(dir string) (*NativeConfig, bool, error) {
 	data, err := os.ReadFile(filepath.Join(dir, "repo.json"))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -24,18 +24,18 @@ func LoadPrefixConfig(dir string) (*PrefixConfig, bool, error) {
 		}
 		return nil, false, err
 	}
-	var cfg PrefixConfig
+	var cfg NativeConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, false, err
 	}
-	return &cfg, cfg.Type == "prefix", nil
+	return &cfg, cfg.Type == "native", nil
 }
 
-func SavePrefixConfig(dir, urlTemplate string) error {
+func SaveNativeConfig(dir, urlTemplate string) error {
 	if err := fs.EnsureDir(dir); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
-	cfg := PrefixConfig{Type: "prefix", URL: urlTemplate}
+	cfg := NativeConfig{Type: "native", URL: urlTemplate}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
@@ -43,7 +43,7 @@ func SavePrefixConfig(dir, urlTemplate string) error {
 	return os.WriteFile(filepath.Join(dir, "repo.json"), data, 0644)
 }
 
-func ResolvePrefixURL(urlTemplate, pkgName string) string {
+func ResolveNativeURL(urlTemplate, pkgName string) string {
 	return strings.ReplaceAll(urlTemplate, "{name}", pkgName)
 }
 
@@ -59,7 +59,7 @@ func FilterValidVersions(tags []string) map[string]string {
 	return versions
 }
 
-func SelectPrefixVersion(versions map[string]string, constraint string) (string, string, error) {
+func SelectNativeVersion(versions map[string]string, constraint string) (string, string, error) {
 	available := make([]string, 0, len(versions))
 	for v := range versions {
 		available = append(available, v)

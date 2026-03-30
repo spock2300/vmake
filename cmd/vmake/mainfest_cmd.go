@@ -85,7 +85,7 @@ var manifestCheckoutCmd = &cobra.Command{
 			switch entry.Source {
 			case "local":
 				checkoutLocal(cwd, entry)
-			case "prefix", "index":
+			case "native", "registry":
 				checkoutRemote(sourceMgr, entry)
 			default:
 				fmt.Printf("  SKIP %s (unknown source: %s)\n", entry.Name, entry.Source)

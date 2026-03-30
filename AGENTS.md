@@ -96,7 +96,7 @@ The codebase uses function type aliases (`type ConfigFunc func(...)`) and struct
 | `pkg/config` | Config storage | No |
 | `pkg/build` | Build execution, compile, link, scheduler, install | No |
 | `pkg/toolchain` | Toolchain abstraction (GCC, Clang) | No |
-| `pkg/repo` | Package management, Git, source download, prefix repos | No |
+| `pkg/repo` | Package management, Git, source download, native repos | No |
 | `pkg/resolver` | Dependency graph, deferred resolution | No |
 | `pkg/log` | Logging (use alias `vlog`) | No |
 | `pkg/tui` | TUI components (bubbletea) | No |
@@ -160,7 +160,7 @@ The codebase uses function type aliases (`type ConfigFunc func(...)`) and struct
     {
       "name": "test_build/mathlib",
       "version": "2.1.0",
-      "source": "prefix",
+      "source": "native",
       "url": "https://gitee.com/.../test_build_mathlib.git",
       "ref": "v2.1.0"
     }
@@ -169,8 +169,8 @@ The codebase uses function type aliases (`type ConfigFunc func(...)`) and struct
 ```
 
 - Local: `source: "local"`, version from `git describe`, `ref` from `git rev-parse HEAD`, `path` relative to cwd
-- Prefix: `source: "prefix"`, `url` from `PrefixGitURL`, `ref` from `PrefixVersions`
-- Index: `source: "index"`, `url` from first `GitURLs()`, `ref` from `Versions()`
+- Native: `source: "native"`, `url` from `NativeGitURL`, `ref` from `NativeVersions`
+- Registry: `source: "registry"`, `url` from first `GitURLs()`, `ref` from `Versions()`
 
 CLI: `vmake manifest show <path>` / `vmake manifest checkout <path> [name]`
 
@@ -253,17 +253,17 @@ ctx.ToolchainOption()  // Auto-populates from registered toolchains, default "ho
 
 Two ecosystem types coexist:
 
-| | Index Repo | Prefix Repo |
+| | Registry Repo | Native Repo |
 |--|--|--|
 | **Purpose** | Wrap third-party C/C++ libs | VMake-native packages, cross-project sharing |
 | **build.go role** | Wrapper (calls CMake etc.) | True build descriptor (identical to local) |
 | **Source location** | build.go in repo, source elsewhere | build.go IS in the package git repo root |
 | **Version source** | `AddVersion()` manual mapping | git tags (auto-filtered for semver) |
 | **Version selection** | Phase 3 (after build.go compiled) | Phase 1 (before build.go — clones first) |
-| **Add command** | `vmake repo add name url` | `vmake repo add --prefix name "https://..../{name}.git"` |
+| **Add command** | `vmake repo add name url` | `vmake repo add --native name "https://..../{name}.git"` |
 | **Update** | `vmake repo update name` | `vmake pkg update repo/name` |
 
-Index repos are checked first; prefix repos are fallback. Prefix build.go must NOT use `SetGit`/`AddVersion` — system handles automatically.
+Registry repos are checked first; native repos are fallback. Native build.go must NOT use `SetGit`/`AddVersion` — system handles automatically.
 
 ## Extension System
 

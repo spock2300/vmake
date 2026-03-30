@@ -28,7 +28,7 @@ include the ones your project needs:
 | 3 | `OnBuild` | Always — define compilation targets |
 | 4 | `OnInstall` | Custom install logic |
 
-`OnPackage` runs for all packages (local and remote). Use it to describe the package (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` is only for index repo packages — prefix repo and local packages should NOT use these.
+`OnPackage` runs for all packages (local and remote). Use it to describe the package (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` is only for registry repo packages — native repo and local packages should NOT use these.
 
 ## Decision Guide
 
@@ -95,9 +95,9 @@ p.OnRequire(func(ctx *api.RequireContext) {
 ctx.Target("app").AddDeps("official/zlib")
 ```
 
-### Prefix repo vs Index repo
-- **Index repo**: `build.go` wraps external C/C++ libs using `OnPackage` + `SetGit` + `AddVersion`
-- **Prefix repo**: `build.go` is a normal build descriptor, NO `SetGit`/`AddVersion` — system handles automatically
+### Registry repo vs Native repo
+- **Registry repo**: `build.go` wraps external C/C++ libs using `OnPackage` + `SetGit` + `AddVersion`
+- **Native repo**: `build.go` is a normal build descriptor, NO `SetGit`/`AddVersion` — system handles automatically
 
 ## Target API at a Glance
 
@@ -165,7 +165,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 })
 ```
 
-**Defining a package (index repo):**
+**Defining a package (registry repo):**
 ```go
 p.OnPackage(func(p *api.Package) {
     p.SetGit("https://github.com/madler/zlib.git")
@@ -245,4 +245,4 @@ Verbosity: `-v` verbose, `-V` very-verbose, `-q` quiet
 - Use `filepath.Join()` for filesystem paths
 - Package IDs use `/`: `official/zlib`
 - Target IDs use `:`: `lib:utils`
-- `OnPackage` with `SetGit`/`AddVersion` is ONLY for index repo packages
+- `OnPackage` with `SetGit`/`AddVersion` is ONLY for registry repo packages

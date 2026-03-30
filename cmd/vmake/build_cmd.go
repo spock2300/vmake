@@ -65,7 +65,7 @@ func applyManifestVersions(ctx *RuntimeContext, manifestPath string) {
 			}
 			fatalErr(repo.Checkout(filepath.Join(cwd, entry.Path), entry.Ref))
 			vlog.Info("  checkout %s -> %s", entry.Name, entry.Ref[:12]+"...")
-		case "prefix", "index":
+		case "native", "registry":
 			if entry.Ref == "" {
 				continue
 			}
@@ -133,12 +133,12 @@ func writeManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 		entry := installManifestEntry{
 			Name:    name,
 			Version: ip.Version,
-			Source:  "index",
+			Source:  "registry",
 		}
-		if node.IsPrefix() {
-			entry.Source = "prefix"
-			entry.URL = node.PrefixGitURL
-			if ref, ok := node.PrefixVersions[ip.Version]; ok {
+		if node.IsNative() {
+			entry.Source = "native"
+			entry.URL = node.NativeGitURL
+			if ref, ok := node.NativeVersions[ip.Version]; ok {
 				entry.Ref = ref
 			}
 		} else if node.Pkg != nil {
@@ -402,12 +402,12 @@ func prepareRemotePackages(ctx *RuntimeContext, tc *toolchain.Toolchain, needed 
 
 		pkg := newPkgRef(repoName, pkgName)
 
-		if node.IsPrefix() {
+		if node.IsNative() {
 			if cfg.Version == "" {
-				cfg.Version = node.PrefixSelected
+				cfg.Version = node.NativeSelected
 			}
-			pkg.SetGit(node.PrefixGitURL)
-			pkg.SetVersions(node.PrefixVersions)
+			pkg.SetGit(node.NativeGitURL)
+			pkg.SetVersions(node.NativeVersions)
 		} else if node.Pkg != nil {
 			pkg.SetGit(node.Pkg.GitURLs()...)
 			pkg.SetVersions(node.Pkg.Versions())

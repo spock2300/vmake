@@ -20,17 +20,17 @@ type PackageNode struct {
 	Pkg            *api.Package
 	Deps           []string
 	Deferred       bool
-	PrefixGitURL   string
-	PrefixVersions map[string]string
-	PrefixSelected string
+	NativeGitURL   string
+	NativeVersions map[string]string
+	NativeSelected string
 }
 
 func (n *PackageNode) IsLocal() bool {
 	return n.Source != nil && n.Source.Origin == api.SourceLocal
 }
 
-func (n *PackageNode) IsPrefix() bool {
-	return n.PrefixGitURL != ""
+func (n *PackageNode) IsNative() bool {
+	return n.NativeGitURL != ""
 }
 
 type Graph struct {
@@ -143,9 +143,9 @@ func (r *Resolver) resolveDeferredNode(id string, node *PackageNode) (*PackageNo
 		return nil, err
 	}
 
-	newNode.PrefixGitURL = node.PrefixGitURL
-	newNode.PrefixVersions = node.PrefixVersions
-	newNode.PrefixSelected = node.PrefixSelected
+	newNode.NativeGitURL = node.NativeGitURL
+	newNode.NativeVersions = node.NativeVersions
+	newNode.NativeSelected = node.NativeSelected
 	return newNode, nil
 }
 
@@ -271,20 +271,20 @@ func (r *Resolver) findSource(id string, constraint string) (*buildscript.Source
 		return src, nil
 	}
 
-	if !r.repoMgr.IsPrefix(repoName) {
+	if !r.repoMgr.IsNative(repoName) {
 		return nil, fmt.Errorf("find %s: %w", id, err)
 	}
 
-	return r.findPrefixSource(id, repoName, pkgName, constraint)
+	return r.findNativeSource(id, repoName, pkgName, constraint)
 }
 
-func (r *Resolver) findPrefixSource(id, repoName, pkgName, constraint string) (*buildscript.Source, error) {
-	urlTemplate, err := r.repoMgr.GetPrefixURL(repoName)
+func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*buildscript.Source, error) {
+	urlTemplate, err := r.repoMgr.GetNativeURL(repoName)
 	if err != nil {
 		return nil, err
 	}
 
-	gitURL := repo.ResolvePrefixURL(urlTemplate, pkgName)
+	gitURL := repo.ResolveNativeURL(urlTemplate, pkgName)
 	repoDir := filepath.Join(r.cacheDir, repoName, pkgName, "repo")
 
 	if !fs.FileExists(repoDir) || !fs.FileExists(filepath.Join(repoDir, ".git")) {
@@ -306,7 +306,7 @@ func (r *Resolver) findPrefixSource(id, repoName, pkgName, constraint string) (*
 		return nil, fmt.Errorf("no valid versions found for %s", id)
 	}
 
-	selectedVersion, selectedRef, err := repo.SelectPrefixVersion(versions, constraint)
+	selectedVersion, selectedRef, err := repo.SelectNativeVersion(versions, constraint)
 	if err != nil {
 		return nil, err
 	}
@@ -336,9 +336,9 @@ func (r *Resolver) findPrefixSource(id, repoName, pkgName, constraint string) (*
 		Source:         src,
 		Deferred:       true,
 		Deps:           []string{},
-		PrefixGitURL:   gitURL,
-		PrefixVersions: versions,
-		PrefixSelected: selectedVersion,
+		NativeGitURL:   gitURL,
+		NativeVersions: versions,
+		NativeSelected: selectedVersion,
 	}
 	r.graph.Packages[id] = node
 	r.sources[id] = src
