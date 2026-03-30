@@ -8,7 +8,7 @@ VMake 是一个现代化的 C/C++ 项目构建工具，采用 Go 语言开发。
 - **灵活的选项系统**：支持布尔、字符串、整数和枚举类型的配置选项
 - **条件构建支持**：通过 `If`、`When` 等方法实现条件编译
 - **多模块支持**：原生支持多模块项目的构建管理
-- **第三方包管理**：通过 Git 仓库管理第三方依赖，自动下载和构建
+- **第三方包管理**：支持 Registry（包装 CMake/Autotools）和 Native（vmake 原生包）两种仓库类型，通过 OnRequire 声明依赖，自动下载、版本匹配和构建
 - **扩展插件系统**：支持 CLI 命令扩展和交叉编译工具链管理
 - **增量编译**：基于依赖分析的智能增量编译，大幅提升构建效率
 - **TUI 配置界面**：提供交互式终端用户界面，方便配置项目选项
@@ -98,6 +98,47 @@ vmake/
 └── docs/                # 设计文档
 ```
 
+## 包仓库
+
+VMake 支持两种包仓库类型：
+
+**Registry 仓库**：包装第三方 C/C++ 库（如 zlib、curl）。`build.go` 作为包装器调用 CMake/Autotools 构建源码，版本通过 `AddVersion()` 手动映射。
+
+**Native 仓库**：VMake 原生包，用于跨项目共享。每个包是一个独立的 Git 仓库，`build.go` 位于仓库根目录，版本通过 git tag 自动识别。
+
+| | Registry 仓库 | Native 仓库 |
+|--|--|--|
+| **用途** | 包装第三方 C/C++ 库 | VMake 原生包，跨项目共享 |
+| **build.go** | 包装器（调用 CMake 等） | 真正的构建描述 |
+| **版本来源** | `AddVersion()` 手动映射 | git tag（自动识别 semver） |
+| **添加命令** | `vmake repo add name url` | `vmake repo add --native name "https://..../{name}.git"` |
+
+### 使用流程
+
+1. 添加仓库：
+
+```bash
+vmake repo add official https://github.com/user/vmake-packages    # Registry
+vmake repo add --native myorg https://git.example.com/{name}.git   # Native
+```
+
+2. 在 `build.go` 中声明依赖：
+
+```go
+p.OnRequire(func(ctx *api.RequireContext) {
+    ctx.AddRequires("official/zlib >=1.2")
+})
+```
+
+3. 在 Target 中使用：
+
+```go
+ctx.Target("app").
+    SetKind(api.TargetBinary).
+    AddFiles("src/*.c").
+    AddDeps("official/zlib")
+```
+
 ## API 概览
 
 ### Option 类型
@@ -165,7 +206,8 @@ vmake toolchain init <name>
 ### 包仓库管理
 
 ```bash
-vmake repo add <name> <url>
+vmake repo add <name> <url>                # Registry 仓库
+vmake repo add --native <name> <url>       # Native 仓库（URL 模板含 {name}）
 vmake repo remove <name>
 vmake repo list
 vmake repo update <name>
