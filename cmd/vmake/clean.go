@@ -56,16 +56,20 @@ func cleanPackages(entries []pkgCleanEntry, cfg *config.ConfigFile, cleanAll boo
 	vlog.Info("Clean completed!")
 }
 
-func runClean(cmd *cobra.Command, args []string) {
-	ctx := mustInitContext()
-
-	packages, err := buildscript.Scan(ctx.WorkDir)
+func scanPackages(workDir string) []pkgCleanEntry {
+	packages, err := buildscript.Scan(workDir)
 	fatalErr(err)
 
 	entries := make([]pkgCleanEntry, len(packages))
 	for i, pkg := range packages {
 		entries[i] = pkgCleanEntry{Dir: pkg.Dir, Name: pkg.Name}
 	}
+	return entries
+}
+
+func runClean(cmd *cobra.Command, args []string) {
+	ctx := mustInitContext()
+	entries := scanPackages(ctx.WorkDir)
 	cleanPackages(entries, ctx.Config, cleanAllFlag)
 }
 
@@ -83,6 +87,31 @@ func cleanDir(path, pkgName, label string) {
 		return
 	}
 	vlog.Info("Cleaned %s/%s/", pkgName, label)
+}
+
+func removeIfExists(path, pkgName, label string, isDir bool) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return
+	}
+	var err error
+	if isDir {
+		err = os.RemoveAll(path)
+	} else {
+		err = os.Remove(path)
+	}
+	if err != nil {
+		if pkgName != "" {
+			vlog.Error("Failed to clean %s/%s: %v", pkgName, label, err)
+		} else {
+			vlog.Error("Failed to clean %s: %v", label, err)
+		}
+		return
+	}
+	if pkgName != "" {
+		vlog.Info("Cleaned %s/%s", pkgName, label)
+	} else {
+		vlog.Info("Cleaned %s", label)
+	}
 }
 
 func cleanAllToolchains(dir, pkgName string) {
