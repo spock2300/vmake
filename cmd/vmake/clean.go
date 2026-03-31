@@ -40,6 +40,12 @@ func cleanPackages(entries []pkgCleanEntry, cfg *config.ConfigFile, cleanAll boo
 		return
 	}
 
+	resolvedTools, err := build.ResolveTools(tc)
+	if err != nil {
+		vlog.Error("Error: %v", err)
+		return
+	}
+
 	mode := resolveMode(cfg, "")
 
 	for _, pkg := range entries {
@@ -47,12 +53,15 @@ func cleanPackages(entries []pkgCleanEntry, cfg *config.ConfigFile, cleanAll boo
 			cleanAllBuildDirs(pkg.Dir, pkg.Name)
 		} else {
 			entry := config.GetEntry(cfg, pkg.Name)
-			cleanBuildKeyDir(pkg.Dir, pkg.Name, tcName, tc.Tools.CC, mode, entry.Options)
+			cleanBuildKeyDir(pkg.Dir, pkg.Name, tcName, resolvedTools.CC, mode, entry.Options)
 			pkgTc := resolvePkgToolchain(cfg, pkg.Name, tcName)
 			if pkgTc != tcName {
 				pkgTcObj, err := toolchain.GetManager().SelectToolchain(pkgTc)
 				if err == nil {
-					cleanBuildKeyDir(pkg.Dir, pkg.Name, pkgTc, pkgTcObj.Tools.CC, mode, entry.Options)
+					pkgResolvedTools, err := build.ResolveTools(pkgTcObj)
+					if err == nil {
+						cleanBuildKeyDir(pkg.Dir, pkg.Name, pkgTc, pkgResolvedTools.CC, mode, entry.Options)
+					}
 				}
 			}
 		}

@@ -454,11 +454,11 @@ func prepareRemotePackages(ctx *RuntimeContext, tc *toolchain.Toolchain, needed 
 		}
 		vlog.Info("  %s@%s -> %s", name, cfg.Version, sourceDir)
 
-		cacheHash := build.BuildKey(tc.Tools.CC, "release", cfg.Options)
+		buildKey := build.BuildKey(tc.Tools.CC, "release", cfg.Options)
 		remote.dirs[name] = &api.PkgDirs{
 			SourceDir:  sourceDir,
-			BuildDir:   filepath.Join(packagesDir, name, cfg.Version, cacheHash, "build"),
-			InstallDir: filepath.Join(packagesDir, name, cfg.Version, cacheHash, "install"),
+			BuildDir:   filepath.Join(packagesDir, name, cfg.Version, buildKey, "build"),
+			InstallDir: filepath.Join(packagesDir, name, cfg.Version, buildKey, "install"),
 		}
 	}
 
@@ -562,11 +562,11 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 			for name := range subPkgs {
 				if meta, ok := pkgMetaMap[name]; ok && meta.IsRemote {
 					rcfg := remote.configs[name]
-					subHash := build.BuildKey(subTc.Tools.CC, "release", rcfg.Options)
+					subBuildKey := build.BuildKey(subTc.Tools.CC, "release", rcfg.Options)
 					subRemoteDirs[name] = &api.PkgDirs{
 						SourceDir:  remote.dirs[name].SourceDir,
-						BuildDir:   filepath.Join(packagesDir, name, rcfg.Version, subHash, "build"),
-						InstallDir: filepath.Join(packagesDir, name, rcfg.Version, subHash, "install"),
+						BuildDir:   filepath.Join(packagesDir, name, rcfg.Version, subBuildKey, "build"),
+						InstallDir: filepath.Join(packagesDir, name, rcfg.Version, subBuildKey, "install"),
 					}
 				} else {
 					subRemoteDirs[name] = remote.dirs[name]
