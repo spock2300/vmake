@@ -88,13 +88,17 @@ ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c").AddIncludes("inc
 | `pkg/toolchain` | Toolchain abstraction (GCC, Clang) | No |
 | `pkg/repo` | Package management, Git, native repos | No |
 | `pkg/resolver` | Dependency graph, deferred resolution | No |
+| `pkg/config` | Project configuration management | No |
+| `pkg/log` | Logging (Debug, Info, Error, Fatal) | No |
+| `pkg/tui` | Terminal UI (interactive config) | No |
+| `pkg/version` | Version information | No |
 | `internal/*` | exec, fs, gitstore, glob, gocompile, jsonio | No |
 
 **Dependency DAG**: `internal/*` -> `pkg/toolchain` -> `pkg/api` -> `pkg/buildscript, pkg/repo` -> `pkg/resolver, pkg/plugin, pkg/build` -> `cmd/vmake`
 
 ## CLI Architecture
 - `github.com/spf13/cobra`, package-level vars, `init()` registration
-- Command factories (`newAddCmd`, `newRemoveCmd`, `newUpdateCmd`) in `cmd/vmake/helpers.go`
+- Command factories (`newRemoveCmd`, `newUpdateCmd`) in `cmd/vmake/helpers.go`
 
 ### Build Flags
 
@@ -106,6 +110,7 @@ ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c").AddIncludes("inc
 | `--install` | `-i` | Install after build |
 | `--prefix` | `-p` | Installation prefix (default: `./install/`) |
 | `--install-type` | | `runtime` (default) or `sdk` |
+| `--manifest` | | Pin versions from manifest file |
 
 ## Build Script System
 Each `build.go` is compiled to a Go plugin (`.so`):

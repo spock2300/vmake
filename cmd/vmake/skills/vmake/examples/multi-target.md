@@ -57,13 +57,10 @@ myproject/
 
 ```
 build/
-└── myproject/
-    ├── mylib/
-    │   └── libmylib.a    # Static library
-    ├── myapp/
-    │   └── myapp         # Main executable
-    └── tests/
-        └── tests         # Test executable (not built by default)
+└── <toolchain>-<mode>/
+    ├── libmylib.a    # Static library
+    ├── myapp         # Main executable
+    └── tests         # Test executable (not built by default)
 ```
 
 ## Key Points

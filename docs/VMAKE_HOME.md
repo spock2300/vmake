@@ -6,7 +6,6 @@
 
 ```
 ~/.vmake/
-├── config.json                    # 全局工具链配置
 ├── extensions/                    # 扩展仓库（git clone）
 │   └── <repo-name>/
 │       ├── <plugin-name>/         # 插件目录
@@ -30,41 +29,9 @@
 │               ├── build/         # 中间产物（.o 文件等）
 │               └── install/       # 最终产物（库、头文件）
 └── cache/
-    ├── buildscripts/              # 编译后的构建脚本缓存
-    │   └── <name>/build.so
-    ├── plugins/                   # 编译后的扩展插件缓存
-    │   └── <repo>/<plugin>.so
-    └── <repo>/<pkg>/repo/         # 包源码的 git clone
-```
-
-## config.json
-
-全局工具链配置，存储编译器路径和默认编译选项。
-
-源码：`pkg/toolchain/store.go`
-CLI：`vmake toolchain list|show`
-
-```json
-{
-  "version": "1",
-  "default_toolchain": "host",
-  "toolchains": {
-    "host": {
-      "name": "host",
-      "display_name": "Host",
-      "host": "x86_64-linux-gnu",
-      "tools": {
-        "cc": "gcc", "cxx": "g++", "ar": "ar",
-        "ld": "ld", "strip": "strip", "ranlib": "ranlib"
-      },
-      "default_flags": {
-        "cflags": ["-O2", "-Wall"],
-        "cxxflags": ["-O2", "-Wall", "-Wextra"],
-        "ldflags": ["-Wl,--as-needed"]
-      }
-    }
-  }
-}
+├── buildscripts/              # 编译后的构建脚本缓存
+│   └── <name>/build.so
+└── <repo>/<pkg>/repo/         # 包源码的 git clone
 ```
 
 ## repos/
@@ -107,6 +74,8 @@ extensions/<repo-name>/
 源码：`pkg/plugin/manager.go`（嵌入 `*gitstore.Store`）
 CLI：`vmake ext add|remove|list|update`
 
+插件 `.so` 文件编译在插件目录内（`extensions/<repo>/<plugin-name>/plugin.so`），而非统一缓存目录。
+
 ## toolchains/
 
 已安装的交叉编译工具链，由扩展自动下载或手动安装。
@@ -139,7 +108,7 @@ packages/<repo>/<pkg>/<version>/<cacheHash>/
     └── lib/                       # 静态库/动态库
 ```
 
-`cacheHash` 由工具链、构建模式、选项组合生成（`pkg/repo/cache.go`）。
+`cacheHash` 由编译器名称（如 gcc）、构建模式、选项组合生成（`pkg/repo/cache.go`）。
 
 不同工具链或选项组合产生不同的 `cacheHash`，实现配置隔离。
 

@@ -189,7 +189,7 @@ func Main(p *api.Package) {
 ## API Coverage Summary
 
 | Category | Methods Used |
-|------------------------|
+|----------|-------------|
 | Options | Bool, String, Int, Choice, ShowIf, GlobalMode/Option |
 | Conditionals | If, IfNot, Select, When, Bool, String, Int |
 | Targets | Object, Static, Shared, Binary, Default(false) |

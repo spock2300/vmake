@@ -184,7 +184,7 @@ ctx.Target(name string) *Target
 ### 构建命令
 
 ```bash
-vmake build [-f|--force] [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>]
+vmake build [-f|--force] [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>]
 vmake clean [--all]
 vmake rebuild
 ```
@@ -200,7 +200,6 @@ vmake config    # 交互式 TUI 配置
 ```bash
 vmake toolchain list
 vmake toolchain show [name]
-vmake toolchain init <name>
 ```
 
 ### 包仓库管理
@@ -237,7 +236,9 @@ vmake ext update [name]
 vmake git tag [version] [--major|--minor|--patch]    # 版本标签
 vmake update [version]                                # 自我更新
 vmake version                                         # 版本信息
-vmake doc                                             # AI 文档
+vmake skill install                                   # 安装 AI 技能
+vmake skill uninstall                                 # 卸载 AI 技能
+vmake skill path                                      # 显示安装路径
 ```
 
 全局选项：`-v` (verbose), `-V` (very verbose), `-q` (quiet)
@@ -249,6 +250,7 @@ vmake doc                                             # AI 文档
 - [插件 API](docs/PLUGIN_API.md) - 构建脚本和扩展插件 API
 - [架构设计](docs/ARCHITECTURE.md) - 系统架构和执行流程
 - [目录结构](docs/VMAKE_HOME.md) - ~/.vmake 目录结构
+- [AI 安装指南](docs/AI_INSTALL_GUIDE.md) - AI 助手技能安装指南
 
 ## 测试用例
 
@@ -267,6 +269,9 @@ vmake doc                                             # AI 文档
 | `test_data/09_with_curl` | 使用 libcurl |
 | `test_data/10_local_repo` | 本地包仓库 |
 | `test_data/11_with_tinyexpr` | 使用 tinyexpr 库 |
+| `test_data/12_rtos_simulate` | RTOS 模拟项目 |
+| `test_data/13_with_prefix_repo` | Native 仓库依赖 |
+| `test_data/14_bin_header` | 二进制头文件嵌入 |
 
 ## 许可证
 

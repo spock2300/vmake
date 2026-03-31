@@ -149,7 +149,7 @@ All build helpers return `error`.
 | `Libs()` | `[]string` | Library deps |
 | `Deps()` | `map[string]*InstalledPackage` | Resolved dependencies |
 | `SelectVersion(constraint)` | `(string, error)` | Best version match |
-| `GetVersions()` | `[]string` | Sorted version list |
+| `GetVersions()` | `[]string` | Available version list (unsorted) |
 | `GitURLs()` | `[]string` | Git repository URLs |
 | `Homepage()` | `string` | Project homepage |
 | `Description()` | `string` | Package description |
@@ -158,7 +158,12 @@ All build helpers return `error`.
 | `Submodules()` | `bool` | Git submodules enabled |
 | `ScriptDir()` | `string` | Build script directory |
 | `GetPatches()` | `[]string` | Git patch paths |
-| `SetDep(name, pkg)` | | Set resolved dependency |
+
+### Dependency Management
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `SetDep` | `(name string, pkg *InstalledPackage)` | Set resolved dependency |
 
 ---
 

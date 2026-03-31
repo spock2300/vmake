@@ -151,7 +151,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 })
 ```
 
-Use `ctx.ToolchainOption()` to allow per-package toolchain switching for sub-graph builds (e.g., building a code generator with the host toolchain while cross-compiling firmware with an embedded toolchain).
+Use `p.OnConfig(func(ctx *api.ConfigContext) { ctx.ToolchainOption() })` to allow per-package toolchain switching for sub-graph builds (e.g., building a code generator with the host toolchain while cross-compiling firmware with an embedded toolchain).
 
 ## Package Dependencies
 
@@ -194,7 +194,7 @@ AddCFlags(ctx.If("debug", "-g", "-O0")...)        // bool → flags
 AddCFlags(ctx.IfNot("debug", "-O2")...)           // inverted
 AddCFlags(ctx.Select("opt", map[string]string{    // choice → flag
     "O0": "-O0", "O2": "-O2",
-}))...
+}))
 
 ctx.String("name")    // read string
 ctx.Int("count")      // read int
@@ -210,7 +210,7 @@ ctx.When("x", "val")  // compare → bool (for if statements)
 | `--prefix` / `-p` | Prefix (default: `./install/`) |
 | `--install-type` | `runtime` (binaries+shared) or `sdk` (everything) |
 
-Custom install entries: `p.AddInstalls("src/file.conf", "etc/file.conf")`
+Custom install entries: `p.AddInstalls("src/file.conf", "etc/file.conf")` (maps src → dest)
 
 ## CLI Quick Reference
 

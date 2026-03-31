@@ -12,8 +12,7 @@ test_data/
 │
 ├── 02_with_config/       # 带配置选项的项目
 │   ├── build.go
-│   ├── src/main.c
-│   └── .vmake/config.json
+│   └── src/
 │
 ├── 03_multi_target/      # 多目标项目（库+应用+测试）
 │   ├── build.go
@@ -34,12 +33,50 @@ test_data/
 │
 ├── 05_conditional/       # 条件表达式示例
 │   ├── build.go
-│   ├── src/main.c
-│   └── .vmake/config.json
+│   └── src/
 │
-└── 09_with_curl/         # 远程包依赖示例（curl + mbedtls）
+├── 06_complete_api/      # 完整 API 测试
+│   ├── build.go
+│   ├── include/
+│   └── src/
+│
+├── 07_subbuild_codegen/  # 子构建 / 代码生成
+│   ├── build.go
+│   ├── tools/
+│   ├── src/
+│   └── output/
+│
+├── 08_with_package/      # 使用第三方包
+│   ├── build.go
+│   └── src/
+│
+├── 09_with_curl/         # 远程包依赖示例（curl + mbedtls）
+│   ├── build.go
+│   ├── go.mod
+│   └── src/
+│
+├── 10_local_repo/        # 本地包仓库
+│   ├── app/
+│   └── mylib/
+│
+├── 11_with_tinyexpr/     # 使用 tinyexpr 库
+│   ├── build.go
+│   └── src/
+│
+├── 12_rtos_simulate/     # RTOS 模拟（链接脚本 + 后链接步骤）
+│   ├── build.go
+│   ├── include/
+│   ├── linker/
+│   └── src/
+│
+├── 13_with_prefix_repo/  # Native 仓库依赖
+│   ├── build.go
+│   └── src/
+│
+└── 14_bin_header/        # 二进制头文件嵌入
     ├── build.go
-    └── src/main.c
+    ├── assets/
+    └── src/
 ```
 
 ## 测试场景说明
@@ -86,15 +123,81 @@ test_data/
 - Select 映射
 - 复杂的编译选项组合
 
+### 06_complete_api
+完整 API 覆盖测试，包含全局选项、对象文件目标、共享库、条件目标等。
+
+**验证要点：**
+- GlobalOption、OptionString、OptionInt
+- SetShowIf 条件显示
+- TargetObject、TargetShared、TargetStatic
+- SetLanguages、AddCxxFlags、AddLdFlags
+- When、Bool 条件判断
+
+### 07_subbuild_codegen
+子图构建与代码生成，构建宿主工具然后执行生成源文件。
+
+**验证要点：**
+- BuildSubGraph 子图构建
+- DepOutput 获取依赖输出路径
+- Exec 执行构建产物
+- ToolchainOption 工具链选项
+
+### 08_with_package
+使用第三方包依赖（zlib）。
+
+**验证要点：**
+- OnRequire + AddRequires 声明依赖
+- AddDeps 链接第三方包
+- 版本约束
+
 ### 09_with_curl
 远程包依赖示例，使用 curl 库（依赖 mbedtls SSL 后端）。
 
 **验证要点：**
 - 远程包依赖声明 (OnRequire + AddRequires)
 - 版本约束 (>=8.5)
-- 传递依赖解析 (curl → mbedtls)
+- 传递依赖解析 (curl -> mbedtls)
 - CMake 包构建
 - AddDeps 链接
+
+### 10_local_repo
+本地包仓库，多模块项目间通过本地仓库共享包。
+
+**验证要点：**
+- 本地仓库配置
+- 包发现与版本匹配
+- 跨项目依赖
+
+### 11_with_tinyexpr
+使用 tinyexpr 数学表达式库。
+
+**验证要点：**
+- 第三方包依赖
+- TargetVoid + SetBuildFunc
+
+### 12_rtos_simulate
+RTOS/嵌入式固件模拟，展示链接脚本和后链接步骤。
+
+**验证要点：**
+- SetLinkerScript 链接脚本
+- AddPostLinkHex/AddPostLinkBin/AddPostLinkSize
+- AddBinHeader 二进制头文件嵌入
+
+### 13_with_prefix_repo
+Native 仓库依赖，通过 git tag 进行版本管理。
+
+**验证要点：**
+- Native 仓库配置
+- 自动版本发现（git tag）
+- Native 包依赖解析
+
+### 14_bin_header
+二进制文件嵌入为 C 头文件。
+
+**验证要点：**
+- AddBinHeader API
+- 增量编译（mtime 判断）
+- 自动生成头文件
 
 ## 预期行为
 
@@ -102,7 +205,6 @@ test_data/
 
 ```bash
 cd test_data/01_simple_c
-vmake config    # 应正确加载并显示配置界面
-vmake build     # 应编译生成 hello 可执行文件
-./hello         # 输出 "Hello, VMake!"
+../../vmake build     # 应编译生成 hello 可执行文件
+./build/host-debug/hello  # 输出 "Hello, VMake!"
 ```

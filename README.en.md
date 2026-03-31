@@ -8,11 +8,11 @@ VMake is a modern C/C++ project build tool developed in Go. It provides a concis
 - **Flexible Option System**: Supports configuration options of boolean, string, integer, and enum types
 - **Conditional Build Support**: Enables conditional compilation through methods like `If` and `When`
 - **Multi-Module Support**: Native support for managing builds of multi-module projects
-- **Third-Party Package Management**: Git-based package dependencies with automatic download and build
+- **Third-Party Package Management**: Supports Registry (wrapping CMake/Autotools) and Native (vmake native packages) repository types, declare dependencies via OnRequire, automatic download, version matching, and build
 - **Extension Plugin System**: CLI command extensions and cross-compilation toolchain management
 - **Incremental Compilation**: Intelligent incremental compilation based on dependency analysis
 - **TUI Configuration Interface**: Interactive terminal user interface for project configuration
-- **Toolchain Management**: Flexible switching between multiple compiler toolchains
+- **Toolchain Management**: Flexible switching between multiple compiler toolchains, supports cross-compilation
 - **Semantic Versioning**: Built-in semver parsing and constraint matching
 
 ## Quick Start
@@ -73,8 +73,8 @@ vmake build
 vmake/
 ├── cmd/vmake/           # CLI command entry
 ├── pkg/
-│   ├── api/             # Core build API
-│   ├── plugin/          # Plugin loader
+│   ├── api/             # Core build API (importable from build scripts)
+│   ├── plugin/          # Extension plugin system (importable from plugins)
 │   ├── build/           # Compilation, linking, and cache management
 │   ├── buildscript/     # Build script scan, compile, load
 │   ├── config/          # Configuration storage
@@ -92,6 +92,47 @@ vmake/
 │   ├── gocompile/       # Go plugin compilation
 │   └── jsonio/          # JSON serialization
 └── docs/                # Design documentation
+```
+
+## Package Repository
+
+VMake supports two types of package repositories:
+
+**Registry Repository**: Wraps third-party C/C++ libraries (such as zlib, curl). `build.go` acts as a wrapper that calls CMake/Autotools to build source code. Versions are manually mapped via `AddVersion()`.
+
+**Native Repository**: VMake native packages, for sharing across projects. Each package is an independent Git repository, with `build.go` at the repository root. Versions are automatically recognized via git tags.
+
+| | Registry Repository | Native Repository |
+|--|--|--|
+| **Purpose** | Wrapping third-party C/C++ libraries | VMake native packages, cross-project sharing |
+| **build.go** | Wrapper (calls CMake, etc.) | Actual build description |
+| **Version Source** | `AddVersion()` manual mapping | git tag (auto-detected semver) |
+| **Add Command** | `vmake repo add name url` | `vmake repo add --native name "https://..../{name}.git"` |
+
+### Usage Flow
+
+1. Add a repository:
+
+```bash
+vmake repo add official https://github.com/user/vmake-packages    # Registry
+vmake repo add --native myorg https://git.example.com/{name}.git   # Native
+```
+
+2. Declare dependencies in `build.go`:
+
+```go
+p.OnRequire(func(ctx *api.RequireContext) {
+    ctx.AddRequires("official/zlib >=1.2")
+})
+```
+
+3. Use in a Target:
+
+```go
+ctx.Target("app").
+    SetKind(api.TargetBinary).
+    AddFiles("src/*.c").
+    AddDeps("official/zlib")
 ```
 
 ## API Overview
@@ -139,7 +180,7 @@ ctx.Target(name string) *Target
 ### Build Commands
 
 ```bash
-vmake build [-f|--force] [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>]
+vmake build [-f|--force] [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>]
 vmake clean [--all]
 vmake rebuild
 ```
@@ -155,13 +196,13 @@ vmake config    # Interactive TUI configuration
 ```bash
 vmake toolchain list
 vmake toolchain show [name]
-vmake toolchain init <name>
 ```
 
 ### Package Repository Management
 
 ```bash
-vmake repo add <name> <url>
+vmake repo add <name> <url>                # Registry repo
+vmake repo add --native <name> <url>       # Native repo (URL template with {name})
 vmake repo remove <name>
 vmake repo list
 vmake repo update <name>
@@ -191,7 +232,9 @@ vmake ext update [name]
 vmake git tag [version] [--major|--minor|--patch]    # Version tagging
 vmake update [version]                                # Self-update
 vmake version                                         # Version info
-vmake doc                                             # AI documentation
+vmake skill install                                   # Install AI skill
+vmake skill uninstall                                 # Uninstall AI skill
+vmake skill path                                      # Show skill paths
 ```
 
 Global flags: `-v` (verbose), `-V` (very verbose), `-q` (quiet)
@@ -200,9 +243,10 @@ Global flags: `-v` (verbose), `-V` (very verbose), `-q` (quiet)
 
 Detailed design documents are available in the [docs](docs/) directory:
 
-- [Plugin API](docs/PLUGIN_API.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Directory Structure](docs/VMAKE_HOME.md)
+- [Plugin API](docs/PLUGIN_API.md) - Build script and extension plugin API
+- [Architecture](docs/ARCHITECTURE.md) - System architecture and execution flow
+- [Directory Structure](docs/VMAKE_HOME.md) - ~/.vmake directory structure
+- [AI Install Guide](docs/AI_INSTALL_GUIDE.md) - AI assistant skill installation
 
 ## Test Cases
 
@@ -219,6 +263,9 @@ Detailed design documents are available in the [docs](docs/) directory:
 | `test_data/09_with_curl` | Package requiring curl download |
 | `test_data/10_local_repo` | Local repository test |
 | `test_data/11_with_tinyexpr` | Package with tinyexpr dependency |
+| `test_data/12_rtos_simulate` | RTOS simulation project |
+| `test_data/13_with_prefix_repo` | Native repository dependencies |
+| `test_data/14_bin_header` | Binary header embedding |
 
 ## License
 

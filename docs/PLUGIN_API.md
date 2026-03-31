@@ -530,8 +530,8 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 `vmake build --install` 在安装前缀生成 `manifest.json`，记录构建元数据和每个包的版本信息：
 
 - 本地包：`source: "local"`，含 `ref`（git 完整哈希）和 `path`（相对路径）
-- Prefix 包：`source: "prefix"`，含 `url` 和 `ref`（git tag）
-- Index 包：`source: "index"`，含 `url` 和 `ref`
+- Native 包：`source: "native"`，含 `url` 和 `ref`（git tag）
+- Registry 包：`source: "registry"`，含 `url` 和 `ref`
 
 通过 `vmake manifest show <path>` 查看，`vmake manifest checkout <path> [name]` 恢复到记录的版本。
 
