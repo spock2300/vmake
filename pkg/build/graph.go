@@ -2,6 +2,7 @@ package build
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
@@ -179,6 +180,7 @@ func findPackageTargetNodes(pkgName string, nodes map[string]*BuildNode) []strin
 			result = append(result, fullName)
 		}
 	}
+	sort.Strings(result)
 	return result
 }
 
@@ -216,7 +218,13 @@ func topologicalSort(nodes map[string]*BuildNode) ([]string, error) {
 		return nil
 	}
 
+	names := make([]string, 0, len(nodes))
 	for name := range nodes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
 		if !visited[name] {
 			if err := visit(name); err != nil {
 				return nil, err
