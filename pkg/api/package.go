@@ -21,6 +21,39 @@ const (
 	TargetVoid   TargetKind = "void"
 )
 
+func (k TargetKind) Ext() string {
+	switch k {
+	case TargetStatic:
+		return ".a"
+	case TargetShared:
+		return ".so"
+	case TargetObject:
+		return ".o"
+	default:
+		return ""
+	}
+}
+
+func (k TargetKind) Prefix() string {
+	switch k {
+	case TargetStatic, TargetShared:
+		return "lib"
+	default:
+		return ""
+	}
+}
+
+func (k TargetKind) InstallDir() string {
+	switch k {
+	case TargetBinary:
+		return "bin"
+	case TargetStatic, TargetShared:
+		return "lib"
+	default:
+		return ""
+	}
+}
+
 type OptionType int
 
 const (

@@ -3,7 +3,6 @@ package build
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
@@ -140,5 +139,5 @@ func BuildSubGraph(rootPkg string, tc *toolchain.Toolchain, tcName string, mode 
 
 func TargetOutputPath(pkgDir, tcName, mode, buildKey string, kind api.TargetKind, targetName string) string {
 	filename := targetFilename(kind, targetName)
-	return filepath.Join(pkgDir, "build", buildKey, filename)
+	return BuildPath(pkgDir, buildKey, filename)
 }

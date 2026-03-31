@@ -75,6 +75,14 @@ func GetCurrentCommit(dir string) (string, error) {
 	return exec.TrimOutput(output), nil
 }
 
+func GitRevParse(dir string) string {
+	commit, _ := GetCurrentCommit(dir)
+	if commit == "" {
+		return "unknown"
+	}
+	return commit
+}
+
 func IsAlreadyAtRef(dir, ref string) bool {
 	head, err := GetCurrentCommit(dir)
 	if err != nil {

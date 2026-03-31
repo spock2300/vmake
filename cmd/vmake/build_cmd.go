@@ -103,11 +103,7 @@ func gitDescribe(dir string) string {
 }
 
 func gitRevParse(dir string) string {
-	out, err := exec.RunWithOptions("git", []string{"rev-parse", "HEAD"}, exec.RunOptions{Dir: dir, Quiet: true})
-	if err == nil {
-		return strings.TrimSpace(string(out))
-	}
-	return "unknown"
+	return repo.GitRevParse(dir)
 }
 
 func writeManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix string) error {
@@ -437,8 +433,11 @@ func prepareRemotePackages(ctx *RuntimeContext, tc *toolchain.Toolchain, needed 
 			pkg.SetGit(node.Pkg.GitURLs()...)
 			pkg.SetVersions(node.Pkg.Versions())
 		} else if node.Source != nil && node.Source.Path != "" {
-			pkg.SetVersions(extractVersionsFromBuildGo(node.Source.Path))
-			pkg.SetGit(extractGitURLs(node.Source.Path)...)
+			info, err := ParseBuildGo(node.Source.Path)
+			if err == nil {
+				pkg.SetVersions(info.Versions)
+				pkg.SetGit(info.GitURLs...)
+			}
 		}
 
 		if cfg.Version == "" && len(pkg.GetVersions()) > 0 {
@@ -716,23 +715,43 @@ func applyPatches(pkg *api.Package, sourceDir string) error {
 	return nil
 }
 
-func extractVersionsFromBuildGo(buildGoPath string) map[string]string {
-	calls := findAllCallsInBuildGo(buildGoPath, "AddVersion")
-	versions := make(map[string]string)
-	for _, args := range calls {
-		if len(args) >= 2 {
-			versions[args[0]] = args[1]
-		}
-	}
-	return versions
+type BuildGoInfo struct {
+	Versions map[string]string
+	GitURLs  []string
 }
 
-func extractGitURLs(buildGoPath string) []string {
-	calls := findAllCallsInBuildGo(buildGoPath, "SetGit")
-	if len(calls) > 0 {
-		return calls[0]
+func ParseBuildGo(path string) (*BuildGoInfo, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	content := string(data)
+	info := &BuildGoInfo{
+		Versions: make(map[string]string),
+	}
+	for _, call := range []struct {
+		name    string
+		handler func([]string)
+	}{
+		{"AddVersion", func(args []string) {
+			if len(args) >= 2 {
+				info.Versions[args[0]] = args[1]
+			}
+		}},
+		{"SetGit", func(args []string) {
+			if len(args) > 0 {
+				info.GitURLs = append(info.GitURLs, args[0])
+			}
+		}},
+	} {
+		prefix := call.name + "("
+		for i := 0; i+len(prefix) <= len(content); i++ {
+			if content[i:i+len(prefix)] == prefix {
+				call.handler(extractCallArgs(content[i+len(prefix):]))
+			}
+		}
+	}
+	return info, nil
 }
 
 func extractCallArgs(s string) []string {

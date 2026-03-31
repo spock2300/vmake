@@ -178,20 +178,28 @@ func ensureLineInFile(path, line string) bool {
 	return true
 }
 
-func completeToolchain(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	tcs, err := toolchain.GetManager().ListToolchains()
-	if err != nil {
-		return nil, cobra.ShellCompDirectiveError
-	}
-	names := make([]string, 0, len(tcs))
-	for name := range tcs {
+func completeMapKeys[V any](m map[string]V) ([]string, cobra.ShellCompDirective) {
+	names := make([]string, 0, len(m))
+	for name := range m {
 		names = append(names, name)
 	}
 	return names, cobra.ShellCompDirectiveNoFileComp
 }
 
+func completeSlice(s []string) ([]string, cobra.ShellCompDirective) {
+	return s, cobra.ShellCompDirectiveNoFileComp
+}
+
+func completeToolchain(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	tcs, err := toolchain.GetManager().ListToolchains()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveError
+	}
+	return completeMapKeys(tcs)
+}
+
 func completeMode(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	return []string{"debug", "release"}, cobra.ShellCompDirectiveNoFileComp
+	return completeSlice([]string{"debug", "release"})
 }
 
 func completeInstallType(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {

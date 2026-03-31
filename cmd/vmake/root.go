@@ -161,25 +161,6 @@ func newBuildContext(ctx *RuntimeContext, name string, globalValues map[string]a
 	return buildCtx
 }
 
-func findAllCallsInBuildGo(buildGoPath, callName string) [][]string {
-	data, err := os.ReadFile(buildGoPath)
-	if err != nil {
-		return nil
-	}
-	content := string(data)
-	prefix := callName + "("
-	var results [][]string
-	for i := 0; i < len(content); i++ {
-		if i+len(prefix) <= len(content) && content[i:i+len(prefix)] == prefix {
-			args := extractCallArgs(content[i+len(prefix):])
-			if len(args) > 0 {
-				results = append(results, args)
-			}
-		}
-	}
-	return results
-}
-
 func runRequirePhase(ctx *RuntimeContext, force bool) error {
 	vlog.Info("Scanning %s...", ctx.WorkDir)
 

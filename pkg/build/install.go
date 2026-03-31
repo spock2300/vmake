@@ -227,7 +227,7 @@ func (i *ArtifactInstaller) installExtraItems(node *BuildNode) error {
 
 func (i *ArtifactInstaller) getOutputPath(pkgName string, pkgInfo *PkgInstallInfo, node *BuildNode) string {
 	name := targetFilename(node.Target.Kind(), node.Target.Name())
-	return filepath.Join(i.pkgDirs[pkgName], "build", pkgInfo.BuildKey, name)
+	return BuildPath(i.pkgDirs[pkgName], pkgInfo.BuildKey, name)
 }
 
 func (i *ArtifactInstaller) getInstallPath(prefix string, target *api.Target) string {
@@ -238,14 +238,10 @@ func (i *ArtifactInstaller) getInstallPath(prefix string, target *api.Target) st
 		return filepath.Join(prefix, installDir, basename)
 	}
 
-	switch target.Kind() {
-	case api.TargetBinary:
-		return filepath.Join(prefix, "bin", basename)
-	case api.TargetStatic, api.TargetShared:
-		return filepath.Join(prefix, "lib", basename)
-	default:
-		return filepath.Join(prefix, basename)
+	if dir := target.Kind().InstallDir(); dir != "" {
+		return filepath.Join(prefix, dir, basename)
 	}
+	return filepath.Join(prefix, basename)
 }
 
 func (i *ArtifactInstaller) copyDirWithFilter(src, dest string, filter api.InstallFilterFunc) error {

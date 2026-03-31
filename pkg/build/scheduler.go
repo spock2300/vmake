@@ -159,13 +159,13 @@ func (s *Scheduler) Build(fullName string) error {
 
 	genRules := node.Target.GenRules()
 	if len(genRules) > 0 {
-		generatedDir := filepath.Join("build", pkgInfo.BuildKey, "generated")
+		generatedDir := BuildPath(".", pkgInfo.BuildKey, "generated")
 		if err := runGenRules(genRules, generatedDir); err != nil {
 			return err
 		}
 	}
 
-	if err := os.MkdirAll(filepath.Join("build", pkgInfo.BuildKey, "objects"), 0755); err != nil {
+	if err := os.MkdirAll(BuildPath(".", pkgInfo.BuildKey, "objects"), 0755); err != nil {
 		return fmt.Errorf("create build directory: %w", err)
 	}
 
@@ -352,7 +352,7 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	pkgInfo := s.pkgs[node.PkgName]
 	genRules := node.Target.GenRules()
 	if len(genRules) > 0 {
-		generatedDir := filepath.Join("build", pkgInfo.BuildKey, "generated")
+		generatedDir := BuildPath(".", pkgInfo.BuildKey, "generated")
 		resolved.AllIncludes = append(resolved.AllIncludes, generatedDir)
 	}
 
@@ -366,16 +366,7 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 }
 
 func targetFilename(kind api.TargetKind, name string) string {
-	switch kind {
-	case api.TargetStatic:
-		return "lib" + name + ".a"
-	case api.TargetShared:
-		return "lib" + name + ".so"
-	case api.TargetObject:
-		return name + ".o"
-	default:
-		return name
-	}
+	return kind.Prefix() + name + kind.Ext()
 }
 
 func collectAllObjects(objs []string, artifacts []string) []string {
@@ -394,7 +385,7 @@ func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
 	if pkgInfo.OutputDir != "" {
 		return filepath.Join(pkgInfo.OutputDir, name)
 	}
-	return filepath.Join("build", pkgInfo.BuildKey, name)
+	return BuildPath(".", pkgInfo.BuildKey, name)
 }
 
 func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string, []string, error) {
@@ -404,7 +395,7 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string,
 	if pkgInfo.OutputDir != "" {
 		objRel = filepath.Join(pkgInfo.OutputDir, "objects", strings.ReplaceAll(src, "/", "_")+".o")
 	} else {
-		objRel = filepath.Join("build", pkgInfo.BuildKey, "objects", strings.ReplaceAll(src, "/", "_")+".o")
+		objRel = BuildPath(".", pkgInfo.BuildKey, "objects/"+strings.ReplaceAll(src, "/", "_")+".o")
 	}
 
 	valid, deps := IsSourceValid(src, objRel)

@@ -80,7 +80,7 @@ func runClean(cmd *cobra.Command, args []string) {
 
 func cleanBuildKeyDir(dir, pkgName, tcName, ccPath, mode string, options map[string]any) {
 	buildKey := build.BuildKey(ccPath, mode, options)
-	cleanDir(filepath.Join(dir, "build", buildKey), pkgName, buildKey)
+	cleanDir(build.BuildPath(dir, buildKey, ""), pkgName, buildKey)
 }
 
 func cleanDir(path, pkgName, label string) {
