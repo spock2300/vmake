@@ -1,14 +1,15 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"gitee.com/spock2300/vmake/pkg/build"
 	"gitee.com/spock2300/vmake/pkg/buildscript"
 	"gitee.com/spock2300/vmake/pkg/config"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
+	"gitee.com/spock2300/vmake/pkg/toolchain"
 
 	"github.com/spf13/cobra"
 )
@@ -19,13 +20,13 @@ var cleanCmd = &cobra.Command{
 	Use:   "clean",
 	Short: "Clean build artifacts",
 	Long: `Remove object files and build cache for all packages.
-Use --all to clean build directories for all toolchains.`,
+Use --all to clean all build directories.`,
 	Run: runClean,
 }
 
 func init() {
 	RootCmd.AddCommand(cleanCmd)
-	cleanCmd.Flags().BoolVar(&cleanAllFlag, "all", false, "clean build directories for all toolchains")
+	cleanCmd.Flags().BoolVar(&cleanAllFlag, "all", false, "clean all build directories")
 }
 
 type pkgCleanEntry struct {
@@ -33,7 +34,7 @@ type pkgCleanEntry struct {
 }
 
 func cleanPackages(entries []pkgCleanEntry, cfg *config.ConfigFile, cleanAll bool) {
-	_, tcName, err := GetToolchain(cfg)
+	tc, tcName, err := GetToolchain(cfg)
 	if err != nil {
 		vlog.Error("Error: %v", err)
 		return
@@ -43,12 +44,16 @@ func cleanPackages(entries []pkgCleanEntry, cfg *config.ConfigFile, cleanAll boo
 
 	for _, pkg := range entries {
 		if cleanAll {
-			cleanAllToolchains(pkg.Dir, pkg.Name)
+			cleanAllBuildDirs(pkg.Dir, pkg.Name)
 		} else {
-			cleanToolchainDir(pkg.Dir, pkg.Name, tcName, mode)
+			entry := config.GetEntry(cfg, pkg.Name)
+			cleanBuildKeyDir(pkg.Dir, pkg.Name, tcName, tc.Tools.CC, mode, entry.Options)
 			pkgTc := resolvePkgToolchain(cfg, pkg.Name, tcName)
 			if pkgTc != tcName {
-				cleanToolchainDir(pkg.Dir, pkg.Name, pkgTc, mode)
+				pkgTcObj, err := toolchain.GetManager().SelectToolchain(pkgTc)
+				if err == nil {
+					cleanBuildKeyDir(pkg.Dir, pkg.Name, pkgTc, pkgTcObj.Tools.CC, mode, entry.Options)
+				}
 			}
 		}
 	}
@@ -73,9 +78,9 @@ func runClean(cmd *cobra.Command, args []string) {
 	cleanPackages(entries, ctx.Config, cleanAllFlag)
 }
 
-func cleanToolchainDir(dir, pkgName, tc, mode string) {
-	buildDir := fmt.Sprintf("%s-%s", tc, mode)
-	cleanDir(filepath.Join(dir, "build", buildDir), pkgName, buildDir)
+func cleanBuildKeyDir(dir, pkgName, tcName, ccPath, mode string, options map[string]any) {
+	buildKey := build.BuildKey(ccPath, mode, options)
+	cleanDir(filepath.Join(dir, "build", buildKey), pkgName, buildKey)
 }
 
 func cleanDir(path, pkgName, label string) {
@@ -114,7 +119,7 @@ func removeIfExists(path, pkgName, label string, isDir bool) {
 	}
 }
 
-func cleanAllToolchains(dir, pkgName string) {
+func cleanAllBuildDirs(dir, pkgName string) {
 	buildBase := filepath.Join(dir, "build")
 	entries, err := os.ReadDir(buildBase)
 	if err != nil {

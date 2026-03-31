@@ -38,6 +38,7 @@ type compileResult struct {
 type PkgInfo struct {
 	api.PkgDirs
 	OutputDir string
+	BuildKey  string
 }
 
 type Scheduler struct {
@@ -48,13 +49,10 @@ type Scheduler struct {
 	resolvedTools *ResolvedTools
 	tcName        string
 	mode          string
-	buildDir      string
 	pkgs          map[string]*PkgInfo
 	origDir       string
 	ccWriter      *CompileCommandsWriter
 	packages      map[string]*api.Package
-	state         *BuildState
-	stateDir      string
 }
 
 func NewScheduler(
@@ -62,6 +60,7 @@ func NewScheduler(
 	tc *toolchain.Toolchain,
 	pkgDirs map[string]string,
 	mode string,
+	pkgOptions map[string]map[string]any,
 ) (*Scheduler, error) {
 	tools, err := ResolveTools(tc)
 	if err != nil {
@@ -77,20 +76,8 @@ func NewScheduler(
 	if mode == "" {
 		mode = api.ModeDebug
 	}
-	buildDir := fmt.Sprintf("%s-%s", tcName, mode)
 
 	ccWriter := NewCompileCommandsWriter(tools)
-
-	state, err := LoadState(buildDir)
-	if err != nil {
-		state = NewBuildState(tc)
-		state.Mode = mode
-	}
-	if state.NeedFullRebuild(tc) || state.Mode != mode {
-		CleanObjects(buildDir)
-		state = NewBuildState(tc)
-		state.Mode = mode
-	}
 
 	s := &Scheduler{
 		graph:         graph,
@@ -100,17 +87,19 @@ func NewScheduler(
 		resolvedTools: tools,
 		tcName:        tcName,
 		mode:          mode,
-		buildDir:      buildDir,
 		pkgs:          make(map[string]*PkgInfo),
 		origDir:       origDir,
 		ccWriter:      ccWriter,
 		packages:      make(map[string]*api.Package),
-		state:         state,
-		stateDir:      buildDir,
 	}
 
 	for pkgName, pkgDir := range pkgDirs {
-		s.pkgs[pkgName] = &PkgInfo{PkgDirs: api.PkgDirs{SourceDir: pkgDir}}
+		opts := pkgOptions[pkgName]
+		buildKey := BuildKey(tools.CC, mode, opts)
+		s.pkgs[pkgName] = &PkgInfo{
+			PkgDirs:  api.PkgDirs{SourceDir: pkgDir},
+			BuildKey: buildKey,
+		}
 	}
 
 	return s, nil
@@ -121,7 +110,16 @@ func (s *Scheduler) SetPackage(pkgName string, pkg *api.Package) {
 }
 
 func (s *Scheduler) SetPkgDirs(pkgName string, dirs *api.PkgDirs) {
-	s.pkgs[pkgName] = &PkgInfo{PkgDirs: *dirs}
+	if info, ok := s.pkgs[pkgName]; ok {
+		info.PkgDirs = *dirs
+	} else {
+		s.pkgs[pkgName] = &PkgInfo{PkgDirs: *dirs}
+	}
+}
+
+func (s *Scheduler) GetPkgInfo(pkgName string) (*PkgInfo, bool) {
+	info, ok := s.pkgs[pkgName]
+	return info, ok
 }
 
 func (s *Scheduler) BuildAll() error {
@@ -161,13 +159,13 @@ func (s *Scheduler) Build(fullName string) error {
 
 	genRules := node.Target.GenRules()
 	if len(genRules) > 0 {
-		generatedDir := filepath.Join("build", s.buildDir, "generated")
+		generatedDir := filepath.Join("build", pkgInfo.BuildKey, "generated")
 		if err := runGenRules(genRules, generatedDir); err != nil {
 			return err
 		}
 	}
 
-	if err := os.MkdirAll(filepath.Join("build", s.buildDir, "objects"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join("build", pkgInfo.BuildKey, "objects"), 0755); err != nil {
 		return fmt.Errorf("create build directory: %w", err)
 	}
 
@@ -229,7 +227,7 @@ func (s *Scheduler) Build(fullName string) error {
 		}
 	}
 
-	return s.state.Save(s.stateDir)
+	return nil
 }
 
 func (s *Scheduler) compileWorker(resolved *ResolvedTarget, jobs <-chan string, results chan<- compileResult, wg *sync.WaitGroup) {
@@ -351,9 +349,10 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 
 	resolved.OutputPath = s.getTargetOutputPath(node)
 
+	pkgInfo := s.pkgs[node.PkgName]
 	genRules := node.Target.GenRules()
 	if len(genRules) > 0 {
-		generatedDir := filepath.Join("build", s.buildDir, "generated")
+		generatedDir := filepath.Join("build", pkgInfo.BuildKey, "generated")
 		resolved.AllIncludes = append(resolved.AllIncludes, generatedDir)
 	}
 
@@ -395,7 +394,7 @@ func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
 	if pkgInfo.OutputDir != "" {
 		return filepath.Join(pkgInfo.OutputDir, name)
 	}
-	return filepath.Join("build", s.buildDir, name)
+	return filepath.Join("build", pkgInfo.BuildKey, name)
 }
 
 func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string, []string, error) {
@@ -405,7 +404,7 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string,
 	if pkgInfo.OutputDir != "" {
 		objRel = filepath.Join(pkgInfo.OutputDir, "objects", strings.ReplaceAll(src, "/", "_")+".o")
 	} else {
-		objRel = filepath.Join("build", s.buildDir, "objects", strings.ReplaceAll(src, "/", "_")+".o")
+		objRel = filepath.Join("build", pkgInfo.BuildKey, "objects", strings.ReplaceAll(src, "/", "_")+".o")
 	}
 
 	valid, deps := IsSourceValid(src, objRel)

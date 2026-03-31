@@ -70,7 +70,7 @@ func filterMap[V any](src map[string]V, keys map[string]bool) map[string]V {
 	return dst
 }
 
-func BuildSubGraph(rootPkg string, tc *toolchain.Toolchain, tcName string, mode string, params *SubGraphParams) error {
+func BuildSubGraph(rootPkg string, tc *toolchain.Toolchain, tcName string, mode string, params *SubGraphParams, pkgOptions map[string]map[string]any) error {
 	subPkgs := CollectSubGraphPackages(rootPkg, params.PkgMeta, params.AllTargets, params.Needed)
 
 	if len(subPkgs) == 0 {
@@ -97,7 +97,7 @@ func BuildSubGraph(rootPkg string, tc *toolchain.Toolchain, tcName string, mode 
 		return fmt.Errorf("subgraph build graph: %w", err)
 	}
 
-	scheduler, err := NewScheduler(graph, tc, filteredPkgDirs, mode)
+	scheduler, err := NewScheduler(graph, tc, filteredPkgDirs, mode, filterMap(pkgOptions, subPkgs))
 	if err != nil {
 		return fmt.Errorf("subgraph scheduler: %w", err)
 	}
@@ -138,7 +138,7 @@ func BuildSubGraph(rootPkg string, tc *toolchain.Toolchain, tcName string, mode 
 	return nil
 }
 
-func TargetOutputPath(pkgDir, tcName, mode string, kind api.TargetKind, targetName string) string {
+func TargetOutputPath(pkgDir, tcName, mode, buildKey string, kind api.TargetKind, targetName string) string {
 	filename := targetFilename(kind, targetName)
-	return filepath.Join(pkgDir, "build", fmt.Sprintf("%s-%s", tcName, mode), filename)
+	return filepath.Join(pkgDir, "build", buildKey, filename)
 }

@@ -18,6 +18,7 @@ type PkgInstallInfo struct {
 	BuildDir      string
 	Mode          string
 	TcName        string
+	BuildKey      string
 	InstallFilter api.InstallFilterFunc
 }
 
@@ -226,9 +227,7 @@ func (i *ArtifactInstaller) installExtraItems(node *BuildNode) error {
 
 func (i *ArtifactInstaller) getOutputPath(pkgName string, pkgInfo *PkgInstallInfo, node *BuildNode) string {
 	name := targetFilename(node.Target.Kind(), node.Target.Name())
-
-	buildDir := fmt.Sprintf("%s-%s", pkgInfo.TcName, pkgInfo.Mode)
-	return filepath.Join(i.pkgDirs[pkgName], "build", buildDir, name)
+	return filepath.Join(i.pkgDirs[pkgName], "build", pkgInfo.BuildKey, name)
 }
 
 func (i *ArtifactInstaller) getInstallPath(prefix string, target *api.Target) string {
