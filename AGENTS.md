@@ -77,6 +77,39 @@ ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c").AddIncludes("inc
 - Within a file: setters first, then getters, then remove methods, then private helpers
 - No interfaces — use function type aliases (`type ConfigFunc func(...)`) and struct-embedded function fields
 
+### Struct Embedding (Composition)
+Context types embed shared accessors to inherit behavior:
+```go
+type BuildContext struct {
+    ConfigAccessor    // embedded: provides Bool(), String(), Option()
+    *TargetRegistry   // embedded: provides Target(), GetTargets()
+    pkgName string
+}
+```
+Use embedding for shared behavior, not inheritance.
+
+### Function Type Patterns
+Common callback types: `RequireFunc`, `ConfigFunc`, `BuildFunc`, `InstallFilterFunc`, `CopyFilter`, `MainFunc`.
+Define as `type XxxFunc func(...)` and store as struct fields.
+
+### Generics
+Use Go generics for type-safe helpers: `func getTypedValue[T any](...)`, `func execFuncs[T any](...)`.
+
+### Context Usage
+`context.Context` used in `internal/exec` for timeout/cancellation:
+```go
+type RunOptions struct { Context context.Context; Timeout time.Duration }
+```
+Auto-creates timeout context if `Timeout > 0` and `Context` is nil.
+
+### CLI Error Helper
+Use `fatalErr(err)` pattern in CLI code:
+```go
+func fatalErr(err error) {
+    if err != nil { vlog.Error("Error: %v", err); os.Exit(1) }
+}
+```
+
 ## Package Structure
 
 | Package | Responsibility | Plugin Importable |
