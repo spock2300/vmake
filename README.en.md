@@ -175,6 +175,28 @@ ctx.Select(option string, mapping map[string]string) string
 ctx.Target(name string) *Target
 ```
 
+## Extension Plugins
+
+Extension plugins extend vmake's CLI commands and toolchain management through Go plugins (`.so`). Each extension repository is a Git repository, where each subdirectory (containing a `plugin.json`) at the repository root is an independent plugin.
+
+### Capabilities
+
+- **CLI Command Extension**: Add custom subcommands via `AddSubCommand`
+- **Toolchain Management**: Register custom toolchains with auto-download on first use via `manifest.json` + Git LFS
+- **Global Build Flags**: Inject C/CXX flags into all builds via `AddGlobalFlags`
+
+### Usage Flow
+
+1. Add an extension repository:
+
+```bash
+vmake ext add <name> <git-url>
+```
+
+2. Plugins are auto-discovered and compiled on the next run. Restart vmake to use new commands.
+
+See the [Extension Plugin Guide](docs/EXTENSION_PLUGIN.md) for the complete plugin authoring tutorial, all interface references, and practical examples.
+
 ## Command-Line Usage
 
 ### Build Commands
@@ -243,7 +265,8 @@ Global flags: `-v` (verbose), `-V` (very verbose), `-q` (quiet)
 
 Detailed design documents are available in the [docs](docs/) directory:
 
-- [Plugin API](docs/PLUGIN_API.md) - Build script and extension plugin API
+- [Build Script API](docs/BUILD_SCRIPT_API.md) - Build script and third-party package API
+- [Extension Plugin Guide](docs/EXTENSION_PLUGIN.md) - CLI extension and toolchain repository authoring
 - [Architecture](docs/ARCHITECTURE.md) - System architecture and execution flow
 - [Directory Structure](docs/VMAKE_HOME.md) - ~/.vmake directory structure
 - [AI Install Guide](docs/AI_INSTALL_GUIDE.md) - AI assistant skill installation

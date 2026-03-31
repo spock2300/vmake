@@ -9,7 +9,7 @@ VMake 是一个现代化的 C/C++ 项目构建工具，采用 Go 语言开发。
 - **条件构建支持**：通过 `If`、`When` 等方法实现条件编译
 - **多模块支持**：原生支持多模块项目的构建管理
 - **第三方包管理**：支持 Registry（包装 CMake/Autotools）和 Native（vmake 原生包）两种仓库类型，通过 OnRequire 声明依赖，自动下载、版本匹配和构建
-- **扩展插件系统**：支持 CLI 命令扩展和交叉编译工具链管理
+- **扩展插件系统**：通过 Go 插件扩展 CLI 命令和工具链，支持自定义子命令、交叉编译工具链自动下载与管理
 - **增量编译**：基于依赖分析的智能增量编译，大幅提升构建效率
 - **TUI 配置界面**：提供交互式终端用户界面，方便配置项目选项
 - **工具链管理**：支持多种编译工具链的灵活切换，支持交叉编译
@@ -179,6 +179,28 @@ ctx.Select(option string, mapping map[string]string) string
 ctx.Target(name string) *Target
 ```
 
+## 扩展插件
+
+扩展插件通过 Go 插件（`.so`）扩展 vmake 的 CLI 命令和工具链管理能力。每个扩展仓库是一个 Git 仓库，仓库根目录下的每个子目录（含 `plugin.json`）是一个独立的插件。
+
+### 扩展能力
+
+- **CLI 命令扩展**：通过 `AddSubCommand` 添加自定义子命令
+- **工具链管理**：注册自定义工具链，支持通过 `manifest.json` + Git LFS 实现首次使用自动下载
+- **全局编译标志**：通过 `AddGlobalFlags` 向所有构建注入 C/CXX 选项
+
+### 使用流程
+
+1. 添加扩展仓库：
+
+```bash
+vmake ext add <name> <git-url>
+```
+
+2. 插件在下次运行时自动发现并编译，重启 vmake 即可使用
+
+详见 [扩展插件指南](docs/EXTENSION_PLUGIN.md) 获取完整的插件编写教程、所有接口参考和实战示例。
+
 ## 命令行用法
 
 ### 构建命令
@@ -247,7 +269,8 @@ vmake skill path                                      # 显示安装路径
 
 详细的设计文档请参考 [docs](docs/) 目录：
 
-- [插件 API](docs/PLUGIN_API.md) - 构建脚本和扩展插件 API
+- [构建脚本 API](docs/BUILD_SCRIPT_API.md) - 构建脚本和第三方包 API
+- [扩展插件指南](docs/EXTENSION_PLUGIN.md) - CLI 扩展和工具链仓库编写
 - [架构设计](docs/ARCHITECTURE.md) - 系统架构和执行流程
 - [目录结构](docs/VMAKE_HOME.md) - ~/.vmake 目录结构
 - [AI 安装指南](docs/AI_INSTALL_GUIDE.md) - AI 助手技能安装指南
