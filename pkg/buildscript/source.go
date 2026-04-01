@@ -15,6 +15,20 @@ type Source struct {
 	Force     bool
 }
 
+func NewSource(name, path, dir, outputDir string, origin api.SourceOrigin, force bool) *Source {
+	return &Source{
+		Name:      name,
+		Path:      path,
+		Dir:       dir,
+		OutputDir: outputDir,
+		Origin:    origin,
+		Force:     force,
+	}
+}
+
+func (s Source) IsLocal() bool  { return s.Origin == api.SourceLocal }
+func (s Source) IsRemote() bool { return s.Origin == api.SourceRemote }
+
 func (s Source) GetOutputDir() string {
 	if s.OutputDir != "" {
 		return s.OutputDir

@@ -58,7 +58,7 @@ type Scheduler struct {
 func NewScheduler(
 	graph *BuildGraph,
 	tc *toolchain.Toolchain,
-	pkgDirs map[string]string,
+	pkgDirs map[string]*api.PkgDirs,
 	mode string,
 	pkgOptions map[string]map[string]any,
 ) (*Scheduler, error) {
@@ -93,11 +93,11 @@ func NewScheduler(
 		packages:      make(map[string]*api.Package),
 	}
 
-	for pkgName, pkgDir := range pkgDirs {
+	for pkgName, pd := range pkgDirs {
 		opts := pkgOptions[pkgName]
 		buildKey := BuildKey(tools.CC, mode, opts)
 		s.pkgs[pkgName] = &PkgInfo{
-			PkgDirs:  api.PkgDirs{SourceDir: pkgDir},
+			PkgDirs:  *pd,
 			BuildKey: buildKey,
 		}
 	}

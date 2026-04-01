@@ -111,7 +111,7 @@ func writeManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 	for _, name := range ctx.DepGraph.Order {
 		node := ctx.DepGraph.Packages[name]
 		if node.IsLocal() {
-			sourceDir := result.PkgDirs[name]
+			sourceDir := result.PkgDirs[name].SourceDir
 			relPath, _ := filepath.Rel(ctx.WorkDir, sourceDir)
 			packages = append(packages, installManifestEntry{
 				Name:    name,
@@ -133,8 +133,8 @@ func writeManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 		}
 		if node.IsNative() {
 			entry.Source = "native"
-			entry.URL = node.NativeGitURL
-			if ref, ok := node.NativeVersions[ip.Version]; ok {
+			entry.URL = node.Native.GitURL
+			if ref, ok := node.Native.Versions[ip.Version]; ok {
 				entry.Ref = ref
 			}
 		} else if node.Pkg != nil {
@@ -169,7 +169,7 @@ type buildConfig struct {
 type BuildResult struct {
 	AllTargets    map[string]map[string]*api.Target
 	Graph         *build.BuildGraph
-	PkgDirs       map[string]string
+	PkgDirs       map[string]*api.PkgDirs
 	PkgBuildKeys  map[string]string
 	TcName        string
 	Mode          string
@@ -186,18 +186,18 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 
 	localPkgOptions := collectLocalPkgOptions(ctx)
 
-	remote, err := prepareRemotePackages(ctx, cfg.Tc, needed)
+	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
+	remote, err := prepareRemotePackages(ctx, cfg.Tc, needed, pkgDirs)
 	if err != nil {
 		return nil, err
 	}
 
-	pkgDirs := GetPackageDirs(ctx.DepGraph)
 	allTargets, pkgMetaMap := executeAllOnBuild(ctx, needed, remote, pkgDirs, cfg, localPkgOptions)
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
-		if !node.IsLocal() && needed[name] && node.Pkg != nil {
-			if err := applyPatches(node.Pkg, remote.dirs[name].SourceDir); err != nil {
+		if node.IsNeededRemoteWithPkg(needed) {
+			if err := applyPatches(node.Pkg, pkgDirs[name].SourceDir); err != nil {
 				return nil, fmt.Errorf("apply patches for %s: %w", name, err)
 			}
 		}
@@ -229,30 +229,19 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		vlog.Info("  - %s", fullName)
 	}
 
-	scheduler, err := build.NewScheduler(graph, cfg.Tc, pkgDirs, cfg.Mode, localPkgOptions)
-	if err != nil {
-		return nil, err
-	}
+	pipeline := build.NewBuildPipeline(graph, cfg.Tc, pkgDirs, cfg.Mode, localPkgOptions)
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
-		if node.IsLocal() {
-			scheduler.SetPkgDirs(name, &api.PkgDirs{SourceDir: pkgDirs[name]})
-		} else if needed[name] {
-			scheduler.SetPkgDirs(name, remote.dirs[name])
-		}
-	}
-
-	for _, name := range ctx.Resolver.GetOrder() {
-		node := ctx.DepGraph.Packages[name]
-		if !node.IsLocal() && needed[name] && node.Pkg != nil {
-			scheduler.SetPackage(name, node.Pkg)
+		if node.IsNeededRemoteWithPkg(needed) {
+			pipeline.SetPackage(name, node.Pkg)
 		}
 	}
 
 	vlog.Info("")
 	vlog.Info("Building...")
-	if err := scheduler.BuildAll(); err != nil {
+	scheduler, err := pipeline.Run()
+	if err != nil {
 		return nil, err
 	}
 
@@ -275,7 +264,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		PkgBuildKeys:  pkgBuildKeys,
 		TcName:        cfg.TcName,
 		Mode:          cfg.Mode,
-		InstalledPkgs: remote.installedPkgs(),
+		InstalledPkgs: remote.installedPkgs(pkgDirs),
 	}, nil
 }
 
@@ -348,15 +337,23 @@ func filterAndCollectNeeded(ctx *RuntimeContext) map[string]bool {
 
 type remotePkgState struct {
 	configs map[string]*config.EntryConfig
-	dirs    map[string]*api.PkgDirs
 }
 
-func (r *remotePkgState) installedPkgs() map[string]*api.InstalledPackage {
-	if len(r.dirs) == 0 {
+func makeRemotePkgDirs(packagesDir, name, version, ccPath string, opts map[string]any, sourceDir string) *api.PkgDirs {
+	buildKey := build.BuildKey(ccPath, "release", opts)
+	return &api.PkgDirs{
+		SourceDir:  sourceDir,
+		BuildDir:   filepath.Join(packagesDir, name, version, buildKey, "build"),
+		InstallDir: filepath.Join(packagesDir, name, version, buildKey, "install"),
+	}
+}
+
+func (r *remotePkgState) installedPkgs(pkgDirs map[string]*api.PkgDirs) map[string]*api.InstalledPackage {
+	if len(pkgDirs) == 0 {
 		return nil
 	}
 	result := make(map[string]*api.InstalledPackage)
-	for name, d := range r.dirs {
+	for name, d := range pkgDirs {
 		if d.InstallDir != "" {
 			result[name] = api.NewInstalledPackage(name, r.configs[name].Version, d.InstallDir, nil)
 		}
@@ -364,10 +361,10 @@ func (r *remotePkgState) installedPkgs() map[string]*api.InstalledPackage {
 	return result
 }
 
-func prepareRemotePackages(ctx *RuntimeContext, tc *toolchain.Toolchain, needed map[string]bool) (*remotePkgState, error) {
+func prepareRemotePackages(ctx *RuntimeContext, tc *toolchain.Toolchain, needed map[string]bool, pkgDirs map[string]*api.PkgDirs) (*remotePkgState, error) {
 	hasDeps := false
 	for _, name := range ctx.Resolver.GetOrder() {
-		if needed[name] && !ctx.DepGraph.Packages[name].IsLocal() {
+		if ctx.DepGraph.Packages[name].IsNeededRemote(needed) {
 			hasDeps = true
 			break
 		}
@@ -375,7 +372,6 @@ func prepareRemotePackages(ctx *RuntimeContext, tc *toolchain.Toolchain, needed 
 
 	remote := &remotePkgState{
 		configs: make(map[string]*config.EntryConfig),
-		dirs:    make(map[string]*api.PkgDirs),
 	}
 
 	if !hasDeps {
@@ -388,7 +384,7 @@ func prepareRemotePackages(ctx *RuntimeContext, tc *toolchain.Toolchain, needed 
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
-		if needed[name] && !node.IsLocal() {
+		if node.IsNeededRemote(needed) {
 			remote.configs[name] = config.GetEntry(ctx.Config, name)
 		}
 	}
@@ -401,7 +397,7 @@ func prepareRemotePackages(ctx *RuntimeContext, tc *toolchain.Toolchain, needed 
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
-		if needed[name] && !node.IsLocal() && node.Pkg != nil {
+		if node.IsNeededRemoteWithPkg(needed) {
 			installer.SetPackage(name, node.Pkg)
 		}
 	}
@@ -425,10 +421,10 @@ func prepareRemotePackages(ctx *RuntimeContext, tc *toolchain.Toolchain, needed 
 
 		if node.IsNative() {
 			if cfg.Version == "" {
-				cfg.Version = node.NativeSelected
+				cfg.Version = node.Native.Selected
 			}
-			pkg.SetGit(node.NativeGitURL)
-			pkg.SetVersions(node.NativeVersions)
+			pkg.SetGit(node.Native.GitURL)
+			pkg.SetVersions(node.Native.Versions)
 		} else if node.Pkg != nil {
 			pkg.SetGit(node.Pkg.GitURLs()...)
 			pkg.SetVersions(node.Pkg.Versions())
@@ -454,18 +450,13 @@ func prepareRemotePackages(ctx *RuntimeContext, tc *toolchain.Toolchain, needed 
 		}
 		vlog.Info("  %s@%s -> %s", name, cfg.Version, sourceDir)
 
-		buildKey := build.BuildKey(tc.Tools.CC, "release", cfg.Options)
-		remote.dirs[name] = &api.PkgDirs{
-			SourceDir:  sourceDir,
-			BuildDir:   filepath.Join(packagesDir, name, cfg.Version, buildKey, "build"),
-			InstallDir: filepath.Join(packagesDir, name, cfg.Version, buildKey, "install"),
-		}
+		pkgDirs[name] = makeRemotePkgDirs(packagesDir, name, cfg.Version, tc.Tools.CC, cfg.Options, sourceDir)
 	}
 
 	return remote, nil
 }
 
-func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.PackageNode, pkgDirs map[string]string,
+func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.PackageNode, pkgDirs map[string]*api.PkgDirs,
 	allTargets map[string]map[string]*api.Target, remote *remotePkgState, globalValues map[string]any,
 	buildSubGraphFn func(string) error, depOutputFn func(string) string, tc *toolchain.Toolchain) {
 
@@ -473,7 +464,7 @@ func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.Pack
 	buildCtx.SetBuildSubGraphFunc(buildSubGraphFn)
 	buildCtx.SetDepOutputFunc(depOutputFn)
 
-	node.Pkg.ExecBuildFuncs(pkgDirs[name], func(fn api.BuildFunc) {
+	node.Pkg.ExecBuildFuncs(pkgDirs[name].SourceDir, func(fn api.BuildFunc) {
 		fn(buildCtx)
 	})
 
@@ -491,13 +482,13 @@ func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.Pack
 		for k, v := range cfg.Options {
 			cfgVals[k] = v
 		}
-		pkg.SetDirs(*remote.dirs[name])
+		pkg.SetDirs(*pkgDirs[name])
 		pkg.SetCfgVals(cfgVals)
 		pkg.SetToolchain(tc)
 	}
 }
 
-func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remotePkgState, pkgDirs map[string]string, cfg *buildConfig, localPkgOptions map[string]map[string]any) (map[string]map[string]*api.Target, map[string]build.PkgBuildMeta) {
+func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remotePkgState, pkgDirs map[string]*api.PkgDirs, cfg *buildConfig, localPkgOptions map[string]map[string]any) (map[string]map[string]*api.Target, map[string]build.PkgBuildMeta) {
 	vlog.Info("")
 	vlog.Info("Executing OnBuild...")
 
@@ -510,8 +501,8 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 			continue
 		}
 		pkgMetaMap[name] = build.PkgBuildMeta{
-			IsRemote: !node.IsLocal(),
-			Deps:     node.Deps,
+			Origin: node.Source.Origin,
+			Deps:   node.Deps,
 		}
 	}
 
@@ -556,31 +547,26 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 			return err
 		}
 
-		subRemoteDirs := remote.dirs
+		subPkgDirs := make(map[string]*api.PkgDirs, len(pkgDirs))
+		for k, v := range pkgDirs {
+			subPkgDirs[k] = v
+		}
 		if subTcName != cfg.TcName {
-			subRemoteDirs = make(map[string]*api.PkgDirs, len(remote.dirs))
+			subResolvedTools, _ := build.ResolveTools(subTc)
 			for name := range subPkgs {
-				if meta, ok := pkgMetaMap[name]; ok && meta.IsRemote {
+				if meta, ok := pkgMetaMap[name]; ok && meta.IsRemote() {
 					rcfg := remote.configs[name]
-					subBuildKey := build.BuildKey(subTc.Tools.CC, "release", rcfg.Options)
-					subRemoteDirs[name] = &api.PkgDirs{
-						SourceDir:  remote.dirs[name].SourceDir,
-						BuildDir:   filepath.Join(packagesDir, name, rcfg.Version, subBuildKey, "build"),
-						InstallDir: filepath.Join(packagesDir, name, rcfg.Version, subBuildKey, "install"),
-					}
-				} else {
-					subRemoteDirs[name] = remote.dirs[name]
+					subPkgDirs[name] = makeRemotePkgDirs(packagesDir, name, rcfg.Version, subResolvedTools.CC, rcfg.Options, pkgDirs[name].SourceDir)
 				}
 			}
 		}
 
 		params := &build.SubGraphParams{
-			AllTargets:    subAllTargets,
-			PkgMeta:       pkgMetaMap,
-			PkgDirs:       pkgDirs,
-			Packages:      make(map[string]*api.Package),
-			PkgRemoteDirs: subRemoteDirs,
-			Needed:        needed,
+			AllTargets: subAllTargets,
+			PkgMeta:    pkgMetaMap,
+			PkgDirs:    subPkgDirs,
+			Packages:   make(map[string]*api.Package),
+			Needed:     needed,
 		}
 		for name, node := range ctx.DepGraph.Packages {
 			if node.Pkg != nil && subPkgs[name] {
@@ -606,11 +592,9 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 			targetName = ""
 		}
 		subTcName := resolvePkgToolchain(ctx.Config, pkgName, cfg.TcName)
-		pkgDir := pkgDirs[pkgName]
-		if pkgDir == "" {
-			if d, ok := remote.dirs[pkgName]; ok {
-				pkgDir = d.SourceDir
-			}
+		pd := pkgDirs[pkgName]
+		if pd == nil {
+			return ""
 		}
 		if targetName == "" {
 			targets := allTargets[pkgName]
@@ -636,10 +620,10 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 				}
 			}
 			buildKey = build.BuildKey(ccPath, cfg.Mode, opts)
-		} else if d, ok := remote.dirs[pkgName]; ok {
-			buildKey = filepath.Base(d.BuildDir)
+		} else if pd.BuildDir != "" {
+			buildKey = filepath.Base(pd.BuildDir)
 		}
-		return build.TargetOutputPath(pkgDir, subTcName, cfg.Mode, buildKey, target.Kind(), targetName)
+		return build.TargetOutputPath(pd.SourceDir, subTcName, cfg.Mode, buildKey, target.Kind(), targetName)
 	}
 
 	for _, name := range ctx.Resolver.GetOrder() {
@@ -806,13 +790,13 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 		installCtx.SetOptions(ctx.AllOptions[name])
 		installCtx.MergeGlobals(ctx.GlobalOptions, globalValues)
 
-		node.Pkg.ExecInstallFuncs(result.PkgDirs[name], func(fn api.InstallFunc) {
+		node.Pkg.ExecInstallFuncs(result.PkgDirs[name].SourceDir, func(fn api.InstallFunc) {
 			fn(installCtx)
 		})
 
 		buildCtx := newBuildContext(ctx, name, globalValues)
 		buildCtx.SetDryRun(true)
-		node.Pkg.ExecBuildFuncs(result.PkgDirs[name], func(fn api.BuildFunc) {
+		node.Pkg.ExecBuildFuncs(result.PkgDirs[name].SourceDir, func(fn api.BuildFunc) {
 			fn(buildCtx)
 		})
 
@@ -829,7 +813,7 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 		installer.SetPackageInfo(name, &build.PkgInstallInfo{
 			Targets:       result.AllTargets[name],
 			InstallItems:  installItems,
-			BuildDir:      result.PkgDirs[name],
+			BuildDir:      result.PkgDirs[name].SourceDir,
 			Mode:          result.Mode,
 			TcName:        result.TcName,
 			BuildKey:      result.PkgBuildKeys[name],

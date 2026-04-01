@@ -4,33 +4,60 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"gitee.com/spock2300/vmake/internal/fs"
+	"gitee.com/spock2300/vmake/internal/toposort"
 	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/buildscript"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 	"gitee.com/spock2300/vmake/pkg/repo"
 )
 
+type NativePackageInfo struct {
+	GitURL   string
+	Versions map[string]string
+	Selected string
+}
+
 type PackageNode struct {
-	ID             string
-	Source         *buildscript.Source
-	Pkg            *api.Package
-	Deps           []string
-	Deferred       bool
-	NativeGitURL   string
-	NativeVersions map[string]string
-	NativeSelected string
+	ID       string
+	Source   *buildscript.Source
+	Pkg      *api.Package
+	Deps     []string
+	Deferred bool
+	Native   *NativePackageInfo
+}
+
+func NewPackageNode(id string, src *buildscript.Source, pkg *api.Package, deferred bool) *PackageNode {
+	return &PackageNode{
+		ID:       id,
+		Source:   src,
+		Pkg:      pkg,
+		Deferred: deferred,
+		Deps:     []string{},
+	}
+}
+
+func (n *PackageNode) WithNative(gitURL string, versions map[string]string, selected string) *PackageNode {
+	n.Native = &NativePackageInfo{GitURL: gitURL, Versions: versions, Selected: selected}
+	return n
 }
 
 func (n *PackageNode) IsLocal() bool {
-	return n.Source != nil && n.Source.Origin == api.SourceLocal
+	return n.Source != nil && n.Source.IsLocal()
 }
 
 func (n *PackageNode) IsNative() bool {
-	return n.NativeGitURL != ""
+	return n.Native != nil
+}
+
+func (n *PackageNode) IsNeededRemote(needed map[string]bool) bool {
+	return !n.IsLocal() && needed[n.ID]
+}
+
+func (n *PackageNode) IsNeededRemoteWithPkg(needed map[string]bool) bool {
+	return !n.IsLocal() && needed[n.ID] && n.Pkg != nil
 }
 
 type Graph struct {
@@ -78,13 +105,7 @@ func (r *Resolver) UpdateOrder() {
 
 func (r *Resolver) ResolveAll(localSources []buildscript.Source) error {
 	for _, src := range localSources {
-		s := &buildscript.Source{
-			Name:   src.Name,
-			Path:   src.Path,
-			Dir:    src.Dir,
-			Origin: api.SourceLocal,
-			Force:  r.force,
-		}
+		s := buildscript.NewSource(src.Name, src.Path, src.Dir, "", api.SourceLocal, r.force)
 		r.sources[s.Name] = s
 	}
 
@@ -131,21 +152,11 @@ func (r *Resolver) resolveDeferredNode(id string, node *PackageNode) (*PackageNo
 		return nil, fmt.Errorf("deferred node %s has no source", id)
 	}
 
-	scriptPath := r.scriptPath(src)
-	var newNode *PackageNode
-	var err error
-	if !r.force && src.Path != "" && r.hasCachedScript(scriptPath, src.Path) {
-		newNode, err = r.resolveFromCache(id, scriptPath, src, []string{id})
-	} else {
-		newNode, err = r.resolveOne(id, src, []string{id})
-	}
+	newNode, err := r.resolvePackage(id, src, []string{id}, false)
 	if err != nil {
 		return nil, err
 	}
-
-	newNode.NativeGitURL = node.NativeGitURL
-	newNode.NativeVersions = node.NativeVersions
-	newNode.NativeSelected = node.NativeSelected
+	newNode.Native = node.Native
 	return newNode, nil
 }
 
@@ -193,50 +204,61 @@ func (r *Resolver) resolveRecursive(id string, constraint string, path []string)
 		return node, nil
 	}
 
+	return r.resolvePackage(id, src, path, true)
+}
+
+func (r *Resolver) resolvePackage(id string, src *buildscript.Source, path []string, allowDefer bool) (*PackageNode, error) {
 	scriptPath := r.scriptPath(src)
 	if !r.force && src.Path != "" && r.hasCachedScript(scriptPath, src.Path) {
-		return r.resolveFromCache(id, scriptPath, src, path)
-	}
-
-	if src.Origin == api.SourceRemote {
-		node := &PackageNode{
-			ID:       id,
-			Source:   src,
-			Deferred: true,
-			Deps:     []string{},
+		pkg, err := r.loadPackageFromCache(scriptPath, *src)
+		if err != nil {
+			return nil, fmt.Errorf("load %s: %w", id, err)
 		}
+		return r.resolveFromCache(id, pkg, src, path)
+	}
+	if allowDefer && src.IsRemote() {
+		node := NewPackageNode(id, src, nil, true)
 		r.graph.Packages[id] = node
 		return node, nil
 	}
-
 	return r.resolveOne(id, src, path)
 }
 
 func (r *Resolver) resolveOne(id string, src *buildscript.Source, path []string) (*PackageNode, error) {
+	pkg, err := r.PreparePackage(src)
+	if err != nil {
+		return nil, fmt.Errorf("compile %s: %w", id, err)
+	}
+
+	return r.resolveFromCache(id, pkg, src, path)
+}
+
+func (r *Resolver) PreparePackage(src *buildscript.Source) (*api.Package, error) {
 	scriptPath := r.scriptPath(src)
 
 	cr := buildscript.Compile(*src)
 	if !cr.Success {
-		return nil, fmt.Errorf("compile %s: %w", id, cr.Error)
+		return nil, cr.Error
 	}
 
-	return r.resolveFromCache(id, scriptPath, src, path)
-}
-
-func (r *Resolver) resolveFromCache(id string, scriptPath string, src *buildscript.Source, path []string) (*PackageNode, error) {
 	loaded, err := buildscript.Load(scriptPath, *src)
 	if err != nil {
-		return nil, fmt.Errorf("load %s: %w", id, err)
+		return nil, err
 	}
 
-	pkg := loaded.ExtractPackage()
+	return loaded.ExtractPackage(), nil
+}
 
-	node := &PackageNode{
-		ID:     id,
-		Source: src,
-		Pkg:    pkg,
-		Deps:   []string{},
+func (r *Resolver) loadPackageFromCache(scriptPath string, src buildscript.Source) (*api.Package, error) {
+	loaded, err := buildscript.Load(scriptPath, src)
+	if err != nil {
+		return nil, err
 	}
+	return loaded.ExtractPackage(), nil
+}
+
+func (r *Resolver) resolveFromCache(id string, pkg *api.Package, src *buildscript.Source, path []string) (*PackageNode, error) {
+	node := NewPackageNode(id, src, pkg, false)
 	r.graph.Packages[id] = node
 
 	for _, req := range pkg.GetRequires().Get() {
@@ -259,14 +281,7 @@ func (r *Resolver) findSource(id string, constraint string) (*buildscript.Source
 
 	buildGo, err := r.repoMgr.FindPackageGo(repoName, pkgName)
 	if err == nil {
-		src := &buildscript.Source{
-			Name:      id,
-			Path:      buildGo,
-			Dir:       filepath.Dir(buildGo),
-			OutputDir: r.buildscriptOutputDir(id),
-			Origin:    api.SourceRemote,
-			Force:     r.force,
-		}
+		src := buildscript.NewSource(id, buildGo, filepath.Dir(buildGo), r.buildscriptOutputDir(id), api.SourceRemote, r.force)
 		r.sources[id] = src
 		return src, nil
 	}
@@ -322,24 +337,9 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 		return nil, fmt.Errorf("build.go not found in %s", repoDir)
 	}
 
-	src := &buildscript.Source{
-		Name:      id,
-		Path:      buildGo,
-		Dir:       repoDir,
-		OutputDir: r.buildscriptOutputDir(id),
-		Origin:    api.SourceRemote,
-		Force:     r.force,
-	}
+	src := buildscript.NewSource(id, buildGo, repoDir, r.buildscriptOutputDir(id), api.SourceRemote, r.force)
 
-	node := &PackageNode{
-		ID:             id,
-		Source:         src,
-		Deferred:       true,
-		Deps:           []string{},
-		NativeGitURL:   gitURL,
-		NativeVersions: versions,
-		NativeSelected: selectedVersion,
-	}
+	node := NewPackageNode(id, src, nil, true).WithNative(gitURL, versions, selectedVersion)
 	r.graph.Packages[id] = node
 	r.sources[id] = src
 
@@ -377,54 +377,5 @@ func (r *Resolver) hasCachedScript(scriptPath, buildGoPath string) bool {
 }
 
 func topologicalSort(packages map[string]*PackageNode) ([]string, error) {
-	inDegree := make(map[string]int, len(packages))
-	dependents := make(map[string][]string)
-	for name := range packages {
-		inDegree[name] = 0
-	}
-
-	for name, pkg := range packages {
-		for _, dep := range pkg.Deps {
-			if _, exists := packages[dep]; exists {
-				inDegree[name]++
-				dependents[dep] = append(dependents[dep], name)
-			}
-		}
-	}
-
-	var queue []string
-	for name, degree := range inDegree {
-		if degree == 0 {
-			queue = append(queue, name)
-		}
-	}
-	sort.Strings(queue)
-
-	result := make([]string, 0, len(packages))
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		result = append(result, current)
-
-		for _, dep := range dependents[current] {
-			inDegree[dep]--
-			if inDegree[dep] == 0 {
-				queue = append(queue, dep)
-			}
-		}
-		sort.Strings(queue)
-	}
-
-	if len(result) != len(packages) {
-		remaining := make([]string, 0)
-		for name := range packages {
-			if inDegree[name] > 0 {
-				remaining = append(remaining, name)
-			}
-		}
-		sort.Strings(remaining)
-		return nil, fmt.Errorf("circular dependency detected involving: %s", strings.Join(remaining, ", "))
-	}
-
-	return result, nil
+	return toposort.TopologicalSort(packages, func(n *PackageNode) []string { return n.Deps })
 }

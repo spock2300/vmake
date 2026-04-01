@@ -5,12 +5,17 @@ import (
 	"sort"
 	"strings"
 
+	"gitee.com/spock2300/vmake/internal/toposort"
 	"gitee.com/spock2300/vmake/pkg/api"
 )
 
 type PkgBuildMeta struct {
-	IsRemote bool
-	Deps     []string
+	Origin api.SourceOrigin
+	Deps   []string
+}
+
+func (m PkgBuildMeta) IsRemote() bool {
+	return m.Origin == api.SourceRemote
 }
 
 type BuildGraph struct {
@@ -185,52 +190,5 @@ func findPackageTargetNodes(pkgName string, nodes map[string]*BuildNode) []strin
 }
 
 func topologicalSort(nodes map[string]*BuildNode) ([]string, error) {
-	visited := make(map[string]bool)
-	visiting := make(map[string]bool)
-	var result []string
-
-	var visit func(name string) error
-	visit = func(name string) error {
-		if visited[name] {
-			return nil
-		}
-		if visiting[name] {
-			return fmt.Errorf("circular dependency detected involving: %s", name)
-		}
-
-		node, exists := nodes[name]
-		if !exists {
-			return fmt.Errorf("dependency not found: %s", name)
-		}
-
-		visiting[name] = true
-
-		for _, dep := range node.Deps {
-			if err := visit(dep); err != nil {
-				return err
-			}
-		}
-
-		visiting[name] = false
-		visited[name] = true
-		result = append(result, name)
-
-		return nil
-	}
-
-	names := make([]string, 0, len(nodes))
-	for name := range nodes {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	for _, name := range names {
-		if !visited[name] {
-			if err := visit(name); err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	return result, nil
+	return toposort.TopologicalSort(nodes, func(n *BuildNode) []string { return n.Deps })
 }

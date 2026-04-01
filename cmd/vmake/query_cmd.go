@@ -29,7 +29,7 @@ func runQuery(cmd *cobra.Command, args []string) {
 	ctx := mustInitContext()
 	runThroughConfigPhase(ctx, false)
 
-	pkgDirs := GetPackageDirs(ctx.DepGraph)
+	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
 	globalValues := config.BuildGlobalValues(ctx.Config)
 	workDir, _ := os.Getwd()
 
@@ -87,7 +87,7 @@ func formatPkgParts(name string, kinds []targetKindInfo, pkgDir, workDir string,
 		parts = append(parts, name)
 	}
 	if node.IsNative() {
-		parts = append(parts, fmt.Sprintf("@%s", node.NativeSelected))
+		parts = append(parts, fmt.Sprintf("@%s", node.Native.Selected))
 	}
 	if node.Pkg != nil {
 		if desc := node.Pkg.Description(); desc != "" {
@@ -107,7 +107,7 @@ func printTree(
 	w *os.File,
 	graph map[string]*resolver.PackageNode,
 	ctx *RuntimeContext,
-	pkgDirs map[string]string,
+	pkgDirs map[string]*api.PkgDirs,
 	globalValues map[string]any,
 	workDir, name, prefix string,
 	isRoot, isLast bool,
@@ -132,9 +132,10 @@ func printTree(
 	visited[name] = true
 
 	if isLocal {
-		kinds := collectTargetKinds(node.Pkg, name, pkgDirs[name], ctx, globalValues)
+		sourceDir := pkgDirs[name].SourceDir
+		kinds := collectTargetKinds(node.Pkg, name, sourceDir, ctx, globalValues)
 		if len(kinds) > 0 {
-			parts := formatPkgParts(name, kinds, pkgDirs[name], workDir, ctx, globalValues, node)
+			parts := formatPkgParts(name, kinds, sourceDir, workDir, ctx, globalValues, node)
 			fmt.Fprintf(w, "%s%s%s\n", prefix, connector, strings.Join(parts, " "))
 			for _, k := range kinds[1:] {
 				indent := prefix
@@ -144,7 +145,7 @@ func printTree(
 				fmt.Fprintf(w, "%s%s (%s)\n", indent, k.name, k.kind)
 			}
 		} else {
-			parts := formatPkgParts(name, nil, pkgDirs[name], workDir, ctx, globalValues, node)
+			parts := formatPkgParts(name, nil, sourceDir, workDir, ctx, globalValues, node)
 			fmt.Fprintf(w, "%s%s%s\n", prefix, connector, strings.Join(parts, " "))
 		}
 	} else {

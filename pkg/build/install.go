@@ -24,14 +24,14 @@ type PkgInstallInfo struct {
 
 type ArtifactInstaller struct {
 	graph         *BuildGraph
-	pkgDirs       map[string]string
+	pkgDirs       map[string]*api.PkgDirs
 	pkgInfo       map[string]*PkgInstallInfo
 	defaultPrefix string
 	installType   string
 	installed     map[string]bool
 }
 
-func NewArtifactInstaller(graph *BuildGraph, pkgDirs map[string]string, defaultPrefix string) *ArtifactInstaller {
+func NewArtifactInstaller(graph *BuildGraph, pkgDirs map[string]*api.PkgDirs, defaultPrefix string) *ArtifactInstaller {
 	return &ArtifactInstaller{
 		graph:         graph,
 		pkgDirs:       pkgDirs,
@@ -173,7 +173,7 @@ func (i *ArtifactInstaller) installPublicIncludes(node *BuildNode, pkgInfo *PkgI
 	if !i.isSDK() {
 		return nil
 	}
-	return copyPublicIncludes(node.Target, i.pkgDirs[node.PkgName], filepath.Join(prefix, "include"))
+	return copyPublicIncludes(node.Target, i.pkgDirs[node.PkgName].SourceDir, filepath.Join(prefix, "include"))
 }
 
 func (i *ArtifactInstaller) installExtraItems(node *BuildNode) error {
@@ -184,7 +184,7 @@ func (i *ArtifactInstaller) installExtraItems(node *BuildNode) error {
 	}
 
 	prefix := i.getEffectivePrefix(pkgInfo)
-	pkgDir := i.pkgDirs[pkgName]
+	pkgDir := i.pkgDirs[pkgName].SourceDir
 
 	for _, item := range pkgInfo.InstallItems {
 		srcPath := filepath.Join(pkgDir, item.Src)
@@ -227,7 +227,7 @@ func (i *ArtifactInstaller) installExtraItems(node *BuildNode) error {
 
 func (i *ArtifactInstaller) getOutputPath(pkgName string, pkgInfo *PkgInstallInfo, node *BuildNode) string {
 	name := targetFilename(node.Target.Kind(), node.Target.Name())
-	return BuildPath(i.pkgDirs[pkgName], pkgInfo.BuildKey, name)
+	return BuildPath(i.pkgDirs[pkgName].SourceDir, pkgInfo.BuildKey, name)
 }
 
 func (i *ArtifactInstaller) getInstallPath(prefix string, target *api.Target) string {

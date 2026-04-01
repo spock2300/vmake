@@ -217,14 +217,14 @@ func runConfigPhase(ctx *RuntimeContext) error {
 	vlog.Info("Executing OnConfig...")
 
 	ctx.AllOptions = make(map[string]map[string]*api.Option)
-	pkgDirs := GetPackageDirs(ctx.DepGraph)
+	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 
 		var opts map[string]*api.Option
 		if node.Pkg != nil {
-			opts = collectOptions(name, pkgDirs[name], node.Pkg)
+			opts = collectOptions(name, pkgDirs[name].SourceDir, node.Pkg)
 		}
 
 		if len(opts) > 0 {
@@ -271,12 +271,13 @@ func GetToolchain(cfg *config.ConfigFile) (*toolchain.Toolchain, string, error) 
 	return tc, tcName, nil
 }
 
-func GetPackageDirs(graph *resolver.Graph) map[string]string {
-	dirs := make(map[string]string)
+func ResolveAllPackageDirs(graph *resolver.Graph) map[string]*api.PkgDirs {
+	dirs := make(map[string]*api.PkgDirs)
 	for name, node := range graph.Packages {
-		if node.IsLocal() && node.Source != nil {
-			dirs[name] = node.Source.Dir
+		if node.Source == nil {
+			continue
 		}
+		dirs[name] = &api.PkgDirs{SourceDir: node.Source.Dir}
 	}
 	return dirs
 }

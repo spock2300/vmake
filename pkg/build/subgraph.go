@@ -11,12 +11,11 @@ import (
 )
 
 type SubGraphParams struct {
-	AllTargets    map[string]map[string]*api.Target
-	PkgMeta       map[string]PkgBuildMeta
-	PkgDirs       map[string]string
-	Packages      map[string]*api.Package
-	PkgRemoteDirs map[string]*api.PkgDirs
-	Needed        map[string]bool
+	AllTargets map[string]map[string]*api.Target
+	PkgMeta    map[string]PkgBuildMeta
+	PkgDirs    map[string]*api.PkgDirs
+	Packages   map[string]*api.Package
+	Needed     map[string]bool
 }
 
 func CollectSubGraphPackages(rootPkg string, pkgMeta map[string]PkgBuildMeta, allTargets map[string]map[string]*api.Target, needed map[string]bool) map[string]bool {
@@ -85,7 +84,7 @@ func BuildSubGraph(rootPkg string, tc *toolchain.Toolchain, tcName string, mode 
 
 	for pkgName := range subPkgs {
 		defaultMark := ""
-		if meta, ok := filteredPkgMeta[pkgName]; ok && meta.IsRemote {
+		if meta, ok := filteredPkgMeta[pkgName]; ok && meta.IsRemote() {
 			defaultMark = " (remote)"
 		}
 		vlog.Info("  [subgraph] %s%s", pkgName, defaultMark)
@@ -96,40 +95,19 @@ func BuildSubGraph(rootPkg string, tc *toolchain.Toolchain, tcName string, mode 
 		return fmt.Errorf("subgraph build graph: %w", err)
 	}
 
-	scheduler, err := NewScheduler(graph, tc, filteredPkgDirs, mode, filterMap(pkgOptions, subPkgs))
-	if err != nil {
-		return fmt.Errorf("subgraph scheduler: %w", err)
-	}
-
-	for pkgName := range subPkgs {
-		if meta, ok := filteredPkgMeta[pkgName]; ok && !meta.IsRemote {
-			scheduler.SetPkgDirs(pkgName, &api.PkgDirs{SourceDir: filteredPkgDirs[pkgName]})
-		} else if rd, ok := params.PkgRemoteDirs[pkgName]; ok {
-			scheduler.SetPkgDirs(pkgName, rd)
-		}
-	}
+	pipeline := NewBuildPipeline(graph, tc, filteredPkgDirs, mode, filterMap(pkgOptions, subPkgs))
 
 	for pkgName := range subPkgs {
 		if pkg, ok := params.Packages[pkgName]; ok {
 			pkg.SetToolchain(tc)
-			scheduler.SetPackage(pkgName, pkg)
+			pipeline.SetPackage(pkgName, pkg)
 		}
 	}
 
 	origDir, _ := os.Getwd()
 	defer os.Chdir(origDir)
 
-	for _, fullName := range graph.Order {
-		node := graph.Nodes[fullName]
-		pkgInfo := scheduler.pkgs[node.PkgName]
-		if pkgInfo != nil && pkgInfo.InstallDir != "" {
-			if err := os.MkdirAll(pkgInfo.InstallDir, 0755); err != nil {
-				return fmt.Errorf("create install dir: %w", err)
-			}
-		}
-	}
-
-	if err := scheduler.BuildAll(); err != nil {
+	if _, err := pipeline.Run(); err != nil {
 		return fmt.Errorf("subgraph build %s: %w", rootPkg, err)
 	}
 
