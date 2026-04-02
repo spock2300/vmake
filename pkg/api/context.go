@@ -9,15 +9,23 @@ import (
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
 
+type pkgBase struct {
+	pkgName string
+}
+
+func (b *pkgBase) PackageName() string {
+	return b.pkgName
+}
+
 type ConfigContext struct {
 	ConfigAccessor
-	pkgName string
+	pkgBase
 }
 
 func NewConfigContext(pkgName string) *ConfigContext {
 	return &ConfigContext{
 		ConfigAccessor: NewConfigAccessor(nil, nil),
-		pkgName:        pkgName,
+		pkgBase:        pkgBase{pkgName: pkgName},
 	}
 }
 
@@ -28,10 +36,6 @@ func (ctx *ConfigContext) SetConfigValue(name string, val any) *ConfigContext {
 
 func (ctx *ConfigContext) GetOptions() map[string]*Option {
 	return ctx.Options
-}
-
-func (ctx *ConfigContext) PackageName() string {
-	return ctx.pkgName
 }
 
 func (ctx *ConfigContext) Toolchains() []string {
@@ -76,7 +80,7 @@ type BuildContext struct {
 	ConfigAccessor
 	*TargetRegistry
 	*InstallItemHolder
-	pkgName           string
+	pkgBase
 	buildSubGraphFunc func(pkgName string) error
 	depOutputFunc     func(depRef string) string
 	dryRun            bool
@@ -87,7 +91,7 @@ func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext {
 		ConfigAccessor:    NewConfigAccessor(cfgVals, nil),
 		TargetRegistry:    NewTargetRegistry(),
 		InstallItemHolder: &InstallItemHolder{},
-		pkgName:           pkgName,
+		pkgBase:           pkgBase{pkgName: pkgName},
 	}
 }
 
@@ -95,17 +99,6 @@ func (ctx *BuildContext) SetDryRun(v bool) *BuildContext {
 	ctx.dryRun = v
 	return ctx
 }
-
-func (ctx *BuildContext) PackageName() string {
-	return ctx.pkgName
-}
-
-type InstallItem struct {
-	Src  string
-	Dest string
-}
-
-type InstallFilterFunc func(path string, isTargetOutput bool) bool
 
 func (ctx *BuildContext) SetBuildSubGraphFunc(fn func(string) error) {
 	ctx.buildSubGraphFunc = fn
@@ -148,7 +141,7 @@ func (ctx *BuildContext) Exec(name string, args ...string) {
 type InstallContext struct {
 	ConfigAccessor
 	*InstallItemHolder
-	pkgName   string
+	pkgBase
 	prefix    string
 	prefixSet bool
 }
@@ -157,13 +150,12 @@ func NewInstallContext(pkgName string, cfgVals map[string]any) *InstallContext {
 	return &InstallContext{
 		ConfigAccessor:    NewConfigAccessor(cfgVals, nil),
 		InstallItemHolder: &InstallItemHolder{},
-		pkgName:           pkgName,
+		pkgBase:           pkgBase{pkgName: pkgName},
 	}
 }
 
-func (ctx *InstallContext) Prefix() string      { return ctx.prefix }
-func (ctx *InstallContext) PrefixSet() bool     { return ctx.prefixSet }
-func (ctx *InstallContext) PackageName() string { return ctx.pkgName }
+func (ctx *InstallContext) Prefix() string  { return ctx.prefix }
+func (ctx *InstallContext) PrefixSet() bool { return ctx.prefixSet }
 
 func (ctx *InstallContext) SetPrefix(prefix string) *InstallContext {
 	ctx.prefix = prefix

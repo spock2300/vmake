@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -27,12 +28,12 @@ func ParseVersion(s string) (Version, bool) {
 	}
 
 	v := Version{}
-	v.Major = atoi(matches[1])
+	v.Major, _ = strconv.Atoi(matches[1])
 	if matches[2] != "" {
-		v.Minor = atoi(matches[2])
+		v.Minor, _ = strconv.Atoi(matches[2])
 	}
 	if matches[3] != "" {
-		v.Patch = atoi(matches[3])
+		v.Patch, _ = strconv.Atoi(matches[3])
 	}
 	if len(matches) > 4 && matches[4] != "" {
 		v.Pre = matches[4]
@@ -139,14 +140,4 @@ func CheckCycle(path []string, current string) error {
 		}
 	}
 	return nil
-}
-
-func atoi(s string) int {
-	var n int
-	for _, c := range s {
-		if c >= '0' && c <= '9' {
-			n = n*10 + int(c-'0')
-		}
-	}
-	return n
 }

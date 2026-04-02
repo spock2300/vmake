@@ -32,6 +32,13 @@ func NewCompiler(tools *ResolvedTools) *Compiler {
 	}
 }
 
+func selectCompilerAndFlags(ccPath, cxxPath string, globalCFlags, globalCxxFlags, cFlags, cxxFlags []string, opts *CompileOptions) (string, []string) {
+	if opts.Language == "cxx" {
+		return cxxPath, append(append([]string{}, globalCxxFlags...), cxxFlags...)
+	}
+	return ccPath, append(append([]string{}, globalCFlags...), cFlags...)
+}
+
 func (c *Compiler) Compile(src, objPath string, opts *CompileOptions) ([]string, error) {
 	if err := fs.EnsureDir(filepath.Dir(objPath)); err != nil {
 		return nil, err
@@ -39,17 +46,8 @@ func (c *Compiler) Compile(src, objPath string, opts *CompileOptions) ([]string,
 
 	depPath := objPath + ".d"
 
-	var compiler string
-	var flags []string
-
 	mgr := toolchain.GetManager()
-	if opts.Language == "cxx" {
-		compiler = c.cxxPath
-		flags = append(mgr.GetGlobalCxxFlags(), opts.CxxFlags...)
-	} else {
-		compiler = c.ccPath
-		flags = append(mgr.GetGlobalCFlags(), opts.CFlags...)
-	}
+	compiler, flags := selectCompilerAndFlags(c.ccPath, c.cxxPath, mgr.GetGlobalCFlags(), mgr.GetGlobalCxxFlags(), opts.CFlags, opts.CxxFlags, opts)
 
 	args := BuildCompileArgs(opts, objPath, src, flags, depPath)
 

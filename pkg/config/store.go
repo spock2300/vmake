@@ -34,6 +34,41 @@ func newConfigFile() *ConfigFile {
 	}
 }
 
+func (cfg *ConfigFile) UnmarshalJSON(data []byte) error {
+	type rawConfig struct {
+		Version   string                     `json:"version"`
+		Toolchain string                     `json:"toolchain"`
+		Global    *GlobalConfig              `json:"global,omitempty"`
+		Entries   map[string]json.RawMessage `json:"entries"`
+	}
+
+	var raw rawConfig
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	*cfg = *newConfigFile()
+	cfg.Version = raw.Version
+
+	if raw.Global != nil {
+		cfg.Global = raw.Global
+		if cfg.Global.Options == nil {
+			cfg.Global.Options = make(map[string]any)
+		}
+	} else if raw.Toolchain != "" {
+		cfg.Global.Toolchain = raw.Toolchain
+	}
+
+	for name, rawEntry := range raw.Entries {
+		entry := &EntryConfig{Options: make(map[string]any)}
+		if err := json.Unmarshal(rawEntry, entry); err == nil {
+			cfg.Entries[name] = entry
+		}
+	}
+
+	return nil
+}
+
 func Load(path string) (*ConfigFile, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -43,53 +78,12 @@ func Load(path string) (*ConfigFile, error) {
 		return nil, err
 	}
 
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var cfg ConfigFile
+	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}
 
-	cfg := newConfigFile()
-	if v, ok := raw["version"].(string); ok {
-		cfg.Version = v
-	}
-
-	if g, ok := raw["global"].(map[string]any); ok {
-		cfg.Global = &GlobalConfig{Options: make(map[string]any)}
-		if tc, ok := g["toolchain"].(string); ok {
-			cfg.Global.Toolchain = tc
-		}
-		if mode, ok := g["mode"].(string); ok {
-			cfg.Global.Mode = mode
-		}
-		if opts, ok := g["options"].(map[string]any); ok {
-			cfg.Global.Options = opts
-		}
-	} else {
-		if tc, ok := raw["toolchain"].(string); ok {
-			cfg.Global.Toolchain = tc
-		}
-	}
-
-	if entries, ok := raw["entries"].(map[string]any); ok {
-		for name, e := range entries {
-			if em, ok := e.(map[string]any); ok {
-				entry := &EntryConfig{Options: make(map[string]any)}
-				if ver, ok := em["version"].(string); ok {
-					entry.Version = ver
-				}
-				if opts, ok := em["options"].(map[string]any); ok {
-					entry.Options = opts
-				}
-				cfg.Entries[name] = entry
-			}
-		}
-	}
-
-	if cfg.Global == nil {
-		cfg.Global = &GlobalConfig{Options: make(map[string]any)}
-	}
-
-	return cfg, nil
+	return &cfg, nil
 }
 
 func Save(path string, cfg *ConfigFile) error {
@@ -98,11 +92,11 @@ func Save(path string, cfg *ConfigFile) error {
 
 func GetEntry(cfg *ConfigFile, name string) *EntryConfig {
 	if cfg.Entries == nil {
-		return &EntryConfig{Options: make(map[string]any)}
+		return newEntryConfig()
 	}
 	entry, ok := cfg.Entries[name]
 	if !ok {
-		return &EntryConfig{Options: make(map[string]any)}
+		return newEntryConfig()
 	}
 	if entry.Options == nil {
 		entry.Options = make(map[string]any)
@@ -127,4 +121,8 @@ func BuildGlobalValues(cfg *ConfigFile) map[string]any {
 		}
 	}
 	return vals
+}
+
+func newEntryConfig() *EntryConfig {
+	return &EntryConfig{Options: make(map[string]any)}
 }

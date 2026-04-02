@@ -133,14 +133,30 @@ func runPipeline(opts pipelineOptions) {
 	}
 }
 
+func resolveWithDefault(flagVal, configVal, defaultVal string) string {
+	if flagVal != "" {
+		return flagVal
+	}
+	if configVal != "" {
+		return configVal
+	}
+	return defaultVal
+}
+
 func resolveMode(cfg *config.ConfigFile, flagValue string) string {
-	if flagValue != "" {
-		return flagValue
+	var configMode string
+	if cfg.Global != nil {
+		configMode = cfg.Global.Mode
 	}
-	if cfg.Global != nil && cfg.Global.Mode != "" {
-		return cfg.Global.Mode
+	return resolveWithDefault(flagValue, configMode, api.ModeDebug)
+}
+
+func resolveToolchainName(cfg *config.ConfigFile, flagValue string) string {
+	var configTC string
+	if cfg.Global != nil {
+		configTC = cfg.Global.Toolchain
 	}
-	return api.ModeDebug
+	return resolveWithDefault(flagValue, configTC, toolchain.GetManager().GetDefaultToolchain())
 }
 
 func resolvePkgToolchain(cfg *config.ConfigFile, pkgName, defaultTc string) string {
@@ -249,16 +265,6 @@ func runConfigPhase(ctx *RuntimeContext) error {
 	}
 
 	return nil
-}
-
-func resolveToolchainName(cfg *config.ConfigFile, flagValue string) string {
-	if flagValue != "" {
-		return flagValue
-	}
-	if cfg.Global != nil && cfg.Global.Toolchain != "" {
-		return cfg.Global.Toolchain
-	}
-	return toolchain.GetManager().GetDefaultToolchain()
 }
 
 func GetToolchain(cfg *config.ConfigFile) (*toolchain.Toolchain, string, error) {

@@ -2,7 +2,6 @@ package plugin
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"gitee.com/spock2300/vmake/internal/fs"
@@ -28,11 +27,7 @@ func Compile(pluginDir string, force bool) CompileResult {
 
 	outputPath := filepath.Join(pluginDir, "plugin.so")
 
-	if force {
-		os.Remove(outputPath)
-	}
-
-	if fs.FileExists(outputPath) {
+	if !force && fs.FileExists(outputPath) {
 		return CompileResult{CompileResult: gocompile.NewOkResult(outputPath), PluginDir: pluginDir, PluginName: info.Name}
 	}
 
@@ -47,9 +42,9 @@ func Compile(pluginDir string, force bool) CompileResult {
 		Prefix:     "vmake_plugin_",
 	}
 
-	if err := gocompile.CompilePlugin(opts); err != nil {
-		return CompileResult{CompileResult: gocompile.NewFailResultAt(err, outputPath), PluginDir: pluginDir, PluginName: info.Name}
+	return CompileResult{
+		CompileResult: gocompile.CompilePluginToOutput(opts, force),
+		PluginDir:     pluginDir,
+		PluginName:    info.Name,
 	}
-
-	return CompileResult{CompileResult: gocompile.NewOkResult(outputPath), PluginDir: pluginDir, PluginName: info.Name}
 }

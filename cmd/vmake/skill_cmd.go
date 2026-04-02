@@ -3,13 +3,15 @@ package main
 import (
 	"embed"
 	"fmt"
-	"io/fs"
+	stdfs "io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
+	"gitee.com/spock2300/vmake/internal/fs"
 )
 
 //go:embed skills/vmake/SKILL.md
@@ -101,7 +103,7 @@ func installSkill(projectPath string) {
 func uninstallSkill() {
 	targets := []string{getSkillPath("claude"), getSkillPath("agents")}
 	for _, target := range targets {
-		if err := os.RemoveAll(target); err != nil {
+		if err := fs.RemoveAll(target); err != nil {
 			fatalMsg("Failed to uninstall skill: %v", err)
 		}
 		fmt.Printf("Removed %s\n", target)
@@ -110,7 +112,7 @@ func uninstallSkill() {
 }
 
 func copyEmbedToTargets(targets []string) error {
-	return fs.WalkDir(skillFS, "skills", func(path string, d fs.DirEntry, err error) error {
+	return stdfs.WalkDir(skillFS, "skills", func(path string, d stdfs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

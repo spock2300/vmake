@@ -85,10 +85,7 @@ func buildCmd(name string, args []string, dir string, env map[string]string) *ex
 }
 
 func RunToStdout(dir, name string, args ...string) error {
-	cmd := buildCmd(name, args, dir, nil)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return RunWithEnv(dir, nil, name, args...)
 }
 
 func RunFatal(dir, name string, args ...string) {

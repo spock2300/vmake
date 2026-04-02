@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/pkg/repo"
 
 	"github.com/spf13/cobra"
@@ -121,7 +122,7 @@ func searchNativeRepo(repoName, pattern string) {
 		pkgName := entry.Name()
 		repoDir := filepath.Join(cacheDir, pkgName, "repo")
 		buildGo := filepath.Join(repoDir, "build.go")
-		if _, err := os.Stat(buildGo); err != nil {
+		if !fs.FileExists(buildGo) {
 			continue
 		}
 		fullName := repoName + "/" + pkgName

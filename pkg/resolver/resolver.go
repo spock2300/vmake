@@ -302,13 +302,8 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 	gitURL := repo.ResolveNativeURL(urlTemplate, pkgName)
 	repoDir := filepath.Join(r.cacheDir, repoName, pkgName, "repo")
 
-	if !fs.FileExists(repoDir) || !fs.FileExists(filepath.Join(repoDir, ".git")) {
-		vlog.Info("  cloning %s -> %s", gitURL, repoDir)
-		if cloneErr := repo.Clone(gitURL, repoDir); cloneErr != nil {
-			return nil, fmt.Errorf("clone %s: %w", gitURL, cloneErr)
-		}
-	} else {
-		repo.FetchTags(repoDir)
+	if err := repo.EnsureRepoAtRef(gitURL, repoDir, ""); err != nil {
+		return nil, fmt.Errorf("clone %s: %w", gitURL, err)
 	}
 
 	tags, err := repo.ListTags(repoDir)
@@ -328,7 +323,7 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 
 	vlog.Info("  %s@%s (ref: %s)", id, selectedVersion, selectedRef)
 
-	if err := repo.Checkout(repoDir, selectedRef); err != nil {
+	if err := repo.EnsureRepoAtRef(gitURL, repoDir, selectedRef); err != nil {
 		return nil, fmt.Errorf("checkout %s for %s: %w", selectedRef, id, err)
 	}
 

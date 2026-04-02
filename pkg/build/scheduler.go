@@ -244,7 +244,7 @@ type depResolveResult struct {
 	artifacts   []string
 }
 
-func (s *Scheduler) resolveDeps(node *BuildNode) (*depResolveResult, error) {
+func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, error) {
 	result := &depResolveResult{}
 
 	for _, depName := range node.Deps {
@@ -326,7 +326,7 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	resolved.AllCxxFlags = append(resolved.AllCxxFlags, node.Target.CxxFlags()...)
 	resolved.AllLdFlags = append(resolved.AllLdFlags, node.Target.LdFlags()...)
 
-	deps, err := s.resolveDeps(node)
+	deps, err := s.collectDepArtifacts(node)
 	if err != nil {
 		return nil, err
 	}
@@ -508,19 +508,20 @@ func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
 
 	outputName := filepath.Base(resolved.OutputPath)
 
+	allObjs := collectAllObjects(objs, resolved.DepArtifacts)
+
 	switch kind {
 	case api.TargetBinary:
 		vlog.Info("  LINK %s", outputName)
-		return s.linker.LinkBinary(collectAllObjects(objs, resolved.DepArtifacts), unique(resolved.Node.Target.Links()), resolved.AllLdFlags, resolved.OutputPath, resolved.Node.Target.LinkerScript())
+		return s.linker.LinkBinary(allObjs, unique(resolved.Node.Target.Links()), resolved.AllLdFlags, resolved.OutputPath, resolved.Node.Target.LinkerScript())
 	case api.TargetStatic:
 		vlog.Info("  AR %s", outputName)
-		return s.linker.LinkStatic(collectAllObjects(objs, resolved.DepArtifacts), resolved.OutputPath)
+		return s.linker.LinkStatic(allObjs, resolved.OutputPath)
 	case api.TargetShared:
 		vlog.Info("  LINK %s", outputName)
-		return s.linker.LinkShared(collectAllObjects(objs, resolved.DepArtifacts), resolved.AllLdFlags, resolved.OutputPath)
+		return s.linker.LinkShared(allObjs, resolved.AllLdFlags, resolved.OutputPath)
 	case api.TargetObject:
 		vlog.Info("  LD -r %s", outputName)
-		allObjs := collectAllObjects(objs, resolved.DepArtifacts)
 		if len(allObjs) == 0 {
 			return fmt.Errorf("object target requires at least one source file")
 		}
@@ -642,10 +643,6 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 				return fmt.Errorf("install library failed: %w", err)
 			}
 		}
-	}
-
-	if _, err := os.Stat(includeDir); err == nil {
-		return nil
 	}
 
 	if err := os.MkdirAll(includeDir, 0755); err != nil {

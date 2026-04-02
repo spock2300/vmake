@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/internal/jsonio"
 	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/repo"
@@ -105,7 +106,7 @@ func checkoutLocal(cwd string, entry installManifestEntry) {
 	}
 
 	sourceDir := filepath.Join(cwd, entry.Path)
-	if _, err := os.Stat(sourceDir); err != nil {
+	if !fs.FileExists(sourceDir) {
 		fmt.Printf("  SKIP %s (path not found: %s)\n", entry.Name, entry.Path)
 		return
 	}
@@ -140,8 +141,8 @@ func checkoutRemote(sourceMgr *repo.SourceManager, entry installManifestEntry) {
 	}
 
 	buildCacheDir := filepath.Join(getPackagesDir(), repoName, pkgName)
-	if _, err := os.Stat(buildCacheDir); err == nil {
-		os.RemoveAll(buildCacheDir)
+	if fs.FileExists(buildCacheDir) {
+		fs.RemoveIfExists(buildCacheDir)
 		fmt.Printf("  OK   %s -> %s (build cache cleared)\n", entry.Name, entry.Ref)
 	} else {
 		fmt.Printf("  OK   %s -> %s\n", entry.Name, entry.Ref)

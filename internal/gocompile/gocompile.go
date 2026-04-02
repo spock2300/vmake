@@ -123,6 +123,23 @@ func CleanupGoMod(workDir string) {
 	fs.RemoveIfExists(filepath.Join(workDir, "go.sum"))
 }
 
+func CompilePluginToOutput(opts PluginOptions, force bool) CompileResult {
+	outputDir := filepath.Dir(opts.OutputPath)
+	if err := fs.EnsureDir(outputDir); err != nil {
+		return NewFailResult(err)
+	}
+
+	if force {
+		os.Remove(opts.OutputPath)
+	}
+
+	if err := CompilePlugin(opts); err != nil {
+		return NewFailResultAt(err, opts.OutputPath)
+	}
+
+	return NewOkResult(opts.OutputPath)
+}
+
 func SanitizeModuleName(name string) string {
 	return strings.ReplaceAll(name, "/", "_")
 }

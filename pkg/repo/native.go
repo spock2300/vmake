@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"gitee.com/spock2300/vmake/internal/fs"
+	"gitee.com/spock2300/vmake/internal/jsonio"
 	"gitee.com/spock2300/vmake/pkg/api"
 )
 
@@ -17,15 +18,12 @@ type NativeConfig struct {
 }
 
 func LoadNativeConfig(dir string) (*NativeConfig, bool, error) {
-	data, err := os.ReadFile(filepath.Join(dir, "repo.json"))
-	if err != nil {
+	path := filepath.Join(dir, "repo.json")
+	var cfg NativeConfig
+	if err := jsonio.Load(path, &cfg); err != nil {
 		if os.IsNotExist(err) {
 			return nil, false, nil
 		}
-		return nil, false, err
-	}
-	var cfg NativeConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, false, err
 	}
 	return &cfg, cfg.Type == "native", nil

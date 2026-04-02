@@ -269,17 +269,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 }
 
 func resolveBuildConfig(ctx *RuntimeContext) (*buildConfig, error) {
-	globalValues := config.BuildGlobalValues(ctx.Config)
-
-	mode := modeFlag
-	if mode == "" {
-		if m, ok := globalValues["mode"].(string); ok {
-			mode = m
-		}
-	}
-	if mode == "" {
-		mode = api.ModeDebug
-	}
+	mode := resolveMode(ctx.Config, modeFlag)
 
 	tc, tcName, err := GetToolchain(ctx.Config)
 	if err != nil {
@@ -290,7 +280,7 @@ func resolveBuildConfig(ctx *RuntimeContext) (*buildConfig, error) {
 		Mode:         mode,
 		TcName:       tcName,
 		Tc:           tc,
-		GlobalValues: globalValues,
+		GlobalValues: config.BuildGlobalValues(ctx.Config),
 	}, nil
 }
 
@@ -623,7 +613,7 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 		} else if pd.BuildDir != "" {
 			buildKey = filepath.Base(pd.BuildDir)
 		}
-		return build.TargetOutputPath(pd.SourceDir, subTcName, cfg.Mode, buildKey, target.Kind(), targetName)
+		return build.TargetOutputPath(pd.SourceDir, buildKey, target.Kind(), targetName)
 	}
 
 	for _, name := range ctx.Resolver.GetOrder() {
@@ -772,7 +762,7 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 	vlog.Info("")
 	vlog.Info("Installing...")
 
-	os.RemoveAll(effectivePrefix)
+	fs.RemoveIfExists(effectivePrefix)
 	fs.EnsureDir(effectivePrefix)
 
 	installer := build.NewArtifactInstaller(result.Graph, result.PkgDirs, effectivePrefix)

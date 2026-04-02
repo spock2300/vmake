@@ -93,30 +93,33 @@ func detectShell() string {
 	return filepath.Base(os.Getenv("SHELL"))
 }
 
-func installBashCompletion() {
-	home := homeDir()
-	dir := filepath.Join(home, ".local", "share", "bash-completion", "completions")
-	path := filepath.Join(dir, "vmake")
+func installCompletion(dir, filename, shell, shellName string) string {
+	path := filepath.Join(dir, filename)
 
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		fatalErr(fmt.Errorf("create %s: %w", dir, err))
 	}
 
-	writeCompletionToFile(path, "bash")
-	fmt.Printf("Installed bash completion to %s\n", path)
-	fmt.Println("Restart your shell or run: exec bash")
+	writeCompletionToFile(path, shell)
+	fmt.Printf("Installed %s completion to %s\n", shellName, path)
+	fmt.Printf("Restart your shell or run: exec %s\n", shellName)
+	return path
+}
+
+func installBashCompletion() {
+	home := homeDir()
+	installCompletion(
+		filepath.Join(home, ".local", "share", "bash-completion", "completions"),
+		"vmake", "bash", "bash",
+	)
 }
 
 func installZshCompletion() {
 	home := homeDir()
-	dir := filepath.Join(home, ".zsh", "completions")
-	path := filepath.Join(dir, "_vmake")
-
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		fatalErr(fmt.Errorf("create %s: %w", dir, err))
-	}
-
-	writeCompletionToFile(path, "zsh")
+	installCompletion(
+		filepath.Join(home, ".zsh", "completions"),
+		"_vmake", "zsh", "zsh",
+	)
 
 	zshrc := filepath.Join(home, ".zshrc")
 	fpathLine := "fpath=(~/.zsh/completions $fpath)"
@@ -124,23 +127,14 @@ func installZshCompletion() {
 	if ensureLineInFile(zshrc, fpathLine) {
 		fmt.Printf("Added fpath entry to %s\n", zshrc)
 	}
-
-	fmt.Printf("Installed zsh completion to %s\n", path)
-	fmt.Println("Restart your shell or run: exec zsh")
 }
 
 func installFishCompletion() {
 	home := homeDir()
-	dir := filepath.Join(home, ".config", "fish", "completions")
-	path := filepath.Join(dir, "vmake.fish")
-
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		fatalErr(fmt.Errorf("create %s: %w", dir, err))
-	}
-
-	writeCompletionToFile(path, "fish")
-	fmt.Printf("Installed fish completion to %s\n", path)
-	fmt.Println("Restart your shell or run: exec fish")
+	installCompletion(
+		filepath.Join(home, ".config", "fish", "completions"),
+		"vmake.fish", "fish", "fish",
+	)
 }
 
 func writeCompletionToFile(path, shell string) {

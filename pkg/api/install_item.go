@@ -1,5 +1,12 @@
 package api
 
+type InstallItem struct {
+	Src  string
+	Dest string
+}
+
+type InstallFilterFunc func(path string, isTargetOutput bool) bool
+
 type InstallItemHolder struct {
 	items  []InstallItem
 	filter InstallFilterFunc

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/pkg/build"
 	"gitee.com/spock2300/vmake/pkg/buildscript"
 	"gitee.com/spock2300/vmake/pkg/config"
@@ -145,10 +146,10 @@ func cleanBuildKeyDir(dir, pkgName, tcName, ccPath, mode string, options map[str
 }
 
 func cleanDir(path, pkgName, label string) bool {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	if !fs.FileExists(path) {
 		return false
 	}
-	if err := os.RemoveAll(path); err != nil {
+	if err := fs.RemoveAll(path); err != nil {
 		vlog.Error("Failed to clean %s/%s: %v", pkgName, label, err)
 		return false
 	}
@@ -157,12 +158,12 @@ func cleanDir(path, pkgName, label string) bool {
 }
 
 func removeIfExists(path, pkgName, label string, isDir bool) {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	if !fs.FileExists(path) {
 		return
 	}
 	var err error
 	if isDir {
-		err = os.RemoveAll(path)
+		err = fs.RemoveAll(path)
 	} else {
 		err = os.Remove(path)
 	}

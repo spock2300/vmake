@@ -7,6 +7,7 @@ import (
 	"time"
 
 	exec "gitee.com/spock2300/vmake/internal/exec"
+	"gitee.com/spock2300/vmake/internal/fs"
 )
 
 func gitRun(dir string, args []string, timeout time.Duration) error {
@@ -22,7 +23,7 @@ func Clone(url, dir string) error {
 		Timeout: 5 * time.Minute, Quiet: true,
 	})
 	if err != nil {
-		os.RemoveAll(dir)
+		fs.RemoveIfExists(dir)
 		return fmt.Errorf("git clone %s -> %s: %w", url, dir, err)
 	}
 	return nil
@@ -41,10 +42,40 @@ func Checkout(dir, ref string) error {
 }
 
 func FetchAndReset(dir string) error {
-	if err := gitRun(dir, []string{"fetch", "--all", "--tags"}, 0); err != nil {
+	if err := FetchTags(dir); err != nil {
 		return err
 	}
 	return gitRun(dir, []string{"reset", "--hard", "origin/HEAD"}, 0)
+}
+
+func EnsureRepoAtRef(gitURL, repoDir, ref string) error {
+	if ref != "" && IsAlreadyAtRef(repoDir, ref) {
+		return nil
+	}
+
+	if !dirExists(repoDir) || !dirExists(repoDir+"/.git") {
+		if err := Clone(gitURL, repoDir); err != nil {
+			return err
+		}
+	} else {
+		if err := FetchTags(repoDir); err != nil {
+			fs.RemoveIfExists(repoDir)
+			if err := Clone(gitURL, repoDir); err != nil {
+				return err
+			}
+		}
+	}
+
+	if ref == "" {
+		return nil
+	}
+
+	return Checkout(repoDir, ref)
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func Pull(dir string) error {

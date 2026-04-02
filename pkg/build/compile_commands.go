@@ -6,6 +6,7 @@ import (
 
 	iexec "gitee.com/spock2300/vmake/internal/exec"
 	"gitee.com/spock2300/vmake/internal/jsonio"
+	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
 
 type CompileCommand struct {
@@ -35,16 +36,8 @@ func (w *CompileCommandsWriter) SetPackageDir(dir string) {
 }
 
 func (w *CompileCommandsWriter) AddCommand(src, objPath string, opts *CompileOptions) {
-	var compiler string
-	var flags []string
-
-	if opts.Language == "cxx" {
-		compiler = w.cxxPath
-		flags = append([]string{}, opts.CxxFlags...)
-	} else {
-		compiler = w.ccPath
-		flags = append([]string{}, opts.CFlags...)
-	}
+	mgr := toolchain.GetManager()
+	compiler, flags := selectCompilerAndFlags(w.ccPath, w.cxxPath, mgr.GetGlobalCFlags(), mgr.GetGlobalCxxFlags(), opts.CFlags, opts.CxxFlags, opts)
 
 	args := BuildCompileArgs(opts, objPath, src, flags, "")
 	cmdStr := iexec.FormatCommandLine(compiler, args)
