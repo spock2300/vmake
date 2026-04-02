@@ -398,7 +398,7 @@ func (p *Package) Configure(extraArgs ...string) error {
 		args = append(args, "--host="+p.CrossTarget())
 	}
 	args = append(args, extraArgs...)
-	return p.RunEnv(p.Env(), p.dirs.SourceDir+"/configure", args...)
+	return p.RunEnv(p.Env(), filepath.Join(p.dirs.SourceDir, "configure"), args...)
 }
 
 func (p *Package) Make(args ...string) error {

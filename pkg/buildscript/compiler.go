@@ -1,6 +1,8 @@
 package buildscript
 
 import (
+	"path/filepath"
+
 	"gitee.com/spock2300/vmake/internal/gocompile"
 )
 
@@ -12,7 +14,7 @@ type CompileResult struct {
 
 func Compile(src Source) CompileResult {
 	outputDir := src.GetOutputDir()
-	scriptPath := outputDir + "/build.so"
+	scriptPath := filepath.Join(outputDir, "build.so")
 
 	opts := gocompile.PluginOptions{
 		WorkDir:    src.Dir,

@@ -3,6 +3,7 @@ package repo
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -53,7 +54,7 @@ func EnsureRepoAtRef(gitURL, repoDir, ref string) error {
 		return nil
 	}
 
-	if !dirExists(repoDir) || !dirExists(repoDir+"/.git") {
+	if !dirExists(repoDir) || !dirExists(filepath.Join(repoDir, ".git")) {
 		if err := Clone(gitURL, repoDir); err != nil {
 			return err
 		}
