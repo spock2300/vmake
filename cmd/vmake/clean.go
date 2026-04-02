@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/build"
@@ -48,26 +49,77 @@ func cleanPackages(entries []pkgCleanEntry, cfg *config.ConfigFile, cleanAll boo
 
 	mode := resolveMode(cfg, "")
 
+	tcNames := collectToolchainNames(cfg, tcName, entries)
+
 	for _, pkg := range entries {
 		if cleanAll {
 			cleanAllBuildDirs(pkg.Dir, pkg.Name)
 		} else {
 			entry := config.GetEntry(cfg, pkg.Name)
-			cleanBuildKeyDir(pkg.Dir, pkg.Name, tcName, resolvedTools.CC, mode, entry.Options)
-			pkgTc := resolvePkgToolchain(cfg, pkg.Name, tcName)
-			if pkgTc != tcName {
-				pkgTcObj, err := toolchain.GetManager().SelectToolchain(pkgTc)
-				if err == nil {
-					pkgResolvedTools, err := build.ResolveTools(pkgTcObj)
-					if err == nil {
-						cleanBuildKeyDir(pkg.Dir, pkg.Name, pkgTc, pkgResolvedTools.CC, mode, entry.Options)
+			cleaned := false
+			for _, name := range tcNames {
+				t := tc
+				cc := resolvedTools.CC
+				if name != tcName {
+					t, err = toolchain.GetManager().SelectToolchain(name)
+					if err != nil {
+						continue
 					}
+					tools, err := build.ResolveTools(t)
+					if err != nil {
+						continue
+					}
+					cc = tools.CC
 				}
+				if cleanBuildKeyDir(pkg.Dir, pkg.Name, name, cc, mode, entry.Options) {
+					cleaned = true
+				}
+			}
+			if !cleaned {
+				cleanAllBuildDirs(pkg.Dir, pkg.Name)
 			}
 		}
 	}
 
 	vlog.Info("Clean completed!")
+}
+
+func collectToolchainNames(cfg *config.ConfigFile, defaultTc string, entries []pkgCleanEntry) []string {
+	seen := make(map[string]bool)
+	seen[defaultTc] = true
+
+	if cfg.Global != nil && cfg.Global.Toolchain != "" {
+		seen[cfg.Global.Toolchain] = true
+	}
+
+	for _, entry := range cfg.Entries {
+		if v, ok := entry.Options["toolchain"].(string); ok && v != "" {
+			seen[v] = true
+		}
+	}
+
+	for _, pkg := range entries {
+		pkgCfgPath := filepath.Join(pkg.Dir, ".vmake", "config.json")
+		pkgCfg, err := config.Load(pkgCfgPath)
+		if err != nil {
+			continue
+		}
+		if pkgCfg.Global != nil && pkgCfg.Global.Toolchain != "" {
+			seen[pkgCfg.Global.Toolchain] = true
+		}
+		for _, entry := range pkgCfg.Entries {
+			if v, ok := entry.Options["toolchain"].(string); ok && v != "" {
+				seen[v] = true
+			}
+		}
+	}
+
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func scanPackages(workDir string) []pkgCleanEntry {
@@ -87,20 +139,21 @@ func runClean(cmd *cobra.Command, args []string) {
 	cleanPackages(entries, ctx.Config, cleanAllFlag)
 }
 
-func cleanBuildKeyDir(dir, pkgName, tcName, ccPath, mode string, options map[string]any) {
+func cleanBuildKeyDir(dir, pkgName, tcName, ccPath, mode string, options map[string]any) bool {
 	buildKey := build.BuildKey(ccPath, mode, options)
-	cleanDir(build.BuildPath(dir, buildKey, ""), pkgName, buildKey)
+	return cleanDir(build.BuildPath(dir, buildKey, ""), pkgName, buildKey)
 }
 
-func cleanDir(path, pkgName, label string) {
+func cleanDir(path, pkgName, label string) bool {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return
+		return false
 	}
 	if err := os.RemoveAll(path); err != nil {
 		vlog.Error("Failed to clean %s/%s: %v", pkgName, label, err)
-		return
+		return false
 	}
 	vlog.Info("Cleaned %s/%s/", pkgName, label)
+	return true
 }
 
 func removeIfExists(path, pkgName, label string, isDir bool) {
