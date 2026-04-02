@@ -192,7 +192,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		return nil, err
 	}
 
-	allTargets, pkgMetaMap := executeAllOnBuild(ctx, needed, remote, pkgDirs, cfg, localPkgOptions)
+	allTargets, pkgMetaMap, subBuildKeys := executeAllOnBuild(ctx, needed, remote, pkgDirs, cfg, localPkgOptions)
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
@@ -229,7 +229,7 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		vlog.Info("  - %s", fullName)
 	}
 
-	pipeline := build.NewBuildPipeline(graph, cfg.Tc, pkgDirs, cfg.Mode, localPkgOptions)
+	pipeline := build.NewBuildPipeline(graph, cfg.Tc, pkgDirs, cfg.Mode, localPkgOptions, subBuildKeys)
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
@@ -478,7 +478,51 @@ func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.Pack
 	}
 }
 
-func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remotePkgState, pkgDirs map[string]*api.PkgDirs, cfg *buildConfig, localPkgOptions map[string]map[string]any) (map[string]map[string]*api.Target, map[string]build.PkgBuildMeta) {
+func computeDepOutput(depRef string, targets map[string]map[string]*api.Target, ctx *RuntimeContext, cfg *buildConfig, pkgDirs map[string]*api.PkgDirs, localPkgOptions map[string]map[string]any) string {
+	pkgName, targetName, ok := strings.Cut(depRef, ":")
+	if !ok {
+		pkgName = depRef
+		targetName = ""
+	}
+	subTcName := resolvePkgToolchain(ctx.Config, pkgName, cfg.TcName)
+	pd := pkgDirs[pkgName]
+	if pd == nil {
+		return ""
+	}
+	if targetName == "" {
+		pkgTargets := targets[pkgName]
+		if len(pkgTargets) == 1 {
+			for name := range pkgTargets {
+				targetName = name
+			}
+		}
+	}
+	if targetName == "" {
+		return ""
+	}
+	target := targets[pkgName][targetName]
+	if target == nil {
+		return ""
+	}
+	var buildKey string
+	if node := ctx.DepGraph.Packages[pkgName]; node != nil && node.IsLocal() {
+		opts := localPkgOptions[pkgName]
+		subTc, err := toolchain.GetManager().SelectToolchain(subTcName)
+		ccPath := cfg.Tc.Tools.CC
+		if err == nil {
+			resolvedTools, err := build.ResolveTools(subTc)
+			if err == nil {
+				ccPath = resolvedTools.CC
+			}
+		}
+		buildKey = build.BuildKey(ccPath, cfg.Mode, opts)
+	} else if pd.BuildDir != "" {
+		buildKey = filepath.Base(pd.BuildDir)
+	}
+	return build.TargetOutputPath(pd.SourceDir, buildKey, target.Kind(), targetName)
+}
+
+func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remotePkgState, pkgDirs map[string]*api.PkgDirs, cfg *buildConfig, localPkgOptions map[string]map[string]any) (map[string]map[string]*api.Target, map[string]build.PkgBuildMeta, map[string]string) {
 	vlog.Info("")
 	vlog.Info("Executing OnBuild...")
 
@@ -499,6 +543,7 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 	packagesDir := getPackagesDir()
 	subGraphBuilt := make(map[string]bool)
 	subGraphPkgs := make(map[string]bool)
+	subBuildKeys := make(map[string]string)
 
 	var buildSubGraphFn func(string) error
 	var depOutputFn func(string) string
@@ -520,6 +565,14 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 			subGraphPkgs[pkgName] = true
 		}
 
+		subDepOutputFn := func(depRef string) string {
+			pkgName, _, _ := strings.Cut(depRef, ":")
+			if subPkgs[pkgName] {
+				return computeDepOutput(depRef, subAllTargets, ctx, cfg, pkgDirs, localPkgOptions)
+			}
+			return depOutputFn(depRef)
+		}
+
 		for _, name := range ctx.Resolver.GetOrder() {
 			node := ctx.DepGraph.Packages[name]
 			if !subPkgs[name] || node.Pkg == nil {
@@ -528,7 +581,7 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 			if _, done := subAllTargets[name]; done {
 				continue
 			}
-			executePackageOnBuild(ctx, name, node, pkgDirs, subAllTargets, remote, cfg.GlobalValues, buildSubGraphFn, depOutputFn, nil)
+			executePackageOnBuild(ctx, name, node, pkgDirs, subAllTargets, remote, cfg.GlobalValues, buildSubGraphFn, subDepOutputFn, nil)
 		}
 
 		subTcName := resolvePkgToolchain(ctx.Config, rootPkg, cfg.TcName)
@@ -548,6 +601,10 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 					rcfg := remote.configs[name]
 					subPkgDirs[name] = makeRemotePkgDirs(packagesDir, name, rcfg.Version, subResolvedTools.CC, rcfg.Options, pkgDirs[name].SourceDir)
 				}
+			}
+			for name := range subPkgs {
+				opts := localPkgOptions[name]
+				subBuildKeys[name] = build.BuildKey(subResolvedTools.CC, cfg.Mode, opts)
 			}
 		}
 
@@ -576,44 +633,7 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 	}
 
 	depOutputFn = func(depRef string) string {
-		pkgName, targetName, ok := strings.Cut(depRef, ":")
-		if !ok {
-			pkgName = depRef
-			targetName = ""
-		}
-		subTcName := resolvePkgToolchain(ctx.Config, pkgName, cfg.TcName)
-		pd := pkgDirs[pkgName]
-		if pd == nil {
-			return ""
-		}
-		if targetName == "" {
-			targets := allTargets[pkgName]
-			if len(targets) == 1 {
-				for name := range targets {
-					targetName = name
-				}
-			}
-		}
-		if targetName == "" {
-			return ""
-		}
-		target := allTargets[pkgName][targetName]
-		var buildKey string
-		if node := ctx.DepGraph.Packages[pkgName]; node != nil && node.IsLocal() {
-			opts := localPkgOptions[pkgName]
-			subTc, err := toolchain.GetManager().SelectToolchain(subTcName)
-			ccPath := cfg.Tc.Tools.CC
-			if err == nil {
-				resolvedTools, err := build.ResolveTools(subTc)
-				if err == nil {
-					ccPath = resolvedTools.CC
-				}
-			}
-			buildKey = build.BuildKey(ccPath, cfg.Mode, opts)
-		} else if pd.BuildDir != "" {
-			buildKey = filepath.Base(pd.BuildDir)
-		}
-		return build.TargetOutputPath(pd.SourceDir, buildKey, target.Kind(), targetName)
+		return computeDepOutput(depRef, allTargets, ctx, cfg, pkgDirs, localPkgOptions)
 	}
 
 	for _, name := range ctx.Resolver.GetOrder() {
@@ -638,7 +658,7 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 		delete(allTargets, pkgName)
 	}
 
-	return allTargets, pkgMetaMap
+	return allTargets, pkgMetaMap, subBuildKeys
 }
 
 func collectNeeded(graph *resolver.Graph) map[string]bool {
