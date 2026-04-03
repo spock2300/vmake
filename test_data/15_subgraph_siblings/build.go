@@ -6,13 +6,13 @@ import (
 
 func Main(p *api.Package) {
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.BuildSubGraph("sublib")
+		ctx.BuildSubGraph("t15lib")
 
-		sublibPath := ctx.DepOutput("sublib:sublib")
+		sublibPath := ctx.DepOutput("t15lib:sublib")
 		ctx.Target("app").
 			SetKind(api.TargetBinary).
 			AddFiles("src/*.c").
-			AddIncludes("sublib/include").
+			AddIncludes("t15lib/include").
 			AddLdFlags(sublibPath)
 	})
 }

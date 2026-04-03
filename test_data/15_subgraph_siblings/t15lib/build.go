@@ -8,14 +8,15 @@ import (
 
 func Main(p *api.Package) {
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.BuildSubGraph("subgen")
+		ctx.BuildSubGraph("t15gen")
 
 		os.MkdirAll("include", 0755)
-		ctx.Exec(ctx.DepOutput("subgen:gen"), "include/subgen.h")
+		ctx.Exec(ctx.DepOutput("t15gen:gen"), "include/subgen.h")
 
 		ctx.Target("sublib").
 			SetKind(api.TargetStatic).
 			AddFiles("lib.c").
-			AddIncludes("include")
+			AddIncludes("include").
+			AddPublicIncludes("include")
 	})
 }
