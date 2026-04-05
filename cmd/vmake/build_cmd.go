@@ -646,7 +646,7 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 				continue
 			}
 			executePackageOnBuild(ctx, name, node, pkgDirs, subAllTargets, remote, cfg.GlobalValues, buildSubGraphFn, subDepOutputFn, cfg.Tc, localPkgOptions)
-			autoWireRequireDeps(node.Pkg, subAllTargets[name])
+			autoWireRequireDeps(node.Pkg, subAllTargets, subAllTargets[name])
 		}
 
 		subTcName := resolvePkgToolchain(ctx.Config, rootPkg, cfg.TcName)
@@ -714,7 +714,7 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 		}
 
 		executePackageOnBuild(ctx, name, node, pkgDirs, allTargets, remote, cfg.GlobalValues, buildSubGraphFn, depOutputFn, cfg.Tc, localPkgOptions)
-		autoWireRequireDeps(node.Pkg, allTargets[name])
+		autoWireRequireDeps(node.Pkg, allTargets, allTargets[name])
 	}
 
 	for pkgName := range subGraphBuilt {
@@ -724,15 +724,22 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 	return allTargets, pkgMetaMap, subBuildKeys
 }
 
-func autoWireRequireDeps(pkg *api.Package, targets map[string]*api.Target) {
-	if pkg == nil || targets == nil {
+func autoWireRequireDeps(pkg *api.Package, allTargets map[string]map[string]*api.Target, localTargets map[string]*api.Target) {
+	if pkg == nil || localTargets == nil || allTargets == nil {
 		return
 	}
-	for _, t := range targets {
+	for _, t := range localTargets {
 		for _, req := range pkg.GetRequires().Get() {
-			depRef := req.Name + ":" + req.Name
-			if !t.HasDep(depRef) {
-				t.AddDeps(depRef)
+			depPkgName := req.Name
+			depTargets := allTargets[depPkgName]
+			if depTargets == nil {
+				continue
+			}
+			for _, dt := range depTargets {
+				depRef := depPkgName + ":" + dt.Name()
+				if !t.HasDep(depRef) {
+					t.AddDeps(depRef)
+				}
 			}
 		}
 	}

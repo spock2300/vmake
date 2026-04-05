@@ -52,3 +52,14 @@ func (m *BuildscriptManager) Open(path string) (*plugin.Plugin, error) {
 	m.scripts[absPath] = loaded
 	return loaded, nil
 }
+
+func (m *BuildscriptManager) Invalidate(path string) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.scripts, absPath)
+	delete(m.errors, absPath)
+}

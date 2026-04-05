@@ -5,6 +5,7 @@ import (
 	"plugin"
 
 	"gitee.com/spock2300/vmake/pkg/api"
+	vlog "gitee.com/spock2300/vmake/pkg/log"
 )
 
 func ExtractPackage(loaded *LoadedScript) *api.Package {
@@ -21,10 +22,15 @@ func ExtractPackage(loaded *LoadedScript) *api.Package {
 		pkg.SetScriptDir(dir)
 	}
 
-	origDir, _ := os.Getwd()
+	origDir, err := os.Getwd()
+	if err != nil {
+		vlog.Fatal("get working directory: %v", err)
+	}
 	defer os.Chdir(origDir)
 	if dir := loaded.Source.Dir; dir != "" {
-		os.Chdir(dir)
+		if err := os.Chdir(dir); err != nil {
+			vlog.Fatal("chdir to %s: %v", dir, err)
+		}
 	}
 
 	if mainFunc := lookupMain(loaded.Script); mainFunc != nil {

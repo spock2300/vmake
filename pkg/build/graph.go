@@ -128,17 +128,18 @@ func resolveDep(
 	pkgMeta map[string]PkgBuildMeta,
 	path []string,
 ) ([]string, error) {
+	if strings.Contains(dep, ":") {
+		if _, exists := nodes[dep]; !exists {
+			return nil, fmt.Errorf("dependency not found: %s", dep)
+		}
+		return []string{dep}, nil
+	}
+
 	if strings.Contains(dep, "/") {
 		return resolvePackageRef(dep, nodes, pkgMeta, path)
 	}
 
-	var qualified string
-	if strings.Contains(dep, ":") {
-		qualified = dep
-	} else {
-		qualified = currentPkg + ":" + dep
-	}
-
+	qualified := currentPkg + ":" + dep
 	if _, exists := nodes[qualified]; !exists {
 		return nil, fmt.Errorf("dependency not found: %s", dep)
 	}
@@ -157,8 +158,9 @@ func resolvePackageRef(
 
 	var result []string
 
-	meta, ok := pkgMeta[pkgRef]
-	if ok {
+	hasMeta := false
+	if meta, ok := pkgMeta[pkgRef]; ok {
+		hasMeta = true
 		for _, transDep := range meta.Deps {
 			expanded, err := resolvePackageRef(transDep, nodes, pkgMeta, append(path, pkgRef))
 			if err != nil {
@@ -169,7 +171,7 @@ func resolvePackageRef(
 	}
 
 	pkgTargetNodes := findPackageTargetNodes(pkgRef, nodes)
-	if len(pkgTargetNodes) == 0 && len(meta.Deps) == 0 {
+	if len(pkgTargetNodes) == 0 && !hasMeta {
 		return nil, fmt.Errorf("package not found in build graph: %s", pkgRef)
 	}
 	result = append(result, pkgTargetNodes...)

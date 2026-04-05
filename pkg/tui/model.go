@@ -107,11 +107,6 @@ func NewModel(
 		menuconfigRan: make(map[string]bool),
 		presetValues:  make(map[string]string),
 	}
-	for name, entries := range kconfigs {
-		if len(entries) > 0 && len(entries[0].Presets()) > 0 {
-			m.presetValues[name] = entries[0].SelectedPreset()
-		}
-	}
 	m.origValues = deepCopyValues(values)
 	m.origGlobal = deepCopyGlobal(globalValues)
 	m.tree = buildDepTree(packages, deps)
@@ -176,7 +171,7 @@ func buildDepTree(packages []buildscript.Source, deps map[string][]string) []*Tr
 
 	var localNodes []*TreeNode
 	for _, name := range roots {
-		localNodes = append(localNodes, buildDepSubtree(name, localSet, pkgMap, deps, 1))
+		localNodes = append(localNodes, buildDepSubtree(name, localSet, pkgMap, deps, 1, make(map[string]bool)))
 	}
 
 	for i, child := range localNodes {
@@ -192,7 +187,12 @@ func buildDepTree(packages []buildscript.Source, deps map[string][]string) []*Tr
 	return result
 }
 
-func buildDepSubtree(name string, localSet map[string]bool, pkgMap map[string]buildscript.Source, deps map[string][]string, depth int) *TreeNode {
+func buildDepSubtree(name string, localSet map[string]bool, pkgMap map[string]buildscript.Source, deps map[string][]string, depth int, visited map[string]bool) *TreeNode {
+	if visited[name] {
+		return nil
+	}
+	visited[name] = true
+
 	node := &TreeNode{
 		Name:    name,
 		PkgName: name,
@@ -213,7 +213,7 @@ func buildDepSubtree(name string, localSet map[string]bool, pkgMap map[string]bu
 	}
 
 	for _, depName := range depNames {
-		child := buildDepSubtree(depName, localSet, pkgMap, deps, depth+1)
+		child := buildDepSubtree(depName, localSet, pkgMap, deps, depth+1, visited)
 		if child != nil {
 			node.Children = append(node.Children, child)
 		}

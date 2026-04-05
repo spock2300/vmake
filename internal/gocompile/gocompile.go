@@ -42,7 +42,10 @@ func CompilePlugin(opts PluginOptions) error {
 	vmakeDir := os.Getenv("VMAKE_DIR")
 	goModContent := BuildGoModContent(opts, vmakeDir)
 
-	needCleanup := WriteGoModIfMissing(opts.WorkDir, goModContent)
+	needCleanup, err := WriteGoModIfMissing(opts.WorkDir, goModContent)
+	if err != nil {
+		return fmt.Errorf("write go.mod: %w", err)
+	}
 
 	if err := runGoModTidy(opts.WorkDir); err != nil {
 		if needCleanup {
@@ -109,13 +112,15 @@ func GetCurrentGoVersion() string {
 	return v
 }
 
-func WriteGoModIfMissing(workDir, content string) bool {
+func WriteGoModIfMissing(workDir, content string) (bool, error) {
 	goModPath := filepath.Join(workDir, "go.mod")
 	if !fs.FileExists(goModPath) {
-		os.WriteFile(goModPath, []byte(content), 0644)
-		return true
+		if err := os.WriteFile(goModPath, []byte(content), 0644); err != nil {
+			return false, fmt.Errorf("write go.mod: %w", err)
+		}
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
 func CleanupGoMod(workDir string) {

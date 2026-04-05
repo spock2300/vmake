@@ -243,6 +243,10 @@ func (r *Resolver) resolveOne(id string, src *buildscript.Source, path []string)
 func (r *Resolver) PreparePackage(src *buildscript.Source) (*api.Package, error) {
 	scriptPath := r.scriptPath(src)
 
+	if r.force {
+		buildscript.GlobalScript.Invalidate(scriptPath)
+	}
+
 	cr := buildscript.Compile(*src)
 	if !cr.Success {
 		return nil, cr.Error

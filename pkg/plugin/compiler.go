@@ -31,7 +31,7 @@ func Compile(pluginDir string, force bool) CompileResult {
 		return CompileResult{CompileResult: gocompile.NewOkResult(outputPath), PluginDir: pluginDir, PluginName: info.Name}
 	}
 
-	entryFile := filepath.Base(filepath.Join(pluginDir, "src", "main.go"))
+	entryFile := filepath.Base(entryPath)
 	workDir := filepath.Dir(entryPath)
 
 	opts := gocompile.PluginOptions{
