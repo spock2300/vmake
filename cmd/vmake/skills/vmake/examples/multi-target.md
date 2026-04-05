@@ -69,6 +69,36 @@ build/
 - Dependencies resolved automatically - "mylib" builds before "myapp"
 - `SetDefault(false)` useful for test targets, benchmarks
 - `AddIncludes` adds -I flags for both compilation and linking
+- `AddPublicIncludes` propagates include dirs to dependent targets
+
+## Cross-Package Dependencies
+
+Use the `pkg:target` format to depend on targets from other packages in a multi-module workspace:
+
+```go
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.Target("myapp").
+        SetKind(api.TargetBinary).
+        AddFiles("src/main.c").
+        AddDeps("lib:utils")
+})
+```
+
+`lib:utils` means the `utils` target from the `lib` package. vmake ensures `lib:utils` builds first, links its output, and propagates its public includes.
+
+## AddPublicIncludes
+
+`AddPublicIncludes` on a target makes its include directories available to all dependents:
+
+```go
+ctx.Target("mylib").
+    SetKind(api.TargetStatic).
+    AddFiles("src/mylib.c").
+    AddIncludes("include").
+    AddPublicIncludes("include")
+```
+
+Consumers that `AddDeps("mylib")` automatically get `-Iinclude` without specifying it themselves.
 
 ## See Also
 

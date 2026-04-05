@@ -270,6 +270,7 @@ Detailed design documents are available in the [docs](docs/) directory:
 - [Architecture](docs/ARCHITECTURE.md) - System architecture and execution flow
 - [Directory Structure](docs/VMAKE_HOME.md) - ~/.vmake directory structure
 - [AI Install Guide](docs/AI_INSTALL_GUIDE.md) - AI assistant skill installation
+- [Firmware Build Design](docs/FIRMWARE_BUILD_DESIGN.md) - Firmware build system design
 
 ## Test Cases
 
@@ -289,6 +290,9 @@ Detailed design documents are available in the [docs](docs/) directory:
 | `test_data/12_rtos_simulate` | RTOS simulation project |
 | `test_data/13_with_prefix_repo` | Native repository dependencies |
 | `test_data/14_bin_header` | Binary header embedding |
+| `test_data/15_subgraph_siblings` | Subgraph sibling targets build (host codegen tool + library) |
+| `test_data/16_subgraph_cross_tc` | Subgraph build with cross-toolchain |
+| `test_data/17_firmware` | Full firmware build (Linux, U-Boot, BusyBox, App, RootFS, Firmware) |
 
 ## License
 

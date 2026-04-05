@@ -33,6 +33,7 @@ func Main(p *api.Package) {
 - **`ctx.BuildSubGraph(pkgName)`** - Build a package (and its deps) as an independent sub-graph
 - **`ctx.DepOutput(depRef)`** - Get the output path of a dependency target
 - **`ctx.Exec(binary, args...)`** - Run a built binary as build step
+- **`ctx.DepBuildDir(depRef)`** - Get the build directory of a dependency target
 
 ## Use Cases
 
@@ -105,6 +106,7 @@ Phase 1-3: Main build.go
 - `BuildSubGraph` runs in-process, sharing config with the parent build
 - Toolchain is read from the package's config entry (or global default)
 - `DepOutput("pkg:target")` returns the deterministic output path
+- `DepBuildDir("pkg:target")` returns the directory containing that output (useful for locating generated headers or other build artifacts)
 - Targets built by the sub-graph are excluded from the main build graph
 
 ## See Also

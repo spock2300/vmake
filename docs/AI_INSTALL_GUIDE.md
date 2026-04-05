@@ -15,7 +15,13 @@ AI 阅读此文档后，按顺序执行以下命令即可完成安装。
 go install gitee.com/spock2300/vmake/cmd/vmake@latest
 ```
 
-确保 `~/go/bin` 在 PATH 中（如不在，追加到 shell 配置文件）。
+确保 `~/go/bin` 在 PATH 中：
+
+```bash
+export PATH=$PATH:$(go env GOPATH)/bin
+```
+
+如需持久化，将上述命令追加到 shell 配置文件（`~/.bashrc`、`~/.zshrc` 等）。
 
 ### 2. 安装命令行补全
 
@@ -38,6 +44,12 @@ Skill 为 AI 编码助手提供 vmake API 知识，辅助编写 `build.go`：
 
 ```bash
 vmake skill install
+```
+
+使用 `--project` 或 `-p` 参数可将 Skill 安装到当前项目的 `.claude/skills/` 目录：
+
+```bash
+vmake skill install --project .
 ```
 
 安装位置：

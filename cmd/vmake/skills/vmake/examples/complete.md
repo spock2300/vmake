@@ -47,6 +47,7 @@ func Main(p *api.Package) {
 			SetDescription("C++ standard version").
 			SetGroup("C++")
 
+
 		ctx.Option("optimization").
 			SetType(api.OptionChoice).
 			SetDefault("O2").
@@ -91,14 +92,12 @@ func Main(p *api.Package) {
 	p.OnBuild(func(ctx *api.BuildContext) {
 		threads := ctx.Int("thread_count")
 		prefix := ctx.String("custom_prefix")
-		cppStd := ctx.String("c++standard")
 		sslVersion := ctx.String("ssl_version")
 
 		ctx.Target("core_obj").
 			SetKind(api.TargetObject).
 			AddFiles("src/core.cpp").
 			AddIncludes("include").
-			SetLanguages(cppStd).
 			AddCxxFlags("-Wall", "-Wextra").
 			AddCxxFlags(ctx.Select("optimization", map[string]string{
 				"O0": "-O0", "O1": "-O1", "O2": "-O2", "O3": "-O3", "Os": "-Os",
@@ -108,8 +107,7 @@ func Main(p *api.Package) {
 		ctx.Target("utils_obj").
 			SetKind(api.TargetObject).
 			AddFiles("src/utils.cpp").
-			AddIncludes("include").
-			SetLanguages(cppStd)
+			AddIncludes("include")
 
 		if ctx.When("shared_lib", true) {
 			ctx.Target("mylib").
@@ -117,21 +115,18 @@ func Main(p *api.Package) {
 				AddFiles("src/library.cpp").
 				AddIncludes("src/internal").
 				AddPublicIncludes("include").
-				SetLanguages(cppStd).
 				AddDeps("core_obj", "utils_obj").
 				AddDefines(ctx.If("ssl", "USE_SSL")).
 				AddDefines(ctx.If("ssl", "SSL_VERSION=\""+sslVersion+"\"")).
 				AddDefines("THREAD_COUNT=" + strconv.Itoa(threads)).
 				AddDefines("PREFIX=\"" + prefix + "\"").
-				AddCxxFlags("-fPIC").
-				AddLdFlags("-Wl,-soname,libmylib.so")
+				AddCxxFlags("-fPIC")
 		} else {
 			ctx.Target("mylib").
 				SetKind(api.TargetStatic).
 				AddFiles("src/library.cpp").
 				AddIncludes("src/internal").
 				AddPublicIncludes("include").
-				SetLanguages(cppStd).
 				AddDeps("core_obj", "utils_obj").
 				AddDefines(ctx.If("ssl", "USE_SSL")).
 				AddDefines(ctx.If("ssl", "SSL_VERSION=\""+sslVersion+"\"")).
@@ -142,7 +137,6 @@ func Main(p *api.Package) {
 		ctx.Target("myapp").
 			SetKind(api.TargetBinary).
 			AddFiles("src/main.cpp").
-			SetLanguages(cppStd).
 			AddDeps("mylib").
 			AddDefines("PREFIX=\"" + prefix + "\"").
 			AddDefines(ctx.If("ssl", "USE_SSL")).
@@ -156,7 +150,6 @@ func Main(p *api.Package) {
 		ctx.Target("benchmark").
 			SetKind(api.TargetBinary).
 			AddFiles("src/benchmark.cpp").
-			SetLanguages(cppStd).
 			AddDeps("core_obj").
 			AddCxxFlags("-O3", "-DNDEBUG").
 			SetDefault(false)
@@ -181,7 +174,6 @@ func Main(p *api.Package) {
 - **`SetShowIf(func)`** - Conditional option visibility
 - **`api.TargetObject`** - Intermediate object file target
 - **`api.TargetShared`** - Shared library (.so)
-- **`SetLanguages("c++17")`** - Set C/C++ standard version
 - **`ctx.When(option, value)`** - Returns bool for imperative conditionals
 - **Dynamic target creation** - Targets inside `if` blocks
 - **`AddPublicIncludes`** - Propagates to dependents
@@ -204,6 +196,7 @@ func Main(p *api.Package) {
 - Global options apply across packages
 - Integer options need `strconv.Itoa()` for defines
 - Object targets useful for multi-stage builds
+- Language is auto-detected from file extension (`.c` → C, `.cpp` → C++) — no need to set manually
 
 ## See Also
 

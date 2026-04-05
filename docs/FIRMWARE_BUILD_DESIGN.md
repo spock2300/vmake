@@ -39,9 +39,9 @@ OnRequire → OnConfig → OnBuild → OnInstall
 
 | 包 | OnRequire | OnConfig | OnBuild | BuildFunc 做什么 |
 |----|-----------|----------|---------|-----------------|
-| **uboot** | — | `KConfig("u-boot")` | TargetVoid | `make olddefconfig && make` |
-| **kernel** | — | `KConfig("linux")` | TargetVoid | `make olddefconfig && make zImage dtbs` |
-| **busybox** | — | `KConfig("busybox")` | TargetVoid | `make olddefconfig && make && make install` |
+| **uboot** | — | `KConfig("u-boot")` | TargetVoid | `EnsureConfig && make` |
+| **kernel** | — | `KConfig("linux")` | TargetVoid | `EnsureConfig && make` |
+| **busybox** | — | `KConfig("busybox")` | TargetVoid | `EnsureConfig && make && make install` |
 | **myapp** | — | `Option("debug")` | TargetBinary | vmake 自动编译链接 |
 | **rootfs** | `[busybox, myapp]` | — | TargetVoid | overlay + collect → staging → `mksquashfs` → `rootfs.sqsh` |
 | **boot** | `[linux]` | — | TargetVoid | zImage + dtb + overlay → staging → `mkimage` → `boot.img` |
@@ -71,17 +71,18 @@ for _, dep := range pkg.Deps() {
 }
 ```
 
-**无 InstallDir 的包**（闭包捕获 `DepOutput`）：
+**无 InstallDir 的包**（闭包捕获 `DepOutput` / `DepBuildDir`）：
 
-TargetVoid 目标没有自动安装产物，通过 `DepOutput` 获取 BuildDir 路径：
+TargetVoid 目标没有自动安装产物，通过 `DepOutput` 获取产物路径或 `DepBuildDir` 获取 BuildDir：
 
 ```go
 p.OnBuild(func(ctx *api.BuildContext) {
     appBin := ctx.DepOutput("myapp:myapp")
+    busyboxBuildDir := ctx.DepBuildDir("busybox:busybox")
     ctx.Target("rootfs").
         SetKind(api.TargetVoid).
         SetBuildFunc(func(pkg *api.Package) error {
-            // appBin 通过闭包传入
+            // appBin, busyboxBuildDir 通过闭包传入
             return nil
         })
 })
@@ -105,13 +106,13 @@ p.OnBuild(func(ctx *api.BuildContext) {
   "entries": {
     "u-boot": {
       "version": "2024.01",
-      "selected_preset": "rockchip_rk3568_defconfig",
+      "selected_preset": "sandbox_defconfig",
       "kconfig": "# CONFIG_LOCALVERSION_AUTO is not set\nCONFIG_SYS_TEXT_BASE=0x00200000\nCONFIG_CMD_BOOTM=y\nCONFIG_BOOTDELAY=3\n..."
     },
     "linux": {
       "version": "6.6",
-      "selected_preset": "multi_v7_defconfig",
-      "kconfig": "#\n# Automatically generated file; DO NOT EDIT.\n# Linux/arm 6.6.0 Kernel Configuration\n#\nCONFIG_EXT4_FS=y\nCONFIG_NETFILTER=y\n..."
+      "selected_preset": "x86_64_defconfig",
+      "kconfig": "#\n# Automatically generated file; DO NOT EDIT.\n# Linux/x86 6.6.0 Kernel Configuration\n#\nCONFIG_EXT4_FS=y\nCONFIG_NETFILTER=y\n..."
     },
     "busybox": {
       "selected_preset": "defconfig",
@@ -133,7 +134,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 |------|------|
 | OnConfig 之后、OnBuild 之前 | config.json kconfig → 源码目录 `.config` |
 | menuconfig 后 | 源码目录 `.config` → config.json kconfig |
-| 切换 preset | 预设文件 → 编码 → config.json kconfig |
+| 切换 preset | `make <presetName>` 生成 .config → 编码 → config.json kconfig |
 
 ---
 
@@ -142,12 +143,16 @@ p.OnBuild(func(ctx *api.BuildContext) {
 ### 3.1 新增类型
 
 ```go
-// pkg/api/kconfig.go
 type KConfigEntry struct {
-    name          string
-    presets       map[string]string  // preset_name → file_path
-    defaultPreset string
-    currentConfig string             // 当前配置（原始 .config 字符串）
+    name           string
+    description    string
+    configPath     string
+    srcDir         string
+    menuconfigCmd  string
+    presets        []string
+    defaultPreset  string
+    selectedPreset string
+    patchValues    map[string]string
 }
 ```
 
@@ -160,59 +165,131 @@ func (ctx *ConfigContext) KConfig(name string) *KConfigEntry
 ### 3.3 KConfigEntry API
 
 ```go
-func (k *KConfigEntry) AddPreset(name, configPath string) *KConfigEntry
+func (k *KConfigEntry) AddPreset(name string) *KConfigEntry
 func (k *KConfigEntry) SetDefault(presetName string) *KConfigEntry
+func (k *KConfigEntry) SetDescription(desc string) *KConfigEntry
+func (k *KConfigEntry) SetConfigPath(path string) *KConfigEntry
+func (k *KConfigEntry) SetSrcDir(dir string) *KConfigEntry
+func (k *KConfigEntry) SetMenuconfigCmd(cmd string) *KConfigEntry
+func (k *KConfigEntry) SetSelectedPreset(name string) *KConfigEntry
+func (k *KConfigEntry) PatchKConfig(patches map[string]string) *KConfigEntry
+func (k *KConfigEntry) Name() string
+func (k *KConfigEntry) Description() string
+func (k *KConfigEntry) ConfigPath() string
+func (k *KConfigEntry) SrcDir() string
+func (k *KConfigEntry) MenuconfigCmd() string
 func (k *KConfigEntry) Presets() []string
 func (k *KConfigEntry) DefaultPreset() string
-func (k *KConfigEntry) PresetPath(name string) string
-func (k *KConfigEntry) CurrentConfig() string
-func (k *KConfigEntry) SetCurrentConfig(config string) *KConfigEntry
+func (k *KConfigEntry) SelectedPreset() string
+func (k *KConfigEntry) Patches() map[string]string
 ```
 
 ### 3.4 使用模式
 
-uboot、kernel、busybox 的 KConfig 用法完全一致，只是包名和预设文件不同：
+uboot、kernel、busybox 的 KConfig 用法完全一致，只是包名和预设名不同：
 
 ```go
-// packages/uboot/build.go
 p.OnConfig(func(ctx *api.ConfigContext) {
     ctx.KConfig("u-boot").
-        AddPreset("rockchip_rk3568", "configs/rockchip_rk3568_defconfig").
-        AddPreset("minimal", "configs/minimal.config").
-        SetDefault("rockchip_rk3568")
+        SetDescription("U-Boot configuration").
+        AddPreset("sandbox_defconfig").
+        AddPreset("rk3568_defconfig").
+        SetDefault("sandbox_defconfig").
+        SetMenuconfigCmd("make menuconfig")
 })
 
-// packages/linux/build.go
 p.OnConfig(func(ctx *api.ConfigContext) {
     ctx.KConfig("linux").
-        AddPreset("multi_v7", "configs/multi_v7_defconfig").
-        AddPreset("rockchip", "configs/rockchip_defconfig").
-        SetDefault("rockchip")
+        SetDescription("Linux kernel configuration").
+        AddPreset("x86_64_defconfig").
+        AddPreset("rk3568_defconfig").
+        SetDefault("x86_64_defconfig").
+        SetMenuconfigCmd("make menuconfig")
 })
 
-// packages/busybox/build.go
 p.OnConfig(func(ctx *api.ConfigContext) {
     ctx.KConfig("busybox").
-        AddPreset("defconfig", "configs/defconfig").
-        AddPreset("full", "configs/full.config").
-        SetDefault("defconfig")
+        SetDescription("BusyBox applet configuration").
+        SetSrcDir("src").
+        AddPreset("defconfig").
+        SetDefault("defconfig").
+        PatchKConfig(map[string]string{
+            "CONFIG_TC=y": "# CONFIG_TC is not set",
+        })
 })
 ```
 
-### 3.5 预设配置目录
+### 3.5 预设配置
 
-每个包在 SourceDir 下维护预设目录：
+预设是 **defconfig 名称**（make target），不是文件路径。`make <presetName>` 生成 `.config`。
 
+例如 `sandbox_defconfig`、`x86_64_defconfig`、`defconfig` 都是源码树中原生的 make target，直接传入 `AddPreset()` 即可。
+
+---
+
+## 3.6 EnsureConfig + PatchKConfig
+
+### EnsureConfig
+
+```go
+func (p *Package) EnsureConfig(srcDir string) bool
 ```
-packages/<pkg>/
-├── configs/
-│   ├── <preset1>_defconfig
-│   ├── <preset2>.config
-│   └── ...
-└── build.go
+
+`EnsureConfig` 检查 `.config` 是否存在且非空，若缺失则自动生成：
+
+1. 检查 `srcDir/.config` 是否存在且 `size > 0`
+2. 若缺失或为空，执行 `make <selectedPreset>` 生成 `.config`
+3. 若包有 KConfig 条目，调用 `ApplyKConfigPatches` 应用 post-defconfig 补丁
+4. 返回 `bool`：`true` 表示刚生成了配置，`false` 表示已存在
+
+BuildFunc 中使用：
+
+```go
+srcDir := pkg.SourceDir()
+pkg.EnsureConfig(srcDir)
+pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
 ```
 
-预设仅支持完整 `.config` 格式，包含所有选项和 `#` 注释行，可直接使用。
+### PatchKConfig
+
+```go
+func (k *KConfigEntry) PatchKConfig(patches map[string]string) *KConfigEntry
+```
+
+Post-defconfig 值补丁，用于在 `make <preset>` 生成 `.config` 后覆盖特定配置项。例如：
+
+```go
+PatchKConfig(map[string]string{
+    "CONFIG_TC=y": "# CONFIG_TC is not set",
+})
+```
+
+补丁在三个位置生效：
+- **EnsureConfig**：构建时自动应用
+- **restoreKConfigFiles**：Phase 2.5 恢复 `.config` 后应用
+- **TUI ensureConfigCmd**：交互式配置时应用
+
+底层实现为 `api.ApplyKConfigPatches(configPath, patches)`，对 `.config` 文件做字符串替换。
+
+---
+
+## 3.7 SetConfigFiles + 构建缓存跳过
+
+### SetConfigFiles
+
+```go
+func (p *Package) SetConfigFiles(files ...string) *Package
+```
+
+声明哪些文件的变化会导致构建缓存失效。通常在 `OnPackage` 中设置：
+
+```go
+p.OnPackage(func(p *api.Package) {
+    p.SetConfigFiles(".config")
+})
+```
+
+对于没有 InstallDir 的本地包，vmake 使用 `.vmake_stamp` 文件（位于 BuildDir）标记成功构建。当任何 ConfigFile 的时间戳比 stamp 文件新时，构建被视为 stale，会重新执行。
 
 ---
 
@@ -228,22 +305,37 @@ VMake Configuration
 ├── myapp
 │   └── debug            [ ] Enable debug mode
 ├── u-boot
-│   ├── preset           [rockchip_rk3568         ▼]
+│   ├── preset           [sandbox_defconfig    ▶◀]
 │   └── Run menuconfig...
 ├── linux
-│   ├── preset           [rockchip                 ▼]
+│   ├── preset           [x86_64_defconfig    ▶◀]
 │   └── Run menuconfig...
 └── busybox
-    ├── preset           [defconfig               ▼]
+    ├── preset           [defconfig            ▶◀]
     └── Run menuconfig...
 ```
 
-### 4.2 Run menuconfig 流程
+### 4.2 preset 切换
 
-1. 从 config.json 解码 kconfig → 写入源码目录 `.config`
-2. `cd <source_dir> && make menuconfig`
-3. 用户退出后读取 `.config`
-4. 编码为 JSON 字符串 → 更新 config.json
+使用左右箭头键循环切换预设。切换 preset 时会触发以下流程：
+
+1. 若 `.config` 已存在，删除 `.config`（因为 preset 已变更，旧配置不再有效）
+2. 更新 config.json 中的 `selected_preset`
+3. 保存时将 kconfig 清空（preset 切换后尚未生成新 `.config`）
+
+### 4.3 Run menuconfig 流程
+
+menuconfig 采用两步执行：
+
+**Step 1: ensureConfigCmd**
+1. 检查 `.config` 是否存在
+2. 若不存在，执行 `make <preset>` 生成初始配置
+3. 若有 `PatchKConfig`，应用补丁
+
+**Step 2: runMenuconfigCmd**
+1. 执行 `KConfigEntry.MenuconfigCmd()`（默认 `make menuconfig`）
+2. 用户退出后读取修改后的 `.config`
+3. 编码为 JSON 字符串 → 更新 config.json
 
 ---
 
@@ -257,52 +349,41 @@ vmake 的 `Package` 有三个目录：`SourceDir`（源码目录）、`BuildDir`
 
 | 包类型 | BuildDir | 原因 |
 |--------|----------|------|
-| kernel/uboot/busybox | = SourceDir | 这类项目使用 KBuild 系统，要求在源码树内构建（`make -C <dir>`） |
-| myapp（TargetBinary） | = SourceDir | vmake 自动编译，BuildDir 就是源码目录 |
-| 分区/firmware（TargetVoid） | = SourceDir | BuildFunc 使用 `pkg.BuildDir()` 作为 staging 和镜像输出目录 |
+| 本地包 | `<SourceDir>/build/<key>/` | 与源码分离，key 由工具链+模式+选项生成 |
+| 远程包 | `<packagesDir>/<name>/<version>/<key>/build/` | 包管理目录下，与 InstallDir 同级 |
 
-`Package.Make()` 内部实现为 `make -C <BuildDir>`，因此当 BuildDir = SourceDir 时，等效于在源码树内执行 make。
+其中 `key` 由 `build.BuildKey(ccPath, mode, opts)` 生成，确保不同工具链/模式/选项的构建产物隔离。
 
 ### 5.2 交叉编译环境变量
 
 vmake 的 `Toolchain` 结构已提供 `Host`（目标三元组）和 `Prefix`（编译器前缀）字段。`Toolchain.Env()` 会生成包含 `CROSS_COMPILE`、`CC`、`CXX` 等环境变量的 map。
 
-**问题：当前 `Package.Make()` 不传递环境变量。**
-
-```go
-// 当前实现：不传 env
-func (p *Package) Make(args ...string) error {
-    makeArgs := []string{"-C", p.dirs.BuildDir}
-    makeArgs = append(makeArgs, args...)
-    return p.Run("make", makeArgs...)
-}
-```
-
-需要扩展 `Make()` 在工具链非 host 时自动传递 `pkg.Env()`：
+`Package.Make()` 已自动传递 `pkg.Env()`：
 
 ```go
 func (p *Package) Make(args ...string) error {
     makeArgs := []string{"-C", p.dirs.BuildDir}
     makeArgs = append(makeArgs, args...)
-    if len(p.Env()) > 0 {
-        return p.RunEnv(p.Env(), "make", makeArgs...)
-    }
-    return p.Run("make", makeArgs...)
+    return p.RunEnv(p.Env(), "make", makeArgs...)
 }
 ```
 
-扩展后，kernel/uboot/busybox 的 BuildFunc 使用 `pkg.Make("olddefconfig")` 即可自动获得 `CROSS_COMPILE=arm-linux-gnueabihf-` 等环境变量。
+对于 KBuild 系统（kernel/uboot/busybox），Makefile 在 SourceDir 中，需使用 `RunIn` 在源码目录执行 make：
+
+```go
+pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
+```
 
 ### 5.3 Package 执行方法说明
 
 | 方法 | 工作目录 | 环境变量 | 失败行为 |
 |------|----------|----------|----------|
-| `pkg.Make(args...)` | BuildDir | 自动传递 pkg.Env()（扩展后） | `os.Exit(1)` |
+| `pkg.Make(args...)` | BuildDir | 自动传递 pkg.Env() | `os.Exit(1)` |
 | `pkg.Run(cmd, args...)` | BuildDir | 无 | `os.Exit(1)` |
 | `pkg.RunEnv(env, cmd, args...)` | BuildDir | 指定 env map | 返回 error |
 | `pkg.RunIn(dir, cmd, args...)` | 指定 dir | 无 | `os.Exit(1)` |
 
-> `Make()` 和 `Run()` 内部使用 `exec.RunFatal`，失败时直接 `os.Exit(1)` 不会返回 error。BuildFunc 中调用 `pkg.Make(...)` 无需检查返回值，进程已在失败时退出。
+> `Make()` 和 `Run()` 内部使用 `exec.RunFatal`，失败时直接 `os.Exit(1)` 不会返回 error。BuildFunc 中调用 `pkg.Make(...)` 无需检查返回值，进程已在失败时退出。注意 `pkg.Run()` 固定在 BuildDir 中执行，不可指定其他目录。
 
 ---
 
@@ -311,26 +392,38 @@ func (p *Package) Make(args ...string) error {
 ### 6.1 uboot
 
 ```go
-// packages/uboot/build.go
 package main
 
-import "gitee.com/spock2300/vmake/pkg/api"
+import (
+    "runtime"
+    "strconv"
+
+    "gitee.com/spock2300/vmake/pkg/api"
+)
 
 func Main(p *api.Package) {
+    p.OnPackage(func(p *api.Package) {
+        p.SetConfigFiles(".config")
+    })
+
     p.OnConfig(func(ctx *api.ConfigContext) {
         ctx.KConfig("u-boot").
-            AddPreset("rockchip_rk3568", "configs/rockchip_rk3568_defconfig").
-            SetDefault("rockchip_rk3568")
+            SetDescription("U-Boot configuration").
+            AddPreset("sandbox_defconfig").
+            AddPreset("rk3568_defconfig").
+            AddPreset("stm32_defconfig").
+            SetDefault("sandbox_defconfig").
+            SetMenuconfigCmd("make menuconfig")
     })
 
     p.OnBuild(func(ctx *api.BuildContext) {
-        ctx.Target("uboot").
-            SetKind(api.TargetVoid).
-            SetBuildFunc(func(pkg *api.Package) error {
-                pkg.Make("olddefconfig")
-                pkg.Make()
-                return nil
-            })
+        ctx.Target("uboot").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
+            srcDir := pkg.SourceDir()
+            pkg.EnsureConfig(srcDir)
+            pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
+            pkg.RunIn(srcDir, "make", "DESTDIR="+pkg.BuildDir(), "install")
+            return nil
+        })
     })
 }
 ```
@@ -338,74 +431,91 @@ func Main(p *api.Package) {
 ### 6.2 kernel
 
 ```go
-// packages/linux/build.go
-package main
-
-import "gitee.com/spock2300/vmake/pkg/api"
-
-func Main(p *api.Package) {
-    p.OnConfig(func(ctx *api.ConfigContext) {
-        ctx.KConfig("linux").
-            AddPreset("rockchip", "configs/rockchip_defconfig").
-            SetDefault("rockchip")
-    })
-
-    p.OnBuild(func(ctx *api.BuildContext) {
-        ctx.Target("linux").
-            SetKind(api.TargetVoid).
-            SetBuildFunc(func(pkg *api.Package) error {
-                pkg.Make("olddefconfig")
-                pkg.Make("zImage", "dtbs")
-                return nil
-            })
-    })
-}
-```
-
-kernel 只创建一个 TargetVoid，BuildFunc 一次完成 `zImage` 和 `dtbs` 的构建。
-
-### 6.3 busybox
-
-```go
-// packages/busybox/build.go
 package main
 
 import (
-    "os"
-    "path/filepath"
+    "runtime"
+    "strconv"
 
     "gitee.com/spock2300/vmake/pkg/api"
 )
 
 func Main(p *api.Package) {
+    p.OnPackage(func(p *api.Package) {
+        p.SetConfigFiles(".config")
+    })
+
     p.OnConfig(func(ctx *api.ConfigContext) {
-        ctx.KConfig("busybox").
-            AddPreset("defconfig", "configs/defconfig").
-            AddPreset("full", "configs/full.config").
-            SetDefault("defconfig")
+        ctx.KConfig("linux").
+            SetDescription("Linux kernel configuration").
+            AddPreset("x86_64_defconfig").
+            AddPreset("rk3568_defconfig").
+            AddPreset("stm32_defconfig").
+            SetDefault("x86_64_defconfig").
+            SetMenuconfigCmd("make menuconfig")
     })
 
     p.OnBuild(func(ctx *api.BuildContext) {
-        ctx.Target("busybox").
-            SetKind(api.TargetVoid).
-            SetBuildFunc(func(pkg *api.Package) error {
-                installDir := filepath.Join(pkg.BuildDir(), "_install")
-
-                pkg.Make("olddefconfig")
-                pkg.Make()
-
-                os.RemoveAll(installDir)
-                pkg.Run("make", "CONFIG_PREFIX="+installDir, "install")
-                return nil
-            })
+        ctx.Target("linux").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
+            srcDir := pkg.SourceDir()
+            pkg.EnsureConfig(srcDir)
+            pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
+            pkg.RunIn(srcDir, "make", "DESTDIR="+pkg.BuildDir(), "install")
+            return nil
+        })
     })
 }
 ```
 
-Busybox 的 `make CONFIG_PREFIX=<dir> install` 在 BuildDir 下生成 `_install` 目录：
+kernel 只创建一个 TargetVoid，BuildFunc 在源码目录完成构建。
+
+### 6.3 busybox
+
+```go
+package main
+
+import (
+    "path/filepath"
+    "runtime"
+    "strconv"
+
+    "gitee.com/spock2300/vmake/pkg/api"
+)
+
+func Main(p *api.Package) {
+    p.OnPackage(func(p *api.Package) {
+        p.SetGit("https://git.busybox.net/busybox")
+        p.SetConfigFiles(".config")
+    })
+
+    p.OnConfig(func(ctx *api.ConfigContext) {
+        ctx.KConfig("busybox").
+            SetDescription("BusyBox applet configuration").
+            SetSrcDir("src").
+            AddPreset("defconfig").
+            SetDefault("defconfig").
+            PatchKConfig(map[string]string{
+                "CONFIG_TC=y": "# CONFIG_TC is not set",
+            })
+    })
+
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("busybox").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
+            srcDir := pkg.SrcDir()
+            pkg.EnsureConfig(srcDir)
+            pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
+            installDir := filepath.Join(pkg.BuildDir(), "_install")
+            pkg.RunIn(srcDir, "make", "CONFIG_PREFIX="+installDir, "install")
+            return nil
+        })
+    })
+}
+```
+
+Busybox 使用 `SetSrcDir("src")` 指定源码子目录，`PatchKConfig` 在 defconfig 生成后覆盖特定选项。`make CONFIG_PREFIX=<dir> install` 在 BuildDir 下生成 `_install` 目录：
 
 ```
-packages/busybox/build/<buildKey>/_install/
+<BuildDir>/_install/
 ├── bin/
 │   ├── sh -> busybox
 │   ├── ls -> busybox
@@ -418,12 +528,9 @@ packages/busybox/build/<buildKey>/_install/
     └── sbin/
 ```
 
-> 注意：`_install` 放在 `pkg.BuildDir()` 下而非 `pkg.SourceDir()` 下，确保所有构建产物都在 BuildDir 内。`pkg.Run("make", ...)` 内部通过 `exec.RunFatal` 执行，失败时进程直接退出。
-
 ### 6.4 应用（myapp）
 
 ```go
-// packages/myapp/build.go
 package main
 
 import "gitee.com/spock2300/vmake/pkg/api"
@@ -447,7 +554,6 @@ vmake 自动编译、链接，`vmake install` 自动安装到 `<prefix>/bin/myap
 ### 6.5 分区包（rootfs）
 
 ```go
-// partitions/rootfs/build.go
 package main
 
 import (
@@ -463,34 +569,31 @@ func Main(p *api.Package) {
     })
 
     p.OnBuild(func(ctx *api.BuildContext) {
-        appBin := ctx.DepOutput("myapp:myapp")
-        busyboxBuildDir := filepath.Dir(ctx.DepOutput("busybox:busybox"))
+        appOutput := ctx.DepOutput("myapp:myapp")
+        busyboxBuildDir := ctx.DepBuildDir("busybox:busybox")
 
-        ctx.Target("rootfs").
-            SetKind(api.TargetVoid).
-            SetBuildFunc(func(pkg *api.Package) error {
-                staging := filepath.Join(pkg.BuildDir(), "staging")
-                imageFile := filepath.Join(pkg.BuildDir(), "rootfs.sqsh")
-                os.RemoveAll(staging)
+        ctx.Target("rootfs").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
+            staging := filepath.Join(pkg.BuildDir(), "staging")
+            imageFile := filepath.Join(pkg.BuildDir(), "rootfs.sqsh")
+            os.RemoveAll(staging)
 
-                os.MkdirAll(staging, 0755)
-                copyDir(filepath.Join(pkg.SourceDir(), "overlay"), staging)
+            api.CopyDir(filepath.Join(pkg.SourceDir(), "overlay"), staging)
 
-                bbInstall := filepath.Join(busyboxBuildDir, "_install")
-                if _, err := os.Stat(bbInstall); err == nil {
-                    copyIfExists(filepath.Join(bbInstall, "bin"), filepath.Join(staging, "bin"))
-                    copyIfExists(filepath.Join(bbInstall, "sbin"), filepath.Join(staging, "sbin"))
-                    copyIfExists(filepath.Join(bbInstall, "usr"), filepath.Join(staging, "usr"))
-                }
+            bbInstall := filepath.Join(busyboxBuildDir, "_install")
+            if _, err := os.Stat(bbInstall); err == nil {
+                api.CopyDirIfExists(filepath.Join(bbInstall, "bin"), filepath.Join(staging, "bin"))
+                api.CopyDirIfExists(filepath.Join(bbInstall, "sbin"), filepath.Join(staging, "sbin"))
+                api.CopyDirIfExists(filepath.Join(bbInstall, "usr"), filepath.Join(staging, "usr"))
+            }
 
-                if appBin != "" {
-                    os.MkdirAll(filepath.Join(staging, "usr/bin"), 0755)
-                    copyFile(appBin, filepath.Join(staging, "usr/bin", filepath.Base(appBin)))
-                }
+            if appOutput != "" {
+                os.MkdirAll(filepath.Join(staging, "usr", "bin"), 0755)
+                api.CopyFile(appOutput, filepath.Join(staging, "usr", "bin", filepath.Base(appOutput)))
+            }
 
-                os.Remove(imageFile)
-                return pkg.Run("mksquashfs", staging, imageFile, "-noappend")
-            })
+            os.Remove(imageFile)
+            return pkg.Run("mksquashfs", staging, imageFile, "-noappend")
+        })
     })
 }
 ```
@@ -512,15 +615,17 @@ partitions/rootfs/
 
 BuildFunc 先复制 overlay，再收集依赖产物覆盖写入，最后调用外部工具（如 `mksquashfs`）将 staging 目录打包为分区镜像文件。依赖产物优先级高于 overlay 同名文件。
 
-> `copyDir`、`copyFile`、`copyIfExists` 为 build.go 中用户自定义的辅助函数。vmake 的 `pkg/build/copy.go` 提供了 `CopyFile`、`CopyDir`、`CopyDirWithFilter`，但属于 internal 包，build.go 插件无法直接 import。用户可在 build.go 中自行实现或引入第三方文件操作库。
+> 文件操作使用 `pkg/api/copy.go` 提供的 `api.CopyFile`、`api.CopyDir`、`api.CopyDirIfExists`，这些函数属于 `api` 包，build.go 插件可以直接 import 使用。
 
-### 6.6 分区包（boot）
+### 6.6 固件包（firmware）
+
+firmware 只是依赖各分区的最后一个包，BuildFunc 收集各分区镜像文件合成最终固件：
 
 ```go
-// partitions/boot/build.go
 package main
 
 import (
+    "fmt"
     "os"
     "path/filepath"
 
@@ -529,120 +634,65 @@ import (
 
 func Main(p *api.Package) {
     p.OnRequire(func(ctx *api.RequireContext) {
-        ctx.AddRequires("linux")
+        ctx.AddRequires("uboot", "linux", "rootfs", "app")
     })
 
     p.OnBuild(func(ctx *api.BuildContext) {
-        linuxBuildDir := filepath.Dir(ctx.DepOutput("linux:linux"))
+        ubootBuildDir := ctx.DepBuildDir("uboot:uboot")
+        linuxBuildDir := ctx.DepBuildDir("linux:linux")
+        rootfsBuildDir := ctx.DepBuildDir("rootfs:rootfs")
+        appBuildDir := ctx.DepBuildDir("app:app")
 
-        ctx.Target("boot").
-            SetKind(api.TargetVoid).
-            SetBuildFunc(func(pkg *api.Package) error {
-                staging := filepath.Join(pkg.BuildDir(), "staging")
-                imageFile := filepath.Join(pkg.BuildDir(), "boot.img")
+        ctx.Target("firmware").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
+            ubootBin := filepath.Join(ubootBuildDir, "u-boot.bin")
+            zImage := filepath.Join(linuxBuildDir, "zImage")
+            rootfsImg := filepath.Join(rootfsBuildDir, "rootfs.sqsh")
+            appImg := filepath.Join(appBuildDir, "app.sqsh")
 
-                os.MkdirAll(staging, 0755)
-                copyDir(filepath.Join(pkg.SourceDir(), "overlay"), staging)
-                copyIfExists(filepath.Join(linuxBuildDir, "arch/arm/boot/zImage"), filepath.Join(staging, "zImage"))
-                copyIfExists(filepath.Join(linuxBuildDir, "arch/arm/boot/dts"), filepath.Join(staging, "dtbs"))
-
-                return pkg.Run("mkimage", "-A", "arm", "-O", "linux", "-T", "kernel",
-                    "-C", "none", "-a", "0x8000", "-e", "0x8000",
-                    "-n", "Linux", "-d", filepath.Join(staging, "zImage"), imageFile)
-            })
-    })
-}
-```
-
-每个分区包可以自由选择镜像生成工具：`mksquashfs`、`mkimage`、`genext2fs`、`mkfs.ext4` 等，由 BuildFunc 决定。
-
-### 6.7 固件包（firmware）
-
-firmware 只是依赖各分区的最后一个包，BuildFunc 收集各分区镜像文件合成最终固件：
-
-```go
-// firmware/build.go
-package main
-
-import (
-    "path/filepath"
-
-    "gitee.com/spock2300/vmake/pkg/api"
-)
-
-func Main(p *api.Package) {
-    p.OnRequire(func(ctx *api.RequireContext) {
-        ctx.AddRequires("rootfs", "boot")
-    })
-
-    p.OnBuild(func(ctx *api.BuildContext) {
-        rootfsBuildDir := filepath.Dir(ctx.DepOutput("rootfs:rootfs"))
-        bootBuildDir := filepath.Dir(ctx.DepOutput("boot:boot"))
-
-        ctx.Target("firmware").
-            SetKind(api.TargetVoid).
-            SetBuildFunc(func(pkg *api.Package) error {
-                layout := []Partition{
-                    {"boot",  filepath.Join(bootBuildDir, "boot.img"),    0x000000, 0x004000},
-                    {"root",  filepath.Join(rootfsBuildDir, "rootfs.sqsh"), 0x004000, 0x100000},
+            for _, f := range []string{ubootBin, zImage, rootfsImg, appImg} {
+                if _, err := os.Stat(f); err != nil {
+                    return fmt.Errorf("missing partition image: %s", f)
                 }
-                return packImage(layout, filepath.Join(pkg.BuildDir(), "firmware.img"))
-            })
+            }
+
+            layout := []Partition{
+                {"uboot", ubootBin, 0},
+                {"kernel", zImage, 0},
+                {"rootfs", rootfsImg, 0},
+                {"app", appImg, 0},
+            }
+
+            return packImage(layout, filepath.Join(pkg.BuildDir(), "firmware.img"))
+        })
     })
-}
-
-type Partition struct {
-    Name   string
-    Source string
-    Offset int64
-    Size   int64
-}
-
-func packImage(layout []Partition, output string) error {
-    f, err := os.Create(output)
-    if err != nil {
-        return err
-    }
-    defer f.Close()
-    for _, p := range layout {
-        data, err := os.ReadFile(p.Source)
-        if err != nil {
-            return err
-        }
-        if _, err := f.WriteAt(data, p.Offset); err != nil {
-            return err
-        }
-    }
-    return nil
 }
 ```
 
-> firmware 的 BuildFunc 通过 `DepOutput` 获取各分区包的 BuildDir 路径（`filepath.Dir()` 去掉 target 名后缀），再拼接分区镜像文件名。分区镜像文件的具体名称（`rootfs.sqsh`、`boot.img` 等）由各分区包的 BuildFunc 决定，firmware 只需要知道约定。Partition 的 Offset 和 Size 单位为字节。
+> firmware 的 BuildFunc 使用 `ctx.DepBuildDir()` 获取各依赖包的 BuildDir，再拼接分区镜像文件名。`DepBuildDir` 等效于 `filepath.Dir(DepOutput(...))`，是推荐 API。
 
 ---
 
 ## 7. 分区镜像路径约定
 
-`DepOutput("<pkg>:<target>")` 返回 `<pkgDir>/build/<buildKey>/<targetName>`，是一个**文件路径**而非目录路径。分区包使用 `filepath.Dir()` 提取 BuildDir，再拼接镜像文件名：
+获取依赖包 BuildDir 的推荐方式是 `ctx.DepBuildDir("<pkg>:<target>")`：
 
-```
-DepOutput("rootfs:rootfs")  = partitions/rootfs/build/<buildKey>/rootfs
-    filepath.Dir(...)        = partitions/rootfs/build/<buildKey>/
-                               ├── staging/           (中间目录)
-                               └── rootfs.sqsh       (分区镜像)
-
-DepOutput("boot:boot")      = partitions/boot/build/<buildKey>/boot
-    filepath.Dir(...)        = partitions/boot/build/<buildKey>/
-                               ├── staging/
-                               └── boot.img
-
-DepOutput("data:data")      = partitions/data/build/<buildKey>/data
-    filepath.Dir(...)        = partitions/data/build/<buildKey>/
-                               ├── staging/
-                               └── data.ext4
+```go
+busyboxBuildDir := ctx.DepBuildDir("busybox:busybox")
 ```
 
-> TargetVoid 没有实际产物文件，`DepOutput` 返回的路径指向 `<BuildDir>/<targetName>`，该文件不存在但路径有效。分区包的 BuildFunc 将 staging 目录和镜像文件都放在同一 BuildDir 下。下游包通过 `filepath.Dir(DepOutput(...))` 获取 BuildDir，再按约定拼接文件名。
+路径关系：
+
+```
+DepBuildDir("busybox:busybox")  = <packagesDir>/busybox/<version>/<key>/build/
+                                    ├── _install/        (make install 产物)
+                                    └── busybox          (TargetVoid 占位文件)
+
+DepBuildDir("rootfs:rootfs")    = <SourceDir>/build/<key>/
+                                    ├── staging/          (中间目录)
+                                    └── rootfs.sqsh       (分区镜像)
+```
+
+> `DepBuildDir(depRef)` 内部实现为 `filepath.Dir(ctx.DepOutput(depRef))`。TargetVoid 没有实际产物文件，`DepOutput` 返回的路径指向 `<BuildDir>/<targetName>`，该文件不存在但路径有效。下游包通过 `DepBuildDir` 获取 BuildDir，再按约定拼接文件名。
 
 ---
 
@@ -662,29 +712,58 @@ vmake build
 │   │   linux ──┤             ├── firmware
 │   │            ├── boot ────┘
 │   │   uboot ──────────────────┘
+│   │
+│   └── autoWireRequireDeps：为声明了 SetRequire 但未显式 AddDeps 的目标自动补全依赖边
 │
 ├── Phase 2: OnConfig → 收集 Options + KConfig 条目
 │   └── KConfig 条目注册完毕，但尚未恢复 .config
 │
 ├── Phase 2.5: 恢复 .config（OnConfig 之后、OnBuild 之前）
-│   └── 对每个有 kconfig 的包：从 config.json 解码 → 写入 pkg.SourceDir()/.config
-│   └── 确保 BuildFunc 中 make olddefconfig 能找到正确的 .config
+│   └── 对每个有 kconfig 的包，按拓扑序调用 restoreKConfigFiles：
+│       ├── config.json 无该包条目 → 跳过（不删除 .config）
+│       ├── config.json 有条目但 kconfig 为空（preset 切换）→ 删除 .config
+│       ├── config.json 有 kconfig 内容但与磁盘一致 → 跳过（避免 mtime 变化导致缓存失效）
+│       └── config.json 有 kconfig 内容且与磁盘不同 → 写入 .config + ApplyKConfigPatches
 │
 ├── Phase 3: OnBuild（拓扑序执行）
 │   ├── myapp TargetBinary: 编译链接
-│   ├── busybox TargetVoid: make olddefconfig && make && make install
-│   ├── linux TargetVoid: make olddefconfig && make zImage dtbs
-│   ├── uboot TargetVoid: make olddefconfig && make
+│   ├── busybox TargetVoid: EnsureConfig + make + make install
+│   ├── linux TargetVoid: EnsureConfig + make
+│   ├── uboot TargetVoid: EnsureConfig + make
 │   ├── rootfs TargetVoid: overlay + collect → staging → mksquashfs → rootfs.sqsh
 │   ├── boot TargetVoid: zImage + dtb + overlay → staging → mkimage → boot.img
-│   └── firmware TargetVoid: collect rootfs.sqsh + boot.img → firmware.img
+│   └── firmware TargetVoid: collect images → firmware.img
 │
 └── Phase 4: 保存配置（如有变更）
 ```
 
 ---
 
-## 9. 完整目录结构
+## 9. autoWireRequireDeps
+
+`OnRequire`/`AddRequires` 仅声明依赖关系，**不会**自动创建构建图的边。目标必须通过 `AddDeps("pkg:target")` 显式声明构建依赖，否则拓扑排序不会产生正确的构建顺序。
+
+为简化使用，vmake 提供 `autoWireRequireDeps()` 自动补全：
+
+```go
+func autoWireRequireDeps(pkg *api.Package, allTargets, localTargets map[string]map[string]*api.Target)
+```
+
+规则：若本地包的某个 Target 没有显式 `AddDeps`，但包级别声明了 `AddRequires("busybox")`，则自动将该 Target 的依赖指向 busybox 包的所有 Target。
+
+这意味着大多数情况下，build.go 中只需写 `AddRequires` 而无需手动 `AddDeps`：
+
+```go
+p.OnRequire(func(ctx *api.RequireContext) {
+    ctx.AddRequires("busybox", "myapp")
+})
+```
+
+`autoWireRequireDeps` 在 `build_cmd.go` 中 Phase 1 执行，自动为所有本地包的目标补全依赖边。
+
+---
+
+## 10. 完整目录结构
 
 ```
 my-firmware/
@@ -704,13 +783,12 @@ my-firmware/
 │       └── build.go
 ├── packages/
 │   ├── uboot/
-│   │   ├── configs/
+│   │   ├── src/                  (git clone 下载的源码)
+│   │   │   └── ...
 │   │   └── build.go
 │   ├── linux/
-│   │   ├── configs/
 │   │   └── build.go
 │   ├── busybox/
-│   │   ├── configs/
 │   │   └── build.go
 │   └── myapp/
 │       ├── src/
@@ -724,20 +802,20 @@ my-firmware/
 
 ---
 
-## 10. 实施计划
+## 11. 实施计划
 
-| Phase | 内容 | 周期 |
+| Phase | 内容 | 状态 |
 |-------|------|------|
-| **1** | `Package.Make()` 交叉编译扩展：自动传递 `pkg.Env()` | 0.5 周 |
-| **2** | KConfig 基础：类型、API、config.json 扩展、编码/解码 | 1-2 周 |
-| **3** | TUI 扩展：预设选择器、menuconfig 集成 | 1-2 周 |
-| **4** | 构建集成：.config 恢复（Phase 2.5）、配置同步 | 1 周 |
-| **5** | 完整示例：test_data 固件项目（uboot + kernel + busybox + app + 分区 + firmware） | 1-2 周 |
+| **1** | `Package.Make()` 交叉编译扩展：自动传递 `pkg.Env()` | 已完成 |
+| **2** | KConfig 基础：类型、API、config.json 扩展、编码/解码 | 已完成 |
+| **3** | TUI 扩展：预设选择器、menuconfig 集成（两步执行） | 已完成 |
+| **4** | 构建集成：.config 恢复（Phase 2.5）、EnsureConfig、PatchKConfig | 已完成 |
+| **5** | 完整示例：test_data 固件项目（uboot + kernel + busybox + app + 分区 + firmware） | 已完成 |
 | **6** | 高级功能：FIT Image、OTA A/B、签名、多板级管理 | 后续 |
 
 ---
 
-## 11. 关键设计决策
+## 12. 关键设计决策
 
 | 决策 | 选择 | 理由 |
 |------|------|------|
@@ -745,11 +823,15 @@ my-firmware/
 | .config 存储 | JSON 字符串 | 完整保留原始内容，含 `#` 注释 |
 | KConfig | 统一 API | uboot/kernel/busybox 用完全相同的 KConfig API 管理配置 |
 | TargetKind | TargetVoid | 复用现有机制，不增加复杂度 |
-| 预设格式 | 原始 .config/defconfig | 兼容 U-Boot/Kernel/Busybox 原生格式 |
-| 配置同步 | OnConfig 之后恢复 | 确保 BuildFunc 中 `make olddefconfig` 能找到正确的 .config |
-| 交叉编译 | 扩展 Make() 自动传递 Env() | 不改变 BuildFunc 使用方式，`pkg.Make("olddefconfig")` 自动携带 CROSS_COMPILE |
-| BuildDir | = SourceDir | 所有包类型统一，简化路径推导 |
+| 预设格式 | defconfig 名称（make target） | 兼容 U-Boot/Kernel/Busybox 原生格式，`make <preset>` 生成 .config |
+| 配置生成 | EnsureConfig | 检查 .config 存在性，自动 `make <preset>` + PatchKConfig |
+| 配置恢复 | restoreKConfigFiles skip rules | 无条目跳过、空 kconfig 删除、有内容仅变化时写入（避免 mtime 失效） |
+| 交叉编译 | Make() 自动传递 Env() | 不改变 BuildFunc 使用方式，`pkg.Make()` 自动携带 CROSS_COMPILE |
+| BuildDir | 与 SourceDir 分离 | 本地包 `<SourceDir>/build/<key>/`，远程包 `<packagesDir>/.../build/` |
+| 构建缓存 | SetConfigFiles + stamp | ConfigFile 比 stamp 新则重新构建 |
 | 分区 | 普通包 | BuildFunc 做 overlay + collect + 外部工具生成分区镜像，不新增 API |
 | 固件 | 普通包 | 收集分区镜像文件 → 合成固件，完全用户可控 |
-| 依赖产物路径 | 闭包捕获 DepOutput + filepath.Dir | 现有 API，不新增接口 |
+| 依赖产物路径 | DepBuildDir | 封装 `filepath.Dir(DepOutput(...))`，推荐 API |
+| 文件操作 | api.CopyFile/CopyDir | 属于 pkg/api 包，build.go 插件可直接 import |
+| autoWire | autoWireRequireDeps | AddRequires 自动补全构建图边，无需手动 AddDeps |
 | pkg.Deps() | 有 InstallDir 即填充 | 不区分本地/远程，由 populateDepsFromGraph 统一处理 |

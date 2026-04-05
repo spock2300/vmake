@@ -274,6 +274,7 @@ vmake skill path                                      # 显示安装路径
 - [架构设计](docs/ARCHITECTURE.md) - 系统架构和执行流程
 - [目录结构](docs/VMAKE_HOME.md) - ~/.vmake 目录结构
 - [AI 安装指南](docs/AI_INSTALL_GUIDE.md) - AI 助手技能安装指南
+- [固件构建设计](docs/FIRMWARE_BUILD_DESIGN.md) - 固件构建系统设计
 
 ## 测试用例
 
@@ -295,6 +296,9 @@ vmake skill path                                      # 显示安装路径
 | `test_data/12_rtos_simulate` | RTOS 模拟项目 |
 | `test_data/13_with_prefix_repo` | Native 仓库依赖 |
 | `test_data/14_bin_header` | 二进制头文件嵌入 |
+| `test_data/15_subgraph_siblings` | 子图兄弟目标构建（宿主机代码生成工具 + 库） |
+| `test_data/16_subgraph_cross_tc` | 子图交叉编译工具链 |
+| `test_data/17_firmware` | 完整固件构建（Linux, U-Boot, BusyBox, App, RootFS, Firmware） |
 
 ## 许可证
 

@@ -17,56 +17,16 @@ Go-plugin-based C/C++ build system. Build instructions are written in Go (`build
 | Phase | Hook | Purpose |
 |-------|------|---------|
 | 1 | `OnRequire` | Declare third-party dependencies |
-| 2a | `ResolveDeferred` | Clone/compile remote packages (deferred resolution) |
+| 2a | `ResolveDeferred` | Clone/compile remote packages (automatic) |
 | 2b | `OnConfig` | Define build options |
 | 3 | `OnBuild` | Generate build targets |
 | 4 | `OnInstall` | Post-build install logic |
 
-`OnPackage` runs during plugin extraction, right after `Main()` is called and before any lifecycle phases. It populates the `*Package` with metadata (Git URLs, versions, libs, description, license) so the dependency resolver and source downloader can use it.
+`OnPackage` runs during plugin extraction, right after `Main()` is called and before any lifecycle phases. Use it for package metadata (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` is for **registry repo** packages only — native repo and local packages must NOT use these.
 
-**Note**: `OnPackage` with `SetGit`/`AddVersion` is for **registry repo** packages only. **Native repo** packages do NOT use these — versions come from git tags automatically, and the git URL is resolved from the repository URL template.
+## Conditional API
 
-## Usage Example
-
-	package main
-
-	import "gitee.com/spock2300/vmake/pkg/api"
-
-	func Main(p *api.Package) {
-		p.OnConfig(func(ctx *api.ConfigContext) {
-			ctx.Option("debug").
-				SetType(api.OptionBool).
-				SetDefault(false).
-				SetDescription("Enable debug mode")
-			ctx.Option("ssl").
-				SetType(api.OptionBool).
-				SetDefault(false).
-				SetDescription("Enable SSL support")
-		})
-
-		p.OnBuild(func(ctx *api.BuildContext) {
-			ctx.Target("app").
-				SetKind(api.TargetBinary).
-				AddFiles("src/*.c").
-				AddIncludes("include").
-				AddDefines(ctx.If("debug", "DEBUG=1")).
-				AddDefines(ctx.IfNot("debug", "NDEBUG")).
-				AddCFlags(ctx.Select("opt", map[string]string{
-					"O0": "-O0", "O2": "-O2",
-				})).
-				AddLinks(ctx.If("ssl", "ssl", "crypto")).
-				AddDeps("lib:utils").
-				AddDeps("official/zlib")
-
-			ctx.Target("tests").
-				SetKind(api.TargetBinary).
-				AddFiles("tests/*.c").
-				AddDeps("app").
-				SetDefault(false)
-		})
-	}
-
-Conditional API: `If` (if bool then values), `IfNot` (if not), `Select` (map option value), `Equal` (match string), `When` (compare value, returns bool).
+`If` (if bool then values), `IfNot` (if not), `Select` (map option value), `Equal` (match string), `When` (compare value, returns bool).
 
 All setter methods return the receiver for chaining. Use `filepath.Join()` for filesystem paths. Package IDs use `/` (e.g., `official/zlib`), target IDs use `:` (e.g., `lib:utils`). `SetBuildFunc` callback receives `*Package`, returns `error`.
 
@@ -90,7 +50,7 @@ Import: `gitee.com/spock2300/vmake/pkg/api`
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `SetGit` | `(urls ...string)` | Git repository URLs |
+| `SetGit` | `(urls ...string)` | Git repository URLs (registry repo only) |
 | `SetHomepage` | `(url string)` | Project homepage |
 | `SetDescription` | `(desc string)` | Package description |
 | `SetLicense` | `(license string)` | License identifier |
@@ -105,29 +65,30 @@ Import: `gitee.com/spock2300/vmake/pkg/api`
 | `SetToolchain` | `(tc *toolchain.Toolchain)` | Set toolchain |
 | `AddPatches` | `(paths ...string)` | Git patches to apply |
 | `SetPatches` | `(paths ...string)` | Set git patches |
+| `SetConfigFiles` | `(files ...string)` | Config files for stamp invalidation |
+| `SetSrcDir` | `(dir string)` | Source code directory |
+| `SetDryRun` | `(v bool)` | Dry run mode |
 
 ### Targets & Dependencies
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `Target` | `(name string) *Target` | Get or create a target |
-| `AddInstalls` | `(src, dest string) *InstallItemHolder` | Install entry |
-| `SetInstallFilter` | `(filter InstallFilterFunc) *InstallItemHolder` | Install file filter |
 
 ### Build Helpers (run in OnBuild/OnInstall)
 
-| Method | Description |
-|--------|-------------|
-| `CMakeConfigure(extraArgs...)` | cmake -S src -B build --prefix=... |
-| `CMakeBuild(args...)` | cmake --build build |
-| `CMakeInstall()` | cmake --install build |
-| `Configure(extraArgs...)` | ./configure --prefix=... |
-| `Make(args...)` | make -C build |
-| `Run(name, args...)` | Run command in BuildDir |
-| `RunIn(dir, name, args...)` | Run command in dir |
-| `RunEnv(env, name, args...)` | Run with extra env vars |
+All build helpers use `exec.RunFatal` (call `os.Exit` on failure) EXCEPT `RunEnv` which returns a real error.
 
-All build helpers return `error`.
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Run` | `(name string, args ...string) error` | Run command in BuildDir (os.Exit on failure) |
+| `RunIn` | `(dir, name string, args ...string) error` | Run command in dir (os.Exit on failure) |
+| `RunEnv` | `(env map[string]string, name string, args ...string) error` | Run with extra env vars (**returns real error**) |
+| `CMakeConfigure` | `(extraArgs ...string) error` | cmake -S src -B build --prefix=... |
+| `CMakeBuild` | `(args ...string) error` | cmake --build build |
+| `CMakeInstall` | `() error` | cmake --install build |
+| `Configure` | `(extraArgs ...string) error` | ./configure --prefix=... |
+| `Make` | `(args ...string) error` | make -C build (uses `pkg.Env()`, passes `-j<ncpu>`) |
 
 ### Property Getters
 
@@ -143,27 +104,38 @@ All build helpers return `error`.
 | `Size()` | `string` | size tool path |
 | `ObjDump()` | `string` | objdump tool path |
 | `NM()` | `string` | nm tool path |
-| `SourceDir()` / `BuildDir()` / `InstallDir()` / `OutputDir()` | `string` | Directories |
-| `GetRequires()` | `*Requires` | Package requires |
-| `Env()` | `map[string]string` | Toolchain env vars |
+| `SourceDir()` | `string` | Package root (where build.go lives) |
+| `SrcDir()` | `string` | Source code directory (SourceDir()/src/ when SetGit downloads) |
+| `BuildDir()` | `string` | Build scratch directory |
+| `InstallDir()` | `string` | Installation prefix |
+| `OutputDir()` | `string` | Output directory |
+| `ScriptDir()` | `string` | Build script directory (same as SourceDir) |
+| `Env()` | `map[string]string` | Toolchain env vars (CC, CXX, AR, etc.) |
 | `Libs()` | `[]string` | Library deps |
 | `Deps()` | `map[string]*InstalledPackage` | Resolved dependencies |
-| `SelectVersion(constraint)` | `(string, error)` | Best version match |
-| `GetVersions()` | `[]string` | Available version list (unsorted) |
+| `GetRequires()` | `*Requires` | Package requires |
 | `GitURLs()` | `[]string` | Git repository URLs |
 | `Homepage()` | `string` | Project homepage |
 | `Description()` | `string` | Package description |
 | `License()` | `string` | License identifier |
 | `Versions()` | `map[string]string` | Version to ref mapping |
+| `GetVersions()` | `[]string` | Available version list (unsorted) |
+| `GetRef` | `(version string) string` | Git ref for a version |
+| `SelectVersion` | `(constraint string) (string, error)` | Best version match |
 | `Submodules()` | `bool` | Git submodules enabled |
-| `ScriptDir()` | `string` | Build script directory |
 | `GetPatches()` | `[]string` | Git patch paths |
+| `ConfigFiles()` | `[]string` | Stamp-related config files |
+| `DryRun()` | `bool` | Dry run mode |
+| `SetDep` | `(name string, pkg *InstalledPackage) *Package` | Set resolved dependency |
 
-### Dependency Management
+### Package KConfig Methods
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `SetDep` | `(name string, pkg *InstalledPackage)` | Set resolved dependency |
+| `AddKConfig` | `(name string) *KConfigEntry` | Create KConfig entry |
+| `KConfigEntries` | `() []*KConfigEntry` | All KConfig entries |
+| `SelectedPreset` | `() string` | Selected preset name |
+| `EnsureConfig` | `(srcDir string) bool` | Check `.config` exists & non-empty, run `make <preset>` if not |
 
 ---
 
@@ -177,26 +149,27 @@ All setters are fluent (return `*Target`).
 |--------|-----------|-------------|
 | `SetKind` | `(kind TargetKind)` | Binary/Static/Shared/Object/Void |
 | `SetDefault` | `(isDefault bool)` | Include in default build |
-| `AddFiles` | `(files ...any)` | Source files (supports globs, []string) |
+| `AddFiles` | `(files ...any)` | Source files (globs, strings, []string) |
 | `AddIncludes` | `(dirs ...any)` | Include directories |
 | `AddPublicIncludes` | `(args ...any)` | Includes propagated to dependents (use @"pattern" to match) |
 | `AddDefines` | `(defines ...any)` | Preprocessor defines |
-| `SetLanguages` | `(langs ...string)` | "c" or "c++" |
 | `AddLinks` | `(libs ...any)` | Libraries to link |
-| `AddDeps` | `(targets ...string)` | Dependencies: same pkg (`"name"`), cross pkg (`"pkg:name"`), third-party (`"official/zlib"`) |
+| `AddDeps` | `(targets ...string)` | Dependencies: same pkg, cross pkg (`"pkg:name"`), third-party (`"official/zlib"`) |
 | `AddCFlags` | `(flags ...any)` | C compiler flags |
 | `AddCxxFlags` | `(flags ...any)` | C++ compiler flags |
 | `AddLdFlags` | `(flags ...any)` | Linker flags |
-| `SetBuildFunc` | `(fn func(p *Package) error)` | Custom build logic (for third-party packages with external build systems) |
+| `SetBuildFunc` | `(fn func(p *Package) error)` | Custom build logic (for third-party packages) |
 | `SetInstallDir` | `(dir string)` | Install directory |
 | `SetInstall` | `(install bool)` | Control install |
-| `SetLinkerScript` | `(path string)` | Linker script for binary target (passes `-T` to linker) |
-| `AddPostLink` | `(tool string, args ...string)` | Post-link step: runs `tool args...` after linking, supports `{output}` placeholder |
-| `AddPostLinkHex` | `()` | Shorthand: `objcopy -O ihex {output} {output}.hex` |
-| `AddPostLinkBin` | `()` | Shorthand: `objcopy -O binary {output} {output}.bin` |
-| `AddPostLinkSize` | `()` | Shorthand: `size {output}` |
-| `AddPostLinkStrip` | `()` | Shorthand: `strip -o {output}.stripped {output}` |
-| `AddBinHeader` | `(inputs ...any)` | Convert binary files to `.h` hex headers (e.g. `AddBinHeader("assets/logo.bin")`); accepts `string` or `[]string`; output to `build/<tc>-<mode>/generated/<stem>.h`; include path auto-added; incremental via mtime |
+| `SetLinkerScript` | `(path string)` | Linker script (passes `-T` to linker) |
+| `AddPostLink` | `(tool string, args ...string)` | Post-link step: `{output}` placeholder |
+| `AddPostLinkHex` | `()` | `objcopy -O ihex {output} {output}.hex` |
+| `AddPostLinkBin` | `()` | `objcopy -O binary {output} {output}.bin` |
+| `AddPostLinkSize` | `()` | `size {output}` |
+| `AddPostLinkStrip` | `()` | `strip -o {output}.stripped {output}` |
+| `AddBinHeader` | `(inputs ...any)` | Binary files → `.h` headers; output to `build/<tc>-<mode>/generated/`; incremental via mtime |
+
+`SetLanguages(langs ...string)` exists but has **no effect** — language is auto-detected from file extension (`.c` → C, `.cc/.cpp/.cxx` → C++).
 
 ### Removers
 
@@ -223,6 +196,78 @@ All setters are fluent (return `*Target`).
 | `LinkerScript()` | `string` |
 | `PostLinkSteps()` | `[]PostLinkStep` |
 | `GenRules()` | `[]GenRule` |
+| `HasDep(depRef)` | `bool` |
+| `IncludeRule(dir)` | `[]string` |
+
+---
+
+## Context Types
+
+All context types embed `ConfigAccessor` for option value access (see below).
+
+### ConfigContext
+
+| Method | Description |
+|--------|-------------|
+| `Option(name) *Option` | Get or create option |
+| `GlobalOption(name) *Option` | Get or create global option |
+| `GlobalMode() *Option` | Built-in mode option |
+| `ToolchainOption() *Option` | Toolchain choice option (auto-populated) |
+| `Toolchains() []string` | Available toolchain names |
+| `SetConfigValue(name, val) *ConfigContext` | Set config value |
+| `GetOptions() map[string]*Option` | All options |
+| `PackageName() string` | Package name |
+| `KConfig(name) *KConfigEntry` | Create/get KConfig entry |
+
+### BuildContext
+
+| Method | Description |
+|--------|-------------|
+| `Target(name) *Target` | Get or create target |
+| `GetTargets() map[string]*Target` | All targets |
+| `PackageName() string` | Package name |
+| `AddInstalls(src, dest)` | Install entry |
+| `SetInstallFilter(filter)` | Install file filter |
+| `BuildSubGraph(pkgName)` | Build package as independent sub-graph |
+| `DepOutput(depRef) string` | Get output path of dependency target |
+| `DepBuildDir(depRef) string` | Get build directory of dependency target |
+| `Exec(name, args...)` | Run command with logging (os.Exit on failure) |
+| `SetDryRun(v bool) *BuildContext` | Set dry run mode |
+| `GetInstallItems() []InstallItem` | All install items |
+| `GetInstallFilter() InstallFilterFunc` | Install file filter |
+
+### InstallContext
+
+| Method | Description |
+|--------|-------------|
+| `SetPrefix(prefix string)` | Install prefix |
+| `Prefix() string` | Get prefix |
+| `PrefixSet() bool` | Was prefix set |
+| `AddInstalls(src, dest)` | Install entry |
+| `PackageName() string` | Package name |
+
+### RequireContext
+
+| Method | Description |
+|--------|-------------|
+| `AddRequires(deps...)` | Add dependency (`"official/zlib >=1.2"`) |
+| `GetRequires() []RequireInfo` | All requires |
+| `ResetRequires()` | Clear requires |
+
+### ConfigAccessor (embedded by all context types)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Bool` | `(name string) bool` | Get bool value |
+| `String` | `(name string) string` | Get string value |
+| `Int` | `(name string) int` | Get int value |
+| `BoolStr` | `(name string) string` | Returns "ON"/"OFF" |
+| `If` | `(option string, then ...string) []string` | Values if bool is true |
+| `IfNot` | `(option string, then ...string) []string` | Values if bool is false |
+| `Equal` | `(option, value, dep string) string` | Return dep if String==value |
+| `Select` | `(option string, mapping map[string]string) string` | Map option value (returns `""` in discoverAll) |
+| `When` | `(option string, value any) bool` | Compare option value (returns `true` in discoverAll) |
+| `Option` | `(name string) *Option` | Get or create option |
 
 ---
 
@@ -240,88 +285,6 @@ All setters are fluent (return `*Option`).
 | `SetGroup` | `(group string)` | Display group |
 
 Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()`, `Group()`, `IsGlobal()`.
-
----
-
-## ConfigContext
-
-Embedded: `ConfigAccessor`
-
-| Method | Description |
-|--------|-------------|
-| `Option(name) *Option` | Get or create option |
-| `GlobalOption(name) *Option` | Get or create global option |
-| `GlobalMode() *Option` | Built-in mode option |
-| `ToolchainOption() *Option` | Toolchain choice option (auto-populated from registered toolchains) |
-| `Toolchains() []string` | Available toolchain names |
-| `SetConfigValue(name, val)` | Set config value |
-| `GetOptions() map[string]*Option` | All options |
-| `PackageName() string` | Package name |
-
----
-
-## BuildContext
-
-Embedded: `ConfigAccessor`
-
-| Method | Description |
-|--------|-------------|
-| `Target(name) *Target` | Get or create target |
-| `GetTargets() map[string]*Target` | All targets |
-| `PackageName() string` | Package name |
-| `AddInstalls(src, dest)` | Install entry |
-| `SetInstallFilter(filter)` | Install file filter |
-| `BuildSubGraph(pkgName)` | Build package as independent sub-graph |
-| `DepOutput(depRef) string` | Get output path of dependency target |
-| `Exec(name, args...)` | Run command with logging (calls Fatal on error) |
-
----
-
-## InstallContext
-
-Embedded: `ConfigAccessor`
-
-| Method | Description |
-|--------|-------------|
-| `SetPrefix(prefix string)` | Install prefix |
-| `Prefix() string` | Get prefix |
-| `PrefixSet() bool` | Was prefix set |
-| `AddInstalls(src, dest)` | Install entry |
-| `PackageName() string` | Package name |
-
----
-
-## RequireContext
-
-Embedded: `ConfigAccessor`
-
-| Method | Description |
-|--------|-------------|
-| `AddRequires(deps...)` | Add dependency (`"official/zlib >=1.2"`) |
-| `GetRequires() []RequireInfo` | All requires |
-| `ResetRequires()` | Clear requires |
-| `RunFuncs()` | Execute registered funcs |
-
----
-
-## ConfigAccessor
-
-Embedded by all context types. Provides option value access.
-
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `Bool` | `(name string) bool` | Get bool value |
-| `String` | `(name string) string` | Get string value |
-| `Int` | `(name string) int` | Get int value |
-| `BoolStr` | `(name string) string` | Returns "ON"/"OFF" |
-| `If` | `(option string, then ...string) []string` | Values if bool is true |
-| `IfNot` | `(option string, then ...string) []string` | Values if bool is false |
-| `Equal` | `(option, value, dep string) string` | Return dep if String==value |
-| `Select` | `(option string, mapping map[string]string) string` | Map option value (returns `""` in discoverAll mode) |
-| `When` | `(option string, value any) bool` | Compare option value (returns `true` in discoverAll mode) |
-| `Option` | `(name string) *Option` | Get or create option |
-| `SetOptions` | `(options map[string]*Option)` | Set options map |
-| `MergeGlobals` | `(globalOptions map[string]*Option, globalVals map[string]any)` | Merge global options/values as fallback |
 
 ---
 
@@ -361,6 +324,7 @@ Embedded by all context types. Provides option value access.
 	func (r *Requires) Reset()
 
 	type PackageMeta struct { Repo string; Name string }
+	func (m PackageMeta) FullName() string
 
 	type InstalledPackage struct {
 		Name, Version, InstallDir string
@@ -378,8 +342,80 @@ Embedded by all context types. Provides option value access.
 		SourceRemote SourceOrigin = 1
 	)
 
-	type Version struct { Major, Minor, Patch int; Pre string }
-	type Constraint struct { Op string; Version Version }
+	type CopyFilter func(path string, isDir bool) bool
+	type InstallFilterFunc func(path string, isTargetOutput bool) bool
+
+	type KConfigEntry struct { ... }
+	func (k *KConfigEntry) Name() string
+	func (k *KConfigEntry) Description() string
+	func (k *KConfigEntry) ConfigPath() string
+	func (k *KConfigEntry) SrcDir() string
+	func (k *KConfigEntry) Presets() []string
+	func (k *KConfigEntry) DefaultPreset() string
+	func (k *KConfigEntry) SelectedPreset() string
+	func (k *KConfigEntry) MenuconfigCmd() string
+	func (k *KConfigEntry) Patches() map[string]string
+	func (k *KConfigEntry) SetDescription(desc string) *KConfigEntry
+	func (k *KConfigEntry) SetConfigPath(path string) *KConfigEntry
+	func (k *KConfigEntry) SetSrcDir(dir string) *KConfigEntry
+	func (k *KConfigEntry) SetMenuconfigCmd(cmd string) *KConfigEntry
+	func (k *KConfigEntry) AddPreset(name string) *KConfigEntry
+	func (k *KConfigEntry) SetDefault(presetName string) *KConfigEntry
+	func (k *KConfigEntry) SetSelectedPreset(name string) *KConfigEntry
+	func (k *KConfigEntry) PatchKConfig(patches map[string]string) *KConfigEntry
+
+	type GenRuleKind string
+	const GenRuleBinHeader GenRuleKind = "binheader"
+
+	type GenRule struct { ... }
+	func (r *GenRule) Kind() GenRuleKind
+	func (r *GenRule) Input() string
+	func (r *GenRule) OutputStem() string
+
+---
+
+## Constructor Functions
 
 	func NewPackage() *Package
 	func NewInstalledPackage(name, version, installDir string, libs []string) *InstalledPackage
+	func NewConfigContext(pkgName string) *ConfigContext
+	func NewConfigContextWithPackage(pkgName string, pkg *Package) *ConfigContext
+	func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext
+	func NewInstallContext(pkgName string, cfgVals map[string]any) *InstallContext
+
+---
+
+## Utility Functions
+
+### KConfig
+
+	func ApplyKConfigPatches(configPath string, patches map[string]string)
+
+### File Copy
+
+| Function | Description |
+|----------|-------------|
+| `CopyFile(src, dest string) error` | Copy a single file |
+| `CopyDir(src, dest string) error` | Copy directory (skips `.git`) |
+| `CopyDirWithFilter(src, dest string, filter CopyFilter) error` | Copy directory with filter |
+| `CopyDirIfExists(src, dst string) error` | Copy directory only if source exists |
+
+### Package Reference
+
+	func SplitPackageRef(ref string) (repo, name string, ok bool)
+	func MatchPatterns(patterns []string, name string) bool
+
+### Build Mode
+
+	func GetModeFlags(mode string) (cflags []string, defines []string)
+
+### Semver
+
+	type Version struct { Major, Minor, Patch int; Pre string }
+	type Constraint struct { Op string; Version Version }
+	func ParseVersion(s string) (Version, bool)
+	func ParseConstraint(s string) (Constraint, bool)
+	func (v Version) Compare(other Version) int
+	func (v Version) String() string
+	func (c Constraint) Match(v Version) bool
+	func MatchVersion(available []string, constraint string) (string, bool)

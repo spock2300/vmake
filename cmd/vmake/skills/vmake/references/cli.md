@@ -4,8 +4,9 @@ Generated from vmake built-in commands. For plugin commands,
 run `vmake <plugin> --help` or check the plugin documentation.
 
 `vmake [--quiet -q --verbose -v --very-verbose -V]` - VMake - A Go-based C/C++ build system
-  `vmake build [--force -f --install -i --install-type --mode --prefix -p --toolchain]` - Build the project
+  `vmake build [--force -f --install -i --install-type --mode --prefix -p --toolchain --manifest]` - Build the project
   `vmake clean [--all]` - Clean build artifacts
+  `vmake distclean` - Deep clean all build artifacts (build scripts, caches, install dir)
   `vmake completion [shell]` - Generate shell completion script
     `vmake install [--shell]` - Install shell completion to your profile
   `vmake config` - Configure project options
@@ -21,6 +22,9 @@ run `vmake <plugin> --help` or check the plugin documentation.
     `vmake list` - List installed packages
     `vmake search [pattern]` - Search for packages
     `vmake update <repo/name>` - Update package source
+  `vmake manifest` - Install manifest management
+    `vmake show <path>` - Show manifest contents
+    `vmake checkout <path> [name]` - Checkout packages from manifest
   `vmake query` - Show dependency tree
   `vmake rebuild [--install -i --install-type --prefix -p]` - Rebuild the project
   `vmake repo` - Manage package repositories

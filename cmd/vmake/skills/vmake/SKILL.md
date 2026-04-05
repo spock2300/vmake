@@ -24,11 +24,12 @@ include the ones your project needs:
 | Phase | Hook | When you need it |
 |-------|------|-----------------|
 | 1 | `OnRequire` | Third-party dependencies (git packages) |
-| 2 | `OnConfig` | Build options (debug/release, features, etc.) |
+| 2a | `ResolveDeferred` | Remote packages cloned, build.go compiled (automatic) |
+| 2b | `OnConfig` | Build options (debug/release, features, etc.) |
 | 3 | `OnBuild` | Always — define compilation targets |
 | 4 | `OnInstall` | Custom install logic |
 
-`OnPackage` runs for all packages (local and remote). Use it to describe the package (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` is only for registry repo packages — native repo and local packages should NOT use these.
+`OnPackage` runs for all packages right after `Main()` is called (before any lifecycle phases). Use it to describe the package (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` is only for **registry repo** packages — native repo and local packages must NOT use these.
 
 ## Decision Guide
 
@@ -36,11 +37,12 @@ include the ones your project needs:
 - **Need configurable features** → Add `OnConfig`. See `examples/config.md`.
 - **Conditional compilation** → Options + `ctx.If()`/`ctx.Select()`. See `examples/conditional.md`.
 - **Multiple targets (lib + binary + tests)** → See `examples/multi-target.md`.
-- **Multi-module workspace** → Cross-package deps with `pkg:target` format. See `examples/multi-target.md`.
+- **Multi-module workspace (lib/ + app/ directories)** → See `examples/multi-module.md`.
 - **Third-party packages** → `OnRequire` + `AddRequires` + `AddDeps`. See `examples/with-package.md`.
 - **Wrap external C/C++ library (CMake/Autotools)** → `TargetVoid` + `SetBuildFunc`. See `examples/third-party-wrapper.md`.
 - **Code generation / host tools** → `BuildSubGraph` + `DepOutput` + `Exec`. See `examples/subbuild.md`.
-- **Embedded / RTOS firmware** → `SetLinkerScript` + `AddPostLink*` + `AddBinHeader`. See RTOS section below.
+- **Embedded / RTOS firmware (linker script, hex/bin)** → See `examples/embedded-rtos.md`.
+- **Embedded firmware (KConfig/partitions)** → `EnsureConfig` + `PatchKConfig` + `DepBuildDir`. See `examples/firmware.md`.
 
 ## Build Script Template
 
@@ -51,75 +53,150 @@ import "gitee.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
     p.OnConfig(func(ctx *api.ConfigContext) {
-        // Phase 2: Define build options (optional)
     })
 
     p.OnBuild(func(ctx *api.BuildContext) {
-        // Phase 3: Define targets (required)
+        ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c")
     })
 }
 ```
 
-## Key Patterns & Gotchas
+## Common Mistakes
 
-### Fluent API
-All setters return the receiver for chaining:
+### `pkg.Make()` runs in BuildDir, not SourceDir
+
+`pkg.Make()` always runs `make` in `BuildDir`. For most third-party packages (U-Boot, Linux, Busybox, etc.), the Makefile is in the source tree, so you need `pkg.RunIn()`:
+
 ```go
-ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c")
+SetBuildFunc(func(p *api.Package) error {
+    srcDir := p.SrcDir()
+    p.EnsureConfig(srcDir)
+    pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
+    return nil
+})
 ```
 
-### Conditional expressions return slices
-`ctx.If()` and `ctx.Select()` return `[]string` — spread with `...`:
+Use `pkg.Make()` only when the build process should run in the scratch `BuildDir` (rare — mainly custom builds that generate Makefiles via CMake/Configure into BuildDir).
+
+### `$(nproc)` won't work — use `runtime.NumCPU()`
+
+`exec.Command` doesn't expand shell features. `$(nproc)`, `$(pwd)`, and pipes won't work. Use Go APIs instead:
+
+```go
+"-j" + strconv.Itoa(runtime.NumCPU())
+```
+
+### `ctx.If()` returns `[]string` — must spread with `...`
+
 ```go
 AddCFlags(ctx.If("debug", "-g", "-O0")...)   // correct
-AddCFlags(ctx.If("debug", "-g", "-O0"))      // WRONG — compile error
+AddCFlags(ctx.If("debug", "-g", "-O0"))      // compile error
 ```
 
-### `AddXxx` methods accept strings and []string
-```go
-AddFiles("src/main.c", "src/utils.c")         // individual strings
-AddFiles("src/*.c")                            // glob pattern
-files := []string{"a.c", "b.c"}
-AddFiles(files)                                // slice (via ...any)
-```
+### `filepath.Join` with absolute paths
 
-### Third-party deps require TWO steps
-`AddDeps` alone is not enough — you must also declare the dependency:
-```go
-// Step 1: Declare (Phase 1)
-p.OnRequire(func(ctx *api.RequireContext) {
-    ctx.AddRequires("official/zlib >=1.2")
-})
+`filepath.Join("/a/b", "/a/b/c")` returns `/a/b/a/b/c`, NOT `/a/b/c`. The second absolute path wins and the first becomes a segment. Use string concatenation or trim leading `/` for logical path components.
 
-// Step 2: Use (Phase 3)
-ctx.Target("app").AddDeps("official/zlib")
-```
+### `SetGit`/`AddVersion` is registry-only
 
-### Registry repo vs Native repo
-- **Registry repo**: `build.go` wraps external C/C++ libs using `OnPackage` + `SetGit` + `AddVersion`
-- **Native repo**: `build.go` is a normal build descriptor, NO `SetGit`/`AddVersion` — system handles automatically
+Local packages and native repo packages must NOT use `SetGit`/`AddVersion` in `OnPackage`. Only registry repo wrapper packages use these.
+
+### `pkg.Run()` calls `os.Exit` on failure
+
+`pkg.Run()` and `pkg.RunIn()` use `exec.RunFatal` internally — they never return a non-nil error. Only `pkg.RunEnv()` returns a real error that you should check.
+
+## Directory Reference
+
+| Property | What it returns | When to use |
+|----------|----------------|-------------|
+| `SourceDir()` | Package root (where build.go lives) | Package metadata files, overlay dirs |
+| `SrcDir()` | Source code dir (`SourceDir()/src/` when `SetGit` downloads source) | Source files for firmware/third-party builds |
+| `BuildDir()` | Scratch dir (`SourceDir()/build/<key>/`) | Intermediate artifacts, stamps |
+| `InstallDir()` | Installation prefix | Headers/libs installed by third-party packages |
+| `ScriptDir()` | Same as `SourceDir()` | Legacy alias |
+
+Key distinction: for a registry package like U-Boot, `SourceDir()` is where `build.go` lives, but the actual U-Boot source is at `SrcDir()` (= `SourceDir()/src/`). For a local package without `SetGit`, `SourceDir()` == `SrcDir()`.
+
+## Package Types
+
+| Type | How identified | `OnPackage` metadata | Source code location |
+|------|---------------|---------------------|---------------------|
+| **Local** | build.go in project directory | `SetDescription`, `SetLicense` only | `SourceDir()` (same as build.go) |
+| **Registry** | `vmake repo add name url` | `SetGit`, `AddVersion`, `SetLibs` required | `SrcDir()` (downloaded to `SourceDir()/src/`) |
+| **Native** | `vmake repo add --native name url` | No `SetGit`/`AddVersion` — version from git tag | `SrcDir()` (downloaded to `SourceDir()/src/`) |
+
+Registry packages wrap external C/C++ libraries. Native packages are independent vmake projects consumed as dependencies. The resolver checks registry first, then native.
 
 ## Target API at a Glance
 
 ```go
 ctx.Target("app").
-    SetKind(api.TargetBinary).           // Binary/Static/Shared/Object/Void
-    AddFiles("src/*.c").                 // Source files (globs, strings, []string)
-    AddIncludes("include").              // Include directories
-    AddPublicIncludes("include").        // Propagated to dependents
-    AddDefines("DEBUG=1").               // Preprocessor defines
-    AddCFlags("-Wall").                  // C compiler flags
-    AddCxxFlags("-stdlib=libc++").       // C++ compiler flags
-    AddLdFlags("-lm").                   // Linker flags
-    AddLinks("ssl", "crypto").           // Libraries to link
-    AddDeps("lib:utils").                // Dependencies (pkg:target / pkg/name / local)
-    SetDefault(false).                   // Exclude from default build
-    SetLanguages("c++17").               // C/C++ standard
+    SetKind(api.TargetBinary).
+    AddFiles("src/*.c").
+    AddIncludes("include").
+    AddPublicIncludes("include").
+    AddDefines("DEBUG=1").
+    AddCFlags("-Wall").
+    AddCxxFlags("-stdlib=libc++").
+    AddLdFlags("-lm").
+    AddLinks("ssl", "crypto").
+    AddDeps("lib:utils").
+    SetDefault(false).
+    SetBuildFunc(func(p *api.Package) error { ... })
 ```
 
 Remove flags: `RemoveCFlags`, `RemoveDefines`, `RemoveIncludes`, etc.
 
-Third-party packages with external build systems (CMake, Autotools, etc.) use `TargetVoid` with `SetBuildFunc` to provide custom build logic.
+Third-party packages with external build systems use `TargetVoid` with `SetBuildFunc`.
+
+## Dependencies
+
+### Declaring and Using Dependencies
+
+```go
+p.OnRequire(func(ctx *api.RequireContext) {
+    ctx.AddRequires("official/zlib >=1.2")
+})
+
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.Target("app").AddDeps("official/zlib")
+})
+```
+
+### Auto-Wire: When AddDeps is Automatic
+
+After all `OnBuild` callbacks execute, vmake runs `autoWireRequireDeps`. For each local target, for each `AddRequires` entry, it adds `AddDeps("pkg:target")` for ALL targets defined by that dependency package. This means:
+
+- `AddRequires("busybox")` + busybox defines target `"busybox"` → all your targets automatically get `AddDeps("busybox:busybox")`
+- You do NOT need explicit `AddDeps` when depending on a whole package via `OnRequire`
+
+Explicit `AddDeps` IS needed for:
+- Same-package target deps: `AddDeps("mylib")`
+- Specific cross-package target: `AddDeps("lib:utils")`
+- Third-party packages: both `AddRequires` (Phase 1) and `AddDeps` (Phase 3) needed
+
+### Dependency Format
+
+- `"utils"` — same-package target
+- `"lib:utils"` — cross-package target (build order + link + PublicIncludes)
+- `"official/zlib"` — third-party package (expanded to all targets from that package)
+
+## Option & Conditional
+
+```go
+ctx.Option("debug").SetType(api.OptionBool).SetDefault(false)
+
+AddCFlags(ctx.If("debug", "-g", "-O0")...)
+AddCFlags(ctx.IfNot("debug", "-O2")...)
+AddCFlags(ctx.Select("opt", map[string]string{
+    "O0": "-O0", "O2": "-O2",
+}))
+
+ctx.String("name")
+ctx.Int("count")
+ctx.Bool("debug")
+ctx.When("x", "val")
+```
 
 ## RTOS / Embedded
 
@@ -128,10 +205,10 @@ ctx.Target("firmware").
     SetKind(api.TargetBinary).
     AddFiles("src/*.c").
     SetLinkerScript("ld/stm32f4.ld").
-    AddBinHeader("assets/logo.bin").      // Binary → .h hex header (auto-included)
-    AddPostLinkSize().                    // Print size info
-    AddPostLinkHex().                     // Generate .hex
-    AddPostLinkBin()                      // Generate .bin
+    AddBinHeader("assets/logo.bin").
+    AddPostLinkSize().
+    AddPostLinkHex().
+    AddPostLinkBin()
 ```
 
 - `SetLinkerScript(path)` — passes `-T` to linker
@@ -140,67 +217,36 @@ ctx.Target("firmware").
 - `AddBinHeader(inputs...)` — converts binary files to `.h` headers; output to `build/<tc>-<mode>/generated/`; include path auto-added; incremental via mtime
 - RTOS tool accessors: `Package.ObjCopy()`, `Size()`, `ObjDump()`, `NM()`
 
+### KConfig Preset Management (Firmware)
+
+1. **Declare presets** in `OnConfig`: `ctx.KConfig("u-boot").AddPreset("rk3568_defconfig").SetDefault("sandbox_defconfig")`
+2. **Select preset** via `vmake config` TUI — saves to `config.json`
+3. **EnsureConfig**: Call `pkg.EnsureConfig(srcDir)` in `SetBuildFunc` — checks `.config` exists, runs `make <preset>` if missing, applies `PatchKConfig` patches
+4. **PatchKConfig**: Override specific config options after defconfig: `ctx.KConfig("u-boot").PatchKConfig(map[string]string{"CONFIG_FOO=y"})`
+5. **SetConfigFiles**: Register files that invalidate the stamp on change: `p.SetConfigFiles(".config")` (in `OnPackage`)
+
 ## Sub-Graph Build (Code Generation)
 
 ```go
 p.OnBuild(func(ctx *api.BuildContext) {
-    ctx.BuildSubGraph("codegen")                      // Build codegen + deps
+    ctx.BuildSubGraph("codegen")
     ctx.Exec(ctx.DepOutput("codegen:codegen"), "output/generated.h")
+    ctx.DepBuildDir("codegen:codegen")
 
     ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c")
 })
 ```
 
-Use `p.OnConfig(func(ctx *api.ConfigContext) { ctx.ToolchainOption() })` to allow per-package toolchain switching for sub-graph builds (e.g., building a code generator with the host toolchain while cross-compiling firmware with an embedded toolchain).
+Use `ctx.ToolchainOption()` to allow per-package toolchain switching for sub-graph builds.
 
-## Package Dependencies
+## Stamp-Based Skip (Void Targets)
 
-**Consuming a package:**
-```go
-p.OnRequire(func(ctx *api.RequireContext) {
-    ctx.AddRequires("official/zlib >=1.2")
-})
-p.OnBuild(func(ctx *api.BuildContext) {
-    ctx.Target("app").AddDeps("official/zlib")
-})
-```
+Local void targets use `.vmake_stamp` in `BuildDir` for incremental builds. Stale when:
+- Config files registered via `p.SetConfigFiles(".config")` are newer than the stamp
+- The stamp file is deleted
+- `.config` size becomes 0
 
-**Defining a package (registry repo):**
-```go
-p.OnPackage(func(p *api.Package) {
-    p.SetGit("https://github.com/madler/zlib.git")
-    p.AddVersion("1.2.13", "v1.2.13")
-    p.SetLibs("z")
-})
-```
-
-## Unified Dependency Format
-
-`AddDeps` handles all types:
-- `"utils"` — same-package target
-- `"lib:utils"` — cross-package target (build order + link + PublicIncludes)
-- `"official/zlib"` — third-party package (must also be in `OnRequire`)
-
-Package refs (containing `/`) are expanded into all targets defined by that package plus its transitive dependency targets.
-
-## Option & Conditional
-
-```go
-// Define (OnConfig)
-ctx.Option("debug").SetType(api.OptionBool).SetDefault(false)
-
-// Use (OnBuild)
-AddCFlags(ctx.If("debug", "-g", "-O0")...)        // bool → flags
-AddCFlags(ctx.IfNot("debug", "-O2")...)           // inverted
-AddCFlags(ctx.Select("opt", map[string]string{    // choice → flag
-    "O0": "-O0", "O2": "-O2",
-}))
-
-ctx.String("name")    // read string
-ctx.Int("count")      // read int
-ctx.Bool("debug")     // read bool
-ctx.When("x", "val")  // compare → bool (for if statements)
-```
+Use `SetConfigFiles` on `*Package` (in `OnPackage`) to declare which files invalidate the stamp.
 
 ## Install
 
@@ -210,7 +256,11 @@ ctx.When("x", "val")  // compare → bool (for if statements)
 | `--prefix` / `-p` | Prefix (default: `./install/`) |
 | `--install-type` | `runtime` (binaries+shared) or `sdk` (everything) |
 
-Custom install entries: `p.AddInstalls("src/file.conf", "etc/file.conf")` (maps src → dest)
+Custom install entries: `ctx.AddInstalls("src/file.conf", "etc/file.conf")` (available in `OnBuild` and `OnInstall`).
+
+## Build Scope
+
+vmake builds packages by BFS from local (directory-based) packages. Remote packages are only built if reachable from a local package's transitive dependency chain. If you `AddRequires("pkg")` but no local package depends on it, the package won't be built.
 
 ## CLI Quick Reference
 
@@ -220,25 +270,28 @@ Custom install entries: `p.AddInstalls("src/file.conf", "etc/file.conf")` (maps 
 | `vmake rebuild` | Clean + build |
 | `vmake config` | TUI for options |
 | `vmake clean` | Remove artifacts |
+| `vmake distclean` | Deep clean all artifacts + caches |
 | `vmake query` | Dependency tree |
 | `vmake toolchain list/show` | Toolchain info |
 | `vmake repo add/list/remove/update` | Package repos |
 | `vmake pkg list/search/clean/update` | Packages |
+| `vmake ext add/list/remove/update` | Extension repos |
 | `vmake manifest show/checkout` | Install manifest |
 | `vmake git tag` | Version tagging |
 | `vmake skill install/uninstall/path` | AI skill management |
 | `vmake version` | Version info |
 
-Build flags: `--force/-f`, `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`
+Build flags: `--force/-f`, `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`, `--manifest`
 Verbosity: `-v` verbose, `-V` very-verbose, `-q` quiet
 
 ## Reading Guide
 
 - **Learning the basics** → Start with `examples/simple.md`, then `examples/config.md`
 - **Writing a build.go** → Follow the Decision Guide above to pick the right example
+- **Multi-module workspace** → `examples/multi-module.md`
 - **Looking up a specific API** → See `references/api.md` for complete method signatures
 - **CLI usage** → See `references/cli.md` for full command tree
-- **Advanced patterns** → `examples/complete.md` (full API demo), `examples/subbuild.md` (code gen)
+- **Advanced patterns** → `examples/complete.md`, `examples/subbuild.md`, `examples/embedded-rtos.md`, `examples/firmware.md`
 
 ## Key Conventions
 
@@ -246,3 +299,4 @@ Verbosity: `-v` verbose, `-V` very-verbose, `-q` quiet
 - Package IDs use `/`: `official/zlib`
 - Target IDs use `:`: `lib:utils`
 - `OnPackage` with `SetGit`/`AddVersion` is ONLY for registry repo packages
+- `SetLanguages()` exists but has no effect — language is auto-detected from file extension

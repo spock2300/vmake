@@ -29,9 +29,9 @@
 │               ├── build/         # 中间产物（.o 文件等）
 │               └── install/       # 最终产物（库、头文件）
 └── cache/
-├── buildscripts/              # 编译后的构建脚本缓存
-│   └── <name>/build.so
-└── <repo>/<pkg>/repo/         # 包源码的 git clone
+    ├── buildscripts/              # 编译后的构建脚本缓存
+    │   └── <name>/build.so
+    └── <repo>/<pkg>/repo/         # 包源码的 git clone
 ```
 
 ## repos/
@@ -129,9 +129,7 @@ CLI：`vmake pkg list|clean`
 
 ### plugins/
 
-编译后的扩展插件缓存。
-
-路径规则：`cache/plugins/<repo>/<plugin>.so`
+扩展插件在插件目录内原地编译（`extensions/<repo>/<plugin-name>/plugin.so`），不使用统一缓存目录。
 
 源码：`pkg/plugin/compiler.go`
 
@@ -153,7 +151,6 @@ project/
 ├── .vmake/
 │   └── config.json                # 项目配置
 └── build/                         # 构建输出
-    ├── build.so                  # 编译后的构建脚本
     ├── compile_commands.json      # LSP 编译数据库
     └── <tc>-<mode>/               # 如 host-debug
         ├── state.json             # 构建状态（工具链/模式）
@@ -177,7 +174,9 @@ project/
     },
     "official/zlib": {
       "version": "1.3.1",
-      "options": { "shared": false }
+      "options": { "shared": false },
+      "kconfig": "",
+      "selected_preset": ""
     }
   }
 }

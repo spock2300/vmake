@@ -46,6 +46,7 @@ func Main(p *api.Package) {
 | `<2.0` | Version lower than 2.0 |
 | `~1.2.0` | Pessimistic (>=1.2.0, <1.3.0) |
 | `=1.2.0` | Exact match |
+| `@1.2.13` | Pin exact version |
 
 ## Package Repository
 

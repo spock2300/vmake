@@ -33,6 +33,7 @@ Phase 3: OnBuild
 | `--install` | `-i` | 构建后安装 |
 | `--prefix` | `-p` | 安装前缀（默认: `./install/`） |
 | `--install-type` | | 安装类型: `runtime`（默认）或 `sdk` |
+| `--manifest` | | 从 manifest 文件锁定版本 |
 
 ### Install Type 过滤
 
@@ -191,26 +192,30 @@ AddRequires          1. 检查 registry 仓库（未找到）      编译 build.
 
 1. `findSource` 先检查 registry 仓库（`FindPackageGo`），未找到再检查 native
 2. 解析 URL 模板（`{name}` → 包名）
-3. 如果 clone 不存在 → git clone；如果已存在 → git fetch（自动获取新 tag）
-4. `git tag` → `FilterValidVersions`（过滤有效 semver）
+3. `repo.EnsureRepoAtRef(gitURL, repoDir, "")` 确保 clone/fetch
+4. `repo.ListTags(repoDir)` → `FilterValidVersions`（过滤有效 semver）
 5. `SelectNativeVersion`（按约束选择最高匹配版本）
-6. `git checkout` 到选中的 tag
+6. `repo.EnsureRepoAtRef(gitURL, repoDir, selectedRef)` checkout 到选中 tag
 7. 在仓库根目录查找 `build.go`
-8. 创建 `PackageNode`，注册到 `graph.Packages`（含 `NativeGitURL`/`NativeVersions`/`NativeSelected`）
+8. 创建 `PackageNode`，注册到 `graph.Packages`（含 `Native *NativePackageInfo`）
 9. Phase 2a `resolveDeferredNode` 编译/加载 build.go，保留 native 字段
 
 ### PackageNode Native 字段
 
 ```go
 type PackageNode struct {
-    ID             string
-    Source         *buildscript.Source
-    Pkg            *api.Package
-    Deps           []string
-    Deferred       bool
-    NativeGitURL   string              // 解析后的 git URL
-    NativeVersions map[string]string   // version_string → git_tag
-    NativeSelected string              // 选中的版本号
+    ID       string
+    Source   *buildscript.Source
+    Pkg      *api.Package
+    Deps     []string
+    Deferred bool
+    Native   *NativePackageInfo
+}
+
+type NativePackageInfo struct {
+    GitURL   string            // 解析后的 git URL
+    Versions map[string]string // version_string → git_tag
+    Selected string            // 选中的版本号
 }
 ```
 
@@ -316,14 +321,15 @@ Graph
 └── Packages map[string]*PackageNode
 
 PackageNode
-├── ID             string
-├── Source         *buildscript.Source
-├── Pkg            *api.Package
-├── Deps           []string
-├── Deferred       bool
-├── NativeGitURL   string              // native 仓库：解析后的 git URL
-├── NativeVersions map[string]string   // native 仓库：version_string → git_tag
-└── NativeSelected string              // native 仓库：选中的版本号
+├── ID       string
+├── Source   *buildscript.Source
+├── Pkg      *api.Package
+├── Deps     []string
+├── Deferred bool
+└── Native   *NativePackageInfo
+    ├── GitURL   string            // native 仓库：解析后的 git URL
+    ├── Versions map[string]string // native 仓库：version_string → git_tag
+    └── Selected string            // native 仓库：选中的版本号
 ```
 
 ### buildscript.Source (`pkg/buildscript/source.go`)
@@ -365,8 +371,10 @@ ConfigFile
 └── Entries  map[string]*EntryConfig
 
 EntryConfig
-├── Version  string                  // 第三方包的版本（可选）
-└── Options  map[string]any          // 配置选项
+├── Version        string                  // 第三方包的版本（可选）
+├── Options        map[string]any          // 配置选项
+├── KConfig        string                  // KConfig 配置内容
+└── SelectedPreset string                  // 选中的 KConfig preset 名称
 ```
 
 ## 关键文件位置
@@ -391,6 +399,73 @@ EntryConfig
 | 文件系统 | `internal/fs/` | 文件/目录操作工具 |
 | Git 仓库 | `internal/gitstore/` | 通用 Git 仓库管理（Add/Remove/List） |
 | Go 编译 | `internal/gocompile/` | Go 插件编译工具 |
+
+## KConfig 系统
+
+VMake 内置 KConfig 配置管理，用于 Linux 内核、U-Boot 等 Kconfig-based 项目的配置流程。
+
+### KConfigEntry
+
+```go
+type KConfigEntry struct {
+    name, description, configPath, srcDir, menuconfigCmd string
+    presets        []string
+    defaultPreset  string
+    selectedPreset string
+    patchValues    map[string]string
+}
+```
+
+流式 API：
+
+- `SetDescription(desc)` — 设置描述
+- `SetConfigPath(path)` — 设置 .config 路径
+- `SetSrcDir(dir)` — 设置源码目录
+- `SetMenuconfigCmd(cmd)` — 设置 menuconfig 命令
+- `AddPreset(name)` — 添加 preset（defconfig 文件名）
+- `SetDefault(presetName)` — 设置默认 preset
+- `SetSelectedPreset(name)` — 设置选中 preset
+- `PatchKConfig(patches)` — 设置 post-defconfig 补丁（`map[string]string`）
+
+### 声明与配置
+
+在 `OnConfig` 中通过 `Package.AddKConfig(name)` 声明 KConfig 条目，TUI 会列出可用 preset 供用户选择。
+
+### EnsureConfig 抽象
+
+`Package.EnsureConfig(srcDir) bool` 是 KConfig 构建的核心抽象：
+
+1. 检查 `.config` 是否存在且大小 > 0 → 如果有效，返回 `false`（无需重新生成）
+2. 执行 `make <selectedPreset>` 生成 `.config`
+3. 应用 `PatchKConfig` 中定义的 post-defconfig 补丁（字符串替换）
+4. 返回 `true`（已重新生成配置）
+
+### Stamp-Based Skip（TargetVoid）
+
+本地包（无 `InstallDir`）使用 `.vmake_stamp` 跳过已构建目标：
+
+- 构建完成后在 `BuildDir` 写入 `.vmake_stamp`
+- 下次构建时检查 stamp 是否存在
+- 通过 `SetConfigFiles()` 声明的配置文件比 stamp 新时，判定为 stale，重新构建
+- 配置文件不存在也判定为 stale
+
+### autoWireRequireDeps
+
+`OnRequire`/`AddRequires` 仅声明包级需求，不会自动创建构建图边。`Target.AddDeps()` 是将包引用关联到具体 target 的必要步骤。
+
+当 target 没有显式调用 `AddDeps()`，但包通过 `AddRequires` 声明了依赖时，`autoWireRequireDeps()` 会自动将依赖包的所有 target 作为当前 target 的依赖，建立构建图边。
+
+源码：`cmd/vmake/build_cmd.go`（`autoWireRequireDeps`）
+
+## GenRule 系统
+
+Target 支持 `AddBinHeader(inputs ...any)` 方法，创建 `GenRuleBinHeader` 类型的 GenRule。GenRule 在构建阶段由 scheduler 处理，将输入文件作为二进制头文件嵌入到目标中。
+
+```go
+ctx.Target("app").AddBinHeader("assets/logo.bin")
+```
+
+源码：`pkg/api/genrule.go`, `pkg/api/target.go`
 
 ## 扩展系统
 

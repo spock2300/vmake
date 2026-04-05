@@ -161,6 +161,36 @@ func (p *Package) GetOptions() map[string]*Option
 func (p *Package) Versions() map[string]string
 ```
 
+### Stamp 控制
+
+```go
+func (p *Package) SetConfigFiles(files ...string) *Package  // 配置文件列表，变更时使 stamp 失效
+func (p *Package) ConfigFiles() []string
+```
+
+### 源码与输出目录
+
+```go
+func (p *Package) SetSrcDir(dir string) *Package    // 设置源码目录（与 SourceDir 不同，当 SetGit 下载源码时使用）
+func (p *Package) SrcDir() string                    // 注意：当 SetGit 下载源码时，SrcDir 返回 <SourceDir>/src/，而非 SourceDir
+func (p *Package) SetOutputDir(dir string) *Package
+```
+
+### DryRun
+
+```go
+func (p *Package) SetDryRun(v bool) *Package   // 设置 dry run 模式（只打印不执行）
+func (p *Package) DryRun() bool
+```
+
+### 版本选择
+
+```go
+func (p *Package) GetRef(version string) string              // 根据 version 名获取 git ref
+func (p *Package) GetVersions() []string                     // 获取所有可用版本（未排序）
+func (p *Package) SelectVersion(constraint string) (string, error)  // 根据约束选择最佳匹配版本
+```
+
 ## ConfigAccessor（条件表达式与值读取）
 
 `ConfigAccessor` 被嵌入到 `Package`、`ConfigContext`、`BuildContext`、`InstallContext`、`RequireContext` 中，提供选项值读取和条件表达式。
@@ -271,6 +301,7 @@ func (ctx *BuildContext) SetInstallFilter(filter InstallFilterFunc) *InstallItem
 // 子构建
 func (ctx *BuildContext) BuildSubGraph(pkgName string)
 func (ctx *BuildContext) DepOutput(depRef string) string
+func (ctx *BuildContext) DepBuildDir(depRef string) string
 
 // 其他
 func (ctx *BuildContext) PackageName() string
@@ -339,6 +370,7 @@ func (t *Target) AddPostLinkHex() *Target               // objcopy -O ihex {outp
 func (t *Target) AddPostLinkBin() *Target               // objcopy -O binary {output} {output}.bin
 func (t *Target) AddPostLinkSize() *Target              // size {output}
 func (t *Target) AddPostLinkStrip() *Target             // strip -o {output}.stripped {output}
+func (t *Target) AddBinHeader(inputs ...any) *Target    // 将二进制文件转换为 .h 头文件（GenRule），输出到 build/<tc>-<mode>/generated/<stem>.h，包含路径自动添加
 
 // 安装控制
 func (t *Target) SetInstallDir(dir string) *Target
@@ -364,6 +396,7 @@ func (t *Target) PublicIncludes() []string
 func (t *Target) Defines() []string
 func (t *Target) Languages() []string
 func (t *Target) IncludeRule(dir string) []string
+func (t *Target) HasDep(depRef string) bool
 func (t *Target) Links() []string
 func (t *Target) Deps() []string
 func (t *Target) CFlags() []string
@@ -391,6 +424,8 @@ ctx.Target("mylib").AddPublicIncludes("include", "src", "@foo*.h")
 ```
 
 ## RequireContext（依赖声明）
+
+RequireContext 嵌入了 `ConfigAccessor`，因此 `Bool()`、`String()`、`If()`、`When()` 等方法均可使用。
 
 ```go
 // 项目依赖声明
@@ -474,6 +509,18 @@ func (c Constraint) Match(v Version) bool
 func MatchVersion(available []string, constraint string) (string, bool)
 ```
 
+## 构建标志
+
+| 标志 | 短选项 | 说明 |
+|------|--------|------|
+| `--force` | `-f` | 强制重新编译构建脚本 |
+| `--toolchain` | | 覆盖工具链 |
+| `--mode` | | 覆盖构建模式（debug/release） |
+| `--install` | `-i` | 构建后安装 |
+| `--prefix` | `-p` | 安装前缀（默认：`./install/`） |
+| `--install-type` | | `runtime`（默认）或 `sdk` |
+| `--manifest` | | 从清单文件固定版本 |
+
 ## 全局选项
 
 内置全局选项（`pkg/api/global.go`）：
@@ -511,6 +558,34 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 
 全局选项在所有 Package 间共享。如果多个 Package 定义同名全局选项，类型和默认值必须一致。
 
+## 工具函数
+
+### 文件复制 (`pkg/api/copy.go`)
+
+```go
+func CopyFile(src, dest string) error
+func CopyDir(src, dest string) error
+func CopyDirWithFilter(src, dest string, filter CopyFilter) error
+func CopyDirIfExists(src, dst string) error
+func MatchPatterns(patterns []string, name string) bool
+
+type CopyFilter func(path string, isDir bool) bool
+```
+
+`CopyDir` 自动跳过 `.git` 目录。`CopyDirWithFilter` 通过 filter 回调控制复制行为。
+
+### 包引用解析
+
+```go
+func SplitPackageRef(ref string) (repo, name string, ok bool)  // "official/zlib" -> ("official", "zlib", true)
+```
+
+### 构建模式标志
+
+```go
+func GetModeFlags(mode string) (cflags []string, defines []string)  // "debug" -> (["-O0","-g"], []); "release" -> (["-O2"], ["NDEBUG"])
+```
+
 ## 安装类型过滤
 
 `--install-type` 控制 `vmake build --install` 安装哪些文件：
@@ -534,6 +609,89 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 - Registry 包：`source: "registry"`，含 `url` 和 `ref`
 
 通过 `vmake manifest show <path>` 查看，`vmake manifest checkout <path> [name]` 恢复到记录的版本。
+
+## KConfig（固件配置）
+
+KConfig 用于管理基于 `make defconfig` / `make menuconfig` 的固件项目配置（如 Linux 内核、U-Boot、Busybox）。
+
+### Package KConfig 方法
+
+```go
+func (p *Package) AddKConfig(name string) *KConfigEntry
+func (p *Package) KConfigEntries() []*KConfigEntry
+func (p *Package) SelectedPreset() string          // 返回选中的 preset 名（优先 selectedPreset，其次 defaultPreset）
+func (p *Package) EnsureConfig(srcDir string) bool  // 检查 .config 是否存在且非空，否则执行 make <preset> 并应用 patches；返回 true 表示重新生成了 .config
+```
+
+### ConfigContext KConfig 方法
+
+```go
+func (ctx *ConfigContext) KConfig(name string) *KConfigEntry  // 创建或获取 KConfigEntry（与 Package 关联）
+```
+
+### KConfigEntry
+
+```go
+// 获取方法
+func (k *KConfigEntry) Name() string
+func (k *KConfigEntry) Description() string
+func (k *KConfigEntry) ConfigPath() string     // 默认 ".config"
+func (k *KConfigEntry) SrcDir() string
+func (k *KConfigEntry) Presets() []string
+func (k *KConfigEntry) DefaultPreset() string
+func (k *KConfigEntry) SelectedPreset() string
+func (k *KConfigEntry) MenuconfigCmd() string
+func (k *KConfigEntry) Patches() map[string]string
+
+// 设置方法（链式调用）
+func (k *KConfigEntry) SetDescription(desc string) *KConfigEntry
+func (k *KConfigEntry) SetConfigPath(path string) *KConfigEntry
+func (k *KConfigEntry) SetSrcDir(dir string) *KConfigEntry
+func (k *KConfigEntry) SetMenuconfigCmd(cmd string) *KConfigEntry
+func (k *KConfigEntry) AddPreset(name string) *KConfigEntry
+func (k *KConfigEntry) SetDefault(presetName string) *KConfigEntry
+func (k *KConfigEntry) SetSelectedPreset(name string) *KConfigEntry
+func (k *KConfigEntry) PatchKConfig(patches map[string]string) *KConfigEntry
+```
+
+### 工具函数
+
+```go
+func ApplyKConfigPatches(configPath string, patches map[string]string)
+```
+
+对 `.config` 文件执行字符串替换（在 defconfig 之后应用补丁）。
+
+### 使用示例
+
+```go
+func Main(p *api.Package) {
+    p.OnConfig(func(ctx *api.ConfigContext) {
+        ctx.KConfig("uboot").
+            SetDescription("U-Boot configuration").
+            AddPreset("evk_rk3568_defconfig").
+            AddPreset("evk_rk3588_defconfig").
+            SetDefault("evk_rk3568_defconfig").
+            PatchKConfig(map[string]string{
+                "CONFIG_LOCALVERSION=\"-custom\"": "CONFIG_LOCALVERSION=\"-myboard\"",
+            })
+    })
+
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("uboot").
+            SetKind(api.TargetVoid).
+            SetBuildFunc(func(pkg *api.Package) error {
+                srcDir := pkg.SrcDir()
+                if pkg.EnsureConfig(srcDir) {
+                    pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
+                } else {
+                    pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
+                }
+                return nil
+            })
+    })
+}
+```
 
 ## SplitPackageRef (`pkg/api/package.go`)
 
@@ -728,9 +886,9 @@ func Main(p *api.Package) {
 }
 ```
 
-### Prefix 仓库包定义
+### Native 仓库包定义
 
-Prefix 仓库的 `build.go` 与本地项目完全相同 — 不需要 `OnPackage`、`SetGit`、`AddVersion`。版本由 git tag 自动提取。
+Native 仓库的 `build.go` 与本地项目完全相同 — 不需要 `OnPackage`、`SetGit`、`AddVersion`。版本由 git tag 自动提取。
 
 ```go
 func Main(p *api.Package) {
@@ -743,10 +901,10 @@ func Main(p *api.Package) {
 }
 ```
 
-使用前需要添加 prefix 仓库：
+使用前需要添加 native 仓库：
 
 ```bash
-vmake repo add --prefix myorg "https://git.example.com/{name}.git"
+vmake repo add --native myorg "https://git.example.com/{name}.git"
 ```
 
 在消费方项目中声明依赖：
@@ -766,13 +924,13 @@ p.OnBuild(func(ctx *api.BuildContext) {
 
 两种仓库类型对比：
 
-| | Index 仓库 | Prefix 仓库 |
+| | Index 仓库 | Native 仓库 |
 |--|--|--|
 | **用途** | 包装第三方 C/C++ 库 | VMake 原生包，跨项目共享 |
 | **build.go** | 包装器（调用 CMake 等） | 真正的构建描述（同本地项目） |
 | **源码位置** | build.go 在仓库中，源码在别处 | build.go 在包的 git 仓库根目录 |
 | **版本来源** | `AddVersion()` 手动映射 | git tag（自动过滤有效 semver） |
-| **添加命令** | `vmake repo add name url` | `vmake repo add --prefix name "https://..../{name}.git"` |
+| **添加命令** | `vmake repo add name url` | `vmake repo add --native name "https://..../{name}.git"` |
 | **更新** | `vmake repo update name` | `vmake pkg update repo/name` |
 
 ## 扩展插件 API

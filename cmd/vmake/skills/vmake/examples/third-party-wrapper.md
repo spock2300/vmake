@@ -83,6 +83,56 @@ p.OnBuild(func(ctx *api.BuildContext) {
 })
 ```
 
+## Stamp-Based Skip with SetConfigFiles
+
+For local packages using `TargetVoid` (no `InstallDir`), vmake uses a `.vmake_stamp` file in `BuildDir` to skip already-built targets. Use `SetConfigFiles` to declare files that invalidate the stamp:
+
+```go
+p.OnPackage(func(p *api.Package) {
+    p.SetConfigFiles(".config")
+})
+
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.Target("mylib").
+        SetKind(api.TargetVoid).
+        SetBuildFunc(func(p *api.Package) error {
+            p.CMakeConfigure("-DBUILD_SHARED_LIBS=OFF")
+            p.CMakeBuild()
+            p.CMakeInstall()
+            return nil
+        })
+})
+```
+
+The stamp becomes stale when any registered config file is newer than the stamp, the stamp is deleted, or the config file size becomes 0.
+
+## KConfig for Firmware Wrappers
+
+Firmware wrapper packages (U-Boot, kernel, etc.) combine KConfig preset management with void targets:
+
+```go
+p.OnPackage(func(p *api.Package) {
+    p.SetConfigFiles(".config")
+})
+
+p.OnConfig(func(ctx *api.ConfigContext) {
+    ctx.KConfig("u-boot").
+        AddPreset("rk3568_defconfig").
+        AddPreset("stm32_defconfig").
+        SetDefault("sandbox_defconfig").
+        PatchKConfig(map[string]string{"CONFIG_FOO=y"})
+})
+
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.Target("uboot").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
+        srcDir := pkg.SourceDir()
+        pkg.EnsureConfig(srcDir)
+        pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
+        return nil
+    })
+})
+```
+
 ## Key Points
 
 - `SetBuildFunc` callback runs in the package's `BuildDir` context
