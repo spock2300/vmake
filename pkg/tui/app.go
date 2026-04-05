@@ -92,6 +92,9 @@ func ensureConfigCmd(pkgName string, entries []*api.KConfigEntry, workDir string
 		args = append(args, presetName)
 		cmd := exec.Command(parts[0], args...)
 		err := cmd.Run()
+		if err == nil {
+			api.ApplyKConfigPatches(configPath, e.Patches())
+		}
 		return menuconfigDone{pkgName: pkgName, ensured: true, err: err}
 	}
 }

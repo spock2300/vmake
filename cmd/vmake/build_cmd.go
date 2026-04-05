@@ -827,6 +827,7 @@ func restoreKConfigFiles(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, n
 		if err := os.WriteFile(configPath, []byte(kconfigContent), 0644); err != nil {
 			return fmt.Errorf("restore kconfig %s: %w", name, err)
 		}
+		api.ApplyKConfigPatches(configPath, k.Patches())
 		vlog.Info("Restored .config for %s (%d bytes)", name, len(kconfigContent))
 	}
 	return nil

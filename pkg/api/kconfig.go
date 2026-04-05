@@ -9,6 +9,7 @@ type KConfigEntry struct {
 	presets        []string
 	defaultPreset  string
 	selectedPreset string
+	patchValues    map[string]string
 }
 
 func (k *KConfigEntry) Name() string           { return k.name }
@@ -53,4 +54,13 @@ func (k *KConfigEntry) SetDefault(presetName string) *KConfigEntry {
 func (k *KConfigEntry) SetSelectedPreset(name string) *KConfigEntry {
 	k.selectedPreset = name
 	return k
+}
+
+func (k *KConfigEntry) PatchKConfig(patches map[string]string) *KConfigEntry {
+	k.patchValues = patches
+	return k
+}
+
+func (k *KConfigEntry) Patches() map[string]string {
+	return k.patchValues
 }

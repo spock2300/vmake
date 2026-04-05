@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -524,4 +525,31 @@ func (p *Package) SelectedPreset() string {
 		return k.selectedPreset
 	}
 	return k.defaultPreset
+}
+
+func (p *Package) EnsureConfig(srcDir string) bool {
+	configPath := filepath.Join(srcDir, ".config")
+	if info, err := os.Stat(configPath); err == nil && info.Size() > 0 {
+		return false
+	}
+	p.RunIn(srcDir, "make", p.SelectedPreset())
+	if len(p.kconfigEntries) > 0 {
+		ApplyKConfigPatches(configPath, p.kconfigEntries[0].Patches())
+	}
+	return true
+}
+
+func ApplyKConfigPatches(configPath string, patches map[string]string) {
+	if len(patches) == 0 {
+		return
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return
+	}
+	content := string(data)
+	for old, newVal := range patches {
+		content = strings.ReplaceAll(content, old, newVal)
+	}
+	os.WriteFile(configPath, []byte(content), 0644)
 }
