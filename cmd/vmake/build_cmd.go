@@ -113,11 +113,17 @@ func writeManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 		if node.IsLocal() {
 			sourceDir := result.PkgDirs[name].SourceDir
 			relPath, _ := filepath.Rel(ctx.WorkDir, sourceDir)
+			gitDir := sourceDir
+			if node.Pkg != nil {
+				if srcDir := node.Pkg.SrcDir(); srcDir != "" {
+					gitDir = srcDir
+				}
+			}
 			packages = append(packages, installManifestEntry{
 				Name:    name,
-				Version: gitDescribe(sourceDir),
+				Version: gitDescribe(gitDir),
 				Source:  "local",
-				Ref:     gitRevParse(sourceDir),
+				Ref:     gitRevParse(gitDir),
 				Path:    relPath,
 			})
 			continue
@@ -192,16 +198,20 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		return nil, err
 	}
 
-	allTargets, pkgMetaMap, subBuildKeys := executeAllOnBuild(ctx, needed, remote, pkgDirs, cfg, localPkgOptions)
-
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if needed[name] && node.Pkg != nil {
-			if err := applyPatches(node.Pkg, pkgDirs[name].SourceDir); err != nil {
+			patchDir := pkgDirs[name].SourceDir
+			if srcDir := node.Pkg.SrcDir(); srcDir != "" {
+				patchDir = srcDir
+			}
+			if err := applyPatches(node.Pkg, patchDir); err != nil {
 				return nil, fmt.Errorf("apply patches for %s: %w", name, err)
 			}
 		}
 	}
+
+	allTargets, pkgMetaMap, subBuildKeys := executeAllOnBuild(ctx, needed, remote, pkgDirs, cfg, localPkgOptions)
 
 	vlog.Info("")
 	vlog.Info("Targets found:")
@@ -312,7 +322,9 @@ func filterAndCollectNeeded(ctx *RuntimeContext) map[string]bool {
 			vlog.Info("  %s: deps=%v", name, node.Deps)
 		}
 	}
-	ctx.Resolver.UpdateOrder()
+	if err := ctx.Resolver.UpdateOrder(); err != nil {
+		vlog.Fatal("dependency cycle: %v", err)
+	}
 
 	needed := collectNeeded(ctx.DepGraph)
 
@@ -347,7 +359,9 @@ func (r *remotePkgState) installedPkgs(pkgDirs map[string]*api.PkgDirs) map[stri
 	result := make(map[string]*api.InstalledPackage)
 	for name, d := range pkgDirs {
 		if d.InstallDir != "" {
-			result[name] = api.NewInstalledPackage(name, r.configs[name].Version, d.InstallDir, nil)
+			if rc, ok := r.configs[name]; ok {
+				result[name] = api.NewInstalledPackage(name, rc.Version, d.InstallDir, nil)
+			}
 		}
 	}
 	return result
@@ -487,12 +501,6 @@ func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.Pack
 	buildCtx.SetBuildSubGraphFunc(buildSubGraphFn)
 	buildCtx.SetDepOutputFunc(depOutputFn)
 
-	node.Pkg.ExecBuildFuncs(pkgDirs[name].SourceDir, func(fn api.BuildFunc) {
-		fn(buildCtx)
-	})
-
-	allTargets[name] = buildCtx.GetTargets()
-
 	if node.Pkg != nil && tc != nil {
 		pkg := node.Pkg
 		cfgVals := make(map[string]any)
@@ -515,6 +523,12 @@ func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.Pack
 		pkg.SetCfgVals(cfgVals)
 		pkg.SetToolchain(tc)
 	}
+
+	node.Pkg.ExecBuildFuncs(pkgDirs[name].SourceDir, func(fn api.BuildFunc) {
+		fn(buildCtx)
+	})
+
+	allTargets[name] = buildCtx.GetTargets()
 }
 
 func computeDepOutput(depRef string, targets map[string]map[string]*api.Target, ctx *RuntimeContext, cfg *buildConfig, pkgDirs map[string]*api.PkgDirs, localPkgOptions map[string]map[string]any) string {
@@ -608,7 +622,7 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 			if _, done := subAllTargets[name]; done {
 				continue
 			}
-			executePackageOnBuild(ctx, name, node, pkgDirs, subAllTargets, remote, cfg.GlobalValues, buildSubGraphFn, subDepOutputFn, nil, localPkgOptions)
+			executePackageOnBuild(ctx, name, node, pkgDirs, subAllTargets, remote, cfg.GlobalValues, buildSubGraphFn, subDepOutputFn, cfg.Tc, localPkgOptions)
 		}
 
 		subTcName := resolvePkgToolchain(ctx.Config, rootPkg, cfg.TcName)
@@ -830,9 +844,13 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 
 		buildCtx := newBuildContext(ctx, name, globalValues)
 		buildCtx.SetDryRun(true)
+		buildCtx.SetBuildSubGraphFunc(func(string) error { return nil })
+		buildCtx.SetDepOutputFunc(func(string) string { return "" })
+		node.Pkg.SetDryRun(true)
 		node.Pkg.ExecBuildFuncs(result.PkgDirs[name].SourceDir, func(fn api.BuildFunc) {
 			fn(buildCtx)
 		})
+		node.Pkg.SetDryRun(false)
 
 		installItems := installCtx.GetInstallItems()
 		installItems = append(installItems, buildCtx.GetInstallItems()...)
@@ -860,7 +878,7 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 	}
 
 	if err := writeManifest(ctx, result, effectivePrefix); err != nil {
-		vlog.Info("  (manifest write failed: %v)", err)
+		return fmt.Errorf("write manifest: %w", err)
 	}
 
 	vlog.Info("")

@@ -94,13 +94,13 @@ func (r *Resolver) GetOrder() []string {
 	return r.graph.Order
 }
 
-func (r *Resolver) UpdateOrder() {
+func (r *Resolver) UpdateOrder() error {
 	order, err := topologicalSort(r.graph.Packages)
 	if err != nil {
-		r.graph.Order = []string{}
-		return
+		return fmt.Errorf("dependency cycle detected: %w", err)
 	}
 	r.graph.Order = order
+	return nil
 }
 
 func (r *Resolver) ResolveAll(localSources []buildscript.Source) error {
@@ -118,13 +118,18 @@ func (r *Resolver) ResolveAll(localSources []buildscript.Source) error {
 		}
 	}
 
-	r.UpdateOrder()
+	if err := r.UpdateOrder(); err != nil {
+		return err
+	}
 	return nil
 }
 
 func (r *Resolver) ResolveDeferred() error {
-	for {
-		r.UpdateOrder()
+	maxIter := len(r.graph.Packages) + 1
+	for i := 0; i < maxIter; i++ {
+		if err := r.UpdateOrder(); err != nil {
+			return err
+		}
 		hasDeferred := false
 		for _, id := range r.graph.Order {
 			node := r.graph.Packages[id]
@@ -142,7 +147,9 @@ func (r *Resolver) ResolveDeferred() error {
 			break
 		}
 	}
-	r.UpdateOrder()
+	if err := r.UpdateOrder(); err != nil {
+		return err
+	}
 	return nil
 }
 

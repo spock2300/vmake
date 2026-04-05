@@ -149,8 +149,9 @@ func (a *ConfigAccessor) Option(name string) *Option {
 	return opt
 }
 
-func (a *ConfigAccessor) SetOptions(options map[string]*Option) {
+func (a *ConfigAccessor) SetOptions(options map[string]*Option) *ConfigAccessor {
 	a.Options = options
+	return a
 }
 
 func (a *ConfigAccessor) MergeGlobals(globalOptions map[string]*Option, globalVals map[string]any) {

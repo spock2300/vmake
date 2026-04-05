@@ -268,8 +268,12 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 		}
 
 		if len(depNode.Target.PublicIncludes()) > 0 {
+			srcDir := depPkg.SourceDir
+			if dep := s.packages[depNode.PkgName]; dep != nil && dep.SrcDir() != "" {
+				srcDir = dep.SrcDir()
+			}
 			for _, pubInc := range depNode.Target.PublicIncludes() {
-				result.includes = append(result.includes, filepath.Join(depPkg.SourceDir, pubInc))
+				result.includes = append(result.includes, filepath.Join(srcDir, pubInc))
 			}
 		} else if depPkg.InstallDir != "" {
 			result.includes = append(result.includes, filepath.Join(depPkg.InstallDir, "include"))
@@ -503,7 +507,12 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 			stale := false
 			for _, cf := range pkg.ConfigFiles() {
 				cp := filepath.Join(pkg.SrcDir(), cf)
-				if ci, err := os.Stat(cp); err == nil && ci.ModTime().After(si.ModTime()) {
+				ci, err := os.Stat(cp)
+				if err != nil {
+					stale = true
+					break
+				}
+				if ci.ModTime().After(si.ModTime()) {
 					stale = true
 					break
 				}
@@ -692,7 +701,11 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 		return fmt.Errorf("create include dir: %w", err)
 	}
 
-	return copyPublicIncludes(t, pkgInfo.SourceDir, includeDir)
+	srcDir := pkgInfo.SourceDir
+	if pkg := s.packages[resolved.Node.PkgName]; pkg != nil && pkg.SrcDir() != "" {
+		srcDir = pkg.SrcDir()
+	}
+	return copyPublicIncludes(t, srcDir, includeDir)
 }
 
 func unique(s []string) []string {

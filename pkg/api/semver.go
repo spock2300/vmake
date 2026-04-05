@@ -52,7 +52,41 @@ func (v Version) Compare(other Version) int {
 	if v.Patch != other.Patch {
 		return v.Patch - other.Patch
 	}
-	return 0
+	if v.Pre != "" && other.Pre == "" {
+		return -1
+	}
+	if v.Pre == "" && other.Pre != "" {
+		return 1
+	}
+	return comparePreIdentifiers(v.Pre, other.Pre)
+}
+
+func comparePreIdentifiers(a, b string) int {
+	aParts := strings.Split(a, ".")
+	bParts := strings.Split(b, ".")
+	for i := 0; i < len(aParts) && i < len(bParts); i++ {
+		aNum, aIsNum := strconv.Atoi(aParts[i])
+		bNum, bIsNum := strconv.Atoi(bParts[i])
+		if aIsNum == nil && bIsNum == nil {
+			if aNum != bNum {
+				return aNum - bNum
+			}
+			continue
+		}
+		if aIsNum != nil && bIsNum == nil {
+			return -1
+		}
+		if aIsNum == nil && bIsNum != nil {
+			return 1
+		}
+		if aParts[i] != bParts[i] {
+			if aParts[i] < bParts[i] {
+				return -1
+			}
+			return 1
+		}
+	}
+	return len(aParts) - len(bParts)
 }
 
 func (v Version) String() string {
@@ -113,11 +147,15 @@ func MatchVersion(available []string, constraint string) (string, bool) {
 		return "", false
 	}
 
-	var candidates []Version
+	type candidate struct {
+		raw string
+		v   Version
+	}
+	var candidates []candidate
 	for _, s := range available {
 		v, ok := ParseVersion(s)
 		if ok && c.Match(v) {
-			candidates = append(candidates, v)
+			candidates = append(candidates, candidate{raw: s, v: v})
 		}
 	}
 
@@ -126,10 +164,10 @@ func MatchVersion(available []string, constraint string) (string, bool) {
 	}
 
 	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].Compare(candidates[j]) > 0
+		return candidates[i].v.Compare(candidates[j].v) > 0
 	})
 
-	return candidates[0].String(), true
+	return candidates[0].raw, true
 }
 
 func CheckCycle(path []string, current string) error {

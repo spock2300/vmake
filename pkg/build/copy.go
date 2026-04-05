@@ -52,6 +52,13 @@ func CopyDirWithFilter(src, dest string, filter CopyFilter) error {
 	return copyDirWithFilter(src, dest, filter)
 }
 
+func InstallFilter(path string, isDir bool) bool {
+	if isDir {
+		return true
+	}
+	return !strings.HasSuffix(path, ".go")
+}
+
 func copyDirWithFilter(src, dest string, filter CopyFilter) error {
 	if err := os.MkdirAll(dest, 0755); err != nil {
 		return err
@@ -77,9 +84,6 @@ func copyDirWithFilter(src, dest string, filter CopyFilter) error {
 				return err
 			}
 		} else {
-			if strings.HasSuffix(entry.Name(), ".go") {
-				continue
-			}
 			if filter != nil && !filter(srcPath, false) {
 				continue
 			}

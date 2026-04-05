@@ -130,11 +130,11 @@ type Package struct {
 	srcCodeDir   string
 	dirs         PkgDirs
 	outputDir    string
-	cfgVals      map[string]any
 	tc           *toolchain.Toolchain
 	deps         map[string]*InstalledPackage
 	patches      []string
 	configFiles  []string
+	dryRun       bool
 }
 
 func NewPackage() *Package {
@@ -292,11 +292,12 @@ func (p *Package) SetDeps(deps map[string]*InstalledPackage) *Package {
 	return p
 }
 
-func (p *Package) SetDep(name string, pkg *InstalledPackage) {
+func (p *Package) SetDep(name string, pkg *InstalledPackage) *Package {
 	if p.deps == nil {
 		p.deps = make(map[string]*InstalledPackage)
 	}
 	p.deps[name] = pkg
+	return p
 }
 
 func (p *Package) Deps() map[string]*InstalledPackage {
@@ -308,12 +309,14 @@ func (p *Package) SetDirs(dirs PkgDirs) *Package {
 	return p
 }
 
-func (p *Package) SetScriptDir(dir string) {
+func (p *Package) SetScriptDir(dir string) *Package {
 	p.scriptDir = dir
+	return p
 }
 
-func (p *Package) SetSrcDir(dir string) {
+func (p *Package) SetSrcDir(dir string) *Package {
 	p.srcCodeDir = dir
+	return p
 }
 
 func (p *Package) AddPatches(paths ...string) *Package {
@@ -339,7 +342,7 @@ func (p *Package) SetOutputDir(dir string) *Package {
 }
 
 func (p *Package) SetCfgVals(vals map[string]any) *Package {
-	p.cfgVals = vals
+	p.CfgVals = vals
 	return p
 }
 
@@ -348,6 +351,13 @@ func (p *Package) SetToolchain(tc *toolchain.Toolchain) *Package {
 	return p
 }
 
+func (p *Package) SetDryRun(v bool) *Package {
+	p.dryRun = v
+	return p
+}
+
+func (p *Package) DryRun() bool { return p.dryRun }
+
 func (p *Package) ScriptDir() string    { return p.scriptDir }
 func (p *Package) SrcDir() string       { return p.srcCodeDir }
 func (p *Package) SourceDir() string    { return p.dirs.SourceDir }
@@ -355,6 +365,13 @@ func (p *Package) BuildDir() string     { return p.dirs.BuildDir }
 func (p *Package) InstallDir() string   { return p.dirs.InstallDir }
 func (p *Package) OutputDir() string    { return p.outputDir }
 func (p *Package) GetPatches() []string { return p.patches }
+
+func (p *Package) effectiveSrcDir() string {
+	if p.srcCodeDir != "" {
+		return p.srcCodeDir
+	}
+	return p.dirs.SourceDir
+}
 
 func (p *Package) CC() string          { return p.tc.Tools.CC }
 func (p *Package) CXX() string         { return p.tc.Tools.CXX }
@@ -373,9 +390,16 @@ func (p *Package) Env() map[string]string {
 	return p.tc.Env()
 }
 
+func (p *Package) cmakeBuildType() string {
+	if m, ok := p.CfgVals[ModeOptionName].(string); ok && m == ModeDebug {
+		return "Debug"
+	}
+	return "Release"
+}
+
 func (p *Package) CMakeConfigure(extraArgs ...string) error {
 	args := []string{
-		"-S", p.dirs.SourceDir,
+		"-S", p.effectiveSrcDir(),
 		"-B", p.dirs.BuildDir,
 		"-DCMAKE_INSTALL_PREFIX=" + p.dirs.InstallDir,
 	}
@@ -385,7 +409,7 @@ func (p *Package) CMakeConfigure(extraArgs ...string) error {
 	if p.tc.Tools.CXX != "" {
 		args = append(args, "-DCMAKE_CXX_COMPILER="+p.tc.Tools.CXX)
 	}
-	args = append(args, "-DCMAKE_BUILD_TYPE=Release")
+	args = append(args, "-DCMAKE_BUILD_TYPE="+p.cmakeBuildType())
 	if p.CrossTarget() != "" {
 		args = append(args,
 			"-DCMAKE_SYSTEM_NAME=Linux",
@@ -412,32 +436,38 @@ func (p *Package) Configure(extraArgs ...string) error {
 		args = append(args, "--host="+p.CrossTarget())
 	}
 	args = append(args, extraArgs...)
-	return p.RunEnv(p.Env(), filepath.Join(p.dirs.SourceDir, "configure"), args...)
+	return p.RunEnv(p.Env(), filepath.Join(p.effectiveSrcDir(), "configure"), args...)
 }
 
 func (p *Package) Make(args ...string) error {
 	makeArgs := []string{"-C", p.dirs.BuildDir}
 	makeArgs = append(makeArgs, args...)
-	if len(p.Env()) > 0 {
-		return p.RunEnv(p.Env(), "make", makeArgs...)
-	}
-	return p.Run("make", makeArgs...)
+	return p.RunEnv(p.Env(), "make", makeArgs...)
 }
 
 func (p *Package) Run(name string, args ...string) error {
 	vlog.Info("  %s %s", name, strings.Join(args, " "))
+	if p.dryRun {
+		return nil
+	}
 	exec.RunFatal(p.dirs.BuildDir, name, args...)
 	return nil
 }
 
 func (p *Package) RunIn(dir, name string, args ...string) error {
 	vlog.Info("  cd %s && %s %s", dir, name, strings.Join(args, " "))
+	if p.dryRun {
+		return nil
+	}
 	exec.RunFatal(dir, name, args...)
 	return nil
 }
 
 func (p *Package) RunEnv(env map[string]string, name string, args ...string) error {
 	vlog.Info("  %s %s", name, strings.Join(args, " "))
+	if p.dryRun {
+		return nil
+	}
 	return exec.RunWithEnv(p.dirs.BuildDir, env, name, args...)
 }
 

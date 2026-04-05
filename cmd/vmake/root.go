@@ -105,7 +105,7 @@ type pipelineOptions struct {
 
 func runPostPhase1(ctx *RuntimeContext) {
 	fatalErr(ctx.Resolver.ResolveDeferred())
-	ctx.Resolver.UpdateOrder()
+	fatalErr(ctx.Resolver.UpdateOrder())
 	fatalErr(runConfigPhase(ctx))
 }
 

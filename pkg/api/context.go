@@ -100,12 +100,14 @@ func (ctx *BuildContext) SetDryRun(v bool) *BuildContext {
 	return ctx
 }
 
-func (ctx *BuildContext) SetBuildSubGraphFunc(fn func(string) error) {
+func (ctx *BuildContext) SetBuildSubGraphFunc(fn func(string) error) *BuildContext {
 	ctx.buildSubGraphFunc = fn
+	return ctx
 }
 
-func (ctx *BuildContext) SetDepOutputFunc(fn func(string) string) {
+func (ctx *BuildContext) SetDepOutputFunc(fn func(string) string) *BuildContext {
 	ctx.depOutputFunc = fn
+	return ctx
 }
 
 func (ctx *BuildContext) BuildSubGraph(pkgName string) {

@@ -19,6 +19,7 @@ var skipDirs = map[string]bool{
 func Scan(rootDir string) ([]Source, error) {
 	var sources []Source
 	seen := make(map[string]bool)
+	namesSeen := make(map[string]bool)
 
 	err := filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -37,10 +38,11 @@ func Scan(rootDir string) ([]Source, error) {
 			dir := filepath.Dir(path)
 			pkgName := filepath.Base(dir)
 
-			if seen[pkgName] {
+			if seen[dir] || namesSeen[pkgName] {
 				return nil
 			}
-			seen[pkgName] = true
+			seen[dir] = true
+			namesSeen[pkgName] = true
 
 			sources = append(sources, Source{
 				Name:   pkgName,
