@@ -127,6 +127,7 @@ type Package struct {
 	installFuncs []InstallFunc
 	packageFunc  PackageFunc
 	scriptDir    string
+	srcCodeDir   string
 	dirs         PkgDirs
 	outputDir    string
 	cfgVals      map[string]any
@@ -310,6 +311,10 @@ func (p *Package) SetScriptDir(dir string) {
 	p.scriptDir = dir
 }
 
+func (p *Package) SetSrcDir(dir string) {
+	p.srcCodeDir = dir
+}
+
 func (p *Package) AddPatches(paths ...string) *Package {
 	p.patches = append(p.patches, paths...)
 	return p
@@ -336,6 +341,7 @@ func (p *Package) SetToolchain(tc *toolchain.Toolchain) *Package {
 }
 
 func (p *Package) ScriptDir() string    { return p.scriptDir }
+func (p *Package) SrcDir() string       { return p.srcCodeDir }
 func (p *Package) SourceDir() string    { return p.dirs.SourceDir }
 func (p *Package) BuildDir() string     { return p.dirs.BuildDir }
 func (p *Package) InstallDir() string   { return p.dirs.InstallDir }
@@ -404,6 +410,9 @@ func (p *Package) Configure(extraArgs ...string) error {
 func (p *Package) Make(args ...string) error {
 	makeArgs := []string{"-C", p.dirs.BuildDir}
 	makeArgs = append(makeArgs, args...)
+	if len(p.Env()) > 0 {
+		return p.RunEnv(p.Env(), "make", makeArgs...)
+	}
 	return p.Run("make", makeArgs...)
 }
 

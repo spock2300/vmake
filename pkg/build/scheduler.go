@@ -101,10 +101,14 @@ func NewScheduler(
 		if override, ok := buildKeyOverrides[pkgName]; ok {
 			buildKey = override
 		}
-		s.pkgs[pkgName] = &PkgInfo{
+		info := &PkgInfo{
 			PkgDirs:  *pd,
 			BuildKey: buildKey,
 		}
+		if pd.BuildDir != "" {
+			info.OutputDir = pd.BuildDir
+		}
+		s.pkgs[pkgName] = info
 	}
 
 	return s, nil
@@ -284,10 +288,10 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 			}
 		} else if depNode.Target.Kind() != api.TargetVoid {
 			var depOutput string
-			if depPkg.InstallDir != "" {
+			if depPkg.InstallDir != "" && depPkg.OutputDir == "" {
 				depOutput = filepath.Join(depPkg.InstallDir, "lib", targetFilename(depNode.Target.Kind(), depNode.Target.Name()))
 			} else {
-				depOutput = filepath.Join(depPkg.SourceDir, s.getTargetOutputPath(depNode))
+				depOutput = s.getTargetOutputPath(depNode)
 			}
 			result.artifacts = append(result.artifacts, depOutput)
 
@@ -466,7 +470,19 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 
 	pkg := s.packages[resolved.Node.PkgName]
 	if pkg == nil {
-		return fmt.Errorf("no Package for TargetVoid target %s", resolved.Node.FullName)
+		pkgInfo := s.pkgs[resolved.Node.PkgName]
+		pkg = api.NewPackage()
+		buildDir := pkgInfo.BuildDir
+		if buildDir == "" {
+			buildDir = BuildPath(pkgInfo.SourceDir, pkgInfo.BuildKey, "")
+		}
+		pkg.SetDirs(api.PkgDirs{
+			SourceDir: pkgInfo.SourceDir,
+			BuildDir:  buildDir,
+		})
+		pkg.SetToolchain(s.toolchain)
+		pkg.SetSrcDir(pkgInfo.SourceDir)
+		s.packages[resolved.Node.PkgName] = pkg
 	}
 	s.populateDepsFromGraph(pkg, resolved.Node)
 
@@ -478,12 +494,13 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 				return nil
 			}
 		}
-		if err := os.MkdirAll(pkg.BuildDir(), 0755); err != nil {
-			return fmt.Errorf("create build dir: %w", err)
-		}
 		if err := os.MkdirAll(pkg.InstallDir(), 0755); err != nil {
 			return fmt.Errorf("create install dir: %w", err)
 		}
+	}
+
+	if err := os.MkdirAll(pkg.BuildDir(), 0755); err != nil {
+		return fmt.Errorf("create build dir: %s: %w", pkg.BuildDir(), err)
 	}
 
 	if err := fn(pkg); err != nil {

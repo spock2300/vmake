@@ -227,6 +227,9 @@ func (i *ArtifactInstaller) installExtraItems(node *BuildNode) error {
 
 func (i *ArtifactInstaller) getOutputPath(pkgName string, pkgInfo *PkgInstallInfo, node *BuildNode) string {
 	name := targetFilename(node.Target.Kind(), node.Target.Name())
+	if pkgInfo.BuildDir != "" {
+		return filepath.Join(pkgInfo.BuildDir, name)
+	}
 	return BuildPath(i.pkgDirs[pkgName].SourceDir, pkgInfo.BuildKey, name)
 }
 
