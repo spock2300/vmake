@@ -286,11 +286,19 @@ func resolveBuildConfig(ctx *RuntimeContext) (*buildConfig, error) {
 		return nil, err
 	}
 
+	globalValues := config.BuildGlobalValues(ctx.Config)
+	if globalValues[api.ModeOptionName] == "" || globalValues[api.ModeOptionName] == nil {
+		globalValues[api.ModeOptionName] = mode
+	}
+	if globalValues["toolchain"] == "" || globalValues["toolchain"] == nil {
+		globalValues["toolchain"] = tcName
+	}
+
 	return &buildConfig{
 		Mode:         mode,
 		TcName:       tcName,
 		Tc:           tc,
-		GlobalValues: config.BuildGlobalValues(ctx.Config),
+		GlobalValues: globalValues,
 	}, nil
 }
 
@@ -441,6 +449,7 @@ func prepareAllPackages(ctx *RuntimeContext, cfg *buildConfig, needed map[string
 		} else if node.Pkg != nil {
 			pkg.SetGit(node.Pkg.GitURLs()...)
 			pkg.SetVersions(node.Pkg.Versions())
+			pkg.SetSubmodules(node.Pkg.Submodules())
 		} else if node.Source != nil && node.Source.Path != "" {
 			info, err := ParseBuildGo(node.Source.Path)
 			if err == nil {
@@ -504,7 +513,11 @@ func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.Pack
 	if node.Pkg != nil && tc != nil {
 		pkg := node.Pkg
 		cfgVals := make(map[string]any)
-		for optName, opt := range pkg.GetOptions() {
+		allOpts := ctx.AllOptions[name]
+		if allOpts == nil {
+			allOpts = pkg.GetOptions()
+		}
+		for optName, opt := range allOpts {
 			if opt.Default() != nil {
 				cfgVals[optName] = opt.Default()
 			}
@@ -519,7 +532,13 @@ func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.Pack
 				cfgVals[k] = v
 			}
 		}
+		for k, v := range globalValues {
+			if _, exists := cfgVals[k]; !exists {
+				cfgVals[k] = v
+			}
+		}
 		pkg.SetDirs(*pkgDirs[name])
+		pkg.SetOptions(allOpts)
 		pkg.SetCfgVals(cfgVals)
 		pkg.SetToolchain(tc)
 	}

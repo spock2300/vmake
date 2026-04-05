@@ -49,6 +49,7 @@ type Scheduler struct {
 	resolvedTools     *ResolvedTools
 	tcName            string
 	mode              string
+	pkgOptions        map[string]map[string]any
 	pkgs              map[string]*PkgInfo
 	origDir           string
 	ccWriter          *CompileCommandsWriter
@@ -89,6 +90,7 @@ func NewScheduler(
 		resolvedTools:     tools,
 		tcName:            tcName,
 		mode:              mode,
+		pkgOptions:        pkgOptions,
 		pkgs:              make(map[string]*PkgInfo),
 		origDir:           origDir,
 		ccWriter:          ccWriter,
@@ -486,6 +488,13 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 		})
 		pkg.SetToolchain(s.toolchain)
 		pkg.SetSrcDir(pkgInfo.SourceDir)
+		cfgVals := map[string]any{api.ModeOptionName: s.mode}
+		if opts, ok := s.pkgOptions[resolved.Node.PkgName]; ok {
+			for k, v := range opts {
+				cfgVals[k] = v
+			}
+		}
+		pkg.SetCfgVals(cfgVals)
 		s.packages[resolved.Node.PkgName] = pkg
 	}
 	s.populateDepsFromGraph(pkg, resolved.Node)

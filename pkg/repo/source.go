@@ -26,11 +26,11 @@ func (m *SourceManager) EnsureSource(pkg *api.Package, version string) (string, 
 
 	if m.exists(repoDir) && m.exists(filepath.Join(repoDir, ".git")) {
 		if IsAlreadyAtRef(repoDir, tag) {
-			return repoDir, nil
+			return repoDir, m.initSubmodules(pkg, repoDir)
 		}
 		if tag != "" {
 			if FetchTags(repoDir) == nil && Checkout(repoDir, tag) == nil {
-				return repoDir, nil
+				return repoDir, m.initSubmodules(pkg, repoDir)
 			}
 		}
 		fs.RemoveIfExists(repoDir)
@@ -42,10 +42,6 @@ func (m *SourceManager) EnsureSource(pkg *api.Package, version string) (string, 
 
 	if tag == "" {
 		return repoDir, nil
-	}
-
-	if pkg.Submodules() {
-		_ = InitSubmodules(repoDir)
 	}
 
 	if err := m.retryWithFreshClone(pkg, repoDir, func() error {
@@ -60,7 +56,17 @@ func (m *SourceManager) EnsureSource(pkg *api.Package, version string) (string, 
 		return "", fmt.Errorf("checkout %s failed for %s: %w", tag, pkg.FullName(), err)
 	}
 
-	return repoDir, nil
+	return repoDir, m.initSubmodules(pkg, repoDir)
+}
+
+func (m *SourceManager) initSubmodules(pkg *api.Package, repoDir string) error {
+	if !pkg.Submodules() {
+		return nil
+	}
+	if err := InitSubmodules(repoDir); err != nil {
+		return fmt.Errorf("init submodules for %s: %w", pkg.FullName(), err)
+	}
+	return nil
 }
 
 func (m *SourceManager) retryWithFreshClone(pkg *api.Package, repoDir string, action func() error) error {

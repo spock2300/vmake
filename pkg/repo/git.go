@@ -31,7 +31,13 @@ func Clone(url, dir string) error {
 }
 
 func InitSubmodules(dir string) error {
-	return gitRun(dir, []string{"submodule", "update", "--init", "--recursive"}, 2*time.Minute)
+	_, err := exec.RunWithOptions("git", []string{"submodule", "update", "--init", "--recursive"}, exec.RunOptions{
+		Dir: dir, Timeout: 2 * time.Minute,
+	})
+	if err != nil {
+		return fmt.Errorf("git submodule update --init in %s: %w", dir, err)
+	}
+	return nil
 }
 
 func FetchTags(dir string) error {
