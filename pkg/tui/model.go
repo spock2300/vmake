@@ -107,6 +107,11 @@ func NewModel(
 		menuconfigRan: make(map[string]bool),
 		presetValues:  make(map[string]string),
 	}
+	for name, entries := range kconfigs {
+		if len(entries) > 0 && len(entries[0].Presets()) > 0 {
+			m.presetValues[name] = entries[0].SelectedPreset()
+		}
+	}
 	m.origValues = deepCopyValues(values)
 	m.origGlobal = deepCopyGlobal(globalValues)
 	m.tree = buildDepTree(packages, deps)
