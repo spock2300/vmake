@@ -16,11 +16,24 @@ func Main(p *api.Package) {
 		p.SetConfigFiles(".config")
 	})
 
+	p.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.KConfig("busybox").
+			SetDescription("BusyBox applet configuration").
+			SetSrcDir("src").
+			AddPreset("defconfig").
+			SetDefault("defconfig")
+	})
+
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("busybox").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
-			kconfigPath := filepath.Join(pkg.SrcDir(), ".config")
-			if _, err := os.Stat(kconfigPath); err != nil {
-				pkg.RunIn(pkg.SrcDir(), "make", "defconfig")
+			srcDir := pkg.SrcDir()
+			kconfigPath := filepath.Join(srcDir, ".config")
+			needDefconfig := true
+			if info, err := os.Stat(kconfigPath); err == nil && info.Size() > 0 {
+				needDefconfig = false
+			}
+			if needDefconfig {
+				pkg.RunIn(srcDir, "make", pkg.SelectedPreset())
 
 				if err := replaceKconfig(kconfigPath, map[string]string{
 					"CONFIG_TC=y": "# CONFIG_TC is not set",
@@ -29,11 +42,11 @@ func Main(p *api.Package) {
 				}
 			}
 
-			pkg.RunIn(pkg.SrcDir(), "make", "-j"+strconv.Itoa(runtime.NumCPU()))
+			pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
 
 			installDir := filepath.Join(pkg.BuildDir(), "_install")
 			os.RemoveAll(installDir)
-			pkg.RunIn(pkg.SrcDir(), "make", "CONFIG_PREFIX="+installDir, "install")
+			pkg.RunIn(srcDir, "make", "CONFIG_PREFIX="+installDir, "install")
 			return nil
 		})
 	})

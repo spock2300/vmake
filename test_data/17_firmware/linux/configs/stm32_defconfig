@@ -1,0 +1,17 @@
+CONFIG_LOCALVERSION="-vmake"
+CONFIG_ARCH="arm"
+CONFIG_NET=y
+# CONFIG_BLK_DEV is not set
+# CONFIG_I2C is not set
+# CONFIG_SPI is not set
+CONFIG_SERIAL=y
+# CONFIG_GPIO is not set
+CONFIG_MTD=y
+CONFIG_MTD_SPI_NOR=y
+# CONFIG_EXT4 is not set
+CONFIG_SQUASHFS=y
+# CONFIG_OVERLAY_FS is not set
+# CONFIG_PCI is not set
+# CONFIG_MMC is not set
+# CONFIG_DRM is not set
+# CONFIG_REGULATOR is not set

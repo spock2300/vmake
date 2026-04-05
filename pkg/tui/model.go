@@ -36,6 +36,8 @@ type Model struct {
 	globalOptions map[string]*api.Option
 	globalValues  map[string]any
 
+	kconfigs map[string][]*api.KConfigEntry
+
 	selectedPkg string
 	focusArea   int
 
@@ -56,6 +58,10 @@ type Model struct {
 	origValues  map[string]map[string]any
 	origGlobal  map[string]any
 	workDir     string
+
+	runningMenuconfig bool
+	menuconfigRan     map[string]bool
+	presetValues      map[string]string
 }
 
 func NewModel(
@@ -67,6 +73,7 @@ func NewModel(
 	currentToolchain string,
 	globalOptions map[string]*api.Option,
 	globalValues map[string]any,
+	kconfigs map[string][]*api.KConfigEntry,
 ) Model {
 	if globalValues == nil {
 		globalValues = make(map[string]any)
@@ -96,6 +103,9 @@ func NewModel(
 		workDir:       workDir,
 		globalOptions: globalOptions,
 		globalValues:  globalValues,
+		kconfigs:      kconfigs,
+		menuconfigRan: make(map[string]bool),
+		presetValues:  make(map[string]string),
 	}
 	m.origValues = deepCopyValues(values)
 	m.origGlobal = deepCopyGlobal(globalValues)
@@ -389,4 +399,47 @@ func (m *Model) shouldShow(opt *api.Option) bool {
 	vals, _ := m.values[m.selectedPkg]
 	opts, _ := m.options[m.selectedPkg]
 	return showIf(buildShowIfContext(m.selectedPkg, vals, opts))
+}
+
+func (m *Model) hasKConfig() bool {
+	if m.selectedPkg == "" || m.selectedPkg == GlobalPkgName {
+		return false
+	}
+	entries, ok := m.kconfigs[m.selectedPkg]
+	return ok && len(entries) > 0
+}
+
+func (m *Model) hasPresets() bool {
+	if !m.hasKConfig() {
+		return false
+	}
+	entries := m.kconfigs[m.selectedPkg]
+	return len(entries[0].Presets()) > 0
+}
+
+func (m *Model) currentPreset() string {
+	entries, ok := m.kconfigs[m.selectedPkg]
+	if !ok || len(entries) == 0 {
+		return ""
+	}
+	if v, ok := m.presetValues[m.selectedPkg]; ok {
+		return v
+	}
+	return entries[0].SelectedPreset()
+}
+
+func (m *Model) selectPreset(name string) {
+	if m.presetValues == nil {
+		m.presetValues = make(map[string]string)
+	}
+	m.presetValues[m.selectedPkg] = name
+	m.hasChanges = true
+}
+
+func (m *Model) presetOptions() []string {
+	entries, ok := m.kconfigs[m.selectedPkg]
+	if !ok || len(entries) == 0 {
+		return nil
+	}
+	return entries[0].Presets()
 }

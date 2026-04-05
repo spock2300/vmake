@@ -113,28 +113,29 @@ type Package struct {
 	ConfigAccessor
 	*TargetRegistry
 	*InstallItemHolder
-	gitURLs      []string
-	homepage     string
-	description  string
-	license      string
-	versions     map[string]string
-	submodules   bool
-	requires     Requires
-	requireFuncs []RequireFunc
-	libs         []string
-	configFuncs  []ConfigFunc
-	buildFuncs   []BuildFunc
-	installFuncs []InstallFunc
-	packageFunc  PackageFunc
-	scriptDir    string
-	srcCodeDir   string
-	dirs         PkgDirs
-	outputDir    string
-	tc           *toolchain.Toolchain
-	deps         map[string]*InstalledPackage
-	patches      []string
-	configFiles  []string
-	dryRun       bool
+	gitURLs        []string
+	homepage       string
+	description    string
+	license        string
+	versions       map[string]string
+	submodules     bool
+	requires       Requires
+	requireFuncs   []RequireFunc
+	libs           []string
+	configFuncs    []ConfigFunc
+	buildFuncs     []BuildFunc
+	installFuncs   []InstallFunc
+	packageFunc    PackageFunc
+	scriptDir      string
+	srcCodeDir     string
+	dirs           PkgDirs
+	outputDir      string
+	tc             *toolchain.Toolchain
+	deps           map[string]*InstalledPackage
+	patches        []string
+	configFiles    []string
+	kconfigEntries []*KConfigEntry
+	dryRun         bool
 }
 
 func NewPackage() *Package {
@@ -504,4 +505,23 @@ func SplitPackageRef(ref string) (repo, name string, ok bool) {
 		return "", ref, false
 	}
 	return ref[:idx], ref[idx+1:], true
+}
+
+func (p *Package) AddKConfig(name string) *KConfigEntry {
+	k := &KConfigEntry{name: name}
+	p.kconfigEntries = append(p.kconfigEntries, k)
+	return k
+}
+
+func (p *Package) KConfigEntries() []*KConfigEntry { return p.kconfigEntries }
+
+func (p *Package) SelectedPreset() string {
+	if len(p.kconfigEntries) == 0 {
+		return ""
+	}
+	k := p.kconfigEntries[0]
+	if k.selectedPreset != "" {
+		return k.selectedPreset
+	}
+	return k.defaultPreset
 }

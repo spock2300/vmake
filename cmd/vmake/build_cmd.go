@@ -211,6 +211,10 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		}
 	}
 
+	if err := restoreKConfigFiles(ctx, pkgDirs, needed); err != nil {
+		return nil, err
+	}
+
 	allTargets, pkgMetaMap, subBuildKeys := executeAllOnBuild(ctx, needed, remote, pkgDirs, cfg, localPkgOptions)
 
 	vlog.Info("")
@@ -642,6 +646,7 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 				continue
 			}
 			executePackageOnBuild(ctx, name, node, pkgDirs, subAllTargets, remote, cfg.GlobalValues, buildSubGraphFn, subDepOutputFn, cfg.Tc, localPkgOptions)
+			autoWireRequireDeps(node.Pkg, subAllTargets[name])
 		}
 
 		subTcName := resolvePkgToolchain(ctx.Config, rootPkg, cfg.TcName)
@@ -709,6 +714,7 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 		}
 
 		executePackageOnBuild(ctx, name, node, pkgDirs, allTargets, remote, cfg.GlobalValues, buildSubGraphFn, depOutputFn, cfg.Tc, localPkgOptions)
+		autoWireRequireDeps(node.Pkg, allTargets[name])
 	}
 
 	for pkgName := range subGraphBuilt {
@@ -716,6 +722,20 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 	}
 
 	return allTargets, pkgMetaMap, subBuildKeys
+}
+
+func autoWireRequireDeps(pkg *api.Package, targets map[string]*api.Target) {
+	if pkg == nil || targets == nil {
+		return
+	}
+	for _, t := range targets {
+		for _, req := range pkg.GetRequires().Get() {
+			depRef := req.Name + ":" + req.Name
+			if !t.HasDep(depRef) {
+				t.AddDeps(depRef)
+			}
+		}
+	}
 }
 
 func collectNeeded(graph *resolver.Graph) map[string]bool {
@@ -763,6 +783,52 @@ func applyPatches(pkg *api.Package, sourceDir string) error {
 		}
 	}
 
+	return nil
+}
+
+func restoreKConfigFiles(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, needed map[string]bool) error {
+	for _, name := range ctx.Resolver.GetOrder() {
+		if !needed[name] {
+			continue
+		}
+		kconfigs := ctx.AllKConfigs[name]
+		if len(kconfigs) == 0 {
+			continue
+		}
+
+		entry := config.GetEntry(ctx.Config, name)
+		kconfigContent := entry.KConfig
+		hasEntry := ctx.Config.Entries != nil && ctx.Config.Entries[name] != nil
+
+		k := kconfigs[0]
+		srcDir := k.SrcDir()
+		if srcDir == "" {
+			srcDir = pkgDirs[name].SourceDir
+		}
+		configPath := filepath.Join(srcDir, k.ConfigPath())
+
+		if hasEntry && kconfigContent == "" {
+			os.Remove(configPath)
+			continue
+		}
+
+		if kconfigContent == "" {
+			continue
+		}
+
+		existing, err := os.ReadFile(configPath)
+		if err == nil && string(existing) == kconfigContent {
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+			return fmt.Errorf("restore kconfig %s: %w", name, err)
+		}
+		if err := os.WriteFile(configPath, []byte(kconfigContent), 0644); err != nil {
+			return fmt.Errorf("restore kconfig %s: %w", name, err)
+		}
+		vlog.Info("Restored .config for %s (%d bytes)", name, len(kconfigContent))
+	}
 	return nil
 }
 

@@ -39,6 +39,7 @@ type RuntimeContext struct {
 	ConfigPath    string
 	DepGraph      *resolver.Graph
 	AllOptions    map[string]map[string]*api.Option
+	AllKConfigs   map[string][]*api.KConfigEntry
 	GlobalOptions map[string]*api.Option
 	Resolver      *resolver.Resolver
 }
@@ -223,7 +224,7 @@ func runRequirePhase(ctx *RuntimeContext, force bool) error {
 }
 
 func collectOptions(name, dir string, pkg *api.Package) map[string]*api.Option {
-	cfgCtx := api.NewConfigContext(name)
+	cfgCtx := api.NewConfigContextWithPackage(name, pkg)
 	pkg.ExecConfigFuncs(dir, func(fn api.ConfigFunc) { fn(cfgCtx) })
 	return cfgCtx.GetOptions()
 }
@@ -233,6 +234,7 @@ func runConfigPhase(ctx *RuntimeContext) error {
 	vlog.Info("Executing OnConfig...")
 
 	ctx.AllOptions = make(map[string]map[string]*api.Option)
+	ctx.AllKConfigs = make(map[string][]*api.KConfigEntry)
 	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
 
 	for _, name := range ctx.Resolver.GetOrder() {
@@ -246,6 +248,30 @@ func runConfigPhase(ctx *RuntimeContext) error {
 		if len(opts) > 0 {
 			ctx.AllOptions[name] = opts
 			vlog.Info("  %s: %d option(s)", name, len(opts))
+		}
+
+		if node.Pkg != nil {
+			entries := node.Pkg.KConfigEntries()
+			if len(entries) > 0 {
+				for _, e := range entries {
+					if e.ConfigPath() == "" {
+						e.SetConfigPath(".config")
+					}
+					if e.SrcDir() == "" {
+						e.SetSrcDir(pkgDirs[name].SourceDir)
+					} else if !filepath.IsAbs(e.SrcDir()) {
+						e.SetSrcDir(filepath.Join(pkgDirs[name].SourceDir, e.SrcDir()))
+					}
+					cfgEntry := config.GetEntry(ctx.Config, name)
+					if cfgEntry.SelectedPreset != "" {
+						e.SetSelectedPreset(cfgEntry.SelectedPreset)
+					} else if e.DefaultPreset() != "" {
+						e.SetSelectedPreset(e.DefaultPreset())
+					}
+				}
+				ctx.AllKConfigs[name] = entries
+				vlog.Info("  %s: %d kconfig(s)", name, len(entries))
+			}
 		}
 	}
 

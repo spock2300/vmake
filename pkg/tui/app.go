@@ -2,6 +2,9 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"gitee.com/spock2300/vmake/pkg/api"
@@ -11,10 +14,12 @@ import (
 )
 
 type ConfigResult struct {
-	Saved        bool
-	Values       map[string]map[string]any
-	Toolchain    string
-	GlobalValues map[string]any
+	Saved         bool
+	Values        map[string]map[string]any
+	Toolchain     string
+	GlobalValues  map[string]any
+	MenuconfigRan map[string]bool
+	PresetValues  map[string]string
 }
 
 func Run(
@@ -26,17 +31,20 @@ func Run(
 	currentToolchain string,
 	globalOptions map[string]*api.Option,
 	globalValues map[string]any,
+	kconfigs map[string][]*api.KConfigEntry,
 ) (*ConfigResult, error) {
-	m := NewModel(packages, deps, options, values, workDir, currentToolchain, globalOptions, globalValues)
+	m := NewModel(packages, deps, options, values, workDir, currentToolchain, globalOptions, globalValues, kconfigs)
 	p := tea.NewProgram(&m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		return nil, err
 	}
 	return &ConfigResult{
-		Saved:        m.saved,
-		Values:       m.values,
-		Toolchain:    getToolchainValue(m.globalValues),
-		GlobalValues: m.globalValues,
+		Saved:         m.saved,
+		Values:        m.values,
+		Toolchain:     getToolchainValue(m.globalValues),
+		GlobalValues:  m.globalValues,
+		MenuconfigRan: m.menuconfigRan,
+		PresetValues:  m.presetValues,
 	}, nil
 }
 
@@ -47,12 +55,93 @@ func getToolchainValue(globalValues map[string]any) string {
 	return ""
 }
 
+type menuconfigDone struct {
+	pkgName string
+	err     error
+	ensured bool
+}
+
+func ensureConfigCmd(pkgName string, entries []*api.KConfigEntry, workDir string) tea.Cmd {
+	return func() tea.Msg {
+		if len(entries) == 0 {
+			return menuconfigDone{pkgName: pkgName}
+		}
+		e := entries[0]
+		srcDir := e.SrcDir()
+		if srcDir == "" {
+			srcDir = workDir
+		}
+		configPath := filepath.Join(srcDir, e.ConfigPath())
+		if _, err := os.Stat(configPath); err == nil {
+			return menuconfigDone{pkgName: pkgName, ensured: true}
+		}
+		presetName := e.SelectedPreset()
+		if presetName == "" {
+			presetName = e.DefaultPreset()
+		}
+		if presetName == "" {
+			return menuconfigDone{pkgName: pkgName, ensured: true}
+		}
+		makeCmd := e.MenuconfigCmd()
+		if makeCmd == "" {
+			makeCmd = "make"
+		}
+		parts := strings.Fields(makeCmd)
+		args := []string{"-C", srcDir}
+		args = append(args, parts[1:]...)
+		args = append(args, presetName)
+		cmd := exec.Command(parts[0], args...)
+		err := cmd.Run()
+		return menuconfigDone{pkgName: pkgName, ensured: true, err: err}
+	}
+}
+
+func runMenuconfigCmd(pkgName string, entries []*api.KConfigEntry, workDir string) tea.Cmd {
+	if len(entries) == 0 {
+		return func() tea.Msg { return menuconfigDone{pkgName: pkgName} }
+	}
+	e := entries[0]
+	srcDir := e.SrcDir()
+	if srcDir == "" {
+		srcDir = workDir
+	}
+	menuconfigCmd := e.MenuconfigCmd()
+	if menuconfigCmd == "" {
+		menuconfigCmd = "make menuconfig"
+	}
+	parts := strings.Fields(menuconfigCmd)
+	args := []string{"-C", srcDir}
+	args = append(args, parts[1:]...)
+	cmd := exec.Command(parts[0], args...)
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return menuconfigDone{pkgName: pkgName, err: err}
+	})
+}
+
 func (m *Model) Init() tea.Cmd {
 	return nil
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case menuconfigDone:
+		if msg.ensured {
+			if msg.err != nil {
+				m.runningMenuconfig = false
+				m.hasChanges = true
+				return m, nil
+			}
+			entries := m.kconfigs[msg.pkgName]
+			return m, runMenuconfigCmd(msg.pkgName, entries, m.workDir)
+		}
+		m.runningMenuconfig = false
+		if msg.err != nil {
+			m.hasChanges = true
+		} else {
+			m.menuconfigRan[msg.pkgName] = true
+			m.hasChanges = true
+		}
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case tea.WindowSizeMsg:
@@ -72,6 +161,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleEditKey(msg)
 	}
 
+	if m.runningMenuconfig {
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "ctrl+c":
 		if m.hasChanges {
@@ -79,6 +172,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.saved = false
+		return m, tea.Quit
+	case "ctrl+s", "s":
+		m.saved = true
 		return m, tea.Quit
 	case "esc":
 		if m.focusArea == 0 {
@@ -95,7 +191,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.focusArea = (m.focusArea + 1) % 2
 		return m, nil
 	case "shift+tab":
-		m.focusArea = (m.focusArea + 1) % 2
+		m.focusArea = (m.focusArea - 1 + 2) % 2
 		return m, nil
 	}
 
@@ -143,8 +239,10 @@ func (m *Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.flat = flattenTree(m.tree)
 		}
 	case "enter":
-		m.saved = true
-		return m, tea.Quit
+		if m.treeCursor < len(m.flat) && len(m.flat[m.treeCursor].Children) > 0 {
+			m.flat[m.treeCursor].Expanded = !m.flat[m.treeCursor].Expanded
+			m.flat = flattenTree(m.tree)
+		}
 	}
 	return m, nil
 }
@@ -159,6 +257,22 @@ func (m *Model) selectCurrentNode() {
 
 func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	visible := m.visibleOptions()
+	presetIdx := len(visible)
+
+	menuconfigIdx := -1
+	if m.hasKConfig() {
+		menuconfigIdx = presetIdx
+		if m.hasPresets() {
+			menuconfigIdx = presetIdx + 1
+		}
+	}
+
+	if menuconfigIdx >= 0 && m.optCursor == menuconfigIdx && msg.String() == "enter" {
+		entries := m.kconfigs[m.selectedPkg]
+		m.runningMenuconfig = true
+		m.saved = false
+		return m, ensureConfigCmd(m.selectedPkg, entries, m.workDir)
+	}
 
 	switch msg.String() {
 	case "up", "k":
@@ -166,43 +280,92 @@ func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.optCursor--
 		}
 	case "down", "j":
-		if m.optCursor < len(visible)-1 {
+		maxCursor := presetIdx
+		if m.hasPresets() {
+			maxCursor = presetIdx + 1
+		}
+		if m.hasKConfig() {
+			maxCursor++
+		}
+		if m.optCursor < maxCursor {
 			m.optCursor++
 		}
-	case " ":
-		if m.optCursor < len(visible) {
-			item := visible[m.optCursor]
-			if item.Opt.Type() == api.OptionBool {
-				current := m.getValue(item.Name)
-				if b, ok := current.(bool); ok {
-					m.setValue(item.Name, !b)
-				} else {
-					m.setValue(item.Name, true)
-				}
-			}
-		}
-	case "enter":
-		if m.optCursor < len(visible) {
-			item := visible[m.optCursor]
-			switch item.Opt.Type() {
-			case api.OptionString, api.OptionInt:
-				m.editing = true
-				m.editInput = fmt.Sprintf("%v", m.getValue(item.Name))
-			case api.OptionChoice:
-				m.editing = true
-				m.editChoices = item.Opt.Values()
-				current := fmt.Sprintf("%v", m.getValue(item.Name))
-				m.editIdx = 0
-				for i, v := range m.editChoices {
-					if v == current {
-						m.editIdx = i
-						break
-					}
-				}
-			}
-		}
+	case " ", "enter", "right", "l":
+		m.handleOptionAction(visible, presetIdx, false, msg.String())
+	case "left", "h":
+		m.handleOptionAction(visible, presetIdx, true, msg.String())
 	}
 	return m, nil
+}
+
+func (m *Model) handleOptionAction(visible []OptionItem, presetIdx int, reverse bool, key string) {
+	if m.optCursor >= presetIdx && m.hasPresets() && m.optCursor == presetIdx {
+		presets := m.presetOptions()
+		if len(presets) > 1 {
+			current := m.currentPreset()
+			idx := 0
+			for i, p := range presets {
+				if p == current {
+					idx = i
+					break
+				}
+			}
+			if reverse {
+				idx--
+				if idx < 0 {
+					idx = len(presets) - 1
+				}
+			} else {
+				idx = (idx + 1) % len(presets)
+			}
+			m.selectPreset(presets[idx])
+		}
+		return
+	}
+
+	if m.optCursor >= len(visible) {
+		return
+	}
+
+	item := visible[m.optCursor]
+	switch item.Opt.Type() {
+	case api.OptionBool:
+		if key == "enter" || key == " " || key == "right" || key == "l" || key == "left" || key == "h" {
+			current := m.getValue(item.Name)
+			if b, ok := current.(bool); ok {
+				m.setValue(item.Name, !b)
+			} else {
+				m.setValue(item.Name, true)
+			}
+		}
+	case api.OptionChoice:
+		choices := item.Opt.Values()
+		if len(choices) < 2 {
+			return
+		}
+		current := fmt.Sprintf("%v", m.getValue(item.Name))
+		idx := 0
+		for i, v := range choices {
+			if v == current {
+				idx = i
+				break
+			}
+		}
+		if reverse {
+			idx--
+			if idx < 0 {
+				idx = len(choices) - 1
+			}
+		} else {
+			idx = (idx + 1) % len(choices)
+		}
+		m.setValue(item.Name, choices[idx])
+	case api.OptionString, api.OptionInt:
+		if !reverse {
+			m.editing = true
+			m.editInput = fmt.Sprintf("%v", m.getValue(item.Name))
+		}
+	}
 }
 
 func (m *Model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -332,8 +495,14 @@ func (m *Model) renderOptions() string {
 		return "Select a package"
 	}
 
+	if m.runningMenuconfig {
+		return "\n  Running menuconfig for " + m.selectedPkg + "...\n"
+	}
+
 	visible := m.visibleOptions()
-	if len(visible) == 0 {
+	hasKConfig := m.hasKConfig()
+
+	if len(visible) == 0 && !hasKConfig {
 		return "No options"
 	}
 
@@ -346,6 +515,34 @@ func (m *Model) renderOptions() string {
 
 		line := m.renderOption(item, i == m.optCursor)
 		b.WriteString(line + "\n")
+	}
+
+	if hasKConfig {
+		presetIdx := len(visible)
+		if m.hasPresets() {
+			b.WriteString("\n")
+			presetName := m.currentPreset()
+			selected := m.optCursor == presetIdx
+			name := optionNameStyle.Render("preset")
+			if selected {
+				name = selectedOptStyle.Render("preset")
+			}
+			val := dropdownStyle.Render(fmt.Sprintf("[%s]", presetName))
+			desc := optionDescStyle.Render("← →: select preset")
+			b.WriteString(fmt.Sprintf("  %s %s %s", name, val, desc) + "\n")
+		}
+		b.WriteString("\n")
+		menuconfigIdx := presetIdx
+		if m.hasPresets() {
+			menuconfigIdx = presetIdx + 1
+		}
+		selected := m.optCursor == menuconfigIdx
+		name := optionNameStyle.Render("menuconfig")
+		if selected {
+			name = selectedOptStyle.Render("menuconfig")
+		}
+		desc := optionDescStyle.Render("Enter: run menuconfig")
+		b.WriteString(fmt.Sprintf("  %s %s", name, desc) + "\n")
 	}
 
 	return b.String()
@@ -407,7 +604,8 @@ func (m *Model) renderHelp() string {
 		return renderHelp("Enter: confirm | Esc: cancel", m.hasChanges)
 	}
 	if m.focusArea == 0 {
-		return renderHelp("↑↓: navigate | ←→: collapse/expand | Tab: options | Enter: Save | Esc: Cancel", m.hasChanges)
+		return renderHelp("↑↓: navigate | ←→: collapse/expand | Tab: options | Enter: expand | S: Save | Esc: Cancel", m.hasChanges)
 	}
-	return renderHelp("↑↓: navigate | Space: toggle | Enter: edit | Tab: tree | Esc: back", m.hasChanges)
+	helpText := "↑↓: navigate | ←→: cycle value | Space/Enter: edit | Tab: tree | Esc: back"
+	return renderHelp(helpText, m.hasChanges)
 }

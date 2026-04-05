@@ -193,10 +193,19 @@ func (t *Target) Defines() []string        { return t.defines }
 func (t *Target) Languages() []string      { return t.languages }
 func (t *Target) Links() []string          { return t.links }
 func (t *Target) Deps() []string           { return t.deps }
-func (t *Target) CFlags() []string         { return t.cflags }
-func (t *Target) CxxFlags() []string       { return t.cxxflags }
-func (t *Target) LdFlags() []string        { return t.ldflags }
-func (t *Target) InstallDir() string       { return t.installDir }
+
+func (t *Target) HasDep(depRef string) bool {
+	for _, d := range t.deps {
+		if d == depRef {
+			return true
+		}
+	}
+	return false
+}
+func (t *Target) CFlags() []string   { return t.cflags }
+func (t *Target) CxxFlags() []string { return t.cxxflags }
+func (t *Target) LdFlags() []string  { return t.ldflags }
+func (t *Target) InstallDir() string { return t.installDir }
 
 func (t *Target) SetInstallDir(dir string) *Target {
 	t.installDir = dir

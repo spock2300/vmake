@@ -10,24 +10,30 @@ import (
 
 func Main(p *api.Package) {
 	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("rootfs", "app")
+		ctx.AddRequires("uboot", "linux", "rootfs", "app")
 	})
 
 	p.OnBuild(func(ctx *api.BuildContext) {
-		rootfsBuildDir := filepath.Dir(ctx.DepOutput("rootfs:rootfs"))
-		appBuildDir := filepath.Dir(ctx.DepOutput("app:app"))
+		ubootBuildDir := ctx.DepBuildDir("uboot:uboot")
+		linuxBuildDir := ctx.DepBuildDir("linux:linux")
+		rootfsBuildDir := ctx.DepBuildDir("rootfs:rootfs")
+		appBuildDir := ctx.DepBuildDir("app:app")
 
-		ctx.Target("firmware").SetKind(api.TargetVoid).AddDeps("rootfs:rootfs", "app:app").SetBuildFunc(func(pkg *api.Package) error {
+		ctx.Target("firmware").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
+			ubootBin := filepath.Join(ubootBuildDir, "u-boot.bin")
+			zImage := filepath.Join(linuxBuildDir, "zImage")
 			rootfsImg := filepath.Join(rootfsBuildDir, "rootfs.sqsh")
 			appImg := filepath.Join(appBuildDir, "app.sqsh")
 
-			for _, f := range []string{rootfsImg, appImg} {
+			for _, f := range []string{ubootBin, zImage, rootfsImg, appImg} {
 				if _, err := os.Stat(f); err != nil {
 					return fmt.Errorf("missing partition image: %s", f)
 				}
 			}
 
 			layout := []Partition{
+				{"uboot", ubootBin, 0},
+				{"kernel", zImage, 0},
 				{"rootfs", rootfsImg, 0},
 				{"app", appImg, 0},
 			}
@@ -83,7 +89,7 @@ func packImage(layout []Partition, output string) error {
 		if _, err := f.WriteAt(data, p.Offset); err != nil {
 			return err
 		}
-		fmt.Printf("  [%s] offset=%d size=%d\n", p.Name, p.Offset, sizes[i])
+		fmt.Printf("  [%s] offset=0x%x size=%d\n", p.Name, p.Offset, sizes[i])
 	}
 
 	fmt.Printf("  firmware.img: total=%d bytes\n", offset)

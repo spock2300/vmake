@@ -515,7 +515,11 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 		if si, err := os.Stat(stampPath); err == nil {
 			stale := false
 			for _, cf := range pkg.ConfigFiles() {
-				cp := filepath.Join(pkg.SrcDir(), cf)
+				base := pkg.SrcDir()
+				if base == "" {
+					base = pkg.SourceDir()
+				}
+				cp := filepath.Join(base, cf)
 				ci, err := os.Stat(cp)
 				if err != nil {
 					stale = true

@@ -1,0 +1,55 @@
+menu "General Setup"
+
+config LOCALVERSION
+    string "Local version - append to kernel release"
+    default "-vmake"
+
+config ARCH
+    string "Architecture"
+    default "x86_64"
+
+endmenu
+
+menu "Device Drivers"
+
+config NET
+    bool "Networking support"
+    default y
+
+config BLK_DEV
+    bool "Block device support"
+    default y
+
+config I2C
+    bool "I2C support"
+    default y
+
+config SPI
+    bool "SPI support"
+    default n
+
+config SERIAL
+    bool "Serial driver"
+    default y
+
+config GPIO
+    bool "GPIO support"
+    default y
+
+endmenu
+
+menu "File systems"
+
+config EXT4
+    bool "Ext4 filesystem"
+    default y
+
+config SQUASHFS
+    bool "SquashFS support"
+    default y
+
+config OVERLAY_FS
+    bool "Overlay filesystem"
+    default n
+
+endmenu

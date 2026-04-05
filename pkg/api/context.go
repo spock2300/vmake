@@ -1,6 +1,7 @@
 package api
 
 import (
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -20,6 +21,7 @@ func (b *pkgBase) PackageName() string {
 type ConfigContext struct {
 	ConfigAccessor
 	pkgBase
+	pkg *Package
 }
 
 func NewConfigContext(pkgName string) *ConfigContext {
@@ -27,6 +29,21 @@ func NewConfigContext(pkgName string) *ConfigContext {
 		ConfigAccessor: NewConfigAccessor(nil, nil),
 		pkgBase:        pkgBase{pkgName: pkgName},
 	}
+}
+
+func NewConfigContextWithPackage(pkgName string, pkg *Package) *ConfigContext {
+	return &ConfigContext{
+		ConfigAccessor: NewConfigAccessor(nil, nil),
+		pkgBase:        pkgBase{pkgName: pkgName},
+		pkg:            pkg,
+	}
+}
+
+func (ctx *ConfigContext) KConfig(name string) *KConfigEntry {
+	if ctx.pkg != nil {
+		return ctx.pkg.AddKConfig(name)
+	}
+	return &KConfigEntry{name: name}
 }
 
 func (ctx *ConfigContext) SetConfigValue(name string, val any) *ConfigContext {
@@ -130,6 +147,10 @@ func (ctx *BuildContext) DepOutput(depRef string) string {
 		vlog.Fatal("DepOutput: not available")
 	}
 	return ctx.depOutputFunc(depRef)
+}
+
+func (ctx *BuildContext) DepBuildDir(depRef string) string {
+	return filepath.Dir(ctx.DepOutput(depRef))
 }
 
 func (ctx *BuildContext) Exec(name string, args ...string) {

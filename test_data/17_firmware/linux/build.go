@@ -2,24 +2,42 @@ package main
 
 import (
 	"os"
-	"path/filepath"
+	"runtime"
+	"strconv"
 
 	"gitee.com/spock2300/vmake/pkg/api"
 )
 
 func Main(p *api.Package) {
+	p.OnPackage(func(p *api.Package) {
+		p.SetConfigFiles(".config")
+	})
+
+	p.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.KConfig("linux").
+			SetDescription("Linux kernel configuration").
+			AddPreset("x86_64_defconfig").
+			AddPreset("rk3568_defconfig").
+			AddPreset("stm32_defconfig").
+			SetDefault("x86_64_defconfig").
+			SetMenuconfigCmd("make menuconfig")
+	})
+
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("linux").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
-			os.MkdirAll(pkg.BuildDir(), 0755)
-
-			zImage := filepath.Join(pkg.BuildDir(), "zImage")
-			if err := os.WriteFile(zImage, []byte("MOCK_LINUX_V6.6_ZIMAGE"), 0644); err != nil {
-				return err
+			srcDir := pkg.SourceDir()
+			configPath := srcDir + "/.config"
+			needDefconfig := true
+			if info, err := os.Stat(configPath); err == nil && info.Size() > 0 {
+				needDefconfig = false
 			}
-
-			dtsDir := filepath.Join(pkg.BuildDir(), "dts")
-			os.MkdirAll(dtsDir, 0755)
-			return os.WriteFile(filepath.Join(dtsDir, "board.dtb"), []byte("MOCK_DTB_V1"), 0644)
+			if needDefconfig {
+				pkg.RunIn(srcDir, "make", pkg.SelectedPreset())
+			}
+			os.MkdirAll(pkg.BuildDir(), 0755)
+			pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
+			pkg.RunIn(srcDir, "make", "DESTDIR="+pkg.BuildDir(), "install")
+			return nil
 		})
 	})
 }

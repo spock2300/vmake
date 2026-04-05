@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+
 	"gitee.com/spock2300/vmake/pkg/buildscript"
 	"gitee.com/spock2300/vmake/pkg/config"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
@@ -61,7 +64,7 @@ func runConfig(cmd *cobra.Command, args []string) {
 		deps[name] = node.Deps
 	}
 
-	result, err := tui.Run(sources, deps, ctx.AllOptions, values, ctx.WorkDir, currentTC, ctx.GlobalOptions, globalValues)
+	result, err := tui.Run(sources, deps, ctx.AllOptions, values, ctx.WorkDir, currentTC, ctx.GlobalOptions, globalValues, ctx.AllKConfigs)
 	fatalErr(err)
 
 	if !result.Saved {
@@ -69,9 +72,41 @@ func runConfig(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	for pkgName, opts := range result.Values {
+	configured := make(map[string]bool)
+	for pkgName := range result.Values {
+		configured[pkgName] = true
+	}
+	for pkgName := range ctx.AllKConfigs {
+		configured[pkgName] = true
+	}
+
+	for pkgName := range configured {
 		entry := config.GetEntry(ctx.Config, pkgName)
-		entry.Options = opts
+
+		if opts, ok := result.Values[pkgName]; ok {
+			entry.Options = opts
+		}
+
+		if result.PresetValues != nil {
+			if preset, ok := result.PresetValues[pkgName]; ok {
+				entry.SelectedPreset = preset
+			}
+		}
+
+		if result.MenuconfigRan[pkgName] {
+			if kconfigs, ok := ctx.AllKConfigs[pkgName]; ok && len(kconfigs) > 0 {
+				k := kconfigs[0]
+				data, err := os.ReadFile(filepath.Join(k.SrcDir(), k.ConfigPath()))
+				if err == nil {
+					entry.KConfig = string(data)
+				}
+			}
+		} else if result.PresetValues != nil {
+			if _, presetChanged := result.PresetValues[pkgName]; presetChanged {
+				entry.KConfig = ""
+			}
+		}
+
 		config.SetEntry(ctx.Config, pkgName, entry)
 	}
 
