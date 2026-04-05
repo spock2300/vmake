@@ -134,6 +134,7 @@ type Package struct {
 	tc           *toolchain.Toolchain
 	deps         map[string]*InstalledPackage
 	patches      []string
+	configFiles  []string
 }
 
 func NewPackage() *Package {
@@ -324,6 +325,13 @@ func (p *Package) SetPatches(paths ...string) *Package {
 	p.patches = paths
 	return p
 }
+
+func (p *Package) SetConfigFiles(files ...string) *Package {
+	p.configFiles = files
+	return p
+}
+
+func (p *Package) ConfigFiles() []string { return p.configFiles }
 
 func (p *Package) SetOutputDir(dir string) *Package {
 	p.outputDir = dir

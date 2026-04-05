@@ -497,6 +497,22 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 		if err := os.MkdirAll(pkg.InstallDir(), 0755); err != nil {
 			return fmt.Errorf("create install dir: %w", err)
 		}
+	} else if pkg.BuildDir() != "" {
+		stampPath := filepath.Join(pkg.BuildDir(), ".vmake_stamp")
+		if si, err := os.Stat(stampPath); err == nil {
+			stale := false
+			for _, cf := range pkg.ConfigFiles() {
+				cp := filepath.Join(pkg.SrcDir(), cf)
+				if ci, err := os.Stat(cp); err == nil && ci.ModTime().After(si.ModTime()) {
+					stale = true
+					break
+				}
+			}
+			if !stale {
+				vlog.Info("  SKIP (already built)")
+				return nil
+			}
+		}
 	}
 
 	if err := os.MkdirAll(pkg.BuildDir(), 0755); err != nil {
@@ -505,6 +521,11 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 
 	if err := fn(pkg); err != nil {
 		return err
+	}
+
+	if pkg.InstallDir() == "" && pkg.BuildDir() != "" {
+		stampPath := filepath.Join(pkg.BuildDir(), ".vmake_stamp")
+		os.WriteFile(stampPath, []byte{}, 0644)
 	}
 
 	pkgName := resolved.Node.PkgName

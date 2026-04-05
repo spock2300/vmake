@@ -13,17 +13,20 @@ import (
 func Main(p *api.Package) {
 	p.OnPackage(func(p *api.Package) {
 		p.SetGit("https://git.busybox.net/busybox")
+		p.SetConfigFiles(".config")
 	})
 
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("busybox").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
-			pkg.RunIn(pkg.SrcDir(), "make", "defconfig")
-
 			kconfigPath := filepath.Join(pkg.SrcDir(), ".config")
-			if err := replaceKconfig(kconfigPath, map[string]string{
-				"CONFIG_TC=y": "# CONFIG_TC is not set",
-			}); err != nil {
-				return err
+			if _, err := os.Stat(kconfigPath); err != nil {
+				pkg.RunIn(pkg.SrcDir(), "make", "defconfig")
+
+				if err := replaceKconfig(kconfigPath, map[string]string{
+					"CONFIG_TC=y": "# CONFIG_TC is not set",
+				}); err != nil {
+					return err
+				}
 			}
 
 			pkg.RunIn(pkg.SrcDir(), "make", "-j"+strconv.Itoa(runtime.NumCPU()))
