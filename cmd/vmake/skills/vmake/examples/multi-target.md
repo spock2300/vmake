@@ -27,7 +27,7 @@ func Main(p *api.Package) {
 			AddFiles("tests/*.c").
 			AddIncludes("include").
 			AddDeps("mylib").
-			SetDefault(false)
+			SetTest(true)
 	})
 }
 ```
@@ -37,7 +37,7 @@ func Main(p *api.Package) {
 - **`api.TargetStatic`** - Build a static library
 - **`AddIncludes("include")`** - Add include directories
 - **`AddDeps("mylib")`** - Intra-package target dependency
-- **`SetDefault(false)`** - Exclude target from default build
+- **`SetTest(true)`** - Mark as test target (excluded from default build, never installed)
 
 ## Project Structure
 
@@ -63,11 +63,18 @@ build/
     └── tests         # Test executable (not built by default)
 ```
 
+## Running Tests
+
+```bash
+vmake build --tests  # Build everything including test targets
+vmake test           # Build + run test targets, report pass/fail
+```
+
 ## Key Points
 
 - Multiple targets in single `OnBuild`
 - Dependencies resolved automatically - "mylib" builds before "myapp"
-- `SetDefault(false)` useful for test targets, benchmarks
+- `SetTest(true)` useful for test targets — auto-sets `isDefault=false`, skipped by `vmake build` and install
 - `AddIncludes` adds -I flags for both compilation and linking
 - `AddPublicIncludes` propagates include dirs to dependent targets
 

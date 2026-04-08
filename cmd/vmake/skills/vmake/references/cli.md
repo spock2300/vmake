@@ -4,7 +4,7 @@ Generated from vmake built-in commands. For plugin commands,
 run `vmake <plugin> --help` or check the plugin documentation.
 
 `vmake [--quiet -q --verbose -v --very-verbose -V]` - VMake - A Go-based C/C++ build system
-  `vmake build [--force -f --install -i --install-type --mode --prefix -p --toolchain --manifest]` - Build the project
+  `vmake build [--force -f --install -i --install-type --mode --prefix -p --toolchain --manifest --tests]` - Build the project
   `vmake clean [--all]` - Clean build artifacts
   `vmake distclean` - Deep clean all build artifacts (build scripts, caches, install dir)
   `vmake completion [shell]` - Generate shell completion script
@@ -36,6 +36,7 @@ run `vmake <plugin> --help` or check the plugin documentation.
     `vmake install [--project -p]` - Install VMake skill for AI assistants
     `vmake path` - Show skill installation paths
     `vmake uninstall` - Uninstall VMake skill
+  `vmake test` - Build and run test targets
   `vmake toolchain` - Show toolchain information
     `vmake list` - List available toolchains
     `vmake show [name]` - Show toolchain details

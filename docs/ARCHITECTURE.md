@@ -34,6 +34,7 @@ Phase 3: OnBuild
 | `--prefix` | `-p` | 安装前缀（默认: `./install/`） |
 | `--install-type` | | 安装类型: `runtime`（默认）或 `sdk` |
 | `--manifest` | | 从 manifest 文件锁定版本 |
+| `--tests` | | 包含测试目标 |
 
 ### Install Type 过滤
 
@@ -260,6 +261,7 @@ vmake (RootCmd)
 │   ├── install    # 安装 AI skill
 │   ├── uninstall  # 卸载 AI skill
 │   └── path       # 显示安装路径
+├── test           # 构建并运行测试目标
 └── <plugin>       # 扩展插件提供的命令
     └── ...        # 插件自定义子命令
 ```

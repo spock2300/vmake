@@ -223,6 +223,7 @@ Methods on `BuildContext`:
 | `--prefix` | `-p` | Installation prefix (default: `./install/`) |
 | `--install-type` | | `runtime` (default) or `sdk` |
 | `--manifest` | | Pin versions from manifest file |
+| `--tests` | | Include test targets in build |
 
 ## Build Script System
 Each `build.go` is compiled to a Go plugin (`.so`):
@@ -249,6 +250,16 @@ type OptionType int     (OptionBool, OptionString, OptionInt, OptionChoice)
 type SourceOrigin int   (SourceLocal, SourceRemote)
 type PkgDirs struct { SourceDir, BuildDir, InstallDir string }
 ```
+
+## Test Targets (`SetTest` / `vmake test`)
+
+- `SetTest(true)` marks a target as a test; auto-sets `isDefault=false`
+- `IsTest()` getter on `Target`
+- `vmake build` skips test targets; `vmake build --tests` includes them
+- `vmake test` builds all test targets, then executes `TargetBinary` tests, reports pass/fail with timing, `os.Exit(1)` on failure
+- `publishTarget` and `installTarget` skip `IsTest()` targets (test binaries are never installed)
+- Test targets can depend on other test targets (e.g., `TargetStatic` test lib used by multiple test binaries); only `TargetBinary` tests are executed
+- Subgraph builds inside `executeAllOnBuild` activate tests via `includeTests` parameter
 
 ## Known Gotchas
 - `cmd/vmake/mainfest_cmd.go` — filename is misspelled ("mainfest" not "manifest"), do NOT rename

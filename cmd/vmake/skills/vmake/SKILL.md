@@ -149,6 +149,24 @@ Remove flags: `RemoveCFlags`, `RemoveDefines`, `RemoveIncludes`, etc.
 
 Third-party packages with external build systems use `TargetVoid` with `SetBuildFunc`.
 
+## Test Targets
+
+Use `SetTest(true)` to mark a target as a test. Test targets are excluded from `vmake build` by default:
+
+```go
+ctx.Target("tests").
+    SetKind(api.TargetBinary).
+    SetTest(true).
+    AddFiles("tests/*.c").
+    AddDeps("mylib")
+```
+
+- `vmake build` — skips test targets
+- `vmake build --tests` — builds everything including tests
+- `vmake test` — builds all test targets, then executes `TargetBinary` tests, reports pass/fail with timing
+- Test targets are never installed (`--install` skips them)
+- Test targets can depend on other test targets (e.g., a `TargetStatic` test lib); only `TargetBinary` tests are executed
+
 ## Dependencies
 
 ### Declaring and Using Dependencies
@@ -267,6 +285,8 @@ vmake builds packages by BFS from local (directory-based) packages. Remote packa
 | Command | Description |
 |---------|-------------|
 | `vmake build` | Build |
+| `vmake build --tests` | Build including test targets |
+| `vmake test` | Build + run test targets |
 | `vmake rebuild` | Clean + build |
 | `vmake config` | TUI for options |
 | `vmake clean` | Remove artifacts |
@@ -281,7 +301,7 @@ vmake builds packages by BFS from local (directory-based) packages. Remote packa
 | `vmake skill install/uninstall/path` | AI skill management |
 | `vmake version` | Version info |
 
-Build flags: `--force/-f`, `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`, `--manifest`
+Build flags: `--force/-f`, `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`, `--manifest`, `--tests`
 Verbosity: `-v` verbose, `-V` very-verbose, `-q` quiet
 
 ## Reading Guide

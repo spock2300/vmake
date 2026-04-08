@@ -341,6 +341,7 @@ func (ctx *InstallContext) String(name string) string
 // 类型设置
 func (t *Target) SetKind(kind TargetKind) *Target
 func (t *Target) SetDefault(isDefault bool) *Target
+func (t *Target) SetTest(v bool) *Target              // 标记为测试目标（自动设置 isDefault=false）
 
 // 源文件与头文件
 func (t *Target) AddFiles(files ...any) *Target
@@ -390,6 +391,7 @@ func (t *Target) RemoveDeps(targets ...string) *Target
 func (t *Target) Name() string
 func (t *Target) Kind() TargetKind
 func (t *Target) IsDefault() bool
+func (t *Target) IsTest() bool
 func (t *Target) Files() []string
 func (t *Target) Includes() []string
 func (t *Target) PublicIncludes() []string
@@ -520,6 +522,7 @@ func MatchVersion(available []string, constraint string) (string, bool)
 | `--prefix` | `-p` | 安装前缀（默认：`./install/`） |
 | `--install-type` | | `runtime`（默认）或 `sdk` |
 | `--manifest` | | 从清单文件固定版本 |
+| `--tests` | | 包含测试目标 |
 
 ## 全局选项
 
@@ -736,7 +739,7 @@ func Main(p *api.Package) {
             SetKind(api.TargetBinary).
             AddFiles("tests/*.c").
             AddDeps("mylib").
-            SetDefault(false)  // 不默认构建
+            SetTest(true)  // 测试目标，不默认构建
     })
 }
 ```

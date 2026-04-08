@@ -149,6 +149,7 @@ All setters are fluent (return `*Target`).
 |--------|-----------|-------------|
 | `SetKind` | `(kind TargetKind)` | Binary/Static/Shared/Object/Void |
 | `SetDefault` | `(isDefault bool)` | Include in default build |
+| `SetTest` | `(v bool)` | Mark as test target (auto-sets isDefault=false) |
 | `AddFiles` | `(files ...any)` | Source files (globs, strings, []string) |
 | `AddIncludes` | `(dirs ...any)` | Include directories |
 | `AddPublicIncludes` | `(args ...any)` | Includes propagated to dependents (use @"pattern" to match) |
@@ -182,6 +183,7 @@ All setters are fluent (return `*Target`).
 | `Name()` | `string` |
 | `Kind()` | `TargetKind` |
 | `IsDefault()` | `bool` |
+| `IsTest()` | `bool` |
 | `Files()` | `[]string` |
 | `Includes()` | `[]string` |
 | `PublicIncludes()` | `[]string` |

@@ -81,11 +81,11 @@ p.OnBuild(func(ctx *api.BuildContext) {
         AddFiles("src/*.c", "tests/*.c").
         AddIncludes("include").
         AddDefines("UNIT_TEST").
-        SetDefault(false)
+        SetTest(true)
 })
 ```
 
-`SetDefault(false)` excludes the test runner from normal builds. Build it explicitly or add a dedicated target.
+`SetTest(true)` excludes the test runner from normal builds. Use `vmake test` to build and run it, or `vmake build --tests` to build without running.
 
 ## Post-Link Steps
 
