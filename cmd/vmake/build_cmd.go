@@ -36,12 +36,13 @@ func init() {
 	buildCmd.Flags().StringVar(&toolchainFlag, "toolchain", "", "override toolchain")
 	buildCmd.Flags().StringVar(&modeFlag, "mode", "", "override build mode")
 	buildCmd.Flags().StringVar(&manifestFlag, "manifest", "", "pin versions from manifest file")
+	buildCmd.Flags().BoolVar(&testsFlag, "tests", false, "build test targets")
 	buildCmd.RegisterFlagCompletionFunc("toolchain", completeToolchain)
 	buildCmd.RegisterFlagCompletionFunc("mode", completeMode)
 }
 
 func runBuild(cmd *cobra.Command, args []string) {
-	opts := pipelineOptions{force: forceFlag, installAfter: installFlag}
+	opts := pipelineOptions{force: forceFlag, tests: testsFlag, installAfter: installFlag}
 	if manifestFlag != "" {
 		opts.afterPhase1 = func(ctx *RuntimeContext) {
 			applyManifestVersions(ctx, manifestFlag)
@@ -182,7 +183,7 @@ type BuildResult struct {
 	InstalledPkgs map[string]*api.InstalledPackage
 }
 
-func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
+func runBuildPhase(ctx *RuntimeContext, includeTests bool) (*BuildResult, error) {
 	cfg, err := resolveBuildConfig(ctx)
 	if err != nil {
 		return nil, err
@@ -215,17 +216,31 @@ func runBuildPhase(ctx *RuntimeContext) (*BuildResult, error) {
 		return nil, err
 	}
 
-	allTargets, pkgMetaMap, subBuildKeys := executeAllOnBuild(ctx, needed, remote, pkgDirs, cfg, localPkgOptions)
+	allTargets, pkgMetaMap, subBuildKeys := executeAllOnBuild(ctx, needed, remote, pkgDirs, cfg, localPkgOptions, includeTests)
+
+	if includeTests {
+		for _, targets := range allTargets {
+			for _, t := range targets {
+				if t.IsTest() {
+					t.SetDefault(true)
+				}
+			}
+		}
+	}
 
 	vlog.Info("")
 	vlog.Info("Targets found:")
 	for pkgName, targets := range allTargets {
 		for _, t := range targets {
 			defaultMark := ""
+			testMark := ""
 			if !t.IsDefault() {
 				defaultMark = " [disabled]"
 			}
-			vlog.Info("  - %s:%s (%s)%s", pkgName, t.Name(), t.Kind(), defaultMark)
+			if t.IsTest() {
+				testMark = " [test]"
+			}
+			vlog.Info("  - %s:%s (%s)%s%s", pkgName, t.Name(), t.Kind(), defaultMark, testMark)
 		}
 	}
 
@@ -586,7 +601,7 @@ func computeDepOutput(depRef string, targets map[string]map[string]*api.Target, 
 	return ""
 }
 
-func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remotePkgState, pkgDirs map[string]*api.PkgDirs, cfg *buildConfig, localPkgOptions map[string]map[string]any) (map[string]map[string]*api.Target, map[string]build.PkgBuildMeta, map[string]string) {
+func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remotePkgState, pkgDirs map[string]*api.PkgDirs, cfg *buildConfig, localPkgOptions map[string]map[string]any, includeTests bool) (map[string]map[string]*api.Target, map[string]build.PkgBuildMeta, map[string]string) {
 	vlog.Info("")
 	vlog.Info("Executing OnBuild...")
 
@@ -683,6 +698,16 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 		for name, node := range ctx.DepGraph.Packages {
 			if node.Pkg != nil && subPkgs[name] {
 				params.Packages[name] = node.Pkg
+			}
+		}
+
+		if includeTests {
+			for _, targets := range subAllTargets {
+				for _, t := range targets {
+					if t.IsTest() {
+						t.SetDefault(true)
+					}
+				}
 			}
 		}
 

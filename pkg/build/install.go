@@ -78,6 +78,10 @@ func (i *ArtifactInstaller) installTarget(node *BuildNode) error {
 		return nil
 	}
 
+	if target.IsTest() {
+		return nil
+	}
+
 	kind := target.Kind()
 	if kind == api.TargetObject {
 		return nil

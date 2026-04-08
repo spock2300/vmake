@@ -17,9 +17,9 @@ func Main(p *api.Package) {
 
 		ctx.Target("tests").
 			SetKind(api.TargetBinary).
+			SetTest(true).
 			AddFiles("tests/*.c").
 			AddIncludes("include").
-			AddDeps("mylib").
-			SetDefault(false)
+			AddDeps("mylib")
 	})
 }

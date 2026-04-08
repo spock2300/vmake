@@ -1,8 +1,8 @@
 # VMake - AGENTS.md
 
-AI coding agents working in the VMake codebase should follow these guidelines.
+VMake: 面向 AI 时代的 C/C++ 项目管理和编译工具。AI coding agents working in this codebase should follow these guidelines.
 
-## Build / Lint / Test Commands
+## Build / Lint / Test
 
 ```bash
 go build -o vmake ./cmd/vmake    # Build
@@ -14,7 +14,6 @@ No Go unit tests. Test via integration projects in `test_data/` (each must run f
 ```bash
 # Single test
 cd test_data/01_simple_c && ../../vmake build && ./hello
-cd test_data/08_with_package && ../../vmake build
 
 # Run all tests (01-17)
 for d in test_data/0[1-9]_*/ test_data/1[0-9]_*/; do (cd "$d" && ../../vmake build) || break; done
@@ -25,13 +24,21 @@ cd test_data/17_firmware && ../../vmake build
 
 Known pre-existing failures (ignore): `07_subbuild_codegen`, `08_with_package`, `09_with_curl` (mbedtls submodule), `10_local_repo` (package not found).
 
+## Development Mode
+
+When iterating on vmake itself, set `VMAKE_DIR` so plugins compile against local source instead of installed version:
+
+```bash
+source start_dev.sh   # exports VMAKE_DIR=$(pwd)
+```
+
+Or manually: `export VMAKE_DIR=/path/to/vmake`. Without this, `go build -o vmake ./cmd/vmake` still works but plugin compilation may mismatch.
+
 ## Core Concepts
 
-VMake 是一个面向 AI 时代的 C/C++ 项目管理和编译工具，三个核心概念贯穿始终：
-
-- **源 (Source)** — 包的仓库。两种类型：**Registry**（包装第三方 C/C++ 库，build.go 在仓库内作为 wrapper）和 **Native**（vmake 原生包，独立 git 仓库，build.go 在仓库根目录，版本来自 git tag）。
-- **包 (Package)** — 由 `build.go` 描述的编译单元。每个包注册回调：`OnRequire`（声明依赖）、`OnConfig`（配置选项）、`OnBuild`（定义目标）。本地包的 build.go 直接编译；远程包的 build.go 在 `pkg/resolver` 中被发现并加载。
-- **目标 (Target)** — 最终编译产物：二进制（`TargetBinary`）、静态库（`TargetStatic`）、共享库（`TargetShared`）、对象文件（`TargetObject`）、第三方 wrapper（`TargetVoid`）。
+- **源 (Source)** — 包的仓库。**Registry**（包装第三方 C/C++ 库，build.go 在仓库内作为 wrapper）和 **Native**（vmake 原生包，独立 git 仓库，build.go 在仓库根目录，版本来自 git tag）。
+- **包 (Package)** — 由 `build.go` 描述的编译单元。注册回调：`OnRequire`（声明依赖）、`OnConfig`（配置选项）、`OnBuild`（定义目标）。
+- **目标 (Target)** — 最终编译产物：`TargetBinary`、`TargetStatic`、`TargetShared`、`TargetObject`、`TargetVoid`。
 
 ## Key Design Decisions
 
@@ -65,7 +72,7 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 - Only abstract `.config` check (`EnsureConfig`), NOT a full `BuildKConfigMake` wrapper
 
 ### Auto-Wire Require → Build Deps
-`OnRequire`/`AddRequires` alone does NOT create build graph edges. `Target.AddDeps("pkg:target")` is required for topology. However, `autoWireRequireDeps()` in `build_cmd.go` auto-wires them when targets declare `SetRequire("pkg")` without explicit `AddDeps`.
+`OnRequire`/`AddRequires` alone does NOT create build graph edges. `Target.AddDeps("pkg:target")` is required for topology. However, `autoWireRequireDeps()` in `build_cmd.go` auto-wires them when a package has `AddRequires` calls but its targets lack explicit `AddDeps` — it links all of the dependency package's targets as deps.
 
 ### TUI Save Iterates Union of All Sources
 When saving TUI results, iterate the union of `Values ∪ AllKConfigs` in a single loop. Don't add parallel loops per source.
@@ -75,6 +82,17 @@ When saving TUI results, iterate the union of `Values ∪ AllKConfigs` in a sing
 - config.json has entry but kconfig empty (preset switch) → delete `.config`
 - config.json has kconfig content → write only if content changed (avoid mtime update invalidating stamp)
 - Empty kconfig content → don't write anything
+
+## Runtime Execution Flow
+```
+Phase 1: OnRequire       -> Scan/Compile/Load buildscripts -> Resolve dependencies
+Phase 2a: ResolveDeferred -> Resolve remote (deferred) packages -> Update topological order
+Phase 2b: OnConfig       -> Execute callbacks -> Collect Options -> Merge global options
+Phase 3: OnBuild         -> Execute callbacks -> Generate Targets -> Compile/Link
+(Optional) Install       -> Install targets to prefix directory + generate manifest.json
+```
+
+Entry point: `cmd/vmake/main.go` → `loadPlugins()` → `Execute()` (cobra). Pipeline in `cmd/vmake/root.go` (`runPipeline`). Build logic in `cmd/vmake/build_cmd.go`.
 
 ## Code Style
 
@@ -100,7 +118,7 @@ Internal packages may use short aliases: `vlog "gitee.com/spock2300/vmake/pkg/lo
 - **AddXxx**: Append multiple values (AddFiles, AddIncludes)
 - **RemoveXxx**: Remove from slices (RemoveCFlags, RemoveDefines)
 - **Type aliases**: Use for readability (`type TargetKind string`)
-- **Logging**: Always use alias `vlog "gitee.com/spock2300/vmake/pkg/log"` (methods: Debug, Info, Error, Fatal — no Warn)
+- **Logging**: Always use alias `vlog "gitee.com/spock2300/vmake/pkg/log"` — methods: Debug, Info, Error, Fatal — **no Warn**
 
 ### Fluent API
 All public APIs use method chaining - return `*Target`, `*Package`, `*Option`:
@@ -136,7 +154,7 @@ type BuildContext struct {
 ```
 
 ### Function Type Patterns
-Common callback types: `RequireFunc`, `ConfigFunc`, `BuildFunc`, `InstallFilterFunc`, `CopyFilter`, `MainFunc`.
+Common callback types defined in `pkg/api/`: `RequireFunc`, `ConfigFunc`, `BuildFunc`, `InstallFunc`, `PackageFunc`, `CopyFilter`, `InstallFilterFunc`.
 Define as `type XxxFunc func(...)` and store as struct fields.
 
 ### Generics
@@ -156,19 +174,29 @@ func fatalErr(err error) {
 }
 ```
 
-### API Execution
-- `pkg.Run()` (uses exec.RunFatal, os.Exit on failure) — for package-level commands
-- `pkg.Exec()` (on BuildContext only) — for build-phase commands
-- `pkg.Make()` — always uses BuildDir with `pkg.Env()`, passes `-j<ncpu>` automatically
+### API Execution Methods
+Methods on `*Package` (used in build.go scripts):
+- `p.Run(name, args...)` — run command in BuildDir (uses exec.RunFatal, exits on failure)
+- `p.RunIn(dir, name, args...)` — run command in specified directory
+- `p.RunEnv(env, name, args...)` — run with custom environment in BuildDir
+- `p.Make(args...)` — always uses BuildDir with `p.Env()`, passes `-C BuildDir` automatically
+- `p.CMakeConfigure()`, `p.CMakeBuild()`, `p.CMakeInstall()` — CMake convenience methods
+- `p.Configure(args...)` — autotools configure
+
+Methods on `BuildContext`:
+- `ctx.Exec(name, args...)` — build-phase command execution (vlog.Fatal on error)
+- `ctx.BuildSubGraph(pkgName)` — build a sub-package as independent sub-graph
+- `ctx.DepOutput(depRef)` — get dependency target output file path
+- `ctx.DepBuildDir(depRef)` — get dependency build directory
 
 ## Package Structure
 
 | Package | Responsibility | Plugin Importable |
 |---------|---------------|-------------------|
-| `pkg/api` | Core API (Package, Target, Option, Contexts, Semver, KConfig) | **Yes** |
+| `pkg/api` | Core API (Package, Target, Option, Contexts, Semver, KConfig, Copy) | **Yes** |
 | `pkg/plugin` | Extension/plugin system | **Yes** |
 | `pkg/buildscript` | Build script scan, compile, load | No |
-| `pkg/build` | Build execution, compile, link, scheduler, install | No |
+| `pkg/build` | Build execution, compile, link, scheduler, install, subgraph | No |
 | `pkg/toolchain` | Toolchain abstraction (GCC, Clang) | No |
 | `pkg/repo` | Package management, Git, native repos | No |
 | `pkg/resolver` | Dependency graph, deferred resolution | No |
@@ -176,7 +204,7 @@ func fatalErr(err error) {
 | `pkg/log` | Logging (Debug, Info, Error, Fatal) | No |
 | `pkg/tui` | Terminal UI (interactive config) | No |
 | `pkg/version` | Version information | No |
-| `internal/*` | exec, fs, gitstore, glob, gocompile, jsonio | No |
+| `internal/*` | exec, fs, gitstore, glob, gocompile, jsonio, toposort | No |
 
 **Dependency DAG**: `internal/*` -> `pkg/toolchain` -> `pkg/api` -> `pkg/buildscript, pkg/repo` -> `pkg/resolver, pkg/plugin, pkg/build` -> `cmd/vmake`
 
@@ -205,15 +233,6 @@ func Main(p *api.Package) {
     p.OnConfig(func(ctx *api.ConfigContext) { ... })
     p.OnBuild(func(ctx *api.BuildContext) { ... })
 }
-```
-
-## Runtime Execution Flow
-```
-Phase 1: OnRequire       -> Scan/Compile/Load buildscripts -> Resolve dependencies
-Phase 2a: ResolveDeferred -> Resolve remote (deferred) packages -> Update topological order
-Phase 2b: OnConfig       -> Execute callbacks -> Collect Options -> Merge global options
-Phase 3: OnBuild         -> Execute callbacks -> Generate Targets -> Compile/Link
-(Optional) Install       -> Install targets to prefix directory + generate manifest.json
 ```
 
 ## Package Repositories

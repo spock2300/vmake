@@ -14,6 +14,7 @@ type Target struct {
 	name           string
 	kind           TargetKind
 	isDefault      bool
+	isTest         bool
 	files          []string
 	includes       []string
 	publicIncludes []string
@@ -40,6 +41,14 @@ func (t *Target) SetKind(kind TargetKind) *Target {
 
 func (t *Target) SetDefault(isDefault bool) *Target {
 	t.isDefault = isDefault
+	return t
+}
+
+func (t *Target) SetTest(v bool) *Target {
+	t.isTest = v
+	if v {
+		t.isDefault = false
+	}
 	return t
 }
 
@@ -186,6 +195,7 @@ func (t *Target) GenRules() []GenRule { return t.genRules }
 func (t *Target) Name() string             { return t.name }
 func (t *Target) Kind() TargetKind         { return t.kind }
 func (t *Target) IsDefault() bool          { return t.isDefault }
+func (t *Target) IsTest() bool             { return t.isTest }
 func (t *Target) Files() []string          { return t.files }
 func (t *Target) Includes() []string       { return t.includes }
 func (t *Target) PublicIncludes() []string { return t.publicIncludes }

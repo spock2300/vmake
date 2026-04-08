@@ -678,7 +678,7 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 	t := resolved.Node.Target
 	kind := t.Kind()
 
-	if kind == api.TargetVoid || kind == api.TargetObject {
+	if kind == api.TargetVoid || kind == api.TargetObject || t.IsTest() {
 		return nil
 	}
 

@@ -8,4 +8,5 @@ var (
 	toolchainFlag   string
 	modeFlag        string
 	manifestFlag    string
+	testsFlag       bool
 )
