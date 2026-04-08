@@ -78,6 +78,8 @@ func installSkill(projectPath string) {
 		targets = append(targets, filepath.Join(projectPath, ".claude", "skills", "vmake"))
 	}
 
+	wasInstalled := isAlreadyInstalled(targets)
+
 	err := copyEmbedToTargets(targets)
 	if err != nil {
 		fatalMsg("Failed to install skill: %v", err)
@@ -94,7 +96,11 @@ func installSkill(projectPath string) {
 		}
 	}
 
-	fmt.Println("VMake skill installed successfully to:")
+	action := "installed"
+	if wasInstalled {
+		action = "updated"
+	}
+	fmt.Printf("VMake skill %s successfully to:\n", action)
 	for _, target := range targets {
 		fmt.Printf("  %s\n", target)
 	}
@@ -109,6 +115,15 @@ func uninstallSkill() {
 		fmt.Printf("Removed %s\n", target)
 	}
 	fmt.Println("VMake skill uninstalled.")
+}
+
+func isAlreadyInstalled(targets []string) bool {
+	for _, target := range targets {
+		if _, err := os.Stat(filepath.Join(target, "SKILL.md")); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func copyEmbedToTargets(targets []string) error {
