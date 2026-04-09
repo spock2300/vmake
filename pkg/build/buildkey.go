@@ -1,9 +1,9 @@
 package build
 
 import (
-	"encoding/base64"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
-	"strings"
 )
 
 func BuildKey(toolchain, mode string, options map[string]any) string {
@@ -18,6 +18,6 @@ func BuildKey(toolchain, mode string, options map[string]any) string {
 		return ""
 	}
 
-	key := base64.URLEncoding.EncodeToString(jsonData)
-	return strings.TrimRight(key, "=")
+	h := sha256.Sum256(jsonData)
+	return hex.EncodeToString(h[:])
 }

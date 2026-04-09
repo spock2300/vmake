@@ -24,6 +24,8 @@ cd test_data/17_firmware && ../../vmake build
 
 Known pre-existing failures (ignore): `07_subbuild_codegen`, `08_with_package`, `09_with_curl` (mbedtls submodule), `10_local_repo` (package not found).
 
+Test 15 (`subgraph_siblings`) and 16 (`subgraph_cross_tc`) test subgraph builds with sibling packages and cross-toolchain respectively.
+
 ## Development Mode
 
 When iterating on vmake itself, set `VMAKE_DIR` so plugins compile against local source instead of installed version:
@@ -211,6 +213,10 @@ Methods on `BuildContext`:
 ## CLI Architecture
 - `github.com/spf13/cobra`, package-level vars, `init()` registration
 - Command factories (`newRemoveCmd`, `newUpdateCmd`) in `cmd/vmake/helpers.go`
+- Global flags: `--verbose/-v`, `--very-verbose/-V`, `--quiet/-q`
+- `vmake query` — show dependency tree (uses `newQueryCmd` factory, registered in root.go init)
+- `vmake ext add/remove/list/update` — manage extension repos that contain plugins and toolchain manifests
+- `vmake skill install/uninstall/path` — install AI assistant skill files to `~/.claude/skills/` and `~/.agents/skills/`
 
 ### Build Flags
 
