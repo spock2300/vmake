@@ -236,10 +236,6 @@ func buildDepSubtree(name string, localSet map[string]bool, pkgMap map[string]bu
 		Depth:   depth,
 	}
 
-	if depth <= 2 {
-		node.Expanded = true
-	}
-
 	if !localSet[name] {
 		node.IsExternal = true
 	}
