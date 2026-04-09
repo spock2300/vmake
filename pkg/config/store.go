@@ -116,8 +116,12 @@ func SetEntry(cfg *ConfigFile, name string, entry *EntryConfig) {
 func BuildGlobalValues(cfg *ConfigFile) map[string]any {
 	vals := make(map[string]any)
 	if cfg.Global != nil {
-		vals["toolchain"] = cfg.Global.Toolchain
-		vals["mode"] = cfg.Global.Mode
+		if cfg.Global.Toolchain != "" {
+			vals["toolchain"] = cfg.Global.Toolchain
+		}
+		if cfg.Global.Mode != "" {
+			vals["mode"] = cfg.Global.Mode
+		}
 		for k, v := range cfg.Global.Options {
 			vals[k] = v
 		}

@@ -93,7 +93,28 @@ func NewModel(
 		}
 	}
 	if _, ok := globalValues["mode"]; !ok {
-		globalValues["mode"] = api.ModeDebug
+		globalValues["mode"] = api.ModeRelease
+	}
+
+	for name, opt := range globalOptions {
+		if _, ok := globalValues[name]; !ok {
+			if d := opt.Default(); d != nil {
+				globalValues[name] = d
+			}
+		}
+	}
+
+	for pkgName, opts := range options {
+		if values[pkgName] == nil {
+			values[pkgName] = make(map[string]any)
+		}
+		for name, opt := range opts {
+			if _, ok := values[pkgName][name]; !ok {
+				if d := opt.Default(); d != nil {
+					values[pkgName][name] = d
+				}
+			}
+		}
 	}
 
 	m := Model{

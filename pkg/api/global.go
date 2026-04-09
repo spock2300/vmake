@@ -14,7 +14,7 @@ const (
 var BuiltInGlobalOptions = map[string]*Option{
 	ModeOptionName: (&Option{}).
 		SetType(OptionChoice).
-		SetDefault(ModeDebug).
+		SetDefault(ModeRelease).
 		SetDescription("Build mode").
 		SetValues(ModeDebug, ModeRelease).
 		SetGroup("Global"),
