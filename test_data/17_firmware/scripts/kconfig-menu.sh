@@ -54,7 +54,10 @@ declare -A CUR
 if [ -f "$DOTCONFIG" ]; then
     while IFS= read -r line; do
         if [[ "$line" =~ ^CONFIG_([A-Za-z0-9_]+)=(.*) ]]; then
-            CUR["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
+            _val="${BASH_REMATCH[2]}"
+            _val="${_val#\"}"
+            _val="${_val%\"}"
+            CUR["${BASH_REMATCH[1]}"]="$_val"
         elif [[ "$line" == "# CONFIG_"*" is not set" ]]; then
             n="${line#\# CONFIG_}"; n="${n%% *}"
             CUR["$n"]="n"
