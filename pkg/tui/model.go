@@ -2,6 +2,7 @@ package tui
 
 import (
 	"sort"
+	"unicode/utf8"
 
 	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/buildscript"
@@ -45,16 +46,15 @@ type Model struct {
 	optCursor  int
 	optItems   []OptionItem
 
-	editing     bool
-	editInput   string
-	editChoices []string
-	editIdx     int
+	editing   bool
+	editInput string
 
 	width       int
 	height      int
 	saved       bool
 	hasChanges  bool
 	confirmQuit bool
+	confirmBtn  int
 	origValues  map[string]map[string]any
 	origGlobal  map[string]any
 	workDir     string
@@ -62,6 +62,10 @@ type Model struct {
 	runningMenuconfig bool
 	menuconfigRan     map[string]bool
 	presetValues      map[string]string
+
+	treeWidth int
+	treeOff   int
+	optOff    int
 }
 
 func NewModel(
@@ -111,6 +115,7 @@ func NewModel(
 	m.origGlobal = deepCopyGlobal(globalValues)
 	m.tree = buildDepTree(packages, deps)
 	m.flat = flattenTree(m.tree)
+	m.treeWidth = calcTreeWidth(m.flat)
 
 	if len(m.flat) > 0 {
 		m.selectFirstPkg()
@@ -137,9 +142,20 @@ func deepCopyValues(src map[string]map[string]any) map[string]map[string]any {
 	return dst
 }
 
+func calcTreeWidth(flat []*TreeNode) int {
+	maxW := 0
+	for _, node := range flat {
+		w := node.Depth*2 + utf8.RuneCountInString(node.Prefix) + 2 + utf8.RuneCountInString(node.Name)
+		if w > maxW {
+			maxW = w
+		}
+	}
+	return clamp(maxW+4, 20, 40)
+}
+
 func buildDepTree(packages []buildscript.Source, deps map[string][]string) []*TreeNode {
 	globalNode := &TreeNode{
-		Name:     "[Global]",
+		Name:     "Global",
 		PkgName:  GlobalPkgName,
 		Expanded: true,
 		Depth:    0,
@@ -438,7 +454,7 @@ func (m *Model) selectPreset(name string) {
 		m.presetValues = make(map[string]string)
 	}
 	m.presetValues[m.selectedPkg] = name
-	m.hasChanges = true
+	m.checkChanges()
 }
 
 func (m *Model) presetOptions() []string {
@@ -447,4 +463,47 @@ func (m *Model) presetOptions() []string {
 		return nil
 	}
 	return entries[0].Presets()
+}
+
+func (m *Model) totalOptRows() int {
+	visible := m.visibleOptions()
+	n := len(visible)
+	if m.hasKConfig() {
+		if m.hasPresets() {
+			n += 2
+		} else {
+			n++
+		}
+	}
+	return n
+}
+
+func (m *Model) ensureTreeCursorVisible() {
+	panelH := m.contentHeight()
+	if panelH <= 0 {
+		return
+	}
+	total := len(m.flat)
+	if total == 0 {
+		return
+	}
+	if m.treeCursor < m.treeOff {
+		m.treeOff = m.treeCursor
+	}
+	if m.treeCursor >= m.treeOff+panelH {
+		m.treeOff = m.treeCursor - panelH + 1
+	}
+	if m.treeOff+panelH > total && total > panelH {
+		m.treeOff = total - panelH
+	}
+	if m.treeOff < 0 {
+		m.treeOff = 0
+	}
+}
+
+func (m *Model) contentHeight() int {
+	if m.height <= 4 {
+		return 1
+	}
+	return m.height - 4
 }
