@@ -52,21 +52,3 @@ func ValidateToolchain(tc *Toolchain) []error {
 
 	return errs
 }
-
-func GetToolchainHost(tc *Toolchain) string {
-	if tc.Host != "" {
-		return tc.Host
-	}
-
-	cc, err := ResolveToolPath(tc.Tools.CC, tc.InstallPath)
-	if err != nil {
-		return "unknown"
-	}
-
-	output, err := iexec.Run(cc, "-dumpmachine")
-	if err != nil {
-		return "unknown"
-	}
-
-	return iexec.TrimOutput(output)
-}

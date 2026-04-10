@@ -38,13 +38,6 @@ type RequireContext struct {
 	requireFuncs []RequireFunc
 }
 
-func NewRequireContext() *RequireContext {
-	return &RequireContext{
-		ConfigAccessor: NilCfgAccessor(),
-		requireFuncs:   make([]RequireFunc, 0),
-	}
-}
-
 func NewRequireContextForConfig(cfgVals map[string]any, options map[string]*Option, funcs []RequireFunc) *RequireContext {
 	if options == nil {
 		options = make(map[string]*Option)

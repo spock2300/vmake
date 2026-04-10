@@ -48,11 +48,6 @@ func (m *RepoManager) ListInfo() []RepoInfo {
 	return result
 }
 
-func (m *RepoManager) List() []string {
-	names, _ := m.Store.List()
-	return names
-}
-
 func (m *RepoManager) Update(name string) error {
 	repoPath := m.Path(name)
 	if !m.Exists(name) {

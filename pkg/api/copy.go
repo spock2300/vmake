@@ -4,7 +4,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 func CopyFile(src, dest string) error {
@@ -94,11 +93,4 @@ func MatchPatterns(patterns []string, name string) bool {
 		}
 	}
 	return false
-}
-
-func isGoFile(path string, isDir bool) bool {
-	if isDir {
-		return true
-	}
-	return !strings.HasSuffix(path, ".go")
 }

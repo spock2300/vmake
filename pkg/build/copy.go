@@ -4,7 +4,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 func CopyFile(src, dest string) error {
@@ -50,13 +49,6 @@ func CopyDirMatching(src, dest string, match func(string) bool) error {
 
 func CopyDirWithFilter(src, dest string, filter CopyFilter) error {
 	return copyDirWithFilter(src, dest, filter)
-}
-
-func InstallFilter(path string, isDir bool) bool {
-	if isDir {
-		return true
-	}
-	return !strings.HasSuffix(path, ".go")
 }
 
 func copyDirWithFilter(src, dest string, filter CopyFilter) error {

@@ -39,13 +39,6 @@ func NewConfigAccessor(cfgVals map[string]any, options map[string]*Option) Confi
 	return ConfigAccessor{CfgVals: cfgVals, Options: options}
 }
 
-// NilCfgAccessor creates a ConfigAccessor with nil CfgVals.
-// Used by RequireContext in discoverAll mode: If/IfNot/Equal/When
-// return all possible values when CfgVals is nil.
-func NilCfgAccessor() ConfigAccessor {
-	return ConfigAccessor{CfgVals: nil, Options: make(map[string]*Option)}
-}
-
 func (a *ConfigAccessor) Bool(name string) bool {
 	return getTypedValue(a.CfgVals, a.Options, name, func(o *Option) bool {
 		if d, ok := o.defaultVal.(bool); ok {

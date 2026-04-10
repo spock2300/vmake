@@ -36,13 +36,6 @@ func (i *PackageInstaller) SetConfigs(configs map[string]*config.EntryConfig) {
 	i.configs = configs
 }
 
-func (i *PackageInstaller) SetConfig(name string, cfg *config.EntryConfig) {
-	if i.configs == nil {
-		i.configs = make(map[string]*config.EntryConfig)
-	}
-	i.configs[name] = cfg
-}
-
 func (i *PackageInstaller) SetToolchain(tc *toolchain.Toolchain) {
 	i.tc = tc
 }

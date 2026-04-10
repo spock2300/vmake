@@ -52,14 +52,6 @@ func (n *PackageNode) IsNative() bool {
 	return n.Native != nil
 }
 
-func (n *PackageNode) IsNeededRemote(needed map[string]bool) bool {
-	return !n.IsLocal() && needed[n.ID]
-}
-
-func (n *PackageNode) IsNeededRemoteWithPkg(needed map[string]bool) bool {
-	return !n.IsLocal() && needed[n.ID] && n.Pkg != nil
-}
-
 type Graph struct {
 	Packages map[string]*PackageNode
 	Order    []string
