@@ -512,28 +512,13 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 		}
 	} else if pkg.BuildDir() != "" {
 		stampPath := filepath.Join(pkg.BuildDir(), ".vmake_stamp")
-		if si, err := os.Stat(stampPath); err == nil {
-			stale := false
-			for _, cf := range pkg.ConfigFiles() {
-				base := pkg.SrcDir()
-				if base == "" {
-					base = pkg.SourceDir()
-				}
-				cp := filepath.Join(base, cf)
-				ci, err := os.Stat(cp)
-				if err != nil {
-					stale = true
-					break
-				}
-				if ci.ModTime().After(si.ModTime()) {
-					stale = true
-					break
-				}
-			}
-			if !stale {
-				vlog.Info("  SKIP (already built)")
-				return nil
-			}
+		srcDir := pkg.SrcDir()
+		if srcDir == "" {
+			srcDir = pkg.SourceDir()
+		}
+		if isStampUpToDate(stampPath, srcDir, pkg.ConfigFiles()) {
+			vlog.Info("  SKIP (already built)")
+			return nil
 		}
 	}
 
@@ -541,13 +526,25 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 		return fmt.Errorf("create build dir: %s: %w", pkg.BuildDir(), err)
 	}
 
+	srcDir := pkg.SrcDir()
+	if srcDir == "" {
+		srcDir = pkg.SourceDir()
+	}
+	stamp := buildStampData(srcDir, pkg.ConfigFiles())
+
 	if err := fn(pkg); err != nil {
 		return err
 	}
 
+	if stamp.ConfigHash == "" && len(pkg.ConfigFiles()) > 0 {
+		if h, err := computeConfigHash(srcDir, pkg.ConfigFiles()); err == nil {
+			stamp.ConfigHash = h
+		}
+	}
+
 	if pkg.InstallDir() == "" && pkg.BuildDir() != "" {
 		stampPath := filepath.Join(pkg.BuildDir(), ".vmake_stamp")
-		os.WriteFile(stampPath, []byte{}, 0644)
+		writeStamp(stampPath, stamp)
 	}
 
 	pkgName := resolved.Node.PkgName
