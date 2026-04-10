@@ -1,0 +1,48 @@
+menu "General Settings"
+
+config VERSION
+    string "U-Boot version string"
+    default "2024.01"
+
+config FIT
+    bool "Support Flattened Image Tree (FIT)"
+    default y
+
+config ENV_SIZE
+    hex "Environment size"
+    default 0x10000
+
+config BOARD_NAME
+    string "Board name"
+    default "sandbox"
+
+endmenu
+
+menu "Device Drivers"
+
+config MMC
+    bool "MMC/SD support"
+    default y
+
+config NET
+    bool "Networking support"
+    default y
+
+config NET_DHCP
+    bool "DHCP support"
+    depends on CONFIG_NET
+    default y
+
+config SERIAL
+    bool "Serial driver"
+    default y
+
+config GPIO
+    bool "GPIO support"
+    default n
+
+config USB
+    bool "USB support"
+    default n
+
+endmenu
