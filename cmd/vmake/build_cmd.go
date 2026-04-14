@@ -327,7 +327,11 @@ func collectLocalPkgOptions(ctx *RuntimeContext) map[string]map[string]any {
 		node := ctx.DepGraph.Packages[name]
 		if node.IsLocal() {
 			entry := config.GetEntry(ctx.Config, name)
-			result[name] = entry.Options
+			opts := make(map[string]any, len(entry.Options))
+			for k, v := range entry.Options {
+				opts[k] = v
+			}
+			result[name] = opts
 		}
 	}
 	return result
