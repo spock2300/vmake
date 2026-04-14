@@ -2,7 +2,7 @@
 #include <math.h>
 #include "tinyexpr.h"
 
-int main() {
+int main(void) {
     double result;
 
     result = te_interp("sin(3.14159/4) + sqrt(2)", 0);

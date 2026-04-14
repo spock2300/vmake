@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-int main() {
+int main(void) {
     printf("Hello, VMake!\n");
     return 0;
 }

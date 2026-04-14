@@ -2,7 +2,7 @@
 #include <mathlib.h>
 #include <greeter.h>
 
-int main() {
+int main(void) {
     printf("%s\n", greet("VMake"));
     printf("mathlib_add(2, 3) = %d\n", mathlib_add(2, 3));
     printf("mathlib_multiply(4, 5) = %d\n", mathlib_multiply(4, 5));

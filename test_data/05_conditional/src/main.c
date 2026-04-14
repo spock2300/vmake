@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-int main() {
+int main(void) {
 #ifdef FEATURE_A
     printf("Feature A enabled\n");
 #endif

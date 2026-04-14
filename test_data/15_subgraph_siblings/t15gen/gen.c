@@ -19,6 +19,8 @@ int main(int argc, char *argv[]) {
 	fprintf(f, "#ifndef SUBGEN_H\n");
 	fprintf(f, "#define SUBGEN_H\n");
 	fprintf(f, "#define MAGIC_VALUE %d\n", MAGIC * 3);
+	fprintf(f, "int get_magic_value(void);\n");
+	fprintf(f, "void print_info(void);\n");
 	fprintf(f, "#endif\n");
 
 	fclose(f);

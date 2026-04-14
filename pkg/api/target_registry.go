@@ -1,7 +1,10 @@
 package api
 
 type TargetRegistry struct {
-	targets map[string]*Target
+	targets         map[string]*Target
+	defaultCFlags   []string
+	defaultCxxFlags []string
+	defaultLdFlags  []string
 }
 
 func NewTargetRegistry() *TargetRegistry {
@@ -10,11 +13,23 @@ func NewTargetRegistry() *TargetRegistry {
 	}
 }
 
+func (r *TargetRegistry) SetDefaultFlags(cflags, cxxflags, ldflags []string) {
+	r.defaultCFlags = append([]string{}, cflags...)
+	r.defaultCxxFlags = append([]string{}, cxxflags...)
+	r.defaultLdFlags = append([]string{}, ldflags...)
+}
+
 func (r *TargetRegistry) Target(name string) *Target {
 	if t, ok := r.targets[name]; ok {
 		return t
 	}
-	t := &Target{name: name, isDefault: true}
+	t := &Target{
+		name:      name,
+		isDefault: true,
+		cflags:    append([]string{}, r.defaultCFlags...),
+		cxxflags:  append([]string{}, r.defaultCxxFlags...),
+		ldflags:   append([]string{}, r.defaultLdFlags...),
+	}
 	r.targets[name] = t
 	return t
 }

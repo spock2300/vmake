@@ -540,6 +540,7 @@ func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.Pack
 	buildCtx.SetDepOutputFunc(depOutputFn)
 
 	if node.Pkg != nil && tc != nil {
+		buildCtx.SetDefaultFlags(tc.DefaultFlags.CFlags, tc.DefaultFlags.CxxFlags, tc.DefaultFlags.LdFlags)
 		pkg := node.Pkg
 		cfgVals := make(map[string]any)
 		allOpts := ctx.AllOptions[name]

@@ -17,9 +17,26 @@ func GetBuiltinHost() *Toolchain {
 			NM:      "nm",
 		},
 		DefaultFlags: DefaultFlags{
-			CFlags:   []string{"-O2", "-Wall", "-Wstrict-prototypes", "-fno-strict-aliasing", "-fno-common", "-fPIC"},
-			CxxFlags: []string{"-O2", "-Wall", "-Wextra", "-fno-strict-aliasing", "-fno-common", "-fPIC"},
-			LdFlags:  []string{"-Wl,--as-needed"},
+			CFlags: []string{
+				"-Wall", "-Wextra", "-Werror",
+				"-Wstrict-prototypes", "-Wmissing-prototypes", "-Wmissing-declarations",
+				"-Wold-style-definition", "-Wundef", "-Werror-implicit-function-declaration",
+				"-Wformat=2", "-Wshadow",
+				"-ffunction-sections", "-fdata-sections",
+				"-fstack-protector-strong", "-D_FORTIFY_SOURCE=2",
+				"-fno-strict-aliasing", "-fno-common", "-fPIC",
+			},
+			CxxFlags: []string{
+				"-Wall", "-Wextra", "-Werror",
+				"-Wnon-virtual-dtor", "-Woverloaded-virtual", "-Wundef",
+				"-Wformat=2", "-Wshadow",
+				"-ffunction-sections", "-fdata-sections",
+				"-fstack-protector-strong", "-D_FORTIFY_SOURCE=2",
+				"-fno-strict-aliasing", "-fno-common", "-fPIC",
+			},
+			LdFlags: []string{
+				"-pie", "-Wl,--as-needed", "-Wl,--gc-sections", "-Wl,-z,relro,-z,now",
+			},
 		},
 	}
 }

@@ -320,9 +320,9 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	resolved := &ResolvedTarget{
 		Node:        node,
 		AllDefines:  append([]string{}, node.Target.Defines()...),
-		AllCFlags:   append([]string{}, s.toolchain.DefaultFlags.CFlags...),
-		AllCxxFlags: append([]string{}, s.toolchain.DefaultFlags.CxxFlags...),
-		AllLdFlags:  append([]string{}, s.toolchain.DefaultFlags.LdFlags...),
+		AllCFlags:   append([]string{}, node.Target.CFlags()...),
+		AllCxxFlags: append([]string{}, node.Target.CxxFlags()...),
+		AllLdFlags:  append([]string{}, node.Target.LdFlags()...),
 	}
 
 	resolved.AllCFlags = append(resolved.AllCFlags, modeFlags...)
@@ -336,10 +336,6 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	for _, pubInc := range node.Target.PublicIncludes() {
 		resolved.AllIncludes = append(resolved.AllIncludes, pubInc)
 	}
-
-	resolved.AllCFlags = append(resolved.AllCFlags, node.Target.CFlags()...)
-	resolved.AllCxxFlags = append(resolved.AllCxxFlags, node.Target.CxxFlags()...)
-	resolved.AllLdFlags = append(resolved.AllLdFlags, node.Target.LdFlags()...)
 
 	deps, err := s.collectDepArtifacts(node)
 	if err != nil {

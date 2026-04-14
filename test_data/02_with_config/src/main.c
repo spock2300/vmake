@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-int main(int argc, char *argv[]) {
+int main(void) {
 #ifdef USE_SSL
     printf("SSL Enabled\n");
 #endif
