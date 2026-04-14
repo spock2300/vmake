@@ -28,6 +28,10 @@ func (r *Requires) Get() []RequireInfo {
 	return r.requires
 }
 
+func (r *Requires) AddInfos(infos ...RequireInfo) {
+	r.requires = append(r.requires, infos...)
+}
+
 func (r *Requires) Reset() {
 	r.requires = make([]RequireInfo, 0)
 }

@@ -245,6 +245,50 @@ func (p *Package) SelectVersion(constraint string) (string, error) {
 	return version, nil
 }
 
+func (p *Package) SelectVersionMulti(constraints []string) (string, error) {
+	versions := p.GetVersions()
+	if len(versions) == 0 {
+		return "", fmt.Errorf("no versions available for %s", p.FullName())
+	}
+
+	parsedConstraints := make([]Constraint, 0, len(constraints))
+	for _, c := range constraints {
+		pc, ok := ParseConstraint(c)
+		if !ok {
+			return "", fmt.Errorf("invalid constraint '%s' for %s", c, p.FullName())
+		}
+		parsedConstraints = append(parsedConstraints, pc)
+	}
+
+	candidates := make([]string, 0, len(versions))
+	for _, v := range versions {
+		pv, ok := ParseVersion(v)
+		if !ok {
+			continue
+		}
+		if matchesAll(pv, parsedConstraints) {
+			candidates = append(candidates, v)
+		}
+	}
+
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("no version matching [%s] for %s (available: %v)",
+			strings.Join(constraints, ", "), p.FullName(), versions)
+	}
+
+	selected, _ := MatchVersion(candidates, "")
+	return selected, nil
+}
+
+func matchesAll(v Version, constraints []Constraint) bool {
+	for _, c := range constraints {
+		if !c.Match(v) {
+			return false
+		}
+	}
+	return true
+}
+
 func (p *Package) GitURLs() []string              { return p.gitURLs }
 func (p *Package) Homepage() string               { return p.homepage }
 func (p *Package) Description() string            { return p.description }

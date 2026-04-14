@@ -478,7 +478,13 @@ func prepareAllPackages(ctx *RuntimeContext, cfg *buildConfig, needed map[string
 		}
 
 		if entryCfg.Version == "" && len(pkg.GetVersions()) > 0 {
-			selected, err := pkg.SelectVersion("")
+			var selected string
+			var err error
+			if len(node.Constraints) > 0 {
+				selected, err = pkg.SelectVersionMulti(node.Constraints)
+			} else {
+				selected, err = pkg.SelectVersion("")
+			}
 			if err != nil {
 				return nil, err
 			}

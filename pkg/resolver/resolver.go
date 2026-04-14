@@ -21,12 +21,13 @@ type NativePackageInfo struct {
 }
 
 type PackageNode struct {
-	ID       string
-	Source   *buildscript.Source
-	Pkg      *api.Package
-	Deps     []string
-	Deferred bool
-	Native   *NativePackageInfo
+	ID          string
+	Source      *buildscript.Source
+	Pkg         *api.Package
+	Deps        []string
+	Deferred    bool
+	Native      *NativePackageInfo
+	Constraints []string
 }
 
 func NewPackageNode(id string, src *buildscript.Source, pkg *api.Package, deferred bool) *PackageNode {
@@ -156,6 +157,14 @@ func (r *Resolver) resolveDeferredNode(id string, node *PackageNode) (*PackageNo
 		return nil, err
 	}
 	newNode.Native = node.Native
+	newNode.Constraints = append([]string{}, node.Constraints...)
+
+	if len(newNode.Constraints) > 0 && newNode.Pkg != nil && len(newNode.Pkg.Versions()) > 0 {
+		if _, err := newNode.Pkg.SelectVersionMulti(newNode.Constraints); err != nil {
+			return nil, fmt.Errorf("package %s: %w", id, err)
+		}
+	}
+
 	return newNode, nil
 }
 
@@ -191,6 +200,9 @@ func (r *Resolver) resolveRecursive(id string, constraint string, path []string)
 	}
 
 	if node, exists := r.graph.Packages[id]; exists {
+		if err := checkNodeConstraints(node, constraint); err != nil {
+			return nil, err
+		}
 		return node, nil
 	}
 
@@ -200,10 +212,27 @@ func (r *Resolver) resolveRecursive(id string, constraint string, path []string)
 	}
 
 	if node, exists := r.graph.Packages[id]; exists {
+		if err := checkNodeConstraints(node, constraint); err != nil {
+			return nil, err
+		}
 		return node, nil
 	}
 
-	return r.resolvePackage(id, src, path, true)
+	node, err := r.resolvePackage(id, src, path, true)
+	if err != nil {
+		return nil, err
+	}
+	if constraint != "" {
+		node.Constraints = append(node.Constraints, constraint)
+	}
+
+	if len(node.Constraints) > 0 && node.Pkg != nil && len(node.Pkg.Versions()) > 0 {
+		if _, err := node.Pkg.SelectVersionMulti(node.Constraints); err != nil {
+			return nil, fmt.Errorf("package %s: %w", id, err)
+		}
+	}
+
+	return node, nil
 }
 
 func (r *Resolver) resolvePackage(id string, src *buildscript.Source, path []string, allowDefer bool) (*PackageNode, error) {
@@ -338,6 +367,9 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 	src := buildscript.NewSource(id, buildGo, repoDir, r.buildscriptOutputDir(id), api.SourceRemote, r.force)
 
 	node := NewPackageNode(id, src, nil, true).WithNative(gitURL, versions, selectedVersion)
+	if constraint != "" {
+		node.Constraints = append(node.Constraints, constraint)
+	}
 	r.graph.Packages[id] = node
 	r.sources[id] = src
 
@@ -372,6 +404,32 @@ func (r *Resolver) hasCachedScript(scriptPath, buildGoPath string) bool {
 		}
 	}
 	return true
+}
+
+func constraintsCompatible(a, b string) bool {
+	if a == "" || b == "" {
+		return true
+	}
+	ca, okA := api.ParseConstraint(a)
+	cb, okB := api.ParseConstraint(b)
+	if !okA || !okB {
+		return a == b
+	}
+	return ca.Match(cb.Version) || cb.Match(ca.Version)
+}
+
+func checkNodeConstraints(node *PackageNode, incoming string) error {
+	if incoming == "" {
+		return nil
+	}
+	for _, existing := range node.Constraints {
+		if !constraintsCompatible(existing, incoming) {
+			return fmt.Errorf("conflicting version constraints for %s: '%s' vs '%s'",
+				node.ID, existing, incoming)
+		}
+	}
+	node.Constraints = append(node.Constraints, incoming)
+	return nil
 }
 
 func topologicalSort(packages map[string]*PackageNode) ([]string, error) {
