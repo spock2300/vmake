@@ -4,12 +4,12 @@ Generated from vmake built-in commands. For plugin commands,
 run `vmake <plugin> --help` or check the plugin documentation.
 
 `vmake [--quiet -q --verbose -v --very-verbose -V]` - VMake - A Go-based C/C++ build system
-  `vmake build [--force -f --install -i --install-type --mode --prefix -p --toolchain --manifest --tests]` - Build the project
+  `vmake build [--force -f --install -i --install-type --manifest --mode --prefix -p --tests --toolchain]` - Build the project
   `vmake clean [--all]` - Clean build artifacts
-  `vmake distclean` - Deep clean all build artifacts (build scripts, caches, install dir)
   `vmake completion [shell]` - Generate shell completion script
     `vmake install [--shell]` - Install shell completion to your profile
-  `vmake config` - Configure project options
+  `vmake config` - Open a TUI to configure build options for all packages.
+  `vmake distclean` - Deep clean all build artifacts
   `vmake ext` - Manage extension repositories
     `vmake add <name> <git-url>` - Add an extension repository
     `vmake list` - List extension repositories and plugins
@@ -17,14 +17,14 @@ run `vmake <plugin> --help` or check the plugin documentation.
     `vmake update [name]` - Update extension repositories
   `vmake git` - Git version management commands
     `vmake tag [version] [--major --message -m --minor --no-push --yes -y]` - Create version tag, update latest, and push
+  `vmake manifest` - Inspect and restore install manifests
+    `vmake checkout <path> [name]` - Checkout packages to recorded versions
+    `vmake show <path>` - Show manifest contents
   `vmake pkg` - Manage packages
     `vmake clean <repo/name> [--all -a]` - Clean package cache
     `vmake list` - List installed packages
     `vmake search [pattern]` - Search for packages
     `vmake update <repo/name>` - Update package source
-  `vmake manifest` - Install manifest management
-    `vmake show <path>` - Show manifest contents
-    `vmake checkout <path> [name]` - Checkout packages from manifest
   `vmake query` - Show dependency tree
   `vmake rebuild [--install -i --install-type --prefix -p]` - Rebuild the project
   `vmake repo` - Manage package repositories

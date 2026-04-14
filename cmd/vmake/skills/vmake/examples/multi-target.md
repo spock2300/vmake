@@ -14,18 +14,16 @@ func Main(p *api.Package) {
 		ctx.Target("mylib").
 			SetKind(api.TargetStatic).
 			AddFiles("src/mylib.c").
-			AddIncludes("include")
+			AddPublicIncludes("include")
 
 		ctx.Target("myapp").
 			SetKind(api.TargetBinary).
 			AddFiles("src/main.c").
-			AddIncludes("include").
 			AddDeps("mylib")
 
 		ctx.Target("tests").
 			SetKind(api.TargetBinary).
 			AddFiles("tests/*.c").
-			AddIncludes("include").
 			AddDeps("mylib").
 			SetTest(true)
 	})
@@ -35,8 +33,8 @@ func Main(p *api.Package) {
 ## What This Demonstrates
 
 - **`api.TargetStatic`** - Build a static library
-- **`AddIncludes("include")`** - Add include directories
-- **`AddDeps("mylib")`** - Intra-package target dependency
+- **`AddPublicIncludes("include")`** - Include dirs for this target AND propagated to dependents
+- **`AddDeps("mylib")`** - Intra-package target dependency (inherits public includes)
 - **`SetTest(true)`** - Mark as test target (excluded from default build, never installed)
 
 ## Project Structure
@@ -75,8 +73,8 @@ vmake test           # Build + run test targets, report pass/fail
 - Multiple targets in single `OnBuild`
 - Dependencies resolved automatically - "mylib" builds before "myapp"
 - `SetTest(true)` useful for test targets — auto-sets `isDefault=false`, skipped by `vmake build` and install
-- `AddIncludes` adds -I flags for both compilation and linking
-- `AddPublicIncludes` propagates include dirs to dependent targets
+- `AddPublicIncludes` implies `AddIncludes` — no need to call both for the same directory
+- `AddDeps("mylib")` propagates public includes — `myapp` and `tests` get `-Iinclude` automatically
 
 ## Cross-Package Dependencies
 
@@ -95,13 +93,12 @@ p.OnBuild(func(ctx *api.BuildContext) {
 
 ## AddPublicIncludes
 
-`AddPublicIncludes` on a target makes its include directories available to all dependents:
+`AddPublicIncludes` on a target makes its include directories available to the target itself and all dependents. It implies `AddIncludes` — no need to call both:
 
 ```go
 ctx.Target("mylib").
     SetKind(api.TargetStatic).
     AddFiles("src/mylib.c").
-    AddIncludes("include").
     AddPublicIncludes("include")
 ```
 

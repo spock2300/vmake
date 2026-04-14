@@ -105,6 +105,31 @@ Local packages and native repo packages must NOT use `SetGit`/`AddVersion` in `O
 
 `pkg.Run()` and `pkg.RunIn()` use `exec.RunFatal` internally — they never return a non-nil error. Only `pkg.RunEnv()` returns a real error that you should check.
 
+### `vmake clean` vs `vmake distclean`
+
+`vmake clean` removes build artifacts (compiled objects, binaries, libraries) but keeps the compiled `build.so` plugin and dependency cache. If you modify `build.go` (add/remove targets, change options, change includes) and the build seems to ignore your changes, use `vmake distclean` — it clears the plugin cache, build script cache, and all installed packages, forcing a full re-evaluation of the build graph.
+
+### Patching source before build in registry packages
+
+Registry packages sometimes need source modifications before building (e.g., enabling a `#define` in a config header). Since `SrcDir()` points to the downloaded source, you can patch files inside `SetBuildFunc` using Go's standard `os` and `strings` packages:
+
+```go
+SetBuildFunc(func(p *api.Package) error {
+    configPath := filepath.Join(p.SrcDir(), "include", "config.h")
+    raw, _ := os.ReadFile(configPath)
+    raw = []byte(strings.Replace(string(raw),
+        "//#define MY_FEATURE\n",
+        "#define MY_FEATURE\n", 1))
+    os.WriteFile(configPath, raw, 0644)
+    p.CMakeConfigure("-DBUILD_SHARED_LIBS=OFF")
+    p.CMakeBuild()
+    p.CMakeInstall()
+    return nil
+})
+```
+
+This pattern is useful for libraries that use header-based configuration (mbedtls 2.x, some RTOS SDKs) where CMake options don't cover all config flags.
+
 ## Directory Reference
 
 | Property | What it returns | When to use |
@@ -116,6 +141,8 @@ Local packages and native repo packages must NOT use `SetGit`/`AddVersion` in `O
 | `ScriptDir()` | Same as `SourceDir()` | Legacy alias |
 
 Key distinction: for a registry package like U-Boot, `SourceDir()` is where `build.go` lives, but the actual U-Boot source is at `SrcDir()` (= `SourceDir()/src/`). For a local package without `SetGit`, `SourceDir()` == `SrcDir()`.
+
+Within `SetBuildFunc`, built-in helpers (`CMakeConfigure`, `CMakeBuild`, `CMakeInstall`) automatically use the correct directories. If you need to read or patch source files manually, use `SrcDir()` to locate the downloaded source tree.
 
 ## Package Types
 
@@ -133,7 +160,6 @@ Registry packages wrap external C/C++ libraries. Native packages are independent
 ctx.Target("app").
     SetKind(api.TargetBinary).
     AddFiles("src/*.c").
-    AddIncludes("include").
     AddPublicIncludes("include").
     AddDefines("DEBUG=1").
     AddCFlags("-Wall").
@@ -143,6 +169,14 @@ ctx.Target("app").
     AddDeps("lib:utils").
     SetDefault(false).
     SetBuildFunc(func(p *api.Package) error { ... })
+```
+
+`AddPublicIncludes` implies `AddIncludes` — directories set via `AddPublicIncludes` are automatically available to the target itself and propagated to all dependents. There is no need to duplicate them with `AddIncludes`.
+
+`AddFiles` accepts glob patterns and can be called with multiple globs to collect sources from different directories:
+
+```go
+AddFiles("src/common/*.c", "src/network/*.c", "src/stun/*.c")
 ```
 
 Remove flags: `RemoveCFlags`, `RemoveDefines`, `RemoveIncludes`, etc.
@@ -166,6 +200,8 @@ ctx.Target("tests").
 - `vmake test` — builds all test targets, then executes `TargetBinary` tests, reports pass/fail with timing
 - Test targets are never installed (`--install` skips them)
 - Test targets can depend on other test targets (e.g., a `TargetStatic` test lib); only `TargetBinary` tests are executed
+
+Always define test targets unconditionally in `OnBuild` (not guarded by options). `SetTest(true)` controls visibility — `vmake build` skips them, `vmake build --tests` includes them. If you gate the target definition behind `if ctx.Bool("tests") { ... }`, it won't exist when `--tests` is passed, because option values are resolved from `config.json` (which may not have `tests=true`).
 
 ## Dependencies
 
@@ -289,8 +325,8 @@ vmake builds packages by BFS from local (directory-based) packages. Remote packa
 | `vmake test` | Build + run test targets |
 | `vmake rebuild` | Clean + build |
 | `vmake config` | TUI for options |
-| `vmake clean` | Remove artifacts |
-| `vmake distclean` | Deep clean all artifacts + caches |
+| `vmake clean` | Remove build artifacts (objects, binaries) |
+| `vmake distclean` | Deep clean: artifacts + plugin cache + installed packages |
 | `vmake query` | Dependency tree |
 | `vmake toolchain list/show` | Toolchain info |
 | `vmake repo add/list/remove/update` | Package repos |

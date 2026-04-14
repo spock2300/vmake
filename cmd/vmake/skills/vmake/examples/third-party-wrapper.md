@@ -136,12 +136,49 @@ p.OnBuild(func(ctx *api.BuildContext) {
 ## Key Points
 
 - `SetBuildFunc` callback runs in the package's `BuildDir` context
-- `p.SourceDir()` — where the downloaded source lives
+- `p.SrcDir()` — the downloaded source tree (use this for source files, config headers, patching)
+- `p.SourceDir()` — where the package's `build.go` lives (registry package metadata directory)
 - `p.BuildDir()` — scratch directory for intermediate files
 - `p.InstallDir()` — where headers/libs/binaries should be installed to
 - Already-installed packages are automatically skipped (non-empty `InstallDir`)
 - `OnPackage` with `SetGit`/`AddVersion` is ONLY for registry repo packages — native repo packages must NOT use these
 - Local packages can also use `OnPackage` for metadata (`SetDescription`, `SetLicense`, `SetHomepage`) — it runs for all packages
+
+## Patching Source Before Build
+
+Some libraries use header-based configuration (e.g., mbedtls 2.x) where CMake options don't cover all config flags. You can patch source files inside `SetBuildFunc` using Go's `os` and `strings` packages before calling build helpers:
+
+```go
+SetBuildFunc(func(p *api.Package) error {
+    configPath := filepath.Join(p.SrcDir(), "include", "mbedtls", "config.h")
+    raw, _ := os.ReadFile(configPath)
+    raw = []byte(strings.Replace(string(raw),
+        "//#define MBEDTLS_SSL_DTLS_SRTP\n",
+        "#define MBEDTLS_SSL_DTLS_SRTP\n", 1))
+    os.WriteFile(configPath, raw, 0644)
+    p.CMakeConfigure("-DBUILD_SHARED_LIBS=OFF")
+    p.CMakeBuild()
+    p.CMakeInstall()
+    return nil
+})
+```
+
+## Post-Install Processing
+
+After `CMakeInstall`, the installed layout may not match what consumers expect. For example, cJSON installs headers to `include/cjson/cJSON.h` but consumer code uses `#include <cJSON.h>`. Use `api.CopyFile` to adjust the layout:
+
+```go
+SetBuildFunc(func(p *api.Package) error {
+    p.CMakeConfigure("-DBUILD_SHARED_LIBS=OFF")
+    p.CMakeBuild()
+    p.CMakeInstall()
+    api.CopyFile(
+        filepath.Join(p.InstallDir(), "include", "cjson", "cJSON.h"),
+        filepath.Join(p.InstallDir(), "include", "cJSON.h"),
+    )
+    return nil
+})
+```
 
 ## Consuming This Package
 

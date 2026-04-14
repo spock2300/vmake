@@ -395,6 +395,8 @@ Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()
 
 ### File Copy
 
+Available as `api.CopyFile`, `api.CopyDir`, etc. — useful in `SetBuildFunc` for post-install layout adjustments.
+
 | Function | Description |
 |----------|-------------|
 | `CopyFile(src, dest string) error` | Copy a single file |
