@@ -16,6 +16,7 @@ type Target struct {
 	isDefault      bool
 	isTest         bool
 	files          []string
+	excludeFiles   []string
 	includes       []string
 	publicIncludes []string
 	includeRules   map[string][]string
@@ -54,6 +55,11 @@ func (t *Target) SetTest(v bool) *Target {
 
 func (t *Target) AddFiles(files ...any) *Target {
 	t.files = append(t.files, flattenAny(files)...)
+	return t
+}
+
+func (t *Target) RemoveFiles(files ...any) *Target {
+	t.excludeFiles = append(t.excludeFiles, flattenAny(files)...)
 	return t
 }
 
@@ -197,6 +203,7 @@ func (t *Target) Kind() TargetKind         { return t.kind }
 func (t *Target) IsDefault() bool          { return t.isDefault }
 func (t *Target) IsTest() bool             { return t.isTest }
 func (t *Target) Files() []string          { return t.files }
+func (t *Target) ExcludedFiles() []string  { return t.excludeFiles }
 func (t *Target) Includes() []string       { return t.includes }
 func (t *Target) PublicIncludes() []string { return t.publicIncludes }
 func (t *Target) Defines() []string        { return t.defines }

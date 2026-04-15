@@ -101,6 +101,45 @@ func matchDoubleStar(pattern, dir string) ([]string, error) {
 	return result, err
 }
 
+func MatchPath(pattern, path string) bool {
+	if !strings.Contains(pattern, "**") {
+		matched, err := filepath.Match(pattern, path)
+		return err == nil && matched
+	}
+
+	parts := strings.SplitN(pattern, "**", 2)
+	if len(parts) != 2 {
+		return false
+	}
+
+	prefix := strings.TrimSuffix(parts[0], "/")
+	suffix := strings.TrimPrefix(parts[1], "/")
+
+	if prefix != "" && prefix != "." {
+		if !strings.HasPrefix(path, prefix+"/") && path != prefix {
+			return false
+		}
+		path = strings.TrimPrefix(path, prefix+"/")
+	}
+
+	if suffix == "" {
+		return true
+	}
+
+	for {
+		if matched, _ := filepath.Match(suffix, path); matched {
+			return true
+		}
+		idx := strings.Index(path, "/")
+		if idx < 0 {
+			break
+		}
+		path = path[idx+1:]
+	}
+
+	return false
+}
+
 func IsCppFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	return ext == ".cpp" || ext == ".cc" || ext == ".cxx" || ext == ".C"

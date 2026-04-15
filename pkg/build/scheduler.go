@@ -350,12 +350,17 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 		resolved.AllLdFlags = append(resolved.AllLdFlags, "-Wl,--end-group")
 	}
 
+	excludes := node.Target.ExcludedFiles()
 	for _, pattern := range node.Target.Files() {
 		files, err := glob.Match(pattern, ".")
 		if err != nil {
 			return nil, err
 		}
-		resolved.SourceFiles = append(resolved.SourceFiles, files...)
+		for _, f := range files {
+			if !matchesAny(f, excludes) {
+				resolved.SourceFiles = append(resolved.SourceFiles, f)
+			}
+		}
 	}
 
 	resolved.OutputPath = s.getTargetOutputPath(node)
@@ -728,4 +733,13 @@ func unique(s []string) []string {
 		}
 	}
 	return result
+}
+
+func matchesAny(path string, patterns []string) bool {
+	for _, p := range patterns {
+		if glob.MatchPath(p, path) {
+			return true
+		}
+	}
+	return false
 }
