@@ -179,7 +179,7 @@ ctx.Target("app").
 AddFiles("src/common/*.c", "src/network/*.c", "src/stun/*.c")
 ```
 
-Remove flags: `RemoveCFlags`, `RemoveDefines`, `RemoveIncludes`, etc.
+Remove flags: `RemoveCFlags`, `RemoveDefines`, `RemoveIncludes`, etc. Use `RemoveFiles("src/test_*.c")` to exclude files matched by `AddFiles` globs — it filters glob results at build time using pattern matching.
 
 Third-party packages with external build systems use `TargetVoid` with `SetBuildFunc`.
 

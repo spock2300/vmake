@@ -151,6 +151,7 @@ All setters are fluent (return `*Target`).
 | `SetDefault` | `(isDefault bool)` | Include in default build |
 | `SetTest` | `(v bool)` | Mark as test target (auto-sets isDefault=false) |
 | `AddFiles` | `(files ...any)` | Source files (globs, strings, []string) |
+| `RemoveFiles` | `(files ...any)` | Exclude files from AddFiles glob expansion (pattern matching) |
 | `AddIncludes` | `(dirs ...any)` | Include directories |
 | `AddPublicIncludes` | `(args ...any)` | Includes propagated to dependents (use @"pattern" to match) |
 | `AddDefines` | `(defines ...any)` | Preprocessor defines |
@@ -174,7 +175,9 @@ All setters are fluent (return `*Target`).
 
 ### Removers
 
-`RemoveCFlags`, `RemoveCxxFlags`, `RemoveLdFlags`, `RemoveDefines`, `RemoveIncludes`, `RemovePublicIncludes`, `RemoveLinks`, `RemoveDeps` — each takes variadic `...string`, returns `*Target`.
+`RemoveCFlags`, `RemoveCxxFlags`, `RemoveLdFlags`, `RemoveDefines`, `RemoveIncludes`, `RemovePublicIncludes`, `RemoveLinks`, `RemoveDeps` — each takes variadic `...string`, returns `*Target`. These perform immediate exact-match deletion from internal slices.
+
+`RemoveFiles` takes variadic `...any` (like `AddFiles`) but uses **deferred pattern matching** — patterns are matched against glob-expanded paths at build time, not removed from the rule list. This lets you exclude files like `RemoveFiles("src/test_*.c")` after a broad `AddFiles("src/*.c")`.
 
 ### Key Getters
 
@@ -185,6 +188,7 @@ All setters are fluent (return `*Target`).
 | `IsDefault()` | `bool` |
 | `IsTest()` | `bool` |
 | `Files()` | `[]string` |
+| `ExcludedFiles()` | `[]string` |
 | `Includes()` | `[]string` |
 | `PublicIncludes()` | `[]string` |
 | `Defines()` | `[]string` |
