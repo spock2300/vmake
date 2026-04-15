@@ -15,11 +15,13 @@ No Go unit tests. Test via integration projects in `test_data/` (each must run f
 # Single test
 cd test_data/01_simple_c && ../../vmake build && ./hello
 
-# Run all tests (01-17)
+# Run all test_data tests (01-16)
 for d in test_data/0[1-9]_*/ test_data/1[0-9]_*/; do (cd "$d" && ../../vmake build) || break; done
+```
 
-# Firmware test (17_firmware) — tests stamp skip, KConfig presets, EnsureConfig
-cd test_data/17_firmware && ../../vmake build
+Firmware test (17) is in `test_linux/17_firmware` (NOT `test_data/`), tests stamp skip, KConfig presets, EnsureConfig:
+```bash
+cd test_linux/17_firmware && ../../vmake build
 ```
 
 Known pre-existing failures (ignore): `07_subbuild_codegen`, `08_with_package`, `09_with_curl` (mbedtls submodule), `10_local_repo` (package not found).
@@ -259,10 +261,9 @@ type PkgDirs struct { SourceDir, BuildDir, InstallDir string }
 
 ## Test Targets (`SetTest` / `vmake test`)
 
-- `SetTest(true)` marks a target as a test; auto-sets `isDefault=false`
-- `IsTest()` getter on `Target`
+- `SetTest(true)` marks a target as a test and auto-sets `isDefault=false`
+- `vmake test` only runs targets where `IsTest() && IsDefault() && Kind() == TargetBinary` — so test binaries must also call `SetDefault(true)` explicitly
 - `vmake build` skips test targets; `vmake build --tests` includes them
-- `vmake test` builds all test targets, then executes `TargetBinary` tests, reports pass/fail with timing, `os.Exit(1)` on failure
 - `publishTarget` and `installTarget` skip `IsTest()` targets (test binaries are never installed)
 - Test targets can depend on other test targets (e.g., `TargetStatic` test lib used by multiple test binaries); only `TargetBinary` tests are executed
 - Subgraph builds inside `executeAllOnBuild` activate tests via `includeTests` parameter

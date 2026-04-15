@@ -101,7 +101,7 @@ func ParseDepFile(depPath string) ([]string, error) {
 	return deps, scanner.Err()
 }
 
-func IsSourceValid(src, objPath string) (bool, []string) {
+func IsSourceValid(src, objPath string, extraDeps ...string) (bool, []string) {
 	objInfo, err := os.Stat(objPath)
 	if os.IsNotExist(err) {
 		return false, nil
@@ -113,14 +113,23 @@ func IsSourceValid(src, objPath string) (bool, []string) {
 		return false, nil
 	}
 
+	objTime := objInfo.ModTime()
+
 	srcInfo, err := os.Stat(src)
-	if err != nil || srcInfo.ModTime().After(objInfo.ModTime()) {
+	if err != nil || srcInfo.ModTime().After(objTime) {
 		return false, deps
 	}
 
 	for _, dep := range deps {
 		depInfo, err := os.Stat(dep)
-		if err != nil || depInfo.ModTime().After(objInfo.ModTime()) {
+		if err != nil || depInfo.ModTime().After(objTime) {
+			return false, deps
+		}
+	}
+
+	for _, dep := range extraDeps {
+		depInfo, err := os.Stat(dep)
+		if err == nil && depInfo.ModTime().After(objTime) {
 			return false, deps
 		}
 	}

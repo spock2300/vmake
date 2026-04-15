@@ -409,7 +409,8 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string,
 		objRel = BuildPath(".", pkgInfo.BuildKey, "objects/"+strings.ReplaceAll(src, "/", "_")+".o")
 	}
 
-	valid, deps := IsSourceValid(src, objRel)
+	buildGoPath := filepath.Join(pkgInfo.SourceDir, "build.go")
+	valid, deps := IsSourceValid(src, objRel, buildGoPath)
 	if valid {
 		return objRel, deps, nil
 	}
