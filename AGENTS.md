@@ -4,6 +4,8 @@ VMake: 面向 AI 时代的 C/C++ 项目管理和编译工具。AI coding agents 
 
 ## Build / Lint / Test
 
+Requires Go 1.26+ (see `go.mod`).
+
 ```bash
 go build -o vmake ./cmd/vmake    # Build
 go vet ./... && gofmt -w .       # Lint
@@ -38,6 +40,29 @@ source start_dev.sh   # exports VMAKE_DIR=$(pwd)
 
 Or manually: `export VMAKE_DIR=/path/to/vmake`. Without this, `go build -o vmake ./cmd/vmake` still works but plugin compilation may mismatch.
 
+## Storage Layout
+
+### Project-Local (`vmake_deps/`)
+Third-party source code, buildscript cache, and build artifacts live in the project root under `vmake_deps/`. Auto-added to `.gitignore` on first build via `ensureGitignore()` in `runPipeline`. Each project has its own independent `vmake_deps/`.
+
+```
+vmake_deps/
+  <repo>/<pkg>/src/          # Git source checkout (registry & native packages)
+  <repo>/<pkg>/build.so      # Compiled buildscript plugin
+  <repo>/<pkg>/out/<buildKey>/build/    # Build artifacts
+  <repo>/<pkg>/out/<buildKey>/install/  # Install staging
+```
+
+No version layer in paths — each package has one version at a time.
+
+`findProjectDir()` (in `cmd/vmake/paths.go`) walks upward from cwd to find `.vmake/` or `build.go` to locate the project root. This ensures commands and shell completion work from subdirectories.
+
+### Global (`~/.vmake/`)
+Only registry repos, toolchains, and extensions remain global:
+- `~/.vmake/repos/` — registry repo clones
+- `~/.vmake/toolchains/` — toolchain manifests
+- `~/.vmake/extensions/` — extension repos
+
 ## Core Concepts
 
 - **源 (Source)** — 包的仓库。**Registry**（包装第三方 C/C++ 库，build.go 在仓库内作为 wrapper）和 **Native**（vmake 原生包，独立 git 仓库，build.go 在仓库根目录，版本来自 git tag）。
@@ -58,7 +83,7 @@ The build pipeline treats local and remote packages identically. `IsLocal()` is 
 ### SrcDir vs SourceDir vs BuildDir
 - `SourceDir`: package root (where build.go lives)
 - `SrcDir()`: source code directory (may differ if `SetGit()` downloads source to `<SourceDir>/src/`)
-- `BuildDir`: always under `<SourceDir>/build/<key>/` (separate from source)
+- `BuildDir`: local packages use `<SourceDir>/build/<key>/`; remote packages use `<depsDir>/<name>/out/<key>/build/`
 - `pkg.Make()` uses BuildDir. When Makefile is in SourceDir, use `pkg.RunIn(srcDir, "make", ...)`
 
 ### KConfig Preset = Make Target Name
@@ -77,9 +102,6 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 
 ### Auto-Wire Require → Build Deps
 `OnRequire`/`AddRequires` alone does NOT create build graph edges. `Target.AddDeps("pkg:target")` is required for topology. However, `autoWireRequireDeps()` in `build_cmd.go` auto-wires them when a package has `AddRequires` calls but its targets lack explicit `AddDeps` — it links all of the dependency package's targets as deps.
-
-### TUI Save Iterates Union of All Sources
-When saving TUI results, iterate the union of `Values ∪ AllKConfigs` in a single loop. Don't add parallel loops per source.
 
 ### restoreKConfigFiles Skip Rules
 - No config.json entry for package → skip entirely (don't delete `.config`)
@@ -139,7 +161,6 @@ ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c").AddIncludes("inc
 ### Cross-Platform Paths
 - Filesystem paths: `filepath.Join()`
 - Logical identifiers: string concatenation (`repo/name`, `pkg:target`)
-- Go 1.26 `filepath.Join("/a/b", "/a/b/c")` returns `/a/b/a/b/c` — NOT `/a/b/c`
 
 ### Code Organization
 - Struct fields are private; access via getter/setter methods
@@ -161,20 +182,13 @@ type BuildContext struct {
 Common callback types defined in `pkg/api/`: `RequireFunc`, `ConfigFunc`, `BuildFunc`, `InstallFunc`, `PackageFunc`, `CopyFilter`, `InstallFilterFunc`.
 Define as `type XxxFunc func(...)` and store as struct fields.
 
-### Generics
-Use Go generics for type-safe helpers: `func getTypedValue[T any](...)`, `func execFuncs[T any](...)`.
-
-### Context Usage
-`context.Context` used in `internal/exec` for timeout/cancellation:
-```go
-type RunOptions struct { Context context.Context; Timeout time.Duration }
-```
-Auto-creates timeout context if `Timeout > 0` and `Context` is nil.
-
-### CLI Error Helper
+### CLI Error Helpers
 ```go
 func fatalErr(err error) {
     if err != nil { vlog.Error("Error: %v", err); os.Exit(1) }
+}
+func fatalMsg(format string, args ...any) {
+    vlog.Error(format, args...); os.Exit(1)
 }
 ```
 
@@ -216,9 +230,17 @@ Methods on `BuildContext`:
 - `github.com/spf13/cobra`, package-level vars, `init()` registration
 - Command factories (`newRemoveCmd`, `newUpdateCmd`) in `cmd/vmake/helpers.go`
 - Global flags: `--verbose/-v`, `--very-verbose/-V`, `--quiet/-q`
+- `vmake` (no subcommand) — defaults to `build`
+- `vmake build` — build all targets (flags: `--force`, `--toolchain`, `--mode`, `--install`, `--prefix`, `--tests`, `--manifest`)
+- `vmake test` — build with `--tests` then execute test binaries
+- `vmake clean [--all]` — clean build artifacts; `--all` removes all build key dirs
+- `vmake rebuild` — clean local packages then build
+- `vmake distclean` — deep clean: local build dirs, build.so, go.mod/go.sum, install/, `vmake_deps/`
+- `vmake config` — interactive TUI for build options
 - `vmake query` — show dependency tree (uses `newQueryCmd` factory, registered in root.go init)
 - `vmake ext add/remove/list/update` — manage extension repos that contain plugins and toolchain manifests
 - `vmake skill install/uninstall/path` — install AI assistant skill files to `~/.claude/skills/` and `~/.agents/skills/`
+- `vmake pkg list/search/clean/update` — manage third-party packages in `vmake_deps/`
 
 ### Build Flags
 
@@ -273,11 +295,14 @@ type PkgDirs struct { SourceDir, BuildDir, InstallDir string }
 - `vlog` has `Debug`, `Info`, `Error`, `Fatal` — no `Warn` method
 - `test_data/09_with_curl` and `test_data/10_local_repo` have pre-existing failures unrelated to code changes
 - `exec.Command` doesn't expand shell features — `$(nproc)` won't work, must use `runtime.NumCPU()`
+- Go 1.26 `filepath.Join("/a/b", "/a/b/c")` returns `/a/b/a/b/c` — NOT `/a/b/c`
 - `collectNeeded` must use BFS from `IsLocal()` roots — NOT `node.Pkg != nil` and NOT full graph mark-all
 - `populateDepsFromGraph` only fills `pkg.Deps()` for packages with non-empty `InstallDir`
 - `tea.ExecProcess` (takes `*exec.Cmd`) vs `tea.Exec` (takes `tea.ExecCommand` interface) — use `ExecProcess` for external interactive commands
 - `scheduler.SetPackage` stores first assignment — `packages[name]` lookup finds original, not re-created one
 - `busybox` kconfig has no `olddefconfig` — only `oldconfig`, `defconfig`, `allnoconfig`
+- `vmake_deps/` is in `scanner.go`'s `skipDirs` — build.go scanner will not recurse into it
+- `ensureGitignore` writes only to project root `.gitignore` (via `findProjectDir()`), not to subdirectories
 
 ## What Not To Do
 - IDE integration plugins

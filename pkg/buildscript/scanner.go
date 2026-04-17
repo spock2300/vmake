@@ -14,6 +14,7 @@ var skipDirs = map[string]bool{
 	"build":        true,
 	"vendor":       true,
 	"node_modules": true,
+	"vmake_deps":   true,
 }
 
 func Scan(rootDir string) ([]Source, error) {

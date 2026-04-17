@@ -22,7 +22,7 @@ var pkgListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List installed packages",
 	Run: func(cmd *cobra.Command, args []string) {
-		entries, err := readDirEntries(getPackagesDir())
+		entries, err := readDirEntries(getDepsDir())
 		if err != nil {
 			if os.IsNotExist(err) {
 				fmt.Println("No packages installed")
@@ -39,21 +39,13 @@ var pkgListCmd = &cobra.Command{
 		fmt.Println("Installed packages:")
 		for _, entry := range entries {
 			repoName := entry.Name()
-			repoPath := filepath.Join(getPackagesDir(), repoName)
+			repoPath := filepath.Join(getDepsDir(), repoName)
 			pkgs, err := readDirEntries(repoPath)
 			if err != nil {
 				continue
 			}
 			for _, pkg := range pkgs {
-				pkgName := pkg.Name()
-				pkgPath := filepath.Join(repoPath, pkgName)
-				versions, err := readDirEntries(pkgPath)
-				if err != nil {
-					continue
-				}
-				for _, ver := range versions {
-					fmt.Printf("  %s/%s %s\n", repoName, pkgName, ver.Name())
-				}
+				fmt.Printf("  %s/%s\n", repoName, pkg.Name())
 			}
 		}
 	},
@@ -112,16 +104,16 @@ func searchRegistryRepo(repoName, pattern string) {
 }
 
 func searchNativeRepo(repoName, pattern string) {
-	cacheDir := filepath.Join(getCacheDir(), repoName)
-	entries, err := readDirEntries(cacheDir)
+	depsDir := filepath.Join(getDepsDir(), repoName)
+	entries, err := readDirEntries(depsDir)
 	if err != nil {
 		return
 	}
 
 	for _, entry := range entries {
 		pkgName := entry.Name()
-		repoDir := filepath.Join(cacheDir, pkgName, "repo")
-		buildGo := filepath.Join(repoDir, "build.go")
+		srcDir := filepath.Join(depsDir, pkgName, "src")
+		buildGo := filepath.Join(srcDir, "build.go")
 		if !fs.FileExists(buildGo) {
 			continue
 		}
@@ -141,13 +133,13 @@ var pkgCleanCmd = &cobra.Command{
 		pkgRef := args[0]
 		repoName, pkgName := mustSplitPkgRef(pkgRef)
 
-		installer := repo.NewPackageInstaller(nil, getPackagesDir(), "")
+		installer := repo.NewPackageInstaller(nil, getDepsDir())
 
 		fatalErr(installer.CleanBuild(pkgRef))
 		fmt.Printf("Cleaned cache for '%s'\n", pkgRef)
 
 		if pkgCleanAll {
-			sourceMgr := repo.NewSourceManager(getCacheDir())
+			sourceMgr := repo.NewSourceManager(getDepsDir())
 
 			fatalErr(sourceMgr.CleanSource(repoName, pkgName))
 			fmt.Printf("Cleaned source for '%s'\n", pkgRef)
@@ -167,7 +159,7 @@ var pkgUpdateCmd = &cobra.Command{
 		repoName, pkgName := mustSplitPkgRef(pkgRef)
 
 		repoMgr := getRepoManager()
-		sourceMgr := repo.NewSourceManager(getCacheDir())
+		sourceMgr := repo.NewSourceManager(getDepsDir())
 
 		if repoMgr.IsNative(repoName) {
 			urlTemplate, err := repoMgr.GetNativeURL(repoName)

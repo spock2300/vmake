@@ -374,12 +374,12 @@ func makeLocalPkgDirs(scriptDir, ccPath, mode string, opts map[string]any) *api.
 	}
 }
 
-func makeRemotePkgDirs(packagesDir, name, version, ccPath, mode string, opts map[string]any, sourceDir string) *api.PkgDirs {
+func makeRemotePkgDirs(depsDir, name, ccPath, mode string, opts map[string]any, sourceDir string) *api.PkgDirs {
 	buildKey := build.BuildKey(ccPath, mode, opts)
 	return &api.PkgDirs{
 		SourceDir:  sourceDir,
-		BuildDir:   filepath.Join(packagesDir, name, version, buildKey, "build"),
-		InstallDir: filepath.Join(packagesDir, name, version, buildKey, "install"),
+		BuildDir:   filepath.Join(depsDir, name, "out", buildKey, "build"),
+		InstallDir: filepath.Join(depsDir, name, "out", buildKey, "install"),
 	}
 }
 
@@ -426,12 +426,11 @@ func prepareAllPackages(ctx *RuntimeContext, cfg *buildConfig, needed map[string
 		pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, resolvedTools.CC, cfg.Mode, opts)
 	}
 
-	packagesDir := getPackagesDir()
-	cacheDir := getCacheDir()
+	depsDir := getDepsDir()
 	repoMgr := getRepoManager()
 
-	sourceMgr := repo.NewSourceManager(cacheDir)
-	installer := repo.NewPackageInstaller(sourceMgr, packagesDir, cacheDir)
+	sourceMgr := repo.NewSourceManager(depsDir)
+	installer := repo.NewPackageInstaller(sourceMgr, depsDir)
 	installer.SetRepoManager(repoMgr)
 	installer.SetConfigs(remote.configs)
 	installer.SetToolchain(cfg.Tc)
@@ -501,7 +500,7 @@ func prepareAllPackages(ctx *RuntimeContext, cfg *buildConfig, needed map[string
 		}
 		vlog.Info("  %s@%s -> %s", name, entryCfg.Version, sourceDir)
 
-		pkgDirs[name] = makeRemotePkgDirs(packagesDir, name, entryCfg.Version, cfg.Tc.Tools.CC, cfg.Mode, entryCfg.Options, sourceDir)
+		pkgDirs[name] = makeRemotePkgDirs(depsDir, name, cfg.Tc.Tools.CC, cfg.Mode, entryCfg.Options, sourceDir)
 	}
 
 	for _, name := range ctx.Resolver.GetOrder() {
@@ -630,7 +629,7 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 		}
 	}
 
-	packagesDir := getPackagesDir()
+	depsDir := getDepsDir()
 	subGraphBuilt := make(map[string]bool)
 	subGraphPkgs := make(map[string]bool)
 	subBuildKeys := make(map[string]string)
@@ -690,7 +689,7 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 			for name := range subPkgs {
 				if meta, ok := pkgMetaMap[name]; ok && meta.IsRemote() {
 					rcfg := remote.configs[name]
-					subPkgDirs[name] = makeRemotePkgDirs(packagesDir, name, rcfg.Version, subResolvedTools.CC, cfg.Mode, rcfg.Options, pkgDirs[name].SourceDir)
+					subPkgDirs[name] = makeRemotePkgDirs(depsDir, name, subResolvedTools.CC, cfg.Mode, rcfg.Options, pkgDirs[name].SourceDir)
 				}
 			}
 			for name := range subPkgs {

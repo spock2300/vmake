@@ -10,21 +10,19 @@ import (
 )
 
 type PackageInstaller struct {
-	sourceMgr   *SourceManager
-	packagesDir string
-	cacheDir    string
-	pkgs        map[string]*api.Package
-	repoMgr     *RepoManager
-	configs     map[string]*config.EntryConfig
-	tc          *toolchain.Toolchain
+	sourceMgr *SourceManager
+	depsDir   string
+	pkgs      map[string]*api.Package
+	repoMgr   *RepoManager
+	configs   map[string]*config.EntryConfig
+	tc        *toolchain.Toolchain
 }
 
-func NewPackageInstaller(sourceMgr *SourceManager, packagesDir, cacheDir string) *PackageInstaller {
+func NewPackageInstaller(sourceMgr *SourceManager, depsDir string) *PackageInstaller {
 	return &PackageInstaller{
-		sourceMgr:   sourceMgr,
-		packagesDir: packagesDir,
-		cacheDir:    cacheDir,
-		pkgs:        make(map[string]*api.Package),
+		sourceMgr: sourceMgr,
+		depsDir:   depsDir,
+		pkgs:      make(map[string]*api.Package),
 	}
 }
 
@@ -45,5 +43,5 @@ func (i *PackageInstaller) SetPackage(name string, pkg *api.Package) {
 }
 
 func (i *PackageInstaller) CleanBuild(name string) error {
-	return fs.RemoveAll(filepath.Join(i.packagesDir, name))
+	return fs.RemoveAll(filepath.Join(i.depsDir, name, "out"))
 }

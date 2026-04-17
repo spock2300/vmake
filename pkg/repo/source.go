@@ -17,7 +17,7 @@ func NewSourceManager(sourcesDir string) *SourceManager {
 }
 
 func (m *SourceManager) EnsureSource(pkg *api.Package, version string) (string, error) {
-	repoDir := filepath.Join(m.sourcesDir, pkg.Repo, pkg.Name, "repo")
+	repoDir := filepath.Join(m.sourcesDir, pkg.Repo, pkg.Name, "src")
 
 	tag := pkg.GetRef(version)
 	if tag == "" {
@@ -93,7 +93,7 @@ func (m *SourceManager) ensureRepo(pkg *api.Package, repoDir string) error {
 }
 
 func (m *SourceManager) UpdateSource(pkg *api.Package) error {
-	repoDir := filepath.Join(m.sourcesDir, pkg.Repo, pkg.Name, "repo")
+	repoDir := filepath.Join(m.sourcesDir, pkg.Repo, pkg.Name, "src")
 
 	if !m.exists(repoDir) {
 		return m.ensureRepo(pkg, repoDir)

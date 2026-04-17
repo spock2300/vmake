@@ -97,7 +97,7 @@ Scan(root)          Compile             Load              Resolve
 ```
 
 1. `buildscript.Scan(root)` 递归扫描 `build.go`，返回 `[]buildscript.Source`
-2. `buildscript.Compile()` 编译为 `.so`，缓存在 `cache/buildscripts/`
+2. `buildscript.Compile()` 编译为 `.so`，缓存在 `vmake_deps/<pkg>/build.so`
 3. `buildscript.Load()` 加载 `.so`，调用 `Main(*api.Package)` 获取 `*api.Package`
 4. `resolver.Resolver` 递归解析依赖，生成 `Graph`（拓扑排序）
 5. `Resolver.ResolveDeferred()` 解析远程（延迟）依赖
@@ -144,15 +144,15 @@ OnRequire          Resolver            SourceManager       Scheduler
 声明依赖           解析依赖树           下载源码            构建安装
     │                 │                    │                  │
     ▼                 ▼                    ▼                  ▼
-AddRequires      Graph                cache/<repo>/<pkg>/  TargetVoid.BuildFunc()
-"official/zlib"  ├─ Order []          repo/                → CMakeConfigure
-                  └─ Packages map                           → CMakeBuild
-                   └─ *PackageNode                         → CMakeInstall
+AddRequires      Graph                vmake_deps/<repo>/  TargetVoid.BuildFunc()
+"official/zlib"  ├─ Order []          <pkg>/src/           → CMakeConfigure
+                   └─ Packages map                        → CMakeBuild
+                    └─ *PackageNode                        → CMakeInstall
 ```
 
 1. `OnRequire` 回调调用 `AddRequires("official/zlib >=1.2")`
 2. `Resolver` 在 `repos/` 中查找包定义，递归解析依赖
-3. `SourceManager.EnsureSource` 通过 git clone 下载源码到 `cache/<repo>/<pkg>/repo/`
+3. `SourceManager.EnsureSource` 通过 git clone 下载源码到 `vmake_deps/<repo>/<pkg>/src/`
 4. `Scheduler` 按拓扑顺序构建所有目标，包括 `TargetVoid` 目标
 
 对于 `TargetVoid` 类型的目标（第三方包），Scheduler 调用 `Target.BuildFunc()` 并传入 `*api.Package`，执行 CMake/Autotools 等构建命令。

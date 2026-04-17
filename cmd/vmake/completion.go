@@ -222,15 +222,15 @@ func completeExtRepoName(cmd *cobra.Command, args []string, toComplete string) (
 }
 
 func completePkgRef(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	packagesDir := getPackagesDir()
-	repoEntries, err := readDirEntries(packagesDir)
+	depsDir := getDepsDir()
+	repoEntries, err := readDirEntries(depsDir)
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	var refs []string
 	for _, repoEntry := range repoEntries {
 		repoName := repoEntry.Name()
-		pkgEntries, err := readDirEntries(filepath.Join(packagesDir, repoName))
+		pkgEntries, err := readDirEntries(filepath.Join(depsDir, repoName))
 		if err != nil {
 			continue
 		}

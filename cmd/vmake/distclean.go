@@ -19,8 +19,7 @@ This is equivalent to 'vmake clean --all' plus:
   - build/compile_commands.json for each local package
   - go.mod/go.sum for each local package (stale buildscript cache)
   - install/ directory at project root
-  - remote buildscript cache (~/.vmake/cache/buildscripts/)
-  - remote package cache (~/.vmake/packages/)`,
+  - vmake_deps/ directory (all third-party sources and build cache)`,
 	Run: runDistClean,
 }
 
@@ -41,8 +40,7 @@ func runDistClean(cmd *cobra.Command, args []string) {
 	}
 
 	removeIfExists(filepath.Join(ctx.WorkDir, "install"), "", "install/", true)
-	removeIfExists(filepath.Join(getCacheDir(), "buildscripts"), "", "~/.vmake/cache/buildscripts/", true)
-	removeIfExists(getPackagesDir(), "", "~/.vmake/packages/", true)
+	removeIfExists(getDepsDir(), "", "vmake_deps/", true)
 
 	vlog.Info("Distclean completed!")
 }

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/internal/toposort"
@@ -59,19 +58,19 @@ type Graph struct {
 }
 
 type Resolver struct {
-	sources  map[string]*buildscript.Source
-	graph    *Graph
-	repoMgr  *repo.RepoManager
-	cacheDir string
-	force    bool
+	sources map[string]*buildscript.Source
+	graph   *Graph
+	repoMgr *repo.RepoManager
+	depsDir string
+	force   bool
 }
 
-func NewResolver(repoMgr *repo.RepoManager, cacheDir string) *Resolver {
+func NewResolver(repoMgr *repo.RepoManager, depsDir string) *Resolver {
 	return &Resolver{
-		sources:  make(map[string]*buildscript.Source),
-		graph:    &Graph{Packages: make(map[string]*PackageNode)},
-		repoMgr:  repoMgr,
-		cacheDir: cacheDir,
+		sources: make(map[string]*buildscript.Source),
+		graph:   &Graph{Packages: make(map[string]*PackageNode)},
+		repoMgr: repoMgr,
+		depsDir: depsDir,
 	}
 }
 
@@ -332,7 +331,7 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 	}
 
 	gitURL := repo.ResolveNativeURL(urlTemplate, pkgName)
-	repoDir := filepath.Join(r.cacheDir, repoName, pkgName, "repo")
+	repoDir := filepath.Join(r.depsDir, repoName, pkgName, "src")
 
 	if err := repo.EnsureRepoAtRef(gitURL, repoDir, ""); err != nil {
 		return nil, fmt.Errorf("clone %s: %w", gitURL, err)
@@ -381,7 +380,7 @@ func (r *Resolver) scriptPath(src *buildscript.Source) string {
 }
 
 func (r *Resolver) buildscriptOutputDir(name string) string {
-	return fmt.Sprintf("%s/buildscripts/%s", r.cacheDir, strings.ReplaceAll(name, "/", "_"))
+	return filepath.Join(r.depsDir, name)
 }
 
 func (r *Resolver) hasCachedScript(scriptPath, buildGoPath string) bool {

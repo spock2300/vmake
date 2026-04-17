@@ -119,6 +119,7 @@ func runThroughConfigPhase(ctx *RuntimeContext, force bool) {
 
 func runPipeline(opts pipelineOptions) {
 	ctx := mustInitContext()
+	ensureGitignore(findProjectDir())
 
 	fatalErr(runRequirePhase(ctx, opts.force))
 
@@ -202,7 +203,7 @@ func runRequirePhase(ctx *RuntimeContext, force bool) error {
 	}
 	vlog.Info("Found %d package(s): %s", len(packages), strings.Join(pkgNames, ", "))
 
-	r := resolver.NewResolver(getRepoManager(), getCacheDir())
+	r := resolver.NewResolver(getRepoManager(), getDepsDir())
 	r.SetForce(force)
 	ctx.Resolver = r
 
@@ -318,4 +319,26 @@ func ResolveAllPackageDirs(graph *resolver.Graph) map[string]*api.PkgDirs {
 		dirs[name] = &api.PkgDirs{SourceDir: node.Source.Dir}
 	}
 	return dirs
+}
+
+func ensureGitignore(workDir string) {
+	gitignorePath := filepath.Join(workDir, ".gitignore")
+	content := ""
+	if data, err := os.ReadFile(gitignorePath); err == nil {
+		content = string(data)
+	}
+	if strings.Contains(content, "vmake_deps") {
+		return
+	}
+	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	var buf []byte
+	if len(content) > 0 && !strings.HasSuffix(content, "\n") {
+		buf = append(buf, '\n')
+	}
+	buf = append(buf, []byte("vmake_deps/\n")...)
+	f.Write(buf)
 }

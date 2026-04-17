@@ -107,7 +107,7 @@ Local packages and native repo packages must NOT use `SetGit`/`AddVersion` in `O
 
 ### `vmake clean` vs `vmake distclean`
 
-`vmake clean` removes build artifacts (compiled objects, binaries, libraries) but keeps the compiled `build.so` plugin and dependency cache. If you modify `build.go` (add/remove targets, change options, change includes) and the build seems to ignore your changes, use `vmake distclean` — it clears the plugin cache, build script cache, and all installed packages, forcing a full re-evaluation of the build graph.
+`vmake clean` removes build artifacts (compiled objects, binaries, libraries) but keeps the compiled `build.so` plugin and dependency source in `vmake_deps/`. If you modify `build.go` (add/remove targets, change options, change includes) and the build seems to ignore your changes, use `vmake distclean` — it clears all build outputs under `vmake_deps/` (plugin cache, build artifacts, installed packages), forcing a full re-evaluation of the build graph. Source checkouts in `vmake_deps/` are preserved.
 
 ### Patching source before build in registry packages
 
@@ -136,13 +136,43 @@ This pattern is useful for libraries that use header-based configuration (mbedtl
 |----------|----------------|-------------|
 | `SourceDir()` | Package root (where build.go lives) | Package metadata files, overlay dirs |
 | `SrcDir()` | Source code dir (`SourceDir()/src/` when `SetGit` downloads source) | Source files for firmware/third-party builds |
-| `BuildDir()` | Scratch dir (`SourceDir()/build/<key>/`) | Intermediate artifacts, stamps |
+| `BuildDir()` | Scratch dir for intermediate artifacts | Build outputs, stamps |
 | `InstallDir()` | Installation prefix | Headers/libs installed by third-party packages |
 | `ScriptDir()` | Same as `SourceDir()` | Legacy alias |
+
+BuildDir path differs by package origin:
+- **Local packages**: `<SourceDir>/build/<key>/`
+- **Remote packages**: `vmake_deps/<repo>/<pkg>/out/<key>/build/`
 
 Key distinction: for a registry package like U-Boot, `SourceDir()` is where `build.go` lives, but the actual U-Boot source is at `SrcDir()` (= `SourceDir()/src/`). For a local package without `SetGit`, `SourceDir()` == `SrcDir()`.
 
 Within `SetBuildFunc`, built-in helpers (`CMakeConfigure`, `CMakeBuild`, `CMakeInstall`) automatically use the correct directories. If you need to read or patch source files manually, use `SrcDir()` to locate the downloaded source tree.
+
+## Storage Layout
+
+Third-party package source code, compiled buildscript plugins, and build artifacts are stored **per-project** in `vmake_deps/` at the project root. This directory is auto-added to `.gitignore` on first build. Each project has its own independent `vmake_deps/` — no cross-project sharing.
+
+```
+project/
+├── build.go
+├── src/
+├── vmake_deps/                    # Auto-managed, gitignored
+│   └── <repo>/<pkg>/
+│       ├── src/                   # Git source checkout
+│       ├── build.so               # Compiled buildscript plugin
+│       └── out/<buildKey>/
+│           ├── build/             # Build artifacts
+│           └── install/           # Install staging
+```
+
+Both registry and native packages use the same `<repo>/<pkg>/` structure. There is no version layer in paths — each package has one version at a time.
+
+Global storage in `~/.vmake/` is limited to:
+- `~/.vmake/repos/` — registry repo clones (buildscript metadata only)
+- `~/.vmake/toolchains/` — toolchain manifests
+- `~/.vmake/extensions/` — extension repos
+
+vmake locates the project root by walking upward from cwd to find `.vmake/` or `build.go` (via `findProjectDir()`). This ensures commands and shell completion work from subdirectories.
 
 ## Package Types
 

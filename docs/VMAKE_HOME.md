@@ -1,6 +1,6 @@
 # ~/.vmake 目录结构
 
-`~/.vmake` 是 vmake 的全局数据目录，存储工具链配置、包仓库、已安装包产物和缓存。
+`~/.vmake` 是 vmake 的全局数据目录，存储工具链配置、包仓库索引和扩展。第三方包的源码和构建产物存储在项目本地的 `vmake_deps/` 目录。
 
 ## 目录总览
 
@@ -16,23 +16,12 @@
 │           └── *.tar.gz           # 工具链压缩包（Git LFS）
 ├── toolchains/                    # 已安装的交叉编译工具链
 │   └── <name>-<version>/          # 工具链安装目录
-├── repos/                         # 包仓库索引（git clone）
-│   └── <repo>/
-│       └── packages/
-│           └── <first-char>/
-│               └── <pkg>/
-│                   └── build.go
-├── packages/                      # 已安装包的构建产物
-│   └── <repo>/<pkg>/
-│       └── <version>/
-│           └── <cacheHash>/
-│               ├── build/         # 中间产物（.o 文件等）
-│               └── install/       # 最终产物（库、头文件）
-└── cache/
-    ├── buildscripts/              # 编译后的构建脚本缓存
-    │   └── <name>/build.so
-    └── <repo>/<pkg>/repo/         # 包源码的 git clone
-```
+└── repos/                         # 包仓库索引（git clone）
+    └── <repo>/
+        └── packages/
+            └── <first-char>/
+                └── <pkg>/
+                    └── build.go
 
 ## repos/
 
@@ -94,52 +83,26 @@ toolchains/<name>-<version>/
 
 源码：`cmd/vmake/ext_cmd.go` (`loadAllToolchainManifests`)
 
-## packages/
+## 项目本地目录（vmake_deps/）
 
-已安装包的构建产物。每个包的不同配置变体独立存储。
-
-路径规则：
+第三方包的源码、构建脚本缓存和构建产物存储在项目根目录的 `vmake_deps/` 中，不在全局目录。
 
 ```
-packages/<repo>/<pkg>/<version>/<cacheHash>/
-├── build/                         # 中间构建产物
-└── install/                       # 最终安装文件
-    ├── include/                   # 头文件
-    └── lib/                       # 静态库/动态库
+vmake_deps/
+└── <repo>/<pkg>/                  # Registry 和 Native 包使用相同结构
+    ├── src/                       # Git 源码 checkout
+    ├── build.so                   # 编译后的 buildscript 插件
+    └── out/<buildKey>/
+        ├── build/                 # 构建产物
+        └── install/               # 安装暂存
 ```
 
-`cacheHash` 由编译器名称（如 gcc）、构建模式、选项组合生成（`pkg/repo/cache.go`）。
+`buildKey` 由编译器名称、构建模式、选项组合生成。每个包同时只有一个版本。
 
-不同工具链或选项组合产生不同的 `cacheHash`，实现配置隔离。
+`vmake_deps/` 在首次构建时自动添加到项目根目录的 `.gitignore`。
 
-源码：`pkg/repo/installer.go`
-CLI：`vmake pkg list|clean`
-
-## cache/
-
-### buildscripts/
-
-编译后的构建脚本缓存。每个包的 `build.go` 被编译为 `.so` 文件，按时间戳判断是否需要重新编译。
-
-路径规则：`cache/buildscripts/<name>/build.so`
-
-`name` 中的 `/` 替换为 `_`（如 `official/curl` → `official_curl`）。
-
-源码：`pkg/buildscript/compiler.go`
-
-### plugins/
-
-扩展插件在插件目录内原地编译（`extensions/<repo>/<plugin-name>/plugin.so`），不使用统一缓存目录。
-
-源码：`pkg/plugin/compiler.go`
-
-### 源码缓存
-
-包源码的 Git 克隆，避免每次构建都重新下载。
-
-路径规则：`cache/<repo>/<pkg>/repo/`
-
-源码：`pkg/repo/source.go`
+源码：`cmd/vmake/paths.go` (`getDepsDir`, `findProjectDir`), `pkg/repo/source.go`, `pkg/repo/installer.go`
+CLI：`vmake pkg list|clean|update`
 
 ## 项目目录
 
@@ -150,7 +113,13 @@ project/
 ├── build.go                       # 项目构建脚本
 ├── .vmake/
 │   └── config.json                # 项目配置
-└── build/                         # 构建输出
+├── vmake_deps/                    # 第三方包（自动生成，已 gitignore）
+│   └── <repo>/<pkg>/
+│       ├── src/                   # 源码
+│       ├── build.so               # buildscript 插件
+│       └── out/<buildKey>/build/  # 构建产物
+├── install/                       # 安装输出
+└── build/                         # 本地包构建输出
     ├── compile_commands.json      # LSP 编译数据库
     └── <tc>-<mode>/               # 如 host-debug
         ├── state.json             # 构建状态（工具链/模式）
