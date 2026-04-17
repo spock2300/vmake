@@ -42,87 +42,96 @@ func (m *SourceManager) EnsureSource(pkg *api.Package, version string) (string, 
 	}
 	defer lock.Release()
 
-	if err := m.ensureSymlink(pkg); err != nil {
-		return "", fmt.Errorf("create symlink for %s: %w", pkg.FullName(), err)
+	globalDir := m.globalSrcPath(pkg)
+	if err := fs.EnsureDir(globalDir); err != nil {
+		return "", fmt.Errorf("ensure dir for %s: %w", pkg.FullName(), err)
 	}
-
-	repoDir := m.localSrcPath(pkg)
 
 	tag := pkg.GetRef(version)
 	if tag == "" {
 		tag = version
 	}
 
-	if m.exists(repoDir) && m.exists(filepath.Join(repoDir, ".git")) {
-		if IsAlreadyAtRef(repoDir, tag) {
-			return repoDir, m.initSubmodules(pkg, repoDir)
+	if m.exists(globalDir) && m.exists(filepath.Join(globalDir, ".git")) {
+		if IsAlreadyAtRef(globalDir, tag) {
+			return m.finalize(pkg, globalDir)
 		}
 		if tag != "" {
-			if FetchTags(repoDir) == nil && Checkout(repoDir, tag) == nil {
-				return repoDir, m.initSubmodules(pkg, repoDir)
+			if FetchTags(globalDir) == nil && Checkout(globalDir, tag) == nil {
+				return m.finalize(pkg, globalDir)
 			}
 		}
-		fs.RemoveIfExists(repoDir)
-		if err := m.ensureSymlink(pkg); err != nil {
-			return "", err
+		fs.RemoveAll(globalDir)
+		if err := fs.EnsureDir(globalDir); err != nil {
+			return "", fmt.Errorf("recreate dir for %s: %w", pkg.FullName(), err)
 		}
 	}
 
-	if err := m.ensureRepo(pkg, repoDir); err != nil {
+	if err := m.ensureRepo(pkg, globalDir); err != nil {
 		return "", err
 	}
 
 	if tag == "" {
-		return repoDir, nil
+		if err := m.ensureSymlink(pkg); err != nil {
+			return "", err
+		}
+		return m.localSrcPath(pkg), nil
 	}
 
-	if err := m.retryWithFreshClone(pkg, repoDir, func() error {
-		return FetchTags(repoDir)
+	if err := m.retryWithFreshClone(pkg, globalDir, func() error {
+		return FetchTags(globalDir)
 	}); err != nil {
 		return "", fmt.Errorf("fetch tags for %s: %w", pkg.FullName(), err)
 	}
 
-	if err := m.retryWithFreshClone(pkg, repoDir, func() error {
-		return Checkout(repoDir, tag)
+	if err := m.retryWithFreshClone(pkg, globalDir, func() error {
+		return Checkout(globalDir, tag)
 	}); err != nil {
 		return "", fmt.Errorf("checkout %s failed for %s: %w", tag, pkg.FullName(), err)
 	}
 
-	return repoDir, m.initSubmodules(pkg, repoDir)
+	return m.finalize(pkg, globalDir)
 }
 
-func (m *SourceManager) initSubmodules(pkg *api.Package, repoDir string) error {
+func (m *SourceManager) finalize(pkg *api.Package, dir string) (string, error) {
+	if err := m.ensureSymlink(pkg); err != nil {
+		return "", err
+	}
+	return m.localSrcPath(pkg), m.initSubmodules(pkg, dir)
+}
+
+func (m *SourceManager) initSubmodules(pkg *api.Package, dir string) error {
 	if !pkg.Submodules() {
 		return nil
 	}
-	if err := InitSubmodules(repoDir); err != nil {
+	if err := InitSubmodules(dir); err != nil {
 		return fmt.Errorf("init submodules for %s: %w", pkg.FullName(), err)
 	}
 	return nil
 }
 
-func (m *SourceManager) retryWithFreshClone(pkg *api.Package, repoDir string, action func() error) error {
+func (m *SourceManager) retryWithFreshClone(pkg *api.Package, globalDir string, action func() error) error {
 	if err := action(); err == nil {
 		return nil
 	}
-	fs.RemoveIfExists(repoDir)
-	if err := m.ensureSymlink(pkg); err != nil {
+	fs.RemoveAll(globalDir)
+	if err := fs.EnsureDir(globalDir); err != nil {
 		return err
 	}
-	if err := m.ensureRepo(pkg, repoDir); err != nil {
+	if err := m.ensureRepo(pkg, globalDir); err != nil {
 		return err
 	}
 	return action()
 }
 
-func (m *SourceManager) ensureRepo(pkg *api.Package, repoDir string) error {
+func (m *SourceManager) ensureRepo(pkg *api.Package, globalDir string) error {
 	var lastErr error
 	for _, url := range pkg.GitURLs() {
-		lastErr = Clone(url, repoDir)
+		lastErr = Clone(url, globalDir)
 		if lastErr == nil {
 			return nil
 		}
-		fs.RemoveIfExists(repoDir)
+		fs.RemoveIfExists(globalDir)
 	}
 	return fmt.Errorf("all mirrors failed for %s: %w", pkg.FullName(), lastErr)
 }
@@ -134,16 +143,22 @@ func (m *SourceManager) UpdateSource(pkg *api.Package) error {
 	}
 	defer lock.Release()
 
-	repoDir := m.localSrcPath(pkg)
+	globalDir := m.globalSrcPath(pkg)
 
-	if !m.exists(repoDir) {
-		if err := m.ensureSymlink(pkg); err != nil {
+	if !m.exists(globalDir) || !m.exists(filepath.Join(globalDir, ".git")) {
+		if err := fs.EnsureDir(globalDir); err != nil {
 			return err
 		}
-		return m.ensureRepo(pkg, repoDir)
+		if err := m.ensureRepo(pkg, globalDir); err != nil {
+			return err
+		}
+		return m.ensureSymlink(pkg)
 	}
 
-	return FetchAndReset(repoDir)
+	if err := FetchAndReset(globalDir); err != nil {
+		return err
+	}
+	return m.ensureSymlink(pkg)
 }
 
 func (m *SourceManager) CleanSource(repo, name string) error {
