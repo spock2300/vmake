@@ -107,7 +107,7 @@ Local packages and native repo packages must NOT use `SetGit`/`AddVersion` in `O
 
 ### `vmake clean` vs `vmake distclean`
 
-`vmake clean` removes build artifacts (compiled objects, binaries, libraries) but keeps the compiled `build.so` plugin and dependency source in `vmake_deps/`. If you modify `build.go` (add/remove targets, change options, change includes) and the build seems to ignore your changes, use `vmake distclean` — it clears all build outputs under `vmake_deps/` (plugin cache, build artifacts, installed packages), forcing a full re-evaluation of the build graph. Source checkouts in `vmake_deps/` are preserved.
+`vmake clean` removes build artifacts (compiled objects, binaries, libraries) but keeps the compiled `build.so` plugin and dependency source in `vmake_deps/`. If you modify `build.go` (add/remove targets, change options, change includes) and the build seems to ignore your changes, use `vmake distclean` — it removes the entire `vmake_deps/` directory (plugin cache, build artifacts, installed packages, source symlinks), forcing a full re-evaluation of the build graph. The actual source data in `~/.vmake/sources/` is preserved — only the symlinks are removed.
 
 ### Patching source before build in registry packages
 
@@ -150,7 +150,7 @@ Within `SetBuildFunc`, built-in helpers (`CMakeConfigure`, `CMakeBuild`, `CMakeI
 
 ## Storage Layout
 
-Third-party package source code, compiled buildscript plugins, and build artifacts are stored **per-project** in `vmake_deps/` at the project root. This directory is auto-added to `.gitignore` on first build. Each project has its own independent `vmake_deps/` — no cross-project sharing.
+Third-party package source code is **shared globally** across projects via symlinks, while compiled buildscript plugins and build artifacts remain **per-project** in `vmake_deps/`. This directory is auto-added to `.gitignore` on first build.
 
 ```
 project/
@@ -158,16 +158,17 @@ project/
 ├── src/
 ├── vmake_deps/                    # Auto-managed, gitignored
 │   └── <repo>/<pkg>/
-│       ├── src/                   # Git source checkout
-│       ├── build.so               # Compiled buildscript plugin
+│       ├── src/ → ~/.vmake/sources/<repo>/<pkg>/src/   # Symlink to global cache
+│       ├── build.so               # Compiled buildscript plugin (project-local)
 │       └── out/<buildKey>/
-│           ├── build/             # Build artifacts
-│           └── install/           # Install staging
+│           ├── build/             # Build artifacts (project-local)
+│           └── install/           # Install staging (project-local)
 ```
 
-Both registry and native packages use the same `<repo>/<pkg>/` structure. There is no version layer in paths — each package has one version at a time.
+Both registry and native packages use the same `<repo>/<pkg>/` structure. There is no version layer in paths — each package has one version at a time. The `src/` entry is a symlink pointing into the global source cache at `~/.vmake/sources/`. All projects sharing the same package version use a single git checkout. File locking (`flock`) serializes concurrent access across projects.
 
-Global storage in `~/.vmake/` is limited to:
+Global storage in `~/.vmake/`:
+- `~/.vmake/sources/<repo>/<pkg>/src/` — shared git source checkouts (symlinked into each project's `vmake_deps/`)
 - `~/.vmake/repos/` — registry repo clones (buildscript metadata only)
 - `~/.vmake/toolchains/` — toolchain manifests
 - `~/.vmake/extensions/` — extension repos

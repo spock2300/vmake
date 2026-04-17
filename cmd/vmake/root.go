@@ -205,6 +205,7 @@ func runRequirePhase(ctx *RuntimeContext, force bool) error {
 
 	r := resolver.NewResolver(getRepoManager(), getDepsDir())
 	r.SetForce(force)
+	r.SetGlobalSourcesDir(getSourcesDir())
 	ctx.Resolver = r
 
 	vlog.Info("")

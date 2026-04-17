@@ -429,7 +429,7 @@ func prepareAllPackages(ctx *RuntimeContext, cfg *buildConfig, needed map[string
 	depsDir := getDepsDir()
 	repoMgr := getRepoManager()
 
-	sourceMgr := repo.NewSourceManager(depsDir)
+	sourceMgr := repo.NewSourceManager(depsDir, getSourcesDir())
 	installer := repo.NewPackageInstaller(sourceMgr, depsDir)
 	installer.SetRepoManager(repoMgr)
 	installer.SetConfigs(remote.configs)

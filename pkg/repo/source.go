@@ -2,22 +2,51 @@ package repo
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
+	"gitee.com/spock2300/vmake/internal/flock"
 	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/pkg/api"
 )
 
 type SourceManager struct {
 	sourcesDir string
+	globalDir  string
 }
 
-func NewSourceManager(sourcesDir string) *SourceManager {
-	return &SourceManager{sourcesDir: sourcesDir}
+func NewSourceManager(sourcesDir, globalDir string) *SourceManager {
+	return &SourceManager{sourcesDir: sourcesDir, globalDir: globalDir}
+}
+
+func (m *SourceManager) globalSrcPath(pkg *api.Package) string {
+	return filepath.Join(m.globalDir, pkg.Repo, pkg.Name, "src")
+}
+
+func (m *SourceManager) localSrcPath(pkg *api.Package) string {
+	return filepath.Join(m.sourcesDir, pkg.Repo, pkg.Name, "src")
+}
+
+func (m *SourceManager) ensureSymlink(pkg *api.Package) error {
+	return fs.EnsureSymlink(m.localSrcPath(pkg), m.globalSrcPath(pkg))
+}
+
+func (m *SourceManager) acquireLock(pkg *api.Package) (*flock.FileLock, error) {
+	return flock.Acquire(filepath.Join(m.globalDir, pkg.Repo, pkg.Name))
 }
 
 func (m *SourceManager) EnsureSource(pkg *api.Package, version string) (string, error) {
-	repoDir := filepath.Join(m.sourcesDir, pkg.Repo, pkg.Name, "src")
+	lock, err := m.acquireLock(pkg)
+	if err != nil {
+		return "", fmt.Errorf("acquire lock for %s: %w", pkg.FullName(), err)
+	}
+	defer lock.Release()
+
+	if err := m.ensureSymlink(pkg); err != nil {
+		return "", fmt.Errorf("create symlink for %s: %w", pkg.FullName(), err)
+	}
+
+	repoDir := m.localSrcPath(pkg)
 
 	tag := pkg.GetRef(version)
 	if tag == "" {
@@ -34,6 +63,9 @@ func (m *SourceManager) EnsureSource(pkg *api.Package, version string) (string, 
 			}
 		}
 		fs.RemoveIfExists(repoDir)
+		if err := m.ensureSymlink(pkg); err != nil {
+			return "", err
+		}
 	}
 
 	if err := m.ensureRepo(pkg, repoDir); err != nil {
@@ -74,6 +106,9 @@ func (m *SourceManager) retryWithFreshClone(pkg *api.Package, repoDir string, ac
 		return nil
 	}
 	fs.RemoveIfExists(repoDir)
+	if err := m.ensureSymlink(pkg); err != nil {
+		return err
+	}
 	if err := m.ensureRepo(pkg, repoDir); err != nil {
 		return err
 	}
@@ -93,9 +128,18 @@ func (m *SourceManager) ensureRepo(pkg *api.Package, repoDir string) error {
 }
 
 func (m *SourceManager) UpdateSource(pkg *api.Package) error {
-	repoDir := filepath.Join(m.sourcesDir, pkg.Repo, pkg.Name, "src")
+	lock, err := m.acquireLock(pkg)
+	if err != nil {
+		return fmt.Errorf("acquire lock for %s: %w", pkg.FullName(), err)
+	}
+	defer lock.Release()
+
+	repoDir := m.localSrcPath(pkg)
 
 	if !m.exists(repoDir) {
+		if err := m.ensureSymlink(pkg); err != nil {
+			return err
+		}
 		return m.ensureRepo(pkg, repoDir)
 	}
 
@@ -103,7 +147,9 @@ func (m *SourceManager) UpdateSource(pkg *api.Package) error {
 }
 
 func (m *SourceManager) CleanSource(repo, name string) error {
-	return fs.RemoveAll(filepath.Join(m.sourcesDir, repo, name))
+	localLink := filepath.Join(m.sourcesDir, repo, name, "src")
+	_ = os.Remove(localLink)
+	return fs.RemoveAll(filepath.Join(m.globalDir, repo, name))
 }
 
 func (m *SourceManager) exists(path string) bool {

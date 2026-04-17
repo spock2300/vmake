@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"gitee.com/spock2300/vmake/internal/flock"
 	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/internal/toposort"
 	"gitee.com/spock2300/vmake/pkg/api"
@@ -58,11 +59,12 @@ type Graph struct {
 }
 
 type Resolver struct {
-	sources map[string]*buildscript.Source
-	graph   *Graph
-	repoMgr *repo.RepoManager
-	depsDir string
-	force   bool
+	sources          map[string]*buildscript.Source
+	graph            *Graph
+	repoMgr          *repo.RepoManager
+	depsDir          string
+	globalSourcesDir string
+	force            bool
 }
 
 func NewResolver(repoMgr *repo.RepoManager, depsDir string) *Resolver {
@@ -76,6 +78,10 @@ func NewResolver(repoMgr *repo.RepoManager, depsDir string) *Resolver {
 
 func (r *Resolver) SetForce(force bool) {
 	r.force = force
+}
+
+func (r *Resolver) SetGlobalSourcesDir(dir string) {
+	r.globalSourcesDir = dir
 }
 
 func (r *Resolver) Graph() *Graph {
@@ -331,7 +337,21 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 	}
 
 	gitURL := repo.ResolveNativeURL(urlTemplate, pkgName)
-	repoDir := filepath.Join(r.depsDir, repoName, pkgName, "src")
+	globalDir := filepath.Join(r.globalSourcesDir, repoName, pkgName)
+	localSrc := filepath.Join(r.depsDir, repoName, pkgName, "src")
+
+	lock, err := flock.Acquire(globalDir)
+	if err != nil {
+		return nil, fmt.Errorf("acquire lock for %s: %w", id, err)
+	}
+	defer lock.Release()
+
+	globalSrc := filepath.Join(globalDir, "src")
+	if err := fs.EnsureSymlink(localSrc, globalSrc); err != nil {
+		return nil, fmt.Errorf("create symlink for %s: %w", id, err)
+	}
+
+	repoDir := localSrc
 
 	if err := repo.EnsureRepoAtRef(gitURL, repoDir, ""); err != nil {
 		return nil, fmt.Errorf("clone %s: %w", gitURL, err)

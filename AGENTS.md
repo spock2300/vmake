@@ -43,11 +43,11 @@ Or manually: `export VMAKE_DIR=/path/to/vmake`. Without this, `go build -o vmake
 ## Storage Layout
 
 ### Project-Local (`vmake_deps/`)
-Third-party source code, buildscript cache, and build artifacts live in the project root under `vmake_deps/`. Auto-added to `.gitignore` on first build via `ensureGitignore()` in `runPipeline`. Each project has its own independent `vmake_deps/`.
+Buildscript cache and build artifacts live in the project root under `vmake_deps/`. Auto-added to `.gitignore` on first build via `ensureGitignore()` in `runPipeline`. Each project has its own independent `vmake_deps/`.
 
 ```
 vmake_deps/
-  <repo>/<pkg>/src/          # Git source checkout (registry & native packages)
+  <repo>/<pkg>/src          # Symlink -> ~/.vmake/sources/<repo>/<pkg>/src
   <repo>/<pkg>/build.so      # Compiled buildscript plugin
   <repo>/<pkg>/out/<buildKey>/build/    # Build artifacts
   <repo>/<pkg>/out/<buildKey>/install/  # Install staging
@@ -58,14 +58,16 @@ No version layer in paths — each package has one version at a time.
 `findProjectDir()` (in `cmd/vmake/paths.go`) walks upward from cwd to find `.vmake/` or `build.go` to locate the project root. This ensures commands and shell completion work from subdirectories.
 
 ### Global (`~/.vmake/`)
-Only registry repos, toolchains, and extensions remain global:
 - `~/.vmake/repos/` — registry repo clones
 - `~/.vmake/toolchains/` — toolchain manifests
 - `~/.vmake/extensions/` — extension repos
+- `~/.vmake/sources/<repo>/<pkg>/src/` — shared git source checkouts (all projects share one copy, symlinked into `vmake_deps/`)
+
+Source downloads are shared globally via symlinks. `SourceManager.EnsureSource()` creates the symlink before cloning, so the actual git checkout goes to `~/.vmake/sources/`. File locking (`internal/flock`) serializes concurrent access across projects.
 
 ## Core Concepts
 
-- **源 (Source)** — 包的仓库。**Registry**（包装第三方 C/C++ 库，build.go 在仓库内作为 wrapper）和 **Native**（vmake 原生包，独立 git 仓库，build.go 在仓库根目录，版本来自 git tag）。
+- **仓库 (Repo)** — 包的来源。**Registry**（包装第三方 C/C++ 库，build.go 在仓库内作为 wrapper）和 **Native**（vmake 原生包，独立 git 仓库，build.go 在仓库根目录，版本来自 git tag）。
 - **包 (Package)** — 由 `build.go` 描述的编译单元。注册回调：`OnRequire`（声明依赖）、`OnConfig`（配置选项）、`OnBuild`（定义目标）。
 - **目标 (Target)** — 最终编译产物：`TargetBinary`、`TargetStatic`、`TargetShared`、`TargetObject`、`TargetVoid`。
 
@@ -222,7 +224,7 @@ Methods on `BuildContext`:
 | `pkg/log` | Logging (Debug, Info, Error, Fatal) | No |
 | `pkg/tui` | Terminal UI (interactive config) | No |
 | `pkg/version` | Version information | No |
-| `internal/*` | exec, fs, gitstore, glob, gocompile, jsonio, toposort | No |
+| `internal/*` | exec, flock, fs, gitstore, glob, gocompile, jsonio, toposort | No |
 
 **Dependency DAG**: `internal/*` -> `pkg/toolchain` -> `pkg/api` -> `pkg/buildscript, pkg/repo` -> `pkg/resolver, pkg/plugin, pkg/build` -> `cmd/vmake`
 
@@ -297,9 +299,7 @@ type PkgDirs struct { SourceDir, BuildDir, InstallDir string }
 - `exec.Command` doesn't expand shell features — `$(nproc)` won't work, must use `runtime.NumCPU()`
 - Go 1.26 `filepath.Join("/a/b", "/a/b/c")` returns `/a/b/a/b/c` — NOT `/a/b/c`
 - `collectNeeded` must use BFS from `IsLocal()` roots — NOT `node.Pkg != nil` and NOT full graph mark-all
-- `populateDepsFromGraph` only fills `pkg.Deps()` for packages with non-empty `InstallDir`
 - `tea.ExecProcess` (takes `*exec.Cmd`) vs `tea.Exec` (takes `tea.ExecCommand` interface) — use `ExecProcess` for external interactive commands
-- `scheduler.SetPackage` stores first assignment — `packages[name]` lookup finds original, not re-created one
 - `busybox` kconfig has no `olddefconfig` — only `oldconfig`, `defconfig`, `allnoconfig`
 - `vmake_deps/` is in `scanner.go`'s `skipDirs` — build.go scanner will not recurse into it
 - `ensureGitignore` writes only to project root `.gitignore` (via `findProjectDir()`), not to subdirectories

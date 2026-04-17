@@ -46,3 +46,7 @@ func getExtensionsDir() string {
 func getToolchainsDir() string {
 	return filepath.Join(vmakeDir, "toolchains")
 }
+
+func getSourcesDir() string {
+	return filepath.Join(vmakeDir, "sources")
+}

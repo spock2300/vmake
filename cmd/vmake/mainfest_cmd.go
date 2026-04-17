@@ -74,7 +74,7 @@ var manifestCheckoutCmd = &cobra.Command{
 		cwd, err := os.Getwd()
 		fatalErr(err)
 
-		sourceMgr := repo.NewSourceManager(getDepsDir())
+		sourceMgr := repo.NewSourceManager(getDepsDir(), getSourcesDir())
 
 		found := false
 		for _, entry := range mf.Packages {
