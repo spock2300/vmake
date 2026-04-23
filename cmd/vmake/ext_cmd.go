@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 	"gitee.com/spock2300/vmake/pkg/plugin"
@@ -168,9 +169,12 @@ func loadPlugins() {
 			Short: p.Info.Description,
 		}
 
+		repoDir := filepath.Dir(p.PluginDir)
+
 		ctx := &plugin.Context{
 			VMakeDir:    vmakeDir,
 			PluginDir:   p.PluginDir,
+			RepoDir:     repoDir,
 			CommandName: p.PluginName,
 			AddSubCommand: func(subCmd *cobra.Command) {
 				pluginCmd.AddCommand(subCmd)
@@ -182,19 +186,89 @@ func loadPlugins() {
 				tcs, _ := toolchain.GetManager().ListToolchains()
 				return tcs
 			},
-			SetOnMissing: func(onMissing func(name string) (*toolchain.Toolchain, error)) {
-				toolchain.GetManager().SetOnMissing(onMissing)
+			SetOnMissing: func(toolchainName string, onMissing func(name string) (*toolchain.Toolchain, error)) {
+				toolchain.GetManager().SetOnMissing(toolchainName, onMissing)
 			},
 			AddGlobalFlags: func(cflags, cxxflags []string) {
 				toolchain.GetManager().AddGlobalFlags(cflags, cxxflags)
 			},
-			DownloadFile:   plugin.DownloadFile,
-			ExtractArchive: plugin.ExtractArchive,
-			RunGitLFS:      plugin.RunGitLFS,
+			RegisterToolchainsFromRepo: makeRegisterToolchainsFromRepo(p.PluginDir, repoDir),
+			LoadToolchainDef:           makeLoadToolchainDef(p.PluginDir),
+			DownloadFile:               plugin.DownloadFile,
+			ExtractToDir:               plugin.ExtractToDir,
+			RunGitLFS:                  plugin.RunGitLFS,
 		}
 
 		loaded.Entry(ctx)
 
 		RootCmd.AddCommand(pluginCmd)
+	}
+}
+
+func makeRegisterToolchainsFromRepo(pluginDir, repoDir string) func() {
+	return func() {
+		tcMgr := toolchain.GetManager()
+		toolchainsDir := getToolchainsDir()
+
+		defs := toolchain.ScanRepoToolchains(repoDir)
+		for i := range defs {
+			def := &defs[i]
+			tcMgr.RegisterDef(def, toolchainsDir)
+
+			if def.Install != nil {
+				d := *def
+				tcMgr.SetOnMissing(def.Name, makeAutoDownload(d, repoDir, toolchainsDir))
+			}
+		}
+	}
+}
+
+func makeAutoDownload(def toolchain.ToolchainDef, repoDir, toolchainsDir string) func(string) (*toolchain.Toolchain, error) {
+	return func(name string) (*toolchain.Toolchain, error) {
+		installDir := def.InstallDir(toolchainsDir)
+		installCfg := def.Install
+
+		fmt.Printf("Auto-downloading %s...\n", def.Name)
+
+		switch installCfg.Method {
+		case "lfs":
+			if err := plugin.RunGitLFS(repoDir, "pull", "--include", installCfg.File); err != nil {
+				return nil, fmt.Errorf("failed to download: %w", err)
+			}
+			archivePath := filepath.Join(repoDir, "assets", "toolchains", installCfg.File)
+			format := installCfg.Format
+			if format == "" {
+				format = toolchain.DetectFormat(installCfg.File)
+			}
+			if err := plugin.ExtractToDir(archivePath, toolchainsDir, format); err != nil {
+				return nil, fmt.Errorf("failed to extract: %w", err)
+			}
+		case "http":
+			archivePath := filepath.Join(toolchainsDir, installCfg.File)
+			if err := plugin.DownloadFile(installCfg.URL, archivePath); err != nil {
+				return nil, fmt.Errorf("failed to download: %w", err)
+			}
+			format := installCfg.Format
+			if format == "" {
+				format = toolchain.DetectFormat(installCfg.File)
+			}
+			if err := plugin.ExtractToDir(archivePath, toolchainsDir, format); err != nil {
+				return nil, fmt.Errorf("failed to extract: %w", err)
+			}
+		default:
+			return nil, fmt.Errorf("unknown install method '%s' for toolchain '%s'", installCfg.Method, name)
+		}
+
+		tc := def.ToToolchain(toolchainsDir)
+		toolchain.GetManager().RegisterToolchain(def.Name, tc)
+
+		fmt.Printf("Toolchain %s installed to %s\n", def.Name, installDir)
+		return tc, nil
+	}
+}
+
+func makeLoadToolchainDef(pluginDir string) func() (*toolchain.ToolchainDef, error) {
+	return func() (*toolchain.ToolchainDef, error) {
+		return toolchain.LoadToolchainDef(filepath.Join(pluginDir, "toolchain.json"))
 	}
 }

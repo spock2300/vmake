@@ -10,7 +10,7 @@ type OnMissingToolchain func(name string) (*Toolchain, error)
 type Manager struct {
 	builtin        *Toolchain
 	extensions     map[string]*Toolchain
-	onMissing      OnMissingToolchain
+	onMissing      map[string]OnMissingToolchain
 	globalCFlags   []string
 	globalCxxFlags []string
 	mu             sync.RWMutex
@@ -24,6 +24,7 @@ func GetManager() *Manager {
 		defaultManager = &Manager{
 			builtin:    GetBuiltinHost(),
 			extensions: make(map[string]*Toolchain),
+			onMissing:  make(map[string]OnMissingToolchain),
 		}
 	})
 	return defaultManager
@@ -38,19 +39,27 @@ func (m *Manager) SelectToolchain(name string) (*Toolchain, error) {
 	tc, ok := m.extensions[name]
 	m.mu.RUnlock()
 
-	if ok {
+	if ok && tc.InstallPath != "" {
 		return tc, nil
 	}
 
-	if m.onMissing != nil {
-		return m.onMissing(name)
+	m.mu.RLock()
+	onMissing, hasHandler := m.onMissing[name]
+	m.mu.RUnlock()
+
+	if hasHandler {
+		return onMissing(name)
+	}
+
+	if ok {
+		return tc, nil
 	}
 
 	return nil, fmt.Errorf("toolchain '%s' not found", name)
 }
 
 func (m *Manager) GetToolchain(name string) (*Toolchain, error) {
-	if name == "host" {
+	if name == "" || name == "host" {
 		return m.builtin, nil
 	}
 
@@ -110,10 +119,13 @@ func (m *Manager) RegisterToolchain(name string, tc *Toolchain) {
 	m.extensions[name] = tc
 }
 
-func (m *Manager) SetOnMissing(fn OnMissingToolchain) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.onMissing = fn
+func (m *Manager) RegisterDef(def *ToolchainDef, toolchainsDir string) {
+	tc := def.ToToolchain(toolchainsDir)
+	m.RegisterToolchain(def.Name, tc)
 }
 
-
+func (m *Manager) SetOnMissing(name string, fn OnMissingToolchain) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onMissing[name] = fn
+}

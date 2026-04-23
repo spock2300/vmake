@@ -53,7 +53,11 @@ func runToolchainList(cmd *cobra.Command, args []string) {
 		if name == defaultTC {
 			mark = " (default)"
 		}
-		vlog.Info("  %s%s", name, mark)
+		status := "installed"
+		if name != "host" && tc.InstallPath == "" {
+			status = "not installed"
+		}
+		vlog.Info("  %s%s [%s]", name, mark, status)
 		vlog.Info("    Display: %s", tc.DisplayName)
 		vlog.Info("    Host:    %s", tc.Host)
 		vlog.Info("    CC:      %s", tc.Tools.CC)
