@@ -150,17 +150,17 @@ func SanitizeModuleName(name string) string {
 }
 
 func runGoModTidy(workDir string) error {
-	output, err := iexec.RunWithEnvCaptured(workDir, map[string]string{"GO111MODULE": "on"}, "go", "mod", "tidy")
+	_, err := iexec.RunWithEnvCaptured(workDir, map[string]string{"GO111MODULE": "on"}, "go", "mod", "tidy")
 	if err != nil {
-		return fmt.Errorf("go mod tidy failed: %s", string(output))
+		return fmt.Errorf("go mod tidy failed: %w", err)
 	}
 	return nil
 }
 
 func runGoBuild(workDir, outputPath, entryFile string) error {
-	output, err := iexec.RunWithEnvCaptured(workDir, map[string]string{"GO111MODULE": "on"}, "go", "build", "-buildmode=plugin", "-o", outputPath, entryFile)
+	_, err := iexec.RunWithEnvCaptured(workDir, map[string]string{"GO111MODULE": "on"}, "go", "build", "-buildmode=plugin", "-o", outputPath, entryFile)
 	if err != nil {
-		return fmt.Errorf("compilation failed: %s", string(output))
+		return fmt.Errorf("compilation failed: %w", err)
 	}
 	return nil
 }
