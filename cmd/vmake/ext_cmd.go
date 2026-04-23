@@ -1,10 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 	"gitee.com/spock2300/vmake/pkg/plugin"
@@ -200,108 +197,4 @@ func loadPlugins() {
 
 		RootCmd.AddCommand(pluginCmd)
 	}
-
-	loadExtensionToolchains()
-}
-
-type toolchainManifestEntry struct {
-	Name         string                 `json:"name"`
-	Version      string                 `json:"version"`
-	Host         string                 `json:"host"`
-	Prefix       string                 `json:"prefix"`
-	File         string                 `json:"file"`
-	Tools        toolchain.Tools        `json:"tools"`
-	DefaultFlags toolchain.DefaultFlags `json:"default_flags"`
-}
-
-type toolchainManifest struct {
-	Toolchains []toolchainManifestEntry `json:"toolchains"`
-}
-
-type manifestEntry struct {
-	repoDir string
-	entry   *toolchainManifestEntry
-}
-
-func loadAllToolchainManifests() []manifestEntry {
-	entries, err := readDirEntries(getExtensionsDir())
-	if err != nil {
-		return nil
-	}
-	var results []manifestEntry
-	for _, dirEntry := range entries {
-		repoDir := filepath.Join(getExtensionsDir(), dirEntry.Name())
-		manifestPath := filepath.Join(repoDir, "assets", "toolchains", "manifest.json")
-		data, err := os.ReadFile(manifestPath)
-		if err != nil {
-			continue
-		}
-		var manifest toolchainManifest
-		if err := json.Unmarshal(data, &manifest); err != nil {
-			continue
-		}
-		for i := range manifest.Toolchains {
-			results = append(results, manifestEntry{
-				repoDir: repoDir,
-				entry:   &manifest.Toolchains[i],
-			})
-		}
-	}
-	return results
-}
-
-func loadExtensionToolchains() {
-	mgr := toolchain.GetManager()
-	toolchainsDir := getToolchainsDir()
-
-	for _, me := range loadAllToolchainManifests() {
-		installPath := filepath.Join(toolchainsDir, me.entry.Name+"-"+me.entry.Version)
-		mgr.RegisterToolchain(me.entry.Name, buildToolchainFromManifest(me.entry, installPath, me.repoDir))
-	}
-
-	toolchain.SetOnToolMissing(func(name string) error {
-		return handleAutoDownload(name)
-	})
-}
-
-func buildToolchainFromManifest(entry *toolchainManifestEntry, installPath string, repoDir string) *toolchain.Toolchain {
-	return &toolchain.Toolchain{
-		Name:         entry.Name,
-		DisplayName:  entry.Name + " " + entry.Version,
-		Host:         entry.Host,
-		Prefix:       entry.Prefix,
-		InstallPath:  installPath,
-		Tools:        entry.Tools,
-		DefaultFlags: entry.DefaultFlags,
-	}
-}
-
-func handleAutoDownload(name string) error {
-	toolchainsDir := getToolchainsDir()
-
-	for _, me := range loadAllToolchainManifests() {
-		if me.entry.Name != name {
-			continue
-		}
-
-		installPath := filepath.Join(toolchainsDir, me.entry.Name+"-"+me.entry.Version)
-
-		fmt.Printf("Auto-downloading %s-%s...\n", me.entry.Name, me.entry.Version)
-
-		archivePath := filepath.Join(me.repoDir, "assets", "toolchains", me.entry.File)
-		if err := plugin.RunGitLFS(me.repoDir, "pull", "--include", "assets/toolchains/"+me.entry.File); err != nil {
-			return fmt.Errorf("failed to download: %w", err)
-		}
-
-		if err := plugin.ExtractArchive(archivePath, toolchainsDir); err != nil {
-			return fmt.Errorf("failed to extract: %w", err)
-		}
-
-		toolchain.GetManager().RegisterToolchain(name, buildToolchainFromManifest(me.entry, installPath, me.repoDir))
-
-		fmt.Printf("Toolchain %s installed to %s\n", name, installPath)
-		return nil
-	}
-
-	return fmt.Errorf("toolchain '%s' not found in any extension repository", name)
 }

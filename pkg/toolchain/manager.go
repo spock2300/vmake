@@ -18,11 +18,6 @@ type Manager struct {
 
 var defaultManager *Manager
 var managerOnce sync.Once
-var onToolMissing func(name string) error
-
-func SetOnToolMissing(fn func(string) error) {
-	onToolMissing = fn
-}
 
 func GetManager() *Manager {
 	managerOnce.Do(func() {
@@ -105,6 +100,10 @@ func (m *Manager) GetGlobalCxxFlags() []string {
 	return append([]string{}, m.globalCxxFlags...)
 }
 
+func (m *Manager) ResolveToolPath(tc *Toolchain, tool string) (string, error) {
+	return ResolveToolPath(tool, tc.InstallPath)
+}
+
 func (m *Manager) RegisterToolchain(name string, tc *Toolchain) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -117,17 +116,4 @@ func (m *Manager) SetOnMissing(fn OnMissingToolchain) {
 	m.onMissing = fn
 }
 
-func (m *Manager) EnsureToolPath(tc *Toolchain, tool string) (string, error) {
-	path, err := ResolveToolPath(tool, tc.InstallPath)
-	if err == nil {
-		return path, nil
-	}
 
-	if onToolMissing != nil && tc.Name != "" {
-		if dlErr := onToolMissing(tc.Name); dlErr == nil {
-			return ResolveToolPath(tool, tc.InstallPath)
-		}
-	}
-
-	return "", fmt.Errorf("tool '%s' not found", tool)
-}

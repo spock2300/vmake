@@ -46,7 +46,7 @@ func ResolveTools(tc *toolchain.Toolchain) (*ResolvedTools, error) {
 }
 
 func resolveRequired(mgr *toolchain.Manager, tc *toolchain.Toolchain, tool, name string) (string, error) {
-	path, err := mgr.EnsureToolPath(tc, tool)
+	path, err := mgr.ResolveToolPath(tc, tool)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve %s: %w", name, err)
 	}
@@ -55,12 +55,12 @@ func resolveRequired(mgr *toolchain.Manager, tc *toolchain.Toolchain, tool, name
 
 func resolveOptionalTool(mgr *toolchain.Manager, tc *toolchain.Toolchain, configured, name string) string {
 	if configured != "" {
-		if path, err := mgr.EnsureToolPath(tc, configured); err == nil {
+		if path, err := mgr.ResolveToolPath(tc, configured); err == nil {
 			return path
 		}
 	}
 	if tc.Prefix != "" {
-		if path, err := mgr.EnsureToolPath(tc, tc.Prefix+name); err == nil {
+		if path, err := mgr.ResolveToolPath(tc, tc.Prefix+name); err == nil {
 			return path
 		}
 	}
