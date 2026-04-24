@@ -40,8 +40,6 @@ func ConfigToDefines(opts map[string]*Option, cfgVals map[string]any) []string {
 		case OptionBool:
 			if v, ok := val.(bool); ok && v {
 				defines = append(defines, macro+"=1")
-			} else {
-				defines = append(defines, macro+"=0")
 			}
 		case OptionInt:
 			defines = append(defines, fmt.Sprintf("%s=%v", macro, val))

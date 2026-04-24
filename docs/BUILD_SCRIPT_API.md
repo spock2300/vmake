@@ -303,6 +303,10 @@ func (ctx *BuildContext) BuildSubGraph(pkgName string)
 func (ctx *BuildContext) DepOutput(depRef string) string
 func (ctx *BuildContext) DepBuildDir(depRef string) string
 
+// 配置导出
+func (ctx *BuildContext) GenerateConfigHeader() *BuildContext
+func (ctx *BuildContext) GenerateConfigDefines() *BuildContext
+
 // 其他
 func (ctx *BuildContext) PackageName() string
 func (ctx *BuildContext) Exec(name string, args ...string)
@@ -695,6 +699,121 @@ func Main(p *api.Package) {
     })
 }
 ```
+
+## 配置导出
+
+VMake 支持两种将配置选项导出给 C 代码的方式。两种方式独立使用，按需选择。
+
+### GenerateConfigHeader — 生成 autoconf.h
+
+在 `OnBuild` 中调用 `ctx.GenerateConfigHeader()`，vmake 会在构建目录的 `generated/autoconf.h` 中生成类似 Linux 内核的配置头文件，并自动将 `generated/` 加入所有目标的包含路径。
+
+```go
+p.OnConfig(func(ctx *api.ConfigContext) {
+    ctx.Option("feature_foo").
+        SetType(api.OptionBool).
+        SetDefault(true).
+        SetDescription("Enable feature foo")
+
+    ctx.Option("buffer_size").
+        SetType(api.OptionInt).
+        SetDefault(4096).
+        SetDescription("Buffer size")
+
+    ctx.Option("device_name").
+        SetType(api.OptionString).
+        SetDefault("uart0").
+        SetDescription("Device name")
+
+    ctx.Option("platform").
+        SetType(api.OptionChoice).
+        SetDefault("linux").
+        SetValues("linux", "macos", "windows").
+        SetDescription("Target platform")
+})
+
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.GenerateConfigHeader()
+
+    ctx.Target("app").
+        SetKind(api.TargetBinary).
+        AddFiles("src/*.c")
+})
+```
+
+生成的 `generated/autoconf.h`：
+
+```c
+#ifndef VMAKE_AUTOCONF_H
+#define VMAKE_AUTOCONF_H
+
+#define CONFIG_FEATURE_FOO 1
+/* #undef CONFIG_FEATURE_BAR */
+#define CONFIG_BUFFER_SIZE 4096
+#define CONFIG_DEVICE_NAME "uart0"
+#define CONFIG_PLATFORM "linux"
+#define CONFIG_PLATFORM_LINUX 1
+
+#endif
+```
+
+在 C 代码中使用：
+
+```c
+#include "autoconf.h"
+
+#ifdef CONFIG_FEATURE_FOO
+void foo_init(void) { ... }
+#endif
+```
+
+### GenerateConfigDefines — 编译器 -D 宏
+
+在 `OnBuild` 中调用 `ctx.GenerateConfigDefines()`，vmake 会自动将所有配置选项转为 `-D` 编译器宏，添加到该包的所有目标。
+
+```go
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.GenerateConfigDefines()
+
+    ctx.Target("app").
+        SetKind(api.TargetBinary).
+        AddFiles("src/*.c")
+})
+```
+
+等效于手动添加：
+
+```
+-DCONFIG_FEATURE_FOO=1 -DCONFIG_BUFFER_SIZE=4096
+-DCONFIG_DEVICE_NAME="uart0" -DCONFIG_PLATFORM="linux" -DCONFIG_PLATFORM_LINUX=1
+```
+
+Bool 选项为 false 时不生成 `-D` 宏（与 `#ifdef` 语义一致）。
+
+在 C 代码中使用：
+
+```c
+if (CONFIG_FEATURE_FOO == 1) { ... }
+printf("size=%d\n", CONFIG_BUFFER_SIZE);
+```
+
+### 宏命名规则
+
+| 选项类型 | 宏名称 | Header 格式 | -D 格式 |
+|---------|--------|-------------|---------|
+| Bool (true) | `CONFIG_<NAME>` | `#define CONFIG_<NAME> 1` | `-DCONFIG_<NAME>=1` |
+| Bool (false) | `CONFIG_<NAME>` | `/* #undef CONFIG_<NAME> */` | 不生成 |
+| Int | `CONFIG_<NAME>` | `#define CONFIG_<NAME> <value>` | `-DCONFIG_<NAME>=<value>` |
+| String | `CONFIG_<NAME>` | `#define CONFIG_<NAME> "<value>"` | `-DCONFIG_<NAME>="<value>"` |
+| Choice | `CONFIG_<NAME>` + `CONFIG_<NAME>_<VALUE>` | `#define` 两个宏 | `-D` 两个宏 |
+
+宏名称规则：`CONFIG_` + 选项名大写 + `-` 替换为 `_`。全局选项（`mode`、`toolchain`）不导出。
+
+### 注意事项
+
+- 两种方式可以同时使用，语义一致：Bool false 时 header 写 `/* #undef */`，defines 不生成 `-D`，`#ifdef` 行为相同
+- `GenerateConfigHeader` 适合需要 `#ifdef` 条件编译的场景（嵌入式/固件风格）
+- `GenerateConfigDefines` 适合不需要头文件、直接通过编译器宏传递配置的场景
 
 ## SplitPackageRef (`pkg/api/package.go`)
 

@@ -4,19 +4,19 @@
 int main(void) {
     int errors = 0;
 
-    if (CONFIG_FEATURE_FOO == 1) {
-        printf("CONFIG_FEATURE_FOO=1 (ok)\n");
-    } else {
-        printf("ERROR: CONFIG_FEATURE_FOO=%d (expected 1)\n", CONFIG_FEATURE_FOO);
-        errors++;
-    }
+#ifdef CONFIG_FEATURE_FOO
+    printf("CONFIG_FEATURE_FOO defined (ok)\n");
+#else
+    printf("ERROR: CONFIG_FEATURE_FOO not defined (expected defined)\n");
+    errors++;
+#endif
 
-    if (CONFIG_FEATURE_BAR == 0) {
-        printf("CONFIG_FEATURE_BAR=0 (ok)\n");
-    } else {
-        printf("ERROR: CONFIG_FEATURE_BAR=%d (expected 0)\n", CONFIG_FEATURE_BAR);
-        errors++;
-    }
+#ifndef CONFIG_FEATURE_BAR
+    printf("CONFIG_FEATURE_BAR undefined (ok)\n");
+#else
+    printf("ERROR: CONFIG_FEATURE_BAR defined (expected undefined)\n");
+    errors++;
+#endif
 
     if (CONFIG_BUFFER_SIZE == 4096) {
         printf("CONFIG_BUFFER_SIZE=4096 (ok)\n");
