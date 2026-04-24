@@ -136,6 +136,7 @@ type Package struct {
 	patches        []string
 	configFiles    []string
 	kconfigEntries []*KConfigEntry
+	genConfigHdr   bool
 	dryRun         bool
 }
 
@@ -403,6 +404,9 @@ func (p *Package) SetDryRun(v bool) *Package {
 }
 
 func (p *Package) DryRun() bool { return p.dryRun }
+
+func (p *Package) SetGenConfigHeader(v bool) *Package { p.genConfigHdr = v; return p }
+func (p *Package) GenConfigHeader() bool              { return p.genConfigHdr }
 
 func (p *Package) ScriptDir() string    { return p.scriptDir }
 func (p *Package) SrcDir() string       { return p.srcCodeDir }

@@ -176,6 +176,14 @@ func (s *Scheduler) Build(fullName string) error {
 		}
 	}
 
+	pkg := s.packages[node.PkgName]
+	if pkg != nil && pkg.GenConfigHeader() {
+		generatedDir := BuildPath(".", pkgInfo.BuildKey, "generated")
+		if err := generateConfigHeader(pkg, generatedDir); err != nil {
+			return err
+		}
+	}
+
 	if err := os.MkdirAll(BuildPath(".", pkgInfo.BuildKey, "objects"), 0755); err != nil {
 		return fmt.Errorf("create build directory: %w", err)
 	}
@@ -367,7 +375,9 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 
 	pkgInfo := s.pkgs[node.PkgName]
 	genRules := node.Target.GenRules()
-	if len(genRules) > 0 {
+	pkg := s.packages[node.PkgName]
+	needGenerated := len(genRules) > 0 || (pkg != nil && pkg.GenConfigHeader())
+	if needGenerated {
 		generatedDir := BuildPath(".", pkgInfo.BuildKey, "generated")
 		resolved.AllIncludes = append(resolved.AllIncludes, generatedDir)
 	}
@@ -742,4 +752,9 @@ func matchesAny(path string, patterns []string) bool {
 		}
 	}
 	return false
+}
+
+func generateConfigHeader(pkg *api.Package, generatedDir string) error {
+	content := api.ConfigToHeader(pkg.Options, pkg.CfgVals)
+	return api.WriteConfigHeader(generatedDir, content)
 }

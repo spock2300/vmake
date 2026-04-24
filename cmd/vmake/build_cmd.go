@@ -576,6 +576,20 @@ func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.Pack
 		fn(buildCtx)
 	})
 
+	if buildCtx.GenConfigDefinesFlag() && node.Pkg != nil {
+		defines := api.ConfigToDefines(node.Pkg.Options, node.Pkg.CfgVals)
+		args := make([]any, len(defines))
+		for i, d := range defines {
+			args[i] = d
+		}
+		for _, t := range buildCtx.GetTargets() {
+			t.AddDefines(args...)
+		}
+	}
+	if buildCtx.GenConfigHeaderFlag() && node.Pkg != nil {
+		node.Pkg.SetGenConfigHeader(true)
+	}
+
 	allTargets[name] = buildCtx.GetTargets()
 }
 

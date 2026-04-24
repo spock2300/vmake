@@ -1,6 +1,6 @@
 # VMake - AGENTS.md
 
-VMake: 面向 AI 时代的 C/C++ 项目管理和编译工具。AI coding agents working in this codebase should follow these guidelines.
+VMake: C/C++ build system using Go buildscripts. AI coding agents working in this codebase should follow these guidelines.
 
 ## Build / Lint / Test
 
@@ -43,7 +43,7 @@ Or manually: `export VMAKE_DIR=/path/to/vmake`. Without this, `go build -o vmake
 ## Storage Layout
 
 ### Project-Local (`vmake_deps/`)
-Buildscript cache and build artifacts live in the project root under `vmake_deps/`. Auto-added to `.gitignore` on first build via `ensureGitignore()` in `runPipeline`. Each project has its own independent `vmake_deps/`.
+Auto-added to `.gitignore` on first build via `ensureGitignore()` in `runPipeline`. Each project has its own independent `vmake_deps/`.
 
 ```
 vmake_deps/
@@ -55,25 +55,25 @@ vmake_deps/
 
 No version layer in paths — each package has one version at a time.
 
-`findProjectDir()` (in `cmd/vmake/paths.go`) walks upward from cwd to find `.vmake/` or `build.go` to locate the project root. This ensures commands and shell completion work from subdirectories.
+`findProjectDir()` (in `cmd/vmake/paths.go`) walks upward from cwd to find `.vmake/` or `build.go` to locate the project root.
 
 ### Global (`~/.vmake/`)
 - `~/.vmake/repos/` — registry repo clones
 - `~/.vmake/toolchains/` — toolchain manifests
 - `~/.vmake/extensions/` — extension repos
-- `~/.vmake/sources/<repo>/<pkg>/src/` — shared git source checkouts (all projects share one copy, symlinked into `vmake_deps/`)
+- `~/.vmake/sources/<repo>/<pkg>/src/` — shared git source checkouts (symlinked into `vmake_deps/`)
 
-Source downloads are shared globally via symlinks. `SourceManager.EnsureSource()` creates the symlink before cloning, so the actual git checkout goes to `~/.vmake/sources/`. File locking (`internal/flock`) serializes concurrent access across projects.
+Source downloads are shared globally via symlinks. `SourceManager.EnsureSource()` creates the symlink before cloning. File locking (`internal/flock`) serializes concurrent access across projects.
 
 ## Core Concepts
 
-- **仓库 (Repo)** — 包的来源。**Registry**（包装第三方 C/C++ 库，build.go 在仓库内作为 wrapper）和 **Native**（vmake 原生包，独立 git 仓库，build.go 在仓库根目录，版本来自 git tag）。
-- **包 (Package)** — 由 `build.go` 描述的编译单元。注册回调：`OnRequire`（声明依赖）、`OnConfig`（配置选项）、`OnBuild`（定义目标）。
-- **目标 (Target)** — 最终编译产物：`TargetBinary`、`TargetStatic`、`TargetShared`、`TargetObject`、`TargetVoid`。
+- **Repo** — Package source. **Registry** (wraps third-party C/C++ libs, build.go is a wrapper) vs **Native** (vmake-native, standalone git repo, build.go at root, version from git tag).
+- **Package** — Build unit described by `build.go`. Callbacks: `OnRequire` (declare deps), `OnConfig` (configure options), `OnBuild` (define targets).
+- **Target** — Build artifact: `TargetBinary`, `TargetStatic`, `TargetShared`, `TargetObject`, `TargetVoid`.
 
 ## Key Design Decisions
 
-### 一切皆包，一切皆依赖
+### Everything is a Package
 uboot, kernel, busybox, app, partitions, firmware are ALL packages with the same lifecycle. No special-casing.
 
 ### No Fallbacks — Fix the Root Cause
@@ -240,6 +240,8 @@ Methods on `BuildContext`:
 - `vmake distclean` — deep clean: local build dirs, build.so, go.mod/go.sum, install/, `vmake_deps/`
 - `vmake config` — interactive TUI for build options
 - `vmake query` — show dependency tree (uses `newQueryCmd` factory, registered in root.go init)
+- `vmake git tag [--minor|--major] [version]` — create version tag, update latest, push (for native repos)
+- `vmake completion [bash|zsh|fish|powershell|install]` — generate shell completion
 - `vmake ext add/remove/list/update` — manage extension repos that contain plugins and toolchain manifests
 - `vmake skill install/uninstall/path` — install AI assistant skill files to `~/.claude/skills/` and `~/.agents/skills/`
 - `vmake pkg list/search/clean/update` — manage third-party packages in `vmake_deps/`
@@ -303,6 +305,7 @@ type PkgDirs struct { SourceDir, BuildDir, InstallDir string }
 - `busybox` kconfig has no `olddefconfig` — only `oldconfig`, `defconfig`, `allnoconfig`
 - `vmake_deps/` is in `scanner.go`'s `skipDirs` — build.go scanner will not recurse into it
 - `ensureGitignore` writes only to project root `.gitignore` (via `findProjectDir()`), not to subdirectories
+- `scanner.go` `skipDirs`: `.git`, `.vmake`, `build`, `vendor`, `node_modules`, `vmake_deps` — build.go files in these dirs are invisible to the scanner
 
 ## What Not To Do
 - IDE integration plugins

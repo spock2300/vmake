@@ -98,6 +98,8 @@ type BuildContext struct {
 	*TargetRegistry
 	*InstallItemHolder
 	pkgBase
+	genConfigHeader  bool
+	genConfigDefines bool
 	buildSubGraphFunc func(pkgName string) error
 	depOutputFunc     func(depRef string) string
 	dryRun            bool
@@ -152,6 +154,19 @@ func (ctx *BuildContext) DepOutput(depRef string) string {
 func (ctx *BuildContext) DepBuildDir(depRef string) string {
 	return filepath.Dir(ctx.DepOutput(depRef))
 }
+
+func (ctx *BuildContext) GenerateConfigHeader() *BuildContext {
+	ctx.genConfigHeader = true
+	return ctx
+}
+
+func (ctx *BuildContext) GenerateConfigDefines() *BuildContext {
+	ctx.genConfigDefines = true
+	return ctx
+}
+
+func (ctx *BuildContext) GenConfigHeaderFlag() bool  { return ctx.genConfigHeader }
+func (ctx *BuildContext) GenConfigDefinesFlag() bool { return ctx.genConfigDefines }
 
 func (ctx *BuildContext) Exec(name string, args ...string) {
 	if ctx.dryRun {
