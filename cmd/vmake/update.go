@@ -37,7 +37,7 @@ func runUpdate(cmd *cobra.Command, args []string) {
 	if len(args) > 0 {
 		targetVer = args[0]
 	} else {
-		versions, err := listAvailableVersions(goCmd)
+		versions, err := listAvailableVersions()
 		fatalErr(err)
 		targetVer = pickLatestStable(versions)
 		fmt.Printf("Available versions: %s\n", strings.Join(versions, " "))
@@ -49,16 +49,32 @@ func runUpdate(cmd *cobra.Command, args []string) {
 	fmt.Printf("Update to %s completed!\n", targetVer)
 }
 
-func listAvailableVersions(goCmd string) ([]string, error) {
-	output, err := iexec.RunWithOptions(goCmd, []string{"list", "-m", "-versions", "gitee.com/spock2300/vmake"}, iexec.RunOptions{Quiet: true})
+func listAvailableVersions() ([]string, error) {
+	gitCmd, err := iexec.LookPath("git")
 	if err != nil {
-		return nil, fmt.Errorf("failed to list versions: %w", err)
+		return nil, fmt.Errorf("git not found: %w", err)
 	}
-	parts := strings.Fields(iexec.TrimOutput(output))
-	if len(parts) <= 1 {
+	output, err := iexec.RunWithOptions(gitCmd, []string{"ls-remote", "--tags", "https://gitee.com/spock2300/vmake.git"}, iexec.RunOptions{Quiet: true})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list remote tags: %w", err)
+	}
+	var tags []string
+	for _, line := range strings.Split(iexec.TrimOutput(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasSuffix(line, "^{}") {
+			continue
+		}
+		idx := strings.Index(line, "refs/tags/")
+		if idx < 0 {
+			continue
+		}
+		tag := line[idx+len("refs/tags/"):]
+		tags = append(tags, tag)
+	}
+	if len(tags) == 0 {
 		return nil, fmt.Errorf("no published versions found")
 	}
-	return parts[1:], nil
+	return tags, nil
 }
 
 func pickLatestStable(versions []string) string {
