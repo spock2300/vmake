@@ -6,9 +6,9 @@ import (
 
 func TestParseVersion(t *testing.T) {
 	tests := []struct {
-		input   string
-		want    Version
-		wantOK  bool
+		input  string
+		want   Version
+		wantOK bool
 	}{
 		{"1.2.3", Version{1, 2, 3, ""}, true},
 		{"v1.2.3", Version{1, 2, 3, ""}, true},

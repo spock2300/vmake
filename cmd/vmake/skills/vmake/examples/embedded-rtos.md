@@ -1,9 +1,13 @@
 # Embedded / RTOS Firmware
 
-Bare-metal or RTOS firmware build using linker scripts, post-link steps,
+Bare-metal or RTOS firmware build using dependency linker scripts, post-link steps,
 and binary-to-header conversion.
 
-## build.go
+Typical multi-package layout: a **chip package** provides the linker script via
+`SetProvidedLinkerScript`, and the **firmware package** inherits it via
+`UseDependencyLinkerScript()`.
+
+## chip/build.go
 
 ```go
 package main
@@ -11,12 +15,33 @@ package main
 import "gitee.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
+    p.OnConfig(func(ctx *api.ConfigContext) {
+        ctx.SetProvidedLinkerScript("linker/sim.ld")
+    })
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("chip").SetKind(api.TargetVoid)
+    })
+}
+```
+
+## firmware/build.go
+
+```go
+package main
+
+import "gitee.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+    p.OnRequire(func(ctx *api.RequireContext) {
+        ctx.AddRequires("chip")
+    })
     p.OnBuild(func(ctx *api.BuildContext) {
         ctx.Target("firmware").
             SetKind(api.TargetBinary).
             AddFiles("src/*.c", "src/*.S").
             AddIncludes("include").
-            SetLinkerScript("linker/stm32f4.ld").
+            AddDeps("chip:chip").
+            UseDependencyLinkerScript().
             AddCFlags("-ffunction-sections", "-fdata-sections").
             AddLdFlags("-nostartfiles", "-Wl,--gc-sections", "-Wl,--print-memory-usage").
             AddBinHeader("assets/logo.bin").
@@ -29,7 +54,8 @@ func Main(p *api.Package) {
 
 ## What This Demonstrates
 
-- **`SetLinkerScript(path)`** — Passes `-T` to the linker for memory layout control
+- **`SetProvidedLinkerScript(path)`** — Chip package declares its linker script (fatal on double-set)
+- **`UseDependencyLinkerScript()`** — Firmware target auto-inherits `-T` from the first dependency that provides one
 - **`AddBinHeader(inputs...)`** — Converts binary assets to `.h` hex arrays, output to `build/<tc>-<mode>/generated/`, include path auto-added
 - **`AddPostLinkSize()`** — Prints section size info after linking
 - **`AddPostLinkHex()`** — Generates Intel HEX format (`objcopy -O ihex`)
@@ -40,29 +66,33 @@ func Main(p *api.Package) {
 ## Project Structure
 
 ```
-my-firmware/
-├── build.go
-├── src/
-│   ├── main.c
-│   └── startup.S
-├── include/
-│   └── stm32f4xx.h
-├── linker/
-│   └── stm32f4.ld
-└── assets/
-    └── logo.bin
+my-project/
+├── chip/
+│   ├── build.go
+│   └── linker/
+│       └── sim.ld
+└── firmware/
+    ├── build.go
+    ├── src/
+    │   ├── main.c
+    │   └── startup.S
+    ├── include/
+    │   └── stm32f4xx.h
+    └── assets/
+        └── logo.bin
 ```
 
 ## Build Output
 
 ```
-build/
-└── <toolchain>-<mode>/
-    ├── firmware              # ELF binary
-    ├── firmware.hex          # Intel HEX
-    ├── firmware.bin          # Raw binary
-    └── generated/
-        └── logo.h            # BinHeader output (auto-included)
+firmware/
+└── build/
+    └── <toolchain>-<mode>/
+        ├── firmware              # ELF binary
+        ├── firmware.hex          # Intel HEX
+        ├── firmware.bin          # Raw binary
+        └── generated/
+            └── logo.h            # BinHeader output (auto-included)
 ```
 
 ## Multiple Targets (Firmware + Test Runner)
@@ -73,7 +103,8 @@ p.OnBuild(func(ctx *api.BuildContext) {
         SetKind(api.TargetBinary).
         AddFiles("src/*.c", "src/*.S").
         AddIncludes("include").
-        SetLinkerScript("linker/stm32f4.ld").
+        AddDeps("chip:chip").
+        UseDependencyLinkerScript().
         AddPostLinkSize()
 
     ctx.Target("test_runner").

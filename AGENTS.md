@@ -102,6 +102,15 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 - `make <preset>` stays in `EnsureConfig` (build) and `ensureConfigCmd` (TUI)
 - Only abstract `.config` check (`EnsureConfig`), NOT a full `BuildKConfigMake` wrapper
 
+### Double-Set Protection
+`SetLinkerScript` and `SetProvidedLinkerScript` call `vlog.Fatal` on second invocation — cannot silently overwrite. Consistent with the "No Fallbacks" principle.
+
+### Option OnApply Callback
+`Option.SetOnApply(fn)` registers a callback invoked after all options are resolved. Used to react to option values (e.g., set global ldflags based on a config choice). Callbacks run during config phase, after option values are finalized.
+
+### Dependency Linker Script
+A package declares `ctx.SetProvidedLinkerScript("path/to/script.ld")` in `OnConfig`/`OnBuild`. A consumer target calls `.UseDependencyLinkerScript()` — at link time, the scheduler resolves the first dependency that provides a linker script and passes `-T` to the linker. `SetProvidedLinkerScript` may only be called once per package (vlog.Fatal on double-set).
+
 ### Auto-Wire Require → Build Deps
 `OnRequire`/`AddRequires` alone does NOT create build graph edges. `Target.AddDeps("pkg:target")` is required for topology. However, `autoWireRequireDeps()` in `build_cmd.go` auto-wires them when a package has `AddRequires` calls but its targets lack explicit `AddDeps` — it links all of the dependency package's targets as deps.
 
@@ -115,7 +124,7 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 ```
 Phase 1: OnRequire       -> Scan/Compile/Load buildscripts -> Resolve dependencies
 Phase 2a: ResolveDeferred -> Resolve remote (deferred) packages -> Update topological order
-Phase 2b: OnConfig       -> Execute callbacks -> Collect Options -> Merge global options
+Phase 2b: OnConfig       -> Execute callbacks -> Collect Options -> Run OnApply callbacks -> Merge global options
 Phase 3: OnBuild         -> Execute callbacks -> Generate Targets -> Compile/Link
 (Optional) Install       -> Install targets to prefix directory + generate manifest.json
 ```
@@ -208,6 +217,10 @@ Methods on `BuildContext`:
 - `ctx.BuildSubGraph(pkgName)` — build a sub-package as independent sub-graph
 - `ctx.DepOutput(depRef)` — get dependency target output file path
 - `ctx.DepBuildDir(depRef)` — get dependency build directory
+- `ctx.AddGlobalCFlags(flags...)` — add global C compiler flags (only effective in OnApply callbacks)
+- `ctx.AddGlobalCxxFlags(flags...)` — add global C++ compiler flags (only effective in OnApply callbacks)
+- `ctx.AddGlobalLdFlags(flags...)` — add global linker flags (only effective in OnApply callbacks)
+- `ctx.SetProvidedLinkerScript(path)` — declare linker script for consumer targets (fatal on double-set)
 
 ## Package Structure
 

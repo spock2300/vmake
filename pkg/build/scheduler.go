@@ -336,6 +336,7 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	resolved.AllCFlags = append(resolved.AllCFlags, modeFlags...)
 	resolved.AllCxxFlags = append(resolved.AllCxxFlags, modeFlags...)
 	resolved.AllDefines = append(resolved.AllDefines, modeDefines...)
+	resolved.AllLdFlags = append(resolved.AllLdFlags, toolchain.GetManager().GetGlobalLdFlags()...)
 
 	for _, inc := range node.Target.Includes() {
 		resolved.AllIncludes = append(resolved.AllIncludes, inc)
@@ -597,8 +598,22 @@ func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) error
 
 	switch kind {
 	case api.TargetBinary:
+		linkerScript := resolved.Node.Target.LinkerScript()
+		if linkerScript == "" && resolved.Node.Target.UseDepLinkerScript() {
+			for _, depFullName := range resolved.Node.Deps {
+				depPkgName, _, _ := strings.Cut(depFullName, ":")
+				depPkg := s.packages[depPkgName]
+				if depPkg != nil && depPkg.ProvidedLinkerScript() != "" {
+					depInfo := s.pkgs[depPkgName]
+					if depInfo != nil {
+						linkerScript = filepath.Join(depInfo.SourceDir, depPkg.ProvidedLinkerScript())
+					}
+					break
+				}
+			}
+		}
 		vlog.Info("  LINK %s", outputName)
-		return s.linker.LinkBinary(allObjs, unique(resolved.Node.Target.Links()), resolved.AllLdFlags, resolved.OutputPath, resolved.Node.Target.LinkerScript())
+		return s.linker.LinkBinary(allObjs, unique(resolved.Node.Target.Links()), resolved.AllLdFlags, resolved.OutputPath, linkerScript)
 	case api.TargetStatic:
 		vlog.Info("  AR %s", outputName)
 		return s.linker.LinkStatic(allObjs, resolved.OutputPath)

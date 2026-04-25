@@ -139,6 +139,13 @@ All build helpers use `exec.RunFatal` (call `os.Exit` on failure) EXCEPT `RunEnv
 | `SelectedPreset` | `() string` | Selected preset name |
 | `EnsureConfig` | `(srcDir string) bool` | Check `.config` exists & non-empty, run `make <preset>` if not |
 
+### Package Linker Script Methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `SetProvidedLinkerScript` | `(path string) *Package` | Declare linker script for consumers (fatal on double-set) |
+| `ProvidedLinkerScript` | `() string` | Get declared linker script path |
+
 ---
 
 ## Target
@@ -165,7 +172,8 @@ All setters are fluent (return `*Target`).
 | `SetBuildFunc` | `(fn func(p *Package) error)` | Custom build logic (for third-party packages) |
 | `SetInstallDir` | `(dir string)` | Install directory |
 | `SetInstall` | `(install bool)` | Control install |
-| `SetLinkerScript` | `(path string)` | Linker script (passes `-T` to linker) |
+| `SetLinkerScript` | `(path string)` | Linker script (passes `-T` to linker; fatal on double-set) |
+| `UseDependencyLinkerScript` | `()` | Auto-inherit linker script from dependency |
 | `AddPostLink` | `(tool string, args ...string)` | Post-link step: `{output}` placeholder |
 | `AddPostLinkHex` | `()` | `objcopy -O ihex {output} {output}.hex` |
 | `AddPostLinkBin` | `()` | `objcopy -O binary {output} {output}.bin` |
@@ -202,6 +210,7 @@ All setters are fluent (return `*Target`).
 | `NoInstall()` | `bool` |
 | `BuildFunc()` | `func(p *Package) error` |
 | `LinkerScript()` | `string` |
+| `UseDepLinkerScript()` | `bool` |
 | `PostLinkSteps()` | `[]PostLinkStep` |
 | `GenRules()` | `[]GenRule` |
 | `HasDep(depRef)` | `bool` |
@@ -226,6 +235,10 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `GetOptions() map[string]*Option` | All options |
 | `PackageName() string` | Package name |
 | `KConfig(name) *KConfigEntry` | Create/get KConfig entry |
+| `SetProvidedLinkerScript(path) *ConfigContext` | Declare linker script for consumers |
+| `AddGlobalCFlags(flags...)` | Add global C flags (OnApply only) |
+| `AddGlobalCxxFlags(flags...)` | Add global C++ flags (OnApply only) |
+| `AddGlobalLdFlags(flags...)` | Add global linker flags (OnApply only) |
 
 ### BuildContext
 
@@ -240,6 +253,10 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `DepOutput(depRef) string` | Get output path of dependency target |
 | `DepBuildDir(depRef) string` | Get build directory of dependency target |
 | `Exec(name, args...)` | Run command with logging (os.Exit on failure) |
+| `SetProvidedLinkerScript(path) *BuildContext` | Declare linker script for consumers |
+| `AddGlobalCFlags(flags...)` | Add global C flags (OnApply only) |
+| `AddGlobalCxxFlags(flags...)` | Add global C++ flags (OnApply only) |
+| `AddGlobalLdFlags(flags...)` | Add global linker flags (OnApply only) |
 | `GenerateConfigHeader()` | Generate `generated/autoconf.h` from config options, add `generated/` to includes |
 | `GenerateConfigDefines()` | Add `-DCONFIG_*` defines from config options to all targets |
 | `SetDryRun(v bool) *BuildContext` | Set dry run mode |
@@ -292,9 +309,10 @@ All setters are fluent (return `*Option`).
 | `SetDescription` | `(desc string)` | Description |
 | `SetValues` | `(vals ...string)` | Choice values (OptionChoice) |
 | `SetShowIf` | `(fn func(ctx *ConfigContext) bool)` | Conditional visibility |
+| `SetOnApply` | `(fn func(ctx *ConfigContext, val string))` | Callback after option values resolved |
 | `SetGroup` | `(group string)` | Display group |
 
-Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()`, `Group()`, `IsGlobal()`.
+Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()`, `OnApply()`, `Group()`, `IsGlobal()`.
 
 ---
 

@@ -114,30 +114,31 @@ type Package struct {
 	ConfigAccessor
 	*TargetRegistry
 	*InstallItemHolder
-	gitURLs        []string
-	homepage       string
-	description    string
-	license        string
-	versions       map[string]string
-	submodules     bool
-	requires       Requires
-	requireFuncs   []RequireFunc
-	libs           []string
-	configFuncs    []ConfigFunc
-	buildFuncs     []BuildFunc
-	installFuncs   []InstallFunc
-	packageFunc    PackageFunc
-	scriptDir      string
-	srcCodeDir     string
-	dirs           PkgDirs
-	outputDir      string
-	tc             *toolchain.Toolchain
-	deps           map[string]*InstalledPackage
-	patches        []string
-	configFiles    []string
-	kconfigEntries []*KConfigEntry
-	genConfigHdr   bool
-	dryRun         bool
+	gitURLs              []string
+	homepage             string
+	description          string
+	license              string
+	versions             map[string]string
+	submodules           bool
+	requires             Requires
+	requireFuncs         []RequireFunc
+	libs                 []string
+	configFuncs          []ConfigFunc
+	buildFuncs           []BuildFunc
+	installFuncs         []InstallFunc
+	packageFunc          PackageFunc
+	scriptDir            string
+	srcCodeDir           string
+	dirs                 PkgDirs
+	outputDir            string
+	tc                   *toolchain.Toolchain
+	deps                 map[string]*InstalledPackage
+	patches              []string
+	configFiles          []string
+	kconfigEntries       []*KConfigEntry
+	genConfigHdr         bool
+	dryRun               bool
+	providedLinkerScript string
 }
 
 func NewPackage() *Package {
@@ -149,6 +150,18 @@ func NewPackage() *Package {
 		requires:          Requires{},
 		deps:              make(map[string]*InstalledPackage),
 	}
+}
+
+func (p *Package) SetProvidedLinkerScript(path string) *Package {
+	if p.providedLinkerScript != "" {
+		vlog.Fatal("SetProvidedLinkerScript: linker script already set to %s", p.providedLinkerScript)
+	}
+	p.providedLinkerScript = path
+	return p
+}
+
+func (p *Package) ProvidedLinkerScript() string {
+	return p.providedLinkerScript
 }
 
 func (p *Package) OnRequire(fn RequireFunc) *Package {

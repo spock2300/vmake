@@ -3,6 +3,10 @@ package main
 import "gitee.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
+	p.OnRequire(func(ctx *api.RequireContext) {
+		ctx.AddRequires("chip_sim")
+	})
+
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.Option("debug").
 			SetType(api.OptionBool).
@@ -21,17 +25,15 @@ func Main(p *api.Package) {
 			AddFiles("src/*.c").
 			AddIncludes("include").
 			AddCFlags(
-				"-Wall", "-Wextra",
 				ctx.Select("optimize", map[string]string{"O0": "-O0", "O2": "-O2", "Os": "-Os"}),
 				ctx.If("debug", "-g"),
-				"-ffunction-sections", "-fdata-sections",
 			).
 			AddLdFlags(
-				"-Wl,--gc-sections",
 				"-Wl,--print-memory-usage",
 				"-nostartfiles",
 			).
-			SetLinkerScript("linker/sim.ld").
+			AddDeps("chip_sim:chip").
+			UseDependencyLinkerScript().
 			AddPostLinkHex().
 			AddPostLinkBin().
 			AddPostLinkSize()

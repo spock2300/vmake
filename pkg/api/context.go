@@ -21,7 +21,10 @@ func (b *pkgBase) PackageName() string {
 type ConfigContext struct {
 	ConfigAccessor
 	pkgBase
-	pkg *Package
+	pkg               *Package
+	addGlobalCFlags   func(...string)
+	addGlobalCxxFlags func(...string)
+	addGlobalLdFlags  func(...string)
 }
 
 func NewConfigContext(pkgName string) *ConfigContext {
@@ -37,6 +40,46 @@ func NewConfigContextWithPackage(pkgName string, pkg *Package) *ConfigContext {
 		pkgBase:        pkgBase{pkgName: pkgName},
 		pkg:            pkg,
 	}
+}
+
+func (ctx *ConfigContext) SetGlobalCFlagsFunc(fn func(...string)) *ConfigContext {
+	ctx.addGlobalCFlags = fn
+	return ctx
+}
+
+func (ctx *ConfigContext) SetGlobalCxxFlagsFunc(fn func(...string)) *ConfigContext {
+	ctx.addGlobalCxxFlags = fn
+	return ctx
+}
+
+func (ctx *ConfigContext) SetGlobalLdFlagsFunc(fn func(...string)) *ConfigContext {
+	ctx.addGlobalLdFlags = fn
+	return ctx
+}
+
+func (ctx *ConfigContext) AddGlobalCFlags(flags ...string) {
+	if ctx.addGlobalCFlags != nil {
+		ctx.addGlobalCFlags(flags...)
+	}
+}
+
+func (ctx *ConfigContext) AddGlobalCxxFlags(flags ...string) {
+	if ctx.addGlobalCxxFlags != nil {
+		ctx.addGlobalCxxFlags(flags...)
+	}
+}
+
+func (ctx *ConfigContext) AddGlobalLdFlags(flags ...string) {
+	if ctx.addGlobalLdFlags != nil {
+		ctx.addGlobalLdFlags(flags...)
+	}
+}
+
+func (ctx *ConfigContext) SetProvidedLinkerScript(path string) *ConfigContext {
+	if ctx.pkg != nil {
+		ctx.pkg.SetProvidedLinkerScript(path)
+	}
+	return ctx
 }
 
 func (ctx *ConfigContext) KConfig(name string) *KConfigEntry {
@@ -98,6 +141,7 @@ type BuildContext struct {
 	*TargetRegistry
 	*InstallItemHolder
 	pkgBase
+	pkg               *Package
 	genConfigHeader   bool
 	genConfigDefines  bool
 	buildSubGraphFunc func(pkgName string) error
@@ -119,6 +163,11 @@ func (ctx *BuildContext) SetDryRun(v bool) *BuildContext {
 	return ctx
 }
 
+func (ctx *BuildContext) SetPackage(pkg *Package) *BuildContext {
+	ctx.pkg = pkg
+	return ctx
+}
+
 func (ctx *BuildContext) SetBuildSubGraphFunc(fn func(string) error) *BuildContext {
 	ctx.buildSubGraphFunc = fn
 	return ctx
@@ -126,6 +175,25 @@ func (ctx *BuildContext) SetBuildSubGraphFunc(fn func(string) error) *BuildConte
 
 func (ctx *BuildContext) SetDepOutputFunc(fn func(string) string) *BuildContext {
 	ctx.depOutputFunc = fn
+	return ctx
+}
+
+func (ctx *BuildContext) AddGlobalCFlags(flags ...string) {
+	toolchain.GetManager().AddGlobalCFlags(flags...)
+}
+
+func (ctx *BuildContext) AddGlobalCxxFlags(flags ...string) {
+	toolchain.GetManager().AddGlobalCxxFlags(flags...)
+}
+
+func (ctx *BuildContext) AddGlobalLdFlags(flags ...string) {
+	toolchain.GetManager().AddGlobalLdFlags(flags...)
+}
+
+func (ctx *BuildContext) SetProvidedLinkerScript(path string) *BuildContext {
+	if ctx.pkg != nil {
+		ctx.pkg.SetProvidedLinkerScript(path)
+	}
 	return ctx
 }
 

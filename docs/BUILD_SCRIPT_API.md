@@ -140,6 +140,13 @@ func (p *Package) ObjDump() string
 func (p *Package) NM() string
 ```
 
+### 依赖 Linker Script
+
+```go
+func (p *Package) SetProvidedLinkerScript(path string) *Package  // 声明 linker script（重复调用 vlog.Fatal）
+func (p *Package) ProvidedLinkerScript() string
+```
+
 ### 构建辅助方法
 
 ```go
@@ -240,6 +247,14 @@ func (ctx *ConfigContext) PackageName() string
 func (ctx *ConfigContext) SetConfigValue(name string, val any) *ConfigContext
 func (ctx *ConfigContext) GetOptions() map[string]*Option
 func (ctx *ConfigContext) Toolchains() []string
+
+// 全局编译/链接标志（仅在 OnApply 回调中有效）
+func (ctx *ConfigContext) AddGlobalCFlags(flags ...string)
+func (ctx *ConfigContext) AddGlobalCxxFlags(flags ...string)
+func (ctx *ConfigContext) AddGlobalLdFlags(flags ...string)
+
+// 依赖 Linker Script
+func (ctx *ConfigContext) SetProvidedLinkerScript(path string) *ConfigContext
 ```
 
 ## Option
@@ -253,6 +268,7 @@ func (o *Option) SetDefault(v any) *Option
 func (o *Option) SetDescription(desc string) *Option
 func (o *Option) SetValues(vals ...string) *Option        // OptionChoice 使用
 func (o *Option) SetShowIf(fn func(ctx *ConfigContext) bool) *Option  // 条件显示
+func (o *Option) SetOnApply(fn func(ctx *ConfigContext, val string)) *Option  // 选项值解析后的回调
 func (o *Option) SetGroup(group string) *Option
 func (o *Option) IsGlobal() bool                      // 是否为全局选项（group == "Global"）
 
@@ -264,6 +280,7 @@ func (o *Option) Description() string
 func (o *Option) Values() []string
 func (o *Option) Group() string
 func (o *Option) ShowIf() func(ctx *ConfigContext) bool
+func (o *Option) OnApply() func(ctx *ConfigContext, val string)
 func (o *Option) IsGlobal() bool
 ```
 
@@ -302,6 +319,14 @@ func (ctx *BuildContext) SetInstallFilter(filter InstallFilterFunc) *InstallItem
 func (ctx *BuildContext) BuildSubGraph(pkgName string)
 func (ctx *BuildContext) DepOutput(depRef string) string
 func (ctx *BuildContext) DepBuildDir(depRef string) string
+
+// 全局编译/链接标志（仅在 OnApply 回调中有效）
+func (ctx *BuildContext) AddGlobalCFlags(flags ...string)
+func (ctx *BuildContext) AddGlobalCxxFlags(flags ...string)
+func (ctx *BuildContext) AddGlobalLdFlags(flags ...string)
+
+// 依赖 Linker Script
+func (ctx *BuildContext) SetProvidedLinkerScript(path string) *BuildContext
 
 // 配置导出
 func (ctx *BuildContext) GenerateConfigHeader() *BuildContext
@@ -369,7 +394,8 @@ func (t *Target) AddLdFlags(flags ...any) *Target
 func (t *Target) SetBuildFunc(fn func(p *Package) error) *Target
 
 // RTOS/嵌入式
-func (t *Target) SetLinkerScript(path string) *Target    // 传递 -T 给链接器
+func (t *Target) SetLinkerScript(path string) *Target    // 传递 -T 给链接器（重复调用 vlog.Fatal）
+func (t *Target) UseDependencyLinkerScript() *Target       // 从依赖自动继承 linker script
 func (t *Target) AddPostLink(tool string, args ...string) *Target  // 通用后链接步骤，支持 {output} 占位符
 func (t *Target) AddPostLinkHex() *Target               // objcopy -O ihex {output} {output}.hex
 func (t *Target) AddPostLinkBin() *Target               // objcopy -O binary {output} {output}.bin
@@ -412,6 +438,7 @@ func (t *Target) InstallDir() string
 func (t *Target) NoInstall() bool
 func (t *Target) BuildFunc() func(*Package) error
 func (t *Target) LinkerScript() string
+func (t *Target) UseDepLinkerScript() bool
 func (t *Target) PostLinkSteps() []PostLinkStep
 ```
 `AddFiles/Includes/Defines/Links/CFlags/CxxFlags/LdFlags` 接受 `string` 或 `[]string`（条件表达式返回）。

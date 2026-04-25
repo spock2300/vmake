@@ -308,22 +308,50 @@ ctx.String("name")
 ctx.Int("count")
 ctx.Bool("debug")
 ctx.When("x", "val")
+
+ctx.Option("chip").SetType(api.OptionChoice).SetValues("stm32f4", "esp32").
+    SetOnApply(func(ctx *api.ConfigContext, val string) {
+        ctx.SetProvidedLinkerScript("linker/" + val + ".ld")
+    })
+
+ctx.Option("trace").SetType(api.OptionBool).SetDefault(false).
+    SetOnApply(func(ctx *api.ConfigContext, val string) {
+        if val == "true" {
+            ctx.AddGlobalCFlags("-DTRACE=1", "-finstrument-functions")
+            ctx.AddGlobalLdFlags("-ltrace")
+        }
+    })
 ```
+
+- `SetOnApply(fn)` — callback invoked after all option values are resolved, receives `*ConfigContext` and the option's string value; used to react to options (e.g., set global flags, choose linker script based on chip)
+- `AddGlobalCFlags/CxxFlags/LdFlags` — only effective inside `SetOnApply` callbacks
 
 ## RTOS / Embedded
 
 ```go
+// chip/build.go — provides linker script
+p.OnConfig(func(ctx *api.ConfigContext) {
+    ctx.SetProvidedLinkerScript("linker/sim.ld")
+})
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.Target("chip").SetKind(api.TargetVoid)
+})
+
+// firmware/build.go — consumes linker script from dependency
 ctx.Target("firmware").
     SetKind(api.TargetBinary).
     AddFiles("src/*.c").
-    SetLinkerScript("ld/stm32f4.ld").
+    AddDeps("chip:chip").
+    UseDependencyLinkerScript().
     AddBinHeader("assets/logo.bin").
     AddPostLinkSize().
     AddPostLinkHex().
     AddPostLinkBin()
 ```
 
-- `SetLinkerScript(path)` — passes `-T` to linker
+- `SetProvidedLinkerScript(path)` — chip/bsp package declares linker script for consumers (on `ConfigContext`/`BuildContext`; fatal on double-set)
+- `UseDependencyLinkerScript()` — firmware target auto-inherits `-T` from first dependency that provides one
+- `SetLinkerScript(path)` — direct linker script on target (fatal on double-set; use when no dependency pattern needed)
 - `AddPostLink(tool, args...)` — generic post-link step, `{output}` placeholder
 - Shorthands: `AddPostLinkHex()`, `AddPostLinkBin()`, `AddPostLinkSize()`, `AddPostLinkStrip()`
 - `AddBinHeader(inputs...)` — converts binary files to `.h` headers; output to `build/<tc>-<mode>/generated/`; include path auto-added; incremental via mtime

@@ -13,6 +13,7 @@ type Manager struct {
 	onMissing      map[string]OnMissingToolchain
 	globalCFlags   []string
 	globalCxxFlags []string
+	globalLdFlags  []string
 	mu             sync.RWMutex
 }
 
@@ -97,6 +98,45 @@ func (m *Manager) AddGlobalFlags(cflags, cxxflags []string) {
 	m.globalCxxFlags = append(m.globalCxxFlags, cxxflags...)
 }
 
+func (m *Manager) AddGlobalCFlags(flags ...string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, f := range flags {
+		if !contains(m.globalCFlags, f) {
+			m.globalCFlags = append(m.globalCFlags, f)
+		}
+	}
+}
+
+func (m *Manager) AddGlobalCxxFlags(flags ...string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, f := range flags {
+		if !contains(m.globalCxxFlags, f) {
+			m.globalCxxFlags = append(m.globalCxxFlags, f)
+		}
+	}
+}
+
+func (m *Manager) AddGlobalLdFlags(flags ...string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, f := range flags {
+		if !contains(m.globalLdFlags, f) {
+			m.globalLdFlags = append(m.globalLdFlags, f)
+		}
+	}
+}
+
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Manager) GetGlobalCFlags() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -107,6 +147,12 @@ func (m *Manager) GetGlobalCxxFlags() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return append([]string{}, m.globalCxxFlags...)
+}
+
+func (m *Manager) GetGlobalLdFlags() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append([]string{}, m.globalLdFlags...)
 }
 
 func (m *Manager) ResolveToolPath(tc *Toolchain, tool string) (string, error) {

@@ -543,6 +543,8 @@ func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.Pack
 		pkg.SetToolchain(tc)
 	}
 
+	buildCtx.SetPackage(node.Pkg)
+
 	node.Pkg.ExecBuildFuncs(pkgDirs[name].SourceDir, func(fn api.BuildFunc) {
 		fn(buildCtx)
 	})

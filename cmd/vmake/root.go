@@ -283,6 +283,50 @@ func runConfigPhase(ctx *RuntimeContext) error {
 		}
 	}
 
+	vlog.Info("")
+	vlog.Info("Applying configuration...")
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if node.Pkg == nil {
+			continue
+		}
+		opts := ctx.AllOptions[name]
+		if len(opts) == 0 {
+			continue
+		}
+
+		entry := config.GetEntry(ctx.Config, name)
+		applyCtx := api.NewConfigContextWithPackage(name, node.Pkg)
+		applyCtx.SetGlobalCFlagsFunc(func(flags ...string) {
+			toolchain.GetManager().AddGlobalCFlags(flags...)
+		})
+		applyCtx.SetGlobalCxxFlagsFunc(func(flags ...string) {
+			toolchain.GetManager().AddGlobalCxxFlags(flags...)
+		})
+		applyCtx.SetGlobalLdFlagsFunc(func(flags ...string) {
+			toolchain.GetManager().AddGlobalLdFlags(flags...)
+		})
+
+		for optName, opt := range opts {
+			if opt.OnApply() == nil {
+				continue
+			}
+			val, ok := entry.Options[optName]
+			if !ok || val == nil {
+				val = opt.Default()
+			}
+			var valStr string
+			switch v := val.(type) {
+			case string:
+				valStr = v
+			default:
+				valStr = fmt.Sprintf("%v", v)
+			}
+			vlog.Debug("  %s/%s = %v", name, optName, valStr)
+			opt.OnApply()(applyCtx, valStr)
+		}
+	}
+
 	mgr := toolchain.GetManager()
 	var tcList []string
 	if tcs, err := mgr.ListToolchains(); err == nil {

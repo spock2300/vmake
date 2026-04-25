@@ -192,6 +192,9 @@ func loadPlugins() {
 			AddGlobalFlags: func(cflags, cxxflags []string) {
 				toolchain.GetManager().AddGlobalFlags(cflags, cxxflags)
 			},
+			AddGlobalLdFlags: func(flags ...string) {
+				toolchain.GetManager().AddGlobalLdFlags(flags...)
+			},
 			RegisterToolchainsFromRepo: makeRegisterToolchainsFromRepo(p.PluginDir, repoDir),
 			LoadToolchainDef:           makeLoadToolchainDef(p.PluginDir),
 			DownloadFile:               plugin.DownloadFile,

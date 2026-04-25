@@ -3,6 +3,8 @@ package api
 import (
 	"path/filepath"
 	"strings"
+
+	vlog "gitee.com/spock2300/vmake/pkg/log"
 )
 
 type PostLinkStep struct {
@@ -11,28 +13,29 @@ type PostLinkStep struct {
 }
 
 type Target struct {
-	name           string
-	kind           TargetKind
-	isDefault      bool
-	isTest         bool
-	files          []string
-	excludeFiles   []string
-	includes       []string
-	publicIncludes []string
-	includeRules   map[string][]string
-	defines        []string
-	languages      []string
-	links          []string
-	deps           []string
-	cflags         []string
-	cxxflags       []string
-	ldflags        []string
-	installDir     string
-	noInstall      bool
-	buildFunc      func(p *Package) error
-	linkerScript   string
-	postLinks      []PostLinkStep
-	genRules       []GenRule
+	name               string
+	kind               TargetKind
+	isDefault          bool
+	isTest             bool
+	files              []string
+	excludeFiles       []string
+	includes           []string
+	publicIncludes     []string
+	includeRules       map[string][]string
+	defines            []string
+	languages          []string
+	links              []string
+	deps               []string
+	cflags             []string
+	cxxflags           []string
+	ldflags            []string
+	installDir         string
+	noInstall          bool
+	buildFunc          func(p *Package) error
+	linkerScript       string
+	useDepLinkerScript bool
+	postLinks          []PostLinkStep
+	genRules           []GenRule
 }
 
 func (t *Target) SetKind(kind TargetKind) *Target {
@@ -155,9 +158,19 @@ func (t *Target) BuildFunc() func(p *Package) error {
 }
 
 func (t *Target) SetLinkerScript(path string) *Target {
+	if t.linkerScript != "" {
+		vlog.Fatal("SetLinkerScript: linker script already set to %s", t.linkerScript)
+	}
 	t.linkerScript = path
 	return t
 }
+
+func (t *Target) UseDependencyLinkerScript() *Target {
+	t.useDepLinkerScript = true
+	return t
+}
+
+func (t *Target) UseDepLinkerScript() bool { return t.useDepLinkerScript }
 
 func (t *Target) AddPostLink(tool string, args ...string) *Target {
 	t.postLinks = append(t.postLinks, PostLinkStep{Tool: tool, Args: args})
