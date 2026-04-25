@@ -21,6 +21,8 @@ func Main(p *api.Package) {
 	})
 
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("chip").SetKind(api.TargetVoid).SetDefault(true)
+		ctx.Target("chip").SetKind(api.TargetStatic).SetDefault(true).
+			AddFiles("src/*.c").
+			AddPublicIncludes("include")
 	})
 }

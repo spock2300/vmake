@@ -353,11 +353,7 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	resolved.AllIncludes = append(resolved.AllIncludes, deps.includes...)
 	resolved.DepArtifacts = deps.artifacts
 
-	if len(deps.voidLdFlags) > 0 {
-		resolved.AllLdFlags = append(resolved.AllLdFlags, "-Wl,--start-group")
-		resolved.AllLdFlags = append(resolved.AllLdFlags, deps.voidLdFlags...)
-		resolved.AllLdFlags = append(resolved.AllLdFlags, "-Wl,--end-group")
-	}
+	resolved.AllLdFlags = append(resolved.AllLdFlags, deps.voidLdFlags...)
 
 	excludes := node.Target.ExcludedFiles()
 	for _, pattern := range node.Target.Files() {

@@ -1,6 +1,9 @@
 package build
 
 import (
+	"path/filepath"
+	"strings"
+
 	iexec "gitee.com/spock2300/vmake/internal/exec"
 	"gitee.com/spock2300/vmake/internal/fs"
 )
@@ -26,13 +29,41 @@ func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScri
 	if linkerScript != "" {
 		args = append(args, "-T", linkerScript)
 	}
-	args = append(args, objs...)
 
-	for _, lib := range libs {
-		args = append(args, "-l"+lib)
+	var objFiles []string
+	var libFiles []string
+	for _, o := range objs {
+		ext := strings.ToLower(filepath.Ext(o))
+		if ext == ".a" || ext == ".so" || ext == ".dylib" {
+			libFiles = append(libFiles, o)
+		} else {
+			objFiles = append(objFiles, o)
+		}
 	}
 
-	args = append(args, ldflags...)
+	var groupFlags []string
+	var otherFlags []string
+	for _, f := range ldflags {
+		if strings.HasPrefix(f, "-l") || strings.HasPrefix(f, "-L") {
+			groupFlags = append(groupFlags, f)
+		} else {
+			otherFlags = append(otherFlags, f)
+		}
+	}
+
+	args = append(args, objFiles...)
+
+	if len(libFiles) > 0 || len(libs) > 0 || len(groupFlags) > 0 {
+		args = append(args, "-Wl,--start-group")
+		args = append(args, libFiles...)
+		for _, lib := range libs {
+			args = append(args, "-l"+lib)
+		}
+		args = append(args, groupFlags...)
+		args = append(args, "-Wl,--end-group")
+	}
+
+	args = append(args, otherFlags...)
 
 	_, err := iexec.Run(l.ccPath, args...)
 	return err

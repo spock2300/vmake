@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "firmware.h"
+#include "chip.h"
 
 static volatile int tick_count = 0;
 
@@ -9,7 +10,6 @@ void timer_isr(void) {
 
 int main(void) {
     printf("[RTOS SIM] Firmware starting...\n");
-    printf("[RTOS SIM] Hardware init done\n");
 
 #ifdef SIM_V1
     printf("[RTOS SIM] Chip config: SIM_V1\n");
@@ -18,6 +18,10 @@ int main(void) {
 #else
     printf("[RTOS SIM] Chip config: unknown\n");
 #endif
+
+    chip_init();
+    chip_write_reg(0, 0xAB);
+    printf("[RTOS SIM] reg0 = 0x%X\n", chip_read_reg(0));
 
     for (int i = 0; i < 3; i++) {
         timer_isr();
