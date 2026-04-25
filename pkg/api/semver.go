@@ -74,10 +74,10 @@ func comparePreIdentifiers(a, b string) int {
 			continue
 		}
 		if aIsNum != nil && bIsNum == nil {
-			return -1
+			return 1
 		}
 		if aIsNum == nil && bIsNum != nil {
-			return 1
+			return -1
 		}
 		if aParts[i] != bParts[i] {
 			if aParts[i] < bParts[i] {
@@ -126,7 +126,13 @@ func (c Constraint) Match(v Version) bool {
 	cmp := v.Compare(c.Version)
 	switch c.Op {
 	case ">=":
-		return cmp >= 0
+		if cmp < 0 {
+			return false
+		}
+		if c.Version.Major > 0 && v.Major != c.Version.Major {
+			return false
+		}
+		return true
 	case ">":
 		return cmp > 0
 	case "<=":

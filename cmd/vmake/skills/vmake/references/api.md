@@ -106,6 +106,7 @@ All build helpers use `exec.RunFatal` (call `os.Exit` on failure) EXCEPT `RunEnv
 | `NM()` | `string` | nm tool path |
 | `SourceDir()` | `string` | Package root (where build.go lives) |
 | `SrcDir()` | `string` | Source code directory (SourceDir()/src/ when SetGit downloads) |
+| `SrcDirRaw()` | `string` | Raw srcCodeDir without SourceDir fallback (empty if SetSrcDir not called) |
 | `BuildDir()` | `string` | Build scratch directory |
 | `InstallDir()` | `string` | Installation prefix |
 | `OutputDir()` | `string` | Output directory |
@@ -122,6 +123,7 @@ All build helpers use `exec.RunFatal` (call `os.Exit` on failure) EXCEPT `RunEnv
 | `GetVersions()` | `[]string` | Available version list (unsorted) |
 | `GetRef` | `(version string) string` | Git ref for a version |
 | `SelectVersion` | `(constraint string) (string, error)` | Best version match |
+| `SelectVersionMulti` | `(constraints []string) (string, error)` | Best version matching multiple constraints |
 | `Submodules()` | `bool` | Git submodules enabled |
 | `GetPatches()` | `[]string` | Git patch paths |
 | `ConfigFiles()` | `[]string` | Stamp-related config files |
@@ -307,6 +309,10 @@ Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()
 		TargetVoid   TargetKind = "void"
 	)
 
+	func (k TargetKind) Ext() string        // ".a" (static), ".so" (shared), ".o" (object), "" (binary/void)
+	func (k TargetKind) Prefix() string     // "lib" for static/shared, "" otherwise
+	func (k TargetKind) InstallDir() string // "bin" (binary), "lib" (static/shared), "" otherwise
+
 	type OptionType int
 	const (
 		OptionBool   OptionType = 0
@@ -314,6 +320,8 @@ Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()
 		OptionInt    OptionType = 2
 		OptionChoice OptionType = 3
 	)
+
+	func (t OptionType) String() string // "bool", "string", "int", "choice"
 
 	const ModeOptionName      = "mode"
 	const ToolchainOptionName = "toolchain"
@@ -328,6 +336,7 @@ Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()
 
 	type Requires struct { ... }
 	func (r *Requires) Add(deps ...string)
+	func (r *Requires) AddInfos(infos ...RequireInfo)
 	func (r *Requires) Get() []RequireInfo
 	func (r *Requires) Reset()
 
@@ -339,6 +348,8 @@ Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()
 		IncludeDir, LibDir, BinDir string
 		Libs, Deps []string
 	}
+
+	func (ip *InstalledPackage) UpdateLibDir()
 
 	type InstallItem struct { Src string; Dest string }
 	type RequireInfo struct { Name string; Constraint string }
@@ -421,11 +432,29 @@ Available as `api.CopyFile`, `api.CopyDir`, etc. — useful in `SetBuildFunc` fo
 
 ### Semver
 
-	type Version struct { Major, Minor, Patch int; Pre string }
-	type Constraint struct { Op string; Version Version }
-	func ParseVersion(s string) (Version, bool)
-	func ParseConstraint(s string) (Constraint, bool)
-	func (v Version) Compare(other Version) int
-	func (v Version) String() string
+Version format: `[v]MAJOR[.MINOR][.PATCH][-PRERELEASE]` (e.g. `1.2.3`, `v2.0`, `1.0.0-rc.1`).
+
+```go
+type Version struct { Major, Minor, Patch int; Pre string }
+type Constraint struct { Op string; Version Version }
+func ParseVersion(s string) (Version, bool)
+func ParseConstraint(s string) (Constraint, bool)
+func (v Version) Compare(other Version) int
+func (v Version) String() string
 	func (c Constraint) Match(v Version) bool
 	func MatchVersion(available []string, constraint string) (string, bool)
+	func CheckCycle(path []string, current string) error
+```
+
+**Constraint operators:**
+
+| Op | Meaning | Major lock |
+|----|---------|------------|
+| `>=` | ≥ (default when no operator) | Yes (major > 0 only) |
+| `>` | > | No |
+| `<=` | ≤ | No |
+| `<` | < | No |
+| `=` | exact match (including pre) | — |
+| `~` | lock major.minor, patch ≥ | Yes |
+
+`>=` with major > 0 restricts to same major version (`>=1.2` won't match `2.0.0`). Empty constraint (`>=0.0.0`) matches all. Selection: highest version satisfying all constraints. Pre-release: `1.0.0-rc.1 < 1.0.0`; numeric identifiers < alpha identifiers in pre-release segments.

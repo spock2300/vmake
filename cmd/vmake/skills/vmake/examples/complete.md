@@ -186,7 +186,6 @@ func Main(p *api.Package) {
 | Conditionals | If, IfNot, Select, When, Bool, String, Int |
 | Targets | Object, Static, Shared, Binary, Default(false) |
 | Flags | CxxFlags, LdFlags, Defines |
-| Languages | SetLanguages |
 | Dependencies | AddDeps, AddLinks |
 | Utilities | AddIncludes, AddPublicIncludes |
 

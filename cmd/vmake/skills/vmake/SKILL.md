@@ -133,9 +133,10 @@ This pattern is useful for libraries that use header-based configuration (mbedtl
 ## Directory Reference
 
 | Property | What it returns | When to use |
-|----------|----------------|-------------|
+|----------|-----------------|-------------|
 | `SourceDir()` | Package root (where build.go lives) | Package metadata files, overlay dirs |
-| `SrcDir()` | Source code dir (`SourceDir()/src/` when `SetGit` downloads source) | Source files for firmware/third-party builds |
+| `SrcDir()` | Source code dir (`SourceDir()/src/` when `SetGit` downloads source, falls back to `SourceDir()`) | Source files for firmware/third-party builds |
+| `SrcDirRaw()` | Raw srcCodeDir without fallback (empty if `SetSrcDir` not called) | Detecting whether source dir was explicitly set |
 | `BuildDir()` | Scratch dir for intermediate artifacts | Build outputs, stamps |
 | `InstallDir()` | Installation prefix | Headers/libs installed by third-party packages |
 | `ScriptDir()` | Same as `SourceDir()` | Legacy alias |
@@ -144,7 +145,7 @@ BuildDir path differs by package origin:
 - **Local packages**: `<SourceDir>/build/<key>/`
 - **Remote packages**: `vmake_deps/<repo>/<pkg>/out/<key>/build/`
 
-Key distinction: for a registry package like U-Boot, `SourceDir()` is where `build.go` lives, but the actual U-Boot source is at `SrcDir()` (= `SourceDir()/src/`). For a local package without `SetGit`, `SourceDir()` == `SrcDir()`.
+Key distinction: for a registry package like U-Boot, `SourceDir()` is where `build.go` lives, but the actual U-Boot source is at `SrcDir()` (= `SourceDir()/src/`). For a local package without `SetGit`, `SourceDir()` == `SrcDir()` (the fallback). Use `SrcDirRaw()` to check whether `SetSrcDir` was explicitly called (returns empty string if not).
 
 Within `SetBuildFunc`, built-in helpers (`CMakeConfigure`, `CMakeBuild`, `CMakeInstall`) automatically use the correct directories. If you need to read or patch source files manually, use `SrcDir()` to locate the downloaded source tree.
 
@@ -265,6 +266,32 @@ Explicit `AddDeps` IS needed for:
 - `"utils"` — same-package target
 - `"lib:utils"` — cross-package target (build order + link + PublicIncludes)
 - `"official/zlib"` — third-party package (expanded to all targets from that package)
+
+### Version Constraints
+
+AddRequires accepts an optional semver constraint after the package name:
+
+```go
+ctx.AddRequires("official/zlib >=1.2")   // constraint: >=1.2
+ctx.AddRequires("official/curl ~8.5")    // constraint: ~8.5
+ctx.AddRequires("test_build/mathlib")    // no constraint = any version
+```
+
+**Constraint operators:**
+
+| Op | Meaning | Example | Matches | Excludes |
+|----|---------|---------|---------|----------|
+| `>=` | ≥ with major lock | `>=1.2` | `1.2.0`–`1.x.x` | `2.0.0`, `1.1.0` |
+| `>` | > no lock | `>1.0` | `1.0.1`, `2.0.0` | `1.0.0` |
+| `<=` | ≤ no lock | `<=2.0` | all ≤ 2.0.0 | `2.0.1` |
+| `<` | < no lock | `<3.0` | all < 3.0.0 | `3.0.0` |
+| `=` | exact | `=1.2.3` | `1.2.3` | everything else |
+| `~` | lock major.minor | `~1.2.3` | `1.2.x` | `1.3.0` |
+| (none) | same as `>=` | `1.2` | same as `>=1.2` | — |
+
+**Major compatibility lock:** `>=` with major > 0 restricts to the same major version (`>=1.2` won't match `2.0.0`). Empty constraint (no version specified) matches all versions. `>`, `<=`, `<` do not lock major — they allow cross-version range comparisons.
+
+**Selection:** From all versions satisfying the constraint, the highest is chosen. When multiple packages depend on the same package with different constraints, all constraints must be mutually satisfiable.
 
 ## Option & Conditional
 

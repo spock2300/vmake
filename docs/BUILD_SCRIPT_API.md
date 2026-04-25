@@ -497,6 +497,61 @@ type PostLinkStep struct {
 
 ### 语义版本 (`pkg/api/semver.go`)
 
+#### 版本格式
+
+```
+[v]MAJOR[.MINOR][.PATCH][-PRERELEASE]
+```
+
+| 示例 | 解析结果 |
+|------|---------|
+| `1.2.3` | `{1, 2, 3, ""}` |
+| `v2.0` | `{2, 0, 0, ""}` |
+| `1.0.0-rc.1` | `{1, 0, 0, "rc.1"}` |
+| `1.0.0-alpha.1` | `{1, 0, 0, "alpha.1"}` |
+
+`v` 前缀可选。MINOR 和 PATCH 缺省为 0。
+
+#### 约束运算符
+
+| 运算符 | 含义 | 示例 | 匹配 | 不匹配 |
+|--------|------|------|------|--------|
+| `>=` | 大于等于（**默认**），锁定 major | `>=1.2` | `1.2.0`, `1.9.9` | `2.0.0`, `1.1.0` |
+| `>` | 大于，不锁定 major | `>1.0.0` | `1.0.1`, `2.0.0` | `1.0.0` |
+| `<=` | 小于等于，不锁定 major | `<=2.0` | `1.9.0`, `2.0.0` | `2.0.1` |
+| `<` | 小于，不锁定 major | `<3.0` | `2.9.9` | `3.0.0` |
+| `=` | 精确匹配（含 pre-release） | `=1.2.3` | `1.2.3` | `1.2.4` |
+| `~` | 锁定 major.minor，patch >= | `~1.2.3` | `1.2.3`, `1.2.9` | `1.3.0`, `1.1.9` |
+| （无） | 等同 `>=` | `1.2` | 同 `>=1.2` | |
+
+#### Major 兼容性锁定
+
+`>=` 运算符当 major > 0 时自动锁定同一 major 版本范围，确保只在兼容范围内选择版本：
+
+- `>=1.2` → 只匹配 `1.x.x`（不匹配 `2.0.0`）
+- `>=2.0` → 只匹配 `2.x.x`（不匹配 `3.0.0`，也不匹配 `1.9.9`）
+- `>=0.0.0`（空约束）→ **不锁定**，匹配所有版本（包括 `1.x`, `2.x`）
+
+`>`, `<=`, `<` 运算符**不锁定** major——用于跨版本范围比较。
+
+#### Pre-release 规则
+
+- 有 pre-release 的版本**低于**同版本无 pre-release 的：`1.0.0-rc.1 < 1.0.0`
+- Pre-release 按点号分段逐段比较：
+  - 纯数字段按数值比较：`1.0.0-1 < 1.0.0-10`
+  - 字符串段按字典序比较：`1.0.0-alpha < 1.0.0-beta`
+  - **数字 < 字母**：`1.0.0-1 < 1.0.0-alpha`
+
+#### 版本选择算法
+
+1. 过滤满足**所有**约束的版本
+2. 按 semver 降序排序
+3. 返回**最高**的匹配版本
+
+多约束兼容性：两个约束互相满足即可。`>=1.0` 和 `>=2.0` 兼容（最终选 `>=2.0`），`>=2.0` 和 `<1.5` 不兼容。
+
+#### API
+
 ```go
 type Version struct {
     Major, Minor, Patch int
@@ -510,6 +565,7 @@ type Constraint struct {
 
 func ParseVersion(s string) (Version, bool)
 func (v Version) Compare(other Version) int
+func (v Version) String() string
 func ParseConstraint(s string) (Constraint, bool)
 func (c Constraint) Match(v Version) bool
 func MatchVersion(available []string, constraint string) (string, bool)

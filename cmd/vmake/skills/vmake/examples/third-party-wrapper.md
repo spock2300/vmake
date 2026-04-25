@@ -120,7 +120,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
         AddPreset("rk3568_defconfig").
         AddPreset("stm32_defconfig").
         SetDefault("sandbox_defconfig").
-        PatchKConfig(map[string]string{"CONFIG_FOO=y"})
+        PatchKConfig(map[string]string{"CONFIG_FOO": "y"})
 })
 
 p.OnBuild(func(ctx *api.BuildContext) {
