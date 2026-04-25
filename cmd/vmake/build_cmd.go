@@ -114,12 +114,7 @@ func writeManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 		if node.IsLocal() {
 			sourceDir := result.PkgDirs[name].SourceDir
 			relPath, _ := filepath.Rel(ctx.WorkDir, sourceDir)
-			gitDir := sourceDir
-			if node.Pkg != nil {
-				if srcDir := node.Pkg.SrcDir(); srcDir != "" {
-					gitDir = srcDir
-				}
-			}
+			gitDir := node.Pkg.SrcDir()
 			packages = append(packages, installManifestEntry{
 				Name:    name,
 				Version: gitDescribe(gitDir),
@@ -202,10 +197,7 @@ func runBuildPhase(ctx *RuntimeContext, includeTests bool) (*BuildResult, error)
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if needed[name] && node.Pkg != nil {
-			patchDir := pkgDirs[name].SourceDir
-			if srcDir := node.Pkg.SrcDir(); srcDir != "" {
-				patchDir = srcDir
-			}
+			patchDir := node.Pkg.SrcDir()
 			if err := applyPatches(node.Pkg, patchDir); err != nil {
 				return nil, fmt.Errorf("apply patches for %s: %w", name, err)
 			}
@@ -219,13 +211,7 @@ func runBuildPhase(ctx *RuntimeContext, includeTests bool) (*BuildResult, error)
 	allTargets, pkgMetaMap, subBuildKeys := executeAllOnBuild(ctx, needed, remote, pkgDirs, cfg, localPkgOptions, includeTests)
 
 	if includeTests {
-		for _, targets := range allTargets {
-			for _, t := range targets {
-				if t.IsTest() {
-					t.SetDefault(true)
-				}
-			}
-		}
+		enableTestDefaults(allTargets)
 	}
 
 	vlog.Info("")
@@ -427,23 +413,8 @@ func prepareAllPackages(ctx *RuntimeContext, cfg *buildConfig, needed map[string
 	}
 
 	depsDir := getDepsDir()
-	repoMgr := getRepoManager()
 
 	sourceMgr := repo.NewSourceManager(depsDir, getSourcesDir())
-	installer := repo.NewPackageInstaller(sourceMgr, depsDir)
-	installer.SetRepoManager(repoMgr)
-	installer.SetConfigs(remote.configs)
-	installer.SetToolchain(cfg.Tc)
-
-	for _, name := range ctx.Resolver.GetOrder() {
-		node := ctx.DepGraph.Packages[name]
-		if !needed[name] || node.IsLocal() {
-			continue
-		}
-		if node.Pkg != nil {
-			installer.SetPackage(name, node.Pkg)
-		}
-	}
 
 	vlog.Info("")
 	vlog.Info("Downloading package sources...")
@@ -726,13 +697,7 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 		}
 
 		if includeTests {
-			for _, targets := range subAllTargets {
-				for _, t := range targets {
-					if t.IsTest() {
-						t.SetDefault(true)
-					}
-				}
-			}
+			enableTestDefaults(subAllTargets)
 		}
 
 		if err := build.BuildSubGraph(rootPkg, subTc, subTcName, cfg.Mode, params, localPkgOptions); err != nil {
@@ -789,6 +754,16 @@ func autoWireRequireDeps(pkg *api.Package, allTargets map[string]map[string]*api
 				if !t.HasDep(depRef) {
 					t.AddDeps(depRef)
 				}
+			}
+		}
+	}
+}
+
+func enableTestDefaults(allTargets map[string]map[string]*api.Target) {
+	for _, targets := range allTargets {
+		for _, t := range targets {
+			if t.IsTest() {
+				t.SetDefault(true)
 			}
 		}
 	}

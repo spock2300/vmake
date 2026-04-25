@@ -98,8 +98,8 @@ type BuildContext struct {
 	*TargetRegistry
 	*InstallItemHolder
 	pkgBase
-	genConfigHeader  bool
-	genConfigDefines bool
+	genConfigHeader   bool
+	genConfigDefines  bool
 	buildSubGraphFunc func(pkgName string) error
 	depOutputFunc     func(depRef string) string
 	dryRun            bool

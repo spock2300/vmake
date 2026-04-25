@@ -123,32 +123,28 @@ func (r *Resolver) ResolveAll(localSources []buildscript.Source) error {
 }
 
 func (r *Resolver) ResolveDeferred() error {
-	maxIter := len(r.graph.Packages) + 1
-	for i := 0; i < maxIter; i++ {
+	for {
 		if err := r.UpdateOrder(); err != nil {
 			return err
 		}
-		hasDeferred := false
+		resolvedAny := false
 		for _, id := range r.graph.Order {
 			node := r.graph.Packages[id]
 			if node == nil || !node.Deferred {
 				continue
 			}
-			hasDeferred = true
+			resolvedAny = true
 			newNode, err := r.resolveDeferredNode(id, node)
 			if err != nil {
 				return err
 			}
 			r.graph.Packages[id] = newNode
 		}
-		if !hasDeferred {
+		if !resolvedAny {
 			break
 		}
 	}
-	if err := r.UpdateOrder(); err != nil {
-		return err
-	}
-	return nil
+	return r.UpdateOrder()
 }
 
 func (r *Resolver) resolveDeferredNode(id string, node *PackageNode) (*PackageNode, error) {
@@ -216,6 +212,8 @@ func (r *Resolver) resolveRecursive(id string, constraint string, path []string)
 		return nil, err
 	}
 
+	// Post-lookup: findNativeSource may have registered a deferred node for native packages
+	// (native repos must be cloned before build.go can be read for OnRequire).
 	if node, exists := r.graph.Packages[id]; exists {
 		if err := checkNodeConstraints(node, constraint); err != nil {
 			return nil, err
@@ -223,6 +221,7 @@ func (r *Resolver) resolveRecursive(id string, constraint string, path []string)
 		return node, nil
 	}
 
+	// Compile + load + recurse into OnRequire dependencies
 	node, err := r.resolvePackage(id, src, path, true)
 	if err != nil {
 		return nil, err
@@ -340,50 +339,17 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 	globalDir := filepath.Join(r.globalSourcesDir, repoName, pkgName)
 	localSrc := filepath.Join(r.depsDir, repoName, pkgName, "src")
 
-	lock, err := flock.Acquire(globalDir)
-	if err != nil {
-		return nil, fmt.Errorf("acquire lock for %s: %w", id, err)
-	}
-	defer lock.Release()
-
-	globalSrc := filepath.Join(globalDir, "src")
-	if err := fs.EnsureSymlink(localSrc, globalSrc); err != nil {
-		return nil, fmt.Errorf("create symlink for %s: %w", id, err)
-	}
-
-	repoDir := localSrc
-
-	if err := repo.EnsureRepoAtRef(gitURL, repoDir, ""); err != nil {
-		return nil, fmt.Errorf("clone %s: %w", gitURL, err)
-	}
-
-	tags, err := repo.ListTags(repoDir)
-	if err != nil {
-		return nil, fmt.Errorf("list tags for %s: %w", id, err)
-	}
-
-	versions := repo.FilterValidVersions(tags)
-	if len(versions) == 0 {
-		return nil, fmt.Errorf("no valid versions found for %s", id)
-	}
-
-	selectedVersion, selectedRef, err := repo.SelectNativeVersion(versions, constraint)
+	selectedVersion, selectedRef, versions, err := r.resolveNativeVersion(id, gitURL, globalDir, localSrc, constraint)
 	if err != nil {
 		return nil, err
 	}
 
 	vlog.Info("  %s@%s (ref: %s)", id, selectedVersion, selectedRef)
 
-	if err := repo.EnsureRepoAtRef(gitURL, repoDir, selectedRef); err != nil {
-		return nil, fmt.Errorf("checkout %s for %s: %w", selectedRef, id, err)
+	src, err := r.checkoutNativeSource(id, gitURL, localSrc, selectedRef)
+	if err != nil {
+		return nil, err
 	}
-
-	buildGo := filepath.Join(repoDir, "build.go")
-	if !fs.FileExists(buildGo) {
-		return nil, fmt.Errorf("build.go not found in %s", repoDir)
-	}
-
-	src := buildscript.NewSource(id, buildGo, repoDir, r.buildscriptOutputDir(id), api.SourceRemote, r.force)
 
 	node := NewPackageNode(id, src, nil, true).WithNative(gitURL, versions, selectedVersion)
 	if constraint != "" {
@@ -393,6 +359,56 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 	r.sources[id] = src
 
 	return src, nil
+}
+
+func (r *Resolver) resolveNativeVersion(id, gitURL, globalDir, localSrc, constraint string) (string, string, map[string]string, error) {
+	lock, err := flock.Acquire(globalDir)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("acquire lock for %s: %w", id, err)
+	}
+	defer lock.Release()
+
+	globalSrc := filepath.Join(globalDir, "src")
+	if err := fs.EnsureParentDir(localSrc); err != nil {
+		return "", "", nil, fmt.Errorf("create local dir for %s: %w", id, err)
+	}
+	if err := fs.EnsureSymlink(localSrc, globalSrc); err != nil {
+		return "", "", nil, fmt.Errorf("create symlink for %s: %w", id, err)
+	}
+
+	if err := repo.EnsureRepoAtRef(gitURL, localSrc, ""); err != nil {
+		return "", "", nil, fmt.Errorf("clone %s: %w", gitURL, err)
+	}
+
+	tags, err := repo.ListTags(localSrc)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("list tags for %s: %w", id, err)
+	}
+
+	versions := repo.FilterValidVersions(tags)
+	if len(versions) == 0 {
+		return "", "", nil, fmt.Errorf("no valid versions found for %s", id)
+	}
+
+	selectedVersion, selectedRef, err := repo.SelectNativeVersion(versions, constraint)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	return selectedVersion, selectedRef, versions, nil
+}
+
+func (r *Resolver) checkoutNativeSource(id, gitURL, repoDir, ref string) (*buildscript.Source, error) {
+	if err := repo.EnsureRepoAtRef(gitURL, repoDir, ref); err != nil {
+		return nil, fmt.Errorf("checkout %s for %s: %w", ref, id, err)
+	}
+
+	buildGo := filepath.Join(repoDir, "build.go")
+	if !fs.FileExists(buildGo) {
+		return nil, fmt.Errorf("build.go not found in %s", repoDir)
+	}
+
+	return buildscript.NewSource(id, buildGo, repoDir, r.buildscriptOutputDir(id), api.SourceRemote, r.force), nil
 }
 
 func (r *Resolver) scriptPath(src *buildscript.Source) string {
@@ -447,7 +463,6 @@ func checkNodeConstraints(node *PackageNode, incoming string) error {
 				node.ID, existing, incoming)
 		}
 	}
-	node.Constraints = append(node.Constraints, incoming)
 	return nil
 }
 

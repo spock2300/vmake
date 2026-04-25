@@ -190,7 +190,7 @@ func (s *Scheduler) Build(fullName string) error {
 
 	numFiles := len(resolved.SourceFiles)
 	if numFiles == 0 {
-		if err := s.link(resolved, nil); err != nil {
+		if err := s.realizeTarget(resolved, nil); err != nil {
 			return err
 		}
 		if err := s.postLink(resolved); err != nil {
@@ -232,7 +232,7 @@ func (s *Scheduler) Build(fullName string) error {
 		objs = append(objs, r.objPath)
 	}
 
-	if err := s.link(resolved, objs); err != nil {
+	if err := s.realizeTarget(resolved, objs); err != nil {
 		return err
 	}
 
@@ -279,7 +279,7 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 
 		if len(depNode.Target.PublicIncludes()) > 0 {
 			srcDir := depPkg.SourceDir
-			if dep := s.packages[depNode.PkgName]; dep != nil && dep.SrcDir() != "" {
+			if dep := s.packages[depNode.PkgName]; dep != nil && dep.SrcDirRaw() != "" {
 				srcDir = dep.SrcDir()
 			}
 			for _, pubInc := range depNode.Target.PublicIncludes() {
@@ -486,52 +486,11 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 		return nil
 	}
 
-	pkg := s.packages[resolved.Node.PkgName]
-	if pkg == nil {
-		pkgInfo := s.pkgs[resolved.Node.PkgName]
-		pkg = api.NewPackage()
-		buildDir := pkgInfo.BuildDir
-		if buildDir == "" {
-			buildDir = BuildPath(pkgInfo.SourceDir, pkgInfo.BuildKey, "")
-		}
-		pkg.SetDirs(api.PkgDirs{
-			SourceDir: pkgInfo.SourceDir,
-			BuildDir:  buildDir,
-		})
-		pkg.SetToolchain(s.toolchain)
-		pkg.SetSrcDir(pkgInfo.SourceDir)
-		cfgVals := map[string]any{api.ModeOptionName: s.mode}
-		if opts, ok := s.pkgOptions[resolved.Node.PkgName]; ok {
-			for k, v := range opts {
-				cfgVals[k] = v
-			}
-		}
-		pkg.SetCfgVals(cfgVals)
-		s.packages[resolved.Node.PkgName] = pkg
-	}
+	pkg := s.ensurePackageForVoid(resolved)
 	s.populateDepsFromGraph(pkg, resolved.Node)
 
-	if pkg.InstallDir() != "" {
-		if info, err := os.Stat(pkg.InstallDir()); err == nil && info.IsDir() {
-			entries, _ := os.ReadDir(pkg.InstallDir())
-			if len(entries) > 0 {
-				vlog.Info("  SKIP (already installed)")
-				return nil
-			}
-		}
-		if err := os.MkdirAll(pkg.InstallDir(), 0755); err != nil {
-			return fmt.Errorf("create install dir: %w", err)
-		}
-	} else if pkg.BuildDir() != "" {
-		stampPath := filepath.Join(pkg.BuildDir(), ".vmake_stamp")
-		srcDir := pkg.SrcDir()
-		if srcDir == "" {
-			srcDir = pkg.SourceDir()
-		}
-		if isStampUpToDate(stampPath, srcDir, pkg.ConfigFiles()) {
-			vlog.Info("  SKIP (already built)")
-			return nil
-		}
+	if s.isVoidUpToDate(pkg) {
+		return nil
 	}
 
 	if err := os.MkdirAll(pkg.BuildDir(), 0755); err != nil {
@@ -539,9 +498,6 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 	}
 
 	srcDir := pkg.SrcDir()
-	if srcDir == "" {
-		srcDir = pkg.SourceDir()
-	}
 	stamp := buildStampData(srcDir, pkg.ConfigFiles())
 
 	if err := fn(pkg); err != nil {
@@ -555,10 +511,66 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 	}
 
 	if pkg.InstallDir() == "" && pkg.BuildDir() != "" {
-		stampPath := filepath.Join(pkg.BuildDir(), ".vmake_stamp")
-		writeStamp(stampPath, stamp)
+		writeStamp(filepath.Join(pkg.BuildDir(), ".vmake_stamp"), stamp)
 	}
 
+	s.updateVoidLibDirs(resolved, pkg)
+	return nil
+}
+
+func (s *Scheduler) ensurePackageForVoid(resolved *ResolvedTarget) *api.Package {
+	pkg := s.packages[resolved.Node.PkgName]
+	if pkg != nil {
+		return pkg
+	}
+
+	pkgInfo := s.pkgs[resolved.Node.PkgName]
+	pkg = api.NewPackage()
+	buildDir := pkgInfo.BuildDir
+	if buildDir == "" {
+		buildDir = BuildPath(pkgInfo.SourceDir, pkgInfo.BuildKey, "")
+	}
+	pkg.SetDirs(api.PkgDirs{
+		SourceDir: pkgInfo.SourceDir,
+		BuildDir:  buildDir,
+	})
+	pkg.SetToolchain(s.toolchain)
+	pkg.SetSrcDir(pkgInfo.SourceDir)
+	cfgVals := map[string]any{api.ModeOptionName: s.mode}
+	if opts, ok := s.pkgOptions[resolved.Node.PkgName]; ok {
+		for k, v := range opts {
+			cfgVals[k] = v
+		}
+	}
+	pkg.SetCfgVals(cfgVals)
+	s.packages[resolved.Node.PkgName] = pkg
+	return pkg
+}
+
+func (s *Scheduler) isVoidUpToDate(pkg *api.Package) bool {
+	if pkg.InstallDir() != "" {
+		if info, err := os.Stat(pkg.InstallDir()); err == nil && info.IsDir() {
+			entries, _ := os.ReadDir(pkg.InstallDir())
+			if len(entries) > 0 {
+				vlog.Info("  SKIP (already installed)")
+				return true
+			}
+		}
+		if err := os.MkdirAll(pkg.InstallDir(), 0755); err == nil {
+			return false
+		}
+	} else if pkg.BuildDir() != "" {
+		stampPath := filepath.Join(pkg.BuildDir(), ".vmake_stamp")
+		srcDir := pkg.SrcDir()
+		if isStampUpToDate(stampPath, srcDir, pkg.ConfigFiles()) {
+			vlog.Info("  SKIP (already built)")
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Scheduler) updateVoidLibDirs(resolved *ResolvedTarget, pkg *api.Package) {
 	pkgName := resolved.Node.PkgName
 	for _, dep := range pkg.Deps() {
 		if dep.Name == pkgName {
@@ -570,10 +582,9 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 			dep.UpdateLibDir()
 		}
 	}
-	return nil
 }
 
-func (s *Scheduler) link(resolved *ResolvedTarget, objs []string) error {
+func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) error {
 	kind := resolved.Node.Target.Kind()
 
 	if !s.needRelink(resolved, objs) {
@@ -724,7 +735,7 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 	}
 
 	srcDir := pkgInfo.SourceDir
-	if pkg := s.packages[resolved.Node.PkgName]; pkg != nil && pkg.SrcDir() != "" {
+	if pkg := s.packages[resolved.Node.PkgName]; pkg != nil && pkg.SrcDirRaw() != "" {
 		srcDir = pkg.SrcDir()
 	}
 	return copyPublicIncludes(t, srcDir, includeDir)

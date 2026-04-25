@@ -408,20 +408,19 @@ func (p *Package) DryRun() bool { return p.dryRun }
 func (p *Package) SetGenConfigHeader(v bool) *Package { p.genConfigHdr = v; return p }
 func (p *Package) GenConfigHeader() bool              { return p.genConfigHdr }
 
-func (p *Package) ScriptDir() string    { return p.scriptDir }
-func (p *Package) SrcDir() string       { return p.srcCodeDir }
-func (p *Package) SourceDir() string    { return p.dirs.SourceDir }
-func (p *Package) BuildDir() string     { return p.dirs.BuildDir }
-func (p *Package) InstallDir() string   { return p.dirs.InstallDir }
-func (p *Package) OutputDir() string    { return p.outputDir }
-func (p *Package) GetPatches() []string { return p.patches }
-
-func (p *Package) effectiveSrcDir() string {
+func (p *Package) ScriptDir() string { return p.scriptDir }
+func (p *Package) SrcDir() string {
 	if p.srcCodeDir != "" {
 		return p.srcCodeDir
 	}
 	return p.dirs.SourceDir
 }
+func (p *Package) SrcDirRaw() string    { return p.srcCodeDir }
+func (p *Package) SourceDir() string    { return p.dirs.SourceDir }
+func (p *Package) BuildDir() string     { return p.dirs.BuildDir }
+func (p *Package) InstallDir() string   { return p.dirs.InstallDir }
+func (p *Package) OutputDir() string    { return p.outputDir }
+func (p *Package) GetPatches() []string { return p.patches }
 
 func (p *Package) CC() string          { return p.tc.Tools.CC }
 func (p *Package) CXX() string         { return p.tc.Tools.CXX }
@@ -449,7 +448,7 @@ func (p *Package) cmakeBuildType() string {
 
 func (p *Package) CMakeConfigure(extraArgs ...string) error {
 	args := []string{
-		"-S", p.effectiveSrcDir(),
+		"-S", p.SrcDir(),
 		"-B", p.dirs.BuildDir,
 		"-DCMAKE_INSTALL_PREFIX=" + p.dirs.InstallDir,
 	}
@@ -486,7 +485,7 @@ func (p *Package) Configure(extraArgs ...string) error {
 		args = append(args, "--host="+p.CrossTarget())
 	}
 	args = append(args, extraArgs...)
-	return p.RunEnv(p.Env(), filepath.Join(p.effectiveSrcDir(), "configure"), args...)
+	return p.RunEnv(p.Env(), filepath.Join(p.SrcDir(), "configure"), args...)
 }
 
 func (p *Package) Make(args ...string) error {

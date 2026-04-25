@@ -4,42 +4,16 @@ import (
 	"path/filepath"
 
 	"gitee.com/spock2300/vmake/internal/fs"
-	"gitee.com/spock2300/vmake/pkg/api"
-	"gitee.com/spock2300/vmake/pkg/config"
-	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
 
 type PackageInstaller struct {
-	sourceMgr *SourceManager
-	depsDir   string
-	pkgs      map[string]*api.Package
-	repoMgr   *RepoManager
-	configs   map[string]*config.EntryConfig
-	tc        *toolchain.Toolchain
+	depsDir string
 }
 
-func NewPackageInstaller(sourceMgr *SourceManager, depsDir string) *PackageInstaller {
+func NewPackageInstaller(depsDir string) *PackageInstaller {
 	return &PackageInstaller{
-		sourceMgr: sourceMgr,
-		depsDir:   depsDir,
-		pkgs:      make(map[string]*api.Package),
+		depsDir: depsDir,
 	}
-}
-
-func (i *PackageInstaller) SetRepoManager(mgr *RepoManager) {
-	i.repoMgr = mgr
-}
-
-func (i *PackageInstaller) SetConfigs(configs map[string]*config.EntryConfig) {
-	i.configs = configs
-}
-
-func (i *PackageInstaller) SetToolchain(tc *toolchain.Toolchain) {
-	i.tc = tc
-}
-
-func (i *PackageInstaller) SetPackage(name string, pkg *api.Package) {
-	i.pkgs[name] = pkg
 }
 
 func (i *PackageInstaller) CleanBuild(name string) error {

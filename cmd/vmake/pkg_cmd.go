@@ -133,7 +133,7 @@ var pkgCleanCmd = &cobra.Command{
 		pkgRef := args[0]
 		repoName, pkgName := mustSplitPkgRef(pkgRef)
 
-		installer := repo.NewPackageInstaller(nil, getDepsDir())
+		installer := repo.NewPackageInstaller(getDepsDir())
 
 		fatalErr(installer.CleanBuild(pkgRef))
 		fmt.Printf("Cleaned cache for '%s'\n", pkgRef)
