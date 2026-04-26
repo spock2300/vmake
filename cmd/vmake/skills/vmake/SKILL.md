@@ -239,7 +239,7 @@ ctx.Target("app").
     SetPrebuilt("/path/to/libfoo.a")
 ```
 
-`AddPublicIncludes` implies `AddIncludes` — directories set via `AddPublicIncludes` are automatically available to the target itself and propagated to all dependents. There is no need to duplicate them with `AddIncludes`.
+`AddPublicIncludes` implies `AddIncludes` — directories set via `AddPublicIncludes` are automatically available to the target itself and propagated to all dependents. There is no need to duplicate them with `AddIncludes`. Use `@"pattern"` as the last argument to filter propagated files: `AddPublicIncludes(".", "@*.h")` only propagates headers matching `*.h`.
 
 `AddFiles` accepts glob patterns and can be called with multiple globs to collect sources from different directories:
 
@@ -321,7 +321,7 @@ After all `OnBuild` callbacks execute, vmake runs `autoWireRequireDeps`. For eac
 Explicit `AddDeps` IS needed for:
 - Same-package target deps: `AddDeps("mylib")`
 - Specific cross-package target: `AddDeps("lib:utils")`
-- Third-party packages: both `AddRequires` (Phase 1) and `AddDeps` (Phase 3) needed
+- Selective dep on a third-party package: `AddDeps("official/zlib:target")` to link against a specific target rather than all targets from that package
 
 ### Dependency Format
 

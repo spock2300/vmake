@@ -66,6 +66,9 @@ Import: `gitee.com/spock2300/vmake/pkg/api`
 | `SetPatches` | `(paths ...string)` | Set git patches |
 | `SetConfigFiles` | `(files ...string)` | Config files for stamp invalidation |
 | `SetSrcDir` | `(dir string)` | Source code directory |
+| `SetScriptDir` | `(dir string)` | Build script directory |
+| `SetCfgVals` | `(vals map[string]any)` | Set config values |
+| `SetGenConfigHeader` | `(v bool)` | Enable generated config header |
 | `SetDryRun` | `(v bool)` | Dry run mode |
 
 ### Targets & Dependencies
@@ -111,7 +114,6 @@ All build helpers use `exec.RunFatal` (call `os.Exit` on failure) EXCEPT `RunEnv
 | `OutputDir()` | `string` | Output directory |
 | `ScriptDir()` | `string` | Build script directory (same as SourceDir) |
 | `Env()` | `map[string]string` | Toolchain env vars (CC, CXX, AR, etc.) |
-| `Libs()` | `[]string` | Library deps |
 | `Deps()` | `map[string]*InstalledPackage` | Resolved dependencies |
 | `GetRequires()` | `*Requires` | Package requires |
 | `GitURLs()` | `[]string` | Git repository URLs |
@@ -120,6 +122,7 @@ All build helpers use `exec.RunFatal` (call `os.Exit` on failure) EXCEPT `RunEnv
 | `License()` | `string` | License identifier |
 | `Versions()` | `map[string]string` | Version to ref mapping |
 | `GetVersions()` | `[]string` | Available version list (unsorted) |
+| `GenConfigHeader()` | `bool` | Generated config header enabled |
 | `GetRef` | `(version string) string` | Git ref for a version |
 | `SelectVersion` | `(constraint string) (string, error)` | Best version match |
 | `SelectVersionMulti` | `(constraints []string) (string, error)` | Best version matching multiple constraints |
