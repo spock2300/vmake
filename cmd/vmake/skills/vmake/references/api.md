@@ -170,6 +170,7 @@ All setters are fluent (return `*Target`).
 | `AddCxxFlags` | `(flags ...any)` | C++ compiler flags |
 | `AddLdFlags` | `(flags ...any)` | Linker flags |
 | `SetBuildFunc` | `(fn func(p *Package) error)` | Custom build logic (for third-party packages) |
+| `SetPrebuilt` | `(path string)` | Pre-compiled artifact — skip compilation, symlink to output path |
 | `SetInstallDir` | `(dir string)` | Install directory |
 | `SetInstall` | `(install bool)` | Control install |
 | `SetLinkerScript` | `(path string)` | Linker script (passes `-T` to linker; fatal on double-set) |
@@ -209,6 +210,7 @@ All setters are fluent (return `*Target`).
 | `InstallDir()` | `string` |
 | `NoInstall()` | `bool` |
 | `BuildFunc()` | `func(p *Package) error` |
+| `Prebuilt()` | `string` |
 | `LinkerScript()` | `string` |
 | `UseDepLinkerScript()` | `bool` |
 | `PostLinkSteps()` | `[]PostLinkStep` |

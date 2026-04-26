@@ -40,6 +40,7 @@ include the ones your project needs:
 - **Multi-module workspace (lib/ + app/ directories)** → See `examples/multi-module.md`.
 - **Third-party packages** → `OnRequire` + `AddRequires` + `AddDeps`. See `examples/with-package.md`.
 - **Wrap external C/C++ library (CMake/Autotools)** → `TargetVoid` + `SetBuildFunc`. See `examples/third-party-wrapper.md`.
+- **Pre-compiled libraries (.a/.so)** → `SetPrebuilt`. See `examples/prebuilt.md`.
 - **Code generation / host tools** → `BuildSubGraph` + `DepOutput` + `Exec`. See `examples/subbuild.md`.
 - **Embedded / RTOS firmware (linker script, hex/bin)** → See `examples/embedded-rtos.md`.
 - **Embedded firmware (KConfig/partitions)** → `EnsureConfig` + `PatchKConfig` + `DepBuildDir`. See `examples/firmware.md`.
@@ -200,7 +201,8 @@ ctx.Target("app").
     AddLinks("ssl", "crypto").
     AddDeps("lib:utils").
     SetDefault(false).
-    SetBuildFunc(func(p *api.Package) error { ... })
+    SetBuildFunc(func(p *api.Package) error { ... }).
+    SetPrebuilt("/path/to/libfoo.a")
 ```
 
 `AddPublicIncludes` implies `AddIncludes` — directories set via `AddPublicIncludes` are automatically available to the target itself and propagated to all dependents. There is no need to duplicate them with `AddIncludes`.
@@ -214,6 +216,32 @@ AddFiles("src/common/*.c", "src/network/*.c", "src/stun/*.c")
 Remove flags: `RemoveCFlags`, `RemoveDefines`, `RemoveIncludes`, etc. Use `RemoveFiles("src/test_*.c")` to exclude files matched by `AddFiles` globs — it filters glob results at build time using pattern matching.
 
 Third-party packages with external build systems use `TargetVoid` with `SetBuildFunc`.
+
+## Prebuilt Libraries
+
+Use `SetPrebuilt(path)` on `TargetStatic`, `TargetShared`, or `TargetBinary` to export a pre-compiled artifact without any compilation. The scheduler creates a **symlink** from the expected output path to the prebuilt file — no copy, zero disk overhead.
+
+```go
+ctx.Target("drv").
+    SetKind(api.TargetStatic).
+    SetPrebuilt(filepath.Join(p.SourceDir(), "lib", "libdrv.a")).
+    AddPublicIncludes("include")
+```
+
+Downstream packages link against it automatically through normal dependency resolution (`AddDeps`). Combine with `AddPublicIncludes` for headers and `SetProvidedLinkerScript` for linker scripts.
+
+- Works with `TargetStatic` (.a), `TargetShared` (.so), `TargetBinary`
+- No source compilation — scheduler skips compile phase entirely
+- Incremental: compares symlink target, recreates only if path changed
+- `SetLibs` on Package declares additional system library dependencies (e.g., `p.SetLibs("drv", "m", "pthread")` propagates `-lm -lpthread` to consumers)
+- Multiple prebuilt libraries: define one target per `.a`/`.so` file
+
+```go
+ctx.Target("ssl").SetKind(api.TargetStatic).
+    SetPrebuilt(filepath.Join(p.SourceDir(), "lib", "libssl.a"))
+ctx.Target("crypto").SetKind(api.TargetStatic).
+    SetPrebuilt(filepath.Join(p.SourceDir(), "lib", "libcrypto.a"))
+```
 
 ## Test Targets
 

@@ -105,6 +105,9 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 ### Double-Set Protection
 `SetLinkerScript` and `SetProvidedLinkerScript` call `vlog.Fatal` on second invocation — cannot silently overwrite. Consistent with the "No Fallbacks" principle.
 
+### Prebuilt Targets (`SetPrebuilt`)
+`Target.SetPrebuilt(path)` marks a `TargetStatic`/`TargetShared`/`TargetBinary` as pre-compiled. The scheduler skips compilation and creates a symlink from the expected output path to the prebuilt file. Up-to-date check compares symlink target via `os.Readlink`. Source file existence is verified before symlink creation.
+
 ### Option OnApply Callback
 `Option.SetOnApply(fn)` registers a callback invoked after all options are resolved. Used to react to option values (e.g., set global ldflags based on a config choice). Callbacks run during config phase, after option values are finalized.
 

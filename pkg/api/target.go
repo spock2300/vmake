@@ -32,6 +32,7 @@ type Target struct {
 	installDir         string
 	noInstall          bool
 	buildFunc          func(p *Package) error
+	prebuilt           string
 	linkerScript       string
 	useDepLinkerScript bool
 	postLinks          []PostLinkStep
@@ -155,6 +156,18 @@ func (t *Target) SetBuildFunc(fn func(p *Package) error) *Target {
 
 func (t *Target) BuildFunc() func(p *Package) error {
 	return t.buildFunc
+}
+
+func (t *Target) SetPrebuilt(path string) *Target {
+	if t.prebuilt != "" {
+		vlog.Fatal("SetPrebuilt: prebuilt already set to %s", t.prebuilt)
+	}
+	t.prebuilt = path
+	return t
+}
+
+func (t *Target) Prebuilt() string {
+	return t.prebuilt
 }
 
 func (t *Target) SetLinkerScript(path string) *Target {

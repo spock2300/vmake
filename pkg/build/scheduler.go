@@ -189,7 +189,7 @@ func (s *Scheduler) Build(fullName string) error {
 	}
 
 	numFiles := len(resolved.SourceFiles)
-	if numFiles == 0 {
+	if numFiles == 0 || node.Target.Prebuilt() != "" {
 		if err := s.realizeTarget(resolved, nil); err != nil {
 			return err
 		}
@@ -477,6 +477,33 @@ func (s *Scheduler) needRelink(resolved *ResolvedTarget, objs []string) bool {
 	return false
 }
 
+func (s *Scheduler) realizePrebuilt(resolved *ResolvedTarget) error {
+	src := resolved.Node.Target.Prebuilt()
+	dst := resolved.OutputPath
+
+	if _, err := os.Stat(src); err != nil {
+		return fmt.Errorf("prebuilt file not found: %s: %w", src, err)
+	}
+
+	absSrc, err := filepath.Abs(src)
+	if err != nil {
+		return fmt.Errorf("resolve prebuilt path: %w", err)
+	}
+
+	if link, err := os.Readlink(dst); err == nil && link == absSrc {
+		return nil
+	}
+
+	vlog.Info("  PREBUILT %s", filepath.Base(dst))
+
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return fmt.Errorf("create output dir for prebuilt: %w", err)
+	}
+
+	os.Remove(dst)
+	return os.Symlink(absSrc, dst)
+}
+
 func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 	fn := resolved.Node.Target.BuildFunc()
 	if fn == nil {
@@ -584,11 +611,15 @@ func (s *Scheduler) updateVoidLibDirs(resolved *ResolvedTarget, pkg *api.Package
 func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) error {
 	kind := resolved.Node.Target.Kind()
 
-	if !s.needRelink(resolved, objs) {
+	if resolved.Node.Target.Prebuilt() == "" && !s.needRelink(resolved, objs) {
 		return nil
 	}
 
 	outputName := filepath.Base(resolved.OutputPath)
+
+	if resolved.Node.Target.Prebuilt() != "" {
+		return s.realizePrebuilt(resolved)
+	}
 
 	allObjs := collectAllObjects(objs, resolved.DepArtifacts)
 
