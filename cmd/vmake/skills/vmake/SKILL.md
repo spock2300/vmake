@@ -29,7 +29,7 @@ include the ones your project needs:
 | 3 | `OnBuild` | Always — define compilation targets |
 | 4 | `OnInstall` | Custom install logic |
 
-`OnPackage` runs for all packages right after `Main()` is called (before any lifecycle phases). Use it to describe the package (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` is only for **registry repo** packages — native repo and local packages must NOT use these.
+`OnPackage` runs for all packages right after `Main()` is called (before any lifecycle phases). Use it to describe the package (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` downloads remote source to `SourceDir()/src/` — works for both registry packages and local packages that need to wrap a downloaded library.
 
 ## Decision Guide
 
@@ -98,9 +98,39 @@ AddCFlags(ctx.If("debug", "-g", "-O0"))      // compile error
 
 `filepath.Join("/a/b", "/a/b/c")` returns `/a/b/a/b/c`, NOT `/a/b/c`. The second absolute path wins and the first becomes a segment. Use string concatenation or trim leading `/` for logical path components.
 
-### `SetGit`/`AddVersion` is registry-only
+### `SetGit`/`AddVersion` — works for local packages too
 
-Local packages and native repo packages must NOT use `SetGit`/`AddVersion` in `OnPackage`. Only registry repo wrapper packages use these.
+`SetGit`/`AddVersion` in `OnPackage` is the primary mechanism for registry packages, but it also works for local packages that need to download and compile a remote library (e.g., FreeRTOS, mbedtls). When a local package uses `SetGit`, source is downloaded to `SourceDir()/src/` and `SrcDir()` returns that path, just like registry packages. This is the easiest way to wrap a third-party C library that doesn't need a full registry setup.
+
+### Path resolution for packages using `SetGit`
+
+When a package uses `SetGit`, `SourceDir()` and `SrcDir()` differ: `SourceDir()` is where `build.go` lives, `SrcDir()` = `SourceDir()/src/` is the downloaded source. This causes non-obvious path resolution behavior in `OnBuild`:
+
+- **`AddFiles`** paths resolve from `SourceDir()`. Use `"src/tasks.c"`, NOT `"tasks.c"`. Single filenames without glob characters (`*`, `?`) may silently match nothing — always use the `src/` prefix.
+- **`AddIncludes`** paths resolve from `SourceDir()`. Use `"src/include"` to reach downloaded headers.
+- **`AddPublicIncludes`** paths propagate to dependents resolved from `SrcDir()`. Use `"include"` (resolves to `SrcDir()/include/` = `SourceDir()/src/include/`). Since `AddPublicIncludes` implies `AddIncludes`, the target itself also gets these paths resolved from `SrcDir()`.
+- **Relative parent paths** (`"../include"`) in `AddPublicIncludes` produce incorrect doubled paths (e.g., `/path/src/src/include`). Avoid them — place config headers inside `SrcDir()/include/` instead.
+- **Absolute paths** in `AddFiles`/`AddPublicIncludes` get `SrcDir()` prepended, creating wrong paths like `/src/home/user/project/src/file`. Always use relative paths.
+
+```go
+// Correct pattern for a local package wrapping a SetGit download:
+p.OnPackage(func(p *api.Package) {
+    p.SetGit("https://github.com/FreeRTOS/FreeRTOS-Kernel.git")
+    p.AddVersion("11.3.0", "V11.3.0")
+})
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.Target("freertos").SetKind(api.TargetStatic).
+        AddFiles(
+            "src/tasks.c",          // SourceDir()-relative
+            "src/portable/GCC/ARM_CM4F/port.c",
+        ).
+        AddPublicIncludes(
+            "include",              // SrcDir()-relative for propagation
+            "src/include",          // SourceDir()-relative for self-compilation
+            "src/portable/GCC/ARM_CM4F",
+        )
+})
+```
 
 ### `pkg.Run()` calls `os.Exit` on failure
 
@@ -180,7 +210,7 @@ BuildDir path differs by package origin:
 - **Local packages**: `<SourceDir>/build/<key>/`
 - **Remote packages**: `vmake_deps/<repo>/<pkg>/out/<key>/build/`
 
-Key distinction: for a registry package like U-Boot, `SourceDir()` is where `build.go` lives, but the actual U-Boot source is at `SrcDir()` (= `SourceDir()/src/`). For a local package without `SetGit`, `SourceDir()` == `SrcDir()` (the fallback). Use `SrcDirRaw()` to check whether `SetSrcDir` was explicitly called (returns empty string if not).
+Key distinction: for any package using `SetGit` (registry or local), `SourceDir()` is where `build.go` lives, but the actual downloaded source is at `SrcDir()` (= `SourceDir()/src/`). For a local package without `SetGit`, `SourceDir()` == `SrcDir()` (the fallback). Use `SrcDirRaw()` to check whether `SetSrcDir` was explicitly called (returns empty string if not).
 
 Within `SetBuildFunc`, built-in helpers (`CMakeConfigure`, `CMakeBuild`, `CMakeInstall`) automatically use the correct directories. If you need to read or patch source files manually, use `SrcDir()` to locate the downloaded source tree.
 
@@ -215,7 +245,7 @@ vmake locates the project root by walking upward from cwd to find `.vmake/` or `
 
 | Type | How identified | `OnPackage` metadata | Source code location |
 |------|---------------|---------------------|---------------------|
-| **Local** | build.go in project directory | `SetDescription`, `SetLicense` only | `SourceDir()` (same as build.go) |
+| **Local** | build.go in project directory | `SetDescription`, `SetLicense`, or `SetGit`/`AddVersion` for remote source | `SourceDir()` (same as build.go), or `SrcDir()` = `SourceDir()/src/` if `SetGit` used |
 | **Registry** | `vmake repo add name url` | `SetGit`, `AddVersion` required | `SrcDir()` (downloaded to `SourceDir()/src/`) |
 | **Native** | `vmake repo add --native name url` | No `SetGit`/`AddVersion` — version from git tag | `SrcDir()` (downloaded to `SourceDir()/src/`) |
 
@@ -406,26 +436,60 @@ ctx.Option("chip").SetType(api.OptionChoice).SetValues("stm32f4", "esp32").
 
 ## RTOS / Embedded
 
+### Simple chip package (no compilation, linker script only)
+
 ```go
-// chip/build.go — provides linker script
+// chip/build.go — provides linker script, no compiled output
 p.OnConfig(func(ctx *api.ConfigContext) {
     ctx.SetProvidedLinkerScript("linker/sim.ld")
 })
 p.OnBuild(func(ctx *api.BuildContext) {
     ctx.Target("chip").SetKind(api.TargetVoid)
 })
-
-// firmware/build.go — consumes linker script from dependency
-ctx.Target("firmware").
-    SetKind(api.TargetBinary).
-    AddFiles("src/*.c").
-    AddDeps("chip:chip").
-    UseDependencyLinkerScript().
-    AddBinHeader("assets/logo.bin").
-    AddPostLinkSize().
-    AddPostLinkHex().
-    AddPostLinkBin()
 ```
+
+### Full HAL package with global flags (realistic firmware)
+
+For real embedded projects, the chip/HAL package compiles startup code as a static library and sets global compiler/linker flags via `AddGlobalCFlags`/`AddGlobalLdFlags` in `SetOnApply`. This ensures all packages (chip, RTOS, firmware) build with the same target-specific flags.
+
+```go
+// chip/build.go — HAL layer: startup code, global flags, linker script
+p.OnConfig(func(ctx *api.ConfigContext) {
+    ctx.Option("mcu").SetType(api.OptionChoice).
+        SetDefault("stm32f405").
+        SetValues("stm32f405").
+        SetOnApply(func(ctx *api.ConfigContext, val string) {
+            ctx.AddGlobalCFlags("-mcpu=cortex-m4", "-mthumb",
+                "-ffreestanding", "-mfpu=fpv4-sp-d16", "-mfloat-abi=hard",
+                "-DSTM32F405RG")
+            ctx.AddGlobalLdFlags("-nostartfiles", "-specs=nosys.specs",
+                "-mcpu=cortex-m4", "-mthumb",
+                "-mfpu=fpv4-sp-d16", "-mfloat-abi=hard",
+                "-Wl,--gc-sections", "-Wl,--print-memory-usage")
+        })
+    ctx.SetProvidedLinkerScript("linker/stm32f405.ld")
+})
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.Target("chip").SetKind(api.TargetStatic).AddFiles("src/*.S")
+})
+
+// firmware/build.go — application, consumes linker script
+p.OnRequire(func(ctx *api.RequireContext) {
+    ctx.AddRequires("chip")
+})
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.Target("firmware").SetKind(api.TargetBinary).
+        AddFiles("src/*.c").
+        AddDeps("chip:chip").
+        UseDependencyLinkerScript().
+        AddPostLinkSize().AddPostLinkHex().AddPostLinkBin()
+})
+```
+
+Key points for embedded firmware:
+- **FPU flags in both CFLAGS and LDFLAGS**: When using hardware FPU (e.g., ARM_CM4F FreeRTOS port), `-mfloat-abi=hard -mfpu=fpv4-sp-d16` must appear in both `AddGlobalCFlags` and `AddGlobalLdFlags`, otherwise the linker reports "VFP register arguments" mismatches with libc.
+- **`-nostdlib` vs `-specs=nosys.specs`**: Do NOT use `-nostdlib` in LdFlags if the code needs `memset`/`memcpy` from libc (FreeRTOS does). Use `-specs=nosys.specs` instead, which provides stubs for `exit`, `write`, etc. while keeping libc available.
+- **VTOR**: If using an RTOS that reads VTOR (e.g., FreeRTOS `prvPortStartFirstTask`), set SCB_VTOR in Reset_Handler (`ldr r0, =0xE000ED08; ldr r1, =_vector_table; str r1, [r0]`).
 
 - `SetProvidedLinkerScript(path)` — chip/bsp package declares linker script for consumers (on `ConfigContext`; fatal on double-set)
 - `UseDependencyLinkerScript()` — firmware target auto-inherits `-T` from first dependency that provides one
@@ -518,5 +582,6 @@ Verbosity: `-v` verbose, `-V` very-verbose, `-q` quiet
 - Use `filepath.Join()` for filesystem paths
 - Package IDs use `/`: `official/zlib`
 - Target IDs use `:`: `lib:utils`
-- `OnPackage` with `SetGit`/`AddVersion` is ONLY for registry repo packages
+- `OnPackage` with `SetGit`/`AddVersion` works for both registry packages and local packages wrapping remote libraries
 - `SetLanguages()` exists but has no effect — language is auto-detected from file extension
+- For packages using `SetGit`, `AddFiles` paths resolve from `SourceDir()` — always prefix with `"src/"`
