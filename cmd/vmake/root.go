@@ -233,6 +233,15 @@ func runRequirePhase(ctx *RuntimeContext, force bool) error {
 
 func collectOptions(name, dir string, pkg *api.Package) map[string]*api.Option {
 	cfgCtx := api.NewConfigContextWithPackage(name, pkg)
+	cfgCtx.SetGlobalCFlagsFunc(func(flags ...string) {
+		toolchain.GetManager().AddGlobalCFlags(flags...)
+	})
+	cfgCtx.SetGlobalCxxFlagsFunc(func(flags ...string) {
+		toolchain.GetManager().AddGlobalCxxFlags(flags...)
+	})
+	cfgCtx.SetGlobalLdFlagsFunc(func(flags ...string) {
+		toolchain.GetManager().AddGlobalLdFlags(flags...)
+	})
 	pkg.ExecConfigFuncs(dir, func(fn api.ConfigFunc) { fn(cfgCtx) })
 	return cfgCtx.GetOptions()
 }
