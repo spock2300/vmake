@@ -301,7 +301,7 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 		}
 
 		if len(depNode.Target.PublicIncludes()) > 0 {
-			srcDir := s.effectiveSourceDir(depNode.PkgName)
+			srcDir := s.pkgs[depNode.PkgName].SourceDir
 			for _, pubInc := range depNode.Target.PublicIncludes() {
 				result.includes = append(result.includes, filepath.Join(srcDir, pubInc))
 			}
