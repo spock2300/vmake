@@ -548,7 +548,7 @@ func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.Pack
 			t.AddDefines(args...)
 		}
 	}
-	if buildCtx.ExportConfig() && node.Pkg != nil {
+	if buildCtx.ExportEnabled() && node.Pkg != nil {
 		node.Pkg.SetExportConfig(true)
 	}
 	if imports := buildCtx.ImportConfigs(); len(imports) > 0 && node.Pkg != nil {

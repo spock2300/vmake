@@ -258,11 +258,14 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `DepOutput(depRef) string` | Get output path of dependency target |
 | `DepBuildDir(depRef) string` | Get build directory of dependency target |
 | `Exec(name, args...)` | Run command with logging (os.Exit on failure) |
-| `GenerateConfigHeader()` | Generate `generated/autoconf.h` from config options, add `generated/` to includes |
-| `GenerateConfigDefines()` | Add `-DCONFIG_*` defines from config options to all targets |
-| `ExportConfig()` | Declare package config as importable by downstream packages |
-| `ImportConfig(names...)` | Import config defines from named dependency packages |
+| `GenerateConfigHeader()` | Set `genConfigHeader = true`; propagated to `Package.SetGenConfigHeader(true)` — generates `autoconf.h` during scheduler build |
+| `GenerateConfigDefines()` | Set `genConfigDefines = true`; on processing, reads `ImportConfigs()`, merges local + imported options, adds `-DCONFIG_*` defines to all targets |
+| `ExportConfig()` | Set `exportConfig = true`; propagated to `Package.SetExportConfig(true)` |
+| `ImportConfig(names...)` | Append package names to `importConfigs` list (merge + `-D` injection happens inside `GenerateConfigDefines` processing) |
 | `SyncConfigDefines(names...)` | Shorthand for `GenerateConfigDefines` + `ImportConfig` (for parent/orchestrator packages) |
+| `GenConfigDefines() bool` | Whether `genConfigDefines` was set |
+| `GenConfigHeader() bool` | Whether `genConfigHeader` was set |
+| `ExportEnabled() bool` | Whether `exportConfig` was set |
 | `SetDryRun(v bool) *BuildContext` | Set dry run mode |
 | `GetInstallItems() []InstallItem` | All install items |
 | `GetInstallFilter() InstallFilterFunc` | Install file filter |

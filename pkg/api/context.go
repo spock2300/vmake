@@ -206,17 +206,17 @@ func (ctx *BuildContext) DepBuildDir(depRef string) string {
 	return filepath.Dir(ctx.DepOutput(depRef))
 }
 
-func (ctx *BuildContext) SetGenConfigHeader() *BuildContext {
+func (ctx *BuildContext) GenerateConfigHeader() *BuildContext {
 	ctx.genConfigHeader = true
 	return ctx
 }
 
-func (ctx *BuildContext) SetGenConfigDefines() *BuildContext {
+func (ctx *BuildContext) GenerateConfigDefines() *BuildContext {
 	ctx.genConfigDefines = true
 	return ctx
 }
 
-func (ctx *BuildContext) SetExportConfig() *BuildContext {
+func (ctx *BuildContext) ExportConfig() *BuildContext {
 	ctx.exportConfig = true
 	return ctx
 }
@@ -232,10 +232,10 @@ func (ctx *BuildContext) SyncConfigDefines(pkgNames ...string) *BuildContext {
 	return ctx
 }
 
-func (ctx *BuildContext) GenConfigHeader() bool  { return ctx.genConfigHeader }
-func (ctx *BuildContext) GenConfigDefines() bool { return ctx.genConfigDefines }
-func (ctx *BuildContext) ExportConfig() bool     { return ctx.exportConfig }
-func (ctx *BuildContext) ImportConfigs() []string    { return ctx.importConfigs }
+func (ctx *BuildContext) GenConfigHeader() bool     { return ctx.genConfigHeader }
+func (ctx *BuildContext) GenConfigDefines() bool    { return ctx.genConfigDefines }
+func (ctx *BuildContext) ExportEnabled() bool       { return ctx.exportConfig }
+func (ctx *BuildContext) ImportConfigs() []string   { return ctx.importConfigs }
 
 func (ctx *BuildContext) Exec(name string, args ...string) {
 	if ctx.dryRun {

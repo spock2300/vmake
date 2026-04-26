@@ -331,6 +331,9 @@ func (ctx *BuildContext) DepBuildDir(depRef string) string
 // 配置导出
 func (ctx *BuildContext) GenerateConfigHeader() *BuildContext
 func (ctx *BuildContext) GenerateConfigDefines() *BuildContext
+func (ctx *BuildContext) ExportConfig() *BuildContext
+func (ctx *BuildContext) ImportConfig(pkgNames ...string) *BuildContext
+func (ctx *BuildContext) SyncConfigDefines(pkgNames ...string) *BuildContext
 
 // 其他
 func (ctx *BuildContext) PackageName() string
@@ -940,8 +943,8 @@ printf("size=%d\n", CONFIG_BUFFER_SIZE);
 
 | API | 调用者 | 作用 |
 |-----|--------|------|
-| `ExportConfig()` | 被依赖方 | 声明本包的配置可被下游导入 |
-| `ImportConfig(names...)` | 依赖方 | 从指定包导入配置 defines 到本包所有目标 |
+| `ExportConfig()` | 被依赖方 | 设置 `exportConfig = true` 标志，传给 Package.SetExportConfig(true) |
+| `ImportConfig(names...)` | 依赖方 | 向 `importConfigs` 追加包名；实际的配置合并和 `-D` 注入在 `GenerateConfigDefines` 的处理块中完成 |
 | `SyncConfigDefines(names...)` | 父包（编排者） | 等价于 `GenerateConfigDefines` + `ImportConfig`，一次性同步多个子包 |
 
 示例——芯片包导出配置，驱动包导入，根包统一同步：

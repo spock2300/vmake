@@ -15,7 +15,7 @@ func Main(p *api.Package) {
 	})
 
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.SetGenConfigDefines()
+		ctx.GenerateConfigDefines()
 		ctx.ImportConfig("chip")
 
 		ctx.Target("app").SetKind(api.TargetBinary).SetDefault(true).

@@ -106,10 +106,11 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 `SetLinkerScript` and `SetProvidedLinkerScript` call `vlog.Fatal` on second invocation — cannot silently overwrite. Consistent with the "No Fallbacks" principle.
 
 ### Config Cross-Package Propagation
-- `GenerateConfigDefines()` only generates defines from the current package's own options
-- `ExportConfig()` marks a package's config as importable (declarative, no side effects)
-- `ImportConfig(names...)` merges imported packages' options into `-D` defines for all targets
-- `SyncConfigDefines(names...)` = `GenerateConfigDefines` + `ImportConfig` (convenience for parent packages)
+- `GenerateConfigDefines()` sets `genConfigDefines = true` on BuildContext; during build processing, reads `ImportConfigs()`, calls `MergeImportedOptions` to merge local + imported options, then calls `ConfigToDefines` and `AddDefines` on all targets
+- `ExportConfig()` sets `exportConfig = true` on BuildContext; propagated to `Package.SetExportConfig(true)` in `build_cmd.go:551-552`
+- `ImportConfig(names...)` appends package names to `importConfigs []string` on BuildContext; the actual merge and `-D` injection happens inside the `GenerateConfigDefines` processing block (`build_cmd.go:533-549`)
+- `SyncConfigDefines(names...)` = `GenerateConfigDefines` + `ImportConfig` (convenience for orchestrator packages)
+- `GenerateConfigHeader()` sets `genConfigHeader = true` on BuildContext; propagated to `Package.SetGenConfigHeader(true)` — generates `autoconf.h` from merged config options when called by scheduler
 - Merged options: local options take priority over imported (no overwrite on name collision)
 - `autoconf.h` does NOT propagate across packages — only `-D` defines do
 - **Public headers must not `#include "autoconf.h"`** — it's package-local only

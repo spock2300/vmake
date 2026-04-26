@@ -177,6 +177,9 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 - `DepBuildDir(depRef)` — 获取依赖构建目录
 - `GenerateConfigHeader()` — 启用配置头文件自动生成
 - `GenerateConfigDefines()` — 启用配置宏定义自动生成
+- `ExportConfig()` — 设置配置导出标志
+- `ImportConfig(names...)` — 注册可导入的包名
+- `SyncConfigDefines(names...)` — 快捷方式：`GenerateConfigDefines` + `ImportConfig`
 - `SetDryRun(v bool)` — 设置为 dry-run 模式（安装阶段使用）
 
 **BuildPipeline**（`pkg/build/pipeline.go`）：
