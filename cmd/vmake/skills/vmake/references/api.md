@@ -373,6 +373,7 @@ Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()
 	type InstallItem struct { Src string; Dest string }
 	type RequireInfo struct { Name string; Constraint string }
 	type PostLinkStep struct { Tool string; Args []string }
+	func (s PostLinkStep) OutputPaths(outputPath string) []string
 
 	type SourceOrigin int
 	const (

@@ -202,6 +202,7 @@ func (p *Package) DryRun() bool
 func (p *Package) GetRef(version string) string              // 根据 version 名获取 git ref
 func (p *Package) GetVersions() []string                     // 获取所有可用版本（未排序）
 func (p *Package) SelectVersion(constraint string) (string, error)  // 根据约束选择最佳匹配版本
+func (p *Package) SelectVersionMulti(constraints []string) (string, error)  // 根据多约束选择最佳匹配版本
 ```
 
 ## ConfigAccessor（条件表达式与值读取）
@@ -224,7 +225,7 @@ func (a *ConfigAccessor) When(option string, value any) bool
 
 // 选项管理
 func (a *ConfigAccessor) Option(name string) *Option
-func (a *ConfigAccessor) SetOptions(options map[string]*Option)
+func (a *ConfigAccessor) SetOptions(options map[string]*Option) *ConfigAccessor
 func (a *ConfigAccessor) MergeGlobals(globalOptions map[string]*Option, globalVals map[string]any)
 ```
 
@@ -253,6 +254,7 @@ func (ctx *ConfigContext) PackageName() string
 func (ctx *ConfigContext) SetConfigValue(name string, val any) *ConfigContext
 func (ctx *ConfigContext) GetOptions() map[string]*Option
 func (ctx *ConfigContext) Toolchains() []string
+func (ctx *ConfigContext) ToolchainOption() *Option      // 创建工具链选择选项（自动填充可用工具链）
 
 // 全局编译/链接标志（仅在 OnApply 回调中有效）
 func (ctx *ConfigContext) AddGlobalCFlags(flags ...string)
@@ -391,6 +393,7 @@ func (t *Target) AddLdFlags(flags ...any) *Target
 
 // 第三方包构建
 func (t *Target) SetBuildFunc(fn func(p *Package) error) *Target
+func (t *Target) SetPrebuilt(path string) *Target          // 预编译目标，跳过编译直接 symlink 到输出路径
 
 // RTOS/嵌入式
 func (t *Target) SetLinkerScript(path string) *Target    // 传递 -T 给链接器（重复调用 vlog.Fatal）
@@ -439,6 +442,7 @@ func (t *Target) LdFlags() []string
 func (t *Target) InstallDir() string
 func (t *Target) NoInstall() bool
 func (t *Target) BuildFunc() func(*Package) error
+func (t *Target) Prebuilt() string
 func (t *Target) LinkerScript() string
 func (t *Target) UseDepLinkerScript() bool
 func (t *Target) PostLinkSteps() []PostLinkStep
@@ -475,6 +479,24 @@ func (ctx *RequireContext) RunFuncs()
 ## 关键类型
 
 ```go
+// 回调类型别名
+type RequireFunc func(ctx *RequireContext)
+type ConfigFunc func(ctx *ConfigContext)
+type BuildFunc func(ctx *BuildContext)
+type InstallFunc func(ctx *InstallContext)
+type PackageFunc func(p *Package)
+
+// 结构体
+type PkgDirs struct {
+    SourceDir, BuildDir, InstallDir string
+}
+
+type PackageMeta struct {
+    Repo string
+    Name string
+}
+func (m PackageMeta) FullName() string
+
 type TargetKind string
 const (
     TargetBinary TargetKind = "binary"
@@ -524,6 +546,15 @@ type PostLinkStep struct {
     Tool string
     Args []string
 }
+func (s PostLinkStep) OutputPaths(outputPath string) []string  // 从 post-link 步骤中解析 {output} 占位符生成的文件路径
+
+type GenRuleKind string
+const GenRuleBinHeader GenRuleKind = "binheader"
+
+type GenRule struct { ... }
+func (r *GenRule) Kind() GenRuleKind
+func (r *GenRule) Input() string
+func (r *GenRule) OutputStem() string
 ```
 
 ### 语义版本 (`pkg/api/semver.go`)

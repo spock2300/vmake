@@ -355,6 +355,8 @@ ctx.AddRequires("test_build/mathlib")    // no constraint = any version
 
 **Selection:** From all versions satisfying the constraint, the highest is chosen. When multiple packages depend on the same package with different constraints, all constraints must be mutually satisfiable.
 
+**Multi-constraint selection:** Use `Package.SelectVersionMulti(constraints []string)` in `OnPackage`/`SetBuildFunc` to match against multiple constraints: `p.SelectVersionMulti([]string{">=1.0", "<2.0"})` finds the highest version satisfying all constraints simultaneously.
+
 ## Option & Conditional
 
 ```go
