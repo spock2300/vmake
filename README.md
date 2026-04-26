@@ -186,8 +186,8 @@ ctx.Target(name string) *Target
 ### 扩展能力
 
 - **CLI 命令扩展**：通过 `AddSubCommand` 添加自定义子命令
-- **工具链管理**：注册自定义工具链，支持通过 `manifest.json` + Git LFS 实现首次使用自动下载
-- **全局编译标志**：通过 `AddGlobalFlags` 向所有构建注入 C/CXX 选项
+- **工具链管理**：注册自定义工具链，支持通过 `toolchain.json` + `tc` 插件实现首次使用自动下载（Git LFS 或 HTTP）
+- **全局编译/链接标志**：通过 `AddGlobalFlags` 和 `AddGlobalLdFlags` 向所有构建注入 C/CXX/链接选项
 
 ### 使用流程
 

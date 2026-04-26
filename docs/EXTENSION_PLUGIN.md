@@ -53,24 +53,22 @@ vmake 在启动时自动发现并编译插件。首次运行编译后重启 vmak
 ```
 ~/.vmake/extensions/
 └── <repo-name>/
-    ├── <plugin-a>/
-    │   ├── plugin.json       # 插件 A 元信息
-    │   ├── src/
-    │   │   └── main.go       # 入口文件
-    │   └── plugin.so         # 编译产物（自动生成，可删除重建）
-    ├── <plugin-b>/
-    │   ├── plugin.json       # 插件 B 元信息
-    │   └── src/
-    │       └── main.go
-    └── assets/               # 可选：仓库共享资源
-        └── toolchains/
-            ├── manifest.json # 工具链声明
-            └── *.tar.gz      # 工具链压缩包（Git LFS）
+    ├── <plugin-a>/              # 插件 A
+    │   ├── plugin.json
+    │   ├── src/main.go
+    │   └── plugin.so            # 编译产物（自动生成）
+    ├── <plugin-b>/              # 插件 B
+    │   ├── plugin.json
+    │   └── src/main.go
+    ├── <toolchain-name>/        # 工具链声明
+    │   └── toolchain.json
+    └── assets/toolchains/       # 工具链压缩包（Git LFS）
+        └── *.tar.gz
 ```
 
-每个扩展仓库是一个 Git 仓库。仓库根目录下的每个子目录（含 `plugin.json`）是一个独立的插件。一个仓库可以包含任意数量的插件，vmake 启动时自动发现并加载所有插件。
+每个扩展仓库是一个 Git 仓库。仓库根目录下的每个子目录可以是一个插件（含 `plugin.json`）或一个工具链声明（含 `toolchain.json`）。一个仓库可以包含任意数量的插件和工具链，vmake 启动时自动发现并加载所有插件。
 
-示例：一个仓库 `embedded-tools` 包含烧录和监控两个插件：
+示例：一个仓库 `embedded-tools` 包含烧录和监控两个插件，以及一个 arm-gcc 工具链声明：
 
 ```
 ~/.vmake/extensions/embedded-tools/
@@ -80,11 +78,14 @@ vmake 在启动时自动发现并编译插件。首次运行编译后重启 vmak
 ├── monitor/
 │   ├── plugin.json           # name: "monitor"
 │   └── src/main.go
+├── arm-gcc-12.2/
+│   └── toolchain.json
 └── assets/
-    └── toolchains/manifest.json
+    └── toolchains/
+        └── arm-gcc-12.2.0.tar.gz
 ```
 
-对应的 CLI 命令为 `vmake flash ...` 和 `vmake monitor ...`。
+对应的 CLI 命令为 `vmake flash ...` 和 `vmake monitor ...`。工具链通过 `tc` 插件自动发现注册。
 
 ## plugin.json
 
@@ -120,6 +121,7 @@ vmake 在启动时自动发现并编译插件。首次运行编译后重启 vmak
 |------|------|------|
 | `VMakeDir` | `string` | `~/.vmake` 目录的绝对路径 |
 | `PluginDir` | `string` | 当前插件目录的绝对路径 |
+| `RepoDir` | `string` | 当前插件所在仓库目录的绝对路径 |
 | `CommandName` | `string` | 当前插件的命令名（即 `plugin.json` 中的 `name`） |
 
 ### AddSubCommand
@@ -189,19 +191,14 @@ for name, tc := range ctx.GetToolchains() {
 ### SetOnMissing
 
 ```go
-SetOnMissing func(onMissing func(name string) (*toolchain.Toolchain, error))
+SetOnMissing func(toolchainName string, onMissing func(name string) (*toolchain.Toolchain, error))
 ```
 
-设置工具链缺失回调。当用户请求一个未注册的工具链名称时，vmake 调用此回调。典型用途是实现工具链自动下载。
+设置工具链缺失回调。第一个参数是工具链名称，用于区分不同工具链的缺失回调，支持每个工具链独立的下载逻辑。
 
 ```go
-ctx.SetOnMissing(func(name string) (*toolchain.Toolchain, error) {
-    if name == "aarch64-linux-gnu" {
-        fmt.Println("Auto-downloading aarch64 toolchain...")
-        // 下载、解压、注册...
-        return &toolchain.Toolchain{...}, nil
-    }
-    return nil, fmt.Errorf("unknown toolchain: %s", name)
+ctx.SetOnMissing("arm-gcc", func(name string) (*toolchain.Toolchain, error) {
+    // 下载 arm-gcc 工具链...
 })
 ```
 
@@ -220,6 +217,18 @@ ctx.AddGlobalFlags(
 )
 ```
 
+### AddGlobalLdFlags
+
+```go
+AddGlobalLdFlags func(flags ...string)
+```
+
+为所有构建目标注入全局链接选项。影响所有使用 vmake 构建的项目。
+
+```go
+ctx.AddGlobalLdFlags("-Wl,--gc-sections", "-Wl,--as-needed")
+```
+
 ### DownloadFile
 
 ```go
@@ -235,18 +244,19 @@ err := ctx.DownloadFile(
 )
 ```
 
-### ExtractArchive
+### ExtractToDir
 
 ```go
-ExtractArchive func(archive, dest string) error
+ExtractToDir func(archive, dest, format string) error
 ```
 
-解压 `.tar.gz` 归档到目标目录。自动创建目标目录。
+解压归档文件到目标目录。支持格式：`tar.gz`、`tar.xz`、`tar.bz2`、`zip`。`format` 为空时根据文件扩展名自动检测。
 
 ```go
-err := ctx.ExtractArchive(
+err := ctx.ExtractToDir(
     filepath.Join(ctx.VMakeDir, "cache", "esp-idf.tar.gz"),
-    filepath.Join(ctx.VMakeDir, "toolchains", "esp-idf"),
+    filepath.Join(ctx.VMakeDir, "toolchains"),
+    "tar.gz",
 )
 ```
 
@@ -262,6 +272,30 @@ RunGitLFS func(repoDir string, args ...string) error
 err := ctx.RunGitLFS(pluginDir, "pull", "--include", "assets/toolchains/aarch64-gcc.tar.gz")
 ```
 
+### RegisterToolchainsFromRepo
+
+```go
+RegisterToolchainsFromRepo func()
+```
+
+扫描插件仓库中子目录的 `toolchain.json` 文件，注册声明的工具链并为含 `install` 配置的工具链设置自动下载回调。通常由 `tc` 插件在 `Main` 中调用。
+
+```go
+ctx.RegisterToolchainsFromRepo()
+```
+
+### LoadToolchainDef
+
+```go
+LoadToolchainDef func() (*toolchain.ToolchainDef, error)
+```
+
+从插件目录加载 `toolchain.json` 文件，返回 `ToolchainDef`。
+
+```go
+def, err := ctx.LoadToolchainDef()
+```
+
 ## 工具链类型
 
 ### toolchain.Toolchain
@@ -269,7 +303,7 @@ err := ctx.RunGitLFS(pluginDir, "pull", "--include", "assets/toolchains/aarch64-
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `Name` | `string` | 工具链标识符（如 `"aarch64-linux-gnu"`） |
-| `DisplayName` | `string` | 可读名称（如 `"aarch64-linux-gnu 13.2.0"`），`vmake toolchain list` 显示 |
+| `DisplayName` | `string` | 可读名称（如 `"ARM GCC 12.2.0"`），`vmake toolchain list` 显示 |
 | `Host` | `string` | 宿主平台三元组（如 `"x86_64-linux-gnu"`） |
 | `Prefix` | `string` | 交叉编译前缀（如 `"aarch64-linux-gnu"`），设为 `""` 表示无前缀 |
 | `Tools` | `Tools` | 各工具的可执行文件名 |
@@ -322,61 +356,71 @@ err := ctx.RunGitLFS(pluginDir, "pull", "--include", "assets/toolchains/aarch64-
 
 ## 工具链资源
 
-扩展可随仓库提供预编译工具链，通过 `assets/toolchains/manifest.json` 声明。
+扩展可随仓库提供预编译工具链，通过 `toolchain.json` 声明。
 
-### manifest.json 格式
+### toolchain.json 格式
 
 ```json
 {
-  "toolchains": [
-    {
-      "name": "aarch64-linux-gnu",
-      "version": "13.2.0",
-      "host": "x86_64-linux-gnu",
-      "prefix": "aarch64-linux-gnu",
-      "file": "aarch64-linux-gnu-13.2.0.tar.gz",
-      "tools": {
-        "cc": "aarch64-linux-gnu-gcc",
-        "cxx": "aarch64-linux-gnu-g++",
-        "ar": "aarch64-linux-gnu-ar",
-        "ld": "aarch64-linux-gnu-ld",
-        "strip": "aarch64-linux-gnu-strip",
-        "ranlib": "aarch64-linux-gnu-ranlib",
-        "objcopy": "aarch64-linux-gnu-objcopy",
-        "size": "aarch64-linux-gnu-size",
-        "objdump": "aarch64-linux-gnu-objdump",
-        "nm": "aarch64-linux-gnu-nm"
-      },
-      "default_flags": {
-        "cflags": ["-O2"],
-        "cxxflags": ["-O2"],
-        "ldflags": []
-      }
-    }
-  ]
+  "name": "arm-gcc",
+  "version": "12.2.0",
+  "display_name": "ARM GCC 12.2.0",
+  "host": "arm-linux-gnueabihf",
+  "prefix": "arm-linux-gnueabihf",
+  "tools": {
+    "cc": "arm-linux-gnueabihf-gcc",
+    "cxx": "arm-linux-gnueabihf-g++",
+    "ar": "arm-linux-gnueabihf-ar",
+    "ld": "arm-linux-gnueabihf-ld",
+    "strip": "arm-linux-gnueabihf-strip"
+  },
+  "default_flags": {
+    "cflags": ["-mcpu=cortex-a7", "-mfpu=neon-vfpv4", "-mfloat-abi=hard"],
+    "cxxflags": ["-mcpu=cortex-a7", "-mfpu=neon-vfpv4", "-mfloat-abi=hard"],
+    "ldflags": ["-mcpu=cortex-a7", "-mfpu=neon-vfpv4", "-mfloat-abi=hard"]
+  },
+  "install": {
+    "method": "lfs",
+    "file": "arm-gcc-12.2.0.tar.gz",
+    "format": "tar.gz"
+  }
 }
 ```
 
-| 字段 | 说明 |
-|------|------|
-| `name` | 工具链标识符，用于 `--toolchain <name>` |
-| `version` | 版本号 |
-| `host` | 运行工具链的宿主平台 |
-| `prefix` | 交叉编译前缀，工具链 bin 目录下的可执行文件此前缀命名 |
-| `file` | `assets/toolchains/` 下的压缩包文件名 |
-| `tools` | 各工具的可执行文件名（同 `toolchain.Tools`） |
-| `default_flags` | 默认编译/链接选项（同 `toolchain.DefaultFlags`） |
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `name` | string | 是 | 工具链标识符，用于 `--toolchain <name>` |
+| `version` | string | 是 | 版本号 |
+| `display_name` | string | 否 | 可读名称，默认同 `name` |
+| `host` | string | 是 | 宿主平台三元组 |
+| `prefix` | string | 是 | 交叉编译前缀，为空表示无前缀（native） |
+| `tools` | object | 是 | 各工具的可执行文件名（同 `toolchain.Tools`，`cc` 和 `cxx` 必填） |
+| `default_flags` | object | 否 | 默认编译/链接选项（`cflags`/`cxxflags`/`ldflags`） |
+| `install` | object | 否 | 自动下载配置，不配置则需手动安装 |
+
+**install 对象字段**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `method` | string | 是 | 下载方法：`"lfs"`（Git LFS）或 `"http"` |
+| `file` | string | 是 | 压缩包文件名（放在扩展仓库 `assets/toolchains/` 下） |
+| `url` | string | 否 | HTTP 下载URL（method 为 http 时必填） |
+| `format` | string | 否 | 压缩格式（`tar.gz`/`tar.xz`/`tar.bz2`/`zip`），为空时自动检测 |
+| `sha256` | string | 否 | SHA256 校验和，可选 |
 
 ### 自动下载机制
 
-1. vmake 启动时扫描所有扩展仓库的 `assets/toolchains/manifest.json`
-2. 将声明的工具链注册到管理器
-3. 当用户首次请求某个工具链时，自动触发下载：
-   - 通过 Git LFS 拉取压缩包
-   - 解压到 `~/.vmake/toolchains/<name>-<version>/`
-   - 注册工具链供后续使用
+工具链自动下载通过 `tc` 插件 + `RegisterToolchainsFromRepo()` 实现：
 
-压缩包应通过 Git LFS 存储，以避免克隆扩展仓库时下载大文件。
+1. `tc` 插件的 `Main` 函数调用 `ctx.RegisterToolchainsFromRepo()`
+2. 该方法使用 `ScanRepoToolchains()` 扫描扩展仓库根目录下的所有子目录，查找 `toolchain.json`
+3. 对每个包含 `install` 字段的工具链，调用 `SetOnMissing` 注册按需下载回调
+4. 当用户通过 `--toolchain <name>` 或在 `build.go` 选择未安装的工具链时：
+   - `method: "lfs"` → 执行 `git lfs pull` 拉取压缩包 → 解压到 `~/.vmake/toolchains/<name>-<version>/`
+   - `method: "http"` → 从 `url` 下载压缩包 → 解压到 `~/.vmake/toolchains/<name>-<version>/`
+5. 下载完成后自动注册工具链，后续可直接使用
+
+压缩包应通过 Git LFS 存储，避免克隆扩展仓库时下载大文件。
 
 ## 实战示例
 
@@ -435,7 +479,7 @@ func Main(ctx *plugin.Context) {
     registerToolchains(ctx)
 
     // 设置自动下载回调
-    ctx.SetOnMissing(func(name string) (*toolchain.Toolchain, error) {
+    ctx.SetOnMissing("arm-none-eabi", func(name string) (*toolchain.Toolchain, error) {
         return downloadToolchain(ctx, name)
     })
 
@@ -494,7 +538,7 @@ func downloadToolchain(ctx *plugin.Context, name string) (*toolchain.Toolchain, 
     }
 
     // 解压
-    if err := ctx.ExtractArchive(archivePath, toolchainsDir); err != nil {
+    if err := ctx.ExtractToDir(archivePath, toolchainsDir, ""); err != nil {
         return nil, fmt.Errorf("extract failed: %w", err)
     }
 
@@ -504,18 +548,24 @@ func downloadToolchain(ctx *plugin.Context, name string) (*toolchain.Toolchain, 
 }
 ```
 
-### 示例 3：通过 manifest.json 提供工具链资源
+### 示例 3：仅提供工具链资源（无插件）
 
-如果扩展仓库不包含插件代码，仅提供工具链资源，只需放置 `assets/toolchains/manifest.json` 和对应的 `.tar.gz`（通过 Git LFS），vmake 会自动识别并注册。
+如果扩展仓库不包含插件代码，仅提供工具链资源，只需在仓库根目录下创建以工具链命名的子目录，每个子目录包含一个 `toolchain.json`。
 
 目录结构：
 
 ```
 my-toolchains/
+├── arm-gcc-12.2/
+│   └── toolchain.json
+├── riscv-gcc-13.1/
+│   └── toolchain.json
 └── assets/
     └── toolchains/
-        ├── manifest.json
-        └── aarch64-linux-gnu-13.2.0.tar.gz   (Git LFS)
+        ├── arm-gcc-12.2.0.tar.gz      (Git LFS)
+        └── riscv-gcc-13.1.0.tar.gz    (Git LFS)
 ```
 
-manifest.json 声明工具链名称、版本和工具路径后，vmake 在启动时自动注册。用户首次使用时自动下载解压。
+通过 `vmake ext add` 添加该仓库后，使用 `tc` 插件即可自动发现并注册工具链。
+
+如需手动注册，可在自建插件中调用 `ctx.RegisterToolchainsFromRepo()`。

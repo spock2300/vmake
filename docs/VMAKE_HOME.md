@@ -11,9 +11,10 @@
 │       ├── <plugin-name>/         # 插件目录
 │       │   ├── plugin.json        # 插件元信息
 │       │   └── src/main.go        # 插件源码
-│       └── assets/toolchains/     # 工具链资源（可选）
-│           ├── manifest.json      # 工具链清单
-│           └── *.tar.gz           # 工具链压缩包（Git LFS）
+│       ├── <toolchain-name>/      # 工具链声明
+│       │   └── toolchain.json     # 工具链定义
+│       └── assets/toolchains/     # 工具链压缩包（可选，Git LFS）
+│           └── *.tar.gz           # 工具链二进制包
 ├── toolchains/                    # 已安装的交叉编译工具链
 │   └── <name>-<version>/          # 工具链安装目录
 └── repos/                         # 包仓库索引（git clone）
@@ -40,12 +41,13 @@ CLI：`vmake repo add|remove|list|update`
 
 ```
 extensions/<repo-name>/
-├── <plugin-name>/
+├── <plugin-name/>
 │   ├── plugin.json              # 插件元信息
 │   └── src/main.go              # 插件入口
+├── <toolchain-name/>
+│   └── toolchain.json           # 工具链定义
 └── assets/
     └── toolchains/
-        ├── manifest.json        # 工具链清单
         └── *.tar.gz             # 工具链压缩包（Git LFS）
 ```
 
@@ -79,9 +81,9 @@ toolchains/<name>-<version>/
 └── <sysroot>/
 ```
 
-工具链由 `manifest.json` 声明，首次使用时自动下载。
+工具链由 `toolchain.json` 声明，通过 `tc` 插件或 `RegisterToolchainsFromRepo()` 注册，首次使用时自动下载。
 
-源码：`cmd/vmake/ext_cmd.go` (`loadAllToolchainManifests`)
+源码：`pkg/toolchain/manifest.go` (`ScanRepoToolchains`)
 
 ## 项目本地目录（vmake_deps/）
 

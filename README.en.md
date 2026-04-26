@@ -182,8 +182,8 @@ Extension plugins extend vmake's CLI commands and toolchain management through G
 ### Capabilities
 
 - **CLI Command Extension**: Add custom subcommands via `AddSubCommand`
-- **Toolchain Management**: Register custom toolchains with auto-download on first use via `manifest.json` + Git LFS
-- **Global Build Flags**: Inject C/CXX flags into all builds via `AddGlobalFlags`
+- **Toolchain Management**: Register custom toolchains with auto-download on first use via `toolchain.json` + `tc` plugin (Git LFS or HTTP)
+- **Global Build/Link Flags**: Inject C/CXX/linker flags into all builds via `AddGlobalFlags` and `AddGlobalLdFlags`
 
 ### Usage Flow
 
