@@ -131,6 +131,40 @@ SetBuildFunc(func(p *api.Package) error {
 
 This pattern is useful for libraries that use header-based configuration (mbedtls 2.x, some RTOS SDKs) where CMake options don't cover all config flags.
 
+### `ctx.Select()` returns `""` during discoverAll — guard before passing to global flags
+
+vmake runs an internal `discoverAll` phase before the real build to discover all targets. During this phase, `ctx.Select()` returns `""` regardless of the option value. If you pass this empty string to `AddGlobalCFlags` or `AddGlobalLdFlags` inside a `SetOnApply` callback, the empty string persists in the Manager singleton (dedup won't catch it on the real build pass because `""` ≠ `"-O2"`). GCC then interprets the empty string as a filename during compilation, producing errors like:
+
+```
+arm-none-eabi-gcc: warning: : linker input file unused because linking not done
+arm-none-eabi-gcc: error: : linker input file not found: No such file or directory
+```
+
+**Fix:** guard option-dependent values before passing to global flag APIs. Global flags should only be set inside `SetOnApply` callbacks (on `ConfigContext`), not in `OnBuild`:
+
+```go
+ctx.Option("optimization").SetType(api.OptionChoice).
+    SetDefault("O2").
+    SetValues("O0", "O1", "O2", "O3", "Os").
+    SetOnApply(func(ctx *api.ConfigContext, val string) {
+        optFlag := ctx.Select("optimization", map[string]string{
+            "O0": "-O0", "O1": "-O1", "O2": "-O2", "O3": "-O3", "Os": "-Os",
+        })
+
+        globalCFlags := []string{
+            "-Wall", "-Wchar-subscripts", "-Wformat",
+            "-std=c99", "-fno-builtin",
+            "-fdata-sections", "-ffunction-sections",
+        }
+        if optFlag != "" {
+            globalCFlags = append(globalCFlags, optFlag)
+        }
+        ctx.AddGlobalCFlags(globalCFlags...)
+    })
+```
+
+This only affects `AddGlobalCFlags/LdFlags` — per-target `AddCFlags` does not have this problem because per-target flags don't persist across discoverAll/build phases via a singleton.
+
 ## Directory Reference
 
 | Property | What it returns | When to use |
@@ -352,7 +386,21 @@ ctx.Option("trace").SetType(api.OptionBool).SetDefault(false).
 ```
 
 - `SetOnApply(fn)` — callback invoked after all option values are resolved, receives `*ConfigContext` and the option's string value; used to react to options (e.g., set global flags, choose linker script based on chip)
-- `AddGlobalCFlags/CxxFlags/LdFlags` — only effective inside `SetOnApply` callbacks
+
+### Global Flags
+
+`AddGlobalCFlags/CxxFlags/LdFlags` are only available on `ConfigContext`, effective inside `SetOnApply` callbacks.
+
+Global flags apply to ALL targets in ALL packages. They are deduplicated ("appends if not already present"). During compilation, global C/C++ flags are prepended before per-target flags. During linking, global LD flags are appended after per-target flags.
+
+```go
+ctx.Option("chip").SetType(api.OptionChoice).SetValues("stm32f4", "esp32").
+    SetOnApply(func(ctx *api.ConfigContext, val string) {
+        ctx.AddGlobalCFlags("-Wall", "-ffunction-sections", "-fdata-sections")
+        ctx.AddGlobalLdFlags("-Wl,--gc-sections")
+        ctx.SetProvidedLinkerScript("linker/" + val + ".ld")
+    })
+```
 
 ## RTOS / Embedded
 
@@ -377,7 +425,7 @@ ctx.Target("firmware").
     AddPostLinkBin()
 ```
 
-- `SetProvidedLinkerScript(path)` — chip/bsp package declares linker script for consumers (on `ConfigContext`/`BuildContext`; fatal on double-set)
+- `SetProvidedLinkerScript(path)` — chip/bsp package declares linker script for consumers (on `ConfigContext`; fatal on double-set)
 - `UseDependencyLinkerScript()` — firmware target auto-inherits `-T` from first dependency that provides one
 - `SetLinkerScript(path)` — direct linker script on target (fatal on double-set; use when no dependency pattern needed)
 - `AddPostLink(tool, args...)` — generic post-link step, `{output}` placeholder

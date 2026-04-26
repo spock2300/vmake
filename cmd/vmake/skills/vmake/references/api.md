@@ -255,10 +255,6 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `DepOutput(depRef) string` | Get output path of dependency target |
 | `DepBuildDir(depRef) string` | Get build directory of dependency target |
 | `Exec(name, args...)` | Run command with logging (os.Exit on failure) |
-| `SetProvidedLinkerScript(path) *BuildContext` | Declare linker script for consumers |
-| `AddGlobalCFlags(flags...)` | Add global C flags (OnApply only) |
-| `AddGlobalCxxFlags(flags...)` | Add global C++ flags (OnApply only) |
-| `AddGlobalLdFlags(flags...)` | Add global linker flags (OnApply only) |
 | `GenerateConfigHeader()` | Generate `generated/autoconf.h` from config options, add `generated/` to includes |
 | `GenerateConfigDefines()` | Add `-DCONFIG_*` defines from config options to all targets |
 | `SetDryRun(v bool) *BuildContext` | Set dry run mode |

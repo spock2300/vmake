@@ -112,7 +112,7 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 `Option.SetOnApply(fn)` registers a callback invoked after all options are resolved. Used to react to option values (e.g., set global ldflags based on a config choice). Callbacks run during config phase, after option values are finalized.
 
 ### Dependency Linker Script
-A package declares `ctx.SetProvidedLinkerScript("path/to/script.ld")` in `OnConfig`/`OnBuild`. A consumer target calls `.UseDependencyLinkerScript()` — at link time, the scheduler resolves the first dependency that provides a linker script and passes `-T` to the linker. `SetProvidedLinkerScript` may only be called once per package (vlog.Fatal on double-set).
+A package declares `ctx.SetProvidedLinkerScript("path/to/script.ld")` in `OnConfig`. A consumer target calls `.UseDependencyLinkerScript()` — at link time, the scheduler resolves the first dependency that provides a linker script and passes `-T` to the linker. `SetProvidedLinkerScript` may only be called once per package (vlog.Fatal on double-set).
 
 ### Auto-Wire Require → Build Deps
 `OnRequire`/`AddRequires` alone does NOT create build graph edges. `Target.AddDeps("pkg:target")` is required for topology. However, `autoWireRequireDeps()` in `build_cmd.go` auto-wires them when a package has `AddRequires` calls but its targets lack explicit `AddDeps` — it links all of the dependency package's targets as deps.
@@ -220,6 +220,7 @@ Methods on `BuildContext`:
 - `ctx.BuildSubGraph(pkgName)` — build a sub-package as independent sub-graph
 - `ctx.DepOutput(depRef)` — get dependency target output file path
 - `ctx.DepBuildDir(depRef)` — get dependency build directory
+Methods on `ConfigContext`:
 - `ctx.AddGlobalCFlags(flags...)` — add global C compiler flags (only effective in OnApply callbacks)
 - `ctx.AddGlobalCxxFlags(flags...)` — add global C++ compiler flags (only effective in OnApply callbacks)
 - `ctx.AddGlobalLdFlags(flags...)` — add global linker flags (only effective in OnApply callbacks)

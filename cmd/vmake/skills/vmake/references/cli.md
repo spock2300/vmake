@@ -9,7 +9,7 @@ run `vmake <plugin> --help` or check the plugin documentation.
   `vmake completion [shell]` - Generate shell completion script
     `vmake install [--shell]` - Install shell completion to your profile
   `vmake config` - Open a TUI to configure build options for all packages.
-  `vmake distclean` - Deep clean: remove build outputs under `vmake_deps/` (plugin cache, artifacts, installs); source checkouts preserved
+  `vmake distclean` - Deep clean all build artifacts
   `vmake ext` - Manage extension repositories
     `vmake add <name> <git-url>` - Add an extension repository
     `vmake list` - List extension repositories and plugins
@@ -21,7 +21,7 @@ run `vmake <plugin> --help` or check the plugin documentation.
     `vmake checkout <path> [name]` - Checkout packages to recorded versions
     `vmake show <path>` - Show manifest contents
   `vmake pkg` - Manage packages
-    `vmake clean <repo/name> [--all -a]` - Clean project-local package in `vmake_deps/`
+    `vmake clean <repo/name> [--all -a]` - Clean package cache
     `vmake list` - List installed packages
     `vmake search [pattern]` - Search for packages
     `vmake update <repo/name>` - Update package source

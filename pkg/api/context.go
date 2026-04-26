@@ -178,25 +178,6 @@ func (ctx *BuildContext) SetDepOutputFunc(fn func(string) string) *BuildContext 
 	return ctx
 }
 
-func (ctx *BuildContext) AddGlobalCFlags(flags ...string) {
-	toolchain.GetManager().AddGlobalCFlags(flags...)
-}
-
-func (ctx *BuildContext) AddGlobalCxxFlags(flags ...string) {
-	toolchain.GetManager().AddGlobalCxxFlags(flags...)
-}
-
-func (ctx *BuildContext) AddGlobalLdFlags(flags ...string) {
-	toolchain.GetManager().AddGlobalLdFlags(flags...)
-}
-
-func (ctx *BuildContext) SetProvidedLinkerScript(path string) *BuildContext {
-	if ctx.pkg != nil {
-		ctx.pkg.SetProvidedLinkerScript(path)
-	}
-	return ctx
-}
-
 func (ctx *BuildContext) BuildSubGraph(pkgName string) {
 	if ctx.dryRun {
 		return

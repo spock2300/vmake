@@ -319,14 +319,6 @@ func (ctx *BuildContext) BuildSubGraph(pkgName string)
 func (ctx *BuildContext) DepOutput(depRef string) string
 func (ctx *BuildContext) DepBuildDir(depRef string) string
 
-// 全局编译/链接标志（仅在 OnApply 回调中有效）
-func (ctx *BuildContext) AddGlobalCFlags(flags ...string)
-func (ctx *BuildContext) AddGlobalCxxFlags(flags ...string)
-func (ctx *BuildContext) AddGlobalLdFlags(flags ...string)
-
-// 依赖 Linker Script
-func (ctx *BuildContext) SetProvidedLinkerScript(path string) *BuildContext
-
 // 配置导出
 func (ctx *BuildContext) GenerateConfigHeader() *BuildContext
 func (ctx *BuildContext) GenerateConfigDefines() *BuildContext
