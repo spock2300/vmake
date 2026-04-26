@@ -260,6 +260,9 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `Exec(name, args...)` | Run command with logging (os.Exit on failure) |
 | `GenerateConfigHeader()` | Generate `generated/autoconf.h` from config options, add `generated/` to includes |
 | `GenerateConfigDefines()` | Add `-DCONFIG_*` defines from config options to all targets |
+| `ExportConfig()` | Declare package config as importable by downstream packages |
+| `ImportConfig(names...)` | Import config defines from named dependency packages |
+| `SyncConfigDefines(names...)` | Shorthand for `GenerateConfigDefines` + `ImportConfig` (for parent/orchestrator packages) |
 | `SetDryRun(v bool) *BuildContext` | Set dry run mode |
 | `GetInstallItems() []InstallItem` | All install items |
 | `GetInstallFilter() InstallFilterFunc` | Install file filter |

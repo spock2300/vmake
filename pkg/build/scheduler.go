@@ -179,7 +179,7 @@ func (s *Scheduler) Build(fullName string) error {
 	pkg := s.packages[node.PkgName]
 	if pkg != nil && pkg.GenConfigHeader() {
 		generatedDir := BuildPath(".", pkgInfo.BuildKey, "generated")
-		if err := generateConfigHeader(pkg, generatedDir); err != nil {
+		if err := s.generateConfigHeader(pkg, generatedDir); err != nil {
 			return err
 		}
 	}
@@ -800,7 +800,14 @@ func matchesAny(path string, patterns []string) bool {
 	return false
 }
 
-func generateConfigHeader(pkg *api.Package, generatedDir string) error {
-	content := api.ConfigToHeader(pkg.Options, pkg.CfgVals)
+func (s *Scheduler) generateConfigHeader(pkg *api.Package, generatedDir string) error {
+	var importPkgs []*api.Package
+	for _, depName := range pkg.ImportConfigs() {
+		if depPkg := s.packages[depName]; depPkg != nil {
+			importPkgs = append(importPkgs, depPkg)
+		}
+	}
+	mergedOpts, mergedVals := api.MergeImportedOptions(pkg.Options, pkg.CfgVals, importPkgs)
+	content := api.ConfigToHeader(mergedOpts, mergedVals)
 	return api.WriteConfigHeader(generatedDir, content)
 }

@@ -118,3 +118,27 @@ func sortedOptNames(opts map[string]*Option) []string {
 	sort.Strings(names)
 	return names
 }
+
+func MergeImportedOptions(localOpts map[string]*Option, localVals map[string]any, pkgs []*Package) (map[string]*Option, map[string]any) {
+	mergedOpts := make(map[string]*Option, len(localOpts))
+	mergedVals := make(map[string]any, len(localVals))
+	for k, v := range localOpts {
+		mergedOpts[k] = v
+	}
+	for k, v := range localVals {
+		mergedVals[k] = v
+	}
+	for _, dep := range pkgs {
+		for k, v := range dep.Options {
+			if _, exists := mergedOpts[k]; !exists {
+				mergedOpts[k] = v
+			}
+		}
+		for k, v := range dep.CfgVals {
+			if _, exists := mergedVals[k]; !exists {
+				mergedVals[k] = v
+			}
+		}
+	}
+	return mergedOpts, mergedVals
+}

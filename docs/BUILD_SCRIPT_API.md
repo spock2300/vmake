@@ -932,6 +932,51 @@ printf("size=%d\n", CONFIG_BUFFER_SIZE);
 - 两种方式可以同时使用，语义一致：Bool false 时 header 写 `/* #undef */`，defines 不生成 `-D`，`#ifdef` 行为相同
 - `GenerateConfigHeader` 适合需要 `#ifdef` 条件编译的场景（嵌入式/固件风格）
 - `GenerateConfigDefines` 适合不需要头文件、直接通过编译器宏传递配置的场景
+- **公开头文件不要 `#include "autoconf.h"`**：`autoconf.h` 仅限包内使用，不应出现在通过 `AddPublicIncludes` 暴露的头文件中。跨包配置共享应使用 `-D` 宏（`GenerateConfigDefines` + `ImportConfig`）
+
+### 配置跨包传播
+
+分布式工程中，包的配置选项默认只在定义它的包内生效。通过以下 API 实现跨包配置共享：
+
+| API | 调用者 | 作用 |
+|-----|--------|------|
+| `ExportConfig()` | 被依赖方 | 声明本包的配置可被下游导入 |
+| `ImportConfig(names...)` | 依赖方 | 从指定包导入配置 defines 到本包所有目标 |
+| `SyncConfigDefines(names...)` | 父包（编排者） | 等价于 `GenerateConfigDefines` + `ImportConfig`，一次性同步多个子包 |
+
+示例——芯片包导出配置，驱动包导入，根包统一同步：
+
+```go
+// chip/build.go — 芯片包（被依赖方，声明导出）
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.GenerateConfigDefines()
+    ctx.ExportConfig()
+
+    ctx.Target("chip").SetKind(api.TargetStatic).
+        AddFiles("src/*.c")
+})
+
+// driver/build.go — 驱动包（依赖 chip，导入其配置）
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.GenerateConfigDefines()
+    ctx.ImportConfig("chip")
+
+    ctx.Target("driver").SetKind(api.TargetStatic).
+        AddFiles("src/*.c")
+})
+
+// firmware/build.go — 根包（编排者，一次性同步所有子包）
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.SyncConfigDefines("chip", "driver", "rtos")
+
+    ctx.Target("firmware").SetKind(api.TargetBinary).
+        AddFiles("src/*.c")
+})
+```
+
+传播的配置以 `-D` 编译器宏形式注入到当前包的所有目标。选项合并时，本包选项优先于导入选项（同名不覆盖）。
+
+`autoconf.h` 不跨包传播——每个包的 `autoconf.h` 只包含本包视角的合并选项，不会通过 `AddPublicIncludes` 暴露给下游。
 
 ## SplitPackageRef (`pkg/api/package.go`)
 

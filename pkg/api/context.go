@@ -144,6 +144,8 @@ type BuildContext struct {
 	pkg               *Package
 	genConfigHeader   bool
 	genConfigDefines  bool
+	exportConfig      bool
+	importConfigs     []string
 	buildSubGraphFunc func(pkgName string) error
 	depOutputFunc     func(depRef string) string
 	dryRun            bool
@@ -214,8 +216,26 @@ func (ctx *BuildContext) GenerateConfigDefines() *BuildContext {
 	return ctx
 }
 
+func (ctx *BuildContext) ExportConfig() *BuildContext {
+	ctx.exportConfig = true
+	return ctx
+}
+
+func (ctx *BuildContext) ImportConfig(pkgNames ...string) *BuildContext {
+	ctx.importConfigs = append(ctx.importConfigs, pkgNames...)
+	return ctx
+}
+
+func (ctx *BuildContext) SyncConfigDefines(pkgNames ...string) *BuildContext {
+	ctx.genConfigDefines = true
+	ctx.importConfigs = append(ctx.importConfigs, pkgNames...)
+	return ctx
+}
+
 func (ctx *BuildContext) GenConfigHeaderFlag() bool  { return ctx.genConfigHeader }
 func (ctx *BuildContext) GenConfigDefinesFlag() bool { return ctx.genConfigDefines }
+func (ctx *BuildContext) ExportConfigFlag() bool     { return ctx.exportConfig }
+func (ctx *BuildContext) ImportConfigs() []string    { return ctx.importConfigs }
 
 func (ctx *BuildContext) Exec(name string, args ...string) {
 	if ctx.dryRun {

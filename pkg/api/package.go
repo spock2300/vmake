@@ -136,6 +136,8 @@ type Package struct {
 	configFiles          []string
 	kconfigEntries       []*KConfigEntry
 	genConfigHdr         bool
+	exportConfig         bool
+	importConfigs        []string
 	dryRun               bool
 	providedLinkerScript string
 }
@@ -413,6 +415,12 @@ func (p *Package) DryRun() bool { return p.dryRun }
 
 func (p *Package) SetGenConfigHeader(v bool) *Package { p.genConfigHdr = v; return p }
 func (p *Package) GenConfigHeader() bool              { return p.genConfigHdr }
+
+func (p *Package) SetExportConfig(v bool) *Package { p.exportConfig = v; return p }
+func (p *Package) ExportConfig() bool              { return p.exportConfig }
+
+func (p *Package) SetImportConfigs(names []string) *Package { p.importConfigs = names; return p }
+func (p *Package) ImportConfigs() []string                  { return p.importConfigs }
 
 func (p *Package) ScriptDir() string { return p.scriptDir }
 func (p *Package) SrcDir() string {

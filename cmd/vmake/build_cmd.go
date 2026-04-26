@@ -550,7 +550,15 @@ func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.Pack
 	})
 
 	if buildCtx.GenConfigDefinesFlag() && node.Pkg != nil {
-		defines := api.ConfigToDefines(node.Pkg.Options, node.Pkg.CfgVals)
+		var importPkgs []*api.Package
+		for _, depName := range buildCtx.ImportConfigs() {
+			depNode := ctx.DepGraph.Packages[depName]
+			if depNode != nil && depNode.Pkg != nil {
+				importPkgs = append(importPkgs, depNode.Pkg)
+			}
+		}
+		mergedOpts, mergedVals := api.MergeImportedOptions(node.Pkg.Options, node.Pkg.CfgVals, importPkgs)
+		defines := api.ConfigToDefines(mergedOpts, mergedVals)
 		args := make([]any, len(defines))
 		for i, d := range defines {
 			args[i] = d
@@ -558,6 +566,12 @@ func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.Pack
 		for _, t := range buildCtx.GetTargets() {
 			t.AddDefines(args...)
 		}
+	}
+	if buildCtx.ExportConfigFlag() && node.Pkg != nil {
+		node.Pkg.SetExportConfig(true)
+	}
+	if imports := buildCtx.ImportConfigs(); len(imports) > 0 && node.Pkg != nil {
+		node.Pkg.SetImportConfigs(imports)
 	}
 	if buildCtx.GenConfigHeaderFlag() && node.Pkg != nil {
 		node.Pkg.SetGenConfigHeader(true)

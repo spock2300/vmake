@@ -105,6 +105,15 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 ### Double-Set Protection
 `SetLinkerScript` and `SetProvidedLinkerScript` call `vlog.Fatal` on second invocation — cannot silently overwrite. Consistent with the "No Fallbacks" principle.
 
+### Config Cross-Package Propagation
+- `GenerateConfigDefines()` only generates defines from the current package's own options
+- `ExportConfig()` marks a package's config as importable (declarative, no side effects)
+- `ImportConfig(names...)` merges imported packages' options into `-D` defines for all targets
+- `SyncConfigDefines(names...)` = `GenerateConfigDefines` + `ImportConfig` (convenience for parent packages)
+- Merged options: local options take priority over imported (no overwrite on name collision)
+- `autoconf.h` does NOT propagate across packages — only `-D` defines do
+- **Public headers must not `#include "autoconf.h"`** — it's package-local only
+
 ### Prebuilt Targets (`SetPrebuilt`)
 `Target.SetPrebuilt(path)` marks a `TargetStatic`/`TargetShared`/`TargetBinary` as pre-compiled. The scheduler skips compilation and creates a symlink from the expected output path to the prebuilt file. Up-to-date check compares symlink target via `os.Readlink`. Source file existence is verified before symlink creation.
 
