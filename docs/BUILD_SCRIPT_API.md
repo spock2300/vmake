@@ -71,16 +71,21 @@ func (p *Package) OnInstall(fn InstallFunc) *Package      // 定义安装规则
 func (p *Package) OnPackage(fn PackageFunc) *Package      // 填充包元数据（插件提取阶段执行）
 ```
 
-### 元信息设置（第三方包）
+### 元信息设置
 
 ```go
-func (p *Package) SetGit(urls ...string) *Package
+func (p *Package) SetGit(urls ...string) *Package        // Git 仓库 URL（仅 registry 包）
 func (p *Package) SetHomepage(url string) *Package
 func (p *Package) SetDescription(desc string) *Package
 func (p *Package) SetLicense(license string) *Package
 func (p *Package) AddVersion(version, ref string) *Package
 func (p *Package) SetVersions(versions map[string]string) *Package
 func (p *Package) SetSubmodules(v bool) *Package
+func (p *Package) SetRepo(repo string) *Package          // 仓库名
+func (p *Package) SetName(name string) *Package          // 包名
+func (p *Package) SetScriptDir(dir string) *Package      // 构建脚本目录
+func (p *Package) SetCfgVals(vals map[string]any) *Package  // 设置配置值
+func (p *Package) SetGenConfigHeader(v bool) *Package    // 启用生成配置头文件
 ```
 
 ### Git Patch
@@ -165,6 +170,8 @@ func (p *Package) RunEnv(env map[string]string, name string, args ...string) err
 func (p *Package) FullName() string                // 完整包名（repo/name 或 name）
 func (p *Package) GetOptions() map[string]*Option
 func (p *Package) Versions() map[string]string
+func (p *Package) GenConfigHeader() bool           // 配置头文件是否启用
+func (p *Package) SrcDirRaw() string               // 原始 srcCodeDir，无 SourceDir 回退（SetSrcDir 未调用时返回空串）
 ```
 
 ### Stamp 控制
@@ -407,7 +414,9 @@ func (t *Target) RemoveDefines(defines ...string) *Target
 func (t *Target) RemoveIncludes(dirs ...string) *Target
 func (t *Target) RemovePublicIncludes(dirs ...string) *Target
 func (t *Target) RemoveLinks(libs ...string) *Target
+func (t *Target) RemoveProvidedLibs(libs ...string) *Target
 func (t *Target) RemoveDeps(targets ...string) *Target
+func (t *Target) RemoveFiles(files ...any) *Target   // 从 AddFiles 扩展结果中排除文件（模式匹配）
 
 // 获取方法
 func (t *Target) Name() string
@@ -422,6 +431,7 @@ func (t *Target) Languages() []string
 func (t *Target) IncludeRule(dir string) []string
 func (t *Target) HasDep(depRef string) bool
 func (t *Target) Links() []string
+func (t *Target) ProvidedLibs() []string
 func (t *Target) Deps() []string
 func (t *Target) CFlags() []string
 func (t *Target) CxxFlags() []string
@@ -432,6 +442,8 @@ func (t *Target) BuildFunc() func(*Package) error
 func (t *Target) LinkerScript() string
 func (t *Target) UseDepLinkerScript() bool
 func (t *Target) PostLinkSteps() []PostLinkStep
+func (t *Target) ExcludedFiles() []string
+func (t *Target) GenRules() []GenRule
 ```
 `AddFiles/Includes/Defines/Links/CFlags/CxxFlags/LdFlags` 接受 `string` 或 `[]string`（条件表达式返回）。
 
