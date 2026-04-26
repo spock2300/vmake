@@ -292,13 +292,12 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 		if depNode.Target.Kind() == api.TargetVoid && depPkg.InstallDir != "" {
 			libDir := fs.DetectLibDir(depPkg.InstallDir)
 			result.voidLdFlags = append(result.voidLdFlags, "-L"+libDir)
-			if depPkg := s.packages[depNode.PkgName]; depPkg != nil && len(depPkg.Libs()) > 0 {
-				for _, lib := range depPkg.Libs() {
+			if len(depNode.Target.ProvidedLibs()) > 0 {
+				for _, lib := range depNode.Target.ProvidedLibs() {
 					result.voidLdFlags = append(result.voidLdFlags, "-l"+lib)
 				}
 			} else {
-				parts := strings.Split(depNode.PkgName, "/")
-				result.voidLdFlags = append(result.voidLdFlags, "-l"+parts[len(parts)-1])
+				result.voidLdFlags = append(result.voidLdFlags, "-l"+depNode.Target.Name())
 			}
 		} else if depNode.Target.Kind() != api.TargetVoid {
 			var depOutput string
@@ -309,11 +308,9 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 			}
 			result.artifacts = append(result.artifacts, depOutput)
 
-			if pkg := s.packages[depNode.PkgName]; pkg != nil {
-				for _, lib := range pkg.Libs() {
-					if lib != depNode.Target.Name() {
-						result.voidLdFlags = append(result.voidLdFlags, "-l"+lib)
-					}
+			for _, lib := range depNode.Target.ProvidedLibs() {
+				if lib != depNode.Target.Name() {
+					result.voidLdFlags = append(result.voidLdFlags, "-l"+lib)
 				}
 			}
 		}
@@ -726,11 +723,7 @@ func (s *Scheduler) populateDepsFromGraph(pkg *api.Package, node *BuildNode) {
 			continue
 		}
 		var depLibs []string
-		if depPkg := s.packages[depPkgName]; depPkg != nil {
-			if depPkg.Libs() != nil {
-				depLibs = depPkg.Libs()
-			}
-		}
+		depLibs = append(depLibs, depNode.Target.ProvidedLibs()...)
 		ip := api.NewInstalledPackage(depPkgName, "", pkgInfo.InstallDir, depLibs)
 		pkg.SetDep(depPkgName, ip)
 	}

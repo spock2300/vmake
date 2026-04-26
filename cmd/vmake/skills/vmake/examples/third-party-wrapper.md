@@ -14,7 +14,6 @@ func Main(p *api.Package) {
 		p.SetGit("https://github.com/user/somelib.git").
 			AddVersion("1.0.0", "v1.0.0").
 			AddVersion("1.1.0", "v1.1.0").
-			SetLibs("somelib", "somelib_math").
 			SetDescription("A C/C++ library for doing things").
 			SetLicense("MIT")
 	})
@@ -22,6 +21,7 @@ func Main(p *api.Package) {
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("somelib").
 			SetKind(api.TargetVoid).
+			AddProvidedLibs("somelib", "somelib_math").
 			SetBuildFunc(func(p *api.Package) error {
 				p.CMakeConfigure("-DBUILD_SHARED_LIBS=OFF", "-DBUILD_TESTS=OFF")
 				p.CMakeBuild()
@@ -37,7 +37,7 @@ func Main(p *api.Package) {
 - **`p.OnPackage`** — Package metadata phase (runs during plugin extraction, before any lifecycle phases)
 - **`SetGit(urls...)`** — Git repository URLs for source download
 - **`AddVersion(version, ref)`** — Map human-readable version to git ref (tag/commit)
-- **`SetLibs(libs...)`** — Library names that consumers will link against
+- **`AddProvidedLibs(libs...)`** — Library names that consumers will link against
 - **`api.TargetVoid`** — Target that doesn't produce a compilation artifact
 - **`SetBuildFunc(fn)`** — Custom build function; receives `*Package`, returns `error`
 

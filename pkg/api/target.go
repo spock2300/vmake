@@ -25,6 +25,7 @@ type Target struct {
 	defines            []string
 	languages          []string
 	links              []string
+	providedLibs       []string
 	deps               []string
 	cflags             []string
 	cxxflags           []string
@@ -122,6 +123,11 @@ func (t *Target) SetLanguages(langs ...string) *Target {
 
 func (t *Target) AddLinks(libs ...any) *Target {
 	t.links = append(t.links, flattenAny(libs)...)
+	return t
+}
+
+func (t *Target) AddProvidedLibs(libs ...string) *Target {
+	t.providedLibs = append(t.providedLibs, libs...)
 	return t
 }
 
@@ -235,6 +241,7 @@ func (t *Target) PublicIncludes() []string { return t.publicIncludes }
 func (t *Target) Defines() []string        { return t.defines }
 func (t *Target) Languages() []string      { return t.languages }
 func (t *Target) Links() []string          { return t.links }
+func (t *Target) ProvidedLibs() []string   { return t.providedLibs }
 func (t *Target) Deps() []string           { return t.deps }
 
 func (t *Target) HasDep(depRef string) bool {
@@ -296,6 +303,11 @@ func (t *Target) RemovePublicIncludes(dirs ...string) *Target {
 
 func (t *Target) RemoveLinks(libs ...string) *Target {
 	t.links = removeStrings(t.links, libs...)
+	return t
+}
+
+func (t *Target) RemoveProvidedLibs(libs ...string) *Target {
+	t.providedLibs = removeStrings(t.providedLibs, libs...)
 	return t
 }
 

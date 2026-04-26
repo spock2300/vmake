@@ -79,9 +79,20 @@ func Main(p *api.Package) {
 	p.OnPackage(func(p *api.Package) {
 		p.SetGit("https://github.com/madler/zlib.git")
 		p.AddVersion("1.2.13", "v1.2.13")
-		p.SetLibs("z")
 		p.SetDescription("A massively multi-threaded portable C library")
 		p.SetLicense("Zlib")
+	})
+
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("zlib").
+			SetKind(api.TargetVoid).
+			AddProvidedLibs("z").
+			SetBuildFunc(func(p *api.Package) error {
+				p.CMakeConfigure()
+				p.CMakeBuild()
+				p.CMakeInstall()
+				return nil
+			})
 	})
 }
 ```

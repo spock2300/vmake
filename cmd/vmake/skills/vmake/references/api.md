@@ -57,7 +57,6 @@ Import: `gitee.com/spock2300/vmake/pkg/api`
 | `AddVersion` | `(version, ref string)` | Version to git ref mapping |
 | `SetVersions` | `(versions map[string]string)` | Bulk version map |
 | `SetSubmodules` | `(v bool)` | Enable git submodules |
-| `SetLibs` | `(libs ...string)` | Library dependencies |
 | `SetRepo` | `(repo string)` | Repository name |
 | `SetName` | `(name string)` | Package name |
 | `SetOutputDir` | `(dir string)` | Output directory |
@@ -165,6 +164,7 @@ All setters are fluent (return `*Target`).
 | `AddPublicIncludes` | `(args ...any)` | Includes propagated to dependents (use @"pattern" to match) |
 | `AddDefines` | `(defines ...any)` | Preprocessor defines |
 | `AddLinks` | `(libs ...any)` | Libraries to link |
+| `AddProvidedLibs` | `(libs ...string)` | Libraries this target provides to consumers (e.g. `"ssl"`, `"crypto"`) |
 | `AddDeps` | `(targets ...string)` | Dependencies: same pkg, cross pkg (`"pkg:name"`), third-party (`"official/zlib"`) |
 | `AddCFlags` | `(flags ...any)` | C compiler flags |
 | `AddCxxFlags` | `(flags ...any)` | C++ compiler flags |

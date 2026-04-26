@@ -86,12 +86,13 @@ targets from that package are added as dependencies automatically.
 ## With System Library Dependencies
 
 If the prebuilt library depends on system libraries (e.g., `-lpthread`, `-lm`),
-declare them with `SetLibs` on the Package:
+declare them with `AddProvidedLibs` on the Target:
 
 ```go
-p.OnPackage(func(p *api.Package) {
-	p.SetLibs("drv", "pthread", "m")
-})
+ctx.Target("drv").
+	SetKind(api.TargetStatic).
+	SetPrebuilt(filepath.Join(p.SourceDir(), "lib", "libdrv.a")).
+	AddProvidedLibs("drv", "pthread", "m")
 ```
 
 The scheduler propagates `-lpthread -lm` to all consumers of the `drv` target.
@@ -130,7 +131,7 @@ vendor/drv/
 - **`TargetShared` + `SetPrebuilt`** — Export a prebuilt `.so` file
 - **`AddPublicIncludes`** — Propagate header paths to consumers
 - **`SetProvidedLinkerScript`** — Provide linker script to consumers via `UseDependencyLinkerScript()`
-- **`SetLibs`** — Declare additional system library dependencies
+- **`AddProvidedLibs`** — Declare library names this target provides to consumers
 
 ## Incremental Behavior
 

@@ -122,7 +122,6 @@ type Package struct {
 	submodules           bool
 	requires             Requires
 	requireFuncs         []RequireFunc
-	libs                 []string
 	configFuncs          []ConfigFunc
 	buildFuncs           []BuildFunc
 	installFuncs         []InstallFunc
@@ -224,11 +223,6 @@ func (p *Package) SetSubmodules(v bool) *Package {
 	return p
 }
 
-func (p *Package) SetLibs(libs ...string) *Package {
-	p.libs = libs
-	return p
-}
-
 func (p *Package) SetRepo(repo string) *Package {
 	p.Repo = repo
 	return p
@@ -312,7 +306,6 @@ func (p *Package) Submodules() bool               { return p.submodules }
 func (p *Package) GetOptions() map[string]*Option { return p.Options }
 func (p *Package) GetRequires() *Requires         { return &p.requires }
 func (p *Package) GetRef(version string) string   { return p.versions[version] }
-func (p *Package) Libs() []string                 { return p.libs }
 func (p *Package) GetRequireFuncs() []RequireFunc { return p.requireFuncs }
 func (p *Package) GetPackageFunc() PackageFunc    { return p.packageFunc }
 

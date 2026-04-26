@@ -81,7 +81,6 @@ func (p *Package) SetLicense(license string) *Package
 func (p *Package) AddVersion(version, ref string) *Package
 func (p *Package) SetVersions(versions map[string]string) *Package
 func (p *Package) SetSubmodules(v bool) *Package
-func (p *Package) SetLibs(libs ...string) *Package
 ```
 
 ### Git Patch
@@ -383,6 +382,7 @@ func (t *Target) SetLanguages(langs ...string) *Target
 
 // 链接配置
 func (t *Target) AddLinks(libs ...any) *Target
+func (t *Target) AddProvidedLibs(libs ...string) *Target
 func (t *Target) AddDeps(targets ...string) *Target
 
 // 编译/链接选项
@@ -1064,7 +1064,6 @@ func Main(p *api.Package) {
                 "https://gitee.com/mirrors/zlib.git",
                 "https://github.com/madler/zlib.git",
             ).
-            SetLibs("z").
             AddVersion("1.3.1", "v1.3.1").
             AddVersion("1.2.13", "v1.2.13")
     })
@@ -1079,6 +1078,7 @@ func Main(p *api.Package) {
     p.OnBuild(func(ctx *api.BuildContext) {
         ctx.Target("zlib").
             SetKind(api.TargetVoid).
+            AddProvidedLibs("z").
             SetBuildFunc(func(pkg *api.Package) error {
                 pkg.CMakeConfigure(
                     "-DBUILD_SHARED_LIBS=" + pkg.BoolStr("shared"),

@@ -182,7 +182,7 @@ vmake locates the project root by walking upward from cwd to find `.vmake/` or `
 | Type | How identified | `OnPackage` metadata | Source code location |
 |------|---------------|---------------------|---------------------|
 | **Local** | build.go in project directory | `SetDescription`, `SetLicense` only | `SourceDir()` (same as build.go) |
-| **Registry** | `vmake repo add name url` | `SetGit`, `AddVersion`, `SetLibs` required | `SrcDir()` (downloaded to `SourceDir()/src/`) |
+| **Registry** | `vmake repo add name url` | `SetGit`, `AddVersion` required | `SrcDir()` (downloaded to `SourceDir()/src/`) |
 | **Native** | `vmake repo add --native name url` | No `SetGit`/`AddVersion` — version from git tag | `SrcDir()` (downloaded to `SourceDir()/src/`) |
 
 Registry packages wrap external C/C++ libraries. Native packages are independent vmake projects consumed as dependencies. The resolver checks registry first, then native.
@@ -233,7 +233,7 @@ Downstream packages link against it automatically through normal dependency reso
 - Works with `TargetStatic` (.a), `TargetShared` (.so), `TargetBinary`
 - No source compilation — scheduler skips compile phase entirely
 - Incremental: compares symlink target, recreates only if path changed
-- `SetLibs` on Package declares additional system library dependencies (e.g., `p.SetLibs("drv", "m", "pthread")` propagates `-lm -lpthread` to consumers)
+- `AddProvidedLibs` on Target declares library names provided to consumers (e.g., `.AddProvidedLibs("drv", "m", "pthread")` propagates `-ldrv -lm -lpthread` to consumers)
 - Multiple prebuilt libraries: define one target per `.a`/`.so` file
 
 ```go
