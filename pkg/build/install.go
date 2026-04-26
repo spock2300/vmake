@@ -128,6 +128,20 @@ func (i *ArtifactInstaller) installTarget(node *BuildNode) error {
 	}
 
 	i.installed[outputPath] = true
+
+	for _, step := range target.PostLinkSteps() {
+		for _, outFile := range step.OutputPaths(outputPath) {
+			if _, err := os.Stat(outFile); err != nil {
+				continue
+			}
+			postDest := filepath.Join(filepath.Dir(destPath), filepath.Base(outFile))
+			vlog.Info("  INSTALL %s -> %s", filepath.Base(outFile), postDest)
+			if err := CopyFile(outFile, postDest); err != nil {
+				return fmt.Errorf("install post-link output failed: %w", err)
+			}
+		}
+	}
+
 	return i.installPublicIncludes(node, pkgInfo, prefix)
 }
 

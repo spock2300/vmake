@@ -12,6 +12,19 @@ type PostLinkStep struct {
 	Args []string
 }
 
+func (s PostLinkStep) OutputPaths(outputPath string) []string {
+	var paths []string
+	for _, a := range s.Args {
+		if a == "{output}" {
+			continue
+		}
+		if strings.Contains(a, "{output}") {
+			paths = append(paths, strings.ReplaceAll(a, "{output}", outputPath))
+		}
+	}
+	return paths
+}
+
 type Target struct {
 	name               string
 	kind               TargetKind
