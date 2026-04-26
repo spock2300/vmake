@@ -360,7 +360,7 @@ Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()
 	func (r *Requires) Reset()
 
 	type PackageMeta struct { Repo string; Name string }
-	func (m PackageMeta) FullName() string
+	func (m *PackageMeta) FullName() string
 
 	type InstalledPackage struct {
 		Name, Version, InstallDir string

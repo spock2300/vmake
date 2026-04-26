@@ -495,7 +495,7 @@ type PackageMeta struct {
     Repo string
     Name string
 }
-func (m PackageMeta) FullName() string
+func (m *PackageMeta) FullName() string
 
 type TargetKind string
 const (

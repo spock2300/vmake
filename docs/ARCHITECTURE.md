@@ -7,20 +7,40 @@ vmake build 执行三个阶段（含延迟解析子阶段）：
 ```
 Phase 1: OnRequire
     扫描 build.go → 编译构建脚本 → 加载构建脚本 → 收集依赖
-    |
-Phase 2a: ResolveDeferred
-    解析延迟依赖（远程包） → 更新拓扑排序
-    |
-Phase 2b: OnConfig
-    执行 OnConfig 回调 → 收集 Option 定义 → 合并全局选项
-    |
-Phase 3: OnBuild
-    执行 OnBuild 回调 → 生成 Target → 构建依赖图 → 编译/链接
-    │                                                │
-    │  (远程包) git patch 应用 → 执行 TargetVoid.BuildFunc()   (RTOS) 后链接步骤
-    |
+    │
+    [afterPhase1 钩子：manifest 版本锁定]
+    │
+Phase 2: 配置准备 (runPostPhase1)
+    ├── 2a: ResolveDeferred — 解析延迟依赖（远程包）→ 更新拓扑排序
+    └── 2b: OnConfig — 执行 OnConfig 回调 → 收集 Option 定义 → 合并全局选项
+    │
+Phase 3: OnBuild (runBuildPhase)
+    ├── resolveBuildConfig — 解析构建配置（模式、工具链）
+    ├── filterAndCollectNeeded — BFS 过滤本地包依赖
+    ├── resolveAllPackageDirs — 解析所有包目录
+    ├── prepareAllPackages — 下载源码、编译 buildscript 插件
+    ├── applyPatches — 对远程包应用 git patch（git apply --3way）
+    ├── restoreKConfigFiles — 恢复 KConfig 配置
+    ├── executeAllOnBuild — 执行 OnBuild 回调 → 生成 Target
+    ├── NewBuildGraph — 构建依赖图 → 拓扑排序
+    ├── BuildPipeline.Run — 统一编排调度器
+    │   └── NewScheduler → scheduler.BuildAll()
+    │       └── ForEachDefault:
+    │           ├── resolveTarget（解析 include/define/flag/dep/genrule）
+    │           ├── runGenRules（二进制头文件生成等）
+    │           ├── generateConfigHeader（可选配置头文件）
+    │           ├── realizePrebuilt（预编译产物 symlink）
+    │           ├── compile（并行编译源文件）
+    │           ├── link（链接目标）
+    │           ├── postLink（objcopy/size/strip 等后处理）
+    │           └── publishTarget（发布产物到 InstallDir）
+    ├── 生成 compile_commands.json
+    │
+    [afterBuild 钩子：test 命令执行测试二进制]
+    │
 (Optional) Install
-    清理安装前缀 → 安装目标产物 → 生成 manifest.json
+    清理安装前缀 → 执行 OnInstall 回调 → dry-run OnBuild 收集安装项
+    → ArtifactInstaller.InstallAll → 安装目标产物 → 生成 manifest.json
 ```
 
 ### Build Flags
@@ -91,8 +111,9 @@ Scan(root)          Compile             Load              Resolve
     │                   │                  │                 │
     ▼                   ▼                  ▼                 ▼
 []Source           build.so         LoadedScript      Graph
-                                      ├─ pkg *Package   ├─ Order []
-                                      └─ Source          └─ Packages map
+                                      ├─ pkg   *Package  ├─ Order []
+                                      ├─ Source          └─ Packages map
+                                      └─ Script *plugin.Plugin
                                                            └─ *PackageNode
 ```
 
@@ -118,24 +139,59 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 
 源码：`cmd/vmake/root.go`, `pkg/api/global.go`
 
+**ConfigContext 方法**（`pkg/api/context.go`）：
+- `GlobalOption(name)` — 获取全局选项值
+- `GlobalMode()` — 获取全局构建模式
+- `Toolchains()` — 获取可用工具链列表
+- `ToolchainOption()` — 创建工具链选择选项（自动填充可用工具链）
+- `SetConfigValue(name, val)` — 设置配置值
+- `AddGlobalCFlags(flags...)` — 添加全局 C 编译器标志（仅在 OnApply 回调中生效）
+- `AddGlobalCxxFlags(flags...)` — 添加全局 C++ 编译器标志（仅在 OnApply 回调中生效）
+- `AddGlobalLdFlags(flags...)` — 添加全局链接器标志（仅在 OnApply 回调中生效）
+- `SetProvidedLinkerScript(path)` — 声明链接脚本供消费者 target 使用（重复调用触发 Fatal）
+- `KConfig(name)` — 声明 KConfig 条目（委托给 `Package.AddKConfig`）
+
 ### Phase 3: 构建执行
 
+`runBuildPhase` 包含多个子步骤：
+
+1. **resolveBuildConfig** — 解析构建模式（debug/release）和工具链选择
+2. **filterAndCollectNeeded** — 从 `IsLocal()` 根节点 BFS 遍历，过滤需要构建的包
+3. **resolveAllPackageDirs** — 解析所有包的 SourceDir/BuildDir/InstallDir
+4. **prepareAllPackages** — 下载远程包源码，编译 buildscript 插件
+5. **applyPatches** — 对远程包应用 git patch（`git apply --3way`），已应用自动跳过
+6. **restoreKConfigFiles** — 从 config.json 恢复 KConfig 配置（详见 KConfig 章节）
+7. **executeAllOnBuild** — 执行所有 `OnBuild` 回调，生成 `map[string]*Target`
+8. **build.NewBuildGraph** — 构建依赖图，`BuildGraph` 展开包级依赖为 target 级传递闭包
+9. **build.NewBuildPipeline** — 创建 `BuildPipeline`（封装图、工具链、包目录、模式、选项、调度器）
+10. **pipeline.Run()** → `NewScheduler(compiler, linker, cache)` → `BuildAll()`:
+    - `ForEachDefault` 按拓扑顺序构建每个默认 Target
+    - 每个 Target: resolveTarget → runGenRules → generateConfigHeader → realizePrebuilt → compile → link → postLink → publishTarget
+    - 并行编译源文件（`compileWorker`）
+11. **生成 compile_commands.json**（通过 `CompileCommandsWriter`）
+
+**BuildContext 方法**（`pkg/api/context.go`）：
+- `Exec(name, args...)` — 构建阶段执行命令（vlog.Fatal 退出）
+- `BuildSubGraph(pkgName)` — 将包及其依赖作为独立子图构建
+- `DepOutput(depRef)` — 获取依赖目标输出文件路径
+- `DepBuildDir(depRef)` — 获取依赖构建目录
+- `GenerateConfigHeader()` — 启用配置头文件自动生成
+- `GenerateConfigDefines()` — 启用配置宏定义自动生成
+- `SetDryRun(v bool)` — 设置为 dry-run 模式（安装阶段使用）
+
+**BuildPipeline**（`pkg/build/pipeline.go`）：
 ```
-OnBuild 回调 ──▶ 生成 Target ──▶ BuildGraph ──▶ Scheduler.BuildAll()
-                                                    │
-                                                    ▼
-                                               ForEachDefault:
-                                                 resolveTarget ──▶ compile ──▶ link
+BuildPipeline
+├── Graph              *BuildGraph
+├── PkgDirs            map[string]*api.PkgDirs
+├── Toolchain          *toolchain.Toolchain
+├── Mode               string
+├── Options            map[string]map[string]any
+├── Packages           map[string]*api.Package
+└── BuildKeyOverrides  map[string]string
 ```
 
-1. 执行所有 `OnBuild` 回调，生成 `map[string]*Target`
-2. `build.NewBuildGraph` 构建依赖图，拓扑排序
-3. `build.NewScheduler` 初始化编译器、链接器、加载缓存
-4. `Scheduler.BuildAll` 通过 `ForEachDefault` 按拓扑顺序构建每个默认 Target
-5. RTOS 目标：链接后执行 `PostLinkStep`（如 `objcopy -O ihex` 生成 .hex 文件）
-6. 子图构建：`BuildContext.BuildSubGraph()` 将包及其依赖作为独立子图构建，`DepOutput()` 获取依赖目标输出路径
-
-源码：`pkg/build/scheduler.go`, `pkg/build/graph.go`
+源码：`pkg/build/scheduler.go`, `pkg/build/graph.go`, `pkg/build/pipeline.go`, `pkg/build/stamp.go`
 
 ## 第三方包流程
 
@@ -205,12 +261,13 @@ AddRequires          1. 检查 registry 仓库（未找到）      编译 build.
 
 ```go
 type PackageNode struct {
-    ID       string
-    Source   *buildscript.Source
-    Pkg      *api.Package
-    Deps     []string
-    Deferred bool
-    Native   *NativePackageInfo
+    ID          string
+    Source      *buildscript.Source
+    Pkg         *api.Package
+    Deps        []string
+    Deferred    bool
+    Native      *NativePackageInfo
+    Constraints []string
 }
 
 type NativePackageInfo struct {
@@ -229,6 +286,7 @@ vmake (RootCmd)
 ├── build          # 构建项目
 ├── clean          # 清理构建产物
 ├── rebuild        # 完全重新构建
+├── distclean      # 深度清理（删除所有构建产物、build.so、vmake_deps/、install/）
 ├── config         # TUI 配置界面
 ├── update [ver]   # 自我更新（go install）
 ├── version        # 版本信息
@@ -261,6 +319,12 @@ vmake (RootCmd)
 │   ├── install    # 安装 AI skill
 │   ├── uninstall  # 卸载 AI skill
 │   └── path       # 显示安装路径
+├── completion     # 生成 shell 补全脚本
+│   ├── bash       # Bash 补全
+│   ├── zsh        # Zsh 补全
+│   ├── fish       # Fish 补全
+│   ├── powershell # PowerShell 补全
+│   └── install    # 自动安装补全
 ├── test           # 构建并运行测试目标
 └── <plugin>       # 扩展插件提供的命令
     └── ...        # 插件自定义子命令
@@ -268,7 +332,7 @@ vmake (RootCmd)
 
 全局选项：`-v` (verbose), `-V` (very verbose), `-q` (quiet)
 
-源码：`cmd/vmake/`
+源码：`cmd/vmake/`（`distclean.go`, `completion.go`）
 
 ## 统一依赖系统
 
@@ -323,12 +387,13 @@ Graph
 └── Packages map[string]*PackageNode
 
 PackageNode
-├── ID       string
-├── Source   *buildscript.Source
-├── Pkg      *api.Package
-├── Deps     []string
-├── Deferred bool
-└── Native   *NativePackageInfo
+├── ID          string
+├── Source      *buildscript.Source
+├── Pkg         *api.Package
+├── Deps        []string
+├── Deferred    bool
+├── Native      *NativePackageInfo
+└── Constraints []string          // 版本约束列表（如 [">=1.2", "<2.0"]）
     ├── GitURL   string            // native 仓库：解析后的 git URL
     ├── Versions map[string]string // native 仓库：version_string → git_tag
     └── Selected string            // native 仓库：选中的版本号
@@ -364,6 +429,16 @@ BuildNode
 - `GetNode(name) (*BuildNode, error)` — 按 `pkg:target` 全名查找节点
 - `ForEachDefault(fn func(*BuildNode) error) error` — 遍历所有默认目标
 
+### PkgBuildMeta (`pkg/build/graph.go`)
+
+`BuildGraph` 在展开包级依赖时使用 `PkgBuildMeta` 记录每个包的信息：
+
+```
+PkgBuildMeta
+├── Origin api.SourceOrigin    // 包来源（本地/远程）
+└── Deps   []string            // 包级依赖列表
+```
+
 ### ConfigFile (`pkg/config/store.go`)
 
 ```
@@ -372,12 +447,34 @@ ConfigFile
 ├── Global   *GlobalConfig
 └── Entries  map[string]*EntryConfig
 
+GlobalConfig
+├── Toolchain string         // 默认工具链
+├── Mode      string         // 默认构建模式（debug/release）
+└── Options   map[string]any // 全局选项回退值
+
 EntryConfig
 ├── Version        string                  // 第三方包的版本（可选）
 ├── Options        map[string]any          // 配置选项
 ├── KConfig        string                  // KConfig 配置内容
 └── SelectedPreset string                  // 选中的 KConfig preset 名称
 ```
+
+### Package 附加方法
+
+`Package` 提供的额外方法（用于构建脚本）：
+
+- `AddPatches(paths...)` — 添加 git patch 文件（相对于 SourceDir），远程包在构建前自动应用
+- `SetPatches(paths...)` — 设置 git patch 文件（覆盖）
+- `SetGenConfigHeader(v bool)` — 启用或禁用配置头文件自动生成
+- `GenConfigHeader()` — 获取配置头文件生成开关状态
+- `SetScriptDir(dir)` — 设置构建脚本目录
+- `SetOutputDir(dir)` — 设置输出目录
+- `SetCfgVals(vals)` — 设置配置值
+- `SelectVersionMulti(constraints)` — 多约束版本选择
+- `SelectedPreset()` — 返回已选中的 KConfig preset 名称
+- `ApplyKConfigPatches(configPath, patches)` — 对 `.config` 文件应用字符串替换补丁
+
+源码：`pkg/api/package.go`
 
 ## 关键文件位置
 
@@ -442,6 +539,25 @@ type KConfigEntry struct {
 3. 应用 `PatchKConfig` 中定义的 post-defconfig 补丁（字符串替换）
 4. 返回 `true`（已重新生成配置）
 
+### ApplyKConfigPatches
+
+`Package.ApplyKConfigPatches(configPath, patches)` 是独立的导出函数，对 `.config` 文件应用字符串替换补丁：
+
+- 读取 `.config` 文件
+- 对 `patchValues` 中的每对 `key: value` 执行字符串替换
+- 写回 `.config` 文件
+
+被 `EnsureConfig` 和 `restoreKConfigFiles` 共同调用。
+
+### restoreKConfigFiles 跳转规则
+
+`restoreKConfigFiles` 从 `config.json` 恢复 KConfig 配置，遵循以下规则：
+
+- `config.json` 中没有该包的 entry → 跳过（不删除 `.config`）
+- `config.json` 中有 entry 但 kconfig 为空（preset 切换） → 删除 `.config`
+- `config.json` 中有 kconfig 内容 → 仅在内容变化时写回（避免 mtime 更新导致 stamp 失效）
+- KConfig 内容为空 → 不写入
+
 ### Stamp-Based Skip（TargetVoid）
 
 本地包（无 `InstallDir`）使用 `.vmake_stamp` 跳过已构建目标：
@@ -468,6 +584,43 @@ ctx.Target("app").AddBinHeader("assets/logo.bin")
 ```
 
 源码：`pkg/api/genrule.go`, `pkg/api/target.go`
+
+## 后链接步骤系统
+
+Target 支持在链接后执行自定义后处理步骤，用于嵌入式/RTOS 场景的二进制格式转换和分析。
+
+### PostLinkStep
+
+```go
+type PostLinkStep struct {
+    Tool string   // 工具名（如 "objcopy"、"size"）
+    Args []string // 参数模板（{input} / {output} 占位符）
+}
+```
+
+### API 方法
+
+- `AddPostLink(tool, args...)` — 添加自定义后链接步骤
+- `AddPostLinkHex()` — 添加 `objcopy -O ihex` 生成 .hex 文件
+- `AddPostLinkBin()` — 添加 `objcopy -O binary` 生成 .bin 文件
+- `AddPostLinkSize()` — 添加 `size {output}` 显示段大小
+- `AddPostLinkStrip()` — 添加 strip 去除调试符号
+
+### 执行流程
+
+在 `Scheduler.buildTarget` 中，链接完成后执行所有 `PostLinkStep`：
+
+1. 替换 `{input}` 为链接输出路径，`{output}` 为推导的输出路径
+2. 执行每个步骤的工具命令
+3. `PostLinkStep` 的输出也会被 `publishTarget` 和 `installTarget` 处理
+
+```go
+ctx.Target("firmware").SetKind(api.TargetBinary).AddFiles("src/*.c")
+    .AddPostLinkHex()
+    .AddPostLinkSize()
+```
+
+源码：`pkg/api/target.go`, `pkg/build/scheduler.go`
 
 ## 扩展系统
 
@@ -539,6 +692,13 @@ func Main(ctx *plugin.Context) {
 - `DownloadFile(url, dest)`: 下载文件
 - `ExtractToDir(archive, dest, format)`: 解压归档（支持 tar.gz/tar.xz/tar.bz2/zip）
 - `RunGitLFS(repoDir, args...)`: 执行 Git LFS 命令
+
+### 扩展工具函数
+
+- `PluginInfoExists(pluginDir string) bool` — 检查插件目录是否包含有效插件信息
+- `CompileResult` 结构体（`pkg/plugin/compiler.go`）嵌入 `gocompile.CompileResult`，额外包含：
+  - `PluginDir string` — 插件目录路径
+  - `PluginName string` — 插件名称
 
 ### 工具链自动下载
 
