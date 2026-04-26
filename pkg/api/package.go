@@ -508,9 +508,13 @@ func (p *Package) Make(args ...string) error {
 	return p.RunEnv(p.Env(), "make", makeArgs...)
 }
 
-func (p *Package) Run(name string, args ...string) error {
+func (p *Package) logAndDryRun(name string, args []string) bool {
 	vlog.Info("  %s %s", name, strings.Join(args, " "))
-	if p.dryRun {
+	return p.dryRun
+}
+
+func (p *Package) Run(name string, args ...string) error {
+	if p.logAndDryRun(name, args) {
 		return nil
 	}
 	exec.RunFatal(p.dirs.BuildDir, name, args...)
@@ -527,8 +531,7 @@ func (p *Package) RunIn(dir, name string, args ...string) error {
 }
 
 func (p *Package) RunEnv(env map[string]string, name string, args ...string) error {
-	vlog.Info("  %s %s", name, strings.Join(args, " "))
-	if p.dryRun {
+	if p.logAndDryRun(name, args) {
 		return nil
 	}
 	return exec.RunWithEnv(p.dirs.BuildDir, env, name, args...)

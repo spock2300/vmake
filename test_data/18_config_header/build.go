@@ -32,7 +32,7 @@ func Main(p *api.Package) {
 	})
 
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.GenerateConfigHeader()
+		ctx.SetGenConfigHeader()
 
 		ctx.Target("config_test").
 			SetKind(api.TargetBinary).

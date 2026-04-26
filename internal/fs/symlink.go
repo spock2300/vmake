@@ -5,7 +5,7 @@ import (
 )
 
 func EnsureSymlink(linkPath, target string) error {
-	if err := EnsureDir(target); err != nil {
+	if err := EnsureParentDir(linkPath); err != nil {
 		return err
 	}
 	if existing, err := os.Readlink(linkPath); err == nil && existing == target {

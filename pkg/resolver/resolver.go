@@ -369,15 +369,16 @@ func (r *Resolver) resolveNativeVersion(id, gitURL, globalDir, localSrc, constra
 	defer lock.Release()
 
 	globalSrc := filepath.Join(globalDir, "src")
-	if err := fs.EnsureParentDir(localSrc); err != nil {
-		return "", "", nil, fmt.Errorf("create local dir for %s: %w", id, err)
-	}
-	if err := fs.EnsureSymlink(localSrc, globalSrc); err != nil {
-		return "", "", nil, fmt.Errorf("create symlink for %s: %w", id, err)
+	if err := fs.EnsureDir(globalSrc); err != nil {
+		return "", "", nil, fmt.Errorf("create global src dir for %s: %w", id, err)
 	}
 
-	if err := repo.EnsureRepoAtRef(gitURL, localSrc, ""); err != nil {
+	if err := repo.EnsureRepoAtRef(gitURL, globalSrc, ""); err != nil {
 		return "", "", nil, fmt.Errorf("clone %s: %w", gitURL, err)
+	}
+
+	if err := fs.EnsureSymlink(localSrc, globalSrc); err != nil {
+		return "", "", nil, fmt.Errorf("create symlink for %s: %w", id, err)
 	}
 
 	tags, err := repo.ListTags(localSrc)

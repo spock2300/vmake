@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"strings"
 
-	iexec "gitee.com/spock2300/vmake/internal/exec"
-
 	"github.com/spf13/cobra"
+
+	iexec "gitee.com/spock2300/vmake/internal/exec"
 )
 
 var (

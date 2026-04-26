@@ -9,8 +9,18 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"gitee.com/spock2300/vmake/internal/fs"
+	"gitee.com/spock2300/vmake/pkg/plugin"
+	"gitee.com/spock2300/vmake/pkg/repo"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
+
+type shellHandler struct {
+	generate func(io.Writer)
+	install  func()
+}
+
+var shells map[string]shellHandler
 
 var completionShell string
 
@@ -46,6 +56,12 @@ var completionInstallCmd = &cobra.Command{
 }
 
 func init() {
+	shells = map[string]shellHandler{
+		"bash":       {func(w io.Writer) { RootCmd.GenBashCompletionV2(w, true) }, installBashCompletion},
+		"zsh":        {func(w io.Writer) { RootCmd.GenZshCompletion(w) }, installZshCompletion},
+		"fish":       {func(w io.Writer) { RootCmd.GenFishCompletion(w, true) }, installFishCompletion},
+		"powershell": {func(w io.Writer) { RootCmd.GenPowerShellCompletionWithDesc(w) }, nil},
+	}
 	RootCmd.CompletionOptions.DisableDefaultCmd = true
 	completionInstallCmd.Flags().StringVar(&completionShell, "shell", "", "override shell detection (bash, zsh, fish)")
 	completionCmd.AddCommand(completionInstallCmd)
@@ -53,18 +69,11 @@ func init() {
 }
 
 func generateCompletion(shell string, w io.Writer) {
-	switch shell {
-	case "bash":
-		RootCmd.GenBashCompletionV2(w, true)
-	case "zsh":
-		RootCmd.GenZshCompletion(w)
-	case "fish":
-		RootCmd.GenFishCompletion(w, true)
-	case "powershell":
-		RootCmd.GenPowerShellCompletionWithDesc(w)
-	default:
+	entry, ok := shells[shell]
+	if !ok || entry.generate == nil {
 		fatalMsg("unsupported shell: %s (supported: bash, zsh, fish, powershell)", shell)
 	}
+	entry.generate(w)
 }
 
 func completeCompletionShell(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -73,17 +82,11 @@ func completeCompletionShell(cmd *cobra.Command, args []string, toComplete strin
 
 func runCompletionInstall(cmd *cobra.Command, args []string) {
 	shell := detectShell()
-
-	switch shell {
-	case "bash":
-		installBashCompletion()
-	case "zsh":
-		installZshCompletion()
-	case "fish":
-		installFishCompletion()
-	default:
+	entry, ok := shells[shell]
+	if !ok || entry.install == nil {
 		fatalMsg("unsupported shell: %s (supported: bash, zsh, fish). Use --shell to override.", shell)
 	}
+	entry.install()
 }
 
 func detectShell() string {
@@ -203,34 +206,32 @@ func completeInstallType(cmd *cobra.Command, args []string, toComplete string) (
 	}, cobra.ShellCompDirectiveNoFileComp
 }
 
-func completeRepoName(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	infos := getRepoManager().ListInfo()
-	names := make([]string, 0, len(infos))
-	for _, info := range infos {
-		names = append(names, info.Name)
+func completeSliceField[T any](items []T, getName func(T) string) ([]string, cobra.ShellCompDirective) {
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		names = append(names, getName(item))
 	}
 	return names, cobra.ShellCompDirectiveNoFileComp
 }
 
+func completeRepoName(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return completeSliceField(getRepoManager().ListInfo(), func(i repo.RepoInfo) string { return i.Name })
+}
+
 func completeExtRepoName(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	repos := getPluginManager().ListRepos()
-	names := make([]string, 0, len(repos))
-	for _, r := range repos {
-		names = append(names, r.Name)
-	}
-	return names, cobra.ShellCompDirectiveNoFileComp
+	return completeSliceField(getPluginManager().ListRepos(), func(r plugin.ExtensionRepo) string { return r.Name })
 }
 
 func completePkgRef(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	depsDir := getDepsDir()
-	repoEntries, err := readDirEntries(depsDir)
+	repoEntries, err := fs.ListDirEntries(depsDir)
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	var refs []string
 	for _, repoEntry := range repoEntries {
 		repoName := repoEntry.Name()
-		pkgEntries, err := readDirEntries(filepath.Join(depsDir, repoName))
+		pkgEntries, err := fs.ListDirEntries(filepath.Join(depsDir, repoName))
 		if err != nil {
 			continue
 		}

@@ -2,6 +2,7 @@ package toolchain
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 )
 
@@ -102,7 +103,7 @@ func (m *Manager) AddGlobalCFlags(flags ...string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, f := range flags {
-		if !contains(m.globalCFlags, f) {
+		if !slices.Contains(m.globalCFlags, f) {
 			m.globalCFlags = append(m.globalCFlags, f)
 		}
 	}
@@ -112,7 +113,7 @@ func (m *Manager) AddGlobalCxxFlags(flags ...string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, f := range flags {
-		if !contains(m.globalCxxFlags, f) {
+		if !slices.Contains(m.globalCxxFlags, f) {
 			m.globalCxxFlags = append(m.globalCxxFlags, f)
 		}
 	}
@@ -122,19 +123,10 @@ func (m *Manager) AddGlobalLdFlags(flags ...string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, f := range flags {
-		if !contains(m.globalLdFlags, f) {
+		if !slices.Contains(m.globalLdFlags, f) {
 			m.globalLdFlags = append(m.globalLdFlags, f)
 		}
 	}
-}
-
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
 }
 
 func (m *Manager) GetGlobalCFlags() []string {

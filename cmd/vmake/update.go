@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	iexec "gitee.com/spock2300/vmake/internal/exec"
 	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/version"
-	"github.com/spf13/cobra"
 )
 
 const modulePath = "gitee.com/spock2300/vmake/cmd/vmake"

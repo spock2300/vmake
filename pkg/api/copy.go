@@ -4,6 +4,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"gitee.com/spock2300/vmake/internal/fs"
 )
 
 func CopyFile(src, dest string) error {
@@ -42,7 +44,7 @@ func CopyDirWithFilter(src, dest string, filter CopyFilter) error {
 }
 
 func copyDirWithFilter(src, dest string, filter CopyFilter) error {
-	if err := os.MkdirAll(dest, 0755); err != nil {
+	if err := fs.EnsureDir(dest); err != nil {
 		return err
 	}
 

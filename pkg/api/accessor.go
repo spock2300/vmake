@@ -83,24 +83,22 @@ func (a *ConfigAccessor) BoolStr(name string) string {
 	return "OFF"
 }
 
-func (a *ConfigAccessor) If(option string, then ...string) []string {
+func (a *ConfigAccessor) ifCond(cond bool, then ...string) []string {
 	if a.CfgVals == nil {
 		return then
 	}
-	if a.Bool(option) {
+	if cond {
 		return then
 	}
 	return nil
 }
 
+func (a *ConfigAccessor) If(option string, then ...string) []string {
+	return a.ifCond(a.Bool(option), then...)
+}
+
 func (a *ConfigAccessor) IfNot(option string, then ...string) []string {
-	if a.CfgVals == nil {
-		return then
-	}
-	if !a.Bool(option) {
-		return then
-	}
-	return nil
+	return a.ifCond(!a.Bool(option), then...)
 }
 
 // Equal returns dep when CfgVals[option] == value. In discoverAll mode (CfgVals==nil), always returns dep.
@@ -154,14 +152,6 @@ func (a *ConfigAccessor) MergeGlobals(globalOptions map[string]*Option, globalVa
 	if a.CfgVals == nil {
 		a.CfgVals = make(map[string]any)
 	}
-	for name, opt := range globalOptions {
-		if _, exists := a.Options[name]; !exists {
-			a.Options[name] = opt
-		}
-	}
-	for name, val := range globalVals {
-		if _, exists := a.CfgVals[name]; !exists {
-			a.CfgVals[name] = val
-		}
-	}
+	mergeMapNoOverwrite(a.Options, globalOptions)
+	mergeMapNoOverwrite(a.CfgVals, globalVals)
 }

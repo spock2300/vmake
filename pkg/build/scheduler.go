@@ -16,6 +16,11 @@ import (
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
 
+const (
+	subdirObjects   = "objects"
+	subdirGenerated = "generated"
+)
+
 type ResolvedTarget struct {
 	Node         *BuildNode
 	SourceFiles  []string
@@ -39,6 +44,17 @@ type PkgInfo struct {
 	api.PkgDirs
 	OutputDir string
 	BuildKey  string
+}
+
+func (pi *PkgInfo) OutputPath(subpath string) string {
+	if pi.OutputDir != "" {
+		return filepath.Join(pi.OutputDir, subpath)
+	}
+	return BuildPath(".", pi.BuildKey, subpath)
+}
+
+func (pi *PkgInfo) GeneratedDir() string {
+	return BuildPath(".", pi.BuildKey, subdirGenerated)
 }
 
 type Scheduler struct {
@@ -133,6 +149,13 @@ func (s *Scheduler) GetPkgInfo(pkgName string) (*PkgInfo, bool) {
 	return info, ok
 }
 
+func (s *Scheduler) effectiveSourceDir(pkgName string) string {
+	if pkg := s.packages[pkgName]; pkg != nil && pkg.SrcDirRaw() != "" {
+		return pkg.SrcDir()
+	}
+	return s.pkgs[pkgName].SourceDir
+}
+
 func (s *Scheduler) BuildAll() error {
 	if err := s.graph.ForEachDefault(func(node *BuildNode) error {
 		return s.Build(node.FullName)
@@ -170,7 +193,7 @@ func (s *Scheduler) Build(fullName string) error {
 
 	genRules := node.Target.GenRules()
 	if len(genRules) > 0 {
-		generatedDir := BuildPath(".", pkgInfo.BuildKey, "generated")
+		generatedDir := pkgInfo.GeneratedDir()
 		if err := runGenRules(genRules, generatedDir); err != nil {
 			return err
 		}
@@ -178,13 +201,13 @@ func (s *Scheduler) Build(fullName string) error {
 
 	pkg := s.packages[node.PkgName]
 	if pkg != nil && pkg.GenConfigHeader() {
-		generatedDir := BuildPath(".", pkgInfo.BuildKey, "generated")
+		generatedDir := pkgInfo.GeneratedDir()
 		if err := s.generateConfigHeader(pkg, generatedDir); err != nil {
 			return err
 		}
 	}
 
-	if err := os.MkdirAll(BuildPath(".", pkgInfo.BuildKey, "objects"), 0755); err != nil {
+	if err := os.MkdirAll(pkgInfo.OutputPath(subdirObjects), 0755); err != nil {
 		return fmt.Errorf("create build directory: %w", err)
 	}
 
@@ -278,10 +301,7 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 		}
 
 		if len(depNode.Target.PublicIncludes()) > 0 {
-			srcDir := depPkg.SourceDir
-			if dep := s.packages[depNode.PkgName]; dep != nil && dep.SrcDirRaw() != "" {
-				srcDir = dep.SrcDir()
-			}
+			srcDir := s.effectiveSourceDir(depNode.PkgName)
 			for _, pubInc := range depNode.Target.PublicIncludes() {
 				result.includes = append(result.includes, filepath.Join(srcDir, pubInc))
 			}
@@ -372,7 +392,7 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	pkg := s.packages[node.PkgName]
 	needGenerated := len(genRules) > 0 || (pkg != nil && pkg.GenConfigHeader())
 	if needGenerated {
-		generatedDir := BuildPath(".", pkgInfo.BuildKey, "generated")
+		generatedDir := pkgInfo.GeneratedDir()
 		resolved.AllIncludes = append(resolved.AllIncludes, generatedDir)
 	}
 
@@ -389,34 +409,14 @@ func targetFilename(kind api.TargetKind, name string) string {
 	return kind.Prefix() + name + kind.Ext()
 }
 
-func collectAllObjects(objs []string, artifacts []string) []string {
-	allObjs := append([]string{}, objs...)
-	for _, artifact := range artifacts {
-		allObjs = append(allObjs, artifact)
-	}
-	return allObjs
-}
-
 func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
-	pkgInfo := s.pkgs[node.PkgName]
-
-	name := targetFilename(node.Target.Kind(), node.Target.Name())
-
-	if pkgInfo.OutputDir != "" {
-		return filepath.Join(pkgInfo.OutputDir, name)
-	}
-	return BuildPath(".", pkgInfo.BuildKey, name)
+	return s.pkgs[node.PkgName].OutputPath(targetFilename(node.Target.Kind(), node.Target.Name()))
 }
 
 func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string, []string, error) {
 	pkgInfo := s.pkgs[resolved.Node.PkgName]
 
-	var objRel string
-	if pkgInfo.OutputDir != "" {
-		objRel = filepath.Join(pkgInfo.OutputDir, "objects", strings.ReplaceAll(src, "/", "_")+".o")
-	} else {
-		objRel = BuildPath(".", pkgInfo.BuildKey, "objects/"+strings.ReplaceAll(src, "/", "_")+".o")
-	}
+	objRel := pkgInfo.OutputPath(filepath.Join(subdirObjects, strings.ReplaceAll(src, "/", "_")+".o"))
 
 	buildGoPath := filepath.Join(pkgInfo.SourceDir, "build.go")
 	valid, deps := IsSourceValid(src, objRel, buildGoPath)
@@ -492,13 +492,7 @@ func (s *Scheduler) realizePrebuilt(resolved *ResolvedTarget) error {
 	}
 
 	vlog.Info("  PREBUILT %s", filepath.Base(dst))
-
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-		return fmt.Errorf("create output dir for prebuilt: %w", err)
-	}
-
-	os.Remove(dst)
-	return os.Symlink(absSrc, dst)
+	return fs.EnsureSymlink(dst, absSrc)
 }
 
 func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
@@ -618,7 +612,7 @@ func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) error
 		return s.realizePrebuilt(resolved)
 	}
 
-	allObjs := collectAllObjects(objs, resolved.DepArtifacts)
+	allObjs := append(append([]string{}, objs...), resolved.DepArtifacts...)
 
 	switch kind {
 	case api.TargetBinary:
@@ -769,10 +763,7 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 		return fmt.Errorf("create include dir: %w", err)
 	}
 
-	srcDir := pkgInfo.SourceDir
-	if pkg := s.packages[resolved.Node.PkgName]; pkg != nil && pkg.SrcDirRaw() != "" {
-		srcDir = pkg.SrcDir()
-	}
+	srcDir := s.effectiveSourceDir(resolved.Node.PkgName)
 	return copyPublicIncludes(t, srcDir, includeDir)
 }
 

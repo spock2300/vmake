@@ -6,14 +6,14 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/pkg/build"
 	"gitee.com/spock2300/vmake/pkg/buildscript"
 	"gitee.com/spock2300/vmake/pkg/config"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
-
-	"github.com/spf13/cobra"
 )
 
 var cleanAllFlag bool

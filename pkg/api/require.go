@@ -1,5 +1,10 @@
 package api
 
+import (
+	"fmt"
+	"strings"
+)
+
 type RequireFunc func(ctx *RequireContext)
 
 type RequireInfo struct {
@@ -89,4 +94,14 @@ func parseRequire(dep string) (name, constraint string) {
 		}
 	}
 	return dep, ""
+}
+
+func CheckCycle(path []string, current string) error {
+	for _, p := range path {
+		if p == current {
+			return fmt.Errorf("circular dependency: %s → %s",
+				strings.Join(path, " → "), current)
+		}
+	}
+	return nil
 }

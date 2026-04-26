@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/spf13/cobra"
+
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 	"gitee.com/spock2300/vmake/pkg/plugin"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
-
-	"github.com/spf13/cobra"
 )
 
 var extCmd = &cobra.Command{
@@ -24,7 +24,7 @@ var extAddCmd = &cobra.Command{
 	Run:   runExtAdd,
 }
 
-var extRemoveCmd = newRemoveCmd("remove <name>", "Remove an extension repository", "extension repository", func(name string) error {
+var extRemoveCmd = newActionCmd("remove <name>", "Remove an extension repository", "Removed", "repository", func(name string) error {
 	return getPluginManager().RemoveRepo(name)
 })
 

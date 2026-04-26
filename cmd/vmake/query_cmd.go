@@ -2,17 +2,19 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
+
+	"github.com/spf13/cobra"
 
 	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/config"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 	"gitee.com/spock2300/vmake/pkg/resolver"
-
-	"github.com/spf13/cobra"
 )
 
 func newQueryCmd() *cobra.Command {
@@ -222,7 +224,7 @@ func formatOptions(ctx *RuntimeContext, name string, globalValues map[string]any
 	acc.MergeGlobals(ctx.GlobalOptions, globalValues)
 
 	var parts []string
-	for _, oname := range sortedKeys(opts) {
+	for _, oname := range slices.Sorted(maps.Keys(opts)) {
 		o := opts[oname]
 		if o.IsGlobal() {
 			continue
@@ -242,11 +244,3 @@ func formatOptions(ctx *RuntimeContext, name string, globalValues map[string]any
 	return strings.Join(parts, ", ")
 }
 
-func sortedKeys[T any](m map[string]T) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}

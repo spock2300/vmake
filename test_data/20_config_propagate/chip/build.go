@@ -17,8 +17,8 @@ func Main(p *api.Package) {
 	})
 
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.GenerateConfigDefines()
-		ctx.ExportConfig()
+		ctx.SetGenConfigDefines()
+		ctx.SetExportConfig()
 
 		ctx.Target("chip").SetKind(api.TargetStatic).
 			AddFiles("src/*.c").

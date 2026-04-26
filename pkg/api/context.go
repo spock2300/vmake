@@ -206,17 +206,17 @@ func (ctx *BuildContext) DepBuildDir(depRef string) string {
 	return filepath.Dir(ctx.DepOutput(depRef))
 }
 
-func (ctx *BuildContext) GenerateConfigHeader() *BuildContext {
+func (ctx *BuildContext) SetGenConfigHeader() *BuildContext {
 	ctx.genConfigHeader = true
 	return ctx
 }
 
-func (ctx *BuildContext) GenerateConfigDefines() *BuildContext {
+func (ctx *BuildContext) SetGenConfigDefines() *BuildContext {
 	ctx.genConfigDefines = true
 	return ctx
 }
 
-func (ctx *BuildContext) ExportConfig() *BuildContext {
+func (ctx *BuildContext) SetExportConfig() *BuildContext {
 	ctx.exportConfig = true
 	return ctx
 }
@@ -232,9 +232,9 @@ func (ctx *BuildContext) SyncConfigDefines(pkgNames ...string) *BuildContext {
 	return ctx
 }
 
-func (ctx *BuildContext) GenConfigHeaderFlag() bool  { return ctx.genConfigHeader }
-func (ctx *BuildContext) GenConfigDefinesFlag() bool { return ctx.genConfigDefines }
-func (ctx *BuildContext) ExportConfigFlag() bool     { return ctx.exportConfig }
+func (ctx *BuildContext) GenConfigHeader() bool  { return ctx.genConfigHeader }
+func (ctx *BuildContext) GenConfigDefines() bool { return ctx.genConfigDefines }
+func (ctx *BuildContext) ExportConfig() bool     { return ctx.exportConfig }
 func (ctx *BuildContext) ImportConfigs() []string    { return ctx.importConfigs }
 
 func (ctx *BuildContext) Exec(name string, args ...string) {

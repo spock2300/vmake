@@ -32,20 +32,6 @@ func getPluginManager() *plugin.Manager {
 	return plugin.NewManager(vmakeDir)
 }
 
-func readDirEntries(dir string) ([]os.DirEntry, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	var result []os.DirEntry
-	for _, entry := range entries {
-		if entry.IsDir() {
-			result = append(result, entry)
-		}
-	}
-	return result, nil
-}
-
 func newPkgRef(repoName, pkgName string) *api.Package {
 	return api.NewPackage().SetRepo(repoName).SetName(pkgName)
 }
@@ -58,26 +44,14 @@ func mustSplitPkgRef(ref string) (string, string) {
 	return repoName, pkgName
 }
 
-func newRemoveCmd(use, short, entityType string, removeFn func(name string) error) *cobra.Command {
+func newActionCmd(use, short, verb, entityType string, action func(name string) error) *cobra.Command {
 	return &cobra.Command{
 		Use:   use,
 		Short: short,
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			fatalErr(removeFn(args[0]))
-			fmt.Printf("Removed %s '%s'\n", entityType, args[0])
-		},
-	}
-}
-
-func newUpdateCmd(use, short, entityType string, updateFn func(name string) error) *cobra.Command {
-	return &cobra.Command{
-		Use:   use,
-		Short: short,
-		Args:  cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
-			fatalErr(updateFn(args[0]))
-			fmt.Printf("Updated %s '%s'\n", entityType, args[0])
+			fatalErr(action(args[0]))
+			fmt.Printf("%s %s '%s'\n", verb, entityType, args[0])
 		},
 	}
 }

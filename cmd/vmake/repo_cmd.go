@@ -47,7 +47,7 @@ var repoAddCmd = &cobra.Command{
 	},
 }
 
-var repoRemoveCmd = newRemoveCmd("remove <name>", "Remove a package repository", "repository", func(name string) error {
+var repoRemoveCmd = newActionCmd("remove <name>", "Remove a package repository", "Removed", "repository", func(name string) error {
 	return getRepoManager().Remove(name)
 })
 
@@ -72,6 +72,6 @@ var repoListCmd = &cobra.Command{
 	},
 }
 
-var repoUpdateCmd = newUpdateCmd("update <name>", "Update a package repository", "repository", func(name string) error {
+var repoUpdateCmd = newActionCmd("update <name>", "Update a package repository", "Updated", "repository", func(name string) error {
 	return getRepoManager().Update(name)
 })

@@ -7,14 +7,14 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/buildscript"
 	"gitee.com/spock2300/vmake/pkg/config"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
 	"gitee.com/spock2300/vmake/pkg/resolver"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
-
-	"github.com/spf13/cobra"
 )
 
 var (
@@ -237,10 +237,7 @@ func collectOptions(name, dir string, pkg *api.Package) map[string]*api.Option {
 	return cfgCtx.GetOptions()
 }
 
-func runConfigPhase(ctx *RuntimeContext) error {
-	vlog.Info("")
-	vlog.Info("Executing OnConfig...")
-
+func collectAllOptionsAndKConfigs(ctx *RuntimeContext) {
 	ctx.AllOptions = make(map[string]map[string]*api.Option)
 	ctx.AllKConfigs = make(map[string][]*api.KConfigEntry)
 	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
@@ -282,7 +279,9 @@ func runConfigPhase(ctx *RuntimeContext) error {
 			}
 		}
 	}
+}
 
+func applyAllConfigCallbacks(ctx *RuntimeContext) {
 	vlog.Info("")
 	vlog.Info("Applying configuration...")
 	for _, name := range ctx.Resolver.GetOrder() {
@@ -326,7 +325,9 @@ func runConfigPhase(ctx *RuntimeContext) error {
 			opt.OnApply()(applyCtx, valStr)
 		}
 	}
+}
 
+func buildToolchainAndGlobalOptions(ctx *RuntimeContext) error {
 	mgr := toolchain.GetManager()
 	var tcList []string
 	if tcs, err := mgr.ListToolchains(); err == nil {
@@ -341,8 +342,16 @@ func runConfigPhase(ctx *RuntimeContext) error {
 	if err != nil {
 		return fmt.Errorf("global options error: %w", err)
 	}
-
 	return nil
+}
+
+func runConfigPhase(ctx *RuntimeContext) error {
+	vlog.Info("")
+	vlog.Info("Executing OnConfig...")
+
+	collectAllOptionsAndKConfigs(ctx)
+	applyAllConfigCallbacks(ctx)
+	return buildToolchainAndGlobalOptions(ctx)
 }
 
 func GetToolchain(cfg *config.ConfigFile) (*toolchain.Toolchain, string, error) {

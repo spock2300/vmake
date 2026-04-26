@@ -1,13 +1,11 @@
 package repo
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/internal/jsonio"
 	"gitee.com/spock2300/vmake/pkg/api"
 )
@@ -30,15 +28,8 @@ func LoadNativeConfig(dir string) (*NativeConfig, bool, error) {
 }
 
 func SaveNativeConfig(dir, urlTemplate string) error {
-	if err := fs.EnsureDir(dir); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
 	cfg := NativeConfig{Type: "native", URL: urlTemplate}
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(dir, "repo.json"), data, 0644)
+	return jsonio.Save(filepath.Join(dir, "repo.json"), &cfg)
 }
 
 func ResolveNativeURL(urlTemplate, pkgName string) string {

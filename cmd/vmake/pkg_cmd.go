@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"gitee.com/spock2300/vmake/internal/fs"
 	"gitee.com/spock2300/vmake/pkg/repo"
-
-	"github.com/spf13/cobra"
 )
 
 var pkgCmd = &cobra.Command{
@@ -22,7 +22,7 @@ var pkgListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List installed packages",
 	Run: func(cmd *cobra.Command, args []string) {
-		entries, err := readDirEntries(getDepsDir())
+		entries, err := fs.ListDirEntries(getDepsDir())
 		if err != nil {
 			if os.IsNotExist(err) {
 				fmt.Println("No packages installed")
@@ -40,7 +40,7 @@ var pkgListCmd = &cobra.Command{
 		for _, entry := range entries {
 			repoName := entry.Name()
 			repoPath := filepath.Join(getDepsDir(), repoName)
-			pkgs, err := readDirEntries(repoPath)
+			pkgs, err := fs.ListDirEntries(repoPath)
 			if err != nil {
 				continue
 			}
@@ -82,14 +82,14 @@ var pkgSearchCmd = &cobra.Command{
 
 func searchRegistryRepo(repoName, pattern string) {
 	repoPath := filepath.Join(getReposDir(), repoName, "packages")
-	letterDirs, err := readDirEntries(repoPath)
+	letterDirs, err := fs.ListDirEntries(repoPath)
 	if err != nil {
 		return
 	}
 
 	for _, letterDir := range letterDirs {
 		pkgDir := filepath.Join(repoPath, letterDir.Name())
-		pkgs, err := readDirEntries(pkgDir)
+		pkgs, err := fs.ListDirEntries(pkgDir)
 		if err != nil {
 			continue
 		}
@@ -105,7 +105,7 @@ func searchRegistryRepo(repoName, pattern string) {
 
 func searchNativeRepo(repoName, pattern string) {
 	depsDir := filepath.Join(getDepsDir(), repoName)
-	entries, err := readDirEntries(depsDir)
+	entries, err := fs.ListDirEntries(depsDir)
 	if err != nil {
 		return
 	}

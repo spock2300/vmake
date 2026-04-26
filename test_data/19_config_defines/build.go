@@ -32,7 +32,7 @@ func Main(p *api.Package) {
 	})
 
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.GenerateConfigDefines()
+		ctx.SetGenConfigDefines()
 
 		ctx.Target("defines_test").
 			SetKind(api.TargetBinary).
