@@ -60,7 +60,7 @@ func RunWithOptions(name string, args []string, opts RunOptions) ([]byte, error)
 		cmd.Stderr = &buf
 	} else {
 		cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
-		cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
+		cmd.Stderr = os.Stderr
 	}
 
 	err := cmd.Run()
