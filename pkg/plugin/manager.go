@@ -135,8 +135,9 @@ func (m *Manager) DiscoverPlugins() ([]DiscoveredPlugin, error) {
 
 func (m *Manager) CompilePlugin(pluginDir string, force bool) (string, error) {
 	result := Compile(pluginDir, force)
+	soPath := filepath.Join(pluginDir, "plugin.so")
 	if !result.Success {
-		return "", result.Error
+		return soPath, result.Error
 	}
 	return result.OutputPath, nil
 }
