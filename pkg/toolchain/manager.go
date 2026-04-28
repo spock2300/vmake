@@ -15,6 +15,7 @@ type Manager struct {
 	globalCFlags   []string
 	globalCxxFlags []string
 	globalLdFlags  []string
+	globalLinks    []string
 	mu             sync.RWMutex
 }
 
@@ -145,6 +146,22 @@ func (m *Manager) GetGlobalLdFlags() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return append([]string{}, m.globalLdFlags...)
+}
+
+func (m *Manager) AddGlobalLinks(links ...string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, l := range links {
+		if !slices.Contains(m.globalLinks, l) {
+			m.globalLinks = append(m.globalLinks, l)
+		}
+	}
+}
+
+func (m *Manager) GetGlobalLinks() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append([]string{}, m.globalLinks...)
 }
 
 func (m *Manager) ResolveToolPath(tc *Toolchain, tool string) (string, error) {

@@ -25,6 +25,7 @@ type ConfigContext struct {
 	addGlobalCFlags   func(...string)
 	addGlobalCxxFlags func(...string)
 	addGlobalLdFlags  func(...string)
+	addGlobalLinks    func(...string)
 }
 
 func NewConfigContext(pkgName string) *ConfigContext {
@@ -57,6 +58,11 @@ func (ctx *ConfigContext) SetGlobalLdFlagsFunc(fn func(...string)) *ConfigContex
 	return ctx
 }
 
+func (ctx *ConfigContext) SetGlobalLinksFunc(fn func(...string)) *ConfigContext {
+	ctx.addGlobalLinks = fn
+	return ctx
+}
+
 func (ctx *ConfigContext) AddGlobalCFlags(flags ...string) {
 	if ctx.addGlobalCFlags != nil {
 		ctx.addGlobalCFlags(flags...)
@@ -72,6 +78,12 @@ func (ctx *ConfigContext) AddGlobalCxxFlags(flags ...string) {
 func (ctx *ConfigContext) AddGlobalLdFlags(flags ...string) {
 	if ctx.addGlobalLdFlags != nil {
 		ctx.addGlobalLdFlags(flags...)
+	}
+}
+
+func (ctx *ConfigContext) AddGlobalLinks(links ...string) {
+	if ctx.addGlobalLinks != nil {
+		ctx.addGlobalLinks(links...)
 	}
 }
 

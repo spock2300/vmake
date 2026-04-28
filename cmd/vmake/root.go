@@ -242,6 +242,9 @@ func collectOptions(name, dir string, pkg *api.Package) map[string]*api.Option {
 	cfgCtx.SetGlobalLdFlagsFunc(func(flags ...string) {
 		toolchain.GetManager().AddGlobalLdFlags(flags...)
 	})
+	cfgCtx.SetGlobalLinksFunc(func(links ...string) {
+		toolchain.GetManager().AddGlobalLinks(links...)
+	})
 	pkg.ExecConfigFuncs(dir, func(fn api.ConfigFunc) { fn(cfgCtx) })
 	return cfgCtx.GetOptions()
 }
@@ -313,6 +316,9 @@ func applyAllConfigCallbacks(ctx *RuntimeContext) {
 		})
 		applyCtx.SetGlobalLdFlagsFunc(func(flags ...string) {
 			toolchain.GetManager().AddGlobalLdFlags(flags...)
+		})
+		applyCtx.SetGlobalLinksFunc(func(links ...string) {
+			toolchain.GetManager().AddGlobalLinks(links...)
 		})
 
 		for optName, opt := range opts {

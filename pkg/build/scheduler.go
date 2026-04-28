@@ -29,6 +29,7 @@ type ResolvedTarget struct {
 	AllCFlags    []string
 	AllCxxFlags  []string
 	AllLdFlags   []string
+	AllLinks     []string
 	DepArtifacts []string
 	OutputPath   string
 }
@@ -348,12 +349,14 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 		AllCFlags:   append([]string{}, node.Target.CFlags()...),
 		AllCxxFlags: append([]string{}, node.Target.CxxFlags()...),
 		AllLdFlags:  append([]string{}, node.Target.LdFlags()...),
+		AllLinks:    append([]string{}, node.Target.Links()...),
 	}
 
 	resolved.AllCFlags = append(resolved.AllCFlags, modeFlags...)
 	resolved.AllCxxFlags = append(resolved.AllCxxFlags, modeFlags...)
 	resolved.AllDefines = append(resolved.AllDefines, modeDefines...)
 	resolved.AllLdFlags = append(resolved.AllLdFlags, toolchain.GetManager().GetGlobalLdFlags()...)
+	resolved.AllLinks = append(resolved.AllLinks, toolchain.GetManager().GetGlobalLinks()...)
 
 	for _, inc := range node.Target.Includes() {
 		resolved.AllIncludes = append(resolved.AllIncludes, inc)
@@ -631,7 +634,7 @@ func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) error
 			}
 		}
 		vlog.Info("  LINK %s", outputName)
-		return s.linker.LinkBinary(allObjs, unique(resolved.Node.Target.Links()), resolved.AllLdFlags, resolved.OutputPath, linkerScript)
+		return s.linker.LinkBinary(allObjs, unique(resolved.AllLinks), resolved.AllLdFlags, resolved.OutputPath, linkerScript)
 	case api.TargetStatic:
 		vlog.Info("  AR %s", outputName)
 		return s.linker.LinkStatic(allObjs, resolved.OutputPath)
