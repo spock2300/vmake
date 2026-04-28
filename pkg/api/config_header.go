@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 
 	"gitee.com/spock2300/vmake/internal/fs"
@@ -62,7 +63,18 @@ func collectConfigEntries(opts map[string]*Option, cfgVals map[string]any) []con
 				entries = append(entries, configEntry{macro: macro, kind: ceBoolFalse})
 			}
 		case OptionInt:
-			entries = append(entries, configEntry{macro: macro, val: fmt.Sprintf("%v", val), kind: ceInt})
+			var s string
+			switch v := val.(type) {
+			case int:
+				s = strconv.Itoa(v)
+			case float64:
+				s = strconv.Itoa(int(v))
+			case int64:
+				s = strconv.FormatInt(v, 10)
+			default:
+				s = fmt.Sprintf("%d", v)
+			}
+			entries = append(entries, configEntry{macro: macro, val: s, kind: ceInt})
 		case OptionString, OptionChoice:
 			entries = append(entries, configEntry{macro: macro, val: fmt.Sprintf("%v", val), kind: ceString})
 			if typ == OptionChoice {

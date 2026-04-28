@@ -276,7 +276,7 @@ func (o *Option) SetDefault(v any) *Option
 func (o *Option) SetDescription(desc string) *Option
 func (o *Option) SetValues(vals ...string) *Option        // OptionChoice 使用
 func (o *Option) SetShowIf(fn func(ctx *ConfigContext) bool) *Option  // 条件显示
-func (o *Option) SetOnApply(fn func(ctx *ConfigContext, val string)) *Option  // 选项值解析后的回调
+func (o *Option) SetOnApply(fn func(ctx *ConfigContext, val any)) *Option  // 选项值解析后的回调，val 为原始类型值
 func (o *Option) SetGroup(group string) *Option
 func (o *Option) IsGlobal() bool                      // 是否为全局选项（group == "Global"）
 
@@ -288,7 +288,7 @@ func (o *Option) Description() string
 func (o *Option) Values() []string
 func (o *Option) Group() string
 func (o *Option) ShowIf() func(ctx *ConfigContext) bool
-func (o *Option) OnApply() func(ctx *ConfigContext, val string)
+func (o *Option) OnApply() func(ctx *ConfigContext, val any)
 func (o *Option) IsGlobal() bool
 ```
 

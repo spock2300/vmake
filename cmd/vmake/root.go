@@ -329,15 +329,8 @@ func applyAllConfigCallbacks(ctx *RuntimeContext) {
 			if !ok || val == nil {
 				val = opt.Default()
 			}
-			var valStr string
-			switch v := val.(type) {
-			case string:
-				valStr = v
-			default:
-				valStr = fmt.Sprintf("%v", v)
-			}
-			vlog.Debug("  %s/%s = %v", name, optName, valStr)
-			opt.OnApply()(applyCtx, valStr)
+			vlog.Debug("  %s/%s = %v", name, optName, val)
+			opt.OnApply()(applyCtx, val)
 		}
 	}
 }

@@ -7,8 +7,8 @@ func Main(p *api.Package) {
 		ctx.Option("chip_model").SetType(api.OptionChoice).
 			SetDefault("sim_v1").
 			SetValues("sim_v1", "sim_v2").
-			SetOnApply(func(ctx *api.ConfigContext, val string) {
-				switch val {
+			SetOnApply(func(ctx *api.ConfigContext, val any) {
+				switch val.(string) {
 				case "sim_v1":
 					ctx.AddGlobalCFlags("-DSIM_V1")
 				case "sim_v2":

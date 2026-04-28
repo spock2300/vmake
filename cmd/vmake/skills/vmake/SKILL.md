@@ -140,7 +140,7 @@ vmake wraps `AddDeps` archives in `--start-group`/`--end-group`. Libraries added
 
 ```go
 ctx.Option("mcu").SetType(api.OptionChoice).SetDefault("stm32f405").
-    SetOnApply(func(ctx *api.ConfigContext, val string) {
+    SetOnApply(func(ctx *api.ConfigContext, val any) {
         ctx.AddGlobalLdFlags("-nostdlib", "-nostartfiles")
         ctx.AddGlobalLinks("c_nano", "gcc", "nosys")
     })
@@ -194,7 +194,7 @@ arm-none-eabi-gcc: error: : linker input file not found: No such file or directo
 ctx.Option("optimization").SetType(api.OptionChoice).
     SetDefault("O2").
     SetValues("O0", "O1", "O2", "O3", "Os").
-    SetOnApply(func(ctx *api.ConfigContext, val string) {
+    SetOnApply(func(ctx *api.ConfigContext, val any) {
         optFlag := ctx.Select("optimization", map[string]string{
             "O0": "-O0", "O1": "-O1", "O2": "-O2", "O3": "-O3", "Os": "-Os",
         })
@@ -424,20 +424,20 @@ ctx.Bool("debug")
 ctx.When("x", "val")
 
 ctx.Option("chip").SetType(api.OptionChoice).SetValues("stm32f4", "esp32").
-    SetOnApply(func(ctx *api.ConfigContext, val string) {
-        ctx.SetProvidedLinkerScript("linker/" + val + ".ld")
+    SetOnApply(func(ctx *api.ConfigContext, val any) {
+        ctx.SetProvidedLinkerScript("linker/" + val.(string) + ".ld")
     })
 
 ctx.Option("trace").SetType(api.OptionBool).SetDefault(false).
-    SetOnApply(func(ctx *api.ConfigContext, val string) {
-        if val == "true" {
+    SetOnApply(func(ctx *api.ConfigContext, val any) {
+        if val.(bool) {
             ctx.AddGlobalCFlags("-DTRACE=1", "-finstrument-functions")
             ctx.AddGlobalLdFlags("-ltrace")
         }
     })
 ```
 
-- `SetOnApply(fn)` — callback invoked after all option values are resolved, receives `*ConfigContext` and the option's string value; used to react to options (e.g., set global flags, choose linker script based on chip)
+- `SetOnApply(fn)` — callback invoked after all option values are resolved, receives `*ConfigContext` and `val any` (typed: `bool` for OptionBool, `int`/`float64` for OptionInt, `string` for OptionString/OptionChoice; note: JSON round-trip decodes numbers as `float64`); used to react to options (e.g., set global flags, choose linker script based on chip)
 
 ### Global Flags
 
@@ -447,11 +447,11 @@ Global flags apply to ALL targets in ALL packages. They are deduplicated ("appen
 
 ```go
 ctx.Option("chip").SetType(api.OptionChoice).SetValues("stm32f4", "esp32").
-    SetOnApply(func(ctx *api.ConfigContext, val string) {
+    SetOnApply(func(ctx *api.ConfigContext, val any) {
         ctx.AddGlobalCFlags("-Wall", "-ffunction-sections", "-fdata-sections")
         ctx.AddGlobalLdFlags("-Wl,--gc-sections", "-nostdlib")
         ctx.AddGlobalLinks("c_nano", "gcc")
-        ctx.SetProvidedLinkerScript("linker/" + val + ".ld")
+        ctx.SetProvidedLinkerScript("linker/" + val.(string) + ".ld")
     })
 ```
 
@@ -479,7 +479,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
     ctx.Option("mcu").SetType(api.OptionChoice).
         SetDefault("stm32f405").
         SetValues("stm32f405").
-        SetOnApply(func(ctx *api.ConfigContext, val string) {
+        SetOnApply(func(ctx *api.ConfigContext, val any) {
             ctx.AddGlobalCFlags("-mcpu=cortex-m4", "-mthumb",
                 "-ffreestanding", "-mfpu=fpv4-sp-d16", "-mfloat-abi=hard",
                 "-DSTM32F405RG")

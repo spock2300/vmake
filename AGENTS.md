@@ -119,7 +119,7 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 `Target.SetPrebuilt(path)` marks a `TargetStatic`/`TargetShared`/`TargetBinary` as pre-compiled. The scheduler skips compilation and creates a symlink from the expected output path to the prebuilt file. Up-to-date check compares symlink target via `os.Readlink`. Source file existence is verified before symlink creation.
 
 ### Option OnApply Callback
-`Option.SetOnApply(fn)` registers a callback invoked after all options are resolved. Used to react to option values (e.g., set global ldflags based on a config choice). Callbacks run during config phase, after option values are finalized.
+`Option.SetOnApply(fn)` registers a callback invoked after all options are resolved. The callback receives `val any` — the actual typed value (`bool` for OptionBool, `int`/`float64` for OptionInt, `string` for OptionString/OptionChoice). Note: after JSON round-trip through `config.json`, Go decodes all numbers as `float64`, so use `ctx.Int()` or type-assert accordingly. Used to react to option values (e.g., set global ldflags based on a config choice). Callbacks run during config phase, after option values are finalized.
 
 ### Dependency Linker Script
 A package declares `ctx.SetProvidedLinkerScript("path/to/script.ld")` in `OnConfig`. A consumer target calls `.UseDependencyLinkerScript()` — at link time, the scheduler resolves the first dependency that provides a linker script and passes `-T` to the linker. `SetProvidedLinkerScript` may only be called once per package (vlog.Fatal on double-set).

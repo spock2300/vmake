@@ -316,7 +316,7 @@ All setters are fluent (return `*Option`).
 | `SetDescription` | `(desc string)` | Description |
 | `SetValues` | `(vals ...string)` | Choice values (OptionChoice) |
 | `SetShowIf` | `(fn func(ctx *ConfigContext) bool)` | Conditional visibility |
-| `SetOnApply` | `(fn func(ctx *ConfigContext, val string))` | Callback after option values resolved |
+| `SetOnApply` | `(fn func(ctx *ConfigContext, val any))` | Callback after option values resolved. `val` is typed: `bool` (OptionBool), `int`/`float64` (OptionInt), `string` (OptionString/OptionChoice). JSON round-trip decodes numbers as `float64`. |
 | `SetGroup` | `(group string)` | Display group |
 
 Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()`, `OnApply()`, `Group()`, `IsGlobal()`.
