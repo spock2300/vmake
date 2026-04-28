@@ -139,6 +139,7 @@ func CompilePluginToOutput(opts PluginOptions, force bool) CompileResult {
 	}
 
 	if err := CompilePlugin(opts); err != nil {
+		os.Remove(opts.OutputPath)
 		return NewFailResultAt(err, opts.OutputPath)
 	}
 

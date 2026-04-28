@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -150,18 +151,20 @@ func loadPlugins() {
 
 	plugins, err := mgr.DiscoverPlugins()
 	if err != nil {
-		return
+		fatalErr(err)
 	}
 
 	for _, p := range plugins {
 		soPath, err := mgr.CompilePlugin(p.PluginDir, false)
 		if err != nil {
-			continue
+			os.Remove(soPath)
+			fatalMsg("extension plugin '%s' compile failed: %v", p.PluginName, err)
 		}
 
 		loaded, err := plugin.Load(soPath)
 		if err != nil {
-			continue
+			os.Remove(soPath)
+			fatalMsg("extension plugin '%s' load failed: %v", p.PluginName, err)
 		}
 
 		pluginCmd := &cobra.Command{
