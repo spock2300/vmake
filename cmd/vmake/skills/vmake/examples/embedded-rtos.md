@@ -87,7 +87,7 @@ my-project/
 ```
 firmware/
 └── build/
-    └── <toolchain>-<mode>/
+    └── <hash>/
         ├── firmware              # ELF binary
         ├── firmware.hex          # Intel HEX
         ├── firmware.bin          # Raw binary
@@ -137,7 +137,7 @@ AddBinHeader([]string{"assets/a.bin", "assets/b.bin"})
 ```
 
 - Input files can be strings or `[]string`
-- Output: `build/<toolchain>-<mode>/generated/<stem>.h` (e.g., `logo.h`)
+- Output: `build/<tc>-<mode>/generated/<stem>.h` (e.g., `logo.h`)
 - Include path for the `generated/` directory is automatically added
 - Incremental: only regenerates when source binary is newer than header
 - The generated `.h` file contains a `const unsigned char` array and a `size_t` length
@@ -148,9 +148,10 @@ AddBinHeader([]string{"assets/a.bin", "assets/b.bin"})
 - Use `-Wl,--print-memory-usage` during development to catch memory overflow early
 - `AddBinHeader` is not limited to firmware — any binary can embed binary data as headers
 - For complex firmware with KConfig (U-Boot, Linux kernel), see `examples/firmware.md`
+- If a static library dep provides symbols only referenced by libc (not your code), use `-nostdlib` + `AddGlobalLinks("c_nano", "gcc")` in `SetOnApply` to link libc inside the group — see SKILL.md Common Mistakes
 
 ## See Also
 
-- references/api.md - Target post-link methods, AddBinHeader
-- SKILL.md - RTOS / Embedded section
+- references/api.md - Target post-link methods, AddBinHeader, AddLinks, AddGlobalLinks
+- SKILL.md - RTOS / Embedded section, Common Mistakes (AddGlobalLinks vs EXTERN)
 - examples/firmware.md - KConfig, EnsureConfig, multi-package firmware

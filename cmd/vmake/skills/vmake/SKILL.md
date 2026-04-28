@@ -132,6 +132,24 @@ p.OnBuild(func(ctx *api.BuildContext) {
 })
 ```
 
+### Static library deps with symbols not referenced by your code
+
+vmake wraps `AddDeps` archives in `--start-group`/`--end-group`. Libraries added via `-specs` or `-l` after the group (e.g., libc from `-specs=nano.specs`) are linked later. If a static library dep provides symbols only referenced by those post-group libraries — not by your code — the linker won't pull the relevant `.o` from the archive, because nothing in the group needed it.
+
+**Fix (preferred):** Use `-nostdlib` in global LdFlags and `AddGlobalLinks("c_nano", "gcc")` in `SetOnApply`. This places `-lc_nano -lgcc` inside the `--start-group`/`--end-group` for all targets, so libc's references to your dep's symbols resolve during group scanning. No changes to the linker script needed.
+
+```go
+ctx.Option("mcu").SetType(api.OptionChoice).SetDefault("stm32f405").
+    SetOnApply(func(ctx *api.ConfigContext, val string) {
+        ctx.AddGlobalLdFlags("-nostdlib", "-nostartfiles")
+        ctx.AddGlobalLinks("c_nano", "gcc", "nosys")
+    })
+```
+
+**Fix (per-target):** Use `AddLinks("c_nano", "gcc")` on the binary target. Same mechanism, scoped to one target instead of global.
+
+**Fix (alternative):** Use `EXTERN(symbol ...)` in the linker script. It forces the linker to treat those symbols as undefined before archive scanning. This works but requires maintaining a symbol list in the linker script.
+
 ### `pkg.Run()` calls `os.Exit` on failure
 
 `pkg.Run()` and `pkg.RunIn()` use `exec.RunFatal` internally — they never return a non-nil error. Only `pkg.RunEnv()` returns a real error that you should check.
@@ -421,15 +439,16 @@ ctx.Option("trace").SetType(api.OptionBool).SetDefault(false).
 
 ### Global Flags
 
-`AddGlobalCFlags/CxxFlags/LdFlags` are only available on `ConfigContext`, effective inside `SetOnApply` callbacks.
+`AddGlobalCFlags/CxxFlags/LdFlags/Links` are only available on `ConfigContext`, effective inside `SetOnApply` callbacks.
 
-Global flags apply to ALL targets in ALL packages. They are deduplicated ("appends if not already present"). During compilation, global C/C++ flags are prepended before per-target flags. During linking, global LD flags are appended after per-target flags.
+Global flags apply to ALL targets in ALL packages. They are deduplicated ("appends if not already present"). During compilation, global C/C++ flags are prepended before per-target flags. During linking, global LD flags are appended after per-target flags. Global links are placed inside `--start-group`/`--end-group` alongside target-level links.
 
 ```go
 ctx.Option("chip").SetType(api.OptionChoice).SetValues("stm32f4", "esp32").
     SetOnApply(func(ctx *api.ConfigContext, val string) {
         ctx.AddGlobalCFlags("-Wall", "-ffunction-sections", "-fdata-sections")
-        ctx.AddGlobalLdFlags("-Wl,--gc-sections")
+        ctx.AddGlobalLdFlags("-Wl,--gc-sections", "-nostdlib")
+        ctx.AddGlobalLinks("c_nano", "gcc")
         ctx.SetProvidedLinkerScript("linker/" + val + ".ld")
     })
 ```
@@ -450,7 +469,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 
 ### Full HAL package with global flags (realistic firmware)
 
-For real embedded projects, the chip/HAL package compiles startup code as a static library and sets global compiler/linker flags via `AddGlobalCFlags`/`AddGlobalLdFlags` in `SetOnApply`. This ensures all packages (chip, RTOS, firmware) build with the same target-specific flags.
+For real embedded projects, the chip/HAL package compiles startup code as a static library and sets global compiler/linker flags via `AddGlobalCFlags`/`AddGlobalLdFlags` in `SetOnApply`. This ensures all packages build with the same target-specific flags. Add more packages (RTOS, BSP) following the same pattern — each as a `TargetStatic` with `AddDeps` on its dependencies.
 
 ```go
 // chip/build.go — HAL layer: startup code, global flags, linker script
@@ -462,15 +481,18 @@ p.OnConfig(func(ctx *api.ConfigContext) {
             ctx.AddGlobalCFlags("-mcpu=cortex-m4", "-mthumb",
                 "-ffreestanding", "-mfpu=fpv4-sp-d16", "-mfloat-abi=hard",
                 "-DSTM32F405RG")
-            ctx.AddGlobalLdFlags("-nostartfiles", "-specs=nosys.specs",
+            ctx.AddGlobalLdFlags("-nostartfiles", "-nostdlib",
                 "-mcpu=cortex-m4", "-mthumb",
                 "-mfpu=fpv4-sp-d16", "-mfloat-abi=hard",
                 "-Wl,--gc-sections", "-Wl,--print-memory-usage")
+            ctx.AddGlobalLinks("c_nano", "gcc")
         })
     ctx.SetProvidedLinkerScript("linker/stm32f405.ld")
 })
 p.OnBuild(func(ctx *api.BuildContext) {
-    ctx.Target("chip").SetKind(api.TargetStatic).AddFiles("src/*.S")
+    ctx.Target("chip").SetKind(api.TargetStatic).
+        AddFiles("src/*.S", "src/*.c").
+        AddPublicIncludes("include")
 })
 
 // firmware/build.go — application, consumes linker script
@@ -487,9 +509,9 @@ p.OnBuild(func(ctx *api.BuildContext) {
 ```
 
 Key points for embedded firmware:
-- **FPU flags in both CFLAGS and LDFLAGS**: When using hardware FPU (e.g., ARM_CM4F FreeRTOS port), `-mfloat-abi=hard -mfpu=fpv4-sp-d16` must appear in both `AddGlobalCFlags` and `AddGlobalLdFlags`, otherwise the linker reports "VFP register arguments" mismatches with libc.
-- **`-nostdlib` vs `-specs=nosys.specs`**: Do NOT use `-nostdlib` in LdFlags if the code needs `memset`/`memcpy` from libc (FreeRTOS does). Use `-specs=nosys.specs` instead, which provides stubs for `exit`, `write`, etc. while keeping libc available.
-- **VTOR**: If using an RTOS that reads VTOR (e.g., FreeRTOS `prvPortStartFirstTask`), set SCB_VTOR in Reset_Handler (`ldr r0, =0xE000ED08; ldr r1, =_vector_table; str r1, [r0]`).
+- **Target-specific flags in both CFLAGS and LDFLAGS**: Flags like `-mfloat-abi=hard -mfpu=fpv4-sp-d16` must appear in both `AddGlobalCFlags` and `AddGlobalLdFlags`, otherwise the linker reports ABI mismatches with libc.
+- **`-nostdlib` + `AddGlobalLinks`**: Use `-nostdlib` in LdFlags to prevent GCC from auto-linking system libraries. Then use `AddGlobalLinks("c_nano", "gcc")` in `SetOnApply` to link libc/libgcc inside the `--start-group`/`--end-group` for all targets. This ensures libc's references to your dep's symbols (e.g., syscalls from a BSP static library) resolve during group scanning.
+- If you use `-specs=nano.specs` instead (libc linked after the group), and a dep provides symbols only libc references, use `EXTERN` in the linker script — see Common Mistake above.
 
 - `SetProvidedLinkerScript(path)` — chip/bsp package declares linker script for consumers (on `ConfigContext`; fatal on double-set)
 - `UseDependencyLinkerScript()` — firmware target auto-inherits `-T` from first dependency that provides one
