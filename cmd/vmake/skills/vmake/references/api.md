@@ -168,7 +168,7 @@ All setters are fluent (return `*Target`).
 | `AddDefines` | `(defines ...any)` | Preprocessor defines |
 | `AddLinks` | `(libs ...any)` | Libraries to link |
 | `AddProvidedLibs` | `(libs ...string)` | Libraries this target provides to consumers (e.g. `"ssl"`, `"crypto"`) |
-| `AddDeps` | `(targets ...string)` | Dependencies: same pkg, cross pkg (`"pkg:name"`), third-party (`"official/zlib"`) |
+| `AddDeps` | `(targets ...string)` | Dependencies: same pkg (`"utils"`), cross pkg (`"pkg:name"`), wildcard (`"pkg:*"` / `"repo/pkg:*"`), third-party (`"official/zlib"`) |
 | `AddCFlags` | `(flags ...any)` | C compiler flags |
 | `AddCxxFlags` | `(flags ...any)` | C++ compiler flags |
 | `AddLdFlags` | `(flags ...any)` | Linker flags |

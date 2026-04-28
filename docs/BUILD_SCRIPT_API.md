@@ -1057,7 +1057,7 @@ func Main(p *api.Package) {
         ctx.Target("app").
             SetKind(api.TargetBinary).
             AddFiles("*.c").
-            AddDeps("lib:utils")  // 跨包依赖
+            AddDeps("lib:*")     // 通配依赖：链接 lib 包下所有 target
     })
 }
 ```

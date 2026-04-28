@@ -71,7 +71,7 @@ func Main(p *api.Package) {
         ctx.Target("app").
             SetKind(api.TargetBinary).
             AddFiles("src/*.c").
-            AddDeps("lib:utils")
+            AddDeps("lib:*")
     })
 }
 ```
@@ -81,7 +81,7 @@ func Main(p *api.Package) {
 - **Multi-package workspace** — Each sub-directory is an independent package with its own `build.go`
 - **Root build.go** — Defines shared options, no targets of its own
 - **`AddPublicIncludes`** — Include dirs propagated to dependents automatically
-- **`AddDeps("lib:utils")`** — Cross-package dependency: builds `lib:utils` first, links its output, adds its public includes
+- **`AddDeps("lib:*")`** — Wildcard dependency: links all targets from `lib` package, propagates public includes
 - **Global options** — The `debug` option defined in root is accessible in all sub-packages via `ctx.Bool("debug")`
 
 ## Build Flow

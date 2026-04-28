@@ -40,7 +40,7 @@ func Main(p *api.Package) {
             SetKind(api.TargetBinary).
             AddFiles("src/*.c", "src/*.S").
             AddIncludes("include").
-            AddDeps("chip:chip").
+            AddDeps("chip:*").
             UseDependencyLinkerScript().
             AddCFlags("-ffunction-sections", "-fdata-sections").
             AddLdFlags("-nostartfiles", "-Wl,--gc-sections", "-Wl,--print-memory-usage").
@@ -54,7 +54,7 @@ func Main(p *api.Package) {
 
 ## What This Demonstrates
 
-- **`SetProvidedLinkerScript(path)`** — Chip package declares its linker script (fatal on double-set)
+- **`AddDeps("chip:*")`** — Wildcard dependency: links all targets from the `chip` package
 - **`UseDependencyLinkerScript()`** — Firmware target auto-inherits `-T` from the first dependency that provides one
 - **`AddBinHeader(inputs...)`** — Converts binary assets to `.h` hex arrays, output to `build/<tc>-<mode>/generated/`, include path auto-added
 - **`AddPostLinkSize()`** — Prints section size info after linking
@@ -103,7 +103,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
         SetKind(api.TargetBinary).
         AddFiles("src/*.c", "src/*.S").
         AddIncludes("include").
-        AddDeps("chip:chip").
+        AddDeps("chip:*").
         UseDependencyLinkerScript().
         AddPostLinkSize()
 

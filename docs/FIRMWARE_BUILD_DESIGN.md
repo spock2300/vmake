@@ -741,7 +741,7 @@ vmake build
 
 ## 9. autoWireRequireDeps
 
-`OnRequire`/`AddRequires` 仅声明依赖关系，**不会**自动创建构建图的边。目标必须通过 `AddDeps("pkg:target")` 显式声明构建依赖，否则拓扑排序不会产生正确的构建顺序。
+`OnRequire`/`AddRequires` 仅声明依赖关系，**不会**自动创建构建图的边。目标必须通过 `AddDeps` 显式声明构建依赖（支持 `"pkg:target"` 指定 target、`"pkg:*"` 通配所有 target），否则拓扑排序不会产生正确的构建顺序。
 
 为简化使用，vmake 提供 `autoWireRequireDeps()` 自动补全：
 

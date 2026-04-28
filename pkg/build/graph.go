@@ -129,6 +129,10 @@ func resolveDep(
 	path []string,
 ) ([]string, error) {
 	if strings.Contains(dep, ":") {
+		pkgRef, targetSpec, _ := strings.Cut(dep, ":")
+		if targetSpec == "*" {
+			return resolvePackageRef(pkgRef, nodes, pkgMeta, path)
+		}
 		if _, exists := nodes[dep]; !exists {
 			return nil, fmt.Errorf("dependency not found: %s", dep)
 		}

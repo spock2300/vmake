@@ -125,7 +125,7 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 A package declares `ctx.SetProvidedLinkerScript("path/to/script.ld")` in `OnConfig`. A consumer target calls `.UseDependencyLinkerScript()` — at link time, the scheduler resolves the first dependency that provides a linker script and passes `-T` to the linker. `SetProvidedLinkerScript` may only be called once per package (vlog.Fatal on double-set).
 
 ### Auto-Wire Require → Build Deps
-`OnRequire`/`AddRequires` alone does NOT create build graph edges. `Target.AddDeps("pkg:target")` is required for topology. However, `autoWireRequireDeps()` in `build_cmd.go` auto-wires them when a package has `AddRequires` calls but its targets lack explicit `AddDeps` — it links all of the dependency package's targets as deps.
+`OnRequire`/`AddRequires` alone does NOT create build graph edges. `Target.AddDeps("pkg:target")` is required for topology. However, `autoWireRequireDeps()` in `build_cmd.go` auto-wires them when a package has `AddRequires` calls but its targets lack explicit `AddDeps` — it links all of the dependency package's targets as deps. Wildcard deps (`"pkg:*"`, `"repo/pkg:*"`) expand to all targets of the referenced package plus transitive dependencies.
 
 ### restoreKConfigFiles Skip Rules
 - No config.json entry for package → skip entirely (don't delete `.config`)

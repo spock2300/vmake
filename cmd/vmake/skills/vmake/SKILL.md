@@ -369,12 +369,14 @@ After all `OnBuild` callbacks execute, vmake runs `autoWireRequireDeps`. For eac
 Explicit `AddDeps` IS needed for:
 - Same-package target deps: `AddDeps("mylib")`
 - Specific cross-package target: `AddDeps("lib:utils")`
+- Wildcard dep on all targets of a package: `AddDeps("chip:*")` or `AddDeps("official/zlib:*")`
 - Selective dep on a third-party package: `AddDeps("official/zlib:target")` to link against a specific target rather than all targets from that package
 
 ### Dependency Format
 
 - `"utils"` — same-package target
-- `"lib:utils"` — cross-package target (build order + link + PublicIncludes)
+- `"lib:utils"` — specific cross-package target (build order + link + PublicIncludes)
+- `"lib:*"` or `"official/zlib:*"` — wildcard: all targets from that package + transitive deps
 - `"official/zlib"` — third-party package (expanded to all targets from that package)
 
 ### Version Constraints
@@ -502,7 +504,7 @@ p.OnRequire(func(ctx *api.RequireContext) {
 p.OnBuild(func(ctx *api.BuildContext) {
     ctx.Target("firmware").SetKind(api.TargetBinary).
         AddFiles("src/*.c").
-        AddDeps("chip:chip").
+        AddDeps("chip:*").
         UseDependencyLinkerScript().
         AddPostLinkSize().AddPostLinkHex().AddPostLinkBin()
 })

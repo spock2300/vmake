@@ -7,6 +7,6 @@ func Main(p *api.Package) {
 		ctx.Target("app").
 			SetKind(api.TargetBinary).
 			AddFiles("*.c").
-			AddDeps("lib:utils") // 自动继承 utils 的 PublicIncludes
+			AddDeps("lib:*")
 	})
 }

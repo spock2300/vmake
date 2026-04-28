@@ -344,19 +344,20 @@ VMake 使用 `AddDeps` 统一管理所有依赖类型：
 | 类型 | 示例 | 识别规则 |
 |------|------|---------|
 | 同包 target | `AddDeps("utils")` | 不含 `:` 和 `/` |
-| 跨包 target | `AddDeps("lib:utils")` | 含 `:` |
-| 第三方包 | `AddDeps("official/zlib")` | 含 `/` |
+| 跨包 target | `AddDeps("lib:utils")` | 含 `:`，指定具体 target |
+| 通配依赖 | `AddDeps("lib:*")` 或 `AddDeps("official/zlib:*")` | `:*` 结尾，展开为该包所有 target + 传递依赖 |
+| 第三方包 | `AddDeps("official/zlib")` | 含 `/`，展开为该包所有 target + 传递依赖 |
 
 ### 解析流程
 
-`BuildGraph` 构建时，包引用（含 `/`）被自动展开：
+`BuildGraph` 构建时，包引用（`repo/pkg`、`pkg:*`、`repo/pkg:*`）被自动展开：
 
 1. 查找该包的所有 target 节点，添加为直接依赖
 2. 递归展开该包的传递依赖（来自 `resolver.Graph` 中的 `PackageNode.Deps`）
 3. 结果：每个 target 的 `Deps` 是扁平的传递闭包，包含所有直接和间接依赖的 target
 
 ```
-Target.AddDeps("official/zlib")       Target.AddDeps("official/curl")
+Target.AddDeps("official/zlib")        Target.AddDeps("official/curl:*")
          │                                       │
          ▼                                       ▼
     展开 zlib targets                     展开 curl targets
