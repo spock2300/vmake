@@ -135,10 +135,11 @@ A package declares `ctx.SetProvidedLinkerScript("path/to/script.ld")` in `OnConf
 
 ## Runtime Execution Flow
 ```
-Phase 1: OnRequire       -> Scan/Compile/Load buildscripts -> Resolve dependencies
+Phase 1: OnRequire       -> Scan/Compile/Load buildscripts -> Resolve dependencies (nil config; remote deferred)
 Phase 2a: ResolveDeferred -> Resolve remote (deferred) packages -> Update topological order
 Phase 2b: OnConfig       -> Execute callbacks -> Collect Options -> Run OnApply callbacks -> Merge global options
-Phase 3: OnBuild         -> Execute callbacks -> Generate Targets -> Compile/Link
+Phase 2c: FilterDeps     -> Re-run OnRequire with real config -> Replace node.Deps -> Update order -> BFS collect needed
+Phase 3: OnBuild         -> Execute callbacks -> Generate Targets -> autoWireRequireDeps -> Compile/Link
 (Optional) Install       -> Install targets to prefix directory + generate manifest.json
 ```
 

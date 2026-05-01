@@ -14,12 +14,13 @@ Go-plugin-based C/C++ build system. Build instructions are written in Go (`build
 
 ## Lifecycle
 
-| Phase | Hook | Purpose |
-|-------|------|---------|
-| 1 | `OnRequire` | Declare third-party dependencies |
-| 2a | `ResolveDeferred` | Clone/compile remote packages (automatic) |
-| 2b | `OnConfig` | Define build options |
-| 3 | `OnBuild` | Generate build targets |
+| Phase | Hook / Step | Purpose |
+|-------|-------------|---------|
+| 1 | `OnRequire` | Declare deps (runs with nil config; remote packages deferred) |
+| 2a | `ResolveDeferred` | Clone/compile remote packages; their `OnRequire` runs (loops until no more deferred) |
+| 2b | `OnConfig` | Define build options, resolve values, run `OnApply` callbacks |
+| 2c | `FilterDeps` | Re-runs `OnRequire` with real config; recomputes deps; BFS needed packages |
+| 3 | `OnBuild` | Generate build targets + `autoWireRequireDeps` + compile/link |
 | 4 | `OnInstall` | Post-build install logic |
 
 `OnPackage` runs during plugin extraction, right after `Main()` is called and before any lifecycle phases. Use it for package metadata (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` is for **registry repo** packages only — native repo and local packages must NOT use these.
@@ -281,6 +282,8 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `PackageName() string` | Package name |
 
 ### RequireContext
+
+OnRequire callbacks execute twice: first during graph discovery with nil config values (Phase 1), then again during FilterDeps with actual config values from config.json (Phase 2c). This enables option-conditional dependencies.
 
 | Method | Description |
 |--------|-------------|

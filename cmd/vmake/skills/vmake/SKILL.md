@@ -21,12 +21,13 @@ It's an alternative to CMake/Meson/Bazel, using Go as the configuration language
 Every build.go follows the same lifecycle. You don't need all phases — only
 include the ones your project needs:
 
-| Phase | Hook | When you need it |
-|-------|------|-----------------|
-| 1 | `OnRequire` | Third-party dependencies (git packages) |
-| 2a | `ResolveDeferred` | Remote packages cloned, build.go compiled (automatic) |
+| Phase | Hook / Step | When you need it |
+|-------|-------------|-----------------|
+| 1 | `OnRequire` | Declare deps (runs with nil config; remote packages deferred) |
+| 2a | `ResolveDeferred` | Remote packages cloned, compiled; their `OnRequire` runs (loops until no more deferred) |
 | 2b | `OnConfig` | Build options (debug/release, features, etc.) |
-| 3 | `OnBuild` | Always — define compilation targets |
+| 2c | `FilterDeps` | Re-runs `OnRequire` with real config values; recomputes deps; BFS collects needed packages |
+| 3 | `OnBuild` | Define targets + `autoWireRequireDeps` + compile/link |
 | 4 | `OnInstall` | Custom install logic |
 
 `OnPackage` runs for all packages right after `Main()` is called (before any lifecycle phases). Use it to describe the package (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` downloads remote source to `SourceDir()/src/` — works for both registry packages and local packages that need to wrap a downloaded library.
@@ -361,7 +362,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 
 ### Auto-Wire: When AddDeps is Automatic
 
-After all `OnBuild` callbacks execute, vmake runs `autoWireRequireDeps`. For each local target, for each `AddRequires` entry, it adds `AddDeps("pkg:target")` for ALL targets defined by that dependency package. This means:
+After all `OnBuild` callbacks execute, vmake runs `autoWireRequireDeps`. It uses the dependency list recomputed by `FilterDeps` (Phase 2c). For each local target, for each `AddRequires` entry from the final require list, it adds `AddDeps("pkg:target")` for ALL targets defined by that dependency package. This means:
 
 - `AddRequires("busybox")` + busybox defines target `"busybox"` → all your targets automatically get `AddDeps("busybox:busybox")`
 - You do NOT need explicit `AddDeps` when depending on a whole package via `OnRequire`
@@ -406,6 +407,33 @@ ctx.AddRequires("test_build/mathlib")    // no constraint = any version
 **Selection:** From all versions satisfying the constraint, the highest is chosen. When multiple packages depend on the same package with different constraints, all constraints must be mutually satisfiable.
 
 **Multi-constraint selection:** Use `Package.SelectVersionMulti(constraints []string)` in `OnPackage`/`SetBuildFunc` to match against multiple constraints: `p.SelectVersionMulti([]string{">=1.0", "<2.0"})` finds the highest version satisfying all constraints simultaneously.
+
+### OnRequire Two-Phase Execution
+
+`OnRequire` callbacks execute **twice** — once for discovery, once with real configuration:
+
+| Pass | Phase | Config values | Purpose |
+|------|-------|--------------|---------|
+| 1 | Phase 1 / 2a | `nil` | Discover initial dependency graph. Remote packages are deferred and compiled in Phase 2a; their `OnRequire` runs for the first time here. |
+| 2 | Phase 2c (`FilterDeps`) | Real values from `config.json` | After `OnConfig` has resolved all option values, `FilterDeps` re-runs every package's `OnRequire` with actual config. The returned dependencies **replace** `node.Deps`, then topology is re-sorted and needed packages are collected via BFS. |
+
+This is what enables **option-conditional dependencies** — if `OnRequire` only ran once with nil config, your `ctx.Bool("use_ssl")` check would never see the user's actual choice:
+
+```go
+p.OnConfig(func(ctx *api.ConfigContext) {
+    ctx.Option("use_ssl").SetType(api.OptionBool).SetDefault(false)
+})
+
+p.OnRequire(func(ctx *api.RequireContext) {
+    if ctx.Bool("use_ssl") {
+        ctx.AddRequires("official/openssl")
+    }
+})
+```
+
+**Mechanism:** `FilterDeps` calls `Package.UpdateRequireContext(cfgVals, options)`, which creates a fresh `RequireContext` with populated `ConfigAccessor`, runs all `OnRequire` callbacks, and replaces `p.requires` with the result. This runs for **every** package in the graph, not just local ones.
+
+**Key implication:** `AddRequires` alone does not guarantee a package will be built. A package is only built if reachable from a local root via BFS (`collectNeeded`), which runs after `FilterDeps` updates the dependency graph.
 
 ## Option & Conditional
 
