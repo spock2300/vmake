@@ -25,6 +25,7 @@ func (r *TargetRegistry) Target(name string) *Target {
 	}
 	t := &Target{
 		name:      name,
+		kind:      TargetBinary,
 		isDefault: true,
 		cflags:    append([]string{}, r.defaultCFlags...),
 		cxxflags:  append([]string{}, r.defaultCxxFlags...),

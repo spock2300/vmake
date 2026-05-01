@@ -353,7 +353,9 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	}
 
 	resolved.AllCFlags = append(resolved.AllCFlags, modeFlags...)
+	resolved.AllCFlags = append(resolved.AllCFlags, toolchain.GetManager().GetGlobalCFlags()...)
 	resolved.AllCxxFlags = append(resolved.AllCxxFlags, modeFlags...)
+	resolved.AllCxxFlags = append(resolved.AllCxxFlags, toolchain.GetManager().GetGlobalCxxFlags()...)
 	resolved.AllDefines = append(resolved.AllDefines, modeDefines...)
 	resolved.AllLdFlags = append(resolved.AllLdFlags, toolchain.GetManager().GetGlobalLdFlags()...)
 	resolved.AllLinks = append(resolved.AllLinks, toolchain.GetManager().GetGlobalLinks()...)
@@ -649,8 +651,9 @@ func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) error
 		return s.linker.LinkObject(allObjs, resolved.OutputPath)
 	case api.TargetVoid:
 		return s.buildVoidTarget(resolved)
+	default:
+		return fmt.Errorf("target %s has unknown kind %q", resolved.Node.FullName, kind)
 	}
-	return nil
 }
 
 func (s *Scheduler) postLink(resolved *ResolvedTarget) error {

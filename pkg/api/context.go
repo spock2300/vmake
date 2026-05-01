@@ -98,7 +98,8 @@ func (ctx *ConfigContext) KConfig(name string) *KConfigEntry {
 	if ctx.pkg != nil {
 		return ctx.pkg.AddKConfig(name)
 	}
-	return &KConfigEntry{name: name}
+	vlog.Fatal("KConfig(%s): no package associated with context", name)
+	return nil
 }
 
 func (ctx *ConfigContext) SetConfigValue(name string, val any) *ConfigContext {

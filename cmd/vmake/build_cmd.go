@@ -659,7 +659,7 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 	pkgMetaMap := make(map[string]build.PkgBuildMeta)
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
-		if !needed[name] {
+		if !needed[name] || node.Source == nil {
 			continue
 		}
 		pkgMetaMap[name] = build.PkgBuildMeta{
