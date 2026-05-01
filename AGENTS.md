@@ -233,9 +233,10 @@ Methods on `BuildContext`:
 - `ctx.DepBuildDir(depRef)` — get dependency build directory
 Methods on `ConfigContext`:
 - `ctx.ToolchainOption()` — create toolchain choice option auto-populated with available toolchains
-- `ctx.AddGlobalCFlags(flags...)` — add global C compiler flags (only effective in OnApply callbacks)
-- `ctx.AddGlobalCxxFlags(flags...)` — add global C++ compiler flags (only effective in OnApply callbacks)
-- `ctx.AddGlobalLdFlags(flags...)` — add global linker flags (only effective in OnApply callbacks)
+- `ctx.AddGlobalCFlags(flags...)` — add global C compiler flags (effective in OnConfig and OnApply callbacks; only applied for packages that survive FilterDeps)
+- `ctx.AddGlobalCxxFlags(flags...)` — add global C++ compiler flags (effective in OnConfig and OnApply callbacks; only applied for packages that survive FilterDeps)
+- `ctx.AddGlobalLdFlags(flags...)` — add global linker flags (effective in OnConfig and OnApply callbacks; only applied for packages that survive FilterDeps)
+- `ctx.AddGlobalLinks(links...)` — add global link libraries (effective in OnConfig and OnApply callbacks; only applied for packages that survive FilterDeps)
 - `ctx.SetProvidedLinkerScript(path)` — declare linker script for consumer targets (fatal on double-set)
 
 ## Package Structure

@@ -179,6 +179,7 @@ func runBuildPhase(ctx *RuntimeContext, includeTests bool) (*BuildResult, error)
 	}
 
 	needed := filterAndCollectNeeded(ctx)
+	applyGlobalFlagsFromNeeded(ctx, needed)
 
 	localPkgOptions := collectLocalPkgOptions(ctx)
 

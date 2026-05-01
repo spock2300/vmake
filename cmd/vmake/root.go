@@ -33,15 +33,23 @@ func init() {
 	RootCmd.AddCommand(newQueryCmd())
 }
 
+type packageGlobalFlags struct {
+	cFlags   []string
+	cxxFlags []string
+	ldFlags  []string
+	links    []string
+}
+
 type RuntimeContext struct {
-	WorkDir       string
-	Config        *config.ConfigFile
-	ConfigPath    string
-	DepGraph      *resolver.Graph
-	AllOptions    map[string]map[string]*api.Option
-	AllKConfigs   map[string][]*api.KConfigEntry
-	GlobalOptions map[string]*api.Option
-	Resolver      *resolver.Resolver
+	WorkDir             string
+	Config              *config.ConfigFile
+	ConfigPath          string
+	DepGraph            *resolver.Graph
+	AllOptions          map[string]map[string]*api.Option
+	AllKConfigs         map[string][]*api.KConfigEntry
+	GlobalOptions       map[string]*api.Option
+	Resolver            *resolver.Resolver
+	BufferedGlobalFlags map[string]*packageGlobalFlags
 }
 
 var RootCmd = &cobra.Command{
@@ -231,19 +239,19 @@ func runRequirePhase(ctx *RuntimeContext, force bool) error {
 	return nil
 }
 
-func collectOptions(name, dir string, pkg *api.Package) map[string]*api.Option {
+func collectOptions(name, dir string, pkg *api.Package, buf *packageGlobalFlags) map[string]*api.Option {
 	cfgCtx := api.NewConfigContextWithPackage(name, pkg)
 	cfgCtx.SetGlobalCFlagsFunc(func(flags ...string) {
-		toolchain.GetManager().AddGlobalCFlags(flags...)
+		buf.cFlags = append(buf.cFlags, flags...)
 	})
 	cfgCtx.SetGlobalCxxFlagsFunc(func(flags ...string) {
-		toolchain.GetManager().AddGlobalCxxFlags(flags...)
+		buf.cxxFlags = append(buf.cxxFlags, flags...)
 	})
 	cfgCtx.SetGlobalLdFlagsFunc(func(flags ...string) {
-		toolchain.GetManager().AddGlobalLdFlags(flags...)
+		buf.ldFlags = append(buf.ldFlags, flags...)
 	})
 	cfgCtx.SetGlobalLinksFunc(func(links ...string) {
-		toolchain.GetManager().AddGlobalLinks(links...)
+		buf.links = append(buf.links, links...)
 	})
 	pkg.ExecConfigFuncs(dir, func(fn api.ConfigFunc) { fn(cfgCtx) })
 	return cfgCtx.GetOptions()
@@ -252,6 +260,7 @@ func collectOptions(name, dir string, pkg *api.Package) map[string]*api.Option {
 func collectAllOptionsAndKConfigs(ctx *RuntimeContext) {
 	ctx.AllOptions = make(map[string]map[string]*api.Option)
 	ctx.AllKConfigs = make(map[string][]*api.KConfigEntry)
+	ctx.BufferedGlobalFlags = make(map[string]*packageGlobalFlags)
 	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
 
 	for _, name := range ctx.Resolver.GetOrder() {
@@ -259,7 +268,9 @@ func collectAllOptionsAndKConfigs(ctx *RuntimeContext) {
 
 		var opts map[string]*api.Option
 		if node.Pkg != nil {
-			opts = collectOptions(name, pkgDirs[name].SourceDir, node.Pkg)
+			buf := &packageGlobalFlags{}
+			ctx.BufferedGlobalFlags[name] = buf
+			opts = collectOptions(name, pkgDirs[name].SourceDir, node.Pkg, buf)
 		}
 
 		if len(opts) > 0 {
@@ -306,19 +317,25 @@ func applyAllConfigCallbacks(ctx *RuntimeContext) {
 			continue
 		}
 
+		buf := ctx.BufferedGlobalFlags[name]
+		if buf == nil {
+			buf = &packageGlobalFlags{}
+			ctx.BufferedGlobalFlags[name] = buf
+		}
+
 		entry := config.GetEntry(ctx.Config, name)
 		applyCtx := api.NewConfigContextWithPackage(name, node.Pkg)
 		applyCtx.SetGlobalCFlagsFunc(func(flags ...string) {
-			toolchain.GetManager().AddGlobalCFlags(flags...)
+			buf.cFlags = append(buf.cFlags, flags...)
 		})
 		applyCtx.SetGlobalCxxFlagsFunc(func(flags ...string) {
-			toolchain.GetManager().AddGlobalCxxFlags(flags...)
+			buf.cxxFlags = append(buf.cxxFlags, flags...)
 		})
 		applyCtx.SetGlobalLdFlagsFunc(func(flags ...string) {
-			toolchain.GetManager().AddGlobalLdFlags(flags...)
+			buf.ldFlags = append(buf.ldFlags, flags...)
 		})
 		applyCtx.SetGlobalLinksFunc(func(links ...string) {
-			toolchain.GetManager().AddGlobalLinks(links...)
+			buf.links = append(buf.links, links...)
 		})
 
 		for optName, opt := range opts {
@@ -331,6 +348,31 @@ func applyAllConfigCallbacks(ctx *RuntimeContext) {
 			}
 			vlog.Debug("  %s/%s = %v", name, optName, val)
 			opt.OnApply()(applyCtx, val)
+		}
+	}
+}
+
+func applyGlobalFlagsFromNeeded(ctx *RuntimeContext, needed map[string]bool) {
+	mgr := toolchain.GetManager()
+	for _, name := range ctx.Resolver.GetOrder() {
+		if !needed[name] {
+			continue
+		}
+		buf := ctx.BufferedGlobalFlags[name]
+		if buf == nil {
+			continue
+		}
+		if len(buf.cFlags) > 0 {
+			mgr.AddGlobalCFlags(buf.cFlags...)
+		}
+		if len(buf.cxxFlags) > 0 {
+			mgr.AddGlobalCxxFlags(buf.cxxFlags...)
+		}
+		if len(buf.ldFlags) > 0 {
+			mgr.AddGlobalLdFlags(buf.ldFlags...)
+		}
+		if len(buf.links) > 0 {
+			mgr.AddGlobalLinks(buf.links...)
 		}
 	}
 }
