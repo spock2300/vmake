@@ -689,7 +689,8 @@ func Main(ctx *plugin.Context) {
 - `RegisterToolchain(name, tc)`: 注册工具链
 - `GetToolchains()`: 获取已注册工具链
 - `SetOnMissing(toolchainName, fn)`: 为指定工具链设置缺失回调（用于自动下载）
-- `AddGlobalFlags(cflags, cxxflags)`: 添加全局编译标志
+- `AddGlobalCFlags(flags...)`: 添加全局 C 编译标志
+- `AddGlobalCxxFlags(flags...)`: 添加全局 C++ 编译标志
 - `AddGlobalLdFlags(flags...)`: 添加全局链接标志
 - `RegisterToolchainsFromRepo()`: 扫描仓库子目录中的 `toolchain.json` 并注册工具链
 - `LoadToolchainDef()`: 从插件目录加载 `toolchain.json`

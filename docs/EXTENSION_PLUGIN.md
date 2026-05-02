@@ -202,19 +202,18 @@ ctx.SetOnMissing("arm-gcc", func(name string) (*toolchain.Toolchain, error) {
 })
 ```
 
-### AddGlobalFlags
+### AddGlobalCFlags / AddGlobalCxxFlags
 
 ```go
-AddGlobalFlags func(cflags, cxxflags []string)
+AddGlobalCFlags   func(flags ...string)
+AddGlobalCxxFlags func(flags ...string)
 ```
 
-为所有构建目标注入全局 C/CXX 编译选项。影响所有使用 vmake 构建的项目。
+为所有构建目标注入全局 C 或 C++ 编译选项。影响所有使用 vmake 构建的项目。
 
 ```go
-ctx.AddGlobalFlags(
-    []string{"-ffunction-sections", "-fdata-sections"},
-    []string{"-ffunction-sections", "-fdata-sections"},
-)
+ctx.AddGlobalCFlags("-ffunction-sections", "-fdata-sections")
+ctx.AddGlobalCxxFlags("-ffunction-sections", "-fdata-sections")
 ```
 
 ### AddGlobalLdFlags
@@ -484,10 +483,8 @@ func Main(ctx *plugin.Context) {
     })
 
     // 添加全局编译标志
-    ctx.AddGlobalFlags(
-        []string{"-ffunction-sections", "-fdata-sections"},
-        []string{"-ffunction-sections", "-fdata-sections"},
-    )
+    ctx.AddGlobalCFlags("-ffunction-sections", "-fdata-sections")
+    ctx.AddGlobalCxxFlags("-ffunction-sections", "-fdata-sections")
 
     // list 子命令
     ctx.AddSubCommand(&cobra.Command{

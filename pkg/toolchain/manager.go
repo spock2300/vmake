@@ -93,13 +93,6 @@ func (m *Manager) GetDefaultToolchain() string {
 	return "host"
 }
 
-func (m *Manager) AddGlobalFlags(cflags, cxxflags []string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.globalCFlags = append(m.globalCFlags, cflags...)
-	m.globalCxxFlags = append(m.globalCxxFlags, cxxflags...)
-}
-
 func (m *Manager) AddGlobalCFlags(flags ...string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

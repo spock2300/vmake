@@ -192,8 +192,11 @@ func loadPlugins() {
 			SetOnMissing: func(toolchainName string, onMissing func(name string) (*toolchain.Toolchain, error)) {
 				toolchain.GetManager().SetOnMissing(toolchainName, onMissing)
 			},
-			AddGlobalFlags: func(cflags, cxxflags []string) {
-				toolchain.GetManager().AddGlobalFlags(cflags, cxxflags)
+			AddGlobalCFlags: func(flags ...string) {
+				toolchain.GetManager().AddGlobalCFlags(flags...)
+			},
+			AddGlobalCxxFlags: func(flags ...string) {
+				toolchain.GetManager().AddGlobalCxxFlags(flags...)
 			},
 			AddGlobalLdFlags: func(flags ...string) {
 				toolchain.GetManager().AddGlobalLdFlags(flags...)
