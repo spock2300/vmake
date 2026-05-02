@@ -131,6 +131,10 @@ type Package struct {
 	dirs                 PkgDirs
 	outputDir            string
 	tc                   *toolchain.Toolchain
+	globalCFlags         []string
+	globalCxxFlags       []string
+	globalLdFlags        []string
+	globalLinks          []string
 	deps                 map[string]*InstalledPackage
 	patches              []string
 	configFiles          []string
@@ -404,6 +408,30 @@ func (p *Package) SetCfgVals(vals map[string]any) *Package {
 func (p *Package) SetToolchain(tc *toolchain.Toolchain) *Package {
 	p.tc = tc
 	return p
+}
+
+func (p *Package) SetGlobalFlags(cflags, cxxflags, ldflags, links []string) *Package {
+	p.globalCFlags = cflags
+	p.globalCxxFlags = cxxflags
+	p.globalLdFlags = ldflags
+	p.globalLinks = links
+	return p
+}
+
+func (p *Package) GlobalCFlags() []string {
+	return p.globalCFlags
+}
+
+func (p *Package) GlobalCxxFlags() []string {
+	return p.globalCxxFlags
+}
+
+func (p *Package) GlobalLdFlags() []string {
+	return p.globalLdFlags
+}
+
+func (p *Package) GlobalLinks() []string {
+	return p.globalLinks
 }
 
 func (p *Package) SetDryRun(v bool) *Package {

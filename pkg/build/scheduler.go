@@ -509,6 +509,9 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 	pkg := s.ensurePackageForVoid(resolved)
 	s.populateDepsFromGraph(pkg, resolved.Node)
 
+	mgr := toolchain.GetManager()
+	pkg.SetGlobalFlags(mgr.GetGlobalCFlags(), mgr.GetGlobalCxxFlags(), mgr.GetGlobalLdFlags(), mgr.GetGlobalLinks())
+
 	if s.isVoidUpToDate(pkg) {
 		return nil
 	}
