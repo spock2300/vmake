@@ -90,11 +90,13 @@ vmake/
 │   └── version/         # 版本信息
 ├── internal/
 │   ├── exec/            # 命令执行
+│   ├── flock/           # 文件锁（跨项目同步）
 │   ├── fs/              # 文件系统工具
 │   ├── gitstore/        # Git 仓库管理（共享基础设施）
 │   ├── glob/            # 文件匹配
 │   ├── gocompile/       # Go 插件编译
-│   └── jsonio/          # JSON 序列化
+│   ├── jsonio/          # JSON 序列化
+│   └── toposort/        # 拓扑排序
 └── docs/                # 设计文档
 ```
 
@@ -298,7 +300,10 @@ vmake skill path                                      # 显示安装路径
 | `test_data/14_bin_header` | 二进制头文件嵌入 |
 | `test_data/15_subgraph_siblings` | 子图兄弟目标构建（宿主机代码生成工具 + 库） |
 | `test_data/16_subgraph_cross_tc` | 子图交叉编译工具链 |
-| `test_data/17_firmware` | 完整固件构建（Linux, U-Boot, BusyBox, App, RootFS, Firmware） |
+| `test_data/18_config_header` | 配置头文件自动生成（GenerateConfigHeader） |
+| `test_data/19_config_defines` | 配置宏定义自动生成（GenerateConfigDefines） |
+| `test_data/20_config_propagate` | 配置跨包传播（ImportConfig） |
+| `test_linux/17_firmware` | 完整固件构建（Linux, U-Boot, BusyBox, App, RootFS, Firmware） |
 
 ## 许可证
 

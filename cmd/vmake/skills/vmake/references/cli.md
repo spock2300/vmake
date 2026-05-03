@@ -7,38 +7,38 @@ run `vmake <plugin> --help` or check the plugin documentation.
   `vmake build [--force -f --install -i --install-type --manifest --mode --prefix -p --tests --toolchain]` - Build the project
   `vmake clean [--all]` - Clean build artifacts
   `vmake completion [shell]` - Generate shell completion script
-    `vmake install [--shell]` - Install shell completion to your profile
-  `vmake config` - Open a TUI to configure build options for all packages.
+    `vmake completion install [--shell]` - Install shell completion to your profile
+  `vmake config [--set -s <name>=<value>]` - Open a TUI to configure build options for all packages.
   `vmake distclean` - Deep clean all build artifacts
   `vmake ext` - Manage extension repositories
-    `vmake add <name> <git-url>` - Add an extension repository
-    `vmake list` - List extension repositories and plugins
-    `vmake remove <name>` - Remove an extension repository
-    `vmake update [name]` - Update extension repositories
+    `vmake ext add <name> <git-url>` - Add an extension repository
+    `vmake ext list` - List extension repositories and plugins
+    `vmake ext remove <name>` - Remove an extension repository
+    `vmake ext update [name]` - Update extension repositories
   `vmake git` - Git version management commands
-    `vmake tag [version] [--major --message -m --minor --no-push --yes -y]` - Create version tag, update latest, and push
+    `vmake git tag [version] [--major --message -m --minor --no-push --yes -y]` - Create version tag, update latest, and push
   `vmake manifest` - Inspect and restore install manifests
-    `vmake checkout <path> [name]` - Checkout packages to recorded versions
-    `vmake show <path>` - Show manifest contents
+    `vmake manifest checkout <path> [name]` - Checkout packages to recorded versions
+    `vmake manifest show <path>` - Show manifest contents
   `vmake pkg` - Manage packages
-    `vmake clean <repo/name> [--all -a]` - Clean package cache
-    `vmake list` - List installed packages
-    `vmake search [pattern]` - Search for packages
-    `vmake update <repo/name>` - Update package source
+    `vmake pkg clean <repo/name> [--all -a]` - Clean package cache
+    `vmake pkg list` - List installed packages
+    `vmake pkg search [pattern]` - Search for packages
+    `vmake pkg update <repo/name>` - Update package source
   `vmake query` - Show dependency tree
   `vmake rebuild [--install -i --install-type --prefix -p]` - Rebuild the project
   `vmake repo` - Manage package repositories
-    `vmake add <name> <git-url-or-template> [--native -n]` - Add a package repository
-    `vmake list` - List all package repositories
-    `vmake remove <name>` - Remove a package repository
-    `vmake update <name>` - Update a package repository
+    `vmake repo add <name> <git-url-or-template> [--native -n]` - Add a package repository
+    `vmake repo list` - List all package repositories
+    `vmake repo remove <name>` - Remove a package repository
+    `vmake repo update <name>` - Update a package repository
   `vmake skill` - Manage AI coding assistant skills
-    `vmake install [--project -p]` - Install VMake skill for AI assistants
-    `vmake path` - Show skill installation paths
-    `vmake uninstall` - Uninstall VMake skill
+    `vmake skill install [--project -p]` - Install VMake skill for AI assistants
+    `vmake skill path` - Show skill installation paths
+    `vmake skill uninstall` - Uninstall VMake skill
   `vmake test` - Build and run test targets
   `vmake toolchain` - Show toolchain information
-    `vmake list` - List available toolchains
-    `vmake show [name]` - Show toolchain details
+    `vmake toolchain list` - List available toolchains
+    `vmake toolchain show [name]` - Show toolchain details
   `vmake update [version]` - Update vmake to latest or specified version
   `vmake version` - Print version information

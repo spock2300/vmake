@@ -15,7 +15,7 @@ No Go unit tests. Test via integration projects in `test_data/` (each must run f
 
 ```bash
 # Single test
-cd test_data/01_simple_c && ../../vmake build && ./hello
+cd test_data/01_simple_c && ../../vmake build
 
 # Run all test_data tests (01-16, 18-20; no 17 in test_data)
 for d in test_data/0[1-9]_*/ test_data/1[0-9]_*/ test_data/20_*/; do (cd "$d" && ../../vmake build) || break; done
@@ -107,8 +107,8 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 
 ### Config Cross-Package Propagation
 - `GenerateConfigDefines()` sets `genConfigDefines = true` on BuildContext; during build processing, reads `ImportConfigs()`, calls `MergeImportedOptions` to merge local + imported options, then calls `ConfigToDefines` and `AddDefines` on all targets
-- `ExportConfig()` sets `exportConfig = true` on BuildContext; propagated to `Package.SetExportConfig(true)` in `build_cmd.go:551-552`
-- `ImportConfig(names...)` appends package names to `importConfigs []string` on BuildContext; the actual merge and `-D` injection happens inside the `GenerateConfigDefines` processing block (`build_cmd.go:533-549`)
+- `ExportConfig()` sets `exportConfig = true` on BuildContext; propagated to `Package.SetExportConfig(true)` in `build_cmd.go:552-553`
+- `ImportConfig(names...)` appends package names to `importConfigs []string` on BuildContext; the actual merge and `-D` injection happens inside the `GenerateConfigDefines` processing block (`build_cmd.go:534-551`)
 - `SyncConfigDefines(names...)` = `GenerateConfigDefines` + `ImportConfig` (convenience for orchestrator packages)
 - `GenerateConfigHeader()` sets `genConfigHeader = true` on BuildContext; propagated to `Package.SetGenConfigHeader(true)` — generates `autoconf.h` from merged config options when called by scheduler
 - Merged options: local options take priority over imported (no overwrite on name collision)
@@ -208,7 +208,16 @@ Context types embed shared accessors to inherit behavior:
 type BuildContext struct {
     ConfigAccessor    // embedded: provides Bool(), String(), Option()
     *TargetRegistry   // embedded: provides Target(), GetTargets()
-    pkgName string
+    *InstallItemHolder
+    pkgBase           // embedded: provides PackageName()
+    pkg               *Package
+    genConfigHeader   bool
+    genConfigDefines  bool
+    exportConfig      bool
+    importConfigs     []string
+    buildSubGraphFunc func(pkgName string) error
+    depOutputFunc     func(depRef string) string
+    dryRun            bool
 }
 ```
 

@@ -23,7 +23,7 @@ Go-plugin-based C/C++ build system. Build instructions are written in Go (`build
 | 3 | `OnBuild` | Generate build targets + `autoWireRequireDeps` + compile/link |
 | 4 | `OnInstall` | Post-build install logic |
 
-`OnPackage` runs during plugin extraction, right after `Main()` is called and before any lifecycle phases. Use it for package metadata (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` is for **registry repo** packages only — native repo and local packages must NOT use these.
+`OnPackage` runs during plugin extraction, right after `Main()` is called and before any lifecycle phases. Use it for package metadata (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` is for **registry repo** packages — native repo versions come from git tags automatically; local packages can also use `SetGit`/`AddVersion` for source download.
 
 ## Conditional API
 
@@ -246,6 +246,7 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `AddGlobalCFlags(flags...)` | Add global C flags (OnApply only) |
 | `AddGlobalCxxFlags(flags...)` | Add global C++ flags (OnApply only) |
 | `AddGlobalLdFlags(flags...)` | Add global linker flags (OnApply only) |
+| `AddGlobalLinks(links...)` | Add global link libraries (OnApply only) |
 
 ### BuildContext
 
@@ -253,6 +254,7 @@ All context types embed `ConfigAccessor` for option value access (see below).
 |--------|-------------|
 | `Target(name) *Target` | Get or create target |
 | `GetTargets() map[string]*Target` | All targets |
+| `SetDefaultFlags(cflags, cxxflags, ldflags []string)` | Set default compile/link flags for all targets |
 | `PackageName() string` | Package name |
 | `AddInstalls(src, dest)` | Install entry |
 | `SetInstallFilter(filter)` | Install file filter |
@@ -264,6 +266,7 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `GenerateConfigDefines()` | Set `genConfigDefines = true`; on processing, reads `ImportConfigs()`, merges local + imported options, adds `-DCONFIG_*` defines to all targets |
 | `ExportConfig()` | Set `exportConfig = true`; propagated to `Package.SetExportConfig(true)` |
 | `ImportConfig(names...)` | Append package names to `importConfigs` list (merge + `-D` injection happens inside `GenerateConfigDefines` processing) |
+| `ImportConfigs() []string` | Get imported config package names |
 | `SyncConfigDefines(names...)` | Shorthand for `GenerateConfigDefines` + `ImportConfig` (for parent/orchestrator packages) |
 | `GenConfigDefines() bool` | Whether `genConfigDefines` was set |
 | `GenConfigHeader() bool` | Whether `genConfigHeader` was set |
@@ -473,6 +476,11 @@ Available as `api.CopyFile`, `api.CopyDir`, etc. — useful in `SetBuildFunc` fo
 ### Build Mode
 
 	func GetModeFlags(mode string) (cflags []string, defines []string)
+
+### Config Export
+
+	func ConfigToDefines(options map[string]*Option, cfgVals map[string]any) []string
+	func ConfigToHeader(options map[string]*Option, cfgVals map[string]any) string
 
 ### Semver
 

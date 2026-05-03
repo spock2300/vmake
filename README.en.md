@@ -86,11 +86,13 @@ vmake/
 │   └── version/         # Version info
 ├── internal/
 │   ├── exec/            # Command execution
+│   ├── flock/           # File locking (cross-project sync)
 │   ├── fs/              # Filesystem utilities
 │   ├── gitstore/        # Git repo store (shared infra)
 │   ├── glob/            # File matching
 │   ├── gocompile/       # Go plugin compilation
-│   └── jsonio/          # JSON serialization
+│   ├── jsonio/          # JSON serialization
+│   └── toposort/        # Topological sort
 └── docs/                # Design documentation
 ```
 
@@ -292,7 +294,10 @@ Detailed design documents are available in the [docs](docs/) directory:
 | `test_data/14_bin_header` | Binary header embedding |
 | `test_data/15_subgraph_siblings` | Subgraph sibling targets build (host codegen tool + library) |
 | `test_data/16_subgraph_cross_tc` | Subgraph build with cross-toolchain |
-| `test_data/17_firmware` | Full firmware build (Linux, U-Boot, BusyBox, App, RootFS, Firmware) |
+| `test_data/18_config_header` | Generated config header (GenerateConfigHeader) |
+| `test_data/19_config_defines` | Generated config defines (GenerateConfigDefines) |
+| `test_data/20_config_propagate` | Cross-package config propagation (ImportConfig) |
+| `test_linux/17_firmware` | Full firmware build (Linux, U-Boot, BusyBox, App, RootFS, Firmware) |
 
 ## License
 

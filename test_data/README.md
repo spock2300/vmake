@@ -73,9 +73,30 @@ test_data/
 │   ├── build.go
 │   └── src/
 │
-└── 14_bin_header/        # 二进制头文件嵌入
+├── 14_bin_header/        # 二进制头文件嵌入
+│   ├── build.go
+│   ├── assets/
+│   └── src/
+│
+├── 15_subgraph_siblings/ # 子图兄弟目标（宿主机工具 + 交叉编译库）
+│   ├── build.go
+│   ├── host-tool/
+│   └── lib-cross/
+│
+├── 16_subgraph_cross_tc/ # 子图交叉编译工具链
+│   ├── build.go
+│   └── src/
+│
+├── 18_config_header/     # 配置头文件自动生成
+│   ├── build.go
+│   └── src/
+│
+├── 19_config_defines/    # 配置宏定义自动生成
+│   ├── build.go
+│   └── src/
+│
+└── 20_config_propagate/  # 配置跨包传播
     ├── build.go
-    ├── assets/
     └── src/
 ```
 
@@ -199,12 +220,52 @@ Native 仓库依赖，通过 git tag 进行版本管理。
 - 增量编译（mtime 判断）
 - 自动生成头文件
 
+### 15_subgraph_siblings
+子图兄弟目标构建：宿主机代码生成工具 + 交叉编译库。
+
+**验证要点：**
+- BuildSubGraph 子图构建（宿主工具）
+- DepOutput 获取宿主工具路径并执行
+- 交叉编译与宿主机编译混合
+
+### 16_subgraph_cross_tc
+子图独立交叉编译工具链。
+
+**验证要点：**
+- BuildSubGraph 子图构建
+- 子图使用独立工具链
+- DepBuildDir 获取依赖构建目录
+
+### 18_config_header
+配置头文件自动生成（GenerateConfigHeader）。
+
+**验证要点：**
+- GenerateConfigHeader 配置头文件自动生成
+- autoconf.h 文件格式
+- 生成的头文件自动加入包含路径
+
+### 19_config_defines
+配置宏定义自动生成（GenerateConfigDefines）。
+
+**验证要点：**
+- GenerateConfigDefines 自动添加 -D 宏
+- Bool false 选项不生成宏
+- 跨包配置传播（ImportConfig）
+
+### 20_config_propagate
+配置跨包传播（ImportConfig + ExportConfig）。
+
+**验证要点：**
+- ExportConfig 导出配置
+- ImportConfig 导入配置
+- SyncConfigDefines 快捷方式
+- 本包选项优先于导入选项
+
 ## 预期行为
 
 每个测试目录都应能执行以下命令：
 
 ```bash
 cd test_data/01_simple_c
-../../vmake build     # 应编译生成 hello 可执行文件
-./build/host-debug/hello  # 输出 "Hello, VMake!"
+../../vmake build     # 应编译生成 hello 可执行文件（位于 build/<hash>/hello）
 ```

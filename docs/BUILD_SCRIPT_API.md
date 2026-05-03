@@ -262,6 +262,7 @@ func (ctx *ConfigContext) ToolchainOption() *Option      // 创建工具链选�
 func (ctx *ConfigContext) AddGlobalCFlags(flags ...string)
 func (ctx *ConfigContext) AddGlobalCxxFlags(flags ...string)
 func (ctx *ConfigContext) AddGlobalLdFlags(flags ...string)
+func (ctx *ConfigContext) AddGlobalLinks(links ...string)  // 添加全局链接库
 
 // 依赖 Linker Script
 func (ctx *ConfigContext) SetProvidedLinkerScript(path string) *ConfigContext
@@ -309,6 +310,7 @@ type BuildContext struct {
 // 目标定义
 func (ctx *BuildContext) Target(name string) *Target
 func (ctx *BuildContext) GetTargets() map[string]*Target
+func (ctx *BuildContext) SetDefaultFlags(cflags, cxxflags, ldflags []string)  // 设置所有目标的默认编译/链接标志
 
 // 条件表达式（继承自 ConfigAccessor）
 func (ctx *BuildContext) If(option string, then ...string) []string
