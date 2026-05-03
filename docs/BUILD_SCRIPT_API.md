@@ -16,6 +16,7 @@ func Main(p *api.Package) {
     p.OnConfig(func(ctx *api.ConfigContext) { ... })     // 定义配置选项
     p.OnBuild(func(ctx *api.BuildContext) { ... })       // 定义构建目标
     p.OnInstall(func(ctx *api.InstallContext) { ... })   // 定义安装规则
+    p.OnClean(func(ctx *api.CleanContext) { ... })       // 定义清理规则
 }
 ```
 
@@ -68,6 +69,7 @@ func (p *Package) OnRequire(fn RequireFunc) *Package    // 声明第三方依赖
 func (p *Package) OnConfig(fn ConfigFunc) *Package       // 定义配置选项
 func (p *Package) OnBuild(fn BuildFunc) *Package          // 定义构建目标
 func (p *Package) OnInstall(fn InstallFunc) *Package      // 定义安装规则
+func (p *Package) OnClean(fn CleanFunc) *Package          // 定义清理规则（vmake clean 时执行）
 func (p *Package) OnPackage(fn PackageFunc) *Package      // 填充包元数据（插件提取阶段执行）
 ```
 
@@ -365,6 +367,35 @@ func (ctx *InstallContext) Bool(name string) bool
 func (ctx *InstallContext) String(name string) string
 ```
 
+## CleanContext
+
+清理阶段上下文，用于定义自定义清理逻辑。`vmake clean` 时在目录清理前执行。
+
+```go
+type CleanContext struct {
+    ConfigAccessor
+    // ...
+}
+
+func (ctx *CleanContext) SourceDir() string
+func (ctx *CleanContext) BuildDir() string
+func (ctx *CleanContext) SrcDir() string
+func (ctx *CleanContext) PackageName() string
+
+func (ctx *CleanContext) Run(name string, args ...string) error
+func (ctx *CleanContext) RunIn(dir, name string, args ...string) error
+func (ctx *CleanContext) RunEnv(env map[string]string, name string, args ...string) error
+func (ctx *CleanContext) Make(args ...string) error
+```
+
+使用示例：
+
+```go
+p.OnClean(func(ctx *api.CleanContext) {
+    ctx.RunIn(ctx.SrcDir(), "make", "clean")
+})
+```
+
 ## Target
 
 构建目标定义。
@@ -487,6 +518,7 @@ type RequireFunc func(ctx *RequireContext)
 type ConfigFunc func(ctx *ConfigContext)
 type BuildFunc func(ctx *BuildContext)
 type InstallFunc func(ctx *InstallContext)
+type CleanFunc func(ctx *CleanContext)
 type PackageFunc func(p *Package)
 
 // 结构体

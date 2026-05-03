@@ -35,4 +35,8 @@ func Main(p *api.Package) {
 			return nil
 		})
 	})
+
+	p.OnClean(func(ctx *api.CleanContext) {
+		ctx.RunIn(ctx.SrcDir(), "make", "clean")
+	})
 }

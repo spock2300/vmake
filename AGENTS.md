@@ -17,8 +17,8 @@ No Go unit tests. Test via integration projects in `test_data/` (each must run f
 # Single test
 cd test_data/01_simple_c && ../../vmake build && ./hello
 
-# Run all test_data tests (01-16)
-for d in test_data/0[1-9]_*/ test_data/1[0-9]_*/; do (cd "$d" && ../../vmake build) || break; done
+# Run all test_data tests (01-16, 18-20; no 17 in test_data)
+for d in test_data/0[1-9]_*/ test_data/1[0-9]_*/ test_data/20_*/; do (cd "$d" && ../../vmake build) || break; done
 ```
 
 Firmware test (17) is in `test_linux/17_firmware` (NOT `test_data/`), tests stamp skip, KConfig presets, EnsureConfig:
@@ -28,7 +28,7 @@ cd test_linux/17_firmware && ../../vmake build
 
 Known pre-existing failures (ignore): `07_subbuild_codegen`, `08_with_package`, `09_with_curl` (mbedtls submodule), `10_local_repo` (package not found).
 
-Test 15 (`subgraph_siblings`) and 16 (`subgraph_cross_tc`) test subgraph builds with sibling packages and cross-toolchain respectively.
+Notable test purposes: 15=`subgraph_siblings`, 16=`subgraph_cross_tc`, 18=`config_header` (GenerateConfigHeader), 19=`config_defines` (GenerateConfigDefines), 20=`config_propagate` (ImportConfig/cross-package config).
 
 ## Development Mode
 
@@ -68,7 +68,7 @@ Source downloads are shared globally via symlinks. `SourceManager.EnsureSource()
 ## Core Concepts
 
 - **Repo** — Package source. **Registry** (wraps third-party C/C++ libs, build.go is a wrapper) vs **Native** (vmake-native, standalone git repo, build.go at root, version from git tag).
-- **Package** — Build unit described by `build.go`. Callbacks: `OnRequire` (declare deps), `OnConfig` (configure options), `OnBuild` (define targets).
+- **Package** — Build unit described by `build.go`. Callbacks: `OnRequire` (declare deps), `OnConfig` (configure options), `OnBuild` (define targets), `OnClean` (custom clean).
 - **Target** — Build artifact: `TargetBinary`, `TargetStatic`, `TargetShared`, `TargetObject`, `TargetVoid`.
 
 ## Key Design Decisions
@@ -134,6 +134,8 @@ A package declares `ctx.SetProvidedLinkerScript("path/to/script.ld")` in `OnConf
 - Empty kconfig content → don't write anything
 
 ## Runtime Execution Flow
+
+### Build Pipeline
 ```
 Phase 1: OnRequire       -> Scan/Compile/Load buildscripts -> Resolve dependencies (nil config; remote deferred)
 Phase 2a: ResolveDeferred -> Resolve remote (deferred) packages -> Update topological order
@@ -141,6 +143,13 @@ Phase 2b: OnConfig       -> Execute callbacks -> Collect Options -> Run OnApply 
 Phase 2c: FilterDeps     -> Re-run OnRequire with real config -> Replace node.Deps -> Update order -> BFS collect needed
 Phase 3: OnBuild         -> Execute callbacks -> Generate Targets -> autoWireRequireDeps -> Compile/Link
 (Optional) Install       -> Install targets to prefix directory + generate manifest.json
+```
+
+### Clean Pipeline
+```
+Phase 1-2b: Same as build (OnRequire → OnConfig)
+Phase 3: OnClean         -> Execute callbacks -> Directory cleanup
+Fallback: If plugin loading fails, degrade to scan-only directory cleanup
 ```
 
 Entry point: `cmd/vmake/main.go` → `loadPlugins()` → `Execute()` (cobra). Pipeline in `cmd/vmake/root.go` (`runPipeline`). Build logic in `cmd/vmake/build_cmd.go`.
@@ -204,7 +213,7 @@ type BuildContext struct {
 ```
 
 ### Function Type Patterns
-Common callback types defined in `pkg/api/`: `RequireFunc`, `ConfigFunc`, `BuildFunc`, `InstallFunc`, `PackageFunc`, `CopyFilter`, `InstallFilterFunc`.
+Common callback types defined in `pkg/api/`: `RequireFunc`, `ConfigFunc`, `BuildFunc`, `InstallFunc`, `CleanFunc`, `PackageFunc`, `CopyFilter`, `InstallFilterFunc`.
 Define as `type XxxFunc func(...)` and store as struct fields.
 
 ### CLI Error Helpers
@@ -238,6 +247,14 @@ Methods on `ConfigContext`:
 - `ctx.AddGlobalLdFlags(flags...)` — add global linker flags (effective in OnConfig and OnApply callbacks; only applied for packages that survive FilterDeps)
 - `ctx.AddGlobalLinks(links...)` — add global link libraries (effective in OnConfig and OnApply callbacks; only applied for packages that survive FilterDeps)
 - `ctx.SetProvidedLinkerScript(path)` — declare linker script for consumer targets (fatal on double-set)
+Methods on `CleanContext`:
+- `ctx.SourceDir()` — package root directory
+- `ctx.BuildDir()` — build output directory
+- `ctx.SrcDir()` — source code directory (differs from SourceDir when `SetGit()` is used)
+- `ctx.Run(name, args...)` — run command in BuildDir (os.Exit on failure)
+- `ctx.RunIn(dir, name, args...)` — run command in specified directory (os.Exit on failure)
+- `ctx.RunEnv(env, name, args...)` — run with custom environment (returns real error)
+- `ctx.Make(args...)` — run make in BuildDir with `pkg.Env()`
 
 ## Package Structure
 
@@ -265,7 +282,7 @@ Methods on `ConfigContext`:
 - `vmake` (no subcommand) — defaults to `build`
 - `vmake build` — build all targets (flags: `--force`, `--toolchain`, `--mode`, `--install`, `--prefix`, `--tests`, `--manifest`)
 - `vmake test` — build with `--tests` then execute test binaries
-- `vmake clean [--all]` — clean build artifacts; `--all` removes all build key dirs
+- `vmake clean [--all]` — execute OnClean hooks then clean build artifacts; `--all` removes all build key dirs
 - `vmake rebuild` — clean local packages then build
 - `vmake distclean` — deep clean: local build dirs, build.so, go.mod/go.sum, install/, `vmake_deps/`
 - `vmake config` — interactive TUI for build options
@@ -297,6 +314,7 @@ import "gitee.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
     p.OnConfig(func(ctx *api.ConfigContext) { ... })
     p.OnBuild(func(ctx *api.BuildContext) { ... })
+    p.OnClean(func(ctx *api.CleanContext) { ... })
 }
 ```
 

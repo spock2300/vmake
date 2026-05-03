@@ -21,7 +21,7 @@ func init() {
 func runRebuild(cmd *cobra.Command, args []string) {
 	runPipeline(pipelineOptions{
 		force: false,
-		afterPhase1: func(ctx *RuntimeContext) {
+		beforeBuild: func(ctx *RuntimeContext) {
 			executeCleanLocal(ctx)
 			vlog.Info("")
 		},
@@ -30,6 +30,10 @@ func runRebuild(cmd *cobra.Command, args []string) {
 }
 
 func executeCleanLocal(ctx *RuntimeContext) {
+	vlog.Info("")
+	vlog.Info("Executing OnClean...")
+	executeCleanHooks(ctx, true)
+
 	var entries []pkgCleanEntry
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]

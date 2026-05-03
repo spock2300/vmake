@@ -29,6 +29,7 @@ include the ones your project needs:
 | 2c | `FilterDeps` | Re-runs `OnRequire` with real config values; recomputes deps; BFS collects needed packages |
 | 3 | `OnBuild` | Define targets + `autoWireRequireDeps` + compile/link |
 | 4 | `OnInstall` | Custom install logic |
+| clean | `OnClean` | Custom clean logic (runs during `vmake clean`; separate from build pipeline) |
 
 `OnPackage` runs for all packages right after `Main()` is called (before any lifecycle phases). Use it to describe the package (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` downloads remote source to `SourceDir()/src/` — works for both registry packages and local packages that need to wrap a downloaded library.
 
@@ -59,6 +60,9 @@ func Main(p *api.Package) {
 
     p.OnBuild(func(ctx *api.BuildContext) {
         ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c")
+    })
+
+    p.OnClean(func(ctx *api.CleanContext) {
     })
 }
 ```
@@ -157,7 +161,9 @@ ctx.Option("mcu").SetType(api.OptionChoice).SetDefault("stm32f405").
 
 ### `vmake clean` vs `vmake distclean`
 
-`vmake clean` removes build artifacts (compiled objects, binaries, libraries) but keeps the compiled `build.so` plugin and dependency source in `vmake_deps/`. If you modify `build.go` (add/remove targets, change options, change includes) and the build seems to ignore your changes, use `vmake distclean` — it removes the entire `vmake_deps/` directory (plugin cache, build artifacts, installed packages, source symlinks), forcing a full re-evaluation of the build graph. The actual source data in `~/.vmake/sources/` is preserved — only the symlinks are removed.
+`vmake clean` executes `OnClean` hooks for all packages (which run custom clean commands like `make clean` in source directories), then removes build artifacts (compiled objects, binaries, libraries). It keeps the compiled `build.so` plugin and dependency source in `vmake_deps/`. If plugin loading fails, it falls back to scan-only directory cleanup.
+
+`vmake distclean` is a deeper clean: it removes all local build dirs, build.so, go.mod/go.sum, install/, and the entire `vmake_deps/` directory. Use this when modifying `build.go` (add/remove targets, change options, change includes) and the build seems to ignore your changes. The actual source data in `~/.vmake/sources/` is preserved — only the symlinks are removed.
 
 ### Patching source before build in registry packages
 
@@ -605,7 +611,7 @@ vmake builds packages by BFS from local (directory-based) packages. Remote packa
 | `vmake test` | Build + run test targets |
 | `vmake rebuild` | Clean + build |
 | `vmake config` | TUI for options |
-| `vmake clean` | Remove build artifacts (objects, binaries) |
+| `vmake clean` | Execute OnClean hooks then remove build artifacts |
 | `vmake distclean` | Deep clean: artifacts + plugin cache + installed packages |
 | `vmake query` | Dependency tree |
 | `vmake toolchain list/show` | Toolchain info |

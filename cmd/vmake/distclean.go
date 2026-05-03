@@ -29,6 +29,14 @@ func init() {
 
 func runDistClean(cmd *cobra.Command, args []string) {
 	ctx := mustInitContext()
+
+	if err := runRequirePhase(ctx, false); err == nil {
+		runPostPhase1(ctx)
+		vlog.Info("")
+		vlog.Info("Executing OnClean...")
+		executeCleanHooks(ctx, false)
+	}
+
 	entries := scanPackages(ctx.WorkDir)
 	cleanPackages(entries, ctx.Config, true)
 

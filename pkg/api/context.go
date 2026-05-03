@@ -282,3 +282,41 @@ func (ctx *InstallContext) SetPrefix(prefix string) *InstallContext {
 	ctx.prefixSet = true
 	return ctx
 }
+
+type CleanContext struct {
+	ConfigAccessor
+	pkgBase
+	pkg *Package
+}
+
+func NewCleanContext(pkgName string, cfgVals map[string]any) *CleanContext {
+	return &CleanContext{
+		ConfigAccessor: NewConfigAccessor(cfgVals, nil),
+		pkgBase:        pkgBase{pkgName: pkgName},
+	}
+}
+
+func (ctx *CleanContext) SetPackage(pkg *Package) *CleanContext {
+	ctx.pkg = pkg
+	return ctx
+}
+
+func (ctx *CleanContext) SourceDir() string { return ctx.pkg.SourceDir() }
+func (ctx *CleanContext) BuildDir() string  { return ctx.pkg.BuildDir() }
+func (ctx *CleanContext) SrcDir() string    { return ctx.pkg.SrcDir() }
+
+func (ctx *CleanContext) Run(name string, args ...string) error {
+	return ctx.pkg.Run(name, args...)
+}
+
+func (ctx *CleanContext) RunIn(dir, name string, args ...string) error {
+	return ctx.pkg.RunIn(dir, name, args...)
+}
+
+func (ctx *CleanContext) RunEnv(env map[string]string, name string, args ...string) error {
+	return ctx.pkg.RunEnv(env, name, args...)
+}
+
+func (ctx *CleanContext) Make(args ...string) error {
+	return ctx.pkg.Make(args...)
+}

@@ -43,6 +43,22 @@ Phase 3: OnBuild (runBuildPhase)
     → ArtifactInstaller.InstallAll → 安装目标产物 → 生成 manifest.json
 ```
 
+### Clean Pipeline
+
+```
+vmake clean
+│
+├── Phase 1-2b: 同 build（OnRequire → OnConfig）
+│
+├── Phase 3: OnClean
+│   └── 对每个包执行 OnClean 回调（自定义清理逻辑，如 make clean）
+│
+└── Directory Cleanup
+    └── 删除构建产物目录（build/、out/）
+    
+Fallback: 若插件加载失败，降级为仅扫描目录清理（不执行 OnClean 回调）
+```
+
 ### Build Flags
 
 | Flag | Short | Description |
@@ -287,7 +303,7 @@ type NativePackageInfo struct {
 ```
 vmake (RootCmd)
 ├── build          # 构建项目
-├── clean          # 清理构建产物
+├── clean          # 执行 OnClean 钩子后清理构建产物
 ├── rebuild        # 完全重新构建
 ├── distclean      # 深度清理（删除所有构建产物、build.so、vmake_deps/、install/）
 ├── config         # TUI 配置界面

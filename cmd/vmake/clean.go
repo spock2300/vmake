@@ -9,10 +9,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"gitee.com/spock2300/vmake/internal/fs"
+	"gitee.com/spock2300/vmake/pkg/api"
 	"gitee.com/spock2300/vmake/pkg/build"
 	"gitee.com/spock2300/vmake/pkg/buildscript"
 	"gitee.com/spock2300/vmake/pkg/config"
 	vlog "gitee.com/spock2300/vmake/pkg/log"
+	"gitee.com/spock2300/vmake/pkg/resolver"
 	"gitee.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -136,8 +138,108 @@ func scanPackages(workDir string) []pkgCleanEntry {
 
 func runClean(cmd *cobra.Command, args []string) {
 	ctx := mustInitContext()
-	entries := scanPackages(ctx.WorkDir)
+
+	if err := runRequirePhase(ctx, false); err != nil {
+		entries := scanPackages(ctx.WorkDir)
+		cleanPackages(entries, ctx.Config, cleanAllFlag)
+		return
+	}
+	runPostPhase1(ctx)
+
+	vlog.Info("")
+	vlog.Info("Executing OnClean...")
+	executeCleanHooks(ctx, false)
+
+	entries := collectCleanEntries(ctx)
 	cleanPackages(entries, ctx.Config, cleanAllFlag)
+}
+
+func collectCleanEntries(ctx *RuntimeContext) []pkgCleanEntry {
+	var entries []pkgCleanEntry
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if node.Source != nil && node.IsLocal() {
+			entries = append(entries, pkgCleanEntry{Dir: node.Source.Dir, Name: name})
+		}
+	}
+	return entries
+}
+
+func executeCleanHooks(ctx *RuntimeContext, localOnly bool) {
+	cfg, err := resolveBuildConfig(ctx)
+	if err != nil {
+		vlog.Error("Error: %v", err)
+		return
+	}
+
+	resolvedTools, err := build.ResolveTools(cfg.Tc)
+	if err != nil {
+		vlog.Error("Error: %v", err)
+		return
+	}
+
+	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
+	localPkgOptions := collectLocalPkgOptions(ctx)
+	depsDir := getDepsDir()
+
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if node.Pkg == nil || node.Source == nil {
+			continue
+		}
+		if localOnly && !node.IsLocal() {
+			continue
+		}
+
+		if node.IsLocal() {
+			pkgDirs[name] = makeLocalPkgDirs(
+				node.Source.Dir, resolvedTools.CC, cfg.Mode,
+				localPkgOptions[name],
+			)
+		} else {
+			entry := config.GetEntry(ctx.Config, name)
+			sourceDir := filepath.Join(depsDir, name, "src")
+			if info, err := os.Stat(sourceDir); err != nil || !info.IsDir() {
+				continue
+			}
+			pkgDirs[name] = makeRemotePkgDirs(
+				depsDir, name, resolvedTools.CC, cfg.Mode,
+				entry.Options, sourceDir,
+			)
+		}
+
+		detectExistingSrcDir(node)
+
+		node.Pkg.SetDirs(*pkgDirs[name])
+		node.Pkg.SetToolchain(cfg.Tc)
+
+		entry := config.GetEntry(ctx.Config, name)
+		cleanCtx := api.NewCleanContext(name, entry.Options)
+		if opts, ok := ctx.AllOptions[name]; ok {
+			cleanCtx.SetOptions(opts)
+		}
+		cleanCtx.MergeGlobals(ctx.GlobalOptions, cfg.GlobalValues)
+		cleanCtx.SetPackage(node.Pkg)
+
+		node.Pkg.ExecCleanFuncs(pkgDirs[name].SourceDir, func(fn api.CleanFunc) {
+			fn(cleanCtx)
+		})
+	}
+}
+
+func detectExistingSrcDir(node *resolver.PackageNode) {
+	if !node.IsLocal() || node.Pkg == nil {
+		return
+	}
+	if len(node.Pkg.GitURLs()) == 0 {
+		return
+	}
+	srcDir := filepath.Join(node.Source.Dir, "src")
+	if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
+		if _, err := os.Stat(filepath.Join(srcDir, ".git")); err == nil {
+			node.Pkg.SetSrcDir(srcDir)
+		}
+	}
 }
 
 func cleanBuildKeyDir(dir, pkgName, tcName, ccPath, mode string, options map[string]any) bool {

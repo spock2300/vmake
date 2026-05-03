@@ -82,6 +82,7 @@ func (t OptionType) String() string {
 type ConfigFunc func(ctx *ConfigContext)
 type BuildFunc func(ctx *BuildContext)
 type InstallFunc func(ctx *InstallContext)
+type CleanFunc func(ctx *CleanContext)
 type PackageFunc func(p *Package)
 
 type SourceOrigin int
@@ -125,6 +126,7 @@ type Package struct {
 	configFuncs          []ConfigFunc
 	buildFuncs           []BuildFunc
 	installFuncs         []InstallFunc
+	cleanFuncs           []CleanFunc
 	packageFunc          PackageFunc
 	scriptDir            string
 	srcCodeDir           string
@@ -186,6 +188,11 @@ func (p *Package) OnBuild(fn BuildFunc) *Package {
 
 func (p *Package) OnInstall(fn InstallFunc) *Package {
 	p.installFuncs = append(p.installFuncs, fn)
+	return p
+}
+
+func (p *Package) OnClean(fn CleanFunc) *Package {
+	p.cleanFuncs = append(p.cleanFuncs, fn)
 	return p
 }
 
@@ -333,6 +340,10 @@ func (p *Package) ExecBuildFuncs(dir string, fn func(BuildFunc)) {
 
 func (p *Package) ExecInstallFuncs(dir string, fn func(InstallFunc)) {
 	execFuncs(dir, p.installFuncs, fn)
+}
+
+func (p *Package) ExecCleanFuncs(dir string, fn func(CleanFunc)) {
+	execFuncs(dir, p.cleanFuncs, fn)
 }
 
 func (p *Package) UpdateRequireContext(cfgVals map[string]any, options map[string]*Option) {

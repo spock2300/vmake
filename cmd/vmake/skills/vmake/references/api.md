@@ -45,6 +45,7 @@ Import: `gitee.com/spock2300/vmake/pkg/api`
 | `OnConfig(fn ConfigFunc)` | `func(ctx *ConfigContext)` |
 | `OnBuild(fn BuildFunc)` | `func(ctx *BuildContext)` |
 | `OnInstall(fn InstallFunc)` | `func(ctx *InstallContext)` |
+| `OnClean(fn CleanFunc)` | `func(ctx *CleanContext)` |
 | `OnPackage(fn PackageFunc)` | `func(p *Package)` |
 
 ### Metadata (fluent, returns `*Package`)
@@ -281,6 +282,19 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `AddInstalls(src, dest)` | Install entry |
 | `PackageName() string` | Package name |
 
+### CleanContext
+
+| Method | Description |
+|--------|-------------|
+| `SourceDir() string` | Package root directory |
+| `BuildDir() string` | Build output directory |
+| `SrcDir() string` | Source code directory (differs from SourceDir when `SetGit()` is used) |
+| `Run(name, args...)` | Run command in BuildDir (os.Exit on failure) |
+| `RunIn(dir, name, args...)` | Run command in specified directory (os.Exit on failure) |
+| `RunEnv(env, name, args...)` | Run with custom environment (**returns real error**) |
+| `Make(args...)` | Run make in BuildDir with `pkg.Env()` |
+| `PackageName() string` | Package name |
+
 ### RequireContext
 
 OnRequire callbacks execute twice: first during graph discovery with nil config values (Phase 1), then again during FilterDeps with actual config values from config.json (Phase 2c). This enables option-conditional dependencies.
@@ -430,6 +444,7 @@ Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()
 	func NewConfigContextWithPackage(pkgName string, pkg *Package) *ConfigContext
 	func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext
 	func NewInstallContext(pkgName string, cfgVals map[string]any) *InstallContext
+	func NewCleanContext(pkgName string, cfgVals map[string]any) *CleanContext
 
 ---
 

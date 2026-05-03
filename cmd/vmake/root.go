@@ -109,6 +109,7 @@ func mustInitContext() *RuntimeContext {
 type pipelineOptions struct {
 	force        bool
 	afterPhase1  func(ctx *RuntimeContext)
+	beforeBuild  func(ctx *RuntimeContext)
 	afterBuild   func(ctx *RuntimeContext, result *BuildResult)
 	tests        bool
 	installAfter bool
@@ -136,6 +137,10 @@ func runPipeline(opts pipelineOptions) {
 	}
 
 	runPostPhase1(ctx)
+
+	if opts.beforeBuild != nil {
+		opts.beforeBuild(ctx)
+	}
 
 	result, err := runBuildPhase(ctx, opts.tests)
 	fatalErr(err)
