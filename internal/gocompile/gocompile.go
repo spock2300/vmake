@@ -40,6 +40,9 @@ func NewOkResult(outputPath string) CompileResult {
 
 func CompilePlugin(opts PluginOptions) error {
 	vmakeDir := os.Getenv("VMAKE_DIR")
+	if vmakeDir == "" {
+		vmakeDir = detectVMakeSourceDir()
+	}
 	goModContent := BuildGoModContent(opts, vmakeDir)
 
 	needCleanup, err := WriteGoModIfMissing(opts.WorkDir, goModContent)
@@ -101,15 +104,27 @@ func GetVMakeVersion() string {
 
 func GetCurrentGoVersion() string {
 	v := runtime.Version()
-	// v is like "go1.22.0" or "go1.26.0"
-	// strip "go" prefix
 	v = strings.TrimPrefix(v, "go")
-	// find first dot after major.minor
 	parts := strings.SplitN(v, ".", 3)
 	if len(parts) >= 2 {
 		return parts[0] + "." + parts[1]
 	}
 	return v
+}
+
+func detectVMakeSourceDir() string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		return ""
+	}
+	root := filepath.Dir(filepath.Dir(filepath.Dir(file)))
+	goModPath := filepath.Join(root, "go.mod")
+	if bs, err := os.ReadFile(goModPath); err == nil {
+		if strings.Contains(string(bs), "gitee.com/spock2300/vmake") {
+			return root
+		}
+	}
+	return ""
 }
 
 func WriteGoModIfMissing(workDir, content string) (bool, error) {
