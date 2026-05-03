@@ -39,7 +39,7 @@ myproject/
 
 ```bash
 vmake build
-./build/host-debug/hello    # Output goes to build/<toolchain>-<mode>/
+./build/<buildKey>/hello    # Output goes to build/<buildKey>/ (SHA-256 of toolchain+mode+options)
 ```
 
 ## Key Points
@@ -47,7 +47,7 @@ vmake build
 - No `OnConfig` needed if no build options
 - No `OnRequire` needed if no third-party dependencies
 - Glob patterns (`src/*.c`) match multiple files
-- Output binary goes to `build/<toolchain>-<mode>/<target>`
+- Output binary goes to `build/<buildKey>/<target>`
 
 ## See Also
 

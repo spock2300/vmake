@@ -56,7 +56,7 @@ func Main(p *api.Package) {
 
 - **`AddDeps("chip:*")`** — Wildcard dependency: links all targets from the `chip` package
 - **`UseDependencyLinkerScript()`** — Firmware target auto-inherits `-T` from the first dependency that provides one
-- **`AddBinHeader(inputs...)`** — Converts binary assets to `.h` hex arrays, output to `build/<tc>-<mode>/generated/`, include path auto-added
+- **`AddBinHeader(inputs...)`** — Converts binary assets to `.h` hex arrays, output to `build/<buildKey>/generated/`, include path auto-added
 - **`AddPostLinkSize()`** — Prints section size info after linking
 - **`AddPostLinkHex()`** — Generates Intel HEX format (`objcopy -O ihex`)
 - **`AddPostLinkBin()`** — Generates raw binary (`objcopy -O binary`)
@@ -137,7 +137,7 @@ AddBinHeader([]string{"assets/a.bin", "assets/b.bin"})
 ```
 
 - Input files can be strings or `[]string`
-- Output: `build/<tc>-<mode>/generated/<stem>.h` (e.g., `logo.h`)
+- Output: `build/<buildKey>/generated/<stem>.h` (e.g., `logo.h`)
 - Include path for the `generated/` directory is automatically added
 - Incremental: only regenerates when source binary is newer than header
 - The generated `.h` file contains a `const unsigned char` array and a `size_t` length

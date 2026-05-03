@@ -55,7 +55,7 @@ myproject/
 
 ```
 build/
-└── <toolchain>-<mode>/
+└── <buildKey>/
     ├── libmylib.a    # Static library
     ├── myapp         # Main executable
     └── tests         # Test executable (not built by default)

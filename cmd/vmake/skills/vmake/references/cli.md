@@ -4,11 +4,16 @@ Generated from vmake built-in commands. For plugin commands,
 run `vmake <plugin> --help` or check the plugin documentation.
 
 `vmake [--quiet -q --verbose -v --very-verbose -V]` - VMake - A Go-based C/C++ build system
-  `vmake build [--force -f --install -i --install-type --manifest --mode --prefix -p --tests --toolchain]` - Build the project
+  `vmake build [--force -f --install -i --install-type --manifest --mode --prefix -p --tests --toolchain]` - Build the project.
+    `--install-type`: `runtime` (binaries+shared, default) or `sdk` (everything including static libs)
+    `--mode`: `debug` or `release`
+    `--manifest <path>`: pin versions from a manifest file
+    `--toolchain`: override toolchain
   `vmake clean [--all]` - Clean build artifacts
-  `vmake completion [shell]` - Generate shell completion script
-    `vmake completion install [--shell]` - Install shell completion to your profile
+  `vmake completion [bash|zsh|fish|powershell|install]` - Generate shell completion script
+    `vmake completion install [--shell <name>]` - Install shell completion to your profile
   `vmake config [--set -s <name>=<value>]` - Open a TUI to configure build options for all packages.
+    `--set` supports `option=value` (global), `pkg/option=value` (package-specific), and bool coercion (`true`/`false`/`on`/`off`/`1`/`0`). Validates choices against allowed values.
   `vmake distclean` - Deep clean all build artifacts
   `vmake ext` - Manage extension repositories
     `vmake ext add <name> <git-url>` - Add an extension repository

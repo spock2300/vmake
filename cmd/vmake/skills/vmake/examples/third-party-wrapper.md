@@ -104,7 +104,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 })
 ```
 
-The stamp becomes stale when any registered config file is newer than the stamp, the stamp is deleted, or the config file size becomes 0.
+The stamp becomes stale when config file content changes (SHA-256 hash comparison of registered files), the source git revision changes, or the stamp is deleted.
 
 ## KConfig for Firmware Wrappers
 

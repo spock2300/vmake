@@ -185,13 +185,13 @@ All setters are fluent (return `*Target`).
 | `AddPostLinkBin` | `()` | `objcopy -O binary {output} {output}.bin` |
 | `AddPostLinkSize` | `()` | `size {output}` |
 | `AddPostLinkStrip` | `()` | `strip -o {output}.stripped {output}` |
-| `AddBinHeader` | `(inputs ...any)` | Binary files → `.h` headers; output to `build/<tc>-<mode>/generated/`; incremental via mtime |
+| `AddBinHeader` | `(inputs ...any)` | Binary files → `.h` headers; output to `build/<buildKey>/generated/`; incremental via mtime |
 
 `SetLanguages(langs ...string)` exists but has **no effect** — language is auto-detected from file extension (`.c` → C, `.cc/.cpp/.cxx` → C++).
 
 ### Removers
 
-`RemoveCFlags`, `RemoveCxxFlags`, `RemoveLdFlags`, `RemoveDefines`, `RemoveIncludes`, `RemovePublicIncludes`, `RemoveLinks`, `RemoveDeps` — each takes variadic `...string`, returns `*Target`. These perform immediate exact-match deletion from internal slices.
+`RemoveCFlags`, `RemoveCxxFlags`, `RemoveLdFlags`, `RemoveDefines`, `RemoveIncludes`, `RemovePublicIncludes`, `RemoveLinks`, `RemoveDeps`, `RemoveProvidedLibs` — each takes variadic `...string`, returns `*Target`. These perform immediate exact-match deletion from internal slices.
 
 `RemoveFiles` takes variadic `...any` (like `AddFiles`) but uses **deferred pattern matching** — patterns are matched against glob-expanded paths at build time, not removed from the rule list. This lets you exclude files like `RemoveFiles("src/test_*.c")` after a broad `AddFiles("src/*.c")`.
 
@@ -283,6 +283,9 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `Prefix() string` | Get prefix |
 | `PrefixSet() bool` | Was prefix set |
 | `AddInstalls(src, dest)` | Install entry |
+| `SetInstallFilter(filter InstallFilterFunc)` | Filter which files get installed (inherited from `InstallItemHolder`) |
+| `GetInstallItems() []InstallItem` | All install items (inherited) |
+| `GetInstallFilter() InstallFilterFunc` | Current install filter (inherited) |
 | `PackageName() string` | Package name |
 
 ### CleanContext
@@ -340,6 +343,8 @@ All setters are fluent (return `*Option`).
 | `SetGroup` | `(group string)` | Display group |
 
 Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()`, `OnApply()`, `Group()`, `IsGlobal()`.
+
+Note: When `SetDefault` is not called on an `OptionChoice`, the **first value** in `SetValues` becomes the effective default. For `OptionBool`, the default is `false`; for `OptionString`, `""`; for `OptionInt`, `0`.
 
 ---
 
@@ -508,5 +513,6 @@ func (v Version) String() string
 | `<` | < | No |
 | `=` | exact match (including pre) | — |
 | `~` | lock major.minor, patch ≥ | Yes |
+| `@` | Same as `>=` (major-locked) | Yes |
 
 `>=` with major > 0 restricts to same major version (`>=1.2` won't match `2.0.0`). Empty constraint (`>=0.0.0`) matches all. Selection: highest version satisfying all constraints. Pre-release: `1.0.0-rc.1 < 1.0.0`; numeric identifiers < alpha identifiers in pre-release segments.

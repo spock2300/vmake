@@ -234,7 +234,7 @@ func Main(p *api.Package) {
 - **PatchKConfig** — Override specific config values after defconfig generation
 - **SetSrcDir** — Source code in a subdirectory (`src/` for busybox)
 - **SetConfigFiles** — Registers files that invalidate the build stamp on change
-- **Stamp-based skip** — `.vmake_stamp` in BuildDir; stale when config files are newer
+- **Stamp-based skip** — `.vmake_stamp` in BuildDir; stale when config file content changes (SHA-256 hash comparison), source git revision changes, or the stamp is deleted
 - **DepBuildDir** — `ctx.DepBuildDir("busybox:busybox")` returns the dependency's build directory
 - **DepOutput** — `ctx.DepOutput("myapp:myapp")` returns the dependency's output binary path
 - **api.CopyFile/CopyDir/CopyDirIfExists** — File copy utilities from the `api` package

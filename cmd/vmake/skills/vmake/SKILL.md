@@ -43,6 +43,7 @@ include the ones your project needs:
 - **Third-party packages** → `OnRequire` + `AddRequires` + `AddDeps`. See `examples/with-package.md`.
 - **Wrap external C/C++ library (CMake/Autotools)** → `TargetVoid` + `SetBuildFunc`. See `examples/third-party-wrapper.md`.
 - **Pre-compiled libraries (.a/.so)** → `SetPrebuilt`. See `examples/prebuilt.md`.
+- **Cross-package config propagation (GenerateConfigDefines, ExportConfig, ImportConfig)** → See `examples/config-propagate.md`.
 - **Code generation / host tools** → `BuildSubGraph` + `DepOutput` + `Exec`. See `examples/subbuild.md`.
 - **Embedded / RTOS firmware (linker script, hex/bin)** → See `examples/embedded-rtos.md`.
 - **Embedded firmware (KConfig/partitions)** → `EnsureConfig` + `PatchKConfig` + `DepBuildDir`. See `examples/firmware.md`.
@@ -113,7 +114,7 @@ When a package uses `SetGit`, `SourceDir()` and `SrcDir()` differ: `SourceDir()`
 
 - **`AddFiles`** paths resolve from `SourceDir()`. Use `"src/tasks.c"`, NOT `"tasks.c"`. Single filenames without glob characters (`*`, `?`) may silently match nothing — always use the `src/` prefix.
 - **`AddIncludes`** paths resolve from `SourceDir()`. Use `"src/include"` to reach downloaded headers.
-- **`AddPublicIncludes`** paths propagate to dependents resolved from `SrcDir()`. Use `"include"` (resolves to `SrcDir()/include/` = `SourceDir()/src/include/`). Since `AddPublicIncludes` implies `AddIncludes`, the target itself also gets these paths resolved from `SrcDir()`.
+- **`AddPublicIncludes`** paths propagate to dependents resolved from `SourceDir()` (via `filepath.Join(depPkg.SourceDir, pubInc)`). Use `"src/include"` to reach headers downloaded by `SetGit` (resolves to `SourceDir()/src/include/`). The target itself gets `AddPublicIncludes` paths as raw `-I` entries, resolved relative to CWD (which the scheduler sets to `SourceDir()` before compilation).
 - **Relative parent paths** (`"../include"`) in `AddPublicIncludes` produce incorrect doubled paths (e.g., `/path/src/src/include`). Avoid them — place config headers inside `SrcDir()/include/` instead.
 - **Absolute paths** in `AddFiles`/`AddPublicIncludes` get `SrcDir()` prepended, creating wrong paths like `/src/home/user/project/src/file`. Always use relative paths.
 
@@ -130,8 +131,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
             "src/portable/GCC/ARM_CM4F/port.c",
         ).
         AddPublicIncludes(
-            "include",              // SrcDir()-relative for propagation
-            "src/include",          // SourceDir()-relative for self-compilation
+            "src/include",                      // SourceDir()-relative (self + propagation)
             "src/portable/GCC/ARM_CM4F",
         )
 })
@@ -186,6 +186,23 @@ SetBuildFunc(func(p *api.Package) error {
 
 This pattern is useful for libraries that use header-based configuration (mbedtls 2.x, some RTOS SDKs) where CMake options don't cover all config flags.
 
+### Applying Git Patches (AddPatches / SetPatches)
+
+For registry packages that need source modifications that Go string replacement can't handle (multi-file changes, binary patches, etc.), vmake supports git patch application. Patches are applied automatically during the build pipeline, with deduplication to prevent double-application:
+
+```go
+// In OnPackage — patches are applied before any build phase runs
+p.AddPatches("patches/fix-cross.patch", "patches/disable-avx.patch")
+```
+
+- `AddPatches(paths ...string)` — append patch files to the list
+- `SetPatches(paths ...string)` — replace the entire patch list
+- `SetSubmodules(true)` — clone git submodules before applying patches
+- Patches are tracked via `repo.IsPatchApplied` — same patch file won't be applied twice even across rebuilds
+- Patch files are relative to `SourceDir()` (where `build.go` lives)
+
+Use this when wrapping a library that needs compilation fixes (e.g., cross-compilation `CFLAGS` in a Makefile, missing `#include` guards, hardcoded toolchain assumptions). Raw `os.WriteFile` patching (shown above) is better for simple single-line changes; git patches handle multi-file, multi-line modifications reliably.
+
 ### `ctx.Select()` returns `""` during discoverAll — guard before passing to global flags
 
 vmake runs an internal `discoverAll` phase before the real build to discover all targets. During this phase, `ctx.Select()` returns `""` regardless of the option value. If you pass this empty string to `AddGlobalCFlags` or `AddGlobalLdFlags` inside a `SetOnApply` callback, the empty string persists in the Manager singleton (dedup won't catch it on the real build pass because `""` ≠ `"-O2"`). GCC then interprets the empty string as a filename during compilation, producing errors like:
@@ -218,7 +235,7 @@ ctx.Option("optimization").SetType(api.OptionChoice).
     })
 ```
 
-This only affects `AddGlobalCFlags/LdFlags` — per-target `AddCFlags` does not have this problem because per-target flags don't persist across discoverAll/build phases via a singleton.
+**Root cause:** `AddGlobalCFlags/LdFlags/Links` write to `toolchain.GetManager()`, a **global singleton** that persists across the discoverAll and real-build phases. The empty string from discoverAll is appended and never removed, so it reappears on the real build. Per-target `AddCFlags` does not have this problem because per-target flags are ephemeral — they exist only for the current build phase and are not stored in a global singleton.
 
 ## Directory Reference
 
@@ -231,13 +248,27 @@ This only affects `AddGlobalCFlags/LdFlags` — per-target `AddCFlags` does not 
 | `InstallDir()` | Installation prefix | Headers/libs installed by third-party packages |
 | `ScriptDir()` | Same as `SourceDir()` | Legacy alias |
 
-BuildDir path differs by package origin:
-- **Local packages**: `<SourceDir>/build/<key>/`
-- **Remote packages**: `vmake_deps/<repo>/<pkg>/out/<key>/build/`
+### BuildKey — Build Directory Naming
 
-Key distinction: for any package using `SetGit` (registry or local), `SourceDir()` is where `build.go` lives, but the actual downloaded source is at `SrcDir()` (= `SourceDir()/src/`). For a local package without `SetGit`, `SourceDir()` == `SrcDir()` (the fallback). Use `SrcDirRaw()` to check whether `SetSrcDir` was explicitly called (returns empty string if not).
+The `build/` directory is named by a **SHA-256 hex hash** of `(toolchain_path, build_mode, options)` — not by a readable name like `<toolchain>-<mode>`. This hash is called the **BuildKey**, and it exists to allow multiple build variants (different toolchains, modes, option sets) to coexist under `build/` without clobbering each other:
+
+```
+build/a1b2c3d4e5f6789012345678abcdef0123456789abcdef0123456789abcdef0123/
+```
+
+BuildDir path by package origin:
+- **Local packages**: `<SourceDir>/build/<buildKey>/`
+- **Remote packages**: `vmake_deps/<repo>/<pkg>/out/<buildKey>/build/`
+
+The BuildKey is deterministic — same toolchain + mode + options always produces the same hash. You can find the current BuildKey in `config.json` entries. The `compile_commands.json` file lives at `build/compile_commands.json` (relative to project root). `AddBinHeader` output goes to `build/<buildKey>/generated/`.
+
+### SourceDir vs SrcDir
+
+For any package using `SetGit` (registry or local), `SourceDir()` is where `build.go` lives, but the actual downloaded source is at `SrcDir()` (= `SourceDir()/src/`). For a local package without `SetGit`, `SourceDir()` == `SrcDir()` (the fallback). Use `SrcDirRaw()` to check whether `SetSrcDir` was explicitly called (returns empty string if not).
 
 Within `SetBuildFunc`, built-in helpers (`CMakeConfigure`, `CMakeBuild`, `CMakeInstall`) automatically use the correct directories. If you need to read or patch source files manually, use `SrcDir()` to locate the downloaded source tree.
+
+All `AddFiles` paths are `SourceDir()`-relative (even with `SetGit`, use `"src/tasks.c"` not `"tasks.c"`). `AddPublicIncludes` propagated to dependents resolves from `SourceDir()` (via `filepath.Join` with the dep's `PkgDirs.SourceDir`).
 
 ## Storage Layout
 
@@ -302,9 +333,16 @@ ctx.Target("app").
 AddFiles("src/common/*.c", "src/network/*.c", "src/stun/*.c")
 ```
 
-Remove flags: `RemoveCFlags`, `RemoveDefines`, `RemoveIncludes`, etc. Use `RemoveFiles("src/test_*.c")` to exclude files matched by `AddFiles` globs — it filters glob results at build time using pattern matching.
+Remove flags: `RemoveCFlags`, `RemoveDefines`, `RemoveIncludes`, etc. These perform **immediate exact-match deletion** from internal slices — calling `RemoveCFlags("-Wall")` after `AddCFlags("-Wall")` removes the flag instantly.
 
-Third-party packages with external build systems use `TargetVoid` with `SetBuildFunc`.
+`RemoveFiles` works differently: it stores patterns and applies them at build time against **glob-expanded paths**, not against the raw `AddFiles` argument strings. This deferred matching means:
+- `AddFiles("src/*.c").RemoveFiles("src/test_*.c")` — works (globs expand, patterns match expanded paths)
+- `AddFiles("src/main.c", "src/test.c").RemoveFiles("src/test.c")` — works even though no glob was used (patterns match the final file paths, not the AddFiles strings)
+- `RemoveFiles` does NOT remove entries from the `AddFiles` rule list — it adds exclusion patterns to a separate filter applied during compilation
+
+This is the only Remover method that uses deferred matching; all others (`RemoveCFlags`, `RemoveDeps`, `RemoveLinks`, `RemoveProvidedLibs`, etc.) delete immediately.
+
+Third-party packages with external build systems use `TargetVoid` with `SetBuildFunc`. The callback function `func(p *api.Package) error` returns a real error — unlike `pkg.Run()` (which calls `os.Exit`), `SetBuildFunc` errors are returned to the scheduler and fail the build gracefully. Use `return fmt.Errorf(...)` for controlled failure, `return nil` for success.
 
 ## Prebuilt Libraries
 
@@ -473,11 +511,47 @@ ctx.Option("trace").SetType(api.OptionBool).SetDefault(false).
 
 - `SetOnApply(fn)` — callback invoked after all option values are resolved, receives `*ConfigContext` and `val any` (typed: `bool` for OptionBool, `int`/`float64` for OptionInt, `string` for OptionString/OptionChoice; note: JSON round-trip decodes numbers as `float64`); used to react to options (e.g., set global flags, choose linker script based on chip)
 
+### OptionChoice Generates Dual Macros
+
+When `GenerateConfigDefines` or `GenerateConfigHeader` processes a `Choice` option, it produces **two** entries:
+
+- `CONFIG_{NAME}="<value>"` — the selection itself
+- `CONFIG_{NAME}_{VALUE}=1` — a boolean for the specific choice
+
+For example, `OptionChoice("platform").SetValues("linux", "windows")` with value `"linux"` generates:
+```
+CONFIG_PLATFORM="linux"
+CONFIG_PLATFORM_LINUX=1
+```
+
+This lets code use either `#if CONFIG_PLATFORM_LINUX` (specific check) or switch on `CONFIG_PLATFORM` (general check). Note: `-D` defines use comma-delimited `#define` syntax (e.g., `-DCONFIG_PLATFORM_LINUX`), while `autoconf.h` uses `#define CONFIG_PLATFORM_LINUX 1`.
+
+### Programmatic Option Override: SetConfigValue
+
+`ctx.SetConfigValue(name, val)` sets an option value programmatically in `OnConfig` — useful when one option forces another:
+
+```go
+p.OnConfig(func(ctx *api.ConfigContext) {
+    ctx.Option("chip").SetType(api.OptionChoice).SetValues("stm32f4", "esp32").
+        SetDefault("stm32f4")
+
+    if ctx.String("chip") == "stm32f4" {
+        ctx.SetConfigValue("use_fpu", true)
+    }
+})
+```
+
+Unlike `SetOnApply` (which only reacts), `SetConfigValue` changes the value that other parts of `OnConfig` will see.
+
 ### Global Flags
 
 `AddGlobalCFlags/CxxFlags/LdFlags/Links` are only available on `ConfigContext`, effective inside `SetOnApply` callbacks.
 
-Global flags apply to ALL targets in ALL packages. They are deduplicated ("appends if not already present"). During compilation, global C/C++ flags are prepended before per-target flags. During linking, global LD flags are appended after per-target flags. Global links are placed inside `--start-group`/`--end-group` alongside target-level links.
+Global flags apply to ALL targets in ALL packages. They are deduplicated ("appends if not already present").
+
+During compilation, the merge order is: per-target CFlags → mode flags → global CFlags → dedup (first occurrence kept). The compiler additionally prepends global CFlags before the resolved list. The final gcc order is: `[globalCFlags prepended] [per-target + mode + global deduped]`. For GCC, the last occurrence of repeated flags (like `-O`) takes effect — since mode sits between per-target and resolved globals, mode overrides per-target, and globals override mode (unless per-target wrote the same flag value, which dedup eliminates the global copy from resolved, leaving mode in effect).
+
+During linking, global LD flags are appended after per-target flags. Global links are placed inside `--start-group`/`--end-group` alongside target-level links.
 
 ```go
 ctx.Option("chip").SetType(api.OptionChoice).SetValues("stm32f4", "esp32").
@@ -488,6 +562,27 @@ ctx.Option("chip").SetType(api.OptionChoice).SetValues("stm32f4", "esp32").
         ctx.SetProvidedLinkerScript("linker/" + val.(string) + ".ld")
     })
 ```
+
+### Mode Auto-Injected Flags
+
+vmake silently injects optimization flags based on build mode into **every** target's compile commands, between per-target flags and global flags:
+
+| Mode | Flags injected |
+|------|---------------|
+| `release` | `-O2 -DNDEBUG` |
+| `debug` | `-O0 -g` |
+
+This happens in the scheduler (`scheduler.go:355-359`), not via `AddGlobalCFlags`. The mode flags are appended after per-target CFlags/CxxFlags but before global CFlags/CxxFlags. Deduplication keeps the first occurrence, so if your target's `AddCFlags("-O3")` and mode injects `-O2`, gcc sees both and uses the last one (`-O2`). To override the mode's optimization level, use `SetOnApply`'s `AddGlobalCFlags` — global flags appear last in resolved and win, unless per-target has the same flag value (which dedup eliminates from resolved, leaving mode in effect).
+
+### GlobalOption Cross-Package Consistency
+
+If two packages define the same global option via `GlobalOption()`, their `Type` and `Default` must be **identical** — otherwise the build fails with a fatal error. This constraint ensures all packages agree on the option's meaning. For example, if `chip/build.go` defines `GlobalOption("mcu").SetType(api.OptionString).SetDefault("stm32f405")` and `bsp/build.go` defines `GlobalOption("mcu").SetType(api.OptionChoice)`, the build will fail with a type mismatch error.
+
+Only one package needs to define a global option's `SetValues` for `OptionChoice` — values from multiple definitions are merged. `SetDescription` and `SetOnApply` are also merged across packages.
+
+### Toolchain DefaultFlags
+
+Each toolchain declares default C/C++/linker flags in its manifest. These are injected as the **base** of every new target — when you call `ctx.Target("app")`, the target's initial CFlags/CxxFlags/LdFlags are set from the toolchain's defaults. Calling `AddCFlags(...)` appends to this base.
 
 ## RTOS / Embedded
 
@@ -554,7 +649,7 @@ Key points for embedded firmware:
 - `SetLinkerScript(path)` — direct linker script on target (fatal on double-set; use when no dependency pattern needed)
 - `AddPostLink(tool, args...)` — generic post-link step, `{output}` placeholder
 - Shorthands: `AddPostLinkHex()`, `AddPostLinkBin()`, `AddPostLinkSize()`, `AddPostLinkStrip()`
-- `AddBinHeader(inputs...)` — converts binary files to `.h` headers; output to `build/<tc>-<mode>/generated/`; include path auto-added; incremental via mtime
+- `AddBinHeader(inputs...)` — converts binary files to `.h` headers; output to `build/<buildKey>/generated/` (where `<buildKey>` is SHA-256 of toolchain+mode+options); include path auto-added; incremental via mtime
 - RTOS tool accessors: `Package.ObjCopy()`, `Size()`, `ObjDump()`, `NM()`
 
 ### KConfig Preset Management (Firmware)
@@ -582,11 +677,17 @@ Use `ctx.ToolchainOption()` to allow per-package toolchain switching for sub-gra
 ## Stamp-Based Skip (Void Targets)
 
 Local void targets use `.vmake_stamp` in `BuildDir` for incremental builds. Stale when:
-- Config files registered via `p.SetConfigFiles(".config")` are newer than the stamp
+- The **content hash** (SHA-256) of config files registered via `p.SetConfigFiles(".config")` changes — for any config file whose content differs from the last build
+- The git HEAD revision (`SourceRev`) of the source directory changes
 - The stamp file is deleted
-- `.config` size becomes 0
+
+The stamp stores `config_hash` (SHA-256 of config file contents) and `source_rev` (git HEAD commit hash). On each build, both are recomputed and compared — mtime is NOT checked.
 
 Use `SetConfigFiles` on `*Package` (in `OnPackage`) to declare which files invalidate the stamp.
+
+**InstallDir changes the skip mechanism entirely.** When a void target has `InstallDir` set (remote packages, or local packages that call `p.CMakeInstall()` in `SetBuildFunc`), the scheduler checks whether `InstallDir` exists and contains files — if it does, the target is skipped. The `.vmake_stamp` in `BuildDir` is **not** consulted. This means a local void target that uses `CMakeInstall` will skip based on directory contents, not stamp validity.
+
+To force a rebuild of a void target with `InstallDir`, either delete the install directory or run `vmake clean --all`.
 
 ## Install
 
@@ -598,9 +699,37 @@ Use `SetConfigFiles` on `*Package` (in `OnPackage`) to declare which files inval
 
 Custom install entries: `ctx.AddInstalls("src/file.conf", "etc/file.conf")` (available in `OnBuild` and `OnInstall`).
 
+### OnInstall Lifecycle
+
+`OnInstall` runs after all builds succeed. Use it for post-install tasks that need the final install directory layout. `InstallContext` provides `SetPrefix()` for per-package prefix overrides:
+
+```go
+p.OnInstall(func(ctx *api.InstallContext) {
+    // Override prefix for this package's install
+    ctx.SetPrefix("/opt/myproject")
+    ctx.AddInstalls("docs/README.md", "share/doc/README.md")
+})
+```
+
+`OnInstall` is separate from `OnBuild` — targets are already compiled and installed before this phase runs. Use it for copying config templates, documentation, or license files into the install tree.
+
 ## Build Scope
 
 vmake builds packages by BFS from local (directory-based) packages. Remote packages are only built if reachable from a local package's transitive dependency chain. If you `AddRequires("pkg")` but no local package depends on it, the package won't be built.
+
+## Reproducible Builds (--manifest)
+
+For CI/CD reproducibility, pin package versions in a manifest file and pass `--manifest` to `vmake build`:
+
+```bash
+# First build: create manifest recording exact versions/revisions
+vmake build --install -i --manifest install.json
+
+# Later build: restore exact versions from manifest
+vmake build --manifest install.json
+```
+
+The manifest records git remote URLs, refs, and revisions for every package. `vmake manifest show install.json` displays its contents; `vmake manifest checkout install.json` restores sources to the recorded revisions without building.
 
 ## CLI Quick Reference
 
@@ -633,7 +762,7 @@ Verbosity: `-v` verbose, `-V` very-verbose, `-q` quiet
 - **Multi-module workspace** → `examples/multi-module.md`
 - **Looking up a specific API** → See `references/api.md` for complete method signatures
 - **CLI usage** → See `references/cli.md` for full command tree
-- **Advanced patterns** → `examples/complete.md`, `examples/subbuild.md`, `examples/embedded-rtos.md`, `examples/firmware.md`
+- **Advanced patterns** → `examples/complete.md`, `examples/subbuild.md`, `examples/embedded-rtos.md`, `examples/firmware.md`, `examples/config-propagate.md`
 
 ## Key Conventions
 

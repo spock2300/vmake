@@ -89,10 +89,10 @@ Phase 1-3: Main build.go
     ├── BuildSubGraph("tools")
     │       └── OnBuild for tools → collects targets
     │       └── NewBuildGraph → Scheduler with tools' toolchain
-    │       └── builds tools/build/<tc>-<mode>/codegen
+    │       └── builds tools/build/<buildKey>/codegen
     │
     ├── DepOutput("tools:codegen")
-    │       └── Returns path: tools/build/host-debug/codegen
+    │       └── Returns path: tools/build/<buildKey>/codegen
     │
     ├── Exec(path, "output/generated.h")
     │       └── Runs codegen to create generated.h
@@ -108,6 +108,53 @@ Phase 1-3: Main build.go
 - `DepOutput("pkg:target")` returns the deterministic output path
 - `DepBuildDir("pkg:target")` returns the directory containing that output (useful for locating generated headers or other build artifacts)
 - Targets built by the sub-graph are excluded from the main build graph
+
+## Linking Sub-Graph Libraries
+
+When a sub-graph produces a **static library** (not a codegen binary), pass its output path to the main target via `AddLdFlags`:
+
+```go
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.BuildSubGraph("sublib")
+
+    sublibPath := ctx.DepOutput("sublib:sublib")
+
+    ctx.Target("app").
+        SetKind(api.TargetBinary).
+        AddFiles("src/*.c").
+        AddLdFlags(sublibPath)
+})
+```
+
+`DepOutput("sublib:sublib")` returns the path to `libsublib.a`. Adding it via `AddLdFlags` passes the full `.a` path directly to the linker.
+
+**Why `AddDeps` won't work:** Sub-graph targets are excluded from the main build graph — the scheduler marks them as "built by subgraph" and skips them. If you write `AddDeps("sublib:sublib")`, the scheduler tries to compile it as part of the main graph AND the subgraph, hitting a double-build error or a target-not-found error. `AddLdFlags(DepOutput(...))` is the only way to link a subgraph-produced artifact.
+
+### Nested Sub-Graphs
+
+A sub-graph can itself call `BuildSubGraph` — the `DepOutput` function chains through parent contexts automatically:
+
+```go
+// tools/build.go — sub-graph package
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.BuildSubGraph("codegen")                      // nested subgraph
+    ctx.Exec(ctx.DepOutput("codegen:gen"), "output/ids.h")  // resolves correctly
+
+    ctx.Target("sublib").SetKind(api.TargetStatic).AddFiles("lib.c")
+})
+
+// build.go — root package
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.BuildSubGraph("tools")
+
+    libPath := ctx.DepOutput("tools:sublib")  // resolves through nested subgraph
+
+    ctx.Target("app").SetKind(api.TargetBinary).
+        AddFiles("src/*.c").AddLdFlags(libPath)
+})
+```
+
+If a dependency is inside the same subgraph, `DepOutput` computes its output locally. If it's in a different subgraph, it delegates to the parent's dep-output resolver. This fallback chain allows arbitrary nesting depth.
 
 ## See Also
 
