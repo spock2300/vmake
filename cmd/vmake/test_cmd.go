@@ -25,12 +25,10 @@ func init() {
 }
 
 func runTest(cmd *cobra.Command, args []string) {
-	runPipeline(pipelineOptions{
-		tests: true,
-		afterBuild: func(ctx *RuntimeContext, result *BuildResult) {
-			runAllTests(result)
-		},
-	})
+	ctx := resolveToConfig(false)
+	result, err := runBuildPhase(ctx, true)
+	fatalErr(err)
+	runAllTests(result)
 }
 
 type testResult struct {

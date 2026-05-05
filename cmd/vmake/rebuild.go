@@ -19,14 +19,14 @@ func init() {
 }
 
 func runRebuild(cmd *cobra.Command, args []string) {
-	runPipeline(pipelineOptions{
-		force: false,
-		beforeBuild: func(ctx *RuntimeContext) {
-			executeCleanLocal(ctx)
-			vlog.Info("")
-		},
-		installAfter: installFlag,
-	})
+	ctx := resolveToConfig(false)
+	executeCleanLocal(ctx)
+	vlog.Info("")
+	result, err := runBuildPhase(ctx, false)
+	fatalErr(err)
+	if installFlag {
+		fatalErr(executeInstall(ctx, result))
+	}
 }
 
 func executeCleanLocal(ctx *RuntimeContext) {

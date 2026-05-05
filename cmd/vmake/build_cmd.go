@@ -36,13 +36,15 @@ func init() {
 }
 
 func runBuild(cmd *cobra.Command, args []string) {
-	opts := pipelineOptions{force: forceFlag, tests: testsFlag, installAfter: installFlag}
+	ctx := resolveToConfig(forceFlag)
 	if manifestFlag != "" {
-		opts.afterPhase1 = func(ctx *RuntimeContext) {
-			applyManifestVersions(ctx, manifestFlag)
-		}
+		applyManifestVersions(ctx, manifestFlag)
 	}
-	runPipeline(opts)
+	result, err := runBuildPhase(ctx, testsFlag)
+	fatalErr(err)
+	if installFlag {
+		fatalErr(executeInstall(ctx, result))
+	}
 }
 
 func applyManifestVersions(ctx *RuntimeContext, manifestPath string) {

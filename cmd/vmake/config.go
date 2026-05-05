@@ -32,8 +32,7 @@ func init() {
 }
 
 func runConfig(cmd *cobra.Command, args []string) {
-	ctx := mustInitContext()
-	runThroughConfigPhase(ctx, false)
+	ctx := resolveToConfig(false)
 
 	if len(setFlags) > 0 {
 		runSetConfig(ctx, setFlags)

@@ -106,52 +106,28 @@ func mustInitContext() *RuntimeContext {
 	return ctx
 }
 
-type pipelineOptions struct {
-	force        bool
-	afterPhase1  func(ctx *RuntimeContext)
-	beforeBuild  func(ctx *RuntimeContext)
-	afterBuild   func(ctx *RuntimeContext, result *BuildResult)
-	tests        bool
-	installAfter bool
-}
-
 func runPostPhase1(ctx *RuntimeContext) {
 	fatalErr(ctx.Resolver.ResolveDeferred())
 	fatalErr(ctx.Resolver.UpdateOrder())
 	fatalErr(runConfigPhase(ctx))
 }
 
-func runThroughConfigPhase(ctx *RuntimeContext, force bool) {
-	fatalErr(runRequirePhase(ctx, force))
-	runPostPhase1(ctx)
-}
-
-func runPipeline(opts pipelineOptions) {
+func resolveToConfig(force bool) *RuntimeContext {
 	ctx := mustInitContext()
 	ensureGitignore(findProjectDir())
-
-	fatalErr(runRequirePhase(ctx, opts.force))
-
-	if opts.afterPhase1 != nil {
-		opts.afterPhase1(ctx)
-	}
-
+	fatalErr(runRequirePhase(ctx, force))
 	runPostPhase1(ctx)
+	return ctx
+}
 
-	if opts.beforeBuild != nil {
-		opts.beforeBuild(ctx)
+func resolveToConfigBestEffort(force bool) (*RuntimeContext, bool) {
+	ctx := mustInitContext()
+	ensureGitignore(findProjectDir())
+	if err := runRequirePhase(ctx, force); err != nil {
+		return ctx, false
 	}
-
-	result, err := runBuildPhase(ctx, opts.tests)
-	fatalErr(err)
-
-	if opts.afterBuild != nil {
-		opts.afterBuild(ctx, result)
-	}
-
-	if opts.installAfter {
-		fatalErr(executeInstall(ctx, result))
-	}
+	runPostPhase1(ctx)
+	return ctx, true
 }
 
 func resolveWithDefault(flagVal, configVal, defaultVal string) string {
