@@ -33,13 +33,5 @@ func executeCleanLocal(ctx *RuntimeContext) {
 	vlog.Info("")
 	vlog.Info("Executing OnClean...")
 	executeCleanHooks(ctx, true)
-
-	var entries []pkgCleanEntry
-	for _, name := range ctx.Resolver.GetOrder() {
-		node := ctx.DepGraph.Packages[name]
-		if node.IsLocal() {
-			entries = append(entries, pkgCleanEntry{Dir: node.Source.Dir, Name: name})
-		}
-	}
-	cleanPackages(entries, ctx.Config, false)
+	cleanPackages(collectCleanEntries(ctx), ctx.Config, false)
 }

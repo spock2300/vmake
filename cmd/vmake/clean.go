@@ -191,21 +191,15 @@ func executeCleanHooks(ctx *RuntimeContext, localOnly bool) {
 			continue
 		}
 
+		entry := config.GetEntry(ctx.Config, name)
 		if node.IsLocal() {
-			pkgDirs[name] = makeLocalPkgDirs(
-				node.Source.Dir, resolvedTools.CC, cfg.Mode,
-				localPkgOptions[name],
-			)
+			pkgDirs[name] = resolvePkgDir(node, depsDir, resolvedTools.CC, cfg.Mode, localPkgOptions[name])
 		} else {
-			entry := config.GetEntry(ctx.Config, name)
 			sourceDir := filepath.Join(depsDir, name, "src")
 			if info, err := os.Stat(sourceDir); err != nil || !info.IsDir() {
 				continue
 			}
-			pkgDirs[name] = makeRemotePkgDirs(
-				depsDir, name, resolvedTools.CC, cfg.Mode,
-				entry.Options, sourceDir,
-			)
+			pkgDirs[name] = resolvePkgDir(node, depsDir, resolvedTools.CC, cfg.Mode, entry.Options)
 		}
 
 		detectExistingSrcDir(node)
@@ -213,7 +207,6 @@ func executeCleanHooks(ctx *RuntimeContext, localOnly bool) {
 		node.Pkg.SetDirs(*pkgDirs[name])
 		node.Pkg.SetToolchain(cfg.Tc)
 
-		entry := config.GetEntry(ctx.Config, name)
 		cleanCtx := api.NewCleanContext(name, entry.Options)
 		if opts, ok := ctx.AllOptions[name]; ok {
 			cleanCtx.SetOptions(opts)
@@ -227,19 +220,21 @@ func executeCleanHooks(ctx *RuntimeContext, localOnly bool) {
 	}
 }
 
-func detectExistingSrcDir(node *resolver.PackageNode) {
+func detectExistingSrcDir(node *resolver.PackageNode) bool {
 	if !node.IsLocal() || node.Pkg == nil {
-		return
+		return false
 	}
 	if len(node.Pkg.GitURLs()) == 0 {
-		return
+		return false
 	}
 	srcDir := filepath.Join(node.Source.Dir, "src")
 	if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
 		if _, err := os.Stat(filepath.Join(srcDir, ".git")); err == nil {
 			node.Pkg.SetSrcDir(srcDir)
+			return true
 		}
 	}
+	return false
 }
 
 func cleanBuildKeyDir(dir, pkgName, tcName, ccPath, mode string, options map[string]any) bool {

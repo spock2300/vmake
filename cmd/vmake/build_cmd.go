@@ -181,10 +181,10 @@ func runBuildPhase(ctx *RuntimeContext, includeTests bool) (*BuildResult, error)
 	needed := filterAndCollectNeeded(ctx)
 	applyGlobalFlagsFromNeeded(ctx, needed)
 
-	localPkgOptions := collectLocalPkgOptions(ctx)
+	allPkgOptions := collectAllPkgOptions(ctx, needed)
 
 	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
-	remote, err := prepareAllPackages(ctx, cfg, needed, pkgDirs, localPkgOptions)
+	remote, err := prepareAllPackages(ctx, cfg, needed, pkgDirs, allPkgOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +203,7 @@ func runBuildPhase(ctx *RuntimeContext, includeTests bool) (*BuildResult, error)
 		return nil, err
 	}
 
-	allTargets, pkgMetaMap, subBuildKeys := executeAllOnBuild(ctx, needed, remote, pkgDirs, cfg, localPkgOptions, includeTests)
+	allTargets, pkgMetaMap, subBuildKeys := executeAllOnBuild(ctx, needed, remote, pkgDirs, cfg, allPkgOptions, includeTests)
 
 	if includeTests {
 		enableTestDefaults(allTargets)
@@ -239,7 +239,7 @@ func runBuildPhase(ctx *RuntimeContext, includeTests bool) (*BuildResult, error)
 		vlog.Info("  - %s", fullName)
 	}
 
-	pipeline := build.NewBuildPipeline(graph, cfg.Tc, pkgDirs, cfg.Mode, localPkgOptions, subBuildKeys)
+	pipeline := build.NewBuildPipeline(graph, cfg.Tc, pkgDirs, cfg.Mode, allPkgOptions, subBuildKeys)
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
@@ -318,6 +318,22 @@ func collectLocalPkgOptions(ctx *RuntimeContext) map[string]map[string]any {
 	return result
 }
 
+func collectAllPkgOptions(ctx *RuntimeContext, needed map[string]bool) map[string]map[string]any {
+	result := make(map[string]map[string]any)
+	for _, name := range ctx.Resolver.GetOrder() {
+		if !needed[name] {
+			continue
+		}
+		entry := config.GetEntry(ctx.Config, name)
+		opts := make(map[string]any, len(entry.Options))
+		for k, v := range entry.Options {
+			opts[k] = v
+		}
+		result[name] = opts
+	}
+	return result
+}
+
 func filterAndCollectNeeded(ctx *RuntimeContext) map[string]bool {
 	vlog.Info("")
 	vlog.Info("Filtering dependencies...")
@@ -343,8 +359,8 @@ func filterAndCollectNeeded(ctx *RuntimeContext) map[string]bool {
 	return needed
 }
 
-type remotePkgState struct {
-	configs map[string]*config.EntryConfig
+type remoteVersionState struct {
+	entries map[string]*config.EntryConfig
 }
 
 func makeLocalPkgDirs(scriptDir, ccPath, mode string, opts map[string]any) *api.PkgDirs {
@@ -364,14 +380,22 @@ func makeRemotePkgDirs(depsDir, name, ccPath, mode string, opts map[string]any, 
 	}
 }
 
-func (r *remotePkgState) installedPkgs(pkgDirs map[string]*api.PkgDirs) map[string]*api.InstalledPackage {
+func resolvePkgDir(node *resolver.PackageNode, depsDir, ccPath, mode string, opts map[string]any) *api.PkgDirs {
+	if node.IsLocal() {
+		return makeLocalPkgDirs(node.Source.Dir, ccPath, mode, opts)
+	}
+	sourceDir := filepath.Join(depsDir, node.ID, "src")
+	return makeRemotePkgDirs(depsDir, node.ID, ccPath, mode, opts, sourceDir)
+}
+
+func (r *remoteVersionState) installedPkgs(pkgDirs map[string]*api.PkgDirs) map[string]*api.InstalledPackage {
 	if len(pkgDirs) == 0 {
 		return nil
 	}
 	result := make(map[string]*api.InstalledPackage)
 	for name, d := range pkgDirs {
 		if d.InstallDir != "" {
-			if rc, ok := r.configs[name]; ok {
+			if rc, ok := r.entries[name]; ok {
 				result[name] = api.NewInstalledPackage(name, rc.Version, d.InstallDir, nil)
 			}
 		}
@@ -379,9 +403,9 @@ func (r *remotePkgState) installedPkgs(pkgDirs map[string]*api.PkgDirs) map[stri
 	return result
 }
 
-func prepareAllPackages(ctx *RuntimeContext, cfg *buildConfig, needed map[string]bool, pkgDirs map[string]*api.PkgDirs, localPkgOptions map[string]map[string]any) (*remotePkgState, error) {
-	remote := &remotePkgState{
-		configs: make(map[string]*config.EntryConfig),
+func prepareAllPackages(ctx *RuntimeContext, cfg *buildConfig, needed map[string]bool, pkgDirs map[string]*api.PkgDirs, allPkgOptions map[string]map[string]any) (*remoteVersionState, error) {
+	remote := &remoteVersionState{
+		entries: make(map[string]*config.EntryConfig),
 	}
 
 	resolvedTools, err := build.ResolveTools(cfg.Tc)
@@ -394,16 +418,16 @@ func prepareAllPackages(ctx *RuntimeContext, cfg *buildConfig, needed map[string
 			continue
 		}
 		if !ctx.DepGraph.Packages[name].IsLocal() {
-			remote.configs[name] = config.GetEntry(ctx.Config, name)
+			remote.entries[name] = config.GetEntry(ctx.Config, name)
 		}
 	}
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
-		if !needed[name] || node.Source == nil {
+		if !needed[name] || node.Source == nil || !node.IsLocal() {
 			continue
 		}
-		opts := localPkgOptions[name]
+		opts := allPkgOptions[name]
 		pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, resolvedTools.CC, cfg.Mode, opts)
 	}
 
@@ -412,7 +436,7 @@ func prepareAllPackages(ctx *RuntimeContext, cfg *buildConfig, needed map[string
 	vlog.Info("")
 	vlog.Info("Downloading package sources...")
 
-	if err := downloadRemoteSources(ctx, needed, remote, pkgDirs, depsDir, cfg); err != nil {
+	if err := downloadRemoteSources(ctx, needed, remote, pkgDirs, depsDir, cfg, allPkgOptions); err != nil {
 		return nil, err
 	}
 
@@ -423,14 +447,14 @@ func prepareAllPackages(ctx *RuntimeContext, cfg *buildConfig, needed map[string
 	return remote, nil
 }
 
-func downloadRemoteSources(ctx *RuntimeContext, needed map[string]bool, remote *remotePkgState, pkgDirs map[string]*api.PkgDirs, depsDir string, cfg *buildConfig) error {
+func downloadRemoteSources(ctx *RuntimeContext, needed map[string]bool, remote *remoteVersionState, pkgDirs map[string]*api.PkgDirs, depsDir string, cfg *buildConfig, allPkgOptions map[string]map[string]any) error {
 	sourceMgr := repo.NewSourceManager(depsDir, getSourcesDir())
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if !needed[name] || node.IsLocal() {
 			continue
 		}
-		entryCfg := remote.configs[name]
+		entryCfg := remote.entries[name]
 		repoName, pkgName, ok := api.SplitPackageRef(name)
 		if !ok {
 			continue
@@ -471,7 +495,7 @@ func downloadRemoteSources(ctx *RuntimeContext, needed map[string]bool, remote *
 			return fmt.Errorf("failed to download %s: %w", name, err)
 		}
 		vlog.Info("  %s@%s -> %s", name, entryCfg.Version, sourceDir)
-		pkgDirs[name] = makeRemotePkgDirs(depsDir, name, cfg.Tc.Tools.CC, cfg.Mode, entryCfg.Options, sourceDir)
+		pkgDirs[name] = makeRemotePkgDirs(depsDir, name, cfg.Tc.Tools.CC, cfg.Mode, allPkgOptions[name], sourceDir)
 	}
 	return nil
 }
@@ -486,14 +510,11 @@ func cloneLocalGitSources(ctx *RuntimeContext, needed map[string]bool, pkgDirs m
 		if len(gitURLs) == 0 {
 			continue
 		}
-		srcDir := filepath.Join(node.Source.Dir, "src")
-		if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
-			if _, err2 := os.Stat(filepath.Join(srcDir, ".git")); err2 == nil {
-				vlog.Info("  %s (source exists)", name)
-				node.Pkg.SetSrcDir(srcDir)
-				continue
-			}
+		if detectExistingSrcDir(node) {
+			vlog.Info("  %s (source exists)", name)
+			continue
 		}
+		srcDir := filepath.Join(node.Source.Dir, "src")
 		vlog.Info("  %s -> %s", name, srcDir)
 		if err := repo.Clone(gitURLs[0], srcDir); err != nil {
 			return fmt.Errorf("failed to download source for %s: %w", name, err)
@@ -504,8 +525,8 @@ func cloneLocalGitSources(ctx *RuntimeContext, needed map[string]bool, pkgDirs m
 }
 
 func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.PackageNode, pkgDirs map[string]*api.PkgDirs,
-	allTargets map[string]map[string]*api.Target, remote *remotePkgState, globalValues map[string]any,
-	buildSubGraphFn func(string) error, depOutputFn func(string) string, tc *toolchain.Toolchain, localPkgOptions map[string]map[string]any) {
+	allTargets map[string]map[string]*api.Target, globalValues map[string]any,
+	buildSubGraphFn func(string) error, depOutputFn func(string) string, tc *toolchain.Toolchain, allPkgOptions map[string]map[string]any) {
 
 	buildCtx := newBuildContext(ctx, name, globalValues)
 	buildCtx.SetBuildSubGraphFunc(buildSubGraphFn)
@@ -518,7 +539,7 @@ func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.Pack
 		if allOpts == nil {
 			allOpts = pkg.GetOptions()
 		}
-		cfgVals := mergeCfgVals(name, node, ctx, remote, globalValues, localPkgOptions)
+		cfgVals := mergeCfgVals(name, node, ctx, globalValues, allPkgOptions)
 		pkg.SetDirs(*pkgDirs[name])
 		pkg.SetOptions(allOpts)
 		pkg.SetCfgVals(cfgVals)
@@ -562,7 +583,7 @@ func executePackageOnBuild(ctx *RuntimeContext, name string, node *resolver.Pack
 	allTargets[name] = buildCtx.GetTargets()
 }
 
-func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, remote *remotePkgState, globalValues map[string]any, localPkgOptions map[string]map[string]any) map[string]any {
+func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, globalValues map[string]any, allPkgOptions map[string]map[string]any) map[string]any {
 	cfgVals := make(map[string]any)
 	allOpts := ctx.AllOptions[name]
 	if allOpts == nil && node.Pkg != nil {
@@ -575,13 +596,8 @@ func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, 
 			}
 		}
 	}
-	if remoteCfg, ok := remote.configs[name]; ok {
-		for k, v := range remoteCfg.Options {
-			cfgVals[k] = v
-		}
-	}
-	if localOpts, ok := localPkgOptions[name]; ok {
-		for k, v := range localOpts {
+	if opts, ok := allPkgOptions[name]; ok {
+		for k, v := range opts {
 			cfgVals[k] = v
 		}
 	}
@@ -593,7 +609,7 @@ func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, 
 	return cfgVals
 }
 
-func computeDepOutput(depRef string, targets map[string]map[string]*api.Target, ctx *RuntimeContext, cfg *buildConfig, pkgDirs map[string]*api.PkgDirs, localPkgOptions map[string]map[string]any) string {
+func computeDepOutput(depRef string, targets map[string]map[string]*api.Target, ctx *RuntimeContext, cfg *buildConfig, pkgDirs map[string]*api.PkgDirs, allPkgOptions map[string]map[string]any) string {
 	pkgName, targetName, ok := strings.Cut(depRef, ":")
 	if !ok {
 		pkgName = depRef
@@ -631,11 +647,10 @@ func executeOnBuildForPackages(
 	targets map[string]map[string]*api.Target,
 	allTargets map[string]map[string]*api.Target,
 	pkgDirs map[string]*api.PkgDirs,
-	remote *remotePkgState,
 	cfg *buildConfig,
 	buildSubGraphFn func(string) error,
 	depOutputFn func(string) string,
-	localPkgOptions map[string]map[string]any,
+	allPkgOptions map[string]map[string]any,
 ) {
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
@@ -645,12 +660,12 @@ func executeOnBuildForPackages(
 		if _, done := targets[name]; done {
 			continue
 		}
-		executePackageOnBuild(ctx, name, node, pkgDirs, targets, remote, cfg.GlobalValues, buildSubGraphFn, depOutputFn, cfg.Tc, localPkgOptions)
+		executePackageOnBuild(ctx, name, node, pkgDirs, targets, cfg.GlobalValues, buildSubGraphFn, depOutputFn, cfg.Tc, allPkgOptions)
 		autoWireRequireDeps(node.Pkg, allTargets, targets[name])
 	}
 }
 
-func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remotePkgState, pkgDirs map[string]*api.PkgDirs, cfg *buildConfig, localPkgOptions map[string]map[string]any, includeTests bool) (map[string]map[string]*api.Target, map[string]build.PkgBuildMeta, map[string]string) {
+func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remoteVersionState, pkgDirs map[string]*api.PkgDirs, cfg *buildConfig, allPkgOptions map[string]map[string]any, includeTests bool) (map[string]map[string]*api.Target, map[string]build.PkgBuildMeta, map[string]string) {
 	vlog.Info("")
 	vlog.Info("Executing OnBuild...")
 
@@ -696,12 +711,12 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 		subDepOutputFn := func(depRef string) string {
 			pkgName, _, _ := strings.Cut(depRef, ":")
 			if subPkgs[pkgName] {
-				return computeDepOutput(depRef, subAllTargets, ctx, cfg, pkgDirs, localPkgOptions)
+				return computeDepOutput(depRef, subAllTargets, ctx, cfg, pkgDirs, allPkgOptions)
 			}
 			return depOutputFn(depRef)
 		}
 
-		executeOnBuildForPackages(ctx, subPkgs, subAllTargets, allTargets, pkgDirs, remote, cfg, buildSubGraphFn, subDepOutputFn, localPkgOptions)
+		executeOnBuildForPackages(ctx, subPkgs, subAllTargets, allTargets, pkgDirs, cfg, buildSubGraphFn, subDepOutputFn, allPkgOptions)
 
 		subTcName := resolvePkgToolchain(ctx.Config, rootPkg, cfg.TcName)
 		subTc, err := toolchain.GetManager().SelectToolchain(subTcName)
@@ -717,12 +732,11 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 			subResolvedTools, _ := build.ResolveTools(subTc)
 			for name := range subPkgs {
 				if meta, ok := pkgMetaMap[name]; ok && meta.IsRemote() {
-					rcfg := remote.configs[name]
-					subPkgDirs[name] = makeRemotePkgDirs(depsDir, name, subResolvedTools.CC, cfg.Mode, rcfg.Options, pkgDirs[name].SourceDir)
+					subPkgDirs[name] = makeRemotePkgDirs(depsDir, name, subResolvedTools.CC, cfg.Mode, allPkgOptions[name], pkgDirs[name].SourceDir)
 				}
 			}
 			for name := range subPkgs {
-				opts := localPkgOptions[name]
+				opts := allPkgOptions[name]
 				subBuildKeys[name] = build.BuildKey(subResolvedTools.CC, cfg.Mode, opts)
 			}
 		}
@@ -744,7 +758,7 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 			enableTestDefaults(subAllTargets)
 		}
 
-		if err := build.BuildSubGraph(rootPkg, subTc, subTcName, cfg.Mode, params, localPkgOptions); err != nil {
+		if err := build.BuildSubGraph(rootPkg, subTc, subTcName, cfg.Mode, params, allPkgOptions); err != nil {
 			return err
 		}
 
@@ -756,10 +770,10 @@ func executeAllOnBuild(ctx *RuntimeContext, needed map[string]bool, remote *remo
 	}
 
 	depOutputFn = func(depRef string) string {
-		return computeDepOutput(depRef, allTargets, ctx, cfg, pkgDirs, localPkgOptions)
+		return computeDepOutput(depRef, allTargets, ctx, cfg, pkgDirs, allPkgOptions)
 	}
 
-	executeOnBuildForPackages(ctx, needed, allTargets, allTargets, pkgDirs, remote, cfg, buildSubGraphFn, depOutputFn, localPkgOptions)
+	executeOnBuildForPackages(ctx, needed, allTargets, allTargets, pkgDirs, cfg, buildSubGraphFn, depOutputFn, allPkgOptions)
 
 	for pkgName := range subGraphBuilt {
 		delete(allTargets, pkgName)
