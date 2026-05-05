@@ -819,6 +819,18 @@ func collectNeeded(graph *resolver.Graph) map[string]bool {
 	needed := make(map[string]bool, len(graph.Packages))
 	var queue []string
 
+	dependedOn := make(map[string]bool)
+	for _, node := range graph.Packages {
+		if !node.IsLocal() {
+			continue
+		}
+		for _, dep := range node.Deps {
+			if depNode, ok := graph.Packages[dep]; ok && depNode.IsLocal() {
+				dependedOn[dep] = true
+			}
+		}
+	}
+
 	hasLocalRequire := false
 	for _, node := range graph.Packages {
 		if node.IsLocal() && node.Pkg != nil && len(node.Pkg.GetRequireFuncs()) > 0 {
@@ -831,7 +843,7 @@ func collectNeeded(graph *resolver.Graph) map[string]bool {
 		if !node.IsLocal() {
 			continue
 		}
-		if hasLocalRequire && node.Pkg != nil && len(node.Pkg.GetRequireFuncs()) == 0 {
+		if hasLocalRequire && node.Pkg != nil && len(node.Pkg.GetRequireFuncs()) == 0 && dependedOn[id] {
 			continue
 		}
 		needed[id] = true
