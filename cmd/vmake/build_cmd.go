@@ -819,36 +819,54 @@ func collectNeeded(graph *resolver.Graph) map[string]bool {
 	needed := make(map[string]bool, len(graph.Packages))
 	var queue []string
 
-	dependedOn := make(map[string]bool)
-	for _, node := range graph.Packages {
-		if !node.IsLocal() {
-			continue
+	var rootID string
+	rootCount := 0
+	for id, node := range graph.Packages {
+		if node.IsLocal() && node.Pkg != nil && node.Pkg.IsRoot() {
+			rootCount++
+			rootID = id
 		}
-		for _, dep := range node.Deps {
-			if depNode, ok := graph.Packages[dep]; ok && depNode.IsLocal() {
-				dependedOn[dep] = true
+	}
+	if rootCount > 1 {
+		vlog.Fatal("SetRoot(true): multiple root packages found; only one is allowed")
+	}
+
+	if rootCount == 1 {
+		needed[rootID] = true
+		queue = append(queue, rootID)
+	} else {
+		dependedOn := make(map[string]bool)
+		for _, node := range graph.Packages {
+			if !node.IsLocal() {
+				continue
+			}
+			for _, dep := range node.Deps {
+				if depNode, ok := graph.Packages[dep]; ok && depNode.IsLocal() {
+					dependedOn[dep] = true
+				}
 			}
 		}
+
+		hasLocalRequire := false
+		for _, node := range graph.Packages {
+			if node.IsLocal() && node.Pkg != nil && len(node.Pkg.GetRequireFuncs()) > 0 {
+				hasLocalRequire = true
+				break
+			}
+		}
+
+		for id, node := range graph.Packages {
+			if !node.IsLocal() {
+				continue
+			}
+			if hasLocalRequire && node.Pkg != nil && len(node.Pkg.GetRequireFuncs()) == 0 && dependedOn[id] {
+				continue
+			}
+			needed[id] = true
+			queue = append(queue, id)
+		}
 	}
 
-	hasLocalRequire := false
-	for _, node := range graph.Packages {
-		if node.IsLocal() && node.Pkg != nil && len(node.Pkg.GetRequireFuncs()) > 0 {
-			hasLocalRequire = true
-			break
-		}
-	}
-
-	for id, node := range graph.Packages {
-		if !node.IsLocal() {
-			continue
-		}
-		if hasLocalRequire && node.Pkg != nil && len(node.Pkg.GetRequireFuncs()) == 0 && dependedOn[id] {
-			continue
-		}
-		needed[id] = true
-		queue = append(queue, id)
-	}
 	for len(queue) > 0 {
 		name := queue[0]
 		queue = queue[1:]
