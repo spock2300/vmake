@@ -802,11 +802,24 @@ func enableTestDefaults(allTargets map[string]map[string]*api.Target) {
 func collectNeeded(graph *resolver.Graph) map[string]bool {
 	needed := make(map[string]bool, len(graph.Packages))
 	var queue []string
-	for id, node := range graph.Packages {
-		if node.IsLocal() {
-			needed[id] = true
-			queue = append(queue, id)
+
+	hasLocalRequire := false
+	for _, node := range graph.Packages {
+		if node.IsLocal() && node.Pkg != nil && len(node.Pkg.GetRequireFuncs()) > 0 {
+			hasLocalRequire = true
+			break
 		}
+	}
+
+	for id, node := range graph.Packages {
+		if !node.IsLocal() {
+			continue
+		}
+		if hasLocalRequire && node.Pkg != nil && len(node.Pkg.GetRequireFuncs()) == 0 {
+			continue
+		}
+		needed[id] = true
+		queue = append(queue, id)
 	}
 	for len(queue) > 0 {
 		name := queue[0]
