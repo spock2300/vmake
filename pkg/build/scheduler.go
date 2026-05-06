@@ -656,8 +656,15 @@ func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) error
 		vlog.Info("  LINK %s", outputName)
 		return s.linker.LinkBinary(allObjs, unique(resolved.AllLinks), resolved.AllLdFlags, resolved.OutputPath, linkerScript)
 	case api.TargetStatic:
+		var objOnly []string
+		for _, o := range allObjs {
+			ext := strings.ToLower(filepath.Ext(o))
+			if ext != ".a" && ext != ".so" && ext != ".dylib" {
+				objOnly = append(objOnly, o)
+			}
+		}
 		vlog.Info("  AR %s", outputName)
-		return s.linker.LinkStatic(allObjs, resolved.OutputPath)
+		return s.linker.LinkStatic(objOnly, resolved.OutputPath)
 	case api.TargetShared:
 		vlog.Info("  LINK %s", outputName)
 		return s.linker.LinkShared(allObjs, resolved.AllLdFlags, resolved.OutputPath)
