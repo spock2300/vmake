@@ -312,13 +312,19 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 
 		if depNode.Target.Kind() == api.TargetVoid && depPkg.InstallDir != "" {
 			libDir := fs.DetectLibDir(depPkg.InstallDir)
-			result.voidLdFlags = append(result.voidLdFlags, "-L"+libDir)
+			var libNames []string
 			if len(depNode.Target.ProvidedLibs()) > 0 {
-				for _, lib := range depNode.Target.ProvidedLibs() {
+				libNames = depNode.Target.ProvidedLibs()
+			} else {
+				libNames = []string{depNode.Target.Name()}
+			}
+			for _, lib := range libNames {
+				archivePath := filepath.Join(libDir, "lib"+lib+".a")
+				if fs.FileExists(archivePath) {
+					result.artifacts = append(result.artifacts, archivePath)
+				} else {
 					result.voidLdFlags = append(result.voidLdFlags, "-l"+lib)
 				}
-			} else {
-				result.voidLdFlags = append(result.voidLdFlags, "-l"+depNode.Target.Name())
 			}
 		} else if depNode.Target.Kind() != api.TargetVoid {
 			var depOutput string
@@ -331,7 +337,16 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 
 			for _, lib := range depNode.Target.ProvidedLibs() {
 				if lib != depNode.Target.Name() {
-					result.voidLdFlags = append(result.voidLdFlags, "-l"+lib)
+					archivePath := ""
+					if depPkg.InstallDir != "" {
+						libDir := fs.DetectLibDir(depPkg.InstallDir)
+						archivePath = filepath.Join(libDir, "lib"+lib+".a")
+					}
+					if archivePath != "" && fs.FileExists(archivePath) {
+						result.artifacts = append(result.artifacts, archivePath)
+					} else {
+						result.voidLdFlags = append(result.voidLdFlags, "-l"+lib)
+					}
 				}
 			}
 		}

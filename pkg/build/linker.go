@@ -55,7 +55,11 @@ func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScri
 
 	if len(libFiles) > 0 || len(libs) > 0 || len(groupFlags) > 0 {
 		args = append(args, "-Wl,--start-group")
-		args = append(args, libFiles...)
+		if len(libFiles) > 0 {
+			args = append(args, "-Wl,--whole-archive")
+			args = append(args, libFiles...)
+			args = append(args, "-Wl,--no-whole-archive")
+		}
 		for _, lib := range libs {
 			args = append(args, "-l"+lib)
 		}
