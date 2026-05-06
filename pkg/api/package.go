@@ -446,6 +446,38 @@ func (p *Package) GlobalLinks() []string {
 	return p.globalLinks
 }
 
+func (p *Package) MergedCFlags(extra ...string) string {
+	all := append(append([]string{}, p.globalCFlags...), extra...)
+	return strings.Join(all, " ")
+}
+
+func (p *Package) MergedCxxFlags(extra ...string) string {
+	all := append(append([]string{}, p.globalCxxFlags...), extra...)
+	return strings.Join(all, " ")
+}
+
+func (p *Package) MergedLdFlags(extra ...string) string {
+	all := append(append([]string{}, p.globalLdFlags...), extra...)
+	return strings.Join(all, " ")
+}
+
+func (p *Package) CMakeGlobalFlagsArgs() []string {
+	var args []string
+	if cf := p.MergedCFlags(); cf != "" {
+		args = append(args, "-DCMAKE_C_FLAGS="+cf)
+	}
+	if cxxf := p.MergedCxxFlags(); cxxf != "" {
+		args = append(args, "-DCMAKE_CXX_FLAGS="+cxxf)
+	}
+	if ldf := p.MergedLdFlags(); ldf != "" {
+		args = append(args,
+			"-DCMAKE_EXE_LINKER_FLAGS="+ldf,
+			"-DCMAKE_SHARED_LINKER_FLAGS="+ldf,
+		)
+	}
+	return args
+}
+
 func (p *Package) SetDryRun(v bool) *Package {
 	p.dryRun = v
 	return p

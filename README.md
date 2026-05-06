@@ -189,7 +189,7 @@ ctx.Target(name string) *Target
 
 - **CLI 命令扩展**：通过 `AddSubCommand` 添加自定义子命令
 - **工具链管理**：注册自定义工具链，支持通过 `toolchain.json` + `tc` 插件实现首次使用自动下载（Git LFS 或 HTTP）
-- **全局编译/链接标志**：通过 `AddGlobalCFlags`、`AddGlobalCxxFlags` 和 `AddGlobalLdFlags` 向所有构建注入 C/CXX/链接选项
+- **全局编译/链接标志**：通过 `AddGlobalCFlags`、`AddGlobalCxxFlags` 和 `AddGlobalLdFlags` 向所有构建注入 C/CXX/链接选项，并通过 `CMakeGlobalFlagsArgs()` 或 `MergedCFlags()` 传递给 CMake 外部构建
 
 ### 使用流程
 

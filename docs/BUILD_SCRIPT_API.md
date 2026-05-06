@@ -166,6 +166,31 @@ func (p *Package) RunIn(dir, name string, args ...string) error
 func (p *Package) RunEnv(env map[string]string, name string, args ...string) error
 ```
 
+### CMake 全局标志传递
+
+将 `AddGlobalCFlags`/`AddGlobalCxxFlags`/`AddGlobalLdFlags` 设置的全局标志传递给 CMake 外部构建：
+
+```go
+func (p *Package) CMakeGlobalFlagsArgs() []string          // 返回 -DCMAKE_C_FLAGS=... 等 CMake 参数
+func (p *Package) MergedCFlags(extra ...string) string      // 合并全局 C 标志 + extra，返回空格拼接字符串
+func (p *Package) MergedCxxFlags(extra ...string) string    // 合并全局 C++ 标志 + extra
+func (p *Package) MergedLdFlags(extra ...string) string     // 合并全局链接标志 + extra
+```
+
+使用示例：
+
+```go
+// 方式一：用 CMakeConfigure 便捷方法
+p.CMakeConfigure(append(p.CMakeGlobalFlagsArgs(), "-DBUILD_SHARED_LIBS=OFF")...)
+
+// 方式二：手动 cmake（如自定义 toolchain file 场景），追加自己的 cflags
+args := []string{"-S", pkg.SrcDir(), "-B", pkg.BuildDir(), "-G", "Ninja",
+    "--toolchain", tcPath,
+    "-DCMAKE_C_FLAGS=" + pkg.MergedCFlags("-D__SINGLE_THREAD=ON"),
+}
+pkg.RunIn(pkg.BuildDir(), "cmake", args...)
+```
+
 ### 获取方法
 
 ```go

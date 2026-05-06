@@ -89,6 +89,10 @@ All build helpers use `exec.RunFatal` (call `os.Exit` on failure) EXCEPT `RunEnv
 | `RunIn` | `(dir, name string, args ...string) error` | Run command in dir (os.Exit on failure) |
 | `RunEnv` | `(env map[string]string, name string, args ...string) error` | Run with extra env vars (**returns real error**) |
 | `CMakeConfigure` | `(extraArgs ...string) error` | cmake -S src -B build --prefix=... |
+| `CMakeGlobalFlagsArgs` | `() []string` | Returns `-DCMAKE_C_FLAGS=...` etc. from global flags for CMake |
+| `MergedCFlags` | `(extra ...string) string` | Merge global C flags + extra, space-joined |
+| `MergedCxxFlags` | `(extra ...string) string` | Merge global C++ flags + extra, space-joined |
+| `MergedLdFlags` | `(extra ...string) string` | Merge global linker flags + extra, space-joined |
 | `CMakeBuild` | `(args ...string) error` | cmake --build build |
 | `CMakeInstall` | `() error` | cmake --install build |
 | `Configure` | `(extraArgs ...string) error` | ./configure --prefix=... |

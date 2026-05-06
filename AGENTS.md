@@ -242,6 +242,8 @@ Methods on `*Package` (used in build.go scripts):
 - `p.RunEnv(env, name, args...)` — run with custom environment in BuildDir
 - `p.Make(args...)` — always uses BuildDir with `p.Env()`, passes `-C BuildDir` automatically
 - `p.CMakeConfigure()`, `p.CMakeBuild()`, `p.CMakeInstall()` — CMake convenience methods
+- `p.CMakeGlobalFlagsArgs()` — returns `[]string` of `-DCMAKE_C_FLAGS=...` etc. from global flags, pass to `CMakeConfigure` or manual cmake args
+- `p.MergedCFlags(extra...)`, `p.MergedCxxFlags(extra...)`, `p.MergedLdFlags(extra...)` — merge global flags + extra into space-joined string for CMake or toolchain files
 - `p.Configure(args...)` — autotools configure
 
 Methods on `BuildContext`:
