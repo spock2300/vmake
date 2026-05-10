@@ -110,50 +110,11 @@ AddCFlags(ctx.If("debug", "-g", "-O0"))      // compile error
 
 ### Path resolution for packages using `SetGit`
 
-When a package uses `SetGit`, `SourceDir()` and `SrcDir()` differ: `SourceDir()` is where `build.go` lives, `SrcDir()` = `SourceDir()/src/` is the downloaded source. This causes non-obvious path resolution behavior in `OnBuild`:
-
-- **`AddFiles`** paths resolve from `SourceDir()`. Use `"src/tasks.c"`, NOT `"tasks.c"`. Single filenames without glob characters (`*`, `?`) may silently match nothing — always use the `src/` prefix.
-- **`AddIncludes`** paths resolve from `SourceDir()`. Use `"src/include"` to reach downloaded headers.
-- **`AddPublicIncludes`** paths propagate to dependents resolved from `SourceDir()` (via `filepath.Join(depPkg.SourceDir, pubInc)`). Use `"src/include"` to reach headers downloaded by `SetGit` (resolves to `SourceDir()/src/include/`). The target itself gets `AddPublicIncludes` paths as raw `-I` entries, resolved relative to CWD (which the scheduler sets to `SourceDir()` before compilation).
-- **Relative parent paths** (`"../include"`) in `AddPublicIncludes` produce incorrect doubled paths (e.g., `/path/src/src/include`). Avoid them — place config headers inside `SrcDir()/include/` instead.
-- **Absolute paths** in `AddFiles`/`AddPublicIncludes` get `SrcDir()` prepended, creating wrong paths like `/src/home/user/project/src/file`. Always use relative paths.
-
-```go
-// Correct pattern for a local package wrapping a SetGit download:
-p.OnPackage(func(p *api.Package) {
-    p.SetGit("https://github.com/FreeRTOS/FreeRTOS-Kernel.git")
-    p.AddVersion("11.3.0", "V11.3.0")
-})
-p.OnBuild(func(ctx *api.BuildContext) {
-    ctx.Target("freertos").SetKind(api.TargetStatic).
-        AddFiles(
-            "src/tasks.c",          // SourceDir()-relative
-            "src/portable/GCC/ARM_CM4F/port.c",
-        ).
-        AddPublicIncludes(
-            "src/include",                      // SourceDir()-relative (self + propagation)
-            "src/portable/GCC/ARM_CM4F",
-        )
-})
-```
+When a package uses `SetGit`, `SourceDir()` and `SrcDir()` differ — all `AddFiles` / `AddIncludes` / `AddPublicIncludes` paths resolve from `SourceDir()`, so you must prefix with `"src/"`. See `references/dirs.md` for full rules, edge cases, and the correct code pattern.
 
 ### Static library deps with symbols not referenced by your code
 
-vmake wraps `AddDeps` archives in `--start-group`/`--end-group`. Libraries added via `-specs` or `-l` after the group (e.g., libc from `-specs=nano.specs`) are linked later. If a static library dep provides symbols only referenced by those post-group libraries — not by your code — the linker won't pull the relevant `.o` from the archive, because nothing in the group needed it.
-
-**Fix (preferred):** Use `-nostdlib` in global LdFlags and `AddGlobalLinks("c_nano", "gcc")` in `SetOnApply`. This places `-lc_nano -lgcc` inside the `--start-group`/`--end-group` for all targets, so libc's references to your dep's symbols resolve during group scanning. No changes to the linker script needed.
-
-```go
-ctx.Option("mcu").SetType(api.OptionChoice).SetDefault("stm32f405").
-    SetOnApply(func(ctx *api.ConfigContext, val any) {
-        ctx.AddGlobalLdFlags("-nostdlib", "-nostartfiles")
-        ctx.AddGlobalLinks("c_nano", "gcc", "nosys")
-    })
-```
-
-**Fix (per-target):** Use `AddLinks("c_nano", "gcc")` on the binary target. Same mechanism, scoped to one target instead of global.
-
-**Fix (alternative):** Use `EXTERN(symbol ...)` in the linker script. It forces the linker to treat those symbols as undefined before archive scanning. This works but requires maintaining a symbol list in the linker script.
+vmake wraps `AddDeps` archives in `--start-group`/`--end-group`. If a static lib dep provides symbols only referenced by post-group libraries (e.g., libc from `-specs`), the linker won't pull the archive. Fix with `-nostdlib` + `AddGlobalLinks`. See `references/gotchas.md` for all three fix patterns with code.
 
 ### `pkg.Run()` calls `os.Exit` on failure
 
@@ -161,81 +122,17 @@ ctx.Option("mcu").SetType(api.OptionChoice).SetDefault("stm32f405").
 
 ### `vmake clean` vs `vmake distclean`
 
-`vmake clean` executes `OnClean` hooks for all packages (which run custom clean commands like `make clean` in source directories), then removes build artifacts (compiled objects, binaries, libraries). It keeps the compiled `build.so` plugin and dependency source in `vmake_deps/`. If plugin loading fails, it falls back to scan-only directory cleanup.
+`vmake clean` runs `OnClean` hooks then removes build artifacts (objects, binaries); keeps `build.so` and `vmake_deps/`.
 
-`vmake distclean` is a deeper clean: it removes all local build dirs, build.so, go.mod/go.sum, install/, and the entire `vmake_deps/` directory. Use this when modifying `build.go` (add/remove targets, change options, change includes) and the build seems to ignore your changes. The actual source data in `~/.vmake/sources/` is preserved — only the symlinks are removed.
+`vmake distclean` removes all local build dirs, build.so, go.mod/go.sum, install/, and `vmake_deps/` (symlinks only — `~/.vmake/sources/` is preserved). Use when modifying `build.go` and the build ignores your changes.
 
 ### Patching source before build in registry packages
 
-Registry packages sometimes need source modifications before building (e.g., enabling a `#define` in a config header). Since `SrcDir()` points to the downloaded source, you can patch files inside `SetBuildFunc` using Go's standard `os` and `strings` packages:
-
-```go
-SetBuildFunc(func(p *api.Package) error {
-    configPath := filepath.Join(p.SrcDir(), "include", "config.h")
-    raw, _ := os.ReadFile(configPath)
-    raw = []byte(strings.Replace(string(raw),
-        "//#define MY_FEATURE\n",
-        "#define MY_FEATURE\n", 1))
-    os.WriteFile(configPath, raw, 0644)
-    p.CMakeConfigure("-DBUILD_SHARED_LIBS=OFF")
-    p.CMakeBuild()
-    p.CMakeInstall()
-    return nil
-})
-```
-
-This pattern is useful for libraries that use header-based configuration (mbedtls 2.x, some RTOS SDKs) where CMake options don't cover all config flags.
-
-### Applying Git Patches (AddPatches / SetPatches)
-
-For registry packages that need source modifications that Go string replacement can't handle (multi-file changes, binary patches, etc.), vmake supports git patch application. Patches are applied automatically during the build pipeline, with deduplication to prevent double-application:
-
-```go
-// In OnPackage — patches are applied before any build phase runs
-p.AddPatches("patches/fix-cross.patch", "patches/disable-avx.patch")
-```
-
-- `AddPatches(paths ...string)` — append patch files to the list
-- `SetPatches(paths ...string)` — replace the entire patch list
-- `SetSubmodules(true)` — clone git submodules before applying patches
-- Patches are tracked via `repo.IsPatchApplied` — same patch file won't be applied twice even across rebuilds
-- Patch files are relative to `SourceDir()` (where `build.go` lives)
-
-Use this when wrapping a library that needs compilation fixes (e.g., cross-compilation `CFLAGS` in a Makefile, missing `#include` guards, hardcoded toolchain assumptions). Raw `os.WriteFile` patching (shown above) is better for simple single-line changes; git patches handle multi-file, multi-line modifications reliably.
+To patch downloaded source inside `SetBuildFunc`, use Go's `os.ReadFile` + `os.WriteFile` (simple single-line changes) or `AddPatches("patches/fix.patch")` in `OnPackage` (multi-file git patches with deduplication). See `references/gotchas.md` for code examples of both patterns.
 
 ### `ctx.Select()` returns `""` during discoverAll — guard before passing to global flags
 
-vmake runs an internal `discoverAll` phase before the real build to discover all targets. During this phase, `ctx.Select()` returns `""` regardless of the option value. If you pass this empty string to `AddGlobalCFlags` or `AddGlobalLdFlags` inside a `SetOnApply` callback, the empty string persists in the Manager singleton (dedup won't catch it on the real build pass because `""` ≠ `"-O2"`). GCC then interprets the empty string as a filename during compilation, producing errors like:
-
-```
-arm-none-eabi-gcc: warning: : linker input file unused because linking not done
-arm-none-eabi-gcc: error: : linker input file not found: No such file or directory
-```
-
-**Fix:** guard option-dependent values before passing to global flag APIs. Global flags should only be set inside `SetOnApply` callbacks (on `ConfigContext`), not in `OnBuild`:
-
-```go
-ctx.Option("optimization").SetType(api.OptionChoice).
-    SetDefault("O2").
-    SetValues("O0", "O1", "O2", "O3", "Os").
-    SetOnApply(func(ctx *api.ConfigContext, val any) {
-        optFlag := ctx.Select("optimization", map[string]string{
-            "O0": "-O0", "O1": "-O1", "O2": "-O2", "O3": "-O3", "Os": "-Os",
-        })
-
-        globalCFlags := []string{
-            "-Wall", "-Wchar-subscripts", "-Wformat",
-            "-std=c99", "-fno-builtin",
-            "-fdata-sections", "-ffunction-sections",
-        }
-        if optFlag != "" {
-            globalCFlags = append(globalCFlags, optFlag)
-        }
-        ctx.AddGlobalCFlags(globalCFlags...)
-    })
-```
-
-**Root cause:** `AddGlobalCFlags/LdFlags/Links` write to `toolchain.GetManager()`, a **global singleton** that persists across the discoverAll and real-build phases. The empty string from discoverAll is appended and never removed, so it reappears on the real build. Per-target `AddCFlags` does not have this problem because per-target flags are ephemeral — they exist only for the current build phase and are not stored in a global singleton.
+vmake runs an internal `discoverAll` phase where `ctx.Select()` returns `""`. If passed to `AddGlobalCFlags/LdFlags` in `SetOnApply`, the empty string persists in the global singleton and GCC interprets it as a filename. **Fix:** guard with `if optFlag != ""` before appending. See `references/gotchas.md` for the full explanation and code.
 
 ## Directory Reference
 
@@ -243,32 +140,10 @@ ctx.Option("optimization").SetType(api.OptionChoice).
 |----------|-----------------|-------------|
 | `SourceDir()` | Package root (where build.go lives) | Package metadata files, overlay dirs |
 | `SrcDir()` | Source code dir (`SourceDir()/src/` when `SetGit` downloads source, falls back to `SourceDir()`) | Source files for firmware/third-party builds |
-| `SrcDirRaw()` | Raw srcCodeDir without fallback (empty if `SetSrcDir` not called) | Detecting whether source dir was explicitly set |
 | `BuildDir()` | Scratch dir for intermediate artifacts | Build outputs, stamps |
 | `InstallDir()` | Installation prefix | Headers/libs installed by third-party packages |
-| `ScriptDir()` | Same as `SourceDir()` | Legacy alias |
 
-### BuildKey — Build Directory Naming
-
-The `build/` directory is named by a **SHA-256 hex hash** of `(toolchain_path, build_mode, options)` — not by a readable name like `<toolchain>-<mode>`. This hash is called the **BuildKey**, and it exists to allow multiple build variants (different toolchains, modes, option sets) to coexist under `build/` without clobbering each other:
-
-```
-build/a1b2c3d4e5f6789012345678abcdef0123456789abcdef0123456789abcdef0123/
-```
-
-BuildDir path by package origin:
-- **Local packages**: `<SourceDir>/build/<buildKey>/`
-- **Remote packages**: `vmake_deps/<repo>/<pkg>/out/<buildKey>/build/`
-
-The BuildKey is deterministic — same toolchain + mode + options always produces the same hash. You can find the current BuildKey in `config.json` entries. The `compile_commands.json` file lives at `build/compile_commands.json` (relative to project root). `AddBinHeader` output goes to `build/<buildKey>/generated/`.
-
-### SourceDir vs SrcDir
-
-For any package using `SetGit` (registry or local), `SourceDir()` is where `build.go` lives, but the actual downloaded source is at `SrcDir()` (= `SourceDir()/src/`). For a local package without `SetGit`, `SourceDir()` == `SrcDir()` (the fallback). Use `SrcDirRaw()` to check whether `SetSrcDir` was explicitly called (returns empty string if not).
-
-Within `SetBuildFunc`, built-in helpers (`CMakeConfigure`, `CMakeBuild`, `CMakeInstall`) automatically use the correct directories. If you need to read or patch source files manually, use `SrcDir()` to locate the downloaded source tree.
-
-All `AddFiles` paths are `SourceDir()`-relative (even with `SetGit`, use `"src/tasks.c"` not `"tasks.c"`). `AddPublicIncludes` propagated to dependents resolves from `SourceDir()` (via `filepath.Join` with the dep's `PkgDirs.SourceDir`).
+For `BuildKey` naming, `SourceDir` vs `SrcDir` distinction, and `SetGit` path resolution rules, see `references/dirs.md`.
 
 ## Storage Layout
 
@@ -346,49 +221,26 @@ Third-party packages with external build systems use `TargetVoid` with `SetBuild
 
 ## Prebuilt Libraries
 
-Use `SetPrebuilt(path)` on `TargetStatic`, `TargetShared`, or `TargetBinary` to export a pre-compiled artifact without any compilation. The scheduler creates a **symlink** from the expected output path to the prebuilt file — no copy, zero disk overhead.
+Use `SetPrebuilt(path)` on `TargetStatic`, `TargetShared`, or `TargetBinary` to export a pre-compiled artifact. The scheduler creates a symlink from the expected output path (no copy, zero disk overhead). Incremental: compares symlink target, recreates only if path changed. Multiple libraries: one target per `.a`/`.so`.
 
 ```go
-ctx.Target("drv").
-    SetKind(api.TargetStatic).
+ctx.Target("drv").SetKind(api.TargetStatic).
     SetPrebuilt(filepath.Join(p.SourceDir(), "lib", "libdrv.a")).
-    AddPublicIncludes("include")
+    AddPublicIncludes("include").AddProvidedLibs("drv")
 ```
 
-Downstream packages link against it automatically through normal dependency resolution (`AddDeps`). Combine with `AddPublicIncludes` for headers and `SetProvidedLinkerScript` for linker scripts.
-
-- Works with `TargetStatic` (.a), `TargetShared` (.so), `TargetBinary`
-- No source compilation — scheduler skips compile phase entirely
-- Incremental: compares symlink target, recreates only if path changed
-- `AddProvidedLibs` on Target declares library names provided to consumers (e.g., `.AddProvidedLibs("drv", "m", "pthread")` propagates `-ldrv -lm -lpthread` to consumers)
-- Multiple prebuilt libraries: define one target per `.a`/`.so` file
-
-```go
-ctx.Target("ssl").SetKind(api.TargetStatic).
-    SetPrebuilt(filepath.Join(p.SourceDir(), "lib", "libssl.a"))
-ctx.Target("crypto").SetKind(api.TargetStatic).
-    SetPrebuilt(filepath.Join(p.SourceDir(), "lib", "libcrypto.a"))
-```
+See `examples/prebuilt.md` for full patterns, `AddProvidedLibs`, shared libraries, and when to use `SetPrebuilt` vs `TargetVoid`+`SetBuildFunc`.
 
 ## Test Targets
 
-Use `SetTest(true)` to mark a target as a test. Test targets are excluded from `vmake build` by default:
+Mark targets with `SetTest(true)`. Test targets are excluded from `vmake build` by default; `vmake build --tests` includes them; `vmake test` builds and runs `TargetBinary` tests, reporting pass/fail with timing.
 
 ```go
-ctx.Target("tests").
-    SetKind(api.TargetBinary).
-    SetTest(true).
-    AddFiles("tests/*.c").
-    AddDeps("mylib")
+ctx.Target("tests").SetKind(api.TargetBinary).SetTest(true).
+    AddFiles("tests/*.c").AddDeps("mylib")
 ```
 
-- `vmake build` — skips test targets
-- `vmake build --tests` — builds everything including tests
-- `vmake test` — builds all test targets, then executes `TargetBinary` tests, reports pass/fail with timing
-- Test targets are never installed (`--install` skips them)
-- Test targets can depend on other test targets (e.g., a `TargetStatic` test lib); only `TargetBinary` tests are executed
-
-Always define test targets unconditionally in `OnBuild` (not guarded by options). `SetTest(true)` controls visibility — `vmake build` skips them, `vmake build --tests` includes them. If you gate the target definition behind `if ctx.Bool("tests") { ... }`, it won't exist when `--tests` is passed, because option values are resolved from `config.json` (which may not have `tests=true`).
+Always define test targets unconditionally in `OnBuild` — `SetTest(true)` controls visibility, not option guards. Test targets are never installed and can depend on other test targets. See `examples/multi-target.md`.
 
 ## Dependencies
 
@@ -406,16 +258,9 @@ p.OnBuild(func(ctx *api.BuildContext) {
 
 ### Auto-Wire: When AddDeps is Automatic
 
-After all `OnBuild` callbacks execute, vmake runs `autoWireRequireDeps`. It uses the dependency list recomputed by `FilterDeps` (Phase 2c). For each local target, for each `AddRequires` entry from the final require list, it adds `AddDeps("pkg:target")` for ALL targets defined by that dependency package. This means:
+After all `OnBuild` callbacks execute, `autoWireRequireDeps` auto-adds `AddDeps("pkg:target")` for ALL targets defined by each `AddRequires` dependency package. So `AddRequires("busybox")` + busybox's target `"busybox"` → all your targets automatically get `AddDeps("busybox:busybox")`. You do NOT need explicit `AddDeps` when depending on a whole package via `OnRequire`.
 
-- `AddRequires("busybox")` + busybox defines target `"busybox"` → all your targets automatically get `AddDeps("busybox:busybox")`
-- You do NOT need explicit `AddDeps` when depending on a whole package via `OnRequire`
-
-Explicit `AddDeps` IS needed for:
-- Same-package target deps: `AddDeps("mylib")`
-- Specific cross-package target: `AddDeps("lib:utils")`
-- Wildcard dep on all targets of a package: `AddDeps("chip:*")` or `AddDeps("official/zlib:*")`
-- Selective dep on a third-party package: `AddDeps("official/zlib:target")` to link against a specific target rather than all targets from that package
+Explicit `AddDeps` IS needed for: same-package deps (`"mylib"`), specific cross-package targets (`"lib:utils"`), wildcard deps (`"chip:*"`), or selective third-party targets (`"official/zlib:target"`).
 
 ### Dependency Format
 
@@ -426,31 +271,9 @@ Explicit `AddDeps` IS needed for:
 
 ### Version Constraints
 
-AddRequires accepts an optional semver constraint after the package name:
+AddRequires accepts semver constraints: `"official/zlib >=1.2"`, `"official/curl ~8.5"`, `"test_build/mathlib"` (no constraint = any version).
 
-```go
-ctx.AddRequires("official/zlib >=1.2")   // constraint: >=1.2
-ctx.AddRequires("official/curl ~8.5")    // constraint: ~8.5
-ctx.AddRequires("test_build/mathlib")    // no constraint = any version
-```
-
-**Constraint operators:**
-
-| Op | Meaning | Example | Matches | Excludes |
-|----|---------|---------|---------|----------|
-| `>=` | ≥ with major lock | `>=1.2` | `1.2.0`–`1.x.x` | `2.0.0`, `1.1.0` |
-| `>` | > no lock | `>1.0` | `1.0.1`, `2.0.0` | `1.0.0` |
-| `<=` | ≤ no lock | `<=2.0` | all ≤ 2.0.0 | `2.0.1` |
-| `<` | < no lock | `<3.0` | all < 3.0.0 | `3.0.0` |
-| `=` | exact | `=1.2.3` | `1.2.3` | everything else |
-| `~` | lock major.minor | `~1.2.3` | `1.2.x` | `1.3.0` |
-| (none) | same as `>=` | `1.2` | same as `>=1.2` | — |
-
-**Major compatibility lock:** `>=` with major > 0 restricts to the same major version (`>=1.2` won't match `2.0.0`). Empty constraint (no version specified) matches all versions. `>`, `<=`, `<` do not lock major — they allow cross-version range comparisons.
-
-**Selection:** From all versions satisfying the constraint, the highest is chosen. When multiple packages depend on the same package with different constraints, all constraints must be mutually satisfiable.
-
-**Multi-constraint selection:** Use `Package.SelectVersionMulti(constraints []string)` in `OnPackage`/`SetBuildFunc` to match against multiple constraints: `p.SelectVersionMulti([]string{">=1.0", "<2.0"})` finds the highest version satisfying all constraints simultaneously.
+Operators: `>=` (major-locked), `>` / `<=` / `<` (no major lock), `=` (exact), `~` (major.minor lock). Highest satisfying version is selected; multi-package constraints must be mutually satisfiable. See `references/api.md` for the full operator table and major lock semantics.
 
 ### OnRequire Two-Phase Execution
 
@@ -475,9 +298,9 @@ p.OnRequire(func(ctx *api.RequireContext) {
 })
 ```
 
-**Mechanism:** `FilterDeps` calls `Package.UpdateRequireContext(cfgVals, options)`, which creates a fresh `RequireContext` with populated `ConfigAccessor`, runs all `OnRequire` callbacks, and replaces `p.requires` with the result. This runs for **every** package in the graph, not just local ones.
+**Mechanism:** `FilterDeps` re-runs `OnRequire` for every package with real config values, replacing `node.Deps`. Then topology is re-sorted and needed packages collected via BFS from local roots.
 
-**Key implication:** `AddRequires` alone does not guarantee a package will be built. A package is only built if reachable from a local root via BFS (`collectNeeded`), which runs after `FilterDeps` updates the dependency graph.
+**Key implication:** `AddRequires` alone does not guarantee a package is built — it must be reachable from a local root via BFS.
 
 ## Option & Conditional
 
@@ -526,53 +349,32 @@ CONFIG_PLATFORM_LINUX=1
 
 This lets code use either `#if CONFIG_PLATFORM_LINUX` (specific check) or switch on `CONFIG_PLATFORM` (general check). Note: `-D` defines use comma-delimited `#define` syntax (e.g., `-DCONFIG_PLATFORM_LINUX`), while `autoconf.h` uses `#define CONFIG_PLATFORM_LINUX 1`.
 
-### Programmatic Option Override: SetConfigValue
+### SetConfigValue: Programmatic Override
 
-`ctx.SetConfigValue(name, val)` sets an option value programmatically in `OnConfig` — useful when one option forces another:
-
-```go
-p.OnConfig(func(ctx *api.ConfigContext) {
-    ctx.Option("chip").SetType(api.OptionChoice).SetValues("stm32f4", "esp32").
-        SetDefault("stm32f4")
-
-    if ctx.String("chip") == "stm32f4" {
-        ctx.SetConfigValue("use_fpu", true)
-    }
-})
-```
-
-Unlike `SetOnApply` (which only reacts), `SetConfigValue` changes the value that other parts of `OnConfig` will see.
-
-### Global Flags
-
-`AddGlobalCFlags/CxxFlags/LdFlags/Links` are only available on `ConfigContext`, effective inside `SetOnApply` callbacks.
-
-Global flags apply to ALL targets in ALL packages. They are deduplicated ("appends if not already present").
-
-During compilation, the merge order is: per-target CFlags → mode flags → global CFlags → dedup (first occurrence kept). The compiler additionally prepends global CFlags before the resolved list. The final gcc order is: `[globalCFlags prepended] [per-target + mode + global deduped]`. For GCC, the last occurrence of repeated flags (like `-O`) takes effect — since mode sits between per-target and resolved globals, mode overrides per-target, and globals override mode (unless per-target wrote the same flag value, which dedup eliminates the global copy from resolved, leaving mode in effect).
-
-During linking, global LD flags are appended after per-target flags. Global links are placed inside `--start-group`/`--end-group` alongside target-level links.
+`ctx.SetConfigValue(name, val)` in `OnConfig` changes an option value programmatically. Unlike `SetOnApply` (which only reacts), `SetConfigValue` changes the value that other parts of `OnConfig` will see:
 
 ```go
-ctx.Option("chip").SetType(api.OptionChoice).SetValues("stm32f4", "esp32").
-    SetOnApply(func(ctx *api.ConfigContext, val any) {
-        ctx.AddGlobalCFlags("-Wall", "-ffunction-sections", "-fdata-sections")
-        ctx.AddGlobalLdFlags("-Wl,--gc-sections", "-nostdlib")
-        ctx.AddGlobalLinks("c_nano", "gcc")
-        ctx.SetProvidedLinkerScript("linker/" + val.(string) + ".ld")
-    })
+if ctx.String("chip") == "stm32f4" {
+    ctx.SetConfigValue("use_fpu", true)
+}
 ```
 
-### Mode Auto-Injected Flags
+### Global Flags & Mode Flags
 
-vmake silently injects optimization flags based on build mode into **every** target's compile commands, between per-target flags and global flags:
+`AddGlobalCFlags/CxxFlags/LdFlags/Links` are only available on `ConfigContext`, effective inside `SetOnApply`. They apply to ALL targets in ALL packages and are deduplicated.
+
+The compile merge order is: per-target flags → mode flags → global flags → dedup. Additionally, global CFlags are prepended before the resolved list: `[globalCFlags prepended] [per-target + mode + global deduped]`. For GCC, the last occurrence of repeated flags (`-O`) wins — mode overrides per-target, globals override mode unless dedup eliminates the global copy.
+
+Mode auto-injected flags (injected by scheduler, not via `AddGlobalCFlags`):
 
 | Mode | Flags injected |
 |------|---------------|
 | `release` | `-O2 -DNDEBUG` |
 | `debug` | `-O0 -g` |
 
-This happens in the scheduler (`scheduler.go:355-359`), not via `AddGlobalCFlags`. The mode flags are appended after per-target CFlags/CxxFlags but before global CFlags/CxxFlags. Deduplication keeps the first occurrence, so if your target's `AddCFlags("-O3")` and mode injects `-O2`, gcc sees both and uses the last one (`-O2`). To override the mode's optimization level, use `SetOnApply`'s `AddGlobalCFlags` — global flags appear last in resolved and win, unless per-target has the same flag value (which dedup eliminates from resolved, leaving mode in effect).
+During linking, global LD flags are appended after per-target flags; global links go inside `--start-group`/`--end-group`.
+
+See `references/gotchas.md` for the `ctx.Select()` empty-string guard when using option-dependent values in `SetOnApply`.
 
 ### GlobalOption Cross-Package Consistency
 
@@ -600,65 +402,20 @@ p.OnBuild(func(ctx *api.BuildContext) {
 
 ### Full HAL package with global flags (realistic firmware)
 
-For real embedded projects, the chip/HAL package compiles startup code as a static library and sets global compiler/linker flags via `AddGlobalCFlags`/`AddGlobalLdFlags` in `SetOnApply`. This ensures all packages build with the same target-specific flags. Add more packages (RTOS, BSP) following the same pattern — each as a `TargetStatic` with `AddDeps` on its dependencies.
+For real embedded projects, the chip/HAL package compiles startup code as a static library and sets global compiler/linker flags via `AddGlobalCFlags`/`AddGlobalLdFlags` in `SetOnApply`. See `examples/embedded-rtos.md` for the complete two-package pattern (chip + firmware with `UseDependencyLinkerScript`, post-link steps, `AddBinHeader`).
 
-```go
-// chip/build.go — HAL layer: startup code, global flags, linker script
-p.OnConfig(func(ctx *api.ConfigContext) {
-    ctx.Option("mcu").SetType(api.OptionChoice).
-        SetDefault("stm32f405").
-        SetValues("stm32f405").
-        SetOnApply(func(ctx *api.ConfigContext, val any) {
-            ctx.AddGlobalCFlags("-mcpu=cortex-m4", "-mthumb",
-                "-ffreestanding", "-mfpu=fpv4-sp-d16", "-mfloat-abi=hard",
-                "-DSTM32F405RG")
-            ctx.AddGlobalLdFlags("-nostartfiles", "-nostdlib",
-                "-mcpu=cortex-m4", "-mthumb",
-                "-mfpu=fpv4-sp-d16", "-mfloat-abi=hard",
-                "-Wl,--gc-sections", "-Wl,--print-memory-usage")
-            ctx.AddGlobalLinks("c_nano", "gcc")
-        })
-    ctx.SetProvidedLinkerScript("linker/stm32f405.ld")
-})
-p.OnBuild(func(ctx *api.BuildContext) {
-    ctx.Target("chip").SetKind(api.TargetStatic).
-        AddFiles("src/*.S", "src/*.c").
-        AddPublicIncludes("include")
-})
+Key embedded rules: (1) Target-specific flags must appear in both CFLAGS and LDFLAGS to avoid ABI mismatches. (2) Use `-nostdlib` + `AddGlobalLinks("c_nano", "gcc")` in `SetOnApply` — this places libc inside `--start-group`/`--end-group` so arc dep symbols resolve. (3) `-specs=nano.specs` links libc after the group; if a dep provides symbols only libc references, use `EXTERN` in the linker script. See `references/gotchas.md` for the full explanation.
 
-// firmware/build.go — application, consumes linker script
-p.OnRequire(func(ctx *api.RequireContext) {
-    ctx.AddRequires("chip")
-})
-p.OnBuild(func(ctx *api.BuildContext) {
-    ctx.Target("firmware").SetKind(api.TargetBinary).
-        AddFiles("src/*.c").
-        AddDeps("chip:*").
-        UseDependencyLinkerScript().
-        AddPostLinkSize().AddPostLinkHex().AddPostLinkBin()
-})
-```
-
-Key points for embedded firmware:
-- **Target-specific flags in both CFLAGS and LDFLAGS**: Flags like `-mfloat-abi=hard -mfpu=fpv4-sp-d16` must appear in both `AddGlobalCFlags` and `AddGlobalLdFlags`, otherwise the linker reports ABI mismatches with libc.
-- **`-nostdlib` + `AddGlobalLinks`**: Use `-nostdlib` in LdFlags to prevent GCC from auto-linking system libraries. Then use `AddGlobalLinks("c_nano", "gcc")` in `SetOnApply` to link libc/libgcc inside the `--start-group`/`--end-group` for all targets. This ensures libc's references to your dep's symbols (e.g., syscalls from a BSP static library) resolve during group scanning.
-- If you use `-specs=nano.specs` instead (libc linked after the group), and a dep provides symbols only libc references, use `EXTERN` in the linker script — see Common Mistake above.
-
-- `SetProvidedLinkerScript(path)` — chip/bsp package declares linker script for consumers (on `ConfigContext`; fatal on double-set)
+- `SetProvidedLinkerScript(path)` — chip/bsp declares linker script for consumers (fatal on double-set)
 - `UseDependencyLinkerScript()` — firmware target auto-inherits `-T` from first dependency that provides one
-- `SetLinkerScript(path)` — direct linker script on target (fatal on double-set; use when no dependency pattern needed)
-- `AddPostLink(tool, args...)` — generic post-link step, `{output}` placeholder
-- Shorthands: `AddPostLinkHex()`, `AddPostLinkBin()`, `AddPostLinkSize()`, `AddPostLinkStrip()`
-- `AddBinHeader(inputs...)` — converts binary files to `.h` headers; output to `build/<buildKey>/generated/` (where `<buildKey>` is SHA-256 of toolchain+mode+options); include path auto-added; incremental via mtime
+- `SetLinkerScript(path)` — direct linker script on target (fatal on double-set)
+- `AddPostLink(tool, args...)` — generic post-link, shorthands: `AddPostLinkHex/Bin/Size/Strip`
+- `AddBinHeader(inputs...)` — binary files → `.h` headers
 - RTOS tool accessors: `Package.ObjCopy()`, `Size()`, `ObjDump()`, `NM()`
 
 ### KConfig Preset Management (Firmware)
 
-1. **Declare presets** in `OnConfig`: `ctx.KConfig("u-boot").AddPreset("rk3568_defconfig").SetDefault("sandbox_defconfig")`
-2. **Select preset** via `vmake config` TUI — saves to `config.json`
-3. **EnsureConfig**: Call `pkg.EnsureConfig(srcDir)` in `SetBuildFunc` — checks `.config` exists, runs `make <preset>` if missing, applies `PatchKConfig` patches
-4. **PatchKConfig**: Override specific config options after defconfig: `ctx.KConfig("u-boot").PatchKConfig(map[string]string{"CONFIG_FOO=y"})`
-5. **SetConfigFiles**: Register files that invalidate the stamp on change: `p.SetConfigFiles(".config")` (in `OnPackage`)
+Use `ctx.KConfig("u-boot").AddPreset("rk3568_defconfig").SetDefault(...)` in `OnConfig`; select via `vmake config` TUI; call `pkg.EnsureConfig(srcDir)` in `SetBuildFunc`; use `PatchKConfig(map[string]string{...})` for post-defconfig overrides; register config files with `p.SetConfigFiles(".config")`. See `examples/firmware.md` for the full multi-package firmware pattern.
 
 ## Sub-Graph Build (Code Generation)
 
@@ -676,18 +433,11 @@ Use `ctx.ToolchainOption()` to allow per-package toolchain switching for sub-gra
 
 ## Stamp-Based Skip (Void Targets)
 
-Local void targets use `.vmake_stamp` in `BuildDir` for incremental builds. Stale when:
-- The **content hash** (SHA-256) of config files registered via `p.SetConfigFiles(".config")` changes — for any config file whose content differs from the last build
-- The git HEAD revision (`SourceRev`) of the source directory changes
-- The stamp file is deleted
-
-The stamp stores `config_hash` (SHA-256 of config file contents) and `source_rev` (git HEAD commit hash). On each build, both are recomputed and compared — mtime is NOT checked.
+Local void targets use `.vmake_stamp` in `BuildDir` for incremental builds. Stale when the **content hash** (SHA-256) of files registered via `p.SetConfigFiles(".config")` changes, the git HEAD revision changes, or the stamp file is deleted. Mtime is NOT checked — only SHA-256 content hash and git commit hash.
 
 Use `SetConfigFiles` on `*Package` (in `OnPackage`) to declare which files invalidate the stamp.
 
-**InstallDir changes the skip mechanism entirely.** When a void target has `InstallDir` set (remote packages, or local packages that call `p.CMakeInstall()` in `SetBuildFunc`), the scheduler checks whether `InstallDir` exists and contains files — if it does, the target is skipped. The `.vmake_stamp` in `BuildDir` is **not** consulted. This means a local void target that uses `CMakeInstall` will skip based on directory contents, not stamp validity.
-
-To force a rebuild of a void target with `InstallDir`, either delete the install directory or run `vmake clean --all`.
+**InstallDir changes the skip mechanism entirely.** When a void target has `InstallDir` set (remote packages, or `p.CMakeInstall()` in `SetBuildFunc`), the scheduler checks whether `InstallDir` exists and contains files — if it does, the target is skipped. `.vmake_stamp` is **not** consulted. Force rebuild by deleting the install directory or running `vmake clean --all`.
 
 ## Install
 
@@ -701,17 +451,7 @@ Custom install entries: `ctx.AddInstalls("src/file.conf", "etc/file.conf")` (ava
 
 ### OnInstall Lifecycle
 
-`OnInstall` runs after all builds succeed. Use it for post-install tasks that need the final install directory layout. `InstallContext` provides `SetPrefix()` for per-package prefix overrides:
-
-```go
-p.OnInstall(func(ctx *api.InstallContext) {
-    // Override prefix for this package's install
-    ctx.SetPrefix("/opt/myproject")
-    ctx.AddInstalls("docs/README.md", "share/doc/README.md")
-})
-```
-
-`OnInstall` is separate from `OnBuild` — targets are already compiled and installed before this phase runs. Use it for copying config templates, documentation, or license files into the install tree.
+`OnInstall` runs after all builds succeed and targets are installed. Use `ctx.SetPrefix()` for per-package prefix overrides and `ctx.AddInstalls()` for post-install file copies (docs, configs, licenses). See `examples/on-install.md`.
 
 ## Build Scope
 
@@ -760,9 +500,12 @@ Verbosity: `-v` verbose, `-V` very-verbose, `-q` quiet
 - **Learning the basics** → Start with `examples/simple.md`, then `examples/config.md`
 - **Writing a build.go** → Follow the Decision Guide above to pick the right example
 - **Multi-module workspace** → `examples/multi-module.md`
+- **OnClean / OnInstall lifecycles** → `examples/on-clean.md`, `examples/on-install.md`
 - **Looking up a specific API** → See `references/api.md` for complete method signatures
 - **CLI usage** → See `references/cli.md` for full command tree
-- **Advanced patterns** → `examples/complete.md`, `examples/subbuild.md`, `examples/embedded-rtos.md`, `examples/firmware.md`, `examples/config-propagate.md`
+- **Directory / path resolution details** → `references/dirs.md` (BuildKey, SetGit paths, SourceDir vs SrcDir)
+- **Advanced gotchas** → `references/gotchas.md` (static lib deps, discoverAll guard, source patching)
+- **Advanced patterns** → `examples/complete.md`, `examples/subbuild.md`, `examples/embedded-rtos.md`, `examples/firmware.md`, `examples/config-propagate.md`, `examples/prebuilt.md`, `examples/third-party-wrapper.md`
 
 ## Key Conventions
 
