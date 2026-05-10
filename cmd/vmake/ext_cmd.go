@@ -43,15 +43,25 @@ If no name is given, all repositories are updated.`,
 	Run: runExtUpdate,
 }
 
+var extCleanCmd = &cobra.Command{
+	Use:   "clean [name]",
+	Short: "Clean plugin build artifacts",
+	Long: `Clean compiled plugin artifacts (plugin.so, go.mod, go.sum).
+If no name is given, all extension repositories are cleaned.`,
+	Run: runExtClean,
+}
+
 func init() {
 	RootCmd.AddCommand(extCmd)
 	extCmd.AddCommand(extAddCmd)
 	extCmd.AddCommand(extRemoveCmd)
 	extCmd.AddCommand(extListCmd)
 	extCmd.AddCommand(extUpdateCmd)
+	extCmd.AddCommand(extCleanCmd)
 
 	extRemoveCmd.ValidArgsFunction = completeExtRepoName
 	extUpdateCmd.ValidArgsFunction = completeExtRepoName
+	extCleanCmd.ValidArgsFunction = completeExtRepoName
 }
 
 func runExtAdd(cmd *cobra.Command, args []string) {
@@ -146,6 +156,35 @@ func runExtUpdate(cmd *cobra.Command, args []string) {
 	fmt.Println("Done. Plugins will be recompiled on next run.")
 }
 
+func runExtClean(cmd *cobra.Command, args []string) {
+	mgr := getPluginManager()
+
+	if len(args) == 1 {
+		name := args[0]
+		repoPath := mgr.Path(name)
+		if !mgr.Exists(name) {
+			fatalMsg("extension repo '%s' not found", name)
+		}
+		fatalErr(mgr.CleanPlugins(repoPath))
+		fmt.Printf("Cleaned plugin artifacts for '%s'\n", name)
+		return
+	}
+
+	repos := mgr.ListRepos()
+	if len(repos) == 0 {
+		fmt.Println("No extension repositories found")
+		return
+	}
+
+	for _, r := range repos {
+		if err := mgr.CleanPlugins(r.Path); err != nil {
+			vlog.Error("  Error cleaning '%s': %v", r.Name, err)
+		} else {
+			fmt.Printf("Cleaned '%s'\n", r.Name)
+		}
+	}
+}
+
 func loadPlugins() {
 	mgr := getPluginManager()
 
@@ -158,13 +197,15 @@ func loadPlugins() {
 		soPath, err := mgr.CompilePlugin(p.PluginDir, false)
 		if err != nil {
 			os.Remove(soPath)
-			fatalMsg("extension plugin '%s' compile failed: %v", p.PluginName, err)
+			vlog.Error("extension plugin '%s' compile failed: %v", p.PluginName, err)
+			continue
 		}
 
 		loaded, err := plugin.Load(soPath)
 		if err != nil {
 			os.Remove(soPath)
-			fatalMsg("extension plugin '%s' load failed: %v", p.PluginName, err)
+			vlog.Error("extension plugin '%s' load failed: %v", p.PluginName, err)
+			continue
 		}
 
 		pluginCmd := &cobra.Command{

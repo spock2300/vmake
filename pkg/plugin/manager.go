@@ -45,15 +45,21 @@ func (m *Manager) UpdateRepo(name string) error {
 	return m.clearCompiledPlugins(repoPath)
 }
 
-func (m *Manager) clearCompiledPlugins(repoPath string) error {
+func (m *Manager) CleanPlugins(repoPath string) error {
 	names, err := fs.ListDirs(repoPath)
 	if err != nil {
 		return err
 	}
 	for _, name := range names {
 		fs.RemoveIfExists(filepath.Join(repoPath, name, "plugin.so"))
+		fs.RemoveIfExists(filepath.Join(repoPath, name, "go.mod"))
+		fs.RemoveIfExists(filepath.Join(repoPath, name, "go.sum"))
 	}
 	return nil
+}
+
+func (m *Manager) clearCompiledPlugins(repoPath string) error {
+	return m.CleanPlugins(repoPath)
 }
 
 func (m *Manager) RemoveRepo(name string) error {
