@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -185,6 +186,27 @@ func runExtClean(cmd *cobra.Command, args []string) {
 	}
 }
 
+func loadPlugin(mgr *plugin.Manager, pluginDir string) (*plugin.LoadedPlugin, error) {
+	load := func(force bool) (*plugin.LoadedPlugin, error) {
+		soPath, err := mgr.CompilePlugin(pluginDir, force)
+		if err != nil {
+			return nil, fmt.Errorf("compile: %w", err)
+		}
+		loaded, err := plugin.Load(soPath)
+		if err != nil {
+			os.Remove(soPath)
+			return nil, fmt.Errorf("load: %w", err)
+		}
+		return loaded, nil
+	}
+
+	loaded, err := load(false)
+	if err != nil && strings.Contains(err.Error(), "built with a different version") {
+		loaded, err = load(true)
+	}
+	return loaded, err
+}
+
 func loadPlugins() {
 	mgr := getPluginManager()
 
@@ -194,16 +216,8 @@ func loadPlugins() {
 	}
 
 	for _, p := range plugins {
-		soPath, err := mgr.CompilePlugin(p.PluginDir, false)
+		loaded, err := loadPlugin(mgr, p.PluginDir)
 		if err != nil {
-			os.Remove(soPath)
-			vlog.Error("extension plugin '%s' compile failed: %v", p.PluginName, err)
-			continue
-		}
-
-		loaded, err := plugin.Load(soPath)
-		if err != nil {
-			os.Remove(soPath)
 			vlog.Error("extension plugin '%s' load failed: %v", p.PluginName, err)
 			continue
 		}
