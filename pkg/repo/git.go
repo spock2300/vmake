@@ -106,7 +106,7 @@ func ListTags(dir string) ([]string, error) {
 }
 
 func GetCurrentCommit(dir string) (string, error) {
-	output, err := exec.RunWithOptions("git", []string{"rev-parse", "HEAD"}, exec.RunOptions{Dir: dir})
+	output, err := exec.RunWithOptions("git", []string{"rev-parse", "HEAD"}, exec.RunOptions{Dir: dir, Quiet: true})
 	if err != nil {
 		return "", err
 	}
@@ -126,7 +126,7 @@ func IsAlreadyAtRef(dir, ref string) bool {
 	if err != nil {
 		return false
 	}
-	output, err := exec.RunWithOptions("git", []string{"rev-parse", ref + "^{}"}, exec.RunOptions{Dir: dir})
+	output, err := exec.RunWithOptions("git", []string{"rev-parse", ref + "^{}"}, exec.RunOptions{Dir: dir, Quiet: true})
 	if err != nil {
 		return false
 	}

@@ -1,0 +1,93 @@
+package main
+
+import (
+	"gitee.com/spock2300/vmake/pkg/api"
+	"gitee.com/spock2300/vmake/pkg/resolver"
+)
+
+func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, globalValues map[string]any, allPkgOptions map[string]map[string]any) map[string]any {
+	cfgVals := make(map[string]any)
+	allOpts := ctx.AllOptions[name]
+	if allOpts == nil && node.Pkg != nil {
+		allOpts = node.Pkg.GetOptions()
+	}
+	if allOpts != nil {
+		for optName, opt := range allOpts {
+			if opt.Default() != nil {
+				cfgVals[optName] = opt.Default()
+			}
+		}
+	}
+	if opts, ok := allPkgOptions[name]; ok {
+		for k, v := range opts {
+			cfgVals[k] = v
+		}
+	}
+	for k, v := range globalValues {
+		if _, exists := cfgVals[k]; !exists {
+			cfgVals[k] = v
+		}
+	}
+	return cfgVals
+}
+
+func autoWireRequireDeps(pkg *api.Package, allTargets map[string]map[string]*api.Target, localTargets map[string]*api.Target) {
+	if pkg == nil || localTargets == nil || allTargets == nil {
+		return
+	}
+	for _, t := range localTargets {
+		for _, req := range pkg.GetRequires().Get() {
+			depPkgName := req.Name
+			depTargets := allTargets[depPkgName]
+			if depTargets == nil {
+				continue
+			}
+			for _, dt := range depTargets {
+				depRef := depPkgName + ":" + dt.Name()
+				if !t.HasDep(depRef) {
+					t.AddDeps(depRef)
+				}
+			}
+		}
+	}
+}
+
+func enableTestDefaults(allTargets map[string]map[string]*api.Target) {
+	for _, targets := range allTargets {
+		for _, t := range targets {
+			if t.IsTest() {
+				t.SetDefault(true)
+			}
+		}
+	}
+}
+
+func applyBuildContextConfig(buildCtx *api.BuildContext, node *resolver.PackageNode, ctx *RuntimeContext) {
+	if buildCtx.GenConfigDefines() && node.Pkg != nil {
+		var importPkgs []*api.Package
+		for _, depName := range buildCtx.ImportConfigs() {
+			depNode := ctx.DepGraph.Packages[depName]
+			if depNode != nil && depNode.Pkg != nil {
+				importPkgs = append(importPkgs, depNode.Pkg)
+			}
+		}
+		mergedOpts, mergedVals := api.MergeImportedOptions(node.Pkg.Options, node.Pkg.CfgVals, importPkgs)
+		defines := api.ConfigToDefines(mergedOpts, mergedVals)
+		args := make([]any, len(defines))
+		for i, d := range defines {
+			args[i] = d
+		}
+		for _, t := range buildCtx.GetTargets() {
+			t.AddDefines(args...)
+		}
+	}
+	if buildCtx.ExportEnabled() && node.Pkg != nil {
+		node.Pkg.SetExportConfig(true)
+	}
+	if imports := buildCtx.ImportConfigs(); len(imports) > 0 && node.Pkg != nil {
+		node.Pkg.SetImportConfigs(imports)
+	}
+	if buildCtx.GenConfigHeader() && node.Pkg != nil {
+		node.Pkg.SetGenConfigHeader(true)
+	}
+}

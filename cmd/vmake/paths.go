@@ -35,7 +35,7 @@ func getDepsDir() string {
 	return filepath.Join(findProjectDir(), "vmake_deps")
 }
 
-func getReposDir() string       { return filepath.Join(vmakeDir, "repos") }
-func getExtensionsDir() string  { return filepath.Join(vmakeDir, "extensions") }
-func getSourcesDir() string     { return filepath.Join(vmakeDir, "sources") }
-func getToolchainsDir() string  { return filepath.Join(vmakeDir, "toolchains") }
+func getReposDir() string      { return filepath.Join(vmakeDir, "repos") }
+func getExtensionsDir() string { return filepath.Join(vmakeDir, "extensions") }
+func getSourcesDir() string    { return filepath.Join(vmakeDir, "sources") }
+func getToolchainsDir() string { return filepath.Join(vmakeDir, "toolchains") }

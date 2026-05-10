@@ -373,3 +373,13 @@ type PkgDirs struct { SourceDir, BuildDir, InstallDir string }
 - Don't add fallback chains — fix root cause
 - Don't use `pkg.Make()` when Makefile is in SourceDir — use `pkg.RunIn(srcDir, "make", ...)`
 - Don't run tests from `test_data/` parent — each sub-project must be built from its own directory
+
+## Coding Guidelines
+
+**Think before coding.** State assumptions explicitly. If multiple interpretations exist, present them. If a simpler approach exists, say so.
+
+**Minimum code that solves the problem.** No speculative features, abstractions, or configurability. If 200 lines could be 50, rewrite it.
+
+**Surgical changes.** Touch only what the task requires. Match existing style. Remove imports/variables made unused by your changes — don't touch pre-existing dead code.
+
+**Goal-driven execution.** Convert tasks into verifiable outcomes: "Add validation" → "write tests, then make them pass". For multi-step tasks, state a plan with verify checks.
