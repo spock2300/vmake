@@ -527,7 +527,7 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 	mgr := toolchain.GetManager()
 	pkg.SetGlobalFlags(mgr.GetGlobalCFlags(), mgr.GetGlobalCxxFlags(), mgr.GetGlobalLdFlags(), mgr.GetGlobalLinks())
 
-	if s.isVoidUpToDate(pkg) {
+	if s.isVoidUpToDate(pkg) && !s.depArtifactsNewer(resolved) {
 		return nil
 	}
 
@@ -602,6 +602,29 @@ func (s *Scheduler) isVoidUpToDate(pkg *api.Package) bool {
 		srcDir := pkg.SrcDir()
 		if isStampUpToDate(stampPath, srcDir, pkg.ConfigFiles()) {
 			vlog.Info("  SKIP (already built)")
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Scheduler) depArtifactsNewer(resolved *ResolvedTarget) bool {
+	if len(resolved.DepArtifacts) == 0 {
+		return false
+	}
+	pkg := s.packages[resolved.Node.PkgName]
+	if pkg == nil || pkg.InstallDir() != "" || pkg.BuildDir() == "" {
+		return false
+	}
+	stampPath := filepath.Join(pkg.BuildDir(), ".vmake_stamp")
+	stampInfo, err := os.Stat(stampPath)
+	if err != nil {
+		return true
+	}
+	stampTime := stampInfo.ModTime()
+	for _, artifact := range resolved.DepArtifacts {
+		artInfo, err := os.Stat(artifact)
+		if err == nil && artInfo.ModTime().After(stampTime) {
 			return true
 		}
 	}
