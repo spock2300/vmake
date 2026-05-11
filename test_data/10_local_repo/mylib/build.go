@@ -7,6 +7,6 @@ func Main(p *api.Package) {
 		ctx.Target("mylib").
 			SetKind(api.TargetStatic).
 			AddFiles("src/*.c").
-			AddIncludes("include")
+			AddPublicIncludes("include")
 	})
 }
