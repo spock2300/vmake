@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -206,7 +207,15 @@ func (s *buildPhaseState) prepareAllPackages() error {
 		return err
 	}
 
+	if err := s.setupSubPackageDirs(depsDir); err != nil {
+		return err
+	}
+
 	if err := s.cloneLocalGitSources(); err != nil {
+		return err
+	}
+
+	if err := s.cloneSubPackageGitSources(); err != nil {
 		return err
 	}
 
@@ -215,10 +224,14 @@ func (s *buildPhaseState) prepareAllPackages() error {
 }
 
 func (s *buildPhaseState) downloadRemoteSources(remote *remoteVersionState, depsDir string) error {
+	subParents := s.ctx.Resolver.SubParents()
 	sourceMgr := repo.NewSourceManager(depsDir, getSourcesDir())
 	for _, name := range s.ctx.Resolver.GetOrder() {
 		node := s.ctx.DepGraph.Packages[name]
 		if !s.needed[name] || node.IsLocal() {
+			continue
+		}
+		if _, isSub := subParents[name]; isSub {
 			continue
 		}
 		entryCfg := remote.entries[name]
@@ -291,6 +304,76 @@ func (s *buildPhaseState) cloneLocalGitSources() error {
 	return nil
 }
 
+func (s *buildPhaseState) setupSubPackageDirs(depsDir string) error {
+	subParents := s.ctx.Resolver.SubParents()
+	if len(subParents) == 0 {
+		return nil
+	}
+
+	for _, name := range s.ctx.Resolver.GetOrder() {
+		rootParent, isSub := subParents[name]
+		if !isSub {
+			continue
+		}
+		if !s.needed[name] {
+			continue
+		}
+		node := s.ctx.DepGraph.Packages[name]
+		if node.Source == nil {
+			continue
+		}
+
+		parentDirs, ok := s.pkgDirs[rootParent]
+		if !ok || parentDirs.SourceDir == "" {
+			continue
+		}
+
+		relPath := strings.TrimPrefix(name, rootParent+"/")
+		sourceDir := filepath.Join(parentDirs.SourceDir, relPath)
+
+		opts := s.allPkgOptions[name]
+		s.pkgDirs[name] = makeRemotePkgDirs(depsDir, name, s.cfg.Tc.Tools.CC, s.cfg.Mode, opts, sourceDir)
+	}
+	return nil
+}
+
+func (s *buildPhaseState) cloneSubPackageGitSources() error {
+	subParents := s.ctx.Resolver.SubParents()
+	if len(subParents) == 0 {
+		return nil
+	}
+
+	for _, name := range s.ctx.Resolver.GetOrder() {
+		if _, isSub := subParents[name]; !isSub {
+			continue
+		}
+		node := s.ctx.DepGraph.Packages[name]
+		if !s.needed[name] || node.Pkg == nil {
+			continue
+		}
+		gitURLs := node.Pkg.GitURLs()
+		if len(gitURLs) == 0 {
+			continue
+		}
+		dirs, ok := s.pkgDirs[name]
+		if !ok || dirs.SourceDir == "" {
+			continue
+		}
+		srcDir := filepath.Join(dirs.SourceDir, "src")
+		if _, err := os.Stat(filepath.Join(srcDir, ".git")); err == nil {
+			node.Pkg.SetSrcDir(srcDir)
+			vlog.Info("  %s (source exists)", name)
+			continue
+		}
+		vlog.Info("  %s -> %s", name, srcDir)
+		if err := repo.Clone(gitURLs[0], srcDir); err != nil {
+			return fmt.Errorf("failed to download source for %s: %w", name, err)
+		}
+		node.Pkg.SetSrcDir(srcDir)
+	}
+	return nil
+}
+
 func (s *buildPhaseState) applyPatchesToNeeded() error {
 	for _, name := range s.ctx.Resolver.GetOrder() {
 		node := s.ctx.DepGraph.Packages[name]
@@ -349,7 +432,7 @@ func (s *buildPhaseState) executeMainPackages(filter map[string]bool) {
 			continue
 		}
 		s.executeOnePackage(name, node)
-		autoWireRequireDeps(node.Pkg, s.allTargets, s.allTargets[name])
+		autoWireRequireDeps(node.Pkg, s.allTargets, s.allTargets[name], name, s.ctx.Resolver.SubParents())
 	}
 }
 
@@ -382,7 +465,7 @@ func (s *buildPhaseState) executeOnePackage(name string, node *resolver.PackageN
 		fn(buildCtx)
 	})
 
-	applyBuildContextConfig(buildCtx, node, s.ctx)
+	applyBuildContextConfig(buildCtx, node, s.ctx, name)
 
 	s.allTargets[name] = buildCtx.GetTargets()
 	if len(s.subGraphStack) > 0 {
@@ -435,6 +518,7 @@ func (s *buildPhaseState) buildSubGraph(rootPkg string) error {
 		PkgDirs:    s.pkgDirs,
 		Packages:   make(map[string]*api.Package),
 		Needed:     s.needed,
+		SubParents: s.ctx.Resolver.SubParents(),
 	}
 	for name, node := range s.ctx.DepGraph.Packages {
 		if node.Pkg != nil && subPkgs[name] {
@@ -521,7 +605,7 @@ func (s *buildPhaseState) logResults() {
 }
 
 func (s *buildPhaseState) buildAndRunPipeline() (*BuildResult, error) {
-	graph, err := build.NewBuildGraph(s.allTargets, s.pkgMetaMap)
+	graph, err := build.NewBuildGraph(s.allTargets, s.pkgMetaMap, s.ctx.Resolver.SubParents())
 	if err != nil {
 		return nil, err
 	}

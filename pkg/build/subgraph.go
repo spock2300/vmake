@@ -16,6 +16,7 @@ type SubGraphParams struct {
 	PkgDirs    map[string]*api.PkgDirs
 	Packages   map[string]*api.Package
 	Needed     map[string]bool
+	SubParents map[string]string
 }
 
 func CollectSubGraphPackages(rootPkg string, pkgMeta map[string]PkgBuildMeta, allTargets map[string]map[string]*api.Target, needed map[string]bool) map[string]bool {
@@ -90,7 +91,7 @@ func BuildSubGraph(rootPkg string, tc *toolchain.Toolchain, tcName string, mode 
 		vlog.Info("  [subgraph] %s%s", pkgName, defaultMark)
 	}
 
-	graph, err := NewBuildGraph(filteredTargets, filteredPkgMeta)
+	graph, err := NewBuildGraph(filteredTargets, filteredPkgMeta, params.SubParents)
 	if err != nil {
 		return fmt.Errorf("subgraph build graph: %w", err)
 	}

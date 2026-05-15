@@ -57,6 +57,7 @@ type BuildNode struct {
 func NewBuildGraph(
 	targets map[string]map[string]*api.Target,
 	pkgMeta map[string]PkgBuildMeta,
+	subParents map[string]string,
 ) (*BuildGraph, error) {
 	graph := &BuildGraph{
 		Nodes: make(map[string]*BuildNode),
@@ -79,7 +80,7 @@ func NewBuildGraph(
 			fullName := fmt.Sprintf("%s:%s", pkgName, targetName)
 			node := graph.Nodes[fullName]
 
-			resolved, err := resolveDeps(target.Deps(), pkgName, graph.Nodes, pkgMeta, nil)
+			resolved, err := resolveDeps(target.Deps(), pkgName, graph.Nodes, pkgMeta, subParents, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -101,13 +102,14 @@ func resolveDeps(
 	currentPkg string,
 	nodes map[string]*BuildNode,
 	pkgMeta map[string]PkgBuildMeta,
+	subParents map[string]string,
 	path []string,
 ) ([]string, error) {
 	var result []string
 	seen := make(map[string]bool)
 
 	for _, dep := range deps {
-		expanded, err := resolveDep(dep, currentPkg, nodes, pkgMeta, path)
+		expanded, err := resolveDep(dep, currentPkg, nodes, pkgMeta, subParents, path)
 		if err != nil {
 			return nil, err
 		}
@@ -126,21 +128,24 @@ func resolveDep(
 	currentPkg string,
 	nodes map[string]*BuildNode,
 	pkgMeta map[string]PkgBuildMeta,
+	subParents map[string]string,
 	path []string,
 ) ([]string, error) {
 	if strings.Contains(dep, ":") {
 		pkgRef, targetSpec, _ := strings.Cut(dep, ":")
+		pkgRef = resolveDepPkgName(currentPkg, pkgRef, subParents, pkgMeta)
 		if targetSpec == "*" {
-			return resolvePackageRef(pkgRef, nodes, pkgMeta, path)
+			return resolvePackageRef(pkgRef, nodes, pkgMeta, subParents, path)
 		}
-		if _, exists := nodes[dep]; !exists {
-			return nil, fmt.Errorf("dependency not found: %s", dep)
+		fullDep := pkgRef + ":" + targetSpec
+		if _, exists := nodes[fullDep]; !exists {
+			return nil, fmt.Errorf("dependency not found: %s (resolved: %s)", dep, fullDep)
 		}
-		return []string{dep}, nil
+		return []string{fullDep}, nil
 	}
 
 	if strings.Contains(dep, "/") {
-		return resolvePackageRef(dep, nodes, pkgMeta, path)
+		return resolvePackageRef(dep, nodes, pkgMeta, subParents, path)
 	}
 
 	qualified := currentPkg + ":" + dep
@@ -150,10 +155,18 @@ func resolveDep(
 	return []string{qualified}, nil
 }
 
+func resolveDepPkgName(currentPkg, depName string, subParents map[string]string, pkgMeta map[string]PkgBuildMeta) string {
+	return api.ResolveSubPackageName(currentPkg, depName, subParents, func(candidate string) bool {
+		_, ok := pkgMeta[candidate]
+		return ok
+	})
+}
+
 func resolvePackageRef(
 	pkgRef string,
 	nodes map[string]*BuildNode,
 	pkgMeta map[string]PkgBuildMeta,
+	subParents map[string]string,
 	path []string,
 ) ([]string, error) {
 	if err := api.CheckCycle(path, pkgRef); err != nil {
@@ -166,7 +179,8 @@ func resolvePackageRef(
 	if meta, ok := pkgMeta[pkgRef]; ok {
 		hasMeta = true
 		for _, transDep := range meta.Deps {
-			expanded, err := resolvePackageRef(transDep, nodes, pkgMeta, append(path, pkgRef))
+			transDep = resolveDepPkgName(pkgRef, transDep, subParents, pkgMeta)
+			expanded, err := resolvePackageRef(transDep, nodes, pkgMeta, subParents, append(path, pkgRef))
 			if err != nil {
 				return nil, err
 			}

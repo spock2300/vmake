@@ -65,14 +65,16 @@ type Resolver struct {
 	depsDir          string
 	globalSourcesDir string
 	force            bool
+	subParents       map[string]string
 }
 
 func NewResolver(repoMgr *repo.RepoManager, depsDir string) *Resolver {
 	return &Resolver{
-		sources: make(map[string]*buildscript.Source),
-		graph:   &Graph{Packages: make(map[string]*PackageNode)},
-		repoMgr: repoMgr,
-		depsDir: depsDir,
+		sources:    make(map[string]*buildscript.Source),
+		graph:      &Graph{Packages: make(map[string]*PackageNode)},
+		repoMgr:    repoMgr,
+		depsDir:    depsDir,
+		subParents: make(map[string]string),
 	}
 }
 
@@ -82,6 +84,17 @@ func (r *Resolver) SetForce(force bool) {
 
 func (r *Resolver) SetGlobalSourcesDir(dir string) {
 	r.globalSourcesDir = dir
+}
+
+func (r *Resolver) SubParents() map[string]string {
+	return r.subParents
+}
+
+func (r *Resolver) resolveDepName(fromPkg, depName string) string {
+	return api.ResolveSubPackageName(fromPkg, depName, r.subParents, func(candidate string) bool {
+		_, exists := r.sources[candidate]
+		return exists
+	})
 }
 
 func (r *Resolver) Graph() *Graph {
@@ -189,7 +202,7 @@ func (r *Resolver) FilterDeps(id string, cfgVals map[string]any, options map[str
 	deps := pkg.GetRequires().Get()
 	newDeps := make([]string, 0, len(deps))
 	for _, req := range deps {
-		newDeps = append(newDeps, req.Name)
+		newDeps = append(newDeps, r.resolveDepName(id, req.Name))
 	}
 	node.Deps = newDeps
 	return nil
@@ -298,7 +311,8 @@ func (r *Resolver) resolveFromCache(id string, pkg *api.Package, src *buildscrip
 	r.graph.Packages[id] = node
 
 	for _, req := range pkg.GetRequires().Get() {
-		depNode, err := r.resolveRecursive(req.Name, req.Constraint, append(path, id))
+		depName := r.resolveDepName(id, req.Name)
+		depNode, err := r.resolveRecursive(depName, req.Constraint, append(path, id))
 		if err != nil {
 			return nil, err
 		}
@@ -358,7 +372,28 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 	r.graph.Packages[id] = node
 	r.sources[id] = src
 
+	r.scanSubPackages(id, localSrc)
+
 	return src, nil
+}
+
+func (r *Resolver) scanSubPackages(parentID, checkoutDir string) {
+	subs, err := buildscript.ScanSubPackages(checkoutDir, parentID)
+	if err != nil {
+		vlog.Error("scan sub-packages for %s: %v", parentID, err)
+		return
+	}
+	if len(subs) == 0 {
+		return
+	}
+	for i := range subs {
+		ss := &subs[i]
+		ss.OutputDir = r.buildscriptOutputDir(ss.Name)
+		r.sources[ss.Name] = ss
+		r.subParents[ss.Name] = parentID
+		r.graph.Packages[ss.Name] = NewPackageNode(ss.Name, ss, nil, true)
+	}
+	vlog.Info("  %s: found %d sub-package(s)", parentID, len(subs))
 }
 
 func (r *Resolver) resolveNativeVersion(id, gitURL, globalDir, localSrc, constraint string) (string, string, map[string]string, error) {
