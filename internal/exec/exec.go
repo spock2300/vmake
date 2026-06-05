@@ -67,7 +67,10 @@ func RunWithOptions(name string, args []string, opts RunOptions) ([]byte, error)
 	output := buf.Bytes()
 
 	if err != nil {
-		return nil, fmt.Errorf("%s\n%s", cmdLine, string(output))
+		if opts.Quiet {
+			return nil, fmt.Errorf("%s\n%s", cmdLine, string(output))
+		}
+		return nil, fmt.Errorf("%s", TrimOutput(output))
 	}
 
 	return output, nil
