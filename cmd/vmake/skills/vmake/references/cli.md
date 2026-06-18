@@ -17,6 +17,7 @@ run `vmake <plugin> --help` or check the plugin documentation.
   `vmake distclean` - Deep clean all build artifacts
   `vmake ext` - Manage extension repositories
     `vmake ext add <name> <git-url>` - Add an extension repository
+    `vmake ext clean [name]` - Clean plugin build artifacts
     `vmake ext list` - List extension repositories and plugins
     `vmake ext remove <name>` - Remove an extension repository
     `vmake ext update [name]` - Update extension repositories
