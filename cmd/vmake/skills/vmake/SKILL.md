@@ -38,6 +38,7 @@ include the ones your project needs:
 - **New project, no options, no deps** → Only `OnBuild`. Start from `examples/simple.md`.
 - **Need configurable features** → Add `OnConfig`. See `examples/config.md`.
 - **Conditional compilation** → Options + `ctx.If()`/`ctx.Select()`. See `examples/conditional.md`.
+- **Config options → C compiler defines (-D flags)** → Three mechanisms. See `examples/config-to-define.md`.
 - **Multiple targets (lib + binary + tests)** → See `examples/multi-target.md`.
 - **Multi-module workspace (lib/ + app/ directories)** → See `examples/multi-module.md`.
 - **Third-party packages** → `OnRequire` + `AddRequires` + `AddDeps`. See `examples/with-package.md`.
@@ -499,6 +500,7 @@ Verbosity: `-v` verbose, `-V` very-verbose, `-q` quiet
 
 - **Learning the basics** → Start with `examples/simple.md`, then `examples/config.md`
 - **Writing a build.go** → Follow the Decision Guide above to pick the right example
+- **Mapping config to defines** → `examples/config-to-define.md` (three mechanisms compared)
 - **Multi-module workspace** → `examples/multi-module.md`
 - **OnClean / OnInstall lifecycles** → `examples/on-clean.md`, `examples/on-install.md`
 - **Looking up a specific API** → See `references/api.md` for complete method signatures
