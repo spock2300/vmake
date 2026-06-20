@@ -587,13 +587,11 @@ type KConfigEntry struct {
 - 通过 `SetConfigFiles()` 声明的配置文件比 stamp 新时，判定为 stale，重新构建
 - 配置文件不存在也判定为 stale
 
-### autoWireRequireDeps
+### autoWireRequireDeps（v2 已移除）
 
-`OnRequire`/`AddRequires` 仅声明包级需求，不会自动创建构建图边。`Target.AddDeps()` 是将包引用关联到具体 target 的必要步骤。
+历史上 vmake 提供 `autoWireRequireDeps()` 自动补全依赖边：当 target 没有显式 `AddDeps()` 但包通过 `AddRequires` 声明了依赖时，会自动将依赖包的所有 target 作为当前 target 的依赖。
 
-当 target 没有显式调用 `AddDeps()`，但包通过 `AddRequires` 声明了依赖时，`autoWireRequireDeps()` 会自动将依赖包的所有 target 作为当前 target 的依赖，建立构建图边。
-
-源码：`cmd/vmake/build_cmd.go`（`autoWireRequireDeps`）
+v2 中已移除该 fallback（违反 No-Fallbacks 原则）。每个 target 必须显式声明 `AddDeps`。运行 `vmake doctor` 检测需要迁移的 build.go,详见 `docs/MIGRATION_V2.md`。
 
 ## GenRule 系统
 

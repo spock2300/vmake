@@ -13,6 +13,7 @@ func Main(p *api.Package) {
 		ctx.Target("root_app").
 			SetKind(api.TargetBinary).
 			AddFiles("src/*.c").
+			AddDeps("lib_a:lib_a").
 			AddLdFlags(ctx.DepOutput("lib_a:lib_a"))
 	})
 }

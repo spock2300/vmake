@@ -31,37 +31,6 @@ func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, 
 	return cfgVals
 }
 
-func autoWireRequireDeps(pkg *api.Package, allTargets map[string]map[string]*api.Target, localTargets map[string]*api.Target, currentPkg string, subParents map[string]string) {
-	if pkg == nil || localTargets == nil || allTargets == nil {
-		return
-	}
-	for _, t := range localTargets {
-		for _, req := range pkg.GetRequires().Get() {
-			depPkgName := resolveWireDepName(currentPkg, req.Name, subParents, allTargets)
-			depTargets := allTargets[depPkgName]
-			if depTargets == nil {
-				continue
-			}
-			for _, dt := range depTargets {
-				depRef := depPkgName + ":" + dt.Name()
-				if !t.HasDep(depRef) {
-					t.AddDeps(depRef)
-				}
-			}
-		}
-	}
-}
-
-func resolveWireDepName(currentPkg, depName string, subParents map[string]string, allTargets map[string]map[string]*api.Target) string {
-	return api.ResolveSubPackageName(currentPkg, depName, subParents, func(candidate string) bool {
-		if allTargets != nil {
-			_, ok := allTargets[candidate]
-			return ok
-		}
-		return false
-	})
-}
-
 func enableTestDefaults(allTargets map[string]map[string]*api.Target) {
 	for _, targets := range allTargets {
 		for _, t := range targets {

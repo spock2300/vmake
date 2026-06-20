@@ -16,7 +16,9 @@ func Main(p *api.Package) {
 		appOutput := ctx.DepOutput("myapp:myapp")
 		busyboxBuildDir := ctx.DepBuildDir("busybox:busybox")
 
-		ctx.Target("rootfs").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
+		ctx.Target("rootfs").SetKind(api.TargetVoid).
+			AddDeps("busybox:busybox", "myapp:myapp").
+			SetBuildFunc(func(pkg *api.Package) error {
 			staging := filepath.Join(pkg.BuildDir(), "staging")
 			imageFile := filepath.Join(pkg.BuildDir(), "rootfs.sqsh")
 			os.RemoveAll(staging)

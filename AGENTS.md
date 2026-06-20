@@ -133,9 +133,17 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 
 ### Dependency Linker Script
 A package declares `ctx.SetProvidedLinkerScript("path/to/script.ld")` in `OnConfig`. A consumer target calls `.UseDependencyLinkerScript()` — at link time, the scheduler resolves the first dependency that provides a linker script and passes `-T` to the linker. `SetProvidedLinkerScript` may only be called once per package (vlog.Fatal on double-set).
+### Auto-Wire Require → Build Deps (REMOVED in v2)
 
-### Auto-Wire Require → Build Deps
-`OnRequire`/`AddRequires` alone does NOT create build graph edges. `Target.AddDeps("pkg:target")` is required for topology. However, `autoWireRequireDeps()` in `build_cmd.go` auto-wires them when a package has `AddRequires` calls but its targets lack explicit `AddDeps` — it links all of the dependency package's targets as deps. Wildcard deps (`"pkg:*"`, `"repo/pkg:*"`) expand to all targets of the referenced package plus transitive dependencies.
+**Historically**: `OnRequire`/`AddRequires` declared package-level deps, and
+`autoWireRequireDeps()` (in `build_cmd.go`) silently auto-added `AddDeps` edges
+to any target whose package had `AddRequires` calls but no explicit `AddDeps`.
+
+**v2**: `autoWireRequireDeps` was REMOVED (violates No-Fallbacks principle).
+Each target must declare its build-graph edges explicitly via `AddDeps`.
+
+Run `vmake doctor` to detect build.go files that still rely on the old
+auto-wire behavior. See `docs/MIGRATION_V2.md` for migration steps.
 
 ### restoreKConfigFiles Skip Rules
 - No config.json entry for package → skip entirely (don't delete `.config`)
@@ -151,7 +159,7 @@ Phase 1: OnRequire       -> Scan/Compile/Load buildscripts -> Resolve dependenci
 Phase 2a: ResolveDeferred -> Resolve remote (deferred) packages -> Update topological order
 Phase 2b: OnConfig       -> Execute callbacks -> Collect Options -> Run OnApply callbacks -> Merge global options
 Phase 2c: FilterDeps     -> Re-run OnRequire with real config -> Replace node.Deps -> Update order -> BFS collect needed
-Phase 3: OnBuild         -> Execute callbacks -> Generate Targets -> autoWireRequireDeps -> Compile/Link
+Phase 3: OnBuild         -> Execute callbacks -> Generate Targets -> Compile/Link
 (Optional) Install       -> Install targets to prefix directory + generate manifest.json
 ```
 

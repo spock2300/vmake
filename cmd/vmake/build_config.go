@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/pkg/api"
@@ -34,6 +35,16 @@ func computeReachable(graph *resolver.Graph) map[string]bool {
 		needed[rootID] = true
 		queue = append(queue, rootID)
 	} else {
+		if os.Getenv("VMAKE_LEGACY_ROOT") != "1" {
+			rootsHint := make([]string, 0)
+			for id, node := range graph.Packages {
+				if node.IsLocal() && node.Pkg != nil && len(node.Pkg.GetRequireFuncs()) > 0 {
+					rootsHint = append(rootsHint, id)
+				}
+			}
+			vlog.Info("[hint] no package declares SetRoot(true); consider adding 'p.SetRoot(true)' to one of: %s", strings.Join(rootsHint, ", "))
+			vlog.Info("[hint] set VMAKE_LEGACY_ROOT=1 to silence this warning (legacy heuristic will be used)")
+		}
 		dependedOn := make(map[string]bool)
 		for _, node := range graph.Packages {
 			if !node.IsLocal() {

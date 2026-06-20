@@ -15,7 +15,9 @@ func Main(p *api.Package) {
 	p.OnBuild(func(ctx *api.BuildContext) {
 		appOutput := ctx.DepOutput("myapp:myapp")
 
-		ctx.Target("app").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
+		ctx.Target("app").SetKind(api.TargetVoid).
+			AddDeps("myapp:myapp").
+			SetBuildFunc(func(pkg *api.Package) error {
 			staging := filepath.Join(pkg.BuildDir(), "staging")
 			imageFile := filepath.Join(pkg.BuildDir(), "app.sqsh")
 			os.RemoveAll(staging)

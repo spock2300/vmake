@@ -419,7 +419,6 @@ func (s *buildPhaseState) executeMainPackages(filter map[string]bool) {
 			continue
 		}
 		s.executeOnePackage(name, node)
-		autoWireRequireDeps(node.Pkg, s.allTargets, s.allTargets[name], name, s.ctx.Resolver.SubParents())
 	}
 }
 

@@ -19,7 +19,9 @@ func Main(p *api.Package) {
 		rootfsBuildDir := ctx.DepBuildDir("rootfs:rootfs")
 		appBuildDir := ctx.DepBuildDir("app:app")
 
-		ctx.Target("firmware").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
+		ctx.Target("firmware").SetKind(api.TargetVoid).
+			AddDeps("uboot:uboot", "linux:linux", "rootfs:rootfs", "app:app").
+			SetBuildFunc(func(pkg *api.Package) error {
 			ubootBin := filepath.Join(ubootBuildDir, "u-boot.bin")
 			zImage := filepath.Join(linuxBuildDir, "zImage")
 			rootfsImg := filepath.Join(rootfsBuildDir, "rootfs.sqsh")
