@@ -135,51 +135,12 @@ func (r *Resolver) ResolveAll(localSources []buildscript.Source) error {
 	return nil
 }
 
+// ResolveDeferred is retained as a no-op for backward compatibility.
+// All packages (registry and native) are now resolved eagerly during
+// ResolveAll, so there are no deferred nodes to resolve. The method
+// still runs UpdateOrder to ensure graph.Order is current.
 func (r *Resolver) ResolveDeferred() error {
-	for {
-		if err := r.UpdateOrder(); err != nil {
-			return err
-		}
-		resolvedAny := false
-		for _, id := range r.graph.Order {
-			node := r.graph.Packages[id]
-			if node == nil || !node.Deferred {
-				continue
-			}
-			resolvedAny = true
-			newNode, err := r.resolveDeferredNode(id, node)
-			if err != nil {
-				return err
-			}
-			r.graph.Packages[id] = newNode
-		}
-		if !resolvedAny {
-			break
-		}
-	}
 	return r.UpdateOrder()
-}
-
-func (r *Resolver) resolveDeferredNode(id string, node *PackageNode) (*PackageNode, error) {
-	src := node.Source
-	if src == nil {
-		return nil, fmt.Errorf("deferred node %s has no source", id)
-	}
-
-	newNode, err := r.resolvePackage(id, src, []string{id}, false)
-	if err != nil {
-		return nil, err
-	}
-	newNode.Native = node.Native
-	newNode.Constraints = append([]string{}, node.Constraints...)
-
-	if len(newNode.Constraints) > 0 && newNode.Pkg != nil && len(newNode.Pkg.Versions()) > 0 {
-		if _, err := newNode.Pkg.SelectVersionMulti(newNode.Constraints); err != nil {
-			return nil, fmt.Errorf("package %s: %w", id, err)
-		}
-	}
-
-	return newNode, nil
 }
 
 func (r *Resolver) FilterDeps(id string, cfgVals map[string]any, options map[string]*api.Option) error {
@@ -235,7 +196,7 @@ func (r *Resolver) resolveRecursive(id string, constraint string, path []string)
 	}
 
 	// Compile + load + recurse into OnRequire dependencies
-	node, err := r.resolvePackage(id, src, path, true)
+	node, err := r.resolvePackage(id, src, path)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +213,7 @@ func (r *Resolver) resolveRecursive(id string, constraint string, path []string)
 	return node, nil
 }
 
-func (r *Resolver) resolvePackage(id string, src *buildscript.Source, path []string, allowDefer bool) (*PackageNode, error) {
+func (r *Resolver) resolvePackage(id string, src *buildscript.Source, path []string) (*PackageNode, error) {
 	scriptPath := r.scriptPath(src)
 	if !r.force && src.Path != "" && r.hasCachedScript(scriptPath, src.Path) {
 		pkg, err := r.loadPackageFromCache(scriptPath, *src)
@@ -260,11 +221,6 @@ func (r *Resolver) resolvePackage(id string, src *buildscript.Source, path []str
 			return nil, fmt.Errorf("load %s: %w", id, err)
 		}
 		return r.resolveFromCache(id, pkg, src, path)
-	}
-	if allowDefer && src.IsRemote() {
-		node := NewPackageNode(id, src, nil, true)
-		r.graph.Packages[id] = node
-		return node, nil
 	}
 	return r.resolveOne(id, src, path)
 }
@@ -310,16 +266,26 @@ func (r *Resolver) resolveFromCache(id string, pkg *api.Package, src *buildscrip
 	node := NewPackageNode(id, src, pkg, false)
 	r.graph.Packages[id] = node
 
+	if err := r.recurseDeps(node, path); err != nil {
+		return nil, err
+	}
+	return node, nil
+}
+
+func (r *Resolver) recurseDeps(node *PackageNode, path []string) error {
+	pkg := node.Pkg
+	if pkg == nil {
+		return nil
+	}
 	for _, req := range pkg.GetRequires().Get() {
-		depName := r.resolveDepName(id, req.Name)
-		depNode, err := r.resolveRecursive(depName, req.Constraint, append(path, id))
+		depName := r.resolveDepName(node.ID, req.Name)
+		depNode, err := r.resolveRecursive(depName, req.Constraint, append(path, node.ID))
 		if err != nil {
-			return nil, err
+			return err
 		}
 		node.Deps = append(node.Deps, depNode.ID)
 	}
-
-	return node, nil
+	return nil
 }
 
 func (r *Resolver) findSource(id string, constraint string) (*buildscript.Source, error) {
@@ -365,12 +331,28 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 		return nil, err
 	}
 
-	node := NewPackageNode(id, src, nil, true).WithNative(gitURL, versions, selectedVersion)
+	r.sources[id] = src
+
+	pkg, err := r.PreparePackage(src)
+	if err != nil {
+		return nil, fmt.Errorf("compile %s: %w", id, err)
+	}
+
+	node := NewPackageNode(id, src, pkg, false).WithNative(gitURL, versions, selectedVersion)
 	if constraint != "" {
 		node.Constraints = append(node.Constraints, constraint)
 	}
 	r.graph.Packages[id] = node
-	r.sources[id] = src
+
+	if err := r.recurseDeps(node, []string{id}); err != nil {
+		return nil, err
+	}
+
+	if len(node.Constraints) > 0 && len(pkg.Versions()) > 0 {
+		if _, err := pkg.SelectVersionMulti(node.Constraints); err != nil {
+			return nil, fmt.Errorf("package %s: %w", id, err)
+		}
+	}
 
 	r.scanSubPackages(id, localSrc)
 
@@ -391,7 +373,6 @@ func (r *Resolver) scanSubPackages(parentID, checkoutDir string) {
 		ss.OutputDir = r.buildscriptOutputDir(ss.Name)
 		r.sources[ss.Name] = ss
 		r.subParents[ss.Name] = parentID
-		r.graph.Packages[ss.Name] = NewPackageNode(ss.Name, ss, nil, true)
 	}
 	vlog.Info("  %s: found %d sub-package(s)", parentID, len(subs))
 }
