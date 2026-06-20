@@ -1,0 +1,33 @@
+{
+  "project": "19_config_defines",
+  "build_args": [
+    "build",
+    "--install"
+  ],
+  "manifest": {
+    "toolchain": "host",
+    "mode": "debug",
+    "packages": [
+      {
+        "name": "19_config_defines",
+        "source": "local",
+        "path": "."
+      }
+    ]
+  },
+  "install_files": [
+    {
+      "path": "bin/defines_test",
+      "size": 17217,
+      "hash": "c0ae1749364b3da79078f504a83d2d5ae91330b8c36bc3e77e7e75984e04000b"
+    }
+  ],
+  "build_files": [
+    {
+      "path": "compile_commands.json",
+      "size": 753,
+      "hash": "5c42ad84f5858f08993b79a0d4c687f9afe2da3e1f337ecfff8d39cf0dede762"
+    }
+  ],
+  "install_tree_hash": "32ad2a3e4fe81894347dae79ceec603034bac1b4984b2e70cff329bb3e61681c"
+}

@@ -1,0 +1,40 @@
+{
+  "project": "11_with_tinyexpr",
+  "build_args": [
+    "build",
+    "--install"
+  ],
+  "manifest": {
+    "toolchain": "host",
+    "mode": "debug",
+    "packages": [
+      {
+        "name": "official/tinyexpr",
+        "source": "registry",
+        "url": "https://github.com/codeplea/tinyexpr.git",
+        "version": "1.0.0",
+        "ref": "9907207e5def0fabdb60c443517b0d9e9d521393"
+      },
+      {
+        "name": "11_with_tinyexpr",
+        "source": "local",
+        "path": "."
+      }
+    ]
+  },
+  "install_files": [
+    {
+      "path": "bin/tinyexpr_test",
+      "size": 37949,
+      "hash": "a9006a61432ce26508b22b8f3efe587a930cf1ec422d4b9ee6e444ead88a8a2a"
+    }
+  ],
+  "build_files": [
+    {
+      "path": "compile_commands.json",
+      "size": 1286,
+      "hash": "00dc6998f4715ad42845ee6814f1695eca0352f53014c54c3828142b283ae7e1"
+    }
+  ],
+  "install_tree_hash": "b4bf898adf5dbed88b4aa6c66269d03d7c053e665a6658a49072d8e14b09bdaf"
+}

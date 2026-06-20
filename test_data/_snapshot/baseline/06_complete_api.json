@@ -1,0 +1,33 @@
+{
+  "project": "06_complete_api",
+  "build_args": [
+    "build",
+    "--install"
+  ],
+  "manifest": {
+    "toolchain": "host",
+    "mode": "debug",
+    "packages": [
+      {
+        "name": "06_complete_api",
+        "source": "local",
+        "path": "."
+      }
+    ]
+  },
+  "install_files": [
+    {
+      "path": "bin/myapp",
+      "size": 20090,
+      "hash": "617d0ddfd8ad2625b4a9c1351ab759e028b133ddfaf4cfcdf7296d9e581528a6"
+    }
+  ],
+  "build_files": [
+    {
+      "path": "compile_commands.json",
+      "size": 2251,
+      "hash": "e345a4d61cb547cd1c68ed4a42c9781d19eb3581e58a2bda7e5169ca8f78dd50"
+    }
+  ],
+  "install_tree_hash": "f9796c2d92914df9f39e72728331ab8997e5af2c3c8aca1dc88fd577f615e371"
+}

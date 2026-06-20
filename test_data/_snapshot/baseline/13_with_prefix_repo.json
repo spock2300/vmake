@@ -1,0 +1,47 @@
+{
+  "project": "13_with_prefix_repo",
+  "build_args": [
+    "build",
+    "--install"
+  ],
+  "manifest": {
+    "toolchain": "host",
+    "mode": "debug",
+    "packages": [
+      {
+        "name": "test_build/greeter",
+        "source": "native",
+        "url": "https://github.com/spock2300/test_build_greeter.git",
+        "version": "1.0.0",
+        "ref": "v1.0.0"
+      },
+      {
+        "name": "test_build/mathlib",
+        "source": "native",
+        "url": "https://github.com/spock2300/test_build_mathlib.git",
+        "version": "1.0.0",
+        "ref": "v1.0.0"
+      },
+      {
+        "name": "13_with_prefix_repo",
+        "source": "local",
+        "path": "."
+      }
+    ]
+  },
+  "install_files": [
+    {
+      "path": "bin/app",
+      "size": 18993,
+      "hash": "fbf0a169c2713ee5516c3a6bb94063ee2c93d3b8db9b813598aa037b8f5519d4"
+    }
+  ],
+  "build_files": [
+    {
+      "path": "compile_commands.json",
+      "size": 2227,
+      "hash": "edb9c777030e0ab22324352b73fa4fa92c6f2a5ebe227dee42d06effbf62fe80"
+    }
+  ],
+  "install_tree_hash": "4a12d0b610cbd7e93e5cb0420c004bc84a5fed673166d4095faa3ac45423e279"
+}

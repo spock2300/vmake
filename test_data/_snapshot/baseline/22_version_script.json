@@ -1,0 +1,38 @@
+{
+  "project": "22_version_script",
+  "build_args": [
+    "build",
+    "--install"
+  ],
+  "manifest": {
+    "toolchain": "host",
+    "mode": "debug",
+    "packages": [
+      {
+        "name": "22_version_script",
+        "source": "local",
+        "path": "."
+      }
+    ]
+  },
+  "install_files": [
+    {
+      "path": "bin/app",
+      "size": 17395,
+      "hash": "218d20b0ab25d7317ecc55fa7203862b337641d5b3a8dfb136018949bf003cf6"
+    },
+    {
+      "path": "lib/liblibfoo.so",
+      "size": 17033,
+      "hash": "bb41e504648e59651601ef6e26e96aa4e39117c56e0103979168dc4d38f8787d"
+    }
+  ],
+  "build_files": [
+    {
+      "path": "compile_commands.json",
+      "size": 2023,
+      "hash": "c3035c03e97f45de9338d034d7c763b8d2ac7c91f016ea3b3bee856a41e90979"
+    }
+  ],
+  "install_tree_hash": "a5afece51277357db921b66578a8cd4974c1f4b94293b18b3c4ee7f3eb54a175"
+}

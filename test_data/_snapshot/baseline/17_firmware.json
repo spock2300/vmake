@@ -1,0 +1,68 @@
+{
+  "project": "17_firmware",
+  "build_args": [
+    "build",
+    "--install"
+  ],
+  "manifest": {
+    "toolchain": "host",
+    "mode": "debug",
+    "packages": [
+      {
+        "name": "17_firmware",
+        "source": "local",
+        "path": "."
+      },
+      {
+        "name": "busybox",
+        "source": "local",
+        "path": "busybox"
+      },
+      {
+        "name": "linux",
+        "source": "local",
+        "path": "linux"
+      },
+      {
+        "name": "myapp",
+        "source": "local",
+        "path": "myapp"
+      },
+      {
+        "name": "app",
+        "source": "local",
+        "path": "app"
+      },
+      {
+        "name": "rootfs",
+        "source": "local",
+        "path": "rootfs"
+      },
+      {
+        "name": "uboot",
+        "source": "local",
+        "path": "uboot"
+      },
+      {
+        "name": "firmware",
+        "source": "local",
+        "path": "firmware"
+      }
+    ]
+  },
+  "install_files": [
+    {
+      "path": "bin/myapp",
+      "size": 17369,
+      "hash": "9cb2608a49dabb115447a2ed826d3445d4abca18f970fbc78b6f6096f5e08dd8"
+    }
+  ],
+  "build_files": [
+    {
+      "path": "compile_commands.json",
+      "size": 2,
+      "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    }
+  ],
+  "install_tree_hash": "034f7216ae401fe5232b63c188fc86de67597d4fd0c562e4baccb74a082b91e4"
+}

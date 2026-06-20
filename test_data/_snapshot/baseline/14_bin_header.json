@@ -1,0 +1,33 @@
+{
+  "project": "14_bin_header",
+  "build_args": [
+    "build",
+    "--install"
+  ],
+  "manifest": {
+    "toolchain": "host",
+    "mode": "debug",
+    "packages": [
+      {
+        "name": "14_bin_header",
+        "source": "local",
+        "path": "."
+      }
+    ]
+  },
+  "install_files": [
+    {
+      "path": "bin/app",
+      "size": 17569,
+      "hash": "6a2f8c8e367d592787b7c681c8b39a661c105dbc65be0f5e712f477787310d16"
+    }
+  ],
+  "build_files": [
+    {
+      "path": "compile_commands.json",
+      "size": 674,
+      "hash": "48e0d96693a755291943b8945edb0e7c0d63d134a729391173a24391f1785f01"
+    }
+  ],
+  "install_tree_hash": "6c784dd4a63d9cf133ce46a339df4161042b3c0ef943b4791b7f5329b529d287"
+}

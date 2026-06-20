@@ -1,0 +1,48 @@
+{
+  "project": "12_rtos_simulate",
+  "build_args": [
+    "build",
+    "--install"
+  ],
+  "manifest": {
+    "toolchain": "host",
+    "mode": "debug",
+    "packages": [
+      {
+        "name": "chip_sim",
+        "source": "local",
+        "path": "chip_sim"
+      },
+      {
+        "name": "12_rtos_simulate",
+        "source": "local",
+        "path": "."
+      }
+    ]
+  },
+  "install_files": [
+    {
+      "path": "bin/firmware",
+      "size": 13467,
+      "hash": "051a7c443d079ca39d6998d63985956c4d4e7ae95a0406d830f988508b4ed08f"
+    },
+    {
+      "path": "bin/firmware.bin",
+      "size": 1792,
+      "hash": "0a02903609665c4fc376a145ad8b069d3783c77571e0dd6a55661cebd5047651"
+    },
+    {
+      "path": "bin/firmware.hex",
+      "size": 5063,
+      "hash": "7ca7c04c6939619f88ef7a2e29f0d423850c79b9f5eceefd92ebfa88c6103033"
+    }
+  ],
+  "build_files": [
+    {
+      "path": "compile_commands.json",
+      "size": 735,
+      "hash": "4abb63944374bb8c8dbf8b9de152c7c8fddb383f1252b788d760b56f1774e4d6"
+    }
+  ],
+  "install_tree_hash": "ebe78b180db88f1fde8b1f5d20cc7be424d2ccc8d705b996a9fb5c12fc49ad3c"
+}

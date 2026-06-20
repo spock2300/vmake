@@ -1,0 +1,43 @@
+{
+  "project": "15_subgraph_siblings",
+  "build_args": [
+    "build",
+    "--install"
+  ],
+  "manifest": {
+    "toolchain": "host",
+    "mode": "debug",
+    "packages": [
+      {
+        "name": "15_subgraph_siblings",
+        "source": "local",
+        "path": "."
+      },
+      {
+        "name": "t15gen",
+        "source": "local",
+        "path": "t15gen"
+      },
+      {
+        "name": "t15lib",
+        "source": "local",
+        "path": "t15lib"
+      }
+    ]
+  },
+  "install_files": [
+    {
+      "path": "bin/app",
+      "size": 17754,
+      "hash": "320453d058ea57920d2d5a1827a91d12c6083a2dde15016442ba4666f374fbe3"
+    }
+  ],
+  "build_files": [
+    {
+      "path": "compile_commands.json",
+      "size": 629,
+      "hash": "95d58235988c79670096b33b09f08fb8a4ab265fb870855eb693d8bda7dc4472"
+    }
+  ],
+  "install_tree_hash": "8c8c47ff6fea76e13d610d1f5552d49615eb527f8b0c26cfaf8af6eefad73424"
+}

@@ -1,0 +1,43 @@
+{
+  "project": "21_root_package",
+  "build_args": [
+    "build",
+    "--install"
+  ],
+  "manifest": {
+    "toolchain": "host",
+    "mode": "debug",
+    "packages": [
+      {
+        "name": "lib_a",
+        "source": "local",
+        "path": "lib_a"
+      },
+      {
+        "name": "app",
+        "source": "local",
+        "path": "app"
+      },
+      {
+        "name": "lib_b",
+        "source": "local",
+        "path": "lib_b"
+      }
+    ]
+  },
+  "install_files": [
+    {
+      "path": "bin/root_app",
+      "size": 17570,
+      "hash": "5271efcdde6ad99db6b2f27f7330d3329bc1adccc134905b655704a4aa965c68"
+    }
+  ],
+  "build_files": [
+    {
+      "path": "compile_commands.json",
+      "size": 2,
+      "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    }
+  ],
+  "install_tree_hash": "3bf45e191add08761d5c04e5ca3ae4e3451436cec3f71f3268635385bed27ef7"
+}

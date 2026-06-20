@@ -1,0 +1,33 @@
+{
+  "project": "18_config_header",
+  "build_args": [
+    "build",
+    "--install"
+  ],
+  "manifest": {
+    "toolchain": "host",
+    "mode": "debug",
+    "packages": [
+      {
+        "name": "18_config_header",
+        "source": "local",
+        "path": "."
+      }
+    ]
+  },
+  "install_files": [
+    {
+      "path": "bin/config_test",
+      "size": 17217,
+      "hash": "391f5f3acaed992e40fad21f9fb495c7f98f2ae66383298657130c157c1e523b"
+    }
+  ],
+  "build_files": [
+    {
+      "path": "compile_commands.json",
+      "size": 683,
+      "hash": "e801f913ebbeb6027dc798fef7278744309fbae925524e89913e1ba50a32d7ba"
+    }
+  ],
+  "install_tree_hash": "11cc4ac844829641436bd754ddb623a6c6f9757d810f0074a6e0297b0bddd9b6"
+}

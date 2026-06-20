@@ -255,12 +255,19 @@ func (s *Scheduler) Build(fullName string) error {
 	wg.Wait()
 	close(results)
 
-	objs := make([]string, 0, numFiles)
+	bySrc := make(map[string]string, numFiles)
 	for r := range results {
 		if r.err != nil {
 			return r.err
 		}
-		objs = append(objs, r.objPath)
+		bySrc[r.src] = r.objPath
+	}
+
+	objs := make([]string, 0, numFiles)
+	for _, src := range resolved.SourceFiles {
+		if obj, ok := bySrc[src]; ok {
+			objs = append(objs, obj)
+		}
 	}
 
 	linked, err := s.realizeTarget(resolved, objs)

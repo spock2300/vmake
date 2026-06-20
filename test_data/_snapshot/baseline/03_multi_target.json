@@ -1,0 +1,33 @@
+{
+  "project": "03_multi_target",
+  "build_args": [
+    "build",
+    "--install"
+  ],
+  "manifest": {
+    "toolchain": "host",
+    "mode": "debug",
+    "packages": [
+      {
+        "name": "03_multi_target",
+        "source": "local",
+        "path": "."
+      }
+    ]
+  },
+  "install_files": [
+    {
+      "path": "bin/myapp",
+      "size": 17817,
+      "hash": "f7f6de3badc099c7208a5209198c43211074a46a8ec4b5723fadde1cf5f871f2"
+    }
+  ],
+  "build_files": [
+    {
+      "path": "compile_commands.json",
+      "size": 1215,
+      "hash": "17e5571f2fc64c6510f0a33f2ceb1cdc2429552aa41ff6f0fba098ab20752c9b"
+    }
+  ],
+  "install_tree_hash": "3db2897bbd2deabbbb2d060f2821bf97feb5ff060cf2dc254d08f4eb555ace5b"
+}

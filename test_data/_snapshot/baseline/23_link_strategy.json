@@ -1,0 +1,38 @@
+{
+  "project": "23_link_strategy",
+  "build_args": [
+    "build",
+    "--install"
+  ],
+  "manifest": {
+    "toolchain": "host",
+    "mode": "debug",
+    "packages": [
+      {
+        "name": "23_link_strategy",
+        "source": "local",
+        "path": "."
+      }
+    ]
+  },
+  "install_files": [
+    {
+      "path": "lib/libbar.so",
+      "size": 16449,
+      "hash": "e477042e536bac094e29fbc1929e9a072d62eb8fb48f8fa656c776c730cee43e"
+    },
+    {
+      "path": "lib/libfoo.so",
+      "size": 16569,
+      "hash": "7815048bd398a1f5488b62ea0280f570496ccfa1ef472ad0336d97011458426a"
+    }
+  ],
+  "build_files": [
+    {
+      "path": "compile_commands.json",
+      "size": 1870,
+      "hash": "a5bfe492fa9b55021847189a5ed0dbc1473b998767776c793cf81e29741f0a3d"
+    }
+  ],
+  "install_tree_hash": "a641e7bec2a673ac66cdcfcd399b301067422168853d48a3784fd2e5b5e1d325"
+}

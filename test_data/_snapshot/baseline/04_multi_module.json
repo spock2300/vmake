@@ -1,0 +1,43 @@
+{
+  "project": "04_multi_module",
+  "build_args": [
+    "build",
+    "--install"
+  ],
+  "manifest": {
+    "toolchain": "host",
+    "mode": "debug",
+    "packages": [
+      {
+        "name": "04_multi_module",
+        "source": "local",
+        "path": "."
+      },
+      {
+        "name": "app",
+        "source": "local",
+        "path": "app"
+      },
+      {
+        "name": "lib",
+        "source": "local",
+        "path": "lib"
+      }
+    ]
+  },
+  "install_files": [
+    {
+      "path": "bin/app",
+      "size": 17899,
+      "hash": "a68a24003e83725964d88f81d38b2d6df009d04ca61e26a9b88a199066d05799"
+    }
+  ],
+  "build_files": [
+    {
+      "path": "compile_commands.json",
+      "size": 2,
+      "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    }
+  ],
+  "install_tree_hash": "5024435dfdbbe1475c976645ba76ddeaaa0c1b686cf9030573597ab1f607e75c"
+}

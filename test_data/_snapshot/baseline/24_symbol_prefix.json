@@ -1,0 +1,27 @@
+{
+  "project": "24_symbol_prefix",
+  "build_args": [
+    "build",
+    "--install"
+  ],
+  "manifest": {
+    "toolchain": "host",
+    "mode": "debug",
+    "packages": [
+      {
+        "name": "24_symbol_prefix",
+        "source": "local",
+        "path": "."
+      }
+    ]
+  },
+  "install_files": null,
+  "build_files": [
+    {
+      "path": "compile_commands.json",
+      "size": 615,
+      "hash": "3080700babaeffbc4e25f6b8265dea19d78dee5aa08d6d73149299f0ec9eaf2b"
+    }
+  ],
+  "install_tree_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}
