@@ -20,7 +20,38 @@ func NewLinker(tools *ResolvedTools) *Linker {
 	}
 }
 
-func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScript string) error {
+type LinkPolicy struct {
+	VersionScript string
+	ExcludeLibs   []string
+	SymbolBinding string
+}
+
+func (p LinkPolicy) versionScriptFlag() string {
+	if p.VersionScript == "" {
+		return ""
+	}
+	return "-Wl,--version-script=" + p.VersionScript
+}
+
+func (p LinkPolicy) excludeLibsFlag() string {
+	if len(p.ExcludeLibs) == 0 {
+		return ""
+	}
+	return "-Wl,--exclude-libs=" + strings.Join(p.ExcludeLibs, ",")
+}
+
+func (p LinkPolicy) bindingFlags() []string {
+	switch p.SymbolBinding {
+	case "static":
+		return []string{"-Wl,-Bsymbolic"}
+	case "static-functions":
+		return []string{"-Wl,-Bsymbolic-functions"}
+	default:
+		return nil
+	}
+}
+
+func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScript string, policy LinkPolicy) error {
 	if err := fs.EnsureParentDir(outputPath); err != nil {
 		return err
 	}
@@ -28,6 +59,12 @@ func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScri
 	args := []string{"-o", outputPath}
 	if linkerScript != "" {
 		args = append(args, "-T", linkerScript)
+	}
+	if vs := policy.versionScriptFlag(); vs != "" {
+		args = append(args, vs)
+	}
+	if el := policy.excludeLibsFlag(); el != "" {
+		args = append(args, el)
 	}
 
 	var objFiles []string
@@ -68,6 +105,7 @@ func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScri
 	}
 
 	args = append(args, otherFlags...)
+	args = append(args, policy.bindingFlags()...)
 
 	_, err := iexec.Run(l.ccPath, args...)
 	return err
@@ -85,14 +123,29 @@ func (l *Linker) LinkStatic(objs []string, outputPath string) error {
 	return err
 }
 
-func (l *Linker) LinkShared(objs, ldflags []string, outputPath string) error {
+func (l *Linker) LinkShared(objs, ldflags []string, outputPath string, policy LinkPolicy) error {
 	if err := fs.EnsureParentDir(outputPath); err != nil {
 		return err
 	}
 
+	filtered := make([]string, 0, len(ldflags))
+	for _, f := range ldflags {
+		if f == "-pie" || f == "-no-pie" {
+			continue
+		}
+		filtered = append(filtered, f)
+	}
+
 	args := []string{"-shared", "-o", outputPath}
+	if vs := policy.versionScriptFlag(); vs != "" {
+		args = append(args, vs)
+	}
+	if el := policy.excludeLibsFlag(); el != "" {
+		args = append(args, el)
+	}
 	args = append(args, objs...)
-	args = append(args, ldflags...)
+	args = append(args, filtered...)
+	args = append(args, policy.bindingFlags()...)
 
 	_, err := iexec.Run(l.ccPath, args...)
 	return err

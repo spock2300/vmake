@@ -183,6 +183,11 @@ All setters are fluent (return `*Target`).
 | `SetInstallDir` | `(dir string)` | Install directory |
 | `SetInstall` | `(install bool)` | Control install |
 | `SetLinkerScript` | `(path string)` | Linker script (passes `-T` to linker; fatal on double-set) |
+| `SetVersionScript` | `(path string)` | Version script for symbol visibility (Shared/Binary only; fatal on double-set) |
+| `SetExcludeLibs` | `(libs ...string)` | Strip symbols from absorbed static archives via `-Wl,--exclude-libs=` |
+| `SetSymbolBinding` | `(mode string)` | `"static"` → `-Bsymbolic`; `"static-functions"` → `-Bsymbolic-functions` |
+| `SetExpectedExports` | `(syms ...string)` | Audit assertion (no build effect; verified by `vmake check-symbols`) |
+| `SetSymbolPrefix` | `(prefix string)` | Append post-link `objcopy --prefix-symbols=` step (fatal on double-set) |
 | `UseDependencyLinkerScript` | `()` | Auto-inherit linker script from dependency |
 | `AddPostLink` | `(tool string, args ...string)` | Post-link step: `{output}` placeholder |
 | `AddPostLinkHex` | `()` | `objcopy -O ihex {output} {output}.hex` |
@@ -251,6 +256,7 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `AddGlobalCxxFlags(flags...)` | Add global C++ flags (OnApply only) |
 | `AddGlobalLdFlags(flags...)` | Add global linker flags (OnApply only) |
 | `AddGlobalLinks(links...)` | Add global link libraries (OnApply only) |
+| `SetDefaultVisibilityHidden() *ConfigContext` | Add `-fvisibility=hidden` globally (C+C++) and `-fvisibility-inlines-hidden` (C++ only) |
 
 ### BuildContext
 

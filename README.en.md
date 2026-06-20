@@ -14,6 +14,7 @@ VMake is a modern C/C++ project build tool developed in Go. It provides a concis
 - **TUI Configuration Interface**: Interactive terminal user interface for project configuration
 - **Toolchain Management**: Flexible switching between multiple compiler toolchains, supports cross-compilation
 - **Semantic Versioning**: Built-in semver parsing and constraint matching
+- **Symbol Management**: Five-layer defense (`SetDefaultVisibilityHidden` + `SetVersionScript` + `SetExcludeLibs` + `SetSymbolBinding` + `vmake check-symbols`) controls exported symbols to prevent conflicts and leaks in complex dependency graphs
 
 ## Quick Start
 

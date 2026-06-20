@@ -1,0 +1,7 @@
+V_1_0 {
+    global:
+        foo_api;
+        foo_init;
+    local:
+        *;
+};

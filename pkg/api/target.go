@@ -48,6 +48,11 @@ type Target struct {
 	buildFunc          func(p *Package) error
 	prebuilt           string
 	linkerScript       string
+	versionScript      string
+	excludeLibs        []string
+	symbolBinding      string
+	expectedExports    []string
+	symbolPrefix       string
 	useDepLinkerScript bool
 	postLinks          []PostLinkStep
 	genRules           []GenRule
@@ -197,6 +202,46 @@ func (t *Target) SetLinkerScript(path string) *Target {
 	return t
 }
 
+func (t *Target) SetVersionScript(path string) *Target {
+	if t.versionScript != "" {
+		vlog.Fatal("SetVersionScript: version script already set to %s", t.versionScript)
+	}
+	t.versionScript = path
+	return t
+}
+
+func (t *Target) SetExcludeLibs(libs ...string) *Target {
+	t.excludeLibs = append(t.excludeLibs, libs...)
+	return t
+}
+
+func (t *Target) SetSymbolBinding(mode string) *Target {
+	switch mode {
+	case "", "static", "static-functions":
+		t.symbolBinding = mode
+	default:
+		vlog.Fatal("SetSymbolBinding: invalid mode %q (use \"static\" or \"static-functions\")", mode)
+	}
+	return t
+}
+
+func (t *Target) SetExpectedExports(syms ...string) *Target {
+	t.expectedExports = append(t.expectedExports, syms...)
+	return t
+}
+
+func (t *Target) SetSymbolPrefix(prefix string) *Target {
+	if t.symbolPrefix != "" {
+		vlog.Fatal("SetSymbolPrefix: prefix already set to %s", t.symbolPrefix)
+	}
+	t.symbolPrefix = prefix
+	t.postLinks = append(t.postLinks, PostLinkStep{
+		Tool: "objcopy",
+		Args: []string{"--prefix-symbols=" + prefix, "{output}"},
+	})
+	return t
+}
+
 func (t *Target) UseDependencyLinkerScript() *Target {
 	t.useDepLinkerScript = true
 	return t
@@ -282,6 +327,11 @@ func (t *Target) SetInstall(install bool) *Target {
 
 func (t *Target) NoInstall() bool               { return t.noInstall }
 func (t *Target) LinkerScript() string          { return t.linkerScript }
+func (t *Target) VersionScript() string         { return t.versionScript }
+func (t *Target) ExcludeLibs() []string         { return t.excludeLibs }
+func (t *Target) SymbolBinding() string         { return t.symbolBinding }
+func (t *Target) ExpectedExports() []string     { return t.expectedExports }
+func (t *Target) SymbolPrefix() string          { return t.symbolPrefix }
 func (t *Target) PostLinkSteps() []PostLinkStep { return t.postLinks }
 
 func (t *Target) RemoveCFlags(flags ...string) *Target {

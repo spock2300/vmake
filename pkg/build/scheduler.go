@@ -22,16 +22,20 @@ const (
 )
 
 type ResolvedTarget struct {
-	Node         *BuildNode
-	SourceFiles  []string
-	AllIncludes  []string
-	AllDefines   []string
-	AllCFlags    []string
-	AllCxxFlags  []string
-	AllLdFlags   []string
-	AllLinks     []string
-	DepArtifacts []string
-	OutputPath   string
+	Node            *BuildNode
+	SourceFiles     []string
+	AllIncludes     []string
+	AllDefines      []string
+	AllCFlags       []string
+	AllCxxFlags     []string
+	AllLdFlags      []string
+	AllLinks        []string
+	DepArtifacts    []string
+	OutputPath      string
+	VersionScript   string
+	ExcludeLibs     []string
+	SymbolBinding   string
+	ExpectedExports []string
 }
 
 type compileResult struct {
@@ -214,11 +218,14 @@ func (s *Scheduler) Build(fullName string) error {
 
 	numFiles := len(resolved.SourceFiles)
 	if numFiles == 0 || node.Target.Prebuilt() != "" {
-		if err := s.realizeTarget(resolved, nil); err != nil {
+		linked, err := s.realizeTarget(resolved, nil)
+		if err != nil {
 			return err
 		}
-		if err := s.postLink(resolved); err != nil {
-			return err
+		if linked {
+			if err := s.postLink(resolved); err != nil {
+				return err
+			}
 		}
 		if pkgInfo.InstallDir != "" {
 			return s.publishTarget(resolved, pkgInfo)
@@ -256,12 +263,15 @@ func (s *Scheduler) Build(fullName string) error {
 		objs = append(objs, r.objPath)
 	}
 
-	if err := s.realizeTarget(resolved, objs); err != nil {
+	linked, err := s.realizeTarget(resolved, objs)
+	if err != nil {
 		return err
 	}
 
-	if err := s.postLink(resolved); err != nil {
-		return err
+	if linked {
+		if err := s.postLink(resolved); err != nil {
+			return err
+		}
 	}
 
 	if pkgInfo.InstallDir != "" {
@@ -415,6 +425,24 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 		generatedDir := pkgInfo.GeneratedDir()
 		resolved.AllIncludes = append(resolved.AllIncludes, generatedDir)
 	}
+
+	if vs := node.Target.VersionScript(); vs != "" {
+		kind := node.Target.Kind()
+		if kind != api.TargetShared && kind != api.TargetBinary {
+			return nil, fmt.Errorf("SetVersionScript(%q): only valid on TargetShared/TargetBinary, got %q", vs, kind)
+		}
+		if pkgInfo != nil {
+			resolved.VersionScript = filepath.Join(pkgInfo.SourceDir, vs)
+		} else {
+			resolved.VersionScript = vs
+		}
+	}
+
+	if el := node.Target.ExcludeLibs(); len(el) > 0 {
+		resolved.ExcludeLibs = append([]string{}, el...)
+	}
+	resolved.SymbolBinding = node.Target.SymbolBinding()
+	resolved.ExpectedExports = append([]string{}, node.Target.ExpectedExports()...)
 
 	resolved.AllDefines = unique(resolved.AllDefines)
 	resolved.AllIncludes = unique(resolved.AllIncludes)
@@ -645,17 +673,17 @@ func (s *Scheduler) updateVoidLibDirs(resolved *ResolvedTarget, pkg *api.Package
 	}
 }
 
-func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) error {
+func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) (bool, error) {
 	kind := resolved.Node.Target.Kind()
 
 	if resolved.Node.Target.Prebuilt() == "" && !s.needRelink(resolved, objs) {
-		return nil
+		return false, nil
 	}
 
 	outputName := filepath.Base(resolved.OutputPath)
 
 	if resolved.Node.Target.Prebuilt() != "" {
-		return s.realizePrebuilt(resolved)
+		return true, s.realizePrebuilt(resolved)
 	}
 
 	allObjs := append(append([]string{}, objs...), resolved.DepArtifacts...)
@@ -677,7 +705,13 @@ func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) error
 			}
 		}
 		vlog.Info("  LINK %s", outputName)
-		return s.linker.LinkBinary(allObjs, unique(resolved.AllLinks), resolved.AllLdFlags, resolved.OutputPath, linkerScript)
+		policy := LinkPolicy{
+			VersionScript: resolved.VersionScript,
+			ExcludeLibs:   resolved.ExcludeLibs,
+			SymbolBinding: resolved.SymbolBinding,
+		}
+		err := s.linker.LinkBinary(allObjs, unique(resolved.AllLinks), resolved.AllLdFlags, resolved.OutputPath, linkerScript, policy)
+		return err == nil, err
 	case api.TargetStatic:
 		var objOnly []string
 		for _, o := range allObjs {
@@ -687,20 +721,29 @@ func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) error
 			}
 		}
 		vlog.Info("  AR %s", outputName)
-		return s.linker.LinkStatic(objOnly, resolved.OutputPath)
+		err := s.linker.LinkStatic(objOnly, resolved.OutputPath)
+		return err == nil, err
 	case api.TargetShared:
 		vlog.Info("  LINK %s", outputName)
-		return s.linker.LinkShared(allObjs, resolved.AllLdFlags, resolved.OutputPath)
+		policy := LinkPolicy{
+			VersionScript: resolved.VersionScript,
+			ExcludeLibs:   resolved.ExcludeLibs,
+			SymbolBinding: resolved.SymbolBinding,
+		}
+		err := s.linker.LinkShared(allObjs, resolved.AllLdFlags, resolved.OutputPath, policy)
+		return err == nil, err
 	case api.TargetObject:
 		vlog.Info("  LD -r %s", outputName)
 		if len(allObjs) == 0 {
-			return fmt.Errorf("object target requires at least one source file")
+			return false, fmt.Errorf("object target requires at least one source file")
 		}
-		return s.linker.LinkObject(allObjs, resolved.OutputPath)
+		err := s.linker.LinkObject(allObjs, resolved.OutputPath)
+		return err == nil, err
 	case api.TargetVoid:
-		return s.buildVoidTarget(resolved)
+		err := s.buildVoidTarget(resolved)
+		return err == nil, err
 	default:
-		return fmt.Errorf("target %s has unknown kind %q", resolved.Node.FullName, kind)
+		return false, fmt.Errorf("target %s has unknown kind %q", resolved.Node.FullName, kind)
 	}
 }
 

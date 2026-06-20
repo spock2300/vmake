@@ -1,0 +1,6 @@
+bar_1_0 {
+    global:
+        bar_api;
+    local:
+        *;
+};

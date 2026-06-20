@@ -48,6 +48,7 @@ include the ones your project needs:
 - **Code generation / host tools** → `BuildSubGraph` + `DepOutput` + `Exec`. See `examples/subbuild.md`.
 - **Embedded / RTOS firmware (linker script, hex/bin)** → See `examples/embedded-rtos.md`.
 - **Embedded firmware (KConfig/partitions)** → `EnsureConfig` + `PatchKConfig` + `DepBuildDir`. See `examples/firmware.md`.
+- **Symbol conflicts / leaked internals across dependencies** → `SetDefaultVisibilityHidden` + `SetVersionScript` + `vmake check-symbols`. See `examples/symbol-management.md`.
 
 ## Build Script Template
 
@@ -231,6 +232,24 @@ ctx.Target("drv").SetKind(api.TargetStatic).
 ```
 
 See `examples/prebuilt.md` for full patterns, `AddProvidedLibs`, shared libraries, and when to use `SetPrebuilt` vs `TargetVoid`+`SetBuildFunc`.
+
+## Symbol Management
+
+Control which symbols a library exports to prevent conflicts and leaks in
+complex dependency graphs. Five layers, applied in order:
+
+| Layer | API | Purpose |
+|-------|-----|---------|
+| 1. Default hidden | `ctx.SetDefaultVisibilityHidden()` | `-fvisibility=hidden` globally; annotate exports in source |
+| 2. Version script | `target.SetVersionScript("foo.map")` | Declarative exports on `TargetShared`/`TargetBinary` |
+| 3. Link policy | `target.SetExcludeLibs(...)`, `target.SetSymbolBinding("static")` | Strip static archive symbols; bind internal refs |
+| 4. Audit | `target.SetExpectedExports(...)`, `vmake check-symbols` | Verify actual vs expected `.dynsym` |
+| 5. Prefix | `target.SetSymbolPrefix("v_")` | `objcopy --prefix-symbols=` for third-party C code |
+
+Layer 1 is the foundation — without it, version scripts have weak effect.
+`SetVersionScript` on `TargetObject` is a fatal error (partial link produces
+no dynamic symbol table). See `examples/symbol-management.md` for full
+patterns and version-script syntax.
 
 ## Test Targets
 

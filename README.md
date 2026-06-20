@@ -14,6 +14,7 @@ VMake 是一个现代化的 C/C++ 项目构建工具，采用 Go 语言开发。
 - **TUI 配置界面**：提供交互式终端用户界面，方便配置项目选项
 - **工具链管理**：支持多种编译工具链的灵活切换，支持交叉编译
 - **语义版本约束**：内置语义版本解析和约束匹配
+- **符号管理**：通过 `SetDefaultVisibilityHidden` + `SetVersionScript` + `SetExcludeLibs` + `SetSymbolBinding` + `vmake check-symbols` 五层防御，控制库的导出符号，避免复杂依赖图中的符号冲突和泄漏
 
 ## 快速开始
 
