@@ -23,9 +23,9 @@ func TestConfigMacroName(t *testing.T) {
 
 func TestConfigToDefinesBool(t *testing.T) {
 	opts := map[string]*Option{
-		"on":         {name: "on", optType: OptionBool, defaultVal: true},
-		"off":        {name: "off", optType: OptionBool, defaultVal: false},
-		"override":   {name: "override", optType: OptionBool, defaultVal: false},
+		"on":       {name: "on", optType: OptionBool, defaultVal: true},
+		"off":      {name: "off", optType: OptionBool, defaultVal: false},
+		"override": {name: "override", optType: OptionBool, defaultVal: false},
 	}
 	vals := map[string]any{"override": true}
 	defs := ConfigToDefines(opts, vals)

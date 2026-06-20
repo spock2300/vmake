@@ -350,10 +350,10 @@ func TestPackageCMakeGlobalFlagsArgs(t *testing.T) {
 
 func TestSplitPackageRef(t *testing.T) {
 	tests := []struct {
-		ref     string
-		repo    string
-		name    string
-		ok      bool
+		ref  string
+		repo string
+		name string
+		ok   bool
 	}{
 		{"foo", "", "foo", false},
 		{"official/zlib", "official", "zlib", true},
