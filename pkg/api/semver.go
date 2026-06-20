@@ -175,4 +175,3 @@ func MatchVersion(available []string, constraint string) (string, bool) {
 
 	return candidates[0].raw, true
 }
-

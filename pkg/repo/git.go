@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	exec "gitee.com/spock2300/vmake/internal/exec"
-	"gitee.com/spock2300/vmake/internal/fs"
+	exec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/internal/fs"
 )
 
 func gitRun(dir string, args []string, timeout time.Duration) error {

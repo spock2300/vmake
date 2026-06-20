@@ -7,9 +7,9 @@ import (
 	"runtime"
 	"strings"
 
-	iexec "gitee.com/spock2300/vmake/internal/exec"
-	"gitee.com/spock2300/vmake/internal/fs"
-	"gitee.com/spock2300/vmake/pkg/version"
+	iexec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/pkg/version"
 )
 
 type PluginOptions struct {
@@ -79,9 +79,9 @@ func BuildGoModContent(opts PluginOptions, vmakeDir string) string {
 
 go %s
 
-require gitee.com/spock2300/vmake v0.0.0
+require github.com/spock2300/vmake v0.0.0
 
-replace gitee.com/spock2300/vmake => %s
+replace github.com/spock2300/vmake => %s
 `, moduleName, goVersion, vmakeDir)
 	}
 
@@ -90,7 +90,7 @@ replace gitee.com/spock2300/vmake => %s
 
 go %s
 
-require gitee.com/spock2300/vmake %s
+require github.com/spock2300/vmake %s
 `, moduleName, goVersion, vmakeVersion)
 }
 
@@ -120,7 +120,7 @@ func detectVMakeSourceDir() string {
 	root := filepath.Dir(filepath.Dir(filepath.Dir(file)))
 	goModPath := filepath.Join(root, "go.mod")
 	if bs, err := os.ReadFile(goModPath); err == nil {
-		if strings.Contains(string(bs), "gitee.com/spock2300/vmake") {
+		if strings.Contains(string(bs), "github.com/spock2300/vmake") {
 			return root
 		}
 	}

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"os"
 
-	"gitee.com/spock2300/vmake/internal/jsonio"
+	"github.com/spock2300/vmake/internal/jsonio"
 )
 
 const ConfigVersion = "1"

@@ -20,7 +20,7 @@ VMake is a modern C/C++ project build tool developed in Go. It provides a concis
 ### Installation
 
 ```bash
-go install gitee.com/spock2300/vmake/cmd/vmake@latest
+go install github.com/spock2300/vmake/cmd/vmake@latest
 ```
 
 ### Debug Mode
@@ -42,7 +42,7 @@ Create a `build.go` file:
 ```go
 package main
 
-import "gitee.com/spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
     p.OnConfig(func(ctx *api.ConfigContext) {
@@ -305,4 +305,4 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ## Contact
 
-- Project URL: https://gitee.com/spock2300/vmake
+- Project URL: https://github.com/spock2300/vmake

@@ -2,14 +2,14 @@ package api
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"maps"
 	"slices"
 	"strconv"
 	"strings"
 
-	"gitee.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/fs"
 )
 
 func configMacroName(optName string) string {
@@ -30,7 +30,7 @@ func resolveOptVal(opts map[string]*Option, cfgVals map[string]any, name string)
 type configEntryKind int
 
 const (
-	ceBoolTrue  configEntryKind = iota
+	ceBoolTrue configEntryKind = iota
 	ceBoolFalse
 	ceInt
 	ceString

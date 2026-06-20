@@ -54,7 +54,7 @@ include the ones your project needs:
 ```go
 package main
 
-import "gitee.com/spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
     p.OnConfig(func(ctx *api.ConfigContext) {

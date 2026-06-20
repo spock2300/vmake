@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gitee.com/spock2300/vmake/internal/exec"
-	"gitee.com/spock2300/vmake/internal/fs"
-	vlog "gitee.com/spock2300/vmake/pkg/log"
-	"gitee.com/spock2300/vmake/pkg/toolchain"
+	"github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/internal/fs"
+	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 type TargetKind string

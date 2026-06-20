@@ -6,10 +6,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gitee.com/spock2300/vmake/internal/jsonio"
-	"gitee.com/spock2300/vmake/pkg/config"
-	vlog "gitee.com/spock2300/vmake/pkg/log"
-	"gitee.com/spock2300/vmake/pkg/repo"
+	"github.com/spock2300/vmake/internal/jsonio"
+	"github.com/spock2300/vmake/pkg/config"
+	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/repo"
 )
 
 var buildCmd = &cobra.Command{

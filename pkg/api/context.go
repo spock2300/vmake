@@ -5,9 +5,9 @@ import (
 	"sort"
 	"strings"
 
-	"gitee.com/spock2300/vmake/internal/exec"
-	vlog "gitee.com/spock2300/vmake/pkg/log"
-	"gitee.com/spock2300/vmake/pkg/toolchain"
+	"github.com/spock2300/vmake/internal/exec"
+	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 type pkgBase struct {
@@ -245,10 +245,10 @@ func (ctx *BuildContext) SyncConfigDefines(pkgNames ...string) *BuildContext {
 	return ctx
 }
 
-func (ctx *BuildContext) GenConfigHeader() bool     { return ctx.genConfigHeader }
-func (ctx *BuildContext) GenConfigDefines() bool    { return ctx.genConfigDefines }
-func (ctx *BuildContext) ExportEnabled() bool       { return ctx.exportConfig }
-func (ctx *BuildContext) ImportConfigs() []string   { return ctx.importConfigs }
+func (ctx *BuildContext) GenConfigHeader() bool   { return ctx.genConfigHeader }
+func (ctx *BuildContext) GenConfigDefines() bool  { return ctx.genConfigDefines }
+func (ctx *BuildContext) ExportEnabled() bool     { return ctx.exportConfig }
+func (ctx *BuildContext) ImportConfigs() []string { return ctx.importConfigs }
 
 func (ctx *BuildContext) Exec(name string, args ...string) {
 	if ctx.dryRun {

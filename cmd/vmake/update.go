@@ -6,12 +6,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	iexec "gitee.com/spock2300/vmake/internal/exec"
-	"gitee.com/spock2300/vmake/pkg/api"
-	"gitee.com/spock2300/vmake/pkg/version"
+	iexec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/version"
 )
 
-const modulePath = "gitee.com/spock2300/vmake/cmd/vmake"
+const modulePath = "github.com/spock2300/vmake/cmd/vmake"
 
 var updateCmd = &cobra.Command{
 	Use:   "update [version]",
@@ -55,7 +55,7 @@ func listAvailableVersions() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("git not found: %w", err)
 	}
-	output, err := iexec.RunWithOptions(gitCmd, []string{"ls-remote", "--tags", "https://gitee.com/spock2300/vmake.git"}, iexec.RunOptions{Quiet: true})
+	output, err := iexec.RunWithOptions(gitCmd, []string{"ls-remote", "--tags", "https://github.com/spock2300/vmake.git"}, iexec.RunOptions{Quiet: true})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list remote tags: %w", err)
 	}

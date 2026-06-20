@@ -1,7 +1,7 @@
 package main
 
 import (
-	vlog "gitee.com/spock2300/vmake/pkg/log"
+	vlog "github.com/spock2300/vmake/pkg/log"
 
 	"github.com/spf13/cobra"
 )

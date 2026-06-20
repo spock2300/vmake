@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"plugin"
 
-	"gitee.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/api"
 )
 
 type LoadedScript struct {

@@ -6,3 +6,4 @@ bin/
 build/compile_commands.json
 cmd/vmake/vmake
 official_repo
+vmake_deps/

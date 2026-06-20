@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"gitee.com/spock2300/vmake/pkg/api"
-	"gitee.com/spock2300/vmake/pkg/toolchain"
+	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 type BuildPipeline struct {

@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"gitee.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/fs"
 )
 
 //go:embed skills/vmake/SKILL.md

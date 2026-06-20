@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	iexec "gitee.com/spock2300/vmake/internal/exec"
-	"gitee.com/spock2300/vmake/internal/fs"
+	iexec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/internal/fs"
 )
 
 type Linker struct {

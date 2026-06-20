@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	exec "gitee.com/spock2300/vmake/internal/exec"
-	"gitee.com/spock2300/vmake/pkg/api"
-	"gitee.com/spock2300/vmake/pkg/build"
-	"gitee.com/spock2300/vmake/pkg/config"
-	vlog "gitee.com/spock2300/vmake/pkg/log"
-	"gitee.com/spock2300/vmake/pkg/repo"
-	"gitee.com/spock2300/vmake/pkg/resolver"
-	"gitee.com/spock2300/vmake/pkg/toolchain"
+	exec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/build"
+	"github.com/spock2300/vmake/pkg/config"
+	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/repo"
+	"github.com/spock2300/vmake/pkg/resolver"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 type buildConfig struct {

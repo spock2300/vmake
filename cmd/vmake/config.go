@@ -9,11 +9,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gitee.com/spock2300/vmake/pkg/api"
-	"gitee.com/spock2300/vmake/pkg/buildscript"
-	"gitee.com/spock2300/vmake/pkg/config"
-	vlog "gitee.com/spock2300/vmake/pkg/log"
-	"gitee.com/spock2300/vmake/pkg/tui"
+	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/config"
+	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/tui"
 )
 
 var setFlags []string

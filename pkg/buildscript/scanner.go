@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gitee.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/api"
 )
 
 var skipDirs = map[string]bool{

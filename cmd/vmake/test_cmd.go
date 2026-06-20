@@ -8,10 +8,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	exec "gitee.com/spock2300/vmake/internal/exec"
-	"gitee.com/spock2300/vmake/pkg/api"
-	"gitee.com/spock2300/vmake/pkg/build"
-	vlog "gitee.com/spock2300/vmake/pkg/log"
+	exec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/build"
+	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
 var testCmd = &cobra.Command{

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"os"
 
-	"gitee.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/fs"
 )
 
 func Save(path string, v any) error {

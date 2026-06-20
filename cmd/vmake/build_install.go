@@ -5,14 +5,14 @@ import (
 	"path/filepath"
 	"time"
 
-	"gitee.com/spock2300/vmake/internal/fs"
-	"gitee.com/spock2300/vmake/internal/jsonio"
-	"gitee.com/spock2300/vmake/pkg/api"
-	"gitee.com/spock2300/vmake/pkg/build"
-	"gitee.com/spock2300/vmake/pkg/config"
-	vlog "gitee.com/spock2300/vmake/pkg/log"
-	"gitee.com/spock2300/vmake/pkg/resolver"
-	"gitee.com/spock2300/vmake/pkg/version"
+	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/jsonio"
+	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/build"
+	"github.com/spock2300/vmake/pkg/config"
+	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/resolver"
+	"github.com/spock2300/vmake/pkg/version"
 )
 
 type installManifestEntry struct {

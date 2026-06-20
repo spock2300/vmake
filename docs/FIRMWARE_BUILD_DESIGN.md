@@ -405,7 +405,7 @@ import (
     "runtime"
     "strconv"
 
-    "gitee.com/spock2300/vmake/pkg/api"
+    "github.com/spock2300/vmake/pkg/api"
 )
 
 func Main(p *api.Package) {
@@ -444,7 +444,7 @@ import (
     "runtime"
     "strconv"
 
-    "gitee.com/spock2300/vmake/pkg/api"
+    "github.com/spock2300/vmake/pkg/api"
 )
 
 func Main(p *api.Package) {
@@ -486,7 +486,7 @@ import (
     "runtime"
     "strconv"
 
-    "gitee.com/spock2300/vmake/pkg/api"
+    "github.com/spock2300/vmake/pkg/api"
 )
 
 func Main(p *api.Package) {
@@ -540,7 +540,7 @@ Busybox 使用 `SetSrcDir("src")` 指定源码子目录，`PatchKConfig` 在 def
 ```go
 package main
 
-import "gitee.com/spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
     p.OnConfig(func(ctx *api.ConfigContext) {
@@ -567,7 +567,7 @@ import (
     "os"
     "path/filepath"
 
-    "gitee.com/spock2300/vmake/pkg/api"
+    "github.com/spock2300/vmake/pkg/api"
 )
 
 func Main(p *api.Package) {
@@ -636,7 +636,7 @@ import (
     "os"
     "path/filepath"
 
-    "gitee.com/spock2300/vmake/pkg/api"
+    "github.com/spock2300/vmake/pkg/api"
 )
 
 func Main(p *api.Package) {

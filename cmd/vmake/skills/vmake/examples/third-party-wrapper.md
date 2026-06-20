@@ -7,7 +7,7 @@ Wrapping an external C/C++ library (CMake, Autotools, etc.) as a vmake package u
 ```go
 package main
 
-import "gitee.com/spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
 	p.OnPackage(func(p *api.Package) {

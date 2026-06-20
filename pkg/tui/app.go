@@ -8,10 +8,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"gitee.com/spock2300/vmake/pkg/api"
-	"gitee.com/spock2300/vmake/pkg/buildscript"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/buildscript"
 )
 
 type ConfigResult struct {

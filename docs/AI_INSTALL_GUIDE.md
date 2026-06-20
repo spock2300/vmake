@@ -12,7 +12,7 @@ AI 阅读此文档后，按顺序执行以下命令即可完成安装。
 ### 1. 安装 vmake
 
 ```bash
-go install gitee.com/spock2300/vmake/cmd/vmake@latest
+go install github.com/spock2300/vmake/cmd/vmake@latest
 ```
 
 确保 `~/go/bin` 在 PATH 中：

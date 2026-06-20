@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gitee.com/spock2300/vmake/internal/fs"
-	"gitee.com/spock2300/vmake/pkg/repo"
+	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/pkg/repo"
 )
 
 var pkgCmd = &cobra.Command{

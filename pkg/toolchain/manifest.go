@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gitee.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/fs"
 )
 
 type InstallConfig struct {

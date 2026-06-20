@@ -6,10 +6,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gitee.com/spock2300/vmake/pkg/api"
-	vlog "gitee.com/spock2300/vmake/pkg/log"
-	"gitee.com/spock2300/vmake/pkg/plugin"
-	"gitee.com/spock2300/vmake/pkg/repo"
+	"github.com/spock2300/vmake/pkg/api"
+	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/plugin"
+	"github.com/spock2300/vmake/pkg/repo"
 )
 
 func fatalErr(err error) {

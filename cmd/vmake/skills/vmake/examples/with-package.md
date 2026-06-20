@@ -7,7 +7,7 @@ Demonstrates depending on and consuming remote packages - the core package manag
 ```go
 package main
 
-import "gitee.com/spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
 	p.OnRequire(func(ctx *api.RequireContext) {
@@ -74,7 +74,7 @@ A package must define metadata:
 ```go
 package main
 
-import "gitee.com/spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
 	p.OnPackage(func(p *api.Package) {

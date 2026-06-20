@@ -20,7 +20,7 @@ VMake 是一个现代化的 C/C++ 项目构建工具，采用 Go 语言开发。
 ### 安装
 
 ```bash
-go install gitee.com/spock2300/vmake/cmd/vmake@latest
+go install github.com/spock2300/vmake/cmd/vmake@latest
 ```
 
 安装后 vmake 位于 `~/go/bin/vmake`。
@@ -46,7 +46,7 @@ go build -o vmake ./cmd/vmake
 ```go
 package main
 
-import "gitee.com/spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
     p.OnConfig(func(ctx *api.ConfigContext) {
@@ -311,4 +311,4 @@ vmake skill path                                      # 显示安装路径
 
 ## 联系方式
 
-- 项目地址：https://gitee.com/spock2300/vmake
+- 项目地址：https://github.com/spock2300/vmake

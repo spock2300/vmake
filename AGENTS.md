@@ -168,17 +168,17 @@ import (
 
     "github.com/spf13/cobra"
 
-    "gitee.com/spock2300/vmake/pkg/api"
+    "github.com/spock2300/vmake/pkg/api"
 )
 ```
-Internal packages may use short aliases: `vlog "gitee.com/spock2300/vmake/pkg/log"`, `exec "gitee.com/spock2300/vmake/internal/exec"`
+Internal packages may use short aliases: `vlog "github.com/spock2300/vmake/pkg/log"`, `exec "github.com/spock2300/vmake/internal/exec"`
 
 ### Naming Conventions
 - **SetXxx**: Set a single value (SetKind, SetDefault)
 - **AddXxx**: Append multiple values (AddFiles, AddIncludes)
 - **RemoveXxx**: Remove from slices (RemoveCFlags, RemoveDefines)
 - **Type aliases**: Use for readability (`type TargetKind string`)
-- **Logging**: Always use alias `vlog "gitee.com/spock2300/vmake/pkg/log"` — methods: Debug, Info, Error, Fatal — **no Warn**
+- **Logging**: Always use alias `vlog "github.com/spock2300/vmake/pkg/log"` — methods: Debug, Info, Error, Fatal — **no Warn**
 
 ### Fluent API
 All public APIs use method chaining - return `*Target`, `*Package`, `*Option`:
@@ -321,7 +321,7 @@ Methods on `CleanContext`:
 Each `build.go` is compiled to a Go plugin (`.so`):
 ```go
 package main
-import "gitee.com/spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
     p.OnConfig(func(ctx *api.ConfigContext) { ... })
     p.OnBuild(func(ctx *api.BuildContext) { ... })

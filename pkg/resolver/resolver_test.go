@@ -3,8 +3,8 @@ package resolver
 import (
 	"testing"
 
-	"gitee.com/spock2300/vmake/pkg/api"
-	"gitee.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/buildscript"
 )
 
 func TestTopologicalSort(t *testing.T) {

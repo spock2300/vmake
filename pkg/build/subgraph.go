@@ -5,9 +5,9 @@ import (
 	"os"
 	"strings"
 
-	"gitee.com/spock2300/vmake/pkg/api"
-	vlog "gitee.com/spock2300/vmake/pkg/log"
-	"gitee.com/spock2300/vmake/pkg/toolchain"
+	"github.com/spock2300/vmake/pkg/api"
+	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 type SubGraphParams struct {

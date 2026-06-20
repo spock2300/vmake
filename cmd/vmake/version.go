@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	"gitee.com/spock2300/vmake/pkg/version"
 	"github.com/spf13/cobra"
+	"github.com/spock2300/vmake/pkg/version"
 )
 
 var versionCmd = &cobra.Command{

@@ -35,7 +35,7 @@ The root `build.go` is empty — the project is composed entirely of sub-package
 ```go
 package main
 
-import "gitee.com/spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
 }
@@ -50,7 +50,7 @@ import (
     "runtime"
     "strconv"
 
-    "gitee.com/spock2300/vmake/pkg/api"
+    "github.com/spock2300/vmake/pkg/api"
 )
 
 func Main(p *api.Package) {
@@ -88,7 +88,7 @@ import (
     "runtime"
     "strconv"
 
-    "gitee.com/spock2300/vmake/pkg/api"
+    "github.com/spock2300/vmake/pkg/api"
 )
 
 func Main(p *api.Package) {
@@ -126,7 +126,7 @@ func Main(p *api.Package) {
 ```go
 package main
 
-import "gitee.com/spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
     p.OnBuild(func(ctx *api.BuildContext) {
@@ -147,7 +147,7 @@ import (
     "os"
     "path/filepath"
 
-    "gitee.com/spock2300/vmake/pkg/api"
+    "github.com/spock2300/vmake/pkg/api"
 )
 
 func Main(p *api.Package) {
@@ -197,7 +197,7 @@ import (
     "os"
     "path/filepath"
 
-    "gitee.com/spock2300/vmake/pkg/api"
+    "github.com/spock2300/vmake/pkg/api"
 )
 
 func Main(p *api.Package) {

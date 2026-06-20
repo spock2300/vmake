@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"gitee.com/spock2300/vmake/internal/toposort"
-	"gitee.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/internal/toposort"
+	"github.com/spock2300/vmake/pkg/api"
 )
 
 type PkgBuildMeta struct {

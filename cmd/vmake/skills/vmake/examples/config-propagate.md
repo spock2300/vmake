@@ -24,7 +24,7 @@ myproject/
 ```go
 package main
 
-import "gitee.com.spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
     p.OnConfig(func(ctx *api.ConfigContext) {
@@ -59,7 +59,7 @@ After this, every target in `chip` is compiled with `-DCONFIG_MCU=stm32f405 -DCO
 ```go
 package main
 
-import "gitee.com/spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
     p.OnBuild(func(ctx *api.BuildContext) {
@@ -84,7 +84,7 @@ Note: `ImportConfig` alone does NOT add `-D` defines — it only merges the opti
 ```go
 package main
 
-import "gitee.com/spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
     p.OnBuild(func(ctx *api.BuildContext) {

@@ -1,4 +1,4 @@
-module gitee.com/spock2300/vmake
+module github.com/spock2300/vmake
 
 go 1.26.0
 

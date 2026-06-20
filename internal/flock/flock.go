@@ -4,7 +4,7 @@ import (
 	"os"
 	"syscall"
 
-	"gitee.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/fs"
 )
 
 type FileLock struct {

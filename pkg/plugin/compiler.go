@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"gitee.com/spock2300/vmake/internal/fs"
-	"gitee.com/spock2300/vmake/internal/gocompile"
+	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/gocompile"
 )
 
 type CompileResult struct {

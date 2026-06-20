@@ -24,7 +24,7 @@ package main
 import (
     "fmt"
 
-    "gitee.com/spock2300/vmake/pkg/plugin"
+    "github.com/spock2300/vmake/pkg/plugin"
     "github.com/spf13/cobra"
 )
 
@@ -433,7 +433,7 @@ package main
 import (
     "fmt"
 
-    "gitee.com/spock2300/vmake/pkg/plugin"
+    "github.com/spock2300/vmake/pkg/plugin"
     "github.com/spf13/cobra"
 )
 
@@ -468,8 +468,8 @@ import (
     "fmt"
     "path/filepath"
 
-    "gitee.com/spock2300/vmake/pkg/plugin"
-    "gitee.com/spock2300/vmake/pkg/toolchain"
+    "github.com/spock2300/vmake/pkg/plugin"
+    "github.com/spock2300/vmake/pkg/toolchain"
     "github.com/spf13/cobra"
 )
 

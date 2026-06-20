@@ -4,7 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 
-	iexec "gitee.com/spock2300/vmake/internal/exec"
+	iexec "github.com/spock2300/vmake/internal/exec"
 )
 
 func ResolveToolPath(tool string, installPath string) (string, error) {

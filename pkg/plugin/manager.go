@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"path/filepath"
 
-	iexec "gitee.com/spock2300/vmake/internal/exec"
-	"gitee.com/spock2300/vmake/internal/fs"
-	"gitee.com/spock2300/vmake/internal/gitstore"
-	"gitee.com/spock2300/vmake/pkg/repo"
+	iexec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/gitstore"
+	"github.com/spock2300/vmake/pkg/repo"
 )
 
 type Manager struct {

@@ -18,7 +18,7 @@ Simplest. Register options in `OnConfig`, call `ctx.GenerateConfigDefines()` in 
 ```go
 package main
 
-import "gitee.com.spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
 	p.OnConfig(func(ctx *api.ConfigContext) {
@@ -50,7 +50,7 @@ Register options normally. In `OnBuild`, read values with `ctx.Bool()`/`ctx.Int(
 ```go
 package main
 
-import "gitee.com.spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
 	p.OnConfig(func(ctx *api.ConfigContext) {

@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"gitee.com/spock2300/vmake/internal/fs"
-	"gitee.com/spock2300/vmake/pkg/api"
-	vlog "gitee.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/pkg/api"
+	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
 var hexChars = [16]byte{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'}

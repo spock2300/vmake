@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	iexec "gitee.com/spock2300/vmake/internal/exec"
-	"gitee.com/spock2300/vmake/internal/fs"
-	"gitee.com/spock2300/vmake/pkg/toolchain"
+	iexec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 type Compiler struct {

@@ -8,12 +8,12 @@ import (
 	"strings"
 	"sync"
 
-	iexec "gitee.com/spock2300/vmake/internal/exec"
-	"gitee.com/spock2300/vmake/internal/fs"
-	"gitee.com/spock2300/vmake/internal/glob"
-	"gitee.com/spock2300/vmake/pkg/api"
-	vlog "gitee.com/spock2300/vmake/pkg/log"
-	"gitee.com/spock2300/vmake/pkg/toolchain"
+	iexec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/glob"
+	"github.com/spock2300/vmake/pkg/api"
+	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 const (

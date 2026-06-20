@@ -5,9 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"gitee.com/spock2300/vmake/internal/flock"
-	"gitee.com/spock2300/vmake/internal/fs"
-	"gitee.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/internal/flock"
+	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/pkg/api"
 )
 
 type SourceManager struct {

@@ -3,7 +3,7 @@ package repo
 import (
 	"path/filepath"
 
-	"gitee.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/fs"
 )
 
 type PackageInstaller struct {

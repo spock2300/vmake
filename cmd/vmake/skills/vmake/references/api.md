@@ -35,7 +35,7 @@ All setter methods return the receiver for chaining. Use `filepath.Join()` for f
 
 ## Package
 
-Import: `gitee.com/spock2300/vmake/pkg/api`
+Import: `github.com/spock2300/vmake/pkg/api`
 
 ### Lifecycle Hooks
 

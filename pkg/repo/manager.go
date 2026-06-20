@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gitee.com/spock2300/vmake/internal/fs"
-	"gitee.com/spock2300/vmake/internal/gitstore"
+	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/gitstore"
 )
 
 type RepoManager struct {

@@ -4,8 +4,8 @@ import (
 	"os"
 	"plugin"
 
-	"gitee.com/spock2300/vmake/pkg/api"
-	vlog "gitee.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/api"
+	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
 func ExtractPackage(loaded *LoadedScript) *api.Package {

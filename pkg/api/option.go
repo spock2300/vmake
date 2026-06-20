@@ -46,12 +46,12 @@ func (o *Option) SetGroup(group string) *Option {
 	return o
 }
 
-func (o *Option) Name() string                                  { return o.name }
-func (o *Option) Type() OptionType                              { return o.optType }
-func (o *Option) Default() any                                  { return o.defaultVal }
-func (o *Option) Description() string                           { return o.description }
-func (o *Option) Values() []string                              { return o.values }
-func (o *Option) ShowIf() func(ctx *ConfigContext) bool         { return o.showIf }
+func (o *Option) Name() string                               { return o.name }
+func (o *Option) Type() OptionType                           { return o.optType }
+func (o *Option) Default() any                               { return o.defaultVal }
+func (o *Option) Description() string                        { return o.description }
+func (o *Option) Values() []string                           { return o.values }
+func (o *Option) ShowIf() func(ctx *ConfigContext) bool      { return o.showIf }
 func (o *Option) OnApply() func(ctx *ConfigContext, val any) { return o.onApply }
-func (o *Option) Group() string                                 { return o.group }
-func (o *Option) IsGlobal() bool                                { return o.group == "Global" }
+func (o *Option) Group() string                              { return o.group }
+func (o *Option) IsGlobal() bool                             { return o.group == "Global" }

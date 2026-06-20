@@ -8,7 +8,7 @@ Demonstrates custom clean logic using `OnClean`. Needed when your package has bu
 package main
 
 import (
-	"gitee.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/api"
 )
 
 func Main(p *api.Package) {

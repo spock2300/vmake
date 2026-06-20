@@ -3,7 +3,7 @@ package build
 import (
 	"fmt"
 
-	"gitee.com/spock2300/vmake/pkg/toolchain"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 type ResolvedTools struct {

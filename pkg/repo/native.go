@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gitee.com/spock2300/vmake/internal/jsonio"
-	"gitee.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/internal/jsonio"
+	"github.com/spock2300/vmake/pkg/api"
 )
 
 type NativeConfig struct {

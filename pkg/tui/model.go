@@ -4,8 +4,8 @@ import (
 	"sort"
 	"unicode/utf8"
 
-	"gitee.com/spock2300/vmake/pkg/api"
-	"gitee.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/buildscript"
 )
 
 type TreeNode struct {

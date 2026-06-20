@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	iexec "gitee.com/spock2300/vmake/internal/exec"
+	iexec "github.com/spock2300/vmake/internal/exec"
 )
 
 var (

@@ -9,10 +9,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gitee.com/spock2300/vmake/internal/fs"
-	"gitee.com/spock2300/vmake/pkg/plugin"
-	"gitee.com/spock2300/vmake/pkg/repo"
-	"gitee.com/spock2300/vmake/pkg/toolchain"
+	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/pkg/plugin"
+	"github.com/spock2300/vmake/pkg/repo"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 type shellHandler struct {

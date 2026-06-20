@@ -5,13 +5,13 @@ import (
 	"os"
 	"path/filepath"
 
-	"gitee.com/spock2300/vmake/internal/flock"
-	"gitee.com/spock2300/vmake/internal/fs"
-	"gitee.com/spock2300/vmake/internal/toposort"
-	"gitee.com/spock2300/vmake/pkg/api"
-	"gitee.com/spock2300/vmake/pkg/buildscript"
-	vlog "gitee.com/spock2300/vmake/pkg/log"
-	"gitee.com/spock2300/vmake/pkg/repo"
+	"github.com/spock2300/vmake/internal/flock"
+	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/toposort"
+	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/buildscript"
+	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/repo"
 )
 
 type NativePackageInfo struct {

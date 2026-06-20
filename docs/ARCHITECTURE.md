@@ -687,7 +687,7 @@ RootCmd.AddCommand(pluginCmd)     ──▶ 添加到 CLI 命令树
 package main
 
 import (
-    "gitee.com/spock2300/vmake/pkg/plugin"
+    "github.com/spock2300/vmake/pkg/plugin"
     "github.com/spf13/cobra"
 )
 

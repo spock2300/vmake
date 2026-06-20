@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"gitee.com/spock2300/vmake/internal/fs"
-	"gitee.com/spock2300/vmake/internal/jsonio"
+	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/jsonio"
 )
 
 func LoadPluginInfo(pluginDir string) (*Info, error) {

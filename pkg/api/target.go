@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	vlog "gitee.com/spock2300/vmake/pkg/log"
+	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
 type PostLinkStep struct {

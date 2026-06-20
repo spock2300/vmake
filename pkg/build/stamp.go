@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
-	vlog "gitee.com/spock2300/vmake/pkg/log"
-	"gitee.com/spock2300/vmake/pkg/repo"
+	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/repo"
 )
 
 type stampData struct {

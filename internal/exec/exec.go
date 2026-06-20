@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	vlog "gitee.com/spock2300/vmake/pkg/log"
+	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
 type RunOptions struct {

@@ -8,10 +8,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gitee.com/spock2300/vmake/internal/fs"
-	"gitee.com/spock2300/vmake/internal/jsonio"
-	"gitee.com/spock2300/vmake/pkg/api"
-	"gitee.com/spock2300/vmake/pkg/repo"
+	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/jsonio"
+	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/repo"
 )
 
 var manifestCmd = &cobra.Command{

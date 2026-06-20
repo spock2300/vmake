@@ -9,7 +9,7 @@ VMake 使用 Go 插件（`.so`）作为配置语言。项目和第三方包的 `
 ```go
 package main
 
-import "gitee.com/spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
     p.OnRequire(func(ctx *api.RequireContext) { ... })  // 声明依赖
@@ -25,7 +25,7 @@ func Main(p *api.Package) {
 ```go
 package main
 
-import "gitee.com/spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
     p.OnPackage(func(pkg *api.Package) {  // 填充元数据

@@ -25,7 +25,7 @@ myproject/
 ```go
 package main
 
-import "gitee.com/spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
     p.OnConfig(func(ctx *api.ConfigContext) {
@@ -45,7 +45,7 @@ The root `build.go` defines options shared across all sub-packages. It has no `O
 ```go
 package main
 
-import "gitee.com/spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
     p.OnBuild(func(ctx *api.BuildContext) {
@@ -64,7 +64,7 @@ func Main(p *api.Package) {
 ```go
 package main
 
-import "gitee.com/spock2300/vmake/pkg/api"
+import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
     p.OnBuild(func(ctx *api.BuildContext) {

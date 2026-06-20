@@ -3,8 +3,8 @@ package main
 import (
 	"strings"
 
-	vlog "gitee.com/spock2300/vmake/pkg/log"
-	"gitee.com/spock2300/vmake/pkg/toolchain"
+	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/toolchain"
 
 	"github.com/spf13/cobra"
 )

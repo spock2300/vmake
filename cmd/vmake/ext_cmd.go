@@ -8,9 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	vlog "gitee.com/spock2300/vmake/pkg/log"
-	"gitee.com/spock2300/vmake/pkg/plugin"
-	"gitee.com/spock2300/vmake/pkg/toolchain"
+	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/plugin"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 var extCmd = &cobra.Command{

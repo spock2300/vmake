@@ -1,8 +1,8 @@
 package plugin
 
 import (
-	"gitee.com/spock2300/vmake/pkg/toolchain"
 	"github.com/spf13/cobra"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 type Info struct {

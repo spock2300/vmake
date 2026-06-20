@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	vlog "gitee.com/spock2300/vmake/pkg/log"
+	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
 var distCleanCmd = &cobra.Command{
