@@ -75,7 +75,6 @@ type Scheduler struct {
 	origDir           string
 	ccWriter          *CompileCommandsWriter
 	packages          map[string]*api.Package
-	buildKeyOverrides map[string]string
 }
 
 func NewScheduler(
@@ -84,7 +83,6 @@ func NewScheduler(
 	pkgDirs map[string]*api.PkgDirs,
 	mode string,
 	pkgOptions map[string]map[string]any,
-	buildKeyOverrides map[string]string,
 ) (*Scheduler, error) {
 	tools, err := ResolveTools(tc)
 	if err != nil {
@@ -104,26 +102,22 @@ func NewScheduler(
 	ccWriter := NewCompileCommandsWriter(tools)
 
 	s := &Scheduler{
-		graph:             graph,
-		compiler:          compiler,
-		linker:            linker,
-		toolchain:         tc,
-		resolvedTools:     tools,
-		tcName:            tcName,
-		mode:              mode,
-		pkgOptions:        pkgOptions,
-		pkgs:              make(map[string]*PkgInfo),
-		origDir:           origDir,
-		ccWriter:          ccWriter,
-		packages:          make(map[string]*api.Package),
-		buildKeyOverrides: buildKeyOverrides,
+		graph:         graph,
+		compiler:      compiler,
+		linker:        linker,
+		toolchain:     tc,
+		resolvedTools: tools,
+		tcName:        tcName,
+		mode:          mode,
+		pkgOptions:    pkgOptions,
+		pkgs:          make(map[string]*PkgInfo),
+		origDir:       origDir,
+		ccWriter:      ccWriter,
+		packages:      make(map[string]*api.Package),
 	}
 
 	for pkgName, pd := range pkgDirs {
 		buildKey := BuildKey(tools.CC, mode, pkgOptions[pkgName])
-		if override, ok := buildKeyOverrides[pkgName]; ok {
-			buildKey = override
-		}
 		info := &PkgInfo{
 			PkgDirs:  *pd,
 			BuildKey: buildKey,

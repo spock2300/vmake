@@ -96,7 +96,7 @@ func BuildSubGraph(rootPkg string, tc *toolchain.Toolchain, tcName string, mode 
 		return fmt.Errorf("subgraph build graph: %w", err)
 	}
 
-	pipeline := NewBuildPipeline(graph, tc, filteredPkgDirs, mode, filterMap(pkgOptions, subPkgs), nil)
+	pipeline := NewBuildPipeline(graph, tc, filteredPkgDirs, mode, filterMap(pkgOptions, subPkgs))
 
 	for pkgName := range subPkgs {
 		if pkg, ok := params.Packages[pkgName]; ok {

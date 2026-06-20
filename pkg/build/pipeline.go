@@ -9,24 +9,22 @@ import (
 )
 
 type BuildPipeline struct {
-	Graph             *BuildGraph
-	Toolchain         *toolchain.Toolchain
-	PkgDirs           map[string]*api.PkgDirs
-	Mode              string
-	Options           map[string]map[string]any
-	Packages          map[string]*api.Package
-	BuildKeyOverrides map[string]string
+	Graph     *BuildGraph
+	Toolchain *toolchain.Toolchain
+	PkgDirs   map[string]*api.PkgDirs
+	Mode      string
+	Options   map[string]map[string]any
+	Packages  map[string]*api.Package
 }
 
-func NewBuildPipeline(graph *BuildGraph, tc *toolchain.Toolchain, pkgDirs map[string]*api.PkgDirs, mode string, options map[string]map[string]any, buildKeyOverrides map[string]string) *BuildPipeline {
+func NewBuildPipeline(graph *BuildGraph, tc *toolchain.Toolchain, pkgDirs map[string]*api.PkgDirs, mode string, options map[string]map[string]any) *BuildPipeline {
 	return &BuildPipeline{
-		Graph:             graph,
-		Toolchain:         tc,
-		PkgDirs:           pkgDirs,
-		Mode:              mode,
-		Options:           options,
-		Packages:          make(map[string]*api.Package),
-		BuildKeyOverrides: buildKeyOverrides,
+		Graph:     graph,
+		Toolchain: tc,
+		PkgDirs:   pkgDirs,
+		Mode:      mode,
+		Options:   options,
+		Packages:  make(map[string]*api.Package),
 	}
 }
 
@@ -35,7 +33,7 @@ func (p *BuildPipeline) SetPackage(pkgName string, pkg *api.Package) {
 }
 
 func (p *BuildPipeline) Run() (*Scheduler, error) {
-	scheduler, err := NewScheduler(p.Graph, p.Toolchain, p.PkgDirs, p.Mode, p.Options, p.BuildKeyOverrides)
+	scheduler, err := NewScheduler(p.Graph, p.Toolchain, p.PkgDirs, p.Mode, p.Options)
 	if err != nil {
 		return nil, err
 	}

@@ -33,11 +33,6 @@ type BuildResult struct {
 	InstalledPkgs map[string]*api.InstalledPackage
 }
 
-type subGraphFrame struct {
-	pkgs    map[string]bool
-	targets map[string]map[string]*api.Target
-}
-
 type buildPhaseState struct {
 	ctx          *RuntimeContext
 	includeTests bool
@@ -49,10 +44,8 @@ type buildPhaseState struct {
 	allPkgOptions map[string]map[string]any
 	allTargets    map[string]map[string]*api.Target
 	pkgMetaMap    map[string]build.PkgBuildMeta
-	subBuildKeys  map[string]string
 
 	subGraphBuilt map[string]bool
-	subGraphStack []subGraphFrame
 }
 
 type remoteVersionState struct {
@@ -409,8 +402,6 @@ func (s *buildPhaseState) executeOnBuild() {
 		}
 	}
 
-	s.subBuildKeys = make(map[string]string)
-
 	s.executeMainPackages(s.needed)
 
 	for pkgName := range s.subGraphBuilt {
@@ -419,16 +410,12 @@ func (s *buildPhaseState) executeOnBuild() {
 }
 
 func (s *buildPhaseState) executeMainPackages(filter map[string]bool) {
-	targetMap := s.allTargets
-	if len(s.subGraphStack) > 0 {
-		targetMap = s.subGraphStack[len(s.subGraphStack)-1].targets
-	}
 	for _, name := range s.ctx.Resolver.GetOrder() {
 		node := s.ctx.DepGraph.Packages[name]
 		if !filter[name] || node.Pkg == nil {
 			continue
 		}
-		if _, done := targetMap[name]; done {
+		if _, done := s.allTargets[name]; done {
 			continue
 		}
 		s.executeOnePackage(name, node)
@@ -468,10 +455,6 @@ func (s *buildPhaseState) executeOnePackage(name string, node *resolver.PackageN
 	applyBuildContextConfig(buildCtx, node, s.ctx, name)
 
 	s.allTargets[name] = buildCtx.GetTargets()
-	if len(s.subGraphStack) > 0 {
-		frame := &s.subGraphStack[len(s.subGraphStack)-1]
-		frame.targets[name] = s.allTargets[name]
-	}
 }
 
 func (s *buildPhaseState) buildSubGraph(rootPkg string) error {
@@ -480,15 +463,7 @@ func (s *buildPhaseState) buildSubGraph(rootPkg string) error {
 	}
 	s.subGraphBuilt[rootPkg] = true
 
-	subAllTargets := make(map[string]map[string]*api.Target, len(s.allTargets))
-	for k, v := range s.allTargets {
-		subAllTargets[k] = v
-	}
-
-	subPkgs := build.CollectSubGraphPackages(rootPkg, s.pkgMetaMap, subAllTargets, s.needed)
-
-	s.subGraphStack = append(s.subGraphStack, subGraphFrame{pkgs: subPkgs, targets: subAllTargets})
-	defer func() { s.subGraphStack = s.subGraphStack[:len(s.subGraphStack)-1] }()
+	subPkgs := build.CollectSubGraphPackages(rootPkg, s.pkgMetaMap, s.allTargets, s.needed)
 
 	s.executeMainPackages(subPkgs)
 
@@ -506,14 +481,10 @@ func (s *buildPhaseState) buildSubGraph(rootPkg string) error {
 				s.pkgDirs[name] = makeRemotePkgDirs(depsDir, name, subResolvedTools.CC, s.cfg.Mode, s.allPkgOptions[name], s.pkgDirs[name].SourceDir)
 			}
 		}
-		for name := range subPkgs {
-			opts := s.allPkgOptions[name]
-			s.subBuildKeys[name] = build.BuildKey(subResolvedTools.CC, s.cfg.Mode, opts)
-		}
 	}
 
 	params := &build.SubGraphParams{
-		AllTargets: subAllTargets,
+		AllTargets: s.allTargets,
 		PkgMeta:    s.pkgMetaMap,
 		PkgDirs:    s.pkgDirs,
 		Packages:   make(map[string]*api.Package),
@@ -527,26 +498,17 @@ func (s *buildPhaseState) buildSubGraph(rootPkg string) error {
 	}
 
 	if s.includeTests {
-		enableTestDefaults(subAllTargets)
+		enableTestDefaults(s.allTargets)
 	}
 
 	if err := build.BuildSubGraph(rootPkg, subTc, subTcName, s.cfg.Mode, params, s.allPkgOptions); err != nil {
 		return err
 	}
 
-	if targets, ok := subAllTargets[rootPkg]; ok {
-		s.allTargets[rootPkg] = targets
-	}
-
 	return nil
 }
 
 func (s *buildPhaseState) resolveDepTargets(pkgName string) map[string]map[string]*api.Target {
-	for i := len(s.subGraphStack) - 1; i >= 0; i-- {
-		if s.subGraphStack[i].pkgs[pkgName] {
-			return s.subGraphStack[i].targets
-		}
-	}
 	return s.allTargets
 }
 
@@ -616,7 +578,7 @@ func (s *buildPhaseState) buildAndRunPipeline() (*BuildResult, error) {
 		vlog.Info("  - %s", fullName)
 	}
 
-	pipeline := build.NewBuildPipeline(graph, s.cfg.Tc, s.pkgDirs, s.cfg.Mode, s.allPkgOptions, s.subBuildKeys)
+	pipeline := build.NewBuildPipeline(graph, s.cfg.Tc, s.pkgDirs, s.cfg.Mode, s.allPkgOptions)
 
 	for _, name := range s.ctx.Resolver.GetOrder() {
 		node := s.ctx.DepGraph.Packages[name]
