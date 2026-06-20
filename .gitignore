@@ -1,5 +1,6 @@
 bin/
 **/build/
+!pkg/build/
 **/install/
 .vmake
 .cache
