@@ -4,7 +4,6 @@ type TargetRegistry struct {
 	targets         map[string]*Target
 	defaultCFlags   []string
 	defaultCxxFlags []string
-	defaultLdFlags  []string
 }
 
 func NewTargetRegistry() *TargetRegistry {
@@ -13,10 +12,9 @@ func NewTargetRegistry() *TargetRegistry {
 	}
 }
 
-func (r *TargetRegistry) SetDefaultFlags(cflags, cxxflags, ldflags []string) {
+func (r *TargetRegistry) SetDefaultFlags(cflags, cxxflags []string) {
 	r.defaultCFlags = append([]string{}, cflags...)
 	r.defaultCxxFlags = append([]string{}, cxxflags...)
-	r.defaultLdFlags = append([]string{}, ldflags...)
 }
 
 func (r *TargetRegistry) Target(name string) *Target {
@@ -29,7 +27,7 @@ func (r *TargetRegistry) Target(name string) *Target {
 		isDefault: true,
 		cflags:    append([]string{}, r.defaultCFlags...),
 		cxxflags:  append([]string{}, r.defaultCxxFlags...),
-		ldflags:   append([]string{}, r.defaultLdFlags...),
+		ldflags:   nil,
 	}
 	r.targets[name] = t
 	return t

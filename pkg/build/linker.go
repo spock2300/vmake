@@ -98,13 +98,14 @@ func (l *Linker) LinkShared(objs, ldflags []string, outputPath string) error {
 	return err
 }
 
-func (l *Linker) LinkObject(objs []string, outputPath string) error {
+func (l *Linker) LinkObject(objs, ldflags []string, outputPath string) error {
 	if err := fs.EnsureParentDir(outputPath); err != nil {
 		return err
 	}
 
 	args := []string{"-r", "-o", outputPath}
 	args = append(args, objs...)
+	args = append(args, ldflags...)
 
 	_, err := iexec.Run(l.ccPath, args...)
 	return err
