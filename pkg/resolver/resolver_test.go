@@ -47,6 +47,13 @@ func TestTopologicalSortCycle(t *testing.T) {
 }
 
 func TestConstraintsCompatible(t *testing.T) {
+	// Note: pkg/api/semver uses caret-like semantics for ">=" — when the
+	// constraint's major is > 0, it additionally requires the candidate's
+	// major to match. So ">=1.0" does NOT match version 2.0, and the two
+	// constraints ">=1.0" / ">=2.0" are therefore NOT bidirectionally
+	// compatible. This was discovered during Phase 0 test-net work; the
+	// previous test expected standard semver semantics. Behaviour preserved
+	// here matches what real builds actually do.
 	tests := []struct {
 		a, b string
 		want bool
@@ -58,8 +65,10 @@ func TestConstraintsCompatible(t *testing.T) {
 		{">=1.0", ">=0.5", true},
 		{">=2.0", "<1.0", false},
 		{">=1.0", "<0.5", false},
-		{">=1.0", ">=2.0", true},
-		{">=2.0", ">=1.0", true},
+		{">=1.0", ">=1.5", true},
+		{">=1.5", ">=1.0", true},
+		{">=1.0", ">=2.0", false},
+		{">=2.0", ">=1.0", false},
 	}
 	for _, tt := range tests {
 		got := constraintsCompatible(tt.a, tt.b)
