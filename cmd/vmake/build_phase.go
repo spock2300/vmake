@@ -446,8 +446,7 @@ func (s *buildPhaseState) executeOnePackage(name string, node *resolver.PackageN
 	})
 
 	if node.Pkg != nil && s.cfg.Tc != nil {
-		buildCtx.SetDefaultFlags(s.cfg.Tc.DefaultFlags.CFlags, s.cfg.Tc.DefaultFlags.CxxFlags)
-		toolchain.GetManager().AddGlobalLdFlags(s.cfg.Tc.DefaultFlags.LdFlags...)
+		buildCtx.SetDefaultFlags(s.cfg.Tc.DefaultFlags.CFlags, s.cfg.Tc.DefaultFlags.CxxFlags, s.cfg.Tc.DefaultFlags.LdFlags)
 		pkg := node.Pkg
 		allOpts := s.ctx.AllOptions[name]
 		if allOpts == nil {

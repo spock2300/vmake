@@ -696,7 +696,7 @@ func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) error
 		if len(allObjs) == 0 {
 			return fmt.Errorf("object target requires at least one source file")
 		}
-		return s.linker.LinkObject(allObjs, resolved.Node.Target.LdFlags(), resolved.OutputPath)
+		return s.linker.LinkObject(allObjs, resolved.OutputPath)
 	case api.TargetVoid:
 		return s.buildVoidTarget(resolved)
 	default:
