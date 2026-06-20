@@ -18,7 +18,7 @@ import (
 
 const (
 	snapshotDir  = "test_data/_snapshot"
-	baselineName  = "baseline"
+	baselineName = "baseline"
 	updateEnvKey = "VMAKE_SNAPSHOT_UPDATE"
 )
 
@@ -48,18 +48,18 @@ type manifestEntry struct {
 }
 
 type redactedManifest struct {
-	Toolchain string           `json:"toolchain"`
-	Mode      string           `json:"mode"`
-	Packages  []manifestEntry  `json:"packages"`
+	Toolchain string          `json:"toolchain"`
+	Mode      string          `json:"mode"`
+	Packages  []manifestEntry `json:"packages"`
 }
 
 type snapshot struct {
-	Project       string      `json:"project"`
-	BuildArgs     []string    `json:"build_args"`
-	Manifest      redactedManifest `json:"manifest"`
-	InstallFiles  []fileEntry `json:"install_files"`
-	BuildFiles    []fileEntry `json:"build_files"`
-	InstallTreeHash string   `json:"install_tree_hash"`
+	Project         string           `json:"project"`
+	BuildArgs       []string         `json:"build_args"`
+	Manifest        redactedManifest `json:"manifest"`
+	InstallFiles    []fileEntry      `json:"install_files"`
+	BuildFiles      []fileEntry      `json:"build_files"`
+	InstallTreeHash string           `json:"install_tree_hash"`
 }
 
 type project struct {

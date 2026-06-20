@@ -63,18 +63,18 @@ func (pi *PkgInfo) GeneratedDir() string {
 }
 
 type Scheduler struct {
-	graph             *BuildGraph
-	compiler          *Compiler
-	linker            *Linker
-	toolchain         *toolchain.Toolchain
-	resolvedTools     *ResolvedTools
-	tcName            string
-	mode              string
-	pkgOptions        map[string]map[string]any
-	pkgs              map[string]*PkgInfo
-	origDir           string
-	ccWriter          *CompileCommandsWriter
-	packages          map[string]*api.Package
+	graph         *BuildGraph
+	compiler      *Compiler
+	linker        *Linker
+	toolchain     *toolchain.Toolchain
+	resolvedTools *ResolvedTools
+	tcName        string
+	mode          string
+	pkgOptions    map[string]map[string]any
+	pkgs          map[string]*PkgInfo
+	origDir       string
+	ccWriter      *CompileCommandsWriter
+	packages      map[string]*api.Package
 }
 
 func NewScheduler(
