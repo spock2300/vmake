@@ -365,12 +365,12 @@ type PkgDirs struct { SourceDir, BuildDir, InstallDir string }
 - Subgraph builds inside `executeAllOnBuild` activate tests via `includeTests` parameter
 
 ## Known Gotchas
-- `cmd/vmake/mainfest_cmd.go` — filename is misspelled ("mainfest" not "manifest"), do NOT rename
+- `cmd/vmake/manifest_cmd.go` — was historically misspelled as `mainfest_cmd.go`; renamed in Phase 1 cleanup. References to the old name in older docs/scripts should be updated.
 - `vlog` has `Debug`, `Info`, `Error`, `Fatal` — no `Warn` method
 - `test_data/09_with_curl` and `test_data/10_local_repo` have pre-existing failures unrelated to code changes
 - `exec.Command` doesn't expand shell features — `$(nproc)` won't work, must use `runtime.NumCPU()`
 - Go 1.26 `filepath.Join("/a/b", "/a/b/c")` returns `/a/b/a/b/c` — NOT `/a/b/c`
-- `collectNeeded` must use BFS from `IsLocal()` roots — NOT `node.Pkg != nil` and NOT full graph mark-all
+- `computeReachable` must use BFS from `IsLocal()` roots — NOT `node.Pkg != nil` and NOT full graph mark-all
 - `tea.ExecProcess` (takes `*exec.Cmd`) vs `tea.Exec` (takes `tea.ExecCommand` interface) — use `ExecProcess` for external interactive commands
 - `busybox` kconfig has no `olddefconfig` — only `oldconfig`, `defconfig`, `allnoconfig`
 - `vmake_deps/` is in `scanner.go`'s `skipDirs` — build.go scanner will not recurse into it

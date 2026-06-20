@@ -10,7 +10,7 @@ Phase 1: OnRequire
     │
     [afterPhase1 钩子：manifest 版本锁定]
     │
-Phase 2: 配置准备 (runPostPhase1)
+Phase 2: 配置准备 (runConfigurePhase)
     ├── 2a: ResolveDeferred — 解析延迟依赖（远程包）→ 更新拓扑排序
     └── 2b: OnConfig — 执行 OnConfig 回调 → 收集 Option 定义 → 合并全局选项
     │

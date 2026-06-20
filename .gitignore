@@ -26,3 +26,4 @@ test_linux/17_firmware/linux/zImage
 test_linux/17_firmware/linux/arch/dts/board.dtb
 test_linux/17_firmware/uboot/.config
 test_linux/17_firmware/uboot/u-boot.bin
+test_data/a.log

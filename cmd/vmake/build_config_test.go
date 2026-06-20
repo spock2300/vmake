@@ -38,7 +38,7 @@ func remoteNode(name string, deps ...string) *resolver.PackageNode {
 
 func TestCollectNeededEmptyGraph(t *testing.T) {
 	graph := &resolver.Graph{Packages: map[string]*resolver.PackageNode{}}
-	needed := collectNeeded(graph)
+	needed := computeReachable(graph)
 	if len(needed) != 0 {
 		t.Errorf("empty graph should produce empty needed, got %v", needed)
 	}
@@ -54,7 +54,7 @@ func TestCollectNeededSingleRootExplicit(t *testing.T) {
 			"lib": lib,
 		},
 	}
-	needed := collectNeeded(graph)
+	needed := computeReachable(graph)
 	if len(needed) != 1 {
 		t.Fatalf("with explicit root, only root should be seed: got %v", needed)
 	}
@@ -75,7 +75,7 @@ func TestCollectNeededBFSFromRoot(t *testing.T) {
 			"remote-pkg": remote,
 		},
 	}
-	needed := collectNeeded(graph)
+	needed := computeReachable(graph)
 	if !needed["app"] || !needed["lib"] || !needed["remote-pkg"] {
 		t.Errorf("BFS should reach all deps: got %v", needed)
 	}
@@ -91,7 +91,7 @@ func TestCollectNeededExcludesUnreachable(t *testing.T) {
 			"orphan": orphan,
 		},
 	}
-	needed := collectNeeded(graph)
+	needed := computeReachable(graph)
 	if needed["orphan"] {
 		t.Error("orphan (no one depends on it) should not be needed")
 	}
@@ -101,7 +101,7 @@ func TestCollectNeededExcludesUnreachable(t *testing.T) {
 }
 
 func TestCollectNeededLibraryOnlyStillPulledInViaBFS(t *testing.T) {
-	// Per collectNeeded logic (build_config.go:61-66), library-only packages
+	// Per computeReachable logic (build_config.go:61-66), library-only packages
 	// (no OnRequire + depended-on by local) are excluded from SEEDS, but they
 	// are still pulled into the needed set via BFS from the consumer that
 	// depends on them. The exclusion only affects which packages start the BFS.
@@ -114,7 +114,7 @@ func TestCollectNeededLibraryOnlyStillPulledInViaBFS(t *testing.T) {
 			"lib": libraryOnly,
 		},
 	}
-	needed := collectNeeded(graph)
+	needed := computeReachable(graph)
 	if !needed["app"] {
 		t.Error("consumer with requires should be needed")
 	}

@@ -14,7 +14,7 @@ import (
 	"github.com/spock2300/vmake/pkg/resolver"
 )
 
-func collectNeeded(graph *resolver.Graph) map[string]bool {
+func computeReachable(graph *resolver.Graph) map[string]bool {
 	needed := make(map[string]bool, len(graph.Packages))
 	var queue []string
 

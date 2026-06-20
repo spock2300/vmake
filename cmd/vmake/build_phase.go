@@ -160,7 +160,7 @@ func filterAndCollectNeeded(ctx *RuntimeContext) map[string]bool {
 		vlog.Fatal("dependency cycle: %v", err)
 	}
 
-	needed := collectNeeded(ctx.DepGraph)
+	needed := computeReachable(ctx.DepGraph)
 
 	return needed
 }

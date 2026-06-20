@@ -63,7 +63,7 @@ func runCheckSymbols(strict bool) {
 	if err != nil {
 		vlog.Fatal("resolve tools: %v", err)
 	}
-	allOpts := collectAllPkgOptions(ctx, collectNeeded(ctx.DepGraph))
+	allOpts := collectAllPkgOptions(ctx, computeReachable(ctx.DepGraph))
 	for name, node := range ctx.DepGraph.Packages {
 		if node == nil || node.Source == nil || !node.IsLocal() {
 			continue

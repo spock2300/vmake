@@ -107,7 +107,7 @@ func mustInitContext() *RuntimeContext {
 	return ctx
 }
 
-func runPostPhase1(ctx *RuntimeContext) {
+func runConfigurePhase(ctx *RuntimeContext) {
 	fatalErr(ctx.Resolver.ResolveDeferred())
 	fatalErr(ctx.Resolver.UpdateOrder())
 	fatalErr(runConfigPhase(ctx))
@@ -117,7 +117,7 @@ func resolveToConfig(force bool) *RuntimeContext {
 	ctx := mustInitContext()
 	ensureGitignore(findProjectDir())
 	fatalErr(runRequirePhase(ctx, force))
-	runPostPhase1(ctx)
+	runConfigurePhase(ctx)
 	return ctx
 }
 
@@ -127,7 +127,7 @@ func resolveToConfigBestEffort(force bool) (*RuntimeContext, bool) {
 	if err := runRequirePhase(ctx, force); err != nil {
 		return ctx, false
 	}
-	runPostPhase1(ctx)
+	runConfigurePhase(ctx)
 	return ctx, true
 }
 
