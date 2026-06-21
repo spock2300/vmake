@@ -88,10 +88,9 @@ func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScri
 		}
 	}
 
-	args = append(args, objFiles...)
-
-	if len(libFiles) > 0 || len(libs) > 0 || len(groupFlags) > 0 {
+	if len(objFiles) > 0 || len(libFiles) > 0 || len(libs) > 0 || len(groupFlags) > 0 {
 		args = append(args, "-Wl,--start-group")
+		args = append(args, objFiles...)
 		if len(libFiles) > 0 {
 			args = append(args, "-Wl,--whole-archive")
 			args = append(args, libFiles...)

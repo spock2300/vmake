@@ -733,10 +733,10 @@ func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) (bool
 		return err == nil, err
 	case api.TargetObject:
 		vlog.Info("  LD -r %s", outputName)
-		if len(allObjs) == 0 {
+		if len(objs) == 0 {
 			return false, fmt.Errorf("object target requires at least one source file")
 		}
-		err := s.linker.LinkObject(allObjs, resolved.OutputPath)
+		err := s.linker.LinkObject(objs, resolved.OutputPath)
 		return err == nil, err
 	case api.TargetVoid:
 		err := s.buildVoidTarget(resolved)
