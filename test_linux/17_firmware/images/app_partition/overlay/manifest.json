@@ -1,0 +1,6 @@
+{
+  "format": "app-partition-v1",
+  "apps": ["webapp", "sensordaemon", "controlpanel"],
+  "libs": ["libcore.so", "libnet.so"],
+  "min_compat_core": 100
+}

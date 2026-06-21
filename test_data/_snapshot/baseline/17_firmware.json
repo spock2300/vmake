@@ -19,29 +19,59 @@
         "path": "busybox"
       },
       {
+        "name": "configs",
+        "source": "local",
+        "path": "configs"
+      },
+      {
+        "name": "libcore",
+        "source": "local",
+        "path": "libs/libcore"
+      },
+      {
+        "name": "libnet",
+        "source": "local",
+        "path": "libs/libnet"
+      },
+      {
+        "name": "controlpanel",
+        "source": "local",
+        "path": "apps/controlpanel"
+      },
+      {
         "name": "linux",
         "source": "local",
         "path": "linux"
       },
       {
-        "name": "myapp",
+        "name": "sensordaemon",
         "source": "local",
-        "path": "myapp"
+        "path": "apps/sensordaemon"
       },
       {
-        "name": "app",
+        "name": "recovery_rootfs",
         "source": "local",
-        "path": "app"
-      },
-      {
-        "name": "rootfs",
-        "source": "local",
-        "path": "rootfs"
+        "path": "images/recovery_rootfs"
       },
       {
         "name": "uboot",
         "source": "local",
         "path": "uboot"
+      },
+      {
+        "name": "webapp",
+        "source": "local",
+        "path": "apps/webapp"
+      },
+      {
+        "name": "app_partition",
+        "source": "local",
+        "path": "images/app_partition"
+      },
+      {
+        "name": "main_rootfs",
+        "source": "local",
+        "path": "images/main_rootfs"
       },
       {
         "name": "firmware",
@@ -52,9 +82,29 @@
   },
   "install_files": [
     {
-      "path": "bin/myapp",
-      "size": 17369,
-      "hash": "9cb2608a49dabb115447a2ed826d3445d4abca18f970fbc78b6f6096f5e08dd8"
+      "path": "bin/controlpanel",
+      "size": 19861,
+      "hash": "7ee5ece7ed97398e8e9929c1de110298cf92fbdf662a629d5e69df3fbad04070"
+    },
+    {
+      "path": "bin/sensordaemon",
+      "size": 20139,
+      "hash": "c913905d147ded27293e51caf2279734252d1261d83b0f8f8c7006514dd4d04b"
+    },
+    {
+      "path": "bin/webapp",
+      "size": 20965,
+      "hash": "db4d6c4dff3f5c5a13eec68f0e1aeb42125975150471b52d3392010482c4ed5c"
+    },
+    {
+      "path": "lib/libcore.so",
+      "size": 18993,
+      "hash": "e262ce21c6d2e52a22d0794bb042f63c65e1a9ab42fbc2cfb03d65dc0ca62b23"
+    },
+    {
+      "path": "lib/libnet.so",
+      "size": 20539,
+      "hash": "606e75cecc83fd19a5361be437bdeeeb2a6481ce270924fa7c1782ae414dc455"
     }
   ],
   "build_files": [
@@ -64,5 +114,5 @@
       "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
     }
   ],
-  "install_tree_hash": "034f7216ae401fe5232b63c188fc86de67597d4fd0c562e4baccb74a082b91e4"
+  "install_tree_hash": "5f6ebaad79e7e0ee27f3b27bd4d7aead5afb0e369eb2a02fb1c3693a30ffe4f3"
 }
