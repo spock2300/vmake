@@ -110,7 +110,6 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 - `target.SetVersionScript("file.map")` valid only on `TargetShared`/`TargetBinary` — scheduler returns error otherwise. Path resolved against package SourceDir. Adds `-Wl,--version-script=` to link command
 - `target.SetExcludeLibs("libfoo")` adds `-Wl,--exclude-libs=`. GNU ld quirk: matches the full archive basename minus `.a`, so use `libfoo` form (with `lib` prefix), not `foo`
 - `target.SetSymbolBinding("static"|"static-functions")` adds `-Wl,-Bsymbolic` or `-Wl,-Bsymbolic-functions`
-- `target.SetExpectedExports(syms...)` is purely an audit assertion — does NOT affect build. Verified by `vmake check-symbols [--strict]`
 - `target.SetSymbolPrefix("pfx_")` appends post-link `objcopy --prefix-symbols=pfx_` step. Implemented via existing AddPostLink mechanism
 - `LinkShared` strips `-pie`/`-no-pie` from ldflags (incompatible with `-shared`)
 - `LinkPolicy` struct in `pkg/build/linker.go` carries VersionScript/ExcludeLibs/SymbolBinding across scheduler→linker boundary
@@ -316,7 +315,7 @@ Methods on `CleanContext`:
 - `vmake distclean` — deep clean: local build dirs, build.so, go.mod/go.sum, install/, `vmake_deps/`
 - `vmake config` — interactive TUI for build options
 - `vmake query` — show dependency tree (uses `newQueryCmd` factory, registered in root.go init)
-- `vmake check-symbols [--strict]` — audit exported symbols of built Shared/Binary targets against `SetExpectedExports`; reports missing/unexpected exports and cross-target duplicates; `--strict` exits non-zero
+- `vmake check-symbols [--strict]` — scan all built Shared/Binary outputs via `nm -D` and report: cross-target duplicate exports, C++ mangled leaks (`_Z*`), reserved-prefix leaks (`__libc_*` etc.), version-script violations (when `SetVersionScript` is set), and missing version-script warnings. No per-target declaration required. `--strict` exits non-zero on warn/error findings (info-level still passes)
 - `vmake git tag [--minor|--major] [version]` — create version tag, update latest, push (for native repos)
 - `vmake completion [bash|zsh|fish|powershell|install]` — generate shell completion
 - `vmake ext add/remove/list/update` — manage extension repos that contain plugins and toolchain manifests

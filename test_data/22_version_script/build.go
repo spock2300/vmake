@@ -12,8 +12,7 @@ func Main(p *api.Package) {
 			SetKind(api.TargetShared).
 			AddFiles("src/foo_api.c", "src/foo_internal.c").
 			AddPublicIncludes("include").
-			SetVersionScript("export.map").
-			SetExpectedExports("foo_api", "foo_init")
+			SetVersionScript("export.map")
 
 		ctx.Target("app").
 			SetKind(api.TargetBinary).

@@ -17,14 +17,6 @@ func Main(p *api.Package) {
 			AddCFlags("-fPIC").
 			AddDeps("libcore:core").
 			AddLdFlags(libcoreSo).
-			SetExcludeLibs("libcore").
-			SetExpectedExports(
-				"net_init",
-				"net_listen_and_serve",
-				"net_send",
-				"net_recv",
-				"net_close",
-				"net_last_error",
-			)
+			SetExcludeLibs("libcore")
 	})
 }

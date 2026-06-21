@@ -7,10 +7,11 @@ existing projects. All changes are detected by `vmake doctor` — run it first.
 
 ```bash
 vmake doctor
+vmake check-symbols
 ```
 
-Reports `autoWire` warnings and `noRoot` warnings. Address each before
-upgrading.
+`doctor` reports `autoWire` warnings and `noRoot` warnings. `check-symbols`
+now runs pure `nm` auto-detection (no per-target declaration needed).
 
 ## 1. `autoWireRequireDeps` Removed (breaking)
 
@@ -142,3 +143,40 @@ packages that actually declared deps via `AddRequires`.
 No. The No-Fallbacks principle (AGENTS.md) requires that build intent be
 explicit. If you find yourself repeatedly typing the same `AddDeps`, factor
 the pattern into a helper in your build.go.
+
+## 4. `SetExpectedExports` Removed (breaking)
+
+### Before
+
+Targets declared expected exported symbols via `SetExpectedExports`, and
+`vmake check-symbols` compared the declared list against actual `nm` output:
+
+```go
+ctx.Target("libfoo").
+    SetKind(api.TargetShared).
+    SetVersionScript("foo.map").
+    SetExpectedExports("foo_api", "foo_init", "foo_cleanup")  // redundant
+```
+
+### After
+
+`SetExpectedExports` has been removed entirely. `vmake check-symbols` now
+does **pure `nm` auto-detection** — no per-target declaration required.
+
+Detection covers:
+
+- **duplicate-export**: same symbol exported by multiple `.so`/binaries
+- **mangled-leak**: C++ Itanium-mangled symbols (`_Z*`) in any artifact
+- **reserved-prefix**: glibc/runtime internal leaks (`__libc_*`, `_IO_*`, `_Jv_*`, `__cxa_*`)
+- **version-script-violation**: when `SetVersionScript` is set, actual exports are verified against the `.map` `global:` section
+- **no-version-script** (info): `TargetShared` without a version-script
+
+### Migration Steps
+
+1. Remove all `SetExpectedExports(...)` calls from your `build.go` files.
+2. Run `vmake check-symbols` — it now scans all built Shared/Binary targets automatically.
+3. For strict per-target export control, rely on `SetVersionScript` (the linker's
+   source of truth) rather than re-declaring in Go.
+4. Use `vmake check-symbols --strict` in CI to fail on duplicate exports,
+   mangled leaks, reserved-prefix leaks, and version-script violations.
+

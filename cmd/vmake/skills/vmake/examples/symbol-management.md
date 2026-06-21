@@ -26,7 +26,6 @@ The fix is layered: **default hidden → declare exports → link policy → aud
 | 1. Default hidden | `-fvisibility=hidden` + `-fvisibility-inlines-hidden` | 90% of leaks — all symbols default to non-exported | `ctx.SetDefaultVisibilityHidden()` |
 | 2. Declare exports | version-script on shared libs | Declarative public API surface | `target.SetVersionScript("foo.map")` |
 | 3. Link policy | `--exclude-libs`, `-Bsymbolic` | Static archive absorption; internal binding | `target.SetExcludeLibs(...)`, `target.SetSymbolBinding("static")` |
-| 4. Audit | scan `.dynsym` against expectations | Catch unexpected exports / conflicts | `target.SetExpectedExports(...)`, `vmake check-symbols` |
 | 5. Prefix isolation | `objcopy --prefix-symbols=` | Force namespace onto third-party C code | `target.SetSymbolPrefix("vendor_")` |
 
 Layer 1 is the foundation. Without default-hidden visibility, version-scripts
@@ -182,7 +181,6 @@ ctx.Target("libfoo").
     SetKind(api.TargetShared).
     AddFiles("src/*.c").
     SetVersionScript("export.map").
-    SetExpectedExports("foo_api", "foo_init", "foo_shutdown")
 ```
 
 ```bash
@@ -200,7 +198,6 @@ Output flags:
 `--strict` exits non-zero on any discrepancy (for CI). Without it, the report
 is informational.
 
-`SetExpectedExports` is purely an audit assertion — it does NOT affect the
 build itself. The version script remains the source of truth for what's
 actually exported.
 
@@ -242,7 +239,6 @@ func Main(p *api.Package) {
             AddPublicIncludes("include").
             SetVersionScript("export.map").        /* Layer 2: declare */
             SetSymbolBinding("static").            /* Layer 3: bind */
-            SetExpectedExports("foo_api", "foo_init", "foo_shutdown")  /* Layer 4 */
     })
 }
 ```

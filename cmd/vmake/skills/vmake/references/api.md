@@ -186,8 +186,7 @@ All setters are fluent (return `*Target`).
 | `SetVersionScript` | `(path string)` | Version script for symbol visibility (Shared/Binary only; fatal on double-set) |
 | `SetExcludeLibs` | `(libs ...string)` | Strip symbols from absorbed static archives via `-Wl,--exclude-libs=` |
 | `SetSymbolBinding` | `(mode string)` | `"static"` → `-Bsymbolic`; `"static-functions"` → `-Bsymbolic-functions` |
-| `SetExpectedExports` | `(syms ...string)` | Audit assertion (no build effect; verified by `vmake check-symbols`) |
-| `SetSymbolPrefix` | `(prefix string)` | Append post-link `objcopy --prefix-symbols=` step (fatal on double-set) |
+| `SetSymbolPrefix` | `(prefix string)` | Post-link `objcopy --prefix-symbols=` (fatal on double-set) |
 | `UseDependencyLinkerScript` | `()` | Auto-inherit linker script from dependency |
 | `AddPostLink` | `(tool string, args ...string)` | Post-link step: `{output}` placeholder |
 | `AddPostLinkHex` | `()` | `objcopy -O ihex {output} {output}.hex` |

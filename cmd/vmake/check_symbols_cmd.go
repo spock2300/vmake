@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -20,36 +21,49 @@ func newCheckSymbolsCmd() *cobra.Command {
 	var strict bool
 	cmd := &cobra.Command{
 		Use:   "check-symbols",
-		Short: "Audit exported symbols of shared libraries and binaries",
-		Long: `Verify that build artifacts export only the symbols declared via
-target.SetExpectedExports(...). Also reports duplicate exports across
-libraries in the build graph.
+		Short: "Audit exported symbols of shared libraries and binaries via nm",
+		Long: `Scan all built TargetShared and TargetBinary outputs using 'nm -D' and
+report issues automatically — no per-target declaration required.
+
+Detection categories:
+  duplicate-export         Same symbol exported by multiple targets (runtime conflict risk)
+  mangled-leak             C++ mangled symbol (_Z*) leaked into a C library or binary
+  reserved-prefix          glibc/runtime internal symbol leaked (__libc_*, _IO_*, _Jv_*, ...)
+  version-script-violation Target has SetVersionScript but exports symbols not in the .map
+  no-version-script        TargetShared without version-script (info; --strict fails on this)
 
 Requires a successful build first; scans existing build/ outputs.`,
 		Run: func(cmd *cobra.Command, args []string) {
 			runCheckSymbols(strict)
 		},
 	}
-	cmd.Flags().BoolVar(&strict, "strict", false, "exit non-zero on any discrepancy")
+	cmd.Flags().BoolVar(&strict, "strict", false, "exit non-zero on any non-info finding")
 	return cmd
 }
 
-type targetAudit struct {
-	pkgName    string
-	targetName string
-	outputPath string
-	expected   []string
+type scanArtifact struct {
+	pkgName       string
+	targetName    string
+	outputPath    string
+	kind          api.TargetKind
+	versionScript string
+	exports       []string
 }
 
-type auditFinding struct {
-	pkgTarget string
-	category  string
-	symbol    string
-	detail    string
+type finding struct {
+	category string
+	severity string
+	subject  string
+	symbol   string
+	detail   string
 }
 
 func runCheckSymbols(strict bool) {
 	vlog.SetLevel(vlog.Quiet)
+
+	if _, err := exec.LookPath("nm"); err != nil {
+		vlog.Fatal("check-symbols requires 'nm' on PATH (binutils)")
+	}
 
 	ctx := resolveToConfig(false)
 	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
@@ -71,95 +85,53 @@ func runCheckSymbols(strict bool) {
 		pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, resolvedTools.CC, cfg.Mode, allOpts[name])
 	}
 
-	audits := collectExpectedExports(ctx, pkgDirs, globalValues)
-	if len(audits) == 0 {
-		fmt.Println("No targets with SetExpectedExports found. Nothing to audit.")
+	artifacts := discoverArtifacts(ctx, pkgDirs, globalValues)
+	if len(artifacts) == 0 {
+		fmt.Println("No built Shared/Binary targets found. Run 'vmake build' first.")
 		return
 	}
 
-	var findings []auditFinding
-	exportOwners := make(map[string][]string)
+	var findings []finding
 
-	for _, a := range audits {
+	for i := range artifacts {
+		a := &artifacts[i]
 		if _, err := os.Stat(a.outputPath); err != nil {
-			findings = append(findings, auditFinding{
-				pkgTarget: a.pkgName + ":" + a.targetName,
-				category:  "missing-artifact",
-				detail:    fmt.Sprintf("build output not found: %s (run 'vmake build' first)", a.outputPath),
+			findings = append(findings, finding{
+				category: "missing-artifact",
+				severity: "error",
+				subject:  a.pkgName + ":" + a.targetName,
+				detail:   fmt.Sprintf("build output not found: %s", a.outputPath),
 			})
 			continue
 		}
-
-		actual, err := readExports(a.outputPath)
+		exports, err := readExports(a.outputPath)
 		if err != nil {
-			findings = append(findings, auditFinding{
-				pkgTarget: a.pkgName + ":" + a.targetName,
-				category:  "tool-error",
-				detail:    err.Error(),
+			findings = append(findings, finding{
+				category: "tool-error",
+				severity: "error",
+				subject:  a.pkgName + ":" + a.targetName,
+				detail:   err.Error(),
 			})
 			continue
 		}
-
-		actualSet := make(map[string]bool, len(actual))
-		for _, s := range actual {
-			actualSet[s] = true
-		}
-		expectedSet := make(map[string]bool, len(a.expected))
-		for _, s := range a.expected {
-			expectedSet[s] = true
-		}
-
-		for _, sym := range a.expected {
-			if !actualSet[sym] {
-				findings = append(findings, auditFinding{
-					pkgTarget: a.pkgName + ":" + a.targetName,
-					category:  "missing-export",
-					symbol:    sym,
-				})
-			}
-		}
-
-		unexpected := make([]string, 0)
-		for _, sym := range actual {
-			if !expectedSet[sym] {
-				unexpected = append(unexpected, sym)
-			}
-		}
-		sort.Strings(unexpected)
-		for _, sym := range unexpected {
-			findings = append(findings, auditFinding{
-				pkgTarget: a.pkgName + ":" + a.targetName,
-				category:  "unexpected-export",
-				symbol:    sym,
-			})
-		}
-
-		for _, sym := range actual {
-			exportOwners[sym] = append(exportOwners[sym], a.pkgName+":"+a.targetName)
-		}
+		a.exports = exports
 	}
 
-	for sym, owners := range exportOwners {
-		if len(owners) > 1 {
-			sort.Strings(owners)
-			findings = append(findings, auditFinding{
-				category: "duplicate-export",
-				symbol:   sym,
-				detail:   strings.Join(owners, ", "),
-			})
-		}
-	}
+	findings = append(findings, detectMangledLeaks(artifacts)...)
+	findings = append(findings, detectReservedPrefixes(artifacts)...)
+	findings = append(findings, detectVersionScriptViolations(artifacts)...)
+	findings = append(findings, detectNoVersionScript(artifacts)...)
+	findings = append(findings, detectDuplicateExports(artifacts)...)
 
-	reportFindings(findings)
+	reportFindings(findings, len(artifacts))
 
-	if strict && len(findings) > 0 {
+	if strict && hasStrictFindings(findings) {
 		os.Exit(1)
 	}
 }
 
-func collectExpectedExports(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, globalValues map[string]any) []targetAudit {
-	var audits []targetAudit
-
+func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, globalValues map[string]any) []scanArtifact {
+	var out []scanArtifact
 	for name, node := range ctx.DepGraph.Packages {
 		if node == nil || node.Pkg == nil || !node.IsLocal() {
 			continue
@@ -168,38 +140,36 @@ func collectExpectedExports(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs
 		if dirs == nil {
 			continue
 		}
-
 		buildCtx := newBuildContext(ctx, name, globalValues)
 		buildCtx.SetDryRun(true)
-		node.Pkg.ExecBuildFuncs(dirs.SourceDir, func(fn api.BuildFunc) {
-			fn(buildCtx)
-		})
+		node.Pkg.ExecBuildFuncs(dirs.SourceDir, func(fn api.BuildFunc) { fn(buildCtx) })
 
 		for _, t := range buildCtx.GetTargets() {
-			exp := t.ExpectedExports()
-			if len(exp) == 0 {
-				continue
-			}
 			kind := t.Kind()
 			if kind != api.TargetShared && kind != api.TargetBinary {
 				continue
 			}
-			audits = append(audits, targetAudit{
-				pkgName:    name,
-				targetName: t.Name(),
-				outputPath: findBuiltOutput(dirs.BuildDir, string(kind.Prefix())+t.Name()+string(kind.Ext())),
-				expected:   append([]string{}, exp...),
+			if !t.IsDefault() {
+				continue
+			}
+			filename := string(kind.Prefix()) + t.Name() + string(kind.Ext())
+			outputPath := findBuiltOutput(dirs.BuildDir, filename)
+			out = append(out, scanArtifact{
+				pkgName:       name,
+				targetName:    t.Name(),
+				outputPath:    outputPath,
+				kind:          kind,
+				versionScript: t.VersionScript(),
 			})
 		}
 	}
-
-	sort.Slice(audits, func(i, j int) bool {
-		if audits[i].pkgName != audits[j].pkgName {
-			return audits[i].pkgName < audits[j].pkgName
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].pkgName != out[j].pkgName {
+			return out[i].pkgName < out[j].pkgName
 		}
-		return audits[i].targetName < audits[j].targetName
+		return out[i].targetName < out[j].targetName
 	})
-	return audits
+	return out
 }
 
 func findBuiltOutput(buildDir, filename string) string {
@@ -219,10 +189,32 @@ func findBuiltOutput(buildDir, filename string) string {
 	return matches[len(matches)-1]
 }
 
+var (
+	crtSymbols = map[string]bool{
+		"_init": true, "_fini": true,
+		"_GLOBAL_OFFSET_TABLE_": true,
+		"__bss_start":           true, "_edata": true, "_end": true,
+		"_DYNAMIC": true, "_PROCEDURE_LINKAGE_TABLE_": true,
+		"_Jv_RegisterClasses": true,
+	}
+
+	mangledRe = regexp.MustCompile(`^_Z`)
+
+	reservedPrefixes = []string{
+		"__libc_",
+		"_IO_",
+		"_Jv_",
+		"_ITM_",
+		"__cxa_",
+		"__gxx_",
+		"__gnu_",
+	}
+)
+
 func readExports(path string) ([]string, error) {
 	out, err := exec.Command("nm", "-D", "--defined-only", path).Output()
 	if err != nil {
-		return nil, fmt.Errorf("nm %s: %w", path, err)
+		return nil, fmt.Errorf("nm %s: %w", filepath.Base(path), err)
 	}
 	seen := make(map[string]bool)
 	var syms []string
@@ -242,10 +234,7 @@ func readExports(path string) ([]string, error) {
 		if sym == "" || seen[sym] {
 			continue
 		}
-		if strings.HasPrefix(sym, "_init") || strings.HasPrefix(sym, "_fini") {
-			continue
-		}
-		if strings.HasPrefix(sym, "__") {
+		if crtSymbols[sym] {
 			continue
 		}
 		seen[sym] = true
@@ -254,34 +243,237 @@ func readExports(path string) ([]string, error) {
 	return syms, nil
 }
 
-func reportFindings(findings []auditFinding) {
+func detectMangledLeaks(artifacts []scanArtifact) []finding {
+	var findings []finding
+	for i := range artifacts {
+		a := &artifacts[i]
+		for _, sym := range a.exports {
+			if mangledRe.MatchString(sym) {
+				findings = append(findings, finding{
+					category: "mangled-leak",
+					severity: "warn",
+					subject:  a.pkgName + ":" + a.targetName,
+					symbol:   sym,
+					detail:   "C++ mangled symbol detected (missing visibility=hidden or version-script?)",
+				})
+			}
+		}
+	}
+	return findings
+}
+
+func detectReservedPrefixes(artifacts []scanArtifact) []finding {
+	var findings []finding
+	for i := range artifacts {
+		a := &artifacts[i]
+		for _, sym := range a.exports {
+			for _, pfx := range reservedPrefixes {
+				if strings.HasPrefix(sym, pfx) {
+					findings = append(findings, finding{
+						category: "reserved-prefix",
+						severity: "warn",
+						subject:  a.pkgName + ":" + a.targetName,
+						symbol:   sym,
+						detail:   fmt.Sprintf("reserved/internal prefix %q (likely runtime leak)", pfx),
+					})
+					break
+				}
+			}
+		}
+	}
+	return findings
+}
+
+func detectVersionScriptViolations(artifacts []scanArtifact) []finding {
+	var findings []finding
+	for i := range artifacts {
+		a := &artifacts[i]
+		if a.versionScript == "" {
+			continue
+		}
+		scriptPath := a.versionScript
+		if !filepath.IsAbs(scriptPath) {
+			for _, dir := range []string{".", filepath.Dir(a.outputPath)} {
+				candidate := filepath.Join(dir, scriptPath)
+				if _, err := os.Stat(candidate); err == nil {
+					scriptPath = candidate
+					break
+				}
+			}
+		}
+		declared, err := parseVersionScriptGlobals(scriptPath)
+		if err != nil {
+			findings = append(findings, finding{
+				category: "version-script-violation",
+				severity: "warn",
+				subject:  a.pkgName + ":" + a.targetName,
+				detail:   fmt.Sprintf("could not parse %s: %v", a.versionScript, err),
+			})
+			continue
+		}
+		if declared == nil {
+			continue
+		}
+		for _, sym := range a.exports {
+			if !declared[sym] {
+				findings = append(findings, finding{
+					category: "version-script-violation",
+					severity: "warn",
+					subject:  a.pkgName + ":" + a.targetName,
+					symbol:   sym,
+					detail:   fmt.Sprintf("exported but not in %s global section", a.versionScript),
+				})
+			}
+		}
+	}
+	return findings
+}
+
+func detectNoVersionScript(artifacts []scanArtifact) []finding {
+	var findings []finding
+	for i := range artifacts {
+		a := &artifacts[i]
+		if a.kind == api.TargetShared && a.versionScript == "" {
+			findings = append(findings, finding{
+				category: "no-version-script",
+				severity: "info",
+				subject:  a.pkgName + ":" + a.targetName,
+				detail:   "TargetShared without version-script; consider adding one to restrict exports",
+			})
+		}
+	}
+	return findings
+}
+
+func detectDuplicateExports(artifacts []scanArtifact) []finding {
+	owners := make(map[string][]string)
+	for i := range artifacts {
+		a := &artifacts[i]
+		for _, sym := range a.exports {
+			owners[sym] = append(owners[sym], a.pkgName+":"+a.targetName)
+		}
+	}
+	var findings []finding
+	for sym, list := range owners {
+		if len(list) <= 1 {
+			continue
+		}
+		sort.Strings(list)
+		findings = append(findings, finding{
+			category: "duplicate-export",
+			severity: "warn",
+			symbol:   sym,
+			detail:   strings.Join(list, ", "),
+		})
+	}
+	return findings
+}
+
+func parseVersionScriptGlobals(path string) (map[string]bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	content := string(data)
+	inGlobal := false
+	result := make(map[string]bool)
+	for _, rawLine := range strings.Split(content, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || strings.HasPrefix(line, "/*") || strings.HasPrefix(line, "//") {
+			continue
+		}
+		if strings.HasPrefix(line, "global:") || strings.Contains(line, "global:") {
+			inGlobal = true
+			rest := strings.SplitN(line, "global:", 2)[1]
+			collectGlobalSymbols(rest, result)
+			continue
+		}
+		if strings.HasPrefix(line, "local:") || strings.Contains(line, "local:") {
+			inGlobal = false
+			continue
+		}
+		if strings.HasPrefix(line, "};") || strings.HasPrefix(line, "}") {
+			inGlobal = false
+			continue
+		}
+		if inGlobal {
+			collectGlobalSymbols(line, result)
+		}
+	}
+	return result, nil
+}
+
+func collectGlobalSymbols(line string, result map[string]bool) {
+	line = strings.TrimRight(line, ";")
+	line = strings.TrimSpace(line)
+	if line == "" || line == "*" {
+		return
+	}
+	if strings.ContainsAny(line, " \t{};\"") {
+		for _, tok := range strings.FieldsFunc(line, func(r rune) bool {
+			return r == ' ' || r == '\t' || r == '{' || r == '}' || r == ';' || r == '"'
+		}) {
+			if tok != "" && tok != "*" {
+				result[tok] = true
+			}
+		}
+		return
+	}
+	result[line] = true
+}
+
+func hasStrictFindings(findings []finding) bool {
+	for _, f := range findings {
+		if f.severity == "warn" || f.severity == "error" {
+			return true
+		}
+	}
+	return false
+}
+
+func reportFindings(findings []finding, artifactCount int) {
 	if len(findings) == 0 {
-		fmt.Println("Symbol audit: OK (no discrepancies)")
+		fmt.Printf("Symbol audit: OK (%d artifacts scanned, no discrepancies)\n", artifactCount)
 		return
 	}
 
-	byCategory := make(map[string][]auditFinding)
+	byCategory := make(map[string][]finding)
 	for _, f := range findings {
 		byCategory[f.category] = append(byCategory[f.category], f)
 	}
 
-	fmt.Println("Symbol audit: issues found")
-	for _, cat := range []string{"missing-artifact", "missing-export", "unexpected-export", "duplicate-export", "tool-error"} {
+	fmt.Printf("Symbol audit: %d finding(s) across %d artifacts\n", len(findings), artifactCount)
+
+	categoryOrder := []string{
+		"missing-artifact",
+		"tool-error",
+		"duplicate-export",
+		"mangled-leak",
+		"reserved-prefix",
+		"version-script-violation",
+		"no-version-script",
+	}
+	for _, cat := range categoryOrder {
 		items := byCategory[cat]
 		if len(items) == 0 {
 			continue
 		}
-		fmt.Printf("\n[%s] (%d)\n", cat, len(items))
+		severity := items[0].severity
+		fmt.Printf("\n[%s] (%s, %d)\n", cat, severity, len(items))
 		for _, f := range items {
 			switch f.category {
-			case "missing-export":
-				fmt.Printf("  %s: expected %s but not exported\n", f.pkgTarget, f.symbol)
-			case "unexpected-export":
-				fmt.Printf("  %s: unexpected export %s\n", f.pkgTarget, f.symbol)
 			case "duplicate-export":
-				fmt.Printf("  %s exported by multiple targets: %s\n", f.symbol, f.detail)
+				fmt.Printf("  %s exported by: %s\n", f.symbol, f.detail)
+			case "no-version-script":
+				fmt.Printf("  %s: %s\n", f.subject, f.detail)
+			case "missing-artifact", "tool-error":
+				fmt.Printf("  %s: %s\n", f.subject, f.detail)
 			default:
-				fmt.Printf("  %s: %s\n", f.pkgTarget, f.detail)
+				if f.symbol != "" {
+					fmt.Printf("  %s: %s — %s\n", f.subject, f.symbol, f.detail)
+				} else {
+					fmt.Printf("  %s: %s\n", f.subject, f.detail)
+				}
 			}
 		}
 	}

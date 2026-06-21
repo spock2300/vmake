@@ -51,7 +51,6 @@ type Target struct {
 	versionScript      string
 	excludeLibs        []string
 	symbolBinding      string
-	expectedExports    []string
 	symbolPrefix       string
 	useDepLinkerScript bool
 	postLinks          []PostLinkStep
@@ -225,11 +224,6 @@ func (t *Target) SetSymbolBinding(mode string) *Target {
 	return t
 }
 
-func (t *Target) SetExpectedExports(syms ...string) *Target {
-	t.expectedExports = append(t.expectedExports, syms...)
-	return t
-}
-
 func (t *Target) SetSymbolPrefix(prefix string) *Target {
 	if t.symbolPrefix != "" {
 		vlog.Fatal("SetSymbolPrefix: prefix already set to %s", t.symbolPrefix)
@@ -330,7 +324,6 @@ func (t *Target) LinkerScript() string          { return t.linkerScript }
 func (t *Target) VersionScript() string         { return t.versionScript }
 func (t *Target) ExcludeLibs() []string         { return t.excludeLibs }
 func (t *Target) SymbolBinding() string         { return t.symbolBinding }
-func (t *Target) ExpectedExports() []string     { return t.expectedExports }
 func (t *Target) SymbolPrefix() string          { return t.symbolPrefix }
 func (t *Target) PostLinkSteps() []PostLinkStep { return t.postLinks }
 

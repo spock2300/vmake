@@ -9,14 +9,6 @@ func Main(p *api.Package) {
 			AddFiles("src/*.c").
 			AddPublicIncludes("include").
 			AddCFlags("-fPIC").
-			SetExcludeLibs("libcore").
-			SetExpectedExports(
-				"core_init",
-				"core_get_version",
-				"core_build_id",
-				"core_log",
-				"core_log_set_fd",
-				"core_hash",
-			)
+			SetExcludeLibs("libcore")
 	})
 }

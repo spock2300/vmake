@@ -101,17 +101,13 @@ func TestTargetSetInstall(t *testing.T) {
 	}
 }
 
-func TestTargetExcludeLibsAndExpectedExports(t *testing.T) {
+func TestTargetExcludeLibs(t *testing.T) {
 	tr := NewTargetRegistry()
 	tgt := tr.Target("t").
-		SetExcludeLibs("libfoo", "libbar").
-		SetExpectedExports("api1", "api2")
+		SetExcludeLibs("libfoo", "libbar")
 
 	if !reflect.DeepEqual(tgt.ExcludeLibs(), []string{"libfoo", "libbar"}) {
 		t.Errorf("ExcludeLibs = %v", tgt.ExcludeLibs())
-	}
-	if !reflect.DeepEqual(tgt.ExpectedExports(), []string{"api1", "api2"}) {
-		t.Errorf("ExpectedExports = %v", tgt.ExpectedExports())
 	}
 }
 

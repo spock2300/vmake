@@ -22,20 +22,19 @@ const (
 )
 
 type ResolvedTarget struct {
-	Node            *BuildNode
-	SourceFiles     []string
-	AllIncludes     []string
-	AllDefines      []string
-	AllCFlags       []string
-	AllCxxFlags     []string
-	AllLdFlags      []string
-	AllLinks        []string
-	DepArtifacts    []string
-	OutputPath      string
-	VersionScript   string
-	ExcludeLibs     []string
-	SymbolBinding   string
-	ExpectedExports []string
+	Node          *BuildNode
+	SourceFiles   []string
+	AllIncludes   []string
+	AllDefines    []string
+	AllCFlags     []string
+	AllCxxFlags   []string
+	AllLdFlags    []string
+	AllLinks      []string
+	DepArtifacts  []string
+	OutputPath    string
+	VersionScript string
+	ExcludeLibs   []string
+	SymbolBinding string
 }
 
 type compileResult struct {
@@ -443,7 +442,6 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 		resolved.ExcludeLibs = append([]string{}, el...)
 	}
 	resolved.SymbolBinding = node.Target.SymbolBinding()
-	resolved.ExpectedExports = append([]string{}, node.Target.ExpectedExports()...)
 
 	resolved.AllDefines = unique(resolved.AllDefines)
 	resolved.AllIncludes = unique(resolved.AllIncludes)

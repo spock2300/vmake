@@ -15,14 +15,12 @@ func Main(p *api.Package) {
 			AddPublicIncludes("include").
 			AddDeps("helper").
 			SetExcludeLibs("libhelper").
-			SetSymbolBinding("static").
-			SetExpectedExports("foo_api")
+			SetSymbolBinding("static")
 
 		ctx.Target("bar").
 			SetKind(api.TargetShared).
 			AddFiles("src/bar.c").
 			AddPublicIncludes("include").
-			SetVersionScript("bar.map").
-			SetExpectedExports("bar_api")
+			SetVersionScript("bar.map")
 	})
 }

@@ -243,7 +243,7 @@ complex dependency graphs. Five layers, applied in order:
 | 1. Default hidden | `ctx.SetDefaultVisibilityHidden()` | `-fvisibility=hidden` globally; annotate exports in source |
 | 2. Version script | `target.SetVersionScript("foo.map")` | Declarative exports on `TargetShared`/`TargetBinary` |
 | 3. Link policy | `target.SetExcludeLibs(...)`, `target.SetSymbolBinding("static")` | Strip static archive symbols; bind internal refs |
-| 4. Audit | `target.SetExpectedExports(...)`, `vmake check-symbols` | Verify actual vs expected `.dynsym` |
+| 4. Audit | `vmake check-symbols` | Pure `nm -D` auto-detection: duplicates, mangled leaks, glibc leaks, version-script violations |
 | 5. Prefix | `target.SetSymbolPrefix("v_")` | `objcopy --prefix-symbols=` for third-party C code |
 
 Layer 1 is the foundation — without it, version scripts have weak effect.
