@@ -116,6 +116,8 @@ func (l *Linker) LinkStatic(objs []string, outputPath string) error {
 		return err
 	}
 
+	fs.RemoveIfExists(outputPath)
+
 	args := []string{"rcs", outputPath}
 	args = append(args, objs...)
 
