@@ -336,7 +336,14 @@ func (m *Model) buildOptionItems() {
 		return
 	}
 
-	m.optItems = groupAndSortOptions(opts)
+	filtered := make(map[string]*api.Option, len(opts))
+	for name, opt := range opts {
+		if opt.IsGlobal() {
+			continue
+		}
+		filtered[name] = opt
+	}
+	m.optItems = groupAndSortOptions(filtered)
 }
 
 func (m *Model) getValue(name string) any {

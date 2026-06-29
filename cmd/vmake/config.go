@@ -230,6 +230,9 @@ func resolveSetOption(pkgName, optName string, ctx *RuntimeContext) (*api.Option
 		available := sortedOptionNames(pkgOpts)
 		return nil, fmt.Errorf("option %q not found in package %q (available: %s)", optName, pkgName, strings.Join(available, ", "))
 	}
+	if opt.IsGlobal() {
+		return nil, fmt.Errorf("option %q in package %q is global; set it without a package prefix: %s=...", optName, pkgName, optName)
+	}
 	return opt, nil
 }
 
