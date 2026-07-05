@@ -94,6 +94,9 @@ Preset files under `configs/` are partial configs (defconfig format), NOT comple
 ### Stamp-Based Skip for Void Targets
 Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when config files (`SetConfigFiles()`) are newer, deleted, or `.config` size becomes 0.
 
+### Post-Link Incremental Tracking
+`target.AddPostLinkDeps(files...)` declares extra input files (SourceDir-relative, like `AddFiles`) that post-link steps consume. The relink check (`needRelink` in `pkg/build/scheduler.go`) compares each dep's mtime against the link output: any dep newer or missing → relink + re-run ALL post-link steps. Without this, post-link inputs (e.g. `objcopy --keep-global-symbols=file.sym`) are invisible to staleness — editing `file.sym` is silently skipped, forcing `rebuild`/`distclean`. Granularity is whole-target: one dep change → relink + full post-link re-run (no per-step incremental). Dep deletion also triggers relink (mirrors `SetConfigFiles` void-target semantics). Applies to Binary/Shared/Object (Prebuilt short-circuits before `needRelink`, so `AddPostLinkDeps` is a no-op there). Diagnostic on trigger: `RELINK <name> (post-link dep <file> newer|missing)` via `vlog.Info`.
+
 ### EnsureConfig + PatchKConfig Abstraction
 `pkg.EnsureConfig(srcDir) bool` checks `.config` existence + size > 0, runs `make <preset>` if needed. `PatchKConfig(map[string]string)` applies post-defconfig patches in EnsureConfig, restoreKConfigFiles, and TUI ensureConfigCmd.
 

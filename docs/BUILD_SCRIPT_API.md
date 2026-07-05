@@ -460,6 +460,7 @@ func (t *Target) SetPrebuilt(path string) *Target          // 预编译目标，
 func (t *Target) SetLinkerScript(path string) *Target    // 传递 -T 给链接器（重复调用 vlog.Fatal）
 func (t *Target) UseDependencyLinkerScript() *Target       // 从依赖自动继承 linker script
 func (t *Target) AddPostLink(tool string, args ...string) *Target  // 通用后链接步骤，支持 {output} 占位符
+func (t *Target) AddPostLinkDeps(files ...string) *Target  // 声明 post-link 步骤依赖的额外输入文件（SourceDir 相对路径）；任一变化（mtime 新于输出或缺失）触发 relink + 重跑全部 post-link
 func (t *Target) AddPostLinkHex() *Target               // objcopy -O ihex {output} {output}.hex
 func (t *Target) AddPostLinkBin() *Target               // objcopy -O binary {output} {output}.bin
 func (t *Target) AddPostLinkSize() *Target              // size {output}
@@ -507,6 +508,7 @@ func (t *Target) Prebuilt() string
 func (t *Target) LinkerScript() string
 func (t *Target) UseDepLinkerScript() bool
 func (t *Target) PostLinkSteps() []PostLinkStep
+func (t *Target) PostLinkDeps() []string
 func (t *Target) ExcludedFiles() []string
 func (t *Target) GenRules() []GenRule
 ```

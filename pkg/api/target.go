@@ -54,6 +54,7 @@ type Target struct {
 	symbolPrefix       string
 	useDepLinkerScript bool
 	postLinks          []PostLinkStep
+	postLinkDeps       []string
 	genRules           []GenRule
 }
 
@@ -248,6 +249,11 @@ func (t *Target) AddPostLink(tool string, args ...string) *Target {
 	return t
 }
 
+func (t *Target) AddPostLinkDeps(files ...string) *Target {
+	t.postLinkDeps = append(t.postLinkDeps, files...)
+	return t
+}
+
 func (t *Target) AddPostLinkHex() *Target {
 	t.postLinks = append(t.postLinks, PostLinkStep{Tool: "objcopy", Args: []string{"-O", "ihex", "{output}", "{output}.hex"}})
 	return t
@@ -326,6 +332,7 @@ func (t *Target) ExcludeLibs() []string         { return t.excludeLibs }
 func (t *Target) SymbolBinding() string         { return t.symbolBinding }
 func (t *Target) SymbolPrefix() string          { return t.symbolPrefix }
 func (t *Target) PostLinkSteps() []PostLinkStep { return t.postLinks }
+func (t *Target) PostLinkDeps() []string        { return t.postLinkDeps }
 
 func (t *Target) RemoveCFlags(flags ...string) *Target {
 	t.cflags = removeStrings(t.cflags, flags...)

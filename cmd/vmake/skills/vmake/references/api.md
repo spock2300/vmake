@@ -193,6 +193,7 @@ All setters are fluent (return `*Target`).
 | `AddPostLinkBin` | `()` | `objcopy -O binary {output} {output}.bin` |
 | `AddPostLinkSize` | `()` | `size {output}` |
 | `AddPostLinkStrip` | `()` | `strip -o {output}.stripped {output}` |
+| `AddPostLinkDeps` | `(files ...string)` | Extra input files for post-link steps (SourceDir-relative); any change/missing → relink + re-run all post-link |
 | `AddBinHeader` | `(inputs ...any)` | Binary files → `.h` headers; output to `build/<buildKey>/generated/`; incremental via mtime |
 
 `SetLanguages(langs ...string)` exists but has **no effect** — language is auto-detected from file extension (`.c` → C, `.cc/.cpp/.cxx` → C++).
@@ -227,6 +228,7 @@ All setters are fluent (return `*Target`).
 | `LinkerScript()` | `string` |
 | `UseDepLinkerScript()` | `bool` |
 | `PostLinkSteps()` | `[]PostLinkStep` |
+| `PostLinkDeps()` | `[]string` |
 | `GenRules()` | `[]GenRule` |
 | `HasDep(depRef)` | `bool` |
 | `IncludeRule(dir)` | `[]string` |

@@ -518,6 +518,18 @@ func (s *Scheduler) needRelink(resolved *ResolvedTarget, objs []string) bool {
 		}
 	}
 
+	for _, dep := range resolved.Node.Target.PostLinkDeps() {
+		depInfo, err := os.Stat(dep)
+		if err != nil {
+			vlog.Info("  RELINK %s (post-link dep %s missing)", resolved.Node.Target.Name(), dep)
+			return true
+		}
+		if depInfo.ModTime().After(outputTime) {
+			vlog.Info("  RELINK %s (post-link dep %s newer)", resolved.Node.Target.Name(), dep)
+			return true
+		}
+	}
+
 	return false
 }
 

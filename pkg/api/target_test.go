@@ -262,6 +262,20 @@ func TestTargetAddPostLinkHelpers(t *testing.T) {
 	}
 }
 
+func TestTargetAddPostLinkDeps(t *testing.T) {
+	tr := NewTargetRegistry()
+	tgt := tr.Target("t").
+		AddPostLinkDeps("include/chip_public.sym")
+	if !reflect.DeepEqual(tgt.PostLinkDeps(), []string{"include/chip_public.sym"}) {
+		t.Fatalf("PostLinkDeps = %v, want [include/chip_public.sym]", tgt.PostLinkDeps())
+	}
+	tgt.AddPostLinkDeps("wrappers/hostap_public.sym", "include/lwip_public.sym")
+	want := []string{"include/chip_public.sym", "wrappers/hostap_public.sym", "include/lwip_public.sym"}
+	if !reflect.DeepEqual(tgt.PostLinkDeps(), want) {
+		t.Errorf("PostLinkDeps = %v, want %v", tgt.PostLinkDeps(), want)
+	}
+}
+
 func TestPostLinkStepOutputPaths(t *testing.T) {
 	s := PostLinkStep{Tool: "objcopy", Args: []string{"-O", "ihex", "{output}", "{output}.hex"}}
 	paths := s.OutputPaths("/build/app")

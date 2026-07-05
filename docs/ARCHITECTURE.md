@@ -619,6 +619,7 @@ type PostLinkStep struct {
 ### API 方法
 
 - `AddPostLink(tool, args...)` — 添加自定义后链接步骤
+- `AddPostLinkDeps(files...)` — 声明 post-link 步骤依赖的输入文件（SourceDir 相对路径）；任一变化（mtime 新于输出或缺失）触发 relink + 重跑全部 post-link
 - `AddPostLinkHex()` — 添加 `objcopy -O ihex` 生成 .hex 文件
 - `AddPostLinkBin()` — 添加 `objcopy -O binary` 生成 .bin 文件
 - `AddPostLinkSize()` — 添加 `size {output}` 显示段大小
@@ -631,6 +632,8 @@ type PostLinkStep struct {
 1. 替换 `{input}` 为链接输出路径，`{output}` 为推导的输出路径
 2. 执行每个步骤的工具命令
 3. `PostLinkStep` 的输出也会被 `publishTarget` 和 `installTarget` 处理
+
+post-link 仅在实际发生 relink（`needRelink=true`）时执行。`AddPostLinkDeps` 声明的输入文件参与 `needRelink` 的 mtime 判定，使 post-link 输入（如 `--keep-global-symbols=file.sym` 中的 `.sym`）变化时能触发 relink + 重跑 post-link，避免静默跳过。
 
 ```go
 ctx.Target("firmware").SetKind(api.TargetBinary).AddFiles("src/*.c")
