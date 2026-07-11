@@ -26,11 +26,9 @@ go install github.com/spock2300/vmake/cmd/vmake@latest
 
 ### Debug Mode
 
-Set `VMAKE_DIR` to point to local source when developing vmake or debugging `build.go`:
+Buildscripts are interpreted by yaegi directly — no plugin compilation needed:
 
 ```bash
-export VMAKE_DIR=/path/to/vmake
-
 cd /path/to/vmake
 go build -o vmake ./cmd/vmake
 ./vmake build
@@ -91,7 +89,7 @@ vmake/
 │   ├── fs/              # Filesystem utilities
 │   ├── gitstore/        # Git repo store (shared infra)
 │   ├── glob/            # File matching
-│   ├── gocompile/       # Go plugin compilation
+│   ├── gocompile/       # Go plugin compilation (extension system only)
 │   ├── jsonio/          # JSON serialization
 │   └── toposort/        # Topological sort
 └── docs/                # Design documentation

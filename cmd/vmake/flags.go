@@ -12,7 +12,6 @@ func addInstallFlags(cmd *cobra.Command) {
 }
 
 func addBuildFlags(cmd *cobra.Command) {
-	cmd.Flags().BoolVarP(&forceFlag, "force", "f", false, "force buildscript recompilation")
 	cmd.Flags().StringVar(&toolchainFlag, "toolchain", "", "override toolchain")
 	cmd.Flags().StringVar(&modeFlag, "mode", "", "override build mode")
 	cmd.Flags().StringVar(&manifestFlag, "manifest", "", "pin versions from manifest file")

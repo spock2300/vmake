@@ -1,6 +1,6 @@
 # VMake
 
-Go-plugin-based C/C++ build system. Build instructions are written in Go (`build.go`) using a fluent API. Each `build.go` is compiled into a Go plugin and executed through a multi-phase lifecycle.
+Go-based C/C++ build system. Build instructions are written in Go (`build.go`) using a fluent API. Each `build.go` is interpreted at runtime by yaegi (Go interpreter) and executed through a multi-phase lifecycle.
 
 ## Project Structure
 

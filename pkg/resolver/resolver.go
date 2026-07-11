@@ -2,7 +2,6 @@ package resolver
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/spock2300/vmake/internal/flock"
@@ -64,8 +63,7 @@ type Resolver struct {
 	repoMgr          *repo.RepoManager
 	depsDir          string
 	globalSourcesDir string
-	force            bool
-	subParents       map[string]string
+	subParents map[string]string
 }
 
 func NewResolver(repoMgr *repo.RepoManager, depsDir string) *Resolver {
@@ -76,10 +74,6 @@ func NewResolver(repoMgr *repo.RepoManager, depsDir string) *Resolver {
 		depsDir:    depsDir,
 		subParents: make(map[string]string),
 	}
-}
-
-func (r *Resolver) SetForce(force bool) {
-	r.force = force
 }
 
 func (r *Resolver) SetGlobalSourcesDir(dir string) {
@@ -116,7 +110,7 @@ func (r *Resolver) UpdateOrder() error {
 
 func (r *Resolver) ResolveAll(localSources []buildscript.Source) error {
 	for _, src := range localSources {
-		s := buildscript.NewSource(src.Name, src.Path, src.Dir, "", api.SourceLocal, r.force)
+		s := buildscript.NewSource(src.Name, src.Path, src.Dir, api.SourceLocal)
 		r.sources[s.Name] = s
 	}
 
@@ -195,8 +189,7 @@ func (r *Resolver) resolveRecursive(id string, constraint string, path []string)
 		return node, nil
 	}
 
-	// Compile + load + recurse into OnRequire dependencies
-	node, err := r.resolvePackage(id, src, path)
+	node, err := r.resolveOne(id, src, path)
 	if err != nil {
 		return nil, err
 	}
@@ -213,53 +206,17 @@ func (r *Resolver) resolveRecursive(id string, constraint string, path []string)
 	return node, nil
 }
 
-func (r *Resolver) resolvePackage(id string, src *buildscript.Source, path []string) (*PackageNode, error) {
-	scriptPath := r.scriptPath(src)
-	if !r.force && src.Path != "" && r.hasCachedScript(scriptPath, src.Path) {
-		pkg, err := r.loadPackageFromCache(scriptPath, *src)
-		if err != nil {
-			return nil, fmt.Errorf("load %s: %w", id, err)
-		}
-		return r.resolveFromCache(id, pkg, src, path)
-	}
-	return r.resolveOne(id, src, path)
-}
-
 func (r *Resolver) resolveOne(id string, src *buildscript.Source, path []string) (*PackageNode, error) {
 	pkg, err := r.PreparePackage(src)
 	if err != nil {
-		return nil, fmt.Errorf("compile %s: %w", id, err)
+		return nil, fmt.Errorf("load %s: %w", id, err)
 	}
 
 	return r.resolveFromCache(id, pkg, src, path)
 }
 
 func (r *Resolver) PreparePackage(src *buildscript.Source) (*api.Package, error) {
-	scriptPath := r.scriptPath(src)
-
-	if r.force {
-		buildscript.GlobalScript.Invalidate(scriptPath)
-	}
-
-	cr := buildscript.Compile(*src)
-	if !cr.Success {
-		return nil, cr.Error
-	}
-
-	loaded, err := buildscript.Load(scriptPath, *src)
-	if err != nil {
-		return nil, err
-	}
-
-	return loaded.ExtractPackage(), nil
-}
-
-func (r *Resolver) loadPackageFromCache(scriptPath string, src buildscript.Source) (*api.Package, error) {
-	loaded, err := buildscript.Load(scriptPath, src)
-	if err != nil {
-		return nil, err
-	}
-	return loaded.ExtractPackage(), nil
+	return buildscript.LoadBuildScript(*src)
 }
 
 func (r *Resolver) resolveFromCache(id string, pkg *api.Package, src *buildscript.Source, path []string) (*PackageNode, error) {
@@ -297,7 +254,7 @@ func (r *Resolver) findSource(id string, constraint string) (*buildscript.Source
 
 	buildGo, err := r.repoMgr.FindPackageGo(repoName, pkgName)
 	if err == nil {
-		src := buildscript.NewSource(id, buildGo, filepath.Dir(buildGo), r.buildscriptOutputDir(id), api.SourceRemote, r.force)
+		src := buildscript.NewSource(id, buildGo, filepath.Dir(buildGo), api.SourceRemote)
 		r.sources[id] = src
 		return src, nil
 	}
@@ -335,7 +292,7 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 
 	pkg, err := r.PreparePackage(src)
 	if err != nil {
-		return nil, fmt.Errorf("compile %s: %w", id, err)
+		return nil, fmt.Errorf("load %s: %w", id, err)
 	}
 
 	node := NewPackageNode(id, src, pkg, false).WithNative(gitURL, versions, selectedVersion)
@@ -370,7 +327,6 @@ func (r *Resolver) scanSubPackages(parentID, checkoutDir string) {
 	}
 	for i := range subs {
 		ss := &subs[i]
-		ss.OutputDir = r.buildscriptOutputDir(ss.Name)
 		r.sources[ss.Name] = ss
 		r.subParents[ss.Name] = parentID
 	}
@@ -425,37 +381,7 @@ func (r *Resolver) checkoutNativeSource(id, gitURL, repoDir, ref string) (*build
 		return nil, fmt.Errorf("build.go not found in %s", repoDir)
 	}
 
-	return buildscript.NewSource(id, buildGo, repoDir, r.buildscriptOutputDir(id), api.SourceRemote, r.force), nil
-}
-
-func (r *Resolver) scriptPath(src *buildscript.Source) string {
-	return filepath.Join(src.GetOutputDir(), "build.so")
-}
-
-func (r *Resolver) buildscriptOutputDir(name string) string {
-	return filepath.Join(r.depsDir, name)
-}
-
-func (r *Resolver) hasCachedScript(scriptPath, buildGoPath string) bool {
-	info, err := os.Stat(scriptPath)
-	if err != nil || info.Size() == 0 {
-		return false
-	}
-	if exe, err := os.Executable(); err == nil {
-		if exeStat, err := os.Stat(exe); err == nil {
-			if exeStat.ModTime().After(info.ModTime()) {
-				return false
-			}
-		}
-	}
-	if buildGoPath != "" {
-		if src, err := os.Stat(buildGoPath); err == nil {
-			if src.ModTime().After(info.ModTime()) {
-				return false
-			}
-		}
-	}
-	return true
+	return buildscript.NewSource(id, buildGo, repoDir, api.SourceRemote), nil
 }
 
 func constraintsCompatible(a, b string) bool {

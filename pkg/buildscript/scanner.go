@@ -59,6 +59,28 @@ func Scan(rootDir string) ([]Source, error) {
 	return sources, err
 }
 
+func ListGoFiles(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".go") {
+			continue
+		}
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		files = append(files, filepath.Join(dir, name))
+	}
+	return files, nil
+}
+
 func ScanSubPackages(rootDir string, parentID string) ([]Source, error) {
 	var sources []Source
 	seen := make(map[string]bool)

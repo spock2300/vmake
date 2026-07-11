@@ -19,7 +19,7 @@ func init() {
 }
 
 func runRebuild(cmd *cobra.Command, args []string) {
-	ctx := resolveToConfig(false)
+	ctx := resolveToConfig()
 	executeCleanLocal(ctx)
 	vlog.Info("")
 	result, err := runBuildPhase(ctx, false)

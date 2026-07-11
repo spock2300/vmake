@@ -65,7 +65,7 @@ func runCheckSymbols(strict bool) {
 		vlog.Fatal("check-symbols requires 'nm' on PATH (binutils)")
 	}
 
-	ctx := resolveToConfig(false)
+	ctx := resolveToConfig()
 	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
 	globalValues := config.BuildGlobalValues(ctx.Config)
 

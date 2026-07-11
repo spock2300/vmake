@@ -87,13 +87,12 @@ toolchains/<name>-<version>/
 
 ## 项目本地目录（vmake_deps/）
 
-第三方包的源码、构建脚本缓存和构建产物存储在项目根目录的 `vmake_deps/` 中，不在全局目录。
+第三方包的构建产物存储在项目根目录的 `vmake_deps/` 中，不在全局目录。
 
 ```
 vmake_deps/
 └── <repo>/<pkg>/                  # Registry 和 Native 包使用相同结构
     ├── src/                       # Git 源码 checkout
-    ├── build.so                   # 编译后的 buildscript 插件
     └── out/<buildKey>/
         ├── build/                 # 构建产物
         └── install/               # 安装暂存
@@ -118,7 +117,6 @@ project/
 ├── vmake_deps/                    # 第三方包（自动生成，已 gitignore）
 │   └── <repo>/<pkg>/
 │       ├── src/                   # 源码
-│       ├── build.so               # buildscript 插件
 │       └── out/<buildKey>/build/  # 构建产物
 ├── install/                       # 安装输出
 └── build/                         # 本地包构建输出

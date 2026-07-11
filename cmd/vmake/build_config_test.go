@@ -14,7 +14,7 @@ import (
 )
 
 func localSource(name string) *buildscript.Source {
-	return buildscript.NewSource(name, "/p/"+name+"/build.go", "/p/"+name, "", api.SourceLocal, false)
+	return buildscript.NewSource(name, "/p/"+name+"/build.go", "/p/"+name, api.SourceLocal)
 }
 
 func localNode(name string, deps ...string) *resolver.PackageNode {
@@ -27,7 +27,7 @@ func localNode(name string, deps ...string) *resolver.PackageNode {
 }
 
 func remoteNode(name string, deps ...string) *resolver.PackageNode {
-	src := buildscript.NewSource(name, "/p/"+name+"/build.go", "/p/"+name, "", api.SourceRemote, false)
+	src := buildscript.NewSource(name, "/p/"+name+"/build.go", "/p/"+name, api.SourceRemote)
 	return &resolver.PackageNode{
 		ID:     name,
 		Source: src,

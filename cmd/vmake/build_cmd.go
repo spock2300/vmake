@@ -26,7 +26,7 @@ func init() {
 }
 
 func runBuild(cmd *cobra.Command, args []string) {
-	ctx := resolveToConfig(forceFlag)
+	ctx := resolveToConfig()
 	if manifestFlag != "" {
 		applyManifestVersions(ctx, manifestFlag)
 	}

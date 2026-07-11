@@ -8,37 +8,50 @@ Requires Go 1.26+ (see `go.mod`).
 
 ```bash
 go build -o vmake ./cmd/vmake    # Build
-go vet ./... && gofmt -w .       # Lint
+gofmt -w .                       # Format
 ```
 
-No Go unit tests. Test via integration projects in `test_data/` (each must run from its own directory):
+### Lint and unit tests — scope to vmake's own packages
+
+**Do NOT run bare `go vet ./...` or `go test ./...`** — they walk into `test_data/`, which contains C source files inside Go packages, and fail with "C source files not allowed when not using cgo". Always scope to vmake's own code:
+
+```bash
+go vet ./cmd/... ./pkg/... ./internal/...      # Lint
+go test ./cmd/vmake/... ./pkg/... ./internal/... # Unit tests
+```
+
+Go tests live in `cmd/vmake`, `pkg/api`, `pkg/build`, `pkg/buildscript`, `pkg/config`, `pkg/repo`, `pkg/resolver`, `internal/gocompile`. Pre-existing failure (ignore): `internal/gocompile` `TestCompilePluginToOutput_NonForceSkipsExisting` (gocompile is now only used by the extension system, not buildscripts).
+
+### Integration tests via `test_data/` (run each from its own directory)
 
 ```bash
 # Single test
 cd test_data/01_simple_c && ../../vmake build
 
-# Run all test_data tests (01-16, 18-20; no 17 in test_data)
-for d in test_data/0[1-9]_*/ test_data/1[0-9]_*/ test_data/20_*/; do (cd "$d" && ../../vmake build) || break; done
+# Run all test_data integration tests (01-16, 18-24; 17 is NOT in test_data — see below)
+for d in test_data/0[1-9]_*/ test_data/1[0-9]_*/ test_data/2[0-4]_*/; do (cd "$d" && ../../vmake build) || break; done
 ```
 
-Firmware test (17) is in `test_linux/17_firmware` (NOT `test_data/`), tests stamp skip, KConfig presets, EnsureConfig:
+Never build `test_data/` from the parent directory — each sub-project must run from its own dir.
+
+Firmware test (17) lives in `test_linux/17_firmware` (NOT `test_data/`), tests stamp skip, KConfig presets, EnsureConfig:
 ```bash
 cd test_linux/17_firmware && ../../vmake build
 ```
 
-Known pre-existing failures (ignore): `07_subbuild_codegen`, `08_with_package`, `09_with_curl` (mbedtls submodule), `10_local_repo` (package not found).
+Known pre-existing integration failures (ignore): none — all test_data tests currently pass.
 
-Notable test purposes: 15=`subgraph_siblings`, 16=`subgraph_cross_tc`, 18=`config_header` (GenerateConfigHeader), 19=`config_defines` (GenerateConfigDefines), 20=`config_propagate` (ImportConfig/cross-package config).
+Notable test purposes: 15=`subgraph_siblings`, 16=`subgraph_cross_tc`, 18=`config_header` (GenerateConfigHeader), 19=`config_defines` (GenerateConfigDefines), 20=`config_propagate` (ImportConfig/cross-package config), 21=`root_package`, 22=`version_script`, 23=`link_strategy`, 24=`symbol_prefix`.
 
 ## Development Mode
 
-When iterating on vmake itself, set `VMAKE_DIR` so plugins compile against local source instead of installed version:
+Buildscripts are interpreted by yaegi (Go interpreter) — no `go build -buildmode=plugin` needed. The `VMAKE_DIR` environment variable is no longer required for buildscripts (only used by the extension plugin system in `pkg/plugin`).
 
 ```bash
-source start_dev.sh   # exports VMAKE_DIR=$(pwd)
+go build -o vmake ./cmd/vmake    # Build vmake itself
 ```
 
-Or manually: `export VMAKE_DIR=/path/to/vmake`. Without this, `go build -o vmake ./cmd/vmake` still works but plugin compilation may mismatch.
+`start_dev.sh` still exports `VMAKE_DIR` for the extension system, but buildscripts work without it.
 
 ## Storage Layout
 
@@ -48,7 +61,6 @@ Auto-added to `.gitignore` on first build via `ensureGitignore()` in `runPipelin
 ```
 vmake_deps/
   <repo>/<pkg>/src          # Symlink -> ~/.vmake/sources/<repo>/<pkg>/src
-  <repo>/<pkg>/build.so      # Compiled buildscript plugin
   <repo>/<pkg>/out/<buildKey>/build/    # Build artifacts
   <repo>/<pkg>/out/<buildKey>/install/  # Install staging
 ```
@@ -157,7 +169,7 @@ auto-wire behavior. See `docs/MIGRATION_V2.md` for migration steps.
 
 ### Build Pipeline
 ```
-Phase 1: OnRequire       -> Scan/Compile/Load buildscripts -> Resolve dependencies (nil config; remote deferred)
+Phase 1: OnRequire       -> Scan/Interpret buildscripts (yaegi) -> Resolve dependencies (nil config; remote deferred)
 Phase 2a: ResolveDeferred -> Resolve remote (deferred) packages -> Update topological order
 Phase 2b: OnConfig       -> Execute callbacks -> Collect Options -> Run OnApply callbacks -> Merge global options
 Phase 2c: FilterDeps     -> Re-run OnRequire with real config -> Replace node.Deps -> Update order -> BFS collect needed
@@ -169,7 +181,6 @@ Phase 3: OnBuild         -> Execute callbacks -> Generate Targets -> Compile/Lin
 ```
 Phase 1-2b: Same as build (OnRequire → OnConfig)
 Phase 3: OnClean         -> Execute callbacks -> Directory cleanup
-Fallback: If plugin loading fails, degrade to scan-only directory cleanup
 ```
 
 Entry point: `cmd/vmake/main.go` → `loadPlugins()` → `Execute()` (cobra). Pipeline in `cmd/vmake/root.go` (`runPipeline`). Build logic in `cmd/vmake/build_cmd.go`.
@@ -293,7 +304,7 @@ Methods on `CleanContext`:
 |---------|---------------|-------------------|
 | `pkg/api` | Core API (Package, Target, Option, Contexts, Semver, KConfig, Copy) | **Yes** |
 | `pkg/plugin` | Extension/plugin system | **Yes** |
-| `pkg/buildscript` | Build script scan, compile, load | No |
+| `pkg/buildscript` | Build script scan, yaegi interpretation, multi-file merge | No |
 | `pkg/build` | Build execution, compile, link, scheduler, install, subgraph | No |
 | `pkg/toolchain` | Toolchain abstraction (GCC, Clang) | No |
 | `pkg/repo` | Package management, Git, native repos | No |
@@ -306,6 +317,8 @@ Methods on `CleanContext`:
 
 **Dependency DAG**: `internal/*` -> `pkg/toolchain` -> `pkg/api` -> `pkg/buildscript, pkg/repo` -> `pkg/resolver, pkg/plugin, pkg/build` -> `cmd/vmake`
 
+`internal/gocompile` is now only used by the extension plugin system (`pkg/plugin`), not by buildscripts.
+
 ## CLI Architecture
 - `github.com/spf13/cobra`, package-level vars, `init()` registration
 - Command factories (`newRemoveCmd`, `newUpdateCmd`) in `cmd/vmake/helpers.go`
@@ -315,7 +328,7 @@ Methods on `CleanContext`:
 - `vmake test` — build with `--tests` then execute test binaries
 - `vmake clean [--all]` — execute OnClean hooks then clean build artifacts; `--all` removes all build key dirs
 - `vmake rebuild` — clean local packages then build
-- `vmake distclean` — deep clean: local build dirs, build.so, go.mod/go.sum, install/, `vmake_deps/`
+- `vmake distclean` — deep clean: local build dirs, install/, `vmake_deps/`
 - `vmake config` — interactive TUI for build options
 - `vmake query` — show dependency tree (uses `newQueryCmd` factory, registered in root.go init)
 - `vmake check-symbols [--strict]` — scan all built Shared/Binary outputs via `nm -D` and report: cross-target duplicate exports, C++ mangled leaks (`_Z*`), reserved-prefix leaks (`__libc_*` etc.), version-script violations (when `SetVersionScript` is set), and missing version-script warnings. No per-target declaration required. `--strict` exits non-zero on warn/error findings (info-level still passes)
@@ -329,7 +342,7 @@ Methods on `CleanContext`:
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `--force` | `-f` | Force buildscript recompilation |
+| `--force` | `-f` | Force rebuild (no-op for buildscript loading; buildscripts are always re-interpreted) |
 | `--toolchain` | | Override toolchain |
 | `--mode` | | Override build mode (debug/release) |
 | `--install` | `-i` | Install after build |
@@ -339,7 +352,18 @@ Methods on `CleanContext`:
 | `--tests` | | Include test targets in build |
 
 ## Build Script System
-Each `build.go` is compiled to a Go plugin (`.so`):
+
+Buildscripts are interpreted at runtime by [yaegi](https://github.com/traefik/yaegi) (Go interpreter) — no `go build -buildmode=plugin`, no `.so` files, no `go.mod`/`go.sum` generation. Each `vmake` invocation re-interprets all `build.go` files fresh.
+
+### Multi-File Support
+
+A single buildscript package can be split across multiple `.go` files in the same directory. The loader (`pkg/buildscript/yaegi_loader.go`) reads all `.go` files (excluding `_test.go`), merges them at source level (deduplicating imports, combining declarations), writes to a temp file, and interprets via `yaegi.EvalPath`. This enables cross-file function calls, shared constants, and modular build logic.
+
+### Symbol Table
+
+`pkg/api` exports `YaegiSymbols()` (in `pkg/api/yaegi_symbols.go`) returning `map[string]reflect.Value` for all exported types, functions, constants, and variables. `pkg/toolchain` has a similar file. These are registered with the yaegi interpreter via `i.Use()`. A test (`pkg/api/yaegi_symbols_test.go`) uses `go/types` to verify completeness — adding a new export to `pkg/api` without registering it will fail the test.
+
+### Buildscript Structure
 ```go
 package main
 import "github.com/spock2300/vmake/pkg/api"
@@ -349,6 +373,15 @@ func Main(p *api.Package) {
     p.OnClean(func(ctx *api.CleanContext) { ... })
 }
 ```
+
+### Yaegi Limitations
+
+- **`[]string` spread to `...any` fails** — `reflect.CallSlice` can't convert `[]string` to `[]interface{}`. Pass `[]string` directly (without `...`); `AddCFlags`/`AddDefines`/`AddLinks` etc. use `flattenAny` to handle `[]string` items.
+- **Type name not preserved** — `reflect.TypeOf(x).Name()` returns empty string for interpreted types; `fmt.Sprintf("%T", x)` prints underlying type (e.g. `struct {}`) not the named type.
+- **No CGo, no assembly, no `//go:embed`, no `//go:generate`** — compiler directives are silently ignored.
+- **Performance** — interpreted code is slower than compiled, but build.go callbacks are lightweight (declare targets/options). Heavy operations go through `exec.Command` which is native.
+- **Go modules not supported** by yaegi — irrelevant since build.go only imports `pkg/api` (provided as binary symbols via `i.Use()`).
+- Working fine: generics, goroutines, channels, closures, defer, error wrapping, struct embedding, JSON marshal/unmarshal, `os/exec` (via unrestricted symbols), `net/http`, file I/O.
 
 ## Package Repositories
 Registry checked first; native is fallback. Add commands:
@@ -377,7 +410,6 @@ type PkgDirs struct { SourceDir, BuildDir, InstallDir string }
 ## Known Gotchas
 - `cmd/vmake/manifest_cmd.go` — was historically misspelled as `mainfest_cmd.go`; renamed in Phase 1 cleanup. References to the old name in older docs/scripts should be updated.
 - `vlog` has `Debug`, `Info`, `Error`, `Fatal` — no `Warn` method
-- `test_data/09_with_curl` and `test_data/10_local_repo` have pre-existing failures unrelated to code changes
 - `exec.Command` doesn't expand shell features — `$(nproc)` won't work, must use `runtime.NumCPU()`
 - Go 1.26 `filepath.Join("/a/b", "/a/b/c")` returns `/a/b/a/b/c` — NOT `/a/b/c`
 - `computeReachable` must use BFS from `IsLocal()` roots — NOT `node.Pkg != nil` and NOT full graph mark-all
@@ -386,6 +418,8 @@ type PkgDirs struct { SourceDir, BuildDir, InstallDir string }
 - `vmake_deps/` is in `scanner.go`'s `skipDirs` — build.go scanner will not recurse into it
 - `ensureGitignore` writes only to project root `.gitignore` (via `findProjectDir()`), not to subdirectories
 - `scanner.go` `skipDirs`: `.git`, `.vmake`, `build`, `vendor`, `node_modules`, `vmake_deps` — build.go files in these dirs are invisible to the scanner
+- Buildscripts are re-interpreted on every `vmake` invocation — no `.so` cache, no `go.mod`/`go.sum` generated. `--force` flag is a no-op for buildscript loading (buildscripts are always fresh).
+- `internal/gocompile` is now only used by the extension plugin system (`pkg/plugin`), not by buildscripts.
 
 ## What Not To Do
 - IDE integration plugins

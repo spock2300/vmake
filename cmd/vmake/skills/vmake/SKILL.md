@@ -12,8 +12,9 @@ description: >
 
 # VMake Build Assistant
 
-VMake is a Go-plugin-based C/C++ build system. Build scripts are Go files
-(`build.go`) compiled to plugins and executed through a multi-phase lifecycle.
+VMake is a Go-based C/C++ build system. Build scripts are Go files
+(`build.go`) interpreted at runtime by [yaegi](https://github.com/traefik/yaegi) (Go interpreter)
+and executed through a multi-phase lifecycle.
 It's an alternative to CMake/Meson/Bazel, using Go as the configuration language.
 
 ## Mental Model: Build Phases
@@ -124,9 +125,9 @@ vmake wraps `AddDeps` archives in `--start-group`/`--end-group`. If a static lib
 
 ### `vmake clean` vs `vmake distclean`
 
-`vmake clean` runs `OnClean` hooks then removes build artifacts (objects, binaries); keeps `build.so` and `vmake_deps/`.
+`vmake clean` runs `OnClean` hooks then removes build artifacts (objects, binaries); keeps `vmake_deps/`.
 
-`vmake distclean` removes all local build dirs, build.so, go.mod/go.sum, install/, and `vmake_deps/` (symlinks only — `~/.vmake/sources/` is preserved). Use when modifying `build.go` and the build ignores your changes.
+`vmake distclean` removes all local build dirs, install/, and `vmake_deps/` (symlinks only — `~/.vmake/sources/` is preserved). Use when modifying `build.go` and the build ignores your changes.
 
 ### Patching source before build in registry packages
 
@@ -149,7 +150,7 @@ For `BuildKey` naming, `SourceDir` vs `SrcDir` distinction, and `SetGit` path re
 
 ## Storage Layout
 
-Third-party package source code is **shared globally** across projects via symlinks, while compiled buildscript plugins and build artifacts remain **per-project** in `vmake_deps/`. This directory is auto-added to `.gitignore` on first build.
+Third-party package source code is **shared globally** across projects via symlinks, while build artifacts remain **per-project** in `vmake_deps/`. This directory is auto-added to `.gitignore` on first build. Buildscripts are interpreted by yaegi at runtime — no `.so` files are generated.
 
 ```
 project/
@@ -158,7 +159,6 @@ project/
 ├── vmake_deps/                    # Auto-managed, gitignored
 │   └── <repo>/<pkg>/
 │       ├── src/ → ~/.vmake/sources/<repo>/<pkg>/src/   # Symlink to global cache
-│       ├── build.so               # Compiled buildscript plugin (project-local)
 │       └── out/<buildKey>/
 │           ├── build/             # Build artifacts (project-local)
 │           └── install/           # Install staging (project-local)

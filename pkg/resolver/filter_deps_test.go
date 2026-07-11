@@ -9,7 +9,7 @@ import (
 
 func TestResolveDepNameBareWithNoSubParents(t *testing.T) {
 	r := NewResolver(nil, t.TempDir())
-	r.sources["foo"] = buildscript.NewSource("foo", "/p/build.go", "/p", "", api.SourceLocal, false)
+	r.sources["foo"] = buildscript.NewSource("foo", "/p/build.go", "/p", api.SourceLocal)
 
 	got := r.resolveDepName("callingPkg", "foo")
 	if got != "foo" {
@@ -19,7 +19,7 @@ func TestResolveDepNameBareWithNoSubParents(t *testing.T) {
 
 func TestResolveDepNamePassesThroughAbsolute(t *testing.T) {
 	r := NewResolver(nil, t.TempDir())
-	r.sources["parent/child"] = buildscript.NewSource("parent/child", "/p/build.go", "/p", "", api.SourceLocal, false)
+	r.sources["parent/child"] = buildscript.NewSource("parent/child", "/p/build.go", "/p", api.SourceLocal)
 	r.subParents["parent/child"] = "parent"
 
 	got := r.resolveDepName("parent/child", "parent/child")
@@ -30,8 +30,8 @@ func TestResolveDepNamePassesThroughAbsolute(t *testing.T) {
 
 func TestResolveDepNameSubPackageResolution(t *testing.T) {
 	r := NewResolver(nil, t.TempDir())
-	r.sources["parent/sub"] = buildscript.NewSource("parent/sub", "/p/build.go", "/p", "", api.SourceLocal, false)
-	r.sources["parent/dep"] = buildscript.NewSource("parent/dep", "/p2/build.go", "/p2", "", api.SourceLocal, false)
+	r.sources["parent/sub"] = buildscript.NewSource("parent/sub", "/p/build.go", "/p", api.SourceLocal)
+	r.sources["parent/dep"] = buildscript.NewSource("parent/dep", "/p2/build.go", "/p2", api.SourceLocal)
 	r.subParents["parent/sub"] = "parent"
 
 	got := r.resolveDepName("parent/sub", "dep")
@@ -85,8 +85,8 @@ func TestFilterDepsReplacesNodeDeps(t *testing.T) {
 	pkg.UpdateRequireContext(nil, nil)
 
 	r.graph.Packages["foo"] = &PackageNode{ID: "foo", Pkg: pkg, Deps: []string{"old-dep"}}
-	r.sources["real-dep-1"] = buildscript.NewSource("real-dep-1", "/p1/build.go", "/p1", "", api.SourceLocal, false)
-	r.sources["real-dep-2"] = buildscript.NewSource("real-dep-2", "/p2/build.go", "/p2", "", api.SourceLocal, false)
+	r.sources["real-dep-1"] = buildscript.NewSource("real-dep-1", "/p1/build.go", "/p1", api.SourceLocal)
+	r.sources["real-dep-2"] = buildscript.NewSource("real-dep-2", "/p2/build.go", "/p2", api.SourceLocal)
 
 	if err := r.FilterDeps("foo", nil, nil); err != nil {
 		t.Fatalf("FilterDeps: %v", err)

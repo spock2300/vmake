@@ -28,7 +28,7 @@ func newQueryCmd() *cobra.Command {
 func runQuery(cmd *cobra.Command, args []string) {
 	vlog.SetLevel(vlog.Quiet)
 
-	ctx := resolveToConfig(false)
+	ctx := resolveToConfig()
 
 	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
 	globalValues := config.BuildGlobalValues(ctx.Config)

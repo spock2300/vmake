@@ -1,6 +1,6 @@
 # VMake 构建脚本 API 参考
 
-VMake 使用 Go 插件（`.so`）作为配置语言。项目和第三方包的 `build.go` 文件会被编译为 Go 插件，由 vmake 加载执行。
+VMake 使用 [yaegi](https://github.com/traefik/yaegi) Go 解释器在运行时直接解释执行 `build.go` 文件，无需编译为插件。支持多文件：一个包目录下可以有多个 `.go` 文件，它们会被合并后一起解释执行。
 
 ## 入口函数
 

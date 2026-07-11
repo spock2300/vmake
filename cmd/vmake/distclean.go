@@ -15,9 +15,7 @@ var distCleanCmd = &cobra.Command{
 remote package cache, and the install directory.
 
 This is equivalent to 'vmake clean --all' plus:
-  - build/build.so for each local package
   - build/compile_commands.json for each local package
-  - go.mod/go.sum for each local package (stale buildscript cache)
   - install/ directory at project root
   - vmake_deps/ directory (all third-party sources and build cache)`,
 	Run: runDistClean,
@@ -28,7 +26,7 @@ func init() {
 }
 
 func runDistClean(cmd *cobra.Command, args []string) {
-	ctx, ok := resolveToConfigBestEffort(false)
+	ctx, ok := resolveToConfigBestEffort()
 	if ok {
 		vlog.Info("")
 		vlog.Info("Executing OnClean...")
@@ -39,10 +37,7 @@ func runDistClean(cmd *cobra.Command, args []string) {
 	cleanPackages(entries, ctx.Config, true)
 
 	for _, pkg := range entries {
-		removeIfExists(filepath.Join(pkg.Dir, "build", "build.so"), pkg.Name, "build.so", false)
 		removeIfExists(filepath.Join(pkg.Dir, "build", "compile_commands.json"), pkg.Name, "compile_commands.json", false)
-		removeIfExists(filepath.Join(pkg.Dir, "go.mod"), pkg.Name, "go.mod", false)
-		removeIfExists(filepath.Join(pkg.Dir, "go.sum"), pkg.Name, "go.sum", false)
 	}
 
 	removeIfExists(filepath.Join(ctx.WorkDir, "install"), "", "install/", true)

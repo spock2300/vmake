@@ -113,18 +113,18 @@ func runConfigurePhase(ctx *RuntimeContext) {
 	fatalErr(runConfigPhase(ctx))
 }
 
-func resolveToConfig(force bool) *RuntimeContext {
+func resolveToConfig() *RuntimeContext {
 	ctx := mustInitContext()
 	ensureGitignore(findProjectDir())
-	fatalErr(runRequirePhase(ctx, force))
+	fatalErr(runRequirePhase(ctx))
 	runConfigurePhase(ctx)
 	return ctx
 }
 
-func resolveToConfigBestEffort(force bool) (*RuntimeContext, bool) {
+func resolveToConfigBestEffort() (*RuntimeContext, bool) {
 	ctx := mustInitContext()
 	ensureGitignore(findProjectDir())
-	if err := runRequirePhase(ctx, force); err != nil {
+	if err := runRequirePhase(ctx); err != nil {
 		return ctx, false
 	}
 	runConfigurePhase(ctx)
@@ -175,7 +175,7 @@ func newBuildContext(ctx *RuntimeContext, name string, globalValues map[string]a
 	return buildCtx
 }
 
-func runRequirePhase(ctx *RuntimeContext, force bool) error {
+func runRequirePhase(ctx *RuntimeContext) error {
 	vlog.Info("Scanning %s...", ctx.WorkDir)
 
 	packages, err := buildscript.Scan(ctx.WorkDir)
@@ -194,7 +194,6 @@ func runRequirePhase(ctx *RuntimeContext, force bool) error {
 	vlog.Info("Found %d package(s): %s", len(packages), strings.Join(pkgNames, ", "))
 
 	r := resolver.NewResolver(getRepoManager(), getDepsDir())
-	r.SetForce(force)
 	r.SetGlobalSourcesDir(getSourcesDir())
 	ctx.Resolver = r
 

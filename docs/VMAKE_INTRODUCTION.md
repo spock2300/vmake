@@ -102,12 +102,13 @@ func Main(p *api.Package) {
 
 ## 架构之美：为什么 VMake 的设计更优雅
 
-### 1. Go 插件化的 build.go 系统
+### 1. Go 解释器化的 build.go 系统
 
-每个 `build.go` 文件在运行时被编译为 Go 插件（.so）并动态加载。这意味着：
+每个 `build.go` 文件在运行时由 [yaegi](https://github.com/traefik/yaegi) Go 解释器直接解释执行，无需编译为插件。这意味着：
 
 - 构建脚本就是标准 Go 代码，享有完整的类型安全
 - 可以直接使用 Go 标准库——字符串处理、文件操作、网络请求，一切触手可及
+- 支持多文件：一个包的 build.go 可以拆分成多个 `.go` 文件
 - 不再需要学习 CMake 那种自成一派的 DSL
 
 ### 2. 流式 API（Fluent API）

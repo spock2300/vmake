@@ -29,14 +29,12 @@ Per project (`build --install`):
 
 ## What is NOT Snapshotted
 
-- `build/build.so` — Go plugin binary, inherently non-deterministic.
 - `build/<hash>/objects/*.o` and `*.o.d` — redundant with `compile_commands.json`.
 - `manifest.json` itself is captured via the redacted field, not as a file.
 
 ## Excluded Projects
 
-`07_subbuild_codegen`, `08_with_package`, `09_with_curl`, `10_local_repo` —
-known pre-existing failures unrelated to vmake core (see AGENTS.md).
+All test_data projects currently pass — no known pre-existing failures.
 
 ## Interpreting Failures
 

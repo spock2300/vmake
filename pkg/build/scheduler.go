@@ -12,6 +12,7 @@ import (
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/glob"
 	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/buildscript"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
@@ -231,13 +232,22 @@ func (s *Scheduler) Build(fullName string) error {
 		numWorkers = numFiles
 	}
 
+	goFiles, err := buildscript.ListGoFiles(pkgInfo.SourceDir)
+	if err != nil {
+		vlog.Error("list .go files in %s: %v", pkgInfo.SourceDir, err)
+		buildGo := filepath.Join(pkgInfo.SourceDir, "build.go")
+		if _, statErr := os.Stat(buildGo); statErr == nil {
+			goFiles = []string{buildGo}
+		}
+	}
+
 	jobs := make(chan string, numFiles)
 	results := make(chan compileResult, numFiles)
 
 	var wg sync.WaitGroup
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
-		go s.compileWorker(resolved, jobs, results, &wg)
+		go s.compileWorker(resolved, jobs, results, &wg, goFiles)
 	}
 
 	for _, src := range resolved.SourceFiles {
@@ -283,10 +293,10 @@ func (s *Scheduler) Build(fullName string) error {
 	return nil
 }
 
-func (s *Scheduler) compileWorker(resolved *ResolvedTarget, jobs <-chan string, results chan<- compileResult, wg *sync.WaitGroup) {
+func (s *Scheduler) compileWorker(resolved *ResolvedTarget, jobs <-chan string, results chan<- compileResult, wg *sync.WaitGroup, goFiles []string) {
 	defer wg.Done()
 	for src := range jobs {
-		objPath, deps, err := s.compileSource(resolved, src)
+		objPath, deps, err := s.compileSource(resolved, src, goFiles)
 		results <- compileResult{src: src, objPath: objPath, deps: deps, err: err}
 	}
 }
@@ -460,13 +470,12 @@ func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
 	return s.pkgs[node.PkgName].OutputPath(targetFilename(node.Target.Kind(), node.Target.Name()))
 }
 
-func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string, []string, error) {
+func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string, goFiles []string) (string, []string, error) {
 	pkgInfo := s.pkgs[resolved.Node.PkgName]
 
 	objRel := pkgInfo.OutputPath(filepath.Join(subdirObjects, strings.ReplaceAll(src, "/", "_")+".o"))
 
-	buildGoPath := filepath.Join(pkgInfo.SourceDir, "build.go")
-	valid, deps := IsSourceValid(src, objRel, buildGoPath)
+	valid, deps := IsSourceValid(src, objRel, goFiles...)
 	if valid {
 		return objRel, deps, nil
 	}

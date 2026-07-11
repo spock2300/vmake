@@ -32,7 +32,7 @@ func init() {
 }
 
 func runConfig(cmd *cobra.Command, args []string) {
-	ctx := resolveToConfig(false)
+	ctx := resolveToConfig()
 
 	if len(setFlags) > 0 {
 		runSetConfig(ctx, setFlags)

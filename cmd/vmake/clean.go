@@ -137,7 +137,7 @@ func scanPackages(workDir string) []pkgCleanEntry {
 }
 
 func runClean(cmd *cobra.Command, args []string) {
-	ctx, ok := resolveToConfigBestEffort(false)
+	ctx, ok := resolveToConfigBestEffort()
 	if !ok {
 		entries := scanPackages(ctx.WorkDir)
 		cleanPackages(entries, ctx.Config, cleanAllFlag)

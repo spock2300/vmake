@@ -28,11 +28,9 @@ go install github.com/spock2300/vmake/cmd/vmake@latest
 
 ### 调试模式
 
-开发 vmake 或调试 `build.go`/`package.go` 时，设置 `VMAKE_DIR` 指向本地源码：
+build.go 由 yaegi 解释器直接执行，无需编译为插件：
 
 ```bash
-export VMAKE_DIR=/path/to/vmake
-
 cd /path/to/vmake
 go build -o vmake ./cmd/vmake
 ./vmake build
@@ -95,7 +93,7 @@ vmake/
 │   ├── fs/              # 文件系统工具
 │   ├── gitstore/        # Git 仓库管理（共享基础设施）
 │   ├── glob/            # 文件匹配
-│   ├── gocompile/       # Go 插件编译
+│   ├── gocompile/       # Go 插件编译（仅扩展系统使用）
 │   ├── jsonio/          # JSON 序列化
 │   └── toposort/        # 拓扑排序
 └── docs/                # 设计文档

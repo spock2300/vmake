@@ -131,13 +131,13 @@ func TestResolveAllLocalOnly(t *testing.T) {
 }
 
 func TestPackageNodeIsLocal(t *testing.T) {
-	localSrc := buildscript.NewSource("foo", "/path/build.go", "/path", "", api.SourceLocal, false)
+	localSrc := buildscript.NewSource("foo", "/path/build.go", "/path", api.SourceLocal)
 	localNode := NewPackageNode("foo", localSrc, nil, false)
 	if !localNode.IsLocal() {
 		t.Error("local source should be IsLocal()")
 	}
 
-	remoteSrc := buildscript.NewSource("bar/pkg", "/remote/build.go", "/remote", "", api.SourceRemote, false)
+	remoteSrc := buildscript.NewSource("bar/pkg", "/remote/build.go", "/remote", api.SourceRemote)
 	remoteNode := NewPackageNode("bar/pkg", remoteSrc, nil, false)
 	if remoteNode.IsLocal() {
 		t.Error("remote source should not be IsLocal()")
@@ -145,7 +145,7 @@ func TestPackageNodeIsLocal(t *testing.T) {
 }
 
 func TestPackageNodeWithNative(t *testing.T) {
-	src := buildscript.NewSource("foo", "/path/build.go", "/path", "", api.SourceRemote, false)
+	src := buildscript.NewSource("foo", "/path/build.go", "/path", api.SourceRemote)
 	node := NewPackageNode("foo", src, nil, true).WithNative("https://example.com/foo.git",
 		map[string]string{"1.0.0": "refs/tags/1.0.0"}, "1.0.0")
 
