@@ -45,19 +45,7 @@ func LoadBuildScript(src Source) (*api.Package, error) {
 		return nil, fmt.Errorf("merge go files in %s: %w", src.Dir, err)
 	}
 
-	tmpFile, err := os.CreateTemp("", "vmake_build_*.go")
-	if err != nil {
-		return nil, fmt.Errorf("create temp file: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
-	if _, err := tmpFile.Write([]byte(merged)); err != nil {
-		tmpFile.Close()
-		return nil, fmt.Errorf("write temp file: %w", err)
-	}
-	tmpFile.Close()
-
-	if _, err := i.EvalPath(tmpPath); err != nil {
+	if _, err := i.Eval(merged); err != nil {
 		return nil, fmt.Errorf("yaegi eval %s: %w", src.Name, err)
 	}
 
