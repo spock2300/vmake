@@ -25,17 +25,17 @@ func Main(p *api.Package) {
 
 ## What This Demonstrates
 
-- **`p.OnRequire`** - Require phase hook (Phase 1 and Phase 2c)
+- **`p.OnRequire`** - Require phase hook (Phase 1 and Phase 3 FilterDeps)
 - **`ctx.AddRequires("repo/name >=version")`** - Declare dependency
 - **`ctx.Target(...).AddDeps("repo/name")`** - Link against package in target
 - **Version constraints** - semver syntax
 
 ## How It Works
 
-1. **Phase 1 (OnRequire)**: `AddRequires` registers `"official/zlib >=1.2"` for graph discovery. Remote packages are deferred (not yet compiled).
-2. **Phase 2a (ResolveDeferred)**: Remote packages are downloaded, compiled, and their own `OnRequire` runs to discover transitive dependencies.
-3. **Phase 2c (FilterDeps)**: After config is resolved, `OnRequire` runs **again** with real config values from `config.json`, recomputing the dependency list. This enables option-conditional dependencies.
-4. **Phase 3 (OnBuild)**: `autoWireRequireDeps` wires require entries to build dependencies; when target links zlib, includes/libs are linked automatically.
+1. **Phase 1 (OnRequire)**: `AddRequires` registers `"official/zlib >=1.2"` for graph discovery. All packages are resolved eagerly.
+2. **Phase 2 (OnConfig)**: Build options are defined and resolved via `OnConfig` callbacks.
+3. **Phase 3 (FilterDeps)**: After config is resolved, `OnRequire` runs **again** with real config values from `config.json`, recomputing the dependency list. This enables option-conditional dependencies.
+4. **Phase 4 (OnBuild)**: Targets must declare explicit `AddDeps("official/zlib")` to create build-graph edges. The scheduler links the library and propagates public includes automatically.
 
 ## Version Constraint Syntax
 
@@ -100,7 +100,7 @@ func Main(p *api.Package) {
 
 ## Conditional Dependencies
 
-`OnRequire` can depend on options. This works because `OnRequire` runs twice — the second pass (Phase 2c `FilterDeps`) sees the user's actual config values:
+`OnRequire` can depend on options. This works because `OnRequire` runs twice — the second pass (Phase 3 `FilterDeps`) sees the user's actual config values:
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {
@@ -120,7 +120,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
         SetKind(api.TargetBinary).
         AddFiles("src/*.c").
         AddDeps("test_build/mathlib")
-    // autoWireRequireDeps handles openssl dep automatically when use_ssl=true
+    // AddDeps("official/openssl") needed here too -- no auto-wiring
 })
 ```
 
@@ -129,9 +129,9 @@ p.OnBuild(func(ctx *api.BuildContext) {
 - Package refs use `/`: `repo/name`
 - Version constraints use semver syntax
 - `AddDeps("official/zlib")` auto-links; no need for manual `-lz`
-- `OnRequire` runs twice: first with nil config (Phase 1/2a), then with real config (Phase 2c `FilterDeps`)
-- Option-conditional deps work because Phase 2c has resolved config values
-- `autoWireRequireDeps` uses the final dependency list from `FilterDeps`
+- `OnRequire` runs twice: first with nil config (Phase 1), then with real config (Phase 3 `FilterDeps`)
+- Option-conditional deps work because FilterDeps has resolved config values
+- `AddDeps` uses the final dependency list from `FilterDeps`
 
 ## See Also
 

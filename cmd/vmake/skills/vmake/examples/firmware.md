@@ -238,7 +238,7 @@ func Main(p *api.Package) {
 - **DepBuildDir** — `ctx.DepBuildDir("busybox:busybox")` returns the dependency's build directory
 - **DepOutput** — `ctx.DepOutput("myapp:myapp")` returns the dependency's output binary path
 - **api.CopyFile/CopyDir/CopyDirIfExists** — File copy utilities from the `api` package
-- **autoWireRequireDeps** — `AddRequires` automatically creates build graph edges (no need for explicit `AddDeps` on local targets)
+- **Explicit AddDeps** — Targets must declare `AddDeps` for build-graph edges; `AddRequires` alone only handles package resolution
 - **Empty root build.go** — All work happens in sub-packages; root only provides the workspace
 
 ## Key Points

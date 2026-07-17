@@ -16,12 +16,13 @@ Go-based C/C++ build system. Build instructions are written in Go (`build.go`) u
 
 | Phase | Hook / Step | Purpose |
 |-------|-------------|---------|
-| 1 | `OnRequire` | Declare deps (runs with nil config; remote packages deferred) |
-| 2a | `ResolveDeferred` | Clone/compile remote packages; their `OnRequire` runs (loops until no more deferred) |
-| 2b | `OnConfig` | Define build options, resolve values, run `OnApply` callbacks |
-| 2c | `FilterDeps` | Re-runs `OnRequire` with real config; recomputes deps; BFS needed packages |
-| 3 | `OnBuild` | Generate build targets + `autoWireRequireDeps` + compile/link |
-| 4 | `OnInstall` | Post-build install logic |
+| 1 | `OnRequire` | Declare deps (runs with nil config; all packages resolved eagerly) |
+| 2 | `OnConfig` | Define build options, resolve values, run `OnApply` callbacks |
+| 3 | `FilterDeps` | Re-runs `OnRequire` with real config; recomputes deps; BFS needed packages |
+| 4 | `OnBuild` | Generate build targets |
+| 5 | Compile & Link | Scheduler compiles sources and links targets |
+| 6* | Install | Optional install (only with `--install` flag) |
+| — | `OnInstall` | Post-install custom logic |
 
 `OnPackage` runs during buildscript extraction, right after `Main()` is called and before any lifecycle phases. Use it for package metadata (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` is for **registry repo** packages — native repo versions come from git tags automatically; local packages can also use `SetGit`/`AddVersion` for source download.
 
@@ -71,7 +72,11 @@ Import: `github.com/spock2300/vmake/pkg/api`
 | `SetScriptDir` | `(dir string)` | Build script directory |
 | `SetCfgVals` | `(vals map[string]any)` | Set config values |
 | `SetGenConfigHeader` | `(v bool)` | Enable generated config header |
+| `SetExportConfig` | `(v bool)` | Enable config export |
+| `SetImportConfigs` | `(names []string)` | Set imported config package names |
 | `SetDryRun` | `(v bool)` | Dry run mode |
+| `SetRoot` | `(v bool)` | Mark as root package |
+| `SetGlobalFlags` | `(cflags, cxxflags, ldflags, links []string)` | Set global compiler/linker flags |
 
 ### Targets & Dependencies
 
@@ -118,7 +123,7 @@ All build helpers use `exec.RunFatal` (call `os.Exit` on failure) EXCEPT `RunEnv
 | `BuildDir()` | `string` | Build scratch directory |
 | `InstallDir()` | `string` | Installation prefix |
 | `OutputDir()` | `string` | Output directory |
-| `ScriptDir()` | `string` | Build script directory (same as SourceDir) |
+| `ScriptDir()` | `string` | Build script directory (set via `SetScriptDir`; defaults to `""`) |
 | `Env()` | `map[string]string` | Toolchain env vars (CC, CXX, AR, etc.) |
 | `Deps()` | `map[string]*InstalledPackage` | Resolved dependencies |
 | `GetRequires()` | `*Requires` | Package requires |
@@ -129,6 +134,10 @@ All build helpers use `exec.RunFatal` (call `os.Exit` on failure) EXCEPT `RunEnv
 | `Versions()` | `map[string]string` | Version to ref mapping |
 | `GetVersions()` | `[]string` | Available version list (unsorted) |
 | `GenConfigHeader()` | `bool` | Generated config header enabled |
+| `ExportConfig()` | `bool` | Config export enabled |
+| `ImportConfigs()` | `[]string` | Imported config package names |
+| `IsRoot()` | `bool` | Whether marked as root package |
+| `GlobalCFlags()` / `GlobalCxxFlags()` / `GlobalLdFlags()` / `GlobalLinks()` | `[]string` | Global flags |
 | `GetRef` | `(version string) string` | Git ref for a version |
 | `SelectVersion` | `(constraint string) (string, error)` | Best version match |
 | `SelectVersionMulti` | `(constraints []string) (string, error)` | Best version matching multiple constraints |
@@ -314,7 +323,7 @@ All context types embed `ConfigAccessor` for option value access (see below).
 
 ### RequireContext
 
-OnRequire callbacks execute twice: first during graph discovery with nil config values (Phase 1), then again during FilterDeps with actual config values from config.json (Phase 2c). This enables option-conditional dependencies.
+OnRequire callbacks execute twice: first during graph discovery with nil config values (Phase 1), then again during FilterDeps with actual config values from config.json (Phase 3). This enables option-conditional dependencies.
 
 | Method | Description |
 |--------|-------------|
@@ -488,15 +497,20 @@ Available as `api.CopyFile`, `api.CopyDir`, etc. — useful in `SetBuildFunc` fo
 
 	func SplitPackageRef(ref string) (repo, name string, ok bool)
 	func MatchPatterns(patterns []string, name string) bool
+	func ResolveSubPackageName(currentPkg, depName string, subParents map[string]string, exists func(string) bool) string
+	func CheckCycle(path []string, current string) error
 
 ### Build Mode
 
 	func GetModeFlags(mode string) (cflags []string, defines []string)
 
-### Config Export
+### Config Export & Merge
 
 	func ConfigToDefines(options map[string]*Option, cfgVals map[string]any) []string
 	func ConfigToHeader(options map[string]*Option, cfgVals map[string]any) string
+	func WriteConfigHeader(dir string, content string) error
+	func MergeImportedOptions(localOpts map[string]*Option, localVals map[string]any, pkgs []*Package) (map[string]*Option, map[string]any)
+	func MergeGlobalOptions(allDefs map[string]map[string]*Option, toolchainList []string) (map[string]*Option, error)
 
 ### Semver
 

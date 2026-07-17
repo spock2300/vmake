@@ -9,12 +9,14 @@ run `vmake <plugin> --help` or check the plugin documentation.
     `--mode`: `debug` or `release`
     `--manifest <path>`: pin versions from a manifest file
     `--toolchain`: override toolchain
+  `vmake check-symbols [--strict]` - Audit exported symbols of shared libraries and binaries via nm -D
   `vmake clean [--all]` - Clean build artifacts
   `vmake completion [bash|zsh|fish|powershell|install]` - Generate shell completion script
     `vmake completion install [--shell <name>]` - Install shell completion to your profile
   `vmake config [--set -s <name>=<value>]` - Open a TUI to configure build options for all packages.
     `--set` supports `option=value` (global), `pkg/option=value` (package-specific), and bool coercion (`true`/`false`/`on`/`off`/`1`/`0`). Validates choices against allowed values.
-  `vmake distclean` - Deep clean all build artifacts
+  `vmake distclean` - Deep clean all build artifacts (build dirs + install/ + vmake_deps/)
+  `vmake doctor` - Diagnose build.go for patterns that may break in future vmake versions
   `vmake ext` - Manage extension repositories
     `vmake ext add <name> <git-url>` - Add an extension repository
     `vmake ext list` - List extension repositories and plugins
@@ -31,14 +33,14 @@ run `vmake <plugin> --help` or check the plugin documentation.
     `vmake pkg search [pattern]` - Search for packages
     `vmake pkg update <repo/name>` - Update package source
   `vmake query` - Show dependency tree
-  `vmake rebuild [--install -i --install-type --prefix -p]` - Rebuild the project
+  `vmake rebuild [--install -i --install-type --prefix -p]` - Rebuild the project (clean local packages then build)
   `vmake repo` - Manage package repositories
     `vmake repo add <name> <git-url-or-template> [--native -n]` - Add a package repository
     `vmake repo list` - List all package repositories
     `vmake repo remove <name>` - Remove a package repository
     `vmake repo update <name>` - Update a package repository
   `vmake skill` - Manage AI coding assistant skills
-    `vmake skill install [--project -p]` - Install VMake skill for AI assistants
+    `vmake skill install [--project -p]` - Install VMake skill for AI assistants (--project also installs to current project)
     `vmake skill path` - Show skill installation paths
     `vmake skill uninstall` - Uninstall VMake skill
   `vmake test` - Build and run test targets

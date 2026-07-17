@@ -48,7 +48,7 @@ func Main(p *api.Package) {
 
 ## What This Demonstrates
 
-- **`p.OnConfig`** - Config phase hook (Phase 2)
+- **`p.OnConfig`** - Config phase hook (Phase 2 in the lifecycle)
 - **`ctx.Option(name)`** - Define an option with fluent API
 - **`SetType(api.OptionBool/Choice/String/Int)`** - Option type
 - **`SetDefault(value)`** - Default value

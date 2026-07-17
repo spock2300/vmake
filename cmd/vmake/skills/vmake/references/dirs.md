@@ -9,7 +9,7 @@
 | `SrcDirRaw()` | Raw srcCodeDir without fallback (empty if `SetSrcDir` not called) | Detecting whether source dir was explicitly set |
 | `BuildDir()` | Scratch dir for intermediate artifacts | Build outputs, stamps |
 | `InstallDir()` | Installation prefix | Headers/libs installed by third-party packages |
-| `ScriptDir()` | Same as `SourceDir()` | Legacy alias |
+| `ScriptDir()` | Directory set via `SetScriptDir` (defaults to `""`) | Patch resolution; rarely used — most code uses `SourceDir()` |
 
 ## BuildKey — Build Directory Naming
 

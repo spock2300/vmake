@@ -24,12 +24,13 @@ include the ones your project needs:
 
 | Phase | Hook / Step | When you need it |
 |-------|-------------|-----------------|
-| 1 | `OnRequire` | Declare deps (runs with nil config; remote packages deferred) |
-| 2a | `ResolveDeferred` | Remote packages cloned, compiled; their `OnRequire` runs (loops until no more deferred) |
-| 2b | `OnConfig` | Build options (debug/release, features, etc.) |
-| 2c | `FilterDeps` | Re-runs `OnRequire` with real config values; recomputes deps; BFS collects needed packages |
-| 3 | `OnBuild` | Define targets + `autoWireRequireDeps` + compile/link |
-| 4 | `OnInstall` | Custom install logic |
+| 1 | `OnRequire` | Declare deps (runs with nil config; all packages resolved eagerly) |
+| 2 | `OnConfig` | Build options (debug/release, features, etc.) — includes OnApply callbacks |
+| 3 | `FilterDeps` | Re-runs `OnRequire` with real config values; recomputes deps; BFS collects needed packages |
+| 4 | `OnBuild` | Define targets |
+| 5 | Compile & Link | Scheduler compiles sources and links targets |
+| 6* | Install | Optional install (only with `--install` flag) |
+| — | `OnInstall` | Post-install custom logic (runs after install) |
 | clean | `OnClean` | Custom clean logic (runs during `vmake clean`; separate from build pipeline) |
 
 `OnPackage` runs for all packages right after `Main()` is called (before any lifecycle phases). Use it to describe the package (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` downloads remote source to `SourceDir()/src/` — works for both registry packages and local packages that need to wrap a downloaded library.
@@ -276,11 +277,16 @@ p.OnBuild(func(ctx *api.BuildContext) {
 })
 ```
 
-### Auto-Wire: When AddDeps is Automatic
+### Dependency Wiring (Always Explicit)
 
-After all `OnBuild` callbacks execute, `autoWireRequireDeps` auto-adds `AddDeps("pkg:target")` for ALL targets defined by each `AddRequires` dependency package. So `AddRequires("busybox")` + busybox's target `"busybox"` → all your targets automatically get `AddDeps("busybox:busybox")`. You do NOT need explicit `AddDeps` when depending on a whole package via `OnRequire`.
+Every target must declare its build-graph edges explicitly via `AddDeps`. There is **no** automatic wiring — `AddRequires` in `OnRequire` only declares the *package-level dependency* for resolution, not the *build-graph edge*.
 
-Explicit `AddDeps` IS needed for: same-package deps (`"mylib"`), specific cross-package targets (`"lib:utils"`), wildcard deps (`"chip:*"`), or selective third-party targets (`"official/zlib:target"`).
+- `AddRequires("official/zlib >=1.2")` — declares the package as a dependency (for version resolution and source download)
+- `AddDeps("official/zlib")` — creates the build-graph edge (link + propagate public includes)
+
+Both are needed. `AddRequires` alone will not link the library or propagate headers.
+
+Run `vmake doctor` to detect packages that are missing explicit `AddDeps`.
 
 ### Dependency Format
 
@@ -301,8 +307,8 @@ Operators: `>=` (major-locked), `>` / `<=` / `<` (no major lock), `=` (exact), `
 
 | Pass | Phase | Config values | Purpose |
 |------|-------|--------------|---------|
-| 1 | Phase 1 / 2a | `nil` | Discover initial dependency graph. Remote packages are deferred and compiled in Phase 2a; their `OnRequire` runs for the first time here. |
-| 2 | Phase 2c (`FilterDeps`) | Real values from `config.json` | After `OnConfig` has resolved all option values, `FilterDeps` re-runs every package's `OnRequire` with actual config. The returned dependencies **replace** `node.Deps`, then topology is re-sorted and needed packages are collected via BFS. |
+| 1 | Phase 1 | `nil` | Discover initial dependency graph. All packages (registry and native) are resolved eagerly. `OnRequire` runs for the first time here with nil config. |
+| 2 | Phase 3 (`FilterDeps`) | Real values from `config.json` | After `OnConfig` has resolved all option values, `FilterDeps` re-runs every package's `OnRequire` with actual config. The returned dependencies **replace** `node.Deps`, then topology is re-sorted and needed packages are collected via BFS. |
 
 This is what enables **option-conditional dependencies** — if `OnRequire` only ran once with nil config, your `ctx.Bool("use_ssl")` check would never see the user's actual choice:
 
@@ -508,8 +514,11 @@ The manifest records git remote URLs, refs, and revisions for every package. `vm
 | `vmake pkg list/search/clean/update` | Packages |
 | `vmake ext add/list/remove/update` | Extension repos |
 | `vmake manifest show/checkout` | Install manifest |
+| `vmake check-symbols [--strict]` | Audit exported symbols via nm -D |
+| `vmake doctor` | Diagnose build.go issues |
 | `vmake git tag` | Version tagging |
 | `vmake skill install/uninstall/path` | AI skill management |
+| `vmake update [version]` | Update vmake |
 | `vmake version` | Version info |
 
 Build flags: `--force/-f`, `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`, `--manifest`, `--tests`

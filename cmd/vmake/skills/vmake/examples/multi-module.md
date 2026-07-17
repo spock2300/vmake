@@ -122,5 +122,5 @@ Each dependency is a separate package in its own directory. The `pkg:target` for
 ## See Also
 
 - references/api.md - Target, AddPublicIncludes, dependency format
-- SKILL.md - Dependencies section, auto-wire behavior
+- SKILL.md - Dependencies section
 - examples/multi-target.md - Multiple targets within a single package

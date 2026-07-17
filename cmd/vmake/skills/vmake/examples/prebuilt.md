@@ -86,8 +86,8 @@ Or use the wildcard syntax to link all targets from a package:
 ctx.Target("app").AddDeps("vendor/openssl:*")
 ```
 
-Or let auto-wire handle it by using `AddRequires("vendor/openssl")` — all
-targets from that package are added as dependencies automatically.
+Or use `AddDeps("vendor/openssl")` to depend on all targets from that
+package — wildcard syntax is implied for package-level references.
 
 ## With System Library Dependencies
 
