@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"fmt"
 	"sort"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/spock2300/vmake/pkg/api"
@@ -46,8 +48,9 @@ type Model struct {
 	optCursor  int
 	optItems   []OptionItem
 
-	editing   bool
-	editInput string
+	editing    bool
+	editInput  string
+	editCursor int
 
 	width       int
 	height      int
@@ -66,7 +69,29 @@ type Model struct {
 	treeWidth int
 	treeOff   int
 	optOff    int
+
+	hideEmptyPkgs bool
+	optCounts     map[string]int
+
+	overlay      overlayKind
+	choiceCursor int
+	choiceOpt    string
+	choiceValues []string
+
+	filterActive bool
+	filterInput  string
+
+	renderedHeaderH int
+	renderedFooterH int
 }
+
+type overlayKind int
+
+const (
+	overlayNone overlayKind = iota
+	overlayChoice
+	overlayDetail
+)
 
 func NewModel(
 	packages []buildscript.Source,
@@ -131,17 +156,250 @@ func NewModel(
 		kconfigs:      kconfigs,
 		menuconfigRan: make(map[string]bool),
 		presetValues:  make(map[string]string),
+		optCounts:     computeOptCounts(options, globalOptions),
 	}
 	m.origValues = deepCopyValues(values)
 	m.origGlobal = deepCopyGlobal(globalValues)
 	m.tree = buildDepTree(packages, deps)
-	m.flat = flattenTree(m.tree)
-	m.treeWidth = calcTreeWidth(m.flat)
+	m.rebuildFlat()
 
 	if len(m.flat) > 0 {
 		m.selectFirstPkg()
 	}
 	return m
+}
+
+func computeOptCounts(options map[string]map[string]*api.Option, globalOptions map[string]*api.Option) map[string]int {
+	counts := make(map[string]int)
+	for pkgName, opts := range options {
+		n := 0
+		for _, opt := range opts {
+			if !opt.IsGlobal() {
+				n++
+			}
+		}
+		counts[pkgName] = n
+	}
+	counts[GlobalPkgName] = len(globalOptions)
+	return counts
+}
+
+func (m *Model) rebuildFlat() {
+	switch {
+	case m.filterInput != "":
+		m.flat = flattenTreeSearch(m.tree, m.filterInput, m.options, m.globalOptions)
+	case m.hideEmptyPkgs:
+		m.flat = flattenTreeFiltered(m.tree, m.optCounts, m.kconfigs)
+	default:
+		m.flat = flattenTree(m.tree)
+	}
+	m.treeWidth = calcTreeWidth(m.flat, m.optCounts)
+}
+
+func flattenTreeSearch(nodes []*TreeNode, q string, options map[string]map[string]*api.Option, globalOptions map[string]*api.Option) []*TreeNode {
+	q = strings.ToLower(q)
+	var result []*TreeNode
+	for _, n := range nodes {
+		if searchVisible(n, q, options, globalOptions) {
+			result = append(result, n)
+			if len(n.Children) > 0 {
+				result = append(result, flattenTreeSearch(n.Children, q, options, globalOptions)...)
+			}
+		}
+	}
+	return result
+}
+
+func searchVisible(n *TreeNode, q string, options map[string]map[string]*api.Option, globalOptions map[string]*api.Option) bool {
+	if n.PkgName == "" {
+		return true
+	}
+	if strings.Contains(strings.ToLower(n.Name), q) {
+		return true
+	}
+	var opts map[string]*api.Option
+	if n.PkgName == GlobalPkgName {
+		opts = globalOptions
+	} else {
+		opts = options[n.PkgName]
+	}
+	for name, opt := range opts {
+		if strings.Contains(strings.ToLower(name), q) {
+			return true
+		}
+		if strings.Contains(strings.ToLower(opt.Description()), q) {
+			return true
+		}
+	}
+	for _, c := range n.Children {
+		if searchVisible(c, q, options, globalOptions) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) findFirstMatch(query string) (pkgName, optName string) {
+	q := strings.ToLower(query)
+	for _, node := range m.tree {
+		if p, o := searchNodeMatch(node, q, m.options, m.globalOptions); p != "" {
+			return p, o
+		}
+	}
+	return "", ""
+}
+
+func searchNodeMatch(n *TreeNode, q string, options map[string]map[string]*api.Option, globalOptions map[string]*api.Option) (pkgName, optName string) {
+	if n.PkgName != "" {
+		if strings.Contains(strings.ToLower(n.Name), q) {
+			return n.PkgName, ""
+		}
+		var opts map[string]*api.Option
+		if n.PkgName == GlobalPkgName {
+			opts = globalOptions
+		} else {
+			opts = options[n.PkgName]
+		}
+		for name, opt := range opts {
+			if strings.Contains(strings.ToLower(name), q) || strings.Contains(strings.ToLower(opt.Description()), q) {
+				return n.PkgName, name
+			}
+		}
+	}
+	for _, c := range n.Children {
+		if p, o := searchNodeMatch(c, q, options, globalOptions); p != "" {
+			return p, o
+		}
+	}
+	return "", ""
+}
+
+func (m *Model) expandToPkg(target string) bool {
+	for _, node := range m.tree {
+		if expandToPkgRec(node, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func expandToPkgRec(n *TreeNode, target string) bool {
+	if n.PkgName == target {
+		return true
+	}
+	for _, c := range n.Children {
+		if expandToPkgRec(c, target) {
+			n.Expanded = true
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) jumpToMatch(pkgName, optName string) bool {
+	if pkgName == "" {
+		return false
+	}
+	m.expandToPkg(pkgName)
+	m.rebuildFlat()
+	for i, n := range m.flat {
+		if n.PkgName == pkgName {
+			m.treeCursor = i
+			m.selectCurrentNode()
+			break
+		}
+	}
+	if optName != "" {
+		visible := m.visibleOptions()
+		for i, item := range visible {
+			if item.Name == optName {
+				m.optCursor = i
+				break
+			}
+		}
+	}
+	m.focusArea = 0
+	m.ensureTreeCursorVisible()
+	return true
+}
+
+func (m *Model) filteredMatchCount() int {
+	n := 0
+	for _, node := range m.flat {
+		if node.PkgName != "" && node.PkgName != GlobalPkgName {
+			n++
+		}
+	}
+	return n
+}
+
+func (m *Model) matchedOptionIn(pkg, query string) string {
+	q := strings.ToLower(query)
+	var opts map[string]*api.Option
+	if pkg == GlobalPkgName {
+		opts = m.globalOptions
+	} else {
+		opts = m.options[pkg]
+	}
+	for name, opt := range opts {
+		if strings.Contains(strings.ToLower(name), q) || strings.Contains(strings.ToLower(opt.Description()), q) {
+			return name
+		}
+	}
+	return ""
+}
+
+func flattenTreeFiltered(nodes []*TreeNode, optCounts map[string]int, kconfigs map[string][]*api.KConfigEntry) []*TreeNode {
+	var result []*TreeNode
+	for _, n := range nodes {
+		if isDisplayable(n, optCounts, kconfigs) {
+			result = append(result, n)
+			if n.Expanded && len(n.Children) > 0 {
+				result = append(result, flattenTreeFiltered(n.Children, optCounts, kconfigs)...)
+			}
+		}
+	}
+	return result
+}
+
+func isDisplayable(n *TreeNode, optCounts map[string]int, kconfigs map[string][]*api.KConfigEntry) bool {
+	if n.PkgName == "" || n.PkgName == GlobalPkgName {
+		return true
+	}
+	if optCounts[n.PkgName] > 0 {
+		return true
+	}
+	if len(kconfigs[n.PkgName]) > 0 {
+		return true
+	}
+	for _, c := range n.Children {
+		if isDisplayable(c, optCounts, kconfigs) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) collapseAll() {
+	setExpandedAll(m.tree, false, true)
+	m.rebuildFlat()
+	m.ensureTreeCursorVisible()
+}
+
+func (m *Model) expandAll() {
+	setExpandedAll(m.tree, true, false)
+	m.rebuildFlat()
+	m.ensureTreeCursorVisible()
+}
+
+func setExpandedAll(nodes []*TreeNode, expanded, keepGlobal bool) {
+	for _, n := range nodes {
+		if keepGlobal && n.PkgName == GlobalPkgName {
+			continue
+		}
+		n.Expanded = expanded
+		setExpandedAll(n.Children, expanded, keepGlobal)
+	}
 }
 
 func deepCopyGlobal(src map[string]any) map[string]any {
@@ -163,10 +421,15 @@ func deepCopyValues(src map[string]map[string]any) map[string]map[string]any {
 	return dst
 }
 
-func calcTreeWidth(flat []*TreeNode) int {
+func calcTreeWidth(flat []*TreeNode, optCounts map[string]int) int {
 	maxW := 0
 	for _, node := range flat {
 		w := node.Depth*2 + utf8.RuneCountInString(node.Prefix) + 2 + utf8.RuneCountInString(node.Name)
+		if node.PkgName != "" {
+			if c := optCounts[node.PkgName]; c > 0 {
+				w += utf8.RuneCountInString(fmt.Sprintf(" (%d)", c))
+			}
+		}
 		if w > maxW {
 			maxW = w
 		}
@@ -395,7 +658,7 @@ func globalValuesEqual(a, b map[string]any) bool {
 	}
 	for k, vA := range a {
 		vB, ok := b[k]
-		if !ok || vA != vB {
+		if !ok || !sameValue(vA, vB) {
 			return false
 		}
 	}
@@ -413,12 +676,40 @@ func valuesEqual(a, b map[string]map[string]any) bool {
 		}
 		for k, vA := range optsA {
 			vB, ok := optsB[k]
-			if !ok || vA != vB {
+			if !ok || !sameValue(vA, vB) {
 				return false
 			}
 		}
 	}
 	return true
+}
+
+func sameValue(a, b any) bool {
+	if a == b {
+		return true
+	}
+	if af, ok := toFloat(a); ok {
+		if bf, ok2 := toFloat(b); ok2 {
+			return af == bf
+		}
+	}
+	return false
+}
+
+func toFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case int:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case float32:
+		return float64(n), true
+	case float64:
+		return n, true
+	}
+	return 0, false
 }
 
 func (m *Model) visibleOptions() []OptionItem {
@@ -503,22 +794,24 @@ func (m *Model) totalOptRows() int {
 }
 
 func (m *Model) ensureTreeCursorVisible() {
-	panelH := m.contentHeight()
-	if panelH <= 0 {
-		return
-	}
+	drawH := m.treeItemRows()
 	total := len(m.flat)
 	if total == 0 {
+		return
+	}
+	if drawH >= total {
+		m.treeOff = 0
 		return
 	}
 	if m.treeCursor < m.treeOff {
 		m.treeOff = m.treeCursor
 	}
-	if m.treeCursor >= m.treeOff+panelH {
-		m.treeOff = m.treeCursor - panelH + 1
+	if m.treeCursor >= m.treeOff+drawH {
+		m.treeOff = m.treeCursor - drawH + 1
 	}
-	if m.treeOff+panelH > total && total > panelH {
-		m.treeOff = total - panelH
+	maxOff := total - drawH
+	if m.treeOff > maxOff {
+		m.treeOff = maxOff
 	}
 	if m.treeOff < 0 {
 		m.treeOff = 0
@@ -526,8 +819,179 @@ func (m *Model) ensureTreeCursorVisible() {
 }
 
 func (m *Model) contentHeight() int {
-	if m.height <= 4 {
+	h := m.height - m.headerHeight() - m.footerHeight()
+	if h < 1 {
 		return 1
 	}
-	return m.height - 4
+	return h
+}
+
+func (m *Model) treePanelHeight() int {
+	h := m.contentHeight()
+	if m.filterActive || m.filterInput != "" {
+		h--
+	}
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
+
+func (m *Model) treeItemRows() int {
+	h := m.treePanelHeight()
+	if len(m.flat) > h {
+		return h - 1
+	}
+	return h
+}
+
+func (m *Model) optItemRows() int {
+	h := m.contentHeight()
+	if m.totalOptRows() > h {
+		return h - 1
+	}
+	return h
+}
+
+func (m *Model) optCountFor(pkgName string) int {
+	if m.optCounts == nil {
+		return 0
+	}
+	return m.optCounts[pkgName]
+}
+
+func (m *Model) origValue(name string) any {
+	if m.selectedPkg == GlobalPkgName {
+		if v, ok := m.origGlobal[name]; ok {
+			return v
+		}
+		if opt, ok := m.globalOptions[name]; ok {
+			return opt.Default()
+		}
+		return nil
+	}
+	if vals, ok := m.origValues[m.selectedPkg]; ok {
+		if v, ok := vals[name]; ok {
+			return v
+		}
+	}
+	if opts, ok := m.options[m.selectedPkg]; ok {
+		if opt, ok := opts[name]; ok {
+			return opt.Default()
+		}
+	}
+	return nil
+}
+
+func (m *Model) isOptionModified(name string) bool {
+	return !sameValue(m.getValue(name), m.origValue(name))
+}
+
+func (m *Model) resetOption(name string) {
+	m.setValue(name, m.origValue(name))
+}
+
+func (m *Model) resetOptionToDefault(name string) {
+	def := m.defaultFor(name)
+	if def != nil {
+		m.setValue(name, def)
+	}
+}
+
+func (m *Model) defaultFor(name string) any {
+	if m.selectedPkg == GlobalPkgName {
+		if opt, ok := m.globalOptions[name]; ok {
+			return opt.Default()
+		}
+		return nil
+	}
+	if opts, ok := m.options[m.selectedPkg]; ok {
+		if opt, ok := opts[name]; ok {
+			return opt.Default()
+		}
+	}
+	return nil
+}
+
+func (m *Model) modifiedCount() int {
+	n := 0
+	for name := range m.globalOptions {
+		if m.isOptionModifiedGlobal(name) {
+			n++
+		}
+	}
+	for pkgName, opts := range m.options {
+		for name, opt := range opts {
+			if opt.IsGlobal() {
+				continue
+			}
+			if m.isOptionModifiedPkg(pkgName, name) {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func (m *Model) isOptionModifiedGlobal(name string) bool {
+	cur := m.globalValues[name]
+	orig := m.origGlobal[name]
+	if orig == nil {
+		if opt, ok := m.globalOptions[name]; ok {
+			orig = opt.Default()
+		}
+	}
+	return !sameValue(cur, orig)
+}
+
+func (m *Model) isOptionModifiedPkg(pkgName, name string) bool {
+	cur := m.values[pkgName][name]
+	var orig any
+	if vals, ok := m.origValues[pkgName]; ok {
+		orig = vals[name]
+	}
+	if orig == nil {
+		if opts, ok := m.options[pkgName]; ok {
+			if opt, ok := opts[name]; ok {
+				orig = opt.Default()
+			}
+		}
+	}
+	return !sameValue(cur, orig)
+}
+
+func (m *Model) openChoiceOverlay(name string, choices []string) {
+	m.overlay = overlayChoice
+	m.choiceOpt = name
+	m.choiceValues = choices
+	current := fmt.Sprintf("%v", m.getValue(name))
+	m.choiceCursor = 0
+	for i, v := range choices {
+		if v == current {
+			m.choiceCursor = i
+			break
+		}
+	}
+}
+
+func (m *Model) closeOverlay() {
+	m.overlay = overlayNone
+	m.choiceOpt = ""
+	m.choiceValues = nil
+	m.choiceCursor = 0
+}
+
+func (m *Model) openDetailOverlay(item OptionItem) {
+	m.overlay = overlayDetail
+	m.choiceOpt = item.Name
+}
+
+func (m *Model) detailOption() *api.Option {
+	if m.selectedPkg == GlobalPkgName {
+		return m.globalOptions[m.choiceOpt]
+	}
+	if opts, ok := m.options[m.selectedPkg]; ok {
+		return opts[m.choiceOpt]
+	}
+	return nil
 }

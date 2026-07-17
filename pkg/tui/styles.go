@@ -71,6 +71,11 @@ var (
 				Foreground(colorDanger).
 				Bold(true)
 
+	overlayStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorPrimary).
+			Padding(1, 2)
+
 	confirmMsgStyle = lipgloss.NewStyle().
 			Foreground(colorMuted)
 
@@ -86,6 +91,20 @@ var (
 				Bold(true)
 
 	scrollIndicatorStyle = lipgloss.NewStyle().
+				Foreground(colorMuted)
+
+	countBadgeStyle = lipgloss.NewStyle().
+			Foreground(colorAccent)
+
+	modifiedMarkStyle = lipgloss.NewStyle().
+				Foreground(colorWarning).
+				Bold(true)
+
+	filterBoxActiveStyle = lipgloss.NewStyle().
+				Foreground(colorAccent).
+				Bold(true)
+
+	filterBoxAppliedStyle = lipgloss.NewStyle().
 				Foreground(colorMuted)
 )
 

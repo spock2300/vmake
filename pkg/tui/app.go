@@ -35,7 +35,7 @@ func Run(
 	kconfigs map[string][]*api.KConfigEntry,
 ) (*ConfigResult, error) {
 	m := NewModel(packages, deps, options, values, workDir, currentToolchain, globalOptions, globalValues, kconfigs)
-	p := tea.NewProgram(&m, tea.WithAltScreen())
+	p := tea.NewProgram(&m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		return nil, err
 	}
@@ -148,6 +148,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -165,12 +167,20 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleConfirmKey(msg)
 	}
 
+	if m.overlay != overlayNone {
+		return m.handleOverlayKey(msg)
+	}
+
 	if m.editing {
 		return m.handleEditKey(msg)
 	}
 
 	if m.runningMenuconfig {
 		return m, nil
+	}
+
+	if m.filterActive {
+		return m.handleFilterKey(msg)
 	}
 
 	switch msg.String() {
@@ -185,7 +195,23 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+s":
 		m.saved = true
 		return m, tea.Quit
+	case "/":
+		m.filterActive = true
+		m.rebuildFlat()
+		return m, nil
 	case "esc":
+		if m.filterInput != "" && !m.filterActive {
+			m.filterInput = ""
+			m.rebuildFlat()
+			if len(m.flat) > 0 {
+				if m.treeCursor >= len(m.flat) {
+					m.treeCursor = max(0, len(m.flat)-1)
+				}
+				m.selectCurrentNode()
+			}
+			m.ensureTreeCursorVisible()
+			return m, nil
+		}
 		if m.focusArea == 0 {
 			if m.hasChanges {
 				m.confirmQuit = true
@@ -209,6 +235,163 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleTreeKey(msg)
 	}
 	return m.handleOptionsKey(msg)
+}
+
+func (m *Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.filterActive = false
+		m.filterInput = ""
+		m.rebuildFlat()
+		if len(m.flat) > 0 {
+			m.selectFirstPkg()
+		}
+		return m, nil
+	case "enter":
+		query := m.filterInput
+		if m.filteredMatchCount() <= 1 {
+			m.filterActive = false
+			m.filterInput = ""
+			m.rebuildFlat()
+			if query != "" {
+				pkg, opt := m.findFirstMatch(query)
+				m.jumpToMatch(pkg, opt)
+			} else if len(m.flat) > 0 {
+				m.selectFirstPkg()
+			}
+		} else {
+			m.filterActive = false
+			m.focusArea = 0
+			if len(m.flat) > 0 {
+				m.treeCursor = 0
+				m.selectCurrentNode()
+				m.ensureTreeCursorVisible()
+			}
+		}
+		return m, nil
+	case "backspace":
+		if len(m.filterInput) > 0 {
+			_, sz := utf8.DecodeLastRuneInString(m.filterInput)
+			m.filterInput = m.filterInput[:len(m.filterInput)-sz]
+			m.rebuildFlat()
+		}
+		return m, nil
+	case "ctrl+u":
+		m.filterInput = ""
+		m.rebuildFlat()
+		return m, nil
+	}
+
+	if msg.Type == tea.KeyRunes {
+		m.filterInput += string(msg.Runes)
+		m.rebuildFlat()
+	}
+	return m, nil
+}
+
+func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.confirmQuit || m.overlay != overlayNone || m.editing || m.filterActive || m.runningMenuconfig {
+		return m, nil
+	}
+
+	mx, my := msg.X, msg.Y
+	headerH := m.headerHeight()
+	footerH := m.footerHeight()
+	if my < headerH || my >= m.height-footerH {
+		return m, nil
+	}
+	contentY := my - headerH
+	if contentY < 0 {
+		return m, nil
+	}
+
+	inTree := mx < m.treeWidth
+
+	switch {
+	case msg.Button == tea.MouseButtonLeft && msg.Type == tea.MouseLeft:
+		if inTree {
+			row := contentY
+			if m.filterActive || m.filterInput != "" {
+				row--
+			}
+			if row < 0 {
+				return m, nil
+			}
+			idx := row + m.treeOff
+			if idx >= 0 && idx < len(m.flat) {
+				m.focusArea = 0
+				m.treeCursor = idx
+				m.selectCurrentNode()
+				if len(m.flat[idx].Children) > 0 {
+					m.flat[idx].Expanded = !m.flat[idx].Expanded
+					m.rebuildFlat()
+				}
+				m.ensureTreeCursorVisible()
+			}
+		} else {
+			m.focusArea = 1
+			visible := m.visibleOptions()
+			row := contentY
+			idx := row + m.optOff
+			maxIdx := m.totalOptRows() - 1
+			if idx < 0 {
+				idx = 0
+			}
+			if idx > maxIdx {
+				idx = maxIdx
+			}
+			if len(visible) > 0 {
+				m.optCursor = idx
+			}
+		}
+	case msg.Type == tea.MouseWheelUp:
+		if inTree {
+			if m.treeOff > 0 {
+				m.treeOff--
+			}
+		} else {
+			if m.optOff > 0 {
+				m.optOff--
+			}
+		}
+	case msg.Type == tea.MouseWheelDown:
+		if inTree {
+			drawH := m.treeItemRows()
+			total := len(m.flat)
+			maxOff := total - drawH
+			if maxOff < 0 {
+				maxOff = 0
+			}
+			if m.treeOff < maxOff {
+				m.treeOff++
+			}
+		} else {
+			drawH := m.optItemRows()
+			total := m.totalOptRows()
+			maxOff := total - drawH
+			if maxOff < 0 {
+				maxOff = 0
+			}
+			if m.optOff < maxOff {
+				m.optOff++
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) headerHeight() int {
+	if m.renderedHeaderH > 0 {
+		return m.renderedHeaderH
+	}
+	return 2
+}
+
+func (m *Model) footerHeight() int {
+	if m.renderedFooterH > 0 {
+		return m.renderedFooterH
+	}
+	return 2
 }
 
 func (m *Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -239,7 +422,59 @@ func (m *Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		m.closeOverlay()
+		return m, nil
+	case "?", "d":
+		if m.overlay == overlayDetail {
+			m.closeOverlay()
+			return m, nil
+		}
+	case "up", "k":
+		if m.overlay == overlayChoice && m.choiceCursor > 0 {
+			m.choiceCursor--
+		}
+	case "down", "j":
+		if m.overlay == overlayChoice && m.choiceCursor < len(m.choiceValues)-1 {
+			m.choiceCursor++
+		}
+	case "home", "g":
+		if m.overlay == overlayChoice {
+			m.choiceCursor = 0
+		}
+	case "end", "G":
+		if m.overlay == overlayChoice && len(m.choiceValues) > 0 {
+			m.choiceCursor = len(m.choiceValues) - 1
+		}
+	case "enter":
+		if m.overlay == overlayChoice && m.choiceCursor < len(m.choiceValues) {
+			m.setValue(m.choiceOpt, m.choiceValues[m.choiceCursor])
+		}
+		m.closeOverlay()
+	}
+	return m, nil
+}
+
 func (m *Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browsing := m.filterInput != "" && !m.filterActive
+
+	if browsing && msg.String() == "enter" {
+		pkg := ""
+		if m.treeCursor < len(m.flat) {
+			pkg = m.flat[m.treeCursor].PkgName
+		}
+		query := m.filterInput
+		m.filterInput = ""
+		m.rebuildFlat()
+		if pkg == "" {
+			return m, nil
+		}
+		m.jumpToMatch(pkg, m.matchedOptionIn(pkg, query))
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "up", "k":
 		if m.treeCursor > 0 {
@@ -256,24 +491,33 @@ func (m *Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "left", "h":
 		if m.treeCursor < len(m.flat) && m.flat[m.treeCursor].Expanded {
 			m.flat[m.treeCursor].Expanded = false
-			m.flat = flattenTree(m.tree)
-			m.treeWidth = calcTreeWidth(m.flat)
+			m.rebuildFlat()
 			m.ensureTreeCursorVisible()
 		}
 	case "right", "l":
 		if m.treeCursor < len(m.flat) && len(m.flat[m.treeCursor].Children) > 0 {
 			m.flat[m.treeCursor].Expanded = true
-			m.flat = flattenTree(m.tree)
-			m.treeWidth = calcTreeWidth(m.flat)
+			m.rebuildFlat()
 			m.ensureTreeCursorVisible()
 		}
 	case "enter":
 		if m.treeCursor < len(m.flat) && len(m.flat[m.treeCursor].Children) > 0 {
 			m.flat[m.treeCursor].Expanded = !m.flat[m.treeCursor].Expanded
-			m.flat = flattenTree(m.tree)
-			m.treeWidth = calcTreeWidth(m.flat)
+			m.rebuildFlat()
 			m.ensureTreeCursorVisible()
 		}
+	case "z":
+		m.collapseAll()
+	case "Z":
+		m.expandAll()
+	case "H":
+		m.hideEmptyPkgs = !m.hideEmptyPkgs
+		m.rebuildFlat()
+		if m.treeCursor >= len(m.flat) {
+			m.treeCursor = max(0, len(m.flat)-1)
+		}
+		m.selectCurrentNode()
+		m.ensureTreeCursorVisible()
 	}
 	return m, nil
 }
@@ -306,6 +550,14 @@ func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, ensureConfigCmd(m.selectedPkg, entries, m.workDir)
 	}
 
+	if msg.String() == "enter" && m.optCursor < len(visible) {
+		item := visible[m.optCursor]
+		if item.Opt.Type() == api.OptionChoice && len(item.Opt.Values()) > 1 {
+			m.openChoiceOverlay(item.Name, item.Opt.Values())
+			return m, nil
+		}
+	}
+
 	switch msg.String() {
 	case "up", "k":
 		if m.optCursor > 0 {
@@ -315,6 +567,18 @@ func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		maxCursor := m.totalOptRows() - 1
 		if m.optCursor < maxCursor {
 			m.optCursor++
+		}
+	case "r":
+		if m.optCursor < len(visible) {
+			m.resetOption(visible[m.optCursor].Name)
+		}
+	case "R":
+		if m.optCursor < len(visible) {
+			m.resetOptionToDefault(visible[m.optCursor].Name)
+		}
+	case "?", "d":
+		if m.optCursor < len(visible) {
+			m.openDetailOverlay(visible[m.optCursor])
 		}
 	case " ", "enter", "right", "l":
 		m.handleOptionAction(visible, presetIdx, false, msg.String())
@@ -390,6 +654,7 @@ func (m *Model) handleOptionAction(visible []OptionItem, presetIdx int, reverse 
 		if !reverse {
 			m.editing = true
 			m.editInput = fmt.Sprintf("%v", m.getValue(item.Name))
+			m.editCursor = len(m.editInput)
 		}
 	}
 }
@@ -402,8 +667,9 @@ func (m *Model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	item := visible[m.optCursor]
+	s := msg.String()
 
-	switch msg.String() {
+	switch s {
 	case "esc":
 		m.editing = false
 		return m, nil
@@ -413,31 +679,81 @@ func (m *Model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case api.OptionString:
 			m.setValue(item.Name, m.editInput)
 		case api.OptionInt:
-			var val int
-			if _, err := fmt.Sscanf(m.editInput, "%d", &val); err != nil {
+			val, ok := parseIntInput(m.editInput)
+			if !ok {
 				return m, nil
 			}
 			m.setValue(item.Name, val)
 		}
 		return m, nil
-	case "backspace":
-		if item.Opt.Type() == api.OptionString || item.Opt.Type() == api.OptionInt {
-			if len(m.editInput) > 0 {
-				_, sz := utf8.DecodeLastRuneInString(m.editInput)
-				m.editInput = m.editInput[:len(m.editInput)-sz]
-			}
+	case "left":
+		if m.editCursor > 0 {
+			_, sz := utf8.DecodeLastRuneInString(m.editInput[:m.editCursor])
+			m.editCursor -= sz
 		}
-	default:
-		ch := msg.String()
-		if item.Opt.Type() == api.OptionInt {
-			if len(ch) == 1 && (ch >= "0" && ch <= "9" || ch == "-" && len(m.editInput) == 0) {
-				m.editInput += ch
-			}
-		} else if item.Opt.Type() == api.OptionString {
-			m.editInput += ch
+		return m, nil
+	case "right":
+		if m.editCursor < len(m.editInput) {
+			_, sz := utf8.DecodeRuneInString(m.editInput[m.editCursor:])
+			m.editCursor += sz
+		}
+		return m, nil
+	case "home", "ctrl+a":
+		m.editCursor = 0
+		return m, nil
+	case "end", "ctrl+e":
+		m.editCursor = len(m.editInput)
+		return m, nil
+	case "backspace":
+		if m.editCursor > 0 {
+			_, sz := utf8.DecodeLastRuneInString(m.editInput[:m.editCursor])
+			m.editInput = m.editInput[:m.editCursor-sz] + m.editInput[m.editCursor:]
+			m.editCursor -= sz
+		}
+		return m, nil
+	case "delete":
+		if m.editCursor < len(m.editInput) {
+			_, sz := utf8.DecodeRuneInString(m.editInput[m.editCursor:])
+			m.editInput = m.editInput[:m.editCursor] + m.editInput[m.editCursor+sz:]
+		}
+		return m, nil
+	case "ctrl+u":
+		m.editInput = m.editInput[m.editCursor:]
+		m.editCursor = 0
+		return m, nil
+	case "ctrl+k":
+		m.editInput = m.editInput[:m.editCursor]
+		return m, nil
+	}
+
+	if msg.Type != tea.KeyRunes {
+		return m, nil
+	}
+	ch := string(msg.Runes)
+	if item.Opt.Type() == api.OptionInt {
+		if len(ch) != 1 {
+			return m, nil
+		}
+		c := ch[0]
+		if !((c >= '0' && c <= '9') || (c == '-' && m.editCursor == 0)) {
+			return m, nil
 		}
 	}
+	m.editInput = m.editInput[:m.editCursor] + ch + m.editInput[m.editCursor:]
+	m.editCursor += len(ch)
 	return m, nil
+}
+
+func parseIntInput(s string) (int, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	var val int
+	if _, err := fmt.Sscanf(s, "%d", &val); err != nil {
+		return 0, false
+	}
+	return val, true
 }
 
 func (m *Model) View() string {
@@ -456,10 +772,15 @@ func (m *Model) View() string {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialog)
 	}
 
+	if m.overlay != overlayNone {
+		dialog := m.renderOverlay()
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialog)
+	}
+
 	header := m.renderHeader()
 
 	treePanel := treePanelStyle(m.focusArea == 0, m.treeWidth).Render(m.renderTree())
-	optWidth := m.width - m.treeWidth - 4
+	optWidth := m.width - m.treeWidth - 5
 	if optWidth < 1 {
 		optWidth = 1
 	}
@@ -472,6 +793,9 @@ func (m *Model) View() string {
 	)
 
 	footer := m.renderFooter()
+
+	m.renderedHeaderH = lipgloss.Height(header)
+	m.renderedFooterH = lipgloss.Height(footer)
 
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -489,7 +813,8 @@ func (m *Model) renderHeader() string {
 		rightParts = append(rightParts, titlePathStyle.Render(m.workDir))
 	}
 	if m.hasChanges {
-		rightParts = append(rightParts, modifiedBadgeStyle.Render("● Modified"))
+		n := m.modifiedCount()
+		rightParts = append(rightParts, modifiedBadgeStyle.Render(fmt.Sprintf("● %d modified", n)))
 	}
 	rightPart := strings.Join(rightParts, "  ")
 
@@ -504,21 +829,27 @@ func (m *Model) renderHeader() string {
 }
 
 func (m *Model) renderTree() string {
-	if len(m.flat) == 0 {
-		return ""
+	var topBar string
+	if m.filterActive {
+		topBar = filterBoxActiveStyle.Render("/"+m.filterInput+"▎") + "\n"
+	} else if m.filterInput != "" {
+		n := m.filteredMatchCount()
+		topBar = filterBoxAppliedStyle.Render(fmt.Sprintf("filter: %s (%d)", m.filterInput, n)) + "\n"
 	}
 
-	panelH := m.contentHeight()
+	panelH := m.treePanelHeight()
+
+	if len(m.flat) == 0 {
+		return topBar + filterBoxAppliedStyle.Render("  No matches")
+	}
 
 	total := len(m.flat)
 	start := m.treeOff
-	drawH := panelH
-	if total > panelH {
-		drawH = panelH - 1
-	}
+	drawH := m.treeItemRows()
 	end := min(start+drawH, total)
 
 	var b strings.Builder
+	b.WriteString(topBar)
 
 	for i := start; i < end; i++ {
 		node := m.flat[i]
@@ -540,8 +871,28 @@ func (m *Model) renderTree() string {
 		}
 
 		name := node.Name
+		count := 0
+		if node.PkgName != "" {
+			count = m.optCountFor(node.PkgName)
+		}
+		fixed := node.Depth*2 + utf8.RuneCountInString(node.Prefix) + 2
+		badgeLen := 0
+		if count > 0 {
+			badgeLen = utf8.RuneCountInString(fmt.Sprintf(" (%d)", count))
+		}
+		avail := m.treeWidth - fixed - badgeLen
+		if avail < 1 {
+			avail = 1
+		}
+		if utf8.RuneCountInString(name) > avail {
+			name = truncateRunes(name, avail)
+		}
 		if node.IsExternal {
 			name = externalPkgStyle.Render(name)
+		}
+
+		if count > 0 {
+			name += countBadgeStyle.Render(fmt.Sprintf(" (%d)", count))
 		}
 
 		line := prefix + node.Prefix + icon + " " + name
@@ -556,7 +907,7 @@ func (m *Model) renderTree() string {
 	}
 
 	if total > panelH {
-		pct := float64(m.treeOff+panelH) / float64(total) * 100
+		pct := float64(m.treeOff+drawH) / float64(total) * 100
 		indicator := scrollIndicatorStyle.Render(fmt.Sprintf("  %d/%d  %.0f%%", min(m.treeCursor+1, total), total, pct))
 		b.WriteString(indicator)
 	}
@@ -631,26 +982,30 @@ func (m *Model) renderOptions() string {
 	}
 
 	panelH := m.contentHeight()
+	total := len(allRows)
+	drawH := panelH
+	if total > panelH {
+		drawH = panelH - 1
+	}
 	if cursorRowIdx >= 0 {
 		if cursorRowIdx < m.optOff {
 			m.optOff = cursorRowIdx
 		}
-		if cursorRowIdx >= m.optOff+panelH {
-			m.optOff = cursorRowIdx - panelH + 1
+		if cursorRowIdx >= m.optOff+drawH {
+			m.optOff = cursorRowIdx - drawH + 1
 		}
 	}
-	total := len(allRows)
-	if m.optOff+panelH > total && total > panelH {
-		m.optOff = total - panelH
+	maxOff := total - drawH
+	if maxOff < 0 {
+		maxOff = 0
+	}
+	if m.optOff > maxOff {
+		m.optOff = maxOff
 	}
 	if m.optOff < 0 {
 		m.optOff = 0
 	}
 
-	drawH := panelH
-	if total > panelH {
-		drawH = panelH - 1
-	}
 	start := m.optOff
 	end := min(start+drawH, total)
 
@@ -677,7 +1032,7 @@ func (m *Model) renderOptions() string {
 
 	totalRows := len(allRows)
 	if totalRows > panelH {
-		pct := float64(m.optOff+panelH) / float64(totalRows) * 100
+		pct := float64(m.optOff+drawH) / float64(totalRows) * 100
 		indicator := scrollIndicatorStyle.Render(fmt.Sprintf("  %d/%d  %.0f%%", min(m.optCursor+1, m.totalOptRows()), m.totalOptRows(), pct))
 		b.WriteString(indicator)
 	}
@@ -706,11 +1061,16 @@ func (m *Model) renderOptionAligned(item OptionItem, selected bool, nameW, valW 
 	name := item.Name
 	desc := item.Opt.Description()
 
+	marker := " "
+	if m.isOptionModified(item.Name) {
+		marker = modifiedMarkStyle.Render("*")
+	}
+
 	var val string
 	if m.editing && selected {
 		switch item.Opt.Type() {
 		case api.OptionString, api.OptionInt:
-			val = inputStyle.Render(m.editInput + "▎")
+			val = inputStyle.Render(renderEditField(m.editInput, m.editCursor))
 		}
 	} else {
 		switch item.Opt.Type() {
@@ -735,20 +1095,59 @@ func (m *Model) renderOptionAligned(item OptionItem, selected bool, nameW, valW 
 		valPad = 0
 	}
 
+	shownDesc := desc
+	if m.editing && selected {
+		def := item.Opt.Default()
+		if def != nil {
+			shownDesc = fmt.Sprintf("(default: %v)", def)
+		}
+	}
+
 	var line string
 	if selected {
 		nameRendered := selectedOptStyle.Render(namePad)
 		valRendered := val + strings.Repeat(" ", valPad)
-		descRendered := optionDescStyle.Render(desc)
-		line = fmt.Sprintf("  %s  %s  %s", nameRendered, valRendered, descRendered)
+		descRendered := optionDescStyle.Render(shownDesc)
+		line = fmt.Sprintf("%s %s  %s  %s", marker, nameRendered, valRendered, descRendered)
 		line = selectedRowStyle.Render(line)
 	} else {
 		nameRendered := optionNameStyle.Render(namePad)
 		descRendered := optionDescStyle.Render(desc)
-		line = fmt.Sprintf("  %s  %s  %s", nameRendered, val, descRendered)
+		line = fmt.Sprintf("%s %s  %s  %s", marker, nameRendered, val, descRendered)
 	}
 
 	return line
+}
+
+func renderEditField(input string, cursor int) string {
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(input) {
+		cursor = len(input)
+	}
+	return input[:cursor] + "▎" + input[cursor:]
+}
+
+func truncateRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	if max == 1 {
+		return "…"
+	}
+	out := []rune{}
+	for _, r := range s {
+		if len(out) == max-1 {
+			break
+		}
+		out = append(out, r)
+	}
+	out = append(out, '…')
+	return string(out)
 }
 
 func (m *Model) renderPresetRow(selected bool, nameW, valW int) string {
@@ -816,40 +1215,129 @@ func (m *Model) renderConfirmDialog() string {
 	return confirmStyle.Render(content)
 }
 
+func (m *Model) renderOverlay() string {
+	switch m.overlay {
+	case overlayChoice:
+		return m.renderChoiceOverlay()
+	case overlayDetail:
+		return m.renderDetailOverlay()
+	}
+	return ""
+}
+
+func (m *Model) renderChoiceOverlay() string {
+	opt := m.detailOption()
+	desc := ""
+	if opt != nil {
+		desc = opt.Description()
+	}
+	title := confirmTitleStyle.Render(m.choiceOpt)
+
+	var rows []string
+	for i, v := range m.choiceValues {
+		marker := "  "
+		cur := fmt.Sprintf("%v", m.getValue(m.choiceOpt))
+		if v == cur {
+			marker = checkboxStyle.Render("● ")
+		}
+		line := fmt.Sprintf("%s %s", marker, v)
+		if i == m.choiceCursor {
+			line = selectedRowStyle.Render(" " + line)
+		} else {
+			line = " " + line
+		}
+		rows = append(rows, line)
+	}
+	list := strings.Join(rows, "\n")
+
+	hint := confirmMsgStyle.Render("↑↓ navigate │ Enter select │ Esc cancel")
+
+	parts := []string{title}
+	if desc != "" {
+		parts = append(parts, optionDescStyle.Render(desc))
+	}
+	parts = append(parts, "", list, "", hint)
+	content := lipgloss.JoinVertical(lipgloss.Center, parts...)
+	return overlayStyle.Render(content)
+}
+
+func (m *Model) renderDetailOverlay() string {
+	opt := m.detailOption()
+	if opt == nil {
+		return overlayStyle.Render(confirmMsgStyle.Render("No details available"))
+	}
+	cur := m.getValue(m.choiceOpt)
+	def := opt.Default()
+
+	type kv struct{ k, v string }
+	rows := []kv{
+		{"name", m.choiceOpt},
+		{"type", opt.Type().String()},
+		{"default", fmt.Sprintf("%v", def)},
+		{"current", fmt.Sprintf("%v", cur)},
+	}
+	modified := m.isOptionModified(m.choiceOpt)
+	status := "no"
+	if modified {
+		status = modifiedMarkStyle.Render("yes")
+	}
+	rows = append(rows, kv{"modified", status})
+
+	keyW := 0
+	for _, r := range rows {
+		if len(r.k) > keyW {
+			keyW = len(r.k)
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString(confirmTitleStyle.Render(m.choiceOpt) + "\n\n")
+	for _, r := range rows {
+		b.WriteString(fmt.Sprintf("  %-*s : %s\n", keyW, r.k, r.v))
+	}
+	if desc := opt.Description(); desc != "" {
+		b.WriteString("\n  " + optionDescStyle.Render(desc) + "\n")
+	}
+	if opt.Type() == api.OptionChoice && len(opt.Values()) > 0 {
+		b.WriteString("\n  " + confirmMsgStyle.Render("choices: "+strings.Join(opt.Values(), ", ")) + "\n")
+	}
+	b.WriteString("\n" + confirmMsgStyle.Render("Esc/? to close"))
+	return overlayStyle.Render(b.String())
+}
+
 func (m *Model) renderFooter() string {
 	var helpText string
-	if m.editing {
-		visible := m.visibleOptions()
-		if m.optCursor < len(visible) {
-			item := visible[m.optCursor]
-			if item.Opt.Type() == api.OptionChoice {
-				helpText = renderHelpEntries([]helpEntry{
-					{"↑↓", "select"}, {"Enter", "confirm"}, {"Esc", "cancel"},
-				})
-			} else {
-				helpText = renderHelpEntries([]helpEntry{
-					{"Enter", "confirm"}, {"Esc", "cancel"},
-				})
-			}
-		} else {
-			helpText = renderHelpEntries([]helpEntry{
-				{"Enter", "confirm"}, {"Esc", "cancel"},
-			})
-		}
+	if m.filterActive {
+		helpText = renderHelpEntries([]helpEntry{
+			{"Enter", "confirm/1 match"}, {"Backspace", "delete"}, {"Esc", "cancel"},
+		})
+	} else if m.filterInput != "" {
+		helpText = renderHelpEntries([]helpEntry{
+			{"↑↓", "pick match"}, {"Enter", "jump"}, {"/", "refine"}, {"Esc", "clear"},
+		})
+	} else if m.editing {
+		helpText = renderHelpEntries([]helpEntry{
+			{"←→", "move cursor"}, {"Home/End", "jump"}, {"Backspace", "delete"},
+			{"Enter", "confirm"}, {"Esc", "cancel"},
+		})
 	} else if m.focusArea == 0 {
 		helpText = renderHelpEntries([]helpEntry{
-			{"↑↓", "navigate"}, {"←→", "collapse/expand"}, {"Tab", "options"},
-			{"Enter", "expand"}, {"Ctrl+S", "save"}, {"Esc", "cancel"},
+			{"↑↓", "navigate"}, {"←→", "collapse/expand"}, {"/", "search"},
+			{"z/Z", "collapse/expand all"}, {"H", "hide empty"},
+			{"Tab", "options"}, {"Ctrl+S", "save"}, {"Esc", "cancel"},
 		})
 	} else {
 		helpText = renderHelpEntries([]helpEntry{
 			{"↑↓", "navigate"}, {"←→", "cycle value"}, {"Space/Enter", "edit"},
+			{"r", "reset"}, {"R", "default"}, {"?", "detail"},
 			{"Tab", "tree"}, {"Ctrl+S", "save"}, {"Esc", "back"},
 		})
 	}
 
 	if m.hasChanges {
-		helpText += "  " + modifiedBadgeStyle.Render("● Modified")
+		n := m.modifiedCount()
+		badge := fmt.Sprintf("● %d modified", n)
+		helpText += "  " + modifiedBadgeStyle.Render(badge)
 	}
 
 	return footerBorderStyle().Width(m.width - 4).Render(helpText)
