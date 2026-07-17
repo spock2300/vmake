@@ -5,7 +5,7 @@ Go-based C/C++ build system. Build instructions are written in Go (`build.go`) u
 ## Project Structure
 
 	myproject/
-	├── build.go          <- plugin entry (package main)
+	├── build.go          <- buildscript entry (package main)
 	├── src/
 	│   └── main.c
 	├── lib/
@@ -23,7 +23,7 @@ Go-based C/C++ build system. Build instructions are written in Go (`build.go`) u
 | 3 | `OnBuild` | Generate build targets + `autoWireRequireDeps` + compile/link |
 | 4 | `OnInstall` | Post-build install logic |
 
-`OnPackage` runs during plugin extraction, right after `Main()` is called and before any lifecycle phases. Use it for package metadata (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` is for **registry repo** packages — native repo versions come from git tags automatically; local packages can also use `SetGit`/`AddVersion` for source download.
+`OnPackage` runs during buildscript extraction, right after `Main()` is called and before any lifecycle phases. Use it for package metadata (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` is for **registry repo** packages — native repo versions come from git tags automatically; local packages can also use `SetGit`/`AddVersion` for source download.
 
 ## Conditional API
 

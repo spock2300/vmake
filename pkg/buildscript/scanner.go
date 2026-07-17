@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/spock2300/vmake/internal/gosrc"
 	"github.com/spock2300/vmake/pkg/api"
 )
 
@@ -60,25 +61,7 @@ func Scan(rootDir string) ([]Source, error) {
 }
 
 func ListGoFiles(dir string) ([]string, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	var files []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if !strings.HasSuffix(name, ".go") {
-			continue
-		}
-		if strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		files = append(files, filepath.Join(dir, name))
-	}
-	return files, nil
+	return gosrc.ListGoFiles(dir)
 }
 
 func ScanSubPackages(rootDir string, parentID string) ([]Source, error) {

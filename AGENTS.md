@@ -20,7 +20,7 @@ go vet ./cmd/... ./pkg/... ./internal/...      # Lint
 go test ./cmd/vmake/... ./pkg/... ./internal/... # Unit tests
 ```
 
-Go tests live in `cmd/vmake`, `pkg/api`, `pkg/build`, `pkg/buildscript`, `pkg/config`, `pkg/repo`, `pkg/resolver`, `internal/gocompile`. Pre-existing failure (ignore): `internal/gocompile` `TestCompilePluginToOutput_NonForceSkipsExisting` (gocompile is now only used by the extension system, not buildscripts).
+Go tests live in `cmd/vmake`, `pkg/api`, `pkg/build`, `pkg/buildscript`, `pkg/config`, `pkg/plugin`, `pkg/repo`, `pkg/resolver`.
 
 ### Integration tests via `test_data/` (run each from its own directory)
 
@@ -45,13 +45,11 @@ Notable test purposes: 15=`subgraph_siblings`, 16=`subgraph_cross_tc`, 18=`confi
 
 ## Development Mode
 
-Buildscripts are interpreted by yaegi (Go interpreter) — no `go build -buildmode=plugin` needed. The `VMAKE_DIR` environment variable is no longer required for buildscripts (only used by the extension plugin system in `pkg/plugin`).
+Buildscripts AND extension plugins are interpreted by yaegi (Go interpreter) — no `go build -buildmode=plugin`, no `.so` files, no `VMAKE_DIR` environment variable.
 
 ```bash
 go build -o vmake ./cmd/vmake    # Build vmake itself
 ```
-
-`start_dev.sh` still exports `VMAKE_DIR` for the extension system, but buildscripts work without it.
 
 ## Storage Layout
 
@@ -313,11 +311,11 @@ Methods on `CleanContext`:
 | `pkg/log` | Logging (Debug, Info, Error, Fatal) | No |
 | `pkg/tui` | Terminal UI (interactive config) | No |
 | `pkg/version` | Version information | No |
-| `internal/*` | exec, flock, fs, gitstore, glob, gocompile, jsonio, toposort | No |
+| `internal/*` | exec, flock, fs, gitstore, glob, gosrc, jsonio, toposort, yaegibase, yaegisym | No |
 
 **Dependency DAG**: `internal/*` -> `pkg/toolchain` -> `pkg/api` -> `pkg/buildscript, pkg/repo` -> `pkg/resolver, pkg/plugin, pkg/build` -> `cmd/vmake`
 
-`internal/gocompile` is now only used by the extension plugin system (`pkg/plugin`), not by buildscripts.
+Extension plugins are interpreted by yaegi at runtime (same as buildscripts). Cobra/pflag symbols are pre-generated via `yaegi extract` into `internal/yaegisym/` (regenerate with `go generate ./internal/yaegisym/`). The plugin loader (`pkg/plugin/loader.go`) uses `internal/yaegibase.New()` + `internal/gosrc.MergeGoSources()` — no compilation step.
 
 ## CLI Architecture
 - `github.com/spf13/cobra`, package-level vars, `init()` registration
@@ -419,7 +417,7 @@ type PkgDirs struct { SourceDir, BuildDir, InstallDir string }
 - `ensureGitignore` writes only to project root `.gitignore` (via `findProjectDir()`), not to subdirectories
 - `scanner.go` `skipDirs`: `.git`, `.vmake`, `build`, `vendor`, `node_modules`, `vmake_deps` — build.go files in these dirs are invisible to the scanner
 - Buildscripts are re-interpreted on every `vmake` invocation — no `.so` cache, no `go.mod`/`go.sum` generated. `--force` flag is a no-op for buildscript loading (buildscripts are always fresh).
-- `internal/gocompile` is now only used by the extension plugin system (`pkg/plugin`), not by buildscripts.
+- Extension plugins are re-interpreted by yaegi on every `vmake` invocation — no `.so` compilation, no version-mismatch issues. Cobra/pflag symbols in `internal/yaegisym/` must be regenerated (`go generate`) when cobra version bumps.
 
 ## What Not To Do
 - IDE integration plugins

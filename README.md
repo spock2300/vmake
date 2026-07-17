@@ -93,9 +93,11 @@ vmake/
 │   ├── fs/              # 文件系统工具
 │   ├── gitstore/        # Git 仓库管理（共享基础设施）
 │   ├── glob/            # 文件匹配
-│   ├── gocompile/       # Go 插件编译（仅扩展系统使用）
+│   ├── gosrc/           # Go 源码合并（buildscript + plugin 共用）
 │   ├── jsonio/          # JSON 序列化
-│   └── toposort/        # 拓扑排序
+│   ├── toposort/        # 拓扑排序
+│   ├── yaegibase/       # yaegi 解释器初始化 helper
+│   └── yaegisym/        # cobra/pflag 的 yaegi 符号表（go generate）
 └── docs/                # 设计文档
 ```
 

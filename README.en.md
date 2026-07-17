@@ -89,9 +89,11 @@ vmake/
 │   ├── fs/              # Filesystem utilities
 │   ├── gitstore/        # Git repo store (shared infra)
 │   ├── glob/            # File matching
-│   ├── gocompile/       # Go plugin compilation (extension system only)
+│   ├── gosrc/           # Go source merging (buildscript + plugin)
 │   ├── jsonio/          # JSON serialization
-│   └── toposort/        # Topological sort
+│   ├── toposort/        # Topological sort
+│   ├── yaegibase/       # yaegi interpreter init helper
+│   └── yaegisym/        # cobra/pflag yaegi symbols (go generate)
 └── docs/                # Design documentation
 ```
 

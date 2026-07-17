@@ -34,7 +34,7 @@ func Main(p *api.Package) {
 
 ## What This Demonstrates
 
-- **`p.OnPackage`** — Package metadata phase (runs during plugin extraction, before any lifecycle phases)
+- **`p.OnPackage`** — Package metadata phase (runs during buildscript extraction, before any lifecycle phases)
 - **`SetGit(urls...)`** — Git repository URLs for source download
 - **`AddVersion(version, ref)`** — Map human-readable version to git ref (tag/commit)
 - **`AddProvidedLibs(libs...)`** — Library names that consumers will link against

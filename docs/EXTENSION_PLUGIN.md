@@ -1,6 +1,6 @@
 # VMake 扩展插件指南
 
-扩展插件通过 Go 插件（`.so`）扩展 vmake 的 CLI 命令和工具链管理能力。插件存储在 `~/.vmake/extensions/<repo>/<plugin>/`。
+扩展插件通过 [yaegi](https://github.com/traefik/yaegi) Go 解释器动态加载，扩展 vmake 的 CLI 命令和工具链管理能力。插件存储在 `~/.vmake/extensions/<repo>/<plugin>/`。无需编译，vmake 启动时即时解释执行插件源码。
 
 ## 快速开始
 
@@ -46,7 +46,7 @@ vmake ext add myext https://gitee.com/myorg/myext.git
 vmake hello world
 ```
 
-vmake 在启动时自动发现并编译插件。首次运行编译后重启 vmake 即可使用。
+vmake 在启动时自动发现并用 yaegi 解释执行插件源码，无需编译，即时可用。
 
 ## 目录结构
 
@@ -55,8 +55,7 @@ vmake 在启动时自动发现并编译插件。首次运行编译后重启 vmak
 └── <repo-name>/
     ├── <plugin-a>/              # 插件 A
     │   ├── plugin.json
-    │   ├── src/main.go
-    │   └── plugin.so            # 编译产物（自动生成）
+    │   └── src/main.go
     ├── <plugin-b>/              # 插件 B
     │   ├── plugin.json
     │   └── src/main.go

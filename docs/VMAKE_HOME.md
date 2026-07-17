@@ -65,7 +65,7 @@ extensions/<repo-name>/
 源码：`pkg/plugin/manager.go`（嵌入 `*gitstore.Store`）
 CLI：`vmake ext add|remove|list|update`
 
-插件 `.so` 文件编译在插件目录内（`extensions/<repo>/<plugin-name>/plugin.so`），而非统一缓存目录。
+插件源码由 yaegi 解释器动态加载（`extensions/<repo>/<plugin-name>/src/main.go`），无需编译，不产生 `.so` 文件。
 
 ## toolchains/
 

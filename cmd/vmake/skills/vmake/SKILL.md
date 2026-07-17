@@ -501,7 +501,7 @@ The manifest records git remote URLs, refs, and revisions for every package. `vm
 | `vmake rebuild` | Clean + build |
 | `vmake config` | TUI for options |
 | `vmake clean` | Execute OnClean hooks then remove build artifacts |
-| `vmake distclean` | Deep clean: artifacts + plugin cache + installed packages |
+| `vmake distclean` | Deep clean: artifacts + install/ + vmake_deps/ |
 | `vmake query` | Dependency tree |
 | `vmake toolchain list/show` | Toolchain info |
 | `vmake repo add/list/remove/update` | Package repos |

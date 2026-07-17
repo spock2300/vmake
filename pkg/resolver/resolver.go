@@ -63,7 +63,7 @@ type Resolver struct {
 	repoMgr          *repo.RepoManager
 	depsDir          string
 	globalSourcesDir string
-	subParents map[string]string
+	subParents       map[string]string
 }
 
 func NewResolver(repoMgr *repo.RepoManager, depsDir string) *Resolver {

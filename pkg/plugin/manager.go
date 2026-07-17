@@ -37,29 +37,7 @@ func (m *Manager) UpdateRepo(name string) error {
 	if !m.Exists(name) {
 		return fmt.Errorf("extension repo '%s' not found", name)
 	}
-
-	if err := repo.Pull(repoPath); err != nil {
-		return err
-	}
-
-	return m.clearCompiledPlugins(repoPath)
-}
-
-func (m *Manager) CleanPlugins(repoPath string) error {
-	names, err := fs.ListDirs(repoPath)
-	if err != nil {
-		return err
-	}
-	for _, name := range names {
-		fs.RemoveIfExists(filepath.Join(repoPath, name, "plugin.so"))
-		fs.RemoveIfExists(filepath.Join(repoPath, name, "go.mod"))
-		fs.RemoveIfExists(filepath.Join(repoPath, name, "go.sum"))
-	}
-	return nil
-}
-
-func (m *Manager) clearCompiledPlugins(repoPath string) error {
-	return m.CleanPlugins(repoPath)
+	return repo.Pull(repoPath)
 }
 
 func (m *Manager) RemoveRepo(name string) error {
@@ -137,13 +115,4 @@ func (m *Manager) DiscoverPlugins() ([]DiscoveredPlugin, error) {
 	}
 
 	return plugins, nil
-}
-
-func (m *Manager) CompilePlugin(pluginDir string, force bool) (string, error) {
-	result := Compile(pluginDir, force)
-	soPath := filepath.Join(pluginDir, "plugin.so")
-	if !result.Success {
-		return soPath, result.Error
-	}
-	return result.OutputPath, nil
 }

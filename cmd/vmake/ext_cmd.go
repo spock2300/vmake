@@ -2,9 +2,7 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -44,25 +42,15 @@ If no name is given, all repositories are updated.`,
 	Run: runExtUpdate,
 }
 
-var extCleanCmd = &cobra.Command{
-	Use:   "clean [name]",
-	Short: "Clean plugin build artifacts",
-	Long: `Clean compiled plugin artifacts (plugin.so, go.mod, go.sum).
-If no name is given, all extension repositories are cleaned.`,
-	Run: runExtClean,
-}
-
 func init() {
 	RootCmd.AddCommand(extCmd)
 	extCmd.AddCommand(extAddCmd)
 	extCmd.AddCommand(extRemoveCmd)
 	extCmd.AddCommand(extListCmd)
 	extCmd.AddCommand(extUpdateCmd)
-	extCmd.AddCommand(extCleanCmd)
 
 	extRemoveCmd.ValidArgsFunction = completeExtRepoName
 	extUpdateCmd.ValidArgsFunction = completeExtRepoName
-	extCleanCmd.ValidArgsFunction = completeExtRepoName
 }
 
 func runExtAdd(cmd *cobra.Command, args []string) {
@@ -89,7 +77,7 @@ func runExtAdd(cmd *cobra.Command, args []string) {
 	}
 
 	if count > 0 {
-		fmt.Printf("Discovered %d plugin(s). Restart vmake to use them.\n", count)
+		fmt.Printf("Discovered %d plugin(s). Run vmake again to use them.\n", count)
 	}
 }
 
@@ -138,7 +126,7 @@ func runExtUpdate(cmd *cobra.Command, args []string) {
 		name := args[0]
 		fmt.Printf("Updating extension repository '%s'...\n", name)
 		fatalErr(mgr.UpdateRepo(name))
-		fmt.Printf("Updated '%s'. Plugins will be recompiled on next run.\n", name)
+		fmt.Printf("Updated '%s'. Plugins will be reloaded on next run.\n", name)
 		return
 	}
 
@@ -154,57 +142,7 @@ func runExtUpdate(cmd *cobra.Command, args []string) {
 			vlog.Error("  Error: %v", err)
 		}
 	}
-	fmt.Println("Done. Plugins will be recompiled on next run.")
-}
-
-func runExtClean(cmd *cobra.Command, args []string) {
-	mgr := getPluginManager()
-
-	if len(args) == 1 {
-		name := args[0]
-		repoPath := mgr.Path(name)
-		if !mgr.Exists(name) {
-			fatalMsg("extension repo '%s' not found", name)
-		}
-		fatalErr(mgr.CleanPlugins(repoPath))
-		fmt.Printf("Cleaned plugin artifacts for '%s'\n", name)
-		return
-	}
-
-	repos := mgr.ListRepos()
-	if len(repos) == 0 {
-		fmt.Println("No extension repositories found")
-		return
-	}
-
-	for _, r := range repos {
-		if err := mgr.CleanPlugins(r.Path); err != nil {
-			vlog.Error("  Error cleaning '%s': %v", r.Name, err)
-		} else {
-			fmt.Printf("Cleaned '%s'\n", r.Name)
-		}
-	}
-}
-
-func loadPlugin(mgr *plugin.Manager, pluginDir string) (*plugin.LoadedPlugin, error) {
-	load := func(force bool) (*plugin.LoadedPlugin, error) {
-		soPath, err := mgr.CompilePlugin(pluginDir, force)
-		if err != nil {
-			return nil, fmt.Errorf("compile: %w", err)
-		}
-		loaded, err := plugin.Load(soPath)
-		if err != nil {
-			os.Remove(soPath)
-			return nil, fmt.Errorf("load: %w", err)
-		}
-		return loaded, nil
-	}
-
-	loaded, err := load(false)
-	if err != nil && strings.Contains(err.Error(), "built with a different version") {
-		loaded, err = load(true)
-	}
-	return loaded, err
+	fmt.Println("Done. Plugins will be reloaded on next run.")
 }
 
 func loadPlugins() {
@@ -216,7 +154,7 @@ func loadPlugins() {
 	}
 
 	for _, p := range plugins {
-		loaded, err := loadPlugin(mgr, p.PluginDir)
+		loaded, err := plugin.Load(p.PluginDir)
 		if err != nil {
 			vlog.Error("extension plugin '%s' load failed: %v", p.PluginName, err)
 			continue
@@ -263,7 +201,7 @@ func loadPlugins() {
 			RunGitLFS:                  plugin.RunGitLFS,
 		}
 
-		loaded.Entry(ctx)
+		plugin.RunMain(loaded, ctx)
 
 		RootCmd.AddCommand(pluginCmd)
 	}
