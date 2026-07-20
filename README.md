@@ -1,34 +1,34 @@
 # VMake
 
-VMake 是一个现代化的 C/C++ 项目构建工具，采用 Go 语言开发。它提供了一个简洁而强大的 API，用于配置和构建多模块 C/C++ 项目。
+> [中文文档 🇨🇳](README.zh.md)
 
-## 功能特性
+VMake is a modern C/C++ project build tool developed in Go. It provides a concise and powerful API for configuring and building multi-module C/C++ projects.
 
-- **简洁的 API 设计**：通过方法链 (Fluent API) 实现声明式构建配置
-- **灵活的选项系统**：支持布尔、字符串、整数和枚举类型的配置选项
-- **条件构建支持**：通过 `If`、`When` 等方法实现条件编译
-- **多模块支持**：原生支持多模块项目的构建管理
-- **第三方包管理**：支持 Registry（包装 CMake/Autotools）和 Native（vmake 原生包）两种仓库类型，通过 OnRequire 声明依赖，自动下载、版本匹配和构建
-- **扩展插件系统**：通过 Go 插件扩展 CLI 命令和工具链，支持自定义子命令、交叉编译工具链自动下载与管理
-- **增量编译**：基于依赖分析的智能增量编译，大幅提升构建效率
-- **TUI 配置界面**：提供交互式终端用户界面，方便配置项目选项
-- **工具链管理**：支持多种编译工具链的灵活切换，支持交叉编译
-- **语义版本约束**：内置语义版本解析和约束匹配
-- **符号管理**：通过 `SetDefaultVisibilityHidden` + `SetVersionScript` + `SetExcludeLibs` + `SetSymbolBinding` + `vmake check-symbols` 五层防御，控制库的导出符号，避免复杂依赖图中的符号冲突和泄漏
+## Features
 
-## 快速开始
+- **Simple API Design**: Declarative build configuration via Fluent API
+- **Flexible Option System**: Supports configuration options of boolean, string, integer, and enum types
+- **Conditional Build Support**: Enables conditional compilation through methods like `If` and `When`
+- **Multi-Module Support**: Native support for managing builds of multi-module projects
+- **Third-Party Package Management**: Supports Registry (wrapping CMake/Autotools) and Native (vmake native packages) repository types, declare dependencies via OnRequire, automatic download, version matching, and build
+- **Extension Plugin System**: CLI command extensions and cross-compilation toolchain management
+- **Incremental Compilation**: Intelligent incremental compilation based on dependency analysis
+- **TUI Configuration Interface**: Interactive terminal user interface for project configuration
+- **Toolchain Management**: Flexible switching between multiple compiler toolchains, supports cross-compilation
+- **Semantic Versioning**: Built-in semver parsing and constraint matching
+- **Symbol Management**: Five-layer defense (`SetDefaultVisibilityHidden` + `SetVersionScript` + `SetExcludeLibs` + `SetSymbolBinding` + `vmake check-symbols`) controls exported symbols to prevent conflicts and leaks in complex dependency graphs
 
-### 安装
+## Quick Start
+
+### Installation
 
 ```bash
 go install github.com/spock2300/vmake/cmd/vmake@latest
 ```
 
-安装后 vmake 位于 `~/go/bin/vmake`。
+### Debug Mode
 
-### 调试模式
-
-build.go 由 yaegi 解释器直接执行，无需编译为插件：
+Buildscripts are interpreted by yaegi directly — no plugin compilation needed:
 
 ```bash
 cd /path/to/vmake
@@ -36,11 +36,9 @@ go build -o vmake ./cmd/vmake
 ./vmake build
 ```
 
-调试模式下，插件会使用本地 vmake 源码编译，避免版本不匹配问题。
+### Basic Usage
 
-### 基本用法
-
-创建 `build.go` 文件：
+Create a `build.go` file:
 
 ```go
 package main
@@ -64,68 +62,68 @@ func Main(p *api.Package) {
 }
 ```
 
-运行构建：
+Run the build:
 
 ```bash
 vmake build
 ```
 
-## 项目结构
+## Project Structure
 
 ```
 vmake/
-├── cmd/vmake/           # CLI 命令入口
+├── cmd/vmake/           # CLI command entry
 ├── pkg/
-│   ├── api/             # 核心构建 API（构建脚本可导入）
-│   ├── plugin/          # 扩展插件系统（插件可导入）
-│   ├── build/           # 编译、链接、缓存管理
-│   ├── buildscript/     # 构建脚本扫描、编译、加载
-│   ├── config/          # 配置存储
-│   ├── resolver/        # 依赖解析
-│   ├── repo/            # 包仓库管理
-│   ├── toolchain/       # 工具链管理
-│   ├── log/             # 日志输出
-│   ├── tui/             # 终端用户界面
-│   └── version/         # 版本信息
+│   ├── api/             # Core build API (importable from build scripts)
+│   ├── plugin/          # Extension plugin system (importable from plugins)
+│   ├── build/           # Compilation, linking, and cache management
+│   ├── buildscript/     # Build script scan, compile, load
+│   ├── config/          # Configuration storage
+│   ├── resolver/        # Dependency resolution
+│   ├── repo/            # Package repository management
+│   ├── toolchain/       # Toolchain management
+│   ├── log/             # Logging
+│   ├── tui/             # Terminal user interface
+│   └── version/         # Version info
 ├── internal/
-│   ├── exec/            # 命令执行
-│   ├── flock/           # 文件锁（跨项目同步）
-│   ├── fs/              # 文件系统工具
-│   ├── gitstore/        # Git 仓库管理（共享基础设施）
-│   ├── glob/            # 文件匹配
-│   ├── gosrc/           # Go 源码合并（buildscript + plugin 共用）
-│   ├── jsonio/          # JSON 序列化
-│   ├── toposort/        # 拓扑排序
-│   ├── yaegibase/       # yaegi 解释器初始化 helper
-│   └── yaegisym/        # cobra/pflag 的 yaegi 符号表（go generate）
-└── docs/                # 设计文档
+│   ├── exec/            # Command execution
+│   ├── flock/           # File locking (cross-project sync)
+│   ├── fs/              # Filesystem utilities
+│   ├── gitstore/        # Git repo store (shared infra)
+│   ├── glob/            # File matching
+│   ├── gosrc/           # Go source merging (buildscript + plugin)
+│   ├── jsonio/          # JSON serialization
+│   ├── toposort/        # Topological sort
+│   ├── yaegibase/       # yaegi interpreter init helper
+│   └── yaegisym/        # cobra/pflag yaegi symbols (go generate)
+└── docs/                # Design documentation
 ```
 
-## 包仓库
+## Package Repository
 
-VMake 支持两种包仓库类型：
+VMake supports two types of package repositories:
 
-**Registry 仓库**：包装第三方 C/C++ 库（如 zlib、curl）。`build.go` 作为包装器调用 CMake/Autotools 构建源码，版本通过 `AddVersion()` 手动映射。
+**Registry Repository**: Wraps third-party C/C++ libraries (such as zlib, curl). `build.go` acts as a wrapper that calls CMake/Autotools to build source code. Versions are manually mapped via `AddVersion()`.
 
-**Native 仓库**：VMake 原生包，用于跨项目共享。每个包是一个独立的 Git 仓库，`build.go` 位于仓库根目录，版本通过 git tag 自动识别。
+**Native Repository**: VMake native packages, for sharing across projects. Each package is an independent Git repository, with `build.go` at the repository root. Versions are automatically recognized via git tags.
 
-| | Registry 仓库 | Native 仓库 |
+| | Registry Repository | Native Repository |
 |--|--|--|
-| **用途** | 包装第三方 C/C++ 库 | VMake 原生包，跨项目共享 |
-| **build.go** | 包装器（调用 CMake 等） | 真正的构建描述 |
-| **版本来源** | `AddVersion()` 手动映射 | git tag（自动识别 semver） |
-| **添加命令** | `vmake repo add name url` | `vmake repo add --native name "https://..../{name}.git"` |
+| **Purpose** | Wrapping third-party C/C++ libraries | VMake native packages, cross-project sharing |
+| **build.go** | Wrapper (calls CMake, etc.) | Actual build description |
+| **Version Source** | `AddVersion()` manual mapping | git tag (auto-detected semver) |
+| **Add Command** | `vmake repo add name url` | `vmake repo add --native name "https://..../{name}.git"` |
 
-### 使用流程
+### Usage Flow
 
-1. 添加仓库：
+1. Add a repository:
 
 ```bash
 vmake repo add official https://github.com/user/vmake-packages    # Registry
 vmake repo add --native myorg https://git.example.com/{name}.git   # Native
 ```
 
-2. 在 `build.go` 中声明依赖：
+2. Declare dependencies in `build.go`:
 
 ```go
 p.OnRequire(func(ctx *api.RequireContext) {
@@ -133,7 +131,7 @@ p.OnRequire(func(ctx *api.RequireContext) {
 })
 ```
 
-3. 在 Target 中使用：
+3. Use in a Target:
 
 ```go
 ctx.Target("app").
@@ -142,71 +140,71 @@ ctx.Target("app").
     AddDeps("official/zlib")
 ```
 
-## API 概览
+## API Overview
 
-### Option 类型
+### Option Types
 
-| 类型 | 说明 |
-|------|------|
-| `OptionBool` | 布尔类型 |
-| `OptionString` | 字符串类型 |
-| `OptionInt` | 整数类型 |
-| `OptionChoice` | 枚举类型 |
+| Type | Description |
+|------|-------------|
+| `OptionBool` | Boolean type |
+| `OptionString` | String type |
+| `OptionInt` | Integer type |
+| `OptionChoice` | Enum type |
 
-### Target 类型
+### Target Types
 
-| 类型 | 说明 |
-|------|------|
-| `TargetBinary` | 可执行文件 |
-| `TargetStatic` | 静态库 |
-| `TargetShared` | 动态库 |
-| `TargetObject` | 目标文件 |
-| `TargetVoid` | 第三方包构建（配合 `SetBuildFunc`） |
+| Type | Description |
+|------|-------------|
+| `TargetBinary` | Executable |
+| `TargetStatic` | Static library |
+| `TargetShared` | Shared library |
+| `TargetObject` | Object file |
+| `TargetVoid` | Third-party package build (with `SetBuildFunc`) |
 
-### 核心方法
+### Core Methods
 
 ```go
-// 配置选项
+// Configure options
 ctx.Option(name string) *Option
 ctx.Bool(name string) bool
 ctx.String(name string) string
 ctx.Int(name string) int
 
-// 条件判断
+// Conditional evaluation
 ctx.If(option string, then ...string) []string
 ctx.IfNot(option string, then ...string) []string
 ctx.When(option string, value any) bool
 ctx.Select(option string, mapping map[string]string) string
 
-// 目标配置
+// Target configuration
 ctx.Target(name string) *Target
 ```
 
-## 扩展插件
+## Extension Plugins
 
-扩展插件通过 yaegi 解释器动态加载 Go 源码，无需编译，不产生 `.so` 文件。每个扩展仓库是一个 Git 仓库，仓库根目录下的每个子目录（含 `plugin.json`）是一个独立的插件。
+Extension plugins are dynamically loaded by the yaegi Go interpreter — no `.so` compilation. Each extension repository is a Git repository, where each subdirectory (containing a `plugin.json`) at the repository root is an independent plugin.
 
-### 扩展能力
+### Capabilities
 
-- **CLI 命令扩展**：通过 `AddSubCommand` 添加自定义子命令
-- **工具链管理**：注册自定义工具链，支持通过 `toolchain.json` + `tc` 插件实现首次使用自动下载（Git LFS 或 HTTP）
-- **全局编译/链接标志**：通过 `AddGlobalCFlags`、`AddGlobalCxxFlags` 和 `AddGlobalLdFlags` 向所有构建注入 C/CXX/链接选项，并通过 `CMakeGlobalFlagsArgs()` 或 `MergedCFlags()` 传递给 CMake 外部构建
+- **CLI Command Extension**: Add custom subcommands via `AddSubCommand`
+- **Toolchain Management**: Register custom toolchains with auto-download on first use via `toolchain.json` + `tc` plugin (Git LFS or HTTP)
+- **Global Build/Link Flags**: Inject C/CXX/linker flags into all builds via `AddGlobalCFlags`, `AddGlobalCxxFlags`, and `AddGlobalLdFlags`. Pass to CMake external builds via `CMakeGlobalFlagsArgs()` or `MergedCFlags()`
 
-### 使用流程
+### Usage Flow
 
-1. 添加扩展仓库：
+1. Add an extension repository:
 
 ```bash
 vmake ext add <name> <git-url>
 ```
 
-2. 插件在下次运行时自动发现并编译，重启 vmake 即可使用
+2. Plugins are auto-discovered and compiled on the next run. Restart vmake to use new commands.
 
-详见 [扩展插件指南](docs/EXTENSION_PLUGIN.md) 获取完整的插件编写教程、所有接口参考和实战示例。
+See the [Extension Plugin Guide](docs/EXTENSION_PLUGIN.md) for the complete plugin authoring tutorial, all interface references, and practical examples.
 
-## 命令行用法
+## Command-Line Usage
 
-### 构建命令
+### Build Commands
 
 ```bash
 vmake build [-f|--force] [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>]
@@ -214,30 +212,30 @@ vmake clean [--all]
 vmake rebuild
 ```
 
-### 配置命令
+### Configuration Commands
 
 ```bash
-vmake config    # 交互式 TUI 配置
+vmake config    # Interactive TUI configuration
 ```
 
-### 工具链管理
+### Toolchain Management
 
 ```bash
 vmake toolchain list
 vmake toolchain show [name]
 ```
 
-### 包仓库管理
+### Package Repository Management
 
 ```bash
-vmake repo add <name> <url>                # Registry 仓库
-vmake repo add --native <name> <url>       # Native 仓库（URL 模板含 {name}）
+vmake repo add <name> <url>                # Registry repo
+vmake repo add --native <name> <url>       # Native repo (URL template with {name})
 vmake repo remove <name>
 vmake repo list
 vmake repo update <name>
 ```
 
-### 包管理
+### Package Management
 
 ```bash
 vmake pkg list
@@ -246,7 +244,7 @@ vmake pkg clean <repo/name> [-a]
 vmake pkg update <repo/name>
 ```
 
-### 扩展管理
+### Extension Management
 
 ```bash
 vmake ext add <name> <url>
@@ -255,61 +253,59 @@ vmake ext list
 vmake ext update [name]
 ```
 
-### 其他命令
+### Other Commands
 
 ```bash
-vmake git tag [version] [--major|--minor|--patch]    # 版本标签
-vmake update [version]                                # 自我更新
-vmake version                                         # 版本信息
-vmake skill install                                   # 安装 AI 技能
-vmake skill uninstall                                 # 卸载 AI 技能
-vmake skill path                                      # 显示安装路径
+vmake git tag [version] [--major|--minor|--patch]    # Version tagging
+vmake update [version]                                # Self-update
+vmake version                                         # Version info
+vmake skill install                                   # Install AI skill
+vmake skill uninstall                                 # Uninstall AI skill
+vmake skill path                                      # Show skill paths
 ```
 
-全局选项：`-v` (verbose), `-V` (very verbose), `-q` (quiet)
+Global flags: `-v` (verbose), `-V` (very verbose), `-q` (quiet)
 
-## 开发文档
+## Documentation
 
-详细的设计文档请参考 [docs](docs/) 目录：
+Detailed design documents are available in the [docs](docs/) directory:
 
-- [构建脚本 API](docs/BUILD_SCRIPT_API.md) - 构建脚本和第三方包 API
-- [扩展插件指南](docs/EXTENSION_PLUGIN.md) - CLI 扩展和工具链仓库编写
-- [架构设计](docs/ARCHITECTURE.md) - 系统架构和执行流程
-- [目录结构](docs/VMAKE_HOME.md) - ~/.vmake 目录结构
-- [AI 安装指南](docs/AI_INSTALL_GUIDE.md) - AI 助手技能安装指南
-- [固件构建设计](docs/FIRMWARE_BUILD_DESIGN.md) - 固件构建系统设计
+- [Build Script API](docs/BUILD_SCRIPT_API.md) - Build script and third-party package API
+- [Extension Plugin Guide](docs/EXTENSION_PLUGIN.md) - CLI extension and toolchain repository authoring
+- [Architecture](docs/ARCHITECTURE.md) - System architecture and execution flow
+- [Directory Structure](docs/VMAKE_HOME.md) - ~/.vmake directory structure
+- [AI Install Guide](docs/AI_INSTALL_GUIDE.md) - AI assistant skill installation
+- [Firmware Build Design](docs/FIRMWARE_BUILD_DESIGN.md) - Firmware build system design
 
-## 测试用例
+## Test Cases
 
-项目包含以下测试场景：
+| Directory | Description |
+|-----------|-------------|
+| `test_data/01_simple_c` | Simple C project |
+| `test_data/02_with_config` | Project with configuration options |
+| `test_data/03_multi_target` | Multi-target project |
+| `test_data/04_multi_module` | Multi-module project |
+| `test_data/05_conditional` | Conditional compilation project |
+| `test_data/06_complete_api` | Complete API test |
+| `test_data/07_subbuild_codegen` | Sub-build / code generation |
+| `test_data/08_with_package` | Third-party package dependency |
+| `test_data/09_with_curl` | Package requiring curl download |
+| `test_data/10_local_repo` | Local repository test |
+| `test_data/11_with_tinyexpr` | Package with tinyexpr dependency |
+| `test_data/12_rtos_simulate` | RTOS simulation project |
+| `test_data/13_with_prefix_repo` | Native repository dependencies |
+| `test_data/14_bin_header` | Binary header embedding |
+| `test_data/15_subgraph_siblings` | Subgraph sibling targets build (host codegen tool + library) |
+| `test_data/16_subgraph_cross_tc` | Subgraph build with cross-toolchain |
+| `test_data/18_config_header` | Generated config header (GenerateConfigHeader) |
+| `test_data/19_config_defines` | Generated config defines (GenerateConfigDefines) |
+| `test_data/20_config_propagate` | Cross-package config propagation (ImportConfig) |
+| `test_linux/17_firmware` | Full firmware build (Linux, U-Boot, BusyBox, App, RootFS, Firmware) |
 
-| 目录 | 描述 |
-|------|------|
-| `test_data/01_simple_c` | 简单 C 项目 |
-| `test_data/02_with_config` | 带配置选项的项目 |
-| `test_data/03_multi_target` | 多目标项目 |
-| `test_data/04_multi_module` | 多模块项目 |
-| `test_data/05_conditional` | 条件编译项目 |
-| `test_data/06_complete_api` | 完整 API 测试 |
-| `test_data/07_subbuild_codegen` | 子构建 / 代码生成 |
-| `test_data/08_with_package` | 使用第三方包 |
-| `test_data/09_with_curl` | 使用 libcurl |
-| `test_data/10_local_repo` | 本地包仓库 |
-| `test_data/11_with_tinyexpr` | 使用 tinyexpr 库 |
-| `test_data/12_rtos_simulate` | RTOS 模拟项目 |
-| `test_data/13_with_prefix_repo` | Native 仓库依赖 |
-| `test_data/14_bin_header` | 二进制头文件嵌入 |
-| `test_data/15_subgraph_siblings` | 子图兄弟目标构建（宿主机代码生成工具 + 库） |
-| `test_data/16_subgraph_cross_tc` | 子图交叉编译工具链 |
-| `test_data/18_config_header` | 配置头文件自动生成（GenerateConfigHeader） |
-| `test_data/19_config_defines` | 配置宏定义自动生成（GenerateConfigDefines） |
-| `test_data/20_config_propagate` | 配置跨包传播（ImportConfig） |
-| `test_linux/17_firmware` | 完整固件构建（Linux, U-Boot, BusyBox, App, RootFS, Firmware） |
+## License
 
-## 许可证
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
-本项目采用 MIT 许可证，详情请参见 [LICENSE](LICENSE) 文件。
+## Contact
 
-## 联系方式
-
-- 项目地址：https://github.com/spock2300/vmake
+- Project URL: https://github.com/spock2300/vmake
