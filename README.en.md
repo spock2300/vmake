@@ -180,7 +180,7 @@ ctx.Target(name string) *Target
 
 ## Extension Plugins
 
-Extension plugins extend vmake's CLI commands and toolchain management through Go plugins (`.so`). Each extension repository is a Git repository, where each subdirectory (containing a `plugin.json`) at the repository root is an independent plugin.
+Extension plugins are dynamically loaded by the yaegi Go interpreter — no `.so` compilation. Each extension repository is a Git repository, where each subdirectory (containing a `plugin.json`) at the repository root is an independent plugin.
 
 ### Capabilities
 
