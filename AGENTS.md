@@ -54,7 +54,7 @@ go build -o vmake ./cmd/vmake    # Build vmake itself
 ## Storage Layout
 
 ### Project-Local (`vmake_deps/`)
-Auto-added to `.gitignore` on first build via `ensureGitignore()` in `runPipeline`. Each project has its own independent `vmake_deps/`.
+Auto-added to `.gitignore` on first build via `ensureGitignore()` in `resolveToConfig()`. Each project has its own independent `vmake_deps/`.
 
 ```
 vmake_deps/
@@ -107,8 +107,8 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 ### Post-Link Incremental Tracking
 `target.AddPostLinkDeps(files...)` declares extra input files (SourceDir-relative, like `AddFiles`) that post-link steps consume. The relink check (`needRelink` in `pkg/build/scheduler.go`) compares each dep's mtime against the link output: any dep newer or missing → relink + re-run ALL post-link steps. Without this, post-link inputs (e.g. `objcopy --keep-global-symbols=file.sym`) are invisible to staleness — editing `file.sym` is silently skipped, forcing `rebuild`/`distclean`. Granularity is whole-target: one dep change → relink + full post-link re-run (no per-step incremental). Dep deletion also triggers relink (mirrors `SetConfigFiles` void-target semantics). Applies to Binary/Shared/Object (Prebuilt short-circuits before `needRelink`, so `AddPostLinkDeps` is a no-op there). Diagnostic on trigger: `RELINK <name> (post-link dep <file> newer|missing)` via `vlog.Info`.
 
-### EnsureConfig + PatchKConfig Abstraction
-`pkg.EnsureConfig(srcDir) bool` checks `.config` existence + size > 0, runs `make <preset>` if needed. `PatchKConfig(map[string]string)` applies post-defconfig patches in EnsureConfig, restoreKConfigFiles, and TUI ensureConfigCmd.
+### EnsureConfig + ApplyKConfigPatches Abstraction
+`pkg.EnsureConfig(srcDir) bool` checks `.config` existence + size > 0, runs `make <preset>` if needed. `ApplyKConfigPatches(configPath, patches)` applies post-defconfig patches in EnsureConfig, restoreKConfigFiles, and TUI ensureConfigCmd.
 
 ### Abstraction Boundaries
 - `restoreKConfigFiles` only restores from config.json — does NOT call `make <preset>`
@@ -129,8 +129,8 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 
 ### Config Cross-Package Propagation
 - `GenerateConfigDefines()` sets `genConfigDefines = true` on BuildContext; during build processing, reads `ImportConfigs()`, calls `MergeImportedOptions` to merge local + imported options, then calls `ConfigToDefines` and `AddDefines` on all targets
-- `ExportConfig()` sets `exportConfig = true` on BuildContext; propagated to `Package.SetExportConfig(true)` in `build_cmd.go:552-553`
-- `ImportConfig(names...)` appends package names to `importConfigs []string` on BuildContext; the actual merge and `-D` injection happens inside the `GenerateConfigDefines` processing block (`build_cmd.go:534-551`)
+- `ExportConfig()` sets `exportConfig = true` on BuildContext; propagated to `Package.SetExportConfig(true)` in `build_exec.go:68-70`
+- `ImportConfig(names...)` appends package names to `importConfigs []string` on BuildContext; the actual merge and `-D` injection happens inside the `GenerateConfigDefines` processing block (`build_exec.go:46-67`)
 - `SyncConfigDefines(names...)` = `GenerateConfigDefines` + `ImportConfig` (convenience for orchestrator packages)
 - `GenerateConfigHeader()` sets `genConfigHeader = true` on BuildContext; propagated to `Package.SetGenConfigHeader(true)` — generates `autoconf.h` from merged config options when called by scheduler
 - Merged options: local options take priority over imported (no overwrite on name collision)
@@ -181,7 +181,7 @@ Phase 1-2b: Same as build (OnRequire → OnConfig)
 Phase 3: OnClean         -> Execute callbacks -> Directory cleanup
 ```
 
-Entry point: `cmd/vmake/main.go` → `loadPlugins()` → `Execute()` (cobra). Pipeline in `cmd/vmake/root.go` (`runPipeline`). Build logic in `cmd/vmake/build_cmd.go`.
+Entry point: `cmd/vmake/main.go` → `loadPlugins()` → `Execute()` (cobra). Pipeline: `resolveToConfig()` (root.go) → `runRequirePhase()` → `runConfigurePhase()` → `runBuildPhase()` (build_phase.go). Build logic in `cmd/vmake/build_cmd.go`.
 
 ## Code Style
 
@@ -322,7 +322,7 @@ Extension plugins are interpreted by yaegi at runtime (same as buildscripts). Co
 - Command factories (`newRemoveCmd`, `newUpdateCmd`) in `cmd/vmake/helpers.go`
 - Global flags: `--verbose/-v`, `--very-verbose/-V`, `--quiet/-q`
 - `vmake` (no subcommand) — defaults to `build`
-- `vmake build` — build all targets (flags: `--force`, `--toolchain`, `--mode`, `--install`, `--prefix`, `--tests`, `--manifest`)
+- `vmake build` — build all targets (flags: `--toolchain`, `--mode`, `--install`, `--prefix`, `--tests`, `--manifest`)
 - `vmake test` — build with `--tests` then execute test binaries
 - `vmake clean [--all]` — execute OnClean hooks then clean build artifacts; `--all` removes all build key dirs
 - `vmake rebuild` — clean local packages then build
@@ -333,14 +333,13 @@ Extension plugins are interpreted by yaegi at runtime (same as buildscripts). Co
 - `vmake git tag [--minor|--major] [version]` — create version tag, update latest, push (for native repos)
 - `vmake completion [bash|zsh|fish|powershell|install]` — generate shell completion
 - `vmake ext add/remove/list/update` — manage extension repos that contain plugins and toolchain manifests
-- `vmake skill install/uninstall/path` — install AI assistant skill files to `~/.claude/skills/` and `~/.agents/skills/`
+- `vmake skill install/uninstall/path` — install AI assistant skill files to `~/.claude/skills/vmake/` and `~/.agents/skills/vmake/`
 - `vmake pkg list/search/clean/update` — manage third-party packages in `vmake_deps/`
 
 ### Build Flags
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `--force` | `-f` | Force rebuild (no-op for buildscript loading; buildscripts are always re-interpreted) |
 | `--toolchain` | | Override toolchain |
 | `--mode` | | Override build mode (debug/release) |
 | `--install` | `-i` | Install after build |
@@ -416,7 +415,7 @@ type PkgDirs struct { SourceDir, BuildDir, InstallDir string }
 - `vmake_deps/` is in `scanner.go`'s `skipDirs` — build.go scanner will not recurse into it
 - `ensureGitignore` writes only to project root `.gitignore` (via `findProjectDir()`), not to subdirectories
 - `scanner.go` `skipDirs`: `.git`, `.vmake`, `build`, `vendor`, `node_modules`, `vmake_deps` — build.go files in these dirs are invisible to the scanner
-- Buildscripts are re-interpreted on every `vmake` invocation — no `.so` cache, no `go.mod`/`go.sum` generated. `--force` flag is a no-op for buildscript loading (buildscripts are always fresh).
+- Buildscripts are re-interpreted on every `vmake` invocation — no `.so` cache, no `go.mod`/`go.sum` generated.
 - Extension plugins are re-interpreted by yaegi on every `vmake` invocation — no `.so` compilation, no version-mismatch issues. Cobra/pflag symbols in `internal/yaegisym/` must be regenerated (`go generate`) when cobra version bumps.
 
 ## What Not To Do

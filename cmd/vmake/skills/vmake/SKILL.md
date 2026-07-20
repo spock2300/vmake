@@ -82,7 +82,7 @@ func Main(p *api.Package) {
 SetBuildFunc(func(p *api.Package) error {
     srcDir := p.SrcDir()
     p.EnsureConfig(srcDir)
-    pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
+    p.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
     return nil
 })
 ```
@@ -521,7 +521,7 @@ The manifest records git remote URLs, refs, and revisions for every package. `vm
 | `vmake update [version]` | Update vmake |
 | `vmake version` | Version info |
 
-Build flags: `--force/-f`, `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`, `--manifest`, `--tests`
+Build flags: `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`, `--manifest`, `--tests`
 Verbosity: `-v` verbose, `-V` very-verbose, `-q` quiet
 
 ## Reading Guide

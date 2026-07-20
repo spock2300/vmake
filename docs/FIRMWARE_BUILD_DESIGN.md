@@ -720,12 +720,16 @@ vmake build
 │   │            ├── boot ────┘
 │   │   uboot ──────────────────┘
 │   │
-│   └── autoWireRequireDeps：为声明了 SetRequire 但未显式 AddDeps 的目标自动补全依赖边
 │
-├── Phase 2: OnConfig → 收集 Options + KConfig 条目
+├── Phase 2a: ResolveDeferred → 解析远程包 → 更新拓扑排序
+│
+├── Phase 2b: OnConfig → 收集 Options + KConfig 条目
 │   └── KConfig 条目注册完毕，但尚未恢复 .config
 │
-├── Phase 2.5: 恢复 .config（OnConfig 之后、OnBuild 之前）
+├── Phase 2c: FilterDeps → 使用真实配置重新执行 OnRequire，替换节点依赖，
+│   │           BFS 收集实际需要的包（移除未选中的条件依赖）
+│   │
+│   ├── Phase 2.5: 恢复 .config（FilterDeps 之后、OnBuild 之前）
 │   └── 对每个有 kconfig 的包，按拓扑序调用 restoreKConfigFiles：
 │       ├── config.json 无该包条目 → 跳过（不删除 .config）
 │       ├── config.json 有条目但 kconfig 为空（preset 切换）→ 删除 .config
@@ -746,27 +750,15 @@ vmake build
 
 ---
 
-## 9. autoWireRequireDeps
+## 9. 自动依赖补全（autoWireRequireDeps — 已移除）
+
+> **v2 中已移除 `autoWireRequireDeps`**（违反了"无降级"原则）。
 
 `OnRequire`/`AddRequires` 仅声明依赖关系，**不会**自动创建构建图的边。目标必须通过 `AddDeps` 显式声明构建依赖（支持 `"pkg:target"` 指定 target、`"pkg:*"` 通配所有 target），否则拓扑排序不会产生正确的构建顺序。
 
-为简化使用，vmake 提供 `autoWireRequireDeps()` 自动补全：
+v1 中曾提供 `autoWireRequireDeps()` 自动将 `AddRequires` 声明的依赖补全到未显式 `AddDeps` 的目标上。该机制在 v2 中被移除，每个目标必须显式声明构建图边。
 
-```go
-func autoWireRequireDeps(pkg *api.Package, allTargets, localTargets map[string]map[string]*api.Target)
-```
-
-规则：若本地包的某个 Target 没有显式 `AddDeps`，但包级别声明了 `AddRequires("busybox")`，则自动将该 Target 的依赖指向 busybox 包的所有 Target。
-
-这意味着大多数情况下，build.go 中只需写 `AddRequires` 而无需手动 `AddDeps`：
-
-```go
-p.OnRequire(func(ctx *api.RequireContext) {
-    ctx.AddRequires("busybox", "myapp")
-})
-```
-
-`autoWireRequireDeps` 在 `build_cmd.go` 中 Phase 1 执行，自动为所有本地包的目标补全依赖边。
+迁移方法：检查所有 build.go，确保每个需要依赖其他包的目标都调用了 `AddDeps`。详见 `docs/MIGRATION_V2.md`。
 
 ---
 
@@ -840,5 +832,5 @@ my-firmware/
 | 固件 | 普通包 | 收集分区镜像文件 → 合成固件，完全用户可控 |
 | 依赖产物路径 | DepBuildDir | 封装 `filepath.Dir(DepOutput(...))`，推荐 API |
 | 文件操作 | api.CopyFile/CopyDir | 属于 pkg/api 包，build.go 插件可直接 import |
-| autoWire | autoWireRequireDeps | AddRequires 自动补全构建图边，无需手动 AddDeps |
+| autoWire | autoWireRequireDeps（v2 已移除） | v2 中移除，每个目标必须显式 AddDeps |
 | pkg.Deps() | 有 InstallDir 即填充 | 不区分本地/远程，由 populateDepsFromGraph 统一处理 |

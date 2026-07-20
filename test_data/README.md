@@ -95,7 +95,23 @@ test_data/
 │   ├── build.go
 │   └── src/
 │
-└── 20_config_propagate/  # 配置跨包传播
+├── 20_config_propagate/  # 配置跨包传播
+│   ├── build.go
+│   └── src/
+│
+├── 21_root_package/      # 根包构建
+│   ├── build.go
+│   └── src/
+│
+├── 22_version_script/    # 版本脚本
+│   ├── build.go
+│   └── src/
+│
+├── 23_link_strategy/     # 链接策略
+│   ├── build.go
+│   └── src/
+│
+└── 24_symbol_prefix/     # 符号前缀
     ├── build.go
     └── src/
 ```
@@ -260,6 +276,36 @@ Native 仓库依赖，通过 git tag 进行版本管理。
 - ImportConfig 导入配置
 - SyncConfigDefines 快捷方式
 - 本包选项优先于导入选项
+
+### 21_root_package
+根包构建测试。
+
+**验证要点：**
+- Root Package 作为独立依赖目标
+- 根包生命周期
+
+### 22_version_script
+版本脚本链接测试。
+
+**验证要点：**
+- SetVersionScript API
+- 链接器版本脚本传递
+- 符号版本控制
+
+### 23_link_strategy
+链接策略测试。
+
+**验证要点：**
+- 不同链接策略的配置
+- 链接器行为验证
+
+### 24_symbol_prefix
+符号前缀测试。
+
+**验证要点：**
+- SetSymbolPrefix API
+- 后链接 objcopy --prefix-symbols
+- 增量编译符号前缀变更检测
 
 ## 预期行为
 

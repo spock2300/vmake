@@ -17,6 +17,8 @@
 │           └── *.tar.gz           # 工具链二进制包
 ├── toolchains/                    # 已安装的交叉编译工具链
 │   └── <name>-<version>/          # 工具链安装目录
+├── sources/                        # 共享源码检出（symlink 到 vmake_deps）
+│   └── <repo>/<pkg>/src/
 └── repos/                         # 包仓库索引（git clone）
     └── <repo>/
         └── packages/
@@ -122,7 +124,6 @@ project/
 └── build/                         # 本地包构建输出
     ├── compile_commands.json      # LSP 编译数据库
     └── <tc>-<mode>/               # 如 host-debug
-        ├── state.json             # 构建状态（工具链/模式）
         ├── objects/               # 中间目标文件
         └── <target>               # 最终产物
 ```

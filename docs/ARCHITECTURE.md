@@ -6,19 +6,20 @@ vmake build 执行三个阶段（含延迟解析子阶段）：
 
 ```
 Phase 1: OnRequire
-    扫描 build.go → 编译构建脚本 → 加载构建脚本 → 收集依赖
+    扫描 build.go → 解释构建脚本 → 加载构建脚本 → 收集依赖
     │
     [afterPhase1 钩子：manifest 版本锁定]
     │
 Phase 2: 配置准备 (runConfigurePhase)
     ├── 2a: ResolveDeferred — 解析延迟依赖（远程包）→ 更新拓扑排序
-    └── 2b: OnConfig — 执行 OnConfig 回调 → 收集 Option 定义 → 合并全局选项
+    ├── 2b: OnConfig — 执行 OnConfig 回调 → 收集 Option 定义 → 合并全局选项
+    └── 2c: FilterDeps — 用真实配置重新执行 OnRequire → 替换节点.Deps → BFS 收集 needed
     │
 Phase 3: OnBuild (runBuildPhase)
     ├── resolveBuildConfig — 解析构建配置（模式、工具链）
     ├── filterAndCollectNeeded — BFS 过滤本地包依赖
     ├── resolveAllPackageDirs — 解析所有包目录
-    ├── prepareAllPackages — 下载源码、编译 buildscript 插件
+    ├── prepareAllPackages — 下载源码、解释 buildscript 脚本
     ├── applyPatches — 对远程包应用 git patch（git apply --3way）
     ├── restoreKConfigFiles — 恢复 KConfig 配置
     ├── executeAllOnBuild — 执行 OnBuild 回调 → 生成 Target
@@ -56,14 +57,13 @@ vmake clean
 └── Directory Cleanup
     └── 删除构建产物目录（build/、out/）
     
-Fallback: 若插件加载失败，降级为仅扫描目录清理（不执行 OnClean 回调）
+当 resolveToConfigBestEffort 配置解析失败时，降级为扫描目录并清理构建产物（不执行 OnClean 回调）
 ```
 
 ### Build Flags
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `--force` | `-f` | 强制重新编译构建脚本 |
 | `--toolchain` | | 覆盖工具链 |
 | `--mode` | | 覆盖构建模式（debug/release） |
 | `--install` | `-i` | 构建后安装 |
@@ -172,7 +172,7 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 1. **resolveBuildConfig** — 解析构建模式（debug/release）和工具链选择
 2. **filterAndCollectNeeded** — 从 `IsLocal()` 根节点 BFS 遍历，过滤需要构建的包
 3. **resolveAllPackageDirs** — 解析所有包的 SourceDir/BuildDir/InstallDir
-4. **prepareAllPackages** — 下载远程包源码，编译 buildscript 插件
+4. **prepareAllPackages** — 下载远程包源码、克隆本地 Git 源码、设置子包目录
 5. **applyPatches** — 对远程包应用 git patch（`git apply --3way`），已应用自动跳过
 6. **restoreKConfigFiles** — 从 config.json 恢复 KConfig 配置（详见 KConfig 章节）
 7. **executeAllOnBuild** — 执行所有 `OnBuild` 回调，生成 `map[string]*Target`
@@ -304,6 +304,7 @@ vmake (RootCmd)
 ├── clean          # 执行 OnClean 钩子后清理构建产物
 ├── rebuild        # 完全重新构建
 ├── distclean      # 深度清理（删除所有构建产物、vmake_deps/、install/）
+├── doctor         # 检测 build.go 中的常见问题（如缺少 AddDeps）
 ├── config         # TUI 配置界面
 ├── update [ver]   # 自我更新（go install）
 ├── version        # 版本信息
@@ -343,6 +344,7 @@ vmake (RootCmd)
 │   ├── powershell # PowerShell 补全
 │   └── install    # 自动安装补全
 ├── test           # 构建并运行测试目标
+├── check-symbols  # 扫描构建产物，检测符号泄漏和版本脚本违规
 └── <plugin>       # 扩展插件提供的命令
     └── ...        # 插件自定义子命令
 ```
@@ -421,12 +423,10 @@ PackageNode
 
 ```
 Source
-├── Path      string          // build.go 文件路径
-├── Name      string          // 包名（如 "official/zlib"）
-├── Dir       string          // 包目录
-├── OutputDir string          // 输出目录
-├── Origin    api.SourceOrigin // SourceLocal 或 SourceRemote
-└── Force     bool
+├── Path   string          // build.go 文件路径
+├── Name   string          // 包名（如 "official/zlib"）
+├── Dir    string          // 包目录
+└── Origin api.SourceOrigin // SourceLocal 或 SourceRemote
 ```
 
 ### BuildGraph (`pkg/build/graph.go`)
@@ -499,8 +499,8 @@ EntryConfig
 | 组件 | 文件路径 | 职责 |
 |------|----------|------|
 | API 定义 | `pkg/api/` | 公共 API，构建脚本可导入 |
-| 插件系统 | `pkg/plugin/` | 扩展插件管理、编译、加载 |
-| 构建脚本系统 | `pkg/buildscript/` | 扫描、编译、加载构建脚本 |
+| 插件系统 | `pkg/plugin/` | 扩展插件管理、解释、加载 |
+| 构建脚本系统 | `pkg/buildscript/` | 扫描、解释、加载构建脚本 |
 | 依赖解析 | `pkg/resolver/` | 依赖图解析、拓扑排序 |
 | 构建系统 | `pkg/build/` | 编译、链接、调度、安装 |
 | 包管理 | `pkg/repo/` | 仓库管理、源码下载、安装、native 仓库 |

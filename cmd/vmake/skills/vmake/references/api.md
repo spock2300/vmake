@@ -538,6 +538,5 @@ func (v Version) String() string
 | `<` | < | No |
 | `=` | exact match (including pre) | — |
 | `~` | lock major.minor, patch ≥ | Yes |
-| `@` | Same as `>=` (major-locked) | Yes |
 
 `>=` with major > 0 restricts to same major version (`>=1.2` won't match `2.0.0`). Empty constraint (`>=0.0.0`) matches all. Selection: highest version satisfying all constraints. Pre-release: `1.0.0-rc.1 < 1.0.0`; numeric identifiers < alpha identifiers in pre-release segments.

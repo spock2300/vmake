@@ -77,7 +77,7 @@ vmake/
 │   ├── api/             # Core build API (importable from build scripts)
 │   ├── plugin/          # Extension plugin system (importable from plugins)
 │   ├── build/           # Compilation, linking, and cache management
-│   ├── buildscript/     # Build script scan, compile, load
+│   ├── buildscript/     # Build script scan, interpret, load
 │   ├── config/          # Configuration storage
 │   ├── resolver/        # Dependency resolution
 │   ├── repo/            # Package repository management
@@ -198,7 +198,7 @@ Extension plugins are dynamically loaded by the yaegi Go interpreter — no `.so
 vmake ext add <name> <git-url>
 ```
 
-2. Plugins are auto-discovered and compiled on the next run. Restart vmake to use new commands.
+2. Plugins are auto-discovered and interpreted on the next run. Restart vmake to use new commands.
 
 See the [Extension Plugin Guide](docs/EXTENSION_PLUGIN.md) for the complete plugin authoring tutorial, all interface references, and practical examples.
 
@@ -207,8 +207,10 @@ See the [Extension Plugin Guide](docs/EXTENSION_PLUGIN.md) for the complete plug
 ### Build Commands
 
 ```bash
-vmake build [-f|--force] [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>]
+vmake build [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>] [--tests]
+vmake test
 vmake clean [--all]
+vmake distclean
 vmake rebuild
 ```
 
@@ -256,7 +258,12 @@ vmake ext update [name]
 ### Other Commands
 
 ```bash
-vmake git tag [version] [--major|--minor|--patch]    # Version tagging
+vmake git tag [version] [--minor|--major]             # Version tagging
+vmake doctor                                          # Diagnose build.go patterns
+vmake manifest show <path>                            # Show manifest contents
+vmake manifest checkout <path> [name]                 # Checkout packages to recorded versions
+vmake completion <shell>                              # Generate shell completion (bash|zsh|fish|powershell)
+vmake completion install                              # Auto-install shell completion
 vmake update [version]                                # Self-update
 vmake version                                         # Version info
 vmake skill install                                   # Install AI skill
@@ -300,6 +307,10 @@ Detailed design documents are available in the [docs](docs/) directory:
 | `test_data/18_config_header` | Generated config header (GenerateConfigHeader) |
 | `test_data/19_config_defines` | Generated config defines (GenerateConfigDefines) |
 | `test_data/20_config_propagate` | Cross-package config propagation (ImportConfig) |
+| `test_data/21_root_package` | Root package selection (SetRoot) |
+| `test_data/22_version_script` | Version script linker integration |
+| `test_data/23_link_strategy` | Link strategy tests |
+| `test_data/24_symbol_prefix` | Symbol prefix (objcopy --prefix-symbols) |
 | `test_linux/17_firmware` | Full firmware build (Linux, U-Boot, BusyBox, App, RootFS, Firmware) |
 
 ## License

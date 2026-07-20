@@ -701,7 +701,6 @@ func MatchVersion(available []string, constraint string) (string, bool)
 
 | 标志 | 短选项 | 说明 |
 |------|--------|------|
-| `--force` | `-f` | 强制重新编译构建脚本 |
 | `--toolchain` | | 覆盖工具链 |
 | `--mode` | | 覆盖构建模式（debug/release） |
 | `--install` | `-i` | 构建后安装 |

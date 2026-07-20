@@ -79,7 +79,7 @@ vmake/
 │   ├── api/             # 核心构建 API（构建脚本可导入）
 │   ├── plugin/          # 扩展插件系统（插件可导入）
 │   ├── build/           # 编译、链接、缓存管理
-│   ├── buildscript/     # 构建脚本扫描、编译、加载
+│   ├── buildscript/     # 构建脚本扫描、解释、加载
 │   ├── config/          # 配置存储
 │   ├── resolver/        # 依赖解析
 │   ├── repo/            # 包仓库管理
@@ -200,7 +200,7 @@ ctx.Target(name string) *Target
 vmake ext add <name> <git-url>
 ```
 
-2. 插件在下次运行时自动发现并编译，重启 vmake 即可使用
+2. 插件在下次运行时自动发现并解释执行，重启 vmake 即可使用
 
 详见 [扩展插件指南](docs/EXTENSION_PLUGIN.md) 获取完整的插件编写教程、所有接口参考和实战示例。
 
@@ -209,8 +209,10 @@ vmake ext add <name> <git-url>
 ### 构建命令
 
 ```bash
-vmake build [-f|--force] [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>]
+vmake build [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>] [--tests]
+vmake test
 vmake clean [--all]
+vmake distclean
 vmake rebuild
 ```
 
@@ -258,7 +260,12 @@ vmake ext update [name]
 ### 其他命令
 
 ```bash
-vmake git tag [version] [--major|--minor|--patch]    # 版本标签
+vmake git tag [version] [--minor|--major]             # 版本标签
+vmake doctor                                          # 诊断 build.go 模式
+vmake manifest show <path>                            # 显示清单内容
+vmake manifest checkout <path> [name]                 # 按清单检出版本
+vmake completion <shell>                              # 生成 shell 自动补全 (bash|zsh|fish|powershell)
+vmake completion install                              # 自动安装 shell 补全
 vmake update [version]                                # 自我更新
 vmake version                                         # 版本信息
 vmake skill install                                   # 安装 AI 技能
@@ -304,6 +311,10 @@ vmake skill path                                      # 显示安装路径
 | `test_data/18_config_header` | 配置头文件自动生成（GenerateConfigHeader） |
 | `test_data/19_config_defines` | 配置宏定义自动生成（GenerateConfigDefines） |
 | `test_data/20_config_propagate` | 配置跨包传播（ImportConfig） |
+| `test_data/21_root_package` | 根包选择（SetRoot） |
+| `test_data/22_version_script` | 版本脚本链接器集成 |
+| `test_data/23_link_strategy` | 链接策略测试 |
+| `test_data/24_symbol_prefix` | 符号前缀（objcopy --prefix-symbols） |
 | `test_linux/17_firmware` | 完整固件构建（Linux, U-Boot, BusyBox, App, RootFS, Firmware） |
 
 ## 许可证

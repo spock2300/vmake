@@ -131,11 +131,13 @@ ctx.Target("app").
 VMake 的运行时执行流程分为清晰的三个阶段：
 
 ```
-Phase 1: OnRequire  →  扫描 build.go → 编译插件 → 收集依赖声明
+Phase 1: OnRequire  →  扫描 build.go → 解释构建脚本 → 收集依赖声明
     ↓
 Phase 2a: ResolveDeferred  →  解析远程包 → 更新拓扑排序
     ↓
 Phase 2b: OnConfig  →  执行配置回调 → 收集 Options → 合并全局配置
+    ↓
+Phase 2c: FilterDeps  →  用真实配置重跑 OnRequire → BFS 收集 needed 包
     ↓
 Phase 3: OnBuild  →  执行构建回调 → 生成 Targets → 拓扑排序编译/链接
     ↓

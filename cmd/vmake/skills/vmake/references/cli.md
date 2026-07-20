@@ -4,7 +4,7 @@ Generated from vmake built-in commands. For plugin commands,
 run `vmake <plugin> --help` or check the plugin documentation.
 
 `vmake [--quiet -q --verbose -v --very-verbose -V]` - VMake - A Go-based C/C++ build system
-  `vmake build [--force -f --install -i --install-type --manifest --mode --prefix -p --tests --toolchain]` - Build the project.
+  `vmake build [--install -i --install-type --manifest --mode --prefix -p --tests --toolchain]` - Build the project.
     `--install-type`: `runtime` (binaries+shared, default) or `sdk` (everything including static libs)
     `--mode`: `debug` or `release`
     `--manifest <path>`: pin versions from a manifest file
