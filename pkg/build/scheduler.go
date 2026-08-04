@@ -185,7 +185,7 @@ func (s *Scheduler) Build(fullName string) error {
 	genRules := node.Target.GenRules()
 	if len(genRules) > 0 {
 		generatedDir := pkgInfo.GeneratedDir()
-		if err := runGenRules(genRules, resolveWorkPath(workDir, generatedDir)); err != nil {
+		if err := runGenRules(genRules, resolveWorkPath(workDir, generatedDir), workDir); err != nil {
 			return err
 		}
 	}
@@ -517,7 +517,7 @@ func (s *Scheduler) needRelink(resolved *ResolvedTarget, objs []string) bool {
 	}
 
 	for _, artifact := range resolved.DepArtifacts {
-		artifactInfo, err := os.Stat(artifact)
+		artifactInfo, err := os.Stat(resolveWorkPath(workDir, artifact))
 		if err != nil || artifactInfo.ModTime().After(outputTime) {
 			return true
 		}
@@ -849,9 +849,10 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 	includeDir := filepath.Join(pkgInfo.InstallDir, "include")
 
 	if resolved.OutputPath != "" {
+		srcPath := resolveWorkPath(pkgInfo.SourceDir, resolved.OutputPath)
 		dest := filepath.Join(libDir, filepath.Base(resolved.OutputPath))
 		if info, err := os.Stat(dest); err == nil {
-			srcInfo, err2 := os.Stat(resolved.OutputPath)
+			srcInfo, err2 := os.Stat(srcPath)
 			if err2 == nil && info.Size() == srcInfo.Size() && !info.ModTime().Before(srcInfo.ModTime()) {
 				vlog.Info("  SKIP (already published)")
 				return nil
@@ -864,10 +865,11 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 	}
 
 	if resolved.OutputPath != "" {
-		if _, err := os.Stat(resolved.OutputPath); err == nil {
+		srcPath := resolveWorkPath(pkgInfo.SourceDir, resolved.OutputPath)
+		if _, err := os.Stat(srcPath); err == nil {
 			dest := filepath.Join(libDir, filepath.Base(resolved.OutputPath))
 			vlog.Info("  INSTALL %s -> %s", filepath.Base(resolved.OutputPath), dest)
-			if err := CopyFile(resolved.OutputPath, dest); err != nil {
+			if err := CopyFile(srcPath, dest); err != nil {
 				return fmt.Errorf("install library failed: %w", err)
 			}
 		}

@@ -727,9 +727,9 @@ vmake build
 │   └── KConfig 条目注册完毕，但尚未恢复 .config
 │
 ├── Phase 2c: FilterDeps → 使用真实配置重新执行 OnRequire，替换节点依赖，
-│   │           BFS 收集实际需要的包（移除未选中的条件依赖）
-│   │
-│   ├── Phase 2.5: 恢复 .config（FilterDeps 之后、OnBuild 之前）
+│              BFS 收集实际需要的包（移除未选中的条件依赖）
+│
+├── Phase 2.5: 恢复 .config（FilterDeps 之后、OnBuild 之前）
 │   └── 对每个有 kconfig 的包，按拓扑序调用 restoreKConfigFiles：
 │       ├── config.json 无该包条目 → 跳过（不删除 .config）
 │       ├── config.json 有条目但 kconfig 为空（preset 切换）→ 删除 .config

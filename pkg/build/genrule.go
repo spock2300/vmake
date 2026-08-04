@@ -13,7 +13,7 @@ import (
 
 var hexChars = [16]byte{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'}
 
-func runGenRules(rules []api.GenRule, generatedDir string) error {
+func runGenRules(rules []api.GenRule, generatedDir, workDir string) error {
 	if len(rules) == 0 {
 		return nil
 	}
@@ -33,19 +33,20 @@ func runGenRules(rules []api.GenRule, generatedDir string) error {
 		}
 		stems[rule.OutputStem()] = rule.Input()
 
-		if !fs.FileExists(rule.Input()) {
+		input := resolveWorkPath(workDir, rule.Input())
+		if !fs.FileExists(input) {
 			return fmt.Errorf("gen rule input not found: %s", rule.Input())
 		}
 
 		output := filepath.Join(generatedDir, rule.OutputStem()+".h")
 
-		if !needGenRule(rule.Input(), output) {
+		if !needGenRule(input, output) {
 			vlog.Info("  GEN [skip] %s -> %s", rule.Input(), rule.OutputStem()+".h")
 			continue
 		}
 
 		vlog.Info("  GEN %s -> %s", rule.Input(), rule.OutputStem()+".h")
-		if err := generateBinHeader(rule.Input(), output); err != nil {
+		if err := generateBinHeader(input, output); err != nil {
 			return err
 		}
 	}
