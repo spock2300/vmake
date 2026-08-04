@@ -39,8 +39,8 @@ func selectCompilerAndFlags(ccPath, cxxPath string, globalCFlags, globalCxxFlags
 	return ccPath, append(append([]string{}, globalCFlags...), cFlags...)
 }
 
-func (c *Compiler) Compile(src, objPath string, opts *CompileOptions) ([]string, error) {
-	if err := fs.EnsureDir(filepath.Dir(objPath)); err != nil {
+func (c *Compiler) Compile(src, objPath string, opts *CompileOptions, workDir string) ([]string, error) {
+	if err := fs.EnsureDir(filepath.Dir(resolveWorkPath(workDir, objPath))); err != nil {
 		return nil, err
 	}
 
@@ -51,12 +51,12 @@ func (c *Compiler) Compile(src, objPath string, opts *CompileOptions) ([]string,
 
 	args := BuildCompileArgs(opts, objPath, src, flags, depPath)
 
-	_, err := iexec.Run(compiler, args...)
+	_, err := iexec.RunInDir(compiler, workDir, args...)
 	if err != nil {
 		return nil, err
 	}
 
-	deps, err := ParseDepFile(depPath)
+	deps, err := ParseDepFile(resolveWorkPath(workDir, depPath))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse dep file: %w", err)
 	}
@@ -101,21 +101,23 @@ func ParseDepFile(depPath string) ([]string, error) {
 	return deps, scanner.Err()
 }
 
-func IsSourceValid(src, objPath string, extraDeps ...string) (bool, []string) {
-	objInfo, err := os.Stat(objPath)
+func IsSourceValid(src, objPath string, extraDeps []string, workDir string) (bool, []string) {
+	absObj := resolveWorkPath(workDir, objPath)
+	objInfo, err := os.Stat(absObj)
 	if os.IsNotExist(err) {
 		return false, nil
 	}
 
 	depPath := objPath + ".d"
-	deps, err := ParseDepFile(depPath)
+	deps, err := ParseDepFile(resolveWorkPath(workDir, depPath))
 	if err != nil {
 		return false, nil
 	}
 
 	objTime := objInfo.ModTime()
 
-	srcInfo, err := os.Stat(src)
+	absSrc := resolveWorkPath(workDir, src)
+	srcInfo, err := os.Stat(absSrc)
 	if err != nil || srcInfo.ModTime().After(objTime) {
 		return false, deps
 	}
@@ -128,7 +130,8 @@ func IsSourceValid(src, objPath string, extraDeps ...string) (bool, []string) {
 	}
 
 	for _, dep := range extraDeps {
-		depInfo, err := os.Stat(dep)
+		depPath := resolveWorkPath(workDir, dep)
+		depInfo, err := os.Stat(depPath)
 		if err == nil && depInfo.ModTime().After(objTime) {
 			return false, deps
 		}

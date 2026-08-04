@@ -190,6 +190,8 @@ func TestIsSourceValidMissingObj(t *testing.T) {
 	valid, _ := IsSourceValid(
 		filepath.Join(dir, "src.c"),
 		filepath.Join(dir, "obj.o"),
+		nil,
+		dir,
 	)
 	if valid {
 		t.Error("missing obj should be invalid (not up-to-date)")
@@ -209,7 +211,7 @@ func TestIsSourceValidFresh(t *testing.T) {
 	setMtime(t, srcPath, "2020-01-01T00:00:00Z")
 	setMtime(t, objPath, "2020-01-02T00:00:00Z")
 
-	valid, _ := IsSourceValid(srcPath, objPath)
+	valid, _ := IsSourceValid(srcPath, objPath, nil, dir)
 	if !valid {
 		t.Error("obj newer than src should be valid")
 	}
@@ -228,7 +230,7 @@ func TestIsSourceValidStaleSrc(t *testing.T) {
 	setMtime(t, srcPath, "2020-01-02T00:00:00Z")
 	setMtime(t, objPath, "2020-01-01T00:00:00Z")
 
-	valid, _ := IsSourceValid(srcPath, objPath)
+	valid, _ := IsSourceValid(srcPath, objPath, nil, dir)
 	if valid {
 		t.Error("src newer than obj should be invalid")
 	}
@@ -250,7 +252,7 @@ func TestIsSourceValidStaleDep(t *testing.T) {
 	setMtime(t, hdrPath, "2020-01-03T00:00:00Z")
 	setMtime(t, objPath, "2020-01-02T00:00:00Z")
 
-	valid, _ := IsSourceValid(srcPath, objPath)
+	valid, _ := IsSourceValid(srcPath, objPath, nil, dir)
 	if valid {
 		t.Error("dep newer than obj should be invalid")
 	}
@@ -272,7 +274,7 @@ func TestIsSourceValidStaleExtraDep(t *testing.T) {
 	setMtime(t, buildGo, "2020-01-03T00:00:00Z")
 	setMtime(t, objPath, "2020-01-02T00:00:00Z")
 
-	valid, _ := IsSourceValid(srcPath, objPath, buildGo)
+	valid, _ := IsSourceValid(srcPath, objPath, []string{buildGo}, dir)
 	if valid {
 		t.Error("extra dep newer than obj should be invalid")
 	}

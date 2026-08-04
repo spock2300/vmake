@@ -72,7 +72,6 @@ type Scheduler struct {
 	mode          string
 	pkgOptions    map[string]map[string]any
 	pkgs          map[string]*PkgInfo
-	origDir       string
 	ccWriter      *CompileCommandsWriter
 	packages      map[string]*api.Package
 }
@@ -92,8 +91,6 @@ func NewScheduler(
 	compiler := NewCompiler(tools)
 	linker := NewLinker(tools)
 
-	origDir, _ := os.Getwd()
-
 	tcName := tc.Name
 	if mode == "" {
 		mode = api.ModeDebug
@@ -111,7 +108,6 @@ func NewScheduler(
 		mode:          mode,
 		pkgOptions:    pkgOptions,
 		pkgs:          make(map[string]*PkgInfo),
-		origDir:       origDir,
 		ccWriter:      ccWriter,
 		packages:      make(map[string]*api.Package),
 	}
@@ -175,13 +171,9 @@ func (s *Scheduler) Build(fullName string) error {
 	}
 
 	pkgInfo := s.pkgs[node.PkgName]
+	workDir := pkgInfo.SourceDir
 
-	if err := os.Chdir(pkgInfo.SourceDir); err != nil {
-		return err
-	}
-	defer os.Chdir(s.origDir)
-
-	s.ccWriter.SetPackageDir(pkgInfo.SourceDir)
+	s.ccWriter.SetPackageDir(workDir)
 
 	vlog.Info("[%s]", fullName)
 
@@ -193,7 +185,7 @@ func (s *Scheduler) Build(fullName string) error {
 	genRules := node.Target.GenRules()
 	if len(genRules) > 0 {
 		generatedDir := pkgInfo.GeneratedDir()
-		if err := runGenRules(genRules, generatedDir); err != nil {
+		if err := runGenRules(genRules, resolveWorkPath(workDir, generatedDir)); err != nil {
 			return err
 		}
 	}
@@ -201,12 +193,12 @@ func (s *Scheduler) Build(fullName string) error {
 	pkg := s.packages[node.PkgName]
 	if pkg != nil && pkg.GenConfigHeader() {
 		generatedDir := pkgInfo.GeneratedDir()
-		if err := s.generateConfigHeader(pkg, generatedDir); err != nil {
+		if err := s.generateConfigHeader(pkg, resolveWorkPath(workDir, generatedDir)); err != nil {
 			return err
 		}
 	}
 
-	if err := os.MkdirAll(pkgInfo.OutputPath(subdirObjects), 0755); err != nil {
+	if err := os.MkdirAll(resolveWorkPath(workDir, pkgInfo.OutputPath(subdirObjects)), 0755); err != nil {
 		return fmt.Errorf("create build directory: %w", err)
 	}
 
@@ -413,8 +405,9 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	resolved.AllLdFlags = append(resolved.AllLdFlags, deps.voidLdFlags...)
 
 	excludes := node.Target.ExcludedFiles()
+	sourceDir := s.pkgs[node.PkgName].SourceDir
 	for _, pattern := range node.Target.Files() {
-		files, err := glob.Match(pattern, ".")
+		files, err := glob.Match(pattern, sourceDir)
 		if err != nil {
 			return nil, err
 		}
@@ -472,10 +465,11 @@ func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
 
 func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string, goFiles []string) (string, []string, error) {
 	pkgInfo := s.pkgs[resolved.Node.PkgName]
+	workDir := pkgInfo.SourceDir
 
 	objRel := pkgInfo.OutputPath(filepath.Join(subdirObjects, strings.ReplaceAll(src, "/", "_")+".o"))
 
-	valid, deps := IsSourceValid(src, objRel, goFiles...)
+	valid, deps := IsSourceValid(src, objRel, goFiles, workDir)
 	if valid {
 		return objRel, deps, nil
 	}
@@ -497,7 +491,7 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string, goFiles 
 
 	s.ccWriter.AddCommand(src, objRel, opts)
 
-	deps, err := s.compiler.Compile(src, objRel, opts)
+	deps, err := s.compiler.Compile(src, objRel, opts, workDir)
 	if err != nil {
 		return "", nil, err
 	}
@@ -506,7 +500,9 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string, goFiles 
 }
 
 func (s *Scheduler) needRelink(resolved *ResolvedTarget, objs []string) bool {
-	outputInfo, err := os.Stat(resolved.OutputPath)
+	workDir := s.pkgs[resolved.Node.PkgName].SourceDir
+	absOutput := resolveWorkPath(workDir, resolved.OutputPath)
+	outputInfo, err := os.Stat(absOutput)
 	if err != nil {
 		return true
 	}
@@ -514,7 +510,7 @@ func (s *Scheduler) needRelink(resolved *ResolvedTarget, objs []string) bool {
 	outputTime := outputInfo.ModTime()
 
 	for _, obj := range objs {
-		objInfo, err := os.Stat(obj)
+		objInfo, err := os.Stat(resolveWorkPath(workDir, obj))
 		if err != nil || objInfo.ModTime().After(outputTime) {
 			return true
 		}
@@ -528,7 +524,8 @@ func (s *Scheduler) needRelink(resolved *ResolvedTarget, objs []string) bool {
 	}
 
 	for _, dep := range resolved.Node.Target.PostLinkDeps() {
-		depInfo, err := os.Stat(dep)
+		depPath := resolveWorkPath(workDir, dep)
+		depInfo, err := os.Stat(depPath)
 		if err != nil {
 			vlog.Info("  RELINK %s (post-link dep %s missing)", resolved.Node.Target.Name(), dep)
 			return true
@@ -544,23 +541,20 @@ func (s *Scheduler) needRelink(resolved *ResolvedTarget, objs []string) bool {
 
 func (s *Scheduler) realizePrebuilt(resolved *ResolvedTarget) error {
 	src := resolved.Node.Target.Prebuilt()
-	dst := resolved.OutputPath
+	workDir := s.pkgs[resolved.Node.PkgName].SourceDir
+	absDst := resolveWorkPath(workDir, resolved.OutputPath)
+	absSrc := resolveWorkPath(workDir, src)
 
-	if _, err := os.Stat(src); err != nil {
-		return fmt.Errorf("prebuilt file not found: %s: %w", src, err)
+	if _, err := os.Stat(absSrc); err != nil {
+		return fmt.Errorf("prebuilt file not found: %s: %w", absSrc, err)
 	}
 
-	absSrc, err := filepath.Abs(src)
-	if err != nil {
-		return fmt.Errorf("resolve prebuilt path: %w", err)
-	}
-
-	if link, err := os.Readlink(dst); err == nil && link == absSrc {
+	if link, err := os.Readlink(absDst); err == nil && link == absSrc {
 		return nil
 	}
 
-	vlog.Info("  PREBUILT %s", filepath.Base(dst))
-	return fs.EnsureSymlink(dst, absSrc)
+	vlog.Info("  PREBUILT %s", filepath.Base(absDst))
+	return fs.EnsureSymlink(absDst, absSrc)
 }
 
 func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
@@ -700,6 +694,7 @@ func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) (bool
 		return false, nil
 	}
 
+	workDir := s.pkgs[resolved.Node.PkgName].SourceDir
 	outputName := filepath.Base(resolved.OutputPath)
 
 	if resolved.Node.Target.Prebuilt() != "" {
@@ -730,7 +725,7 @@ func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) (bool
 			ExcludeLibs:   resolved.ExcludeLibs,
 			SymbolBinding: resolved.SymbolBinding,
 		}
-		err := s.linker.LinkBinary(allObjs, unique(resolved.AllLinks), resolved.AllLdFlags, resolved.OutputPath, linkerScript, policy)
+		err := s.linker.LinkBinary(allObjs, unique(resolved.AllLinks), resolved.AllLdFlags, resolved.OutputPath, linkerScript, policy, workDir)
 		return err == nil, err
 	case api.TargetStatic:
 		var objOnly []string
@@ -741,7 +736,7 @@ func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) (bool
 			}
 		}
 		vlog.Info("  AR %s", outputName)
-		err := s.linker.LinkStatic(objOnly, resolved.OutputPath)
+		err := s.linker.LinkStatic(objOnly, resolved.OutputPath, workDir)
 		return err == nil, err
 	case api.TargetShared:
 		vlog.Info("  LINK %s", outputName)
@@ -750,14 +745,14 @@ func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) (bool
 			ExcludeLibs:   resolved.ExcludeLibs,
 			SymbolBinding: resolved.SymbolBinding,
 		}
-		err := s.linker.LinkShared(allObjs, resolved.AllLdFlags, resolved.OutputPath, policy)
+		err := s.linker.LinkShared(allObjs, resolved.AllLdFlags, resolved.OutputPath, policy, workDir)
 		return err == nil, err
 	case api.TargetObject:
 		vlog.Info("  LD -r %s", outputName)
 		if len(objs) == 0 {
 			return false, fmt.Errorf("object target requires at least one source file")
 		}
-		err := s.linker.LinkObject(objs, resolved.OutputPath)
+		err := s.linker.LinkObject(objs, resolved.OutputPath, workDir)
 		return err == nil, err
 	case api.TargetVoid:
 		err := s.buildVoidTarget(resolved)
@@ -773,6 +768,8 @@ func (s *Scheduler) postLink(resolved *ResolvedTarget) error {
 		return nil
 	}
 
+	workDir := s.pkgs[resolved.Node.PkgName].SourceDir
+
 	for _, step := range steps {
 		tool := s.resolvePostLinkTool(step.Tool)
 		if tool == "" {
@@ -785,7 +782,7 @@ func (s *Scheduler) postLink(resolved *ResolvedTarget) error {
 		}
 
 		vlog.Info("  %s %s", filepath.Base(tool), strings.Join(args, " "))
-		if _, err := iexec.Run(tool, args...); err != nil {
+		if _, err := iexec.RunInDir(tool, workDir, args...); err != nil {
 			return err
 		}
 	}

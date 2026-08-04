@@ -51,8 +51,8 @@ func (p LinkPolicy) bindingFlags() []string {
 	}
 }
 
-func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScript string, policy LinkPolicy) error {
-	if err := fs.EnsureParentDir(outputPath); err != nil {
+func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScript string, policy LinkPolicy, workDir string) error {
+	if err := fs.EnsureParentDir(resolveWorkPath(workDir, outputPath)); err != nil {
 		return err
 	}
 
@@ -106,26 +106,26 @@ func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScri
 	args = append(args, otherFlags...)
 	args = append(args, policy.bindingFlags()...)
 
-	_, err := iexec.Run(l.ccPath, args...)
+	_, err := iexec.RunInDir(l.ccPath, workDir, args...)
 	return err
 }
 
-func (l *Linker) LinkStatic(objs []string, outputPath string) error {
-	if err := fs.EnsureParentDir(outputPath); err != nil {
+func (l *Linker) LinkStatic(objs []string, outputPath, workDir string) error {
+	if err := fs.EnsureParentDir(resolveWorkPath(workDir, outputPath)); err != nil {
 		return err
 	}
 
-	fs.RemoveIfExists(outputPath)
+	fs.RemoveIfExists(resolveWorkPath(workDir, outputPath))
 
 	args := []string{"rcs", outputPath}
 	args = append(args, objs...)
 
-	_, err := iexec.Run(l.arPath, args...)
+	_, err := iexec.RunInDir(l.arPath, workDir, args...)
 	return err
 }
 
-func (l *Linker) LinkShared(objs, ldflags []string, outputPath string, policy LinkPolicy) error {
-	if err := fs.EnsureParentDir(outputPath); err != nil {
+func (l *Linker) LinkShared(objs, ldflags []string, outputPath string, policy LinkPolicy, workDir string) error {
+	if err := fs.EnsureParentDir(resolveWorkPath(workDir, outputPath)); err != nil {
 		return err
 	}
 
@@ -148,18 +148,18 @@ func (l *Linker) LinkShared(objs, ldflags []string, outputPath string, policy Li
 	args = append(args, filtered...)
 	args = append(args, policy.bindingFlags()...)
 
-	_, err := iexec.Run(l.ccPath, args...)
+	_, err := iexec.RunInDir(l.ccPath, workDir, args...)
 	return err
 }
 
-func (l *Linker) LinkObject(objs []string, outputPath string) error {
-	if err := fs.EnsureParentDir(outputPath); err != nil {
+func (l *Linker) LinkObject(objs []string, outputPath, workDir string) error {
+	if err := fs.EnsureParentDir(resolveWorkPath(workDir, outputPath)); err != nil {
 		return err
 	}
 
 	args := []string{"-r", "-o", outputPath}
 	args = append(args, objs...)
 
-	_, err := iexec.Run(l.ccPath, args...)
+	_, err := iexec.RunInDir(l.ccPath, workDir, args...)
 	return err
 }

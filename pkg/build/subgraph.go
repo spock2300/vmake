@@ -2,7 +2,6 @@ package build
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spock2300/vmake/pkg/api"
@@ -104,9 +103,6 @@ func BuildSubGraph(rootPkg string, tc *toolchain.Toolchain, tcName string, mode 
 			pipeline.SetPackage(pkgName, pkg)
 		}
 	}
-
-	origDir, _ := os.Getwd()
-	defer os.Chdir(origDir)
 
 	if _, err := pipeline.Run(); err != nil {
 		return fmt.Errorf("subgraph build %s: %w", rootPkg, err)
