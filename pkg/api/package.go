@@ -490,7 +490,7 @@ func (p *Package) InstallDir() string   { return p.dirs.InstallDir }
 func (p *Package) OutputDir() string    { return p.outputDir }
 func (p *Package) GetPatches() []string { return p.patches }
 
-func (p *Package) CC() string          { return p.tc.Tools.CC }
+func (p *Package) CC() string       { return p.tc.Tools.CC }
 func (p *Package) CXX() string      { return p.tc.Tools.CXX }
 func (p *Package) AR() string       { return p.tc.Tools.AR }
 func (p *Package) Prefix() string   { return p.tc.Prefix }

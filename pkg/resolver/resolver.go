@@ -30,10 +30,10 @@ type PackageNode struct {
 
 func NewPackageNode(id string, src *buildscript.Source, pkg *api.Package) *PackageNode {
 	return &PackageNode{
-		ID:       id,
-		Source:   src,
-		Pkg:      pkg,
-		Deps:     []string{},
+		ID:     id,
+		Source: src,
+		Pkg:    pkg,
+		Deps:   []string{},
 	}
 }
 
