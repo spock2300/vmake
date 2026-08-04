@@ -9,9 +9,32 @@ import (
 	"os/exec"
 	"strings"
 	"time"
-
-	vlog "github.com/spock2300/vmake/pkg/log"
 )
+
+type Logger interface {
+	Debug(format string, args ...any)
+	Error(format string, args ...any)
+	Fatal(format string, args ...any)
+}
+
+type noopLogger struct{}
+
+func (noopLogger) Debug(string, ...any) {}
+
+func (noopLogger) Error(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+}
+
+func (noopLogger) Fatal(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	os.Exit(1)
+}
+
+var logger Logger = noopLogger{}
+
+func SetLogger(l Logger) {
+	logger = l
+}
 
 type RunOptions struct {
 	Dir     string
@@ -34,7 +57,7 @@ func TrimOutput(output []byte) string {
 
 func RunWithOptions(name string, args []string, opts RunOptions) ([]byte, error) {
 	cmdLine := FormatCommandLine(name, args)
-	vlog.Debug("%s  %s", opts.Dir, cmdLine)
+	logger.Debug("%s  %s", opts.Dir, cmdLine)
 
 	ctx := opts.Context
 	if ctx == nil && opts.Timeout > 0 {
@@ -93,7 +116,7 @@ func RunToStdout(dir, name string, args ...string) error {
 
 func RunFatal(dir, name string, args ...string) {
 	if err := RunToStdout(dir, name, args...); err != nil {
-		vlog.Fatal("command failed: %s %s", name, strings.Join(args, " "))
+		logger.Fatal("command failed: %s %s", name, strings.Join(args, " "))
 	}
 }
 
