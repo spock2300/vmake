@@ -3,6 +3,8 @@ package api
 import (
 	"path/filepath"
 	"strings"
+
+	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
 type PostLinkStep struct {
@@ -381,6 +383,7 @@ func flattenAny(items []any) []string {
 	var result []string
 	for _, item := range items {
 		switch v := item.(type) {
+		case nil:
 		case string:
 			if v != "" {
 				result = append(result, v)
@@ -391,6 +394,10 @@ func flattenAny(items []any) []string {
 					result = append(result, s)
 				}
 			}
+		case []any:
+			result = append(result, flattenAny(v)...)
+		default:
+			vlog.Error("flattenAny: skipping unsupported type %T (%v)", item, item)
 		}
 	}
 	return result
