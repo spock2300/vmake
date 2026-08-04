@@ -150,6 +150,9 @@ func copyPublicIncludes(target *api.Target, baseDir, includeDir string) error {
 		srcPath := filepath.Join(baseDir, inc)
 		info, err := os.Stat(srcPath)
 		if err != nil {
+			if !os.IsNotExist(err) {
+				return fmt.Errorf("stat public include %s: %w", srcPath, err)
+			}
 			continue
 		}
 
