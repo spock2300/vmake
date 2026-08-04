@@ -45,6 +45,7 @@ func LoadBuildScript(src Source) (*api.Package, error) {
 	}
 
 	pkg := api.NewPackage()
+	pkg.SetName(src.Name)
 	if dir := src.Dir; dir != "" {
 		pkg.SetScriptDir(dir)
 	}
@@ -60,19 +61,40 @@ func LoadBuildScript(src Source) (*api.Package, error) {
 		}
 	}
 
-	mainFunc(pkg)
+	runScriptFunc(src.Name, func() {
+		mainFunc(pkg)
+	})
 
 	if fn := pkg.GetPackageFunc(); fn != nil {
-		fn(pkg)
+		runScriptFunc(src.Name, func() {
+			fn(pkg)
+		})
 	}
 
 	if len(pkg.GetRequireFuncs()) > 0 {
 		ctx := api.NewRequireContextForConfig(nil, pkg.Options, pkg.GetRequireFuncs())
 		for _, fn := range pkg.GetRequireFuncs() {
-			fn(ctx)
+			runScriptFunc(src.Name, func() {
+				fn(ctx)
+			})
 		}
 		pkg.GetRequires().AddInfos(ctx.GetRequires()...)
 	}
 
 	return pkg, nil
+}
+
+func runScriptFunc(pkgName string, fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			if bse, ok := r.(*api.BuildScriptError); ok {
+				if bse.Package == "" {
+					bse.Package = pkgName
+				}
+				vlog.Fatal("%v", bse)
+			}
+			panic(r)
+		}
+	}()
+	fn()
 }

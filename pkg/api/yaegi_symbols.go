@@ -26,6 +26,7 @@ func YaegiSymbols() map[string]reflect.Value {
 		"InstalledPackage":  reflect.ValueOf((*InstalledPackage)(nil)),
 		"PostLinkStep":      reflect.ValueOf((*PostLinkStep)(nil)),
 		"GenRule":           reflect.ValueOf((*GenRule)(nil)),
+		"BuildScriptError":  reflect.ValueOf((*BuildScriptError)(nil)),
 
 		"TargetKind":   reflect.ValueOf((*TargetKind)(nil)),
 		"OptionType":   reflect.ValueOf((*OptionType)(nil)),

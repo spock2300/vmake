@@ -3,8 +3,6 @@ package api
 import (
 	"path/filepath"
 	"strings"
-
-	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
 type PostLinkStep struct {
@@ -184,7 +182,7 @@ func (t *Target) BuildFunc() func(p *Package) error {
 
 func (t *Target) SetPrebuilt(path string) *Target {
 	if t.prebuilt != "" {
-		vlog.Fatal("SetPrebuilt: prebuilt already set to %s", t.prebuilt)
+		fatalScript("", "SetPrebuilt", "prebuilt already set to %s", t.prebuilt)
 	}
 	t.prebuilt = path
 	return t
@@ -196,7 +194,7 @@ func (t *Target) Prebuilt() string {
 
 func (t *Target) SetLinkerScript(path string) *Target {
 	if t.linkerScript != "" {
-		vlog.Fatal("SetLinkerScript: linker script already set to %s", t.linkerScript)
+		fatalScript("", "SetLinkerScript", "linker script already set to %s", t.linkerScript)
 	}
 	t.linkerScript = path
 	return t
@@ -204,7 +202,7 @@ func (t *Target) SetLinkerScript(path string) *Target {
 
 func (t *Target) SetVersionScript(path string) *Target {
 	if t.versionScript != "" {
-		vlog.Fatal("SetVersionScript: version script already set to %s", t.versionScript)
+		fatalScript("", "SetVersionScript", "version script already set to %s", t.versionScript)
 	}
 	t.versionScript = path
 	return t
@@ -220,14 +218,14 @@ func (t *Target) SetSymbolBinding(mode string) *Target {
 	case "", "static", "static-functions":
 		t.symbolBinding = mode
 	default:
-		vlog.Fatal("SetSymbolBinding: invalid mode %q (use \"static\" or \"static-functions\")", mode)
+		fatalScript("", "SetSymbolBinding", "invalid mode %q (use \"static\" or \"static-functions\")", mode)
 	}
 	return t
 }
 
 func (t *Target) SetSymbolPrefix(prefix string) *Target {
 	if t.symbolPrefix != "" {
-		vlog.Fatal("SetSymbolPrefix: prefix already set to %s", t.symbolPrefix)
+		fatalScript("", "SetSymbolPrefix", "prefix already set to %s", t.symbolPrefix)
 	}
 	t.symbolPrefix = prefix
 	t.postLinks = append(t.postLinks, PostLinkStep{

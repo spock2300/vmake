@@ -104,7 +104,7 @@ func (ctx *ConfigContext) KConfig(name string) *KConfigEntry {
 	if ctx.pkg != nil {
 		return ctx.pkg.AddKConfig(name)
 	}
-	vlog.Fatal("KConfig(%s): no package associated with context", name)
+	fatalScript(ctx.PackageName(), "KConfig", "no package associated with context (name=%s)", name)
 	return nil
 }
 
@@ -204,10 +204,10 @@ func (ctx *BuildContext) BuildSubGraph(pkgName string) {
 		return
 	}
 	if ctx.buildSubGraphFunc == nil {
-		vlog.Fatal("BuildSubGraph: not available")
+		fatalScript(ctx.PackageName(), "BuildSubGraph", "not available")
 	}
 	if err := ctx.buildSubGraphFunc(pkgName); err != nil {
-		vlog.Fatal("BuildSubGraph %s: %v", pkgName, err)
+		fatalScript(ctx.PackageName(), "BuildSubGraph", "%v (pkgName=%s)", err, pkgName)
 	}
 }
 
@@ -216,7 +216,7 @@ func (ctx *BuildContext) DepOutput(depRef string) string {
 		return ""
 	}
 	if ctx.depOutputFunc == nil {
-		vlog.Fatal("DepOutput: not available")
+		fatalScript(ctx.PackageName(), "DepOutput", "not available")
 	}
 	return ctx.depOutputFunc(depRef)
 }

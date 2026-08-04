@@ -162,7 +162,7 @@ func NewPackage() *Package {
 
 func (p *Package) SetProvidedLinkerScript(path string) *Package {
 	if p.providedLinkerScript != "" {
-		vlog.Fatal("SetProvidedLinkerScript: linker script already set to %s", p.providedLinkerScript)
+		fatalScript(p.FullName(), "SetProvidedLinkerScript", "linker script already set to %s", p.providedLinkerScript)
 	}
 	p.providedLinkerScript = path
 	return p
@@ -324,6 +324,14 @@ func (p *Package) GetRequireFuncs() []RequireFunc { return p.requireFuncs }
 func (p *Package) GetPackageFunc() PackageFunc    { return p.packageFunc }
 
 func execFuncs[T any](dir string, funcs []T, fn func(T)) {
+	defer func() {
+		if r := recover(); r != nil {
+			if bse, ok := r.(*BuildScriptError); ok {
+				vlog.Fatal("%v", bse)
+			}
+			panic(r)
+		}
+	}()
 	execInDir(dir, func() {
 		for _, f := range funcs {
 			fn(f)
