@@ -167,17 +167,16 @@ auto-wire behavior. See `docs/MIGRATION_V2.md` for migration steps.
 
 ### Build Pipeline
 ```
-Phase 1: OnRequire       -> Scan/Interpret buildscripts (yaegi) -> Resolve dependencies (nil config; remote deferred)
-Phase 2a: ResolveDeferred -> Resolve remote (deferred) packages -> Update topological order
-Phase 2b: OnConfig       -> Execute callbacks -> Collect Options -> Run OnApply callbacks -> Merge global options
-Phase 2c: FilterDeps     -> Re-run OnRequire with real config -> Replace node.Deps -> Update order -> BFS collect needed
+Phase 1: OnRequire       -> Scan/Interpret buildscripts (yaegi) -> Resolve dependencies (all eager, nil config)
+Phase 2a: OnConfig       -> Execute callbacks -> Collect Options -> Run OnApply callbacks -> Merge global options
+Phase 2b: FilterDeps     -> Re-run OnRequire with real config -> Replace node.Deps -> Update order -> BFS collect needed (inside runBuildPhase)
 Phase 3: OnBuild         -> Execute callbacks -> Generate Targets -> Compile/Link
 (Optional) Install       -> Install targets to prefix directory + generate manifest.json
 ```
 
 ### Clean Pipeline
 ```
-Phase 1-2b: Same as build (OnRequire → OnConfig)
+Phase 1-2a: Same as build (OnRequire → OnConfig)
 Phase 3: OnClean         -> Execute callbacks -> Directory cleanup
 ```
 
@@ -306,7 +305,7 @@ Methods on `CleanContext`:
 | `pkg/build` | Build execution, compile, link, scheduler, install, subgraph | No |
 | `pkg/toolchain` | Toolchain abstraction (GCC, Clang) | No |
 | `pkg/repo` | Package management, Git, native repos | No |
-| `pkg/resolver` | Dependency graph, deferred resolution | No |
+| `pkg/resolver` | Dependency graph, resolution | No |
 | `pkg/config` | Project configuration management | No |
 | `pkg/log` | Logging (Debug, Info, Error, Fatal) | No |
 | `pkg/tui` | Terminal UI (interactive config) | No |

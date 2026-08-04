@@ -108,7 +108,6 @@ func mustInitContext() *RuntimeContext {
 }
 
 func runConfigurePhase(ctx *RuntimeContext) {
-	fatalErr(ctx.Resolver.ResolveDeferred())
 	fatalErr(ctx.Resolver.UpdateOrder())
 	fatalErr(runConfigPhase(ctx))
 }
@@ -210,8 +209,6 @@ func runRequirePhase(ctx *RuntimeContext) error {
 		node := ctx.DepGraph.Packages[name]
 		if node.IsLocal() {
 			vlog.Info("  %s (local)", name)
-		} else if node.Deferred {
-			vlog.Info("  %s (deferred)", name)
 		} else {
 			vlog.Info("  %s", name)
 		}

@@ -132,13 +132,13 @@ func TestResolveAllLocalOnly(t *testing.T) {
 
 func TestPackageNodeIsLocal(t *testing.T) {
 	localSrc := buildscript.NewSource("foo", "/path/build.go", "/path", api.SourceLocal)
-	localNode := NewPackageNode("foo", localSrc, nil, false)
+	localNode := NewPackageNode("foo", localSrc, nil)
 	if !localNode.IsLocal() {
 		t.Error("local source should be IsLocal()")
 	}
 
 	remoteSrc := buildscript.NewSource("bar/pkg", "/remote/build.go", "/remote", api.SourceRemote)
-	remoteNode := NewPackageNode("bar/pkg", remoteSrc, nil, false)
+	remoteNode := NewPackageNode("bar/pkg", remoteSrc, nil)
 	if remoteNode.IsLocal() {
 		t.Error("remote source should not be IsLocal()")
 	}
@@ -146,12 +146,9 @@ func TestPackageNodeIsLocal(t *testing.T) {
 
 func TestPackageNodeWithNative(t *testing.T) {
 	src := buildscript.NewSource("foo", "/path/build.go", "/path", api.SourceRemote)
-	node := NewPackageNode("foo", src, nil, true).WithNative("https://example.com/foo.git",
+	node := NewPackageNode("foo", src, nil).WithNative("https://example.com/foo.git",
 		map[string]string{"1.0.0": "refs/tags/1.0.0"}, "1.0.0")
 
-	if !node.Deferred {
-		t.Error("should be deferred")
-	}
 	if !node.IsNative() {
 		t.Error("should be native")
 	}
@@ -182,16 +179,6 @@ func TestUpdateOrder(t *testing.T) {
 	}
 	if pos["b"] >= pos["a"] {
 		t.Errorf("b should come before a: b at %d, a at %d", pos["b"], pos["a"])
-	}
-}
-
-func TestResolveDeferredNoDeferred(t *testing.T) {
-	r := NewResolver(nil, t.TempDir())
-	r.graph.Packages["a"] = &PackageNode{ID: "a", Deps: []string{}}
-	r.graph.Packages["a"].Deferred = false
-
-	if err := r.ResolveDeferred(); err != nil {
-		t.Fatalf("ResolveDeferred with no deferred should succeed: %v", err)
 	}
 }
 

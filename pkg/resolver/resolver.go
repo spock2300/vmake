@@ -24,17 +24,15 @@ type PackageNode struct {
 	Source      *buildscript.Source
 	Pkg         *api.Package
 	Deps        []string
-	Deferred    bool
 	Native      *NativePackageInfo
 	Constraints []string
 }
 
-func NewPackageNode(id string, src *buildscript.Source, pkg *api.Package, deferred bool) *PackageNode {
+func NewPackageNode(id string, src *buildscript.Source, pkg *api.Package) *PackageNode {
 	return &PackageNode{
 		ID:       id,
 		Source:   src,
 		Pkg:      pkg,
-		Deferred: deferred,
 		Deps:     []string{},
 	}
 }
@@ -129,14 +127,6 @@ func (r *Resolver) ResolveAll(localSources []buildscript.Source) error {
 	return nil
 }
 
-// ResolveDeferred is retained as a no-op for backward compatibility.
-// All packages (registry and native) are now resolved eagerly during
-// ResolveAll, so there are no deferred nodes to resolve. The method
-// still runs UpdateOrder to ensure graph.Order is current.
-func (r *Resolver) ResolveDeferred() error {
-	return r.UpdateOrder()
-}
-
 func (r *Resolver) FilterDeps(id string, cfgVals map[string]any, options map[string]*api.Option) error {
 	node, exists := r.graph.Packages[id]
 	if !exists {
@@ -220,7 +210,7 @@ func (r *Resolver) PreparePackage(src *buildscript.Source) (*api.Package, error)
 }
 
 func (r *Resolver) resolveFromCache(id string, pkg *api.Package, src *buildscript.Source, path []string) (*PackageNode, error) {
-	node := NewPackageNode(id, src, pkg, false)
+	node := NewPackageNode(id, src, pkg)
 	r.graph.Packages[id] = node
 
 	if err := r.recurseDeps(node, path); err != nil {
@@ -295,7 +285,7 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 		return nil, fmt.Errorf("load %s: %w", id, err)
 	}
 
-	node := NewPackageNode(id, src, pkg, false).WithNative(gitURL, versions, selectedVersion)
+	node := NewPackageNode(id, src, pkg).WithNative(gitURL, versions, selectedVersion)
 	if constraint != "" {
 		node.Constraints = append(node.Constraints, constraint)
 	}
