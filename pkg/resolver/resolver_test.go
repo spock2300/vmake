@@ -182,6 +182,29 @@ func TestUpdateOrder(t *testing.T) {
 	}
 }
 
+func TestGraphFreezeGuardsMutations(t *testing.T) {
+	r := NewResolver(nil, t.TempDir())
+	r.graph.Packages["a"] = &PackageNode{ID: "a", Deps: []string{}}
+	r.graph.Packages["b"] = &PackageNode{ID: "b", Deps: []string{"a"}}
+
+	if err := r.UpdateOrder(); err != nil {
+		t.Fatalf("UpdateOrder before freeze should succeed: %v", err)
+	}
+
+	r.graph.Freeze()
+	if !r.graph.IsFrozen() {
+		t.Fatal("graph should be frozen after Freeze()")
+	}
+
+	if err := r.UpdateOrder(); err == nil {
+		t.Error("UpdateOrder after freeze should return error")
+	}
+
+	if err := r.FilterDeps("a", nil, nil); err == nil {
+		t.Error("FilterDeps after freeze should return error")
+	}
+}
+
 func TestCycleDetection(t *testing.T) {
 	err := api.CheckCycle([]string{"a", "b"}, "a")
 	if err == nil {

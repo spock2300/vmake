@@ -153,6 +153,8 @@ func filterAndCollectNeeded(ctx *RuntimeContext) map[string]bool {
 		vlog.Fatal("dependency cycle: %v", err)
 	}
 
+	ctx.DepGraph.Freeze()
+
 	needed := computeReachable(ctx.DepGraph)
 
 	return needed

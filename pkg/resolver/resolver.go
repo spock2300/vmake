@@ -53,6 +53,15 @@ func (n *PackageNode) IsNative() bool {
 type Graph struct {
 	Packages map[string]*PackageNode
 	Order    []string
+	frozen   bool
+}
+
+func (g *Graph) Freeze() {
+	g.frozen = true
+}
+
+func (g *Graph) IsFrozen() bool {
+	return g.frozen
 }
 
 type Resolver struct {
@@ -98,6 +107,9 @@ func (r *Resolver) GetOrder() []string {
 }
 
 func (r *Resolver) UpdateOrder() error {
+	if r.graph.frozen {
+		return fmt.Errorf("UpdateOrder: graph is frozen (post-filter mutations forbidden)")
+	}
 	order, err := topologicalSort(r.graph.Packages)
 	if err != nil {
 		return fmt.Errorf("dependency cycle detected: %w", err)
@@ -128,6 +140,9 @@ func (r *Resolver) ResolveAll(localSources []buildscript.Source) error {
 }
 
 func (r *Resolver) FilterDeps(id string, cfgVals map[string]any, options map[string]*api.Option) error {
+	if r.graph.frozen {
+		return fmt.Errorf("FilterDeps: graph is frozen (post-filter mutations forbidden)")
+	}
 	node, exists := r.graph.Packages[id]
 	if !exists {
 		return fmt.Errorf("package %s not in graph", id)
