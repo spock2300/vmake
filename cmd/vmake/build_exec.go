@@ -31,16 +31,6 @@ func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, 
 	return cfgVals
 }
 
-func enableTestDefaults(allTargets map[string]map[string]*api.Target) {
-	for _, targets := range allTargets {
-		for _, t := range targets {
-			if t.IsTest() {
-				t.SetDefault(true)
-			}
-		}
-	}
-}
-
 func applyBuildContextConfig(buildCtx *api.BuildContext, node *resolver.PackageNode, ctx *RuntimeContext, currentPkg string) {
 	subParents := ctx.Resolver.SubParents()
 	if buildCtx.GenConfigDefines() && node.Pkg != nil {

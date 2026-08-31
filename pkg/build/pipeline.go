@@ -9,12 +9,18 @@ import (
 )
 
 type BuildPipeline struct {
-	Graph     *BuildGraph
-	Toolchain *toolchain.Toolchain
-	PkgDirs   map[string]*api.PkgDirs
-	Mode      string
-	Options   map[string]map[string]any
-	Packages  map[string]*api.Package
+	Graph        *BuildGraph
+	Toolchain    *toolchain.Toolchain
+	PkgDirs      map[string]*api.PkgDirs
+	Mode         string
+	Options      map[string]map[string]any
+	Packages     map[string]*api.Package
+	RootDir      string
+	IncludeTests bool
+	PkgKeyExtra  map[string]string
+	PkgLockDir   string
+	NumWorkers   int
+	KeepGoing    bool
 }
 
 func NewBuildPipeline(graph *BuildGraph, tc *toolchain.Toolchain, pkgDirs map[string]*api.PkgDirs, mode string, options map[string]map[string]any) *BuildPipeline {
@@ -32,11 +38,43 @@ func (p *BuildPipeline) SetPackage(pkgName string, pkg *api.Package) {
 	p.Packages[pkgName] = pkg
 }
 
+func (p *BuildPipeline) SetRootDir(dir string) {
+	p.RootDir = dir
+}
+
+func (p *BuildPipeline) SetIncludeTests(v bool) {
+	p.IncludeTests = v
+}
+
+func (p *BuildPipeline) SetPkgKeyExtra(extra map[string]string) {
+	p.PkgKeyExtra = extra
+}
+
+func (p *BuildPipeline) SetPkgLockDir(dir string) {
+	p.PkgLockDir = dir
+}
+
+func (p *BuildPipeline) SetNumWorkers(n int) {
+	p.NumWorkers = n
+}
+
+func (p *BuildPipeline) SetKeepGoing(v bool) {
+	p.KeepGoing = v
+}
+
 func (p *BuildPipeline) Run() (*Scheduler, error) {
 	scheduler, err := NewScheduler(p.Graph, p.Toolchain, p.PkgDirs, p.Mode, p.Options)
 	if err != nil {
 		return nil, err
 	}
+	if p.RootDir != "" {
+		scheduler.SetRootDir(p.RootDir)
+	}
+	scheduler.SetIncludeTests(p.IncludeTests)
+	scheduler.SetPkgKeyExtra(p.PkgKeyExtra)
+	scheduler.SetPkgLockDir(p.PkgLockDir)
+	scheduler.SetNumWorkers(p.NumWorkers)
+	scheduler.SetKeepGoing(p.KeepGoing)
 
 	for name, pkg := range p.Packages {
 		scheduler.SetPackage(name, pkg)

@@ -62,7 +62,7 @@ func (i *ArtifactInstaller) getEffectivePrefix(pkgInfo *PkgInstallInfo) string {
 }
 
 func (i *ArtifactInstaller) InstallAll() error {
-	return i.graph.ForEachDefault(func(node *BuildNode) error {
+	return i.graph.ForEachDefault(true, func(node *BuildNode) error {
 		if err := i.installTarget(node); err != nil {
 			return err
 		}

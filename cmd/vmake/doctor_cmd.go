@@ -61,6 +61,7 @@ func runDoctor() {
 	rootCount := 0
 	for _, src := range sources {
 		findings = append(findings, checkAutoWire(src)...)
+		findings = append(findings, checkDeprecated(src)...)
 		if hasSetRoot(src.Path) {
 			rootCount++
 		}
@@ -144,4 +145,34 @@ func hasSetRoot(path string) bool {
 		return false
 	}
 	return strings.Contains(string(data), "SetRoot(true)")
+}
+
+var deprecatedAPIs = []struct {
+	old, new, category string
+}{
+	{"SetExcludeLibs(", "AddExcludeLibs(", "SetExcludeLibs"},
+	{"PatchKConfig(", "SetKConfigPatches(", "PatchKConfig"},
+	{"SetSelectedPreset(", "SelectPreset(", "SetSelectedPreset"},
+	{"IfNot(", "When(", "IfNot"},
+}
+
+func checkDeprecated(src buildscript.Source) []doctorFinding {
+	data, err := os.ReadFile(src.Path)
+	if err != nil {
+		return nil
+	}
+	content := string(data)
+
+	var findings []doctorFinding
+	for _, d := range deprecatedAPIs {
+		if strings.Contains(content, d.old) {
+			findings = append(findings, doctorFinding{
+				Severity: "warn",
+				File:     src.Path,
+				Category: d.category,
+				Message:  fmt.Sprintf("use %s instead of deprecated %s", d.new, strings.TrimSuffix(d.old, "(")),
+			})
+		}
+	}
+	return findings
 }

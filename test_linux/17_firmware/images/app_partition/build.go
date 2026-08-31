@@ -40,7 +40,8 @@ func Main(p *api.Package) {
 				copyOne(staging, "lib", libnetSo)
 
 				os.Remove(imageFile)
-				return pkg.Run("mksquashfs", staging, imageFile, "-noappend")
+				pkg.Run("mksquashfs", staging, imageFile, "-noappend")
+				return nil
 			})
 	})
 }

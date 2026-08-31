@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spock2300/vmake/internal/fs"
@@ -197,6 +198,9 @@ func (p *Package) OnClean(fn CleanFunc) *Package {
 }
 
 func (p *Package) OnPackage(fn PackageFunc) *Package {
+	if p.packageFunc != nil {
+		fatalScript(p.Name, "OnPackage", "already registered (single-slot callback); merge the implementations into one")
+	}
 	p.packageFunc = fn
 	return p
 }
@@ -322,13 +326,29 @@ func (p *Package) GetRef(version string) string   { return p.versions[version] }
 func (p *Package) GetRequireFuncs() []RequireFunc { return p.requireFuncs }
 func (p *Package) GetPackageFunc() PackageFunc    { return p.packageFunc }
 
-func execFuncs[T any](dir string, funcs []T, fn func(T)) {
+func normalizeScriptPanic(pkgName string, r any) *BuildScriptError {
+	if existing, ok := r.(*BuildScriptError); ok {
+		if existing.Package == "" {
+			existing.Package = pkgName
+		}
+		return existing
+	}
+	return &BuildScriptError{Package: pkgName, Op: "panic", Err: fmt.Errorf("%v", r)}
+}
+
+func RunScriptSafe(pkgName string, fn func()) {
 	defer func() {
 		if r := recover(); r != nil {
-			if bse, ok := r.(*BuildScriptError); ok {
-				vlog.Fatal("%v", bse)
-			}
-			panic(r)
+			vlog.Fatal("%v", normalizeScriptPanic(pkgName, r))
+		}
+	}()
+	fn()
+}
+
+func execFuncs[T any](pkgName, dir string, funcs []T, fn func(T)) {
+	defer func() {
+		if r := recover(); r != nil {
+			vlog.Fatal("%v", normalizeScriptPanic(pkgName, r))
 		}
 	}()
 	execInDir(dir, func() {
@@ -339,29 +359,31 @@ func execFuncs[T any](dir string, funcs []T, fn func(T)) {
 }
 
 func (p *Package) ExecConfigFuncs(dir string, fn func(ConfigFunc)) {
-	execFuncs(dir, p.configFuncs, fn)
+	execFuncs(p.Name, dir, p.configFuncs, fn)
 }
 
 func (p *Package) ExecBuildFuncs(dir string, fn func(BuildFunc)) {
-	execFuncs(dir, p.buildFuncs, fn)
+	execFuncs(p.Name, dir, p.buildFuncs, fn)
 }
 
 func (p *Package) ExecInstallFuncs(dir string, fn func(InstallFunc)) {
-	execFuncs(dir, p.installFuncs, fn)
+	execFuncs(p.Name, dir, p.installFuncs, fn)
 }
 
 func (p *Package) ExecCleanFuncs(dir string, fn func(CleanFunc)) {
-	execFuncs(dir, p.cleanFuncs, fn)
+	execFuncs(p.Name, dir, p.cleanFuncs, fn)
 }
 
 func (p *Package) UpdateRequireContext(cfgVals map[string]any, options map[string]*Option) {
 	if len(p.requireFuncs) == 0 {
 		return
 	}
-	ctx := NewRequireContextForConfig(cfgVals, options, nil)
-	for _, fn := range p.requireFuncs {
-		fn(ctx)
-	}
+	ctx := NewRequireContextForConfig(p.Name, cfgVals, options, nil)
+	RunScriptSafe(p.Name, func() {
+		for _, fn := range p.requireFuncs {
+			fn(ctx)
+		}
+	})
 	p.requires = Requires{requires: ctx.GetRequires()}
 }
 
@@ -538,6 +560,9 @@ func SplitPackageRef(ref string) (repo, name string, ok bool) {
 }
 
 func (p *Package) AddKConfig(name string) *KConfigEntry {
+	if len(p.kconfigEntries) > 0 {
+		fatalScript(p.Name, "AddKConfig", "only one kconfig entry per package is supported (existing: %q)", p.kconfigEntries[0].name)
+	}
 	k := &KConfigEntry{name: name}
 	p.kconfigEntries = append(p.kconfigEntries, k)
 	return k
@@ -561,24 +586,50 @@ func (p *Package) EnsureConfig(srcDir string) bool {
 	if info, err := os.Stat(configPath); err == nil && info.Size() > 0 {
 		return false
 	}
-	p.RunIn(srcDir, "make", p.SelectedPreset())
+	preset := p.SelectedPreset()
+	if preset == "" {
+		fatalScript(p.Name, "EnsureConfig", "no kconfig preset selected; configure one via AddKConfig().SetDefaultPreset(...) or vmake config")
+	}
+	p.RunIn(srcDir, "make", preset)
 	if len(p.kconfigEntries) > 0 {
-		ApplyKConfigPatches(configPath, p.kconfigEntries[0].Patches())
+		if err := ApplyKConfigPatches(configPath, p.kconfigEntries[0].Patches()); err != nil {
+			fatalScript(p.Name, "EnsureConfig", "apply kconfig patches: %v", err)
+		}
 	}
 	return true
 }
 
-func ApplyKConfigPatches(configPath string, patches map[string]string) {
+func ApplyKConfigPatches(configPath string, patches map[string]string) error {
 	if len(patches) == 0 {
-		return
+		return nil
 	}
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return
+		return fmt.Errorf("read %s: %w", configPath, err)
 	}
-	content := string(data)
-	for old, newVal := range patches {
-		content = strings.ReplaceAll(content, old, newVal)
+	lines := strings.Split(string(data), "\n")
+	keys := make([]string, 0, len(patches))
+	for k := range patches {
+		keys = append(keys, k)
 	}
-	os.WriteFile(configPath, []byte(content), 0644)
+	sort.Strings(keys)
+	for i, line := range lines {
+		for _, old := range keys {
+			if patchLineMatches(line, old) {
+				lines[i] = patches[old]
+				break
+			}
+		}
+	}
+	if err := os.WriteFile(configPath, []byte(strings.Join(lines, "\n")), 0644); err != nil {
+		return fmt.Errorf("write %s: %w", configPath, err)
+	}
+	return nil
+}
+
+func patchLineMatches(line, key string) bool {
+	if strings.Contains(key, "=") {
+		return strings.HasPrefix(line, key)
+	}
+	return strings.HasPrefix(line, key+"=")
 }

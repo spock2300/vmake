@@ -15,7 +15,11 @@ func Save(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func Load(path string, v any) error {

@@ -20,7 +20,7 @@ go vet ./cmd/... ./pkg/... ./internal/...      # Lint
 go test ./cmd/vmake/... ./pkg/... ./internal/... # Unit tests
 ```
 
-Go tests live in `cmd/vmake`, `pkg/api`, `pkg/build`, `pkg/buildscript`, `pkg/config`, `pkg/plugin`, `pkg/repo`, `pkg/resolver`.
+Go tests live in `cmd/vmake`, `pkg/api`, `pkg/build`, `pkg/buildscript`, `pkg/config`, `pkg/plugin`, `pkg/repo`, `pkg/resolver`, `pkg/tui`.
 
 ### Integration tests via `test_data/` (run each from its own directory)
 
@@ -38,6 +38,22 @@ Firmware test (17) lives in `test_linux/17_firmware` (NOT `test_data/`), tests s
 ```bash
 cd test_linux/17_firmware && ../../vmake build
 ```
+
+### Snapshot tests (`test_data/_snapshot/` — separate Go module)
+
+Golden-file tests that build every test_data project from clean and hash the results. Preferred verification for build-behavior changes — much faster feedback than the manual loop above:
+
+```bash
+go build -o vmake ./cmd/vmake                  # REQUIRED first: tests invoke ./vmake at repo root
+cd test_data/_snapshot && go test              # compare against baselines
+go test -run TestSnapshotsTestData/01_simple_c # single project
+go test -update                                # regenerate baselines after intended changes (or VMAKE_SNAPSHOT_UPDATE=1)
+```
+
+- Snapshotted per project (`build --install`): `install/` tree SHA256 hashes (paths normalized to `<ROOT>`/`<HOME>`), redacted `manifest.json`, `build/compile_commands.json` (compile flag drift detector)
+- `TestSnapshotsTestLinux` also covers `test_linux/17_firmware` (skipped if absent)
+- Skipped projects: 07, 08, 09, 10 (codegen/network-dependent)
+- On drift: intended change → `go test -update`; unintended regression → fix before committing
 
 Known pre-existing integration failures (ignore): none — all test_data tests currently pass.
 
@@ -58,22 +74,25 @@ Auto-added to `.gitignore` on first build via `ensureGitignore()` in `resolveToC
 
 ```
 vmake_deps/
-  <repo>/<pkg>/src          # Symlink -> ~/.vmake/sources/<repo>/<pkg>/src
-  <repo>/<pkg>/out/<buildKey>/build/    # Build artifacts
-  <repo>/<pkg>/out/<buildKey>/install/  # Install staging
+  <repo>/<pkg>/src    # Symlink -> ~/.vmake/cache/<repo>/<pkg>/<version>/src
+  <repo>/<pkg>/out    # Symlink -> ~/.vmake/cache/<repo>/<pkg>/<version>/out
 ```
 
-No version layer in paths — each package has one version at a time.
+`.vmake/vmake.lock` pins remote versions+commits for reproducible builds (`vmake lock update` re-resolves). Commit it alongside `.vmake/config.json`. With a valid lock entry, native version resolution reads local refs tags only — no network. Refs are refreshed (git fetch) only when resolving fresh (no lock entry) or in `vmake lock update` mode.
 
-`findProjectDir()` (in `cmd/vmake/paths.go`) walks upward from cwd to find `.vmake/` or `build.go` to locate the project root.
+`findProjectDir()` (in `cmd/vmake/paths.go`) walks upward from cwd to find `.vmake/` or `build.go` to locate the project root (fatal when none found; `findProjectDirSoft()` is the non-fatal variant used by `cleanupLegacyStorage`).
 
 ### Global (`~/.vmake/`)
 - `~/.vmake/repos/` — registry repo clones
 - `~/.vmake/toolchains/` — toolchain manifests
 - `~/.vmake/extensions/` — extension repos
-- `~/.vmake/sources/<repo>/<pkg>/src/` — shared git source checkouts (symlinked into `vmake_deps/`)
+- `~/.vmake/cache/<repo>/<pkg>/<version>/src` — immutable per-version source checkouts (temp-clone + atomic rename; never mutated in place)
+- `~/.vmake/cache/<repo>/<pkg>/<version>/out/<buildKey>/` — shared binary cache (build/install staging, shared across projects)
+- `~/.vmake/cache/_localgit/<sha256(url)>/src` — shared clones for local `SetGit` packages
+- `~/.vmake/cache/_locks/<repo>_<pkg>.lock` — lock files OUTSIDE the guarded package dirs (never deleted; deleted-in-place locks broke mutual exclusion)
+- `~/.vmake/config.json` — `trustedRepos` (remote-script trust)
 
-Source downloads are shared globally via symlinks. `SourceManager.EnsureSource()` creates the symlink before cloning. File locking (`internal/flock`) serializes concurrent access across projects.
+`BuildKey` hashes toolchain+mode+options+version+commit+`GlobalFlagsHash()`. `SourceManager.EnsureVersion()` materializes version dirs; per-package build locks serialize shared-out access. `VMAKE_CACHE` overrides the cache root; `VMAKE_FETCH_TIMEOUT` (seconds) the git fetch timeout; `VMAKE_TRUST_ALL=1` bypasses trust gating (CI). Legacy `~/.vmake/sources` and stale `vmake_deps/` are auto-removed on first run (layout marker `.vmake/layout`).
 
 ## Core Concepts
 
@@ -116,12 +135,12 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 - Only abstract `.config` check (`EnsureConfig`), NOT a full `BuildKConfigMake` wrapper
 
 ### Double-Set Protection
-`SetLinkerScript`, `SetProvidedLinkerScript`, `SetVersionScript`, and `SetSymbolPrefix` call `vlog.Fatal` on second invocation — cannot silently overwrite. Consistent with the "No Fallbacks" principle.
+`SetLinkerScript`, `SetProvidedLinkerScript`, `SetVersionScript`, and `SetSymbolPrefix` panic with `*BuildScriptError` on second invocation — cannot silently overwrite. Consistent with the "No Fallbacks" principle. `OnPackage` and `AddKConfig` are also single-slot (second registration fatals).
 
 ### Symbol Management (Five Layers)
 - `ctx.SetDefaultVisibilityHidden()` adds `-fvisibility=hidden` to global C+C++ flags, `-fvisibility-inlines-hidden` to C++ only
 - `target.SetVersionScript("file.map")` valid only on `TargetShared`/`TargetBinary` — scheduler returns error otherwise. Path resolved against package SourceDir. Adds `-Wl,--version-script=` to link command
-- `target.SetExcludeLibs("libfoo")` adds `-Wl,--exclude-libs=`. GNU ld quirk: matches the full archive basename minus `.a`, so use `libfoo` form (with `lib` prefix), not `foo`
+- `target.AddExcludeLibs("libfoo")` adds `-Wl,--exclude-libs=` (appends; deprecated alias `SetExcludeLibs`). GNU ld quirk: matches the full archive basename minus `.a`, so use `libfoo` form (with `lib` prefix), not `foo`
 - `target.SetSymbolBinding("static"|"static-functions")` adds `-Wl,-Bsymbolic` or `-Wl,-Bsymbolic-functions`
 - `target.SetSymbolPrefix("pfx_")` appends post-link `objcopy --prefix-symbols=pfx_` step. Implemented via existing AddPostLink mechanism
 - `LinkShared` strips `-pie`/`-no-pie` from ldflags (incompatible with `-shared`)
@@ -129,8 +148,8 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 
 ### Config Cross-Package Propagation
 - `GenerateConfigDefines()` sets `genConfigDefines = true` on BuildContext; during build processing, reads `ImportConfigs()`, calls `MergeImportedOptions` to merge local + imported options, then calls `ConfigToDefines` and `AddDefines` on all targets
-- `ExportConfig()` sets `exportConfig = true` on BuildContext; propagated to `Package.SetExportConfig(true)` in `build_exec.go:68-70`
-- `ImportConfig(names...)` appends package names to `importConfigs []string` on BuildContext; the actual merge and `-D` injection happens inside the `GenerateConfigDefines` processing block (`build_exec.go:46-67`)
+- `ExportConfig()` sets `exportConfig = true` on BuildContext; propagated to `Package.SetExportConfig(true)` in `applyBuildContextConfig` (`cmd/vmake/build_exec.go`)
+- `ImportConfig(names...)` appends package names to `importConfigs []string` on BuildContext; the actual merge and `-D` injection happens inside the `GenerateConfigDefines` block of `applyBuildContextConfig`
 - `SyncConfigDefines(names...)` = `GenerateConfigDefines` + `ImportConfig` (convenience for orchestrator packages)
 - `GenerateConfigHeader()` sets `genConfigHeader = true` on BuildContext; propagated to `Package.SetGenConfigHeader(true)` — generates `autoconf.h` from merged config options when called by scheduler
 - Merged options: local options take priority over imported (no overwrite on name collision)
@@ -141,10 +160,13 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 `Target.SetPrebuilt(path)` marks a `TargetStatic`/`TargetShared`/`TargetBinary` as pre-compiled. The scheduler skips compilation and creates a symlink from the expected output path to the prebuilt file. Up-to-date check compares symlink target via `os.Readlink`. Source file existence is verified before symlink creation.
 
 ### Option OnApply Callback
-`Option.SetOnApply(fn)` registers a callback invoked after all options are resolved. The callback receives `val any` — the actual typed value (`bool` for OptionBool, `int`/`float64` for OptionInt, `string` for OptionString/OptionChoice). Note: after JSON round-trip through `config.json`, Go decodes all numbers as `float64`, so use `ctx.Int()` or type-assert accordingly. Used to react to option values (e.g., set global ldflags based on a config choice). Callbacks run during config phase, after option values are finalized.
+`Option.SetOnApply(fn)` registers a callback invoked after all options are resolved. The callback receives `val any` — normalized to the option's declared type (`bool` for OptionBool, `int` for OptionInt, `string` for OptionString/OptionChoice; `api.NormalizeOptionValue` converts JSON `float64` before the call). The context carries real option values (CfgVals from config.json + all declared options), so reading other options inside the callback works. Callbacks run in sorted option-name order, during config phase, after option values are finalized.
+
+### Strict Config Accessors
+Script-facing contexts (Config/Build/Install/Clean/Require) have strict accessors: reading an unknown option name, using an accessor that mismatches the option's `SetType`, or reading values directly during OnRequire discovery (`ctx.Bool` etc.) panics with `*BuildScriptError`. OnRequire must use the discovery-aware helpers (`ctx.When`, `ctx.If`, `ctx.Equal`, `ctx.Select`). TUI/CLI accessors remain lenient (`NewConfigAccessor` without `setStrictOwner`).
 
 ### Dependency Linker Script
-A package declares `ctx.SetProvidedLinkerScript("path/to/script.ld")` in `OnConfig`. A consumer target calls `.UseDependencyLinkerScript()` — at link time, the scheduler resolves the first dependency that provides a linker script and passes `-T` to the linker. `SetProvidedLinkerScript` may only be called once per package (vlog.Fatal on double-set).
+A package declares `ctx.SetProvidedLinkerScript("path/to/script.ld")` in `OnConfig`. A consumer target calls `.UseDependencyLinkerScript()` — at link time, the scheduler resolves the first dependency that provides a linker script and passes `-T` to the linker. `SetProvidedLinkerScript` may only be called once per package (fatalScript panic on double-set).
 ### Auto-Wire Require → Build Deps (REMOVED in v2)
 
 **Historically**: `OnRequire`/`AddRequires` declared package-level deps, and
@@ -217,8 +239,8 @@ ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c").AddIncludes("inc
 ### Error Handling
 - Library code never panics, always return error with context: `fmt.Errorf("git clone %s -> %s: %w", url, dir, err)`
 - CLI code uses `vlog.Fatal()` or `os.Exit(1)` for user-facing errors
-- `pkg/api` context helpers use `vlog.Fatal()` for user-facing errors
-- Cycle errors must be `vlog.Fatal`, NOT `vlog.Error` (BUG-1 lesson)
+- `pkg/api` misuse (double-set, invalid args, unavailable context funcs) panics with `*BuildScriptError` via `fatalScript(pkgName, op, ...)` (`pkg/api/errors.go`); recovered in `execFuncs` (`pkg/api/package.go`) and `runScriptFunc` (`pkg/buildscript/yaegi_loader.go`), normalized to `*BuildScriptError` with package name + operation, then reported via `vlog.Fatal` (exit 1). New `pkg/api` fatal paths must follow this pattern, not `vlog.Fatal`
+- Dependency cycles are returned as errors (`api.CheckCycle`, wrapped by resolver as "dependency cycle detected") — never logged-and-ignored
 
 ### Cross-Platform Paths
 - Filesystem paths: `filepath.Join()`
@@ -275,7 +297,7 @@ Methods on `*Package` (used in build.go scripts):
 - `p.Configure(args...)` — autotools configure
 
 Methods on `BuildContext`:
-- `ctx.Exec(name, args...)` — build-phase command execution (vlog.Fatal on error)
+- `ctx.Exec(name, args...)` — build-phase command execution (exits on failure via `exec.RunFatal`)
 - `ctx.BuildSubGraph(pkgName)` — build a sub-package as independent sub-graph
 - `ctx.DepOutput(depRef)` — get dependency target output file path
 - `ctx.DepBuildDir(depRef)` — get dependency build directory
@@ -293,7 +315,7 @@ Methods on `CleanContext`:
 - `ctx.Run(name, args...)` — run command in BuildDir (os.Exit on failure)
 - `ctx.RunIn(dir, name, args...)` — run command in specified directory (os.Exit on failure)
 - `ctx.RunEnv(env, name, args...)` — run with custom environment (returns real error)
-- `ctx.Make(args...)` — run make in BuildDir with `pkg.Env()`
+- `ctx.Make(args...)` — run make in BuildDir with `pkg.Env()` (returns real error)
 
 ## Package Structure
 
@@ -325,7 +347,7 @@ Extension plugins are interpreted by yaegi at runtime (same as buildscripts). Co
 - `vmake test` — build with `--tests` then execute test binaries
 - `vmake clean [--all]` — execute OnClean hooks then clean build artifacts; `--all` removes all build key dirs
 - `vmake rebuild` — clean local packages then build
-- `vmake distclean` — deep clean: local build dirs, install/, `vmake_deps/`
+- `vmake distclean` — deep clean: local build dirs, install/, `vmake_deps/`; the shared global cache survives by default (rebuild re-links without recompiling). `--purge-cache` also deletes global cache entries for every remote package this project materialized (affects other projects too)
 - `vmake config` — interactive TUI for build options
 - `vmake query` — show dependency tree (uses `newQueryCmd` factory, registered in root.go init)
 - `vmake check-symbols [--strict]` — scan all built Shared/Binary outputs via `nm -D` and report: cross-target duplicate exports, C++ mangled leaks (`_Z*`), reserved-prefix leaks (`__libc_*` etc.), version-script violations (when `SetVersionScript` is set), and missing version-script warnings. No per-target declaration required. `--strict` exits non-zero on warn/error findings (info-level still passes)
@@ -375,6 +397,7 @@ func Main(p *api.Package) {
 - **`[]string` spread to `...any` fails** — `reflect.CallSlice` can't convert `[]string` to `[]interface{}`. Pass `[]string` directly (without `...`); `AddCFlags`/`AddDefines`/`AddLinks` etc. use `flattenAny` to handle `[]string` items.
 - **Type name not preserved** — `reflect.TypeOf(x).Name()` returns empty string for interpreted types; `fmt.Sprintf("%T", x)` prints underlying type (e.g. `struct {}`) not the named type.
 - **No CGo, no assembly, no `//go:embed`, no `//go:generate`** — compiler directives are silently ignored.
+- **`//line` directives in merged buildscripts crash the interpreter** (nil deref in type analysis when a directive precedes a function whose signature uses a binary-registered type, e.g. `func Main(p *api.Package)`). Do not emit them in `MergeGoSources`; revisit on a yaegi upgrade.
 - **Performance** — interpreted code is slower than compiled, but build.go callbacks are lightweight (declare targets/options). Heavy operations go through `exec.Command` which is native.
 - **Go modules not supported** by yaegi — irrelevant since build.go only imports `pkg/api` (provided as binary symbols via `i.Use()`).
 - Working fine: generics, goroutines, channels, closures, defer, error wrapping, struct embedding, JSON marshal/unmarshal, `os/exec` (via unrestricted symbols), `net/http`, file I/O.
@@ -396,8 +419,9 @@ type PkgDirs struct { SourceDir, BuildDir, InstallDir string }
 
 ## Test Targets (`SetTest` / `vmake test`)
 
-- `SetTest(true)` marks a target as a test and auto-sets `isDefault=false`
-- `vmake test` only runs targets where `IsTest() && IsDefault() && Kind() == TargetBinary` — so test binaries must also call `SetDefault(true)` explicitly
+- `SetTest(true)` marks a target as a test (does NOT touch `isDefault` — ordering of `SetTest`/`SetDefault` is irrelevant)
+- `vmake test` only runs targets where `IsTest() && Kind() == TargetBinary`
+- Test inclusion is scheduler-level: `vmake build` skips `IsTest()` targets; `--tests`/`vmake test` include them (threaded via `Scheduler.SetIncludeTests` / `BuildPipeline.IncludeTests` / `SubGraphParams.IncludeTests`)
 - `vmake build` skips test targets; `vmake build --tests` includes them
 - `publishTarget` and `installTarget` skip `IsTest()` targets (test binaries are never installed)
 - Test targets can depend on other test targets (e.g., `TargetStatic` test lib used by multiple test binaries); only `TargetBinary` tests are executed

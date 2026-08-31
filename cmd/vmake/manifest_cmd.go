@@ -74,7 +74,7 @@ var manifestCheckoutCmd = &cobra.Command{
 		cwd, err := os.Getwd()
 		fatalErr(err)
 
-		sourceMgr := repo.NewSourceManager(getDepsDir(), getSourcesDir())
+		sourceMgr := repo.NewSourceManager(getDepsDir(), getCacheDir())
 
 		found := false
 		for _, entry := range mf.Packages {
@@ -140,13 +140,7 @@ func checkoutRemote(sourceMgr *repo.SourceManager, entry installManifestEntry) {
 		return
 	}
 
-	buildCacheDir := filepath.Join(getDepsDir(), repoName, pkgName, "out")
-	if fs.FileExists(buildCacheDir) {
-		fs.RemoveIfExists(buildCacheDir)
-		fmt.Printf("  OK   %s -> %s (build cache cleared)\n", entry.Name, entry.Ref)
-	} else {
-		fmt.Printf("  OK   %s -> %s\n", entry.Name, entry.Ref)
-	}
+	fmt.Printf("  OK   %s -> %s\n", entry.Name, entry.Ref)
 }
 
 func init() {

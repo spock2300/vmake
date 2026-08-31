@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
@@ -85,6 +86,8 @@ func TestFilterDepsReplacesNodeDeps(t *testing.T) {
 	pkg.UpdateRequireContext(nil, nil)
 
 	r.graph.Packages["foo"] = &PackageNode{ID: "foo", Pkg: pkg, Deps: []string{"old-dep"}}
+	r.graph.Packages["real-dep-1"] = &PackageNode{ID: "real-dep-1"}
+	r.graph.Packages["real-dep-2"] = &PackageNode{ID: "real-dep-2"}
 	r.sources["real-dep-1"] = buildscript.NewSource("real-dep-1", "/p1/build.go", "/p1", api.SourceLocal)
 	r.sources["real-dep-2"] = buildscript.NewSource("real-dep-2", "/p2/build.go", "/p2", api.SourceLocal)
 
@@ -101,6 +104,25 @@ func TestFilterDepsReplacesNodeDeps(t *testing.T) {
 	}
 	if deps[0] != "real-dep-1" || deps[1] != "real-dep-2" {
 		t.Errorf("Deps = %v, want [real-dep-1 real-dep-2]", deps)
+	}
+}
+
+func TestFilterDepsUnknownDepErrors(t *testing.T) {
+	r := NewResolver(nil, t.TempDir())
+	pkg := api.NewPackage()
+	pkg.OnRequire(func(ctx *api.RequireContext) {
+		ctx.AddRequires("ghost-dep")
+	})
+	pkg.UpdateRequireContext(nil, nil)
+
+	r.graph.Packages["foo"] = &PackageNode{ID: "foo", Pkg: pkg, Deps: []string{}}
+
+	err := r.FilterDeps("foo", nil, nil)
+	if err == nil {
+		t.Fatal("FilterDeps with unknown dep name should error")
+	}
+	if !strings.Contains(err.Error(), "ghost-dep") {
+		t.Errorf("error should mention the unknown dep, got: %v", err)
 	}
 }
 

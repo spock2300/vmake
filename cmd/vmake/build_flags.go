@@ -8,4 +8,6 @@ var (
 	modeFlag        string
 	manifestFlag    string
 	testsFlag       bool
+	jobsFlag        int
+	keepGoingFlag   bool
 )

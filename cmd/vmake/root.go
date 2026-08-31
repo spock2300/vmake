@@ -12,7 +12,9 @@ import (
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
+	"github.com/spock2300/vmake/pkg/lockfile"
 	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/repo"
 	"github.com/spock2300/vmake/pkg/resolver"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
@@ -21,7 +23,13 @@ var (
 	verbose     bool
 	veryVerbose bool
 	quiet       bool
+	yesFlag     bool
 	vmakeDir    string
+
+	// lockUpdateMode makes dependency resolution ignore vmake.lock (used by
+	// `vmake lock update`). It must be set BEFORE resolveToConfig(): native
+	// version selection happens during the require phase.
+	lockUpdateMode bool
 )
 
 func init() {
@@ -30,8 +38,11 @@ func init() {
 	RootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	RootCmd.PersistentFlags().BoolVarP(&veryVerbose, "very-verbose", "V", false, "very verbose output")
 	RootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "quiet mode")
+	RootCmd.PersistentFlags().BoolVarP(&yesFlag, "yes", "y", false, "assume yes for interactive prompts (e.g. trusting remote repositories)")
 	RootCmd.AddCommand(newQueryCmd())
 	RootCmd.AddCommand(newCheckSymbolsCmd())
+	RootCmd.AddCommand(newInitEditorCmd())
+	RootCmd.AddCommand(newLockCmd())
 }
 
 type packageGlobalFlags struct {
@@ -51,6 +62,9 @@ type RuntimeContext struct {
 	GlobalOptions       map[string]*api.Option
 	Resolver            *resolver.Resolver
 	BufferedGlobalFlags map[string]*packageGlobalFlags
+	Lock                *lockfile.Lock
+	LockPath            string
+	IgnoreLock          bool
 }
 
 var RootCmd = &cobra.Command{
@@ -114,15 +128,31 @@ func runConfigurePhase(ctx *RuntimeContext) {
 
 func resolveToConfig() *RuntimeContext {
 	ctx := mustInitContext()
-	ensureGitignore(findProjectDir())
+	fatalErr(ensureGitignore(findProjectDir()))
+	cleanupLegacyStorage()
+	ctx.LockPath = getLockfilePath()
+	ctx.Lock = mustLoadLockfile(ctx.LockPath)
+	ctx.IgnoreLock = lockUpdateMode
 	fatalErr(runRequirePhase(ctx))
 	runConfigurePhase(ctx)
 	return ctx
 }
 
+func mustLoadLockfile(path string) *lockfile.Lock {
+	l, err := lockfile.LoadOrCreate(path)
+	fatalErr(err)
+	return l
+}
+
 func resolveToConfigBestEffort() (*RuntimeContext, bool) {
 	ctx := mustInitContext()
-	ensureGitignore(findProjectDir())
+	if err := ensureGitignore(findProjectDir()); err != nil {
+		vlog.Error("gitignore: %v", err)
+	}
+	cleanupLegacyStorage()
+	ctx.LockPath = getLockfilePath()
+	ctx.Lock = mustLoadLockfile(ctx.LockPath)
+	ctx.IgnoreLock = lockUpdateMode
 	if err := runRequirePhase(ctx); err != nil {
 		return ctx, false
 	}
@@ -174,6 +204,16 @@ func newBuildContext(ctx *RuntimeContext, name string, globalValues map[string]a
 	return buildCtx
 }
 
+func collectConfigPins(cfg *config.ConfigFile) map[string]string {
+	pins := make(map[string]string)
+	for name, entry := range cfg.Entries {
+		if entry != nil && entry.Version != "" {
+			pins[name] = entry.Version
+		}
+	}
+	return pins
+}
+
 func runRequirePhase(ctx *RuntimeContext) error {
 	vlog.Info("Scanning %s...", ctx.WorkDir)
 
@@ -193,7 +233,10 @@ func runRequirePhase(ctx *RuntimeContext) error {
 	vlog.Info("Found %d package(s): %s", len(packages), strings.Join(pkgNames, ", "))
 
 	r := resolver.NewResolver(getRepoManager(), getDepsDir())
-	r.SetGlobalSourcesDir(getSourcesDir())
+	r.SetSourceManager(repo.NewSourceManager(getDepsDir(), getCacheDir()))
+	r.SetLockfile(ctx.Lock, ctx.IgnoreLock)
+	r.SetTrustChecker(remoteScriptTrustChecker)
+	r.SetConfigPins(collectConfigPins(ctx.Config))
 	ctx.Resolver = r
 
 	vlog.Info("")
@@ -252,6 +295,11 @@ func collectAllOptionsAndKConfigs(ctx *RuntimeContext) {
 		}
 
 		if len(opts) > 0 {
+			for _, opt := range opts {
+				if err := api.ValidateOption(opt); err != nil {
+					fatalMsg("package %s: %v", name, err)
+				}
+			}
 			ctx.AllOptions[name] = opts
 			vlog.Info("  %s: %d option(s)", name, len(opts))
 		}
@@ -303,6 +351,8 @@ func applyAllConfigCallbacks(ctx *RuntimeContext) {
 
 		entry := config.GetEntry(ctx.Config, name)
 		applyCtx := api.NewConfigContextWithPackage(name, node.Pkg)
+		applyCtx.SetOptions(opts)
+		applyCtx.SetCfgVals(entry.Options)
 		applyCtx.SetGlobalCFlagsFunc(func(flags ...string) {
 			buf.cFlags = append(buf.cFlags, flags...)
 		})
@@ -316,7 +366,13 @@ func applyAllConfigCallbacks(ctx *RuntimeContext) {
 			buf.links = append(buf.links, links...)
 		})
 
-		for optName, opt := range opts {
+		optNames := make([]string, 0, len(opts))
+		for optName := range opts {
+			optNames = append(optNames, optName)
+		}
+		sort.Strings(optNames)
+		for _, optName := range optNames {
+			opt := opts[optName]
 			if opt.OnApply() == nil {
 				continue
 			}
@@ -324,8 +380,9 @@ func applyAllConfigCallbacks(ctx *RuntimeContext) {
 			if !ok || val == nil {
 				val = opt.Default()
 			}
+			val = api.NormalizeOptionValue(opt, val)
 			vlog.Debug("  %s/%s = %v", name, optName, val)
-			opt.OnApply()(applyCtx, val)
+			api.RunScriptSafe(name, func() { opt.OnApply()(applyCtx, val) })
 		}
 	}
 }
@@ -403,18 +460,18 @@ func ResolveAllPackageDirs(graph *resolver.Graph) map[string]*api.PkgDirs {
 	return dirs
 }
 
-func ensureGitignore(workDir string) {
+func ensureGitignore(workDir string) error {
 	gitignorePath := filepath.Join(workDir, ".gitignore")
 	content := ""
 	if data, err := os.ReadFile(gitignorePath); err == nil {
 		content = string(data)
 	}
-	if strings.Contains(content, "vmake_deps") {
-		return
+	if gitignoreIgnoresVmakeDeps(content) {
+		return nil
 	}
 	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return
+		return fmt.Errorf("open %s: %w", gitignorePath, err)
 	}
 	defer f.Close()
 	var buf []byte
@@ -422,5 +479,22 @@ func ensureGitignore(workDir string) {
 		buf = append(buf, '\n')
 	}
 	buf = append(buf, []byte("vmake_deps/\n")...)
-	f.Write(buf)
+	if _, err := f.Write(buf); err != nil {
+		return fmt.Errorf("write %s: %w", gitignorePath, err)
+	}
+	return nil
+}
+
+func gitignoreIgnoresVmakeDeps(content string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "!") {
+			continue
+		}
+		if line == "vmake_deps" || line == "vmake_deps/" ||
+			strings.HasSuffix(line, "/vmake_deps") || strings.HasSuffix(line, "/vmake_deps/") {
+			return true
+		}
+	}
+	return false
 }

@@ -20,7 +20,26 @@ func yaegiExports() interp.Exports {
 	}
 }
 
+// ScriptTrustChecker decides whether scripts from a remote repository may be
+// executed. It may prompt or record trust; an error refuses execution.
+type ScriptTrustChecker func(repo string) error
+
 func LoadBuildScript(src Source) (*api.Package, error) {
+	return LoadBuildScriptWithTrust(src, nil)
+}
+
+// LoadBuildScriptWithTrust gates remote scripts on a trust decision before
+// interpretation. Scripts from untrusted repositories are refused.
+func LoadBuildScriptWithTrust(src Source, trustChecker ScriptTrustChecker) (*api.Package, error) {
+	if src.IsRemote() && src.Repo != "" && trustChecker != nil {
+		if err := trustChecker(src.Repo); err != nil {
+			return nil, fmt.Errorf("untrusted repository %q: %w", src.Repo, err)
+		}
+	}
+	return loadBuildScript(src)
+}
+
+func loadBuildScript(src Source) (*api.Package, error) {
 	i, err := yaegibase.New(yaegiExports())
 	if err != nil {
 		return nil, err
@@ -52,12 +71,12 @@ func LoadBuildScript(src Source) (*api.Package, error) {
 
 	origDir, err := os.Getwd()
 	if err != nil {
-		vlog.Fatal("get working directory: %v", err)
+		return nil, fmt.Errorf("get working directory: %w", err)
 	}
 	defer os.Chdir(origDir)
 	if dir := src.Dir; dir != "" {
 		if err := os.Chdir(dir); err != nil {
-			vlog.Fatal("chdir to %s: %v", dir, err)
+			return nil, fmt.Errorf("chdir to %s: %w", dir, err)
 		}
 	}
 
@@ -72,7 +91,7 @@ func LoadBuildScript(src Source) (*api.Package, error) {
 	}
 
 	if len(pkg.GetRequireFuncs()) > 0 {
-		ctx := api.NewRequireContextForConfig(nil, pkg.Options, pkg.GetRequireFuncs())
+		ctx := api.NewRequireContextForConfig(src.Name, nil, pkg.Options, pkg.GetRequireFuncs())
 		for _, fn := range pkg.GetRequireFuncs() {
 			runScriptFunc(src.Name, func() {
 				fn(ctx)
@@ -87,13 +106,20 @@ func LoadBuildScript(src Source) (*api.Package, error) {
 func runScriptFunc(pkgName string, fn func()) {
 	defer func() {
 		if r := recover(); r != nil {
-			if bse, ok := r.(*api.BuildScriptError); ok {
+			var bse *api.BuildScriptError
+			if existing, ok := r.(*api.BuildScriptError); ok {
+				bse = existing
 				if bse.Package == "" {
 					bse.Package = pkgName
 				}
-				vlog.Fatal("%v", bse)
+			} else {
+				bse = &api.BuildScriptError{
+					Package: pkgName,
+					Op:      "panic",
+					Err:     fmt.Errorf("%v", r),
+				}
 			}
-			panic(r)
+			vlog.Fatal("%v", bse)
 		}
 	}()
 	fn()

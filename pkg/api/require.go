@@ -47,11 +47,15 @@ type RequireContext struct {
 	requireFuncs []RequireFunc
 }
 
-func NewRequireContextForConfig(cfgVals map[string]any, options map[string]*Option, funcs []RequireFunc) *RequireContext {
+func NewRequireContextForConfig(pkgName string, cfgVals map[string]any, options map[string]*Option, funcs []RequireFunc) *RequireContext {
 	if options == nil {
 		options = make(map[string]*Option)
 	}
 	accessor := ConfigAccessor{CfgVals: cfgVals, Options: options}
+	if pkgName != "" {
+		accessor.setStrictOwner(pkgName)
+		accessor.discover = cfgVals == nil
+	}
 	return &RequireContext{
 		ConfigAccessor: accessor,
 		requireFuncs:   funcs,

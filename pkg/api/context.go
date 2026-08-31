@@ -29,18 +29,28 @@ type ConfigContext struct {
 }
 
 func NewConfigContext(pkgName string) *ConfigContext {
-	return &ConfigContext{
+	ctx := &ConfigContext{
 		ConfigAccessor: NewConfigAccessor(nil, nil),
 		pkgBase:        pkgBase{pkgName: pkgName},
 	}
+	ctx.setStrictOwner(pkgName)
+	return ctx
 }
 
 func NewConfigContextWithPackage(pkgName string, pkg *Package) *ConfigContext {
-	return &ConfigContext{
+	ctx := &ConfigContext{
 		ConfigAccessor: NewConfigAccessor(nil, nil),
 		pkgBase:        pkgBase{pkgName: pkgName},
 		pkg:            pkg,
 	}
+	ctx.setStrictOwner(pkgName)
+	return ctx
+}
+
+func (ctx *ConfigContext) SetLenient() *ConfigContext {
+	ctx.strict = false
+	ctx.owner = ""
+	return ctx
 }
 
 func (ctx *ConfigContext) SetGlobalCFlagsFunc(fn func(...string)) *ConfigContext {
@@ -120,7 +130,7 @@ func (ctx *ConfigContext) GetOptions() map[string]*Option {
 func (ctx *ConfigContext) Toolchains() []string {
 	tcs, err := toolchain.GetManager().ListToolchains()
 	if err != nil {
-		return []string{"host"}
+		fatalScript(ctx.PackageName(), "Toolchains", "%v", err)
 	}
 	names := make([]string, 0, len(tcs))
 	for name := range tcs {
@@ -132,7 +142,7 @@ func (ctx *ConfigContext) Toolchains() []string {
 
 func (ctx *ConfigContext) GlobalOption(name string) *Option {
 	opt := ctx.Option(name)
-	opt.group = "Global"
+	opt.group = GroupGlobal
 	return opt
 }
 
@@ -171,12 +181,14 @@ type BuildContext struct {
 }
 
 func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext {
-	return &BuildContext{
+	ctx := &BuildContext{
 		ConfigAccessor:    NewConfigAccessor(cfgVals, nil),
 		TargetRegistry:    NewTargetRegistry(),
 		InstallItemHolder: &InstallItemHolder{},
 		pkgBase:           pkgBase{pkgName: pkgName},
 	}
+	ctx.setStrictOwner(pkgName)
+	return ctx
 }
 
 func (ctx *BuildContext) SetDryRun(v bool) *BuildContext {
@@ -273,11 +285,13 @@ type InstallContext struct {
 }
 
 func NewInstallContext(pkgName string, cfgVals map[string]any) *InstallContext {
-	return &InstallContext{
+	ctx := &InstallContext{
 		ConfigAccessor:    NewConfigAccessor(cfgVals, nil),
 		InstallItemHolder: &InstallItemHolder{},
 		pkgBase:           pkgBase{pkgName: pkgName},
 	}
+	ctx.setStrictOwner(pkgName)
+	return ctx
 }
 
 func (ctx *InstallContext) Prefix() string  { return ctx.prefix }
@@ -296,10 +310,12 @@ type CleanContext struct {
 }
 
 func NewCleanContext(pkgName string, cfgVals map[string]any) *CleanContext {
-	return &CleanContext{
+	ctx := &CleanContext{
 		ConfigAccessor: NewConfigAccessor(cfgVals, nil),
 		pkgBase:        pkgBase{pkgName: pkgName},
 	}
+	ctx.setStrictOwner(pkgName)
+	return ctx
 }
 
 func (ctx *CleanContext) SetPackage(pkg *Package) *CleanContext {
@@ -311,12 +327,12 @@ func (ctx *CleanContext) SourceDir() string { return ctx.pkg.SourceDir() }
 func (ctx *CleanContext) BuildDir() string  { return ctx.pkg.BuildDir() }
 func (ctx *CleanContext) SrcDir() string    { return ctx.pkg.SrcDir() }
 
-func (ctx *CleanContext) Run(name string, args ...string) error {
-	return ctx.pkg.Run(name, args...)
+func (ctx *CleanContext) Run(name string, args ...string) {
+	ctx.pkg.Run(name, args...)
 }
 
-func (ctx *CleanContext) RunIn(dir, name string, args ...string) error {
-	return ctx.pkg.RunIn(dir, name, args...)
+func (ctx *CleanContext) RunIn(dir, name string, args ...string) {
+	ctx.pkg.RunIn(dir, name, args...)
 }
 
 func (ctx *CleanContext) RunEnv(env map[string]string, name string, args ...string) error {

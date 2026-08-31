@@ -154,7 +154,7 @@ func discoverProjects(t *testing.T, root string) []project {
 
 func cleanProject(dir string) error {
 	// Remove top-level artifacts
-	patterns := []string{"build", "install", "vmake_deps", ".vmake", ".cache"}
+	patterns := []string{"build", "install", "vmake_deps", ".vmake", ".cache", ".vmake-cache", "vmake.lock"}
 	for _, p := range patterns {
 		if err := os.RemoveAll(filepath.Join(dir, p)); err != nil {
 			return err
@@ -180,14 +180,36 @@ func runVmake(t *testing.T, root, dir string, args ...string) error {
 	if _, err := os.Stat(bin); err != nil {
 		t.Fatalf("vmake binary not found at %s; run 'go build -o vmake ./cmd/vmake'", bin)
 	}
+	cacheDir := filepath.Join(dir, ".vmake-cache")
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = dir
+	cmd.Env = withEnvOverride(os.Environ(), "VMAKE_CACHE="+cacheDir, "VMAKE_TRUST_ALL=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Logf("vmake output:\n%s", string(out))
 		return fmt.Errorf("vmake %s in %s: %w", strings.Join(args, " "), dir, err)
 	}
 	return nil
+}
+
+func withEnvOverride(base []string, overrides ...string) []string {
+	keys := make(map[string]bool)
+	for _, o := range overrides {
+		if i := strings.Index(o, "="); i >= 0 {
+			keys[o[:i]] = true
+		}
+	}
+	var env []string
+	for _, e := range base {
+		key := e
+		if i := strings.Index(e, "="); i >= 0 {
+			key = e[:i]
+		}
+		if !keys[key] {
+			env = append(env, e)
+		}
+	}
+	return append(env, overrides...)
 }
 
 func normalizeBytes(data []byte, root string) []byte {
@@ -408,6 +430,11 @@ func runSnapshot(t *testing.T, root string, p project) {
 	if err := cleanProject(p.dir); err != nil {
 		t.Fatalf("clean: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := cleanProject(p.dir); err != nil {
+			t.Logf("post-run clean %s: %v", p.dir, err)
+		}
+	})
 	if err := runVmake(t, root, p.dir, "build", "--install"); err != nil {
 		t.Fatalf("build: %v", err)
 	}

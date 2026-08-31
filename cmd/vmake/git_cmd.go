@@ -18,7 +18,6 @@ var (
 	gitTagMajor  bool
 	gitTagNoPush bool
 	gitTagMsg    string
-	gitTagYes    bool
 )
 
 var gitCmd = &cobra.Command{
@@ -46,7 +45,6 @@ func init() {
 	gitTagCmd.Flags().BoolVar(&gitTagMajor, "major", false, "bump major version")
 	gitTagCmd.Flags().BoolVar(&gitTagNoPush, "no-push", false, "create tags without pushing")
 	gitTagCmd.Flags().StringVarP(&gitTagMsg, "message", "m", "", "custom tag message")
-	gitTagCmd.Flags().BoolVarP(&gitTagYes, "yes", "y", false, "skip confirmation")
 
 	gitCmd.AddCommand(gitTagCmd)
 	RootCmd.AddCommand(gitCmd)
@@ -90,7 +88,7 @@ func runGitTag(cmd *cobra.Command, args []string) {
 	fmt.Printf("  Commit:    %s\n", strings.TrimSpace(string(commit)))
 	fmt.Printf("  Push:      %s\n", pushInfo)
 
-	if !gitTagYes {
+	if !yesFlag {
 		fmt.Printf("Confirm? [y/N]: ")
 		reader := bufio.NewReader(os.Stdin)
 		answer, err := reader.ReadString('\n')

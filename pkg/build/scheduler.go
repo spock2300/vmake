@@ -1,6 +1,10 @@
 package build
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +13,7 @@ import (
 	"sync"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/internal/flock"
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/glob"
 	"github.com/spock2300/vmake/pkg/api"
@@ -34,6 +39,7 @@ type ResolvedTarget struct {
 	DepArtifacts  []string
 	OutputPath    string
 	VersionScript string
+	LinkerScript  string
 	ExcludeLibs   []string
 	SymbolBinding string
 }
@@ -59,6 +65,9 @@ func (pi *PkgInfo) OutputPath(subpath string) string {
 }
 
 func (pi *PkgInfo) GeneratedDir() string {
+	if pi.OutputDir != "" {
+		return filepath.Join(pi.OutputDir, subdirGenerated)
+	}
 	return BuildPath(".", pi.BuildKey, subdirGenerated)
 }
 
@@ -74,6 +83,12 @@ type Scheduler struct {
 	pkgs          map[string]*PkgInfo
 	ccWriter      *CompileCommandsWriter
 	packages      map[string]*api.Package
+	rootDir       string
+	includeTests  bool
+	pkgKeyExtra   map[string]string
+	pkgLockDir    string
+	numWorkers    int
+	keepGoing     bool
 }
 
 func NewScheduler(
@@ -113,7 +128,7 @@ func NewScheduler(
 	}
 
 	for pkgName, pd := range pkgDirs {
-		buildKey := BuildKey(tools.CC, mode, pkgOptions[pkgName])
+		buildKey := BuildKey(tools.CC, mode, pkgOptions[pkgName], s.pkgExtra(pkgName))
 		info := &PkgInfo{
 			PkgDirs:  *pd,
 			BuildKey: buildKey,
@@ -129,6 +144,50 @@ func NewScheduler(
 
 func (s *Scheduler) SetPackage(pkgName string, pkg *api.Package) {
 	s.packages[pkgName] = pkg
+}
+
+func (s *Scheduler) SetRootDir(dir string) {
+	s.rootDir = dir
+}
+
+func (s *Scheduler) SetIncludeTests(v bool) {
+	s.includeTests = v
+}
+
+func (s *Scheduler) SetPkgKeyExtra(extra map[string]string) {
+	s.pkgKeyExtra = extra
+}
+
+func (s *Scheduler) SetPkgLockDir(dir string) {
+	s.pkgLockDir = dir
+}
+
+func (s *Scheduler) SetNumWorkers(n int) {
+	s.numWorkers = n
+}
+
+func (s *Scheduler) SetKeepGoing(v bool) {
+	s.keepGoing = v
+}
+
+func (s *Scheduler) pkgExtra(pkgName string) string {
+	if s.pkgKeyExtra == nil {
+		return ""
+	}
+	return s.pkgKeyExtra[pkgName]
+}
+
+func (s *Scheduler) lockPackage(pkgName string) (func(), error) {
+	if s.pkgLockDir == "" {
+		return func() {}, nil
+	}
+	h := sha256.Sum256([]byte(pkgName))
+	safe := strings.ReplaceAll(pkgName, "/", "_") + "_" + hex.EncodeToString(h[:4])
+	l, err := flock.Acquire(filepath.Join(s.pkgLockDir, safe+".lock"))
+	if err != nil {
+		return nil, fmt.Errorf("acquire build lock for %s: %w", pkgName, err)
+	}
+	return func() { _ = l.Release() }, nil
 }
 
 func (s *Scheduler) SetPkgDirs(pkgName string, dirs *api.PkgDirs) {
@@ -152,12 +211,47 @@ func (s *Scheduler) effectiveSourceDir(pkgName string) string {
 }
 
 func (s *Scheduler) BuildAll() error {
-	if err := s.graph.ForEachDefault(func(node *BuildNode) error {
-		return s.Build(node.FullName)
+	var errs []error
+	failedTargets := make(map[string]bool)
+	if err := s.graph.ForEachDefault(s.includeTests, func(node *BuildNode) error {
+		if s.depsFailed(node, failedTargets) {
+			vlog.Info("[skip] %s (dependency failed)", node.FullName)
+			failedTargets[node.FullName] = true
+			return nil
+		}
+		if err := s.Build(node.FullName); err != nil {
+			failedTargets[node.FullName] = true
+			errs = append(errs, err)
+			if !s.keepGoing {
+				return err
+			}
+			return nil
+		}
+		return nil
 	}); err != nil {
 		return err
 	}
-	return s.ccWriter.Save(filepath.Join("build", "compile_commands.json"))
+	root := s.rootDir
+	if root == "" {
+		root = "."
+	}
+	saveErr := s.ccWriter.Save(filepath.Join(root, "build", "compile_commands.json"))
+	if len(errs) > 0 {
+		if saveErr != nil {
+			errs = append(errs, saveErr)
+		}
+		return errors.Join(errs...)
+	}
+	return saveErr
+}
+
+func (s *Scheduler) depsFailed(node *BuildNode, failedTargets map[string]bool) bool {
+	for _, dep := range node.Deps {
+		if failedTargets[dep] {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Scheduler) Build(fullName string) error {
@@ -169,10 +263,24 @@ func (s *Scheduler) Build(fullName string) error {
 	if !node.Target.IsDefault() {
 		return nil
 	}
+	if node.Target.IsTest() && !s.includeTests {
+		return nil
+	}
 
 	pkgInfo := s.pkgs[node.PkgName]
 	workDir := pkgInfo.SourceDir
 
+	// The package lock serializes access to the SHARED remote out/<key>
+	// directory in the global cache. Local package build dirs are
+	// project-private — locking them by bare package name would serialize
+	// unrelated projects that happen to use the same local package name.
+	if meta, ok := s.graph.PkgMeta[node.PkgName]; ok && meta.IsRemote() {
+		release, err := s.lockPackage(node.PkgName)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
 	s.ccWriter.SetPackageDir(workDir)
 
 	vlog.Info("[%s]", fullName)
@@ -181,6 +289,26 @@ func (s *Scheduler) Build(fullName string) error {
 	if err != nil {
 		return err
 	}
+
+	if err := s.prepareTarget(resolved, pkgInfo, workDir); err != nil {
+		return err
+	}
+
+	numFiles := len(resolved.SourceFiles)
+	if numFiles == 0 || node.Target.Prebuilt() != "" {
+		return s.finalizeTarget(resolved, pkgInfo, nil)
+	}
+
+	objs, err := s.compileAll(resolved, pkgInfo)
+	if err != nil {
+		return err
+	}
+
+	return s.finalizeTarget(resolved, pkgInfo, objs)
+}
+
+func (s *Scheduler) prepareTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, workDir string) error {
+	node := resolved.Node
 
 	genRules := node.Target.GenRules()
 	if len(genRules) > 0 {
@@ -201,70 +329,10 @@ func (s *Scheduler) Build(fullName string) error {
 	if err := os.MkdirAll(resolveWorkPath(workDir, pkgInfo.OutputPath(subdirObjects)), 0755); err != nil {
 		return fmt.Errorf("create build directory: %w", err)
 	}
+	return nil
+}
 
-	numFiles := len(resolved.SourceFiles)
-	if numFiles == 0 || node.Target.Prebuilt() != "" {
-		linked, err := s.realizeTarget(resolved, nil)
-		if err != nil {
-			return err
-		}
-		if linked {
-			if err := s.postLink(resolved); err != nil {
-				return err
-			}
-		}
-		if pkgInfo.InstallDir != "" {
-			return s.publishTarget(resolved, pkgInfo)
-		}
-		return nil
-	}
-
-	numWorkers := runtime.NumCPU()
-	if numWorkers > numFiles {
-		numWorkers = numFiles
-	}
-
-	goFiles, err := buildscript.ListGoFiles(pkgInfo.SourceDir)
-	if err != nil {
-		vlog.Error("list .go files in %s: %v", pkgInfo.SourceDir, err)
-		buildGo := filepath.Join(pkgInfo.SourceDir, "build.go")
-		if _, statErr := os.Stat(buildGo); statErr == nil {
-			goFiles = []string{buildGo}
-		}
-	}
-
-	jobs := make(chan string, numFiles)
-	results := make(chan compileResult, numFiles)
-
-	var wg sync.WaitGroup
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go s.compileWorker(resolved, jobs, results, &wg, goFiles)
-	}
-
-	for _, src := range resolved.SourceFiles {
-		jobs <- src
-	}
-	close(jobs)
-
-	wg.Wait()
-	close(results)
-
-	bySrc := make(map[string]string, numFiles)
-	for r := range results {
-		if r.err != nil {
-			return r.err
-		}
-		bySrc[r.src] = r.objPath
-	}
-
-	objs := make([]string, 0, numFiles)
-	for _, src := range resolved.SourceFiles {
-		if obj, ok := bySrc[src]; ok {
-			objs = append(objs, obj)
-		}
-	}
-
+func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, objs []string) error {
 	linked, err := s.realizeTarget(resolved, objs)
 	if err != nil {
 		return err
@@ -281,16 +349,84 @@ func (s *Scheduler) Build(fullName string) error {
 			return err
 		}
 	}
-
 	return nil
 }
 
-func (s *Scheduler) compileWorker(resolved *ResolvedTarget, jobs <-chan string, results chan<- compileResult, wg *sync.WaitGroup, goFiles []string) {
-	defer wg.Done()
-	for src := range jobs {
-		objPath, deps, err := s.compileSource(resolved, src, goFiles)
-		results <- compileResult{src: src, objPath: objPath, deps: deps, err: err}
+func (s *Scheduler) compileAll(resolved *ResolvedTarget, pkgInfo *PkgInfo) ([]string, error) {
+	numFiles := len(resolved.SourceFiles)
+
+	numWorkers := s.numWorkers
+	if numWorkers <= 0 {
+		numWorkers = runtime.NumCPU()
 	}
+	if numWorkers > numFiles {
+		numWorkers = numFiles
+	}
+
+	goFiles, err := buildscript.ListGoFiles(pkgInfo.SourceDir)
+	if err != nil {
+		vlog.Error("list .go files in %s: %v", pkgInfo.SourceDir, err)
+		buildGo := filepath.Join(pkgInfo.SourceDir, "build.go")
+		if _, statErr := os.Stat(buildGo); statErr == nil {
+			goFiles = []string{buildGo}
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	jobs := make(chan int, numFiles)
+	results := make([]compileResult, numFiles)
+
+	var wg sync.WaitGroup
+
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case idx, ok := <-jobs:
+					if !ok {
+						return
+					}
+					src := resolved.SourceFiles[idx]
+					objPath, deps, err := s.compileSource(resolved, src, goFiles)
+					results[idx] = compileResult{src: src, objPath: objPath, deps: deps, err: err}
+					if err != nil {
+						cancel()
+					}
+				}
+			}
+		}()
+	}
+
+feed:
+	for i := range resolved.SourceFiles {
+		select {
+		case jobs <- i:
+		case <-ctx.Done():
+			break feed
+		}
+	}
+	close(jobs)
+	wg.Wait()
+
+	for _, r := range results {
+		if r.err != nil {
+			return nil, r.err
+		}
+	}
+
+	objs := make([]string, 0, numFiles)
+	for _, r := range results {
+		if r.objPath != "" {
+			objs = append(objs, r.objPath)
+		}
+	}
+	return objs, nil
 }
 
 type depResolveResult struct {
@@ -344,6 +480,9 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 				depOutput = filepath.Join(depPkg.InstallDir, "lib", targetFilename(depNode.Target.Kind(), depNode.Target.Name()))
 			} else {
 				depOutput = s.getTargetOutputPath(depNode)
+			}
+			if !fs.FileExists(depOutput) {
+				return nil, fmt.Errorf("dependency artifact missing: %s (was the dependency target %s built?)", depOutput, depName)
 			}
 			result.artifacts = append(result.artifacts, depOutput)
 
@@ -402,6 +541,8 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	resolved.AllIncludes = append(resolved.AllIncludes, deps.includes...)
 	resolved.DepArtifacts = deps.artifacts
 
+	s.checkLibDependencies(resolved)
+
 	resolved.AllLdFlags = append(resolved.AllLdFlags, deps.voidLdFlags...)
 
 	excludes := node.Target.ExcludedFiles()
@@ -441,6 +582,23 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 		}
 	}
 
+	if node.Target.Kind() == api.TargetBinary {
+		linkerScript := node.Target.LinkerScript()
+		if linkerScript == "" && node.Target.UseDepLinkerScript() {
+			for _, depFullName := range node.Deps {
+				depPkgName, _, _ := strings.Cut(depFullName, ":")
+				depPkg := s.packages[depPkgName]
+				if depPkg != nil && depPkg.ProvidedLinkerScript() != "" {
+					if depInfo := s.pkgs[depPkgName]; depInfo != nil {
+						linkerScript = filepath.Join(depInfo.SourceDir, depPkg.ProvidedLinkerScript())
+					}
+					break
+				}
+			}
+		}
+		resolved.LinkerScript = linkerScript
+	}
+
 	if el := node.Target.ExcludeLibs(); len(el) > 0 {
 		resolved.ExcludeLibs = append([]string{}, el...)
 	}
@@ -459,6 +617,19 @@ func targetFilename(kind api.TargetKind, name string) string {
 	return kind.Prefix() + name + kind.Ext()
 }
 
+func (s *Scheduler) checkLibDependencies(resolved *ResolvedTarget) {
+	kind := resolved.Node.Target.Kind()
+	if kind != api.TargetStatic && kind != api.TargetObject {
+		return
+	}
+	for _, artifact := range resolved.DepArtifacts {
+		ext := strings.ToLower(filepath.Ext(artifact))
+		if ext == ".a" || ext == ".so" || ext == ".dylib" {
+			vlog.Info("  NOTE %s: library dependency %s provides build ordering/includes only; it is not merged into the %s output", resolved.Node.FullName, filepath.Base(artifact), kind)
+		}
+	}
+}
+
 func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
 	return s.pkgs[node.PkgName].OutputPath(targetFilename(node.Target.Kind(), node.Target.Name()))
 }
@@ -468,13 +639,6 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string, goFiles 
 	workDir := pkgInfo.SourceDir
 
 	objRel := pkgInfo.OutputPath(filepath.Join(subdirObjects, strings.ReplaceAll(src, "/", "_")+".o"))
-
-	valid, deps := IsSourceValid(src, objRel, goFiles, workDir)
-	if valid {
-		return objRel, deps, nil
-	}
-
-	vlog.Info("  CC %s", src)
 
 	lang := "c"
 	if glob.IsCppFile(src) {
@@ -490,6 +654,13 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string, goFiles 
 	}
 
 	s.ccWriter.AddCommand(src, objRel, opts)
+
+	valid, deps := IsSourceValid(src, objRel, goFiles, workDir)
+	if valid {
+		return objRel, deps, nil
+	}
+
+	vlog.Info("  CC %s", src)
 
 	deps, err := s.compiler.Compile(src, objRel, opts, workDir)
 	if err != nil {
@@ -532,6 +703,21 @@ func (s *Scheduler) needRelink(resolved *ResolvedTarget, objs []string) bool {
 		}
 		if depInfo.ModTime().After(outputTime) {
 			vlog.Info("  RELINK %s (post-link dep %s newer)", resolved.Node.Target.Name(), dep)
+			return true
+		}
+	}
+
+	for _, script := range []string{resolved.VersionScript, resolved.LinkerScript} {
+		if script == "" {
+			continue
+		}
+		scriptInfo, err := os.Stat(resolveWorkPath(workDir, script))
+		if err != nil {
+			vlog.Info("  RELINK %s (script %s missing)", resolved.Node.Target.Name(), script)
+			return true
+		}
+		if scriptInfo.ModTime().After(outputTime) {
+			vlog.Info("  RELINK %s (script %s newer)", resolved.Node.Target.Name(), script)
 			return true
 		}
 	}
@@ -591,7 +777,9 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 	}
 
 	if pkg.InstallDir() == "" && pkg.BuildDir() != "" {
-		writeStamp(filepath.Join(pkg.BuildDir(), ".vmake_stamp"), stamp)
+		if err := writeStamp(filepath.Join(pkg.BuildDir(), ".vmake_stamp"), stamp); err != nil {
+			return fmt.Errorf("write stamp for %s: %w", resolved.Node.PkgName, err)
+		}
 	}
 
 	s.updateVoidLibDirs(resolved, pkg)
@@ -666,7 +854,11 @@ func (s *Scheduler) depArtifactsNewer(resolved *ResolvedTarget) bool {
 	stampTime := stampInfo.ModTime()
 	for _, artifact := range resolved.DepArtifacts {
 		artInfo, err := os.Stat(artifact)
-		if err == nil && artInfo.ModTime().After(stampTime) {
+		if err != nil {
+			vlog.Info("  REBUILD (dependency artifact %s missing)", filepath.Base(artifact))
+			return true
+		}
+		if artInfo.ModTime().After(stampTime) {
 			return true
 		}
 	}
@@ -705,20 +897,7 @@ func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) (bool
 
 	switch kind {
 	case api.TargetBinary:
-		linkerScript := resolved.Node.Target.LinkerScript()
-		if linkerScript == "" && resolved.Node.Target.UseDepLinkerScript() {
-			for _, depFullName := range resolved.Node.Deps {
-				depPkgName, _, _ := strings.Cut(depFullName, ":")
-				depPkg := s.packages[depPkgName]
-				if depPkg != nil && depPkg.ProvidedLinkerScript() != "" {
-					depInfo := s.pkgs[depPkgName]
-					if depInfo != nil {
-						linkerScript = filepath.Join(depInfo.SourceDir, depPkg.ProvidedLinkerScript())
-					}
-					break
-				}
-			}
-		}
+		linkerScript := resolved.LinkerScript
 		vlog.Info("  LINK %s", outputName)
 		policy := LinkPolicy{
 			VersionScript: resolved.VersionScript,

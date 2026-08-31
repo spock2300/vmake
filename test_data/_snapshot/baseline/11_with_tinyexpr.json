@@ -25,16 +25,16 @@
   "install_files": [
     {
       "path": "bin/tinyexpr_test",
-      "size": 37949,
-      "hash": "a9006a61432ce26508b22b8f3efe587a930cf1ec422d4b9ee6e444ead88a8a2a"
+      "size": 37898,
+      "hash": "f9304857fa11cbb0d086b48eb9ac2dda0b04186fc3277b69d0d44ad09fa3d7c6"
     }
   ],
   "build_files": [
     {
       "path": "compile_commands.json",
-      "size": 1286,
-      "hash": "00dc6998f4715ad42845ee6814f1695eca0352f53014c54c3828142b283ae7e1"
+      "size": 1294,
+      "hash": "fb7948cde1ac19fb6fabc32b71ca5c7a2e8b0f846110b19b472a29b7fae67041"
     }
   ],
-  "install_tree_hash": "b4bf898adf5dbed88b4aa6c66269d03d7c053e665a6658a49072d8e14b09bdaf"
+  "install_tree_hash": "bc5da056580be4d90874832df8d8117a346212bbbb88f32175434a83069f5a42"
 }

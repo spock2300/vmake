@@ -16,6 +16,7 @@ var rebuildCmd = &cobra.Command{
 func init() {
 	RootCmd.AddCommand(rebuildCmd)
 	addInstallFlags(rebuildCmd)
+	addBuildFlags(rebuildCmd)
 }
 
 func runRebuild(cmd *cobra.Command, args []string) {

@@ -19,8 +19,9 @@ func (m PkgBuildMeta) IsRemote() bool {
 }
 
 type BuildGraph struct {
-	Nodes map[string]*BuildNode
-	Order []string
+	Nodes   map[string]*BuildNode
+	Order   []string
+	PkgMeta map[string]PkgBuildMeta
 }
 
 func (g *BuildGraph) GetNode(name string) (*BuildNode, error) {
@@ -31,13 +32,16 @@ func (g *BuildGraph) GetNode(name string) (*BuildNode, error) {
 	return node, nil
 }
 
-func (g *BuildGraph) ForEachDefault(fn func(node *BuildNode) error) error {
+func (g *BuildGraph) ForEachDefault(includeTests bool, fn func(node *BuildNode) error) error {
 	for _, fullName := range g.Order {
 		node, err := g.GetNode(fullName)
 		if err != nil {
 			return err
 		}
 		if !node.Target.IsDefault() {
+			continue
+		}
+		if node.Target.IsTest() && !includeTests {
 			continue
 		}
 		if err := fn(node); err != nil {
@@ -60,7 +64,8 @@ func NewBuildGraph(
 	subParents map[string]string,
 ) (*BuildGraph, error) {
 	graph := &BuildGraph{
-		Nodes: make(map[string]*BuildNode),
+		Nodes:   make(map[string]*BuildNode),
+		PkgMeta: pkgMeta,
 	}
 
 	for pkgName, pkgTargets := range targets {
@@ -75,12 +80,14 @@ func NewBuildGraph(
 		}
 	}
 
+	resolver := newDepResolver(graph.Nodes, pkgMeta, subParents)
+
 	for pkgName, pkgTargets := range targets {
 		for targetName, target := range pkgTargets {
 			fullName := fmt.Sprintf("%s:%s", pkgName, targetName)
 			node := graph.Nodes[fullName]
 
-			resolved, err := resolveDeps(target.Deps(), pkgName, graph.Nodes, pkgMeta, subParents, nil)
+			resolved, err := resolver.resolveDeps(target.Deps(), pkgName, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -97,90 +104,101 @@ func NewBuildGraph(
 	return graph, nil
 }
 
-func resolveDeps(
-	deps []string,
-	currentPkg string,
-	nodes map[string]*BuildNode,
-	pkgMeta map[string]PkgBuildMeta,
-	subParents map[string]string,
-	path []string,
-) ([]string, error) {
+type depResolver struct {
+	nodes      map[string]*BuildNode
+	pkgMeta    map[string]PkgBuildMeta
+	subParents map[string]string
+	pkgTargets map[string][]string
+	memo       map[string][]string
+}
+
+func newDepResolver(nodes map[string]*BuildNode, pkgMeta map[string]PkgBuildMeta, subParents map[string]string) *depResolver {
+	pkgTargets := make(map[string][]string)
+	for fullName := range nodes {
+		if pkg, _, ok := strings.Cut(fullName, ":"); ok {
+			pkgTargets[pkg] = append(pkgTargets[pkg], fullName)
+		}
+	}
+	for _, names := range pkgTargets {
+		sort.Strings(names)
+	}
+	return &depResolver{
+		nodes:      nodes,
+		pkgMeta:    pkgMeta,
+		subParents: subParents,
+		pkgTargets: pkgTargets,
+		memo:       make(map[string][]string),
+	}
+}
+
+func (d *depResolver) resolveDeps(deps []string, currentPkg string, path []string) ([]string, error) {
 	var result []string
 	seen := make(map[string]bool)
 
 	for _, dep := range deps {
-		expanded, err := resolveDep(dep, currentPkg, nodes, pkgMeta, subParents, path)
+		expanded, err := d.resolveDep(dep, currentPkg, path)
 		if err != nil {
 			return nil, err
 		}
-		for _, d := range expanded {
-			if !seen[d] {
-				seen[d] = true
-				result = append(result, d)
+		for _, x := range expanded {
+			if !seen[x] {
+				seen[x] = true
+				result = append(result, x)
 			}
 		}
 	}
 	return result, nil
 }
 
-func resolveDep(
-	dep string,
-	currentPkg string,
-	nodes map[string]*BuildNode,
-	pkgMeta map[string]PkgBuildMeta,
-	subParents map[string]string,
-	path []string,
-) ([]string, error) {
+func (d *depResolver) resolveDep(dep string, currentPkg string, path []string) ([]string, error) {
 	if strings.Contains(dep, ":") {
 		pkgRef, targetSpec, _ := strings.Cut(dep, ":")
-		pkgRef = resolveDepPkgName(currentPkg, pkgRef, subParents, pkgMeta)
+		pkgRef = d.resolveDepPkgName(currentPkg, pkgRef)
 		if targetSpec == "*" {
-			return resolvePackageRef(pkgRef, nodes, pkgMeta, subParents, path)
+			return d.resolvePackageRef(pkgRef, path)
 		}
 		fullDep := pkgRef + ":" + targetSpec
-		if _, exists := nodes[fullDep]; !exists {
+		if _, exists := d.nodes[fullDep]; !exists {
 			return nil, fmt.Errorf("dependency not found: %s (resolved: %s)", dep, fullDep)
 		}
 		return []string{fullDep}, nil
 	}
 
 	if strings.Contains(dep, "/") {
-		return resolvePackageRef(dep, nodes, pkgMeta, subParents, path)
+		return d.resolvePackageRef(dep, path)
 	}
 
 	qualified := currentPkg + ":" + dep
-	if _, exists := nodes[qualified]; !exists {
+	if _, exists := d.nodes[qualified]; !exists {
 		return nil, fmt.Errorf("dependency not found: %s", dep)
 	}
 	return []string{qualified}, nil
 }
 
-func resolveDepPkgName(currentPkg, depName string, subParents map[string]string, pkgMeta map[string]PkgBuildMeta) string {
-	return api.ResolveSubPackageName(currentPkg, depName, subParents, func(candidate string) bool {
-		_, ok := pkgMeta[candidate]
+func (d *depResolver) resolveDepPkgName(currentPkg, depName string) string {
+	return api.ResolveSubPackageName(currentPkg, depName, d.subParents, func(candidate string) bool {
+		_, ok := d.pkgMeta[candidate]
 		return ok
 	})
 }
 
-func resolvePackageRef(
-	pkgRef string,
-	nodes map[string]*BuildNode,
-	pkgMeta map[string]PkgBuildMeta,
-	subParents map[string]string,
-	path []string,
-) ([]string, error) {
+func (d *depResolver) resolvePackageRef(pkgRef string, path []string) ([]string, error) {
 	if err := api.CheckCycle(path, pkgRef); err != nil {
 		return nil, err
+	}
+
+	if cached, ok := d.memo[pkgRef]; ok {
+		return cached, nil
 	}
 
 	var result []string
 
 	hasMeta := false
-	if meta, ok := pkgMeta[pkgRef]; ok {
+	if meta, ok := d.pkgMeta[pkgRef]; ok {
 		hasMeta = true
 		for _, transDep := range meta.Deps {
-			transDep = resolveDepPkgName(pkgRef, transDep, subParents, pkgMeta)
-			expanded, err := resolvePackageRef(transDep, nodes, pkgMeta, subParents, append(path, pkgRef))
+			transDep = d.resolveDepPkgName(pkgRef, transDep)
+			expanded, err := d.resolvePackageRef(transDep, append(path, pkgRef))
 			if err != nil {
 				return nil, err
 			}
@@ -188,25 +206,14 @@ func resolvePackageRef(
 		}
 	}
 
-	pkgTargetNodes := findPackageTargetNodes(pkgRef, nodes)
+	pkgTargetNodes := d.pkgTargets[pkgRef]
 	if len(pkgTargetNodes) == 0 && !hasMeta {
 		return nil, fmt.Errorf("package not found in build graph: %s", pkgRef)
 	}
 	result = append(result, pkgTargetNodes...)
 
+	d.memo[pkgRef] = result
 	return result, nil
-}
-
-func findPackageTargetNodes(pkgName string, nodes map[string]*BuildNode) []string {
-	var result []string
-	prefix := pkgName + ":"
-	for fullName := range nodes {
-		if strings.HasPrefix(fullName, prefix) {
-			result = append(result, fullName)
-		}
-	}
-	sort.Strings(result)
-	return result
 }
 
 func topologicalSort(nodes map[string]*BuildNode) ([]string, error) {

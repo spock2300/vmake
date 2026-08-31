@@ -176,6 +176,9 @@ func executeCleanHooks(ctx *RuntimeContext, localOnly bool) {
 		return
 	}
 
+	applyGlobalFlagsFromNeeded(ctx, computeReachable(ctx.DepGraph))
+	globalFlagsHash := build.GlobalFlagsHash()
+
 	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
 	localPkgOptions := collectLocalPkgOptions(ctx)
 	depsDir := getDepsDir()
@@ -191,13 +194,26 @@ func executeCleanHooks(ctx *RuntimeContext, localOnly bool) {
 
 		entry := config.GetEntry(ctx.Config, name)
 		if node.IsLocal() {
-			pkgDirs[name] = resolvePkgDir(node, depsDir, resolvedTools.CC, cfg.Mode, localPkgOptions[name])
+			pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, resolvedTools.CC, cfg.Mode, localPkgOptions[name], globalFlagsHash)
 		} else {
 			sourceDir := filepath.Join(depsDir, name, "src")
 			if info, err := os.Stat(sourceDir); err != nil || !info.IsDir() {
 				continue
 			}
-			pkgDirs[name] = resolvePkgDir(node, depsDir, resolvedTools.CC, cfg.Mode, entry.Options)
+			var version, commit string
+			if locked, ok := ctx.Lock.Get(name); ok && locked.Version != "" {
+				version, commit = locked.Version, locked.Commit
+			} else if node.Native != nil && node.Native.Selected != "" {
+				version, commit = node.Native.Selected, node.Native.Commit
+			} else if entry.Version != "" {
+				version = entry.Version
+			} else {
+				continue
+			}
+			repoName, pkgName, _ := api.SplitPackageRef(name)
+			versionDir := filepath.Join(getCacheDir(), repoName, pkgName, version)
+			pkgDirs[name] = makeRemotePkgDirs(versionDir, sourceDir, resolvedTools.CC, cfg.Mode, entry.Options,
+				version, commit, globalFlagsHash)
 		}
 
 		detectExistingSrcDir(node)
@@ -235,8 +251,17 @@ func detectExistingSrcDir(node *resolver.PackageNode) bool {
 	return false
 }
 
+func isLegacyRealSrcDir(node *resolver.PackageNode) bool {
+	if !detectExistingSrcDir(node) {
+		return false
+	}
+	srcDir := filepath.Join(node.Source.Dir, "src")
+	_, err := os.Readlink(srcDir)
+	return err != nil
+}
+
 func cleanBuildKeyDir(dir, pkgName, tcName, ccPath, mode string, options map[string]any) bool {
-	buildKey := build.BuildKey(ccPath, mode, options)
+	buildKey := build.BuildKey(ccPath, mode, options, build.GlobalFlagsHash())
 	return cleanDir(build.BuildPath(dir, buildKey, ""), pkgName, buildKey)
 }
 

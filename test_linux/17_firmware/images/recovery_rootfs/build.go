@@ -46,7 +46,8 @@ func Main(p *api.Package) {
 				}
 
 				os.Remove(imageFile)
-				return pkg.Run("mksquashfs", staging, imageFile, "-noappend")
+				pkg.Run("mksquashfs", staging, imageFile, "-noappend")
+				return nil
 			})
 	})
 }

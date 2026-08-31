@@ -6,8 +6,8 @@ import (
 
 func TestBuildKeyDeterministic(t *testing.T) {
 	opts := map[string]any{"a": 1, "b": "x"}
-	k1 := BuildKey("/usr/bin/gcc", "debug", opts)
-	k2 := BuildKey("/usr/bin/gcc", "debug", opts)
+	k1 := BuildKey("/usr/bin/gcc", "debug", opts, "")
+	k2 := BuildKey("/usr/bin/gcc", "debug", opts, "")
 	if k1 != k2 {
 		t.Errorf("BuildKey not deterministic: %q vs %q", k1, k2)
 	}
@@ -15,8 +15,8 @@ func TestBuildKeyDeterministic(t *testing.T) {
 
 func TestBuildKeyDiffersOnToolchain(t *testing.T) {
 	opts := map[string]any{"a": 1}
-	k1 := BuildKey("/usr/bin/gcc", "debug", opts)
-	k2 := BuildKey("/usr/bin/arm-gcc", "debug", opts)
+	k1 := BuildKey("/usr/bin/gcc", "debug", opts, "")
+	k2 := BuildKey("/usr/bin/arm-gcc", "debug", opts, "")
 	if k1 == k2 {
 		t.Error("BuildKey should differ when toolchain differs")
 	}
@@ -24,33 +24,47 @@ func TestBuildKeyDiffersOnToolchain(t *testing.T) {
 
 func TestBuildKeyDiffersOnMode(t *testing.T) {
 	opts := map[string]any{"a": 1}
-	k1 := BuildKey("gcc", "debug", opts)
-	k2 := BuildKey("gcc", "release", opts)
+	k1 := BuildKey("gcc", "debug", opts, "")
+	k2 := BuildKey("gcc", "release", opts, "")
 	if k1 == k2 {
 		t.Error("BuildKey should differ when mode differs")
 	}
 }
 
 func TestBuildKeyDiffersOnOptions(t *testing.T) {
-	k1 := BuildKey("gcc", "debug", map[string]any{"a": 1})
-	k2 := BuildKey("gcc", "debug", map[string]any{"a": 2})
+	k1 := BuildKey("gcc", "debug", map[string]any{"a": 1}, "")
+	k2 := BuildKey("gcc", "debug", map[string]any{"a": 2}, "")
 	if k1 == k2 {
 		t.Error("BuildKey should differ when option value differs")
 	}
 }
 
 func TestBuildKeyOrderIndependent(t *testing.T) {
-	k1 := BuildKey("gcc", "debug", map[string]any{"a": 1, "b": 2})
-	k2 := BuildKey("gcc", "debug", map[string]any{"b": 2, "a": 1})
+	k1 := BuildKey("gcc", "debug", map[string]any{"a": 1, "b": 2}, "")
+	k2 := BuildKey("gcc", "debug", map[string]any{"b": 2, "a": 1}, "")
 	if k1 != k2 {
 		t.Errorf("BuildKey should be order-independent for options: %q vs %q", k1, k2)
 	}
 }
 
 func TestBuildKeyEmpty(t *testing.T) {
-	k := BuildKey("", "", nil)
+	k := BuildKey("", "", nil, "")
 	if k == "" {
 		t.Error("BuildKey should produce non-empty hash for empty input")
+	}
+}
+
+func TestBuildKeyDiffersOnExtra(t *testing.T) {
+	opts := map[string]any{"a": 1}
+	k1 := BuildKey("gcc", "debug", opts, JoinKeyExtra("1.0.0", "abc", "h1"))
+	k2 := BuildKey("gcc", "debug", opts, JoinKeyExtra("1.1.0", "abc", "h1"))
+	k3 := BuildKey("gcc", "debug", opts, JoinKeyExtra("1.0.0", "def", "h1"))
+	k4 := BuildKey("gcc", "debug", opts, JoinKeyExtra("1.0.0", "abc", "h2"))
+	if k1 == k2 || k1 == k3 || k1 == k4 {
+		t.Error("BuildKey should differ when version/commit/globalFlags differ")
+	}
+	if BuildKey("gcc", "debug", opts, "") == k1 {
+		t.Error("BuildKey should differ between empty and non-empty extra")
 	}
 }
 

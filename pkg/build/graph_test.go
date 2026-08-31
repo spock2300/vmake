@@ -166,7 +166,7 @@ func TestBuildGraphForEachDefaultSkipsNonDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	visited := []string{}
-	err = graph.ForEachDefault(func(n *BuildNode) error {
+	err = graph.ForEachDefault(false, func(n *BuildNode) error {
 		visited = append(visited, n.FullName)
 		return nil
 	})
@@ -175,6 +175,37 @@ func TestBuildGraphForEachDefaultSkipsNonDefault(t *testing.T) {
 	}
 	if len(visited) != 1 || visited[0] != "p:default" {
 		t.Errorf("ForEachDefault visited = %v, want [p:default]", visited)
+	}
+}
+
+func TestBuildGraphForEachDefaultSkipsTestsUnlessIncluded(t *testing.T) {
+	defaultT := makeTargetWithDeps("default")
+	testT := makeTargetWithDeps("tester").SetTest(true)
+
+	graph, err := NewBuildGraph(makeTargets("p", defaultT, testT), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	visited := []string{}
+	if err := graph.ForEachDefault(false, func(n *BuildNode) error {
+		visited = append(visited, n.FullName)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(visited) != 1 || visited[0] != "p:default" {
+		t.Errorf("ForEachDefault(false) visited = %v, want [p:default]", visited)
+	}
+
+	visited = []string{}
+	if err := graph.ForEachDefault(true, func(n *BuildNode) error {
+		visited = append(visited, n.FullName)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(visited) != 2 {
+		t.Errorf("ForEachDefault(true) visited = %v, want 2 entries", visited)
 	}
 }
 
@@ -194,9 +225,66 @@ func TestResolveDepPkgName(t *testing.T) {
 	pkgMeta := map[string]PkgBuildMeta{
 		"parent":     {},
 		"parent/sub": {},
+		"parent/dep": {},
 	}
-	got := resolveDepPkgName("parent/sub", "dep", subParents, pkgMeta)
-	_ = got
+	d := newDepResolver(nil, pkgMeta, subParents)
+	if got := d.resolveDepPkgName("parent/sub", "dep"); got != "parent/dep" {
+		t.Errorf("resolveDepPkgName = %q, want parent/dep", got)
+	}
+	if got := d.resolveDepPkgName("parent/sub", "nomatch"); got != "nomatch" {
+		t.Errorf("unresolvable dep should stay bare, got %q", got)
+	}
+}
+
+func TestBuildGraphDiamondPackageRefMemo(t *testing.T) {
+	app := makeTargetWithDeps("app", "left:*", "right:*")
+	leftLib := makeTargetWithDeps("lib")
+	rightLib := makeTargetWithDeps("lib")
+	commonLib := makeTargetWithDeps("common")
+
+	targets := map[string]map[string]*api.Target{
+		"main":   {"app": app},
+		"left":   {"lib": leftLib},
+		"right":  {"lib": rightLib},
+		"common": {"common": commonLib},
+	}
+	pkgMeta := map[string]PkgBuildMeta{
+		"main":   {Deps: []string{"left", "right"}},
+		"left":   {Deps: []string{"common"}},
+		"right":  {Deps: []string{"common"}},
+		"common": {},
+	}
+	graph, err := NewBuildGraph(targets, pkgMeta, nil)
+	if err != nil {
+		t.Fatalf("NewBuildGraph: %v", err)
+	}
+	appNode, _ := graph.GetNode("main:app")
+	got := append([]string{}, appNode.Deps...)
+	sort.Strings(got)
+	want := []string{"common:common", "left:lib", "right:lib"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("diamond deps = %v, want %v", got, want)
+	}
+}
+
+func TestBuildGraphDiamondCycleError(t *testing.T) {
+	app := makeTargetWithDeps("app", "left:*")
+	leftLib := makeTargetWithDeps("lib")
+	commonLib := makeTargetWithDeps("common")
+
+	targets := map[string]map[string]*api.Target{
+		"main":   {"app": app},
+		"left":   {"lib": leftLib},
+		"common": {"common": commonLib},
+	}
+	pkgMeta := map[string]PkgBuildMeta{
+		"main":   {Deps: []string{"left"}},
+		"left":   {Deps: []string{"common"}},
+		"common": {Deps: []string{"left"}},
+	}
+	if _, err := NewBuildGraph(targets, pkgMeta, nil); err == nil {
+		t.Error("diamond with cycle should produce error")
+	}
 }
 
 func TestBuildPath(t *testing.T) {

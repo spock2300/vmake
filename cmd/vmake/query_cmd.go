@@ -18,10 +18,93 @@ import (
 )
 
 func newQueryCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "query",
 		Short: "Show dependency tree",
 		Run:   runQuery,
+	}
+	cmd.AddCommand(newQueryTargetsCmd())
+	cmd.AddCommand(newQueryConfigCmd())
+	return cmd
+}
+
+func newQueryTargetsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "targets",
+		Short: "List build targets without building",
+		Run:   runQueryTargets,
+	}
+}
+
+func newQueryConfigCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "config <pkg>",
+		Short: "Show effective option values and generated defines",
+		Args:  cobra.ExactArgs(1),
+		Run:   runQueryConfig,
+	}
+}
+
+func runQueryTargets(cmd *cobra.Command, args []string) {
+	vlog.SetLevel(vlog.Quiet)
+
+	ctx := resolveToConfig()
+	globalValues := config.BuildGlobalValues(ctx.Config)
+	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
+
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if node == nil || !node.IsLocal() || node.Pkg == nil {
+			continue
+		}
+		kinds := collectTargetKinds(node.Pkg, name, pkgDirs[name].SourceDir, ctx, globalValues)
+		for _, k := range kinds {
+			fmt.Printf("%s:%s (%s)\n", name, k.name, k.kind)
+		}
+	}
+}
+
+func runQueryConfig(cmd *cobra.Command, args []string) {
+	vlog.SetLevel(vlog.Quiet)
+
+	name := args[0]
+	ctx := resolveToConfig()
+
+	node := ctx.DepGraph.Packages[name]
+	if node == nil {
+		fatalMsg("package %q not found", name)
+	}
+	if node.IsNative() {
+		fmt.Printf("%s@%s\n", name, node.Native.Selected)
+	}
+
+	opts := make(map[string]*api.Option)
+	for n, o := range ctx.AllOptions[name] {
+		opts[n] = o
+	}
+	mergeMapNoOverwrite(opts, ctx.GlobalOptions)
+
+	globalValues := config.BuildGlobalValues(ctx.Config)
+	entry := config.GetEntry(ctx.Config, name)
+	vals := make(map[string]any)
+	for n, v := range entry.Options {
+		vals[n] = v
+	}
+	mergeMapNoOverwrite(vals, globalValues)
+
+	if s := formatOptions(ctx, name, globalValues); s != "" {
+		fmt.Println(s)
+	}
+	for _, d := range api.ConfigToDefines(opts, vals) {
+		fmt.Printf("-D%s\n", d)
+	}
+}
+
+func mergeMapNoOverwrite[K comparable, V any](dst, src map[K]V) {
+	for k, v := range src {
+		if _, exists := dst[k]; !exists {
+			dst[k] = v
+		}
 	}
 }
 

@@ -77,12 +77,15 @@ func runCheckSymbols(strict bool) {
 	if err != nil {
 		vlog.Fatal("resolve tools: %v", err)
 	}
-	allOpts := collectAllPkgOptions(ctx, computeReachable(ctx.DepGraph))
+	needed := computeReachable(ctx.DepGraph)
+	applyGlobalFlagsFromNeeded(ctx, needed)
+	globalFlagsHash := build.GlobalFlagsHash()
+	allOpts := collectAllPkgOptions(ctx, needed)
 	for name, node := range ctx.DepGraph.Packages {
 		if node == nil || node.Source == nil || !node.IsLocal() {
 			continue
 		}
-		pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, resolvedTools.CC, cfg.Mode, allOpts[name])
+		pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, resolvedTools.CC, cfg.Mode, allOpts[name], globalFlagsHash)
 	}
 
 	artifacts := discoverArtifacts(ctx, pkgDirs, globalValues)

@@ -51,7 +51,7 @@ func TestRequiresReset(t *testing.T) {
 }
 
 func TestRequiresAddViaContext(t *testing.T) {
-	ctx := NewRequireContextForConfig(nil, nil, nil)
+	ctx := NewRequireContextForConfig("", nil, nil, nil)
 	ctx.AddRequires("foo>=1.0", "bar")
 	got := ctx.GetRequires()
 	want := []RequireInfo{
@@ -64,7 +64,7 @@ func TestRequiresAddViaContext(t *testing.T) {
 }
 
 func TestRequiresResetViaContext(t *testing.T) {
-	ctx := NewRequireContextForConfig(nil, nil, nil)
+	ctx := NewRequireContextForConfig("", nil, nil, nil)
 	ctx.AddRequires("foo")
 	if len(ctx.GetRequires()) != 1 {
 		t.Fatal("expected 1 require")
@@ -81,7 +81,7 @@ func TestRequireContextRunFuncs(t *testing.T) {
 		called++
 		ctx.AddRequires("triggered")
 	}
-	ctx := NewRequireContextForConfig(nil, nil, []RequireFunc{fn, fn})
+	ctx := NewRequireContextForConfig("", nil, nil, []RequireFunc{fn, fn})
 	ctx.RunFuncs()
 	if called != 2 {
 		t.Errorf("RunFuncs called %d times, want 2", called)

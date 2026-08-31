@@ -260,41 +260,6 @@ func TestRestoreKConfigFilesAppliesPatches(t *testing.T) {
 	}
 }
 
-func TestParseBuildGoExtractsVersionsAndGitURLs(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "build.go")
-	content := `package main
-import "github.com/spock2300/vmake/pkg/api"
-func Main(p *api.Package) {
-	p.AddVersion("1.0.0", "v1.0.0")
-	p.AddVersion("2.0.0", "v2.0.0")
-	p.SetGit("https://example.com/repo.git")
-}
-`
-	_ = os.WriteFile(path, []byte(content), 0644)
-
-	info, err := ParseBuildGo(path)
-	if err != nil {
-		t.Fatalf("ParseBuildGo: %v", err)
-	}
-	if len(info.Versions) != 2 {
-		t.Errorf("Versions = %v, want 2 entries", info.Versions)
-	}
-	if info.Versions["1.0.0"] != "v1.0.0" {
-		t.Errorf("Versions[1.0.0] = %q", info.Versions["1.0.0"])
-	}
-	if len(info.GitURLs) != 1 || info.GitURLs[0] != "https://example.com/repo.git" {
-		t.Errorf("GitURLs = %v", info.GitURLs)
-	}
-}
-
-func TestParseBuildGoMissingFile(t *testing.T) {
-	_, err := ParseBuildGo("/nonexistent/build.go")
-	if err == nil {
-		t.Error("missing file should produce error")
-	}
-}
-
 func TestResolveModePrecedence(t *testing.T) {
 	cfg := &config.ConfigFile{Global: &config.GlobalConfig{Mode: "release"}}
 	tests := []struct {
@@ -354,7 +319,7 @@ func TestResolveWithDefault(t *testing.T) {
 }
 
 func TestMakeLocalPkgDirsLayout(t *testing.T) {
-	dirs := makeLocalPkgDirs("/script", "/usr/bin/gcc", "debug", map[string]any{"x": 1})
+	dirs := makeLocalPkgDirs("/script", "/usr/bin/gcc", "debug", map[string]any{"x": 1}, "gh")
 	if dirs.SourceDir != "/script" {
 		t.Errorf("SourceDir = %q", dirs.SourceDir)
 	}
@@ -367,17 +332,15 @@ func TestMakeLocalPkgDirsLayout(t *testing.T) {
 }
 
 func TestMakeRemotePkgDirsLayout(t *testing.T) {
-	dirs := makeRemotePkgDirs("/deps", "official/zlib", "/usr/bin/gcc", "release", map[string]any{"x": 1}, "/src")
+	dirs := makeRemotePkgDirs("/vd", "/src", "/usr/bin/gcc", "release", map[string]any{"x": 1}, "1.0.0", "c0ffee", "gh")
 	if dirs.SourceDir != "/src" {
 		t.Errorf("SourceDir = %q", dirs.SourceDir)
 	}
-	if dirs.BuildDir != "/deps/official/zlib/out/"+filepath.Base(dirs.BuildDir)+"/build" {
+	if !stringsContains(dirs.BuildDir, "/vd/out/") {
+		t.Errorf("BuildDir should be under /vd/out/: got %q", dirs.BuildDir)
 	}
-	if !stringsContains(dirs.BuildDir, "/deps/official/zlib/out/") {
-		t.Errorf("BuildDir should be under deps/official/zlib/out/: got %q", dirs.BuildDir)
-	}
-	if !stringsContains(dirs.InstallDir, "/deps/official/zlib/out/") {
-		t.Errorf("InstallDir should be under deps/official/zlib/out/: got %q", dirs.InstallDir)
+	if !stringsContains(dirs.InstallDir, "/vd/out/") {
+		t.Errorf("InstallDir should be under /vd/out/: got %q", dirs.InstallDir)
 	}
 	if dirs.InstallDir == "" {
 		t.Error("remote pkg should have InstallDir")
@@ -408,13 +371,48 @@ func TestEnsureGitignorePreservesExistingContent(t *testing.T) {
 	original := "*.o\nbuild/\n"
 	_ = os.WriteFile(gitignore, []byte(original), 0644)
 
-	ensureGitignore(dir)
+	if err := ensureGitignore(dir); err != nil {
+		t.Fatalf("ensureGitignore: %v", err)
+	}
 	data, _ := os.ReadFile(gitignore)
 	if !stringsContains(string(data), "*.o") {
 		t.Errorf("existing content should be preserved, got %q", string(data))
 	}
 	if !stringsContains(string(data), "vmake_deps") {
 		t.Errorf("vmake_deps should be appended, got %q", string(data))
+	}
+}
+
+func TestEnsureGitignoreNegatedPatternNotCounted(t *testing.T) {
+	dir := t.TempDir()
+	gitignore := filepath.Join(dir, ".gitignore")
+	_ = os.WriteFile(gitignore, []byte("!vmake_deps/\n"), 0644)
+
+	if err := ensureGitignore(dir); err != nil {
+		t.Fatalf("ensureGitignore: %v", err)
+	}
+	data, _ := os.ReadFile(gitignore)
+	content := string(data)
+	if !stringsContains(content, "!vmake_deps/") {
+		t.Errorf("negated pattern should be preserved, got %q", content)
+	}
+	if !stringsContains(content, "\nvmake_deps/") {
+		t.Errorf("vmake_deps/ should still be appended after a negated pattern, got %q", content)
+	}
+}
+
+func TestEnsureGitignoreExistingEntryNoAppend(t *testing.T) {
+	dir := t.TempDir()
+	gitignore := filepath.Join(dir, ".gitignore")
+	original := "build/\nvmake_deps/\n"
+	_ = os.WriteFile(gitignore, []byte(original), 0644)
+
+	if err := ensureGitignore(dir); err != nil {
+		t.Fatalf("ensureGitignore: %v", err)
+	}
+	data, _ := os.ReadFile(gitignore)
+	if string(data) != original {
+		t.Errorf("existing vmake_deps entry should prevent append, got %q", string(data))
 	}
 }
 

@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/spock2300/vmake/internal/flock"
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/toposort"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/lockfile"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/repo"
 )
@@ -17,6 +17,7 @@ type NativePackageInfo struct {
 	GitURL   string
 	Versions map[string]string
 	Selected string
+	Commit   string
 }
 
 type PackageNode struct {
@@ -65,12 +66,16 @@ func (g *Graph) IsFrozen() bool {
 }
 
 type Resolver struct {
-	sources          map[string]*buildscript.Source
-	graph            *Graph
-	repoMgr          *repo.RepoManager
-	depsDir          string
-	globalSourcesDir string
-	subParents       map[string]string
+	sources      map[string]*buildscript.Source
+	graph        *Graph
+	repoMgr      *repo.RepoManager
+	depsDir      string
+	sourceMgr    *repo.SourceManager
+	subParents   map[string]string
+	lockfile     *lockfile.Lock
+	ignoreLock   bool
+	configPins   map[string]string
+	trustChecker buildscript.ScriptTrustChecker
 }
 
 func NewResolver(repoMgr *repo.RepoManager, depsDir string) *Resolver {
@@ -83,8 +88,21 @@ func NewResolver(repoMgr *repo.RepoManager, depsDir string) *Resolver {
 	}
 }
 
-func (r *Resolver) SetGlobalSourcesDir(dir string) {
-	r.globalSourcesDir = dir
+func (r *Resolver) SetSourceManager(sm *repo.SourceManager) {
+	r.sourceMgr = sm
+}
+
+func (r *Resolver) SetLockfile(l *lockfile.Lock, ignore bool) {
+	r.lockfile = l
+	r.ignoreLock = ignore
+}
+
+func (r *Resolver) SetTrustChecker(c buildscript.ScriptTrustChecker) {
+	r.trustChecker = c
+}
+
+func (r *Resolver) SetConfigPins(pins map[string]string) {
+	r.configPins = pins
 }
 
 func (r *Resolver) SubParents() map[string]string {
@@ -162,7 +180,11 @@ func (r *Resolver) FilterDeps(id string, cfgVals map[string]any, options map[str
 	deps := pkg.GetRequires().Get()
 	newDeps := make([]string, 0, len(deps))
 	for _, req := range deps {
-		newDeps = append(newDeps, r.resolveDepName(id, req.Name))
+		resolved := r.resolveDepName(id, req.Name)
+		if _, ok := r.graph.Packages[resolved]; !ok {
+			return fmt.Errorf("dependency %q (required by %s) not found in dependency graph; declare it unconditionally in OnRequire (use ctx.When() for config-conditional requires)", req.Name, id)
+		}
+		newDeps = append(newDeps, resolved)
 	}
 	node.Deps = newDeps
 	return nil
@@ -221,7 +243,7 @@ func (r *Resolver) resolveOne(id string, src *buildscript.Source, path []string)
 }
 
 func (r *Resolver) PreparePackage(src *buildscript.Source) (*api.Package, error) {
-	return buildscript.LoadBuildScript(*src)
+	return buildscript.LoadBuildScriptWithTrust(*src, r.trustChecker)
 }
 
 func (r *Resolver) resolveFromCache(id string, pkg *api.Package, src *buildscript.Source, path []string) (*PackageNode, error) {
@@ -260,6 +282,7 @@ func (r *Resolver) findSource(id string, constraint string) (*buildscript.Source
 	buildGo, err := r.repoMgr.FindPackageGo(repoName, pkgName)
 	if err == nil {
 		src := buildscript.NewSource(id, buildGo, filepath.Dir(buildGo), api.SourceRemote)
+		src.Repo = repoName
 		r.sources[id] = src
 		return src, nil
 	}
@@ -272,26 +295,90 @@ func (r *Resolver) findSource(id string, constraint string) (*buildscript.Source
 }
 
 func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*buildscript.Source, error) {
+	if r.sourceMgr == nil {
+		return nil, fmt.Errorf("resolver for %s has no source manager configured", id)
+	}
 	urlTemplate, err := r.repoMgr.GetNativeURL(repoName)
 	if err != nil {
 		return nil, err
 	}
 
 	gitURL := repo.ResolveNativeURL(urlTemplate, pkgName)
-	globalDir := filepath.Join(r.globalSourcesDir, repoName, pkgName)
-	localSrc := filepath.Join(r.depsDir, repoName, pkgName, "src")
 
-	selectedVersion, selectedRef, versions, err := r.resolveNativeVersion(id, gitURL, globalDir, localSrc, constraint)
-	if err != nil {
-		return nil, err
+	pkgStub := api.NewPackage()
+	pkgStub.Repo = repoName
+	pkgStub.Name = pkgName
+	pkgStub.SetGit(gitURL)
+
+	pinVersion, pinCommit, hasPin := r.pinnedVersion(id)
+
+	var versions map[string]string
+	var selectedVersion string
+	var res *repo.SourceResult
+
+	if hasPin && r.sourceMgr.HasMaterializedVersion(pkgStub, pinVersion) {
+		if err := r.checkConstraint(id, pinVersion, constraint); err != nil {
+			return nil, err
+		}
+		res, err = r.sourceMgr.EnsureVersion(pkgStub, pinVersion)
+		if err != nil {
+			return nil, err
+		}
+		if pinCommit != "" && res.Commit != pinCommit {
+			return nil, fmt.Errorf("cached %s@%s is commit %s but lock pins %s; run 'vmake lock update' to re-resolve", id, pinVersion, res.Commit, pinCommit)
+		}
+		versions = map[string]string{pinVersion: repo.DescribeTag(filepath.Join(res.VersionDir, "src"))}
+		selectedVersion = pinVersion
+		vlog.Info("  %s@%s (pinned, cached)", id, selectedVersion)
+	} else {
+		refsDir, err := r.sourceMgr.EnsureRefsClone(pkgStub, !hasPin)
+		if err != nil {
+			return nil, fmt.Errorf("refs clone for %s: %w", id, err)
+		}
+
+		tags, err := repo.ListTags(refsDir)
+		if err != nil {
+			return nil, fmt.Errorf("list tags for %s: %w", id, err)
+		}
+		versions = repo.FilterValidVersions(tags)
+		if hasPin && versions[pinVersion] == "" {
+			refsDir, err = r.sourceMgr.EnsureRefsClone(pkgStub, true)
+			if err != nil {
+				return nil, fmt.Errorf("refs clone for %s: %w", id, err)
+			}
+			tags, err = repo.ListTags(refsDir)
+			if err != nil {
+				return nil, fmt.Errorf("list tags for %s: %w", id, err)
+			}
+			versions = repo.FilterValidVersions(tags)
+		}
+		if len(versions) == 0 {
+			return nil, fmt.Errorf("no valid versions found for %s", id)
+		}
+		pkgStub.SetVersions(versions)
+
+		selectedVersion, _, err = r.selectNativeVersion(id, versions, constraint)
+		if err != nil {
+			return nil, err
+		}
+
+		vlog.Info("  %s@%s", id, selectedVersion)
+
+		res, err = r.sourceMgr.EnsureVersion(pkgStub, selectedVersion)
+		if err != nil {
+			return nil, err
+		}
+		if pinCommit != "" && selectedVersion == pinVersion && res.Commit != pinCommit {
+			return nil, fmt.Errorf("%s@%s resolved to commit %s but lock pins %s; run 'vmake lock update' to re-resolve", id, selectedVersion, res.Commit, pinCommit)
+		}
 	}
 
-	vlog.Info("  %s@%s (ref: %s)", id, selectedVersion, selectedRef)
-
-	src, err := r.checkoutNativeSource(id, gitURL, localSrc, selectedRef)
-	if err != nil {
-		return nil, err
+	buildGo := filepath.Join(res.LocalSrc, "build.go")
+	if !fs.FileExists(buildGo) {
+		return nil, fmt.Errorf("build.go not found in %s", res.LocalSrc)
 	}
+	src := buildscript.NewSource(id, buildGo, res.LocalSrc, api.SourceRemote)
+	src.Repo = repoName
 
 	r.sources[id] = src
 
@@ -301,6 +388,7 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 	}
 
 	node := NewPackageNode(id, src, pkg).WithNative(gitURL, versions, selectedVersion)
+	node.Native.Commit = res.Commit
 	if constraint != "" {
 		node.Constraints = append(node.Constraints, constraint)
 	}
@@ -316,9 +404,69 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 		}
 	}
 
-	r.scanSubPackages(id, localSrc)
+	r.scanSubPackages(id, res.LocalSrc)
 
 	return src, nil
+}
+
+func (r *Resolver) selectNativeVersion(id string, versions map[string]string, constraint string) (string, string, error) {
+	if pin, ok := r.configPins[id]; ok && pin != "" {
+		ref, exists := versions[pin]
+		if !exists {
+			return "", "", fmt.Errorf("config-pinned version %s for %s not found in upstream tags", pin, id)
+		}
+		if err := r.checkConstraint(id, pin, constraint); err != nil {
+			return "", "", err
+		}
+		return pin, ref, nil
+	}
+	if locked, ok := r.lockfileEntry(id); ok {
+		ref, exists := versions[locked.Version]
+		if !exists {
+			return "", "", fmt.Errorf("locked version %s for %s not found in upstream tags; run 'vmake lock update' to re-resolve", locked.Version, id)
+		}
+		if err := r.checkConstraint(id, locked.Version, constraint); err != nil {
+			return "", "", err
+		}
+		return locked.Version, ref, nil
+	}
+	return repo.SelectNativeVersion(versions, constraint)
+}
+
+func (r *Resolver) pinnedVersion(id string) (version, commit string, ok bool) {
+	if v, ok := r.configPins[id]; ok && v != "" {
+		return v, "", true
+	}
+	if locked, ok := r.lockfileEntry(id); ok {
+		return locked.Version, locked.Commit, true
+	}
+	return "", "", false
+}
+
+func (r *Resolver) checkConstraint(id, version, constraint string) error {
+	if constraint == "" {
+		return nil
+	}
+	c, ok := api.ParseConstraint(constraint)
+	if !ok {
+		return fmt.Errorf("invalid constraint %q for %s", constraint, id)
+	}
+	v, ok := api.ParseVersion(version)
+	if !ok || !c.Match(v) {
+		return fmt.Errorf("version %s for %s violates constraint %q; run 'vmake lock update' to re-resolve", version, id, constraint)
+	}
+	return nil
+}
+
+func (r *Resolver) lockfileEntry(id string) (*lockfile.LockedPkg, bool) {
+	if r.lockfile == nil || r.ignoreLock {
+		return nil, false
+	}
+	locked, ok := r.lockfile.Get(id)
+	if !ok || locked.Version == "" {
+		return nil, false
+	}
+	return locked, true
 }
 
 func (r *Resolver) scanSubPackages(parentID, checkoutDir string) {
@@ -330,50 +478,14 @@ func (r *Resolver) scanSubPackages(parentID, checkoutDir string) {
 	if len(subs) == 0 {
 		return
 	}
+	repoName, _, _ := api.SplitPackageRef(parentID)
 	for i := range subs {
 		ss := &subs[i]
+		ss.Repo = repoName
 		r.sources[ss.Name] = ss
 		r.subParents[ss.Name] = parentID
 	}
 	vlog.Info("  %s: found %d sub-package(s)", parentID, len(subs))
-}
-
-func (r *Resolver) resolveNativeVersion(id, gitURL, globalDir, localSrc, constraint string) (string, string, map[string]string, error) {
-	lock, err := flock.Acquire(globalDir)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("acquire lock for %s: %w", id, err)
-	}
-	defer lock.Release()
-
-	globalSrc := filepath.Join(globalDir, "src")
-	if err := fs.EnsureDir(globalSrc); err != nil {
-		return "", "", nil, fmt.Errorf("create global src dir for %s: %w", id, err)
-	}
-
-	if err := repo.EnsureRepoAtRef(gitURL, globalSrc, ""); err != nil {
-		return "", "", nil, fmt.Errorf("clone %s: %w", gitURL, err)
-	}
-
-	if err := fs.EnsureSymlink(localSrc, globalSrc); err != nil {
-		return "", "", nil, fmt.Errorf("create symlink for %s: %w", id, err)
-	}
-
-	tags, err := repo.ListTags(localSrc)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("list tags for %s: %w", id, err)
-	}
-
-	versions := repo.FilterValidVersions(tags)
-	if len(versions) == 0 {
-		return "", "", nil, fmt.Errorf("no valid versions found for %s", id)
-	}
-
-	selectedVersion, selectedRef, err := repo.SelectNativeVersion(versions, constraint)
-	if err != nil {
-		return "", "", nil, err
-	}
-
-	return selectedVersion, selectedRef, versions, nil
 }
 
 func (r *Resolver) checkoutNativeSource(id, gitURL, repoDir, ref string) (*buildscript.Source, error) {

@@ -19,15 +19,15 @@
     {
       "path": "bin/hello",
       "size": 16977,
-      "hash": "f50ee70e477600a7f79548fab0478895a1ee855e1d1bc4ba0997ec59efe9343e"
+      "hash": "389f4d5d6e913c1490580afd5017a1dc7196b5e1faab2820434cf859a837b82c"
     }
   ],
   "build_files": [
     {
       "path": "compile_commands.json",
       "size": 585,
-      "hash": "ee3369873aaa5e1bfde52a768058f4f1e90613bc17a1f0eb3c349d5d1d994820"
+      "hash": "22857d636dfc95a7f62d0950551b96e66e2d9acd8e10af46cc56d3f084772624"
     }
   ],
-  "install_tree_hash": "fa494f6cd29a5be7c6039d8609092f04ad938f31cb9cf10b45f9f61f02d4986b"
+  "install_tree_hash": "61f27b763e46c456359b7f7a288c7aea1def43b4ccc8740df512cbdb3aa94884"
 }

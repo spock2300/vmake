@@ -21,6 +21,7 @@ func YaegiSymbols() map[string]reflect.Value {
 		"RequireContext":    reflect.ValueOf((*RequireContext)(nil)),
 		"Requires":          reflect.ValueOf((*Requires)(nil)),
 		"RequireInfo":       reflect.ValueOf((*RequireInfo)(nil)),
+		"DepRef":            reflect.ValueOf((*DepRef)(nil)),
 		"PkgDirs":           reflect.ValueOf((*PkgDirs)(nil)),
 		"PackageMeta":       reflect.ValueOf((*PackageMeta)(nil)),
 		"InstalledPackage":  reflect.ValueOf((*InstalledPackage)(nil)),
@@ -70,6 +71,10 @@ func YaegiSymbols() map[string]reflect.Value {
 		"CheckCycle":                  reflect.ValueOf(CheckCycle),
 		"ResolveSubPackageName":       reflect.ValueOf(ResolveSubPackageName),
 		"SplitPackageRef":             reflect.ValueOf(SplitPackageRef),
+		"NormalizeOptionValue":        reflect.ValueOf(NormalizeOptionValue),
+		"ValidateOption":              reflect.ValueOf(ValidateOption),
+		"ParseDepRef":                 reflect.ValueOf(ParseDepRef),
+		"RunScriptSafe":               reflect.ValueOf(RunScriptSafe),
 		"YaegiSymbols":                reflect.ValueOf(YaegiSymbols),
 
 		"TargetBinary":        reflect.ValueOf(TargetBinary),
@@ -88,6 +93,7 @@ func YaegiSymbols() map[string]reflect.Value {
 		"ModeDebug":           reflect.ValueOf(ModeDebug),
 		"ModeRelease":         reflect.ValueOf(ModeRelease),
 		"GenRuleBinHeader":    reflect.ValueOf(GenRuleBinHeader),
+		"GroupGlobal":         reflect.ValueOf(GroupGlobal),
 
 		"BuiltInGlobalOptions": reflect.ValueOf(&BuiltInGlobalOptions).Elem(),
 	}

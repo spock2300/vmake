@@ -146,7 +146,9 @@ func TestLoadBuildScript_CompleteAPI(t *testing.T) {
 	}
 
 	buildCtx := api.NewBuildContext("06_complete_api", nil)
+	buildCtx.Options = opts
 	buildCtx.SetPackage(pkg)
+	buildCtx.SetOptions(opts)
 	pkg.ExecBuildFuncs(dir, func(fn api.BuildFunc) {
 		fn(buildCtx)
 	})

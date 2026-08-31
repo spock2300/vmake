@@ -53,7 +53,7 @@ func (p *Package) cmakeBuildType() string {
 	return "Release"
 }
 
-func (p *Package) CMakeConfigure(extraArgs ...string) error {
+func (p *Package) CMakeConfigure(extraArgs ...string) {
 	args := []string{
 		"-S", p.SrcDir(),
 		"-B", p.dirs.BuildDir,
@@ -73,17 +73,17 @@ func (p *Package) CMakeConfigure(extraArgs ...string) error {
 			"-DCMAKE_CXX_COMPILER_TARGET="+p.CrossTarget())
 	}
 	args = append(args, extraArgs...)
-	return p.Run("cmake", args...)
+	p.Run("cmake", args...)
 }
 
-func (p *Package) CMakeBuild(args ...string) error {
+func (p *Package) CMakeBuild(args ...string) {
 	buildArgs := []string{"--build", p.dirs.BuildDir}
 	buildArgs = append(buildArgs, args...)
-	return p.Run("cmake", buildArgs...)
+	p.Run("cmake", buildArgs...)
 }
 
-func (p *Package) CMakeInstall() error {
-	return p.Run("cmake", "--install", p.dirs.BuildDir)
+func (p *Package) CMakeInstall() {
+	p.Run("cmake", "--install", p.dirs.BuildDir)
 }
 
 func (p *Package) Configure(extraArgs ...string) error {
@@ -106,21 +106,19 @@ func (p *Package) logAndDryRun(name string, args []string) bool {
 	return p.dryRun
 }
 
-func (p *Package) Run(name string, args ...string) error {
+func (p *Package) Run(name string, args ...string) {
 	if p.logAndDryRun(name, args) {
-		return nil
+		return
 	}
 	exec.RunFatal(p.dirs.BuildDir, name, args...)
-	return nil
 }
 
-func (p *Package) RunIn(dir, name string, args ...string) error {
+func (p *Package) RunIn(dir, name string, args ...string) {
 	vlog.Info("  cd %s && %s %s", dir, name, strings.Join(args, " "))
 	if p.dryRun {
-		return nil
+		return
 	}
 	exec.RunFatal(dir, name, args...)
-	return nil
 }
 
 func (p *Package) RunEnv(env map[string]string, name string, args ...string) error {

@@ -3,8 +3,6 @@ package api
 import (
 	"path/filepath"
 	"strings"
-
-	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
 type PostLinkStep struct {
@@ -70,9 +68,6 @@ func (t *Target) SetDefault(isDefault bool) *Target {
 
 func (t *Target) SetTest(v bool) *Target {
 	t.isTest = v
-	if v {
-		t.isDefault = false
-	}
 	return t
 }
 
@@ -151,9 +146,13 @@ func (t *Target) AddProvidedLibs(libs ...string) *Target {
 
 func (t *Target) AddDeps(targets ...string) *Target {
 	for _, d := range targets {
-		if d != "" {
-			t.deps = append(t.deps, d)
+		if d == "" {
+			continue
 		}
+		if _, err := ParseDepRef(d); err != nil {
+			fatalScript("", "AddDeps", "%v", err)
+		}
+		t.deps = append(t.deps, d)
 	}
 	return t
 }
@@ -210,9 +209,14 @@ func (t *Target) SetVersionScript(path string) *Target {
 	return t
 }
 
-func (t *Target) SetExcludeLibs(libs ...string) *Target {
+func (t *Target) AddExcludeLibs(libs ...string) *Target {
 	t.excludeLibs = append(t.excludeLibs, libs...)
 	return t
+}
+
+// Deprecated: use AddExcludeLibs. SetExcludeLibs appends (it never replaced).
+func (t *Target) SetExcludeLibs(libs ...string) *Target {
+	return t.AddExcludeLibs(libs...)
 }
 
 func (t *Target) SetSymbolBinding(mode string) *Target {
@@ -397,7 +401,7 @@ func flattenAny(items []any) []string {
 		case []any:
 			result = append(result, flattenAny(v)...)
 		default:
-			vlog.Error("flattenAny: skipping unsupported type %T (%v)", item, item)
+			fatalScript("", "Add*", "unsupported argument type %T (%v); only string, []string and []any are accepted", item, item)
 		}
 	}
 	return result

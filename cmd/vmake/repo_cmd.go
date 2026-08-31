@@ -13,12 +13,16 @@ func init() {
 	repoCmd.AddCommand(repoRemoveCmd)
 	repoCmd.AddCommand(repoListCmd)
 	repoCmd.AddCommand(repoUpdateCmd)
+	repoCmd.AddCommand(repoTrustCmd)
+	repoCmd.AddCommand(repoUntrustCmd)
 	RootCmd.AddCommand(repoCmd)
 
 	repoAddCmd.Flags().BoolVarP(&repoAddNative, "native", "n", false, "add a native repository (URL template with {name} placeholder)")
 
 	repoRemoveCmd.ValidArgsFunction = completeRepoName
 	repoUpdateCmd.ValidArgsFunction = completeRepoName
+	repoTrustCmd.ValidArgsFunction = completeRepoName
+	repoUntrustCmd.ValidArgsFunction = completeRepoName
 }
 
 var repoCmd = &cobra.Command{
@@ -44,6 +48,29 @@ var repoAddCmd = &cobra.Command{
 			fatalErr(mgr.Add(name, url))
 			fmt.Printf("Added repository '%s' from %s\n", name, url)
 		}
+		if !isRepoTrusted(name) {
+			confirmTrustRemoteRepo(name)
+		}
+	},
+}
+
+var repoTrustCmd = &cobra.Command{
+	Use:   "trust <name>",
+	Short: "Trust a repository's build.go scripts",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		fatalErr(addTrustedRepo(args[0]))
+		fmt.Printf("Trusted repository '%s'\n", args[0])
+	},
+}
+
+var repoUntrustCmd = &cobra.Command{
+	Use:   "untrust <name>",
+	Short: "Revoke trust for a repository",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		fatalErr(removeTrustedRepo(args[0]))
+		fmt.Printf("Untrusted repository '%s'\n", args[0])
 	},
 }
 

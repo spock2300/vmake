@@ -1,7 +1,6 @@
 package build
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,7 +8,6 @@ import (
 
 	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/fs"
-	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 type Compiler struct {
@@ -32,11 +30,11 @@ func NewCompiler(tools *ResolvedTools) *Compiler {
 	}
 }
 
-func selectCompilerAndFlags(ccPath, cxxPath string, globalCFlags, globalCxxFlags, cFlags, cxxFlags []string, opts *CompileOptions) (string, []string) {
+func selectCompilerAndFlags(ccPath, cxxPath string, cFlags, cxxFlags []string, opts *CompileOptions) (string, []string) {
 	if opts.Language == "cxx" {
-		return cxxPath, append(append([]string{}, globalCxxFlags...), cxxFlags...)
+		return cxxPath, append([]string{}, cxxFlags...)
 	}
-	return ccPath, append(append([]string{}, globalCFlags...), cFlags...)
+	return ccPath, append([]string{}, cFlags...)
 }
 
 func (c *Compiler) Compile(src, objPath string, opts *CompileOptions, workDir string) ([]string, error) {
@@ -46,8 +44,7 @@ func (c *Compiler) Compile(src, objPath string, opts *CompileOptions, workDir st
 
 	depPath := objPath + ".d"
 
-	mgr := toolchain.GetManager()
-	compiler, flags := selectCompilerAndFlags(c.ccPath, c.cxxPath, mgr.GetGlobalCFlags(), mgr.GetGlobalCxxFlags(), opts.CFlags, opts.CxxFlags, opts)
+	compiler, flags := selectCompilerAndFlags(c.ccPath, c.cxxPath, opts.CFlags, opts.CxxFlags, opts)
 
 	args := BuildCompileArgs(opts, objPath, src, flags, depPath)
 
@@ -64,41 +61,89 @@ func (c *Compiler) Compile(src, objPath string, opts *CompileOptions, workDir st
 	return deps, nil
 }
 
+// ParseDepFile parses a gcc/clang -MD style depfile: a "target: deps..."
+// rule possibly wrapped across lines with backslash continuations, where
+// spaces in paths are escaped as "\ ". Everything after the first ":" up to
+// the next rule is the dependency list, from which the first entry (the
+// primary source file) is dropped — the scheduler already tracks it as the
+// compile input, so only the header dependencies remain. Phony rules
+// contribute nothing.
 func ParseDepFile(depPath string) ([]string, error) {
-	file, err := os.Open(depPath)
+	data, err := os.ReadFile(depPath)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
 
-	var deps []string
-	scanner := bufio.NewScanner(file)
+	tokens := tokenizeDepFile(string(data))
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		line = strings.TrimSpace(line)
-
-		if strings.HasSuffix(line, ":") {
-			continue
-		}
-
-		line = strings.TrimSuffix(line, "\\")
-		line = strings.TrimSpace(line)
-
-		parts := strings.Fields(line)
-		for _, part := range parts {
-			if strings.HasSuffix(part, ":") {
-				continue
-			}
-			deps = append(deps, part)
+	ruleStart := -1
+	for i, tok := range tokens {
+		if tok == ":" {
+			ruleStart = i
+			break
 		}
 	}
+	if ruleStart < 0 {
+		return nil, nil
+	}
 
+	var deps []string
+	for _, tok := range tokens[ruleStart+1:] {
+		if tok == ":" {
+			break
+		}
+		deps = append(deps, tok)
+	}
 	if len(deps) > 0 {
 		deps = deps[1:]
 	}
+	return deps, nil
+}
 
-	return deps, scanner.Err()
+func tokenizeDepFile(content string) []string {
+	var tokens []string
+	var cur strings.Builder
+	escaped := false
+
+	flush := func() {
+		if cur.Len() > 0 {
+			tokens = append(tokens, cur.String())
+			cur.Reset()
+		}
+	}
+
+	for i := 0; i < len(content); i++ {
+		c := content[i]
+		switch {
+		case escaped:
+			cur.WriteByte(c)
+			escaped = false
+		case c == '\\':
+			if i+1 < len(content) && content[i+1] == '\n' {
+				i++
+				continue
+			}
+			if i+1 < len(content) && content[i+1] == ' ' {
+				cur.WriteByte(' ')
+				i++
+				continue
+			}
+			escaped = true
+		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+			flush()
+		case c == ':':
+			if i+1 >= len(content) || content[i+1] == ' ' || content[i+1] == '\t' || content[i+1] == '\n' || content[i+1] == '\r' {
+				flush()
+				tokens = append(tokens, ":")
+			} else {
+				cur.WriteByte(c)
+			}
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	flush()
+	return tokens
 }
 
 func IsSourceValid(src, objPath string, extraDeps []string, workDir string) (bool, []string) {

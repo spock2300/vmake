@@ -4,11 +4,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 
-	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/repo"
 )
 
@@ -18,12 +19,21 @@ type stampData struct {
 }
 
 func gitHead(dir string) string {
-	rev, err := repo.GetCurrentCommit(dir)
-	if err != nil {
+	if dir == "" {
 		return ""
 	}
+	if commit, ok := gitHeadCache.Load(dir); ok {
+		return commit.(string)
+	}
+	rev, err := repo.GetCurrentCommit(dir)
+	if err != nil {
+		rev = ""
+	}
+	gitHeadCache.Store(dir, rev)
 	return rev
 }
+
+var gitHeadCache sync.Map
 
 func computeConfigHash(baseDir string, configFiles []string) (string, error) {
 	if len(configFiles) == 0 {
@@ -87,13 +97,13 @@ func buildStampData(baseDir string, configFiles []string) stampData {
 	}
 }
 
-func writeStamp(stampPath string, stamp stampData) {
+func writeStamp(stampPath string, stamp stampData) error {
 	data, err := json.Marshal(stamp)
 	if err != nil {
-		vlog.Error("stamp marshal: %v", err)
-		return
+		return fmt.Errorf("stamp marshal: %w", err)
 	}
 	if err := os.WriteFile(stampPath, data, 0644); err != nil {
-		vlog.Error("stamp write %s: %v", stampPath, err)
+		return fmt.Errorf("stamp write %s: %w", stampPath, err)
 	}
+	return nil
 }

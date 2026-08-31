@@ -55,15 +55,33 @@ func TestPackageCallbackRegistration(t *testing.T) {
 	}
 }
 
-func TestPackageOnPackageOverwrites(t *testing.T) {
+func TestPackageOnPackageDoubleRegisterPanics(t *testing.T) {
+	p := NewPackage()
+	p.SetName("testpkg")
+	p.OnPackage(func(p *Package) {})
+
+	defer func() {
+		r := recover()
+		bse, ok := r.(*BuildScriptError)
+		if !ok {
+			t.Fatalf("expected *BuildScriptError, got %v", r)
+		}
+		if bse.Package != "testpkg" || bse.Op != "OnPackage" {
+			t.Errorf("package=%q op=%q, want testpkg/OnPackage", bse.Package, bse.Op)
+		}
+	}()
+	p.OnPackage(func(p *Package) {})
+	t.Fatal("second OnPackage should panic via fatalScript")
+}
+
+func TestPackageOnPackageSingle(t *testing.T) {
 	p := NewPackage()
 	first := func(p *Package) {}
-	second := func(p *Package) {}
-	p.OnPackage(first).OnPackage(second)
+	p.OnPackage(first)
 	gotPtr := reflect.ValueOf(p.GetPackageFunc()).Pointer()
-	wantPtr := reflect.ValueOf(second).Pointer()
+	wantPtr := reflect.ValueOf(first).Pointer()
 	if gotPtr != wantPtr {
-		t.Error("OnPackage should overwrite (not append)")
+		t.Error("OnPackage should store the callback")
 	}
 }
 

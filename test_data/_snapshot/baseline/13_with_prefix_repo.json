@@ -32,16 +32,16 @@
   "install_files": [
     {
       "path": "bin/app",
-      "size": 18993,
-      "hash": "fbf0a169c2713ee5516c3a6bb94063ee2c93d3b8db9b813598aa037b8f5519d4"
+      "size": 19045,
+      "hash": "2b7b1190b370f3a95af56e81e33095fe8b2b07d8470564091f90605ac22ade33"
     }
   ],
   "build_files": [
     {
       "path": "compile_commands.json",
-      "size": 2227,
-      "hash": "edb9c777030e0ab22324352b73fa4fa92c6f2a5ebe227dee42d06effbf62fe80"
+      "size": 2243,
+      "hash": "58c95f530bc763090878c7383fd3951105020a3a10ce4a1a7e4b59e5f8b7cf62"
     }
   ],
-  "install_tree_hash": "4a12d0b610cbd7e93e5cb0420c004bc84a5fed673166d4095faa3ac45423e279"
+  "install_tree_hash": "94d52fb12847ec5019a3ed4260ccf4505d8d82e40320aa8701678560465c834e"
 }

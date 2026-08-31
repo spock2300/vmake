@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,8 +41,17 @@ func InitSubmodules(dir string) error {
 	return nil
 }
 
+func fetchTimeout() time.Duration {
+	if s := os.Getenv("VMAKE_FETCH_TIMEOUT"); s != "" {
+		if secs, err := strconv.Atoi(s); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return 120 * time.Second
+}
+
 func FetchTags(dir string) error {
-	return gitRun(dir, []string{"fetch", "--all", "--tags"}, 30*time.Second)
+	return gitRun(dir, []string{"fetch", "--all", "--tags"}, fetchTimeout())
 }
 
 func Checkout(dir, ref string) error {
@@ -111,6 +121,71 @@ func GetCurrentCommit(dir string) (string, error) {
 		return "", err
 	}
 	return exec.TrimOutput(output), nil
+}
+
+// ResolveCommit resolves a tag or ref to its commit SHA inside an existing
+// clone. Used by manifest import to pin real commits without materializing.
+func ResolveCommit(dir, ref string) (string, error) {
+	output, err := exec.RunWithOptions("git", []string{"rev-parse", ref + "^{commit}"}, exec.RunOptions{Dir: dir, Quiet: true})
+	if err != nil {
+		return "", fmt.Errorf("resolve %s in %s: %w", ref, dir, err)
+	}
+	return exec.TrimOutput(output), nil
+}
+
+// ResolveRemoteCommit resolves a tag (or commit SHA) on a remote URL to its
+// commit SHA via `git ls-remote`, without any local clone. Annotated tags are
+// dereferenced (the ^{} pattern wins); a 40-hex ref that the remote does not
+// know is taken as the commit itself.
+func ResolveRemoteCommit(url, ref string) (string, error) {
+	args := []string{"ls-remote", url, "refs/tags/" + ref + "^{}", "refs/tags/" + ref, ref}
+	output, err := exec.RunWithOptions("git", args, exec.RunOptions{Timeout: fetchTimeout(), Quiet: true})
+	if err != nil {
+		return "", fmt.Errorf("ls-remote %s (%s): %w", url, ref, err)
+	}
+	commit := ""
+	for _, line := range strings.Split(exec.TrimOutput(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		if strings.HasSuffix(fields[1], "^{}") {
+			return fields[0], nil
+		}
+		if commit == "" {
+			commit = fields[0]
+		}
+	}
+	if commit == "" && isCommitSHA(ref) {
+		return ref, nil
+	}
+	if commit == "" {
+		return "", fmt.Errorf("ref %s not found on %s", ref, url)
+	}
+	return commit, nil
+}
+
+func isCommitSHA(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+// DescribeTag returns the tag exactly pointing at HEAD, or "" when HEAD is
+// not tagged. Local-only; used to rebuild version->tag maps from cached
+// checkouts without touching the network.
+func DescribeTag(dir string) string {
+	output, err := exec.RunWithOptions("git", []string{"describe", "--tags", "--exact-match", "HEAD"}, exec.RunOptions{Dir: dir, Quiet: true})
+	if err != nil {
+		return ""
+	}
+	return exec.TrimOutput(output)
 }
 
 func GitRevParse(dir string) string {

@@ -10,12 +10,18 @@ import (
 )
 
 type SubGraphParams struct {
-	AllTargets map[string]map[string]*api.Target
-	PkgMeta    map[string]PkgBuildMeta
-	PkgDirs    map[string]*api.PkgDirs
-	Packages   map[string]*api.Package
-	Needed     map[string]bool
-	SubParents map[string]string
+	AllTargets   map[string]map[string]*api.Target
+	PkgMeta      map[string]PkgBuildMeta
+	PkgDirs      map[string]*api.PkgDirs
+	Packages     map[string]*api.Package
+	Needed       map[string]bool
+	SubParents   map[string]string
+	IncludeTests bool
+	PkgKeyExtra  map[string]string
+	PkgLockDir   string
+	RootDir      string
+	NumWorkers   int
+	KeepGoing    bool
 }
 
 func CollectSubGraphPackages(rootPkg string, pkgMeta map[string]PkgBuildMeta, allTargets map[string]map[string]*api.Target, needed map[string]bool) map[string]bool {
@@ -96,6 +102,12 @@ func BuildSubGraph(rootPkg string, tc *toolchain.Toolchain, tcName string, mode 
 	}
 
 	pipeline := NewBuildPipeline(graph, tc, filteredPkgDirs, mode, filterMap(pkgOptions, subPkgs))
+	pipeline.SetIncludeTests(params.IncludeTests)
+	pipeline.SetPkgKeyExtra(params.PkgKeyExtra)
+	pipeline.SetPkgLockDir(params.PkgLockDir)
+	pipeline.SetRootDir(params.RootDir)
+	pipeline.SetNumWorkers(params.NumWorkers)
+	pipeline.SetKeepGoing(params.KeepGoing)
 
 	for pkgName := range subPkgs {
 		if pkg, ok := params.Packages[pkgName]; ok {

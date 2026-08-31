@@ -350,6 +350,23 @@ func TestApplyKConfigPatchesEmptyMapNoOp(t *testing.T) {
 	}
 }
 
+func TestApplyKConfigPatchesBareNameDoesNotOvermatch(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".config")
+	original := "CONFIG_FOO=n\nCONFIG_FOO_BAR=y\n"
+	if err := os.WriteFile(path, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ApplyKConfigPatches(path, map[string]string{
+		"CONFIG_FOO": "CONFIG_FOO=y",
+	})
+	data, _ := os.ReadFile(path)
+	if string(data) != "CONFIG_FOO=y\nCONFIG_FOO_BAR=y\n" {
+		t.Errorf("patched = %q, want bare name to not over-match CONFIG_FOO_BAR", string(data))
+	}
+}
+
 func TestApplyKConfigPatchesMissingFile(t *testing.T) {
 	ApplyKConfigPatches("/nonexistent/file", map[string]string{"a": "b"})
 }

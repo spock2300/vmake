@@ -283,14 +283,13 @@ func TestIsSourceValidStaleExtraDep(t *testing.T) {
 func TestSelectCompilerAndFlagsCxx(t *testing.T) {
 	ccPath, flags := selectCompilerAndFlags(
 		"cc", "cxx",
-		[]string{"-gstd"}, []string{"-gxxstd"},
 		[]string{"-cflag"}, []string{"-cxxflag"},
 		&CompileOptions{Language: "cxx"},
 	)
 	if ccPath != "cxx" {
 		t.Errorf("compiler = %q, want cxx", ccPath)
 	}
-	want := []string{"-gxxstd", "-cxxflag"}
+	want := []string{"-cxxflag"}
 	if !sliceEqual(flags, want) {
 		t.Errorf("flags = %v, want %v", flags, want)
 	}
@@ -299,14 +298,13 @@ func TestSelectCompilerAndFlagsCxx(t *testing.T) {
 func TestSelectCompilerAndFlagsC(t *testing.T) {
 	ccPath, flags := selectCompilerAndFlags(
 		"cc", "cxx",
-		[]string{"-gstd"}, []string{"-gxxstd"},
 		[]string{"-cflag"}, []string{"-cxxflag"},
 		&CompileOptions{Language: "c"},
 	)
 	if ccPath != "cc" {
 		t.Errorf("compiler = %q, want cc", ccPath)
 	}
-	want := []string{"-gstd", "-cflag"}
+	want := []string{"-cflag"}
 	if !sliceEqual(flags, want) {
 		t.Errorf("flags = %v, want %v", flags, want)
 	}

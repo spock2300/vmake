@@ -1,12 +1,14 @@
 package build
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/jsonio"
-	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 type CompileCommand struct {
@@ -36,8 +38,7 @@ func (w *CompileCommandsWriter) SetPackageDir(dir string) {
 }
 
 func (w *CompileCommandsWriter) AddCommand(src, objPath string, opts *CompileOptions) {
-	mgr := toolchain.GetManager()
-	compiler, flags := selectCompilerAndFlags(w.ccPath, w.cxxPath, mgr.GetGlobalCFlags(), mgr.GetGlobalCxxFlags(), opts.CFlags, opts.CxxFlags, opts)
+	compiler, flags := selectCompilerAndFlags(w.ccPath, w.cxxPath, opts.CFlags, opts.CxxFlags, opts)
 
 	args := BuildCompileArgs(opts, objPath, src, flags, "")
 	cmdStr := iexec.FormatCommandLine(compiler, args)
@@ -51,6 +52,40 @@ func (w *CompileCommandsWriter) AddCommand(src, objPath string, opts *CompileOpt
 	w.mu.Unlock()
 }
 
+// Save merges the collected commands into compile_commands.json keyed by
+// file: entries from previous runs (or other in-project schedulers, e.g.
+// sub-graphs) are kept only for files this writer does not cover. Command
+// changes replace their stale entries; sub-graph contributions survive.
 func (w *CompileCommandsWriter) Save(outputPath string) error {
-	return jsonio.Save(outputPath, w.commands)
+	w.mu.Lock()
+	commands := append([]CompileCommand{}, w.commands...)
+	w.mu.Unlock()
+
+	files := make(map[string]bool, len(commands))
+	for _, c := range commands {
+		files[c.File] = true
+	}
+
+	var existing []CompileCommand
+	if _, err := os.Stat(outputPath); err == nil {
+		if err := jsonio.Load(outputPath, &existing); err != nil {
+			return fmt.Errorf("merge existing %s: %w", outputPath, err)
+		}
+	}
+	merged := make([]CompileCommand, 0, len(existing)+len(commands))
+	for _, c := range existing {
+		if files[c.File] {
+			continue
+		}
+		merged = append(merged, c)
+	}
+	merged = append(merged, commands...)
+
+	sort.Slice(merged, func(i, j int) bool {
+		if merged[i].File != merged[j].File {
+			return merged[i].File < merged[j].File
+		}
+		return merged[i].Command < merged[j].Command
+	})
+	return jsonio.Save(outputPath, merged)
 }

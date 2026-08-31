@@ -82,5 +82,6 @@ func buildSquashfs(pkg *api.Package, imageName string, stage func(staging string
 		return err
 	}
 	os.Remove(imageFile)
-	return pkg.Run("mksquashfs", staging, imageFile, "-noappend")
+	pkg.Run("mksquashfs", staging, imageFile, "-noappend")
+	return nil
 }

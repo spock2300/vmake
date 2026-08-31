@@ -96,22 +96,22 @@ func TestTargetSetKind(t *testing.T) {
 	}
 }
 
-func TestTargetSetTestClearsDefault(t *testing.T) {
+func TestTargetSetTestKeepsDefault(t *testing.T) {
 	tr := NewTargetRegistry()
 	tgt := tr.Target("t")
 	if !tgt.IsDefault() {
 		t.Fatal("default should be true initially")
 	}
 	tgt.SetTest(true)
-	if tgt.IsTest() != true {
+	if !tgt.IsTest() {
 		t.Fatal("IsTest should be true after SetTest(true)")
 	}
-	if tgt.IsDefault() {
-		t.Fatal("SetTest(true) must clear IsDefault")
+	if !tgt.IsDefault() {
+		t.Fatal("SetTest(true) must not touch IsDefault (ordering-independent; vmake build skips tests via the scheduler)")
 	}
 	tgt.SetTest(false)
-	if tgt.IsDefault() {
-		t.Error("SetTest(false) must NOT re-enable IsDefault (per source target.go:71-77)")
+	if !tgt.IsDefault() {
+		t.Error("IsDefault should remain true")
 	}
 	if tgt.IsTest() {
 		t.Error("IsTest should be false after SetTest(false)")

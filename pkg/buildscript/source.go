@@ -9,6 +9,9 @@ type Source struct {
 	Name   string
 	Dir    string
 	Origin api.SourceOrigin
+	// Repo is the remote repository name the script originates from
+	// ("official", "mynative"). Empty for local project scripts.
+	Repo string
 }
 
 func NewSource(name, path, dir string, origin api.SourceOrigin) *Source {

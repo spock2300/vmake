@@ -9,6 +9,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/repo"
 )
 
@@ -139,7 +141,7 @@ var pkgCleanCmd = &cobra.Command{
 		fmt.Printf("Cleaned cache for '%s'\n", pkgRef)
 
 		if pkgCleanAll {
-			sourceMgr := repo.NewSourceManager(getDepsDir(), getSourcesDir())
+			sourceMgr := repo.NewSourceManager(getDepsDir(), getCacheDir())
 
 			fatalErr(sourceMgr.CleanSource(repoName, pkgName))
 			fmt.Printf("Cleaned source for '%s'\n", pkgRef)
@@ -148,35 +150,78 @@ var pkgCleanCmd = &cobra.Command{
 }
 
 var pkgCleanAll bool
+var pkgUpdateDryRun bool
 
 var pkgUpdateCmd = &cobra.Command{
-	Use:   "update <repo/name>",
-	Short: "Update package source",
+	Use:   "update <repo/name>[@version]",
+	Short: "Update package source (floats to origin/HEAD, or pins @version)",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		pkgRef := args[0]
+		version := ""
+		if idx := strings.Index(pkgRef, "@"); idx >= 0 {
+			version = pkgRef[idx+1:]
+			pkgRef = pkgRef[:idx]
+			if version == "" {
+				fatalMsg("empty version after '@' in %s", args[0])
+			}
+		}
 
 		repoName, pkgName := mustSplitPkgRef(pkgRef)
 
 		repoMgr := getRepoManager()
-		sourceMgr := repo.NewSourceManager(getDepsDir(), getSourcesDir())
+		sourceMgr := repo.NewSourceManager(getDepsDir(), getCacheDir())
 
+		pkg := newPkgRef(repoName, pkgName)
 		if repoMgr.IsNative(repoName) {
 			urlTemplate, err := repoMgr.GetNativeURL(repoName)
 			fatalErr(err)
-			gitURL := repo.ResolveNativeURL(urlTemplate, pkgName)
-			pkg := newPkgRef(repoName, pkgName)
-			pkg.SetGit(gitURL)
-			fatalErr(sourceMgr.UpdateSource(pkg))
-		} else {
-			_, err := repoMgr.FindPackage(repoName, pkgName)
+			pkg.SetGit(repo.ResolveNativeURL(urlTemplate, pkgName))
+			refsDir, err := sourceMgr.EnsureRefsClone(pkg, true)
 			fatalErr(err)
-			pkg := newPkgRef(repoName, pkgName)
-			fatalErr(sourceMgr.UpdateSource(pkg))
+			tags, err := repo.ListTags(refsDir)
+			fatalErr(err)
+			pkg.SetVersions(repo.FilterValidVersions(tags))
+		} else {
+			buildGoPath, err := repoMgr.FindPackageGo(repoName, pkgName)
+			fatalErr(err)
+			interpreted, err := buildscript.LoadBuildScriptWithTrust(buildscript.Source{
+				Name:   pkgRef,
+				Path:   buildGoPath,
+				Dir:    filepath.Dir(buildGoPath),
+				Origin: api.SourceRemote,
+				Repo:   repoName,
+			}, remoteScriptTrustChecker)
+			fatalErr(err)
+			pkg.SetVersions(interpreted.Versions())
+			pkg.SetGit(interpreted.GitURLs()...)
 		}
 
+		if version != "" {
+			if pkgUpdateDryRun {
+				fmt.Printf("Would fetch %s@%s into the global cache\n", pkgRef, version)
+				return
+			}
+			res, err := sourceMgr.EnsureVersion(pkg, version)
+			fatalErr(err)
+			fmt.Printf("Updated source for '%s' -> %s@%s (%s)\n", pkgRef, pkgRef, version, shortCommit(res.Commit))
+			return
+		}
+
+		if pkgUpdateDryRun {
+			fmt.Printf("Would fetch latest for '%s' (floating _head clone)\n", pkgRef)
+			return
+		}
+		fatalErr(sourceMgr.UpdateSource(pkg))
 		fmt.Printf("Updated source for package '%s'\n", pkgRef)
 	},
+}
+
+func shortCommit(c string) string {
+	if len(c) > 12 {
+		return c[:12]
+	}
+	return c
 }
 
 func init() {
@@ -187,6 +232,7 @@ func init() {
 	RootCmd.AddCommand(pkgCmd)
 
 	pkgCleanCmd.Flags().BoolVarP(&pkgCleanAll, "all", "a", false, "also clean source code")
+	pkgUpdateCmd.Flags().BoolVar(&pkgUpdateDryRun, "dry-run", false, "show what would be fetched without fetching")
 
 	pkgUpdateCmd.ValidArgsFunction = completePkgRef
 	pkgCleanCmd.ValidArgsFunction = completePkgRef

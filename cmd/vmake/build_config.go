@@ -124,29 +124,25 @@ func collectLocalPkgOptions(ctx *RuntimeContext) map[string]map[string]any {
 	return result
 }
 
-func makeLocalPkgDirs(scriptDir, ccPath, mode string, opts map[string]any) *api.PkgDirs {
-	buildKey := build.BuildKey(ccPath, mode, opts)
+func makeLocalPkgDirs(scriptDir, ccPath, mode string, opts map[string]any, globalFlagsHash string) *api.PkgDirs {
+	buildKey := build.BuildKey(ccPath, mode, opts, globalFlagsHash)
 	return &api.PkgDirs{
 		SourceDir: scriptDir,
 		BuildDir:  filepath.Join(scriptDir, "build", buildKey),
 	}
 }
 
-func makeRemotePkgDirs(depsDir, name, ccPath, mode string, opts map[string]any, sourceDir string) *api.PkgDirs {
-	buildKey := build.BuildKey(ccPath, mode, opts)
+// makeRemotePkgDirs points remote packages at the shared global cache:
+// <versionDir>/out/<buildKey>/{build,install}. The version dir is immutable
+// per source version; the build key folds in toolchain/mode/options plus the
+// version, commit and global-flags hash.
+func makeRemotePkgDirs(versionDir, sourceDir, ccPath, mode string, opts map[string]any, version, commit, globalFlagsHash string) *api.PkgDirs {
+	buildKey := build.BuildKey(ccPath, mode, opts, build.JoinKeyExtra(version, commit, globalFlagsHash))
 	return &api.PkgDirs{
 		SourceDir:  sourceDir,
-		BuildDir:   filepath.Join(depsDir, name, "out", buildKey, "build"),
-		InstallDir: filepath.Join(depsDir, name, "out", buildKey, "install"),
+		BuildDir:   filepath.Join(versionDir, "out", buildKey, "build"),
+		InstallDir: filepath.Join(versionDir, "out", buildKey, "install"),
 	}
-}
-
-func resolvePkgDir(node *resolver.PackageNode, depsDir, ccPath, mode string, opts map[string]any) *api.PkgDirs {
-	if node.IsLocal() {
-		return makeLocalPkgDirs(node.Source.Dir, ccPath, mode, opts)
-	}
-	sourceDir := filepath.Join(depsDir, node.ID, "src")
-	return makeRemotePkgDirs(depsDir, node.ID, ccPath, mode, opts, sourceDir)
 }
 
 func applyPatches(pkg *api.Package, sourceDir string) error {
@@ -214,70 +210,10 @@ func restoreKConfigFiles(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, n
 		if err := os.WriteFile(configPath, []byte(kconfigContent), 0644); err != nil {
 			return fmt.Errorf("restore kconfig %s: %w", name, err)
 		}
-		api.ApplyKConfigPatches(configPath, k.Patches())
+		if err := api.ApplyKConfigPatches(configPath, k.Patches()); err != nil {
+			return fmt.Errorf("restore kconfig %s: %w", name, err)
+		}
 		vlog.Info("Restored .config for %s (%d bytes)", name, len(kconfigContent))
 	}
 	return nil
-}
-
-type BuildGoInfo struct {
-	Versions map[string]string
-	GitURLs  []string
-}
-
-func ParseBuildGo(path string) (*BuildGoInfo, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	content := string(data)
-	info := &BuildGoInfo{
-		Versions: make(map[string]string),
-	}
-	for _, call := range []struct {
-		name    string
-		handler func([]string)
-	}{
-		{"AddVersion", func(args []string) {
-			if len(args) >= 2 {
-				info.Versions[args[0]] = args[1]
-			}
-		}},
-		{"SetGit", func(args []string) {
-			if len(args) > 0 {
-				info.GitURLs = append(info.GitURLs, args[0])
-			}
-		}},
-	} {
-		prefix := call.name + "("
-		for i := 0; i+len(prefix) <= len(content); i++ {
-			if content[i:i+len(prefix)] == prefix {
-				call.handler(extractCallArgs(content[i+len(prefix):]))
-			}
-		}
-	}
-	return info, nil
-}
-
-func extractCallArgs(s string) []string {
-	var args []string
-	for i := 0; i < len(s); i++ {
-		if s[i] == '"' {
-			i++
-			start := i
-			for i < len(s) && s[i] != '"' {
-				if s[i] == '\\' {
-					i++
-				}
-				i++
-			}
-			args = append(args, s[start:i])
-			if len(args) >= 3 {
-				break
-			}
-		} else if s[i] == ')' {
-			break
-		}
-	}
-	return args
 }
