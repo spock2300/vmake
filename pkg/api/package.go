@@ -285,13 +285,18 @@ func (p *Package) SelectVersionMulti(constraints []string) (string, error) {
 		parsedConstraints = append(parsedConstraints, pc)
 	}
 
+	anchors := make([]Version, 0, len(parsedConstraints))
+	for _, pc := range parsedConstraints {
+		anchors = append(anchors, pc.Version)
+	}
+
 	candidates := make([]string, 0, len(versions))
 	for _, v := range versions {
 		pv, ok := ParseVersion(v)
 		if !ok {
 			continue
 		}
-		if matchesAll(pv, parsedConstraints) {
+		if matchesAll(pv, parsedConstraints) && prereleaseAllowed(pv, anchors) {
 			candidates = append(candidates, v)
 		}
 	}
@@ -301,7 +306,7 @@ func (p *Package) SelectVersionMulti(constraints []string) (string, error) {
 			strings.Join(constraints, ", "), p.FullName(), versions)
 	}
 
-	selected, _ := MatchVersion(candidates, "")
+	selected, _ := pickHighest(candidates)
 	return selected, nil
 }
 

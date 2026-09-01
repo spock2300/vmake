@@ -25,7 +25,7 @@ The fix is layered: **default hidden → declare exports → link policy → aud
 |-------|-----------|--------|-----|
 | 1. Default hidden | `-fvisibility=hidden` + `-fvisibility-inlines-hidden` | 90% of leaks — all symbols default to non-exported | `ctx.SetDefaultVisibilityHidden()` |
 | 2. Declare exports | version-script on shared libs | Declarative public API surface | `target.SetVersionScript("foo.map")` |
-| 3. Link policy | `--exclude-libs`, `-Bsymbolic` | Static archive absorption; internal binding | `target.SetExcludeLibs(...)`, `target.SetSymbolBinding("static")` |
+| 3. Link policy | `--exclude-libs`, `-Bsymbolic` | Static archive absorption; internal binding | `target.AddExcludeLibs(...)`, `target.SetSymbolBinding("static")` |
 | 5. Prefix isolation | `objcopy --prefix-symbols=` | Force namespace onto third-party C code | `target.SetSymbolPrefix("vendor_")` |
 
 Layer 1 is the foundation. Without default-hidden visibility, version-scripts
@@ -135,7 +135,7 @@ object-level visibility control, use Layer 1 (compile-time visibility).
 ### Strip symbols from absorbed static libraries
 
 When `TargetShared` links a static `.a` (via `--whole-archive` by default),
-every global symbol from that archive becomes exported. Use `SetExcludeLibs`
+every global symbol from that archive becomes exported. Use `AddExcludeLibs`
 to strip them:
 
 ```go
@@ -143,7 +143,7 @@ ctx.Target("libfoo").
     SetKind(api.TargetShared).
     AddFiles("src/*.c").
     AddDeps("vendor:helper_lib").   /* static lib from another package */
-    SetExcludeLibs("helper_lib")    /* don't re-export its symbols */
+    AddExcludeLibs("helper_lib")    /* don't re-export its symbols */
 ```
 
 This passes `-Wl,--exclude-libs=helper_lib` to the linker. Use `ALL` to strip

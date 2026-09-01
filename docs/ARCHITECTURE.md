@@ -542,9 +542,9 @@ type KConfigEntry struct {
 - `SetSrcDir(dir)` — 设置源码目录
 - `SetMenuconfigCmd(cmd)` — 设置 menuconfig 命令
 - `AddPreset(name)` — 添加 preset（defconfig 文件名）
-- `SetDefault(presetName)` — 设置默认 preset
-- `SetSelectedPreset(name)` — 设置选中 preset
-- `PatchKConfig(patches)` — 设置 post-defconfig 补丁（`map[string]string`）
+- `SetDefaultPreset(presetName)` — 设置默认 preset
+- `SelectPreset(name)` — 设置选中 preset
+- `SetKConfigPatches(patches)` — 设置 post-defconfig 补丁（`map[string]string`）
 
 ### 声明与配置
 
@@ -556,7 +556,7 @@ type KConfigEntry struct {
 
 1. 检查 `.config` 是否存在且大小 > 0 → 如果有效，返回 `false`（无需重新生成）
 2. 执行 `make <selectedPreset>` 生成 `.config`
-3. 应用 `PatchKConfig` 中定义的 post-defconfig 补丁（字符串替换）
+3. 应用 `SetKConfigPatches` 中定义的 post-defconfig 补丁（字符串替换）
 4. 返回 `true`（已重新生成配置）
 
 ### ApplyKConfigPatches

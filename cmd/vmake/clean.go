@@ -164,20 +164,11 @@ func collectCleanEntries(ctx *RuntimeContext) []pkgCleanEntry {
 }
 
 func executeCleanHooks(ctx *RuntimeContext, localOnly bool) {
-	cfg, err := resolveBuildConfig(ctx)
+	pre, err := prepareBuildPrelude(ctx)
 	if err != nil {
 		vlog.Error("Error: %v", err)
 		return
 	}
-
-	resolvedTools, err := build.ResolveTools(cfg.Tc)
-	if err != nil {
-		vlog.Error("Error: %v", err)
-		return
-	}
-
-	applyGlobalFlagsFromNeeded(ctx, computeReachable(ctx.DepGraph))
-	globalFlagsHash := build.GlobalFlagsHash()
 
 	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
 	localPkgOptions := collectLocalPkgOptions(ctx)
@@ -193,39 +184,35 @@ func executeCleanHooks(ctx *RuntimeContext, localOnly bool) {
 		}
 
 		entry := config.GetEntry(ctx.Config, name)
+		scriptHash := scriptHashForNode(name, node)
 		if node.IsLocal() {
-			pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, resolvedTools.CC, cfg.Mode, localPkgOptions[name], globalFlagsHash)
+			pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, pre.tools.CCKey(), pre.cfg.Mode, localPkgOptions[name], pre.globalFlagsHash, scriptHash)
 		} else {
 			sourceDir := filepath.Join(depsDir, name, "src")
 			if info, err := os.Stat(sourceDir); err != nil || !info.IsDir() {
 				continue
 			}
-			var version, commit string
-			if locked, ok := ctx.Lock.Get(name); ok && locked.Version != "" {
-				version, commit = locked.Version, locked.Commit
-			} else if node.Native != nil && node.Native.Selected != "" {
-				version, commit = node.Native.Selected, node.Native.Commit
-			} else if entry.Version != "" {
-				version = entry.Version
-			} else {
+			version, commit, ok := remoteVersionKey(ctx, name, node, entry)
+			if !ok {
 				continue
 			}
 			repoName, pkgName, _ := api.SplitPackageRef(name)
 			versionDir := filepath.Join(getCacheDir(), repoName, pkgName, version)
-			pkgDirs[name] = makeRemotePkgDirs(versionDir, sourceDir, resolvedTools.CC, cfg.Mode, entry.Options,
-				version, commit, globalFlagsHash)
+			patchHash := patchHashForNode(name, node)
+			pkgDirs[name] = makeRemotePkgDirs(versionDir, sourceDir, pre.tools.CCKey(), pre.cfg.Mode, entry.Options,
+				version, commit, pre.globalFlagsHash, patchHash, scriptHash)
 		}
 
 		detectExistingSrcDir(node)
 
 		node.Pkg.SetDirs(*pkgDirs[name])
-		node.Pkg.SetToolchain(cfg.Tc)
+		node.Pkg.SetToolchain(pre.cfg.Tc)
 
 		cleanCtx := api.NewCleanContext(name, entry.Options)
 		if opts, ok := ctx.AllOptions[name]; ok {
 			cleanCtx.SetOptions(opts)
 		}
-		cleanCtx.MergeGlobals(ctx.GlobalOptions, cfg.GlobalValues)
+		cleanCtx.MergeGlobals(ctx.GlobalOptions, pre.cfg.GlobalValues)
 		cleanCtx.SetPackage(node.Pkg)
 
 		node.Pkg.ExecCleanFuncs(pkgDirs[name].SourceDir, func(fn api.CleanFunc) {

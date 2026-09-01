@@ -202,7 +202,7 @@ var pkgUpdateCmd = &cobra.Command{
 				fmt.Printf("Would fetch %s@%s into the global cache\n", pkgRef, version)
 				return
 			}
-			res, err := sourceMgr.EnsureVersion(pkg, version)
+			res, err := sourceMgr.EnsureVersion(pkg, version, "")
 			fatalErr(err)
 			fmt.Printf("Updated source for '%s' -> %s@%s (%s)\n", pkgRef, pkgRef, version, shortCommit(res.Commit))
 			return

@@ -190,7 +190,6 @@ func TestIsSourceValidMissingObj(t *testing.T) {
 	valid, _ := IsSourceValid(
 		filepath.Join(dir, "src.c"),
 		filepath.Join(dir, "obj.o"),
-		nil,
 		dir,
 	)
 	if valid {
@@ -211,7 +210,7 @@ func TestIsSourceValidFresh(t *testing.T) {
 	setMtime(t, srcPath, "2020-01-01T00:00:00Z")
 	setMtime(t, objPath, "2020-01-02T00:00:00Z")
 
-	valid, _ := IsSourceValid(srcPath, objPath, nil, dir)
+	valid, _ := IsSourceValid(srcPath, objPath, dir)
 	if !valid {
 		t.Error("obj newer than src should be valid")
 	}
@@ -230,7 +229,7 @@ func TestIsSourceValidStaleSrc(t *testing.T) {
 	setMtime(t, srcPath, "2020-01-02T00:00:00Z")
 	setMtime(t, objPath, "2020-01-01T00:00:00Z")
 
-	valid, _ := IsSourceValid(srcPath, objPath, nil, dir)
+	valid, _ := IsSourceValid(srcPath, objPath, dir)
 	if valid {
 		t.Error("src newer than obj should be invalid")
 	}
@@ -252,31 +251,9 @@ func TestIsSourceValidStaleDep(t *testing.T) {
 	setMtime(t, hdrPath, "2020-01-03T00:00:00Z")
 	setMtime(t, objPath, "2020-01-02T00:00:00Z")
 
-	valid, _ := IsSourceValid(srcPath, objPath, nil, dir)
+	valid, _ := IsSourceValid(srcPath, objPath, dir)
 	if valid {
 		t.Error("dep newer than obj should be invalid")
-	}
-}
-
-func TestIsSourceValidStaleExtraDep(t *testing.T) {
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "src.c")
-	buildGo := filepath.Join(dir, "build.go")
-	objPath := filepath.Join(dir, "obj.o")
-	depPath := objPath + ".d"
-
-	_ = os.WriteFile(srcPath, []byte("x"), 0644)
-	_ = os.WriteFile(buildGo, []byte("y"), 0644)
-	_ = os.WriteFile(depPath, []byte("obj.o: src.c\n"), 0644)
-	_ = os.WriteFile(objPath, []byte("obj"), 0644)
-
-	setMtime(t, srcPath, "2020-01-01T00:00:00Z")
-	setMtime(t, buildGo, "2020-01-03T00:00:00Z")
-	setMtime(t, objPath, "2020-01-02T00:00:00Z")
-
-	valid, _ := IsSourceValid(srcPath, objPath, []string{buildGo}, dir)
-	if valid {
-		t.Error("extra dep newer than obj should be invalid")
 	}
 }
 

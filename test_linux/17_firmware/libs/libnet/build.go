@@ -17,6 +17,6 @@ func Main(p *api.Package) {
 			AddCFlags("-fPIC").
 			AddDeps("libcore:core").
 			AddLdFlags(libcoreSo).
-			SetExcludeLibs("libcore")
+			AddExcludeLibs("libcore")
 	})
 }

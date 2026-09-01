@@ -14,7 +14,7 @@ func Main(p *api.Package) {
 			AddFiles("src/foo.c").
 			AddPublicIncludes("include").
 			AddDeps("helper").
-			SetExcludeLibs("libhelper").
+			AddExcludeLibs("libhelper").
 			SetSymbolBinding("static")
 
 		ctx.Target("bar").

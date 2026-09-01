@@ -2,6 +2,7 @@ package api
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -155,4 +156,19 @@ func TestNormalizeOptionValueFloat64ToInt(t *testing.T) {
 	if !reflect.DeepEqual(got, 9) {
 		t.Errorf("NormalizeOptionValue = %#v, want int 9", got)
 	}
+}
+
+func TestOptionLockedOutsideConfigPhase(t *testing.T) {
+	defer func() {
+		r := recover()
+		err, ok := r.(*BuildScriptError)
+		if !ok {
+			t.Fatalf("recover = %v, want *BuildScriptError", r)
+		}
+		if !strings.Contains(err.Error(), "after the config phase") {
+			t.Errorf("error should mention config phase, got: %v", err)
+		}
+	}()
+	ctx := NewBuildContext("p", nil)
+	ctx.Option("late_option")
 }

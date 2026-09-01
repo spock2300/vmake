@@ -21,7 +21,6 @@ type CompileCommandsWriter struct {
 	commands []CompileCommand
 	ccPath   string
 	cxxPath  string
-	pkgDir   string
 	mu       sync.Mutex
 }
 
@@ -33,11 +32,7 @@ func NewCompileCommandsWriter(tools *ResolvedTools) *CompileCommandsWriter {
 	}
 }
 
-func (w *CompileCommandsWriter) SetPackageDir(dir string) {
-	w.pkgDir = dir
-}
-
-func (w *CompileCommandsWriter) AddCommand(src, objPath string, opts *CompileOptions) {
+func (w *CompileCommandsWriter) AddCommand(dir, src, objPath string, opts *CompileOptions) {
 	compiler, flags := selectCompilerAndFlags(w.ccPath, w.cxxPath, opts.CFlags, opts.CxxFlags, opts)
 
 	args := BuildCompileArgs(opts, objPath, src, flags, "")
@@ -45,9 +40,9 @@ func (w *CompileCommandsWriter) AddCommand(src, objPath string, opts *CompileOpt
 
 	w.mu.Lock()
 	w.commands = append(w.commands, CompileCommand{
-		Directory: w.pkgDir,
+		Directory: dir,
 		Command:   cmdStr,
-		File:      filepath.Join(w.pkgDir, src),
+		File:      filepath.Join(dir, src),
 	})
 	w.mu.Unlock()
 }

@@ -2,7 +2,9 @@ package build
 
 import (
 	"fmt"
+	"strings"
 
+	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -14,6 +16,31 @@ type ResolvedTools struct {
 	SIZE    string
 	OBJDUMP string
 	NM      string
+
+	CCVersion  string
+	CXXVersion string
+}
+
+// CCKey combines the C compiler path with its reported version. An in-place
+// compiler upgrade keeps the path but changes the version, which must rotate
+// build keys instead of reusing stale objects.
+func (t *ResolvedTools) CCKey() string {
+	if t.CCVersion == "" {
+		return t.CC
+	}
+	return t.CC + "@" + t.CCVersion
+}
+
+func compilerVersion(path string) (string, error) {
+	out, err := iexec.Run(path, "-dumpversion")
+	if err != nil {
+		return "", fmt.Errorf("probe %s version: %w", path, err)
+	}
+	v := strings.TrimSpace(string(out))
+	if v == "" {
+		return "", fmt.Errorf("probe %s version: empty output", path)
+	}
+	return v, nil
 }
 
 func ResolveTools(tc *toolchain.Toolchain) (*ResolvedTools, error) {
@@ -34,6 +61,15 @@ func ResolveTools(tc *toolchain.Toolchain) (*ResolvedTools, error) {
 		return nil, err
 	}
 
+	ccVersion, err := compilerVersion(ccPath)
+	if err != nil {
+		return nil, err
+	}
+	cxxVersion, err := compilerVersion(cxxPath)
+	if err != nil {
+		return nil, err
+	}
+
 	return &ResolvedTools{
 		CC:      ccPath,
 		CXX:     cxxPath,
@@ -42,6 +78,9 @@ func ResolveTools(tc *toolchain.Toolchain) (*ResolvedTools, error) {
 		SIZE:    resolveOptionalTool(mgr, tc, tc.Tools.SIZE, "SIZE"),
 		OBJDUMP: resolveOptionalTool(mgr, tc, tc.Tools.OBJDUMP, "OBJDUMP"),
 		NM:      resolveOptionalTool(mgr, tc, tc.Tools.NM, "NM"),
+
+		CCVersion:  ccVersion,
+		CXXVersion: cxxVersion,
 	}, nil
 }
 

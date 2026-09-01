@@ -9,13 +9,94 @@ import (
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
+	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/repo"
 	"github.com/spock2300/vmake/pkg/resolver"
 )
 
-func computeReachable(graph *resolver.Graph) map[string]bool {
+type buildPrelude struct {
+	cfg             *buildConfig
+	tools           *build.ResolvedTools
+	needed          map[string]bool
+	globalFlagsHash string
+}
+
+// prepareBuildPrelude is the shared build/clean/check-symbols preamble:
+// resolve build config and tools, compute the reachable set, apply global
+// flags from it and derive the global flags hash. One implementation, no
+// per-command copies.
+func prepareBuildPrelude(ctx *RuntimeContext) (*buildPrelude, error) {
+	cfg, err := resolveBuildConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tools, err := build.ResolveTools(cfg.Tc)
+	if err != nil {
+		return nil, err
+	}
+	needed, err := computeReachable(ctx.DepGraph)
+	if err != nil {
+		return nil, err
+	}
+	applyGlobalFlagsFromNeeded(ctx, needed)
+	return &buildPrelude{
+		cfg:             cfg,
+		tools:           tools,
+		needed:          needed,
+		globalFlagsHash: build.GlobalFlagsHash(),
+	}, nil
+}
+
+func scriptHashForNode(name string, node *resolver.PackageNode) string {
+	if node == nil || node.Source == nil {
+		return ""
+	}
+	h, err := buildscript.ScriptSetHash(node.Source.Dir)
+	if err != nil {
+		vlog.Fatal("hash buildscript for %s: %v", name, err)
+	}
+	return h
+}
+
+func patchHashForNode(name string, node *resolver.PackageNode) string {
+	if node == nil || node.Pkg == nil || len(node.Pkg.GetPatches()) == 0 {
+		return ""
+	}
+	h, err := repo.PatchSetHash(node.Pkg)
+	if err != nil {
+		vlog.Fatal("hash patches for %s: %v", name, err)
+	}
+	return h
+}
+
+// remoteVersionKey is the single authoritative version/commit derivation for
+// remote packages outside the download path: config pin first, then lock,
+// then the resolver-selected native version. Mirrors the precedence of
+// resolver.selectNativeVersion.
+func remoteVersionKey(ctx *RuntimeContext, name string, node *resolver.PackageNode, entry *config.EntryConfig) (string, string, bool) {
+	if entry != nil && entry.Version != "" {
+		commit := ""
+		if ctx.Lock != nil && !ctx.IgnoreLock {
+			if locked, ok := ctx.Lock.Get(name); ok && locked.Version == entry.Version {
+				commit = locked.Commit
+			}
+		}
+		return entry.Version, commit, true
+	}
+	if ctx.Lock != nil && !ctx.IgnoreLock {
+		if locked, ok := ctx.Lock.Get(name); ok && locked.Version != "" {
+			return locked.Version, locked.Commit, true
+		}
+	}
+	if node.Native != nil && node.Native.Selected != "" {
+		return node.Native.Selected, node.Native.Commit, true
+	}
+	return "", "", false
+}
+
+func computeReachable(graph *resolver.Graph) (map[string]bool, error) {
 	needed := make(map[string]bool, len(graph.Packages))
 	var queue []string
 
@@ -28,7 +109,7 @@ func computeReachable(graph *resolver.Graph) map[string]bool {
 		}
 	}
 	if rootCount > 1 {
-		vlog.Fatal("SetRoot(true): multiple root packages found; only one is allowed")
+		return nil, fmt.Errorf("SetRoot(true): multiple root packages found; only one is allowed")
 	}
 
 	if rootCount == 1 {
@@ -89,7 +170,7 @@ func computeReachable(graph *resolver.Graph) map[string]bool {
 			}
 		}
 	}
-	return needed
+	return needed, nil
 }
 
 func collectAllPkgOptions(ctx *RuntimeContext, needed map[string]bool) map[string]map[string]any {
@@ -124,8 +205,12 @@ func collectLocalPkgOptions(ctx *RuntimeContext) map[string]map[string]any {
 	return result
 }
 
-func makeLocalPkgDirs(scriptDir, ccPath, mode string, opts map[string]any, globalFlagsHash string) *api.PkgDirs {
-	buildKey := build.BuildKey(ccPath, mode, opts, globalFlagsHash)
+func localKeyExtra(globalFlagsHash, scriptHash string) string {
+	return build.JoinKeyExtra("", "", globalFlagsHash, "", scriptHash)
+}
+
+func makeLocalPkgDirs(scriptDir, ccKey, mode string, opts map[string]any, globalFlagsHash, scriptHash string) *api.PkgDirs {
+	buildKey := build.BuildKey(ccKey, mode, opts, localKeyExtra(globalFlagsHash, scriptHash))
 	return &api.PkgDirs{
 		SourceDir: scriptDir,
 		BuildDir:  filepath.Join(scriptDir, "build", buildKey),
@@ -135,9 +220,9 @@ func makeLocalPkgDirs(scriptDir, ccPath, mode string, opts map[string]any, globa
 // makeRemotePkgDirs points remote packages at the shared global cache:
 // <versionDir>/out/<buildKey>/{build,install}. The version dir is immutable
 // per source version; the build key folds in toolchain/mode/options plus the
-// version, commit and global-flags hash.
-func makeRemotePkgDirs(versionDir, sourceDir, ccPath, mode string, opts map[string]any, version, commit, globalFlagsHash string) *api.PkgDirs {
-	buildKey := build.BuildKey(ccPath, mode, opts, build.JoinKeyExtra(version, commit, globalFlagsHash))
+// version, commit, global-flags hash, patch-set hash and script hash.
+func makeRemotePkgDirs(versionDir, sourceDir, ccKey, mode string, opts map[string]any, version, commit, globalFlagsHash, patchHash, scriptHash string) *api.PkgDirs {
+	buildKey := build.BuildKey(ccKey, mode, opts, build.JoinKeyExtra(version, commit, globalFlagsHash, patchHash, scriptHash))
 	return &api.PkgDirs{
 		SourceDir:  sourceDir,
 		BuildDir:   filepath.Join(versionDir, "out", buildKey, "build"),

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	iexec "github.com/spock2300/vmake/internal/exec"
 )
 
 func TestLinkStatic_RemovesStaleMembers(t *testing.T) {
@@ -31,7 +33,7 @@ func TestLinkStatic_RemovesStaleMembers(t *testing.T) {
 	}
 
 	archive := filepath.Join(dir, "lib.a")
-	linker := &Linker{ccPath: "cc", arPath: "ar"}
+	linker := &Linker{ccPath: "cc", arPath: "ar", run: iexec.RunInDir}
 
 	objA := mkObj("a", "a")
 	objB := mkObj("b", "b")

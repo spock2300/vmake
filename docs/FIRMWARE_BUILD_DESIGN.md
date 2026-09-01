@@ -173,13 +173,11 @@ func (ctx *ConfigContext) KConfig(name string) *KConfigEntry
 
 ```go
 func (k *KConfigEntry) AddPreset(name string) *KConfigEntry
-func (k *KConfigEntry) SetDefault(presetName string) *KConfigEntry
+func (k *KConfigEntry) SetDefaultPreset(presetName string) *KConfigEntry
 func (k *KConfigEntry) SetDescription(desc string) *KConfigEntry
 func (k *KConfigEntry) SetConfigPath(path string) *KConfigEntry
 func (k *KConfigEntry) SetSrcDir(dir string) *KConfigEntry
 func (k *KConfigEntry) SetMenuconfigCmd(cmd string) *KConfigEntry
-func (k *KConfigEntry) SetSelectedPreset(name string) *KConfigEntry
-func (k *KConfigEntry) PatchKConfig(patches map[string]string) *KConfigEntry
 func (k *KConfigEntry) Name() string
 func (k *KConfigEntry) Description() string
 func (k *KConfigEntry) ConfigPath() string
@@ -201,7 +199,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
         SetDescription("U-Boot configuration").
         AddPreset("sandbox_defconfig").
         AddPreset("rk3568_defconfig").
-        SetDefault("sandbox_defconfig").
+        SetDefaultPreset("sandbox_defconfig").
         SetMenuconfigCmd("make menuconfig")
 })
 
@@ -210,7 +208,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
         SetDescription("Linux kernel configuration").
         AddPreset("x86_64_defconfig").
         AddPreset("rk3568_defconfig").
-        SetDefault("x86_64_defconfig").
+        SetDefaultPreset("x86_64_defconfig").
         SetMenuconfigCmd("make menuconfig")
 })
 
@@ -219,8 +217,8 @@ p.OnConfig(func(ctx *api.ConfigContext) {
         SetDescription("BusyBox applet configuration").
         SetSrcDir("src").
         AddPreset("defconfig").
-        SetDefault("defconfig").
-        PatchKConfig(map[string]string{
+        SetDefaultPreset("defconfig").
+        SetKConfigPatches(map[string]string{
             "CONFIG_TC=y": "# CONFIG_TC is not set",
         })
 })
@@ -234,7 +232,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 
 ---
 
-## 3.6 EnsureConfig + PatchKConfig
+## 3.6 EnsureConfig + SetKConfigPatches
 
 ### EnsureConfig
 
@@ -257,16 +255,15 @@ pkg.EnsureConfig(srcDir)
 pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
 ```
 
-### PatchKConfig
+### SetKConfigPatches
 
 ```go
-func (k *KConfigEntry) PatchKConfig(patches map[string]string) *KConfigEntry
 ```
 
 Post-defconfig 值补丁，用于在 `make <preset>` 生成 `.config` 后覆盖特定配置项。例如：
 
 ```go
-PatchKConfig(map[string]string{
+SetKConfigPatches(map[string]string{
     "CONFIG_TC=y": "# CONFIG_TC is not set",
 })
 ```
@@ -337,7 +334,7 @@ menuconfig 采用两步执行：
 **Step 1: ensureConfigCmd**
 1. 检查 `.config` 是否存在
 2. 若不存在，执行 `make <preset>` 生成初始配置
-3. 若有 `PatchKConfig`，应用补丁
+3. 若有 `SetKConfigPatches`，应用补丁
 
 **Step 2: runMenuconfigCmd**
 1. 执行 `KConfigEntry.MenuconfigCmd()`（默认 `make menuconfig`）
@@ -419,7 +416,7 @@ func Main(p *api.Package) {
             AddPreset("sandbox_defconfig").
             AddPreset("rk3568_defconfig").
             AddPreset("stm32_defconfig").
-            SetDefault("sandbox_defconfig").
+            SetDefaultPreset("sandbox_defconfig").
             SetMenuconfigCmd("make menuconfig")
     })
 
@@ -458,7 +455,7 @@ func Main(p *api.Package) {
             AddPreset("x86_64_defconfig").
             AddPreset("rk3568_defconfig").
             AddPreset("stm32_defconfig").
-            SetDefault("x86_64_defconfig").
+            SetDefaultPreset("x86_64_defconfig").
             SetMenuconfigCmd("make menuconfig")
     })
 
@@ -500,8 +497,8 @@ func Main(p *api.Package) {
             SetDescription("BusyBox applet configuration").
             SetSrcDir("src").
             AddPreset("defconfig").
-            SetDefault("defconfig").
-            PatchKConfig(map[string]string{
+            SetDefaultPreset("defconfig").
+            SetKConfigPatches(map[string]string{
                 "CONFIG_TC=y": "# CONFIG_TC is not set",
             })
     })
@@ -519,7 +516,7 @@ func Main(p *api.Package) {
 }
 ```
 
-Busybox 使用 `SetSrcDir("src")` 指定源码子目录，`PatchKConfig` 在 defconfig 生成后覆盖特定选项。`make CONFIG_PREFIX=<dir> install` 在 BuildDir 下生成 `_install` 目录：
+Busybox 使用 `SetSrcDir("src")` 指定源码子目录，`SetKConfigPatches` 在 defconfig 生成后覆盖特定选项。`make CONFIG_PREFIX=<dir> install` 在 BuildDir 下生成 `_install` 目录：
 
 ```
 <BuildDir>/_install/
@@ -808,7 +805,7 @@ my-firmware/
 | **1** | `Package.Make()` 交叉编译扩展：自动传递 `pkg.Env()` | 已完成 |
 | **2** | KConfig 基础：类型、API、config.json 扩展、编码/解码 | 已完成 |
 | **3** | TUI 扩展：预设选择器、menuconfig 集成（两步执行） | 已完成 |
-| **4** | 构建集成：.config 恢复（Phase 2.5）、EnsureConfig、PatchKConfig | 已完成 |
+| **4** | 构建集成：.config 恢复（Phase 2.5）、EnsureConfig、SetKConfigPatches | 已完成 |
 | **5** | 完整示例：test_data 固件项目（uboot + kernel + busybox + app + 分区 + firmware） | 已完成 |
 | **6** | 高级功能：FIT Image、OTA A/B、签名、多板级管理 | 后续 |
 
@@ -823,7 +820,7 @@ my-firmware/
 | KConfig | 统一 API | uboot/kernel/busybox 用完全相同的 KConfig API 管理配置 |
 | TargetKind | TargetVoid | 复用现有机制，不增加复杂度 |
 | 预设格式 | defconfig 名称（make target） | 兼容 U-Boot/Kernel/Busybox 原生格式，`make <preset>` 生成 .config |
-| 配置生成 | EnsureConfig | 检查 .config 存在性，自动 `make <preset>` + PatchKConfig |
+| 配置生成 | EnsureConfig | 检查 .config 存在性，自动 `make <preset>` + SetKConfigPatches |
 | 配置恢复 | restoreKConfigFiles skip rules | 无条目跳过、空 kconfig 删除、有内容仅变化时写入（避免 mtime 失效） |
 | 交叉编译 | Make() 自动传递 Env() | 不改变 BuildFunc 使用方式，`pkg.Make()` 自动携带 CROSS_COMPILE |
 | BuildDir | 与 SourceDir 分离 | 本地包 `<SourceDir>/build/<key>/`，远程包 `<packagesDir>/.../build/` |

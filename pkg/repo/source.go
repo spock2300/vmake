@@ -64,17 +64,28 @@ func (m *SourceManager) acquireLock(pkg *api.Package) (*flock.FileLock, error) {
 	return flock.Acquire(m.pkgLockFile(pkg.Repo, pkg.Name))
 }
 
+func ShortCommit(c string) string {
+	if len(c) > 12 {
+		return c[:12]
+	}
+	return c
+}
+
 // EnsureSource materializes the requested version of pkg in the global cache
 // and symlinks <project>/vmake_deps/<repo>/<pkg>/src (and out) to it.
 func (m *SourceManager) EnsureSource(pkg *api.Package, version string) (string, error) {
-	res, err := m.EnsureVersion(pkg, version)
+	res, err := m.EnsureVersion(pkg, version, "")
 	if err != nil {
 		return "", err
 	}
 	return res.LocalSrc, nil
 }
 
-func (m *SourceManager) EnsureVersion(pkg *api.Package, version string) (*SourceResult, error) {
+// EnsureVersion materializes the requested version of pkg in the global cache.
+// When expectedCommit is non-empty and the cached checkout resolves to a
+// different commit (e.g. a moved tag), the mismatch is a hard error: the
+// caller must re-resolve ('vmake lock update') or purge the stale entry.
+func (m *SourceManager) EnsureVersion(pkg *api.Package, version, expectedCommit string) (*SourceResult, error) {
 	lock, err := m.acquireLock(pkg)
 	if err != nil {
 		return nil, fmt.Errorf("acquire lock for %s: %w", pkg.FullName(), err)
@@ -100,11 +111,12 @@ func (m *SourceManager) EnsureVersion(pkg *api.Package, version string) (*Source
 		return nil, fmt.Errorf("resolve commit for %s@%s: %w", pkg.FullName(), version, err)
 	}
 
-	if err := m.linkProject(pkg, versionDir); err != nil {
-		return nil, err
+	if expectedCommit != "" && commit != expectedCommit {
+		return nil, fmt.Errorf("cached %s@%s is commit %s but expected %s (moved tag?); run 'vmake pkg clean %s' or 'vmake lock update' to re-resolve",
+			pkg.FullName(), version, ShortCommit(commit), ShortCommit(expectedCommit), pkg.FullName())
 	}
 
-	if err := m.initSubmodules(pkg, srcDir); err != nil {
+	if err := m.linkProject(pkg, versionDir); err != nil {
 		return nil, err
 	}
 
@@ -112,8 +124,9 @@ func (m *SourceManager) EnsureVersion(pkg *api.Package, version string) (*Source
 }
 
 // materialize clones one of pkg's mirrors into a temporary sibling of the
-// version's src directory, checks out tag, then atomically renames it into
-// place. versionDir itself only ever holds src/ and out/.
+// version's src directory, checks out tag, initializes submodules, then
+// atomically renames it into place. versionDir itself only ever holds src/
+// and out/.
 func (m *SourceManager) materialize(pkg *api.Package, versionDir, tag string) error {
 	srcTarget := filepath.Join(versionDir, "src")
 	tmpDir := srcTarget + ".tmp"
@@ -128,6 +141,10 @@ func (m *SourceManager) materialize(pkg *api.Package, versionDir, tag string) er
 		if err := Checkout(tmpDir, tag); err != nil {
 			return fmt.Errorf("checkout %s failed for %s: %w", tag, pkg.FullName(), err)
 		}
+	}
+
+	if err := m.initSubmodules(pkg, tmpDir); err != nil {
+		return err
 	}
 
 	if err := fs.EnsureDir(versionDir); err != nil {
@@ -149,6 +166,79 @@ func (m *SourceManager) linkProject(pkg *api.Package, versionDir string) error {
 		return fmt.Errorf("link out for %s: %w", pkg.FullName(), err)
 	}
 	return nil
+}
+
+// PatchSetHash summarizes a package's declared patch set. Paths are hashed
+// in declaration order — patches form a series and usually do not commute,
+// so EnsurePatched (which applies them in declaration order) must land on
+// the same content for a given hash. It keys the patched/ cache layout and
+// the remote BuildKey so different patch sets never share build outputs.
+func PatchSetHash(pkg *api.Package) (string, error) {
+	patches := pkg.GetPatches()
+	if len(patches) == 0 {
+		return "", nil
+	}
+	h := sha256.New()
+	for _, p := range patches {
+		data, err := os.ReadFile(filepath.Join(pkg.ScriptDir(), p))
+		if err != nil {
+			return "", fmt.Errorf("read patch %s for %s: %w", p, pkg.FullName(), err)
+		}
+		fmt.Fprintf(h, "%s\x00", p)
+		h.Write(data)
+		h.Write([]byte("\x00"))
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16], nil
+}
+
+// EnsurePatched materializes a patched copy of the immutable version checkout
+// at <versionDir>/patched/<patchHash>/src. The immutable <versionDir>/src is
+// never modified; identical patch sets share one patched copy across projects.
+func (m *SourceManager) EnsurePatched(pkg *api.Package, versionDir string) (string, error) {
+	patchHash, err := PatchSetHash(pkg)
+	if err != nil {
+		return "", err
+	}
+	if patchHash == "" {
+		return filepath.Join(versionDir, "src"), nil
+	}
+
+	patchedDir := filepath.Join(versionDir, "patched", patchHash)
+	patchedSrc := filepath.Join(patchedDir, "src")
+
+	lock, err := m.acquireLock(pkg)
+	if err != nil {
+		return "", fmt.Errorf("acquire lock for %s: %w", pkg.FullName(), err)
+	}
+	defer lock.Release()
+
+	if fs.FileExists(filepath.Join(patchedSrc, ".git")) {
+		return patchedSrc, nil
+	}
+
+	tmpDir := patchedSrc + ".tmp"
+	fs.RemoveIfExists(tmpDir)
+	defer fs.RemoveIfExists(tmpDir)
+
+	if err := Clone(filepath.Join(versionDir, "src"), tmpDir); err != nil {
+		return "", fmt.Errorf("clone %s for patching: %w", pkg.FullName(), err)
+	}
+	if err := m.initSubmodules(pkg, tmpDir); err != nil {
+		return "", err
+	}
+	for _, p := range pkg.GetPatches() {
+		if err := ApplyPatch(tmpDir, filepath.Join(pkg.ScriptDir(), p)); err != nil {
+			return "", fmt.Errorf("apply patch %s for %s: %w", p, pkg.FullName(), err)
+		}
+	}
+	if err := fs.EnsureDir(patchedDir); err != nil {
+		return "", err
+	}
+	fs.RemoveIfExists(patchedSrc)
+	if err := os.Rename(tmpDir, patchedSrc); err != nil {
+		return "", fmt.Errorf("publish %s: %w", patchedSrc, err)
+	}
+	return patchedSrc, nil
 }
 
 func (m *SourceManager) initSubmodules(pkg *api.Package, dir string) error {

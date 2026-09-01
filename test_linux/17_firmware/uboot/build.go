@@ -18,7 +18,7 @@ func Main(p *api.Package) {
 			AddPreset("sandbox_defconfig").
 			AddPreset("rk3568_defconfig").
 			AddPreset("stm32_defconfig").
-			SetDefault("sandbox_defconfig").
+			SetDefaultPreset("sandbox_defconfig").
 			SetMenuconfigCmd("make menuconfig")
 	})
 

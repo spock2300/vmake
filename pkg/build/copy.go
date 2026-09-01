@@ -1,10 +1,28 @@
 package build
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 )
+
+// FileHash returns the SHA256 of a file's content, used for exact
+// publish-skip decisions where size+mtime would accept divergent content.
+func FileHash(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("hash %s: %w", path, err)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
 
 func CopyFile(src, dest string) error {
 	srcFile, err := os.Open(src)

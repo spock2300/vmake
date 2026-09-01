@@ -37,7 +37,7 @@ func Main(p *api.Package) {
 	})
 
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("conditional_app").
+		target := ctx.Target("conditional_app").
 			SetKind(api.TargetBinary).
 			AddFiles("src/*.c").
 			AddDefines(ctx.If("debug", "DEBUG_MODE")).
@@ -45,12 +45,14 @@ func Main(p *api.Package) {
 			AddDefines(ctx.If("feature_a", "FEATURE_A")).
 			AddDefines(ctx.If("feature_b", "FEATURE_B")).
 			AddDefines("PLATFORM=\"" + ctx.String("platform") + "\"").
-			AddCFlags(ctx.If("debug", "-g", "-O0")).
-			AddCFlags(ctx.IfNot("debug", "-O2")).
-			AddCFlags(ctx.Select("platform", map[string]string{
-				"linux":   "-DLINUX",
-				"macos":   "-DMACOS",
-				"windows": "-DWINDOWS",
-			}))
+			AddCFlags(ctx.If("debug", "-g", "-O0"))
+		if !ctx.When("debug", true) {
+			target.AddCFlags("-O2")
+		}
+		target.AddCFlags(ctx.Select("platform", map[string]string{
+			"linux":   "-DLINUX",
+			"macos":   "-DMACOS",
+			"windows": "-DWINDOWS",
+		}))
 	})
 }

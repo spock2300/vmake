@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -126,39 +127,72 @@ func TestFilterDepsUnknownDepErrors(t *testing.T) {
 	}
 }
 
-func TestCheckNodeConstraintsEmptyIncoming(t *testing.T) {
+func TestValidateNodeConstraintsEmptyIncoming(t *testing.T) {
 	node := &PackageNode{ID: "x", Constraints: []string{">=1.0"}}
-	if err := checkNodeConstraints(node, ""); err != nil {
+	if err := validateNodeConstraints(node, "", []string{"a"}); err != nil {
 		t.Errorf("empty incoming should pass: %v", err)
 	}
 }
 
-func TestCheckNodeConstraintsMultipleCompatible(t *testing.T) {
-	node := &PackageNode{ID: "x", Constraints: []string{">=1.0", ">=1.5", "<2.0"}}
-	if err := checkNodeConstraints(node, ">=1.6"); err != nil {
+func TestValidateNodeConstraintsNativeCompatible(t *testing.T) {
+	node := &PackageNode{
+		ID:          "x",
+		Constraints: []string{">=1.0"},
+		Native:      &NativePackageInfo{Selected: "1.5.0"},
+	}
+	if err := validateNodeConstraints(node, ">=1.2", []string{"a"}); err != nil {
 		t.Errorf("compatible constraint should pass: %v", err)
 	}
-}
-
-func TestCheckNodeConstraintsConflictFatal(t *testing.T) {
-	node := &PackageNode{ID: "x", Constraints: []string{">=2.0"}}
-	if err := checkNodeConstraints(node, "<1.0"); err == nil {
-		t.Error("conflicting constraint should fail")
+	if !slices.Contains(node.Constraints, ">=1.2") {
+		t.Errorf("constraint should be appended, got %v", node.Constraints)
 	}
 }
 
-func TestConstraintsCompatibleBothEmpty(t *testing.T) {
-	if !constraintsCompatible("", "") {
-		t.Error("both empty should be compatible")
+func TestValidateNodeConstraintsNativeConflictFatal(t *testing.T) {
+	node := &PackageNode{
+		ID:          "x",
+		Constraints: []string{">=1.2"},
+		Native:      &NativePackageInfo{Selected: "1.9.0"},
+	}
+	err := validateNodeConstraints(node, "<1.5", []string{"a"})
+	if err == nil {
+		t.Fatal("conflicting constraint against selected version should fail")
+	}
+	for _, want := range []string{"1.9.0", "<1.5", ">=1.2"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q, got: %v", want, err)
+		}
 	}
 }
 
-func TestConstraintsCompatibleUnparseable(t *testing.T) {
-	if !constraintsCompatible("garbage", "garbage") {
-		t.Error("identical unparseable should fall back to equality check")
+func TestValidateNodeConstraintsRegistryConflictFatal(t *testing.T) {
+	pkg := api.NewPackage().SetRepo("official").SetName("zlib")
+	pkg.SetVersions(map[string]string{
+		"1.2.0": "v1.2.0",
+		"1.5.0": "v1.5.0",
+		"1.9.0": "v1.9.0",
+	})
+	node := &PackageNode{
+		ID:          "official/zlib",
+		Constraints: []string{">=1.2"},
+		Pkg:         pkg,
 	}
-	if constraintsCompatible("garbage", "different") {
-		t.Error("different unparseable should not be compatible")
+	if err := validateNodeConstraints(node, ">=1.5", []string{"a"}); err != nil {
+		t.Errorf("compatible constraint should pass: %v", err)
+	}
+	err := validateNodeConstraints(node, "<1.5", []string{"b"})
+	if err == nil {
+		t.Fatal("conflicting constraint with no common version should fail")
+	}
+	if !strings.Contains(err.Error(), "official/zlib") {
+		t.Errorf("error should mention package, got: %v", err)
+	}
+}
+
+func TestValidateNodeConstraintsUnversionedIgnored(t *testing.T) {
+	node := &PackageNode{ID: "local-thing"}
+	if err := validateNodeConstraints(node, ">=2.0", []string{"a"}); err != nil {
+		t.Errorf("unversioned node should ignore constraints: %v", err)
 	}
 }
 

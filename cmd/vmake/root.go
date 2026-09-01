@@ -318,9 +318,9 @@ func collectAllOptionsAndKConfigs(ctx *RuntimeContext) {
 					}
 					cfgEntry := config.GetEntry(ctx.Config, name)
 					if cfgEntry.SelectedPreset != "" {
-						e.SetSelectedPreset(cfgEntry.SelectedPreset)
+						e.SelectPreset(cfgEntry.SelectedPreset)
 					} else if e.DefaultPreset() != "" {
-						e.SetSelectedPreset(e.DefaultPreset())
+						e.SelectPreset(e.DefaultPreset())
 					}
 				}
 				ctx.AllKConfigs[name] = entries

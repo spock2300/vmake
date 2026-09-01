@@ -25,6 +25,7 @@ func (s PostLinkStep) OutputPaths(outputPath string) []string {
 
 type Target struct {
 	name               string
+	pkgName            string
 	kind               TargetKind
 	isDefault          bool
 	isTest             bool
@@ -150,7 +151,7 @@ func (t *Target) AddDeps(targets ...string) *Target {
 			continue
 		}
 		if _, err := ParseDepRef(d); err != nil {
-			fatalScript("", "AddDeps", "%v", err)
+			fatalScript(t.pkgName, "AddDeps", "%v", err)
 		}
 		t.deps = append(t.deps, d)
 	}
@@ -183,7 +184,7 @@ func (t *Target) BuildFunc() func(p *Package) error {
 
 func (t *Target) SetPrebuilt(path string) *Target {
 	if t.prebuilt != "" {
-		fatalScript("", "SetPrebuilt", "prebuilt already set to %s", t.prebuilt)
+		fatalScript(t.pkgName, "SetPrebuilt", "prebuilt already set to %s", t.prebuilt)
 	}
 	t.prebuilt = path
 	return t
@@ -195,7 +196,7 @@ func (t *Target) Prebuilt() string {
 
 func (t *Target) SetLinkerScript(path string) *Target {
 	if t.linkerScript != "" {
-		fatalScript("", "SetLinkerScript", "linker script already set to %s", t.linkerScript)
+		fatalScript(t.pkgName, "SetLinkerScript", "linker script already set to %s", t.linkerScript)
 	}
 	t.linkerScript = path
 	return t
@@ -203,7 +204,7 @@ func (t *Target) SetLinkerScript(path string) *Target {
 
 func (t *Target) SetVersionScript(path string) *Target {
 	if t.versionScript != "" {
-		fatalScript("", "SetVersionScript", "version script already set to %s", t.versionScript)
+		fatalScript(t.pkgName, "SetVersionScript", "version script already set to %s", t.versionScript)
 	}
 	t.versionScript = path
 	return t
@@ -214,24 +215,19 @@ func (t *Target) AddExcludeLibs(libs ...string) *Target {
 	return t
 }
 
-// Deprecated: use AddExcludeLibs. SetExcludeLibs appends (it never replaced).
-func (t *Target) SetExcludeLibs(libs ...string) *Target {
-	return t.AddExcludeLibs(libs...)
-}
-
 func (t *Target) SetSymbolBinding(mode string) *Target {
 	switch mode {
 	case "", "static", "static-functions":
 		t.symbolBinding = mode
 	default:
-		fatalScript("", "SetSymbolBinding", "invalid mode %q (use \"static\" or \"static-functions\")", mode)
+		fatalScript(t.pkgName, "SetSymbolBinding", "invalid mode %q (use \"static\" or \"static-functions\")", mode)
 	}
 	return t
 }
 
 func (t *Target) SetSymbolPrefix(prefix string) *Target {
 	if t.symbolPrefix != "" {
-		fatalScript("", "SetSymbolPrefix", "prefix already set to %s", t.symbolPrefix)
+		fatalScript(t.pkgName, "SetSymbolPrefix", "prefix already set to %s", t.symbolPrefix)
 	}
 	t.symbolPrefix = prefix
 	t.postLinks = append(t.postLinks, PostLinkStep{

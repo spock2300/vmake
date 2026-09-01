@@ -54,7 +54,8 @@ func GlobalFlagsHash() string {
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
-// JoinKeyExtra combines version/commit/globalFlagsHash into BuildKey extra material.
-func JoinKeyExtra(version, commit, globalFlagsHash string) string {
-	return version + "\x00" + commit + "\x00" + globalFlagsHash
+// JoinKeyExtra combines version/commit/globalFlagsHash/patchHash/scriptHash
+// into BuildKey extra material.
+func JoinKeyExtra(version, commit, globalFlagsHash, patchHash, scriptHash string) string {
+	return version + "\x00" + commit + "\x00" + globalFlagsHash + "\x00" + patchHash + "\x00" + scriptHash
 }

@@ -3,6 +3,7 @@ package build
 import (
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/toolchain"
@@ -20,6 +21,7 @@ type BuildPipeline struct {
 	PkgKeyExtra  map[string]string
 	PkgLockDir   string
 	NumWorkers   int
+	ParallelPkgs int
 	KeepGoing    bool
 }
 
@@ -58,6 +60,10 @@ func (p *BuildPipeline) SetNumWorkers(n int) {
 	p.NumWorkers = n
 }
 
+func (p *BuildPipeline) SetParallelPkgs(n int) {
+	p.ParallelPkgs = n
+}
+
 func (p *BuildPipeline) SetKeepGoing(v bool) {
 	p.KeepGoing = v
 }
@@ -74,6 +80,11 @@ func (p *BuildPipeline) Run() (*Scheduler, error) {
 	scheduler.SetPkgKeyExtra(p.PkgKeyExtra)
 	scheduler.SetPkgLockDir(p.PkgLockDir)
 	scheduler.SetNumWorkers(p.NumWorkers)
+	parallelPkgs := p.ParallelPkgs
+	if parallelPkgs == 0 {
+		parallelPkgs = runtime.NumCPU()
+	}
+	scheduler.SetParallelPkgs(parallelPkgs)
 	scheduler.SetKeepGoing(p.KeepGoing)
 
 	for name, pkg := range p.Packages {

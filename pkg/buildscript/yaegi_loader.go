@@ -2,11 +2,11 @@ package buildscript
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/traefik/yaegi/interp"
 
 	"github.com/spock2300/vmake/internal/gosrc"
+	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/internal/yaegibase"
 	"github.com/spock2300/vmake/pkg/api"
 	vlog "github.com/spock2300/vmake/pkg/log"
@@ -45,6 +45,12 @@ func loadBuildScript(src Source) (*api.Package, error) {
 		return nil, err
 	}
 
+	if src.Dir != "" {
+		if err := i.Use(scriptfs.New(src.Dir).Exports()); err != nil {
+			return nil, fmt.Errorf("use script fs %s: %w", src.Dir, err)
+		}
+	}
+
 	merged, err := gosrc.MergeGoSources(src.Dir)
 	if err != nil {
 		return nil, fmt.Errorf("merge go files in %s: %w", src.Dir, err)
@@ -67,17 +73,6 @@ func loadBuildScript(src Source) (*api.Package, error) {
 	pkg.SetName(src.Name)
 	if dir := src.Dir; dir != "" {
 		pkg.SetScriptDir(dir)
-	}
-
-	origDir, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("get working directory: %w", err)
-	}
-	defer os.Chdir(origDir)
-	if dir := src.Dir; dir != "" {
-		if err := os.Chdir(dir); err != nil {
-			return nil, fmt.Errorf("chdir to %s: %w", dir, err)
-		}
 	}
 
 	runScriptFunc(src.Name, func() {

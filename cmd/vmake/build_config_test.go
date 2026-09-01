@@ -38,7 +38,10 @@ func remoteNode(name string, deps ...string) *resolver.PackageNode {
 
 func TestCollectNeededEmptyGraph(t *testing.T) {
 	graph := &resolver.Graph{Packages: map[string]*resolver.PackageNode{}}
-	needed := computeReachable(graph)
+	needed, err := computeReachable(graph)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(needed) != 0 {
 		t.Errorf("empty graph should produce empty needed, got %v", needed)
 	}
@@ -54,7 +57,10 @@ func TestCollectNeededSingleRootExplicit(t *testing.T) {
 			"lib": lib,
 		},
 	}
-	needed := computeReachable(graph)
+	needed, err := computeReachable(graph)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(needed) != 1 {
 		t.Fatalf("with explicit root, only root should be seed: got %v", needed)
 	}
@@ -75,7 +81,10 @@ func TestCollectNeededBFSFromRoot(t *testing.T) {
 			"remote-pkg": remote,
 		},
 	}
-	needed := computeReachable(graph)
+	needed, err := computeReachable(graph)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !needed["app"] || !needed["lib"] || !needed["remote-pkg"] {
 		t.Errorf("BFS should reach all deps: got %v", needed)
 	}
@@ -91,7 +100,10 @@ func TestCollectNeededExcludesUnreachable(t *testing.T) {
 			"orphan": orphan,
 		},
 	}
-	needed := computeReachable(graph)
+	needed, err := computeReachable(graph)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if needed["orphan"] {
 		t.Error("orphan (no one depends on it) should not be needed")
 	}
@@ -114,7 +126,10 @@ func TestCollectNeededLibraryOnlyStillPulledInViaBFS(t *testing.T) {
 			"lib": libraryOnly,
 		},
 	}
-	needed := computeReachable(graph)
+	needed, err := computeReachable(graph)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !needed["app"] {
 		t.Error("consumer with requires should be needed")
 	}
@@ -123,8 +138,24 @@ func TestCollectNeededLibraryOnlyStillPulledInViaBFS(t *testing.T) {
 	}
 }
 
-func TestCollectNeededMultipleRootsFatals(t *testing.T) {
-	t.Skip("vlog.Fatal calls os.Exit which kills the test process; covered by integration test in test_data/21_root_package")
+func TestCollectNeededMultipleRootsFails(t *testing.T) {
+	r1 := localNode("app1")
+	r1.Pkg.SetRoot(true)
+	r2 := localNode("app2")
+	r2.Pkg.SetRoot(true)
+	graph := &resolver.Graph{
+		Packages: map[string]*resolver.PackageNode{
+			"app1": r1,
+			"app2": r2,
+		},
+	}
+	_, err := computeReachable(graph)
+	if err == nil {
+		t.Fatal("multiple SetRoot(true) packages should fail")
+	}
+	if !stringsContains(err.Error(), "multiple root packages") {
+		t.Errorf("error should mention multiple root packages, got: %v", err)
+	}
 }
 
 func emptyConfig() *config.ConfigFile {
@@ -246,7 +277,7 @@ func TestRestoreKConfigFilesAppliesPatches(t *testing.T) {
 		(&api.KConfigEntry{}).
 			SetConfigPath(".config").
 			SetSrcDir(dir).
-			PatchKConfig(map[string]string{"CONFIG_OLD=n": "CONFIG_OLD=y"}),
+			SetKConfigPatches(map[string]string{"CONFIG_OLD=n": "CONFIG_OLD=y"}),
 	}
 	config.SetEntry(ctx.Config, "p", &config.EntryConfig{KConfig: "CONFIG_OLD=n\n"})
 
@@ -319,7 +350,7 @@ func TestResolveWithDefault(t *testing.T) {
 }
 
 func TestMakeLocalPkgDirsLayout(t *testing.T) {
-	dirs := makeLocalPkgDirs("/script", "/usr/bin/gcc", "debug", map[string]any{"x": 1}, "gh")
+	dirs := makeLocalPkgDirs("/script", "/usr/bin/gcc@13", "debug", map[string]any{"x": 1}, "gh", "sh")
 	if dirs.SourceDir != "/script" {
 		t.Errorf("SourceDir = %q", dirs.SourceDir)
 	}
@@ -332,7 +363,7 @@ func TestMakeLocalPkgDirsLayout(t *testing.T) {
 }
 
 func TestMakeRemotePkgDirsLayout(t *testing.T) {
-	dirs := makeRemotePkgDirs("/vd", "/src", "/usr/bin/gcc", "release", map[string]any{"x": 1}, "1.0.0", "c0ffee", "gh")
+	dirs := makeRemotePkgDirs("/vd", "/src", "/usr/bin/gcc@13", "release", map[string]any{"x": 1}, "1.0.0", "c0ffee", "gh", "", "sh")
 	if dirs.SourceDir != "/src" {
 		t.Errorf("SourceDir = %q", dirs.SourceDir)
 	}

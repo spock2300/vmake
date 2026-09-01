@@ -18,7 +18,7 @@ func Main(p *api.Package) {
 			AddPreset("x86_64_defconfig").
 			AddPreset("rk3568_defconfig").
 			AddPreset("stm32_defconfig").
-			SetDefault("x86_64_defconfig").
+			SetDefaultPreset("x86_64_defconfig").
 			SetMenuconfigCmd("make menuconfig")
 	})
 

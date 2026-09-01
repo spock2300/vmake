@@ -301,7 +301,7 @@ func TestPackagePatches(t *testing.T) {
 
 func TestPackageKConfigEntries(t *testing.T) {
 	p := NewPackage()
-	p.AddKConfig("linux").AddPreset("defconfig").SetDefault("defconfig")
+	p.AddKConfig("linux").AddPreset("defconfig").SetDefaultPreset("defconfig")
 	entries := p.KConfigEntries()
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(entries))
@@ -316,12 +316,12 @@ func TestPackageKConfigEntries(t *testing.T) {
 
 func TestPackageSelectedPresetPrefersSelectedOverDefault(t *testing.T) {
 	p := NewPackage()
-	p.AddKConfig("linux").AddPreset("defconfig").SetDefault("defconfig")
+	p.AddKConfig("linux").AddPreset("defconfig").SetDefaultPreset("defconfig")
 	if p.SelectedPreset() != "defconfig" {
 		t.Errorf("default fallback = %q", p.SelectedPreset())
 	}
 
-	p.KConfigEntries()[0].SetSelectedPreset("tinyconfig")
+	p.KConfigEntries()[0].SelectPreset("tinyconfig")
 	if p.SelectedPreset() != "tinyconfig" {
 		t.Errorf("selected override = %q", p.SelectedPreset())
 	}

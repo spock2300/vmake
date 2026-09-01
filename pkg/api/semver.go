@@ -3,7 +3,6 @@ package api
 import (
 	"fmt"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -134,7 +133,13 @@ func (c Constraint) Match(v Version) bool {
 		}
 		return true
 	case ">":
-		return cmp > 0
+		if cmp <= 0 {
+			return false
+		}
+		if c.Version.Major > 0 && v.Major != c.Version.Major {
+			return false
+		}
+		return true
 	case "<=":
 		return cmp <= 0
 	case "<":
@@ -147,21 +152,46 @@ func (c Constraint) Match(v Version) bool {
 	return false
 }
 
+func prereleaseAllowed(v Version, anchors []Version) bool {
+	if v.Pre == "" {
+		return true
+	}
+	for _, a := range anchors {
+		if a.Pre != "" && a.Major == v.Major && a.Minor == v.Minor && a.Patch == v.Patch {
+			return true
+		}
+	}
+	return false
+}
+
+func pickHighest(versions []string) (string, bool) {
+	best := ""
+	var bestV Version
+	have := false
+	for _, s := range versions {
+		v, ok := ParseVersion(s)
+		if !ok {
+			continue
+		}
+		if !have || v.Compare(bestV) > 0 {
+			best, bestV, have = s, v, true
+		}
+	}
+	return best, have
+}
+
 func MatchVersion(available []string, constraint string) (string, bool) {
 	c, ok := ParseConstraint(constraint)
 	if !ok {
 		return "", false
 	}
 
-	type candidate struct {
-		raw string
-		v   Version
-	}
-	var candidates []candidate
+	anchors := []Version{c.Version}
+	var candidates []string
 	for _, s := range available {
 		v, ok := ParseVersion(s)
-		if ok && c.Match(v) {
-			candidates = append(candidates, candidate{raw: s, v: v})
+		if ok && c.Match(v) && prereleaseAllowed(v, anchors) {
+			candidates = append(candidates, s)
 		}
 	}
 
@@ -169,9 +199,5 @@ func MatchVersion(available []string, constraint string) (string, bool) {
 		return "", false
 	}
 
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].v.Compare(candidates[j].v) > 0
-	})
-
-	return candidates[0].raw, true
+	return pickHighest(candidates)
 }

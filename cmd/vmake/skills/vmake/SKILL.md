@@ -49,7 +49,7 @@ include the ones your project needs:
 - **Cross-package config propagation (GenerateConfigDefines, ExportConfig, ImportConfig)** → See `examples/config-propagate.md`.
 - **Code generation / host tools** → `BuildSubGraph` + `DepOutput` + `Exec`. See `examples/subbuild.md`.
 - **Embedded / RTOS firmware (linker script, hex/bin)** → See `examples/embedded-rtos.md`.
-- **Embedded firmware (KConfig/partitions)** → `EnsureConfig` + `PatchKConfig` + `DepBuildDir`. See `examples/firmware.md`.
+- **Embedded firmware (KConfig/partitions)** → `EnsureConfig` + `SetKConfigPatches` + `DepBuildDir`. See `examples/firmware.md`.
 - **Symbol conflicts / leaked internals across dependencies** → `SetDefaultVisibilityHidden` + `SetVersionScript` + `vmake check-symbols`. See `examples/symbol-management.md`.
 
 ## Build Script Template
@@ -243,7 +243,7 @@ complex dependency graphs. Five layers, applied in order:
 |-------|-----|---------|
 | 1. Default hidden | `ctx.SetDefaultVisibilityHidden()` | `-fvisibility=hidden` globally; annotate exports in source |
 | 2. Version script | `target.SetVersionScript("foo.map")` | Declarative exports on `TargetShared`/`TargetBinary` |
-| 3. Link policy | `target.SetExcludeLibs(...)`, `target.SetSymbolBinding("static")` | Strip static archive symbols; bind internal refs |
+| 3. Link policy | `target.AddExcludeLibs(...)`, `target.SetSymbolBinding("static")` | Strip static archive symbols; bind internal refs |
 | 4. Audit | `vmake check-symbols` | Pure `nm -D` auto-detection: duplicates, mangled leaks, glibc leaks, version-script violations |
 | 5. Prefix | `target.SetSymbolPrefix("v_")` | `objcopy --prefix-symbols=` for third-party C code |
 
@@ -334,7 +334,9 @@ p.OnRequire(func(ctx *api.RequireContext) {
 ctx.Option("debug").SetType(api.OptionBool).SetDefault(false)
 
 AddCFlags(ctx.If("debug", "-g", "-O0")...)
-AddCFlags(ctx.IfNot("debug", "-O2")...)
+if !ctx.When("debug", true) {
+	target.AddCFlags("-O2")
+}
 AddCFlags(ctx.Select("opt", map[string]string{
     "O0": "-O0", "O2": "-O2",
 }))
@@ -441,7 +443,7 @@ Key embedded rules: (1) Target-specific flags must appear in both CFLAGS and LDF
 
 ### KConfig Preset Management (Firmware)
 
-Use `ctx.KConfig("u-boot").AddPreset("rk3568_defconfig").SetDefault(...)` in `OnConfig`; select via `vmake config` TUI; call `pkg.EnsureConfig(srcDir)` in `SetBuildFunc`; use `PatchKConfig(map[string]string{...})` for post-defconfig overrides; register config files with `p.SetConfigFiles(".config")`. See `examples/firmware.md` for the full multi-package firmware pattern.
+Use `ctx.KConfig("u-boot").AddPreset("rk3568_defconfig").SetDefaultPreset(...)` in `OnConfig`; select via `vmake config` TUI; call `pkg.EnsureConfig(srcDir)` in `SetBuildFunc`; use `SetKConfigPatches(map[string]string{...})` for post-defconfig overrides; register config files with `p.SetConfigFiles(".config")`. See `examples/firmware.md` for the full multi-package firmware pattern.
 
 ## Sub-Graph Build (Code Generation)
 

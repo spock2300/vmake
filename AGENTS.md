@@ -109,7 +109,7 @@ uboot, kernel, busybox, app, partitions, firmware are ALL packages with the same
 When a function receives wrong input, fix the caller. Never add fallback chains or `if x == "" { x = y }` guards to hide bugs.
 
 ### Local vs Remote Unification
-The build pipeline treats local and remote packages identically. `IsLocal()` is only used for directory resolution (`makeLocalPkgDirs` vs `makeRemotePkgDirs`), never for behavioral branching.
+The build pipeline treats local and remote packages identically for target scheduling, compilation and linking. `IsLocal()` distinguishes only: directory resolution (`makeLocalPkgDirs` vs `makeRemotePkgDirs`), where sources are materialized (remote = immutable version dir in the global cache, local = mutable checkout), and how patches apply (remote = content-addressed `EnsurePatched` clone; local = in-place).
 
 ### SrcDir vs SourceDir vs BuildDir
 - `SourceDir`: package root (where build.go lives)
@@ -140,7 +140,7 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 ### Symbol Management (Five Layers)
 - `ctx.SetDefaultVisibilityHidden()` adds `-fvisibility=hidden` to global C+C++ flags, `-fvisibility-inlines-hidden` to C++ only
 - `target.SetVersionScript("file.map")` valid only on `TargetShared`/`TargetBinary` — scheduler returns error otherwise. Path resolved against package SourceDir. Adds `-Wl,--version-script=` to link command
-- `target.AddExcludeLibs("libfoo")` adds `-Wl,--exclude-libs=` (appends; deprecated alias `SetExcludeLibs`). GNU ld quirk: matches the full archive basename minus `.a`, so use `libfoo` form (with `lib` prefix), not `foo`
+- `target.AddExcludeLibs("libfoo")` adds `-Wl,--exclude-libs=` (appends; the old `SetExcludeLibs` name was removed). GNU ld quirk: matches the full archive basename minus `.a`, so use `libfoo` form (with `lib` prefix), not `foo`
 - `target.SetSymbolBinding("static"|"static-functions")` adds `-Wl,-Bsymbolic` or `-Wl,-Bsymbolic-functions`
 - `target.SetSymbolPrefix("pfx_")` appends post-link `objcopy --prefix-symbols=pfx_` step. Implemented via existing AddPostLink mechanism
 - `LinkShared` strips `-pie`/`-no-pie` from ldflags (incompatible with `-shared`)
@@ -163,7 +163,7 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 `Option.SetOnApply(fn)` registers a callback invoked after all options are resolved. The callback receives `val any` — normalized to the option's declared type (`bool` for OptionBool, `int` for OptionInt, `string` for OptionString/OptionChoice; `api.NormalizeOptionValue` converts JSON `float64` before the call). The context carries real option values (CfgVals from config.json + all declared options), so reading other options inside the callback works. Callbacks run in sorted option-name order, during config phase, after option values are finalized.
 
 ### Strict Config Accessors
-Script-facing contexts (Config/Build/Install/Clean/Require) have strict accessors: reading an unknown option name, using an accessor that mismatches the option's `SetType`, or reading values directly during OnRequire discovery (`ctx.Bool` etc.) panics with `*BuildScriptError`. OnRequire must use the discovery-aware helpers (`ctx.When`, `ctx.If`, `ctx.Equal`, `ctx.Select`). TUI/CLI accessors remain lenient (`NewConfigAccessor` without `setStrictOwner`).
+Script-facing contexts (Config/Build/Install/Clean/Require) have strict accessors: reading an unknown option name, using an accessor that mismatches the option's `SetType`, or reading values directly during OnRequire discovery (`ctx.Bool` etc.) panics with `*BuildScriptError`. OnRequire must use the discovery-aware helpers (`ctx.When`, `ctx.If`, `ctx.Select`). TUI/CLI accessors remain lenient (`NewConfigAccessor` without `setStrictOwner`).
 
 ### Dependency Linker Script
 A package declares `ctx.SetProvidedLinkerScript("path/to/script.ld")` in `OnConfig`. A consumer target calls `.UseDependencyLinkerScript()` — at link time, the scheduler resolves the first dependency that provides a linker script and passes `-T` to the linker. `SetProvidedLinkerScript` may only be called once per package (fatalScript panic on double-set).
@@ -401,6 +401,7 @@ func Main(p *api.Package) {
 - **Performance** — interpreted code is slower than compiled, but build.go callbacks are lightweight (declare targets/options). Heavy operations go through `exec.Command` which is native.
 - **Go modules not supported** by yaegi — irrelevant since build.go only imports `pkg/api` (provided as binary symbols via `i.Use()`).
 - Working fine: generics, goroutines, channels, closures, defer, error wrapping, struct embedding, JSON marshal/unmarshal, `os/exec` (via unrestricted symbols), `net/http`, file I/O.
+- **Script-relative file IO**: every interpreter carries its script dir (`internal/scriptfs`). In build.go code, relative paths passed to wrapped stdlib (`os.Open/OpenFile/Create/ReadFile/WriteFile/Stat/Lstat/Mkdir/MkdirAll/Remove/RemoveAll/Rename/ReadDir/CreateTemp`, `filepath.Walk/WalkDir`, `exec.Command` with unset `Dir`) resolve against the build.go's own directory — in ALL phases (Main, OnRequire discovery + FilterDeps re-run, OnApply, OnBuild declarations, SetBuildFunc closures). `os.Getwd()` returns the script dir; `os.Chdir` returns an error (process-wide chdir races with the parallel scheduler). Long-tail unwrapped APIs still see the process cwd — e.g. `exec.CommandContext` (only `exec.Command` is wrapped), `text/template.ParseFiles`, `io/ioutil` — use absolute paths built from `p.SourceDir()`/`p.BuildDir()` for those.
 
 ## Package Repositories
 Registry checked first; native is fallback. Add commands:

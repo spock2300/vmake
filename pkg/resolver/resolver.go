@@ -3,6 +3,8 @@ package resolver
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/toposort"
@@ -196,7 +198,7 @@ func (r *Resolver) resolveRecursive(id string, constraint string, path []string)
 	}
 
 	if node, exists := r.graph.Packages[id]; exists {
-		if err := checkNodeConstraints(node, constraint); err != nil {
+		if err := validateNodeConstraints(node, constraint, path); err != nil {
 			return nil, err
 		}
 		return node, nil
@@ -210,7 +212,7 @@ func (r *Resolver) resolveRecursive(id string, constraint string, path []string)
 	// Post-lookup: findNativeSource may have registered a deferred node for native packages
 	// (native repos must be cloned before build.go can be read for OnRequire).
 	if node, exists := r.graph.Packages[id]; exists {
-		if err := checkNodeConstraints(node, constraint); err != nil {
+		if err := validateNodeConstraints(node, constraint, path); err != nil {
 			return nil, err
 		}
 		return node, nil
@@ -281,6 +283,9 @@ func (r *Resolver) findSource(id string, constraint string) (*buildscript.Source
 
 	buildGo, err := r.repoMgr.FindPackageGo(repoName, pkgName)
 	if err == nil {
+		if werr := r.checkWrapperCommit(id, repoName); werr != nil {
+			return nil, werr
+		}
 		src := buildscript.NewSource(id, buildGo, filepath.Dir(buildGo), api.SourceRemote)
 		src.Repo = repoName
 		r.sources[id] = src
@@ -320,12 +325,9 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 		if err := r.checkConstraint(id, pinVersion, constraint); err != nil {
 			return nil, err
 		}
-		res, err = r.sourceMgr.EnsureVersion(pkgStub, pinVersion)
+		res, err = r.sourceMgr.EnsureVersion(pkgStub, pinVersion, pinCommit)
 		if err != nil {
 			return nil, err
-		}
-		if pinCommit != "" && res.Commit != pinCommit {
-			return nil, fmt.Errorf("cached %s@%s is commit %s but lock pins %s; run 'vmake lock update' to re-resolve", id, pinVersion, res.Commit, pinCommit)
 		}
 		versions = map[string]string{pinVersion: repo.DescribeTag(filepath.Join(res.VersionDir, "src"))}
 		selectedVersion = pinVersion
@@ -364,12 +366,13 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 
 		vlog.Info("  %s@%s", id, selectedVersion)
 
-		res, err = r.sourceMgr.EnsureVersion(pkgStub, selectedVersion)
+		expectedCommit := ""
+		if selectedVersion == pinVersion {
+			expectedCommit = pinCommit
+		}
+		res, err = r.sourceMgr.EnsureVersion(pkgStub, selectedVersion, expectedCommit)
 		if err != nil {
 			return nil, err
-		}
-		if pinCommit != "" && selectedVersion == pinVersion && res.Commit != pinCommit {
-			return nil, fmt.Errorf("%s@%s resolved to commit %s but lock pins %s; run 'vmake lock update' to re-resolve", id, selectedVersion, res.Commit, pinCommit)
 		}
 	}
 
@@ -501,26 +504,58 @@ func (r *Resolver) checkoutNativeSource(id, gitURL, repoDir, ref string) (*build
 	return buildscript.NewSource(id, buildGo, repoDir, api.SourceRemote), nil
 }
 
-func constraintsCompatible(a, b string) bool {
-	if a == "" || b == "" {
-		return true
-	}
-	ca, okA := api.ParseConstraint(a)
-	cb, okB := api.ParseConstraint(b)
-	if !okA || !okB {
-		return a == b
-	}
-	return ca.Match(cb.Version) || cb.Match(ca.Version)
-}
-
-func checkNodeConstraints(node *PackageNode, incoming string) error {
-	if incoming == "" {
+func (r *Resolver) checkWrapperCommit(id, repoName string) error {
+	locked, ok := r.lockfileEntry(id)
+	if !ok || locked.WrapperCommit == "" {
 		return nil
 	}
-	for _, existing := range node.Constraints {
-		if !constraintsCompatible(existing, incoming) {
-			return fmt.Errorf("conflicting version constraints for %s: '%s' vs '%s'",
-				node.ID, existing, incoming)
+	head, err := repo.GetCurrentCommit(r.repoMgr.Path(repoName))
+	if err != nil {
+		return fmt.Errorf("read HEAD of registry '%s': %w", repoName, err)
+	}
+	if head != locked.WrapperCommit {
+		return fmt.Errorf("registry '%s' content changed since lock (wrapper commit %s expected, now %s); run 'vmake lock update' to re-resolve",
+			repoName, repo.ShortCommit(locked.WrapperCommit), repo.ShortCommit(head))
+	}
+	return nil
+}
+
+func requirerName(path []string) string {
+	if len(path) == 0 {
+		return "?"
+	}
+	return path[len(path)-1]
+}
+
+func validateNodeConstraints(node *PackageNode, constraint string, path []string) error {
+	if constraint == "" {
+		return nil
+	}
+	if !slices.Contains(node.Constraints, constraint) {
+		node.Constraints = append(node.Constraints, constraint)
+	}
+	requirer := requirerName(path)
+
+	if node.Native != nil && node.Native.Selected != "" {
+		v, ok := api.ParseVersion(node.Native.Selected)
+		if !ok {
+			return nil
+		}
+		c, ok := api.ParseConstraint(constraint)
+		if !ok {
+			return fmt.Errorf("invalid constraint %q for %s (required by %s)", constraint, node.ID, requirer)
+		}
+		if !c.Match(v) {
+			return fmt.Errorf("conflicting version constraints for %s: already selected %s (constraints: [%s]), but %s requires %q",
+				node.ID, node.Native.Selected, strings.Join(node.Constraints, ", "), requirer, constraint)
+		}
+		return nil
+	}
+
+	if node.Pkg != nil && len(node.Pkg.Versions()) > 0 {
+		if _, err := node.Pkg.SelectVersionMulti(node.Constraints); err != nil {
+			return fmt.Errorf("conflicting version constraints for %s (constraints: [%s], required by %s): %w",
+				node.ID, strings.Join(node.Constraints, ", "), requirer, err)
 		}
 	}
 	return nil

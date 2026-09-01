@@ -17,6 +17,10 @@ type LockedPkg struct {
 	Version string `json:"version"`
 	Commit  string `json:"commit,omitempty"`
 	Source  string `json:"source"`
+	// WrapperCommit pins the registry repo HEAD that provided the wrapper
+	// build.go for registry packages. Native packages are pinned by Commit
+	// alone (the wrapper IS the package repo).
+	WrapperCommit string `json:"wrapperCommit,omitempty"`
 }
 
 type Lock struct {

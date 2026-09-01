@@ -245,8 +245,6 @@ func (a *ConfigAccessor) BoolStr(name string) string          // "ON" / "OFF"
 
 // 条件表达式
 func (a *ConfigAccessor) If(option string, then ...string) []string
-func (a *ConfigAccessor) IfNot(option string, then ...string) []string
-func (a *ConfigAccessor) Equal(option, value, dep string) string
 func (a *ConfigAccessor) Select(option string, mapping map[string]string) string
 func (a *ConfigAccessor) When(option string, value any) bool
 
@@ -339,7 +337,6 @@ func (ctx *BuildContext) SetDefaultFlags(cflags, cxxflags, ldflags []string)  //
 
 // 条件表达式（继承自 ConfigAccessor）
 func (ctx *BuildContext) If(option string, then ...string) []string
-func (ctx *BuildContext) IfNot(option string, then ...string) []string
 func (ctx *BuildContext) Select(option string, mapping map[string]string) string
 func (ctx *BuildContext) When(option string, value any) bool
 
@@ -526,6 +523,24 @@ ctx.Target("mylib").AddPublicIncludes("include", "@*.h")
 // 只匹配 foo*.h 到 src 目录
 ctx.Target("mylib").AddPublicIncludes("include", "src", "@foo*.h")
 ```
+
+## 文件 IO 与工作目录（ScriptFS）
+
+build.go 中的相对路径文件 IO 以 **build.go 所在目录** 为基准，在所有阶段一致（Main、OnRequire、OnApply、OnBuild、SetBuildFunc 闭包）：
+
+```go
+data, err := os.ReadFile("configs/app.conf")   // 始终是 <脚本目录>/configs/app.conf
+os.WriteFile("generated.c", src, 0644)          // 写到脚本目录下
+wd, _ := os.Getwd()                              // 返回脚本目录
+cmd := exec.Command("git", "status")             // 子进程 cwd = 脚本目录
+```
+
+覆盖范围：`os.Open/OpenFile/Create/ReadFile/WriteFile/Stat/Lstat/Mkdir/MkdirAll/Remove/RemoveAll/Rename/ReadDir/CreateTemp`、`filepath.Walk/WalkDir`、`exec.Command`（未显式设置 `Dir` 时）。绝对路径原样通过。
+
+限制：
+- `os.Chdir` 返回错误——进程级 chdir 与并行调度冲突；请用 `p.RunIn(dir, ...)` 或绝对路径
+- 未包装的长尾 API 仍按进程 cwd 解析——如 `exec.CommandContext`（仅 `exec.Command` 被包装）、`text/template.ParseFiles`、`io/ioutil`；请用 `filepath.Join(p.SourceDir(), ...)` 显式锚定
+- 构建产物请继续用 `p.BuildDir()`；外部命令用 `p.Run/p.RunIn`（显式 Dir）
 
 ## RequireContext（依赖声明）
 
@@ -837,9 +852,7 @@ func (k *KConfigEntry) SetConfigPath(path string) *KConfigEntry
 func (k *KConfigEntry) SetSrcDir(dir string) *KConfigEntry
 func (k *KConfigEntry) SetMenuconfigCmd(cmd string) *KConfigEntry
 func (k *KConfigEntry) AddPreset(name string) *KConfigEntry
-func (k *KConfigEntry) SetDefault(presetName string) *KConfigEntry
-func (k *KConfigEntry) SetSelectedPreset(name string) *KConfigEntry
-func (k *KConfigEntry) PatchKConfig(patches map[string]string) *KConfigEntry
+func (k *KConfigEntry) SetDefaultPreset(presetName string) *KConfigEntry
 ```
 
 ### 工具函数
@@ -859,8 +872,8 @@ func Main(p *api.Package) {
             SetDescription("U-Boot configuration").
             AddPreset("evk_rk3568_defconfig").
             AddPreset("evk_rk3588_defconfig").
-            SetDefault("evk_rk3568_defconfig").
-            PatchKConfig(map[string]string{
+            SetDefaultPreset("evk_rk3568_defconfig").
+            SetKConfigPatches(map[string]string{
                 "CONFIG_LOCALVERSION=\"-custom\"": "CONFIG_LOCALVERSION=\"-myboard\"",
             })
     })
@@ -1147,7 +1160,7 @@ func Main(p *api.Package) {
             AddFiles("src/*.c").
             AddDefines(ctx.If("debug", "DEBUG_MODE")).
             AddCFlags(ctx.If("debug", "-g", "-O0")).
-            AddCFlags(ctx.IfNot("debug", "-O2")).
+            // use: if !ctx.When("debug", true) { target.AddCFlags("-O2") }
             AddCFlags(ctx.Select("platform", map[string]string{
                 "linux":   "-DLINUX",
                 "macos":   "-DMACOS",

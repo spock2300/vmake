@@ -55,7 +55,6 @@ func Main(p *api.Package) {
 - **`SetDescription(text)`** - Help text
 - **`SetGroup(name)`** - Grouping for TUI
 - **`ctx.If("option", "value_true"...)`** - Conditional (returns values if bool is true)
-- **`ctx.IfNot("option", "value")`** - Inverse conditional
 - **`ctx.Select("option", map)`** - Map option value to flag
 - **`ctx.String("option")`** - Read option as string
 

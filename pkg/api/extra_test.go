@@ -13,9 +13,9 @@ func TestKConfigEntryFluent(t *testing.T) {
 		SetMenuconfigCmd("menuconfig").
 		AddPreset("defconfig").
 		AddPreset("tinyconfig").
-		SetDefault("defconfig").
-		SetSelectedPreset("tinyconfig").
-		PatchKConfig(map[string]string{"CONFIG_FOO=n": "CONFIG_FOO=y"})
+		SetDefaultPreset("defconfig").
+		SelectPreset("tinyconfig").
+		SetKConfigPatches(map[string]string{"CONFIG_FOO=n": "CONFIG_FOO=y"})
 
 	if k.Name() != "linux" {
 		t.Errorf("Name = %q", k.Name())
@@ -104,7 +104,7 @@ func TestTargetSetInstall(t *testing.T) {
 func TestTargetExcludeLibs(t *testing.T) {
 	tr := NewTargetRegistry()
 	tgt := tr.Target("t").
-		SetExcludeLibs("libfoo", "libbar")
+		AddExcludeLibs("libfoo", "libbar")
 
 	if !reflect.DeepEqual(tgt.ExcludeLibs(), []string{"libfoo", "libbar"}) {
 		t.Errorf("ExcludeLibs = %v", tgt.ExcludeLibs())

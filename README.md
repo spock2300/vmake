@@ -12,7 +12,7 @@ VMake is a modern C/C++ project build tool developed in Go. It provides a concis
 - **Multi-Module Support**: Native support for managing builds of multi-module projects
 - **Third-Party Package Management**: Supports Registry (wrapping CMake/Autotools) and Native (vmake native packages) repository types, declare dependencies via OnRequire, automatic download, version matching, and build
 - **Extension Plugin System**: CLI command extensions and cross-compilation toolchain management
-- **Incremental Compilation**: Intelligent incremental compilation based on dependency analysis
+- **Incremental Builds**: Per-target staleness via depfile mtimes; build-key rotation on toolchain/compiler-version/mode/options/lock-pin/patch-set/buildscript changes
 - **TUI Configuration Interface**: Interactive terminal user interface for project configuration
 - **Toolchain Management**: Flexible switching between multiple compiler toolchains, supports cross-compilation
 - **Semantic Versioning**: Built-in semver parsing and constraint matching

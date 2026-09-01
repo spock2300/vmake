@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
 var repoAddNative bool
@@ -100,5 +102,15 @@ var repoListCmd = &cobra.Command{
 }
 
 var repoUpdateCmd = newActionCmd("update <name>", "Update a package repository", "Updated", "repository", func(name string) error {
-	return getRepoManager().Update(name)
+	if err := getRepoManager().Update(name); err != nil {
+		return err
+	}
+	if isRepoTrusted(name) {
+		if err := removeTrustedRepo(name); err != nil {
+			return fmt.Errorf("reset trust for updated repository %s: %w", name, err)
+		}
+		vlog.Info("repository '%s' updated: content changed, trust reset", name)
+		vlog.Info("run 'vmake repo trust %s' (or the next build) to re-confirm the new scripts", name)
+	}
+	return nil
 })

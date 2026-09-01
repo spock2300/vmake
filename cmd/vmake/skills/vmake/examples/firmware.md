@@ -78,7 +78,7 @@ func Main(p *api.Package) {
 }
 ```
 
-## Busybox (PatchKConfig + SetSrcDir)
+## Busybox (SetKConfigPatches + SetSrcDir)
 
 ```go
 package main
@@ -99,9 +99,9 @@ func Main(p *api.Package) {
     p.OnConfig(func(ctx *api.ConfigContext) {
         ctx.KConfig("busybox").
             AddPreset("defconfig").
-            SetDefault("defconfig").
+            SetDefaultPreset("defconfig").
             SetSrcDir("src").
-            PatchKConfig(map[string]string{
+            SetKConfigPatches(map[string]string{
                 "CONFIG_TC=y": "# CONFIG_TC is not set",
             })
     })
@@ -231,7 +231,7 @@ func Main(p *api.Package) {
 
 - **KConfig presets** — `AddPreset("defconfig")` registers a defconfig name as a make target
 - **EnsureConfig** — `pkg.EnsureConfig(srcDir)` checks `.config` exists + non-empty, runs `make <preset>` if missing
-- **PatchKConfig** — Override specific config values after defconfig generation
+- **SetKConfigPatches** — Override specific config values after defconfig generation
 - **SetSrcDir** — Source code in a subdirectory (`src/` for busybox)
 - **SetConfigFiles** — Registers files that invalidate the build stamp on change
 - **Stamp-based skip** — `.vmake_stamp` in BuildDir; stale when config file content changes (SHA-256 hash comparison), source git revision changes, or the stamp is deleted
@@ -247,7 +247,7 @@ func Main(p *api.Package) {
 - Use `pkg.SrcDir()` (not `SourceDir()`) when the package has `SetSrcDir("src")`
 - `SetConfigFiles` + stamp skip applies only to void targets without `InstallDir`
 - Presets are defconfig names passed to `make <preset>` — not complete `.config` files
-- `EnsureConfig` also applies `PatchKConfig` patches after running `make <preset>`
+- `EnsureConfig` also applies `SetKConfigPatches` patches after running `make <preset>`
 - Guard `api.CopyDirIfExists` calls with `os.Stat` when the source may not exist
 - Remove output files before regenerating (e.g., `os.Remove(imageFile)` before `mksquashfs`)
 - Validate input files exist with `os.Stat` before packing firmware images

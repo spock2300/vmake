@@ -183,11 +183,12 @@ type BuildContext struct {
 func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext {
 	ctx := &BuildContext{
 		ConfigAccessor:    NewConfigAccessor(cfgVals, nil),
-		TargetRegistry:    NewTargetRegistry(),
+		TargetRegistry:    newOwnedTargetRegistry(pkgName),
 		InstallItemHolder: &InstallItemHolder{},
 		pkgBase:           pkgBase{pkgName: pkgName},
 	}
 	ctx.setStrictOwner(pkgName)
+	ctx.ConfigAccessor.LockOptionDeclaration()
 	return ctx
 }
 
@@ -291,6 +292,7 @@ func NewInstallContext(pkgName string, cfgVals map[string]any) *InstallContext {
 		pkgBase:           pkgBase{pkgName: pkgName},
 	}
 	ctx.setStrictOwner(pkgName)
+	ctx.ConfigAccessor.LockOptionDeclaration()
 	return ctx
 }
 
@@ -315,6 +317,7 @@ func NewCleanContext(pkgName string, cfgVals map[string]any) *CleanContext {
 		pkgBase:        pkgBase{pkgName: pkgName},
 	}
 	ctx.setStrictOwner(pkgName)
+	ctx.ConfigAccessor.LockOptionDeclaration()
 	return ctx
 }
 

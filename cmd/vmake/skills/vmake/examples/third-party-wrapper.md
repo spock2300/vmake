@@ -119,8 +119,8 @@ p.OnConfig(func(ctx *api.ConfigContext) {
     ctx.KConfig("u-boot").
         AddPreset("rk3568_defconfig").
         AddPreset("stm32_defconfig").
-        SetDefault("sandbox_defconfig").
-        PatchKConfig(map[string]string{"CONFIG_FOO": "y"})
+        SetDefaultPreset("sandbox_defconfig").
+        SetKConfigPatches(map[string]string{"CONFIG_FOO": "y"})
 })
 
 p.OnBuild(func(ctx *api.BuildContext) {

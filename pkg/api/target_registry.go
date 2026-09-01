@@ -2,6 +2,7 @@ package api
 
 type TargetRegistry struct {
 	targets         map[string]*Target
+	ownerPkg        string
 	defaultCFlags   []string
 	defaultCxxFlags []string
 	defaultLdFlags  []string
@@ -10,6 +11,13 @@ type TargetRegistry struct {
 func NewTargetRegistry() *TargetRegistry {
 	return &TargetRegistry{
 		targets: make(map[string]*Target),
+	}
+}
+
+func newOwnedTargetRegistry(pkgName string) *TargetRegistry {
+	return &TargetRegistry{
+		targets:  make(map[string]*Target),
+		ownerPkg: pkgName,
 	}
 }
 
@@ -25,6 +33,7 @@ func (r *TargetRegistry) Target(name string) *Target {
 	}
 	t := &Target{
 		name:      name,
+		pkgName:   r.ownerPkg,
 		kind:      TargetBinary,
 		isDefault: true,
 		cflags:    append([]string{}, r.defaultCFlags...),

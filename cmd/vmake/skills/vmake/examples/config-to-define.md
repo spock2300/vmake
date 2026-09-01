@@ -125,7 +125,7 @@ ctx.Int("tick_hz")          // int → int
 ctx.String("platform")      // string → string
 ctx.BoolStr("debug")        // bool → "ON" / "OFF"
 ctx.When("x", "val")        // true iff option "x" == "val"
-ctx.Equal("x", "val", "dep") // returns "dep" iff option "x" == "val", else ""
+ctx.When("x", "val") // returns true iff option "x" == "val"
 ```
 
 These work anywhere `ConfigAccessor` is available: `OnBuild`, `OnRequire`, `OnInstall`.

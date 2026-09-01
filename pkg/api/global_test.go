@@ -389,7 +389,7 @@ func TestEnsureConfigMissingTriggersMake(t *testing.T) {
 	dir := t.TempDir()
 	pkg := NewPackage()
 	entry := pkg.AddKConfig("linux")
-	entry.SetSelectedPreset("defconfig")
+	entry.SelectPreset("defconfig")
 
 	makePath, err := findFakeMake(dir)
 	if err != nil {

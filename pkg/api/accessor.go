@@ -11,6 +11,8 @@ type ConfigAccessor struct {
 	owner    string
 	strict   bool
 	discover bool
+
+	optionsLocked bool
 }
 
 func NewConfigAccessor(cfgVals map[string]any, options map[string]*Option) ConfigAccessor {
@@ -184,26 +186,6 @@ func (a *ConfigAccessor) If(option string, then ...string) []string {
 	return a.ifCond(a.boolQuiet(option), then...)
 }
 
-// Deprecated: use When for discovery-safe conditionals.
-func (a *ConfigAccessor) IfNot(option string, then ...string) []string {
-	if !a.discover {
-		a.valueRead(option, "Bool")
-	}
-	return a.ifCond(!a.boolQuiet(option), then...)
-}
-
-// Equal returns dep when CfgVals[option] == value. In discoverAll mode (CfgVals==nil), always returns dep.
-// Deprecated: use When for discovery-safe conditionals.
-func (a *ConfigAccessor) Equal(option, value, dep string) string {
-	if a.CfgVals == nil {
-		return dep
-	}
-	if a.String(option) == value {
-		return dep
-	}
-	return ""
-}
-
 func (a *ConfigAccessor) Select(option string, mapping map[string]string) string {
 	if a.CfgVals == nil {
 		return ""
@@ -281,12 +263,22 @@ func numericValue(v any) (float64, bool) {
 }
 
 func (a *ConfigAccessor) Option(name string) *Option {
+	if a.optionsLocked {
+		fatalScript(a.owner, "Option", "option %q declared after the config phase; declare options in OnConfig", name)
+	}
 	if opt, ok := a.Options[name]; ok {
 		return opt
 	}
 	opt := &Option{name: name}
 	a.Options[name] = opt
 	return opt
+}
+
+// LockOptionDeclaration marks the config phase as finished. Option() calls
+// after this point fatal: late-declared options never reach option
+// resolution and would be silently ignored.
+func (a *ConfigAccessor) LockOptionDeclaration() {
+	a.optionsLocked = true
 }
 
 func (a *ConfigAccessor) SetOptions(options map[string]*Option) *ConfigAccessor {

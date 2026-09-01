@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spock2300/vmake/pkg/api"
-	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
@@ -69,23 +68,16 @@ func runCheckSymbols(strict bool) {
 	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
 	globalValues := config.BuildGlobalValues(ctx.Config)
 
-	cfg, err := resolveBuildConfig(ctx)
+	pre, err := prepareBuildPrelude(ctx)
 	if err != nil {
-		vlog.Fatal("resolve build config: %v", err)
+		vlog.Fatal("prepare build prelude: %v", err)
 	}
-	resolvedTools, err := build.ResolveTools(cfg.Tc)
-	if err != nil {
-		vlog.Fatal("resolve tools: %v", err)
-	}
-	needed := computeReachable(ctx.DepGraph)
-	applyGlobalFlagsFromNeeded(ctx, needed)
-	globalFlagsHash := build.GlobalFlagsHash()
-	allOpts := collectAllPkgOptions(ctx, needed)
+	allOpts := collectAllPkgOptions(ctx, pre.needed)
 	for name, node := range ctx.DepGraph.Packages {
 		if node == nil || node.Source == nil || !node.IsLocal() {
 			continue
 		}
-		pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, resolvedTools.CC, cfg.Mode, allOpts[name], globalFlagsHash)
+		pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, pre.tools.CCKey(), pre.cfg.Mode, allOpts[name], pre.globalFlagsHash, scriptHashForNode(name, node))
 	}
 
 	artifacts := discoverArtifacts(ctx, pkgDirs, globalValues)

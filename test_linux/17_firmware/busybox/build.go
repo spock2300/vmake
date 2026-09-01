@@ -19,8 +19,8 @@ func Main(p *api.Package) {
 			SetDescription("BusyBox applet configuration").
 			SetSrcDir("src").
 			AddPreset("defconfig").
-			SetDefault("defconfig").
-			PatchKConfig(map[string]string{
+			SetDefaultPreset("defconfig").
+			SetKConfigPatches(map[string]string{
 				"CONFIG_TC=y": "# CONFIG_TC is not set",
 			})
 	})

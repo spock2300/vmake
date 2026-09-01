@@ -9,6 +9,6 @@ func Main(p *api.Package) {
 			AddFiles("src/*.c").
 			AddPublicIncludes("include").
 			AddCFlags("-fPIC").
-			SetExcludeLibs("libcore")
+			AddExcludeLibs("libcore")
 	})
 }

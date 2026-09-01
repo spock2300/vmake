@@ -10,9 +10,12 @@ import (
 	"github.com/spock2300/vmake/internal/fs"
 )
 
+type cmdRunner func(name, dir string, args ...string) ([]byte, error)
+
 type Compiler struct {
 	ccPath  string
 	cxxPath string
+	run     cmdRunner
 }
 
 type CompileOptions struct {
@@ -27,6 +30,7 @@ func NewCompiler(tools *ResolvedTools) *Compiler {
 	return &Compiler{
 		ccPath:  tools.CC,
 		cxxPath: tools.CXX,
+		run:     iexec.RunInDir,
 	}
 }
 
@@ -48,7 +52,7 @@ func (c *Compiler) Compile(src, objPath string, opts *CompileOptions, workDir st
 
 	args := BuildCompileArgs(opts, objPath, src, flags, depPath)
 
-	_, err := iexec.RunInDir(compiler, workDir, args...)
+	_, err := c.run(compiler, workDir, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +150,7 @@ func tokenizeDepFile(content string) []string {
 	return tokens
 }
 
-func IsSourceValid(src, objPath string, extraDeps []string, workDir string) (bool, []string) {
+func IsSourceValid(src, objPath string, workDir string) (bool, []string) {
 	absObj := resolveWorkPath(workDir, objPath)
 	objInfo, err := os.Stat(absObj)
 	if os.IsNotExist(err) {
@@ -173,14 +177,6 @@ func IsSourceValid(src, objPath string, extraDeps []string, workDir string) (boo
 	for _, dep := range deps {
 		depInfo, err := os.Stat(resolveWorkPath(workDir, dep))
 		if err != nil || depInfo.ModTime().After(objTime) {
-			return false, deps
-		}
-	}
-
-	for _, dep := range extraDeps {
-		depPath := resolveWorkPath(workDir, dep)
-		depInfo, err := os.Stat(depPath)
-		if err == nil && depInfo.ModTime().After(objTime) {
 			return false, deps
 		}
 	}

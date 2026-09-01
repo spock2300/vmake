@@ -11,12 +11,14 @@ import (
 type Linker struct {
 	ccPath string
 	arPath string
+	run    cmdRunner
 }
 
 func NewLinker(tools *ResolvedTools) *Linker {
 	return &Linker{
 		ccPath: tools.CC,
 		arPath: tools.AR,
+		run:    iexec.RunInDir,
 	}
 }
 
@@ -106,7 +108,7 @@ func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScri
 	args = append(args, otherFlags...)
 	args = append(args, policy.bindingFlags()...)
 
-	_, err := iexec.RunInDir(l.ccPath, workDir, args...)
+	_, err := l.run(l.ccPath, workDir, args...)
 	return err
 }
 
@@ -120,7 +122,7 @@ func (l *Linker) LinkStatic(objs []string, outputPath, workDir string) error {
 	args := []string{"rcs", outputPath}
 	args = append(args, objs...)
 
-	_, err := iexec.RunInDir(l.arPath, workDir, args...)
+	_, err := l.run(l.arPath, workDir, args...)
 	return err
 }
 
@@ -148,7 +150,7 @@ func (l *Linker) LinkShared(objs, ldflags []string, outputPath string, policy Li
 	args = append(args, filtered...)
 	args = append(args, policy.bindingFlags()...)
 
-	_, err := iexec.RunInDir(l.ccPath, workDir, args...)
+	_, err := l.run(l.ccPath, workDir, args...)
 	return err
 }
 
@@ -160,6 +162,6 @@ func (l *Linker) LinkObject(objs []string, outputPath, workDir string) error {
 	args := []string{"-r", "-o", outputPath}
 	args = append(args, objs...)
 
-	_, err := iexec.RunInDir(l.ccPath, workDir, args...)
+	_, err := l.run(l.ccPath, workDir, args...)
 	return err
 }

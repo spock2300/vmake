@@ -1,8 +1,12 @@
 package buildscript
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spock2300/vmake/internal/gosrc"
@@ -62,6 +66,28 @@ func Scan(rootDir string) ([]Source, error) {
 
 func ListGoFiles(dir string) ([]string, error) {
 	return gosrc.ListGoFiles(dir)
+}
+
+// ScriptSetHash summarizes a package's buildscript files (sorted paths +
+// contents). It feeds the BuildKey so script edits or deletions rotate build
+// directories instead of silently reusing stale outputs.
+func ScriptSetHash(dir string) (string, error) {
+	files, err := gosrc.ListGoFiles(dir)
+	if err != nil {
+		return "", err
+	}
+	sort.Strings(files)
+	h := sha256.New()
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(h, "%s\x00", f)
+		h.Write(data)
+		h.Write([]byte("\x00"))
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16], nil
 }
 
 func ScanSubPackages(rootDir string, parentID string) ([]Source, error) {

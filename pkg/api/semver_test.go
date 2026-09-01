@@ -144,7 +144,7 @@ func TestConstraintMatch(t *testing.T) {
 		{">=0.0.0", "0.9.0", true},
 		{">1.0.0", "1.0.0", false},
 		{">1.0.0", "1.0.1", true},
-		{">1.0.0", "2.0.0", true},
+		{">1.0.0", "2.0.0", false},
 		{"<=2.0.0", "2.0.0", true},
 		{"<=2.0.0", "2.0.1", false},
 		{"<2.0.0", "1.9.9", true},
@@ -203,6 +203,80 @@ func TestMatchVersionWithPreRelease(t *testing.T) {
 	got, ok := MatchVersion(available, ">=1.0.0-alpha")
 	if !ok || got != "1.0.0" {
 		t.Errorf("MatchVersion pre-release: got %q ok=%v, want %q true", got, ok, "1.0.0")
+	}
+}
+
+func TestMatchVersionExcludesPreReleaseByDefault(t *testing.T) {
+	available := []string{"1.3.0", "1.4.0-rc.1"}
+
+	got, ok := MatchVersion(available, ">=1.0.0")
+	if !ok || got != "1.3.0" {
+		t.Errorf("MatchVersion default: got %q ok=%v, want %q true", got, ok, "1.3.0")
+	}
+
+	got, ok = MatchVersion(available, "")
+	if !ok || got != "1.3.0" {
+		t.Errorf("MatchVersion empty constraint: got %q ok=%v, want %q true", got, ok, "1.3.0")
+	}
+
+	got, ok = MatchVersion(available, ">=1.4.0-rc.1")
+	if !ok || got != "1.4.0-rc.1" {
+		t.Errorf("MatchVersion explicit pre-release anchor: got %q ok=%v, want %q true", got, ok, "1.4.0-rc.1")
+	}
+
+	got, ok = MatchVersion(available, "=1.4.0-rc.1")
+	if !ok || got != "1.4.0-rc.1" {
+		t.Errorf("MatchVersion exact pre-release: got %q ok=%v, want %q true", got, ok, "1.4.0-rc.1")
+	}
+}
+
+func TestMatchVersionPreReleaseDifferentTupleExcluded(t *testing.T) {
+	available := []string{"1.0.0-rc.1", "2.0.0-rc.1"}
+	got, ok := MatchVersion(available, ">=1.0.0-rc.1")
+	if !ok || got != "1.0.0-rc.1" {
+		t.Errorf("MatchVersion cross-tuple pre-release: got %q ok=%v, want %q true", got, ok, "1.0.0-rc.1")
+	}
+}
+
+func TestSelectVersionMultiPreRelease(t *testing.T) {
+	p := NewPackage().SetRepo("test").SetName("pkg")
+	p.SetVersions(map[string]string{
+		"1.3.0":      "v1.3.0",
+		"1.4.0-rc.1": "v1.4.0-rc.1",
+	})
+
+	selected, err := p.SelectVersionMulti([]string{">=1.0.0"})
+	if err != nil || selected != "1.3.0" {
+		t.Errorf("SelectVersionMulti default: got %q err=%v, want %q", selected, err, "1.3.0")
+	}
+
+	selected, err = p.SelectVersionMulti([]string{">=1.4.0-rc.1"})
+	if err != nil || selected != "1.4.0-rc.1" {
+		t.Errorf("SelectVersionMulti explicit anchor: got %q err=%v, want %q", selected, err, "1.4.0-rc.1")
+	}
+
+	selected, err = p.SelectVersionMulti([]string{"=1.4.0-rc.1"})
+	if err != nil || selected != "1.4.0-rc.1" {
+		t.Errorf("SelectVersionMulti exact: got %q err=%v, want %q", selected, err, "1.4.0-rc.1")
+	}
+}
+
+func TestSelectVersionMultiConflict(t *testing.T) {
+	p := NewPackage().SetRepo("test").SetName("pkg")
+	p.SetVersions(map[string]string{
+		"1.2.0": "v1.2.0",
+		"1.5.0": "v1.5.0",
+		"1.9.0": "v1.9.0",
+	})
+
+	selected, err := p.SelectVersionMulti([]string{">=1.2.0", "<1.5.0"})
+	if err != nil || selected != "1.2.0" {
+		t.Errorf("SelectVersionMulti intersect: got %q err=%v, want %q", selected, err, "1.2.0")
+	}
+
+	_, err = p.SelectVersionMulti([]string{">=1.9.0", "<1.5.0"})
+	if err == nil {
+		t.Error("SelectVersionMulti conflicting constraints should error")
 	}
 }
 

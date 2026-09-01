@@ -2,15 +2,14 @@ package plugin
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/traefik/yaegi/interp"
 
 	"github.com/spock2300/vmake/internal/gosrc"
+	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/internal/yaegibase"
 	"github.com/spock2300/vmake/internal/yaegisym"
-	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -40,6 +39,9 @@ func Load(pluginDir string) (*LoadedPlugin, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := i.Use(scriptfs.New(entryDir).Exports()); err != nil {
+		return nil, fmt.Errorf("use plugin fs %s: %w", entryDir, err)
+	}
 
 	merged, err := gosrc.MergeGoSources(entryDir)
 	if err != nil {
@@ -66,13 +68,5 @@ func Load(pluginDir string) (*LoadedPlugin, error) {
 }
 
 func RunMain(loaded *LoadedPlugin, ctx *Context) {
-	origDir, err := os.Getwd()
-	if err != nil {
-		vlog.Fatal("get working directory: %v", err)
-	}
-	defer os.Chdir(origDir)
-	if err := os.Chdir(ctx.PluginDir); err != nil {
-		vlog.Fatal("chdir to %s: %v", ctx.PluginDir, err)
-	}
 	loaded.Entry(ctx)
 }

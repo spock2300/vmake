@@ -28,7 +28,7 @@ Go-based C/C++ build system. Build instructions are written in Go (`build.go`) u
 
 ## Conditional API
 
-`If` (if bool then values), `IfNot` (if not), `Select` (map option value), `Equal` (match string), `When` (compare value, returns bool).
+`If` (if bool then values), `Select` (map option value), `When` (compare value, returns bool; negate for inverse conditions).
 
 All setter methods return the receiver for chaining. Use `filepath.Join()` for filesystem paths. Package IDs use `/` (e.g., `official/zlib`), target IDs use `:` (e.g., `lib:utils`). `SetBuildFunc` callback receives `*Package`, returns `error`.
 
@@ -193,7 +193,7 @@ All setters are fluent (return `*Target`).
 | `SetInstall` | `(install bool)` | Control install |
 | `SetLinkerScript` | `(path string)` | Linker script (passes `-T` to linker; fatal on double-set) |
 | `SetVersionScript` | `(path string)` | Version script for symbol visibility (Shared/Binary only; fatal on double-set) |
-| `SetExcludeLibs` | `(libs ...string)` | Strip symbols from absorbed static archives via `-Wl,--exclude-libs=` |
+| `AddExcludeLibs` | `(libs ...string)` | Strip symbols from absorbed static archives via `-Wl,--exclude-libs=` |
 | `SetSymbolBinding` | `(mode string)` | `"static"` → `-Bsymbolic`; `"static-functions"` → `-Bsymbolic-functions` |
 | `SetSymbolPrefix` | `(prefix string)` | Post-link `objcopy --prefix-symbols=` (fatal on double-set) |
 | `UseDependencyLinkerScript` | `()` | Auto-inherit linker script from dependency |
@@ -340,8 +340,6 @@ OnRequire callbacks execute twice: first during graph discovery with nil config 
 | `Int` | `(name string) int` | Get int value |
 | `BoolStr` | `(name string) string` | Returns "ON"/"OFF" |
 | `If` | `(option string, then ...string) []string` | Values if bool is true |
-| `IfNot` | `(option string, then ...string) []string` | Values if bool is false |
-| `Equal` | `(option, value, dep string) string` | Return dep if String==value |
 | `Select` | `(option string, mapping map[string]string) string` | Map option value (returns `""` in discoverAll) |
 | `When` | `(option string, value any) bool` | Compare option value (returns `true` in discoverAll) |
 | `Option` | `(name string) *Option` | Get or create option |
@@ -450,9 +448,7 @@ Note: When `SetDefault` is not called on an `OptionChoice`, the **first value** 
 	func (k *KConfigEntry) SetSrcDir(dir string) *KConfigEntry
 	func (k *KConfigEntry) SetMenuconfigCmd(cmd string) *KConfigEntry
 	func (k *KConfigEntry) AddPreset(name string) *KConfigEntry
-	func (k *KConfigEntry) SetDefault(presetName string) *KConfigEntry
-	func (k *KConfigEntry) SetSelectedPreset(name string) *KConfigEntry
-	func (k *KConfigEntry) PatchKConfig(patches map[string]string) *KConfigEntry
+	func (k *KConfigEntry) SetDefaultPreset(presetName string) *KConfigEntry
 
 	type GenRuleKind string
 	const GenRuleBinHeader GenRuleKind = "binheader"

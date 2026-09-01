@@ -154,6 +154,9 @@ var deprecatedAPIs = []struct {
 	{"PatchKConfig(", "SetKConfigPatches(", "PatchKConfig"},
 	{"SetSelectedPreset(", "SelectPreset(", "SetSelectedPreset"},
 	{"IfNot(", "When(", "IfNot"},
+	{"ctx.Equal(", "ctx.When(", "Equal"},
+	{"os.Chdir(", "absolute paths or p.RunIn", "os.Chdir"},
+	{"ioutil.", "os.", "ioutil"},
 }
 
 func checkDeprecated(src buildscript.Source) []doctorFinding {

@@ -44,7 +44,7 @@ func Main(p *api.Package) {
 	})
 
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("conditional_app").
+		target := ctx.Target("conditional_app").
 			SetKind(api.TargetBinary).
 			AddFiles("src/*.c").
 			AddDefines(ctx.If("debug", "DEBUG_MODE")).
@@ -52,13 +52,15 @@ func Main(p *api.Package) {
 			AddDefines(ctx.If("feature_a", "FEATURE_A")).
 			AddDefines(ctx.If("feature_b", "FEATURE_B")).
 			AddDefines("PLATFORM=\"" + ctx.String("platform") + "\"").
-			AddCFlags(ctx.If("debug", "-g", "-O0")).
-			AddCFlags(ctx.IfNot("debug", "-O2")).
-			AddCFlags(ctx.Select("platform", map[string]string{
-				"linux":   "-DLINUX",
-				"macos":   "-DMACOS",
-				"windows": "-DWINDOWS",
-			}))
+			AddCFlags(ctx.If("debug", "-g", "-O0"))
+		if !ctx.Bool("debug") {
+			target.AddCFlags("-O2")
+		}
+		target.AddCFlags(ctx.Select("platform", map[string]string{
+			"linux":   "-DLINUX",
+			"macos":   "-DMACOS",
+			"windows": "-DWINDOWS",
+		}))
 	})
 }
 ```
@@ -66,7 +68,6 @@ func Main(p *api.Package) {
 ## What This Demonstrates
 
 - **`ctx.If`** - Returns values if bool option is true, empty slice otherwise
-- **`ctx.IfNot`** - Returns values if bool is false
 - **`ctx.Select`** - Map option value to different flags
 - **`ctx.String`** - Read string option value
 - **`ctx.Bool`** - Read bool option value
@@ -87,7 +88,6 @@ vmake build
 | Method | Use Case |
 |--------|----------|
 | `ctx.If("debug", "-g", "-O0")...` | Toggle flags |
-| `ctx.IfNot("debug", "-O2")...` | Inverse conditional |
 | `ctx.Select("platform", {...})` | Platform-specific flags |
 | `ctx.If("debug", "DEBUG")...` | Conditional defines |
 

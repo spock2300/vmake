@@ -61,18 +61,6 @@ func (k *KConfigEntry) SetKConfigPatches(patches map[string]string) *KConfigEntr
 	return k
 }
 
-func (k *KConfigEntry) SetDefault(presetName string) *KConfigEntry {
-	return k.SetDefaultPreset(presetName)
-}
-
-func (k *KConfigEntry) SetSelectedPreset(name string) *KConfigEntry {
-	return k.SelectPreset(name)
-}
-
-func (k *KConfigEntry) PatchKConfig(patches map[string]string) *KConfigEntry {
-	return k.SetKConfigPatches(patches)
-}
-
 func (k *KConfigEntry) Patches() map[string]string {
 	return k.patchValues
 }

@@ -17,7 +17,6 @@ import (
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/glob"
 	"github.com/spock2300/vmake/pkg/api"
-	"github.com/spock2300/vmake/pkg/buildscript"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
@@ -88,7 +87,10 @@ type Scheduler struct {
 	pkgKeyExtra   map[string]string
 	pkgLockDir    string
 	numWorkers    int
+	parallelPkgs  int
 	keepGoing     bool
+
+	buildTargetsFn func(fullNames []string) error
 }
 
 func NewScheduler(
@@ -170,6 +172,14 @@ func (s *Scheduler) SetKeepGoing(v bool) {
 	s.keepGoing = v
 }
 
+// SetParallelPkgs enables package-level parallelism in BuildAll: up to n
+// packages build concurrently in graph-dependency order (Kahn levels).
+// Targets inside one package stay sequential. 0 or 1 keeps the sequential
+// scheduler.
+func (s *Scheduler) SetParallelPkgs(n int) {
+	s.parallelPkgs = n
+}
+
 func (s *Scheduler) pkgExtra(pkgName string) string {
 	if s.pkgKeyExtra == nil {
 		return ""
@@ -207,29 +217,44 @@ func (s *Scheduler) effectiveSourceDir(pkgName string) string {
 	if pkg := s.packages[pkgName]; pkg != nil && pkg.SrcDirRaw() != "" {
 		return pkg.SrcDir()
 	}
-	return s.pkgs[pkgName].SourceDir
+	if info := s.pkgs[pkgName]; info != nil {
+		return info.SourceDir
+	}
+	return ""
+}
+
+func (s *Scheduler) pkgInfoOf(pkgName string) (*PkgInfo, error) {
+	info := s.pkgs[pkgName]
+	if info == nil {
+		return nil, fmt.Errorf("package %s has no build dirs registered (SetPkgDirs not called)", pkgName)
+	}
+	return info, nil
 }
 
 func (s *Scheduler) BuildAll() error {
 	var errs []error
-	failedTargets := make(map[string]bool)
-	if err := s.graph.ForEachDefault(s.includeTests, func(node *BuildNode) error {
-		if s.depsFailed(node, failedTargets) {
-			vlog.Info("[skip] %s (dependency failed)", node.FullName)
-			failedTargets[node.FullName] = true
-			return nil
-		}
-		if err := s.Build(node.FullName); err != nil {
-			failedTargets[node.FullName] = true
-			errs = append(errs, err)
-			if !s.keepGoing {
-				return err
+	if s.parallelPkgs > 1 {
+		errs = s.buildAllParallel()
+	} else {
+		failedTargets := make(map[string]bool)
+		if err := s.graph.ForEachDefault(s.includeTests, func(node *BuildNode) error {
+			if s.depsFailed(node, failedTargets) {
+				vlog.Info("[skip] %s (dependency failed)", node.FullName)
+				failedTargets[node.FullName] = true
+				return nil
+			}
+			if err := s.Build(node.FullName); err != nil {
+				failedTargets[node.FullName] = true
+				errs = append(errs, err)
+				if !s.keepGoing {
+					return err
+				}
+				return nil
 			}
 			return nil
+		}); err != nil {
+			return err
 		}
-		return nil
-	}); err != nil {
-		return err
 	}
 	root := s.rootDir
 	if root == "" {
@@ -267,7 +292,10 @@ func (s *Scheduler) Build(fullName string) error {
 		return nil
 	}
 
-	pkgInfo := s.pkgs[node.PkgName]
+	pkgInfo, err := s.pkgInfoOf(node.PkgName)
+	if err != nil {
+		return err
+	}
 	workDir := pkgInfo.SourceDir
 
 	// The package lock serializes access to the SHARED remote out/<key>
@@ -281,8 +309,6 @@ func (s *Scheduler) Build(fullName string) error {
 		}
 		defer release()
 	}
-	s.ccWriter.SetPackageDir(workDir)
-
 	vlog.Info("[%s]", fullName)
 
 	resolved, err := s.resolveTarget(node)
@@ -363,15 +389,6 @@ func (s *Scheduler) compileAll(resolved *ResolvedTarget, pkgInfo *PkgInfo) ([]st
 		numWorkers = numFiles
 	}
 
-	goFiles, err := buildscript.ListGoFiles(pkgInfo.SourceDir)
-	if err != nil {
-		vlog.Error("list .go files in %s: %v", pkgInfo.SourceDir, err)
-		buildGo := filepath.Join(pkgInfo.SourceDir, "build.go")
-		if _, statErr := os.Stat(buildGo); statErr == nil {
-			goFiles = []string{buildGo}
-		}
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -393,7 +410,7 @@ func (s *Scheduler) compileAll(resolved *ResolvedTarget, pkgInfo *PkgInfo) ([]st
 						return
 					}
 					src := resolved.SourceFiles[idx]
-					objPath, deps, err := s.compileSource(resolved, src, goFiles)
+					objPath, deps, err := s.compileSource(resolved, src)
 					results[idx] = compileResult{src: src, objPath: objPath, deps: deps, err: err}
 					if err != nil {
 						cancel()
@@ -546,7 +563,11 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	resolved.AllLdFlags = append(resolved.AllLdFlags, deps.voidLdFlags...)
 
 	excludes := node.Target.ExcludedFiles()
-	sourceDir := s.pkgs[node.PkgName].SourceDir
+	pkgInfo, err := s.pkgInfoOf(node.PkgName)
+	if err != nil {
+		return nil, err
+	}
+	sourceDir := pkgInfo.SourceDir
 	for _, pattern := range node.Target.Files() {
 		files, err := glob.Match(pattern, sourceDir)
 		if err != nil {
@@ -561,7 +582,6 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 
 	resolved.OutputPath = s.getTargetOutputPath(node)
 
-	pkgInfo := s.pkgs[node.PkgName]
 	genRules := node.Target.GenRules()
 	pkg := s.packages[node.PkgName]
 	needGenerated := len(genRules) > 0 || (pkg != nil && pkg.GenConfigHeader())
@@ -634,7 +654,7 @@ func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
 	return s.pkgs[node.PkgName].OutputPath(targetFilename(node.Target.Kind(), node.Target.Name()))
 }
 
-func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string, goFiles []string) (string, []string, error) {
+func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string, []string, error) {
 	pkgInfo := s.pkgs[resolved.Node.PkgName]
 	workDir := pkgInfo.SourceDir
 
@@ -653,9 +673,9 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string, goFiles 
 		Language: lang,
 	}
 
-	s.ccWriter.AddCommand(src, objRel, opts)
+	s.ccWriter.AddCommand(workDir, src, objRel, opts)
 
-	valid, deps := IsSourceValid(src, objRel, goFiles, workDir)
+	valid, deps := IsSourceValid(src, objRel, workDir)
 	if valid {
 		return objRel, deps, nil
 	}
@@ -749,7 +769,7 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 		return nil
 	}
 
-	pkg := s.ensurePackageForVoid(resolved)
+	pkg := s.ensurePackageForVoid(resolved.Node)
 	s.populateDepsFromGraph(pkg, resolved.Node)
 
 	mgr := toolchain.GetManager()
@@ -786,13 +806,17 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 	return nil
 }
 
-func (s *Scheduler) ensurePackageForVoid(resolved *ResolvedTarget) *api.Package {
-	pkg := s.packages[resolved.Node.PkgName]
+// ensurePackageForVoid lazily creates the api.Package entry for a package
+// whose void target carries a BuildFunc. buildAllParallel pre-materializes
+// every such entry before workers start: s.packages is read concurrently by
+// scheduler workers, and this map write would race with those reads.
+func (s *Scheduler) ensurePackageForVoid(node *BuildNode) *api.Package {
+	pkg := s.packages[node.PkgName]
 	if pkg != nil {
 		return pkg
 	}
 
-	pkgInfo := s.pkgs[resolved.Node.PkgName]
+	pkgInfo := s.pkgs[node.PkgName]
 	pkg = api.NewPackage()
 	buildDir := pkgInfo.BuildDir
 	if buildDir == "" {
@@ -805,13 +829,13 @@ func (s *Scheduler) ensurePackageForVoid(resolved *ResolvedTarget) *api.Package 
 	pkg.SetToolchain(s.toolchain)
 	pkg.SetSrcDir(pkgInfo.SourceDir)
 	cfgVals := map[string]any{api.ModeOptionName: s.mode}
-	if opts, ok := s.pkgOptions[resolved.Node.PkgName]; ok {
+	if opts, ok := s.pkgOptions[node.PkgName]; ok {
 		for k, v := range opts {
 			cfgVals[k] = v
 		}
 	}
 	pkg.SetCfgVals(cfgVals)
-	s.packages[resolved.Node.PkgName] = pkg
+	s.packages[node.PkgName] = pkg
 	return pkg
 }
 
@@ -1016,6 +1040,18 @@ func (s *Scheduler) populateDepsFromGraph(pkg *api.Package, node *BuildNode) {
 	}
 }
 
+func sameFileContent(a, b string) bool {
+	ha, err := FileHash(a)
+	if err != nil {
+		return false
+	}
+	hb, err := FileHash(b)
+	if err != nil {
+		return false
+	}
+	return ha == hb
+}
+
 func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) error {
 	t := resolved.Node.Target
 	kind := t.Kind()
@@ -1030,9 +1066,8 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 	if resolved.OutputPath != "" {
 		srcPath := resolveWorkPath(pkgInfo.SourceDir, resolved.OutputPath)
 		dest := filepath.Join(libDir, filepath.Base(resolved.OutputPath))
-		if info, err := os.Stat(dest); err == nil {
-			srcInfo, err2 := os.Stat(srcPath)
-			if err2 == nil && info.Size() == srcInfo.Size() && !info.ModTime().Before(srcInfo.ModTime()) {
+		if info, err := os.Stat(dest); err == nil && info.Mode().IsRegular() {
+			if sameFileContent(srcPath, dest) {
 				vlog.Info("  SKIP (already published)")
 				return nil
 			}
