@@ -1,4 +1,4 @@
-package main
+package pipeline
 
 import (
 	"path/filepath"
@@ -11,10 +11,6 @@ import (
 
 func TestWriteLockfilePrunesStaleEntries(t *testing.T) {
 	tmp := t.TempDir()
-
-	origVmakeDir := vmakeDir
-	vmakeDir = tmp
-	t.Cleanup(func() { vmakeDir = origVmakeDir })
 
 	r := resolver.NewResolver(nil, tmp)
 	node := &resolver.PackageNode{
@@ -39,8 +35,9 @@ func TestWriteLockfilePrunesStaleEntries(t *testing.T) {
 		DepGraph: r.Graph(),
 		Lock:     old,
 		LockPath: lockPath,
+		Paths:    &Paths{ReposDir: tmp},
 	}
-	s := newBuildPhaseState(ctx, false)
+	s := newBuildPhaseState(ctx, BuildOptions{})
 	s.remote = &remoteVersionState{
 		entries: map[string]*config.EntryConfig{"testnative/foo": {Version: "1.9.0"}},
 		commits: map[string]string{"testnative/foo": "bbbb"},

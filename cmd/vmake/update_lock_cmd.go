@@ -5,8 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/lockfile"
+	"github.com/spock2300/vmake/pkg/pipeline"
 )
 
 func newLockCmd() *cobra.Command {
@@ -33,17 +33,8 @@ downloads the selected versions and rewrites the lock.
 
 Version pins from .vmake/config.json take precedence over latest matching tags.`,
 		Run: func(cmd *cobra.Command, args []string) {
-			lockUpdateMode = true
-			ctx := resolveToConfig()
-
-			s := newBuildPhaseState(ctx, false)
-			fatalErr(s.resolveBuildConfig())
-			fatalErr(s.filterNeeded())
-			applyGlobalFlagsFromNeeded(ctx, s.needed)
-			s.globalFlagsHash = build.GlobalFlagsHash()
-			s.computeDirsAndOptions()
-			fatalErr(s.prepareAllPackages())
-			fatalErr(s.writeLockfile())
+			ctx := resolveToConfig(true)
+			fatalErr(pipeline.UpdateLock(ctx))
 		},
 	}
 }

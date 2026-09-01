@@ -20,7 +20,7 @@ go vet ./cmd/... ./pkg/... ./internal/...      # Lint
 go test ./cmd/vmake/... ./pkg/... ./internal/... # Unit tests
 ```
 
-Go tests live in `cmd/vmake`, `pkg/api`, `pkg/build`, `pkg/buildscript`, `pkg/config`, `pkg/plugin`, `pkg/repo`, `pkg/resolver`, `pkg/tui`.
+Go tests live in `cmd/vmake`, `pkg/api`, `pkg/build`, `pkg/buildscript`, `pkg/config`, `pkg/plugin`, `pkg/pipeline`, `pkg/repo`, `pkg/resolver`, `pkg/tui`.
 
 ### Integration tests via `test_data/` (run each from its own directory)
 
@@ -148,7 +148,7 @@ Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when con
 
 ### Config Cross-Package Propagation
 - `GenerateConfigDefines()` sets `genConfigDefines = true` on BuildContext; during build processing, reads `ImportConfigs()`, calls `MergeImportedOptions` to merge local + imported options, then calls `ConfigToDefines` and `AddDefines` on all targets
-- `ExportConfig()` sets `exportConfig = true` on BuildContext; propagated to `Package.SetExportConfig(true)` in `applyBuildContextConfig` (`cmd/vmake/build_exec.go`)
+- `ExportConfig()` sets `exportConfig = true` on BuildContext; propagated to `Package.SetExportConfig(true)` in `applyBuildContextConfig` (`pkg/pipeline/pipeline.go`)
 - `ImportConfig(names...)` appends package names to `importConfigs []string` on BuildContext; the actual merge and `-D` injection happens inside the `GenerateConfigDefines` block of `applyBuildContextConfig`
 - `SyncConfigDefines(names...)` = `GenerateConfigDefines` + `ImportConfig` (convenience for orchestrator packages)
 - `GenerateConfigHeader()` sets `genConfigHeader = true` on BuildContext; propagated to `Package.SetGenConfigHeader(true)` — generates `autoconf.h` from merged config options when called by scheduler
@@ -202,7 +202,7 @@ Phase 1-2a: Same as build (OnRequire → OnConfig)
 Phase 3: OnClean         -> Execute callbacks -> Directory cleanup
 ```
 
-Entry point: `cmd/vmake/main.go` → `loadPlugins()` → `Execute()` (cobra). Pipeline: `resolveToConfig()` (root.go) → `runRequirePhase()` → `runConfigurePhase()` → `runBuildPhase()` (build_phase.go). Build logic in `cmd/vmake/build_cmd.go`.
+Entry point: `cmd/vmake/main.go` → `loadPlugins()` → `Execute()` (cobra). Pipeline: `resolveToConfig()` (cmd/vmake/root.go: config load → gitignore/legacy side effects → `pipeline.NewContext` → `pipeline.Require` → `pipeline.Configure`) → `pipeline.RunBuild(ctx, opts)` (pkg/pipeline/build_phase.go: filter → materialize → lock → patch → kconfig → OnBuild → schedule). `vmake lock update` = `pipeline.UpdateLock(ctx)`; clean/check-symbols/query consume `pipeline.Inspect(ctx)` + `pipeline.DeclareTargets(...)` instead of replaying phase internals. Build command logic in `cmd/vmake/build_cmd.go`.
 
 ## Code Style
 
@@ -325,6 +325,7 @@ Methods on `CleanContext`:
 | `pkg/plugin` | Extension/plugin system | **Yes** |
 | `pkg/buildscript` | Build script scan, yaegi interpretation, multi-file merge | No |
 | `pkg/build` | Build execution, compile, link, scheduler, install, subgraph | No |
+| `pkg/pipeline` | Phase orchestration (require/configure/materialize/lock/declare), RuntimeContext, dir/key derivation | No |
 | `pkg/toolchain` | Toolchain abstraction (GCC, Clang) | No |
 | `pkg/repo` | Package management, Git, native repos | No |
 | `pkg/resolver` | Dependency graph, resolution | No |
@@ -334,7 +335,7 @@ Methods on `CleanContext`:
 | `pkg/version` | Version information | No |
 | `internal/*` | exec, flock, fs, gitstore, glob, gosrc, jsonio, toposort, yaegibase, yaegisym | No |
 
-**Dependency DAG**: `internal/*` -> `pkg/toolchain` -> `pkg/api` -> `pkg/buildscript, pkg/repo` -> `pkg/resolver, pkg/plugin, pkg/build` -> `cmd/vmake`
+**Dependency DAG**: `internal/*` -> `pkg/toolchain` -> `pkg/api` -> `pkg/buildscript, pkg/repo` -> `pkg/resolver, pkg/plugin, pkg/build` -> `pkg/pipeline` -> `cmd/vmake`
 
 Extension plugins are interpreted by yaegi at runtime (same as buildscripts). Cobra/pflag symbols are pre-generated via `yaegi extract` into `internal/yaegisym/` (regenerate with `go generate ./internal/yaegisym/`). The plugin loader (`pkg/plugin/loader.go`) uses `internal/yaegibase.New()` + `internal/gosrc.MergeGoSources()` — no compilation step.
 
@@ -429,6 +430,9 @@ type PkgDirs struct { SourceDir, BuildDir, InstallDir string }
 - Subgraph builds inside `executeAllOnBuild` activate tests via `includeTests` parameter
 
 ## Known Gotchas
+- `pipeline.DeclareTargets` (dry-run OnBuild re-execution used by query/check-symbols/install) intentionally does NOT run `applyBuildContextConfig` (config defines only affect compile flags, and install re-declares after a real build — re-applying would duplicate `-D`). Its `tc` argument may be nil, meaning "leave the package's existing toolchain wiring untouched"
+- `cleanPackages` (cmd/vmake/clean.go) falls back to `cleanAllBuildDirs` when no build-key dir matches — deliberate UX decision, not a fallback chain to fix
+- clean's OnClean hooks treat `pipeline.Inspect` errors as non-fatal (log, skip hooks, still clean build dirs) — best-effort by design; hash failures used to hard-exit inside the old loop
 - `cmd/vmake/manifest_cmd.go` — was historically misspelled as `mainfest_cmd.go`; renamed in Phase 1 cleanup. References to the old name in older docs/scripts should be updated.
 - `vlog` has `Debug`, `Info`, `Error`, `Fatal` — no `Warn` method
 - `exec.Command` doesn't expand shell features — `$(nproc)` won't work, must use `runtime.NumCPU()`

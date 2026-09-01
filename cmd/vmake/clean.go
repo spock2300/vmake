@@ -14,7 +14,7 @@ import (
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
-	"github.com/spock2300/vmake/pkg/resolver"
+	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -38,7 +38,7 @@ type pkgCleanEntry struct {
 }
 
 func cleanPackages(entries []pkgCleanEntry, cfg *config.ConfigFile, cleanAll bool) {
-	tc, tcName, err := GetToolchain(cfg)
+	tc, tcName, err := pipeline.GetToolchain(cfg, "")
 	if err != nil {
 		vlog.Error("Error: %v", err)
 		return
@@ -50,7 +50,7 @@ func cleanPackages(entries []pkgCleanEntry, cfg *config.ConfigFile, cleanAll boo
 		return
 	}
 
-	mode := resolveMode(cfg, "")
+	mode := pipeline.ResolveMode(cfg, "")
 
 	tcNames := collectToolchainNames(cfg, tcName, entries)
 
@@ -137,7 +137,7 @@ func scanPackages(workDir string) []pkgCleanEntry {
 }
 
 func runClean(cmd *cobra.Command, args []string) {
-	ctx, ok := resolveToConfigBestEffort()
+	ctx, ok := resolveToConfigBestEffort(false)
 	if !ok {
 		entries := scanPackages(ctx.WorkDir)
 		cleanPackages(entries, ctx.Config, cleanAllFlag)
@@ -164,15 +164,11 @@ func collectCleanEntries(ctx *RuntimeContext) []pkgCleanEntry {
 }
 
 func executeCleanHooks(ctx *RuntimeContext, localOnly bool) {
-	pre, err := prepareBuildPrelude(ctx)
+	insp, err := pipeline.Inspect(ctx)
 	if err != nil {
 		vlog.Error("Error: %v", err)
 		return
 	}
-
-	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
-	localPkgOptions := collectLocalPkgOptions(ctx)
-	depsDir := getDepsDir()
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
@@ -182,69 +178,29 @@ func executeCleanHooks(ctx *RuntimeContext, localOnly bool) {
 		if localOnly && !node.IsLocal() {
 			continue
 		}
-
-		entry := config.GetEntry(ctx.Config, name)
-		scriptHash := scriptHashForNode(name, node)
-		if node.IsLocal() {
-			pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, pre.tools.CCKey(), pre.cfg.Mode, localPkgOptions[name], pre.globalFlagsHash, scriptHash)
-		} else {
-			sourceDir := filepath.Join(depsDir, name, "src")
-			if info, err := os.Stat(sourceDir); err != nil || !info.IsDir() {
-				continue
-			}
-			version, commit, ok := remoteVersionKey(ctx, name, node, entry)
-			if !ok {
-				continue
-			}
-			repoName, pkgName, _ := api.SplitPackageRef(name)
-			versionDir := filepath.Join(getCacheDir(), repoName, pkgName, version)
-			patchHash := patchHashForNode(name, node)
-			pkgDirs[name] = makeRemotePkgDirs(versionDir, sourceDir, pre.tools.CCKey(), pre.cfg.Mode, entry.Options,
-				version, commit, pre.globalFlagsHash, patchHash, scriptHash)
+		dirs := insp.PkgDirs[name]
+		if dirs == nil {
+			continue
 		}
 
-		detectExistingSrcDir(node)
+		entry := config.GetEntry(ctx.Config, name)
 
-		node.Pkg.SetDirs(*pkgDirs[name])
-		node.Pkg.SetToolchain(pre.cfg.Tc)
+		pipeline.DetectExistingSrcDir(node)
+
+		node.Pkg.SetDirs(*dirs)
+		node.Pkg.SetToolchain(insp.Tc)
 
 		cleanCtx := api.NewCleanContext(name, entry.Options)
 		if opts, ok := ctx.AllOptions[name]; ok {
 			cleanCtx.SetOptions(opts)
 		}
-		cleanCtx.MergeGlobals(ctx.GlobalOptions, pre.cfg.GlobalValues)
+		cleanCtx.MergeGlobals(ctx.GlobalOptions, insp.GlobalValues)
 		cleanCtx.SetPackage(node.Pkg)
 
-		node.Pkg.ExecCleanFuncs(pkgDirs[name].SourceDir, func(fn api.CleanFunc) {
+		node.Pkg.ExecCleanFuncs(dirs.SourceDir, func(fn api.CleanFunc) {
 			fn(cleanCtx)
 		})
 	}
-}
-
-func detectExistingSrcDir(node *resolver.PackageNode) bool {
-	if !node.IsLocal() || node.Pkg == nil {
-		return false
-	}
-	if len(node.Pkg.GitURLs()) == 0 {
-		return false
-	}
-	srcDir := filepath.Join(node.Source.Dir, "src")
-	if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
-		if _, err := os.Stat(filepath.Join(srcDir, ".git")); err == nil {
-			node.Pkg.SetSrcDir(srcDir)
-			return true
-		}
-	}
-	return false
-}
-
-func isLegacyRealSrcDir(node *resolver.PackageNode) bool {
-	if !detectExistingSrcDir(node) {
-		return false
-	}
-	srcDir := filepath.Join(node.Source.Dir, "src")
-	_, err := os.Readlink(srcDir)
-	return err != nil
 }
 
 func cleanBuildKeyDir(dir, pkgName, tcName, ccPath, mode string, options map[string]any) bool {

@@ -1,4 +1,4 @@
-package main
+package pipeline
 
 import (
 	"fmt"
@@ -14,7 +14,15 @@ import (
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/repo"
 	"github.com/spock2300/vmake/pkg/resolver"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
+
+type buildConfig struct {
+	Mode         string
+	TcName       string
+	Tc           *toolchain.Toolchain
+	GlobalValues map[string]any
+}
 
 type buildPrelude struct {
 	cfg             *buildConfig
@@ -23,10 +31,6 @@ type buildPrelude struct {
 	globalFlagsHash string
 }
 
-// prepareBuildPrelude is the shared build/clean/check-symbols preamble:
-// resolve build config and tools, compute the reachable set, apply global
-// flags from it and derive the global flags hash. One implementation, no
-// per-command copies.
 func prepareBuildPrelude(ctx *RuntimeContext) (*buildPrelude, error) {
 	cfg, err := resolveBuildConfig(ctx)
 	if err != nil {
@@ -49,32 +53,28 @@ func prepareBuildPrelude(ctx *RuntimeContext) (*buildPrelude, error) {
 	}, nil
 }
 
-func scriptHashForNode(name string, node *resolver.PackageNode) string {
+func scriptHashForNode(name string, node *resolver.PackageNode) (string, error) {
 	if node == nil || node.Source == nil {
-		return ""
+		return "", nil
 	}
 	h, err := buildscript.ScriptSetHash(node.Source.Dir)
 	if err != nil {
-		vlog.Fatal("hash buildscript for %s: %v", name, err)
+		return "", fmt.Errorf("hash buildscript for %s: %w", name, err)
 	}
-	return h
+	return h, nil
 }
 
-func patchHashForNode(name string, node *resolver.PackageNode) string {
+func patchHashForNode(name string, node *resolver.PackageNode) (string, error) {
 	if node == nil || node.Pkg == nil || len(node.Pkg.GetPatches()) == 0 {
-		return ""
+		return "", nil
 	}
 	h, err := repo.PatchSetHash(node.Pkg)
 	if err != nil {
-		vlog.Fatal("hash patches for %s: %v", name, err)
+		return "", fmt.Errorf("hash patches for %s: %w", name, err)
 	}
-	return h
+	return h, nil
 }
 
-// remoteVersionKey is the single authoritative version/commit derivation for
-// remote packages outside the download path: config pin first, then lock,
-// then the resolver-selected native version. Mirrors the precedence of
-// resolver.selectNativeVersion.
 func remoteVersionKey(ctx *RuntimeContext, name string, node *resolver.PackageNode, entry *config.EntryConfig) (string, string, bool) {
 	if entry != nil && entry.Version != "" {
 		commit := ""
@@ -189,22 +189,6 @@ func collectAllPkgOptions(ctx *RuntimeContext, needed map[string]bool) map[strin
 	return result
 }
 
-func collectLocalPkgOptions(ctx *RuntimeContext) map[string]map[string]any {
-	result := make(map[string]map[string]any)
-	for _, name := range ctx.Resolver.GetOrder() {
-		node := ctx.DepGraph.Packages[name]
-		if node.IsLocal() {
-			entry := config.GetEntry(ctx.Config, name)
-			opts := make(map[string]any, len(entry.Options))
-			for k, v := range entry.Options {
-				opts[k] = v
-			}
-			result[name] = opts
-		}
-	}
-	return result
-}
-
 func localKeyExtra(globalFlagsHash, scriptHash string) string {
 	return build.JoinKeyExtra("", "", globalFlagsHash, "", scriptHash)
 }
@@ -217,10 +201,6 @@ func makeLocalPkgDirs(scriptDir, ccKey, mode string, opts map[string]any, global
 	}
 }
 
-// makeRemotePkgDirs points remote packages at the shared global cache:
-// <versionDir>/out/<buildKey>/{build,install}. The version dir is immutable
-// per source version; the build key folds in toolchain/mode/options plus the
-// version, commit, global-flags hash, patch-set hash and script hash.
 func makeRemotePkgDirs(versionDir, sourceDir, ccKey, mode string, opts map[string]any, version, commit, globalFlagsHash, patchHash, scriptHash string) *api.PkgDirs {
 	buildKey := build.BuildKey(ccKey, mode, opts, build.JoinKeyExtra(version, commit, globalFlagsHash, patchHash, scriptHash))
 	return &api.PkgDirs{

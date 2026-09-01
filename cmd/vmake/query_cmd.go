@@ -14,7 +14,9 @@ import (
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/resolver"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 func newQueryCmd() *cobra.Command {
@@ -48,27 +50,38 @@ func newQueryConfigCmd() *cobra.Command {
 func runQueryTargets(cmd *cobra.Command, args []string) {
 	vlog.SetLevel(vlog.Quiet)
 
-	ctx := resolveToConfig()
+	ctx := resolveToConfig(false)
 	globalValues := config.BuildGlobalValues(ctx.Config)
-	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
+	pkgDirs := pipeline.ResolveAllPackageDirs(ctx.DepGraph)
+	tc := queryToolchain(ctx.Config)
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if node == nil || !node.IsLocal() || node.Pkg == nil {
 			continue
 		}
-		kinds := collectTargetKinds(node.Pkg, name, pkgDirs[name].SourceDir, ctx, globalValues)
+		kinds := collectTargetKinds(name, pkgDirs[name], ctx, tc, globalValues)
 		for _, k := range kinds {
 			fmt.Printf("%s:%s (%s)\n", name, k.name, k.kind)
 		}
 	}
 }
 
+func queryToolchain(cfg *config.ConfigFile) *toolchain.Toolchain {
+	name := pipeline.ResolveToolchainName(cfg, "")
+	tc, err := toolchain.GetManager().GetToolchain(name)
+	if err != nil {
+		vlog.Error("queryToolchain: %v (continuing without toolchain wiring)", err)
+		return nil
+	}
+	return tc
+}
+
 func runQueryConfig(cmd *cobra.Command, args []string) {
 	vlog.SetLevel(vlog.Quiet)
 
 	name := args[0]
-	ctx := resolveToConfig()
+	ctx := resolveToConfig(false)
 
 	node := ctx.DepGraph.Packages[name]
 	if node == nil {
@@ -111,10 +124,11 @@ func mergeMapNoOverwrite[K comparable, V any](dst, src map[K]V) {
 func runQuery(cmd *cobra.Command, args []string) {
 	vlog.SetLevel(vlog.Quiet)
 
-	ctx := resolveToConfig()
+	ctx := resolveToConfig(false)
 
-	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
+	pkgDirs := pipeline.ResolveAllPackageDirs(ctx.DepGraph)
 	globalValues := config.BuildGlobalValues(ctx.Config)
+	tc := queryToolchain(ctx.Config)
 	workDir, _ := os.Getwd()
 
 	graph := ctx.DepGraph.Packages
@@ -148,7 +162,7 @@ func runQuery(cmd *cobra.Command, args []string) {
 		if i > 0 {
 			fmt.Fprintln(os.Stdout)
 		}
-		printTree(os.Stdout, graph, ctx, pkgDirs, globalValues, workDir, root, "", true, true, visited)
+		printTree(os.Stdout, graph, ctx, pkgDirs, globalValues, tc, workDir, root, "", true, true, visited)
 	}
 }
 
@@ -193,6 +207,7 @@ func printTree(
 	ctx *RuntimeContext,
 	pkgDirs map[string]*api.PkgDirs,
 	globalValues map[string]any,
+	tc *toolchain.Toolchain,
 	workDir, name, prefix string,
 	isRoot, isLast bool,
 	visited map[string]bool,
@@ -217,7 +232,7 @@ func printTree(
 
 	if isLocal {
 		sourceDir := pkgDirs[name].SourceDir
-		kinds := collectTargetKinds(node.Pkg, name, sourceDir, ctx, globalValues)
+		kinds := collectTargetKinds(name, pkgDirs[name], ctx, tc, globalValues)
 		if len(kinds) > 0 {
 			parts := formatPkgParts(name, kinds, sourceDir, workDir, ctx, globalValues, node)
 			fmt.Fprintf(w, "%s%s%s\n", prefix, connector, strings.Join(parts, " "))
@@ -256,7 +271,7 @@ func printTree(
 		} else {
 			childPrefix = prefix + "│   "
 		}
-		printTree(w, graph, ctx, pkgDirs, globalValues, workDir, dep, childPrefix, false, isLastDep, visited)
+		printTree(w, graph, ctx, pkgDirs, globalValues, tc, workDir, dep, childPrefix, false, isLastDep, visited)
 	}
 }
 
@@ -265,17 +280,13 @@ type targetKindInfo struct {
 	kind string
 }
 
-func collectTargetKinds(pkg *api.Package, name, dir string, ctx *RuntimeContext, globalValues map[string]any) []targetKindInfo {
-	if pkg == nil {
+func collectTargetKinds(name string, dirs *api.PkgDirs, ctx *RuntimeContext, tc *toolchain.Toolchain, globalValues map[string]any) []targetKindInfo {
+	node := ctx.DepGraph.Packages[name]
+	if node == nil || node.Pkg == nil {
 		return nil
 	}
 
-	buildCtx := newBuildContext(ctx, name, globalValues)
-	buildCtx.SetDryRun(true)
-
-	pkg.ExecBuildFuncs(dir, func(fn api.BuildFunc) {
-		fn(buildCtx)
-	})
+	buildCtx := pipeline.DeclareTargets(ctx, name, dirs, tc, globalValues)
 
 	targets := buildCtx.GetTargets()
 	if len(targets) == 0 {

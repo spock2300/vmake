@@ -26,8 +26,8 @@ func init() {
 }
 
 func runTest(cmd *cobra.Command, args []string) {
-	ctx := resolveToConfig()
-	result, err := runBuildPhase(ctx, true)
+	ctx := resolveToConfig(false)
+	result, err := runBuildPhase(ctx, BuildOptions{IncludeTests: true, Jobs: jobsFlag, KeepGoing: keepGoingFlag})
 	fatalErr(err)
 	runAllTests(result)
 }

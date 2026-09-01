@@ -40,7 +40,7 @@ func init() {
 }
 
 func runDistClean(cmd *cobra.Command, args []string) {
-	ctx, ok := resolveToConfigBestEffort()
+	ctx, ok := resolveToConfigBestEffort(false)
 	if ok {
 		vlog.Info("")
 		vlog.Info("Executing OnClean...")

@@ -3,14 +3,18 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
+	exec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/jsonio"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/pipeline"
+	"github.com/spock2300/vmake/pkg/repo"
 	"github.com/spock2300/vmake/pkg/resolver"
 	"github.com/spock2300/vmake/pkg/version"
 )
@@ -81,15 +85,7 @@ func installOnePackage(ctx *RuntimeContext, name string, node *resolver.PackageN
 		fn(installCtx)
 	})
 
-	buildCtx := newBuildContext(ctx, name, globalValues)
-	buildCtx.SetDryRun(true)
-	buildCtx.SetBuildSubGraphFunc(func(string) error { return nil })
-	buildCtx.SetDepOutputFunc(func(string) string { return "" })
-	node.Pkg.SetDryRun(true)
-	node.Pkg.ExecBuildFuncs(result.PkgDirs[name].SourceDir, func(fn api.BuildFunc) {
-		fn(buildCtx)
-	})
-	node.Pkg.SetDryRun(false)
+	buildCtx := pipeline.DeclareTargets(ctx, name, result.PkgDirs[name], nil, globalValues)
 
 	installItems := installCtx.GetInstallItems()
 	installItems = append(installItems, buildCtx.GetInstallItems()...)
@@ -164,4 +160,16 @@ func writeManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 	}
 	path := filepath.Join(effectivePrefix, "manifest.json")
 	return jsonio.Save(path, mf)
+}
+
+func gitDescribe(dir string) string {
+	out, err := exec.RunWithOptions("git", []string{"describe", "--tags", "--always", "--dirty"}, exec.RunOptions{Dir: dir, Quiet: true})
+	if err == nil {
+		return strings.TrimSpace(string(out))
+	}
+	return gitRevParse(dir)
+}
+
+func gitRevParse(dir string) string {
+	return repo.GitRevParse(dir)
 }

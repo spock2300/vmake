@@ -30,11 +30,11 @@ func runBuild(cmd *cobra.Command, args []string) {
 	if manifestFlag != "" {
 		importManifestIntoLock(manifestFlag)
 	}
-	ctx := resolveToConfig()
+	ctx := resolveToConfig(false)
 	if manifestFlag != "" {
 		checkoutManifestLocals(manifestFlag)
 	}
-	result, err := runBuildPhase(ctx, testsFlag)
+	result, err := runBuildPhase(ctx, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag})
 	fatalErr(err)
 	if installFlag {
 		fatalErr(executeInstall(ctx, result))

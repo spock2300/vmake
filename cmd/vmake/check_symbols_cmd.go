@@ -14,6 +14,8 @@ import (
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/pipeline"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 func newCheckSymbolsCmd() *cobra.Command {
@@ -64,23 +66,15 @@ func runCheckSymbols(strict bool) {
 		vlog.Fatal("check-symbols requires 'nm' on PATH (binutils)")
 	}
 
-	ctx := resolveToConfig()
-	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
+	ctx := resolveToConfig(false)
 	globalValues := config.BuildGlobalValues(ctx.Config)
 
-	pre, err := prepareBuildPrelude(ctx)
+	insp, err := pipeline.Inspect(ctx)
 	if err != nil {
-		vlog.Fatal("prepare build prelude: %v", err)
-	}
-	allOpts := collectAllPkgOptions(ctx, pre.needed)
-	for name, node := range ctx.DepGraph.Packages {
-		if node == nil || node.Source == nil || !node.IsLocal() {
-			continue
-		}
-		pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, pre.tools.CCKey(), pre.cfg.Mode, allOpts[name], pre.globalFlagsHash, scriptHashForNode(name, node))
+		vlog.Fatal("inspect: %v", err)
 	}
 
-	artifacts := discoverArtifacts(ctx, pkgDirs, globalValues)
+	artifacts := discoverArtifacts(ctx, insp.PkgDirs, insp.Tc, globalValues)
 	if len(artifacts) == 0 {
 		fmt.Println("No built Shared/Binary targets found. Run 'vmake build' first.")
 		return
@@ -125,7 +119,7 @@ func runCheckSymbols(strict bool) {
 	}
 }
 
-func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, globalValues map[string]any) []scanArtifact {
+func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, tc *toolchain.Toolchain, globalValues map[string]any) []scanArtifact {
 	var out []scanArtifact
 	for name, node := range ctx.DepGraph.Packages {
 		if node == nil || node.Pkg == nil || !node.IsLocal() {
@@ -135,9 +129,7 @@ func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, glo
 		if dirs == nil {
 			continue
 		}
-		buildCtx := newBuildContext(ctx, name, globalValues)
-		buildCtx.SetDryRun(true)
-		node.Pkg.ExecBuildFuncs(dirs.SourceDir, func(fn api.BuildFunc) { fn(buildCtx) })
+		buildCtx := pipeline.DeclareTargets(ctx, name, dirs, tc, globalValues)
 
 		for _, t := range buildCtx.GetTargets() {
 			kind := t.Kind()

@@ -13,6 +13,7 @@ import (
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/tui"
 )
 
@@ -32,7 +33,7 @@ func init() {
 }
 
 func runConfig(cmd *cobra.Command, args []string) {
-	ctx := resolveToConfig()
+	ctx := resolveToConfig(false)
 
 	if len(setFlags) > 0 {
 		runSetConfig(ctx, setFlags)
@@ -53,7 +54,7 @@ func runConfig(cmd *cobra.Command, args []string) {
 
 	globalValues := config.BuildGlobalValues(ctx.Config)
 
-	currentTC := resolveToolchainName(ctx.Config, "")
+	currentTC := pipeline.ResolveToolchainName(ctx.Config, "")
 
 	var sources []buildscript.Source
 	localPkgs := make(map[string]bool)

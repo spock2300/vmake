@@ -20,10 +20,10 @@ func init() {
 }
 
 func runRebuild(cmd *cobra.Command, args []string) {
-	ctx := resolveToConfig()
+	ctx := resolveToConfig(false)
 	executeCleanLocal(ctx)
 	vlog.Info("")
-	result, err := runBuildPhase(ctx, false)
+	result, err := runBuildPhase(ctx, BuildOptions{Jobs: jobsFlag, KeepGoing: keepGoingFlag})
 	fatalErr(err)
 	if installFlag {
 		fatalErr(executeInstall(ctx, result))
