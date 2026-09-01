@@ -137,10 +137,17 @@ AddBinHeader([]string{"assets/a.bin", "assets/b.bin"})
 ```
 
 - Input files can be strings or `[]string`
-- Output: `build/<buildKey>/generated/<stem>.h` (e.g., `logo.h`)
+- Output: `build/<buildKey>/generated/<stem>.h` (e.g., `logo.h`) — a **comma-separated hex fragment**, not a complete declaration. Wrap it in your own array and size it with `sizeof`:
+
+```c
+static const unsigned char logo[] = {
+    #include "logo.h"
+};
+/* length = sizeof(logo) */
+```
+
 - Include path for the `generated/` directory is automatically added
 - Incremental: only regenerates when source binary is newer than header
-- The generated `.h` file contains a `const unsigned char` array and a `size_t` length
 
 ## Key Points
 

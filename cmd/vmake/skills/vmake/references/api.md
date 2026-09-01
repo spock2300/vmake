@@ -47,13 +47,13 @@ Import: `github.com/spock2300/vmake/pkg/api`
 | `OnBuild(fn BuildFunc)` | `func(ctx *BuildContext)` |
 | `OnInstall(fn InstallFunc)` | `func(ctx *InstallContext)` |
 | `OnClean(fn CleanFunc)` | `func(ctx *CleanContext)` |
-| `OnPackage(fn PackageFunc)` | `func(p *Package)` |
+| `OnPackage(fn PackageFunc)` | `func(p *Package)` — single-slot: a second registration is a build error |
 
 ### Metadata (fluent, returns `*Package`)
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `SetGit` | `(urls ...string)` | Git repository URLs (registry repo only) |
+| `SetGit` | `(urls ...string)` | Git repository URLs (mirror list — tried in order); registry packages and local packages wrapping remote source |
 | `SetHomepage` | `(url string)` | Project homepage |
 | `SetDescription` | `(desc string)` | Package description |
 | `SetLicense` | `(license string)` | License identifier |
@@ -84,24 +84,26 @@ Import: `github.com/spock2300/vmake/pkg/api`
 |--------|-----------|-------------|
 | `Target` | `(name string) *Target` | Get or create a target |
 
-### Build Helpers (run in OnBuild/OnInstall)
+### Build Helpers (run in OnBuild/OnInstall/SetBuildFunc)
 
-All build helpers use `exec.RunFatal` (call `os.Exit` on failure) EXCEPT `RunEnv` which returns a real error.
+Exit-on-failure helpers use `exec.RunFatal` (call `os.Exit` on failure) and return **nothing**: `Run`, `RunIn`, `CMakeConfigure`, `CMakeBuild`, `CMakeInstall` (plus their `CleanContext` wrappers). Real-error helpers: `RunEnv`, `Make`, `Configure`. Never `return` an exit-on-failure helper — call it as a statement.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `Run` | `(name string, args ...string) error` | Run command in BuildDir (os.Exit on failure) |
-| `RunIn` | `(dir, name string, args ...string) error` | Run command in dir (os.Exit on failure) |
-| `RunEnv` | `(env map[string]string, name string, args ...string) error` | Run with extra env vars (**returns real error**) |
-| `CMakeConfigure` | `(extraArgs ...string) error` | cmake -S src -B build --prefix=... |
+| `Run` | `(name string, args ...string)` | Run command in BuildDir (os.Exit on failure) |
+| `RunIn` | `(dir, name string, args ...string)` | Run command in dir (os.Exit on failure) |
+| `RunEnv` | `(env map[string]string, name string, args ...string) error` | Run with extra env vars in BuildDir (**returns real error**) |
+| `CMakeConfigure` | `(extraArgs ...string)` | cmake -S SrcDir -B BuildDir --prefix=InstallDir (+ compiler, build type) |
 | `CMakeGlobalFlagsArgs` | `() []string` | Returns `-DCMAKE_C_FLAGS=...` etc. from global flags for CMake |
 | `MergedCFlags` | `(extra ...string) string` | Merge global C flags + extra, space-joined |
 | `MergedCxxFlags` | `(extra ...string) string` | Merge global C++ flags + extra, space-joined |
 | `MergedLdFlags` | `(extra ...string) string` | Merge global linker flags + extra, space-joined |
-| `CMakeBuild` | `(args ...string) error` | cmake --build build |
-| `CMakeInstall` | `() error` | cmake --install build |
-| `Configure` | `(extraArgs ...string) error` | ./configure --prefix=... |
-| `Make` | `(args ...string) error` | make -C build (uses `pkg.Env()`, passes `-j<ncpu>`) |
+| `CMakeBuild` | `(args ...string)` | cmake --build BuildDir |
+| `CMakeInstall` | `()` | cmake --install BuildDir |
+| `Configure` | `(extraArgs ...string) error` | SrcDir/configure --prefix=... (+ --host when cross) |
+| `Make` | `(args ...string) error` | make -C BuildDir with `pkg.Env()` (**returns real error**; no implicit -j) |
+
+Dry-run aware: in dry-run mode (query/check-symbols), all helpers log commands without executing them.
 
 ### Property Getters
 
@@ -151,10 +153,10 @@ All build helpers use `exec.RunFatal` (call `os.Exit` on failure) EXCEPT `RunEnv
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `AddKConfig` | `(name string) *KConfigEntry` | Create KConfig entry |
+| `AddKConfig` | `(name string) *KConfigEntry` | Create KConfig entry (**single entry per package** — a second `AddKConfig` is a build error) |
 | `KConfigEntries` | `() []*KConfigEntry` | All KConfig entries |
-| `SelectedPreset` | `() string` | Selected preset name |
-| `EnsureConfig` | `(srcDir string) bool` | Check `.config` exists & non-empty, run `make <preset>` if not |
+| `SelectedPreset` | `() string` | Selected preset name (selected > default) |
+| `EnsureConfig` | `(srcDir string) bool` | Check `.config` in srcDir exists & non-empty; if not, run `make <preset>` there and apply `SetKConfigPatches`. Fatal when no preset is selected (declare `SetDefaultPreset` or pick one in the TUI) |
 
 ### Package Linker Script Methods
 
@@ -175,7 +177,7 @@ All setters are fluent (return `*Target`).
 |--------|-----------|-------------|
 | `SetKind` | `(kind TargetKind)` | Binary/Static/Shared/Object/Void |
 | `SetDefault` | `(isDefault bool)` | Include in default build |
-| `SetTest` | `(v bool)` | Mark as test target (auto-sets isDefault=false) |
+| `SetTest` | `(v bool)` | Mark as test target (does NOT touch isDefault — scheduler decides inclusion; `vmake build` skips tests, `--tests`/`vmake test` include them) |
 | `AddFiles` | `(files ...any)` | Source files (globs, strings, []string) |
 | `RemoveFiles` | `(files ...any)` | Exclude files from AddFiles glob expansion (pattern matching) |
 | `AddIncludes` | `(dirs ...any)` | Include directories |
@@ -183,12 +185,12 @@ All setters are fluent (return `*Target`).
 | `AddDefines` | `(defines ...any)` | Preprocessor defines |
 | `AddLinks` | `(libs ...any)` | Libraries to link |
 | `AddProvidedLibs` | `(libs ...string)` | Libraries this target provides to consumers (e.g. `"ssl"`, `"crypto"`) |
-| `AddDeps` | `(targets ...string)` | Dependencies: same pkg (`"utils"`), cross pkg (`"pkg:name"`), wildcard (`"pkg:*"` / `"repo/pkg:*"`), third-party (`"official/zlib"`) |
+| `AddDeps` | `(targets ...string)` | Dependencies: same pkg (`"utils"`), cross pkg (`"pkg:name"`), wildcard (`"pkg:*"`), third-party (`"official/zlib"`). Invalid refs (whitespace, stray `:`, empty segments) are build errors |
 | `AddCFlags` | `(flags ...any)` | C compiler flags |
 | `AddCxxFlags` | `(flags ...any)` | C++ compiler flags |
 | `AddLdFlags` | `(flags ...any)` | Linker flags |
 | `SetBuildFunc` | `(fn func(p *Package) error)` | Custom build logic (for third-party packages) |
-| `SetPrebuilt` | `(path string)` | Pre-compiled artifact — skip compilation, symlink to output path |
+| `SetPrebuilt` | `(path string)` | Pre-compiled artifact — skip compilation, symlink to output path (fatal on double-set) |
 | `SetInstallDir` | `(dir string)` | Install directory |
 | `SetInstall` | `(install bool)` | Control install |
 | `SetLinkerScript` | `(path string)` | Linker script (passes `-T` to linker; fatal on double-set) |
@@ -202,7 +204,7 @@ All setters are fluent (return `*Target`).
 | `AddPostLinkBin` | `()` | `objcopy -O binary {output} {output}.bin` |
 | `AddPostLinkSize` | `()` | `size {output}` |
 | `AddPostLinkStrip` | `()` | `strip -o {output}.stripped {output}` |
-| `AddPostLinkDeps` | `(files ...string)` | Extra input files for post-link steps (SourceDir-relative); any change/missing → relink + re-run all post-link |
+| `AddPostLinkDeps` | `(files ...string)` | Extra input files for post-link steps (SourceDir-relative); any change/missing → relink + re-run all post-link (no-op on Prebuilt targets, which short-circuit before the relink check) |
 | `AddBinHeader` | `(inputs ...any)` | Binary files → `.h` headers; output to `build/<buildKey>/generated/`; incremental via mtime |
 
 `SetLanguages(langs ...string)` exists but has **no effect** — language is auto-detected from file extension (`.c` → C, `.cc/.cpp/.cxx` → C++).
@@ -315,15 +317,15 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `SourceDir() string` | Package root directory |
 | `BuildDir() string` | Build output directory |
 | `SrcDir() string` | Source code directory (differs from SourceDir when `SetGit()` is used) |
-| `Run(name, args...)` | Run command in BuildDir (os.Exit on failure) |
-| `RunIn(dir, name, args...)` | Run command in specified directory (os.Exit on failure) |
-| `RunEnv(env, name, args...)` | Run with custom environment (**returns real error**) |
-| `Make(args...)` | Run make in BuildDir with `pkg.Env()` |
+| `Run(name, args...)` | Run command in BuildDir (os.Exit on failure; returns nothing) |
+| `RunIn(dir, name, args...)` | Run command in specified directory (os.Exit on failure; returns nothing) |
+| `RunEnv(env, name, args...) error` | Run with custom environment (**returns real error**) |
+| `Make(args...) error` | Run make in BuildDir with `pkg.Env()` (**returns real error**) |
 | `PackageName() string` | Package name |
 
 ### RequireContext
 
-OnRequire callbacks execute twice: first during graph discovery with nil config values (Phase 1), then again during FilterDeps with actual config values from config.json (Phase 3). This enables option-conditional dependencies.
+OnRequire callbacks execute twice: first during graph discovery with nil config values (Phase 1), then again during FilterDeps with actual config values from config.json (Phase 3). This enables option-conditional dependencies. During discovery, direct value reads (`ctx.Bool/String/Int`) are build errors — use `ctx.When`/`ctx.If`/`ctx.Select`. Both passes must declare the **same set of requires** (only guard values may differ).
 
 | Method | Description |
 |--------|-------------|
@@ -333,16 +335,18 @@ OnRequire callbacks execute twice: first during graph discovery with nil config 
 
 ### ConfigAccessor (embedded by all context types)
 
+Strict in script contexts (`OnConfig`/`OnBuild`/`OnInstall`/`OnClean`/`OnRequire`): reading an unknown option name, or using an accessor that mismatches the option's `SetType`, is a **build error** (not a silent zero value). During `OnRequire` discovery, direct reads (`Bool`/`String`/`Int`) are also build errors — use the discovery-aware `If`/`Select`/`When`. TUI/CLI read paths stay lenient.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `Bool` | `(name string) bool` | Get bool value |
-| `String` | `(name string) string` | Get string value |
-| `Int` | `(name string) int` | Get int value |
+| `Bool` | `(name string) bool` | Get bool value (strict: only for OptionBool) |
+| `String` | `(name string) string` | Get string value (strict: OptionString/OptionChoice) |
+| `Int` | `(name string) int` | Get int value (strict: OptionInt; coerces float64/int64) |
 | `BoolStr` | `(name string) string` | Returns "ON"/"OFF" |
-| `If` | `(option string, then ...string) []string` | Values if bool is true |
-| `Select` | `(option string, mapping map[string]string) string` | Map option value (returns `""` in discoverAll) |
-| `When` | `(option string, value any) bool` | Compare option value (returns `true` in discoverAll) |
-| `Option` | `(name string) *Option` | Get or create option |
+| `If` | `(option string, then ...string) []string` | `then` values if bool option is true; discovery-aware (falls back to declared default) |
+| `Select` | `(option string, mapping map[string]string) string` | Map option value; returns `""` when config is nil (discovery) or value unmapped |
+| `When` | `(option string, value any) bool` | Compare option value, numerics across int/float64; returns `true` when config is nil (discovery) |
+| `Option` | `(name string) *Option` | Get or create option (build error after the config phase) |
 
 ---
 
@@ -353,16 +357,16 @@ All setters are fluent (return `*Option`).
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `SetType` | `(t OptionType)` | Bool/String/Int/Choice |
-| `SetDefault` | `(v any)` | Default value |
+| `SetDefault` | `(v any)` | Default value — must match `SetType` (validated after OnConfig; the classic trap is forgetting `SetType`, whose zero value is `OptionBool`, while setting a string default) |
 | `SetDescription` | `(desc string)` | Description |
-| `SetValues` | `(vals ...string)` | Choice values (OptionChoice) |
+| `SetValues` | `(vals ...string)` | Choice values (OptionChoice); defaults must be among them |
 | `SetShowIf` | `(fn func(ctx *ConfigContext) bool)` | Conditional visibility |
-| `SetOnApply` | `(fn func(ctx *ConfigContext, val any))` | Callback after option values resolved. `val` is typed: `bool` (OptionBool), `int`/`float64` (OptionInt), `string` (OptionString/OptionChoice). JSON round-trip decodes numbers as `float64`. |
+| `SetOnApply` | `(fn func(ctx *ConfigContext, val any))` | Callback after option values resolved, once per build, in sorted option-name order. `val` is normalized to the declared type: `bool` (OptionBool), `int` (OptionInt — JSON `float64` converted to `int`), `string` (OptionString/OptionChoice). The callback's context carries real option values, so reading other options works |
 | `SetGroup` | `(group string)` | Display group |
 
 Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()`, `OnApply()`, `Group()`, `IsGlobal()`.
 
-Note: When `SetDefault` is not called on an `OptionChoice`, the **first value** in `SetValues` becomes the effective default. For `OptionBool`, the default is `false`; for `OptionString`, `""`; for `OptionInt`, `0`.
+Note: without `SetDefault`, the zero value applies (`false` for OptionBool, `""` for OptionString/OptionChoice, `0` for OptionInt). An unset Choice default is not validated against `SetValues`.
 
 ---
 
@@ -449,6 +453,8 @@ Note: When `SetDefault` is not called on an `OptionChoice`, the **first value** 
 	func (k *KConfigEntry) SetMenuconfigCmd(cmd string) *KConfigEntry
 	func (k *KConfigEntry) AddPreset(name string) *KConfigEntry
 	func (k *KConfigEntry) SetDefaultPreset(presetName string) *KConfigEntry
+	func (k *KConfigEntry) SelectPreset(name string) *KConfigEntry
+	func (k *KConfigEntry) SetKConfigPatches(patches map[string]string) *KConfigEntry
 
 	type GenRuleKind string
 	const GenRuleBinHeader GenRuleKind = "binheader"
@@ -476,7 +482,9 @@ Note: When `SetDefault` is not called on an `OptionChoice`, the **first value** 
 
 ### KConfig
 
-	func ApplyKConfigPatches(configPath string, patches map[string]string)
+	func ApplyKConfigPatches(configPath string, patches map[string]string) error
+
+Replaces lines matching a patch key (by `KEY=` prefix) with the patch value; keys sorted for determinism. Called automatically by `EnsureConfig`.
 
 ### File Copy
 
@@ -519,20 +527,19 @@ func ParseVersion(s string) (Version, bool)
 func ParseConstraint(s string) (Constraint, bool)
 func (v Version) Compare(other Version) int
 func (v Version) String() string
-	func (c Constraint) Match(v Version) bool
-	func MatchVersion(available []string, constraint string) (string, bool)
-	func CheckCycle(path []string, current string) error
+func (c Constraint) Match(v Version) bool
+func MatchVersion(available []string, constraint string) (string, bool)
 ```
 
 **Constraint operators:**
 
 | Op | Meaning | Major lock |
 |----|---------|------------|
-| `>=` | ≥ (default when no operator) | Yes (major > 0 only) |
-| `>` | > | No |
+| `>=` | ≥ (default when no operator) | Yes (when constraint major > 0) |
+| `>` | > | Yes (when constraint major > 0) |
 | `<=` | ≤ | No |
 | `<` | < | No |
 | `=` | exact match (including pre) | — |
 | `~` | lock major.minor, patch ≥ | Yes |
 
-`>=` with major > 0 restricts to same major version (`>=1.2` won't match `2.0.0`). Empty constraint (`>=0.0.0`) matches all. Selection: highest version satisfying all constraints. Pre-release: `1.0.0-rc.1 < 1.0.0`; numeric identifiers < alpha identifiers in pre-release segments.
+`>=` and `>` with constraint major > 0 restrict to the same major version (`>=1.2` and `>1.0` won't match `2.0.0`); `>=0.x` / `>0.x` are not major-locked. Empty constraint (`>=0.0.0`) matches all. Selection: highest version satisfying all constraints (mutually satisfiable across packages). Pre-release: `1.0.0-rc.1 < 1.0.0`; pre-releases only match when the constraint itself pins a pre-release of the same `major.minor.patch`; numeric identifiers < alpha identifiers in pre-release segments.

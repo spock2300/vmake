@@ -63,7 +63,7 @@ func Main(p *api.Package) {
 	})
 
 	p.OnBuild(func(ctx *api.BuildContext) {
-		var defines []any
+		var defines []string
 		if ctx.Bool("perf") {
 			defines = append(defines, "LWIP_PERF=1")
 		}
@@ -72,7 +72,7 @@ func Main(p *api.Package) {
 		}
 
 		ctx.Target("lwip").SetKind(api.TargetStatic).
-			AddDefines(defines...).
+			AddDefines(defines). // []string flattens into ...any — no "..." spread
 			AddFiles("src/*.c")
 	})
 }
@@ -82,15 +82,15 @@ func Main(p *api.Package) {
 - `AddDefines("LWIP_PERF=1")` produces `-DLWIP_PERF=1` on the compiler command line
 - `AddDefines("KEY")` (no value) produces `-DKEY`
 - Boolean options do NOT auto-convert to 1/0 — you must construct the string yourself
-- `ctx.Bool()` works for both `OptionBool` and `OptionChoice` (returns true if choice value matches string name)
+- The accessor must match `SetType`: `ctx.Bool` for `OptionBool`, `ctx.String` for `OptionString`/`OptionChoice` — a mismatch is a build error
 - Use `ctx.BoolStr("name")` to get `"ON"` / `"OFF"` strings instead of `true`/`false`
 
 **Also works with `AddCFlags` directly** — useful for flags that aren't pure defines:
 
 ```go
 ctx.Target("app").SetKind(api.TargetBinary).
-	AddCFlags(ctx.If("debug", "-g", "-O0")...).
-	AddCFlags(ctx.If("perf", "-DLWIP_PERF=1")...)
+	AddCFlags(ctx.If("debug", "-g", "-O0")).
+	AddCFlags(ctx.If("perf", "-DLWIP_PERF=1"))
 ```
 
 But `AddDefines` is clearer when the purpose is purely `-D` defines.
@@ -111,24 +111,23 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 })
 ```
 
-Global flags apply to ALL targets in ALL packages. They are deduplicated. Use sparingly — prefer Mechanism 1 or 2 unless the flag truly needs cross-package visibility.
+Global flags apply to ALL targets in ALL packages. They are deduplicated, buffered per package (flags from packages pruned by `FilterDeps` never leak), and their changes rebuild artifacts (global flags are part of the BuildKey). Use sparingly — prefer Mechanism 1 or 2 unless the flag truly needs cross-package visibility.
 
-**Important**: `ctx.Select()` returns `""` during vmake's internal discoverAll phase. If you call `AddGlobalCFlags` in `SetOnApply` with a value derived from `ctx.Select()`, guard with `if flag != ""`.
+**Note**: `val` inside `SetOnApply` is already typed to the declared option type (`string` for Choice) — no `float64` conversion needed for Int options either.
 
 ## Reading Config Values in OnBuild
 
 All option values are available in `OnBuild` via the ConfigAccessor:
 
 ```go
-ctx.Bool("debug")           // bool → bool
-ctx.Int("tick_hz")          // int → int
-ctx.String("platform")      // string → string
+ctx.Bool("debug")           // bool → bool (OptionBool only — accessor must match SetType)
+ctx.Int("tick_hz")          // int → int (OptionInt only)
+ctx.String("platform")      // string → string (OptionString/OptionChoice only)
 ctx.BoolStr("debug")        // bool → "ON" / "OFF"
-ctx.When("x", "val")        // true iff option "x" == "val"
-ctx.When("x", "val") // returns true iff option "x" == "val"
+ctx.When("x", "val")        // true iff option "x" == "val" (works in OnRequire too)
 ```
 
-These work anywhere `ConfigAccessor` is available: `OnBuild`, `OnRequire`, `OnInstall`.
+These work anywhere `ConfigAccessor` is available: `OnBuild`, `OnConfig`, `OnInstall`, `OnClean`. In `OnRequire`, only `When`/`If`/`Select` are allowed during discovery — direct reads are build errors.
 
 Newly registered options that haven't been written to `.vmake/config.json` yet (first build after adding an option) will use their `SetDefault` value. No need to run `vmake config` first.
 

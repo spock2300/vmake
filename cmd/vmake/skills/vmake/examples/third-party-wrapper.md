@@ -72,16 +72,14 @@ p.OnBuild(func(ctx *api.BuildContext) {
     ctx.Target("customlib").
         SetKind(api.TargetVoid).
         SetBuildFunc(func(p *api.Package) error {
-            if err := p.RunIn(p.SourceDir(), "make", "-j4"); err != nil {
-                return err
-            }
-            if err := p.RunIn(p.SourceDir(), "make", "install", "PREFIX="+p.InstallDir()); err != nil {
-                return err
-            }
+            p.RunIn(p.SourceDir(), "make", "-j4")
+            p.RunIn(p.SourceDir(), "make", "install", "PREFIX="+p.InstallDir())
             return nil
         })
 })
 ```
+
+`p.Run`/`p.RunIn` exit the process on failure and return nothing — call them as statements and `return nil` at the end (use `p.RunEnv` if you need the error).
 
 ## Stamp-Based Skip with SetConfigFiles
 

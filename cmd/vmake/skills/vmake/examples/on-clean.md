@@ -34,8 +34,8 @@ func Main(p *api.Package) {
 
 - `OnClean` is a **separate pipeline** from build — it doesn't run during `vmake build`
 - `vmake clean` executes `OnClean` hooks first, then removes build artifacts (compiled objects, binaries)
-- `vmake distclean` removes local build dirs, install/, and `vmake_deps/` — `OnClean` does NOT run for distclean
-- Use `ctx.Run()` / `ctx.RunIn()` (not `RunEnv`) since these call `os.Exit` on failure — same as `pkg.Run()` in build scripts
+- `vmake distclean` **also executes `OnClean` hooks**, then removes all local build dirs, `install/`, `compile_commands.json`, and `vmake_deps/` (the shared global cache survives; `--purge-cache` also purges it)
+- Use `ctx.Run()` / `ctx.RunIn()` (not `RunEnv`) when you want fail-fast behavior — they exit on failure and return nothing; `RunEnv`/`Make` return errors
 - `OnClean` has access to `SourceDir()`, `BuildDir()`, and `SrcDir()` — same directory model as other phases
 
 ## When to Use OnClean

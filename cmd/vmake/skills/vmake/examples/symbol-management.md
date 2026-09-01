@@ -26,6 +26,7 @@ The fix is layered: **default hidden → declare exports → link policy → aud
 | 1. Default hidden | `-fvisibility=hidden` + `-fvisibility-inlines-hidden` | 90% of leaks — all symbols default to non-exported | `ctx.SetDefaultVisibilityHidden()` |
 | 2. Declare exports | version-script on shared libs | Declarative public API surface | `target.SetVersionScript("foo.map")` |
 | 3. Link policy | `--exclude-libs`, `-Bsymbolic` | Static archive absorption; internal binding | `target.AddExcludeLibs(...)`, `target.SetSymbolBinding("static")` |
+| 4. Audit | `nm -D` scan of all Shared/Binary outputs | Duplicate/mangled/reserved leaks, version-script violations | `vmake check-symbols [--strict]` |
 | 5. Prefix isolation | `objcopy --prefix-symbols=` | Force namespace onto third-party C code | `target.SetSymbolPrefix("vendor_")` |
 
 Layer 1 is the foundation. Without default-hidden visibility, version-scripts
@@ -173,33 +174,25 @@ or empty (default).
 
 ## Layer 4: Audit
 
-Declare expected exports per target, then run `vmake check-symbols` to verify
-the build actually produces them — and nothing else.
+`vmake check-symbols` scans all built Shared/Binary outputs via `nm -D` — no
+per-target declaration required — and reports:
 
-```go
-ctx.Target("libfoo").
-    SetKind(api.TargetShared).
-    AddFiles("src/*.c").
-    SetVersionScript("export.map").
-```
+- **Cross-target duplicate exports**: the same symbol exported by two targets
+  in the build graph (collision risk at final link)
+- **C++ mangled leaks**: `_Z*` symbols exported from C-facing libraries
+- **Reserved-prefix leaks**: `__libc_*` and similar reserved prefixes
+- **Version-script violations**: exports outside what a declared
+  `SetVersionScript` allows
+- **Missing version-script warnings**: shared libraries without any version
+  script
 
 ```bash
 vmake build
 vmake check-symbols --strict
 ```
 
-Output flags:
-
-- **Unexpected exports**: a symbol in `.dynsym` not in the expected list
-- **Missing exports**: an expected symbol not found in `.dynsym`
-- **Cross-library conflicts**: the same symbol exported by two different
-  shared libraries in the build graph
-
-`--strict` exits non-zero on any discrepancy (for CI). Without it, the report
-is informational.
-
-build itself. The version script remains the source of truth for what's
-actually exported.
+`--strict` exits non-zero on warn/error findings (info-level still passes) —
+use in CI. Without it, the report is informational.
 
 ## Layer 5: Prefix Isolation (Third-Party C Code)
 
@@ -220,7 +213,7 @@ your own code must reference.
 
 ## Putting It All Together
 
-A mature library package uses Layers 1+2+4 together:
+A mature library package uses Layers 1+2+3 together, then audits in CI:
 
 ```go
 package main

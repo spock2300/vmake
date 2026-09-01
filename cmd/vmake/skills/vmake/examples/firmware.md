@@ -62,7 +62,7 @@ func Main(p *api.Package) {
         ctx.KConfig("u-boot").
             AddPreset("sandbox_defconfig").
             AddPreset("rk3568_defconfig").
-            SetDefault("sandbox_defconfig").
+            SetDefaultPreset("sandbox_defconfig").
             SetMenuconfigCmd("make menuconfig")
     })
 
@@ -180,7 +180,8 @@ func Main(p *api.Package) {
 
             imageFile := filepath.Join(pkg.BuildDir(), "rootfs.sqsh")
             os.Remove(imageFile)
-            return pkg.Run("mksquashfs", staging, imageFile, "-noappend")
+            pkg.Run("mksquashfs", staging, imageFile, "-noappend") // exits on failure
+            return nil
         })
     })
 }
@@ -202,7 +203,7 @@ import (
 
 func Main(p *api.Package) {
     p.OnRequire(func(ctx *api.RequireContext) {
-        ctx.AddRequires("uboot", "linux", "rootfs", "app")
+        ctx.AddRequires("uboot", "linux", "rootfs", "myapp")
     })
 
     p.OnBuild(func(ctx *api.BuildContext) {

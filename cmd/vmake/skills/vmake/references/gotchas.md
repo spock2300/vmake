@@ -18,16 +18,16 @@ ctx.Option("mcu").SetType(api.OptionChoice).SetDefault("stm32f405").
 
 **Fix (alternative):** Use `EXTERN(symbol ...)` in the linker script. It forces the linker to treat those symbols as undefined before archive scanning. This works but requires maintaining a symbol list in the linker script.
 
-## `ctx.Select()` Returns `""` During discoverAll
+## OnApply Callbacks, Global Flags, and Discovery Reads
 
-vmake runs an internal `discoverAll` phase before the real build to discover all targets. During this phase, `ctx.Select()` returns `""` regardless of the option value. If you pass this empty string to `AddGlobalCFlags` or `AddGlobalLdFlags` inside a `SetOnApply` callback, the empty string persists in the Manager singleton (dedup won't catch it on the real build pass because `""` ≠ `"-O2"`). GCC then interprets the empty string as a filename during compilation, producing errors like:
+`SetOnApply` callbacks run **once per build**, during the config phase, after all option values are resolved (in sorted option-name order). The context carries real option values — reading other options inside the callback works, and `ctx.Select` sees actual values (no discovery pass runs callbacks).
 
-```
-arm-none-eabi-gcc: warning: : linker input file unused because linking not done
-arm-none-eabi-gcc: error: : linker input file not found: No such file or directory
-```
+Global flags registered via `AddGlobalCFlags/CxxFlags/LdFlags/Links` are **buffered per package** and only applied to the toolchain manager for packages that survive `FilterDeps` — flags from pruned packages never leak into the build. Global flag changes also change the BuildKey (via the global-flags hash), so artifacts rebuild when flags change.
 
-**Fix:** guard option-dependent values before passing to global flag APIs. Global flags should only be set inside `SetOnApply` callbacks (on `ConfigContext`), not in `OnBuild`:
+Two discovery-era rules still matter:
+
+- In `OnRequire` (both passes), direct value reads (`ctx.Bool/String/Int`) are build errors. Use `ctx.When("opt", value)` / `ctx.If(...)` / `ctx.Select(...)`. On the first pass (nil config) `When` returns `true`, `If` follows the declared default, and `Select` returns `""`.
+- Inside `SetOnApply`, `Select` sees the resolved value — but an unmapped choice still yields `""`, which `flattenAny` would silently drop from `Add*` lists. Guard before use:
 
 ```go
 ctx.Option("optimization").SetType(api.OptionChoice).
@@ -37,24 +37,17 @@ ctx.Option("optimization").SetType(api.OptionChoice).
         optFlag := ctx.Select("optimization", map[string]string{
             "O0": "-O0", "O1": "-O1", "O2": "-O2", "O3": "-O3", "Os": "-Os",
         })
-
-        globalCFlags := []string{
-            "-Wall", "-Wchar-subscripts", "-Wformat",
-            "-std=c99", "-fno-builtin",
-            "-fdata-sections", "-ffunction-sections",
+        if optFlag != "" { // unmapped values Select to ""
+            ctx.AddGlobalCFlags(optFlag)
         }
-        if optFlag != "" {
-            globalCFlags = append(globalCFlags, optFlag)
-        }
-        ctx.AddGlobalCFlags(globalCFlags...)
     })
 ```
 
-**Root cause:** `AddGlobalCFlags/LdFlags/Links` write to `toolchain.GetManager()`, a **global singleton** that persists across the discoverAll and real-build phases. The empty string from discoverAll is appended and never removed, so it reappears on the real build. Per-target `AddCFlags` does not have this problem because per-target flags are ephemeral — they exist only for the current build phase and are not stored in a global singleton.
+- `When` compares numerics across `int`/`float64` (JSON round-trips decode numbers as `float64`) — `ctx.When("threads", 4)` works regardless of how the value was stored.
 
 ## Patching Source Before Build
 
-Registry packages sometimes need source modifications before building (e.g., enabling a `#define` in a config header). Since `SrcDir()` points to the downloaded source, you can patch files inside `SetBuildFunc` using Go's standard `os` and `strings` packages:
+Registry packages sometimes need source modifications before building (e.g., enabling a `#define` in a config header). Since `SrcDir()` points to the downloaded source, you can patch files inside `SetBuildFunc` using Go's standard `os` and `strings` packages. Note: relative paths passed to `os.*` functions resolve against the **build.go's directory** (script-relative IO), so build source paths from `p.SrcDir()`:
 
 ```go
 SetBuildFunc(func(p *api.Package) error {
@@ -75,17 +68,18 @@ This pattern is useful for libraries that use header-based configuration (mbedtl
 
 ## Applying Git Patches (AddPatches / SetPatches)
 
-For registry packages that need source modifications that Go string replacement can't handle (multi-file changes, binary patches, etc.), vmake supports git patch application. Patches are applied automatically during the build pipeline:
+For registry packages that need source modifications that Go string replacement can't handle (multi-file changes, binary patches, etc.), vmake supports git patch application:
 
 ```go
 // In OnPackage — patches are applied before any build phase runs
 p.AddPatches("patches/fix-cross.patch", "patches/disable-avx.patch")
 ```
 
-- `AddPatches(paths ...string)` — append patch files to the list
+- `AddPatches(paths ...string)` — append patch files to the list (applied in declaration order)
 - `SetPatches(paths ...string)` — replace the entire patch list
 - `SetSubmodules(true)` — clone git submodules before applying patches
-- Patches are tracked via `repo.IsPatchApplied` — same patch file won't be applied twice even across rebuilds
-- Patch files are relative to `SourceDir()` (where `build.go` lives)
+- **Remote packages**: patches are applied to a **content-addressed patched copy** at `~/.vmake/cache/<repo>/<pkg>/<version>/patched/<patchHash>/src` — the immutable version checkout is never modified, and identical patch sets share one patched copy across projects. The patch-set hash also feeds the BuildKey, so different patch sets never share build outputs.
+- **Local packages**: patches apply in place to `SrcDir()`; already-applied patches are detected (`IsPatchApplied`) and skipped across rebuilds.
+- Patch files are relative to the directory containing the package's `build.go`.
 
 Use this when wrapping a library that needs compilation fixes (e.g., cross-compilation `CFLAGS` in a Makefile, missing `#include` guards, hardcoded toolchain assumptions). Raw `os.WriteFile` patching (shown above) is better for simple single-line changes; git patches handle multi-file, multi-line modifications reliably.

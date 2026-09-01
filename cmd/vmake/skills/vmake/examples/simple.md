@@ -21,7 +21,7 @@ func Main(p *api.Package) {
 ## What This Demonstrates
 
 - **`package main`** with `func Main(p *api.Package)` - required entry point
-- **`p.OnBuild`** - Build phase hook (Phase 3)
+- **`p.OnBuild`** - Build phase hook (Phase 4)
 - **`ctx.Target("hello")`** - Create a target named "hello"
 - **`SetKind(api.TargetBinary)`** - Target produces an executable
 - **`AddFiles("src/*.c")`** - Source files with glob pattern

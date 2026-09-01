@@ -35,7 +35,7 @@ func Main(p *api.Package) {
 - **`api.TargetStatic`** - Build a static library
 - **`AddPublicIncludes("include")`** - Include dirs for this target AND propagated to dependents
 - **`AddDeps("mylib")`** - Intra-package target dependency (inherits public includes)
-- **`SetTest(true)`** - Mark as test target (excluded from default build, never installed)
+- **`SetTest(true)`** - Mark as test target (skipped by `vmake build`, never installed; does NOT clear `IsDefault` — the scheduler decides inclusion)
 
 ## Project Structure
 
@@ -72,7 +72,7 @@ vmake test           # Build + run test targets, report pass/fail
 
 - Multiple targets in single `OnBuild`
 - Dependencies resolved automatically - "mylib" builds before "myapp"
-- `SetTest(true)` useful for test targets — auto-sets `isDefault=false`, skipped by `vmake build` and install
+- `SetTest(true)` useful for test targets — scheduler skips them on plain `vmake build` and never installs them; ordering of `SetTest`/`SetDefault` is irrelevant
 - `AddPublicIncludes` implies `AddIncludes` — no need to call both for the same directory
 - `AddDeps("mylib")` propagates public includes — `myapp` and `tests` get `-Iinclude` automatically
 

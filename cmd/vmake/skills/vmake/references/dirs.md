@@ -13,7 +13,7 @@
 
 ## BuildKey — Build Directory Naming
 
-The `build/` directory is named by a **SHA-256 hex hash** of `(toolchain_path, build_mode, options)` — not by a readable name like `<toolchain>-<mode>`. This hash is called the **BuildKey**, and it exists to allow multiple build variants (different toolchains, modes, option sets) to coexist under `build/` without clobbering each other:
+The `build/` directory is named by a **SHA-256 hex hash**, not a readable name — so multiple build variants coexist under `build/` without clobbering each other:
 
 ```
 build/a1b2c3d4e5f6789012345678abcdef0123456789abcdef0123456789abcdef0123/
@@ -21,9 +21,9 @@ build/a1b2c3d4e5f6789012345678abcdef0123456789abcdef0123456789abcdef0123/
 
 BuildDir path by package origin:
 - **Local packages**: `<SourceDir>/build/<buildKey>/`
-- **Remote packages**: `vmake_deps/<repo>/<pkg>/out/<buildKey>/build/`
+- **Remote packages**: `vmake_deps/<repo>/<pkg>/out/<buildKey>/build/` — `out` is a symlink into `~/.vmake/cache/<repo>/<pkg>/<version>/out`, so identical builds are **shared across projects** (identical key = re-link without recompiling, even after `distclean`)
 
-The BuildKey is deterministic — same toolchain + mode + options always produces the same hash. You can find the current BuildKey in `config.json` entries. The `compile_commands.json` file lives at `build/compile_commands.json` (relative to project root). `AddBinHeader` output goes to `build/<buildKey>/generated/`.
+The BuildKey hashes `(toolchain, build_mode, options)` plus extra material: the **global-flags hash** and **buildscript hash** for every package, and additionally the **source version, commit and patch-set hash** for remote packages — so version switches, global flag changes, patch edits and build.go edits each produce a fresh key instead of silently reusing stale artifacts. The BuildKey is deterministic — same inputs always produce the same hash. `compile_commands.json` is merged and written to `<project root>/build/compile_commands.json`. `AddBinHeader` output goes to `build/<buildKey>/generated/`.
 
 ## SourceDir vs SrcDir
 

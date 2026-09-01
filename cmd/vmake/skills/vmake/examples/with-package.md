@@ -41,10 +41,10 @@ func Main(p *api.Package) {
 
 | Syntax | Meaning |
 |--------|---------|
-| `>=1.2` | Version 1.2 or higher |
+| `>=1.2` | Version 1.2 or higher, same major (major-locked when major > 0) |
 | `<=1.2` | Version 1.2 or lower |
-| `>1.0` | Version higher than 1.0 |
-| `<2.0` | Version lower than 2.0 |
+| `>1.0` | Higher than 1.0, same major |
+| `<2.0` | Lower than 2.0 |
 | `~1.2.0` | Pessimistic (>=1.2.0, <1.3.0) |
 | `=1.2.0` | Exact match |
 
@@ -54,9 +54,15 @@ func Main(p *api.Package) {
 # List available repositories
 vmake repo list
 
-# Add custom package repo
+# Add custom package repo (offers to trust its build.go scripts at add time)
 vmake repo add mylib https://github.com/user/mylib.git
+
+# Trust management (remote build.go runs with full system access)
+vmake repo trust mylib
+vmake repo untrust mylib
 ```
+
+Resolved versions and commits are pinned into `.vmake/vmake.lock` — commit it for reproducible builds; `vmake lock update` re-resolves.
 
 ## Consuming a Package
 
@@ -99,7 +105,7 @@ func Main(p *api.Package) {
 
 ## Conditional Dependencies
 
-`OnRequire` can depend on options. This works because `OnRequire` runs twice — the second pass (Phase 3 `FilterDeps`) sees the user's actual config values:
+`OnRequire` can depend on options. This works because `OnRequire` runs twice — the second pass (Phase 3 `FilterDeps`) sees the user's actual config values. During the first pass (nil config) direct reads like `ctx.Bool(...)` are **build errors** — use the discovery-aware `ctx.When(...)` (returns `true` on the first pass):
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {
@@ -109,7 +115,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 p.OnRequire(func(ctx *api.RequireContext) {
     ctx.AddRequires("test_build/mathlib >=1.0") // always needed
 
-    if ctx.Bool("use_ssl") {
+    if ctx.When("use_ssl", true) {
         ctx.AddRequires("official/openssl")       // only when use_ssl=true
     }
 })
@@ -123,14 +129,17 @@ p.OnBuild(func(ctx *api.BuildContext) {
 })
 ```
 
+**Same-set rule:** both `OnRequire` passes must declare the same set of requires — only guard values may differ. A dependency that appears only in the second pass (guard false with defaults, then the user enables the option) is a build error.
+
 ## Key Points
 
 - Package refs use `/`: `repo/name`
-- Version constraints use semver syntax
+- Version constraints use semver syntax (`>=`/`>` are major-locked when major > 0)
 - `AddDeps("official/zlib")` auto-links; no need for manual `-lz`
 - `OnRequire` runs twice: first with nil config (Phase 1), then with real config (Phase 3 `FilterDeps`)
 - Option-conditional deps work because FilterDeps has resolved config values
 - `AddDeps` uses the final dependency list from `FilterDeps`
+- Remote packages are resolved from `.vmake/vmake.lock` pins (run `vmake lock update` to re-resolve)
 
 ## See Also
 

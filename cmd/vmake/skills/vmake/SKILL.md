@@ -30,8 +30,8 @@ include the ones your project needs:
 | 4 | `OnBuild` | Define targets |
 | 5 | Compile & Link | Scheduler compiles sources and links targets |
 | 6* | Install | Optional install (only with `--install` flag) |
-| — | `OnInstall` | Post-install custom logic (runs after install) |
-| clean | `OnClean` | Custom clean logic (runs during `vmake clean`; separate from build pipeline) |
+| — | `OnInstall` | Extra install entries (runs when install starts, after builds succeed; items copied together with targets) |
+| clean | `OnClean` | Custom clean logic (runs during `vmake clean`/`distclean`; separate from build pipeline) |
 
 `OnPackage` runs for all packages right after `Main()` is called (before any lifecycle phases). Use it to describe the package (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` downloads remote source to `SourceDir()/src/` — works for both registry packages and local packages that need to wrap a downloaded library.
 
@@ -97,12 +97,16 @@ Use `pkg.Make()` only when the build process should run in the scratch `BuildDir
 "-j" + strconv.Itoa(runtime.NumCPU())
 ```
 
-### `ctx.If()` returns `[]string` — must spread with `...`
+### `ctx.If()` returns `[]string` — pass it directly, do NOT spread with `...`
+
+`Add*` methods take variadic `...any` and flatten `[]string` items. Under yaegi, spreading a `[]string` into `...any` fails (`reflect.CallSlice` cannot convert `[]string` to `[]interface{}`):
 
 ```go
-AddCFlags(ctx.If("debug", "-g", "-O0")...)   // correct
-AddCFlags(ctx.If("debug", "-g", "-O0"))      // compile error
+AddCFlags(ctx.If("debug", "-g", "-O0"))    // correct — []string flattens automatically
+AddCFlags(ctx.If("debug", "-g", "-O0")...) // runtime error in yaegi
 ```
+
+Also: `flattenAny` silently drops empty strings — never rely on an empty flag reaching the compiler.
 
 ### `filepath.Join` with absolute paths
 
@@ -120,23 +124,31 @@ When a package uses `SetGit`, `SourceDir()` and `SrcDir()` differ — all `AddFi
 
 vmake wraps `AddDeps` archives in `--start-group`/`--end-group`. If a static lib dep provides symbols only referenced by post-group libraries (e.g., libc from `-specs`), the linker won't pull the archive. Fix with `-nostdlib` + `AddGlobalLinks`. See `references/gotchas.md` for all three fix patterns with code.
 
-### `pkg.Run()` calls `os.Exit` on failure
+### `pkg.Run` / `pkg.RunIn` / `CMake*` call `os.Exit` on failure — no error return
 
-`pkg.Run()` and `pkg.RunIn()` use `exec.RunFatal` internally — they never return a non-nil error. Only `pkg.RunEnv()` returns a real error that you should check.
+`p.Run()`, `p.RunIn()`, `p.CMakeConfigure()`, `p.CMakeBuild()`, `p.CMakeInstall()` (and their `CleanContext` wrappers) return **nothing** — they exit the process on failure. Only `p.RunEnv()`, `p.Make()`, and `p.Configure()` return a real `error` you should check. Never write `return pkg.Run(...)` — call it as a statement, then `return nil`.
 
 ### `vmake clean` vs `vmake distclean`
 
-`vmake clean` runs `OnClean` hooks then removes build artifacts (objects, binaries); keeps `vmake_deps/`.
+`vmake clean` runs `OnClean` hooks then removes build artifacts (objects, binaries); keeps `vmake_deps/`. `--all` removes every build-key directory.
 
-`vmake distclean` removes all local build dirs, install/, and `vmake_deps/` (symlinks only — `~/.vmake/sources/` is preserved). Use when modifying `build.go` and the build ignores your changes.
+`vmake distclean` also runs `OnClean` hooks, then removes all local build dirs, `install/`, `compile_commands.json`, and `vmake_deps/`. The shared global cache (`~/.vmake/cache`) survives by default — a rebuild re-links without recompiling. `--purge-cache` additionally deletes global cache entries for every remote package this project materialized (affects other projects too). Use distclean when modifying `build.go` and the build ignores your changes.
 
 ### Patching source before build in registry packages
 
-To patch downloaded source inside `SetBuildFunc`, use Go's `os.ReadFile` + `os.WriteFile` (simple single-line changes) or `AddPatches("patches/fix.patch")` in `OnPackage` (multi-file git patches with deduplication). See `references/gotchas.md` for code examples of both patterns.
+To patch downloaded source inside `SetBuildFunc`, use Go's `os.ReadFile` + `os.WriteFile` (simple single-line changes) or `AddPatches("patches/fix.patch")` in `OnPackage` (multi-file git patches). Remote patches are applied to a content-addressed patched copy, never to the immutable cache checkout; local packages patch in place. See `references/gotchas.md` for code examples of both patterns.
 
-### `ctx.Select()` returns `""` during discoverAll — guard before passing to global flags
+### Strict config accessors — wrong reads are build errors, not zero values
 
-vmake runs an internal `discoverAll` phase where `ctx.Select()` returns `""`. If passed to `AddGlobalCFlags/LdFlags` in `SetOnApply`, the empty string persists in the global singleton and GCC interprets it as a filename. **Fix:** guard with `if optFlag != ""` before appending. See `references/gotchas.md` for the full explanation and code.
+Script-facing contexts (`OnConfig`/`OnBuild`/`OnInstall`/`OnClean`/`OnRequire`) fail loudly on: reading an **unknown option** (typo), using an **accessor that mismatches `SetType`** (e.g. `ctx.String` on an `OptionBool`), and **direct value reads (`ctx.Bool/String/Int`) during OnRequire discovery**. In `OnRequire`, use the discovery-aware helpers: `ctx.When("opt", true)`, `ctx.If(...)`, `ctx.Select(...)`.
+
+Two related rules:
+- **Both OnRequire passes must declare the same set of requires** — only guard values may differ. A dependency that appears only in the second pass (FilterDeps, with real config) is a build error.
+- `When` compares numerics across `int`/`float64` (JSON round-trips decode numbers as `float64`); `Select` returns `""` and `When` returns `true` while config is still nil during discovery.
+
+### Script-relative file IO
+
+Inside build.go, relative paths passed to wrapped stdlib (`os.ReadFile/WriteFile/Stat/...`, `exec.Command` without `Dir`) resolve against the **build.go's own directory** in ALL phases — not the process cwd. `os.Getwd()` returns the script dir; `os.Chdir` returns an error. Long-tail unwrapped APIs (`text/template.ParseFiles`, `exec.CommandContext`, `io/ioutil`) still see the process cwd — build absolute paths from `p.SourceDir()`/`p.BuildDir()` for those.
 
 ## Directory Reference
 
@@ -151,29 +163,42 @@ For `BuildKey` naming, `SourceDir` vs `SrcDir` distinction, and `SetGit` path re
 
 ## Storage Layout
 
-Third-party package source code is **shared globally** across projects via symlinks, while build artifacts remain **per-project** in `vmake_deps/`. This directory is auto-added to `.gitignore` on first build. Buildscripts are interpreted by yaegi at runtime — no `.so` files are generated.
+Sources and build outputs for remote packages live in a **content-addressed global cache** (`~/.vmake/cache/`), shared across projects. Each project's `vmake_deps/` is a symlink farm into it — auto-added to `.gitignore` on first build. Buildscripts are interpreted by yaegi at runtime — no `.so` files are generated.
 
 ```
 project/
 ├── build.go
-├── src/
-├── vmake_deps/                    # Auto-managed, gitignored
-│   └── <repo>/<pkg>/
-│       ├── src/ → ~/.vmake/sources/<repo>/<pkg>/src/   # Symlink to global cache
-│       └── out/<buildKey>/
-│           ├── build/             # Build artifacts (project-local)
-│           └── install/           # Install staging (project-local)
+├── .vmake/
+│   ├── config.json               # Option values + selected presets (commit it)
+│   └── vmake.lock                # Pinned remote versions+commits (commit it)
+└── vmake_deps/                   # Auto-managed, gitignored symlink farm
+    └── <repo>/<pkg>/
+        ├── src → ~/.vmake/cache/<repo>/<pkg>/<version>/src        # immutable checkout
+        └── out → ~/.vmake/cache/<repo>/<pkg>/<version>/out        # shared binary cache
+                     └── <buildKey>/{build,install}/
 ```
 
-Both registry and native packages use the same `<repo>/<pkg>/` structure. There is no version layer in paths — each package has one version at a time. The `src/` entry is a symlink pointing into the global source cache at `~/.vmake/sources/`. All projects sharing the same package version use a single git checkout. File locking (`flock`) serializes concurrent access across projects.
+- Each `<version>` has its own immutable checkout (cloned via temp-dir + atomic rename, never mutated in place). Projects needing different versions never thrash each other.
+- `out/<buildKey>/` is a **shared binary cache**: identical toolchain+mode+options+version+commit+global-flags reuse compiled artifacts across projects (rebuild after `distclean` re-links without recompiling).
+- Patches on remote packages never touch the immutable checkout — a patched copy is materialized at `<version>/patched/<patchHash>/src` and shared by identical patch sets.
+- `.vmake/vmake.lock` pins remote versions + commits for reproducible builds. With a valid lock entry and cached checkout, resolution is fully offline. `vmake lock update` re-resolves; `vmake lock show` prints pins.
+- Per-package `flock` files in `~/.vmake/cache/_locks/` serialize concurrent access across projects.
 
 Global storage in `~/.vmake/`:
-- `~/.vmake/sources/<repo>/<pkg>/src/` — shared git source checkouts (symlinked into each project's `vmake_deps/`)
+- `~/.vmake/cache/<repo>/<pkg>/<version>/{src,out}` — content-addressed source checkouts + shared build outputs
+- `~/.vmake/cache/_localgit/<sha256(url)>/src` — shared clones for local `SetGit` packages (keyed by URL)
 - `~/.vmake/repos/` — registry repo clones (buildscript metadata only)
 - `~/.vmake/toolchains/` — toolchain manifests
 - `~/.vmake/extensions/` — extension repos
+- `~/.vmake/config.json` — `trustedRepos` (remote-script trust)
 
-vmake locates the project root by walking upward from cwd to find `.vmake/` or `build.go` (via `findProjectDir()`). This ensures commands and shell completion work from subdirectories.
+Environment overrides: `VMAKE_CACHE` (cache root), `VMAKE_FETCH_TIMEOUT` (git fetch seconds, default 120), `VMAKE_TRUST_ALL=1` (bypass trust gating, CI).
+
+vmake locates the project root by walking upward from cwd to find `.vmake/`, `build.go`, or (at the starting directory only) `*/build.go` (via `findProjectDir()`). Running outside a project is a hard error.
+
+## Remote Script Trust
+
+`build.go` files from remote repositories execute with full system access. On first use of an untrusted repo, vmake prompts (TTY) or refuses (non-TTY). Manage with `vmake repo trust/untrust <name>`, auto-approve with `--yes/-y`, or bypass with `VMAKE_TRUST_ALL=1` (CI). `vmake repo update` removes trust so content drift requires explicit re-trust.
 
 ## Package Types
 
@@ -261,7 +286,7 @@ ctx.Target("tests").SetKind(api.TargetBinary).SetTest(true).
     AddFiles("tests/*.c").AddDeps("mylib")
 ```
 
-Always define test targets unconditionally in `OnBuild` — `SetTest(true)` controls visibility, not option guards. Test targets are never installed and can depend on other test targets. See `examples/multi-target.md`.
+Always define test targets unconditionally in `OnBuild` — `SetTest(true)` controls scheduler visibility, not option guards. `SetTest(true)` does NOT clear `IsDefault` (ordering of `SetTest`/`SetDefault` is irrelevant — inclusion is decided by the scheduler). Test targets are never installed and can depend on other test targets (only `TargetBinary` tests are executed). See `examples/multi-target.md`.
 
 ## Dependencies
 
@@ -299,7 +324,9 @@ Run `vmake doctor` to detect packages that are missing explicit `AddDeps`.
 
 AddRequires accepts semver constraints: `"official/zlib >=1.2"`, `"official/curl ~8.5"`, `"test_build/mathlib"` (no constraint = any version).
 
-Operators: `>=` (major-locked), `>` / `<=` / `<` (no major lock), `=` (exact), `~` (major.minor lock). Highest satisfying version is selected; multi-package constraints must be mutually satisfiable. See `references/api.md` for the full operator table and major lock semantics.
+Operators: `>=` and `>` (major-locked when major > 0 — `>=1.2` never matches `2.0`), `<=` / `<` (no major lock), `=` (exact), `~` (major.minor lock). Highest satisfying version is selected; multi-package constraints must be mutually satisfiable. See `references/api.md` for the full operator table and major lock semantics.
+
+Version pins in `.vmake/config.json` entries (set via TUI) take precedence over latest matching tags, and `.vmake/vmake.lock` pins survive until `vmake lock update`.
 
 ### OnRequire Two-Phase Execution
 
@@ -310,7 +337,7 @@ Operators: `>=` (major-locked), `>` / `<=` / `<` (no major lock), `=` (exact), `
 | 1 | Phase 1 | `nil` | Discover initial dependency graph. All packages (registry and native) are resolved eagerly. `OnRequire` runs for the first time here with nil config. |
 | 2 | Phase 3 (`FilterDeps`) | Real values from `config.json` | After `OnConfig` has resolved all option values, `FilterDeps` re-runs every package's `OnRequire` with actual config. The returned dependencies **replace** `node.Deps`, then topology is re-sorted and needed packages are collected via BFS. |
 
-This is what enables **option-conditional dependencies** — if `OnRequire` only ran once with nil config, your `ctx.Bool("use_ssl")` check would never see the user's actual choice:
+This is what enables **option-conditional dependencies**. During discovery, direct reads (`ctx.Bool/String/Int`) are build errors — use the discovery-aware helpers. On pass 1 (nil config) `ctx.When(...)` returns `true`, `ctx.If(...)` follows the declared default, and `ctx.Select(...)` returns `""`; on pass 2 all see real values:
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {
@@ -318,11 +345,13 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 })
 
 p.OnRequire(func(ctx *api.RequireContext) {
-    if ctx.Bool("use_ssl") {
+    if ctx.When("use_ssl", true) {
         ctx.AddRequires("official/openssl")
     }
 })
 ```
+
+**Same-set rule:** both passes must declare the same set of requires — only guard values may differ. A dependency that first appears in the FilterDeps pass (e.g. the guard was false with defaults, then the user enabled the option) is a build error; hoist the unconditional `AddRequires` out of the guard.
 
 **Mechanism:** `FilterDeps` re-runs `OnRequire` for every package with real config values, replacing `node.Deps`. Then topology is re-sorted and needed packages collected via BFS from local roots.
 
@@ -333,7 +362,7 @@ p.OnRequire(func(ctx *api.RequireContext) {
 ```go
 ctx.Option("debug").SetType(api.OptionBool).SetDefault(false)
 
-AddCFlags(ctx.If("debug", "-g", "-O0")...)
+AddCFlags(ctx.If("debug", "-g", "-O0"))   // []string flattens into ...any — no "..." spread
 if !ctx.When("debug", true) {
 	target.AddCFlags("-O2")
 }
@@ -360,7 +389,7 @@ ctx.Option("trace").SetType(api.OptionBool).SetDefault(false).
     })
 ```
 
-- `SetOnApply(fn)` — callback invoked after all option values are resolved, receives `*ConfigContext` and `val any` (typed: `bool` for OptionBool, `int`/`float64` for OptionInt, `string` for OptionString/OptionChoice; note: JSON round-trip decodes numbers as `float64`); used to react to options (e.g., set global flags, choose linker script based on chip)
+- `SetOnApply(fn)` — callback invoked once per build after all option values are resolved (in sorted option-name order), receives `*ConfigContext` and `val any` **normalized to the declared type** (`bool` for OptionBool, `int` for OptionInt, `string` for OptionString/OptionChoice — `api.NormalizeOptionValue` converts JSON `float64` to `int` before the call). The callback's context carries real option values, so reading other options inside it works. Used to react to options (set global flags, choose linker script based on chip).
 
 ### OptionChoice Generates Dual Macros
 
@@ -389,9 +418,9 @@ if ctx.String("chip") == "stm32f4" {
 
 ### Global Flags & Mode Flags
 
-`AddGlobalCFlags/CxxFlags/LdFlags/Links` are only available on `ConfigContext`, effective inside `SetOnApply`. They apply to ALL targets in ALL packages and are deduplicated.
+`AddGlobalCFlags/CxxFlags/LdFlags/Links` are only available on `ConfigContext` (mainly inside `SetOnApply`). They apply to ALL targets in ALL packages and are deduplicated. Global flags set by a package that `FilterDeps` prunes from the build are dropped — flags from unneeded packages never leak. Global flag changes also change the BuildKey, so artifacts rebuild correctly when flags change.
 
-The compile merge order is: per-target flags → mode flags → global flags → dedup. Additionally, global CFlags are prepended before the resolved list: `[globalCFlags prepended] [per-target + mode + global deduped]`. For GCC, the last occurrence of repeated flags (`-O`) wins — mode overrides per-target, globals override mode unless dedup eliminates the global copy.
+The compile merge order is: per-target flags → mode flags → global flags → dedup (first occurrence wins). For GCC, the last occurrence of repeated flags (`-O`) wins — mode overrides per-target, globals override mode, unless dedup removes the later exact duplicate.
 
 Mode auto-injected flags (injected by scheduler, not via `AddGlobalCFlags`):
 
@@ -402,13 +431,11 @@ Mode auto-injected flags (injected by scheduler, not via `AddGlobalCFlags`):
 
 During linking, global LD flags are appended after per-target flags; global links go inside `--start-group`/`--end-group`.
 
-See `references/gotchas.md` for the `ctx.Select()` empty-string guard when using option-dependent values in `SetOnApply`.
-
 ### GlobalOption Cross-Package Consistency
 
 If two packages define the same global option via `GlobalOption()`, their `Type` and `Default` must be **identical** — otherwise the build fails with a fatal error. This constraint ensures all packages agree on the option's meaning. For example, if `chip/build.go` defines `GlobalOption("mcu").SetType(api.OptionString).SetDefault("stm32f405")` and `bsp/build.go` defines `GlobalOption("mcu").SetType(api.OptionChoice)`, the build will fail with a type mismatch error.
 
-Only one package needs to define a global option's `SetValues` for `OptionChoice` — values from multiple definitions are merged. `SetDescription` and `SetOnApply` are also merged across packages.
+There is no merging of definitions: the **first** definition in package resolution order wins for the merged global view (its `SetValues`/`SetDescription` are what every package reads). Each declaring package's own `SetOnApply` callback still runs during that package's config pass — prefer a single declaring package.
 
 ### Toolchain DefaultFlags
 
@@ -438,8 +465,11 @@ Key embedded rules: (1) Target-specific flags must appear in both CFLAGS and LDF
 - `UseDependencyLinkerScript()` — firmware target auto-inherits `-T` from first dependency that provides one
 - `SetLinkerScript(path)` — direct linker script on target (fatal on double-set)
 - `AddPostLink(tool, args...)` — generic post-link, shorthands: `AddPostLinkHex/Bin/Size/Strip`
+- `AddPostLinkDeps(files...)` — declare extra post-link input files (SourceDir-relative, like `AddFiles`); any dep newer/missing → relink + re-run ALL post-link steps. Without it, editing a file consumed by a post-link step (e.g. an `objcopy --keep-global-symbols` list) is silently skipped
 - `AddBinHeader(inputs...)` — binary files → `.h` headers
 - RTOS tool accessors: `Package.ObjCopy()`, `Size()`, `ObjDump()`, `NM()`
+
+Editing a linker script or version script triggers relink automatically.
 
 ### KConfig Preset Management (Firmware)
 
@@ -479,52 +509,56 @@ Custom install entries: `ctx.AddInstalls("src/file.conf", "etc/file.conf")` (ava
 
 ### OnInstall Lifecycle
 
-`OnInstall` runs after all builds succeed and targets are installed. Use `ctx.SetPrefix()` for per-package prefix overrides and `ctx.AddInstalls()` for post-install file copies (docs, configs, licenses). See `examples/on-install.md`.
+`OnInstall` runs during `--install`, right after all builds succeed. Use `ctx.SetPrefix()` for per-package prefix overrides and `ctx.AddInstalls()` for extra file copies (docs, configs, licenses) — these are installed together with target outputs. Test targets are never installed; without `--install-type sdk`, static libraries are skipped at install. See `examples/on-install.md`.
 
 ## Build Scope
 
 vmake builds packages by BFS from local (directory-based) packages. Remote packages are only built if reachable from a local package's transitive dependency chain. If you `AddRequires("pkg")` but no local package depends on it, the package won't be built.
 
-## Reproducible Builds (--manifest)
+## Reproducible Builds (vmake.lock + --manifest)
 
-For CI/CD reproducibility, pin package versions in a manifest file and pass `--manifest` to `vmake build`:
+Remote dependency versions and commits are pinned in `.vmake/vmake.lock` after resolution — commit it alongside `.vmake/config.json`. Subsequent builds reuse locked versions; new upstream tags never change what you build until you run `vmake lock update`.
+
+For CI/CD, pin from an install manifest instead:
 
 ```bash
-# First build: create manifest recording exact versions/revisions
-vmake build --install -i --manifest install.json
+# First build: install and write install/manifest.json (versions + revisions)
+vmake build --install
 
-# Later build: restore exact versions from manifest
-vmake build --manifest install.json
+# Later build: import manifest pins into vmake.lock BEFORE resolution, then build
+vmake build --manifest install/manifest.json
 ```
 
-The manifest records git remote URLs, refs, and revisions for every package. `vmake manifest show install.json` displays its contents; `vmake manifest checkout install.json` restores sources to the recorded revisions without building.
+`--manifest` imports the recorded git URLs, refs, and revisions into `vmake.lock` before dependency resolution, so the graph is built from the pinned versions (local `SetGit` packages are also checked out to recorded revisions). `vmake manifest show install.json` displays contents; `vmake manifest checkout install.json` restores sources without building. With a valid lock entry and cached checkout, resolution is fully offline.
 
 ## CLI Quick Reference
 
 | Command | Description |
 |---------|-------------|
-| `vmake build` | Build |
+| `vmake build` | Build (`-j N` parallel compile jobs, `-k` keep-going after failure) |
 | `vmake build --tests` | Build including test targets |
 | `vmake test` | Build + run test targets |
 | `vmake rebuild` | Clean + build |
-| `vmake config` | TUI for options |
-| `vmake clean` | Execute OnClean hooks then remove build artifacts |
-| `vmake distclean` | Deep clean: artifacts + install/ + vmake_deps/ |
-| `vmake query` | Dependency tree |
+| `vmake config` | TUI for options (`--set opt=val` / `--set pkg/opt=val` non-interactive) |
+| `vmake clean [--all]` | Execute OnClean hooks then remove build artifacts |
+| `vmake distclean [--purge-cache]` | Deep clean: artifacts + install/ + vmake_deps/ (+ global cache entries) |
+| `vmake query` | Dependency tree; `query targets`, `query config <pkg>` |
+| `vmake lock update/show` | Re-resolve / print `.vmake/vmake.lock` pins |
 | `vmake toolchain list/show` | Toolchain info |
-| `vmake repo add/list/remove/update` | Package repos |
-| `vmake pkg list/search/clean/update` | Packages |
+| `vmake repo add/list/remove/update/trust/untrust` | Package repos + trust management |
+| `vmake pkg list/search/clean/update` | Packages (`pkg update <repo/name>[@version] [--dry-run]`) |
 | `vmake ext add/list/remove/update` | Extension repos |
 | `vmake manifest show/checkout` | Install manifest |
 | `vmake check-symbols [--strict]` | Audit exported symbols via nm -D |
 | `vmake doctor` | Diagnose build.go issues |
+| `vmake init-editor` | Generate go.mod so gopls supports build.go |
 | `vmake git tag` | Version tagging |
-| `vmake skill install/uninstall/path` | AI skill management |
+| `vmake skill install/uninstall/path` | AI skill management (`install --project` also installs into ./.claude/skills/) |
 | `vmake update [version]` | Update vmake |
 | `vmake version` | Version info |
 
-Build flags: `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`, `--manifest`, `--tests`
-Verbosity: `-v` verbose, `-V` very-verbose, `-q` quiet
+Build flags: `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`, `--manifest`, `--tests`, `--jobs/-j`, `--keep-going/-k`
+Global flags: `-v` verbose, `-V` very-verbose, `-q` quiet, `-y/--yes` assume yes (trust prompts)
 
 ## Reading Guide
 
@@ -536,7 +570,7 @@ Verbosity: `-v` verbose, `-V` very-verbose, `-q` quiet
 - **Looking up a specific API** → See `references/api.md` for complete method signatures
 - **CLI usage** → See `references/cli.md` for full command tree
 - **Directory / path resolution details** → `references/dirs.md` (BuildKey, SetGit paths, SourceDir vs SrcDir)
-- **Advanced gotchas** → `references/gotchas.md` (static lib deps, discoverAll guard, source patching)
+- **Advanced gotchas** → `references/gotchas.md` (static lib deps, OnApply/global flags, source patching)
 - **Advanced patterns** → `examples/complete.md`, `examples/subbuild.md`, `examples/embedded-rtos.md`, `examples/firmware.md`, `examples/config-propagate.md`, `examples/prebuilt.md`, `examples/third-party-wrapper.md`
 
 ## Key Conventions
@@ -545,5 +579,8 @@ Verbosity: `-v` verbose, `-V` very-verbose, `-q` quiet
 - Package IDs use `/`: `official/zlib`
 - Target IDs use `:`: `lib:utils`
 - `OnPackage` with `SetGit`/`AddVersion` works for both registry packages and local packages wrapping remote libraries
+- `OnPackage` and `AddKConfig` are single-slot — a second registration is a build error (one kconfig entry per package)
 - `SetLanguages()` exists but has no effect — language is auto-detected from file extension
 - For packages using `SetGit`, `AddFiles` paths resolve from `SourceDir()` — always prefix with `"src/"`
+- Relative file IO inside build.go resolves against the build.go's directory (see Script-relative file IO above)
+- Pass `[]string` directly to `Add*` methods — never spread with `...` (yaegi limitation)

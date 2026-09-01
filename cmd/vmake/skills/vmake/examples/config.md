@@ -54,7 +54,7 @@ func Main(p *api.Package) {
 - **`SetDefault(value)`** - Default value
 - **`SetDescription(text)`** - Help text
 - **`SetGroup(name)`** - Grouping for TUI
-- **`ctx.If("option", "value_true"...)`** - Conditional (returns values if bool is true)
+- **`ctx.If("option", vals...)`** - Conditional (returns `[]string` if bool is true; pass the slice to Add* methods directly, no `...` spread)
 - **`ctx.Select("option", map)`** - Map option value to flag
 - **`ctx.String("option")`** - Read option as string
 
@@ -71,9 +71,9 @@ vmake build --mode debug
 ## Key Points
 
 - Options are typed: Bool, String, Int, Choice
-- Conditional expressions spread into variadic methods (`...`)
-- `ctx.If("debug", "-g", "-O0")` returns slice - use `...` to unpack
-- Choice options require `SetValues(...)` with allowed values
+- `AddDefines(ctx.If("ssl", "USE_SSL"))` passes the `[]string` directly — `Add*` methods accept `...any` and flatten slices. Do NOT spread with `...` (yaegi cannot spread `[]string` into `...any`)
+- Choice options require `SetValues(...)` with allowed values; `SetDefault` must be one of them (validated after OnConfig)
+- Reading an option with a mismatched accessor (e.g. `ctx.Bool` on an OptionChoice) is a build error — use the accessor matching `SetType`
 
 ## See Also
 

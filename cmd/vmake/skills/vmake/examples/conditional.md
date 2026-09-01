@@ -87,16 +87,16 @@ vmake build
 
 | Method | Use Case |
 |--------|----------|
-| `ctx.If("debug", "-g", "-O0")...` | Toggle flags |
-| `ctx.Select("platform", {...})` | Platform-specific flags |
-| `ctx.If("debug", "DEBUG")...` | Conditional defines |
+| `ctx.If("debug", "-g", "-O0")` | Toggle flags (returns `[]string`, pass directly) |
+| `ctx.Select("platform", {...})` | Platform-specific flags (returns `string`) |
+| `ctx.If("debug", "DEBUG")` | Conditional defines |
 
 ## Key Points
 
-- Conditional methods return slices - spread with `...`
-- `ctx.If("opt", "a", "b")` returns `["a", "b"]`
-- `ctx.If("opt", "value")` at start, then other flags after
+- `ctx.If` returns a `[]string` — pass it to `Add*` methods **directly** (`AddCFlags(ctx.If(...))`); never spread with `...` (yaegi limitation)
+- `ctx.If("opt", "a", "b")` returns `["a", "b"]` when true, `[]` when false
 - Multiple conditionals can stack
+- In `OnRequire` (discovery), use `ctx.When(...)` instead of `ctx.Bool(...)` — direct reads are build errors there
 
 ## See Also
 

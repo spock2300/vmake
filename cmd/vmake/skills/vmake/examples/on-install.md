@@ -42,12 +42,11 @@ p.OnInstall(func(ctx *api.InstallContext) {
 
 ## Key Points
 
-- `OnInstall` runs **after** all targets are compiled, linked, and installed — targets are already in the install tree
-- `AddInstalls` in both `OnBuild` (via `BuildContext`) and `OnInstall` (via `InstallContext`) accept the same `(source, dest)` signature
-- `OnBuild AddInstalls` copies files after the target is built; `OnInstall AddInstalls` copies after all targets are installed
-- Use `OnInstall` for tasks that need the final install directory layout (e.g., merging config files from multiple targets)
+- `OnInstall` runs during `--install`, right after all targets are compiled and linked — its `AddInstalls` items are copied together with target outputs
+- `AddInstalls` in both `OnBuild` (via `BuildContext`) and `OnInstall` (via `InstallContext`) accept the same `(source, dest)` signature; dest is relative to the prefix
+- Use `OnInstall` for entries that don't belong to any specific target (docs, licenses, config templates)
 - `SetPrefix` overrides the `--prefix` flag per-package; useful for system-wide installs (`/opt`, `/usr/local`)
-- `OnInstall` is **not** called for test targets or `sdk` install type
+- Test targets are never installed; without `--install-type sdk`, static libraries are skipped at install time
 
 ## When to Use OnInstall
 

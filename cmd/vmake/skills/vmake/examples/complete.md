@@ -183,7 +183,7 @@ func Main(p *api.Package) {
 | Category | Methods Used |
 |----------|-------------|
 | Options | Bool, String, Int, Choice, ShowIf, GlobalMode/Option |
-| Conditionals | If, IfNot, Select, When, Bool, String, Int |
+| Conditionals | If, Select, When, Bool, String, Int |
 | Targets | Object, Static, Shared, Binary, Default(false) |
 | Flags | CxxFlags, LdFlags, Defines |
 | Dependencies | AddDeps, AddLinks |

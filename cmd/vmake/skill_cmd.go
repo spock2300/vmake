@@ -160,11 +160,12 @@ func copyEmbedToTargets(targets []string) error {
 func generateCLIRef(root *cobra.Command) string {
 	var b strings.Builder
 	b.WriteString("# CLI Reference\n\n")
-	b.WriteString("Generated from vmake built-in commands. For plugin commands,\n")
-	b.WriteString("run `vmake <plugin> --help` or check the plugin documentation.\n\n")
+	b.WriteString("Generated from the live command tree at install time, so installed\n")
+	b.WriteString("extension plugin commands appear here too. For plugin details, run\n")
+	b.WriteString("`vmake <plugin> --help`.\n\n")
 
-	var walk func(cmd *cobra.Command, depth int)
-	walk = func(cmd *cobra.Command, depth int) {
+	var walk func(cmd *cobra.Command, parentPath string, depth int)
+	walk = func(cmd *cobra.Command, parentPath string, depth int) {
 		if !cmd.IsAvailableCommand() || cmd.IsAdditionalHelpTopicCommand() {
 			return
 		}
@@ -173,7 +174,14 @@ func generateCLIRef(root *cobra.Command) string {
 		}
 
 		indent := strings.Repeat("  ", depth)
-		usage := cmd.Use
+		fullPath := cmd.Name()
+		if parentPath != "" {
+			fullPath = parentPath + " " + cmd.Name()
+		}
+		usage := fullPath
+		if idx := strings.IndexAny(cmd.Use, " \t"); idx >= 0 {
+			usage += cmd.Use[idx:]
+		}
 		if cmd.HasFlags() {
 			var flags []string
 			cmd.LocalFlags().VisitAll(func(f *pflag.Flag) {
@@ -191,21 +199,17 @@ func generateCLIRef(root *cobra.Command) string {
 			}
 		}
 
-		prefix := "vmake "
-		if depth == 0 {
-			prefix = ""
-		}
-		b.WriteString(fmt.Sprintf("%s`%s%s`", indent, prefix, usage))
+		b.WriteString(fmt.Sprintf("%s`%s`", indent, usage))
 		if cmd.Short != "" {
 			b.WriteString(fmt.Sprintf(" - %s", cmd.Short))
 		}
 		b.WriteString("\n")
 
 		for _, sub := range cmd.Commands() {
-			walk(sub, depth+1)
+			walk(sub, fullPath, depth+1)
 		}
 	}
 
-	walk(root, 0)
+	walk(root, "", 0)
 	return b.String()
 }
