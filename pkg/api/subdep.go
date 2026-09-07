@@ -3,19 +3,28 @@ package api
 import "strings"
 
 func ResolveSubPackageName(currentPkg, depName string, subParents map[string]string, exists func(string) bool) string {
+	if c := SubPackageCandidates(currentPkg, depName, subParents); c != nil {
+		for _, candidate := range c {
+			if exists(candidate) {
+				return candidate
+			}
+		}
+	}
+	return depName
+}
+
+func SubPackageCandidates(currentPkg, depName string, subParents map[string]string) []string {
 	if strings.Contains(depName, "/") {
-		return depName
+		return nil
 	}
 	rootParent, hasParent := subParents[currentPkg]
 	if !hasParent {
-		return depName
+		return nil
 	}
+	var candidates []string
 	current := currentPkg
 	for {
-		candidate := current + "/" + depName
-		if exists(candidate) {
-			return candidate
-		}
+		candidates = append(candidates, current+"/"+depName)
 		if current == rootParent {
 			break
 		}
@@ -25,5 +34,5 @@ func ResolveSubPackageName(currentPkg, depName string, subParents map[string]str
 		}
 		current = current[:idx]
 	}
-	return depName
+	return candidates
 }

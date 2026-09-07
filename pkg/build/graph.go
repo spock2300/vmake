@@ -153,13 +153,14 @@ func (d *depResolver) resolveDeps(deps []string, currentPkg string, path []strin
 func (d *depResolver) resolveDep(dep string, currentPkg string, path []string) ([]string, error) {
 	if strings.Contains(dep, ":") {
 		pkgRef, targetSpec, _ := strings.Cut(dep, ":")
-		pkgRef = d.resolveDepPkgName(currentPkg, pkgRef)
+		resolvedPkg := d.resolveDepPkgName(currentPkg, pkgRef)
 		if targetSpec == "*" {
-			return d.resolvePackageRef(pkgRef, path)
+			return d.resolvePackageRef(resolvedPkg, path)
 		}
-		fullDep := pkgRef + ":" + targetSpec
+		fullDep := resolvedPkg + ":" + targetSpec
 		if _, exists := d.nodes[fullDep]; !exists {
-			return nil, fmt.Errorf("dependency not found: %s (resolved: %s)", dep, fullDep)
+			hint := subPackageHint(currentPkg, pkgRef, resolvedPkg, d.subParents)
+			return nil, fmt.Errorf("dependency not found: %s (resolved: %s)%s", dep, fullDep, hint)
 		}
 		return []string{fullDep}, nil
 	}
@@ -180,6 +181,17 @@ func (d *depResolver) resolveDepPkgName(currentPkg, depName string) string {
 		_, ok := d.pkgMeta[candidate]
 		return ok
 	})
+}
+
+func subPackageHint(currentPkg, depName, resolvedPkg string, subParents map[string]string) string {
+	if resolvedPkg != depName {
+		return ""
+	}
+	candidates := api.SubPackageCandidates(currentPkg, depName, subParents)
+	if len(candidates) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (tried sub-package candidates: %s)", strings.Join(candidates, ", "))
 }
 
 func (d *depResolver) resolvePackageRef(pkgRef string, path []string) ([]string, error) {

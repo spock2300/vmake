@@ -118,6 +118,17 @@ func (r *Resolver) resolveDepName(fromPkg, depName string) string {
 	})
 }
 
+func subPackageHint(fromPkg, depName, resolved string, subParents map[string]string) string {
+	if resolved != depName {
+		return ""
+	}
+	candidates := api.SubPackageCandidates(fromPkg, depName, subParents)
+	if len(candidates) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (tried sub-package candidates: %s)", strings.Join(candidates, ", "))
+}
+
 func (r *Resolver) Graph() *Graph {
 	return r.graph
 }
@@ -184,7 +195,8 @@ func (r *Resolver) FilterDeps(id string, cfgVals map[string]any, options map[str
 	for _, req := range deps {
 		resolved := r.resolveDepName(id, req.Name)
 		if _, ok := r.graph.Packages[resolved]; !ok {
-			return fmt.Errorf("dependency %q (required by %s) not found in dependency graph; declare it unconditionally in OnRequire (use ctx.When() for config-conditional requires)", req.Name, id)
+			hint := subPackageHint(id, req.Name, resolved, r.subParents)
+			return fmt.Errorf("dependency %q (required by %s) not found in dependency graph; declare it unconditionally in OnRequire (use ctx.When() for config-conditional requires)%s", req.Name, id, hint)
 		}
 		newDeps = append(newDeps, resolved)
 	}
@@ -473,6 +485,11 @@ func (r *Resolver) lockfileEntry(id string) (*lockfile.LockedPkg, bool) {
 }
 
 func (r *Resolver) scanSubPackages(parentID, checkoutDir string) {
+	if resolved, err := filepath.EvalSymlinks(checkoutDir); err != nil {
+		vlog.Error("scan sub-packages for %s: resolve %s: %v", parentID, checkoutDir, err)
+	} else {
+		checkoutDir = resolved
+	}
 	subs, err := buildscript.ScanSubPackages(checkoutDir, parentID)
 	if err != nil {
 		vlog.Error("scan sub-packages for %s: %v", parentID, err)

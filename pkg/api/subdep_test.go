@@ -52,3 +52,29 @@ func TestResolveSubPackageNameFallbackToBare(t *testing.T) {
 		t.Errorf("no match should fall back to bare, got %q", got)
 	}
 }
+
+func TestSubPackageCandidates(t *testing.T) {
+	subParents := map[string]string{
+		"root/child/grandchild": "root",
+		"root/child":            "root",
+	}
+	got := SubPackageCandidates("root/child/grandchild", "dep", subParents)
+	want := []string{"root/child/grandchild/dep", "root/child/dep", "root/dep"}
+	if len(got) != len(want) {
+		t.Fatalf("candidates = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("candidates[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestSubPackageCandidatesNoParentOrAbsolute(t *testing.T) {
+	if c := SubPackageCandidates("pkg", "dep", map[string]string{}); c != nil {
+		t.Errorf("no parent → nil candidates, got %v", c)
+	}
+	if c := SubPackageCandidates("root/child", "a/dep", map[string]string{"root/child": "root"}); c != nil {
+		t.Errorf("absolute dep → nil candidates, got %v", c)
+	}
+}

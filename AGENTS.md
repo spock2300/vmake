@@ -28,8 +28,8 @@ Go tests live in `cmd/vmake`, `pkg/api`, `pkg/build`, `pkg/buildscript`, `pkg/co
 # Single test
 cd test_data/01_simple_c && ../../vmake build
 
-# Run all test_data integration tests (01-16, 18-24; 17 is NOT in test_data — see below)
-for d in test_data/0[1-9]_*/ test_data/1[0-9]_*/ test_data/2[0-4]_*/; do (cd "$d" && ../../vmake build) || break; done
+# Run all test_data integration tests (01-16, 18-25; 17 is NOT in test_data — see below; 25 needs `sh test_data/25_subpackage/setup.sh` once)
+for d in test_data/0[1-9]_*/ test_data/1[0-9]_*/ test_data/2[0-5]_*/; do (cd "$d" && ../../vmake build) || break; done
 ```
 
 Never build `test_data/` from the parent directory — each sub-project must run from its own dir.
@@ -57,7 +57,7 @@ go test -update                                # regenerate baselines after inte
 
 Known pre-existing integration failures (ignore): none — all test_data tests currently pass.
 
-Notable test purposes: 15=`subgraph_siblings`, 16=`subgraph_cross_tc`, 18=`config_header` (GenerateConfigHeader), 19=`config_defines` (GenerateConfigDefines), 20=`config_propagate` (ImportConfig/cross-package config), 21=`root_package`, 22=`version_script`, 23=`link_strategy`, 24=`symbol_prefix`.
+Notable test purposes: 15=`subgraph_siblings`, 16=`subgraph_cross_tc`, 18=`config_header` (GenerateConfigHeader), 19=`config_defines` (GenerateConfigDefines), 20=`config_propagate` (ImportConfig/cross-package config), 21=`root_package`, 22=`version_script`, 23=`link_strategy`, 24=`symbol_prefix`, 25=`subpackage` (native sub-package discovery/short-name refs; run `sh test_data/25_subpackage/setup.sh` once first — registers local native repo `subtest`).
 
 ## Development Mode
 
@@ -167,6 +167,9 @@ Script-facing contexts (Config/Build/Install/Clean/Require) have strict accessor
 
 ### Dependency Linker Script
 A package declares `ctx.SetProvidedLinkerScript("path/to/script.ld")` in `OnConfig`. A consumer target calls `.UseDependencyLinkerScript()` — at link time, the scheduler resolves the first dependency that provides a linker script and passes `-T` to the linker. `SetProvidedLinkerScript` may only be called once per package (fatalScript panic on double-set).
+### Sub-Packages (Native Repos Only)
+Nested `build.go` inside a **native** remote package checkout becomes a sub-package: independently loaded, named `parent/sub`, own options/targets/build dirs, version follows the parent (no separate lockfile entry). Lazy: build.go interpreted only when depended on. Registry wrapper packages deliberately have NO sub-packages; a parent cannot require its own sub-packages in `OnRequire` (scan runs after dep resolution); local projects have no sub-package concept. Recorded decisions and known limitations: `docs/DESIGN_DECISIONS.md` (DD-1..DD-3). Integration test: `test_data/25_subpackage`.
+
 ### Auto-Wire Require → Build Deps (REMOVED in v2)
 
 **Historically**: `OnRequire`/`AddRequires` declared package-level deps, and
@@ -437,6 +440,8 @@ type PkgDirs struct { SourceDir, BuildDir, InstallDir string }
 - `vmake_deps/` is in `scanner.go`'s `skipDirs` — build.go scanner will not recurse into it
 - `ensureGitignore` writes only to project root `.gitignore` (via `findProjectDir()`), not to subdirectories
 - `scanner.go` `skipDirs`: `.git`, `.vmake`, `build`, `vendor`, `node_modules`, `vmake_deps` — build.go files in these dirs are invisible to the scanner
+- `filepath.Walk` does NOT follow a symlinked walk root — `Resolver.scanSubPackages` must `EvalSymlinks` the checkout dir first (`vmake_deps/.../src` is a symlink to the cache)
+- Sub-package refs by full name require the parent to be resolved first — in one `AddRequires` list, parent before sub-package
 - Buildscripts are re-interpreted on every `vmake` invocation — no `.so` cache, no `go.mod`/`go.sum` generated.
 - Extension plugins are re-interpreted by yaegi on every `vmake` invocation — no `.so` compilation, no version-mismatch issues. Cobra/pflag symbols in `internal/yaegisym/` must be regenerated (`go generate`) when cobra version bumps.
 

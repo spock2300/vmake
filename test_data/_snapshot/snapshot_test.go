@@ -277,7 +277,7 @@ func buildFilter(rel string) bool {
 	return rel == "compile_commands.json"
 }
 
-func redactManifest(path string) (redactedManifest, error) {
+func redactManifest(path, root string) (redactedManifest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return redactedManifest{}, err
@@ -305,7 +305,7 @@ func redactManifest(path string) (redactedManifest, error) {
 			Name:   p.Name,
 			Source: p.Source,
 			Path:   p.Path,
-			URL:    p.URL,
+			URL:    string(normalizeBytes([]byte(p.URL), root)),
 		}
 		if p.Source != "local" {
 			e.Version = p.Version
@@ -328,7 +328,7 @@ func treeHash(files []fileEntry) string {
 func takeSnapshot(t *testing.T, root string, p project) snapshot {
 	t.Helper()
 	manifestPath := filepath.Join(p.dir, "install", "manifest.json")
-	manifest, err := redactManifest(manifestPath)
+	manifest, err := redactManifest(manifestPath, root)
 	if err != nil {
 		t.Fatalf("redact manifest: %v", err)
 	}

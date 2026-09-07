@@ -200,6 +200,8 @@ All setters are fluent (return `*Target`).
 | `SetSymbolPrefix` | `(prefix string)` | Post-link `objcopy --prefix-symbols=` (fatal on double-set) |
 
 `AddDeps` ref grammar (`pkg/api/depref.go`): a ref without `:` and `/` is a target of the declaring package; `pkg:target` selects one target; `pkg:*` or a `/`-containing path (e.g. `"official/zlib"`) expands to all targets of that package plus its transitive package deps (flat closure, deduplicated). Validation is fatal at declaration time (empty/whitespace refs, multiple `:`, empty segments, malformed paths); unknown targets (`dependency not found`), unknown packages (`package not found in build graph`) and cycles fail at build-graph time. A `pkg` part without `/` in `pkg:target` is first resolved relative to the declaring (sub-)package.
+
+Sub-packages: a nested `build.go` in a native remote package's checkout is an independent package named `parent/sub`, versioned by the parent (no separate lockfile entry). Only native repos have sub-packages (registry wrappers never do — design decision DD-1, see `docs/DESIGN_DECISIONS.md`); they load lazily when depended on. Reference from outside by full name (`"subtest/mother/sub_a:*"`; list the parent before its sub-packages in `AddRequires`); inside a sub-package use short names for siblings (`"sub_b:utils_b"`). A parent cannot require its own sub-packages in `OnRequire`. Example: `test_data/25_subpackage`.
 | `UseDependencyLinkerScript` | `()` | Auto-inherit linker script from dependency |
 | `AddPostLink` | `(tool string, args ...string)` | Post-link step: `{output}` placeholder |
 | `AddPostLinkHex` | `()` | `objcopy -O ihex {output} {output}.hex` |

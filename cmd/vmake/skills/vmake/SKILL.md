@@ -320,7 +320,18 @@ Run `vmake doctor` to detect packages that are missing explicit `AddDeps`.
 - `"lib:*"` or `"official/zlib:*"` — wildcard: all targets from that package + transitive deps
 - `"official/zlib"` — third-party package (expanded to all targets from that package + transitive deps)
 
-Invalid refs (empty, whitespace, stray `:`, empty segments) are fatal at declaration time; unknown targets/packages and dependency cycles fail at build-graph time. In `pkg:target`, a `pkg` part without `/` is first resolved as a sub-package name relative to the declaring package (`ResolveSubPackageName`).
+Invalid refs (empty, whitespace, stray `:`, empty segments) are fatal at declaration time; unknown targets/packages and dependency cycles fail at build-graph time. In `pkg:target`, a `pkg` part without `/` is first resolved as a sub-package name relative to the declaring package (`ResolveSubPackageName`); on failure the error lists the tried candidates.
+
+### Sub-Packages
+
+A nested `build.go` inside a **native** remote package's checkout becomes a sub-package: an independently loaded package named `parent/sub` with its own options/targets/build dirs, versioned by the parent (not locked separately). Key rules:
+
+- Registry (wrapper) packages have **no** sub-packages — by design (`docs/DESIGN_DECISIONS.md` DD-1)
+- Sub-packages are lazy: their build.go is interpreted only when depended on (DD-3)
+- Reference from outside by full name: `ctx.AddRequires("subtest/mother/sub_a")`, `AddDeps("subtest/mother/sub_a:*")` — the parent must be listed before its sub-packages in the same `AddRequires`
+- Inside a sub-package, siblings can be referenced by short name: `AddRequires("sub_b")`, `AddDeps("sub_b:utils_b")`
+- A parent cannot reference its own sub-packages in `OnRequire` (discovery runs after dep resolution); local projects have no sub-package concept (nested build.go are top-level packages)
+- Example: `test_data/25_subpackage`
 
 ### Version Constraints
 

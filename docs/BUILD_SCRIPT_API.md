@@ -549,8 +549,23 @@ ctx.Target("mylib").AddPublicIncludes("include", "src", "@foo*.h")
 
 - **声明时校验**（fatal `*BuildScriptError`）：空引用、含空白字符、多个 `:`、`:` 前后任一段为空、包路径畸形（首/尾 `/`、`//`）。空字符串参数被静默跳过，重复引用在图构建时去重。
 - **子包短名**：`pkg:target` 的 pkg 部分不含 `/` 时，会先尝试按当前（子）包路径相对解析（`ResolveSubPackageName`）——兄弟子包之间可写 `AddDeps("mylib:utils")` 而不必写全路径。
-- **图构建时报错**：target 不存在 → `dependency not found`；包不在构建图中 → `package not found in build graph`；循环依赖 → 错误（`api.CheckCycle`）。
+- **图构建时报错**：target 不存在 → `dependency not found`；包不在构建图中 → `package not found in build graph`；循环依赖 → 错误（`api.CheckCycle`）。子包短名解析失败时错误信息附带已尝试的候选路径（`tried sub-package candidates: ...`）。
 - 依赖边同时决定：链接输入（依赖 target 的产物路径）、PublicIncludes 传播、拓扑排序顺序。
+
+## 子包（Sub-Package）
+
+native 远程包 checkout 内嵌套的 `build.go` 会被识别为**子包**：独立加载的包，
+全名为 `父包全名/相对路径`（如 `official/mylib/sub_a`），拥有独立的 options/targets/build 目录，
+但**版本完全跟随父包**（不单独进 lockfile/manifest）。完整设计见 `docs/DESIGN_DECISIONS.md`（DD-1~DD-3）。
+
+要点：
+
+- **发现**：父包（native 仓库）checkout 后自动扫描其中嵌套的 build.go（`Resolver.scanSubPackages`）；registry 包装包**没有**子包概念（DD-1，设计决策）。子包懒加载（DD-3）：只有被依赖时其 build.go 才被解释。
+- **引用子包**：外部包用全名，如 `ctx.AddRequires("subtest/mother/sub_a")`、`AddDeps("subtest/mother/sub_a:*", "subtest/mother:base")`；同一 `AddRequires` 列表中父包必须写在子包之前。
+- **子包互引短名**：子包内部引用兄弟子包时 pkg 部分可写短名（沿祖先链解析，见上文"子包短名"）。
+- **限制**：父包不能在自己的 `OnRequire` 中引用其子包（发现晚于依赖解析，见 DESIGN_DECISIONS.md 已知限制 5）；本地项目无子包概念（嵌套 build.go 是顶层裸名包，已知限制 1）。
+
+示例见 `test_data/25_subpackage`（含本地 fixture native 仓）。
 
 ## 文件 IO 与工作目录（ScriptFS）
 
