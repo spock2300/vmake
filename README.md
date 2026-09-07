@@ -16,7 +16,7 @@ VMake is a modern C/C++ project build tool developed in Go. It provides a concis
 - **TUI Configuration Interface**: Interactive terminal user interface for project configuration
 - **Toolchain Management**: Flexible switching between multiple compiler toolchains, supports cross-compilation
 - **Semantic Versioning**: Built-in semver parsing and constraint matching
-- **Symbol Management**: Five-layer defense (`SetDefaultVisibilityHidden` + `SetVersionScript` + `SetExcludeLibs` + `SetSymbolBinding` + `vmake check-symbols`) controls exported symbols to prevent conflicts and leaks in complex dependency graphs
+- **Symbol Management**: Five-layer defense (`SetDefaultVisibilityHidden` + `SetVersionScript` + `AddExcludeLibs` + `SetSymbolBinding` + `vmake check-symbols`) controls exported symbols to prevent conflicts and leaks in complex dependency graphs
 
 ## Quick Start
 
@@ -57,7 +57,7 @@ func Main(p *api.Package) {
         ctx.Target("app").
             SetKind(api.TargetBinary).
             AddFiles("src/main.c").
-            AddDefines(ctx.If("debug", "DEBUG")...)
+            AddDefines(ctx.If("debug", "DEBUG"))
     })
 }
 ```
@@ -78,7 +78,9 @@ vmake/
 │   ├── plugin/          # Extension plugin system (importable from plugins)
 │   ├── build/           # Compilation, linking, and cache management
 │   ├── buildscript/     # Build script scan, interpret, load
+│   ├── pipeline/        # Phase orchestration (require/configure/build)
 │   ├── config/          # Configuration storage
+│   ├── lockfile/        # .vmake/vmake.lock read/write (pinned versions)
 │   ├── resolver/        # Dependency resolution
 │   ├── repo/            # Package repository management
 │   ├── toolchain/       # Toolchain management
@@ -93,6 +95,7 @@ vmake/
 │   ├── glob/            # File matching
 │   ├── gosrc/           # Go source merging (buildscript + plugin)
 │   ├── jsonio/          # JSON serialization
+│   ├── scriptfs/        # Script-relative file IO for interpreted code
 │   ├── toposort/        # Topological sort
 │   ├── yaegibase/       # yaegi interpreter init helper
 │   └── yaegisym/        # cobra/pflag yaegi symbols (go generate)
@@ -172,7 +175,6 @@ ctx.Int(name string) int
 
 // Conditional evaluation
 ctx.If(option string, then ...string) []string
-ctx.IfNot(option string, then ...string) []string
 ctx.When(option string, value any) bool
 ctx.Select(option string, mapping map[string]string) string
 
@@ -207,10 +209,10 @@ See the [Extension Plugin Guide](docs/EXTENSION_PLUGIN.md) for the complete plug
 ### Build Commands
 
 ```bash
-vmake build [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>] [--tests]
+vmake build [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k]
 vmake test
 vmake clean [--all]
-vmake distclean
+vmake distclean [--purge-cache]
 vmake rebuild
 ```
 
@@ -235,6 +237,8 @@ vmake repo add --native <name> <url>       # Native repo (URL template with {nam
 vmake repo remove <name>
 vmake repo list
 vmake repo update <name>
+vmake repo trust <name>                    # Trust a remote repo's buildscripts
+vmake repo untrust <name>                  # Revoke trust
 ```
 
 ### Package Management
@@ -243,7 +247,7 @@ vmake repo update <name>
 vmake pkg list
 vmake pkg search <keyword>
 vmake pkg clean <repo/name> [-a]
-vmake pkg update <repo/name>
+vmake pkg update <repo/name>[@version]
 ```
 
 ### Extension Management
@@ -258,7 +262,11 @@ vmake ext update [name]
 ### Other Commands
 
 ```bash
-vmake git tag [version] [--minor|--major]             # Version tagging
+vmake git tag [version] [--minor|--major] [--no-push] [-m|--message <msg>]   # Version tagging
+vmake query [targets|config]                          # Show dependency tree / package config
+vmake check-symbols [--strict]                        # Scan built outputs for symbol issues
+vmake lock update|show                                # Re-resolve / show pinned versions (.vmake/vmake.lock)
+vmake init-editor                                     # Generate editor support files for build.go
 vmake doctor                                          # Diagnose build.go patterns
 vmake manifest show <path>                            # Show manifest contents
 vmake manifest checkout <path> [name]                 # Checkout packages to recorded versions
@@ -271,7 +279,7 @@ vmake skill uninstall                                 # Uninstall AI skill
 vmake skill path                                      # Show skill paths
 ```
 
-Global flags: `-v` (verbose), `-V` (very verbose), `-q` (quiet)
+Global flags: `-v` (verbose), `-V` (very verbose), `-q` (quiet), `-y` (assume yes for interactive prompts)
 
 ## Documentation
 

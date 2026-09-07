@@ -66,13 +66,13 @@ Registry 和 Native 不是孤立的，它们共同构成了一个完整的代码
 | 使用 zlib/curl 等开源库 | Registry | 编写 wrapper，零侵入原始代码 |
 | 团队内部工具库跨项目复用 | Native | 独立 Git 仓库，tag 即版本 |
 | 开源自己的库给社区 | Native | 任何人 `vmake repo add` 即可使用 |
-| 混合使用第三方库和自有库 | 两者并存 | 统一的 `ctx.Require()` API |
+| 混合使用第三方库和自有库 | 两者并存 | 统一的 `ctx.AddRequires()` API |
 
 这种设计的精妙之处在于：**Registry 解决了"如何优雅地消费生态"的问题，Native 解决了"如何高效地分享代码"的问题。** 两者通过同一个依赖解析引擎工作，开发者不需要在两套工具之间切换。
 
 ### 包（Package）
 
-包是编译的基本单元，由 `build.go` 描述。每个包通过三种回调注册自己的行为：
+包是编译的基本单元，由 `build.go` 描述。每个包通过一组回调注册自己的行为：
 
 ```go
 func Main(p *api.Package) {
@@ -84,6 +84,9 @@ func Main(p *api.Package) {
     })
     p.OnBuild(func(ctx *api.BuildContext) {
         // 定义编译目标
+    })
+    p.OnClean(func(ctx *api.CleanContext) {
+        // 自定义清理
     })
 }
 ```
@@ -120,24 +123,22 @@ ctx.Target("app").
     SetKind(api.TargetBinary).
     AddFiles("src/*.c").
     AddIncludes("include").
-    AddDefines(ctx.If("debug", "DEBUG")...).
+    AddDefines(ctx.If("debug", "DEBUG")).
     AddDeps("lib:utils")
 ```
 
-条件编译同样简洁——`If`、`IfNot`、`When`、`Select`、`Equal` 一行搞定，无需冗长的 `if-else` 块。
+条件编译同样简洁——`If`、`When`、`Select` 一行搞定，无需冗长的 `if-else` 块。
 
 ### 3. 三阶段执行模型
 
 VMake 的运行时执行流程分为清晰的三个阶段：
 
 ```
-Phase 1: OnRequire  →  扫描 build.go → 解释构建脚本 → 收集依赖声明
+Phase 1: OnRequire  →  扫描 build.go → 解释构建脚本 → 解析依赖（远程包在此阶段一并解析）
     ↓
-Phase 2a: ResolveDeferred  →  解析远程包 → 更新拓扑排序
+Phase 2a: OnConfig  →  执行配置回调 → 收集 Options → 运行 OnApply 回调 → 合并全局配置
     ↓
-Phase 2b: OnConfig  →  执行配置回调 → 收集 Options → 合并全局配置
-    ↓
-Phase 2c: FilterDeps  →  用真实配置重跑 OnRequire → BFS 收集 needed 包
+Phase 2b: FilterDeps  →  用真实配置重跑 OnRequire → 更新拓扑排序 → BFS 收集 needed 包
     ↓
 Phase 3: OnBuild  →  执行构建回调 → 生成 Targets → 拓扑排序编译/链接
     ↓
@@ -154,14 +155,14 @@ VMake 不依赖外部包管理器。它内置了完整的依赖图解析器，�
 
 - 语义化版本（Semver）约束匹配：`>=`、`<=`、`~`、`=`
 - 拓扑排序的依赖构建顺序
-- 延迟解析（Deferred Resolution）——远程包在依赖图构建后才解析
+- 锁文件固定版本——`.vmake/vmake.lock` 记录远程包的版本与提交，保证可重现构建
 - 增量编译——基于文件级依赖分析和时间戳对比
 
 ### 5. 跨平台与交叉编译
 
 Toolchain 抽象层统一管理所有编译工具链：
 
-- 自动检测 GCC/Clang 主机工具链
+- 内置 `host` 工具链，默认使用 gcc/g++ 并从 PATH 解析
 - 插件化注册交叉编译工具链（如 ARM 嵌入式工具链）
 - 自动设置 `CMAKE_SYSTEM_NAME`、`--host` 等跨编译参数
 - 支持 RTOS/嵌入式后处理步骤（objcopy、size、strip）
@@ -222,7 +223,7 @@ Registry 和 Native 的双源设计对 AI 有着独特的价值：
 
 - **模式清晰**：Registry 用于包装第三方，Native 用于分享自有代码——AI 能根据上下文自动选择正确的包类型
 - **版本可推理**：Native 包的版本来自 Git Tag，AI 可以通过 `git tag` 命令直接获取可用版本列表，无需查阅外部文档
-- **依赖图可理解**：`ctx.Require()` 的声明式语法让 AI 能完整理解项目的依赖拓扑，从而给出准确的依赖升级建议和冲突解决方案
+- **依赖图可理解**：`ctx.AddRequires()` 的声明式语法让 AI 能完整理解项目的依赖拓扑，从而给出准确的依赖升级建议和冲突解决方案
 
 ### 6. 插件扩展 = AI 可参与的工作流定制
 
@@ -249,7 +250,7 @@ AI 不再只是一个代码补全工具，而是成为了一个**能够理解和
 
 | 维度 | CMake/Make | VMake |
 |------|-----------|-------|
-| 构建语言 | 自定义 DSL | Go（插件化） |
+| 构建语言 | 自定义 DSL | Go（yaegi 解释执行） |
 | 依赖管理 | 外部工具（Conan/vcpkg）或手动 | 内置，Registry + Native 双源 |
 | 第三方库集成 | 需要修改源码或外部脚本 | Registry wrapper，零侵入 |
 | 自有代码分享 | Submodule / Monorepo / 手动拷贝 | Native 包，Git Tag 自动版本化 |

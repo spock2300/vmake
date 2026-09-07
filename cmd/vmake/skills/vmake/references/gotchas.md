@@ -2,9 +2,9 @@
 
 ## Static Library Deps with Symbols Not Referenced by Your Code
 
-vmake wraps `AddDeps` archives in `--start-group`/`--end-group`. Libraries added via `-specs` or `-l` after the group (e.g., libc from `-specs=nano.specs`) are linked later. If a static library dep provides symbols only referenced by those post-group libraries — not by your code — the linker won't pull the relevant `.o` from the archive, because nothing in the group needed it.
+vmake wraps `AddDeps` archives in `--start-group`/`--end-group`. Your `-l`/`-L` ldflags are placed inside the group too; what lands after the group are libraries the compiler driver appends itself (e.g., libc pulled in by `-specs=nano.specs`). If a static library dep provides symbols only referenced by those post-group libraries — not by your code — the linker won't pull the relevant `.o` from the archive, because nothing in the group needed it.
 
-**Fix (preferred):** Use `-nostdlib` in global LdFlags and `AddGlobalLinks("c_nano", "gcc")` in `SetOnApply`. This places `-lc_nano -lgcc` inside the `--start-group`/`--end-group` for all targets, so libc's references to your dep's symbols resolve during group scanning. No changes to the linker script needed.
+**Fix (preferred):** Use `-nostdlib` in global LdFlags and `AddGlobalLinks("c_nano", "gcc")` in `SetOnApply`. This places `-lc_nano -lgcc` inside the `--start-group`/`--end-group` for all binary targets, so libc's references to your dep's symbols resolve during group scanning. No changes to the linker script needed.
 
 ```go
 ctx.Option("mcu").SetType(api.OptionChoice).SetDefault("stm32f405").
@@ -26,7 +26,7 @@ Global flags registered via `AddGlobalCFlags/CxxFlags/LdFlags/Links` are **buffe
 
 Two discovery-era rules still matter:
 
-- In `OnRequire` (both passes), direct value reads (`ctx.Bool/String/Int`) are build errors. Use `ctx.When("opt", value)` / `ctx.If(...)` / `ctx.Select(...)`. On the first pass (nil config) `When` returns `true`, `If` follows the declared default, and `Select` returns `""`.
+- In `OnRequire`, direct value reads (`ctx.Bool/String/Int`) are fatal only on the first pass (nil config, discovery); on the `FilterDeps` re-run (real config) they work. On the first pass, use `ctx.When("opt", value)` / `ctx.If(...)` / `ctx.Select(...)` — there `When` returns `true`, `If` returns its `then` items (condition unevaluated), and `Select` returns `""`.
 - Inside `SetOnApply`, `Select` sees the resolved value — but an unmapped choice still yields `""`, which `flattenAny` would silently drop from `Add*` lists. Guard before use:
 
 ```go
@@ -64,14 +64,14 @@ SetBuildFunc(func(p *api.Package) error {
 })
 ```
 
-This pattern is useful for libraries that use header-based configuration (mbedtls 2.x, some RTOS SDKs) where CMake options don't cover all config flags. For multi-file or complex changes, prefer `AddPatches` (see Advanced Patches section below).
+This pattern is useful for libraries that use header-based configuration (mbedtls 2.x, some RTOS SDKs) where CMake options don't cover all config flags. For multi-file or complex changes, prefer `AddPatches` (see the Applying Git Patches section below).
 
 ## Applying Git Patches (AddPatches / SetPatches)
 
 For registry packages that need source modifications that Go string replacement can't handle (multi-file changes, binary patches, etc.), vmake supports git patch application:
 
 ```go
-// In OnPackage — patches are applied before any build phase runs
+// In OnPackage — patches are applied before OnBuild runs
 p.AddPatches("patches/fix-cross.patch", "patches/disable-avx.patch")
 ```
 

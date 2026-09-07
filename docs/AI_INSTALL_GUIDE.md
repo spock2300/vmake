@@ -46,7 +46,7 @@ Skill 为 AI 编码助手提供 vmake API 知识，辅助编写 `build.go`：
 vmake skill install
 ```
 
-使用 `--project` 或 `-p` 参数可将 Skill 安装到当前项目的 `.claude/skills/` 目录：
+使用 `--project` 或 `-p` 参数可将 Skill 追加安装到当前项目的 `.claude/skills/vmake/` 目录：
 
 ```bash
 vmake skill install --project .
@@ -59,7 +59,9 @@ vmake skill install --project .
 包含内容：
 - `SKILL.md` — 核心指南（构建阶段、决策树、API 速查、RTOS 支持）
 - `references/api.md` — 完整 API 方法签名
-- `references/cli.md` — CLI 命令参考
+- `references/cli.md` — CLI 命令参考（安装时从实际命令树生成）
+- `references/dirs.md` — 目录与路径解析规则
+- `references/gotchas.md` — 高级陷阱与修复模式
 - `examples/` — 各场景 build.go 示例
 
 ### 4. 验证

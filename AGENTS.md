@@ -20,7 +20,7 @@ go vet ./cmd/... ./pkg/... ./internal/...      # Lint
 go test ./cmd/vmake/... ./pkg/... ./internal/... # Unit tests
 ```
 
-Go tests live in `cmd/vmake`, `pkg/api`, `pkg/build`, `pkg/buildscript`, `pkg/config`, `pkg/plugin`, `pkg/pipeline`, `pkg/repo`, `pkg/resolver`, `pkg/tui`.
+Go tests live in `cmd/vmake`, `pkg/api`, `pkg/build`, `pkg/buildscript`, `pkg/config`, `pkg/plugin`, `pkg/pipeline`, `pkg/repo`, `pkg/resolver`, `pkg/tui`, `internal/scriptfs`.
 
 ### Integration tests via `test_data/` (run each from its own directory)
 
@@ -121,7 +121,7 @@ The build pipeline treats local and remote packages identically for target sched
 Preset files under `configs/` are partial configs (defconfig format), NOT complete `.config`. The preset name is passed to `make <preset>` to generate `.config`. Lifecycle: TUI select → save name to config.json → on build: check `.config` → if missing, `make <preset>` → build.
 
 ### Stamp-Based Skip for Void Targets
-Local packages without InstallDir use `.vmake_stamp` in BuildDir. Stale when config files (`SetConfigFiles()`) are newer, deleted, or `.config` size becomes 0.
+Void targets with a BuildFunc and no InstallDir record `.vmake_stamp` (JSON) in BuildDir after a successful run: `config_hash` = SHA256 over the contents of `SetConfigFiles()` files (missing files are skipped by the hash, so deletion counts as a change) + `source_rev` = git HEAD of SrcDir. Stale when: stamp missing/corrupt, config file contents changed, git HEAD changed, or a dependency artifact is newer than the stamp (`isVoidUpToDate` + `depArtifactsNewer` in `pkg/build/scheduler.go`; hash/rev logic in `pkg/build/stamp.go`).
 
 ### Post-Link Incremental Tracking
 `target.AddPostLinkDeps(files...)` declares extra input files (SourceDir-relative, like `AddFiles`) that post-link steps consume. The relink check (`needRelink` in `pkg/build/scheduler.go`) compares each dep's mtime against the link output: any dep newer or missing → relink + re-run ALL post-link steps. Without this, post-link inputs (e.g. `objcopy --keep-global-symbols=file.sym`) are invisible to staleness — editing `file.sym` is silently skipped, forcing `rebuild`/`distclean`. Granularity is whole-target: one dep change → relink + full post-link re-run (no per-step incremental). Dep deletion also triggers relink (mirrors `SetConfigFiles` void-target semantics). Applies to Binary/Shared/Object (Prebuilt short-circuits before `needRelink`, so `AddPostLinkDeps` is a no-op there). Diagnostic on trigger: `RELINK <name> (post-link dep <file> newer|missing)` via `vlog.Info`.
@@ -177,7 +177,7 @@ to any target whose package had `AddRequires` calls but no explicit `AddDeps`.
 Each target must declare its build-graph edges explicitly via `AddDeps`.
 
 Run `vmake doctor` to detect build.go files that still rely on the old
-auto-wire behavior. See `docs/MIGRATION_V2.md` for migration steps.
+auto-wire behavior.
 
 ### restoreKConfigFiles Skip Rules
 - No config.json entry for package → skip entirely (don't delete `.config`)
@@ -330,45 +330,39 @@ Methods on `CleanContext`:
 | `pkg/repo` | Package management, Git, native repos | No |
 | `pkg/resolver` | Dependency graph, resolution | No |
 | `pkg/config` | Project configuration management | No |
+| `pkg/lockfile` | `.vmake/vmake.lock` read/write (pinned versions+commits) | No |
 | `pkg/log` | Logging (Debug, Info, Error, Fatal) | No |
 | `pkg/tui` | Terminal UI (interactive config) | No |
 | `pkg/version` | Version information | No |
-| `internal/*` | exec, flock, fs, gitstore, glob, gosrc, jsonio, toposort, yaegibase, yaegisym | No |
+| `internal/*` | exec, flock, fs, gitstore, glob, gosrc, jsonio, scriptfs, toposort, yaegibase, yaegisym | No |
 
 **Dependency DAG**: `internal/*` -> `pkg/toolchain` -> `pkg/api` -> `pkg/buildscript, pkg/repo` -> `pkg/resolver, pkg/plugin, pkg/build` -> `pkg/pipeline` -> `cmd/vmake`
 
-Extension plugins are interpreted by yaegi at runtime (same as buildscripts). Cobra/pflag symbols are pre-generated via `yaegi extract` into `internal/yaegisym/` (regenerate with `go generate ./internal/yaegisym/`). The plugin loader (`pkg/plugin/loader.go`) uses `internal/yaegibase.New()` + `internal/gosrc.MergeGoSources()` — no compilation step.
+Extension plugins are interpreted by yaegi at runtime (same as buildscripts). Cobra/pflag symbols are pre-generated via `yaegi extract` into `internal/yaegisym/` (regenerate with `go generate ./internal/yaegisym/`). The plugin loader (`pkg/plugin/loader.go`) uses `internal/yaegibase.New()` + `internal/gosrc.MergeGoSources()` — no compilation step. Each discovered extension also registers a root-level cobra command named after the plugin (`loadPlugins()` in `cmd/vmake/ext_cmd.go`); the plugin adds subcommands via `plugin.Context.AddSubCommand`.
 
 ## CLI Architecture
 - `github.com/spf13/cobra`, package-level vars, `init()` registration
-- Command factories (`newRemoveCmd`, `newUpdateCmd`) in `cmd/vmake/helpers.go`
+- Command factory `newActionCmd` (repo remove/update, ext remove) plus shared helpers (`fatalErr`, `fatalMsg`, `newPkgRef`) in `cmd/vmake/helpers.go`; build/install flags registered once in `cmd/vmake/flags.go` (`addBuildFlags`/`addInstallFlags`, shared by build/rebuild/test)
 - Global flags: `--verbose/-v`, `--very-verbose/-V`, `--quiet/-q`
 - `vmake` (no subcommand) — defaults to `build`
-- `vmake build` — build all targets (flags: `--toolchain`, `--mode`, `--install`, `--prefix`, `--tests`, `--manifest`)
+- `vmake build` — build all targets (flags: `--toolchain`, `--mode`, `--install/-i`, `--prefix/-p`, `--install-type runtime|sdk`, `--tests`, `--manifest`, `--jobs/-j`, `--keep-going/-k`). `--jobs` controls package-level parallelism AND compile jobs per target (0 = NumCPU, 1 = sequential; `pkg/build/scheduler_parallel.go`); `--keep-going` keeps building independent targets after a failure
 - `vmake test` — build with `--tests` then execute test binaries
 - `vmake clean [--all]` — execute OnClean hooks then clean build artifacts; `--all` removes all build key dirs
 - `vmake rebuild` — clean local packages then build
 - `vmake distclean` — deep clean: local build dirs, install/, `vmake_deps/`; the shared global cache survives by default (rebuild re-links without recompiling). `--purge-cache` also deletes global cache entries for every remote package this project materialized (affects other projects too)
 - `vmake config` — interactive TUI for build options
-- `vmake query` — show dependency tree (uses `newQueryCmd` factory, registered in root.go init)
+- `vmake query [targets|config]` — show dependency tree (uses `newQueryCmd` factory, registered in root.go init)
 - `vmake check-symbols [--strict]` — scan all built Shared/Binary outputs via `nm -D` and report: cross-target duplicate exports, C++ mangled leaks (`_Z*`), reserved-prefix leaks (`__libc_*` etc.), version-script violations (when `SetVersionScript` is set), and missing version-script warnings. No per-target declaration required. `--strict` exits non-zero on warn/error findings (info-level still passes)
-- `vmake git tag [--minor|--major] [version]` — create version tag, update latest, push (for native repos)
-- `vmake completion [bash|zsh|fish|powershell|install]` — generate shell completion
-- `vmake ext add/remove/list/update` — manage extension repos that contain plugins and toolchain manifests
+- `vmake lock update|show` — re-resolve latest / show pinned versions (`.vmake/vmake.lock`)
+- `vmake doctor` — detect build.go files relying on removed auto-wire (`AddRequires` with no `AddDeps`)
+- `vmake manifest show|checkout <path> [name]` — show manifest contents / checkout packages at recorded versions
+- `vmake toolchain list|show [name]` — list/show toolchain manifests
+- `vmake repo trust|untrust <name>` — manage supply-chain trust for remote repos (stored in `~/.vmake/config.json`)
+- `vmake init-editor` — generate editor support files for build.go (go.mod for gopls)
+- `vmake update [version]` — self-update
+- `vmake version` — print version information
 - `vmake skill install/uninstall/path` — install AI assistant skill files to `~/.claude/skills/vmake/` and `~/.agents/skills/vmake/`
-- `vmake pkg list/search/clean/update` — manage third-party packages in `vmake_deps/`
-
-### Build Flags
-
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--toolchain` | | Override toolchain |
-| `--mode` | | Override build mode (debug/release) |
-| `--install` | `-i` | Install after build |
-| `--prefix` | `-p` | Installation prefix (default: `./install/`) |
-| `--install-type` | | `runtime` (default) or `sdk` |
-| `--manifest` | | Pin versions from manifest file |
-| `--tests` | | Include test targets in build |
+- `vmake git tag`, `vmake completion`, `vmake ext add/remove/list/update`, `vmake pkg list/search/clean/update` — see README
 
 ## Build Script System
 

@@ -156,13 +156,13 @@ func (p *Package) ProvidedLinkerScript() string
 ### 构建辅助方法
 
 ```go
-func (p *Package) CMakeConfigure(extraArgs ...string) error
-func (p *Package) CMakeBuild(args ...string) error
-func (p *Package) CMakeInstall() error
+func (p *Package) CMakeConfigure(extraArgs ...string)
+func (p *Package) CMakeBuild(args ...string)
+func (p *Package) CMakeInstall()
 func (p *Package) Configure(extraArgs ...string) error
 func (p *Package) Make(args ...string) error
-func (p *Package) Run(name string, args ...string) error
-func (p *Package) RunIn(dir, name string, args ...string) error
+func (p *Package) Run(name string, args ...string)              // 在 BuildDir 运行命令（失败时 fatal 退出）
+func (p *Package) RunIn(dir, name string, args ...string)       // 在指定目录运行命令（失败时 fatal 退出）
 func (p *Package) RunEnv(env map[string]string, name string, args ...string) error
 ```
 
@@ -234,7 +234,9 @@ func (p *Package) SelectVersionMulti(constraints []string) (string, error)  // �
 
 ## ConfigAccessor（条件表达式与值读取）
 
-`ConfigAccessor` 被嵌入到 `Package`、`ConfigContext`、`BuildContext`、`InstallContext`、`RequireContext` 中，提供选项值读取和条件表达式。
+`ConfigAccessor` 被嵌入到 `Package`、`ConfigContext`、`BuildContext`、`InstallContext`、`CleanContext`、`RequireContext` 中，提供选项值读取和条件表达式。
+
+脚本上下文（Config/Build/Install/Clean/Require）的访问器是**严格的**：读取未声明的选项名、或用与选项 `SetType` 不匹配的方法读取（如对 `OptionInt` 选项用 `Bool()`），会 fatal（panic `*BuildScriptError`）。`OnRequire` 依赖发现阶段选项值尚不可用，直接读取（`Bool()` 等）同样 fatal——请使用发现感知的 `ctx.When` / `ctx.If` / `ctx.Select`。
 
 ```go
 // 值读取（优先配置值，其次默认值）
@@ -281,11 +283,12 @@ func (ctx *ConfigContext) GetOptions() map[string]*Option
 func (ctx *ConfigContext) Toolchains() []string
 func (ctx *ConfigContext) ToolchainOption() *Option      // 创建工具链选择选项（自动填充可用工具链）
 
-// 全局编译/链接标志（仅在 OnApply 回调中有效）
+// 全局编译/链接标志（在 OnConfig 和 OnApply 回调中有效）
 func (ctx *ConfigContext) AddGlobalCFlags(flags ...string)
 func (ctx *ConfigContext) AddGlobalCxxFlags(flags ...string)
 func (ctx *ConfigContext) AddGlobalLdFlags(flags ...string)
 func (ctx *ConfigContext) AddGlobalLinks(links ...string)  // 添加全局链接库
+func (ctx *ConfigContext) SetDefaultVisibilityHidden() *ConfigContext  // 全局加 -fvisibility=hidden（C++ 另加 -fvisibility-inlines-hidden）
 
 // 依赖 Linker Script
 func (ctx *ConfigContext) SetProvidedLinkerScript(path string) *ConfigContext
@@ -304,7 +307,6 @@ func (o *Option) SetValues(vals ...string) *Option        // OptionChoice 使用
 func (o *Option) SetShowIf(fn func(ctx *ConfigContext) bool) *Option  // 条件显示
 func (o *Option) SetOnApply(fn func(ctx *ConfigContext, val any)) *Option  // 选项值解析后的回调，val 为原始类型值
 func (o *Option) SetGroup(group string) *Option
-func (o *Option) IsGlobal() bool                      // 是否为全局选项（group == "Global"）
 
 // 获取方法
 func (o *Option) Name() string
@@ -406,8 +408,8 @@ func (ctx *CleanContext) BuildDir() string
 func (ctx *CleanContext) SrcDir() string
 func (ctx *CleanContext) PackageName() string
 
-func (ctx *CleanContext) Run(name string, args ...string) error
-func (ctx *CleanContext) RunIn(dir, name string, args ...string) error
+func (ctx *CleanContext) Run(name string, args ...string)             // 在 BuildDir 运行命令（失败时 fatal 退出）
+func (ctx *CleanContext) RunIn(dir, name string, args ...string)      // 在指定目录运行命令（失败时 fatal 退出）
 func (ctx *CleanContext) RunEnv(env map[string]string, name string, args ...string) error
 func (ctx *CleanContext) Make(args ...string) error
 ```
@@ -428,7 +430,7 @@ p.OnClean(func(ctx *api.CleanContext) {
 // 类型设置
 func (t *Target) SetKind(kind TargetKind) *Target
 func (t *Target) SetDefault(isDefault bool) *Target
-func (t *Target) SetTest(v bool) *Target              // 标记为测试目标（自动设置 isDefault=false）
+func (t *Target) SetTest(v bool) *Target              // 标记为测试目标（不改变 isDefault）
 
 // 源文件与头文件
 func (t *Target) AddFiles(files ...any) *Target
@@ -456,13 +458,17 @@ func (t *Target) SetPrebuilt(path string) *Target          // 预编译目标，
 // RTOS/嵌入式
 func (t *Target) SetLinkerScript(path string) *Target    // 传递 -T 给链接器（重复调用 vlog.Fatal）
 func (t *Target) UseDependencyLinkerScript() *Target       // 从依赖自动继承 linker script
+func (t *Target) SetVersionScript(path string) *Target     // 版本脚本，链接时加 -Wl,--version-script=；仅 Shared/Binary 有效；路径相对包 SourceDir（重复调用 fatal）
+func (t *Target) AddExcludeLibs(libs ...string) *Target    // 链接时加 -Wl,--exclude-libs=（追加；ld 按去掉 .a 的完整库名匹配，写 libfoo 而非 foo）
+func (t *Target) SetSymbolBinding(mode string) *Target     // "static" → -Wl,-Bsymbolic；"static-functions" → -Wl,-Bsymbolic-functions；其他值 fatal
+func (t *Target) SetSymbolPrefix(prefix string) *Target    // post-link 追加 objcopy --prefix-symbols=<prefix>（重复调用 fatal）
 func (t *Target) AddPostLink(tool string, args ...string) *Target  // 通用后链接步骤，支持 {output} 占位符
 func (t *Target) AddPostLinkDeps(files ...string) *Target  // 声明 post-link 步骤依赖的额外输入文件（SourceDir 相对路径）；任一变化（mtime 新于输出或缺失）触发 relink + 重跑全部 post-link
 func (t *Target) AddPostLinkHex() *Target               // objcopy -O ihex {output} {output}.hex
 func (t *Target) AddPostLinkBin() *Target               // objcopy -O binary {output} {output}.bin
 func (t *Target) AddPostLinkSize() *Target              // size {output}
 func (t *Target) AddPostLinkStrip() *Target             // strip -o {output}.stripped {output}
-func (t *Target) AddBinHeader(inputs ...any) *Target    // 将二进制文件转换为 .h 头文件（GenRule），输出到 build/<tc>-<mode>/generated/<stem>.h，包含路径自动添加
+func (t *Target) AddBinHeader(inputs ...any) *Target    // 将二进制文件转换为 .h 头文件（GenRule），输出到构建目录的 generated/<stem>.h，包含路径自动添加
 
 // 安装控制
 func (t *Target) SetInstallDir(dir string) *Target
@@ -504,12 +510,16 @@ func (t *Target) BuildFunc() func(*Package) error
 func (t *Target) Prebuilt() string
 func (t *Target) LinkerScript() string
 func (t *Target) UseDepLinkerScript() bool
+func (t *Target) VersionScript() string
+func (t *Target) ExcludeLibs() []string
+func (t *Target) SymbolBinding() string
+func (t *Target) SymbolPrefix() string
 func (t *Target) PostLinkSteps() []PostLinkStep
 func (t *Target) PostLinkDeps() []string
 func (t *Target) ExcludedFiles() []string
 func (t *Target) GenRules() []GenRule
 ```
-`AddFiles/Includes/Defines/Links/CFlags/CxxFlags/LdFlags` 接受 `string` 或 `[]string`（条件表达式返回）。
+`AddFiles/Includes/Defines/Links/CFlags/CxxFlags/LdFlags` 接受 `string` 或 `[]string`（条件表达式返回）。注意 yaegi 限制：不能对 `...any` 参数使用 `[]string...` 展开，直接传 `[]string` 即可（上述方法内部会展开处理）。
 
 `AddPublicIncludes` 支持 `@"pattern"` 作为最后一个参数进行 match。Pattern 应用到前面所有目录（省略目录默认为 `"."`）。Pattern 使用 `filepath.Match` 语法。
 
@@ -523,6 +533,24 @@ ctx.Target("mylib").AddPublicIncludes("include", "@*.h")
 // 只匹配 foo*.h 到 src 目录
 ctx.Target("mylib").AddPublicIncludes("include", "src", "@foo*.h")
 ```
+
+### AddDeps 依赖引用格式
+
+`AddDeps(targets ...string)` 的每个参数是一个依赖引用（`pkg/api/depref.go` `ParseDepRef`），支持 4 种格式：
+
+| 格式 | 示例 | 含义 |
+|------|------|------|
+| 同包 target（不含 `:` 和 `/`） | `AddDeps("utils")` | 声明包自己的 `utils` target |
+| 跨包 target | `AddDeps("lib:utils")` | `lib` 包的 `utils` target（构建顺序 + 链接 + PublicIncludes 传播） |
+| 通配依赖 | `AddDeps("lib:*")`、`AddDeps("official/zlib:*")` | 该包所有 target + 传递依赖 |
+| 包路径（含 `/` 不含 `:`） | `AddDeps("official/zlib")` | 该包所有 target + 传递依赖闭包 |
+
+规则：
+
+- **声明时校验**（fatal `*BuildScriptError`）：空引用、含空白字符、多个 `:`、`:` 前后任一段为空、包路径畸形（首/尾 `/`、`//`）。空字符串参数被静默跳过，重复引用在图构建时去重。
+- **子包短名**：`pkg:target` 的 pkg 部分不含 `/` 时，会先尝试按当前（子）包路径相对解析（`ResolveSubPackageName`）——兄弟子包之间可写 `AddDeps("mylib:utils")` 而不必写全路径。
+- **图构建时报错**：target 不存在 → `dependency not found`；包不在构建图中 → `package not found in build graph`；循环依赖 → 错误（`api.CheckCycle`）。
+- 依赖边同时决定：链接输入（依赖 target 的产物路径）、PublicIncludes 传播、拓扑排序顺序。
 
 ## 文件 IO 与工作目录（ScriptFS）
 
@@ -658,7 +686,7 @@ func (r *GenRule) OutputStem() string
 | 运算符 | 含义 | 示例 | 匹配 | 不匹配 |
 |--------|------|------|------|--------|
 | `>=` | 大于等于（**默认**），锁定 major | `>=1.2` | `1.2.0`, `1.9.9` | `2.0.0`, `1.1.0` |
-| `>` | 大于，不锁定 major | `>1.0.0` | `1.0.1`, `2.0.0` | `1.0.0` |
+| `>` | 大于，锁定 major | `>1.0.0` | `1.0.1` | `1.0.0`, `2.0.0` |
 | `<=` | 小于等于，不锁定 major | `<=2.0` | `1.9.0`, `2.0.0` | `2.0.1` |
 | `<` | 小于，不锁定 major | `<3.0` | `2.9.9` | `3.0.0` |
 | `=` | 精确匹配（含 pre-release） | `=1.2.3` | `1.2.3` | `1.2.4` |
@@ -673,11 +701,14 @@ func (r *GenRule) OutputStem() string
 - `>=2.0` → 只匹配 `2.x.x`（不匹配 `3.0.0`，也不匹配 `1.9.9`）
 - `>=0.0.0`（空约束）→ **不锁定**，匹配所有版本（包括 `1.x`, `2.x`）
 
-`>`, `<=`, `<` 运算符**不锁定** major——用于跨版本范围比较。
+`>` 运算符与 `>=` 一样锁定 major（锚点 major > 0 时）：`>1.0.0` 只匹配 `1.x.x` 且大于 `1.0.0`（不匹配 `2.0.0`）。
+
+`<=`, `<` 运算符**不锁定** major——用于跨版本范围比较。
 
 #### Pre-release 规则
 
 - 有 pre-release 的版本**低于**同版本无 pre-release 的：`1.0.0-rc.1 < 1.0.0`
+- 带 pre-release 的版本只有在约束本身含 pre-release 且 major.minor.patch 相同时才会被选中：`>=1.4.0-rc.1` 可选中 `1.4.0-rc.1`；`>=1.0.0` 不会选中 `1.4.0-rc.1`
 - Pre-release 按点号分段逐段比较：
   - 纯数字段按数值比较：`1.0.0-1 < 1.0.0-10`
   - 字符串段按字典序比较：`1.0.0-alpha < 1.0.0-beta`
@@ -689,7 +720,7 @@ func (r *GenRule) OutputStem() string
 2. 按 semver 降序排序
 3. 返回**最高**的匹配版本
 
-多约束兼容性：两个约束互相满足即可。`>=1.0` 和 `>=2.0` 兼容（最终选 `>=2.0`），`>=2.0` 和 `<1.5` 不兼容。
+多约束为 AND 语义：版本必须同时满足**所有**约束（含各约束的 major 锁定），无交集时报错。`>=1.2` 和 `<1.5` 兼容（在交集中选最高），`>=1.0` 和 `>=2.0` 无交集（major 锁定冲突），报错。
 
 #### API
 
@@ -723,6 +754,8 @@ func MatchVersion(available []string, constraint string) (string, bool)
 | `--install-type` | | `runtime`（默认）或 `sdk` |
 | `--manifest` | | 从清单文件固定版本 |
 | `--tests` | | 包含测试目标 |
+| `--jobs` | `-j` | 并行度：包级并行 + 每目标编译并行（0 = CPU 数，1 = 串行） |
+| `--keep-going` | `-k` | 某目标失败后继续构建其他独立目标 |
 
 ## 全局选项
 
@@ -820,7 +853,7 @@ KConfig 用于管理基于 `make defconfig` / `make menuconfig` 的固件项目�
 ### Package KConfig 方法
 
 ```go
-func (p *Package) AddKConfig(name string) *KConfigEntry
+func (p *Package) AddKConfig(name string) *KConfigEntry  // 创建 KConfigEntry（每包仅支持一个，重复调用 fatal）
 func (p *Package) KConfigEntries() []*KConfigEntry
 func (p *Package) SelectedPreset() string          // 返回选中的 preset 名（优先 selectedPreset，其次 defaultPreset）
 func (p *Package) EnsureConfig(srcDir string) bool  // 检查 .config 是否存在且非空，否则执行 make <preset> 并应用 patches；返回 true 表示重新生成了 .config
@@ -829,7 +862,7 @@ func (p *Package) EnsureConfig(srcDir string) bool  // 检查 .config 是否存�
 ### ConfigContext KConfig 方法
 
 ```go
-func (ctx *ConfigContext) KConfig(name string) *KConfigEntry  // 创建或获取 KConfigEntry（与 Package 关联）
+func (ctx *ConfigContext) KConfig(name string) *KConfigEntry  // 创建 KConfigEntry（与 Package 关联；每包仅支持一个，重复调用 fatal）
 ```
 
 ### KConfigEntry
@@ -853,12 +886,14 @@ func (k *KConfigEntry) SetSrcDir(dir string) *KConfigEntry
 func (k *KConfigEntry) SetMenuconfigCmd(cmd string) *KConfigEntry
 func (k *KConfigEntry) AddPreset(name string) *KConfigEntry
 func (k *KConfigEntry) SetDefaultPreset(presetName string) *KConfigEntry
+func (k *KConfigEntry) SelectPreset(name string) *KConfigEntry
+func (k *KConfigEntry) SetKConfigPatches(patches map[string]string) *KConfigEntry
 ```
 
 ### 工具函数
 
 ```go
-func ApplyKConfigPatches(configPath string, patches map[string]string)
+func ApplyKConfigPatches(configPath string, patches map[string]string) error
 ```
 
 对 `.config` 文件执行字符串替换（在 defconfig 之后应用补丁）。
@@ -883,11 +918,8 @@ func Main(p *api.Package) {
             SetKind(api.TargetVoid).
             SetBuildFunc(func(pkg *api.Package) error {
                 srcDir := pkg.SrcDir()
-                if pkg.EnsureConfig(srcDir) {
-                    pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
-                } else {
-                    pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
-                }
+                pkg.EnsureConfig(srcDir) // .config 不存在或为空时执行 make <preset> 并应用 patches
+                pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
                 return nil
             })
     })
@@ -1097,7 +1129,7 @@ func Main(p *api.Package) {
             SetKind(api.TargetBinary).
             AddFiles("tests/*.c").
             AddDeps("mylib").
-            SetTest(true)  // 测试目标，不默认构建
+            SetTest(true)  // 测试目标：vmake build 默认跳过，--tests / vmake test 时才构建
     })
 }
 ```

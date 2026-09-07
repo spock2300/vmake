@@ -1,5 +1,7 @@
 # VMake
 
+> [English 🇬🇧](README.md)
+
 VMake 是一个现代化的 C/C++ 项目构建工具，采用 Go 语言开发。它提供了一个简洁而强大的 API，用于配置和构建多模块 C/C++ 项目。
 
 ## 功能特性
@@ -9,12 +11,12 @@ VMake 是一个现代化的 C/C++ 项目构建工具，采用 Go 语言开发。
 - **条件构建支持**：通过 `If`、`When` 等方法实现条件编译
 - **多模块支持**：原生支持多模块项目的构建管理
 - **第三方包管理**：支持 Registry（包装 CMake/Autotools）和 Native（vmake 原生包）两种仓库类型，通过 OnRequire 声明依赖，自动下载、版本匹配和构建
-- **扩展插件系统**：通过 Go 插件扩展 CLI 命令和工具链，支持自定义子命令、交叉编译工具链自动下载与管理
+- **扩展插件系统**：CLI 命令扩展和交叉编译工具链管理
 - **增量构建**：按目标基于 depfile mtime 判定失效；工具链/编译器版本/模式/选项/lock 固定/补丁集/构建脚本变化会轮换 build key
 - **TUI 配置界面**：提供交互式终端用户界面，方便配置项目选项
 - **工具链管理**：支持多种编译工具链的灵活切换，支持交叉编译
 - **语义版本约束**：内置语义版本解析和约束匹配
-- **符号管理**：通过 `SetDefaultVisibilityHidden` + `SetVersionScript` + `SetExcludeLibs` + `SetSymbolBinding` + `vmake check-symbols` 五层防御，控制库的导出符号，避免复杂依赖图中的符号冲突和泄漏
+- **符号管理**：通过 `SetDefaultVisibilityHidden` + `SetVersionScript` + `AddExcludeLibs` + `SetSymbolBinding` + `vmake check-symbols` 五层防御，控制库的导出符号，避免复杂依赖图中的符号冲突和泄漏
 
 ## 快速开始
 
@@ -36,7 +38,7 @@ go build -o vmake ./cmd/vmake
 ./vmake build
 ```
 
-调试模式下，插件会使用本地 vmake 源码编译，避免版本不匹配问题。
+调试模式下，build.go 和扩展插件会直接使用本地 vmake 源码由 yaegi 解释执行，无需编译，避免版本不匹配问题。
 
 ### 基本用法
 
@@ -59,7 +61,7 @@ func Main(p *api.Package) {
         ctx.Target("app").
             SetKind(api.TargetBinary).
             AddFiles("src/main.c").
-            AddDefines(ctx.If("debug", "DEBUG")...)
+            AddDefines(ctx.If("debug", "DEBUG"))
     })
 }
 ```
@@ -80,7 +82,9 @@ vmake/
 │   ├── plugin/          # 扩展插件系统（插件可导入）
 │   ├── build/           # 编译、链接、缓存管理
 │   ├── buildscript/     # 构建脚本扫描、解释、加载
+│   ├── pipeline/        # 阶段编排（require/configure/build）
 │   ├── config/          # 配置存储
+│   ├── lockfile/        # .vmake/vmake.lock 读写（固定版本）
 │   ├── resolver/        # 依赖解析
 │   ├── repo/            # 包仓库管理
 │   ├── toolchain/       # 工具链管理
@@ -95,6 +99,7 @@ vmake/
 │   ├── glob/            # 文件匹配
 │   ├── gosrc/           # Go 源码合并（buildscript + plugin 共用）
 │   ├── jsonio/          # JSON 序列化
+│   ├── scriptfs/        # 解释代码的脚本相对文件 IO
 │   ├── toposort/        # 拓扑排序
 │   ├── yaegibase/       # yaegi 解释器初始化 helper
 │   └── yaegisym/        # cobra/pflag 的 yaegi 符号表（go generate）
@@ -174,7 +179,6 @@ ctx.Int(name string) int
 
 // 条件判断
 ctx.If(option string, then ...string) []string
-ctx.IfNot(option string, then ...string) []string
 ctx.When(option string, value any) bool
 ctx.Select(option string, mapping map[string]string) string
 
@@ -209,10 +213,10 @@ vmake ext add <name> <git-url>
 ### 构建命令
 
 ```bash
-vmake build [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>] [--tests]
+vmake build [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k]
 vmake test
 vmake clean [--all]
-vmake distclean
+vmake distclean [--purge-cache]
 vmake rebuild
 ```
 
@@ -237,6 +241,8 @@ vmake repo add --native <name> <url>       # Native 仓库（URL 模板含 {name
 vmake repo remove <name>
 vmake repo list
 vmake repo update <name>
+vmake repo trust <name>                    # 信任远程仓库的 buildscript
+vmake repo untrust <name>                  # 撤销信任
 ```
 
 ### 包管理
@@ -245,7 +251,7 @@ vmake repo update <name>
 vmake pkg list
 vmake pkg search <keyword>
 vmake pkg clean <repo/name> [-a]
-vmake pkg update <repo/name>
+vmake pkg update <repo/name>[@version]
 ```
 
 ### 扩展管理
@@ -260,7 +266,11 @@ vmake ext update [name]
 ### 其他命令
 
 ```bash
-vmake git tag [version] [--minor|--major]             # 版本标签
+vmake git tag [version] [--minor|--major] [--no-push] [-m|--message <msg>]   # 版本标签
+vmake query [targets|config]                          # 显示依赖树 / 包配置
+vmake check-symbols [--strict]                        # 扫描已构建产物的符号问题
+vmake lock update|show                                # 重新解析 / 显示固定版本（.vmake/vmake.lock）
+vmake init-editor                                     # 为 build.go 生成编辑器支持文件
 vmake doctor                                          # 诊断 build.go 模式
 vmake manifest show <path>                            # 显示清单内容
 vmake manifest checkout <path> [name]                 # 按清单检出版本
@@ -273,7 +283,7 @@ vmake skill uninstall                                 # 卸载 AI 技能
 vmake skill path                                      # 显示安装路径
 ```
 
-全局选项：`-v` (verbose), `-V` (very verbose), `-q` (quiet)
+全局选项：`-v` (verbose), `-V` (very verbose), `-q` (quiet), `-y` (交互提示自动确认)
 
 ## 开发文档
 

@@ -64,7 +64,10 @@ func Main(p *api.Package) {
 # Use TUI to configure
 vmake config
 
-# Or override via command line (if toolchain supports)
+# Or set option values non-interactively (format: [pkg/]option=value)
+vmake config --set <pkg>/ssl=true --set <pkg>/optimization=O3
+
+# The global build mode (debug/release) can also be overridden per build
 vmake build --mode debug
 ```
 
@@ -72,8 +75,8 @@ vmake build --mode debug
 
 - Options are typed: Bool, String, Int, Choice
 - `AddDefines(ctx.If("ssl", "USE_SSL"))` passes the `[]string` directly — `Add*` methods accept `...any` and flatten slices. Do NOT spread with `...` (yaegi cannot spread `[]string` into `...any`)
-- Choice options require `SetValues(...)` with allowed values; `SetDefault` must be one of them (validated after OnConfig)
-- Reading an option with a mismatched accessor (e.g. `ctx.Bool` on an OptionChoice) is a build error — use the accessor matching `SetType`
+- Choice options declare their allowed values with `SetValues(...)`; `SetDefault` must be one of them (validated after OnConfig)
+- Reading an option with a mismatched accessor (e.g. `ctx.Bool` on an OptionChoice) is a build error — use the accessor matching `SetType`: `ctx.Bool`, `ctx.String`, `ctx.Int` (there is no Choice accessor; OptionChoice is read with `ctx.String`)
 
 ## See Also
 

@@ -39,7 +39,7 @@ myproject/
 
 ```bash
 vmake build
-./build/<buildKey>/hello    # Output goes to build/<buildKey>/ (SHA-256 of toolchain+mode+options)
+./build/<buildKey>/hello    # Output goes to build/<buildKey>/ (SHA-256 of toolchain+mode+options+global flags+script hash)
 ```
 
 ## Key Points

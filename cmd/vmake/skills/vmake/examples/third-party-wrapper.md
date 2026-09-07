@@ -56,8 +56,8 @@ p.OnBuild(func(ctx *api.BuildContext) {
         SetKind(api.TargetVoid).
         SetBuildFunc(func(p *api.Package) error {
             p.Configure("--disable-static", "--enable-shared")
-            p.Make()
-            p.Make("install")
+            p.RunIn(p.SrcDir(), "make", "-j4")
+            p.RunIn(p.SrcDir(), "make", "install")
             return nil
         })
 })
@@ -72,14 +72,14 @@ p.OnBuild(func(ctx *api.BuildContext) {
     ctx.Target("customlib").
         SetKind(api.TargetVoid).
         SetBuildFunc(func(p *api.Package) error {
-            p.RunIn(p.SourceDir(), "make", "-j4")
-            p.RunIn(p.SourceDir(), "make", "install", "PREFIX="+p.InstallDir())
+            p.RunIn(p.SrcDir(), "make", "-j4")
+            p.RunIn(p.SrcDir(), "make", "install", "PREFIX="+p.InstallDir())
             return nil
         })
 })
 ```
 
-`p.Run`/`p.RunIn` exit the process on failure and return nothing — call them as statements and `return nil` at the end (use `p.RunEnv` if you need the error).
+`p.Run`/`p.RunIn` exit the process on failure and return nothing — call them as statements and `return nil` at the end (use `p.RunEnv` if you need the error). Note that `p.Make` runs with `-C <BuildDir>`, so it pairs with CMake (which configures out-of-tree into `BuildDir`); after `p.Configure` the generated Makefile is in `SrcDir()`, so run make there with `p.RunIn(p.SrcDir(), "make", ...)`.
 
 ## Stamp-Based Skip with SetConfigFiles
 
@@ -133,7 +133,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 
 ## Key Points
 
-- `SetBuildFunc` callback runs in the package's `BuildDir` context
+- Commands run via `p.Run`/`p.Make`/CMake helpers default to the package's `BuildDir`
 - `p.SrcDir()` — the downloaded source tree (use this for source files, config headers, patching)
 - `p.SourceDir()` — where the package's `build.go` lives (registry package metadata directory)
 - `p.BuildDir()` — scratch directory for intermediate files

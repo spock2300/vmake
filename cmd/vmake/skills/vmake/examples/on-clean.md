@@ -48,4 +48,4 @@ func Main(p *api.Package) {
 
 - examples/simple.md — Minimal build without clean
 - examples/third-party-wrapper.md — TargetVoid with SetBuildFunc pattern
-- examples/firmware.md — Real-world firmware with KConfig and OnClean
+- examples/firmware.md — Real-world firmware with KConfig presets and stamp-based skip

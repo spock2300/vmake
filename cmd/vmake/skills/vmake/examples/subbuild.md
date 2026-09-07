@@ -88,7 +88,7 @@ Phase 1-3: Main build.go
     │
     ├── BuildSubGraph("tools")
     │       └── OnBuild for tools → collects targets
-    │       └── NewBuildGraph → Scheduler with tools' toolchain
+    │       └── NewBuildGraph → BuildPipeline with tools' toolchain
     │       └── builds tools/build/<buildKey>/codegen
     │
     ├── DepOutput("tools:codegen")
@@ -128,11 +128,11 @@ p.OnBuild(func(ctx *api.BuildContext) {
 
 `DepOutput("sublib:sublib")` returns the path to `libsublib.a`. Adding it via `AddLdFlags` passes the full `.a` path directly to the linker.
 
-**Why `AddDeps` won't work:** Sub-graph targets are excluded from the main build graph — the scheduler marks them as "built by subgraph" and skips them. If you write `AddDeps("sublib:sublib")`, the scheduler tries to compile it as part of the main graph AND the subgraph, hitting a double-build error or a target-not-found error. `AddLdFlags(DepOutput(...))` is the only way to link a subgraph-produced artifact.
+**Why `AddDeps` won't work:** Sub-graph packages are removed from the main build's target set after OnBuild execution (`executeOnBuild` deletes every `BuildSubGraph` root package from `allTargets`, `pkg/pipeline/build_phase.go:622`), so the main graph can no longer resolve them. If you write `AddDeps("sublib:sublib")`, dependency resolution fails with a target-not-found error. `AddLdFlags(DepOutput(...))` is the only way to link a subgraph-produced artifact.
 
 ### Nested Sub-Graphs
 
-A sub-graph can itself call `BuildSubGraph` — the `DepOutput` function chains through parent contexts automatically:
+A sub-graph can itself call `BuildSubGraph` — `DepOutput` resolves against the shared target table, so nested subgraph outputs stay visible:
 
 ```go
 // tools/build.go — sub-graph package
@@ -154,7 +154,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 })
 ```
 
-If a dependency is inside the same subgraph, `DepOutput` computes its output locally. If it's in a different subgraph, it delegates to the parent's dep-output resolver. This fallback chain allows arbitrary nesting depth.
+`DepOutput` looks the package up in the build's shared `allTargets`/`pkgDirs` maps (`computeDepOutput`, `pkg/pipeline/build_phase.go:755`), and those maps still contain every sub-graph package while OnBuild callbacks run. Nested subgraph refs like `codegen:gen` and `tools:sublib` therefore resolve regardless of depth.
 
 ## See Also
 

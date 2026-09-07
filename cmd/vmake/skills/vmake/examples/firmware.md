@@ -159,12 +159,16 @@ func Main(p *api.Package) {
         appOutput := ctx.DepOutput("myapp:myapp")
         busyboxBuildDir := ctx.DepBuildDir("busybox:busybox")
 
-        ctx.Target("rootfs").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
+        ctx.Target("rootfs").SetKind(api.TargetVoid).
+            AddDeps("busybox:busybox", "myapp:myapp").
+            SetBuildFunc(func(pkg *api.Package) error {
             staging := filepath.Join(pkg.BuildDir(), "staging")
             os.RemoveAll(staging)
             os.MkdirAll(staging, 0755)
 
-            api.CopyDir(filepath.Join(pkg.SourceDir(), "overlay"), staging)
+            if err := api.CopyDir(filepath.Join(pkg.SourceDir(), "overlay"), staging); err != nil {
+                return err
+            }
 
             bbInstall := filepath.Join(busyboxBuildDir, "_install")
             if _, err := os.Stat(bbInstall); err == nil {
@@ -211,7 +215,9 @@ func Main(p *api.Package) {
         linuxDir := ctx.DepBuildDir("linux:linux")
         rootfsDir := ctx.DepBuildDir("rootfs:rootfs")
 
-        ctx.Target("firmware").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
+        ctx.Target("firmware").SetKind(api.TargetVoid).
+            AddDeps("uboot:uboot", "linux:linux", "rootfs:rootfs").
+            SetBuildFunc(func(pkg *api.Package) error {
             inputs := []string{
                 filepath.Join(ubootDir, "u-boot.bin"),
                 filepath.Join(linuxDir, "zImage"),
@@ -235,7 +241,7 @@ func Main(p *api.Package) {
 - **SetKConfigPatches** — Override specific config values after defconfig generation
 - **SetSrcDir** — Source code in a subdirectory (`src/` for busybox)
 - **SetConfigFiles** — Registers files that invalidate the build stamp on change
-- **Stamp-based skip** — `.vmake_stamp` in BuildDir; stale when config file content changes (SHA-256 hash comparison), source git revision changes, or the stamp is deleted
+- **Stamp-based skip** — `.vmake_stamp` in BuildDir; stale when config file content changes (SHA-256 hash comparison), source git revision changes, a dependency artifact is newer than the stamp, or the stamp is deleted
 - **DepBuildDir** — `ctx.DepBuildDir("busybox:busybox")` returns the dependency's build directory
 - **DepOutput** — `ctx.DepOutput("myapp:myapp")` returns the dependency's output binary path
 - **api.CopyFile/CopyDir/CopyDirIfExists** — File copy utilities from the `api` package

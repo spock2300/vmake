@@ -33,7 +33,7 @@ include the ones your project needs:
 | — | `OnInstall` | Extra install entries (runs when install starts, after builds succeed; items copied together with targets) |
 | clean | `OnClean` | Custom clean logic (runs during `vmake clean`/`distclean`; separate from build pipeline) |
 
-`OnPackage` runs for all packages right after `Main()` is called (before any lifecycle phases). Use it to describe the package (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` downloads remote source to `SourceDir()/src/` — works for both registry packages and local packages that need to wrap a downloaded library.
+`OnPackage` runs for all packages right after `Main()` is called (before any lifecycle phases). Use it to describe the package (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` downloads remote source — for local packages it is linked at `SourceDir()/src/` (and `SrcDir()` points there) — works for both registry packages and local packages that need to wrap a downloaded library.
 
 ## Decision Guide
 
@@ -114,11 +114,11 @@ Also: `flattenAny` silently drops empty strings — never rely on an empty flag 
 
 ### `SetGit`/`AddVersion` — works for local packages too
 
-`SetGit`/`AddVersion` in `OnPackage` is the primary mechanism for registry packages, but it also works for local packages that need to download and compile a remote library (e.g., FreeRTOS, mbedtls). When a local package uses `SetGit`, source is downloaded to `SourceDir()/src/` and `SrcDir()` returns that path, just like registry packages. This is the easiest way to wrap a third-party C library that doesn't need a full registry setup.
+`SetGit`/`AddVersion` in `OnPackage` is the primary mechanism for registry packages, but it also works for local packages that need to download and compile a remote library (e.g., FreeRTOS, mbedtls). When a local package uses `SetGit`, source is downloaded to `SourceDir()/src/` and `SrcDir()` returns that path (registry packages differ: their `SourceDir()` already points at the downloaded checkout, so `SrcDir()` falls back to `SourceDir()`). This is the easiest way to wrap a third-party C library that doesn't need a full registry setup.
 
 ### Path resolution for packages using `SetGit`
 
-When a package uses `SetGit`, `SourceDir()` and `SrcDir()` differ — all `AddFiles` / `AddIncludes` / `AddPublicIncludes` paths resolve from `SourceDir()`, so you must prefix with `"src/"`. See `references/dirs.md` for full rules, edge cases, and the correct code pattern.
+When a **local** package uses `SetGit`, `SourceDir()` and `SrcDir()` differ — all `AddFiles` / `AddIncludes` / `AddPublicIncludes` paths resolve from `SourceDir()`, so you must prefix with `"src/"`. Registry/native packages resolve paths directly from the downloaded checkout: their `SourceDir()` already points at it, and a `"src/"` prefix would double-nest. See `references/dirs.md` for full rules, edge cases, and the correct code pattern.
 
 ### Static library deps with symbols not referenced by your code
 
@@ -155,7 +155,7 @@ Inside build.go, relative paths passed to wrapped stdlib (`os.ReadFile/WriteFile
 | Property | What it returns | When to use |
 |----------|-----------------|-------------|
 | `SourceDir()` | Package root (where build.go lives) | Package metadata files, overlay dirs |
-| `SrcDir()` | Source code dir (`SourceDir()/src/` when `SetGit` downloads source, falls back to `SourceDir()`) | Source files for firmware/third-party builds |
+| `SrcDir()` | Source code dir (`SourceDir()/src/` for local `SetGit` packages, falls back to `SourceDir()`) | Source files for firmware/third-party builds |
 | `BuildDir()` | Scratch dir for intermediate artifacts | Build outputs, stamps |
 | `InstallDir()` | Installation prefix | Headers/libs installed by third-party packages |
 
@@ -205,8 +205,8 @@ vmake locates the project root by walking upward from cwd to find `.vmake/`, `bu
 | Type | How identified | `OnPackage` metadata | Source code location |
 |------|---------------|---------------------|---------------------|
 | **Local** | build.go in project directory | `SetDescription`, `SetLicense`, or `SetGit`/`AddVersion` for remote source | `SourceDir()` (same as build.go), or `SrcDir()` = `SourceDir()/src/` if `SetGit` used |
-| **Registry** | `vmake repo add name url` | `SetGit`, `AddVersion` required | `SrcDir()` (downloaded to `SourceDir()/src/`) |
-| **Native** | `vmake repo add --native name url` | No `SetGit`/`AddVersion` — version from git tag | `SrcDir()` (downloaded to `SourceDir()/src/`) |
+| **Registry** | `vmake repo add name url` | `SetGit`, `AddVersion` required | `SourceDir()` is the downloaded checkout (`vmake_deps/<repo>/<pkg>/src`); `SrcDir()` falls back to `SourceDir()` |
+| **Native** | `vmake repo add --native name url` | No `SetGit`/`AddVersion` — version from git tag | `SourceDir()` == `SrcDir()` (the downloaded checkout; `build.go` sits at its root) |
 
 Registry packages wrap external C/C++ libraries. Native packages are independent vmake projects consumed as dependencies. The resolver checks registry first, then native.
 
@@ -273,7 +273,7 @@ complex dependency graphs. Five layers, applied in order:
 | 5. Prefix | `target.SetSymbolPrefix("v_")` | `objcopy --prefix-symbols=` for third-party C code |
 
 Layer 1 is the foundation — without it, version scripts have weak effect.
-`SetVersionScript` on `TargetObject` is a fatal error (partial link produces
+`SetVersionScript` on `TargetObject` is a build error (partial link produces
 no dynamic symbol table). See `examples/symbol-management.md` for full
 patterns and version-script syntax.
 
@@ -318,7 +318,9 @@ Run `vmake doctor` to detect packages that are missing explicit `AddDeps`.
 - `"utils"` — same-package target
 - `"lib:utils"` — specific cross-package target (build order + link + PublicIncludes)
 - `"lib:*"` or `"official/zlib:*"` — wildcard: all targets from that package + transitive deps
-- `"official/zlib"` — third-party package (expanded to all targets from that package)
+- `"official/zlib"` — third-party package (expanded to all targets from that package + transitive deps)
+
+Invalid refs (empty, whitespace, stray `:`, empty segments) are fatal at declaration time; unknown targets/packages and dependency cycles fail at build-graph time. In `pkg:target`, a `pkg` part without `/` is first resolved as a sub-package name relative to the declaring package (`ResolveSubPackageName`).
 
 ### Version Constraints
 
@@ -337,7 +339,7 @@ Version pins in `.vmake/config.json` entries (set via TUI) take precedence over 
 | 1 | Phase 1 | `nil` | Discover initial dependency graph. All packages (registry and native) are resolved eagerly. `OnRequire` runs for the first time here with nil config. |
 | 2 | Phase 3 (`FilterDeps`) | Real values from `config.json` | After `OnConfig` has resolved all option values, `FilterDeps` re-runs every package's `OnRequire` with actual config. The returned dependencies **replace** `node.Deps`, then topology is re-sorted and needed packages are collected via BFS. |
 
-This is what enables **option-conditional dependencies**. During discovery, direct reads (`ctx.Bool/String/Int`) are build errors — use the discovery-aware helpers. On pass 1 (nil config) `ctx.When(...)` returns `true`, `ctx.If(...)` follows the declared default, and `ctx.Select(...)` returns `""`; on pass 2 all see real values:
+This is what enables **option-conditional dependencies**. During discovery, direct reads (`ctx.Bool/String/Int`) are build errors — use the discovery-aware helpers. On pass 1 (nil config) `ctx.When(...)` returns `true`, `ctx.If(...)` returns its `then` arguments (nil config counts as true), and `ctx.Select(...)` returns `""`; on pass 2 all see real values:
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {
@@ -404,7 +406,7 @@ CONFIG_PLATFORM="linux"
 CONFIG_PLATFORM_LINUX=1
 ```
 
-This lets code use either `#if CONFIG_PLATFORM_LINUX` (specific check) or switch on `CONFIG_PLATFORM` (general check). Note: `-D` defines use comma-delimited `#define` syntax (e.g., `-DCONFIG_PLATFORM_LINUX`), while `autoconf.h` uses `#define CONFIG_PLATFORM_LINUX 1`.
+This lets code use either `#if CONFIG_PLATFORM_LINUX` (specific check) or switch on `CONFIG_PLATFORM` (general check). Note: `-D` defines pass the macro text directly (e.g., `-DCONFIG_PLATFORM_LINUX=1`), while `autoconf.h` writes `#define CONFIG_PLATFORM_LINUX 1`.
 
 ### SetConfigValue: Programmatic Override
 
@@ -435,7 +437,7 @@ During linking, global LD flags are appended after per-target flags; global link
 
 If two packages define the same global option via `GlobalOption()`, their `Type` and `Default` must be **identical** — otherwise the build fails with a fatal error. This constraint ensures all packages agree on the option's meaning. For example, if `chip/build.go` defines `GlobalOption("mcu").SetType(api.OptionString).SetDefault("stm32f405")` and `bsp/build.go` defines `GlobalOption("mcu").SetType(api.OptionChoice)`, the build will fail with a type mismatch error.
 
-There is no merging of definitions: the **first** definition in package resolution order wins for the merged global view (its `SetValues`/`SetDescription` are what every package reads). Each declaring package's own `SetOnApply` callback still runs during that package's config pass — prefer a single declaring package.
+There is no merging of definitions: only `Type` and `Default` are validated for consistency; which definition supplies the merged view's `SetValues`/`SetDescription` is unspecified — prefer a single declaring package. Each declaring package's own `SetOnApply` callback still runs during that package's config pass.
 
 ### Toolchain DefaultFlags
 
@@ -491,11 +493,11 @@ Use `ctx.ToolchainOption()` to allow per-package toolchain switching for sub-gra
 
 ## Stamp-Based Skip (Void Targets)
 
-Local void targets use `.vmake_stamp` in `BuildDir` for incremental builds. Stale when the **content hash** (SHA-256) of files registered via `p.SetConfigFiles(".config")` changes, the git HEAD revision changes, or the stamp file is deleted. Mtime is NOT checked — only SHA-256 content hash and git commit hash.
+Local void targets use `.vmake_stamp` in `BuildDir` for incremental builds. Stale when the **content hash** (SHA-256) of files registered via `p.SetConfigFiles(".config")` changes, the git HEAD revision changes, the stamp file is missing/corrupt, or a **dependency artifact is newer than the stamp**. Target source file mtimes are NOT checked — only SHA-256 content hash and git commit hash (dependency artifacts are compared by mtime).
 
 Use `SetConfigFiles` on `*Package` (in `OnPackage`) to declare which files invalidate the stamp.
 
-**InstallDir changes the skip mechanism entirely.** When a void target has `InstallDir` set (remote packages, or `p.CMakeInstall()` in `SetBuildFunc`), the scheduler checks whether `InstallDir` exists and contains files — if it does, the target is skipped. `.vmake_stamp` is **not** consulted. Force rebuild by deleting the install directory or running `vmake clean --all`.
+**InstallDir changes the skip mechanism entirely.** When a void target has `InstallDir` set (remote packages — their `InstallDir` is `<version>/out/<buildKey>/install` in the global cache), the scheduler checks whether `InstallDir` exists and contains files — if it does, the target is skipped. `.vmake_stamp` is **not** consulted. Force rebuild by deleting the install directory (e.g. `vmake pkg clean <repo/name>`; `vmake clean` only touches local packages' build dirs).
 
 ## Install
 
@@ -535,7 +537,7 @@ vmake build --manifest install/manifest.json
 
 | Command | Description |
 |---------|-------------|
-| `vmake build` | Build (`-j N` parallel compile jobs, `-k` keep-going after failure) |
+| `vmake build` | Build (`-j N` parallel jobs: packages and per-target compiles, `-k` keep-going after failure) |
 | `vmake build --tests` | Build including test targets |
 | `vmake test` | Build + run test targets |
 | `vmake rebuild` | Clean + build |
@@ -581,6 +583,6 @@ Global flags: `-v` verbose, `-V` very-verbose, `-q` quiet, `-y/--yes` assume yes
 - `OnPackage` with `SetGit`/`AddVersion` works for both registry packages and local packages wrapping remote libraries
 - `OnPackage` and `AddKConfig` are single-slot — a second registration is a build error (one kconfig entry per package)
 - `SetLanguages()` exists but has no effect — language is auto-detected from file extension
-- For packages using `SetGit`, `AddFiles` paths resolve from `SourceDir()` — always prefix with `"src/"`
+- For **local** packages using `SetGit`, `AddFiles` paths resolve from `SourceDir()` — always prefix with `"src/"` (registry/native packages resolve from the checkout root directly)
 - Relative file IO inside build.go resolves against the build.go's directory (see Script-relative file IO above)
 - Pass `[]string` directly to `Add*` methods — never spread with `...` (yaegi limitation)

@@ -46,8 +46,8 @@ OnClean（vmake clean 时执行，用于自定义清理逻辑如 make clean）
 
 | 包 | OnRequire | OnConfig | OnBuild | BuildFunc 做什么 |
 |----|-----------|----------|---------|-----------------|
-| **uboot** | — | `KConfig("u-boot")` | TargetVoid | `EnsureConfig && make` |
-| **kernel** | — | `KConfig("linux")` | TargetVoid | `EnsureConfig && make` |
+| **uboot** | — | `KConfig("u-boot")` | TargetVoid | `EnsureConfig && make && make install` |
+| **kernel** | — | `KConfig("linux")` | TargetVoid | `EnsureConfig && make && make install` |
 | **busybox** | — | `KConfig("busybox")` | TargetVoid | `EnsureConfig && make && make install` |
 | **myapp** | — | `Option("debug")` | TargetBinary | vmake 自动编译链接 |
 | **rootfs** | `[busybox, myapp]` | — | TargetVoid | overlay + collect → staging → `mksquashfs` → `rootfs.sqsh` |
@@ -88,6 +88,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
     busyboxBuildDir := ctx.DepBuildDir("busybox:busybox")
     ctx.Target("rootfs").
         SetKind(api.TargetVoid).
+        AddDeps("myapp:myapp", "busybox:busybox").
         SetBuildFunc(func(pkg *api.Package) error {
             // appBin, busyboxBuildDir 通过闭包传入
             return nil
@@ -141,7 +142,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 |------|------|
 | OnConfig 之后、OnBuild 之前 | config.json kconfig → 源码目录 `.config` |
 | menuconfig 后 | 源码目录 `.config` → config.json kconfig |
-| 切换 preset | `make <presetName>` 生成 .config → 编码 → config.json kconfig |
+| 切换 preset | TUI 保存时更新 `selected_preset` 并清空 kconfig；下次构建删除旧 `.config`，由 `make <presetName>` 重新生成（不回写 config.json） |
 
 ---
 
@@ -258,6 +259,7 @@ pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
 ### SetKConfigPatches
 
 ```go
+func (k *KConfigEntry) SetKConfigPatches(patches map[string]string) *KConfigEntry
 ```
 
 Post-defconfig 值补丁，用于在 `make <preset>` 生成 `.config` 后覆盖特定配置项。例如：
@@ -293,7 +295,7 @@ p.OnPackage(func(p *api.Package) {
 })
 ```
 
-对于没有 InstallDir 的本地包，vmake 使用 `.vmake_stamp` 文件（位于 BuildDir）标记成功构建。当任何 ConfigFile 的时间戳比 stamp 文件新时，构建被视为 stale，会重新执行。
+对于没有 InstallDir 的本地包，vmake 在成功构建后于 BuildDir 写入 `.vmake_stamp` 文件（JSON），记录 `config_hash`（`SetConfigFiles` 文件**内容**的 SHA256，缺失文件跳过——删除文件同样构成变更）与 `source_rev`（SrcDir 的 git HEAD）。当 stamp 缺失或损坏、config 文件内容变化、git HEAD 变化，或有依赖产物比 stamp 新时，构建被视为 stale，会重新执行。
 
 ---
 
@@ -321,11 +323,11 @@ VMake Configuration
 
 ### 4.2 preset 切换
 
-使用左右箭头键循环切换预设。切换 preset 时会触发以下流程：
+使用左右箭头键循环切换预设。切换 preset 时仅在 TUI 内记录新选择，保存时写入 config.json：
 
-1. 若 `.config` 已存在，删除 `.config`（因为 preset 已变更，旧配置不再有效）
-2. 更新 config.json 中的 `selected_preset`
-3. 保存时将 kconfig 清空（preset 切换后尚未生成新 `.config`）
+1. 更新 config.json 中的 `selected_preset`
+2. 若该包未运行过 menuconfig，保存时将 kconfig 清空（preset 已变更，旧配置不再有效）
+3. 旧 `.config` 文件的删除延迟到下次构建：restoreKConfigFiles 检测到「有条目但 kconfig 为空」时删除 `.config`，随后由 EnsureConfig 以新 preset 重新生成
 
 ### 4.3 Run menuconfig 流程
 
@@ -354,9 +356,9 @@ vmake 的 `Package` 有三个目录：`SourceDir`（源码目录）、`BuildDir`
 | 包类型 | BuildDir | 原因 |
 |--------|----------|------|
 | 本地包 | `<SourceDir>/build/<key>/` | 与源码分离，key 由工具链+模式+选项生成 |
-| 远程包 | `<packagesDir>/<name>/<version>/<key>/build/` | 包管理目录下，与 InstallDir 同级 |
+| 远程包 | `<缓存目录>/<repo>/<pkg>/<version>/out/<key>/build/` | 全局缓存目录（`~/.vmake/cache/`）下，与 InstallDir（`.../out/<key>/install`）同级 |
 
-其中 `key` 由 `build.BuildKey(ccPath, mode, opts)` 生成，确保不同工具链/模式/选项的构建产物隔离。
+其中 `key` 由 `build.BuildKey(toolchain, mode, options, extra)` 生成（`extra` 包含版本、commit、全局 flags 哈希、补丁哈希、脚本哈希），确保不同工具链/模式/选项/版本的构建产物隔离。
 
 ### 5.2 交叉编译环境变量
 
@@ -382,12 +384,12 @@ pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
 
 | 方法 | 工作目录 | 环境变量 | 失败行为 |
 |------|----------|----------|----------|
-| `pkg.Make(args...)` | BuildDir | 自动传递 pkg.Env() | `os.Exit(1)` |
+| `pkg.Make(args...)` | BuildDir | 自动传递 pkg.Env() | 返回 error |
 | `pkg.Run(cmd, args...)` | BuildDir | 无 | `os.Exit(1)` |
 | `pkg.RunEnv(env, cmd, args...)` | BuildDir | 指定 env map | 返回 error |
 | `pkg.RunIn(dir, cmd, args...)` | 指定 dir | 无 | `os.Exit(1)` |
 
-> `Make()` 和 `Run()` 内部使用 `exec.RunFatal`，失败时直接 `os.Exit(1)` 不会返回 error。BuildFunc 中调用 `pkg.Make(...)` 无需检查返回值，进程已在失败时退出。注意 `pkg.Run()` 固定在 BuildDir 中执行，不可指定其他目录。
+> `Run()` 和 `RunIn()` 内部使用 `exec.RunFatal`，失败时直接 `os.Exit(1)` 不会返回 error；`Make()` 和 `RunEnv()` 内部使用 `exec.RunWithEnv`，失败时返回 error，BuildFunc 中应检查返回值（或直接 `return pkg.Make(...)`）。注意 `pkg.Run()` 固定在 BuildDir 中执行，不可指定其他目录。
 
 ---
 
@@ -553,7 +555,7 @@ func Main(p *api.Package) {
 }
 ```
 
-vmake 自动编译、链接，`vmake install` 自动安装到 `<prefix>/bin/myapp`。
+vmake 自动编译、链接，`vmake build --install` 自动安装到 `<prefix>/bin/myapp`。
 
 ### 6.5 分区包（rootfs）
 
@@ -576,7 +578,9 @@ func Main(p *api.Package) {
         appOutput := ctx.DepOutput("myapp:myapp")
         busyboxBuildDir := ctx.DepBuildDir("busybox:busybox")
 
-        ctx.Target("rootfs").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
+        ctx.Target("rootfs").SetKind(api.TargetVoid).
+            AddDeps("busybox:busybox", "myapp:myapp").
+            SetBuildFunc(func(pkg *api.Package) error {
             staging := filepath.Join(pkg.BuildDir(), "staging")
             imageFile := filepath.Join(pkg.BuildDir(), "rootfs.sqsh")
             os.RemoveAll(staging)
@@ -647,7 +651,9 @@ func Main(p *api.Package) {
         rootfsBuildDir := ctx.DepBuildDir("rootfs:rootfs")
         appBuildDir := ctx.DepBuildDir("app:app")
 
-        ctx.Target("firmware").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
+        ctx.Target("firmware").SetKind(api.TargetVoid).
+            AddDeps("uboot:uboot", "linux:linux", "rootfs:rootfs", "app:app").
+            SetBuildFunc(func(pkg *api.Package) error {
             ubootBin := filepath.Join(ubootBuildDir, "u-boot.bin")
             zImage := filepath.Join(linuxBuildDir, "zImage")
             rootfsImg := filepath.Join(rootfsBuildDir, "rootfs.sqsh")
@@ -687,13 +693,14 @@ busyboxBuildDir := ctx.DepBuildDir("busybox:busybox")
 路径关系：
 
 ```
-DepBuildDir("busybox:busybox")  = <packagesDir>/busybox/<version>/<key>/build/
-                                    ├── _install/        (make install 产物)
-                                    └── busybox          (TargetVoid 占位文件)
+DepBuildDir("busybox:busybox")  = <SourceDir>/build/<key>/       (本地包；SetGit 时源码位于 <SourceDir>/src/)
+                                    └── _install/     (make install 产物)
 
 DepBuildDir("rootfs:rootfs")    = <SourceDir>/build/<key>/
-                                    ├── staging/          (中间目录)
-                                    └── rootfs.sqsh       (分区镜像)
+                                    ├── staging/      (中间目录)
+                                    └── rootfs.sqsh   (分区镜像)
+
+远程包 BuildDir                 = <缓存目录>/<repo>/<pkg>/<version>/out/<key>/build/
 ```
 
 > `DepBuildDir(depRef)` 内部实现为 `filepath.Dir(ctx.DepOutput(depRef))`。TargetVoid 没有实际产物文件，`DepOutput` 返回的路径指向 `<BuildDir>/<targetName>`，该文件不存在但路径有效。下游包通过 `DepBuildDir` 获取 BuildDir，再按约定拼接文件名。
@@ -718,13 +725,13 @@ vmake build
 │   │   uboot ──────────────────┘
 │   │
 │
-├── Phase 2a: ResolveDeferred → 解析远程包 → 更新拓扑排序
-│
-├── Phase 2b: OnConfig → 收集 Options + KConfig 条目
+├── Phase 2a: OnConfig → 收集 Options + KConfig 条目 → 运行 OnApply 回调
 │   └── KConfig 条目注册完毕，但尚未恢复 .config
 │
-├── Phase 2c: FilterDeps → 使用真实配置重新执行 OnRequire，替换节点依赖，
+├── Phase 2b: FilterDeps → 使用真实配置重新执行 OnRequire，替换节点依赖，
 │              BFS 收集实际需要的包（移除未选中的条件依赖）
+│
+├── FilterDeps 之后：物化远程包源码 → 写入 .vmake/vmake.lock → 应用补丁
 │
 ├── Phase 2.5: 恢复 .config（FilterDeps 之后、OnBuild 之前）
 │   └── 对每个有 kconfig 的包，按拓扑序调用 restoreKConfigFiles：
@@ -733,16 +740,16 @@ vmake build
 │       ├── config.json 有 kconfig 内容但与磁盘一致 → 跳过（避免 mtime 变化导致缓存失效）
 │       └── config.json 有 kconfig 内容且与磁盘不同 → 写入 .config + ApplyKConfigPatches
 │
-├── Phase 3: OnBuild（拓扑序执行）
+├── Phase 3: OnBuild（拓扑序执行，声明目标后交由调度器构建）
 │   ├── myapp TargetBinary: 编译链接
 │   ├── busybox TargetVoid: EnsureConfig + make + make install
-│   ├── linux TargetVoid: EnsureConfig + make
-│   ├── uboot TargetVoid: EnsureConfig + make
+│   ├── linux TargetVoid: EnsureConfig + make + make install
+│   ├── uboot TargetVoid: EnsureConfig + make + make install
 │   ├── rootfs TargetVoid: overlay + collect → staging → mksquashfs → rootfs.sqsh
 │   ├── boot TargetVoid: zImage + dtb + overlay → staging → mkimage → boot.img
 │   └── firmware TargetVoid: collect images → firmware.img
 │
-└── Phase 4: 保存配置（如有变更）
+└── Phase 4: 调度执行（Scheduler）→ 输出构建结果
 ```
 
 ---
@@ -755,7 +762,7 @@ vmake build
 
 v1 中曾提供 `autoWireRequireDeps()` 自动将 `AddRequires` 声明的依赖补全到未显式 `AddDeps` 的目标上。该机制在 v2 中被移除，每个目标必须显式声明构建图边。
 
-迁移方法：检查所有 build.go，确保每个需要依赖其他包的目标都调用了 `AddDeps`。详见 `docs/MIGRATION_V2.md`。
+迁移方法：运行 `vmake doctor` 检测仍依赖自动补全的 build.go（`AddRequires` 而目标无 `AddDeps`），确保每个需要依赖其他包的目标都显式调用 `AddDeps`。
 
 ---
 
@@ -806,7 +813,7 @@ my-firmware/
 | **2** | KConfig 基础：类型、API、config.json 扩展、编码/解码 | 已完成 |
 | **3** | TUI 扩展：预设选择器、menuconfig 集成（两步执行） | 已完成 |
 | **4** | 构建集成：.config 恢复（Phase 2.5）、EnsureConfig、SetKConfigPatches | 已完成 |
-| **5** | 完整示例：test_data 固件项目（uboot + kernel + busybox + app + 分区 + firmware） | 已完成 |
+| **5** | 完整示例：test_linux/17_firmware 固件项目（uboot + kernel + busybox + app + 分区 + firmware） | 已完成 |
 | **6** | 高级功能：FIT Image、OTA A/B、签名、多板级管理 | 后续 |
 
 ---
@@ -823,8 +830,8 @@ my-firmware/
 | 配置生成 | EnsureConfig | 检查 .config 存在性，自动 `make <preset>` + SetKConfigPatches |
 | 配置恢复 | restoreKConfigFiles skip rules | 无条目跳过、空 kconfig 删除、有内容仅变化时写入（避免 mtime 失效） |
 | 交叉编译 | Make() 自动传递 Env() | 不改变 BuildFunc 使用方式，`pkg.Make()` 自动携带 CROSS_COMPILE |
-| BuildDir | 与 SourceDir 分离 | 本地包 `<SourceDir>/build/<key>/`，远程包 `<packagesDir>/.../build/` |
-| 构建缓存 | SetConfigFiles + stamp | ConfigFile 比 stamp 新则重新构建 |
+| BuildDir | 与 SourceDir 分离 | 本地包 `<SourceDir>/build/<key>/`，远程包 `<缓存目录>/<repo>/<pkg>/<version>/out/<key>/build/` |
+| 构建缓存 | SetConfigFiles + stamp | ConfigFile 内容哈希或 git HEAD 变化（或有依赖产物更新）则重新构建 |
 | 分区 | 普通包 | BuildFunc 做 overlay + collect + 外部工具生成分区镜像，不新增 API |
 | 固件 | 普通包 | 收集分区镜像文件 → 合成固件，完全用户可控 |
 | 依赖产物路径 | DepBuildDir | 封装 `filepath.Dir(DepOutput(...))`，推荐 API |

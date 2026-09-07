@@ -22,7 +22,7 @@ Go-based C/C++ build system. Build instructions are written in Go (`build.go`) u
 | 4 | `OnBuild` | Generate build targets |
 | 5 | Compile & Link | Scheduler compiles sources and links targets |
 | 6* | Install | Optional install (only with `--install` flag) |
-| — | `OnInstall` | Post-install custom logic |
+| — | `OnInstall` | Install-phase hook: declare `AddInstalls` entries / install filter (runs before files are copied) |
 
 `OnPackage` runs during buildscript extraction, right after `Main()` is called and before any lifecycle phases. Use it for package metadata (`SetDescription`, `SetLicense`, `SetHomepage`). `SetGit`/`AddVersion` inside `OnPackage` is for **registry repo** packages — native repo versions come from git tags automatically; local packages can also use `SetGit`/`AddVersion` for source download.
 
@@ -30,7 +30,7 @@ Go-based C/C++ build system. Build instructions are written in Go (`build.go`) u
 
 `If` (if bool then values), `Select` (map option value), `When` (compare value, returns bool; negate for inverse conditions).
 
-All setter methods return the receiver for chaining. Use `filepath.Join()` for filesystem paths. Package IDs use `/` (e.g., `official/zlib`), target IDs use `:` (e.g., `lib:utils`). `SetBuildFunc` callback receives `*Package`, returns `error`.
+All setter methods return the receiver for chaining (exception: `SetDefaultFlags` returns nothing). Use `filepath.Join()` for filesystem paths. Package IDs use `/` (e.g., `official/zlib`), target IDs use `:` (e.g., `lib:utils`). `SetBuildFunc` callback receives `*Package`, returns `error`.
 
 # API Reference
 
@@ -86,14 +86,14 @@ Import: `github.com/spock2300/vmake/pkg/api`
 
 ### Build Helpers (run in OnBuild/OnInstall/SetBuildFunc)
 
-Exit-on-failure helpers use `exec.RunFatal` (call `os.Exit` on failure) and return **nothing**: `Run`, `RunIn`, `CMakeConfigure`, `CMakeBuild`, `CMakeInstall` (plus their `CleanContext` wrappers). Real-error helpers: `RunEnv`, `Make`, `Configure`. Never `return` an exit-on-failure helper — call it as a statement.
+Exit-on-failure helpers use `exec.RunFatal` (call `os.Exit` on failure) and return **nothing**: `Run`, `RunIn`, `CMakeConfigure`, `CMakeBuild`, `CMakeInstall` (plus the `CleanContext` `Run`/`RunIn` wrappers). Real-error helpers: `RunEnv`, `Make`, `Configure`. Never `return` an exit-on-failure helper — call it as a statement.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `Run` | `(name string, args ...string)` | Run command in BuildDir (os.Exit on failure) |
 | `RunIn` | `(dir, name string, args ...string)` | Run command in dir (os.Exit on failure) |
 | `RunEnv` | `(env map[string]string, name string, args ...string) error` | Run with extra env vars in BuildDir (**returns real error**) |
-| `CMakeConfigure` | `(extraArgs ...string)` | cmake -S SrcDir -B BuildDir --prefix=InstallDir (+ compiler, build type) |
+| `CMakeConfigure` | `(extraArgs ...string)` | cmake -S SrcDir -B BuildDir -DCMAKE_INSTALL_PREFIX=InstallDir (+ compilers, build type, cross-compilation settings) |
 | `CMakeGlobalFlagsArgs` | `() []string` | Returns `-DCMAKE_C_FLAGS=...` etc. from global flags for CMake |
 | `MergedCFlags` | `(extra ...string) string` | Merge global C flags + extra, space-joined |
 | `MergedCxxFlags` | `(extra ...string) string` | Merge global C++ flags + extra, space-joined |
@@ -103,7 +103,7 @@ Exit-on-failure helpers use `exec.RunFatal` (call `os.Exit` on failure) and retu
 | `Configure` | `(extraArgs ...string) error` | SrcDir/configure --prefix=... (+ --host when cross) |
 | `Make` | `(args ...string) error` | make -C BuildDir with `pkg.Env()` (**returns real error**; no implicit -j) |
 
-Dry-run aware: in dry-run mode (query/check-symbols), all helpers log commands without executing them.
+Dry-run aware: in dry-run mode (query/check-symbols/install), all helpers log commands without executing them.
 
 ### Property Getters
 
@@ -198,6 +198,8 @@ All setters are fluent (return `*Target`).
 | `AddExcludeLibs` | `(libs ...string)` | Strip symbols from absorbed static archives via `-Wl,--exclude-libs=` |
 | `SetSymbolBinding` | `(mode string)` | `"static"` → `-Bsymbolic`; `"static-functions"` → `-Bsymbolic-functions` |
 | `SetSymbolPrefix` | `(prefix string)` | Post-link `objcopy --prefix-symbols=` (fatal on double-set) |
+
+`AddDeps` ref grammar (`pkg/api/depref.go`): a ref without `:` and `/` is a target of the declaring package; `pkg:target` selects one target; `pkg:*` or a `/`-containing path (e.g. `"official/zlib"`) expands to all targets of that package plus its transitive package deps (flat closure, deduplicated). Validation is fatal at declaration time (empty/whitespace refs, multiple `:`, empty segments, malformed paths); unknown targets (`dependency not found`), unknown packages (`package not found in build graph`) and cycles fail at build-graph time. A `pkg` part without `/` in `pkg:target` is first resolved relative to the declaring (sub-)package.
 | `UseDependencyLinkerScript` | `()` | Auto-inherit linker script from dependency |
 | `AddPostLink` | `(tool string, args ...string)` | Post-link step: `{output}` placeholder |
 | `AddPostLinkHex` | `()` | `objcopy -O ihex {output} {output}.hex` |
@@ -207,7 +209,7 @@ All setters are fluent (return `*Target`).
 | `AddPostLinkDeps` | `(files ...string)` | Extra input files for post-link steps (SourceDir-relative); any change/missing → relink + re-run all post-link (no-op on Prebuilt targets, which short-circuit before the relink check) |
 | `AddBinHeader` | `(inputs ...any)` | Binary files → `.h` headers; output to `build/<buildKey>/generated/`; incremental via mtime |
 
-`SetLanguages(langs ...string)` exists but has **no effect** — language is auto-detected from file extension (`.c` → C, `.cc/.cpp/.cxx` → C++).
+`SetLanguages(langs ...string)` exists but has **no effect** — language is auto-detected from file extension (`.c` → C, `.cc/.cpp/.cxx/.C` → C++).
 
 ### Removers
 
@@ -237,6 +239,11 @@ All setters are fluent (return `*Target`).
 | `BuildFunc()` | `func(p *Package) error` |
 | `Prebuilt()` | `string` |
 | `LinkerScript()` | `string` |
+| `VersionScript()` | `string` |
+| `ExcludeLibs()` | `[]string` |
+| `SymbolBinding()` | `string` |
+| `SymbolPrefix()` | `string` |
+| `ProvidedLibs()` | `[]string` |
 | `UseDepLinkerScript()` | `bool` |
 | `PostLinkSteps()` | `[]PostLinkStep` |
 | `PostLinkDeps()` | `[]string` |
@@ -262,12 +269,12 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `SetConfigValue(name, val) *ConfigContext` | Set config value |
 | `GetOptions() map[string]*Option` | All options |
 | `PackageName() string` | Package name |
-| `KConfig(name) *KConfigEntry` | Create/get KConfig entry |
+| `KConfig(name) *KConfigEntry` | Create KConfig entry (single slot — a second call is a build error) |
 | `SetProvidedLinkerScript(path) *ConfigContext` | Declare linker script for consumers |
-| `AddGlobalCFlags(flags...)` | Add global C flags (OnApply only) |
-| `AddGlobalCxxFlags(flags...)` | Add global C++ flags (OnApply only) |
-| `AddGlobalLdFlags(flags...)` | Add global linker flags (OnApply only) |
-| `AddGlobalLinks(links...)` | Add global link libraries (OnApply only) |
+| `AddGlobalCFlags(flags...)` | Add global C flags (effective in OnConfig and OnApply; only applied for packages that survive FilterDeps) |
+| `AddGlobalCxxFlags(flags...)` | Add global C++ flags (same) |
+| `AddGlobalLdFlags(flags...)` | Add global linker flags (same) |
+| `AddGlobalLinks(links...)` | Add global link libraries (same) |
 | `SetDefaultVisibilityHidden() *ConfigContext` | Add `-fvisibility=hidden` globally (C+C++) and `-fvisibility-inlines-hidden` (C++ only) |
 
 ### BuildContext
@@ -325,7 +332,7 @@ All context types embed `ConfigAccessor` for option value access (see below).
 
 ### RequireContext
 
-OnRequire callbacks execute twice: first during graph discovery with nil config values (Phase 1), then again during FilterDeps with actual config values from config.json (Phase 3). This enables option-conditional dependencies. During discovery, direct value reads (`ctx.Bool/String/Int`) are build errors — use `ctx.When`/`ctx.If`/`ctx.Select`. Both passes must declare the **same set of requires** (only guard values may differ).
+OnRequire callbacks execute twice: first during graph discovery with nil config values (Phase 1), then again during FilterDeps with actual config values from config.json (Phase 3). This enables option-conditional dependencies. During discovery, direct value reads (`ctx.Bool/String/Int`) are build errors — use `ctx.When`/`ctx.If`/`ctx.Select`. Pass-2 requires **replace** the dependency edges: a dep whose guard is false in pass 2 is dropped, but a dep declared only in pass 2 (not discovered in Phase 1) is a build error — declare deps unconditionally and condition them with `ctx.When`/`ctx.If`.
 
 | Method | Description |
 |--------|-------------|
@@ -343,9 +350,9 @@ Strict in script contexts (`OnConfig`/`OnBuild`/`OnInstall`/`OnClean`/`OnRequire
 | `String` | `(name string) string` | Get string value (strict: OptionString/OptionChoice) |
 | `Int` | `(name string) int` | Get int value (strict: OptionInt; coerces float64/int64) |
 | `BoolStr` | `(name string) string` | Returns "ON"/"OFF" |
-| `If` | `(option string, then ...string) []string` | `then` values if bool option is true; discovery-aware (falls back to declared default) |
+| `If` | `(option string, then ...string) []string` | `then` values if bool option is true; when config is nil (discovery) returns `then` unconditionally; when unset, falls back to declared default |
 | `Select` | `(option string, mapping map[string]string) string` | Map option value; returns `""` when config is nil (discovery) or value unmapped |
-| `When` | `(option string, value any) bool` | Compare option value, numerics across int/float64; returns `true` when config is nil (discovery) |
+| `When` | `(option string, value any) bool` | Compare option value (numerics across int/float64); falls back to declared default when unset; returns `true` when config is nil (discovery) |
 | `Option` | `(name string) *Option` | Get or create option (build error after the config phase) |
 
 ---

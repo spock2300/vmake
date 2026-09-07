@@ -143,11 +143,11 @@ to strip them:
 ctx.Target("libfoo").
     SetKind(api.TargetShared).
     AddFiles("src/*.c").
-    AddDeps("vendor:helper_lib").   /* static lib from another package */
-    AddExcludeLibs("helper_lib")    /* don't re-export its symbols */
+    AddDeps("helper").              /* static lib from another package */
+    AddExcludeLibs("libhelper")     /* don't re-export its symbols */
 ```
 
-This passes `-Wl,--exclude-libs=helper_lib` to the linker. Use `ALL` to strip
+This passes `-Wl,--exclude-libs=libhelper` to the linker. Use `ALL` to strip
 every static archive's symbols.
 
 **GNU ld quirk**: when the archive is linked by file path (not `-l`),
@@ -231,7 +231,7 @@ func Main(p *api.Package) {
             AddFiles("src/*.c").
             AddPublicIncludes("include").
             SetVersionScript("export.map").        /* Layer 2: declare */
-            SetSymbolBinding("static").            /* Layer 3: bind */
+            SetSymbolBinding("static")             /* Layer 3: bind */
     })
 }
 ```

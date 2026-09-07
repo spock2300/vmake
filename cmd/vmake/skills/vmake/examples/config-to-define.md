@@ -7,13 +7,13 @@ Pick the right one based on **macro naming** and **scope**.
 
 | Mechanism | Scope | Macro naming | When |
 |---|---|---|---|
-| `GenerateConfigDefines()` | All targets in this package | Auto: `-DCONFIG_<NAME>=<value>` | You control both option names and C code (`#if CONFIG_FOO`) |
+| `GenerateConfigDefines()` | All targets in this package | Auto: `-DCONFIG_<NAME>=<value>` (bool true → `=1`, string → quoted; disabled bool → no define) | You control both option names and C code (`#if CONFIG_FOO`) |
 | `OnBuild` + `ctx.Bool()` + `AddDefines` | One target (in this package) | Manual: any name | Third-party library expects specific names (e.g., lwIP wants `LWIP_PERF`, not `CONFIG_LWIP_PERF`) |
 | `SetOnApply` + `AddGlobalCFlags` | Global (all packages) | Manual: any name | Architecture-wide flags all packages need (e.g., `-DAIC8800M40`) |
 
 ## Mechanism 1: GenerateConfigDefines — Automatic CONFIG_ Prefix
 
-Simplest. Register options in `OnConfig`, call `ctx.GenerateConfigDefines()` in `OnBuild` before any targets. Every option becomes `-DCONFIG_<NAME>=<value>`.
+Simplest. Register options in `OnConfig`, call `ctx.GenerateConfigDefines()` in `OnBuild`. The defines are applied to every target of this package after `OnBuild` returns, so call position doesn't matter. Macro names are `CONFIG_<OPTION_NAME>` (uppercased, `-` → `_`); disabled bools emit no define, and Choice options emit a second `CONFIG_X_<VAL>=1` macro.
 
 ```go
 package main
@@ -31,7 +31,7 @@ func Main(p *api.Package) {
 	})
 
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.GenerateConfigDefines()   // emits -DCONFIG_DEBUG=1 -DCONFIG_TICK_HZ=1000
+		ctx.GenerateConfigDefines()   // debug defaults to false → no define; emits -DCONFIG_TICK_HZ=1000
 
 		ctx.Target("app").SetKind(api.TargetBinary).
 			AddFiles("src/*.c")
@@ -41,7 +41,7 @@ func Main(p *api.Package) {
 
 C code: `#if CONFIG_DEBUG`, configure with `vmake config`.
 
-**Limitation**: macro name is always `CONFIG_<OPTION_NAME>`. If your C code expects a different name (e.g., `LWIP_STATS`), use Mechanism 2.
+**Limitation**: macro name is always `CONFIG_<OPTION_NAME>` (uppercased, `-` → `_`); disabled bools emit no `-D` at all. If your C code expects a different name (e.g., `LWIP_STATS`), use Mechanism 2.
 
 ## Mechanism 2: AddDefines with Manual Naming — Per-Target Control
 

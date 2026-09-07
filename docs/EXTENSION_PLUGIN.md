@@ -93,7 +93,7 @@ vmake 在启动时自动发现并用 yaegi 解释执行插件源码，无需编�
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `name` | string | 是 | 插件名，同时也是 CLI 命令名（`vmake <name>`） |
-| `version` | string | 是 | 语义版本号 |
+| `version` | string | 否 | 语义版本号，显示在 `vmake ext list` |
 | `description` | string | 否 | 一句话描述，显示在 `vmake ext list` |
 | `entry` | string | 是 | 入口 Go 源文件的相对路径（如 `src/main.go`） |
 | `enabled` | bool | 否 | 是否启用，默认 `false`。设为 `true` 时启用该插件 |
@@ -388,7 +388,7 @@ def, err := ctx.LoadToolchainDef()
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `name` | string | 是 | 工具链标识符，用于 `--toolchain <name>` |
-| `version` | string | 是 | 版本号 |
+| `version` | string | 否 | 版本号，影响安装目录名（有版本号为 `<name>-<version>`，否则为 `<name>`） |
 | `display_name` | string | 否 | 可读名称，默认同 `name` |
 | `host` | string | 是 | 宿主平台三元组 |
 | `prefix` | string | 是 | 交叉编译前缀，为空表示无前缀（native） |
@@ -401,7 +401,7 @@ def, err := ctx.LoadToolchainDef()
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `method` | string | 是 | 下载方法：`"lfs"`（Git LFS）或 `"http"` |
-| `file` | string | 是 | 压缩包文件名（放在扩展仓库 `assets/toolchains/` 下） |
+| `file` | string | 是 | 压缩包文件名：`lfs` 方法时位于扩展仓库 `assets/toolchains/` 下，`http` 方法时作为下载到 `~/.vmake/toolchains/` 的文件名 |
 | `url` | string | 否 | HTTP 下载URL（method 为 http 时必填） |
 | `format` | string | 否 | 压缩格式（`tar.gz`/`tar.xz`/`tar.bz2`/`zip`），为空时自动检测 |
 | `sha256` | string | 否 | SHA256 校验和，可选 |
@@ -414,11 +414,11 @@ def, err := ctx.LoadToolchainDef()
 2. 该方法使用 `ScanRepoToolchains()` 扫描扩展仓库根目录下的所有子目录，查找 `toolchain.json`
 3. 对每个包含 `install` 字段的工具链，调用 `SetOnMissing` 注册按需下载回调
 4. 当用户通过 `--toolchain <name>` 或在 `build.go` 选择未安装的工具链时：
-   - `method: "lfs"` → 执行 `git lfs pull` 拉取压缩包 → 解压到 `~/.vmake/toolchains/<name>-<version>/`
-   - `method: "http"` → 从 `url` 下载压缩包 → 解压到 `~/.vmake/toolchains/<name>-<version>/`
+   - `method: "lfs"` → 执行 `git lfs pull` 拉取压缩包 → 解压到 `~/.vmake/toolchains/`
+   - `method: "http"` → 从 `url` 下载压缩包到 `~/.vmake/toolchains/` → 解压到 `~/.vmake/toolchains/`
 5. 下载完成后自动注册工具链，后续可直接使用
 
-压缩包应通过 Git LFS 存储，避免克隆扩展仓库时下载大文件。
+压缩包应通过 Git LFS 存储。解压后，若 `~/.vmake/toolchains/<name>-<version>/` 目录存在，该目录即作为工具链的 `InstallPath`。
 
 ## 实战示例
 

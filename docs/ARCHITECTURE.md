@@ -2,27 +2,29 @@
 
 ## 运行时执行流程
 
-vmake build 执行三个阶段（含延迟解析子阶段）：
+vmake build 执行三个阶段：
 
 ```
+[--manifest: importManifestIntoLock 将清单版本锁定写入 vmake.lock]
+    │
 Phase 1: OnRequire
     扫描 build.go → 解释构建脚本 → 加载构建脚本 → 收集依赖
     │
-    [afterPhase1 钩子：manifest 版本锁定]
+Phase 2: 配置准备 (pipeline.Configure → runConfigPhase)
+    ├── UpdateOrder — 更新拓扑排序
+    └── OnConfig — 执行 OnConfig 回调 → 收集 Option 定义 → 运行 OnApply 回调
+        → 合并全局选项 (api.MergeGlobalOptions)
     │
-Phase 2: 配置准备 (runConfigurePhase)
-    ├── 2a: ResolveDeferred — 解析延迟依赖（远程包）→ 更新拓扑排序
-    ├── 2b: OnConfig — 执行 OnConfig 回调 → 收集 Option 定义 → 合并全局选项
-    └── 2c: FilterDeps — 用真实配置重新执行 OnRequire → 替换节点.Deps → BFS 收集 needed
-    │
-Phase 3: OnBuild (runBuildPhase)
+Phase 3: OnBuild (pipeline.RunBuild)
     ├── resolveBuildConfig — 解析构建配置（模式、工具链）
-    ├── filterAndCollectNeeded — BFS 过滤本地包依赖
+    ├── filterAndCollectNeeded — 用真实配置重新执行 OnRequire（Resolver.FilterDeps
+    │   替换节点.Deps）→ UpdateOrder → BFS 收集 needed
     ├── resolveAllPackageDirs — 解析所有包目录
-    ├── prepareAllPackages — 下载源码、解释 buildscript 脚本
-    ├── applyPatches — 对远程包应用 git patch（git apply --3way）
+    ├── prepareAllPackages — 下载远程包源码、克隆本地 Git 源码、设置子包目录
+    ├── applyPatches — 本地包就地应用（git apply --3way，已应用自动跳过）；
+    │   远程包走内容寻址的 EnsurePatched 克隆
     ├── restoreKConfigFiles — 恢复 KConfig 配置
-    ├── executeAllOnBuild — 执行 OnBuild 回调 → 生成 Target
+    ├── executeOnBuild — 执行 OnBuild 回调 → 生成 Target
     ├── NewBuildGraph — 构建依赖图 → 拓扑排序
     ├── BuildPipeline.Run — 统一编排调度器
     │   └── NewScheduler → scheduler.BuildAll()
@@ -30,14 +32,13 @@ Phase 3: OnBuild (runBuildPhase)
     │           ├── resolveTarget（解析 include/define/flag/dep/genrule）
     │           ├── runGenRules（二进制头文件生成等）
     │           ├── generateConfigHeader（可选配置头文件）
-    │           ├── realizePrebuilt（预编译产物 symlink）
-    │           ├── compile（并行编译源文件）
-    │           ├── link（链接目标）
+    │           ├── compile（compileAll 并行编译源文件）
+    │           ├── link（realizeTarget：prebuilt symlink / 链接 / void BuildFunc）
     │           ├── postLink（objcopy/size/strip 等后处理）
     │           └── publishTarget（发布产物到 InstallDir）
     ├── 生成 compile_commands.json
     │
-    [afterBuild 钩子：test 命令执行测试二进制]
+    [构建完成后：vmake test 以 IncludeTests=true 构建，再执行测试二进制]
     │
 (Optional) Install
     清理安装前缀 → 执行 OnInstall 回调 → dry-run OnBuild 收集安装项
@@ -49,13 +50,13 @@ Phase 3: OnBuild (runBuildPhase)
 ```
 vmake clean
 │
-├── Phase 1-2b: 同 build（OnRequire → OnConfig）
+├── Phase 1-2: 同 build（OnRequire → OnConfig）
 │
 ├── Phase 3: OnClean
 │   └── 对每个包执行 OnClean 回调（自定义清理逻辑，如 make clean）
 │
 └── Directory Cleanup
-    └── 删除构建产物目录（build/、out/）
+    └── 删除本地包的构建产物目录（build/<key>/）
     
 当 resolveToConfigBestEffort 配置解析失败时，降级为扫描目录并清理构建产物（不执行 OnClean 回调）
 ```
@@ -71,6 +72,8 @@ vmake clean
 | `--install-type` | | 安装类型: `runtime`（默认）或 `sdk` |
 | `--manifest` | | 从 manifest 文件锁定版本 |
 | `--tests` | | 包含测试目标 |
+| `--jobs` | `-j` | 并行度：包级并行 + 每 target 编译作业数（0 = NumCPU，1 = 串行） |
+| `--keep-going` | `-k` | 某个 target 失败后继续构建其余独立 target |
 
 ### Install Type 过滤
 
@@ -133,11 +136,11 @@ Scan(root)            LoadBuildScript              Resolve
 ```
 
 1. `buildscript.Scan(root)` 递归扫描 `build.go`，返回 `[]buildscript.Source`
-2. `buildscript.LoadBuildScript(src)` 用 yaegi 解释器加载所有 `.go` 文件（源码合并 → 临时文件 → `EvalPath` → 查找 `Main` → 调用 `Main(*api.Package)`)
+2. `buildscript.LoadBuildScript(src)` 用 yaegi 解释器加载所有 `.go` 文件（`MergeGoSources` 源码合并 → `Eval` → 查找 `Main` → 调用 `Main(*api.Package)`)
 3. `resolver.Resolver` 递归解析依赖，生成 `Graph`（拓扑排序）
-4. `Resolver.ResolveDeferred()` 解析远程（延迟）依赖
+4. `Resolver.ResolveAll` 在 Phase 1 内完成全部依赖解析（本地 + 远程注册包 + native）；远程包源码的下载物化延迟到 Phase 3 `prepareAllPackages`（`EnsureVersion`）
 
-远程包在 Phase 3 源码下载后、构建前会自动应用 git patch（`git apply --3way`），已应用的 patch 会被跳过。
+远程包在 Phase 3 源码下载后、构建前自动应用 git patch：本地包在 SrcDir 就地应用（`git apply --3way`，已应用的 patch 会被跳过），远程包走内容寻址的 `EnsurePatched` 克隆（`<versionDir>/patched/<patchHash>/src`，不可变版本目录不被修改）。
 
 源码：`pkg/buildscript/scanner.go`, `yaegi_loader.go`, `pkg/resolver/resolver.go`
 
@@ -148,8 +151,8 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 ```
 
 1. 执行所有 `OnConfig` 回调，收集 `Option` 定义
-2. `ConfigAccessor.MergeGlobals` 合并全局选项（内置 `mode` + `toolchain` + 用户定义）作为回退
-3. 配置值在后续 TUI 或 CLI flag 中加载
+2. `api.MergeGlobalOptions` 合并全局选项定义（内置 `mode` + `toolchain` + 用户定义）；`ConfigAccessor.MergeGlobals` 将全局定义与值合并进脚本上下文作为回退（不覆盖已有值）
+3. `OnApply` 回调按选项名排序执行；配置值在后续 TUI 或 CLI flag 中加载
 
 源码：`cmd/vmake/root.go`, `pkg/api/accessor.go`
 
@@ -170,19 +173,20 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 `runBuildPhase` 包含多个子步骤：
 
 1. **resolveBuildConfig** — 解析构建模式（debug/release）和工具链选择
-2. **filterAndCollectNeeded** — 从 `IsLocal()` 根节点 BFS 遍历，过滤需要构建的包
+2. **filterAndCollectNeeded** — 用真实配置重新执行 OnRequire（`Resolver.FilterDeps` 替换节点.Deps）→ `UpdateOrder` → 从 `IsLocal()` 根节点 BFS 遍历，过滤需要构建的包
 3. **resolveAllPackageDirs** — 解析所有包的 SourceDir/BuildDir/InstallDir
 4. **prepareAllPackages** — 下载远程包源码、克隆本地 Git 源码、设置子包目录
-5. **applyPatches** — 对远程包应用 git patch（`git apply --3way`），已应用自动跳过
-6. **restoreKConfigFiles** — 从 config.json 恢复 KConfig 配置（详见 KConfig 章节）
-7. **executeAllOnBuild** — 执行所有 `OnBuild` 回调，生成 `map[string]*Target`
-8. **build.NewBuildGraph** — 构建依赖图，`BuildGraph` 展开包级依赖为 target 级传递闭包
-9. **build.NewBuildPipeline** — 创建 `BuildPipeline`（封装图、工具链、包目录、模式、选项、调度器）
-10. **pipeline.Run()** → `NewScheduler(compiler, linker, cache)` → `BuildAll()`:
-    - `ForEachDefault` 按拓扑顺序构建每个默认 Target
-    - 每个 Target: resolveTarget → runGenRules → generateConfigHeader → realizePrebuilt → compile → link → postLink → publishTarget
-    - 并行编译源文件（`compileWorker`）
-11. **生成 compile_commands.json**（通过 `CompileCommandsWriter`）
+5. **writeLockfile** — 写入 `.vmake/vmake.lock`（锁定解析到的版本与 commit）
+6. **applyPatches** — 本地包就地应用 git patch（`git apply --3way`，已应用自动跳过）；远程包走内容寻址的 `EnsurePatched` 克隆
+7. **restoreKConfigFiles** — 从 config.json 恢复 KConfig 配置（详见 KConfig 章节）
+8. **executeOnBuild** — 执行所有 `OnBuild` 回调，生成 `map[string]*Target`
+9. **build.NewBuildGraph** — 构建依赖图，`BuildGraph` 展开包级依赖为 target 级传递闭包
+10. **build.NewBuildPipeline** — 创建 `BuildPipeline`（封装图、工具链、包目录、模式、选项、调度器）
+11. **pipeline.Run()** → `NewScheduler(graph, toolchain, pkgDirs, mode, options)` → `BuildAll()`:
+    - `ForEachDefault(includeTests, fn)` 按拓扑顺序构建每个默认 Target
+    - 每个 Target: resolveTarget → runGenRules → generateConfigHeader → compile（`compileAll`）→ link（`realizeTarget`：prebuilt symlink / 链接 / void BuildFunc）→ postLink → publishTarget
+    - 并行编译源文件（`compileAll` 工作池，`--jobs` 控制编译作业数）
+12. **生成 compile_commands.json**（通过 `CompileCommandsWriter`）
 
 **BuildContext 方法**（`pkg/api/context.go`）：
 - `Exec(name, args...)` — 构建阶段执行命令（vlog.Fatal 退出）
@@ -199,13 +203,19 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 **BuildPipeline**（`pkg/build/pipeline.go`）：
 ```
 BuildPipeline
-├── Graph              *BuildGraph
-├── PkgDirs            map[string]*api.PkgDirs
-├── Toolchain          *toolchain.Toolchain
-├── Mode               string
-├── Options            map[string]map[string]any
-├── Packages           map[string]*api.Package
-└── BuildKeyOverrides  map[string]string
+├── Graph        *BuildGraph
+├── Toolchain    *toolchain.Toolchain
+├── PkgDirs      map[string]*api.PkgDirs
+├── Mode         string
+├── Options      map[string]map[string]any
+├── Packages     map[string]*api.Package
+├── RootDir      string
+├── IncludeTests bool
+├── PkgKeyExtra  map[string]string
+├── PkgLockDir   string
+├── NumWorkers   int
+├── ParallelPkgs int
+└── KeepGoing    bool
 ```
 
 源码：`pkg/build/scheduler.go`, `pkg/build/graph.go`, `pkg/build/pipeline.go`, `pkg/build/stamp.go`
@@ -217,15 +227,15 @@ OnRequire          Resolver            SourceManager       Scheduler
 声明依赖           解析依赖树           下载源码            构建安装
     │                 │                    │                  │
     ▼                 ▼                    ▼                  ▼
-AddRequires      Graph                vmake_deps/<repo>/  TargetVoid.BuildFunc()
-"official/zlib"  ├─ Order []          <pkg>/src/           → CMakeConfigure
-                   └─ Packages map                        → CMakeBuild
-                    └─ *PackageNode                        → CMakeInstall
+AddRequires      Graph                ~/.vmake/cache/      TargetVoid.BuildFunc()
+"official/zlib"  ├─ Order []          <repo>/<pkg>/        → CMakeConfigure
+                   └─ Packages map    <version>/src/       → CMakeBuild
+                    └─ *PackageNode   (vmake_deps/ 为符号链接) → CMakeInstall
 ```
 
 1. `OnRequire` 回调调用 `AddRequires("official/zlib >=1.2")`
 2. `Resolver` 在 `repos/` 中查找包定义，递归解析依赖
-3. `SourceManager.EnsureSource` 通过 git clone 下载源码到 `vmake_deps/<repo>/<pkg>/src/`
+3. `SourceManager.EnsureVersion` 下载源码到全局内容寻址缓存 `~/.vmake/cache/<repo>/<pkg>/<version>/src/`（临时 clone + checkout + 原子重命名，不可变），并在 `vmake_deps/<repo>/<pkg>/src`、`out` 建立符号链接
 4. `Scheduler` 按拓扑顺序构建所有目标，包括 `TargetVoid` 目标
 
 对于 `TargetVoid` 类型的目标（第三方包），Scheduler 调用 `Target.BuildFunc()` 并传入 `*api.Package`，执行 CMake/Autotools 等构建命令。
@@ -237,7 +247,7 @@ AddRequires      Graph                vmake_deps/<repo>/  TargetVoid.BuildFunc()
 Native 仓库是 VMake 原生的包生态系统，用于跨项目共享包。每个包是一个独立的 Git 仓库，`build.go` 位于仓库根目录。
 
 ```
-OnRequire            Resolver.findNativeSource          Phase 2a              Scheduler
+OnRequire            Resolver.findNativeSource          Phase 1               Scheduler
 声明依赖             解析 native 源                      yaegi 加载 build.go   构建
     │                      │                                  │                  │
     ▼                      ▼                                  ▼                  ▼
@@ -257,7 +267,7 @@ AddRequires          1. 检查 registry 仓库（未找到）      LoadBuildScri
 | **build.go** | 包装器（调用 CMake 等） | 真正的构建描述（与本地项目相同） |
 | **源码位置** | build.go 在 registry 仓库中，源码在别处 | build.go 在包的 git 仓库根目录 |
 | **版本来源** | `AddVersion()` 手动映射 | git tag（自动过滤有效 semver） |
-| **版本选择时机** | Phase 3（build.go 编译后） | Phase 1（build.go 编译前 — 需先 clone） |
+| **版本选择时机** | Phase 1（build.go 加载后，按约束 `SelectVersionMulti`） | Phase 1（build.go 编译前 — 需先 clone） |
 | **添加命令** | `vmake repo add name url` | `vmake repo add --native name "https://..../{name}.git"` |
 | **更新** | `vmake repo update name` | `vmake pkg update repo/name` |
 | **搜索** | 列出仓库中所有包 | 仅显示已缓存的包 |
@@ -265,14 +275,14 @@ AddRequires          1. 检查 registry 仓库（未找到）      LoadBuildScri
 ### Native 源码解析流程 (`findNativeSource`)
 
 1. `findSource` 先检查 registry 仓库（`FindPackageGo`），未找到再检查 native
-2. 解析 URL 模板（`{name}` → 包名）
-3. `repo.EnsureRepoAtRef(gitURL, repoDir, "")` 确保 clone/fetch
-4. `repo.ListTags(repoDir)` → `FilterValidVersions`（过滤有效 semver）
-5. `SelectNativeVersion`（按约束选择最高匹配版本）
-6. `repo.EnsureRepoAtRef(gitURL, repoDir, selectedRef)` checkout 到选中 tag
-7. 在仓库根目录查找 `build.go`
-8. 创建 `PackageNode`，注册到 `graph.Packages`（含 `Native *NativePackageInfo`）
-9. Phase 2a `resolveDeferredNode` 编译/加载 build.go，保留 native 字段
+2. 解析 URL 模板（`{name}` → 包名，`repo.ResolveNativeURL`）
+3. 有锁定版本且已缓存时直接 `EnsureVersion`；否则 `sourceMgr.EnsureRefsClone` 维护用于 tag 列表的 refs 克隆（clone/fetch）
+4. `repo.ListTags(refsDir)` → `repo.FilterValidVersions`（过滤有效 semver）
+5. `selectNativeVersion`（config.json pin → vmake.lock → `repo.SelectNativeVersion` 按约束选择最高匹配版本）
+6. `sourceMgr.EnsureVersion` 物化选中版本的不可变 checkout（临时 clone + 原子重命名到全局缓存版本目录）
+7. 在版本目录根查找 `build.go`
+8. 创建 `PackageNode`，注册到 `graph.Packages`（`WithNative` 写入 `Native *NativePackageInfo`）
+9. 仍在 Phase 1：`PreparePackage` 用 yaegi 加载 build.go，随后 `recurseDeps` 继续解析依赖
 
 ### PackageNode Native 字段
 
@@ -282,7 +292,6 @@ type PackageNode struct {
     Source      *buildscript.Source
     Pkg         *api.Package
     Deps        []string
-    Deferred    bool
     Native      *NativePackageInfo
     Constraints []string
 }
@@ -291,6 +300,7 @@ type NativePackageInfo struct {
     GitURL   string            // 解析后的 git URL
     Versions map[string]string // version_string → git_tag
     Selected string            // 选中的版本号
+    Commit   string            // 选中版本对应的 commit
 }
 ```
 
@@ -316,7 +326,9 @@ vmake (RootCmd)
 │   ├── add            # 添加 registry 仓库
 │   ├── remove     # 删除仓库
 │   ├── list       # 列出仓库（显示 registry/native 类型）
-│   └── update     # 更新仓库（native 仓库提示使用 pkg update）
+│   ├── update     # 更新仓库（native 仓库提示使用 pkg update）
+│   ├── trust      # 信任仓库的 build.go 脚本
+│   └── untrust    # 撤销仓库信任
 ├── pkg            # 包管理
 │   ├── list       # 列出已安装包
 │   ├── search     # 搜索包
@@ -329,7 +341,12 @@ vmake (RootCmd)
 │   └── update     # 更新扩展仓库
 ├── git
 │   └── tag        # Git 标签操作（支持版本号自动递增）
-├── query          # 显示依赖树
+├── lock           # vmake.lock 管理（.vmake/vmake.lock）
+│   ├── update     # 重新解析并更新锁定版本
+│   └── show       # 显示锁定版本
+├── query          # 依赖树查询
+│   ├── targets    # 列出构建 target（不构建）
+│   └── config     # 显示某包生效的选项值与生成的宏定义
 ├── manifest       # 安装清单管理
 │   ├── show       # 显示清单内容
 │   └── checkout   # 按记录版本 checkout
@@ -337,19 +354,16 @@ vmake (RootCmd)
 │   ├── install    # 安装 AI skill
 │   ├── uninstall  # 卸载 AI skill
 │   └── path       # 显示安装路径
-├── completion     # 生成 shell 补全脚本
-│   ├── bash       # Bash 补全
-│   ├── zsh        # Zsh 补全
-│   ├── fish       # Fish 补全
-│   ├── powershell # PowerShell 补全
-│   └── install    # 自动安装补全
+├── init-editor    # 生成 build.go 编辑器支持文件（gopls 用的 go.mod）
+├── completion [shell] # 生成 shell 补全脚本（bash/zsh/fish/powershell 作为参数）
+│   └── install    # 自动安装补全到你的 shell 配置
 ├── test           # 构建并运行测试目标
 ├── check-symbols  # 扫描构建产物，检测符号泄漏和版本脚本违规
 └── <plugin>       # 扩展插件提供的命令
     └── ...        # 插件自定义子命令
 ```
 
-全局选项：`-v` (verbose), `-V` (very verbose), `-q` (quiet)
+全局选项：`-v` (verbose), `-V` (very verbose), `-q` (quiet), `-y` (assume yes for interactive prompts)
 
 源码：`cmd/vmake/`（`distclean.go`, `completion.go`）
 
@@ -363,6 +377,8 @@ VMake 使用 `AddDeps` 统一管理所有依赖类型：
 | 跨包 target | `AddDeps("lib:utils")` | 含 `:`，指定具体 target |
 | 通配依赖 | `AddDeps("lib:*")` 或 `AddDeps("official/zlib:*")` | `:*` 结尾，展开为该包所有 target + 传递依赖 |
 | 第三方包 | `AddDeps("official/zlib")` | 含 `/`，展开为该包所有 target + 传递依赖 |
+
+`pkg:target` 中不含 `/` 的 pkg 部分会先按当前（子）包路径相对解析（`ResolveSubPackageName`），兄弟子包之间可用短名。非法引用（空引用、含空白、多个 `:`、`:` 前后段为空、包路径首/尾 `/` 或 `//`）在声明时即 fatal（`ParseDepRef`）；target/包不存在或循环依赖在构建图时报错。
 
 ### 解析流程
 
@@ -411,12 +427,14 @@ PackageNode
 ├── Source      *buildscript.Source
 ├── Pkg         *api.Package
 ├── Deps        []string
-├── Deferred    bool
 ├── Native      *NativePackageInfo
 └── Constraints []string          // 版本约束列表（如 [">=1.2", "<2.0"]）
-    ├── GitURL   string            // native 仓库：解析后的 git URL
-    ├── Versions map[string]string // native 仓库：version_string → git_tag
-    └── Selected string            // native 仓库：选中的版本号
+
+NativePackageInfo
+├── GitURL   string            // native 仓库：解析后的 git URL
+├── Versions map[string]string // native 仓库：version_string → git_tag
+├── Selected string            // native 仓库：选中的版本号
+└── Commit   string            // native 仓库：选中版本对应的 commit
 ```
 
 ### buildscript.Source (`pkg/buildscript/source.go`)
@@ -426,15 +444,17 @@ Source
 ├── Path   string          // build.go 文件路径
 ├── Name   string          // 包名（如 "official/zlib"）
 ├── Dir    string          // 包目录
-└── Origin api.SourceOrigin // SourceLocal 或 SourceRemote
+├── Origin api.SourceOrigin // SourceLocal 或 SourceRemote
+└── Repo   string          // 脚本来源的远程仓库名（如 "official"），本地脚本为空
 ```
 
 ### BuildGraph (`pkg/build/graph.go`)
 
 ```
 BuildGraph
-├── Nodes map[string]*BuildNode              // "pkg:target" → Node
-└── Order []string                           // 拓扑排序结果
+├── Nodes   map[string]*BuildNode              // "pkg:target" → Node
+├── Order   []string                           // 拓扑排序结果
+└── PkgMeta map[string]PkgBuildMeta            // 包级元数据（展开包引用用）
 
 BuildNode
 ├── FullName string                          // "pkg:target"
@@ -445,7 +465,7 @@ BuildNode
 
 `BuildGraph` 提供辅助方法：
 - `GetNode(name) (*BuildNode, error)` — 按 `pkg:target` 全名查找节点
-- `ForEachDefault(fn func(*BuildNode) error) error` — 遍历所有默认目标
+- `ForEachDefault(includeTests bool, fn func(node *BuildNode) error) error` — 遍历所有默认目标（`includeTests` 控制 `SetTest` 目标是否包含）
 
 ### PkgBuildMeta (`pkg/build/graph.go`)
 
@@ -481,7 +501,7 @@ EntryConfig
 
 `Package` 提供的额外方法（用于构建脚本）：
 
-- `AddPatches(paths...)` — 添加 git patch 文件（相对于 SourceDir），远程包在构建前自动应用
+- `AddPatches(paths...)` — 添加 git patch 文件（相对于构建脚本目录 ScriptDir），构建前自动应用
 - `SetPatches(paths...)` — 设置 git patch 文件（覆盖）
 - `SetGenConfigHeader(v bool)` — 启用或禁用配置头文件自动生成
 - `GenConfigHeader()` — 获取配置头文件生成开关状态
@@ -490,7 +510,7 @@ EntryConfig
 - `SetCfgVals(vals)` — 设置配置值
 - `SelectVersionMulti(constraints)` — 多约束版本选择
 - `SelectedPreset()` — 返回已选中的 KConfig preset 名称
-- `ApplyKConfigPatches(configPath, patches)` — 对 `.config` 文件应用字符串替换补丁
+- `ApplyKConfigPatches(configPath, patches)` — 对 `.config` 文件应用按行替换的补丁
 
 源码：`pkg/api/package.go`
 
@@ -556,15 +576,15 @@ type KConfigEntry struct {
 
 1. 检查 `.config` 是否存在且大小 > 0 → 如果有效，返回 `false`（无需重新生成）
 2. 执行 `make <selectedPreset>` 生成 `.config`
-3. 应用 `SetKConfigPatches` 中定义的 post-defconfig 补丁（字符串替换）
+3. 应用 `SetKConfigPatches` 中定义的 post-defconfig 补丁（按行前缀匹配替换）
 4. 返回 `true`（已重新生成配置）
 
 ### ApplyKConfigPatches
 
-`Package.ApplyKConfigPatches(configPath, patches)` 是独立的导出函数，对 `.config` 文件应用字符串替换补丁：
+`Package.ApplyKConfigPatches(configPath, patches)` 是独立的导出函数，对 `.config` 文件应用按行替换的补丁：
 
 - 读取 `.config` 文件
-- 对 `patchValues` 中的每对 `key: value` 执行字符串替换
+- 对每一行，按 `patchValues` 中各 key 做行前缀匹配（key 含 `=` 时直接前缀匹配，否则按 `key=` 匹配），命中则整行替换为对应的 value
 - 写回 `.config` 文件
 
 被 `EnsureConfig` 和 `restoreKConfigFiles` 共同调用。
@@ -580,18 +600,19 @@ type KConfigEntry struct {
 
 ### Stamp-Based Skip（TargetVoid）
 
-本地包（无 `InstallDir`）使用 `.vmake_stamp` 跳过已构建目标：
+无 `InstallDir` 且带 `BuildFunc` 的 `TargetVoid` 目标使用 `.vmake_stamp` 跳过重复构建：
 
-- 构建完成后在 `BuildDir` 写入 `.vmake_stamp`
-- 下次构建时检查 stamp 是否存在
-- 通过 `SetConfigFiles()` 声明的配置文件比 stamp 新时，判定为 stale，重新构建
-- 配置文件不存在也判定为 stale
+- 构建完成后在 `BuildDir` 写入 `.vmake_stamp`（JSON：`config_hash` + `source_rev`）
+- 下次构建时校验 stamp 是否有效（`isVoidUpToDate`）
+- 通过 `SetConfigFiles()` 声明的配置文件内容哈希与 stamp 记录不一致时，判定为 stale，重新构建（内容寻址，非 mtime；文件被删除同样改变哈希）
+- `source_rev`（SrcDir 的 git HEAD）变化也判定为 stale
+- 依赖产物比 stamp 新时同样重建（`depArtifactsNewer`）
 
 ### autoWireRequireDeps（v2 已移除）
 
 历史上 vmake 提供 `autoWireRequireDeps()` 自动补全依赖边：当 target 没有显式 `AddDeps()` 但包通过 `AddRequires` 声明了依赖时，会自动将依赖包的所有 target 作为当前 target 的依赖。
 
-v2 中已移除该 fallback（违反 No-Fallbacks 原则）。每个 target 必须显式声明 `AddDeps`。运行 `vmake doctor` 检测需要迁移的 build.go,详见 `docs/MIGRATION_V2.md`。
+v2 中已移除该 fallback（违反 No-Fallbacks 原则）。每个 target 必须显式声明 `AddDeps`。运行 `vmake doctor` 检测仍依赖旧行为的 build.go（`AddRequires` 与 `AddDeps` 不匹配等）。
 
 ## GenRule 系统
 
@@ -612,7 +633,7 @@ Target 支持在链接后执行自定义后处理步骤，用于嵌入式/RTOS �
 ```go
 type PostLinkStep struct {
     Tool string   // 工具名（如 "objcopy"、"size"）
-    Args []string // 参数模板（{input} / {output} 占位符）
+    Args []string // 参数模板（{output} 占位符 → 链接输出路径）
 }
 ```
 
@@ -623,15 +644,15 @@ type PostLinkStep struct {
 - `AddPostLinkHex()` — 添加 `objcopy -O ihex` 生成 .hex 文件
 - `AddPostLinkBin()` — 添加 `objcopy -O binary` 生成 .bin 文件
 - `AddPostLinkSize()` — 添加 `size {output}` 显示段大小
-- `AddPostLinkStrip()` — 添加 strip 去除调试符号
+- `AddPostLinkStrip()` — 添加 `strip -o {output}.stripped {output}`，生成去除符号的 `.stripped` 副本
 
 ### 执行流程
 
-在 `Scheduler.buildTarget` 中，链接完成后执行所有 `PostLinkStep`：
+在 `Scheduler.finalizeTarget` 中，`realizeTarget`（链接/prebuilt/void）成功后调用 `postLink`，执行所有 `PostLinkStep`：
 
-1. 替换 `{input}` 为链接输出路径，`{output}` 为推导的输出路径
+1. 将参数中的 `{output}` 替换为链接输出路径
 2. 执行每个步骤的工具命令
-3. `PostLinkStep` 的输出也会被 `publishTarget` 和 `installTarget` 处理
+3. `PostLinkStep` 的输出产物会由 `installTarget`（`ArtifactInstaller`，`vmake build --install`）随主产物一起安装
 
 post-link 仅在实际发生 relink（`needRelink=true`）时执行。`AddPostLinkDeps` 声明的输入文件参与 `needRelink` 的 mtime 判定，使 post-link 输入（如 `--keep-global-symbols=file.sym` 中的 `.sym`）变化时能触发 relink + 重跑 post-link，避免静默跳过。
 
@@ -672,10 +693,10 @@ vmake 启动
 plugin.Manager.DiscoverPlugins()  ──▶ 扫描 extensions/*/
     │
     ▼
-plugin.Load()                     ──▶ yaegi 解释 main.go，获取 Main func
+plugin.Load()                     ──▶ 合并解释插件入口目录的全部 .go 文件，查找 Main func
     │
     ▼
-plugin.RunMain(loaded, ctx)       ──▶ chdir 到插件目录，调用 Main(ctx)
+plugin.RunMain(loaded, ctx)       ──▶ 调用插件 Main(ctx)（相对路径经 scriptfs 解析到入口目录）
     │
     ▼
 ctx.AddSubCommand()               ──▶ 注册 cobra.Command

@@ -167,7 +167,7 @@ func Main(p *api.Package) {
 
 ## What This Demonstrates
 
-- **`ctx.GlobalMode()`** - Enable global options (mode, toolchain)
+- **`ctx.GlobalMode()`** - Declare the built-in build-mode option (`mode`: debug/release) as global
 - **`ctx.GlobalOption(name)`** - Package-wide options accessible to all packages
 - **`api.OptionInt`** - Integer option type
 - **`ctx.Int(name)`** - Read int option value

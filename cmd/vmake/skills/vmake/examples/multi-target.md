@@ -107,4 +107,4 @@ Consumers that `AddDeps("mylib")` automatically get `-Iinclude` without specifyi
 ## See Also
 
 - references/api.md - Target setters, TargetKind
-- SKILL.md - Target Quick Reference
+- SKILL.md - Target API at a Glance
