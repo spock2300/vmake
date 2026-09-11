@@ -6,13 +6,13 @@ extension plugin commands appear here too. For plugin details, run
 
 `vmake [--quiet -q --verbose -v --very-verbose -V --yes -y]` - VMake - A Go-based C/C++ build system
   `vmake build [--install -i --install-type --jobs -j --keep-going -k --manifest --mode --prefix -p --tests --toolchain]` - Build the project
-  `vmake check-symbols [--strict]` - Audit exported symbols of shared libraries and binaries via nm
+  `vmake check-symbols [--strict]` - Audit exported symbols of shared libraries and binaries via nm (Linux only; refuses to run on Windows)
   `vmake clean [--all]` - Clean build artifacts
   `vmake completion [shell]` - Generate shell completion script
     `vmake completion install [--shell]` - Install shell completion to your profile
   `vmake config [--set -s]` - Open a TUI to configure build options for all packages.
   `vmake distclean [--purge-cache]` - Deep clean all build artifacts
-  `vmake doctor` - Diagnose build.go for patterns that may break in future vmake versions
+  `vmake doctor` - Diagnose platform prerequisites and build.go patterns
   `vmake ext` - Manage extension repositories
     `vmake ext add <name> <git-url>` - Add an extension repository
     `vmake ext list` - List extension repositories and plugins

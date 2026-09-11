@@ -124,7 +124,7 @@ func BuildSubGraph(rootPkg string, tc *toolchain.Toolchain, tcName string, mode 
 	return nil
 }
 
-func TargetOutputPath(pkgDir, buildKey string, kind api.TargetKind, targetName string) string {
-	filename := targetFilename(kind, targetName)
+func TargetOutputPath(pkgDir, buildKey string, kind api.TargetKind, targetName, targetOS string) string {
+	filename := targetFilename(kind, targetName, targetOS)
 	return BuildPath(pkgDir, buildKey, filename)
 }

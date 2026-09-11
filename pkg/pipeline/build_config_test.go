@@ -355,7 +355,7 @@ func TestMakeLocalPkgDirsLayout(t *testing.T) {
 	if dirs.InstallDir != "" {
 		t.Errorf("local pkgs should not have InstallDir, got %q", dirs.InstallDir)
 	}
-	if !stringsContains(dirs.BuildDir, "/script/build/") {
+	if !stringsContains(dirs.BuildDir, filepath.FromSlash("/script/build/")) {
 		t.Errorf("BuildDir should be under /script/build/: got %q", dirs.BuildDir)
 	}
 }
@@ -365,10 +365,10 @@ func TestMakeRemotePkgDirsLayout(t *testing.T) {
 	if dirs.SourceDir != "/src" {
 		t.Errorf("SourceDir = %q", dirs.SourceDir)
 	}
-	if !stringsContains(dirs.BuildDir, "/vd/out/") {
+	if !stringsContains(dirs.BuildDir, filepath.FromSlash("/vd/out/")) {
 		t.Errorf("BuildDir should be under /vd/out/: got %q", dirs.BuildDir)
 	}
-	if !stringsContains(dirs.InstallDir, "/vd/out/") {
+	if !stringsContains(dirs.InstallDir, filepath.FromSlash("/vd/out/")) {
 		t.Errorf("InstallDir should be under /vd/out/: got %q", dirs.InstallDir)
 	}
 	if dirs.InstallDir == "" {

@@ -24,6 +24,7 @@ type ToolchainDef struct {
 	DisplayName  string         `json:"display_name"`
 	Host         string         `json:"host"`
 	Prefix       string         `json:"prefix"`
+	TargetOS     string         `json:"target_os"`
 	Tools        Tools          `json:"tools"`
 	DefaultFlags DefaultFlags   `json:"default_flags"`
 	Install      *InstallConfig `json:"install"`
@@ -68,6 +69,7 @@ func (d *ToolchainDef) ToToolchain(toolchainsDir string) *Toolchain {
 		DisplayName:  displayName,
 		Host:         d.Host,
 		Prefix:       d.Prefix,
+		TargetOS:     d.TargetOS,
 		Tools:        d.Tools,
 		DefaultFlags: d.DefaultFlags,
 		InstallPath:  installPath,

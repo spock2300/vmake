@@ -23,14 +23,14 @@ func FileExists(path string) bool {
 }
 
 func RemoveAll(path string) error {
-	if err := os.RemoveAll(path); err != nil {
+	if err := RemoveAllRetry(path); err != nil {
 		return fmt.Errorf("remove %s: %w", path, err)
 	}
 	return nil
 }
 
 func RemoveIfExists(path string) {
-	_ = os.RemoveAll(path)
+	_ = RemoveAllRetry(path)
 }
 
 func ListDirs(dir string) ([]string, error) {

@@ -18,9 +18,18 @@ import (
 
 const (
 	snapshotDir  = "test_data/_snapshot"
-	baselineName = "baseline"
 	updateEnvKey = "VMAKE_SNAPSHOT_UPDATE"
 )
+
+// baselineDirName is per-OS: artifact names, path separators and the contents
+// of compile_commands.json are all OS-specific, so Windows baselines are stored
+// alongside the Unix ones rather than replacing them.
+func baselineDirName() string {
+	if runtime.GOOS == "windows" {
+		return "baseline-windows"
+	}
+	return "baseline"
+}
 
 var (
 	skipProjects = map[string]bool{
@@ -351,7 +360,7 @@ func takeSnapshot(t *testing.T, root string, p project) snapshot {
 }
 
 func baselinePath(root string, p project) string {
-	return filepath.Join(root, snapshotDir, baselineName, p.name+".json")
+	return filepath.Join(root, snapshotDir, baselineDirName(), p.name+".json")
 }
 
 func loadBaseline(path string) (snapshot, error) {

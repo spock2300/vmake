@@ -151,7 +151,7 @@ func (m *SourceManager) materialize(pkg *api.Package, versionDir, tag string) er
 		return err
 	}
 	fs.RemoveIfExists(srcTarget)
-	if err := os.Rename(tmpDir, srcTarget); err != nil {
+	if err := fs.RenameRetry(tmpDir, srcTarget); err != nil {
 		return fmt.Errorf("publish %s: %w", srcTarget, err)
 	}
 	return nil
@@ -235,7 +235,7 @@ func (m *SourceManager) EnsurePatched(pkg *api.Package, versionDir string) (stri
 		return "", err
 	}
 	fs.RemoveIfExists(patchedSrc)
-	if err := os.Rename(tmpDir, patchedSrc); err != nil {
+	if err := fs.RenameRetry(tmpDir, patchedSrc); err != nil {
 		return "", fmt.Errorf("publish %s: %w", patchedSrc, err)
 	}
 	return patchedSrc, nil
@@ -315,11 +315,11 @@ func (m *SourceManager) recloneRefs(pkg *api.Package, refsDir string) error {
 		return err
 	}
 	fs.RemoveIfExists(backupDir)
-	if err := os.Rename(refsDir, backupDir); err != nil {
+	if err := fs.RenameRetry(refsDir, backupDir); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpDir, refsDir); err != nil {
-		_ = os.Rename(backupDir, refsDir)
+	if err := fs.RenameRetry(tmpDir, refsDir); err != nil {
+		_ = fs.RenameRetry(backupDir, refsDir)
 		return err
 	}
 	fs.RemoveAll(backupDir)
@@ -359,7 +359,7 @@ func (m *SourceManager) EnsureURL(url string) (string, error) {
 			return "", err
 		}
 		fs.RemoveIfExists(srcDir)
-		if err := os.Rename(tmpDir, srcDir); err != nil {
+		if err := fs.RenameRetry(tmpDir, srcDir); err != nil {
 			return "", fmt.Errorf("publish %s: %w", srcDir, err)
 		}
 	} else if isLocalGitURL(url) {

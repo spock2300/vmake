@@ -127,7 +127,7 @@ func TestBuildAllParallelSchedulesConcurrently(t *testing.T) {
 	}
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
-	if !rec.start["ab"].After(rec.end["a"]) || !rec.start["ab"].After(rec.end["b"]) {
+	if rec.start["ab"].Before(rec.end["a"]) || rec.start["ab"].Before(rec.end["b"]) {
 		t.Error("dependent package ab must start only after deps a and b finish")
 	}
 }

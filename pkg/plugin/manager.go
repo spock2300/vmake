@@ -6,6 +6,7 @@ import (
 
 	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/gitcmd"
 	"github.com/spock2300/vmake/internal/gitstore"
 	"github.com/spock2300/vmake/pkg/repo"
 )
@@ -66,7 +67,7 @@ func (m *Manager) ListRepos() []ExtensionRepo {
 }
 
 func (m *Manager) getRepoURL(repoPath string) string {
-	output, err := iexec.RunWithEnvCaptured(repoPath, nil, "git", "config", "--get", "remote.origin.url")
+	output, err := iexec.RunWithEnvCaptured(repoPath, nil, "git", gitcmd.Args("config", "--get", "remote.origin.url")...)
 	if err != nil {
 		return ""
 	}

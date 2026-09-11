@@ -1,6 +1,7 @@
 package api
 
 import (
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -319,11 +320,11 @@ func TestNewInstalledPackageDefaults(t *testing.T) {
 	if ip.Version != "1.0" {
 		t.Errorf("Version = %q", ip.Version)
 	}
-	if ip.IncludeDir != "/install/include" {
-		t.Errorf("IncludeDir = %q", ip.IncludeDir)
+	if want := filepath.FromSlash("/install/include"); ip.IncludeDir != want {
+		t.Errorf("IncludeDir = %q, want %q", ip.IncludeDir, want)
 	}
-	if ip.BinDir != "/install/bin" {
-		t.Errorf("BinDir = %q", ip.BinDir)
+	if want := filepath.FromSlash("/install/bin"); ip.BinDir != want {
+		t.Errorf("BinDir = %q, want %q", ip.BinDir, want)
 	}
 	if !reflect.DeepEqual(ip.Libs, []string{"libfoo.a"}) {
 		t.Errorf("Libs = %v", ip.Libs)

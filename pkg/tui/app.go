@@ -10,6 +10,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
 )
@@ -62,7 +64,7 @@ type menuconfigDone struct {
 	ensured bool
 }
 
-func ensureConfigCmd(pkgName string, entries []*api.KConfigEntry, workDir string) tea.Cmd {
+func ensureConfigCmd(pkgName string, entries []*api.KConfigEntry, workDir, makeTool string) tea.Cmd {
 	return func() tea.Msg {
 		if len(entries) == 0 {
 			return menuconfigDone{pkgName: pkgName}
@@ -85,14 +87,15 @@ func ensureConfigCmd(pkgName string, entries []*api.KConfigEntry, workDir string
 		}
 		makeCmd := e.MenuconfigCmd()
 		if makeCmd == "" {
-			makeCmd = "make"
+			makeCmd = makeTool
 		}
 		parts := strings.Fields(makeCmd)
-		args := []string{"-C", srcDir}
+		args := []string{"-C", filepath.ToSlash(srcDir)}
 		args = append(args, parts[1:]...)
 		args = append(args, presetName)
-		cmd := exec.Command(parts[0], args...)
-		err := cmd.Run()
+		// Captured, not streamed: this runs inside a tea.Cmd while the
+		// alt-screen UI is active.
+		_, err := iexec.RunWithOptions(parts[0], args, iexec.RunOptions{Quiet: true})
 		if err == nil {
 			api.ApplyKConfigPatches(configPath, e.Patches())
 		}
@@ -100,7 +103,7 @@ func ensureConfigCmd(pkgName string, entries []*api.KConfigEntry, workDir string
 	}
 }
 
-func runMenuconfigCmd(pkgName string, entries []*api.KConfigEntry, workDir string) tea.Cmd {
+func runMenuconfigCmd(pkgName string, entries []*api.KConfigEntry, workDir, makeTool string) tea.Cmd {
 	if len(entries) == 0 {
 		return func() tea.Msg { return menuconfigDone{pkgName: pkgName} }
 	}
@@ -111,10 +114,10 @@ func runMenuconfigCmd(pkgName string, entries []*api.KConfigEntry, workDir strin
 	}
 	menuconfigCmd := e.MenuconfigCmd()
 	if menuconfigCmd == "" {
-		menuconfigCmd = "make menuconfig"
+		menuconfigCmd = makeTool + " menuconfig"
 	}
 	parts := strings.Fields(menuconfigCmd)
-	args := []string{"-C", srcDir}
+	args := []string{"-C", filepath.ToSlash(srcDir)}
 	args = append(args, parts[1:]...)
 	cmd := exec.Command(parts[0], args...)
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
@@ -136,7 +139,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			entries := m.kconfigs[msg.pkgName]
-			return m, runMenuconfigCmd(msg.pkgName, entries, m.workDir)
+			return m, runMenuconfigCmd(msg.pkgName, entries, m.workDir, m.makeTool)
 		}
 		m.runningMenuconfig = false
 		if msg.err != nil {
@@ -547,7 +550,7 @@ func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		entries := m.kconfigs[m.selectedPkg]
 		m.runningMenuconfig = true
 		m.saved = false
-		return m, ensureConfigCmd(m.selectedPkg, entries, m.workDir)
+		return m, ensureConfigCmd(m.selectedPkg, entries, m.workDir, m.makeTool)
 	}
 
 	if msg.String() == "enter" && m.optCursor < len(visible) {

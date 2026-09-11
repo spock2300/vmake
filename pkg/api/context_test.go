@@ -1,6 +1,7 @@
 package api
 
 import (
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -78,8 +79,8 @@ func TestBuildContextDepBuildDir(t *testing.T) {
 		return "/build/dir/libfoo.a"
 	})
 	got := ctx.DepBuildDir("foo:bar")
-	if got != "/build/dir" {
-		t.Errorf("DepBuildDir = %q, want /build/dir", got)
+	if want := filepath.FromSlash("/build/dir"); got != want {
+		t.Errorf("DepBuildDir = %q, want %q", got, want)
 	}
 }
 

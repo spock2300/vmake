@@ -8,6 +8,7 @@ import (
 
 	exec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/gitcmd"
 	"github.com/spock2300/vmake/internal/jsonio"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
@@ -103,6 +104,7 @@ func installOnePackage(ctx *RuntimeContext, name string, node *resolver.PackageN
 		BuildDir:      result.PkgDirs[name].BuildDir,
 		Mode:          result.Mode,
 		TcName:        result.TcName,
+		TargetOS:      result.TargetOS,
 		BuildKey:      result.PkgBuildKeys[name],
 		InstallFilter: installFilter,
 	})
@@ -163,7 +165,7 @@ func writeManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 }
 
 func gitDescribe(dir string) string {
-	out, err := exec.RunWithOptions("git", []string{"describe", "--tags", "--always", "--dirty"}, exec.RunOptions{Dir: dir, Quiet: true})
+	out, err := exec.RunWithOptions("git", gitcmd.Args("describe", "--tags", "--always", "--dirty"), exec.RunOptions{Dir: dir, Quiet: true})
 	if err == nil {
 		return strings.TrimSpace(string(out))
 	}

@@ -26,6 +26,29 @@ VMake is a modern C/C++ project build tool developed in Go. It provides a concis
 go install github.com/spock2300/vmake/cmd/vmake@latest
 ```
 
+### Windows
+
+vmake runs natively on Windows. Two prerequisites cannot be supplied by vmake itself:
+
+1. **Git for Windows** — install the *full* installer, not MinGit. vmake locates the
+   bundled MSYS userland (`sh`, coreutils, `sed`/`awk`/`grep`/`find`, `tar`, `unzip`,
+   `curl`) and prepends it to its own `PATH`. vmake also forces
+   `core.autocrlf=false`/`core.eol=lf` on every git invocation, so cached checkouts
+   stay byte-identical to their repositories regardless of the installer's answer to
+   the "Checkout Windows-style, commit Unix-style" question.
+2. **A MinGW-w64 GCC toolchain** — Git for Windows ships no C compiler and no `make`.
+   Install MinGW-w64 (or MSYS2) so `gcc`, `g++`, `ar`, `ranlib`, `strip`, `nm`,
+   `objcopy` and `make` are on `PATH`.
+
+vmake's storage layout is built on symbolic links, which Windows only permits in
+**Developer Mode** (Settings → System → For developers) or from an elevated shell.
+Run `vmake doctor` to check all of the above; it reports the status of symlinks, the
+Git userland, `make` and the C toolchain, and `vmake doctor` never needs a project to
+be present to report them.
+
+Everything works on Windows except `vmake check-symbols`, which reads ELF dynamic
+symbols and refuses to run there.
+
 ### Debug Mode
 
 Buildscripts are interpreted by yaegi directly — no plugin compilation needed:

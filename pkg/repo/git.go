@@ -10,10 +10,17 @@ import (
 
 	exec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/gitcmd"
 )
 
+// runGit invokes git with the configuration vmake requires for reproducible
+// checkouts; see internal/gitcmd.
+func runGitCmd(args []string, opts exec.RunOptions) ([]byte, error) {
+	return exec.RunWithOptions("git", gitcmd.Args(args...), opts)
+}
+
 func gitRun(dir string, args []string, timeout time.Duration) error {
-	_, err := exec.RunWithOptions("git", args, exec.RunOptions{Dir: dir, Timeout: timeout, Quiet: true})
+	_, err := runGitCmd(args, exec.RunOptions{Dir: dir, Timeout: timeout, Quiet: true})
 	if err != nil {
 		return fmt.Errorf("git %s in %s: %w", args[0], dir, err)
 	}
@@ -21,7 +28,7 @@ func gitRun(dir string, args []string, timeout time.Duration) error {
 }
 
 func Clone(url, dir string) error {
-	_, err := exec.RunWithOptions("git", []string{"clone", url, dir}, exec.RunOptions{
+	_, err := runGitCmd([]string{"clone", url, dir}, exec.RunOptions{
 		Timeout: 5 * time.Minute, Quiet: true,
 	})
 	if err != nil {
@@ -32,8 +39,8 @@ func Clone(url, dir string) error {
 }
 
 func InitSubmodules(dir string) error {
-	_, err := exec.RunWithOptions("git", []string{"submodule", "update", "--init", "--recursive"}, exec.RunOptions{
-		Dir: dir, Timeout: 2 * time.Minute,
+	_, err := runGitCmd([]string{"submodule", "update", "--init", "--recursive"}, exec.RunOptions{
+		Dir: dir, Timeout: 10 * time.Minute,
 	})
 	if err != nil {
 		return fmt.Errorf("git submodule update --init in %s: %w", dir, err)
@@ -100,7 +107,7 @@ func Pull(dir string) error {
 }
 
 func ListTags(dir string) ([]string, error) {
-	output, err := exec.RunWithOptions("git", []string{"tag", "--list"}, exec.RunOptions{Dir: dir, Quiet: true})
+	output, err := runGitCmd([]string{"tag", "--list"}, exec.RunOptions{Dir: dir, Quiet: true})
 	if err != nil {
 		return nil, fmt.Errorf("git tag --list in %s: %w", dir, err)
 	}
@@ -116,7 +123,7 @@ func ListTags(dir string) ([]string, error) {
 }
 
 func GetCurrentCommit(dir string) (string, error) {
-	output, err := exec.RunWithOptions("git", []string{"rev-parse", "HEAD"}, exec.RunOptions{Dir: dir, Quiet: true})
+	output, err := runGitCmd([]string{"rev-parse", "HEAD"}, exec.RunOptions{Dir: dir, Quiet: true})
 	if err != nil {
 		return "", err
 	}
@@ -126,7 +133,7 @@ func GetCurrentCommit(dir string) (string, error) {
 // ResolveCommit resolves a tag or ref to its commit SHA inside an existing
 // clone. Used by manifest import to pin real commits without materializing.
 func ResolveCommit(dir, ref string) (string, error) {
-	output, err := exec.RunWithOptions("git", []string{"rev-parse", ref + "^{commit}"}, exec.RunOptions{Dir: dir, Quiet: true})
+	output, err := runGitCmd([]string{"rev-parse", ref + "^{commit}"}, exec.RunOptions{Dir: dir, Quiet: true})
 	if err != nil {
 		return "", fmt.Errorf("resolve %s in %s: %w", ref, dir, err)
 	}
@@ -139,7 +146,7 @@ func ResolveCommit(dir, ref string) (string, error) {
 // know is taken as the commit itself.
 func ResolveRemoteCommit(url, ref string) (string, error) {
 	args := []string{"ls-remote", url, "refs/tags/" + ref + "^{}", "refs/tags/" + ref, ref}
-	output, err := exec.RunWithOptions("git", args, exec.RunOptions{Timeout: fetchTimeout(), Quiet: true})
+	output, err := runGitCmd(args, exec.RunOptions{Timeout: fetchTimeout(), Quiet: true})
 	if err != nil {
 		return "", fmt.Errorf("ls-remote %s (%s): %w", url, ref, err)
 	}
@@ -181,7 +188,7 @@ func isCommitSHA(s string) bool {
 // not tagged. Local-only; used to rebuild version->tag maps from cached
 // checkouts without touching the network.
 func DescribeTag(dir string) string {
-	output, err := exec.RunWithOptions("git", []string{"describe", "--tags", "--exact-match", "HEAD"}, exec.RunOptions{Dir: dir, Quiet: true})
+	output, err := runGitCmd([]string{"describe", "--tags", "--exact-match", "HEAD"}, exec.RunOptions{Dir: dir, Quiet: true})
 	if err != nil {
 		return ""
 	}
@@ -201,7 +208,7 @@ func IsAlreadyAtRef(dir, ref string) bool {
 	if err != nil {
 		return false
 	}
-	output, err := exec.RunWithOptions("git", []string{"rev-parse", ref + "^{}"}, exec.RunOptions{Dir: dir, Quiet: true})
+	output, err := runGitCmd([]string{"rev-parse", ref + "^{}"}, exec.RunOptions{Dir: dir, Quiet: true})
 	if err != nil {
 		return false
 	}
@@ -209,7 +216,7 @@ func IsAlreadyAtRef(dir, ref string) bool {
 }
 
 func IsPatchApplied(dir, patchFile string) bool {
-	_, err := exec.RunWithOptions("git", []string{"apply", "--reverse", "--check", patchFile}, exec.RunOptions{Dir: dir})
+	_, err := runGitCmd([]string{"apply", "--reverse", "--check", patchFile}, exec.RunOptions{Dir: dir})
 	return err == nil
 }
 

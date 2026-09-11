@@ -6,6 +6,7 @@ import (
 
 	"github.com/spock2300/vmake/internal/exec"
 	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 func (p *Package) MergedCFlags(extra ...string) string {
@@ -87,18 +88,23 @@ func (p *Package) CMakeInstall() {
 }
 
 func (p *Package) Configure(extraArgs ...string) error {
-	args := []string{"--prefix=" + p.dirs.InstallDir}
+	name, args := configureCommand(p.SrcDir())
+	// Slash-separated prefix: it is an sh argv element, and the MSYS runtime
+	// de-quotes backslashes there.
+	args = append(args, "--prefix="+filepath.ToSlash(p.dirs.InstallDir))
 	if p.CrossTarget() != "" {
 		args = append(args, "--host="+p.CrossTarget())
 	}
 	args = append(args, extraArgs...)
-	return p.RunEnv(p.Env(), filepath.Join(p.SrcDir(), "configure"), args...)
+	return p.RunEnv(p.Env(), name, args...)
 }
 
 func (p *Package) Make(args ...string) error {
-	makeArgs := []string{"-C", p.dirs.BuildDir}
+	// Slash-separated -C path: MSYS make de-quotes backslashes in argv, and
+	// forward slashes work for native make implementations too.
+	makeArgs := []string{"-C", filepath.ToSlash(p.dirs.BuildDir)}
 	makeArgs = append(makeArgs, args...)
-	return p.RunEnv(p.Env(), "make", makeArgs...)
+	return p.RunEnv(p.Env(), toolchain.MakeToolOf(p.tc), makeArgs...)
 }
 
 func (p *Package) logAndDryRun(name string, args []string) bool {

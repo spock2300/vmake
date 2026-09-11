@@ -3,20 +3,26 @@ package scriptfs
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
 func TestResolve(t *testing.T) {
+	// "/abs/data.txt" is only absolute on Unix; Windows needs a volume.
+	absPath := "/abs/data.txt"
+	if runtime.GOOS == "windows" {
+		absPath = `C:\abs\data.txt`
+	}
 	s := New("/p/pkg")
 	cases := []struct{ in, want string }{
 		{"data.txt", "/p/pkg/data.txt"},
 		{"sub/data.txt", "/p/pkg/sub/data.txt"},
-		{"/abs/data.txt", "/abs/data.txt"},
+		{absPath, absPath},
 		{"", ""},
 		{"../x", "/p/x"},
 	}
 	for _, c := range cases {
-		if got := s.resolve(c.in); got != c.want {
+		if got := s.resolve(c.in); got != filepath.FromSlash(c.want) {
 			t.Errorf("resolve(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}

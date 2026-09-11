@@ -24,6 +24,7 @@ type BuildResult struct {
 	PkgDirs       map[string]*api.PkgDirs
 	PkgBuildKeys  map[string]string
 	TcName        string
+	TargetOS      string
 	Mode          string
 	InstalledPkgs map[string]*api.InstalledPackage
 	BuildCtxs     map[string]*api.BuildContext
@@ -779,7 +780,7 @@ func (s *buildPhaseState) computeDepOutput(depRef string) string {
 		return ""
 	}
 	if pd.BuildDir != "" {
-		filename := target.Kind().Prefix() + targetName + target.Kind().Ext()
+		filename := api.TargetFilename(target.Kind(), targetName, toolchain.TargetOSOf(s.cfg.Tc))
 		return filepath.Join(pd.BuildDir, filename)
 	}
 	return ""
@@ -901,6 +902,7 @@ func (s *buildPhaseState) buildAndRunPipeline() (*BuildResult, error) {
 		PkgDirs:       s.pkgDirs,
 		PkgBuildKeys:  pkgBuildKeys,
 		TcName:        s.cfg.TcName,
+		TargetOS:      toolchain.TargetOSOf(s.cfg.Tc),
 		Mode:          s.cfg.Mode,
 		InstalledPkgs: s.remote.installedPkgs(s.pkgDirs),
 		BuildCtxs:     s.buildCtxs,

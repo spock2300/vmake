@@ -1,0 +1,57 @@
+name: Windows
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Git for Windows is preinstalled on windows-latest. It supplies the Unix
+      # userland (sh, coreutils, sed/awk/grep/find, tar, unzip, curl) that
+      # internal/gitusr discovers; MinGW-w64 supplies the C toolchain and make,
+      # which Git for Windows does not bundle.
+      - name: Install MinGW-w64 GCC and make
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            make
+          path-type: inherit
+
+      - name: Build
+        run: go build -o vmake.exe ./cmd/vmake
+
+      - name: Vet
+        run: go vet ./cmd/vmake/... ./pkg/... ./internal/...
+
+      - name: Unit tests
+        run: go test ./cmd/vmake/... ./pkg/... ./internal/...
+
+      - name: Platform prerequisites
+        run: ./vmake.exe doctor
+
+      - name: Integration (local project)
+        working-directory: test_data/01_simple_c
+        run: ../../vmake.exe build
+
+      - name: Integration (symlinks, scripts, install)
+        working-directory: test_data/24_symbol_prefix
+        run: ../../vmake.exe build --install
+
+      # Snapshot baselines are per-OS (baseline-windows/). Generate them once on
+      # a Windows machine with `go test -update` in test_data/_snapshot and
+      # commit the result, then re-enable:
+      #   - name: Snapshot tests
+      #     working-directory: test_data/_snapshot
+      #     run: go test -run TestSnapshotsTestData

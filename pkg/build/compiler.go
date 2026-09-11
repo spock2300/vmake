@@ -107,7 +107,6 @@ func ParseDepFile(depPath string) ([]string, error) {
 func tokenizeDepFile(content string) []string {
 	var tokens []string
 	var cur strings.Builder
-	escaped := false
 
 	flush := func() {
 		if cur.Len() > 0 {
@@ -119,20 +118,20 @@ func tokenizeDepFile(content string) []string {
 	for i := 0; i < len(content); i++ {
 		c := content[i]
 		switch {
-		case escaped:
-			cur.WriteByte(c)
-			escaped = false
 		case c == '\\':
-			if i+1 < len(content) && content[i+1] == '\n' {
+			// Make-style escapes: a backslash escapes whitespace, '#' and
+			// itself. Any other backslash is a literal Windows path separator
+			// (C:\dir\file.h), not an escape.
+			if i+1 < len(content) && strings.IndexByte(" \t\n\r#\\", content[i+1]) >= 0 {
+				next := content[i+1]
 				i++
+				if next == '\n' || next == '\r' {
+					continue
+				}
+				cur.WriteByte(next)
 				continue
 			}
-			if i+1 < len(content) && content[i+1] == ' ' {
-				cur.WriteByte(' ')
-				i++
-				continue
-			}
-			escaped = true
+			cur.WriteByte('\\')
 		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
 			flush()
 		case c == ':':

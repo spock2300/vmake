@@ -1,12 +1,16 @@
 package toolchain
 
-import "strings"
+import (
+	"runtime"
+	"strings"
+)
 
 type Toolchain struct {
 	Name         string       `json:"name"`
 	DisplayName  string       `json:"display_name"`
 	Host         string       `json:"host"`
 	Prefix       string       `json:"prefix"`
+	TargetOS     string       `json:"target_os"`
 	Tools        Tools        `json:"tools"`
 	DefaultFlags DefaultFlags `json:"default_flags"`
 	InstallPath  string       `json:"install_path"`
@@ -23,6 +27,41 @@ type Tools struct {
 	SIZE    string `json:"size"`
 	OBJDUMP string `json:"objdump"`
 	NM      string `json:"nm"`
+	MAKE    string `json:"make"`
+}
+
+// TargetOSOrDefault returns the toolchain's target OS. An unset target OS
+// means "same as the host".
+func (t *Toolchain) TargetOSOrDefault() string {
+	if t.TargetOS != "" {
+		return t.TargetOS
+	}
+	return runtime.GOOS
+}
+
+// TargetOSOf returns tc's target OS, defaulting to the host when tc is nil.
+func TargetOSOf(tc *Toolchain) string {
+	if tc == nil {
+		return runtime.GOOS
+	}
+	return tc.TargetOSOrDefault()
+}
+
+// MakeTool returns the make program to invoke.
+func (t *Toolchain) MakeTool() string {
+	if t.Tools.MAKE != "" {
+		return t.Tools.MAKE
+	}
+	return "make"
+}
+
+// MakeToolOf returns tc's make program, defaulting to "make" when tc is nil.
+// Script-facing helpers may run before a toolchain is wired up.
+func MakeToolOf(tc *Toolchain) string {
+	if tc == nil {
+		return "make"
+	}
+	return tc.MakeTool()
 }
 
 type DefaultFlags struct {
@@ -56,5 +95,6 @@ func (t *Toolchain) Env() map[string]string {
 	if t.Tools.NM != "" {
 		env["NM"] = t.Tools.NM
 	}
+	env["MAKE"] = t.MakeTool()
 	return env
 }

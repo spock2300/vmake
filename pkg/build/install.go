@@ -18,6 +18,7 @@ type PkgInstallInfo struct {
 	BuildDir      string
 	Mode          string
 	TcName        string
+	TargetOS      string
 	BuildKey      string
 	InstallFilter api.InstallFilterFunc
 }
@@ -93,7 +94,7 @@ func (i *ArtifactInstaller) installTarget(node *BuildNode) error {
 	}
 
 	if !i.isSDK() && kind == api.TargetStatic {
-		vlog.Info("  SKIP %s (static lib, use --install-type sdk)", targetFilename(kind, target.Name()))
+		vlog.Info("  SKIP %s (static lib, use --install-type sdk)", targetFilename(kind, target.Name(), pkgInfo.TargetOS))
 		return nil
 	}
 
@@ -104,7 +105,7 @@ func (i *ArtifactInstaller) installTarget(node *BuildNode) error {
 		return nil
 	}
 
-	destPath := i.getInstallPath(prefix, target)
+	destPath := i.getInstallPath(prefix, pkgInfo, target)
 
 	if pkgInfo.InstallFilter != nil {
 		if !pkgInfo.InstallFilter(outputPath, true) {
@@ -125,6 +126,16 @@ func (i *ArtifactInstaller) installTarget(node *BuildNode) error {
 
 	if err := CopyFile(outputPath, destPath); err != nil {
 		return fmt.Errorf("install library failed: %w", err)
+	}
+
+	if implib := importLibraryPath(outputPath, pkgInfo.TargetOS, kind); implib != "" {
+		if _, err := os.Stat(implib); err == nil {
+			implibDest := filepath.Join(filepath.Dir(destPath), filepath.Base(implib))
+			vlog.Info("  INSTALL %s -> %s", filepath.Base(implib), implibDest)
+			if err := CopyFile(implib, implibDest); err != nil {
+				return fmt.Errorf("install import library failed: %w", err)
+			}
+		}
 	}
 
 	i.installed[outputPath] = true
@@ -247,16 +258,16 @@ func (i *ArtifactInstaller) installExtraItems(node *BuildNode) error {
 }
 
 func (i *ArtifactInstaller) getOutputPath(pkgName string, pkgInfo *PkgInstallInfo, node *BuildNode) string {
-	name := targetFilename(node.Target.Kind(), node.Target.Name())
+	name := targetFilename(node.Target.Kind(), node.Target.Name(), pkgInfo.TargetOS)
 	if pkgInfo.BuildDir != "" {
 		return filepath.Join(pkgInfo.BuildDir, name)
 	}
 	return BuildPath(i.pkgDirs[pkgName].SourceDir, pkgInfo.BuildKey, name)
 }
 
-func (i *ArtifactInstaller) getInstallPath(prefix string, target *api.Target) string {
+func (i *ArtifactInstaller) getInstallPath(prefix string, pkgInfo *PkgInstallInfo, target *api.Target) string {
 	installDir := target.InstallDir()
-	basename := targetFilename(target.Kind(), target.Name())
+	basename := targetFilename(target.Kind(), target.Name(), pkgInfo.TargetOS)
 
 	if installDir != "" {
 		return filepath.Join(prefix, installDir, basename)

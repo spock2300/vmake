@@ -72,6 +72,31 @@ func Main(p *api.Package) {
 }
 ```
 
+## Platform Notes (Windows)
+
+VMake runs natively on Windows. Preconditions: **Git for Windows** (full installer — it supplies
+`sh`, coreutils, `sed`/`awk`/`grep`/`find`, `tar` and `curl`, which vmake discovers automatically),
+a **MinGW-w64 GCC toolchain** (Git for Windows ships no C compiler and no `make`), and
+**Developer Mode** (the storage layout is symlink-based). `vmake doctor` reports all of these.
+
+When writing build.go that must also work on Windows:
+
+- `p.Make()` and `p.EnsureConfig()` run the *toolchain's* make program (`Toolchain.Tools.MAKE`),
+  which defaults to `make`. Do not hardcode `make` — call `p.Make(...)` / `p.EnsureConfig(dir)`.
+- `p.Configure(...)` runs `./configure` through `sh` automatically on Windows; never exec the
+  script path directly.
+- Artifact names are decided by the toolchain's **target OS**, not the host:
+  `TargetBinary` → `.exe`, `TargetShared` → `.dll` (+ import library `lib<name>.dll.a`, which is
+  what consumers link against on PE targets). Use `api.TargetFilename(kind, name, targetOS)` if you
+  need to compute one.
+- `SetVersionScript`, `AddExcludeLibs` and `SetSymbolBinding` are ELF-only; the build fails with a
+  clear error on a Windows target instead of silently dropping them. There is no PE equivalent.
+- `vmake check-symbols` is Linux-only (it parses `nm -D`).
+- Build filesystem paths with `filepath.Join`. Write `/` only in logical identifiers
+  (`repo/pkg`, `pkg:target`) and glob patterns (`src/**/*.c`) — the glob layer normalizes those, and
+  object names are flattened so `src/foo.c` and `src\foo.c` map to the same object.
+- Prefer `runtime.NumCPU()` over `$(nproc)`: commands are exec'd directly, with no shell expansion.
+
 ## Common Mistakes
 
 ### `pkg.Make()` runs in BuildDir, not SourceDir
@@ -562,8 +587,8 @@ vmake build --manifest install/manifest.json
 | `vmake pkg list/search/clean/update` | Packages (`pkg update <repo/name>[@version] [--dry-run]`) |
 | `vmake ext add/list/remove/update` | Extension repos |
 | `vmake manifest show/checkout` | Install manifest |
-| `vmake check-symbols [--strict]` | Audit exported symbols via nm -D |
-| `vmake doctor` | Diagnose build.go issues |
+| `vmake check-symbols [--strict]` | Audit exported symbols via nm -D (Linux only) |
+| `vmake doctor` | Diagnose platform prerequisites (symlinks, Git userland, make, toolchain) and build.go issues |
 | `vmake init-editor` | Generate go.mod so gopls supports build.go |
 | `vmake git tag` | Version tagging |
 | `vmake skill install/uninstall/path` | AI skill management (`install --project` also installs into ./.claude/skills/) |

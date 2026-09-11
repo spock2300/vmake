@@ -185,6 +185,60 @@ func TestParseDepFileContinuationLines(t *testing.T) {
 	}
 }
 
+func TestParseDepFileWindowsPaths(t *testing.T) {
+	dir := t.TempDir()
+	depPath := filepath.Join(dir, "obj.d")
+	content := `obj.o: C:\Users\build\src.c C:\Users\build\inc\a.h C:\Users\build\inc\b.h` + "\n"
+	_ = os.WriteFile(depPath, []byte(content), 0644)
+
+	deps, err := ParseDepFile(depPath)
+	if err != nil {
+		t.Fatalf("ParseDepFile: %v", err)
+	}
+	if len(deps) != 2 {
+		t.Fatalf("deps = %v, want 2 entries (src.c dropped)", deps)
+	}
+	if deps[0] != `C:\Users\build\inc\a.h` || deps[1] != `C:\Users\build\inc\b.h` {
+		t.Errorf("deps = %v, want Windows separators preserved", deps)
+	}
+}
+
+func TestParseDepFileEscapedSpaceAndBackslash(t *testing.T) {
+	dir := t.TempDir()
+	depPath := filepath.Join(dir, "obj.d")
+	content := `obj.o: C:\src\main.c C:\Program\ Files\sdk\a.h C:\\double\\b.h` + "\n"
+	_ = os.WriteFile(depPath, []byte(content), 0644)
+
+	deps, err := ParseDepFile(depPath)
+	if err != nil {
+		t.Fatalf("ParseDepFile: %v", err)
+	}
+	want := []string{`C:\Program Files\sdk\a.h`, `C:\double\b.h`}
+	if len(deps) != len(want) {
+		t.Fatalf("deps = %v, want %v", deps, want)
+	}
+	for i := range want {
+		if deps[i] != want[i] {
+			t.Errorf("deps[%d] = %q, want %q", i, deps[i], want[i])
+		}
+	}
+}
+
+func TestParseDepFileCRLFContinuation(t *testing.T) {
+	dir := t.TempDir()
+	depPath := filepath.Join(dir, "obj.d")
+	content := "obj.o: src.c \\\r\nC:\\x\\a.h\r\n"
+	_ = os.WriteFile(depPath, []byte(content), 0644)
+
+	deps, err := ParseDepFile(depPath)
+	if err != nil {
+		t.Fatalf("ParseDepFile: %v", err)
+	}
+	if len(deps) != 1 || deps[0] != `C:\x\a.h` {
+		t.Errorf("deps = %v, want [C:\\x\\a.h]", deps)
+	}
+}
+
 func TestIsSourceValidMissingObj(t *testing.T) {
 	dir := t.TempDir()
 	valid, _ := IsSourceValid(

@@ -76,6 +76,7 @@ func YaegiSymbols() map[string]reflect.Value {
 		"ValidateOption":              reflect.ValueOf(ValidateOption),
 		"ParseDepRef":                 reflect.ValueOf(ParseDepRef),
 		"RunScriptSafe":               reflect.ValueOf(RunScriptSafe),
+		"TargetFilename":              reflect.ValueOf(TargetFilename),
 		"YaegiSymbols":                reflect.ValueOf(YaegiSymbols),
 
 		"TargetBinary":        reflect.ValueOf(TargetBinary),

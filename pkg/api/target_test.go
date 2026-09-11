@@ -2,23 +2,36 @@ package api
 
 import (
 	"reflect"
+	"runtime"
 	"testing"
 )
 
 func TestTargetKindExt(t *testing.T) {
 	tests := []struct {
-		kind TargetKind
-		want string
+		kind     TargetKind
+		targetOS string
+		want     string
 	}{
-		{TargetBinary, ""},
-		{TargetStatic, ".a"},
-		{TargetShared, ".so"},
-		{TargetObject, ".o"},
-		{TargetVoid, ""},
+		{TargetBinary, "linux", ""},
+		{TargetBinary, "windows", ".exe"},
+		{TargetStatic, "linux", ".a"},
+		{TargetStatic, "windows", ".a"},
+		{TargetShared, "linux", ".so"},
+		{TargetShared, "windows", ".dll"},
+		{TargetObject, "linux", ".o"},
+		{TargetObject, "windows", ".o"},
+		{TargetVoid, "linux", ""},
 	}
 	for _, tt := range tests {
-		if got := tt.kind.Ext(); got != tt.want {
-			t.Errorf("TargetKind(%q).Ext() = %q, want %q", tt.kind, got, tt.want)
+		if got := tt.kind.ExtFor(tt.targetOS); got != tt.want {
+			t.Errorf("TargetKind(%q).ExtFor(%q) = %q, want %q", tt.kind, tt.targetOS, got, tt.want)
+		}
+	}
+
+	// Ext() is the host-OS convenience wrapper around ExtFor.
+	for _, kind := range []TargetKind{TargetBinary, TargetStatic, TargetShared, TargetObject, TargetVoid} {
+		if got, want := kind.Ext(), kind.ExtFor(runtime.GOOS); got != want {
+			t.Errorf("TargetKind(%q).Ext() = %q, want ExtFor(%q) = %q", kind, got, runtime.GOOS, want)
 		}
 	}
 }

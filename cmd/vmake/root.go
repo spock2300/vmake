@@ -60,6 +60,9 @@ It uses Go buildscripts for configuration and provides a TUI for option manageme
 		case quiet:
 			vlog.SetLevel(vlog.Quiet)
 		}
+		if len(gitUserlandDirs) > 0 {
+			vlog.Debug("git userland on PATH: %v", gitUserlandDirs)
+		}
 	},
 }
 

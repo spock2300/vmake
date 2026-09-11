@@ -62,6 +62,10 @@ type finding struct {
 func runCheckSymbols(strict bool) {
 	vlog.SetLevel(vlog.Quiet)
 
+	if !checkSymbolsSupported() {
+		vlog.Fatal("check-symbols is not supported on Windows: it reads ELF dynamic symbols via 'nm -D', and PE export analysis is not implemented; run it on Linux")
+	}
+
 	if _, err := exec.LookPath("nm"); err != nil {
 		vlog.Fatal("check-symbols requires 'nm' on PATH (binutils)")
 	}

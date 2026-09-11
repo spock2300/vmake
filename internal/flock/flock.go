@@ -8,7 +8,8 @@ import (
 )
 
 type FileLock struct {
-	file *os.File
+	file  *os.File
+	state lockState
 }
 
 // Acquire takes an exclusive flock on the given lock FILE path. The file's
@@ -22,14 +23,15 @@ func Acquire(lockFile string) (*FileLock, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := lockFileExclusive(int(f.Fd())); err != nil {
+	state, err := lockFileExclusive(f)
+	if err != nil {
 		f.Close()
 		return nil, err
 	}
-	return &FileLock{file: f}, nil
+	return &FileLock{file: f, state: state}, nil
 }
 
 func (l *FileLock) Release() error {
-	unlockFile(int(l.file.Fd()))
+	unlockFile(l.file, l.state)
 	return l.file.Close()
 }

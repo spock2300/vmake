@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -22,11 +23,27 @@ const (
 	TargetVoid   TargetKind = "void"
 )
 
+// Ext returns the artifact extension for this host, i.e. ExtFor(runtime.GOOS).
 func (k TargetKind) Ext() string {
+	return k.ExtFor(runtime.GOOS)
+}
+
+// ExtFor returns the artifact extension for targetOS. The target OS, not the
+// host, decides: vmake cross-compiles from Linux to embedded Linux, so naming
+// artifacts after the host would be wrong.
+func (k TargetKind) ExtFor(targetOS string) string {
 	switch k {
+	case TargetBinary:
+		if targetOS == "windows" {
+			return ".exe"
+		}
+		return ""
 	case TargetStatic:
 		return ".a"
 	case TargetShared:
+		if targetOS == "windows" {
+			return ".dll"
+		}
 		return ".so"
 	case TargetObject:
 		return ".o"
@@ -35,13 +52,24 @@ func (k TargetKind) Ext() string {
 	}
 }
 
+// Prefix returns the artifact prefix for this host, i.e. PrefixFor(runtime.GOOS).
 func (k TargetKind) Prefix() string {
+	return k.PrefixFor(runtime.GOOS)
+}
+
+// PrefixFor returns the artifact prefix for targetOS.
+func (k TargetKind) PrefixFor(targetOS string) string {
 	switch k {
 	case TargetStatic, TargetShared:
 		return "lib"
 	default:
 		return ""
 	}
+}
+
+// TargetFilename is the single source of truth for artifact file names.
+func TargetFilename(kind TargetKind, name, targetOS string) string {
+	return kind.PrefixFor(targetOS) + name + kind.ExtFor(targetOS)
 }
 
 func (k TargetKind) InstallDir() string {
@@ -595,7 +623,7 @@ func (p *Package) EnsureConfig(srcDir string) bool {
 	if preset == "" {
 		fatalScript(p.Name, "EnsureConfig", "no kconfig preset selected; configure one via AddKConfig().SetDefaultPreset(...) or vmake config")
 	}
-	p.RunIn(srcDir, "make", preset)
+	p.RunIn(srcDir, toolchain.MakeToolOf(p.tc), preset)
 	if len(p.kconfigEntries) > 0 {
 		if err := ApplyKConfigPatches(configPath, p.kconfigEntries[0].Patches()); err != nil {
 			fatalScript(p.Name, "EnsureConfig", "apply kconfig patches: %v", err)

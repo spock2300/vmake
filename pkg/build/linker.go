@@ -1,11 +1,13 @@
 package build
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/pkg/api"
 )
 
 type Linker struct {
@@ -23,9 +25,68 @@ func NewLinker(tools *ResolvedTools) *Linker {
 }
 
 type LinkPolicy struct {
+	TargetOS      string
 	VersionScript string
 	ExcludeLibs   []string
 	SymbolBinding string
+}
+
+// Validate rejects symbol-management options the target's object format does
+// not support. Version scripts, --exclude-libs and -Bsymbolic are ELF-only.
+func (p LinkPolicy) Validate() error {
+	if p.TargetOS != "windows" {
+		return nil
+	}
+	var unsupported []string
+	if p.VersionScript != "" {
+		unsupported = append(unsupported, "SetVersionScript")
+	}
+	if len(p.ExcludeLibs) > 0 {
+		unsupported = append(unsupported, "AddExcludeLibs")
+	}
+	if p.SymbolBinding != "" {
+		unsupported = append(unsupported, "SetSymbolBinding")
+	}
+	if len(unsupported) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s not supported for PE targets: version scripts, --exclude-libs and -Bsymbolic are ELF-only", strings.Join(unsupported, ", "))
+}
+
+// isLibraryArtifact reports whether path is a linkable library rather than a
+// relocatable object file. MinGW import libraries (libfoo.dll.a) match the .a
+// case because filepath.Ext only sees the final extension.
+func isLibraryArtifact(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".a", ".so", ".dylib", ".dll", ".lib":
+		return true
+	}
+	return false
+}
+
+// wholeArchiveInput reports whether a linker input belongs inside a
+// -Wl,--whole-archive group. A PE DLL and its import library are deliberately
+// excluded: whole-archive on an import library force-imports every DLL export,
+// defeating --gc-sections and risking duplicate-symbol errors between shared
+// deps. Consumers still receive the import library as a normal group input.
+func wholeArchiveInput(path string) bool {
+	if strings.HasSuffix(strings.ToLower(filepath.Base(path)), ".dll.a") {
+		return false
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".a", ".so", ".dylib":
+		return true
+	}
+	return false
+}
+
+// importLibraryPath returns the MinGW import library LinkShared emits next to
+// a PE shared library, or "" for anything else.
+func importLibraryPath(outputPath, targetOS string, kind api.TargetKind) string {
+	if kind == api.TargetShared && targetOS == "windows" {
+		return outputPath + ".a"
+	}
+	return ""
 }
 
 func (p LinkPolicy) versionScriptFlag() string {
@@ -54,6 +115,9 @@ func (p LinkPolicy) bindingFlags() []string {
 }
 
 func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScript string, policy LinkPolicy, workDir string) error {
+	if err := policy.Validate(); err != nil {
+		return err
+	}
 	if err := fs.EnsureParentDir(resolveWorkPath(workDir, outputPath)); err != nil {
 		return err
 	}
@@ -72,8 +136,7 @@ func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScri
 	var objFiles []string
 	var libFiles []string
 	for _, o := range objs {
-		ext := strings.ToLower(filepath.Ext(o))
-		if ext == ".a" || ext == ".so" || ext == ".dylib" {
+		if wholeArchiveInput(o) {
 			libFiles = append(libFiles, o)
 		} else {
 			objFiles = append(objFiles, o)
@@ -127,6 +190,9 @@ func (l *Linker) LinkStatic(objs []string, outputPath, workDir string) error {
 }
 
 func (l *Linker) LinkShared(objs, ldflags []string, outputPath string, policy LinkPolicy, workDir string) error {
+	if err := policy.Validate(); err != nil {
+		return err
+	}
 	if err := fs.EnsureParentDir(resolveWorkPath(workDir, outputPath)); err != nil {
 		return err
 	}
@@ -140,6 +206,10 @@ func (l *Linker) LinkShared(objs, ldflags []string, outputPath string, policy Li
 	}
 
 	args := []string{"-shared", "-o", outputPath}
+	if policy.TargetOS == "windows" {
+		// Consumers link against the import library, not the DLL.
+		args = append(args, "-Wl,--out-implib="+outputPath+".a")
+	}
 	if vs := policy.versionScriptFlag(); vs != "" {
 		args = append(args, vs)
 	}

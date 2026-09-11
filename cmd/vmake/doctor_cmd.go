@@ -14,9 +14,11 @@ import (
 
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
-	Short: "Diagnose build.go for patterns that may break in future vmake versions",
-	Long: `Scans build.go files in the current project and reports patterns that
-currently work but may become errors in future vmake versions:
+	Short: "Diagnose platform prerequisites and build.go patterns",
+	Long: `Reports the status of the platform prerequisites vmake depends on
+(symbolic links, the Git for Windows userland, make, the C toolchain) and
+scans build.go files in the current project for patterns that currently work
+but may become errors in future vmake versions:
 
   - [autoWire] Package uses OnRequire/AddRequires but its targets don't call
     AddDeps. vmake currently auto-wires the dependency edges as a convenience,
@@ -49,15 +51,17 @@ func runDoctor() {
 		vlog.Fatal("getwd: %v", err)
 	}
 
+	findings := checkPlatform()
+
 	sources, err := buildscript.Scan(workDir)
 	if err != nil {
 		vlog.Fatal("scan: %v", err)
 	}
 	if len(sources) == 0 {
+		reportDoctorFindings(workDir, findings)
 		vlog.Fatal("no build.go files found")
 	}
 
-	var findings []doctorFinding
 	rootCount := 0
 	for _, src := range sources {
 		findings = append(findings, checkAutoWire(src)...)
@@ -82,8 +86,13 @@ func runDoctor() {
 		})
 	}
 
+	reportDoctorFindings(workDir, findings)
+}
+
+func reportDoctorFindings(workDir string, findings []doctorFinding) {
+	errors := 0
+	warns := 0
 	for _, f := range findings {
-		sev := f.Severity
 		prefix := ""
 		if f.File != "" {
 			rel, err := filepath.Rel(workDir, f.File)
@@ -93,24 +102,21 @@ func runDoctor() {
 				prefix = f.File + ": "
 			}
 		}
-		vlog.Info("[%s] %s%s (%s)", sev, prefix, f.Message, f.Category)
-	}
+		vlog.Info("[%s] %s%s (%s)", f.Severity, prefix, f.Message, f.Category)
 
-	if len(findings) == 0 {
-		vlog.Info("OK: no findings")
-		return
-	}
-
-	errors := 0
-	warns := 0
-	for _, f := range findings {
-		if f.Severity == "error" {
+		switch f.Severity {
+		case "error":
 			errors++
-		} else {
+		case "warn":
 			warns++
 		}
 	}
+
 	vlog.Info("")
+	if errors == 0 && warns == 0 {
+		vlog.Info("OK: no issues")
+		return
+	}
 	vlog.Info("Summary: %d error(s), %d warning(s)", errors, warns)
 	if errors > 0 {
 		os.Exit(1)

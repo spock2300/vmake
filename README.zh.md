@@ -28,6 +28,26 @@ go install github.com/spock2300/vmake/cmd/vmake@latest
 
 安装后 vmake 位于 `~/go/bin/vmake`。
 
+### Windows
+
+vmake 可在 Windows 上原生运行。有两个前提 vmake 自身无法提供：
+
+1. **Git for Windows** —— 请安装**完整版安装器**，不要用 MinGit。vmake 会自动定位其自带的
+   MSYS 用户态工具（`sh`、coreutils、`sed`/`awk`/`grep`/`find`、`tar`、`unzip`、`curl`），
+   并把对应目录前置到自己的 `PATH`。同时，vmake 对所有 git 调用强制
+   `core.autocrlf=false`/`core.eol=lf`，因此无论安装器里"换行符转换"如何选择，缓存中的
+   检出内容都与仓库逐字节一致。
+2. **MinGW-w64 GCC 工具链** —— Git for Windows 既不带 C 编译器也不带 `make`。请安装
+   MinGW-w64（或 MSYS2），确保 `gcc`、`g++`、`ar`、`ranlib`、`strip`、`nm`、`objcopy`、
+   `make` 在 `PATH` 上。
+
+vmake 的存储布局依赖符号链接，而 Windows 仅在**开发者模式**（设置 → 系统 → 开发者选项）
+或管理员终端下允许创建。运行 `vmake doctor` 可检查以上全部前提：它会报告符号链接、
+Git 用户态工具、`make` 与 C 工具链的状态，且不需要当前目录存在项目即可报告这些信息。
+
+除 `vmake check-symbols` 外，Windows 上所有功能均可用。该命令读取 ELF 动态符号，
+在 Windows 上会明确拒绝执行。
+
 ### 调试模式
 
 build.go 由 yaegi 解释器直接执行，无需编译为插件：

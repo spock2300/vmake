@@ -1,9 +1,13 @@
 package toolchain
 
+import "runtime"
+
 func GetBuiltinHost() *Toolchain {
+	targetOS := runtime.GOOS
 	return &Toolchain{
 		Name:        "host",
 		DisplayName: "Host",
+		TargetOS:    targetOS,
 		Tools: Tools{
 			CC:      "gcc",
 			CXX:     "g++",
@@ -15,28 +19,8 @@ func GetBuiltinHost() *Toolchain {
 			SIZE:    "size",
 			OBJDUMP: "objdump",
 			NM:      "nm",
+			MAKE:    "make",
 		},
-		DefaultFlags: DefaultFlags{
-			CFlags: []string{
-				"-Wall", "-Wextra", "-Werror",
-				"-Wstrict-prototypes", "-Wmissing-prototypes", "-Wmissing-declarations",
-				"-Wold-style-definition", "-Wundef", "-Werror-implicit-function-declaration",
-				"-Wformat=2", "-Wshadow",
-				"-ffunction-sections", "-fdata-sections",
-				"-fstack-protector-strong", "-D_FORTIFY_SOURCE=2",
-				"-fno-strict-aliasing", "-fno-common", "-fPIC",
-			},
-			CxxFlags: []string{
-				"-Wall", "-Wextra", "-Werror",
-				"-Wnon-virtual-dtor", "-Woverloaded-virtual", "-Wundef",
-				"-Wformat=2", "-Wshadow",
-				"-ffunction-sections", "-fdata-sections",
-				"-fstack-protector-strong", "-D_FORTIFY_SOURCE=2",
-				"-fno-strict-aliasing", "-fno-common", "-fPIC",
-			},
-			LdFlags: []string{
-				"-pie", "-Wl,--as-needed", "-Wl,--gc-sections", "-Wl,-z,relro,-z,now",
-			},
-		},
+		DefaultFlags: defaultFlagsFor(targetOS),
 	}
 }

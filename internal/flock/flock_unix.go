@@ -2,12 +2,17 @@
 
 package flock
 
-import "syscall"
+import (
+	"os"
+	"syscall"
+)
 
-func lockFileExclusive(fd int) error {
-	return syscall.Flock(fd, syscall.LOCK_EX)
+type lockState struct{}
+
+func lockFileExclusive(f *os.File) (lockState, error) {
+	return lockState{}, syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
 }
 
-func unlockFile(fd int) error {
-	return syscall.Flock(fd, syscall.LOCK_UN)
+func unlockFile(f *os.File, _ lockState) {
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 }

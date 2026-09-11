@@ -19,7 +19,7 @@ func Save(path string, v any) error {
 	if err := os.WriteFile(tmp, data, 0644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return fs.RenameRetry(tmp, path)
 }
 
 func Load(path string, v any) error {

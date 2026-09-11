@@ -63,7 +63,7 @@ func runAllTests(result *BuildResult) {
 			continue
 		}
 
-		outputPath := build.TargetOutputPath(pkgDirs.SourceDir, buildKey, node.Target.Kind(), node.Target.Name())
+		outputPath := build.TargetOutputPath(pkgDirs.SourceDir, buildKey, node.Target.Kind(), node.Target.Name(), result.TargetOS)
 		if _, err := os.Stat(outputPath); err != nil {
 			vlog.Error("FAIL %s (binary not found: %s)", fullName, outputPath)
 			os.Exit(1)

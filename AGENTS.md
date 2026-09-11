@@ -53,6 +53,8 @@ go test -update                                # regenerate baselines after inte
 - Snapshotted per project (`build --install`): `install/` tree SHA256 hashes (paths normalized to `<ROOT>`/`<HOME>`), redacted `manifest.json`, `build/compile_commands.json` (compile flag drift detector)
 - `TestSnapshotsTestLinux` also covers `test_linux/17_firmware` (skipped if absent)
 - Skipped projects: 07, 08, 09, 10 (codegen/network-dependent)
+- Baselines are per-OS: `baseline/` on Unix, `baseline-windows/` on Windows (`baselineDirName()`). Artifact names, path separators and `compile_commands.json` contents are OS-specific, so a shared baseline is not possible; generate the Windows set once with `go test -update` on Windows
+- Projects 06, 11, 13 and 25 need a C++ frontend, a registered registry repo, or `test_data/25_subpackage/setup.sh`; they fail in environments lacking those, independently of vmake
 - On drift: intended change → `go test -update`; unintended regression → fix before committing
 
 Known pre-existing integration failures (ignore): none — all test_data tests currently pass.
@@ -66,6 +68,23 @@ Buildscripts AND extension plugins are interpreted by yaegi (Go interpreter) —
 ```bash
 go build -o vmake ./cmd/vmake    # Build vmake itself
 ```
+
+## Platform Support
+
+vmake compiles and runs on Unix and natively on Windows (`GOOS=windows go build ./cmd/vmake` succeeds). The pieces that matter:
+
+- **`internal/gitusr`** — Windows only. Locates the Git for Windows installation (`git --exec-path`, falling back to deriving it from the resolved `git.exe`) and prepends `<root>\usr\bin` and `<root>\<msystem>\bin` to the **process** `PATH`, so `sh`, coreutils, `sed`/`awk`/`grep`/`find`, `tar`, `unzip` and `curl` resolve. The default installer only adds `Git\cmd` to `PATH`, so these tools exist on disk but are invisible to `exec.LookPath`. Called once from `cmd/vmake/main.go` before `loadPlugins()`; `os.Setenv` is not goroutine-safe, so it must stay first.
+- **`internal/gitcmd`** — every git invocation goes through `gitcmd.Args()`, which forces `core.autocrlf=false`, `core.eol=lf` and `core.longpaths=true` (plus `core.symlinks=true` only when this process can actually create symlinks). The Git for Windows installer defaults `autocrlf` to true; leaving it would rewrite line endings in `~/.vmake/cache` checkouts and break content hashes (`stamp.go`) and `git apply` patch series.
+- **`internal/flock`** — `syscall.Flock` on Unix, `LockFileEx`/`UnlockFileEx` (`golang.org/x/sys/windows`) on Windows. The platform layer owns a `lockState` because the `OVERLAPPED` must outlive the lock. Lock files live in `~/.vmake/cache/_locks/`, outside the directories they guard, so they are never deleted while held.
+- **Symlinks — no junction fallback.** The storage layout is symlink-based (`vmake_deps/<repo>/<pkg>/src`, `<versionDir>/src|out`, `SetGit` sources, prebuilt outputs). On Windows `os.Symlink` needs Developer Mode or elevation; `internal/fs.EnsureSymlink` decorates the failure with that hint and `fs.SymlinksSupported()` probes the capability once per process. Junctions were rejected: Go sets `ModeSymlink` only for `IO_REPARSE_TAG_SYMLINK`, not for `IO_REPARSE_TAG_MOUNT_POINT`, so `filepath.EvalSymlinks` would not resolve a junction and `filepath.Walk` would not descend into one — silently breaking `Resolver.scanSubPackages` (`pkg/resolver/resolver.go`). Supporting junctions would mean replacing that `EvalSymlinks` and auditing every `Walk` root.
+- **Target OS, not host OS.** `Toolchain.TargetOS` (empty = `runtime.GOOS`, see `toolchain.TargetOSOf`) decides artifact names and link flags. `api.TargetKind.ExtFor/PrefixFor` and `api.TargetFilename` are the single source of truth: `.exe`/`.dll` for PE targets, no extension/`.so` otherwise. Naming off the host would regress the Linux→embedded-Linux cross builds vmake exists for. `Toolchain.Tools.MAKE` (`MakeTool()`) names the make program.
+- **PE linking.** `Linker.LinkShared` adds `-Wl,--out-implib=<output>.a` for PE targets; `collectDepArtifacts` links consumers against that import library (`libfoo.dll.a`) rather than the DLL, `installTarget`/`publishTarget` copy it into `<prefix>/lib` (`importLibraryPath`), and `needRelink` re-links when it is missing. The import library rides as a **normal group input, never inside `-Wl,--whole-archive`** (`wholeArchiveInput` excludes `.dll.a`) — whole-archive on an import library force-imports every DLL export. Prebuilt shared targets ship only the declared file, so consumers link the DLL itself. `-pie`, `-Wl,--as-needed` and `-Wl,-z,relro,-z,now` are ELF-only and are omitted for PE; the default flags are chosen per target OS in `pkg/toolchain/flags.go`.
+- **Paths handed to MSYS binaries are slash-separated.** The MSYS runtime de-quotes backslashes in argv, and autoconf derives `srcdir` from `$0` via `dirname`, which only understands `/`. `p.Configure` (script path and `--prefix=`), `p.Make`'s `-C`, the TUI's `-C`, `tar -C` and `curl -o` all pass `filepath.ToSlash` paths — a no-op on Unix. Any new argument forwarded to `sh`/`tar`/`curl`/MSYS `make` must do the same; `cmd.Dir` (native CreateProcess) correctly keeps backslashes.
+- **ELF-only symbol management is rejected, not ignored.** `LinkPolicy.Validate()` fails the build when `SetVersionScript`, `AddExcludeLibs` or `SetSymbolBinding` is used on a PE target.
+- **`check-symbols` is unsupported on Windows.** It parses `nm -D` (ELF dynamic symbols); `checkSymbolsSupported()` makes it fail with a clear message instead of a confusing binutils error. PE export analysis is deliberately not implemented.
+- **`vmake doctor`** reports symlink capability, the Git userland, `make` and the C toolchain — Git for Windows bundles neither a C toolchain nor `make`, so MinGW-w64 (or MSYS2) is required for a real build.
+
+Prerequisites for a Windows build: Git for Windows (full installer) + MinGW-w64 GCC + Developer Mode. `unzip` is no longer needed (`ExtractToDir` unpacks `.zip` with `archive/zip`).
 
 ## Storage Layout
 
@@ -337,7 +356,7 @@ Methods on `CleanContext`:
 | `pkg/log` | Logging (Debug, Info, Error, Fatal) | No |
 | `pkg/tui` | Terminal UI (interactive config) | No |
 | `pkg/version` | Version information | No |
-| `internal/*` | exec, flock, fs, gitstore, glob, gosrc, jsonio, scriptfs, toposort, yaegibase, yaegisym | No |
+| `internal/*` | exec, flock, fs, gitcmd, gitstore, gitusr, glob, gosrc, jsonio, scriptfs, toposort, yaegibase, yaegisym | No |
 
 **Dependency DAG**: `internal/*` -> `pkg/toolchain` -> `pkg/api` -> `pkg/buildscript, pkg/repo` -> `pkg/resolver, pkg/plugin, pkg/build` -> `pkg/pipeline` -> `cmd/vmake`
 
@@ -355,9 +374,9 @@ Extension plugins are interpreted by yaegi at runtime (same as buildscripts). Co
 - `vmake distclean` — deep clean: local build dirs, install/, `vmake_deps/`; the shared global cache survives by default (rebuild re-links without recompiling). `--purge-cache` also deletes global cache entries for every remote package this project materialized (affects other projects too)
 - `vmake config` — interactive TUI for build options
 - `vmake query [targets|config]` — show dependency tree (uses `newQueryCmd` factory, registered in root.go init)
-- `vmake check-symbols [--strict]` — scan all built Shared/Binary outputs via `nm -D` and report: cross-target duplicate exports, C++ mangled leaks (`_Z*`), reserved-prefix leaks (`__libc_*` etc.), version-script violations (when `SetVersionScript` is set), and missing version-script warnings. No per-target declaration required. `--strict` exits non-zero on warn/error findings (info-level still passes)
+- `vmake check-symbols [--strict]` — scan all built Shared/Binary outputs via `nm -D` and report: cross-target duplicate exports, C++ mangled leaks (`_Z*`), reserved-prefix leaks (`__libc_*` etc.), version-script violations (when `SetVersionScript` is set), and missing version-script warnings. No per-target declaration required. `--strict` exits non-zero on warn/error findings (info-level still passes). **Linux only** — `checkSymbolsSupported()` refuses on Windows rather than letting `nm -D` fail cryptically
 - `vmake lock update|show` — re-resolve latest / show pinned versions (`.vmake/vmake.lock`)
-- `vmake doctor` — detect build.go files relying on removed auto-wire (`AddRequires` with no `AddDeps`)
+- `vmake doctor` — two parts. Platform prerequisites (always reported, no project required): symlink capability, Git for Windows userland, `make`, C toolchain. Then build.go findings: reliance on removed auto-wire (`AddRequires` with no `AddDeps`), deprecated APIs, `SetRoot` count. Exit code is 1 only when an `error`-severity finding exists
 - `vmake manifest show|checkout <path> [name]` — show manifest contents / checkout packages at recorded versions
 - `vmake toolchain list|show [name]` — list/show toolchain manifests
 - `vmake repo trust|untrust <name>` — manage supply-chain trust for remote repos (stored in `~/.vmake/config.json`)

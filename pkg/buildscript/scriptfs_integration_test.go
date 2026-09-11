@@ -3,6 +3,7 @@ package buildscript
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -148,7 +149,7 @@ import (
 func Main(p *api.Package) {
 	p.OnBuild(func(ctx *api.BuildContext) {
 		if err := os.Chdir("/tmp"); err == nil {
-			os.WriteFile("` + filepath.Join(dir, "chdir-ok") + `", []byte("x"), 0644)
+			os.WriteFile(` + strconv.Quote(filepath.Join(dir, "chdir-ok")) + `, []byte("x"), 0644)
 		}
 	})
 }

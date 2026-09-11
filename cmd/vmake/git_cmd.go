@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/internal/gitcmd"
 )
 
 var (
@@ -70,7 +71,7 @@ func runGitTag(cmd *cobra.Command, args []string) {
 		msg = fmt.Sprintf("Release %s", newVersion)
 	}
 
-	commit, err := iexec.Run("git", "rev-parse", "--short", "HEAD")
+	commit, err := iexec.Run("git", gitcmd.Args("rev-parse", "--short", "HEAD")...)
 	fatalErr(err)
 
 	pushInfo := "no (local only)"
@@ -119,7 +120,7 @@ func runGitTag(cmd *cobra.Command, args []string) {
 }
 
 func checkStagedChanges() error {
-	_, err := iexec.Run("git", "diff", "--cached", "--quiet")
+	_, err := iexec.Run("git", gitcmd.Args("diff", "--cached", "--quiet")...)
 	if err != nil {
 		return fmt.Errorf("staging area has uncommitted changes, please commit first")
 	}
@@ -127,7 +128,7 @@ func checkStagedChanges() error {
 }
 
 func getLatestTag() (string, error) {
-	output, err := iexec.Run("git", "tag", "--sort=-v:refname")
+	output, err := iexec.Run("git", gitcmd.Args("tag", "--sort=-v:refname")...)
 	if err != nil {
 		return "", fmt.Errorf("failed to list tags: %w", err)
 	}
@@ -192,11 +193,11 @@ func bumpVersion(tag string, major, minor bool) (string, error) {
 }
 
 func createAnnotatedTag(version, msg string) error {
-	return iexec.RunToStdout("", "git", "tag", "-a", version, "-m", msg)
+	return iexec.RunToStdout("", "git", gitcmd.Args("tag", "-a", version, "-m", msg)...)
 }
 
 func updateLatestTag() error {
-	return iexec.RunToStdout("", "git", "tag", "-f", "latest")
+	return iexec.RunToStdout("", "git", gitcmd.Args("tag", "-f", "latest")...)
 }
 
 func pushTags(version string) error {
@@ -205,15 +206,15 @@ func pushTags(version string) error {
 		return err
 	}
 
-	if err := iexec.RunToStdout("", "git", "push", "--atomic", remote, "HEAD", version); err != nil {
+	if err := iexec.RunToStdout("", "git", gitcmd.Args("push", "--atomic", remote, "HEAD", version)...); err != nil {
 		return err
 	}
 
-	return iexec.RunToStdout("", "git", "push", "--force", remote, "latest")
+	return iexec.RunToStdout("", "git", gitcmd.Args("push", "--force", remote, "latest")...)
 }
 
 func getRemoteName() (string, error) {
-	output, err := iexec.Run("git", "remote")
+	output, err := iexec.Run("git", gitcmd.Args("remote")...)
 	if err != nil {
 		return "", fmt.Errorf("failed to get remote: %w", err)
 	}

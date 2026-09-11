@@ -8,6 +8,7 @@ import (
 
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 type TreeNode struct {
@@ -61,6 +62,7 @@ type Model struct {
 	origValues  map[string]map[string]any
 	origGlobal  map[string]any
 	workDir     string
+	makeTool    string
 
 	runningMenuconfig bool
 	menuconfigRan     map[string]bool
@@ -151,6 +153,7 @@ func NewModel(
 		optCursor:     0,
 		focusArea:     0,
 		workDir:       workDir,
+		makeTool:      resolveMakeTool(currentToolchain),
 		globalOptions: globalOptions,
 		globalValues:  globalValues,
 		kconfigs:      kconfigs,
@@ -167,6 +170,16 @@ func NewModel(
 		m.selectFirstPkg()
 	}
 	return m
+}
+
+// resolveMakeTool returns the make program of the selected toolchain, so the
+// TUI drives the same make as the build (e.g. mingw32-make on Windows).
+func resolveMakeTool(name string) string {
+	tc, err := toolchain.GetManager().GetToolchain(name)
+	if err != nil {
+		return "make"
+	}
+	return tc.MakeTool()
 }
 
 func computeOptCounts(options map[string]map[string]*api.Option, globalOptions map[string]*api.Option) map[string]int {
