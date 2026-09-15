@@ -2,7 +2,11 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -10,6 +14,8 @@ import (
 	"github.com/spock2300/vmake/pkg/plugin"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
+
+var toolchainPathMu sync.Mutex
 
 var extCmd = &cobra.Command{
 	Use:   "ext",
@@ -177,13 +183,14 @@ func loadPlugins() {
 			},
 			RegisterToolchain: func(name string, tc *toolchain.Toolchain) {
 				toolchain.GetManager().RegisterToolchain(name, tc)
+				fatalErr(addToolchainToPath(tc))
 			},
 			GetToolchains: func() map[string]*toolchain.Toolchain {
 				tcs, _ := toolchain.GetManager().ListToolchains()
 				return tcs
 			},
 			SetOnMissing: func(toolchainName string, onMissing func(name string) (*toolchain.Toolchain, error)) {
-				toolchain.GetManager().SetOnMissing(toolchainName, onMissing)
+				toolchain.GetManager().SetOnMissing(toolchainName, withToolchainPath(onMissing))
 			},
 			AddGlobalCFlags: func(flags ...string) {
 				toolchain.GetManager().AddGlobalCFlags(flags...)
@@ -215,14 +222,56 @@ func makeRegisterToolchainsFromRepo(pluginDir, repoDir string) func() {
 		defs := toolchain.ScanRepoToolchains(repoDir)
 		for i := range defs {
 			def := &defs[i]
-			tcMgr.RegisterDef(def, toolchainsDir)
+			tc := def.ToToolchain(toolchainsDir)
+			tcMgr.RegisterToolchain(def.Name, tc)
+			fatalErr(addToolchainToPath(tc))
 
 			if def.Install != nil {
 				d := *def
-				tcMgr.SetOnMissing(def.Name, makeAutoDownload(d, repoDir, toolchainsDir))
+				tcMgr.SetOnMissing(def.Name, withToolchainPath(makeAutoDownload(d, repoDir, toolchainsDir)))
 			}
 		}
 	}
+}
+
+func withToolchainPath(fn toolchain.OnMissingToolchain) toolchain.OnMissingToolchain {
+	return func(name string) (*toolchain.Toolchain, error) {
+		tc, err := fn(name)
+		if err != nil {
+			return nil, err
+		}
+		if err := addToolchainToPath(tc); err != nil {
+			return nil, err
+		}
+		return tc, nil
+	}
+}
+
+func addToolchainToPath(tc *toolchain.Toolchain) error {
+	if tc.InstallPath == "" {
+		return nil
+	}
+	toolchainPathMu.Lock()
+	defer toolchainPathMu.Unlock()
+
+	binDir, err := filepath.Abs(filepath.Join(tc.InstallPath, "bin"))
+	if err != nil {
+		return fmt.Errorf("toolchain %s bin directory: %w", tc.Name, err)
+	}
+	path := os.Getenv("PATH")
+	for _, dir := range filepath.SplitList(path) {
+		clean := filepath.Clean(dir)
+		if clean == binDir || (runtime.GOOS == "windows" && strings.EqualFold(clean, binDir)) {
+			return nil
+		}
+	}
+	if path != "" {
+		binDir += string(os.PathListSeparator) + path
+	}
+	if err := os.Setenv("PATH", binDir); err != nil {
+		return fmt.Errorf("toolchain %s PATH: %w", tc.Name, err)
+	}
+	return nil
 }
 
 func makeAutoDownload(def toolchain.ToolchainDef, repoDir, toolchainsDir string) func(string) (*toolchain.Toolchain, error) {
