@@ -118,7 +118,8 @@ func TestNeedRelinkMissingImportLibrary(t *testing.T) {
 	s := &Scheduler{
 		graph:     graph,
 		pkgs:      map[string]*PkgInfo{"p": {PkgDirs: api.PkgDirs{SourceDir: dir}}},
-		toolchain: &toolchain.Toolchain{TargetOS: "windows"},
+		toolchain: &toolchain.Toolchain{},
+		platform:  api.Platform{OS: "windows"},
 	}
 	resolved := &ResolvedTarget{Node: node, OutputPath: dll}
 

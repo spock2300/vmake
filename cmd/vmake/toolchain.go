@@ -56,13 +56,11 @@ func runToolchainList(cmd *cobra.Command, args []string) {
 			mark = " (default)"
 		}
 		status := "installed"
-		if name != "host" && tc.InstallPath == "" {
-			status = "not installed"
+		if len(toolchain.ValidateToolchain(tc)) > 0 {
+			status = "unavailable"
 		}
 		vlog.Info("  %s%s [%s]", name, mark, status)
 		vlog.Info("    Display: %s", tc.DisplayName)
-		vlog.Info("    Target triple: %s", tc.TargetTriple)
-		vlog.Info("    Target OS: %s", tc.TargetOS)
 		vlog.Info("    CC:      %s", tc.Tools.CC)
 		vlog.Info("    CXX:     %s", tc.Tools.CXX)
 	}
@@ -98,8 +96,6 @@ func runToolchainShow(cmd *cobra.Command, args []string) {
 
 	vlog.Info("Toolchain: %s", tc.Name)
 	vlog.Info("Display Name: %s", tc.DisplayName)
-	vlog.Info("Target triple: %s", tc.TargetTriple)
-	vlog.Info("Target OS: %s", tc.TargetOS)
 	vlog.Info("")
 	vlog.Info("Tools:")
 	vlog.Info("  CC:     %s", tc.Tools.CC)
@@ -109,10 +105,6 @@ func runToolchainShow(cmd *cobra.Command, args []string) {
 	vlog.Info("  STRIP:  %s", tc.Tools.STRIP)
 	vlog.Info("  RANLIB: %s", tc.Tools.RANLIB)
 	vlog.Info("")
-	vlog.Info("Default Flags:")
-	vlog.Info("  CFlags:   [%s]", strings.Join(tc.DefaultFlags.CFlags, ", "))
-	vlog.Info("  CxxFlags: [%s]", strings.Join(tc.DefaultFlags.CxxFlags, ", "))
-	vlog.Info("  LdFlags:  [%s]", strings.Join(tc.DefaultFlags.LdFlags, ", "))
 
 	if tc.InstallPath != "" {
 		vlog.Info("")

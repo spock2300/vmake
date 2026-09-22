@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
 	"strings"
 	"time"
@@ -12,7 +13,6 @@ import (
 	"github.com/spock2300/vmake/internal/jsonio"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
-	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/repo"
@@ -38,7 +38,7 @@ type installManifest struct {
 }
 
 func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
-	globalValues := config.BuildGlobalValues(ctx.Config)
+	globalValues := result.GlobalValues
 
 	effectivePrefix := prefixFlag
 	if effectivePrefix == "" {
@@ -59,7 +59,9 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 		if node.Pkg == nil {
 			continue
 		}
-		installOnePackage(ctx, name, node, result, installer, globalValues)
+		if err := installOnePackage(ctx, name, node, result, installer, globalValues); err != nil {
+			return err
+		}
 	}
 
 	if err := installer.InstallAll(); err != nil {
@@ -75,18 +77,24 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 	return nil
 }
 
-func installOnePackage(ctx *RuntimeContext, name string, node *resolver.PackageNode, result *BuildResult, installer *build.ArtifactInstaller, globalValues map[string]any) {
-	entry := config.GetEntry(ctx.Config, name)
+func installOnePackage(ctx *RuntimeContext, name string, node *resolver.PackageNode, result *BuildResult, installer *build.ArtifactInstaller, globalValues map[string]any) error {
+	values, err := pipeline.PackageConfigValues(ctx, name, globalValues)
+	if err != nil {
+		return err
+	}
 
-	installCtx := api.NewInstallContext(name, entry.Options)
-	installCtx.SetOptions(ctx.AllOptions[name])
+	installCtx := api.NewInstallContext(name, values)
+	installCtx.SetOptions(maps.Clone(ctx.AllOptions[name]))
 	installCtx.MergeGlobals(ctx.GlobalOptions, globalValues)
 
 	node.Pkg.ExecInstallFuncs(result.PkgDirs[name].SourceDir, func(fn api.InstallFunc) {
 		fn(installCtx)
 	})
 
-	buildCtx := pipeline.DeclareTargets(ctx, name, result.PkgDirs[name], nil, globalValues)
+	buildCtx, err := pipeline.DeclareTargets(ctx, name, result.PkgDirs[name], nil, globalValues)
+	if err != nil {
+		return err
+	}
 
 	installItems := installCtx.GetInstallItems()
 	installItems = append(installItems, buildCtx.GetInstallItems()...)
@@ -104,10 +112,11 @@ func installOnePackage(ctx *RuntimeContext, name string, node *resolver.PackageN
 		BuildDir:      result.PkgDirs[name].BuildDir,
 		Mode:          result.Mode,
 		TcName:        result.TcName,
-		TargetOS:      result.TargetOS,
+		TargetOS:      node.Pkg.TargetOS(),
 		BuildKey:      result.PkgBuildKeys[name],
 		InstallFilter: installFilter,
 	})
+	return nil
 }
 
 func writeManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix string) error {

@@ -73,7 +73,7 @@ func checkToolchain(tc *toolchain.Toolchain) []doctorFinding {
 		findings = append(findings, doctorFinding{
 			Severity: "ok",
 			Category: "binutils",
-			Message:  fmt.Sprintf("selected toolchain %q (target_os=%s, target_triple=%q): all configured tools found", tc.Name, tc.TargetOS, tc.TargetTriple),
+			Message:  fmt.Sprintf("selected toolchain %q: all configured tools found", tc.Name),
 		})
 	} else {
 		for _, err := range errs {

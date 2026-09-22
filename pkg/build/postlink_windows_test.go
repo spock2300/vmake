@@ -43,7 +43,8 @@ func TestPostLinkPrefixedWindowsOutput(t *testing.T) {
 	dirs := &api.PkgDirs{SourceDir: dir, BuildDir: buildDir}
 	scheduler := &Scheduler{
 		pkgs:      map[string]*PkgInfo{"p": {PkgDirs: *dirs}},
-		toolchain: &toolchain.Toolchain{TargetOS: "none"},
+		toolchain: &toolchain.Toolchain{},
+		platform:  api.Platform{OS: "none"},
 	}
 	if scheduler.needRelink(resolved, nil) {
 		t.Fatal("existing prefixed post-link output triggers relinking")

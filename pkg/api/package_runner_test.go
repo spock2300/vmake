@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,55 @@ import (
 
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
+
+func TestRunEnvFindsUnconfiguredToolchainProgram(t *testing.T) {
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	program, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "vmake-toolchain-helper"
+	filename := name
+	if runtime.GOOS == "windows" {
+		filename += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(bin, filename), data, 0755); err != nil {
+		t.Fatal(err)
+	}
+	p := NewPackage().SetToolchain(&toolchain.Toolchain{InstallPath: root}).SetDirs(PkgDirs{BuildDir: root})
+	t.Setenv("PATH", "")
+	env := map[string]string{"VMAKE_SHELL_TOOL_PROCESS": "1"}
+	if err := p.RunEnv(env, name, "-test.run=^TestShellToolProcess$", "--", "output"); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "output")); err != nil || string(data) != "CONFIG_OK=y\n" {
+		t.Fatalf("output = %q, %v", data, err)
+	}
+	key := "PATH"
+	if runtime.GOOS == "windows" {
+		key = "Path"
+	}
+	env[key] = t.TempDir()
+	if err := p.RunEnv(env, name, "-test.run=^TestShellToolProcess$", "--", "output"); !errors.Is(err, exec.ErrNotFound) {
+		t.Fatalf("extra PATH did not replace toolchain PATH: %v", err)
+	}
+	p.SetToolchain(&toolchain.Toolchain{InstallPath: t.TempDir(), Tools: toolchain.Tools{CC: name}})
+	env[key] = bin
+	if err := p.RunEnv(env, name, "-test.run=^TestShellToolProcess$", "--", "output"); err == nil {
+		t.Fatal("configured tool fell back to extra PATH outside its installation")
+	}
+	if got := os.Getenv("PATH"); got != "" {
+		t.Fatalf("process PATH changed to %q", got)
+	}
+}
 
 func TestCMakeBareMetalUsesConfiguredTools(t *testing.T) {
 	t.Setenv("CMAKE_GENERATOR", "")
@@ -27,8 +77,8 @@ func TestCMakeBareMetalUsesConfiguredTools(t *testing.T) {
 	if err := os.WriteFile(toolPath, []byte("tool"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	p := NewPackage().SetToolchain(&toolchain.Toolchain{
-		TargetOS: "none", TargetTriple: "arm-none-eabi", InstallPath: root, Prefix: "arm-none-eabi-",
+	p := NewPackage().SetPlatform(Platform{OS: "none", Triple: "arm-none-eabi"}).SetToolchain(&toolchain.Toolchain{
+		InstallPath: root, Prefix: "arm-none-eabi-",
 		Tools: toolchain.Tools{CC: tool, CXX: tool, AR: tool, LD: tool, RANLIB: tool, MAKE: tool},
 	}).SetDirs(PkgDirs{SourceDir: root, BuildDir: filepath.Join(root, "build"), InstallDir: filepath.Join(root, "install")})
 	args, err := p.cmakeConfigureArgs("windows")
@@ -91,7 +141,7 @@ func TestCMakeTargetSystemAndGenerator(t *testing.T) {
 		{"preset generator", "windows", "none", "Generic", "", []string{"--preset=firmware"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			p := NewPackage().SetToolchain(&toolchain.Toolchain{TargetOS: test.targetOS})
+			p := NewPackage().SetPlatform(Platform{OS: test.targetOS}).SetToolchain(&toolchain.Toolchain{})
 			args, err := p.cmakeConfigureArgs(test.hostOS, test.extra...)
 			if err != nil {
 				t.Fatal(err)
@@ -108,7 +158,7 @@ func TestCMakeTargetSystemAndGenerator(t *testing.T) {
 		})
 	}
 	t.Setenv("CMAKE_GENERATOR", "Unix Makefiles")
-	p := NewPackage().SetToolchain(&toolchain.Toolchain{TargetOS: "none"})
+	p := NewPackage().SetPlatform(Platform{OS: "none"}).SetToolchain(&toolchain.Toolchain{})
 	args, err := p.cmakeConfigureArgs("windows")
 	if err != nil || slices.Contains(args, "Ninja") {
 		t.Fatalf("environment generator overridden: %q, %v", args, err)
@@ -116,7 +166,7 @@ func TestCMakeTargetSystemAndGenerator(t *testing.T) {
 }
 
 func TestCMakeMissingConfiguredCompilerFails(t *testing.T) {
-	p := NewPackage().SetToolchain(&toolchain.Toolchain{TargetOS: "none", Tools: toolchain.Tools{CC: filepath.Join(t.TempDir(), "missing compiler")}})
+	p := NewPackage().SetPlatform(Platform{OS: "none"}).SetToolchain(&toolchain.Toolchain{Tools: toolchain.Tools{CC: filepath.Join(t.TempDir(), "missing compiler")}})
 	_, err := p.cmakeConfigureArgs("windows")
 	if err == nil || !strings.Contains(err.Error(), "missing compiler") || !strings.Contains(err.Error(), "CMAKE_C_COMPILER") {
 		t.Fatalf("missing compiler error = %v", err)
@@ -191,7 +241,7 @@ func TestMakeAndConfigurePreserveSpacedToolPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := NewPackage().SetToolchain(&toolchain.Toolchain{
-		TargetOS: "none", TargetTriple: "arm-none-eabi", Prefix: "arm-none-eabi-", InstallPath: installDir,
+		Prefix: "arm-none-eabi-", InstallPath: installDir,
 		Tools: toolchain.Tools{CC: toolName, MAKE: makePath},
 	}).SetDirs(PkgDirs{SourceDir: dir, BuildDir: dir, InstallDir: filepath.Join(dir, "install")})
 	p.AddKConfig("firmware").SelectPreset("defconfig")

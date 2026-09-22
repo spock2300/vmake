@@ -94,14 +94,13 @@ import (
     "fmt"
     "os"
     "path/filepath"
-    "runtime"
     "github.com/spock2300/vmake/pkg/plugin"
     "github.com/spock2300/vmake/pkg/toolchain"
 )
 func Main(ctx *plugin.Context) {
     exe, err := os.Executable()
     if err != nil { panic(err) }
-    tc := &toolchain.Toolchain{Name: "pending", TargetOS: runtime.GOOS, Tools: toolchain.Tools{CC: exe, CXX: exe, AR: exe, LD: exe}}
+    tc := &toolchain.Toolchain{Name: "pending", Tools: toolchain.Tools{CC: exe, CXX: exe, AR: exe, LD: exe}}
     __TOOLS__
     ctx.RegisterToolchain("pending", tc)
     ctx.SetOnMissing("pending", func(name string) (*toolchain.Toolchain, error) {

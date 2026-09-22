@@ -1,6 +1,9 @@
 package main
 
 import (
+	"errors"
+	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -37,17 +40,25 @@ type pkgCleanEntry struct {
 	Dir, Name string
 }
 
-func cleanPackages(entries []pkgCleanEntry, cfg *config.ConfigFile, cleanAll bool) {
-	tc, tcName, err := pipeline.GetToolchain(cfg, "")
-	if err != nil {
-		vlog.Error("Error: %v", err)
-		return
+func cleanPackages(entries []pkgCleanEntry, ctx *RuntimeContext, cleanAll bool) error {
+	if cleanAll {
+		for _, pkg := range entries {
+			cleanAllBuildDirs(pkg.Dir, pkg.Name)
+		}
+		vlog.Info("Clean completed!")
+		return nil
 	}
 
-	resolvedTools, err := build.ResolveTools(tc)
+	cfg := ctx.Config
+	platform, err := pipeline.ProjectPlatform(ctx)
 	if err != nil {
-		vlog.Error("Error: %v", err)
-		return
+		return err
+	}
+
+	tcName := pipeline.ResolveToolchainName(cfg, "")
+	resolvedTools, err := existingCleanTools(tcName, platform)
+	if err != nil {
+		return err
 	}
 
 	mode := pipeline.ResolveMode(cfg, "")
@@ -55,36 +66,44 @@ func cleanPackages(entries []pkgCleanEntry, cfg *config.ConfigFile, cleanAll boo
 	tcNames := collectToolchainNames(cfg, tcName, entries)
 
 	for _, pkg := range entries {
-		if cleanAll {
+		entry := config.GetEntry(cfg, pkg.Name)
+		cleaned := false
+		for _, name := range tcNames {
+			cc := resolvedTools.CC
+			if name != tcName {
+				tools, err := existingCleanTools(name, platform)
+				if err != nil {
+					continue
+				}
+				cc = tools.CC
+			}
+			if cleanBuildKeyDir(pkg.Dir, pkg.Name, name, cc, mode, entry.Options) {
+				cleaned = true
+			}
+		}
+		if !cleaned {
 			cleanAllBuildDirs(pkg.Dir, pkg.Name)
-		} else {
-			entry := config.GetEntry(cfg, pkg.Name)
-			cleaned := false
-			for _, name := range tcNames {
-				t := tc
-				cc := resolvedTools.CC
-				if name != tcName {
-					t, err = toolchain.GetManager().SelectToolchain(name)
-					if err != nil {
-						continue
-					}
-					tools, err := build.ResolveTools(t)
-					if err != nil {
-						continue
-					}
-					cc = tools.CC
-				}
-				if cleanBuildKeyDir(pkg.Dir, pkg.Name, name, cc, mode, entry.Options) {
-					cleaned = true
-				}
-			}
-			if !cleaned {
-				cleanAllBuildDirs(pkg.Dir, pkg.Name)
-			}
 		}
 	}
 
 	vlog.Info("Clean completed!")
+	return nil
+}
+
+func existingCleanTools(name string, platform api.Platform) (*build.ResolvedTools, error) {
+	tc, err := toolchain.GetManager().GetToolchain(name)
+	if err == nil {
+		if errs := toolchain.ValidateToolchain(tc); len(errs) > 0 {
+			err = fmt.Errorf("invalid toolchain %q: %w", name, errors.Join(errs...))
+		} else {
+			var tools *build.ResolvedTools
+			tools, err = build.ResolveTools(tc, platform)
+			if err == nil {
+				return tools, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("%w; run 'vmake build --toolchain %s' first", err, name)
 }
 
 func collectToolchainNames(cfg *config.ConfigFile, defaultTc string, entries []pkgCleanEntry) []string {
@@ -140,16 +159,21 @@ func runClean(cmd *cobra.Command, args []string) {
 	ctx, ok := resolveToConfigBestEffort(false)
 	if !ok {
 		entries := scanPackages(ctx.WorkDir)
-		cleanPackages(entries, ctx.Config, cleanAllFlag)
+		fatalErr(cleanPackages(entries, ctx, cleanAllFlag))
 		return
 	}
 
 	vlog.Info("")
 	vlog.Info("Executing OnClean...")
-	executeCleanHooks(ctx, false)
+	if err := executeCleanHooks(ctx, false); err != nil {
+		if !cleanAllFlag {
+			fatalErr(err)
+		}
+		vlog.Error("Skipping OnClean: %v", err)
+	}
 
 	entries := collectCleanEntries(ctx)
-	cleanPackages(entries, ctx.Config, cleanAllFlag)
+	fatalErr(cleanPackages(entries, ctx, cleanAllFlag))
 }
 
 func collectCleanEntries(ctx *RuntimeContext) []pkgCleanEntry {
@@ -163,13 +187,8 @@ func collectCleanEntries(ctx *RuntimeContext) []pkgCleanEntry {
 	return entries
 }
 
-func executeCleanHooks(ctx *RuntimeContext, localOnly bool) {
-	insp, err := pipeline.Inspect(ctx)
-	if err != nil {
-		vlog.Error("Error: %v", err)
-		return
-	}
-
+func executeCleanHooks(ctx *RuntimeContext, localOnly bool) error {
+	var insp *pipeline.Inspection
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if node.Pkg == nil || node.Source == nil {
@@ -178,29 +197,51 @@ func executeCleanHooks(ctx *RuntimeContext, localOnly bool) {
 		if localOnly && !node.IsLocal() {
 			continue
 		}
+		hasHooks := false
+		node.Pkg.ExecCleanFuncs(node.Source.Dir, func(api.CleanFunc) { hasHooks = true })
+		if !hasHooks {
+			continue
+		}
+		if insp == nil {
+			var err error
+			insp, err = pipeline.Inspect(ctx)
+			if err != nil {
+				return fmt.Errorf("OnClean: %w", err)
+			}
+		}
 		dirs := insp.PkgDirs[name]
 		if dirs == nil {
 			continue
 		}
 
-		entry := config.GetEntry(ctx.Config, name)
-
+		platform, err := pipeline.PackagePlatform(ctx, name)
+		if err != nil {
+			return fmt.Errorf("OnClean: %w", err)
+		}
+		values, err := pipeline.PackageConfigValues(ctx, name, insp.GlobalValues)
+		if err != nil {
+			return fmt.Errorf("OnClean: %w", err)
+		}
 		pipeline.DetectExistingSrcDir(node)
 
 		node.Pkg.SetDirs(*dirs)
 		node.Pkg.SetToolchain(insp.Tc)
+		node.Pkg.SetPlatform(platform)
 
-		cleanCtx := api.NewCleanContext(name, entry.Options)
+		cleanCtx := api.NewCleanContext(name, values)
 		if opts, ok := ctx.AllOptions[name]; ok {
-			cleanCtx.SetOptions(opts)
+			cleanCtx.SetOptions(maps.Clone(opts))
 		}
 		cleanCtx.MergeGlobals(ctx.GlobalOptions, insp.GlobalValues)
 		cleanCtx.SetPackage(node.Pkg)
+		node.Pkg.SetOptions(cleanCtx.Options)
+		node.Pkg.SetCfgVals(cleanCtx.CfgVals)
 
 		node.Pkg.ExecCleanFuncs(dirs.SourceDir, func(fn api.CleanFunc) {
 			fn(cleanCtx)
 		})
 	}
+	return nil
 }
 
 func cleanBuildKeyDir(dir, pkgName, tcName, ccPath, mode string, options map[string]any) bool {

@@ -163,8 +163,8 @@ VMake 不依赖外部包管理器。它内置了完整的依赖图解析器，�
 Toolchain 抽象层统一管理所有编译工具链：
 
 - 内置 `host` 工具链，默认使用 gcc/g++ 并从 PATH 解析
-- 插件化注册交叉编译工具链（如 ARM 嵌入式工具链）
-- 自动设置 `CMAKE_SYSTEM_NAME`、`--host` 等跨编译参数
+- 扩展仓库通过 `toolchain.json` 声明交叉编译工具链（如 ARM 嵌入式工具链），vmake 自动扫描、按宿主平台下载并注册
+- 目标系统与三元组由项目 `build.go` 声明，自动生成 `CMAKE_SYSTEM_NAME`、`--host` 等跨编译参数
 - 支持 RTOS/嵌入式后处理步骤（objcopy、size、strip）
 
 ---
@@ -227,11 +227,13 @@ Registry 和 Native 的双源设计对 AI 有着独特的价值：
 
 ### 6. 插件扩展 = AI 可参与的工作流定制
 
-VMake 的插件系统允许扩展 CLI 命令和工具链管理。AI 可以帮你：
+VMake 的插件系统允许扩展 CLI 命令、全局编译选项和编译器分发。AI 可以帮你：
 
 - 编写项目特定的插件，自动化重复的构建流程
 - 集成 CI/CD 流水线
 - 创建自定义的代码生成步骤
+
+插件不参与编译过程：编译哪些目标、使用哪些编译选项，全部由 `build.go` 定义。
 
 ### 7. 从"辅助编码"到"自主工程管理"
 
@@ -255,7 +257,7 @@ AI 不再只是一个代码补全工具，而是成为了一个**能够理解和
 | 第三方库集成 | 需要修改源码或外部脚本 | Registry wrapper，零侵入 |
 | 自有代码分享 | Submodule / Monorepo / 手动拷贝 | Native 包，Git Tag 自动版本化 |
 | 配置系统 | 缓存变量，弱类型 | 强类型 Option + TUI 交互 |
-| 交叉编译 | Toolchain 文件，配置复杂 | 插件化工具链注册 |
+| 交叉编译 | Toolchain 文件，配置复杂 | 声明式 toolchain.json + 项目 build.go 定义目标 |
 | 可扩展性 | CMake 模块，有限 | Go 插件，无限可能 |
 | AI 友好度 | 低（DSL 训练数据少） | 高（Go + 结构化 API + Skill 系统） |
 

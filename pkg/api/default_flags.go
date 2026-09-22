@@ -1,9 +1,15 @@
-package toolchain
+package api
 
-// defaultFlagsFor returns the builtin host toolchain's default flags for a
-// target OS. ELF-only linker flags and the glibc-only _FORTIFY_SOURCE are
-// omitted for PE targets, where MinGW's linker rejects them.
-func defaultFlagsFor(targetOS string) DefaultFlags {
+type DefaultFlags struct {
+	CFlags   []string
+	CxxFlags []string
+	LdFlags  []string
+}
+
+func DefaultBuildFlags(toolchainName, targetOS string) DefaultFlags {
+	if toolchainName != "host" {
+		return DefaultFlags{}
+	}
 	return DefaultFlags{
 		CFlags:   cFlagsFor(targetOS),
 		CxxFlags: cxxFlagsFor(targetOS),
@@ -46,7 +52,6 @@ func cxxFlagsFor(targetOS string) []string {
 
 func ldFlagsFor(targetOS string) []string {
 	if targetOS == "windows" {
-		// -pie, --as-needed and -z relro/now are ELF-only.
 		return []string{"-Wl,--gc-sections"}
 	}
 	return []string{"-pie", "-Wl,--as-needed", "-Wl,--gc-sections", "-Wl,-z,relro,-z,now"}

@@ -33,6 +33,10 @@ func runRebuild(cmd *cobra.Command, args []string) {
 func executeCleanLocal(ctx *RuntimeContext) {
 	vlog.Info("")
 	vlog.Info("Executing OnClean...")
-	executeCleanHooks(ctx, true)
-	cleanPackages(collectCleanEntries(ctx), ctx.Config, false)
+	if err := executeCleanHooks(ctx, true); err != nil {
+		vlog.Error("Skipping OnClean: %v", err)
+	}
+	if err := cleanPackages(collectCleanEntries(ctx), ctx, false); err != nil {
+		vlog.Error("Error: %v", err)
+	}
 }

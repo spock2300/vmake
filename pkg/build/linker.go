@@ -19,7 +19,7 @@ func NewLinker(tools *ResolvedTools) *Linker {
 	return &Linker{
 		ccPath: tools.CC,
 		arPath: tools.AR,
-		run:    runGNU,
+		run:    gnuRunner(tools.env),
 	}
 }
 

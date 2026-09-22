@@ -29,9 +29,6 @@ func ValidateToolchain(tc *Toolchain) []error {
 	if tc == nil {
 		return []error{errors.New("toolchain is nil")}
 	}
-	if tc.TargetOS == "" {
-		errs = append(errs, errors.New("target_os is not configured"))
-	}
 
 	tools := []struct {
 		name     string

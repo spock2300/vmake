@@ -274,7 +274,8 @@ func collectTargetKinds(name string, dirs *api.PkgDirs, ctx *RuntimeContext, tc 
 		return nil
 	}
 
-	buildCtx := pipeline.DeclareTargets(ctx, name, dirs, tc, globalValues)
+	buildCtx, err := pipeline.DeclareTargets(ctx, name, dirs, tc, globalValues)
+	fatalErr(err)
 
 	targets := buildCtx.GetTargets()
 	if len(targets) == 0 {

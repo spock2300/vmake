@@ -1,19 +1,16 @@
 package toolchain
 
 import (
-	"runtime"
-	"strings"
+	"os"
+	"path/filepath"
 )
 
 type Toolchain struct {
-	Name         string       `json:"name"`
-	DisplayName  string       `json:"display_name"`
-	TargetTriple string       `json:"target_triple"`
-	Prefix       string       `json:"prefix"`
-	TargetOS     string       `json:"target_os"`
-	Tools        Tools        `json:"tools"`
-	DefaultFlags DefaultFlags `json:"default_flags"`
-	InstallPath  string       `json:"install_path"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	Prefix      string `json:"prefix"`
+	Tools       Tools  `json:"tools"`
+	InstallPath string `json:"install_path"`
 }
 
 type Tools struct {
@@ -28,23 +25,6 @@ type Tools struct {
 	OBJDUMP string `json:"objdump"`
 	NM      string `json:"nm"`
 	MAKE    string `json:"make"`
-}
-
-// TargetOSOrDefault returns the toolchain's target OS. An unset target OS
-// means "same as the host".
-func (t *Toolchain) TargetOSOrDefault() string {
-	if t.TargetOS != "" {
-		return t.TargetOS
-	}
-	return runtime.GOOS
-}
-
-// TargetOSOf returns tc's target OS, defaulting to the host when tc is nil.
-func TargetOSOf(tc *Toolchain) string {
-	if tc == nil {
-		return runtime.GOOS
-	}
-	return tc.TargetOSOrDefault()
 }
 
 // MakeTool returns the make program to invoke.
@@ -64,21 +44,12 @@ func MakeToolOf(tc *Toolchain) string {
 	return tc.MakeTool()
 }
 
-type DefaultFlags struct {
-	CFlags   []string `json:"cflags"`
-	CxxFlags []string `json:"cxxflags"`
-	LdFlags  []string `json:"ldflags"`
-}
-
 func (t *Toolchain) Env() map[string]string {
 	env := map[string]string{
-		"CC":       t.Tools.CC,
-		"CXX":      t.Tools.CXX,
-		"LD":       t.Tools.LD,
-		"AR":       t.Tools.AR,
-		"CFLAGS":   strings.Join(t.DefaultFlags.CFlags, " "),
-		"CXXFLAGS": strings.Join(t.DefaultFlags.CxxFlags, " "),
-		"LDFLAGS":  strings.Join(t.DefaultFlags.LdFlags, " "),
+		"CC":  t.Tools.CC,
+		"CXX": t.Tools.CXX,
+		"LD":  t.Tools.LD,
+		"AR":  t.Tools.AR,
 	}
 	if t.Prefix != "" {
 		env["CROSS_COMPILE"] = t.Prefix
@@ -96,5 +67,17 @@ func (t *Toolchain) Env() map[string]string {
 		env["NM"] = t.Tools.NM
 	}
 	env["MAKE"] = t.MakeTool()
+	return env
+}
+
+func (t *Toolchain) CommandEnv() map[string]string {
+	env := make(map[string]string)
+	if t != nil && t.InstallPath != "" {
+		path := filepath.Join(t.InstallPath, "bin")
+		if inherited := os.Getenv("PATH"); inherited != "" {
+			path += string(os.PathListSeparator) + inherited
+		}
+		env["PATH"] = path
+	}
 	return env
 }

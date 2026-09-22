@@ -23,7 +23,7 @@ func assemblyTestTools(t *testing.T, name string) *ResolvedTools {
 	if err != nil {
 		t.Skipf("%s unavailable", name)
 	}
-	version, err := compilerVersion(path)
+	version, err := compilerVersion(path, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

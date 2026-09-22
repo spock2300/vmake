@@ -2,13 +2,13 @@
 
 本轮支持 Windows x64 主机构建裸机 / RTOS，使用 GNU ARM 工具链生成 ELF、HEX 和 BIN。按任务要求，不修改子图实现，不在 Windows 验证子图。
 
-## 工具链与插件
+## 工具链与扩展
 
-`vmake-tools` 根据运行主机的 `GOOS/GOARCH`，从 `installations` 中选择 `linux/amd64` 或 `windows/amd64`。目标使用 `target_os: "none"`、`target_triple: "arm-none-eabi"`，与主机平台分开。
+`vmake-tools` 仓库只提供 `arm-none-eabi/toolchain.json`，vmake 自身扫描并注册，不需要插件。定义根据运行主机的 `GOOS/GOARCH`，从 `installations` 中选择 `linux/amd64` 或 `windows/amd64`。目标平台由项目声明：`test_windows/arm_firmware/build.go` 在 `OnConfig` 中设置全局选项 `target_os = "none"`、`target_triple = "arm-none-eabi"`，并通过 `AddGlobalCFlags`／`AddGlobalLdFlags` 提供 `-mcpu=cortex-m4 -mthumb --specs=nosys.specs` 等 CPU 选项，与主机平台和工具链定义分开。
 
 Windows 资产为 `arm-gnu-toolchain-15.3.rel1-mingw-w64-x86_64-arm-none-eabi.zip`，SHA256 为 `b85669d3408e2ae713b17b0cc59bc4ea26369a7f2bd19108fd11df7095f159e6`。Linux TAR 与 Windows ZIP 均保留，Git LFS 按平台只取所需资产。两份插件目录已同步：`examples/plugins` 和 `/home/spock/.vmake/extensions/vmake-tools`。
 
-安装目录为 `~/.vmake/toolchains/<os>/<arch>/<name>/<version>`。解压、哈希和工具校验成功后才发布目录。旧的安装目录保留；旧 `host`、`install` 字段需要按 README 迁移。
+安装目录为 `~/.vmake/toolchains/<os>/<arch>/<name>/<version>`。解压、哈希和工具校验成功后才发布目录。旧的安装目录保留；旧 `host`、`install` 字段以及 `target_os`、`target_triple`、`default_flags` 均需要按 README 迁移，后三者移入项目 `build.go`。
 
 ## 已执行的验证
 

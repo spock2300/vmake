@@ -147,7 +147,7 @@ func (p *Package) cmakeConfigureArgs(hostOS string, extraArgs ...string) ([]stri
 		args = append(args, "-D"+tool.key+"="+filepath.ToSlash(path))
 	}
 	args = append(args, "-DCMAKE_BUILD_TYPE="+p.cmakeBuildType())
-	targetOS := toolchain.TargetOSOf(p.tc)
+	targetOS := p.TargetOS()
 	if p.TargetTriple() != "" || targetOS != hostOS {
 		systemNames := map[string]string{
 			"none": "Generic", "linux": "Linux", "windows": "Windows",

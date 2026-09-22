@@ -1,4 +1,4 @@
-package plugin
+package assets
 
 import (
 	"archive/zip"

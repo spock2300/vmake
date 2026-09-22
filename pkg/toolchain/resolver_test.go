@@ -48,7 +48,7 @@ func TestSelectToolchainValidatesConfiguredTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tc := &Toolchain{Name: "custom", TargetOS: "none", Tools: Tools{CC: exe, CXX: exe, AR: exe, LD: exe, OBJCOPY: filepath.Join(t.TempDir(), "missing")}}
+	tc := &Toolchain{Name: "custom", Tools: Tools{CC: exe, CXX: exe, AR: exe, LD: exe, OBJCOPY: filepath.Join(t.TempDir(), "missing")}}
 	mgr := &Manager{extensions: map[string]*Toolchain{"custom": tc}}
 	if _, err := mgr.SelectToolchain("custom"); err == nil || !strings.Contains(err.Error(), "objcopy") {
 		t.Fatalf("selection error = %v", err)
@@ -84,7 +84,7 @@ func TestManagerIsolatesDefinitionErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	healthy := &Toolchain{Name: "healthy", TargetOS: runtime.GOOS, Tools: Tools{CC: exe, CXX: exe, AR: exe, LD: exe}}
+	healthy := &Toolchain{Name: "healthy", Tools: Tools{CC: exe, CXX: exe, AR: exe, LD: exe}}
 	handlerCalled := false
 	mgr := &Manager{
 		builtin:    healthy,

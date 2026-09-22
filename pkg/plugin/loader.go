@@ -67,6 +67,12 @@ func Load(pluginDir string) (*LoadedPlugin, error) {
 	}, nil
 }
 
-func RunMain(loaded *LoadedPlugin, ctx *Context) {
+func RunMain(loaded *LoadedPlugin, ctx *Context) (err error) {
+	defer func() {
+		if value := recover(); value != nil {
+			err = fmt.Errorf("plugin %s initialization: %v", loaded.Info.Name, value)
+		}
+	}()
 	loaded.Entry(ctx)
+	return nil
 }

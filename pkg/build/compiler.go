@@ -34,7 +34,7 @@ func NewCompiler(tools *ResolvedTools) *Compiler {
 		cxxPath:  tools.CXX,
 		clangCC:  tools.isClangCC(),
 		targetOS: tools.targetOS,
-		run:      runGNU,
+		run:      gnuRunner(tools.env),
 	}
 }
 

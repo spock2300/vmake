@@ -728,17 +728,17 @@ func Main(ctx *plugin.Context) {
 
 **Context 方法**（`pkg/plugin/api.go`）：
 - `AddSubCommand(cmd)`: 注册子命令
-- `RegisterToolchain(name, tc)`: 注册工具链
+- `RegisterToolchain(name, tc) error`: 注册工具链，重名或名称非法时返回错误
 - `GetToolchains()`: 获取已注册工具链
-- `SetOnMissing(toolchainName, fn)`: 为指定工具链设置缺失回调（用于自动下载）
+- `SetOnMissing(toolchainName, fn)`: 为指定工具链设置缺失回调（用于自定义安装）
 - `AddGlobalCFlags(flags...)`: 添加全局 C 编译标志
 - `AddGlobalCxxFlags(flags...)`: 添加全局 C++ 编译标志
 - `AddGlobalLdFlags(flags...)`: 添加全局链接标志
-- `RegisterToolchainsFromRepo()`: 扫描仓库子目录中的 `toolchain.json` 并注册工具链
-- `LoadToolchainDef()`: 从插件目录加载 `toolchain.json`
 - `DownloadFile(url, dest)`: 下载文件
 - `ExtractToDir(archive, dest, format)`: 解压归档（支持 tar.gz/tar.xz/tar.bz2/zip）
 - `RunGitLFS(repoDir, args...)`: 执行 Git LFS 命令
+
+插件不参与编译过程：没有编译回调，也不向 `build.go` 暴露 API。插件收集的全局标志在 `Main` 返回后统一发布到 `toolchain.Manager`，单个插件失败不影响其它插件。
 
 ### 扩展工具函数
 
@@ -747,7 +747,7 @@ func Main(ctx *plugin.Context) {
 
 ### 工具链自动下载
 
-扩展可在子目录中放置 `toolchain.json` 来声明工具链。每个工具链一个文件。
+扩展可在子目录中放置 `toolchain.json` 来声明工具链。每个工具链一个文件。工具链只描述使用哪些程序，不描述目标 CPU/ABI，也不携带项目默认编译选项。
 
 示例 `arm-gcc/toolchain.json`：
 
@@ -756,19 +756,12 @@ func Main(ctx *plugin.Context) {
   "name": "arm-gcc",
   "version": "12.2.0",
   "display_name": "ARM GCC 12.2.0",
-  "target_triple": "arm-linux-gnueabihf",
-  "target_os": "linux",
   "prefix": "arm-linux-gnueabihf-",
   "tools": {
     "cc": "arm-linux-gnueabihf-gcc",
     "cxx": "arm-linux-gnueabihf-g++",
     "ar": "arm-linux-gnueabihf-ar",
-    "ld": "arm-linux-gnueabihf-ld"
-  },
-  "default_flags": {
-    "cflags": ["-mcpu=cortex-a7"],
-    "cxxflags": ["-mcpu=cortex-a7"],
-    "ldflags": []
+    "ld": "arm-linux-gnueabihf-gcc"
   },
   "installations": {
     "linux/amd64": {
@@ -781,9 +774,11 @@ func Main(ctx *plugin.Context) {
 }
 ```
 
-通过 `RegisterToolchainsFromRepo()` 扫描并注册所有子目录中的 `toolchain.json`。含当前宿主 `installations` 条目的工具链会自动注册按需下载回调。支持 `method: "lfs"`（Git LFS）和 `method: "http"` 两种下载方式。
+`toolchain.Manager.RegisterRepo(repoDir, toolchainsDir)`（`pkg/toolchain/discovery.go`）扫描并注册所有子目录中的 `toolchain.json`，不需要插件参与。含当前宿主 `installations` 条目的工具链自动注册按需安装回调，由 `toolchain.Install`（`pkg/toolchain/install.go`）加锁、校验 SHA256、暂存解压后重命名发布。支持 `method: "lfs"`（Git LFS）和 `method: "http"` 两种下载方式。
 
-源码：`pkg/plugin/`, `cmd/vmake/ext_cmd.go`, `pkg/toolchain/manifest.go`
+`target_os`、`target_triple`、`default_flags` 写进 `toolchain.json` 会被拒绝，它们属于项目配置：`api.Platform` 由全局选项 `target_os` / `target_triple` 解析（`pkg/pipeline/platform.go`），默认编译选项由 `api.DefaultBuildFlags`（`pkg/api/default_flags.go`）在内置 `host` 工具链下提供。
+
+源码：`pkg/plugin/`, `cmd/vmake/ext_cmd.go`, `pkg/toolchain/manifest.go`, `pkg/toolchain/discovery.go`, `pkg/toolchain/install.go`
 
 ## 共享基础设施
 

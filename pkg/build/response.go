@@ -10,11 +10,16 @@ import (
 	iexec "github.com/spock2300/vmake/internal/exec"
 )
 
-func runGNU(name, dir string, args ...string) ([]byte, error) {
-	if runtime.GOOS != "windows" {
-		return iexec.RunInDir(name, dir, args...)
+func gnuRunner(env map[string]string) cmdRunner {
+	run := func(name, dir string, args ...string) ([]byte, error) {
+		return iexec.RunWithOptions(name, args, iexec.RunOptions{Dir: dir, Env: env})
 	}
-	return runGNUResponse(name, dir, args, iexec.RunInDir)
+	return func(name, dir string, args ...string) ([]byte, error) {
+		if runtime.GOOS == "windows" {
+			return runGNUResponse(name, dir, args, run)
+		}
+		return run(name, dir, args...)
+	}
 }
 
 func runGNUResponse(name, dir string, args []string, run cmdRunner) ([]byte, error) {

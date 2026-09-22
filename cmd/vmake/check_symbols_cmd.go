@@ -15,7 +15,6 @@ import (
 
 	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/pkg/api"
-	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/toolchain"
@@ -66,14 +65,13 @@ func runCheckSymbols(strict bool) {
 	vlog.SetLevel(vlog.Quiet)
 
 	ctx := resolveToConfig(false)
-	globalValues := config.BuildGlobalValues(ctx.Config)
-
 	insp, err := pipeline.Inspect(ctx)
 	if err != nil {
 		vlog.Fatal("inspect: %v", err)
 	}
 
-	artifacts := discoverArtifacts(ctx, insp.PkgDirs, insp.Tc, globalValues)
+	artifacts, err := discoverArtifacts(ctx, insp.PkgDirs, insp.Tc, insp.GlobalValues)
+	fatalErr(err)
 	if len(artifacts) == 0 {
 		fmt.Println("No built Shared/Binary targets found. Run 'vmake build' first.")
 		return
@@ -133,7 +131,7 @@ func runCheckSymbols(strict bool) {
 	}
 }
 
-func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, tc *toolchain.Toolchain, globalValues map[string]any) []scanArtifact {
+func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, tc *toolchain.Toolchain, globalValues map[string]any) ([]scanArtifact, error) {
 	var out []scanArtifact
 	for name, node := range ctx.DepGraph.Packages {
 		if node == nil || node.Pkg == nil || !node.IsLocal() {
@@ -143,7 +141,10 @@ func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, tc 
 		if dirs == nil {
 			continue
 		}
-		buildCtx := pipeline.DeclareTargets(ctx, name, dirs, tc, globalValues)
+		buildCtx, err := pipeline.DeclareTargets(ctx, name, dirs, tc, globalValues)
+		if err != nil {
+			return nil, err
+		}
 
 		for _, t := range buildCtx.GetTargets() {
 			kind := t.Kind()
@@ -153,7 +154,7 @@ func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, tc 
 			if !t.IsDefault() {
 				continue
 			}
-			filename := api.TargetFilename(kind, t.Name(), toolchain.TargetOSOf(tc))
+			filename := api.TargetFilename(kind, t.Name(), node.Pkg.TargetOS())
 			outputPath := findBuiltOutput(dirs.BuildDir, filename)
 			out = append(out, scanArtifact{
 				pkgName:       name,
@@ -170,7 +171,7 @@ func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, tc 
 		}
 		return out[i].targetName < out[j].targetName
 	})
-	return out
+	return out, nil
 }
 
 func findBuiltOutput(buildDir, filename string) string {

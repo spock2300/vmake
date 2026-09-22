@@ -139,11 +139,20 @@ func (p *Package) LDFlags() string
 func (p *Package) Env() map[string]string
 ```
 
-`TargetTriple()` 返回工具链的 `target_triple`（例如 `arm-none-eabi`）；旧方法 `CrossTarget()` 已移除。工具链必须声明 `target_os`，裸机使用 `none`，不能按运行 vmake 的主机系统推断目标系统。
+`TargetTriple()` 返回项目全局选项 `target_triple` 的值（例如 `arm-none-eabi`）；旧方法 `CrossTarget()` 已移除。目标系统由全局选项 `target_os` 决定，裸机使用 `none`，未声明时取运行 vmake 的主机系统。两者属于项目配置而非工具链，同一个编译器可服务不同目标：
+
+```go
+p.OnConfig(func(ctx *api.ConfigContext) {
+    ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString).SetDefault("none")
+    ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString).SetDefault("arm-none-eabi")
+})
+```
+
+`CFlags()`／`CXXFlags()`／`LDFlags()` 返回内置 `host` 工具链的默认选项，交叉工具链下为空；目标 CPU/ABI 选项由 `build.go` 通过 `AddGlobalCFlags` 等或目标级 `AddCFlags` 提供。
 
 `Prefix()` 原样返回工具链配置的前缀，例如 `arm-none-eabi-`，包含末尾的 `-`，不补充安装目录。拼接工具名时直接使用 `p.Prefix() + "gcc"`，不能再添加 `-`。迁移旧脚本时，应检查 `p.Prefix() + "-gcc"` 和传给外部工具链文件的前缀参数；要求目标三元组的参数使用 `TargetTriple()`。
 
-`p.Env()` 返回已解析的工具路径。工具链声明安装目录时，`CROSS_COMPILE` 包含该目录下的 `bin` 路径和完整前缀，例如 `/path/to/toolchain/bin/arm-none-eabi-`，同样不能再添加 `-`。CMake 工程优先使用 `p.CMakeConfigure()`，它会自动传递已解析的工具。仅在 API 无法表达的特殊操作中手动调用 CMake，并使用 `p.Env()["CC"]`、`p.Env()["CXX"]`、`p.Env()["AR"]` 等路径，避免从前缀重建工具名并依赖 PATH。
+`p.Env()` 返回已解析的工具路径，并把工具链的 `InstallPath/bin` 前置到 `PATH`（仅作用于该命令，vmake 不修改进程级 `PATH`）。工具链声明安装目录时，`CROSS_COMPILE` 包含该目录下的 `bin` 路径和完整前缀，例如 `/path/to/toolchain/bin/arm-none-eabi-`，同样不能再添加 `-`。`CFLAGS`／`CXXFLAGS`／`LDFLAGS` 来自本包的默认与全局选项。CMake 工程优先使用 `p.CMakeConfigure()`，它会自动传递已解析的工具。仅在 API 无法表达的特殊操作中手动调用 CMake，并使用 `p.Env()["CC"]`、`p.Env()["CXX"]`、`p.Env()["AR"]` 等路径，避免从前缀重建工具名并依赖 PATH。
 
 ### RTOS 工具访问器
 
@@ -193,7 +202,7 @@ Windows 主机默认使用 Ninja，尊重显式生成器、`CMAKE_GENERATOR` 环
 
 ### CMake 编译与链接标志传递
 
-`CMakeConfigure` 自动传递本包的默认符号可见性及 `AddGlobalCFlags`／`AddGlobalCxxFlags`／`AddGlobalLdFlags` 设置的全局 C、CXX 及可执行文件／共享库／模块库链接标志（`CMAKE_EXE_LINKER_FLAGS`、`CMAKE_SHARED_LINKER_FLAGS`、`CMAKE_MODULE_LINKER_FLAGS`），不自动加入工具链 `DefaultFlags`。包级可见性默认值位于全局及显式追加标志之前。显式传入某个 flags 变量会替换该变量的自动值；如需追加项目标志，使用 `Merged*Flags` 保留包级默认值与全局值。ASM flags 由项目显式声明，不自动复制全部 C flags。
+`CMakeConfigure` 自动传递本包的默认符号可见性及 `AddGlobalCFlags`／`AddGlobalCxxFlags`／`AddGlobalLdFlags` 设置的全局 C、CXX 及可执行文件／共享库／模块库链接标志（`CMAKE_EXE_LINKER_FLAGS`、`CMAKE_SHARED_LINKER_FLAGS`、`CMAKE_MODULE_LINKER_FLAGS`）。包级可见性默认值位于全局及显式追加标志之前。显式传入某个 flags 变量会替换该变量的自动值；如需追加项目标志，使用 `Merged*Flags` 保留包级默认值与全局值。ASM flags 由项目显式声明，不自动复制全部 C flags。
 
 ```go
 func (p *Package) CMakeGlobalFlagsArgs() []string
@@ -837,6 +846,24 @@ const (
     ModeRelease         = "release"
 )
 ```
+
+项目平台选项（`pkg/api/platform.go`）由项目按需声明，用于交叉编译：
+
+```go
+const (
+    TargetOSOptionName     = "target_os"
+    TargetTripleOptionName = "target_triple"
+)
+```
+
+```go
+p.OnConfig(func(ctx *api.ConfigContext) {
+    ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString).SetDefault("none")
+    ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString).SetDefault("arm-none-eabi")
+})
+```
+
+`target_os` 决定产物命名、链接策略和 CMake 的 `CMAKE_SYSTEM_NAME`（裸机为 `none`），未设置时取运行 vmake 的主机系统；`target_triple` 提供 `Configure` 的 `--host=` 与 `CMAKE_*_COMPILER_TARGET`。两者都可由 `.vmake/config.json` 的 `global.options` 覆盖，也可在包级配置中针对单个包覆盖。
 
 `mode` 选项自动添加编译标志：
 

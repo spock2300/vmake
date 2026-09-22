@@ -1,4 +1,4 @@
-package plugin
+package assets
 
 import (
 	"archive/zip"
@@ -27,7 +27,7 @@ func DownloadFile(url, dest string) error {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	if err := iexec.RunToStdout("", "curl", "-L", "-o", msysPath(dest), url); err != nil {
+	if err := iexec.RunToStdout("", "curl", "--fail", "-L", "-o", msysPath(dest), url); err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
 

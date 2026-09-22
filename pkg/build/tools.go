@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -23,6 +24,7 @@ type ResolvedTools struct {
 	STRIP    string
 	identity string
 	targetOS string
+	env      map[string]string
 
 	CCVersion  string
 	CXXVersion string
@@ -45,8 +47,8 @@ func (t *ResolvedTools) CCKey() string {
 	return t.CC + "@" + t.CCVersion
 }
 
-func compilerVersion(path string) (string, error) {
-	out, err := iexec.RunWithOptions(path, []string{"--version"}, iexec.RunOptions{Quiet: true})
+func compilerVersion(path string, env map[string]string) (string, error) {
+	out, err := iexec.RunWithOptions(path, []string{"--version"}, iexec.RunOptions{Quiet: true, Env: env})
 	if err != nil {
 		return "", fmt.Errorf("probe %s version: %w", path, err)
 	}
@@ -57,7 +59,8 @@ func compilerVersion(path string) (string, error) {
 	return v, nil
 }
 
-func ResolveTools(tc *toolchain.Toolchain) (*ResolvedTools, error) {
+func ResolveTools(tc *toolchain.Toolchain, platform api.Platform) (*ResolvedTools, error) {
+	platform.OS = platform.OSOrHost()
 	mgr := toolchain.GetManager()
 
 	ccPath, err := resolveRequired(mgr, tc, tc.Tools.CC, "CC")
@@ -75,11 +78,12 @@ func ResolveTools(tc *toolchain.Toolchain) (*ResolvedTools, error) {
 		return nil, err
 	}
 
-	ccVersion, err := compilerVersion(ccPath)
+	env := tc.CommandEnv()
+	ccVersion, err := compilerVersion(ccPath, env)
 	if err != nil {
 		return nil, err
 	}
-	cxxVersion, err := compilerVersion(cxxPath)
+	cxxVersion, err := compilerVersion(cxxPath, env)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +91,8 @@ func ResolveTools(tc *toolchain.Toolchain) (*ResolvedTools, error) {
 	resolved := &ResolvedTools{
 		CC: ccPath, CXX: cxxPath, AR: arPath,
 		CCVersion: ccVersion, CXXVersion: cxxVersion,
-		targetOS: tc.TargetOSOrDefault(),
+		targetOS: platform.OS,
+		env:      env,
 	}
 	for _, item := range []struct {
 		name, configured string
@@ -113,7 +118,8 @@ func ResolveTools(tc *toolchain.Toolchain) (*ResolvedTools, error) {
 		HostArch  string
 		Toolchain *toolchain.Toolchain
 		Resolved  *ResolvedTools
-	}{runtime.GOOS, runtime.GOARCH, tc, resolved})
+		Platform  api.Platform
+	}{runtime.GOOS, runtime.GOARCH, tc, resolved, platform})
 	if err != nil {
 		return nil, fmt.Errorf("toolchain identity: %w", err)
 	}

@@ -164,6 +164,7 @@ type Package struct {
 	cmakeConfig             string
 	outputDir               string
 	tc                      *toolchain.Toolchain
+	platform                Platform
 	globalCFlags            []string
 	globalCxxFlags          []string
 	globalLdFlags           []string
@@ -560,17 +561,23 @@ func (p *Package) InstallDir() string   { return p.dirs.InstallDir }
 func (p *Package) OutputDir() string    { return p.outputDir }
 func (p *Package) GetPatches() []string { return p.patches }
 
-func (p *Package) CC() string       { return p.tc.Tools.CC }
-func (p *Package) CXX() string      { return p.tc.Tools.CXX }
-func (p *Package) AR() string       { return p.tc.Tools.AR }
-func (p *Package) Prefix() string   { return p.tc.Prefix }
-func (p *Package) CFlags() string   { return strings.Join(p.tc.DefaultFlags.CFlags, " ") }
-func (p *Package) CXXFlags() string { return strings.Join(p.tc.DefaultFlags.CxxFlags, " ") }
-func (p *Package) LDFlags() string  { return strings.Join(p.tc.DefaultFlags.LdFlags, " ") }
-func (p *Package) ObjCopy() string  { return p.tc.Tools.OBJCOPY }
-func (p *Package) Size() string     { return p.tc.Tools.SIZE }
-func (p *Package) ObjDump() string  { return p.tc.Tools.OBJDUMP }
-func (p *Package) NM() string       { return p.tc.Tools.NM }
+func (p *Package) CC() string     { return p.tc.Tools.CC }
+func (p *Package) CXX() string    { return p.tc.Tools.CXX }
+func (p *Package) AR() string     { return p.tc.Tools.AR }
+func (p *Package) Prefix() string { return p.tc.Prefix }
+func (p *Package) CFlags() string {
+	return strings.Join(DefaultBuildFlags(p.tc.Name, p.TargetOS()).CFlags, " ")
+}
+func (p *Package) CXXFlags() string {
+	return strings.Join(DefaultBuildFlags(p.tc.Name, p.TargetOS()).CxxFlags, " ")
+}
+func (p *Package) LDFlags() string {
+	return strings.Join(DefaultBuildFlags(p.tc.Name, p.TargetOS()).LdFlags, " ")
+}
+func (p *Package) ObjCopy() string { return p.tc.Tools.OBJCOPY }
+func (p *Package) Size() string    { return p.tc.Tools.SIZE }
+func (p *Package) ObjDump() string { return p.tc.Tools.OBJDUMP }
+func (p *Package) NM() string      { return p.tc.Tools.NM }
 
 type InstalledPackage struct {
 	Name       string

@@ -24,6 +24,7 @@ type buildConfig struct {
 	Mode         string
 	TcName       string
 	Tc           *toolchain.Toolchain
+	Platform     api.Platform
 	GlobalValues map[string]any
 }
 
@@ -34,17 +35,27 @@ type buildPrelude struct {
 	globalFlagsHash string
 }
 
-func prepareBuildPrelude(ctx *RuntimeContext) (*buildPrelude, error) {
+func resolveExistingBuildConfig(ctx *RuntimeContext) (*buildConfig, error) {
+	if _, err := ProjectPlatform(ctx); err != nil {
+		return nil, err
+	}
 	tcName := ResolveToolchainName(ctx.Config, ctx.ToolchainOverride)
 	tc, err := toolchain.GetManager().GetToolchain(tcName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w; run 'vmake build --toolchain %s' first", err, tcName)
 	}
 	if errs := toolchain.ValidateToolchain(tc); len(errs) > 0 {
-		return nil, fmt.Errorf("invalid toolchain %q: %w", tcName, errors.Join(errs...))
+		return nil, fmt.Errorf("invalid toolchain %q: %w; run 'vmake build --toolchain %s' first", tcName, errors.Join(errs...), tcName)
 	}
-	cfg := makeBuildConfig(ctx, tc, tcName)
-	tools, err := build.ResolveTools(cfg.Tc)
+	return makeBuildConfig(ctx, tc, tcName), nil
+}
+
+func prepareBuildPrelude(ctx *RuntimeContext) (*buildPrelude, error) {
+	cfg, err := resolveExistingBuildConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tools, err := build.ResolveTools(cfg.Tc, cfg.Platform)
 	if err != nil {
 		return nil, err
 	}
@@ -59,6 +70,22 @@ func prepareBuildPrelude(ctx *RuntimeContext) (*buildPrelude, error) {
 		needed:          needed,
 		globalFlagsHash: build.GlobalFlagsHash(),
 	}, nil
+}
+
+func resolvePackageTools(ctx *RuntimeContext, name string, tc *toolchain.Toolchain, cache map[api.Platform]*build.ResolvedTools) (*build.ResolvedTools, error) {
+	platform, err := PackagePlatform(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if tools := cache[platform]; tools != nil {
+		return tools, nil
+	}
+	tools, err := build.ResolveTools(tc, platform)
+	if err != nil {
+		return nil, fmt.Errorf("resolve tools for %s: %w", name, err)
+	}
+	cache[platform] = tools
+	return tools, nil
 }
 
 func scriptHashForNode(name string, node *resolver.PackageNode) (string, error) {

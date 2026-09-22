@@ -2,7 +2,6 @@
   "name": "arm-none-eabi",
   "display_name": "ARM GNU Toolchain 15.3.rel1 (arm-none-eabi)",
   "prefix": "arm-none-eabi-",
-  "target_os": "none",
   "tools": {
     "cc": "arm-none-eabi-gcc",
     "cxx": "arm-none-eabi-g++",
@@ -15,30 +14,7 @@
     "objdump": "arm-none-eabi-objdump",
     "nm": "arm-none-eabi-nm"
   },
-  "default_flags": {
-    "cflags": [
-      "-mcpu=cortex-m4",
-      "-mthumb",
-      "-Os",
-      "-ffunction-sections",
-      "-fdata-sections"
-    ],
-    "cxxflags": [
-      "-mcpu=cortex-m4",
-      "-mthumb",
-      "-Os",
-      "-ffunction-sections",
-      "-fdata-sections"
-    ],
-    "ldflags": [
-      "-mcpu=cortex-m4",
-      "-mthumb",
-      "--specs=nosys.specs",
-      "-Wl,--gc-sections"
-    ]
-  },
   "version": "15.3.rel1",
-  "target_triple": "arm-none-eabi",
   "installations": {
     "windows/amd64": {
       "method": "lfs",

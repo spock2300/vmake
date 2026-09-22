@@ -38,15 +38,17 @@ def check_archive(path, arm):
     assert objects == 3, (path, objects)
 
 
-def verify(vmake, root, name, toolchain, generator, custom=False, preset=False):
+def verify(vmake, root, name, toolchain, generator, custom=False, preset=False,
+           default_mode=False):
     project = root / name
     source = project / "source"
     source.mkdir(parents=True)
     (project / ".vmake").mkdir()
     arm = toolchain == "arm-none-eabi"
-    (project / ".vmake/config.json").write_text(json.dumps({
-        "global": {"toolchain": toolchain, "mode": "debug"}
-    }), encoding="utf-8")
+    if not default_mode:
+        (project / ".vmake/config.json").write_text(json.dumps({
+            "global": {"toolchain": toolchain, "mode": "debug"}
+        }), encoding="utf-8")
     (project / "CMakeLists.txt").write_text('''cmake_minimum_required(VERSION 3.20)
 project(vmake_probe LANGUAGES C CXX ASM)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -93,12 +95,16 @@ probe_asm:
 int probe_cpp(void);
 int main(void) { return probe_value() + probe_cpp() > 0 ? 0 : 1; }
 ''', encoding="utf-8")
-    settings = 'p.SetCMakeBuildType("MinSizeRel")'
+    settings = "" if default_mode else 'p.SetCMakeBuildType("MinSizeRel")'
     if custom:
-        settings += '.SetCMakeBuildDir("intermediate cmake").SetCMakeInstallDir("stage area")'
+        settings += '\np.SetCMakeBuildDir("intermediate cmake").SetCMakeInstallDir("stage area")'
     flags = 'ctx.AddGlobalCFlags("-DVMAKE_C_FLAG=1")\nctx.AddGlobalCxxFlags("-DVMAKE_CXX_FLAG=1")'
     flags += '\nctx.AddGlobalLdFlags("-Wl,--gc-sections")'
+    if default_mode:
+        flags += '\nctx.GlobalMode()'
     if arm:
+        flags += '\nctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString).SetDefault("none")'
+        flags += '\nctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString).SetDefault("arm-none-eabi")'
         flags += '\nctx.AddGlobalCFlags("-mcpu=cortex-m4", "-mthumb")\nctx.AddGlobalCxxFlags("-mcpu=cortex-m4", "-mthumb")'
     configure = ["--preset=probe"] if preset else ["-G", generator]
     if generator == "Ninja Multi-Config":
@@ -155,7 +161,9 @@ func Main(p *api.Package) {
     assert (install / "include/value.h").is_file()
     assert (project / "install/lib/libprobe.a").is_file()
     cache = (build / "CMakeCache.txt").read_text(encoding="utf-8")
-    assert "CMAKE_BUILD_TYPE:STRING=MinSizeRel" in cache or "CMAKE_BUILD_TYPE:UNINITIALIZED=MinSizeRel" in cache
+    expected_type = "Debug" if default_mode else "MinSizeRel"
+    assert (f"CMAKE_BUILD_TYPE:STRING={expected_type}" in cache
+            or f"CMAKE_BUILD_TYPE:UNINITIALIZED={expected_type}" in cache), expected_type
     assert "CMAKE_LINKER:UNINITIALIZED=" not in cache
     assert "CMAKE_MODULE_LINKER_FLAGS:STRING=-Wl,--gc-sections" in cache
     commands = json.loads((build / "compile_commands.json").read_text(encoding="utf-8"))
@@ -188,6 +196,7 @@ def main():
     verify(vmake, root, "native", "host", "Ninja")
     verify(vmake, root, "multi config", "host", "Ninja Multi-Config", custom=True)
     verify(vmake, root, "preset", "host", "Ninja", preset=True)
+    verify(vmake, root, "default debug", "host", "Ninja", default_mode=True)
     if args.arm:
         verify(vmake, root, "ARM", "arm-none-eabi", "Ninja")
     print(f"All CMake checks passed: {root}")

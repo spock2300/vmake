@@ -8,20 +8,21 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 func TestTestExecutionRejectsCrossTargets(t *testing.T) {
-	for _, tc := range []*toolchain.Toolchain{
-		{Name: "arm", TargetOS: "none", TargetTriple: "arm-none-eabi"},
-		{Name: "linux-arm", TargetOS: "linux", TargetTriple: "aarch64-linux-gnu"},
-		{Name: "windows", TargetOS: "windows"},
+	for _, platform := range []api.Platform{
+		{OS: "none", Triple: "arm-none-eabi"},
+		{OS: "linux", Triple: "aarch64-linux-gnu"},
+		{OS: "windows"},
 	} {
-		if err := validateTestExecution(tc, "linux"); err == nil || !strings.Contains(err.Error(), "vmake build --tests") {
-			t.Errorf("toolchain %s: %v", tc.Name, err)
+		if err := validateTestExecution(platform, "linux"); err == nil || !strings.Contains(err.Error(), "vmake build --tests") {
+			t.Errorf("platform %v: %v", platform, err)
 		}
 	}
-	if err := validateTestExecution(&toolchain.Toolchain{Name: "host", TargetOS: "linux"}, "linux"); err != nil {
+	if err := validateTestExecution(api.Platform{OS: "linux"}, "linux"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -33,7 +34,7 @@ func TestDoctorChecksSelectedToolsWithoutNativeGCC(t *testing.T) {
 	}
 	t.Setenv("PATH", t.TempDir())
 	tc := &toolchain.Toolchain{
-		Name: "arm", TargetOS: "none", TargetTriple: "arm-none-eabi",
+		Name:  "arm",
 		Tools: toolchain.Tools{CC: program, CXX: program, AR: program, LD: program, MAKE: program},
 	}
 	findings := checkToolchain(tc)

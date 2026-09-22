@@ -208,6 +208,7 @@ func applyAllConfigCallbacks(ctx *RuntimeContext) {
 
 func applyGlobalFlagsFromNeeded(ctx *RuntimeContext, needed map[string]bool) {
 	mgr := toolchain.GetManager()
+	var cflags, cxxflags, ldflags, links []string
 	for _, name := range ctx.Resolver.GetOrder() {
 		if !needed[name] {
 			continue
@@ -216,19 +217,12 @@ func applyGlobalFlagsFromNeeded(ctx *RuntimeContext, needed map[string]bool) {
 		if buf == nil {
 			continue
 		}
-		if len(buf.cFlags) > 0 {
-			mgr.AddGlobalCFlags(buf.cFlags...)
-		}
-		if len(buf.cxxFlags) > 0 {
-			mgr.AddGlobalCxxFlags(buf.cxxFlags...)
-		}
-		if len(buf.ldFlags) > 0 {
-			mgr.AddGlobalLdFlags(buf.ldFlags...)
-		}
-		if len(buf.links) > 0 {
-			mgr.AddGlobalLinks(buf.links...)
-		}
+		cflags = append(cflags, buf.cFlags...)
+		cxxflags = append(cxxflags, buf.cxxFlags...)
+		ldflags = append(ldflags, buf.ldFlags...)
+		links = append(links, buf.links...)
 	}
+	mgr.SetProjectFlags(cflags, cxxflags, ldflags, links)
 }
 
 func buildToolchainAndGlobalOptions(ctx *RuntimeContext) error {

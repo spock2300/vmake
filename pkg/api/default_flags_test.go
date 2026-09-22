@@ -1,12 +1,14 @@
-package toolchain
+package api
 
 import (
 	"slices"
 	"testing"
+
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 func TestDefaultFlagsLinuxUnchanged(t *testing.T) {
-	flags := defaultFlagsFor("linux")
+	flags := DefaultBuildFlags("host", "linux")
 
 	wantC := []string{
 		"-Wall", "-Wextra", "-Werror",
@@ -28,7 +30,7 @@ func TestDefaultFlagsLinuxUnchanged(t *testing.T) {
 }
 
 func TestDefaultFlagsWindowsDropsELFFlags(t *testing.T) {
-	flags := defaultFlagsFor("windows")
+	flags := DefaultBuildFlags("host", "windows")
 
 	if slices.Contains(flags.CFlags, "-D_FORTIFY_SOURCE=2") {
 		t.Error("CFlags must not carry the glibc-only -D_FORTIFY_SOURCE=2 for PE targets")
@@ -48,19 +50,19 @@ func TestDefaultFlagsWindowsDropsELFFlags(t *testing.T) {
 }
 
 func TestTargetOSOf(t *testing.T) {
-	if got := TargetOSOf(nil); got == "" {
-		t.Error("TargetOSOf(nil) must fall back to the host OS")
+	if got := (Platform{}).OSOrHost(); got == "" {
+		t.Error("empty platform must use the host OS")
 	}
-	if got := TargetOSOf(&Toolchain{TargetOS: "windows"}); got != "windows" {
+	if got := (Platform{OS: "windows"}).OSOrHost(); got != "windows" {
 		t.Errorf("TargetOSOf = %q, want windows", got)
 	}
 }
 
 func TestMakeTool(t *testing.T) {
-	if got := (&Toolchain{}).MakeTool(); got != "make" {
+	if got := (&toolchain.Toolchain{}).MakeTool(); got != "make" {
 		t.Errorf("MakeTool() = %q, want make", got)
 	}
-	if got := (&Toolchain{Tools: Tools{MAKE: "mingw32-make"}}).MakeTool(); got != "mingw32-make" {
+	if got := (&toolchain.Toolchain{Tools: toolchain.Tools{MAKE: "mingw32-make"}}).MakeTool(); got != "mingw32-make" {
 		t.Errorf("MakeTool() = %q, want mingw32-make", got)
 	}
 }

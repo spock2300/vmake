@@ -75,6 +75,7 @@ type Scheduler struct {
 	compiler      *Compiler
 	linker        *Linker
 	toolchain     *toolchain.Toolchain
+	platform      api.Platform
 	resolvedTools *ResolvedTools
 	tcName        string
 	mode          string
@@ -99,8 +100,9 @@ func NewScheduler(
 	pkgDirs map[string]*api.PkgDirs,
 	mode string,
 	pkgOptions map[string]map[string]any,
+	platform api.Platform,
 ) (*Scheduler, error) {
-	tools, err := ResolveTools(tc)
+	tools, err := ResolveTools(tc, platform)
 	if err != nil {
 		return nil, err
 	}
@@ -120,6 +122,7 @@ func NewScheduler(
 		compiler:      compiler,
 		linker:        linker,
 		toolchain:     tc,
+		platform:      platform,
 		resolvedTools: tools,
 		tcName:        tcName,
 		mode:          mode,
@@ -494,7 +497,7 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 		} else if depNode.Target.Kind() != api.TargetVoid {
 			var depOutput string
 			if depPkg.InstallDir != "" && depPkg.OutputDir == "" {
-				depOutput = filepath.Join(depPkg.InstallDir, "lib", targetFilename(depNode.Target.Kind(), depNode.Target.Name(), s.targetOS()))
+				depOutput = filepath.Join(depPkg.InstallDir, "lib", targetFilename(depNode.Target.Kind(), depNode.Target.Name(), s.targetOS(depNode.PkgName)))
 			} else {
 				depOutput = s.getTargetOutputPath(depNode)
 			}
@@ -502,7 +505,7 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 			// LinkShared emits next to the DLL as libfoo.dll.a. Prebuilt
 			// targets ship only the declared file, so consumers link the DLL
 			// itself.
-			if s.targetOS() == "windows" && depNode.Target.Kind() == api.TargetShared && depNode.Target.Prebuilt() == "" {
+			if s.targetOS(depNode.PkgName) == "windows" && depNode.Target.Kind() == api.TargetShared && depNode.Target.Prebuilt() == "" {
 				depOutput += ".a"
 			}
 			if !fs.FileExists(depOutput) {
@@ -663,10 +666,11 @@ func targetFilename(kind api.TargetKind, name, targetOS string) string {
 	return api.TargetFilename(kind, name, targetOS)
 }
 
-// targetOS is the OS the toolchain produces artifacts for, which is not
-// necessarily the host (vmake cross-compiles from Linux to embedded Linux).
-func (s *Scheduler) targetOS() string {
-	return toolchain.TargetOSOf(s.toolchain)
+func (s *Scheduler) targetOS(pkgName string) string {
+	if pkg := s.packages[pkgName]; pkg != nil {
+		return pkg.TargetOS()
+	}
+	return s.platform.OSOrHost()
 }
 
 // objectName derives the flat object file name for a source path. Source paths
@@ -690,7 +694,7 @@ func (s *Scheduler) checkLibDependencies(resolved *ResolvedTarget) {
 }
 
 func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
-	return s.pkgs[node.PkgName].OutputPath(targetFilename(node.Target.Kind(), node.Target.Name(), s.targetOS()))
+	return s.pkgs[node.PkgName].OutputPath(targetFilename(node.Target.Kind(), node.Target.Name(), s.targetOS(node.PkgName)))
 }
 
 func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string, []string, error) {
@@ -718,7 +722,9 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string,
 
 	vlog.Info("  CC %s", src)
 
-	deps, err := s.compiler.Compile(src, objRel, opts, workDir)
+	compiler := *s.compiler
+	compiler.targetOS = s.targetOS(resolved.Node.PkgName)
+	deps, err := compiler.Compile(src, objRel, opts, workDir)
 	if err != nil {
 		return "", nil, err
 	}
@@ -737,7 +743,7 @@ func (s *Scheduler) needRelink(resolved *ResolvedTarget, objs []string) bool {
 	// A PE shared target must also carry its import library: without it,
 	// consumers fail with "dependency artifact missing" even though the DLL
 	// itself is up to date.
-	if implib := importLibraryPath(absOutput, s.targetOS(), resolved.Node.Target.Kind()); implib != "" {
+	if implib := importLibraryPath(absOutput, s.targetOS(resolved.Node.PkgName), resolved.Node.Target.Kind()); implib != "" {
 		if _, err := os.Stat(implib); err != nil {
 			vlog.Info("  RELINK %s (import library missing)", resolved.Node.Target.Name())
 			return true
@@ -876,6 +882,7 @@ func (s *Scheduler) ensurePackageForVoid(node *BuildNode) *api.Package {
 		BuildDir:  buildDir,
 	})
 	pkg.SetToolchain(s.toolchain)
+	pkg.SetPlatform(s.platform)
 	pkg.SetSrcDir(pkgInfo.SourceDir)
 	cfgVals := map[string]any{api.ModeOptionName: s.mode}
 	if opts, ok := s.pkgOptions[node.PkgName]; ok {
@@ -973,7 +980,7 @@ func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) (bool
 		linkerScript := resolved.LinkerScript
 		vlog.Info("  LINK %s", outputName)
 		policy := LinkPolicy{
-			TargetOS:      s.targetOS(),
+			TargetOS:      s.targetOS(resolved.Node.PkgName),
 			VersionScript: resolved.VersionScript,
 			ExcludeLibs:   resolved.ExcludeLibs,
 			SymbolBinding: resolved.SymbolBinding,
@@ -994,7 +1001,7 @@ func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) (bool
 	case api.TargetShared:
 		vlog.Info("  LINK %s", outputName)
 		policy := LinkPolicy{
-			TargetOS:      s.targetOS(),
+			TargetOS:      s.targetOS(resolved.Node.PkgName),
 			VersionScript: resolved.VersionScript,
 			ExcludeLibs:   resolved.ExcludeLibs,
 			SymbolBinding: resolved.SymbolBinding,
@@ -1033,7 +1040,7 @@ func (s *Scheduler) postLink(resolved *ResolvedTarget) error {
 		args := expandPostLinkArgs(step.Args, workDir, resolved.OutputPath)
 
 		vlog.Info("  %s %s", filepath.Base(tool), strings.Join(args, " "))
-		if _, err := iexec.RunInDir(tool, workDir, args...); err != nil {
+		if _, err := iexec.RunWithOptions(tool, args, iexec.RunOptions{Dir: workDir, Env: s.toolchain.CommandEnv()}); err != nil {
 			return err
 		}
 	}
@@ -1092,6 +1099,7 @@ func sameFileContent(a, b string) bool {
 func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) error {
 	t := resolved.Node.Target
 	kind := t.Kind()
+	targetOS := s.targetOS(resolved.Node.PkgName)
 
 	if kind == api.TargetVoid || kind == api.TargetObject || t.IsTest() {
 		return nil
@@ -1104,7 +1112,7 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 		srcPath := resolveWorkPath(pkgInfo.SourceDir, resolved.OutputPath)
 		dest := filepath.Join(libDir, filepath.Base(resolved.OutputPath))
 		if info, err := os.Stat(dest); err == nil && info.Mode().IsRegular() &&
-			sameFileContent(srcPath, dest) && !s.implibMissing(srcPath, libDir, kind) {
+			sameFileContent(srcPath, dest) && !implibMissing(srcPath, libDir, targetOS, kind) {
 			vlog.Info("  SKIP (already published)")
 			return nil
 		}
@@ -1123,7 +1131,7 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 				return fmt.Errorf("install library failed: %w", err)
 			}
 		}
-		if implib := importLibraryPath(srcPath, s.targetOS(), kind); implib != "" {
+		if implib := importLibraryPath(srcPath, targetOS, kind); implib != "" {
 			if _, err := os.Stat(implib); err == nil {
 				dest := filepath.Join(libDir, filepath.Base(implib))
 				vlog.Info("  INSTALL %s -> %s", filepath.Base(implib), dest)
@@ -1146,8 +1154,8 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 // publishing: LinkShared emitted one next to the artifact, but the destination
 // directory does not have it. Guards the "already published" fast path, which
 // otherwise compares only the DLL and never repairs a deleted implib.
-func (s *Scheduler) implibMissing(srcPath, destDir string, kind api.TargetKind) bool {
-	implib := importLibraryPath(srcPath, s.targetOS(), kind)
+func implibMissing(srcPath, destDir, targetOS string, kind api.TargetKind) bool {
+	implib := importLibraryPath(srcPath, targetOS, kind)
 	if implib == "" {
 		return false
 	}

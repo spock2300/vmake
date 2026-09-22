@@ -12,6 +12,7 @@ import (
 type BuildPipeline struct {
 	Graph        *BuildGraph
 	Toolchain    *toolchain.Toolchain
+	Platform     api.Platform
 	PkgDirs      map[string]*api.PkgDirs
 	Mode         string
 	Options      map[string]map[string]any
@@ -25,8 +26,9 @@ type BuildPipeline struct {
 	KeepGoing    bool
 }
 
-func NewBuildPipeline(graph *BuildGraph, tc *toolchain.Toolchain, pkgDirs map[string]*api.PkgDirs, mode string, options map[string]map[string]any) *BuildPipeline {
+func NewBuildPipeline(graph *BuildGraph, tc *toolchain.Toolchain, pkgDirs map[string]*api.PkgDirs, mode string, options map[string]map[string]any, platform api.Platform) *BuildPipeline {
 	return &BuildPipeline{
+		Platform:  platform,
 		Graph:     graph,
 		Toolchain: tc,
 		PkgDirs:   pkgDirs,
@@ -69,7 +71,7 @@ func (p *BuildPipeline) SetKeepGoing(v bool) {
 }
 
 func (p *BuildPipeline) Run() (*Scheduler, error) {
-	scheduler, err := NewScheduler(p.Graph, p.Toolchain, p.PkgDirs, p.Mode, p.Options)
+	scheduler, err := NewScheduler(p.Graph, p.Toolchain, p.PkgDirs, p.Mode, p.Options, p.Platform)
 	if err != nil {
 		return nil, err
 	}

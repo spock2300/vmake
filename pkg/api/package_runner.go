@@ -2,6 +2,7 @@ package api
 
 import (
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/spock2300/vmake/internal/exec"
@@ -27,8 +28,6 @@ func (p *Package) MergedLdFlags(extra ...string) string {
 	all := append(append([]string{}, p.globalLdFlags...), extra...)
 	return strings.Join(all, " ")
 }
-
-func (p *Package) TargetTriple() string { return p.tc.TargetTriple }
 
 func (p *Package) Env() map[string]string {
 	tc := *p.tc
@@ -59,6 +58,12 @@ func (p *Package) Env() map[string]string {
 		tc.Prefix = filepath.ToSlash(tc.Prefix)
 	}
 	env := tc.Env()
+	for key, value := range tc.CommandEnv() {
+		env[key] = value
+	}
+	env["CFLAGS"] = strings.TrimSpace(p.CFlags() + " " + p.MergedCFlags())
+	env["CXXFLAGS"] = strings.TrimSpace(p.CXXFlags() + " " + p.MergedCxxFlags())
+	env["LDFLAGS"] = strings.TrimSpace(p.LDFlags() + " " + p.MergedLdFlags())
 	if tc.Tools.STRIP != "" {
 		env["STRIP"] = tc.Tools.STRIP
 	}
@@ -133,7 +138,9 @@ func (p *Package) Run(name string, args ...string) {
 	if p.logAndDryRun(name, args) {
 		return
 	}
-	exec.RunFatal(p.dirs.BuildDir, name, args...)
+	if err := p.runIn(p.dirs.BuildDir, nil, name, args...); err != nil {
+		fatalScript(p.Name, "Run", "%v", err)
+	}
 }
 
 func (p *Package) RunIn(dir, name string, args ...string) {
@@ -141,12 +148,38 @@ func (p *Package) RunIn(dir, name string, args ...string) {
 	if p.dryRun {
 		return
 	}
-	exec.RunFatal(dir, name, args...)
+	if err := p.runIn(dir, nil, name, args...); err != nil {
+		fatalScript(p.Name, "RunIn", "%v", err)
+	}
 }
 
 func (p *Package) RunEnv(env map[string]string, name string, args ...string) error {
 	if p.logAndDryRun(name, args) {
 		return nil
 	}
-	return exec.RunWithEnv(p.dirs.BuildDir, env, name, args...)
+	return p.runIn(p.dirs.BuildDir, env, name, args...)
+}
+
+func (p *Package) runIn(dir string, extra map[string]string, name string, args ...string) error {
+	env := p.tc.CommandEnv()
+	for key, value := range extra {
+		if runtime.GOOS == "windows" && strings.EqualFold(key, "PATH") {
+			key = "PATH"
+		}
+		env[key] = value
+	}
+	if p.tc != nil {
+		t := p.tc.Tools
+		for _, configured := range []string{t.CC, t.CXX, t.AR, t.LD, t.STRIP, t.RANLIB, t.OBJCOPY, t.SIZE, t.OBJDUMP, t.NM, t.MAKE} {
+			if configured != "" && name == configured {
+				path, err := toolchain.ResolveToolPath(configured, p.tc.InstallPath)
+				if err != nil {
+					return err
+				}
+				name = path
+				break
+			}
+		}
+	}
+	return exec.RunWithEnv(dir, env, name, args...)
 }

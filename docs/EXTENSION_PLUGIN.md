@@ -1,6 +1,14 @@
 # VMake 扩展插件指南
 
-扩展插件通过 [yaegi](https://github.com/traefik/yaegi) Go 解释器动态加载，扩展 vmake 的 CLI 命令和工具链管理能力。插件存储在 `~/.vmake/extensions/<repo>/<plugin>/`。无需编译，vmake 启动时即时解释执行插件源码。
+扩展插件通过 [yaegi](https://github.com/traefik/yaegi) Go 解释器动态加载，扩展 vmake 自身的能力。插件存储在 `~/.vmake/extensions/<repo>/<plugin>/`。无需编译，vmake 启动时即时解释执行插件源码。
+
+扩展只做三件事：
+
+1. 提供新的 CLI 命令，执行外部程序
+2. 注册与项目无关的全局编译/链接选项
+3. 按宿主 OS/架构声明、下载并注册编译器
+
+“编译什么、怎么编译”由项目的 `build.go` 决定。扩展不参与编译过程，也不向构建脚本提供 API。
 
 ## 快速开始
 
@@ -48,6 +56,8 @@ vmake hello world
 
 vmake 在启动时自动发现并用 yaegi 解释执行插件源码，无需编译，即时可用。
 
+`vmake ext add` 和 `vmake ext update` 只获取普通 Git 文件及 LFS 指针，不自动下载 LFS 大文件。构建首次使用某个未安装的工具链时，vmake 才下载该工具链对应当前宿主 OS/架构的压缩包。更新扩展不会预取新版本，也不会删除已有压缩包、LFS 缓存或工具链安装目录。这项策略仅用于扩展仓库，不改变项目源码依赖的 Git 下载行为。
+
 ## 目录结构
 
 ```
@@ -65,7 +75,7 @@ vmake 在启动时自动发现并用 yaegi 解释执行插件源码，无需编�
         └── *.tar.gz
 ```
 
-每个扩展仓库是一个 Git 仓库。仓库根目录下的每个子目录可以是一个插件（含 `plugin.json`）或一个工具链声明（含 `toolchain.json`）。一个仓库可以包含任意数量的插件和工具链，vmake 启动时自动发现并加载所有插件。
+每个扩展仓库是一个 Git 仓库。仓库根目录下的每个子目录可以是一个插件（含 `plugin.json`）或一个工具链声明（含 `toolchain.json`）。一个仓库可以包含任意数量的插件和工具链，vmake 启动时自动发现并注册工具链、加载所有插件；只含 `toolchain.json` 的仓库不需要任何插件代码。
 
 示例：一个仓库 `embedded-tools` 包含烧录和监控两个插件，以及一个 arm-gcc 工具链声明：
 
@@ -84,7 +94,7 @@ vmake 在启动时自动发现并用 yaegi 解释执行插件源码，无需编�
         └── arm-gcc-12.2.0.tar.gz
 ```
 
-对应的 CLI 命令为 `vmake flash ...` 和 `vmake monitor ...`。工具链通过 `tc` 插件自动发现注册。
+对应的 CLI 命令为 `vmake flash ...` 和 `vmake monitor ...`。`arm-gcc-12.2/toolchain.json` 由 vmake 直接扫描注册。
 
 ## plugin.json
 
@@ -149,29 +159,29 @@ func Main(ctx *plugin.Context) {
 ### RegisterToolchain
 
 ```go
-RegisterToolchain func(name string, tc *toolchain.Toolchain)
+RegisterToolchain func(name string, tc *toolchain.Toolchain) error
 ```
 
-注册一个自定义工具链。注册后用户可以通过 `--toolchain <name>` 或在 `build.go` 中设置 `toolchain` 选项来选择该工具链。
+注册一个自定义工具链。注册后用户可以通过 `--toolchain <name>` 或全局 `toolchain` 选项选择该工具链。名称必须与 `tc.Name` 一致，不能是 `host`，且不能与已注册的工具链重名，否则返回错误。
+
+工具链只描述“用哪些程序编译”，不描述“为哪个 CPU 编译”。目标 CPU/ABI 选项由项目的 `build.go` 提供。
 
 ```go
-ctx.RegisterToolchain("riscv32", &toolchain.Toolchain{
+err := ctx.RegisterToolchain("riscv32", &toolchain.Toolchain{
     Name:        "riscv32",
     DisplayName: "RISC-V 32-bit",
-    Host:        "x86_64-linux-gnu",
     Prefix:      "riscv32-unknown-elf-",
     Tools: toolchain.Tools{
         CC:  "riscv32-unknown-elf-gcc",
         CXX: "riscv32-unknown-elf-g++",
         AR:  "riscv32-unknown-elf-ar",
-    },
-    DefaultFlags: toolchain.DefaultFlags{
-        CFlags:   []string{"-O2", "-march=rv32im", "-mabi=ilp32"},
-        CxxFlags: []string{"-O2", "-march=rv32im", "-mabi=ilp32"},
+        LD:  "riscv32-unknown-elf-gcc",
     },
     InstallPath: filepath.Join(ctx.VMakeDir, "toolchains", "riscv32"),
 })
 ```
+
+通常不需要手动调用：仓库子目录中的 `toolchain.json` 由 vmake 自身扫描注册，见[工具链资源](#工具链资源)。`RegisterToolchain` 用于无法用 `toolchain.json` 描述的动态场景。
 
 ### GetToolchains
 
@@ -179,7 +189,7 @@ ctx.RegisterToolchain("riscv32", &toolchain.Toolchain{
 GetToolchains func() map[string]*toolchain.Toolchain
 ```
 
-获取所有已注册的工具链（内置 `host` + 扩展注册的工具链）。
+获取所有已注册的工具链（内置 `host` + 声明或注册的工具链）。
 
 ```go
 for name, tc := range ctx.GetToolchains() {
@@ -193,7 +203,7 @@ for name, tc := range ctx.GetToolchains() {
 SetOnMissing func(toolchainName string, onMissing func(name string) (*toolchain.Toolchain, error))
 ```
 
-设置工具链缺失回调。第一个参数是工具链名称，用于区分不同工具链的缺失回调，支持每个工具链独立的下载逻辑。
+设置工具链缺失回调。第一个参数是工具链名称，用于区分不同工具链的缺失回调，支持每个工具链独立的下载逻辑。含 `installations` 的 `toolchain.json` 已由 vmake 自动注册该回调，此方法用于自定义安装流程。
 
 ```go
 ctx.SetOnMissing("arm-gcc", func(name string) (*toolchain.Toolchain, error) {
@@ -208,7 +218,7 @@ AddGlobalCFlags   func(flags ...string)
 AddGlobalCxxFlags func(flags ...string)
 ```
 
-为所有构建目标注入全局 C 或 C++ 编译选项。影响所有使用 vmake 构建的项目。
+为所有构建目标注入全局 C 或 C++ 编译选项。影响所有使用 vmake 构建的项目，因此只应放置与项目无关的选项；目标 CPU、优化级别等属于项目，应写在 `build.go` 里。
 
 ```go
 ctx.AddGlobalCFlags("-ffunction-sections", "-fdata-sections")
@@ -233,7 +243,7 @@ ctx.AddGlobalLdFlags("-Wl,--gc-sections", "-Wl,--as-needed")
 DownloadFile func(url, dest string) error
 ```
 
-从 URL 下载文件到本地路径。使用 `curl -L -o` 实现，自动创建目标目录的父目录。
+从 URL 下载文件到本地路径。使用 `curl -fL -o` 实现，自动创建目标目录的父目录。
 
 ```go
 err := ctx.DownloadFile(
@@ -264,37 +274,17 @@ err := ctx.ExtractToDir(
 RunGitLFS func(repoDir string, args ...string) error
 ```
 
-在指定目录执行 `git lfs` 命令。典型用途是拉取扩展仓库中通过 Git LFS 存储的工具链压缩包。
+在指定目录执行 `git lfs` 命令。声明式工具链的资源由 vmake 按需下载；插件自有的其他 LFS 资源需要在实际使用时调用此接口显式拉取。插件源码、`plugin.json` 和 `toolchain.json` 应作为普通 Git 文件保存。
 
 ```go
-err := ctx.RunGitLFS(pluginDir, "pull", "--include", "assets/toolchains/aarch64-gcc.tar.gz")
+err := ctx.RunGitLFS(ctx.RepoDir, "pull", "--include=assets/toolchains/aarch64-gcc.tar.gz", "--exclude=")
 ```
 
-### RegisterToolchainsFromRepo
-
-```go
-RegisterToolchainsFromRepo func()
-```
-
-扫描插件仓库中子目录的 `toolchain.json` 文件，注册声明的工具链并为含当前宿主 `installations` 配置的工具链设置自动下载回调。通常由 `tc` 插件在 `Main` 中调用。
-
-```go
-ctx.RegisterToolchainsFromRepo()
-```
-
-### LoadToolchainDef
-
-```go
-LoadToolchainDef func() (*toolchain.ToolchainDef, error)
-```
-
-从插件目录加载 `toolchain.json` 文件，返回 `ToolchainDef`。
-
-```go
-def, err := ctx.LoadToolchainDef()
-```
+`--include` 限定需要的文件，`--exclude=` 清除本次调用继承的 LFS 排除规则。该接口按插件提供的参数执行，下载范围和调用时机由插件负责。
 
 ## 工具链类型
+
+工具链只回答“用哪些程序编译”。目标系统、目标三元组和项目编译选项都不属于工具链，由项目的 `build.go` 提供，因此同一个编译器可以服务不同 CPU 的项目。
 
 ### toolchain.Toolchain
 
@@ -302,11 +292,9 @@ def, err := ctx.LoadToolchainDef()
 |------|------|------|
 | `Name` | `string` | 工具链标识符（如 `"aarch64-linux-gnu"`） |
 | `DisplayName` | `string` | 可读名称（如 `"ARM GCC 12.2.0"`），`vmake toolchain list` 显示 |
-| `Host` | `string` | 宿主平台三元组（如 `"x86_64-linux-gnu"`） |
 | `Prefix` | `string` | 包含末尾 `-` 的交叉编译前缀（如 `"aarch64-linux-gnu-"`），设为 `""` 表示无前缀；拼接工具名时不再添加 `-` |
 | `Tools` | `Tools` | 各工具的可执行文件名 |
-| `DefaultFlags` | `DefaultFlags` | 默认编译/链接选项 |
-| `InstallPath` | `string` | 工具链安装目录的绝对路径 |
+| `InstallPath` | `string` | 工具链安装目录的绝对路径，为空表示尚未安装 |
 
 ### toolchain.Tools
 
@@ -322,20 +310,13 @@ def, err := ctx.LoadToolchainDef()
 | `SIZE` | `string` | 大小报告 | `"aarch64-linux-gnu-size"` |
 | `OBJDUMP` | `string` | 反汇编 | `"aarch64-linux-gnu-objdump"` |
 | `NM` | `string` | 符号列表 | `"aarch64-linux-gnu-nm"` |
+| `MAKE` | `string` | make 程序，为空时按需解析为 `make` | `"make"` |
 
-`CC` 和 `CXX` 是必填项，其余可选。
-
-### toolchain.DefaultFlags
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `CFlags` | `[]string` | 默认 C 编译选项 |
-| `CxxFlags` | `[]string` | 默认 C++ 编译选项 |
-| `LdFlags` | `[]string` | 默认链接选项 |
+`CC`、`CXX`、`AR` 和 `LD` 是必填项，其余可选。
 
 ### Toolchain.Env()
 
-`Toolchain` 提供一个 `Env()` 方法，返回环境变量映射：
+`Toolchain` 提供一个 `Env()` 方法，返回传给 `p.Run`/`p.Make` 等外部命令的环境变量映射：
 
 | 变量 | 来源 |
 |------|------|
@@ -343,18 +324,22 @@ def, err := ctx.LoadToolchainDef()
 | `CXX` | `Tools.CXX` |
 | `LD` | `Tools.LD` |
 | `AR` | `Tools.AR` |
-| `CFLAGS` | `DefaultFlags.CFlags`（空格拼接） |
-| `CXXFLAGS` | `DefaultFlags.CxxFlags`（空格拼接） |
-| `LDFLAGS` | `DefaultFlags.LdFlags`（空格拼接） |
+| `MAKE` | `MakeTool()` |
 | `CROSS_COMPILE` | `Prefix`（仅当非空时） |
 | `OBJCOPY` | `Tools.OBJCOPY`（仅当非空时） |
 | `SIZE` | `Tools.SIZE`（仅当非空时） |
 | `OBJDUMP` | `Tools.OBJDUMP`（仅当非空时） |
 | `NM` | `Tools.NM`（仅当非空时） |
 
+`CFLAGS`/`CXXFLAGS`/`LDFLAGS` 来自包自身的编译选项，由 `pkg/api` 在调用外部构建系统时拼接，不再由工具链提供。
+
+### Toolchain.CommandEnv()
+
+`CommandEnv()` 返回把 `InstallPath/bin` 前置到 `PATH` 的环境变量映射，仅用于单条命令。vmake 不修改进程级 `PATH`，各工具链互不干扰。
+
 ## 工具链资源
 
-扩展可随仓库提供预编译工具链，通过 `toolchain.json` 声明。
+扩展可随仓库提供预编译工具链，通过 `toolchain.json` 声明。vmake 启动时扫描每个扩展仓库的子目录，自动注册其中的 `toolchain.json`，不需要插件参与。
 
 ### toolchain.json 格式
 
@@ -363,20 +348,13 @@ def, err := ctx.LoadToolchainDef()
   "name": "arm-gcc",
   "version": "12.2.0",
   "display_name": "ARM GCC 12.2.0",
-  "target_triple": "arm-linux-gnueabihf",
-  "target_os": "linux",
   "prefix": "arm-linux-gnueabihf-",
   "tools": {
     "cc": "arm-linux-gnueabihf-gcc",
     "cxx": "arm-linux-gnueabihf-g++",
     "ar": "arm-linux-gnueabihf-ar",
-    "ld": "arm-linux-gnueabihf-ld",
+    "ld": "arm-linux-gnueabihf-gcc",
     "strip": "arm-linux-gnueabihf-strip"
-  },
-  "default_flags": {
-    "cflags": ["-mcpu=cortex-a7", "-mfpu=neon-vfpv4", "-mfloat-abi=hard"],
-    "cxxflags": ["-mcpu=cortex-a7", "-mfpu=neon-vfpv4", "-mfloat-abi=hard"],
-    "ldflags": ["-mcpu=cortex-a7", "-mfpu=neon-vfpv4", "-mfloat-abi=hard"]
   },
   "installations": {
     "linux/amd64": {
@@ -394,19 +372,18 @@ def, err := ctx.LoadToolchainDef()
 | `name` | string | 是 | 工具链标识符，用于 `--toolchain <name>` |
 | `version` | string | 安装时必填 | 安装目录使用 `<os>/<arch>/<name>/<version>` |
 | `display_name` | string | 否 | 可读名称，默认同 `name` |
-| `target_triple` | string | 否 | 编译目标三元组，例如 `arm-linux-gnueabihf` |
-| `target_os` | string | 是 | 目标系统；裸机为 `none`，嵌入式 Linux 为 `linux` |
 | `prefix` | string | 否 | 交叉编译前缀，非空时必须包含结尾的连字符 |
 | `tools` | object | 是 | 各工具的可执行文件名（同 `toolchain.Tools`，`cc`、`cxx`、`ar` 和 `ld` 必填） |
-| `default_flags` | object | 否 | 默认编译/链接选项（`cflags`/`cxxflags`/`ldflags`） |
 | `installations` | object | 否 | 以宿主 `OS/architecture` 为键的安装配置；不配置则使用明确配置的工具路径或 PATH |
+
+未列出的字段一律拒绝。`target_os`、`target_triple`、`default_flags` 属于项目配置，写在 `toolchain.json` 里会让该定义报错；旧的 `host`、`install` 字段同样不再接受。
 
 **每个 installations 条目的字段**：
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `method` | string | 是 | 下载方法：`"lfs"`（Git LFS）或 `"http"` |
-| `file` | string | 是 | 压缩包文件名：`lfs` 方法时位于扩展仓库 `assets/toolchains/` 下，`http` 方法时作为下载到 `~/.vmake/toolchains/` 的文件名 |
+| `file` | string | 是 | 压缩包文件名：`lfs` 方法时位于扩展仓库 `assets/toolchains/` 下，不能包含逗号、通配符 `*?[]` 或首尾空白，以保证只匹配一个文件；`http` 方法的文件名规则不变 |
 | `url` | string | 否 | HTTP 下载URL（method 为 http 时必填） |
 | `format` | string | 否 | 压缩格式（`tar.gz`/`tar.xz`/`tar.bz2`/`zip`），为空时自动检测 |
 | `sha256` | string | 否 | SHA256 校验和，可选 |
@@ -414,19 +391,39 @@ def, err := ctx.LoadToolchainDef()
 
 ### 自动下载机制
 
-工具链自动下载通过 `tc` 插件 + `RegisterToolchainsFromRepo()` 实现：
+工具链的发现与安装由 vmake 自身完成，插件不参与：
 
-1. `tc` 插件的 `Main` 函数调用 `ctx.RegisterToolchainsFromRepo()`
-2. 该方法逐个加载扩展仓库子目录中的 `toolchain.json`，独立记录每份定义的成功或错误
-3. 对每个包含当前宿主 `installations` 条目的工具链，调用 `SetOnMissing` 注册按需下载回调
-4. 当用户通过 `--toolchain <name>` 或在 `build.go` 选择未安装的工具链时：
-   - `method: "lfs"` → 执行 `git lfs pull` 拉取压缩包 → 解压到 `~/.vmake/toolchains/`
-   - `method: "http"` → 从 `url` 下载压缩包到 `~/.vmake/toolchains/` → 解压到 `~/.vmake/toolchains/`
-5. 下载完成后自动注册工具链，后续可直接使用
+1. vmake 启动时扫描每个扩展仓库的子目录，逐个加载 `toolchain.json`，独立记录每份定义的成功或错误
+2. 对每个包含当前宿主 `installations` 条目的工具链，注册按需安装回调
+3. 构建通过 `--toolchain <name>`、全局 `toolchain` 选项或实际构建的子图选中未安装的工具链时：
+   - `method: "lfs"` → 先检查选中的压缩包；完整文件直接复用，指针或缺失文件才执行 `git -c lfs.fetchrecentalways=false lfs pull --include=assets/toolchains/<file> --exclude=`。只拉取当前检出版本的单个文件，已有 LFS 对象可离线复用；拉取后仍为指针或缺失则报错，不扩大下载范围
+   - `method: "http"` → 从 `url` 下载压缩包到临时目录
+4. 校验 SHA256、按 `root_dir` 解压到暂存目录，再整体重命名发布到 `~/.vmake/toolchains/<os>/<arch>/<name>/<version>/`，作为工具链的 `InstallPath`
+5. 安装过程持有文件锁，多个项目并发构建时只会安装一次
 
-Git LFS 压缩包放在扩展仓库的 `assets/toolchains/`。按声明的 `root_dir` 解压、校验后，发布到 `~/.vmake/toolchains/<os>/<arch>/<name>/<version>/`，作为工具链的 `InstallPath`。
+工具链的程序通过 `InstallPath/bin` 逐条命令解析，vmake 不会修改进程级 `PATH`。
 
-旧 `host`、`install` 字段不再接受。错误仅阻止对应工具链；`vmake toolchain list` 显示定义名称、路径及原因，损坏 JSON 无法识别名称时按路径显示。选择错误定义时不会回退到宿主工具链。`vmake ext update/remove` 跳过插件执行，可用于修复或移除扩展。
+列表、查询、诊断、`clean` 和 `lock update` 不会自动安装工具链。操作确实依赖编译器信息而工具不可用时，会提示先执行 `vmake build --toolchain <name>`。`clean --all` 可在工具链缺失时清理构建目录；此时无法执行依赖工具链的 `OnClean` 回调会明确提示。第三方插件显式调用下载接口的行为不受此限制。
+
+错误仅阻止对应工具链；`vmake toolchain list` 显示定义名称、路径及原因，损坏 JSON 无法识别名称时按路径显示。选择错误定义时不会回退到宿主工具链。`vmake ext update/remove` 跳过插件执行，可用于修复或移除扩展。
+
+### 项目一侧的目标平台
+
+工具链不携带目标信息，项目在 `build.go` 中声明：
+
+```go
+func Main(p *api.Package) {
+    p.OnConfig(func(ctx *api.ConfigContext) {
+        ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString).SetDefault("none")
+        ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString).SetDefault("arm-none-eabi")
+        ctx.AddGlobalCFlags("-mcpu=cortex-m4", "-mthumb")
+        ctx.AddGlobalCxxFlags("-mcpu=cortex-m4", "-mthumb")
+        ctx.AddGlobalLdFlags("-mcpu=cortex-m4", "-mthumb", "--specs=nosys.specs")
+    })
+}
+```
+
+`target_os` 决定产物命名、链接策略和 CMake 的 `CMAKE_SYSTEM_NAME`（裸机为 `none`），`target_triple` 提供 `--host=` 与 `CMAKE_*_COMPILER_TARGET`。两者都是普通全局选项，可由 `.vmake/config.json` 的 `global.options` 覆盖。
 
 ## 实战示例
 
@@ -466,7 +463,7 @@ func Main(ctx *plugin.Context) {
 
 ### 示例 2：交叉编译工具链管理插件
 
-提供 `vmake xcompile list` 和 `vmake xcompile use` 命令，同时管理工具链自动下载：
+提供 `vmake xcompile list` 命令，并为动态发现的工具链注册安装回调：
 
 ```go
 package main
@@ -481,19 +478,16 @@ import (
 )
 
 func Main(ctx *plugin.Context) {
-    // 注册工具链
     registerToolchains(ctx)
 
-    // 设置自动下载回调
     ctx.SetOnMissing("arm-none-eabi", func(name string) (*toolchain.Toolchain, error) {
         return downloadToolchain(ctx, name)
     })
 
-    // 添加全局编译标志
+    // 与项目无关的全局选项
     ctx.AddGlobalCFlags("-ffunction-sections", "-fdata-sections")
     ctx.AddGlobalCxxFlags("-ffunction-sections", "-fdata-sections")
 
-    // list 子命令
     ctx.AddSubCommand(&cobra.Command{
         Use:   "list",
         Short: "List available cross-compilation toolchains",
@@ -508,49 +502,41 @@ func Main(ctx *plugin.Context) {
 func registerToolchains(ctx *plugin.Context) {
     toolchainsDir := filepath.Join(ctx.VMakeDir, "toolchains")
 
-    ctx.RegisterToolchain("arm-none-eabi", &toolchain.Toolchain{
+    if err := ctx.RegisterToolchain("arm-none-eabi", &toolchain.Toolchain{
         Name:        "arm-none-eabi",
         DisplayName: "ARM GCC 12.2.1",
-        Host:        "x86_64-linux-gnu",
         Prefix:      "arm-none-eabi-",
         Tools: toolchain.Tools{
             CC:      "arm-none-eabi-gcc",
             CXX:     "arm-none-eabi-g++",
             AR:      "arm-none-eabi-ar",
+            LD:      "arm-none-eabi-gcc",
             OBJCOPY: "arm-none-eabi-objcopy",
             SIZE:    "arm-none-eabi-size",
             OBJDUMP: "arm-none-eabi-objdump",
             NM:      "arm-none-eabi-nm",
         },
-        DefaultFlags: toolchain.DefaultFlags{
-            CFlags:   []string{"-Os", "-mcpu=cortex-m4", "-mthumb"},
-            CxxFlags: []string{"-Os", "-mcpu=cortex-m4", "-mthumb"},
-            LdFlags:  []string{"-specs=nosys.specs"},
-        },
         InstallPath: filepath.Join(toolchainsDir, "arm-none-eabi-12.2.1"),
-    })
+    }); err != nil {
+        fmt.Printf("register arm-none-eabi: %v\n", err)
+    }
 }
 
 func downloadToolchain(ctx *plugin.Context, name string) (*toolchain.Toolchain, error) {
-    pluginDir := ctx.PluginDir
-    archivePath := filepath.Join(pluginDir, "assets", "toolchains", name+".tar.gz")
+    archive := filepath.Join(ctx.RepoDir, "assets", "toolchains", name+".tar.gz")
     toolchainsDir := filepath.Join(ctx.VMakeDir, "toolchains")
 
-    // 通过 Git LFS 拉取
-    if err := ctx.RunGitLFS(pluginDir, "pull", "--include", "assets/toolchains/"+name+".tar.gz"); err != nil {
+    if err := ctx.RunGitLFS(ctx.RepoDir, "pull", "--include", "assets/toolchains/"+name+".tar.gz", "--exclude="); err != nil {
         return nil, fmt.Errorf("download failed: %w", err)
     }
-
-    // 解压
-    if err := ctx.ExtractToDir(archivePath, toolchainsDir, ""); err != nil {
+    if err := ctx.ExtractToDir(archive, toolchainsDir, ""); err != nil {
         return nil, fmt.Errorf("extract failed: %w", err)
     }
-
-    fmt.Printf("Toolchain %s installed\n", name)
-    // 返回已注册的工具链（此处省略具体构造）
-    return nil, nil
+    return ctx.GetToolchains()[name], nil
 }
 ```
+
+注意：`-mcpu`、`-mthumb`、`-Os` 这类描述“为哪个 CPU 编译”的选项不属于插件，应写在项目的 `build.go` 里。
 
 ### 示例 3：仅提供工具链资源（无插件）
 
@@ -570,6 +556,4 @@ my-toolchains/
         └── riscv-gcc-13.1.0.tar.gz    (Git LFS)
 ```
 
-通过 `vmake ext add` 添加该仓库后，使用 `tc` 插件即可自动发现并注册工具链。
-
-如需手动注册，可在自建插件中调用 `ctx.RegisterToolchainsFromRepo()`。
+通过 `vmake ext add` 添加该仓库后，vmake 自动发现并注册其中的工具链，`vmake toolchain list` 立即可见，无需任何插件代码。

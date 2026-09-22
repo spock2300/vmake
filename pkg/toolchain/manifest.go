@@ -3,6 +3,7 @@ package toolchain
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,11 +26,8 @@ type ToolchainDef struct {
 	Name          string                   `json:"name"`
 	Version       string                   `json:"version"`
 	DisplayName   string                   `json:"display_name"`
-	TargetTriple  string                   `json:"target_triple"`
 	Prefix        string                   `json:"prefix"`
-	TargetOS      string                   `json:"target_os"`
 	Tools         Tools                    `json:"tools"`
-	DefaultFlags  DefaultFlags             `json:"default_flags"`
 	Installations map[string]InstallConfig `json:"installations"`
 }
 
@@ -69,7 +67,12 @@ func LoadToolchainDef(path string) (*ToolchainDef, error) {
 	}
 	for _, field := range []string{"host", "install"} {
 		if _, ok := fields[field]; ok {
-			return nil, &DefinitionError{name: name, path: path, err: fmt.Errorf("legacy field %q is unsupported; use target_triple and installations keyed by OS/architecture", field)}
+			return nil, &DefinitionError{name: name, path: path, err: fmt.Errorf("legacy field %q is unsupported; use installations keyed by host OS/architecture", field)}
+		}
+	}
+	for _, field := range []string{"target_os", "target_triple", "default_flags"} {
+		if _, ok := fields[field]; ok {
+			return nil, &DefinitionError{name: name, path: path, err: fmt.Errorf("field %q belongs in build.go project configuration, not toolchain.json", field)}
 		}
 	}
 	var def ToolchainDef
@@ -108,9 +111,6 @@ func (d *ToolchainDef) Validate() error {
 	if !validPathComponent(d.Name) {
 		return fmt.Errorf("missing or invalid name %q", d.Name)
 	}
-	if d.TargetOS == "" {
-		return fmt.Errorf("toolchain %s: missing target_os", d.Name)
-	}
 	if d.Prefix != "" && !strings.HasSuffix(d.Prefix, "-") {
 		return fmt.Errorf("toolchain %s: prefix must include its trailing hyphen", d.Name)
 	}
@@ -127,6 +127,9 @@ func (d *ToolchainDef) Validate() error {
 		}
 		if !validPathComponent(install.File) {
 			return fmt.Errorf("toolchain %s installation %s: missing or invalid archive file %q", d.Name, host, install.File)
+		}
+		if install.Method == "lfs" && (strings.TrimSpace(install.File) != install.File || strings.ContainsAny(install.File, ",*?[]")) {
+			return fmt.Errorf("toolchain %s installation %s: invalid LFS archive file %q; use a literal filename without pattern characters, commas, or surrounding whitespace", d.Name, host, install.File)
 		}
 		if install.Method != "lfs" && install.Method != "http" {
 			return fmt.Errorf("toolchain %s installation %s: unknown method %q", d.Name, host, install.Method)
@@ -168,19 +171,17 @@ func (d *ToolchainDef) ToToolchain(toolchainsDir string) (*Toolchain, error) {
 		displayName = d.Name
 	}
 	return &Toolchain{
-		Name:         d.Name,
-		DisplayName:  displayName,
-		TargetTriple: d.TargetTriple,
-		Prefix:       d.Prefix,
-		TargetOS:     d.TargetOS,
-		Tools:        d.Tools,
-		DefaultFlags: d.DefaultFlags,
-		InstallPath:  installPath,
+		Name:        d.Name,
+		DisplayName: displayName,
+		Prefix:      d.Prefix,
+		Tools:       d.Tools,
+		InstallPath: installPath,
 	}, nil
 }
 
 func ScanRepoToolchains(repoDir string) ([]ToolchainDef, error) {
 	var results []ToolchainDef
+	var failures []error
 
 	entries, err := os.ReadDir(repoDir)
 	if err != nil {
@@ -197,26 +198,11 @@ func ScanRepoToolchains(repoDir string) ([]ToolchainDef, error) {
 		}
 		def, err := LoadToolchainDef(defPath)
 		if err != nil {
-			return nil, err
+			failures = append(failures, err)
+			continue
 		}
 		results = append(results, *def)
 	}
 
-	return results, nil
-}
-
-func DetectFormat(filename string) string {
-	if strings.HasSuffix(filename, ".tar.gz") || strings.HasSuffix(filename, ".tgz") {
-		return "tar.gz"
-	}
-	if strings.HasSuffix(filename, ".tar.xz") || strings.HasSuffix(filename, ".txz") {
-		return "tar.xz"
-	}
-	if strings.HasSuffix(filename, ".tar.bz2") || strings.HasSuffix(filename, ".tbz2") {
-		return "tar.bz2"
-	}
-	if strings.HasSuffix(filename, ".zip") {
-		return "zip"
-	}
-	return "tar.gz"
+	return results, errors.Join(failures...)
 }

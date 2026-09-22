@@ -14,11 +14,16 @@ type Manager struct {
 	builtin          *Toolchain
 	extensions       map[string]*Toolchain
 	onMissing        map[string]OnMissingToolchain
+	sources          map[string]string
 	definitionErrors map[string]*DefinitionError
 	globalCFlags     []string
 	globalCxxFlags   []string
 	globalLdFlags    []string
 	globalLinks      []string
+	projectCFlags    []string
+	projectCxxFlags  []string
+	projectLdFlags   []string
+	projectLinks     []string
 	mu               sync.RWMutex
 }
 
@@ -61,7 +66,13 @@ func (m *Manager) SelectToolchain(name string) (*Toolchain, error) {
 		if err != nil {
 			return nil, err
 		}
-		return validatedToolchain(tc)
+		if _, err := validatedToolchain(tc); err != nil {
+			return nil, err
+		}
+		m.mu.Lock()
+		m.extensions[name] = tc
+		m.mu.Unlock()
+		return tc, nil
 	}
 
 	if ok {
@@ -161,49 +172,37 @@ func (m *Manager) GetDefaultToolchain() string {
 func (m *Manager) AddGlobalCFlags(flags ...string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, f := range flags {
-		if !slices.Contains(m.globalCFlags, f) {
-			m.globalCFlags = append(m.globalCFlags, f)
-		}
-	}
+	m.globalCFlags = append(m.globalCFlags, flags...)
 }
 
 func (m *Manager) AddGlobalCxxFlags(flags ...string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, f := range flags {
-		if !slices.Contains(m.globalCxxFlags, f) {
-			m.globalCxxFlags = append(m.globalCxxFlags, f)
-		}
-	}
+	m.globalCxxFlags = append(m.globalCxxFlags, flags...)
 }
 
 func (m *Manager) AddGlobalLdFlags(flags ...string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, f := range flags {
-		if !slices.Contains(m.globalLdFlags, f) {
-			m.globalLdFlags = append(m.globalLdFlags, f)
-		}
-	}
+	m.globalLdFlags = append(m.globalLdFlags, flags...)
 }
 
 func (m *Manager) GetGlobalCFlags() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return append([]string{}, m.globalCFlags...)
+	return append(append([]string{}, m.globalCFlags...), m.projectCFlags...)
 }
 
 func (m *Manager) GetGlobalCxxFlags() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return append([]string{}, m.globalCxxFlags...)
+	return append(append([]string{}, m.globalCxxFlags...), m.projectCxxFlags...)
 }
 
 func (m *Manager) GetGlobalLdFlags() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return append([]string{}, m.globalLdFlags...)
+	return append(append([]string{}, m.globalLdFlags...), m.projectLdFlags...)
 }
 
 func (m *Manager) AddGlobalLinks(links ...string) {
@@ -219,31 +218,44 @@ func (m *Manager) AddGlobalLinks(links ...string) {
 func (m *Manager) GetGlobalLinks() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return append([]string{}, m.globalLinks...)
+	return append(append([]string{}, m.globalLinks...), m.projectLinks...)
+}
+
+func (m *Manager) SetProjectFlags(cflags, cxxflags, ldflags, links []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.projectCFlags = append([]string{}, cflags...)
+	m.projectCxxFlags = append([]string{}, cxxflags...)
+	m.projectLdFlags = append([]string{}, ldflags...)
+	m.projectLinks = append([]string{}, links...)
 }
 
 func (m *Manager) ResolveToolPath(tc *Toolchain, tool string) (string, error) {
 	return ResolveToolPath(tool, tc.InstallPath)
 }
 
-func (m *Manager) RegisterToolchain(name string, tc *Toolchain) {
+func (m *Manager) RegisterToolchain(name string, tc *Toolchain) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.extensions[name] = tc
-}
-
-func (m *Manager) RegisterDef(def *ToolchainDef, toolchainsDir string) error {
-	tc, err := def.ToToolchain(toolchainsDir)
-	if err != nil {
-		return err
+	if !validPathComponent(name) || name == "host" || tc == nil || tc.Name != name {
+		return fmt.Errorf("invalid toolchain registration %q", name)
 	}
-	m.RegisterToolchain(def.Name, tc)
+	if _, exists := m.extensions[name]; exists {
+		return fmt.Errorf("toolchain %q is already registered", name)
+	}
+	if m.extensions == nil {
+		m.extensions = make(map[string]*Toolchain)
+	}
+	m.extensions[name] = tc
 	return nil
 }
 
 func (m *Manager) SetOnMissing(name string, fn OnMissingToolchain) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.onMissing == nil {
+		m.onMissing = make(map[string]OnMissingToolchain)
+	}
 	m.onMissing[name] = fn
 }
 

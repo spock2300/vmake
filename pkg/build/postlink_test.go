@@ -62,17 +62,17 @@ func TestPostLinkDebuglinkIncrementalAndInstall(t *testing.T) {
 		t.Fatal(err)
 	}
 	dirs := map[string]*api.PkgDirs{"p": {SourceDir: dir, BuildDir: buildDir}}
-	tc := &toolchain.Toolchain{Name: "postlink-test", TargetOS: "linux", Tools: toolchain.Tools{
+	tc := &toolchain.Toolchain{Name: "postlink-test", Tools: toolchain.Tools{
 		CC: resolved["gcc"], CXX: resolved["g++"], AR: resolved["ar"], OBJCOPY: resolved["objcopy"], STRIP: resolved["strip"], SIZE: resolved["size"],
 	}}
-	scheduler, err := NewScheduler(graph, tc, dirs, api.ModeDebug, nil)
+	scheduler, err := NewScheduler(graph, tc, dirs, api.ModeDebug, nil, api.Platform{OS: "linux"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	links := 0
 	scheduler.linker.run = func(name, dir string, args ...string) ([]byte, error) {
 		links++
-		return runGNU(name, dir, args...)
+		return gnuRunner(nil)(name, dir, args...)
 	}
 	for count := 0; count < 2; count++ {
 		if err := scheduler.Build("p:app"); err != nil {

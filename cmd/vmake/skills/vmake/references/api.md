@@ -139,7 +139,7 @@ operations the helpers cannot express.
   explicitly when needed.
 - C/CXX flags start with the package's visibility defaults, then inherit the
   project's global flags. Executable/shared/module linker flags inherit global
-  flags; toolchain `DefaultFlags` are not added. Explicit cache arguments for a
+  flags. Explicit cache arguments for a
   flags variable replace its automatic value. Use `MergedCFlags(extra...)` when
   that override should retain package defaults and global flags. ASM flags must
   be explicit. Make/Configure do not inject these compiler flags automatically.
@@ -173,9 +173,10 @@ own build tree and publish the staged archive through the getter.
 | `CC()` | `string` | C compiler |
 | `CXX()` | `string` | C++ compiler |
 | `AR()` | `string` | Archiver |
-| `TargetTriple()` | `string` | Target triple from the toolchain's `target_triple` field, e.g. `arm-none-eabi` |
+| `TargetTriple()` | `string` | Target triple from the project's `target_triple` global option, e.g. `arm-none-eabi` |
+| `TargetOS()` | `string` | Target OS from the project's `target_os` global option; `none` for bare metal, host OS when unset |
 | `Prefix()` | `string` | Raw configured toolchain prefix, including the trailing `-`, e.g. `arm-none-eabi-`; does not add the installation path |
-| `CFlags()` / `CXXFlags()` / `LDFlags()` | `string` | Compiler/linker flags |
+| `CFlags()` / `CXXFlags()` / `LDFlags()` | `string` | Default compiler/linker flags (builtin `host` toolchain only) |
 | `ObjCopy()` | `string` | objcopy tool path |
 | `Size()` | `string` | size tool path |
 | `ObjDump()` | `string` | objdump tool path |

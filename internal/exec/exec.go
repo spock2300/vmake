@@ -7,6 +7,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"time"
 )
@@ -38,6 +41,7 @@ func SetLogger(l Logger) {
 
 type RunOptions struct {
 	Dir     string
+	Env     map[string]string
 	Context context.Context
 	Timeout time.Duration
 	Quiet   bool
@@ -66,16 +70,7 @@ func RunWithOptions(name string, args []string, opts RunOptions) ([]byte, error)
 		defer cancel()
 	}
 
-	var cmd *exec.Cmd
-	if ctx != nil {
-		cmd = exec.CommandContext(ctx, name, args...)
-	} else {
-		cmd = exec.Command(name, args...)
-	}
-
-	if opts.Dir != "" {
-		cmd.Dir = opts.Dir
-	}
+	cmd := buildCmd(ctx, name, args, opts.Dir, opts.Env)
 
 	var buf bytes.Buffer
 	if opts.Quiet {
@@ -99,13 +94,21 @@ func RunWithOptions(name string, args []string, opts RunOptions) ([]byte, error)
 	return output, nil
 }
 
-func buildCmd(name string, args []string, dir string, env map[string]string) *exec.Cmd {
-	cmd := exec.Command(name, args...)
+func buildCmd(ctx context.Context, name string, args []string, dir string, env map[string]string) *exec.Cmd {
+	var cmd *exec.Cmd
+	if ctx != nil {
+		cmd = exec.CommandContext(ctx, name, args...)
+	} else {
+		cmd = exec.Command(name, args...)
+	}
 	if dir != "" {
 		cmd.Dir = dir
 	}
 	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), flattenEnv(env)...)
+		cmd.Env = append(cmd.Environ(), flattenEnv(env)...)
+		if filepath.Base(name) == name && (runtime.GOOS != "windows" || !strings.ContainsAny(name, `:\/`)) {
+			cmd.Path, cmd.Err = lookPathEnv(name, cmd.Env)
+		}
 	}
 	return cmd
 }
@@ -121,7 +124,7 @@ func RunFatal(dir, name string, args ...string) {
 }
 
 func RunWithEnv(dir string, env map[string]string, name string, args ...string) error {
-	cmd := buildCmd(name, args, dir, env)
+	cmd := buildCmd(nil, name, args, dir, env)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -135,7 +138,7 @@ func LookPath(name string) (string, error) {
 }
 
 func RunWithEnvCaptured(dir string, env map[string]string, name string, args ...string) ([]byte, error) {
-	cmd := buildCmd(name, args, dir, env)
+	cmd := buildCmd(nil, name, args, dir, env)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w\n%s", FormatCommandLine(name, args), err, string(output))
@@ -148,7 +151,29 @@ func flattenEnv(env map[string]string) []string {
 	for k, v := range env {
 		result = append(result, k+"="+v)
 	}
+	sort.Strings(result)
 	return result
+}
+
+func envValue(env []string, key string) (string, bool) {
+	for i := len(env) - 1; i >= 0; i-- {
+		name, value, ok := strings.Cut(env[i], "=")
+		if ok && (name == key || runtime.GOOS == "windows" && strings.EqualFold(name, key)) {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+func allowRelativeExecutable() bool {
+	settings := strings.Split(os.Getenv("GODEBUG"), ",")
+	for i := len(settings) - 1; i >= 0; i-- {
+		key, value, ok := strings.Cut(settings[i], "=")
+		if ok && key == "execerrdot" {
+			return value == "0"
+		}
+	}
+	return false
 }
 
 func FormatCommandLine(name string, args []string) string {

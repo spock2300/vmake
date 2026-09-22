@@ -28,7 +28,7 @@ func TestCMakeDirectoriesAndConfiguration(t *testing.T) {
 				dirs.InstallDir = filepath.Join(root, "install")
 				wantInstall = dirs.InstallDir
 			}
-			p := NewPackage().SetDirs(dirs).SetToolchain(&toolchain.Toolchain{TargetOS: runtime.GOOS})
+			p := NewPackage().SetDirs(dirs).SetToolchain(&toolchain.Toolchain{})
 			if got := p.CMakeBuildDir(); got != filepath.Join(dirs.BuildDir, "cmake") {
 				t.Fatalf("build directory = %q", got)
 			}
@@ -97,7 +97,7 @@ func assertCMakePhases(t *testing.T, p *Package, config string) {
 }
 
 func TestCMakeRejectsConflictingManagedArguments(t *testing.T) {
-	p := NewPackage().SetToolchain(&toolchain.Toolchain{TargetOS: runtime.GOOS})
+	p := NewPackage().SetToolchain(&toolchain.Toolchain{})
 	for _, test := range []struct {
 		args []string
 		want string
@@ -190,12 +190,7 @@ func TestCMakeBuildRejectsPresetsThatOverrideManagedDirectory(t *testing.T) {
 }
 
 func TestCMakeInheritsOnlyGlobalFlagsAndAllowsOverrides(t *testing.T) {
-	p := NewPackage().SetToolchain(&toolchain.Toolchain{
-		TargetOS: runtime.GOOS,
-		DefaultFlags: toolchain.DefaultFlags{
-			CFlags: []string{"-DDEFAULT_C"}, CxxFlags: []string{"-DDEFAULT_CXX"}, LdFlags: []string{"-ldefault"},
-		},
-	}).SetGlobalFlags([]string{"-DGLOBAL_C", "-mcpu=cortex-m4"}, []string{"-DGLOBAL_CXX"}, []string{"-Wl,--gc-sections"}, nil)
+	p := NewPackage().SetToolchain(toolchain.GetBuiltinHost()).SetGlobalFlags([]string{"-DGLOBAL_C", "-mcpu=cortex-m4"}, []string{"-DGLOBAL_CXX"}, []string{"-Wl,--gc-sections"}, nil)
 	args, err := p.cmakeConfigureArgs(runtime.GOOS)
 	if err != nil {
 		t.Fatal(err)
@@ -206,7 +201,7 @@ func TestCMakeInheritsOnlyGlobalFlagsAndAllowsOverrides(t *testing.T) {
 		}
 	}
 	for _, arg := range args {
-		if strings.Contains(arg, "DEFAULT") || strings.Contains(arg, "-ldefault") || strings.HasPrefix(arg, "-DCMAKE_ASM_FLAGS=") {
+		if strings.Contains(arg, "-Werror") || strings.Contains(arg, "-pie") || strings.HasPrefix(arg, "-DCMAKE_ASM_FLAGS=") {
 			t.Errorf("unexpected automatic flags: %q", arg)
 		}
 	}
@@ -228,9 +223,9 @@ func TestCMakeInheritsOnlyGlobalFlagsAndAllowsOverrides(t *testing.T) {
 func TestCMakePackageVisibilityAndOverrides(t *testing.T) {
 	cflags := []string{"-DGLOBAL_C"}
 	cxxflags := []string{"-DGLOBAL_CXX"}
-	app := NewPackage().SetToolchain(&toolchain.Toolchain{TargetOS: runtime.GOOS}).
+	app := NewPackage().SetToolchain(&toolchain.Toolchain{}).
 		SetGlobalFlags(cflags, cxxflags, nil, nil)
-	dep := NewPackage().SetToolchain(&toolchain.Toolchain{TargetOS: runtime.GOOS}).
+	dep := NewPackage().SetToolchain(&toolchain.Toolchain{}).
 		SetGlobalFlags(cflags, cxxflags, nil, nil)
 	NewConfigContextWithPackage("app", app).SetDefaultVisibilityHidden()
 	for _, test := range []struct {
@@ -287,7 +282,7 @@ func TestCMakeMissingConfiguredBinutilsFails(t *testing.T) {
 		{"CMAKE_RANLIB", toolchain.Tools{RANLIB: "missing-ranlib"}},
 		{"CMAKE_CXX_COMPILER", toolchain.Tools{CXX: "missing-cxx"}},
 	} {
-		p := NewPackage().SetToolchain(&toolchain.Toolchain{TargetOS: runtime.GOOS, InstallPath: root, Tools: test.tools})
+		p := NewPackage().SetToolchain(&toolchain.Toolchain{InstallPath: root, Tools: test.tools})
 		_, err := p.cmakeConfigureArgs(runtime.GOOS)
 		var lookupErr *exec.Error
 		if err == nil || !strings.Contains(err.Error(), test.key) || !errors.As(err, &lookupErr) || !strings.HasPrefix(lookupErr.Name, filepath.Join(root, "bin")+string(filepath.Separator)) {
@@ -322,7 +317,7 @@ func TestCMakeSettersAndCommandsReportScriptErrors(t *testing.T) {
 func TestCMakeDryRunDoesNotExecuteOrCreateDirectories(t *testing.T) {
 	root := t.TempDir()
 	p := NewPackage().SetDirs(PkgDirs{SourceDir: filepath.Join(root, "missing-source"), BuildDir: filepath.Join(root, "missing-build")}).
-		SetToolchain(&toolchain.Toolchain{TargetOS: runtime.GOOS}).SetDryRun(true)
+		SetToolchain(&toolchain.Toolchain{}).SetDryRun(true)
 	t.Setenv("PATH", "")
 	p.CMakeConfigure()
 	p.CMakeConfigure("--preset", "fixture")

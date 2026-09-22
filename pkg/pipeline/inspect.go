@@ -55,11 +55,16 @@ func Inspect(ctx *RuntimeContext) (*Inspection, error) {
 	}
 
 	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
+	toolCache := map[api.Platform]*build.ResolvedTools{pre.cfg.Platform: pre.tools}
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if node == nil || node.Source == nil {
 			continue
+		}
+		tools, err := resolvePackageTools(ctx, name, pre.cfg.Tc, toolCache)
+		if err != nil {
+			return nil, err
 		}
 		entry := config.GetEntry(ctx.Config, name)
 		scriptHash, err := scriptHashForNode(name, node)
@@ -68,7 +73,7 @@ func Inspect(ctx *RuntimeContext) (*Inspection, error) {
 		}
 		flagsHash := packageFlagsHash(pre.globalFlagsHash, node)
 		if node.IsLocal() {
-			pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, pre.tools.CCKey(), pre.cfg.Mode, entry.Options, flagsHash, scriptHash)
+			pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, tools.CCKey(), pre.cfg.Mode, entry.Options, flagsHash, scriptHash)
 			continue
 		}
 		sourceDir := filepath.Join(ctx.Paths.DepsDir, name, "src")
@@ -85,7 +90,7 @@ func Inspect(ctx *RuntimeContext) (*Inspection, error) {
 		if err != nil {
 			return nil, err
 		}
-		pkgDirs[name] = makeRemotePkgDirs(versionDir, sourceDir, pre.tools.CCKey(), pre.cfg.Mode, entry.Options,
+		pkgDirs[name] = makeRemotePkgDirs(versionDir, sourceDir, tools.CCKey(), pre.cfg.Mode, entry.Options,
 			version, commit, flagsHash, patchHash, scriptHash)
 	}
 

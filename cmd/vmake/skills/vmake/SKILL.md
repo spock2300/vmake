@@ -493,9 +493,11 @@ If two packages define the same global option via `GlobalOption()`, their `Type`
 
 There is no merging of definitions: only `Type` and `Default` are validated for consistency; which definition supplies the merged view's `SetValues`/`SetDescription` is unspecified — prefer a single declaring package. Each declaring package's own `SetOnApply` callback still runs during that package's config pass.
 
-### Toolchain DefaultFlags
+### Default Build Flags
 
-Each toolchain declares default C/C++/linker flags in its manifest. These are injected as the **base** of every new target — when you call `ctx.Target("app")`, the target's initial CFlags/CxxFlags/LdFlags are set from the toolchain's defaults. Calling `AddCFlags(...)` appends to this base.
+The builtin `host` toolchain contributes default C/C++/linker flags (hardening, warnings, `-ffunction-sections`), selected by the project's `target_os`. They are injected as the **base** of every new target — when you call `ctx.Target("app")`, the target's initial CFlags/CxxFlags/LdFlags are set from those defaults. Calling `AddCFlags(...)` appends to this base.
+
+Toolchains declared by extensions contribute no default flags: `toolchain.json` describes which programs to run, not which CPU to target. A cross-compiling project supplies its own `-mcpu`/`-mthumb`/`--specs=` through `ctx.AddGlobalCFlags` / `AddGlobalLdFlags` in `OnConfig`, or per target with `AddCFlags`/`AddLdFlags`.
 
 ## RTOS / Embedded
 

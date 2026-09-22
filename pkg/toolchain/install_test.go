@@ -1,4 +1,4 @@
-package main
+package toolchain_test
 
 import (
 	"archive/zip"
@@ -44,7 +44,7 @@ func toolchainArchiveFixture(t *testing.T, root string) (toolchain.ToolchainDef,
 		t.Fatal(err)
 	}
 	def := toolchain.ToolchainDef{
-		Name: "test-installed-toolchain", Version: "1", TargetOS: "none", TargetTriple: "arm-none-eabi",
+		Name: "test-installed-toolchain", Version: "1",
 		Tools: toolchain.Tools{CC: "cross-tool", CXX: "cross-tool", AR: "cross-tool", LD: "cross-tool"},
 		Installations: map[string]toolchain.InstallConfig{
 			runtime.GOOS + "/" + runtime.GOARCH: {Method: "lfs", File: "toolchain.zip", Format: "zip", RootDir: root},
@@ -57,8 +57,7 @@ func TestAutoDownloadPublishesValidatedToolchain(t *testing.T) {
 	for _, root := range []string{"upstream-root", "."} {
 		t.Run(root, func(t *testing.T) {
 			def, repo, toolchainsDir := toolchainArchiveFixture(t, root)
-			install := makeAutoDownload(def, repo, toolchainsDir)
-			tc, err := install(def.Name)
+			tc, err := toolchain.Install(def, repo, toolchainsDir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -71,7 +70,7 @@ func TestAutoDownloadPublishesValidatedToolchain(t *testing.T) {
 			if err := os.RemoveAll(repo); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := install(def.Name); err != nil {
+			if _, err := toolchain.Install(def, repo, toolchainsDir); err != nil {
 				t.Fatalf("already installed toolchain read archive again: %v", err)
 			}
 		})
@@ -93,7 +92,7 @@ func TestAutoDownloadFailureDoesNotPublish(t *testing.T) {
 				install.Sha256 = strings.Repeat("0", 64)
 			}
 			def.Installations[key] = install
-			if _, err := makeAutoDownload(def, repo, toolchainsDir)(def.Name); err == nil {
+			if _, err := toolchain.Install(def, repo, toolchainsDir); err == nil {
 				t.Fatal("invalid toolchain was installed")
 			}
 			final := def.InstallDir(toolchainsDir)

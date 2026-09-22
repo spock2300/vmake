@@ -72,8 +72,6 @@ import (
 )
 func Main(ctx *plugin.Context) {
     fmt.Println("PLUGIN_EXECUTED")
-    ctx.RegisterToolchainsFromRepo()
-    ctx.RegisterToolchainsFromRepo()
     for _, failure := range toolchain.GetManager().ToolchainErrors() {
         var definitionError *toolchain.DefinitionError = failure
         if definitionError.Path() == "" || definitionError.Unwrap() == nil {
@@ -90,7 +88,7 @@ func writeHealthyDefinition(t *testing.T, path, name string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	def := toolchain.ToolchainDef{Name: name, TargetOS: runtime.GOOS, Tools: toolchain.Tools{CC: exe, CXX: exe, AR: exe, LD: exe}}
+	def := toolchain.ToolchainDef{Name: name, Tools: toolchain.Tools{CC: exe, CXX: exe, AR: exe, LD: exe}}
 	data, err := json.Marshal(def)
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +103,7 @@ func TestExtensionDefinitionsFailIndependently(t *testing.T) {
 	writeHealthyDefinition(t, filepath.Join(repo, "healthy", "toolchain.json"), "healthy")
 	writeExtensionFile(t, filepath.Join(repo, "legacy", "toolchain.json"), `{"name":"broken","host":"old-triple"}`)
 	writeExtensionFile(t, filepath.Join(repo, "unknown", "toolchain.json"), `{"name":"untrustworthy",`)
-	writeExtensionFile(t, filepath.Join(repo, "unsupported", "toolchain.json"), `{"name":"unsupported","target_os":"none","version":"1","installations":{"unsupported-host/amd64":{"method":"lfs","file":"archive.zip","root_dir":"."}}}`)
+	writeExtensionFile(t, filepath.Join(repo, "unsupported", "toolchain.json"), `{"name":"unsupported","version":"1","installations":{"unsupported-host/amd64":{"method":"lfs","file":"archive.zip","root_dir":"."}}}`)
 	out, err := extensionCommand(t, dir, dir, "toolchain", "list")
 	if err != nil {
 		t.Fatalf("list: %v\n%s", err, out)
@@ -217,7 +215,7 @@ func TestRegisterRepoToolchainsRetainsDanglingManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	mgr := toolchain.GetManager()
-	registerToolchainsFromRepo(mgr, repo, t.TempDir())
+	mgr.RegisterRepo(repo, t.TempDir())
 	for _, err := range mgr.ToolchainErrors() {
 		if err.Path() == path {
 			if err.Name() != "" || !os.IsNotExist(err.Unwrap()) {

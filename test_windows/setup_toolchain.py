@@ -24,16 +24,7 @@ def setup_toolchain(destination):
     toolchain = destination / "arm-none-eabi"
     toolchain.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(manifest, toolchain / "toolchain.json")
-    plugin = destination / "tools"
-    source = plugin / "src"
-    source.mkdir(parents=True, exist_ok=True)
-    (plugin / "plugin.json").write_text(json.dumps({"name": "tools", "entry": "src/main.go", "enabled": True}), encoding="utf-8")
-    (source / "main.go").write_text(
-        'package main\n\nimport "github.com/spock2300/vmake/pkg/plugin"\n\n'
-        'func Main(ctx *plugin.Context) { ctx.RegisterToolchainsFromRepo() }\n',
-        encoding="utf-8",
-    )
-    print(f"Windows ARM toolchain plugin ready: {destination}")
+    print(f"Windows ARM toolchain definition ready: {destination}")
 
 
 if __name__ == "__main__":

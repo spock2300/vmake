@@ -45,7 +45,10 @@ func TestDeclarePackageTargetsDryRunWiring(t *testing.T) {
 	srcDir := t.TempDir()
 	dirs := &api.PkgDirs{SourceDir: srcDir, BuildDir: filepath.Join(srcDir, "build", "key1")}
 
-	buildCtx := DeclareTargets(ctx, "pkg", dirs, testToolchain(), map[string]any{"mode": "debug"})
+	buildCtx, err := DeclareTargets(ctx, "pkg", dirs, testToolchain(), map[string]any{"mode": "debug"})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if !sawDryRun {
 		t.Error("package must be in dry-run mode during OnBuild declarations")
@@ -84,7 +87,10 @@ func TestDeclarePackageTargetsSkipsConfigDefines(t *testing.T) {
 
 	srcDir := t.TempDir()
 	dirs := &api.PkgDirs{SourceDir: srcDir, BuildDir: filepath.Join(srcDir, "build", "key1")}
-	buildCtx := DeclareTargets(ctx, "pkg", dirs, testToolchain(), map[string]any{"mode": "debug"})
+	buildCtx, err := DeclareTargets(ctx, "pkg", dirs, testToolchain(), map[string]any{"mode": "debug"})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	target := buildCtx.GetTargets()["app"]
 	if target == nil {

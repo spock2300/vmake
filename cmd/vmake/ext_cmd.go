@@ -1,37 +1,25 @@
 package main
 
 import (
-	"crypto/sha256"
-	"errors"
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
-	"runtime"
-	"strings"
-	"sync"
 
 	"github.com/spf13/cobra"
 
-	"github.com/spock2300/vmake/internal/flock"
+	"github.com/spock2300/vmake/internal/assets"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/plugin"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
-var toolchainPathMu sync.Mutex
-
 var extCmd = &cobra.Command{
-	Use:   "ext",
-	Short: "Manage extension repositories",
-	Long:  `Manage extension repositories that contain plugins for vmake.`,
+	Use: "ext", Short: "Manage extension repositories",
+	Long: `Manage extension repositories that contain plugins and compiler definitions for vmake.`,
 }
 
 var extAddCmd = &cobra.Command{
-	Use:   "add <name> <git-url>",
-	Short: "Add an extension repository",
-	Args:  cobra.ExactArgs(2),
-	Run:   runExtAdd,
+	Use: "add <name> <git-url>", Short: "Add an extension repository",
+	Args: cobra.ExactArgs(2), Run: runExtAdd,
 }
 
 var extRemoveCmd = newActionCmd("remove <name>", "Remove an extension repository", "Removed", "repository", func(name string) error {
@@ -39,99 +27,71 @@ var extRemoveCmd = newActionCmd("remove <name>", "Remove an extension repository
 })
 
 var extListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List extension repositories and plugins",
-	Run:   runExtList,
+	Use: "list", Short: "List extension repositories and plugins", Run: runExtList,
 }
 
 var extUpdateCmd = &cobra.Command{
-	Use:   "update [name]",
-	Short: "Update extension repositories",
+	Use: "update [name]", Short: "Update extension repositories",
 	Long: `Update extension repositories by pulling latest changes.
-If no name is given, all repositories are updated.`,
-	Run: runExtUpdate,
+If no name is given, all repositories are updated.`, Run: runExtUpdate,
 }
 
 func init() {
 	RootCmd.AddCommand(extCmd)
-	extCmd.AddCommand(extAddCmd)
-	extCmd.AddCommand(extRemoveCmd)
-	extCmd.AddCommand(extListCmd)
-	extCmd.AddCommand(extUpdateCmd)
-
+	extCmd.AddCommand(extAddCmd, extRemoveCmd, extListCmd, extUpdateCmd)
 	extRemoveCmd.ValidArgsFunction = completeExtRepoName
 	extUpdateCmd.ValidArgsFunction = completeExtRepoName
 }
 
 func runExtAdd(cmd *cobra.Command, args []string) {
-	name := args[0]
-	gitURL := args[1]
-
+	name, gitURL := args[0], args[1]
 	mgr := getPluginManager()
-
 	fatalErr(mgr.AddRepo(name, gitURL))
-
 	fmt.Printf("Added extension repository '%s' from %s\n", name, gitURL)
-
 	plugins, err := mgr.DiscoverPlugins()
 	if err != nil {
-		return
+		vlog.Error("%v", err)
 	}
-
-	count := 0
 	for _, p := range plugins {
 		if p.RepoName == name {
 			fmt.Printf("  Found plugin: %s\n", p.PluginName)
-			count++
 		}
-	}
-
-	if count > 0 {
-		fmt.Printf("Discovered %d plugin(s). Run vmake again to use them.\n", count)
 	}
 }
 
 func runExtList(cmd *cobra.Command, args []string) {
 	mgr := getPluginManager()
-
 	repos := mgr.ListRepos()
 	if len(repos) == 0 {
 		fmt.Println("No extension repositories found")
 		fmt.Println("Use 'vmake ext add <name> <url>' to add one")
 		return
 	}
-
 	fmt.Println("Extension repositories:")
 	for _, r := range repos {
-		fmt.Printf("  %s\n", r.Name)
-		fmt.Printf("    URL: %s\n", r.URL)
-		fmt.Printf("    Path: %s\n", r.Path)
+		fmt.Printf("  %s\n    URL: %s\n    Path: %s\n", r.Name, r.URL, r.Path)
+		defs, err := toolchain.ScanRepoToolchains(r.Path)
+		if err != nil {
+			vlog.Error("%v", err)
+		}
+		for _, def := range defs {
+			fmt.Printf("    Compiler: %s (%s)\n", def.Name, def.Version)
+		}
 	}
-
 	plugins, err := mgr.DiscoverPlugins()
 	if err != nil {
-		return
+		vlog.Error("%v", err)
 	}
-
 	if len(plugins) > 0 {
-		fmt.Println("")
-		fmt.Println("Discovered plugins:")
+		fmt.Println("\nDiscovered plugins:")
 		for _, p := range plugins {
-			fmt.Printf("  %s/%s", p.RepoName, p.PluginName)
-			if p.Info != nil {
-				fmt.Printf(" (%s)", p.Info.Version)
-				if p.Info.Description != "" {
-					fmt.Printf(" - %s", p.Info.Description)
-				}
-			}
-			fmt.Println()
+			fmt.Printf("  %s/%s (%s) - %s\n", p.RepoName, p.PluginName, p.Info.Version, p.Info.Description)
 		}
 	}
 }
 
 func runExtUpdate(cmd *cobra.Command, args []string) {
 	mgr := getPluginManager()
-
 	if len(args) == 1 {
 		name := args[0]
 		fmt.Printf("Updating extension repository '%s'...\n", name)
@@ -139,13 +99,11 @@ func runExtUpdate(cmd *cobra.Command, args []string) {
 		fmt.Printf("Updated '%s'. Plugins will be reloaded on next run.\n", name)
 		return
 	}
-
 	repos := mgr.ListRepos()
 	if len(repos) == 0 {
 		fmt.Println("No extension repositories found")
 		return
 	}
-
 	for _, r := range repos {
 		fmt.Printf("Updating '%s'...\n", r.Name)
 		if err := mgr.UpdateRepo(r.Name); err != nil {
@@ -157,295 +115,72 @@ func runExtUpdate(cmd *cobra.Command, args []string) {
 
 func loadPlugins() {
 	mgr := getPluginManager()
-
+	tcMgr := toolchain.GetManager()
+	for _, repo := range mgr.ListRepos() {
+		tcMgr.RegisterRepo(repo.Path, getToolchainsDir())
+	}
 	plugins, err := mgr.DiscoverPlugins()
 	if err != nil {
-		fatalErr(err)
+		vlog.Error("%v", err)
 	}
-
 	for _, p := range plugins {
+		if existing, _, err := RootCmd.Find([]string{p.PluginName}); err == nil && existing != RootCmd {
+			vlog.Error("extension plugin %s/%s conflicts with command %s", p.RepoName, p.PluginName, existing.CommandPath())
+			continue
+		}
 		loaded, err := plugin.Load(p.PluginDir)
 		if err != nil {
 			vlog.Error("extension plugin '%s' load failed: %v", p.PluginName, err)
 			continue
 		}
-
-		pluginCmd := &cobra.Command{
-			Use:   p.PluginName,
-			Short: p.Info.Description,
-		}
-
-		repoDir := filepath.Dir(p.PluginDir)
-
+		pluginCmd := &cobra.Command{Use: p.PluginName, Short: p.Info.Description}
+		addCFlags, commitCFlags := bufferPluginFlags(tcMgr.AddGlobalCFlags)
+		addCxxFlags, commitCxxFlags := bufferPluginFlags(tcMgr.AddGlobalCxxFlags)
+		addLdFlags, commitLdFlags := bufferPluginFlags(tcMgr.AddGlobalLdFlags)
 		ctx := &plugin.Context{
-			VMakeDir:    vmakeDir,
-			PluginDir:   p.PluginDir,
-			RepoDir:     repoDir,
-			CommandName: p.PluginName,
-			AddSubCommand: func(subCmd *cobra.Command) {
-				pluginCmd.AddCommand(subCmd)
-			},
-			RegisterToolchain: func(name string, tc *toolchain.Toolchain) {
-				toolchain.GetManager().RegisterToolchain(name, tc)
-				fatalErr(addToolchainToPath(tc))
-			},
+			VMakeDir: vmakeDir, PluginDir: p.PluginDir,
+			RepoDir: filepath.Dir(p.PluginDir), CommandName: p.PluginName,
+			AddSubCommand:     func(cmd *cobra.Command) { pluginCmd.AddCommand(cmd) },
+			RegisterToolchain: tcMgr.RegisterToolchain,
 			GetToolchains: func() map[string]*toolchain.Toolchain {
-				tcs, _ := toolchain.GetManager().ListToolchains()
+				tcs, _ := tcMgr.ListToolchains()
 				return tcs
 			},
-			SetOnMissing: func(toolchainName string, onMissing func(name string) (*toolchain.Toolchain, error)) {
-				toolchain.GetManager().SetOnMissing(toolchainName, withToolchainPath(onMissing))
-			},
-			AddGlobalCFlags: func(flags ...string) {
-				toolchain.GetManager().AddGlobalCFlags(flags...)
-			},
-			AddGlobalCxxFlags: func(flags ...string) {
-				toolchain.GetManager().AddGlobalCxxFlags(flags...)
-			},
-			AddGlobalLdFlags: func(flags ...string) {
-				toolchain.GetManager().AddGlobalLdFlags(flags...)
-			},
-			RegisterToolchainsFromRepo: makeRegisterToolchainsFromRepo(p.PluginDir, repoDir),
-			LoadToolchainDef:           makeLoadToolchainDef(p.PluginDir),
-			DownloadFile:               plugin.DownloadFile,
-			ExtractToDir:               plugin.ExtractToDir,
-			RunGitLFS:                  plugin.RunGitLFS,
+			SetOnMissing:      func(name string, fn func(string) (*toolchain.Toolchain, error)) { tcMgr.SetOnMissing(name, fn) },
+			AddGlobalCFlags:   addCFlags,
+			AddGlobalCxxFlags: addCxxFlags,
+			AddGlobalLdFlags:  addLdFlags,
+			DownloadFile:      assets.DownloadFile, ExtractToDir: assets.ExtractToDir, RunGitLFS: assets.RunGitLFS,
 		}
-
-		plugin.RunMain(loaded, ctx)
-
+		if err := plugin.RunMain(loaded, ctx); err != nil {
+			vlog.Error("%v", err)
+			continue
+		}
+		commitCFlags()
+		commitCxxFlags()
+		commitLdFlags()
 		RootCmd.AddCommand(pluginCmd)
 	}
-	for _, err := range toolchain.GetManager().ToolchainErrors() {
+	for _, err := range tcMgr.ToolchainErrors() {
 		vlog.Error("Unavailable toolchain: %s", formatToolchainDefinitionError(err))
 	}
 }
 
-func makeRegisterToolchainsFromRepo(pluginDir, repoDir string) func() {
-	return func() {
-		registerToolchainsFromRepo(toolchain.GetManager(), repoDir, getToolchainsDir())
-	}
-}
-
-func registerToolchainsFromRepo(tcMgr *toolchain.Manager, repoDir, toolchainsDir string) {
-	absoluteDir, err := filepath.Abs(repoDir)
-	if err != nil {
-		tcMgr.RegisterToolchainError("", repoDir, err)
-		return
-	}
-	repoDir = absoluteDir
-	entries, err := os.ReadDir(repoDir)
-	if err != nil {
-		tcMgr.RegisterToolchainError("", repoDir, err)
-		return
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		path := filepath.Join(repoDir, entry.Name(), "toolchain.json")
-		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
-			continue
-		} else if err != nil {
-			tcMgr.RegisterToolchainError("", path, err)
-			continue
-		}
-		def, err := toolchain.LoadToolchainDef(path)
-		if err != nil {
-			var defErr *toolchain.DefinitionError
-			name := ""
-			if errors.As(err, &defErr) {
-				name = defErr.Name()
-				path = defErr.Path()
+func bufferPluginFlags(add func(...string)) (func(...string), func()) {
+	var pending []string
+	committed := false
+	return func(flags ...string) {
+			if committed {
+				add(flags...)
+				return
 			}
-			tcMgr.RegisterToolchainError(name, path, err)
-			continue
-		}
-		tc, err := def.ToToolchain(toolchainsDir)
-		if err != nil {
-			tcMgr.RegisterToolchainError(def.Name, path, err)
-			continue
-		}
-		if err := addToolchainToPath(tc); err != nil {
-			tcMgr.RegisterToolchainError(def.Name, path, err)
-			continue
-		}
-		tcMgr.RegisterToolchain(def.Name, tc)
-		if len(def.Installations) > 0 {
-			tcMgr.SetOnMissing(def.Name, withToolchainPath(makeAutoDownload(*def, repoDir, toolchainsDir)))
-		}
-	}
-}
-
-func withToolchainPath(fn toolchain.OnMissingToolchain) toolchain.OnMissingToolchain {
-	return func(name string) (*toolchain.Toolchain, error) {
-		tc, err := fn(name)
-		if err != nil {
-			return nil, err
-		}
-		if err := addToolchainToPath(tc); err != nil {
-			return nil, err
-		}
-		return tc, nil
-	}
-}
-
-func addToolchainToPath(tc *toolchain.Toolchain) error {
-	if tc.InstallPath == "" {
-		return nil
-	}
-	toolchainPathMu.Lock()
-	defer toolchainPathMu.Unlock()
-
-	binDir, err := filepath.Abs(filepath.Join(tc.InstallPath, "bin"))
-	if err != nil {
-		return fmt.Errorf("toolchain %s bin directory: %w", tc.Name, err)
-	}
-	path := os.Getenv("PATH")
-	for _, dir := range filepath.SplitList(path) {
-		clean := filepath.Clean(dir)
-		if clean == binDir || (runtime.GOOS == "windows" && strings.EqualFold(clean, binDir)) {
-			return nil
-		}
-	}
-	if path != "" {
-		binDir += string(os.PathListSeparator) + path
-	}
-	if err := os.Setenv("PATH", binDir); err != nil {
-		return fmt.Errorf("toolchain %s PATH: %w", tc.Name, err)
-	}
-	return nil
-}
-
-func makeAutoDownload(def toolchain.ToolchainDef, repoDir, toolchainsDir string) func(string) (*toolchain.Toolchain, error) {
-	return func(name string) (*toolchain.Toolchain, error) {
-		if err := def.Validate(); err != nil {
-			return nil, err
-		}
-		installCfg, err := def.Installation()
-		if err != nil {
-			return nil, err
-		}
-		if installCfg == nil {
-			return nil, fmt.Errorf("toolchain %s has no installation", name)
-		}
-		installDir := def.InstallDir(toolchainsDir)
-		lock, err := flock.Acquire(filepath.Join(toolchainsDir, "_locks", runtime.GOOS, runtime.GOARCH, def.Name, def.Version+".lock"))
-		if err != nil {
-			return nil, fmt.Errorf("lock toolchain %s: %w", name, err)
-		}
-		defer lock.Release()
-		tc, err := def.ToToolchain(toolchainsDir)
-		if err != nil {
-			return nil, err
-		}
-		if tc.InstallPath != "" {
-			if errs := toolchain.ValidateToolchain(tc); len(errs) > 0 {
-				return nil, fmt.Errorf("toolchain %s: %w", name, errors.Join(errs...))
+			pending = append(pending, flags...)
+		}, func() {
+			if committed {
+				return
 			}
-			toolchain.GetManager().RegisterToolchain(def.Name, tc)
-			return tc, nil
+			add(pending...)
+			pending = nil
+			committed = true
 		}
-		if err := os.MkdirAll(filepath.Dir(installDir), 0755); err != nil {
-			return nil, fmt.Errorf("create toolchain parent: %w", err)
-		}
-		stage, err := os.MkdirTemp(filepath.Dir(installDir), ".install-")
-		if err != nil {
-			return nil, fmt.Errorf("create toolchain staging directory: %w", err)
-		}
-		defer os.RemoveAll(stage)
-
-		fmt.Printf("Installing %s for %s/%s...\n", def.Name, runtime.GOOS, runtime.GOARCH)
-
-		var archivePath string
-		switch installCfg.Method {
-		case "lfs":
-			archivePath = filepath.Join(repoDir, "assets", "toolchains", installCfg.File)
-			if err := materializeToolchainAsset(repoDir, archivePath, installCfg.File); err != nil {
-				return nil, err
-			}
-		case "http":
-			archivePath = filepath.Join(stage, installCfg.File)
-			if err := plugin.DownloadFile(installCfg.URL, archivePath); err != nil {
-				return nil, fmt.Errorf("failed to download: %w", err)
-			}
-		default:
-			return nil, fmt.Errorf("unknown install method '%s' for toolchain '%s'", installCfg.Method, name)
-		}
-
-		if err := verifyToolchainArchive(archivePath, installCfg.Sha256); err != nil {
-			return nil, err
-		}
-		extractDir := filepath.Join(stage, "extracted")
-		if err := plugin.ExtractToDir(archivePath, extractDir, installCfg.Format); err != nil {
-			return nil, fmt.Errorf("extract toolchain %s: %w", name, err)
-		}
-		root := filepath.Join(extractDir, installCfg.RootDir)
-		info, err := os.Lstat(root)
-		if err != nil {
-			return nil, fmt.Errorf("toolchain %s root_dir %s: %w", name, installCfg.RootDir, err)
-		}
-		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("toolchain %s root_dir %s is not a directory", name, installCfg.RootDir)
-		}
-		tc.InstallPath = root
-		if errs := toolchain.ValidateToolchain(tc); len(errs) > 0 {
-			return nil, fmt.Errorf("toolchain %s extracted tools: %w", name, errors.Join(errs...))
-		}
-		if err := os.Rename(root, installDir); err != nil {
-			return nil, fmt.Errorf("publish toolchain %s: %w", name, err)
-		}
-		tc.InstallPath = installDir
-		toolchain.GetManager().RegisterToolchain(def.Name, tc)
-
-		fmt.Printf("Toolchain %s installed to %s\n", def.Name, installDir)
-		return tc, nil
-	}
-}
-
-func materializeToolchainAsset(repoDir, archivePath, file string) error {
-	f, err := os.Open(archivePath)
-	if err == nil {
-		header := make([]byte, 128)
-		n, readErr := f.Read(header)
-		f.Close()
-		if readErr != nil && readErr != io.EOF {
-			return fmt.Errorf("read toolchain archive: %w", readErr)
-		}
-		if !strings.HasPrefix(string(header[:n]), "version https://git-lfs.github.com/spec/v1") {
-			return nil
-		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("open toolchain archive: %w", err)
-	}
-	if err := plugin.RunGitLFS(repoDir, "pull", "--include", "assets/toolchains/"+file); err != nil {
-		return fmt.Errorf("download toolchain archive: %w", err)
-	}
-	return nil
-}
-
-func verifyToolchainArchive(path, expected string) error {
-	if expected == "" {
-		return nil
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("open toolchain archive: %w", err)
-	}
-	defer f.Close()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, f); err != nil {
-		return fmt.Errorf("hash toolchain archive: %w", err)
-	}
-	actual := fmt.Sprintf("%x", hash.Sum(nil))
-	if !strings.EqualFold(actual, expected) {
-		return fmt.Errorf("toolchain archive %s: SHA256 mismatch: got %s, expected %s", path, actual, expected)
-	}
-	return nil
-}
-
-func makeLoadToolchainDef(pluginDir string) func() (*toolchain.ToolchainDef, error) {
-	return func() (*toolchain.ToolchainDef, error) {
-		return toolchain.LoadToolchainDef(filepath.Join(pluginDir, "toolchain.json"))
-	}
 }

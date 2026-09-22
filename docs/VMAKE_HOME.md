@@ -109,23 +109,25 @@ CLI：`vmake ext add|remove|list|update`
 
 插件源码由 yaegi 解释器动态加载（`extensions/<repo>/<plugin-name>/src/main.go`），无需编译，不产生 `.so` 文件。
 
+仓库中的 `toolchain.json` 由 vmake 自身扫描注册，不需要插件参与；只提供编译器的仓库可以不含任何插件代码。
+
 ## toolchains/
 
-已安装的交叉编译工具链，由扩展自动下载或手动安装。
+已安装的交叉编译工具链，由扩展声明后自动下载或手动安装。
 
 ```
-toolchains/<name>-<version>/
+toolchains/<host-os>/<host-arch>/<name>/<version>/
 ├── bin/
-│   ├── <prefix>-gcc
-│   ├── <prefix>-g++
+│   ├── <prefix>gcc
+│   ├── <prefix>g++
 │   └── ...
 ├── lib/
 └── <sysroot>/
 ```
 
-工具链由 `toolchain.json` 声明，通过 `tc` 插件或 `RegisterToolchainsFromRepo()` 注册，首次使用时自动下载。
+工具链由 `toolchain.json` 声明，vmake 启动时扫描扩展仓库子目录自动注册，首次使用时自动下载安装。
 
-源码：`pkg/toolchain/manifest.go` (`ScanRepoToolchains`)
+源码：`pkg/toolchain/discovery.go` (`Manager.RegisterRepo`)、`pkg/toolchain/install.go` (`Install`)
 
 ## 项目本地目录（vmake_deps/）
 

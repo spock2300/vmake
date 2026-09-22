@@ -1,13 +1,9 @@
 package toolchain
 
-import "runtime"
-
 func GetBuiltinHost() *Toolchain {
-	targetOS := runtime.GOOS
 	return &Toolchain{
 		Name:        "host",
 		DisplayName: "Host",
-		TargetOS:    targetOS,
 		Tools: Tools{
 			CC:      "gcc",
 			CXX:     "g++",
@@ -20,6 +16,5 @@ func GetBuiltinHost() *Toolchain {
 			OBJDUMP: "objdump",
 			NM:      "nm",
 		},
-		DefaultFlags: defaultFlagsFor(targetOS),
 	}
 }

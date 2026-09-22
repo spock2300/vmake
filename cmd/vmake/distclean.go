@@ -44,11 +44,15 @@ func runDistClean(cmd *cobra.Command, args []string) {
 	if ok {
 		vlog.Info("")
 		vlog.Info("Executing OnClean...")
-		executeCleanHooks(ctx, false)
+		if err := executeCleanHooks(ctx, false); err != nil {
+			vlog.Error("Skipping OnClean: %v", err)
+		}
 	}
 
 	entries := scanPackages(ctx.WorkDir)
-	cleanPackages(entries, ctx.Config, true)
+	if err := cleanPackages(entries, ctx, true); err != nil {
+		vlog.Error("Error: %v", err)
+	}
 
 	for _, pkg := range entries {
 		removeIfExists(filepath.Join(pkg.Dir, "build", "compile_commands.json"), pkg.Name, "compile_commands.json", false)

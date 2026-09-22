@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"maps"
+
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
@@ -73,24 +75,46 @@ func NewContext(p ResolveParams) *RuntimeContext {
 	}
 }
 
-func newBuildContext(ctx *RuntimeContext, name string, globalValues map[string]any) *api.BuildContext {
-	entry := config.GetEntry(ctx.Config, name)
-	buildCtx := api.NewBuildContext(name, entry.Options)
+func newBuildContext(ctx *RuntimeContext, name string, globalValues map[string]any) (*api.BuildContext, error) {
+	values, err := PackageConfigValues(ctx, name, globalValues)
+	if err != nil {
+		return nil, err
+	}
+	buildCtx := api.NewBuildContext(name, values)
 	if opts, ok := ctx.AllOptions[name]; ok {
 		buildCtx.SetOptions(opts)
 	}
 	buildCtx.MergeGlobals(ctx.GlobalOptions, globalValues)
-	return buildCtx
+	return buildCtx, nil
+}
+
+func PackageConfigValues(ctx *RuntimeContext, name string, globalValues map[string]any) (map[string]any, error) {
+	if _, err := checkedPlatform(globalValues, "project"); err != nil {
+		return nil, err
+	}
+	if _, err := checkedPlatform(packagePlatformValues(ctx, name, globalValues), "package "+name); err != nil {
+		return nil, err
+	}
+	var node *resolver.PackageNode
+	if ctx.DepGraph != nil {
+		node = ctx.DepGraph.Packages[name]
+	}
+	return mergeCfgVals(name, node, ctx, globalValues, map[string]map[string]any{
+		name: config.GetEntry(ctx.Config, name).Options,
+	}), nil
 }
 
 func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, globalValues map[string]any, allPkgOptions map[string]map[string]any) map[string]any {
 	cfgVals := make(map[string]any)
 	allOpts := ctx.AllOptions[name]
-	if allOpts == nil && node.Pkg != nil {
+	if allOpts == nil && node != nil && node.Pkg != nil {
 		allOpts = node.Pkg.GetOptions()
 	}
 	if allOpts != nil {
 		for optName, opt := range allOpts {
+			if _, resolved := globalValues[optName]; resolved && opt.IsGlobal() {
+				continue
+			}
 			if opt.Default() != nil {
 				cfgVals[optName] = opt.Default()
 			}
@@ -106,6 +130,7 @@ func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, 
 			cfgVals[k] = v
 		}
 	}
+	maps.Copy(cfgVals, packagePlatformValues(ctx, name, globalValues))
 	return cfgVals
 }
 
@@ -144,9 +169,13 @@ func applyBuildContextConfig(buildCtx *api.BuildContext, node *resolver.PackageN
 	}
 }
 
-func DeclareTargets(ctx *RuntimeContext, name string, dirs *api.PkgDirs, tc *toolchain.Toolchain, globalValues map[string]any) *api.BuildContext {
+func DeclareTargets(ctx *RuntimeContext, name string, dirs *api.PkgDirs, tc *toolchain.Toolchain, globalValues map[string]any) (*api.BuildContext, error) {
 	node := ctx.DepGraph.Packages[name]
-	buildCtx := newBuildContext(ctx, name, globalValues)
+	buildCtx, err := newBuildContext(ctx, name, globalValues)
+	if err != nil {
+		return nil, err
+	}
+	platform := platformFromValues(buildCtx.CfgVals)
 	buildCtx.SetDryRun(true)
 	buildCtx.SetBuildSubGraphFunc(func(string) error { return nil })
 	buildCtx.SetDepOutputFunc(func(string) string { return "" })
@@ -157,14 +186,14 @@ func DeclareTargets(ctx *RuntimeContext, name string, dirs *api.PkgDirs, tc *too
 		if allOpts == nil {
 			allOpts = pkg.GetOptions()
 		}
-		cfgVals := mergeCfgVals(name, node, ctx, globalValues, map[string]map[string]any{
-			name: config.GetEntry(ctx.Config, name).Options,
-		})
 		pkg.SetDirs(*dirs)
 		pkg.SetOptions(allOpts)
-		pkg.SetCfgVals(cfgVals)
+		pkg.SetCfgVals(maps.Clone(buildCtx.CfgVals))
 		if tc != nil {
 			pkg.SetToolchain(tc)
+			pkg.SetPlatform(platform)
+			flags := api.DefaultBuildFlags(tc.Name, pkg.TargetOS())
+			buildCtx.SetDefaultFlags(flags.CFlags, flags.CxxFlags, flags.LdFlags)
 		}
 		buildCtx.SetPackage(pkg)
 
@@ -175,5 +204,5 @@ func DeclareTargets(ctx *RuntimeContext, name string, dirs *api.PkgDirs, tc *too
 		pkg.SetDryRun(false)
 	}
 
-	return buildCtx
+	return buildCtx, nil
 }

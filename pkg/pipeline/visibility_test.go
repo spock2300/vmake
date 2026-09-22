@@ -152,7 +152,7 @@ func TestPackageVisibilityBuildAndInspectKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tools, err := build.ResolveTools(tc)
+	tools, err := build.ResolveTools(tc, api.Platform{})
 	if err != nil {
 		t.Skipf("host toolchain unavailable: %v", err)
 	}

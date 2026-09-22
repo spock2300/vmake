@@ -10,6 +10,7 @@ import (
 )
 
 type SubGraphParams struct {
+	Platform     api.Platform
 	AllTargets   map[string]map[string]*api.Target
 	PkgMeta      map[string]PkgBuildMeta
 	PkgDirs      map[string]*api.PkgDirs
@@ -101,7 +102,7 @@ func BuildSubGraph(rootPkg string, tc *toolchain.Toolchain, tcName string, mode 
 		return fmt.Errorf("subgraph build graph: %w", err)
 	}
 
-	pipeline := NewBuildPipeline(graph, tc, filteredPkgDirs, mode, filterMap(pkgOptions, subPkgs))
+	pipeline := NewBuildPipeline(graph, tc, filteredPkgDirs, mode, filterMap(pkgOptions, subPkgs), params.Platform)
 	pipeline.SetIncludeTests(params.IncludeTests)
 	pipeline.SetPkgKeyExtra(params.PkgKeyExtra)
 	pipeline.SetPkgLockDir(params.PkgLockDir)
