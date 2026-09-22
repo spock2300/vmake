@@ -10,13 +10,13 @@ VMake is a modern C/C++ project build tool developed in Go. It provides a concis
 - **Flexible Option System**: Supports configuration options of boolean, string, integer, and enum types
 - **Conditional Build Support**: Enables conditional compilation through methods like `If` and `When`
 - **Multi-Module Support**: Native support for managing builds of multi-module projects
-- **Third-Party Package Management**: Supports Registry (wrapping CMake/Autotools) and Native (vmake native packages) repository types, declare dependencies via OnRequire, automatic download, version matching, and build
+- **Third-Party Package Management**: Supports Registry (wrapping CMake/Autotools) and Native (vmake native packages) repository types, declare dependencies via OnRequire, automatic download, version matching, and build. Prefer `CMakeConfigure` / `CMakeBuild` / `CMakeInstall` for CMake projects; the API manages tools, directories, global flags, and parallelism.
 - **Extension Plugin System**: CLI command extensions and cross-compilation toolchain management
 - **Incremental Builds**: Per-target staleness via depfile mtimes; build-key rotation on toolchain/compiler-version/mode/options/lock-pin/patch-set/buildscript changes
 - **TUI Configuration Interface**: Interactive terminal user interface for project configuration
 - **Toolchain Management**: Flexible switching between multiple compiler toolchains, supports cross-compilation
 - **Semantic Versioning**: Built-in semver parsing and constraint matching
-- **Symbol Management**: Five-layer defense (`SetDefaultVisibilityHidden` + `SetVersionScript` + `AddExcludeLibs` + `SetSymbolBinding` + `vmake check-symbols`) controls exported symbols to prevent conflicts and leaks in complex dependency graphs
+- **Symbol Management**: Five-layer defense (`SetDefaultVisibilityHidden` + `SetVersionScript` + `AddExcludeLibs` + `SetSymbolBinding` + `vmake check-symbols`) controls exported symbols to prevent conflicts and leaks in complex dependency graphs. Default hidden visibility applies only to the declaring package; dependencies keep their own export rules.
 
 ## Quick Start
 
@@ -28,7 +28,7 @@ go install github.com/spock2300/vmake/cmd/vmake@latest
 
 ### Windows
 
-vmake runs natively on Windows. Two prerequisites cannot be supplied by vmake itself:
+vmake runs natively on Windows and supports Windows-hosted ARM bare-metal builds.
 
 1. **Git for Windows** — install the *full* installer, not MinGit. vmake locates the
    bundled MSYS userland (`sh`, coreutils, `sed`/`awk`/`grep`/`find`, `tar`, `unzip`,
@@ -36,18 +36,41 @@ vmake runs natively on Windows. Two prerequisites cannot be supplied by vmake it
    `core.autocrlf=false`/`core.eol=lf` on every git invocation, so cached checkouts
    stay byte-identical to their repositories regardless of the installer's answer to
    the "Checkout Windows-style, commit Unix-style" question.
-2. **A MinGW-w64 GCC toolchain** — Git for Windows ships no C compiler and no `make`.
-   Install MinGW-w64 (or MSYS2) so `gcc`, `g++`, `ar`, `ranlib`, `strip`, `nm`,
-   `objcopy` and `make` are on `PATH`.
+2. **A toolchain for the target** — select the ARM GNU toolchain for bare-metal
+   firmware, or MinGW-w64 for native Windows binaries. An ARM build does not need
+   a native MinGW C compiler. Install the host tools used by the build scripts:
+   CMake uses Ninja by default on Windows; `p.Make()`, preset generation and the
+   default menuconfig need the selected toolchain's `make` program. Ordinary C/C++
+   builds and custom menuconfig programs with an existing config do not require
+   default make. An explicitly configured MAKE is still validated. Git for Windows
+   supplies neither C compilers nor make.
 
 vmake's storage layout is built on symbolic links, which Windows only permits in
 **Developer Mode** (Settings → System → For developers) or from an elevated shell.
 Run `vmake doctor` to check all of the above; it reports the status of symlinks, the
-Git userland, `make` and the C toolchain, and `vmake doctor` never needs a project to
-be present to report them.
+Git userland, `make` and the selected C toolchain. Use `vmake doctor --toolchain NAME`
+to diagnose a specific toolchain.
 
-Everything works on Windows except `vmake check-symbols`, which reads ELF dynamic
-symbols and refuses to run there.
+Toolchain manifests declare `target_triple` and `target_os`; ARM bare-metal uses
+`"target_triple": "arm-none-eabi"` and `"target_os": "none"`. The target OS controls
+output naming, linker flags and CMake settings independently of the host OS.
+`vmake test` runs native test binaries; use `vmake build --tests` for cross-compiled
+test targets. `vmake check-symbols` can inspect ELF dynamic symbols on either host
+using the selected toolchain's `nm`; PE files and ELF files without a dynamic
+symbol table report that the audit is not applicable. Windows subgraph behavior
+is outside the current compatibility validation.
+
+GCC and Clang assembly inputs track both assembler `.include` files and `.S`
+preprocessor headers. Clang requires an external GNU assembler supported by its
+driver; configure the target and assembler search path through the toolchain flags
+(`--target` and `-B` as needed). Clang bare-metal support is outside this validation;
+use GNU ARM GCC for Windows ARM firmware builds.
+
+Build the Windows executable from Linux with CGO disabled:
+
+```bash
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o vmake.exe ./cmd/vmake
+```
 
 ### Debug Mode
 
@@ -213,7 +236,7 @@ Extension plugins are dynamically loaded by the yaegi Go interpreter — no `.so
 
 - **CLI Command Extension**: Add custom subcommands via `AddSubCommand`
 - **Toolchain Management**: Register custom toolchains with auto-download on first use via `toolchain.json` + `tc` plugin (Git LFS or HTTP)
-- **Global Build/Link Flags**: Inject C/CXX/linker flags into all builds via `AddGlobalCFlags`, `AddGlobalCxxFlags`, and `AddGlobalLdFlags`. Pass to CMake external builds via `CMakeGlobalFlagsArgs()` or `MergedCFlags()`
+- **Global Build/Link Flags**: Inject C/CXX/linker flags into all builds via `AddGlobalCFlags`, `AddGlobalCxxFlags`, and `AddGlobalLdFlags`. `CMakeConfigure()` inherits them automatically; use `MergedCFlags()` when adding project flags to an explicit override.
 
 ### Usage Flow
 
@@ -224,6 +247,12 @@ vmake ext add <name> <git-url>
 ```
 
 2. Plugins are auto-discovered and interpreted on the next run. Restart vmake to use new commands.
+
+Toolchain definitions load independently. Invalid or legacy manifests and definitions
+without an installation for the current host are reported by `vmake toolchain list`;
+healthy toolchains remain available. Selecting an invalid toolchain fails with its
+original error and never switches to the host toolchain. The built-in `vmake ext`
+commands skip plugin execution so a broken extension can still be updated or removed.
 
 See the [Extension Plugin Guide](docs/EXTENSION_PLUGIN.md) for the complete plugin authoring tutorial, all interface references, and practical examples.
 

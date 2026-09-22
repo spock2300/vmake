@@ -23,21 +23,21 @@ The fix is layered: **default hidden → declare exports → link policy → aud
 
 | Layer | Mechanism | Solves | API |
 |-------|-----------|--------|-----|
-| 1. Default hidden | `-fvisibility=hidden` + `-fvisibility-inlines-hidden` | 90% of leaks — all symbols default to non-exported | `ctx.SetDefaultVisibilityHidden()` |
+| 1. Default hidden | `-fvisibility=hidden` + `-fvisibility-inlines-hidden` | This package's symbols default to non-exported | `ctx.SetDefaultVisibilityHidden()` |
 | 2. Declare exports | version-script on shared libs | Declarative public API surface | `target.SetVersionScript("foo.map")` |
 | 3. Link policy | `--exclude-libs`, `-Bsymbolic` | Static archive absorption; internal binding | `target.AddExcludeLibs(...)`, `target.SetSymbolBinding("static")` |
 | 4. Audit | `nm -D` scan of all Shared/Binary outputs | Duplicate/mangled/reserved leaks, version-script violations | `vmake check-symbols [--strict]` |
 | 5. Prefix isolation | `objcopy --prefix-symbols=` | Force namespace onto third-party C code | `target.SetSymbolPrefix("vendor_")` |
 
-Layer 1 is the foundation. Without default-hidden visibility, version-scripts
-only redefine which of the (many) exported symbols remain exported — weak
-protection. Always start with Layer 1.
+Use Layer 1 in packages whose source declares their public exports. Dependency
+packages keep their own export rules, including third-party libraries that rely
+on default visibility. Enable it separately in each of your packages that needs
+hidden defaults.
 
 ## Layer 1: Default Hidden Visibility
 
-Compile every source file with hidden default visibility. Only symbols
-explicitly marked become public. This is what glibc, libc++, Boost, and most
-professional C/C++ libraries do.
+Compile every source file in the declaring package with hidden default
+visibility. Only symbols explicitly marked become public.
 
 ```go
 package main
@@ -55,8 +55,23 @@ func Main(p *api.Package) {
 }
 ```
 
-This adds `-fvisibility=hidden` to C and C++ compiler flags, plus
-`-fvisibility-inlines-hidden` to C++ only (that flag is invalid for C).
+This adds `-fvisibility=hidden` to this package's C and C++ compiler flags, plus
+`-fvisibility-inlines-hidden` to C++ only (that flag is invalid for C). The
+setting applies to every target in this package and is idempotent in `OnConfig`
+or an option's `OnApply`. It does not alter dependencies or force
+`-fvisibility=default` on them. This behavior is the same for local, remote,
+Registry, and Native packages.
+
+Native compilation, `p.MergedCFlags()`/`p.MergedCxxFlags()`, and
+`p.CMakeConfigure()` share these defaults. The defaults precede global and
+explicit extra flags; explicit CMake flags replace the automatic value. Use
+`MergedCFlags(extra...)` or `MergedCxxFlags(extra...)` to retain it in an
+override. `p.DefaultVisibilityHidden()` and `p.VisibilityFlags()` expose the
+policy, and changing it changes only this package's build key.
+
+`AddGlobalCFlags("-fvisibility=hidden")` and
+`AddGlobalCxxFlags("-fvisibility=hidden")` still apply to all packages when that
+behavior is explicitly required.
 
 Then annotate exported symbols in source:
 

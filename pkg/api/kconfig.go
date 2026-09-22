@@ -6,20 +6,22 @@ type KConfigEntry struct {
 	configPath     string
 	srcDir         string
 	menuconfigCmd  string
+	menuconfigArgs []string
 	presets        []string
 	defaultPreset  string
 	selectedPreset string
 	patchValues    map[string]string
 }
 
-func (k *KConfigEntry) Name() string           { return k.name }
-func (k *KConfigEntry) Description() string    { return k.description }
-func (k *KConfigEntry) ConfigPath() string     { return k.configPath }
-func (k *KConfigEntry) SrcDir() string         { return k.srcDir }
-func (k *KConfigEntry) Presets() []string      { return k.presets }
-func (k *KConfigEntry) DefaultPreset() string  { return k.defaultPreset }
-func (k *KConfigEntry) SelectedPreset() string { return k.selectedPreset }
-func (k *KConfigEntry) MenuconfigCmd() string  { return k.menuconfigCmd }
+func (k *KConfigEntry) Name() string             { return k.name }
+func (k *KConfigEntry) Description() string      { return k.description }
+func (k *KConfigEntry) ConfigPath() string       { return k.configPath }
+func (k *KConfigEntry) SrcDir() string           { return k.srcDir }
+func (k *KConfigEntry) Presets() []string        { return k.presets }
+func (k *KConfigEntry) DefaultPreset() string    { return k.defaultPreset }
+func (k *KConfigEntry) SelectedPreset() string   { return k.selectedPreset }
+func (k *KConfigEntry) MenuconfigCmd() string    { return k.menuconfigCmd }
+func (k *KConfigEntry) MenuconfigArgs() []string { return append([]string(nil), k.menuconfigArgs...) }
 
 func (k *KConfigEntry) SetDescription(desc string) *KConfigEntry {
 	k.description = desc
@@ -36,8 +38,9 @@ func (k *KConfigEntry) SetSrcDir(dir string) *KConfigEntry {
 	return k
 }
 
-func (k *KConfigEntry) SetMenuconfigCmd(cmd string) *KConfigEntry {
-	k.menuconfigCmd = cmd
+func (k *KConfigEntry) SetMenuconfigCmd(program string, args ...string) *KConfigEntry {
+	k.menuconfigCmd = program
+	k.menuconfigArgs = append([]string(nil), args...)
 	return k
 }
 

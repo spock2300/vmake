@@ -28,3 +28,6 @@ test_linux/17_firmware/uboot/.config
 test_linux/17_firmware/uboot/u-boot.bin
 test_data/a.log
 .gocache/
+/examples/plugins/.git/
+
+test_data/25_subpackage/.fixture/

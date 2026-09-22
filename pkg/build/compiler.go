@@ -6,16 +6,17 @@ import (
 	"path/filepath"
 	"strings"
 
-	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/fs"
 )
 
 type cmdRunner func(name, dir string, args ...string) ([]byte, error)
 
 type Compiler struct {
-	ccPath  string
-	cxxPath string
-	run     cmdRunner
+	ccPath   string
+	cxxPath  string
+	clangCC  bool
+	targetOS string
+	run      cmdRunner
 }
 
 type CompileOptions struct {
@@ -24,13 +25,16 @@ type CompileOptions struct {
 	CFlags   []string
 	CxxFlags []string
 	Language string
+	clang    bool
 }
 
 func NewCompiler(tools *ResolvedTools) *Compiler {
 	return &Compiler{
-		ccPath:  tools.CC,
-		cxxPath: tools.CXX,
-		run:     iexec.RunInDir,
+		ccPath:   tools.CC,
+		cxxPath:  tools.CXX,
+		clangCC:  tools.isClangCC(),
+		targetOS: tools.targetOS,
+		run:      runGNU,
 	}
 }
 
@@ -49,12 +53,27 @@ func (c *Compiler) Compile(src, objPath string, opts *CompileOptions, workDir st
 	depPath := objPath + ".d"
 
 	compiler, flags := selectCompilerAndFlags(c.ccPath, c.cxxPath, opts.CFlags, opts.CxxFlags, opts)
+	commandOpts := *opts
+	commandOpts.clang = c.clangCC
+	if commandOpts.clang && (opts.Language == "asm" || opts.Language == "asm-cpp") {
+		return c.compileClangAssembly(src, objPath, &commandOpts, flags, workDir)
+	}
 
-	args := BuildCompileArgs(opts, objPath, src, flags, depPath)
+	args := compileArgs(&commandOpts, objPath, src, flags, depPath, workDir)
 
 	_, err := c.run(compiler, workDir, args...)
 	if err != nil {
 		return nil, err
+	}
+
+	if opts.Language == "asm" || opts.Language == "asm-cpp" {
+		depFiles := []string{depPath}
+		intermediate := ""
+		if opts.Language == "asm-cpp" {
+			depFiles = append(depFiles, depPath+".as")
+			intermediate = strings.TrimSuffix(objPath, filepath.Ext(objPath)) + ".s"
+		}
+		return mergeAssemblyDeps(src, objPath, depPath, workDir, intermediate, depFiles...)
 	}
 
 	deps, err := ParseDepFile(resolveWorkPath(workDir, depPath))
@@ -73,33 +92,62 @@ func (c *Compiler) Compile(src, objPath string, opts *CompileOptions, workDir st
 // compile input, so only the header dependencies remain. Phony rules
 // contribute nothing.
 func ParseDepFile(depPath string) ([]string, error) {
+	deps, err := readDepInputs(depPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(deps) > 0 {
+		deps = deps[1:]
+	}
+	return deps, nil
+}
+
+func readDepInputs(depPath string) ([]string, error) {
 	data, err := os.ReadFile(depPath)
 	if err != nil {
 		return nil, err
 	}
-
-	tokens := tokenizeDepFile(string(data))
-
-	ruleStart := -1
+	content := strings.ReplaceAll(string(data), "\\\r\n", " ")
+	content = strings.ReplaceAll(content, "\\\n", " ")
+	line, _, _ := strings.Cut(content, "\n")
+	tokens := tokenizeDepFile(line)
 	for i, tok := range tokens {
 		if tok == ":" {
-			ruleStart = i
-			break
+			return tokens[i+1:], nil
 		}
 	}
-	if ruleStart < 0 {
-		return nil, nil
-	}
+	return nil, fmt.Errorf("dependency file %s contains no rule", depPath)
+}
 
-	var deps []string
-	for _, tok := range tokens[ruleStart+1:] {
-		if tok == ":" {
-			break
+func mergeAssemblyDeps(src, objPath, depPath, workDir, intermediate string, depFiles ...string) ([]string, error) {
+	var all []string
+	for _, file := range depFiles {
+		inputs, err := readDepInputs(resolveWorkPath(workDir, file))
+		if err != nil {
+			return nil, fmt.Errorf("read assembly dependencies %s: %w", file, err)
 		}
-		deps = append(deps, tok)
+		all = append(all, inputs...)
 	}
-	if len(deps) > 0 {
-		deps = deps[1:]
+	var deps []string
+	for _, dep := range unique(all) {
+		abs := filepath.Clean(resolveWorkPath(workDir, dep))
+		if abs == filepath.Clean(resolveWorkPath(workDir, src)) {
+			continue
+		}
+		if intermediate != "" && abs == filepath.Clean(resolveWorkPath(workDir, intermediate)) {
+			continue
+		}
+		deps = append(deps, dep)
+	}
+	escape := strings.NewReplacer("\\", "\\\\", " ", "\\ ", "#", "\\#")
+	var rule strings.Builder
+	rule.WriteString(escape.Replace(objPath) + ": " + escape.Replace(src))
+	for _, dep := range deps {
+		rule.WriteString(" " + escape.Replace(dep))
+	}
+	rule.WriteByte('\n')
+	if err := os.WriteFile(resolveWorkPath(workDir, depPath), []byte(rule.String()), 0644); err != nil {
+		return nil, err
 	}
 	return deps, nil
 }

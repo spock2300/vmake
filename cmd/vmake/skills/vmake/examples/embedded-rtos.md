@@ -127,6 +127,9 @@ p.OnBuild(func(ctx *api.BuildContext) {
 | `AddPostLinkBin()` | `objcopy -O binary {output} {output}.bin` |
 | `AddPostLinkStrip()` | `strip -o {output}.stripped {output}` |
 | `AddPostLink(tool, args...)` | Custom: runs `tool args...`, supports `{output}` placeholder |
+| `AddPostLinkOutputs(paths...)` | Declares extra outputs for missing-file rebuilds and automatic installation |
+
+Hex/Bin/Strip declare their outputs automatically. Custom steps must declare outputs explicitly; command arguments do not imply outputs. Output templates support `{output}`, with relative paths based on SourceDir.
 
 ## AddBinHeader Details
 

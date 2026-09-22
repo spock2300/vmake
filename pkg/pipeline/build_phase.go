@@ -164,13 +164,15 @@ func (s *buildPhaseState) resolveBuildConfig() error {
 }
 
 func resolveBuildConfig(ctx *RuntimeContext) (*buildConfig, error) {
-	mode := ResolveMode(ctx.Config, ctx.ModeOverride)
-
 	tc, tcName, err := GetToolchain(ctx.Config, ctx.ToolchainOverride)
 	if err != nil {
 		return nil, err
 	}
+	return makeBuildConfig(ctx, tc, tcName), nil
+}
 
+func makeBuildConfig(ctx *RuntimeContext, tc *toolchain.Toolchain, tcName string) *buildConfig {
+	mode := ResolveMode(ctx.Config, ctx.ModeOverride)
 	globalValues := config.BuildGlobalValues(ctx.Config)
 	if globalValues[api.ModeOptionName] == "" || globalValues[api.ModeOptionName] == nil {
 		globalValues[api.ModeOptionName] = mode
@@ -184,7 +186,7 @@ func resolveBuildConfig(ctx *RuntimeContext) (*buildConfig, error) {
 		TcName:       tcName,
 		Tc:           tc,
 		GlobalValues: globalValues,
-	}, nil
+	}
 }
 
 func (s *buildPhaseState) filterNeeded() error {
@@ -262,7 +264,7 @@ func (s *buildPhaseState) prepareAllPackages() error {
 		if err != nil {
 			return err
 		}
-		s.pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, resolvedTools.CCKey(), s.cfg.Mode, opts, s.globalFlagsHash, scriptHash)
+		s.pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, resolvedTools.CCKey(), s.cfg.Mode, opts, packageFlagsHash(s.globalFlagsHash, node), scriptHash)
 	}
 
 	depsDir := s.ctx.Paths.DepsDir
@@ -439,7 +441,7 @@ func (s *buildPhaseState) downloadRemoteSources(remote *remoteVersionState, deps
 			return err
 		}
 		s.pkgDirs[name] = makeRemotePkgDirs(res.VersionDir, res.LocalSrc, resolvedCC, s.cfg.Mode, s.allPkgOptions[name],
-			entryCfg.Version, res.Commit, s.globalFlagsHash, patchHash, scriptHash)
+			entryCfg.Version, res.Commit, packageFlagsHash(s.globalFlagsHash, node), patchHash, scriptHash)
 	}
 	return nil
 }
@@ -520,7 +522,7 @@ func (s *buildPhaseState) setupSubPackageDirs(depsDir string) error {
 		if err != nil {
 			return err
 		}
-		s.pkgDirs[name] = makeLocalPkgDirs(sourceDir, resolvedTools.CCKey(), s.cfg.Mode, opts, s.globalFlagsHash, scriptHash)
+		s.pkgDirs[name] = makeLocalPkgDirs(sourceDir, resolvedTools.CCKey(), s.cfg.Mode, opts, packageFlagsHash(s.globalFlagsHash, node), scriptHash)
 	}
 	return nil
 }
@@ -696,6 +698,7 @@ func (s *buildPhaseState) buildSubGraph(rootPkg string) error {
 		}
 		for name := range subPkgs {
 			if meta, ok := s.pkgMetaMap[name]; ok && meta.IsRemote() {
+				flagsHash := packageFlagsHash(s.globalFlagsHash, s.ctx.DepGraph.Packages[name])
 				versionDir := s.remote.versionDirs[name]
 				dirs := s.pkgDirs[name]
 				if versionDir == "" {
@@ -703,7 +706,7 @@ func (s *buildPhaseState) buildSubGraph(rootPkg string) error {
 					if err != nil {
 						return err
 					}
-					s.pkgDirs[name] = makeLocalPkgDirs(dirs.SourceDir, subResolvedTools.CCKey(), s.cfg.Mode, s.allPkgOptions[name], s.globalFlagsHash, scriptHash)
+					s.pkgDirs[name] = makeLocalPkgDirs(dirs.SourceDir, subResolvedTools.CCKey(), s.cfg.Mode, s.allPkgOptions[name], flagsHash, scriptHash)
 					continue
 				}
 				version, commit := s.remotePkgKeyMaterial(name)
@@ -712,7 +715,7 @@ func (s *buildPhaseState) buildSubGraph(rootPkg string) error {
 					return err
 				}
 				s.pkgDirs[name] = makeRemotePkgDirs(versionDir, dirs.SourceDir, subResolvedTools.CCKey(), s.cfg.Mode, s.allPkgOptions[name],
-					version, commit, s.globalFlagsHash, s.patchHashes[name], scriptHash)
+					version, commit, flagsHash, s.patchHashes[name], scriptHash)
 			}
 		}
 	}
@@ -821,12 +824,13 @@ func (s *buildPhaseState) buildPkgKeyExtra() (map[string]string, error) {
 	extra := make(map[string]string)
 	for name := range s.needed {
 		node := s.ctx.DepGraph.Packages[name]
+		flagsHash := packageFlagsHash(s.globalFlagsHash, node)
 		if node == nil || node.IsLocal() {
 			scriptHash, err := s.scriptHashFor(name)
 			if err != nil {
 				return nil, err
 			}
-			extra[name] = localKeyExtra(s.globalFlagsHash, scriptHash)
+			extra[name] = localKeyExtra(flagsHash, scriptHash)
 			continue
 		}
 		version, commit := s.remotePkgKeyMaterial(name)
@@ -840,7 +844,7 @@ func (s *buildPhaseState) buildPkgKeyExtra() (map[string]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		extra[name] = build.JoinKeyExtra(version, commit, s.globalFlagsHash, s.patchHashes[name], scriptHash)
+		extra[name] = build.JoinKeyExtra(version, commit, flagsHash, s.patchHashes[name], scriptHash)
 	}
 	return extra, nil
 }

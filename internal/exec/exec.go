@@ -91,9 +91,9 @@ func RunWithOptions(name string, args []string, opts RunOptions) ([]byte, error)
 
 	if err != nil {
 		if opts.Quiet {
-			return nil, fmt.Errorf("%s\n%s", cmdLine, string(output))
+			return nil, fmt.Errorf("%s: %w\n%s", cmdLine, err, string(output))
 		}
-		return nil, fmt.Errorf("%s", TrimOutput(output))
+		return nil, fmt.Errorf("%s: %w\n%s", cmdLine, err, TrimOutput(output))
 	}
 
 	return output, nil
@@ -116,7 +116,7 @@ func RunToStdout(dir, name string, args ...string) error {
 
 func RunFatal(dir, name string, args ...string) {
 	if err := RunToStdout(dir, name, args...); err != nil {
-		logger.Fatal("command failed: %s %s", name, strings.Join(args, " "))
+		logger.Fatal("command failed: %v", err)
 	}
 }
 
@@ -124,7 +124,10 @@ func RunWithEnv(dir string, env map[string]string, name string, args ...string) 
 	cmd := buildCmd(name, args, dir, env)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s: %w", FormatCommandLine(name, args), err)
+	}
+	return nil
 }
 
 func LookPath(name string) (string, error) {
@@ -135,7 +138,7 @@ func RunWithEnvCaptured(dir string, env map[string]string, name string, args ...
 	cmd := buildCmd(name, args, dir, env)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("%s %s\n%s", name, strings.Join(args, " "), string(output))
+		return nil, fmt.Errorf("%s: %w\n%s", FormatCommandLine(name, args), err, string(output))
 	}
 	return output, nil
 }

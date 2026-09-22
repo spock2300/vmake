@@ -1,7 +1,11 @@
 package build
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"runtime"
 	"strings"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
@@ -9,22 +13,32 @@ import (
 )
 
 type ResolvedTools struct {
-	CC      string
-	CXX     string
-	AR      string
-	OBJCOPY string
-	SIZE    string
-	OBJDUMP string
-	NM      string
+	CC       string
+	CXX      string
+	AR       string
+	OBJCOPY  string
+	SIZE     string
+	OBJDUMP  string
+	NM       string
+	STRIP    string
+	identity string
+	targetOS string
 
 	CCVersion  string
 	CXXVersion string
+}
+
+func (t *ResolvedTools) isClangCC() bool {
+	return strings.Contains(strings.ToLower(t.CCVersion), "clang version")
 }
 
 // CCKey combines the C compiler path with its reported version. An in-place
 // compiler upgrade keeps the path but changes the version, which must rotate
 // build keys instead of reusing stale objects.
 func (t *ResolvedTools) CCKey() string {
+	if t.identity != "" {
+		return t.CC + "@" + t.identity
+	}
 	if t.CCVersion == "" {
 		return t.CC
 	}
@@ -32,7 +46,7 @@ func (t *ResolvedTools) CCKey() string {
 }
 
 func compilerVersion(path string) (string, error) {
-	out, err := iexec.Run(path, "-dumpversion")
+	out, err := iexec.RunWithOptions(path, []string{"--version"}, iexec.RunOptions{Quiet: true})
 	if err != nil {
 		return "", fmt.Errorf("probe %s version: %w", path, err)
 	}
@@ -70,18 +84,42 @@ func ResolveTools(tc *toolchain.Toolchain) (*ResolvedTools, error) {
 		return nil, err
 	}
 
-	return &ResolvedTools{
-		CC:      ccPath,
-		CXX:     cxxPath,
-		AR:      arPath,
-		OBJCOPY: resolveOptionalTool(mgr, tc, tc.Tools.OBJCOPY, "OBJCOPY"),
-		SIZE:    resolveOptionalTool(mgr, tc, tc.Tools.SIZE, "SIZE"),
-		OBJDUMP: resolveOptionalTool(mgr, tc, tc.Tools.OBJDUMP, "OBJDUMP"),
-		NM:      resolveOptionalTool(mgr, tc, tc.Tools.NM, "NM"),
-
-		CCVersion:  ccVersion,
-		CXXVersion: cxxVersion,
-	}, nil
+	resolved := &ResolvedTools{
+		CC: ccPath, CXX: cxxPath, AR: arPath,
+		CCVersion: ccVersion, CXXVersion: cxxVersion,
+		targetOS: tc.TargetOSOrDefault(),
+	}
+	for _, item := range []struct {
+		name, configured string
+		dest             *string
+	}{
+		{"OBJCOPY", tc.Tools.OBJCOPY, &resolved.OBJCOPY},
+		{"SIZE", tc.Tools.SIZE, &resolved.SIZE},
+		{"OBJDUMP", tc.Tools.OBJDUMP, &resolved.OBJDUMP},
+		{"NM", tc.Tools.NM, &resolved.NM},
+		{"STRIP", tc.Tools.STRIP, &resolved.STRIP},
+	} {
+		if item.configured == "" {
+			continue
+		}
+		path, err := resolveRequired(mgr, tc, item.configured, item.name)
+		if err != nil {
+			return nil, err
+		}
+		*item.dest = path
+	}
+	data, err := json.Marshal(struct {
+		HostOS    string
+		HostArch  string
+		Toolchain *toolchain.Toolchain
+		Resolved  *ResolvedTools
+	}{runtime.GOOS, runtime.GOARCH, tc, resolved})
+	if err != nil {
+		return nil, fmt.Errorf("toolchain identity: %w", err)
+	}
+	hash := sha256.Sum256(data)
+	resolved.identity = hex.EncodeToString(hash[:])
+	return resolved, nil
 }
 
 func resolveRequired(mgr *toolchain.Manager, tc *toolchain.Toolchain, tool, name string) (string, error) {
@@ -90,18 +128,4 @@ func resolveRequired(mgr *toolchain.Manager, tc *toolchain.Toolchain, tool, name
 		return "", fmt.Errorf("failed to resolve %s: %w", name, err)
 	}
 	return path, nil
-}
-
-func resolveOptionalTool(mgr *toolchain.Manager, tc *toolchain.Toolchain, configured, name string) string {
-	if configured != "" {
-		if path, err := mgr.ResolveToolPath(tc, configured); err == nil {
-			return path
-		}
-	}
-	if tc.Prefix != "" {
-		if path, err := mgr.ResolveToolPath(tc, tc.Prefix+name); err == nil {
-			return path
-		}
-	}
-	return ""
 }

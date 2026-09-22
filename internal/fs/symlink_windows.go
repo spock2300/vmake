@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // SymlinkHint describes what to do when symbolic links are unavailable.
@@ -27,4 +28,9 @@ func probeSymlinks() bool {
 
 func symlinkError(err error) error {
 	return fmt.Errorf("%w (%s)", err, SymlinkHint)
+}
+
+func symlinkKindMatches(link, target os.FileInfo) bool {
+	attrs := link.Sys().(*syscall.Win32FileAttributeData).FileAttributes
+	return (attrs&syscall.FILE_ATTRIBUTE_DIRECTORY != 0) == target.IsDir()
 }

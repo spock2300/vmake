@@ -289,11 +289,17 @@ func TestTargetAddPostLinkDeps(t *testing.T) {
 	}
 }
 
-func TestPostLinkStepOutputPaths(t *testing.T) {
-	s := PostLinkStep{Tool: "objcopy", Args: []string{"-O", "ihex", "{output}", "{output}.hex"}}
-	paths := s.OutputPaths("/build/app")
-	if !reflect.DeepEqual(paths, []string{"/build/app.hex"}) {
-		t.Errorf("OutputPaths = %v, want [/build/app.hex]", paths)
+func TestTargetPostLinkOutputs(t *testing.T) {
+	target := NewTargetRegistry().Target("app").
+		AddPostLink("objcopy", "--add-gnu-debuglink={output}.debug", "{output}")
+	if len(target.PostLinkOutputs()) != 0 {
+		t.Fatalf("command arguments inferred as outputs: %v", target.PostLinkOutputs())
+	}
+	target.AddPostLinkOutputs("{output}.debug").
+		AddPostLinkHex().AddPostLinkBin().AddPostLinkStrip().AddPostLinkSize().SetSymbolPrefix("pfx_")
+	want := []string{"{output}.debug", "{output}.hex", "{output}.bin", "{output}.stripped"}
+	if !reflect.DeepEqual(target.PostLinkOutputs(), want) {
+		t.Errorf("PostLinkOutputs = %v, want %v", target.PostLinkOutputs(), want)
 	}
 }
 

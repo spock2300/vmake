@@ -19,7 +19,6 @@ func GetBuiltinHost() *Toolchain {
 			SIZE:    "size",
 			OBJDUMP: "objdump",
 			NM:      "nm",
-			MAKE:    "make",
 		},
 		DefaultFlags: defaultFlagsFor(targetOS),
 	}

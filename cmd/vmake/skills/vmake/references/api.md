@@ -77,6 +77,9 @@ Import: `github.com/spock2300/vmake/pkg/api`
 | `SetDryRun` | `(v bool)` | Dry run mode |
 | `SetRoot` | `(v bool)` | Mark as root package |
 | `SetGlobalFlags` | `(cflags, cxxflags, ldflags, links []string)` | Set global compiler/linker flags |
+| `SetCMakeBuildDir` | `(dir string) *Package` | Set CMake build directory; relative to BuildDir unless absolute |
+| `SetCMakeInstallDir` | `(dir string) *Package` | Set CMake install prefix; relative to BuildDir unless absolute |
+| `SetCMakeBuildType` | `(buildType string) *Package` | Set the default CMake configuration, e.g. MinSizeRel |
 
 ### Targets & Dependencies
 
@@ -93,17 +96,75 @@ Exit-on-failure helpers use `exec.RunFatal` (call `os.Exit` on failure) and retu
 | `Run` | `(name string, args ...string)` | Run command in BuildDir (os.Exit on failure) |
 | `RunIn` | `(dir, name string, args ...string)` | Run command in dir (os.Exit on failure) |
 | `RunEnv` | `(env map[string]string, name string, args ...string) error` | Run with extra env vars in BuildDir (**returns real error**) |
-| `CMakeConfigure` | `(extraArgs ...string)` | cmake -S SrcDir -B BuildDir -DCMAKE_INSTALL_PREFIX=InstallDir (+ compilers, build type, cross-compilation settings) |
-| `CMakeGlobalFlagsArgs` | `() []string` | Returns `-DCMAKE_C_FLAGS=...` etc. from global flags for CMake |
-| `MergedCFlags` | `(extra ...string) string` | Merge global C flags + extra, space-joined |
-| `MergedCxxFlags` | `(extra ...string) string` | Merge global C++ flags + extra, space-joined |
+| `CMakeConfigure` | `(extraArgs ...string)` | Configure SrcDir into CMakeBuildDir with CMakeInstallDir, resolved tools, build type, target settings, package visibility, and global flags |
+| `CMakeGlobalFlagsArgs` | `() []string` | Package visibility and global flag arguments for special manual CMake calls; CMakeConfigure already includes them |
+| `DefaultVisibilityHidden` | `() bool` | Whether this package enables hidden default visibility |
+| `VisibilityFlags` | `() (cflags, cxxflags []string)` | Package visibility defaults for C and C++; empty when not enabled |
+| `MergedCFlags` | `(extra ...string) string` | Merge package visibility defaults + global C flags + extra, space-joined |
+| `MergedCxxFlags` | `(extra ...string) string` | Merge package visibility defaults + global C++ flags + extra, space-joined |
 | `MergedLdFlags` | `(extra ...string) string` | Merge global linker flags + extra, space-joined |
-| `CMakeBuild` | `(args ...string)` | cmake --build BuildDir |
-| `CMakeInstall` | `()` | cmake --install BuildDir |
+| `CMakeBuild` | `(args ...string)` | Build CMakeBuildDir with the default configuration and CPU-count parallelism |
+| `CMakeInstall` | `(args ...string)` | Install CMakeBuildDir using the same default configuration; accepts --component and other install options |
 | `Configure` | `(extraArgs ...string) error` | SrcDir/configure --prefix=... (+ --host when cross) |
 | `Make` | `(args ...string) error` | make -C BuildDir with `pkg.Env()` (**returns real error**; no implicit -j) |
 
 Dry-run aware: in dry-run mode (query/check-symbols/install), all helpers log commands without executing them.
+
+### CMake Integration
+
+Prefer `CMakeConfigure`, `CMakeBuild`, and `CMakeInstall` for CMake projects. Keep
+project options in build.go and let the helpers manage the tools, paths, target
+system, configuration, and parallelism. Direct `cmake` calls are for special
+operations the helpers cannot express.
+
+- Defaults: `SrcDir()` for sources, `BuildDir()/cmake` for the build tree, remote
+  `InstallDir()` or local `BuildDir()/staging` for installation. Use
+  `CMakeBuildDir()` / `CMakeInstallDir()` when referring to artifacts. Directory
+  setters do not change `PkgDirs` or the existing stamp/publication rules.
+- `SetCMakeBuildType("MinSizeRel")` changes the configuration used by all three
+  stages. Otherwise VMake debug/release mode chooses Debug/Release. Explicit
+  `--config` on build or install overrides that invocation's configuration.
+- Use setters for build directory, install prefix, and default build type. Raw
+  directory overrides, `--prefix`, `-DCMAKE_INSTALL_PREFIX`, and
+  `-DCMAKE_BUILD_TYPE` are rejected with a setter hint. Other project arguments
+  are forwarded, including explicit generators and configure presets.
+  `CMakeBuild` rejects `--preset` because a build preset's `binaryDir` overrides
+  the managed build directory. Use `CMakeConfigure("--preset", "name")`, then
+  select build targets/configuration with `--target` / `--config`.
+- Configured compilers/binutils resolve strictly to paths. ASM defaults to the
+  resolved CC driver. CMake chooses its underlying linker; VMake's `Tools.LD`
+  is not passed as `CMAKE_LINKER`. The target OS sets `CMAKE_SYSTEM_NAME`; bare
+  metal uses Generic, static-library compiler checks, host program search and
+  target-only library/include search. Set `CMAKE_SYSTEM_PROCESSOR`
+  explicitly when needed.
+- C/CXX flags start with the package's visibility defaults, then inherit the
+  project's global flags. Executable/shared/module linker flags inherit global
+  flags; toolchain `DefaultFlags` are not added. Explicit cache arguments for a
+  flags variable replace its automatic value. Use `MergedCFlags(extra...)` when
+  that override should retain package defaults and global flags. ASM flags must
+  be explicit. Make/Configure do not inject these compiler flags automatically.
+- Windows defaults to Ninja unless a generator or configure preset is explicit. Build
+  defaults to CPU-count parallelism unless `-j`/`--parallel` or
+  `CMAKE_BUILD_PARALLEL_LEVEL` is supplied. No default make is resolved by the API.
+
+```go
+p.SetCMakeBuildType("MinSizeRel")
+cflags := p.MergedCFlags("-fno-builtin")
+p.CMakeConfigure(
+    "-DBUILD_SHARED_LIBS=OFF",
+    "-DCMAKE_C_FLAGS="+cflags,
+    "-DCMAKE_ASM_FLAGS="+cflags,
+)
+p.CMakeBuild()
+p.CMakeInstall()
+```
+
+Migration: old CMake artifacts directly under `BuildDir()` now live under
+`CMakeBuildDir()`. Replace manual directory/prefix/build-type arguments with
+setters, remove redundant `CMakeGlobalFlagsArgs()` from helper calls, and replace
+make-after-CMake with `CMakeBuild()` / `CMakeInstall()`. Clean the old build tree
+before rebuilding. For local `SetPrebuilt` wrappers, keep CMake's archive in its
+own build tree and publish the staged archive through the getter.
 
 ### Property Getters
 
@@ -112,8 +173,8 @@ Dry-run aware: in dry-run mode (query/check-symbols/install), all helpers log co
 | `CC()` | `string` | C compiler |
 | `CXX()` | `string` | C++ compiler |
 | `AR()` | `string` | Archiver |
-| `CrossTarget()` | `string` | Cross-compilation target |
-| `Prefix()` | `string` | Toolchain prefix |
+| `TargetTriple()` | `string` | Target triple from the toolchain's `target_triple` field, e.g. `arm-none-eabi` |
+| `Prefix()` | `string` | Raw configured toolchain prefix, including the trailing `-`, e.g. `arm-none-eabi-`; does not add the installation path |
 | `CFlags()` / `CXXFlags()` / `LDFlags()` | `string` | Compiler/linker flags |
 | `ObjCopy()` | `string` | objcopy tool path |
 | `Size()` | `string` | size tool path |
@@ -124,6 +185,8 @@ Dry-run aware: in dry-run mode (query/check-symbols/install), all helpers log co
 | `SrcDirRaw()` | `string` | Raw srcCodeDir without SourceDir fallback (empty if SetSrcDir not called) |
 | `BuildDir()` | `string` | Build scratch directory |
 | `InstallDir()` | `string` | Installation prefix |
+| `CMakeBuildDir()` | `string` | CMake build tree, default BuildDir()/cmake |
+| `CMakeInstallDir()` | `string` | CMake installation prefix, default remote InstallDir() or local BuildDir()/staging |
 | `OutputDir()` | `string` | Output directory |
 | `ScriptDir()` | `string` | Build script directory (set via `SetScriptDir`; defaults to `""`) |
 | `Env()` | `map[string]string` | Toolchain env vars (CC, CXX, AR, etc.) |
@@ -148,6 +211,10 @@ Dry-run aware: in dry-run mode (query/check-symbols/install), all helpers log co
 | `ConfigFiles()` | `[]string` | Stamp-related config files |
 | `DryRun()` | `bool` | Dry run mode |
 | `SetDep` | `(name string, pkg *InstalledPackage) *Package` | Set resolved dependency |
+
+`Prefix()` includes the separator: append `"gcc"`, never `"-gcc"`. Migrate old callers that add a hyphen themselves. Use `TargetTriple()` for an external argument that expects a target triple such as `arm-none-eabi`.
+
+`p.Env()` resolves configured tools to executable paths. For an installed toolchain, `p.Env()["CROSS_COMPILE"]` includes its `bin` directory and complete prefix, such as `/path/to/toolchain/bin/arm-none-eabi-`; do not append another hyphen. Prefer `p.CMakeConfigure()`, which passes resolved tools automatically. If a special operation requires calling CMake manually, pass `p.Env()["CC"]`, `["CXX"]` and `["AR"]` instead of reconstructing names from a prefix or relying on PATH.
 
 ### Package KConfig Methods
 
@@ -204,6 +271,7 @@ All setters are fluent (return `*Target`).
 Sub-packages: a nested `build.go` in a native remote package's checkout is an independent package named `parent/sub`, versioned by the parent (no separate lockfile entry). Only native repos have sub-packages (registry wrappers never do — design decision DD-1, see `docs/DESIGN_DECISIONS.md`); they load lazily when depended on. Reference from outside by full name (`"subtest/mother/sub_a:*"`; list the parent before its sub-packages in `AddRequires`); inside a sub-package use short names for siblings (`"sub_b:utils_b"`). A parent cannot require its own sub-packages in `OnRequire`. Example: `test_data/25_subpackage`.
 | `UseDependencyLinkerScript` | `()` | Auto-inherit linker script from dependency |
 | `AddPostLink` | `(tool string, args ...string)` | Post-link step: `{output}` placeholder |
+| `AddPostLinkOutputs` | `(paths ...string)` | Explicit extra outputs for missing-output rebuilds and automatic installation; supports `{output}`, SourceDir-relative paths and absolute paths. Hex/Bin/Strip helpers declare their outputs automatically; command arguments never imply outputs |
 | `AddPostLinkHex` | `()` | `objcopy -O ihex {output} {output}.hex` |
 | `AddPostLinkBin` | `()` | `objcopy -O binary {output} {output}.bin` |
 | `AddPostLinkSize` | `()` | `size {output}` |
@@ -248,6 +316,7 @@ Sub-packages: a nested `build.go` in a native remote package's checkout is an in
 | `ProvidedLibs()` | `[]string` |
 | `UseDepLinkerScript()` | `bool` |
 | `PostLinkSteps()` | `[]PostLinkStep` |
+| `PostLinkOutputs()` | `[]string` |
 | `PostLinkDeps()` | `[]string` |
 | `GenRules()` | `[]GenRule` |
 | `HasDep(depRef)` | `bool` |
@@ -277,7 +346,7 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `AddGlobalCxxFlags(flags...)` | Add global C++ flags (same) |
 | `AddGlobalLdFlags(flags...)` | Add global linker flags (same) |
 | `AddGlobalLinks(links...)` | Add global link libraries (same) |
-| `SetDefaultVisibilityHidden() *ConfigContext` | Add `-fvisibility=hidden` globally (C+C++) and `-fvisibility-inlines-hidden` (C++ only) |
+| `SetDefaultVisibilityHidden() *ConfigContext` | Add `-fvisibility=hidden` to this package (C+C++) and `-fvisibility-inlines-hidden` (C++ only); idempotent in OnConfig/OnApply, BuildScriptError without a package |
 
 ### BuildContext
 
@@ -435,7 +504,6 @@ Note: without `SetDefault`, the zero value applies (`false` for OptionBool, `""`
 	type InstallItem struct { Src string; Dest string }
 	type RequireInfo struct { Name string; Constraint string }
 	type PostLinkStep struct { Tool string; Args []string }
-	func (s PostLinkStep) OutputPaths(outputPath string) []string
 
 	type SourceOrigin int
 	const (
@@ -455,11 +523,12 @@ Note: without `SetDefault`, the zero value applies (`false` for OptionBool, `""`
 	func (k *KConfigEntry) DefaultPreset() string
 	func (k *KConfigEntry) SelectedPreset() string
 	func (k *KConfigEntry) MenuconfigCmd() string
+	func (k *KConfigEntry) MenuconfigArgs() []string
 	func (k *KConfigEntry) Patches() map[string]string
 	func (k *KConfigEntry) SetDescription(desc string) *KConfigEntry
 	func (k *KConfigEntry) SetConfigPath(path string) *KConfigEntry
 	func (k *KConfigEntry) SetSrcDir(dir string) *KConfigEntry
-	func (k *KConfigEntry) SetMenuconfigCmd(cmd string) *KConfigEntry
+	func (k *KConfigEntry) SetMenuconfigCmd(program string, args ...string) *KConfigEntry
 	func (k *KConfigEntry) AddPreset(name string) *KConfigEntry
 	func (k *KConfigEntry) SetDefaultPreset(presetName string) *KConfigEntry
 	func (k *KConfigEntry) SelectPreset(name string) *KConfigEntry

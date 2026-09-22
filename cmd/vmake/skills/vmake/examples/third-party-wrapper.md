@@ -2,6 +2,11 @@
 
 Wrapping an external C/C++ library (CMake, Autotools, etc.) as a vmake package using `TargetVoid` and `SetBuildFunc`. This is the pattern used for **registry repo** packages.
 
+For CMake projects, prefer `CMakeConfigure`, `CMakeBuild`, and `CMakeInstall`.
+They manage the toolchain, paths, build configuration, global flags, and
+parallelism; build.go supplies project options and project-specific steps.
+Call `cmake` directly only for operations these APIs cannot express.
+
 ## build.go
 
 ```go
@@ -45,8 +50,53 @@ func Main(p *api.Package) {
 
 1. **OnPackage**: Declares metadata so the dependency resolver can download and version-match the source
 2. **OnBuild**: `TargetVoid` with `SetBuildFunc` runs the external build system
-3. The `SetBuildFunc` callback receives a `*Package` with `SourceDir()`, `BuildDir()`, `InstallDir()` already set correctly
-4. Built-in helpers (`CMakeConfigure`, `CMakeBuild`, `CMakeInstall`, `Configure`, `Make`) automatically use the right directories and prefix
+3. The `SetBuildFunc` callback receives a `*Package` with the source, build, and installation directories resolved
+4. CMake configures `SrcDir()` into `CMakeBuildDir()` (default `BuildDir()/cmake`) and installs to `CMakeInstallDir()` (the remote `InstallDir()` or local `BuildDir()/staging`)
+
+## CMake Configuration and Artifacts
+
+The default configuration follows VMake's debug/release mode. Use
+`SetCMakeBuildType("MinSizeRel")` for another configuration, shared by configure,
+build, and install. Use `SetCMakeBuildDir` / `SetCMakeInstallDir` to change paths;
+relative paths are based on `BuildDir()`. Pass project-specific `-D` options to
+`CMakeConfigure`, targets to `CMakeBuild("--target", "name")`, and install options
+to `CMakeInstall("--component", "name")`. Configure presets are supported through
+`CMakeConfigure("--preset", "name")`; build presets are rejected because they
+override the managed build directory. See `references/api.md` for overrides.
+
+Global C/CXX and linker flags are inherited automatically. Default hidden
+visibility is package-local: an application's `SetDefaultVisibilityHidden()`
+does not change this wrapper's upstream export rules. If the wrapper enables
+hidden visibility itself, its CMake build receives those defaults. To add a C
+flag while retaining package defaults and global flags, pass `"-DCMAKE_C_FLAGS="+p.MergedCFlags("-fno-builtin")`. ASM flags
+must be supplied explicitly when the project needs them. The helpers resolve
+compiler/binutils paths and target settings; do not recreate a generic toolchain
+file or concatenate compiler prefixes in the wrapper.
+
+A local package can expose a CMake-installed static library with `SetPrebuilt`.
+Use the directory getter so declarations agree with all three CMake stages:
+
+```go
+p.OnBuild(func(ctx *api.BuildContext) {
+    p.SetCMakeBuildType("MinSizeRel")
+    ctx.Target("foo_build").SetKind(api.TargetVoid).
+        SetBuildFunc(func(p *api.Package) error {
+            p.CMakeConfigure("-DBUILD_SHARED_LIBS=OFF")
+            p.CMakeBuild()
+            p.CMakeInstall()
+            return nil
+        })
+    ctx.Target("foo").SetKind(api.TargetStatic).
+        AddDeps("foo_build").
+        SetPrebuilt(filepath.Join(p.CMakeInstallDir(), "lib", "libfoo.a"))
+})
+```
+
+Import `path/filepath` for this example. The CMake archive lives in
+`CMakeBuildDir()`, the installed archive in `CMakeInstallDir()`, and VMake publishes
+a symlink at `BuildDir()/libfoo.a`. Separate paths avoid two build systems claiming
+the same output. These directory settings do not change existing stamp or remote
+package publication behavior.
 
 ## Autotools Example
 
@@ -79,7 +129,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 })
 ```
 
-`p.Run`/`p.RunIn` exit the process on failure and return nothing — call them as statements and `return nil` at the end (use `p.RunEnv` if you need the error). Note that `p.Make` runs with `-C <BuildDir>`, so it pairs with CMake (which configures out-of-tree into `BuildDir`); after `p.Configure` the generated Makefile is in `SrcDir()`, so run make there with `p.RunIn(p.SrcDir(), "make", ...)`.
+`p.Run`/`p.RunIn` exit the process on failure and return nothing — call them as statements and `return nil` at the end (use `p.RunEnv` if you need the error). `p.Make` runs with `-C <BuildDir>` and applies when a Makefile exists there. CMake projects use `CMakeBuild` / `CMakeInstall` for their selected generator and build directory. Keep source-tree make commands in `SrcDir()`.
 
 ## Stamp-Based Skip with SetConfigFiles
 
@@ -133,11 +183,12 @@ p.OnBuild(func(ctx *api.BuildContext) {
 
 ## Key Points
 
-- Commands run via `p.Run`/`p.Make`/CMake helpers default to the package's `BuildDir`
+- `p.Run` / `p.Make` default to the package's `BuildDir`; CMake helpers manage `CMakeBuildDir()` across all three stages
 - `p.SrcDir()` — the downloaded source tree (use this for source files, config headers, patching)
 - `p.SourceDir()` — where the package's `build.go` lives (registry package metadata directory)
 - `p.BuildDir()` — scratch directory for intermediate files
 - `p.InstallDir()` — where headers/libs/binaries should be installed to
+- `p.CMakeBuildDir()` / `p.CMakeInstallDir()` — actual CMake build tree and installation prefix
 - Already-installed packages are automatically skipped (non-empty `InstallDir`)
 - `OnPackage` with `SetGit`/`AddVersion` is ONLY for registry repo packages — native repo packages must NOT use these
 - Local packages can also use `OnPackage` for metadata (`SetDescription`, `SetLicense`, `SetHomepage`) — it runs for all packages
@@ -171,8 +222,8 @@ SetBuildFunc(func(p *api.Package) error {
     p.CMakeBuild()
     p.CMakeInstall()
     api.CopyFile(
-        filepath.Join(p.InstallDir(), "include", "cjson", "cJSON.h"),
-        filepath.Join(p.InstallDir(), "include", "cJSON.h"),
+        filepath.Join(p.CMakeInstallDir(), "include", "cjson", "cJSON.h"),
+        filepath.Join(p.CMakeInstallDir(), "include", "cJSON.h"),
     )
     return nil
 })

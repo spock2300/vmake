@@ -8,7 +8,7 @@ import (
 type Toolchain struct {
 	Name         string       `json:"name"`
 	DisplayName  string       `json:"display_name"`
-	Host         string       `json:"host"`
+	TargetTriple string       `json:"target_triple"`
 	Prefix       string       `json:"prefix"`
 	TargetOS     string       `json:"target_os"`
 	Tools        Tools        `json:"tools"`

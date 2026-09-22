@@ -1,18 +1,15 @@
 package main
 
 import (
-	"os/exec"
+	"fmt"
 	"runtime"
-	"strings"
 
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/gitusr"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
-// checkPlatform reports the status of the platform prerequisites vmake
-// depends on: symbolic links, the Git for Windows userland, make, and the
-// C toolchain.
-func checkPlatform() []doctorFinding {
+func checkPlatform(tc *toolchain.Toolchain) []doctorFinding {
 	var findings []doctorFinding
 
 	if fs.SymlinksSupported() {
@@ -45,7 +42,20 @@ func checkPlatform() []doctorFinding {
 		}
 	}
 
-	if path, err := exec.LookPath("make"); err == nil {
+	if tc == nil {
+		return findings
+	}
+	findings = append(findings, checkToolchain(tc)...)
+	return findings
+}
+
+func checkToolchain(tc *toolchain.Toolchain) []doctorFinding {
+	var findings []doctorFinding
+	makeInstallPath := ""
+	if tc.Tools.MAKE != "" {
+		makeInstallPath = tc.InstallPath
+	}
+	if path, err := toolchain.ResolveToolPath(tc.MakeTool(), makeInstallPath); err == nil {
 		findings = append(findings, doctorFinding{
 			Severity: "ok",
 			Category: "make",
@@ -55,22 +65,24 @@ func checkPlatform() []doctorFinding {
 		findings = append(findings, doctorFinding{
 			Severity: "warn",
 			Category: "make",
-			Message:  "make not found on PATH; p.Make(), EnsureConfig and 'vmake config' will fail" + toolHint(),
+			Message:  fmt.Sprintf("make %q: %v; p.Make(), preset generation and default make menuconfig require this tool%s", tc.MakeTool(), err, toolHint()),
 		})
 	}
 
-	if missing := missingTools("gcc", "g++", "ar", "ranlib", "strip", "nm", "objcopy"); len(missing) == 0 {
+	if errs := toolchain.ValidateToolchain(tc); len(errs) == 0 {
 		findings = append(findings, doctorFinding{
 			Severity: "ok",
 			Category: "binutils",
-			Message:  "gcc/g++/ar/ranlib/strip/nm/objcopy all found on PATH",
+			Message:  fmt.Sprintf("selected toolchain %q (target_os=%s, target_triple=%q): all configured tools found", tc.Name, tc.TargetOS, tc.TargetTriple),
 		})
 	} else {
-		findings = append(findings, doctorFinding{
-			Severity: "warn",
-			Category: "binutils",
-			Message:  "missing build tools on PATH: " + strings.Join(missing, ", ") + toolHint(),
-		})
+		for _, err := range errs {
+			findings = append(findings, doctorFinding{
+				Severity: "error",
+				Category: "binutils",
+				Message:  fmt.Sprintf("selected toolchain %q: %v", tc.Name, err),
+			})
+		}
 	}
 
 	return findings
@@ -81,14 +93,4 @@ func toolHint() string {
 		return " (Git for Windows bundles neither a C toolchain nor make; install MinGW-w64 or MSYS2)"
 	}
 	return ""
-}
-
-func missingTools(names ...string) []string {
-	var missing []string
-	for _, name := range names {
-		if _, err := exec.LookPath(name); err != nil {
-			missing = append(missing, name)
-		}
-	}
-	return missing
 }

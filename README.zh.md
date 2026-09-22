@@ -10,13 +10,13 @@ VMake 是一个现代化的 C/C++ 项目构建工具，采用 Go 语言开发。
 - **灵活的选项系统**：支持布尔、字符串、整数和枚举类型的配置选项
 - **条件构建支持**：通过 `If`、`When` 等方法实现条件编译
 - **多模块支持**：原生支持多模块项目的构建管理
-- **第三方包管理**：支持 Registry（包装 CMake/Autotools）和 Native（vmake 原生包）两种仓库类型，通过 OnRequire 声明依赖，自动下载、版本匹配和构建
+- **第三方包管理**：支持 Registry（包装 CMake/Autotools）和 Native（vmake 原生包）两种仓库类型，通过 OnRequire 声明依赖，自动下载、版本匹配和构建。CMake 工程优先使用 `CMakeConfigure`／`CMakeBuild`／`CMakeInstall`，由 API 管理工具链、目录、全局标志和并行规则。
 - **扩展插件系统**：CLI 命令扩展和交叉编译工具链管理
 - **增量构建**：按目标基于 depfile mtime 判定失效；工具链/编译器版本/模式/选项/lock 固定/补丁集/构建脚本变化会轮换 build key
 - **TUI 配置界面**：提供交互式终端用户界面，方便配置项目选项
 - **工具链管理**：支持多种编译工具链的灵活切换，支持交叉编译
 - **语义版本约束**：内置语义版本解析和约束匹配
-- **符号管理**：通过 `SetDefaultVisibilityHidden` + `SetVersionScript` + `AddExcludeLibs` + `SetSymbolBinding` + `vmake check-symbols` 五层防御，控制库的导出符号，避免复杂依赖图中的符号冲突和泄漏
+- **符号管理**：通过 `SetDefaultVisibilityHidden` + `SetVersionScript` + `AddExcludeLibs` + `SetSymbolBinding` + `vmake check-symbols` 五层防御，控制库的导出符号，避免复杂依赖图中的符号冲突和泄漏。默认符号隐藏仅影响声明它的包，依赖包保留自身的导出规则。
 
 ## 快速开始
 
@@ -214,7 +214,7 @@ ctx.Target(name string) *Target
 
 - **CLI 命令扩展**：通过 `AddSubCommand` 添加自定义子命令
 - **工具链管理**：注册自定义工具链，支持通过 `toolchain.json` + `tc` 插件实现首次使用自动下载（Git LFS 或 HTTP）
-- **全局编译/链接标志**：通过 `AddGlobalCFlags`、`AddGlobalCxxFlags` 和 `AddGlobalLdFlags` 向所有构建注入 C/CXX/链接选项，并通过 `CMakeGlobalFlagsArgs()` 或 `MergedCFlags()` 传递给 CMake 外部构建
+- **全局编译/链接标志**：通过 `AddGlobalCFlags`、`AddGlobalCxxFlags` 和 `AddGlobalLdFlags` 向所有构建注入 C/CXX/链接选项，`CMakeConfigure()` 自动继承；显式覆盖时可通过 `MergedCFlags()` 保留全局标志并追加项目选项。
 
 ### 使用流程
 

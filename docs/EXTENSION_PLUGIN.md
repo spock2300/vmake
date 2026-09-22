@@ -159,7 +159,7 @@ ctx.RegisterToolchain("riscv32", &toolchain.Toolchain{
     Name:        "riscv32",
     DisplayName: "RISC-V 32-bit",
     Host:        "x86_64-linux-gnu",
-    Prefix:      "riscv32-unknown-elf",
+    Prefix:      "riscv32-unknown-elf-",
     Tools: toolchain.Tools{
         CC:  "riscv32-unknown-elf-gcc",
         CXX: "riscv32-unknown-elf-g++",
@@ -276,7 +276,7 @@ err := ctx.RunGitLFS(pluginDir, "pull", "--include", "assets/toolchains/aarch64-
 RegisterToolchainsFromRepo func()
 ```
 
-扫描插件仓库中子目录的 `toolchain.json` 文件，注册声明的工具链并为含 `install` 配置的工具链设置自动下载回调。通常由 `tc` 插件在 `Main` 中调用。
+扫描插件仓库中子目录的 `toolchain.json` 文件，注册声明的工具链并为含当前宿主 `installations` 配置的工具链设置自动下载回调。通常由 `tc` 插件在 `Main` 中调用。
 
 ```go
 ctx.RegisterToolchainsFromRepo()
@@ -303,7 +303,7 @@ def, err := ctx.LoadToolchainDef()
 | `Name` | `string` | 工具链标识符（如 `"aarch64-linux-gnu"`） |
 | `DisplayName` | `string` | 可读名称（如 `"ARM GCC 12.2.0"`），`vmake toolchain list` 显示 |
 | `Host` | `string` | 宿主平台三元组（如 `"x86_64-linux-gnu"`） |
-| `Prefix` | `string` | 交叉编译前缀（如 `"aarch64-linux-gnu"`），设为 `""` 表示无前缀 |
+| `Prefix` | `string` | 包含末尾 `-` 的交叉编译前缀（如 `"aarch64-linux-gnu-"`），设为 `""` 表示无前缀；拼接工具名时不再添加 `-` |
 | `Tools` | `Tools` | 各工具的可执行文件名 |
 | `DefaultFlags` | `DefaultFlags` | 默认编译/链接选项 |
 | `InstallPath` | `string` | 工具链安装目录的绝对路径 |
@@ -363,8 +363,9 @@ def, err := ctx.LoadToolchainDef()
   "name": "arm-gcc",
   "version": "12.2.0",
   "display_name": "ARM GCC 12.2.0",
-  "host": "arm-linux-gnueabihf",
-  "prefix": "arm-linux-gnueabihf",
+  "target_triple": "arm-linux-gnueabihf",
+  "target_os": "linux",
+  "prefix": "arm-linux-gnueabihf-",
   "tools": {
     "cc": "arm-linux-gnueabihf-gcc",
     "cxx": "arm-linux-gnueabihf-g++",
@@ -377,10 +378,13 @@ def, err := ctx.LoadToolchainDef()
     "cxxflags": ["-mcpu=cortex-a7", "-mfpu=neon-vfpv4", "-mfloat-abi=hard"],
     "ldflags": ["-mcpu=cortex-a7", "-mfpu=neon-vfpv4", "-mfloat-abi=hard"]
   },
-  "install": {
-    "method": "lfs",
-    "file": "arm-gcc-12.2.0.tar.gz",
-    "format": "tar.gz"
+  "installations": {
+    "linux/amd64": {
+      "method": "lfs",
+      "file": "arm-gcc-12.2.0.tar.gz",
+      "format": "tar.gz",
+      "root_dir": "arm-gcc-12.2.0"
+    }
   }
 }
 ```
@@ -388,15 +392,16 @@ def, err := ctx.LoadToolchainDef()
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `name` | string | 是 | 工具链标识符，用于 `--toolchain <name>` |
-| `version` | string | 否 | 版本号，影响安装目录名（有版本号为 `<name>-<version>`，否则为 `<name>`） |
+| `version` | string | 安装时必填 | 安装目录使用 `<os>/<arch>/<name>/<version>` |
 | `display_name` | string | 否 | 可读名称，默认同 `name` |
-| `host` | string | 是 | 宿主平台三元组 |
-| `prefix` | string | 是 | 交叉编译前缀，为空表示无前缀（native） |
-| `tools` | object | 是 | 各工具的可执行文件名（同 `toolchain.Tools`，`cc` 和 `cxx` 必填） |
+| `target_triple` | string | 否 | 编译目标三元组，例如 `arm-linux-gnueabihf` |
+| `target_os` | string | 是 | 目标系统；裸机为 `none`，嵌入式 Linux 为 `linux` |
+| `prefix` | string | 否 | 交叉编译前缀，非空时必须包含结尾的连字符 |
+| `tools` | object | 是 | 各工具的可执行文件名（同 `toolchain.Tools`，`cc`、`cxx`、`ar` 和 `ld` 必填） |
 | `default_flags` | object | 否 | 默认编译/链接选项（`cflags`/`cxxflags`/`ldflags`） |
-| `install` | object | 否 | 自动下载配置，不配置则需手动安装 |
+| `installations` | object | 否 | 以宿主 `OS/architecture` 为键的安装配置；不配置则使用明确配置的工具路径或 PATH |
 
-**install 对象字段**：
+**每个 installations 条目的字段**：
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
@@ -405,20 +410,23 @@ def, err := ctx.LoadToolchainDef()
 | `url` | string | 否 | HTTP 下载URL（method 为 http 时必填） |
 | `format` | string | 否 | 压缩格式（`tar.gz`/`tar.xz`/`tar.bz2`/`zip`），为空时自动检测 |
 | `sha256` | string | 否 | SHA256 校验和，可选 |
+| `root_dir` | string | 是 | 归档中的工具链根目录；`.` 表示归档根目录 |
 
 ### 自动下载机制
 
 工具链自动下载通过 `tc` 插件 + `RegisterToolchainsFromRepo()` 实现：
 
 1. `tc` 插件的 `Main` 函数调用 `ctx.RegisterToolchainsFromRepo()`
-2. 该方法使用 `ScanRepoToolchains()` 扫描扩展仓库根目录下的所有子目录，查找 `toolchain.json`
-3. 对每个包含 `install` 字段的工具链，调用 `SetOnMissing` 注册按需下载回调
+2. 该方法逐个加载扩展仓库子目录中的 `toolchain.json`，独立记录每份定义的成功或错误
+3. 对每个包含当前宿主 `installations` 条目的工具链，调用 `SetOnMissing` 注册按需下载回调
 4. 当用户通过 `--toolchain <name>` 或在 `build.go` 选择未安装的工具链时：
    - `method: "lfs"` → 执行 `git lfs pull` 拉取压缩包 → 解压到 `~/.vmake/toolchains/`
    - `method: "http"` → 从 `url` 下载压缩包到 `~/.vmake/toolchains/` → 解压到 `~/.vmake/toolchains/`
 5. 下载完成后自动注册工具链，后续可直接使用
 
-压缩包应通过 Git LFS 存储。解压后，若 `~/.vmake/toolchains/<name>-<version>/` 目录存在，该目录即作为工具链的 `InstallPath`。
+Git LFS 压缩包放在扩展仓库的 `assets/toolchains/`。按声明的 `root_dir` 解压、校验后，发布到 `~/.vmake/toolchains/<os>/<arch>/<name>/<version>/`，作为工具链的 `InstallPath`。
+
+旧 `host`、`install` 字段不再接受。错误仅阻止对应工具链；`vmake toolchain list` 显示定义名称、路径及原因，损坏 JSON 无法识别名称时按路径显示。选择错误定义时不会回退到宿主工具链。`vmake ext update/remove` 跳过插件执行，可用于修复或移除扩展。
 
 ## 实战示例
 
@@ -504,7 +512,7 @@ func registerToolchains(ctx *plugin.Context) {
         Name:        "arm-none-eabi",
         DisplayName: "ARM GCC 12.2.1",
         Host:        "x86_64-linux-gnu",
-        Prefix:      "arm-none-eabi",
+        Prefix:      "arm-none-eabi-",
         Tools: toolchain.Tools{
             CC:      "arm-none-eabi-gcc",
             CXX:     "arm-none-eabi-g++",

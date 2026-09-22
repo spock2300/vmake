@@ -1,22 +1,25 @@
 package toolchain
 
 import (
+	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 )
 
 type OnMissingToolchain func(name string) (*Toolchain, error)
 
 type Manager struct {
-	builtin        *Toolchain
-	extensions     map[string]*Toolchain
-	onMissing      map[string]OnMissingToolchain
-	globalCFlags   []string
-	globalCxxFlags []string
-	globalLdFlags  []string
-	globalLinks    []string
-	mu             sync.RWMutex
+	builtin          *Toolchain
+	extensions       map[string]*Toolchain
+	onMissing        map[string]OnMissingToolchain
+	definitionErrors map[string]*DefinitionError
+	globalCFlags     []string
+	globalCxxFlags   []string
+	globalLdFlags    []string
+	globalLinks      []string
+	mu               sync.RWMutex
 }
 
 var defaultManager *Manager
@@ -34,8 +37,11 @@ func GetManager() *Manager {
 }
 
 func (m *Manager) SelectToolchain(name string) (*Toolchain, error) {
+	if err := m.toolchainError(name); err != nil {
+		return nil, err
+	}
 	if name == "" || name == "host" {
-		return m.builtin, nil
+		return validatedToolchain(m.builtin)
 	}
 
 	m.mu.RLock()
@@ -43,7 +49,7 @@ func (m *Manager) SelectToolchain(name string) (*Toolchain, error) {
 	m.mu.RUnlock()
 
 	if ok && tc.InstallPath != "" {
-		return tc, nil
+		return validatedToolchain(tc)
 	}
 
 	m.mu.RLock()
@@ -51,17 +57,24 @@ func (m *Manager) SelectToolchain(name string) (*Toolchain, error) {
 	m.mu.RUnlock()
 
 	if hasHandler {
-		return onMissing(name)
+		tc, err := onMissing(name)
+		if err != nil {
+			return nil, err
+		}
+		return validatedToolchain(tc)
 	}
 
 	if ok {
-		return tc, nil
+		return validatedToolchain(tc)
 	}
 
-	return nil, fmt.Errorf("toolchain '%s' not found", name)
+	return nil, m.toolchainNotFound(name)
 }
 
 func (m *Manager) GetToolchain(name string) (*Toolchain, error) {
+	if err := m.toolchainError(name); err != nil {
+		return nil, err
+	}
 	if name == "" || name == "host" {
 		return m.builtin, nil
 	}
@@ -71,7 +84,7 @@ func (m *Manager) GetToolchain(name string) (*Toolchain, error) {
 	m.mu.RUnlock()
 
 	if !ok {
-		return nil, fmt.Errorf("toolchain '%s' not found", name)
+		return nil, m.toolchainNotFound(name)
 	}
 
 	return tc, nil
@@ -86,7 +99,59 @@ func (m *Manager) ListToolchains() (map[string]*Toolchain, error) {
 	for name, tc := range m.extensions {
 		result[name] = tc
 	}
+	for _, err := range m.definitionErrors {
+		delete(result, err.Name())
+	}
 	return result, nil
+}
+
+func (m *Manager) RegisterToolchainError(name, sourcePath string, err error) *Manager {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.definitionErrors == nil {
+		m.definitionErrors = make(map[string]*DefinitionError)
+	}
+	var defErr *DefinitionError
+	if errors.As(err, &defErr) && defErr.Path() == sourcePath && defErr.Name() == name {
+		m.definitionErrors[sourcePath] = defErr
+	} else {
+		m.definitionErrors[sourcePath] = &DefinitionError{name: name, path: sourcePath, err: err}
+	}
+	return m
+}
+
+func (m *Manager) ToolchainErrors() []*DefinitionError {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	errs := make([]*DefinitionError, 0, len(m.definitionErrors))
+	for _, err := range m.definitionErrors {
+		errs = append(errs, err)
+	}
+	slices.SortFunc(errs, func(a, b *DefinitionError) int { return strings.Compare(a.Path(), b.Path()) })
+	return errs
+}
+
+func (m *Manager) toolchainError(name string) error {
+	if name == "" {
+		name = "host"
+	}
+	var errs []error
+	for _, err := range m.ToolchainErrors() {
+		if err.Name() == name {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (m *Manager) toolchainNotFound(name string) error {
+	errs := []error{fmt.Errorf("toolchain '%s' not found", name)}
+	for _, err := range m.ToolchainErrors() {
+		if err.Name() == "" {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (m *Manager) GetDefaultToolchain() string {
@@ -167,13 +232,24 @@ func (m *Manager) RegisterToolchain(name string, tc *Toolchain) {
 	m.extensions[name] = tc
 }
 
-func (m *Manager) RegisterDef(def *ToolchainDef, toolchainsDir string) {
-	tc := def.ToToolchain(toolchainsDir)
+func (m *Manager) RegisterDef(def *ToolchainDef, toolchainsDir string) error {
+	tc, err := def.ToToolchain(toolchainsDir)
+	if err != nil {
+		return err
+	}
 	m.RegisterToolchain(def.Name, tc)
+	return nil
 }
 
 func (m *Manager) SetOnMissing(name string, fn OnMissingToolchain) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onMissing[name] = fn
+}
+
+func validatedToolchain(tc *Toolchain) (*Toolchain, error) {
+	if errs := ValidateToolchain(tc); len(errs) > 0 {
+		return nil, fmt.Errorf("invalid toolchain: %w", errors.Join(errs...))
+	}
+	return tc, nil
 }

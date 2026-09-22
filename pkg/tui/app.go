@@ -64,7 +64,9 @@ type menuconfigDone struct {
 	ensured bool
 }
 
-func ensureConfigCmd(pkgName string, entries []*api.KConfigEntry, workDir, makeTool string) tea.Cmd {
+type makeResolver func() (string, error)
+
+func ensureConfigCmd(pkgName string, entries []*api.KConfigEntry, workDir string, resolveMake makeResolver) tea.Cmd {
 	return func() tea.Msg {
 		if len(entries) == 0 {
 			return menuconfigDone{pkgName: pkgName}
@@ -75,7 +77,7 @@ func ensureConfigCmd(pkgName string, entries []*api.KConfigEntry, workDir, makeT
 			srcDir = workDir
 		}
 		configPath := filepath.Join(srcDir, e.ConfigPath())
-		if _, err := os.Stat(configPath); err == nil {
+		if info, err := os.Stat(configPath); err == nil && info.Size() > 0 {
 			return menuconfigDone{pkgName: pkgName, ensured: true}
 		}
 		presetName := e.SelectedPreset()
@@ -85,44 +87,53 @@ func ensureConfigCmd(pkgName string, entries []*api.KConfigEntry, workDir, makeT
 		if presetName == "" {
 			return menuconfigDone{pkgName: pkgName, ensured: true}
 		}
-		makeCmd := e.MenuconfigCmd()
-		if makeCmd == "" {
-			makeCmd = makeTool
+		makeTool, err := resolveMake()
+		if err != nil {
+			return menuconfigDone{pkgName: pkgName, ensured: true, err: fmt.Errorf("generate preset %s: %w", presetName, err)}
 		}
-		parts := strings.Fields(makeCmd)
-		args := []string{"-C", filepath.ToSlash(srcDir)}
-		args = append(args, parts[1:]...)
-		args = append(args, presetName)
-		// Captured, not streamed: this runs inside a tea.Cmd while the
-		// alt-screen UI is active.
-		_, err := iexec.RunWithOptions(parts[0], args, iexec.RunOptions{Quiet: true})
+		args := []string{"-C", filepath.ToSlash(srcDir), presetName}
+		_, err = iexec.RunWithOptions(makeTool, args, iexec.RunOptions{Quiet: true})
 		if err == nil {
-			api.ApplyKConfigPatches(configPath, e.Patches())
+			err = api.ApplyKConfigPatches(configPath, e.Patches())
 		}
 		return menuconfigDone{pkgName: pkgName, ensured: true, err: err}
 	}
 }
 
-func runMenuconfigCmd(pkgName string, entries []*api.KConfigEntry, workDir, makeTool string) tea.Cmd {
+func runMenuconfigCmd(pkgName string, entries []*api.KConfigEntry, workDir string, resolveMake makeResolver) tea.Cmd {
 	if len(entries) == 0 {
 		return func() tea.Msg { return menuconfigDone{pkgName: pkgName} }
 	}
-	e := entries[0]
-	srcDir := e.SrcDir()
+	cmd, err := menuconfigProcess(entries[0], workDir, resolveMake)
+	if err != nil {
+		return func() tea.Msg { return menuconfigDone{pkgName: pkgName, err: err} }
+	}
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		if err != nil {
+			err = fmt.Errorf("%s: %w", iexec.FormatCommandLine(cmd.Path, cmd.Args[1:]), err)
+		}
+		return menuconfigDone{pkgName: pkgName, err: err}
+	})
+}
+
+func menuconfigProcess(entry *api.KConfigEntry, workDir string, resolveMake makeResolver) (*exec.Cmd, error) {
+	srcDir := entry.SrcDir()
 	if srcDir == "" {
 		srcDir = workDir
 	}
-	menuconfigCmd := e.MenuconfigCmd()
-	if menuconfigCmd == "" {
-		menuconfigCmd = makeTool + " menuconfig"
+	program := entry.MenuconfigCmd()
+	args := entry.MenuconfigArgs()
+	if program == "" {
+		var err error
+		program, err = resolveMake()
+		if err != nil {
+			return nil, fmt.Errorf("menuconfig: %w", err)
+		}
+		args = []string{"menuconfig"}
 	}
-	parts := strings.Fields(menuconfigCmd)
-	args := []string{"-C", filepath.ToSlash(srcDir)}
-	args = append(args, parts[1:]...)
-	cmd := exec.Command(parts[0], args...)
-	return tea.ExecProcess(cmd, func(err error) tea.Msg {
-		return menuconfigDone{pkgName: pkgName, err: err}
-	})
+	cmd := exec.Command(program, args...)
+	cmd.Dir = srcDir
+	return cmd, nil
 }
 
 func (m *Model) Init() tea.Cmd {
@@ -132,6 +143,7 @@ func (m *Model) Init() tea.Cmd {
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case menuconfigDone:
+		m.menuconfigErr = msg.err
 		if msg.ensured {
 			if msg.err != nil {
 				m.runningMenuconfig = false
@@ -139,7 +151,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			entries := m.kconfigs[msg.pkgName]
-			return m, runMenuconfigCmd(msg.pkgName, entries, m.workDir, m.makeTool)
+			return m, runMenuconfigCmd(msg.pkgName, entries, m.workDir, m.resolveMake())
 		}
 		m.runningMenuconfig = false
 		if msg.err != nil {
@@ -548,9 +560,10 @@ func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if menuconfigIdx >= 0 && m.optCursor == menuconfigIdx && msg.String() == "enter" {
 		entries := m.kconfigs[m.selectedPkg]
+		m.menuconfigErr = nil
 		m.runningMenuconfig = true
 		m.saved = false
-		return m, ensureConfigCmd(m.selectedPkg, entries, m.workDir, m.makeTool)
+		return m, ensureConfigCmd(m.selectedPkg, entries, m.workDir, m.resolveMake())
 	}
 
 	if msg.String() == "enter" && m.optCursor < len(visible) {
@@ -1341,6 +1354,12 @@ func (m *Model) renderFooter() string {
 		n := m.modifiedCount()
 		badge := fmt.Sprintf("● %d modified", n)
 		helpText += "  " + modifiedBadgeStyle.Render(badge)
+	}
+	if m.menuconfigErr != nil {
+		helpText += "\n" + m.menuconfigErr.Error()
+	}
+	if diagnostics := m.toolchainDiagnostics(); diagnostics != "" {
+		helpText += "\n" + diagnostics
 	}
 
 	return footerBorderStyle().Width(m.width - 4).Render(helpText)

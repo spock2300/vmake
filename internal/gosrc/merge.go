@@ -4,16 +4,26 @@ import (
 	"bytes"
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/parser"
 	"go/printer"
 	"go/token"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 )
 
 func ListGoFiles(dir string) ([]string, error) {
+	ctx := build.Default
+	ctx.GOOS = runtime.GOOS
+	ctx.GOARCH = runtime.GOARCH
+	ctx.CgoEnabled = false
+	return listGoFiles(dir, ctx)
+}
+
+func listGoFiles(dir string, ctx build.Context) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -30,7 +40,28 @@ func ListGoFiles(dir string) ([]string, error) {
 		if strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		files = append(files, filepath.Join(dir, name))
+		matched, err := ctx.MatchFile(dir, name)
+		if err != nil {
+			return nil, fmt.Errorf("select %s: %w", filepath.Join(dir, name), err)
+		}
+		if !matched {
+			continue
+		}
+		fullPath := filepath.Join(dir, name)
+		parsed, err := parser.ParseFile(token.NewFileSet(), fullPath, nil, parser.ImportsOnly)
+		if err != nil {
+			return nil, fmt.Errorf("parse imports in %s: %w", fullPath, err)
+		}
+		usesCgo := false
+		for _, imp := range parsed.Imports {
+			if imp.Path.Value == `"C"` || imp.Path.Value == "`C`" {
+				usesCgo = true
+				break
+			}
+		}
+		if !usesCgo {
+			files = append(files, fullPath)
+		}
 	}
 	return files, nil
 }

@@ -158,11 +158,15 @@ func (m *SourceManager) materialize(pkg *api.Package, versionDir, tag string) er
 }
 
 func (m *SourceManager) linkProject(pkg *api.Package, versionDir string) error {
+	outDir := filepath.Join(versionDir, "out")
+	if err := fs.EnsureDir(outDir); err != nil {
+		return fmt.Errorf("create out for %s: %w", pkg.FullName(), err)
+	}
 	if err := fs.EnsureSymlink(m.localSrcPath(pkg), filepath.Join(versionDir, "src")); err != nil {
 		return fmt.Errorf("link src for %s: %w", pkg.FullName(), err)
 	}
 	localOut := filepath.Join(m.sourcesDir, pkg.Repo, pkg.Name, "out")
-	if err := fs.EnsureSymlink(localOut, filepath.Join(versionDir, "out")); err != nil {
+	if err := fs.EnsureSymlink(localOut, outDir); err != nil {
 		return fmt.Errorf("link out for %s: %w", pkg.FullName(), err)
 	}
 	return nil

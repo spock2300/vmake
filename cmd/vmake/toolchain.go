@@ -1,12 +1,14 @@
 package main
 
 import (
+	"fmt"
+	"path/filepath"
 	"strings"
+
+	"github.com/spf13/cobra"
 
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/toolchain"
-
-	"github.com/spf13/cobra"
 )
 
 var toolchainCmd = &cobra.Command{
@@ -59,10 +61,28 @@ func runToolchainList(cmd *cobra.Command, args []string) {
 		}
 		vlog.Info("  %s%s [%s]", name, mark, status)
 		vlog.Info("    Display: %s", tc.DisplayName)
-		vlog.Info("    Host:    %s", tc.Host)
+		vlog.Info("    Target triple: %s", tc.TargetTriple)
+		vlog.Info("    Target OS: %s", tc.TargetOS)
 		vlog.Info("    CC:      %s", tc.Tools.CC)
 		vlog.Info("    CXX:     %s", tc.Tools.CXX)
 	}
+	if errs := mgr.ToolchainErrors(); len(errs) > 0 {
+		vlog.Info("Unavailable toolchains:")
+		for _, err := range errs {
+			vlog.Info("  %s", formatToolchainDefinitionError(err))
+		}
+	}
+}
+
+func formatToolchainDefinitionError(err *toolchain.DefinitionError) string {
+	path := err.Path()
+	if rel, relErr := filepath.Rel(getExtensionsDir(), path); relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		path = filepath.ToSlash(rel)
+	}
+	if err.Name() == "" {
+		return fmt.Sprintf("%s [unidentified]: %v", path, err.Unwrap())
+	}
+	return fmt.Sprintf("%s [%s]: %v", err.Name(), path, err.Unwrap())
 }
 
 func runToolchainShow(cmd *cobra.Command, args []string) {
@@ -74,14 +94,12 @@ func runToolchainShow(cmd *cobra.Command, args []string) {
 	}
 
 	tc, err := mgr.GetToolchain(name)
-	if err != nil {
-		vlog.Error("Error: %v", err)
-		return
-	}
+	fatalErr(err)
 
 	vlog.Info("Toolchain: %s", tc.Name)
 	vlog.Info("Display Name: %s", tc.DisplayName)
-	vlog.Info("Host: %s", tc.Host)
+	vlog.Info("Target triple: %s", tc.TargetTriple)
+	vlog.Info("Target OS: %s", tc.TargetOS)
 	vlog.Info("")
 	vlog.Info("Tools:")
 	vlog.Info("  CC:     %s", tc.Tools.CC)

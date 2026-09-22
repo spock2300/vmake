@@ -548,6 +548,7 @@ VMake 内置 KConfig 配置管理，用于 Linux 内核、U-Boot 等 Kconfig-bas
 ```go
 type KConfigEntry struct {
     name, description, configPath, srcDir, menuconfigCmd string
+    menuconfigArgs []string
     presets        []string
     defaultPreset  string
     selectedPreset string
@@ -560,7 +561,7 @@ type KConfigEntry struct {
 - `SetDescription(desc)` — 设置描述
 - `SetConfigPath(path)` — 设置 .config 路径
 - `SetSrcDir(dir)` — 设置源码目录
-- `SetMenuconfigCmd(cmd)` — 设置 menuconfig 命令
+- `SetMenuconfigCmd(program, args...)` — 分开设置 menuconfig 程序和参数，在 SrcDir 执行；preset 使用所选工具链的 make
 - `AddPreset(name)` — 添加 preset（defconfig 文件名）
 - `SetDefaultPreset(presetName)` — 设置默认 preset
 - `SelectPreset(name)` — 设置选中 preset
@@ -640,6 +641,7 @@ type PostLinkStep struct {
 ### API 方法
 
 - `AddPostLink(tool, args...)` — 添加自定义后链接步骤
+- `AddPostLinkOutputs(paths...)` — 显式声明额外产物，支持 `{output}`；缺失时重新链接并运行全部步骤，安装阶段使用同一声明列表
 - `AddPostLinkDeps(files...)` — 声明 post-link 步骤依赖的输入文件（SourceDir 相对路径）；任一变化（mtime 新于输出或缺失）触发 relink + 重跑全部 post-link
 - `AddPostLinkHex()` — 添加 `objcopy -O ihex` 生成 .hex 文件
 - `AddPostLinkBin()` — 添加 `objcopy -O binary` 生成 .bin 文件
@@ -652,7 +654,7 @@ type PostLinkStep struct {
 
 1. 将参数中的 `{output}` 替换为链接输出路径
 2. 执行每个步骤的工具命令
-3. `PostLinkStep` 的输出产物会由 `installTarget`（`ArtifactInstaller`，`vmake build --install`）随主产物一起安装
+3. `Target.PostLinkOutputs()` 声明的输出产物会由 `installTarget`（`ArtifactInstaller`，`vmake build --install`）随主产物一起安装；不从 `PostLinkStep.Args` 推断输出
 
 post-link 仅在实际发生 relink（`needRelink=true`）时执行。`AddPostLinkDeps` 声明的输入文件参与 `needRelink` 的 mtime 判定，使 post-link 输入（如 `--keep-global-symbols=file.sym` 中的 `.sym`）变化时能触发 relink + 重跑 post-link，避免静默跳过。
 
@@ -754,27 +756,32 @@ func Main(ctx *plugin.Context) {
   "name": "arm-gcc",
   "version": "12.2.0",
   "display_name": "ARM GCC 12.2.0",
-  "host": "arm-linux-gnueabihf",
-  "prefix": "arm-linux-gnueabihf",
+  "target_triple": "arm-linux-gnueabihf",
+  "target_os": "linux",
+  "prefix": "arm-linux-gnueabihf-",
   "tools": {
     "cc": "arm-linux-gnueabihf-gcc",
     "cxx": "arm-linux-gnueabihf-g++",
-    "ar": "arm-linux-gnueabihf-ar"
+    "ar": "arm-linux-gnueabihf-ar",
+    "ld": "arm-linux-gnueabihf-ld"
   },
   "default_flags": {
     "cflags": ["-mcpu=cortex-a7"],
     "cxxflags": ["-mcpu=cortex-a7"],
     "ldflags": []
   },
-  "install": {
-    "method": "lfs",
-    "file": "arm-gcc-12.2.0.tar.gz",
-    "format": "tar.gz"
+  "installations": {
+    "linux/amd64": {
+      "method": "lfs",
+      "file": "arm-gcc-12.2.0.tar.gz",
+      "format": "tar.gz",
+      "root_dir": "arm-gcc-12.2.0"
+    }
   }
 }
 ```
 
-通过 `RegisterToolchainsFromRepo()` 扫描并注册所有子目录中的 `toolchain.json`。含 `install` 字段的工具链会自动注册按需下载回调。支持 `method: "lfs"`（Git LFS）和 `method: "http"` 两种下载方式。
+通过 `RegisterToolchainsFromRepo()` 扫描并注册所有子目录中的 `toolchain.json`。含当前宿主 `installations` 条目的工具链会自动注册按需下载回调。支持 `method: "lfs"`（Git LFS）和 `method: "http"` 两种下载方式。
 
 源码：`pkg/plugin/`, `cmd/vmake/ext_cmd.go`, `pkg/toolchain/manifest.go`
 

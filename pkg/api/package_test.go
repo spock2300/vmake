@@ -360,6 +360,7 @@ func TestPackageCMakeGlobalFlagsArgs(t *testing.T) {
 		"-DCMAKE_CXX_FLAGS=-std=c++17",
 		"-DCMAKE_EXE_LINKER_FLAGS=-lm",
 		"-DCMAKE_SHARED_LINKER_FLAGS=-lm",
+		"-DCMAKE_MODULE_LINKER_FLAGS=-lm",
 	}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("CMakeGlobalFlagsArgs = %v, want %v", args, want)

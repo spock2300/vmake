@@ -51,30 +51,19 @@ func runQueryTargets(cmd *cobra.Command, args []string) {
 	vlog.SetLevel(vlog.Quiet)
 
 	ctx := resolveToConfig(false)
-	globalValues := config.BuildGlobalValues(ctx.Config)
-	pkgDirs := pipeline.ResolveAllPackageDirs(ctx.DepGraph)
-	tc := queryToolchain(ctx.Config)
+	inspection, err := pipeline.Inspect(ctx)
+	fatalErr(err)
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if node == nil || !node.IsLocal() || node.Pkg == nil {
 			continue
 		}
-		kinds := collectTargetKinds(name, pkgDirs[name], ctx, tc, globalValues)
+		kinds := collectTargetKinds(name, inspection.PkgDirs[name], ctx, inspection.Tc, inspection.GlobalValues)
 		for _, k := range kinds {
 			fmt.Printf("%s:%s (%s)\n", name, k.name, k.kind)
 		}
 	}
-}
-
-func queryToolchain(cfg *config.ConfigFile) *toolchain.Toolchain {
-	name := pipeline.ResolveToolchainName(cfg, "")
-	tc, err := toolchain.GetManager().GetToolchain(name)
-	if err != nil {
-		vlog.Error("queryToolchain: %v (continuing without toolchain wiring)", err)
-		return nil
-	}
-	return tc
 }
 
 func runQueryConfig(cmd *cobra.Command, args []string) {
@@ -126,9 +115,8 @@ func runQuery(cmd *cobra.Command, args []string) {
 
 	ctx := resolveToConfig(false)
 
-	pkgDirs := pipeline.ResolveAllPackageDirs(ctx.DepGraph)
-	globalValues := config.BuildGlobalValues(ctx.Config)
-	tc := queryToolchain(ctx.Config)
+	inspection, err := pipeline.Inspect(ctx)
+	fatalErr(err)
 	workDir, _ := os.Getwd()
 
 	graph := ctx.DepGraph.Packages
@@ -162,7 +150,7 @@ func runQuery(cmd *cobra.Command, args []string) {
 		if i > 0 {
 			fmt.Fprintln(os.Stdout)
 		}
-		printTree(os.Stdout, graph, ctx, pkgDirs, globalValues, tc, workDir, root, "", true, true, visited)
+		printTree(os.Stdout, graph, ctx, inspection.PkgDirs, inspection.GlobalValues, inspection.Tc, workDir, root, "", true, true, visited)
 	}
 }
 

@@ -157,6 +157,7 @@ type KConfigEntry struct {
     configPath     string
     srcDir         string
     menuconfigCmd  string
+    menuconfigArgs []string
     presets        []string
     defaultPreset  string
     selectedPreset string
@@ -178,12 +179,13 @@ func (k *KConfigEntry) SetDefaultPreset(presetName string) *KConfigEntry
 func (k *KConfigEntry) SetDescription(desc string) *KConfigEntry
 func (k *KConfigEntry) SetConfigPath(path string) *KConfigEntry
 func (k *KConfigEntry) SetSrcDir(dir string) *KConfigEntry
-func (k *KConfigEntry) SetMenuconfigCmd(cmd string) *KConfigEntry
+func (k *KConfigEntry) SetMenuconfigCmd(program string, args ...string) *KConfigEntry
 func (k *KConfigEntry) Name() string
 func (k *KConfigEntry) Description() string
 func (k *KConfigEntry) ConfigPath() string
 func (k *KConfigEntry) SrcDir() string
 func (k *KConfigEntry) MenuconfigCmd() string
+func (k *KConfigEntry) MenuconfigArgs() []string
 func (k *KConfigEntry) Presets() []string
 func (k *KConfigEntry) DefaultPreset() string
 func (k *KConfigEntry) SelectedPreset() string
@@ -201,7 +203,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
         AddPreset("sandbox_defconfig").
         AddPreset("rk3568_defconfig").
         SetDefaultPreset("sandbox_defconfig").
-        SetMenuconfigCmd("make menuconfig")
+        SetMenuconfigCmd("make", "menuconfig")
 })
 
 p.OnConfig(func(ctx *api.ConfigContext) {
@@ -210,7 +212,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
         AddPreset("x86_64_defconfig").
         AddPreset("rk3568_defconfig").
         SetDefaultPreset("x86_64_defconfig").
-        SetMenuconfigCmd("make menuconfig")
+        SetMenuconfigCmd("make", "menuconfig")
 })
 
 p.OnConfig(func(ctx *api.ConfigContext) {
@@ -334,12 +336,12 @@ VMake Configuration
 menuconfig 采用两步执行：
 
 **Step 1: ensureConfigCmd**
-1. 检查 `.config` 是否存在
-2. 若不存在，执行 `make <preset>` 生成初始配置
+1. 检查 `.config` 是否存在且非空
+2. 若不存在或为空，使用所选工具链的 make 执行 `<preset>` 生成初始配置
 3. 若有 `SetKConfigPatches`，应用补丁
 
 **Step 2: runMenuconfigCmd**
-1. 执行 `KConfigEntry.MenuconfigCmd()`（默认 `make menuconfig`）
+1. 在源码目录执行 `MenuconfigCmd()` 程序与 `MenuconfigArgs()` 参数（默认使用所选工具链的 `make menuconfig`），不拆分包含空格的程序路径或参数
 2. 用户退出后读取修改后的 `.config`
 3. 编码为 JSON 字符串 → 更新 config.json
 
@@ -419,7 +421,7 @@ func Main(p *api.Package) {
             AddPreset("rk3568_defconfig").
             AddPreset("stm32_defconfig").
             SetDefaultPreset("sandbox_defconfig").
-            SetMenuconfigCmd("make menuconfig")
+            SetMenuconfigCmd("make", "menuconfig")
     })
 
     p.OnBuild(func(ctx *api.BuildContext) {
@@ -458,7 +460,7 @@ func Main(p *api.Package) {
             AddPreset("rk3568_defconfig").
             AddPreset("stm32_defconfig").
             SetDefaultPreset("x86_64_defconfig").
-            SetMenuconfigCmd("make menuconfig")
+            SetMenuconfigCmd("make", "menuconfig")
     })
 
     p.OnBuild(func(ctx *api.BuildContext) {

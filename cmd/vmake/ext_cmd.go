@@ -1,7 +1,10 @@
 package main
 
 import (
+	"crypto/sha256"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/spock2300/vmake/internal/flock"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/plugin"
 	"github.com/spock2300/vmake/pkg/toolchain"
@@ -212,24 +216,63 @@ func loadPlugins() {
 
 		RootCmd.AddCommand(pluginCmd)
 	}
+	for _, err := range toolchain.GetManager().ToolchainErrors() {
+		vlog.Error("Unavailable toolchain: %s", formatToolchainDefinitionError(err))
+	}
 }
 
 func makeRegisterToolchainsFromRepo(pluginDir, repoDir string) func() {
 	return func() {
-		tcMgr := toolchain.GetManager()
-		toolchainsDir := getToolchainsDir()
+		registerToolchainsFromRepo(toolchain.GetManager(), repoDir, getToolchainsDir())
+	}
+}
 
-		defs := toolchain.ScanRepoToolchains(repoDir)
-		for i := range defs {
-			def := &defs[i]
-			tc := def.ToToolchain(toolchainsDir)
-			tcMgr.RegisterToolchain(def.Name, tc)
-			fatalErr(addToolchainToPath(tc))
-
-			if def.Install != nil {
-				d := *def
-				tcMgr.SetOnMissing(def.Name, withToolchainPath(makeAutoDownload(d, repoDir, toolchainsDir)))
+func registerToolchainsFromRepo(tcMgr *toolchain.Manager, repoDir, toolchainsDir string) {
+	absoluteDir, err := filepath.Abs(repoDir)
+	if err != nil {
+		tcMgr.RegisterToolchainError("", repoDir, err)
+		return
+	}
+	repoDir = absoluteDir
+	entries, err := os.ReadDir(repoDir)
+	if err != nil {
+		tcMgr.RegisterToolchainError("", repoDir, err)
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(repoDir, entry.Name(), "toolchain.json")
+		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			tcMgr.RegisterToolchainError("", path, err)
+			continue
+		}
+		def, err := toolchain.LoadToolchainDef(path)
+		if err != nil {
+			var defErr *toolchain.DefinitionError
+			name := ""
+			if errors.As(err, &defErr) {
+				name = defErr.Name()
+				path = defErr.Path()
 			}
+			tcMgr.RegisterToolchainError(name, path, err)
+			continue
+		}
+		tc, err := def.ToToolchain(toolchainsDir)
+		if err != nil {
+			tcMgr.RegisterToolchainError(def.Name, path, err)
+			continue
+		}
+		if err := addToolchainToPath(tc); err != nil {
+			tcMgr.RegisterToolchainError(def.Name, path, err)
+			continue
+		}
+		tcMgr.RegisterToolchain(def.Name, tc)
+		if len(def.Installations) > 0 {
+			tcMgr.SetOnMissing(def.Name, withToolchainPath(makeAutoDownload(*def, repoDir, toolchainsDir)))
 		}
 	}
 }
@@ -276,46 +319,129 @@ func addToolchainToPath(tc *toolchain.Toolchain) error {
 
 func makeAutoDownload(def toolchain.ToolchainDef, repoDir, toolchainsDir string) func(string) (*toolchain.Toolchain, error) {
 	return func(name string) (*toolchain.Toolchain, error) {
+		if err := def.Validate(); err != nil {
+			return nil, err
+		}
+		installCfg, err := def.Installation()
+		if err != nil {
+			return nil, err
+		}
+		if installCfg == nil {
+			return nil, fmt.Errorf("toolchain %s has no installation", name)
+		}
 		installDir := def.InstallDir(toolchainsDir)
-		installCfg := def.Install
+		lock, err := flock.Acquire(filepath.Join(toolchainsDir, "_locks", runtime.GOOS, runtime.GOARCH, def.Name, def.Version+".lock"))
+		if err != nil {
+			return nil, fmt.Errorf("lock toolchain %s: %w", name, err)
+		}
+		defer lock.Release()
+		tc, err := def.ToToolchain(toolchainsDir)
+		if err != nil {
+			return nil, err
+		}
+		if tc.InstallPath != "" {
+			if errs := toolchain.ValidateToolchain(tc); len(errs) > 0 {
+				return nil, fmt.Errorf("toolchain %s: %w", name, errors.Join(errs...))
+			}
+			toolchain.GetManager().RegisterToolchain(def.Name, tc)
+			return tc, nil
+		}
+		if err := os.MkdirAll(filepath.Dir(installDir), 0755); err != nil {
+			return nil, fmt.Errorf("create toolchain parent: %w", err)
+		}
+		stage, err := os.MkdirTemp(filepath.Dir(installDir), ".install-")
+		if err != nil {
+			return nil, fmt.Errorf("create toolchain staging directory: %w", err)
+		}
+		defer os.RemoveAll(stage)
 
-		fmt.Printf("Auto-downloading %s...\n", def.Name)
+		fmt.Printf("Installing %s for %s/%s...\n", def.Name, runtime.GOOS, runtime.GOARCH)
 
+		var archivePath string
 		switch installCfg.Method {
 		case "lfs":
-			if err := plugin.RunGitLFS(repoDir, "pull", "--include", installCfg.File); err != nil {
-				return nil, fmt.Errorf("failed to download: %w", err)
-			}
-			archivePath := filepath.Join(repoDir, "assets", "toolchains", installCfg.File)
-			format := installCfg.Format
-			if format == "" {
-				format = toolchain.DetectFormat(installCfg.File)
-			}
-			if err := plugin.ExtractToDir(archivePath, toolchainsDir, format); err != nil {
-				return nil, fmt.Errorf("failed to extract: %w", err)
+			archivePath = filepath.Join(repoDir, "assets", "toolchains", installCfg.File)
+			if err := materializeToolchainAsset(repoDir, archivePath, installCfg.File); err != nil {
+				return nil, err
 			}
 		case "http":
-			archivePath := filepath.Join(toolchainsDir, installCfg.File)
+			archivePath = filepath.Join(stage, installCfg.File)
 			if err := plugin.DownloadFile(installCfg.URL, archivePath); err != nil {
 				return nil, fmt.Errorf("failed to download: %w", err)
-			}
-			format := installCfg.Format
-			if format == "" {
-				format = toolchain.DetectFormat(installCfg.File)
-			}
-			if err := plugin.ExtractToDir(archivePath, toolchainsDir, format); err != nil {
-				return nil, fmt.Errorf("failed to extract: %w", err)
 			}
 		default:
 			return nil, fmt.Errorf("unknown install method '%s' for toolchain '%s'", installCfg.Method, name)
 		}
 
-		tc := def.ToToolchain(toolchainsDir)
+		if err := verifyToolchainArchive(archivePath, installCfg.Sha256); err != nil {
+			return nil, err
+		}
+		extractDir := filepath.Join(stage, "extracted")
+		if err := plugin.ExtractToDir(archivePath, extractDir, installCfg.Format); err != nil {
+			return nil, fmt.Errorf("extract toolchain %s: %w", name, err)
+		}
+		root := filepath.Join(extractDir, installCfg.RootDir)
+		info, err := os.Lstat(root)
+		if err != nil {
+			return nil, fmt.Errorf("toolchain %s root_dir %s: %w", name, installCfg.RootDir, err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("toolchain %s root_dir %s is not a directory", name, installCfg.RootDir)
+		}
+		tc.InstallPath = root
+		if errs := toolchain.ValidateToolchain(tc); len(errs) > 0 {
+			return nil, fmt.Errorf("toolchain %s extracted tools: %w", name, errors.Join(errs...))
+		}
+		if err := os.Rename(root, installDir); err != nil {
+			return nil, fmt.Errorf("publish toolchain %s: %w", name, err)
+		}
+		tc.InstallPath = installDir
 		toolchain.GetManager().RegisterToolchain(def.Name, tc)
 
 		fmt.Printf("Toolchain %s installed to %s\n", def.Name, installDir)
 		return tc, nil
 	}
+}
+
+func materializeToolchainAsset(repoDir, archivePath, file string) error {
+	f, err := os.Open(archivePath)
+	if err == nil {
+		header := make([]byte, 128)
+		n, readErr := f.Read(header)
+		f.Close()
+		if readErr != nil && readErr != io.EOF {
+			return fmt.Errorf("read toolchain archive: %w", readErr)
+		}
+		if !strings.HasPrefix(string(header[:n]), "version https://git-lfs.github.com/spec/v1") {
+			return nil
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("open toolchain archive: %w", err)
+	}
+	if err := plugin.RunGitLFS(repoDir, "pull", "--include", "assets/toolchains/"+file); err != nil {
+		return fmt.Errorf("download toolchain archive: %w", err)
+	}
+	return nil
+}
+
+func verifyToolchainArchive(path, expected string) error {
+	if expected == "" {
+		return nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open toolchain archive: %w", err)
+	}
+	defer f.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, f); err != nil {
+		return fmt.Errorf("hash toolchain archive: %w", err)
+	}
+	actual := fmt.Sprintf("%x", hash.Sum(nil))
+	if !strings.EqualFold(actual, expected) {
+		return fmt.Errorf("toolchain archive %s: SHA256 mismatch: got %s, expected %s", path, actual, expected)
+	}
+	return nil
 }
 
 func makeLoadToolchainDef(pluginDir string) func() (*toolchain.ToolchainDef, error) {

@@ -3,6 +3,7 @@ package plugin
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -233,5 +234,28 @@ func Main() {}
 	_, err := Load(dir)
 	if err == nil {
 		t.Fatal("expected error for wrong Main signature")
+	}
+}
+
+func TestLoadSelectsHostSources(t *testing.T) {
+	dir := t.TempDir()
+	writePluginFixture(t, dir, map[string]string{
+		"plugin.json": pluginJSON,
+		"src/main.go": `package main
+import "github.com/spock2300/vmake/pkg/plugin"
+func Main(ctx *plugin.Context) { ctx.AddGlobalCFlags(hostFlag()) }
+`,
+		"src/host_" + runtime.GOOS + "_" + runtime.GOARCH + ".go": "package main\nfunc hostFlag() string { return \"-host\" }\n",
+		"src/other.go": "//go:build !" + runtime.GOOS + "\n\npackage main\nfunc hostFlag() string { return \"-other\" }\n",
+		"src/cgo.go":   "//go:build cgo\n\npackage main\nfunc hostFlag() string { return \"-cgo\" }\n",
+	})
+	loaded, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var flags []string
+	RunMain(loaded, &Context{AddGlobalCFlags: func(values ...string) { flags = append(flags, values...) }})
+	if len(flags) != 1 || flags[0] != "-host" {
+		t.Fatalf("host flags = %v", flags)
 	}
 }

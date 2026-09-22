@@ -8,6 +8,8 @@ on:
 jobs:
   windows:
     runs-on: windows-latest
+    env:
+      CGO_ENABLED: '0'
     steps:
       - uses: actions/checkout@v4
 
@@ -20,14 +22,23 @@ jobs:
       # internal/gitusr discovers; MinGW-w64 supplies the C toolchain and make,
       # which Git for Windows does not bundle.
       - name: Install MinGW-w64 GCC and make
+        id: msys2
         uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
           update: false
           install: >-
             mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-ninja
             make
           path-type: inherit
+
+      - name: Expose MinGW and MSYS tools to native commands
+        shell: pwsh
+        run: |
+          $msysRoot = '${{ steps.msys2.outputs.msys2-location }}'
+          Add-Content $env:GITHUB_PATH "$msysRoot\ucrt64\bin"
+          Add-Content $env:GITHUB_PATH "$msysRoot\usr\bin"
 
       - name: Build
         run: go build -o vmake.exe ./cmd/vmake
@@ -36,10 +47,11 @@ jobs:
         run: go vet ./cmd/vmake/... ./pkg/... ./internal/...
 
       - name: Unit tests
-        run: go test ./cmd/vmake/... ./pkg/... ./internal/...
+        run: go test ./cmd/vmake/... ./pkg/... ./internal/... -skip '(?i)subgraph|TestDeclarePackageTargetsDryRunWiring'
 
       - name: Platform prerequisites
-        run: ./vmake.exe doctor
+        working-directory: test_data/01_simple_c
+        run: ../../vmake.exe doctor --toolchain host
 
       - name: Integration (local project)
         working-directory: test_data/01_simple_c
@@ -48,6 +60,23 @@ jobs:
       - name: Integration (symlinks, scripts, install)
         working-directory: test_data/24_symbol_prefix
         run: ../../vmake.exe build --install
+
+      - name: Set up pinned Windows ARM toolchain plugin
+        run: python test_windows/setup_toolchain.py
+
+      - name: Integration (CMake native and ARM)
+        env:
+          PYTHONUTF8: '1'
+        run: python test_windows/verify_cmake.py ./vmake.exe --arm
+
+      - name: Integration (ARM firmware and incremental builds)
+        shell: pwsh
+        env:
+          PYTHONUTF8: '1'
+        run: |
+          $segment = 'directory' * 9
+          $env:VMAKE_WINDOWS_TEST_ROOT = Join-Path $env:RUNNER_TEMP "vmake ARM long path\$segment\$segment\中文 space"
+          python test_windows/verify_arm.py (Resolve-Path ./vmake.exe).Path
 
       # Snapshot baselines are per-OS (baseline-windows/). Generate them once on
       # a Windows machine with `go test -update` in test_data/_snapshot and

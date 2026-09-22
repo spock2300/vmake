@@ -98,8 +98,10 @@ func (ctx *ConfigContext) AddGlobalLinks(links ...string) {
 }
 
 func (ctx *ConfigContext) SetDefaultVisibilityHidden() *ConfigContext {
-	ctx.AddGlobalCFlags("-fvisibility=hidden")
-	ctx.AddGlobalCxxFlags("-fvisibility=hidden", "-fvisibility-inlines-hidden")
+	if ctx.pkg == nil {
+		fatalScript(ctx.PackageName(), "SetDefaultVisibilityHidden", "no package associated with context")
+	}
+	ctx.pkg.defaultVisibilityHidden = true
 	return ctx
 }
 

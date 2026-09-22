@@ -2,6 +2,7 @@ package toolchain
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
@@ -9,14 +10,11 @@ import (
 
 func ResolveToolPath(tool string, installPath string) (string, error) {
 	if filepath.IsAbs(tool) {
-		return tool, nil
+		return iexec.LookPath(tool)
 	}
 
 	if installPath != "" {
-		absPath := filepath.Join(installPath, "bin", tool)
-		if _, err := iexec.LookPath(absPath); err == nil {
-			return absPath, nil
-		}
+		return iexec.LookPath(filepath.Join(installPath, "bin", tool))
 	}
 
 	resolved, err := iexec.LookPath(tool)
@@ -28,25 +26,41 @@ func ResolveToolPath(tool string, installPath string) (string, error) {
 
 func ValidateToolchain(tc *Toolchain) []error {
 	var errs []error
+	if tc == nil {
+		return []error{errors.New("toolchain is nil")}
+	}
+	if tc.TargetOS == "" {
+		errs = append(errs, errors.New("target_os is not configured"))
+	}
 
 	tools := []struct {
-		name string
-		path string
+		name     string
+		path     string
+		required bool
 	}{
-		{"cc", tc.Tools.CC},
-		{"cxx", tc.Tools.CXX},
-		{"ar", tc.Tools.AR},
-		{"ld", tc.Tools.LD},
+		{"cc", tc.Tools.CC, true},
+		{"cxx", tc.Tools.CXX, true},
+		{"ar", tc.Tools.AR, true},
+		{"ld", tc.Tools.LD, true},
+		{"strip", tc.Tools.STRIP, false},
+		{"ranlib", tc.Tools.RANLIB, false},
+		{"objcopy", tc.Tools.OBJCOPY, false},
+		{"size", tc.Tools.SIZE, false},
+		{"objdump", tc.Tools.OBJDUMP, false},
+		{"nm", tc.Tools.NM, false},
+		{"make", tc.Tools.MAKE, false},
 	}
 
 	for _, t := range tools {
 		if t.path == "" {
-			errs = append(errs, errors.New(t.name+" is not configured"))
+			if t.required {
+				errs = append(errs, errors.New(t.name+" is not configured"))
+			}
 			continue
 		}
 		_, err := ResolveToolPath(t.path, tc.InstallPath)
 		if err != nil {
-			errs = append(errs, errors.New(t.name+": "+t.path+" not found"))
+			errs = append(errs, fmt.Errorf("%s %q: %w", t.name, t.path, err))
 		}
 	}
 

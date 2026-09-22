@@ -66,8 +66,9 @@ func Inspect(ctx *RuntimeContext) (*Inspection, error) {
 		if err != nil {
 			return nil, err
 		}
+		flagsHash := packageFlagsHash(pre.globalFlagsHash, node)
 		if node.IsLocal() {
-			pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, pre.tools.CCKey(), pre.cfg.Mode, entry.Options, pre.globalFlagsHash, scriptHash)
+			pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, pre.tools.CCKey(), pre.cfg.Mode, entry.Options, flagsHash, scriptHash)
 			continue
 		}
 		sourceDir := filepath.Join(ctx.Paths.DepsDir, name, "src")
@@ -85,7 +86,7 @@ func Inspect(ctx *RuntimeContext) (*Inspection, error) {
 			return nil, err
 		}
 		pkgDirs[name] = makeRemotePkgDirs(versionDir, sourceDir, pre.tools.CCKey(), pre.cfg.Mode, entry.Options,
-			version, commit, pre.globalFlagsHash, patchHash, scriptHash)
+			version, commit, flagsHash, patchHash, scriptHash)
 	}
 
 	return &Inspection{

@@ -1,0 +1,7 @@
+{
+  "entry": 134217729,
+  "sha256": {
+    "firmware.elf.bin": "48ac715640f31ac7fa03a547dea5ab445585a2f6eb0f7fbbd1dc0f867dd6c764",
+    "firmware.elf.hex": "846c6736e9f65c45a81059c4f95b294d18d789dcbbf39f24c6661622ad41f82a"
+  }
+}

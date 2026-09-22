@@ -143,38 +143,42 @@ type Package struct {
 	ConfigAccessor
 	*TargetRegistry
 	*InstallItemHolder
-	gitURLs              []string
-	homepage             string
-	description          string
-	license              string
-	versions             map[string]string
-	submodules           bool
-	requires             Requires
-	requireFuncs         []RequireFunc
-	configFuncs          []ConfigFunc
-	buildFuncs           []BuildFunc
-	installFuncs         []InstallFunc
-	cleanFuncs           []CleanFunc
-	packageFunc          PackageFunc
-	scriptDir            string
-	srcCodeDir           string
-	dirs                 PkgDirs
-	outputDir            string
-	tc                   *toolchain.Toolchain
-	globalCFlags         []string
-	globalCxxFlags       []string
-	globalLdFlags        []string
-	globalLinks          []string
-	deps                 map[string]*InstalledPackage
-	patches              []string
-	configFiles          []string
-	kconfigEntries       []*KConfigEntry
-	genConfigHdr         bool
-	exportConfig         bool
-	importConfigs        []string
-	dryRun               bool
-	isRoot               bool
-	providedLinkerScript string
+	gitURLs                 []string
+	homepage                string
+	description             string
+	license                 string
+	versions                map[string]string
+	submodules              bool
+	requires                Requires
+	requireFuncs            []RequireFunc
+	configFuncs             []ConfigFunc
+	buildFuncs              []BuildFunc
+	installFuncs            []InstallFunc
+	cleanFuncs              []CleanFunc
+	packageFunc             PackageFunc
+	scriptDir               string
+	srcCodeDir              string
+	dirs                    PkgDirs
+	cmakeBuildDir           string
+	cmakeInstallDir         string
+	cmakeConfig             string
+	outputDir               string
+	tc                      *toolchain.Toolchain
+	globalCFlags            []string
+	globalCxxFlags          []string
+	globalLdFlags           []string
+	globalLinks             []string
+	defaultVisibilityHidden bool
+	deps                    map[string]*InstalledPackage
+	patches                 []string
+	configFiles             []string
+	kconfigEntries          []*KConfigEntry
+	genConfigHdr            bool
+	exportConfig            bool
+	importConfigs           []string
+	dryRun                  bool
+	isRoot                  bool
+	providedLinkerScript    string
 }
 
 func NewPackage() *Package {
@@ -508,6 +512,17 @@ func (p *Package) GlobalLinks() []string {
 	return p.globalLinks
 }
 
+func (p *Package) DefaultVisibilityHidden() bool {
+	return p.defaultVisibilityHidden
+}
+
+func (p *Package) VisibilityFlags() (cflags, cxxflags []string) {
+	if !p.defaultVisibilityHidden {
+		return nil, nil
+	}
+	return []string{"-fvisibility=hidden"}, []string{"-fvisibility=hidden", "-fvisibility-inlines-hidden"}
+}
+
 func (p *Package) SetDryRun(v bool) *Package {
 	p.dryRun = v
 	return p
@@ -623,7 +638,9 @@ func (p *Package) EnsureConfig(srcDir string) bool {
 	if preset == "" {
 		fatalScript(p.Name, "EnsureConfig", "no kconfig preset selected; configure one via AddKConfig().SetDefaultPreset(...) or vmake config")
 	}
-	p.RunIn(srcDir, toolchain.MakeToolOf(p.tc), preset)
+	if err := p.runMakeIn(srcDir, preset); err != nil {
+		fatalScript(p.Name, "EnsureConfig", "%v", err)
+	}
 	if len(p.kconfigEntries) > 0 {
 		if err := ApplyKConfigPatches(configPath, p.kconfigEntries[0].Patches()); err != nil {
 			fatalScript(p.Name, "EnsureConfig", "apply kconfig patches: %v", err)

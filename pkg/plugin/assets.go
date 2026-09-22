@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
@@ -44,16 +45,24 @@ func ExtractToDir(archive, dest, format string) error {
 
 	switch format {
 	case "tar.gz", "tgz":
-		return runExtract("tar", "-xzf", msysPath(archive), "-C", msysPath(dest))
+		return extractTar(archive, dest, "-xzf")
 	case "tar.xz", "txz":
-		return runExtract("tar", "-xJf", msysPath(archive), "-C", msysPath(dest))
+		return extractTar(archive, dest, "-xJf")
 	case "tar.bz2", "tbz2":
-		return runExtract("tar", "-xjf", msysPath(archive), "-C", msysPath(dest))
+		return extractTar(archive, dest, "-xjf")
 	case "zip":
 		return extractZip(archive, dest)
 	default:
-		return runExtract("tar", "-xzf", msysPath(archive), "-C", msysPath(dest))
+		return fmt.Errorf("unsupported archive format %q", format)
 	}
+}
+
+func extractTar(archive, dest, flag string) error {
+	args := []string{flag, msysPath(archive), "-C", msysPath(dest)}
+	if runtime.GOOS == "windows" {
+		args = append([]string{"--force-local"}, args...)
+	}
+	return runExtract("tar", args...)
 }
 
 // msysPath converts a path handed to an MSYS binary (tar from Git for
@@ -72,27 +81,34 @@ func extractZip(archive, dest string) error {
 		return fmt.Errorf("open zip %s: %w", archive, err)
 	}
 	defer r.Close()
+	root, err := os.OpenRoot(dest)
+	if err != nil {
+		return fmt.Errorf("open zip destination %s: %w", dest, err)
+	}
+	defer root.Close()
 
 	for _, f := range r.File {
-		if err := extractZipEntry(f, dest); err != nil {
+		if err := extractZipEntry(f, root); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func extractZipEntry(f *zip.File, dest string) error {
-	target := filepath.Join(dest, filepath.FromSlash(f.Name))
-
-	rel, err := filepath.Rel(dest, target)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+func extractZipEntry(f *zip.File, root *os.Root) error {
+	target := filepath.FromSlash(f.Name)
+	if !filepath.IsLocal(target) || strings.ContainsAny(f.Name, "\\:") {
 		return fmt.Errorf("zip entry %q escapes the destination directory", f.Name)
+	}
+	target = filepath.Clean(target)
+	if f.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("zip entry %q is a symbolic link", f.Name)
 	}
 
 	if f.FileInfo().IsDir() {
-		return fs.EnsureDir(target)
+		return root.MkdirAll(target, 0755)
 	}
-	if err := fs.EnsureParentDir(target); err != nil {
+	if err := root.MkdirAll(filepath.Dir(target), 0755); err != nil {
 		return err
 	}
 
@@ -102,7 +118,7 @@ func extractZipEntry(f *zip.File, dest string) error {
 	}
 	defer src.Close()
 
-	out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, f.Mode().Perm())
+	out, err := root.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, f.Mode().Perm())
 	if err != nil {
 		return fmt.Errorf("create %s: %w", target, err)
 	}

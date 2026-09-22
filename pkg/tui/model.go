@@ -62,9 +62,9 @@ type Model struct {
 	origValues  map[string]map[string]any
 	origGlobal  map[string]any
 	workDir     string
-	makeTool    string
 
 	runningMenuconfig bool
+	menuconfigErr     error
 	menuconfigRan     map[string]bool
 	presetValues      map[string]string
 
@@ -153,7 +153,6 @@ func NewModel(
 		optCursor:     0,
 		focusArea:     0,
 		workDir:       workDir,
-		makeTool:      resolveMakeTool(currentToolchain),
 		globalOptions: globalOptions,
 		globalValues:  globalValues,
 		kconfigs:      kconfigs,
@@ -172,14 +171,33 @@ func NewModel(
 	return m
 }
 
-// resolveMakeTool returns the make program of the selected toolchain, so the
-// TUI drives the same make as the build (e.g. mingw32-make on Windows).
-func resolveMakeTool(name string) string {
+func resolveMakeTool(name string) (string, error) {
 	tc, err := toolchain.GetManager().GetToolchain(name)
 	if err != nil {
-		return "make"
+		return "", err
 	}
-	return tc.MakeTool()
+	if tc.Tools.MAKE != "" {
+		return toolchain.ResolveToolPath(tc.Tools.MAKE, tc.InstallPath)
+	}
+	return toolchain.ResolveToolPath(tc.MakeTool(), "")
+}
+
+func (m *Model) resolveMake() makeResolver {
+	name := getToolchainValue(m.globalValues)
+	return func() (string, error) { return resolveMakeTool(name) }
+}
+
+func (m *Model) toolchainDiagnostics() string {
+	mgr := toolchain.GetManager()
+	var messages []string
+	if errs := mgr.ToolchainErrors(); len(errs) > 0 {
+		messages = append(messages, fmt.Sprintf("%d unavailable toolchain definitions; run vmake toolchain list for details", len(errs)))
+	}
+	name := getToolchainValue(m.globalValues)
+	if _, err := mgr.GetToolchain(name); err != nil {
+		messages = append(messages, fmt.Sprintf("Selected toolchain %q: %v", name, err))
+	}
+	return strings.Join(messages, "\n")
 }
 
 func computeOptCounts(options map[string]map[string]*api.Option, globalOptions map[string]*api.Option) map[string]int {

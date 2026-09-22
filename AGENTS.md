@@ -6,8 +6,10 @@ VMake: C/C++ build system using Go buildscripts. AI coding agents working in thi
 
 Requires Go 1.26+ (see `go.mod`).
 
+Build vmake with `CGO_ENABLED=0`, including Windows cross-compiles. Build scripts and plugins use yaegi and do not require CGO.
+
 ```bash
-go build -o vmake ./cmd/vmake    # Build
+CGO_ENABLED=0 go build -o vmake ./cmd/vmake    # Build
 gofmt -w .                       # Format
 ```
 
@@ -71,20 +73,26 @@ go build -o vmake ./cmd/vmake    # Build vmake itself
 
 ## Platform Support
 
-vmake compiles and runs on Unix and natively on Windows (`GOOS=windows go build ./cmd/vmake` succeeds). The pieces that matter:
+vmake compiles and runs on Unix and natively on Windows. Windows-hosted ARM bare-metal builds use the Windows ARM GNU toolchain to produce ARM ELF, binary and hex artifacts. Cross-compile vmake itself with `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o vmake.exe ./cmd/vmake`. The pieces that matter:
 
 - **`internal/gitusr`** — Windows only. Locates the Git for Windows installation (`git --exec-path`, falling back to deriving it from the resolved `git.exe`) and prepends `<root>\usr\bin` and `<root>\<msystem>\bin` to the **process** `PATH`, so `sh`, coreutils, `sed`/`awk`/`grep`/`find`, `tar`, `unzip` and `curl` resolve. The default installer only adds `Git\cmd` to `PATH`, so these tools exist on disk but are invisible to `exec.LookPath`. Called once from `cmd/vmake/main.go` before `loadPlugins()`; `os.Setenv` is not goroutine-safe, so it must stay first.
 - **`internal/gitcmd`** — every git invocation goes through `gitcmd.Args()`, which forces `core.autocrlf=false`, `core.eol=lf` and `core.longpaths=true` (plus `core.symlinks=true` only when this process can actually create symlinks). The Git for Windows installer defaults `autocrlf` to true; leaving it would rewrite line endings in `~/.vmake/cache` checkouts and break content hashes (`stamp.go`) and `git apply` patch series.
 - **`internal/flock`** — `syscall.Flock` on Unix, `LockFileEx`/`UnlockFileEx` (`golang.org/x/sys/windows`) on Windows. The platform layer owns a `lockState` because the `OVERLAPPED` must outlive the lock. Lock files live in `~/.vmake/cache/_locks/`, outside the directories they guard, so they are never deleted while held.
 - **Symlinks — no junction fallback.** The storage layout is symlink-based (`vmake_deps/<repo>/<pkg>/src`, `<versionDir>/src|out`, `SetGit` sources, prebuilt outputs). On Windows `os.Symlink` needs Developer Mode or elevation; `internal/fs.EnsureSymlink` decorates the failure with that hint and `fs.SymlinksSupported()` probes the capability once per process. Junctions were rejected: Go sets `ModeSymlink` only for `IO_REPARSE_TAG_SYMLINK`, not for `IO_REPARSE_TAG_MOUNT_POINT`, so `filepath.EvalSymlinks` would not resolve a junction and `filepath.Walk` would not descend into one — silently breaking `Resolver.scanSubPackages` (`pkg/resolver/resolver.go`). Supporting junctions would mean replacing that `EvalSymlinks` and auditing every `Walk` root.
-- **Target OS, not host OS.** `Toolchain.TargetOS` (empty = `runtime.GOOS`, see `toolchain.TargetOSOf`) decides artifact names and link flags. `api.TargetKind.ExtFor/PrefixFor` and `api.TargetFilename` are the single source of truth: `.exe`/`.dll` for PE targets, no extension/`.so` otherwise. Naming off the host would regress the Linux→embedded-Linux cross builds vmake exists for. `Toolchain.Tools.MAKE` (`MakeTool()`) names the make program.
+- **Target OS, not host OS.** Toolchain definitions must declare `target_os`; ARM bare-metal uses `none`, embedded Linux uses `linux`, and PE uses `windows`. `Toolchain.TargetTriple`/JSON `target_triple` describes the compiler target (for example `arm-none-eabi`); the old `Host`/`host` field and `Package.CrossTarget()` are removed. Scripts use `Package.TargetTriple()`. `api.TargetKind.ExtFor/PrefixFor` and `api.TargetFilename` decide target artifact names: `.exe`/`.dll` for PE targets, no binary extension/`.so` otherwise. Low-level `TargetOSOf(nil)` and unset in-memory toolchains retain host defaults, but selected toolchains reject missing `target_os`. `Toolchain.Tools.MAKE` (`MakeTool()`) names the make program.
+- **Host-specific installations.** `toolchain.json` has `installations` keyed by host OS/architecture (`linux/amd64`, `windows/amd64`) instead of the old single `install` field. Each entry declares its archive and exact `root_dir`; `.` means files are at the archive root. Unsupported hosts fail explicitly. Install directories are `~/.vmake/toolchains/<host-os>/<host-arch>/<name>/<version>/`, so Linux and Windows archives cannot reuse one another's compiler files. The `vmake-tools` ARM profile selects its Linux `.tar.xz` or Windows `.zip` Git LFS archive automatically and declares `target_triple=arm-none-eabi`, `target_os=none`.
+- **Configured tools resolve strictly.** An explicit absolute tool path must exist; a relative tool with `InstallPath` resolves under that installation's `bin`, with no PATH fallback. Windows resolution preserves the actual `.exe` path. Required compiler/archive/linker tools and every configured optional tool are validated. `Package.Env()` exports raw resolved paths without changing the shared toolchain. Make/Configure quote tool paths in their shell environments; Make also escapes dollar signs for make expansion. EnsureConfig and CleanContext.Make share the Make path. Explicit MAKE is resolved the same way, while unset MAKE uses the host's `make`. Toolchain build identity includes host OS/architecture, toolchain configuration, resolved paths and compiler versions.
 - **PE linking.** `Linker.LinkShared` adds `-Wl,--out-implib=<output>.a` for PE targets; `collectDepArtifacts` links consumers against that import library (`libfoo.dll.a`) rather than the DLL, `installTarget`/`publishTarget` copy it into `<prefix>/lib` (`importLibraryPath`), and `needRelink` re-links when it is missing. The import library rides as a **normal group input, never inside `-Wl,--whole-archive`** (`wholeArchiveInput` excludes `.dll.a`) — whole-archive on an import library force-imports every DLL export. Prebuilt shared targets ship only the declared file, so consumers link the DLL itself. `-pie`, `-Wl,--as-needed` and `-Wl,-z,relro,-z,now` are ELF-only and are omitted for PE; the default flags are chosen per target OS in `pkg/toolchain/flags.go`.
 - **Paths handed to MSYS binaries are slash-separated.** The MSYS runtime de-quotes backslashes in argv, and autoconf derives `srcdir` from `$0` via `dirname`, which only understands `/`. `p.Configure` (script path and `--prefix=`), `p.Make`'s `-C`, the TUI's `-C`, `tar -C` and `curl -o` all pass `filepath.ToSlash` paths — a no-op on Unix. Any new argument forwarded to `sh`/`tar`/`curl`/MSYS `make` must do the same; `cmd.Dir` (native CreateProcess) correctly keeps backslashes.
+- **Windows compiler arguments.** GNU compiler, linker and archive invocations use temporary response files with individually quoted and escaped arguments. Path arguments are made relative to the command working directory where possible and slash-separated. `compile_commands.json` retains the expanded `arguments` array, not a reference to a deleted response file. Command failures retain the original program, arguments and underlying error.
+- **Assembly inputs.** `.s` selects the compiler's assembler mode; `.S` selects assembler-with-cpp and saves the preprocessed assembly while collecting dependencies. Assembler `.include` dependencies and `.S` preprocessor dependencies are merged into the target depfile, so edits to either included source cause recompilation. Windows drive letters and escaped spaces are handled when parsing depfiles. Clang uses external GNU assembler; `.S` preprocessing writes an object-specific intermediate file and merges both dependency lists. Existing toolchain flags select the compiler target and assembler search path; there is no automatic assembler fallback. Clang outputs must be COFF for Windows or relocatable ELF for Linux/bare-metal. Clang bare-metal is not part of the validated support; Windows ARM uses GNU ARM GCC.
+- **CMake.** Prefer `CMakeConfigure`, `CMakeBuild`, and `CMakeInstall` for CMake projects. Keep only project options and special steps in build.go; call cmake directly only for operations the API cannot express. All three helpers use `CMakeBuildDir()` (default `BuildDir()/cmake`) and `CMakeInstallDir()` (remote `InstallDir()`, local `BuildDir()/staging`). Directory setters resolve relative paths against `BuildDir()` without changing `PkgDirs` or stamp/publication rules. `SetCMakeBuildType` sets the shared default configuration, otherwise Debug/Release follows VMake mode. Build/install accept explicit `--config`; raw directory, install-prefix and default-build-type overrides must use the setters. CMake receives resolved compiler/binutils paths (ASM uses CC, `Tools.LD` is not mapped to `CMAKE_LINKER`) and a system name based on the target OS. `none` uses `Generic`, static-library compiler checks, host program search and target-only library/include search; projects explicitly supply the processor when needed. Global C/CXX and executable/shared/module linker flags are automatic, explicit flags override them, and toolchain `DefaultFlags` are not added. ASM flags are explicit. Windows defaults to Ninja unless a generator or configure preset is explicit. Configure presets are supported; build presets are rejected because their binaryDir overrides the managed build directory (use --target/--config for building). Build defaults to CPU-count parallelism unless a parallel argument or `CMAKE_BUILD_PARALLEL_LEVEL` is set. The helpers preserve independent argv, normalized paths and dry-run behavior, without resolving default make in advance.
+- **Kconfig.** `SetMenuconfigCmd(program, args...)` stores the executable and arguments separately and runs them in `SrcDir`; `MenuconfigCmd()`/`MenuconfigArgs()` return those values. The default is the selected make with `menuconfig`. Preset generation always uses the selected make independently of any custom menuconfig program.
 - **ELF-only symbol management is rejected, not ignored.** `LinkPolicy.Validate()` fails the build when `SetVersionScript`, `AddExcludeLibs` or `SetSymbolBinding` is used on a PE target.
-- **`check-symbols` is unsupported on Windows.** It parses `nm -D` (ELF dynamic symbols); `checkSymbolsSupported()` makes it fail with a clear message instead of a confusing binutils error. PE export analysis is deliberately not implemented.
-- **`vmake doctor`** reports symlink capability, the Git userland, `make` and the C toolchain — Git for Windows bundles neither a C toolchain nor `make`, so MinGW-w64 (or MSYS2) is required for a real build.
+- **`check-symbols` follows artifact capability.** On either host, it reads ELF dynamic symbols with the selected toolchain's `nm -D`. PE files and ELF files without a dynamic symbol table report that the audit is not applicable. PE export analysis is deliberately not implemented.
+- **`vmake doctor`** reports symlink capability, the Git userland, selected make and the selected toolchain's configured tools. It reads the project selection or `--toolchain NAME`; an ARM build does not require unrelated native GCC tools. `vmake test` refuses bare-metal/cross-toolchain execution with a `vmake build --tests` hint.
 
-Prerequisites for a Windows build: Git for Windows (full installer) + MinGW-w64 GCC + Developer Mode. `unzip` is no longer needed (`ExtractToDir` unpacks `.zip` with `archive/zip`).
+Prerequisites for Windows ARM builds: Git for Windows (full installer, including Git LFS for LFS archives), the Windows ARM GNU toolchain and Developer Mode or elevation for symlinks. Native Windows builds instead need a native toolchain such as MinGW-w64. Install Ninja/CMake or make when the build scripts use them; Git for Windows supplies neither a C compiler nor make. `unzip` is not needed: `ExtractToDir` unpacks `.zip` with `archive/zip` inside the destination root and rejects escaping entries and symlink entries. The installer applies the declared archive root explicitly. Windows tar extraction uses `--force-local` for drive-letter paths.
 
 ## Storage Layout
 
@@ -103,7 +111,7 @@ vmake_deps/
 
 ### Global (`~/.vmake/`)
 - `~/.vmake/repos/` — registry repo clones
-- `~/.vmake/toolchains/` — toolchain manifests
+- `~/.vmake/toolchains/<host-os>/<host-arch>/<name>/<version>/` — host-specific compiler installations
 - `~/.vmake/extensions/` — extension repos
 - `~/.vmake/cache/<repo>/<pkg>/<version>/src` — immutable per-version source checkouts (temp-clone + atomic rename; never mutated in place)
 - `~/.vmake/cache/<repo>/<pkg>/<version>/out/<buildKey>/` — shared binary cache (build/install staging, shared across projects)
@@ -135,6 +143,7 @@ The build pipeline treats local and remote packages identically for target sched
 - `SrcDir()`: source code directory (may differ if `SetGit()` downloads source to `<SourceDir>/src/`)
 - `BuildDir`: local packages use `<SourceDir>/build/<key>/`; remote packages use `<depsDir>/<name>/out/<key>/build/`
 - `pkg.Make()` uses BuildDir. When Makefile is in SourceDir, use `pkg.RunIn(srcDir, "make", ...)`
+- CMake helpers use `CMakeBuildDir()` and `CMakeInstallDir()`. Keep CMake-produced archives separate from VMake's `SetPrebuilt` symlink destinations; use the getters for artifact paths.
 
 ### KConfig Preset = Make Target Name
 Preset files under `configs/` are partial configs (defconfig format), NOT complete `.config`. The preset name is passed to `make <preset>` to generate `.config`. Lifecycle: TUI select → save name to config.json → on build: check `.config` → if missing, `make <preset>` → build.
@@ -145,6 +154,8 @@ Void targets with a BuildFunc and no InstallDir record `.vmake_stamp` (JSON) in 
 ### Post-Link Incremental Tracking
 `target.AddPostLinkDeps(files...)` declares extra input files (SourceDir-relative, like `AddFiles`) that post-link steps consume. The relink check (`needRelink` in `pkg/build/scheduler.go`) compares each dep's mtime against the link output: any dep newer or missing → relink + re-run ALL post-link steps. Without this, post-link inputs (e.g. `objcopy --keep-global-symbols=file.sym`) are invisible to staleness — editing `file.sym` is silently skipped, forcing `rebuild`/`distclean`. Granularity is whole-target: one dep change → relink + full post-link re-run (no per-step incremental). Dep deletion also triggers relink (mirrors `SetConfigFiles` void-target semantics). Applies to Binary/Shared/Object (Prebuilt short-circuits before `needRelink`, so `AddPostLinkDeps` is a no-op there). Diagnostic on trigger: `RELINK <name> (post-link dep <file> newer|missing)` via `vlog.Info`.
 
+`target.AddPostLinkOutputs(paths...)` explicitly declares extra post-link outputs; `PostLinkOutputs()` returns their templates. The scheduler and installer expand `{output}` and resolve relative paths against SourceDir. Missing declared outputs trigger relinking and all post-link steps, even if the main ELF is current. Hex/Bin/Strip helpers automatically declare their outputs; Size/SymbolPrefix do not. Command arguments never imply outputs, and the primary artifact is not counted twice. Custom steps must declare outputs to obtain missing-output rebuilds and automatic installation.
+
 ### EnsureConfig + ApplyKConfigPatches Abstraction
 `pkg.EnsureConfig(srcDir) bool` checks `.config` existence + size > 0, runs `make <preset>` if needed. `ApplyKConfigPatches(configPath, patches)` applies post-defconfig patches in EnsureConfig, restoreKConfigFiles, and TUI ensureConfigCmd.
 
@@ -153,11 +164,15 @@ Void targets with a BuildFunc and no InstallDir record `.vmake_stamp` (JSON) in 
 - `make <preset>` stays in `EnsureConfig` (build) and `ensureConfigCmd` (TUI)
 - Only abstract `.config` check (`EnsureConfig`), NOT a full `BuildKConfigMake` wrapper
 
+### Toolchain Definition Errors
+
+Toolchain manifests are registered independently. Malformed/legacy definitions and unavailable host installations retain their original errors; healthy definitions remain usable. Known error names fail selection and query, while errors without a reliable JSON name are identified by manifest path. `toolchain list` displays errors, and TUI retains an already selected invalid name instead of replacing it. Built-in `ext` commands skip plugin execution so update/remove remain available. Unset MAKE is resolved only for actual make operations; explicitly configured MAKE stays strictly validated.
+
 ### Double-Set Protection
 `SetLinkerScript`, `SetProvidedLinkerScript`, `SetVersionScript`, and `SetSymbolPrefix` panic with `*BuildScriptError` on second invocation — cannot silently overwrite. Consistent with the "No Fallbacks" principle. `OnPackage` and `AddKConfig` are also single-slot (second registration fatals).
 
 ### Symbol Management (Five Layers)
-- `ctx.SetDefaultVisibilityHidden()` adds `-fvisibility=hidden` to global C+C++ flags, `-fvisibility-inlines-hidden` to C++ only
+- `ctx.SetDefaultVisibilityHidden()` adds `-fvisibility=hidden` to the declaring package's C+C++ flags, `-fvisibility-inlines-hidden` to its C++ flags only. It is idempotent and valid in `OnConfig`/`OnApply`; a context without a package raises `BuildScriptError`. Dependencies retain their own visibility policy. Explicit `AddGlobalCFlags`/`AddGlobalCxxFlags` remain global, including explicit hidden flags. `Package.DefaultVisibilityHidden()` and `VisibilityFlags()` expose the package policy; native compilation, `MergedCFlags`/`MergedCxxFlags`, and CMake place it before explicit flags. Package visibility participates in that package's build key.
 - `target.SetVersionScript("file.map")` valid only on `TargetShared`/`TargetBinary` — scheduler returns error otherwise. Path resolved against package SourceDir. Adds `-Wl,--version-script=` to link command
 - `target.AddExcludeLibs("libfoo")` adds `-Wl,--exclude-libs=` (appends; the old `SetExcludeLibs` name was removed). GNU ld quirk: matches the full archive basename minus `.a`, so use `libfoo` form (with `lib` prefix), not `foo`
 - `target.SetSymbolBinding("static"|"static-functions")` adds `-Wl,-Bsymbolic` or `-Wl,-Bsymbolic-functions`
@@ -312,10 +327,14 @@ Methods on `*Package` (used in build.go scripts):
 - `p.Run(name, args...)` — run command in BuildDir (uses exec.RunFatal, exits on failure)
 - `p.RunIn(dir, name, args...)` — run command in specified directory
 - `p.RunEnv(env, name, args...)` — run with custom environment in BuildDir
+- `p.TargetTriple()` — target triple from the selected toolchain; replaces removed `CrossTarget()`
+- `p.Env()` — compiler/binutils environment with resolved configured paths and installation-qualified `CROSS_COMPILE`
 - `p.Make(args...)` — always uses BuildDir with `p.Env()`, passes `-C BuildDir` automatically
-- `p.CMakeConfigure()`, `p.CMakeBuild()`, `p.CMakeInstall()` — CMake convenience methods
-- `p.CMakeGlobalFlagsArgs()` — returns `[]string` of `-DCMAKE_C_FLAGS=...` etc. from global flags, pass to `CMakeConfigure` or manual cmake args
-- `p.MergedCFlags(extra...)`, `p.MergedCxxFlags(extra...)`, `p.MergedLdFlags(extra...)` — merge global flags + extra into space-joined string for CMake or toolchain files
+- `p.CMakeConfigure(args...)`, `p.CMakeBuild(args...)`, `p.CMakeInstall(args...)` — preferred CMake configure/build/install APIs, including project global flags
+- `p.CMakeBuildDir()`, `p.CMakeInstallDir()` — actual CMake build and installation directories
+- `p.SetCMakeBuildDir(dir)`, `p.SetCMakeInstallDir(dir)`, `p.SetCMakeBuildType(buildType)` — fluent settings shared across the CMake stages
+- `p.CMakeGlobalFlagsArgs()` — returns package visibility and global-flag arguments for special manual cmake calls; `CMakeConfigure` already includes them
+- `p.MergedCFlags(extra...)`, `p.MergedCxxFlags(extra...)` — merge package visibility defaults + global flags + extra into space-joined strings for CMake or toolchain files; `p.MergedLdFlags(extra...)` merges global linker flags + extra
 - `p.Configure(args...)` — autotools configure
 
 Methods on `BuildContext`:
@@ -360,7 +379,7 @@ Methods on `CleanContext`:
 
 **Dependency DAG**: `internal/*` -> `pkg/toolchain` -> `pkg/api` -> `pkg/buildscript, pkg/repo` -> `pkg/resolver, pkg/plugin, pkg/build` -> `pkg/pipeline` -> `cmd/vmake`
 
-Extension plugins are interpreted by yaegi at runtime (same as buildscripts). Cobra/pflag symbols are pre-generated via `yaegi extract` into `internal/yaegisym/` (regenerate with `go generate ./internal/yaegisym/`). The plugin loader (`pkg/plugin/loader.go`) uses `internal/yaegibase.New()` + `internal/gosrc.MergeGoSources()` — no compilation step. Each discovered extension also registers a root-level cobra command named after the plugin (`loadPlugins()` in `cmd/vmake/ext_cmd.go`); the plugin adds subcommands via `plugin.Context.AddSubCommand`.
+Extension plugins are interpreted by yaegi at runtime (same as buildscripts). Cobra/pflag symbols are pre-generated via `yaegi extract` into `internal/yaegisym/` (regenerate with `go generate ./internal/yaegisym/`). The plugin loader (`pkg/plugin/loader.go`) uses `internal/yaegibase.New()` + `internal/gosrc.MergeGoSources()` — no compilation step. Each discovered extension also registers a root-level cobra command named after the plugin (`loadPlugins()` in `cmd/vmake/ext_cmd.go`); the plugin adds subcommands via `plugin.Context.AddSubCommand`. Working scaffold + enforced-contract notes: `examples/plugins/README.md`. The plugin import path must be exactly `github.com/spock2300/vmake/pkg/plugin` (symbols are registered under that literal string; the old `gitee.com/...` spelling fails to resolve), and `plugin.json` must set `"enabled": true` or the plugin is skipped.
 
 ## CLI Architecture
 - `github.com/spf13/cobra`, package-level vars, `init()` registration
@@ -368,15 +387,15 @@ Extension plugins are interpreted by yaegi at runtime (same as buildscripts). Co
 - Global flags: `--verbose/-v`, `--very-verbose/-V`, `--quiet/-q`
 - `vmake` (no subcommand) — defaults to `build`
 - `vmake build` — build all targets (flags: `--toolchain`, `--mode`, `--install/-i`, `--prefix/-p`, `--install-type runtime|sdk`, `--tests`, `--manifest`, `--jobs/-j`, `--keep-going/-k`). `--jobs` controls package-level parallelism AND compile jobs per target (0 = NumCPU, 1 = sequential; `pkg/build/scheduler_parallel.go`); `--keep-going` keeps building independent targets after a failure
-- `vmake test` — build with `--tests` then execute test binaries
+- `vmake test` — build with `--tests` then execute native test binaries; bare-metal, a different target OS or a nonempty target triple refuses execution and directs users to `vmake build --tests`
 - `vmake clean [--all]` — execute OnClean hooks then clean build artifacts; `--all` removes all build key dirs
 - `vmake rebuild` — clean local packages then build
 - `vmake distclean` — deep clean: local build dirs, install/, `vmake_deps/`; the shared global cache survives by default (rebuild re-links without recompiling). `--purge-cache` also deletes global cache entries for every remote package this project materialized (affects other projects too)
 - `vmake config` — interactive TUI for build options
 - `vmake query [targets|config]` — show dependency tree (uses `newQueryCmd` factory, registered in root.go init)
-- `vmake check-symbols [--strict]` — scan all built Shared/Binary outputs via `nm -D` and report: cross-target duplicate exports, C++ mangled leaks (`_Z*`), reserved-prefix leaks (`__libc_*` etc.), version-script violations (when `SetVersionScript` is set), and missing version-script warnings. No per-target declaration required. `--strict` exits non-zero on warn/error findings (info-level still passes). **Linux only** — `checkSymbolsSupported()` refuses on Windows rather than letting `nm -D` fail cryptically
+- `vmake check-symbols [--strict]` — scan built Shared/Binary ELF outputs via the selected toolchain's `nm -D` and report: cross-target duplicate exports, C++ mangled leaks (`_Z*`), reserved-prefix leaks (`__libc_*` etc.), version-script violations (when `SetVersionScript` is set), and missing version-script warnings. No per-target declaration required. `--strict` exits non-zero on warn/error findings (info-level still passes). Both Linux and Windows hosts are supported; PE files and ELF files without dynamic symbols report that the audit is not applicable
 - `vmake lock update|show` — re-resolve latest / show pinned versions (`.vmake/vmake.lock`)
-- `vmake doctor` — two parts. Platform prerequisites (always reported, no project required): symlink capability, Git for Windows userland, `make`, C toolchain. Then build.go findings: reliance on removed auto-wire (`AddRequires` with no `AddDeps`), deprecated APIs, `SetRoot` count. Exit code is 1 only when an `error`-severity finding exists
+- `vmake doctor [--toolchain NAME]` — two parts. Platform prerequisites: symlink capability, Git for Windows userland, selected make and configured toolchain tools. The project selection is used unless overridden; ARM profiles do not require native GCC. Then build.go findings: reliance on removed auto-wire (`AddRequires` with no `AddDeps`), deprecated APIs, `SetRoot` count. Error-severity findings fail the command; a missing project is also reported after platform diagnostics
 - `vmake manifest show|checkout <path> [name]` — show manifest contents / checkout packages at recorded versions
 - `vmake toolchain list|show [name]` — list/show toolchain manifests
 - `vmake repo trust|untrust <name>` — manage supply-chain trust for remote repos (stored in `~/.vmake/config.json`)
@@ -392,7 +411,7 @@ Buildscripts are interpreted at runtime by [yaegi](https://github.com/traefik/ya
 
 ### Multi-File Support
 
-A single buildscript package can be split across multiple `.go` files in the same directory. The loader (`pkg/buildscript/yaegi_loader.go`) reads all `.go` files (excluding `_test.go`), merges them at source level (deduplicating imports, combining declarations), writes to a temp file, and interprets via `yaegi.EvalPath`. This enables cross-file function calls, shared constants, and modular build logic.
+A single buildscript package can be split across multiple `.go` files in the same directory. The loader (`pkg/buildscript/yaegi_loader.go`) selects files using `internal/gosrc.ListGoFiles`: GOOS/GOARCH filename suffixes and build constraints use the host running vmake, with CGO disabled; `_test.go` and files importing `C` are excluded. Extension plugins use the same selection. This host selection is independent of the C/C++ target OS. Selected files are merged at source level (deduplicating imports, combining declarations), written to a temp file, and interpreted via `yaegi.EvalPath`. This enables cross-file function calls, shared constants, and modular build logic.
 
 ### Symbol Table
 

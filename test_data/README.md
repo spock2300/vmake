@@ -2,6 +2,10 @@
 
 此目录包含用于 VMake 开发和测试的示例项目。
 
+每个编号目录都是独立项目，必须进入各自目录运行 `vmake build`。从 `test_data/` 运行会把所有示例合并为一个项目，不符合这些测试的运行方式。
+
+`SetDefaultVisibilityHidden()` 仅影响声明它的包；应用开启隐藏不会改变 zlib 等依赖包的导出规则。显式 `AddGlobalCFlags`／`AddGlobalCxxFlags` 仍会传播到所有包，包括显式传入的 hidden 标志。
+
 ## 目录结构
 
 ```
@@ -315,3 +319,20 @@ Native 仓库依赖，通过 git tag 进行版本管理。
 cd test_data/01_simple_c
 ../../vmake build     # 应编译生成 hello 可执行文件（位于 build/<hash>/hello）
 ```
+
+单独验证 zlib 示例（从仓库根目录开始）：
+
+```bash
+cd test_data/08_with_package
+../../vmake build
+```
+
+批量验证时使用快照测试，它会分别构建每个独立项目（从仓库根目录开始）：
+
+```bash
+CGO_ENABLED=0 go build -o vmake ./cmd/vmake
+cd test_data/_snapshot
+go test
+```
+
+快照测试跳过 `07`、`08`、`09`、`10`；这些示例需分别进入目录构建。`25_subpackage` 首次运行前需要从仓库根目录执行 `sh test_data/25_subpackage/setup.sh`。

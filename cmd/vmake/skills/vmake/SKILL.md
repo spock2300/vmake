@@ -2,7 +2,8 @@
 name: vmake
 description: >
   VMake C/C++ build system assistant for writing build.go files, configuring
-  build options, managing third-party packages, using vmake CLI commands,
+  build options, integrating CMake projects through VMake's CMake API,
+  managing third-party packages, using vmake CLI commands,
   embedded/RTOS firmware builds, cross-compilation, linker scripts, and code
   generation. Also use when the user is working on a C/C++ project that uses
   vmake, modifying existing build.go files, debugging vmake build errors,
@@ -44,13 +45,20 @@ include the ones your project needs:
 - **Multiple targets (lib + binary + tests)** → See `examples/multi-target.md`.
 - **Multi-module workspace (lib/ + app/ directories)** → See `examples/multi-module.md`.
 - **Third-party packages** → `OnRequire` + `AddRequires` + `AddDeps`. See `examples/with-package.md`.
-- **Wrap external C/C++ library (CMake/Autotools)** → `TargetVoid` + `SetBuildFunc`. See `examples/third-party-wrapper.md`.
+- **Build a CMake project** → Prefer `CMakeConfigure`, `CMakeBuild`, and `CMakeInstall` inside `TargetVoid` + `SetBuildFunc`. See `examples/third-party-wrapper.md`.
+- **Wrap an Autotools library** → `TargetVoid` + `SetBuildFunc`. See `examples/third-party-wrapper.md`.
 - **Pre-compiled libraries (.a/.so)** → `SetPrebuilt`. See `examples/prebuilt.md`.
 - **Cross-package config propagation (GenerateConfigDefines, ExportConfig, ImportConfig)** → See `examples/config-propagate.md`.
 - **Code generation / host tools** → `BuildSubGraph` + `DepOutput` + `Exec`. See `examples/subbuild.md`.
 - **Embedded / RTOS firmware (linker script, hex/bin)** → See `examples/embedded-rtos.md`.
 - **Embedded firmware (KConfig/partitions)** → `EnsureConfig` + `SetKConfigPatches` + `DepBuildDir`. See `examples/firmware.md`.
 - **Symbol conflicts / leaked internals across dependencies** → `SetDefaultVisibilityHidden` + `SetVersionScript` + `vmake check-symbols`. See `examples/symbol-management.md`.
+
+For CMake projects, let VMake's CMake API manage toolchain resolution, platform paths,
+build directories, installation prefixes, build configuration, and parallelism.
+Keep build.go focused on project options and project-specific steps. Invoke `cmake`
+directly only for special operations the API cannot express; do not duplicate these
+general rules in build.go. See `references/api.md` for settings and migration details.
 
 ## Build Script Template
 
@@ -76,22 +84,26 @@ func Main(p *api.Package) {
 
 VMake runs natively on Windows. Preconditions: **Git for Windows** (full installer — it supplies
 `sh`, coreutils, `sed`/`awk`/`grep`/`find`, `tar` and `curl`, which vmake discovers automatically),
-a **MinGW-w64 GCC toolchain** (Git for Windows ships no C compiler and no `make`), and
+a **target toolchain** (GNU ARM for bare-metal or MinGW-w64 for native Windows; Git for Windows ships no C compiler and no `make`), and
 **Developer Mode** (the storage layout is symlink-based). `vmake doctor` reports all of these.
 
 When writing build.go that must also work on Windows:
 
 - `p.Make()` and `p.EnsureConfig()` run the *toolchain's* make program (`Toolchain.Tools.MAKE`),
   which defaults to `make`. Do not hardcode `make` — call `p.Make(...)` / `p.EnsureConfig(dir)`.
+  Default make is resolved only when used; custom menuconfig with an existing config does not require it. An explicitly configured MAKE is still validated.
 - `p.Configure(...)` runs `./configure` through `sh` automatically on Windows; never exec the
   script path directly.
+- `p.CMakeConfigure(...)`, `p.CMakeBuild(...)`, and `p.CMakeInstall(...)` pass resolved tools
+  and normalized paths. Windows defaults to Ninja unless a generator or configure preset is explicit;
+  install CMake and the selected generator. Use these helpers for CMake projects.
 - Artifact names are decided by the toolchain's **target OS**, not the host:
   `TargetBinary` → `.exe`, `TargetShared` → `.dll` (+ import library `lib<name>.dll.a`, which is
   what consumers link against on PE targets). Use `api.TargetFilename(kind, name, targetOS)` if you
   need to compute one.
 - `SetVersionScript`, `AddExcludeLibs` and `SetSymbolBinding` are ELF-only; the build fails with a
   clear error on a Windows target instead of silently dropping them. There is no PE equivalent.
-- `vmake check-symbols` is Linux-only (it parses `nm -D`).
+- `vmake check-symbols` inspects ELF dynamic symbols with the selected toolchain's `nm -D` on either host; PE files and ELF files without dynamic symbols report that the audit is not applicable.
 - Build filesystem paths with `filepath.Join`. Write `/` only in logical identifiers
   (`repo/pkg`, `pkg:target`) and glob patterns (`src/**/*.c`) — the glob layer normalizes those, and
   object names are flattened so `src/foo.c` and `src\foo.c` map to the same object.
@@ -112,7 +124,8 @@ SetBuildFunc(func(p *api.Package) error {
 })
 ```
 
-Use `pkg.Make()` only when the build process should run in the scratch `BuildDir` (rare — mainly custom builds that generate Makefiles via CMake/Configure into BuildDir).
+Use `pkg.Make()` when the Makefile is in the scratch `BuildDir`. CMake projects use
+`pkg.CMakeBuild()` and `pkg.CMakeInstall()` with their own build directory and generator.
 
 ### `$(nproc)` won't work — use `runtime.NumCPU()`
 
@@ -182,7 +195,9 @@ Inside build.go, relative paths passed to wrapped stdlib (`os.ReadFile/WriteFile
 | `SourceDir()` | Package root (where build.go lives) | Package metadata files, overlay dirs |
 | `SrcDir()` | Source code dir (`SourceDir()/src/` for local `SetGit` packages, falls back to `SourceDir()`) | Source files for firmware/third-party builds |
 | `BuildDir()` | Scratch dir for intermediate artifacts | Build outputs, stamps |
-| `InstallDir()` | Installation prefix | Headers/libs installed by third-party packages |
+| `InstallDir()` | Remote package installation prefix; empty for local packages | Remote package publication |
+| `CMakeBuildDir()` | `BuildDir()/cmake`, unless explicitly set | CMake cache and build artifacts |
+| `CMakeInstallDir()` | Remote `InstallDir()` or local `BuildDir()/staging`, unless explicitly set | Headers/libs installed by CMake |
 
 For `BuildKey` naming, `SourceDir` vs `SrcDir` distinction, and `SetGit` path resolution rules, see `references/dirs.md`.
 
@@ -291,13 +306,16 @@ complex dependency graphs. Five layers, applied in order:
 
 | Layer | API | Purpose |
 |-------|-----|---------|
-| 1. Default hidden | `ctx.SetDefaultVisibilityHidden()` | `-fvisibility=hidden` globally; annotate exports in source |
+| 1. Default hidden | `ctx.SetDefaultVisibilityHidden()` | `-fvisibility=hidden` in this package; annotate exports in source |
 | 2. Version script | `target.SetVersionScript("foo.map")` | Declarative exports on `TargetShared`/`TargetBinary` |
 | 3. Link policy | `target.AddExcludeLibs(...)`, `target.SetSymbolBinding("static")` | Strip static archive symbols; bind internal refs |
 | 4. Audit | `vmake check-symbols` | Pure `nm -D` auto-detection: duplicates, mangled leaks, glibc leaks, version-script violations |
 | 5. Prefix | `target.SetSymbolPrefix("v_")` | `objcopy --prefix-symbols=` for third-party C code |
 
-Layer 1 is the foundation — without it, version scripts have weak effect.
+Enable Layer 1 separately in each package whose exports you control. Dependencies
+retain their own visibility policy; explicit `AddGlobalCFlags`/`AddGlobalCxxFlags`
+still affect all packages. Native and CMake compilation use the same package
+defaults, which are included in that package's build key.
 `SetVersionScript` on `TargetObject` is a build error (partial link produces
 no dynamic symbol table). See `examples/symbol-management.md` for full
 patterns and version-script syntax.
@@ -503,6 +521,7 @@ Key embedded rules: (1) Target-specific flags must appear in both CFLAGS and LDF
 - `UseDependencyLinkerScript()` — firmware target auto-inherits `-T` from first dependency that provides one
 - `SetLinkerScript(path)` — direct linker script on target (fatal on double-set)
 - `AddPostLink(tool, args...)` — generic post-link, shorthands: `AddPostLinkHex/Bin/Size/Strip`
+- `AddPostLinkOutputs(paths...)` — declare extra output files explicitly, with `{output}` templates or SourceDir-relative/absolute paths. Missing outputs trigger relink and all post-link steps; only declared outputs are automatically installed. Hex/Bin/Strip declare their outputs automatically. AddPostLink arguments never imply outputs, including positional inputs and `--add-gnu-debuglink={output}.debug`
 - `AddPostLinkDeps(files...)` — declare extra post-link input files (SourceDir-relative, like `AddFiles`); any dep newer/missing → relink + re-run ALL post-link steps. Without it, editing a file consumed by a post-link step (e.g. an `objcopy --keep-global-symbols` list) is silently skipped
 - `AddBinHeader(inputs...)` — binary files → `.h` headers
 - RTOS tool accessors: `Package.ObjCopy()`, `Size()`, `ObjDump()`, `NM()`

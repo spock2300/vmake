@@ -19,7 +19,7 @@ func Main(p *api.Package) {
 			AddPreset("rk3568_defconfig").
 			AddPreset("stm32_defconfig").
 			SetDefaultPreset("sandbox_defconfig").
-			SetMenuconfigCmd("make menuconfig")
+			SetMenuconfigCmd("make", "menuconfig")
 	})
 
 	p.OnBuild(func(ctx *api.BuildContext) {

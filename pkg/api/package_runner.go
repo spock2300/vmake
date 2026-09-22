@@ -10,12 +10,16 @@ import (
 )
 
 func (p *Package) MergedCFlags(extra ...string) string {
-	all := append(append([]string{}, p.globalCFlags...), extra...)
+	all, _ := p.VisibilityFlags()
+	all = append(all, p.globalCFlags...)
+	all = append(all, extra...)
 	return strings.Join(all, " ")
 }
 
 func (p *Package) MergedCxxFlags(extra ...string) string {
-	all := append(append([]string{}, p.globalCxxFlags...), extra...)
+	_, all := p.VisibilityFlags()
+	all = append(all, p.globalCxxFlags...)
+	all = append(all, extra...)
 	return strings.Join(all, " ")
 }
 
@@ -24,67 +28,80 @@ func (p *Package) MergedLdFlags(extra ...string) string {
 	return strings.Join(all, " ")
 }
 
-func (p *Package) CMakeGlobalFlagsArgs() []string {
-	var args []string
-	if cf := p.MergedCFlags(); cf != "" {
-		args = append(args, "-DCMAKE_C_FLAGS="+cf)
-	}
-	if cxxf := p.MergedCxxFlags(); cxxf != "" {
-		args = append(args, "-DCMAKE_CXX_FLAGS="+cxxf)
-	}
-	if ldf := p.MergedLdFlags(); ldf != "" {
-		args = append(args,
-			"-DCMAKE_EXE_LINKER_FLAGS="+ldf,
-			"-DCMAKE_SHARED_LINKER_FLAGS="+ldf,
-		)
-	}
-	return args
-}
-
-func (p *Package) CrossTarget() string { return p.tc.Host }
+func (p *Package) TargetTriple() string { return p.tc.TargetTriple }
 
 func (p *Package) Env() map[string]string {
-	return p.tc.Env()
+	tc := *p.tc
+	for _, tool := range []struct {
+		name string
+		path *string
+	}{
+		{"CC", &tc.Tools.CC}, {"CXX", &tc.Tools.CXX},
+		{"AR", &tc.Tools.AR}, {"LD", &tc.Tools.LD},
+		{"STRIP", &tc.Tools.STRIP}, {"RANLIB", &tc.Tools.RANLIB},
+		{"OBJCOPY", &tc.Tools.OBJCOPY}, {"SIZE", &tc.Tools.SIZE},
+		{"OBJDUMP", &tc.Tools.OBJDUMP}, {"NM", &tc.Tools.NM},
+		{"MAKE", &tc.Tools.MAKE},
+	} {
+		if *tool.path == "" {
+			continue
+		}
+		path, err := toolchain.ResolveToolPath(*tool.path, tc.InstallPath)
+		if err != nil {
+			fatalScript(p.Name, "Env", "resolve %s %q: %v", tool.name, *tool.path, err)
+		}
+		*tool.path = filepath.ToSlash(path)
+	}
+	if tc.Prefix != "" {
+		if tc.InstallPath != "" && !filepath.IsAbs(tc.Prefix) {
+			tc.Prefix = filepath.Join(tc.InstallPath, "bin", tc.Prefix)
+		}
+		tc.Prefix = filepath.ToSlash(tc.Prefix)
+	}
+	env := tc.Env()
+	if tc.Tools.STRIP != "" {
+		env["STRIP"] = tc.Tools.STRIP
+	}
+	if tc.Tools.RANLIB != "" {
+		env["RANLIB"] = tc.Tools.RANLIB
+	}
+	return env
 }
 
-func (p *Package) cmakeBuildType() string {
-	if m, ok := p.CfgVals[ModeOptionName].(string); ok && m == ModeDebug {
-		return "Debug"
+func (p *Package) makeTool() string {
+	if p.tc == nil || p.tc.Tools.MAKE == "" {
+		return toolchain.MakeToolOf(p.tc)
 	}
-	return "Release"
+	path, err := toolchain.ResolveToolPath(p.tc.Tools.MAKE, p.tc.InstallPath)
+	if err != nil {
+		fatalScript(p.Name, "Make", "resolve %q: %v", p.tc.Tools.MAKE, err)
+	}
+	return path
 }
 
-func (p *Package) CMakeConfigure(extraArgs ...string) {
-	args := []string{
-		"-S", p.SrcDir(),
-		"-B", p.dirs.BuildDir,
-		"-DCMAKE_INSTALL_PREFIX=" + p.dirs.InstallDir,
+func (p *Package) shellEnv(forMake bool) map[string]string {
+	if p.tc == nil {
+		return nil
 	}
-	if p.tc.Tools.CC != "" {
-		args = append(args, "-DCMAKE_C_COMPILER="+p.tc.Tools.CC)
+	env := p.Env()
+	for _, key := range []string{"CC", "CXX", "AR", "LD", "STRIP", "RANLIB", "OBJCOPY", "SIZE", "OBJDUMP", "NM", "MAKE", "CROSS_COMPILE"} {
+		if value := env[key]; value != "" {
+			value = `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "$", `\$`, "`", "\\`").Replace(value) + `"`
+			if forMake {
+				value = strings.ReplaceAll(value, "$", "$$")
+			}
+			env[key] = value
+		}
 	}
-	if p.tc.Tools.CXX != "" {
-		args = append(args, "-DCMAKE_CXX_COMPILER="+p.tc.Tools.CXX)
-	}
-	args = append(args, "-DCMAKE_BUILD_TYPE="+p.cmakeBuildType())
-	if p.CrossTarget() != "" {
-		args = append(args,
-			"-DCMAKE_SYSTEM_NAME=Linux",
-			"-DCMAKE_C_COMPILER_TARGET="+p.CrossTarget(),
-			"-DCMAKE_CXX_COMPILER_TARGET="+p.CrossTarget())
-	}
-	args = append(args, extraArgs...)
-	p.Run("cmake", args...)
+	return env
 }
 
-func (p *Package) CMakeBuild(args ...string) {
-	buildArgs := []string{"--build", p.dirs.BuildDir}
-	buildArgs = append(buildArgs, args...)
-	p.Run("cmake", buildArgs...)
-}
-
-func (p *Package) CMakeInstall() {
-	p.Run("cmake", "--install", p.dirs.BuildDir)
+func (p *Package) runMakeIn(dir string, args ...string) error {
+	program := p.makeTool()
+	if p.logAndDryRun(program, args) {
+		return nil
+	}
+	return exec.RunWithEnv(dir, p.shellEnv(true), program, args...)
 }
 
 func (p *Package) Configure(extraArgs ...string) error {
@@ -92,11 +109,11 @@ func (p *Package) Configure(extraArgs ...string) error {
 	// Slash-separated prefix: it is an sh argv element, and the MSYS runtime
 	// de-quotes backslashes there.
 	args = append(args, "--prefix="+filepath.ToSlash(p.dirs.InstallDir))
-	if p.CrossTarget() != "" {
-		args = append(args, "--host="+p.CrossTarget())
+	if p.TargetTriple() != "" {
+		args = append(args, "--host="+p.TargetTriple())
 	}
 	args = append(args, extraArgs...)
-	return p.RunEnv(p.Env(), name, args...)
+	return p.RunEnv(p.shellEnv(false), name, args...)
 }
 
 func (p *Package) Make(args ...string) error {
@@ -104,7 +121,7 @@ func (p *Package) Make(args ...string) error {
 	// forward slashes work for native make implementations too.
 	makeArgs := []string{"-C", filepath.ToSlash(p.dirs.BuildDir)}
 	makeArgs = append(makeArgs, args...)
-	return p.RunEnv(p.Env(), toolchain.MakeToolOf(p.tc), makeArgs...)
+	return p.runMakeIn(p.dirs.BuildDir, makeArgs...)
 }
 
 func (p *Package) logAndDryRun(name string, args []string) bool {

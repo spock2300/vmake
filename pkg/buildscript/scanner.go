@@ -118,7 +118,7 @@ func ScanSubPackages(rootDir string, parentID string) ([]Source, error) {
 				return nil
 			}
 
-			qualifiedName := parentID + "/" + relDir
+			qualifiedName := parentID + "/" + filepath.ToSlash(relDir)
 
 			if seen[dir] {
 				return nil

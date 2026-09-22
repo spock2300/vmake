@@ -3,7 +3,6 @@ package build
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 
@@ -12,15 +11,17 @@ import (
 )
 
 type CompileCommand struct {
-	Directory string `json:"directory"`
-	Command   string `json:"command"`
-	File      string `json:"file"`
+	Directory string   `json:"directory"`
+	Command   string   `json:"command,omitempty"`
+	Arguments []string `json:"arguments"`
+	File      string   `json:"file"`
 }
 
 type CompileCommandsWriter struct {
 	commands []CompileCommand
 	ccPath   string
 	cxxPath  string
+	clangCC  bool
 	mu       sync.Mutex
 }
 
@@ -29,20 +30,24 @@ func NewCompileCommandsWriter(tools *ResolvedTools) *CompileCommandsWriter {
 		commands: make([]CompileCommand, 0),
 		ccPath:   tools.CC,
 		cxxPath:  tools.CXX,
+		clangCC:  tools.isClangCC(),
 	}
 }
 
 func (w *CompileCommandsWriter) AddCommand(dir, src, objPath string, opts *CompileOptions) {
 	compiler, flags := selectCompilerAndFlags(w.ccPath, w.cxxPath, opts.CFlags, opts.CxxFlags, opts)
 
-	args := BuildCompileArgs(opts, objPath, src, flags, "")
+	commandOpts := *opts
+	commandOpts.clang = w.clangCC
+	args := compileArgs(&commandOpts, objPath, src, flags, "", dir)
 	cmdStr := iexec.FormatCommandLine(compiler, args)
 
 	w.mu.Lock()
 	w.commands = append(w.commands, CompileCommand{
 		Directory: dir,
 		Command:   cmdStr,
-		File:      filepath.Join(dir, src),
+		Arguments: append([]string{compiler}, args...),
+		File:      resolveWorkPath(dir, src),
 	})
 	w.mu.Unlock()
 }

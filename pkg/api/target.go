@@ -10,19 +10,6 @@ type PostLinkStep struct {
 	Args []string
 }
 
-func (s PostLinkStep) OutputPaths(outputPath string) []string {
-	var paths []string
-	for _, a := range s.Args {
-		if a == "{output}" {
-			continue
-		}
-		if strings.Contains(a, "{output}") {
-			paths = append(paths, strings.ReplaceAll(a, "{output}", outputPath))
-		}
-	}
-	return paths
-}
-
 type Target struct {
 	name               string
 	pkgName            string
@@ -54,6 +41,7 @@ type Target struct {
 	useDepLinkerScript bool
 	postLinks          []PostLinkStep
 	postLinkDeps       []string
+	postLinkOutputs    []string
 	genRules           []GenRule
 }
 
@@ -254,14 +242,19 @@ func (t *Target) AddPostLinkDeps(files ...string) *Target {
 	return t
 }
 
+func (t *Target) AddPostLinkOutputs(paths ...string) *Target {
+	t.postLinkOutputs = append(t.postLinkOutputs, paths...)
+	return t
+}
+
 func (t *Target) AddPostLinkHex() *Target {
 	t.postLinks = append(t.postLinks, PostLinkStep{Tool: "objcopy", Args: []string{"-O", "ihex", "{output}", "{output}.hex"}})
-	return t
+	return t.AddPostLinkOutputs("{output}.hex")
 }
 
 func (t *Target) AddPostLinkBin() *Target {
 	t.postLinks = append(t.postLinks, PostLinkStep{Tool: "objcopy", Args: []string{"-O", "binary", "{output}", "{output}.bin"}})
-	return t
+	return t.AddPostLinkOutputs("{output}.bin")
 }
 
 func (t *Target) AddPostLinkSize() *Target {
@@ -271,7 +264,7 @@ func (t *Target) AddPostLinkSize() *Target {
 
 func (t *Target) AddPostLinkStrip() *Target {
 	t.postLinks = append(t.postLinks, PostLinkStep{Tool: "strip", Args: []string{"-o", "{output}.stripped", "{output}"}})
-	return t
+	return t.AddPostLinkOutputs("{output}.stripped")
 }
 
 func (t *Target) AddBinHeader(inputs ...any) *Target {
@@ -333,6 +326,7 @@ func (t *Target) SymbolBinding() string         { return t.symbolBinding }
 func (t *Target) SymbolPrefix() string          { return t.symbolPrefix }
 func (t *Target) PostLinkSteps() []PostLinkStep { return t.postLinks }
 func (t *Target) PostLinkDeps() []string        { return t.postLinkDeps }
+func (t *Target) PostLinkOutputs() []string     { return t.postLinkOutputs }
 
 func (t *Target) RemoveCFlags(flags ...string) *Target {
 	t.cflags = removeStrings(t.cflags, flags...)

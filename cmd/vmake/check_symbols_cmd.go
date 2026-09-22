@@ -1,9 +1,11 @@
 package main
 
 import (
+	"debug/elf"
+	"errors"
 	"fmt"
+	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
@@ -62,14 +65,6 @@ type finding struct {
 func runCheckSymbols(strict bool) {
 	vlog.SetLevel(vlog.Quiet)
 
-	if !checkSymbolsSupported() {
-		vlog.Fatal("check-symbols is not supported on Windows: it reads ELF dynamic symbols via 'nm -D', and PE export analysis is not implemented; run it on Linux")
-	}
-
-	if _, err := exec.LookPath("nm"); err != nil {
-		vlog.Fatal("check-symbols requires 'nm' on PATH (binutils)")
-	}
-
 	ctx := resolveToConfig(false)
 	globalValues := config.BuildGlobalValues(ctx.Config)
 
@@ -85,6 +80,7 @@ func runCheckSymbols(strict bool) {
 	}
 
 	var findings []finding
+	var scanned []scanArtifact
 
 	for i := range artifacts {
 		a := &artifacts[i]
@@ -97,7 +93,20 @@ func runCheckSymbols(strict bool) {
 			})
 			continue
 		}
-		exports, err := readExports(a.outputPath)
+		if err := checkDynamicSymbols(a.outputPath); err != nil {
+			severity, category := "error", "tool-error"
+			if errors.Is(err, errNoDynamicSymbols) || errors.Is(err, errNonELFArtifact) {
+				severity, category = "info", "not-applicable"
+			}
+			findings = append(findings, finding{category: category, severity: severity, subject: a.pkgName + ":" + a.targetName, detail: err.Error()})
+			continue
+		}
+		nm, err := toolchain.ResolveToolPath(insp.Tc.Tools.NM, insp.Tc.InstallPath)
+		if err != nil {
+			findings = append(findings, finding{category: "tool-error", severity: "error", subject: a.pkgName + ":" + a.targetName, detail: fmt.Sprintf("resolve nm %q: %v", insp.Tc.Tools.NM, err)})
+			continue
+		}
+		exports, err := readExports(nm, a.outputPath)
 		if err != nil {
 			findings = append(findings, finding{
 				category: "tool-error",
@@ -108,13 +117,14 @@ func runCheckSymbols(strict bool) {
 			continue
 		}
 		a.exports = exports
+		scanned = append(scanned, *a)
 	}
 
-	findings = append(findings, detectMangledLeaks(artifacts)...)
-	findings = append(findings, detectReservedPrefixes(artifacts)...)
-	findings = append(findings, detectVersionScriptViolations(artifacts)...)
-	findings = append(findings, detectNoVersionScript(artifacts)...)
-	findings = append(findings, detectDuplicateExports(artifacts)...)
+	findings = append(findings, detectMangledLeaks(scanned)...)
+	findings = append(findings, detectReservedPrefixes(scanned)...)
+	findings = append(findings, detectVersionScriptViolations(scanned)...)
+	findings = append(findings, detectNoVersionScript(scanned)...)
+	findings = append(findings, detectDuplicateExports(scanned)...)
 
 	reportFindings(findings, len(artifacts))
 
@@ -143,7 +153,7 @@ func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, tc 
 			if !t.IsDefault() {
 				continue
 			}
-			filename := string(kind.Prefix()) + t.Name() + string(kind.Ext())
+			filename := api.TargetFilename(kind, t.Name(), toolchain.TargetOSOf(tc))
 			outputPath := findBuiltOutput(dirs.BuildDir, filename)
 			out = append(out, scanArtifact{
 				pkgName:       name,
@@ -202,10 +212,39 @@ var (
 	}
 )
 
-func readExports(path string) ([]string, error) {
-	out, err := exec.Command("nm", "-D", "--defined-only", path).Output()
+var errNoDynamicSymbols = errors.New("not applicable: ELF artifact has no dynamic symbol table")
+var errNonELFArtifact = errors.New("not applicable: artifact is not ELF; PE export analysis is not supported")
+
+func checkDynamicSymbols(path string) error {
+	file, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("nm %s: %w", filepath.Base(path), err)
+		return err
+	}
+	defer file.Close()
+	var magic [4]byte
+	if _, err := io.ReadFull(file, magic[:]); err != nil {
+		return fmt.Errorf("read artifact header %s: %w", path, err)
+	}
+	if string(magic[:]) != elf.ELFMAG {
+		return errNonELFArtifact
+	}
+	f, err := elf.NewFile(file)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	for _, section := range f.Sections {
+		if section.Type == elf.SHT_DYNSYM && section.Size > 0 {
+			return nil
+		}
+	}
+	return errNoDynamicSymbols
+}
+
+func readExports(nm, path string) ([]string, error) {
+	out, err := iexec.RunWithOptions(nm, []string{"-D", "--defined-only", path}, iexec.RunOptions{Quiet: true})
+	if err != nil {
+		return nil, err
 	}
 	seen := make(map[string]bool)
 	var syms []string
@@ -436,6 +475,7 @@ func reportFindings(findings []finding, artifactCount int) {
 	fmt.Printf("Symbol audit: %d finding(s) across %d artifacts\n", len(findings), artifactCount)
 
 	categoryOrder := []string{
+		"not-applicable",
 		"missing-artifact",
 		"tool-error",
 		"duplicate-export",

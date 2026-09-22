@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -12,6 +13,8 @@ import (
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/pipeline"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 var testCmd = &cobra.Command{
@@ -27,9 +30,20 @@ func init() {
 
 func runTest(cmd *cobra.Command, args []string) {
 	ctx := resolveToConfig(false)
+	tc, _, err := pipeline.GetToolchain(ctx.Config, ctx.ToolchainOverride)
+	fatalErr(err)
+	fatalErr(validateTestExecution(tc, runtime.GOOS))
 	result, err := runBuildPhase(ctx, BuildOptions{IncludeTests: true, Jobs: jobsFlag, KeepGoing: keepGoingFlag})
 	fatalErr(err)
 	runAllTests(result)
+}
+
+func validateTestExecution(tc *toolchain.Toolchain, hostOS string) error {
+	targetOS := toolchain.TargetOSOf(tc)
+	if targetOS == "none" || targetOS != hostOS || tc.TargetTriple != "" {
+		return fmt.Errorf("cannot run tests for toolchain %q (target_os=%s, target_triple=%q) on %s; use 'vmake build --tests' to build them without execution", tc.Name, targetOS, tc.TargetTriple, hostOS)
+	}
+	return nil
 }
 
 type testResult struct {

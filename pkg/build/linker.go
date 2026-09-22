@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/pkg/api"
 )
@@ -20,7 +19,7 @@ func NewLinker(tools *ResolvedTools) *Linker {
 	return &Linker{
 		ccPath: tools.CC,
 		arPath: tools.AR,
-		run:    iexec.RunInDir,
+		run:    runGNU,
 	}
 }
 
@@ -122,6 +121,11 @@ func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScri
 		return err
 	}
 
+	objs = commandPaths(workDir, objs)
+	ldflags = commandFlags(workDir, ldflags)
+	outputPath = commandPath(workDir, outputPath)
+	linkerScript = commandPath(workDir, linkerScript)
+	policy.VersionScript = commandPath(workDir, policy.VersionScript)
 	args := []string{"-o", outputPath}
 	if linkerScript != "" {
 		args = append(args, "-T", linkerScript)
@@ -182,7 +186,8 @@ func (l *Linker) LinkStatic(objs []string, outputPath, workDir string) error {
 
 	fs.RemoveIfExists(resolveWorkPath(workDir, outputPath))
 
-	args := []string{"rcs", outputPath}
+	objs = commandPaths(workDir, objs)
+	args := []string{"rcs", commandPath(workDir, outputPath)}
 	args = append(args, objs...)
 
 	_, err := l.run(l.arPath, workDir, args...)
@@ -197,6 +202,10 @@ func (l *Linker) LinkShared(objs, ldflags []string, outputPath string, policy Li
 		return err
 	}
 
+	objs = commandPaths(workDir, objs)
+	ldflags = commandFlags(workDir, ldflags)
+	outputPath = commandPath(workDir, outputPath)
+	policy.VersionScript = commandPath(workDir, policy.VersionScript)
 	filtered := make([]string, 0, len(ldflags))
 	for _, f := range ldflags {
 		if f == "-pie" || f == "-no-pie" {
@@ -229,7 +238,8 @@ func (l *Linker) LinkObject(objs []string, outputPath, workDir string) error {
 		return err
 	}
 
-	args := []string{"-r", "-o", outputPath}
+	objs = commandPaths(workDir, objs)
+	args := []string{"-r", "-o", commandPath(workDir, outputPath)}
 	args = append(args, objs...)
 
 	_, err := l.run(l.ccPath, workDir, args...)

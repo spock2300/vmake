@@ -2,11 +2,19 @@ package glob
 
 import (
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strings"
+
+	"github.com/spock2300/vmake/internal/fs"
 )
 
 func Match(pattern, dir string) ([]string, error) {
+	pattern = path.Clean(filepath.ToSlash(pattern))
+	if err := validatePattern(pattern); err != nil {
+		return nil, err
+	}
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
@@ -55,89 +63,80 @@ func matchSingleStar(pattern, dir string) ([]string, error) {
 
 func matchDoubleStar(pattern, dir string) ([]string, error) {
 	var result []string
-
-	parts := strings.Split(pattern, "**")
-	if len(parts) != 2 {
-		return nil, nil
+	parts := strings.Split(pattern, "/")
+	prefixLen := 0
+	for prefixLen < len(parts) && !strings.ContainsAny(parts[prefixLen], "*?[\\") {
+		prefixLen++
 	}
+	baseDir := filepath.Join(dir, filepath.FromSlash(strings.Join(parts[:prefixLen], "/")))
 
-	prefix := strings.TrimSuffix(parts[0], "/")
-	suffix := strings.TrimPrefix(parts[1], "/")
-
-	baseDir := dir
-	if prefix != "" && prefix != "." {
-		baseDir = filepath.Join(dir, prefix)
-	}
-
-	err := filepath.Walk(baseDir, func(path string, info os.FileInfo, err error) error {
+	err := fs.Walk(baseDir, func(file string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil
+			if file == baseDir && os.IsNotExist(err) {
+				return nil
+			}
+			if info != nil && info.Mode()&os.ModeSymlink != 0 && os.IsNotExist(err) {
+				rel, relErr := filepath.Rel(dir, file)
+				if relErr != nil {
+					return relErr
+				}
+				if !MatchPath(pattern, rel) {
+					return nil
+				}
+			}
+			return err
 		}
 		if info.IsDir() {
 			return nil
 		}
-
-		if suffix == "" {
-			result = append(result, path)
-			return nil
-		}
-
-		rel, err := filepath.Rel(baseDir, path)
+		rel, err := filepath.Rel(dir, file)
 		if err != nil {
-			return nil
+			return err
 		}
-
-		matched, err := filepath.Match(suffix, rel)
-		if err != nil {
-			return nil
+		if MatchPath(pattern, rel) {
+			result = append(result, file)
 		}
-		if matched {
-			result = append(result, path)
-		}
-
 		return nil
 	})
-
+	sort.Strings(result)
 	return result, err
 }
 
-func MatchPath(pattern, path string) bool {
-	if !strings.Contains(pattern, "**") {
-		matched, err := filepath.Match(pattern, path)
-		return err == nil && matched
-	}
-
-	parts := strings.SplitN(pattern, "**", 2)
-	if len(parts) != 2 {
+func MatchPath(pattern, name string) bool {
+	pattern = path.Clean(filepath.ToSlash(pattern))
+	name = path.Clean(filepath.ToSlash(name))
+	if err := validatePattern(pattern); err != nil {
 		return false
 	}
+	return matchParts(strings.Split(pattern, "/"), strings.Split(name, "/"))
+}
 
-	prefix := strings.TrimSuffix(parts[0], "/")
-	suffix := strings.TrimPrefix(parts[1], "/")
-
-	if prefix != "" && prefix != "." {
-		if !strings.HasPrefix(path, prefix+"/") && path != prefix {
-			return false
+func validatePattern(pattern string) error {
+	for _, part := range strings.Split(pattern, "/") {
+		if _, err := path.Match(part, ""); err != nil {
+			return err
 		}
-		path = strings.TrimPrefix(path, prefix+"/")
 	}
+	return nil
+}
 
-	if suffix == "" {
-		return true
+func matchParts(pattern, name []string) bool {
+	if len(pattern) == 0 {
+		return len(name) == 0
 	}
-
-	for {
-		if matched, _ := filepath.Match(suffix, path); matched {
-			return true
+	if pattern[0] == "**" {
+		for i := 0; i <= len(name); i++ {
+			if matchParts(pattern[1:], name[i:]) {
+				return true
+			}
 		}
-		idx := strings.Index(path, "/")
-		if idx < 0 {
-			break
-		}
-		path = path[idx+1:]
+		return false
 	}
-
-	return false
+	if len(name) == 0 {
+		return false
+	}
+	matched, err := path.Match(pattern[0], name[0])
+	return err == nil && matched && matchParts(pattern[1:], name[1:])
 }
 
 func IsCppFile(path string) bool {

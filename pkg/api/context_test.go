@@ -99,18 +99,49 @@ func TestConfigContextGlobalFlagsBuffered(t *testing.T) {
 
 func TestConfigContextSetDefaultVisibilityHidden(t *testing.T) {
 	var cflags, cxxflags []string
-	ctx := NewConfigContext("app")
+	pkg := NewPackage()
+	dep := NewPackage()
+	ctx := NewConfigContextWithPackage("app", pkg)
 	ctx.SetGlobalCFlagsFunc(func(f ...string) { cflags = append(cflags, f...) })
 	ctx.SetGlobalCxxFlagsFunc(func(f ...string) { cxxflags = append(cxxflags, f...) })
 
-	ctx.SetDefaultVisibilityHidden()
-	if !reflect.DeepEqual(cflags, []string{"-fvisibility=hidden"}) {
-		t.Errorf("cflags = %v", cflags)
+	if ctx.SetDefaultVisibilityHidden().SetDefaultVisibilityHidden() != ctx {
+		t.Fatal("visibility setter did not return the context")
+	}
+	if !pkg.DefaultVisibilityHidden() || dep.DefaultVisibilityHidden() {
+		t.Fatal("visibility must be enabled only on the declaring package")
+	}
+	if len(cflags) != 0 || len(cxxflags) != 0 {
+		t.Fatalf("package visibility leaked into global flags: C=%v CXX=%v", cflags, cxxflags)
+	}
+	c, cxx := pkg.VisibilityFlags()
+	if !reflect.DeepEqual(c, []string{"-fvisibility=hidden"}) {
+		t.Errorf("cflags = %v", c)
 	}
 	want := []string{"-fvisibility=hidden", "-fvisibility-inlines-hidden"}
-	if !reflect.DeepEqual(cxxflags, want) {
-		t.Errorf("cxxflags = %v, want %v", cxxflags, want)
+	if !reflect.DeepEqual(cxx, want) {
+		t.Errorf("cxxflags = %v, want %v", cxx, want)
 	}
+	if c, cxx := dep.VisibilityFlags(); len(c) != 0 || len(cxx) != 0 {
+		t.Fatalf("undeclared dependency has visibility flags: %v %v", c, cxx)
+	}
+	c[0] = "changed"
+	cxx[0] = "changed"
+	c, cxx = pkg.VisibilityFlags()
+	if c[0] != "-fvisibility=hidden" || cxx[0] != "-fvisibility=hidden" {
+		t.Fatal("visibility getter exposes mutable package state")
+	}
+}
+
+func TestConfigContextVisibilityWithoutPackageReportsScriptError(t *testing.T) {
+	defer func() {
+		err, ok := recover().(*BuildScriptError)
+		if !ok || err.Package != "app" || err.Op != "SetDefaultVisibilityHidden" {
+			t.Fatalf("expected package visibility script error, got %v", err)
+		}
+	}()
+	NewConfigContext("app").SetDefaultVisibilityHidden()
+	t.Fatal("expected script error")
 }
 
 func TestConfigContextKConfigDelegatesToPackage(t *testing.T) {

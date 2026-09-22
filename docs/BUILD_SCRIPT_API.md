@@ -40,7 +40,7 @@ func Main(p *api.Package) {
             SetKind(api.TargetVoid).
             SetBuildFunc(func(pkg *api.Package) error {
                 pkg.CMakeConfigure()
-                pkg.CMakeBuild("-j4")
+                pkg.CMakeBuild()
                 pkg.CMakeInstall()
                 return nil
             })
@@ -119,6 +119,8 @@ func (p *Package) Deps() map[string]*InstalledPackage
 func (p *Package) SourceDir() string
 func (p *Package) BuildDir() string
 func (p *Package) InstallDir() string
+func (p *Package) CMakeBuildDir() string
+func (p *Package) CMakeInstallDir() string
 func (p *Package) OutputDir() string
 func (p *Package) ScriptDir() string
 ```
@@ -129,13 +131,19 @@ func (p *Package) ScriptDir() string
 func (p *Package) CC() string
 func (p *Package) CXX() string
 func (p *Package) AR() string
-func (p *Package) CrossTarget() string
+func (p *Package) TargetTriple() string
 func (p *Package) Prefix() string
 func (p *Package) CFlags() string
 func (p *Package) CXXFlags() string
 func (p *Package) LDFlags() string
 func (p *Package) Env() map[string]string
 ```
+
+`TargetTriple()` 返回工具链的 `target_triple`（例如 `arm-none-eabi`）；旧方法 `CrossTarget()` 已移除。工具链必须声明 `target_os`，裸机使用 `none`，不能按运行 vmake 的主机系统推断目标系统。
+
+`Prefix()` 原样返回工具链配置的前缀，例如 `arm-none-eabi-`，包含末尾的 `-`，不补充安装目录。拼接工具名时直接使用 `p.Prefix() + "gcc"`，不能再添加 `-`。迁移旧脚本时，应检查 `p.Prefix() + "-gcc"` 和传给外部工具链文件的前缀参数；要求目标三元组的参数使用 `TargetTriple()`。
+
+`p.Env()` 返回已解析的工具路径。工具链声明安装目录时，`CROSS_COMPILE` 包含该目录下的 `bin` 路径和完整前缀，例如 `/path/to/toolchain/bin/arm-none-eabi-`，同样不能再添加 `-`。CMake 工程优先使用 `p.CMakeConfigure()`，它会自动传递已解析的工具。仅在 API 无法表达的特殊操作中手动调用 CMake，并使用 `p.Env()["CC"]`、`p.Env()["CXX"]`、`p.Env()["AR"]` 等路径，避免从前缀重建工具名并依赖 PATH。
 
 ### RTOS 工具访问器
 
@@ -158,7 +166,10 @@ func (p *Package) ProvidedLinkerScript() string
 ```go
 func (p *Package) CMakeConfigure(extraArgs ...string)
 func (p *Package) CMakeBuild(args ...string)
-func (p *Package) CMakeInstall()
+func (p *Package) CMakeInstall(args ...string)
+func (p *Package) SetCMakeBuildDir(dir string) *Package
+func (p *Package) SetCMakeInstallDir(dir string) *Package
+func (p *Package) SetCMakeBuildType(buildType string) *Package
 func (p *Package) Configure(extraArgs ...string) error
 func (p *Package) Make(args ...string) error
 func (p *Package) Run(name string, args ...string)              // 在 BuildDir 运行命令（失败时 fatal 退出）
@@ -166,36 +177,62 @@ func (p *Package) RunIn(dir, name string, args ...string)       // 在指定目�
 func (p *Package) RunEnv(env map[string]string, name string, args ...string) error
 ```
 
-### CMake 全局标志传递
+在 VMake 中构建 CMake 工程时，优先使用 `CMakeConfigure`、`CMakeBuild`、`CMakeInstall`。工具链解析、跨平台路径、构建目录、安装前缀、构建配置和并行规则由 API 管理；build.go 只声明项目选项及专用步骤。仅在 API 无法表达的特殊操作中直接调用 cmake。
 
-将 `AddGlobalCFlags`/`AddGlobalCxxFlags`/`AddGlobalLdFlags` 设置的全局标志传递给 CMake 外部构建：
+三阶段共用 `CMakeBuildDir()`，默认是 `BuildDir()/cmake`。源码默认取 `SrcDir()`。`CMakeInstallDir()` 默认返回远程包的 `InstallDir()`，本地包则使用 `BuildDir()/staging`。通过目录 setter 修改时，相对路径基于 `BuildDir()`，绝对路径保持不变。这些设置不改变 `PkgDirs`、stamp 或远程包发布机制；远程包使用自定义安装目录时，需要将产物发布到原有 `InstallDir()` 或显式声明产物。
+
+默认构建配置按 VMake mode 选择 Debug／Release，`SetCMakeBuildType("MinSizeRel")` 等设置对 configure、build、install 均生效。Build、Install 的显式 `--config` 覆盖本次调用的配置。通过 setter 管理构建目录、安装前缀和默认构建类型；原生目录覆盖参数、`--prefix`、`-DCMAKE_INSTALL_PREFIX`、`-DCMAKE_BUILD_TYPE` 会报错并提示对应 setter，其他项目参数继续透传。
+
+多配置生成器要求所选配置已包含在工程或 preset 声明的 `CMAKE_CONFIGURATION_TYPES` 中。`SetCMakeBuildType` 只选择配置，不改写可用配置集合。例如 Ninja Multi-Config 默认不含 MinSizeRel；需要它时，可向 `CMakeConfigure` 传入 `"-DCMAKE_CONFIGURATION_TYPES=Debug;Release;MinSizeRel"`。
+
+`CMakeConfigure` 严格解析已配置的编译器及 binutils，ASM 默认使用已解析的 CC 驱动。VMake 不将 `Tools.LD` 映射为 `CMAKE_LINKER`，底层链接器由 CMake 根据编译器识别。目标系统决定 `CMAKE_SYSTEM_NAME`；裸机使用 `Generic`、`CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY`，并从宿主查找程序、从目标根查找库和头文件。需要处理器信息时由项目显式传入 `CMAKE_SYSTEM_PROCESSOR`。
+
+Windows 主机默认使用 Ninja，尊重显式生成器、`CMAKE_GENERATOR` 环境变量及 configure preset。通过 `CMakeConfigure("--preset", "name")` 使用配置预设；`CMakeBuild` 拒绝 `--preset`，因为 build preset 的 `binaryDir` 会覆盖 API 管理的目录。构建目标和配置分别通过 `--target`、`--config` 选择。API 使用独立 argv 和规范化路径，不提前解析默认 make。`CMakeBuild()` 默认按 CPU 核数并行；显式 `-j`／`--parallel` 或 `CMAKE_BUILD_PARALLEL_LEVEL` 优先。`CMakeInstall(args...)` 支持 `--component` 等原生安装选项。
+
+`Env()` 返回不含 shell 引号的工具绝对路径，可用于直接执行程序。`Make`、`Configure` 和 `EnsureConfig` 会针对 shell 单独引用环境中的工具路径，保留路径内的空格；make 环境还会保护美元符号，避免被 make 展开。`CleanContext.Make` 使用相同处理。
+
+### CMake 编译与链接标志传递
+
+`CMakeConfigure` 自动传递本包的默认符号可见性及 `AddGlobalCFlags`／`AddGlobalCxxFlags`／`AddGlobalLdFlags` 设置的全局 C、CXX 及可执行文件／共享库／模块库链接标志（`CMAKE_EXE_LINKER_FLAGS`、`CMAKE_SHARED_LINKER_FLAGS`、`CMAKE_MODULE_LINKER_FLAGS`），不自动加入工具链 `DefaultFlags`。包级可见性默认值位于全局及显式追加标志之前。显式传入某个 flags 变量会替换该变量的自动值；如需追加项目标志，使用 `Merged*Flags` 保留包级默认值与全局值。ASM flags 由项目显式声明，不自动复制全部 C flags。
 
 ```go
-func (p *Package) CMakeGlobalFlagsArgs() []string          // 返回 -DCMAKE_C_FLAGS=... 等 CMake 参数
-func (p *Package) MergedCFlags(extra ...string) string      // 合并全局 C 标志 + extra，返回空格拼接字符串
-func (p *Package) MergedCxxFlags(extra ...string) string    // 合并全局 C++ 标志 + extra
-func (p *Package) MergedLdFlags(extra ...string) string     // 合并全局链接标志 + extra
+func (p *Package) CMakeGlobalFlagsArgs() []string
+func (p *Package) MergedCFlags(extra ...string) string
+func (p *Package) MergedCxxFlags(extra ...string) string
+func (p *Package) MergedLdFlags(extra ...string) string
 ```
 
 使用示例：
 
 ```go
-// 方式一：用 CMakeConfigure 便捷方法
-p.CMakeConfigure(append(p.CMakeGlobalFlagsArgs(), "-DBUILD_SHARED_LIBS=OFF")...)
-
-// 方式二：手动 cmake（如自定义 toolchain file 场景），追加自己的 cflags
-args := []string{"-S", pkg.SrcDir(), "-B", pkg.BuildDir(), "-G", "Ninja",
-    "--toolchain", tcPath,
-    "-DCMAKE_C_FLAGS=" + pkg.MergedCFlags("-D__SINGLE_THREAD=ON"),
-}
-pkg.RunIn(pkg.BuildDir(), "cmake", args...)
+p.SetCMakeBuildType("MinSizeRel")
+cflags := p.MergedCFlags("-fno-builtin")
+p.CMakeConfigure(
+    "-DBUILD_SHARED_LIBS=OFF",
+    "-DCMAKE_C_FLAGS="+cflags,
+    "-DCMAKE_ASM_FLAGS="+cflags,
+)
+p.CMakeBuild()
+p.CMakeInstall()
 ```
+
+`MergedCFlags`／`MergedCxxFlags` 按包级可见性默认值、全局标志、额外标志的顺序返回按空格拼接的字符串；`MergedLdFlags` 合并全局链接标志与额外标志。`CMakeGlobalFlagsArgs()` 同样包含本包可见性，保留给特殊的手动 CMake 调用；使用 `CMakeConfigure` 时无需再次传入。`Make`／`Configure` 不自动注入这些编译标志，已有使用 `Merged*Flags` 的脚本会获得本包的策略。
+
+### CMake 脚本迁移
+
+- 原先直接位于 `BuildDir()` 的 CMake cache 和产物迁至 `CMakeBuildDir()`；CMake 安装产物统一通过 `CMakeInstallDir()` 引用。
+- 原生 `-B`、安装前缀及 build-type 覆盖改用 setter；删除通用工具链文件生成、编译器前缀拼接和默认并行参数计算。
+- configure 之后调用 `CMakeBuild()`／`CMakeInstall()`，不再调用 `pkg.Make()` 构建 CMake 工程。
+- 本地 `SetPrebuilt` 包保持产物与发布位置分离：例如 CMake 生成 `cmake/libfoo.a`、安装到 `staging/lib/libfoo.a`，VMake 的顶层 `libfoo.a` 链接指向安装产物。
+- 迁移后清理旧构建目录再构建。目录设置不改变现有 void target stamp 或远程包安装跳过规则。
 
 ### 获取方法
 
 ```go
 func (p *Package) FullName() string                // 完整包名（repo/name 或 name）
 func (p *Package) GetOptions() map[string]*Option
+func (p *Package) DefaultVisibilityHidden() bool
+func (p *Package) VisibilityFlags() (cflags, cxxflags []string)
 func (p *Package) Versions() map[string]string
 func (p *Package) GenConfigHeader() bool           // 配置头文件是否启用
 func (p *Package) SrcDirRaw() string               // 原始 srcCodeDir，无 SourceDir 回退（SetSrcDir 未调用时返回空串）
@@ -288,11 +325,15 @@ func (ctx *ConfigContext) AddGlobalCFlags(flags ...string)
 func (ctx *ConfigContext) AddGlobalCxxFlags(flags ...string)
 func (ctx *ConfigContext) AddGlobalLdFlags(flags ...string)
 func (ctx *ConfigContext) AddGlobalLinks(links ...string)  // 添加全局链接库
-func (ctx *ConfigContext) SetDefaultVisibilityHidden() *ConfigContext  // 全局加 -fvisibility=hidden（C++ 另加 -fvisibility-inlines-hidden）
+func (ctx *ConfigContext) SetDefaultVisibilityHidden() *ConfigContext  // 仅本包加 -fvisibility=hidden（C++ 另加 -fvisibility-inlines-hidden）
 
 // 依赖 Linker Script
 func (ctx *ConfigContext) SetProvidedLinkerScript(path string) *ConfigContext
 ```
+
+`SetDefaultVisibilityHidden()` 在 `OnConfig` 或选项 `OnApply` 中启用本包所有目标的默认符号隐藏，重复调用幂等；无关联包时报告 `BuildScriptError`。本地、远程、Registry 和 Native 包采用相同语义，依赖包保留自身的导出规则，不会被注入 `-fvisibility=default`。多个自有包需要隐藏时，分别在各自的 `OnConfig` 中声明。显式 `AddGlobalCFlags`／`AddGlobalCxxFlags` 仍影响所有包，包括显式传入的 hidden 标志。
+
+`DefaultVisibilityHidden()` 返回本包是否启用隐藏；`VisibilityFlags()` 返回对应的 C 和 C++ 默认标志，未启用时均为空。切换包级隐藏策略只改变该包的构建缓存标识；全局标志变化仍影响所有包。
 
 ## Option
 
@@ -463,6 +504,7 @@ func (t *Target) AddExcludeLibs(libs ...string) *Target    // 链接时加 -Wl,-
 func (t *Target) SetSymbolBinding(mode string) *Target     // "static" → -Wl,-Bsymbolic；"static-functions" → -Wl,-Bsymbolic-functions；其他值 fatal
 func (t *Target) SetSymbolPrefix(prefix string) *Target    // post-link 追加 objcopy --prefix-symbols=<prefix>（重复调用 fatal）
 func (t *Target) AddPostLink(tool string, args ...string) *Target  // 通用后链接步骤，支持 {output} 占位符
+func (t *Target) AddPostLinkOutputs(paths ...string) *Target
 func (t *Target) AddPostLinkDeps(files ...string) *Target  // 声明 post-link 步骤依赖的额外输入文件（SourceDir 相对路径）；任一变化（mtime 新于输出或缺失）触发 relink + 重跑全部 post-link
 func (t *Target) AddPostLinkHex() *Target               // objcopy -O ihex {output} {output}.hex
 func (t *Target) AddPostLinkBin() *Target               // objcopy -O binary {output} {output}.bin
@@ -515,11 +557,23 @@ func (t *Target) ExcludeLibs() []string
 func (t *Target) SymbolBinding() string
 func (t *Target) SymbolPrefix() string
 func (t *Target) PostLinkSteps() []PostLinkStep
+func (t *Target) PostLinkOutputs() []string
 func (t *Target) PostLinkDeps() []string
 func (t *Target) ExcludedFiles() []string
 func (t *Target) GenRules() []GenRule
 ```
 `AddFiles/Includes/Defines/Links/CFlags/CxxFlags/LdFlags` 接受 `string` 或 `[]string`（条件表达式返回）。注意 yaegi 限制：不能对 `...any` 参数使用 `[]string...` 展开，直接传 `[]string` 即可（上述方法内部会展开处理）。
+
+`AddPostLinkOutputs` 显式声明整个目标的后链接产物，支持 `{output}` 占位符；相对路径基于包的 SourceDir，绝对路径保持不变，主产物不会重复计入。任一声明产物缺失会触发重新链接并运行全部后链接步骤；安装阶段只自动安装声明的额外产物。`AddPostLinkHex/Bin/Strip` 自动声明各自产物，`AddPostLinkSize` 和 `SetSymbolPrefix` 不产生额外产物。
+
+`AddPostLink` 的参数不再用于推断产物。已有自定义步骤需要补充输出声明，例如下面的 `.debug` 是第一步的输出，也是第二步的输入：
+
+```go
+ctx.Target("app").
+    AddPostLink("objcopy", "--only-keep-debug", "{output}", "{output}.debug").
+    AddPostLinkOutputs("{output}.debug").
+    AddPostLink("objcopy", "--add-gnu-debuglink={output}.debug", "{output}")
+```
 
 `AddPublicIncludes` 支持 `@"pattern"` 作为最后一个参数进行 match。Pattern 应用到前面所有目录（省略目录默认为 `"."`）。Pattern 使用 `filepath.Match` 语法。
 
@@ -668,7 +722,6 @@ type PostLinkStep struct {
     Tool string
     Args []string
 }
-func (s PostLinkStep) OutputPaths(outputPath string) []string  // 从 post-link 步骤中解析 {output} 占位符生成的文件路径
 
 type GenRuleKind string
 const GenRuleBinHeader GenRuleKind = "binheader"
@@ -825,6 +878,8 @@ type CopyFilter func(path string, isDir bool) bool
 
 `CopyDir` 自动跳过 `.git` 目录。`CopyDirWithFilter` 通过 filter 回调控制复制行为。
 
+`CopyFile` 拒绝把文件复制到自身，包括软链接和硬链接指向同一文件的情况；报错时保留原内容。`CopyDir` 拒绝源目录链接进入目标目录或其子目录。过滤器可以明确排除断链；未被排除的断链仍会报错。
+
 ### 包引用解析
 
 ```go
@@ -892,18 +947,23 @@ func (k *KConfigEntry) Presets() []string
 func (k *KConfigEntry) DefaultPreset() string
 func (k *KConfigEntry) SelectedPreset() string
 func (k *KConfigEntry) MenuconfigCmd() string
+func (k *KConfigEntry) MenuconfigArgs() []string
 func (k *KConfigEntry) Patches() map[string]string
 
 // 设置方法（链式调用）
 func (k *KConfigEntry) SetDescription(desc string) *KConfigEntry
 func (k *KConfigEntry) SetConfigPath(path string) *KConfigEntry
 func (k *KConfigEntry) SetSrcDir(dir string) *KConfigEntry
-func (k *KConfigEntry) SetMenuconfigCmd(cmd string) *KConfigEntry
+func (k *KConfigEntry) SetMenuconfigCmd(program string, args ...string) *KConfigEntry
 func (k *KConfigEntry) AddPreset(name string) *KConfigEntry
 func (k *KConfigEntry) SetDefaultPreset(presetName string) *KConfigEntry
 func (k *KConfigEntry) SelectPreset(name string) *KConfigEntry
 func (k *KConfigEntry) SetKConfigPatches(patches map[string]string) *KConfigEntry
 ```
+
+`SetMenuconfigCmd` 分别接收可执行程序和参数，例如 `SetMenuconfigCmd("C:/Program Files/Kconfig/menu.exe", "--config", "project config")`。命令在 `SrcDir` 下执行，参数不经过 shell 拆分。未设置时运行所选工具链的 `make menuconfig`；生成 preset 始终使用所选工具链的 make，与自定义 menuconfig 命令无关。
+
+TUI 仅在需要生成 preset 或运行默认 menuconfig 时解析 make。已有非空配置，或没有需要生成的 preset 时，自定义 menuconfig 程序无需安装 make。普通 C/C++ 构建也不要求默认 make；工具链中显式配置的 MAKE 仍会严格校验。
 
 ### 工具函数
 
@@ -1286,7 +1346,7 @@ func Main(p *api.Package) {
                 pkg.CMakeConfigure(
                     "-DBUILD_SHARED_LIBS=" + pkg.BoolStr("shared"),
                 )
-                pkg.CMakeBuild("-j4")
+                pkg.CMakeBuild()
                 pkg.CMakeInstall()
                 return nil
             })

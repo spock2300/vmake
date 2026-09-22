@@ -9,7 +9,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/pipeline"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 var doctorCmd = &cobra.Command{
@@ -36,6 +39,8 @@ but may become errors in future vmake versions:
 
 func init() {
 	RootCmd.AddCommand(doctorCmd)
+	doctorCmd.Flags().StringVar(&toolchainFlag, "toolchain", "", "toolchain to diagnose (default: project selection)")
+	doctorCmd.RegisterFlagCompletionFunc("toolchain", completeToolchain)
 }
 
 type doctorFinding struct {
@@ -51,7 +56,19 @@ func runDoctor() {
 		vlog.Fatal("getwd: %v", err)
 	}
 
-	findings := checkPlatform()
+	if projectDir := findProjectDirSoft(); projectDir != "" {
+		workDir = projectDir
+	}
+	cfg, err := config.Load(filepath.Join(workDir, ".vmake", "config.json"))
+	if err != nil {
+		vlog.Fatal("load project config: %v", err)
+	}
+	tcName := pipeline.ResolveToolchainName(cfg, toolchainFlag)
+	tc, tcErr := toolchain.GetManager().GetToolchain(tcName)
+	findings := checkPlatform(tc)
+	if tcErr != nil {
+		findings = append(findings, doctorFinding{Severity: "error", Category: "toolchain", Message: tcErr.Error()})
+	}
 
 	sources, err := buildscript.Scan(workDir)
 	if err != nil {
@@ -156,6 +173,7 @@ func hasSetRoot(path string) bool {
 var deprecatedAPIs = []struct {
 	old, new, category string
 }{
+	{"CrossTarget(", "TargetTriple(", "CrossTarget"},
 	{"SetExcludeLibs(", "AddExcludeLibs(", "SetExcludeLibs"},
 	{"PatchKConfig(", "SetKConfigPatches(", "PatchKConfig"},
 	{"SetSelectedPreset(", "SelectPreset(", "SetSelectedPreset"},

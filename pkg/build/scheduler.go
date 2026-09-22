@@ -130,7 +130,7 @@ func NewScheduler(
 	}
 
 	for pkgName, pd := range pkgDirs {
-		buildKey := BuildKey(tools.CC, mode, pkgOptions[pkgName], s.pkgExtra(pkgName))
+		buildKey := BuildKey(tools.CCKey(), mode, pkgOptions[pkgName], s.pkgExtra(pkgName))
 		info := &PkgInfo{
 			PkgDirs:  *pd,
 			BuildKey: buildKey,
@@ -532,12 +532,16 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 
 func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	modeFlags, modeDefines := api.GetModeFlags(s.mode)
+	var visibilityCFlags, visibilityCxxFlags []string
+	if pkg := s.packages[node.PkgName]; pkg != nil {
+		visibilityCFlags, visibilityCxxFlags = pkg.VisibilityFlags()
+	}
 
 	resolved := &ResolvedTarget{
 		Node:        node,
 		AllDefines:  append([]string{}, node.Target.Defines()...),
-		AllCFlags:   append([]string{}, node.Target.CFlags()...),
-		AllCxxFlags: append([]string{}, node.Target.CxxFlags()...),
+		AllCFlags:   append(visibilityCFlags, node.Target.CFlags()...),
+		AllCxxFlags: append(visibilityCxxFlags, node.Target.CxxFlags()...),
 		AllLdFlags:  append([]string{}, node.Target.LdFlags()...),
 		AllLinks:    append([]string{}, node.Target.Links()...),
 	}
@@ -611,6 +615,9 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 
 	if node.Target.Kind() == api.TargetBinary {
 		linkerScript := node.Target.LinkerScript()
+		if linkerScript != "" {
+			linkerScript = resolveWorkPath(pkgInfo.SourceDir, linkerScript)
+		}
 		if linkerScript == "" && node.Target.UseDepLinkerScript() {
 			for _, depFullName := range node.Deps {
 				depPkgName, _, _ := strings.Cut(depFullName, ":")
@@ -621,6 +628,18 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 					}
 					break
 				}
+			}
+		}
+		if node.Target.UseDepLinkerScript() && linkerScript == "" {
+			return nil, fmt.Errorf("%s: no dependency provides a linker script", node.FullName)
+		}
+		if linkerScript != "" {
+			info, err := os.Stat(linkerScript)
+			if err != nil {
+				return nil, fmt.Errorf("linker script %s: %w", linkerScript, err)
+			}
+			if !info.Mode().IsRegular() {
+				return nil, fmt.Errorf("linker script %s is not a regular file", linkerScript)
 			}
 		}
 		resolved.LinkerScript = linkerScript
@@ -680,10 +699,7 @@ func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string,
 
 	objRel := pkgInfo.OutputPath(filepath.Join(subdirObjects, objectName(src)))
 
-	lang := "c"
-	if glob.IsCppFile(src) {
-		lang = "cxx"
-	}
+	lang := sourceLanguage(src)
 
 	opts := &CompileOptions{
 		Includes: resolved.AllIncludes,
@@ -724,6 +740,13 @@ func (s *Scheduler) needRelink(resolved *ResolvedTarget, objs []string) bool {
 	if implib := importLibraryPath(absOutput, s.targetOS(), resolved.Node.Target.Kind()); implib != "" {
 		if _, err := os.Stat(implib); err != nil {
 			vlog.Info("  RELINK %s (import library missing)", resolved.Node.Target.Name())
+			return true
+		}
+	}
+
+	for _, path := range postLinkOutputPaths(resolved.Node.Target, workDir, resolved.OutputPath) {
+		if _, err := os.Stat(path); err != nil {
+			vlog.Info("  RELINK %s (post-link output %s missing)", resolved.Node.Target.Name(), path)
 			return true
 		}
 	}
@@ -783,10 +806,6 @@ func (s *Scheduler) realizePrebuilt(resolved *ResolvedTarget) error {
 
 	if _, err := os.Stat(absSrc); err != nil {
 		return fmt.Errorf("prebuilt file not found: %s: %w", absSrc, err)
-	}
-
-	if link, err := os.Readlink(absDst); err == nil && link == absSrc {
-		return nil
 	}
 
 	vlog.Info("  PREBUILT %s", filepath.Base(absDst))
@@ -1011,10 +1030,7 @@ func (s *Scheduler) postLink(resolved *ResolvedTarget) error {
 			return fmt.Errorf("post-link tool not found: %s", step.Tool)
 		}
 
-		args := make([]string, len(step.Args))
-		for i, a := range step.Args {
-			args[i] = strings.ReplaceAll(a, "{output}", resolved.OutputPath)
-		}
+		args := expandPostLinkArgs(step.Args, workDir, resolved.OutputPath)
 
 		vlog.Info("  %s %s", filepath.Base(tool), strings.Join(args, " "))
 		if _, err := iexec.RunInDir(tool, workDir, args...); err != nil {
@@ -1025,28 +1041,17 @@ func (s *Scheduler) postLink(resolved *ResolvedTarget) error {
 }
 
 func (s *Scheduler) resolvePostLinkTool(name string) string {
-	switch strings.ToUpper(name) {
-	case "OBJCOPY":
-		if s.resolvedTools.OBJCOPY != "" {
-			return s.resolvedTools.OBJCOPY
-		}
-	case "SIZE":
-		if s.resolvedTools.SIZE != "" {
-			return s.resolvedTools.SIZE
-		}
-	case "OBJDUMP":
-		if s.resolvedTools.OBJDUMP != "" {
-			return s.resolvedTools.OBJDUMP
-		}
-	case "NM":
-		if s.resolvedTools.NM != "" {
-			return s.resolvedTools.NM
-		}
-	case "STRIP":
-		if s.toolchain.Prefix != "" {
-			return s.toolchain.Prefix + "strip"
-		}
-		return "strip"
+	switch name {
+	case "objcopy":
+		return s.resolvedTools.OBJCOPY
+	case "size":
+		return s.resolvedTools.SIZE
+	case "objdump":
+		return s.resolvedTools.OBJDUMP
+	case "nm":
+		return s.resolvedTools.NM
+	case "strip":
+		return s.resolvedTools.STRIP
 	}
 	return ""
 }

@@ -6,6 +6,7 @@ func YaegiSymbols() map[string]reflect.Value {
 	return map[string]reflect.Value{
 		"Toolchain":          reflect.ValueOf((*Toolchain)(nil)),
 		"ToolchainDef":       reflect.ValueOf((*ToolchainDef)(nil)),
+		"DefinitionError":    reflect.ValueOf((*DefinitionError)(nil)),
 		"Tools":              reflect.ValueOf((*Tools)(nil)),
 		"DefaultFlags":       reflect.ValueOf((*DefaultFlags)(nil)),
 		"InstallConfig":      reflect.ValueOf((*InstallConfig)(nil)),

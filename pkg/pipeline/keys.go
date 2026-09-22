@@ -1,6 +1,9 @@
 package pipeline
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,10 +35,15 @@ type buildPrelude struct {
 }
 
 func prepareBuildPrelude(ctx *RuntimeContext) (*buildPrelude, error) {
-	cfg, err := resolveBuildConfig(ctx)
+	tcName := ResolveToolchainName(ctx.Config, ctx.ToolchainOverride)
+	tc, err := toolchain.GetManager().GetToolchain(tcName)
 	if err != nil {
 		return nil, err
 	}
+	if errs := toolchain.ValidateToolchain(tc); len(errs) > 0 {
+		return nil, fmt.Errorf("invalid toolchain %q: %w", tcName, errors.Join(errs...))
+	}
+	cfg := makeBuildConfig(ctx, tc, tcName)
 	tools, err := build.ResolveTools(cfg.Tc)
 	if err != nil {
 		return nil, err
@@ -187,6 +195,14 @@ func collectAllPkgOptions(ctx *RuntimeContext, needed map[string]bool) map[strin
 		result[name] = opts
 	}
 	return result
+}
+
+func packageFlagsHash(globalFlagsHash string, node *resolver.PackageNode) string {
+	if node == nil || node.Pkg == nil || !node.Pkg.DefaultVisibilityHidden() {
+		return globalFlagsHash
+	}
+	hash := sha256.Sum256([]byte(globalFlagsHash + "\x00default-visibility=hidden"))
+	return hex.EncodeToString(hash[:])[:16]
 }
 
 func localKeyExtra(globalFlagsHash, scriptHash string) string {
