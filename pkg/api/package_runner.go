@@ -58,7 +58,7 @@ func (p *Package) Env() map[string]string {
 		tc.Prefix = filepath.ToSlash(tc.Prefix)
 	}
 	env := tc.Env()
-	for key, value := range tc.CommandEnv() {
+	for key, value := range p.tc.CommandEnv() {
 		env[key] = value
 	}
 	env["CFLAGS"] = strings.TrimSpace(p.CFlags() + " " + p.MergedCFlags())

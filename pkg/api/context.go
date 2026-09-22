@@ -276,6 +276,12 @@ func (ctx *BuildContext) Exec(name string, args ...string) {
 		return
 	}
 	vlog.Info("  %s %s", name, strings.Join(args, " "))
+	if ctx.pkg != nil {
+		if err := ctx.pkg.runIn("", nil, name, args...); err != nil {
+			fatalScript(ctx.PackageName(), "Exec", "%v", err)
+		}
+		return
+	}
 	exec.RunFatal("", name, args...)
 }
 

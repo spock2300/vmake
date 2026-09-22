@@ -3,6 +3,8 @@ package toolchain
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 )
 
 type Toolchain struct {
@@ -72,8 +74,28 @@ func (t *Toolchain) Env() map[string]string {
 
 func (t *Toolchain) CommandEnv() map[string]string {
 	env := make(map[string]string)
-	if t != nil && t.InstallPath != "" {
-		path := filepath.Join(t.InstallPath, "bin")
+	if t == nil {
+		return env
+	}
+	var dirs []string
+	addDir := func(dir string) {
+		for _, existing := range dirs {
+			if existing == dir || runtime.GOOS == "windows" && strings.EqualFold(existing, dir) {
+				return
+			}
+		}
+		dirs = append(dirs, dir)
+	}
+	if t.InstallPath != "" {
+		addDir(filepath.Join(t.InstallPath, "bin"))
+	}
+	for _, compiler := range []string{t.Tools.CC, t.Tools.CXX} {
+		if filepath.IsAbs(compiler) {
+			addDir(filepath.Dir(compiler))
+		}
+	}
+	if len(dirs) > 0 {
+		path := strings.Join(dirs, string(os.PathListSeparator))
 		if inherited := os.Getenv("PATH"); inherited != "" {
 			path += string(os.PathListSeparator) + inherited
 		}

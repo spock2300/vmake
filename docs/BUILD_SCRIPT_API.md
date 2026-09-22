@@ -152,7 +152,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 
 `Prefix()` 原样返回工具链配置的前缀，例如 `arm-none-eabi-`，包含末尾的 `-`，不补充安装目录。拼接工具名时直接使用 `p.Prefix() + "gcc"`，不能再添加 `-`。迁移旧脚本时，应检查 `p.Prefix() + "-gcc"` 和传给外部工具链文件的前缀参数；要求目标三元组的参数使用 `TargetTriple()`。
 
-`p.Env()` 返回已解析的工具路径，并把工具链的 `InstallPath/bin` 前置到 `PATH`（仅作用于该命令，vmake 不修改进程级 `PATH`）。工具链声明安装目录时，`CROSS_COMPILE` 包含该目录下的 `bin` 路径和完整前缀，例如 `/path/to/toolchain/bin/arm-none-eabi-`，同样不能再添加 `-`。`CFLAGS`／`CXXFLAGS`／`LDFLAGS` 来自本包的默认与全局选项。CMake 工程优先使用 `p.CMakeConfigure()`，它会自动传递已解析的工具。仅在 API 无法表达的特殊操作中手动调用 CMake，并使用 `p.Env()["CC"]`、`p.Env()["CXX"]`、`p.Env()["AR"]` 等路径，避免从前缀重建工具名并依赖 PATH。
+`p.Env()` 返回已解析的工具路径，并把工具链的 `InstallPath/bin` 和绝对路径编译器 `CC`／`CXX` 所在目录前置到 `PATH`。`p.Run`、`p.RunIn`、`p.RunEnv`、`ctx.Exec` 及 CMake／Make 辅助方法也自动传递这个 `PATH`，外部程序启动的子进程会继承它；vmake 不修改进程级环境。`p.RunEnv` 显式提供的 `PATH` 优先，可以替换自动生成的路径。工具链声明安装目录时，`CROSS_COMPILE` 包含该目录下的 `bin` 路径和完整前缀，例如 `/path/to/toolchain/bin/arm-none-eabi-`，同样不能再添加 `-`。`CFLAGS`／`CXXFLAGS`／`LDFLAGS` 来自本包的默认与全局选项。CMake 工程优先使用 `p.CMakeConfigure()`，它会自动传递已解析的工具。仅在 API 无法表达的特殊操作中手动调用 CMake，并使用 `p.Env()["CC"]`、`p.Env()["CXX"]`、`p.Env()["AR"]` 等路径，避免从前缀重建工具名并依赖 PATH。
 
 ### RTOS 工具访问器
 

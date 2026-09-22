@@ -335,7 +335,7 @@ err := ctx.RunGitLFS(ctx.RepoDir, "pull", "--include=assets/toolchains/aarch64-g
 
 ### Toolchain.CommandEnv()
 
-`CommandEnv()` 返回把 `InstallPath/bin` 前置到 `PATH` 的环境变量映射，仅用于单条命令。vmake 不修改进程级 `PATH`，各工具链互不干扰。
+`CommandEnv()` 返回单条命令使用的环境变量映射：依次把 `InstallPath/bin`（如有）、绝对路径 `CC` 和 `CXX` 所在目录前置到继承的 `PATH`，重复的工具目录只添加一次。这样直接配置编译器绝对路径的工具链也能让 CMake、Make 及其子进程找到同目录的辅助程序。vmake 不修改进程级 `PATH`，各工具链互不干扰。
 
 ## 工具链资源
 
