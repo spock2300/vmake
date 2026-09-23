@@ -19,7 +19,7 @@ test_data/*/go.sum
 test_data/07_subbuild_codegen/output/
 test_data/15_subgraph_siblings/t15lib/include/
 
-test_linux/17_firmware/busybox/src/
+test_linux/17_firmware/busybox/src
 test_linux/17_firmware/linux/.config
 test_linux/17_firmware/linux/vmlinux
 test_linux/17_firmware/linux/zImage

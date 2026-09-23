@@ -1,6 +1,7 @@
 package build
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ type PkgInstallInfo struct {
 }
 
 type ArtifactInstaller struct {
+	ctx           context.Context
 	graph         *BuildGraph
 	pkgDirs       map[string]*api.PkgDirs
 	pkgInfo       map[string]*PkgInstallInfo
@@ -62,13 +64,24 @@ func (i *ArtifactInstaller) getEffectivePrefix(pkgInfo *PkgInstallInfo) string {
 	return i.defaultPrefix
 }
 
-func (i *ArtifactInstaller) InstallAll() error {
-	return i.graph.ForEachDefault(true, func(node *BuildNode) error {
+func (i *ArtifactInstaller) InstallAll(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	i.ctx = ctx
+	err := i.graph.ForEachDefault(true, func(node *BuildNode) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := i.installTarget(node); err != nil {
 			return err
 		}
 		return i.installExtraItems(node)
 	})
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
 }
 
 func (i *ArtifactInstaller) installTarget(node *BuildNode) error {
@@ -91,6 +104,10 @@ func (i *ArtifactInstaller) installTarget(node *BuildNode) error {
 	pkgInfo, ok := i.pkgInfo[pkgName]
 	if !ok {
 		return nil
+	}
+	pkgDirs, err := i.packageDirs(pkgName)
+	if err != nil {
+		return err
 	}
 
 	if !i.isSDK() && kind == api.TargetStatic {
@@ -140,8 +157,14 @@ func (i *ArtifactInstaller) installTarget(node *BuildNode) error {
 
 	i.installed[outputPath] = true
 
-	for _, outFile := range postLinkOutputPaths(target, i.pkgDirs[pkgName].SourceDir, outputPath) {
+	for _, outFile := range postLinkOutputPaths(target, pkgDirs.SourceDir, outputPath) {
+		if err := i.ctx.Err(); err != nil {
+			return err
+		}
 		if _, err := os.Stat(outFile); err != nil {
+			if !os.IsNotExist(err) {
+				return fmt.Errorf("install post-link output %s: %w", outFile, err)
+			}
 			continue
 		}
 		postDest := filepath.Join(filepath.Dir(destPath), filepath.Base(outFile))
@@ -199,6 +222,14 @@ func copyPublicIncludes(target *api.Target, baseDir, includeDir string) error {
 	return nil
 }
 
+func (i *ArtifactInstaller) packageDirs(pkgName string) (*api.PkgDirs, error) {
+	dirs := i.pkgDirs[pkgName]
+	if dirs == nil || dirs.SourceDir == "" {
+		return nil, fmt.Errorf("install %s: package directories are not resolved", pkgName)
+	}
+	return dirs, nil
+}
+
 func (i *ArtifactInstaller) installPublicIncludes(node *BuildNode, pkgInfo *PkgInstallInfo, prefix string) error {
 	if !i.isSDK() {
 		return nil
@@ -212,11 +243,18 @@ func (i *ArtifactInstaller) installExtraItems(node *BuildNode) error {
 	if !ok {
 		return nil
 	}
+	pkgDirs, err := i.packageDirs(pkgName)
+	if err != nil {
+		return err
+	}
 
 	prefix := i.getEffectivePrefix(pkgInfo)
-	pkgDir := i.pkgDirs[pkgName].SourceDir
+	pkgDir := pkgDirs.SourceDir
 
 	for _, item := range pkgInfo.InstallItems {
+		if err := i.ctx.Err(); err != nil {
+			return err
+		}
 		srcPath := filepath.Join(pkgDir, item.Src)
 		destPath := filepath.Join(prefix, item.Dest)
 

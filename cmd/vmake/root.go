@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/spock2300/vmake/internal/storage"
 	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/lockfile"
 	vlog "github.com/spock2300/vmake/pkg/log"
@@ -15,11 +18,13 @@ import (
 )
 
 var (
-	verbose     bool
-	veryVerbose bool
-	quiet       bool
-	yesFlag     bool
-	vmakeDir    string
+	verbose                 bool
+	veryVerbose             bool
+	quiet                   bool
+	yesFlag                 bool
+	vmakeDir                string
+	commandStorage          *storage.Session
+	commandStorageExclusive bool
 )
 
 func init() {
@@ -48,10 +53,16 @@ var RootCmd = &cobra.Command{
 	Short: "VMake - A Go-based C/C++ build system",
 	Long: `VMake is a minimal build system for C/C++ projects.
 It uses Go buildscripts for configuration and provides a TUI for option management.`,
-	Run: func(cmd *cobra.Command, args []string) {
-		runBuild(cmd, args)
-	},
+	RunE:         runBuild,
+	SilenceUsage: true,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		commandStorageExclusive = false
+		for current := cmd; current != nil; current = current.Parent() {
+			switch current.Name() {
+			case "clean", "distclean", "rebuild", "update":
+				commandStorageExclusive = true
+			}
+		}
 		switch {
 		case veryVerbose:
 			vlog.SetLevel(vlog.VeryVerbose)
@@ -67,9 +78,31 @@ It uses Go buildscripts for configuration and provides a TUI for option manageme
 }
 
 func Execute() {
-	if err := RootCmd.Execute(); err != nil {
+	err := RootCmd.Execute()
+	if commandStorage != nil {
+		closeErr := commandStorage.Close()
+		commandStorage = nil
+		if err == nil {
+			err = closeErr
+		}
+	}
+	if err != nil {
+		var interrupted *buildInterrupted
+		if errors.As(err, &interrupted) {
+			os.Exit(interrupted.code)
+		}
 		os.Exit(1)
 	}
+}
+
+func commandStorageLocks() *storage.Session {
+	if commandStorage != nil {
+		return commandStorage
+	}
+	var err error
+	commandStorage, err = storage.Acquire(findProjectDir(), getCacheDir(), commandStorageExclusive)
+	fatalErr(err)
+	return commandStorage
 }
 
 func pipelinePaths() *pipeline.Paths {
@@ -105,18 +138,41 @@ func mustLoadConfig(path string) *config.ConfigFile {
 }
 
 func resolveToConfig(ignoreLock bool) *RuntimeContext {
-	workDir, err := os.Getwd()
+	ctx, err := resolveToConfigContext(context.Background(), ignoreLock)
 	fatalErr(err)
+	return ctx
+}
+
+func resolveToConfigContext(execution context.Context, ignoreLock bool) (*RuntimeContext, error) {
+	locks := commandStorageLocks()
+	workDir, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
 	configPath := filepath.Join(workDir, ".vmake", "config.json")
-	cfg := mustLoadConfig(configPath)
-	fatalErr(ensureGitignore(findProjectDir()))
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureGitignore(findProjectDir()); err != nil {
+		return nil, err
+	}
 	cleanupLegacyStorage()
 	lockPath := getLockfilePath()
-	lock := mustLoadLockfile(lockPath)
+	lock, err := lockfile.LoadOrCreate(lockPath)
+	if err != nil {
+		return nil, err
+	}
 	ctx := pipeline.NewContext(resolveParams(ignoreLock, workDir, configPath, lockPath, lock, cfg))
-	fatalErr(pipeline.Require(ctx))
-	fatalErr(pipeline.Configure(ctx))
-	return ctx
+	ctx.Context = execution
+	ctx.Locks = locks
+	if err := pipeline.Require(ctx); err != nil {
+		return nil, err
+	}
+	if err := pipeline.Configure(ctx); err != nil {
+		return nil, err
+	}
+	return ctx, nil
 }
 
 func mustLoadLockfile(path string) *lockfile.Lock {
@@ -126,6 +182,7 @@ func mustLoadLockfile(path string) *lockfile.Lock {
 }
 
 func resolveToConfigBestEffort(ignoreLock bool) (*RuntimeContext, bool) {
+	locks := commandStorageLocks()
 	workDir, err := os.Getwd()
 	if err != nil {
 		vlog.Error("Error: %v", err)
@@ -140,6 +197,7 @@ func resolveToConfigBestEffort(ignoreLock bool) (*RuntimeContext, bool) {
 	lockPath := getLockfilePath()
 	lock := mustLoadLockfile(lockPath)
 	ctx := pipeline.NewContext(resolveParams(ignoreLock, workDir, configPath, lockPath, lock, cfg))
+	ctx.Locks = locks
 	if err := pipeline.Require(ctx); err != nil {
 		return ctx, false
 	}

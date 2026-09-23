@@ -134,53 +134,32 @@ func loadPlugins() {
 			continue
 		}
 		pluginCmd := &cobra.Command{Use: p.PluginName, Short: p.Info.Description}
-		addCFlags, commitCFlags := bufferPluginFlags(tcMgr.AddGlobalCFlags)
-		addCxxFlags, commitCxxFlags := bufferPluginFlags(tcMgr.AddGlobalCxxFlags)
-		addLdFlags, commitLdFlags := bufferPluginFlags(tcMgr.AddGlobalLdFlags)
+		registration := toolchain.NewRegistration(tcMgr)
 		ctx := &plugin.Context{
 			VMakeDir: vmakeDir, PluginDir: p.PluginDir,
 			RepoDir: filepath.Dir(p.PluginDir), CommandName: p.PluginName,
 			AddSubCommand:     func(cmd *cobra.Command) { pluginCmd.AddCommand(cmd) },
-			RegisterToolchain: tcMgr.RegisterToolchain,
-			GetToolchains: func() map[string]*toolchain.Toolchain {
-				tcs, _ := tcMgr.ListToolchains()
-				return tcs
-			},
-			SetOnMissing:      func(name string, fn func(string) (*toolchain.Toolchain, error)) { tcMgr.SetOnMissing(name, fn) },
-			AddGlobalCFlags:   addCFlags,
-			AddGlobalCxxFlags: addCxxFlags,
-			AddGlobalLdFlags:  addLdFlags,
+			RegisterToolchain: registration.RegisterToolchain,
+			GetToolchains:     registration.GetToolchains,
+			SetOnMissing:      func(name string, fn func(string) (*toolchain.Toolchain, error)) { registration.SetOnMissing(name, fn) },
+			AddGlobalCFlags:   registration.AddGlobalCFlags,
+			AddGlobalCxxFlags: registration.AddGlobalCxxFlags,
+			AddGlobalLdFlags:  registration.AddGlobalLdFlags,
 			DownloadFile:      assets.DownloadFile, ExtractToDir: assets.ExtractToDir, RunGitLFS: assets.RunGitLFS,
 		}
 		if err := plugin.RunMain(loaded, ctx); err != nil {
+			registration.Abort()
 			vlog.Error("%v", err)
 			continue
 		}
-		commitCFlags()
-		commitCxxFlags()
-		commitLdFlags()
+		if err := registration.Commit(); err != nil {
+			registration.Abort()
+			vlog.Error("plugin %s initialization: %v", p.PluginName, err)
+			continue
+		}
 		RootCmd.AddCommand(pluginCmd)
 	}
 	for _, err := range tcMgr.ToolchainErrors() {
 		vlog.Error("Unavailable toolchain: %s", formatToolchainDefinitionError(err))
 	}
-}
-
-func bufferPluginFlags(add func(...string)) (func(...string), func()) {
-	var pending []string
-	committed := false
-	return func(flags ...string) {
-			if committed {
-				add(flags...)
-				return
-			}
-			pending = append(pending, flags...)
-		}, func() {
-			if committed {
-				return
-			}
-			add(pending...)
-			pending = nil
-			committed = true
-		}
 }

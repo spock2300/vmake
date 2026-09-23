@@ -78,8 +78,8 @@ p.AddPatches("patches/fix-cross.patch", "patches/disable-avx.patch")
 - `AddPatches(paths ...string)` — append patch files to the list (applied in declaration order)
 - `SetPatches(paths ...string)` — replace the entire patch list
 - `SetSubmodules(true)` — clone git submodules before applying patches
-- **Remote packages**: patches are applied to a **content-addressed patched copy** at `~/.vmake/cache/<repo>/<pkg>/<version>/patched/<patchHash>/src` — the immutable version checkout is never modified, and identical patch sets share one patched copy across projects. The patch-set hash also feeds the BuildKey, so different patch sets never share build outputs.
-- **Local packages**: patches apply in place to `SrcDir()`; already-applied patches are detected (`IsPatchApplied`) and skipped across rebuilds.
+- **Remote packages**: patches apply to the writable member/build-key workspace at `~/.vmake/cache/v2/<repo>/<pkg>/<version>/out/<sha256(member)>/<buildKey>/work/repo`. The source seed remains immutable. Ordered patch content contributes to the build key.
+- **Local packages**: ordinary local sources are patched in place. Local SetGit uses a writable `BuildDir()/work/src` copy exposed through `SrcDir()`. Already-applied patches are detected and skipped.
 - Patch files are relative to the directory containing the package's `build.go`.
 
 Use this when wrapping a library that needs compilation fixes (e.g., cross-compilation `CFLAGS` in a Makefile, missing `#include` guards, hardcoded toolchain assumptions). Raw `os.WriteFile` patching (shown above) is better for simple single-line changes; git patches handle multi-file, multi-line modifications reliably.

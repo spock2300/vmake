@@ -67,7 +67,7 @@ Import: `github.com/spock2300/vmake/pkg/api`
 | `SetToolchain` | `(tc *toolchain.Toolchain)` | Set toolchain |
 | `AddPatches` | `(paths ...string)` | Git patches to apply |
 | `SetPatches` | `(paths ...string)` | Set git patches |
-| `SetConfigFiles` | `(files ...string)` | Config files for stamp invalidation |
+| `SetConfigFiles` | `(files ...string)` | Package configuration-file metadata; does not control target skipping |
 | `SetSrcDir` | `(dir string)` | Source code directory |
 | `SetScriptDir` | `(dir string)` | Build script directory |
 | `SetCfgVals` | `(vals map[string]any)` | Set config values |
@@ -89,12 +89,12 @@ Import: `github.com/spock2300/vmake/pkg/api`
 
 ### Build Helpers (run in OnBuild/OnInstall/SetBuildFunc)
 
-Exit-on-failure helpers use `exec.RunFatal` (call `os.Exit` on failure) and return **nothing**: `Run`, `RunIn`, `CMakeConfigure`, `CMakeBuild`, `CMakeInstall` (plus the `CleanContext` `Run`/`RunIn` wrappers). Real-error helpers: `RunEnv`, `Make`, `Configure`. Never `return` an exit-on-failure helper — call it as a statement.
+The following helpers return **nothing** and raise a script error on failure; the execution boundary catches it and releases resources: `Run`, `RunIn`, `CMakeConfigure`, `CMakeBuild`, `CMakeInstall` (plus the `CleanContext` `Run`/`RunIn` wrappers). Real-error helpers: `RunEnv`, `Make`, `Configure`. Never `return` a void-return helper — call it as a statement.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `Run` | `(name string, args ...string)` | Run command in BuildDir (os.Exit on failure) |
-| `RunIn` | `(dir, name string, args ...string)` | Run command in dir (os.Exit on failure) |
+| `Run` | `(name string, args ...string)` | Run command in BuildDir (script error on failure) |
+| `RunIn` | `(dir, name string, args ...string)` | Run command in dir (script error on failure) |
 | `RunEnv` | `(env map[string]string, name string, args ...string) error` | Run with extra env vars in BuildDir (**returns real error**) |
 | `CMakeConfigure` | `(extraArgs ...string)` | Configure SrcDir into CMakeBuildDir with CMakeInstallDir, resolved tools, build type, target settings, package visibility, and global flags |
 | `CMakeGlobalFlagsArgs` | `() []string` | Package visibility and global flag arguments for special manual CMake calls; CMakeConfigure already includes them |
@@ -103,10 +103,10 @@ Exit-on-failure helpers use `exec.RunFatal` (call `os.Exit` on failure) and retu
 | `MergedCFlags` | `(extra ...string) string` | Merge package visibility defaults + global C flags + extra, space-joined |
 | `MergedCxxFlags` | `(extra ...string) string` | Merge package visibility defaults + global C++ flags + extra, space-joined |
 | `MergedLdFlags` | `(extra ...string) string` | Merge global linker flags + extra, space-joined |
-| `CMakeBuild` | `(args ...string)` | Build CMakeBuildDir with the default configuration and CPU-count parallelism |
+| `CMakeBuild` | `(args ...string)` | Build CMakeBuildDir with the default configuration and session jobs budget |
 | `CMakeInstall` | `(args ...string)` | Install CMakeBuildDir using the same default configuration; accepts --component and other install options |
 | `Configure` | `(extraArgs ...string) error` | SrcDir/configure --prefix=... (+ --host when cross) |
-| `Make` | `(args ...string) error` | make -C BuildDir with `pkg.Env()` (**returns real error**; no implicit -j) |
+| `Make` | `(args ...string) error` | make -C BuildDir with `pkg.Env()` and the session jobs budget (**returns real error**) |
 
 Dry-run aware: in dry-run mode (query/check-symbols/install), all helpers log commands without executing them.
 
@@ -120,7 +120,7 @@ operations the helpers cannot express.
 - Defaults: `SrcDir()` for sources, `BuildDir()/cmake` for the build tree, remote
   `InstallDir()` or local `BuildDir()/staging` for installation. Use
   `CMakeBuildDir()` / `CMakeInstallDir()` when referring to artifacts. Directory
-  setters do not change `PkgDirs` or the existing stamp/publication rules.
+  setters do not change `PkgDirs`; void callbacks still run once per session.
 - `SetCMakeBuildType("MinSizeRel")` changes the configuration used by all three
   stages. Otherwise VMake debug/release mode chooses Debug/Release. Explicit
   `--config` on build or install overrides that invocation's configuration.
@@ -142,10 +142,13 @@ operations the helpers cannot express.
   flags. Explicit cache arguments for a
   flags variable replace its automatic value. Use `MergedCFlags(extra...)` when
   that override should retain package defaults and global flags. ASM flags must
-  be explicit. Make/Configure do not inject these compiler flags automatically.
+  be explicit. Make/Configure inherit the merged C/CXX/linker flags through `pkg.Env()`.
 - Windows defaults to Ninja unless a generator or configure preset is explicit. Build
-  defaults to CPU-count parallelism unless `-j`/`--parallel` or
-  `CMAKE_BUILD_PARALLEL_LEVEL` is supplied. No default make is resolved by the API.
+  uses the normalized VMake jobs budget (`-j0` means CPU count). Explicit
+  arguments, backend arguments and environment parallel settings must be positive
+  and no greater than that budget; smaller requests reduce parallelism. Bare
+  `-j` and inherited Make jobserver tokens are rejected. CMakeInstall stays serial
+  unless parallelism is requested. Default make is resolved only when make is used.
 
 ```go
 p.SetCMakeBuildType("MinSizeRel")
@@ -209,7 +212,7 @@ own build tree and publish the staged archive through the getter.
 | `SelectVersionMulti` | `(constraints []string) (string, error)` | Best version matching multiple constraints |
 | `Submodules()` | `bool` | Git submodules enabled |
 | `GetPatches()` | `[]string` | Git patch paths |
-| `ConfigFiles()` | `[]string` | Stamp-related config files |
+| `ConfigFiles()` | `[]string` | Package configuration-file metadata |
 | `DryRun()` | `bool` | Dry run mode |
 | `SetDep` | `(name string, pkg *InstalledPackage) *Package` | Set resolved dependency |
 
@@ -362,7 +365,7 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `BuildSubGraph(pkgName)` | Build package as independent sub-graph |
 | `DepOutput(depRef) string` | Get output path of dependency target |
 | `DepBuildDir(depRef) string` | Get build directory of dependency target |
-| `Exec(name, args...)` | Run command with logging (os.Exit on failure) |
+| `Exec(name, args...)` | Run command with logging (script error on failure) |
 | `GenerateConfigHeader()` | Set `genConfigHeader = true`; propagated to `Package.SetGenConfigHeader(true)` — generates `autoconf.h` during scheduler build |
 | `GenerateConfigDefines()` | Set `genConfigDefines = true`; on processing, reads `ImportConfigs()`, merges local + imported options, adds `-DCONFIG_*` defines to all targets |
 | `ExportConfig()` | Set `exportConfig = true`; propagated to `Package.SetExportConfig(true)` |
@@ -396,8 +399,8 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `SourceDir() string` | Package root directory |
 | `BuildDir() string` | Build output directory |
 | `SrcDir() string` | Source code directory (differs from SourceDir when `SetGit()` is used) |
-| `Run(name, args...)` | Run command in BuildDir (os.Exit on failure; returns nothing) |
-| `RunIn(dir, name, args...)` | Run command in specified directory (os.Exit on failure; returns nothing) |
+| `Run(name, args...)` | Run command in BuildDir (script error on failure; returns nothing) |
+| `RunIn(dir, name, args...)` | Run command in specified directory (script error on failure; returns nothing) |
 | `RunEnv(env, name, args...) error` | Run with custom environment (**returns real error**) |
 | `Make(args...) error` | Run make in BuildDir with `pkg.Env()` (**returns real error**) |
 | `PackageName() string` | Package name |

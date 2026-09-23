@@ -17,7 +17,8 @@ import (
 )
 
 type ScriptFS struct {
-	base string
+	base     string
+	baseFunc func() string
 }
 
 func New(base string) *ScriptFS {
@@ -26,14 +27,21 @@ func New(base string) *ScriptFS {
 
 // Base returns the directory relative paths resolve against.
 func (s *ScriptFS) Base() string {
+	if s.baseFunc != nil {
+		return s.baseFunc()
+	}
 	return s.base
+}
+
+func (s *ScriptFS) SetBaseFunc(fn func() string) {
+	s.baseFunc = fn
 }
 
 func (s *ScriptFS) resolve(p string) string {
 	if p == "" || filepath.IsAbs(p) {
 		return p
 	}
-	return filepath.Join(s.base, p)
+	return filepath.Join(s.Base(), p)
 }
 
 // Exports returns yaegi symbol overrides for "os", "os/exec" and
@@ -92,7 +100,7 @@ func (s *ScriptFS) rename(oldpath, newpath string) error {
 }
 func (s *ScriptFS) readDir(name string) ([]os.DirEntry, error) { return os.ReadDir(s.resolve(name)) }
 
-func (s *ScriptFS) getwd() (string, error) { return s.base, nil }
+func (s *ScriptFS) getwd() (string, error) { return s.Base(), nil }
 
 func (s *ScriptFS) chdir(string) error {
 	return fmt.Errorf("os.Chdir is not allowed in interpreted scripts (breaks parallel builds); use absolute paths or p.RunIn(dir, ...)")
@@ -107,7 +115,7 @@ func (s *ScriptFS) createTemp(dir, pattern string) (*os.File, error) {
 func (s *ScriptFS) command(name string, args ...string) *exec.Cmd {
 	cmd := exec.Command(name, args...)
 	if cmd.Dir == "" {
-		cmd.Dir = s.base
+		cmd.Dir = s.Base()
 	}
 	return cmd
 }

@@ -6,10 +6,10 @@ import (
 	"github.com/traefik/yaegi/interp"
 
 	"github.com/spock2300/vmake/internal/gosrc"
+	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/internal/yaegibase"
 	"github.com/spock2300/vmake/pkg/api"
-	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -39,14 +39,16 @@ func LoadBuildScriptWithTrust(src Source, trustChecker ScriptTrustChecker) (*api
 	return loadBuildScript(src)
 }
 
-func loadBuildScript(src Source) (*api.Package, error) {
+func loadBuildScript(src Source) (_ *api.Package, err error) {
+	defer scriptcall.Recover(&err)
 	i, err := yaegibase.New(yaegiExports())
 	if err != nil {
 		return nil, err
 	}
 
+	scriptFS := scriptfs.New(src.Dir)
 	if src.Dir != "" {
-		if err := i.Use(scriptfs.New(src.Dir).Exports()); err != nil {
+		if err := i.Use(scriptFS.Exports()); err != nil {
 			return nil, fmt.Errorf("use script fs %s: %w", src.Dir, err)
 		}
 	}
@@ -70,6 +72,12 @@ func loadBuildScript(src Source) (*api.Package, error) {
 	}
 
 	pkg := api.NewPackage()
+	scriptFS.SetBaseFunc(func() string {
+		if dir := pkg.SourceDir(); dir != "" {
+			return dir
+		}
+		return src.Dir
+	})
 	pkg.SetName(src.Name)
 	if dir := src.Dir; dir != "" {
 		pkg.SetScriptDir(dir)
@@ -114,7 +122,7 @@ func runScriptFunc(pkgName string, fn func()) {
 					Err:     fmt.Errorf("%v", r),
 				}
 			}
-			vlog.Fatal("%v", bse)
+			panic(bse)
 		}
 	}()
 	fn()

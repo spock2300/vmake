@@ -1,6 +1,7 @@
 package build
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,8 +12,12 @@ import (
 )
 
 func gnuRunner(env map[string]string) cmdRunner {
+	return gnuRunnerContext(context.Background(), env)
+}
+
+func gnuRunnerContext(ctx context.Context, env map[string]string) cmdRunner {
 	run := func(name, dir string, args ...string) ([]byte, error) {
-		return iexec.RunWithOptions(name, args, iexec.RunOptions{Dir: dir, Env: env})
+		return iexec.RunWithOptions(name, args, iexec.RunOptions{Dir: dir, Env: env, Context: ctx})
 	}
 	return func(name, dir string, args ...string) ([]byte, error) {
 		if runtime.GOOS == "windows" {

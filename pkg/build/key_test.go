@@ -1,6 +1,7 @@
 package build
 
 import (
+	"context"
 	"testing"
 )
 
@@ -67,6 +68,29 @@ func TestBuildKeyDiffersOnExtra(t *testing.T) {
 	}
 	if BuildKey("gcc", "debug", opts, "") == k1 {
 		t.Error("BuildKey should differ between empty and non-empty extra")
+	}
+}
+
+func TestSchedulerUpdatesBuildKeysWhenPackageExtraIsBound(t *testing.T) {
+	s := &Scheduler{ctx: context.Background(),
+		resolvedTools: &ResolvedTools{CC: "/tool/cc", identity: "tool-content"}, mode: "debug",
+		pkgOptions: map[string]map[string]any{"p": {"feature": true}},
+		pkgs: map[string]*PkgInfo{
+			"p": {BuildKey: "unbound", OutputDir: "/stable/output"},
+			"q": {BuildKey: "unbound"},
+		},
+	}
+	extra := map[string]string{"p": "revision-and-flags"}
+	s.SetPkgKeyExtra(extra)
+	for name, info := range s.pkgs {
+		want := BuildKey(s.toolIdentity(), s.mode, s.pkgOptions[name], extra[name])
+		if info.BuildKey != want {
+			t.Fatalf("%s key = %s, want %s", name, info.BuildKey, want)
+		}
+	}
+	extra["p"] = "later-mutation"
+	if s.pkgExtra("p") != "revision-and-flags" || s.pkgs["p"].OutputDir != "/stable/output" {
+		t.Fatal("binding changed stable output or retained mutable extra map")
 	}
 }
 

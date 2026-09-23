@@ -95,8 +95,8 @@ p.OnBuild(func(ctx *api.BuildContext) {
 Import `path/filepath` for this example. The CMake archive lives in
 `CMakeBuildDir()`, the installed archive in `CMakeInstallDir()`, and VMake publishes
 a symlink at `BuildDir()/libfoo.a`. Separate paths avoid two build systems claiming
-the same output. These directory settings do not change existing stamp or remote
-package publication behavior.
+the same output. Targets with post-link steps copy the prebuilt archive before modifying it.
+Void callbacks run once per session and CMake performs its own incremental checks.
 
 ## Autotools Example
 
@@ -105,10 +105,13 @@ p.OnBuild(func(ctx *api.BuildContext) {
     ctx.Target("libfoo").
         SetKind(api.TargetVoid).
         SetBuildFunc(func(p *api.Package) error {
-            p.Configure("--disable-static", "--enable-shared")
-            p.RunIn(p.SrcDir(), "make", "-j4")
-            p.RunIn(p.SrcDir(), "make", "install")
-            return nil
+            if err := p.Configure("--disable-static", "--enable-shared"); err != nil {
+                return err
+            }
+            if err := p.Make("-C", filepath.ToSlash(p.SrcDir())); err != nil {
+                return err
+            }
+            return p.Make("-C", filepath.ToSlash(p.SrcDir()), "install")
         })
 })
 ```
@@ -122,18 +125,19 @@ p.OnBuild(func(ctx *api.BuildContext) {
     ctx.Target("customlib").
         SetKind(api.TargetVoid).
         SetBuildFunc(func(p *api.Package) error {
-            p.RunIn(p.SrcDir(), "make", "-j4")
-            p.RunIn(p.SrcDir(), "make", "install", "PREFIX="+p.InstallDir())
-            return nil
+            if err := p.Make("-C", filepath.ToSlash(p.SrcDir())); err != nil {
+                return err
+            }
+            return p.Make("-C", filepath.ToSlash(p.SrcDir()), "install", "PREFIX="+filepath.ToSlash(p.InstallDir()))
         })
 })
 ```
 
-`p.Run`/`p.RunIn` exit the process on failure and return nothing — call them as statements and `return nil` at the end (use `p.RunEnv` if you need the error). `p.Make` runs with `-C <BuildDir>` and applies when a Makefile exists there. CMake projects use `CMakeBuild` / `CMakeInstall` for their selected generator and build directory. Keep source-tree make commands in `SrcDir()`.
+`p.Run`/`p.RunIn` raise a script error on failure and return nothing; execution boundaries release resources — call them as statements and `return nil` at the end (use `p.RunEnv` if you need the error). `p.Make` starts with `-C <BuildDir>`; pass a second `-C` with the absolute `SrcDir()` when building in the source tree. Import `path/filepath` and normalize Make path arguments with `filepath.ToSlash`. The helper supplies the session jobs budget. CMake projects use `CMakeBuild` / `CMakeInstall` for their selected generator and build directory.
 
-## Stamp-Based Skip with SetConfigFiles
+## External Incremental Builds
 
-For local packages using `TargetVoid` (no `InstallDir`), vmake uses a `.vmake_stamp` file in `BuildDir` to skip already-built targets. Use `SetConfigFiles` to declare files that invalidate the stamp:
+VMake calls each local or remote `TargetVoid` once per build session. Make/CMake decides which work is incremental. `SetConfigFiles` stores package configuration metadata; it does not skip callbacks or declare target inputs:
 
 ```go
 p.OnPackage(func(p *api.Package) {
@@ -152,7 +156,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 })
 ```
 
-The stamp becomes stale when config file content changes (SHA-256 hash comparison of registered files), the source git revision changes, or the stamp is deleted.
+Synchronous subgraphs and the main graph share completed target state. A later invocation calls the callback again, including after a failed build or a partially populated installation directory.
 
 ## KConfig for Firmware Wrappers
 
@@ -175,7 +179,10 @@ p.OnBuild(func(ctx *api.BuildContext) {
     ctx.Target("uboot").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
         srcDir := pkg.SourceDir()
         pkg.EnsureConfig(srcDir)
-        pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
+        const ownFlags = "ifndef VMAKE_FIRMWARE_FLAGS_RESET\nundefine CFLAGS\nundefine CXXFLAGS\nundefine LDFLAGS\nexport VMAKE_FIRMWARE_FLAGS_RESET := 1\nendif"
+        if err := pkg.Make("-C", filepath.ToSlash(srcDir), "--eval", ownFlags); err != nil {
+            return err
+        }
         return nil
     })
 })
@@ -185,11 +192,11 @@ p.OnBuild(func(ctx *api.BuildContext) {
 
 - `p.Run` / `p.Make` default to the package's `BuildDir`; CMake helpers manage `CMakeBuildDir()` across all three stages
 - `p.SrcDir()` — the downloaded source tree (use this for source files, config headers, patching)
-- `p.SourceDir()` — where the package's `build.go` lives (registry package metadata directory)
+- `p.SourceDir()` — package root; remote packages receive their writable member workspace
 - `p.BuildDir()` — scratch directory for intermediate files
 - `p.InstallDir()` — where headers/libs/binaries should be installed to
 - `p.CMakeBuildDir()` / `p.CMakeInstallDir()` — actual CMake build tree and installation prefix
-- Already-installed packages are automatically skipped (non-empty `InstallDir`)
+- Void callbacks run once per session even with a nonempty `InstallDir`; Make/CMake performs incremental checks
 - `OnPackage` with `SetGit`/`AddVersion` is ONLY for registry repo packages — native repo packages must NOT use these
 - Local packages can also use `OnPackage` for metadata (`SetDescription`, `SetLicense`, `SetHomepage`) — it runs for all packages
 

@@ -5,9 +5,11 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
-	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/buildruntime"
+	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/buildscript"
@@ -20,6 +22,7 @@ import (
 )
 
 type BuildResult struct {
+	SubGraphRoots map[string]bool
 	AllTargets    map[string]map[string]*api.Target
 	Graph         *build.BuildGraph
 	PkgDirs       map[string]*api.PkgDirs
@@ -34,22 +37,33 @@ type BuildResult struct {
 }
 
 type buildPhaseState struct {
-	ctx             *RuntimeContext
-	includeTests    bool
-	jobs            int
-	keepGoing       bool
-	globalFlagsHash string
+	session          *build.Session
+	budget           *buildruntime.Budget
+	bindings         map[string]*packageBinding
+	declarations     map[string]uint8
+	declarationPath  []string
+	scopeValues      map[string]any
+	subGraphErrors   map[string]error
+	subGraphRequests map[string]string
+	globalFlags      [4][]string
+	ctx              *RuntimeContext
+	includeTests     bool
+	jobs             int
+	keepGoing        bool
+	globalFlagsHash  string
 
-	cfg           *buildConfig
-	needed        map[string]bool
-	pkgDirs       map[string]*api.PkgDirs
-	remote        *remoteVersionState
-	patchHashes   map[string]string
-	scriptHashes  map[string]string
-	allPkgOptions map[string]map[string]any
-	toolCache     map[api.Platform]*build.ResolvedTools
-	allTargets    map[string]map[string]*api.Target
-	pkgMetaMap    map[string]build.PkgBuildMeta
+	cfg            *buildConfig
+	needed         map[string]bool
+	pkgDirs        map[string]*api.PkgDirs
+	remote         *remoteVersionState
+	patchHashes    map[string]string
+	sourceSeeds    map[string]string
+	sourceCommits  map[string]string
+	sourceVersions map[string]string
+	scriptHashes   map[string]string
+	allPkgOptions  map[string]map[string]any
+	allTargets     map[string]map[string]*api.Target
+	pkgMetaMap     map[string]build.PkgBuildMeta
 
 	subGraphBuilt map[string]bool
 	buildCtxs     map[string]*api.BuildContext
@@ -69,13 +83,20 @@ type BuildOptions struct {
 
 func newBuildPhaseState(ctx *RuntimeContext, opts BuildOptions) *buildPhaseState {
 	return &buildPhaseState{
-		ctx:           ctx,
-		includeTests:  opts.IncludeTests,
-		jobs:          opts.Jobs,
-		keepGoing:     opts.KeepGoing,
-		patchHashes:   make(map[string]string),
-		scriptHashes:  make(map[string]string),
-		subGraphBuilt: make(map[string]bool),
+		ctx:            ctx,
+		session:        build.NewSession(ctx.Context),
+		bindings:       make(map[string]*packageBinding),
+		declarations:   make(map[string]uint8),
+		subGraphErrors: make(map[string]error),
+		includeTests:   opts.IncludeTests,
+		jobs:           opts.Jobs,
+		keepGoing:      opts.KeepGoing,
+		patchHashes:    make(map[string]string),
+		sourceSeeds:    make(map[string]string),
+		sourceCommits:  make(map[string]string),
+		sourceVersions: make(map[string]string),
+		scriptHashes:   make(map[string]string),
+		subGraphBuilt:  make(map[string]bool),
 	}
 }
 
@@ -94,8 +115,19 @@ func (s *buildPhaseState) scriptHashFor(name string) (string, error) {
 	return h, nil
 }
 
-func RunBuild(ctx *RuntimeContext, opts BuildOptions) (*BuildResult, error) {
+func RunBuild(ctx *RuntimeContext, opts BuildOptions) (_ *BuildResult, err error) {
+	defer scriptcall.Recover(&err)
+	if ctx.Context != nil && ctx.Context.Err() != nil {
+		return nil, ctx.Context.Err()
+	}
+	if opts.Jobs < 0 {
+		return nil, fmt.Errorf("jobs must be non-negative")
+	}
+	if opts.Jobs == 0 {
+		opts.Jobs = runtime.NumCPU()
+	}
 	s := newBuildPhaseState(ctx, opts)
+	s.budget = &buildruntime.Budget{Jobs: opts.Jobs}
 
 	if err := s.resolveBuildConfig(); err != nil {
 		return nil, err
@@ -104,8 +136,13 @@ func RunBuild(ctx *RuntimeContext, opts BuildOptions) (*BuildResult, error) {
 	if err := s.filterNeeded(); err != nil {
 		return nil, err
 	}
+	if err := s.acquireStorageOwners(); err != nil {
+		return nil, err
+	}
 
 	applyGlobalFlagsFromNeeded(ctx, s.needed)
+	mgr := toolchain.GetManager()
+	s.globalFlags = [4][]string{mgr.GetGlobalCFlags(), mgr.GetGlobalCxxFlags(), mgr.GetGlobalLdFlags(), mgr.GetGlobalLinks()}
 
 	s.globalFlagsHash = build.GlobalFlagsHash()
 
@@ -126,6 +163,9 @@ func RunBuild(ctx *RuntimeContext, opts BuildOptions) (*BuildResult, error) {
 	if err := s.restoreKConfigs(); err != nil {
 		return nil, err
 	}
+	if err := os.Remove(filepath.Join(ctx.Paths.ProjectDir, "build", "compile_commands.json")); err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
 
 	if err := s.executeOnBuild(); err != nil {
 		return nil, err
@@ -136,7 +176,8 @@ func RunBuild(ctx *RuntimeContext, opts BuildOptions) (*BuildResult, error) {
 	return s.buildAndRunPipeline()
 }
 
-func UpdateLock(ctx *RuntimeContext) error {
+func UpdateLock(ctx *RuntimeContext) (err error) {
+	defer scriptcall.Recover(&err)
 	s := newBuildPhaseState(ctx, BuildOptions{})
 
 	cfg, err := resolveExistingBuildConfig(ctx)
@@ -146,6 +187,9 @@ func UpdateLock(ctx *RuntimeContext) error {
 	s.cfg = cfg
 
 	if err := s.filterNeeded(); err != nil {
+		return err
+	}
+	if err := s.acquireStorageOwners(); err != nil {
 		return err
 	}
 
@@ -242,10 +286,20 @@ func (s *buildPhaseState) computeDirsAndOptions() {
 }
 
 func (s *buildPhaseState) toolsForPackage(name string) (*build.ResolvedTools, error) {
-	if s.toolCache == nil {
-		s.toolCache = make(map[api.Platform]*build.ResolvedTools)
+	tcName := resolvePkgToolchain(s.ctx.Config, name, s.cfg.TcName)
+	tc := s.cfg.Tc
+	if tcName != s.cfg.TcName {
+		var err error
+		tc, err = toolchain.GetManager().SelectToolchain(tcName)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return resolvePackageTools(s.ctx, name, s.cfg.Tc, s.toolCache)
+	platform, err := PackagePlatform(s.ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	return s.session.ResolveTools(tc, platform)
 }
 
 func (s *buildPhaseState) prepareAllPackages() error {
@@ -278,7 +332,10 @@ func (s *buildPhaseState) prepareAllPackages() error {
 		if err != nil {
 			return err
 		}
-		s.pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, resolvedTools.CCKey(), s.cfg.Mode, opts, packageFlagsHash(s.globalFlagsHash, node), scriptHash)
+		if err := s.selectPackageSource(name); err != nil {
+			return fmt.Errorf("select source for %s: %w", name, err)
+		}
+		s.pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, resolvedTools.CCKey(), s.cfg.Mode, opts, packageFlagsHash(s.globalFlagsHash, node), scriptHash, s.sourceCommits[name])
 	}
 
 	depsDir := s.ctx.Paths.DepsDir
@@ -289,6 +346,7 @@ func (s *buildPhaseState) prepareAllPackages() error {
 	if err := s.downloadRemoteSources(remote, depsDir); err != nil {
 		return err
 	}
+	s.remote = remote
 
 	if err := s.setupSubPackageDirs(depsDir); err != nil {
 		return err
@@ -302,7 +360,6 @@ func (s *buildPhaseState) prepareAllPackages() error {
 		return err
 	}
 
-	s.remote = remote
 	return nil
 }
 
@@ -315,7 +372,7 @@ func (s *buildPhaseState) registryWrapperCommit(name string) (string, error) {
 	if !mgr.Exists(repoName) {
 		return "", nil
 	}
-	commit, err := repo.GetCurrentCommit(mgr.Path(repoName))
+	commit, err := repo.GetCurrentCommitContext(s.ctx.Context, mgr.Path(repoName))
 	if err != nil {
 		return "", fmt.Errorf("read registry %s HEAD: %w", repoName, err)
 	}
@@ -330,6 +387,16 @@ func (s *buildPhaseState) writeLockfile() error {
 	for _, name := range s.ctx.Resolver.GetOrder() {
 		node := s.ctx.DepGraph.Packages[name]
 		if node.IsLocal() {
+			if version := s.sourceVersions[name]; version != "" {
+				updated.Set(name, &lockfile.LockedPkg{Version: version, Commit: s.sourceCommits[name], Source: "git"})
+			} else if node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 && len(node.Pkg.Versions()) > 0 && s.ctx.Lock != nil {
+				if old, ok := s.ctx.Lock.Get(name); ok && old.Source == "git" {
+					updated.Set(name, old)
+				}
+			}
+			continue
+		}
+		if _, isSub := s.ctx.Resolver.SubParents()[name]; isSub {
 			continue
 		}
 		entry := s.remote.entries[name]
@@ -382,7 +449,7 @@ func (s *buildPhaseState) writeLockfile() error {
 
 func (s *buildPhaseState) downloadRemoteSources(remote *remoteVersionState, depsDir string) error {
 	subParents := s.ctx.Resolver.SubParents()
-	sourceMgr := repo.NewSourceManager(depsDir, s.ctx.Paths.CacheDir)
+	sourceMgr := repo.NewSourceManager(depsDir, s.ctx.Paths.CacheDir).WithSession(s.ctx.Locks).WithContext(s.ctx.Context)
 	for _, name := range s.ctx.Resolver.GetOrder() {
 		node := s.ctx.DepGraph.Packages[name]
 		if !s.needed[name] || node.IsLocal() {
@@ -460,6 +527,9 @@ func (s *buildPhaseState) downloadRemoteSources(remote *remoteVersionState, deps
 		}
 		s.pkgDirs[name] = makeRemotePkgDirs(res.VersionDir, res.LocalSrc, resolvedTools.CCKey(), s.cfg.Mode, s.allPkgOptions[name],
 			entryCfg.Version, res.Commit, packageFlagsHash(s.globalFlagsHash, node), patchHash, scriptHash)
+		if err := prepareRemoteWorkspace(sourceMgr, node, s.pkgDirs[name], res.VersionDir, res.Commit, patchHash); err != nil {
+			return fmt.Errorf("prepare workspace for %s: %w", name, err)
+		}
 	}
 	return nil
 }
@@ -480,25 +550,9 @@ func (s *buildPhaseState) cloneLocalGitSources() error {
 		if !s.needed[name] || !node.IsLocal() || node.Pkg == nil {
 			continue
 		}
-		gitURLs := node.Pkg.GitURLs()
-		if len(gitURLs) == 0 {
-			continue
+		if err := s.preparePackageWorkspace(name); err != nil {
+			return fmt.Errorf("prepare workspace for %s: %w", name, err)
 		}
-		if isLegacyRealSrcDir(node) {
-			vlog.Info("  %s (source exists)", name)
-			continue
-		}
-		sourceMgr := repo.NewSourceManager(s.ctx.Paths.DepsDir, s.ctx.Paths.CacheDir)
-		srcDir, err := sourceMgr.EnsureURL(gitURLs[0])
-		if err != nil {
-			return fmt.Errorf("failed to download source for %s: %w", name, err)
-		}
-		localSrc := filepath.Join(node.Source.Dir, "src")
-		if err := fs.EnsureSymlink(localSrc, srcDir); err != nil {
-			return fmt.Errorf("link source for %s: %w", name, err)
-		}
-		vlog.Info("  %s -> %s", name, localSrc)
-		node.Pkg.SetSrcDir(localSrc)
 	}
 	return nil
 }
@@ -526,63 +580,60 @@ func (s *buildPhaseState) setupSubPackageDirs(depsDir string) error {
 			return err
 		}
 
-		parentDirs, ok := s.pkgDirs[rootParent]
-		if !ok || parentDirs.SourceDir == "" {
-			continue
-		}
-
 		relPath := strings.TrimPrefix(name, rootParent+"/")
-		sourceDir := filepath.Join(parentDirs.SourceDir, relPath)
-
+		parentNode := s.ctx.DepGraph.Packages[rootParent]
+		parentEntry := config.GetEntry(s.ctx.Config, rootParent)
+		version, commit, ok := remoteVersionKey(s.ctx, rootParent, parentNode, parentEntry)
+		if !ok {
+			return fmt.Errorf("native parent %s has no resolved version", rootParent)
+		}
+		if recorded := s.remote.commits[rootParent]; recorded != "" {
+			commit = recorded
+		}
+		versionDir := s.remote.versionDirs[rootParent]
+		if versionDir == "" {
+			versionDir = remoteVersionDir(s.ctx, rootParent, version)
+		}
+		s.remote.versionDirs[rootParent] = versionDir
+		s.remote.commits[rootParent] = commit
+		s.remote.versionDirs[name] = versionDir
+		s.remote.commits[name] = commit
 		opts := s.allPkgOptions[name]
 		scriptHash, err := s.scriptHashFor(name)
 		if err != nil {
 			return err
 		}
-		s.pkgDirs[name] = makeLocalPkgDirs(sourceDir, resolvedTools.CCKey(), s.cfg.Mode, opts, packageFlagsHash(s.globalFlagsHash, node), scriptHash)
+		patchHash, err := patchHashForNode(name, node)
+		if err != nil {
+			return err
+		}
+		s.patchHashes[name] = patchHash
+		if err := s.selectPackageSource(name); err != nil {
+			return fmt.Errorf("select source for %s: %w", name, err)
+		}
+		s.pkgDirs[name] = makeRemotePkgDirs(versionDir, node.Source.Dir, resolvedTools.CCKey(), s.cfg.Mode, opts,
+			version, s.packageCommitKey(name, commit), packageFlagsHash(s.globalFlagsHash, node), patchHash, scriptHash, relPath)
+		manager := repo.NewSourceManager(depsDir, s.ctx.Paths.CacheDir).WithSession(s.ctx.Locks).WithContext(s.ctx.Context)
+		if err := prepareRemoteWorkspace(manager, node, s.pkgDirs[name], versionDir, commit, patchHash); err != nil {
+			return fmt.Errorf("prepare workspace for %s: %w", name, err)
+		}
 	}
 	return nil
 }
 
 func (s *buildPhaseState) cloneSubPackageGitSources() error {
-	subParents := s.ctx.Resolver.SubParents()
-	if len(subParents) == 0 {
-		return nil
-	}
-
 	for _, name := range s.ctx.Resolver.GetOrder() {
-		if _, isSub := subParents[name]; !isSub {
+		if _, isSub := s.ctx.Resolver.SubParents()[name]; !isSub || !s.needed[name] {
 			continue
 		}
-		node := s.ctx.DepGraph.Packages[name]
-		if !s.needed[name] || node.Pkg == nil {
-			continue
+		if err := s.preparePackageWorkspace(name); err != nil {
+			return fmt.Errorf("prepare workspace for %s: %w", name, err)
 		}
-		gitURLs := node.Pkg.GitURLs()
-		if len(gitURLs) == 0 {
-			continue
-		}
-		dirs, ok := s.pkgDirs[name]
-		if !ok || dirs.SourceDir == "" {
-			continue
-		}
-		srcDir := filepath.Join(dirs.SourceDir, "src")
-		if _, err := os.Stat(filepath.Join(srcDir, ".git")); err == nil {
-			node.Pkg.SetSrcDir(srcDir)
-			vlog.Info("  %s (source exists)", name)
-			continue
-		}
-		vlog.Info("  %s -> %s", name, srcDir)
-		if err := repo.Clone(gitURLs[0], srcDir); err != nil {
-			return fmt.Errorf("failed to download source for %s: %w", name, err)
-		}
-		node.Pkg.SetSrcDir(srcDir)
 	}
 	return nil
 }
 
 func (s *buildPhaseState) applyPatchesToNeeded() error {
-	sourceMgr := repo.NewSourceManager(s.ctx.Paths.DepsDir, s.ctx.Paths.CacheDir)
 	for _, name := range s.ctx.Resolver.GetOrder() {
 		node := s.ctx.DepGraph.Packages[name]
 		if !s.needed[name] || node.Pkg == nil || node.Source == nil {
@@ -591,24 +642,8 @@ func (s *buildPhaseState) applyPatchesToNeeded() error {
 		if len(node.Pkg.GetPatches()) == 0 {
 			continue
 		}
-		if node.IsLocal() {
-			if err := applyPatches(node.Pkg, node.Pkg.SrcDir()); err != nil {
-				return fmt.Errorf("apply patches for %s: %w", name, err)
-			}
-			continue
-		}
-		versionDir := s.remote.versionDirs[name]
-		if versionDir == "" {
-			return fmt.Errorf("apply patches for %s: no materialized version dir", name)
-		}
-		patchedSrc, err := sourceMgr.EnsurePatched(node.Pkg, versionDir)
-		if err != nil {
+		if err := applyPatchesContext(s.ctx.Context, node.Pkg, node.Pkg.SrcDir()); err != nil {
 			return fmt.Errorf("apply patches for %s: %w", name, err)
-		}
-		vlog.Info("  %s: patched source at %s", name, patchedSrc)
-		node.Pkg.SetSrcDir(patchedSrc)
-		if dirs := s.pkgDirs[name]; dirs != nil {
-			dirs.SourceDir = patchedSrc
 		}
 	}
 	return nil
@@ -641,20 +676,28 @@ func (s *buildPhaseState) executeOnBuild() error {
 		return err
 	}
 
-	for pkgName := range s.subGraphBuilt {
-		delete(s.allTargets, pkgName)
-	}
 	return nil
 }
 
 func (s *buildPhaseState) executeMainPackages(filter map[string]bool) error {
 	for _, name := range s.ctx.Resolver.GetOrder() {
+		if s.ctx.Context != nil && s.ctx.Context.Err() != nil {
+			return s.ctx.Context.Err()
+		}
 		node := s.ctx.DepGraph.Packages[name]
 		if !filter[name] || node.Pkg == nil {
 			continue
 		}
-		if _, done := s.allTargets[name]; done {
+		if s.declarations[name] == 2 {
+			if s.scopeValues != nil {
+				if _, err := s.bindPackage(name); err != nil {
+					return err
+				}
+			}
 			continue
+		}
+		if s.declarations[name] != 0 {
+			return fmt.Errorf("recursive or failed OnBuild declaration: %s -> %s", strings.Join(s.declarationPath, " -> "), name)
 		}
 		if err := s.executeOnePackage(name, node); err != nil {
 			return err
@@ -663,129 +706,149 @@ func (s *buildPhaseState) executeMainPackages(filter map[string]bool) error {
 	return nil
 }
 
-func (s *buildPhaseState) executeOnePackage(name string, node *resolver.PackageNode) error {
-	buildCtx, err := newBuildContext(s.ctx, name, s.cfg.GlobalValues)
+func (s *buildPhaseState) executeOnePackage(name string, node *resolver.PackageNode) (err error) {
+	s.declarations[name] = 1
+	s.declarationPath = append(s.declarationPath, name)
+	defer func() {
+		s.declarationPath = s.declarationPath[:len(s.declarationPath)-1]
+		if err != nil {
+			s.declarations[name] = 3
+		}
+	}()
+	defer scriptcall.Recover(&err)
+	bound, err := s.bindPackage(name)
+	if err != nil {
+		return err
+	}
+	buildCtx, err := newBuildContext(s.ctx, name, bound.values)
 	if err != nil {
 		return err
 	}
 	platform := platformFromValues(buildCtx.CfgVals)
-	buildCtx.SetBuildSubGraphFunc(func(pkgName string) error {
-		return s.buildSubGraph(pkgName)
-	})
-	buildCtx.SetDepOutputFunc(func(depRef string) string {
-		return s.computeDepOutput(depRef)
-	})
-
-	if node.Pkg != nil && s.cfg.Tc != nil {
-		flags := api.DefaultBuildFlags(s.cfg.TcName, platform.OSOrHost())
-		buildCtx.SetDefaultFlags(flags.CFlags, flags.CxxFlags, flags.LdFlags)
-		pkg := node.Pkg
-		allOpts := s.ctx.AllOptions[name]
-		if allOpts == nil {
-			allOpts = pkg.GetOptions()
-		}
-		pkg.SetDirs(*s.pkgDirs[name])
-		pkg.SetOptions(allOpts)
-		pkg.SetCfgVals(maps.Clone(buildCtx.CfgVals))
-		pkg.SetToolchain(s.cfg.Tc)
-		pkg.SetPlatform(platform)
+	buildCtx.SetBuildSubGraphFunc(func(pkgName string) error { return s.buildSubGraph(pkgName) })
+	buildCtx.SetDepOutputFunc(func(depRef string) string { return s.computeDepOutput(depRef) })
+	flags := api.DefaultBuildFlags(bound.toolchain.Name, platform.OSOrHost())
+	buildCtx.SetDefaultFlags(flags.CFlags, flags.CxxFlags, flags.LdFlags)
+	pkg := node.Pkg
+	allOpts := s.ctx.AllOptions[name]
+	if allOpts == nil {
+		allOpts = pkg.GetOptions()
 	}
-
-	buildCtx.SetPackage(node.Pkg)
-
-	node.Pkg.ExecBuildFuncs(s.pkgDirs[name].SourceDir, func(fn api.BuildFunc) {
-		fn(buildCtx)
-	})
-
+	pkg.SetDirs(*s.pkgDirs[name])
+	pkg.SetOptions(allOpts)
+	pkg.SetCfgVals(maps.Clone(buildCtx.CfgVals))
+	pkg.SetToolchain(bound.toolchain)
+	pkg.SetPlatform(platform)
+	buildCtx.SetPackage(pkg)
+	pkg.ExecBuildFuncs(s.pkgDirs[name].SourceDir, func(fn api.BuildFunc) { fn(buildCtx) })
 	applyBuildContextConfig(buildCtx, node, s.ctx, name)
-
-	s.allTargets[name] = buildCtx.GetTargets()
+	targets := make(map[string]*api.Target)
+	for targetName, target := range buildCtx.GetTargets() {
+		targets[targetName] = api.SnapshotTarget(target)
+	}
+	s.allTargets[name] = targets
 	s.buildCtxs[name] = buildCtx
+	s.declarations[name] = 2
 	return nil
 }
 
-func (s *buildPhaseState) buildSubGraph(rootPkg string) error {
-	if s.subGraphBuilt[rootPkg] {
-		return nil
+func (s *buildPhaseState) buildSubGraph(rootPkg string) (err error) {
+	if active := s.session.ActiveTarget(); active != "" {
+		return fmt.Errorf("BuildSubGraph(%s) is not allowed while target %s is running", rootPkg, active)
 	}
-	s.subGraphBuilt[rootPkg] = true
-
+	previous, completed := s.subGraphErrors[rootPkg]
+	if s.subGraphBuilt[rootPkg] && !completed {
+		return fmt.Errorf("recursive BuildSubGraph(%s)", rootPkg)
+	}
+	if !s.needed[rootPkg] {
+		return fmt.Errorf("subgraph package %s not found in required packages", rootPkg)
+	}
+	previousScope := s.scopeValues
+	base := previousScope
+	if base == nil {
+		base = s.cfg.GlobalValues
+	}
+	values, err := s.packageBindingValues(rootPkg, base)
+	if err != nil {
+		return err
+	}
+	scope := maps.Clone(base)
+	for _, key := range []string{api.ToolchainOptionName, api.TargetOSOptionName, api.TargetTripleOptionName} {
+		scope[key] = values[key]
+	}
+	request, err := s.subGraphRequestSignature(rootPkg, values, scope)
+	if err != nil {
+		return err
+	}
 	subPkgs := build.CollectSubGraphPackages(rootPkg, s.pkgMetaMap, s.allTargets, s.needed)
-
-	subTcName := resolvePkgToolchain(s.ctx.Config, rootPkg, s.cfg.TcName)
-	subTc, err := toolchain.GetManager().SelectToolchain(subTcName)
-	if err != nil {
-		return err
-	}
-
-	subPlatform, err := PackagePlatform(s.ctx, rootPkg)
-	if err != nil {
-		return err
-	}
-	if err := s.executeMainPackages(subPkgs); err != nil {
-		return err
-	}
-	if subTcName != s.cfg.TcName || subPlatform != s.cfg.Platform {
-		subTools := make(map[api.Platform]*build.ResolvedTools)
-		for name := range subPkgs {
-			if meta, ok := s.pkgMetaMap[name]; ok && meta.IsRemote() {
-				subResolvedTools, err := resolvePackageTools(s.ctx, name, subTc, subTools)
-				if err != nil {
-					return err
-				}
-				flagsHash := packageFlagsHash(s.globalFlagsHash, s.ctx.DepGraph.Packages[name])
-				versionDir := s.remote.versionDirs[name]
-				dirs := s.pkgDirs[name]
-				if versionDir == "" {
-					scriptHash, err := s.scriptHashFor(name)
-					if err != nil {
-						return err
-					}
-					s.pkgDirs[name] = makeLocalPkgDirs(dirs.SourceDir, subResolvedTools.CCKey(), s.cfg.Mode, s.allPkgOptions[name], flagsHash, scriptHash)
-					continue
-				}
-				version, commit := s.remotePkgKeyMaterial(name)
-				scriptHash, err := s.scriptHashFor(name)
-				if err != nil {
-					return err
-				}
-				s.pkgDirs[name] = makeRemotePkgDirs(versionDir, dirs.SourceDir, subResolvedTools.CCKey(), s.cfg.Mode, s.allPkgOptions[name],
-					version, commit, flagsHash, s.patchHashes[name], scriptHash)
-			}
+	for _, name := range s.ctx.Resolver.GetOrder() {
+		if !subPkgs[name] || s.bindings[name] == nil {
+			continue
+		}
+		values, err := s.packageBindingValues(name, scope)
+		if err != nil {
+			return err
+		}
+		if _, err := s.matchingPackageBinding(name, values); err != nil {
+			return err
 		}
 	}
-
+	if previous, ok := s.subGraphRequests[rootPkg]; ok && previous != request {
+		return fmt.Errorf("subgraph package %s was already requested with an incompatible build configuration", rootPkg)
+	}
+	if completed {
+		return previous
+	}
+	if s.subGraphRequests == nil {
+		s.subGraphRequests = make(map[string]string)
+	}
+	s.subGraphRequests[rootPkg] = request
+	s.subGraphBuilt[rootPkg] = true
+	defer func() { s.subGraphErrors[rootPkg] = err }()
+	defer scriptcall.Recover(&err)
+	s.scopeValues = scope
+	defer func() { s.scopeValues = previousScope }()
+	for {
+		if err := s.executeMainPackages(subPkgs); err != nil {
+			return err
+		}
+		expanded := build.CollectSubGraphPackages(rootPkg, s.pkgMetaMap, s.allTargets, s.needed)
+		if len(expanded) == len(subPkgs) {
+			break
+		}
+		subPkgs = expanded
+	}
+	bound := s.bindings[rootPkg]
+	if bound == nil {
+		return fmt.Errorf("subgraph package %s has no build declaration", rootPkg)
+	}
 	keyExtra, err := s.buildPkgKeyExtra()
 	if err != nil {
 		return err
 	}
-
 	params := &build.SubGraphParams{
-		Platform:     subPlatform,
-		AllTargets:   s.allTargets,
-		PkgMeta:      s.pkgMetaMap,
-		PkgDirs:      s.pkgDirs,
-		Packages:     make(map[string]*api.Package),
-		Needed:       s.needed,
-		SubParents:   s.ctx.Resolver.SubParents(),
-		IncludeTests: s.includeTests,
-		PkgKeyExtra:  keyExtra,
-		PkgLockDir:   s.ctx.Paths.LocksDir,
-		RootDir:      s.ctx.Paths.ProjectDir,
-		NumWorkers:   s.jobs,
-		KeepGoing:    s.keepGoing,
+		Session:           s.session,
+		GlobalFlags:       &s.globalFlags,
+		Platform:          platformFromValues(bound.values),
+		AllTargets:        s.allTargets,
+		PkgMeta:           s.pkgMetaMap,
+		PkgDirs:           s.pkgDirs,
+		Packages:          make(map[string]*api.Package),
+		PackageToolchains: s.packageToolchains(),
+		Needed:            s.needed,
+		SubParents:        s.ctx.Resolver.SubParents(),
+		IncludeTests:      s.includeTests,
+		PkgKeyExtra:       keyExtra,
+		RootDir:           s.ctx.Paths.ProjectDir,
+		NumWorkers:        s.jobs,
+		KeepGoing:         s.keepGoing,
 	}
-	for name, node := range s.ctx.DepGraph.Packages {
-		if node.Pkg != nil && subPkgs[name] {
+	for name := range subPkgs {
+		if node := s.ctx.DepGraph.Packages[name]; node != nil && node.Pkg != nil {
 			params.Packages[name] = node.Pkg
 		}
 	}
-
-	if err := build.BuildSubGraph(rootPkg, subTc, subTcName, s.cfg.Mode, params, s.allPkgOptions); err != nil {
-		return err
-	}
-
-	return nil
+	return build.BuildSubGraph(rootPkg, bound.toolchain, bound.toolchain.Name, s.cfg.Mode, params, s.allPkgOptions)
 }
 
 func (s *buildPhaseState) resolveDepTargets() map[string]map[string]*api.Target {
@@ -854,6 +917,7 @@ func (s *buildPhaseState) remotePkgKeyMaterial(name string) (string, string) {
 	if s.remote == nil {
 		return "", ""
 	}
+	name = remoteOwnerName(s.ctx, name)
 	if entry := s.remote.entries[name]; entry != nil {
 		return entry.Version, s.remote.commits[name]
 	}
@@ -870,7 +934,7 @@ func (s *buildPhaseState) buildPkgKeyExtra() (map[string]string, error) {
 			if err != nil {
 				return nil, err
 			}
-			extra[name] = localKeyExtra(flagsHash, scriptHash)
+			extra[name] = localKeyExtra(flagsHash, scriptHash, s.sourceCommits[name])
 			continue
 		}
 		version, commit := s.remotePkgKeyMaterial(name)
@@ -884,7 +948,7 @@ func (s *buildPhaseState) buildPkgKeyExtra() (map[string]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		extra[name] = build.JoinKeyExtra(version, commit, flagsHash, s.patchHashes[name], scriptHash)
+		extra[name] = build.JoinKeyExtra(version, s.packageCommitKey(name, commit), flagsHash, s.patchHashes[name], scriptHash)
 	}
 	return extra, nil
 }
@@ -909,9 +973,10 @@ func (s *buildPhaseState) buildAndRunPipeline() (*BuildResult, error) {
 		return nil, err
 	}
 	bp.SetPkgKeyExtra(keyExtra)
-	bp.SetPkgLockDir(s.ctx.Paths.LocksDir)
+	bp.Session = s.session
+	bp.GlobalFlags = &s.globalFlags
+	bp.PackageToolchains = s.packageToolchains()
 	bp.SetNumWorkers(s.jobs)
-	bp.SetParallelPkgs(s.jobs)
 	bp.SetKeepGoing(s.keepGoing)
 
 	for _, name := range s.ctx.Resolver.GetOrder() {
@@ -945,6 +1010,7 @@ func (s *buildPhaseState) buildAndRunPipeline() (*BuildResult, error) {
 	}
 
 	return &BuildResult{
+		SubGraphRoots: maps.Clone(s.subGraphBuilt),
 		AllTargets:    s.allTargets,
 		Graph:         graph,
 		PkgDirs:       s.pkgDirs,

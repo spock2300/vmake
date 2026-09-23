@@ -1,6 +1,7 @@
 package build
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,7 +19,7 @@ func TestCollectDepArtifactsMissingNonVoidArtifact(t *testing.T) {
 		t.Fatalf("NewBuildGraph: %v", err)
 	}
 
-	s := &Scheduler{
+	s := &Scheduler{ctx: context.Background(),
 		graph: graph,
 		pkgs:  map[string]*PkgInfo{"p": {PkgDirs: api.PkgDirs{SourceDir: t.TempDir()}}},
 	}
@@ -33,13 +34,33 @@ func TestCollectDepArtifactsMissingNonVoidArtifact(t *testing.T) {
 	}
 }
 
-func TestObjectNameIsFlat(t *testing.T) {
-	got := objectName(filepath.Join("src", "nested", "foo.c"))
-	want := "src_nested_foo.c.o"
-	if got != want {
-		t.Fatalf("objectName = %q, want %q", got, want)
-	}
-	if strings.ContainsAny(got, `/\`) {
-		t.Fatalf("objectName = %q must not contain a path separator", got)
+func TestObjectPathIdentityAndReadableName(t *testing.T) {
+	dir := t.TempDir()
+	seen := make(map[string]bool)
+	for _, test := range []struct{ target, source string }{
+		{"p:one", "src/foo.c"},
+		{"p:two", "src/foo.c"},
+		{"p:one", "other/foo.c"},
+		{"p:one", "src/foo.cpp"},
+		{"p:one", "src/foo.S"},
+	} {
+		got, err := objectPath(test.target, test.source, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parts := strings.Split(filepath.ToSlash(got), "/")
+		if len(parts) != 3 || parts[0] != "object" || len(parts[1]) != 64 || parts[2] != "foo.o" {
+			t.Fatalf("unexpected object layout: %s", got)
+		}
+		if seen[got] {
+			t.Fatalf("object path collision for %+v: %s", test, got)
+		}
+		seen[got] = true
+		for _, equivalent := range []string{"./" + test.source, filepath.Join(dir, test.source)} {
+			other, err := objectPath(test.target, equivalent, dir)
+			if err != nil || other != got {
+				t.Fatalf("source alias %s changed object path: %s, %v", equivalent, other, err)
+			}
+		}
 	}
 }

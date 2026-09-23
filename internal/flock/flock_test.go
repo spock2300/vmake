@@ -1,12 +1,56 @@
 package flock
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestAcquireContextCancelsWithoutReplacingHeldFile(t *testing.T) {
+	for _, shared := range []bool{false, true} {
+		t.Run(map[bool]string{false: "exclusive", true: "shared"}[shared], func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "held.lock")
+			held, err := Acquire(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			acquire := AcquireContext
+			if shared {
+				acquire = AcquireSharedContext
+			}
+			lock, err := acquire(ctx, path)
+			if lock != nil || !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("waiting lock = %v, %v", lock, err)
+			}
+			after, err := os.Stat(path)
+			if err != nil || !os.SameFile(before, after) {
+				t.Fatalf("held lock file replaced: %v", err)
+			}
+			if err := held.Release(); err != nil {
+				t.Fatal(err)
+			}
+			retryCtx, stop := context.WithTimeout(context.Background(), time.Second)
+			defer stop()
+			lock, err = acquire(retryCtx, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := lock.Release(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
 
 const childEnvKey = "VMAKE_FLOCK_CHILD"
 

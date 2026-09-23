@@ -46,6 +46,7 @@ func TestPackagePlatformBeforeTargetDeclaration(t *testing.T) {
 				root := t.TempDir()
 				r := resolver.NewResolver(nil, root)
 				node := localNode("app")
+				node.Source.Dir = root
 				r.Graph().Packages["app"] = node
 				r.Graph().Order = []string{"app"}
 				globals := api.NewConfigContext("root")
@@ -56,6 +57,7 @@ func TestPackagePlatformBeforeTargetDeclaration(t *testing.T) {
 					locals.Option(key).SetType(api.OptionString).SetDefault(value)
 				}
 				ctx := &RuntimeContext{Config: emptyConfig(), Resolver: r, DepGraph: r.Graph(), GlobalOptions: globals.GetOptions(), AllOptions: map[string]map[string]*api.Option{"app": locals.GetOptions()}}
+				ctx.Paths = &Paths{ProjectDir: root, DepsDir: filepath.Join(root, "vmake_deps"), CacheDir: filepath.Join(root, "cache")}
 				ctx.Config.Global.Options = test.global
 				config.SetEntry(ctx.Config, "app", &config.EntryConfig{Options: test.explicit})
 				tc := testToolchain()

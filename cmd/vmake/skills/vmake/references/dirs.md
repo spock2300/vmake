@@ -4,10 +4,10 @@
 
 | Property | What it returns | When to use |
 |----------|-----------------|-------------|
-| `SourceDir()` | Package root — the `build.go` dir for local packages; the downloaded version checkout (`vmake_deps/<repo>/<pkg>/src`) for remote packages | Package metadata files, overlay dirs |
+| `SourceDir()` | Package root — the `build.go` dir for local packages; the package member’s writable build workspace for remote packages | Package metadata files, overlay dirs |
 | `SrcDir()` | Source code dir (`SourceDir()/src/` for local `SetGit` packages, otherwise falls back to `SourceDir()`) | Source files for firmware/third-party builds |
 | `SrcDirRaw()` | Raw srcCodeDir without fallback (empty if `SetSrcDir` not called) | Detecting whether source dir was explicitly set |
-| `BuildDir()` | Scratch dir for intermediate artifacts | Build outputs, stamps |
+| `BuildDir()` | Scratch dir for intermediate artifacts | Build outputs and action success records |
 | `InstallDir()` | Remote package installation prefix; empty for local packages | Remote package publication |
 | `CMakeBuildDir()` | `BuildDir()/cmake`, unless explicitly set | CMake cache and intermediate artifacts |
 | `CMakeInstallDir()` | Remote `InstallDir()` or local `BuildDir()/staging`, unless explicitly set | Headers/libs installed by CMake |
@@ -23,13 +23,17 @@ build/a1b2c3d4e5f6789012345678abcdef0123456789abcdef0123456789abcdef01/
 
 BuildDir path by package origin:
 - **Local packages**: `<SourceDir>/build/<buildKey>/`
-- **Remote packages**: `vmake_deps/<repo>/<pkg>/out/<buildKey>/build/` — `out` is a symlink into `~/.vmake/cache/<repo>/<pkg>/<version>/out`, so identical builds are **shared across projects** (identical key = re-link without recompiling, even after `distclean`)
+- **Remote packages**: `vmake_deps/<repo>/<pkg>/out/<sha256(member)>/<buildKey>/build/` — `out` points into `~/.vmake/cache/v2/<repo>/<pkg>/<version>/out`. Each member/build key also owns `install/` and `work/repo/`; matching native actions may reuse successful outputs across projects
 
-The BuildKey hashes `(toolchain, build_mode, options)` plus extra material: the **global-flags hash** and **buildscript hash** for every package, and additionally the **source version, commit and patch-set hash** for remote packages — so version switches, global flag changes, patch edits and build.go edits each produce a fresh key instead of silently reusing stale artifacts. The BuildKey is deterministic — same inputs always produce the same hash. `compile_commands.json` is merged and written to `<project root>/build/compile_commands.json`. `AddBinHeader` output goes to `build/<buildKey>/generated/`.
+The BuildKey hashes the format version and `(toolchain identity, build_mode, options)` plus extra material: the **global-flags hash** and **buildscript hash** for every package, and additionally the **source version, commit and patch-set hash** for remote packages — so version switches, global flag changes, patch edits and build.go edits each produce a fresh key instead of silently reusing stale artifacts. The BuildKey is deterministic — same inputs always produce the same hash. `compile_commands.json` is rebuilt for the current session and merged across schedulers by `(source file, object output)` at `<project root>/build/compile_commands.json`. `AddBinHeader` output goes to `build/<buildKey>/generated/`.
 
 ## SourceDir vs SrcDir
 
-For a **local** package using `SetGit`, `SourceDir()` is where `build.go` lives, and the downloaded source is linked at `SrcDir()` (= `SourceDir()/src/`, a symlink into `~/.vmake/cache/_localgit/<sha256(url)>/src/`). For **registry** packages, the wrapper `build.go` lives in the registry clone (`ScriptDir()`), while the downloaded version checkout becomes `SourceDir()` itself (`vmake_deps/<repo>/<pkg>/src` → `~/.vmake/cache/<repo>/<pkg>/<version>/src`), so `SrcDir()` falls back to `SourceDir()`. For **native** packages `build.go` sits at the root of the downloaded checkout, so `SourceDir()` == `SrcDir()`. For a local package without `SetGit`, `SourceDir()` == `SrcDir()` (the fallback). When a remote package declares patches, both point at the patched copy `<version dir>/patched/<patchHash>/src/`. Use `SrcDirRaw()` to check whether `SetSrcDir` was explicitly called (returns empty string if not).
+For local `SetGit`, `SourceDir()` stays at the package root. `SourceDir()/src` is a managed symlink to the writable `BuildDir()/work/src` copied from a commit-specific cache seed. Use `SrcDir()` for this actual source tree.
+
+Remote registry and native packages build in the member/build-key workspace at `out/<sha256(member)>/<buildKey>/work/repo`; native subpackages use their relative path within their own workspace. `SourceDir()` points there before OnBuild runs, and patches apply there. `ScriptDir()` identifies the loaded buildscript's directory and may differ. The project's ordinary `vmake_deps/<repo>/<pkg>/src` link still points at the immutable seed; do not hard-code that link as a writable build tree. Native child source links at `vmake_deps/<repo>/<pkg>/_members/<sha256(member)>/src` point to the child's actual source tree. The member is its repository-relative path with forward slashes; hashing keeps names such as `src` and `out` separate from the parent's links.
+
+For local packages without SetGit, `SrcDir()` defaults to `SourceDir()` unless `SetSrcDir` overrides it. `SrcDirRaw()` reports only the explicit source-directory setting. Once OnBuild exposes paths or synchronous subgraphs build a package, the session retains those paths through installation.
 
 Within `SetBuildFunc`, built-in helpers (`CMakeConfigure`, `CMakeBuild`, `CMakeInstall`) automatically use the correct directories. If you need to read or patch source files manually, use `SrcDir()` to locate the downloaded source tree.
 
@@ -42,7 +46,7 @@ headers, or `SetPrebuilt` artifacts.
 
 `SetCMakeBuildDir(dir)` and `SetCMakeInstallDir(dir)` return `*Package`. Relative
 paths resolve against `BuildDir()`; absolute paths remain absolute. These settings
-do not change `PkgDirs`, remote package publication, or void-target stamp behavior.
+do not change `PkgDirs` or the once-per-session execution of void targets.
 If a remote wrapper chooses a custom CMake install directory, it must publish its
 results into the package's `InstallDir()` or declare them explicitly.
 

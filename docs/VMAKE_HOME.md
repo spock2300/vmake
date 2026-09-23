@@ -18,15 +18,18 @@
 ├── toolchains/                    # 已安装的交叉编译工具链
 │   └── <name>-<version>/          # 工具链安装目录
 ├── cache/                         # 内容寻址缓存（VMAKE_CACHE 可覆盖根路径）
-│   ├── <repo>/<pkg>/<version>/src/    # 每版本不可变源码 checkout（临时目录 + 原子改名）
-│   │   ├── out/<buildKey>/            # 共享二进制缓存（build/install 暂存）
-│   │   │   ├── build/
-│   │   │   └── install/
-│   │   └── patched/<patchHash>/src/   # 应用补丁后的副本
-│   ├── <repo>/<pkg>/_refs/            # tag 列表用可变 clone（native 包）
-│   ├── <repo>/<pkg>/_head/            # `vmake pkg update` 用可变 clone
-│   ├── _localgit/<sha256(url)>/src/   # 本地 SetGit 包的共享 clone
-│   └── _locks/<repo>_<pkg>.lock       # 包级构建锁（位于受保护目录之外）
+│   ├── v2/
+│   │   ├── <repo>/<pkg>/<version>/
+│   │   │   ├── src/
+│   │   │   └── out/<sha256(member)>/<buildKey>/
+│   │   │       ├── build/
+│   │   │       ├── install/
+│   │   │       └── work/repo/
+│   │   ├── <repo>/<pkg>/{_refs,_head}/
+│   │   └── _localgit/<sha256(url)>/
+│   │       ├── src/
+│   │       └── commits/<commit>/src/
+│   └── _locks/
 ├── config.json                    # 全局配置（trustedRepos 远程脚本信任）
 └── repos/                         # 包仓库索引（git clone）
     └── <repo>/
@@ -53,14 +56,17 @@ CLI：`vmake repo add|remove|list|update|trust|untrust`
 
 全局内容寻址缓存，存储远程包的源码和构建产物，所有项目共享。`VMAKE_CACHE` 环境变量可覆盖缓存根路径（`cmd/vmake/paths.go` `getCacheDir`）。
 
-- `<repo>/<pkg>/<version>/src/` — 每版本不可变源码 checkout，一旦生成不再原地修改（临时 clone + 原子改名发布）
-- `<repo>/<pkg>/<version>/out/<buildKey>/` — 共享二进制缓存（`build/`、`install/`），跨项目复用
-- `<repo>/<pkg>/<version>/patched/<patchHash>/src/` — 声明了补丁的包使用的内容寻址补丁副本
-- `<repo>/<pkg>/_refs/`、`<repo>/<pkg>/_head/` — 可变 clone（native 包 tag 列表 / `vmake pkg update`）
-- `_localgit/<sha256(url)>/src/` — 本地 `SetGit` 包的共享 clone
-- `_locks/<repo>_<pkg>.lock` — 包级构建锁文件，位于受保护的包目录之外，不会被删除
+- `v2/<repo>/<pkg>/<version>/src/` — 不可变 source seed，以临时目录物化并原子发布
+- `v2/<repo>/<pkg>/<version>/out/<sha256(member)>/<buildKey>/` — 每个包成员与构建键的 build、install 和可写 work/repo 工作区；native 子包使用各自成员目录
+- `v2/<repo>/<pkg>/_refs/`、`_head/` — tag 列表与更新使用的可变克隆
+- `v2/_localgit/<sha256(url)>/commits/<commit>/src/` — 本地 SetGit 的提交级 source seed；可写副本位于该本地包的 BuildDir/work/src
+- `_locks/` — 生命周期、owner 和物化锁；锁文件位于缓存内容目录之外，清理时不删除
 
-源码：`pkg/repo/source.go`（`SourceManager`，注释中给出完整布局）
+补丁与外部构建写入工作区。source seed 不可变是受信任脚本需要遵守的契约，不是文件权限沙箱。初始物化以临时目录完成并原子发布；后续外部构建失败可能留下部分产物，下一构建会话重新执行回调。
+
+项目操作先取得 `project/.vmake/_locks/project.lock`，构建再持有 cache lifecycle 共享锁，清理/更新持独占锁。执行前固定 owner 集合并按排序取得 owner 锁，声明、同步子图、构建和安装复用同一会话锁，避免其他构建读取半完成输出。
+
+源码：`pkg/repo/source.go`、`pkg/repo/workspace.go`、`internal/storage/`
 
 ## config.json
 
@@ -136,14 +142,18 @@ toolchains/<host-os>/<host-arch>/<name>/<version>/
 ```
 vmake_deps/
 └── <repo>/<pkg>/                  # Registry 和 Native 包使用相同结构
-    ├── src -> ~/.vmake/cache/<repo>/<pkg>/<version>/src
-    └── out -> ~/.vmake/cache/<repo>/<pkg>/<version>/out
-        └── <buildKey>/
-            ├── build/             # 构建产物
-            └── install/           # 安装暂存
+    ├── src -> ~/.vmake/cache/v2/<repo>/<pkg>/<version>/src
+    ├── out -> ~/.vmake/cache/v2/<repo>/<pkg>/<version>/out
+    │   └── <sha256(member)>/<buildKey>/
+    │       ├── build/
+    │       ├── install/
+    │       └── work/repo/
+    └── _members/<sha256(member)>/src -> Native 子包的实际源码工作区
 ```
 
-`buildKey` 由工具链（CC 路径）、构建模式、选项组合，以及版本号、commit、全局 flags 哈希、补丁集哈希、buildscript 哈希共同生成（`pkg/build/key.go` `BuildKey`）。src/out 符号链接同一时刻只指向一个版本目录，但缓存中可同时保留多个版本。
+`buildKey` 由格式版本、工具链身份（含工具内容）、构建模式、选项组合，以及版本号、commit、有序全局 flags、补丁集和 buildscript 哈希共同生成（`pkg/build/key.go` `BuildKey`）。src/out 符号链接同一时刻只指向一个版本目录，但缓存中可同时保留多个版本。
+
+Native 子包的链接使用 `_members/<sha256(member)>/src`，其中 `member` 是使用 `/` 分隔的仓库相对路径。子包名不会直接成为链接目录，因此 `src`、`out` 和嵌套子包不会穿过父包的源码或输出链接。
 
 `vmake_deps/` 在首次构建时自动添加到项目根目录的 `.gitignore`。
 
@@ -168,7 +178,7 @@ project/
 └── build/                         # 本地包构建输出
     ├── compile_commands.json      # LSP 编译数据库
     └── <buildKey>/                # 64 位十六进制哈希目录
-        ├── objects/               # 中间目标文件
+        ├── object/<hash>/foo.o    # hash 隔离 target 与源码路径，保留源码文件名
         └── <target>               # 最终产物
 ```
 

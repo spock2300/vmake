@@ -79,7 +79,7 @@ func Main(ctx *plugin.Context) {
 	}
 }
 
-func TestExtensionFailedInitializationDiscardsGlobalFlags(t *testing.T) {
+func TestExtensionFailedInitializationDiscardsRegistrations(t *testing.T) {
 	dir := t.TempDir()
 	writeExtensionFlagsPlugin(t, dir, "a-failed", `package main
 import (
@@ -94,6 +94,7 @@ func Main(ctx *plugin.Context) {
     cflags("initial-c")
     cxxflags("initial-cxx")
     ldflags("initial-ld")
+    if err := ctx.RegisterToolchain("failed-tool", &toolchain.Toolchain{Name:"failed-tool"}); err != nil { panic(err) }
     ctx.SetOnMissing("failed", func(name string) (*toolchain.Toolchain, error) {
         cflags("late-c")
         cxxflags("late-cxx")
@@ -116,7 +117,8 @@ func Main(ctx *plugin.Context) {
     ctx.AddSubCommand(&cobra.Command{Use:"show", Run:func(cmd *cobra.Command, args []string) {
         manager := toolchain.GetManager()
         fmt.Printf("BEFORE=%q/%q/%q\n", manager.GetGlobalCFlags(), manager.GetGlobalCxxFlags(), manager.GetGlobalLdFlags())
-        if _, err := manager.SelectToolchain("failed"); err != nil { panic(err) }
+        if _, err := manager.SelectToolchain("failed"); err == nil { panic("failed plugin retained its missing handler") }
+        if _, err := manager.GetToolchain("failed-tool"); err == nil { panic("failed plugin retained its toolchain") }
         fmt.Printf("AFTER=%q/%q/%q\n", manager.GetGlobalCFlags(), manager.GetGlobalCxxFlags(), manager.GetGlobalLdFlags())
     }})
 }

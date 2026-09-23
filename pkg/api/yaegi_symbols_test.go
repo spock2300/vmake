@@ -25,6 +25,9 @@ func TestYaegiSymbolsComplete(t *testing.T) {
 
 	var missing []string
 	for _, name := range sc.Names() {
+		if name == "BindBuildRuntime" || name == "SnapshotTarget" {
+			continue
+		}
 		o := sc.Lookup(name)
 		if !o.Exported() {
 			continue
@@ -64,6 +67,11 @@ func TestYaegiSymbolsComplete(t *testing.T) {
 
 func TestYaegiSymbolsNotNil(t *testing.T) {
 	syms := YaegiSymbols()
+	for _, name := range []string{"BindBuildRuntime", "SnapshotTarget"} {
+		if _, exists := syms[name]; exists {
+			t.Fatalf("native function %s is exposed to scripts", name)
+		}
+	}
 	for name, v := range syms {
 		if !v.IsValid() {
 			t.Errorf("symbol %q has invalid reflect.Value", name)

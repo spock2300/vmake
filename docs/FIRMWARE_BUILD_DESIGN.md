@@ -250,12 +250,15 @@ func (p *Package) EnsureConfig(srcDir string) bool
 3. 若包有 KConfig 条目，调用 `ApplyKConfigPatches` 应用 post-defconfig 补丁
 4. 返回 `bool`：`true` 表示刚生成了配置，`false` 表示已存在
 
-BuildFunc 中使用：
+导入 `path/filepath` 后，在 BuildFunc 中使用；KBuild 的 guarded reset 保留 Makefile 对编译 flags 的控制：
 
 ```go
 srcDir := pkg.SourceDir()
 pkg.EnsureConfig(srcDir)
-pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
+const ownFlags = "ifndef VMAKE_FIRMWARE_FLAGS_RESET\nundefine CFLAGS\nundefine CXXFLAGS\nundefine LDFLAGS\nexport VMAKE_FIRMWARE_FLAGS_RESET := 1\nendif"
+if err := pkg.Make("-C", filepath.ToSlash(srcDir), "--eval", ownFlags); err != nil {
+    return err
+}
 ```
 
 ### SetKConfigPatches
@@ -281,7 +284,7 @@ SetKConfigPatches(map[string]string{
 
 ---
 
-## 3.7 SetConfigFiles + 构建缓存跳过
+## 3.7 SetConfigFiles 与外部增量构建
 
 ### SetConfigFiles
 
@@ -289,7 +292,7 @@ SetKConfigPatches(map[string]string{
 func (p *Package) SetConfigFiles(files ...string) *Package
 ```
 
-声明哪些文件的变化会导致构建缓存失效。通常在 `OnPackage` 中设置：
+保存包级配置文件元数据。它不控制 TargetVoid 回调跳过，也不会自动成为原生 target 的输入。通常在 `OnPackage` 中设置：
 
 ```go
 p.OnPackage(func(p *api.Package) {
@@ -297,7 +300,7 @@ p.OnPackage(func(p *api.Package) {
 })
 ```
 
-对于没有 InstallDir 的本地包，vmake 在成功构建后于 BuildDir 写入 `.vmake_stamp` 文件（JSON），记录 `config_hash`（`SetConfigFiles` 文件**内容**的 SHA256，缺失文件跳过——删除文件同样构成变更）与 `source_rev`（SrcDir 的 git HEAD）。当 stamp 缺失或损坏、config 文件内容变化、git HEAD 变化，或有依赖产物比 stamp 新时，构建被视为 stale，会重新执行。
+本地和远程包的 TargetVoid 回调在每个构建会话执行一次；VMake 不使用 `.vmake_stamp` 或非空安装目录跳过回调。同步子图与主图共享会话，已完成 target 不重复执行。回调内的 Make/CMake 负责读取配置、检查依赖及增量执行；失败后下一次构建仍进入回调。所有 VMake target 串行，`-j` 作为 target 内部编译及 Make/CMake helper 的并行上限。
 
 ---
 
@@ -358,7 +361,7 @@ vmake 的 `Package` 有三个目录：`SourceDir`（源码目录）、`BuildDir`
 | 包类型 | BuildDir | 原因 |
 |--------|----------|------|
 | 本地包 | `<SourceDir>/build/<key>/` | 与源码分离，key 由工具链+模式+选项生成 |
-| 远程包 | `<缓存目录>/<repo>/<pkg>/<version>/out/<key>/build/` | 全局缓存目录（`~/.vmake/cache/`）下，与 InstallDir（`.../out/<key>/install`）同级 |
+| 远程包 | `<缓存目录>/v2/<repo>/<pkg>/<version>/out/<sha256(member)>/<key>/build/` | 全局缓存目录（`~/.vmake/cache/`）下，与 InstallDir（`.../out/<sha256(member)>/<key>/install`）同级 |
 
 其中 `key` 由 `build.BuildKey(toolchain, mode, options, extra)` 生成（`extra` 包含版本、commit、全局 flags 哈希、补丁哈希、脚本哈希），确保不同工具链/模式/选项/版本的构建产物隔离。
 
@@ -366,32 +369,28 @@ vmake 的 `Package` 有三个目录：`SourceDir`（源码目录）、`BuildDir`
 
 vmake 的 `Toolchain` 结构已提供 `Host`（目标三元组）和 `Prefix`（编译器前缀）字段。`Toolchain.Env()` 会生成包含 `CROSS_COMPILE`、`CC`、`CXX` 等环境变量的 map。
 
-`Package.Make()` 已自动传递 `pkg.Env()`：
+`Package.Make()` 自动传递 `pkg.Env()`，选择已配置的 Make 工具并应用会话的 jobs 预算。它默认使用 BuildDir；源码内构建传入第二个 `-C`，目录必须是绝对路径并经 `filepath.ToSlash` 转换。
+
+KBuild 系统（kernel/uboot/busybox）使用自己的 C/CXX/链接参数，先在最外层 Make 清除 VMake 注入的这些 flags，同时保留递归 Make 的设置。导入 `path/filepath` 后，在 BuildFunc 中调用：
 
 ```go
-func (p *Package) Make(args ...string) error {
-    makeArgs := []string{"-C", p.dirs.BuildDir}
-    makeArgs = append(makeArgs, args...)
-    return p.RunEnv(p.Env(), "make", makeArgs...)
-}
+srcDir := pkg.SrcDir()
+const ownFlags = "ifndef VMAKE_FIRMWARE_FLAGS_RESET\nundefine CFLAGS\nundefine CXXFLAGS\nundefine LDFLAGS\nexport VMAKE_FIRMWARE_FLAGS_RESET := 1\nendif"
+return pkg.Make("-C", filepath.ToSlash(srcDir), "--eval", ownFlags)
 ```
 
-对于 KBuild 系统（kernel/uboot/busybox），Makefile 在 SourceDir 中，需使用 `RunIn` 在源码目录执行 make：
-
-```go
-pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
-```
+不自行计算 CPU 数或传入固定 `-j`；VMake 的会话预算统一控制 Make/CMake helper。
 
 ### 5.3 Package 执行方法说明
 
 | 方法 | 工作目录 | 环境变量 | 失败行为 |
 |------|----------|----------|----------|
 | `pkg.Make(args...)` | BuildDir | 自动传递 pkg.Env() | 返回 error |
-| `pkg.Run(cmd, args...)` | BuildDir | 无 | `os.Exit(1)` |
+| `pkg.Run(cmd, args...)` | BuildDir | 无 | 脚本错误，由执行边界回收 |
 | `pkg.RunEnv(env, cmd, args...)` | BuildDir | 指定 env map | 返回 error |
-| `pkg.RunIn(dir, cmd, args...)` | 指定 dir | 无 | `os.Exit(1)` |
+| `pkg.RunIn(dir, cmd, args...)` | 指定 dir | 无 | 脚本错误，由执行边界回收 |
 
-> `Run()` 和 `RunIn()` 内部使用 `exec.RunFatal`，失败时直接 `os.Exit(1)` 不会返回 error；`Make()` 和 `RunEnv()` 内部使用 `exec.RunWithEnv`，失败时返回 error，BuildFunc 中应检查返回值（或直接 `return pkg.Make(...)`）。注意 `pkg.Run()` 固定在 BuildDir 中执行，不可指定其他目录。
+> `Run()` 和 `RunIn()` 返回值为空，失败会中止脚本，由执行边界返回错误并释放资源；`Make()` 和 `RunEnv()` 返回 error，BuildFunc 中应检查返回值（或直接 `return pkg.Make(...)`）。`pkg.Run()` 固定在 BuildDir 中执行，指定其他目录使用 `RunIn()`。
 
 ---
 
@@ -403,8 +402,7 @@ pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
 package main
 
 import (
-    "runtime"
-    "strconv"
+    "path/filepath"
 
     "github.com/spock2300/vmake/pkg/api"
 )
@@ -428,9 +426,11 @@ func Main(p *api.Package) {
         ctx.Target("uboot").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
             srcDir := pkg.SourceDir()
             pkg.EnsureConfig(srcDir)
-            pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
-            pkg.RunIn(srcDir, "make", "DESTDIR="+pkg.BuildDir(), "install")
-            return nil
+            const ownFlags = "ifndef VMAKE_FIRMWARE_FLAGS_RESET\nundefine CFLAGS\nundefine CXXFLAGS\nundefine LDFLAGS\nexport VMAKE_FIRMWARE_FLAGS_RESET := 1\nendif"
+            if err := pkg.Make("-C", filepath.ToSlash(srcDir), "--eval", ownFlags); err != nil {
+                return err
+            }
+            return pkg.Make("-C", filepath.ToSlash(srcDir), "--eval", ownFlags, "DESTDIR="+filepath.ToSlash(pkg.BuildDir()), "install")
         })
     })
 }
@@ -442,8 +442,7 @@ func Main(p *api.Package) {
 package main
 
 import (
-    "runtime"
-    "strconv"
+    "path/filepath"
 
     "github.com/spock2300/vmake/pkg/api"
 )
@@ -467,9 +466,11 @@ func Main(p *api.Package) {
         ctx.Target("linux").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
             srcDir := pkg.SourceDir()
             pkg.EnsureConfig(srcDir)
-            pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
-            pkg.RunIn(srcDir, "make", "DESTDIR="+pkg.BuildDir(), "install")
-            return nil
+            const ownFlags = "ifndef VMAKE_FIRMWARE_FLAGS_RESET\nundefine CFLAGS\nundefine CXXFLAGS\nundefine LDFLAGS\nexport VMAKE_FIRMWARE_FLAGS_RESET := 1\nendif"
+            if err := pkg.Make("-C", filepath.ToSlash(srcDir), "--eval", ownFlags); err != nil {
+                return err
+            }
+            return pkg.Make("-C", filepath.ToSlash(srcDir), "--eval", ownFlags, "DESTDIR="+filepath.ToSlash(pkg.BuildDir()), "install")
         })
     })
 }
@@ -484,8 +485,6 @@ package main
 
 import (
     "path/filepath"
-    "runtime"
-    "strconv"
 
     "github.com/spock2300/vmake/pkg/api"
 )
@@ -511,10 +510,12 @@ func Main(p *api.Package) {
         ctx.Target("busybox").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
             srcDir := pkg.SrcDir()
             pkg.EnsureConfig(srcDir)
-            pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
+            const ownFlags = "ifndef VMAKE_FIRMWARE_FLAGS_RESET\nundefine CFLAGS\nundefine CXXFLAGS\nundefine LDFLAGS\nexport VMAKE_FIRMWARE_FLAGS_RESET := 1\nendif"
+            if err := pkg.Make("-C", filepath.ToSlash(srcDir), "--eval", ownFlags); err != nil {
+                return err
+            }
             installDir := filepath.Join(pkg.BuildDir(), "_install")
-            pkg.RunIn(srcDir, "make", "CONFIG_PREFIX="+installDir, "install")
-            return nil
+            return pkg.Make("-C", filepath.ToSlash(srcDir), "--eval", ownFlags, "CONFIG_PREFIX="+filepath.ToSlash(installDir), "install")
         })
     })
 }
@@ -702,7 +703,7 @@ DepBuildDir("rootfs:rootfs")    = <SourceDir>/build/<key>/
                                     ├── staging/      (中间目录)
                                     └── rootfs.sqsh   (分区镜像)
 
-远程包 BuildDir                 = <缓存目录>/<repo>/<pkg>/<version>/out/<key>/build/
+远程包 BuildDir                 = <缓存目录>/v2/<repo>/<pkg>/<version>/out/<sha256(member)>/<key>/build/
 ```
 
 > `DepBuildDir(depRef)` 内部实现为 `filepath.Dir(ctx.DepOutput(depRef))`。TargetVoid 没有实际产物文件，`DepOutput` 返回的路径指向 `<BuildDir>/<targetName>`，该文件不存在但路径有效。下游包通过 `DepBuildDir` 获取 BuildDir，再按约定拼接文件名。
@@ -832,8 +833,8 @@ my-firmware/
 | 配置生成 | EnsureConfig | 检查 .config 存在性，自动 `make <preset>` + SetKConfigPatches |
 | 配置恢复 | restoreKConfigFiles skip rules | 无条目跳过、空 kconfig 删除、有内容仅变化时写入（避免 mtime 失效） |
 | 交叉编译 | Make() 自动传递 Env() | 不改变 BuildFunc 使用方式，`pkg.Make()` 自动携带 CROSS_COMPILE |
-| BuildDir | 与 SourceDir 分离 | 本地包 `<SourceDir>/build/<key>/`，远程包 `<缓存目录>/<repo>/<pkg>/<version>/out/<key>/build/` |
-| 构建缓存 | SetConfigFiles + stamp | ConfigFile 内容哈希或 git HEAD 变化（或有依赖产物更新）则重新构建 |
+| BuildDir | 与 SourceDir 分离 | 本地包 `<SourceDir>/build/<key>/`，远程包 `<缓存目录>/v2/<repo>/<pkg>/<version>/out/<sha256(member)>/<key>/build/` |
+| 外部增量构建 | TargetVoid + Make/CMake | 每会话进入一次回调，由外部工具检查配置、依赖和产物 |
 | 分区 | 普通包 | BuildFunc 做 overlay + collect + 外部工具生成分区镜像，不新增 API |
 | 固件 | 普通包 | 收集分区镜像文件 → 合成固件，完全用户可控 |
 | 依赖产物路径 | DepBuildDir | 封装 `filepath.Dir(DepOutput(...))`，推荐 API |

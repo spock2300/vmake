@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spock2300/vmake/internal/buildruntime"
 	"github.com/spock2300/vmake/internal/fs"
-	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -180,6 +181,8 @@ type Package struct {
 	dryRun                  bool
 	isRoot                  bool
 	providedLinkerScript    string
+	buildRuntime            *buildruntime.Budget
+	buildContext            context.Context
 }
 
 func NewPackage() *Package {
@@ -377,7 +380,7 @@ func normalizeScriptPanic(pkgName string, r any) *BuildScriptError {
 func RunScriptSafe(pkgName string, fn func()) {
 	defer func() {
 		if r := recover(); r != nil {
-			vlog.Fatal("%v", normalizeScriptPanic(pkgName, r))
+			panic(normalizeScriptPanic(pkgName, r))
 		}
 	}()
 	fn()
@@ -386,7 +389,7 @@ func RunScriptSafe(pkgName string, fn func()) {
 func execFuncs[T any](pkgName, dir string, funcs []T, fn func(T)) {
 	defer func() {
 		if r := recover(); r != nil {
-			vlog.Fatal("%v", normalizeScriptPanic(pkgName, r))
+			panic(normalizeScriptPanic(pkgName, r))
 		}
 	}()
 	execInDir(dir, func() {

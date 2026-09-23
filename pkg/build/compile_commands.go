@@ -3,6 +3,7 @@ package build
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 
@@ -52,34 +53,37 @@ func (w *CompileCommandsWriter) AddCommand(dir, src, objPath string, opts *Compi
 	w.mu.Unlock()
 }
 
-// Save merges the collected commands into compile_commands.json keyed by
-// file: entries from previous runs (or other in-project schedulers, e.g.
-// sub-graphs) are kept only for files this writer does not cover. Command
-// changes replace their stale entries; sub-graph contributions survive.
 func (w *CompileCommandsWriter) Save(outputPath string) error {
 	w.mu.Lock()
 	commands := append([]CompileCommand{}, w.commands...)
 	w.mu.Unlock()
-
-	files := make(map[string]bool, len(commands))
-	for _, c := range commands {
-		files[c.File] = true
-	}
 
 	var existing []CompileCommand
 	if _, err := os.Stat(outputPath); err == nil {
 		if err := jsonio.Load(outputPath, &existing); err != nil {
 			return fmt.Errorf("merge existing %s: %w", outputPath, err)
 		}
+	} else if !os.IsNotExist(err) {
+		return err
 	}
-	merged := make([]CompileCommand, 0, len(existing)+len(commands))
-	for _, c := range existing {
-		if files[c.File] {
-			continue
+	byOutput := make(map[[2]string]CompileCommand, len(existing)+len(commands))
+	for _, c := range append(existing, commands...) {
+		output := ""
+		for i := 0; i+1 < len(c.Arguments); i++ {
+			if c.Arguments[i] == "-o" {
+				output = c.Arguments[i+1]
+			}
 		}
+		if output == "" {
+			return fmt.Errorf("compile command for %s has no output argument", c.File)
+		}
+		key := [2]string{filepath.Clean(resolveWorkPath(c.Directory, c.File)), filepath.Clean(resolveWorkPath(c.Directory, output))}
+		byOutput[key] = c
+	}
+	merged := make([]CompileCommand, 0, len(byOutput))
+	for _, c := range byOutput {
 		merged = append(merged, c)
 	}
-	merged = append(merged, commands...)
 
 	sort.Slice(merged, func(i, j int) bool {
 		if merged[i].File != merged[j].File {

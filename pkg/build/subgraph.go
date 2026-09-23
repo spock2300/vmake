@@ -10,19 +10,22 @@ import (
 )
 
 type SubGraphParams struct {
-	Platform     api.Platform
-	AllTargets   map[string]map[string]*api.Target
-	PkgMeta      map[string]PkgBuildMeta
-	PkgDirs      map[string]*api.PkgDirs
-	Packages     map[string]*api.Package
-	Needed       map[string]bool
-	SubParents   map[string]string
-	IncludeTests bool
-	PkgKeyExtra  map[string]string
-	PkgLockDir   string
-	RootDir      string
-	NumWorkers   int
-	KeepGoing    bool
+	PackageToolchains map[string]*toolchain.Toolchain
+	GlobalFlags       *[4][]string
+	Session           *Session
+	Platform          api.Platform
+	AllTargets        map[string]map[string]*api.Target
+	PkgMeta           map[string]PkgBuildMeta
+	PkgDirs           map[string]*api.PkgDirs
+	Packages          map[string]*api.Package
+	Needed            map[string]bool
+	SubParents        map[string]string
+	IncludeTests      bool
+	PkgKeyExtra       map[string]string
+	PkgLockDir        string
+	RootDir           string
+	NumWorkers        int
+	KeepGoing         bool
 }
 
 func CollectSubGraphPackages(rootPkg string, pkgMeta map[string]PkgBuildMeta, allTargets map[string]map[string]*api.Target, needed map[string]bool) map[string]bool {
@@ -103,6 +106,9 @@ func BuildSubGraph(rootPkg string, tc *toolchain.Toolchain, tcName string, mode 
 	}
 
 	pipeline := NewBuildPipeline(graph, tc, filteredPkgDirs, mode, filterMap(pkgOptions, subPkgs), params.Platform)
+	pipeline.Session = params.Session
+	pipeline.PackageToolchains = filterMap(params.PackageToolchains, subPkgs)
+	pipeline.GlobalFlags = params.GlobalFlags
 	pipeline.SetIncludeTests(params.IncludeTests)
 	pipeline.SetPkgKeyExtra(params.PkgKeyExtra)
 	pipeline.SetPkgLockDir(params.PkgLockDir)
@@ -112,7 +118,6 @@ func BuildSubGraph(rootPkg string, tc *toolchain.Toolchain, tcName string, mode 
 
 	for pkgName := range subPkgs {
 		if pkg, ok := params.Packages[pkgName]; ok {
-			pkg.SetToolchain(tc)
 			pipeline.SetPackage(pkgName, pkg)
 		}
 	}

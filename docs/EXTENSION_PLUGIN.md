@@ -403,7 +403,7 @@ err := ctx.RunGitLFS(ctx.RepoDir, "pull", "--include=assets/toolchains/aarch64-g
 
 工具链的程序通过 `InstallPath/bin` 逐条命令解析，vmake 不会修改进程级 `PATH`。
 
-列表、查询、诊断、`clean` 和 `lock update` 不会自动安装工具链。操作确实依赖编译器信息而工具不可用时，会提示先执行 `vmake build --toolchain <name>`。`clean --all` 可在工具链缺失时清理构建目录；此时无法执行依赖工具链的 `OnClean` 回调会明确提示。第三方插件显式调用下载接口的行为不受此限制。
+列表、查询、诊断、`clean` 和 `lock update` 不会自动安装工具链。操作确实依赖编译器信息而工具不可用时，会提示先执行 `vmake build --toolchain <name>`。`clean` 只删除当前配置（当前工具链、模式与选项）对应的构建目录；`clean --all` 与 `distclean` 删除所有配置的构建目录，因此可在工具链缺失时清理构建目录；此时无法执行依赖工具链的 `OnClean` 回调会明确提示。第三方插件显式调用下载接口的行为不受此限制。
 
 错误仅阻止对应工具链；`vmake toolchain list` 显示定义名称、路径及原因，损坏 JSON 无法识别名称时按路径显示。选择错误定义时不会回退到宿主工具链。`vmake ext update/remove` 跳过插件执行，可用于修复或移除扩展。
 

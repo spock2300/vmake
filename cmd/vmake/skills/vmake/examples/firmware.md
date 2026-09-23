@@ -1,6 +1,6 @@
 # Firmware Build (KConfig, EnsureConfig, Partitions)
 
-A complete firmware project using KConfig preset management, stamp-based skip,
+A complete firmware project using KConfig preset management, external incremental builds,
 dependency-driven partition assembly, and `DepBuildDir` for accessing build
 artifacts from other packages.
 
@@ -47,8 +47,7 @@ func Main(p *api.Package) {
 package main
 
 import (
-    "runtime"
-    "strconv"
+    "path/filepath"
 
     "github.com/spock2300/vmake/pkg/api"
 )
@@ -70,9 +69,11 @@ func Main(p *api.Package) {
         ctx.Target("uboot").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
             srcDir := pkg.SourceDir()
             pkg.EnsureConfig(srcDir)
-            pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
-            pkg.RunIn(srcDir, "make", "DESTDIR="+pkg.BuildDir(), "install")
-            return nil
+            const ownFlags = "ifndef VMAKE_FIRMWARE_FLAGS_RESET\nundefine CFLAGS\nundefine CXXFLAGS\nundefine LDFLAGS\nexport VMAKE_FIRMWARE_FLAGS_RESET := 1\nendif"
+            if err := pkg.Make("-C", filepath.ToSlash(srcDir), "--eval", ownFlags); err != nil {
+                return err
+            }
+            return pkg.Make("-C", filepath.ToSlash(srcDir), "--eval", ownFlags, "DESTDIR="+filepath.ToSlash(pkg.BuildDir()), "install")
         })
     })
 }
@@ -85,8 +86,6 @@ package main
 
 import (
     "path/filepath"
-    "runtime"
-    "strconv"
 
     "github.com/spock2300/vmake/pkg/api"
 )
@@ -110,14 +109,18 @@ func Main(p *api.Package) {
         ctx.Target("busybox").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
             srcDir := pkg.SrcDir()
             pkg.EnsureConfig(srcDir)
-            pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
+            const ownFlags = "ifndef VMAKE_FIRMWARE_FLAGS_RESET\nundefine CFLAGS\nundefine CXXFLAGS\nundefine LDFLAGS\nexport VMAKE_FIRMWARE_FLAGS_RESET := 1\nendif"
+            if err := pkg.Make("-C", filepath.ToSlash(srcDir), "--eval", ownFlags); err != nil {
+                return err
+            }
             installDir := filepath.Join(pkg.BuildDir(), "_install")
-            pkg.RunIn(srcDir, "make", "CONFIG_PREFIX="+installDir, "install")
-            return nil
+            return pkg.Make("-C", filepath.ToSlash(srcDir), "--eval", ownFlags, "CONFIG_PREFIX="+filepath.ToSlash(installDir), "install")
         })
     })
 }
 ```
+
+The guarded `ownFlags` reset preserves KBuild ownership of C/CXX/linker flags and does not clear flags in recursive Make invocations. `Make` selects the configured tool and inherits the session jobs budget.
 
 `SetSrcDir("src")` tells vmake the source code is in `SourceDir/src/`. Use `pkg.SrcDir()` (not `pkg.SourceDir()`) to get this path. `EnsureConfig` looks for `.config` in `SrcDir`.
 
@@ -184,7 +187,7 @@ func Main(p *api.Package) {
 
             imageFile := filepath.Join(pkg.BuildDir(), "rootfs.sqsh")
             os.Remove(imageFile)
-            pkg.Run("mksquashfs", staging, imageFile, "-noappend") // exits on failure
+            pkg.Run("mksquashfs", staging, imageFile, "-noappend")
             return nil
         })
     })
@@ -240,8 +243,8 @@ func Main(p *api.Package) {
 - **EnsureConfig** — `pkg.EnsureConfig(srcDir)` checks `.config` exists + non-empty, runs `make <preset>` if missing
 - **SetKConfigPatches** — Override specific config values after defconfig generation
 - **SetSrcDir** — Source code in a subdirectory (`src/` for busybox)
-- **SetConfigFiles** — Registers files that invalidate the build stamp on change
-- **Stamp-based skip** — `.vmake_stamp` in BuildDir; stale when config file content changes (SHA-256 hash comparison), source git revision changes, a dependency artifact is newer than the stamp, or the stamp is deleted
+- **SetConfigFiles** — Stores package configuration-file metadata; does not control target skipping
+- **External incrementality** — Void callbacks run once per build session; Make checks configuration, sources, dependencies, and outputs
 - **DepBuildDir** — `ctx.DepBuildDir("busybox:busybox")` returns the dependency's build directory
 - **DepOutput** — `ctx.DepOutput("myapp:myapp")` returns the dependency's output binary path
 - **api.CopyFile/CopyDir/CopyDirIfExists** — File copy utilities from the `api` package
@@ -250,9 +253,9 @@ func Main(p *api.Package) {
 
 ## Key Points
 
-- Use `pkg.RunIn(srcDir, "make", ...)` when the Makefile is in the source tree (NOT `pkg.Make()`)
+- For a source-tree Makefile, call `pkg.Make("-C", filepath.ToSlash(pkg.SrcDir()), ...)`; return its error and let the helper apply the jobs budget
 - Use `pkg.SrcDir()` (not `SourceDir()`) when the package has `SetSrcDir("src")`
-- `SetConfigFiles` + stamp skip applies only to void targets without `InstallDir`
+- Local and remote void targets both run their callback once per session; a nonempty InstallDir does not skip the callback
 - Presets are defconfig names passed to `make <preset>` — not complete `.config` files
 - `EnsureConfig` also applies `SetKConfigPatches` patches after running `make <preset>`
 - Guard `api.CopyDirIfExists` calls with `os.Stat` when the source may not exist

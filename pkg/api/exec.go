@@ -2,8 +2,6 @@ package api
 
 import (
 	"os"
-
-	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
 func execInDir(dir string, fn func()) {
@@ -13,15 +11,15 @@ func execInDir(dir string, fn func()) {
 	}
 	origDir, err := os.Getwd()
 	if err != nil {
-		vlog.Error("get working directory for %s: %v (callbacks run in current dir)", dir, err)
-		fn()
-		return
+		fatalScript("", "working directory", "%v", err)
 	}
 	if err := os.Chdir(dir); err != nil {
-		vlog.Error("chdir to %s: %v (callbacks run in current dir)", dir, err)
-		fn()
-		return
+		fatalScript("", "working directory", "%v", err)
 	}
-	defer os.Chdir(origDir)
+	defer func() {
+		if err := os.Chdir(origDir); err != nil {
+			fatalScript("", "restore working directory", "%v", err)
+		}
+	}()
 	fn()
 }

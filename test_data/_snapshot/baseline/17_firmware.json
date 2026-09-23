@@ -84,17 +84,17 @@
     {
       "path": "bin/controlpanel",
       "size": 19861,
-      "hash": "7f2602b5f4364803ea47c2ad08bcb9ba0d52efacf9596e51355ce9f3fd6f62f5"
+      "hash": "b06ecb1dc7d7c7d130c0ccea0f7bd45a3617abcba2f4fa3099105d15cf532a44"
     },
     {
       "path": "bin/sensordaemon",
       "size": 20139,
-      "hash": "4ec364d261f7d1efc05296f0b26fc143c41e0a8d6a33233d21231ae5740b4a07"
+      "hash": "ad0e04cfb98cf253d70809b5afdcbf698e4f624b12665380d985d17d44088a94"
     },
     {
       "path": "bin/webapp",
       "size": 20965,
-      "hash": "e793eef7b12d468c111ab897aced519e088941ebbcbb23abd7472d892f1c17a8"
+      "hash": "1d912e40ec242a8556f8157a99baccad3752b819c90ca5be243d32435e8b54d4"
     },
     {
       "path": "lib/libcore.so",
@@ -104,15 +104,15 @@
     {
       "path": "lib/libnet.so",
       "size": 20539,
-      "hash": "aff9d45240a95e863f92a0c8df289052c8d98367cc38426a76180d832e2ef075"
+      "hash": "aed7aa355ede623abece2274b6d2ecce46baae1f2dde141f522fdf0ac39cd0bd"
     }
   ],
   "build_files": [
     {
       "path": "compile_commands.json",
-      "size": 7483,
-      "hash": "5ff4827987a708f8033940312a20c2ff8bfd93f71c1089481d4f8688279a941c"
+      "size": 8105,
+      "hash": "071ba8c77ed3599a90305c151182aec75cc36b5300c24aa05c6e374efc1a9bb7"
     }
   ],
-  "install_tree_hash": "307cd1d0e90115bdc44c7eb8ce7e6a783207bf4d37f99f02e2984aa8ff65b7f3"
+  "install_tree_hash": "2fea80392a000faf7f48b87d901ee9aad89dcfe256f9457f233b657c2273fbaa"
 }

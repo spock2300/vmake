@@ -54,6 +54,23 @@
 
 ---
 
+## DD-4: target 串行，外部回调交由原生工具增量
+
+- 状态: accepted
+- 决策: 所有 target 按依赖拓扑串行执行，只有当前 target 内部的源文件编译并行。Make/CMake helper 使用同一个 jobs 上限。同步 BuildSubGraph 共享会话、执行记录和预算；已完成的 target 不重复执行。
+- 决策: Void 构建回调每次构建调用一次，不使用安装目录或包级 stamp 判断是否跳过。Make/CMake 继续负责自身增量，任意自定义生成和打包可能重复执行。
+- 理由: 保持脚本 API 简洁，不新增通用动作、输入输出声明和跨运行回调缓存协议。安装复用已有声明，不重跑 OnBuild。
+
+## DD-5: 不可变源码种子与独立工作副本
+
+- 状态: accepted
+- 决策: 使用 cache/v2；远程父仓库种子只用于物化，每个成员和构建键拥有完整父仓库工作副本及独立 build/install 目录。子包 SetGit 与本地 SetGit 共用来源缓存和选定提交，外源提交参与构建身份。
+- 决策: 本地 SetGit 声明版本映射时，复用现有版本约束选择并锁定提交；无映射时使用 HEAD。Native 子包仍继承父包版本，不将父包版本套用到子包的外部 SetGit 仓库。
+- 决策: 项目锁、缓存生命周期锁、排序后的源码所有者锁覆盖构建与安装；清理取得生命周期独占锁。锁文件不随被保护目录删除。
+- 理由: 相对兄弟目录引用继续有效，同时避免补丁、配置文件与外部构建污染共享源码。旧缓存布局不兼容。
+
+---
+
 ## 已知限制 / 待议
 
 以下问题已被识别但尚未决策，修改前需单独讨论：
@@ -61,12 +78,6 @@
 1. **本地项目无子包概念**：本地嵌套 build.go 被 `Scan` 收为顶层裸名包（目录 basename），
    且 basename 冲突时静默丢弃（`pkg/buildscript/scanner.go` 的 `namesSeen` 去重）。
    本地子包化是破坏性变更（现有本地多包项目的裸名引用需迁移），暂不实施。
-2. **子包构建产物落在父包版本 checkout 内**：`setupSubPackageDirs` 以父包
-   `SourceDir`（`~/.vmake/cache/<repo>/<pkg>/<ver>/src`）为根派生 build 目录，
-   子包 `SetGit` 也克隆进其中，与"per-version checkout 不可变"的全局约定冲突，
-   多项目共享缓存时可能互相污染。重构子包目录布局（迁入 `out/` 或项目侧）影响面大，待议。
-3. **子包 `SetGit` 克隆无缓存无锁**：直接 `repo.Clone`，与本地包的 `EnsureURL`
-   （`_localgit` 内容寻址 + 锁）不一致，跨项目不共享。与上一条一并解决。
 4. **命名歧义（低概率）**：子包全名 `repo/pkg/sub` 经 `SplitPackageRef` 拆分后 pkg 部分
    含 `/`，若 registry 恰好存在名为 `pkg/sub` 的包会被误匹配（`findSource` 先查 registry）。
 5. **父包不能在自己的 OnRequire 中引用其子包**：`findNativeSource` 中 `recurseDeps`

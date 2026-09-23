@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 
 	"github.com/spock2300/vmake/pkg/toolchain"
@@ -199,11 +198,11 @@ func (p *Package) cmakeBuildArgs(extraArgs ...string) ([]string, error) {
 	if !hasCMakeOption(extraArgs, "--config") {
 		args = append(args, "--config", p.cmakeBuildType())
 	}
-	_, parallelEnv := os.LookupEnv("CMAKE_BUILD_PARALLEL_LEVEL")
-	if !parallelEnv && !hasCMakeOption(extraArgs, "-j", "--parallel") {
-		args = append(args, "--parallel", strconv.Itoa(runtime.NumCPU()))
+	parallelArgs, err := p.executionBudget().CMakeBuildArgs(extraArgs, parallelEnvironment())
+	if err != nil {
+		return nil, err
 	}
-	return append(args, extraArgs...), nil
+	return append(args, parallelArgs...), nil
 }
 
 func (p *Package) cmakeInstallArgs(extraArgs ...string) ([]string, error) {
@@ -214,7 +213,11 @@ func (p *Package) cmakeInstallArgs(extraArgs ...string) ([]string, error) {
 	if !hasCMakeOption(extraArgs, "--config") {
 		args = append(args, "--config", p.cmakeBuildType())
 	}
-	return append(args, extraArgs...), nil
+	parallelArgs, err := p.executionBudget().CMakeInstallArgs(extraArgs, parallelEnvironment())
+	if err != nil {
+		return nil, err
+	}
+	return append(args, parallelArgs...), nil
 }
 
 func validateCMakeArgs(args []string) error {

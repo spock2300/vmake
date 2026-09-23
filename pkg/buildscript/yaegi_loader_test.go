@@ -51,6 +51,37 @@ func TestLoadBuildScript_Simple(t *testing.T) {
 	}
 }
 
+func TestRuntimeFilesystemUsesPackageWorkspace(t *testing.T) {
+	seed, workspace := t.TempDir(), t.TempDir()
+	script := `package main
+import (
+	"os"
+	"github.com/spock2300/vmake/pkg/api"
+)
+func Main(p *api.Package) {
+	p.OnBuild(func(ctx *api.BuildContext) {
+		if err := os.WriteFile("generated.txt", []byte("workspace"), 0644); err != nil { panic(err) }
+	})
+}
+`
+	path := filepath.Join(seed, "build.go")
+	if err := os.WriteFile(path, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := LoadBuildScript(*NewSource("native/sample", path, seed, api.SourceRemote))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg.SetDirs(api.PkgDirs{SourceDir: workspace})
+	pkg.ExecBuildFuncs(workspace, func(fn api.BuildFunc) { fn(api.NewBuildContext("native/sample", nil)) })
+	if _, err := os.Stat(filepath.Join(seed, "generated.txt")); !os.IsNotExist(err) {
+		t.Fatalf("runtime write reached source seed: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(workspace, "generated.txt")); err != nil || string(data) != "workspace" {
+		t.Fatalf("runtime write missed workspace: %q, %v", data, err)
+	}
+}
+
 func targetKeys(m map[string]*api.Target) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {

@@ -1,6 +1,8 @@
 package repo
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,7 +22,11 @@ func runGitCmd(args []string, opts exec.RunOptions) ([]byte, error) {
 }
 
 func gitRun(dir string, args []string, timeout time.Duration) error {
-	_, err := runGitCmd(args, exec.RunOptions{Dir: dir, Timeout: timeout, Quiet: true})
+	return gitRunContext(context.Background(), dir, args, timeout)
+}
+
+func gitRunContext(ctx context.Context, dir string, args []string, timeout time.Duration) error {
+	_, err := runGitCmd(args, exec.RunOptions{Context: ctx, Dir: dir, Timeout: timeout, Quiet: true})
 	if err != nil {
 		return fmt.Errorf("git %s in %s: %w", args[0], dir, err)
 	}
@@ -28,8 +34,26 @@ func gitRun(dir string, args []string, timeout time.Duration) error {
 }
 
 func Clone(url, dir string) error {
-	_, err := runGitCmd([]string{"clone", url, dir}, exec.RunOptions{
-		Timeout: 5 * time.Minute, Quiet: true,
+	return CloneContext(context.Background(), url, dir)
+}
+
+func CloneContext(ctx context.Context, url, dir string) error {
+	return cloneRepo(ctx, url, dir, nil)
+}
+
+func CloneHead(url, dir string) error {
+	return CloneHeadContext(context.Background(), url, dir)
+}
+
+func CloneHeadContext(ctx context.Context, url, dir string) error {
+	return cloneRepo(ctx, url, dir, []string{"--depth", "1", "--single-branch", "--no-tags"})
+}
+
+func cloneRepo(ctx context.Context, url, dir string, flags []string) error {
+	args := append([]string{"clone"}, flags...)
+	args = append(args, url, dir)
+	_, err := runGitCmd(args, exec.RunOptions{
+		Context: ctx, Timeout: 5 * time.Minute, Quiet: true,
 	})
 	if err != nil {
 		fs.RemoveIfExists(dir)
@@ -39,8 +63,12 @@ func Clone(url, dir string) error {
 }
 
 func InitSubmodules(dir string) error {
+	return InitSubmodulesContext(context.Background(), dir)
+}
+
+func InitSubmodulesContext(ctx context.Context, dir string) error {
 	_, err := runGitCmd([]string{"submodule", "update", "--init", "--recursive"}, exec.RunOptions{
-		Dir: dir, Timeout: 10 * time.Minute,
+		Context: ctx, Dir: dir, Timeout: 10 * time.Minute,
 	})
 	if err != nil {
 		return fmt.Errorf("git submodule update --init in %s: %w", dir, err)
@@ -58,33 +86,64 @@ func fetchTimeout() time.Duration {
 }
 
 func FetchTags(dir string) error {
-	return gitRun(dir, []string{"fetch", "--all", "--tags"}, fetchTimeout())
+	return FetchTagsContext(context.Background(), dir)
+}
+
+func FetchTagsContext(ctx context.Context, dir string) error {
+	return gitRunContext(ctx, dir, []string{"fetch", "--all", "--tags"}, fetchTimeout())
 }
 
 func Checkout(dir, ref string) error {
-	return gitRun(dir, []string{"checkout", "--force", ref}, 0)
+	return CheckoutContext(context.Background(), dir, ref)
+}
+
+func CheckoutContext(ctx context.Context, dir, ref string) error {
+	return gitRunContext(ctx, dir, []string{"checkout", "--force", ref}, 0)
 }
 
 func FetchAndReset(dir string) error {
-	if err := FetchTags(dir); err != nil {
+	return FetchAndResetContext(context.Background(), dir)
+}
+
+func FetchAndResetContext(ctx context.Context, dir string) error {
+	if err := FetchTagsContext(ctx, dir); err != nil {
 		return err
 	}
-	return gitRun(dir, []string{"reset", "--hard", "origin/HEAD"}, 0)
+	return gitRunContext(ctx, dir, []string{"reset", "--hard", "origin/HEAD"}, 0)
 }
 
 func EnsureRepoAtRef(gitURL, repoDir, ref string) error {
-	if ref != "" && IsAlreadyAtRef(repoDir, ref) {
-		return nil
+	return EnsureRepoAtRefContext(context.Background(), gitURL, repoDir, ref)
+}
+
+func EnsureRepoAtRefContext(ctx context.Context, gitURL, repoDir, ref string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if ref != "" {
+		already, err := IsAlreadyAtRefContext(ctx, repoDir, ref)
+		if err != nil {
+			return err
+		}
+		if already {
+			return nil
+		}
 	}
 
 	if !dirExists(repoDir) || !dirExists(filepath.Join(repoDir, ".git")) {
-		if err := Clone(gitURL, repoDir); err != nil {
+		if err := CloneContext(ctx, gitURL, repoDir); err != nil {
 			return err
 		}
 	} else {
-		if err := FetchTags(repoDir); err != nil {
+		if err := FetchTagsContext(ctx, repoDir); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			fs.RemoveIfExists(repoDir)
-			if err := Clone(gitURL, repoDir); err != nil {
+			if err := CloneContext(ctx, gitURL, repoDir); err != nil {
 				return err
 			}
 		}
@@ -94,7 +153,7 @@ func EnsureRepoAtRef(gitURL, repoDir, ref string) error {
 		return nil
 	}
 
-	return Checkout(repoDir, ref)
+	return CheckoutContext(ctx, repoDir, ref)
 }
 
 func dirExists(path string) bool {
@@ -107,7 +166,11 @@ func Pull(dir string) error {
 }
 
 func ListTags(dir string) ([]string, error) {
-	output, err := runGitCmd([]string{"tag", "--list"}, exec.RunOptions{Dir: dir, Quiet: true})
+	return ListTagsContext(context.Background(), dir)
+}
+
+func ListTagsContext(ctx context.Context, dir string) ([]string, error) {
+	output, err := runGitCmd([]string{"tag", "--list"}, exec.RunOptions{Context: ctx, Dir: dir, Quiet: true})
 	if err != nil {
 		return nil, fmt.Errorf("git tag --list in %s: %w", dir, err)
 	}
@@ -123,7 +186,11 @@ func ListTags(dir string) ([]string, error) {
 }
 
 func GetCurrentCommit(dir string) (string, error) {
-	output, err := runGitCmd([]string{"rev-parse", "HEAD"}, exec.RunOptions{Dir: dir, Quiet: true})
+	return GetCurrentCommitContext(context.Background(), dir)
+}
+
+func GetCurrentCommitContext(ctx context.Context, dir string) (string, error) {
+	output, err := runGitCmd([]string{"rev-parse", "HEAD"}, exec.RunOptions{Context: ctx, Dir: dir, Quiet: true})
 	if err != nil {
 		return "", err
 	}
@@ -133,7 +200,11 @@ func GetCurrentCommit(dir string) (string, error) {
 // ResolveCommit resolves a tag or ref to its commit SHA inside an existing
 // clone. Used by manifest import to pin real commits without materializing.
 func ResolveCommit(dir, ref string) (string, error) {
-	output, err := runGitCmd([]string{"rev-parse", ref + "^{commit}"}, exec.RunOptions{Dir: dir, Quiet: true})
+	return ResolveCommitContext(context.Background(), dir, ref)
+}
+
+func ResolveCommitContext(ctx context.Context, dir, ref string) (string, error) {
+	output, err := runGitCmd([]string{"rev-parse", ref + "^{commit}"}, exec.RunOptions{Context: ctx, Dir: dir, Quiet: true})
 	if err != nil {
 		return "", fmt.Errorf("resolve %s in %s: %w", ref, dir, err)
 	}
@@ -145,8 +216,12 @@ func ResolveCommit(dir, ref string) (string, error) {
 // dereferenced (the ^{} pattern wins); a 40-hex ref that the remote does not
 // know is taken as the commit itself.
 func ResolveRemoteCommit(url, ref string) (string, error) {
+	return ResolveRemoteCommitContext(context.Background(), url, ref)
+}
+
+func ResolveRemoteCommitContext(ctx context.Context, url, ref string) (string, error) {
 	args := []string{"ls-remote", url, "refs/tags/" + ref + "^{}", "refs/tags/" + ref, ref}
-	output, err := runGitCmd(args, exec.RunOptions{Timeout: fetchTimeout(), Quiet: true})
+	output, err := runGitCmd(args, exec.RunOptions{Context: ctx, Timeout: fetchTimeout(), Quiet: true})
 	if err != nil {
 		return "", fmt.Errorf("ls-remote %s (%s): %w", url, ref, err)
 	}
@@ -173,26 +248,26 @@ func ResolveRemoteCommit(url, ref string) (string, error) {
 }
 
 func isCommitSHA(s string) bool {
-	if len(s) != 40 {
-		return false
-	}
-	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
-			return false
-		}
-	}
-	return true
+	return validCommitID(s)
 }
 
 // DescribeTag returns the tag exactly pointing at HEAD, or "" when HEAD is
 // not tagged. Local-only; used to rebuild version->tag maps from cached
 // checkouts without touching the network.
 func DescribeTag(dir string) string {
-	output, err := runGitCmd([]string{"describe", "--tags", "--exact-match", "HEAD"}, exec.RunOptions{Dir: dir, Quiet: true})
+	tag, _ := DescribeTagContext(context.Background(), dir)
+	return tag
+}
+
+func DescribeTagContext(ctx context.Context, dir string) (string, error) {
+	output, err := runGitCmd([]string{"describe", "--tags", "--exact-match", "HEAD"}, exec.RunOptions{Context: ctx, Dir: dir, Quiet: true})
 	if err != nil {
-		return ""
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return "", err
+		}
+		return "", nil
 	}
-	return exec.TrimOutput(output)
+	return exec.TrimOutput(output), nil
 }
 
 func GitRevParse(dir string) string {
@@ -204,22 +279,48 @@ func GitRevParse(dir string) string {
 }
 
 func IsAlreadyAtRef(dir, ref string) bool {
-	head, err := GetCurrentCommit(dir)
+	already, _ := IsAlreadyAtRefContext(context.Background(), dir, ref)
+	return already
+}
+
+func IsAlreadyAtRefContext(ctx context.Context, dir, ref string) (bool, error) {
+	head, err := GetCurrentCommitContext(ctx, dir)
 	if err != nil {
-		return false
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return false, err
+		}
+		return false, nil
 	}
-	output, err := runGitCmd([]string{"rev-parse", ref + "^{}"}, exec.RunOptions{Dir: dir, Quiet: true})
+	output, err := runGitCmd([]string{"rev-parse", ref + "^{}"}, exec.RunOptions{Context: ctx, Dir: dir, Quiet: true})
 	if err != nil {
-		return false
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return false, err
+		}
+		return false, nil
 	}
-	return head == exec.TrimOutput(output)
+	return head == exec.TrimOutput(output), nil
 }
 
 func IsPatchApplied(dir, patchFile string) bool {
-	_, err := runGitCmd([]string{"apply", "--reverse", "--check", patchFile}, exec.RunOptions{Dir: dir})
-	return err == nil
+	applied, _ := IsPatchAppliedContext(context.Background(), dir, patchFile)
+	return applied
+}
+
+func IsPatchAppliedContext(ctx context.Context, dir, patchFile string) (bool, error) {
+	_, err := runGitCmd([]string{"apply", "--reverse", "--check", patchFile}, exec.RunOptions{Context: ctx, Dir: dir, Quiet: true})
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false, err
+	}
+	return err == nil, nil
 }
 
 func ApplyPatch(dir, patchFile string) error {
-	return gitRun(dir, []string{"apply", "--3way", patchFile}, 0)
+	return ApplyPatchContext(context.Background(), dir, patchFile)
+}
+
+func ApplyPatchContext(ctx context.Context, dir, patchFile string) error {
+	if err := gitRunContext(ctx, dir, []string{"update-index", "-q", "--refresh"}, 0); err != nil {
+		return err
+	}
+	return gitRunContext(ctx, dir, []string{"apply", "--3way", patchFile}, 0)
 }

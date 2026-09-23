@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sort"
 
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
@@ -15,6 +14,7 @@ import (
 // hash, joined with "\x00" separators.
 func BuildKey(toolchain, mode string, options map[string]any, extra string) string {
 	data := map[string]any{
+		"format":     buildFormatVersion,
 		"toolchain":  toolchain,
 		"build_mode": mode,
 		"options":    options,
@@ -44,9 +44,7 @@ func GlobalFlagsHash() string {
 	}
 	h := sha256.New()
 	for _, group := range parts {
-		sorted := append([]string{}, group...)
-		sort.Strings(sorted)
-		for _, s := range sorted {
+		for _, s := range group {
 			fmt.Fprintf(h, "%s\x00", s)
 		}
 		h.Write([]byte("\x01"))

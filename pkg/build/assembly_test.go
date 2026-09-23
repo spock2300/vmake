@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 func assemblyTestTools(t *testing.T, name string) *ResolvedTools {
@@ -79,7 +78,12 @@ func TestAssemblyCompilerDependencies(t *testing.T) {
 					if len(deps) != len(want) {
 						t.Fatalf("unexpected dependencies: %v", deps)
 					}
-					if valid, _ := IsSourceValid(source, obj, dir); !valid {
+					record := filepath.Join(dir, "compile.json")
+					inputs := append([]string{source}, deps...)
+					if err := saveActionRecord(record, "assembly", dir, inputs, []string{obj}); err != nil {
+						t.Fatal(err)
+					}
+					if !actionUpToDate(record, "assembly", dir, inputs, []string{obj}) {
 						t.Fatal("unchanged object is stale")
 					}
 					for _, dep := range want {
@@ -88,17 +92,16 @@ func TestAssemblyCompilerDependencies(t *testing.T) {
 						if err != nil {
 							t.Fatal(err)
 						}
-						future := time.Now().Add(time.Minute)
-						if err := os.Chtimes(path, future, future); err != nil {
+						if err := os.WriteFile(path, append(data, []byte("\n")...), 0644); err != nil {
 							t.Fatal(err)
 						}
-						if valid, _ := IsSourceValid(source, obj, dir); valid {
+						if actionUpToDate(record, "assembly", dir, inputs, []string{obj}) {
 							t.Fatalf("edit to %s did not invalidate object", dep)
 						}
 						if err := os.Remove(path); err != nil {
 							t.Fatal(err)
 						}
-						if valid, _ := IsSourceValid(source, obj, dir); valid {
+						if actionUpToDate(record, "assembly", dir, inputs, []string{obj}) {
 							t.Fatalf("deletion of %s did not invalidate object", dep)
 						}
 						if err := os.WriteFile(path, data, 0644); err != nil {
@@ -107,7 +110,10 @@ func TestAssemblyCompilerDependencies(t *testing.T) {
 						if _, err := compiler.Compile(source, obj, opts, dir); err != nil {
 							t.Fatal(err)
 						}
-						if valid, _ := IsSourceValid(source, obj, dir); !valid {
+						if err := saveActionRecord(record, "assembly", dir, inputs, []string{obj}); err != nil {
+							t.Fatal(err)
+						}
+						if !actionUpToDate(record, "assembly", dir, inputs, []string{obj}) {
 							t.Fatalf("recompiled object is stale after restoring %s", dep)
 						}
 					}
@@ -135,8 +141,12 @@ func TestClangAssemblyParallelSourceNames(t *testing.T) {
 	var wg sync.WaitGroup
 	for _, source := range sources {
 		wg.Go(func() {
-			obj := filepath.Join("objects", objectName(source))
-			_, err := compiler.Compile(source, obj, &CompileOptions{Language: "asm-cpp", Includes: []string{"include"}}, dir)
+			obj, err := objectPath("p:assembly", source, dir)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			_, err = compiler.Compile(source, obj, &CompileOptions{Language: "asm-cpp", Includes: []string{"include"}}, dir)
 			if err != nil {
 				t.Error(err)
 			}
@@ -144,7 +154,11 @@ func TestClangAssemblyParallelSourceNames(t *testing.T) {
 	}
 	wg.Wait()
 	for index, source := range sources {
-		obj := filepath.Join(dir, "objects", objectName(source))
+		rel, err := objectPath("p:assembly", source, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		obj := filepath.Join(dir, rel)
 		file, err := elf.Open(obj)
 		if err != nil {
 			t.Fatal(err)

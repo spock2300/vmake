@@ -1,6 +1,7 @@
 package build
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -41,18 +42,21 @@ func TestPostLinkPrefixedWindowsOutput(t *testing.T) {
 	node := graph.Nodes["p:firmware"]
 	resolved := &ResolvedTarget{Node: node, OutputPath: output}
 	dirs := &api.PkgDirs{SourceDir: dir, BuildDir: buildDir}
-	scheduler := &Scheduler{
-		pkgs:      map[string]*PkgInfo{"p": {PkgDirs: *dirs}},
-		toolchain: &toolchain.Toolchain{},
-		platform:  api.Platform{OS: "none"},
+	scheduler := &Scheduler{ctx: context.Background(),
+		pkgs:          map[string]*PkgInfo{"p": {PkgDirs: *dirs}},
+		toolchain:     &toolchain.Toolchain{},
+		platform:      api.Platform{OS: "none"},
+		linker:        NewLinker(&ResolvedTools{CC: "cc", AR: "ar"}),
+		resolvedTools: &ResolvedTools{OBJCOPY: "objcopy"},
 	}
+	saveTestLinkRecord(t, scheduler, resolved, nil)
 	if scheduler.needRelink(resolved, nil) {
 		t.Fatal("existing prefixed post-link output triggers relinking")
 	}
 	prefix := filepath.Join(dir, "install")
 	installer := NewArtifactInstaller(graph, map[string]*api.PkgDirs{"p": dirs}, prefix)
 	installer.SetPackageInfo("p", &PkgInstallInfo{BuildDir: buildDir, TargetOS: "none"})
-	if err := installer.InstallAll(); err != nil {
+	if err := installer.InstallAll(nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(prefix, "bin", "firmware.bin")); err != nil {

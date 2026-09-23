@@ -1,6 +1,7 @@
 package build
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -34,9 +35,6 @@ func (t *ResolvedTools) isClangCC() bool {
 	return strings.Contains(strings.ToLower(t.CCVersion), "clang version")
 }
 
-// CCKey combines the C compiler path with its reported version. An in-place
-// compiler upgrade keeps the path but changes the version, which must rotate
-// build keys instead of reusing stale objects.
 func (t *ResolvedTools) CCKey() string {
 	if t.identity != "" {
 		return t.CC + "@" + t.identity
@@ -48,7 +46,11 @@ func (t *ResolvedTools) CCKey() string {
 }
 
 func compilerVersion(path string, env map[string]string) (string, error) {
-	out, err := iexec.RunWithOptions(path, []string{"--version"}, iexec.RunOptions{Quiet: true, Env: env})
+	return compilerVersionContext(context.Background(), path, env)
+}
+
+func compilerVersionContext(ctx context.Context, path string, env map[string]string) (string, error) {
+	out, err := iexec.RunWithOptions(path, []string{"--version"}, iexec.RunOptions{Quiet: true, Env: env, Context: ctx})
 	if err != nil {
 		return "", fmt.Errorf("probe %s version: %w", path, err)
 	}
@@ -60,6 +62,10 @@ func compilerVersion(path string, env map[string]string) (string, error) {
 }
 
 func ResolveTools(tc *toolchain.Toolchain, platform api.Platform) (*ResolvedTools, error) {
+	return resolveTools(context.Background(), tc, platform)
+}
+
+func resolveTools(ctx context.Context, tc *toolchain.Toolchain, platform api.Platform) (*ResolvedTools, error) {
 	platform.OS = platform.OSOrHost()
 	mgr := toolchain.GetManager()
 
@@ -79,11 +85,11 @@ func ResolveTools(tc *toolchain.Toolchain, platform api.Platform) (*ResolvedTool
 	}
 
 	env := tc.CommandEnv()
-	ccVersion, err := compilerVersion(ccPath, env)
+	ccVersion, err := compilerVersionContext(ctx, ccPath, env)
 	if err != nil {
 		return nil, err
 	}
-	cxxVersion, err := compilerVersion(cxxPath, env)
+	cxxVersion, err := compilerVersionContext(ctx, cxxPath, env)
 	if err != nil {
 		return nil, err
 	}
@@ -113,13 +119,28 @@ func ResolveTools(tc *toolchain.Toolchain, platform api.Platform) (*ResolvedTool
 		}
 		*item.dest = path
 	}
+	digests := make(map[string]string)
+	for _, path := range []string{resolved.CC, resolved.CXX, resolved.AR, resolved.OBJCOPY, resolved.SIZE, resolved.OBJDUMP, resolved.NM, resolved.STRIP} {
+		if path == "" {
+			continue
+		}
+		if _, ok := digests[path]; ok {
+			continue
+		}
+		hash, err := FileHash(path)
+		if err != nil {
+			return nil, fmt.Errorf("fingerprint tool %s: %w", path, err)
+		}
+		digests[path] = hash
+	}
 	data, err := json.Marshal(struct {
 		HostOS    string
 		HostArch  string
 		Toolchain *toolchain.Toolchain
 		Resolved  *ResolvedTools
 		Platform  api.Platform
-	}{runtime.GOOS, runtime.GOARCH, tc, resolved, platform})
+		Digests   map[string]string
+	}{runtime.GOOS, runtime.GOARCH, tc, resolved, platform, digests})
 	if err != nil {
 		return nil, fmt.Errorf("toolchain identity: %w", err)
 	}

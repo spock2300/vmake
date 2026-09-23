@@ -38,6 +38,10 @@ CGO_ENABLED=0 go build -o vmake ./cmd/vmake
 
 ## Execution boundaries
 
+- Targets execute serially in target dependency order. Only source compilation within the active target is parallel. `-j0` resolves to CPU count once; Make/CMake helpers share the same ceiling.
+- Required Void build callbacks execute once per invocation, including synchronous subgraphs. VMake does not skip arbitrary callbacks across invocations; Make/CMake own their incremental checks.
+- Installation reuses the invocation's BuildCtxs. Do not replay OnBuild during installation.
+
 - `cmd/vmake/main.go` initializes Git userland before plugin loading and Cobra execution. Built-in `ext` commands skip plugin execution so broken extensions remain removable/updatable.
 - `cmd/vmake/root.go:resolveToConfig` calls `pipeline.Require` then `pipeline.Configure`. `pkg/pipeline/build_phase.go:RunBuild` owns filtering, source preparation, lockfile writing, patches, Kconfig restoration, OnBuild, and scheduling. Keep orchestration in `pkg/pipeline`; compilation/linking/install belong in `pkg/build`.
 - `OnRequire` runs first for eager discovery without option values, then again through `FilterDeps` after `OnConfig`/`OnApply`. Use discovery-aware `When`/`If`/`Select` there; direct `Bool`/`String`/`Int` reads fail. Reachability is traversed from local roots, not every loaded remote package.
@@ -48,7 +52,7 @@ CGO_ENABLED=0 go build -o vmake ./cmd/vmake
 ## Interpreted scripts and generated symbols
 
 - Buildscripts and plugins are reinterpreted each invocation: no `.so`, `-buildmode=plugin`, or module generation. Their usable binary imports are registered in `pkg/buildscript/yaegi_loader.go` and `pkg/plugin/loader.go`.
-- New package-level exports in `pkg/api` must be registered in `pkg/api/yaegi_symbols.go`; `TestYaegiSymbolsComplete` checks this. `pkg/toolchain` and `pkg/plugin` maintain their own symbol tables.
+- Script-facing package-level exports in `pkg/api` must be registered in `pkg/api/yaegi_symbols.go`; `TestYaegiSymbolsComplete` checks this. Native runtime binding and target snapshots are explicitly excluded and must remain unavailable to scripts. `pkg/toolchain` and `pkg/plugin` maintain their own symbol tables.
 - Cobra/pflag bindings under `internal/yaegisym` are generated. After Cobra/pflag upgrades, run `go generate ./internal/yaegisym/` with `yaegi` (from `github.com/traefik/yaegi/cmd/yaegi`) on PATH, matching the version in `go.mod`; do not hand-edit generated bindings.
 - `internal/gosrc.ListGoFiles` selects Go files using the running host's GOOS/GOARCH with CGO disabled, independently of the C/C++ target. It excludes `_test.go` and files importing `C`; the loaders merge selected files for interpretation.
 - Pass `[]string` directly to `AddCFlags`, `AddDefines`, etc.; spreading it with `...` into their `...any` parameters fails under yaegi. The API flattens slices itself.
@@ -56,9 +60,9 @@ CGO_ENABLED=0 go build -o vmake ./cmd/vmake
 
 ## Directories and incremental behavior
 
-- `SourceDir()` is the package root; `SrcDir()` is the actual source tree and can differ after `SetGit`; `BuildDir()` is build-key-specific. `p.Run` and `p.Make` use BuildDir. For an in-source Makefile use `p.RunIn(srcDir, "make", ...)`.
+- `SourceDir()` is the package root; `SrcDir()` is the actual source tree and can differ after `SetGit`; `BuildDir()` is build-key-specific. `p.Run` and `p.Make` use BuildDir. For an in-source Makefile use `p.Make("-C", filepath.ToSlash(srcDir), ...)`; the source directory must be absolute. Make/CMake helpers inherit the invocation jobs ceiling.
 - Prefer `CMakeConfigure`/`CMakeBuild`/`CMakeInstall`. Use their directory/configuration setters and `CMakeBuildDir()`/`CMakeInstallDir()` getters; defaults are `BuildDir()/cmake` and remote InstallDir or local `BuildDir()/staging`. Keep CMake artifacts separate from `SetPrebuilt` symlink destinations.
-- `vmake_deps/<repo>/<pkg>/{src,out}` links into `~/.vmake/cache/<repo>/<pkg>/<version>/`. Source checkouts are immutable; outputs are shared between projects. Keep `_locks` outside guarded package directories and never unlink held lock files. `distclean` retains the shared cache unless `--purge-cache` is requested.
+- `vmake_deps/<repo>/<pkg>/{src,out}` links into `~/.vmake/cache/v2/<repo>/<pkg>/<version>/`. Source seeds are immutable; each member/build key has a writable repository workspace beside its build/install directories. Outputs are shared between projects. Keep `_locks` outside guarded package directories and never unlink held lock files. `distclean` retains the shared cache unless `--purge-cache` is requested.
 - `.vmake/vmake.lock` pins remote versions/commits; `vmake lock update` explicitly re-resolves them. Preserve offline locked resolution rather than adding unconditional fetches.
 - Kconfig presets are make target names, not complete `.config` files. Generation belongs in `EnsureConfig`/TUI `ensureConfigCmd`; `restoreKConfigFiles` only restores saved content. Preserve unchanged config mtimes so incremental stamps remain valid.
 - Custom post-link inputs/outputs require `AddPostLinkDeps`/`AddPostLinkOutputs`. Missing outputs or changed inputs trigger relinking and all post-link steps; command arguments do not imply outputs. Hex/Bin/Strip helpers declare their outputs automatically.

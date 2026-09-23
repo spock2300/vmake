@@ -28,7 +28,7 @@ func TestSchedulerPackagePlatformArtifacts(t *testing.T) {
 					"app": makeTargetWithDeps("app", "lib").SetKind(api.TargetBinary).SetDefault(true),
 				}
 			}
-			s, graph := newParallelTestScheduler(t, targets)
+			s, graph := newTestScheduler(t, targets)
 			s.platform = api.Platform{OS: rootOS}
 			var commands [][]string
 			s.linker = &Linker{ccPath: "cc", run: func(_ string, dir string, args ...string) ([]byte, error) {
@@ -124,7 +124,7 @@ func TestSchedulerPackagePlatformLinkPolicy(t *testing.T) {
 	for _, kind := range []api.TargetKind{api.TargetBinary, api.TargetShared} {
 		t.Run(string(kind), func(t *testing.T) {
 			target := makeTargetWithDeps("app").SetKind(kind).SetDefault(true).AddExcludeLibs("private")
-			s, _ := newParallelTestScheduler(t, makeTargets("windows", target))
+			s, _ := newTestScheduler(t, makeTargets("windows", target))
 			s.platform = api.Platform{OS: "linux"}
 			s.SetPackage("windows", api.NewPackage().SetPlatform(api.Platform{OS: "windows"}))
 			s.pkgs["windows"].OutputDir = s.pkgs["windows"].BuildDir
@@ -137,7 +137,7 @@ func TestSchedulerPackagePlatformLinkPolicy(t *testing.T) {
 }
 
 func TestSchedulerPackagePlatformConcurrentAssembly(t *testing.T) {
-	s, graph := newParallelTestScheduler(t, map[string]map[string]*api.Target{
+	s, graph := newTestScheduler(t, map[string]map[string]*api.Target{
 		"linux":   {"asm": makeTargetWithDeps("asm")},
 		"windows": {"asm": makeTargetWithDeps("asm")},
 	})

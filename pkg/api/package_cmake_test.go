@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/spock2300/vmake/internal/buildruntime"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -136,22 +136,27 @@ func TestCMakeRejectsConflictingManagedArguments(t *testing.T) {
 }
 
 func TestCMakeBuildAndInstallOverrides(t *testing.T) {
-	t.Setenv("CMAKE_BUILD_PARALLEL_LEVEL", "")
-	if err := os.Unsetenv("CMAKE_BUILD_PARALLEL_LEVEL"); err != nil {
-		t.Fatal(err)
+	for _, key := range []string{"MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "CMAKE_BUILD_PARALLEL_LEVEL"} {
+		t.Setenv(key, "")
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatal(err)
+		}
 	}
 	p := NewPackage().SetDirs(PkgDirs{BuildDir: t.TempDir()}).SetCMakeBuildType("MinSizeRel")
+	if err := BindBuildRuntime(p, &buildruntime.Budget{Jobs: 4}, nil); err != nil {
+		t.Fatal(err)
+	}
 	args, err := p.cmakeBuildArgs()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if i := slices.Index(args, "--parallel"); i < 0 || args[i+1] != strconv.Itoa(runtime.NumCPU()) {
-		t.Fatalf("default parallelism = %q", args)
+	if i := slices.Index(args, "--parallel"); i < 0 || args[i+1] != "4" {
+		t.Fatalf("bound parallelism = %q", args)
 	}
-	for _, parallel := range [][]string{{"-j", "2"}, {"-j2"}, {"--parallel", "3"}, {"--parallel=3"}} {
+	for _, parallel := range [][]string{{"-j", "2"}, {"-j2"}, {"--parallel", "2"}, {"--parallel=2"}} {
 		extra := append([]string{"--config", "Debug"}, parallel...)
 		args, err := p.cmakeBuildArgs(extra...)
-		want := append([]string{"--build", filepath.ToSlash(p.CMakeBuildDir())}, extra...)
+		want := []string{"--build", filepath.ToSlash(p.CMakeBuildDir()), "--parallel", "2", "--config", "Debug"}
 		if err != nil || !slices.Equal(args, want) {
 			t.Fatalf("explicit arguments = %q, want %q, error %v", args, want, err)
 		}
@@ -160,11 +165,15 @@ func TestCMakeBuildAndInstallOverrides(t *testing.T) {
 	if err != nil || !slices.Contains(args, "--parallel") || !slices.Contains(args, "MinSizeRel") {
 		t.Fatalf("backend args suppressed CMake defaults: %q, %v", args, err)
 	}
-	for _, value := range []string{"2", ""} {
+	t.Setenv("CMAKE_BUILD_PARALLEL_LEVEL", "2")
+	args, err = p.cmakeBuildArgs()
+	if i := slices.Index(args, "--parallel"); err != nil || i < 0 || args[i+1] != "2" {
+		t.Fatalf("smaller parallel environment ignored: %q, %v", args, err)
+	}
+	for _, value := range []string{"5", "", "0", "-1"} {
 		t.Setenv("CMAKE_BUILD_PARALLEL_LEVEL", value)
-		args, err := p.cmakeBuildArgs()
-		if err != nil || slices.Contains(args, "--parallel") {
-			t.Fatalf("parallel environment %q overridden: %q, %v", value, args, err)
+		if args, err = p.cmakeBuildArgs(); err == nil {
+			t.Fatalf("invalid parallel environment %q accepted: %q", value, args)
 		}
 	}
 	args, err = p.cmakeInstallArgs("--config=Debug", "--component", "Development")

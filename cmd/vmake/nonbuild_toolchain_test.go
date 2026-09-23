@@ -59,8 +59,12 @@ func Main(p *api.Package) { p.SetRoot(true) }
 						t.Errorf("%v: %v\n%s", command, err, out)
 					}
 					if command[0] == "clean" {
-						if _, err := os.Stat(artifact); !os.IsNotExist(err) {
-							t.Errorf("clean left build artifact: %v\n%s", err, out)
+						if cleanAll {
+							if _, err := os.Stat(artifact); !os.IsNotExist(err) {
+								t.Errorf("clean --all left build artifact: %v\n%s", err, out)
+							}
+						} else if _, err := os.Stat(artifact); err != nil {
+							t.Errorf("clean removed a directory outside the current configuration: %v\n%s", err, out)
 						}
 					} else if !strings.Contains(out, "Downloading package sources") {
 						t.Errorf("lock update did not complete:\n%s", out)
@@ -116,8 +120,12 @@ func Main(p *api.Package) {
 					if err != nil {
 						t.Errorf("%v: %v\n%s", command, err, out)
 					}
-					if _, err := os.Stat(artifact); !os.IsNotExist(err) {
-						t.Errorf("clean left build artifact: %v\n%s", err, out)
+					if cleanAll {
+						if _, err := os.Stat(artifact); !os.IsNotExist(err) {
+							t.Errorf("clean --all left build artifact: %v\n%s", err, out)
+						}
+					} else if _, err := os.Stat(artifact); err != nil {
+						t.Errorf("clean removed a directory outside the current configuration: %v\n%s", err, out)
 					}
 				} else if err == nil {
 					t.Errorf("clean succeeded with unavailable hook toolchain:\n%s", out)
@@ -193,8 +201,12 @@ func Main(p *api.Package) {
 				if strings.Count(out, want) != 1 {
 					t.Fatalf("OnClean platform: want %q once:\n%s", want, out)
 				}
-				if _, err := os.Stat(artifact); !os.IsNotExist(err) {
-					t.Fatalf("clean left artifact: %v\n%s", err, out)
+				if len(command) == 2 {
+					if _, err := os.Stat(artifact); !os.IsNotExist(err) {
+						t.Fatalf("clean --all left artifact: %v\n%s", err, out)
+					}
+				} else if _, err := os.Stat(artifact); err != nil {
+					t.Fatalf("clean removed a directory outside the current configuration: %v\n%s", err, out)
 				}
 			})
 		}

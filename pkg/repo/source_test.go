@@ -74,8 +74,11 @@ func TestEnsureURLRefreshesExistingClone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second EnsureURL: %v", err)
 	}
-	if srcDir2 != srcDir {
-		t.Errorf("second EnsureURL path = %q, want %q", srcDir2, srcDir)
+	if srcDir2 == srcDir {
+		t.Errorf("different commits share source path %q", srcDir2)
+	}
+	if got, _ := os.ReadFile(filepath.Join(srcDir, "foo.txt")); string(got) != "v1\n" {
+		t.Errorf("previous source changed to %q", got)
 	}
 	if got, _ := os.ReadFile(filepath.Join(srcDir2, "foo.txt")); string(got) != "v2\n" {
 		t.Errorf("refreshed content = %q, want v2", got)

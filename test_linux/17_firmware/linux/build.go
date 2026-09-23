@@ -1,9 +1,6 @@
 package main
 
 import (
-	"runtime"
-	"strconv"
-
 	"github.com/spock2300/vmake/pkg/api"
 )
 
@@ -26,9 +23,11 @@ func Main(p *api.Package) {
 		ctx.Target("linux").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
 			srcDir := pkg.SourceDir()
 			pkg.EnsureConfig(srcDir)
-			pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
-			pkg.RunIn(srcDir, "make", "DESTDIR="+pkg.BuildDir(), "install")
-			return nil
+			const ownFlags = "ifndef VMAKE_FIRMWARE_FLAGS_RESET\nundefine CFLAGS\nundefine CXXFLAGS\nundefine LDFLAGS\nexport VMAKE_FIRMWARE_FLAGS_RESET := 1\nendif"
+			if err := pkg.Make("-C", srcDir, "--eval", ownFlags); err != nil {
+				return err
+			}
+			return pkg.Make("-C", srcDir, "--eval", ownFlags, "DESTDIR="+pkg.BuildDir(), "install")
 		})
 	})
 }

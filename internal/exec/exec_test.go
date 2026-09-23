@@ -183,3 +183,27 @@ func TestCommandEnvironmentContext(t *testing.T) {
 		t.Fatalf("timeout took %v", elapsed)
 	}
 }
+
+func TestCommandContextAndTimeoutBothApply(t *testing.T) {
+	program, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, parentFirst := range []bool{false, true} {
+		t.Run(fmt.Sprint(parentFirst), func(t *testing.T) {
+			parentTimeout, commandTimeout := 2*time.Second, 100*time.Millisecond
+			if parentFirst {
+				parentTimeout, commandTimeout = commandTimeout, parentTimeout
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), parentTimeout)
+			defer cancel()
+			start := time.Now()
+			_, err := RunWithOptions(program, []string{"-test.run=^TestCommandHelper$"}, RunOptions{
+				Env: map[string]string{"VMAKE_EXEC_HELPER": "wait"}, Context: ctx, Timeout: commandTimeout, Quiet: true,
+			})
+			if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > time.Second {
+				t.Fatalf("earlier timeout not honored: %v (%s)", err, time.Since(start))
+			}
+		})
+	}
+}

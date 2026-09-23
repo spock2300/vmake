@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
@@ -15,7 +16,8 @@ import (
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
-func Require(ctx *RuntimeContext) error {
+func Require(ctx *RuntimeContext) (err error) {
+	defer scriptcall.Recover(&err)
 	vlog.Info("Scanning %s...", ctx.WorkDir)
 
 	packages, err := buildscript.Scan(ctx.WorkDir)
@@ -34,7 +36,8 @@ func Require(ctx *RuntimeContext) error {
 	vlog.Info("Found %d package(s): %s", len(packages), strings.Join(pkgNames, ", "))
 
 	r := resolver.NewResolver(repo.NewRepoManager(ctx.Paths.ReposDir), ctx.Paths.DepsDir)
-	r.SetSourceManager(repo.NewSourceManager(ctx.Paths.DepsDir, ctx.Paths.CacheDir))
+	r.SetContext(ctx.Context)
+	r.SetSourceManager(repo.NewSourceManager(ctx.Paths.DepsDir, ctx.Paths.CacheDir).WithSession(ctx.Locks).WithContext(ctx.Context))
 	r.SetLockfile(ctx.Lock, ctx.IgnoreLock)
 	r.SetTrustChecker(ctx.TrustChecker)
 	r.SetConfigPins(collectConfigPins(ctx.Config))
@@ -61,7 +64,8 @@ func Require(ctx *RuntimeContext) error {
 	return nil
 }
 
-func Configure(ctx *RuntimeContext) error {
+func Configure(ctx *RuntimeContext) (err error) {
+	defer scriptcall.Recover(&err)
 	if err := ctx.Resolver.UpdateOrder(); err != nil {
 		return err
 	}

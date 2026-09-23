@@ -282,7 +282,9 @@ func (ctx *BuildContext) Exec(name string, args ...string) {
 		}
 		return
 	}
-	exec.RunFatal("", name, args...)
+	if err := exec.RunToStdout("", name, args...); err != nil {
+		fatalScript(ctx.PackageName(), "Exec", "%v", err)
+	}
 }
 
 type InstallContext struct {

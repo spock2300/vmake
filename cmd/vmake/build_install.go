@@ -11,6 +11,7 @@ import (
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/gitcmd"
 	"github.com/spock2300/vmake/internal/jsonio"
+	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 	vlog "github.com/spock2300/vmake/pkg/log"
@@ -37,7 +38,11 @@ type installManifest struct {
 	Packages  []installManifestEntry `json:"packages"`
 }
 
-func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
+func executeInstall(ctx *RuntimeContext, result *BuildResult) (err error) {
+	defer scriptcall.Recover(&err)
+	if ctx.Context != nil && ctx.Context.Err() != nil {
+		return ctx.Context.Err()
+	}
 	globalValues := result.GlobalValues
 
 	effectivePrefix := prefixFlag
@@ -55,8 +60,11 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 	installer.SetInstallType(installTypeFlag)
 
 	for _, name := range ctx.DepGraph.Order {
+		if ctx.Context != nil && ctx.Context.Err() != nil {
+			return ctx.Context.Err()
+		}
 		node := ctx.DepGraph.Packages[name]
-		if node.Pkg == nil {
+		if node.Pkg == nil || result.BuildCtxs[name] == nil || result.SubGraphRoots[name] {
 			continue
 		}
 		if err := installOnePackage(ctx, name, node, result, installer, globalValues); err != nil {
@@ -64,7 +72,10 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) error {
 		}
 	}
 
-	if err := installer.InstallAll(); err != nil {
+	if ctx.Context != nil && ctx.Context.Err() != nil {
+		return ctx.Context.Err()
+	}
+	if err := installer.InstallAll(ctx.Context); err != nil {
 		return err
 	}
 
@@ -91,9 +102,9 @@ func installOnePackage(ctx *RuntimeContext, name string, node *resolver.PackageN
 		fn(installCtx)
 	})
 
-	buildCtx, err := pipeline.DeclareTargets(ctx, name, result.PkgDirs[name], nil, globalValues)
-	if err != nil {
-		return err
+	buildCtx := result.BuildCtxs[name]
+	if buildCtx == nil {
+		return fmt.Errorf("package %s was not declared in this build", name)
 	}
 
 	installItems := installCtx.GetInstallItems()
@@ -123,6 +134,9 @@ func writeManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 	var packages []installManifestEntry
 	for _, name := range ctx.DepGraph.Order {
 		node := ctx.DepGraph.Packages[name]
+		if _, isSub := ctx.Resolver.SubParents()[name]; isSub {
+			continue
+		}
 		if node.IsLocal() {
 			sourceDir := result.PkgDirs[name].SourceDir
 			relPath, _ := filepath.Rel(ctx.WorkDir, sourceDir)

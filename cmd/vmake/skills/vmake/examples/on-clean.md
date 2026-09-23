@@ -26,7 +26,7 @@ func Main(p *api.Package) {
 ## What This Demonstrates
 
 - **`p.OnClean(func(ctx *api.CleanContext))`** — Custom clean hook (runs during `vmake clean`)
-- **`ctx.Run(name, args...)`** — Run command in BuildDir, `os.Exit` on failure
+- **`ctx.Run(name, args...)`** — Run command in BuildDir, raises a script error on failure, with cleanup at the execution boundary
 - **`ctx.RunIn(dir, name, args...)`** — Run command in specified directory
 - **`ctx.SourceDir()`** — Package root directory
 
@@ -48,4 +48,4 @@ func Main(p *api.Package) {
 
 - examples/simple.md — Minimal build without clean
 - examples/third-party-wrapper.md — TargetVoid with SetBuildFunc pattern
-- examples/firmware.md — Real-world firmware with KConfig presets and stamp-based skip
+- examples/firmware.md — Real-world firmware with KConfig presets and external incremental builds

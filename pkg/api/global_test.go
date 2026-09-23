@@ -419,7 +419,7 @@ func findFakeMake(dir string) (string, error) {
 		return "", err
 	}
 	makePath := filepath.Join(makeDir, "make")
-	script := []byte("#!/bin/sh\n[ \"$1\" = \"defconfig\" ] && echo \"CONFIG_FAKE=y\" > .config\n")
+	script := []byte("#!/bin/sh\ncase \"$1\" in -j[1-9]*) shift ;; *) exit 2 ;; esac\n[ \"$1\" = \"defconfig\" ] && echo \"CONFIG_FAKE=y\" > .config\n")
 	if err := os.WriteFile(makePath, script, 0755); err != nil {
 		return "", err
 	}

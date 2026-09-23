@@ -362,7 +362,7 @@ func TestMakeLocalPkgDirsLayout(t *testing.T) {
 
 func TestMakeRemotePkgDirsLayout(t *testing.T) {
 	dirs := makeRemotePkgDirs("/vd", "/src", "/usr/bin/gcc@13", "release", map[string]any{"x": 1}, "1.0.0", "c0ffee", "gh", "", "sh")
-	if dirs.SourceDir != "/src" {
+	if dirs.SourceDir != filepath.Join(filepath.Dir(dirs.BuildDir), "work", "repo") {
 		t.Errorf("SourceDir = %q", dirs.SourceDir)
 	}
 	if !stringsContains(dirs.BuildDir, filepath.FromSlash("/vd/out/")) {

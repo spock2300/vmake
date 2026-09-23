@@ -97,9 +97,9 @@ func TestPackageVisibilityCacheIsolation(t *testing.T) {
 			if test.native {
 				dependency.WithNative("https://example.invalid/dependency.git", nil, "1.0")
 			}
-			s := newBuildPhaseState(&RuntimeContext{DepGraph: &resolver.Graph{
-				Packages: map[string]*resolver.PackageNode{"app": app, "dependency": dependency},
-			}}, BuildOptions{})
+			r := resolver.NewResolver(nil, root)
+			r.Graph().Packages = map[string]*resolver.PackageNode{"app": app, "dependency": dependency}
+			s := newBuildPhaseState(&RuntimeContext{Resolver: r, DepGraph: r.Graph()}, BuildOptions{})
 			s.needed = map[string]bool{"app": true, "dependency": true}
 			s.scriptHashes = map[string]string{"app": "app-script", "dependency": "dependency-script"}
 			s.globalFlagsHash = "global-flags"

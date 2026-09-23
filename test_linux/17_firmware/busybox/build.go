@@ -2,8 +2,6 @@ package main
 
 import (
 	"path/filepath"
-	"runtime"
-	"strconv"
 
 	"github.com/spock2300/vmake/pkg/api"
 )
@@ -29,10 +27,12 @@ func Main(p *api.Package) {
 		ctx.Target("busybox").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
 			srcDir := pkg.SrcDir()
 			pkg.EnsureConfig(srcDir)
-			pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
+			const ownFlags = "ifndef VMAKE_FIRMWARE_FLAGS_RESET\nundefine CFLAGS\nundefine CXXFLAGS\nundefine LDFLAGS\nexport VMAKE_FIRMWARE_FLAGS_RESET := 1\nendif"
+			if err := pkg.Make("-C", srcDir, "--eval", ownFlags); err != nil {
+				return err
+			}
 			installDir := filepath.Join(pkg.BuildDir(), "_install")
-			pkg.RunIn(srcDir, "make", "CONFIG_PREFIX="+installDir, "install")
-			return nil
+			return pkg.Make("-C", srcDir, "--eval", ownFlags, "CONFIG_PREFIX="+installDir, "install")
 		})
 	})
 

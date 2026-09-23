@@ -94,7 +94,7 @@ func Main(p *api.Package) {
    - lib: creates target "utils" (static library)
    - app: creates target "app" (binary), depends on "lib:utils"
 6. Topological sort: lib:utils → app:app
-7. Compile & link (packages build in parallel by default)
+7. Compile & link (all targets execute serially; source compilation within a target follows the jobs budget)
 ```
 
 ## Adding More Packages

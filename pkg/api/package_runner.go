@@ -103,10 +103,14 @@ func (p *Package) shellEnv(forMake bool) map[string]string {
 
 func (p *Package) runMakeIn(dir string, args ...string) error {
 	program := p.makeTool()
+	args, err := p.executionBudget().MakeArgs(args, parallelEnvironment())
+	if err != nil {
+		return err
+	}
 	if p.logAndDryRun(program, args) {
 		return nil
 	}
-	return exec.RunWithEnv(dir, p.shellEnv(true), program, args...)
+	return exec.RunWithEnvContext(p.executionContext(), dir, p.shellEnv(true), program, args...)
 }
 
 func (p *Package) Configure(extraArgs ...string) error {
@@ -181,5 +185,5 @@ func (p *Package) runIn(dir string, extra map[string]string, name string, args .
 			}
 		}
 	}
-	return exec.RunWithEnv(dir, env, name, args...)
+	return exec.RunWithEnvContext(p.executionContext(), dir, env, name, args...)
 }

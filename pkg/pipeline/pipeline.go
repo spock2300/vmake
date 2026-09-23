@@ -1,8 +1,11 @@
 package pipeline
 
 import (
+	"context"
 	"maps"
 
+	"github.com/spock2300/vmake/internal/scriptcall"
+	"github.com/spock2300/vmake/internal/storage"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
@@ -21,6 +24,8 @@ type Paths struct {
 }
 
 type RuntimeContext struct {
+	Context             context.Context
+	Locks               *storage.Session
 	WorkDir             string
 	ConfigPath          string
 	Config              *config.ConfigFile
@@ -169,7 +174,8 @@ func applyBuildContextConfig(buildCtx *api.BuildContext, node *resolver.PackageN
 	}
 }
 
-func DeclareTargets(ctx *RuntimeContext, name string, dirs *api.PkgDirs, tc *toolchain.Toolchain, globalValues map[string]any) (*api.BuildContext, error) {
+func DeclareTargets(ctx *RuntimeContext, name string, dirs *api.PkgDirs, tc *toolchain.Toolchain, globalValues map[string]any) (_ *api.BuildContext, err error) {
+	defer scriptcall.Recover(&err)
 	node := ctx.DepGraph.Packages[name]
 	buildCtx, err := newBuildContext(ctx, name, globalValues)
 	if err != nil {
@@ -190,6 +196,13 @@ func DeclareTargets(ctx *RuntimeContext, name string, dirs *api.PkgDirs, tc *too
 		pkg.SetOptions(allOpts)
 		pkg.SetCfgVals(maps.Clone(buildCtx.CfgVals))
 		if tc != nil {
+			name := resolvePkgToolchain(ctx.Config, name, tc.Name)
+			if name != tc.Name {
+				tc, err = toolchain.GetManager().GetToolchain(name)
+				if err != nil {
+					return nil, err
+				}
+			}
 			pkg.SetToolchain(tc)
 			pkg.SetPlatform(platform)
 			flags := api.DefaultBuildFlags(tc.Name, pkg.TargetOS())
@@ -198,6 +211,7 @@ func DeclareTargets(ctx *RuntimeContext, name string, dirs *api.PkgDirs, tc *too
 		buildCtx.SetPackage(pkg)
 
 		pkg.SetDryRun(true)
+		defer pkg.SetDryRun(false)
 		pkg.ExecBuildFuncs(dirs.SourceDir, func(fn api.BuildFunc) {
 			fn(buildCtx)
 		})

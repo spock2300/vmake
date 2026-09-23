@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -68,6 +69,7 @@ func (g *Graph) IsFrozen() bool {
 }
 
 type Resolver struct {
+	ctx          context.Context
 	sources      map[string]*buildscript.Source
 	graph        *Graph
 	repoMgr      *repo.RepoManager
@@ -82,12 +84,20 @@ type Resolver struct {
 
 func NewResolver(repoMgr *repo.RepoManager, depsDir string) *Resolver {
 	return &Resolver{
+		ctx:        context.Background(),
 		sources:    make(map[string]*buildscript.Source),
 		graph:      &Graph{Packages: make(map[string]*PackageNode)},
 		repoMgr:    repoMgr,
 		depsDir:    depsDir,
 		subParents: make(map[string]string),
 	}
+}
+
+func (r *Resolver) SetContext(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	r.ctx = ctx
 }
 
 func (r *Resolver) SetSourceManager(sm *repo.SourceManager) {
@@ -341,7 +351,11 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 		if err != nil {
 			return nil, err
 		}
-		versions = map[string]string{pinVersion: repo.DescribeTag(filepath.Join(res.VersionDir, "src"))}
+		tag, err := repo.DescribeTagContext(r.ctx, filepath.Join(res.VersionDir, "src"))
+		if err != nil {
+			return nil, err
+		}
+		versions = map[string]string{pinVersion: tag}
 		selectedVersion = pinVersion
 		vlog.Info("  %s@%s (pinned, cached)", id, selectedVersion)
 	} else {
@@ -350,7 +364,7 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 			return nil, fmt.Errorf("refs clone for %s: %w", id, err)
 		}
 
-		tags, err := repo.ListTags(refsDir)
+		tags, err := repo.ListTagsContext(r.ctx, refsDir)
 		if err != nil {
 			return nil, fmt.Errorf("list tags for %s: %w", id, err)
 		}
@@ -360,7 +374,7 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 			if err != nil {
 				return nil, fmt.Errorf("refs clone for %s: %w", id, err)
 			}
-			tags, err = repo.ListTags(refsDir)
+			tags, err = repo.ListTagsContext(r.ctx, refsDir)
 			if err != nil {
 				return nil, fmt.Errorf("list tags for %s: %w", id, err)
 			}
@@ -509,7 +523,7 @@ func (r *Resolver) scanSubPackages(parentID, checkoutDir string) {
 }
 
 func (r *Resolver) checkoutNativeSource(id, gitURL, repoDir, ref string) (*buildscript.Source, error) {
-	if err := repo.EnsureRepoAtRef(gitURL, repoDir, ref); err != nil {
+	if err := repo.EnsureRepoAtRefContext(r.ctx, gitURL, repoDir, ref); err != nil {
 		return nil, fmt.Errorf("checkout %s for %s: %w", ref, id, err)
 	}
 
@@ -526,7 +540,7 @@ func (r *Resolver) checkWrapperCommit(id, repoName string) error {
 	if !ok || locked.WrapperCommit == "" {
 		return nil
 	}
-	head, err := repo.GetCurrentCommit(r.repoMgr.Path(repoName))
+	head, err := repo.GetCurrentCommitContext(r.ctx, r.repoMgr.Path(repoName))
 	if err != nil {
 		return fmt.Errorf("read HEAD of registry '%s': %w", repoName, err)
 	}

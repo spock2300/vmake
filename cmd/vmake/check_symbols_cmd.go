@@ -70,7 +70,7 @@ func runCheckSymbols(strict bool) {
 		vlog.Fatal("inspect: %v", err)
 	}
 
-	artifacts, err := discoverArtifacts(ctx, insp.PkgDirs, insp.Tc, insp.GlobalValues)
+	artifacts, err := discoverArtifacts(ctx, insp.PkgDirs, insp.PackageToolchains, insp.GlobalValues)
 	fatalErr(err)
 	if len(artifacts) == 0 {
 		fmt.Println("No built Shared/Binary targets found. Run 'vmake build' first.")
@@ -99,9 +99,10 @@ func runCheckSymbols(strict bool) {
 			findings = append(findings, finding{category: category, severity: severity, subject: a.pkgName + ":" + a.targetName, detail: err.Error()})
 			continue
 		}
-		nm, err := toolchain.ResolveToolPath(insp.Tc.Tools.NM, insp.Tc.InstallPath)
+		tc := insp.PackageToolchains[a.pkgName]
+		nm, err := toolchain.ResolveToolPath(tc.Tools.NM, tc.InstallPath)
 		if err != nil {
-			findings = append(findings, finding{category: "tool-error", severity: "error", subject: a.pkgName + ":" + a.targetName, detail: fmt.Sprintf("resolve nm %q: %v", insp.Tc.Tools.NM, err)})
+			findings = append(findings, finding{category: "tool-error", severity: "error", subject: a.pkgName + ":" + a.targetName, detail: fmt.Sprintf("resolve nm %q: %v", tc.Tools.NM, err)})
 			continue
 		}
 		exports, err := readExports(nm, a.outputPath)
@@ -131,7 +132,7 @@ func runCheckSymbols(strict bool) {
 	}
 }
 
-func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, tc *toolchain.Toolchain, globalValues map[string]any) ([]scanArtifact, error) {
+func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, tcs map[string]*toolchain.Toolchain, globalValues map[string]any) ([]scanArtifact, error) {
 	var out []scanArtifact
 	for name, node := range ctx.DepGraph.Packages {
 		if node == nil || node.Pkg == nil || !node.IsLocal() {
@@ -141,7 +142,7 @@ func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, tc 
 		if dirs == nil {
 			continue
 		}
-		buildCtx, err := pipeline.DeclareTargets(ctx, name, dirs, tc, globalValues)
+		buildCtx, err := pipeline.DeclareTargets(ctx, name, dirs, tcs[name], globalValues)
 		if err != nil {
 			return nil, err
 		}

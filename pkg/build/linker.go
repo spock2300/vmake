@@ -2,6 +2,7 @@ package build
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -113,14 +114,10 @@ func (p LinkPolicy) bindingFlags() []string {
 	}
 }
 
-func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScript string, policy LinkPolicy, workDir string) error {
+func (l *Linker) binaryCommand(objs, libs, ldflags []string, outputPath, linkerScript string, policy LinkPolicy, workDir string) (commandSpec, error) {
 	if err := policy.Validate(); err != nil {
-		return err
+		return commandSpec{}, err
 	}
-	if err := fs.EnsureParentDir(resolveWorkPath(workDir, outputPath)); err != nil {
-		return err
-	}
-
 	objs = commandPaths(workDir, objs)
 	ldflags = commandFlags(workDir, ldflags)
 	outputPath = commandPath(workDir, outputPath)
@@ -136,28 +133,23 @@ func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScri
 	if el := policy.excludeLibsFlag(); el != "" {
 		args = append(args, el)
 	}
-
-	var objFiles []string
-	var libFiles []string
-	for _, o := range objs {
-		if wholeArchiveInput(o) {
-			libFiles = append(libFiles, o)
+	var objFiles, libFiles []string
+	for _, path := range objs {
+		if wholeArchiveInput(path) {
+			libFiles = append(libFiles, path)
 		} else {
-			objFiles = append(objFiles, o)
+			objFiles = append(objFiles, path)
 		}
 	}
-
-	var groupFlags []string
-	var otherFlags []string
-	for _, f := range ldflags {
-		if strings.HasPrefix(f, "-l") || strings.HasPrefix(f, "-L") {
-			groupFlags = append(groupFlags, f)
+	var groupFlags, otherFlags []string
+	for _, flag := range ldflags {
+		if strings.HasPrefix(flag, "-l") || strings.HasPrefix(flag, "-L") {
+			groupFlags = append(groupFlags, flag)
 		} else {
-			otherFlags = append(otherFlags, f)
+			otherFlags = append(otherFlags, flag)
 		}
 	}
-
-	if len(objFiles) > 0 || len(libFiles) > 0 || len(libs) > 0 || len(groupFlags) > 0 {
+	if len(objFiles)+len(libFiles)+len(libs)+len(groupFlags) > 0 {
 		args = append(args, "-Wl,--start-group")
 		args = append(args, objFiles...)
 		if len(libFiles) > 0 {
@@ -171,52 +163,32 @@ func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScri
 		args = append(args, groupFlags...)
 		args = append(args, "-Wl,--end-group")
 	}
-
 	args = append(args, otherFlags...)
 	args = append(args, policy.bindingFlags()...)
-
-	_, err := l.run(l.ccPath, workDir, args...)
-	return err
+	return commandSpec{Program: l.ccPath, Args: args}, nil
 }
 
-func (l *Linker) LinkStatic(objs []string, outputPath, workDir string) error {
-	if err := fs.EnsureParentDir(resolveWorkPath(workDir, outputPath)); err != nil {
-		return err
-	}
-
-	fs.RemoveIfExists(resolveWorkPath(workDir, outputPath))
-
-	objs = commandPaths(workDir, objs)
+func (l *Linker) staticCommand(objs []string, outputPath, workDir string) commandSpec {
 	args := []string{"rcs", commandPath(workDir, outputPath)}
-	args = append(args, objs...)
-
-	_, err := l.run(l.arPath, workDir, args...)
-	return err
+	return commandSpec{Program: l.arPath, Args: append(args, commandPaths(workDir, objs)...)}
 }
 
-func (l *Linker) LinkShared(objs, ldflags []string, outputPath string, policy LinkPolicy, workDir string) error {
+func (l *Linker) sharedCommand(objs, ldflags []string, outputPath string, policy LinkPolicy, workDir string) (commandSpec, error) {
 	if err := policy.Validate(); err != nil {
-		return err
+		return commandSpec{}, err
 	}
-	if err := fs.EnsureParentDir(resolveWorkPath(workDir, outputPath)); err != nil {
-		return err
-	}
-
 	objs = commandPaths(workDir, objs)
 	ldflags = commandFlags(workDir, ldflags)
 	outputPath = commandPath(workDir, outputPath)
 	policy.VersionScript = commandPath(workDir, policy.VersionScript)
 	filtered := make([]string, 0, len(ldflags))
-	for _, f := range ldflags {
-		if f == "-pie" || f == "-no-pie" {
-			continue
+	for _, flag := range ldflags {
+		if flag != "-pie" && flag != "-no-pie" {
+			filtered = append(filtered, flag)
 		}
-		filtered = append(filtered, f)
 	}
-
 	args := []string{"-shared", "-o", outputPath}
 	if policy.TargetOS == "windows" {
-		// Consumers link against the import library, not the DLL.
 		args = append(args, "-Wl,--out-implib="+outputPath+".a")
 	}
 	if vs := policy.versionScriptFlag(); vs != "" {
@@ -228,20 +200,52 @@ func (l *Linker) LinkShared(objs, ldflags []string, outputPath string, policy Li
 	args = append(args, objs...)
 	args = append(args, filtered...)
 	args = append(args, policy.bindingFlags()...)
+	return commandSpec{Program: l.ccPath, Args: args}, nil
+}
 
-	_, err := l.run(l.ccPath, workDir, args...)
+func (l *Linker) objectCommand(objs []string, outputPath, workDir string) commandSpec {
+	args := []string{"-r", "-o", commandPath(workDir, outputPath)}
+	return commandSpec{Program: l.ccPath, Args: append(args, commandPaths(workDir, objs)...)}
+}
+
+func (l *Linker) execute(command commandSpec, outputPath, workDir string, archive bool) error {
+	absolute := resolveWorkPath(workDir, outputPath)
+	if err := fs.EnsureParentDir(absolute); err != nil {
+		return err
+	}
+	if archive {
+		if err := os.Remove(absolute); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	} else if info, err := os.Lstat(absolute); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		if err := os.Remove(absolute); err != nil {
+			return err
+		}
+	}
+	_, err := l.run(command.Program, workDir, command.Args...)
 	return err
 }
 
-func (l *Linker) LinkObject(objs []string, outputPath, workDir string) error {
-	if err := fs.EnsureParentDir(resolveWorkPath(workDir, outputPath)); err != nil {
+func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScript string, policy LinkPolicy, workDir string) error {
+	command, err := l.binaryCommand(objs, libs, ldflags, outputPath, linkerScript, policy, workDir)
+	if err != nil {
 		return err
 	}
+	return l.execute(command, outputPath, workDir, false)
+}
 
-	objs = commandPaths(workDir, objs)
-	args := []string{"-r", "-o", commandPath(workDir, outputPath)}
-	args = append(args, objs...)
+func (l *Linker) LinkStatic(objs []string, outputPath, workDir string) error {
+	return l.execute(l.staticCommand(objs, outputPath, workDir), outputPath, workDir, true)
+}
 
-	_, err := l.run(l.ccPath, workDir, args...)
-	return err
+func (l *Linker) LinkShared(objs, ldflags []string, outputPath string, policy LinkPolicy, workDir string) error {
+	command, err := l.sharedCommand(objs, ldflags, outputPath, policy, workDir)
+	if err != nil {
+		return err
+	}
+	return l.execute(command, outputPath, workDir, false)
+}
+
+func (l *Linker) LinkObject(objs []string, outputPath, workDir string) error {
+	return l.execute(l.objectCommand(objs, outputPath, workDir), outputPath, workDir, false)
 }

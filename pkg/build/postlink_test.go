@@ -116,7 +116,7 @@ func TestPostLinkDebuglinkIncrementalAndInstall(t *testing.T) {
 	prefix := filepath.Join(dir, "install")
 	installer := NewArtifactInstaller(graph, dirs, prefix)
 	installer.SetPackageInfo("p", &PkgInstallInfo{BuildDir: buildDir, TargetOS: "linux"})
-	if err := installer.InstallAll(); err != nil {
+	if err := installer.InstallAll(nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"app", "app.debug", "app.hex", "app.bin", "app.stripped", "relative.bin", "absolute.bin"} {

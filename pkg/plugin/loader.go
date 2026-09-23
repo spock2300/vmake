@@ -70,7 +70,11 @@ func Load(pluginDir string) (*LoadedPlugin, error) {
 func RunMain(loaded *LoadedPlugin, ctx *Context) (err error) {
 	defer func() {
 		if value := recover(); value != nil {
-			err = fmt.Errorf("plugin %s initialization: %v", loaded.Info.Name, value)
+			if cause, ok := value.(error); ok {
+				err = fmt.Errorf("plugin %s initialization: %w", loaded.Info.Name, cause)
+			} else {
+				err = fmt.Errorf("plugin %s initialization: %v", loaded.Info.Name, value)
+			}
 		}
 	}()
 	loaded.Entry(ctx)

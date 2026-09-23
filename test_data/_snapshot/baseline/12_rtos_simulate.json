@@ -23,8 +23,8 @@
   "install_files": [
     {
       "path": "bin/firmware",
-      "size": 13467,
-      "hash": "051a7c443d079ca39d6998d63985956c4d4e7ae95a0406d830f988508b4ed08f"
+      "size": 13475,
+      "hash": "738cf3ae8f9bbc1c8633d203385130b4494e16abfd69352e1d438e51fe65aa5a"
     },
     {
       "path": "bin/firmware.bin",
@@ -40,9 +40,9 @@
   "build_files": [
     {
       "path": "compile_commands.json",
-      "size": 2894,
-      "hash": "ccb59bd880c54f87632da29e0c89f1764c796fb111a29d69c56e736aa746df8c"
+      "size": 3413,
+      "hash": "996379f6c40aab6d1964d645b7b5da03a764414125b24d24172ba23717a4cc87"
     }
   ],
-  "install_tree_hash": "ebe78b180db88f1fde8b1f5d20cc7be424d2ccc8d705b996a9fb5c12fc49ad3c"
+  "install_tree_hash": "a91f662ac57d845ffc7ebec70777d9ecfde8081f60a92fd5d21bf02b92850b97"
 }

@@ -44,7 +44,7 @@ func runDistClean(cmd *cobra.Command, args []string) {
 	if ok {
 		vlog.Info("")
 		vlog.Info("Executing OnClean...")
-		if err := executeCleanHooks(ctx, false); err != nil {
+		if err := executeCleanHooks(ctx, false, false); err != nil {
 			vlog.Error("Skipping OnClean: %v", err)
 		}
 	}
@@ -80,7 +80,7 @@ func purgeGlobalCache(depsDir string) {
 		return
 	}
 
-	sourceMgr := repo.NewSourceManager(depsDir, getCacheDir())
+	sourceMgr := repo.NewSourceManager(depsDir, getCacheDir()).WithSession(commandStorageLocks())
 
 	for _, repoEntry := range entries {
 		if !repoEntry.IsDir() {
@@ -96,13 +96,11 @@ func purgeGlobalCache(depsDir string) {
 				continue
 			}
 			pkgName := pkgEntry.Name()
-			srcLink := filepath.Join(depsDir, repoName, pkgName, "src")
-			target, err := os.Readlink(srcLink)
+			version, err := sourceMgr.ProjectVersion(repoName, pkgName)
 			if err != nil {
-				vlog.Error("resolve src link %s: %v", srcLink, err)
+				vlog.Error("resolve source %s/%s: %v", repoName, pkgName, err)
 				continue
 			}
-			version := filepath.Base(filepath.Dir(target))
 			if err := sourceMgr.CleanVersion(repoName, pkgName, version); err != nil {
 				vlog.Error("purge %s/%s@%s: %v", repoName, pkgName, version, err)
 				continue

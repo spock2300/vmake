@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/spock2300/vmake/internal/flock"
 	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/storage"
 	"github.com/spock2300/vmake/pkg/api"
 )
 
@@ -25,13 +27,16 @@ import (
 // Version directories are never mutated once populated; clones go through a
 // temporary sibling directory and an atomic rename.
 type SourceManager struct {
+	ctx        context.Context
 	sourcesDir string
 	globalDir  string
 	locksDir   string
+	session    *storage.Session
 }
 
 func NewSourceManager(sourcesDir, globalDir string) *SourceManager {
 	return &SourceManager{
+		ctx:        context.Background(),
 		sourcesDir: sourcesDir,
 		globalDir:  globalDir,
 		locksDir:   filepath.Join(globalDir, "_locks"),
@@ -57,11 +62,11 @@ func (m *SourceManager) localSrcPath(pkg *api.Package) string {
 }
 
 func (m *SourceManager) versionDir(pkg *api.Package, version string) string {
-	return filepath.Join(m.globalDir, pkg.Repo, pkg.Name, version)
+	return filepath.Join(storage.CacheDir(m.globalDir), pkg.Repo, pkg.Name, version)
 }
 
 func (m *SourceManager) acquireLock(pkg *api.Package) (*flock.FileLock, error) {
-	return flock.Acquire(m.pkgLockFile(pkg.Repo, pkg.Name))
+	return flock.AcquireContext(m.context(), m.pkgLockFile(pkg.Repo, pkg.Name))
 }
 
 func ShortCommit(c string) string {
@@ -86,6 +91,11 @@ func (m *SourceManager) EnsureSource(pkg *api.Package, version string) (string, 
 // different commit (e.g. a moved tag), the mismatch is a hard error: the
 // caller must re-resolve ('vmake lock update') or purge the stale entry.
 func (m *SourceManager) EnsureVersion(pkg *api.Package, version, expectedCommit string) (*SourceResult, error) {
+	release, err := m.acquireAccess(false)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	lock, err := m.acquireLock(pkg)
 	if err != nil {
 		return nil, fmt.Errorf("acquire lock for %s: %w", pkg.FullName(), err)
@@ -106,7 +116,7 @@ func (m *SourceManager) EnsureVersion(pkg *api.Package, version, expectedCommit 
 		}
 	}
 
-	commit, err := GetCurrentCommit(srcDir)
+	commit, err := GetCurrentCommitContext(m.context(), srcDir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve commit for %s@%s: %w", pkg.FullName(), version, err)
 	}
@@ -138,12 +148,15 @@ func (m *SourceManager) materialize(pkg *api.Package, versionDir, tag string) er
 	}
 
 	if tag != "" {
-		if err := Checkout(tmpDir, tag); err != nil {
+		if err := CheckoutContext(m.context(), tmpDir, tag); err != nil {
 			return fmt.Errorf("checkout %s failed for %s: %w", tag, pkg.FullName(), err)
 		}
 	}
 
 	if err := m.initSubmodules(pkg, tmpDir); err != nil {
+		return err
+	}
+	if err := m.context().Err(); err != nil {
 		return err
 	}
 
@@ -199,6 +212,11 @@ func PatchSetHash(pkg *api.Package) (string, error) {
 // at <versionDir>/patched/<patchHash>/src. The immutable <versionDir>/src is
 // never modified; identical patch sets share one patched copy across projects.
 func (m *SourceManager) EnsurePatched(pkg *api.Package, versionDir string) (string, error) {
+	release, err := m.acquireAccess(false)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	patchHash, err := PatchSetHash(pkg)
 	if err != nil {
 		return "", err
@@ -224,16 +242,19 @@ func (m *SourceManager) EnsurePatched(pkg *api.Package, versionDir string) (stri
 	fs.RemoveIfExists(tmpDir)
 	defer fs.RemoveIfExists(tmpDir)
 
-	if err := Clone(filepath.Join(versionDir, "src"), tmpDir); err != nil {
+	if err := CloneContext(m.context(), filepath.Join(versionDir, "src"), tmpDir); err != nil {
 		return "", fmt.Errorf("clone %s for patching: %w", pkg.FullName(), err)
 	}
 	if err := m.initSubmodules(pkg, tmpDir); err != nil {
 		return "", err
 	}
 	for _, p := range pkg.GetPatches() {
-		if err := ApplyPatch(tmpDir, filepath.Join(pkg.ScriptDir(), p)); err != nil {
+		if err := ApplyPatchContext(m.context(), tmpDir, filepath.Join(pkg.ScriptDir(), p)); err != nil {
 			return "", fmt.Errorf("apply patch %s for %s: %w", p, pkg.FullName(), err)
 		}
+	}
+	if err := m.context().Err(); err != nil {
+		return "", err
 	}
 	if err := fs.EnsureDir(patchedDir); err != nil {
 		return "", err
@@ -249,7 +270,7 @@ func (m *SourceManager) initSubmodules(pkg *api.Package, dir string) error {
 	if !pkg.Submodules() {
 		return nil
 	}
-	if err := InitSubmodules(dir); err != nil {
+	if err := InitSubmodulesContext(m.context(), dir); err != nil {
 		return fmt.Errorf("init submodules for %s: %w", pkg.FullName(), err)
 	}
 	return nil
@@ -262,9 +283,12 @@ func (m *SourceManager) ensureRepo(pkg *api.Package, dir string) error {
 		return fmt.Errorf("no git URL for %s", pkg.FullName())
 	}
 	for _, url := range urls {
-		lastErr = Clone(url, dir)
+		lastErr = CloneContext(m.context(), url, dir)
 		if lastErr == nil {
 			return nil
+		}
+		if m.context().Err() != nil {
+			return m.context().Err()
 		}
 		fs.RemoveIfExists(dir)
 	}
@@ -278,8 +302,13 @@ func (m *SourceManager) ensureRepo(pkg *api.Package, dir string) error {
 // re-clone via temp-dir + atomic swap; if that also fails the existing clone
 // is kept so an offline `vmake lock update` never destroys the warm refs.
 func (m *SourceManager) EnsureRefsClone(pkg *api.Package, refresh bool) (string, error) {
-	refsDir := filepath.Join(m.globalDir, pkg.Repo, pkg.Name, "_refs")
-	lock, err := flock.Acquire(filepath.Join(m.locksDir, m.pkgLockName(pkg.Repo, pkg.Name, "refs")))
+	release, err := m.acquireAccess(false)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	refsDir := filepath.Join(storage.CacheDir(m.globalDir), pkg.Repo, pkg.Name, "_refs")
+	lock, err := flock.AcquireContext(m.context(), filepath.Join(m.locksDir, m.pkgLockName(pkg.Repo, pkg.Name, "refs")))
 	if err != nil {
 		return "", fmt.Errorf("acquire refs lock for %s/%s: %w", pkg.Repo, pkg.Name, err)
 	}
@@ -290,7 +319,7 @@ func (m *SourceManager) EnsureRefsClone(pkg *api.Package, refresh bool) (string,
 		if len(urls) == 0 {
 			return "", fmt.Errorf("no git URL for %s", pkg.FullName())
 		}
-		if err := Clone(urls[0], refsDir); err != nil {
+		if err := CloneContext(m.context(), urls[0], refsDir); err != nil {
 			return "", err
 		}
 		return refsDir, nil
@@ -298,7 +327,10 @@ func (m *SourceManager) EnsureRefsClone(pkg *api.Package, refresh bool) (string,
 	if !refresh {
 		return refsDir, nil
 	}
-	if err := FetchTags(refsDir); err != nil {
+	if err := FetchTagsContext(m.context(), refsDir); err != nil {
+		if m.context().Err() != nil {
+			return "", m.context().Err()
+		}
 		if rerr := m.recloneRefs(pkg, refsDir); rerr != nil {
 			return "", fmt.Errorf("%w (kept existing refs clone; re-clone failed: %v)", err, rerr)
 		}
@@ -315,7 +347,10 @@ func (m *SourceManager) recloneRefs(pkg *api.Package, refsDir string) error {
 	backupDir := refsDir + ".bak"
 	fs.RemoveIfExists(tmpDir)
 	defer fs.RemoveIfExists(tmpDir)
-	if err := Clone(urls[0], tmpDir); err != nil {
+	if err := CloneContext(m.context(), urls[0], tmpDir); err != nil {
+		return err
+	}
+	if err := m.context().Err(); err != nil {
 		return err
 	}
 	fs.RemoveIfExists(backupDir)
@@ -342,11 +377,16 @@ func (m *SourceManager) HasMaterializedVersion(pkg *api.Package, version string)
 // filesystem URLs are refreshed to origin/HEAD on each call; remote URLs are
 // cloned once and never refreshed (offline-friendly).
 func (m *SourceManager) EnsureURL(url string) (string, error) {
+	release, err := m.acquireAccess(false)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	h := sha256.Sum256([]byte(url))
-	dir := filepath.Join(m.globalDir, "_localgit", hex.EncodeToString(h[:]))
+	dir := filepath.Join(storage.CacheDir(m.globalDir), "_localgit", hex.EncodeToString(h[:]))
 	srcDir := filepath.Join(dir, "src")
 
-	lock, err := flock.Acquire(filepath.Join(m.locksDir, "localgit_"+hex.EncodeToString(h[:8])+".lock"))
+	lock, err := flock.AcquireContext(m.context(), filepath.Join(m.locksDir, "localgit_"+hex.EncodeToString(h[:8])+".lock"))
 	if err != nil {
 		return "", fmt.Errorf("acquire lock for %s: %w", url, err)
 	}
@@ -356,7 +396,14 @@ func (m *SourceManager) EnsureURL(url string) (string, error) {
 		tmpDir := srcDir + ".tmp"
 		fs.RemoveIfExists(tmpDir)
 		defer fs.RemoveIfExists(tmpDir)
-		if err := Clone(url, tmpDir); err != nil {
+		clone := CloneHeadContext
+		if isLocalGitURL(url) {
+			clone = CloneContext
+		}
+		if err := clone(m.context(), url, tmpDir); err != nil {
+			return "", err
+		}
+		if err := m.context().Err(); err != nil {
 			return "", err
 		}
 		if err := fs.EnsureDir(dir); err != nil {
@@ -367,11 +414,22 @@ func (m *SourceManager) EnsureURL(url string) (string, error) {
 			return "", fmt.Errorf("publish %s: %w", srcDir, err)
 		}
 	} else if isLocalGitURL(url) {
-		if err := FetchAndReset(srcDir); err != nil {
+		if err := FetchAndResetContext(m.context(), srcDir); err != nil {
 			return "", err
 		}
 	}
-	return srcDir, nil
+	commit, err := GetCurrentCommitContext(m.context(), srcDir)
+	if err != nil {
+		return "", err
+	}
+	seedDir := filepath.Join(dir, "commits", commit, "src")
+	if fs.FileExists(filepath.Join(seedDir, ".git")) {
+		return checkedSourceCommit(m.context(), seedDir, commit)
+	}
+	if err := m.ensureWorkspace(srcDir, seedDir, commit); err != nil {
+		return "", err
+	}
+	return seedDir, nil
 }
 
 func isLocalGitURL(url string) bool {
@@ -390,13 +448,18 @@ func isLocalGitURL(url string) bool {
 // UpdateSource floats a mutable clone at origin/HEAD for `vmake pkg update`
 // and re-points the project symlinks at it.
 func (m *SourceManager) UpdateSource(pkg *api.Package) error {
+	release, err := m.acquireAccess(true)
+	if err != nil {
+		return err
+	}
+	defer release()
 	lock, err := m.acquireLock(pkg)
 	if err != nil {
 		return fmt.Errorf("acquire lock for %s: %w", pkg.FullName(), err)
 	}
 	defer lock.Release()
 
-	headDir := filepath.Join(m.globalDir, pkg.Repo, pkg.Name, "_head")
+	headDir := filepath.Join(storage.CacheDir(m.globalDir), pkg.Repo, pkg.Name, "_head")
 	if !fs.FileExists(filepath.Join(headDir, ".git")) {
 		if err := fs.EnsureDir(filepath.Dir(headDir)); err != nil {
 			return err
@@ -404,7 +467,7 @@ func (m *SourceManager) UpdateSource(pkg *api.Package) error {
 		if err := m.ensureRepo(pkg, headDir); err != nil {
 			return err
 		}
-	} else if err := FetchAndReset(headDir); err != nil {
+	} else if err := FetchAndResetContext(m.context(), headDir); err != nil {
 		return err
 	}
 
@@ -417,13 +480,23 @@ func (m *SourceManager) UpdateSource(pkg *api.Package) error {
 }
 
 func (m *SourceManager) CleanSource(repoName, name string) error {
+	release, err := m.acquireAccess(true)
+	if err != nil {
+		return err
+	}
+	defer release()
 	localLink := filepath.Join(m.sourcesDir, repoName, name, "src")
 	_ = os.Remove(localLink)
 	localOut := filepath.Join(m.sourcesDir, repoName, name, "out")
 	_ = os.Remove(localOut)
-	return fs.RemoveAll(filepath.Join(m.globalDir, repoName, name))
+	return fs.RemoveAll(filepath.Join(storage.CacheDir(m.globalDir), repoName, name))
 }
 
 func (m *SourceManager) CleanVersion(repoName, name, version string) error {
-	return fs.RemoveAll(filepath.Join(m.globalDir, repoName, name, version))
+	release, err := m.acquireAccess(true)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return fs.RemoveAll(filepath.Join(storage.CacheDir(m.globalDir), repoName, name, version))
 }

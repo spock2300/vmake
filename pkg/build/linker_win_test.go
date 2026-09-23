@@ -1,6 +1,7 @@
 package build
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -115,8 +116,9 @@ func TestNeedRelinkMissingImportLibrary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := &Scheduler{
+	s := &Scheduler{ctx: context.Background(),
 		graph:     graph,
+		linker:    NewLinker(&ResolvedTools{CC: "cc", AR: "ar"}),
 		pkgs:      map[string]*PkgInfo{"p": {PkgDirs: api.PkgDirs{SourceDir: dir}}},
 		toolchain: &toolchain.Toolchain{},
 		platform:  api.Platform{OS: "windows"},
@@ -134,6 +136,7 @@ func TestNeedRelinkMissingImportLibrary(t *testing.T) {
 	if err := os.WriteFile(implib, []byte("implib"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	saveTestLinkRecord(t, s, resolved, nil)
 	if s.needRelink(resolved, nil) {
 		t.Error("a PE shared target with DLL and import library present must not relink")
 	}

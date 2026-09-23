@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -22,7 +23,7 @@ import (
 )
 
 const (
-	subdirObjects   = "objects"
+	subdirObjects   = "object"
 	subdirGenerated = "generated"
 )
 
@@ -71,6 +72,7 @@ func (pi *PkgInfo) GeneratedDir() string {
 }
 
 type Scheduler struct {
+	ctx           context.Context
 	graph         *BuildGraph
 	compiler      *Compiler
 	linker        *Linker
@@ -88,10 +90,13 @@ type Scheduler struct {
 	pkgKeyExtra   map[string]string
 	pkgLockDir    string
 	numWorkers    int
-	parallelPkgs  int
 	keepGoing     bool
 
-	buildTargetsFn func(fullNames []string) error
+	buildTargetFn  func(string) error
+	globalCFlags   []string
+	globalCxxFlags []string
+	globalLdFlags  []string
+	globalLinks    []string
 }
 
 func NewScheduler(
@@ -106,7 +111,10 @@ func NewScheduler(
 	if err != nil {
 		return nil, err
 	}
+	return newScheduler(graph, tc, pkgDirs, mode, pkgOptions, platform, tools), nil
+}
 
+func newScheduler(graph *BuildGraph, tc *toolchain.Toolchain, pkgDirs map[string]*api.PkgDirs, mode string, pkgOptions map[string]map[string]any, platform api.Platform, tools *ResolvedTools) *Scheduler {
 	compiler := NewCompiler(tools)
 	linker := NewLinker(tools)
 
@@ -116,20 +124,26 @@ func NewScheduler(
 	}
 
 	ccWriter := NewCompileCommandsWriter(tools)
+	manager := toolchain.GetManager()
 
 	s := &Scheduler{
-		graph:         graph,
-		compiler:      compiler,
-		linker:        linker,
-		toolchain:     tc,
-		platform:      platform,
-		resolvedTools: tools,
-		tcName:        tcName,
-		mode:          mode,
-		pkgOptions:    pkgOptions,
-		pkgs:          make(map[string]*PkgInfo),
-		ccWriter:      ccWriter,
-		packages:      make(map[string]*api.Package),
+		ctx:            context.Background(),
+		graph:          graph,
+		compiler:       compiler,
+		linker:         linker,
+		toolchain:      tc,
+		platform:       platform,
+		resolvedTools:  tools,
+		tcName:         tcName,
+		mode:           mode,
+		pkgOptions:     pkgOptions,
+		pkgs:           make(map[string]*PkgInfo),
+		ccWriter:       ccWriter,
+		packages:       make(map[string]*api.Package),
+		globalCFlags:   append([]string{}, manager.GetGlobalCFlags()...),
+		globalCxxFlags: append([]string{}, manager.GetGlobalCxxFlags()...),
+		globalLdFlags:  append([]string{}, manager.GetGlobalLdFlags()...),
+		globalLinks:    append([]string{}, manager.GetGlobalLinks()...),
 	}
 
 	for pkgName, pd := range pkgDirs {
@@ -144,7 +158,7 @@ func NewScheduler(
 		s.pkgs[pkgName] = info
 	}
 
-	return s, nil
+	return s
 }
 
 func (s *Scheduler) SetPackage(pkgName string, pkg *api.Package) {
@@ -160,7 +174,10 @@ func (s *Scheduler) SetIncludeTests(v bool) {
 }
 
 func (s *Scheduler) SetPkgKeyExtra(extra map[string]string) {
-	s.pkgKeyExtra = extra
+	s.pkgKeyExtra = maps.Clone(extra)
+	for name, info := range s.pkgs {
+		info.BuildKey = BuildKey(s.toolIdentity(), s.mode, s.pkgOptions[name], s.pkgExtra(name))
+	}
 }
 
 func (s *Scheduler) SetPkgLockDir(dir string) {
@@ -175,12 +192,8 @@ func (s *Scheduler) SetKeepGoing(v bool) {
 	s.keepGoing = v
 }
 
-// SetParallelPkgs enables package-level parallelism in BuildAll: up to n
-// packages build concurrently in graph-dependency order (Kahn levels).
-// Targets inside one package stay sequential. 0 or 1 keeps the sequential
-// scheduler.
-func (s *Scheduler) SetParallelPkgs(n int) {
-	s.parallelPkgs = n
+func (s *Scheduler) SetBuildTargetFunc(fn func(string) error) {
+	s.buildTargetFn = fn
 }
 
 func (s *Scheduler) pkgExtra(pkgName string) string {
@@ -196,7 +209,7 @@ func (s *Scheduler) lockPackage(pkgName string) (func(), error) {
 	}
 	h := sha256.Sum256([]byte(pkgName))
 	safe := strings.ReplaceAll(pkgName, "/", "_") + "_" + hex.EncodeToString(h[:4])
-	l, err := flock.Acquire(filepath.Join(s.pkgLockDir, safe+".lock"))
+	l, err := flock.AcquireContext(s.ctx, filepath.Join(s.pkgLockDir, safe+".lock"))
 	if err != nil {
 		return nil, fmt.Errorf("acquire build lock for %s: %w", pkgName, err)
 	}
@@ -236,41 +249,40 @@ func (s *Scheduler) pkgInfoOf(pkgName string) (*PkgInfo, error) {
 
 func (s *Scheduler) BuildAll() error {
 	var errs []error
-	if s.parallelPkgs > 1 {
-		errs = s.buildAllParallel()
-	} else {
-		failedTargets := make(map[string]bool)
-		if err := s.graph.ForEachDefault(s.includeTests, func(node *BuildNode) error {
-			if s.depsFailed(node, failedTargets) {
-				vlog.Info("[skip] %s (dependency failed)", node.FullName)
-				failedTargets[node.FullName] = true
-				return nil
-			}
-			if err := s.Build(node.FullName); err != nil {
-				failedTargets[node.FullName] = true
-				errs = append(errs, err)
-				if !s.keepGoing {
-					return err
-				}
-				return nil
-			}
-			return nil
-		}); err != nil {
+	failedTargets := make(map[string]bool)
+	buildTarget := s.buildTargetFn
+	if buildTarget == nil {
+		buildTarget = s.Build
+	}
+	err := s.graph.ForEachDefault(s.includeTests, func(node *BuildNode) error {
+		if err := s.ctx.Err(); err != nil {
 			return err
 		}
+		if s.depsFailed(node, failedTargets) {
+			vlog.Info("[skip] %s (dependency failed)", node.FullName)
+			failedTargets[node.FullName] = true
+			return nil
+		}
+		if err := buildTarget(node.FullName); err != nil {
+			failedTargets[node.FullName] = true
+			errs = append(errs, err)
+			if !s.keepGoing || s.ctx.Err() != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil && len(errs) == 0 {
+		errs = append(errs, err)
 	}
 	root := s.rootDir
 	if root == "" {
 		root = "."
 	}
-	saveErr := s.ccWriter.Save(filepath.Join(root, "build", "compile_commands.json"))
-	if len(errs) > 0 {
-		if saveErr != nil {
-			errs = append(errs, saveErr)
-		}
-		return errors.Join(errs...)
+	if err := s.ccWriter.Save(filepath.Join(root, "build", "compile_commands.json")); err != nil {
+		errs = append(errs, err)
 	}
-	return saveErr
+	return errors.Join(errs...)
 }
 
 func (s *Scheduler) depsFailed(node *BuildNode, failedTargets map[string]bool) bool {
@@ -283,6 +295,9 @@ func (s *Scheduler) depsFailed(node *BuildNode, failedTargets map[string]bool) b
 }
 
 func (s *Scheduler) Build(fullName string) error {
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
 	node, err := s.graph.GetNode(fullName)
 	if err != nil {
 		return err
@@ -342,7 +357,7 @@ func (s *Scheduler) prepareTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, wo
 	genRules := node.Target.GenRules()
 	if len(genRules) > 0 {
 		generatedDir := pkgInfo.GeneratedDir()
-		if err := runGenRules(genRules, resolveWorkPath(workDir, generatedDir), workDir); err != nil {
+		if err := runGenRulesContext(s.ctx, genRules, resolveWorkPath(workDir, generatedDir), workDir); err != nil {
 			return err
 		}
 	}
@@ -362,21 +377,64 @@ func (s *Scheduler) prepareTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, wo
 }
 
 func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, objs []string) error {
-	linked, err := s.realizeTarget(resolved, objs)
-	if err != nil {
+	if err := s.ctx.Err(); err != nil {
 		return err
 	}
-
-	if linked {
+	if resolved.Node.Target.Kind() == api.TargetVoid {
+		if err := s.buildVoidTarget(resolved); err != nil {
+			return err
+		}
 		if err := s.postLink(resolved); err != nil {
 			return err
 		}
-	}
-
-	if pkgInfo.InstallDir != "" {
-		if err := s.publishTarget(resolved, pkgInfo); err != nil {
+		if err := s.ctx.Err(); err != nil {
 			return err
 		}
+		for _, output := range expandPostLinkArgs(resolved.Node.Target.PostLinkOutputs(), pkgInfo.SourceDir, resolved.OutputPath) {
+			path := resolveWorkPath(pkgInfo.SourceDir, output)
+			info, err := os.Stat(path)
+			if err != nil {
+				return fmt.Errorf("post-link output %s: %w", path, err)
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("post-link output is not a regular file: %s", path)
+			}
+		}
+		return nil
+	}
+	action, err := s.planLink(resolved, objs)
+	if err != nil {
+		return err
+	}
+	if !actionUpToDate(action.recordPath, action.signature, pkgInfo.SourceDir, action.inputs, action.outputs) {
+		if err := invalidateActionRecord(action.recordPath); err != nil {
+			return err
+		}
+		if resolved.Node.Target.Prebuilt() != "" {
+			if err := s.realizePrebuilt(resolved); err != nil {
+				return err
+			}
+		} else {
+			vlog.Info("  LINK %s", filepath.Base(resolved.OutputPath))
+			if err := s.linker.execute(action.command, resolved.OutputPath, pkgInfo.SourceDir, resolved.Node.Target.Kind() == api.TargetStatic); err != nil {
+				return err
+			}
+		}
+		if err := s.postLink(resolved); err != nil {
+			return err
+		}
+		if err := s.ctx.Err(); err != nil {
+			return err
+		}
+		if err := saveActionRecord(action.recordPath, action.signature, pkgInfo.SourceDir, action.inputs, action.outputs); err != nil {
+			return err
+		}
+	}
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+	if pkgInfo.InstallDir != "" {
+		return s.publishTarget(resolved, pkgInfo)
 	}
 	return nil
 }
@@ -392,13 +450,15 @@ func (s *Scheduler) compileAll(resolved *ResolvedTarget, pkgInfo *PkgInfo) ([]st
 		numWorkers = numFiles
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
 
 	jobs := make(chan int, numFiles)
 	results := make([]compileResult, numFiles)
 
 	var wg sync.WaitGroup
+	var firstError sync.Once
+	var firstErr error
 
 	for w := 0; w < numWorkers; w++ {
 		wg.Add(1)
@@ -412,11 +472,17 @@ func (s *Scheduler) compileAll(resolved *ResolvedTarget, pkgInfo *PkgInfo) ([]st
 					if !ok {
 						return
 					}
+					if ctx.Err() != nil {
+						return
+					}
 					src := resolved.SourceFiles[idx]
-					objPath, deps, err := s.compileSource(resolved, src)
+					objPath, deps, err := s.compileSourceContext(ctx, resolved, src)
 					results[idx] = compileResult{src: src, objPath: objPath, deps: deps, err: err}
 					if err != nil {
-						cancel()
+						firstError.Do(func() {
+							firstErr = err
+							cancel()
+						})
 					}
 				}
 			}
@@ -434,10 +500,8 @@ feed:
 	close(jobs)
 	wg.Wait()
 
-	for _, r := range results {
-		if r.err != nil {
-			return nil, r.err
-		}
+	if firstErr != nil {
+		return nil, firstErr
 	}
 
 	objs := make([]string, 0, numFiles)
@@ -550,12 +614,12 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	}
 
 	resolved.AllCFlags = append(resolved.AllCFlags, modeFlags...)
-	resolved.AllCFlags = append(resolved.AllCFlags, toolchain.GetManager().GetGlobalCFlags()...)
+	resolved.AllCFlags = append(resolved.AllCFlags, s.globalCFlags...)
 	resolved.AllCxxFlags = append(resolved.AllCxxFlags, modeFlags...)
-	resolved.AllCxxFlags = append(resolved.AllCxxFlags, toolchain.GetManager().GetGlobalCxxFlags()...)
+	resolved.AllCxxFlags = append(resolved.AllCxxFlags, s.globalCxxFlags...)
 	resolved.AllDefines = append(resolved.AllDefines, modeDefines...)
-	resolved.AllLdFlags = append(resolved.AllLdFlags, toolchain.GetManager().GetGlobalLdFlags()...)
-	resolved.AllLinks = append(resolved.AllLinks, toolchain.GetManager().GetGlobalLinks()...)
+	resolved.AllLdFlags = append(resolved.AllLdFlags, s.globalLdFlags...)
+	resolved.AllLinks = append(resolved.AllLinks, s.globalLinks...)
 
 	for _, inc := range node.Target.Includes() {
 		resolved.AllIncludes = append(resolved.AllIncludes, inc)
@@ -653,11 +717,8 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	}
 	resolved.SymbolBinding = node.Target.SymbolBinding()
 
-	resolved.AllDefines = unique(resolved.AllDefines)
 	resolved.AllIncludes = unique(resolved.AllIncludes)
-	resolved.AllCFlags = unique(resolved.AllCFlags)
-	resolved.AllCxxFlags = unique(resolved.AllCxxFlags)
-	resolved.AllLdFlags = unique(resolved.AllLdFlags)
+	resolved.SourceFiles = unique(resolved.SourceFiles)
 
 	return resolved, nil
 }
@@ -673,12 +734,18 @@ func (s *Scheduler) targetOS(pkgName string) string {
 	return s.platform.OSOrHost()
 }
 
-// objectName derives the flat object file name for a source path. Source paths
-// come from glob.Match, so they carry the native separator; ToSlash makes the
-// result identical on every platform instead of nesting "src\foo.c.o" under a
-// "src" directory on Windows.
-func objectName(src string) string {
-	return strings.ReplaceAll(filepath.ToSlash(src), "/", "_") + ".o"
+func objectPath(target, src, workDir string) (string, error) {
+	root, err := filepath.Abs(workDir)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(root, resolveWorkPath(root, src))
+	if err != nil {
+		return "", fmt.Errorf("object source path %s: %w", src, err)
+	}
+	hash := sha256.Sum256([]byte(target + "\x00" + filepath.ToSlash(rel)))
+	name := strings.TrimSuffix(filepath.Base(rel), filepath.Ext(rel)) + ".o"
+	return filepath.Join(subdirObjects, hex.EncodeToString(hash[:]), name), nil
 }
 
 func (s *Scheduler) checkLibDependencies(resolved *ResolvedTarget) {
@@ -698,110 +765,78 @@ func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
 }
 
 func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string, []string, error) {
+	return s.compileSourceContext(context.Background(), resolved, src)
+}
+
+func (s *Scheduler) compileSourceContext(ctx context.Context, resolved *ResolvedTarget, src string) (string, []string, error) {
 	pkgInfo := s.pkgs[resolved.Node.PkgName]
 	workDir := pkgInfo.SourceDir
-
-	objRel := pkgInfo.OutputPath(filepath.Join(subdirObjects, objectName(src)))
-
-	lang := sourceLanguage(src)
-
+	object, err := objectPath(resolved.Node.FullName, src, workDir)
+	if err != nil {
+		return "", nil, err
+	}
+	objRel := pkgInfo.OutputPath(object)
 	opts := &CompileOptions{
 		Includes: resolved.AllIncludes,
 		Defines:  resolved.AllDefines,
 		CFlags:   resolved.AllCFlags,
 		CxxFlags: resolved.AllCxxFlags,
-		Language: lang,
+		Language: sourceLanguage(src),
+		clang:    s.compiler.clangCC,
 	}
-
 	s.ccWriter.AddCommand(workDir, src, objRel, opts)
-
-	valid, deps := IsSourceValid(src, objRel, workDir)
-	if valid {
-		return objRel, deps, nil
-	}
-
-	vlog.Info("  CC %s", src)
-
-	compiler := *s.compiler
-	compiler.targetOS = s.targetOS(resolved.Node.PkgName)
-	deps, err := compiler.Compile(src, objRel, opts, workDir)
+	compilerPath, flags := selectCompilerAndFlags(s.compiler.ccPath, s.compiler.cxxPath, opts.CFlags, opts.CxxFlags, opts)
+	env, err := environmentSignature(s.compiler.env)
 	if err != nil {
 		return "", nil, err
 	}
-
+	signature, err := digestValue(struct {
+		Version     int
+		Target      string
+		WorkDir     string
+		TargetOS    string
+		Tools       string
+		Environment string
+		Command     commandSpec
+	}{buildFormatVersion, resolved.Node.FullName, workDir, s.targetOS(resolved.Node.PkgName), s.toolIdentity(), env, commandSpec{Program: compilerPath, Args: compileArgs(opts, objRel, src, flags, objRel+".d", workDir)}})
+	if err != nil {
+		return "", nil, err
+	}
+	recordPath := resolveWorkPath(workDir, objRel+".vmake.json")
+	deps, depErr := ParseDepFile(resolveWorkPath(workDir, objRel+".d"))
+	inputs := append([]string{src}, deps...)
+	outputs := []string{objRel, objRel + ".d"}
+	if depErr == nil && actionUpToDate(recordPath, signature, workDir, inputs, outputs) {
+		return objRel, deps, nil
+	}
+	if err := invalidateActionRecord(recordPath); err != nil {
+		return "", nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return "", nil, err
+	}
+	vlog.Info("  CC %s", src)
+	compiler := *s.compiler
+	compiler.targetOS = s.targetOS(resolved.Node.PkgName)
+	deps, err = compiler.CompileContext(ctx, src, objRel, opts, workDir)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return "", nil, errors.Join(err, removeCompileFiles(workDir, objRel, objRel+".d"))
+	}
+	if err := saveActionRecord(recordPath, signature, workDir, append([]string{src}, deps...), outputs); err != nil {
+		return "", nil, err
+	}
 	return objRel, deps, nil
 }
 
 func (s *Scheduler) needRelink(resolved *ResolvedTarget, objs []string) bool {
-	workDir := s.pkgs[resolved.Node.PkgName].SourceDir
-	absOutput := resolveWorkPath(workDir, resolved.OutputPath)
-	outputInfo, err := os.Stat(absOutput)
+	action, err := s.planLink(resolved, objs)
 	if err != nil {
 		return true
 	}
-
-	// A PE shared target must also carry its import library: without it,
-	// consumers fail with "dependency artifact missing" even though the DLL
-	// itself is up to date.
-	if implib := importLibraryPath(absOutput, s.targetOS(resolved.Node.PkgName), resolved.Node.Target.Kind()); implib != "" {
-		if _, err := os.Stat(implib); err != nil {
-			vlog.Info("  RELINK %s (import library missing)", resolved.Node.Target.Name())
-			return true
-		}
-	}
-
-	for _, path := range postLinkOutputPaths(resolved.Node.Target, workDir, resolved.OutputPath) {
-		if _, err := os.Stat(path); err != nil {
-			vlog.Info("  RELINK %s (post-link output %s missing)", resolved.Node.Target.Name(), path)
-			return true
-		}
-	}
-
-	outputTime := outputInfo.ModTime()
-
-	for _, obj := range objs {
-		objInfo, err := os.Stat(resolveWorkPath(workDir, obj))
-		if err != nil || objInfo.ModTime().After(outputTime) {
-			return true
-		}
-	}
-
-	for _, artifact := range resolved.DepArtifacts {
-		artifactInfo, err := os.Stat(resolveWorkPath(workDir, artifact))
-		if err != nil || artifactInfo.ModTime().After(outputTime) {
-			return true
-		}
-	}
-
-	for _, dep := range resolved.Node.Target.PostLinkDeps() {
-		depPath := resolveWorkPath(workDir, dep)
-		depInfo, err := os.Stat(depPath)
-		if err != nil {
-			vlog.Info("  RELINK %s (post-link dep %s missing)", resolved.Node.Target.Name(), dep)
-			return true
-		}
-		if depInfo.ModTime().After(outputTime) {
-			vlog.Info("  RELINK %s (post-link dep %s newer)", resolved.Node.Target.Name(), dep)
-			return true
-		}
-	}
-
-	for _, script := range []string{resolved.VersionScript, resolved.LinkerScript} {
-		if script == "" {
-			continue
-		}
-		scriptInfo, err := os.Stat(resolveWorkPath(workDir, script))
-		if err != nil {
-			vlog.Info("  RELINK %s (script %s missing)", resolved.Node.Target.Name(), script)
-			return true
-		}
-		if scriptInfo.ModTime().After(outputTime) {
-			vlog.Info("  RELINK %s (script %s newer)", resolved.Node.Target.Name(), script)
-			return true
-		}
-	}
-
-	return false
+	return !actionUpToDate(action.recordPath, action.signature, s.pkgs[resolved.Node.PkgName].SourceDir, action.inputs, action.outputs)
 }
 
 func (s *Scheduler) realizePrebuilt(resolved *ResolvedTarget) error {
@@ -815,7 +850,20 @@ func (s *Scheduler) realizePrebuilt(resolved *ResolvedTarget) error {
 	}
 
 	vlog.Info("  PREBUILT %s", filepath.Base(absDst))
-	return fs.EnsureSymlink(absDst, absSrc)
+	if filepath.Clean(absSrc) == filepath.Clean(absDst) {
+		return fmt.Errorf("prebuilt source and output must differ: %s", absSrc)
+	}
+	if err := os.Remove(absDst); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if len(resolved.Node.Target.PostLinkSteps()) == 0 {
+		srcPath, err := filepath.Abs(absSrc)
+		if err != nil {
+			return err
+		}
+		return fs.EnsureSymlink(absDst, srcPath)
+	}
+	return CopyFile(absSrc, absDst)
 }
 
 func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
@@ -827,44 +875,20 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
 	pkg := s.ensurePackageForVoid(resolved.Node)
 	s.populateDepsFromGraph(pkg, resolved.Node)
 
-	mgr := toolchain.GetManager()
-	pkg.SetGlobalFlags(mgr.GetGlobalCFlags(), mgr.GetGlobalCxxFlags(), mgr.GetGlobalLdFlags(), mgr.GetGlobalLinks())
-
-	if s.isVoidUpToDate(pkg) && !s.depArtifactsNewer(resolved) {
-		return nil
-	}
+	pkg.SetGlobalFlags(s.globalCFlags, s.globalCxxFlags, s.globalLdFlags, s.globalLinks)
 
 	if err := os.MkdirAll(pkg.BuildDir(), 0755); err != nil {
 		return fmt.Errorf("create build dir: %s: %w", pkg.BuildDir(), err)
 	}
 
-	srcDir := pkg.SrcDir()
-	stamp := buildStampData(srcDir, pkg.ConfigFiles())
-
 	if err := fn(pkg); err != nil {
 		return err
-	}
-
-	if stamp.ConfigHash == "" && len(pkg.ConfigFiles()) > 0 {
-		if h, err := computeConfigHash(srcDir, pkg.ConfigFiles()); err == nil {
-			stamp.ConfigHash = h
-		}
-	}
-
-	if pkg.InstallDir() == "" && pkg.BuildDir() != "" {
-		if err := writeStamp(filepath.Join(pkg.BuildDir(), ".vmake_stamp"), stamp); err != nil {
-			return fmt.Errorf("write stamp for %s: %w", resolved.Node.PkgName, err)
-		}
 	}
 
 	s.updateVoidLibDirs(resolved, pkg)
 	return nil
 }
 
-// ensurePackageForVoid lazily creates the api.Package entry for a package
-// whose void target carries a BuildFunc. buildAllParallel pre-materializes
-// every such entry before workers start: s.packages is read concurrently by
-// scheduler workers, and this map write would race with those reads.
 func (s *Scheduler) ensurePackageForVoid(node *BuildNode) *api.Package {
 	pkg := s.packages[node.PkgName]
 	if pkg != nil {
@@ -895,56 +919,6 @@ func (s *Scheduler) ensurePackageForVoid(node *BuildNode) *api.Package {
 	return pkg
 }
 
-func (s *Scheduler) isVoidUpToDate(pkg *api.Package) bool {
-	if pkg.InstallDir() != "" {
-		if info, err := os.Stat(pkg.InstallDir()); err == nil && info.IsDir() {
-			entries, _ := os.ReadDir(pkg.InstallDir())
-			if len(entries) > 0 {
-				vlog.Info("  SKIP (already installed)")
-				return true
-			}
-		}
-		if err := os.MkdirAll(pkg.InstallDir(), 0755); err == nil {
-			return false
-		}
-	} else if pkg.BuildDir() != "" {
-		stampPath := filepath.Join(pkg.BuildDir(), ".vmake_stamp")
-		srcDir := pkg.SrcDir()
-		if isStampUpToDate(stampPath, srcDir, pkg.ConfigFiles()) {
-			vlog.Info("  SKIP (already built)")
-			return true
-		}
-	}
-	return false
-}
-
-func (s *Scheduler) depArtifactsNewer(resolved *ResolvedTarget) bool {
-	if len(resolved.DepArtifacts) == 0 {
-		return false
-	}
-	pkg := s.packages[resolved.Node.PkgName]
-	if pkg == nil || pkg.InstallDir() != "" || pkg.BuildDir() == "" {
-		return false
-	}
-	stampPath := filepath.Join(pkg.BuildDir(), ".vmake_stamp")
-	stampInfo, err := os.Stat(stampPath)
-	if err != nil {
-		return true
-	}
-	stampTime := stampInfo.ModTime()
-	for _, artifact := range resolved.DepArtifacts {
-		artInfo, err := os.Stat(artifact)
-		if err != nil {
-			vlog.Info("  REBUILD (dependency artifact %s missing)", filepath.Base(artifact))
-			return true
-		}
-		if artInfo.ModTime().After(stampTime) {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *Scheduler) updateVoidLibDirs(resolved *ResolvedTarget, pkg *api.Package) {
 	pkgName := resolved.Node.PkgName
 	for _, dep := range pkg.Deps() {
@@ -956,70 +930,6 @@ func (s *Scheduler) updateVoidLibDirs(resolved *ResolvedTarget, pkg *api.Package
 		if dep, ok := otherPkg.Deps()[pkgName]; ok {
 			dep.UpdateLibDir()
 		}
-	}
-}
-
-func (s *Scheduler) realizeTarget(resolved *ResolvedTarget, objs []string) (bool, error) {
-	kind := resolved.Node.Target.Kind()
-
-	if resolved.Node.Target.Prebuilt() == "" && !s.needRelink(resolved, objs) {
-		return false, nil
-	}
-
-	workDir := s.pkgs[resolved.Node.PkgName].SourceDir
-	outputName := filepath.Base(resolved.OutputPath)
-
-	if resolved.Node.Target.Prebuilt() != "" {
-		return true, s.realizePrebuilt(resolved)
-	}
-
-	allObjs := append(append([]string{}, objs...), resolved.DepArtifacts...)
-
-	switch kind {
-	case api.TargetBinary:
-		linkerScript := resolved.LinkerScript
-		vlog.Info("  LINK %s", outputName)
-		policy := LinkPolicy{
-			TargetOS:      s.targetOS(resolved.Node.PkgName),
-			VersionScript: resolved.VersionScript,
-			ExcludeLibs:   resolved.ExcludeLibs,
-			SymbolBinding: resolved.SymbolBinding,
-		}
-		err := s.linker.LinkBinary(allObjs, unique(resolved.AllLinks), resolved.AllLdFlags, resolved.OutputPath, linkerScript, policy, workDir)
-		return err == nil, err
-	case api.TargetStatic:
-		var objOnly []string
-		for _, o := range allObjs {
-			if isLibraryArtifact(o) {
-				continue
-			}
-			objOnly = append(objOnly, o)
-		}
-		vlog.Info("  AR %s", outputName)
-		err := s.linker.LinkStatic(objOnly, resolved.OutputPath, workDir)
-		return err == nil, err
-	case api.TargetShared:
-		vlog.Info("  LINK %s", outputName)
-		policy := LinkPolicy{
-			TargetOS:      s.targetOS(resolved.Node.PkgName),
-			VersionScript: resolved.VersionScript,
-			ExcludeLibs:   resolved.ExcludeLibs,
-			SymbolBinding: resolved.SymbolBinding,
-		}
-		err := s.linker.LinkShared(allObjs, resolved.AllLdFlags, resolved.OutputPath, policy, workDir)
-		return err == nil, err
-	case api.TargetObject:
-		vlog.Info("  LD -r %s", outputName)
-		if len(objs) == 0 {
-			return false, fmt.Errorf("object target requires at least one source file")
-		}
-		err := s.linker.LinkObject(objs, resolved.OutputPath, workDir)
-		return err == nil, err
-	case api.TargetVoid:
-		err := s.buildVoidTarget(resolved)
-		return err == nil, err
-	default:
-		return false, fmt.Errorf("target %s has unknown kind %q", resolved.Node.FullName, kind)
 	}
 }
 
@@ -1040,7 +950,7 @@ func (s *Scheduler) postLink(resolved *ResolvedTarget) error {
 		args := expandPostLinkArgs(step.Args, workDir, resolved.OutputPath)
 
 		vlog.Info("  %s %s", filepath.Base(tool), strings.Join(args, " "))
-		if _, err := iexec.RunWithOptions(tool, args, iexec.RunOptions{Dir: workDir, Env: s.toolchain.CommandEnv()}); err != nil {
+		if _, err := iexec.RunWithOptions(tool, args, iexec.RunOptions{Dir: workDir, Env: s.toolchain.CommandEnv(), Context: s.ctx}); err != nil {
 			return err
 		}
 	}
@@ -1107,6 +1017,7 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 
 	libDir := filepath.Join(pkgInfo.InstallDir, "lib")
 	includeDir := filepath.Join(pkgInfo.InstallDir, "include")
+	published := false
 
 	if resolved.OutputPath != "" {
 		srcPath := resolveWorkPath(pkgInfo.SourceDir, resolved.OutputPath)
@@ -1114,7 +1025,7 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 		if info, err := os.Stat(dest); err == nil && info.Mode().IsRegular() &&
 			sameFileContent(srcPath, dest) && !implibMissing(srcPath, libDir, targetOS, kind) {
 			vlog.Info("  SKIP (already published)")
-			return nil
+			published = true
 		}
 	}
 
@@ -1122,7 +1033,7 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 		return fmt.Errorf("create lib dir: %w", err)
 	}
 
-	if resolved.OutputPath != "" {
+	if resolved.OutputPath != "" && !published {
 		srcPath := resolveWorkPath(pkgInfo.SourceDir, resolved.OutputPath)
 		if _, err := os.Stat(srcPath); err == nil {
 			dest := filepath.Join(libDir, filepath.Base(resolved.OutputPath))

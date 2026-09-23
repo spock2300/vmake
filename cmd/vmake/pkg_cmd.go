@@ -135,14 +135,11 @@ var pkgCleanCmd = &cobra.Command{
 		pkgRef := args[0]
 		repoName, pkgName := mustSplitPkgRef(pkgRef)
 
-		installer := repo.NewPackageInstaller(getDepsDir())
-
-		fatalErr(installer.CleanBuild(pkgRef))
+		sourceMgr := repo.NewSourceManager(getDepsDir(), getCacheDir()).WithSession(commandStorageLocks())
+		fatalErr(sourceMgr.CleanOutputs(repoName, pkgName))
 		fmt.Printf("Cleaned cache for '%s'\n", pkgRef)
 
 		if pkgCleanAll {
-			sourceMgr := repo.NewSourceManager(getDepsDir(), getCacheDir())
-
 			fatalErr(sourceMgr.CleanSource(repoName, pkgName))
 			fmt.Printf("Cleaned source for '%s'\n", pkgRef)
 		}
@@ -170,7 +167,7 @@ var pkgUpdateCmd = &cobra.Command{
 		repoName, pkgName := mustSplitPkgRef(pkgRef)
 
 		repoMgr := getRepoManager()
-		sourceMgr := repo.NewSourceManager(getDepsDir(), getCacheDir())
+		sourceMgr := repo.NewSourceManager(getDepsDir(), getCacheDir()).WithSession(commandStorageLocks())
 
 		pkg := newPkgRef(repoName, pkgName)
 		if repoMgr.IsNative(repoName) {

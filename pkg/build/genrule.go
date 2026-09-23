@@ -2,6 +2,7 @@ package build
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,10 @@ import (
 var hexChars = [16]byte{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'}
 
 func runGenRules(rules []api.GenRule, generatedDir, workDir string) error {
+	return runGenRulesContext(context.Background(), rules, generatedDir, workDir)
+}
+
+func runGenRulesContext(ctx context.Context, rules []api.GenRule, generatedDir, workDir string) error {
 	if len(rules) == 0 {
 		return nil
 	}
@@ -24,6 +29,9 @@ func runGenRules(rules []api.GenRule, generatedDir, workDir string) error {
 
 	stems := make(map[string]string, len(rules))
 	for _, rule := range rules {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if rule.Kind() != api.GenRuleBinHeader {
 			return fmt.Errorf("unsupported gen rule kind: %s", rule.Kind())
 		}
@@ -46,7 +54,7 @@ func runGenRules(rules []api.GenRule, generatedDir, workDir string) error {
 		}
 
 		vlog.Info("  GEN %s -> %s", rule.Input(), rule.OutputStem()+".h")
-		if err := generateBinHeader(input, output); err != nil {
+		if err := generateBinHeaderContext(ctx, input, output); err != nil {
 			return err
 		}
 	}
@@ -69,6 +77,13 @@ func needGenRule(input, output string) bool {
 }
 
 func generateBinHeader(input, output string) error {
+	return generateBinHeaderContext(context.Background(), input, output)
+}
+
+func generateBinHeaderContext(ctx context.Context, input, output string) (err error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	data, err := os.ReadFile(input)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", input, err)
@@ -78,15 +93,25 @@ func generateBinHeader(input, output string) error {
 	if err != nil {
 		return fmt.Errorf("create %s: %w", output, err)
 	}
-	defer f.Close()
+	defer func() {
+		closeErr := f.Close()
+		if err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			_ = os.Remove(output)
+		}
+	}()
 
 	w := bufio.NewWriterSize(f, 32*1024)
-	defer w.Flush()
 
 	var line [82]byte
 	n := len(data)
 
 	for i := 0; i < n; i += 16 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		chunk := data[i:]
 		if len(chunk) > 16 {
 			chunk = chunk[:16]
@@ -110,5 +135,5 @@ func generateBinHeader(input, output string) error {
 		}
 	}
 
-	return nil
+	return w.Flush()
 }

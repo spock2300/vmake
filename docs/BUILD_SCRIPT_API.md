@@ -76,7 +76,7 @@ func (p *Package) OnPackage(fn PackageFunc) *Package      // 填充包元数据�
 ### 元信息设置
 
 ```go
-func (p *Package) SetGit(urls ...string) *Package        // Git 仓库 URL（仅 registry 包）
+func (p *Package) SetGit(urls ...string) *Package
 func (p *Package) SetHomepage(url string) *Package
 func (p *Package) SetDescription(desc string) *Package
 func (p *Package) SetLicense(license string) *Package
@@ -89,6 +89,8 @@ func (p *Package) SetScriptDir(dir string) *Package      // 构建脚本目录
 func (p *Package) SetCfgVals(vals map[string]any) *Package  // 设置配置值
 func (p *Package) SetGenConfigHeader(v bool) *Package    // 启用生成配置头文件
 ```
+
+本地包也可通过 `SetGit` 选择外部源码。声明 `AddVersion` 映射时，按依赖约束选择版本并在 `.vmake/vmake.lock` 固定版本和提交；后续构建可使用已缓存的固定提交离线物化。`vmake lock update` 重新选择版本。没有版本映射时使用仓库 HEAD。项目目录保留，受管理的 `src` 链接指向构建键对应的工作副本。若 `src` 已是真实目录，构建会报错并保留该目录，需先由用户移开。
 
 ### Git Patch
 
@@ -166,7 +168,7 @@ func (p *Package) NM() string
 ### 依赖 Linker Script
 
 ```go
-func (p *Package) SetProvidedLinkerScript(path string) *Package  // 声明 linker script（重复调用 vlog.Fatal）
+func (p *Package) SetProvidedLinkerScript(path string) *Package  // 声明 linker script（重复调用抛出 BuildScriptError）
 func (p *Package) ProvidedLinkerScript() string
 ```
 
@@ -181,14 +183,14 @@ func (p *Package) SetCMakeInstallDir(dir string) *Package
 func (p *Package) SetCMakeBuildType(buildType string) *Package
 func (p *Package) Configure(extraArgs ...string) error
 func (p *Package) Make(args ...string) error
-func (p *Package) Run(name string, args ...string)              // 在 BuildDir 运行命令（失败时 fatal 退出）
-func (p *Package) RunIn(dir, name string, args ...string)       // 在指定目录运行命令（失败时 fatal 退出）
+func (p *Package) Run(name string, args ...string)              // 在 BuildDir 运行命令（失败时抛出 BuildScriptError，由执行边界返回）
+func (p *Package) RunIn(dir, name string, args ...string)       // 在指定目录运行命令（失败时抛出 BuildScriptError，由执行边界返回）
 func (p *Package) RunEnv(env map[string]string, name string, args ...string) error
 ```
 
 在 VMake 中构建 CMake 工程时，优先使用 `CMakeConfigure`、`CMakeBuild`、`CMakeInstall`。工具链解析、跨平台路径、构建目录、安装前缀、构建配置和并行规则由 API 管理；build.go 只声明项目选项及专用步骤。仅在 API 无法表达的特殊操作中直接调用 cmake。
 
-三阶段共用 `CMakeBuildDir()`，默认是 `BuildDir()/cmake`。源码默认取 `SrcDir()`。`CMakeInstallDir()` 默认返回远程包的 `InstallDir()`，本地包则使用 `BuildDir()/staging`。通过目录 setter 修改时，相对路径基于 `BuildDir()`，绝对路径保持不变。这些设置不改变 `PkgDirs`、stamp 或远程包发布机制；远程包使用自定义安装目录时，需要将产物发布到原有 `InstallDir()` 或显式声明产物。
+三阶段共用 `CMakeBuildDir()`，默认是 `BuildDir()/cmake`。源码默认取 `SrcDir()`。`CMakeInstallDir()` 默认返回远程包的 `InstallDir()`，本地包则使用 `BuildDir()/staging`。通过目录 setter 修改时，相对路径基于 `BuildDir()`，绝对路径保持不变。这些设置不改变 `PkgDirs` 或远程包发布机制；远程包使用自定义安装目录时，需要将产物发布到原有 `InstallDir()` 或显式声明产物。
 
 默认构建配置按 VMake mode 选择 Debug／Release，`SetCMakeBuildType("MinSizeRel")` 等设置对 configure、build、install 均生效。Build、Install 的显式 `--config` 覆盖本次调用的配置。通过 setter 管理构建目录、安装前缀和默认构建类型；原生目录覆盖参数、`--prefix`、`-DCMAKE_INSTALL_PREFIX`、`-DCMAKE_BUILD_TYPE` 会报错并提示对应 setter，其他项目参数继续透传。
 
@@ -196,7 +198,7 @@ func (p *Package) RunEnv(env map[string]string, name string, args ...string) err
 
 `CMakeConfigure` 严格解析已配置的编译器及 binutils，ASM 默认使用已解析的 CC 驱动。VMake 不将 `Tools.LD` 映射为 `CMAKE_LINKER`，底层链接器由 CMake 根据编译器识别。目标系统决定 `CMAKE_SYSTEM_NAME`；裸机使用 `Generic`、`CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY`，并从宿主查找程序、从目标根查找库和头文件。需要处理器信息时由项目显式传入 `CMAKE_SYSTEM_PROCESSOR`。
 
-Windows 主机默认使用 Ninja，尊重显式生成器、`CMAKE_GENERATOR` 环境变量及 configure preset。通过 `CMakeConfigure("--preset", "name")` 使用配置预设；`CMakeBuild` 拒绝 `--preset`，因为 build preset 的 `binaryDir` 会覆盖 API 管理的目录。构建目标和配置分别通过 `--target`、`--config` 选择。API 使用独立 argv 和规范化路径，不提前解析默认 make。`CMakeBuild()` 默认按 CPU 核数并行；显式 `-j`／`--parallel` 或 `CMAKE_BUILD_PARALLEL_LEVEL` 优先。`CMakeInstall(args...)` 支持 `--component` 等原生安装选项。
+Windows 主机默认使用 Ninja，尊重显式生成器、`CMAKE_GENERATOR` 环境变量及 configure preset。通过 `CMakeConfigure("--preset", "name")` 使用配置预设；`CMakeBuild` 拒绝 `--preset`，因为 build preset 的 `binaryDir` 会覆盖 API 管理的目录。构建目标和配置分别通过 `--target`、`--config` 选择。API 使用独立 argv 和规范化路径，不提前解析默认 make。`CMakeBuild()` 与 `Make()` 使用本次 `vmake -j N` 的并发上限。参数、环境变量及透传给后端的并发设置只能降低该上限；无限并发、非正数或超过上限均报错。未指定 `-j` 或 `-j0` 时，在构建开始时解析 CPU 数。`CMakeInstall(args...)` 支持 `--component` 等原生安装选项。
 
 `Env()` 返回不含 shell 引号的工具绝对路径，可用于直接执行程序。`Make`、`Configure` 和 `EnsureConfig` 会针对 shell 单独引用环境中的工具路径，保留路径内的空格；make 环境还会保护美元符号，避免被 make 展开。`CleanContext.Make` 使用相同处理。
 
@@ -233,7 +235,7 @@ p.CMakeInstall()
 - 原生 `-B`、安装前缀及 build-type 覆盖改用 setter；删除通用工具链文件生成、编译器前缀拼接和默认并行参数计算。
 - configure 之后调用 `CMakeBuild()`／`CMakeInstall()`，不再调用 `pkg.Make()` 构建 CMake 工程。
 - 本地 `SetPrebuilt` 包保持产物与发布位置分离：例如 CMake 生成 `cmake/libfoo.a`、安装到 `staging/lib/libfoo.a`，VMake 的顶层 `libfoo.a` 链接指向安装产物。
-- 迁移后清理旧构建目录再构建。目录设置不改变现有 void target stamp 或远程包安装跳过规则。
+- 迁移后清理旧构建目录再构建。所需 Void 构建回调每次构建执行一次，增量由 Make/CMake 自行判断；不再使用包级 stamp 或“安装目录非空”跳过回调。
 
 ### 获取方法
 
@@ -247,10 +249,10 @@ func (p *Package) GenConfigHeader() bool           // 配置头文件是否启�
 func (p *Package) SrcDirRaw() string               // 原始 srcCodeDir，无 SourceDir 回退（SetSrcDir 未调用时返回空串）
 ```
 
-### Stamp 控制
+### 配置文件声明
 
 ```go
-func (p *Package) SetConfigFiles(files ...string) *Package  // 配置文件列表，变更时使 stamp 失效
+func (p *Package) SetConfigFiles(files ...string) *Package  // 包级配置文件列表，不控制自定义回调是否执行
 func (p *Package) ConfigFiles() []string
 ```
 
@@ -458,8 +460,8 @@ func (ctx *CleanContext) BuildDir() string
 func (ctx *CleanContext) SrcDir() string
 func (ctx *CleanContext) PackageName() string
 
-func (ctx *CleanContext) Run(name string, args ...string)             // 在 BuildDir 运行命令（失败时 fatal 退出）
-func (ctx *CleanContext) RunIn(dir, name string, args ...string)      // 在指定目录运行命令（失败时 fatal 退出）
+func (ctx *CleanContext) Run(name string, args ...string)             // 在 BuildDir 运行命令（失败时抛出 BuildScriptError，由执行边界返回）
+func (ctx *CleanContext) RunIn(dir, name string, args ...string)      // 在指定目录运行命令（失败时抛出 BuildScriptError，由执行边界返回）
 func (ctx *CleanContext) RunEnv(env map[string]string, name string, args ...string) error
 func (ctx *CleanContext) Make(args ...string) error
 ```
@@ -506,7 +508,7 @@ func (t *Target) SetBuildFunc(fn func(p *Package) error) *Target
 func (t *Target) SetPrebuilt(path string) *Target          // 预编译目标，跳过编译直接 symlink 到输出路径
 
 // RTOS/嵌入式
-func (t *Target) SetLinkerScript(path string) *Target    // 传递 -T 给链接器（重复调用 vlog.Fatal）
+func (t *Target) SetLinkerScript(path string) *Target    // 传递 -T 给链接器（重复调用抛出 BuildScriptError）
 func (t *Target) UseDependencyLinkerScript() *Target       // 从依赖自动继承 linker script
 func (t *Target) SetVersionScript(path string) *Target     // 版本脚本，链接时加 -Wl,--version-script=；仅 Shared/Binary 有效；路径相对包 SourceDir（重复调用 fatal）
 func (t *Target) AddExcludeLibs(libs ...string) *Target    // 链接时加 -Wl,--exclude-libs=（追加；ld 按去掉 .a 的完整库名匹配，写 libfoo 而非 foo）
@@ -632,19 +634,19 @@ native 远程包 checkout 内嵌套的 `build.go` 会被识别为**子包**：�
 
 ## 文件 IO 与工作目录（ScriptFS）
 
-build.go 中的相对路径文件 IO 以 **build.go 所在目录** 为基准，在所有阶段一致（Main、OnRequire、OnApply、OnBuild、SetBuildFunc 闭包）：
+build.go 中的相对路径文件 IO 在发现、配置阶段以 **build.go 所在目录** 为基准；进入构建阶段后以包的 `SourceDir()` 为基准。远程包绑定到当前构建键的私有工作副本，避免修改共享源码种子。
 
 ```go
-data, err := os.ReadFile("configs/app.conf")   // 始终是 <脚本目录>/configs/app.conf
-os.WriteFile("generated.c", src, 0644)          // 写到脚本目录下
-wd, _ := os.Getwd()                              // 返回脚本目录
-cmd := exec.Command("git", "status")             // 子进程 cwd = 脚本目录
+data, err := os.ReadFile("configs/app.conf")
+os.WriteFile("generated.c", src, 0644)
+wd, _ := os.Getwd()
+cmd := exec.Command("git", "status")
 ```
 
 覆盖范围：`os.Open/OpenFile/Create/ReadFile/WriteFile/Stat/Lstat/Mkdir/MkdirAll/Remove/RemoveAll/Rename/ReadDir/CreateTemp`、`filepath.Walk/WalkDir`、`exec.Command`（未显式设置 `Dir` 时）。绝对路径原样通过。
 
 限制：
-- `os.Chdir` 返回错误——进程级 chdir 与并行调度冲突；请用 `p.RunIn(dir, ...)` 或绝对路径
+- `os.Chdir` 返回错误——进程工作目录由回调执行边界管理；请用 `p.RunIn(dir, ...)` 或绝对路径
 - 未包装的长尾 API 仍按进程 cwd 解析——如 `exec.CommandContext`（仅 `exec.Command` 被包装）、`text/template.ParseFiles`、`io/ioutil`；请用 `filepath.Join(p.SourceDir(), ...)` 显式锚定
 - 构建产物请继续用 `p.BuildDir()`；外部命令用 `p.Run/p.RunIn`（显式 Dir）
 
@@ -831,7 +833,7 @@ func MatchVersion(available []string, constraint string) (string, bool)
 | `--install-type` | | `runtime`（默认）或 `sdk` |
 | `--manifest` | | 从清单文件固定版本 |
 | `--tests` | | 包含测试目标 |
-| `--jobs` | `-j` | 并行度：包级并行 + 每目标编译并行（0 = CPU 数，1 = 串行） |
+| `--jobs` | `-j` | 当前 target 的编译并行上限，同时约束 Make/CMake helper（0 = CPU 数，1 = 串行）；target 之间始终串行 |
 | `--keep-going` | `-k` | 某目标失败后继续构建其他独立目标 |
 
 ## 全局选项
@@ -1021,8 +1023,7 @@ func Main(p *api.Package) {
             SetBuildFunc(func(pkg *api.Package) error {
                 srcDir := pkg.SrcDir()
                 pkg.EnsureConfig(srcDir) // .config 不存在或为空时执行 make <preset> 并应用 patches
-                pkg.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
-                return nil
+                return pkg.Make("-C", filepath.ToSlash(srcDir))
             })
     })
 }

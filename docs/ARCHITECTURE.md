@@ -72,7 +72,7 @@ vmake clean
 | `--install-type` | | 安装类型: `runtime`（默认）或 `sdk` |
 | `--manifest` | | 从 manifest 文件锁定版本 |
 | `--tests` | | 包含测试目标 |
-| `--jobs` | `-j` | 并行度：包级并行 + 每 target 编译作业数（0 = NumCPU，1 = 串行） |
+| `--jobs` | `-j` | target 内部编译及 Make/CMake helper 的并行上限；所有 target 串行（0 = NumCPU，负数报错） |
 | `--keep-going` | `-k` | 某个 target 失败后继续构建其余独立 target |
 
 ### Install Type 过滤
@@ -140,7 +140,7 @@ Scan(root)            LoadBuildScript              Resolve
 3. `resolver.Resolver` 递归解析依赖，生成 `Graph`（拓扑排序）
 4. `Resolver.ResolveAll` 在 Phase 1 内完成全部依赖解析（本地 + 远程注册包 + native）；远程包源码的下载物化延迟到 Phase 3 `prepareAllPackages`（`EnsureVersion`）
 
-远程包在 Phase 3 源码下载后、构建前自动应用 git patch：本地包在 SrcDir 就地应用（`git apply --3way`，已应用的 patch 会被跳过），远程包走内容寻址的 `EnsurePatched` 克隆（`<versionDir>/patched/<patchHash>/src`，不可变版本目录不被修改）。
+源码准备后、OnBuild 前自动应用补丁：普通本地包在 SrcDir 就地应用，SetGit 和远程包在绑定到 member/build key 的可写工作区应用；不可变 source seed 不参与构建写入。补丁内容按声明顺序进入构建键。
 
 源码：`pkg/buildscript/scanner.go`, `yaegi_loader.go`, `pkg/resolver/resolver.go`
 
@@ -177,20 +177,20 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 3. **resolveAllPackageDirs** — 解析所有包的 SourceDir/BuildDir/InstallDir
 4. **prepareAllPackages** — 下载远程包源码、克隆本地 Git 源码、设置子包目录
 5. **writeLockfile** — 写入 `.vmake/vmake.lock`（锁定解析到的版本与 commit）
-6. **applyPatches** — 本地包就地应用 git patch（`git apply --3way`，已应用自动跳过）；远程包走内容寻址的 `EnsurePatched` 克隆
+6. **applyPatches** — 普通本地包就地应用补丁；SetGit 和远程包在 member/build-key 私有工作区应用补丁，不修改共享 source seed
 7. **restoreKConfigFiles** — 从 config.json 恢复 KConfig 配置（详见 KConfig 章节）
 8. **executeOnBuild** — 执行所有 `OnBuild` 回调，生成 `map[string]*Target`
 9. **build.NewBuildGraph** — 构建依赖图，`BuildGraph` 展开包级依赖为 target 级传递闭包
 10. **build.NewBuildPipeline** — 创建 `BuildPipeline`（封装图、工具链、包目录、模式、选项、调度器）
 11. **pipeline.Run()** → `NewScheduler(graph, toolchain, pkgDirs, mode, options)` → `BuildAll()`:
     - `ForEachDefault(includeTests, fn)` 按拓扑顺序构建每个默认 Target
-    - 每个 Target: resolveTarget → runGenRules → generateConfigHeader → compile（`compileAll`）→ link（`realizeTarget`：prebuilt symlink / 链接 / void BuildFunc）→ postLink → publishTarget
+    - 每个原生 Target: resolveTarget → prepareTarget → compileAll → finalizeTarget（链接/prebuilt、postLink、提交成功记录）→ publishTarget；TargetVoid 在 finalizeTarget 调用 BuildFunc
     - 并行编译源文件（`compileAll` 工作池，`--jobs` 控制编译作业数）
 12. **生成 compile_commands.json**（通过 `CompileCommandsWriter`）
 
 **BuildContext 方法**（`pkg/api/context.go`）：
-- `Exec(name, args...)` — 构建阶段执行命令（vlog.Fatal 退出）
-- `BuildSubGraph(pkgName)` — 将包及其依赖作为独立子图构建
+- `Exec(name, args...)` — 构建阶段执行命令；失败中止脚本，由执行边界回收并返回错误
+- `BuildSubGraph(pkgName)` — 在 OnBuild 声明期间同步构建包及其依赖，与主图共享会话状态；不能从正在执行的 target 回调重入
 - `DepOutput(depRef)` — 获取依赖目标输出文件路径
 - `DepBuildDir(depRef)` — 获取依赖构建目录
 - `GenerateConfigHeader()` — 启用配置头文件自动生成
@@ -214,11 +214,13 @@ BuildPipeline
 ├── PkgKeyExtra  map[string]string
 ├── PkgLockDir   string
 ├── NumWorkers   int
-├── ParallelPkgs int
+├── Session      *Session
+├── PackageToolchains map[string]*toolchain.Toolchain
+├── GlobalFlags  *[4][]string
 └── KeepGoing    bool
 ```
 
-源码：`pkg/build/scheduler.go`, `pkg/build/graph.go`, `pkg/build/pipeline.go`, `pkg/build/stamp.go`
+源码：`pkg/build/scheduler.go`, `pkg/build/graph.go`, `pkg/build/pipeline.go`, `pkg/build/signature.go`, `pkg/build/session.go`
 
 ## 第三方包流程
 
@@ -227,7 +229,7 @@ OnRequire          Resolver            SourceManager       Scheduler
 声明依赖           解析依赖树           下载源码            构建安装
     │                 │                    │                  │
     ▼                 ▼                    ▼                  ▼
-AddRequires      Graph                ~/.vmake/cache/      TargetVoid.BuildFunc()
+AddRequires      Graph                ~/.vmake/cache/v2/   TargetVoid.BuildFunc()
 "official/zlib"  ├─ Order []          <repo>/<pkg>/        → CMakeConfigure
                    └─ Packages map    <version>/src/       → CMakeBuild
                     └─ *PackageNode   (vmake_deps/ 为符号链接) → CMakeInstall
@@ -235,8 +237,9 @@ AddRequires      Graph                ~/.vmake/cache/      TargetVoid.BuildFunc(
 
 1. `OnRequire` 回调调用 `AddRequires("official/zlib >=1.2")`
 2. `Resolver` 在 `repos/` 中查找包定义，递归解析依赖
-3. `SourceManager.EnsureVersion` 下载源码到全局内容寻址缓存 `~/.vmake/cache/<repo>/<pkg>/<version>/src/`（临时 clone + checkout + 原子重命名，不可变），并在 `vmake_deps/<repo>/<pkg>/src`、`out` 建立符号链接
-4. `Scheduler` 按拓扑顺序构建所有目标，包括 `TargetVoid` 目标
+3. `SourceManager.EnsureVersion` 下载源码到全局内容寻址缓存 `~/.vmake/cache/v2/<repo>/<pkg>/<version>/src/`（临时 clone + checkout + 原子重命名，作为不可变 seed），在 `vmake_deps/<repo>/<pkg>/src`、`out` 建立符号链接；每个 member/build key 使用 `out/<sha256(member)>/<buildKey>/work/repo/` 可写工作区及独立的 build/install 目录
+4. 会话在执行前确定 owner 集合并按排序加锁，声明、同步子图、构建和安装复用锁；缓存 lifecycle 共享锁阻止同期清理
+5. `Scheduler` 按拓扑顺序串行构建所有目标，包括 `TargetVoid` 目标
 
 对于 `TargetVoid` 类型的目标（第三方包），Scheduler 调用 `Target.BuildFunc()` 并传入 `*api.Package`，执行 CMake/Autotools 等构建命令。
 
@@ -596,18 +599,18 @@ type KConfigEntry struct {
 
 - `config.json` 中没有该包的 entry → 跳过（不删除 `.config`）
 - `config.json` 中有 entry 但 kconfig 为空（preset 切换） → 删除 `.config`
-- `config.json` 中有 kconfig 内容 → 仅在内容变化时写回（避免 mtime 更新导致 stamp 失效）
+- `config.json` 中有 kconfig 内容 → 仅在内容变化时写回（保留未变化配置的 mtime，避免外部构建系统误判失效）
 - KConfig 内容为空 → 不写入
 
-### Stamp-Based Skip（TargetVoid）
+### 动作成功记录与 TargetVoid
 
-无 `InstallDir` 且带 `BuildFunc` 的 `TargetVoid` 目标使用 `.vmake_stamp` 跳过重复构建：
+原生编译和链接使用带格式版本的动作成功记录。编译签名覆盖有序参数、工具身份、有效环境和目标；记录校验源文件、depfile 依赖及对象文件的内容。链接记录覆盖对象列表、依赖产物、链接脚本、post-link 输入、主产物和显式 post-link 输出。任一步骤失败都不会提交成功记录，下次构建重新执行未完成动作。
 
-- 构建完成后在 `BuildDir` 写入 `.vmake_stamp`（JSON：`config_hash` + `source_rev`）
-- 下次构建时校验 stamp 是否有效（`isVoidUpToDate`）
-- 通过 `SetConfigFiles()` 声明的配置文件内容哈希与 stamp 记录不一致时，判定为 stale，重新构建（内容寻址，非 mtime；文件被删除同样改变哈希）
-- `source_rev`（SrcDir 的 git HEAD）变化也判定为 stale
-- 依赖产物比 stamp 新时同样重建（`depArtifactsNewer`）
+对象路径包含 target 名称和源路径各自的完整哈希，避免多个 target 编译同一源文件或不同源路径被压平后互相覆盖。编译失败会取消并回收同 target 的其他编译进程，之后才允许继续执行无关 target。
+
+所有 target 按依赖图串行执行。`BuildSubGraph` 在声明阶段同步完成，子图与主图共享 `Session`，同一 target 本会话只执行一次；配置、工具链和已发布路径不能在之后的声明中发生冲突。安装复用本会话声明的目标。
+
+`TargetVoid` 的 `BuildFunc` 每个构建会话执行一次，不根据 `.vmake_stamp` 或非空 `InstallDir` 跳过。Make/CMake 自己决定增量工作。`SetConfigFiles` 保留包级元数据，不控制回调跳过，也不代表 target 输入声明。
 
 ### autoWireRequireDeps（v2 已移除）
 
@@ -642,7 +645,7 @@ type PostLinkStep struct {
 
 - `AddPostLink(tool, args...)` — 添加自定义后链接步骤
 - `AddPostLinkOutputs(paths...)` — 显式声明额外产物，支持 `{output}`；缺失时重新链接并运行全部步骤，安装阶段使用同一声明列表
-- `AddPostLinkDeps(files...)` — 声明 post-link 步骤依赖的输入文件（SourceDir 相对路径）；任一变化（mtime 新于输出或缺失）触发 relink + 重跑全部 post-link
+- `AddPostLinkDeps(files...)` — 声明 post-link 步骤依赖的输入文件（SourceDir 相对路径）；内容变化或缺失会使动作成功记录失效，触发 relink + 重跑全部 post-link
 - `AddPostLinkHex()` — 添加 `objcopy -O ihex` 生成 .hex 文件
 - `AddPostLinkBin()` — 添加 `objcopy -O binary` 生成 .bin 文件
 - `AddPostLinkSize()` — 添加 `size {output}` 显示段大小
@@ -650,13 +653,13 @@ type PostLinkStep struct {
 
 ### 执行流程
 
-在 `Scheduler.finalizeTarget` 中，`realizeTarget`（链接/prebuilt/void）成功后调用 `postLink`，执行所有 `PostLinkStep`：
+在 `Scheduler.finalizeTarget` 中，原生/prebuilt 目标先校验完整的链接动作记录；失效时链接或实现 prebuilt，再执行全部 `PostLinkStep`。没有后处理的 prebuilt 保持符号链接；有后处理时先复制源产物，保护外部构建系统的文件：
 
 1. 将参数中的 `{output}` 替换为链接输出路径
 2. 执行每个步骤的工具命令
 3. `Target.PostLinkOutputs()` 声明的输出产物会由 `installTarget`（`ArtifactInstaller`，`vmake build --install`）随主产物一起安装；不从 `PostLinkStep.Args` 推断输出
 
-post-link 仅在实际发生 relink（`needRelink=true`）时执行。`AddPostLinkDeps` 声明的输入文件参与 `needRelink` 的 mtime 判定，使 post-link 输入（如 `--keep-global-symbols=file.sym` 中的 `.sym`）变化时能触发 relink + 重跑 post-link，避免静默跳过。
+post-link 与链接作为一个完整动作提交成功记录。输入、命令或工具变化，输出缺失或内容被修改，都会重新链接并运行全部步骤；后处理失败后不复用半完成产物。`AddPostLinkDeps` 声明的文件按内容校验，不依赖 mtime。
 
 ```go
 ctx.Target("firmware").SetKind(api.TargetBinary).AddFiles("src/*.c")

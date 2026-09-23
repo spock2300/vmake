@@ -106,34 +106,32 @@ When writing build.go that must also work on Windows:
 - `vmake check-symbols` inspects ELF dynamic symbols with the selected toolchain's `nm -D` on either host; PE files and ELF files without dynamic symbols report that the audit is not applicable.
 - Build filesystem paths with `filepath.Join`. Write `/` only in logical identifiers
   (`repo/pkg`, `pkg:target`) and glob patterns (`src/**/*.c`) — the glob layer normalizes those, and
-  object names are flattened so `src/foo.c` and `src\foo.c` map to the same object.
-- Prefer `runtime.NumCPU()` over `$(nproc)`: commands are exec'd directly, with no shell expansion.
+  object identities use target and normalized source-path hashes.
+- Let `p.Make` and CMake helpers inherit the VMake jobs budget; do not add manual job counts. Commands execute without shell expansion.
 
 ## Common Mistakes
 
 ### `pkg.Make()` runs in BuildDir, not SourceDir
 
-`pkg.Make()` always runs `make` in `BuildDir`. For most third-party packages (U-Boot, Linux, Busybox, etc.), the Makefile is in the source tree, so you need `pkg.RunIn()`:
+`pkg.Make()` starts in `BuildDir`. For a source-tree Makefile, pass a second `-C` with the absolute source directory returned by `SrcDir()`. Import `path/filepath` and convert make path arguments with `filepath.ToSlash`. KBuild projects keep ownership of their compiler flags using the guarded reset below:
 
 ```go
 SetBuildFunc(func(p *api.Package) error {
     srcDir := p.SrcDir()
     p.EnsureConfig(srcDir)
-    p.RunIn(srcDir, "make", "-j"+strconv.Itoa(runtime.NumCPU()))
+    const ownFlags = "ifndef VMAKE_FIRMWARE_FLAGS_RESET\nundefine CFLAGS\nundefine CXXFLAGS\nundefine LDFLAGS\nexport VMAKE_FIRMWARE_FLAGS_RESET := 1\nendif"
+    if err := p.Make("-C", filepath.ToSlash(srcDir), "--eval", ownFlags); err != nil {
+        return err
+    }
     return nil
 })
 ```
 
-Use `pkg.Make()` when the Makefile is in the scratch `BuildDir`. CMake projects use
-`pkg.CMakeBuild()` and `pkg.CMakeInstall()` with their own build directory and generator.
+The `ownFlags` reset clears inherited C/CXX/linker flags only once and leaves recursive Make flags intact. Ordinary Makefiles that accept `pkg.Env()` compiler flags can omit it. Use `pkg.Make()` without `-C` when the Makefile is in `BuildDir`. CMake projects use `pkg.CMakeBuild()` and `pkg.CMakeInstall()` with their own build directory and generator.
 
-### `$(nproc)` won't work — use `runtime.NumCPU()`
+### Use helper-managed jobs
 
-`exec.Command` doesn't expand shell features. `$(nproc)`, `$(pwd)`, and pipes won't work. Use Go APIs instead:
-
-```go
-"-j" + strconv.Itoa(runtime.NumCPU())
-```
+`p.Make` and `p.CMakeBuild` inherit the normalized `vmake -j` budget. Do not append manual job counts or shell substitutions. `exec.Command` does not expand `$(nproc)`, `$(pwd)`, or pipes; construct ordinary paths and arguments with Go APIs.
 
 ### `ctx.If()` returns `[]string` — pass it directly, do NOT spread with `...`
 
@@ -162,9 +160,9 @@ When a **local** package uses `SetGit`, `SourceDir()` and `SrcDir()` differ — 
 
 vmake wraps `AddDeps` archives in `--start-group`/`--end-group`. If a static lib dep provides symbols only referenced by post-group libraries (e.g., libc from `-specs`), the linker won't pull the archive. Fix with `-nostdlib` + `AddGlobalLinks`. See `references/gotchas.md` for all three fix patterns with code.
 
-### `pkg.Run` / `pkg.RunIn` / `CMake*` call `os.Exit` on failure — no error return
+### `pkg.Run` / `pkg.RunIn` / `CMake*` raise script errors — no error return
 
-`p.Run()`, `p.RunIn()`, `p.CMakeConfigure()`, `p.CMakeBuild()`, `p.CMakeInstall()` (and their `CleanContext` wrappers) return **nothing** — they exit the process on failure. Only `p.RunEnv()`, `p.Make()`, and `p.Configure()` return a real `error` you should check. Never write `return pkg.Run(...)` — call it as a statement, then `return nil`.
+`p.Run()`, `p.RunIn()`, `p.CMakeConfigure()`, `p.CMakeBuild()`, `p.CMakeInstall()` (and their `CleanContext` wrappers) return **nothing** — they raise a script error on failure, caught by the execution boundary so resources can be released. Only `p.RunEnv()`, `p.Make()`, and `p.Configure()` return a real `error` you should check. Never write `return pkg.Run(...)` — call it as a statement, then `return nil`.
 
 ### `vmake clean` vs `vmake distclean`
 
@@ -194,7 +192,7 @@ Inside build.go, relative paths passed to wrapped stdlib (`os.ReadFile/WriteFile
 |----------|-----------------|-------------|
 | `SourceDir()` | Package root (where build.go lives) | Package metadata files, overlay dirs |
 | `SrcDir()` | Source code dir (`SourceDir()/src/` for local `SetGit` packages, falls back to `SourceDir()`) | Source files for firmware/third-party builds |
-| `BuildDir()` | Scratch dir for intermediate artifacts | Build outputs, stamps |
+| `BuildDir()` | Scratch dir for intermediate artifacts | Build outputs and action success records |
 | `InstallDir()` | Remote package installation prefix; empty for local packages | Remote package publication |
 | `CMakeBuildDir()` | `BuildDir()/cmake`, unless explicitly set | CMake cache and build artifacts |
 | `CMakeInstallDir()` | Remote `InstallDir()` or local `BuildDir()/staging`, unless explicitly set | Headers/libs installed by CMake |
@@ -203,30 +201,29 @@ For `BuildKey` naming, `SourceDir` vs `SrcDir` distinction, and `SetGit` path re
 
 ## Storage Layout
 
-Sources and build outputs for remote packages live in a **content-addressed global cache** (`~/.vmake/cache/`), shared across projects. Each project's `vmake_deps/` is a symlink farm into it — auto-added to `.gitignore` on first build. Buildscripts are interpreted by yaegi at runtime — no `.so` files are generated.
+Remote sources and outputs use the versioned cache under `~/.vmake/cache/v2/` (or `VMAKE_CACHE/v2/`). Shared source seeds are immutable by the trusted-script contract. Build commands use a writable workspace belonging to the package member and build key. This is storage isolation, not a script sandbox.
 
 ```
-project/
-├── build.go
-├── .vmake/
-│   ├── config.json               # Option values + selected presets (commit it)
-│   └── vmake.lock                # Pinned remote versions+commits (commit it)
-└── vmake_deps/                   # Auto-managed, gitignored symlink farm
-    └── <repo>/<pkg>/
-        ├── src → ~/.vmake/cache/<repo>/<pkg>/<version>/src        # immutable checkout
-        └── out → ~/.vmake/cache/<repo>/<pkg>/<version>/out        # shared binary cache
-                     └── <buildKey>/{build,install}/
+cache/v2/<repo>/<pkg>/<version>/
+├── src/
+└── out/<sha256(member)>/<buildKey>/
+    ├── build/
+    ├── install/
+    └── work/repo/
+
+project/vmake_deps/<repo>/<pkg>/
+├── src → cache/v2/<repo>/<pkg>/<version>/src
+└── out → cache/v2/<repo>/<pkg>/<version>/out
 ```
 
-- Each `<version>` has its own immutable checkout (cloned via temp-dir + atomic rename, never mutated in place). Projects needing different versions never thrash each other.
-- `out/<buildKey>/` is a **shared binary cache**: identical toolchain+mode+options+version+commit+global-flags reuse compiled artifacts across projects (rebuild after `distclean` re-links without recompiling).
-- Patches on remote packages never touch the immutable checkout — a patched copy is materialized at `<version>/patched/<patchHash>/src` and shared by identical patch sets.
-- `.vmake/vmake.lock` pins remote versions + commits for reproducible builds. With a valid lock entry and cached checkout, resolution is fully offline. `vmake lock update` re-resolves; `vmake lock show` prints pins.
-- Per-package `flock` files in `~/.vmake/cache/_locks/` serialize concurrent access across projects.
+- Source seeds and initial workspaces are materialized in temporary sibling directories and atomically published. Native subpackages have separate member paths, including their own output and workspace trees.
+- Patches apply to writable build workspaces. Ordinary external build output is not transactional: a failed callback may leave partial files, and the next session calls it again.
+- `.vmake/vmake.lock` pins remote versions and commits. A valid lock and cached sources permit offline resolution; `vmake lock update` re-resolves.
+- A project lock serializes one project's operations. A lifecycle lock under the cache root is shared during builds and exclusive during cleanup/update. Sorted owner locks are held across declaration, synchronous subgraphs, target execution, and installation; subgraphs reuse the session's locks. Lock files remain outside directories being cleaned.
 
 Global storage in `~/.vmake/`:
-- `~/.vmake/cache/<repo>/<pkg>/<version>/{src,out}` — content-addressed source checkouts + shared build outputs
-- `~/.vmake/cache/_localgit/<sha256(url)>/src` — shared clones for local `SetGit` packages (keyed by URL)
+- `~/.vmake/cache/v2/<repo>/<pkg>/<version>/{src,out}` — immutable source seeds and per-member build variants
+- `~/.vmake/cache/v2/_localgit/<sha256(url)>/commits/<commit>/src` — local SetGit source seeds; writable copies live in `BuildDir()/work/src`
 - `~/.vmake/repos/` — registry repo clones (buildscript metadata only)
 - `~/.vmake/toolchains/` — toolchain manifests
 - `~/.vmake/extensions/` — extension repos
@@ -245,8 +242,8 @@ vmake locates the project root by walking upward from cwd to find `.vmake/`, `bu
 | Type | How identified | `OnPackage` metadata | Source code location |
 |------|---------------|---------------------|---------------------|
 | **Local** | build.go in project directory | `SetDescription`, `SetLicense`, or `SetGit`/`AddVersion` for remote source | `SourceDir()` (same as build.go), or `SrcDir()` = `SourceDir()/src/` if `SetGit` used |
-| **Registry** | `vmake repo add name url` | `SetGit`, `AddVersion` required | `SourceDir()` is the downloaded checkout (`vmake_deps/<repo>/<pkg>/src`); `SrcDir()` falls back to `SourceDir()` |
-| **Native** | `vmake repo add --native name url` | No `SetGit`/`AddVersion` — version from git tag | `SourceDir()` == `SrcDir()` (the downloaded checkout; `build.go` sits at its root) |
+| **Registry** | `vmake repo add name url` | `SetGit`, `AddVersion` required | `SourceDir()` is the package member’s writable build workspace; `SrcDir()` falls back to `SourceDir()` |
+| **Native** | `vmake repo add --native name url` | No `SetGit`/`AddVersion` — version from git tag | `SourceDir()` == `SrcDir()` (the writable workspace; subpackages use their own member workspace) |
 
 Registry packages wrap external C/C++ libraries. Native packages are independent vmake projects consumed as dependencies. The resolver checks registry first, then native.
 
@@ -285,7 +282,7 @@ Remove flags: `RemoveCFlags`, `RemoveDefines`, `RemoveIncludes`, etc. These perf
 
 This is the only Remover method that uses deferred matching; all others (`RemoveCFlags`, `RemoveDeps`, `RemoveLinks`, `RemoveProvidedLibs`, etc.) delete immediately.
 
-Third-party packages with external build systems use `TargetVoid` with `SetBuildFunc`. The callback function `func(p *api.Package) error` returns a real error — unlike `pkg.Run()` (which calls `os.Exit`), `SetBuildFunc` errors are returned to the scheduler and fail the build gracefully. Use `return fmt.Errorf(...)` for controlled failure, `return nil` for success.
+Third-party packages with external build systems use `TargetVoid` with `SetBuildFunc`. The callback function `func(p *api.Package) error` returns a real error. Returned errors and script errors raised by void-return helpers both reach the scheduler after cleanup. Use `return fmt.Errorf(...)` for controlled failure, `return nil` for success.
 
 ## Prebuilt Libraries
 
@@ -548,13 +545,15 @@ p.OnBuild(func(ctx *api.BuildContext) {
 
 Use `ctx.ToolchainOption()` to allow per-package toolchain switching for sub-graph builds.
 
-## Stamp-Based Skip (Void Targets)
+## Serial Targets and Incremental Builds
 
-Local void targets use `.vmake_stamp` in `BuildDir` for incremental builds. Stale when the **content hash** (SHA-256) of files registered via `p.SetConfigFiles(".config")` changes, the git HEAD revision changes, the stamp file is missing/corrupt, or a **dependency artifact is newer than the stamp**. Target source file mtimes are NOT checked — only SHA-256 content hash and git commit hash (dependency artifacts are compared by mtime).
+All VMake targets execute serially in target dependency order. `-j N` bounds compilation within the current target and the `Make`/`CMakeBuild` helpers. `-j0` uses CPU count; negative values are errors. Explicit helper arguments, backend arguments and parallel environment settings must be positive and no greater than the session budget; smaller values reduce parallelism. Bare `-j` and inherited Make jobserver tokens are rejected. CMakeInstall is serial unless parallelism is requested. Arbitrary `Run`/`RunIn` commands remain caller-controlled.
 
-Use `SetConfigFiles` on `*Package` (in `OnPackage`) to declare which files invalidate the stamp.
+Native compilation and linking reuse a versioned action success record only when ordered commands, tool identity, effective environment, and input/output content still match. Objects are isolated by target and source path. Missing outputs and failed post-link steps force a retry; prebuilt artifacts with post-link steps are copied before modification.
 
-**InstallDir changes the skip mechanism entirely.** When a void target has `InstallDir` set (remote packages — their `InstallDir` is `<version>/out/<buildKey>/install` in the global cache), the scheduler checks whether `InstallDir` exists and contains files — if it does, the target is skipped. `.vmake_stamp` is **not** consulted. Force rebuild by deleting the install directory (e.g. `vmake pkg clean <repo/name>`; `vmake clean` only touches local packages' build dirs).
+Local and remote void callbacks run once per build session, with Make/CMake responsible for incremental checks. Neither `.vmake_stamp` nor a nonempty `InstallDir` skips them. `SetConfigFiles` retains package metadata and does not declare target inputs or control skipping.
+
+`BuildSubGraph` runs synchronously during OnBuild and shares completed targets with subsequent subgraphs and the main graph. Reentering it from an executing target callback is rejected. Package configuration, toolchain, and output paths are fixed before its first OnBuild; later conflicting requests fail. Installation reuses the targets declared in this session.
 
 ## Install
 
@@ -594,7 +593,7 @@ vmake build --manifest install/manifest.json
 
 | Command | Description |
 |---------|-------------|
-| `vmake build` | Build (`-j N` parallel jobs: packages and per-target compiles, `-k` keep-going after failure) |
+| `vmake build` | Build (serial targets; `-j N` bounds per-target compilation and Make/CMake helpers; `-k` keeps going after failure) |
 | `vmake build --tests` | Build including test targets |
 | `vmake test` | Build + run test targets |
 | `vmake rebuild` | Clean + build |

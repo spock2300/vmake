@@ -27,7 +27,27 @@ func FileHash(path string) (string, error) {
 }
 
 func CopyFile(src, dest string) error {
+	if copyFileUnchanged(src, dest) {
+		return nil
+	}
 	return api.CopyFile(src, dest)
+}
+
+func copyFileUnchanged(src, dest string) bool {
+	srcInfo, err := os.Stat(src)
+	if err != nil || !srcInfo.Mode().IsRegular() {
+		return false
+	}
+	destInfo, err := os.Stat(dest)
+	if err != nil || !destInfo.Mode().IsRegular() || os.SameFile(srcInfo, destInfo) || srcInfo.Size() != destInfo.Size() || srcInfo.Mode() != destInfo.Mode() {
+		return false
+	}
+	srcHash, err := FileHash(src)
+	if err != nil {
+		return false
+	}
+	destHash, err := FileHash(dest)
+	return err == nil && srcHash == destHash
 }
 
 type CopyFilter = api.CopyFilter
@@ -51,7 +71,25 @@ func CopyDirWithFilter(src, dest string, filter CopyFilter) error {
 }
 
 func copyDirWithFilter(src, dest string, filter CopyFilter) error {
-	return api.CopyDirWithFilter(src, dest, filter)
+	var relativeErr error
+	err := api.CopyDirWithFilter(src, dest, func(path string, isDir bool) bool {
+		if filter != nil && !filter(path, isDir) {
+			return false
+		}
+		if isDir {
+			return true
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			relativeErr = err
+			return false
+		}
+		return !copyFileUnchanged(path, filepath.Join(dest, rel))
+	})
+	if err != nil {
+		return err
+	}
+	return relativeErr
 }
 
 func MatchPatterns(patterns []string, name string) bool {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,13 +12,14 @@ import (
 	"github.com/spock2300/vmake/pkg/lockfile"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/repo"
+	"github.com/spock2300/vmake/pkg/resolver"
 )
 
 var buildCmd = &cobra.Command{
 	Use:   "build",
 	Short: "Build the project",
 	Long:  `Compile and link all targets defined in build.go files.`,
-	Run:   runBuild,
+	RunE:  runBuild,
 }
 
 func init() {
@@ -26,30 +28,49 @@ func init() {
 	addBuildFlags(buildCmd)
 }
 
-func runBuild(cmd *cobra.Command, args []string) {
-	if manifestFlag != "" {
-		importManifestIntoLock(manifestFlag)
-	}
-	ctx := resolveToConfig(false)
-	if manifestFlag != "" {
-		checkoutManifestLocals(manifestFlag)
-	}
-	result, err := runBuildPhase(ctx, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag})
-	fatalErr(err)
-	if installFlag {
-		fatalErr(executeInstall(ctx, result))
-	}
+func runBuild(cmd *cobra.Command, args []string) error {
+	commandStorageLocks()
+	execution := &RuntimeContext{}
+	return withBuildContext(execution, func() error {
+		if manifestFlag != "" {
+			if err := importManifestIntoLock(execution.Context, manifestFlag); err != nil {
+				return err
+			}
+		}
+		ctx, err := resolveToConfigContext(execution.Context, false)
+		if err != nil {
+			return err
+		}
+		if manifestFlag != "" {
+			if err := checkoutManifestLocals(ctx, manifestFlag); err != nil {
+				return err
+			}
+		}
+		result, err := runBuildPhase(ctx, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag})
+		if err != nil {
+			return err
+		}
+		if installFlag {
+			return executeInstall(ctx, result)
+		}
+		return nil
+	})
 }
 
 // importManifestIntoLock pins remote package versions from an install manifest
 // into vmake.lock BEFORE dependency resolution, so the graph is built from the
 // pinned versions (not from latest-matching tags).
-func importManifestIntoLock(manifestPath string) {
+func importManifestIntoLock(ctx context.Context, manifestPath string) error {
 	var mf installManifest
-	fatalErr(jsonio.Load(manifestPath, &mf))
+	if err := jsonio.Load(manifestPath, &mf); err != nil {
+		return err
+	}
 
 	lockPath := getLockfilePath()
-	l := mustLoadLockfile(lockPath)
+	l, err := lockfile.LoadOrCreate(lockPath)
+	if err != nil {
+		return err
+	}
 	changed := false
 	for _, entry := range mf.Packages {
 		switch entry.Source {
@@ -63,11 +84,11 @@ func importManifestIntoLock(manifestPath string) {
 				version = entry.Ref
 			}
 			if entry.URL == "" {
-				fatalMsg("manifest entry %s has no URL; cannot resolve commit for %s", entry.Name, entry.Ref)
+				return fmt.Errorf("manifest entry %s has no URL; cannot resolve commit for %s", entry.Name, entry.Ref)
 			}
-			commit, err := repo.ResolveRemoteCommit(entry.URL, entry.Ref)
+			commit, err := repo.ResolveRemoteCommitContext(ctx, entry.URL, entry.Ref)
 			if err != nil {
-				fatalErr(fmt.Errorf("resolve commit for %s@%s: %w", entry.Name, entry.Ref, err))
+				return fmt.Errorf("resolve commit for %s@%s: %w", entry.Name, entry.Ref, err)
 			}
 			l.Set(entry.Name, &lockfile.LockedPkg{
 				Version: version,
@@ -79,31 +100,57 @@ func importManifestIntoLock(manifestPath string) {
 		}
 	}
 	if changed {
-		fatalErr(l.Save(lockPath))
+		return l.Save(lockPath)
 	}
+	return nil
 }
 
 // checkoutManifestLocals checks out local packages to the refs recorded in an
-// install manifest (local packages are not part of vmake.lock).
-func checkoutManifestLocals(manifestPath string) {
+// install manifest (local packages are not part of vmake.lock). Local packages
+// with a managed git source are skipped: their manifest ref belongs to the
+// upstream clone, while the checkout would run against the project repository,
+// and the build materializes the recorded source version on its own.
+func checkoutManifestLocals(ctx *RuntimeContext, manifestPath string) error {
 	var mf installManifest
-	fatalErr(jsonio.Load(manifestPath, &mf))
+	if err := jsonio.Load(manifestPath, &mf); err != nil {
+		return err
+	}
 
 	cwd, err := os.Getwd()
-	fatalErr(err)
+	if err != nil {
+		return err
+	}
 
 	for _, entry := range mf.Packages {
 		if entry.Source != "local" {
 			continue
 		}
-		if entry.Ref == "" || entry.Ref == "unknown" {
+		if entry.Ref == "" || entry.Ref == "unknown" || entry.Path == "" {
 			continue
 		}
-		fatalErr(repo.Checkout(filepath.Join(cwd, entry.Path), entry.Ref))
+		if node := localManifestNode(ctx, entry.Name); node != nil && len(node.Pkg.GitURLs()) > 0 {
+			vlog.Info("  skip checkout %s (managed git source)", entry.Name)
+			continue
+		}
+		if err := repo.CheckoutContext(ctx.Context, filepath.Join(cwd, entry.Path), entry.Ref); err != nil {
+			return err
+		}
 		shortRef := entry.Ref
 		if len(shortRef) > 12 {
 			shortRef = shortRef[:12]
 		}
 		vlog.Info("  checkout %s -> %s", entry.Name, shortRef+"...")
 	}
+	return nil
+}
+
+func localManifestNode(ctx *RuntimeContext, name string) *resolver.PackageNode {
+	if ctx == nil || ctx.DepGraph == nil {
+		return nil
+	}
+	node := ctx.DepGraph.Packages[name]
+	if node == nil || node.Pkg == nil {
+		return nil
+	}
+	return node
 }

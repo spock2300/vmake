@@ -64,9 +64,12 @@ func RunWithOptions(name string, args []string, opts RunOptions) ([]byte, error)
 	logger.Debug("%s  %s", opts.Dir, cmdLine)
 
 	ctx := opts.Context
-	if ctx == nil && opts.Timeout > 0 {
+	if opts.Timeout > 0 {
+		if ctx == nil {
+			ctx = context.Background()
+		}
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(context.Background(), opts.Timeout)
+		ctx, cancel = context.WithTimeout(ctx, opts.Timeout)
 		defer cancel()
 	}
 
@@ -82,6 +85,9 @@ func RunWithOptions(name string, args []string, opts RunOptions) ([]byte, error)
 	}
 
 	err := cmd.Run()
+	if err != nil && ctx != nil && ctx.Err() != nil {
+		err = ctx.Err()
+	}
 	output := buf.Bytes()
 
 	if err != nil {
@@ -98,6 +104,9 @@ func buildCmd(ctx context.Context, name string, args []string, dir string, env m
 	var cmd *exec.Cmd
 	if ctx != nil {
 		cmd = exec.CommandContext(ctx, name, args...)
+		if ctx.Done() != nil {
+			configureCancellation(cmd)
+		}
 	} else {
 		cmd = exec.Command(name, args...)
 	}
@@ -124,10 +133,18 @@ func RunFatal(dir, name string, args ...string) {
 }
 
 func RunWithEnv(dir string, env map[string]string, name string, args ...string) error {
-	cmd := buildCmd(nil, name, args, dir, env)
+	return RunWithEnvContext(nil, dir, env, name, args...)
+}
+
+func RunWithEnvContext(ctx context.Context, dir string, env map[string]string, name string, args ...string) error {
+	cmd := buildCmd(ctx, name, args, dir, env)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	if err != nil && ctx != nil && ctx.Err() != nil {
+		err = ctx.Err()
+	}
+	if err != nil {
 		return fmt.Errorf("%s: %w", FormatCommandLine(name, args), err)
 	}
 	return nil

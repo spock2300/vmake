@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/storage"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/buildscript"
@@ -72,19 +74,20 @@ func prepareBuildPrelude(ctx *RuntimeContext) (*buildPrelude, error) {
 	}, nil
 }
 
-func resolvePackageTools(ctx *RuntimeContext, name string, tc *toolchain.Toolchain, cache map[api.Platform]*build.ResolvedTools) (*build.ResolvedTools, error) {
+func resolvePackageTools(ctx *RuntimeContext, name string, tc *toolchain.Toolchain, cache map[string]*build.ResolvedTools) (*build.ResolvedTools, error) {
 	platform, err := PackagePlatform(ctx, name)
 	if err != nil {
 		return nil, err
 	}
-	if tools := cache[platform]; tools != nil {
+	key := fmt.Sprintf("%s:%s:%s", tc.Name, platform.OS, platform.Triple)
+	if tools := cache[key]; tools != nil {
 		return tools, nil
 	}
 	tools, err := build.ResolveTools(tc, platform)
 	if err != nil {
 		return nil, fmt.Errorf("resolve tools for %s: %w", name, err)
 	}
-	cache[platform] = tools
+	cache[key] = tools
 	return tools, nil
 }
 
@@ -232,28 +235,55 @@ func packageFlagsHash(globalFlagsHash string, node *resolver.PackageNode) string
 	return hex.EncodeToString(hash[:])[:16]
 }
 
-func localKeyExtra(globalFlagsHash, scriptHash string) string {
-	return build.JoinKeyExtra("", "", globalFlagsHash, "", scriptHash)
+func localKeyExtra(globalFlagsHash, scriptHash string, sourceCommit ...string) string {
+	commit := ""
+	if len(sourceCommit) > 0 {
+		commit = sourceCommit[0]
+	}
+	return build.JoinKeyExtra("", commit, globalFlagsHash, "", scriptHash)
 }
 
-func makeLocalPkgDirs(scriptDir, ccKey, mode string, opts map[string]any, globalFlagsHash, scriptHash string) *api.PkgDirs {
-	buildKey := build.BuildKey(ccKey, mode, opts, localKeyExtra(globalFlagsHash, scriptHash))
+func makeLocalPkgDirs(scriptDir, ccKey, mode string, opts map[string]any, globalFlagsHash, scriptHash string, sourceCommit ...string) *api.PkgDirs {
+	buildKey := build.BuildKey(ccKey, mode, opts, localKeyExtra(globalFlagsHash, scriptHash, sourceCommit...))
 	return &api.PkgDirs{
 		SourceDir: scriptDir,
 		BuildDir:  filepath.Join(scriptDir, "build", buildKey),
 	}
 }
 
-func makeRemotePkgDirs(versionDir, sourceDir, ccKey, mode string, opts map[string]any, version, commit, globalFlagsHash, patchHash, scriptHash string) *api.PkgDirs {
+func makeRemotePkgDirs(versionDir, sourceDir, ccKey, mode string, opts map[string]any, version, commit, globalFlagsHash, patchHash, scriptHash string, memberPath ...string) *api.PkgDirs {
 	buildKey := build.BuildKey(ccKey, mode, opts, build.JoinKeyExtra(version, commit, globalFlagsHash, patchHash, scriptHash))
+	member := ""
+	if len(memberPath) > 0 {
+		member = memberPath[0]
+	}
+	output := filepath.Join(versionDir, "out", storage.OwnerKey(filepath.ToSlash(member)), buildKey)
 	return &api.PkgDirs{
-		SourceDir:  sourceDir,
-		BuildDir:   filepath.Join(versionDir, "out", buildKey, "build"),
-		InstallDir: filepath.Join(versionDir, "out", buildKey, "install"),
+		SourceDir:  filepath.Join(output, "work", "repo", member),
+		BuildDir:   filepath.Join(output, "build"),
+		InstallDir: filepath.Join(output, "install"),
 	}
 }
 
+func remoteMemberPath(ctx *RuntimeContext, name string) string {
+	if parent, ok := ctx.Resolver.SubParents()[name]; ok {
+		return strings.TrimPrefix(name, parent+"/")
+	}
+	return ""
+}
+
+func remoteOwnerName(ctx *RuntimeContext, name string) string {
+	if parent, ok := ctx.Resolver.SubParents()[name]; ok {
+		return parent
+	}
+	return name
+}
+
 func applyPatches(pkg *api.Package, sourceDir string) error {
+	return applyPatchesContext(context.Background(), pkg, sourceDir)
+}
+
+func applyPatchesContext(ctx context.Context, pkg *api.Package, sourceDir string) error {
 	patches := pkg.GetPatches()
 	if len(patches) == 0 {
 		return nil
@@ -264,16 +294,43 @@ func applyPatches(pkg *api.Package, sourceDir string) error {
 
 	for _, patch := range patches {
 		absPath := filepath.Join(scriptDir, patch)
-		if repo.IsPatchApplied(sourceDir, absPath) {
+		applied, err := repo.IsPatchAppliedContext(ctx, sourceDir, absPath)
+		if err != nil {
+			return err
+		}
+		if applied {
 			vlog.Info("  %s (already applied)", patch)
 			continue
 		}
 		vlog.Info("  %s", patch)
-		if err := repo.ApplyPatch(sourceDir, absPath); err != nil {
+		if err := repo.ApplyPatchContext(ctx, sourceDir, absPath); err != nil {
 			return err
 		}
 	}
 
+	return nil
+}
+
+func rebaseKConfigSourceDirs(ctx *RuntimeContext, name, oldRoot, newRoot string) error {
+	if oldRoot == newRoot {
+		return nil
+	}
+	member, seedRoot := "", oldRoot
+	if ctx.DepGraph != nil {
+		if node := ctx.DepGraph.Packages[name]; node != nil && !node.IsLocal() && node.Source != nil {
+			member = remoteMemberPath(ctx, name)
+			seedRoot = node.Source.Dir
+		}
+	}
+	for _, k := range ctx.AllKConfigs[name] {
+		if srcDir := k.SrcDir(); srcDir != "" {
+			rebased, err := rebaseSourcePath(srcDir, oldRoot, newRoot, member, seedRoot)
+			if err != nil {
+				return fmt.Errorf("rebase kconfig %s: %w", name, err)
+			}
+			k.SetSrcDir(rebased)
+		}
+	}
 	return nil
 }
 
@@ -295,6 +352,13 @@ func restoreKConfigFiles(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, n
 		srcDir := k.SrcDir()
 		if srcDir == "" {
 			srcDir = pkgDirs[name].SourceDir
+		} else if ctx.DepGraph != nil {
+			if node := ctx.DepGraph.Packages[name]; node != nil && !node.IsLocal() && node.Source != nil {
+				if err := rebaseKConfigSourceDirs(ctx, name, node.Source.Dir, pkgDirs[name].SourceDir); err != nil {
+					return err
+				}
+				srcDir = k.SrcDir()
+			}
 		}
 		configPath := filepath.Join(srcDir, k.ConfigPath())
 

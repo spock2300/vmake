@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -8,6 +9,14 @@ import (
 
 	"github.com/spf13/cobra"
 )
+
+func TestRunMainPreservesPanicError(t *testing.T) {
+	cause := errors.New("initialization failed")
+	loaded := &LoadedPlugin{Info: &Info{Name: "fixture"}, Entry: func(*Context) { panic(cause) }}
+	if err := RunMain(loaded, &Context{}); !errors.Is(err, cause) {
+		t.Fatalf("lost initialization error: %v", err)
+	}
+}
 
 func writePluginFixture(t *testing.T, dir string, files map[string]string) {
 	t.Helper()

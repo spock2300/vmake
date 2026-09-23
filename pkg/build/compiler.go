@@ -1,6 +1,8 @@
 package build
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +19,7 @@ type Compiler struct {
 	clangCC  bool
 	targetOS string
 	run      cmdRunner
+	env      map[string]string
 }
 
 type CompileOptions struct {
@@ -34,7 +37,7 @@ func NewCompiler(tools *ResolvedTools) *Compiler {
 		cxxPath:  tools.CXX,
 		clangCC:  tools.isClangCC(),
 		targetOS: tools.targetOS,
-		run:      gnuRunner(tools.env),
+		env:      tools.env,
 	}
 }
 
@@ -46,11 +49,28 @@ func selectCompilerAndFlags(ccPath, cxxPath string, cFlags, cxxFlags []string, o
 }
 
 func (c *Compiler) Compile(src, objPath string, opts *CompileOptions, workDir string) ([]string, error) {
+	return c.CompileContext(context.Background(), src, objPath, opts, workDir)
+}
+
+func (c *Compiler) CompileContext(ctx context.Context, src, objPath string, opts *CompileOptions, workDir string) ([]string, error) {
+	compiler := *c
+	if compiler.run == nil {
+		compiler.run = gnuRunnerContext(ctx, c.env)
+	}
+	return compiler.compile(src, objPath, opts, workDir)
+}
+
+func (c *Compiler) compile(src, objPath string, opts *CompileOptions, workDir string) (deps []string, err error) {
 	if err := fs.EnsureDir(filepath.Dir(resolveWorkPath(workDir, objPath))); err != nil {
 		return nil, err
 	}
 
 	depPath := objPath + ".d"
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, removeCompileFiles(workDir, objPath, depPath, depPath+".as", strings.TrimSuffix(objPath, filepath.Ext(objPath))+".s"))
+		}
+	}()
 
 	compiler, flags := selectCompilerAndFlags(c.ccPath, c.cxxPath, opts.CFlags, opts.CxxFlags, opts)
 	commandOpts := *opts
@@ -61,7 +81,7 @@ func (c *Compiler) Compile(src, objPath string, opts *CompileOptions, workDir st
 
 	args := compileArgs(&commandOpts, objPath, src, flags, depPath, workDir)
 
-	_, err := c.run(compiler, workDir, args...)
+	_, err = c.run(compiler, workDir, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +96,7 @@ func (c *Compiler) Compile(src, objPath string, opts *CompileOptions, workDir st
 		return mergeAssemblyDeps(src, objPath, depPath, workDir, intermediate, depFiles...)
 	}
 
-	deps, err := ParseDepFile(resolveWorkPath(workDir, depPath))
+	deps, err = ParseDepFile(resolveWorkPath(workDir, depPath))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse dep file: %w", err)
 	}
@@ -195,38 +215,4 @@ func tokenizeDepFile(content string) []string {
 	}
 	flush()
 	return tokens
-}
-
-func IsSourceValid(src, objPath string, workDir string) (bool, []string) {
-	absObj := resolveWorkPath(workDir, objPath)
-	objInfo, err := os.Stat(absObj)
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, nil
-	}
-
-	depPath := objPath + ".d"
-	deps, err := ParseDepFile(resolveWorkPath(workDir, depPath))
-	if err != nil {
-		return false, nil
-	}
-
-	objTime := objInfo.ModTime()
-
-	absSrc := resolveWorkPath(workDir, src)
-	srcInfo, err := os.Stat(absSrc)
-	if err != nil || srcInfo.ModTime().After(objTime) {
-		return false, deps
-	}
-
-	for _, dep := range deps {
-		depInfo, err := os.Stat(resolveWorkPath(workDir, dep))
-		if err != nil || depInfo.ModTime().After(objTime) {
-			return false, deps
-		}
-	}
-
-	return true, deps
 }
