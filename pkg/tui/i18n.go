@@ -37,6 +37,7 @@ const (
 	textNo                 textID = "no"
 	textChoices            textID = "choices"
 	textCloseDetails       textID = "close_details"
+	textDetailScrollHint   textID = "detail_scroll_hint"
 	textNavigate           textID = "navigate"
 	textCollapseExpand     textID = "collapse_expand"
 	textSearch             textID = "search"

@@ -305,44 +305,46 @@ func (m *Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.confirmQuit || m.overlay != overlayNone || m.editing || m.filterActive || m.runningMenuconfig {
+	if m.width < 50 || m.height < 8 || msg.X < 0 || msg.Y < 0 || msg.X >= m.width || msg.Y >= m.height {
+		return m, nil
+	}
+	if !mouseLeftPress(msg) && mouseWheel(msg) == 0 {
+		return m, nil
+	}
+	m.View()
+	if m.confirmQuit {
+		return m.handleConfirmMouse(msg)
+	}
+	if m.overlay != overlayNone {
+		return m.handleOverlayMouse(msg)
+	}
+	if m.editing {
+		return m.handleEditingMouse(msg)
+	}
+	if m.filterActive || m.runningMenuconfig {
 		return m, nil
 	}
 
 	mx, my := msg.X, msg.Y
 	headerH := m.headerHeight()
-	footerH := m.footerHeight()
-	if msg.Button == tea.MouseButtonLeft && msg.Type == tea.MouseLeft && my == m.languageSelectorY && mx >= m.languageSelectorX && mx < m.languageSelectorX+m.languageSelectorW {
+	if mouseLeftPress(msg) && my == m.languageSelectorY && mx >= m.languageSelectorX && mx < m.languageSelectorX+m.languageSelectorW {
 		m.openLanguageSelector()
 		return m, nil
 	}
-	if my < headerH || my >= m.height-footerH {
+	if my < headerH || my >= headerH+m.renderedMainH {
 		return m, nil
 	}
-	contentY := my - headerH
-	if contentY < 0 {
-		return m, nil
-	}
-	panelY := contentY - 1
-	if panelY < 0 {
-		return m, nil
-	}
-
-	inTree := mx < m.treeWidth
+	inTree := mx < m.renderedTreeW
 
 	switch {
-	case msg.Button == tea.MouseButtonLeft && msg.Type == tea.MouseLeft:
+	case mouseLeftPress(msg):
 		if inTree {
-			row := panelY
-			if m.filterActive || m.filterInput != "" {
-				row--
-			}
-			if row < 0 {
-				return m, nil
-			}
-			idx := row + m.treeOff
-			if idx >= 0 && idx < len(m.flat) {
-				m.focusArea = 0
+			m.focusArea = 0
+			for _, target := range m.treeMouseRows {
+				if my-headerH < target.y || my-headerH >= target.y+target.height {
+					continue
+				}
+				idx := target.index
 				m.treeCursor = idx
 				m.selectCurrentNode()
 				if len(m.flat[idx].Children) > 0 {
@@ -350,57 +352,20 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 					m.rebuildFlat()
 				}
 				m.ensureTreeCursorVisible()
+				break
 			}
 		} else {
 			m.focusArea = 1
-			visible := m.visibleOptions()
-			row := panelY
-			if row < 0 {
-				return m, nil
-			}
-			idx := row + m.optOff
-			maxIdx := m.totalOptRows() - 1
-			if idx < 0 {
-				idx = 0
-			}
-			if idx > maxIdx {
-				idx = maxIdx
-			}
-			if len(visible) > 0 {
-				m.optCursor = idx
-			}
+			return m.handleMouseOptionClick(msg)
 		}
-	case msg.Type == tea.MouseWheelUp:
+	case mouseWheel(msg) != 0:
 		if inTree {
-			if m.treeOff > 0 {
-				m.treeOff--
-			}
+			m.focusArea = 0
+			m.treeOff = clamp(m.treeOff+mouseWheel(msg), 0, max(0, len(m.flat)-m.treeItemRows()))
 		} else {
-			if m.optOff > 0 {
-				m.optOff--
-			}
-		}
-	case msg.Type == tea.MouseWheelDown:
-		if inTree {
-			drawH := m.treeItemRows()
-			total := len(m.flat)
-			maxOff := total - drawH
-			if maxOff < 0 {
-				maxOff = 0
-			}
-			if m.treeOff < maxOff {
-				m.treeOff++
-			}
-		} else {
-			drawH := m.optItemRows()
-			total := m.totalOptRows()
-			maxOff := total - drawH
-			if maxOff < 0 {
-				maxOff = 0
-			}
-			if m.optOff < maxOff {
-				m.optOff++
-			}
+			m.focusArea = 1
+			m.optScrolled = true
+			m.optOff = clamp(m.optOff+mouseWheel(msg), 0, max(0, len(m.optionLines())-m.optItemRows()))
 		}
 	}
 	return m, nil
@@ -449,6 +414,13 @@ func (m *Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.overlay == overlayDetail {
+		switch msg.String() {
+		case "up", "k", "down", "j", "pgup", "pgdown", "home", "g", "end", "G":
+			m.scrollDetail(msg.String())
+			return m, nil
+		}
+	}
 	switch msg.String() {
 	case "esc", "ctrl+c":
 		m.closeOverlay()
@@ -560,10 +532,12 @@ func (m *Model) selectCurrentNode() {
 		m.buildOptionItems()
 		m.optCursor = 0
 		m.optOff = 0
+		m.optScrolled = false
 	}
 }
 
 func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.optScrolled = false
 	visible := m.visibleOptions()
 	presetIdx := len(visible)
 
@@ -812,21 +786,31 @@ func (m *Model) View() string {
 
 	header := m.renderHeader()
 	footer := m.renderFooter()
+	treeStyle := treePanelStyle(m.focusArea == 0, m.treePanelWidth())
+	optionStyle := optionsPanelStyle(m.focusArea == 1, m.optionsPanelWidth())
+	minTreeHeight := 2 + treeStyle.GetVerticalFrameSize()
+	if m.filterActive || m.filterInput != "" {
+		minTreeHeight++
+	}
+	minMainHeight := max(minTreeHeight, 2+optionStyle.GetVerticalFrameSize())
+	if lipgloss.Height(header)+lipgloss.Height(footer)+minMainHeight > m.height {
+		minFooterHeight := 1 + footerBorderStyle().GetVerticalFrameSize()
+		header = m.renderHeaderWithin(m.height - minMainHeight - minFooterHeight)
+		footer = m.renderFooterWithin(m.height - minMainHeight - lipgloss.Height(header))
+	}
 	m.renderedHeaderH = lipgloss.Height(header)
 	m.renderedFooterH = lipgloss.Height(footer)
 
-	treePanel := treePanelStyle(m.focusArea == 0, m.treeWidth).Render(m.renderTree())
-	optWidth := m.width - m.treeWidth - 5
-	if optWidth < 1 {
-		optWidth = 1
-	}
-	optPanel := optionsPanelStyle(m.focusArea == 1, optWidth).Render(m.renderOptions())
+	treePanel := treeStyle.MaxHeight(m.contentHeight()).Render(m.renderTree())
+	m.renderedTreeW = lipgloss.Width(treePanel)
+	optPanel := optionStyle.MaxHeight(m.contentHeight()).Render(m.renderOptions())
 
 	main := lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		treePanel,
 		optPanel,
 	)
+	m.renderedMainH = lipgloss.Height(main)
 
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -837,6 +821,10 @@ func (m *Model) View() string {
 }
 
 func (m *Model) renderHeader() string {
+	return m.renderHeaderWithin(0)
+}
+
+func (m *Model) renderHeaderWithin(maxHeight int) string {
 	title := titleStyle.Padding(0).Render("◆ " + m.text(textVMakeConfiguration))
 
 	var rightParts []string
@@ -864,15 +852,21 @@ func (m *Model) renderHeader() string {
 			leftContent += "\n" + rightPart
 		}
 	}
-	left := lipgloss.NewStyle().Width(leftWidth).Render(leftContent)
+	leftStyle := lipgloss.NewStyle().Width(leftWidth)
+	if maxHeight > 0 {
+		leftStyle = leftStyle.MaxHeight(max(1, maxHeight-headerStyle.GetVerticalFrameSize()))
+	}
+	left := leftStyle.Render(leftContent)
 	headerContent := lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", languageSelector)
 
 	return headerStyle.Render(headerContent)
 }
 
 func (m *Model) renderTree() string {
+	m.treeMouseRows = nil
+	contentWidth := max(1, m.treePanelWidth()-2)
 	var b strings.Builder
-	b.WriteString(panelTitleStyle.Render(m.text(textPackages)) + "\n")
+	b.WriteString(panelTitleStyle.MaxWidth(contentWidth).Render(m.text(textPackages)) + "\n")
 
 	var topBar string
 	if m.filterActive {
@@ -895,7 +889,11 @@ func (m *Model) renderTree() string {
 	drawH := m.treeItemRows()
 	end := min(start+drawH, total)
 
+	if topBar != "" {
+		topBar = lipgloss.NewStyle().MaxWidth(contentWidth).Render(strings.TrimSuffix(topBar, "\n")) + "\n"
+	}
 	b.WriteString(topBar)
+	rowY := 1 + strings.Count(topBar, "\n")
 
 	for i := start; i < end; i++ {
 		node := m.flat[i]
@@ -952,25 +950,29 @@ func (m *Model) renderTree() string {
 		if isSelected && isFocused {
 			line = selectedRowStyle.Render(line)
 		}
+		line = lipgloss.NewStyle().MaxWidth(contentWidth).Render(line)
+		m.treeMouseRows = append(m.treeMouseRows, panelRowTarget{y: rowY, height: 1, index: i})
 		b.WriteString(line + "\n")
+		rowY++
 	}
 
-	if total > panelH {
+	if total > panelH && panelH > 1 {
 		pct := float64(m.treeOff+drawH) / float64(total) * 100
 		indicator := scrollIndicatorStyle.Render(fmt.Sprintf("  %d/%d  %.0f%%", min(m.treeCursor+1, total), total, pct))
 		b.WriteString(indicator)
 	}
 
-	return b.String()
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 func (m *Model) renderOptions() string {
+	m.optionMouseRows = nil
 	title := m.text(textOptions)
 	if m.selectedPkg != "" {
 		title += " · " + m.packageLabel(m.selectedPkg)
 	}
 	var b strings.Builder
-	b.WriteString(panelTitleStyle.Render(title) + "\n")
+	b.WriteString(panelTitleStyle.MaxWidth(m.optionsContentWidth()).Render(title) + "\n")
 
 	if m.selectedPkg == "" {
 		b.WriteString(lipgloss.PlaceHorizontal(m.width-m.treeWidth-6, lipgloss.Center, m.text(textSelectPackage)))
@@ -990,51 +992,14 @@ func (m *Model) renderOptions() string {
 		return b.String()
 	}
 
-	nameWidth := 0
-	valWidth := 0
-	for _, item := range visible {
-		if w := utf8.RuneCountInString(item.Name); w > nameWidth {
-			nameWidth = w
-		}
-		valStr := fmt.Sprintf("%v", m.getValue(item.Name))
-		if w := utf8.RuneCountInString(valStr); w > valWidth {
-			valWidth = w
-		}
-	}
-	nameWidth = min(nameWidth, 20)
-	valWidth = min(valWidth, 16)
-
-	var allRows []optionRow
-	navigableIdx := 0
-	currentGroup := ""
-	for _, item := range visible {
-		if item.Group != currentGroup {
-			currentGroup = item.Group
-			allRows = append(allRows, optionRow{kind: rowGroup, navIdx: -1, text: currentGroup})
-		}
-		allRows = append(allRows, optionRow{kind: rowOption, navIdx: navigableIdx, idx: len(allRows), item: item})
-		navigableIdx++
-	}
-
-	presetIdx := navigableIdx
-	menuconfigIdx := -1
-	if hasKConfig {
-		if m.hasPresets() {
-			allRows = append(allRows, optionRow{kind: rowPreset, navIdx: navigableIdx, idx: len(allRows)})
-			navigableIdx++
-			menuconfigIdx = navigableIdx
-			allRows = append(allRows, optionRow{kind: rowMenuconfig, navIdx: navigableIdx, idx: len(allRows)})
-			navigableIdx++
-		} else {
-			menuconfigIdx = navigableIdx
-			allRows = append(allRows, optionRow{kind: rowMenuconfig, navIdx: navigableIdx, idx: len(allRows)})
-			navigableIdx++
-		}
-	}
+	allRows := m.optionLines()
 
 	cursorRowIdx := -1
 	for ri, r := range allRows {
-		if r.navIdx == m.optCursor {
+		if r.row.navIdx == m.optCursor && cursorRowIdx < 0 {
+			cursorRowIdx = ri
+		}
+		if r.editCursor {
 			cursorRowIdx = ri
 			break
 		}
@@ -1049,7 +1014,7 @@ func (m *Model) renderOptions() string {
 	if total > panelH {
 		drawH = max(1, panelH-1)
 	}
-	if cursorRowIdx >= 0 {
+	if cursorRowIdx >= 0 && !m.optScrolled {
 		if cursorRowIdx < m.optOff {
 			m.optOff = cursorRowIdx
 		}
@@ -1072,29 +1037,9 @@ func (m *Model) renderOptions() string {
 	end := min(start+drawH, total)
 
 	for i := start; i < end; i++ {
-		row := allRows[i]
-		switch row.kind {
-		case rowGroup:
-			sepLen := nameWidth + valWidth + 6
-			groupName := row.text
-			if groupName == "General" {
-				groupName = m.text(textGeneral)
-			}
-			if groupName == "Global" {
-				groupName = m.text(textGlobal)
-			}
-			sep := strings.Repeat("─", max(sepLen-utf8.RuneCountInString(groupName)-4, 3))
-			b.WriteString(groupStyle.Render("── "+groupName+" "+sep) + "\n")
-		case rowOption:
-			selected := row.navIdx == m.optCursor && m.focusArea == 1
-			b.WriteString(m.renderOptionAligned(row.item, selected, nameWidth, valWidth) + "\n")
-		case rowPreset:
-			selected := presetIdx == m.optCursor && m.focusArea == 1
-			b.WriteString(m.renderPresetRow(selected, nameWidth, valWidth) + "\n")
-		case rowMenuconfig:
-			selected := menuconfigIdx == m.optCursor && m.focusArea == 1
-			b.WriteString(m.renderMenuconfigRow(selected, nameWidth) + "\n")
-		}
+		line := allRows[i]
+		m.optionMouseRows = append(m.optionMouseRows, panelRowTarget{y: i - start + 1, height: 1, index: line.row.navIdx})
+		b.WriteString(line.text + "\n")
 	}
 
 	totalRows := len(allRows)
@@ -1104,7 +1049,7 @@ func (m *Model) renderOptions() string {
 		b.WriteString(indicator)
 	}
 
-	return b.String()
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 type rowKind int
@@ -1119,7 +1064,6 @@ const (
 type optionRow struct {
 	kind   rowKind
 	text   string
-	idx    int
 	navIdx int
 	item   OptionItem
 }
@@ -1253,33 +1197,7 @@ func (m *Model) renderMenuconfigRow(selected bool, nameW int) string {
 }
 
 func (m *Model) renderConfirmDialog() string {
-	title := confirmTitleStyle.Render(m.text(textUnsavedChanges))
-	msg := confirmMsgStyle.Render(m.text(textSaveBeforeExit))
-
-	saveBtn := " " + m.text(textSave) + " "
-	discardBtn := " " + m.text(textDiscard) + " "
-	if m.confirmBtn == 0 {
-		saveBtn = btnActiveStyle.Render("[ " + m.text(textSave) + " ]")
-		discardBtn = btnInactiveStyle.Render("  " + m.text(textDiscard) + "  ")
-	} else {
-		saveBtn = btnInactiveStyle.Render("  " + m.text(textSave) + "  ")
-		discardBtn = btnActiveStyle.Render("[ " + m.text(textDiscard) + " ]")
-	}
-
-	buttons := lipgloss.JoinHorizontal(lipgloss.Center, saveBtn, "  ", discardBtn)
-
-	content := lipgloss.JoinVertical(
-		lipgloss.Center,
-		title,
-		"",
-		msg,
-		"",
-		buttons,
-		"",
-		confirmMsgStyle.Render(m.text(textConfirmHint)),
-	)
-
-	return confirmStyle.Render(content)
+	return m.confirmDialogLayout().view
 }
 
 func (m *Model) renderOverlay() string {
@@ -1293,54 +1211,13 @@ func (m *Model) renderOverlay() string {
 }
 
 func (m *Model) renderChoiceOverlay() string {
-	opt := m.detailOption()
-	desc := ""
-	if opt != nil {
-		desc = opt.Description()
-	}
-	titleText := m.choiceOpt
-	if m.overlay == overlayLanguage {
-		titleText = m.text(textLanguage)
-	}
-	title := confirmTitleStyle.Render(titleText)
-	current := ""
-	if m.overlay == overlayLanguage {
-		current = m.languageLabel()
-	} else {
-		current = fmt.Sprintf("%v", m.getValue(m.choiceOpt))
-	}
-
-	var rows []string
-	for i, v := range m.choiceValues {
-		marker := "  "
-		if v == current {
-			marker = checkboxStyle.Render("● ")
-		}
-		line := fmt.Sprintf("%s %s", marker, v)
-		if i == m.choiceCursor {
-			line = selectedRowStyle.Render(" " + line)
-		} else {
-			line = " " + line
-		}
-		rows = append(rows, line)
-	}
-	list := strings.Join(rows, "\n")
-
-	hint := confirmMsgStyle.Render(m.text(textChoiceHint))
-
-	parts := []string{title}
-	if desc != "" {
-		parts = append(parts, optionDescStyle.Render(desc))
-	}
-	parts = append(parts, "", list, "", hint)
-	content := lipgloss.JoinVertical(lipgloss.Center, parts...)
-	return overlayStyle.Render(content)
+	return m.choiceDialogLayout().view
 }
 
 func (m *Model) renderDetailOverlay() string {
 	opt := m.detailOption()
 	if opt == nil {
-		return overlayStyle.Render(confirmMsgStyle.Render(m.text(textNoDetails)))
+		return m.renderDetailDialog(confirmMsgStyle.Render(m.text(textNoDetails)))
 	}
 	cur := m.getValue(m.choiceOpt)
 	def := opt.Default()
@@ -1377,11 +1254,14 @@ func (m *Model) renderDetailOverlay() string {
 	if opt.Type() == api.OptionChoice && len(opt.Values()) > 0 {
 		b.WriteString("\n  " + confirmMsgStyle.Render(m.text(textChoices)+strings.Join(opt.Values(), ", ")) + "\n")
 	}
-	b.WriteString("\n" + confirmMsgStyle.Render(m.text(textCloseDetails)))
-	return overlayStyle.Render(b.String())
+	return m.renderDetailDialog(b.String())
 }
 
 func (m *Model) renderFooter() string {
+	return m.renderFooterWithin(0)
+}
+
+func (m *Model) renderFooterWithin(maxHeight int) string {
 	var helpText string
 	if m.filterActive {
 		helpText = renderHelpEntries([]helpEntry{
@@ -1422,7 +1302,13 @@ func (m *Model) renderFooter() string {
 		helpText += "\n" + diagnostics
 	}
 
-	return footerBorderStyle().Width(m.width - 4).Render(helpText)
+	footerStyle := footerBorderStyle().Width(m.width - 4)
+	if maxHeight > 0 {
+		contentWidth := max(1, footerStyle.GetWidth()-footerStyle.GetHorizontalFrameSize())
+		contentHeight := max(1, maxHeight-footerStyle.GetVerticalFrameSize())
+		helpText = lipgloss.NewStyle().Width(contentWidth).MaxHeight(contentHeight).Render(helpText)
+	}
+	return footerStyle.Render(helpText)
 }
 
 type helpEntry struct {

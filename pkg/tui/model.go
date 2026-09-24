@@ -72,17 +72,26 @@ type Model struct {
 	menuconfigRan     map[string]bool
 	presetValues      map[string]string
 
-	treeWidth int
-	treeOff   int
-	optOff    int
+	treeWidth       int
+	treeOff         int
+	optOff          int
+	optScrolled     bool
+	treeMouseRows   []panelRowTarget
+	optionMouseRows []panelRowTarget
+	renderedTreeW   int
+	renderedMainH   int
 
 	hideEmptyPkgs bool
 	optCounts     map[string]int
 
 	overlay      overlayKind
 	choiceCursor int
+	choiceOff    int
 	choiceOpt    string
 	choiceValues []string
+	detailOff    int
+	detailRows   int
+	detailTotal  int
 
 	filterActive bool
 	filterInput  string
@@ -686,7 +695,7 @@ func (m *Model) setValue(name string, val any) {
 
 func (m *Model) checkChanges() {
 	globalChanged := !globalValuesEqual(m.globalValues, m.origGlobal)
-	m.hasChanges = !valuesEqual(m.values, m.origValues) || globalChanged
+	m.hasChanges = !valuesEqual(m.values, m.origValues) || globalChanged || m.modifiedPresetCount() > 0
 }
 
 func globalValuesEqual(a, b map[string]any) bool {
@@ -806,7 +815,20 @@ func (m *Model) selectPreset(name string) {
 		m.presetValues = make(map[string]string)
 	}
 	m.presetValues[m.selectedPkg] = name
+	if entries := m.kconfigs[m.selectedPkg]; len(entries) > 0 && name == entries[0].SelectedPreset() {
+		delete(m.presetValues, m.selectedPkg)
+	}
 	m.checkChanges()
+}
+
+func (m *Model) modifiedPresetCount() int {
+	n := 0
+	for pkgName, preset := range m.presetValues {
+		if entries := m.kconfigs[pkgName]; len(entries) > 0 && preset != entries[0].SelectedPreset() {
+			n++
+		}
+	}
+	return n
 }
 
 func (m *Model) presetOptions() []string {
@@ -887,7 +909,7 @@ func (m *Model) optItemRows() int {
 	if h < 1 {
 		h = 1
 	}
-	if m.totalOptRows() > h {
+	if len(m.optionLines()) > h {
 		return max(1, h-1)
 	}
 	return h
@@ -954,7 +976,7 @@ func (m *Model) defaultFor(name string) any {
 }
 
 func (m *Model) modifiedCount() int {
-	n := 0
+	n := m.modifiedPresetCount()
 	for name := range m.globalOptions {
 		if m.isOptionModifiedGlobal(name) {
 			n++
@@ -1004,6 +1026,7 @@ func (m *Model) openChoiceOverlay(name string, choices []string) {
 	m.overlay = overlayChoice
 	m.choiceOpt = name
 	m.choiceValues = choices
+	m.choiceOff = 0
 	current := fmt.Sprintf("%v", m.getValue(name))
 	m.choiceCursor = 0
 	for i, v := range choices {
@@ -1019,11 +1042,18 @@ func (m *Model) closeOverlay() {
 	m.choiceOpt = ""
 	m.choiceValues = nil
 	m.choiceCursor = 0
+	m.choiceOff = 0
+	m.detailOff = 0
+	m.detailRows = 0
+	m.detailTotal = 0
 }
 
 func (m *Model) openDetailOverlay(item OptionItem) {
 	m.overlay = overlayDetail
 	m.choiceOpt = item.Name
+	m.detailOff = 0
+	m.detailRows = 0
+	m.detailTotal = 0
 }
 
 func (m *Model) detailOption() *api.Option {
