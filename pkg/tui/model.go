@@ -53,15 +53,19 @@ type Model struct {
 	editInput  string
 	editCursor int
 
-	width       int
-	height      int
-	saved       bool
-	hasChanges  bool
-	confirmQuit bool
-	confirmBtn  int
-	origValues  map[string]map[string]any
-	origGlobal  map[string]any
-	workDir     string
+	width             int
+	height            int
+	saved             bool
+	hasChanges        bool
+	confirmQuit       bool
+	confirmBtn        int
+	origValues        map[string]map[string]any
+	origGlobal        map[string]any
+	workDir           string
+	language          language
+	languageSelectorX int
+	languageSelectorY int
+	languageSelectorW int
 
 	runningMenuconfig bool
 	menuconfigErr     error
@@ -93,6 +97,7 @@ const (
 	overlayNone overlayKind = iota
 	overlayChoice
 	overlayDetail
+	overlayLanguage
 )
 
 func NewModel(
@@ -156,6 +161,7 @@ func NewModel(
 		globalOptions: globalOptions,
 		globalValues:  globalValues,
 		kconfigs:      kconfigs,
+		language:      systemLanguage(),
 		menuconfigRan: make(map[string]bool),
 		presetValues:  make(map[string]string),
 		optCounts:     computeOptCounts(options, globalOptions),
@@ -191,11 +197,11 @@ func (m *Model) toolchainDiagnostics() string {
 	mgr := toolchain.GetManager()
 	var messages []string
 	if errs := mgr.ToolchainErrors(); len(errs) > 0 {
-		messages = append(messages, fmt.Sprintf("%d unavailable toolchain definitions; run vmake toolchain list for details", len(errs)))
+		messages = append(messages, m.textf(textToolchainErrors, len(errs)))
 	}
 	name := getToolchainValue(m.globalValues)
 	if _, err := mgr.GetToolchain(name); err != nil {
-		messages = append(messages, fmt.Sprintf("Selected toolchain %q: %v", name, err))
+		messages = append(messages, m.textf(textSelectedToolchain, name, err))
 	}
 	return strings.Join(messages, "\n")
 }
@@ -858,7 +864,7 @@ func (m *Model) contentHeight() int {
 }
 
 func (m *Model) treePanelHeight() int {
-	h := m.contentHeight()
+	h := m.contentHeight() - 1
 	if m.filterActive || m.filterInput != "" {
 		h--
 	}
@@ -871,15 +877,18 @@ func (m *Model) treePanelHeight() int {
 func (m *Model) treeItemRows() int {
 	h := m.treePanelHeight()
 	if len(m.flat) > h {
-		return h - 1
+		return max(1, h-1)
 	}
 	return h
 }
 
 func (m *Model) optItemRows() int {
-	h := m.contentHeight()
+	h := m.contentHeight() - 1
+	if h < 1 {
+		h = 1
+	}
 	if m.totalOptRows() > h {
-		return h - 1
+		return max(1, h-1)
 	}
 	return h
 }

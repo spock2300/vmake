@@ -312,11 +312,19 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	mx, my := msg.X, msg.Y
 	headerH := m.headerHeight()
 	footerH := m.footerHeight()
+	if msg.Button == tea.MouseButtonLeft && msg.Type == tea.MouseLeft && my == m.languageSelectorY && mx >= m.languageSelectorX && mx < m.languageSelectorX+m.languageSelectorW {
+		m.openLanguageSelector()
+		return m, nil
+	}
 	if my < headerH || my >= m.height-footerH {
 		return m, nil
 	}
 	contentY := my - headerH
 	if contentY < 0 {
+		return m, nil
+	}
+	panelY := contentY - 1
+	if panelY < 0 {
 		return m, nil
 	}
 
@@ -325,7 +333,7 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case msg.Button == tea.MouseButtonLeft && msg.Type == tea.MouseLeft:
 		if inTree {
-			row := contentY
+			row := panelY
 			if m.filterActive || m.filterInput != "" {
 				row--
 			}
@@ -346,7 +354,10 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.focusArea = 1
 			visible := m.visibleOptions()
-			row := contentY
+			row := panelY
+			if row < 0 {
+				return m, nil
+			}
 			idx := row + m.optOff
 			maxIdx := m.totalOptRows() - 1
 			if idx < 0 {
@@ -448,24 +459,30 @@ func (m *Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case "up", "k":
-		if m.overlay == overlayChoice && m.choiceCursor > 0 {
+		if (m.overlay == overlayChoice || m.overlay == overlayLanguage) && m.choiceCursor > 0 {
 			m.choiceCursor--
 		}
 	case "down", "j":
-		if m.overlay == overlayChoice && m.choiceCursor < len(m.choiceValues)-1 {
+		if (m.overlay == overlayChoice || m.overlay == overlayLanguage) && m.choiceCursor < len(m.choiceValues)-1 {
 			m.choiceCursor++
 		}
 	case "home", "g":
-		if m.overlay == overlayChoice {
+		if m.overlay == overlayChoice || m.overlay == overlayLanguage {
 			m.choiceCursor = 0
 		}
 	case "end", "G":
-		if m.overlay == overlayChoice && len(m.choiceValues) > 0 {
+		if (m.overlay == overlayChoice || m.overlay == overlayLanguage) && len(m.choiceValues) > 0 {
 			m.choiceCursor = len(m.choiceValues) - 1
 		}
 	case "enter":
 		if m.overlay == overlayChoice && m.choiceCursor < len(m.choiceValues) {
 			m.setValue(m.choiceOpt, m.choiceValues[m.choiceCursor])
+		} else if m.overlay == overlayLanguage && m.choiceCursor < len(m.choiceValues) {
+			if m.choiceCursor == 0 {
+				m.language = languageEnglish
+			} else {
+				m.language = languageChinese
+			}
 		}
 		m.closeOverlay()
 	}
@@ -779,7 +796,7 @@ func (m *Model) View() string {
 
 	if m.width < 50 || m.height < 8 {
 		return lipgloss.NewStyle().Width(m.width).Height(m.height).Render(
-			"Terminal too small. Please resize to at least 50x8.",
+			m.text(textTerminalTooSmall),
 		)
 	}
 
@@ -794,6 +811,9 @@ func (m *Model) View() string {
 	}
 
 	header := m.renderHeader()
+	footer := m.renderFooter()
+	m.renderedHeaderH = lipgloss.Height(header)
+	m.renderedFooterH = lipgloss.Height(footer)
 
 	treePanel := treePanelStyle(m.focusArea == 0, m.treeWidth).Render(m.renderTree())
 	optWidth := m.width - m.treeWidth - 5
@@ -808,11 +828,6 @@ func (m *Model) View() string {
 		optPanel,
 	)
 
-	footer := m.renderFooter()
-
-	m.renderedHeaderH = lipgloss.Height(header)
-	m.renderedFooterH = lipgloss.Height(footer)
-
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		header,
@@ -822,7 +837,7 @@ func (m *Model) View() string {
 }
 
 func (m *Model) renderHeader() string {
-	title := titleStyle.Render("◆ VMake Configuration")
+	title := titleStyle.Padding(0).Render("◆ " + m.text(textVMakeConfiguration))
 
 	var rightParts []string
 	if m.workDir != "" {
@@ -830,33 +845,49 @@ func (m *Model) renderHeader() string {
 	}
 	if m.hasChanges {
 		n := m.modifiedCount()
-		rightParts = append(rightParts, modifiedBadgeStyle.Render(fmt.Sprintf("● %d modified", n)))
+		rightParts = append(rightParts, modifiedBadgeStyle.Render(m.textf(textModified, n)))
 	}
+	languageSelector := languageSelectorStyle.Render("[" + m.text(textLanguage) + ": " + m.languageLabel() + " ▼]")
+	headerStyle := headerBorderStyle(true).Width(m.width - 4)
+	headerWidth := headerStyle.GetWidth() - headerStyle.GetHorizontalFrameSize()
+	m.languageSelectorW = lipgloss.Width(languageSelector)
+	leftWidth := max(1, headerWidth-m.languageSelectorW-2)
+	m.languageSelectorX = headerStyle.GetBorderLeftSize() + headerStyle.GetPaddingLeft() + leftWidth + 2
+	m.languageSelectorY = headerStyle.GetBorderTopSize() + headerStyle.GetPaddingTop()
 	rightPart := strings.Join(rightParts, "  ")
 
-	headerWidth := m.width - 6
-	headerContent := lipgloss.JoinHorizontal(
-		lipgloss.Center,
-		title,
-		lipgloss.PlaceHorizontal(headerWidth-lipgloss.Width(title), lipgloss.Right, rightPart),
-	)
+	leftContent := title
+	if rightPart != "" {
+		if lipgloss.Width(title)+2+lipgloss.Width(rightPart) <= leftWidth {
+			leftContent += lipgloss.PlaceHorizontal(leftWidth-lipgloss.Width(title), lipgloss.Right, rightPart)
+		} else {
+			leftContent += "\n" + rightPart
+		}
+	}
+	left := lipgloss.NewStyle().Width(leftWidth).Render(leftContent)
+	headerContent := lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", languageSelector)
 
-	return headerBorderStyle(true).Width(m.width - 4).Render(headerContent)
+	return headerStyle.Render(headerContent)
 }
 
 func (m *Model) renderTree() string {
+	var b strings.Builder
+	b.WriteString(panelTitleStyle.Render(m.text(textPackages)) + "\n")
+
 	var topBar string
 	if m.filterActive {
 		topBar = filterBoxActiveStyle.Render("/"+m.filterInput+"▎") + "\n"
 	} else if m.filterInput != "" {
 		n := m.filteredMatchCount()
-		topBar = filterBoxAppliedStyle.Render(fmt.Sprintf("filter: %s (%d)", m.filterInput, n)) + "\n"
+		topBar = filterBoxAppliedStyle.Render(m.textf(textFilter, m.filterInput, n)) + "\n"
 	}
 
 	panelH := m.treePanelHeight()
 
 	if len(m.flat) == 0 {
-		return topBar + filterBoxAppliedStyle.Render("  No matches")
+		b.WriteString(topBar)
+		b.WriteString(filterBoxAppliedStyle.Render("  " + m.text(textNoMatches)))
+		return b.String()
 	}
 
 	total := len(m.flat)
@@ -864,7 +895,6 @@ func (m *Model) renderTree() string {
 	drawH := m.treeItemRows()
 	end := min(start+drawH, total)
 
-	var b strings.Builder
 	b.WriteString(topBar)
 
 	for i := start; i < end; i++ {
@@ -887,6 +917,9 @@ func (m *Model) renderTree() string {
 		}
 
 		name := node.Name
+		if node.PkgName == GlobalPkgName {
+			name = m.packageLabel(node.PkgName)
+		}
 		count := 0
 		if node.PkgName != "" {
 			count = m.optCountFor(node.PkgName)
@@ -932,19 +965,29 @@ func (m *Model) renderTree() string {
 }
 
 func (m *Model) renderOptions() string {
+	title := m.text(textOptions)
+	if m.selectedPkg != "" {
+		title += " · " + m.packageLabel(m.selectedPkg)
+	}
+	var b strings.Builder
+	b.WriteString(panelTitleStyle.Render(title) + "\n")
+
 	if m.selectedPkg == "" {
-		return lipgloss.PlaceHorizontal(m.width-m.treeWidth-6, lipgloss.Center, "Select a package")
+		b.WriteString(lipgloss.PlaceHorizontal(m.width-m.treeWidth-6, lipgloss.Center, m.text(textSelectPackage)))
+		return b.String()
 	}
 
 	if m.runningMenuconfig {
-		return "\n  Running menuconfig for " + m.selectedPkg + "...\n"
+		b.WriteString("\n  " + m.textf(textRunningMenuconfig, m.packageLabel(m.selectedPkg)) + "\n")
+		return b.String()
 	}
 
 	visible := m.visibleOptions()
 	hasKConfig := m.hasKConfig()
 
 	if len(visible) == 0 && !hasKConfig {
-		return "No options"
+		b.WriteString(m.text(textNoOptions))
+		return b.String()
 	}
 
 	nameWidth := 0
@@ -997,11 +1040,14 @@ func (m *Model) renderOptions() string {
 		}
 	}
 
-	panelH := m.contentHeight()
+	panelH := m.contentHeight() - 1
+	if panelH < 1 {
+		panelH = 1
+	}
 	total := len(allRows)
 	drawH := panelH
 	if total > panelH {
-		drawH = panelH - 1
+		drawH = max(1, panelH-1)
 	}
 	if cursorRowIdx >= 0 {
 		if cursorRowIdx < m.optOff {
@@ -1025,15 +1071,20 @@ func (m *Model) renderOptions() string {
 	start := m.optOff
 	end := min(start+drawH, total)
 
-	var b strings.Builder
-
 	for i := start; i < end; i++ {
 		row := allRows[i]
 		switch row.kind {
 		case rowGroup:
 			sepLen := nameWidth + valWidth + 6
-			sep := strings.Repeat("─", max(sepLen-utf8.RuneCountInString(row.text)-4, 3))
-			b.WriteString(groupStyle.Render("── "+row.text+" "+sep) + "\n")
+			groupName := row.text
+			if groupName == "General" {
+				groupName = m.text(textGeneral)
+			}
+			if groupName == "Global" {
+				groupName = m.text(textGlobal)
+			}
+			sep := strings.Repeat("─", max(sepLen-utf8.RuneCountInString(groupName)-4, 3))
+			b.WriteString(groupStyle.Render("── "+groupName+" "+sep) + "\n")
 		case rowOption:
 			selected := row.navIdx == m.optCursor && m.focusArea == 1
 			b.WriteString(m.renderOptionAligned(row.item, selected, nameWidth, valWidth) + "\n")
@@ -1047,7 +1098,7 @@ func (m *Model) renderOptions() string {
 	}
 
 	totalRows := len(allRows)
-	if totalRows > panelH {
+	if totalRows > panelH && panelH > 1 {
 		pct := float64(m.optOff+drawH) / float64(totalRows) * 100
 		indicator := scrollIndicatorStyle.Render(fmt.Sprintf("  %d/%d  %.0f%%", min(m.optCursor+1, m.totalOptRows()), m.totalOptRows(), pct))
 		b.WriteString(indicator)
@@ -1168,7 +1219,7 @@ func truncateRunes(s string, max int) string {
 
 func (m *Model) renderPresetRow(selected bool, nameW, valW int) string {
 	presetName := m.currentPreset()
-	name := "preset"
+	name := m.text(textPreset)
 	namePad := fmt.Sprintf("%-*s", nameW, name)
 	val := dropdownStyle.Render(fmt.Sprintf("◀ %s ▶", presetName))
 
@@ -1187,7 +1238,7 @@ func (m *Model) renderPresetRow(selected bool, nameW, valW int) string {
 func (m *Model) renderMenuconfigRow(selected bool, nameW int) string {
 	name := "menuconfig"
 	namePad := fmt.Sprintf("%-*s", nameW, name)
-	desc := optionDescStyle.Render("▸ run menuconfig")
+	desc := optionDescStyle.Render("▸ " + m.text(textRunMenuconfig))
 
 	var line string
 	if selected {
@@ -1202,17 +1253,17 @@ func (m *Model) renderMenuconfigRow(selected bool, nameW int) string {
 }
 
 func (m *Model) renderConfirmDialog() string {
-	title := confirmTitleStyle.Render("Unsaved Changes")
-	msg := confirmMsgStyle.Render("Save before exiting?")
+	title := confirmTitleStyle.Render(m.text(textUnsavedChanges))
+	msg := confirmMsgStyle.Render(m.text(textSaveBeforeExit))
 
-	saveBtn := " Save "
-	discardBtn := " Discard "
+	saveBtn := " " + m.text(textSave) + " "
+	discardBtn := " " + m.text(textDiscard) + " "
 	if m.confirmBtn == 0 {
-		saveBtn = btnActiveStyle.Render("[ Save ]")
-		discardBtn = btnInactiveStyle.Render("  Discard  ")
+		saveBtn = btnActiveStyle.Render("[ " + m.text(textSave) + " ]")
+		discardBtn = btnInactiveStyle.Render("  " + m.text(textDiscard) + "  ")
 	} else {
-		saveBtn = btnInactiveStyle.Render("  Save  ")
-		discardBtn = btnActiveStyle.Render("[ Discard ]")
+		saveBtn = btnInactiveStyle.Render("  " + m.text(textSave) + "  ")
+		discardBtn = btnActiveStyle.Render("[ " + m.text(textDiscard) + " ]")
 	}
 
 	buttons := lipgloss.JoinHorizontal(lipgloss.Center, saveBtn, "  ", discardBtn)
@@ -1225,7 +1276,7 @@ func (m *Model) renderConfirmDialog() string {
 		"",
 		buttons,
 		"",
-		confirmMsgStyle.Render("Tab: switch │ Enter: confirm │ Esc: cancel"),
+		confirmMsgStyle.Render(m.text(textConfirmHint)),
 	)
 
 	return confirmStyle.Render(content)
@@ -1233,7 +1284,7 @@ func (m *Model) renderConfirmDialog() string {
 
 func (m *Model) renderOverlay() string {
 	switch m.overlay {
-	case overlayChoice:
+	case overlayChoice, overlayLanguage:
 		return m.renderChoiceOverlay()
 	case overlayDetail:
 		return m.renderDetailOverlay()
@@ -1247,13 +1298,22 @@ func (m *Model) renderChoiceOverlay() string {
 	if opt != nil {
 		desc = opt.Description()
 	}
-	title := confirmTitleStyle.Render(m.choiceOpt)
+	titleText := m.choiceOpt
+	if m.overlay == overlayLanguage {
+		titleText = m.text(textLanguage)
+	}
+	title := confirmTitleStyle.Render(titleText)
+	current := ""
+	if m.overlay == overlayLanguage {
+		current = m.languageLabel()
+	} else {
+		current = fmt.Sprintf("%v", m.getValue(m.choiceOpt))
+	}
 
 	var rows []string
 	for i, v := range m.choiceValues {
 		marker := "  "
-		cur := fmt.Sprintf("%v", m.getValue(m.choiceOpt))
-		if v == cur {
+		if v == current {
 			marker = checkboxStyle.Render("● ")
 		}
 		line := fmt.Sprintf("%s %s", marker, v)
@@ -1266,7 +1326,7 @@ func (m *Model) renderChoiceOverlay() string {
 	}
 	list := strings.Join(rows, "\n")
 
-	hint := confirmMsgStyle.Render("↑↓ navigate │ Enter select │ Esc cancel")
+	hint := confirmMsgStyle.Render(m.text(textChoiceHint))
 
 	parts := []string{title}
 	if desc != "" {
@@ -1280,24 +1340,24 @@ func (m *Model) renderChoiceOverlay() string {
 func (m *Model) renderDetailOverlay() string {
 	opt := m.detailOption()
 	if opt == nil {
-		return overlayStyle.Render(confirmMsgStyle.Render("No details available"))
+		return overlayStyle.Render(confirmMsgStyle.Render(m.text(textNoDetails)))
 	}
 	cur := m.getValue(m.choiceOpt)
 	def := opt.Default()
 
 	type kv struct{ k, v string }
 	rows := []kv{
-		{"name", m.choiceOpt},
-		{"type", opt.Type().String()},
-		{"default", fmt.Sprintf("%v", def)},
-		{"current", fmt.Sprintf("%v", cur)},
+		{m.text(textName), m.choiceOpt},
+		{m.text(textType), opt.Type().String()},
+		{m.text(textDefault), fmt.Sprintf("%v", def)},
+		{m.text(textCurrent), fmt.Sprintf("%v", cur)},
 	}
 	modified := m.isOptionModified(m.choiceOpt)
-	status := "no"
+	status := m.text(textNo)
 	if modified {
-		status = modifiedMarkStyle.Render("yes")
+		status = modifiedMarkStyle.Render(m.text(textYes))
 	}
-	rows = append(rows, kv{"modified", status})
+	rows = append(rows, kv{m.text(textModifiedLabel), status})
 
 	keyW := 0
 	for _, r := range rows {
@@ -1315,9 +1375,9 @@ func (m *Model) renderDetailOverlay() string {
 		b.WriteString("\n  " + optionDescStyle.Render(desc) + "\n")
 	}
 	if opt.Type() == api.OptionChoice && len(opt.Values()) > 0 {
-		b.WriteString("\n  " + confirmMsgStyle.Render("choices: "+strings.Join(opt.Values(), ", ")) + "\n")
+		b.WriteString("\n  " + confirmMsgStyle.Render(m.text(textChoices)+strings.Join(opt.Values(), ", ")) + "\n")
 	}
-	b.WriteString("\n" + confirmMsgStyle.Render("Esc/? to close"))
+	b.WriteString("\n" + confirmMsgStyle.Render(m.text(textCloseDetails)))
 	return overlayStyle.Render(b.String())
 }
 
@@ -1325,34 +1385,34 @@ func (m *Model) renderFooter() string {
 	var helpText string
 	if m.filterActive {
 		helpText = renderHelpEntries([]helpEntry{
-			{"Enter", "confirm/1 match"}, {"Backspace", "delete"}, {"Esc", "cancel"},
+			{"Enter", m.text(textConfirmMatch)}, {"Backspace", m.text(textDelete)}, {"Esc", m.text(textCancel)},
 		})
 	} else if m.filterInput != "" {
 		helpText = renderHelpEntries([]helpEntry{
-			{"↑↓", "pick match"}, {"Enter", "jump"}, {"/", "refine"}, {"Esc", "clear"},
+			{"↑↓", m.text(textPickMatch)}, {"Enter", m.text(textJump)}, {"/", m.text(textRefine)}, {"Esc", m.text(textClear)},
 		})
 	} else if m.editing {
 		helpText = renderHelpEntries([]helpEntry{
-			{"←→", "move cursor"}, {"Home/End", "jump"}, {"Backspace", "delete"},
-			{"Enter", "confirm"}, {"Esc", "cancel"},
+			{"←→", m.text(textMoveCursor)}, {"Home/End", m.text(textJump)}, {"Backspace", m.text(textDelete)},
+			{"Enter", m.text(textConfirm)}, {"Esc", m.text(textCancel)},
 		})
 	} else if m.focusArea == 0 {
 		helpText = renderHelpEntries([]helpEntry{
-			{"↑↓", "navigate"}, {"←→", "collapse/expand"}, {"/", "search"},
-			{"z/Z", "collapse/expand all"}, {"H", "hide empty"},
-			{"Tab", "options"}, {"Ctrl+S", "save"}, {"Esc", "cancel"},
+			{"↑↓", m.text(textNavigate)}, {"←→", m.text(textCollapseExpand)}, {"/", m.text(textSearch)},
+			{"z/Z", m.text(textCollapseExpandAll)}, {"H", m.text(textHideEmpty)},
+			{"Tab", m.text(textOptions)}, {"Ctrl+S", m.text(textSave)}, {"Esc", m.text(textCancel)},
 		})
 	} else {
 		helpText = renderHelpEntries([]helpEntry{
-			{"↑↓", "navigate"}, {"←→", "cycle value"}, {"Space/Enter", "edit"},
-			{"r", "reset"}, {"R", "default"}, {"?", "detail"},
-			{"Tab", "tree"}, {"Ctrl+S", "save"}, {"Esc", "back"},
+			{"↑↓", m.text(textNavigate)}, {"←→", m.text(textCycleValue)}, {"Space/Enter", m.text(textEdit)},
+			{"r", m.text(textReset)}, {"R", m.text(textDefault)}, {"?", m.text(textDetail)},
+			{"Tab", m.text(textPackages)}, {"Ctrl+S", m.text(textSave)}, {"Esc", m.text(textBack)},
 		})
 	}
 
 	if m.hasChanges {
 		n := m.modifiedCount()
-		badge := fmt.Sprintf("● %d modified", n)
+		badge := m.textf(textModified, n)
 		helpText += "  " + modifiedBadgeStyle.Render(badge)
 	}
 	if m.menuconfigErr != nil {
@@ -1373,7 +1433,7 @@ type helpEntry struct {
 func renderHelpEntries(entries []helpEntry) string {
 	var parts []string
 	for _, e := range entries {
-		parts = append(parts, helpKeyStyle.Render(e.key)+":"+e.act)
+		parts = append(parts, helpKeyStyle.Render(e.key)+" "+e.act)
 	}
 	return strings.Join(parts, helpSepStyle.Render(" │ "))
 }

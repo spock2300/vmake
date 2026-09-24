@@ -275,6 +275,7 @@ func TestEditAcceptsMultibyteRunes(t *testing.T) {
 	m := NewModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 24
+	m.language = languageEnglish
 	m.selectedPkg = "app"
 	m.buildOptionItems()
 	m.focusArea = 1
@@ -380,11 +381,11 @@ func TestMouseClickTogglesTreeExpansion(t *testing.T) {
 		t.Fatal("app should start collapsed")
 	}
 
-	// click on app row: Y = headerH(2) + appIdx
+	// click on app row: Y = headerH(2) + panel title row + appIdx
 	click := func(y int) tea.MouseMsg {
 		return tea.MouseMsg{X: 2, Y: y, Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
 	}
-	m.handleMouse(click(2 + appIdx))
+	m.handleMouse(click(2 + 1 + appIdx))
 
 	appNode := (*TreeNode)(nil)
 	for _, n := range m.flat {
@@ -405,7 +406,7 @@ func TestMouseClickTogglesTreeExpansion(t *testing.T) {
 	}
 
 	// click app again → collapse
-	m.handleMouse(click(2 + appIdx))
+	m.handleMouse(click(2 + 1 + appIdx))
 	appNode = nil
 	for _, n := range m.flat {
 		if n.PkgName == "app" {
@@ -425,7 +426,7 @@ func TestMouseClickLeafSelectsOnly(t *testing.T) {
 	m := NewModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 24
-	click := tea.MouseMsg{X: 2, Y: 3, Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
+	click := tea.MouseMsg{X: 2, Y: 4, Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
 	m.handleMouse(click)
 	if m.selectedPkg != "app" {
 		t.Errorf("click should select app, got %q", m.selectedPkg)
@@ -451,17 +452,17 @@ func TestMouseMappingUsesRenderedHeaderHeight(t *testing.T) {
 		t.Fatalf("expected wrapped header >2 rows for long workDir, got %d", hh)
 	}
 
-	// Global sits at Y=hh; the first real package (app) at Y=hh+1.
+	// The panel title sits at Y=hh; Global at Y=hh+1; app at Y=hh+2.
 	click := func(y int) tea.MouseMsg {
 		return tea.MouseMsg{X: 2, Y: y, Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
 	}
 	mm := m
-	mm.handleMouse(click(hh))
+	mm.handleMouse(click(hh + 1))
 	if mm.selectedPkg != GlobalPkgName && mm.flat[mm.treeCursor].Name != "Global" {
 		t.Errorf("click at headerH should hit Global, got %q", mm.selectedPkg)
 	}
 	mm = m
-	mm.handleMouse(click(hh + 1))
+	mm.handleMouse(click(hh + 2))
 	if mm.selectedPkg != "app" {
 		t.Errorf("click at headerH+1 should hit first package app, got %q", mm.selectedPkg)
 	}
@@ -483,5 +484,36 @@ func TestContentHeightAccountsForWrappedFooter(t *testing.T) {
 	realContent := m.height - m.headerHeight() - m.footerHeight()
 	if m.contentHeight() != realContent {
 		t.Errorf("contentHeight=%d, want %d (height - header - footer)", m.contentHeight(), realContent)
+	}
+}
+
+func TestPanelsRenderContextTitles(t *testing.T) {
+	opts := map[string]map[string]*api.Option{
+		"app": {"debug": mkOpt("debug", api.OptionBool, false)},
+	}
+	m := NewModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m.width = 80
+	m.height = 24
+	m.language = languageEnglish
+	m.selectedPkg = "app"
+	m.buildOptionItems()
+
+	tree := stripAnsi(m.renderTree())
+	if !strings.HasPrefix(tree, "Packages\n") {
+		t.Fatalf("tree should start with a Packages title, got %q", tree)
+	}
+	options := stripAnsi(m.renderOptions())
+	if !strings.HasPrefix(options, "Options · app\n") {
+		t.Fatalf("options should identify selected package, got %q", options)
+	}
+}
+
+func TestRenderHelpEntriesUsesReadableSpacing(t *testing.T) {
+	got := stripAnsi(renderHelpEntries([]helpEntry{{"↑↓", "navigate"}, {"Enter", "confirm"}}))
+	if !strings.Contains(got, "↑↓ navigate") {
+		t.Fatalf("help entry should separate key and action with readable spacing: %q", got)
+	}
+	if strings.Contains(got, "↑↓:navigate") {
+		t.Fatalf("help entry still uses cramped key:action format: %q", got)
 	}
 }

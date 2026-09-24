@@ -851,6 +851,7 @@ func TestTreeScrollReachesLastItem(t *testing.T) {
 			m := NewModel(mkSources(names...), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 			m.width = 80
 			m.height = h
+			m.language = languageEnglish
 			m.treeCursor = len(m.flat) - 1
 			m.selectCurrentNode()
 			m.ensureTreeCursorVisible()
@@ -874,6 +875,7 @@ func TestTreeScrollReachesFirstItem(t *testing.T) {
 	m := NewModel(mkSources(names...), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 8
+	m.language = languageEnglish
 	m.treeOff = 20
 	m.treeCursor = 0
 	m.ensureTreeCursorVisible()

@@ -23,6 +23,10 @@ var (
 	titlePathStyle = lipgloss.NewStyle().
 			Foreground(colorMuted)
 
+	panelTitleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorAccent)
+
 	groupStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(colorMuted)
@@ -58,6 +62,10 @@ var (
 
 	dropdownStyle = lipgloss.NewStyle().
 			Foreground(colorDropdown)
+
+	languageSelectorStyle = lipgloss.NewStyle().
+				Foreground(colorDropdown).
+				Bold(true)
 
 	externalPkgStyle = lipgloss.NewStyle().
 				Foreground(colorMuted)
