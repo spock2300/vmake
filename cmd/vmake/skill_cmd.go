@@ -182,13 +182,17 @@ func generateCLIRef(root *cobra.Command) string {
 		if idx := strings.IndexAny(cmd.Use, " \t"); idx >= 0 {
 			usage += cmd.Use[idx:]
 		}
-		if cmd.HasFlags() {
+		local := cmd.LocalFlags()
+		if local.HasFlags() {
 			var flags []string
-			cmd.LocalFlags().VisitAll(func(f *pflag.Flag) {
+			local.VisitAll(func(f *pflag.Flag) {
 				if f.Name == "help" {
 					return
 				}
 				flag := "--" + f.Name
+				if f.Value.Type() != "bool" {
+					flag += " <value>"
+				}
 				if f.Shorthand != "" {
 					flag += " -" + f.Shorthand
 				}

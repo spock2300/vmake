@@ -2,6 +2,11 @@
 
 The most minimal VMake build script - builds a single C binary from source files.
 
+## Prerequisites
+
+- `vmake` is installed and a host C compiler (gcc or clang) is on PATH.
+- Run from anywhere inside the project: VMake searches upward from the current directory for `.vmake/`, `build.go`, or a `*/build.go` directly below the starting directory.
+
 ## build.go
 
 ```go
@@ -35,21 +40,38 @@ myproject/
     └── main.c
 ```
 
+Minimal `src/main.c`:
+
+```c
+#include <stdio.h>
+
+int main(void) {
+    puts("hello from vmake");
+    return 0;
+}
+```
+
 ## Running
 
 ```bash
+vmake doctor               # verify the host C toolchain once
 vmake build
-./build/<buildKey>/hello    # Output goes to build/<buildKey>/ (SHA-256 of toolchain+mode+options+global flags+script hash)
+./build/*/hello            # <buildKey> is the 64-hex SHA-256 build directory key
+ls build/                  # list variants if the glob is ambiguous
+# Windows: .\build\<buildKey>\hello.exe
 ```
 
 ## Key Points
 
 - No `OnConfig` needed if no build options
 - No `OnRequire` needed if no third-party dependencies
-- Glob patterns (`src/*.c`) match multiple files
-- Output binary goes to `build/<buildKey>/<target>`
+- Glob patterns (`src/*.c`) match multiple files and resolve against `SourceDir()` (the `build.go` directory), not the current working directory
+- A glob that matches nothing is not an error: a binary target fails later at link time with no inputs, while a static target produces an empty archive
+- For local packages the output binary goes to `build/<buildKey>/<target>`; remote packages build in the shared cache
+- `<buildKey>` hashes the build format version, toolchain, mode, options, and the global-flags/script hashes; a local `SetGit` package additionally hashes its current source commit
 
 ## See Also
 
 - references/api.md - Target setters and TargetKind constants
+- references/dirs.md - SourceDir vs SrcDir, BuildKey naming
 - examples/config.md - Adding build options

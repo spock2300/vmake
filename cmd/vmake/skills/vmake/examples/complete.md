@@ -2,6 +2,11 @@
 
 The most comprehensive example covering nearly the entire VMake API.
 
+## Prerequisites
+
+- VMake installed with a host C/C++ toolchain (the example sources are C++).
+- Run commands from the project directory; VMake finds `build.go` by searching upward.
+
 ## build.go
 
 ```go
@@ -37,22 +42,7 @@ func Main(p *api.Package) {
 		ctx.Option("verbose").
 			SetType(api.OptionBool).
 			SetDefault(false).
-			SetDescription("Enable verbose output").
-			SetGroup("General")
-
-		ctx.Option("c++standard").
-			SetType(api.OptionChoice).
-			SetDefault("c++17").
-			SetValues("c++11", "c++14", "c++17", "c++20").
-			SetDescription("C++ standard version").
-			SetGroup("C++")
-
-
-		ctx.Option("optimization").
-			SetType(api.OptionChoice).
-			SetDefault("O2").
-			SetValues("O0", "O1", "O2", "O3", "Os").
-			SetDescription("Optimization level").
+			SetDescription("Show compiler driver invocations (-v)").
 			SetGroup("General")
 
 		ctx.Option("ssl").
@@ -98,9 +88,11 @@ func Main(p *api.Package) {
 			SetKind(api.TargetObject).
 			AddFiles("src/core.cpp").
 			AddIncludes("include").
-			AddCxxFlags("-Wall", "-Wextra").
-			AddCxxFlags(ctx.Select("optimization", map[string]string{
-				"O0": "-O0", "O1": "-O1", "O2": "-O2", "O3": "-O3", "Os": "-Os",
+			AddDefines(ctx.Select("product", map[string]string{
+				"lite":         "PRODUCT_LITE",
+				"standard":     "PRODUCT_STANDARD",
+				"professional": "PRODUCT_PROFESSIONAL",
+				"enterprise":   "PRODUCT_ENTERPRISE",
 			})).
 			AddCxxFlags(ctx.If("debug", "-g", "-DDEBUG"))
 
@@ -119,8 +111,7 @@ func Main(p *api.Package) {
 				AddDefines(ctx.If("ssl", "USE_SSL")).
 				AddDefines(ctx.If("ssl", "SSL_VERSION=\""+sslVersion+"\"")).
 				AddDefines("THREAD_COUNT=" + strconv.Itoa(threads)).
-				AddDefines("PREFIX=\"" + prefix + "\"").
-				AddCxxFlags("-fPIC")
+				AddDefines("PREFIX=\"" + prefix + "\"")
 		} else {
 			ctx.Target("mylib").
 				SetKind(api.TargetStatic).
@@ -144,25 +135,58 @@ func Main(p *api.Package) {
 			AddCxxFlags(ctx.If("debug", "-g", "-fsanitize=address")).
 			AddCxxFlags(ctx.If("verbose", "-v")).
 			AddLinks(ctx.If("ssl", "ssl", "crypto")).
-			AddLdFlags(ctx.If("debug", "-fsanitize=address")).
-			AddLdFlags("-Wl,--as-needed")
+			AddLdFlags(ctx.If("debug", "-fsanitize=address"))
 
 		ctx.Target("benchmark").
 			SetKind(api.TargetBinary).
 			AddFiles("src/benchmark.cpp").
 			AddDeps("core_obj").
-			AddCxxFlags("-O3", "-DNDEBUG").
-			SetDefault(false)
+			AddCxxFlags("-DNDEBUG").
+			SetTest(true)
 
 		if ctx.Bool("verbose") {
 			ctx.Target("debug_info").
 				SetKind(api.TargetBinary).
 				AddFiles("src/debug.cpp").
 				AddDefines("VERBOSE_MODE").
-				SetDefault(false)
+				SetDefault(false) // [disabled]: skipped by vmake build and vmake test
 		}
 	})
 }
+```
+
+## Project Structure
+
+```
+myproject/
+├── build.go
+├── include/
+│   └── mylib.h
+└── src/
+    ├── core.cpp
+    ├── utils.cpp
+    ├── library.cpp
+    ├── main.cpp
+    ├── benchmark.cpp
+    ├── debug.cpp
+    └── internal/
+        └── internal.h
+```
+
+## Running
+
+```bash
+# shared_lib is a package-local option: prefix it with the package name (the build.go directory)
+vmake config --set myproject/shared_lib=true
+
+vmake build
+# -> build/<buildKey>/myapp
+# -> build/<buildKey>/libmylib.a       (default)
+# -> build/<buildKey>/libmylib.so      (shared_lib=true; libmylib.dll on Windows)
+# Windows binary: build\<buildKey>\myapp.exe
+
+vmake test
+# builds and runs the benchmark test target (SetTest(true))
 ```
 
 ## What This Demonstrates
@@ -175,8 +199,10 @@ func Main(p *api.Package) {
 - **`api.TargetObject`** - Intermediate object file target
 - **`api.TargetShared`** - Shared library (.so)
 - **`ctx.When(option, value)`** - Returns bool for imperative conditionals
+- **`ctx.Select(option, map)`** - Map a choice value to a define
 - **Dynamic target creation** - Targets inside `if` blocks
 - **`AddPublicIncludes`** - Propagates to dependents
+- **`SetTest(true)`** - Test target: built and run by `vmake test`, skipped by ordinary builds
 
 ## API Coverage Summary
 
@@ -184,7 +210,7 @@ func Main(p *api.Package) {
 |----------|-------------|
 | Options | Bool, String, Int, Choice, ShowIf, GlobalMode/Option |
 | Conditionals | If, Select, When, Bool, String, Int |
-| Targets | Object, Static, Shared, Binary, Default(false) |
+| Targets | Object, Static, Shared, Binary, SetTest(true), Default(false) |
 | Flags | CxxFlags, LdFlags, Defines |
 | Dependencies | AddDeps, AddLinks |
 | Utilities | AddIncludes, AddPublicIncludes |
@@ -195,9 +221,14 @@ func Main(p *api.Package) {
 - Global options apply across packages
 - Integer options need `strconv.Itoa()` for defines
 - Object targets useful for multi-stage builds
-- Language is auto-detected from file extension (`.c` → C, `.cpp` → C++) — no need to set manually
+- Language is auto-detected from file extension (`.c` → C, `.cpp` → C++) — no need to set manually; `SetLanguages` only records the value and is not consumed by the scheduler
+- Mode flags are appended after target flags (target → mode → global), so per-target `-O*` flags lose to the mode's `-O2`/`-O0` for GCC — select the mode instead (`vmake build --mode debug`); see `SKILL.md - Global Flags & Mode Flags`
+- The builtin `host` toolchain already injects `-Wall -Wextra` and `-fPIC` when compiling and `-Wl,--as-needed` when linking (non-Windows), so the targets don't repeat them; see `SKILL.md - Default Build Flags`
+- Global options may be declared by multiple packages, but each declaration must use the same `Type` and `Default` — only global options are cross-validated; see `SKILL.md - GlobalOption Cross-Package Consistency`
+- `benchmark` uses `SetTest(true)`, so `vmake test` builds and runs it; `debug_info` keeps `SetDefault(false)` and is never built automatically (listed as `[disabled]`)
 
 ## See Also
 
 - references/api.md - Full API reference
-- SKILL.md - Target Quick Reference
+- references/gotchas.md - Linker groups, discovery reads, source patching
+- SKILL.md - Target API at a Glance

@@ -1,11 +1,17 @@
 # Third-Party Package Wrapper
 
-Wrapping an external C/C++ library (CMake, Autotools, etc.) as a vmake package using `TargetVoid` and `SetBuildFunc`. This is the pattern used for **registry repo** packages.
+Wrapping an external C/C++ library (CMake, Autotools, etc.) as a vmake package using `TargetVoid` and `SetBuildFunc`. This is the pattern used for **registry repo** packages, and for local packages that wrap a downloaded library.
 
 For CMake projects, prefer `CMakeConfigure`, `CMakeBuild`, and `CMakeInstall`.
 They manage the toolchain, paths, build configuration, global flags, and
 parallelism; build.go supplies project options and project-specific steps.
 Call `cmake` directly only for operations these APIs cannot express.
+
+## Prerequisites
+
+- Go 1.26+ and a vmake binary built from the repository root: `CGO_ENABLED=0 go build -o vmake ./cmd/vmake`
+- Network access for `SetGit` (or a populated `~/.vmake` cache/lock), plus the upstream build tools (`cmake`/`make`) and a C/C++ compiler
+- A consuming project that requires the wrapper with `AddRequires` + `AddDeps` (see `examples/with-package.md`)
 
 ## build.go
 
@@ -96,9 +102,58 @@ Import `path/filepath` for this example. The CMake archive lives in
 `CMakeBuildDir()`, the installed archive in `CMakeInstallDir()`, and VMake publishes
 a symlink at `BuildDir()/libfoo.a`. Separate paths avoid two build systems claiming
 the same output. Targets with post-link steps copy the prebuilt archive before modifying it.
-Void callbacks run once per session and CMake performs its own incremental checks.
+Void callbacks run once per vmake invocation and CMake performs its own incremental checks.
+
+## Wrapping a Plain C Library (No CMake)
+
+For a small C library with a single translation unit, declare a static target directly — no `TargetVoid` needed. `AddPublicIncludes("src", "@tinyexpr.h")` adds `src` to dependents' include path and records the trailing `@` argument as an include rule, so only matching headers are copied when public includes are installed:
+
+```go
+p.OnPackage(func(p *api.Package) {
+    p.SetGit("https://github.com/codeplea/tinyexpr.git").
+        AddVersion("1.0.0", "9907207e5def0fabdb60c443517b0d9e9d521393").
+        SetDescription("Tiny expression evaluator for C").
+        SetLicense("zlib")
+})
+
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.Target("tinyexpr").
+        SetKind(api.TargetStatic).
+        AddProvidedLibs("tinyexpr", "m").
+        AddFiles("src/tinyexpr.c").             // local SetGit: SourceDir()-relative, src/ prefix
+        AddPublicIncludes("src", "@tinyexpr.h") // public -Isrc; install copies only tinyexpr.h
+})
+```
+
+The official registry wrapper for the same library resolves from the checkout root, so it drops the prefix: `AddFiles("tinyexpr.c").AddPublicIncludes(".", "@tinyexpr.h")`.
+
+Library-style bool options follow the same rule. `*Package` embeds `ConfigAccessor`, so inside `SetBuildFunc` the resolved values are readable directly (the official cJSON/zlib wrappers do this):
+
+```go
+p.OnConfig(func(ctx *api.ConfigContext) {
+    ctx.Option("shared").
+        SetType(api.OptionBool).
+        SetDefault(false).
+        SetDescription("Build shared library")
+})
+
+p.OnBuild(func(ctx *api.BuildContext) {
+    ctx.Target("cjson").SetKind(api.TargetVoid).
+        AddProvidedLibs("cjson").
+        SetBuildFunc(func(p *api.Package) error {
+            p.CMakeConfigure("-DBUILD_SHARED_LIBS=" + p.BoolStr("shared"))
+            p.CMakeBuild()
+            p.CMakeInstall()
+            return nil
+        })
+})
+```
+
+`p.BoolStr("shared")` returns `"ON"`/`"OFF"`; `p.Bool`, `p.String`, and `p.Int` are available on `*Package` inside `SetBuildFunc` as well, because option values are resolved before `OnBuild` runs.
 
 ## Autotools Example
+
+`p.Configure()` runs `<SrcDir>/configure` with the working directory set to `BuildDir()` (out-of-source build) and appends `--prefix=p.InstallDir()` and `--host=p.TargetTriple()`. `p.Make()` then starts with `-C <BuildDir>`, so the matching build is `p.Make()` / `p.Make("install")` — do NOT point make at `SrcDir()` after configure, or it will not find the generated Makefile:
 
 ```go
 p.OnBuild(func(ctx *api.BuildContext) {
@@ -108,13 +163,24 @@ p.OnBuild(func(ctx *api.BuildContext) {
             if err := p.Configure("--disable-static", "--enable-shared"); err != nil {
                 return err
             }
-            if err := p.Make("-C", filepath.ToSlash(p.SrcDir())); err != nil {
+            if err := p.Make(); err != nil {
                 return err
             }
-            return p.Make("-C", filepath.ToSlash(p.SrcDir()), "install")
+            return p.Make("install")
         })
 })
 ```
+
+Projects that ship a Makefile in the source tree with no `configure` script build in-source instead: keep the implicit `-C <BuildDir>` and add a second, absolute `-C` (`make` processes them in order, and `SrcDir()` is absolute):
+
+```go
+if err := p.Make("-C", filepath.ToSlash(p.SrcDir())); err != nil {
+    return err
+}
+return p.Make("-C", filepath.ToSlash(p.SrcDir()), "install")
+```
+
+Import `path/filepath` for these examples. `PREFIX=p.InstallDir()` only sets a real prefix for remote wrappers — see the note under Custom Build Logic.
 
 ## Custom Build Logic
 
@@ -133,11 +199,13 @@ p.OnBuild(func(ctx *api.BuildContext) {
 })
 ```
 
-`p.Run`/`p.RunIn` raise a script error on failure and return nothing; execution boundaries release resources — call them as statements and `return nil` at the end (use `p.RunEnv` if you need the error). `p.Make` starts with `-C <BuildDir>`; pass a second `-C` with the absolute `SrcDir()` when building in the source tree. Import `path/filepath` and normalize Make path arguments with `filepath.ToSlash`. The helper supplies the session jobs budget. CMake projects use `CMakeBuild` / `CMakeInstall` for their selected generator and build directory.
+`PREFIX=p.InstallDir()` yields an empty prefix for local packages: `InstallDir()` is only populated for remote packages. Local wrappers should stage into `BuildDir()` (for example `filepath.Join(p.BuildDir(), "_install")`) and declare artifacts with `SetPrebuilt`/`AddPublicIncludes`, or publish through install items.
+
+`p.Run`/`p.RunIn` raise a script error on failure and return nothing; execution boundaries release resources — call them as statements and `return nil` at the end (use `p.RunEnv` if you need the error). `p.Make` starts with `-C <BuildDir>`; pass a second `-C` with the absolute `SrcDir()` when building in the source tree. Import `path/filepath` and normalize Make path arguments with `filepath.ToSlash`. The helper supplies the invocation jobs budget. CMake projects use `CMakeBuild` / `CMakeInstall` for their selected generator and build directory.
 
 ## External Incremental Builds
 
-VMake calls each local or remote `TargetVoid` once per build session. Make/CMake decides which work is incremental. `SetConfigFiles` stores package configuration metadata; it does not skip callbacks or declare target inputs:
+VMake calls each local or remote `TargetVoid` once per vmake invocation. Make/CMake decides which work is incremental. `SetConfigFiles` stores package configuration metadata; it does not skip callbacks or declare target inputs:
 
 ```go
 p.OnPackage(func(p *api.Package) {
@@ -164,7 +232,9 @@ Firmware wrapper packages (U-Boot, kernel, etc.) combine KConfig preset manageme
 
 ```go
 p.OnPackage(func(p *api.Package) {
-    p.SetConfigFiles(".config")
+    p.SetGit("https://github.com/u-boot/u-boot.git").
+        AddVersion("2024.04", "v2024.04").
+        SetConfigFiles(".config")
 })
 
 p.OnConfig(func(ctx *api.ConfigContext) {
@@ -172,12 +242,13 @@ p.OnConfig(func(ctx *api.ConfigContext) {
         AddPreset("rk3568_defconfig").
         AddPreset("stm32_defconfig").
         SetDefaultPreset("sandbox_defconfig").
+        SetSrcDir("src"). // local SetGit: read .config from SrcDir() = SourceDir()/src
         SetKConfigPatches(map[string]string{"CONFIG_FOO": "y"})
 })
 
 p.OnBuild(func(ctx *api.BuildContext) {
     ctx.Target("uboot").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
-        srcDir := pkg.SourceDir()
+        srcDir := pkg.SrcDir()
         pkg.EnsureConfig(srcDir)
         const ownFlags = "ifndef VMAKE_FIRMWARE_FLAGS_RESET\nundefine CFLAGS\nundefine CXXFLAGS\nundefine LDFLAGS\nexport VMAKE_FIRMWARE_FLAGS_RESET := 1\nendif"
         if err := pkg.Make("-C", filepath.ToSlash(srcDir), "--eval", ownFlags); err != nil {
@@ -188,16 +259,19 @@ p.OnBuild(func(ctx *api.BuildContext) {
 })
 ```
 
+`EnsureConfig(pkg.SrcDir())` runs the selected preset (`make <preset>`) and applies KConfig patches to `<SrcDir>/.config`; `SetSrcDir("src")` tells `vmake config` where that file is for a local `SetGit` package. Registry packages resolve from the checkout root, so there `SetSrcDir` can be omitted (it defaults to `SourceDir()`). The reference fixture is `test_linux/17_firmware/busybox`.
+
 ## Key Points
 
 - `p.Run` / `p.Make` default to the package's `BuildDir`; CMake helpers manage `CMakeBuildDir()` across all three stages
-- `p.SrcDir()` — the downloaded source tree (use this for source files, config headers, patching)
+- `p.SrcDir()` — the downloaded source tree (use this for source files, config headers, patching); equals `SourceDir()/src` for local `SetGit` packages and `SourceDir()` for registry packages
 - `p.SourceDir()` — package root; remote packages receive their writable member workspace
 - `p.BuildDir()` — scratch directory for intermediate files
-- `p.InstallDir()` — where headers/libs/binaries should be installed to
+- `p.InstallDir()` — installation prefix for **remote** packages; it is empty for local packages, so `PREFIX=p.InstallDir()` / `--prefix` only works in remote wrappers (a custom `SetCMakeInstallDir` must still publish results into `InstallDir()`)
 - `p.CMakeBuildDir()` / `p.CMakeInstallDir()` — actual CMake build tree and installation prefix
-- Void callbacks run once per session even with a nonempty `InstallDir`; Make/CMake performs incremental checks
-- `OnPackage` with `SetGit`/`AddVersion` is ONLY for registry repo packages — native repo packages must NOT use these
+- Void callbacks run once per vmake invocation even with a nonempty `InstallDir`; Make/CMake performs incremental checks
+- `OnPackage` with `SetGit`/`AddVersion` works for registry packages and for local packages that wrap a downloaded library. Native remote repos must NOT use them — their version comes from git tags and the resolver wires the checkout itself
+- Path prefixes differ: local `SetGit` packages need `"src/"` prefixes for `AddFiles`/`AddIncludes`/`AddPublicIncludes` (sources live in `SourceDir()/src`); registry packages resolve from the checkout root with no prefix — see `references/dirs.md`
 - Local packages can also use `OnPackage` for metadata (`SetDescription`, `SetLicense`, `SetHomepage`) — it runs for all packages
 
 ## Patching Source Before Build
@@ -249,8 +323,20 @@ p.OnBuild(func(ctx *api.BuildContext) {
 })
 ```
 
+## Running / Verifying
+
+- Wrapper package (local build.go): run `vmake build` from the wrapper's project directory. A `TargetVoid` wrapper succeeds when its `Configure`/`Make`/`CMake*` commands succeed — the run ends with `Build succeeded!`, and `vmake query targets` lists the declared targets.
+- Consuming project: `vmake build --install` resolves and checks out the registry package, builds dependencies first, then links the app. `vmake query` prints the dependency tree; a successful build ends with `Build succeeded!` (plus `Install succeeded!` with `--install`).
+- Installed layout: for a local library target, `vmake build --install --install-type sdk` publishes the archive/shared library under `install/lib/` and the forwarded public headers under `install/include/` (static libraries are skipped at install without `sdk`). Remote packages publish into their own `InstallDir()` in the vmake cache.
+- The first run needs network access unless `.vmake/vmake.lock` and the `~/.vmake` cache already hold the pinned commit; registry repos must be added/trusted first (`vmake repo add`).
+
 ## See Also
 
 - references/api.md - Package metadata setters, TargetVoid, SetBuildFunc
+- references/dirs.md - SourceDir/SrcDir/BuildDir/InstallDir path rules
 - examples/with-package.md - Consuming third-party packages
-- SKILL.md - Registry repo vs Native repo
+- references/gotchas.md — source patching and static-library linking
+- examples/firmware.md — full multi-package KBuild flow (U-Boot, linux, rootfs)
+- local vs registry vs native packages — `SKILL.md - Package Types`
+- target kinds and helpers — `SKILL.md - Target API at a Glance`
+- AddRequires/AddDeps wiring — `SKILL.md - Dependencies`

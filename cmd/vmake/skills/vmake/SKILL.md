@@ -25,7 +25,7 @@ include the ones your project needs:
 
 | Phase | Hook / Step | When you need it |
 |-------|-------------|-----------------|
-| 1 | `OnRequire` | Declare deps (runs with nil config; all packages resolved eagerly) |
+| 1 | `OnRequire` | Declare deps (runs with nil config) |
 | 2 | `OnConfig` | Build options (debug/release, features, etc.) — includes OnApply callbacks |
 | 3 | `FilterDeps` | Re-runs `OnRequire` with real config values; recomputes deps; BFS collects needed packages |
 | 4 | `OnBuild` | Define targets |
@@ -38,11 +38,12 @@ include the ones your project needs:
 
 ## Decision Guide
 
-- **New project, no options, no deps** → Only `OnBuild`. Start from `examples/simple.md`.
+- **New project, no options, no deps** → Only `OnBuild`. Run `vmake doctor` to check the host toolchain, then start from `examples/simple.md`.
 - **Need configurable features** → Add `OnConfig`. See `examples/config.md`.
 - **Conditional compilation** → Options + `ctx.If()`/`ctx.Select()`. See `examples/conditional.md`.
 - **Config options → C compiler defines (-D flags)** → Three mechanisms. See `examples/config-to-define.md`.
 - **Multiple targets (lib + binary + tests)** → See `examples/multi-target.md`.
+- **Run tests** → `SetTest(true)` targets + `vmake test` on host targets, or `vmake build --tests` for cross/bare-metal. See `examples/multi-target.md`.
 - **Multi-module workspace (lib/ + app/ directories)** → See `examples/multi-module.md`.
 - **Third-party packages** → `OnRequire` + `AddRequires` + `AddDeps`. See `examples/with-package.md`.
 - **Build a CMake project** → Prefer `CMakeConfigure`, `CMakeBuild`, and `CMakeInstall` inside `TargetVoid` + `SetBuildFunc`. See `examples/third-party-wrapper.md`.
@@ -53,6 +54,11 @@ include the ones your project needs:
 - **Embedded / RTOS firmware (linker script, hex/bin)** → See `examples/embedded-rtos.md`.
 - **Embedded firmware (KConfig/partitions)** → `EnsureConfig` + `SetKConfigPatches` + `DepBuildDir`. See `examples/firmware.md`.
 - **Symbol conflicts / leaked internals across dependencies** → `SetDefaultVisibilityHidden` + `SetVersionScript` + `vmake check-symbols`. See `examples/symbol-management.md`.
+- **Cross-compile or pick a toolchain** → project `target_os`/`target_triple` global options + `--toolchain`. See **Cross-Compiling** below.
+- **Install layout and install hooks** → `--install`, `--prefix`, `--install-type`, `AddInstalls`. See `examples/on-install.md`.
+- **Custom clean logic** → `OnClean` hooks for `vmake clean`/`distclean`. See `examples/on-clean.md`.
+- **Broad tour of options, deps, tests, install, and post-link** → See `examples/complete.md`.
+- **Pin dependency versions for reproducible or CI builds** → `.vmake/vmake.lock` + `vmake build --manifest install/manifest.json`. See **Reproducible Builds (vmake.lock + --manifest)** below.
 
 For CMake projects, let VMake's CMake API manage toolchain resolution, platform paths,
 build directories, installation prefixes, build configuration, and parallelism.
@@ -97,7 +103,7 @@ When writing build.go that must also work on Windows:
 - `p.CMakeConfigure(...)`, `p.CMakeBuild(...)`, and `p.CMakeInstall(...)` pass resolved tools
   and normalized paths. Windows defaults to Ninja unless a generator or configure preset is explicit;
   install CMake and the selected generator. Use these helpers for CMake projects.
-- Artifact names are decided by the toolchain's **target OS**, not the host:
+- Artifact names are decided by the project's **target OS** (the `target_os` global option; host OS when unset), not by the host toolchain:
   `TargetBinary` → `.exe`, `TargetShared` → `.dll` (+ import library `lib<name>.dll.a`, which is
   what consumers link against on PE targets). Use `api.TargetFilename(kind, name, targetOS)` if you
   need to compute one.
@@ -135,14 +141,11 @@ The `ownFlags` reset clears inherited C/CXX/linker flags only once and leaves re
 
 ### `ctx.If()` returns `[]string` — pass it directly, do NOT spread with `...`
 
-`Add*` methods take variadic `...any` and flatten `[]string` items. Under yaegi, spreading a `[]string` into `...any` fails (`reflect.CallSlice` cannot convert `[]string` to `[]interface{}`):
+`Add*` methods take variadic `...any` and expand `[]string` items through `flattenAny`. Spreading the slice with `...` does not compile — Go will not convert `[]string` to `[]any` (yaegi reports the same call-site error through `reflect.CallSlice`):
 
 ```go
-AddCFlags(ctx.If("debug", "-g", "-O0"))    // correct — []string flattens automatically
-AddCFlags(ctx.If("debug", "-g", "-O0")...) // runtime error in yaegi
+AddCFlags(ctx.If("debug", "-g", "-O0"))    // correct — the []string flattens automatically
 ```
-
-Also: `flattenAny` silently drops empty strings — never rely on an empty flag reaching the compiler.
 
 ### `filepath.Join` with absolute paths
 
@@ -158,11 +161,11 @@ When a **local** package uses `SetGit`, `SourceDir()` and `SrcDir()` differ — 
 
 ### Static library deps with symbols not referenced by your code
 
-vmake wraps `AddDeps` archives in `--start-group`/`--end-group`. If a static lib dep provides symbols only referenced by post-group libraries (e.g., libc from `-specs`), the linker won't pull the archive. Fix with `-nostdlib` + `AddGlobalLinks`. See `references/gotchas.md` for all three fix patterns with code.
+On **binary** links, dependency archives from `AddDeps` land inside `--start-group`/`--end-group` and `.a`/`.so`/`.dylib` inputs are additionally wrapped in `-Wl,--whole-archive` (PE `.dll.a` import libraries are excluded), so every object of such an archive is pulled in; shared-library links pull only referenced members. A library supplied as a plain `-l` (e.g. via `AddLinks`/`AddGlobalLinks`) is inside the group but not whole-archived: if nothing in the group references it, it is skipped even when a post-group library (libc from `-specs`) needs its symbols. Fix with `-nostdlib` + `AddGlobalLinks(...)` in `SetOnApply`, per-target `AddLinks(...)`, or `EXTERN` in the linker script. See `references/gotchas.md` for all three fix patterns with code.
 
 ### `pkg.Run` / `pkg.RunIn` / `CMake*` raise script errors — no error return
 
-`p.Run()`, `p.RunIn()`, `p.CMakeConfigure()`, `p.CMakeBuild()`, `p.CMakeInstall()` (and their `CleanContext` wrappers) return **nothing** — they raise a script error on failure, caught by the execution boundary so resources can be released. Only `p.RunEnv()`, `p.Make()`, and `p.Configure()` return a real `error` you should check. Never write `return pkg.Run(...)` — call it as a statement, then `return nil`.
+`p.Run()`, `p.RunIn()`, `p.CMakeConfigure()`, `p.CMakeBuild()`, `p.CMakeInstall()` return **nothing** — they raise a script error on failure, caught by the execution boundary so resources can be released (the `CleanContext` offers only `Run`/`RunIn`/`RunEnv`/`Make`, with no CMake wrappers). Only `p.RunEnv()`, `p.Make()`, and `p.Configure()` return a real `error` you should check. Never write `return pkg.Run(...)` — call it as a statement, then `return nil`.
 
 ### `vmake clean` vs `vmake distclean`
 
@@ -172,14 +175,14 @@ vmake wraps `AddDeps` archives in `--start-group`/`--end-group`. If a static lib
 
 ### Patching source before build in registry packages
 
-To patch downloaded source inside `SetBuildFunc`, use Go's `os.ReadFile` + `os.WriteFile` (simple single-line changes) or `AddPatches("patches/fix.patch")` in `OnPackage` (multi-file git patches). Remote patches are applied to a content-addressed patched copy, never to the immutable cache checkout; local packages patch in place. See `references/gotchas.md` for code examples of both patterns.
+To patch downloaded source inside `SetBuildFunc`, use Go's `os.ReadFile` + `os.WriteFile` (simple single-line changes) or `AddPatches("patches/fix.patch")` in `OnPackage` (multi-file git patches). Patches are applied to the writable workspace exposed as `SrcDir()` (the member/build-key workspace for remote packages); the immutable cache seed is never modified, and local packages are patched in place. See `references/gotchas.md` for code examples of both patterns.
 
 ### Strict config accessors — wrong reads are build errors, not zero values
 
 Script-facing contexts (`OnConfig`/`OnBuild`/`OnInstall`/`OnClean`/`OnRequire`) fail loudly on: reading an **unknown option** (typo), using an **accessor that mismatches `SetType`** (e.g. `ctx.String` on an `OptionBool`), and **direct value reads (`ctx.Bool/String/Int`) during OnRequire discovery**. In `OnRequire`, use the discovery-aware helpers: `ctx.When("opt", true)`, `ctx.If(...)`, `ctx.Select(...)`.
 
 Two related rules:
-- **Both OnRequire passes must declare the same set of requires** — only guard values may differ. A dependency that appears only in the second pass (FilterDeps, with real config) is a build error.
+- **Pass 2 must never introduce a package that pass 1 did not see.** Removing a dependency in pass 2 replaces the edge and prunes it; adding one (e.g. a guard that was false under defaults) is a build error — hoist the unconditional `AddRequires` out of the guard.
 - `When` compares numerics across `int`/`float64` (JSON round-trips decode numbers as `float64`); `Select` returns `""` and `When` returns `true` while config is still nil during discovery.
 
 ### Script-relative file IO
@@ -261,11 +264,11 @@ ctx.Target("app").
     AddLinks("ssl", "crypto").
     AddDeps("lib:utils").
     SetDefault(false).
-    SetBuildFunc(func(p *api.Package) error { ... }).
+    SetBuildFunc(func(p *api.Package) error { return nil }).
     SetPrebuilt("/path/to/libfoo.a")
 ```
 
-`AddPublicIncludes` implies `AddIncludes` — directories set via `AddPublicIncludes` are automatically available to the target itself and propagated to all dependents. There is no need to duplicate them with `AddIncludes`. Use `@"pattern"` as the last argument to filter propagated files: `AddPublicIncludes(".", "@*.h")` only propagates headers matching `*.h`.
+`AddPublicIncludes` implies `AddIncludes` — directories set via `AddPublicIncludes` are automatically available to the target itself and propagated to all dependents. There is no need to duplicate them with `AddIncludes`. The whole directory always becomes an `-I` entry; use `@"pattern"` as the last argument to filter which files are **installed** from it: `AddPublicIncludes(".", "@*.h")` installs only matching headers, while the directory stays on the include path.
 
 `AddFiles` accepts glob patterns and can be called with multiple globs to collect sources from different directories:
 
@@ -286,7 +289,7 @@ Third-party packages with external build systems use `TargetVoid` with `SetBuild
 
 ## Prebuilt Libraries
 
-Use `SetPrebuilt(path)` on `TargetStatic`, `TargetShared`, or `TargetBinary` to export a pre-compiled artifact. The scheduler creates a symlink from the expected output path (no copy, zero disk overhead). Incremental: compares symlink target, recreates only if path changed. Multiple libraries: one target per `.a`/`.so`.
+Use `SetPrebuilt(path)` on `TargetStatic`, `TargetShared`, or `TargetBinary` to export a pre-compiled artifact. The expected output path in `BuildDir()` becomes a symlink to the source file; when the target has post-link steps (e.g. `SetSymbolPrefix`), the artifact is copied instead so post-link can rewrite it. Incrementality uses a link-state success record (signature plus input/output hashes), so a changed source file or a changed path in build.go triggers a rebuild. Multiple libraries: one target per `.a`/`.so`.
 
 ```go
 ctx.Target("drv").SetKind(api.TargetStatic).
@@ -326,11 +329,13 @@ ctx.Target("tests").SetKind(api.TargetBinary).SetTest(true).
     AddFiles("tests/*.c").AddDeps("mylib")
 ```
 
-Always define test targets unconditionally in `OnBuild` — `SetTest(true)` controls scheduler visibility, not option guards. `SetTest(true)` does NOT clear `IsDefault` (ordering of `SetTest`/`SetDefault` is irrelevant — inclusion is decided by the scheduler). Test targets are never installed and can depend on other test targets (only `TargetBinary` tests are executed). See `examples/multi-target.md`.
+Always define test targets unconditionally in `OnBuild` — `SetTest(true)` controls scheduler visibility, not option guards. `SetTest(true)` does NOT clear `IsDefault`, but `vmake test` runs only targets that are both `IsTest()` and `IsDefault()`, and only `TargetBinary` targets — a test target with `SetDefault(false)` is silently skipped. `vmake build` excludes tests unless `--tests` is passed; cross/bare-metal targets can only be built (`vmake test` refuses to run them). Test targets are never installed and can depend on other test targets. See `examples/multi-target.md`.
 
 ## Dependencies
 
 ### Declaring and Using Dependencies
+
+Package repositories must be registered and trusted before resolution: `vmake repo add official <git-url>` (first use prompts for trust; non-TTY runs need `-y` or `VMAKE_TRUST_ALL=1`). The `official` repo is not built in.
 
 ```go
 p.OnRequire(func(ctx *api.RequireContext) {
@@ -387,7 +392,7 @@ Version pins in `.vmake/config.json` entries (set via TUI) take precedence over 
 
 | Pass | Phase | Config values | Purpose |
 |------|-------|--------------|---------|
-| 1 | Phase 1 | `nil` | Discover initial dependency graph. All packages (registry and native) are resolved eagerly. `OnRequire` runs for the first time here with nil config. |
+| 1 | Phase 1 | `nil` | Discover initial dependency graph. Top-level packages (registry and native) are resolved eagerly; native sub-packages load lazily. `OnRequire` runs for the first time here with nil config. |
 | 2 | Phase 3 (`FilterDeps`) | Real values from `config.json` | After `OnConfig` has resolved all option values, `FilterDeps` re-runs every package's `OnRequire` with actual config. The returned dependencies **replace** `node.Deps`, then topology is re-sorted and needed packages are collected via BFS. |
 
 This is what enables **option-conditional dependencies**. During discovery, direct reads (`ctx.Bool/String/Int`) are build errors — use the discovery-aware helpers. On pass 1 (nil config) `ctx.When(...)` returns `true`, `ctx.If(...)` returns its `then` arguments (nil config counts as true), and `ctx.Select(...)` returns `""`; on pass 2 all see real values:
@@ -404,7 +409,7 @@ p.OnRequire(func(ctx *api.RequireContext) {
 })
 ```
 
-**Same-set rule:** both passes must declare the same set of requires — only guard values may differ. A dependency that first appears in the FilterDeps pass (e.g. the guard was false with defaults, then the user enabled the option) is a build error; hoist the unconditional `AddRequires` out of the guard.
+**Same-set rule:** pass 2 must not add a package that pass 1 did not declare — a dependency that first appears in the FilterDeps pass (e.g. the guard was false with defaults, then the user enabled the option) is a build error; hoist the unconditional `AddRequires` out of the guard. The reverse direction is fine: a dependency dropped in pass 2 replaces the edge and is pruned.
 
 **Mechanism:** `FilterDeps` re-runs `OnRequire` for every package with real config values, replacing `node.Deps`. Then topology is re-sorted and needed packages collected via BFS from local roots.
 
@@ -471,9 +476,9 @@ if ctx.String("chip") == "stm32f4" {
 
 ### Global Flags & Mode Flags
 
-`AddGlobalCFlags/CxxFlags/LdFlags/Links` are only available on `ConfigContext` (mainly inside `SetOnApply`). They apply to ALL targets in ALL packages and are deduplicated. Global flags set by a package that `FilterDeps` prunes from the build are dropped — flags from unneeded packages never leak. Global flag changes also change the BuildKey, so artifacts rebuild correctly when flags change.
+`AddGlobalCFlags/CxxFlags/LdFlags/Links` are only available on `ConfigContext` (mainly inside `SetOnApply`). They return nothing (not chainable), apply to ALL targets in ALL packages, and flags are appended as-is — duplicates are preserved, not deduplicated. Global flags set by a package that `FilterDeps` prunes from the build are dropped — flags from unneeded packages never leak. Global flag changes also change the BuildKey, so artifacts rebuild correctly when flags change.
 
-The compile merge order is: per-target flags → mode flags → global flags → dedup (first occurrence wins). For GCC, the last occurrence of repeated flags (`-O`) wins — mode overrides per-target, globals override mode, unless dedup removes the later exact duplicate.
+The compile merge order is: per-target flags → mode flags → global flags. For GCC, the last occurrence of a repeated option (`-O`) wins — mode flags override per-target `-O`, and global flags override mode.
 
 Mode auto-injected flags (injected by scheduler, not via `AddGlobalCFlags`):
 
@@ -496,6 +501,26 @@ The builtin `host` toolchain contributes default C/C++/linker flags (hardening, 
 
 Toolchains declared by extensions contribute no default flags: `toolchain.json` describes which programs to run, not which CPU to target. A cross-compiling project supplies its own `-mcpu`/`-mthumb`/`--specs=` through `ctx.AddGlobalCFlags` / `AddGlobalLdFlags` in `OnConfig`, or per target with `AddCFlags`/`AddLdFlags`.
 
+## Cross-Compiling
+
+Declare the target platform as project global options in `OnConfig`, then select the toolchain with `--toolchain`:
+
+```go
+p.OnConfig(func(ctx *api.ConfigContext) {
+    ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString).SetDefault("none")
+    ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString).SetDefault("arm-none-eabi")
+    ctx.AddGlobalCFlags("-mcpu=cortex-m4", "-mthumb", "-ffunction-sections", "-fdata-sections", "--specs=nosys.specs")
+    ctx.AddGlobalLdFlags("-mcpu=cortex-m4", "-mthumb", "--specs=nosys.specs", "-Wl,--gc-sections")
+})
+```
+
+- `target_os="none"` means bare metal; `TargetOS()`/`TargetTriple()` read the resolved values, and artifact names follow the target OS via `TargetFilename(kind, name, target_os)` (or `ExtFor`/`PrefixFor`).
+- Register toolchain repositories with `vmake ext add <name> <git-url>`; their `toolchain.json` files are scanned and installed for the host automatically (authoring: `docs/EXTENSION_PLUGIN.md`). `vmake toolchain list` shows what is available.
+- List toolchains with `vmake toolchain list` / `vmake toolchain show <name>`; select per invocation with `--toolchain <name>`, or per package via `ctx.ToolchainOption()`. Toolchains contributed by extensions carry no target defaults — supply `-mcpu`/`-mthumb`/`--specs` yourself.
+- Validate a cross setup with `vmake doctor --toolchain <name>`.
+- Cross/bare-metal tests cannot execute: `vmake test` refuses non-host targets; use `vmake build --tests`.
+- For bare-metal linking (libc, crt0, `-nostdlib`, `EXTERN`), see `examples/embedded-rtos.md` and `references/gotchas.md`.
+
 ## RTOS / Embedded
 
 ### Simple chip package (no compilation, linker script only)
@@ -514,7 +539,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 
 For real embedded projects, the chip/HAL package compiles startup code as a static library and sets global compiler/linker flags via `AddGlobalCFlags`/`AddGlobalLdFlags` in `SetOnApply`. See `examples/embedded-rtos.md` for the complete two-package pattern (chip + firmware with `UseDependencyLinkerScript`, post-link steps, `AddBinHeader`).
 
-Key embedded rules: (1) Target-specific flags must appear in both CFLAGS and LDFLAGS to avoid ABI mismatches. (2) Use `-nostdlib` + `AddGlobalLinks("c_nano", "gcc")` in `SetOnApply` — this places libc inside `--start-group`/`--end-group` so arc dep symbols resolve. (3) `-specs=nano.specs` links libc after the group; if a dep provides symbols only libc references, use `EXTERN` in the linker script. See `references/gotchas.md` for the full explanation.
+Key embedded rules: (1) Target-specific flags must appear in both CFLAGS and LDFLAGS to avoid ABI mismatches. (2) Use `-nostdlib` + `AddGlobalLinks("c_nano", "gcc")` in `SetOnApply` — this places libc inside `--start-group`/`--end-group` so archive dependency symbols resolve. (3) `-specs=nano.specs` links libc after the group; if a library supplied as a plain `-l` provides symbols only libc references, use `EXTERN` in the linker script or global links. See `references/gotchas.md` for the full explanation.
 
 - `SetProvidedLinkerScript(path)` — chip/bsp declares linker script for consumers (fatal on double-set)
 - `UseDependencyLinkerScript()` — firmware target auto-inherits `-T` from first dependency that provides one
@@ -567,11 +592,15 @@ Custom install entries: `ctx.AddInstalls("src/file.conf", "etc/file.conf")` (ava
 
 ### OnInstall Lifecycle
 
-`OnInstall` runs during `--install`, right after all builds succeed. Use `ctx.SetPrefix()` for per-package prefix overrides and `ctx.AddInstalls()` for extra file copies (docs, configs, licenses) — these are installed together with target outputs. Test targets are never installed; without `--install-type sdk`, static libraries are skipped at install. See `examples/on-install.md`.
+`OnInstall` runs during `--install`, after all builds succeed but before any files are copied: it registers extra install entries and filters, it cannot run shell commands. Use `ctx.AddInstalls("src/file.conf", "etc/file.conf")` for extra copies (docs, configs, licenses) — these are installed together with target outputs. The install root comes from `--prefix` (default `./install/`). Test targets are never installed; without `--install-type sdk`, static libraries are skipped at install (sdk also installs public includes). See `examples/on-install.md`.
 
 ## Build Scope
 
-vmake builds packages by BFS from local (directory-based) packages. Remote packages are only built if reachable from a local package's transitive dependency chain. If you `AddRequires("pkg")` but no local package depends on it, the package won't be built.
+vmake builds packages by BFS from local (directory-based) roots. Remote packages are only built if reachable from a root's transitive dependency chain. If you `AddRequires("pkg")` but no local package depends on it, the package won't be built.
+
+Without an explicit root, the resolver falls back to a heuristic: when no local package declares `OnRequire`, every local package is a root; once any local package declares requires, a local package that declares none and is depended on by another local package is not treated as a root. A hint is printed when no package calls `SetRoot(true)`. In a larger workspace, call `p.SetRoot(true)` once on the entry package (`Main` or `OnPackage`); a top-level package that only declares options must not be the sole root unless it also `AddRequires` the packages it should build.
+
+Bare `vmake` is equivalent to `vmake build`.
 
 ## Reproducible Builds (vmake.lock + --manifest)
 
@@ -587,7 +616,7 @@ vmake build --install
 vmake build --manifest install/manifest.json
 ```
 
-`--manifest` imports the recorded git URLs, refs, and revisions into `vmake.lock` before dependency resolution, so the graph is built from the pinned versions (local `SetGit` packages are also checked out to recorded revisions). `vmake manifest show install.json` displays contents; `vmake manifest checkout install.json` restores sources without building. With a valid lock entry and cached checkout, resolution is fully offline.
+`--manifest` imports the recorded git URLs, refs, and revisions into `vmake.lock` before dependency resolution, so the graph is built from the pinned versions. During `vmake build --manifest`, local packages with a managed `SetGit` source are skipped by manifest checkout — the build materializes the recorded source version on its own; the separate `vmake manifest checkout` command performs raw checkouts of local entries in their package directories. `vmake manifest show install.json` displays contents; `vmake manifest checkout install.json` restores sources without building. With a valid lock entry and cached checkout, resolution is fully offline.
 
 ## CLI Quick Reference
 
@@ -607,11 +636,11 @@ vmake build --manifest install/manifest.json
 | `vmake pkg list/search/clean/update` | Packages (`pkg update <repo/name>[@version] [--dry-run]`) |
 | `vmake ext add/list/remove/update` | Extension repos |
 | `vmake manifest show/checkout` | Install manifest |
-| `vmake check-symbols [--strict]` | Audit exported symbols via nm -D (Linux only) |
+| `vmake check-symbols [--strict]` | Audit exported symbols via nm -D (ELF; PE and no-dynsym artifacts report not-applicable) |
 | `vmake doctor` | Diagnose platform prerequisites (symlinks, Git userland, make, toolchain) and build.go issues |
 | `vmake init-editor` | Generate go.mod so gopls supports build.go |
 | `vmake git tag` | Version tagging |
-| `vmake skill install/uninstall/path` | AI skill management (`install --project` also installs into ./.claude/skills/) |
+| `vmake skill install/uninstall/path` | AI skill management (`install --project .` also installs into ./.claude/skills/) |
 | `vmake update [version]` | Update vmake |
 | `vmake version` | Version info |
 
@@ -630,6 +659,7 @@ Global flags: `-v` verbose, `-V` very-verbose, `-q` quiet, `-y/--yes` assume yes
 - **Directory / path resolution details** → `references/dirs.md` (BuildKey, SetGit paths, SourceDir vs SrcDir)
 - **Advanced gotchas** → `references/gotchas.md` (static lib deps, OnApply/global flags, source patching)
 - **Advanced patterns** → `examples/complete.md`, `examples/subbuild.md`, `examples/embedded-rtos.md`, `examples/firmware.md`, `examples/config-propagate.md`, `examples/prebuilt.md`, `examples/third-party-wrapper.md`
+- **Cross-compiling / bare metal** → **Cross-Compiling** above, plus `examples/embedded-rtos.md` and `examples/firmware.md`
 
 ## Key Conventions
 
@@ -641,4 +671,4 @@ Global flags: `-v` verbose, `-V` very-verbose, `-q` quiet, `-y/--yes` assume yes
 - `SetLanguages()` exists but has no effect — language is auto-detected from file extension
 - For **local** packages using `SetGit`, `AddFiles` paths resolve from `SourceDir()` — always prefix with `"src/"` (registry/native packages resolve from the checkout root directly)
 - Relative file IO inside build.go resolves against the build.go's directory (see Script-relative file IO above)
-- Pass `[]string` directly to `Add*` methods — never spread with `...` (yaegi limitation)
+- Pass `[]string` directly to `Add*` methods — they take `...any` and flatten slices; `xs...` does not compile because Go rejects `[]string` for `[]any` (yaegi reports the same call-site error via `reflect.CallSlice`)

@@ -14,19 +14,28 @@ Without symbol management:
   override.
 - Internal helpers leak into a `.so`'s export table, becoming de-facto public
   ABI. Refactoring then breaks downstream consumers.
-- Static archives absorbed via `--whole-archive` export every global symbol,
-  polluting the final binary's namespace.
+- Binary links absorb static archives through `--whole-archive`, contributing
+  every global symbol from them into the final binary's namespace.
 
 The fix is layered: **default hidden → declare exports → link policy → audit**.
+
+## Prerequisites
+
+- An ELF target for the link-policy layers and the audit; GNU-compatible
+  toolchain with `nm` (and `objcopy` for Layer 5).
+- A version-script file committed at a stable path (e.g. `export.map` in the
+  package root) when using Layer 2.
+- A build that succeeds: `vmake check-symbols` inspects built artifacts and
+  reports `missing-artifact` errors for declared targets without output.
 
 ## The Five Layers
 
 | Layer | Mechanism | Solves | API |
 |-------|-----------|--------|-----|
 | 1. Default hidden | `-fvisibility=hidden` + `-fvisibility-inlines-hidden` | This package's symbols default to non-exported | `ctx.SetDefaultVisibilityHidden()` |
-| 2. Declare exports | version-script on shared libs | Declarative public API surface | `target.SetVersionScript("foo.map")` |
+| 2. Declare exports | version-script on Shared/Binary | Declarative public API surface | `target.SetVersionScript("foo.map")` |
 | 3. Link policy | `--exclude-libs`, `-Bsymbolic` | Static archive absorption; internal binding | `target.AddExcludeLibs(...)`, `target.SetSymbolBinding("static")` |
-| 4. Audit | `nm -D` scan of all Shared/Binary outputs | Duplicate/mangled/reserved leaks, version-script violations | `vmake check-symbols [--strict]` |
+| 4. Audit | `nm -D` scan of built local default outputs | Duplicate/mangled/reserved leaks, version-script violations | `vmake check-symbols [--strict]` |
 | 5. Prefix isolation | `objcopy --prefix-symbols=` | Force namespace onto third-party C code | `target.SetSymbolPrefix("vendor_")` |
 
 Use Layer 1 in packages whose source declares their public exports. Dependency
@@ -91,20 +100,10 @@ int foo_api(int x) { return helper(x) + 1; }   /* exported */
 static int helper(int x) { return x * 2; }
 ```
 
-For a cross-platform macro that also covers MSVC, put this in a single header:
-
-```c
-/* visibility.h */
-#if defined(_WIN32)
-  #if defined(FOO_BUILD_DLL)
-    #define FOO_EXPORT __declspec(dllexport)
-  #else
-    #define FOO_EXPORT __declspec(dllimport)
-  #endif
-#else
-  #define FOO_EXPORT __attribute__((visibility("default")))
-#endif
-```
+MSVC is out of scope for VMake — it targets GNU-compatible toolchains, where the
+GNU visibility attribute above is the export mechanism. On PE targets only the
+ELF-specific layers are rejected at link time (version scripts, `--exclude-libs`,
+`-Bsymbolic`), and `vmake check-symbols` reports the artifacts as not-applicable.
 
 ## Layer 2: Version Script (Declarative Exports)
 
@@ -132,10 +131,12 @@ V_1_0 {
 };
 ```
 
-`SetVersionScript` is only valid on `TargetShared` and `TargetBinary`. Calling
-it on `TargetObject` is a fatal error — `cc -r` (partial link) does not
-produce a dynamic symbol table, so the version script has no effect. For
-object-level visibility control, use Layer 1 (compile-time visibility).
+`SetVersionScript` is only valid on `TargetShared` and `TargetBinary`. Any other
+kind fails at build time with a scheduler error ("only valid on
+TargetShared/TargetBinary") — it is not a declaration-time `fatalScript`. `cc -r`
+(partial link) produces no dynamic symbol table, and static archives never link
+one, so the version script would have no effect. For object-level visibility
+control, use Layer 1 (compile-time visibility).
 
 ### Version Script Syntax Cheat Sheet
 
@@ -144,14 +145,36 @@ object-level visibility control, use Layer 1 (compile-time visibility).
 - `local: *foo_internal*;` — hide by pattern (wildcards supported)
 - `extern "C" { ... }` — wrap C++ mangled names to declare them unmangled
 - Multiple version nodes (`V_1_0 { ... }; V_2_0 { ... };`) for versioned ABI
-- Comments: `/* block */` and `// line`
+- Comments: `/* block */` and `#`. GNU ld does **not** accept `//` line
+  comments; VMake's audit parser tolerates `//` but does not skip `#` lines
+  (they are collected as declared symbols), so `vmake check-symbols` will NOT
+  catch a `//` mistake — prefer `/* */`
+
+Audit-parser limitations: `global: *;` and `extern "C++" { ... }` are not
+modeled by the version-script checker. `global: *;` yields an empty declared
+set and `extern "C++"` contributes literal `extern`/`C++` tokens, so either
+form makes every real export a `version-script-violation` false positive.
+
+### Version Script Path Resolution
+
+`SetVersionScript` paths are resolved against the package's `SourceDir()` at
+build time (an absolute path is still joined under `SourceDir()`, so always pass
+a SourceDir-relative path). `vmake check-symbols` resolves the same literal
+against the current working directory first, then the built artifact's
+directory. If the audit cannot open the file it emits a warn-level
+`version-script-violation` with `could not parse <path>` under `--strict`. Keep
+one consistent SourceDir-relative path (e.g. `"linker/export.map"`) and run the
+audit from the project root, or from the directory where that path resolves.
 
 ## Layer 3: Link Policy
 
 ### Strip symbols from absorbed static libraries
 
-When `TargetShared` links a static `.a` (via `--whole-archive` by default),
-every global symbol from that archive becomes exported. Use `AddExcludeLibs`
+By default a `TargetShared` that links a static `.a` through `AddDeps` passes
+the archive as a plain positional input — unlike a binary link, the shared
+command does **not** wrap dependency archives in `--whole-archive`. Only the
+members the shared code references get included, but their global symbols still
+appear in the `.so`'s dynamic export table unless hidden. Use `AddExcludeLibs`
 to strip them:
 
 ```go
@@ -169,6 +192,19 @@ every static archive's symbols.
 `--exclude-libs` matches the full archive basename minus `.a` — so a target
 named `helper` (which vmake emits as `libhelper.a`) must be referenced as
 `libhelper`, not `helper`. Pass the form with the `lib` prefix.
+
+On `TargetBinary`, VMake places `.a`/`.so` dependency artifacts inside
+`-Wl,--start-group` / `-Wl,--whole-archive` / `-Wl,--no-whole-archive`. The full
+linker semantics and the unresolved-symbol case are covered in
+`references/gotchas.md` (`Static Library Deps with Symbols Not Referenced by
+Your Code`).
+
+All three `SetVersionScript`, `AddExcludeLibs` and `SetSymbolBinding` settings are
+validated as ELF-only on shared/binary links: on a `target_os=windows`
+`TargetShared`/`TargetBinary` the build fails with "not supported for PE targets:
+version scripts, --exclude-libs and -Bsymbolic are ELF-only". Static/object links
+never build a link policy, so `AddExcludeLibs`/`SetSymbolBinding` there are
+silently ignored (and `SetVersionScript` fails earlier on the kind check).
 
 ### Bind internal references statically
 
@@ -189,8 +225,9 @@ or empty (default).
 
 ## Layer 4: Audit
 
-`vmake check-symbols` scans all built Shared/Binary outputs via `nm -D` — no
-per-target declaration required — and reports:
+`vmake check-symbols` inspects the built default `TargetShared`/`TargetBinary`
+outputs of **local** packages via `nm -D` — no per-target declaration required —
+and reports:
 
 - **Cross-target duplicate exports**: the same symbol exported by two targets
   in the build graph (collision risk at final link)
@@ -198,16 +235,26 @@ per-target declaration required — and reports:
 - **Reserved-prefix leaks**: `__libc_*` and similar reserved prefixes
 - **Version-script violations**: exports outside what a declared
   `SetVersionScript` allows
-- **Missing version-script warnings**: shared libraries without any version
-  script
+- **Missing version-script notices**: shared libraries without any version
+  script (severity `info`, so `--strict` still passes)
 
 ```bash
 vmake build
-vmake check-symbols --strict
+vmake check-symbols            # informational report
+vmake check-symbols --strict   # exits 1 on any warn/error finding
 ```
 
-`--strict` exits non-zero on warn/error findings (info-level still passes) —
-use in CI. Without it, the report is informational.
+Scope and platform rules:
+
+- The command runs on any host but analyzes **ELF only**. PE/COFF artifacts and
+  ELF files without a dynamic symbol table (`SHT_DYNSYM`) are reported as
+  `not-applicable` with `info` severity and never fail `--strict`.
+- Only local packages are scanned; remote packages are skipped. Targets with
+  `SetDefault(false)` are excluded.
+- A declared target whose built artifact is missing is a `missing-artifact`
+  `error` and fails `--strict`. Run `vmake build` first.
+- `--strict` exits non-zero when any `warn` or `error` finding exists; without
+  it the report is informational.
 
 ## Layer 5: Prefix Isolation (Third-Party C Code)
 
@@ -222,9 +269,23 @@ ctx.Target("liblinenoise").
 ```
 
 Implemented as a post-link `objcopy --prefix-symbols=ln_` step. Works on any
-target kind (binary, shared, static, object). Use sparingly — prefer upstream
-namespacing when possible, and remember the prefix changes the symbol names
-your own code must reference.
+target kind (binary, shared, static, object); on a `SetPrebuilt` target the
+post-link step also forces a copy instead of a symlink. Use sparingly — prefer
+upstream namespacing when possible, and remember the prefix changes the symbol
+names your own code must reference.
+
+## Running / Verifying
+
+```bash
+vmake build                 # Layer 1+2 in place: hidden defaults + export.map
+vmake check-symbols         # report; info-level not-applicable entries are fine
+vmake check-symbols --strict  # exit code 0 when no warn/error findings remain
+```
+
+Fixture `test_data/22_version_script` combines Layers 1+2 (`SetDefaultVisibilityHidden`
+plus `SetVersionScript`) and `test_data/23_link_strategy` combines Layers 3
+(`AddExcludeLibs`, `SetSymbolBinding`) on shared libraries; `test_data/24_symbol_prefix`
+covers Layer 5.
 
 ## Putting It All Together
 
@@ -259,6 +320,8 @@ vmake build && vmake check-symbols --strict
 
 ## See Also
 
+- SKILL.md - Symbol Management
 - references/api.md — Target setters, ConfigContext methods
-- examples/multi-target.md — Static + shared + binary in one package
-- references/gotchas.md — Static library deps with unreferenced symbols
+- references/gotchas.md — static library deps and `--start-group`/`--whole-archive` semantics
+- examples/multi-target.md — static + binary + test targets in one package (no shared library)
+- examples/prebuilt.md — shipping a prebuilt `.a`/`.so` instead of compiling

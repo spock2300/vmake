@@ -2,7 +2,7 @@
 
 ## Static Library Deps with Symbols Not Referenced by Your Code
 
-vmake wraps `AddDeps` archives in `--start-group`/`--end-group`. Your `-l`/`-L` ldflags are placed inside the group too; what lands after the group are libraries the compiler driver appends itself (e.g., libc pulled in by `-specs=nano.specs`). If a static library dep provides symbols only referenced by those post-group libraries — not by your code — the linker won't pull the relevant `.o` from the archive, because nothing in the group needed it.
+On binary links, vmake places `AddDeps` dependency archives inside `--start-group`/`--end-group` and wraps `.a`/`.so`/`.dylib` inputs in `-Wl,--whole-archive` (PE `.dll.a` import libraries are excluded), so every object of such an archive is pulled in; shared-library links pass archives as plain inputs and pull only referenced members. Your `-l`/`-L` ldflags are inside the group but not whole-archived; what lands after the group are libraries the compiler driver appends itself (e.g., libc pulled in by `-specs=nano.specs`). A library supplied as a plain `-l` fails when its symbols are only referenced by those post-group libraries — nothing in the group caused the linker to scan it. Symptom: `undefined reference to ...` from libc/crt code.
 
 **Fix (preferred):** Use `-nostdlib` in global LdFlags and `AddGlobalLinks("c_nano", "gcc")` in `SetOnApply`. This places `-lc_nano -lgcc` inside the `--start-group`/`--end-group` for all binary targets, so libc's references to your dep's symbols resolve during group scanning. No changes to the linker script needed.
 
@@ -27,7 +27,7 @@ Global flags registered via `AddGlobalCFlags/CxxFlags/LdFlags/Links` are **buffe
 Two discovery-era rules still matter:
 
 - In `OnRequire`, direct value reads (`ctx.Bool/String/Int`) are fatal only on the first pass (nil config, discovery); on the `FilterDeps` re-run (real config) they work. On the first pass, use `ctx.When("opt", value)` / `ctx.If(...)` / `ctx.Select(...)` — there `When` returns `true`, `If` returns its `then` items (condition unevaluated), and `Select` returns `""`.
-- Inside `SetOnApply`, `Select` sees the resolved value — but an unmapped choice still yields `""`, which `flattenAny` would silently drop from `Add*` lists. Guard before use:
+- Inside `SetOnApply`, `Select` sees the resolved value — but an unmapped choice still yields `""`. `Target.Add*` methods take `...any` and `flattenAny` silently drops empty strings; `AddGlobal*` take `...string` and would pass an empty argument through. Guard before use either way:
 
 ```go
 ctx.Option("optimization").SetType(api.OptionChoice).
@@ -47,7 +47,7 @@ ctx.Option("optimization").SetType(api.OptionChoice).
 
 ## Patching Source Before Build
 
-Registry packages sometimes need source modifications before building (e.g., enabling a `#define` in a config header). Since `SrcDir()` points to the downloaded source, you can patch files inside `SetBuildFunc` using Go's standard `os` and `strings` packages. Note: relative paths passed to `os.*` functions resolve against the **build.go's directory** (script-relative IO), so build source paths from `p.SrcDir()`:
+Registry packages sometimes need source modifications before building (e.g., enabling a `#define` in a config header). Since `SrcDir()` points to the downloaded source, you can patch files inside `SetBuildFunc` using Go's standard `os` and `strings` packages. Note: the script wrapper covers only a subset of `os` (`ReadFile`/`WriteFile`/`Stat` and friends) and resolves relative paths against the **build.go's directory**; unwrapped APIs such as `os.Readlink`/`os.Symlink` and `exec.CommandContext` still use the process cwd, and `os.Chdir` is rejected. Build source paths from `p.SrcDir()`. Raw writes are permanent for local packages and are not part of the BuildKey — prefer `AddPatches` when the change must trigger a rebuild:
 
 ```go
 SetBuildFunc(func(p *api.Package) error {
@@ -83,3 +83,21 @@ p.AddPatches("patches/fix-cross.patch", "patches/disable-avx.patch")
 - Patch files are relative to the directory containing the package's `build.go`.
 
 Use this when wrapping a library that needs compilation fixes (e.g., cross-compilation `CFLAGS` in a Makefile, missing `#include` guards, hardcoded toolchain assumptions). Raw `os.WriteFile` patching (shown above) is better for simple single-line changes; git patches handle multi-file, multi-line modifications reliably.
+
+## `[]string` Arguments — Never Spread
+
+`Add*` methods on targets take `...any` and expand slices via `flattenAny`, which also drops empty strings. Pass the slice whole; `xs...` does not compile because Go will not convert `[]string` to `[]any` (yaegi reports the same call-site error through `reflect.CallSlice`).
+
+```go
+flags := []string{"-O2", "-Wall"}
+target.AddCFlags(flags)    // correct
+target.AddCFlags(flags...) // does not compile
+```
+
+## AddRequires vs AddDeps
+
+`AddRequires` (in `OnRequire`) only resolves and downloads a package; `AddDeps` (in `OnBuild`) creates the build-graph edge that links its artifact and propagates public includes. Third-party packages normally need both, and a resolved package that is unreachable from a local root is not built.
+
+## Options After the Config Phase
+
+`ctx.Option(...)` may only be called during `OnConfig`; calling it in a later phase is a build error. Resolved values are readable in `OnBuild`/`OnInstall`/`OnClean` and inside `SetOnApply`; during `OnRequire` discovery use the discovery-aware `When`/`If`/`Select`.

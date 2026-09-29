@@ -2,6 +2,10 @@
 
 Demonstrates the option system: defining build-time options and using conditional expressions to adapt compilation flags.
 
+## Prerequisites
+
+- VMake installed with a host C toolchain (gcc or clang); run from the project directory (VMake searches upward for `build.go` or `.vmake/`).
+
 ## build.go
 
 ```go
@@ -17,11 +21,11 @@ func Main(p *api.Package) {
 			SetDescription("Enable debug mode").
 			SetGroup("General")
 
-		ctx.Option("optimization").
+		ctx.Option("features").
 			SetType(api.OptionChoice).
-			SetDefault("O2").
-			SetValues("O0", "O1", "O2", "O3", "Os").
-			SetDescription("Optimization level").
+			SetDefault("standard").
+			SetValues("minimal", "standard", "full").
+			SetDescription("Feature set").
 			SetGroup("General")
 
 		ctx.Option("ssl").
@@ -37,12 +41,34 @@ func Main(p *api.Package) {
 			AddFiles("src/*.c").
 			AddDefines(ctx.If("ssl", "USE_SSL")).
 			AddDefines(ctx.If("debug", "DEBUG=1")).
-			AddDefines("OPT_LEVEL=\"" + ctx.String("optimization") + "\"").
-			AddCFlags(ctx.Select("optimization", map[string]string{
-				"O0": "-O0", "O1": "-O1", "O2": "-O2", "O3": "-O3", "Os": "-Os",
+			AddDefines(ctx.Select("features", map[string]string{
+				"minimal":  "FEATURES_MINIMAL",
+				"standard": "FEATURES_STANDARD",
+				"full":     "FEATURES_FULL",
 			})).
+			AddDefines("FEATURE_SET=\"" + ctx.String("features") + "\"").
 			AddLinks(ctx.If("ssl", "ssl", "crypto"))
 	})
+}
+```
+
+## Project Structure
+
+```
+myproject/
+├── build.go
+└── src/
+    └── main.c
+```
+
+```c
+#include <stdio.h>
+
+int main(void) {
+#ifdef USE_SSL
+    puts("ssl enabled");
+#endif
+    return 0;
 }
 ```
 
@@ -54,9 +80,9 @@ func Main(p *api.Package) {
 - **`SetDefault(value)`** - Default value
 - **`SetDescription(text)`** - Help text
 - **`SetGroup(name)`** - Grouping for TUI
-- **`ctx.If("option", vals...)`** - Conditional (returns `[]string` if bool is true; pass the slice to Add* methods directly, no `...` spread)
-- **`ctx.Select("option", map)`** - Map option value to flag
-- **`ctx.String("option")`** - Read option as string
+- **`ctx.If("option", vals...)`** - Conditional for **bool** options (returns the chosen strings when true, `nil` otherwise; pass the slice to Add* methods directly, no `...` spread)
+- **`ctx.Select("option", map)`** - Map a String/Choice option value to a flag or define
+- **`ctx.String("option")`** - Read a String/Choice option
 
 ## Running with Options
 
@@ -64,21 +90,31 @@ func Main(p *api.Package) {
 # Use TUI to configure
 vmake config
 
-# Or set option values non-interactively (format: [pkg/]option=value)
-vmake config --set <pkg>/ssl=true --set <pkg>/optimization=O3
+# Or set option values non-interactively (format: [pkg/]option=value).
+# The package prefix is the build.go directory name and is required for non-global options.
+vmake config --set myproject/debug=true --set myproject/features=full
+
+# Show effective option values and generated -DCONFIG_* defines
+vmake query config myproject
 
 # The global build mode (debug/release) can also be overridden per build
+vmake build
 vmake build --mode debug
 ```
 
 ## Key Points
 
 - Options are typed: Bool, String, Int, Choice
-- `AddDefines(ctx.If("ssl", "USE_SSL"))` passes the `[]string` directly — `Add*` methods accept `...any` and flatten slices. Do NOT spread with `...` (yaegi cannot spread `[]string` into `...any`)
-- Choice options declare their allowed values with `SetValues(...)`; `SetDefault` must be one of them (validated after OnConfig)
+- `AddDefines(ctx.If("ssl", "USE_SSL"))` passes the `[]string` directly — `Add*` methods accept `...any` and flatten slices. Do NOT spread with `...` (Go cannot spread `[]string` into `[]any`; `flattenAny` expands the slice for you)
+- `ctx.If` only accepts `OptionBool`; `ctx.Select` and `ctx.String` work for String/Choice options, and `ctx.When`/`ctx.Int`/`ctx.Bool` cover the rest (a mismatched accessor is a build error)
+- Options can only be declared in `OnConfig`; `ctx.Option(...)` after the config phase is a build error
+- Choice options declare their allowed values with `SetValues(...)`; a non-empty `SetDefault` is validated against them after `OnConfig` (validation is skipped when the default is empty or `SetValues` was never called). `vmake config --set` rejects invalid choices
+- Don't map options to `-O*`: build mode flags are appended after target flags, so the mode's `-O2`/`-O0` wins for GCC — see `SKILL.md - Global Flags & Mode Flags`
+- Turn options into `-DCONFIG_*` defines or a generated `autoconf.h` with `ctx.GenerateConfigDefines()` / `ctx.GenerateConfigHeader()` in `OnBuild` — see `examples/config-to-define.md`
 - Reading an option with a mismatched accessor (e.g. `ctx.Bool` on an OptionChoice) is a build error — use the accessor matching `SetType`: `ctx.Bool`, `ctx.String`, `ctx.Int` (there is no Choice accessor; OptionChoice is read with `ctx.String`)
 
 ## See Also
 
 - references/api.md - Complete Option API, ConfigAccessor
-- SKILL.md - Option & Conditional section
+- examples/config-to-define.md - Option → `-DCONFIG_*` / `autoconf.h` generation
+- SKILL.md - Option & Conditional

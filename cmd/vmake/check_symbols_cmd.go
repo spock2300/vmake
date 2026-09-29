@@ -33,7 +33,7 @@ Detection categories:
   mangled-leak             C++ mangled symbol (_Z*) leaked into a C library or binary
   reserved-prefix          glibc/runtime internal symbol leaked (__libc_*, _IO_*, _Jv_*, ...)
   version-script-violation Target has SetVersionScript but exports symbols not in the .map
-  no-version-script        TargetShared without version-script (info; --strict fails on this)
+  no-version-script        TargetShared without version-script (info; does not fail --strict)
 
 Requires a successful build first; scans existing build/ outputs.`,
 		Run: func(cmd *cobra.Command, args []string) {

@@ -6,7 +6,7 @@
 |----------|-----------------|-------------|
 | `SourceDir()` | Package root — the `build.go` dir for local packages; the package member’s writable build workspace for remote packages | Package metadata files, overlay dirs |
 | `SrcDir()` | Source code dir (`SourceDir()/src/` for local `SetGit` packages, otherwise falls back to `SourceDir()`) | Source files for firmware/third-party builds |
-| `SrcDirRaw()` | Raw srcCodeDir without fallback (empty if `SetSrcDir` not called) | Detecting whether source dir was explicitly set |
+| `SrcDirRaw()` | Raw source dir without the SourceDir fallback; the framework sets it for `SetGit` workspaces | Inspecting the configured source dir |
 | `BuildDir()` | Scratch dir for intermediate artifacts | Build outputs and action success records |
 | `InstallDir()` | Remote package installation prefix; empty for local packages | Remote package publication |
 | `CMakeBuildDir()` | `BuildDir()/cmake`, unless explicitly set | CMake cache and intermediate artifacts |
@@ -25,15 +25,28 @@ BuildDir path by package origin:
 - **Local packages**: `<SourceDir>/build/<buildKey>/`
 - **Remote packages**: `vmake_deps/<repo>/<pkg>/out/<sha256(member)>/<buildKey>/build/` — `out` points into `~/.vmake/cache/v2/<repo>/<pkg>/<version>/out`. Each member/build key also owns `install/` and `work/repo/`; matching native actions may reuse successful outputs across projects
 
-The BuildKey hashes the format version and `(toolchain identity, build_mode, options)` plus extra material: the **global-flags hash** and **buildscript hash** for every package, and additionally the **source version, commit and patch-set hash** for remote packages — so version switches, global flag changes, patch edits and build.go edits each produce a fresh key instead of silently reusing stale artifacts. The BuildKey is deterministic — same inputs always produce the same hash. `compile_commands.json` is rebuilt for the current session and merged across schedulers by `(source file, object output)` at `<project root>/build/compile_commands.json`. `AddBinHeader` output goes to `build/<buildKey>/generated/`.
+The BuildKey hashes the format version and `(toolchain identity, build_mode, options)` plus extra material: the **global-flags hash** and **buildscript hash** for every package; local `SetGit` packages additionally contribute the resolved **source commit**; remote packages contribute **source version, commit and patch-set hash** — so version switches, global flag changes, patch edits and build.go edits each produce a fresh key instead of silently reusing stale artifacts. The BuildKey is deterministic — same inputs always produce the same hash. `compile_commands.json` is rebuilt for the current session and merged across schedulers by `(source file, object output)` at `<project root>/build/compile_commands.json`. `AddBinHeader` output goes to `build/<buildKey>/generated/`.
 
 ## SourceDir vs SrcDir
 
 For local `SetGit`, `SourceDir()` stays at the package root. `SourceDir()/src` is a managed symlink to the writable `BuildDir()/work/src` copied from a commit-specific cache seed. Use `SrcDir()` for this actual source tree.
 
-Remote registry and native packages build in the member/build-key workspace at `out/<sha256(member)>/<buildKey>/work/repo`; native subpackages use their relative path within their own workspace. `SourceDir()` points there before OnBuild runs, and patches apply there. `ScriptDir()` identifies the loaded buildscript's directory and may differ. The project's ordinary `vmake_deps/<repo>/<pkg>/src` link still points at the immutable seed; do not hard-code that link as a writable build tree. Native child source links at `vmake_deps/<repo>/<pkg>/_members/<sha256(member)>/src` point to the child's actual source tree. The member is its repository-relative path with forward slashes; hashing keeps names such as `src` and `out` separate from the parent's links.
+Remote registry and native packages build in the member/build-key workspace at `out/<sha256(member)>/<buildKey>/work/repo`; native subpackages use their relative path within their own workspace. `SourceDir()` points there before OnBuild runs; patches apply to `SrcDir()` (remote patch sets are first materialized into `<versionDir>/patched/<patchHash>/src`, then applied to the workspace). `ScriptDir()` identifies the loaded buildscript's directory and may differ. The project's ordinary `vmake_deps/<repo>/<pkg>/src` link still points at the immutable seed; do not hard-code that link as a writable build tree. Native child source links at `vmake_deps/<repo>/<pkg>/_members/<sha256(member)>/src` point to the child's actual source tree. The member is its repository-relative path with forward slashes; hashing keeps names such as `src` and `out` separate from the parent's links.
 
-For local packages without SetGit, `SrcDir()` defaults to `SourceDir()` unless `SetSrcDir` overrides it. `SrcDirRaw()` reports only the explicit source-directory setting. Once OnBuild exposes paths or synchronous subgraphs build a package, the session retains those paths through installation.
+For local packages without SetGit, `SrcDir()` defaults to `SourceDir()` unless `SetSrcDir` overrides it. `SrcDirRaw()` reports the raw source-dir setting without the fallback. Once OnBuild exposes paths or synchronous subgraphs build a package, the session retains those paths through installation.
+
+Path getters are bound after the package's source preparation; do not rely on `SourceDir()`/`BuildDir()`/`SrcDir()` before the build phase (they may still be empty in `OnPackage`/`OnConfig` and are populated for `OnBuild`).
+
+## Action → Directory
+
+| Action | Working directory | Notes |
+|--------|-------------------|-------|
+| `p.Make(...)` | `BuildDir()` | For a source-tree Makefile use `p.Make("-C", filepath.ToSlash(absSrcDir), ...)` with an absolute `SrcDir()` |
+| `p.Run(...)` / `p.RunIn(dir, ...)` | `BuildDir()` by default | `RunIn` selects the directory explicitly |
+| `p.Configure(...)` | configures `SrcDir()` out-of-source into `BuildDir()` | install prefix from `InstallDir()`; empty for local packages |
+| `CMakeConfigure` / `CMakeBuild` / `CMakeInstall` | `CMakeBuildDir()` / `CMakeInstallDir()` | see CMake Directories |
+| `SetPrebuilt(path)` source | existing file at `path` (absolute or `SourceDir()`-relative) | output published at `BuildDir()/<TargetFilename>` (symlink, or copy with post-link steps) |
+| Install / publish | remote `InstallDir()`; local `--prefix` (default `./install/`) | `InstallDir()` is empty for local packages |
 
 Within `SetBuildFunc`, built-in helpers (`CMakeConfigure`, `CMakeBuild`, `CMakeInstall`) automatically use the correct directories. If you need to read or patch source files manually, use `SrcDir()` to locate the downloaded source tree.
 
