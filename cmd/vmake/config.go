@@ -22,7 +22,7 @@ var setFlags []string
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Edit the active build configuration or manage configuration files",
-	Long:  `Open a TUI to edit the active configuration, or use list, copy and use to manage configuration files in .vmake.`,
+	Long:  `Open a TUI to edit the active configuration, or use list, use, copy and describe to manage configuration files in .vmake.`,
 	Args:  cobra.NoArgs,
 	Run:   runConfig,
 }

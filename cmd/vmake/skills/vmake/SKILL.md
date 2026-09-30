@@ -40,6 +40,7 @@ include the ones your project needs:
 
 - **New project, no options, no deps** → Only `OnBuild`. Run `vmake doctor` to check the host toolchain, then start from `examples/simple.md`.
 - **Need configurable features** → Add `OnConfig`. See `examples/config.md`.
+- **Multiple saved configurations (debug/release/board variants)** → Store files in `.vmake/` and switch with `vmake config list/use/copy/describe`. See `examples/config.md` and **Multiple Project Configurations** below.
 - **Conditional compilation** → Options + `ctx.If()`/`ctx.Select()`. See `examples/conditional.md`.
 - **Config options → C compiler defines (auto `-DCONFIG_*` or `autoconf.h`)** → Three mechanisms. See `examples/config-to-define.md`.
 - **Multiple targets (lib + binary + tests)** → See `examples/multi-target.md`.
@@ -388,7 +389,7 @@ AddRequires accepts semver constraints: `"official/zlib >=1.2"`, `"official/curl
 
 Operators: `>=` and `>` (major-locked when major > 0 — `>=1.2` never matches `2.0`), `<=` / `<` (no major lock), `=` (exact), `~` (major.minor lock). Highest satisfying version is selected; multi-package constraints must be mutually satisfiable. See `references/api.md` for the full operator table and major lock semantics.
 
-Version pins in entries of the active configuration (`.vmake/config.json` by default, set via the TUI) take precedence over latest matching tags, and `.vmake/vmake.lock` pins survive until `vmake lock update`.
+Version pins in entries of the active configuration (`.vmake/config.json` by default, or the file selected in `.vmake/project.json`) take precedence over latest matching tags; set a pin by editing the `version` field of that package's entry in the file. `.vmake/vmake.lock` pins survive until `vmake lock update`.
 
 ### OnRequire Two-Phase Execution
 
@@ -454,7 +455,9 @@ malformed project.json before using it.
 The TUI shows the description as a fixed `Description` row at the top of the
 options panel: press `D` or click the row to edit it, and `Ctrl+S` saves it
 with the rest of the configuration. Descriptions are metadata only — they do
-not affect dependency resolution or the BuildKey.
+not affect dependency resolution or the BuildKey. The TUI also supports mouse
+interaction; its header language selector switches between English and 中文
+(initial language follows the system locale).
 
 TUI and `--set` edit only the selected file. Build, test, query, clean, doctor and
 lock update use that same selection relative to the detected project root; script
@@ -688,7 +691,7 @@ vmake build --manifest install/manifest.json
 | `vmake test` | Build + run test targets |
 | `vmake rebuild` | Clean + build |
 | `vmake config` | TUI for the selected configuration (`--set opt=val` / `--set pkg/opt=val` non-interactive) |
-| `vmake config list/use/copy` | List files, select an existing file, or copy the active configuration in `.vmake/` |
+| `vmake config list/use/copy/describe` | List files, select an existing file, copy the active configuration in `.vmake/`, or print/set its description |
 | `vmake clean [--all]` | Execute OnClean hooks then remove build artifacts |
 | `vmake distclean [--purge-cache]` | Deep clean: artifacts + install/ + vmake_deps/ (+ global cache entries) |
 | `vmake query` | Dependency tree; `query targets`, `query config <pkg>` |

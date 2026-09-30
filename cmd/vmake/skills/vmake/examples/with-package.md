@@ -68,7 +68,7 @@ Constraints are parsed by `ParseConstraint` in `pkg/api/semver.go`: **one operat
 
 The **highest satisfying version** is selected. When several packages constrain the same dependency, all constraints must match (`SelectVersionMulti`); mutually unsatisfiable constraints fail resolution. Prereleases are excluded unless a constraint pins that same `major.minor.patch` prerelease — a `>=1.2.0-rc1` constraint admits `1.2.0-rc2`, but not `1.2.1-rc1`.
 
-Version pins in entries of the active configuration (`.vmake/config.json` by default, set via the TUI) take precedence over latest matching tags, and `.vmake/vmake.lock` pins survive until `vmake lock update`.
+Version pins in entries of the active configuration (`.vmake/config.json` by default, or the file selected in `.vmake/project.json`) take precedence over latest matching tags; set a pin by editing the `version` field of that package's entry in the file. `.vmake/vmake.lock` pins survive until `vmake lock update`.
 
 ## Package Repository
 
