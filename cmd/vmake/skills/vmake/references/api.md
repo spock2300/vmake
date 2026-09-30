@@ -456,8 +456,9 @@ All setters are fluent (return `*Option`).
 | `SetShowIf` | `(fn func(ctx *ConfigContext) bool)` | Conditional visibility |
 | `SetOnApply` | `(fn func(ctx *ConfigContext, val any))` | Callback after option values resolved, once per build, in sorted option-name order. `val` is normalized to the declared type: `bool` (OptionBool), `int` (OptionInt — JSON `float64` converted to `int`), `string` (OptionString/OptionChoice). The callback's context carries real option values, so reading other options works |
 | `SetGroup` | `(group string)` | Display group |
+| `SetMacroName` | `(name string)` | Global options only: override the auto-exported `CONFIG_<NAME>` macro name; a `%s`/`%v` in the name renders the option value (`PY32F539xx%s` + `M` → `PY32F539xxM=1`) |
 
-Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()`, `OnApply()`, `Group()`, `IsGlobal()`.
+Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()`, `OnApply()`, `Group()`, `MacroName()`, `IsGlobal()`.
 
 Note: without `SetDefault`, the zero value applies (`false` for OptionBool, `""` for OptionString/OptionChoice, `0` for OptionInt). An unset Choice default is not validated against `SetValues`.
 

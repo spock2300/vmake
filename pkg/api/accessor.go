@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"math"
+	"strings"
 )
 
 type ConfigAccessor struct {
@@ -316,6 +317,25 @@ func NormalizeOptionValue(opt *Option, val any) any {
 func ValidateOption(o *Option) error {
 	if o == nil {
 		return nil
+	}
+	if o.macroName != "" {
+		if !o.IsGlobal() {
+			return fmt.Errorf("option %q: SetMacroName requires a global option (ctx.GlobalOption)", o.name)
+		}
+		if strings.Contains(o.macroName, "%") {
+			if strings.Count(o.macroName, "%") != 1 || (!strings.Contains(o.macroName, "%s") && !strings.Contains(o.macroName, "%v")) {
+				return fmt.Errorf("option %q: SetMacroName template %q must contain exactly one %%s or %%v verb", o.name, o.macroName)
+			}
+			if o.optType == OptionChoice {
+				for _, v := range o.values {
+					if !validMacroName(fmt.Sprintf(o.macroName, v)) {
+						return fmt.Errorf("option %q: SetMacroName %q renders invalid macro name for value %q", o.name, o.macroName, v)
+					}
+				}
+			}
+		} else if !validMacroName(o.macroName) {
+			return fmt.Errorf("option %q: SetMacroName %q is not a valid C identifier", o.name, o.macroName)
+		}
 	}
 	if o.defaultVal == nil {
 		return nil

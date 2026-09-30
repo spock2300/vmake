@@ -35,6 +35,7 @@ type RuntimeContext struct {
 	GlobalOptions       map[string]*api.Option
 	Resolver            *resolver.Resolver
 	BufferedGlobalFlags map[string]*packageGlobalFlags
+	GlobalMacroDefines  []string
 	Lock                *lockfile.Lock
 	LockPath            string
 	IgnoreLock          bool

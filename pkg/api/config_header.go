@@ -42,6 +42,55 @@ type configEntry struct {
 	kind  configEntryKind
 }
 
+func validMacroName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r == '_' || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z'):
+		case r >= '0' && r <= '9':
+			if i == 0 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func macroEntries(macro string, typ OptionType, val any) []configEntry {
+	switch typ {
+	case OptionBool:
+		if v, ok := val.(bool); ok && v {
+			return []configEntry{{macro: macro, val: "1", kind: ceBoolTrue}}
+		}
+		return []configEntry{{macro: macro, kind: ceBoolFalse}}
+	case OptionInt:
+		var s string
+		switch v := val.(type) {
+		case int:
+			s = strconv.Itoa(v)
+		case float64:
+			s = strconv.Itoa(int(v))
+		case int64:
+			s = strconv.FormatInt(v, 10)
+		default:
+			s = fmt.Sprintf("%d", v)
+		}
+		return []configEntry{{macro: macro, val: s, kind: ceInt}}
+	case OptionString, OptionChoice:
+		entries := []configEntry{{macro: macro, val: fmt.Sprintf("%v", val), kind: ceString}}
+		if typ == OptionChoice {
+			choiceMacro := macro + "_" + strings.ToUpper(strings.ReplaceAll(fmt.Sprintf("%v", val), "-", "_"))
+			entries = append(entries, configEntry{macro: choiceMacro, val: "1", kind: ceBoolTrue})
+		}
+		return entries
+	}
+	return nil
+}
+
 func collectConfigEntries(opts map[string]*Option, cfgVals map[string]any) []configEntry {
 	names := slices.Sorted(maps.Keys(opts))
 	var entries []configEntry
@@ -54,36 +103,39 @@ func collectConfigEntries(opts map[string]*Option, cfgVals map[string]any) []con
 		if val == nil {
 			continue
 		}
-		macro := configMacroName(name)
-		switch typ {
-		case OptionBool:
-			if v, ok := val.(bool); ok && v {
-				entries = append(entries, configEntry{macro: macro, val: "1", kind: ceBoolTrue})
-			} else {
-				entries = append(entries, configEntry{macro: macro, kind: ceBoolFalse})
-			}
-		case OptionInt:
-			var s string
-			switch v := val.(type) {
-			case int:
-				s = strconv.Itoa(v)
-			case float64:
-				s = strconv.Itoa(int(v))
-			case int64:
-				s = strconv.FormatInt(v, 10)
-			default:
-				s = fmt.Sprintf("%d", v)
-			}
-			entries = append(entries, configEntry{macro: macro, val: s, kind: ceInt})
-		case OptionString, OptionChoice:
-			entries = append(entries, configEntry{macro: macro, val: fmt.Sprintf("%v", val), kind: ceString})
-			if typ == OptionChoice {
-				choiceMacro := macro + "_" + strings.ToUpper(strings.ReplaceAll(fmt.Sprintf("%v", val), "-", "_"))
-				entries = append(entries, configEntry{macro: choiceMacro, val: "1", kind: ceBoolTrue})
-			}
-		}
+		entries = append(entries, macroEntries(configMacroName(name), typ, val)...)
 	}
 	return entries
+}
+
+func (o *Option) MacroDefines(val any) ([]string, error) {
+	macro := configMacroName(o.name)
+	if custom := o.MacroName(); custom != "" {
+		if strings.Contains(custom, "%") {
+			rendered := fmt.Sprintf(custom, fmt.Sprintf("%v", val))
+			if !validMacroName(rendered) {
+				return nil, fmt.Errorf("option %q: macro name %q is not a valid C identifier", o.name, rendered)
+			}
+			return []string{rendered + "=1"}, nil
+		}
+		macro = custom
+	}
+	if !validMacroName(macro) {
+		return nil, fmt.Errorf("option %q: macro name %q is not a valid C identifier", o.name, macro)
+	}
+	var defines []string
+	for _, e := range macroEntries(macro, o.Type(), val) {
+		if !validMacroName(e.macro) {
+			return nil, fmt.Errorf("option %q: macro name %q is not a valid C identifier", o.name, e.macro)
+		}
+		switch e.kind {
+		case ceBoolTrue, ceInt:
+			defines = append(defines, e.macro+"="+e.val)
+		case ceString:
+			defines = append(defines, fmt.Sprintf("%s=\"%s\"", e.macro, e.val))
+		}
+	}
+	return defines, nil
 }
 
 func ConfigToDefines(opts map[string]*Option, cfgVals map[string]any) []string {

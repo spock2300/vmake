@@ -42,7 +42,7 @@ include the ones your project needs:
 - **Need configurable features** → Add `OnConfig`. See `examples/config.md`.
 - **Multiple saved configurations (debug/release/board variants)** → Store files in `.vmake/` and switch with `vmake config list/use/copy/describe`. See `examples/config.md` and **Multiple Project Configurations** below.
 - **Conditional compilation** → Options + `ctx.If()`/`ctx.Select()`. See `examples/conditional.md`.
-- **Config options → C compiler defines (auto `-DCONFIG_*` or `autoconf.h`)** → Three mechanisms. See `examples/config-to-define.md`.
+- **Config options → C compiler defines (auto `-DCONFIG_*` or `autoconf.h`)** → Four mechanisms, including global option auto-export. See `examples/config-to-define.md`.
 - **Multiple targets (lib + binary + tests)** → See `examples/multi-target.md`.
 - **Run tests** → `SetTest(true)` targets + `vmake test` on host targets, or `vmake build --tests` for cross/bare-metal. See `examples/multi-target.md`.
 - **Multi-module workspace (lib/ + app/ directories)** → See `examples/multi-module.md`.
@@ -188,7 +188,7 @@ Two related rules:
 
 ### Generated macros are CONFIG_-prefixed, not the raw option name
 
-`GenerateConfigDefines` / `GenerateConfigHeader` always emit `CONFIG_<OPTION_NAME>` (uppercased, `-` → `_`): an option `debug` becomes `-DCONFIG_DEBUG=1`, so C code checks `#if CONFIG_DEBUG`, not `#if DEBUG`. A disabled bool emits no `-D` at all. When C code needs another name, read the option and call `AddDefines` manually. See **Generated Defines Always Use the CONFIG_ Prefix** above.
+`GenerateConfigDefines` / `GenerateConfigHeader` always emit `CONFIG_<OPTION_NAME>` (uppercased, `-` → `_`): an option `debug` becomes `-DCONFIG_DEBUG=1`, so C code checks `#if CONFIG_DEBUG`, not `#if DEBUG`. A disabled bool emits no `-D` at all. When C code needs another name, read the option and call `AddDefines` manually. Global options are the exception: `ctx.GlobalOption(...)` declarations are auto-exported to every package as `CONFIG_<NAME>` (see **Global Option Auto-Export** below). See **Generated Defines Always Use the CONFIG_ Prefix** above.
 
 ### Script-relative file IO
 
@@ -508,7 +508,7 @@ ctx.Option("trace").SetType(api.OptionBool).SetDefault(false).
 - Bool true → `-DCONFIG_X=1`; bool false → no `-D` flag at all (in `autoconf.h`: `/* #undef CONFIG_X */`)
 - Int → `-DCONFIG_X=42`; String/Choice → `-DCONFIG_X="value"` (the quotes are part of the argv element)
 - An option with no configured value and no `SetDefault` is skipped entirely
-- Global options (`mode`, `toolchain`, and `GlobalOption(...)` declarations) are excluded
+- Global options (`mode`, `toolchain`, and `GlobalOption(...)` declarations) are excluded from this package-local list; custom global options are exported to every package instead, see **Global Option Auto-Export** below
 - Options merged in via `ImportConfig()`/`SyncConfigDefines()` use the same prefix
 
 If C code expects a different name, read the option in `OnBuild` and emit the define manually, e.g. `target.AddDefines("DEBUG=1")` guarded by `ctx.Bool("debug")`. See `examples/config-to-define.md` for the full value table and the three config→define mechanisms.
@@ -558,6 +558,28 @@ During linking, global LD flags are appended after per-target flags; global link
 If two packages define the same global option via `GlobalOption()`, their `Type` and `Default` must be **identical** — otherwise the build fails with a fatal error. This constraint ensures all packages agree on the option's meaning. For example, if `chip/build.go` defines `GlobalOption("mcu").SetType(api.OptionString).SetDefault("stm32f405")` and `bsp/build.go` defines `GlobalOption("mcu").SetType(api.OptionChoice)`, the build will fail with a type mismatch error.
 
 There is no merging of definitions: only `Type` and `Default` are validated for consistency; which definition supplies the merged view's `SetValues`/`SetDescription` is unspecified — prefer a single declaring package. Each declaring package's own `SetOnApply` callback still runs during that package's config pass.
+
+### Global Option Auto-Export
+
+Every global option declared with `ctx.GlobalOption(...)` is automatically exported to **all packages** as a `-DCONFIG_<NAME>` macro. The value is the resolved configuration value (saved config → default), so changing it in `vmake config` or with `--set` changes the macros and rebuilds every package — no `SetOnApply` + `AddGlobalCFlags` boilerplate, and no hardcoded values in build.go.
+
+Formatting matches `GenerateConfigDefines`: bool true → `-DCONFIG_X=1` (false emits nothing), int → `-DCONFIG_X=42`, string → `-DCONFIG_X="value"`, choice → `-DCONFIG_X="value"` plus `-DCONFIG_X_VALUE=1`.
+
+```go
+p.OnConfig(func(ctx *api.ConfigContext) {
+    ctx.GlobalOption("cpu_clock_hz").SetType(api.OptionInt).SetDefault(416000000)
+    ctx.GlobalOption("mcu").SetType(api.OptionChoice).
+        SetDefault("py32f539").SetValues("py32f539")
+})
+```
+
+This emits `-DCONFIG_CPU_CLOCK_HZ=416000000 -DCONFIG_MCU="py32f539" -DCONFIG_MCU_PY32F539=1` for every package. Use it for chip/platform contracts and feature switches that all packages must see.
+
+- `SetMacroName("NAME")` replaces the default name entirely; a `%s`/`%v` in the name renders the value into the macro (`SetMacroName("PY32F539xx%s")` with value `L` → `-DPY32F539xxL=1`) and emits only that macro. `SetMacroName` is valid on global options only.
+- `mode`, `toolchain`, `target_os`, and `target_triple` are not exported by default; give them a `SetMacroName` to opt in.
+- Two global options producing the same macro with different values abort the configuration phase; identical definitions are deduplicated.
+- A package-level value for a global option left in `entries.<pkg>.options.<name>` still wins inside that package, but the exported macro always uses the global value; delete stale entry values when migrating an option from package scope to global scope.
+- Exported macros participate in the BuildKey through global flags, so config changes rebuild all packages.
 
 ### Default Build Flags
 

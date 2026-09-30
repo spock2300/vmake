@@ -11,6 +11,7 @@ type Option struct {
 	showIf      func(ctx *ConfigContext) bool
 	group       string
 	onApply     func(ctx *ConfigContext, val any)
+	macroName   string
 }
 
 func (o *Option) SetType(t OptionType) *Option {
@@ -48,6 +49,11 @@ func (o *Option) SetGroup(group string) *Option {
 	return o
 }
 
+func (o *Option) SetMacroName(name string) *Option {
+	o.macroName = name
+	return o
+}
+
 func (o *Option) Name() string                               { return o.name }
 func (o *Option) Type() OptionType                           { return o.optType }
 func (o *Option) Default() any                               { return o.defaultVal }
@@ -56,4 +62,5 @@ func (o *Option) Values() []string                           { return o.values }
 func (o *Option) ShowIf() func(ctx *ConfigContext) bool      { return o.showIf }
 func (o *Option) OnApply() func(ctx *ConfigContext, val any) { return o.onApply }
 func (o *Option) Group() string                              { return o.group }
+func (o *Option) MacroName() string                          { return o.macroName }
 func (o *Option) IsGlobal() bool                             { return o.group == GroupGlobal }

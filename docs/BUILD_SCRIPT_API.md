@@ -891,6 +891,45 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 
 全局选项在所有 Package 间共享。如果多个 Package 定义同名全局选项，类型和默认值必须一致。
 
+### 全局选项自动导出 CONFIG_ 宏
+
+通过 `ctx.GlobalOption(...)` 声明的自定义全局选项会自动导出为全局 `-D CONFIG_*` 宏，对构建中的每个包可见，值取当前配置（`.vmake/config.json` 的 `global.options`，未配置时取默认值）。修改配置后宏随之改变，并因进入全局 flags 哈希而使所有包的 BuildKey 失效，无需在 `SetOnApply` 里手写宏字符串。
+
+| 类型 | 默认宏 | -D 内容 |
+|------|--------|---------|
+| Bool true | `CONFIG_<NAME>` | `-DCONFIG_<NAME>=1` |
+| Bool false | 同上 | 不生成 |
+| Int | 同上 | `-DCONFIG_<NAME>=<value>` |
+| String | 同上 | `-DCONFIG_<NAME>="<value>"` |
+| Choice | `CONFIG_<NAME>` + `CONFIG_<NAME>_<VALUE>` | 两条 |
+
+`SetMacroName(name)` 可覆盖宏名：普通名字整体替换默认名；包含 `%s`/`%v` 时把选项值渲染进宏名（`SetMacroName("PY32F539xx%s")` + 值 `M` → `-DPY32F539xxM=1`），且只生成渲染后的宏。`SetMacroName` 仅对全局选项有效。
+
+`mode`、`toolchain`、`target_os`、`target_triple` 默认不导出，显式 `SetMacroName` 可让其导出。两个全局选项生成同名宏但取值不同时，配置阶段报错；取值相同则去重。
+
+```go
+p.OnConfig(func(ctx *api.ConfigContext) {
+    ctx.GlobalOption("cpu_clock_hz").SetType(api.OptionInt).SetDefault(416000000)
+    ctx.GlobalOption("mcu").SetType(api.OptionChoice).
+        SetDefault("py32f539").SetValues("py32f539")
+    ctx.GlobalOption("variant").SetType(api.OptionChoice).
+        SetDefault("M").SetValues("G", "L", "M").
+        SetMacroName("PY32F539xx%s")
+})
+```
+
+`vmake config --set variant=L` 后，每个包获得：
+
+```
+-DCONFIG_CPU_CLOCK_HZ=416000000
+-DCONFIG_MCU="py32f539" -DCONFIG_MCU_PY32F539=1
+-DPY32F539xxL=1
+```
+
+这是全局投影，与包内 `GenerateConfigDefines` 的展开相互独立；依赖其他选项的复杂条件（如 `wifi || ble` 才定义某宏）仍可把两个选项导出为同名宏（同值去重），或使用 `SetOnApply`。
+
+包级 entry（`entries.<pkg>.options`）里为全局选项保留的显式值在该包内仍然优先于全局值，但导出的宏始终使用全局值；把选项从包级迁移为全局时应删除旧的包级值。导出宏按所有已加载包声明的全局选项生成，不受 `FilterDeps` 裁剪影响（与全局选项本身的语义一致）。
+
 ## 工具函数
 
 ### 文件复制 (`pkg/api/copy.go`)
@@ -1136,7 +1175,7 @@ printf("size=%d\n", CONFIG_BUFFER_SIZE);
 | String | `CONFIG_<NAME>` | `#define CONFIG_<NAME> "<value>"` | `-DCONFIG_<NAME>="<value>"` |
 | Choice | `CONFIG_<NAME>` + `CONFIG_<NAME>_<VALUE>` | `#define` 两个宏 | `-D` 两个宏 |
 
-宏名称规则：`CONFIG_` + 选项名大写 + `-` 替换为 `_`。全局选项（`mode`、`toolchain`）不导出。
+宏名称规则：`CONFIG_` + 选项名大写 + `-` 替换为 `_`。全局选项不参与本包生成：自定义全局选项由全局导出机制统一生成，见「全局选项自动导出 CONFIG_ 宏」。
 
 ### 注意事项
 

@@ -156,6 +156,7 @@ func collectAllOptionsAndKConfigs(ctx *RuntimeContext) error {
 func applyAllConfigCallbacks(ctx *RuntimeContext) {
 	vlog.Info("")
 	vlog.Info("Applying configuration...")
+	globalVals := config.BuildGlobalValues(ctx.Config)
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if node.Pkg == nil {
@@ -175,7 +176,16 @@ func applyAllConfigCallbacks(ctx *RuntimeContext) {
 		entry := config.GetEntry(ctx.Config, name)
 		applyCtx := api.NewConfigContextWithPackage(name, node.Pkg)
 		applyCtx.SetOptions(opts)
-		applyCtx.SetCfgVals(entry.Options)
+		applyVals := make(map[string]any, len(entry.Options)+len(globalVals))
+		for optName, val := range globalVals {
+			if opt, declared := opts[optName]; declared && opt.IsGlobal() {
+				applyVals[optName] = val
+			}
+		}
+		for optName, val := range entry.Options {
+			applyVals[optName] = val
+		}
+		applyCtx.SetCfgVals(applyVals)
 		applyCtx.SetGlobalCFlagsFunc(func(flags ...string) {
 			buf.cFlags = append(buf.cFlags, flags...)
 		})
@@ -199,7 +209,7 @@ func applyAllConfigCallbacks(ctx *RuntimeContext) {
 			if opt.OnApply() == nil {
 				continue
 			}
-			val, ok := entry.Options[optName]
+			val, ok := applyVals[optName]
 			if !ok || val == nil {
 				val = opt.Default()
 			}
@@ -226,7 +236,61 @@ func applyGlobalFlagsFromNeeded(ctx *RuntimeContext, needed map[string]bool) {
 		ldflags = append(ldflags, buf.ldFlags...)
 		links = append(links, buf.links...)
 	}
+	for _, define := range ctx.GlobalMacroDefines {
+		cflags = append(cflags, "-D"+define)
+		cxxflags = append(cxxflags, "-D"+define)
+	}
 	mgr.SetProjectFlags(cflags, cxxflags, ldflags, links)
+}
+
+var globalMacroExcluded = map[string]bool{
+	api.ModeOptionName:         true,
+	api.ToolchainOptionName:    true,
+	api.TargetOSOptionName:     true,
+	api.TargetTripleOptionName: true,
+}
+
+func collectGlobalMacroDefines(opts map[string]*api.Option, vals map[string]any) ([]string, error) {
+	names := make([]string, 0, len(opts))
+	for name := range opts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var defines []string
+	definesByName := make(map[string]string)
+	owners := make(map[string]string)
+	for _, name := range names {
+		opt := opts[name]
+		if globalMacroExcluded[name] && opt.MacroName() == "" {
+			continue
+		}
+		val, ok := vals[name]
+		if !ok || val == nil {
+			val = opt.Default()
+		}
+		if val == nil {
+			continue
+		}
+		val = api.NormalizeOptionValue(opt, val)
+		optionDefines, err := opt.MacroDefines(val)
+		if err != nil {
+			return nil, err
+		}
+		for _, define := range optionDefines {
+			macro, _, _ := strings.Cut(define, "=")
+			if prev, exists := definesByName[macro]; exists {
+				if prev != define {
+					return nil, fmt.Errorf("global macro %s conflicts between options %s and %s (%q vs %q)", macro, owners[macro], name, prev, define)
+				}
+				continue
+			}
+			definesByName[macro] = define
+			owners[macro] = name
+			defines = append(defines, define)
+		}
+	}
+	sort.Strings(defines)
+	return defines, nil
 }
 
 func buildToolchainAndGlobalOptions(ctx *RuntimeContext) error {
@@ -244,6 +308,14 @@ func buildToolchainAndGlobalOptions(ctx *RuntimeContext) error {
 	if err != nil {
 		return fmt.Errorf("global options error: %w", err)
 	}
+	values := config.BuildGlobalValues(ctx.Config)
+	values[api.ModeOptionName] = ResolveMode(ctx.Config, ctx.ModeOverride)
+	values[api.ToolchainOptionName] = ResolveToolchainName(ctx.Config, ctx.ToolchainOverride)
+	defines, err := collectGlobalMacroDefines(ctx.GlobalOptions, values)
+	if err != nil {
+		return fmt.Errorf("global option macro export: %w", err)
+	}
+	ctx.GlobalMacroDefines = defines
 	return nil
 }
 

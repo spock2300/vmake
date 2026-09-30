@@ -161,6 +161,92 @@ func TestMergeMapNoOverwrite(t *testing.T) {
 	}
 }
 
+func TestOptionMacroDefinesDefaults(t *testing.T) {
+	tests := []struct {
+		name string
+		opt  *Option
+		val  any
+		want []string
+	}{
+		{"bool true", &Option{name: "debug", optType: OptionBool}, true, []string{"CONFIG_DEBUG=1"}},
+		{"bool false", &Option{name: "debug", optType: OptionBool}, false, nil},
+		{"int", &Option{name: "size", optType: OptionInt}, float64(42), []string{"CONFIG_SIZE=42"}},
+		{"string", &Option{name: "label", optType: OptionString}, "board-a", []string{`CONFIG_LABEL="board-a"`}},
+		{"choice", &Option{name: "mcu", optType: OptionChoice}, "py32f539", []string{
+			`CONFIG_MCU="py32f539"`, "CONFIG_MCU_PY32F539=1",
+		}},
+		{"dashes", &Option{name: "tick-hz", optType: OptionInt}, 1000, []string{"CONFIG_TICK_HZ=1000"}},
+	}
+	for _, tt := range tests {
+		got, err := tt.opt.MacroDefines(tt.val)
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		if len(got) != len(tt.want) || (len(tt.want) > 0 && !reflect.DeepEqual(got, tt.want)) {
+			t.Errorf("%s: got %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestOptionMacroDefinesCustomName(t *testing.T) {
+	opt := &Option{name: "wifi", optType: OptionBool, macroName: "CONFIG_FIRMWARE_RADIO"}
+	got, err := opt.MacroDefines(true)
+	if err != nil || !reflect.DeepEqual(got, []string{"CONFIG_FIRMWARE_RADIO=1"}) {
+		t.Errorf("enabled: got %v, %v", got, err)
+	}
+	got, err = opt.MacroDefines(false)
+	if err != nil || len(got) != 0 {
+		t.Errorf("disabled: got %v, %v", got, err)
+	}
+}
+
+func TestOptionMacroDefinesTemplate(t *testing.T) {
+	opt := &Option{name: "variant", optType: OptionChoice, macroName: "PY32F539xx%s"}
+	got, err := opt.MacroDefines("M")
+	if err != nil || !reflect.DeepEqual(got, []string{"PY32F539xxM=1"}) {
+		t.Errorf("got %v, %v", got, err)
+	}
+	if _, err := opt.MacroDefines("M-1"); err == nil {
+		t.Error("expected invalid rendered macro name error")
+	}
+}
+
+func TestValidateOptionMacroName(t *testing.T) {
+	local := &Option{name: "flag", optType: OptionBool, macroName: "CONFIG_FLAG"}
+	if err := ValidateOption(local); err == nil {
+		t.Error("SetMacroName on a package option should fail")
+	}
+	global := &Option{name: "flag", optType: OptionBool, group: GroupGlobal, macroName: "CONFIG_FLAG"}
+	if err := ValidateOption(global); err != nil {
+		t.Errorf("global option: %v", err)
+	}
+	bad := &Option{name: "flag", optType: OptionBool, group: GroupGlobal, macroName: "CONFIG-FLAG"}
+	if err := ValidateOption(bad); err == nil {
+		t.Error("invalid C identifier should fail")
+	}
+	tmpl := &Option{
+		name: "variant", optType: OptionChoice, group: GroupGlobal,
+		macroName: "PY32F539xx%s", values: []string{"G", "L", "M"},
+	}
+	if err := ValidateOption(tmpl); err != nil {
+		t.Errorf("choice template: %v", err)
+	}
+	broken := &Option{
+		name: "variant", optType: OptionChoice, group: GroupGlobal,
+		macroName: "PY32F539xx%s", values: []string{"M-1"},
+	}
+	if err := ValidateOption(broken); err == nil {
+		t.Error("choice value rendering an invalid macro name should fail")
+	}
+}
+
+func TestOptionMacroDefinesRejectsInvalidChoiceMacro(t *testing.T) {
+	opt := &Option{name: "platform", optType: OptionChoice}
+	if _, err := opt.MacroDefines("v1.2"); err == nil {
+		t.Error("choice value producing an invalid derived macro name should fail")
+	}
+}
+
 func contains(slice []string, want string) bool {
 	for _, s := range slice {
 		if s == want {

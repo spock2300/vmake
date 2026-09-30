@@ -1,6 +1,6 @@
 # Config Options → C Compiler Defines
 
-There are **three mechanisms** for mapping config options to `-D` compiler flags, plus `GenerateConfigHeader()` when you want the configuration in an `autoconf.h` header instead.
+There are **four mechanisms** for mapping config options to `-D` compiler flags, plus `GenerateConfigHeader()` when you want the configuration in an `autoconf.h` header instead.
 Pick the right one based on **macro naming** and **scope**.
 
 ## Prerequisites
@@ -16,6 +16,7 @@ Pick the right one based on **macro naming** and **scope**.
 | `GenerateConfigDefines()` | All targets in this package | Auto: `-DCONFIG_<NAME>=<value>` (bool true → `=1`, string → quoted; disabled bool → no define) | You control both option names and C code (`#if CONFIG_FOO`) |
 | `OnBuild` + `ctx.Bool()` + `AddDefines` | One target (in this package) | Manual: any name | Third-party library expects specific names (e.g., lwIP wants `LWIP_PERF`, not `CONFIG_LWIP_PERF`) |
 | `SetOnApply` + `AddGlobalCFlags` | Global (all packages) | Manual: any name | Architecture-wide flags all packages need (e.g., `-DAIC8800M40`) |
+| `GlobalOption(...)` auto-export | Global (all packages) | Auto: `-DCONFIG_<NAME>=<value>`; rename with `SetMacroName` | Platform contracts and feature switches everyone must see, value driven by configuration |
 
 For the same automatic `CONFIG_*` macros as `GenerateConfigDefines` but from imported packages, see `examples/config-propagate.md`.
 
@@ -65,7 +66,7 @@ Content rules (same option collection as `GenerateConfigDefines`, driven by `Con
 - Int → `#define CONFIG_X 42`; String/Choice → `#define CONFIG_X "value"`
 - Choice additionally emits `#define CONFIG_X_VALUE 1` (uppercase, `-` → `_`)
 - An option with neither a configured value nor a `SetDefault` is skipped entirely (not even an `#undef` comment)
-- `Group("Global")` options (including `mode`/`toolchain` and `ctx.GlobalOption`) are excluded
+- `Group("Global")` options (including `mode`/`toolchain` and `ctx.GlobalOption`) are excluded from the header; custom global options are exported globally as `-D` instead (see Mechanism 4)
 
 ### Macro table
 
@@ -143,16 +144,16 @@ The `debug` build mode already injects `-O0 -g`, so don't repeat optimization/de
 
 ## Mechanism 3: SetOnApply + AddGlobalCFlags — Global Flags
 
-When a flag must be visible to **all packages** in the build, use `SetOnApply` with `AddGlobalCFlags`. The callback fires when config is resolved; you receive the resolved value and inject global compiler flags.
+When a flag must be visible to **all packages** in the build, use `SetOnApply` with `AddGlobalCFlags`. The callback fires when config is resolved; you receive the resolved value and inject global compiler flags. Reserve this for real flags (architecture/ABI, link options); for plain `CONFIG_*` macros use Mechanism 4.
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {
-	ctx.Option("cpu_clock_hz").SetType(api.OptionChoice).
-		SetDefault("160000000").
-		SetValues("240000000", "160000000", "80000000").
-		SetDescription("CPU clock frequency").
+	ctx.Option("cpu").SetType(api.OptionChoice).
+		SetDefault("cortex-m4").
+		SetValues("cortex-m4", "cortex-m52").
+		SetDescription("Target CPU core").
 		SetOnApply(func(ctx *api.ConfigContext, val any) {
-			ctx.AddGlobalCFlags("-DCONFIG_CPU_CLOCK_HZ=" + val.(string))
+			ctx.AddGlobalCFlags("-mcpu="+val.(string), "-mthumb")
 		})
 })
 ```
@@ -160,6 +161,39 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 Global flags apply to ALL targets in ALL packages. They are appended in declaration order (duplicates are preserved — no deduplication), buffered per package (flags from packages pruned by `FilterDeps` never leak), and their changes rebuild artifacts (global flags are part of the BuildKey). Use sparingly — prefer Mechanism 1 or 2 unless the flag truly needs cross-package visibility.
 
 **Note**: `val` inside `SetOnApply` is already typed to the declared option type (`string` for Choice) — no `float64` conversion needed for Int options either.
+
+## Mechanism 4: GlobalOption Auto-Export — Global CONFIG_ Macros
+
+Declare a global option in `OnConfig`; vmake exports it to **every package** as `CONFIG_<NAME>` automatically, using the resolved configuration value. This replaces the `SetOnApply` + `AddGlobalCFlags` pair whenever the thing being exported is a macro — the value follows the configuration, so nothing is hardcoded in build.go.
+
+```go
+p.OnConfig(func(ctx *api.ConfigContext) {
+	ctx.GlobalOption("cpu_clock_hz").SetType(api.OptionInt).SetDefault(416000000)
+	ctx.GlobalOption("mcu").SetType(api.OptionChoice).
+		SetDefault("py32f539").SetValues("py32f539")
+	ctx.GlobalOption("variant").SetType(api.OptionChoice).
+		SetDefault("M").SetValues("G", "L", "M").
+		SetMacroName("PY32F539xx%s")   // value rendered into the macro name
+})
+```
+
+With the defaults, every package's compile command contains `-DCONFIG_CPU_CLOCK_HZ=416000000`, `-DCONFIG_MCU="py32f539"`, `-DCONFIG_MCU_PY32F539=1`, and `-DPY32F539xxM=1`. Running `vmake config --set variant=L` changes the last macro to `-DPY32F539xxL=1` and invalidates the BuildKey, so all packages rebuild against the new value.
+
+Value rules match `GenerateConfigDefines`:
+
+| Option kind | Value | Emitted |
+|---|---|---|
+| Bool | true | `-DCONFIG_X=1` |
+| Bool | false | (none) |
+| Int | 42 | `-DCONFIG_X=42` |
+| String | `"uart0"` | `-DCONFIG_X="uart0"` |
+| Choice | `"fast"` | `-DCONFIG_X="fast"` + `-DCONFIG_X_FAST=1` |
+
+- `SetMacroName("NAME")` replaces the default name entirely; when the name contains `%s`/`%v`, the option value is rendered into it (`PY32F539xx%s` + `M` → `PY32F539xxM=1`) and only that macro is emitted.
+- `mode`, `toolchain`, `target_os`, `target_triple` are skipped by default; `SetMacroName` opts them in.
+- `SetMacroName` is only valid on global options (`ctx.GlobalOption`); using it on a package option is a validation error.
+- Two global options producing the same macro with different values abort the configuration phase; identical definitions are deduplicated.
+- A package-level value left in `entries.<pkg>.options` for a global option still wins inside that package, but the exported macro always uses the global value; remove stale entry values when moving an option to `GlobalOption`.
 
 ## Reading Config Values
 
@@ -261,7 +295,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 Fix: read resolved values in `OnBuild`/`OnInstall`/`OnClean`, or react with `SetOnApply`.
 
 **Confusing scope of `GenerateConfigDefines`**:
-- `GenerateConfigDefines()` emits `-D` flags for the current package's targets only. It does NOT propagate to dependent packages automatically. For that, the dependent package must call `ImportConfig` then `GenerateConfigDefines` (or `SyncConfigDefines`), and `autoconf.h` never crosses package boundaries. Global options are excluded from generated defines entirely.
+- `GenerateConfigDefines()` emits `-D` flags for the current package's targets only. It does NOT propagate to dependent packages automatically. For that, the dependent package must call `ImportConfig` then `GenerateConfigDefines` (or `SyncConfigDefines`), and `autoconf.h` never crosses package boundaries. Global options are excluded from per-package generated defines; custom global options are auto-exported to every package as `-DCONFIG_*` instead (Mechanism 4).
 
 ## See Also
 
