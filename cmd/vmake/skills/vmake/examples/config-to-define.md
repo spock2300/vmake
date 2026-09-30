@@ -270,4 +270,5 @@ Fix: read resolved values in `OnBuild`/`OnInstall`/`OnClean`, or react with `Set
 - **examples/config-propagate.md** — Cross-package config propagation with ImportConfig/SyncConfigDefines
 - Option types, SetOnApply, accessor rules — `SKILL.md - Option & Conditional`
 - The Choice primary + secondary macro pair — `SKILL.md - OptionChoice Generates Dual Macros`
+- The general `CONFIG_` naming rule — `SKILL.md - Generated Defines Always Use the CONFIG_ Prefix`
 - Frequent build.go errors — `SKILL.md - Common Mistakes`

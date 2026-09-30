@@ -41,7 +41,7 @@ include the ones your project needs:
 - **New project, no options, no deps** → Only `OnBuild`. Run `vmake doctor` to check the host toolchain, then start from `examples/simple.md`.
 - **Need configurable features** → Add `OnConfig`. See `examples/config.md`.
 - **Conditional compilation** → Options + `ctx.If()`/`ctx.Select()`. See `examples/conditional.md`.
-- **Config options → C compiler defines (-D flags)** → Three mechanisms. See `examples/config-to-define.md`.
+- **Config options → C compiler defines (auto `-DCONFIG_*` or `autoconf.h`)** → Three mechanisms. See `examples/config-to-define.md`.
 - **Multiple targets (lib + binary + tests)** → See `examples/multi-target.md`.
 - **Run tests** → `SetTest(true)` targets + `vmake test` on host targets, or `vmake build --tests` for cross/bare-metal. See `examples/multi-target.md`.
 - **Multi-module workspace (lib/ + app/ directories)** → See `examples/multi-module.md`.
@@ -184,6 +184,10 @@ Script-facing contexts (`OnConfig`/`OnBuild`/`OnInstall`/`OnClean`/`OnRequire`) 
 Two related rules:
 - **Pass 2 must never introduce a package that pass 1 did not see.** Removing a dependency in pass 2 replaces the edge and prunes it; adding one (e.g. a guard that was false under defaults) is a build error — hoist the unconditional `AddRequires` out of the guard.
 - `When` compares numerics across `int`/`float64` (JSON round-trips decode numbers as `float64`); `Select` returns `""` and `When` returns `true` while config is still nil during discovery.
+
+### Generated macros are CONFIG_-prefixed, not the raw option name
+
+`GenerateConfigDefines` / `GenerateConfigHeader` always emit `CONFIG_<OPTION_NAME>` (uppercased, `-` → `_`): an option `debug` becomes `-DCONFIG_DEBUG=1`, so C code checks `#if CONFIG_DEBUG`, not `#if DEBUG`. A disabled bool emits no `-D` at all. When C code needs another name, read the option and call `AddDefines` manually. See **Generated Defines Always Use the CONFIG_ Prefix** above.
 
 ### Script-relative file IO
 
@@ -493,6 +497,18 @@ ctx.Option("trace").SetType(api.OptionBool).SetDefault(false).
 ```
 
 - `SetOnApply(fn)` — callback invoked once per build after all option values are resolved (in sorted option-name order), receives `*ConfigContext` and `val any` **normalized to the declared type** (`bool` for OptionBool, `int` for OptionInt, `string` for OptionString/OptionChoice — `api.NormalizeOptionValue` converts JSON `float64` to `int` before the call). The callback's context carries real option values, so reading other options inside it works. Used to react to options (set global flags, choose linker script based on chip).
+
+### Generated Defines Always Use the CONFIG_ Prefix
+
+`GenerateConfigDefines()` and `GenerateConfigHeader()`, called in `OnBuild`, derive every macro name from the option name: the emitted name is always `CONFIG_<OPTION_NAME>` — the option name uppercased, with `-` replaced by `_` (option `debug` → `CONFIG_DEBUG`, option `tick-hz` → `CONFIG_TICK_HZ`). The bare option name is never emitted, so C code must check `#if CONFIG_DEBUG` / `#ifdef CONFIG_DEBUG`. Call position within `OnBuild` does not matter: the macros are applied to every target of this package after the callbacks have run.
+
+- Bool true → `-DCONFIG_X=1`; bool false → no `-D` flag at all (in `autoconf.h`: `/* #undef CONFIG_X */`)
+- Int → `-DCONFIG_X=42`; String/Choice → `-DCONFIG_X="value"` (the quotes are part of the argv element)
+- An option with no configured value and no `SetDefault` is skipped entirely
+- Global options (`mode`, `toolchain`, and `GlobalOption(...)` declarations) are excluded
+- Options merged in via `ImportConfig()`/`SyncConfigDefines()` use the same prefix
+
+If C code expects a different name, read the option in `OnBuild` and emit the define manually, e.g. `target.AddDefines("DEBUG=1")` guarded by `ctx.Bool("debug")`. See `examples/config-to-define.md` for the full value table and the three config→define mechanisms.
 
 ### OptionChoice Generates Dual Macros
 
