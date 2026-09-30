@@ -103,8 +103,8 @@ int main(void) { return probe_value() + probe_cpp() > 0 ? 0 : 1; }
     if default_mode:
         flags += '\nctx.GlobalMode()'
     if arm:
-        flags += '\nctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString).SetDefault("none")'
-        flags += '\nctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString).SetDefault("arm-none-eabi")'
+        flags += '\nctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString)'
+        flags += '\nctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString)'
         flags += '\nctx.AddGlobalCFlags("-mcpu=cortex-m4", "-mthumb")\nctx.AddGlobalCxxFlags("-mcpu=cortex-m4", "-mthumb")'
     configure = ["--preset=probe"] if preset else ["-G", generator]
     if generator == "Ninja Multi-Config":

@@ -79,7 +79,7 @@ func runConfig(cmd *cobra.Command, args []string) {
 		deps[name] = node.Deps
 	}
 
-	result, err := tui.Run(sources, deps, ctx.AllOptions, values, ctx.WorkDir, currentTC, ctx.GlobalOptions, globalValues, ctx.AllKConfigs, ctx.Config.Description)
+	result, err := tui.Run(sources, deps, ctx.AllOptions, values, ctx.WorkDir, currentTC, ctx.GlobalOptions, globalValues, ctx.AllKConfigs, ctx.Config.Description, pipeline.ToolchainTargetDefaults)
 	fatalErr(err)
 
 	if !result.Saved {

@@ -38,9 +38,11 @@ func Run(
 	globalValues map[string]any,
 	kconfigs map[string][]*api.KConfigEntry,
 	description string,
+	displayDefaults func(toolchain string) map[string]any,
 ) (*ConfigResult, error) {
 	m := NewModel(packages, deps, options, values, workDir, currentToolchain, globalOptions, globalValues, kconfigs)
 	m.description = description
+	m.displayDefaults = displayDefaults
 	m.origDescription = description
 	p := tea.NewProgram(&m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
@@ -699,6 +701,9 @@ func (m *Model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		m.editing = false
+		if m.editInput == fmt.Sprintf("%v", m.getValue(item.Name)) {
+			return m, nil
+		}
 		switch item.Opt.Type() {
 		case api.OptionString:
 			m.setValue(item.Name, m.editInput)
@@ -1256,8 +1261,7 @@ func (m *Model) renderOptionAligned(item OptionItem, selected bool, nameW, valW 
 
 	shownDesc := desc
 	if m.editing && selected {
-		def := item.Opt.Default()
-		if def != nil {
+		if def := m.defaultFor(item.Name); def != nil {
 			shownDesc = fmt.Sprintf("(default: %v)", def)
 		}
 	}
@@ -1388,7 +1392,7 @@ func (m *Model) renderDetailOverlay() string {
 		return m.renderDetailDialog(confirmMsgStyle.Render(m.text(textNoDetails)))
 	}
 	cur := m.getValue(m.choiceOpt)
-	def := opt.Default()
+	def := m.defaultFor(m.choiceOpt)
 
 	type kv struct{ k, v string }
 	rows := []kv{

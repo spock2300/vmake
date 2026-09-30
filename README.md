@@ -51,11 +51,12 @@ Run `vmake doctor` to check all of the above; it reports the status of symlinks,
 Git userland, `make` and the selected C toolchain. Use `vmake doctor --toolchain NAME`
 to diagnose a specific toolchain.
 
-Toolchains describe only which programs to run; the target platform belongs to the
-project. `build.go` declares the global options `target_os` (bare metal: `none`)
-and `target_triple` (e.g. `arm-none-eabi`), and owns the matching CPU/ABI flags.
-The target OS controls output naming, linker flags and CMake settings
-independently of the host OS.
+Toolchains describe which programs to run; they may also declare `target_os`
+(bare metal: `none`) and `target_triple` (e.g. `arm-none-eabi`) defaults. The
+project declares those global options when it wants to see or override them, and
+owns the matching CPU/ABI flags; explicit project values always win over the
+toolchain defaults. The target OS controls output naming, linker flags and CMake
+settings independently of the host OS.
 `vmake test` runs native test binaries; use `vmake build --tests` for cross-compiled
 test targets. `vmake check-symbols` can inspect ELF dynamic symbols on either host
 using the selected toolchain's `nm`; PE files and ELF files without a dynamic

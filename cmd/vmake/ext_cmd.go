@@ -76,6 +76,9 @@ func runExtList(cmd *cobra.Command, args []string) {
 		}
 		for _, def := range defs {
 			fmt.Printf("    Compiler: %s (%s)\n", def.Name, def.Version)
+			if def.TargetOS != "" || def.TargetTriple != "" {
+				fmt.Printf("    Targets:  os=%s triple=%s\n", def.TargetOS, def.TargetTriple)
+			}
 		}
 	}
 	plugins, err := mgr.DiscoverPlugins()

@@ -71,7 +71,7 @@ CGO_ENABLED=0 go build -o vmake ./cmd/vmake
 
 ## Cross-platform constraints
 
-- Artifact names and linker/CMake behavior follow the project's `target_os`, not the host. Bare-metal uses `none`; the compiler triple is the project option `target_triple` / `Package.TargetTriple()`. Toolchain manifests carry no target or default flags: `target_os`/`target_triple`/`default_flags` are rejected there. They use host-keyed `installations` with explicit `root_dir`; legacy `host`/`install` fields are rejected too.
+- Artifact names and linker/CMake behavior follow the project's `target_os`, not the host. Bare-metal uses `none`; the compiler triple is the project option `target_triple` / `Package.TargetTriple()`. Toolchain manifests may declare `target_os`/`target_triple` defaults that apply only while the project leaves them unset; `default_flags` stays rejected there. They use host-keyed `installations` with explicit `root_dir`; legacy `host`/`install` fields are rejected too.
 - Configured tools resolve strictly: installation-relative tools stay under that installation's `bin`, with no PATH fallback. Preserve definition errors rather than selecting the host toolchain. Unset MAKE is resolved only when make is needed; explicitly configured MAKE is validated.
 - Route git invocations through `internal/gitcmd.Args` to preserve LF content, long paths, and symlink settings. Use `filepath.ToSlash` for path arguments sent to MSYS `sh`/`make`/`tar`/`curl`; native `cmd.Dir` retains OS separators.
 - Windows storage requires real symlinks (Developer Mode or elevation); do not substitute junctions. Git for Windows supplies Unix userland, not a C compiler or make. Diagnose a fixture with `../../vmake.exe doctor --toolchain NAME` from its project directory.

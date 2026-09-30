@@ -103,7 +103,7 @@ When writing build.go that must also work on Windows:
 - `p.CMakeConfigure(...)`, `p.CMakeBuild(...)`, and `p.CMakeInstall(...)` pass resolved tools
   and normalized paths. Windows defaults to Ninja unless a generator or configure preset is explicit;
   install CMake and the selected generator. Use these helpers for CMake projects.
-- Artifact names are decided by the project's **target OS** (the `target_os` global option; host OS when unset), not by the host toolchain:
+- Artifact names are decided by the resolved **target OS** (the `target_os` global option, falling back to a toolchain default and then the host OS), not by the host toolchain:
   `TargetBinary` → `.exe`, `TargetShared` → `.dll` (+ import library `lib<name>.dll.a`, which is
   what consumers link against on PE targets). Use `api.TargetFilename(kind, name, targetOS)` if you
   need to compute one.
@@ -544,24 +544,24 @@ There is no merging of definitions: only `Type` and `Default` are validated for 
 
 The builtin `host` toolchain contributes default C/C++/linker flags (hardening, warnings, `-ffunction-sections`), selected by the project's `target_os`. They are injected as the **base** of every new target — when you call `ctx.Target("app")`, the target's initial CFlags/CxxFlags/LdFlags are set from those defaults. Calling `AddCFlags(...)` appends to this base.
 
-Toolchains declared by extensions contribute no default flags: `toolchain.json` describes which programs to run, not which CPU to target. A cross-compiling project supplies its own `-mcpu`/`-mthumb`/`--specs=` through `ctx.AddGlobalCFlags` / `AddGlobalLdFlags` in `OnConfig`, or per target with `AddCFlags`/`AddLdFlags`.
+Toolchains declared by extensions contribute no default CPU flags: `toolchain.json` describes which programs to run, not which CPU to target. They may declare `target_os`/`target_triple` defaults, which apply only while the project leaves those options unset. A cross-compiling project supplies its own `-mcpu`/`-mthumb`/`--specs=` through `ctx.AddGlobalCFlags` / `AddGlobalLdFlags` in `OnConfig`, or per target with `AddCFlags`/`AddLdFlags`.
 
 ## Cross-Compiling
 
-Declare the target platform as project global options in `OnConfig`, then select the toolchain with `--toolchain`:
+Declare the target platform as project global options in `OnConfig`, then select the toolchain with `--toolchain`. Values are resolved as: user configuration → project default → toolchain default → empty, so a toolchain that declares `target_os`/`target_triple` lets the declaration stay value-free:
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {
-    ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString).SetDefault("none")
-    ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString).SetDefault("arm-none-eabi")
+    ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString)   // toolchain default, e.g. "none"
+    ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString) // toolchain default
     ctx.AddGlobalCFlags("-mcpu=cortex-m4", "-mthumb", "-ffunction-sections", "-fdata-sections", "--specs=nosys.specs")
     ctx.AddGlobalLdFlags("-mcpu=cortex-m4", "-mthumb", "--specs=nosys.specs", "-Wl,--gc-sections")
 })
 ```
 
-- `target_os="none"` means bare metal; `TargetOS()`/`TargetTriple()` read the resolved values, and artifact names follow the target OS via `TargetFilename(kind, name, target_os)` (or `ExtFor`/`PrefixFor`).
+- `target_os="none"` means bare metal; empty values count as unset and fall back to the project default and then the toolchain default. Use an explicit `"host"` for the host system, and select `toolchain=host` (or a toolchain without target defaults) to clear a toolchain-provided triple. `TargetOS()`/`TargetTriple()` read the resolved values, and artifact names follow the target OS via `TargetFilename(kind, name, target_os)` (or `ExtFor`/`PrefixFor`).
 - Register toolchain repositories with `vmake ext add <name> <git-url>`; their `toolchain.json` files are scanned and installed for the host automatically (authoring: `docs/EXTENSION_PLUGIN.md`). `vmake toolchain list` shows what is available.
-- List toolchains with `vmake toolchain list` / `vmake toolchain show <name>`; select per invocation with `--toolchain <name>`, or per package via `ctx.ToolchainOption()`. Toolchains contributed by extensions carry no target defaults — supply `-mcpu`/`-mthumb`/`--specs` yourself.
+- List toolchains with `vmake toolchain list` / `vmake toolchain show <name>`; select per invocation with `--toolchain <name>`, or per package via `ctx.ToolchainOption()`. Toolchains contributed by extensions may declare `target_os`/`target_triple` defaults, but never CPU/ABI flags — supply `-mcpu`/`-mthumb`/`--specs` yourself. The `vmake config` TUI shows toolchain-provided defaults for declared but unset options.
 - Validate a cross setup with `vmake doctor --toolchain <name>`.
 - Cross/bare-metal tests cannot execute: `vmake test` refuses non-host targets; use `vmake build --tests`.
 - For bare-metal linking (libc, crt0, `-nostdlib`, `EXTERN`), see `examples/embedded-rtos.md` and `references/gotchas.md`.

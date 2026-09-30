@@ -27,6 +27,8 @@ type ToolchainDef struct {
 	Version       string                   `json:"version"`
 	DisplayName   string                   `json:"display_name"`
 	Prefix        string                   `json:"prefix"`
+	TargetOS      string                   `json:"target_os"`
+	TargetTriple  string                   `json:"target_triple"`
 	Tools         Tools                    `json:"tools"`
 	Installations map[string]InstallConfig `json:"installations"`
 }
@@ -70,7 +72,7 @@ func LoadToolchainDef(path string) (*ToolchainDef, error) {
 			return nil, &DefinitionError{name: name, path: path, err: fmt.Errorf("legacy field %q is unsupported; use installations keyed by host OS/architecture", field)}
 		}
 	}
-	for _, field := range []string{"target_os", "target_triple", "default_flags"} {
+	for _, field := range []string{"default_flags"} {
 		if _, ok := fields[field]; ok {
 			return nil, &DefinitionError{name: name, path: path, err: fmt.Errorf("field %q belongs in build.go project configuration, not toolchain.json", field)}
 		}
@@ -171,11 +173,13 @@ func (d *ToolchainDef) ToToolchain(toolchainsDir string) (*Toolchain, error) {
 		displayName = d.Name
 	}
 	return &Toolchain{
-		Name:        d.Name,
-		DisplayName: displayName,
-		Prefix:      d.Prefix,
-		Tools:       d.Tools,
-		InstallPath: installPath,
+		Name:         d.Name,
+		DisplayName:  displayName,
+		Prefix:       d.Prefix,
+		TargetOS:     d.TargetOS,
+		TargetTriple: d.TargetTriple,
+		Tools:        d.Tools,
+		InstallPath:  installPath,
 	}, nil
 }
 

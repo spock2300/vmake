@@ -753,7 +753,7 @@ func Main(ctx *plugin.Context) {
 
 ### 工具链自动下载
 
-扩展可在子目录中放置 `toolchain.json` 来声明工具链。每个工具链一个文件。工具链只描述使用哪些程序，不描述目标 CPU/ABI，也不携带项目默认编译选项。
+扩展可在子目录中放置 `toolchain.json` 来声明工具链。每个工具链一个文件。工具链描述使用哪些程序，可携带 `target_os`/`target_triple` 目标默认值，但不描述目标 CPU/ABI，也不携带项目默认编译选项。
 
 示例 `arm-gcc/toolchain.json`：
 
@@ -782,7 +782,7 @@ func Main(ctx *plugin.Context) {
 
 `toolchain.Manager.RegisterRepo(repoDir, toolchainsDir)`（`pkg/toolchain/discovery.go`）扫描并注册所有子目录中的 `toolchain.json`，不需要插件参与。含当前宿主 `installations` 条目的工具链自动注册按需安装回调，由 `toolchain.Install`（`pkg/toolchain/install.go`）加锁、校验 SHA256、暂存解压后重命名发布。支持 `method: "lfs"`（Git LFS）和 `method: "http"` 两种下载方式。
 
-`target_os`、`target_triple`、`default_flags` 写进 `toolchain.json` 会被拒绝，它们属于项目配置：`api.Platform` 由全局选项 `target_os` / `target_triple` 解析（`pkg/pipeline/platform.go`），默认编译选项由 `api.DefaultBuildFlags`（`pkg/api/default_flags.go`）在内置 `host` 工具链下提供。
+`default_flags` 写进 `toolchain.json` 会被拒绝，它属于项目配置。`target_os` / `target_triple` 可以由工具链声明为默认值，仅在项目未显式设置时生效：`api.Platform` 由全局选项 `target_os` / `target_triple` 解析（`pkg/pipeline/platform.go`），显式配置 → 项目声明默认 → 工具链默认；默认编译选项由 `api.DefaultBuildFlags`（`pkg/api/default_flags.go`）在内置 `host` 工具链下提供。
 
 源码：`pkg/plugin/`, `cmd/vmake/ext_cmd.go`, `pkg/toolchain/manifest.go`, `pkg/toolchain/discovery.go`, `pkg/toolchain/install.go`
 

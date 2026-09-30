@@ -39,8 +39,6 @@ func TestLoadToolchainDefRejectsLegacyAndIncompleteDefinitions(t *testing.T) {
 	for _, test := range []struct{ name, data, want string }{
 		{"host", `{"name":"arm","target_os":"none","host":"arm-none-eabi"}`, "legacy field \"host\""},
 		{"install", `{"name":"arm","target_os":"none","install":null}`, "legacy field \"install\""},
-		{"target", `{"name":"arm","target_os":"none"}`, "build.go"},
-		{"triple", `{"name":"arm","target_triple":"arm-none-eabi"}`, "build.go"},
 		{"flags", `{"name":"arm","default_flags":{}}`, "build.go"},
 		{"root", `{"name":"arm","version":"1","installations":{"linux/amd64":{"method":"lfs","file":"a.zip"}}}`, "root_dir"},
 		{"version", `{"name":"arm","installations":{"linux/amd64":{"method":"lfs","file":"a.zip","root_dir":"."}}}`, "version"},
@@ -55,6 +53,32 @@ func TestLoadToolchainDefRejectsLegacyAndIncompleteDefinitions(t *testing.T) {
 				t.Fatalf("LoadToolchainDef error = %v, want %s", err, test.want)
 			}
 		})
+	}
+}
+
+func TestLoadToolchainDefTargetDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "toolchain.json")
+	data := `{"name":"arm","target_os":"none","target_triple":"arm-none-eabi"}`
+	if err := os.WriteFile(path, []byte(data), 0644); err != nil {
+		t.Fatal(err)
+	}
+	def, err := LoadToolchainDef(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def.TargetOS != "none" || def.TargetTriple != "arm-none-eabi" {
+		t.Fatalf("target defaults = %q / %q", def.TargetOS, def.TargetTriple)
+	}
+	tc, err := def.ToToolchain("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tc.TargetOS != "none" || tc.TargetTriple != "arm-none-eabi" {
+		t.Fatalf("toolchain target defaults = %q / %q", tc.TargetOS, tc.TargetTriple)
+	}
+	encoded, err := json.Marshal(tc)
+	if err != nil || !strings.Contains(string(encoded), `"target_os":"none"`) || !strings.Contains(string(encoded), `"target_triple":"arm-none-eabi"`) {
+		t.Fatalf("serialized toolchain = %s, %v", encoded, err)
 	}
 }
 
@@ -102,7 +126,7 @@ func TestDefinitionErrorUsesOnlyReliableNames(t *testing.T) {
 	for _, test := range []struct{ data, name string }{
 		{`{"name":"old-arm","host":"arm-none-eabi"}`, "old-arm"},
 		{`{"name":"bad-schema","target_os":"none","unknown":true}`, "bad-schema"},
-		{`{"name":"bad-target","target_os":"none"}`, "bad-target"},
+		{`{"name":"bad-target","target_os":42}`, "bad-target"},
 		{`{"name":"truncated",`, ""},
 		{`{"name":"../invalid","target_os":"none"}`, ""},
 		{`{"name":42,"target_os":"none"}`, ""},

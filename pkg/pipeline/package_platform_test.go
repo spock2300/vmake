@@ -27,14 +27,14 @@ func TestPackagePlatformBeforeTargetDeclaration(t *testing.T) {
 	}{
 		{name: "global default", wantOS: "none", wantTriple: "arm-none-eabi"},
 		{name: "global explicit", global: map[string]any{"target_os": "windows", "target_triple": "mingw"}, wantOS: "windows", wantTriple: "mingw"},
-		{name: "global empty", global: map[string]any{"target_os": "", "target_triple": ""}, wantOS: runtime.GOOS},
-		{name: "global host", global: map[string]any{"target_os": "host", "target_triple": ""}, wantOS: runtime.GOOS},
+		{name: "global empty keeps defaults", global: map[string]any{"target_os": "", "target_triple": ""}, wantOS: "none", wantTriple: "arm-none-eabi"},
+		{name: "global host keeps triple", global: map[string]any{"target_os": "host", "target_triple": ""}, wantOS: runtime.GOOS, wantTriple: "arm-none-eabi"},
 		{name: "local defaults", local: map[string]any{"target_os": "windows", "target_triple": "mingw"}, wantOS: "windows", wantTriple: "mingw"},
 		{name: "local defaults override global values", global: map[string]any{"target_os": "linux", "target_triple": "aarch64-linux-gnu"}, local: map[string]any{"target_os": "windows", "target_triple": "mingw"}, wantOS: "windows", wantTriple: "mingw"},
 		{name: "package explicit", explicit: map[string]any{"target_os": "windows", "target_triple": "mingw"}, wantOS: "windows", wantTriple: "mingw"},
 		{name: "package explicit overrides local defaults", local: map[string]any{"target_os": "windows", "target_triple": "mingw"}, explicit: map[string]any{"target_os": "linux", "target_triple": "aarch64-linux-gnu"}, wantOS: "linux", wantTriple: "aarch64-linux-gnu"},
-		{name: "package explicit empty", explicit: map[string]any{"target_os": "", "target_triple": ""}, wantOS: runtime.GOOS},
-		{name: "package local empty", local: map[string]any{"target_os": "", "target_triple": ""}, wantOS: runtime.GOOS},
+		{name: "package explicit empty keeps defaults", explicit: map[string]any{"target_os": "", "target_triple": ""}, wantOS: "none", wantTriple: "arm-none-eabi"},
+		{name: "package local empty keeps defaults", local: map[string]any{"target_os": "", "target_triple": ""}, wantOS: "none", wantTriple: "arm-none-eabi"},
 		{name: "package nil inherits", explicit: map[string]any{"target_os": nil, "target_triple": nil}, wantOS: "none", wantTriple: "arm-none-eabi"},
 	} {
 		for _, dryRun := range []bool{false, true} {

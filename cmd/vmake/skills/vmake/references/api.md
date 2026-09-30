@@ -185,8 +185,8 @@ own build tree and publish the staged archive through the getter.
 | `CC()` | `string` | C compiler |
 | `CXX()` | `string` | C++ compiler |
 | `AR()` | `string` | Archiver |
-| `TargetTriple()` | `string` | Target triple from the project's `target_triple` global option, e.g. `arm-none-eabi` |
-| `TargetOS()` | `string` | Target OS from the project's `target_os` global option; `none` for bare metal, host OS when unset |
+| `TargetTriple()` | `string` | Resolved target triple (user configuration → project default → toolchain `target_triple` default), e.g. `arm-none-eabi` |
+| `TargetOS()` | `string` | Resolved target OS (same resolution order); `none` for bare metal, host OS when unset |
 | `Prefix()` | `string` | Raw configured toolchain prefix, including the trailing `-`, e.g. `arm-none-eabi-`; does not add the installation path |
 | `CFlags()` / `CXXFlags()` / `LDFlags()` | `string` | Default compiler/linker flags (builtin `host` toolchain only) |
 | `ObjCopy()` | `string` | objcopy tool path |
@@ -500,11 +500,11 @@ Note: without `SetDefault`, the zero value applies (`false` for OptionBool, `""`
 	const TargetOSOptionName     = "target_os"
 	const TargetTripleOptionName = "target_triple"
 
-Cross-compilation projects declare the platform through these global options; artifact names then follow the target OS (`TargetFilename`, `ExtFor`, `PrefixFor`):
+Cross-compilation projects declare the platform through these global options; artifact names then follow the target OS (`TargetFilename`, `ExtFor`, `PrefixFor`). A toolchain may declare `target_os`/`target_triple` defaults in `toolchain.json`; the project's `SetDefault` and user configuration take precedence, and empty values count as unset:
 
 ```go
-ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString).SetDefault("none")
-ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString).SetDefault("arm-none-eabi")
+ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString)
+ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString)
 ```
 
 ---

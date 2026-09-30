@@ -410,13 +410,14 @@ The targets vmake compiles itself (`myapp`, plus any `AddFiles` target in a wrap
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {
+    // Values may stay unset when the selected toolchain declares target_os/target_triple defaults.
     ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString).SetDefault("linux")
     ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString).SetDefault("arm-linux-gnueabihf")
-    ctx.AddGlobalCFlags("-mcpu=cortex-a53") // extension toolchains carry no target defaults
+    ctx.AddGlobalCFlags("-mcpu=cortex-a53") // CPU/ABI flags always come from the project
 })
 ```
 
-KBuild packages (`uboot`, `linux`, `busybox`) inherit the selected toolchain through `pkg.Make()`/`pkg.Env()` (`CROSS_COMPILE`, `CC`, `CXX`, …), so their own Makefiles cross-compile without extra wiring. Toolchains contributed by extensions carry no target defaults — supply CPU flags yourself. See `SKILL.md - Cross-Compiling`.
+KBuild packages (`uboot`, `linux`, `busybox`) inherit the selected toolchain through `pkg.Make()`/`pkg.Env()` (`CROSS_COMPILE`, `CC`, `CXX`, …), so their own Makefiles cross-compile without extra wiring. Toolchains contributed by extensions may carry target defaults but never CPU flags — supply those yourself. See `SKILL.md - Cross-Compiling`.
 
 ## Running / Verifying
 

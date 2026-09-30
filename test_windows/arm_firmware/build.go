@@ -9,8 +9,8 @@ import (
 func Main(p *api.Package) {
 	p.SetRoot(true)
 	p.OnConfig(func(ctx *api.ConfigContext) {
-		ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString).SetDefault("none")
-		ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString).SetDefault("arm-none-eabi")
+		ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString)
+		ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString)
 		ctx.AddGlobalCFlags("-mcpu=cortex-m4", "-mthumb", "-ffunction-sections", "-fdata-sections")
 		ctx.AddGlobalCxxFlags("-mcpu=cortex-m4", "-mthumb", "-ffunction-sections", "-fdata-sections")
 		ctx.AddGlobalLdFlags("-mcpu=cortex-m4", "-mthumb", "--specs=nosys.specs", "-Wl,--gc-sections")

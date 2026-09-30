@@ -141,7 +141,7 @@ func (p *Package) LDFlags() string
 func (p *Package) Env() map[string]string
 ```
 
-`TargetTriple()` 返回项目全局选项 `target_triple` 的值（例如 `arm-none-eabi`）；旧方法 `CrossTarget()` 已移除。目标系统由全局选项 `target_os` 决定，裸机使用 `none`，未声明时取运行 vmake 的主机系统。两者属于项目配置而非工具链，同一个编译器可服务不同目标：
+`TargetTriple()` 返回项目全局选项 `target_triple` 的解析值（例如 `arm-none-eabi`）；旧方法 `CrossTarget()` 已移除。目标系统由全局选项 `target_os` 决定，裸机使用 `none`，空值取运行 vmake 的主机系统。两者按“用户配置 → 项目声明默认值 → 工具链 `toolchain.json` 默认值”的顺序解析，同一个编译器可服务不同目标：
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {
@@ -860,12 +860,12 @@ const (
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {
-    ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString).SetDefault("none")
-    ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString).SetDefault("arm-none-eabi")
+    ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString)
+    ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString)
 })
 ```
 
-`target_os` 决定产物命名、链接策略和 CMake 的 `CMAKE_SYSTEM_NAME`（裸机为 `none`），未设置时取运行 vmake 的主机系统；`target_triple` 提供 `Configure` 的 `--host=` 与 `CMAKE_*_COMPILER_TARGET`。两者都可由 `.vmake/config.json` 的 `global.options` 覆盖，也可在包级配置中针对单个包覆盖。
+声明这两个选项用于在 TUI/`vmake config --set` 中可见和可覆盖，值本身可以留空：工具链 `toolchain.json` 中的 `target_os` / `target_triple` 默认值会填补未设置的值。`target_os` 决定产物命名、链接策略和 CMake 的 `CMAKE_SYSTEM_NAME`（裸机为 `none`），空值取运行 vmake 的主机系统；`target_triple` 提供 `Configure` 的 `--host=` 与 `CMAKE_*_COMPILER_TARGET`。用户配置（`.vmake/config.json` 的 `global.options` 或包级配置）与项目声明的非空默认值均优先于工具链默认值；配置中的空字符串视为未设置，会先落回项目声明的默认值、再落回工具链默认值。
 
 `mode` 选项自动添加编译标志：
 

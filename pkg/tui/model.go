@@ -40,6 +40,8 @@ type Model struct {
 	globalOptions map[string]*api.Option
 	globalValues  map[string]any
 
+	displayDefaults func(toolchain string) map[string]any
+
 	kconfigs map[string][]*api.KConfigEntry
 
 	selectedPkg string
@@ -662,15 +664,28 @@ func (m *Model) buildOptionItems() {
 	m.optItems = groupAndSortOptions(filtered)
 }
 
-func (m *Model) getValue(name string) any {
-	if m.selectedPkg == GlobalPkgName {
-		if v, ok := m.globalValues[name]; ok {
+func (m *Model) effectiveGlobalValue(values map[string]any, name string) any {
+	if v, ok := values[name]; ok && v != "" {
+		return v
+	}
+	if opt, ok := m.globalOptions[name]; ok {
+		if def := opt.Default(); def != nil && def != "" {
+			return def
+		}
+		if def := m.displayFallback(name); def != nil {
+			return def
+		}
+		if v, ok := values[name]; ok {
 			return v
 		}
-		if opt, ok := m.globalOptions[name]; ok {
-			return opt.Default()
-		}
-		return nil
+		return opt.Default()
+	}
+	return nil
+}
+
+func (m *Model) getValue(name string) any {
+	if m.selectedPkg == GlobalPkgName {
+		return m.effectiveGlobalValue(m.globalValues, name)
 	}
 
 	if vals, ok := m.values[m.selectedPkg]; ok {
@@ -931,13 +946,7 @@ func (m *Model) optCountFor(pkgName string) int {
 
 func (m *Model) origValue(name string) any {
 	if m.selectedPkg == GlobalPkgName {
-		if v, ok := m.origGlobal[name]; ok {
-			return v
-		}
-		if opt, ok := m.globalOptions[name]; ok {
-			return opt.Default()
-		}
-		return nil
+		return m.effectiveGlobalValue(m.origGlobal, name)
 	}
 	if vals, ok := m.origValues[m.selectedPkg]; ok {
 		if v, ok := vals[name]; ok {
@@ -957,17 +966,38 @@ func (m *Model) isOptionModified(name string) bool {
 }
 
 func (m *Model) resetOption(name string) {
+	if m.selectedPkg == GlobalPkgName {
+		if value, ok := m.origGlobal[name]; ok {
+			m.setValue(name, value)
+			return
+		}
+		m.clearGlobalValue(name)
+		return
+	}
 	m.setValue(name, m.origValue(name))
 }
 
 func (m *Model) resetOptionToDefault(name string) {
-	def := m.defaultFor(name)
-	if def != nil {
-		m.setValue(name, def)
+	def := m.declaredDefault(name)
+	if m.selectedPkg != GlobalPkgName {
+		if def != nil {
+			m.setValue(name, def)
+		}
+		return
 	}
+	if def != nil && def != "" {
+		m.setValue(name, def)
+		return
+	}
+	m.clearGlobalValue(name)
 }
 
-func (m *Model) defaultFor(name string) any {
+func (m *Model) clearGlobalValue(name string) {
+	delete(m.globalValues, name)
+	m.checkChanges()
+}
+
+func (m *Model) declaredDefault(name string) any {
 	if m.selectedPkg == GlobalPkgName {
 		if opt, ok := m.globalOptions[name]; ok {
 			return opt.Default()
@@ -980,6 +1010,33 @@ func (m *Model) defaultFor(name string) any {
 		}
 	}
 	return nil
+}
+
+func (m *Model) displayFallback(name string) any {
+	if m.displayDefaults == nil {
+		return nil
+	}
+	toolchainName, _ := m.globalValues[api.ToolchainOptionName].(string)
+	if toolchainName == "" {
+		toolchainName = "host"
+	}
+	defaults := m.displayDefaults(toolchainName)
+	if defaults == nil {
+		return nil
+	}
+	return defaults[name]
+}
+
+func (m *Model) defaultFor(name string) any {
+	if def := m.declaredDefault(name); def != nil && def != "" {
+		return def
+	}
+	if m.selectedPkg == GlobalPkgName {
+		if def := m.displayFallback(name); def != nil {
+			return def
+		}
+	}
+	return m.declaredDefault(name)
 }
 
 func (m *Model) modifiedCount() int {
@@ -1006,14 +1063,7 @@ func (m *Model) modifiedCount() int {
 }
 
 func (m *Model) isOptionModifiedGlobal(name string) bool {
-	cur := m.globalValues[name]
-	orig := m.origGlobal[name]
-	if orig == nil {
-		if opt, ok := m.globalOptions[name]; ok {
-			orig = opt.Default()
-		}
-	}
-	return !sameValue(cur, orig)
+	return !sameValue(m.effectiveGlobalValue(m.globalValues, name), m.effectiveGlobalValue(m.origGlobal, name))
 }
 
 func (m *Model) isOptionModifiedPkg(pkgName, name string) bool {

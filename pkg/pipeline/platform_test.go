@@ -94,8 +94,8 @@ func TestProjectPlatformDefaultsAndOverrides(t *testing.T) {
 		wantTriple string
 	}{
 		{name: "defaults", wantOS: "none", wantTriple: "arm-none-eabi"},
-		{name: "explicit empty", values: map[string]any{api.TargetOSOptionName: "", api.TargetTripleOptionName: ""}, wantOS: runtime.GOOS},
-		{name: "explicit host", values: map[string]any{api.TargetOSOptionName: "host", api.TargetTripleOptionName: ""}, wantOS: runtime.GOOS},
+		{name: "explicit empty keeps defaults", values: map[string]any{api.TargetOSOptionName: "", api.TargetTripleOptionName: ""}, wantOS: "none", wantTriple: "arm-none-eabi"},
+		{name: "explicit host keeps triple", values: map[string]any{api.TargetOSOptionName: "host", api.TargetTripleOptionName: ""}, wantOS: runtime.GOOS, wantTriple: "arm-none-eabi"},
 		{name: "nil keeps defaults", values: map[string]any{api.TargetOSOptionName: nil, api.TargetTripleOptionName: nil}, wantOS: "none", wantTriple: "arm-none-eabi"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

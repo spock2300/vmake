@@ -231,12 +231,14 @@ func makeBuildConfig(ctx *RuntimeContext, tc *toolchain.Toolchain, tcName string
 	globalValues := projectGlobalValues(ctx)
 	globalValues[api.ModeOptionName] = mode
 	globalValues[api.ToolchainOptionName] = tcName
+	platformValues := maps.Clone(globalValues)
+	fillTargetDefaults(platformValues, tc.TargetOS, tc.TargetTriple)
 
 	return &buildConfig{
 		Mode:         mode,
 		TcName:       tcName,
 		Tc:           tc,
-		Platform:     platformFromValues(globalValues),
+		Platform:     platformFromValues(platformValues),
 		GlobalValues: globalValues,
 	}
 }

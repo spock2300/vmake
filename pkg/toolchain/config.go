@@ -8,11 +8,13 @@ import (
 )
 
 type Toolchain struct {
-	Name        string `json:"name"`
-	DisplayName string `json:"display_name"`
-	Prefix      string `json:"prefix"`
-	Tools       Tools  `json:"tools"`
-	InstallPath string `json:"install_path"`
+	Name         string `json:"name"`
+	DisplayName  string `json:"display_name"`
+	Prefix       string `json:"prefix"`
+	TargetOS     string `json:"target_os,omitempty"`
+	TargetTriple string `json:"target_triple,omitempty"`
+	Tools        Tools  `json:"tools"`
+	InstallPath  string `json:"install_path"`
 }
 
 type Tools struct {

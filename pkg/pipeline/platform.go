@@ -6,6 +6,7 @@ import (
 
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/config"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 func projectGlobalValues(ctx *RuntimeContext) map[string]any {
@@ -14,11 +15,19 @@ func projectGlobalValues(ctx *RuntimeContext) map[string]any {
 		values[name] = opt.Default()
 	}
 	for name, value := range config.BuildGlobalValues(ctx.Config) {
-		if value != nil {
-			values[name] = value
+		if value == nil {
+			continue
 		}
+		if value == "" && isTargetOption(name) {
+			continue
+		}
+		values[name] = value
 	}
 	return values
+}
+
+func isTargetOption(name string) bool {
+	return name == api.TargetOSOptionName || name == api.TargetTripleOptionName
 }
 
 func platformFromValues(values map[string]any) api.Platform {
@@ -30,8 +39,48 @@ func platformFromValues(values map[string]any) api.Platform {
 	return api.Platform{OS: os, Triple: triple}
 }
 
+func toolchainTargetDefaults(name string) (string, string) {
+	if name == "" || name == "host" {
+		return "", ""
+	}
+	tc, err := toolchain.GetManager().GetToolchain(name)
+	if err != nil || tc == nil {
+		return "", ""
+	}
+	return tc.TargetOS, tc.TargetTriple
+}
+
+func ToolchainTargetDefaults(name string) map[string]any {
+	os, triple := toolchainTargetDefaults(name)
+	defaults := make(map[string]any, 2)
+	if os != "" {
+		defaults[api.TargetOSOptionName] = os
+	}
+	if triple != "" {
+		defaults[api.TargetTripleOptionName] = triple
+	}
+	return defaults
+}
+
+func fillTargetDefaults(values map[string]any, os, triple string) {
+	for name, def := range map[string]string{
+		api.TargetOSOptionName:     os,
+		api.TargetTripleOptionName: triple,
+	} {
+		if def == "" {
+			continue
+		}
+		if value, ok := values[name]; ok && value != nil && value != "" {
+			continue
+		}
+		values[name] = def
+	}
+}
+
 func ProjectPlatform(ctx *RuntimeContext) (api.Platform, error) {
 	values := projectGlobalValues(ctx)
+	targetOS, triple := toolchainTargetDefaults(ResolveToolchainName(ctx.Config, ctx.ToolchainOverride))
+	fillTargetDefaults(values, targetOS, triple)
 	return checkedPlatform(values, "project")
 }
 
@@ -48,6 +97,7 @@ func checkedPlatform(values map[string]any, owner string) (api.Platform, error) 
 
 func PackagePlatform(ctx *RuntimeContext, name string) (api.Platform, error) {
 	values := projectGlobalValues(ctx)
+	values[api.ToolchainOptionName] = ResolveToolchainName(ctx.Config, ctx.ToolchainOverride)
 	if _, err := checkedPlatform(values, "project"); err != nil {
 		return api.Platform{}, err
 	}
@@ -63,15 +113,23 @@ func packagePlatformValues(ctx *RuntimeContext, name string, base map[string]any
 		}
 	}
 	for _, key := range []string{api.TargetOSOptionName, api.TargetTripleOptionName} {
-		if value := base[key]; value != nil {
+		if value := base[key]; value != nil && value != "" {
 			values[key] = value
 		}
-		if opt := opts[key]; opt != nil && !opt.IsGlobal() && opt.Default() != nil {
-			values[key] = opt.Default()
+		if opt := opts[key]; opt != nil && !opt.IsGlobal() {
+			if def := opt.Default(); def != nil && def != "" {
+				values[key] = def
+			}
 		}
-		if value := config.GetEntry(ctx.Config, name).Options[key]; value != nil {
+		if value := config.GetEntry(ctx.Config, name).Options[key]; value != nil && value != "" {
 			values[key] = value
 		}
 	}
+	defaultTC := ResolveToolchainName(ctx.Config, ctx.ToolchainOverride)
+	if tc, ok := base[api.ToolchainOptionName].(string); ok && tc != "" {
+		defaultTC = tc
+	}
+	targetOS, triple := toolchainTargetDefaults(resolvePkgToolchain(ctx.Config, name, defaultTC))
+	fillTargetDefaults(values, targetOS, triple)
 	return values
 }

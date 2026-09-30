@@ -14,7 +14,7 @@ func writePackagePlatformProject(t *testing.T, dir string, global, local map[str
 	t.Helper()
 	project := filepath.Join(dir, "project")
 	state := filepath.Join(dir, "state")
-	writeHealthyDefinition(t, filepath.Join(state, "extensions", "fixture", "tools", "toolchain.json"), "fixture")
+	writeTargetDefinition(t, filepath.Join(state, "extensions", "fixture", "tools", "toolchain.json"), "fixture", "none", "arm-none-eabi")
 	data, err := json.Marshal(map[string]any{
 		"version": "1",
 		"global":  map[string]any{"toolchain": "fixture", "options": global},
@@ -37,8 +37,8 @@ import (
 func Main(p *api.Package) {
     p.SetRoot(true)
     p.OnConfig(func(ctx *api.ConfigContext) {
-        ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString).SetDefault("none")
-        ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString).SetDefault("arm-none-eabi")
+        ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString)
+        ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString)
     })
     p.OnBuild(func(ctx *api.BuildContext) {
         fmt.Printf("PLATFORM=%s/%s;OPTIONS=%s/%s\n", p.TargetOS(), p.TargetTriple(), ctx.String("target_os"), ctx.String("target_triple"))
@@ -70,7 +70,12 @@ func TestPackagePlatformQueryBuildInstallAndSymbols(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				source := strings.NewReplacer("ctx.GlobalOption", "ctx.Option", `SetDefault("none")`, `SetDefault("windows")`, `SetDefault("arm-none-eabi")`, `SetDefault("x86_64-w64-mingw32")`).Replace(string(data))
+				source := strings.NewReplacer(
+					"ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString)",
+					`ctx.Option(api.TargetOSOptionName).SetType(api.OptionString).SetDefault("windows")`,
+					"ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString)",
+					`ctx.Option(api.TargetTripleOptionName).SetType(api.OptionString).SetDefault("x86_64-w64-mingw32")`,
+				).Replace(string(data))
 				writeExtensionFile(t, path, source)
 			}
 			for _, args := range [][]string{{"query", "targets"}, {"build", "--install"}, {"check-symbols", "--strict"}} {
@@ -107,16 +112,26 @@ func TestTestCommandUsesPackagePlatform(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, native := range []bool{false, true} {
-		name := "reject package cross target"
-		global := map[string]any{"target_os": "linux", "target_triple": ""}
-		local := map[string]any{"target_os": "none", "target_triple": "arm-none-eabi"}
-		if native {
-			name = "allow package native override"
-			global, local = local, global
-		}
-		t.Run(name, func(t *testing.T) {
-			project, state := writePackagePlatformProject(t, t.TempDir(), global, local, true)
+	for _, test := range []struct {
+		name   string
+		global map[string]any
+		local  map[string]any
+		native bool
+	}{
+		{
+			name:   "reject package cross target",
+			global: map[string]any{"target_os": "linux", "target_triple": ""},
+			local:  map[string]any{"target_os": "none", "target_triple": "arm-none-eabi"},
+		},
+		{
+			name:   "allow package native toolchain override",
+			global: nil,
+			local:  map[string]any{"toolchain": "host"},
+			native: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project, state := writePackagePlatformProject(t, t.TempDir(), test.global, test.local, true)
 			if err := os.WriteFile(filepath.Join(project, "program"), content, 0755); err != nil {
 				t.Fatal(err)
 			}
@@ -124,11 +139,13 @@ func TestTestCommandUsesPackagePlatform(t *testing.T) {
 				t.Fatal(err)
 			}
 			out, err := extensionCommand(t, state, project, "test")
-			if native {
+			if test.native {
 				if err != nil || !strings.Contains(out, "1/1 test(s) passed") {
 					t.Fatalf("native package: %v\n%s", err, out)
 				}
-			} else if err == nil || !strings.Contains(out, "vmake build --tests") || strings.Contains(out, "Running 1 test") {
+				return
+			}
+			if err == nil || !strings.Contains(out, "vmake build --tests") || strings.Contains(out, "Running 1 test") {
 				t.Fatalf("cross package executed: %v\n%s", err, out)
 			}
 		})

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -158,7 +157,7 @@ func TestCleanHooksUsePackagePlatform(t *testing.T) {
 		{name: "global", os: "none", triple: "arm-none-eabi", packageOS: "none"},
 		{name: "null", overrides: map[string]any{"target_os": nil, "target_triple": nil}, os: "none", triple: "arm-none-eabi", packageOS: "none"},
 		{name: "override", overrides: map[string]any{"target_os": "windows", "target_triple": "x86_64-w64-mingw32"}, os: "windows", triple: "x86_64-w64-mingw32", packageOS: "windows"},
-		{name: "empty", overrides: map[string]any{"target_os": "", "target_triple": ""}, packageOS: runtime.GOOS},
+		{name: "empty keeps defaults", overrides: map[string]any{"target_os": "", "target_triple": ""}, os: "none", triple: "arm-none-eabi", packageOS: "none"},
 	} {
 		for _, command := range [][]string{{"clean"}, {"clean", "--all"}} {
 			t.Run(test.name+"/"+strings.Join(command, " "), func(t *testing.T) {

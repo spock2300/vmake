@@ -84,11 +84,16 @@ func Main(ctx *plugin.Context) {
 
 func writeHealthyDefinition(t *testing.T, path, name string) {
 	t.Helper()
+	writeTargetDefinition(t, path, name, "", "")
+}
+
+func writeTargetDefinition(t *testing.T, path, name, targetOS, triple string) {
+	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	def := toolchain.ToolchainDef{Name: name, Tools: toolchain.Tools{CC: exe, CXX: exe, AR: exe, LD: exe}}
+	def := toolchain.ToolchainDef{Name: name, TargetOS: targetOS, TargetTriple: triple, Tools: toolchain.Tools{CC: exe, CXX: exe, AR: exe, LD: exe}}
 	data, err := json.Marshal(def)
 	if err != nil {
 		t.Fatal(err)

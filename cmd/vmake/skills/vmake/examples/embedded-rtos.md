@@ -159,21 +159,22 @@ firmware/
 
 ## Bare-Metal Setup
 
-Declare the bare-metal platform as global options and supply CPU flags; there are no
-toolchain-supplied target defaults:
+Declare the bare-metal platform as global options and supply CPU flags. A toolchain
+definition may provide the target defaults, so the declared options can stay
+value-free:
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {
-    ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString).SetDefault("none")
-    ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString).SetDefault("arm-none-eabi")
+    ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString)     // toolchain default, e.g. "none"
+    ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString) // toolchain default
     ctx.AddGlobalCFlags("-mcpu=cortex-m4", "-mthumb", "-ffunction-sections", "-fdata-sections")
     ctx.AddGlobalCxxFlags("-mcpu=cortex-m4", "-mthumb", "-ffunction-sections", "-fdata-sections")
     ctx.AddGlobalLdFlags("-mcpu=cortex-m4", "-mthumb", "--specs=nosys.specs", "-Wl,--gc-sections")
 })
 ```
 
-- `target_os="none"` marks bare metal and drives artifact naming and link policy; `target_triple` feeds `Configure --host` and CMake's compiler target.
-- Select the compiler with `vmake build --toolchain arm-none-eabi` (or the `toolchain` option in the active configuration). Toolchains contributed by extensions carry no target or CPU defaults, so declare `-mcpu`/`-mthumb`/`--specs` yourself. Validate with `vmake doctor --toolchain arm-none-eabi`. See `SKILL.md - Cross-Compiling`.
+- `target_os="none"` marks bare metal and drives artifact naming and link policy; `target_triple` feeds `Configure --host` and CMake's compiler target. Resolution order: user configuration → project default → toolchain default (`toolchain.json`) → empty.
+- Select the compiler with `vmake build --toolchain arm-none-eabi` (or the `toolchain` option in the active configuration). Toolchains contributed by extensions may carry `target_os`/`target_triple` defaults but never CPU flags, so declare `-mcpu`/`-mthumb`/`--specs` yourself. Validate with `vmake doctor --toolchain arm-none-eabi`. See `SKILL.md - Cross-Compiling`.
 - `-nostartfiles` skips the **target** crt0/startup files provided by the compiler driver's spec; it does **not** unlink libc, so it is not bare-metal linking. A hosted libc stays linked. For bare metal use `-nostdlib` plus explicit libgcc/libc links (see the next section) or `--specs=nosys.specs` (hosted newlib, syscall stubs).
 - Cross/bare-metal test binaries cannot execute on the host: `vmake test` refuses non-host targets with a clear error. Use `vmake build --tests` to compile them.
 - The host-simulated fixture `test_data/12_rtos_simulate` uses the host toolchain, `-nostartfiles`, and a simulated linker script, so it builds on the development machine without a cross toolchain.

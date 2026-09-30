@@ -96,6 +96,15 @@ func runToolchainShow(cmd *cobra.Command, args []string) {
 
 	vlog.Info("Toolchain: %s", tc.Name)
 	vlog.Info("Display Name: %s", tc.DisplayName)
+	if tc.TargetOS != "" || tc.TargetTriple != "" {
+		vlog.Info("Target Defaults:")
+		if tc.TargetOS != "" {
+			vlog.Info("  target_os:     %s", tc.TargetOS)
+		}
+		if tc.TargetTriple != "" {
+			vlog.Info("  target_triple: %s", tc.TargetTriple)
+		}
+	}
 	vlog.Info("")
 	vlog.Info("Tools:")
 	vlog.Info("  CC:     %s", tc.Tools.CC)

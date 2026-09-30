@@ -164,7 +164,7 @@ RegisterToolchain func(name string, tc *toolchain.Toolchain) error
 
 注册一个自定义工具链。注册后用户可以通过 `--toolchain <name>` 或全局 `toolchain` 选项选择该工具链。名称必须与 `tc.Name` 一致，不能是 `host`，且不能与已注册的工具链重名，否则返回错误。
 
-工具链只描述“用哪些程序编译”，不描述“为哪个 CPU 编译”。目标 CPU/ABI 选项由项目的 `build.go` 提供。
+工具链描述“用哪些程序编译”，可以附带 `TargetOS`/`TargetTriple` 目标默认值，但不描述目标 CPU/ABI。CPU/ABI 选项由项目的 `build.go` 提供。
 
 ```go
 err := ctx.RegisterToolchain("riscv32", &toolchain.Toolchain{
@@ -284,7 +284,7 @@ err := ctx.RunGitLFS(ctx.RepoDir, "pull", "--include=assets/toolchains/aarch64-g
 
 ## 工具链类型
 
-工具链只回答“用哪些程序编译”。目标系统、目标三元组和项目编译选项都不属于工具链，由项目的 `build.go` 提供，因此同一个编译器可以服务不同 CPU 的项目。
+工具链回答“用哪些程序编译”，并可提供 `TargetOS`/`TargetTriple` 默认值。目标系统、目标三元组和项目编译选项均可由项目的 `build.go` 声明覆盖，同一个编译器因此可以服务不同 CPU 的项目。
 
 ### toolchain.Toolchain
 
@@ -293,6 +293,7 @@ err := ctx.RunGitLFS(ctx.RepoDir, "pull", "--include=assets/toolchains/aarch64-g
 | `Name` | `string` | 工具链标识符（如 `"aarch64-linux-gnu"`） |
 | `DisplayName` | `string` | 可读名称（如 `"ARM GCC 12.2.0"`），`vmake toolchain list` 显示 |
 | `Prefix` | `string` | 包含末尾 `-` 的交叉编译前缀（如 `"aarch64-linux-gnu-"`），设为 `""` 表示无前缀；拼接工具名时不再添加 `-` |
+| `TargetOS`/`TargetTriple` | `string` | 项目未设置时使用的目标默认值，可由 `toolchain.json` 或插件注册时提供 |
 | `Tools` | `Tools` | 各工具的可执行文件名 |
 | `InstallPath` | `string` | 工具链安装目录的绝对路径，为空表示尚未安装 |
 
@@ -349,6 +350,8 @@ err := ctx.RunGitLFS(ctx.RepoDir, "pull", "--include=assets/toolchains/aarch64-g
   "version": "12.2.0",
   "display_name": "ARM GCC 12.2.0",
   "prefix": "arm-linux-gnueabihf-",
+  "target_os": "linux",
+  "target_triple": "arm-linux-gnueabihf",
   "tools": {
     "cc": "arm-linux-gnueabihf-gcc",
     "cxx": "arm-linux-gnueabihf-g++",
@@ -373,10 +376,12 @@ err := ctx.RunGitLFS(ctx.RepoDir, "pull", "--include=assets/toolchains/aarch64-g
 | `version` | string | 安装时必填 | 安装目录使用 `<os>/<arch>/<name>/<version>` |
 | `display_name` | string | 否 | 可读名称，默认同 `name` |
 | `prefix` | string | 否 | 交叉编译前缀，非空时必须包含结尾的连字符 |
+| `target_os` | string | 否 | 项目未设置 `target_os` 时使用的目标系统默认值（裸机为 `none`） |
+| `target_triple` | string | 否 | 项目未设置 `target_triple` 时使用的目标三元组默认值 |
 | `tools` | object | 是 | 各工具的可执行文件名（同 `toolchain.Tools`，`cc`、`cxx`、`ar` 和 `ld` 必填） |
 | `installations` | object | 否 | 以宿主 `OS/architecture` 为键的安装配置；不配置则使用明确配置的工具路径或 PATH |
 
-未列出的字段一律拒绝。`target_os`、`target_triple`、`default_flags` 属于项目配置，写在 `toolchain.json` 里会让该定义报错；旧的 `host`、`install` 字段同样不再接受。
+未列出的字段一律拒绝。`default_flags` 属于项目配置，写在 `toolchain.json` 里会让该定义报错；旧的 `host`、`install` 字段同样不再接受。`target_os`/`target_triple` 是工具链提供的默认值，项目的显式声明或用户配置始终优先。
 
 **每个 installations 条目的字段**：
 
@@ -409,13 +414,13 @@ err := ctx.RunGitLFS(ctx.RepoDir, "pull", "--include=assets/toolchains/aarch64-g
 
 ### 项目一侧的目标平台
 
-工具链不携带目标信息，项目在 `build.go` 中声明：
+工具链可以在 `toolchain.json` 中声明 `target_os`/`target_triple` 默认值；项目在 `build.go` 中声明这些全局选项是为了在 TUI/`--set` 中可见和可覆盖，值可以留空：
 
 ```go
 func Main(p *api.Package) {
     p.OnConfig(func(ctx *api.ConfigContext) {
-        ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString).SetDefault("none")
-        ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString).SetDefault("arm-none-eabi")
+        ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString)
+        ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString)
         ctx.AddGlobalCFlags("-mcpu=cortex-m4", "-mthumb")
         ctx.AddGlobalCxxFlags("-mcpu=cortex-m4", "-mthumb")
         ctx.AddGlobalLdFlags("-mcpu=cortex-m4", "-mthumb", "--specs=nosys.specs")
@@ -423,7 +428,9 @@ func Main(p *api.Package) {
 }
 ```
 
-`target_os` 决定产物命名、链接策略和 CMake 的 `CMAKE_SYSTEM_NAME`（裸机为 `none`），`target_triple` 提供 `--host=` 与 `CMAKE_*_COMPILER_TARGET`。两者都是普通全局选项，可由 `.vmake/config.json` 的 `global.options` 覆盖。
+解析优先级从高到低：用户配置（`global.options`/包级选项）→ 项目声明的非空默认值 → 工具链默认值 → 空（`target_os` 回退宿主系统）。空值视为未设置，因此不声明也能获得工具链默认值；`target_os` 用 `"host"` 可回到宿主系统，但清除工具链提供的 `target_triple` 需要选择 `toolchain=host` 或没有目标默认值的工具链。
+
+`target_os` 决定产物命名、链接策略和 CMake 的 `CMAKE_SYSTEM_NAME`（裸机为 `none`），`target_triple` 提供 `--host=` 与 `CMAKE_*_COMPILER_TARGET`。CPU/ABI 选项（`-mcpu`、`-mthumb`、`--specs` 等）属于项目，工具链不提供。
 
 ## 实战示例
 
