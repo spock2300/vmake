@@ -423,22 +423,34 @@ Store multiple JSON configuration files directly in `.vmake/`. The optional
 `.vmake/project.json` selects one with `{"config":"config-debug.json"}`.
 Without it, the project uses `.vmake/config.json` without creating a selection
 file. An explicit missing or invalid selection is an error, never a fallback.
-Filenames must end in `.json`; paths and `project.json` are rejected.
+Filenames must end in `.json`; paths and `project.json` are rejected. Each file
+may carry a top-level single-line `description` (≤200 characters) explaining
+what the configuration is for.
 
 ```bash
 vmake config list
 vmake config copy config-debug.json
 vmake config use config-debug.json
+vmake config describe "Board A debug build"
+vmake config describe
 vmake config
 vmake build
 ```
 
-`list` marks the current file with `*` and reports unsaved/invalid entries.
-`copy` preserves the current file bytes, does not switch, and refuses to overwrite;
-an unsaved legacy default copies as an empty configuration. `use` validates an
-existing file and updates the selection, including when the old target is missing.
-These management commands do not execute build.go or resolve dependencies.
-`use` supports filename completion. Repair malformed project.json before using it.
+`list` marks the current file with `*`, reports unsaved/invalid entries and
+appends each readable file's description. `describe` prints the active
+description, or sets it (`describe ""` clears); it does not execute build
+scripts. `copy` preserves the current file bytes, does not switch, and refuses
+to overwrite; an unsaved legacy default copies as an empty configuration. `use`
+validates an existing file and updates the selection, including when the old
+target is missing; its completion candidates carry the description. These
+management commands do not execute build.go or resolve dependencies. Repair
+malformed project.json before using it.
+
+The TUI shows the description as a fixed `Description` row at the top of the
+options panel: press `D` or click the row to edit it, and `Ctrl+S` saves it
+with the rest of the configuration. Descriptions are metadata only — they do
+not affect dependency resolution or the BuildKey.
 
 TUI and `--set` edit only the selected file. Build, test, query, clean, doctor and
 lock update use that same selection relative to the detected project root; script

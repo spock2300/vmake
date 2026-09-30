@@ -14,10 +14,12 @@ import (
 	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/config"
 )
 
 type ConfigResult struct {
 	Saved         bool
+	Description   string
 	Values        map[string]map[string]any
 	Toolchain     string
 	GlobalValues  map[string]any
@@ -35,14 +37,18 @@ func Run(
 	globalOptions map[string]*api.Option,
 	globalValues map[string]any,
 	kconfigs map[string][]*api.KConfigEntry,
+	description string,
 ) (*ConfigResult, error) {
 	m := NewModel(packages, deps, options, values, workDir, currentToolchain, globalOptions, globalValues, kconfigs)
+	m.description = description
+	m.origDescription = description
 	p := tea.NewProgram(&m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		return nil, err
 	}
 	return &ConfigResult{
 		Saved:         m.saved,
+		Description:   m.description,
 		Values:        m.values,
 		Toolchain:     getToolchainValue(m.globalValues),
 		GlobalValues:  m.globalValues,
@@ -190,6 +196,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleEditKey(msg)
 	}
 
+	if m.descEditing {
+		return m.handleDescEditKey(msg)
+	}
+
 	if m.runningMenuconfig {
 		return m, nil
 	}
@@ -320,6 +330,9 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.editing {
 		return m.handleEditingMouse(msg)
+	}
+	if m.descEditing {
+		return m.handleDescriptionMouse(msg)
 	}
 	if m.filterActive || m.runningMenuconfig {
 		return m, nil
@@ -587,6 +600,10 @@ func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.optCursor < len(visible) {
 			m.openDetailOverlay(visible[m.optCursor])
 		}
+	case "D":
+		if m.descRowOffset == 1 {
+			m.startDescriptionEdit()
+		}
 	case " ", "enter", "right", "l":
 		m.handleOptionAction(visible, presetIdx, false, msg.String())
 	case "left", "h":
@@ -749,6 +766,111 @@ func (m *Model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.editInput = m.editInput[:m.editCursor] + ch + m.editInput[m.editCursor:]
 	m.editCursor += len(ch)
 	return m, nil
+}
+
+func (m *Model) startDescriptionEdit() {
+	m.descEditing = true
+	m.descInput = sanitizeDescription(m.description)
+	m.descCursor = len(m.descInput)
+}
+
+func (m *Model) handleDescEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	s := msg.String()
+	switch s {
+	case "esc":
+		m.descEditing = false
+		return m, nil
+	case "enter":
+		m.descEditing = false
+		m.setDescription(m.descInput)
+		return m, nil
+	case "left":
+		if m.descCursor > 0 {
+			_, sz := utf8.DecodeLastRuneInString(m.descInput[:m.descCursor])
+			m.descCursor -= sz
+		}
+		return m, nil
+	case "right":
+		if m.descCursor < len(m.descInput) {
+			_, sz := utf8.DecodeRuneInString(m.descInput[m.descCursor:])
+			m.descCursor += sz
+		}
+		return m, nil
+	case "home", "ctrl+a":
+		m.descCursor = 0
+		return m, nil
+	case "end", "ctrl+e":
+		m.descCursor = len(m.descInput)
+		return m, nil
+	case "backspace":
+		if m.descCursor > 0 {
+			_, sz := utf8.DecodeLastRuneInString(m.descInput[:m.descCursor])
+			m.descInput = m.descInput[:m.descCursor-sz] + m.descInput[m.descCursor:]
+			m.descCursor -= sz
+		}
+		return m, nil
+	case "delete":
+		if m.descCursor < len(m.descInput) {
+			_, sz := utf8.DecodeRuneInString(m.descInput[m.descCursor:])
+			m.descInput = m.descInput[:m.descCursor] + m.descInput[m.descCursor+sz:]
+		}
+		return m, nil
+	case "ctrl+u":
+		m.descInput = m.descInput[m.descCursor:]
+		m.descCursor = 0
+		return m, nil
+	case "ctrl+k":
+		m.descInput = m.descInput[:m.descCursor]
+		return m, nil
+	}
+
+	if msg.Type != tea.KeyRunes {
+		return m, nil
+	}
+	ch := string(descRunes(msg.Runes))
+	if ch == "" {
+		return m, nil
+	}
+	if utf8.RuneCountInString(m.descInput)+utf8.RuneCountInString(ch) > config.MaxDescriptionLength {
+		return m, nil
+	}
+	m.descInput = m.descInput[:m.descCursor] + ch + m.descInput[m.descCursor:]
+	m.descCursor += len(ch)
+	return m, nil
+}
+
+func descRunes(runes []rune) []rune {
+	var out []rune
+	for _, r := range runes {
+		if r == '\t' || r < 32 || r == 127 {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+func sanitizeDescription(text string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		if r == '\t' || r < 32 || r == 127 {
+			return ' '
+		}
+		return r
+	}, text)
+	runes := []rune(cleaned)
+	if len(runes) > config.MaxDescriptionLength {
+		runes = runes[:config.MaxDescriptionLength]
+	}
+	return string(runes)
+}
+
+func (m *Model) setDescription(text string) {
+	text, err := config.ValidateDescription(text)
+	if err != nil {
+		return
+	}
+	m.description = text
+	m.checkChanges()
 }
 
 func parseIntInput(s string) (int, bool) {
@@ -974,6 +1096,12 @@ func (m *Model) renderOptions() string {
 	var b strings.Builder
 	b.WriteString(panelTitleStyle.MaxWidth(m.optionsContentWidth()).Render(title) + "\n")
 
+	m.descRowOffset = 0
+	if m.contentHeight() >= 3 {
+		b.WriteString(m.renderDescriptionRow())
+		m.descRowOffset = 1
+	}
+
 	if m.selectedPkg == "" {
 		b.WriteString(lipgloss.PlaceHorizontal(m.width-m.treeWidth-6, lipgloss.Center, m.text(textSelectPackage)))
 		return b.String()
@@ -1005,7 +1133,7 @@ func (m *Model) renderOptions() string {
 		}
 	}
 
-	panelH := m.contentHeight() - 1
+	panelH := m.contentHeight() - 1 - m.descRowOffset
 	if panelH < 1 {
 		panelH = 1
 	}
@@ -1038,7 +1166,7 @@ func (m *Model) renderOptions() string {
 
 	for i := start; i < end; i++ {
 		line := allRows[i]
-		m.optionMouseRows = append(m.optionMouseRows, panelRowTarget{y: i - start + 1, height: 1, index: line.row.navIdx})
+		m.optionMouseRows = append(m.optionMouseRows, panelRowTarget{y: i - start + 1 + m.descRowOffset, height: 1, index: line.row.navIdx})
 		b.WriteString(line.text + "\n")
 	}
 
@@ -1050,6 +1178,26 @@ func (m *Model) renderOptions() string {
 	}
 
 	return strings.TrimSuffix(b.String(), "\n")
+}
+
+func (m *Model) renderDescriptionRow() string {
+	contentWidth := m.optionsContentWidth()
+	label := m.text(textDescription) + ":"
+	valueWidth := contentWidth - lipgloss.Width(label) - 2
+	if valueWidth < 1 {
+		valueWidth = 1
+	}
+	var value string
+	switch {
+	case m.descEditing:
+		value = inputStyle.Render(truncateDisplay(renderEditField(m.descInput, m.descCursor), valueWidth))
+	case m.description != "":
+		value = optionDescStyle.Render(truncateDisplay(sanitizeDescription(m.description), valueWidth))
+	default:
+		value = optionDescStyle.Render(m.text(textDescriptionNotSet))
+	}
+	line := groupStyle.Render(label) + " " + value
+	return lipgloss.NewStyle().MaxWidth(contentWidth).Render(line) + "\n"
 }
 
 type rowKind int
@@ -1138,6 +1286,26 @@ func renderEditField(input string, cursor int) string {
 		cursor = len(input)
 	}
 	return input[:cursor] + "▎" + input[cursor:]
+}
+
+func truncateDisplay(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= max {
+		return s
+	}
+	var out strings.Builder
+	width := 0
+	for _, r := range s {
+		runeWidth := lipgloss.Width(string(r))
+		if width+runeWidth > max-1 {
+			break
+		}
+		out.WriteRune(r)
+		width += runeWidth
+	}
+	return out.String() + "…"
 }
 
 func truncateRunes(s string, max int) string {
@@ -1271,7 +1439,7 @@ func (m *Model) renderFooterWithin(maxHeight int) string {
 		helpText = renderHelpEntries([]helpEntry{
 			{"↑↓", m.text(textPickMatch)}, {"Enter", m.text(textJump)}, {"/", m.text(textRefine)}, {"Esc", m.text(textClear)},
 		})
-	} else if m.editing {
+	} else if m.editing || m.descEditing {
 		helpText = renderHelpEntries([]helpEntry{
 			{"←→", m.text(textMoveCursor)}, {"Home/End", m.text(textJump)}, {"Backspace", m.text(textDelete)},
 			{"Enter", m.text(textConfirm)}, {"Esc", m.text(textCancel)},
@@ -1285,7 +1453,7 @@ func (m *Model) renderFooterWithin(maxHeight int) string {
 	} else {
 		helpText = renderHelpEntries([]helpEntry{
 			{"↑↓", m.text(textNavigate)}, {"←→", m.text(textCycleValue)}, {"Space/Enter", m.text(textEdit)},
-			{"r", m.text(textReset)}, {"R", m.text(textDefault)}, {"?", m.text(textDetail)},
+			{"r", m.text(textReset)}, {"R", m.text(textDefault)}, {"?", m.text(textDetail)}, {"D", m.text(textDescriptionEdit)},
 			{"Tab", m.text(textPackages)}, {"Ctrl+S", m.text(textSave)}, {"Esc", m.text(textBack)},
 		})
 	}

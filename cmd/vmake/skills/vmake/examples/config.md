@@ -106,6 +106,7 @@ vmake build --mode debug
 
 ```bash
 vmake config copy config-minimal.json
+vmake config describe "minimal feature set, no SSL"
 vmake config use config-minimal.json
 vmake config --set myproject/features=minimal
 vmake build
@@ -114,12 +115,15 @@ vmake config list
 
 The selection is stored in `.vmake/project.json` as
 `{"config":"config-minimal.json"}`. Each file uses the existing configuration
-format, including package versions, options and KConfig data. `copy` leaves the
-selection unchanged and rejects existing destinations; `use` switches it without
-running build scripts. TUI and `--set` save only the selected file. If there was
-no saved default configuration before copying, use `vmake config copy config.json`
+format, including package versions, options and KConfig data, plus an optional
+top-level `description` line shown by `config list` and by completion. `copy`
+leaves the selection unchanged and rejects existing destinations; `describe`
+prints or sets the active description; `use` switches it without running build
+scripts. TUI and `--set` save only the selected file. If there was no saved
+default configuration before copying, use `vmake config copy config.json`
 to create it from the active configuration before switching back, since `use`
-requires an existing file.
+requires an existing file. In the TUI the description is the fixed `Description`
+row at the top of the options panel, edited with `D` or a click.
 
 All configurations share `.vmake/vmake.lock` and the existing BuildKey rules.
 Use distinct installation `--prefix` directories to keep multiple installed builds.

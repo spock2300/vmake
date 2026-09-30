@@ -10,9 +10,10 @@ import (
 const ConfigVersion = "1"
 
 type ConfigFile struct {
-	Version string                  `json:"version"`
-	Global  *GlobalConfig           `json:"global,omitempty"`
-	Entries map[string]*EntryConfig `json:"entries"`
+	Version     string                  `json:"version"`
+	Description string                  `json:"description,omitempty"`
+	Global      *GlobalConfig           `json:"global,omitempty"`
+	Entries     map[string]*EntryConfig `json:"entries"`
 }
 
 type GlobalConfig struct {
@@ -38,10 +39,11 @@ func newConfigFile() *ConfigFile {
 
 func (cfg *ConfigFile) UnmarshalJSON(data []byte) error {
 	type rawConfig struct {
-		Version   string                     `json:"version"`
-		Toolchain string                     `json:"toolchain"`
-		Global    *GlobalConfig              `json:"global,omitempty"`
-		Entries   map[string]json.RawMessage `json:"entries"`
+		Version     string                     `json:"version"`
+		Description string                     `json:"description"`
+		Toolchain   string                     `json:"toolchain"`
+		Global      *GlobalConfig              `json:"global,omitempty"`
+		Entries     map[string]json.RawMessage `json:"entries"`
 	}
 
 	var raw rawConfig
@@ -51,6 +53,7 @@ func (cfg *ConfigFile) UnmarshalJSON(data []byte) error {
 
 	*cfg = *newConfigFile()
 	cfg.Version = raw.Version
+	cfg.Description = raw.Description
 
 	if raw.Global != nil {
 		cfg.Global = raw.Global

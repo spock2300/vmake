@@ -41,10 +41,17 @@ func Main(p *api.Package) { panic("BUILD_SCRIPT_EXECUTED") }
 		t.Fatalf("copy created selection: %v", err)
 	}
 	run(child, "config", "use", "config-debug.json")
+	run(child, "config", "describe", "Board B 调试配置")
+	if out := run(child, "config", "describe"); strings.TrimSpace(out) != "Board B 调试配置" {
+		t.Fatalf("describe = %q", out)
+	}
+	if out, err := extensionCommand(t, state, child, "config", "describe", "two\nlines"); err == nil || strings.Contains(out, "BUILD_SCRIPT_EXECUTED") {
+		t.Fatalf("describe accepted invalid text: %v\n%s", err, out)
+	}
 	run(project, "config", "copy", "config-other.json")
 	writeExtensionFile(t, filepath.Join(project, ".vmake", "broken.json"), "{")
 	listing := run(child, "config", "list")
-	if !strings.Contains(listing, "* config-debug.json") || !strings.Contains(listing, "broken.json (invalid:") {
+	if !strings.Contains(listing, "* config-debug.json  Board B 调试配置") || !strings.Contains(listing, "broken.json (invalid:") {
 		t.Fatal(listing)
 	}
 	for _, args := range [][]string{{"config", "copy", "config-debug.json"}, {"config", "use", "missing.json"}, {"config", "use", "broken.json"}, {"config", "use", "../escape.json"}, {"config", "typo"}} {
@@ -57,8 +64,12 @@ func Main(p *api.Package) { panic("BUILD_SCRIPT_EXECUTED") }
 		t.Fatalf("failed commands changed selection: %s, %v", path, err)
 	}
 	completion := run(child, "__complete", "config", "use", "")
-	if !strings.Contains(completion, "config-debug.json") || !strings.Contains(completion, "config-other.json") || strings.Contains(completion, "broken.json") || strings.Contains(completion, "project.json") {
+	if !strings.Contains(completion, "config-debug.json") || !strings.Contains(completion, "config-other.json") || !strings.Contains(completion, "config-debug.json\tBoard B 调试配置") || strings.Contains(completion, "broken.json") || strings.Contains(completion, "project.json") {
 		t.Fatal(completion)
+	}
+	run(child, "config", "describe", "")
+	if out := run(child, "config", "describe"); strings.TrimSpace(out) != "" {
+		t.Fatalf("cleared describe = %q", out)
 	}
 	if err := os.Remove(filepath.Join(project, ".vmake", "config-debug.json")); err != nil {
 		t.Fatal(err)
@@ -236,7 +247,7 @@ func TestConfigTUISavesOnlySelectedFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := &RuntimeContext{Config: cfg, ConfigPath: path}
-	result := &tui.ConfigResult{Saved: true, Toolchain: "host", GlobalValues: map[string]any{"mode": "debug"}, Values: map[string]map[string]any{"firmware": {"enabled": true}}}
+	result := &tui.ConfigResult{Saved: true, Description: "Board A 调试配置", Toolchain: "host", GlobalValues: map[string]any{"mode": "debug"}, Values: map[string]map[string]any{"firmware": {"enabled": true}}}
 	if err := saveConfigResult(ctx, result); err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +260,7 @@ func TestConfigTUISavesOnlySelectedFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry := saved.Entries["firmware"]
-	if saved.Global.Mode != "debug" || entry.Options["enabled"] != true || entry.Version != "v1" || entry.KConfig != "CONFIG_KEEP=y\n" || entry.SelectedPreset != "board" {
+	if saved.Description != "Board A 调试配置" || saved.Global.Mode != "debug" || entry.Options["enabled"] != true || entry.Version != "v1" || entry.KConfig != "CONFIG_KEEP=y\n" || entry.SelectedPreset != "board" {
 		data, _ := json.Marshal(saved)
 		t.Fatalf("TUI saved unexpected config: %s", data)
 	}

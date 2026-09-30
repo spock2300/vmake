@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/spock2300/vmake/internal/jsonio"
 )
@@ -21,10 +22,26 @@ type projectFile struct {
 }
 
 type ProjectConfigInfo struct {
-	Name    string
-	Active  bool
-	Unsaved bool
-	Error   error
+	Name        string
+	Active      bool
+	Unsaved     bool
+	Description string
+	Error       error
+}
+
+const MaxDescriptionLength = 200
+
+func ValidateDescription(text string) (string, error) {
+	text = strings.TrimSpace(text)
+	if n := utf8.RuneCountInString(text); n > MaxDescriptionLength {
+		return "", fmt.Errorf("description too long: %d characters (maximum %d)", n, MaxDescriptionLength)
+	}
+	for _, c := range text {
+		if c < 32 || c == 127 {
+			return "", fmt.Errorf("description must be a single line without control characters")
+		}
+	}
+	return text, nil
 }
 
 func ValidateFilename(name string) error {
@@ -109,6 +126,22 @@ func UseProjectConfig(projectDir, name string) (string, error) {
 	return name, nil
 }
 
+func SetProjectDescription(projectDir, text string) (string, error) {
+	text, err := ValidateDescription(text)
+	if err != nil {
+		return "", err
+	}
+	cfg, path, err := LoadProject(projectDir)
+	if err != nil {
+		return "", err
+	}
+	cfg.Description = text
+	if err := Save(path, cfg); err != nil {
+		return "", fmt.Errorf("save config %s: %w", path, err)
+	}
+	return path, nil
+}
+
 func CopyProjectConfig(projectDir, name string) error {
 	if err := ValidateFilename(name); err != nil {
 		return err
@@ -171,7 +204,11 @@ func ListProjectConfigs(projectDir string) ([]ProjectConfigInfo, error) {
 		info := ProjectConfigInfo{Name: name}
 		info.Error = ValidateFilename(name)
 		if info.Error == nil {
-			_, _, info.Error = readProjectConfig(filepath.Join(dir, name), false)
+			cfg, _, err := readProjectConfig(filepath.Join(dir, name), false)
+			info.Error = err
+			if err == nil {
+				info.Description = cfg.Description
+			}
 		}
 		configs = append(configs, info)
 	}

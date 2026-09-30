@@ -67,6 +67,13 @@ type Model struct {
 	languageSelectorY int
 	languageSelectorW int
 
+	description     string
+	origDescription string
+	descEditing     bool
+	descInput       string
+	descCursor      int
+	descRowOffset   int
+
 	runningMenuconfig bool
 	menuconfigErr     error
 	menuconfigRan     map[string]bool
@@ -695,7 +702,7 @@ func (m *Model) setValue(name string, val any) {
 
 func (m *Model) checkChanges() {
 	globalChanged := !globalValuesEqual(m.globalValues, m.origGlobal)
-	m.hasChanges = !valuesEqual(m.values, m.origValues) || globalChanged || m.modifiedPresetCount() > 0
+	m.hasChanges = !valuesEqual(m.values, m.origValues) || globalChanged || m.modifiedPresetCount() > 0 || m.description != m.origDescription
 }
 
 func globalValuesEqual(a, b map[string]any) bool {
@@ -905,7 +912,7 @@ func (m *Model) treeItemRows() int {
 }
 
 func (m *Model) optItemRows() int {
-	h := m.contentHeight() - 1
+	h := m.contentHeight() - 1 - m.descRowOffset
 	if h < 1 {
 		h = 1
 	}
@@ -977,6 +984,9 @@ func (m *Model) defaultFor(name string) any {
 
 func (m *Model) modifiedCount() int {
 	n := m.modifiedPresetCount()
+	if m.description != m.origDescription {
+		n++
+	}
 	for name := range m.globalOptions {
 		if m.isOptionModifiedGlobal(name) {
 			n++

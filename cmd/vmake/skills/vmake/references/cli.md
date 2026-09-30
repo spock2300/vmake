@@ -12,6 +12,7 @@ extension plugin commands appear here too. For plugin details, run
     `vmake completion install [--shell <value>]` - Install shell completion to your profile
   `vmake config [--set <value> -s]` - Edit the active build configuration or manage configuration files
     `vmake config copy <filename.json>` - Copy the active configuration to a new file without switching
+    `vmake config describe [text]` - Print or set the description of the active configuration
     `vmake config list` - List project configuration files and the active selection
     `vmake config use <filename.json>` - Select an existing configuration in .vmake/project.json
   `vmake distclean [--purge-cache]` - Deep clean all build artifacts

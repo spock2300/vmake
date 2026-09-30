@@ -62,6 +62,28 @@ func (m *Model) handleEditingMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) handleDescriptionMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if !mouseLeftPress(msg) {
+		return m, nil
+	}
+	if !m.descriptionRowAt(msg.X, msg.Y) {
+		m.descEditing = false
+	}
+	return m, nil
+}
+
+func (m *Model) descriptionRowAt(x, y int) bool {
+	if m.descRowOffset == 0 {
+		return false
+	}
+	style := optionsPanelStyle(m.focusArea == 1, m.optionsPanelWidth())
+	left := m.renderedTreeW + style.GetBorderLeftSize()
+	if x < left || x >= left+style.GetWidth() {
+		return false
+	}
+	return y-m.headerHeight() == 1
+}
+
 func (m *Model) optionRows() ([]optionRow, int, int) {
 	visible := m.visibleOptions()
 	nameWidth, valWidth := 0, 0
@@ -113,6 +135,10 @@ func (m *Model) optionRowAt(x, y int) (int, bool) {
 }
 
 func (m *Model) handleMouseOptionClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.descriptionRowAt(msg.X, msg.Y) {
+		m.startDescriptionEdit()
+		return m, nil
+	}
 	index, ok := m.optionRowAt(msg.X, msg.Y)
 	if !ok {
 		return m, nil

@@ -60,6 +60,9 @@ const (
 	textTerminalTooSmall   textID = "terminal_too_small"
 	textToolchainErrors    textID = "toolchain_errors"
 	textSelectedToolchain  textID = "selected_toolchain"
+	textDescription        textID = "description"
+	textDescriptionNotSet  textID = "description_not_set"
+	textDescriptionEdit    textID = "description_edit"
 )
 
 func (m *Model) text(id textID) string {

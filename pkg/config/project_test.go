@@ -243,3 +243,61 @@ func TestProjectCopyDoesNotFollowDestinationSymlink(t *testing.T) {
 		t.Fatalf("changed symlink target: %q, %v", data, err)
 	}
 }
+
+func TestProjectConfigDescription(t *testing.T) {
+	root := t.TempDir()
+	path, err := SetProjectDescription(root, "  Board A 调试配置  ")
+	if err != nil || path != filepath.Join(root, ".vmake", DefaultFilename) {
+		t.Fatalf("set description: %s, %v", path, err)
+	}
+	cfg, _, err := LoadProject(root)
+	if err != nil || cfg.Description != "Board A 调试配置" {
+		t.Fatalf("loaded description: %+v, %v", cfg, err)
+	}
+	infos, err := ListProjectConfigs(root)
+	if err != nil || len(infos) != 1 || infos[0].Description != "Board A 调试配置" {
+		t.Fatalf("listed description: %+v, %v", infos, err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), `"description": "Board A 调试配置"`) {
+		t.Fatalf("saved description: %q, %v", data, err)
+	}
+	if err := CopyProjectConfig(root, "board.json"); err != nil {
+		t.Fatal(err)
+	}
+	copied, err := Load(filepath.Join(root, ".vmake", "board.json"))
+	if err != nil || copied.Description != "Board A 调试配置" {
+		t.Fatalf("copied description: %+v, %v", copied, err)
+	}
+	if _, err := SetProjectDescription(root, ""); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err = LoadProject(root)
+	if err != nil || cfg.Description != "" {
+		t.Fatalf("cleared description: %+v, %v", cfg, err)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil || strings.Contains(string(data), "description") {
+		t.Fatalf("cleared description persisted: %q, %v", data, err)
+	}
+}
+
+func TestProjectDescriptionValidation(t *testing.T) {
+	root := t.TempDir()
+	original := `{"version":"1","entries":{}}`
+	writeProjectFile(t, root, DefaultFilename, original)
+	writeProjectFile(t, root, ProjectFilename, `{"config":"config.json"}`)
+	for _, bad := range []string{"two\nlines", "tab\there", strings.Repeat("a", MaxDescriptionLength+1)} {
+		if _, err := SetProjectDescription(root, bad); err == nil {
+			t.Fatalf("accepted invalid description %q", bad)
+		}
+		assertProjectFile(t, root, DefaultFilename, original)
+	}
+	if _, err := SetProjectDescription(root, strings.Repeat("a", MaxDescriptionLength)); err != nil {
+		t.Fatalf("rejected max-length description: %v", err)
+	}
+	writeProjectFile(t, root, ProjectFilename, `{"config":"missing.json"}`)
+	if _, err := SetProjectDescription(root, "text"); err == nil || !strings.Contains(err.Error(), ProjectFilename) {
+		t.Fatalf("wrote description for missing explicit selection: %v", err)
+	}
+}

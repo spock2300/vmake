@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -30,7 +32,39 @@ func newConfigListCmd() *cobra.Command {
 				} else if cfg.Error != nil {
 					status = fmt.Sprintf(" (invalid: %v)", cfg.Error)
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s %s%s\n", marker, cfg.Name, status)
+				description := ""
+				if desc := displayDescription(cfg.Description); desc != "" {
+					description = "  " + desc
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s %s%s%s\n", marker, cfg.Name, status, description)
+			}
+			return nil
+		},
+	}
+}
+
+func newConfigDescribeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "describe [text]",
+		Short: "Print or set the description of the active configuration",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			root := findProjectDir()
+			if len(args) == 1 {
+				commandStorageLocks()
+				path, err := config.SetProjectDescription(root, args[0])
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Description saved to %s\n", path)
+				return nil
+			}
+			cfg, _, err := config.LoadProject(root)
+			if err != nil {
+				return err
+			}
+			if cfg.Description != "" {
+				fmt.Fprintln(cmd.OutOrStdout(), cfg.Description)
 			}
 			return nil
 		},
@@ -88,8 +122,26 @@ func completeConfigFilename(cmd *cobra.Command, args []string, toComplete string
 	var names []string
 	for _, cfg := range configs {
 		if cfg.Error == nil && !cfg.Unsaved {
-			names = append(names, cfg.Name)
+			name := cfg.Name
+			if desc := displayDescription(cfg.Description); desc != "" {
+				name += "\t" + desc
+			}
+			names = append(names, name)
 		}
 	}
 	return names, cobra.ShellCompDirectiveNoFileComp
+}
+
+func displayDescription(desc string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		if r < 32 || r == 127 {
+			return ' '
+		}
+		return r
+	}, desc)
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	if utf8.RuneCountInString(cleaned) <= 80 {
+		return cleaned
+	}
+	return string([]rune(cleaned)[:79]) + "…"
 }

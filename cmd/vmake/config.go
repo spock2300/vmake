@@ -31,7 +31,7 @@ func init() {
 	configCmd.Flags().StringArrayVarP(&setFlags, "set", "s", nil,
 		"Set option value non-interactively (format: [pkg/]option=value)")
 	RootCmd.AddCommand(configCmd)
-	configCmd.AddCommand(newConfigListCmd(), newConfigUseCmd(), newConfigCopyCmd())
+	configCmd.AddCommand(newConfigListCmd(), newConfigUseCmd(), newConfigCopyCmd(), newConfigDescribeCmd())
 }
 
 func runConfig(cmd *cobra.Command, args []string) {
@@ -79,7 +79,7 @@ func runConfig(cmd *cobra.Command, args []string) {
 		deps[name] = node.Deps
 	}
 
-	result, err := tui.Run(sources, deps, ctx.AllOptions, values, ctx.WorkDir, currentTC, ctx.GlobalOptions, globalValues, ctx.AllKConfigs)
+	result, err := tui.Run(sources, deps, ctx.AllOptions, values, ctx.WorkDir, currentTC, ctx.GlobalOptions, globalValues, ctx.AllKConfigs, ctx.Config.Description)
 	fatalErr(err)
 
 	if !result.Saved {
@@ -92,6 +92,8 @@ func runConfig(cmd *cobra.Command, args []string) {
 }
 
 func saveConfigResult(ctx *RuntimeContext, result *tui.ConfigResult) error {
+	ctx.Config.Description = result.Description
+
 	configured := make(map[string]bool)
 	for pkgName := range result.Values {
 		configured[pkgName] = true

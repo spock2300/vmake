@@ -9,6 +9,7 @@ var translations = map[language]map[textID]string{
 		textName: "name", textType: "type", textDefault: "default", textCurrent: "current", textYes: "yes", textNo: "no", textChoices: "choices: ", textCloseDetails: "Esc/? to close", textNavigate: "navigate", textCollapseExpand: "collapse/expand", textSearch: "search", textCollapseExpandAll: "collapse/expand all", textHideEmpty: "hide empty",
 		textCycleValue: "cycle value", textEdit: "edit", textReset: "reset", textDetail: "detail", textBack: "back", textConfirm: "confirm", textDelete: "delete", textCancel: "cancel", textConfirmMatch: "confirm/1 match", textPickMatch: "pick match", textJump: "jump", textRefine: "refine", textClear: "clear", textMoveCursor: "move cursor",
 		textTerminalTooSmall: "Terminal too small. Please resize to at least 50x8.", textToolchainErrors: "%d unavailable toolchain definitions; run vmake toolchain list for details", textSelectedToolchain: "Selected toolchain %q: %v",
+		textDescription: "Description", textDescriptionNotSet: "(not set)", textDescriptionEdit: "edit description",
 	},
 	languageChinese: {
 		textDetailScrollHint:   "↑↓/滚轮滚动",
@@ -18,5 +19,6 @@ var translations = map[language]map[textID]string{
 		textName: "名称", textType: "类型", textDefault: "默认值", textCurrent: "当前值", textYes: "是", textNo: "否", textChoices: "可选值：", textCloseDetails: "Esc/? 关闭", textNavigate: "导航", textCollapseExpand: "折叠/展开", textSearch: "搜索", textCollapseExpandAll: "全部折叠/展开", textHideEmpty: "隐藏空项",
 		textCycleValue: "切换值", textEdit: "编辑", textReset: "重置", textDetail: "详情", textBack: "返回", textConfirm: "确认", textDelete: "删除", textCancel: "取消", textConfirmMatch: "确认/单个匹配", textPickMatch: "选择匹配", textJump: "跳转", textRefine: "细化", textClear: "清除", textMoveCursor: "移动光标",
 		textTerminalTooSmall: "终端窗口太小，请至少调整到 50x8。", textToolchainErrors: "%d 个工具链定义不可用；运行 vmake toolchain list 查看详情", textSelectedToolchain: "当前工具链 %q：%v",
+		textDescription: "说明", textDescriptionNotSet: "（未设置）", textDescriptionEdit: "编辑说明",
 	},
 }
