@@ -173,7 +173,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 ```
 
 - `target_os="none"` marks bare metal and drives artifact naming and link policy; `target_triple` feeds `Configure --host` and CMake's compiler target.
-- Select the compiler with `vmake build --toolchain arm-none-eabi` (or the `toolchain` option / `.vmake/config.json`). Toolchains contributed by extensions carry no target or CPU defaults, so declare `-mcpu`/`-mthumb`/`--specs` yourself. Validate with `vmake doctor --toolchain arm-none-eabi`. See `SKILL.md - Cross-Compiling`.
+- Select the compiler with `vmake build --toolchain arm-none-eabi` (or the `toolchain` option in the active configuration). Toolchains contributed by extensions carry no target or CPU defaults, so declare `-mcpu`/`-mthumb`/`--specs` yourself. Validate with `vmake doctor --toolchain arm-none-eabi`. See `SKILL.md - Cross-Compiling`.
 - `-nostartfiles` skips the **target** crt0/startup files provided by the compiler driver's spec; it does **not** unlink libc, so it is not bare-metal linking. A hosted libc stays linked. For bare metal use `-nostdlib` plus explicit libgcc/libc links (see the next section) or `--specs=nosys.specs` (hosted newlib, syscall stubs).
 - Cross/bare-metal test binaries cannot execute on the host: `vmake test` refuses non-host targets with a clear error. Use `vmake build --tests` to compile them.
 - The host-simulated fixture `test_data/12_rtos_simulate` uses the host toolchain, `-nostartfiles`, and a simulated linker script, so it builds on the development machine without a cross toolchain.

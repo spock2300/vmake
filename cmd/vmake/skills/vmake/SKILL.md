@@ -384,7 +384,7 @@ AddRequires accepts semver constraints: `"official/zlib >=1.2"`, `"official/curl
 
 Operators: `>=` and `>` (major-locked when major > 0 — `>=1.2` never matches `2.0`), `<=` / `<` (no major lock), `=` (exact), `~` (major.minor lock). Highest satisfying version is selected; multi-package constraints must be mutually satisfiable. See `references/api.md` for the full operator table and major lock semantics.
 
-Version pins in `.vmake/config.json` entries (set via TUI) take precedence over latest matching tags, and `.vmake/vmake.lock` pins survive until `vmake lock update`.
+Version pins in entries of the active configuration (`.vmake/config.json` by default, set via the TUI) take precedence over latest matching tags, and `.vmake/vmake.lock` pins survive until `vmake lock update`.
 
 ### OnRequire Two-Phase Execution
 
@@ -416,6 +416,39 @@ p.OnRequire(func(ctx *api.RequireContext) {
 **Key implication:** `AddRequires` alone does not guarantee a package is built — it must be reachable from a local root via BFS.
 
 ## Option & Conditional
+
+### Multiple Project Configurations
+
+Store multiple JSON configuration files directly in `.vmake/`. The optional
+`.vmake/project.json` selects one with `{"config":"config-debug.json"}`.
+Without it, the project uses `.vmake/config.json` without creating a selection
+file. An explicit missing or invalid selection is an error, never a fallback.
+Filenames must end in `.json`; paths and `project.json` are rejected.
+
+```bash
+vmake config list
+vmake config copy config-debug.json
+vmake config use config-debug.json
+vmake config
+vmake build
+```
+
+`list` marks the current file with `*` and reports unsaved/invalid entries.
+`copy` preserves the current file bytes, does not switch, and refuses to overwrite;
+an unsaved legacy default copies as an empty configuration. `use` validates an
+existing file and updates the selection, including when the old target is missing.
+These management commands do not execute build.go or resolve dependencies.
+`use` supports filename completion. Repair malformed project.json before using it.
+
+TUI and `--set` edit only the selected file. Build, test, query, clean, doctor and
+lock update use that same selection relative to the detected project root; script
+scanning scope is unchanged. All configurations share `.vmake/vmake.lock`.
+Switching does not rewrite the lock. Configuration filenames do not enter the
+BuildKey, so equivalent configurations reuse artifacts. Installation still defaults
+to `install/`; use distinct `--prefix` values to retain multiple installations.
+`clean --all` and `distclean` preserve configurations and project.json.
+
+### Declaring Options
 
 ```go
 ctx.Option("debug").SetType(api.OptionBool).SetDefault(false)
@@ -604,7 +637,7 @@ Bare `vmake` is equivalent to `vmake build`.
 
 ## Reproducible Builds (vmake.lock + --manifest)
 
-Remote dependency versions and commits are pinned in `.vmake/vmake.lock` after resolution — commit it alongside `.vmake/config.json`. Subsequent builds reuse locked versions; new upstream tags never change what you build until you run `vmake lock update`.
+Remote dependency versions and commits are pinned in `.vmake/vmake.lock` after resolution — commit it alongside the active configuration (`.vmake/config.json` by default). Subsequent builds reuse locked versions; new upstream tags never change what you build until you run `vmake lock update`.
 
 For CI/CD, pin from an install manifest instead:
 
@@ -626,7 +659,8 @@ vmake build --manifest install/manifest.json
 | `vmake build --tests` | Build including test targets |
 | `vmake test` | Build + run test targets |
 | `vmake rebuild` | Clean + build |
-| `vmake config` | TUI for options (`--set opt=val` / `--set pkg/opt=val` non-interactive) |
+| `vmake config` | TUI for the selected configuration (`--set opt=val` / `--set pkg/opt=val` non-interactive) |
+| `vmake config list/use/copy` | List files, select an existing file, or copy the active configuration in `.vmake/` |
 | `vmake clean [--all]` | Execute OnClean hooks then remove build artifacts |
 | `vmake distclean [--purge-cache]` | Deep clean: artifacts + install/ + vmake_deps/ (+ global cache entries) |
 | `vmake query` | Dependency tree; `query targets`, `query config <pkg>` |

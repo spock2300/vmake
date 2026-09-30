@@ -131,12 +131,6 @@ func resolveParams(ignoreLock bool, workDir, configPath, lockPath string, lock *
 	}
 }
 
-func mustLoadConfig(path string) *config.ConfigFile {
-	cfg, err := config.Load(path)
-	fatalErr(err)
-	return cfg
-}
-
 func resolveToConfig(ignoreLock bool) *RuntimeContext {
 	ctx, err := resolveToConfigContext(context.Background(), ignoreLock)
 	fatalErr(err)
@@ -149,8 +143,7 @@ func resolveToConfigContext(execution context.Context, ignoreLock bool) (*Runtim
 	if err != nil {
 		return nil, err
 	}
-	configPath := filepath.Join(workDir, ".vmake", "config.json")
-	cfg, err := config.Load(configPath)
+	cfg, configPath, err := config.LoadProject(findProjectDir())
 	if err != nil {
 		return nil, err
 	}
@@ -188,8 +181,8 @@ func resolveToConfigBestEffort(ignoreLock bool) (*RuntimeContext, bool) {
 		vlog.Error("Error: %v", err)
 		os.Exit(1)
 	}
-	configPath := filepath.Join(workDir, ".vmake", "config.json")
-	cfg := mustLoadConfig(configPath)
+	cfg, configPath, err := config.LoadProject(findProjectDir())
+	fatalErr(err)
 	if err := ensureGitignore(findProjectDir()); err != nil {
 		vlog.Error("gitignore: %v", err)
 	}

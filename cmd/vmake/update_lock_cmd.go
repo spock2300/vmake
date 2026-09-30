@@ -31,7 +31,8 @@ func newLockUpdateCmd() *cobra.Command {
 		Long: `Re-resolves remote dependency versions ignoring the current vmake.lock,
 downloads the selected versions and rewrites the lock.
 
-Version pins from .vmake/config.json take precedence over latest matching tags.`,
+Version pins from the active project configuration take precedence over latest matching tags.
+All project configurations share .vmake/vmake.lock.`,
 		Run: func(cmd *cobra.Command, args []string) {
 			ctx := resolveToConfig(true)
 			fatalErr(pipeline.UpdateLock(ctx))

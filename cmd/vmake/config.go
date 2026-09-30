@@ -21,8 +21,9 @@ var setFlags []string
 
 var configCmd = &cobra.Command{
 	Use:   "config",
-	Short: "Open a TUI to configure build options for all packages.",
-	Long:  `Open a TUI to configure build options for all packages.`,
+	Short: "Edit the active build configuration or manage configuration files",
+	Long:  `Open a TUI to edit the active configuration, or use list, copy and use to manage configuration files in .vmake.`,
+	Args:  cobra.NoArgs,
 	Run:   runConfig,
 }
 
@@ -30,6 +31,7 @@ func init() {
 	configCmd.Flags().StringArrayVarP(&setFlags, "set", "s", nil,
 		"Set option value non-interactively (format: [pkg/]option=value)")
 	RootCmd.AddCommand(configCmd)
+	configCmd.AddCommand(newConfigListCmd(), newConfigUseCmd(), newConfigCopyCmd())
 }
 
 func runConfig(cmd *cobra.Command, args []string) {
@@ -85,6 +87,11 @@ func runConfig(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	fatalErr(saveConfigResult(ctx, result))
+	vlog.Info("Configuration saved to %s", ctx.ConfigPath)
+}
+
+func saveConfigResult(ctx *RuntimeContext, result *tui.ConfigResult) error {
 	configured := make(map[string]bool)
 	for pkgName := range result.Values {
 		configured[pkgName] = true
@@ -144,11 +151,7 @@ func runConfig(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	if err := config.Save(ctx.ConfigPath, ctx.Config); err != nil {
-		fatalMsg("Failed to save config: %v", err)
-	}
-
-	vlog.Info("Configuration saved to %s", ctx.ConfigPath)
+	return config.Save(ctx.ConfigPath, ctx.Config)
 }
 
 type setEntry struct {

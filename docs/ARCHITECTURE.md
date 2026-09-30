@@ -482,6 +482,8 @@ PkgBuildMeta
 
 ### ConfigFile (`pkg/config/store.go`)
 
+CLI 通过 `pkg/config.LoadProject` 从项目根目录的 `.vmake/project.json` 读取 `config` 文件名，再加载对应配置；缺少选择文件时使用 `.vmake/config.json`。解析后的路径保存在 `RuntimeContext.ConfigPath`，TUI 和 `--set` 都保存回该路径。配置管理命令不进入 Require/Configure；所有配置继续共享 `.vmake/vmake.lock`，配置文件名不参与 BuildKey。
+
 ```
 ConfigFile
 ├── Version  string

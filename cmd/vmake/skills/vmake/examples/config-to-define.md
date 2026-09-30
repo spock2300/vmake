@@ -167,7 +167,7 @@ All accessors (`Bool`, `Int`, `String`, `BoolStr`, `When`, `If`, `Select`) exist
 
 | Phase | Values visible |
 |---|---|
-| `OnConfig` | Declared `SetDefault` values plus earlier `SetConfigValue` results only. Values saved in `.vmake/config.json` are NOT loaded yet |
+| `OnConfig` | Declared `SetDefault` values plus earlier `SetConfigValue` results only. Values saved in the active configuration (`.vmake/config.json` by default) are NOT loaded yet |
 | `SetOnApply` | The resolved value for that option (saved config value, else default), normalized to the declared type |
 | `OnBuild` / `OnInstall` / `OnClean` | Full resolved values: saved config + defaults + built-in/global options |
 | `OnRequire` | None during discovery; only `When`/`If`/`Select` are allowed, direct reads are build errors |
@@ -182,7 +182,7 @@ ctx.When("x", "val")        // true iff option "x" == "val" (works in OnRequire 
 
 In `OnConfig`, options must already be declared (`ctx.Option(...)`) in that same callback before they can be read. Do not branch on user configuration there — move that logic to `OnBuild`, `OnInstall`, `OnClean`, or `SetOnApply`.
 
-Newly registered options that haven't been written to `.vmake/config.json` yet (first build after adding an option) will use their `SetDefault` value in `OnBuild`. No need to run `vmake config` first.
+Newly registered options that haven't been written to the active configuration yet (first build after adding an option) will use their `SetDefault` value in `OnBuild`. No need to run `vmake config` first.
 
 ## Running / Verifying
 
@@ -253,7 +253,7 @@ Fix: construct the full `"KEY=VALUE"` string: `AddDefines("LWIP_PERF=1")`.
 
 **Reading saved config in `OnConfig`:**
 ```go
-// WRONG: sees SetDefault/SetConfigValue only, never .vmake/config.json
+// WRONG: sees SetDefault/SetConfigValue only, never saved configuration values
 p.OnConfig(func(ctx *api.ConfigContext) {
     if ctx.Bool("debug") { /* never the user's configured value */ }
 })

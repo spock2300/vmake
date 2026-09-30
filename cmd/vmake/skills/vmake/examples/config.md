@@ -102,6 +102,29 @@ vmake build
 vmake build --mode debug
 ```
 
+## Switching Configuration Files
+
+```bash
+vmake config copy config-minimal.json
+vmake config use config-minimal.json
+vmake config --set myproject/features=minimal
+vmake build
+vmake config list
+```
+
+The selection is stored in `.vmake/project.json` as
+`{"config":"config-minimal.json"}`. Each file uses the existing configuration
+format, including package versions, options and KConfig data. `copy` leaves the
+selection unchanged and rejects existing destinations; `use` switches it without
+running build scripts. TUI and `--set` save only the selected file. If there was
+no saved default configuration before copying, use `vmake config copy config.json`
+to create it from the active configuration before switching back, since `use`
+requires an existing file.
+
+All configurations share `.vmake/vmake.lock` and the existing BuildKey rules.
+Use distinct installation `--prefix` directories to keep multiple installed builds.
+See `SKILL.md - Multiple Project Configurations` for compatibility and error handling.
+
 ## Key Points
 
 - Options are typed: Bool, String, Int, Choice

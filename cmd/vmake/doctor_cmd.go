@@ -59,7 +59,7 @@ func runDoctor() {
 	if projectDir := findProjectDirSoft(); projectDir != "" {
 		workDir = projectDir
 	}
-	cfg, err := config.Load(filepath.Join(workDir, ".vmake", "config.json"))
+	cfg, _, err := config.LoadProject(workDir)
 	if err != nil {
 		vlog.Fatal("load project config: %v", err)
 	}

@@ -159,7 +159,7 @@ One declaring package is enough. Multiple packages may declare the same `GlobalO
 
 ```bash
 vmake build                    # "Build succeeded!"; lib:utils builds before app:app
-vmake config --set debug=true  # non-interactive write; "Configuration saved to .vmake/config.json"
+vmake config --set debug=true  # non-interactive write to the active configuration
 vmake doctor                   # toolchain/platform findings + "[warn] ... (noRoot)" because this example declares no root
 vmake query                    # dependency tree with targets, versions and package dirs
 ```

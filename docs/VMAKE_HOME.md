@@ -162,14 +162,16 @@ CLI：`vmake pkg list|search|clean|update`
 
 ## 项目目录
 
-每个项目可有独立的配置文件，存储在 `.vmake/config.json`。
+每个项目可在 `.vmake/` 中保存多份配置，由 `.vmake/project.json` 选择当前生效的文件。没有 `project.json` 的旧工程仍使用 `config.json`，不会自动生成选择文件。
 
 ```
 project/
 ├── build.go                       # 项目构建脚本
 ├── .vmake/
-│   ├── config.json                # 项目配置
-│   └── vmake.lock                 # 锁定远程包版本+commit（vmake lock update 重新解析）
+│   ├── project.json               # 当前配置选择（可选）
+│   ├── config.json                # 默认配置
+│   ├── config-debug.json          # 其他配置，格式与默认配置相同
+│   └── vmake.lock                 # 所有配置共享的远程包版本+commit 锁
 ├── vmake_deps/                    # 第三方包符号链接（自动生成，已 gitignore）
 │   └── <repo>/<pkg>/
 │       ├── src -> ~/.vmake/cache/.../src
@@ -182,7 +184,32 @@ project/
         └── <target>               # 最终产物
 ```
 
-项目配置结构（`pkg/config/store.go`）：
+`project.json` 仅保存配置文件名：
+
+```json
+{
+  "config": "config-debug.json"
+}
+```
+
+文件名必须以 `.json` 结尾，位于 `.vmake/` 内，不接受路径或保留名称 `project.json`。显式选择的文件缺失或 JSON 无法解析时会报错，不退回默认配置；损坏的 `project.json` 需要修正后再执行命令。
+
+```bash
+vmake config list
+vmake config copy config-debug.json
+vmake config use config-debug.json
+vmake config
+vmake build
+vmake config use config.json
+```
+
+`list` 按文件名排序，用 `*` 标记当前配置，并显示未保存或无法解析的状态。`copy` 原样复制当前配置，不切换、不覆盖已有文件；默认配置尚未保存时复制为空配置。`use` 验证目标后更新选择，不执行构建脚本或解析依赖，即使原选择的文件丢失也可切换。`use` 支持文件名补全。
+
+TUI 和 `vmake config --set` 仅保存当前配置。构建、测试、查询、清理、`doctor` 和 `lock update` 均读取当前配置。配置选择相对于现有项目定位规则找到的根目录，构建脚本扫描范围保持不变；子目录被识别为独立项目时使用其自身配置。
+
+所有配置共享 `.vmake/vmake.lock`，切换本身不改写依赖锁。依赖版本选择与锁更新沿用原有规则。构建缓存键不包含配置文件名，等效配置可以复用产物；`clean` 清理当前配置对应的构建目录，`clean --all` 和 `distclean` 保留所有配置及选择文件。安装仍默认使用 `install/`，同时保留多个安装结果时指定不同的 `--prefix`。
+
+每份项目配置的结构（`pkg/config/store.go`）：
 
 ```json
 {
