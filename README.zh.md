@@ -48,6 +48,25 @@ Git 用户态工具、`make` 与 C 工具链的状态，且不需要当前目录
 除 `vmake check-symbols` 外，Windows 上所有功能均可用。该命令读取 ELF 动态符号，
 在 Windows 上会明确拒绝执行。
 
+### macOS
+
+vmake 可在 macOS 上原生运行，前提是安装 Xcode Command Line Tools
+（`xcode-select --install`）：它提供 Apple clang（`cc`/`c++`）、`ar`、`ld`、
+`strip`、`ranlib`、`nm` 与 `size`。常规构建不需要 GNU binutils，内置 host
+工具链不会要求 `objcopy`/`objdump`；共享库产物为 `.dylib`，依赖归档使用
+`-Wl,-force_load` 链接（Mach-O 对 whole-archive 的等价形式）。
+
+- `SetVersionScript`、`AddExcludeLibs`、`SetSymbolBinding` 仅适用于 ELF，
+  在 macOS 目标上会直接报错；`vmake check-symbols` 对原生 Mach-O 产物报告
+  不适用（它只审计 ELF）。
+- 需要 `objcopy` 的后处理（`AddPostLinkHex`/`AddPostLinkBin`、
+  `SetSymbolPrefix`）需要 `PATH` 上有 GNU binutils，或使用自带 `objcopy` 的
+  目标工具链（例如 ARM GNU 工具链，vmake-tools 扩展已提供 macOS arm64 归档）。
+  `AddPostLinkSize`/`AddPostLinkStrip` 使用系统 `size`/`strip`。
+- Xcode 自带 GNU Make 3.81；Kconfig/Linux 内核/U-Boot 项目需要 GNU Make
+  3.82+，可 `brew install make` 后把所选工具链的 `make` 指向 `gmake`。
+  `vmake doctor` 会报告检测到的 make 版本。
+
 ### 调试模式
 
 build.go 由 yaegi 解释器直接执行，无需编译为插件：

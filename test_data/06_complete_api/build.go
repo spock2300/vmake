@@ -1,6 +1,7 @@
 package main
 
 import (
+	"runtime"
 	"strconv"
 
 	"github.com/spock2300/vmake/pkg/api"
@@ -86,6 +87,12 @@ func Main(p *api.Package) {
 		prefix := ctx.String("custom_prefix")
 		cppStd := ctx.String("c++standard")
 		sslVersion := ctx.String("ssl_version")
+		sonameFlag := "-Wl,-soname,libmylib.so"
+		asNeededFlag := "-Wl,--as-needed"
+		if runtime.GOOS == "darwin" {
+			sonameFlag = ""
+			asNeededFlag = ""
+		}
 
 		ctx.Target("core_obj").
 			SetKind(api.TargetObject).
@@ -117,7 +124,7 @@ func Main(p *api.Package) {
 				AddDefines("THREAD_COUNT=" + strconv.Itoa(threads)).
 				AddDefines("PREFIX=\"" + prefix + "\"").
 				AddCxxFlags("-fPIC").
-				AddLdFlags("-Wl,-soname,libmylib.so")
+				AddLdFlags(sonameFlag)
 		} else {
 			ctx.Target("mylib").
 				SetKind(api.TargetStatic).
@@ -144,7 +151,7 @@ func Main(p *api.Package) {
 			AddCxxFlags(ctx.If("verbose", "-v")).
 			AddLinks(ctx.If("ssl", "ssl", "crypto")).
 			AddLdFlags(ctx.If("debug", "-fsanitize=address")).
-			AddLdFlags("-Wl,--as-needed")
+			AddLdFlags(asNeededFlag)
 
 		ctx.Target("benchmark").
 			SetKind(api.TargetBinary).

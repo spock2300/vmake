@@ -236,3 +236,94 @@ func TestClangAssemblyCompileCommand(t *testing.T) {
 		t.Fatal("compile command mutated caller options")
 	}
 }
+
+var machoObjectHeader = []byte{
+	0xcf, 0xfa, 0xed, 0xfe,
+	0x0c, 0x00, 0x00, 0x01,
+	0x00, 0x00, 0x00, 0x00,
+	0x01, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+}
+
+func darwinClangAssembly(t *testing.T, commands *[][]string, writePP bool) *Compiler {
+	t.Helper()
+	return &Compiler{
+		ccPath:   "cc",
+		clangCC:  true,
+		targetOS: "darwin",
+		run: func(name, workDir string, args ...string) ([]byte, error) {
+			*commands = append(*commands, append([]string{name}, args...))
+			for i, arg := range args {
+				if arg != "-MF" || i+1 >= len(args) {
+					continue
+				}
+				dep := args[i+1]
+				if strings.HasSuffix(dep, ".as") {
+					t.Errorf("darwin assembly must not request assembler deps: %v", args)
+				}
+				if writePP && strings.HasSuffix(dep, ".pp") {
+					if err := os.WriteFile(resolveWorkPath(workDir, dep), []byte("object.o: source.S header.h\n"), 0644); err != nil {
+						return nil, err
+					}
+				}
+			}
+			return nil, os.WriteFile(filepath.Join(workDir, "object.o"), machoObjectHeader, 0644)
+		},
+	}
+}
+
+func TestClangAssemblyDarwinSkipsAssemblerDeps(t *testing.T) {
+	dir := t.TempDir()
+	writeAssemblyFixture(t, dir, "source.s", ".include \"extra.inc\"\n.byte 1\n")
+	writeAssemblyFixture(t, dir, "extra.inc", ".byte 2\n")
+
+	var commands [][]string
+	compiler := darwinClangAssembly(t, &commands, false)
+	deps, err := compiler.Compile("source.s", "object.o", &CompileOptions{Language: "asm"}, dir)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if len(deps) != 0 {
+		t.Fatalf("deps = %v, want none where the assembler has no dep-file option", deps)
+	}
+	if len(commands) != 1 {
+		t.Fatalf("commands = %v, want a single assembly step", commands)
+	}
+	args := commands[0]
+	for _, flag := range []string{"--MD", "-MMD", "-MP", "-MF"} {
+		if slices.Contains(args, flag) {
+			t.Fatalf("args = %v, darwin clang assembly must skip assembler dependency flags", args)
+		}
+	}
+	if !slices.Contains(args, "-fno-integrated-as") {
+		t.Fatalf("args = %v, want -fno-integrated-as", args)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "object.o.d")); err != nil {
+		t.Fatalf("dep file: %v", err)
+	}
+}
+
+func TestClangAssemblyDarwinKeepsPreprocessorDeps(t *testing.T) {
+	dir := t.TempDir()
+	writeAssemblyFixture(t, dir, "source.S", "#include \"header.h\"\n.byte 1\n")
+	writeAssemblyFixture(t, dir, "header.h", "#define VALUE 1\n")
+
+	var commands [][]string
+	compiler := darwinClangAssembly(t, &commands, true)
+	deps, err := compiler.Compile("source.S", "object.o", &CompileOptions{Language: "asm-cpp"}, dir)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if !slices.Contains(deps, "header.h") {
+		t.Fatalf("deps = %v, want preprocessor header header.h", deps)
+	}
+	assemble := commands[len(commands)-1]
+	for _, flag := range []string{"--MD", "-Xassembler"} {
+		if slices.Contains(assemble, flag) {
+			t.Fatalf("assemble args = %v, darwin must not use assembler dependency flags", assemble)
+		}
+	}
+}

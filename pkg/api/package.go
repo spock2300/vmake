@@ -42,10 +42,14 @@ func (k TargetKind) ExtFor(targetOS string) string {
 	case TargetStatic:
 		return ".a"
 	case TargetShared:
-		if targetOS == "windows" {
+		switch targetOS {
+		case "windows":
 			return ".dll"
+		case "darwin":
+			return ".dylib"
+		default:
+			return ".so"
 		}
-		return ".so"
 	case TargetObject:
 		return ".o"
 	default:

@@ -21,12 +21,15 @@ const (
 	updateEnvKey = "VMAKE_SNAPSHOT_UPDATE"
 )
 
-// baselineDirName is per-OS: artifact names, path separators and the contents
-// of compile_commands.json are all OS-specific, so Windows baselines are stored
-// alongside the Unix ones rather than replacing them.
+// baselineDirName is per-OS: artifact names, path separators, toolchain paths
+// and the contents of compile_commands.json are all OS-specific, so Windows and
+// macOS baselines are stored alongside the Unix ones rather than replacing them.
 func baselineDirName() string {
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows":
 		return "baseline-windows"
+	case "darwin":
+		return "baseline-darwin"
 	}
 	return "baseline"
 }
@@ -37,6 +40,13 @@ var (
 		"08_with_package":     true,
 		"09_with_curl":        true,
 		"10_local_repo":       true,
+	}
+	// ELF-only fixtures need GNU ld, GNU binutils and ELF symbol policies.
+	skipProjectsDarwin = map[string]bool{
+		"12_rtos_simulate":  true,
+		"22_version_script": true,
+		"23_link_strategy":  true,
+		"24_symbol_prefix":  true,
 	}
 	updateSnapshots = flag.Bool("update", false, "regenerate baseline snapshots")
 )
@@ -146,7 +156,7 @@ func discoverProjects(t *testing.T, root string) []project {
 		if strings.HasPrefix(name, "_") || strings.HasPrefix(name, ".") {
 			continue
 		}
-		if skipProjects[name] {
+		if skipProjects[name] || runtime.GOOS == "darwin" && skipProjectsDarwin[name] {
 			continue
 		}
 		if skipDirsForDiscovery[name] {

@@ -34,7 +34,7 @@ type LinkPolicy struct {
 // Validate rejects symbol-management options the target's object format does
 // not support. Version scripts, --exclude-libs and -Bsymbolic are ELF-only.
 func (p LinkPolicy) Validate() error {
-	if p.TargetOS != "windows" {
+	if p.TargetOS != "windows" && p.TargetOS != "darwin" {
 		return nil
 	}
 	var unsupported []string
@@ -50,7 +50,11 @@ func (p LinkPolicy) Validate() error {
 	if len(unsupported) == 0 {
 		return nil
 	}
-	return fmt.Errorf("%s not supported for PE targets: version scripts, --exclude-libs and -Bsymbolic are ELF-only", strings.Join(unsupported, ", "))
+	format := "PE"
+	if p.TargetOS == "darwin" {
+		format = "Mach-O"
+	}
+	return fmt.Errorf("%s not supported for %s targets: version scripts, --exclude-libs and -Bsymbolic are ELF-only", strings.Join(unsupported, ", "), format)
 }
 
 // isLibraryArtifact reports whether path is a linkable library rather than a
@@ -118,6 +122,9 @@ func (l *Linker) binaryCommand(objs, libs, ldflags []string, outputPath, linkerS
 	if err := policy.Validate(); err != nil {
 		return commandSpec{}, err
 	}
+	if policy.TargetOS == "darwin" {
+		return l.machoBinaryCommand(objs, libs, ldflags, outputPath, linkerScript, workDir)
+	}
 	objs = commandPaths(workDir, objs)
 	ldflags = commandFlags(workDir, ldflags)
 	outputPath = commandPath(workDir, outputPath)
@@ -168,6 +175,46 @@ func (l *Linker) binaryCommand(objs, libs, ldflags []string, outputPath, linkerS
 	return commandSpec{Program: l.ccPath, Args: args}, nil
 }
 
+func (l *Linker) machoBinaryCommand(objs, libs, ldflags []string, outputPath, linkerScript string, workDir string) (commandSpec, error) {
+	if linkerScript != "" {
+		return commandSpec{}, fmt.Errorf("linker scripts are not supported for Mach-O targets")
+	}
+	objs = commandPaths(workDir, objs)
+	ldflags = commandFlags(workDir, ldflags)
+	outputPath = commandPath(workDir, outputPath)
+	args := []string{"-o", outputPath}
+	var objectFiles, staticArchives, dynamicLibs []string
+	for _, path := range objs {
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".a":
+			staticArchives = append(staticArchives, path)
+		case ".dylib", ".so":
+			dynamicLibs = append(dynamicLibs, path)
+		default:
+			objectFiles = append(objectFiles, path)
+		}
+	}
+	var groupFlags, otherFlags []string
+	for _, flag := range ldflags {
+		if strings.HasPrefix(flag, "-l") || strings.HasPrefix(flag, "-L") {
+			groupFlags = append(groupFlags, flag)
+		} else {
+			otherFlags = append(otherFlags, flag)
+		}
+	}
+	args = append(args, objectFiles...)
+	for _, archive := range staticArchives {
+		args = append(args, "-Wl,-force_load,"+archive)
+	}
+	args = append(args, dynamicLibs...)
+	for _, lib := range libs {
+		args = append(args, "-l"+lib)
+	}
+	args = append(args, groupFlags...)
+	args = append(args, otherFlags...)
+	return commandSpec{Program: l.ccPath, Args: args}, nil
+}
+
 func (l *Linker) staticCommand(objs []string, outputPath, workDir string) commandSpec {
 	args := []string{"rcs", commandPath(workDir, outputPath)}
 	return commandSpec{Program: l.arPath, Args: append(args, commandPaths(workDir, objs)...)}
@@ -187,7 +234,11 @@ func (l *Linker) sharedCommand(objs, ldflags []string, outputPath string, policy
 			filtered = append(filtered, flag)
 		}
 	}
-	args := []string{"-shared", "-o", outputPath}
+	driverFlag := "-shared"
+	if policy.TargetOS == "darwin" {
+		driverFlag = "-dynamiclib"
+	}
+	args := []string{driverFlag, "-o", outputPath}
 	if policy.TargetOS == "windows" {
 		args = append(args, "-Wl,--out-implib="+outputPath+".a")
 	}

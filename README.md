@@ -66,7 +66,9 @@ is outside the current compatibility validation.
 GCC and Clang assembly inputs track both assembler `.include` files and `.S`
 preprocessor headers. Clang requires an external GNU assembler supported by its
 driver; configure the target and assembler search path through the toolchain flags
-(`--target` and `-B` as needed). Clang bare-metal support is outside this validation;
+(`--target` and `-B` as needed). On macOS Apple's assembler has no dependency-file
+option, so `.s`/`.S` tracking there is limited to `.S` preprocessor headers.
+Clang bare-metal support is outside this validation;
 use GNU ARM GCC for Windows ARM firmware builds.
 
 Build the Windows executable from Linux with CGO disabled:
@@ -74,6 +76,28 @@ Build the Windows executable from Linux with CGO disabled:
 ```bash
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o vmake.exe ./cmd/vmake
 ```
+
+### macOS
+
+vmake runs natively on macOS with the Xcode Command Line Tools
+(`xcode-select --install`), which provide Apple clang (`cc`/`c++`), `ar`, `ld`,
+`strip`, `ranlib`, `nm` and `size`. Ordinary builds need no GNU binutils: the
+host toolchain leaves `objcopy`/`objdump` unset, shared libraries are emitted as
+`.dylib`, and dependency archives are linked with `-Wl,-force_load` — the
+Mach-O equivalent of VMake's whole-archive handling.
+
+- `SetVersionScript`, `AddExcludeLibs` and `SetSymbolBinding` are ELF-only and
+  fail with a clear error on a macOS target; `vmake check-symbols` reports
+  native Mach-O artifacts as not applicable (it audits ELF artifacts only).
+- Post-link helpers that require `objcopy` (`AddPostLinkHex`, `AddPostLinkBin`,
+  `SetSymbolPrefix`) need GNU binutils on `PATH` or a target toolchain that
+  supplies its own `objcopy` — for example the ARM GNU Toolchain, whose macOS
+  arm64 archive ships with the vmake-tools extension. `AddPostLinkSize` and
+  `AddPostLinkStrip` use the system `size`/`strip`.
+- The Xcode toolchain ships GNU Make 3.81. Simple `p.Make()` projects work, but
+  Kconfig/kernel/U-Boot builds need GNU Make 3.82 or newer: install it with
+  `brew install make` and point the selected toolchain's `make` at `gmake`.
+  `vmake doctor` reports the detected make version.
 
 ### Debug Mode
 

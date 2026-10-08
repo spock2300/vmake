@@ -11,10 +11,12 @@ func TestTargetFilenamePerOS(t *testing.T) {
 	}{
 		{TargetBinary, "app", "linux", "app"},
 		{TargetBinary, "app", "windows", "app.exe"},
+		{TargetBinary, "app", "darwin", "app"},
 		{TargetStatic, "foo", "linux", "libfoo.a"},
 		{TargetStatic, "foo", "windows", "libfoo.a"},
 		{TargetShared, "foo", "linux", "libfoo.so"},
 		{TargetShared, "foo", "windows", "libfoo.dll"},
+		{TargetShared, "foo", "darwin", "libfoo.dylib"},
 		{TargetObject, "foo", "windows", "foo.o"},
 	}
 

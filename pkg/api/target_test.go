@@ -18,6 +18,7 @@ func TestTargetKindExt(t *testing.T) {
 		{TargetStatic, "windows", ".a"},
 		{TargetShared, "linux", ".so"},
 		{TargetShared, "windows", ".dll"},
+		{TargetShared, "darwin", ".dylib"},
 		{TargetObject, "linux", ".o"},
 		{TargetObject, "windows", ".o"},
 		{TargetVoid, "linux", ""},

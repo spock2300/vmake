@@ -76,6 +76,8 @@ CGO_ENABLED=0 go build -o vmake ./cmd/vmake
 - Route git invocations through `internal/gitcmd.Args` to preserve LF content, long paths, and symlink settings. Use `filepath.ToSlash` for path arguments sent to MSYS `sh`/`make`/`tar`/`curl`; native `cmd.Dir` retains OS separators.
 - Windows storage requires real symlinks (Developer Mode or elevation); do not substitute junctions. Git for Windows supplies Unix userland, not a C compiler or make. Diagnose a fixture with `../../vmake.exe doctor --toolchain NAME` from its project directory.
 - Windows GNU compile/link/archive commands use response files; `compile_commands.json` must retain expanded arguments. VMake-built PE shared libraries link through `.dll.a` import libraries; never whole-archive these. ELF-only symbol policies must fail on PE targets.
+- macOS hosts use the builtin `cc`/`c++` toolchain with no `objcopy`/`objdump`; do not require them there. Native links are Mach-O: dependency archives use `-Wl,-force_load`, GNU group/whole-archive flags are never emitted, `TargetShared` is `.dylib`, and ELF-only symbol policies must fail on Mach-O targets. Mach-O artifacts are out of scope for `vmake check-symbols`.
+- Apple ships GNU Make 3.81; Kconfig/kernel/U-Boot builds need 3.82+ (`brew install make`, then point the toolchain's MAKE at `gmake`). Snapshot baselines are per host OS: `baseline/`, `baseline-windows/`, `baseline-darwin/`; generate darwin baselines on macOS with `go test -update`.
 - `vmake test` executes native test binaries. Cross/bare-metal targets use `vmake build --tests`; test targets are excluded from ordinary builds and installation.
 
 ## Repository conventions

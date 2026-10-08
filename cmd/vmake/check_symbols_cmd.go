@@ -215,7 +215,7 @@ var (
 )
 
 var errNoDynamicSymbols = errors.New("not applicable: ELF artifact has no dynamic symbol table")
-var errNonELFArtifact = errors.New("not applicable: artifact is not ELF; PE export analysis is not supported")
+var errNonELFArtifact = errors.New("not applicable: artifact is not ELF; PE/Mach-O export analysis is not supported")
 
 func checkDynamicSymbols(path string) error {
 	file, err := os.Open(path)

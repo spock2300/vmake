@@ -2,6 +2,7 @@ package build
 
 import (
 	"debug/elf"
+	"debug/macho"
 	"debug/pe"
 	"errors"
 	"fmt"
@@ -22,6 +23,11 @@ func (c *Compiler) compileClangAssembly(src, objPath string, opts *CompileOption
 
 	asmSource := src
 	depFiles := []string{asmDep}
+	asmDepPath := asmDep
+	if c.targetOS == "darwin" {
+		depFiles = nil
+		asmDepPath = ""
+	}
 	if opts.Language == "asm-cpp" {
 		intermediate = objPath + ".s"
 		ppOpts := *opts
@@ -38,7 +44,7 @@ func (c *Compiler) compileClangAssembly(src, objPath string, opts *CompileOption
 
 	asmOpts := *opts
 	asmOpts.Language = "asm"
-	args := compileArgs(&asmOpts, objPath, asmSource, flags, asmDep, workDir)
+	args := compileArgs(&asmOpts, objPath, asmSource, flags, asmDepPath, workDir)
 	if _, err := c.run(c.ccPath, workDir, args...); err != nil {
 		return nil, err
 	}
@@ -67,6 +73,15 @@ func validateAssemblyObject(path, targetOS string) error {
 		defer file.Close()
 		if file.Type != elf.ET_REL {
 			return fmt.Errorf("expected ELF relocatable object for target_os %s, got %s", targetOS, file.Type)
+		}
+	case "darwin":
+		file, err := macho.Open(path)
+		if err != nil {
+			return fmt.Errorf("expected Mach-O object for target_os %s: %w", targetOS, err)
+		}
+		defer file.Close()
+		if file.Type != macho.TypeObj {
+			return fmt.Errorf("expected Mach-O relocatable object for target_os %s, got %s", targetOS, file.Type)
 		}
 	default:
 		return fmt.Errorf("Clang external assembler object validation is unsupported for target_os %q", targetOS)

@@ -49,6 +49,26 @@ func TestDefaultFlagsWindowsDropsELFFlags(t *testing.T) {
 	}
 }
 
+func TestDefaultFlagsDarwinDropsGNULinkerFlags(t *testing.T) {
+	flags := DefaultBuildFlags("host", "darwin")
+
+	if slices.Contains(flags.CFlags, "-D_FORTIFY_SOURCE=2") {
+		t.Error("CFlags must not carry the glibc-only -D_FORTIFY_SOURCE=2 for Mach-O targets")
+	}
+	if slices.Contains(flags.CxxFlags, "-D_FORTIFY_SOURCE=2") {
+		t.Error("CxxFlags must not carry the glibc-only -D_FORTIFY_SOURCE=2 for Mach-O targets")
+	}
+
+	for _, gnuOnly := range []string{"-pie", "-Wl,--as-needed", "-Wl,--gc-sections", "-Wl,-z,relro,-z,now"} {
+		if slices.Contains(flags.LdFlags, gnuOnly) {
+			t.Errorf("LdFlags must not contain the GNU-ld-only %s for Mach-O targets", gnuOnly)
+		}
+	}
+	if !slices.Contains(flags.LdFlags, "-Wl,-dead_strip") {
+		t.Error("LdFlags should pair -ffunction-sections/-fdata-sections with -Wl,-dead_strip on macOS")
+	}
+}
+
 func TestTargetOSOf(t *testing.T) {
 	if got := (Platform{}).OSOrHost(); got == "" {
 		t.Error("empty platform must use the host OS")

@@ -26,7 +26,7 @@ func cFlagsFor(targetOS string) []string {
 		"-ffunction-sections", "-fdata-sections",
 		"-fstack-protector-strong",
 	}
-	if targetOS != "windows" {
+	if targetOS != "windows" && targetOS != "darwin" {
 		flags = append(flags, "-D_FORTIFY_SOURCE=2")
 	}
 	return append(flags,
@@ -42,7 +42,7 @@ func cxxFlagsFor(targetOS string) []string {
 		"-ffunction-sections", "-fdata-sections",
 		"-fstack-protector-strong",
 	}
-	if targetOS != "windows" {
+	if targetOS != "windows" && targetOS != "darwin" {
 		flags = append(flags, "-D_FORTIFY_SOURCE=2")
 	}
 	return append(flags,
@@ -51,8 +51,12 @@ func cxxFlagsFor(targetOS string) []string {
 }
 
 func ldFlagsFor(targetOS string) []string {
-	if targetOS == "windows" {
+	switch targetOS {
+	case "windows":
 		return []string{"-Wl,--gc-sections"}
+	case "darwin":
+		return []string{"-Wl,-dead_strip"}
+	default:
+		return []string{"-pie", "-Wl,--as-needed", "-Wl,--gc-sections", "-Wl,-z,relro,-z,now"}
 	}
-	return []string{"-pie", "-Wl,--as-needed", "-Wl,--gc-sections", "-Wl,-z,relro,-z,now"}
 }

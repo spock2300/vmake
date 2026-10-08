@@ -1,7 +1,13 @@
 package toolchain
 
+import "runtime"
+
 func GetBuiltinHost() *Toolchain {
-	return &Toolchain{
+	return builtinHostFor(runtime.GOOS)
+}
+
+func builtinHostFor(goos string) *Toolchain {
+	tc := &Toolchain{
 		Name:        "host",
 		DisplayName: "Host",
 		Tools: Tools{
@@ -17,4 +23,11 @@ func GetBuiltinHost() *Toolchain {
 			NM:      "nm",
 		},
 	}
+	if goos == "darwin" {
+		tc.Tools.CC = "cc"
+		tc.Tools.CXX = "c++"
+		tc.Tools.OBJCOPY = ""
+		tc.Tools.OBJDUMP = ""
+	}
+	return tc
 }
