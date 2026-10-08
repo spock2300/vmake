@@ -191,7 +191,7 @@ vmake test
 
 ## What This Demonstrates
 
-- **`ctx.GlobalMode()`** - Declare the built-in build-mode option (`mode`: debug/release) as global
+- **`ctx.GlobalMode()`** - Declare the built-in build-mode option (`mode`: debug/release/size) as global
 - **`ctx.GlobalOption(name)`** - Package-wide options accessible to all packages
 - **`api.OptionInt`** - Integer option type
 - **`ctx.Int(name)`** - Read int option value

@@ -66,7 +66,7 @@ vmake clean
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--toolchain` | | 覆盖工具链 |
-| `--mode` | | 覆盖构建模式（debug/release） |
+| `--mode` | | 覆盖构建模式（debug/release/size） |
 | `--install` | `-i` | 构建后安装 |
 | `--prefix` | `-p` | 安装前缀（默认: `./install/`） |
 | `--install-type` | | 安装类型: `runtime`（默认）或 `sdk` |
@@ -172,7 +172,7 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 
 `runBuildPhase` 包含多个子步骤：
 
-1. **resolveBuildConfig** — 解析构建模式（debug/release）和工具链选择
+1. **resolveBuildConfig** — 解析构建模式（debug/release/size）和工具链选择
 2. **filterAndCollectNeeded** — 用真实配置重新执行 OnRequire（`Resolver.FilterDeps` 替换节点.Deps）→ `UpdateOrder` → 从 `IsLocal()` 根节点 BFS 遍历，过滤需要构建的包
 3. **resolveAllPackageDirs** — 解析所有包的 SourceDir/BuildDir/InstallDir
 4. **prepareAllPackages** — 下载远程包源码、克隆本地 Git 源码、设置子包目录
@@ -493,7 +493,7 @@ ConfigFile
 
 GlobalConfig
 ├── Toolchain string         // 默认工具链
-├── Mode      string         // 默认构建模式（debug/release）
+├── Mode      string         // 默认构建模式（debug/release/size）
 └── Options   map[string]any // 全局选项回退值
 
 EntryConfig

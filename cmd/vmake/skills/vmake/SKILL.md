@@ -26,7 +26,7 @@ include the ones your project needs:
 | Phase | Hook / Step | When you need it |
 |-------|-------------|-----------------|
 | 1 | `OnRequire` | Declare deps (runs with nil config) |
-| 2 | `OnConfig` | Build options (debug/release, features, etc.) — includes OnApply callbacks |
+| 2 | `OnConfig` | Build options (debug/release/size, features, etc.) — includes OnApply callbacks |
 | 3 | `FilterDeps` | Re-runs `OnRequire` with real config values; recomputes deps; BFS collects needed packages |
 | 4 | `OnBuild` | Define targets |
 | 5 | Compile & Link | Scheduler compiles sources and links targets |

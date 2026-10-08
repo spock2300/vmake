@@ -97,9 +97,10 @@ vmake config --set myproject/debug=true --set myproject/features=full
 # Show effective option values and generated -DCONFIG_* defines
 vmake query config myproject
 
-# The global build mode (debug/release) can also be overridden per build
+# The global build mode (debug/release/size) can also be overridden per build
 vmake build
 vmake build --mode debug
+vmake build --mode size
 ```
 
 ## Switching Configuration Files

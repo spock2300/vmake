@@ -61,9 +61,10 @@ func Main(p *api.Package) {
 
 ## CMake Configuration and Artifacts
 
-The default configuration follows VMake's debug/release mode. Use
-`SetCMakeBuildType("MinSizeRel")` for another configuration, shared by configure,
-build, and install. Use `SetCMakeBuildDir` / `SetCMakeInstallDir` to change paths;
+The default configuration follows VMake's debug/release/size mode
+(Debug/Release/MinSizeRel). Use `SetCMakeBuildType("RelWithDebInfo")` for another
+configuration, shared by configure, build, and install. Use `SetCMakeBuildDir` /
+`SetCMakeInstallDir` to change paths;
 relative paths are based on `BuildDir()`. Pass project-specific `-D` options to
 `CMakeConfigure`, targets to `CMakeBuild("--target", "name")`, and install options
 to `CMakeInstall("--component", "name")`. Configure presets are supported through

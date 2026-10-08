@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/plugin"
 	"github.com/spock2300/vmake/pkg/repo"
 	"github.com/spock2300/vmake/pkg/toolchain"
@@ -196,7 +197,7 @@ func completeToolchain(cmd *cobra.Command, args []string, toComplete string) ([]
 }
 
 func completeMode(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	return completeSlice([]string{"debug", "release"})
+	return completeSlice(api.BuiltInGlobalOptions[api.ModeOptionName].Values())
 }
 
 func completeInstallType(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {

@@ -35,11 +35,14 @@ func TestCMakeDirectoriesAndConfiguration(t *testing.T) {
 			if got := p.CMakeInstallDir(); got != wantInstall {
 				t.Fatalf("install directory = %q, want %q", got, wantInstall)
 			}
-			for _, mode := range []string{ModeDebug, ModeRelease} {
+			for _, mode := range []string{ModeDebug, ModeRelease, ModeSize} {
 				p.CfgVals = map[string]any{ModeOptionName: mode}
 				config := "Release"
-				if mode == ModeDebug {
+				switch mode {
+				case ModeDebug:
 					config = "Debug"
+				case ModeSize:
+					config = "MinSizeRel"
 				}
 				assertCMakePhases(t, p, config)
 			}

@@ -192,7 +192,7 @@ func (p *Package) RunEnv(env map[string]string, name string, args ...string) err
 
 三阶段共用 `CMakeBuildDir()`，默认是 `BuildDir()/cmake`。源码默认取 `SrcDir()`。`CMakeInstallDir()` 默认返回远程包的 `InstallDir()`，本地包则使用 `BuildDir()/staging`。通过目录 setter 修改时，相对路径基于 `BuildDir()`，绝对路径保持不变。这些设置不改变 `PkgDirs` 或远程包发布机制；远程包使用自定义安装目录时，需要将产物发布到原有 `InstallDir()` 或显式声明产物。
 
-默认构建配置按 VMake mode 选择 Debug／Release，`SetCMakeBuildType("MinSizeRel")` 等设置对 configure、build、install 均生效。Build、Install 的显式 `--config` 覆盖本次调用的配置。通过 setter 管理构建目录、安装前缀和默认构建类型；原生目录覆盖参数、`--prefix`、`-DCMAKE_INSTALL_PREFIX`、`-DCMAKE_BUILD_TYPE` 会报错并提示对应 setter，其他项目参数继续透传。
+默认构建配置按 VMake mode 选择 Debug／Release／MinSizeRel，`SetCMakeBuildType("MinSizeRel")` 等设置对 configure、build、install 均生效。Build、Install 的显式 `--config` 覆盖本次调用的配置。通过 setter 管理构建目录、安装前缀和默认构建类型；原生目录覆盖参数、`--prefix`、`-DCMAKE_INSTALL_PREFIX`、`-DCMAKE_BUILD_TYPE` 会报错并提示对应 setter，其他项目参数继续透传。
 
 多配置生成器要求所选配置已包含在工程或 preset 声明的 `CMAKE_CONFIGURATION_TYPES` 中。`SetCMakeBuildType` 只选择配置，不改写可用配置集合。例如 Ninja Multi-Config 默认不含 MinSizeRel；需要它时，可向 `CMakeConfigure` 传入 `"-DCMAKE_CONFIGURATION_TYPES=Debug;Release;MinSizeRel"`。
 
@@ -827,7 +827,7 @@ func MatchVersion(available []string, constraint string) (string, bool)
 | 标志 | 短选项 | 说明 |
 |------|--------|------|
 | `--toolchain` | | 覆盖工具链 |
-| `--mode` | | 覆盖构建模式（debug/release） |
+| `--mode` | | 覆盖构建模式（debug/release/size） |
 | `--install` | `-i` | 构建后安装 |
 | `--prefix` | `-p` | 安装前缀（默认：`./install/`） |
 | `--install-type` | | `runtime`（默认）或 `sdk` |
@@ -846,6 +846,7 @@ const (
     ToolchainOptionName = "toolchain"
     ModeDebug           = "debug"
     ModeRelease         = "release"
+    ModeSize            = "size"
 )
 ```
 
@@ -873,6 +874,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 |------|--------|---------|
 | debug | `-O0 -g` | 无 |
 | release | `-O2` | `NDEBUG` |
+| size | `-Os` | `NDEBUG` |
 
 `GetModeFlags(mode string) (cflags, defines []string)` 返回上述值。
 
@@ -957,7 +959,7 @@ func SplitPackageRef(ref string) (repo, name string, ok bool)  // "official/zlib
 ### 构建模式标志
 
 ```go
-func GetModeFlags(mode string) (cflags []string, defines []string)  // "debug" -> (["-O0","-g"], []); "release" -> (["-O2"], ["NDEBUG"])
+func GetModeFlags(mode string) (cflags []string, defines []string)  // "debug" -> (["-O0","-g"], []); "release" -> (["-O2"], ["NDEBUG"]); "size" -> (["-Os"], ["NDEBUG"])
 ```
 
 ## 安装类型过滤

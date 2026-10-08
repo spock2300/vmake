@@ -131,8 +131,8 @@ operations the helpers cannot express.
   `CMakeBuildDir()` / `CMakeInstallDir()` when referring to artifacts. Directory
   setters do not change `PkgDirs`; void callbacks still run once per session.
 - `SetCMakeBuildType("MinSizeRel")` changes the configuration used by all three
-  stages. Otherwise VMake debug/release mode chooses Debug/Release. Explicit
-  `--config` on build or install overrides that invocation's configuration.
+  stages. Otherwise VMake debug/release/size mode chooses Debug/Release/MinSizeRel.
+  Explicit `--config` on build or install overrides that invocation's configuration.
 - Use setters for build directory, install prefix, and default build type. Raw
   directory overrides, `--prefix`, `-DCMAKE_INSTALL_PREFIX`, and
   `-DCMAKE_BUILD_TYPE` are rejected with a setter hint. Other project arguments
@@ -497,6 +497,7 @@ Note: without `SetDefault`, the zero value applies (`false` for OptionBool, `""`
 	const ToolchainOptionName = "toolchain"
 	const ModeDebug           = "debug"
 	const ModeRelease         = "release"
+	const ModeSize            = "size"
 
 	const TargetOSOptionName     = "target_os"
 	const TargetTripleOptionName = "target_triple"
@@ -614,7 +615,7 @@ Available as `api.CopyFile`, `api.CopyDir`, etc. — useful in `SetBuildFunc` fo
 
 ### Build Mode
 
-	func GetModeFlags(mode string) (cflags []string, defines []string)
+	func GetModeFlags(mode string) (cflags []string, defines []string) // debug: -O0 -g; release: -O2 + NDEBUG; size: -Os + NDEBUG
 
 ### Config Export & Merge
 

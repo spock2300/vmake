@@ -99,6 +99,7 @@ func YaegiSymbols() map[string]reflect.Value {
 		"ToolchainOptionName": reflect.ValueOf(ToolchainOptionName),
 		"ModeDebug":           reflect.ValueOf(ModeDebug),
 		"ModeRelease":         reflect.ValueOf(ModeRelease),
+		"ModeSize":            reflect.ValueOf(ModeSize),
 		"GenRuleBinHeader":    reflect.ValueOf(GenRuleBinHeader),
 		"GroupGlobal":         reflect.ValueOf(GroupGlobal),
 

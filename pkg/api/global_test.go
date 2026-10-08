@@ -17,6 +17,9 @@ func TestMergeGlobalOptionsBuiltins(t *testing.T) {
 	if got[ModeOptionName] == nil {
 		t.Error("mode option missing")
 	}
+	if !reflect.DeepEqual(got[ModeOptionName].Values(), []string{ModeDebug, ModeRelease, ModeSize}) {
+		t.Errorf("mode values = %v", got[ModeOptionName].Values())
+	}
 	if got[ToolchainOptionName] == nil {
 		t.Error("toolchain option missing")
 	}
@@ -79,6 +82,7 @@ func TestGetModeFlags(t *testing.T) {
 	}{
 		{ModeRelease, []string{"-O2"}, []string{"NDEBUG"}},
 		{ModeDebug, []string{"-O0", "-g"}, nil},
+		{ModeSize, []string{"-Os"}, []string{"NDEBUG"}},
 		{"unknown", []string{"-O0", "-g"}, nil},
 	}
 	for _, tt := range tests {

@@ -9,6 +9,7 @@ const (
 	ToolchainOptionName = "toolchain"
 	ModeDebug           = "debug"
 	ModeRelease         = "release"
+	ModeSize            = "size"
 )
 
 var BuiltInGlobalOptions = map[string]*Option{
@@ -16,7 +17,7 @@ var BuiltInGlobalOptions = map[string]*Option{
 		SetType(OptionChoice).
 		SetDefault(ModeRelease).
 		SetDescription("Build mode").
-		SetValues(ModeDebug, ModeRelease).
+		SetValues(ModeDebug, ModeRelease, ModeSize).
 		SetGroup("Global"),
 }
 
@@ -75,6 +76,8 @@ func GetModeFlags(mode string) (cflags []string, defines []string) {
 		return []string{"-O2"}, []string{"NDEBUG"}
 	case ModeDebug:
 		return []string{"-O0", "-g"}, nil
+	case ModeSize:
+		return []string{"-Os"}, []string{"NDEBUG"}
 	default:
 		return []string{"-O0", "-g"}, nil
 	}

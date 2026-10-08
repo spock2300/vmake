@@ -108,10 +108,15 @@ func (p *Package) cmakeBuildType() string {
 	if p.cmakeConfig != "" {
 		return p.cmakeConfig
 	}
-	if m, ok := p.CfgVals[ModeOptionName].(string); ok && m == ModeDebug {
+	m, _ := p.CfgVals[ModeOptionName].(string)
+	switch m {
+	case ModeDebug:
 		return "Debug"
+	case ModeSize:
+		return "MinSizeRel"
+	default:
+		return "Release"
 	}
-	return "Release"
 }
 
 func (p *Package) cmakeConfigureArgs(hostOS string, extraArgs ...string) ([]string, error) {
