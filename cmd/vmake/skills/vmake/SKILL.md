@@ -121,19 +121,25 @@ When writing build.go that must also work on Windows:
 VMake runs natively on macOS with the Xcode Command Line Tools
 (`xcode-select --install`), which provide Apple clang (`cc`/`c++`), `ar`, `ld`,
 `strip`, `ranlib`, `nm` and `size`. GNU binutils are not required for ordinary
-builds: the host toolchain leaves `objcopy`/`objdump` unset.
+builds: the host toolchain leaves `objcopy`/`objdump` unset. The macOS target OS
+name is `darwin`; `target_os` values are not aliased.
 
 - Artifact names follow the resolved target OS: `TargetShared` → `.dylib`.
-  Dependency archives are linked with `-Wl,-force_load` instead of GNU
-  `--start-group`/`--whole-archive`.
+  Dependency archives are force-loaded (`-force_load`) instead of GNU
+  `--start-group`/`--whole-archive`, and shared libraries link with
+  `-dynamiclib` and an `@rpath/<name>` install name. Consumers of `.dylib`
+  dependencies receive `-rpath` entries for the dependency directories plus
+  `@loader_path`/`@loader_path/../lib`, so in-tree runs and the default
+  `install/bin` + `install/lib` layout resolve.
 - `SetVersionScript`, `AddExcludeLibs` and `SetSymbolBinding` are ELF-only and
   fail with a clear error on a macOS target. `vmake check-symbols` reports
   native Mach-O artifacts as not applicable; it audits ELF artifacts only.
 - Post-link helpers that require `objcopy` (`AddPostLinkHex`, `AddPostLinkBin`,
-  `SetSymbolPrefix`) need GNU binutils on `PATH` or a target toolchain that
-  supplies its own `objcopy`, such as the ARM GNU Toolchain (the vmake-tools
-  extension ships its macOS arm64 archive). `AddPostLinkSize` and
-  `AddPostLinkStrip` use the system `size`/`strip`.
+  `SetSymbolPrefix`) need a selected toolchain that declares `objcopy`, such as
+  the ARM GNU Toolchain (the vmake-tools extension ships its macOS arm64
+  archive). The builtin macOS host declares none: Apple ships no objcopy and GNU
+  objcopy cannot rewrite Mach-O, so `SetSymbolPrefix` is effectively ELF-only.
+  `AddPostLinkSize` and `AddPostLinkStrip` use the system `size`/`strip`.
 - Apple ships GNU Make 3.81. Kconfig/kernel/U-Boot projects need GNU Make 3.82
   or newer: `brew install make`, then point the selected toolchain's `make` at
   `gmake`. `vmake doctor` reports the detected version.
@@ -184,7 +190,7 @@ When a **local** package uses `SetGit`, `SourceDir()` and `SrcDir()` differ — 
 
 ### Static library deps with symbols not referenced by your code
 
-On **binary** links, dependency archives from `AddDeps` land inside `--start-group`/`--end-group` and `.a`/`.so`/`.dylib` inputs are additionally wrapped in `-Wl,--whole-archive` (PE `.dll.a` import libraries are excluded), so every object of such an archive is pulled in; shared-library links pull only referenced members. A library supplied as a plain `-l` (e.g. via `AddLinks`/`AddGlobalLinks`) is inside the group but not whole-archived: if nothing in the group references it, it is skipped even when a post-group library (libc from `-specs`) needs its symbols. Fix with `-nostdlib` + `AddGlobalLinks(...)` in `SetOnApply`, per-target `AddLinks(...)`, or `EXTERN` in the linker script. See `references/gotchas.md` for all three fix patterns with code.
+On ELF and PE **binary** links, dependency archives from `AddDeps` land inside `--start-group`/`--end-group` and `.a`/`.so`/`.dylib` inputs are additionally wrapped in `-Wl,--whole-archive` (PE `.dll.a` import libraries are excluded), so every object of such an archive is pulled in; shared-library links pull only referenced members. On Mach-O targets there is no linker group or whole-archive: dependency archives are force-loaded with `-force_load`, which has the same all-members effect. A library supplied as a plain `-l` (e.g. via `AddLinks`/`AddGlobalLinks`) is inside the group but not whole-archived: if nothing in the group references it, it is skipped even when a post-group library (libc from `-specs`) needs its symbols. Fix with `-nostdlib` + `AddGlobalLinks(...)` in `SetOnApply`, per-target `AddLinks(...)`, or `EXTERN` in the linker script. See `references/gotchas.md` for all three fix patterns with code.
 
 ### `pkg.Run` / `pkg.RunIn` / `CMake*` raise script errors — no error return
 
@@ -573,7 +579,7 @@ Mode auto-injected flags (injected by scheduler, not via `AddGlobalCFlags`):
 | `release` | `-O2 -DNDEBUG` |
 | `debug` | `-O0 -g` |
 
-During linking, global LD flags are appended after per-target flags; global links go inside `--start-group`/`--end-group`.
+During linking, global LD flags are appended after per-target flags; global links go inside `--start-group`/`--end-group` (on Mach-O targets dependency archives are force-loaded instead).
 
 ### GlobalOption Cross-Package Consistency
 

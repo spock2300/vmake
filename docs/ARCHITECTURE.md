@@ -82,7 +82,7 @@ vmake clean
 | 文件类型 | runtime | sdk |
 |---------|---------|-----|
 | binary → `bin/` | ✓ | ✓ |
-| shared (.so) → `lib/` | ✓ | ✓ |
+| shared (.so/.dylib/.dll) → `lib/` | ✓ | ✓ |
 | static (.a) → `lib/` | ✗ | ✓ |
 | public includes → `include/` | ✗ | ✓ |
 | AddInstalls 自定义文件 | ✓ | ✓ |

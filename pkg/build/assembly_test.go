@@ -41,6 +41,9 @@ func writeAssemblyFixture(t *testing.T, dir, name, content string) {
 }
 
 func TestAssemblyCompilerDependencies(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("Apple as has no dependency-file option; .S header deps are covered by the darwin clang tests")
+	}
 	for _, compilerName := range []string{"gcc", "clang"} {
 		t.Run(compilerName, func(t *testing.T) {
 			tools := assemblyTestTools(t, compilerName)

@@ -97,7 +97,7 @@ func Main(p *api.Package) {
 
 - `TargetBinary` — 可执行文件
 - `TargetStatic` — 静态库（.a）
-- `TargetShared` — 共享库（.so）
+- `TargetShared` — 共享库（按 `target_os`：`.so` / `.dylib` / `.dll`）
 - `TargetObject` — 对象文件（.o）
 - `TargetVoid` — 第三方包包装器（调用 CMake/Autotools 等外部构建系统）
 

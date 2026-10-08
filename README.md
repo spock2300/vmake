@@ -82,18 +82,26 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o vmake.exe ./cmd/vmake
 vmake runs natively on macOS with the Xcode Command Line Tools
 (`xcode-select --install`), which provide Apple clang (`cc`/`c++`), `ar`, `ld`,
 `strip`, `ranlib`, `nm` and `size`. Ordinary builds need no GNU binutils: the
-host toolchain leaves `objcopy`/`objdump` unset, shared libraries are emitted as
-`.dylib`, and dependency archives are linked with `-Wl,-force_load` — the
-Mach-O equivalent of VMake's whole-archive handling.
+host toolchain leaves `objcopy`/`objdump` unset and shared libraries are emitted
+as `.dylib`. The macOS target OS name is `darwin`; `target_os` values are not
+aliased.
 
+- Mach-O linking has no GNU linker group: dependency archives are force-loaded
+  (`-force_load`), and `TargetShared` links with `-dynamiclib` plus a
+  relocatable `@rpath/<name>` install name. Consumers of `.dylib` dependencies
+  get `-rpath` entries for the dependency directories, `@loader_path` and
+  `@loader_path/../lib`, so in-tree runs and the default `install/bin` +
+  `install/lib` layout resolve the libraries.
 - `SetVersionScript`, `AddExcludeLibs` and `SetSymbolBinding` are ELF-only and
   fail with a clear error on a macOS target; `vmake check-symbols` reports
   native Mach-O artifacts as not applicable (it audits ELF artifacts only).
 - Post-link helpers that require `objcopy` (`AddPostLinkHex`, `AddPostLinkBin`,
-  `SetSymbolPrefix`) need GNU binutils on `PATH` or a target toolchain that
-  supplies its own `objcopy` — for example the ARM GNU Toolchain, whose macOS
-  arm64 archive ships with the vmake-tools extension. `AddPostLinkSize` and
-  `AddPostLinkStrip` use the system `size`/`strip`.
+  `SetSymbolPrefix`) need a selected toolchain that declares `objcopy`: the
+  builtin macOS host does not, because Apple ships no objcopy and GNU objcopy
+  cannot rewrite Mach-O (so `SetSymbolPrefix` is effectively ELF-only). Use a
+  cross toolchain such as the ARM GNU Toolchain — its macOS arm64 archive ships
+  with the vmake-tools extension — for ELF firmware post-link steps.
+  `AddPostLinkSize` and `AddPostLinkStrip` use the system `size`/`strip`.
 - The Xcode toolchain ships GNU Make 3.81. Simple `p.Make()` projects work, but
   Kconfig/kernel/U-Boot builds need GNU Make 3.82 or newer: install it with
   `brew install make` and point the selected toolchain's `make` at `gmake`.

@@ -204,15 +204,43 @@ func (l *Linker) machoBinaryCommand(objs, libs, ldflags []string, outputPath, li
 	}
 	args = append(args, objectFiles...)
 	for _, archive := range staticArchives {
-		args = append(args, "-Wl,-force_load,"+archive)
+		args = append(args, "-Xlinker", "-force_load", "-Xlinker", archive)
 	}
 	args = append(args, dynamicLibs...)
+	if len(dynamicLibs) > 0 {
+		dirs := append(machoDylibDirs(dynamicLibs), "@loader_path", "@loader_path/../lib")
+		args = append(args, machoRPathArgs(dirs)...)
+	}
 	for _, lib := range libs {
 		args = append(args, "-l"+lib)
 	}
 	args = append(args, groupFlags...)
 	args = append(args, otherFlags...)
 	return commandSpec{Program: l.ccPath, Args: args}, nil
+}
+
+func machoDylibDirs(paths []string) []string {
+	var dirs []string
+	for _, path := range paths {
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".dylib", ".so":
+			dirs = append(dirs, filepath.Dir(path))
+		}
+	}
+	return dirs
+}
+
+func machoRPathArgs(dirs []string) []string {
+	var args []string
+	seen := make(map[string]bool, len(dirs))
+	for _, dir := range dirs {
+		if dir == "" || seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		args = append(args, "-Xlinker", "-rpath", "-Xlinker", dir)
+	}
+	return args
 }
 
 func (l *Linker) staticCommand(objs []string, outputPath, workDir string) commandSpec {
@@ -239,6 +267,9 @@ func (l *Linker) sharedCommand(objs, ldflags []string, outputPath string, policy
 		driverFlag = "-dynamiclib"
 	}
 	args := []string{driverFlag, "-o", outputPath}
+	if policy.TargetOS == "darwin" {
+		args = append(args, "-Xlinker", "-install_name", "-Xlinker", "@rpath/"+filepath.Base(outputPath))
+	}
 	if policy.TargetOS == "windows" {
 		args = append(args, "-Wl,--out-implib="+outputPath+".a")
 	}
@@ -249,6 +280,11 @@ func (l *Linker) sharedCommand(objs, ldflags []string, outputPath string, policy
 		args = append(args, el)
 	}
 	args = append(args, objs...)
+	if policy.TargetOS == "darwin" {
+		if dirs := machoDylibDirs(objs); len(dirs) > 0 {
+			args = append(args, machoRPathArgs(append(dirs, "@loader_path"))...)
+		}
+	}
 	args = append(args, filtered...)
 	args = append(args, policy.bindingFlags()...)
 	return commandSpec{Program: l.ccPath, Args: args}, nil

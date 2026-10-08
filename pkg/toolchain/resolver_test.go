@@ -65,7 +65,7 @@ func TestBuiltinHostDoesNotRequireDefaultMake(t *testing.T) {
 		writeTool(t, dir, name)
 	}
 	t.Setenv("PATH", dir)
-	tc := GetBuiltinHost()
+	tc := builtinHostFor("linux")
 	mgr := &Manager{builtin: tc}
 	if _, err := mgr.SelectToolchain("host"); err != nil {
 		t.Fatalf("host without make: %v", err)

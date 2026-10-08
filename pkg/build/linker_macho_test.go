@@ -7,6 +7,22 @@ import (
 	"testing"
 )
 
+func hasSequence(args []string, seq ...string) bool {
+	for i := 0; i+len(seq) <= len(args); i++ {
+		match := true
+		for j, want := range seq {
+			if args[i+j] != want {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
 func TestLinkBinaryMachOForceLoadsArchives(t *testing.T) {
 	l, got := recordingLinker()
 	dir := t.TempDir()
@@ -30,10 +46,10 @@ func TestLinkBinaryMachOForceLoadsArchives(t *testing.T) {
 			t.Fatalf("args = %v, want no GNU group/whole-archive flags on Mach-O", args)
 		}
 	}
-	if !slices.Contains(args, "-Wl,-force_load,"+archive) {
-		t.Fatalf("args = %v, want -Wl,-force_load,%s", args, archive)
+	if !hasSequence(args, "-Xlinker", "-force_load", "-Xlinker", archive) {
+		t.Fatalf("args = %v, want -force_load %s", args, archive)
 	}
-	if slices.Contains(args, "-Wl,-force_load,"+dylib) {
+	if hasSequence(args, "-Xlinker", "-force_load", "-Xlinker", dylib) {
 		t.Fatalf("args = %v, want dynamic libraries passed directly, not force-loaded", args)
 	}
 	if !slices.Contains(args, dylib) {
@@ -43,6 +59,41 @@ func TestLinkBinaryMachOForceLoadsArchives(t *testing.T) {
 		if !slices.Contains(args, want) {
 			t.Fatalf("args = %v, want %q", args, want)
 		}
+	}
+	for _, rpath := range []string{dir, "@loader_path", "@loader_path/../lib"} {
+		if !hasSequence(args, "-Xlinker", "-rpath", "-Xlinker", rpath) {
+			t.Fatalf("args = %v, want rpath %s for in-tree and installed dylib lookup", args, rpath)
+		}
+	}
+}
+
+func TestLinkBinaryMachOForceLoadKeepsCommaPathsIntact(t *testing.T) {
+	l, got := recordingLinker()
+	dir := t.TempDir()
+	archive := filepath.Join(dir, "lib,comma.a")
+
+	if err := l.LinkBinary([]string{"a.o", archive}, nil, nil, filepath.Join(dir, "app"), "", LinkPolicy{TargetOS: "darwin"}, dir); err != nil {
+		t.Fatalf("LinkBinary: %v", err)
+	}
+	args := *got
+	if !hasSequence(args, "-Xlinker", "-force_load", "-Xlinker", archive) {
+		t.Fatalf("args = %v, want the comma path kept as a single -force_load argument", args)
+	}
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-Wl,-force_load") {
+			t.Fatalf("args = %v, want no -Wl form that clang splits on commas", args)
+		}
+	}
+}
+
+func TestLinkBinaryMachOSkipsRPathsWithoutDylibs(t *testing.T) {
+	l, got := recordingLinker()
+	dir := t.TempDir()
+	if err := l.LinkBinary([]string{filepath.Join(dir, "main.o"), filepath.Join(dir, "libdep.a")}, nil, nil, filepath.Join(dir, "app"), "", LinkPolicy{TargetOS: "darwin"}, dir); err != nil {
+		t.Fatalf("LinkBinary: %v", err)
+	}
+	if strings.Contains(strings.Join(*got, " "), "-rpath") {
+		t.Fatalf("args = %v, want no rpath entries for exclusively static inputs", *got)
 	}
 }
 
@@ -67,6 +118,9 @@ func TestLinkSharedMachOUsesDynamiclib(t *testing.T) {
 	if len(args) < 2 || args[1] != "-dynamiclib" {
 		t.Fatalf("args = %v, want -dynamiclib as the driver flag", args)
 	}
+	if !hasSequence(args, "-Xlinker", "-install_name", "-Xlinker", "@rpath/libfoo.dylib") {
+		t.Fatalf("args = %v, want a relocatable @rpath install name", args)
+	}
 	if slices.Contains(args, "-pie") {
 		t.Fatalf("args = %v, want no -pie on Mach-O shared libraries", args)
 	}
@@ -79,6 +133,32 @@ func TestLinkSharedMachOUsesDynamiclib(t *testing.T) {
 		if !slices.Contains(args, want) {
 			t.Fatalf("args = %v, want %q", args, want)
 		}
+	}
+}
+
+func TestLinkSharedMachORPathsDylibDependencies(t *testing.T) {
+	l, got := recordingLinker()
+	dir := t.TempDir()
+	depDir := filepath.Join(dir, "other build")
+	dylib := filepath.Join(depDir, "libbar.dylib")
+	output := filepath.Join(dir, "libfoo.dylib")
+
+	if err := l.LinkShared([]string{filepath.Join(dir, "a.o"), dylib}, nil, output, LinkPolicy{TargetOS: "darwin"}, dir); err != nil {
+		t.Fatalf("LinkShared: %v", err)
+	}
+	args := *got
+	for _, rpath := range []string{depDir, "@loader_path"} {
+		if !hasSequence(args, "-Xlinker", "-rpath", "-Xlinker", rpath) {
+			t.Fatalf("args = %v, want rpath %s", args, rpath)
+		}
+	}
+}
+
+func TestMachoRPathArgsDeduplicates(t *testing.T) {
+	args := machoRPathArgs([]string{"/a", "/a", "", "/b"})
+	want := []string{"-Xlinker", "-rpath", "-Xlinker", "/a", "-Xlinker", "-rpath", "-Xlinker", "/b"}
+	if !slices.Equal(args, want) {
+		t.Fatalf("machoRPathArgs = %v, want %v", args, want)
 	}
 }
 

@@ -507,6 +507,9 @@ func TestSnapshotsTestData(t *testing.T) {
 }
 
 func TestSnapshotsTestLinux(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("firmware 17 needs GNU make 3.82+ and Linux package repos; run it on Linux")
+	}
 	root := projectRoot(t)
 	fw := filepath.Join(root, "test_linux", "17_firmware")
 	if _, err := os.Stat(filepath.Join(fw, "build.go")); err != nil {

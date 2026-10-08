@@ -53,15 +53,22 @@ Git 用户态工具、`make` 与 C 工具链的状态，且不需要当前目录
 vmake 可在 macOS 上原生运行，前提是安装 Xcode Command Line Tools
 （`xcode-select --install`）：它提供 Apple clang（`cc`/`c++`）、`ar`、`ld`、
 `strip`、`ranlib`、`nm` 与 `size`。常规构建不需要 GNU binutils，内置 host
-工具链不会要求 `objcopy`/`objdump`；共享库产物为 `.dylib`，依赖归档使用
-`-Wl,-force_load` 链接（Mach-O 对 whole-archive 的等价形式）。
+工具链不会要求 `objcopy`/`objdump`；共享库产物为 `.dylib`。macOS 的
+`target_os` 值就是 `darwin`，vmake 不做别名映射。
 
+- Mach-O 链接没有 GNU 链接器组：依赖归档使用 `-force_load`，
+  `TargetShared` 使用 `-dynamiclib` 链接并写入可重定位的
+  `@rpath/<name>` install name；依赖 `.dylib` 的产物会自动获得依赖目录、
+  `@loader_path` 与 `@loader_path/../lib` 的 `-rpath`，因此源码树内运行和
+  默认的 `install/bin` + `install/lib` 布局都能解析到动态库。
 - `SetVersionScript`、`AddExcludeLibs`、`SetSymbolBinding` 仅适用于 ELF，
   在 macOS 目标上会直接报错；`vmake check-symbols` 对原生 Mach-O 产物报告
   不适用（它只审计 ELF）。
 - 需要 `objcopy` 的后处理（`AddPostLinkHex`/`AddPostLinkBin`、
-  `SetSymbolPrefix`）需要 `PATH` 上有 GNU binutils，或使用自带 `objcopy` 的
-  目标工具链（例如 ARM GNU 工具链，vmake-tools 扩展已提供 macOS arm64 归档）。
+  `SetSymbolPrefix`）要求所选工具链声明 `objcopy`：内置 macOS host 不会声明，
+  因为 Apple 不提供 objcopy，且 GNU objcopy 无法改写 Mach-O（因此
+  `SetSymbolPrefix` 实际是 ELF 专属）。ELF 固件的后处理请使用交叉工具链
+  （例如 ARM GNU 工具链，vmake-tools 扩展已提供 macOS arm64 归档）。
   `AddPostLinkSize`/`AddPostLinkStrip` 使用系统 `size`/`strip`。
 - Xcode 自带 GNU Make 3.81；Kconfig/Linux 内核/U-Boot 项目需要 GNU Make
   3.82+，可 `brew install make` 后把所选工具链的 `make` 指向 `gmake`。

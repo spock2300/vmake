@@ -218,15 +218,21 @@ func TestNativeLinkSignatureTracksSourceRemovalAndFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	mapFile := filepath.Join(dir, "link.map")
-	app.AddLdFlags("-Wl,-Map=" + mapFile)
+	linkFlag := "-Wl,-Map=" + mapFile
+	if runtime.GOOS == "darwin" {
+		linkFlag = "-Wl,-dead_strip"
+	}
+	app.AddLdFlags(linkFlag)
 	if err := s.Build("p:app"); err != nil {
 		t.Fatal(err)
 	}
 	if links != 2 {
 		t.Fatalf("link flags changed but linked %d times", links)
 	}
-	if _, err := os.Stat(mapFile); err != nil {
-		t.Fatal(err)
+	if runtime.GOOS != "darwin" {
+		if _, err := os.Stat(mapFile); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

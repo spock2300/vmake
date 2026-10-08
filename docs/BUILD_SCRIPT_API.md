@@ -510,10 +510,10 @@ func (t *Target) SetPrebuilt(path string) *Target          // 预编译目标，
 // RTOS/嵌入式
 func (t *Target) SetLinkerScript(path string) *Target    // 传递 -T 给链接器（重复调用抛出 BuildScriptError）
 func (t *Target) UseDependencyLinkerScript() *Target       // 从依赖自动继承 linker script
-func (t *Target) SetVersionScript(path string) *Target     // 版本脚本，链接时加 -Wl,--version-script=；仅 Shared/Binary 有效；路径相对包 SourceDir（重复调用 fatal）
-func (t *Target) AddExcludeLibs(libs ...string) *Target    // 链接时加 -Wl,--exclude-libs=（追加；ld 按去掉 .a 的完整库名匹配，写 libfoo 而非 foo）
-func (t *Target) SetSymbolBinding(mode string) *Target     // "static" → -Wl,-Bsymbolic；"static-functions" → -Wl,-Bsymbolic-functions；其他值 fatal
-func (t *Target) SetSymbolPrefix(prefix string) *Target    // post-link 追加 objcopy --prefix-symbols=<prefix>（重复调用 fatal）
+func (t *Target) SetVersionScript(path string) *Target     // 版本脚本，链接时加 -Wl,--version-script=；仅 Shared/Binary 且仅 ELF（Windows/macOS 目标报错）；路径相对包 SourceDir（重复调用 fatal）
+func (t *Target) AddExcludeLibs(libs ...string) *Target    // 链接时加 -Wl,--exclude-libs=（仅 ELF；追加；ld 按去掉 .a 的完整库名匹配，写 libfoo 而非 foo）
+func (t *Target) SetSymbolBinding(mode string) *Target     // "static" → -Wl,-Bsymbolic；"static-functions" → -Wl,-Bsymbolic-functions（仅 ELF）；其他值 fatal
+func (t *Target) SetSymbolPrefix(prefix string) *Target    // post-link 追加 objcopy --prefix-symbols=<prefix>（需所选工具链提供 objcopy，GNU objcopy 不支持 Mach-O；重复调用 fatal）
 func (t *Target) AddPostLink(tool string, args ...string) *Target  // 通用后链接步骤，支持 {output} 占位符
 func (t *Target) AddPostLinkOutputs(paths ...string) *Target
 func (t *Target) AddPostLinkDeps(files ...string) *Target  // 声明 post-link 步骤依赖的额外输入文件（SourceDir 相对路径）；任一变化（mtime 新于输出或缺失）触发 relink + 重跑全部 post-link
@@ -967,7 +967,7 @@ func GetModeFlags(mode string) (cflags []string, defines []string)  // "debug" -
 | 文件类型 | runtime | sdk |
 |---------|---------|-----|
 | binary → `bin/` | ✓ | ✓ |
-| shared (.so) → `lib/` | ✓ | ✓ |
+| shared (.so/.dylib/.dll) → `lib/` | ✓ | ✓ |
 | static (.a) → `lib/` | ✗ | ✓ |
 | public includes → `include/` | ✗ | ✓ |
 | AddInstalls 自定义文件 | ✓ | ✓ |

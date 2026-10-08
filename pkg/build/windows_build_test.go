@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -38,6 +39,9 @@ func TestGNUResponseArguments(t *testing.T) {
 }
 
 func TestAssemblyIncludesInvalidateObjects(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("Apple as has no dependency-file option")
+	}
 	cc, err := exec.LookPath("gcc")
 	if err != nil {
 		t.Skip("gcc unavailable")
