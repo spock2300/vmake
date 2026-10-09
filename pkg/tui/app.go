@@ -376,14 +376,30 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	case mouseWheel(msg) != 0:
 		if inTree {
 			m.focusArea = 0
-			m.treeOff = clamp(m.treeOff+mouseWheel(msg), 0, max(0, len(m.flat)-m.treeItemRows()))
+			m.moveTreeCursor(mouseWheel(msg))
 		} else {
 			m.focusArea = 1
-			m.optScrolled = true
-			m.optOff = clamp(m.optOff+mouseWheel(msg), 0, max(0, len(m.optionLines())-m.optItemRows()))
+			m.moveOptionCursor(mouseWheel(msg))
 		}
 	}
 	return m, nil
+}
+
+func (m *Model) moveTreeCursor(delta int) {
+	if len(m.flat) == 0 {
+		return
+	}
+	next := clamp(m.treeCursor+delta, 0, len(m.flat)-1)
+	if next == m.treeCursor {
+		return
+	}
+	m.treeCursor = next
+	m.selectCurrentNode()
+	m.ensureTreeCursorVisible()
+}
+
+func (m *Model) moveOptionCursor(delta int) {
+	m.optCursor = clamp(m.optCursor+delta, 0, max(0, m.totalOptRows()-1))
 }
 
 func (m *Model) headerHeight() int {
@@ -496,17 +512,9 @@ func (m *Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "up", "k":
-		if m.treeCursor > 0 {
-			m.treeCursor--
-			m.selectCurrentNode()
-			m.ensureTreeCursorVisible()
-		}
+		m.moveTreeCursor(-1)
 	case "down", "j":
-		if m.treeCursor < len(m.flat)-1 {
-			m.treeCursor++
-			m.selectCurrentNode()
-			m.ensureTreeCursorVisible()
-		}
+		m.moveTreeCursor(1)
 	case "left", "h":
 		if m.treeCursor < len(m.flat) && m.flat[m.treeCursor].Expanded {
 			m.flat[m.treeCursor].Expanded = false
@@ -547,12 +555,10 @@ func (m *Model) selectCurrentNode() {
 		m.buildOptionItems()
 		m.optCursor = 0
 		m.optOff = 0
-		m.optScrolled = false
 	}
 }
 
 func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	m.optScrolled = false
 	visible := m.visibleOptions()
 	presetIdx := len(visible)
 
@@ -582,14 +588,9 @@ func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "up", "k":
-		if m.optCursor > 0 {
-			m.optCursor--
-		}
+		m.moveOptionCursor(-1)
 	case "down", "j":
-		maxCursor := m.totalOptRows() - 1
-		if m.optCursor < maxCursor {
-			m.optCursor++
-		}
+		m.moveOptionCursor(1)
 	case "r":
 		if m.optCursor < len(visible) {
 			m.resetOption(visible[m.optCursor].Name)
@@ -1147,7 +1148,7 @@ func (m *Model) renderOptions() string {
 	if total > panelH {
 		drawH = max(1, panelH-1)
 	}
-	if cursorRowIdx >= 0 && !m.optScrolled {
+	if cursorRowIdx >= 0 {
 		if cursorRowIdx < m.optOff {
 			m.optOff = cursorRowIdx
 		}

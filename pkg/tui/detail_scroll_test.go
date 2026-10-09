@@ -148,15 +148,15 @@ func TestDetailScrollMouseAndReset(t *testing.T) {
 			view := detailScrollView(t, &m)
 			x, y := dialogTextPosition(t, view, m.text(textCloseDetails))
 			m.Update(mouseTestWheel(0, m.height/2, true))
-			if m.detailOff != 0 {
-				t.Fatal("wheel outside details scrolled their contents")
+			if m.detailOff != 1 {
+				t.Fatalf("wheel outside details offset=%d, want 1", m.detailOff)
 			}
 			m.Update(mouseTestWheel(x, y, true))
-			if m.detailOff != 1 {
-				t.Fatalf("wheel down offset=%d, want 1", m.detailOff)
+			if m.detailOff != 2 {
+				t.Fatalf("wheel down offset=%d, want 2", m.detailOff)
 			}
 			m.Update(mouseTestClick(x, y))
-			if m.detailOff != 1 || m.overlay != overlayDetail {
+			if m.detailOff != 2 || m.overlay != overlayDetail {
 				t.Fatal("click inside details changed navigation state")
 			}
 			m.Update(mouseTestWheel(x, y, false))

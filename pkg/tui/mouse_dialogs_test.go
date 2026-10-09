@@ -44,15 +44,17 @@ func TestDialogMouseChoiceViewport(t *testing.T) {
 					t.Fatalf("dialog exceeds terminal %dx%d: %dx%d\n%s", m.width, m.height, lipgloss.Width(view), lipgloss.Height(view), stripAnsi(view))
 				}
 				x, y := dialogTextPosition(t, view, values[9])
+				before := m.getValue("level")
 				m.handleMouse(tea.MouseMsg{X: 0, Y: 0, Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
-				if m.choiceCursor != 9 {
-					t.Fatal("wheel outside dialog moved choice")
+				if m.choiceCursor != 10 || m.overlay != overlayChoice || m.getValue("level") != before {
+					t.Fatalf("wheel outside dialog cursor=%d overlay=%d value=%v, want cursor 10 without commit", m.choiceCursor, m.overlay, m.getValue("level"))
 				}
+				x, y = dialogTextPosition(t, m.View(), values[10])
 				m.handleMouse(tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
-				if m.choiceCursor != 10 {
-					t.Fatalf("wheel cursor=%d, want 10", m.choiceCursor)
+				if m.choiceCursor != 11 {
+					t.Fatalf("wheel cursor=%d, want 11", m.choiceCursor)
 				}
-				dialogTextPosition(t, m.View(), values[10])
+				dialogTextPosition(t, m.View(), values[11])
 				m.handleOverlayKey(tea.KeyMsg{Type: tea.KeyEnd})
 				x, y = dialogTextPosition(t, m.View(), values[len(values)-1])
 				m.handleMouse(dialogMousePress(x, y))

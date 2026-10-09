@@ -219,7 +219,7 @@ func TestMouseEditingClickAndWheelBehavior(t *testing.T) {
 			mouseTestClickText(t, &m, "edit_option")
 			x, y := mouseTestPosition(t, m.View(), "edit_option")
 			m.Update(mouseTestWheel(x, y, true))
-			if !m.editing || m.editInput != input || m.editCursor != cursor {
+			if !m.editing || m.editInput != input || m.editCursor != cursor || m.optCursor != 0 {
 				t.Fatal("same-row click or wheel changed editing state or input cursor")
 			}
 			switch outside {
@@ -323,7 +323,7 @@ func TestMouseOptionsAfterResizeAndLongHeader(t *testing.T) {
 	}
 }
 
-func TestMouseOptionsWheelScrollsRenderedRows(t *testing.T) {
+func TestMouseOptionsWheelMovesSelection(t *testing.T) {
 	opts := make(map[string]*api.Option)
 	for i := 0; i < 18; i++ {
 		name := fmt.Sprintf("option_%02d", i)
@@ -334,17 +334,21 @@ func TestMouseOptionsWheelScrollsRenderedRows(t *testing.T) {
 	x, y := mouseTestPosition(t, m.View(), "option_00")
 	m.Update(mouseTestWheel(x, y, true))
 	m.View()
-	if m.optOff <= 0 || m.focusArea != 1 || m.treeOff != 0 || m.hasChanges {
-		t.Fatalf("option wheel did not scroll its panel: off=%d focus=%d treeOff=%d", m.optOff, m.focusArea, m.treeOff)
+	if m.optCursor != 1 || m.focusArea != 1 || m.treeOff != 0 || m.hasChanges {
+		t.Fatalf("option wheel did not move selection: cursor=%d focus=%d treeOff=%d", m.optCursor, m.focusArea, m.treeOff)
 	}
 	for range 100 {
 		m.Update(mouseTestWheel(x, y, true))
-		m.View()
 	}
-	lastOff := m.optOff
-	m.Update(mouseTestWheel(x, y, true))
-	if m.optOff != lastOff {
-		t.Fatal("option wheel exceeded its lower boundary")
+	last := m.totalOptRows() - 1
+	if m.optCursor != last {
+		t.Fatalf("wheel down cursor=%d, want %d", m.optCursor, last)
+	}
+	if view := stripAnsi(m.View()); !strings.Contains(view, "option_17") {
+		t.Fatalf("wheel did not keep the selected option visible:\n%s", view)
+	}
+	if m.getValue("option_17") != false {
+		t.Fatal("wheel changed an option value")
 	}
 	view := stripAnsi(m.View())
 	for row, line := range strings.Split(view, "\n") {
@@ -359,19 +363,18 @@ func TestMouseOptionsWheelScrollsRenderedRows(t *testing.T) {
 	}
 	mouseTestClickText(t, &m, "option_17")
 	if m.getValue("option_17") != true {
-		t.Fatal("scrolled option click did not map past group rows")
+		t.Fatal("selected option click did not map past group rows")
 	}
 	for range 100 {
 		m.Update(mouseTestWheel(x, y, false))
-		m.View()
 	}
-	if m.optOff != 0 {
-		t.Fatalf("wheel up did not reach first option rows: off=%d", m.optOff)
+	if m.optCursor != 0 {
+		t.Fatalf("wheel up cursor=%d, want 0", m.optCursor)
 	}
 	mouseTestPosition(t, m.View(), "option_00")
 }
 
-func TestMouseTreeWheelAndFilteredRows(t *testing.T) {
+func TestMouseTreeWheelMovesSelection(t *testing.T) {
 	var names []string
 	opts := map[string]map[string]*api.Option{}
 	for i := 0; i < 20; i++ {
@@ -384,28 +387,28 @@ func TestMouseTreeWheelAndFilteredRows(t *testing.T) {
 	x, y := mouseTestPosition(t, m.View(), "pkg_00")
 	m.Update(mouseTestWheel(x, y, true))
 	m.View()
-	if m.treeOff <= 0 || m.focusArea != 0 || m.optOff != 0 {
-		t.Fatalf("tree wheel did not scroll its panel: treeOff=%d focus=%d optOff=%d", m.treeOff, m.focusArea, m.optOff)
+	if m.treeCursor != 1 || m.selectedPkg != "pkg_00" || m.focusArea != 0 {
+		t.Fatalf("tree wheel did not move selection: cursor=%d selected=%q focus=%d", m.treeCursor, m.selectedPkg, m.focusArea)
 	}
 	for range 100 {
 		m.Update(mouseTestWheel(x, y, true))
-		m.View()
 	}
-	lastOff := m.treeOff
-	m.Update(mouseTestWheel(x, y, true))
-	if m.treeOff != lastOff {
-		t.Fatal("tree wheel exceeded its lower boundary")
+	last := len(m.flat) - 1
+	if m.treeCursor != last || m.selectedPkg != "pkg_19" {
+		t.Fatalf("wheel down cursor=%d selected=%q, want %d/pkg_19", m.treeCursor, m.selectedPkg, last)
+	}
+	if view := stripAnsi(m.View()); !strings.Contains(view, "pkg_19") {
+		t.Fatalf("wheel did not keep the selected package visible:\n%s", view)
 	}
 	mouseTestClickText(t, &m, "pkg_19")
 	if m.selectedPkg != "pkg_19" {
-		t.Fatalf("scrolled leaf click selected %q", m.selectedPkg)
+		t.Fatalf("selected package click changed selection to %q", m.selectedPkg)
 	}
 	for range 100 {
 		m.Update(mouseTestWheel(x, y, false))
-		m.View()
 	}
-	if m.treeOff != 0 {
-		t.Fatalf("tree wheel up did not reach the start: off=%d", m.treeOff)
+	if m.treeCursor != 0 || m.selectedPkg != GlobalPkgName {
+		t.Fatalf("wheel up cursor=%d selected=%q, want 0/%s", m.treeCursor, m.selectedPkg, GlobalPkgName)
 	}
 	m.filterInput = "pkg_0"
 	m.rebuildFlat()

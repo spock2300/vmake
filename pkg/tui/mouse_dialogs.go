@@ -247,7 +247,14 @@ func (m *Model) scrollDetail(key string) {
 
 func (m *Model) handleOverlayMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	delta := mouseWheel(msg)
-	if !mouseLeftPress(msg) && delta == 0 {
+	if delta != 0 {
+		key := tea.KeyDown
+		if delta < 0 {
+			key = tea.KeyUp
+		}
+		return m.handleOverlayKey(tea.KeyMsg{Type: key})
+	}
+	if !mouseLeftPress(msg) {
 		return m, nil
 	}
 	var layout dialogLayout
@@ -259,20 +266,7 @@ func (m *Model) handleOverlayMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		layout.bounds = dialogRect{max(0, (m.width-width)/2), max(0, (m.height-height)/2), width, height}
 	}
 	if !layout.bounds.contains(msg.X, msg.Y) {
-		if mouseLeftPress(msg) {
-			return m.handleOverlayKey(tea.KeyMsg{Type: tea.KeyEsc})
-		}
-		return m, nil
-	}
-	if delta != 0 {
-		if m.overlay == overlayChoice || m.overlay == overlayLanguage || m.overlay == overlayDetail {
-			key := tea.KeyDown
-			if delta < 0 {
-				key = tea.KeyUp
-			}
-			return m.handleOverlayKey(tea.KeyMsg{Type: key})
-		}
-		return m, nil
+		return m.handleOverlayKey(tea.KeyMsg{Type: tea.KeyEsc})
 	}
 	for _, target := range layout.targets {
 		if target.bounds.contains(msg.X, msg.Y) {

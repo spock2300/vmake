@@ -84,7 +84,6 @@ type Model struct {
 	treeWidth       int
 	treeOff         int
 	optOff          int
-	optScrolled     bool
 	treeMouseRows   []panelRowTarget
 	optionMouseRows []panelRowTarget
 	renderedTreeW   int
