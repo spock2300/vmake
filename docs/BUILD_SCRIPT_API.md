@@ -445,6 +445,8 @@ func (ctx *InstallContext) Bool(name string) bool
 func (ctx *InstallContext) String(name string) string
 ```
 
+`SetPrefix` 为该包设置安装前缀，仅在未传 `--prefix` 时生效（显式 `--prefix` 对所有包优先，其目录会在安装前清空）。不带 `--prefix` 时默认的 `<project>/install` 会清空而自定义前缀不清空，`manifest.json` 仍只写入 CLI/默认前缀；建议传绝对路径。
+
 ## CleanContext
 
 清理阶段上下文，用于定义自定义清理逻辑。`vmake clean` 时在目录清理前执行。

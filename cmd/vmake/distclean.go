@@ -40,6 +40,8 @@ func init() {
 }
 
 func runDistClean(cmd *cobra.Command, args []string) {
+	commandStorageLocks()
+	fatalErr(invalidateBuildReport())
 	ctx, ok := resolveToConfigBestEffort(false)
 	if ok {
 		vlog.Info("")

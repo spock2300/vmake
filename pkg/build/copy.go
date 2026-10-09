@@ -53,24 +53,14 @@ func copyFileUnchanged(src, dest string) bool {
 type CopyFilter = api.CopyFilter
 
 func CopyDir(src, dest string) error {
-	return copyDirWithFilter(src, dest, nil)
-}
-
-func CopyDirMatching(src, dest string, match func(string) bool) error {
-	filter := func(path string, isDir bool) bool {
-		if isDir {
-			return true
-		}
-		return match(filepath.Base(path))
-	}
-	return copyDirWithFilter(src, dest, filter)
+	return copyDirWithFilter(src, dest, nil, nil)
 }
 
 func CopyDirWithFilter(src, dest string, filter CopyFilter) error {
-	return copyDirWithFilter(src, dest, filter)
+	return copyDirWithFilter(src, dest, filter, nil)
 }
 
-func copyDirWithFilter(src, dest string, filter CopyFilter) error {
+func copyDirWithFilter(src, dest string, filter CopyFilter, record func(string, string)) error {
 	var relativeErr error
 	err := api.CopyDirWithFilter(src, dest, func(path string, isDir bool) bool {
 		if filter != nil && !filter(path, isDir) {
@@ -84,7 +74,11 @@ func copyDirWithFilter(src, dest string, filter CopyFilter) error {
 			relativeErr = err
 			return false
 		}
-		return !copyFileUnchanged(path, filepath.Join(dest, rel))
+		destination := filepath.Join(dest, rel)
+		if record != nil {
+			record(path, destination)
+		}
+		return !copyFileUnchanged(path, destination)
 	})
 	if err != nil {
 		return err

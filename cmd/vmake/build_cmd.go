@@ -28,8 +28,13 @@ func init() {
 	addBuildFlags(buildCmd)
 }
 
-func runBuild(cmd *cobra.Command, args []string) error {
+func runBuild(cmd *cobra.Command, args []string) (err error) {
 	commandStorageLocks()
+	report, err := beginBuildReport()
+	if err != nil {
+		return err
+	}
+	defer report.finish(&err)
 	execution := &RuntimeContext{}
 	return withBuildContext(execution, func() error {
 		if manifestFlag != "" {
@@ -46,14 +51,19 @@ func runBuild(cmd *cobra.Command, args []string) error {
 				return err
 			}
 		}
+		if err := report.bind(ctx); err != nil {
+			return err
+		}
 		result, err := runBuildPhase(ctx, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag})
 		if err != nil {
 			return err
 		}
 		if installFlag {
-			return executeInstall(ctx, result)
+			if err := executeInstall(ctx, result); err != nil {
+				return err
+			}
 		}
-		return nil
+		return report.complete(ctx, result)
 	})
 }
 

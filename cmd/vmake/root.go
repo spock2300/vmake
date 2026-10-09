@@ -116,10 +116,11 @@ func pipelinePaths() *pipeline.Paths {
 	}
 }
 
-func resolveParams(ignoreLock bool, workDir, configPath, lockPath string, lock *lockfile.Lock, cfg *config.ConfigFile) pipeline.ResolveParams {
+func resolveParams(ignoreLock bool, workDir, configPath, configDigest, lockPath string, lock *lockfile.Lock, cfg *config.ConfigFile) pipeline.ResolveParams {
 	return pipeline.ResolveParams{
 		WorkDir:           workDir,
 		ConfigPath:        configPath,
+		ConfigDigest:      configDigest,
 		Config:            cfg,
 		Lock:              lock,
 		LockPath:          lockPath,
@@ -143,7 +144,7 @@ func resolveToConfigContext(execution context.Context, ignoreLock bool) (*Runtim
 	if err != nil {
 		return nil, err
 	}
-	cfg, configPath, err := config.LoadProject(findProjectDir())
+	cfg, configPath, digest, err := config.LoadProjectSnapshot(findProjectDir())
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +157,7 @@ func resolveToConfigContext(execution context.Context, ignoreLock bool) (*Runtim
 	if err != nil {
 		return nil, err
 	}
-	ctx := pipeline.NewContext(resolveParams(ignoreLock, workDir, configPath, lockPath, lock, cfg))
+	ctx := pipeline.NewContext(resolveParams(ignoreLock, workDir, configPath, digest, lockPath, lock, cfg))
 	ctx.Context = execution
 	ctx.Locks = locks
 	if err := pipeline.Require(ctx); err != nil {
@@ -181,7 +182,7 @@ func resolveToConfigBestEffort(ignoreLock bool) (*RuntimeContext, bool) {
 		vlog.Error("Error: %v", err)
 		os.Exit(1)
 	}
-	cfg, configPath, err := config.LoadProject(findProjectDir())
+	cfg, configPath, digest, err := config.LoadProjectSnapshot(findProjectDir())
 	fatalErr(err)
 	if err := ensureGitignore(findProjectDir()); err != nil {
 		vlog.Error("gitignore: %v", err)
@@ -189,7 +190,7 @@ func resolveToConfigBestEffort(ignoreLock bool) (*RuntimeContext, bool) {
 	cleanupLegacyStorage()
 	lockPath := getLockfilePath()
 	lock := mustLoadLockfile(lockPath)
-	ctx := pipeline.NewContext(resolveParams(ignoreLock, workDir, configPath, lockPath, lock, cfg))
+	ctx := pipeline.NewContext(resolveParams(ignoreLock, workDir, configPath, digest, lockPath, lock, cfg))
 	ctx.Locks = locks
 	if err := pipeline.Require(ctx); err != nil {
 		return ctx, false

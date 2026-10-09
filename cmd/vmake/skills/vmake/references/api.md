@@ -394,7 +394,7 @@ All context types embed `ConfigAccessor` for option value access (see below).
 
 | Method | Description |
 |--------|-------------|
-| `SetPrefix(prefix string)` | Install prefix (currently not consumed by the installer — use the `--prefix` CLI flag) |
+| `SetPrefix(prefix string)` | Per-package install prefix, applied when `--prefix` is not passed (prefer an absolute path) |
 | `Prefix() string` | Get prefix |
 | `PrefixSet() bool` | Was prefix set |
 | `AddInstalls(src, dest)` | Install entry |

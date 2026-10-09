@@ -22,6 +22,8 @@ import (
 )
 
 type BuildResult struct {
+	Targets       []build.TargetResult
+	InstallFiles  []build.InstalledFile
 	SubGraphRoots map[string]bool
 	AllTargets    map[string]map[string]*api.Target
 	Graph         *build.BuildGraph
@@ -1012,6 +1014,7 @@ func (s *buildPhaseState) buildAndRunPipeline() (*BuildResult, error) {
 	}
 
 	return &BuildResult{
+		Targets:       s.session.TargetResults(),
 		SubGraphRoots: maps.Clone(s.subGraphBuilt),
 		AllTargets:    s.allTargets,
 		Graph:         graph,

@@ -1058,7 +1058,7 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 	}
 
 	srcDir := s.effectiveSourceDir(resolved.Node.PkgName)
-	return copyPublicIncludes(t, srcDir, includeDir)
+	return copyPublicIncludes(t, srcDir, includeDir, nil)
 }
 
 // implibMissing reports whether a PE shared target's import library still needs

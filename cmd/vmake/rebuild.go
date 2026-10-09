@@ -19,8 +19,13 @@ func init() {
 	addBuildFlags(rebuildCmd)
 }
 
-func runRebuild(cmd *cobra.Command, args []string) error {
+func runRebuild(cmd *cobra.Command, args []string) (err error) {
 	commandStorageLocks()
+	report, err := beginBuildReport()
+	if err != nil {
+		return err
+	}
+	defer report.finish(&err)
 	execution := &RuntimeContext{}
 	return withBuildContext(execution, func() error {
 		ctx, err := resolveToConfigContext(execution.Context, false)
@@ -29,14 +34,19 @@ func runRebuild(cmd *cobra.Command, args []string) error {
 		}
 		executeCleanLocal(ctx)
 		vlog.Info("")
+		if err := report.bind(ctx); err != nil {
+			return err
+		}
 		result, err := runBuildPhase(ctx, BuildOptions{Jobs: jobsFlag, KeepGoing: keepGoingFlag})
 		if err != nil {
 			return err
 		}
 		if installFlag {
-			return executeInstall(ctx, result)
+			if err := executeInstall(ctx, result); err != nil {
+				return err
+			}
 		}
-		return nil
+		return report.complete(ctx, result)
 	})
 }
 

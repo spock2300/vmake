@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -93,16 +94,21 @@ func readProjectConfig(path string, allowMissing bool) (*ConfigFile, []byte, err
 }
 
 func LoadProject(projectDir string) (*ConfigFile, string, error) {
+	cfg, path, _, err := LoadProjectSnapshot(projectDir)
+	return cfg, path, err
+}
+
+func LoadProjectSnapshot(projectDir string) (*ConfigFile, string, string, error) {
 	project, explicit, err := projectSelection(projectDir)
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 	path := filepath.Join(projectDir, ".vmake", project.Config)
-	cfg, _, err := readProjectConfig(path, !explicit)
+	cfg, data, err := readProjectConfig(path, !explicit)
 	if err != nil && explicit {
-		return nil, path, fmt.Errorf("project selection %s: %w", filepath.Join(projectDir, ".vmake", ProjectFilename), err)
+		return nil, path, "", fmt.Errorf("project selection %s: %w", filepath.Join(projectDir, ".vmake", ProjectFilename), err)
 	}
-	return cfg, path, err
+	return cfg, path, fmt.Sprintf("%x", sha256.Sum256(data)), err
 }
 
 func UseProjectConfig(projectDir, name string) (string, error) {

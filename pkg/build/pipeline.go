@@ -146,10 +146,27 @@ func (p *BuildPipeline) Run() (*Scheduler, error) {
 	scheduler.SetBuildTargetFunc(func(name string) error {
 		run := func() error {
 			node := p.Graph.Nodes[name]
-			if runner := runners[node.PkgName]; runner != nil {
-				return runner.Build(name)
+			runner := runners[node.PkgName]
+			if runner == nil {
+				runner = scheduler
 			}
-			return scheduler.Build(name)
+			if err := runner.Build(name); err != nil {
+				return err
+			}
+			if p.Session == nil || !node.Target.IsDefault() || (node.Target.IsTest() && !p.IncludeTests) {
+				return nil
+			}
+			output := runner.getTargetOutputPath(node)
+			source := runner.pkgs[node.PkgName].SourceDir
+			paths := append([]string{}, postLinkOutputPaths(node.Target, source, output)...)
+			if node.Target.Kind() != api.TargetVoid && node.Target.Kind() != api.TargetObject {
+				paths = append([]string{resolveWorkPath(source, output)}, paths...)
+			}
+			if p.Session.outputs == nil {
+				p.Session.outputs = make(map[string]TargetResult)
+			}
+			p.Session.outputs[name] = TargetResult{Package: node.PkgName, Target: node.Target.Name(), Kind: string(node.Target.Kind()), Outputs: paths}
+			return nil
 		}
 		if p.Session != nil {
 			return p.Session.Execute(name, run)

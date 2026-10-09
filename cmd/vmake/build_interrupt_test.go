@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/spock2300/vmake/internal/flock"
+	"github.com/spock2300/vmake/internal/jsonio"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -144,6 +145,10 @@ func Main(p *api.Package) {
 				if len(pids) != expected {
 					t.Fatal("workers not ready")
 				}
+				var running buildReport
+				if err := jsonio.Load(reportPath(project), &running); err != nil || running.Status != "running" || len(running.Artifacts) != 0 {
+					t.Fatalf("running report: %+v, %v", running, err)
+				}
 				if err := syscall.Kill(-cmd.Process.Pid, sig); err != nil {
 					t.Fatal(err)
 				}
@@ -155,6 +160,10 @@ func Main(p *api.Package) {
 					}
 				case <-time.After(10 * time.Second):
 					t.Fatal("interrupted build did not exit")
+				}
+				var cancelled buildReport
+				if err := jsonio.Load(reportPath(project), &cancelled); err != nil || cancelled.Status != "cancelled" || len(cancelled.Artifacts) != 0 {
+					t.Fatalf("cancelled report: %+v, %v", cancelled, err)
 				}
 				acquired := make(chan error, 1)
 				go func() {

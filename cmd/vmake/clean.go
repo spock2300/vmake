@@ -72,6 +72,8 @@ func scanPackages(workDir string) []pkgCleanEntry {
 }
 
 func runClean(cmd *cobra.Command, args []string) {
+	commandStorageLocks()
+	fatalErr(invalidateBuildReport())
 	ctx, ok := resolveToConfigBestEffort(false)
 	if !ok {
 		if !cleanAllFlag {

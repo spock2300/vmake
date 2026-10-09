@@ -42,7 +42,7 @@ func Main(p *api.Package) {
 - `AddInstalls` in both `OnBuild` (via `BuildContext`) and `OnInstall` (via `InstallContext`) accept the same `(source, dest)` signature; `source` resolves against the package `SourceDir()`, `dest` is relative to the prefix
 - Use `OnInstall` for entries that don't belong to any specific target (docs, licenses, config templates)
 - `InstallContext` exposes option reads plus install registration only: there is no `Run`/`RunIn`/`Exec`/`Make`/`SrcDir`. Do shell work in `OnBuild`/`SetBuildFunc` or in a post-link step
-- The CLI `--prefix` flag is the only effective prefix override. `ctx.SetPrefix` writes `Prefix()`/`PrefixSet()` on the hook context, but the CLI installer never reads them, so it silently has no effect — do not use it
+- `ctx.SetPrefix(dir)` sets a per-package install prefix for this package's target outputs and extra entries, applied only when the `--prefix` flag is omitted; an explicit `--prefix` wins for every package and its directory is removed and re-created before installation. Prefer an absolute path. Without `--prefix`, the default `<project>/install` directory is removed while a custom prefix is left in place, so files from earlier installs can survive there and are not listed in the build report. `manifest.json` is still written only to the CLI/default prefix
 - Filter precedence: the `InstallContext` filter wins; when it is not set, the `BuildContext` filter is used. It receives `(path, isTargetOutput)`, where `path` is the built output path for target artifacts and the SourceDir-relative source for extra items
 - `AddInstalls` entries registered from `OnInstall` are installed regardless of `--install-type`; the type filter only applies to target outputs:
 
@@ -61,7 +61,7 @@ vmake build --install -p /opt/myapp      # explicit prefix
 vmake build --install --install-type sdk # also static libs + public headers
 ```
 
-- The prefix directory is removed and re-created before installation, then `manifest.json` (toolchain, mode, package versions/refs) is written into it.
+- The CLI/default prefix directory is removed and re-created before installation, then `manifest.json` (toolchain, mode, package versions/refs) is written into it. A per-package `SetPrefix` directory is not cleared.
 - Expected output: `Installing...`, `INSTALL <file> -> <prefix>/...` lines, then `Install succeeded!`.
 - A missing source file is only reported as `SKIP <source> (not found)` and does **not** fail the install. A stat error other than "not found" does fail.
 

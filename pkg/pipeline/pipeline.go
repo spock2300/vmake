@@ -28,6 +28,7 @@ type RuntimeContext struct {
 	Locks               *storage.Session
 	WorkDir             string
 	ConfigPath          string
+	ConfigDigest        string
 	Config              *config.ConfigFile
 	DepGraph            *resolver.Graph
 	AllOptions          map[string]map[string]*api.Option
@@ -56,6 +57,7 @@ type packageGlobalFlags struct {
 type ResolveParams struct {
 	WorkDir           string
 	ConfigPath        string
+	ConfigDigest      string
 	Config            *config.ConfigFile
 	Lock              *lockfile.Lock
 	LockPath          string
@@ -70,6 +72,7 @@ func NewContext(p ResolveParams) *RuntimeContext {
 	return &RuntimeContext{
 		WorkDir:           p.WorkDir,
 		ConfigPath:        p.ConfigPath,
+		ConfigDigest:      p.ConfigDigest,
 		Config:            p.Config,
 		Lock:              p.Lock,
 		LockPath:          p.LockPath,

@@ -32,6 +32,22 @@ type ArtifactInstaller struct {
 	defaultPrefix string
 	installType   string
 	installed     map[string]bool
+	files         []InstalledFile
+}
+
+type InstalledFile struct {
+	Package     string
+	Target      string
+	Source      string
+	Destination string
+}
+
+func (i *ArtifactInstaller) InstalledFiles() []InstalledFile {
+	return append([]InstalledFile{}, i.files...)
+}
+
+func (i *ArtifactInstaller) recordFile(pkg, target, source, destination string) {
+	i.files = append(i.files, InstalledFile{pkg, target, source, destination})
 }
 
 func NewArtifactInstaller(graph *BuildGraph, pkgDirs map[string]*api.PkgDirs, defaultPrefix string) *ArtifactInstaller {
@@ -144,6 +160,7 @@ func (i *ArtifactInstaller) installTarget(node *BuildNode) error {
 	if err := CopyFile(outputPath, destPath); err != nil {
 		return fmt.Errorf("install library failed: %w", err)
 	}
+	i.recordFile(pkgName, target.Name(), outputPath, destPath)
 
 	if implib := importLibraryPath(outputPath, pkgInfo.TargetOS, kind); implib != "" {
 		if _, err := os.Stat(implib); err == nil {
@@ -152,6 +169,7 @@ func (i *ArtifactInstaller) installTarget(node *BuildNode) error {
 			if err := CopyFile(implib, implibDest); err != nil {
 				return fmt.Errorf("install import library failed: %w", err)
 			}
+			i.recordFile(pkgName, target.Name(), implib, implibDest)
 		}
 	}
 
@@ -172,12 +190,13 @@ func (i *ArtifactInstaller) installTarget(node *BuildNode) error {
 		if err := CopyFile(outFile, postDest); err != nil {
 			return fmt.Errorf("install post-link output failed: %w", err)
 		}
+		i.recordFile(pkgName, target.Name(), outFile, postDest)
 	}
 
 	return i.installPublicIncludes(node, pkgInfo, prefix)
 }
 
-func copyPublicIncludes(target *api.Target, baseDir, includeDir string) error {
+func copyPublicIncludes(target *api.Target, baseDir, includeDir string, record func(string, string)) error {
 	for _, inc := range target.PublicIncludes() {
 		srcPath := filepath.Join(baseDir, inc)
 		info, err := os.Stat(srcPath)
@@ -190,18 +209,20 @@ func copyPublicIncludes(target *api.Target, baseDir, includeDir string) error {
 
 		if info.IsDir() {
 			rule := target.IncludeRule(inc)
+			var filter CopyFilter
 			if len(rule) > 0 {
 				vlog.Info("  INSTALL DIR %s (match: %s) -> %s", inc, rule, includeDir)
-				if err := CopyDirMatching(srcPath, includeDir, func(name string) bool {
-					return MatchPatterns(rule, name)
-				}); err != nil {
-					return fmt.Errorf("install headers failed: %w", err)
+				filter = func(path string, isDir bool) bool {
+					if isDir {
+						return true
+					}
+					return MatchPatterns(rule, filepath.Base(path))
 				}
 			} else {
 				vlog.Info("  INSTALL DIR %s -> %s", inc, includeDir)
-				if err := CopyDir(srcPath, includeDir); err != nil {
-					return fmt.Errorf("install headers failed: %w", err)
-				}
+			}
+			if err := copyDirWithFilter(srcPath, includeDir, filter, record); err != nil {
+				return fmt.Errorf("install headers failed: %w", err)
 			}
 		} else {
 			rule := target.IncludeRule(inc)
@@ -212,6 +233,9 @@ func copyPublicIncludes(target *api.Target, baseDir, includeDir string) error {
 			vlog.Info("  INSTALL %s -> %s", filepath.Base(srcPath), dest)
 			if err := fs.EnsureDir(includeDir); err != nil {
 				return err
+			}
+			if record != nil {
+				record(srcPath, dest)
 			}
 			if err := CopyFile(srcPath, dest); err != nil {
 				return fmt.Errorf("install header failed: %w", err)
@@ -234,7 +258,9 @@ func (i *ArtifactInstaller) installPublicIncludes(node *BuildNode, pkgInfo *PkgI
 	if !i.isSDK() {
 		return nil
 	}
-	return copyPublicIncludes(node.Target, i.pkgDirs[node.PkgName].SourceDir, filepath.Join(prefix, "include"))
+	return copyPublicIncludes(node.Target, i.pkgDirs[node.PkgName].SourceDir, filepath.Join(prefix, "include"), func(source, destination string) {
+		i.recordFile(node.PkgName, node.Target.Name(), source, destination)
+	})
 }
 
 func (i *ArtifactInstaller) installExtraItems(node *BuildNode) error {
@@ -276,9 +302,10 @@ func (i *ArtifactInstaller) installExtraItems(node *BuildNode) error {
 
 		if info.IsDir() {
 			vlog.Info("  INSTALL DIR %s -> %s", item.Src, destPath)
-			if err := i.copyDirWithFilter(srcPath, destPath, pkgInfo.InstallFilter); err != nil {
+			if err := copyDirWithFilter(srcPath, destPath, CopyFilter(pkgInfo.InstallFilter), func(source, destination string) { i.recordFile(pkgName, "", source, destination) }); err != nil {
 				return err
 			}
+
 		} else {
 			vlog.Info("  INSTALL %s -> %s", item.Src, destPath)
 			if err := fs.EnsureDir(filepath.Dir(destPath)); err != nil {
@@ -287,6 +314,7 @@ func (i *ArtifactInstaller) installExtraItems(node *BuildNode) error {
 			if err := CopyFile(srcPath, destPath); err != nil {
 				return err
 			}
+			i.recordFile(pkgName, "", srcPath, destPath)
 		}
 	}
 
@@ -313,14 +341,4 @@ func (i *ArtifactInstaller) getInstallPath(prefix string, pkgInfo *PkgInstallInf
 		return filepath.Join(prefix, dir, basename)
 	}
 	return filepath.Join(prefix, basename)
-}
-
-func (i *ArtifactInstaller) copyDirWithFilter(src, dest string, filter api.InstallFilterFunc) error {
-	var cf CopyFilter
-	if filter != nil {
-		cf = func(path string, isDir bool) bool {
-			return filter(path, isDir)
-		}
-	}
-	return CopyDirWithFilter(src, dest, cf)
 }

@@ -78,6 +78,7 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) (err error) {
 	if err := installer.InstallAll(ctx.Context); err != nil {
 		return err
 	}
+	result.InstallFiles = installer.InstalledFiles()
 
 	if err := writeManifest(ctx, result, effectivePrefix); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
@@ -117,7 +118,14 @@ func installOnePackage(ctx *RuntimeContext, name string, node *resolver.PackageN
 		installFilter = buildCtx.GetInstallFilter()
 	}
 
+	prefix, prefixSet := installCtx.Prefix(), installCtx.PrefixSet()
+	if prefixFlag != "" {
+		prefix, prefixSet = "", false
+	}
+
 	installer.SetPackageInfo(name, &build.PkgInstallInfo{
+		Prefix:        prefix,
+		PrefixSet:     prefixSet,
 		Targets:       result.AllTargets[name],
 		InstallItems:  installItems,
 		BuildDir:      result.PkgDirs[name].BuildDir,

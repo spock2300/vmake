@@ -3,6 +3,7 @@ package build
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/pkg/api"
@@ -19,6 +20,27 @@ type Session struct {
 	results map[string]targetResult
 	tools   map[string]*ResolvedTools
 	active  string
+	outputs map[string]TargetResult
+}
+
+type TargetResult struct {
+	Package string   `json:"package"`
+	Target  string   `json:"target"`
+	Kind    string   `json:"kind"`
+	Outputs []string `json:"outputs"`
+}
+
+func (s *Session) TargetResults() []TargetResult {
+	keys := make([]string, 0, len(s.outputs))
+	for key := range s.outputs {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	result := make([]TargetResult, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, s.outputs[key])
+	}
+	return result
 }
 
 func NewSession(ctx context.Context) *Session {
