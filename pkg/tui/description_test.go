@@ -131,6 +131,22 @@ func TestDescriptionLoadedMultilineIsSanitized(t *testing.T) {
 	}
 }
 
+func TestDescriptionNoopEditKeepsLoadedLineBreaks(t *testing.T) {
+	m := descriptionModel()
+	m.description = "first\nsecond"
+	m.origDescription = m.description
+	m.renderOptions()
+	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
+	if m.descInput != "first second" {
+		t.Fatalf("edit seed = %q, want %q", m.descInput, "first second")
+	}
+	// 打开编辑后直接回车（没改内容）：不能把多行原文覆盖成单行。
+	m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.description != "first\nsecond" || m.hasChanges {
+		t.Fatalf("no-op edit flattened: description=%q changes=%t", m.description, m.hasChanges)
+	}
+}
+
 func TestDescriptionLoadedOverlongIsTruncated(t *testing.T) {
 	m := descriptionModel()
 	m.description = strings.Repeat("x", int(config.MaxDescriptionLength)+50)

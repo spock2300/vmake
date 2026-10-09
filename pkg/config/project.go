@@ -32,14 +32,19 @@ type ProjectConfigInfo struct {
 
 const MaxDescriptionLength = 200
 
+// ValidateDescription 规范化说明文本：去掉首尾空白，限制 MaxDescriptionLength 个字符。
+// 允许换行（说明可以多行），其余控制字符一律拒绝。
 func ValidateDescription(text string) (string, error) {
 	text = strings.TrimSpace(text)
 	if n := utf8.RuneCountInString(text); n > MaxDescriptionLength {
 		return "", fmt.Errorf("description too long: %d characters (maximum %d)", n, MaxDescriptionLength)
 	}
 	for _, c := range text {
+		if c == '\n' {
+			continue
+		}
 		if c < 32 || c == 127 {
-			return "", fmt.Errorf("description must be a single line without control characters")
+			return "", fmt.Errorf("description must not contain control characters other than line breaks")
 		}
 	}
 	return text, nil

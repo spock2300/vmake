@@ -788,7 +788,11 @@ func (m *Model) handleDescEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		m.descEditing = false
-		m.setDescription(m.descInput)
+		// 编辑框是单行、显示时折行；没改内容就不要用折行版本覆盖原文（原文可以含换行）。
+		// 非法原文（例如旧版本写下的超长文本）仍要借这次编辑归一化。
+		if _, err := config.ValidateDescription(m.description); err != nil || m.descInput != sanitizeDescription(m.description) {
+			m.setDescription(m.descInput)
+		}
 		return m, nil
 	case "left":
 		if m.descCursor > 0 {

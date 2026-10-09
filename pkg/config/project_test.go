@@ -287,11 +287,15 @@ func TestProjectDescriptionValidation(t *testing.T) {
 	original := `{"version":"1","entries":{}}`
 	writeProjectFile(t, root, DefaultFilename, original)
 	writeProjectFile(t, root, ProjectFilename, `{"config":"config.json"}`)
-	for _, bad := range []string{"two\nlines", "tab\there", strings.Repeat("a", MaxDescriptionLength+1)} {
+	for _, bad := range []string{"tab\there", strings.Repeat("a", MaxDescriptionLength+1)} {
 		if _, err := SetProjectDescription(root, bad); err == nil {
 			t.Fatalf("accepted invalid description %q", bad)
 		}
 		assertProjectFile(t, root, DefaultFilename, original)
+	}
+	// 换行合法：说明可以多行，首尾空白由 TrimSpace 去掉。
+	if _, err := SetProjectDescription(root, "first line\nsecond line"); err != nil {
+		t.Fatalf("rejected multiline description: %v", err)
 	}
 	if _, err := SetProjectDescription(root, strings.Repeat("a", MaxDescriptionLength)); err != nil {
 		t.Fatalf("rejected max-length description: %v", err)
