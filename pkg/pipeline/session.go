@@ -157,17 +157,24 @@ func (s *buildPhaseState) bindPackage(name string) (*packageBinding, error) {
 		s.pkgDirs[name] = makeLocalPkgDirs(dirs.SourceDir, tools.CCKey(), s.cfg.Mode, s.allPkgOptions[name], flagsHash, scriptHash, s.sourceCommits[name])
 	} else {
 		version, commit := s.remotePkgKeyMaterial(name)
-		if versionDir := s.remote.versionDirs[name]; versionDir != "" {
-			s.pkgDirs[name] = makeRemotePkgDirs(versionDir, dirs.SourceDir, tools.CCKey(), s.cfg.Mode, s.allPkgOptions[name], version, s.packageCommitKey(name, commit), flagsHash, s.patchHashes[name], scriptHash, remoteMemberPath(s.ctx, name))
+		owner := remoteOwnerName(s.ctx, name)
+		member := remoteMemberPath(s.ctx, name)
+		tree := s.remote.trees[name]
+		if tree == "" {
+			tree = s.remote.trees[owner]
 		}
+		if tree == "" {
+			tree = remoteTreeDir(s.ctx, owner)
+		}
+		s.pkgDirs[name] = makeRemotePkgDirs(tree, member, tools.CCKey(), s.cfg.Mode, s.allPkgOptions[name], version, s.packageCommitKey(name, commit), flagsHash, s.patchHashes[name], scriptHash)
 	}
 	if err := s.preparePackageWorkspace(name); err != nil {
 		return nil, err
 	}
 	currentDirs := s.pkgDirs[name]
 	if dirs.BuildDir != currentDirs.BuildDir || dirs.SourceDir != currentDirs.SourceDir {
-		if err := applyPatchesContext(s.ctx.Context, node.Pkg, node.Pkg.SrcDir()); err != nil {
-			return nil, fmt.Errorf("apply patches for %s: %w", name, err)
+		if err := s.applyPatchesFor(name); err != nil {
+			return nil, err
 		}
 		if err := rebaseKConfigSourceDirs(s.ctx, name, dirs.SourceDir, currentDirs.SourceDir); err != nil {
 			return nil, err

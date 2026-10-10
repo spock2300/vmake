@@ -1,11 +1,14 @@
 package pipeline
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/spock2300/vmake/internal/buildruntime"
@@ -72,9 +75,9 @@ type buildPhaseState struct {
 }
 
 type remoteVersionState struct {
-	entries     map[string]*config.EntryConfig
-	commits     map[string]string
-	versionDirs map[string]string
+	entries map[string]*config.EntryConfig
+	commits map[string]string
+	trees   map[string]string
 }
 
 type BuildOptions struct {
@@ -308,9 +311,9 @@ func (s *buildPhaseState) toolsForPackage(name string) (*build.ResolvedTools, er
 
 func (s *buildPhaseState) prepareAllPackages() error {
 	remote := &remoteVersionState{
-		entries:     make(map[string]*config.EntryConfig),
-		commits:     make(map[string]string),
-		versionDirs: make(map[string]string),
+		entries: make(map[string]*config.EntryConfig),
+		commits: make(map[string]string),
+		trees:   make(map[string]string),
 	}
 
 	for _, name := range s.ctx.Resolver.GetOrder() {
@@ -336,6 +339,11 @@ func (s *buildPhaseState) prepareAllPackages() error {
 		if err != nil {
 			return err
 		}
+		patchHash, err := patchHashForNode(name, node)
+		if err != nil {
+			return err
+		}
+		s.patchHashes[name] = patchHash
 		if err := s.selectPackageSource(name); err != nil {
 			return fmt.Errorf("select source for %s: %w", name, err)
 		}
@@ -352,7 +360,7 @@ func (s *buildPhaseState) prepareAllPackages() error {
 	}
 	s.remote = remote
 
-	if err := s.setupSubPackageDirs(depsDir); err != nil {
+	if err := s.setupSubPackageDirs(); err != nil {
 		return err
 	}
 
@@ -478,6 +486,9 @@ func (s *buildPhaseState) downloadRemoteSources(remote *remoteVersionState, deps
 			}
 			pkg.SetGit(node.Native.GitURL)
 			pkg.SetVersions(node.Native.Versions)
+			if node.Pkg != nil {
+				pkg.SetSubmodules(node.Pkg.Submodules())
+			}
 		} else if node.Pkg != nil {
 			pkg.SetGit(node.Pkg.GitURLs()...)
 			pkg.SetVersions(node.Pkg.Versions())
@@ -513,29 +524,88 @@ func (s *buildPhaseState) downloadRemoteSources(remote *remoteVersionState, deps
 				expectedCommit = locked.Commit
 			}
 		}
-		res, err := sourceMgr.EnsureVersion(pkg, entryCfg.Version, expectedCommit)
-		if err != nil {
-			return fmt.Errorf("failed to download %s: %w", name, err)
-		}
 		patchHash, err := patchHashForNode(name, node)
 		if err != nil {
 			return err
 		}
+		treePatchHash, err := s.treePatchHash(name)
+		if err != nil {
+			return err
+		}
+		ref := ""
+		if entryCfg.Version != "" {
+			ref = pkg.GetRef(entryCfg.Version)
+			if ref == "" {
+				ref = entryCfg.Version
+			}
+		}
+		res, err := sourceMgr.EnsureSource(repo.SourceRequest{
+			Key:        name,
+			URLs:       pkg.GitURLs(),
+			Version:    entryCfg.Version,
+			Ref:        ref,
+			Commit:     expectedCommit,
+			PatchHash:  treePatchHash,
+			Submodules: pkg.Submodules(),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to download %s: %w", name, err)
+		}
 		remote.commits[name] = res.Commit
-		remote.versionDirs[name] = res.VersionDir
+		remote.trees[name] = res.Root
 		s.patchHashes[name] = patchHash
-		vlog.Info("  %s@%s -> %s", name, entryCfg.Version, res.LocalSrc)
+		vlog.Info("  %s@%s -> %s", name, entryCfg.Version, res.SrcDir)
 		scriptHash, err := s.scriptHashFor(name)
 		if err != nil {
 			return err
 		}
-		s.pkgDirs[name] = makeRemotePkgDirs(res.VersionDir, res.LocalSrc, resolvedTools.CCKey(), s.cfg.Mode, s.allPkgOptions[name],
+		s.pkgDirs[name] = makeRemotePkgDirs(res.Root, "", resolvedTools.CCKey(), s.cfg.Mode, s.allPkgOptions[name],
 			entryCfg.Version, res.Commit, packageFlagsHash(s.globalFlagsHash, node), patchHash, scriptHash)
-		if err := prepareRemoteWorkspace(sourceMgr, node, s.pkgDirs[name], res.VersionDir, res.Commit, patchHash); err != nil {
+		if err := s.preparePackageWorkspace(name); err != nil {
 			return fmt.Errorf("prepare workspace for %s: %w", name, err)
 		}
 	}
 	return nil
+}
+
+// treePatchHash summarizes the patch sets applied into a package tree. Native
+// members without their own repository share the parent's tree, so their
+// patches are part of the tree identity: a changed member patch must recreate
+// the tree instead of stacking onto an already patched checkout.
+func (s *buildPhaseState) treePatchHash(owner string) (string, error) {
+	names := []string{owner}
+	for name, parent := range s.ctx.Resolver.SubParents() {
+		if parent != owner || !s.needed[name] {
+			continue
+		}
+		node := s.ctx.DepGraph.Packages[name]
+		if node == nil || node.Pkg == nil || len(node.Pkg.GitURLs()) > 0 {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	hashes := make(map[string]string, len(names))
+	shared := false
+	for _, name := range names {
+		hash, err := patchHashForNode(name, s.ctx.DepGraph.Packages[name])
+		if err != nil {
+			return "", err
+		}
+		s.patchHashes[name] = hash
+		hashes[name] = hash
+		if name != owner && hash != "" {
+			shared = true
+		}
+	}
+	if !shared {
+		return hashes[owner], nil
+	}
+	h := sha256.New()
+	for _, name := range names {
+		fmt.Fprintf(h, "%s\x00%s\x00", name, hashes[name])
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16], nil
 }
 
 func (s *buildPhaseState) lockedVersion(name string) (string, bool) {
@@ -561,7 +631,7 @@ func (s *buildPhaseState) cloneLocalGitSources() error {
 	return nil
 }
 
-func (s *buildPhaseState) setupSubPackageDirs(depsDir string) error {
+func (s *buildPhaseState) setupSubPackageDirs() error {
 	subParents := s.ctx.Resolver.SubParents()
 	if len(subParents) == 0 {
 		return nil
@@ -594,13 +664,13 @@ func (s *buildPhaseState) setupSubPackageDirs(depsDir string) error {
 		if recorded := s.remote.commits[rootParent]; recorded != "" {
 			commit = recorded
 		}
-		versionDir := s.remote.versionDirs[rootParent]
-		if versionDir == "" {
-			versionDir = remoteVersionDir(s.ctx, rootParent, version)
+		tree := s.remote.trees[rootParent]
+		if tree == "" {
+			tree = remoteTreeDir(s.ctx, rootParent)
 		}
-		s.remote.versionDirs[rootParent] = versionDir
+		s.remote.trees[rootParent] = tree
 		s.remote.commits[rootParent] = commit
-		s.remote.versionDirs[name] = versionDir
+		s.remote.trees[name] = tree
 		s.remote.commits[name] = commit
 		opts := s.allPkgOptions[name]
 		scriptHash, err := s.scriptHashFor(name)
@@ -612,15 +682,13 @@ func (s *buildPhaseState) setupSubPackageDirs(depsDir string) error {
 			return err
 		}
 		s.patchHashes[name] = patchHash
+		s.pkgDirs[name] = makeRemotePkgDirs(tree, relPath, resolvedTools.CCKey(), s.cfg.Mode, opts,
+			version, s.packageCommitKey(name, commit), packageFlagsHash(s.globalFlagsHash, node), patchHash, scriptHash)
 		if err := s.selectPackageSource(name); err != nil {
 			return fmt.Errorf("select source for %s: %w", name, err)
 		}
-		s.pkgDirs[name] = makeRemotePkgDirs(versionDir, node.Source.Dir, resolvedTools.CCKey(), s.cfg.Mode, opts,
-			version, s.packageCommitKey(name, commit), packageFlagsHash(s.globalFlagsHash, node), patchHash, scriptHash, relPath)
-		manager := repo.NewSourceManager(depsDir, s.ctx.Paths.CacheDir).WithSession(s.ctx.Locks).WithContext(s.ctx.Context)
-		if err := prepareRemoteWorkspace(manager, node, s.pkgDirs[name], versionDir, commit, patchHash); err != nil {
-			return fmt.Errorf("prepare workspace for %s: %w", name, err)
-		}
+		s.pkgDirs[name] = makeRemotePkgDirs(tree, relPath, resolvedTools.CCKey(), s.cfg.Mode, opts,
+			version, s.packageCommitKey(name, commit), packageFlagsHash(s.globalFlagsHash, node), patchHash, scriptHash)
 	}
 	return nil
 }
@@ -646,11 +714,55 @@ func (s *buildPhaseState) applyPatchesToNeeded() error {
 		if len(node.Pkg.GetPatches()) == 0 {
 			continue
 		}
-		if err := applyPatchesContext(s.ctx.Context, node.Pkg, node.Pkg.SrcDir()); err != nil {
-			return fmt.Errorf("apply patches for %s: %w", name, err)
+		if err := s.applyPatchesFor(name); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// applyPatchesFor applies the package patch series to its working tree. A
+// failed application clears the tree's patch identity so the next invocation
+// recreates a clean tree instead of reusing a partially patched one.
+func (s *buildPhaseState) applyPatchesFor(name string) error {
+	node := s.ctx.DepGraph.Packages[name]
+	if node == nil || node.Pkg == nil {
+		return nil
+	}
+	if err := applyPatchesContext(s.ctx.Context, node.Pkg, node.Pkg.SrcDir()); err != nil {
+		s.clearPatchState(name)
+		return fmt.Errorf("apply patches for %s: %w", name, err)
+	}
+	return nil
+}
+
+func (s *buildPhaseState) clearPatchState(name string) {
+	root := s.treeRootFor(name)
+	if root == "" {
+		return
+	}
+	manager := repo.NewSourceManager(s.ctx.Paths.DepsDir, s.ctx.Paths.CacheDir).WithSession(s.ctx.Locks).WithContext(s.ctx.Context)
+	if err := manager.ClearPatchState(root); err != nil {
+		vlog.Info("  warning: reset patch state for %s: %v", name, err)
+	}
+}
+
+// treeRootFor maps a package to the tree root that owns its state file.
+func (s *buildPhaseState) treeRootFor(name string) string {
+	node := s.ctx.DepGraph.Packages[name]
+	if node == nil || node.Pkg == nil {
+		return ""
+	}
+	if node.IsLocal() {
+		return filepath.Join(s.ctx.Paths.DepsDir, "local", name)
+	}
+	if _, isSub := s.ctx.Resolver.SubParents()[name]; isSub {
+		if len(node.Pkg.GitURLs()) > 0 && s.pkgDirs[name] != nil {
+			return s.pkgDirs[name].SourceDir
+		}
+		return remoteTreeDir(s.ctx, remoteOwnerName(s.ctx, name))
+	}
+	return remoteTreeDir(s.ctx, name)
 }
 
 func (s *buildPhaseState) restoreKConfigs() error {

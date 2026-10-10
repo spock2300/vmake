@@ -10,7 +10,7 @@ Call `cmake` directly only for operations these APIs cannot express.
 ## Prerequisites
 
 - Go 1.26+ and a vmake binary built from the repository root: `CGO_ENABLED=0 go build -o vmake ./cmd/vmake`
-- Network access for `SetGit` (or a populated `~/.vmake` cache/lock), plus the upstream build tools (`cmake`/`make`) and a C/C++ compiler
+- Network access for `SetGit` (or an existing package working tree under the project's `.vmake_deps/` plus the pinned commit in `.vmake/vmake.lock`), plus the upstream build tools (`cmake`/`make`) and a C/C++ compiler
 - A consuming project that requires the wrapper with `AddRequires` + `AddDeps` (see `examples/with-package.md`)
 
 ## build.go
@@ -242,9 +242,10 @@ p.OnConfig(func(ctx *api.ConfigContext) {
     ctx.KConfig("u-boot").
         AddPreset("rk3568_defconfig").
         AddPreset("stm32_defconfig").
+        AddPreset("sandbox_defconfig").
         SetDefaultPreset("sandbox_defconfig").
         SetSrcDir("src"). // local SetGit: read .config from SrcDir() = SourceDir()/src
-        SetKConfigPatches(map[string]string{"CONFIG_FOO": "y"})
+        SetKConfigPatches(map[string]string{"CONFIG_FOO=y": "# CONFIG_FOO is not set"})
 })
 
 p.OnBuild(func(ctx *api.BuildContext) {
@@ -260,13 +261,13 @@ p.OnBuild(func(ctx *api.BuildContext) {
 })
 ```
 
-`EnsureConfig(pkg.SrcDir())` runs the selected preset (`make <preset>`) and applies KConfig patches to `<SrcDir>/.config`; `SetSrcDir("src")` tells `vmake config` where that file is for a local `SetGit` package. Registry packages resolve from the checkout root, so there `SetSrcDir` can be omitted (it defaults to `SourceDir()`). The reference fixture is `test_linux/17_firmware/busybox`.
+`EnsureConfig(pkg.SrcDir())` generates `<SrcDir>/.config` from the selected preset (`make <preset>`) when it is missing or empty, and applies KConfig patches to it; `SetSrcDir("src")` tells `vmake config` where that file is for a local `SetGit` package. Registry packages resolve from the checkout root, so there `SetSrcDir` can be omitted (it defaults to `SourceDir()`). The reference fixture is `test_linux/17_firmware/busybox`.
 
 ## Key Points
 
 - `p.Run` / `p.Make` default to the package's `BuildDir`; CMake helpers manage `CMakeBuildDir()` across all three stages
 - `p.SrcDir()` — the downloaded source tree (use this for source files, config headers, patching); equals `SourceDir()/src` for local `SetGit` packages and `SourceDir()` for registry packages
-- `p.SourceDir()` — package root; remote packages receive their writable member workspace
+- `p.SourceDir()` — package root; remote packages receive their writable working tree under `.vmake_deps/`
 - `p.BuildDir()` — scratch directory for intermediate files
 - `p.InstallDir()` — installation prefix for **remote** packages; it is empty for local packages, so `PREFIX=p.InstallDir()` / `--prefix` only works in remote wrappers (a custom `SetCMakeInstallDir` must still publish results into `InstallDir()`)
 - `p.CMakeBuildDir()` / `p.CMakeInstallDir()` — actual CMake build tree and installation prefix
@@ -328,8 +329,8 @@ p.OnBuild(func(ctx *api.BuildContext) {
 
 - Wrapper package (local build.go): run `vmake build` from the wrapper's project directory. A `TargetVoid` wrapper succeeds when its `Configure`/`Make`/`CMake*` commands succeed — the run ends with `Build succeeded!`, and `vmake query targets` lists the declared targets.
 - Consuming project: `vmake build --install` resolves and checks out the registry package, builds dependencies first, then links the app. `vmake query` prints the dependency tree; a successful build ends with `Build succeeded!` (plus `Install succeeded!` with `--install`).
-- Installed layout: for a local library target, `vmake build --install --install-type sdk` publishes the archive/shared library under `install/lib/` and the forwarded public headers under `install/include/` (static libraries are skipped at install without `sdk`). Remote packages publish into their own `InstallDir()` in the vmake cache.
-- The first run needs network access unless `.vmake/vmake.lock` and the `~/.vmake` cache already hold the pinned commit; registry repos must be added/trusted first (`vmake repo add`).
+- Installed layout: for a local library target, `vmake build --install --install-type sdk` publishes the archive/shared library under `install/lib/` and the forwarded public headers under `install/include/` (static libraries are skipped at install without `sdk`). Remote packages publish into their own `InstallDir()` under the project's `.vmake_deps/` tree.
+- The first run needs network access unless the pinned commit is already recorded in `.vmake/vmake.lock` and materialized under the project's `.vmake_deps/`; registry repos must be added/trusted first (`vmake repo add`).
 
 ## See Also
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/lockfile"
 	"github.com/spock2300/vmake/pkg/repo"
 )
 
@@ -139,5 +140,47 @@ func TestResolveNativeConstraintAgreementSucceeds(t *testing.T) {
 	}
 	if node.Native.Selected != "1.9.0" {
 		t.Errorf("Selected = %q, want 1.9.0", node.Native.Selected)
+	}
+}
+
+func TestResolveNativeConfigPinReusesTreeOffline(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	url := writeNativeRepoWithVersions(t)
+	depsDir, cacheDir := t.TempDir(), t.TempDir()
+	repoMgr := repo.NewRepoManager(t.TempDir())
+	template := strings.TrimSuffix(url, "conflictpkg.git") + "{name}.git"
+	if err := repoMgr.AddNative("testnative", template); err != nil {
+		t.Fatal(err)
+	}
+
+	r := NewResolver(repoMgr, depsDir)
+	r.SetSourceManager(repo.NewSourceManager(depsDir, cacheDir))
+	if err := r.ResolveAll([]buildscript.Source{*localRequiringSource(t, "a", "testnative/conflictpkg >=1.2")}); err != nil {
+		t.Fatal(err)
+	}
+	node := r.Graph().Packages["testnative/conflictpkg"]
+	if node == nil || node.Native == nil || node.Native.Commit == "" {
+		t.Fatalf("native node incomplete: %+v", node)
+	}
+
+	// A config pin with a matching lock must reuse the materialized tree even
+	// when the cache directory is gone.
+	if err := os.RemoveAll(cacheDir); err != nil {
+		t.Fatal(err)
+	}
+	pinned := NewResolver(repoMgr, depsDir)
+	pinned.SetSourceManager(repo.NewSourceManager(depsDir, cacheDir))
+	lock := lockfile.New()
+	lock.Set("testnative/conflictpkg", &lockfile.LockedPkg{Version: "1.9.0", Commit: node.Native.Commit, Source: "native"})
+	pinned.SetLockfile(lock, false)
+	pinned.SetConfigPins(map[string]string{"testnative/conflictpkg": "1.9.0"})
+	if err := pinned.ResolveAll([]buildscript.Source{*localRequiringSource(t, "a", "testnative/conflictpkg >=1.2")}); err != nil {
+		t.Fatalf("offline config pin: %v", err)
+	}
+	pinnedNode := pinned.Graph().Packages["testnative/conflictpkg"]
+	if pinnedNode == nil || pinnedNode.Native == nil || pinnedNode.Native.Selected != "1.9.0" {
+		t.Fatalf("pinned resolution = %+v", pinnedNode)
 	}
 }

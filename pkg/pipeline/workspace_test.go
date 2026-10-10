@@ -4,479 +4,117 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/gitcmd"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/lockfile"
 	"github.com/spock2300/vmake/pkg/repo"
 	"github.com/spock2300/vmake/pkg/resolver"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
-func nativeMemberLinkFixture(t *testing.T, member string, setGit bool) (*buildPhaseState, string, string) {
+func testGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
+	cmd := exec.Command("git", gitcmd.Args(args...)...)
+	cmd.Dir = dir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v in %s: %s: %v", args, dir, output, err)
+	}
+}
+
+func initGitRepo(t *testing.T, files map[string]string) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	dir := t.TempDir()
+	testGit(t, dir, "init", "-q", "-b", "main")
+	testGit(t, dir, "config", "user.name", "test")
+	testGit(t, dir, "config", "user.email", "test@example.com")
+	for name, content := range files {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	testGit(t, dir, "add", "-A")
+	testGit(t, dir, "commit", "-q", "-m", "source")
+	return dir
+}
+
+func TestLocalSetGitSingleTreeStableLink(t *testing.T) {
 	if !fs.SymlinksSupported() {
 		t.Skip(fs.SymlinkHint)
 	}
-	host, err := toolchain.GetManager().GetToolchain("host")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := build.ResolveTools(host, api.Platform{}); err != nil {
-		t.Skipf("host tools unavailable: %v", err)
-	}
+	upstream := initGitRepo(t, map[string]string{"input.c": "original\n"})
+	testGit(t, upstream, "tag", "v1.0.0")
+
 	s := sessionFixture(t)
-	owner := "native/root"
-	versionDir := remoteVersionDir(s.ctx, owner, "1.0.0")
-	seed := filepath.Join(versionDir, "src")
-	for name, content := range map[string]string{
-		"build.go":                           "package main\n",
-		filepath.Join(member, "build.go"):    "package main\n",
-		filepath.Join(member, "payload.txt"): "original",
-	} {
-		path := filepath.Join(seed, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			t.Fatal(err)
-		}
+	node := s.ctx.DepGraph.Packages["app"]
+	node.Pkg.SetGit(upstream).AddVersion("1.0.0", "v1.0.0")
+	node.Constraints = []string{"=1.0.0"}
+	if err := s.selectPackageSource("app"); err != nil {
+		t.Fatal(err)
 	}
-	sources, err := buildscript.ScanSubPackages(seed, owner)
-	if err != nil || len(sources) != 1 {
-		t.Fatalf("native member discovery = %+v, %v", sources, err)
+	s.pkgDirs["app"] = makeLocalPkgDirs(node.Source.Dir, "cc-key", s.cfg.Mode, nil, "", "", s.sourceCommits["app"])
+	if err := s.preparePackageWorkspace("app"); err != nil {
+		t.Fatal(err)
 	}
-	source := &sources[0]
-	name := owner + "/" + member
-	if source.Name != name {
-		t.Fatalf("discovered member = %s, want %s", source.Name, name)
-	}
-	parent := resolver.NewPackageNode(owner, buildscript.NewSource(owner, filepath.Join(seed, "build.go"), seed, api.SourceRemote), api.NewPackage())
-	parent.WithNative("unused", nil, "1.0.0")
-	parent.Native.Commit = "owner-commit"
-	node := resolver.NewPackageNode(name, source, api.NewPackage())
-	if setGit {
-		upstream := t.TempDir()
-		if err := os.WriteFile(filepath.Join(upstream, "payload.txt"), []byte("original"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		for _, args := range [][]string{{"init", "-q", "-b", "main"}, {"add", "."}, {"-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "source"}} {
-			cmd := exec.Command("git", gitcmd.Args(args...)...)
-			cmd.Dir = upstream
-			if output, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("git %v: %s: %v", args, output, err)
-			}
-		}
-		node.Pkg.SetGit(upstream)
-	}
-	s.ctx.DepGraph.Packages[owner], s.ctx.DepGraph.Packages[name] = parent, node
-	delete(s.ctx.DepGraph.Packages, "dep")
-	s.ctx.DepGraph.Order = []string{owner, name, "app"}
-	s.ctx.Resolver.SubParents()[name] = owner
-	s.ctx.DepGraph.Packages["app"].Pkg.SetRoot(true)
-	s.ctx.DepGraph.Packages["app"].Deps = []string{owner, name}
-	s.needed = map[string]bool{"app": true, owner: true, name: true}
-	s.cfg = makeBuildConfig(s.ctx, host, "host")
-	applyGlobalFlagsFromNeeded(s.ctx, s.needed)
-	s.globalFlagsHash = build.GlobalFlagsHash()
-	s.computeDirsAndOptions()
-	s.remote.versionDirs[owner], s.remote.commits[owner] = versionDir, parent.Native.Commit
-	for _, dir := range []string{"src", "out"} {
-		target := filepath.Join(versionDir, dir)
-		if err := os.MkdirAll(target, 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := fs.EnsureSymlink(filepath.Join(s.ctx.Paths.DepsDir, filepath.FromSlash(owner), dir), target); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return s, seed, name
-}
 
-func sourceTreeSnapshot(t *testing.T, root string) map[string]string {
-	t.Helper()
-	files := make(map[string]string)
-	if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		value := info.Mode().String() + "\x00" + info.ModTime().UTC().String()
-		if info.Mode().IsRegular() {
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			value += "\x00" + string(data)
-		} else if info.Mode()&os.ModeSymlink != 0 {
-			target, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			value += "\x00" + target
-		}
-		files[rel] = value
-		return nil
-	}); err != nil {
-		t.Fatal(err)
+	link := filepath.Join(node.Source.Dir, "src")
+	want := filepath.Join(s.ctx.Paths.DepsDir, "local", "app", "src")
+	target, err := os.Readlink(link)
+	if err != nil || target != want {
+		t.Fatalf("src link = %q, %v; want %q", target, err, want)
 	}
-	return files
-}
+	if got := node.Pkg.SrcDir(); got != link {
+		t.Fatalf("SrcDir = %q, want link %q", got, link)
+	}
+	if data, err := os.ReadFile(filepath.Join(link, "input.c")); err != nil || string(data) != "original\n" {
+		t.Fatalf("linked content = %q, %v", data, err)
+	}
 
-func TestNativeMemberSourceLinksPreserveSeedAndParentLinks(t *testing.T) {
-	for _, member := range []string{"src", "src/sub", "out", "out/sub", "normal", "nested/member", "_members/src"} {
-		for _, setGit := range []bool{false, true} {
-			label := member
-			if setGit {
-				label += "/setgit"
-			}
-			t.Run(label, func(t *testing.T) {
-				s, seed, name := nativeMemberLinkFixture(t, member, setGit)
-				before := sourceTreeSnapshot(t, seed)
-				if err := s.setupSubPackageDirs(s.ctx.Paths.DepsDir); err != nil {
-					t.Fatal(err)
-				}
-				if err := s.cloneSubPackageGitSources(); err != nil {
-					t.Fatal(err)
-				}
-				dirs := s.pkgDirs[name]
-				link := nativeMemberSourceLink(s.ctx, name)
-				target := dirs.SourceDir
-				if setGit {
-					target = filepath.Join(target, "src")
-				}
-				if got, err := os.Readlink(link); err != nil || got != target {
-					t.Fatalf("member source link = %s, %v; want %s", got, err, target)
-				}
-				path := filepath.Join(link, "payload.txt")
-				if data, err := os.ReadFile(path); err != nil || string(data) != "original" {
-					t.Fatalf("member source = %q, %v", data, err)
-				}
-				if err := os.WriteFile(path, []byte("workspace change"), 0644); err != nil {
-					t.Fatal(err)
-				}
-				mtime := time.Unix(1700000000, 0)
-				if err := os.Chtimes(path, mtime, mtime); err != nil {
-					t.Fatal(err)
-				}
-				if err := s.preparePackageWorkspace(name); err != nil {
-					t.Fatal(err)
-				}
-				if info, err := os.Stat(path); err != nil || !info.ModTime().Equal(mtime) {
-					t.Fatalf("unchanged workspace mtime changed: %v", err)
-				}
-				if data, err := os.ReadFile(path); err != nil || string(data) != "workspace change" {
-					t.Fatalf("existing workspace was replaced: %q, %v", data, err)
-				}
-				if after := sourceTreeSnapshot(t, seed); !reflect.DeepEqual(before, after) {
-					t.Fatalf("immutable seed changed: before=%v after=%v", before, after)
-				}
-				for _, dir := range []string{"src", "out"} {
-					link := filepath.Join(s.ctx.Paths.DepsDir, "native", "root", dir)
-					if got, err := os.Readlink(link); err != nil || got != filepath.Join(filepath.Dir(seed), dir) {
-						t.Fatalf("parent %s link changed: %s, %v", dir, got, err)
-					}
-				}
-			})
-		}
-	}
-}
-
-func TestNativeMembersUseIndependentWholeRepositoryWorkspaces(t *testing.T) {
-	versionDir := t.TempDir()
-	seed := filepath.Join(versionDir, "src")
-	for name, content := range map[string]string{"shared/value.h": "original", "sub_a/build.go": "a", "sub_b/build.go": "b"} {
-		path := filepath.Join(seed, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	manager := repo.NewSourceManager(t.TempDir(), t.TempDir())
-	dirs := make(map[string]*api.PkgDirs)
-	for _, member := range []string{"sub_a", "sub_b"} {
-		src := buildscript.NewSource("native/root/"+member, filepath.Join(seed, member, "build.go"), filepath.Join(seed, member), api.SourceRemote)
-		node := resolver.NewPackageNode(src.Name, src, api.NewPackage())
-		dirs[member] = makeRemotePkgDirs(versionDir, src.Dir, "cc", "debug", nil, "1.0.0", "commit", "", "", "script", member)
-		if err := prepareRemoteWorkspace(manager, node, dirs[member], versionDir, "commit", ""); err != nil {
-			t.Fatal(err)
-		}
-		if strings.HasPrefix(dirs[member].BuildDir, seed+string(filepath.Separator)) {
-			t.Fatal("build output is inside immutable seed")
-		}
-		data, err := os.ReadFile(filepath.Join(dirs[member].SourceDir, "..", "shared", "value.h"))
-		if err != nil || string(data) != "original" {
-			t.Fatalf("sibling source is unavailable: %q, %v", data, err)
-		}
-	}
-	if dirs["sub_a"].BuildDir == dirs["sub_b"].BuildDir {
-		t.Fatal("members share build directory")
-	}
-	if err := os.WriteFile(filepath.Join(dirs["sub_a"].SourceDir, "..", "shared", "value.h"), []byte("changed"), 0644); err != nil {
+	// Local modifications stay in the single tree; a different build key must
+	// reuse the same tree instead of re-copying it.
+	if err := os.WriteFile(filepath.Join(link, "input.c"), []byte("private\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{filepath.Join(seed, "shared", "value.h"), filepath.Join(dirs["sub_b"].SourceDir, "..", "shared", "value.h")} {
-		data, err := os.ReadFile(path)
-		if err != nil || string(data) != "original" {
-			t.Fatalf("member write leaked into %s: %q, %v", path, data, err)
-		}
-	}
-}
-
-func TestLocalSetGitWorkspacePreservesSrcRelativePaths(t *testing.T) {
-	if !fs.SymlinksSupported() {
-		t.Skip(fs.SymlinkHint)
-	}
-	upstream := t.TempDir()
-	git := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", gitcmd.Args(args...)...)
-		cmd.Dir = upstream
-		if output, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %s: %v", args, output, err)
-		}
-	}
-	git("init", "-q", "-b", "main")
-	git("config", "user.name", "test")
-	git("config", "user.email", "test@example.com")
-	if err := os.WriteFile(filepath.Join(upstream, "input.c"), []byte("original"), 0644); err != nil {
+	s.pkgDirs["app"].BuildDir = filepath.Join(node.Source.Dir, "build", "other-key")
+	if err := s.preparePackageWorkspace("app"); err != nil {
 		t.Fatal(err)
 	}
-	git("add", "input.c")
-	git("commit", "-q", "-m", "source")
-	project := t.TempDir()
-	pkg := api.NewPackage().SetName("local").SetGit(upstream)
-	src := buildscript.NewSource("local", filepath.Join(project, "build.go"), project, api.SourceLocal)
-	r := resolver.NewResolver(repo.NewRepoManager(t.TempDir()), t.TempDir())
-	r.Graph().Packages["local"] = resolver.NewPackageNode("local", src, pkg)
-	ctx := &RuntimeContext{Resolver: r, DepGraph: r.Graph(), Paths: &Paths{DepsDir: t.TempDir(), CacheDir: t.TempDir()}}
-	s := newBuildPhaseState(ctx, BuildOptions{})
-	s.pkgDirs = map[string]*api.PkgDirs{"local": {SourceDir: project, BuildDir: filepath.Join(project, "build", "key-one")}}
-	if err := s.preparePackageWorkspace("local"); err != nil {
-		t.Fatal(err)
+	if data, err := os.ReadFile(filepath.Join(link, "input.c")); err != nil || string(data) != "private\n" {
+		t.Fatalf("tree was recreated on rebind: %q, %v", data, err)
 	}
-	if data, err := os.ReadFile(filepath.Join(project, "src", "input.c")); err != nil || string(data) != "original" {
-		t.Fatalf("SourceDir/src compatibility failed: %q, %v", data, err)
+	if _, err := os.Stat(filepath.Join(node.Source.Dir, "build", "cc-key", "work")); !os.IsNotExist(err) {
+		t.Fatalf("per-build workspace copy appeared: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(pkg.SrcDir(), "input.c"), []byte("private"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	s.pkgDirs["local"].BuildDir = filepath.Join(project, "build", "key-two")
-	if err := s.preparePackageWorkspace("local"); err != nil {
-		t.Fatal(err)
-	}
-	for _, path := range []string{filepath.Join(project, "src", "input.c"), filepath.Join(s.sourceSeeds["local"], "input.c"), filepath.Join(upstream, "input.c")} {
-		data, err := os.ReadFile(path)
-		if err != nil || string(data) != "original" {
-			t.Fatalf("source mutation leaked into %s: %q, %v", path, data, err)
-		}
-	}
-}
-
-func TestRemoteWorkspaceRebindingMovesExplicitSourcePath(t *testing.T) {
-	versionDir := t.TempDir()
-	seed := filepath.Join(versionDir, "src")
-	if err := os.MkdirAll(filepath.Join(seed, "nested"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	pkg := api.NewPackage().SetSrcDir(filepath.Join(seed, "nested"))
-	node := resolver.NewPackageNode("native/sample", buildscript.NewSource("native/sample", filepath.Join(seed, "build.go"), seed, api.SourceRemote), pkg)
-	manager := repo.NewSourceManager(t.TempDir(), t.TempDir())
-	first := makeRemotePkgDirs(versionDir, seed, "cc-one", "debug", nil, "1.0", "commit", "", "", "")
-	if err := prepareRemoteWorkspace(manager, node, first, versionDir, "commit", ""); err != nil {
-		t.Fatal(err)
-	}
-	if pkg.SrcDir() != filepath.Join(first.SourceDir, "nested") {
-		t.Fatalf("first source binding = %s", pkg.SrcDir())
-	}
-	second := makeRemotePkgDirs(versionDir, seed, "cc-two", "debug", nil, "1.0", "commit", "", "", "")
-	if err := prepareRemoteWorkspace(manager, node, second, versionDir, "commit", ""); err != nil {
-		t.Fatal(err)
-	}
-	if pkg.SrcDir() != filepath.Join(second.SourceDir, "nested") || pkg.SrcDir() == filepath.Join(first.SourceDir, "nested") {
-		t.Fatalf("source remained bound to previous toolchain workspace: %s", pkg.SrcDir())
-	}
-}
-
-func TestNativeWorkspaceRebasesRepositorySiblingSources(t *testing.T) {
-	for _, source := range []string{"relative", "seed", "seed-alias", "external"} {
-		t.Run(source, func(t *testing.T) {
-			versionDir := t.TempDir()
-			seed := filepath.Join(versionDir, "src")
-			member := filepath.Join("nested", "member")
-			for _, dir := range []string{member, "shared"} {
-				if err := os.MkdirAll(filepath.Join(seed, dir), 0755); err != nil {
-					t.Fatal(err)
-				}
-			}
-			input := filepath.Join(seed, "shared", "input.c")
-			if err := os.WriteFile(input, []byte("original"), 0644); err != nil {
-				t.Fatal(err)
-			}
-			mtime := time.Unix(1700000000, 0)
-			if err := os.Chtimes(input, mtime, mtime); err != nil {
-				t.Fatal(err)
-			}
-			packageRoot := filepath.Join(seed, member)
-			raw := filepath.Join("..", "..", "shared")
-			if source == "seed" || source == "seed-alias" {
-				raw = filepath.Join(seed, "shared")
-			}
-			if source == "seed-alias" {
-				if !fs.SymlinksSupported() {
-					t.Skip(fs.SymlinkHint)
-				}
-				alias := filepath.Join(t.TempDir(), "source")
-				if err := os.Symlink(seed, alias); err != nil {
-					t.Fatal(err)
-				}
-				packageRoot = filepath.Join(alias, member)
-			}
-			if source == "external" {
-				raw = t.TempDir()
-			}
-			pkg := api.NewPackage().SetSrcDir(raw).SetDirs(api.PkgDirs{SourceDir: packageRoot})
-			node := resolver.NewPackageNode("native/sample/nested/member", buildscript.NewSource("native/sample/nested/member", filepath.Join(packageRoot, "build.go"), packageRoot, api.SourceRemote), pkg)
-			manager := repo.NewSourceManager(t.TempDir(), t.TempDir())
-			var previous string
-			for _, cc := range []string{"cc-one", "cc-two"} {
-				dirs := makeRemotePkgDirs(versionDir, packageRoot, cc, "debug", nil, "1.0", "commit", "", "", "", member)
-				if err := prepareRemoteWorkspace(manager, node, dirs, versionDir, "commit", ""); err != nil {
-					t.Fatal(err)
-				}
-				want := filepath.Join(filepath.Dir(dirs.BuildDir), "work", "repo", "shared")
-				if source == "external" {
-					want = raw
-				}
-				if pkg.SrcDir() != want {
-					t.Fatalf("%s source = %s, want %s", cc, pkg.SrcDir(), want)
-				}
-				if source == "external" {
-					continue
-				}
-				path := filepath.Join(pkg.SrcDir(), "input.c")
-				if data, err := os.ReadFile(path); err != nil || string(data) != "original" {
-					t.Fatalf("workspace source = %q, %v", data, err)
-				}
-				if err := os.WriteFile(path, []byte(cc), 0644); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Chtimes(path, mtime, mtime); err != nil {
-					t.Fatal(err)
-				}
-				if err := prepareRemoteWorkspace(manager, node, dirs, versionDir, "commit", ""); err != nil {
-					t.Fatal(err)
-				}
-				for checked, content := range map[string]string{input: "original", path: cc, previous: "cc-one"} {
-					if checked == "" {
-						continue
-					}
-					if data, err := os.ReadFile(checked); err != nil || string(data) != content {
-						t.Fatalf("source isolation %s = %q, %v", checked, data, err)
-					}
-					if info, err := os.Stat(checked); err != nil || !info.ModTime().Equal(mtime) {
-						t.Fatalf("unchanged source mtime %s: %v", checked, err)
-					}
-				}
-				previous = path
-			}
-		})
-	}
-}
-
-func TestRemoteWorkspaceRejectsInvalidSourceMapping(t *testing.T) {
-	for _, failure := range []string{"member-outside-repository", "member-mismatch", "relative-package-root"} {
-		t.Run(failure, func(t *testing.T) {
-			versionDir := t.TempDir()
-			seed := filepath.Join(versionDir, "src")
-			if err := os.MkdirAll(filepath.Join(seed, "member"), 0755); err != nil {
-				t.Fatal(err)
-			}
-			pkg := api.NewPackage().SetSrcDir(filepath.Join(seed, "shared"))
-			node := resolver.NewPackageNode("native/sample/member", buildscript.NewSource("native/sample/member", filepath.Join(seed, "member", "build.go"), filepath.Join(seed, "member"), api.SourceRemote), pkg)
-			dirs := makeRemotePkgDirs(versionDir, node.Source.Dir, "cc", "debug", nil, "1.0", "commit", "", "", "", "member")
-			switch failure {
-			case "member-outside-repository":
-				dirs.SourceDir = seed
-			case "member-mismatch":
-				pkg.SetDirs(api.PkgDirs{SourceDir: filepath.Join(seed, "different-member")})
-			case "relative-package-root":
-				pkg.SetDirs(api.PkgDirs{SourceDir: "relative/member"})
-			}
-			manager := repo.NewSourceManager(t.TempDir(), t.TempDir())
-			if err := prepareRemoteWorkspace(manager, node, dirs, versionDir, "commit", ""); err == nil {
-				t.Fatal("invalid source mapping was accepted")
-			}
-			if _, err := os.Stat(filepath.Join(filepath.Dir(dirs.BuildDir), "work")); !os.IsNotExist(err) {
-				t.Fatalf("invalid source mapping materialized a workspace: %v", err)
-			}
-			if pkg.SrcDirRaw() != filepath.Join(seed, "shared") {
-				t.Fatal("failed source mapping changed package source")
-			}
-		})
-	}
-}
-
-func TestRebaseRelativeSourcePathOutsideRepository(t *testing.T) {
-	oldRoot := filepath.Join(t.TempDir(), "repo", "member")
-	newRoot := filepath.Join(t.TempDir(), "repo", "member")
-	for _, path := range []string{"../../outside", "../sibling"} {
-		got, err := rebaseSourcePath(path, oldRoot, newRoot, "member")
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := filepath.Join(newRoot, path)
-		if path == "../../outside" {
-			want = filepath.Join(oldRoot, path)
-		}
-		if got != want {
-			t.Fatalf("rebase %s = %s, want %s", path, got, want)
-		}
-	}
-	if _, err := rebaseSourcePath("../sibling", "relative/member", newRoot, "member"); err == nil {
-		t.Fatal("relative source path bypassed old package directory validation")
+	if data, err := os.ReadFile(filepath.Join(upstream, "input.c")); err != nil || string(data) != "original\n" {
+		t.Fatalf("upstream source was modified: %q, %v", data, err)
 	}
 }
 
 func TestLocalSetGitRefSelectionAndLock(t *testing.T) {
-	upstream := t.TempDir()
-	git := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", gitcmd.Args(args...)...)
-		cmd.Dir = upstream
-		if output, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %s: %v", args, output, err)
-		}
-	}
-	git("init", "-q", "-b", "main")
-	git("config", "user.name", "test")
-	git("config", "user.email", "test@example.com")
-	if err := os.WriteFile(filepath.Join(upstream, "input.c"), []byte("version one"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	git("add", "input.c")
-	git("commit", "-q", "-m", "one")
-	git("tag", "v1.0.0")
+	upstream := initGitRepo(t, map[string]string{"input.c": "version one\n"})
+	testGit(t, upstream, "tag", "v1.0.0")
 	first, err := repo.GetCurrentCommit(upstream)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(upstream, "input.c"), []byte("version two"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(upstream, "input.c"), []byte("version two\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	git("commit", "-qam", "two")
+	testGit(t, upstream, "commit", "-qam", "two")
+
 	s := sessionFixture(t)
 	node := s.ctx.DepGraph.Packages["app"]
 	node.Pkg.SetGit(upstream).AddVersion("1.0.0", "v1.0.0").AddVersion("2.0.0", "main")
@@ -510,6 +148,15 @@ func TestLocalSetGitRefSelectionAndLock(t *testing.T) {
 		t.Fatalf("lock update retained previous selection: %s/%s", updated.sourceVersions["app"], updated.sourceCommits["app"])
 	}
 	s.ctx.IgnoreLock = false
+	// Bring the tree back to the locked version while the source is still
+	// reachable; a locked build must then reuse it without the network.
+	back := newBuildPhaseState(s.ctx, BuildOptions{})
+	if err := back.selectPackageSource("app"); err != nil {
+		t.Fatal(err)
+	}
+	if back.sourceCommits["app"] != first || back.sourceVersions["app"] != "1.0.0" {
+		t.Fatalf("online lock selected %s/%s", back.sourceVersions["app"], back.sourceCommits["app"])
+	}
 	if err := os.Rename(upstream, filepath.Join(t.TempDir(), "offline")); err != nil {
 		t.Fatal(err)
 	}
@@ -543,5 +190,310 @@ func TestLocalSetGitPreservesUnmanagedSourceDirectory(t *testing.T) {
 	}
 	if data, err := os.ReadFile(path); err != nil || string(data) != "private source" {
 		t.Fatalf("unmanaged source was changed: %q, %v", data, err)
+	}
+}
+
+func nativeMemberFixture(t *testing.T, member string, setGit bool) (*buildPhaseState, string, string) {
+	t.Helper()
+	if !fs.SymlinksSupported() {
+		t.Skip(fs.SymlinkHint)
+	}
+	host, err := toolchain.GetManager().GetToolchain("host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := build.ResolveTools(host, api.Platform{}); err != nil {
+		t.Skipf("host tools unavailable: %v", err)
+	}
+	s := sessionFixture(t)
+	owner := "native/root"
+	tree := remoteTreeDir(s.ctx, owner)
+	for name, content := range map[string]string{
+		"build.go":                           "package main\n",
+		filepath.Join(member, "build.go"):    "package main\n",
+		filepath.Join(member, "payload.txt"): "original",
+	} {
+		path := filepath.Join(tree, "src", name)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sources, err := buildscript.ScanSubPackages(filepath.Join(tree, "src"), owner)
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("native member discovery = %+v, %v", sources, err)
+	}
+	source := &sources[0]
+	name := owner + "/" + member
+	if source.Name != name {
+		t.Fatalf("discovered member = %s, want %s", source.Name, name)
+	}
+	parent := resolver.NewPackageNode(owner, buildscript.NewSource(owner, filepath.Join(tree, "src", "build.go"), filepath.Join(tree, "src"), api.SourceRemote), api.NewPackage())
+	parent.WithNative("unused", nil, "1.0.0")
+	parent.Native.Commit = "owner-commit"
+	node := resolver.NewPackageNode(name, source, api.NewPackage())
+	if setGit {
+		upstream := initGitRepo(t, map[string]string{"payload.txt": "original"})
+		node.Pkg.SetGit(upstream)
+	}
+	s.ctx.DepGraph.Packages[owner], s.ctx.DepGraph.Packages[name] = parent, node
+	delete(s.ctx.DepGraph.Packages, "dep")
+	s.ctx.DepGraph.Order = []string{owner, name, "app"}
+	s.ctx.Resolver.SubParents()[name] = owner
+	s.ctx.DepGraph.Packages["app"].Pkg.SetRoot(true)
+	s.ctx.DepGraph.Packages["app"].Deps = []string{owner, name}
+	s.needed = map[string]bool{"app": true, owner: true, name: true}
+	s.cfg = makeBuildConfig(s.ctx, host, "host")
+	applyGlobalFlagsFromNeeded(s.ctx, s.needed)
+	s.globalFlagsHash = build.GlobalFlagsHash()
+	s.computeDirsAndOptions()
+	s.remote.trees[owner] = tree
+	s.remote.commits[owner] = parent.Native.Commit
+	return s, tree, name
+}
+
+func TestNativeMemberSingleTreeAndOwnGit(t *testing.T) {
+	for _, setGit := range []bool{false, true} {
+		label := "shared"
+		if setGit {
+			label = "own-git"
+		}
+		t.Run(label, func(t *testing.T) {
+			s, tree, name := nativeMemberFixture(t, "member", setGit)
+			if err := s.setupSubPackageDirs(); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.cloneSubPackageGitSources(); err != nil {
+				t.Fatal(err)
+			}
+			dirs := s.pkgDirs[name]
+			if want := filepath.Join(tree, "src", "member"); dirs.SourceDir != want {
+				t.Fatalf("member SourceDir = %s, want %s", dirs.SourceDir, want)
+			}
+			if !strings.HasPrefix(dirs.BuildDir, filepath.Join(tree, "out")+string(filepath.Separator)) {
+				t.Fatalf("member BuildDir = %s, want under %s", dirs.BuildDir, filepath.Join(tree, "out"))
+			}
+			if setGit {
+				if got := s.ctx.DepGraph.Packages[name].Pkg.SrcDir(); got != filepath.Join(dirs.SourceDir, "src") {
+					t.Fatalf("member SrcDir = %s, want %s", got, filepath.Join(dirs.SourceDir, "src"))
+				}
+				if data, err := os.ReadFile(filepath.Join(dirs.SourceDir, "src", "payload.txt")); err != nil || string(data) != "original" {
+					t.Fatalf("own-git member content = %q, %v", data, err)
+				}
+			}
+			// Sibling paths in the parent repository stay reachable.
+			if data, err := os.ReadFile(filepath.Join(dirs.SourceDir, "..", "build.go")); err != nil || string(data) != "package main\n" {
+				t.Fatalf("parent source unavailable: %q, %v", data, err)
+			}
+		})
+	}
+}
+
+func TestSetupSubPackageDirsKeepsResolvedParentCommit(t *testing.T) {
+	s := sessionFixture(t)
+	owner, name, member := "native/root", "native/root/member", "member"
+	tree := remoteTreeDir(s.ctx, owner)
+	packageRoot := filepath.Join(tree, "src", member)
+	if err := os.MkdirAll(packageRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packageRoot, "build.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	node := s.ctx.DepGraph.Packages["app"]
+	delete(s.ctx.DepGraph.Packages, "app")
+	delete(s.needed, "app")
+	node.ID = name
+	node.Source = buildscript.NewSource(name, filepath.Join(packageRoot, "build.go"), packageRoot, api.SourceRemote)
+	s.ctx.DepGraph.Packages[name] = node
+	s.ctx.DepGraph.Packages[owner] = resolver.NewPackageNode(owner,
+		buildscript.NewSource(owner, filepath.Join(tree, "src", "build.go"), filepath.Join(tree, "src"), api.SourceRemote), api.NewPackage())
+	s.ctx.DepGraph.Order = []string{owner, name}
+	s.needed[name] = true
+	s.needed[owner] = true
+	s.allPkgOptions[name] = nil
+	s.ctx.Resolver.SubParents()[name] = owner
+	s.remote.entries[owner] = &config.EntryConfig{Version: "1.0.0"}
+	s.remote.trees[owner] = tree
+	s.remote.commits[owner] = "resolved-commit"
+	config.SetEntry(s.ctx.Config, owner, &config.EntryConfig{Version: "1.0.0"})
+
+	if err := s.setupSubPackageDirs(); err != nil {
+		t.Fatal(err)
+	}
+	if s.remote.commits[owner] != "resolved-commit" || s.remote.commits[name] != "resolved-commit" {
+		t.Fatalf("commits = %q/%q, want the resolved commit for both", s.remote.commits[owner], s.remote.commits[name])
+	}
+	if s.remote.trees[name] != tree {
+		t.Fatalf("member tree = %q, want %q", s.remote.trees[name], tree)
+	}
+}
+
+func TestRebaseRelativeSourcePathOutsideRepository(t *testing.T) {
+	oldRoot := filepath.Join(t.TempDir(), "repo", "member")
+	newRoot := filepath.Join(t.TempDir(), "repo", "member")
+	for _, path := range []string{"../../outside", "../sibling"} {
+		got, err := rebaseSourcePath(path, oldRoot, newRoot, "member")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := filepath.Join(newRoot, path)
+		if path == "../../outside" {
+			want = filepath.Join(oldRoot, path)
+		}
+		if got != want {
+			t.Fatalf("rebase %s = %s, want %s", path, got, want)
+		}
+	}
+	if _, err := rebaseSourcePath("../sibling", "relative/member", newRoot, "member"); err == nil {
+		t.Fatal("relative source path bypassed old package directory validation")
+	}
+}
+
+func TestDownloadRemoteSourcesBindsDirsBeforePatchApply(t *testing.T) {
+	upstream := initGitRepo(t, map[string]string{
+		"build.go": "package main\n",
+		"input.c":  "int value = 1;\n",
+	})
+	patch := "--- a/input.c\n+++ b/input.c\n@@ -1 +1 @@\n-int value = 1;\n+int value = 2;\n"
+	scriptDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(scriptDir, "change.patch"), []byte(patch), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := sessionFixture(t)
+	delete(s.ctx.DepGraph.Packages, "app")
+	delete(s.ctx.DepGraph.Packages, "dep")
+	s.ctx.DepGraph.Order = []string{"native/sample"}
+	s.needed = map[string]bool{"native/sample": true}
+	node := resolver.NewPackageNode("native/sample",
+		buildscript.NewSource("native/sample", filepath.Join(upstream, "build.go"), upstream, api.SourceRemote),
+		api.NewPackage().SetRepo("native").SetName("sample"))
+	node.Pkg.SetScriptDir(scriptDir).AddPatches("change.patch").SetGit(upstream)
+	s.ctx.DepGraph.Packages["native/sample"] = node
+	s.remote.entries["native/sample"] = &config.EntryConfig{}
+
+	if err := s.downloadRemoteSources(s.remote, s.ctx.Paths.DepsDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.applyPatchesToNeeded(); err != nil {
+		t.Fatal(err)
+	}
+	dirs := s.pkgDirs["native/sample"]
+	if node.Pkg.SourceDir() != dirs.SourceDir {
+		t.Fatalf("source dir = %q, want %q", node.Pkg.SourceDir(), dirs.SourceDir)
+	}
+	data, err := os.ReadFile(filepath.Join(node.Pkg.SrcDir(), "input.c"))
+	if err != nil || string(data) != "int value = 2;\n" {
+		t.Fatalf("patched content = %q, %v", data, err)
+	}
+}
+
+func TestTreePatchHashIncludesSharedMemberPatches(t *testing.T) {
+	s := sessionFixture(t)
+	owner, member := "native/root", "native/root/member"
+	scriptDir := t.TempDir()
+	patchPath := filepath.Join(scriptDir, "change.patch")
+	writePatch := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(patchPath, []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writePatch("first\n")
+
+	memberNode := resolver.NewPackageNode(member,
+		buildscript.NewSource(member, filepath.Join(scriptDir, "build.go"), scriptDir, api.SourceRemote),
+		api.NewPackage().SetName(member))
+	memberNode.Pkg.SetScriptDir(scriptDir).AddPatches("change.patch")
+	parent := resolver.NewPackageNode(owner,
+		buildscript.NewSource(owner, filepath.Join(scriptDir, "build.go"), scriptDir, api.SourceRemote),
+		api.NewPackage().SetName(owner))
+	s.ctx.DepGraph.Packages[owner], s.ctx.DepGraph.Packages[member] = parent, memberNode
+	s.ctx.Resolver.SubParents()[member] = owner
+	s.needed = map[string]bool{owner: true, member: true}
+
+	first, err := s.treePatchHash(owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == "" || s.patchHashes[member] == "" {
+		t.Fatalf("shared member patch was ignored: tree=%q member=%q", first, s.patchHashes[member])
+	}
+
+	writePatch("second\n")
+	second, err := s.treePatchHash(owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == first {
+		t.Fatal("changed member patch kept the tree identity")
+	}
+
+	// A member with its own repository owns a separate tree; its patches must
+	// not change the parent tree identity.
+	memberNode.Pkg.SetGit("file:///nonexistent")
+	if ownGit, err := s.treePatchHash(owner); err != nil || ownGit != "" {
+		t.Fatalf("own-git member changed the parent tree identity: %q, %v", ownGit, err)
+	}
+	memberNode.Pkg.SetGit()
+	memberNode.Pkg.SetPatches()
+
+	parent.Pkg.SetScriptDir(scriptDir).AddPatches("change.patch")
+	own, err := s.treePatchHash(owner)
+	if err != nil || own == "" || own != s.patchHashes[owner] {
+		t.Fatalf("parent-only patch identity = %q, %v", own, err)
+	}
+	memberNode.Pkg.AddPatches("change.patch")
+	combined, err := s.treePatchHash(owner)
+	if err != nil || combined == own {
+		t.Fatalf("shared patch did not extend the parent identity: %q vs %q, %v", combined, own, err)
+	}
+}
+
+func TestDownloadRemoteSourcesUsesSharedTreePatchIdentity(t *testing.T) {
+	upstream := initGitRepo(t, map[string]string{
+		"build.go":        "package main\n",
+		"member/build.go": "package main\n",
+		"member/input.c":  "int value = 1;\n",
+	})
+	testGit(t, upstream, "tag", "v1.0.0")
+	patch := "--- a/input.c\n+++ b/input.c\n@@ -1 +1 @@\n-int value = 1;\n+int value = 2;\n"
+	scriptDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(scriptDir, "change.patch"), []byte(patch), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := sessionFixture(t)
+	delete(s.ctx.DepGraph.Packages, "app")
+	delete(s.ctx.DepGraph.Packages, "dep")
+	owner, member := "native/root", "native/root/member"
+	parent := resolver.NewPackageNode(owner,
+		buildscript.NewSource(owner, filepath.Join(upstream, "build.go"), upstream, api.SourceRemote),
+		api.NewPackage().SetRepo("native").SetName("root"))
+	parent.WithNative(upstream, map[string]string{"1.0.0": "v1.0.0"}, "1.0.0")
+	memberNode := resolver.NewPackageNode(member,
+		buildscript.NewSource(member, filepath.Join(upstream, "member", "build.go"), filepath.Join(upstream, "member"), api.SourceRemote),
+		api.NewPackage().SetRepo("native").SetName("root/member"))
+	memberNode.Pkg.SetScriptDir(scriptDir).AddPatches("change.patch")
+	s.ctx.DepGraph.Packages[owner], s.ctx.DepGraph.Packages[member] = parent, memberNode
+	s.ctx.DepGraph.Order = []string{owner, member}
+	s.ctx.Resolver.SubParents()[member] = owner
+	s.needed = map[string]bool{owner: true, member: true}
+	s.remote.entries[owner] = &config.EntryConfig{Version: "1.0.0"}
+
+	if err := s.downloadRemoteSources(s.remote, s.ctx.Paths.DepsDir); err != nil {
+		t.Fatal(err)
+	}
+	want, err := s.treePatchHash(owner)
+	if err != nil || want == "" {
+		t.Fatalf("tree patch identity = %q, %v", want, err)
+	}
+	manager := repo.NewSourceManager(s.ctx.Paths.DepsDir, s.ctx.Paths.CacheDir)
+	state, err := manager.ReadState(s.remote.trees[owner])
+	if err != nil || state == nil || state.PatchHash != want {
+		t.Fatalf("recorded tree patch hash = %#v, %v; want %q", state, err, want)
 	}
 }

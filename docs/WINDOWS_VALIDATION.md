@@ -4,9 +4,9 @@
 
 ## 工具链与扩展
 
-`vmake-tools` 仓库只提供 `arm-none-eabi/toolchain.json`，vmake 自身扫描并注册，不需要插件。定义根据运行主机的 `GOOS/GOARCH`，从 `installations` 中选择 `linux/amd64` 或 `windows/amd64`，并通过 `target_os = "none"`、`target_triple = "arm-none-eabi"` 提供目标默认值。`test_windows/arm_firmware/build.go` 在 `OnConfig` 中只声明这两个全局选项（不写默认值），CPU 选项由 `AddGlobalCFlags`／`AddGlobalLdFlags` 提供 `-mcpu=cortex-m4 -mthumb --specs=nosys.specs`，与主机平台和工具链定义分开。
+ARM 工具链定义为仓库内的 `test_windows/arm_toolchain.json`；CI 通过 `test_windows/setup_toolchain.py` 从定义中的官方 `url` 下载资产、按 SHA256 校验，并安装为 `~/.vmake/extensions/ci-arm/arm-none-eabi/toolchain.json`。vmake 自身扫描扩展仓库并注册工具链定义，不需要插件。定义根据运行主机的 `GOOS/GOARCH` 从 `installations` 中选择平台条目，并通过 `target_os = "none"`、`target_triple = "arm-none-eabi"` 提供目标默认值。`test_windows/arm_firmware/build.go` 在 `OnConfig` 中只声明这两个全局选项（不写默认值），CPU 选项由 `AddGlobalCFlags`／`AddGlobalLdFlags` 提供 `-mcpu=cortex-m4 -mthumb --specs=nosys.specs`，与主机平台和工具链定义分开。
 
-Windows 资产为 `arm-gnu-toolchain-15.3.rel1-mingw-w64-x86_64-arm-none-eabi.zip`，SHA256 为 `b85669d3408e2ae713b17b0cc59bc4ea26369a7f2bd19108fd11df7095f159e6`。Linux TAR 与 Windows ZIP 均保留，Git LFS 按平台只取所需资产。两份插件目录已同步：`examples/plugins` 和 `/home/spock/.vmake/extensions/vmake-tools`。
+Windows 资产为 `arm-gnu-toolchain-15.3.rel1-mingw-w64-x86_64-arm-none-eabi.zip`，SHA256 为 `b85669d3408e2ae713b17b0cc59bc4ea26369a7f2bd19108fd11df7095f159e6`；本地 `~/.vmake/extensions/vmake-tools` 仓库以 Git LFS 同时保留 Linux TAR、Windows ZIP 与 macOS ARM64 TAR，按平台只取所需资产。
 
 安装目录为 `~/.vmake/toolchains/<os>/<arch>/<name>/<version>`。解压、哈希和工具校验成功后才发布目录。旧的安装目录保留；旧 `host`、`install` 字段需要按 README 迁移，`default_flags` 移入项目 `build.go`；`target_os`、`target_triple` 可保留在工具链定义中作为默认值。
 
@@ -45,7 +45,7 @@ Linux 作用域单测与 vet 通过：
 
 ```bash
 CGO_ENABLED=0 go test ./cmd/vmake/... ./pkg/... ./internal/...
-CGO_ENABLED=0 go vet ./cmd/... ./pkg/... ./internal/...
+CGO_ENABLED=0 go vet ./cmd/vmake/... ./pkg/... ./internal/...
 ```
 
 Wine 下重新运行了文件系统、glob、复制、工具链定义隔离、扩展恢复、doctor 及 TUI 定向测试。新增回归均通过；已有 `TestEnsureConfigUsesSelectedMakeInsteadOfMenuconfig` 因使用 POSIX 测试脚本，在 Windows 按设计跳过，Linux 已覆盖。Windows ARM 全套验证再次通过，包括中文空格目录、248 个 UTF-16 单元的进程工作目录、超过 260 字符的产物路径和超过 32 KB 的编译参数；Linux ARM 也再次通过。Windows 验证未运行子图。

@@ -18,7 +18,6 @@ type Paths struct {
 	ProjectDir string
 	DepsDir    string
 	CacheDir   string
-	LocksDir   string
 	ReposDir   string
 	LockPath   string
 }

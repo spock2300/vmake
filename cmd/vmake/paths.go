@@ -78,24 +78,24 @@ func hasProjectMarker(dir string, checkSubdirs bool) bool {
 	return false
 }
 
+// getDepsDir is the project-local single-source directory. Each package owns
+// exactly one working tree under it (<repo>/<pkg>/src or local/<pkg>/src).
 func getDepsDir() string {
-	return filepath.Join(findProjectDir(), "vmake_deps")
+	return filepath.Join(findProjectDir(), ".vmake_deps")
 }
 
 func getReposDir() string      { return filepath.Join(vmakeDir, "repos") }
 func getExtensionsDir() string { return filepath.Join(vmakeDir, "extensions") }
 func getToolchainsDir() string { return filepath.Join(vmakeDir, "toolchains") }
 
-// getCacheDir returns the global content-addressed cache root. VMAKE_CACHE
-// overrides it (used by tests to isolate shared build state).
+// getCacheDir returns the shared cache root (locks and lifecycle state).
+// VMAKE_CACHE overrides it (used by tests to isolate shared build state).
 func getCacheDir() string {
 	if dir := os.Getenv("VMAKE_CACHE"); dir != "" {
 		return dir
 	}
 	return filepath.Join(vmakeDir, "cache")
 }
-
-func getLocksDir() string { return filepath.Join(getCacheDir(), "_locks") }
 
 func getLockfilePath() string {
 	return filepath.Join(findProjectDir(), ".vmake", lockfile.LockfileName)

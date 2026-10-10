@@ -61,13 +61,12 @@
 - 决策: Void 构建回调每次构建调用一次，不使用安装目录或包级 stamp 判断是否跳过。Make/CMake 继续负责自身增量，任意自定义生成和打包可能重复执行。
 - 理由: 保持脚本 API 简洁，不新增通用动作、输入输出声明和跨运行回调缓存协议。安装复用已有声明，不重跑 OnBuild。
 
-## DD-5: 不可变源码种子与独立工作副本
+## DD-5: 单工作树与按需浅克隆
 
-- 状态: accepted
-- 决策: 使用 cache/v2；远程父仓库种子只用于物化，每个成员和构建键拥有完整父仓库工作副本及独立 build/install 目录。子包 SetGit 与本地 SetGit 共用来源缓存和选定提交，外源提交参与构建身份。
-- 决策: 本地 SetGit 声明版本映射时，复用现有版本约束选择并锁定提交；无映射时使用 HEAD。Native 子包仍继承父包版本，不将父包版本套用到子包的外部 SetGit 仓库。
-- 决策: 项目锁、缓存生命周期锁、排序后的源码所有者锁覆盖构建与安装；清理取得生命周期独占锁。锁文件不随被保护目录删除。
-- 理由: 相对兄弟目录引用继续有效，同时避免补丁、配置文件与外部构建污染共享源码。旧缓存布局不兼容。
+- 状态: accepted（v4，替代 v3 的"共享 bare 镜像"；"每包一棵工作树"保留）
+- 决策: 不再维护共享 bare 镜像。每个包在项目内只物化一棵工作树：远程包 `<project>/.vmake_deps/<repo>/<pkg>/src`，本地 SetGit 包 `.vmake_deps/local/<pkg>/src` 并由 `<pkgDir>/src` 链接。版本发现用一次 `git ls-remote`（只传 ref 列表，不传对象），物化时按 depth=1 直接向上游抓取所选 ref：tag 用 `refs/tags/<tag>` 命名空间（annotated tag 取 peeled commit），branch 存到 `refs/remotes/origin/<name>`，只有 commit 时按 SHA 抓取（服务端不支持时回退全量 clone）。子模块同样 `--depth 1`。本地路径源也走同一条 fetch 路径。
+- 决策: 目标 commit 已检出且上游 URL 未变时就地恢复（`checkout --force --detach` + `clean -fdx`），补丁集变化不触网；不同 commit 或上游 URL 变化时整树重建。树身份包含共享同一棵树的 native 子包补丁集（子包无独立仓库时），任一补丁变化都会重置该树，避免在已打补丁的 checkout 上叠加。补丁、Kconfig `.config` 与脚本内源码改动都作用在这一棵树上。所有命令持有独占工程锁（解析阶段可能物化源码树/链接），同一工程的命令串行执行；每棵树另有 `tree_<hash>.lock` 串行物化。
+- 理由: 完整镜像的首次构建要下载整库历史（FreeRTOS-Kernel 等仓库在大陆网络下极慢甚至超时）；`ls-remote` + depth=1 只下载所选版本的快照。代价是放弃跨工程共享镜像与"暖镜像离线"：离线能力仅剩工作树复用（锁定版本且树已存在时完全离线）。旧 `cache/mirrors`、`cache/v2`、`vmake_deps` 在布局升级时整体删除，不提供兼容迁移。
 
 ---
 

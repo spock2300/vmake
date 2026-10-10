@@ -21,7 +21,7 @@ import (
 func sessionFixture(t *testing.T) *buildPhaseState {
 	t.Helper()
 	root := t.TempDir()
-	r := resolver.NewResolver(nil, filepath.Join(root, "vmake_deps"))
+	r := resolver.NewResolver(nil, filepath.Join(root, ".vmake_deps"))
 	r.Graph().Order = []string{"app", "dep"}
 	for _, name := range r.Graph().Order {
 		dir := filepath.Join(root, name)
@@ -33,13 +33,13 @@ func sessionFixture(t *testing.T) *buildPhaseState {
 		}
 		r.Graph().Packages[name] = resolver.NewPackageNode(name, buildscript.NewSource(name, filepath.Join(dir, "build.go"), dir, api.SourceLocal), api.NewPackage().SetName(name))
 	}
-	ctx := &RuntimeContext{Config: emptyConfig(), Resolver: r, DepGraph: r.Graph(), Paths: &Paths{ProjectDir: root, DepsDir: filepath.Join(root, "vmake_deps"), CacheDir: filepath.Join(root, "cache")}}
+	ctx := &RuntimeContext{Config: emptyConfig(), Resolver: r, DepGraph: r.Graph(), Paths: &Paths{ProjectDir: root, DepsDir: filepath.Join(root, ".vmake_deps"), CacheDir: filepath.Join(root, "cache")}}
 	tc := testToolchain()
 	s := newBuildPhaseState(ctx, BuildOptions{Jobs: 2})
 	s.cfg = makeBuildConfig(ctx, tc, tc.Name)
 	s.needed = map[string]bool{"app": true, "dep": true}
 	s.computeDirsAndOptions()
-	s.remote = &remoteVersionState{entries: map[string]*config.EntryConfig{}, commits: map[string]string{}, versionDirs: map[string]string{}}
+	s.remote = &remoteVersionState{entries: map[string]*config.EntryConfig{}, commits: map[string]string{}, trees: map[string]string{}}
 	return s
 }
 

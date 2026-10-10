@@ -45,7 +45,7 @@ func Main(p *api.Package) { panic("BUILD_SCRIPT_EXECUTED") }
 	if out := run(child, "config", "describe"); strings.TrimSpace(out) != "Board B 调试配置" {
 		t.Fatalf("describe = %q", out)
 	}
-	if out, err := extensionCommand(t, state, child, "config", "describe", "two\nlines"); err == nil || strings.Contains(out, "BUILD_SCRIPT_EXECUTED") {
+	if out, err := extensionCommand(t, state, child, "config", "describe", "bad\x01text"); err == nil || strings.Contains(out, "BUILD_SCRIPT_EXECUTED") {
 		t.Fatalf("describe accepted invalid text: %v\n%s", err, out)
 	}
 	run(project, "config", "copy", "config-other.json")

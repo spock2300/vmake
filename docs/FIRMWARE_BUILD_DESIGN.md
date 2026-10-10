@@ -361,13 +361,13 @@ vmake 的 `Package` 有三个目录：`SourceDir`（源码目录）、`BuildDir`
 | 包类型 | BuildDir | 原因 |
 |--------|----------|------|
 | 本地包 | `<SourceDir>/build/<key>/` | 与源码分离，key 由工具链+模式+选项生成 |
-| 远程包 | `<缓存目录>/v2/<repo>/<pkg>/<version>/out/<sha256(member)>/<key>/build/` | 全局缓存目录（`~/.vmake/cache/`）下，与 InstallDir（`.../out/<sha256(member)>/<key>/install`）同级 |
+| 远程包 | `<项目>/.vmake_deps/<repo>/<pkg>/out/<sha256(member)>/<key>/build/` | 项目内工作树（`.vmake_deps/`）下，与 InstallDir（`.../out/<sha256(member)>/<key>/install`）同级 |
 
 其中 `key` 由 `build.BuildKey(toolchain, mode, options, extra)` 生成（`extra` 包含版本、commit、全局 flags 哈希、补丁哈希、脚本哈希），确保不同工具链/模式/选项/版本的构建产物隔离。
 
 ### 5.2 交叉编译环境变量
 
-vmake 的 `Toolchain` 结构已提供 `Host`（目标三元组）和 `Prefix`（编译器前缀）字段。`Toolchain.Env()` 会生成包含 `CROSS_COMPILE`、`CC`、`CXX` 等环境变量的 map。
+vmake 的 `Toolchain` 结构已提供 `TargetTriple`（目标三元组）和 `Prefix`（编译器前缀）字段。`Toolchain.Env()` 会生成包含 `CROSS_COMPILE`、`CC`、`CXX` 等环境变量的 map。
 
 `Package.Make()` 自动传递 `pkg.Env()`，选择已配置的 Make 工具并应用会话的 jobs 预算。它默认使用 BuildDir；源码内构建传入第二个 `-C`，目录必须是绝对路径并经 `filepath.ToSlash` 转换。
 
@@ -703,7 +703,7 @@ DepBuildDir("rootfs:rootfs")    = <SourceDir>/build/<key>/
                                     ├── staging/      (中间目录)
                                     └── rootfs.sqsh   (分区镜像)
 
-远程包 BuildDir                 = <缓存目录>/v2/<repo>/<pkg>/<version>/out/<sha256(member)>/<key>/build/
+远程包 BuildDir                 = <项目>/.vmake_deps/<repo>/<pkg>/out/<sha256(member)>/<key>/build/
 ```
 
 > `DepBuildDir(depRef)` 内部实现为 `filepath.Dir(ctx.DepOutput(depRef))`。TargetVoid 没有实际产物文件，`DepOutput` 返回的路径指向 `<BuildDir>/<targetName>`，该文件不存在但路径有效。下游包通过 `DepBuildDir` 获取 BuildDir，再按约定拼接文件名。
@@ -789,7 +789,7 @@ my-firmware/
 │       └── build.go
 ├── packages/
 │   ├── uboot/
-│   │   ├── src/                  (git clone 下载的源码)
+│   │   ├── src/                  (SetGit 时源码工作树位于 .vmake_deps/local/uboot/src，src/ 为链接)
 │   │   │   └── ...
 │   │   └── build.go
 │   ├── linux/
@@ -833,7 +833,7 @@ my-firmware/
 | 配置生成 | EnsureConfig | 检查 .config 存在性，自动 `make <preset>` + SetKConfigPatches |
 | 配置恢复 | restoreKConfigFiles skip rules | 无条目跳过、空 kconfig 删除、有内容仅变化时写入（避免 mtime 失效） |
 | 交叉编译 | Make() 自动传递 Env() | 不改变 BuildFunc 使用方式，`pkg.Make()` 自动携带 CROSS_COMPILE |
-| BuildDir | 与 SourceDir 分离 | 本地包 `<SourceDir>/build/<key>/`，远程包 `<缓存目录>/v2/<repo>/<pkg>/<version>/out/<sha256(member)>/<key>/build/` |
+| BuildDir | 与 SourceDir 分离 | 本地包 `<SourceDir>/build/<key>/`，远程包 `<项目>/.vmake_deps/<repo>/<pkg>/out/<sha256(member)>/<key>/build/` |
 | 外部增量构建 | TargetVoid + Make/CMake | 每会话进入一次回调，由外部工具检查配置、依赖和产物 |
 | 分区 | 普通包 | BuildFunc 做 overlay + collect + 外部工具生成分区镜像，不新增 API |
 | 固件 | 普通包 | 收集分区镜像文件 → 合成固件，完全用户可控 |

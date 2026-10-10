@@ -4,7 +4,7 @@
 
 | Property | What it returns | When to use |
 |----------|-----------------|-------------|
-| `SourceDir()` | Package root — the `build.go` dir for local packages; the package member’s writable build workspace for remote packages | Package metadata files, overlay dirs |
+| `SourceDir()` | Package root — the `build.go` dir for local packages; for remote packages the member directory inside the package’s single working tree (`.vmake_deps/<repo>/<pkg>/src[/<member>]`) | Package metadata files, overlay dirs |
 | `SrcDir()` | Source code dir (`SourceDir()/src/` for local `SetGit` packages, otherwise falls back to `SourceDir()`) | Source files for firmware/third-party builds |
 | `SrcDirRaw()` | Raw source dir without the SourceDir fallback; the framework sets it for `SetGit` workspaces | Inspecting the configured source dir |
 | `BuildDir()` | Scratch dir for intermediate artifacts | Build outputs and action success records |
@@ -23,15 +23,15 @@ build/a1b2c3d4e5f6789012345678abcdef0123456789abcdef0123456789abcdef01/
 
 BuildDir path by package origin:
 - **Local packages**: `<SourceDir>/build/<buildKey>/`
-- **Remote packages**: `vmake_deps/<repo>/<pkg>/out/<sha256(member)>/<buildKey>/build/` — `out` points into `~/.vmake/cache/v2/<repo>/<pkg>/<version>/out`. Each member/build key also owns `install/` and `work/repo/`; matching native actions may reuse successful outputs across projects
+- **Remote packages**: `.vmake_deps/<repo>/<pkg>/out/<sha256(member)>/<buildKey>/build/` — the sibling `install/` holds published headers/libs. The package's single working tree lives at `.vmake_deps/<repo>/<pkg>/src`; switching configurations only changes the `out/<buildKey>` directory
 
-The BuildKey hashes the format version and `(toolchain identity, build_mode, options)` plus extra material: the **global-flags hash** and **buildscript hash** for every package; local `SetGit` packages additionally contribute the resolved **source commit**; remote packages contribute **source version, commit and patch-set hash** — so version switches, global flag changes, patch edits and build.go edits each produce a fresh key instead of silently reusing stale artifacts. The BuildKey is deterministic — same inputs always produce the same hash. `compile_commands.json` is rebuilt for the current session and merged across schedulers by `(source file, object output)` at `<project root>/build/compile_commands.json`. `AddBinHeader` output goes to `build/<buildKey>/generated/`.
+The BuildKey hashes the format version and `(toolchain identity, build_mode, options)` plus extra material: the **global-flags hash** and **buildscript hash** for every package; local `SetGit` packages additionally contribute the resolved **source commit**; remote packages contribute **source version, commit and patch-set hash** — so version switches, global flag changes, patch edits and build.go edits each produce a fresh key instead of silently reusing stale artifacts. The BuildKey is deterministic — same inputs always produce the same hash. `compile_commands.json` is rebuilt for the current session and merged across schedulers by `(source file, object output)` at `<project root>/build/compile_commands.json`. `AddBinHeader` output goes to `BuildDir()/generated/`.
 
 ## SourceDir vs SrcDir
 
-For local `SetGit`, `SourceDir()` stays at the package root. `SourceDir()/src` is a managed symlink to the writable `BuildDir()/work/src` copied from a commit-specific cache seed. Use `SrcDir()` for this actual source tree.
+For local `SetGit`, `SourceDir()` stays at the package root. `SourceDir()/src` is a managed symlink to the package's single working tree at `.vmake_deps/local/<pkg>/src`; the link target no longer changes with the build key. Use `SrcDir()` for this actual source tree.
 
-Remote registry and native packages build in the member/build-key workspace at `out/<sha256(member)>/<buildKey>/work/repo`; native subpackages use their relative path within their own workspace. `SourceDir()` points there before OnBuild runs; patches apply to `SrcDir()` (remote patch sets are first materialized into `<versionDir>/patched/<patchHash>/src`, then applied to the workspace). `ScriptDir()` identifies the loaded buildscript's directory and may differ. The project's ordinary `vmake_deps/<repo>/<pkg>/src` link still points at the immutable seed; do not hard-code that link as a writable build tree. Native child source links at `vmake_deps/<repo>/<pkg>/_members/<sha256(member)>/src` point to the child's actual source tree. The member is its repository-relative path with forward slashes; hashing keeps names such as `src` and `out` separate from the parent's links.
+Remote registry and native packages build directly in their working tree at `.vmake_deps/<repo>/<pkg>/src`; native subpackages use their relative path inside it, and a member carrying its own repository gets a nested tree at the member directory. `SourceDir()` points there before OnBuild runs; patches apply to `SrcDir()` in place (a changed patch set resets the tree to its pinned commit first). `ScriptDir()` identifies the loaded buildscript's directory and may differ. Build outputs live in `out/<sha256(member)>/<buildKey>/{build,install}` beside `src`; do not treat the tree as immutable — it is the shared writable source for every configuration of the project.
 
 For local packages without SetGit, `SrcDir()` defaults to `SourceDir()` unless `SetSrcDir` overrides it. `SrcDirRaw()` reports the raw source-dir setting without the fallback. Once OnBuild exposes paths or synchronous subgraphs build a package, the session retains those paths through installation.
 

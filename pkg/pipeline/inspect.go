@@ -117,7 +117,8 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (*Inspection, 
 		}
 		owner := remoteOwnerName(ctx, name)
 		member := remoteMemberPath(ctx, name)
-		sourceDir := filepath.Join(ctx.Paths.DepsDir, filepath.FromSlash(owner), "src", filepath.FromSlash(member))
+		tree := remoteTreeDir(ctx, owner)
+		sourceDir := filepath.Join(tree, "src", filepath.FromSlash(member))
 		if info, err := os.Stat(sourceDir); err != nil || !info.IsDir() {
 			continue
 		}
@@ -125,28 +126,21 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (*Inspection, 
 		if !ok {
 			continue
 		}
-		versionDir := remoteVersionDir(ctx, owner, version)
 		patchHash, err := patchHashForNode(name, node)
 		if err != nil {
 			return nil, err
 		}
 		if commit != "" && member != "" && node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 {
-			materialized := nativeMemberSourceLink(ctx, name)
-			if _, err := os.Stat(materialized); err == nil {
-				sourceCommit, err := repo.GetCurrentCommitContext(ctx.Context, materialized)
-				if err != nil {
-					return nil, err
-				}
+			sourceMgr := repo.NewSourceManager(ctx.Paths.DepsDir, ctx.Paths.CacheDir).WithSession(ctx.Locks).WithContext(ctx.Context)
+			if sourceCommit := sourceMgr.CommitAt(sourceDir); sourceCommit != "" {
 				commit = sourceCommitKey(commit, sourceCommit)
-			} else if !os.IsNotExist(err) {
-				return nil, err
 			}
 		}
 		if commit == "" {
 			continue
 		}
-		pkgDirs[name] = makeRemotePkgDirs(versionDir, sourceDir, tools.CCKey(), pre.cfg.Mode, entry.Options,
-			version, commit, flagsHash, patchHash, scriptHash, member)
+		pkgDirs[name] = makeRemotePkgDirs(tree, member, tools.CCKey(), pre.cfg.Mode, entry.Options,
+			version, commit, flagsHash, patchHash, scriptHash)
 		if member != "" && node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 {
 			node.Pkg.SetSrcDir(filepath.Join(pkgDirs[name].SourceDir, "src"))
 		}

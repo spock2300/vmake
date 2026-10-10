@@ -1,41 +1,31 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	vlog "github.com/spock2300/vmake/pkg/log"
-	"github.com/spock2300/vmake/pkg/repo"
 )
-
-var distCleanPurgeCache bool
 
 var distCleanCmd = &cobra.Command{
 	Use:   "distclean",
 	Short: "Deep clean all build artifacts",
-	Long: `Remove all build artifacts including compiled buildscripts,
-the install directory, and the vmake_deps/ symlink farm.
+	Long: `Remove all build outputs, the project source trees under .vmake_deps/,
+the install directory, and the build report.
 
 This is equivalent to 'vmake clean --all' plus:
-  - build/compile_commands.json for each local package
+  - .vmake_deps/ (the single per-package working trees)
+  - build/compile_commands.json
   - install/ directory at project root
-  - vmake_deps/ directory (per-project symlinks into the global cache)
 
-The global cache (~/.vmake/cache) is shared across projects and survives
-distclean by default: a rebuild re-links from it without recompiling.
-Use --purge-cache to also delete cached sources and binary outputs for
-every remote package this project has materialized. Warning: this affects
-all other projects using those packages too.
-
-Use 'vmake pkg clean <repo/name>' to purge individual packages.`,
+Sources are shallow clones re-downloaded on the next build, so distclean
+removes the only local copy. Use 'vmake pkg clean <repo/name>' to purge
+individual packages.`,
 	Run: runDistClean,
 }
 
 func init() {
-	distCleanCmd.Flags().BoolVar(&distCleanPurgeCache, "purge-cache", false,
-		"also remove global cache (sources and binary outputs) for this project's remote packages")
 	RootCmd.AddCommand(distCleanCmd)
 }
 
@@ -56,58 +46,11 @@ func runDistClean(cmd *cobra.Command, args []string) {
 		vlog.Error("Error: %v", err)
 	}
 
-	for _, pkg := range entries {
-		removeIfExists(filepath.Join(pkg.Dir, "build", "compile_commands.json"), pkg.Name, "compile_commands.json", false)
-	}
+	removeIfExists(filepath.Join(ctx.Paths.ProjectDir, "build", "compile_commands.json"), "", "compile_commands.json", false)
 
-	removeIfExists(filepath.Join(ctx.WorkDir, "install"), "", "install/", true)
+	removeIfExists(filepath.Join(ctx.Paths.ProjectDir, "install"), "", "install/", true)
 
-	if distCleanPurgeCache {
-		purgeGlobalCache(getDepsDir())
-	}
-
-	removeIfExists(getDepsDir(), "", "vmake_deps/", true)
+	removeIfExists(getDepsDir(), "", ".vmake_deps/", true)
 
 	vlog.Info("Distclean completed!")
-}
-
-// purgeGlobalCache removes the global cache entries for every remote package
-// materialized under vmake_deps/. The symlink farm is the authoritative list
-// of what this project downloaded; entries are removed through their real
-// cache locations (never through the symlinks).
-func purgeGlobalCache(depsDir string) {
-	entries, err := os.ReadDir(depsDir)
-	if err != nil {
-		vlog.Info("No vmake_deps/ to purge")
-		return
-	}
-
-	sourceMgr := repo.NewSourceManager(depsDir, getCacheDir()).WithSession(commandStorageLocks())
-
-	for _, repoEntry := range entries {
-		if !repoEntry.IsDir() {
-			continue
-		}
-		repoName := repoEntry.Name()
-		pkgs, err := os.ReadDir(filepath.Join(depsDir, repoName))
-		if err != nil {
-			continue
-		}
-		for _, pkgEntry := range pkgs {
-			if !pkgEntry.IsDir() {
-				continue
-			}
-			pkgName := pkgEntry.Name()
-			version, err := sourceMgr.ProjectVersion(repoName, pkgName)
-			if err != nil {
-				vlog.Error("resolve source %s/%s: %v", repoName, pkgName, err)
-				continue
-			}
-			if err := sourceMgr.CleanVersion(repoName, pkgName, version); err != nil {
-				vlog.Error("purge %s/%s@%s: %v", repoName, pkgName, version, err)
-				continue
-			}
-			vlog.Info("purged cache for %s/%s@%s", repoName, pkgName, version)
-		}
-	}
 }

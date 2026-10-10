@@ -67,7 +67,7 @@ ls build/                  # list variants if the glob is ambiguous
 - No `OnRequire` needed if no third-party dependencies
 - Glob patterns (`src/*.c`) match multiple files and resolve against `SourceDir()` (the `build.go` directory), not the current working directory
 - A glob that matches nothing is not an error: a binary target fails later at link time with no inputs, while a static target produces an empty archive
-- For local packages the output binary goes to `build/<buildKey>/<target>`; remote packages build in the shared cache
+- For local packages the output binary goes to `build/<buildKey>/<target>`; remote packages build under `.vmake_deps/<repo>/<pkg>/out/<sha256(member)>/<buildKey>/build/`
 - `<buildKey>` hashes the build format version, toolchain, mode, options, and the global-flags/script hashes; a local `SetGit` package additionally hashes its current source commit
 
 ## See Also

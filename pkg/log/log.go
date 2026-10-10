@@ -20,6 +20,11 @@ func SetLevel(l Level) {
 	level = l
 }
 
+// IsQuiet reports whether output is suppressed (-q).
+func IsQuiet() bool {
+	return level <= Quiet
+}
+
 func Debug(format string, args ...any) {
 	if level >= VeryVerbose {
 		fmt.Printf(format+"\n", args...)

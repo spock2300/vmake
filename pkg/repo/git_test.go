@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCloneHeadKeepsOnlySelectedHead(t *testing.T) {
@@ -27,8 +28,8 @@ func TestCloneHeadKeepsOnlySelectedHead(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dest, ".git", "shallow")); err != nil {
 		t.Fatalf("HEAD clone downloaded full history: %v", err)
 	}
-	if tags, err := ListTags(dest); err != nil || len(tags) != 0 {
-		t.Fatalf("HEAD clone unexpectedly fetched version tags: %v, %v", tags, err)
+	if tags := gitOutput(t, dest, "tag", "--list"); tags != "" {
+		t.Fatalf("HEAD clone unexpectedly fetched version tags: %v", tags)
 	}
 }
 
@@ -62,5 +63,25 @@ func TestEnsureRepoAtRef_ClonesWhenNoGit(t *testing.T) {
 	// Should attempt Clone (not FetchTags) since .git doesn't exist
 	if _, statErr := os.Stat(dir); statErr == nil {
 		// Clone failed but repoDir still exists — Clone should clean up on failure
+	}
+}
+
+func TestGitNetworkTimeoutOverride(t *testing.T) {
+	t.Setenv("VMAKE_GIT_TIMEOUT", "77")
+	if got := gitNetworkTimeout(); got != 77*time.Second {
+		t.Fatalf("VMAKE_GIT_TIMEOUT = %s, want 77s", got)
+	}
+	t.Setenv("VMAKE_GIT_TIMEOUT", "")
+	t.Setenv("VMAKE_FETCH_TIMEOUT", "42")
+	if got := gitNetworkTimeout(); got != 42*time.Second {
+		t.Fatalf("VMAKE_FETCH_TIMEOUT fallback = %s, want 42s", got)
+	}
+	t.Setenv("VMAKE_GIT_TIMEOUT", "not-a-number")
+	if got := gitNetworkTimeout(); got != 42*time.Second {
+		t.Fatalf("invalid VMAKE_GIT_TIMEOUT = %s, want fallback 42s", got)
+	}
+	t.Setenv("VMAKE_FETCH_TIMEOUT", "")
+	if got := gitNetworkTimeout(); got != 30*time.Minute {
+		t.Fatalf("default timeout = %s, want 30m", got)
 	}
 }

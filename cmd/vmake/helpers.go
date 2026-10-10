@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -41,7 +43,20 @@ func mustSplitPkgRef(ref string) (string, string) {
 	if !ok {
 		fatalMsg("Error: invalid package reference: %s", ref)
 	}
+	if !validPkgRefComponent(repoName) || !validPkgRefComponent(pkgName) {
+		fatalMsg("Error: invalid package reference: %s", ref)
+	}
 	return repoName, pkgName
+}
+
+func validPkgRefComponent(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	if strings.ContainsAny(s, `/\`) {
+		return false
+	}
+	return filepath.IsLocal(s)
 }
 
 func newActionCmd(use, short, verb, entityType string, action func(name string) error) *cobra.Command {

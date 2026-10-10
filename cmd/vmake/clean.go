@@ -22,14 +22,15 @@ var cleanAllFlag bool
 var cleanCmd = &cobra.Command{
 	Use:   "clean",
 	Short: "Clean build artifacts",
-	Long: `Remove build directories for the current configuration.
-Use --all to remove build directories for every configuration.`,
+	Long: `Remove build outputs for the current configuration.
+Use --all to remove outputs for every configuration. Source trees under
+.vmake_deps/ are kept; use 'vmake distclean' to remove them too.`,
 	Run: runClean,
 }
 
 func init() {
 	RootCmd.AddCommand(cleanCmd)
-	cleanCmd.Flags().BoolVar(&cleanAllFlag, "all", false, "clean build directories for every configuration")
+	cleanCmd.Flags().BoolVar(&cleanAllFlag, "all", false, "clean build outputs for every configuration")
 }
 
 type pkgCleanEntry struct {
@@ -41,6 +42,7 @@ func cleanPackages(entries []pkgCleanEntry, ctx *RuntimeContext, cleanAll bool) 
 		for _, pkg := range entries {
 			cleanAllBuildDirs(pkg.Dir, pkg.Name)
 		}
+		cleanAllRemoteOutputs(ctx.Paths.DepsDir)
 		vlog.Info("Clean completed!")
 		return nil
 	}
@@ -50,14 +52,64 @@ func cleanPackages(entries []pkgCleanEntry, ctx *RuntimeContext, cleanAll bool) 
 		return err
 	}
 
-	for _, pkg := range entries {
-		if dirs := insp.PkgDirs[pkg.Name]; dirs != nil && dirs.BuildDir != "" {
-			cleanDir(dirs.BuildDir, pkg.Name, filepath.Base(dirs.BuildDir))
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if node == nil || node.Source == nil {
+			continue
 		}
+		dirs := insp.PkgDirs[name]
+		if dirs == nil || dirs.BuildDir == "" {
+			continue
+		}
+		if node.IsLocal() {
+			cleanDir(dirs.BuildDir, name, filepath.Base(dirs.BuildDir))
+			continue
+		}
+		// Remote outputs live in <tree>/out/<owner>/<buildKey>/{build,install}.
+		output := filepath.Dir(dirs.BuildDir)
+		cleanDir(output, name, filepath.Base(output))
 	}
 
 	vlog.Info("Clean completed!")
 	return nil
+}
+
+// cleanAllRemoteOutputs removes every per-build output directory below the
+// package trees' out/ directories, for all configurations. Tree roots are
+// located by their state.json so arbitrary nesting (native members) is
+// covered.
+func cleanAllRemoteOutputs(depDir string) {
+	_ = filepath.WalkDir(depDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || entry.Name() != "state.json" {
+			return nil
+		}
+		root := filepath.Dir(path)
+		cleanOutputDirs(filepath.Join(root, "out"), filepath.Base(root))
+		return nil
+	})
+}
+
+func cleanOutputDirs(outDir, pkgName string) {
+	owners, err := os.ReadDir(outDir)
+	if err != nil {
+		return
+	}
+	for _, owner := range owners {
+		if !owner.IsDir() || strings.HasPrefix(owner.Name(), ".") {
+			continue
+		}
+		ownerDir := filepath.Join(outDir, owner.Name())
+		builds, err := os.ReadDir(ownerDir)
+		if err != nil {
+			continue
+		}
+		for _, build := range builds {
+			if !build.IsDir() || strings.HasPrefix(build.Name(), ".") {
+				continue
+			}
+			cleanDir(filepath.Join(ownerDir, build.Name()), pkgName, build.Name())
+		}
+	}
 }
 
 func scanPackages(workDir string) []pkgCleanEntry {

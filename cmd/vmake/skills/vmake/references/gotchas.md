@@ -47,7 +47,7 @@ ctx.Option("optimization").SetType(api.OptionChoice).
 
 ## Patching Source Before Build
 
-Registry packages sometimes need source modifications before building (e.g., enabling a `#define` in a config header). Since `SrcDir()` points to the downloaded source, you can patch files inside `SetBuildFunc` using Go's standard `os` and `strings` packages. Note: the script wrapper covers only a subset of `os` (`ReadFile`/`WriteFile`/`Stat` and friends) and resolves relative paths against the **build.go's directory**; unwrapped APIs such as `os.Readlink`/`os.Symlink` and `exec.CommandContext` still use the process cwd, and `os.Chdir` is rejected. Build source paths from `p.SrcDir()`. Raw writes are permanent for local packages and are not part of the BuildKey — prefer `AddPatches` when the change must trigger a rebuild:
+Registry packages sometimes need source modifications before building (e.g., enabling a `#define` in a config header). Since `SrcDir()` points to the downloaded source, you can patch files inside `SetBuildFunc` using Go's standard `os` and `strings` packages. Note: the script wrapper covers only a subset of `os` (`ReadFile`/`WriteFile`/`Stat` and friends) and resolves relative paths against the package's `SourceDir()` once it is bound (the build.go's directory before that); unwrapped APIs such as `os.Readlink`/`os.Symlink` and `exec.CommandContext` still use the process cwd, and `os.Chdir` is rejected. Build source paths from `p.SrcDir()`. Raw writes persist in the shared working tree and are not part of the BuildKey — prefer `AddPatches` when the change must trigger a rebuild:
 
 ```go
 SetBuildFunc(func(p *api.Package) error {
@@ -78,8 +78,8 @@ p.AddPatches("patches/fix-cross.patch", "patches/disable-avx.patch")
 - `AddPatches(paths ...string)` — append patch files to the list (applied in declaration order)
 - `SetPatches(paths ...string)` — replace the entire patch list
 - `SetSubmodules(true)` — clone git submodules before applying patches
-- **Remote packages**: patches apply to the writable member/build-key workspace at `~/.vmake/cache/v2/<repo>/<pkg>/<version>/out/<sha256(member)>/<buildKey>/work/repo`. The source seed remains immutable. Ordered patch content contributes to the build key.
-- **Local packages**: ordinary local sources are patched in place. Local SetGit uses a writable `BuildDir()/work/src` copy exposed through `SrcDir()`. Already-applied patches are detected and skipped.
+- **Remote packages**: patches apply in place to the package's single working tree at `.vmake_deps/<repo>/<pkg>/src` (a native member carrying its own repository gets its own tree under the member directory). Ordered patch content contributes to the build key; a changed patch set restores the tree to its pinned commit before patches are applied.
+- **Local packages**: ordinary local sources are patched in place. Local SetGit uses the `.vmake_deps/local/<pkg>/src` working tree exposed through `SrcDir()`. Already-applied patches are detected and skipped.
 - Patch files are relative to the directory containing the package's `build.go`.
 
 Use this when wrapping a library that needs compilation fixes (e.g., cross-compilation `CFLAGS` in a Makefile, missing `#include` guards, hardcoded toolchain assumptions). Raw `os.WriteFile` patching (shown above) is better for simple single-line changes; git patches handle multi-file, multi-line modifications reliably.

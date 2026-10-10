@@ -57,7 +57,7 @@ func TestPackagePlatformBeforeTargetDeclaration(t *testing.T) {
 					locals.Option(key).SetType(api.OptionString).SetDefault(value)
 				}
 				ctx := &RuntimeContext{Config: emptyConfig(), Resolver: r, DepGraph: r.Graph(), GlobalOptions: globals.GetOptions(), AllOptions: map[string]map[string]*api.Option{"app": locals.GetOptions()}}
-				ctx.Paths = &Paths{ProjectDir: root, DepsDir: filepath.Join(root, "vmake_deps"), CacheDir: filepath.Join(root, "cache")}
+				ctx.Paths = &Paths{ProjectDir: root, DepsDir: filepath.Join(root, ".vmake_deps"), CacheDir: filepath.Join(root, "cache")}
 				ctx.Config.Global.Options = test.global
 				config.SetEntry(ctx.Config, "app", &config.EntryConfig{Options: test.explicit})
 				tc := testToolchain()

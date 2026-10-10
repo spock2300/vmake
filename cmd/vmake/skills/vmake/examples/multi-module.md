@@ -106,7 +106,7 @@ p.OnRequire(func(ctx *api.RequireContext) {
 ## Package Naming and Discovery
 
 - Every `build.go` found while scanning the project becomes a local package named after its directory **basename**: `lib/detail/build.go` → package `detail`, not `lib/detail`.
-- The scan skips `build/`, `vendor/`, `vmake_deps/`, `node_modules/`, `.git/`, `.vmake/`, and any other hidden directory.
+- The scan skips `build/`, `vendor/`, `.vmake_deps/`, `node_modules/`, `.git/`, `.vmake/`, and any other hidden directory.
 - Duplicate names are silently dropped — only the first package with a given basename is loaded, later directories with the same name are ignored. Keep directory names unique.
 
 ## Local vs Remote Dependencies

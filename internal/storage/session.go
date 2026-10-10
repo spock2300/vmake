@@ -21,10 +21,6 @@ type Session struct {
 	closed    bool
 }
 
-func CacheDir(root string) string {
-	return filepath.Join(root, "v2")
-}
-
 func OwnerKey(name string) string {
 	h := sha256.Sum256([]byte(name))
 	return hex.EncodeToString(h[:])
@@ -41,6 +37,10 @@ func AcquireContext(ctx context.Context, projectDir, cacheDir string, exclusive 
 	}
 	s := &Session{cacheDir: cacheDir, exclusive: exclusive, owners: make(map[string]bool)}
 	if projectDir != "" {
+		// The project lock is always exclusive: every command that resolves a
+		// project may materialize source trees or create source links, and the
+		// per-tree locks are released before compilation starts. The cache
+		// lifecycle lock below is shared for reads and exclusive for cleanup.
 		lock, err := flock.AcquireContext(ctx, filepath.Join(projectDir, ".vmake", "_locks", "project.lock"))
 		if err != nil {
 			return nil, err

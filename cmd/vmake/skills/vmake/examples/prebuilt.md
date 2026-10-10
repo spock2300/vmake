@@ -96,7 +96,7 @@ ctx.Target("app").AddDeps("openssl:*")
 
 For a remote package, the qualified package reference implies the wildcard form:
 `AddDeps("official/openssl")` expands to all of that package's targets and their
-transitive deps. A bare name without `:` is always a **same-package target**
+transitive deps. A bare name without `/` or `:` is always a **same-package target**
 reference — `AddDeps("openssl")` on a target in another package is an error, not
 a package-level dependency.
 
@@ -154,7 +154,7 @@ myproject/
         └── aic8800.ld
 ```
 
-Local scanning skips `vendor/`, `build/`, `vmake_deps/`, `.git/`, `node_modules/`
+Local scanning skips `vendor/`, `build/`, `.vmake_deps/`, `.git/`, `node_modules/`
 and hidden directories, and registers each `build.go` under its directory
 basename. If the provider is a remote package instead, keep the `{repo}/{pkg}`
 reference form (e.g. `official/drv`) — a repository-relative path such as

@@ -7,9 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/storage"
 	"github.com/spock2300/vmake/pkg/api"
 )
+
+func newTestPackage(repoName, pkgName, url string) *api.Package {
+	return api.NewPackage().SetRepo(repoName).SetName(pkgName).SetGit(url)
+}
 
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
@@ -19,179 +23,398 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func requireGit(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+}
+
+func commitFile(t *testing.T, dir, name, content, msg string) string {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", msg)
+	return gitOutput(t, dir, "rev-parse", "HEAD")
+}
+
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func TestIsLocalGitURL(t *testing.T) {
 	cases := map[string]bool{
-		"/abs/path/repo":                  true,
-		"./relative/repo":                 true,
-		"relative/repo":                   true,
-		"file:///abs/path/repo":           true,
-		"https://git.busybox.net/busybox": false,
-		"http://example.com/x.git":        false,
-		"git@github.com:user/repo.git":    false,
-		"ssh://git@host/x.git":            false,
-		"git://host/x.git":                false,
+		"/abs/path/repo":               true,
+		"./relative/repo":              true,
+		"relative/repo":                true,
+		"file:///abs/path/repo":        true,
+		"https://git.busybox.net/x":    false,
+		"http://example.com/x.git":     false,
+		"git@github.com:user/repo.git": false,
+		"ssh://git@host/x.git":         false,
+		"git://host/x.git":             false,
 	}
 	for url, want := range cases {
-		if got := isLocalGitURL(url); got != want {
-			t.Errorf("isLocalGitURL(%q) = %v, want %v", url, got, want)
+		if got := IsLocalGitURL(url); got != want {
+			t.Errorf("IsLocalGitURL(%q) = %v, want %v", url, got, want)
 		}
 	}
 }
 
-func TestEnsureURLRefreshesExistingClone(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not on PATH")
-	}
-
-	src := t.TempDir()
-	runGit(t, src, "init", "-q", "-b", "master")
-	runGit(t, src, "config", "user.email", "test@example.com")
-	runGit(t, src, "config", "user.name", "test")
-
-	foo := filepath.Join(src, "foo.txt")
-	if err := os.WriteFile(foo, []byte("v1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, src, "add", "-A")
-	runGit(t, src, "commit", "-q", "-m", "v1")
-
-	m := NewSourceManager(t.TempDir(), t.TempDir())
-	srcDir, err := m.EnsureURL(src)
-	if err != nil {
-		t.Fatalf("first EnsureURL: %v", err)
-	}
-	if got, _ := os.ReadFile(filepath.Join(srcDir, "foo.txt")); string(got) != "v1\n" {
-		t.Fatalf("initial content = %q, want v1", got)
-	}
-
-	if err := os.WriteFile(foo, []byte("v2\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, src, "add", "-A")
-	runGit(t, src, "commit", "-q", "-m", "v2")
-
-	srcDir2, err := m.EnsureURL(src)
-	if err != nil {
-		t.Fatalf("second EnsureURL: %v", err)
-	}
-	if srcDir2 == srcDir {
-		t.Errorf("different commits share source path %q", srcDir2)
-	}
-	if got, _ := os.ReadFile(filepath.Join(srcDir, "foo.txt")); string(got) != "v1\n" {
-		t.Errorf("previous source changed to %q", got)
-	}
-	if got, _ := os.ReadFile(filepath.Join(srcDir2, "foo.txt")); string(got) != "v2\n" {
-		t.Errorf("refreshed content = %q, want v2", got)
-	}
-}
-
-func TestLinkProjectCreatesDirectoryLinks(t *testing.T) {
-	if !fs.SymlinksSupported() {
-		t.Skip(fs.SymlinkHint)
-	}
-	m := NewSourceManager(t.TempDir(), t.TempDir())
-	pkg := api.NewPackage().SetName("sample")
-	pkg.Repo = "native"
-	versionDir := m.versionDir(pkg, "1.0.0")
-	if err := os.MkdirAll(filepath.Join(versionDir, "src"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.linkProject(pkg, versionDir); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"src", "out"} {
-		link := filepath.Join(m.sourcesDir, pkg.Repo, pkg.Name, name)
-		if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
-			t.Fatalf("%s is not a symlink: %v", name, err)
-		}
-		if info, err := os.Stat(link); err != nil || !info.IsDir() {
-			t.Fatalf("%s is not a usable directory link: %v", name, err)
-		}
-	}
-	out := filepath.Join(m.sourcesDir, pkg.Repo, pkg.Name, "out", "result")
-	if err := os.WriteFile(out, []byte("artifact"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if data, err := os.ReadFile(filepath.Join(versionDir, "out", "result")); err != nil || string(data) != "artifact" {
-		t.Fatalf("global out = %q, %v", data, err)
-	}
-}
-
-func TestEnsureVersionColdAndOffline(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not on PATH")
-	}
-	if !fs.SymlinksSupported() {
-		t.Skip(fs.SymlinkHint)
-	}
+func TestEnsureSourceLocalURLShallowClone(t *testing.T) {
+	requireGit(t)
 	src := writePatchableSource(t)
-	runGit(t, src, "config", "core.symlinks", "true")
-	if err := os.Symlink("lib.c", filepath.Join(src, "alias.c")); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, src, "add", "alias.c")
-	runGit(t, src, "commit", "-q", "-m", "source symlink")
 	runGit(t, src, "tag", "v1.0.0")
-	pkg := api.NewPackage().SetRepo("native").SetName("sample").SetGit(src)
-	pkg.SetVersions(map[string]string{"1.0.0": "v1.0.0"})
+	commitFile(t, src, "lib.c", "int val = 2;\n", "v2")
+	runGit(t, src, "tag", "v2.0.0")
+
+	dep, cache := t.TempDir(), t.TempDir()
+	m := NewSourceManager(dep, cache)
+	req := SourceRequest{Key: "native/sample", URLs: []string{src}, Version: "1.0.0", Ref: "v1.0.0"}
+	res, err := m.EnsureSource(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(dep, "native", "sample", "src")
+	if res.SrcDir != want {
+		t.Fatalf("SrcDir = %q, want %q", res.SrcDir, want)
+	}
+	if data, _ := os.ReadFile(filepath.Join(res.SrcDir, "lib.c")); string(data) != "int val = 1;\n" {
+		t.Fatalf("materialized content = %q", data)
+	}
+	// Local path remotes go through the same shallow fetch, so the tree holds
+	// only the requested snapshot.
+	if shallow := gitOutput(t, res.SrcDir, "rev-parse", "--is-shallow-repository"); shallow != "true" {
+		t.Fatalf("local clone is not shallow: %s", shallow)
+	}
+	if got := gitOutput(t, res.SrcDir, "rev-list", "--count", "HEAD"); got != "1" {
+		t.Fatalf("local clone kept history: %s commits", got)
+	}
+	if tags := gitOutput(t, res.SrcDir, "tag", "--list"); !strings.Contains(tags, "v1.0.0") || strings.Contains(tags, "v2.0.0") {
+		t.Fatalf("tree tags = %q", tags)
+	}
+
+	// Same identity must reuse the tree, keeping local modifications.
+	note := filepath.Join(res.SrcDir, "local-note")
+	if err := os.WriteFile(note, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	res2, err := m.EnsureSource(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.SrcDir != res.SrcDir || res2.Commit != res.Commit {
+		t.Fatalf("reuse changed result: %#v vs %#v", res2, res)
+	}
+	if _, err := os.Stat(note); err != nil {
+		t.Fatalf("reuse re-created the tree: %v", err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(res.SrcDir, "lib.c")); string(data) != "int val = 1;\n" {
+		t.Fatalf("reused tree content = %q", data)
+	}
+}
+
+func TestEnsureSourceRematerializesOnCommitChange(t *testing.T) {
+	requireGit(t)
+	src := writePatchableSource(t)
+	runGit(t, src, "tag", "v1.0.0")
+	commitFile(t, src, "lib.c", "int val = 2;\n", "v2")
+	runGit(t, src, "tag", "v2.0.0")
+
 	m := NewSourceManager(t.TempDir(), t.TempDir())
-	refs, err := m.EnsureRefsClone(pkg, false)
+	first, err := m.EnsureSource(SourceRequest{Key: "native/sample", URLs: []string{src}, Ref: "v1.0.0"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	tags, err := ListTags(refs)
+	note := filepath.Join(first.SrcDir, "local-note")
+	if err := os.WriteFile(note, []byte("stale"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	second, err := m.EnsureSource(SourceRequest{Key: "native/sample", URLs: []string{src}, Ref: "v2.0.0"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	version, tag, err := SelectNativeVersion(FilterValidVersions(tags), ">=1.0.0")
-	if err != nil || version != "1.0.0" || tag != "v1.0.0" {
-		t.Fatalf("native selection = %s, %s, %v", version, tag, err)
+	if second.SrcDir != first.SrcDir {
+		t.Fatalf("commit change moved the tree: %q vs %q", second.SrcDir, first.SrcDir)
 	}
-	commit, err := GetCurrentCommit(src)
+	if second.Commit == first.Commit {
+		t.Fatal("commit change reused the old commit")
+	}
+	if _, err := os.Stat(note); !os.IsNotExist(err) {
+		t.Fatalf("stale tree content survived re-materialization: %v", err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(second.SrcDir, "lib.c")); string(data) != "int val = 2;\n" {
+		t.Fatalf("re-materialized content = %q", data)
+	}
+}
+
+func TestEnsureSourceRecreatesOnPatchHashChange(t *testing.T) {
+	requireGit(t)
+	src := writePatchableSource(t)
+	runGit(t, src, "tag", "v1.0.0")
+	m := NewSourceManager(t.TempDir(), t.TempDir())
+	first, err := m.EnsureSource(SourceRequest{Key: "native/sample", URLs: []string{src}, Ref: "v1.0.0", PatchHash: "aaaa"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := m.EnsureVersion(pkg, version, commit)
+	dirty := filepath.Join(first.SrcDir, "lib.c")
+	if err := os.WriteFile(dirty, []byte("patched\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	second, err := m.EnsureSource(SourceRequest{Key: "native/sample", URLs: []string{src}, Ref: "v1.0.0", PatchHash: "bbbb"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !m.HasMaterializedVersion(pkg, version) || first.Commit != commit {
-		t.Fatalf("materialized result = %#v", first)
+	if data, _ := os.ReadFile(filepath.Join(second.SrcDir, "lib.c")); string(data) != "int val = 1;\n" {
+		t.Fatalf("patch change did not reset the tree: %q", data)
 	}
-	if data, err := os.ReadFile(filepath.Join(first.LocalSrc, "lib.c")); err != nil || string(data) != "int val = 1;\n" {
-		t.Fatalf("cold source = %q, %v", data, err)
+	state, err := m.ReadState(second.Root)
+	if err != nil || state == nil || state.PatchHash != "bbbb" {
+		t.Fatalf("state = %#v, %v", state, err)
 	}
-	if info, err := os.Lstat(filepath.Join(first.LocalSrc, "alias.c")); err != nil || info.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("cached source symlink was not preserved: %v", err)
-	}
-	if data, err := os.ReadFile(filepath.Join(first.LocalSrc, "alias.c")); err != nil || string(data) != "int val = 1;\n" {
-		t.Fatalf("cached source link = %q, %v", data, err)
-	}
-	if err := os.Rename(src, filepath.Join(t.TempDir(), "offline")); err != nil {
+}
+
+func TestEnsureSourceURLChangeRematerializes(t *testing.T) {
+	requireGit(t)
+	srcA := writePatchableSource(t)
+	srcB := writePatchableSource(t)
+	commitB := commitFile(t, srcB, "lib.c", "int val = 2;\n", "v2")
+
+	m := NewSourceManager(t.TempDir(), t.TempDir())
+	first, err := m.EnsureSource(SourceRequest{Key: "local/sample", URLs: []string{srcA}})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if cachedRefs, err := m.EnsureRefsClone(pkg, false); err != nil || cachedRefs != refs {
-		t.Fatalf("offline refs = %s, %v", cachedRefs, err)
+	second, err := m.EnsureSource(SourceRequest{Key: "local/sample", URLs: []string{srcB}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	other := NewSourceManager(t.TempDir(), m.globalDir)
-	for _, manager := range []*SourceManager{m, other} {
-		t.Cleanup(func() {
-			_ = os.Remove(manager.localSrcPath(pkg))
-			_ = os.Remove(filepath.Join(manager.sourcesDir, pkg.Repo, pkg.Name, "out"))
-		})
-		cached, err := manager.EnsureVersion(pkg, version, commit)
-		if err != nil {
-			t.Fatal(err)
+	if second.Commit != commitB || second.Commit == first.Commit {
+		t.Fatalf("URL change reused %s, want %s", second.Commit, commitB)
+	}
+	if data, _ := os.ReadFile(filepath.Join(second.SrcDir, "lib.c")); string(data) != "int val = 2;\n" {
+		t.Fatalf("URL change kept stale content: %q", data)
+	}
+	if origin := gitOutput(t, second.SrcDir, "remote", "get-url", "origin"); origin != srcB {
+		t.Fatalf("origin = %q, want %q", origin, srcB)
+	}
+}
+
+func TestEnsureSourceMirrorMoveReclonesSameCommit(t *testing.T) {
+	requireGit(t)
+	srcA := writePatchableSource(t)
+	parent := t.TempDir()
+	runGit(t, parent, "clone", "--no-local", "-q", srcA, "mirror")
+	srcB := filepath.Join(parent, "mirror")
+
+	m := NewSourceManager(t.TempDir(), t.TempDir())
+	first, err := m.EnsureSource(SourceRequest{Key: "local/sample", URLs: []string{srcA}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := m.EnsureSource(SourceRequest{Key: "local/sample", URLs: []string{srcB}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Commit != first.Commit {
+		t.Fatalf("same-commit mirror move changed commit: %s -> %s", first.Commit, second.Commit)
+	}
+	if origin := gitOutput(t, second.SrcDir, "remote", "get-url", "origin"); origin != srcB {
+		t.Fatalf("tree kept the old origin: %q", origin)
+	}
+	state, err := m.ReadState(second.Root)
+	if err != nil || state == nil || len(state.URLs) != 1 || state.URLs[0] != srcB {
+		t.Fatalf("state = %#v, %v", state, err)
+	}
+}
+
+func TestEnsureSourceWithoutURLsReusesMatchingCommit(t *testing.T) {
+	requireGit(t)
+	src := writePatchableSource(t)
+	m := NewSourceManager(t.TempDir(), t.TempDir())
+	first, err := m.EnsureSource(SourceRequest{Key: "local/sample", URLs: []string{src}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := m.EnsureSource(SourceRequest{Key: "local/sample", Commit: first.Commit})
+	if err != nil {
+		t.Fatalf("URL-less reuse: %v", err)
+	}
+	if second.Commit != first.Commit || second.SrcDir != first.SrcDir {
+		t.Fatalf("URL-less reuse = %s (%s), want %s (%s)", second.Commit, second.SrcDir, first.Commit, first.SrcDir)
+	}
+}
+
+func TestEnsureSourceOfflineReuseAfterCachePurge(t *testing.T) {
+	requireGit(t)
+	src := writePatchableSource(t)
+	runGit(t, src, "tag", "v1.0.0")
+	commitFile(t, src, "lib.c", "int val = 2;\n", "v2")
+	runGit(t, src, "tag", "v2.0.0")
+
+	dep, cache := t.TempDir(), t.TempDir()
+	m := NewSourceManager(dep, cache)
+	first, err := m.EnsureSource(SourceRequest{Key: "native/sample", URLs: []string{src}, Ref: "v1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(cache); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(src, src+"-away"); err != nil {
+		t.Fatal(err)
+	}
+
+	offline := NewSourceManager(dep, cache)
+	res, err := offline.EnsureSource(SourceRequest{Key: "native/sample", URLs: []string{src}, Commit: first.Commit})
+	if err != nil {
+		t.Fatalf("offline reuse: %v", err)
+	}
+	if res.Commit != first.Commit {
+		t.Fatalf("offline commit = %q, want %q", res.Commit, first.Commit)
+	}
+	if _, err := offline.EnsureSource(SourceRequest{Key: "native/sample", URLs: []string{src}, Ref: "v2.0.0"}); err == nil {
+		t.Fatal("offline resolution without a source succeeded")
+	}
+	if _, err := os.Stat(filepath.Join(res.SrcDir, "lib.c")); err != nil {
+		t.Fatalf("offline tree lost content: %v", err)
+	}
+}
+
+func TestCleanSourceRemovesTree(t *testing.T) {
+	requireGit(t)
+	src := writePatchableSource(t)
+	runGit(t, src, "tag", "v1.0.0")
+	m := NewSourceManager(t.TempDir(), t.TempDir())
+	if _, err := m.EnsureSource(SourceRequest{Key: "native/sample", URLs: []string{src}, Ref: "v1.0.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.CleanSource("native", "sample"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(m.TreeDir("native/sample")); !os.IsNotExist(err) {
+		t.Fatalf("tree survived CleanSource: %v", err)
+	}
+}
+
+func TestSourceManagerRejectsInvalidSessionReuse(t *testing.T) {
+	requireGit(t)
+	cache := t.TempDir()
+	session, err := storage.Acquire("", cache, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	src := writePatchableSource(t)
+	foreign := NewSourceManager(t.TempDir(), t.TempDir()).WithSession(session)
+	if _, err := foreign.EnsureSource(SourceRequest{Key: "native/sample", URLs: []string{src}, Refresh: true}); err == nil {
+		t.Fatal("manager accepted a session for a different cache")
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	closed := NewSourceManager(t.TempDir(), cache).WithSession(session)
+	if _, err := closed.EnsureSource(SourceRequest{Key: "native/sample", URLs: []string{src}, Refresh: true}); err == nil {
+		t.Fatal("manager accepted a closed storage session")
+	}
+	if _, err := os.Stat(closed.TreeDir("native/sample")); !os.IsNotExist(err) {
+		t.Fatalf("invalid session materialized a tree: %v", err)
+	}
+}
+
+func TestEnsureSourceRefreshFollowsMovedRef(t *testing.T) {
+	requireGit(t)
+	src := writePatchableSource(t)
+	m := NewSourceManager(t.TempDir(), t.TempDir())
+	first, err := m.EnsureSource(SourceRequest{Key: "native/sample", URLs: []string{src}, Ref: "master"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit2 := commitFile(t, src, "lib.c", "int val = 2;\n", "v2")
+
+	moved, err := m.EnsureSource(SourceRequest{Key: "native/sample", URLs: []string{src}, Ref: "master", Refresh: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved.Commit != commit2 || moved.Commit == first.Commit {
+		t.Fatalf("refresh kept stale commit %s, want %s", moved.Commit, commit2)
+	}
+	if data, _ := os.ReadFile(filepath.Join(moved.SrcDir, "lib.c")); string(data) != "int val = 2;\n" {
+		t.Fatalf("refreshed content = %q", data)
+	}
+	if _, err := os.Stat(filepath.Join(moved.SrcDir, "lib.c")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsureSourceRejectsEscapingKey(t *testing.T) {
+	m := NewSourceManager(t.TempDir(), t.TempDir())
+	for _, key := range []string{"../evil", "/abs", "a/../..", ""} {
+		if _, err := m.EnsureSource(SourceRequest{Key: key, URLs: []string{"/nonexistent"}}); err == nil {
+			t.Errorf("EnsureSource(%q) accepted an escaping key", key)
 		}
-		if cached.VersionDir != first.VersionDir || cached.Commit != first.Commit {
-			t.Fatalf("offline shared result = %#v, want %#v", cached, first)
-		}
-		out := filepath.Join(manager.sourcesDir, pkg.Repo, pkg.Name, "out")
-		if info, err := os.Stat(out); err != nil || !info.IsDir() {
-			t.Fatalf("offline out is not a directory: %v", err)
+		if err := m.CleanTree(key); err == nil {
+			t.Errorf("CleanTree(%q) accepted an escaping key", key)
 		}
 	}
-	if _, err := m.EnsureVersion(pkg, version, strings.Repeat("0", 40)); err == nil || !strings.Contains(err.Error(), "but expected") {
-		t.Fatalf("expected-commit mismatch error = %v", err)
+}
+
+func TestEnsureSourceRecoversFromCorruptState(t *testing.T) {
+	requireGit(t)
+	src := writePatchableSource(t)
+	runGit(t, src, "tag", "v1.0.0")
+	m := NewSourceManager(t.TempDir(), t.TempDir())
+	req := SourceRequest{Key: "native/sample", URLs: []string{src}, Ref: "v1.0.0"}
+	first, err := m.EnsureSource(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(first.Root, "state.json"), []byte("{not json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	second, err := m.EnsureSource(req)
+	if err != nil {
+		t.Fatalf("corrupt state was not recovered: %v", err)
+	}
+	state, err := m.ReadState(second.Root)
+	if err != nil || state == nil || state.Commit == "" {
+		t.Fatalf("state was not rewritten: %#v, %v", state, err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(second.SrcDir, "lib.c")); string(data) != "int val = 1;\n" {
+		t.Fatalf("recovered content = %q", data)
+	}
+}
+
+func TestEnsureSourceRepairsMismatchedHead(t *testing.T) {
+	requireGit(t)
+	src := writePatchableSource(t)
+	runGit(t, src, "tag", "v1.0.0")
+	commitFile(t, src, "lib.c", "int val = 2;\n", "v2")
+	runGit(t, src, "tag", "v2.0.0")
+	m := NewSourceManager(t.TempDir(), t.TempDir())
+	req := SourceRequest{Key: "native/sample", URLs: []string{src}, Ref: "v1.0.0"}
+	first, err := m.EnsureSource(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a crash that left the tree at another commit while state still
+	// records the old one. The shallow tree only knows v1.0.0, so fetch the
+	// newer tag before moving HEAD.
+	runGit(t, first.SrcDir, "fetch", "--depth", "1", "origin", "+refs/tags/v2.0.0:refs/tags/v2.0.0")
+	runGit(t, first.SrcDir, "checkout", "--force", "--detach", "v2.0.0")
+	second, err := m.EnsureSource(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(second.SrcDir, "lib.c")); string(data) != "int val = 1;\n" {
+		t.Fatalf("stale HEAD was not repaired: %q", data)
 	}
 }

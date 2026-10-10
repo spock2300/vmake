@@ -56,13 +56,7 @@ It uses Go buildscripts for configuration and provides a TUI for option manageme
 	RunE:         runBuild,
 	SilenceUsage: true,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		commandStorageExclusive = false
-		for current := cmd; current != nil; current = current.Parent() {
-			switch current.Name() {
-			case "clean", "distclean", "rebuild", "update":
-				commandStorageExclusive = true
-			}
-		}
+		commandStorageExclusive = requiresExclusiveStorage(cmd)
 		switch {
 		case veryVerbose:
 			vlog.SetLevel(vlog.VeryVerbose)
@@ -75,6 +69,20 @@ It uses Go buildscripts for configuration and provides a TUI for option manageme
 			vlog.Debug("git userland on PATH: %v", gitUserlandDirs)
 		}
 	},
+}
+
+// requiresExclusiveStorage reports whether the command may delete or rewrite
+// shared storage. Ordinary builds reuse the cache lifecycle lock in shared
+// mode so unrelated projects can build concurrently; the project lock already
+// serializes commands within one project.
+func requiresExclusiveStorage(cmd *cobra.Command) bool {
+	for current := cmd; current != nil; current = current.Parent() {
+		switch current.Name() {
+		case "clean", "distclean", "rebuild", "update":
+			return true
+		}
+	}
+	return false
 }
 
 func Execute() {
@@ -110,7 +118,6 @@ func pipelinePaths() *pipeline.Paths {
 		ProjectDir: findProjectDir(),
 		DepsDir:    getDepsDir(),
 		CacheDir:   getCacheDir(),
-		LocksDir:   getLocksDir(),
 		ReposDir:   getReposDir(),
 		LockPath:   getLockfilePath(),
 	}
@@ -217,7 +224,7 @@ func ensureGitignore(workDir string) error {
 	if len(content) > 0 && !strings.HasSuffix(content, "\n") {
 		buf = append(buf, '\n')
 	}
-	buf = append(buf, []byte("vmake_deps/\n")...)
+	buf = append(buf, []byte(".vmake_deps/\n")...)
 	if _, err := f.Write(buf); err != nil {
 		return fmt.Errorf("write %s: %w", gitignorePath, err)
 	}
@@ -230,8 +237,7 @@ func gitignoreIgnoresVmakeDeps(content string) bool {
 		if strings.HasPrefix(line, "!") {
 			continue
 		}
-		if line == "vmake_deps" || line == "vmake_deps/" ||
-			strings.HasSuffix(line, "/vmake_deps") || strings.HasSuffix(line, "/vmake_deps/") {
+		if line == ".vmake_deps" || line == ".vmake_deps/" {
 			return true
 		}
 	}

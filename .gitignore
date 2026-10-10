@@ -8,6 +8,7 @@ build/compile_commands.json
 cmd/vmake/vmake
 official_repo
 vmake_deps/
+.vmake_deps/
 
 /vmake
 /vmake-extensions/

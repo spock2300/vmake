@@ -173,19 +173,19 @@ func discoverProjects(t *testing.T, root string) []project {
 
 func cleanProject(dir string) error {
 	// Remove top-level artifacts
-	patterns := []string{"build", "install", "vmake_deps", ".vmake", ".cache", ".vmake-cache", "vmake.lock"}
+	patterns := []string{"build", "install", "vmake_deps", ".vmake_deps", ".vmake", ".cache", ".vmake-cache", "vmake.lock"}
 	for _, p := range patterns {
 		if err := os.RemoveAll(filepath.Join(dir, p)); err != nil {
 			return err
 		}
 	}
-	// Recursively remove nested build/install/vmake_deps/.vmake in subpackages
+	// Recursively remove nested build/install/deps/.vmake in subpackages
 	return filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || !info.IsDir() {
 			return nil
 		}
 		name := info.Name()
-		if name == "build" || name == "install" || name == "vmake_deps" || name == ".vmake" || name == ".cache" {
+		if name == "build" || name == "install" || name == "vmake_deps" || name == ".vmake_deps" || name == ".vmake" || name == ".cache" {
 			os.RemoveAll(path)
 			return filepath.SkipDir
 		}

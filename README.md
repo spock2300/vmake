@@ -169,14 +169,20 @@ vmake/
 │   ├── tui/             # Terminal user interface
 │   └── version/         # Version info
 ├── internal/
+│   ├── assets/          # Toolchain asset download/extract (HTTP, Git LFS)
+│   ├── buildruntime/    # Jobs budget for make/CMake helpers
 │   ├── exec/            # Command execution
 │   ├── flock/           # File locking (cross-project sync)
 │   ├── fs/              # Filesystem utilities
+│   ├── gitcmd/          # git arguments with vmake's required config
 │   ├── gitstore/        # Git repo store (shared infra)
+│   ├── gitusr/          # Git for Windows userland discovery
 │   ├── glob/            # File matching
 │   ├── gosrc/           # Go source merging (buildscript + plugin)
 │   ├── jsonio/          # JSON serialization
+│   ├── scriptcall/      # Panic recovery for interpreted callbacks
 │   ├── scriptfs/        # Script-relative file IO for interpreted code
+│   ├── storage/         # Project/cache lock sessions
 │   ├── toposort/        # Topological sort
 │   ├── yaegibase/       # yaegi interpreter init helper
 │   └── yaegisym/        # cobra/pflag yaegi symbols (go generate)
@@ -299,7 +305,7 @@ See the [Extension Plugin Guide](docs/EXTENSION_PLUGIN.md) for the complete plug
 vmake build [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k]
 vmake test
 vmake clean [--all]
-vmake distclean [--purge-cache]
+vmake distclean
 vmake rebuild
 ```
 
@@ -350,11 +356,11 @@ vmake ext update [name]
 
 ```bash
 vmake git tag [version] [--minor|--major] [--no-push] [-m|--message <msg>]   # Version tagging
-vmake query [targets|config]                          # Show dependency tree / package config
+vmake query [targets|config <pkg>]                    # Show dependency tree / package config
 vmake check-symbols [--strict]                        # Scan built outputs for symbol issues
 vmake lock update|show                                # Re-resolve / show pinned versions (.vmake/vmake.lock)
 vmake init-editor                                     # Generate editor support files for build.go
-vmake doctor                                          # Diagnose build.go patterns
+vmake doctor                                          # Diagnose platform prerequisites and build.go patterns
 vmake manifest show <path>                            # Show manifest contents
 vmake manifest checkout <path> [name]                 # Checkout packages to recorded versions
 vmake completion <shell>                              # Generate shell completion (bash|zsh|fish|powershell)
@@ -406,6 +412,7 @@ Detailed design documents are available in the [docs](docs/) directory:
 | `test_data/22_version_script` | Version script linker integration |
 | `test_data/23_link_strategy` | Link strategy tests |
 | `test_data/24_symbol_prefix` | Symbol prefix (objcopy --prefix-symbols) |
+| `test_data/25_subpackage` | Native remote sub-package resolution (register/trust the local `subtest` repo) |
 | `test_linux/17_firmware` | Full firmware build (Linux, U-Boot, BusyBox, App, RootFS, Firmware) |
 
 ## License

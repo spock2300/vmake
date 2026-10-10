@@ -181,7 +181,7 @@ to strip them:
 ctx.Target("libfoo").
     SetKind(api.TargetShared).
     AddFiles("src/*.c").
-    AddDeps("helper").              /* static lib from another package */
+    AddDeps("helper").              /* static lib target in this package */
     AddExcludeLibs("libhelper")     /* don't re-export its symbols */
 ```
 

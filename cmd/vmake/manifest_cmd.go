@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -74,7 +75,9 @@ var manifestCheckoutCmd = &cobra.Command{
 		cwd, err := os.Getwd()
 		fatalErr(err)
 
-		sourceMgr := repo.NewSourceManager(getDepsDir(), getCacheDir())
+		sourceMgr := repo.NewSourceManager(getDepsDir(), getCacheDir()).
+			WithSession(commandStorageLocks()).
+			WithContext(context.Background())
 
 		found := false
 		for _, entry := range mf.Packages {
@@ -135,7 +138,11 @@ func checkoutRemote(sourceMgr *repo.SourceManager, entry installManifestEntry) {
 		pkg.SetGit(entry.URL)
 	}
 
-	if _, err := sourceMgr.EnsureSource(pkg, entry.Ref); err != nil {
+	if _, err := sourceMgr.EnsureSource(repo.SourceRequest{
+		Key:  repo.PackageTreeKey(repoName, pkgName),
+		URLs: pkg.GitURLs(),
+		Ref:  entry.Ref,
+	}); err != nil {
 		fmt.Printf("  FAIL %s (%v)\n", entry.Name, err)
 		return
 	}

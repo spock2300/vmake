@@ -1,6 +1,6 @@
 # ~/.vmake 目录结构
 
-`~/.vmake` 是 vmake 的全局数据目录，存储包仓库索引、扩展、工具链和内容寻址缓存。第三方包的源码和构建产物实际存储在全局缓存 `~/.vmake/cache/` 中，项目本地的 `vmake_deps/` 只保存指向缓存的符号链接。
+`~/.vmake` 是 vmake 的全局数据目录，存储包仓库索引、扩展和工具链。第三方包的源码以**每个包一棵浅工作树**的形式物化在项目内的 `.vmake_deps/`（depth=1，直接来自上游，不再维护共享镜像）。
 
 ## 目录总览
 
@@ -16,20 +16,9 @@
 │       └── assets/toolchains/     # 工具链压缩包（可选，Git LFS）
 │           └── *.tar.gz           # 工具链二进制包
 ├── toolchains/                    # 已安装的交叉编译工具链
-│   └── <name>-<version>/          # 工具链安装目录
-├── cache/                         # 内容寻址缓存（VMAKE_CACHE 可覆盖根路径）
-│   ├── v2/
-│   │   ├── <repo>/<pkg>/<version>/
-│   │   │   ├── src/
-│   │   │   └── out/<sha256(member)>/<buildKey>/
-│   │   │       ├── build/
-│   │   │       ├── install/
-│   │   │       └── work/repo/
-│   │   ├── <repo>/<pkg>/{_refs,_head}/
-│   │   └── _localgit/<sha256(url)>/
-│   │       ├── src/
-│   │       └── commits/<commit>/src/
-│   └── _locks/
+│   └── <host-os>/<host-arch>/<name>/<version>/   # 工具链安装目录
+├── cache/                         # 缓存根（VMAKE_CACHE 可覆盖根路径）
+│   └── _locks/                    # 生命周期锁、owner 锁与 per-tree 物化锁
 ├── config.json                    # 全局配置（trustedRepos 远程脚本信任）
 └── repos/                         # 包仓库索引（git clone）
     └── <repo>/
@@ -39,7 +28,7 @@
                     └── build.go
 ```
 
-旧版 `~/.vmake/sources` 目录会在升级后首次运行时自动删除，过期的项目 `vmake_deps/` 也会一并重建（布局标记 `.vmake/layout`，见 `cmd/vmake/storage.go`）。
+旧版布局（`~/.vmake/sources`、`cache/v2`、`cache/_localgit`、`cache/mirrors`、项目 `vmake_deps/`）会在升级后首次运行时整体删除，依赖重新物化；不提供兼容迁移（布局标记 `.vmake/layout`，见 `cmd/vmake/storage.go`）。
 
 ## repos/
 
@@ -54,19 +43,21 @@ CLI：`vmake repo add|remove|list|update|trust|untrust`
 
 ## cache/
 
-全局内容寻址缓存，存储远程包的源码和构建产物，所有项目共享。`VMAKE_CACHE` 环境变量可覆盖缓存根路径（`cmd/vmake/paths.go` `getCacheDir`）。
+缓存根只保留锁与生命周期状态；第三方源码不再有共享镜像。`VMAKE_CACHE` 环境变量可覆盖根路径（`cmd/vmake/paths.go` `getCacheDir`）。
 
-- `v2/<repo>/<pkg>/<version>/src/` — 不可变 source seed，以临时目录物化并原子发布
-- `v2/<repo>/<pkg>/<version>/out/<sha256(member)>/<buildKey>/` — 每个包成员与构建键的 build、install 和可写 work/repo 工作区；native 子包使用各自成员目录
-- `v2/<repo>/<pkg>/_refs/`、`_head/` — tag 列表与更新使用的可变克隆
-- `v2/_localgit/<sha256(url)>/commits/<commit>/src/` — 本地 SetGit 的提交级 source seed；可写副本位于该本地包的 BuildDir/work/src
-- `_locks/` — 生命周期、owner 和物化锁；锁文件位于缓存内容目录之外，清理时不删除
+- `_locks/` — 生命周期锁、owner 锁与 per-tree 物化锁；锁文件位于工作树之外，清理时不删除
 
-补丁与外部构建写入工作区。source seed 不可变是受信任脚本需要遵守的契约，不是文件权限沙箱。初始物化以临时目录完成并原子发布；后续外部构建失败可能留下部分产物，下一构建会话重新执行回调。
+工作树存放在项目内（见下节），物化时按需直接向上游 `git ls-remote` 解析版本、以 depth=1 抓取所选 ref；工作树本身就是唯一的本地源码缓存，重建与离线构建复用它。
 
-项目操作先取得 `project/.vmake/_locks/project.lock`，构建再持有 cache lifecycle 共享锁，清理/更新持独占锁。执行前固定 owner 集合并按排序取得 owner 锁，声明、同步子图、构建和安装复用同一会话锁，避免其他构建读取半完成输出。
+项目操作先取得 `project/.vmake/_locks/project.lock`（独占）：任何会解析依赖的命令都可能物化源码树或创建源码链接，因此同工程命令总是串行。全局缓存的生命周期锁在构建/读取时共享、在清理时独占；同一棵树在同一时间只允许一个物化操作（`tree_<hash>.lock`）。构建与 `lock update` 还会在整个命令期间持有所需远程包（native 子包归并到根父包）的 `owner_<sha256(name)>.lock`。
 
-源码：`pkg/repo/source.go`、`pkg/repo/workspace.go`、`internal/storage/`
+网络 git 操作默认超时 30 分钟，并把 git 自己的进度实时透传到终端（`-q` 时静默）。网络较慢时可提高上限：
+
+```bash
+VMAKE_GIT_TIMEOUT=7200 vmake build   # 秒；VMAKE_FETCH_TIMEOUT 为兼容别名
+```
+
+源码：`pkg/repo/source.go`、`pkg/repo/git.go`、`pkg/repo/storage.go`、`internal/storage/`
 
 ## config.json
 
@@ -131,33 +122,37 @@ toolchains/<host-os>/<host-arch>/<name>/<version>/
 └── <sysroot>/
 ```
 
-工具链由 `toolchain.json` 声明，vmake 启动时扫描扩展仓库子目录自动注册，首次使用时自动下载安装。
+工具链由 `toolchain.json` 声明，vmake 启动时扫描扩展仓库子目录自动注册，首次使用时自动下载安装。安装过程的互斥锁位于 `toolchains/_locks/<host-os>/<host-arch>/<name>/<version>.lock`。
 
 源码：`pkg/toolchain/discovery.go` (`Manager.RegisterRepo`)、`pkg/toolchain/install.go` (`Install`)
 
-## 项目本地目录（vmake_deps/）
+## 项目本地目录（.vmake_deps/）
 
-`vmake_deps/` 是指向全局缓存的符号链接目录（symlink farm）：源码和构建产物实际存储在 `~/.vmake/cache/` 中，`vmake_deps/` 只保存链接，让各项目拥有独立的依赖视图。
+`.vmake_deps/` 保存每个包唯一的一棵工作树：所有构建配置共享同一份源码，补丁、Kconfig `.config` 和脚本内的源码改动都作用在它上面。构建产物按构建键分开存放，不复制源码。
 
 ```
-vmake_deps/
-└── <repo>/<pkg>/                  # Registry 和 Native 包使用相同结构
-    ├── src -> ~/.vmake/cache/v2/<repo>/<pkg>/<version>/src
-    ├── out -> ~/.vmake/cache/v2/<repo>/<pkg>/<version>/out
-    │   └── <sha256(member)>/<buildKey>/
-    │       ├── build/
-    │       ├── install/
-    │       └── work/repo/
-    └── _members/<sha256(member)>/src -> Native 子包的实际源码工作区
+.vmake_deps/
+├── <repo>/<pkg>/
+│   ├── src/                       # 工作树（depth=1 浅克隆，只有所选版本）
+│   │   └── <member>/              # native 子包自带仓库时：子包自己的树
+│   │       ├── src/
+│   │       └── state.json
+│   ├── state.json                 # urls/version/ref/commit/patchHash/submodules 物化状态
+│   └── out/<sha256(member)>/<buildKey>/
+│       ├── build/                 # 对象、库、可执行文件
+│       └── install/               # 该包对外安装的 include/lib
+└── local/<pkg>/
+    ├── src/                       # 本地 SetGit 包的工作树
+    └── state.json
 ```
 
-`buildKey` 由格式版本、工具链身份（含工具内容）、构建模式、选项组合，以及版本号、commit、有序全局 flags、补丁集和 buildscript 哈希共同生成（`pkg/build/key.go` `BuildKey`）。src/out 符号链接同一时刻只指向一个版本目录，但缓存中可同时保留多个版本。
+`buildKey` 由格式版本、工具链身份（含工具内容）、构建模式、选项组合，以及版本号、commit、有序全局 flags、补丁集和 buildscript 哈希共同生成（`pkg/build/key.go` `BuildKey`）。版本或补丁集变化时工作树就地重建或恢复（同一 commit 的补丁变化走 `checkout --force --detach` + `clean -fdx`，不触网）；切换工具链/选项只更换 `out/<buildKey>`（远程包）或包内 `build/<buildKey>`（本地包）。
 
-Native 子包的链接使用 `_members/<sha256(member)>/src`，其中 `member` 是使用 `/` 分隔的仓库相对路径。子包名不会直接成为链接目录，因此 `src`、`out` 和嵌套子包不会穿过父包的源码或输出链接。
+本地 SetGit 包保留 `<包目录>/src` 符号链接指向 `.vmake_deps/local/<包名>/src`，因此 `AddFiles("src/...")`、`p.SourceDir()/src/...` 等既有写法不变；链接目标不再随构建键变化。vmake 只在项目根写入 `.vmake_deps/` 到 `.gitignore`；本地 SetGit 包应在自己的 `.gitignore` 中忽略 `src/`（多数包已经如此，否则 `git status` 会显示该链接）。
 
-`vmake_deps/` 在首次构建时自动添加到项目根目录的 `.gitignore`。
+`vmake clean` 只删除当前配置的构建键目录，`clean --all` 删除所有配置的产物，两者都保留源码树；`vmake distclean` 才会删除整个 `.vmake_deps/`。`vmake pkg clean <repo/name>` 删除单个包的构建产物，`-a` 连工作树一并删除；下次构建重新下载。
 
-源码：`cmd/vmake/paths.go` (`getDepsDir`, `findProjectDir`), `pkg/repo/source.go`, `pkg/repo/installer.go`
+源码：`cmd/vmake/paths.go` (`getDepsDir`, `findProjectDir`), `pkg/repo/source.go`, `pkg/repo/storage.go`
 CLI：`vmake pkg list|search|clean|update`
 
 ## 项目目录
@@ -171,11 +166,13 @@ project/
 │   ├── project.json               # 当前配置选择（可选）
 │   ├── config.json                # 默认配置
 │   ├── config-debug.json          # 其他配置，格式与默认配置相同
-│   └── vmake.lock                 # 所有配置共享的远程包版本+commit 锁
-├── vmake_deps/                    # 第三方包符号链接（自动生成，已 gitignore）
+│   ├── vmake.lock                 # 所有配置共享的远程包和本地 SetGit 包版本+commit 锁
+│   ├── layout                     # 存储布局版本标记（当前 "4"）
+│   └── _locks/project.lock        # 工程独占锁（同工程命令串行）
+├── .vmake_deps/                   # 第三方源码工作树与产物（自动生成，已 gitignore）
 │   └── <repo>/<pkg>/
-│       ├── src -> ~/.vmake/cache/.../src
-│       └── out -> ~/.vmake/cache/.../out
+│       ├── src/                   # 唯一工作树
+│       └── out/<sha256(member)>/<buildKey>/
 ├── install/                       # 安装输出（--prefix 默认 ./install）
 └── build/                         # 本地包构建输出
     ├── compile_commands.json      # LSP 编译数据库
@@ -205,11 +202,11 @@ vmake config use config.json
 
 `list` 按文件名排序，用 `*` 标记当前配置，并显示未保存或无法解析的状态，以及读到的 `description` 说明。`describe` 打印当前配置的说明，`describe <文本>` 设置或清空（空字符串）该说明。`copy` 原样复制当前配置，不切换、不覆盖已有文件；默认配置尚未保存时复制为空配置。`use` 验证目标后更新选择，不执行构建脚本或解析依赖，即使原选择的文件丢失也可切换。`use` 支持文件名补全，补全候选会附带说明。
 
-说明是配置文件顶层的单行文本，最长 200 字符，可为中文；不参与依赖解析，也不进入构建缓存键。TUI 选项面板顶部常驻一行 `Description`，按 `D` 或点击该行编辑，随 `Ctrl+S` 与其他修改一起保存。
+说明是配置文件顶层的文本（可含换行），最长 200 字符，可为中文；不参与依赖解析，也不进入构建缓存键。TUI 选项面板顶部常驻一行 `Description`，按 `D` 或点击该行编辑，随 `Ctrl+S` 与其他修改一起保存。
 
 TUI 和 `vmake config --set` 仅保存当前配置。构建、测试、查询、清理、`doctor` 和 `lock update` 均读取当前配置。配置选择相对于现有项目定位规则找到的根目录，构建脚本扫描范围保持不变；子目录被识别为独立项目时使用其自身配置。
 
-所有配置共享 `.vmake/vmake.lock`，切换本身不改写依赖锁。依赖版本选择与锁更新沿用原有规则。构建缓存键不包含配置文件名，等效配置可以复用产物；`clean` 清理当前配置对应的构建目录，`clean --all` 和 `distclean` 保留所有配置及选择文件。安装仍默认使用 `install/`，同时保留多个安装结果时指定不同的 `--prefix`。
+所有配置共享 `.vmake/vmake.lock`，切换本身不改写依赖锁。依赖版本选择与锁更新沿用原有规则。构建缓存键不包含配置文件名，等效配置可以复用产物；`clean` 清理当前配置对应的构建输出，`clean --all` 和 `distclean` 保留所有配置及选择文件。安装仍默认使用 `install/`，同时保留多个安装结果时指定不同的 `--prefix`。
 
 每份项目配置的结构（`pkg/config/store.go`）：
 

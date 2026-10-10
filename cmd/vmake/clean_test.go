@@ -29,13 +29,13 @@ func TestCleanPackagesRemovesOnlyActiveBuildDirectory(t *testing.T) {
 		t.Skipf("host tools unavailable: %v", err)
 	}
 	pkg := api.NewPackage().SetName("app").SetRoot(true)
-	r := resolver.NewResolver(nil, filepath.Join(root, "vmake_deps"))
+	r := resolver.NewResolver(nil, filepath.Join(root, ".vmake_deps"))
 	r.Graph().Packages["app"] = resolver.NewPackageNode("app", buildscript.NewSource("app", path, root, api.SourceLocal), pkg)
 	r.Graph().Order = []string{"app"}
 	ctx := &RuntimeContext{
 		Resolver: r, DepGraph: r.Graph(),
 		Config: &config.ConfigFile{Global: &config.GlobalConfig{Toolchain: "host"}},
-		Paths:  &pipeline.Paths{ProjectDir: root, DepsDir: filepath.Join(root, "vmake_deps"), CacheDir: filepath.Join(root, "cache")},
+		Paths:  &pipeline.Paths{ProjectDir: root, DepsDir: filepath.Join(root, ".vmake_deps"), CacheDir: filepath.Join(root, "cache")},
 	}
 	insp, err := pipeline.Inspect(ctx)
 	if err != nil {
@@ -76,13 +76,13 @@ func TestCleanPackagesKeepsOtherConfigurationsWhenActiveMissing(t *testing.T) {
 		t.Skipf("host tools unavailable: %v", err)
 	}
 	pkg := api.NewPackage().SetName("app").SetRoot(true)
-	r := resolver.NewResolver(nil, filepath.Join(root, "vmake_deps"))
+	r := resolver.NewResolver(nil, filepath.Join(root, ".vmake_deps"))
 	r.Graph().Packages["app"] = resolver.NewPackageNode("app", buildscript.NewSource("app", path, root, api.SourceLocal), pkg)
 	r.Graph().Order = []string{"app"}
 	ctx := &RuntimeContext{
 		Resolver: r, DepGraph: r.Graph(),
 		Config: &config.ConfigFile{Global: &config.GlobalConfig{Toolchain: "host"}},
-		Paths:  &pipeline.Paths{ProjectDir: root, DepsDir: filepath.Join(root, "vmake_deps"), CacheDir: filepath.Join(root, "cache")},
+		Paths:  &pipeline.Paths{ProjectDir: root, DepsDir: filepath.Join(root, ".vmake_deps"), CacheDir: filepath.Join(root, "cache")},
 	}
 	decoy := filepath.Join(root, "build", "other-configuration")
 	if err := os.MkdirAll(decoy, 0755); err != nil {
@@ -122,14 +122,14 @@ func TestCleanPackagesSkipsUnresolvedPackageToolchain(t *testing.T) {
 	}
 	app := api.NewPackage().SetName("app").SetRoot(true)
 	other := api.NewPackage().SetName("other")
-	r := resolver.NewResolver(nil, filepath.Join(root, "vmake_deps"))
+	r := resolver.NewResolver(nil, filepath.Join(root, ".vmake_deps"))
 	r.Graph().Packages["app"] = resolver.NewPackageNode("app", buildscript.NewSource("app", path, root, api.SourceLocal), app)
 	r.Graph().Packages["other"] = resolver.NewPackageNode("other", buildscript.NewSource("other", otherPath, otherDir, api.SourceLocal), other)
 	r.Graph().Order = []string{"app", "other"}
 	ctx := &RuntimeContext{
 		Resolver: r, DepGraph: r.Graph(),
 		Config: &config.ConfigFile{Global: &config.GlobalConfig{Toolchain: "host"}},
-		Paths:  &pipeline.Paths{ProjectDir: root, DepsDir: filepath.Join(root, "vmake_deps"), CacheDir: filepath.Join(root, "cache")},
+		Paths:  &pipeline.Paths{ProjectDir: root, DepsDir: filepath.Join(root, ".vmake_deps"), CacheDir: filepath.Join(root, "cache")},
 	}
 	config.SetEntry(ctx.Config, "other", &config.EntryConfig{Options: map[string]any{api.ToolchainOptionName: "clean-missing-toolchain"}})
 	if _, err := pipeline.Inspect(ctx); err == nil {
@@ -190,5 +190,64 @@ func TestCleanHooksRecoverScriptError(t *testing.T) {
 	var scriptErr *api.BuildScriptError
 	if !errors.As(err, &scriptErr) {
 		t.Fatalf("OnClean error was not returned: %v", err)
+	}
+}
+
+func TestCleanAllRemoteOutputsFindsNestedTrees(t *testing.T) {
+	dep := t.TempDir()
+	writeTree := func(root string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(root, "src"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "state.json"), []byte("{}"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		out := filepath.Join(root, "out", "owner", "buildkey", "build")
+		if err := os.MkdirAll(out, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(out, "artifact.o"), []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	top := filepath.Join(dep, "native", "root")
+	nested := filepath.Join(top, "src", "member")
+	writeTree(top)
+	writeTree(nested)
+
+	cleanAllRemoteOutputs(dep)
+
+	for _, root := range []string{top, nested} {
+		out := filepath.Join(root, "out")
+		owners, err := os.ReadDir(out)
+		if err != nil {
+			t.Fatalf("out under %s missing: %v", root, err)
+		}
+		for _, owner := range owners {
+			builds, err := os.ReadDir(filepath.Join(out, owner.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(builds) != 0 {
+				t.Fatalf("outputs under %s survived: %v", root, builds)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(root, "src")); err != nil {
+			t.Fatalf("source under %s was removed: %v", root, err)
+		}
+	}
+}
+
+func TestValidPkgRefComponent(t *testing.T) {
+	for _, good := range []string{"official", "zlib", "a.b", "x-y_1"} {
+		if !validPkgRefComponent(good) {
+			t.Errorf("validPkgRefComponent(%q) = false", good)
+		}
+	}
+	for _, bad := range []string{"", ".", "..", "a/b", `a\b`, "/abs"} {
+		if validPkgRefComponent(bad) {
+			t.Errorf("validPkgRefComponent(%q) = true", bad)
+		}
 	}
 }

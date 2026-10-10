@@ -213,9 +213,9 @@ execution is refused — use `vmake build --tests` to build without running.
 | `AddPostLinkHex()` | `objcopy -O ihex {output} {output}.hex` |
 | `AddPostLinkBin()` | `objcopy -O binary {output} {output}.bin` |
 | `AddPostLinkStrip()` | `strip -o {output}.stripped {output}` |
-| `AddPostLink(tool, args...)` | Custom: runs `tool args...`, supports `{output}` placeholder |
+| `AddPostLink(tool, args...)` | Custom step on a toolchain tool: `objcopy`, `size`, `objdump`, `nm`, or `strip`; supports the `{output}` placeholder |
 | `AddPostLinkOutputs(paths...)` | Declares extra outputs for missing-file rebuilds and automatic installation |
-| `AddPostLinkDeps(files...)` | Declares extra SourceDir-relative inputs; touching one relinks and re-runs every post-link step |
+| `AddPostLinkDeps(files...)` | Declares extra SourceDir-relative inputs; changing one relinks and re-runs every post-link step |
 
 Hex/Bin/Strip declare their outputs automatically. Custom steps must declare outputs explicitly; command arguments do not imply outputs. Output templates support `{output}`, with relative paths based on SourceDir.
 

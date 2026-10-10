@@ -53,7 +53,7 @@ Import: `github.com/spock2300/vmake/pkg/api`
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `SetGit` | `(urls ...string)` | Git repository URLs (mirror list — tried in order); registry packages and local packages wrapping remote source |
+| `SetGit` | `(urls ...string)` | Git repository URLs (tried in order); registry packages and local packages wrapping remote source |
 | `SetHomepage` | `(url string)` | Project homepage |
 | `SetDescription` | `(desc string)` | Package description |
 | `SetLicense` | `(license string)` | License identifier |
@@ -108,7 +108,7 @@ The following helpers return **nothing** and raise a script error on failure; th
 | `Configure` | `(extraArgs ...string) error` | SrcDir/configure --prefix=... (+ --host when cross) |
 | `Make` | `(args ...string) error` | make -C BuildDir with `pkg.Env()` and the session jobs budget (**returns real error**) |
 
-Dry-run aware: in dry-run mode (query/check-symbols/install), all helpers log commands without executing them.
+Dry-run aware: in dry-run mode (query/check-symbols), all helpers log commands without executing them.
 
 ```go
 ctx.Target("zlib").SetKind(api.TargetVoid).SetBuildFunc(func(p *api.Package) error {
@@ -279,20 +279,20 @@ All setters are fluent (return `*Target`).
 | `SetSymbolBinding` | `(mode string)` | `"static"` → `-Bsymbolic`; `"static-functions"` → `-Bsymbolic-functions` |
 | `SetSymbolPrefix` | `(prefix string)` | Post-link `objcopy --prefix-symbols=` (fatal on double-set) |
 
-`AddDeps` ref grammar (`pkg/api/depref.go`): a ref without `:` and `/` is a target of the declaring package; `pkg:target` selects one target; `pkg:*` or a `/`-containing path (e.g. `"official/zlib"`) expands to all targets of that package plus its transitive package deps (flat closure, deduplicated). Validation is fatal at declaration time (empty/whitespace refs, multiple `:`, empty segments, malformed paths); unknown targets (`dependency not found`), unknown packages (`package not found in build graph`) and cycles fail at build-graph time. A `pkg` part without `/` in `pkg:target` is first resolved relative to the declaring (sub-)package.
+`AddDeps` ref grammar (`pkg/api/depref.go`): a ref without `:` and `/` is a target of the declaring package; `pkg:target` selects one target; `pkg:*` or a `/`-containing path (e.g. `"official/zlib"`) expands to all targets of that package plus its transitive package deps (flat closure, deduplicated). Validation is fatal at declaration time for whitespace, multiple `:`, empty segments and malformed paths; an exactly empty entry is silently ignored. Unknown targets (`dependency not found`), unknown packages (`package not found in build graph`) and cycles fail at build-graph time. A `pkg` part without `/` in `pkg:target` is first resolved relative to the declaring (sub-)package.
 
 `AddRequires` and `AddDeps` are independent steps: `AddRequires` (in `OnRequire`) resolves and downloads the package, `AddDeps` (in `OnBuild`) creates the build-graph edge including linking and public-include propagation. Third-party packages normally need both.
 
 Sub-packages: a nested `build.go` in a native remote package's checkout is an independent package named `parent/sub`, versioned by the parent (no separate lockfile entry). Only native repos have sub-packages (registry wrappers never do — design decision DD-1, see `docs/DESIGN_DECISIONS.md`); they load lazily when depended on. Reference from outside by full name (`"subtest/mother/sub_a:*"`; list the parent before its sub-packages in `AddRequires`); inside a sub-package use short names for siblings (`"sub_b:utils_b"`). A parent cannot require its own sub-packages in `OnRequire`. Example: `test_data/25_subpackage`.
 | `UseDependencyLinkerScript` | `()` | Auto-inherit linker script from dependency |
-| `AddPostLink` | `(tool string, args ...string)` | Post-link step: `{output}` placeholder |
+| `AddPostLink` | `(tool string, args ...string)` | Post-link step; only the toolchain tools objcopy/size/objdump/nm/strip resolve (other names fail with "post-link tool not found"). Supports the `{output}` placeholder |
 | `AddPostLinkOutputs` | `(paths ...string)` | Explicit extra outputs for missing-output rebuilds and automatic installation; supports `{output}`, SourceDir-relative paths and absolute paths. Hex/Bin/Strip helpers declare their outputs automatically; command arguments never imply outputs |
 | `AddPostLinkHex` | `()` | `objcopy -O ihex {output} {output}.hex` |
 | `AddPostLinkBin` | `()` | `objcopy -O binary {output} {output}.bin` |
 | `AddPostLinkSize` | `()` | `size {output}` |
 | `AddPostLinkStrip` | `()` | `strip -o {output}.stripped {output}` |
-| `AddPostLinkDeps` | `(files ...string)` | Extra input files for post-link steps (SourceDir-relative); any change/missing → relink + re-run all post-link steps. Prebuilt targets with post-link steps are copied before modification and still relink when these inputs change |
-| `AddBinHeader` | `(inputs ...any)` | Binary files → `.h` headers; output to `build/<buildKey>/generated/`; incremental via mtime |
+| `AddPostLinkDeps` | `(files ...string)` | Extra input files for post-link steps (SourceDir-relative); any content or permission change (a bare `touch` does not count) or a missing input → relink + re-run all post-link steps. Prebuilt targets with post-link steps are copied before modification and still relink when these inputs change |
+| `AddBinHeader` | `(inputs ...any)` | Binary files → `.h` headers; output to `BuildDir()/generated/`; incremental via mtime |
 
 `SetLanguages(langs ...string)` exists but has **no effect** — language is auto-detected from file extension (`.c` → C, `.cc/.cpp/.cxx/.C` → C++).
 

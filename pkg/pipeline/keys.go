@@ -251,15 +251,12 @@ func makeLocalPkgDirs(scriptDir, ccKey, mode string, opts map[string]any, global
 	}
 }
 
-func makeRemotePkgDirs(versionDir, sourceDir, ccKey, mode string, opts map[string]any, version, commit, globalFlagsHash, patchHash, scriptHash string, memberPath ...string) *api.PkgDirs {
+func makeRemotePkgDirs(pkgRoot, member, ccKey, mode string, opts map[string]any, version, commit, globalFlagsHash, patchHash, scriptHash string) *api.PkgDirs {
 	buildKey := build.BuildKey(ccKey, mode, opts, build.JoinKeyExtra(version, commit, globalFlagsHash, patchHash, scriptHash))
-	member := ""
-	if len(memberPath) > 0 {
-		member = memberPath[0]
-	}
-	output := filepath.Join(versionDir, "out", storage.OwnerKey(filepath.ToSlash(member)), buildKey)
+	member = filepath.ToSlash(member)
+	output := filepath.Join(pkgRoot, "out", storage.OwnerKey(member), buildKey)
 	return &api.PkgDirs{
-		SourceDir:  filepath.Join(output, "work", "repo", member),
+		SourceDir:  filepath.Join(pkgRoot, "src", filepath.FromSlash(member)),
 		BuildDir:   filepath.Join(output, "build"),
 		InstallDir: filepath.Join(output, "install"),
 	}
@@ -312,9 +309,6 @@ func applyPatchesContext(ctx context.Context, pkg *api.Package, sourceDir string
 }
 
 func rebaseKConfigSourceDirs(ctx *RuntimeContext, name, oldRoot, newRoot string) error {
-	if oldRoot == newRoot {
-		return nil
-	}
 	member, seedRoot := "", oldRoot
 	if ctx.DepGraph != nil {
 		if node := ctx.DepGraph.Packages[name]; node != nil && !node.IsLocal() && node.Source != nil {

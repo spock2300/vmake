@@ -198,13 +198,13 @@ On ELF and PE **binary** links, dependency archives from `AddDeps` land inside `
 
 ### `vmake clean` vs `vmake distclean`
 
-`vmake clean` runs `OnClean` hooks then removes build artifacts (objects, binaries); keeps `vmake_deps/`. `--all` removes every build-key directory.
+`vmake clean` runs `OnClean` hooks then removes build outputs (objects, binaries) for the current configuration; keeps the source trees under `.vmake_deps/`. `--all` removes every build-key output directory.
 
-`vmake distclean` also runs `OnClean` hooks, then removes all local build dirs, `install/`, `compile_commands.json`, and `vmake_deps/`. The shared global cache (`~/.vmake/cache`) survives by default — a rebuild re-links without recompiling. `--purge-cache` additionally deletes global cache entries for every remote package this project materialized (affects other projects too). Use distclean when modifying `build.go` and the build ignores your changes.
+`vmake distclean` also runs `OnClean` hooks, then removes all emitted outputs, `install/`, `compile_commands.json`, the build report, and the project's `.vmake_deps/` working trees. Sources are re-downloaded on the next build. Use distclean when modifying `build.go` and the build ignores your changes.
 
 ### Patching source before build in registry packages
 
-To patch downloaded source inside `SetBuildFunc`, use Go's `os.ReadFile` + `os.WriteFile` (simple single-line changes) or `AddPatches("patches/fix.patch")` in `OnPackage` (multi-file git patches). Patches are applied to the writable workspace exposed as `SrcDir()` (the member/build-key workspace for remote packages); the immutable cache seed is never modified, and local packages are patched in place. See `references/gotchas.md` for code examples of both patterns.
+To patch downloaded source inside `SetBuildFunc`, use Go's `os.ReadFile` + `os.WriteFile` (simple single-line changes) or `AddPatches("patches/fix.patch")` in `OnPackage` (multi-file git patches). Patches apply to the package's single working tree exposed as `SrcDir()` (`.vmake_deps/.../src` for remote packages, the `<pkgDir>/src` link for local SetGit packages). A changed patch set restores the tree to the pinned commit before patches are applied. See `references/gotchas.md` for code examples of both patterns.
 
 ### Strict config accessors — wrong reads are build errors, not zero values
 
@@ -216,11 +216,11 @@ Two related rules:
 
 ### Generated macros are CONFIG_-prefixed, not the raw option name
 
-`GenerateConfigDefines` / `GenerateConfigHeader` always emit `CONFIG_<OPTION_NAME>` (uppercased, `-` → `_`): an option `debug` becomes `-DCONFIG_DEBUG=1`, so C code checks `#if CONFIG_DEBUG`, not `#if DEBUG`. A disabled bool emits no `-D` at all. When C code needs another name, read the option and call `AddDefines` manually. Global options are the exception: `ctx.GlobalOption(...)` declarations are auto-exported to every package as `CONFIG_<NAME>` (see **Global Option Auto-Export** below). See **Generated Defines Always Use the CONFIG_ Prefix** above.
+`GenerateConfigDefines` / `GenerateConfigHeader` always emit `CONFIG_<OPTION_NAME>` (uppercased, `-` → `_`): an option `debug` becomes `-DCONFIG_DEBUG=1`, so C code checks `#if CONFIG_DEBUG`, not `#if DEBUG`. A disabled bool emits no `-D` at all. When C code needs another name, read the option and call `AddDefines` manually. Global options are the exception: `ctx.GlobalOption(...)` declarations are auto-exported to every package as `CONFIG_<NAME>` (see **Global Option Auto-Export** below). See **Generated Defines Always Use the CONFIG_ Prefix** below.
 
 ### Script-relative file IO
 
-Inside build.go, relative paths passed to wrapped stdlib (`os.ReadFile/WriteFile/Stat/...`, `exec.Command` without `Dir`) resolve against the **build.go's own directory** in ALL phases — not the process cwd. `os.Getwd()` returns the script dir; `os.Chdir` returns an error. Long-tail unwrapped APIs (`text/template.ParseFiles`, `exec.CommandContext`, `io/ioutil`) still see the process cwd — build absolute paths from `p.SourceDir()`/`p.BuildDir()` for those.
+Inside build.go, relative paths passed to wrapped stdlib (`os.ReadFile/WriteFile/Stat/...`, `exec.Command` without `Dir`) resolve against the package's **`SourceDir()`** once it is bound (before binding, the build.go's own directory) — not the process cwd. `os.Getwd()` returns the script dir; `os.Chdir` returns an error. Long-tail unwrapped APIs (`text/template.ParseFiles`, `exec.CommandContext`, `io/ioutil`) still see the process cwd — build absolute paths from `p.SourceDir()`/`p.BuildDir()` for those.
 
 ## Directory Reference
 
@@ -237,35 +237,33 @@ For `BuildKey` naming, `SourceDir` vs `SrcDir` distinction, and `SetGit` path re
 
 ## Storage Layout
 
-Remote sources and outputs use the versioned cache under `~/.vmake/cache/v2/` (or `VMAKE_CACHE/v2/`). Shared source seeds are immutable by the trusted-script contract. Build commands use a writable workspace belonging to the package member and build key. This is storage isolation, not a script sandbox.
+Remote and local `SetGit` sources materialize as **one shallow working tree per package** inside the project; there is no shared mirror cache. Builds write configuration-specific outputs into per-build-key directories, never copies of the source. This is storage isolation, not a script sandbox.
 
 ```
-cache/v2/<repo>/<pkg>/<version>/
-├── src/
-└── out/<sha256(member)>/<buildKey>/
-    ├── build/
-    ├── install/
-    └── work/repo/
+~/.vmake/cache/
+└── _locks/                            # lifecycle + per-owner + per-tree materialization locks
 
-project/vmake_deps/<repo>/<pkg>/
-├── src → cache/v2/<repo>/<pkg>/<version>/src
-└── out → cache/v2/<repo>/<pkg>/<version>/out
+project/.vmake_deps/
+├── <repo>/<pkg>/
+│   ├── src/                           # single working tree (depth=1, selected version)
+│   ├── state.json                     # urls/version/ref/commit/patchHash/submodules
+│   └── out/<sha256(member)>/<buildKey>/{build,install}
+└── local/<pkg>/src                    # local SetGit tree; <pkgDir>/src links to it
 ```
 
-- Source seeds and initial workspaces are materialized in temporary sibling directories and atomically published. Native subpackages have separate member paths, including their own output and workspace trees.
-- Patches apply to writable build workspaces. Ordinary external build output is not transactional: a failed callback may leave partial files, and the next session calls it again.
-- `.vmake/vmake.lock` pins remote versions and commits. A valid lock and cached sources permit offline resolution; `vmake lock update` re-resolves.
-- A project lock serializes one project's operations. A lifecycle lock under the cache root is shared during builds and exclusive during cleanup/update. Sorted owner locks are held across declaration, synchronous subgraphs, target execution, and installation; subgraphs reuse the session's locks. Lock files remain outside directories being cleaned.
+- Working trees are depth-1 fetches from the upstream URL: tags land in `refs/tags/`, branches in `refs/remotes/origin/`, and only the selected version's objects are downloaded. `git log` is truncated by the shallow boundary (use `git fetch --unshallow` when full history is needed).
+- A commit change recreates the tree; a patch-set change on the same commit restores it in place (`git checkout --force --detach <commit>` + `clean -fdx`) without network access. Switching toolchain/mode/options only switches `out/<buildKey>` (remote) or the package's `build/<buildKey>` (local). Patches and Kconfig `.config` apply to the tree; ordinary external build output is not transactional, so a failed callback may leave partial files and the next session calls it again.
+- `.vmake/vmake.lock` pins remote versions and commits (and local packages with a versioned `SetGit` source). When the locked version's tree already exists, builds run fully offline; resolution otherwise needs one small `git ls-remote`. `vmake lock update` re-resolves.
+- Commands that resolve dependencies take the exclusive `project/.vmake/_locks/project.lock`, so commands against one project serialize (resolution may materialize trees or links). Each tree materialization is serialized by `_locks/tree_<hash>.lock`; builds and `lock update` additionally hold `_locks/owner_<sha256(name)>.lock` for every needed remote package (native sub-packages fold into their root parent); the cache lifecycle lock is shared for builds/reads and exclusive for cleanup.
 
 Global storage in `~/.vmake/`:
-- `~/.vmake/cache/v2/<repo>/<pkg>/<version>/{src,out}` — immutable source seeds and per-member build variants
-- `~/.vmake/cache/v2/_localgit/<sha256(url)>/commits/<commit>/src` — local SetGit source seeds; writable copies live in `BuildDir()/work/src`
+- `~/.vmake/cache/_locks/` — lifecycle, per-owner and per-tree materialization locks (no source mirror cache; legacy `cache/mirrors` is removed by the layout upgrade)
 - `~/.vmake/repos/` — registry repo clones (buildscript metadata only)
-- `~/.vmake/toolchains/` — toolchain manifests
+- `~/.vmake/toolchains/` — installed toolchains (`<host-os>/<host-arch>/<name>/<version>/`)
 - `~/.vmake/extensions/` — extension repos
 - `~/.vmake/config.json` — `trustedRepos` (remote-script trust)
 
-Environment overrides: `VMAKE_CACHE` (cache root), `VMAKE_FETCH_TIMEOUT` (git fetch seconds, default 120), `VMAKE_TRUST_ALL=1` (bypass trust gating, CI).
+Environment overrides: `VMAKE_CACHE` (cache root), `VMAKE_GIT_TIMEOUT` (seconds for network git clone/fetch/submodule/ls-remote, default 1800; `VMAKE_FETCH_TIMEOUT` is a legacy alias), `VMAKE_TRUST_ALL=1` (bypass trust gating, CI). Network git commands stream git's own progress to the terminal in real time (suppressed with `-q`).
 
 vmake locates the project root by walking upward from cwd to find `.vmake/`, `build.go`, or (at the starting directory only) `*/build.go` (via `findProjectDir()`). Running outside a project is a hard error.
 
@@ -278,8 +276,8 @@ vmake locates the project root by walking upward from cwd to find `.vmake/`, `bu
 | Type | How identified | `OnPackage` metadata | Source code location |
 |------|---------------|---------------------|---------------------|
 | **Local** | build.go in project directory | `SetDescription`, `SetLicense`, or `SetGit`/`AddVersion` for remote source | `SourceDir()` (same as build.go), or `SrcDir()` = `SourceDir()/src/` if `SetGit` used |
-| **Registry** | `vmake repo add name url` | `SetGit`, `AddVersion` required | `SourceDir()` is the package member’s writable build workspace; `SrcDir()` falls back to `SourceDir()` |
-| **Native** | `vmake repo add --native name url` | No `SetGit`/`AddVersion` — version from git tag | `SourceDir()` == `SrcDir()` (the writable workspace; subpackages use their own member workspace) |
+| **Registry** | `vmake repo add name url` | `SetGit`, `AddVersion` required | `SourceDir()` is the member directory inside the package’s working tree in `.vmake_deps/`; `SrcDir()` falls back to `SourceDir()` |
+| **Native** | `vmake repo add --native name url` | No `SetGit`/`AddVersion` — version from git tag | `SourceDir()` == `SrcDir()` (the working tree in `.vmake_deps/`; subpackages use their own member directory) |
 
 Registry packages wrap external C/C++ libraries. Native packages are independent vmake projects consumed as dependencies. The resolver checks registry first, then native.
 
@@ -398,7 +396,7 @@ Run `vmake doctor` to detect packages that are missing explicit `AddDeps`.
 - `"lib:*"` or `"official/zlib:*"` — wildcard: all targets from that package + transitive deps
 - `"official/zlib"` — third-party package (expanded to all targets from that package + transitive deps)
 
-Invalid refs (empty, whitespace, stray `:`, empty segments) are fatal at declaration time; unknown targets/packages and dependency cycles fail at build-graph time. In `pkg:target`, a `pkg` part without `/` is first resolved as a sub-package name relative to the declaring package (`ResolveSubPackageName`); on failure the error lists the tried candidates.
+Invalid refs (whitespace, stray `:`, empty segments) are fatal at declaration time, and an exactly empty entry is silently ignored; unknown targets/packages and dependency cycles fail at build-graph time. In `pkg:target`, a `pkg` part without `/` is first resolved as a sub-package name relative to the declaring package (`ResolveSubPackageName`); on failure the error lists the tried candidates.
 
 ### Sub-Packages
 
@@ -457,8 +455,8 @@ Store multiple JSON configuration files directly in `.vmake/`. The optional
 Without it, the project uses `.vmake/config.json` without creating a selection
 file. An explicit missing or invalid selection is an error, never a fallback.
 Filenames must end in `.json`; paths and `project.json` are rejected. Each file
-may carry a top-level single-line `description` (≤200 characters) explaining
-what the configuration is for.
+may carry a top-level `description` (≤200 characters; line breaks are allowed)
+explaining what the configuration is for.
 
 ```bash
 vmake config list
@@ -578,6 +576,7 @@ Mode auto-injected flags (injected by scheduler, not via `AddGlobalCFlags`):
 |------|---------------|
 | `release` | `-O2 -DNDEBUG` |
 | `debug` | `-O0 -g` |
+| `size` | `-Os -DNDEBUG` |
 
 During linking, global LD flags are appended after per-target flags; global links go inside `--start-group`/`--end-group` (on Mach-O targets dependency archives are force-loaded instead).
 
@@ -604,7 +603,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 This emits `-DCONFIG_CPU_CLOCK_HZ=416000000 -DCONFIG_MCU="py32f539" -DCONFIG_MCU_PY32F539=1` for every package. Use it for chip/platform contracts and feature switches that all packages must see.
 
 - `SetMacroName("NAME")` replaces the default name entirely; a `%s`/`%v` in the name renders the value into the macro (`SetMacroName("PY32F539xx%s")` with value `L` → `-DPY32F539xxL=1`) and emits only that macro. `SetMacroName` is valid on global options only.
-- `mode`, `toolchain`, `target_os`, and `target_triple` are not exported by default; give them a `SetMacroName` to opt in.
+- `mode`, `toolchain`, `target_os`, and `target_triple` are not exported by default. A `SetMacroName` on `target_os`, `target_triple`, or any other package-declared global option opts it in; the built-in `mode`/`toolchain` definitions are always taken from the built-in objects, so a package-level `SetMacroName` on them is validated but discarded and they cannot be exported.
 - Two global options producing the same macro with different values abort the configuration phase; identical definitions are deduplicated.
 - A package-level value for a global option left in `entries.<pkg>.options.<name>` still wins inside that package, but the exported macro always uses the global value; delete stale entry values when migrating an option from package scope to global scope.
 - Exported macros participate in the BuildKey through global flags, so config changes rebuild all packages.
@@ -658,9 +657,9 @@ Key embedded rules: (1) Target-specific flags must appear in both CFLAGS and LDF
 - `SetProvidedLinkerScript(path)` — chip/bsp declares linker script for consumers (fatal on double-set)
 - `UseDependencyLinkerScript()` — firmware target auto-inherits `-T` from first dependency that provides one
 - `SetLinkerScript(path)` — direct linker script on target (fatal on double-set)
-- `AddPostLink(tool, args...)` — generic post-link, shorthands: `AddPostLinkHex/Bin/Size/Strip`
+- `AddPostLink(tool, args...)` — post-link step; `tool` must be one of the toolchain's built-in tools (`objcopy`, `size`, `objdump`, `nm`, `strip`; any other name fails with `post-link tool not found`). Shorthands: `AddPostLinkHex/Bin/Size/Strip`
 - `AddPostLinkOutputs(paths...)` — declare extra output files explicitly, with `{output}` templates or SourceDir-relative/absolute paths. Missing outputs trigger relink and all post-link steps; only declared outputs are automatically installed. Hex/Bin/Strip declare their outputs automatically. AddPostLink arguments never imply outputs, including positional inputs and `--add-gnu-debuglink={output}.debug`
-- `AddPostLinkDeps(files...)` — declare extra post-link input files (SourceDir-relative, like `AddFiles`); any dep newer/missing → relink + re-run ALL post-link steps. Without it, editing a file consumed by a post-link step (e.g. an `objcopy --keep-global-symbols` list) is silently skipped
+- `AddPostLinkDeps(files...)` — declare extra post-link input files (SourceDir-relative, like `AddFiles`); a dep whose content (or permissions) changed or that is missing triggers relink + re-run of ALL post-link steps (a bare `touch` does not count). Without it, editing a file consumed by a post-link step (e.g. an `objcopy --keep-global-symbols` list) is silently skipped
 - `AddBinHeader(inputs...)` — binary files → `.h` headers
 - RTOS tool accessors: `Package.ObjCopy()`, `Size()`, `ObjDump()`, `NM()`
 
@@ -718,7 +717,7 @@ Bare `vmake` is equivalent to `vmake build`.
 
 ## Reproducible Builds (vmake.lock + --manifest)
 
-Remote dependency versions and commits are pinned in `.vmake/vmake.lock` after resolution — commit it alongside the active configuration (`.vmake/config.json` by default). Subsequent builds reuse locked versions; new upstream tags never change what you build until you run `vmake lock update`.
+Remote dependency versions and commits — and those of local packages that declare a versioned `SetGit` source — are pinned in `.vmake/vmake.lock` after resolution; commit it alongside the active configuration (`.vmake/config.json` by default). Subsequent builds reuse locked versions; new upstream tags never change what you build until you run `vmake lock update`.
 
 For CI/CD, pin from an install manifest instead:
 
@@ -730,7 +729,7 @@ vmake build --install
 vmake build --manifest install/manifest.json
 ```
 
-`--manifest` imports the recorded git URLs, refs, and revisions into `vmake.lock` before dependency resolution, so the graph is built from the pinned versions. During `vmake build --manifest`, local packages with a managed `SetGit` source are skipped by manifest checkout — the build materializes the recorded source version on its own; the separate `vmake manifest checkout` command performs raw checkouts of local entries in their package directories. `vmake manifest show install.json` displays contents; `vmake manifest checkout install.json` restores sources without building. With a valid lock entry and cached checkout, resolution is fully offline.
+`--manifest` resolves the recorded git URLs, refs, and revisions and writes the resulting version/commit pins into `vmake.lock` before dependency resolution, so the graph is built from the pinned versions. During `vmake build --manifest`, local packages with a managed `SetGit` source are skipped by manifest checkout — the build materializes the recorded source version on its own; the separate `vmake manifest checkout` command performs raw checkouts of local entries in their package directories. `vmake manifest show install.json` displays contents; `vmake manifest checkout install.json` restores sources without building. With a valid lock entry and cached checkout, resolution is fully offline.
 
 ## CLI Quick Reference
 
@@ -742,8 +741,8 @@ vmake build --manifest install/manifest.json
 | `vmake rebuild` | Clean + build |
 | `vmake config` | TUI for the selected configuration (`--set opt=val` / `--set pkg/opt=val` non-interactive) |
 | `vmake config list/use/copy/describe` | List files, select an existing file, copy the active configuration in `.vmake/`, or print/set its description |
-| `vmake clean [--all]` | Execute OnClean hooks then remove build artifacts |
-| `vmake distclean [--purge-cache]` | Deep clean: artifacts + install/ + vmake_deps/ (+ global cache entries) |
+| `vmake clean [--all]` | Execute OnClean hooks then remove build outputs (keeps source trees) |
+| `vmake distclean` | Deep clean: outputs + install/ + .vmake_deps/ |
 | `vmake query` | Dependency tree; `query targets`, `query config <pkg>` |
 | `vmake lock update/show` | Re-resolve / print `.vmake/vmake.lock` pins |
 | `vmake toolchain list/show` | Toolchain info |

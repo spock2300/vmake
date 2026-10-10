@@ -33,7 +33,7 @@ func Main(p *api.Package) {
 ## Prerequisites
 
 - Git on PATH for the registry clone and package source checkout
-- Network access for the first clone (later builds reuse the cache and `.vmake/vmake.lock`)
+- Network access for the first clone (later builds reuse the downloaded working trees and `.vmake/vmake.lock`)
 - The package repository registered and trusted. Repositories are **not** built in — a fresh install has none (`vmake repo list` prints `No repositories found`). The repo name in `AddRequires("official/zlib")` must match the name you registered:
 
 ```bash
@@ -175,8 +175,8 @@ Keep `OnRequire` and target dependencies consistent.
 ## Where Files Land
 
 - Registry clone: `~/.vmake/repos/<repo>/`; trust: `~/.vmake/config.json` (`trustedRepos`)
-- Global cache: `~/.vmake/cache/v2/<repo>/<pkg>/<version>/{src,out}` (`VMAKE_CACHE` overrides the root)
-- Project links: `vmake_deps/<repo>/<pkg>/{src,out}` point into the cache
+- Locks only: `~/.vmake/cache/_locks/` (`VMAKE_CACHE` overrides the cache root; there is no source mirror cache)
+- Working tree and outputs: `.vmake_deps/<repo>/<pkg>/{src,out/<sha256(member)>/<buildKey>}` (shallow depth-1 tree)
 - Pins: `.vmake/vmake.lock`
 
 ## Key Points

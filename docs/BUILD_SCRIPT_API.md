@@ -70,7 +70,7 @@ func (p *Package) OnConfig(fn ConfigFunc) *Package       // 定义配置选项
 func (p *Package) OnBuild(fn BuildFunc) *Package          // 定义构建目标
 func (p *Package) OnInstall(fn InstallFunc) *Package      // 定义安装规则
 func (p *Package) OnClean(fn CleanFunc) *Package          // 定义清理规则（vmake clean 时执行）
-func (p *Package) OnPackage(fn PackageFunc) *Package      // 填充包元数据（插件提取阶段执行）
+func (p *Package) OnPackage(fn PackageFunc) *Package      // 填充包元数据（插件提取阶段执行；单槽回调，重复注册 fatal）
 ```
 
 ### 元信息设置
@@ -90,7 +90,7 @@ func (p *Package) SetCfgVals(vals map[string]any) *Package  // 设置配置值
 func (p *Package) SetGenConfigHeader(v bool) *Package    // 启用生成配置头文件
 ```
 
-本地包也可通过 `SetGit` 选择外部源码。声明 `AddVersion` 映射时，按依赖约束选择版本并在 `.vmake/vmake.lock` 固定版本和提交；后续构建可使用已缓存的固定提交离线物化。`vmake lock update` 重新选择版本。没有版本映射时使用仓库 HEAD。项目目录保留，受管理的 `src` 链接指向构建键对应的工作副本。若 `src` 已是真实目录，构建会报错并保留该目录，需先由用户移开。
+本地包也可通过 `SetGit` 选择外部源码。声明 `AddVersion` 映射时，按依赖约束选择版本并在 `.vmake/vmake.lock` 固定版本和提交；锁定版本的浅工作树已存在时可完全离线构建，工作树被删除后需要一次 `git ls-remote` 重新解析。`vmake lock update` 重新选择版本。没有版本映射时使用仓库 HEAD。项目目录保留，受管理的 `src` 链接指向项目内该包唯一的工作树（`.vmake_deps/local/<包名>/src`）。浅树只包含所选版本（`git fetch --unshallow` 可补全历史）。若 `src` 已是真实目录，构建会报错并保留该目录，需先由用户移开。
 
 ### Git Patch
 
@@ -227,7 +227,7 @@ p.CMakeBuild()
 p.CMakeInstall()
 ```
 
-`MergedCFlags`／`MergedCxxFlags` 按包级可见性默认值、全局标志、额外标志的顺序返回按空格拼接的字符串；`MergedLdFlags` 合并全局链接标志与额外标志。`CMakeGlobalFlagsArgs()` 同样包含本包可见性，保留给特殊的手动 CMake 调用；使用 `CMakeConfigure` 时无需再次传入。`Make`／`Configure` 不自动注入这些编译标志，已有使用 `Merged*Flags` 的脚本会获得本包的策略。
+`MergedCFlags`／`MergedCxxFlags` 按包级可见性默认值、全局标志、额外标志的顺序返回按空格拼接的字符串；`MergedLdFlags` 合并全局链接标志与额外标志。`CMakeGlobalFlagsArgs()` 同样包含本包可见性，保留给特殊的手动 CMake 调用；使用 `CMakeConfigure` 时无需再次传入。`Make`／`Configure` 不注入 CMake 风格的 flags 变量：相关标志经由 `p.Env()` 的 `CFLAGS`／`CXXFLAGS`／`LDFLAGS` 传入；已有使用 `Merged*Flags` 的脚本会获得本包的策略。
 
 ### CMake 脚本迁移
 
@@ -299,7 +299,7 @@ func (a *ConfigAccessor) Select(option string, mapping map[string]string) string
 func (a *ConfigAccessor) When(option string, value any) bool
 
 // 选项管理
-func (a *ConfigAccessor) Option(name string) *Option
+func (a *ConfigAccessor) Option(name string) *Option        // 配置阶段结束后（Build/Install/Clean 上下文）调用会 fatal
 func (a *ConfigAccessor) SetOptions(options map[string]*Option) *ConfigAccessor
 func (a *ConfigAccessor) MergeGlobals(globalOptions map[string]*Option, globalVals map[string]any)
 ```
@@ -357,7 +357,7 @@ func (o *Option) SetDefault(v any) *Option
 func (o *Option) SetDescription(desc string) *Option
 func (o *Option) SetValues(vals ...string) *Option        // OptionChoice 使用
 func (o *Option) SetShowIf(fn func(ctx *ConfigContext) bool) *Option  // 条件显示
-func (o *Option) SetOnApply(fn func(ctx *ConfigContext, val any)) *Option  // 选项值解析后的回调，val 为原始类型值
+func (o *Option) SetOnApply(fn func(ctx *ConfigContext, val any)) *Option  // 选项值解析后的回调，val 已按声明类型归一化（bool/int/string）
 func (o *Option) SetGroup(group string) *Option
 
 // 获取方法
@@ -493,7 +493,7 @@ func (t *Target) AddPublicIncludes(args ...any) *Target  // dirs + optional @"pa
 
 // 编译配置
 func (t *Target) AddDefines(defines ...any) *Target
-func (t *Target) SetLanguages(langs ...string) *Target
+func (t *Target) SetLanguages(langs ...string) *Target   // 目前无效果：语言按源文件扩展名自动识别
 
 // 链接配置
 func (t *Target) AddLinks(libs ...any) *Target
@@ -507,18 +507,18 @@ func (t *Target) AddLdFlags(flags ...any) *Target
 
 // 第三方包构建
 func (t *Target) SetBuildFunc(fn func(p *Package) error) *Target
-func (t *Target) SetPrebuilt(path string) *Target          // 预编译目标，跳过编译直接 symlink 到输出路径
+func (t *Target) SetPrebuilt(path string) *Target          // 预编译目标，跳过编译（无后链接步骤时 symlink 到输出路径，有后链接步骤时复制；重复调用 fatal）
 
 // RTOS/嵌入式
 func (t *Target) SetLinkerScript(path string) *Target    // 传递 -T 给链接器（重复调用抛出 BuildScriptError）
 func (t *Target) UseDependencyLinkerScript() *Target       // 从依赖自动继承 linker script
 func (t *Target) SetVersionScript(path string) *Target     // 版本脚本，链接时加 -Wl,--version-script=；仅 Shared/Binary 且仅 ELF（Windows/macOS 目标报错）；路径相对包 SourceDir（重复调用 fatal）
 func (t *Target) AddExcludeLibs(libs ...string) *Target    // 链接时加 -Wl,--exclude-libs=（仅 ELF；追加；ld 按去掉 .a 的完整库名匹配，写 libfoo 而非 foo）
-func (t *Target) SetSymbolBinding(mode string) *Target     // "static" → -Wl,-Bsymbolic；"static-functions" → -Wl,-Bsymbolic-functions（仅 ELF）；其他值 fatal
+func (t *Target) SetSymbolBinding(mode string) *Target     // "static" → -Wl,-Bsymbolic；"static-functions" → -Wl,-Bsymbolic-functions（仅 ELF）；空串清除；其他值 fatal
 func (t *Target) SetSymbolPrefix(prefix string) *Target    // post-link 追加 objcopy --prefix-symbols=<prefix>（需所选工具链提供 objcopy，GNU objcopy 不支持 Mach-O；重复调用 fatal）
-func (t *Target) AddPostLink(tool string, args ...string) *Target  // 通用后链接步骤，支持 {output} 占位符
+func (t *Target) AddPostLink(tool string, args ...string) *Target  // 后链接步骤（仅工具链内置 objcopy/size/objdump/nm/strip），支持 {output} 占位符
 func (t *Target) AddPostLinkOutputs(paths ...string) *Target
-func (t *Target) AddPostLinkDeps(files ...string) *Target  // 声明 post-link 步骤依赖的额外输入文件（SourceDir 相对路径）；任一变化（mtime 新于输出或缺失）触发 relink + 重跑全部 post-link
+func (t *Target) AddPostLinkDeps(files ...string) *Target  // 声明 post-link 步骤依赖的额外输入文件（SourceDir 相对路径）；任一变化（内容或权限变化、文件缺失）触发 relink + 重跑全部 post-link
 func (t *Target) AddPostLinkHex() *Target               // objcopy -O ihex {output} {output}.hex
 func (t *Target) AddPostLinkBin() *Target               // objcopy -O binary {output} {output}.bin
 func (t *Target) AddPostLinkSize() *Target              // size {output}
@@ -588,7 +588,7 @@ ctx.Target("app").
     AddPostLink("objcopy", "--add-gnu-debuglink={output}.debug", "{output}")
 ```
 
-`AddPublicIncludes` 支持 `@"pattern"` 作为最后一个参数进行 match。Pattern 应用到前面所有目录（省略目录默认为 `"."`）。Pattern 使用 `filepath.Match` 语法。
+`AddPublicIncludes` 支持 `@"pattern"` 作为最后一个参数进行 match。Pattern 应用到前面所有目录（省略目录默认为 `"."`）。Pattern 使用 `path.Match` 语法。
 
 ```go
 // 安装所有 .h 文件到 dependents
@@ -614,7 +614,7 @@ ctx.Target("mylib").AddPublicIncludes("include", "src", "@foo*.h")
 
 规则：
 
-- **声明时校验**（fatal `*BuildScriptError`）：空引用、含空白字符、多个 `:`、`:` 前后任一段为空、包路径畸形（首/尾 `/`、`//`）。空字符串参数被静默跳过，重复引用在图构建时去重。
+- **声明时校验**（fatal `*BuildScriptError`）：含空白字符、多个 `:`、`:` 前后任一段为空、包路径畸形（首/尾 `/`、`//`）。空字符串参数被静默跳过，重复引用在图构建时去重。
 - **子包短名**：`pkg:target` 的 pkg 部分不含 `/` 时，会先尝试按当前（子）包路径相对解析（`ResolveSubPackageName`）——兄弟子包之间可写 `AddDeps("mylib:utils")` 而不必写全路径。
 - **图构建时报错**：target 不存在 → `dependency not found`；包不在构建图中 → `package not found in build graph`；循环依赖 → 错误（`api.CheckCycle`）。子包短名解析失败时错误信息附带已尝试的候选路径（`tried sub-package candidates: ...`）。
 - 依赖边同时决定：链接输入（依赖 target 的产物路径）、PublicIncludes 传播、拓扑排序顺序。
@@ -636,7 +636,7 @@ native 远程包 checkout 内嵌套的 `build.go` 会被识别为**子包**：�
 
 ## 文件 IO 与工作目录（ScriptFS）
 
-build.go 中的相对路径文件 IO 在发现、配置阶段以 **build.go 所在目录** 为基准；进入构建阶段后以包的 `SourceDir()` 为基准。远程包绑定到当前构建键的私有工作副本，避免修改共享源码种子。
+build.go 中的相对路径文件 IO 在发现、配置阶段以 **build.go 所在目录** 为基准；进入构建阶段后以包的 `SourceDir()` 为基准。远程包绑定到项目内该包唯一的工作树（`.vmake_deps/`），所有配置共享；补丁与配置会就地修改这棵树，不会写回上游。
 
 ```go
 data, err := os.ReadFile("configs/app.conf")
@@ -654,7 +654,7 @@ cmd := exec.Command("git", "status")
 
 ## RequireContext（依赖声明）
 
-RequireContext 嵌入了 `ConfigAccessor`，因此 `Bool()`、`String()`、`If()`、`When()` 等方法均可使用。
+RequireContext 嵌入了 `ConfigAccessor`，因此 `Bool()`、`String()`、`If()`、`When()` 等方法均可使用（`OnRequire` 发现阶段的直接读取限制见上文）。
 
 ```go
 // 项目依赖声明
@@ -868,7 +868,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 })
 ```
 
-声明这两个选项用于在 TUI/`vmake config --set` 中可见和可覆盖，值本身可以留空：工具链 `toolchain.json` 中的 `target_os` / `target_triple` 默认值会填补未设置的值。`target_os` 决定产物命名、链接策略和 CMake 的 `CMAKE_SYSTEM_NAME`（裸机为 `none`），空值取运行 vmake 的主机系统；`target_triple` 提供 `Configure` 的 `--host=` 与 `CMAKE_*_COMPILER_TARGET`。用户配置（`.vmake/config.json` 的 `global.options` 或包级配置）与项目声明的非空默认值均优先于工具链默认值；配置中的空字符串视为未设置，会先落回项目声明的默认值、再落回工具链默认值。
+声明这两个选项用于在 TUI/`vmake config --set` 中可见和可覆盖，值本身可以留空：工具链 `toolchain.json` 中的 `target_os` / `target_triple` 默认值会填补未设置的值。`target_os` 决定产物命名、链接策略和 CMake 的 `CMAKE_SYSTEM_NAME`（裸机为 `none`），空值取运行 vmake 的主机系统；`target_triple` 提供 `Configure` 的 `--host=` 与 `CMAKE_*_COMPILER_TARGET`。用户配置（`.vmake/` 当前生效配置文件的 `global.options` 或包级配置，默认文件为 `.vmake/config.json`）与项目声明的非空默认值均优先于工具链默认值；配置中的空字符串视为未设置，会先落回项目声明的默认值、再落回工具链默认值。
 
 `mode` 选项自动添加编译标志：
 
@@ -897,7 +897,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 
 ### 全局选项自动导出 CONFIG_ 宏
 
-通过 `ctx.GlobalOption(...)` 声明的自定义全局选项会自动导出为全局 `-D CONFIG_*` 宏，对构建中的每个包可见，值取当前配置（`.vmake/config.json` 的 `global.options`，未配置时取默认值）。修改配置后宏随之改变，并因进入全局 flags 哈希而使所有包的 BuildKey 失效，无需在 `SetOnApply` 里手写宏字符串。
+通过 `ctx.GlobalOption(...)` 声明的自定义全局选项会自动导出为全局 `-D CONFIG_*` 宏，对构建中的每个包可见，值取当前配置（`.vmake/` 当前生效配置文件的 `global.options`，默认文件为 `.vmake/config.json`；未配置时取默认值）。修改配置后宏随之改变，并因进入全局 flags 哈希而使所有包的 BuildKey 失效，无需在 `SetOnApply` 里手写宏字符串。
 
 | 类型 | 默认宏 | -D 内容 |
 |------|--------|---------|
@@ -909,7 +909,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 
 `SetMacroName(name)` 可覆盖宏名：普通名字整体替换默认名；包含 `%s`/`%v` 时把选项值渲染进宏名（`SetMacroName("PY32F539xx%s")` + 值 `M` → `-DPY32F539xxM=1`），且只生成渲染后的宏。`SetMacroName` 仅对全局选项有效。
 
-`mode`、`toolchain`、`target_os`、`target_triple` 默认不导出，显式 `SetMacroName` 可让其导出。两个全局选项生成同名宏但取值不同时，配置阶段报错；取值相同则去重。
+`mode`、`toolchain`、`target_os`、`target_triple` 默认不导出；`target_os`、`target_triple` 或包内声明的其他全局选项可用 `SetMacroName` 导出，而内置 `mode`/`toolchain` 的合并定义始终取内置对象，包级 `SetMacroName` 只通过校验随后被丢弃，无法导出。两个全局选项生成同名宏但取值不同时，配置阶段报错；取值相同则去重。
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {
@@ -998,7 +998,7 @@ KConfig 用于管理基于 `make defconfig` / `make menuconfig` 的固件项目�
 func (p *Package) AddKConfig(name string) *KConfigEntry  // 创建 KConfigEntry（每包仅支持一个，重复调用 fatal）
 func (p *Package) KConfigEntries() []*KConfigEntry
 func (p *Package) SelectedPreset() string          // 返回选中的 preset 名（优先 selectedPreset，其次 defaultPreset）
-func (p *Package) EnsureConfig(srcDir string) bool  // 检查 .config 是否存在且非空，否则执行 make <preset> 并应用 patches；返回 true 表示重新生成了 .config
+func (p *Package) EnsureConfig(srcDir string) bool  // 检查 .config 是否存在且非空，否则执行 make <preset> 并应用 patches；返回 true 表示重新生成了 .config；未选择 preset 时 fatal
 ```
 
 ### ConfigContext KConfig 方法

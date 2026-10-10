@@ -114,6 +114,10 @@ vmake build --mode debug
 ## Conditional Dependencies (OnRequire)
 
 ```go
+p.OnConfig(func(ctx *api.ConfigContext) {
+	ctx.Option("ssl").SetType(api.OptionBool).SetDefault(false)
+})
+
 p.OnRequire(func(ctx *api.RequireContext) {
 	if ctx.When("ssl", true) {
 		ctx.AddRequires("official/openssl")

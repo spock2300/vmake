@@ -158,7 +158,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 })
 ```
 
-Global flags apply to ALL targets in ALL packages. They are appended in declaration order (duplicates are preserved — no deduplication), buffered per package (flags from packages pruned by `FilterDeps` never leak), and their changes rebuild artifacts (global flags are part of the BuildKey). Use sparingly — prefer Mechanism 1 or 2 unless the flag truly needs cross-package visibility.
+Global flags apply to every target of every package in the build. They are appended in declaration order (duplicates are preserved — no deduplication), buffered per package (flags from packages pruned by `FilterDeps` never leak), and their changes rebuild artifacts (global flags are part of the BuildKey). Use sparingly — prefer Mechanism 1 or 2 unless the flag truly needs cross-package visibility.
 
 **Note**: `val` inside `SetOnApply` is already typed to the declared option type (`string` for Choice) — no `float64` conversion needed for Int options either.
 
@@ -190,7 +190,7 @@ Value rules match `GenerateConfigDefines`:
 | Choice | `"fast"` | `-DCONFIG_X="fast"` + `-DCONFIG_X_FAST=1` |
 
 - `SetMacroName("NAME")` replaces the default name entirely; when the name contains `%s`/`%v`, the option value is rendered into it (`PY32F539xx%s` + `M` → `PY32F539xxM=1`) and only that macro is emitted.
-- `mode`, `toolchain`, `target_os`, `target_triple` are skipped by default; `SetMacroName` opts them in.
+- `mode`, `toolchain`, `target_os`, `target_triple` are skipped by default. `SetMacroName` opts in `target_os`, `target_triple`, or any other package-declared global option; the built-in `mode`/`toolchain` definitions always come from the built-in objects, so a package-level `SetMacroName` on them is validated but discarded and they cannot be exported.
 - `SetMacroName` is only valid on global options (`ctx.GlobalOption`); using it on a package option is a validation error.
 - Two global options producing the same macro with different values abort the configuration phase; identical definitions are deduplicated.
 - A package-level value left in `entries.<pkg>.options` for a global option still wins inside that package, but the exported macro always uses the global value; remove stale entry values when moving an option to `GlobalOption`.

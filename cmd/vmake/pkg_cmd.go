@@ -128,16 +128,20 @@ func searchNativeRepo(repoName, pattern string) {
 
 var pkgCleanCmd = &cobra.Command{
 	Use:   "clean <repo/name>",
-	Short: "Clean package cache",
-	Long:  `Clean package cache. Use --all to also clean source code.`,
+	Short: "Clean package build outputs",
+	Long:  `Remove the package build outputs. Use --all to also remove the package working tree.`,
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		pkgRef := args[0]
 		repoName, pkgName := mustSplitPkgRef(pkgRef)
+		if strings.Contains(pkgName, "/") {
+			fatalMsg("Error: sub-packages are cleaned through their parent package: %s", pkgRef)
+		}
+		fatalErr(invalidateBuildReport())
 
 		sourceMgr := repo.NewSourceManager(getDepsDir(), getCacheDir()).WithSession(commandStorageLocks())
-		fatalErr(sourceMgr.CleanOutputs(repoName, pkgName))
-		fmt.Printf("Cleaned cache for '%s'\n", pkgRef)
+		fatalErr(sourceMgr.CleanOutputs(repo.PackageTreeKey(repoName, pkgName)))
+		fmt.Printf("Cleaned outputs for '%s'\n", pkgRef)
 
 		if pkgCleanAll {
 			fatalErr(sourceMgr.CleanSource(repoName, pkgName))
@@ -165,6 +169,9 @@ var pkgUpdateCmd = &cobra.Command{
 		}
 
 		repoName, pkgName := mustSplitPkgRef(pkgRef)
+		if strings.Contains(pkgName, "/") {
+			fatalMsg("Error: sub-packages are updated through their parent package: %s", pkgRef)
+		}
 
 		repoMgr := getRepoManager()
 		sourceMgr := repo.NewSourceManager(getDepsDir(), getCacheDir()).WithSession(commandStorageLocks())
@@ -174,9 +181,7 @@ var pkgUpdateCmd = &cobra.Command{
 			urlTemplate, err := repoMgr.GetNativeURL(repoName)
 			fatalErr(err)
 			pkg.SetGit(repo.ResolveNativeURL(urlTemplate, pkgName))
-			refsDir, err := sourceMgr.EnsureRefsClone(pkg, true)
-			fatalErr(err)
-			tags, err := repo.ListTags(refsDir)
+			tags, err := repo.ListRemoteTags(pkg.GitURLs())
 			fatalErr(err)
 			pkg.SetVersions(repo.FilterValidVersions(tags))
 		} else {
@@ -196,17 +201,26 @@ var pkgUpdateCmd = &cobra.Command{
 
 		if version != "" {
 			if pkgUpdateDryRun {
-				fmt.Printf("Would fetch %s@%s into the global cache\n", pkgRef, version)
+				fmt.Printf("Would materialize %s@%s into .vmake_deps\n", pkgRef, version)
 				return
 			}
-			res, err := sourceMgr.EnsureVersion(pkg, version, "")
+			ref := pkg.GetRef(version)
+			if ref == "" {
+				ref = version
+			}
+			res, err := sourceMgr.EnsureSource(repo.SourceRequest{
+				Key:     repo.PackageTreeKey(repoName, pkgName),
+				URLs:    pkg.GitURLs(),
+				Version: version,
+				Ref:     ref,
+			})
 			fatalErr(err)
 			fmt.Printf("Updated source for '%s' -> %s@%s (%s)\n", pkgRef, pkgRef, version, shortCommit(res.Commit))
 			return
 		}
 
 		if pkgUpdateDryRun {
-			fmt.Printf("Would fetch latest for '%s' (floating _head clone)\n", pkgRef)
+			fmt.Printf("Would fetch latest for '%s' (floating working tree)\n", pkgRef)
 			return
 		}
 		fatalErr(sourceMgr.UpdateSource(pkg))

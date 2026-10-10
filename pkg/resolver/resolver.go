@@ -342,16 +342,18 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 	var versions map[string]string
 	var selectedVersion string
 	var res *repo.SourceResult
+	key := repo.PackageTreeKey(repoName, pkgName)
+	urls := []string{gitURL}
 
-	if hasPin && r.sourceMgr.HasMaterializedVersion(pkgStub, pinVersion) {
+	if hasPin && pinCommit != "" && r.sourceMgr.HasTreeCommit(key, pinCommit) {
 		if err := r.checkConstraint(id, pinVersion, constraint); err != nil {
 			return nil, err
 		}
-		res, err = r.sourceMgr.EnsureVersion(pkgStub, pinVersion, pinCommit)
+		res, err = r.sourceMgr.EnsureSource(repo.SourceRequest{Key: key, URLs: urls, Version: pinVersion, Commit: pinCommit, ResolveOnly: true})
 		if err != nil {
 			return nil, err
 		}
-		tag, err := repo.DescribeTagContext(r.ctx, filepath.Join(res.VersionDir, "src"))
+		tag, err := repo.DescribeTagContext(r.ctx, res.SrcDir)
 		if err != nil {
 			return nil, err
 		}
@@ -359,36 +361,21 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 		selectedVersion = pinVersion
 		vlog.Info("  %s@%s (pinned, cached)", id, selectedVersion)
 	} else {
-		refsDir, err := r.sourceMgr.EnsureRefsClone(pkgStub, !hasPin)
-		if err != nil {
-			return nil, fmt.Errorf("refs clone for %s: %w", id, err)
-		}
-
-		tags, err := repo.ListTagsContext(r.ctx, refsDir)
+		tags, err := repo.ListRemoteTagsContext(r.ctx, urls)
 		if err != nil {
 			return nil, fmt.Errorf("list tags for %s: %w", id, err)
 		}
 		versions = repo.FilterValidVersions(tags)
-		if hasPin && versions[pinVersion] == "" {
-			refsDir, err = r.sourceMgr.EnsureRefsClone(pkgStub, true)
-			if err != nil {
-				return nil, fmt.Errorf("refs clone for %s: %w", id, err)
-			}
-			tags, err = repo.ListTagsContext(r.ctx, refsDir)
-			if err != nil {
-				return nil, fmt.Errorf("list tags for %s: %w", id, err)
-			}
-			versions = repo.FilterValidVersions(tags)
-		}
 		if len(versions) == 0 {
 			return nil, fmt.Errorf("no valid versions found for %s", id)
 		}
 		pkgStub.SetVersions(versions)
 
-		selectedVersion, _, err = r.selectNativeVersion(id, versions, constraint)
+		selected, ref, err := r.selectNativeVersion(id, versions, constraint)
 		if err != nil {
 			return nil, err
 		}
+		selectedVersion = selected
 
 		vlog.Info("  %s@%s", id, selectedVersion)
 
@@ -396,17 +383,19 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 		if selectedVersion == pinVersion {
 			expectedCommit = pinCommit
 		}
-		res, err = r.sourceMgr.EnsureVersion(pkgStub, selectedVersion, expectedCommit)
+		res, err = r.sourceMgr.EnsureSource(repo.SourceRequest{
+			Key: key, URLs: urls, Version: selectedVersion, Ref: ref, Commit: expectedCommit, ResolveOnly: true,
+		})
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	buildGo := filepath.Join(res.LocalSrc, "build.go")
+	buildGo := filepath.Join(res.SrcDir, "build.go")
 	if !fs.FileExists(buildGo) {
-		return nil, fmt.Errorf("build.go not found in %s", res.LocalSrc)
+		return nil, fmt.Errorf("build.go not found in %s", res.SrcDir)
 	}
-	src := buildscript.NewSource(id, buildGo, res.LocalSrc, api.SourceRemote)
+	src := buildscript.NewSource(id, buildGo, res.SrcDir, api.SourceRemote)
 	src.Repo = repoName
 
 	r.sources[id] = src
@@ -433,7 +422,7 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 		}
 	}
 
-	r.scanSubPackages(id, res.LocalSrc)
+	r.scanSubPackages(id, res.SrcDir)
 
 	return src, nil
 }
@@ -464,6 +453,12 @@ func (r *Resolver) selectNativeVersion(id string, versions map[string]string, co
 
 func (r *Resolver) pinnedVersion(id string) (version, commit string, ok bool) {
 	if v, ok := r.configPins[id]; ok && v != "" {
+		// A config pin takes precedence over tag selection, but a matching
+		// lock entry still supplies the commit so a materialized tree can be
+		// reused offline.
+		if locked, lok := r.lockfileEntry(id); lok && locked.Version == v && locked.Commit != "" {
+			return v, locked.Commit, true
+		}
 		return v, "", true
 	}
 	if locked, ok := r.lockfileEntry(id); ok {

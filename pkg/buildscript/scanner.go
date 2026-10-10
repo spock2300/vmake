@@ -16,6 +16,7 @@ import (
 var skipDirs = map[string]bool{
 	".git":         true,
 	".vmake":       true,
+	".vmake_deps":  true,
 	"build":        true,
 	"vendor":       true,
 	"node_modules": true,
@@ -103,6 +104,13 @@ func ScanSubPackages(rootDir string, parentID string) ([]Source, error) {
 			name := info.Name()
 			if skipDirs[name] || strings.HasPrefix(name, ".") {
 				return filepath.SkipDir
+			}
+			// A nested repository (e.g. a native member's own SetGit working
+			// tree at <member>/src) is not a sub-package of the parent.
+			if path != rootDir {
+				if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
+					return filepath.SkipDir
+				}
 			}
 			return nil
 		}

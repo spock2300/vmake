@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -8,7 +10,9 @@ import (
 	"github.com/spock2300/vmake/internal/storage"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
+	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
+	"github.com/spock2300/vmake/pkg/resolver"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -90,35 +94,50 @@ func TestInspectWithOptionsSkipsUnresolvedPackages(t *testing.T) {
 	}
 }
 
-func TestInspectMatchesNativeMemberSourceLinks(t *testing.T) {
-	for _, member := range []string{"src", "src/sub", "out", "normal", "nested/member"} {
-		for _, setGit := range []bool{false, true} {
-			label := member
-			if setGit {
-				label += "/setgit"
-			}
-			t.Run(label, func(t *testing.T) {
-				s, _, name := nativeMemberLinkFixture(t, member, setGit)
-				if err := s.setupSubPackageDirs(s.ctx.Paths.DepsDir); err != nil {
-					t.Fatal(err)
-				}
-				if err := s.cloneSubPackageGitSources(); err != nil {
-					t.Fatal(err)
-				}
-				node := s.ctx.DepGraph.Packages[name]
-				sourceDir := node.Pkg.SrcDir()
-				node.Pkg.SetSrcDir("").SetDirs(api.PkgDirs{})
-				inspection, err := Inspect(s.ctx)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if !reflect.DeepEqual(inspection.PkgDirs[name], s.pkgDirs[name]) {
-					t.Fatalf("inspection/build directories differ: %+v / %+v", inspection.PkgDirs[name], s.pkgDirs[name])
-				}
-				if setGit && node.Pkg.SrcDir() != sourceDir {
-					t.Fatalf("inspected SetGit source = %s, want %s", node.Pkg.SrcDir(), sourceDir)
-				}
-			})
-		}
+func TestInspectRemoteTreeDirs(t *testing.T) {
+	host, err := toolchain.GetManager().GetToolchain("host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := build.ResolveTools(host, api.Platform{}); err != nil {
+		t.Skipf("host tools unavailable: %v", err)
+	}
+	s := sessionFixture(t)
+	owner, name, member := "native/root", "native/root/member", "member"
+	tree := remoteTreeDir(s.ctx, owner)
+	memberDir := filepath.Join(tree, "src", member)
+	if err := os.MkdirAll(memberDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(memberDir, "build.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	parent := resolver.NewPackageNode(owner,
+		buildscript.NewSource(owner, filepath.Join(tree, "src", "build.go"), filepath.Join(tree, "src"), api.SourceRemote), api.NewPackage())
+	parent.WithNative("unused", nil, "1.0.0")
+	parent.Native.Commit = "owner-commit"
+	node := resolver.NewPackageNode(name,
+		buildscript.NewSource(name, filepath.Join(memberDir, "build.go"), memberDir, api.SourceRemote), api.NewPackage())
+	s.ctx.DepGraph.Packages[owner], s.ctx.DepGraph.Packages[name] = parent, node
+	delete(s.ctx.DepGraph.Packages, "dep")
+	s.ctx.DepGraph.Order = []string{owner, name, "app"}
+	s.ctx.Resolver.SubParents()[name] = owner
+	s.ctx.DepGraph.Packages["app"].Pkg.SetRoot(true)
+	s.ctx.DepGraph.Packages["app"].Deps = []string{owner, name}
+	s.globalFlagsHash = build.GlobalFlagsHash()
+
+	inspection, err := Inspect(s.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirs := inspection.PkgDirs[name]
+	if dirs == nil {
+		t.Fatal("member directories were not inspected")
+	}
+	if dirs.SourceDir != memberDir {
+		t.Fatalf("member SourceDir = %s, want %s", dirs.SourceDir, memberDir)
+	}
+	if !strings.HasPrefix(dirs.BuildDir, filepath.Join(tree, "out")+string(filepath.Separator)) {
+		t.Fatalf("member BuildDir = %s, want under %s", dirs.BuildDir, filepath.Join(tree, "out"))
 	}
 }

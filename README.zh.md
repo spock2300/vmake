@@ -30,23 +30,43 @@ go install github.com/spock2300/vmake/cmd/vmake@latest
 
 ### Windows
 
-vmake 可在 Windows 上原生运行。有两个前提 vmake 自身无法提供：
+vmake 可在 Windows 上原生运行，并支持在 Windows 主机上进行 ARM 裸机构建。有两个前提 vmake 自身无法提供：
 
 1. **Git for Windows** —— 请安装**完整版安装器**，不要用 MinGit。vmake 会自动定位其自带的
    MSYS 用户态工具（`sh`、coreutils、`sed`/`awk`/`grep`/`find`、`tar`、`unzip`、`curl`），
    并把对应目录前置到自己的 `PATH`。同时，vmake 对所有 git 调用强制
    `core.autocrlf=false`/`core.eol=lf`，因此无论安装器里"换行符转换"如何选择，缓存中的
    检出内容都与仓库逐字节一致。
-2. **MinGW-w64 GCC 工具链** —— Git for Windows 既不带 C 编译器也不带 `make`。请安装
-   MinGW-w64（或 MSYS2），确保 `gcc`、`g++`、`ar`、`ranlib`、`strip`、`nm`、`objcopy`、
-   `make` 在 `PATH` 上。
+2. **面向目标平台的工具链** —— 裸机固件请选择 ARM GNU 工具链，原生 Windows 二进制请选择
+   MinGW-w64；ARM 构建不需要本机 MinGW C 编译器。请安装构建脚本会用到的宿主工具：
+   Windows 上 CMake 默认使用 Ninja；`p.Make()`、preset 生成和默认 menuconfig 需要所选
+   工具链的 `make` 程序。普通 C/C++ 构建，以及已有配置的自定义 menuconfig 程序，不需要
+   默认 make；显式配置的 MAKE 仍会被校验。Git for Windows 既不带 C 编译器也不带 make。
 
 vmake 的存储布局依赖符号链接，而 Windows 仅在**开发者模式**（设置 → 系统 → 开发者选项）
 或管理员终端下允许创建。运行 `vmake doctor` 可检查以上全部前提：它会报告符号链接、
-Git 用户态工具、`make` 与 C 工具链的状态，且不需要当前目录存在项目即可报告这些信息。
+Git 用户态工具、`make` 与所选 C 工具链的状态；使用 `vmake doctor --toolchain NAME`
+可诊断指定工具链。
 
-除 `vmake check-symbols` 外，Windows 上所有功能均可用。该命令读取 ELF 动态符号，
-在 Windows 上会明确拒绝执行。
+工具链描述要运行哪些程序，还可声明 `target_os`（裸机为 `none`）与 `target_triple`
+（如 `arm-none-eabi`）默认值。项目在需要查看或覆盖这些值时声明对应的全局选项，并自行
+负责匹配的 CPU/ABI 标志；显式的项目值始终优先于工具链默认值。目标 OS 独立于宿主 OS
+决定产物命名、链接器标志和 CMake 设置。
+`vmake test` 运行本机测试二进制；交叉编译的测试目标请使用 `vmake build --tests`。
+`vmake check-symbols` 在任一宿主平台上都能用所选工具链的 `nm` 检查 ELF 动态符号；
+PE 文件和不含动态符号表的 ELF 文件会报告为不适用。Windows 子图行为不在当前兼容性验证范围内。
+
+GCC 与 Clang 汇编输入会同时跟踪汇编器 `.include` 文件和 `.S` 预处理头文件。Clang 需要其
+驱动支持的外部 GNU 汇编器；请通过工具链标志配置目标与汇编器搜索路径（按需使用
+`--target` 和 `-B`）。macOS 上 Apple 汇编器没有依赖文件选项，因此那里的 `.s`/`.S`
+跟踪仅限 `.S` 预处理头文件。Clang 裸机支持不在本次验证范围内；Windows ARM 固件构建请
+使用 GNU ARM GCC。
+
+从 Linux 交叉构建 Windows 可执行文件（禁用 CGO）：
+
+```bash
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o vmake.exe ./cmd/vmake
+```
 
 ### macOS
 
@@ -138,14 +158,20 @@ vmake/
 │   ├── tui/             # 终端用户界面
 │   └── version/         # 版本信息
 ├── internal/
+│   ├── assets/          # 工具链资源下载/解压（HTTP、Git LFS）
+│   ├── buildruntime/    # make/CMake helper 的并行预算
 │   ├── exec/            # 命令执行
 │   ├── flock/           # 文件锁（跨项目同步）
 │   ├── fs/              # 文件系统工具
+│   ├── gitcmd/          # 携带 vmake 所需 git 配置的参数
 │   ├── gitstore/        # Git 仓库管理（共享基础设施）
+│   ├── gitusr/          # Git for Windows 用户态工具发现
 │   ├── glob/            # 文件匹配
 │   ├── gosrc/           # Go 源码合并（buildscript + plugin 共用）
 │   ├── jsonio/          # JSON 序列化
+│   ├── scriptcall/      # 解释回调的 panic 恢复
 │   ├── scriptfs/        # 解释代码的脚本相对文件 IO
+│   ├── storage/         # 项目/缓存锁会话
 │   ├── toposort/        # 拓扑排序
 │   ├── yaegibase/       # yaegi 解释器初始化 helper
 │   └── yaegisym/        # cobra/pflag 的 yaegi 符号表（go generate）
@@ -252,6 +278,10 @@ vmake ext add <name> <git-url>
 
 2. 插件在下次运行时自动发现并解释执行，重启 vmake 即可使用
 
+工具链定义独立加载。无效或旧版 manifest，以及缺少当前主机对应安装项的定义，会由
+`vmake toolchain list` 报告；健康的工具链仍可使用。选择无效工具链会以原始错误失败，
+绝不会改选 host 工具链。内置 `vmake ext` 命令会跳过插件执行，因此损坏的扩展仍可更新或移除。
+
 详见 [扩展插件指南](docs/EXTENSION_PLUGIN.md) 获取完整的插件编写教程、所有接口参考和实战示例。
 
 ## 命令行用法
@@ -262,7 +292,7 @@ vmake ext add <name> <git-url>
 vmake build [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k]
 vmake test
 vmake clean [--all]
-vmake distclean [--purge-cache]
+vmake distclean
 vmake rebuild
 ```
 
@@ -313,11 +343,11 @@ vmake ext update [name]
 
 ```bash
 vmake git tag [version] [--minor|--major] [--no-push] [-m|--message <msg>]   # 版本标签
-vmake query [targets|config]                          # 显示依赖树 / 包配置
+vmake query [targets|config <pkg>]                    # 显示依赖树 / 包配置
 vmake check-symbols [--strict]                        # 扫描已构建产物的符号问题
 vmake lock update|show                                # 重新解析 / 显示固定版本（.vmake/vmake.lock）
 vmake init-editor                                     # 为 build.go 生成编辑器支持文件
-vmake doctor                                          # 诊断 build.go 模式
+vmake doctor                                          # 诊断平台前提与 build.go 模式
 vmake manifest show <path>                            # 显示清单内容
 vmake manifest checkout <path> [name]                 # 按清单检出版本
 vmake completion <shell>                              # 生成 shell 自动补全 (bash|zsh|fish|powershell)
@@ -371,6 +401,7 @@ vmake skill path                                      # 显示安装路径
 | `test_data/22_version_script` | 版本脚本链接器集成 |
 | `test_data/23_link_strategy` | 链接策略测试 |
 | `test_data/24_symbol_prefix` | 符号前缀（objcopy --prefix-symbols） |
+| `test_data/25_subpackage` | Native 远程包内的子包解析（注册/信任本地 `subtest` 仓库） |
 | `test_linux/17_firmware` | 完整固件构建（Linux, U-Boot, BusyBox, App, RootFS, Firmware） |
 
 ## 许可证
