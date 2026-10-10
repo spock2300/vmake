@@ -213,7 +213,6 @@ BuildPipeline
 ├── RootDir      string
 ├── IncludeTests bool
 ├── PkgKeyExtra  map[string]string
-├── PkgLockDir   string
 ├── NumWorkers   int
 ├── Session      *Session
 ├── PackageToolchains map[string]*toolchain.Toolchain
@@ -514,7 +513,6 @@ EntryConfig
 - `SetGenConfigHeader(v bool)` — 启用或禁用配置头文件自动生成
 - `GenConfigHeader()` — 获取配置头文件生成开关状态
 - `SetScriptDir(dir)` — 设置构建脚本目录
-- `SetOutputDir(dir)` — 设置输出目录
 - `SetCfgVals(vals)` — 设置配置值
 - `SelectVersionMulti(constraints)` — 多约束版本选择
 - `SelectedPreset()` — 返回已选中的 KConfig preset 名称
@@ -583,8 +581,8 @@ type KConfigEntry struct {
 
 `Package.EnsureConfig(srcDir) bool` 是 KConfig 构建的核心抽象：
 
-1. 检查 `.config` 是否存在且大小 > 0 → 如果有效，返回 `false`（无需重新生成）
-2. 执行 `make <selectedPreset>` 生成 `.config`
+1. 检查 KConfig 配置（`ConfigPath()`，默认 `.config`）在 `srcDir` 下是否存在且大小 > 0 → 如果有效，返回 `false`（无需重新生成）
+2. 配置缺失或为空时，以 `KCONFIG_CONFIG` 指向该文件执行 `make <selectedPreset>`（默认路径不设置该变量）
 3. 应用 `SetKConfigPatches` 中定义的 post-defconfig 补丁（按行前缀匹配替换）
 4. 返回 `true`（已重新生成配置）
 

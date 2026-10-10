@@ -224,7 +224,7 @@ vmake test
 - Language is auto-detected from file extension (`.c` → C, `.cpp` → C++) — no need to set manually; `SetLanguages` only records the value and is not consumed by the scheduler
 - Mode flags are appended after target flags (target → mode → global), so per-target `-O*` flags lose to the mode's `-O2`/`-O0` for GCC — select the mode instead (`vmake build --mode debug`); see `SKILL.md - Global Flags & Mode Flags`
 - The builtin `host` toolchain already injects `-Wall -Wextra` and `-fPIC` when compiling and `-Wl,--as-needed` when linking (ELF targets), so the targets don't repeat them; see `SKILL.md - Default Build Flags`
-- Global options may be declared by multiple packages, but each declaration must use the same `Type` and `Default` — only global options are cross-validated; see `SKILL.md - GlobalOption Cross-Package Consistency`
+- Global options may be declared by multiple packages, but each declaration must use the same `Type`, `Default` and `SetValues`, with any non-empty `SetMacroName` identical — only global options are cross-validated; see `SKILL.md - GlobalOption Cross-Package Consistency`
 - `benchmark` uses `SetTest(true)`, so `vmake test` builds and runs it; `debug_info` keeps `SetDefault(false)` and is never built automatically (listed as `[disabled]`)
 
 ## See Also

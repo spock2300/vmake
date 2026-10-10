@@ -84,7 +84,11 @@ func ensureConfigCmd(pkgName string, entries []*api.KConfigEntry, workDir string
 		if srcDir == "" {
 			srcDir = workDir
 		}
-		configPath := filepath.Join(srcDir, e.ConfigPath())
+		configName := e.ConfigPath()
+		if configName == "" {
+			configName = ".config"
+		}
+		configPath := filepath.Join(srcDir, configName)
 		if info, err := os.Stat(configPath); err == nil && info.Size() > 0 {
 			return menuconfigDone{pkgName: pkgName, ensured: true}
 		}
@@ -100,7 +104,11 @@ func ensureConfigCmd(pkgName string, entries []*api.KConfigEntry, workDir string
 			return menuconfigDone{pkgName: pkgName, ensured: true, err: fmt.Errorf("generate preset %s: %w", presetName, err)}
 		}
 		args := []string{"-C", filepath.ToSlash(srcDir), presetName}
-		_, err = iexec.RunWithOptions(makeTool, args, iexec.RunOptions{Quiet: true})
+		opts := iexec.RunOptions{Quiet: true}
+		if configName != ".config" {
+			opts.Env = map[string]string{"KCONFIG_CONFIG": filepath.ToSlash(configPath)}
+		}
+		_, err = iexec.RunWithOptions(makeTool, args, opts)
 		if err == nil {
 			err = api.ApplyKConfigPatches(configPath, e.Patches())
 		}
@@ -141,6 +149,9 @@ func menuconfigProcess(entry *api.KConfigEntry, workDir string, resolveMake make
 	}
 	cmd := exec.Command(program, args...)
 	cmd.Dir = srcDir
+	if configName := entry.ConfigPath(); configName != "" && configName != ".config" {
+		cmd.Env = append(cmd.Environ(), "KCONFIG_CONFIG="+filepath.ToSlash(filepath.Join(srcDir, configName)))
+	}
 	return cmd, nil
 }
 

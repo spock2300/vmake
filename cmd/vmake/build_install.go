@@ -47,7 +47,7 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) (err error) {
 
 	effectivePrefix := prefixFlag
 	if effectivePrefix == "" {
-		effectivePrefix = filepath.Join(ctx.WorkDir, "install")
+		effectivePrefix = filepath.Join(ctx.Paths.ProjectDir, "install")
 	}
 
 	vlog.Info("")

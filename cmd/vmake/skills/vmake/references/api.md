@@ -62,7 +62,6 @@ Import: `github.com/spock2300/vmake/pkg/api`
 | `SetSubmodules` | `(v bool)` | Enable git submodules |
 | `SetRepo` | `(repo string)` | Repository name |
 | `SetName` | `(name string)` | Package name |
-| `SetOutputDir` | `(dir string)` | Output directory |
 | `SetDirs` | `(dirs PkgDirs)` | Source/Build/Install directories |
 | `SetToolchain` | `(tc *toolchain.Toolchain)` | Set toolchain |
 | `AddPatches` | `(paths ...string)` | Git patches to apply |
@@ -200,7 +199,6 @@ own build tree and publish the staged archive through the getter.
 | `InstallDir()` | `string` | Installation prefix |
 | `CMakeBuildDir()` | `string` | CMake build tree, default BuildDir()/cmake |
 | `CMakeInstallDir()` | `string` | CMake installation prefix, default remote InstallDir() or local BuildDir()/staging |
-| `OutputDir()` | `string` | Output directory |
 | `ScriptDir()` | `string` | Build script directory (set via `SetScriptDir`; defaults to `""`) |
 | `Env()` | `map[string]string` | Toolchain env vars (CC, CXX, AR, etc.) |
 | `Deps()` | `map[string]*InstalledPackage` | Resolved dependencies |

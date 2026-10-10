@@ -84,7 +84,7 @@ func TestHasSetRootTrue(t *testing.T) {
 	_ = os.WriteFile(path, []byte(`package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) { p.SetRoot(true) }`), 0644)
-	if !hasSetRoot(path) {
+	if !hasSetRoot(buildscript.Source{Path: path, Dir: dir}) {
 		t.Error("hasSetRoot should detect SetRoot(true)")
 	}
 }
@@ -95,13 +95,25 @@ func TestHasSetRootFalse(t *testing.T) {
 	_ = os.WriteFile(path, []byte(`package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) { p.OnBuild(func(ctx *api.BuildContext) {}) }`), 0644)
-	if hasSetRoot(path) {
+	if hasSetRoot(buildscript.Source{Path: path, Dir: dir}) {
 		t.Error("hasSetRoot should return false when no SetRoot(true)")
 	}
 }
 
+func TestHasSetRootInSiblingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "build.go")
+	_ = os.WriteFile(path, []byte("package main\nfunc Main() {}\n"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "root.go"), []byte("package main\nfunc root() { _ = \"SetRoot(true)\" }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if !hasSetRoot(buildscript.Source{Path: path, Dir: dir}) {
+		t.Error("hasSetRoot should scan sibling files")
+	}
+}
+
 func TestHasSetRootMissingFile(t *testing.T) {
-	if hasSetRoot("/nonexistent/build.go") {
+	if hasSetRoot(buildscript.Source{Path: "/nonexistent/build.go"}) {
 		t.Error("hasSetRoot should return false for missing file")
 	}
 }
@@ -111,6 +123,22 @@ func TestCheckAutoWireMissingFile(t *testing.T) {
 	findings := checkAutoWire(src)
 	if len(findings) != 0 {
 		t.Errorf("missing file → no findings, got %v", findings)
+	}
+}
+
+func TestCheckAutoWireAddDepsInSiblingFile(t *testing.T) {
+	dir := t.TempDir()
+	src := makeBuildGoInDir(dir, "split", `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
+}`)
+	if err := os.WriteFile(filepath.Join(dir, "targets.go"), []byte("package main\nfunc targets() string { return \"AddDeps\" }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	findings := checkAutoWire(src)
+	if len(findings) != 0 {
+		t.Errorf("AddDeps in sibling file → no findings, got %v", findings)
 	}
 }
 

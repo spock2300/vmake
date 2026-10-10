@@ -14,7 +14,6 @@ import (
 	"sync"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
-	"github.com/spock2300/vmake/internal/flock"
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/glob"
 	"github.com/spock2300/vmake/pkg/api"
@@ -88,7 +87,6 @@ type Scheduler struct {
 	rootDir       string
 	includeTests  bool
 	pkgKeyExtra   map[string]string
-	pkgLockDir    string
 	numWorkers    int
 	keepGoing     bool
 
@@ -180,10 +178,6 @@ func (s *Scheduler) SetPkgKeyExtra(extra map[string]string) {
 	}
 }
 
-func (s *Scheduler) SetPkgLockDir(dir string) {
-	s.pkgLockDir = dir
-}
-
 func (s *Scheduler) SetNumWorkers(n int) {
 	s.numWorkers = n
 }
@@ -201,19 +195,6 @@ func (s *Scheduler) pkgExtra(pkgName string) string {
 		return ""
 	}
 	return s.pkgKeyExtra[pkgName]
-}
-
-func (s *Scheduler) lockPackage(pkgName string) (func(), error) {
-	if s.pkgLockDir == "" {
-		return func() {}, nil
-	}
-	h := sha256.Sum256([]byte(pkgName))
-	safe := strings.ReplaceAll(pkgName, "/", "_") + "_" + hex.EncodeToString(h[:4])
-	l, err := flock.AcquireContext(s.ctx, filepath.Join(s.pkgLockDir, safe+".lock"))
-	if err != nil {
-		return nil, fmt.Errorf("acquire build lock for %s: %w", pkgName, err)
-	}
-	return func() { _ = l.Release() }, nil
 }
 
 func (s *Scheduler) SetPkgDirs(pkgName string, dirs *api.PkgDirs) {
@@ -316,17 +297,6 @@ func (s *Scheduler) Build(fullName string) error {
 	}
 	workDir := pkgInfo.SourceDir
 
-	// The package lock serializes access to the SHARED remote out/<key>
-	// directory in the global cache. Local package build dirs are
-	// project-private — locking them by bare package name would serialize
-	// unrelated projects that happen to use the same local package name.
-	if meta, ok := s.graph.PkgMeta[node.PkgName]; ok && meta.IsRemote() {
-		release, err := s.lockPackage(node.PkgName)
-		if err != nil {
-			return err
-		}
-		defer release()
-	}
 	vlog.Info("[%s]", fullName)
 
 	resolved, err := s.resolveTarget(node)

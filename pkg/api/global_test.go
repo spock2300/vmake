@@ -74,6 +74,127 @@ func TestMergeGlobalOptionsConflictDefaultMismatch(t *testing.T) {
 	}
 }
 
+func TestMergeGlobalOptionsBuiltinMacroOptIn(t *testing.T) {
+	mode := (&Option{}).
+		SetType(OptionChoice).
+		SetDefault(ModeRelease).
+		SetGroup(GroupGlobal).
+		SetMacroName("CONFIG_BUILD_MODE")
+	all := map[string]map[string]*Option{
+		"pkg": {ModeOptionName: mode},
+	}
+	got, err := MergeGlobalOptions(all, nil)
+	if err != nil {
+		t.Fatalf("MergeGlobalOptions: %v", err)
+	}
+	if got[ModeOptionName].MacroName() != "CONFIG_BUILD_MODE" {
+		t.Fatalf("mode macro = %q", got[ModeOptionName].MacroName())
+	}
+	if BuiltInGlobalOptions[ModeOptionName].MacroName() != "" {
+		t.Fatal("merge must not mutate the built-in option")
+	}
+}
+
+func TestMergeGlobalOptionsBuiltinMacroConflict(t *testing.T) {
+	mode := func(macro string) map[string]*Option {
+		return map[string]*Option{ModeOptionName: (&Option{}).
+			SetType(OptionChoice).
+			SetDefault(ModeRelease).
+			SetGroup(GroupGlobal).
+			SetMacroName(macro)}
+	}
+	all := map[string]map[string]*Option{
+		"pkg-a": mode("CONFIG_A"),
+		"pkg-b": mode("CONFIG_B"),
+	}
+	if _, err := MergeGlobalOptions(all, nil); err == nil {
+		t.Fatal("conflicting built-in macro names should fail")
+	}
+}
+
+func TestMergeGlobalOptionsBuiltinMacroMixedDeclarations(t *testing.T) {
+	withMacro := (&Option{}).SetType(OptionChoice).SetDefault(ModeRelease).SetGroup(GroupGlobal).SetMacroName("CONFIG_BUILD_MODE")
+	plain := (&Option{}).SetType(OptionChoice).SetDefault(ModeRelease).SetGroup(GroupGlobal)
+	for _, tc := range []struct {
+		name string
+		all  map[string]map[string]*Option
+	}{
+		{"macro-first", map[string]map[string]*Option{
+			"pkg-a": {ModeOptionName: withMacro},
+			"pkg-b": {ModeOptionName: plain},
+		}},
+		{"macro-last", map[string]map[string]*Option{
+			"pkg-a": {ModeOptionName: plain},
+			"pkg-b": {ModeOptionName: withMacro},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := MergeGlobalOptions(tc.all, nil)
+			if err != nil {
+				t.Fatalf("MergeGlobalOptions: %v", err)
+			}
+			if got[ModeOptionName].MacroName() != "CONFIG_BUILD_MODE" {
+				t.Fatalf("mode macro = %q", got[ModeOptionName].MacroName())
+			}
+			if BuiltInGlobalOptions[ModeOptionName].MacroName() != "" {
+				t.Fatal("merge must not mutate the built-in option")
+			}
+		})
+	}
+}
+
+func TestMergeGlobalOptionsMacroNameNoPreference(t *testing.T) {
+	plain := (&Option{}).SetType(OptionBool).SetDefault(true).SetGroup(GroupGlobal)
+	withMacro := (&Option{}).SetType(OptionBool).SetDefault(true).SetGroup(GroupGlobal).SetMacroName("CONFIG_FLAG")
+	for _, tc := range []struct {
+		name string
+		all  map[string]map[string]*Option
+	}{
+		{"macro-first", map[string]map[string]*Option{
+			"pkg-a": {"flag": withMacro},
+			"pkg-b": {"flag": plain},
+		}},
+		{"macro-last", map[string]map[string]*Option{
+			"pkg-a": {"flag": plain},
+			"pkg-b": {"flag": withMacro},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := MergeGlobalOptions(tc.all, nil)
+			if err != nil {
+				t.Fatalf("MergeGlobalOptions: %v", err)
+			}
+			if got["flag"].MacroName() != "CONFIG_FLAG" {
+				t.Fatalf("macro = %q", got["flag"].MacroName())
+			}
+		})
+	}
+}
+
+func TestMergeGlobalOptionsCustomMacroConflict(t *testing.T) {
+	a := (&Option{}).SetType(OptionBool).SetDefault(true).SetGroup(GroupGlobal).SetMacroName("CONFIG_A")
+	b := (&Option{}).SetType(OptionBool).SetDefault(true).SetGroup(GroupGlobal).SetMacroName("CONFIG_B")
+	all := map[string]map[string]*Option{
+		"pkg-a": {"flag": a},
+		"pkg-b": {"flag": b},
+	}
+	if _, err := MergeGlobalOptions(all, nil); err == nil {
+		t.Fatal("conflicting macro names should fail")
+	}
+}
+
+func TestMergeGlobalOptionsValuesMismatch(t *testing.T) {
+	a := (&Option{}).SetType(OptionChoice).SetDefault("x").SetValues("x", "y").SetGroup(GroupGlobal)
+	b := (&Option{}).SetType(OptionChoice).SetDefault("x").SetValues("x", "z").SetGroup(GroupGlobal)
+	all := map[string]map[string]*Option{
+		"pkg-a": {"c": a},
+		"pkg-b": {"c": b},
+	}
+	if _, err := MergeGlobalOptions(all, nil); err == nil {
+		t.Fatal("values mismatch should fail")
+	}
+}
+
 func TestGetModeFlags(t *testing.T) {
 	tests := []struct {
 		mode        string
@@ -457,15 +578,11 @@ func TestPackageSubmodules(t *testing.T) {
 	}
 }
 
-func TestPackageScriptDirAndOutputDir(t *testing.T) {
+func TestPackageScriptDir(t *testing.T) {
 	p := NewPackage()
 	p.SetScriptDir("/script")
-	p.SetOutputDir("/output")
 	if p.ScriptDir() != "/script" {
 		t.Errorf("ScriptDir = %q", p.ScriptDir())
-	}
-	if p.OutputDir() != "/output" {
-		t.Errorf("OutputDir = %q", p.OutputDir())
 	}
 }
 

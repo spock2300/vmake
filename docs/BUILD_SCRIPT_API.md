@@ -123,7 +123,6 @@ func (p *Package) BuildDir() string
 func (p *Package) InstallDir() string
 func (p *Package) CMakeBuildDir() string
 func (p *Package) CMakeInstallDir() string
-func (p *Package) OutputDir() string
 func (p *Package) ScriptDir() string
 ```
 
@@ -261,7 +260,6 @@ func (p *Package) ConfigFiles() []string
 ```go
 func (p *Package) SetSrcDir(dir string) *Package    // 设置源码目录（与 SourceDir 不同，当 SetGit 下载源码时使用）
 func (p *Package) SrcDir() string                    // 注意：当 SetGit 下载源码时，SrcDir 返回 <SourceDir>/src/，而非 SourceDir
-func (p *Package) SetOutputDir(dir string) *Package
 ```
 
 ### DryRun
@@ -893,7 +891,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 })
 ```
 
-全局选项在所有 Package 间共享。如果多个 Package 定义同名全局选项，类型和默认值必须一致。
+全局选项在所有 Package 间共享。如果多个 Package 定义同名全局选项，类型、默认值和取值列表必须一致；`SetMacroName` 允许只在部分声明中给出，但非空的宏名必须一致（声明按包名顺序确定性合并，`SetDescription`/`SetGroup` 等展示字段取第一个声明）。
 
 ### 全局选项自动导出 CONFIG_ 宏
 
@@ -909,7 +907,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 
 `SetMacroName(name)` 可覆盖宏名：普通名字整体替换默认名；包含 `%s`/`%v` 时把选项值渲染进宏名（`SetMacroName("PY32F539xx%s")` + 值 `M` → `-DPY32F539xxM=1`），且只生成渲染后的宏。`SetMacroName` 仅对全局选项有效。
 
-`mode`、`toolchain`、`target_os`、`target_triple` 默认不导出；`target_os`、`target_triple` 或包内声明的其他全局选项可用 `SetMacroName` 导出，而内置 `mode`/`toolchain` 的合并定义始终取内置对象，包级 `SetMacroName` 只通过校验随后被丢弃，无法导出。两个全局选项生成同名宏但取值不同时，配置阶段报错；取值相同则去重。
+`mode`、`toolchain`、`target_os`、`target_triple` 默认不导出；重新声明该选项并设置 `SetMacroName` 即可导出（`mode`/`toolchain` 的重声明需与内置类型和默认值一致，宏名冲突时配置阶段报错）。两个全局选项生成同名宏但取值不同时，配置阶段报错；取值相同则去重。
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {
@@ -998,7 +996,7 @@ KConfig 用于管理基于 `make defconfig` / `make menuconfig` 的固件项目�
 func (p *Package) AddKConfig(name string) *KConfigEntry  // 创建 KConfigEntry（每包仅支持一个，重复调用 fatal）
 func (p *Package) KConfigEntries() []*KConfigEntry
 func (p *Package) SelectedPreset() string          // 返回选中的 preset 名（优先 selectedPreset，其次 defaultPreset）
-func (p *Package) EnsureConfig(srcDir string) bool  // 检查 .config 是否存在且非空，否则执行 make <preset> 并应用 patches；返回 true 表示重新生成了 .config；未选择 preset 时 fatal
+func (p *Package) EnsureConfig(srcDir string) bool  // 检查 KConfig 配置（ConfigPath()，默认 ".config"）是否存在且非空，否则以 KCONFIG_CONFIG 指向该文件执行 make <preset> 并应用 patches；返回 true 表示重新生成了配置；未选择 preset 时 fatal
 ```
 
 ### ConfigContext KConfig 方法
@@ -1013,7 +1011,7 @@ func (ctx *ConfigContext) KConfig(name string) *KConfigEntry  // 创建 KConfigE
 // 获取方法
 func (k *KConfigEntry) Name() string
 func (k *KConfigEntry) Description() string
-func (k *KConfigEntry) ConfigPath() string     // 默认 ".config"
+func (k *KConfigEntry) ConfigPath() string     // 默认 ".config"；TUI、恢复与 EnsureConfig 均使用该路径
 func (k *KConfigEntry) SrcDir() string
 func (k *KConfigEntry) Presets() []string
 func (k *KConfigEntry) DefaultPreset() string
@@ -1033,7 +1031,7 @@ func (k *KConfigEntry) SelectPreset(name string) *KConfigEntry
 func (k *KConfigEntry) SetKConfigPatches(patches map[string]string) *KConfigEntry
 ```
 
-`SetMenuconfigCmd` 分别接收可执行程序和参数，例如 `SetMenuconfigCmd("C:/Program Files/Kconfig/menu.exe", "--config", "project config")`。命令在 `SrcDir` 下执行，参数不经过 shell 拆分。未设置时运行所选工具链的 `make menuconfig`；生成 preset 始终使用所选工具链的 make，与自定义 menuconfig 命令无关。
+`SetMenuconfigCmd` 分别接收可执行程序和参数，例如 `SetMenuconfigCmd("C:/Program Files/Kconfig/menu.exe", "--config", "project config")`。命令在 `SrcDir` 下执行，参数不经过 shell 拆分。未设置时运行所选工具链的 `make menuconfig`；生成 preset 始终使用所选工具链的 make，与自定义 menuconfig 命令无关。当 `ConfigPath` 非默认（`.config`）时，vmake 通过 `KCONFIG_CONFIG` 环境变量把目标配置文件位置传给预设生成、menuconfig 与 `EnsureConfig`；自定义 menuconfig 命令需要遵循该变量，否则修改不会写回目标文件。
 
 TUI 仅在需要生成 preset 或运行默认 menuconfig 时解析 make。已有非空配置，或没有需要生成的 preset 时，自定义 menuconfig 程序无需安装 make。普通 C/C++ 构建也不要求默认 make；工具链中显式配置的 MAKE 仍会严格校验。
 
@@ -1065,7 +1063,7 @@ func Main(p *api.Package) {
             SetKind(api.TargetVoid).
             SetBuildFunc(func(pkg *api.Package) error {
                 srcDir := pkg.SrcDir()
-                pkg.EnsureConfig(srcDir) // .config 不存在或为空时执行 make <preset> 并应用 patches
+                pkg.EnsureConfig(srcDir) // ConfigPath() 配置不存在或为空时执行 make <preset> 并应用 patches
                 return pkg.Make("-C", filepath.ToSlash(srcDir))
             })
     })

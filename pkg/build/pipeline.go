@@ -25,7 +25,6 @@ type BuildPipeline struct {
 	RootDir           string
 	IncludeTests      bool
 	PkgKeyExtra       map[string]string
-	PkgLockDir        string
 	NumWorkers        int
 	Session           *Session
 	KeepGoing         bool
@@ -59,10 +58,6 @@ func (p *BuildPipeline) SetPkgKeyExtra(extra map[string]string) {
 	p.PkgKeyExtra = extra
 }
 
-func (p *BuildPipeline) SetPkgLockDir(dir string) {
-	p.PkgLockDir = dir
-}
-
 func (p *BuildPipeline) SetNumWorkers(n int) {
 	p.NumWorkers = n
 }
@@ -82,7 +77,6 @@ func (p *BuildPipeline) newScheduler(tc *toolchain.Toolchain, platform api.Platf
 	scheduler.SetRootDir(p.RootDir)
 	scheduler.SetIncludeTests(p.IncludeTests)
 	scheduler.SetPkgKeyExtra(p.PkgKeyExtra)
-	scheduler.SetPkgLockDir(p.PkgLockDir)
 	scheduler.SetNumWorkers(p.NumWorkers)
 	scheduler.SetKeepGoing(p.KeepGoing)
 	if p.GlobalFlags != nil {

@@ -30,9 +30,19 @@ func runTest(cmd *cobra.Command, args []string) error {
 	commandStorageLocks()
 	execution := &RuntimeContext{}
 	return withBuildContext(execution, func() error {
+		if manifestFlag != "" {
+			if err := importManifestIntoLock(execution.Context, manifestFlag); err != nil {
+				return err
+			}
+		}
 		ctx, err := resolveToConfigContext(execution.Context, false)
 		if err != nil {
 			return err
+		}
+		if manifestFlag != "" {
+			if err := checkoutManifestLocals(ctx, manifestFlag); err != nil {
+				return err
+			}
 		}
 		result, err := runBuildPhase(ctx, BuildOptions{IncludeTests: true, Jobs: jobsFlag, KeepGoing: keepGoingFlag})
 		if err != nil {

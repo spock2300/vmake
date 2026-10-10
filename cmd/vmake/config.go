@@ -118,9 +118,12 @@ func saveConfigResult(ctx *RuntimeContext, result *tui.ConfigResult) error {
 		if result.MenuconfigRan[pkgName] {
 			if kconfigs, ok := ctx.AllKConfigs[pkgName]; ok && len(kconfigs) > 0 {
 				k := kconfigs[0]
-				data, err := os.ReadFile(filepath.Join(k.SrcDir(), k.ConfigPath()))
+				configPath := filepath.Join(k.SrcDir(), k.ConfigPath())
+				data, err := os.ReadFile(configPath)
 				if err == nil {
 					entry.KConfig = string(data)
+				} else if k.ConfigPath() != "" && k.ConfigPath() != ".config" {
+					vlog.Error("menuconfig did not write %s; a custom MenuconfigCmd must honor KCONFIG_CONFIG", configPath)
 				}
 			}
 		} else if result.PresetValues != nil {

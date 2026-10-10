@@ -12,9 +12,9 @@ import (
 //   - core.autocrlf=false and core.eol=lf keep checkouts byte-identical to the
 //     repository. The Git for Windows installer defaults autocrlf to true,
 //     which rewrites line endings on checkout and would break content hashes
-//     (pkg/build/stamp.go) and multi-patch series applied with 'git apply'.
-//   - core.longpaths=true allows the deep ~/.vmake/cache/<repo>/<pkg>/...
-//     paths on Windows.
+//     (pkg/build/signature.go) and multi-patch series applied with 'git apply'.
+//   - core.longpaths=true allows deep working-tree paths such as
+//     <project>/.vmake_deps/<repo>/<pkg>/... on Windows.
 //   - core.symlinks=true is passed only when this process can create symbolic
 //     links; otherwise git falls back to checking symlinks out as plain files.
 func Args(args ...string) []string {

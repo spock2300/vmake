@@ -102,6 +102,10 @@ func (p *Package) shellEnv(forMake bool) map[string]string {
 }
 
 func (p *Package) runMakeIn(dir string, args ...string) error {
+	return p.runMakeInEnv(dir, nil, args...)
+}
+
+func (p *Package) runMakeInEnv(dir string, extraEnv map[string]string, args ...string) error {
 	program := p.makeTool()
 	args, err := p.executionBudget().MakeArgs(args, parallelEnvironment())
 	if err != nil {
@@ -110,7 +114,11 @@ func (p *Package) runMakeIn(dir string, args ...string) error {
 	if p.logAndDryRun(program, args) {
 		return nil
 	}
-	return exec.RunWithEnvContext(p.executionContext(), dir, p.shellEnv(true), program, args...)
+	env := p.shellEnv(true)
+	for key, value := range extraEnv {
+		env[key] = value
+	}
+	return exec.RunWithEnvContext(p.executionContext(), dir, env, program, args...)
 }
 
 func (p *Package) Configure(extraArgs ...string) error {

@@ -190,7 +190,7 @@ Value rules match `GenerateConfigDefines`:
 | Choice | `"fast"` | `-DCONFIG_X="fast"` + `-DCONFIG_X_FAST=1` |
 
 - `SetMacroName("NAME")` replaces the default name entirely; when the name contains `%s`/`%v`, the option value is rendered into it (`PY32F539xx%s` + `M` → `PY32F539xxM=1`) and only that macro is emitted.
-- `mode`, `toolchain`, `target_os`, `target_triple` are skipped by default. `SetMacroName` opts in `target_os`, `target_triple`, or any other package-declared global option; the built-in `mode`/`toolchain` definitions always come from the built-in objects, so a package-level `SetMacroName` on them is validated but discarded and they cannot be exported.
+- `mode`, `toolchain`, `target_os`, `target_triple` are skipped by default. Redeclare the option with a `SetMacroName` to opt it in; a `mode`/`toolchain` redeclaration must match the built-in Type/Default.
 - `SetMacroName` is only valid on global options (`ctx.GlobalOption`); using it on a package option is a validation error.
 - Two global options producing the same macro with different values abort the configuration phase; identical definitions are deduplicated.
 - A package-level value left in `entries.<pkg>.options` for a global option still wins inside that package, but the exported macro always uses the global value; remove stale entry values when moving an option to `GlobalOption`.

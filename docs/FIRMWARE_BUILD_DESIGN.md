@@ -243,10 +243,10 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 func (p *Package) EnsureConfig(srcDir string) bool
 ```
 
-`EnsureConfig` 检查 `.config` 是否存在且非空，若缺失则自动生成：
+`EnsureConfig` 检查 KConfig 配置（`ConfigPath()`，默认 `.config`）是否存在且非空，若缺失则自动生成：
 
-1. 检查 `srcDir/.config` 是否存在且 `size > 0`
-2. 若缺失或为空，执行 `make <selectedPreset>` 生成 `.config`
+1. 检查 `srcDir/<ConfigPath>` 是否存在且 `size > 0`
+2. 若缺失或为空，以 `KCONFIG_CONFIG` 指向该文件执行 `make <selectedPreset>` 生成配置（默认路径不设置该变量）
 3. 若包有 KConfig 条目，调用 `ApplyKConfigPatches` 应用 post-defconfig 补丁
 4. 返回 `bool`：`true` 表示刚生成了配置，`false` 表示已存在
 

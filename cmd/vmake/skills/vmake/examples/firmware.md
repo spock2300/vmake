@@ -178,7 +178,7 @@ func Main(p *api.Package) {
 
 The guarded `ownFlags` reset preserves KBuild ownership of C/CXX/linker flags and does not clear flags in recursive Make invocations. `Make` selects the configured tool and inherits the session jobs budget.
 
-`SetGit` is what makes `SrcDir()` return `SourceDir()/src/` for this local package, which is why the build function uses `pkg.SrcDir()`. The KConfig entry's `SetSrcDir("src")` is a different setting: it only tells the config TUI and the `.config` restore logic where the KConfig `.config` lives relative to `SourceDir()`; it does not change `pkg.SrcDir()`. `EnsureConfig(srcDir)` takes the directory as an argument and looks for `<srcDir>/.config`, so pass `pkg.SrcDir()` here. The package-level `p.SetSrcDir(...)` is the raw source-directory override behind `SrcDir()`; with `SetGit` you get `SourceDir()/src` automatically, so you normally do not call it.
+`SetGit` is what makes `SrcDir()` return `SourceDir()/src/` for this local package, which is why the build function uses `pkg.SrcDir()`. The KConfig entry's `SetSrcDir("src")` is a different setting: it only tells the config TUI and the `.config` restore logic where the KConfig `.config` lives relative to `SourceDir()`; it does not change `pkg.SrcDir()`. `EnsureConfig(srcDir)` takes the directory as an argument and looks for the KConfig entry's `ConfigPath()` file (default `.config`) under it, so pass `pkg.SrcDir()` here. The package-level `p.SetSrcDir(...)` is the raw source-directory override behind `SrcDir()`; with `SetGit` you get `SourceDir()/src` automatically, so you normally do not call it.
 
 ## myapp (Simple Binary)
 
@@ -439,7 +439,7 @@ Expected result:
 ## What This Demonstrates
 
 - **KConfig presets** — `AddPreset("defconfig")` registers a defconfig name as a make target
-- **EnsureConfig** — `pkg.EnsureConfig(srcDir)` checks `<srcDir>/.config` exists + non-empty, runs `make <preset>` if missing
+- **EnsureConfig** — `pkg.EnsureConfig(srcDir)` checks the `ConfigPath()` file (default `<srcDir>/.config`) exists + non-empty, runs `make <preset>` if missing
 - **SetKConfigPatches** — Override specific config values after defconfig generation
 - **SetGit** — Local packages download source to `SourceDir()/src`; `SrcDir()` returns that tree
 - **KConfig SetSrcDir** — Locates the KConfig `.config` for the config TUI and restore logic; it does not set the package source dir

@@ -2,6 +2,8 @@ package api
 
 import (
 	"fmt"
+	"slices"
+	"sort"
 )
 
 const (
@@ -38,22 +40,56 @@ func MergeGlobalOptions(allDefs map[string]map[string]*Option, toolchainList []s
 			SetGroup("Global")
 	}
 
-	for pkgName, opts := range allDefs {
-		for name, opt := range opts {
+	pkgNames := make([]string, 0, len(allDefs))
+	for pkgName := range allDefs {
+		pkgNames = append(pkgNames, pkgName)
+	}
+	sort.Strings(pkgNames)
+	for _, pkgName := range pkgNames {
+		opts := allDefs[pkgName]
+		optNames := make([]string, 0, len(opts))
+		for name := range opts {
+			optNames = append(optNames, name)
+		}
+		sort.Strings(optNames)
+		for _, name := range optNames {
+			opt := opts[name]
 			if !opt.IsGlobal() {
 				continue
 			}
-			if existing, ok := result[name]; ok {
-				if err := validateGlobalOption(name, existing, opt, pkgName); err != nil {
-					return nil, err
-				}
-			} else {
+			existing, ok := result[name]
+			if !ok {
 				result[name] = opt
+				continue
 			}
+			if err := validateGlobalOption(name, existing, opt, pkgName); err != nil {
+				return nil, err
+			}
+			if opt.MacroName() == existing.MacroName() {
+				continue
+			}
+			if opt.MacroName() == "" {
+				continue
+			}
+			if existing.MacroName() == "" {
+				clone := *existing
+				clone.SetMacroName(opt.MacroName())
+				result[name] = &clone
+				continue
+			}
+			return nil, fmt.Errorf("global option '%s' macro name mismatch: already defined as %q, but %s defines as %q",
+				name, existing.MacroName(), pkgName, opt.MacroName())
 		}
 	}
 
 	return result, nil
+}
+
+func isBuiltinGlobalOption(name string) bool {
+	if _, ok := BuiltInGlobalOptions[name]; ok {
+		return true
+	}
+	return name == ToolchainOptionName
 }
 
 func validateGlobalOption(name string, existing, newOpt *Option, fromPkg string) error {
@@ -65,6 +101,11 @@ func validateGlobalOption(name string, existing, newOpt *Option, fromPkg string)
 	if existing.Default() != newOpt.Default() {
 		return fmt.Errorf("global option '%s' default value mismatch: already defined as %v, but %s defines as %v",
 			name, existing.Default(), fromPkg, newOpt.Default())
+	}
+
+	if !isBuiltinGlobalOption(name) && !slices.Equal(existing.Values(), newOpt.Values()) {
+		return fmt.Errorf("global option '%s' values mismatch: already defined as %v, but %s defines as %v",
+			name, existing.Values(), fromPkg, newOpt.Values())
 	}
 
 	return nil

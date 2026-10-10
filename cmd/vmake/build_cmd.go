@@ -116,10 +116,10 @@ func importManifestIntoLock(ctx context.Context, manifestPath string) error {
 }
 
 // checkoutManifestLocals checks out local packages to the refs recorded in an
-// install manifest (local packages are not part of vmake.lock). Local packages
-// with a managed git source are skipped: their manifest ref belongs to the
-// upstream clone, while the checkout would run against the project repository,
-// and the build materializes the recorded source version on its own.
+// install manifest. Local packages with a managed git source are skipped: the
+// manifest ref belongs to the upstream clone, while the checkout would run
+// against the project repository, and the build materializes the recorded
+// source version on its own.
 func checkoutManifestLocals(ctx *RuntimeContext, manifestPath string) error {
 	var mf installManifest
 	if err := jsonio.Load(manifestPath, &mf); err != nil {

@@ -582,9 +582,9 @@ During linking, global LD flags are appended after per-target flags; global link
 
 ### GlobalOption Cross-Package Consistency
 
-If two packages define the same global option via `GlobalOption()`, their `Type` and `Default` must be **identical** — otherwise the build fails with a fatal error. This constraint ensures all packages agree on the option's meaning. For example, if `chip/build.go` defines `GlobalOption("mcu").SetType(api.OptionString).SetDefault("stm32f405")` and `bsp/build.go` defines `GlobalOption("mcu").SetType(api.OptionChoice)`, the build will fail with a type mismatch error.
+If two packages define the same global option via `GlobalOption()`, their `Type`, `Default` and `SetValues` definitions must be **identical** — otherwise the build fails with a fatal error. `SetMacroName` declarations are merged instead: a non-empty macro name must be identical wherever it appears, and declarations without one express no preference. This constraint ensures all packages agree on the option's meaning. For example, if `chip/build.go` defines `GlobalOption("mcu").SetType(api.OptionString).SetDefault("stm32f405")` and `bsp/build.go` defines `GlobalOption("mcu").SetType(api.OptionChoice)`, the build will fail with a type mismatch error.
 
-There is no merging of definitions: only `Type` and `Default` are validated for consistency; which definition supplies the merged view's `SetValues`/`SetDescription` is unspecified — prefer a single declaring package. Each declaring package's own `SetOnApply` callback still runs during that package's config pass.
+Declarations are merged deterministically (package-name order); the first definition wins for presentation fields such as `SetDescription`/`SetGroup`. Prefer a single declaring package. Each declaring package's own `SetOnApply` callback still runs during that package's config pass.
 
 ### Global Option Auto-Export
 
@@ -603,7 +603,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 This emits `-DCONFIG_CPU_CLOCK_HZ=416000000 -DCONFIG_MCU="py32f539" -DCONFIG_MCU_PY32F539=1` for every package. Use it for chip/platform contracts and feature switches that all packages must see.
 
 - `SetMacroName("NAME")` replaces the default name entirely; a `%s`/`%v` in the name renders the value into the macro (`SetMacroName("PY32F539xx%s")` with value `L` → `-DPY32F539xxL=1`) and emits only that macro. `SetMacroName` is valid on global options only.
-- `mode`, `toolchain`, `target_os`, and `target_triple` are not exported by default. A `SetMacroName` on `target_os`, `target_triple`, or any other package-declared global option opts it in; the built-in `mode`/`toolchain` definitions are always taken from the built-in objects, so a package-level `SetMacroName` on them is validated but discarded and they cannot be exported.
+- `mode`, `toolchain`, `target_os`, and `target_triple` are not exported by default; redeclare the option with a `SetMacroName` to opt it in (`mode`/`toolchain` redeclarations must match the built-in `Type`/`Default`; a conflicting macro name between packages is a fatal error).
 - Two global options producing the same macro with different values abort the configuration phase; identical definitions are deduplicated.
 - A package-level value for a global option left in `entries.<pkg>.options.<name>` still wins inside that package, but the exported macro always uses the global value; delete stale entry values when migrating an option from package scope to global scope.
 - Exported macros participate in the BuildKey through global flags, so config changes rebuild all packages.

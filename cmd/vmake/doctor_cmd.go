@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/spock2300/vmake/internal/gosrc"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
@@ -24,9 +25,9 @@ scans build.go files in the current project for patterns that currently work
 but may become errors in future vmake versions:
 
   - [autoWire] Package uses OnRequire/AddRequires but its targets don't call
-    AddDeps. vmake currently auto-wires the dependency edges as a convenience,
-    but this implicit behavior conflicts with the No-Fallbacks principle and
-    may be removed. Add explicit AddDeps("pkg:target") to each target.
+    AddDeps. AddRequires only resolves and fetches the package; it does not
+    create target build edges. Add explicit AddDeps("pkg:target") to each
+    target that links the dependency.
 
   - [noRoot] No package declares SetRoot(true). vmake currently uses heuristics
     to pick build roots, but these may produce surprising results in projects
@@ -83,7 +84,7 @@ func runDoctor() {
 	for _, src := range sources {
 		findings = append(findings, checkAutoWire(src)...)
 		findings = append(findings, checkDeprecated(src)...)
-		if hasSetRoot(src.Path) {
+		if hasSetRoot(src) {
 			rootCount++
 		}
 	}
@@ -141,16 +142,10 @@ func reportDoctorFindings(workDir string, findings []doctorFinding) {
 }
 
 func checkAutoWire(src buildscript.Source) []doctorFinding {
-	data, err := os.ReadFile(src.Path)
-	if err != nil {
+	if !packageSourceContains(src, "AddRequires") {
 		return nil
 	}
-	content := string(data)
-
-	if !strings.Contains(content, "AddRequires") {
-		return nil
-	}
-	if strings.Contains(content, "AddDeps") {
+	if packageSourceContains(src, "AddDeps") {
 		return nil
 	}
 
@@ -158,16 +153,32 @@ func checkAutoWire(src buildscript.Source) []doctorFinding {
 		Severity: "warn",
 		File:     src.Path,
 		Category: "autoWire",
-		Message:  "package uses AddRequires but targets have no AddDeps; relies on autoWireRequireDeps fallback",
+		Message:  "package uses AddRequires but targets have no AddDeps; AddRequires does not create target build edges",
 	}}
 }
 
-func hasSetRoot(path string) bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
+func packageSourceContains(src buildscript.Source, needle string) bool {
+	if src.Dir != "" {
+		files, err := gosrc.ListGoFiles(src.Dir)
+		if err == nil {
+			for _, file := range files {
+				if fileContains(file, needle) {
+					return true
+				}
+			}
+			return false
+		}
 	}
-	return strings.Contains(string(data), "SetRoot(true)")
+	return fileContains(src.Path, needle)
+}
+
+func fileContains(path, needle string) bool {
+	data, err := os.ReadFile(path)
+	return err == nil && strings.Contains(string(data), needle)
+}
+
+func hasSetRoot(src buildscript.Source) bool {
+	return packageSourceContains(src, "SetRoot(true)")
 }
 
 var deprecatedAPIs = []struct {

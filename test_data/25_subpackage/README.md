@@ -24,10 +24,10 @@ setup.sh 从 `.fixture-src/mother/` 构建本地 bare git 仓（`.fixture/mother
 ./install/bin/app   # 输出 43（utils_b=21 → utils_a=42 + base=1）
 ```
 
-修改 `.fixture-src/` 后需重建 fixture 并清理全局缓存：
+修改 `.fixture-src/` 后需重建 fixture 并清理项目状态：
 
 ```sh
-rm -rf .fixture .vmake vmake_deps ~/.vmake/cache/subtest
+rm -rf .fixture .vmake .vmake_deps
 sh ./setup.sh
 ```
 

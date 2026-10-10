@@ -167,7 +167,6 @@ type Package struct {
 	cmakeBuildDir           string
 	cmakeInstallDir         string
 	cmakeConfig             string
-	outputDir               string
 	tc                      *toolchain.Toolchain
 	platform                Platform
 	globalCFlags            []string
@@ -481,11 +480,6 @@ func (p *Package) SetConfigFiles(files ...string) *Package {
 
 func (p *Package) ConfigFiles() []string { return p.configFiles }
 
-func (p *Package) SetOutputDir(dir string) *Package {
-	p.outputDir = dir
-	return p
-}
-
 func (p *Package) SetCfgVals(vals map[string]any) *Package {
 	p.CfgVals = vals
 	return p
@@ -565,7 +559,6 @@ func (p *Package) SrcDirRaw() string    { return p.srcCodeDir }
 func (p *Package) SourceDir() string    { return p.dirs.SourceDir }
 func (p *Package) BuildDir() string     { return p.dirs.BuildDir }
 func (p *Package) InstallDir() string   { return p.dirs.InstallDir }
-func (p *Package) OutputDir() string    { return p.outputDir }
 func (p *Package) GetPatches() []string { return p.patches }
 
 func (p *Package) CC() string     { return p.tc.Tools.CC }
@@ -643,8 +636,16 @@ func (p *Package) SelectedPreset() string {
 	return k.defaultPreset
 }
 
+func (p *Package) kconfigConfigName() string {
+	if len(p.kconfigEntries) > 0 && p.kconfigEntries[0].ConfigPath() != "" {
+		return p.kconfigEntries[0].ConfigPath()
+	}
+	return ".config"
+}
+
 func (p *Package) EnsureConfig(srcDir string) bool {
-	configPath := filepath.Join(srcDir, ".config")
+	configName := p.kconfigConfigName()
+	configPath := filepath.Join(srcDir, configName)
 	if info, err := os.Stat(configPath); err == nil && info.Size() > 0 {
 		return false
 	}
@@ -652,7 +653,11 @@ func (p *Package) EnsureConfig(srcDir string) bool {
 	if preset == "" {
 		fatalScript(p.Name, "EnsureConfig", "no kconfig preset selected; configure one via AddKConfig().SetDefaultPreset(...) or vmake config")
 	}
-	if err := p.runMakeIn(srcDir, preset); err != nil {
+	var extraEnv map[string]string
+	if configName != ".config" {
+		extraEnv = map[string]string{"KCONFIG_CONFIG": filepath.ToSlash(configPath)}
+	}
+	if err := p.runMakeInEnv(srcDir, extraEnv, preset); err != nil {
 		fatalScript(p.Name, "EnsureConfig", "%v", err)
 	}
 	if len(p.kconfigEntries) > 0 {

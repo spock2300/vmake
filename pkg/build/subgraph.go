@@ -22,7 +22,6 @@ type SubGraphParams struct {
 	SubParents        map[string]string
 	IncludeTests      bool
 	PkgKeyExtra       map[string]string
-	PkgLockDir        string
 	RootDir           string
 	NumWorkers        int
 	KeepGoing         bool
@@ -111,7 +110,6 @@ func BuildSubGraph(rootPkg string, tc *toolchain.Toolchain, tcName string, mode 
 	pipeline.GlobalFlags = params.GlobalFlags
 	pipeline.SetIncludeTests(params.IncludeTests)
 	pipeline.SetPkgKeyExtra(params.PkgKeyExtra)
-	pipeline.SetPkgLockDir(params.PkgLockDir)
 	pipeline.SetRootDir(params.RootDir)
 	pipeline.SetNumWorkers(params.NumWorkers)
 	pipeline.SetKeepGoing(params.KeepGoing)
