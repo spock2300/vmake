@@ -200,7 +200,7 @@ On ELF and PE **binary** links, dependency archives from `AddDeps` land inside `
 
 `vmake clean` runs `OnClean` hooks then removes build outputs (objects, binaries) for the current configuration; keeps the source trees under `.vmake_deps/`. `--all` removes every build-key output directory.
 
-`vmake distclean` also runs `OnClean` hooks, then removes all emitted outputs, `install/`, `compile_commands.json`, the build report, and the project's `.vmake_deps/` working trees. Sources are re-downloaded on the next build. Use distclean when modifying `build.go` and the build ignores your changes.
+`vmake distclean` also runs `OnClean` hooks, then removes all emitted outputs, `install/`, `compile_commands.json`, and the build report. Downloaded working trees under `.vmake_deps/` are kept and reused, so the next build does not re-download; pass `--purge-sources` to delete them too. Use distclean when modifying `build.go` and the build ignores your changes.
 
 ### Patching source before build in registry packages
 
@@ -742,7 +742,7 @@ vmake build --manifest install/manifest.json
 | `vmake config` | TUI for the selected configuration (`--set opt=val` / `--set pkg/opt=val` non-interactive) |
 | `vmake config list/use/copy/describe` | List files, select an existing file, copy the active configuration in `.vmake/`, or print/set its description |
 | `vmake clean [--all]` | Execute OnClean hooks then remove build outputs (keeps source trees) |
-| `vmake distclean` | Deep clean: outputs + install/ + .vmake_deps/ |
+| `vmake distclean [--purge-sources]` | Deep clean: outputs + install/ (keeps .vmake_deps/ working trees unless `--purge-sources`) |
 | `vmake query` | Dependency tree; `query targets`, `query config <pkg>` |
 | `vmake lock update/show` | Re-resolve / print `.vmake/vmake.lock` pins |
 | `vmake toolchain list/show` | Toolchain info |

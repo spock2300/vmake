@@ -150,7 +150,7 @@ toolchains/<host-os>/<host-arch>/<name>/<version>/
 
 本地 SetGit 包保留 `<包目录>/src` 符号链接指向 `.vmake_deps/local/<包名>/src`，因此 `AddFiles("src/...")`、`p.SourceDir()/src/...` 等既有写法不变；链接目标不再随构建键变化。vmake 只在项目根写入 `.vmake_deps/` 到 `.gitignore`；本地 SetGit 包应在自己的 `.gitignore` 中忽略 `src/`（多数包已经如此，否则 `git status` 会显示该链接）。
 
-`vmake clean` 只删除当前配置的构建键目录，`clean --all` 删除所有配置的产物，两者都保留源码树；`vmake distclean` 才会删除整个 `.vmake_deps/`。`vmake pkg clean <repo/name>` 删除单个包的构建产物，`-a` 连工作树一并删除；下次构建重新下载。
+`vmake clean` 只删除当前配置的构建键目录，`clean --all` 删除所有配置的产物，两者都保留 `.vmake_deps/` 源码树；`vmake distclean` 同样保留下载的工作树（下次构建直接复用，不重新下载），只有加 `--purge-sources` 才删除整个 `.vmake_deps/`。`vmake pkg clean <repo/name>` 删除单个包的构建产物，`-a` 连工作树一并删除；下次构建重新下载。
 
 源码：`cmd/vmake/paths.go` (`getDepsDir`, `findProjectDir`), `pkg/repo/source.go`, `pkg/repo/storage.go`
 CLI：`vmake pkg list|search|clean|update`

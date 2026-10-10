@@ -5,28 +5,31 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/spock2300/vmake/internal/fs"
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
+
+var distCleanPurgeSources bool
 
 var distCleanCmd = &cobra.Command{
 	Use:   "distclean",
 	Short: "Deep clean all build artifacts",
-	Long: `Remove all build outputs, the project source trees under .vmake_deps/,
-the install directory, and the build report.
+	Long: `Remove all build outputs, the install directory, and the build report.
 
 This is equivalent to 'vmake clean --all' plus:
-  - .vmake_deps/ (the single per-package working trees)
   - build/compile_commands.json
   - install/ directory at project root
 
-Sources are shallow clones re-downloaded on the next build, so distclean
-removes the only local copy. Use 'vmake pkg clean <repo/name>' to purge
-individual packages.`,
+Downloaded package sources under .vmake_deps/ are kept so the next build
+reuses the existing working trees without re-downloading. Pass
+--purge-sources to remove them too; use 'vmake pkg clean <repo/name> -a'
+to purge individual packages.`,
 	Run: runDistClean,
 }
 
 func init() {
 	RootCmd.AddCommand(distCleanCmd)
+	distCleanCmd.Flags().BoolVar(&distCleanPurgeSources, "purge-sources", false, "also remove downloaded package sources under .vmake_deps")
 }
 
 func runDistClean(cmd *cobra.Command, args []string) {
@@ -50,7 +53,11 @@ func runDistClean(cmd *cobra.Command, args []string) {
 
 	removeIfExists(filepath.Join(ctx.Paths.ProjectDir, "install"), "", "install/", true)
 
-	removeIfExists(getDepsDir(), "", ".vmake_deps/", true)
+	if distCleanPurgeSources {
+		removeIfExists(getDepsDir(), "", ".vmake_deps/", true)
+	} else if fs.FileExists(getDepsDir()) {
+		vlog.Info("Kept downloaded sources under .vmake_deps/ (use --purge-sources to remove them)")
+	}
 
 	vlog.Info("Distclean completed!")
 }

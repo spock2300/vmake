@@ -305,7 +305,7 @@ See the [Extension Plugin Guide](docs/EXTENSION_PLUGIN.md) for the complete plug
 vmake build [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k]
 vmake test
 vmake clean [--all]
-vmake distclean
+vmake distclean [--purge-sources]
 vmake rebuild
 ```
 

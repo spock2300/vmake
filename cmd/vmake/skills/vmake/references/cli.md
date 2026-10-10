@@ -15,7 +15,7 @@ extension plugin commands appear here too. For plugin details, run
     `vmake config describe [text]` - Print or set the description of the active configuration
     `vmake config list` - List project configuration files and the active selection
     `vmake config use <filename.json>` - Select an existing configuration in .vmake/project.json
-  `vmake distclean` - Deep clean all build artifacts
+  `vmake distclean [--purge-sources]` - Deep clean all build artifacts
   `vmake doctor [--toolchain <value>]` - Diagnose platform prerequisites and build.go patterns
   `vmake ext` - Manage extension repositories
     `vmake ext add <name> <git-url>` - Add an extension repository

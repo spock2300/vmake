@@ -59,6 +59,9 @@ vmake clean
     
 当 resolveToConfigBestEffort 配置解析失败时，`clean --all` 降级为扫描目录并清理全部构建产物；
 普通 `clean` 报错并提示改用 `--all`/`distclean`（降级路径不执行 OnClean 回调）
+
+`distclean` 按同一套规则清理全部配置的构建产物后，再删除 `install/` 与 `build/compile_commands.json`，
+但保留 `.vmake_deps/` 中已下载的工作树（`src/`、`state.json`），下次构建直接复用；传 `--purge-sources` 才连同工作树一起删除。
 ```
 
 ### Build Flags
@@ -317,7 +320,7 @@ vmake (RootCmd)
 ├── build          # 构建项目
 ├── clean          # 执行 OnClean 钩子后清理构建产物
 ├── rebuild        # 完全重新构建
-├── distclean      # 深度清理（删除构建产物、.vmake_deps/、install/）
+├── distclean      # 深度清理（删除构建产物、install/；保留 .vmake_deps/ 工作树，--purge-sources 才删除）
 ├── doctor         # 检测 build.go 中的常见问题（如缺少 AddDeps）
 ├── config         # TUI 配置界面
 ├── update [ver]   # 自我更新（go install）
