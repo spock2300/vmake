@@ -175,7 +175,7 @@ Keep `OnRequire` and target dependencies consistent.
 ## Where Files Land
 
 - Registry clone: `~/.vmake/repos/<repo>/`; trust: `~/.vmake/config.json` (`trustedRepos`)
-- Locks only: `~/.vmake/cache/_locks/` (`VMAKE_CACHE` overrides the cache root; there is no source mirror cache)
+- Shared object cache + locks: `~/.vmake/cache/git/<urlhash>.git/` (content-addressed, one bare repo per upstream URL) and `~/.vmake/cache/_locks/` (`VMAKE_CACHE` overrides the cache root; `VMAKE_GIT_CACHE=off` disables the cache)
 - Working tree and outputs: `.vmake_deps/<repo>/<pkg>/{src,out/<sha256(member)>/<buildKey>}` (shallow depth-1 tree)
 - Pins: `.vmake/vmake.lock`
 

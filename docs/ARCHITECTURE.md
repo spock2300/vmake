@@ -234,20 +234,20 @@ OnRequire          Resolver            SourceManager       Scheduler
     ▼                 ▼                    ▼                  ▼
 AddRequires      Graph                git ls-remote        TargetVoid.BuildFunc()
 "official/zlib"  ├─ Order []          + depth=1 fetch      → CMakeConfigure
-                   └─ Packages map    fetch selection      → CMakeBuild
+                   └─ Packages map    object cache         → CMakeBuild
                     └─ *PackageNode   .vmake_deps worktree → CMakeInstall
                                       .vmake_deps/<repo>/<pkg>/src
 ```
 
 1. `OnRequire` 回调调用 `AddRequires("official/zlib >=1.2")`
 2. `Resolver` 在 `repos/` 中查找包定义，递归解析依赖；native 包的 tag 列表来自一次 `git ls-remote`（不下载对象）
-3. `SourceManager.EnsureSource` 以 depth=1 直接向上游抓取所选 ref（tag 用 tag 命名空间，只有 commit 时按 SHA），物化出该包在项目内唯一的工作树 `.vmake_deps/<repo>/<pkg>/src`；commit 变化时整树重建，同一 commit 的补丁变化就地恢复，产物写在该树的 `out/<sha256(member)>/<buildKey>/{build,install}`
-4. 构建、测试、更新等写源码的命令持有独占工程锁（`.vmake/_locks/project.lock`），同工程构建串行；每棵树用独立的 `tree_<hash>.lock` 串行物化
+3. `SourceManager.EnsureSource` 先把所选 ref/commit 的对象按 depth=1 抓进共享内容寻址缓存 `<cacheDir>/git/<urlhash>.git`（锚定 `refs/vmake/<commit>`），再从该缓存 `git fetch --depth 1 file://...` 物化出该包在项目内唯一的工作树 `.vmake_deps/<repo>/<pkg>/src`；命中缓存不触网，commit 变化时整树重建，同一 commit 的补丁变化就地恢复，产物写在该树的 `out/<sha256(member)>/<buildKey>/{build,install}`
+4. 构建、测试、更新等写源码的命令持有独占工程锁（`.vmake/_locks/project.lock`），同工程构建串行；每棵树用独立的 `tree_<hash>.lock` 串行物化，每个缓存 bare 仓库用 `cache_<urlhash 前16位>.lock` 串行写入与 checkout
 5. `Scheduler` 按拓扑顺序串行构建所有目标，包括 `TargetVoid` 目标
 
 对于 `TargetVoid` 类型的目标（第三方包），Scheduler 调用 `Target.BuildFunc()` 并传入 `*api.Package`，执行 CMake/Autotools 等构建命令。
 
-源码：`pkg/resolver/resolver.go`, `pkg/repo/source.go`, `pkg/build/scheduler.go`
+源码：`pkg/resolver/resolver.go`, `pkg/repo/source.go`, `pkg/repo/objectcache.go`, `pkg/build/scheduler.go`
 
 ## Native 仓库流程
 
@@ -286,7 +286,7 @@ AddRequires          1. 检查 registry 仓库（未找到）      LoadBuildScri
 3. 有锁定 commit 且工作树已检出该 commit 时直接 `EnsureSource`（ResolveOnly）复用，并用 `DescribeTagContext` 重建版本映射；否则 `repo.ListRemoteTagsContext` 用一次 `git ls-remote` 列出上游 tag（不下载对象）
 4. `repo.FilterValidVersions` 过滤有效 semver
 5. `selectNativeVersion`（config.json pin → vmake.lock → `repo.SelectNativeVersion` 按约束选择最高匹配版本）
-6. `sourceMgr.EnsureSource`（ResolveOnly）以 depth=1 物化选中 ref 到项目内唯一工作树 `.vmake_deps/<repo>/<pkg>/src`，供 Phase 3 恢复并应用补丁
+6. `sourceMgr.EnsureSource`（ResolveOnly）先把选中 ref 的对象按 depth=1 抓进共享内容寻址缓存，再从中 depth=1 物化到项目内唯一工作树 `.vmake_deps/<repo>/<pkg>/src`，供 Phase 3 恢复并应用补丁
 7. 在工作树 `src` 根查找 `build.go`
 8. 创建 `PackageNode`，注册到 `graph.Packages`（`WithNative` 写入 `Native *NativePackageInfo`）
 9. 仍在 Phase 1：`PreparePackage` 用 yaegi 加载 build.go，随后 `recurseDeps` 继续解析依赖

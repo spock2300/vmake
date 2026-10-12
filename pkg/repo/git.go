@@ -165,10 +165,17 @@ func initRepoContext(ctx context.Context, url, dir string) error {
 }
 
 func fetchShallowOriginContext(ctx context.Context, dir, spec string) error {
-	args := progressArgs([]string{"fetch", "--depth", "1", "origin", spec})
+	return fetchShallowFromContext(ctx, dir, "origin", spec)
+}
+
+// fetchShallowFromContext fetches spec from source at depth 1 into dir. A
+// file:// source still runs upload-pack, so --depth 1 is honored and the
+// result is marked shallow exactly as for a network remote.
+func fetchShallowFromContext(ctx context.Context, dir, source, spec string) error {
+	args := progressArgs([]string{"fetch", "--depth", "1", source, spec})
 	_, err := runGitCmd(args, networkGitOptions(ctx, dir))
 	if err != nil {
-		return networkGitError(fmt.Sprintf("git fetch %s in %s", spec, dir), err)
+		return networkGitError(fmt.Sprintf("git fetch %s from %s in %s", spec, source, dir), err)
 	}
 	return nil
 }

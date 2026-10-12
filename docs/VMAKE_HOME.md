@@ -1,6 +1,6 @@
 # ~/.vmake 目录结构
 
-`~/.vmake` 是 vmake 的全局数据目录，存储包仓库索引、扩展和工具链。第三方包的源码以**每个包一棵浅工作树**的形式物化在项目内的 `.vmake_deps/`（depth=1，直接来自上游，不再维护共享镜像）。
+`~/.vmake` 是 vmake 的全局数据目录，存储包仓库索引、扩展和工具链。第三方包的源码以**每个包一棵浅工作树**的形式物化在项目内的 `.vmake_deps/`（depth=1）；同一上游 URL 的对象另有一份跨工程共享的**内容寻址对象缓存** `~/.vmake/cache/git/`，工作树从该缓存本地 depth=1 checkout，不再直接向上游重复下载。
 
 ## 目录总览
 
@@ -18,7 +18,9 @@
 ├── toolchains/                    # 已安装的交叉编译工具链
 │   └── <host-os>/<host-arch>/<name>/<version>/   # 工具链安装目录
 ├── cache/                         # 缓存根（VMAKE_CACHE 可覆盖根路径）
-│   └── _locks/                    # 生命周期锁、owner 锁与 per-tree 物化锁
+│   ├── git/                       # 共享内容寻址 git 对象缓存（VMAKE_GIT_CACHE=off 关闭）
+│   │   └── <urlhash>.git/         # 每个上游 URL 一个 bare 仓库：objects/ + refs/vmake/<sha> + vmake-cache.json
+│   └── _locks/                    # 生命周期锁、owner 锁、per-tree 与 per-cache-repo 锁
 ├── config.json                    # 全局配置（trustedRepos 远程脚本信任）
 └── repos/                         # 包仓库索引（git clone）
     └── <repo>/
@@ -28,7 +30,7 @@
                     └── build.go
 ```
 
-旧版布局（`~/.vmake/sources`、`cache/v2`、`cache/_localgit`、`cache/mirrors`、项目 `vmake_deps/`）会在升级后首次运行时整体删除，依赖重新物化；不提供兼容迁移（布局标记 `.vmake/layout`，见 `cmd/vmake/storage.go`）。
+旧版布局（`~/.vmake/sources`、`cache/v2`、`cache/_localgit`、`cache/mirrors`、项目 `vmake_deps/`）会在升级后首次运行时整体删除，依赖重新物化；不提供兼容迁移（布局标记 `.vmake/layout`，见 `cmd/vmake/storage.go`）。`cache/git/` 是当前布局，升级时不删除。
 
 ## repos/
 
@@ -43,18 +45,20 @@ CLI：`vmake repo add|remove|list|update|trust|untrust`
 
 ## cache/
 
-缓存根只保留锁与生命周期状态；第三方源码不再有共享镜像。`VMAKE_CACHE` 环境变量可覆盖根路径（`cmd/vmake/paths.go` `getCacheDir`）。
+缓存根保存锁、生命周期状态与共享 git 对象缓存。`VMAKE_CACHE` 环境变量可覆盖根路径（`cmd/vmake/paths.go` `getCacheDir`）。
 
-- `_locks/` — 生命周期锁、owner 锁与 per-tree 物化锁；锁文件位于工作树之外，清理时不删除
+- `git/` — 共享内容寻址 git 对象缓存，每个上游 URL 一个 bare 仓库（`<urlhash>.git`，`urlhash = storage.OwnerKey(归一化 URL)`）。仓库只累积 vmake 实际 fetch 过的对象，用 `refs/vmake/<sha>` 锚点固定；工作树再从该缓存本地 depth=1 checkout。设 `VMAKE_GIT_CACHE=off` 可完全关闭
+- `_locks/` — 生命周期锁、owner 锁、per-tree 物化锁与 per-cache-repo 锁（`cache_<urlhash 前16位>.lock`）；锁文件位于工作树与缓存仓库之外，清理时不删除
 
-工作树存放在项目内（见下节），物化时按需直接向上游 `git ls-remote` 解析版本、以 depth=1 抓取所选 ref；工作树本身就是唯一的本地源码缓存，重建与离线构建复用它。
+工作树存放在项目内（见下节），物化时按需 `git ls-remote` 解析版本、把所选 ref/commit 的对象按 depth=1 抓进 `cache/git/` 并锚定，再从缓存本地 fetch 出工作树。首次物化后，同一 commit 在其他工程或 CI job 命中缓存即不触网；上游不可达但缓存已记录该 ref 时也能离线重建。缓存缺失/损坏/URL 变化会在锁内重建，绝不阻塞构建。
 
-项目操作先取得 `project/.vmake/_locks/project.lock`（独占）：任何会解析依赖的命令都可能物化源码树或创建源码链接，因此同工程命令总是串行。全局缓存的生命周期锁在构建/读取时共享、在清理时独占；同一棵树在同一时间只允许一个物化操作（`tree_<hash>.lock`）。构建与 `lock update` 还会在整个命令期间持有所需远程包（native 子包归并到根父包）的 `owner_<sha256(name)>.lock`。
+项目操作先取得 `project/.vmake/_locks/project.lock`（独占）：任何会解析依赖的命令都可能物化源码树或创建源码链接，因此同工程命令总是串行。全局缓存的生命周期锁在构建/读取时共享、在清理时独占；同一棵树在同一时间只允许一个物化操作（`tree_<hash>.lock`），每个缓存 bare 仓库的写入与 checkout 由 `cache_<urlhash 前16位>.lock` 串行（不同 URL 不同锁）。构建与 `lock update` 还会在整个命令期间持有所需远程包（native 子包归并到根父包）的 `owner_<sha256(name)>.lock`。
 
 网络 git 操作默认超时 30 分钟，并把 git 自己的进度实时透传到终端（`-q` 时静默）。网络较慢时可提高上限：
 
 ```bash
 VMAKE_GIT_TIMEOUT=7200 vmake build   # 秒；VMAKE_FETCH_TIMEOUT 为兼容别名
+VMAKE_GIT_CACHE=off vmake build      # 关闭共享 git 对象缓存，直接向上游 depth=1 抓取
 ```
 
 源码：`pkg/repo/source.go`、`pkg/repo/git.go`、`pkg/repo/storage.go`、`internal/storage/`
@@ -167,7 +171,7 @@ project/
 │   ├── config.json                # 默认配置
 │   ├── config-debug.json          # 其他配置，格式与默认配置相同
 │   ├── vmake.lock                 # 所有配置共享的远程包和本地 SetGit 包版本+commit 锁
-│   ├── layout                     # 存储布局版本标记（当前 "4"）
+│   ├── layout                     # 存储布局版本标记（当前 "5"）
 │   └── _locks/project.lock        # 工程独占锁（同工程命令串行）
 ├── .vmake_deps/                   # 第三方源码工作树与产物（自动生成，已 gitignore）
 │   └── <repo>/<pkg>/

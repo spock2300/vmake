@@ -25,8 +25,9 @@ func (m *SourceManager) CleanOutputs(key string) error {
 	return internalfs.RemoveAll(filepath.Join(root, "out"))
 }
 
-// CleanSource removes a package working tree. Sources are shallow clones
-// materialized on demand, so there is no shared cache entry to clean up.
+// CleanSource removes a package working tree. The shallow tree is rebuilt on
+// demand; the shared git object cache under <cacheDir>/git is cross-project
+// and is intentionally left untouched.
 func (m *SourceManager) CleanSource(repoName, name string) error {
 	key := PackageTreeKey(repoName, name)
 	root, err := m.treePath(key)

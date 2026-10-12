@@ -9,7 +9,7 @@ import (
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
-const storageLayoutVersion = "4"
+const storageLayoutVersion = "5"
 
 // cleanupLegacyStorage removes caches from older storage layouts once, on the
 // first run after an upgrade. There is no migration: dependencies are
@@ -24,9 +24,12 @@ func cleanupLegacyStorage() {
 		}
 	}
 
-	// Layout v4 dropped the shared bare-mirror cache: sources are shallow
-	// clones inside .vmake_deps. Mirrors are regenerable download caches, so
-	// stale ones are deleted without migration.
+	// Layout v5 added the shared content-addressed object cache under
+	// cache/git. It is purely additive: cleanupLegacyStorage never touches it,
+	// so upgrading only re-runs the legacy sweeps below. Layout v4 itself
+	// dropped the shared bare-mirror cache: sources are shallow clones inside
+	// .vmake_deps. Mirrors are regenerable download caches, so stale ones are
+	// deleted without migration.
 	legacyMirrors := filepath.Join(getCacheDir(), "mirrors")
 	if fs.FileExists(legacyMirrors) {
 		if err := fs.RemoveAll(legacyMirrors); err != nil {
@@ -46,8 +49,8 @@ func cleanupLegacyStorage() {
 	if err == nil && markerVersion == storageLayoutVersion {
 		return
 	}
-	// v4 keeps the single-tree .vmake_deps layout: trees are the only source
-	// cache now and survive upgrades. The directory only exists in the
+	// v4+ keeps the single-tree .vmake_deps layout: trees are the only source
+	// checkout now and survive upgrades. The directory only exists in the
 	// single-tree layout (v3+), so it is kept even when the marker was never
 	// written (for example sources pre-downloaded by 'vmake pkg update' before
 	// the first build). Pre-v3 directories are removed wholesale.

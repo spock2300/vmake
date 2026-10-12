@@ -1,7 +1,6 @@
 package repo
 
 import (
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +14,7 @@ func fileURL(t *testing.T, path string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}).String()
+	return RepoFileURL(abs)
 }
 
 func TestEnsureSourceShallowTagClone(t *testing.T) {

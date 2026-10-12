@@ -237,11 +237,13 @@ For `BuildKey` naming, `SourceDir` vs `SrcDir` distinction, and `SetGit` path re
 
 ## Storage Layout
 
-Remote and local `SetGit` sources materialize as **one shallow working tree per package** inside the project; there is no shared mirror cache. Builds write configuration-specific outputs into per-build-key directories, never copies of the source. This is storage isolation, not a script sandbox.
+Remote and local `SetGit` sources materialize as **one shallow working tree per package** inside the project, checked out depth-1 from a shared content-addressed object cache. Builds write configuration-specific outputs into per-build-key directories, never copies of the source. This is storage isolation, not a script sandbox.
 
 ```
 ~/.vmake/cache/
-└── _locks/                            # lifecycle + per-owner + per-tree materialization locks
+├── git/<urlhash>.git/                 # shared object cache: one bare repo per upstream URL
+│   └── objects/ + refs/vmake/<sha> + vmake-cache.json
+└── _locks/                            # lifecycle + per-owner + per-tree + per-cache-repo locks
 
 project/.vmake_deps/
 ├── <repo>/<pkg>/
@@ -251,19 +253,21 @@ project/.vmake_deps/
 └── local/<pkg>/src                    # local SetGit tree; <pkgDir>/src links to it
 ```
 
-- Working trees are depth-1 fetches from the upstream URL: tags land in `refs/tags/`, branches in `refs/remotes/origin/`, and only the selected version's objects are downloaded. `git log` is truncated by the shallow boundary (use `git fetch --unshallow` when full history is needed).
+- The shared cache accumulates only the objects vmake actually fetched, anchored under `refs/vmake/<commit>`; `VMAKE_GIT_CACHE=off` disables it. A commit fetched once by any project or CI job is served locally afterwards, so working trees can be rebuilt without touching the upstream again.
+- Working trees are depth-1 fetches from the cache: tags land in `refs/tags/`, branches in `refs/remotes/origin/`, and only the selected version's objects are downloaded. `git log` is truncated by the shallow boundary (use `git fetch --unshallow` when full history is needed).
 - A commit change recreates the tree; a patch-set change on the same commit restores it in place (`git checkout --force --detach <commit>` + `clean -fdx`) without network access. Switching toolchain/mode/options only switches `out/<buildKey>` (remote) or the package's `build/<buildKey>` (local). Patches and Kconfig `.config` apply to the tree; ordinary external build output is not transactional, so a failed callback may leave partial files and the next session calls it again.
-- `.vmake/vmake.lock` pins remote versions and commits (and local packages with a versioned `SetGit` source). When the locked version's tree already exists, builds run fully offline; resolution otherwise needs one small `git ls-remote`. `vmake lock update` re-resolves.
-- Commands that resolve dependencies take the exclusive `project/.vmake/_locks/project.lock`, so commands against one project serialize (resolution may materialize trees or links). Each tree materialization is serialized by `_locks/tree_<hash>.lock`; builds and `lock update` additionally hold `_locks/owner_<sha256(name)>.lock` for every needed remote package (native sub-packages fold into their root parent); the cache lifecycle lock is shared for builds/reads and exclusive for cleanup.
+- `.vmake/vmake.lock` pins remote versions and commits (and local packages with a versioned `SetGit` source). When the locked version's tree already exists, or its commit is in the object cache, builds run fully offline; resolution otherwise needs one small `git ls-remote`. `vmake lock update` re-resolves.
+- Commands that resolve dependencies take the exclusive `project/.vmake/_locks/project.lock`, so commands against one project serialize (resolution may materialize trees or links). Each tree materialization is serialized by `_locks/tree_<hash>.lock` and each cache repository by `_locks/cache_<urlhash[:16]>.lock`; builds and `lock update` additionally hold `_locks/owner_<sha256(name)>.lock` for every needed remote package (native sub-packages fold into their root parent); the cache lifecycle lock is shared for builds/reads and exclusive for cleanup.
 
 Global storage in `~/.vmake/`:
-- `~/.vmake/cache/_locks/` — lifecycle, per-owner and per-tree materialization locks (no source mirror cache; legacy `cache/mirrors` is removed by the layout upgrade)
+- `~/.vmake/cache/git/<urlhash>.git/` — shared content-addressed object cache, one bare repo per upstream URL (accumulates fetched objects, anchored under `refs/vmake/<commit>`; `VMAKE_GIT_CACHE=off` disables)
+- `~/.vmake/cache/_locks/` — lifecycle, per-owner, per-tree and per-cache-repo locks (legacy `cache/mirrors` is removed by the layout upgrade)
 - `~/.vmake/repos/` — registry repo clones (buildscript metadata only)
 - `~/.vmake/toolchains/` — installed toolchains (`<host-os>/<host-arch>/<name>/<version>/`)
 - `~/.vmake/extensions/` — extension repos
 - `~/.vmake/config.json` — `trustedRepos` (remote-script trust)
 
-Environment overrides: `VMAKE_CACHE` (cache root), `VMAKE_GIT_TIMEOUT` (seconds for network git clone/fetch/submodule/ls-remote, default 1800; `VMAKE_FETCH_TIMEOUT` is a legacy alias), `VMAKE_TRUST_ALL=1` (bypass trust gating, CI). Network git commands stream git's own progress to the terminal in real time (suppressed with `-q`).
+Environment overrides: `VMAKE_CACHE` (cache root), `VMAKE_GIT_CACHE=off` (disable the shared git object cache), `VMAKE_GIT_TIMEOUT` (seconds for network git clone/fetch/submodule/ls-remote, default 1800; `VMAKE_FETCH_TIMEOUT` is a legacy alias), `VMAKE_TRUST_ALL=1` (bypass trust gating, CI). Network git commands stream git's own progress to the terminal in real time (suppressed with `-q`).
 
 vmake locates the project root by walking upward from cwd to find `.vmake/`, `build.go`, or (at the starting directory only) `*/build.go` (via `findProjectDir()`). Running outside a project is a hard error.
 

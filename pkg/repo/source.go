@@ -19,20 +19,26 @@ import (
 )
 
 // SourceManager materializes one shallow working tree per package under the
-// project dependency directory, cloning the requested ref directly from its
-// git URL with depth 1. The tree survives across build configurations and is
-// re-created in place when the pinned commit or patch set changes.
+// project dependency directory. The requested commit/ref is fetched into a
+// shared content-addressed object cache once, then the working tree is built
+// from that cache with a depth-1 local fetch, so the tree stays shallow,
+// single-commit and self-contained while reusing objects across projects. The
+// tree survives across build configurations and is re-created in place when the
+// pinned commit or patch set changes.
 //
 //	<depDir>/<key>/src          working tree (one per package)
 //	<depDir>/<key>/state.json   materialization identity
 //	<depDir>/<key>/out/...      per-build outputs (remote packages)
-//	<cacheDir>/_locks/tree_*.lock   per-tree materialization locks
+//	<cacheDir>/git/<urlhash>.git       shared object cache (one per upstream URL)
+//	<cacheDir>/_locks/tree_*.lock      per-tree materialization locks
+//	<cacheDir>/_locks/cache_*.lock     per-cache-repo locks
 type SourceManager struct {
 	ctx       context.Context
 	depDir    string
 	cacheRoot string
 	locksDir  string
 	session   *storage.Session
+	cache     *ObjectCache
 }
 
 func NewSourceManager(depDir, cacheDir string) *SourceManager {
@@ -41,6 +47,7 @@ func NewSourceManager(depDir, cacheDir string) *SourceManager {
 		depDir:    depDir,
 		cacheRoot: cacheDir,
 		locksDir:  filepath.Join(cacheDir, "_locks"),
+		cache:     NewObjectCache(cacheDir),
 	}
 }
 
@@ -251,7 +258,14 @@ func (m *SourceManager) EnsureSource(req SourceRequest) (*SourceResult, error) {
 		} else {
 			resolved, refName, err := ResolveRemoteRefContext(m.context(), req.URLs, req.Ref)
 			if err != nil {
-				if state != nil && state.Commit != "" && m.treeHead(srcDir) == state.Commit && offlineRefMatch(state, req) {
+				if cached, cachedRef, ok := cachedRefCommit(m.cache, req.URLs, req.Ref); ok {
+					// The upstream is unreachable but the cache already recorded
+					// this ref, so rebuild from the cached objects instead of
+					// failing a build that ran successfully before.
+					vlog.Info("  %s: cannot reach %s (%v); using cached %s at %s", req.Key, strings.Join(req.URLs, ", "), err, req.Ref, ShortCommit(cached))
+					commit = cached
+					localRef = cachedRef
+				} else if state != nil && state.Commit != "" && m.treeHead(srcDir) == state.Commit && offlineRefMatch(state, req) {
 					vlog.Info("  %s: cannot reach %s (%v); keeping existing tree at %s", req.Key, strings.Join(req.URLs, ", "), err, ShortCommit(state.Commit))
 					commit = state.Commit
 				} else {
@@ -316,6 +330,21 @@ func sameURLs(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// cachedRefCommit looks up the commit the object cache recorded for ref on any
+// of the request's URLs. It is the offline fallback when version resolution
+// cannot reach the upstream.
+func cachedRefCommit(cache *ObjectCache, urls []string, ref string) (string, string, bool) {
+	if ref == "" {
+		return "", "", false
+	}
+	for _, url := range urls {
+		if commit, localRef, ok := cache.CachedRefCommit(url, ref); ok {
+			return commit, localRef, true
+		}
+	}
+	return "", "", false
 }
 
 // offlineRefMatch reports whether an existing tree's recorded identity may
@@ -409,10 +438,26 @@ func (m *SourceManager) cloneTreeAt(url, dir string, req SourceRequest, commit, 
 	}
 }
 
-// cloneCommitTree fetches exactly commit at depth 1 when only a commit id is
-// known. Servers without allowReachableSHA1InWant cannot serve arbitrary
-// commits; those fall back to a full clone, which is slow but correct.
+// cloneCommitTree fetches exactly commit at depth 1. It prefers the shared
+// object cache, which serves the commit locally without touching the upstream;
+// on a cache miss it fetches from the source. Servers without
+// allowReachableSHA1InWant cannot serve arbitrary commits; those fall back to
+// a full clone, which is slow but correct.
 func (m *SourceManager) cloneCommitTree(url, dir, commit string) (string, error) {
+	if m.cache.Enabled() {
+		if err := m.cache.EnsureCommit(m.context(), url, commit); err == nil {
+			if actual, err := m.checkoutCachedTree(url, dir, "refs/vmake/"+commit, commit); err == nil {
+				return actual, nil
+			} else {
+				vlog.Info("  git object cache: checkout %s from %s failed, fetching from upstream: %v", ShortCommit(commit), url, err)
+			}
+			fs.RemoveIfExists(dir)
+		} else if ctxErr := m.context().Err(); ctxErr != nil {
+			return "", ctxErr
+		} else {
+			vlog.Debug("  git object cache: %s not cached for %s: %v", ShortCommit(commit), url, err)
+		}
+	}
 	if err := FetchShallowCommitContext(m.context(), url, dir, commit); err != nil {
 		if ctxErr := m.context().Err(); ctxErr != nil {
 			return "", ctxErr
@@ -428,7 +473,9 @@ func (m *SourceManager) cloneCommitTree(url, dir, commit string) (string, error)
 	return commit, nil
 }
 
-// cloneHeadTree clones the default-branch tip of url with depth 1.
+// cloneHeadTree clones the default-branch tip of url with depth 1. Version
+// discovery is always a network operation, but the resolved commit is recorded
+// in the shared cache so later lock-pinned builds can reuse it offline.
 func (m *SourceManager) cloneHeadTree(url, dir string) (string, error) {
 	if err := CloneShallowContext(m.context(), url, dir); err != nil {
 		return "", err
@@ -440,22 +487,62 @@ func (m *SourceManager) cloneHeadTree(url, dir string) (string, error) {
 	if err := CheckoutDetachContext(m.context(), dir, actual); err != nil {
 		return "", err
 	}
+	if m.cache.Enabled() {
+		if err := m.cache.RecordCommit(m.context(), url, actual); err != nil {
+			vlog.Debug("  git object cache: %s not recorded for %s: %v", ShortCommit(actual), url, err)
+		}
+	}
 	return actual, nil
 }
 
 // cloneRefTree fetches a tag or branch at depth 1 and verifies that a lock
-// commit still resolves to the same commit.
+// commit still resolves to the same commit. The ref is served from the shared
+// object cache when possible so a cache hit never touches the upstream.
 func (m *SourceManager) cloneRefTree(url, dir string, req SourceRequest, commit, localRef string) (string, error) {
 	if localRef == "" {
-		// A lock-pinned request knows the commit but not the namespace;
-		// detect it when the source is reachable so the tag ref lands in the
-		// tree for git describe.
-		if _, detected, err := resolveRemoteRefOne(m.context(), url, req.Ref); err == nil {
+		// A lock-pinned request knows the commit but not the namespace. Prefer
+		// the cache's recorded mapping (no network); only probe the source when
+		// the cache has never seen this ref, so the tag ref lands in the tree
+		// for git describe.
+		if cached, ok := m.cache.CachedRef(url, req.Ref, commit); ok {
+			localRef = cached
+		} else if _, detected, err := resolveRemoteRefOne(m.context(), url, req.Ref); err == nil {
 			localRef = detected
 		}
 	}
 	if localRef == "" {
 		return m.cloneCommitTree(url, dir, commit)
+	}
+	if m.cache.Enabled() {
+		if err := m.cache.EnsureRef(m.context(), url, localRef, commit); err == nil {
+			target := localRef
+			if strings.HasPrefix(localRef, "refs/heads/") {
+				target = "refs/remotes/origin/" + strings.TrimPrefix(localRef, "refs/heads/")
+			}
+			if actual, err := m.checkoutCachedTree(url, dir, "+"+localRef+":"+target, commit); err == nil {
+				if req.Commit != "" && actual != req.Commit {
+					return "", fmt.Errorf("%s resolves to %s, lock expects %s; run 'vmake lock update' to re-resolve", req.Ref, ShortCommit(actual), ShortCommit(req.Commit))
+				}
+				return actual, nil
+			} else {
+				vlog.Info("  git object cache: checkout %s from %s failed, fetching from upstream: %v", localRef, url, err)
+			}
+			fs.RemoveIfExists(dir)
+		} else if ctxErr := m.context().Err(); ctxErr != nil {
+			return "", ctxErr
+		} else if m.cache.Has(url, commit) {
+			// The ref could not be refreshed (for example the upstream is
+			// unreachable) but its commit is already cached: materialize from
+			// the anchor. The content is correct; only the tag is missing.
+			if actual, cerr := m.cloneCommitTree(url, dir, commit); cerr == nil {
+				return actual, nil
+			} else {
+				vlog.Info("  git object cache: commit-only checkout of %s from %s failed, fetching from upstream: %v", ShortCommit(commit), url, cerr)
+				fs.RemoveIfExists(dir)
+			}
+		} else {
+			vlog.Debug("  git object cache: %s not cached for %s: %v", localRef, url, err)
+		}
 	}
 	rev, err := FetchShallowRefContext(m.context(), url, dir, localRef, commit)
 	if err != nil {
@@ -467,6 +554,34 @@ func (m *SourceManager) cloneRefTree(url, dir string, req SourceRequest, commit,
 	}
 	if req.Commit != "" && actual != req.Commit {
 		return "", fmt.Errorf("%s resolves to %s, lock expects %s; run 'vmake lock update' to re-resolve", req.Ref, ShortCommit(actual), ShortCommit(req.Commit))
+	}
+	if err := CheckoutDetachContext(m.context(), dir, actual); err != nil {
+		return "", err
+	}
+	return actual, nil
+}
+
+// checkoutCachedTree builds dir as a depth-1 working tree fetched from the
+// shared object cache, returning the commit the fetched objects resolve to.
+// origin still points at the upstream url (set by initRepoContext), so the
+// file:// cache only supplies objects while the tree stays shallow,
+// single-commit and self-contained.
+func (m *SourceManager) checkoutCachedTree(url, dir, spec, commit string) (string, error) {
+	if err := initRepoContext(m.context(), url, dir); err != nil {
+		return "", err
+	}
+	cacheURL := RepoFileURL(m.cache.RepoDir(url))
+	// Hold the cache lock across the fetch: a concurrent rebuild, Remove or
+	// future prune is otherwise free to delete the repository mid-read.
+	err := m.cache.withLock(m.context(), url, func() error {
+		return fetchShallowFromContext(m.context(), dir, cacheURL, spec)
+	})
+	if err != nil {
+		return "", err
+	}
+	actual, err := revParseCommitContext(m.context(), dir, commit)
+	if err != nil {
+		return "", err
 	}
 	if err := CheckoutDetachContext(m.context(), dir, actual); err != nil {
 		return "", err
