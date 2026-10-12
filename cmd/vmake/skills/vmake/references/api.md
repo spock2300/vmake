@@ -157,6 +157,18 @@ operations the helpers cannot express.
   and no greater than that budget; smaller requests reduce parallelism. Bare
   `-j` and inherited Make jobserver tokens are rejected. CMakeInstall stays serial
   unless parallelism is requested. Default make is resolved only when make is used.
+- `CMakeConfigure` re-runs configure only when its fingerprint changes, so repeated
+  builds reuse the configured tree. The fingerprint covers the generated and
+  forwarded configure arguments, `CMAKE_*`/`PATH` environment, the resolved cmake
+  executable contents, and the contents of every
+  `CMakeLists.txt`/`CMakePresets.json`/`CMakeUserPresets.json`/`*.cmake`/`*.cmake.in`
+  under `SrcDir()`; the scan skips `.git`, `.vmake_deps`, `<SourceDir>/build`,
+  `CMakeFiles/`, and `cmake_install.cmake`. A cache hit logs
+  `cmake configure (cached): <CMakeBuildDir>` and skips configure; each successful
+  configure writes `<CMakeBuildDir>/.vmake_configure.json`. Dry-run neither reads
+  nor writes the stamp, and any fingerprint failure is treated as a miss, never a
+  build error. Projects using `file(GLOB)` must add `CONFIGURE_DEPENDS` or list
+  files explicitly, or new files will not re-trigger configure.
 
 ```go
 p.SetCMakeBuildType("MinSizeRel")

@@ -63,6 +63,13 @@ do not change `PkgDirs` or the once-per-session execution of void targets.
 If a remote wrapper chooses a custom CMake install directory, it must publish its
 results into the package's `InstallDir()` or declare them explicitly.
 
+`CMakeConfigure` records its fingerprint in `<CMakeBuildDir>/.vmake_configure.json`
+and skips configure while the fingerprint is unchanged, logging
+`cmake configure (cached): <CMakeBuildDir>`. Changing the configure arguments,
+the resolved cmake executable, `CMAKE_*`/`PATH`, or any
+`CMakeLists.txt`/`*.cmake` input under `SrcDir()` invalidates the cache and re-runs
+configure.
+
 For a local static library named `foo`, CMake may build
 `<BuildDir>/cmake/libfoo.a`, install `<BuildDir>/staging/lib/libfoo.a`, and VMake can
 publish `<BuildDir>/libfoo.a` with `SetPrebuilt`. Keep these paths distinct so the

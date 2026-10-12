@@ -197,6 +197,8 @@ func (p *Package) RunEnv(env map[string]string, name string, args ...string) err
 
 `CMakeConfigure` 严格解析已配置的编译器及 binutils，ASM 默认使用已解析的 CC 驱动。VMake 不将 `Tools.LD` 映射为 `CMAKE_LINKER`，底层链接器由 CMake 根据编译器识别。目标系统决定 `CMAKE_SYSTEM_NAME`；裸机使用 `Generic`、`CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY`，并从宿主查找程序、从目标根查找库和头文件。需要处理器信息时由项目显式传入 `CMAKE_SYSTEM_PROCESSOR`。
 
+`CMakeConfigure` 只在指纹变化时重新运行 configure，空闲的重复构建不会重放 configure。指纹包含本次 configure 参数（生成器、目标系统、构建类型、解析后的工具与全局 flags）、`CMAKE_*` 与 `PATH` 环境、cmake 可执行文件的内容，以及 `SrcDir()` 下所有 `CMakeLists.txt`／`CMakePresets.json`／`CMakeUserPresets.json`／`*.cmake`／`*.cmake.in` 的内容哈希；扫描跳过 `.git`、`.vmake_deps`、本次构建根（本地包为 `<SourceDir>/build`，远程包为 `out/<owner>/<key>`）、`CMakeFiles/` 与 `cmake_install.cmake`（含 `SrcDir()` 为符号链接及 `SrcDir()==BuildDir()` 的情形）。命中缓存时输出 `cmake configure (cached): <CMakeBuildDir>` 并跳过 configure；命中还要求 configure 产物仍在（`CMakeCache.txt`、`CMakeFiles/` 及已知生成器的 `build.ninja`／`Makefile`），避免手工删掉构建文件后跳过 configure 导致 `cmake --build` 失败。configure 成功后写入 stamp 文件 `<CMakeBuildDir>/.vmake_configure.json`；dry-run 既不读取也不写入 stamp；指纹计算失败视为 miss，单个不可读输入被跳过（其可读性/内容变化会自然导致 miss），绝不让构建因此失败。使用 `file(GLOB)` 的项目在新增文件时不会触发重新 configure，需要改用 `CONFIGURE_DEPENDS` 或在 `CMakeLists.txt` 中显式列出文件。
+
 Windows 主机默认使用 Ninja，尊重显式生成器、`CMAKE_GENERATOR` 环境变量及 configure preset。通过 `CMakeConfigure("--preset", "name")` 使用配置预设；`CMakeBuild` 拒绝 `--preset`，因为 build preset 的 `binaryDir` 会覆盖 API 管理的目录。构建目标和配置分别通过 `--target`、`--config` 选择。API 使用独立 argv 和规范化路径，不提前解析默认 make。`CMakeBuild()` 与 `Make()` 使用本次 `vmake -j N` 的并发上限。参数、环境变量及透传给后端的并发设置只能降低该上限；无限并发、非正数或超过上限均报错。未指定 `-j` 或 `-j0` 时，在构建开始时解析 CPU 数。`CMakeInstall(args...)` 支持 `--component` 等原生安装选项。
 
 `Env()` 返回不含 shell 引号的工具绝对路径，可用于直接执行程序。`Make`、`Configure` 和 `EnsureConfig` 会针对 shell 单独引用环境中的工具路径，保留路径内的空格；make 环境还会保护美元符号，避免被 make 展开。`CleanContext.Make` 使用相同处理。
@@ -234,7 +236,7 @@ p.CMakeInstall()
 - 原生 `-B`、安装前缀及 build-type 覆盖改用 setter；删除通用工具链文件生成、编译器前缀拼接和默认并行参数计算。
 - configure 之后调用 `CMakeBuild()`／`CMakeInstall()`，不再调用 `pkg.Make()` 构建 CMake 工程。
 - 本地 `SetPrebuilt` 包保持产物与发布位置分离：例如 CMake 生成 `cmake/libfoo.a`、安装到 `staging/lib/libfoo.a`，VMake 的顶层 `libfoo.a` 链接指向安装产物。
-- 迁移后清理旧构建目录再构建。所需 Void 构建回调每次构建执行一次，增量由 Make/CMake 自行判断；不再使用包级 stamp 或“安装目录非空”跳过回调。
+- 迁移后清理旧构建目录再构建。所需 Void 构建回调每次构建执行一次，增量由 Make/CMake 自行判断；不再使用包级 stamp 或“安装目录非空”跳过回调。configure 阶段本身由 `CMakeConfigure` 的指纹缓存判断（见上文），不改变回调每次执行的行为。
 
 ### 获取方法
 

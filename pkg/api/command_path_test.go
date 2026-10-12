@@ -1,14 +1,49 @@
 package api
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
+
+func TestMain(m *testing.M) {
+	switch filepath.Base(os.Args[0]) {
+	case "cmake", "cmake.exe":
+		runCMakeWrapper()
+	}
+	os.Exit(m.Run())
+}
+
+func runCMakeWrapper() {
+	real := os.Getenv("VMAKE_TEST_CMAKE_REAL")
+	if real == "" {
+		fmt.Fprintln(os.Stderr, "cmake wrapper: VMAKE_TEST_CMAKE_REAL is not set")
+		os.Exit(2)
+	}
+	if logPath := os.Getenv("VMAKE_TEST_CMAKE_LOG"); logPath != "" {
+		if log, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+			fmt.Fprintln(log, strings.Join(os.Args[1:], " "))
+			log.Close()
+		}
+	}
+	cmd := exec.Command(real, os.Args[1:]...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.ExitCode())
+		}
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
 
 func commandPathPackage(t *testing.T, installed bool) *Package {
 	t.Helper()
@@ -151,4 +186,83 @@ func assertCommandPathOutput(t *testing.T, path string) {
 	if err != nil || string(data) != "CONFIG_OK=y\n" {
 		t.Fatalf("output %s = %q, %v", path, data, err)
 	}
+}
+
+func TestCMakeConfigureSkipsUnchangedInputs(t *testing.T) {
+	for _, program := range []string{"cmake", "ninja"} {
+		if _, err := exec.LookPath(program); err != nil {
+			t.Skip(err)
+		}
+	}
+	realCMake, err := exec.LookPath("cmake")
+	if err != nil {
+		t.Skip(err)
+	}
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	build := filepath.Join(root, "build")
+	bin := filepath.Join(root, "bin")
+	logPath := filepath.Join(root, "cmake.log")
+	for _, dir := range []string{source, build, bin} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	program, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapper := filepath.Join(bin, "cmake")
+	if runtime.GOOS == "windows" {
+		wrapper += ".exe"
+	}
+	if err := os.WriteFile(wrapper, data, 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("VMAKE_TEST_CMAKE_REAL", realCMake)
+	t.Setenv("VMAKE_TEST_CMAKE_LOG", logPath)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	project := "cmake_minimum_required(VERSION 3.20)\nproject(fingerprint_probe LANGUAGES NONE)\n"
+	cmakeLists := filepath.Join(source, "CMakeLists.txt")
+	if err := os.WriteFile(cmakeLists, []byte(project), 0644); err != nil {
+		t.Fatal(err)
+	}
+	p := NewPackage().SetDirs(PkgDirs{SourceDir: source, BuildDir: build}).SetToolchain(&toolchain.Toolchain{})
+	p.CMakeConfigure("-G", "Ninja")
+	if got := countCMakeConfigureCalls(t, logPath); got != 1 {
+		t.Fatalf("first configure calls = %d, want 1", got)
+	}
+	p.CMakeConfigure("-G", "Ninja")
+	if got := countCMakeConfigureCalls(t, logPath); got != 1 {
+		t.Fatalf("unchanged configure calls = %d, want 1", got)
+	}
+	if err := os.WriteFile(cmakeLists, []byte(project+"# changed\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	p.CMakeConfigure("-G", "Ninja")
+	if got := countCMakeConfigureCalls(t, logPath); got != 2 {
+		t.Fatalf("changed configure calls = %d, want 2", got)
+	}
+}
+
+func countCMakeConfigureCalls(t *testing.T, logPath string) int {
+	t.Helper()
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		t.Fatal(err)
+	}
+	count := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if strings.HasPrefix(line, "-S ") {
+			count++
+		}
+	}
+	return count
 }

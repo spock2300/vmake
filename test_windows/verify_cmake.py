@@ -38,6 +38,14 @@ def check_archive(path, arm):
     assert objects == 3, (path, objects)
 
 
+def configure_count(build):
+    path = build / "vmake_configure_count.txt"
+    try:
+        return len(path.read_text(encoding="utf-8").splitlines())
+    except FileNotFoundError:
+        return 0
+
+
 def verify(vmake, root, name, toolchain, generator, custom=False, preset=False,
            default_mode=False):
     project = root / name
@@ -49,9 +57,10 @@ def verify(vmake, root, name, toolchain, generator, custom=False, preset=False,
         (project / ".vmake/config.json").write_text(json.dumps({
             "global": {"toolchain": toolchain, "mode": "debug"}
         }), encoding="utf-8")
-    (project / "CMakeLists.txt").write_text('''cmake_minimum_required(VERSION 3.20)
+    cmake_lists = '''cmake_minimum_required(VERSION 3.20)
 project(vmake_probe LANGUAGES C CXX ASM)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+file(APPEND "${CMAKE_BINARY_DIR}/vmake_configure_count.txt" "x\\n")
 add_library(probe STATIC source/probe.c source/probe.cpp source/probe.S)
 target_include_directories(probe PRIVATE source)
 install(TARGETS probe ARCHIVE DESTINATION lib)
@@ -64,7 +73,8 @@ if(NOT PROBE_BARE_METAL)
   target_include_directories(probe_module PRIVATE source)
   install(TARGETS probe_module LIBRARY DESTINATION lib)
 endif()
-''', encoding="utf-8")
+'''
+    (project / "CMakeLists.txt").write_text(cmake_lists, encoding="utf-8")
     (source / "value.h").write_text("#define PROBE_VALUE 7\n", encoding="utf-8")
     (source / "probe.c").write_text('''#include "value.h"
 #ifndef VMAKE_C_FLAG
@@ -160,26 +170,39 @@ func Main(p *api.Package) {
     assert published.is_symlink() and published.resolve() == archive.resolve(), published
     assert (install / "include/value.h").is_file()
     assert (project / "install/lib/libprobe.a").is_file()
-    cache = (build / "CMakeCache.txt").read_text(encoding="utf-8")
+    cache = build / "CMakeCache.txt"
+    cache_text = cache.read_text(encoding="utf-8")
     expected_type = "Debug" if default_mode else "MinSizeRel"
-    assert (f"CMAKE_BUILD_TYPE:STRING={expected_type}" in cache
-            or f"CMAKE_BUILD_TYPE:UNINITIALIZED={expected_type}" in cache), expected_type
-    assert "CMAKE_LINKER:UNINITIALIZED=" not in cache
-    assert "CMAKE_MODULE_LINKER_FLAGS:STRING=-Wl,--gc-sections" in cache
+    assert (f"CMAKE_BUILD_TYPE:STRING={expected_type}" in cache_text
+            or f"CMAKE_BUILD_TYPE:UNINITIALIZED={expected_type}" in cache_text), expected_type
+    assert "CMAKE_LINKER:UNINITIALIZED=" not in cache_text
+    assert "CMAKE_MODULE_LINKER_FLAGS:STRING=-Wl,--gc-sections" in cache_text
     commands = json.loads((build / "compile_commands.json").read_text(encoding="utf-8"))
     assert any("probe.S" in entry["file"] for entry in commands)
     assert all("-Werror " not in entry.get("command", "") for entry in commands)
     if not arm:
         run([str(install / "bin" / ("probe_app.exe" if os.name == "nt" else "probe_app"))], project)
+    cache_stamp = cache.stat().st_mtime_ns
     stamp = archive.stat().st_mtime_ns
     before = archive.read_bytes()
+    configure_runs = configure_count(build)
+    assert configure_runs >= 1, "configure side-effect oracle did not run"
     run(build_command, project)
     assert archive.stat().st_mtime_ns == stamp, "unchanged CMake build rewrote archive"
+    assert configure_count(build) == configure_runs, "unchanged CMake build reran configure"
+    assert cache.stat().st_mtime_ns == cache_stamp, "unchanged CMake build reran configure"
     time.sleep(1.1)
     (source / "value.h").write_text("#define PROBE_VALUE 11\n", encoding="utf-8")
     run(build_command, project)
     assert archive.read_bytes() != before, "changed CMake input did not rebuild archive"
+    assert configure_count(build) == configure_runs, "source-only change reran configure"
+    assert cache.stat().st_mtime_ns == cache_stamp, "source-only change reran configure"
     assert "11" in (install / "include/value.h").read_text()
+    time.sleep(1.1)
+    (project / "CMakeLists.txt").write_text(cmake_lists + "# configure fingerprint probe\n", encoding="utf-8")
+    run(build_command, project)
+    assert configure_count(build) > configure_runs, "CMakeLists change did not rerun configure"
+    assert cache.stat().st_mtime_ns != cache_stamp, "CMakeLists change did not rerun configure"
     print(f"CMake verification passed: {name}", flush=True)
 
 

@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 
+	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -74,11 +75,22 @@ func (p *Package) CMakeConfigure(extraArgs ...string) {
 	if err != nil {
 		fatalScript(p.Name, "CMakeConfigure", "%v", err)
 	}
-	if hasCMakeOption(extraArgs, "--preset") {
-		p.RunIn(p.SrcDir(), "cmake", args...)
+	fingerprint, cached := p.cmakeConfigureState(args)
+	if cached {
+		vlog.Info("  cmake configure (cached): %s", filepath.ToSlash(p.CMakeBuildDir()))
 		return
 	}
-	p.Run("cmake", args...)
+	if hasCMakeOption(extraArgs, "--preset") {
+		p.RunIn(p.SrcDir(), "cmake", args...)
+	} else {
+		p.Run("cmake", args...)
+	}
+	if p.DryRun() {
+		return
+	}
+	if err := p.saveCMakeConfigureStamp(args, fingerprint); err != nil {
+		vlog.Debug("  cmake configure: record fingerprint: %v", err)
+	}
 }
 
 func (p *Package) CMakeBuild(extraArgs ...string) {
