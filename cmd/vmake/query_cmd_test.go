@@ -136,3 +136,147 @@ func Main(p *api.Package) {
 		})
 	}
 }
+
+func TestQuerySkipsUnmaterializedLocalGitSources(t *testing.T) {
+	dir := t.TempDir()
+	state := filepath.Join(dir, "state")
+	repo := filepath.Join(state, "extensions", "fixture")
+	writeExtensionLoader(t, repo)
+	writeHealthyDefinition(t, filepath.Join(repo, "healthy", "toolchain.json"), "healthy")
+	project := filepath.Join(dir, "project")
+	writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","global":{"toolchain":"healthy"},"entries":{}}`)
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+    p.SetRoot(true)
+    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("app").SetKind(api.TargetBinary).AddDeps("lib:lib")
+    })
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "lib", "build.go"), `package main
+import (
+    "os"
+    "path/filepath"
+    "github.com/spock2300/vmake/pkg/api"
+)
+func Main(p *api.Package) {
+    p.OnPackage(func(p *api.Package) {
+        p.SetGit("https://example.invalid/lib.git")
+        p.AddVersion("1.0.0", "v1.0.0")
+    })
+    p.OnBuild(func(ctx *api.BuildContext) {
+        if p.BuildDir() == "" {
+            return
+        }
+        if _, err := os.ReadFile(filepath.Join(p.SourceDir(), "src", "lib.c")); err != nil {
+            panic(err)
+        }
+        ctx.Target("lib").SetKind(api.TargetStatic)
+    })
+}
+`)
+	for _, args := range [][]string{{"query"}, {"query", "targets"}} {
+		out, err := extensionCommand(t, state, project, args...)
+		if err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+		if strings.Contains(out, "lib (static)") {
+			t.Errorf("%v declared targets from an unmaterialized source tree:\n%s", args, out)
+		}
+		if _, err := os.Stat(filepath.Join(project, ".vmake_deps")); !os.IsNotExist(err) {
+			t.Fatalf("%v fetched package sources: %v", args, err)
+		}
+	}
+}
+
+func TestQueryCompactTreeRendering(t *testing.T) {
+	dir := t.TempDir()
+	state := filepath.Join(dir, "state")
+	repo := filepath.Join(state, "extensions", "fixture")
+	writeExtensionLoader(t, repo)
+	writeHealthyDefinition(t, filepath.Join(repo, "healthy", "toolchain.json"), "healthy")
+	project := filepath.Join(dir, "project")
+	writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","global":{"toolchain":"healthy"},"entries":{}}`)
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+    p.SetRoot(true)
+    p.OnRequire(func(ctx *api.RequireContext) {
+        ctx.AddRequires("kernel", "lib", "multi")
+        ctx.AddRequires("kernel")
+    })
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("app").SetKind(api.TargetBinary)
+    })
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "kernel", "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("kernel").SetKind(api.TargetObject)
+    })
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "lib", "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("kernel", "crypto") })
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("helper").SetKind(api.TargetVoid)
+        ctx.Target("lib").SetKind(api.TargetStatic)
+    })
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "multi", "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("kernel", "crypto") })
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("multi").SetKind(api.TargetVoid)
+    })
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "crypto", "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("libcrypto").SetKind(api.TargetStatic)
+    })
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "empty", "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+}
+`)
+
+	out, err := extensionCommand(t, state, project, "query")
+	if err != nil {
+		t.Fatalf("query: %v\n%s", err, out)
+	}
+	want := strings.Join([]string{
+		"app (binary) [.]",
+		"├── kernel (object) [kernel]",
+		"├── lib (static) +helper (void) [lib]",
+		"│   ├── kernel (object) (*)",
+		"│   └── crypto:libcrypto (static) [crypto]",
+		"└── multi (void) [multi]",
+		"    ├── kernel (object) (*)",
+		"    └── crypto:libcrypto (static) (*)",
+	}, "\n")
+	if !strings.Contains(out, want) {
+		t.Errorf("compact tree missing expected block:\n%s\ngot:\n%s", want, out)
+	}
+	if strings.Contains(out, "empty") {
+		t.Errorf("empty root package was printed:\n%s", out)
+	}
+	if got := strings.Count(out, "kernel (object) [kernel]"); got != 1 {
+		t.Errorf("kernel expanded %d times, want once:\n%s", got, out)
+	}
+	if got := strings.Count(out, "crypto:libcrypto (static) [crypto]"); got != 1 {
+		t.Errorf("crypto expanded %d times, want once:\n%s", got, out)
+	}
+}

@@ -23,7 +23,13 @@ func newQueryCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "query",
 		Short: "Show dependency tree",
-		Run:   runQuery,
+		Long: `Show the resolved dependency tree.
+
+Each package is expanded once; later occurrences are printed as "<label> (*)".
+A package is labelled by its primary target as "<pkg> (<kind>)", or
+"<pkg>:<target> (<kind>)" when that target is named differently. Extra targets
+are appended to the line as "+<target> (<kind>)".`,
+		Run: runQuery,
 	}
 	cmd.AddCommand(newQueryTargetsCmd())
 	cmd.AddCommand(newQueryConfigCmd())
@@ -145,12 +151,28 @@ func runQuery(cmd *cobra.Command, args []string) {
 	}
 	sort.Strings(roots)
 
-	visited := make(map[string]bool)
-	for i, root := range roots {
-		if i > 0 {
+	printer := &treePrinter{
+		w:       os.Stdout,
+		ctx:     ctx,
+		graph:   graph,
+		pkgDirs: inspection.PkgDirs,
+		values:  inspection.GlobalValues,
+		tcs:     inspection.PackageToolchains,
+		workDir: workDir,
+		visited: make(map[string]bool),
+		kinds:   make(map[string][]targetKindInfo),
+	}
+	printed := 0
+	for _, root := range roots {
+		node := graph[root]
+		if node == nil || (len(printer.targetKinds(root)) == 0 && len(node.Deps) == 0) {
+			continue
+		}
+		if printed > 0 {
 			fmt.Fprintln(os.Stdout)
 		}
-		printTree(os.Stdout, graph, ctx, inspection.PkgDirs, inspection.GlobalValues, inspection.PackageToolchains, workDir, root, "", true, true, visited)
+		printer.print(root, "", true, true)
+		printed++
 	}
 }
 
@@ -165,42 +187,30 @@ func formatPkgDir(pkgDir, workDir string) string {
 	return fmt.Sprintf("[%s]", rel)
 }
 
-func formatPkgParts(name string, kinds []targetKindInfo, pkgDir, workDir string, ctx *RuntimeContext, globalValues map[string]any, node *resolver.PackageNode) []string {
-	var parts []string
-	if len(kinds) > 0 {
-		parts = append(parts, kinds[0].name, fmt.Sprintf("(%s)", kinds[0].kind))
-	} else {
-		parts = append(parts, name)
-	}
-	if node.IsNative() {
-		parts = append(parts, fmt.Sprintf("@%s", node.Native.Selected))
-	}
-	if node.Pkg != nil {
-		if desc := node.Pkg.Description(); desc != "" {
-			parts = append(parts, fmt.Sprintf("- %q", desc))
-		}
-	}
-	if dir := formatPkgDir(pkgDir, workDir); dir != "" {
-		parts = append(parts, dir)
-	}
-	if opts := formatOptions(ctx, name, globalValues); opts != "" {
-		parts = append(parts, opts)
-	}
-	return parts
+type treePrinter struct {
+	w       *os.File
+	ctx     *RuntimeContext
+	graph   map[string]*resolver.PackageNode
+	pkgDirs map[string]*api.PkgDirs
+	values  map[string]any
+	tcs     map[string]*toolchain.Toolchain
+	workDir string
+
+	visited map[string]bool
+	kinds   map[string][]targetKindInfo
 }
 
-func printTree(
-	w *os.File,
-	graph map[string]*resolver.PackageNode,
-	ctx *RuntimeContext,
-	pkgDirs map[string]*api.PkgDirs,
-	globalValues map[string]any,
-	tcs map[string]*toolchain.Toolchain,
-	workDir, name, prefix string,
-	isRoot, isLast bool,
-	visited map[string]bool,
-) {
-	node := graph[name]
+func (p *treePrinter) targetKinds(name string) []targetKindInfo {
+	if kinds, ok := p.kinds[name]; ok {
+		return kinds
+	}
+	kinds := collectTargetKinds(name, p.pkgDirs[name], p.ctx, p.tcs[name], p.values)
+	p.kinds[name] = kinds
+	return kinds
+}
+
+func (p *treePrinter) print(name, prefix string, isRoot, isLast bool) {
+	node := p.graph[name]
 	if node == nil {
 		return
 	}
@@ -214,43 +224,30 @@ func printTree(
 		}
 	}
 
-	isLocal := node.IsLocal()
-	isVisited := visited[name]
-	visited[name] = true
+	label := name
+	var kinds []targetKindInfo
+	if node.IsLocal() {
+		kinds = p.targetKinds(name)
+		label = p.label(name, kinds)
+	}
+	if p.visited[name] {
+		fmt.Fprintf(p.w, "%s%s%s (*)\n", prefix, connector, label)
+		return
+	}
+	p.visited[name] = true
 
-	if isLocal {
-		sourceDir := pkgDirs[name].SourceDir
-		kinds := collectTargetKinds(name, pkgDirs[name], ctx, tcs[name], globalValues)
-		if len(kinds) > 0 {
-			parts := formatPkgParts(name, kinds, sourceDir, workDir, ctx, globalValues, node)
-			fmt.Fprintf(w, "%s%s%s\n", prefix, connector, strings.Join(parts, " "))
-			for _, k := range kinds[1:] {
-				indent := prefix
-				if !isRoot {
-					indent += "    "
-				}
-				fmt.Fprintf(w, "%s%s (%s)\n", indent, k.name, k.kind)
-			}
-		} else {
-			parts := formatPkgParts(name, nil, sourceDir, workDir, ctx, globalValues, node)
-			fmt.Fprintf(w, "%s%s%s\n", prefix, connector, strings.Join(parts, " "))
+	fmt.Fprintf(p.w, "%s%s%s\n", prefix, connector, strings.Join(p.parts(name, kinds, node), " "))
+
+	deps := make([]string, 0, len(node.Deps))
+	seen := make(map[string]bool, len(node.Deps))
+	for _, dep := range node.Deps {
+		if seen[dep] {
+			continue
 		}
-	} else {
-		parts := formatPkgParts(name, nil, "", workDir, ctx, globalValues, node)
-		fmt.Fprintf(w, "%s%s%s\n", prefix, connector, strings.Join(parts, " "))
+		seen[dep] = true
+		deps = append(deps, dep)
 	}
-
-	if isVisited {
-		return
-	}
-
-	deps := node.Deps
-	if len(deps) == 0 {
-		return
-	}
-
 	for i, dep := range deps {
-		isLastDep := i == len(deps)-1
 		var childPrefix string
 		if isRoot {
 			childPrefix = ""
@@ -259,8 +256,57 @@ func printTree(
 		} else {
 			childPrefix = prefix + "│   "
 		}
-		printTree(w, graph, ctx, pkgDirs, globalValues, tcs, workDir, dep, childPrefix, false, isLastDep, visited)
+		p.print(dep, childPrefix, false, i == len(deps)-1)
 	}
+}
+
+func (p *treePrinter) label(name string, kinds []targetKindInfo) string {
+	if len(kinds) == 0 {
+		return name
+	}
+	primary := name
+	if kinds[0].name != name {
+		primary = name + ":" + kinds[0].name
+	}
+	return fmt.Sprintf("%s (%s)", primary, kinds[0].kind)
+}
+
+func (p *treePrinter) parts(name string, kinds []targetKindInfo, node *resolver.PackageNode) []string {
+	var parts []string
+	parts = append(parts, p.label(name, kinds))
+	if len(kinds) > 1 {
+		parts = append(parts, formatExtraTargets(kinds[1:]))
+	}
+	if node.IsNative() {
+		parts = append(parts, fmt.Sprintf("@%s", node.Native.Selected))
+	}
+	if node.Pkg != nil {
+		if desc := node.Pkg.Description(); desc != "" {
+			parts = append(parts, fmt.Sprintf("- %q", desc))
+		}
+	}
+	var pkgDir string
+	if node.IsLocal() && p.pkgDirs[name] != nil {
+		pkgDir = p.pkgDirs[name].SourceDir
+	}
+	if dir := formatPkgDir(pkgDir, p.workDir); dir != "" {
+		parts = append(parts, dir)
+	}
+	if opts := formatOptions(p.ctx, name, p.values); opts != "" {
+		parts = append(parts, opts)
+	}
+	return parts
+}
+
+func formatExtraTargets(kinds []targetKindInfo) string {
+	if len(kinds) == 0 {
+		return ""
+	}
+	items := make([]string, 0, len(kinds))
+	for _, k := range kinds {
+		items = append(items, fmt.Sprintf("%s (%s)", k.name, k.kind))
+	}
+	return "+" + strings.Join(items, ", ")
 }
 
 type targetKindInfo struct {
@@ -292,6 +338,14 @@ func collectTargetKinds(name string, dirs *api.PkgDirs, ctx *RuntimeContext, tc 
 		}
 		return result[i].kind < result[j].kind
 	})
+	for i, k := range result {
+		if k.name == name {
+			primary := result[i]
+			copy(result[1:i+1], result[0:i])
+			result[0] = primary
+			break
+		}
+	}
 	return result
 }
 
