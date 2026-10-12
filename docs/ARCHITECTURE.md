@@ -201,7 +201,7 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 - `ExportConfig()` — 设置配置导出标志
 - `ImportConfig(names...)` — 注册可导入的包名
 - `SyncConfigDefines(names...)` — 快捷方式：`GenerateConfigDefines` + `ImportConfig`
-- `SetDryRun(v bool)` — 设置为 dry-run 模式（查询/检查等只声明场景使用）
+- `SetDryRun(v bool)` — 设置为 dry-run 模式（查询/检查等只声明场景使用）；这些场景不物化源码，本地 SetGit 包的工作树缺失时声明得到空 `BuildDir()`，`OnBuild` 中的真实文件 I/O 必须自行守卫
 
 **BuildPipeline**（`pkg/build/pipeline.go`）：
 ```

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/storage"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
@@ -139,5 +140,77 @@ func TestInspectRemoteTreeDirs(t *testing.T) {
 	}
 	if !strings.HasPrefix(dirs.BuildDir, filepath.Join(tree, "out")+string(filepath.Separator)) {
 		t.Fatalf("member BuildDir = %s, want under %s", dirs.BuildDir, filepath.Join(tree, "out"))
+	}
+}
+
+func skipWithoutHostTools(t *testing.T) {
+	t.Helper()
+	host, err := toolchain.GetManager().GetToolchain("host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := build.ResolveTools(host, api.Platform{}); err != nil {
+		t.Skipf("host tools unavailable: %v", err)
+	}
+}
+
+func TestInspectLocalGitWithoutMaterializedTree(t *testing.T) {
+	skipWithoutHostTools(t)
+	s := sessionFixture(t)
+	s.ctx.DepGraph.Packages["app"].Pkg.SetRoot(true)
+	s.ctx.DepGraph.Packages["app"].Deps = []string{"dep"}
+	dep := s.ctx.DepGraph.Packages["dep"]
+	dep.Pkg.SetGit("https://example.invalid/dep.git").AddVersion("1.0.0", "v1.0.0")
+
+	inspection, err := Inspect(s.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirs := inspection.PkgDirs["dep"]
+	if dirs == nil {
+		t.Fatal("unmaterialized local git package lost its directory entry")
+	}
+	if dirs.BuildDir != "" {
+		t.Fatalf("unmaterialized local git BuildDir = %q, want empty", dirs.BuildDir)
+	}
+	if dirs.SourceDir != dep.Source.Dir {
+		t.Fatalf("unmaterialized local git SourceDir = %q, want %q", dirs.SourceDir, dep.Source.Dir)
+	}
+	if _, err := os.Stat(filepath.Join(dep.Source.Dir, "src")); !os.IsNotExist(err) {
+		t.Fatalf("inspection touched the source tree: %v", err)
+	}
+}
+
+func TestInspectLocalGitWithMaterializedTree(t *testing.T) {
+	if !fs.SymlinksSupported() {
+		t.Skip(fs.SymlinkHint)
+	}
+	skipWithoutHostTools(t)
+	s := sessionFixture(t)
+	s.ctx.DepGraph.Packages["app"].Pkg.SetRoot(true)
+	s.ctx.DepGraph.Packages["app"].Deps = []string{"dep"}
+	dep := s.ctx.DepGraph.Packages["dep"]
+	upstream := initGitRepo(t, map[string]string{"input.c": "original\n"})
+	testGit(t, upstream, "tag", "v1.0.0")
+	dep.Pkg.SetGit(upstream).AddVersion("1.0.0", "v1.0.0")
+	dep.Constraints = []string{"=1.0.0"}
+	if err := s.selectPackageSource("dep"); err != nil {
+		t.Fatal(err)
+	}
+	s.pkgDirs["dep"] = makeLocalPkgDirs(dep.Source.Dir, "cc-key", s.cfg.Mode, nil, "", "", s.sourceCommits["dep"])
+	if err := s.preparePackageWorkspace("dep"); err != nil {
+		t.Fatal(err)
+	}
+
+	inspection, err := Inspect(s.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirs := inspection.PkgDirs["dep"]
+	if dirs == nil || dirs.BuildDir == "" {
+		t.Fatalf("materialized local git directories = %+v, want a computed build key", dirs)
+	}
+	if !strings.HasPrefix(dirs.BuildDir, filepath.Join(dep.Source.Dir, "build")+string(filepath.Separator)) {
+		t.Fatalf("materialized local git BuildDir = %s, want under %s", dirs.BuildDir, filepath.Join(dep.Source.Dir, "build"))
 	}
 }

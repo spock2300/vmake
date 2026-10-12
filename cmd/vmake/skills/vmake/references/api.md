@@ -107,7 +107,7 @@ The following helpers return **nothing** and raise a script error on failure; th
 | `Configure` | `(extraArgs ...string) error` | SrcDir/configure --prefix=... (+ --host when cross) |
 | `Make` | `(args ...string) error` | make -C BuildDir with `pkg.Env()` and the session jobs budget (**returns real error**) |
 
-Dry-run aware: in dry-run mode (query/check-symbols), all helpers log commands without executing them.
+Dry-run aware: in dry-run mode (query/check-symbols), all helpers log commands without executing them. Inspection does not materialize sources: a local SetGit package without a working tree declares with an empty `BuildDir()`. Guard real file I/O in `OnBuild` with `p.DryRun()` or `p.BuildDir() == ""` instead of assuming `SrcDir()` exists.
 
 ```go
 ctx.Target("zlib").SetKind(api.TargetVoid).SetBuildFunc(func(p *api.Package) error {

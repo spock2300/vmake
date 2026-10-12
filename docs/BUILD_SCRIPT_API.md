@@ -271,6 +271,8 @@ func (p *Package) SetDryRun(v bool) *Package   // 设置 dry run 模式（只打
 func (p *Package) DryRun() bool
 ```
 
+`vmake query`、`query targets`、`check-symbols` 等只声明场景不会物化任何源码：本地 SetGit 包的工作树尚未物化时，其 `BuildDir()` 为空。这类场景下内置的 `Run`/`Make`/`CMake*` 只打印不执行，但脚本自己的 `os.ReadFile`/`os.WriteFile` 等不会被拦截；`OnBuild` 中做真实文件读写前必须用 `p.DryRun()` 或 `p.BuildDir() == ""` 守卫，且不能假定 `SrcDir()` 下的源码存在。
+
 ### 版本选择
 
 ```go

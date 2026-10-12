@@ -37,6 +37,8 @@ For local packages without SetGit, `SrcDir()` defaults to `SourceDir()` unless `
 
 Path getters are bound after the package's source preparation; do not rely on `SourceDir()`/`BuildDir()`/`SrcDir()` before the build phase (they may still be empty in `OnPackage`/`OnConfig` and are populated for `OnBuild`).
 
+Inspection commands (`vmake query`, `query targets`, `check-symbols`) declare targets without materializing sources. A local `SetGit` package whose working tree is not present declares with an empty `BuildDir()`; `OnBuild` must guard real file I/O with `p.DryRun()` or `p.BuildDir() == ""` and must not assume the `src` link resolves.
+
 ## Action → Directory
 
 | Action | Working directory | Notes |

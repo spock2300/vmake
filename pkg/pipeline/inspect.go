@@ -108,6 +108,9 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (*Inspection, 
 		}
 		flagsHash := packageFlagsHash(pre.globalFlagsHash, node)
 		if node.IsLocal() {
+			if node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 && !DetectExistingSrcDir(node) {
+				continue
+			}
 			commit, err := existingLocalSourceCommit(node)
 			if err != nil {
 				return nil, err
