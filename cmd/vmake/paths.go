@@ -17,19 +17,20 @@ func findProjectDir() string {
 	if err != nil {
 		fatalMsg("get working directory: %v", err)
 	}
-	checkSubdirs := true
-	for {
-		if hasProjectMarker(dir, checkSubdirs) {
-			cachedProjectDir = dir
-			return dir
-		}
-		checkSubdirs = false
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			fatalMsg("not inside a vmake project (no .vmake/, build.go or */build.go found in %s or any parent directory)", dir)
-		}
-		dir = parent
+	if found, ok := searchProjectDir(dir); ok {
+		cachedProjectDir = found
+		return found
 	}
+	root := dir
+	for {
+		parent := filepath.Dir(root)
+		if parent == root {
+			break
+		}
+		root = parent
+	}
+	fatalMsg("not inside a vmake project (no .vmake/, build.go or */build.go found in %s or any parent directory)", root)
+	return ""
 }
 
 func findProjectDirSoft() string {
@@ -37,15 +38,20 @@ func findProjectDirSoft() string {
 	if err != nil {
 		return ""
 	}
+	found, _ := searchProjectDir(dir)
+	return found
+}
+
+func searchProjectDir(dir string) (string, bool) {
 	checkSubdirs := true
 	for {
 		if hasProjectMarker(dir, checkSubdirs) {
-			return dir
+			return dir, true
 		}
 		checkSubdirs = false
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return ""
+			return "", false
 		}
 		dir = parent
 	}

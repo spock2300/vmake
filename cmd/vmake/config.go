@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -342,27 +344,9 @@ func isValidChoice(val string, choices []string) bool {
 }
 
 func sortedOptionNames(opts map[string]*api.Option) []string {
-	names := make([]string, 0, len(opts))
-	for name := range opts {
-		names = append(names, name)
-	}
-	sortStrings(names)
-	return names
+	return slices.Sorted(maps.Keys(opts))
 }
 
 func sortedPackageNames(pkgs map[string]map[string]*api.Option) []string {
-	names := make([]string, 0, len(pkgs))
-	for name := range pkgs {
-		names = append(names, name)
-	}
-	sortStrings(names)
-	return names
-}
-
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
+	return slices.Sorted(maps.Keys(pkgs))
 }

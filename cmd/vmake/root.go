@@ -187,15 +187,20 @@ func resolveToConfig(ignoreLock bool) *RuntimeContext {
 	return ctx
 }
 
+func newRuntimeContext(inputs resolveInputs, locks *storage.Session) *RuntimeContext {
+	ctx := pipeline.NewContext(inputs.params(modeFlag, toolchainFlag))
+	ctx.Locks = locks
+	return ctx
+}
+
 func resolveToConfigContext(execution context.Context, ignoreLock bool) (*RuntimeContext, error) {
 	locks := commandStorageLocks()
 	inputs, err := loadResolveInputs(ignoreLock, false)
 	if err != nil {
 		return nil, err
 	}
-	ctx := pipeline.NewContext(inputs.params(modeFlag, toolchainFlag))
+	ctx := newRuntimeContext(inputs, locks)
 	ctx.Context = execution
-	ctx.Locks = locks
 	if err := pipeline.Require(ctx); err != nil {
 		return nil, err
 	}
@@ -209,8 +214,7 @@ func resolveToConfigBestEffort(ignoreLock bool) (*RuntimeContext, bool) {
 	locks := commandStorageLocks()
 	inputs, err := loadResolveInputs(ignoreLock, true)
 	fatalErr(err)
-	ctx := pipeline.NewContext(inputs.params(modeFlag, toolchainFlag))
-	ctx.Locks = locks
+	ctx := newRuntimeContext(inputs, locks)
 	if err := pipeline.Require(ctx); err != nil {
 		return ctx, false
 	}

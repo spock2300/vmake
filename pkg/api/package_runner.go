@@ -31,25 +31,15 @@ func (p *Package) MergedLdFlags(extra ...string) string {
 
 func (p *Package) Env() map[string]string {
 	tc := *p.tc
-	for _, tool := range []struct {
-		name string
-		path *string
-	}{
-		{"CC", &tc.Tools.CC}, {"CXX", &tc.Tools.CXX},
-		{"AR", &tc.Tools.AR}, {"LD", &tc.Tools.LD},
-		{"STRIP", &tc.Tools.STRIP}, {"RANLIB", &tc.Tools.RANLIB},
-		{"OBJCOPY", &tc.Tools.OBJCOPY}, {"SIZE", &tc.Tools.SIZE},
-		{"OBJDUMP", &tc.Tools.OBJDUMP}, {"NM", &tc.Tools.NM},
-		{"MAKE", &tc.Tools.MAKE},
-	} {
-		if *tool.path == "" {
+	for _, tool := range tc.Tools.Entries() {
+		if *tool.Value == "" {
 			continue
 		}
-		path, err := toolchain.ResolveToolPath(*tool.path, tc.InstallPath)
+		path, err := toolchain.ResolveToolPath(*tool.Value, tc.InstallPath)
 		if err != nil {
-			fatalScript(p.Name, "Env", "resolve %s %q: %v", tool.name, *tool.path, err)
+			fatalScript(p.Name, "Env", "resolve %s %q: %v", tool.Name, *tool.Value, err)
 		}
-		*tool.path = filepath.ToSlash(path)
+		*tool.Value = filepath.ToSlash(path)
 	}
 	if tc.Prefix != "" {
 		if tc.InstallPath != "" && !filepath.IsAbs(tc.Prefix) {
@@ -181,8 +171,8 @@ func (p *Package) runIn(dir string, extra map[string]string, name string, args .
 		env[key] = value
 	}
 	if p.tc != nil {
-		t := p.tc.Tools
-		for _, configured := range []string{t.CC, t.CXX, t.AR, t.LD, t.STRIP, t.RANLIB, t.OBJCOPY, t.SIZE, t.OBJDUMP, t.NM, t.MAKE} {
+		for _, tool := range p.tc.Tools.Entries() {
+			configured := *tool.Value
 			if configured != "" && name == configured {
 				path, err := toolchain.ResolveToolPath(configured, p.tc.InstallPath)
 				if err != nil {

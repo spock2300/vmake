@@ -17,7 +17,8 @@ CGO_ENABLED=0 go test ./cmd/vmake/... ./pkg/... ./internal/...
 - Run each integration project from its own directory: `(cd test_data/01_simple_c && ../../vmake build)`. Do not invoke a build from the `test_data/` parent.
 - Firmware fixture 17 is in `test_linux/17_firmware`, not `test_data/`.
 - Windows cross-build: `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o vmake.exe ./cmd/vmake`.
-- Windows CI's setup and scoped checks are in `.github/workflows/windows.yml`; its unit command excludes `(?i)subgraph|TestDeclarePackageTargetsDryRunWiring`. Windows snapshots are currently disabled there.
+- CI is Windows-only (`.github/workflows/windows.yml`); it runs the scoped vet/test commands above with `-skip '(?i)subgraph|TestDeclarePackageTargetsDryRunWiring'` and leaves snapshots disabled. Run Linux/macOS verification locally.
+- `build`/`rebuild` always publish `build/vmake-build.json` (status, targets, hashed installed artifacts); `clean`/`distclean` remove it. It is separate from `install/manifest.json`; see `docs/BUILD_RESULT.md`.
 
 ### Build-behavior snapshots
 
@@ -31,22 +32,23 @@ CGO_ENABLED=0 go build -o vmake ./cmd/vmake
 
 - Snapshots compare installed artifacts, a redacted manifest, and `build/compile_commands.json`. Use them for compilation/linking/install behavior changes.
 - The harness deletes fixture-local build/install/dependency directories and `.vmake` configuration before and after each test. It sets an isolated `VMAKE_CACHE` and `VMAKE_TRUST_ALL=1`.
-- Projects 07–10 are skipped by `skipProjects` in `snapshot_test.go`; the full suite also runs firmware 17 when present.
+- Discovery is automatic for any `test_data/*` directory containing `build.go`. `skipProjects` excludes 07–10 and `skipProjectsDarwin` excludes ELF-only 12/22–24 on darwin; `TestSnapshotsTestLinux` adds firmware 17 when present.
 - Prerequisites: 06 uses C++; 11 needs `official/tinyexpr`; 13 needs the `test_build` native repo; 25 requires `sh test_data/25_subpackage/setup.sh` after building vmake. That setup registers/trusts the local `subtest` repo in `~/.vmake`.
-- For intentional drift, run `go test -update` inside `test_data/_snapshot` (optionally with `-run`). Baselines are OS-specific: `baseline/`, `baseline-windows/`, and `baseline-darwin/`. Investigate drift before updating.
-- CMake integration: `python3 test_windows/verify_cmake.py ./vmake` exercises real CMake/Ninja builds; `--arm` also requires the ARM toolchain. Windows ARM setup and verification commands live in the workflow above.
+- For intentional drift, run `go test -update` inside `test_data/_snapshot` (optionally with `-run`). Only `baseline/` is committed; the code uses `baseline-windows/` or `baseline-darwin/` on those hosts, so create that directory before updating. Investigate drift before updating.
+- CMake integration: `python3 test_windows/verify_cmake.py ./vmake` exercises real CMake/Ninja builds; `--arm` also requires the ARM toolchain. Windows ARM setup and verification commands live in that workflow.
 
 ## Execution boundaries
 
 - Targets execute serially in target dependency order. Only source compilation within the active target is parallel. `-j0` resolves to CPU count once; Make/CMake helpers share the same ceiling.
 - Required Void build callbacks execute once per invocation, including synchronous subgraphs. VMake does not skip arbitrary callbacks across invocations; Make/CMake own their incremental checks.
 - Installation reuses the invocation's BuildCtxs. Do not replay OnBuild during installation.
-
 - `cmd/vmake/main.go` initializes Git userland before plugin loading and Cobra execution. Built-in `ext` commands skip plugin execution so broken extensions remain removable/updatable.
 - `cmd/vmake/root.go:resolveToConfig` calls `pipeline.Require` then `pipeline.Configure`. `pkg/pipeline/build_phase.go:RunBuild` owns filtering, source preparation, lockfile writing, patches, Kconfig restoration, OnBuild, and scheduling. Keep orchestration in `pkg/pipeline`; compilation/linking/install belong in `pkg/build`.
 - `OnRequire` runs first for eager discovery without option values, then again through `FilterDeps` after `OnConfig`/`OnApply`. Use discovery-aware `When`/`If`/`Select` there; direct `Bool`/`String`/`Int` reads fail. Reachability is traversed from local roots, not every loaded remote package.
 - `AddRequires` declares package resolution dependencies; targets must explicitly declare build edges with `AddDeps`. There is no automatic Require-to-target wiring.
 - Query/check-symbols/clean reuse `pipeline.Inspect`; target inspection (`query`, `check-symbols`) uses `pipeline.DeclareTargets` for dry-run OnBuild. `DeclareTargets` intentionally omits `applyBuildContextConfig` to avoid duplicate defines; a nil toolchain preserves existing wiring.
+- Inspection never materializes sources: an absent local SetGit tree declares an empty `BuildDir()`, so OnBuild file I/O must guard on `p.DryRun()` or an empty `BuildDir()` and cannot assume the `src` link resolves.
+- `build.PackageLayout` and `layoutFor` in `pkg/pipeline/layout.go` are the single source of truth for per-package build/install dirs and build keys; do not recompute them in callers. Keys cover toolchain identity, mode, options, global flags, buildscript/patch hashes, and source version/commit, so hash any new output-affecting input.
 - Local and remote packages share scheduling, compilation, and linking. Keep source materialization, directory selection, and patch handling at their existing boundaries.
 
 ## Interpreted scripts and generated symbols
@@ -56,15 +58,18 @@ CGO_ENABLED=0 go build -o vmake ./cmd/vmake
 - Cobra/pflag bindings under `internal/yaegisym` are generated. After Cobra/pflag upgrades, run `go generate ./internal/yaegisym/` with `yaegi` (from `github.com/traefik/yaegi/cmd/yaegi`) on PATH, matching the version in `go.mod`; do not hand-edit generated bindings.
 - `internal/gosrc.ListGoFiles` selects Go files using the running host's GOOS/GOARCH with CGO disabled, independently of the C/C++ target. It excludes `_test.go` and files importing `C`; the loaders merge selected files for interpretation.
 - Pass `[]string` directly to `AddCFlags`, `AddDefines`, etc.; spreading it with `...` into their `...any` parameters fails under yaegi. The API flattens slices itself.
+- Custom `GlobalOption`s are auto-exported to every package as `CONFIG_<NAME>` defines (choice values add `CONFIG_<NAME>_<UPPER_VALUE>`); plain package options become macros only through `GenerateConfigDefines`/`GenerateConfigHeader`. Options may only be declared during `OnConfig`.
 - `internal/scriptfs` wraps common `os` operations, `filepath.Walk/WalkDir`, and `exec.Command` to use the script directory. `os.Chdir` is rejected. Unwrapped APIs such as `exec.CommandContext` and `template.ParseFiles` still use process cwd; supply explicit absolute paths/command directories.
 
 ## Directories and incremental behavior
 
 - `SourceDir()` is the package root; `SrcDir()` is the actual source tree and can differ after `SetGit`; `BuildDir()` is build-key-specific. `p.Run` and `p.Make` use BuildDir. For an in-source Makefile use `p.Make("-C", filepath.ToSlash(srcDir), ...)`; the source directory must be absolute. Make/CMake helpers inherit the invocation jobs ceiling.
 - Prefer `CMakeConfigure`/`CMakeBuild`/`CMakeInstall`. Use their directory/configuration setters and `CMakeBuildDir()`/`CMakeInstallDir()` getters; defaults are `BuildDir()/cmake` and remote InstallDir or local `BuildDir()/staging`. Keep CMake artifacts separate from `SetPrebuilt` symlink destinations.
-- Third-party sources materialize as a single shallow working tree per package at `<project>/.vmake_deps/<repo>/<pkg>/src` (local SetGit packages: `.vmake_deps/local/<pkg>/src`, linked from `<pkgDir>/src`). The selected commit's objects are fetched once into the shared content-addressed cache `~/.vmake/cache/git/<urlhash>.git` (one bare repo per upstream URL, anchored under `refs/vmake/<commit>`; `VMAKE_CACHE` overrides the default cache root and `VMAKE_GIT_CACHE=off` disables the cache and fetches depth-1 directly from the upstream URL selected by `git ls-remote`), and each working tree is then fetched depth-1 from that cache. Same-commit work (patch-set changes) is restored in place with `checkout --force --detach`/`clean -fdx`; a different commit recreates the tree. Builds hold the exclusive project lock, and each tree is serialized by `tree_<hash>.lock` while each cache namespace is serialized by `cache_<urlhash[:16]>.lock`. Legacy `cache/mirrors` is deleted once by the layout upgrade. Keep `_locks` outside guarded package directories and never unlink held lock files.
+- `CMakeConfigure` fingerprints its inputs in `<CMakeBuildDir>/.vmake_configure.json` and skips unchanged runs; new files matched only by `file(GLOB)` do not invalidate it—use `CONFIGURE_DEPENDS` or clean the build tree.
+- Third-party sources materialize as a single shallow working tree per package at `<project>/.vmake_deps/<repo>/<pkg>/src` (local SetGit packages: `.vmake_deps/local/<pkg>/src`, linked from `<pkgDir>/src`). The selected commit's objects are fetched once into the shared content-addressed cache `~/.vmake/cache/git/<urlhash>.git` (one bare repo per upstream URL, anchored under `refs/vmake/<commit>`; `VMAKE_CACHE` overrides the default cache root and `VMAKE_GIT_CACHE=off` disables the cache and fetches depth-1 directly from the upstream URL selected by `git ls-remote`), and each working tree is then fetched depth-1 from that cache. Same-commit work (patch-set changes) is restored in place with `checkout --force --detach`/`clean -fdx`; a different commit recreates the tree. Builds hold the exclusive project lock, and each tree is serialized by `tree_<hash>.lock` while each cache namespace is serialized by `cache_<urlhash[:16]>.lock`. Keep `_locks` outside guarded package directories and never unlink held lock files. `clean`/`clean --all` keep these working trees, and `distclean` keeps them unless `--purge-sources` is passed; ordinary cleaning does not reset source edits.
 - Storage layout diagrams are living documentation: whenever paths, lock/state files, or cleanup semantics under `~/.vmake/`, `.vmake/`, or `.vmake_deps/` change, update the structure diagrams in `docs/VMAKE_HOME.md` and every other doc or bundled skill file that states those paths (for example `docs/ARCHITECTURE.md`, `docs/FIRMWARE_BUILD_DESIGN.md`, `cmd/vmake/skills/vmake/`) in the same change; do not leave stale paths.
 - `.vmake/vmake.lock` pins remote versions/commits; `vmake lock update` explicitly re-resolves them. Preserve offline locked resolution rather than adding unconditional fetches.
+- `.vmake/project.json` selects the active config file; if absent, `.vmake/config.json` is the default, but a present selection that is missing/invalid must error rather than fall back. All config files share `.vmake/vmake.lock`; `config list|use|copy|describe` do not run Require/Configure.
 - Kconfig presets are make target names, not complete `.config` files. Generation belongs in `EnsureConfig`/TUI `ensureConfigCmd`; `restoreKConfigFiles` only restores saved content. Preserve unchanged config mtimes so incremental stamps remain valid.
 - Custom post-link inputs/outputs require `AddPostLinkDeps`/`AddPostLinkOutputs`. Missing outputs or changed inputs trigger relinking and all post-link steps; command arguments do not imply outputs. Hex/Bin/Strip helpers declare their outputs automatically.
 - `autoconf.h` is package-local; public headers must not include it. Cross-package config propagation uses exported/imported options and generated defines. `SetDefaultVisibilityHidden` is also package-local, not a dependency-wide policy.
@@ -78,7 +83,7 @@ CGO_ENABLED=0 go build -o vmake ./cmd/vmake
 - Windows storage requires real symlinks (Developer Mode or elevation); do not substitute junctions. Git for Windows supplies Unix userland, not a C compiler or make. Diagnose a fixture with `../../vmake.exe doctor --toolchain NAME` from its project directory.
 - Windows GNU compile/link/archive commands use response files; `compile_commands.json` must retain expanded arguments. VMake-built PE shared libraries link through `.dll.a` import libraries; never whole-archive these. ELF-only symbol policies must fail on PE targets.
 - macOS hosts use the builtin `cc`/`c++` toolchain with no `objcopy`/`objdump`; do not require them there. Native links are Mach-O: dependency archives use `-force_load` (no GNU group/whole-archive), `TargetShared` links with `-dynamiclib` and an `@rpath/<name>` install name, dylib consumers get `-rpath` entries for the dependency directories plus `@loader_path`/`@loader_path/../lib`, and ELF-only symbol policies must fail on Mach-O targets. Only `target_os=darwin` selects this path; values are not aliased. Mach-O artifacts are out of scope for `vmake check-symbols`.
-- Apple ships GNU Make 3.81; Kconfig/kernel/U-Boot builds need 3.82+ (`brew install make`, then point the toolchain's MAKE at `gmake`). Snapshot baselines are per host OS: `baseline/`, `baseline-windows/`, `baseline-darwin/`; generate darwin baselines on macOS with `go test -update`.
+- Apple ships GNU Make 3.81; Kconfig/kernel/U-Boot builds need 3.82+ (`brew install make`, then point the toolchain's MAKE at `gmake`).
 - `vmake test` executes native test binaries. Cross/bare-metal targets use `vmake build --tests`; test targets are excluded from ordinary builds and installation.
 
 ## Repository conventions
@@ -86,7 +91,8 @@ CGO_ENABLED=0 go build -o vmake ./cmd/vmake
 - Do not add comments unless explicitly requested. Use function-type callbacks and composition instead of introducing interfaces.
 - API mutators are fluent: `SetX` sets a single value, `AddX` appends, `RemoveX` removes. Keep fields private where the surrounding API uses accessors.
 - Imports are grouped stdlib → external → local. Logging uses `vlog "github.com/spock2300/vmake/pkg/log"`; available methods are Debug/Info/Error/Fatal, not Warn.
+- `cmd/vmake/skills/vmake/` is embedded, test-checked user documentation. After CLI changes regenerate `references/cli.md` with `CGO_ENABLED=0 go test ./cmd/vmake -run '^TestSkillCLISnapshot$' -update-skill-ref`; keep the API/storage references in sync with code.
 - API misuse raises `*BuildScriptError` through `fatalScript` (`pkg/api/errors.go`), recovered by script execution boundaries. New API validation must use that path rather than exiting with `vlog.Fatal`. Ordinary library errors are returned to callers.
 - Preserve strict contracts: fix invalid callers rather than adding fallback chains or silent defaults. IDE integrations, distributed builds, and MSVC support are outside the current scope.
 
-Detailed references: `docs/BUILD_SCRIPT_API.md` for script contracts, `docs/EXTENSION_PLUGIN.md` for plugins/toolchains, and `docs/DESIGN_DECISIONS.md` for intentional resolver limitations.
+Detailed references: `docs/ARCHITECTURE.md` for execution flow, `docs/BUILD_SCRIPT_API.md` for script contracts, `docs/VMAKE_HOME.md` for storage layout, `docs/EXTENSION_PLUGIN.md` for plugins/toolchains, and `docs/DESIGN_DECISIONS.md` for intentional resolver limitations.

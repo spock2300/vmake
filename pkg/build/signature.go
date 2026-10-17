@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 
@@ -114,15 +115,7 @@ func actionUpToDate(recordPath, signature, workDir string, inputs, outputs []str
 }
 
 func equalFileStates(a, b []fileState) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(a, b)
 }
 
 func saveActionRecord(recordPath, signature, workDir string, inputs, outputs []string) error {

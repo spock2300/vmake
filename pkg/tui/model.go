@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -180,25 +181,13 @@ func newModel(in modelInput) Model {
 		globalValues["mode"] = api.ModeRelease
 	}
 
-	for name, opt := range globalOptions {
-		if _, ok := globalValues[name]; !ok {
-			if d := opt.Default(); d != nil {
-				globalValues[name] = d
-			}
-		}
-	}
+	fillOptionDefaults(globalValues, globalOptions)
 
 	for pkgName, opts := range options {
 		if values[pkgName] == nil {
 			values[pkgName] = make(map[string]any)
 		}
-		for name, opt := range opts {
-			if _, ok := values[pkgName][name]; !ok {
-				if d := opt.Default(); d != nil {
-					values[pkgName][name] = d
-				}
-			}
-		}
+		fillOptionDefaults(values[pkgName], opts)
 	}
 
 	m := Model{
@@ -718,22 +707,38 @@ func (m *Model) effectiveGlobalValue(values map[string]any, name string) any {
 	return nil
 }
 
+func (m *Model) selectedOptions() map[string]*api.Option {
+	if m.selectedPkg == GlobalPkgName {
+		return m.globalOptions
+	}
+	return m.options[m.selectedPkg]
+}
+
+func lookupOptionValue(values map[string]any, opts map[string]*api.Option, name string) any {
+	if v, ok := values[name]; ok {
+		return v
+	}
+	if opt, ok := opts[name]; ok {
+		return opt.Default()
+	}
+	return nil
+}
+
+func fillOptionDefaults(values map[string]any, opts map[string]*api.Option) {
+	for name, opt := range opts {
+		if _, ok := values[name]; !ok {
+			if def := opt.Default(); def != nil {
+				values[name] = def
+			}
+		}
+	}
+}
+
 func (m *Model) getValue(name string) any {
 	if m.selectedPkg == GlobalPkgName {
 		return m.effectiveGlobalValue(m.globalValues, name)
 	}
-
-	if vals, ok := m.values[m.selectedPkg]; ok {
-		if v, ok := vals[name]; ok {
-			return v
-		}
-	}
-	if opts, ok := m.options[m.selectedPkg]; ok {
-		if opt, ok := opts[name]; ok {
-			return opt.Default()
-		}
-	}
-	return nil
+	return lookupOptionValue(m.values[m.selectedPkg], m.options[m.selectedPkg], name)
 }
 
 func (m *Model) setValue(name string, val any) {
@@ -756,35 +761,13 @@ func (m *Model) checkChanges() {
 }
 
 func globalValuesEqual(a, b map[string]any) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, vA := range a {
-		vB, ok := b[k]
-		if !ok || !sameValue(vA, vB) {
-			return false
-		}
-	}
-	return true
+	return maps.EqualFunc(a, b, sameValue)
 }
 
 func valuesEqual(a, b map[string]map[string]any) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for pkg, optsA := range a {
-		optsB, ok := b[pkg]
-		if !ok || len(optsA) != len(optsB) {
-			return false
-		}
-		for k, vA := range optsA {
-			vB, ok := optsB[k]
-			if !ok || !sameValue(vA, vB) {
-				return false
-			}
-		}
-	}
-	return true
+	return maps.EqualFunc(a, b, func(x, y map[string]any) bool {
+		return maps.EqualFunc(x, y, sameValue)
+	})
 }
 
 func sameValue(a, b any) bool {
@@ -983,17 +966,7 @@ func (m *Model) origValue(name string) any {
 	if m.selectedPkg == GlobalPkgName {
 		return m.effectiveGlobalValue(m.origGlobal, name)
 	}
-	if vals, ok := m.origValues[m.selectedPkg]; ok {
-		if v, ok := vals[name]; ok {
-			return v
-		}
-	}
-	if opts, ok := m.options[m.selectedPkg]; ok {
-		if opt, ok := opts[name]; ok {
-			return opt.Default()
-		}
-	}
-	return nil
+	return lookupOptionValue(m.origValues[m.selectedPkg], m.options[m.selectedPkg], name)
 }
 
 func (m *Model) isOptionModified(name string) bool {
@@ -1033,16 +1006,8 @@ func (m *Model) clearGlobalValue(name string) {
 }
 
 func (m *Model) declaredDefault(name string) any {
-	if m.selectedPkg == GlobalPkgName {
-		if opt, ok := m.globalOptions[name]; ok {
-			return opt.Default()
-		}
-		return nil
-	}
-	if opts, ok := m.options[m.selectedPkg]; ok {
-		if opt, ok := opts[name]; ok {
-			return opt.Default()
-		}
+	if opt, ok := m.selectedOptions()[name]; ok {
+		return opt.Default()
 	}
 	return nil
 }
@@ -1103,15 +1068,10 @@ func (m *Model) isOptionModifiedGlobal(name string) bool {
 
 func (m *Model) isOptionModifiedPkg(pkgName, name string) bool {
 	cur := m.values[pkgName][name]
-	var orig any
-	if vals, ok := m.origValues[pkgName]; ok {
-		orig = vals[name]
-	}
+	orig := m.origValues[pkgName][name]
 	if orig == nil {
-		if opts, ok := m.options[pkgName]; ok {
-			if opt, ok := opts[name]; ok {
-				orig = opt.Default()
-			}
+		if opt, ok := m.options[pkgName][name]; ok {
+			orig = opt.Default()
 		}
 	}
 	return !sameValue(cur, orig)

@@ -331,7 +331,7 @@ func resolveRemoteRefOne(ctx context.Context, url, ref string) (string, string, 
 			return commit, "refs/heads/" + ref, nil
 		}
 	}
-	if isCommitSHA(ref) {
+	if validCommitID(ref) {
 		return ref, "", nil
 	}
 	return "", "", fmt.Errorf("ref %s not found on %s", ref, url)
@@ -495,17 +495,13 @@ func ResolveRemoteCommitContext(ctx context.Context, url, ref string) (string, e
 			commit = fields[0]
 		}
 	}
-	if commit == "" && isCommitSHA(ref) {
+	if commit == "" && validCommitID(ref) {
 		return ref, nil
 	}
 	if commit == "" {
 		return "", fmt.Errorf("ref %s not found on %s", ref, url)
 	}
 	return commit, nil
-}
-
-func isCommitSHA(s string) bool {
-	return validCommitID(s)
 }
 
 func validCommitID(commit string) bool {

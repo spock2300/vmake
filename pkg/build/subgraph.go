@@ -99,8 +99,3 @@ func BuildSubGraph(base *BuildJob, req SubGraphRequest) error {
 	vlog.Info("  [subgraph] %s done", req.RootPkg)
 	return nil
 }
-
-func TargetOutputPath(pkgDir, buildKey string, kind api.TargetKind, targetName, targetOS string) string {
-	filename := targetFilename(kind, targetName, targetOS)
-	return BuildPath(pkgDir, buildKey, filename)
-}

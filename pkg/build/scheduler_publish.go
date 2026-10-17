@@ -39,20 +39,12 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 	if resolved.OutputPath != "" && !published {
 		srcPath := resolveWorkPath(pkgInfo.SourceDir, resolved.OutputPath)
 		if _, err := os.Stat(srcPath); err == nil {
-			dest := filepath.Join(libDir, filepath.Base(resolved.OutputPath))
-			vlog.Info("  INSTALL %s -> %s", filepath.Base(resolved.OutputPath), dest)
-			if err := CopyFile(srcPath, dest); err != nil {
+			if err := copyArtifact(srcPath, filepath.Join(libDir, filepath.Base(resolved.OutputPath)), nil); err != nil {
 				return fmt.Errorf("install library failed: %w", err)
 			}
 		}
-		if implib := importLibraryPath(srcPath, targetOS, kind); implib != "" {
-			if _, err := os.Stat(implib); err == nil {
-				dest := filepath.Join(libDir, filepath.Base(implib))
-				vlog.Info("  INSTALL %s -> %s", filepath.Base(implib), dest)
-				if err := CopyFile(implib, dest); err != nil {
-					return fmt.Errorf("install import library failed: %w", err)
-				}
-			}
+		if err := copyImportLibrary(srcPath, libDir, targetOS, kind, nil); err != nil {
+			return fmt.Errorf("install import library failed: %w", err)
 		}
 	}
 

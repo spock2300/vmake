@@ -82,8 +82,7 @@ func collectConfigPins(cfg *config.ConfigFile) map[string]string {
 	return pins
 }
 
-func collectOptions(name, dir string, pkg *api.Package, buf *packageGlobalFlags) map[string]*api.Option {
-	cfgCtx := api.NewConfigContextWithPackage(name, pkg)
+func bindGlobalFlagCallbacks(cfgCtx *api.ConfigContext, buf *packageGlobalFlags) {
 	cfgCtx.SetGlobalCFlagsFunc(func(flags ...string) {
 		buf.cFlags = append(buf.cFlags, flags...)
 	})
@@ -96,6 +95,11 @@ func collectOptions(name, dir string, pkg *api.Package, buf *packageGlobalFlags)
 	cfgCtx.SetGlobalLinksFunc(func(links ...string) {
 		buf.links = append(buf.links, links...)
 	})
+}
+
+func collectOptions(name, dir string, pkg *api.Package, buf *packageGlobalFlags) map[string]*api.Option {
+	cfgCtx := api.NewConfigContextWithPackage(name, pkg)
+	bindGlobalFlagCallbacks(cfgCtx, buf)
 	pkg.ExecConfigFuncs(dir, func(fn api.ConfigFunc) { fn(cfgCtx) })
 	return cfgCtx.GetOptions()
 }
@@ -186,18 +190,7 @@ func applyAllConfigCallbacks(ctx *RuntimeContext) {
 			applyVals[optName] = val
 		}
 		applyCtx.SetCfgVals(applyVals)
-		applyCtx.SetGlobalCFlagsFunc(func(flags ...string) {
-			buf.cFlags = append(buf.cFlags, flags...)
-		})
-		applyCtx.SetGlobalCxxFlagsFunc(func(flags ...string) {
-			buf.cxxFlags = append(buf.cxxFlags, flags...)
-		})
-		applyCtx.SetGlobalLdFlagsFunc(func(flags ...string) {
-			buf.ldFlags = append(buf.ldFlags, flags...)
-		})
-		applyCtx.SetGlobalLinksFunc(func(links ...string) {
-			buf.links = append(buf.links, links...)
-		})
+		bindGlobalFlagCallbacks(applyCtx, buf)
 
 		optNames := make([]string, 0, len(opts))
 		for optName := range opts {

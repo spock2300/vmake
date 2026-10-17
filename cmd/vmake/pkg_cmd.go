@@ -215,7 +215,7 @@ var pkgUpdateCmd = &cobra.Command{
 				Ref:     ref,
 			})
 			fatalErr(err)
-			fmt.Printf("Updated source for '%s' -> %s@%s (%s)\n", pkgRef, pkgRef, version, shortCommit(res.Commit))
+			fmt.Printf("Updated source for '%s' -> %s@%s (%s)\n", pkgRef, pkgRef, version, repo.ShortCommit(res.Commit))
 			return
 		}
 
@@ -226,13 +226,6 @@ var pkgUpdateCmd = &cobra.Command{
 		fatalErr(sourceMgr.UpdateSource(pkg))
 		fmt.Printf("Updated source for package '%s'\n", pkgRef)
 	},
-}
-
-func shortCommit(c string) string {
-	if len(c) > 12 {
-		return c[:12]
-	}
-	return c
 }
 
 func init() {

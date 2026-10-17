@@ -517,19 +517,6 @@ func (r *Resolver) scanSubPackages(parentID, checkoutDir string) {
 	vlog.Info("  %s: found %d sub-package(s)", parentID, len(subs))
 }
 
-func (r *Resolver) checkoutNativeSource(id, gitURL, repoDir, ref string) (*buildscript.Source, error) {
-	if err := repo.EnsureRepoAtRefContext(r.ctx, gitURL, repoDir, ref); err != nil {
-		return nil, fmt.Errorf("checkout %s for %s: %w", ref, id, err)
-	}
-
-	buildGo := filepath.Join(repoDir, "build.go")
-	if !fs.FileExists(buildGo) {
-		return nil, fmt.Errorf("build.go not found in %s", repoDir)
-	}
-
-	return buildscript.NewSource(id, buildGo, repoDir, api.SourceRemote), nil
-}
-
 func (r *Resolver) checkWrapperCommit(id, repoName string) error {
 	locked, ok := r.lockfileEntry(id)
 	if !ok || locked.WrapperCommit == "" {

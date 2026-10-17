@@ -293,10 +293,6 @@ func remoteOwnerName(ctx *RuntimeContext, name string) string {
 	return name
 }
 
-func applyPatches(pkg *api.Package, sourceDir string) error {
-	return applyPatchesContext(context.Background(), pkg, sourceDir)
-}
-
 func applyPatchesContext(ctx context.Context, pkg *api.Package, sourceDir string) error {
 	patches := pkg.GetPatches()
 	if len(patches) == 0 {

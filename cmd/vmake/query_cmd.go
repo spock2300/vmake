@@ -86,33 +86,25 @@ func runQueryConfig(cmd *cobra.Command, args []string) {
 		fmt.Printf("%s@%s\n", name, node.Native.Selected)
 	}
 
-	opts := make(map[string]*api.Option)
-	for n, o := range ctx.AllOptions[name] {
-		opts[n] = o
+	opts := maps.Clone(ctx.GlobalOptions)
+	if opts == nil {
+		opts = make(map[string]*api.Option)
 	}
-	mergeMapNoOverwrite(opts, ctx.GlobalOptions)
+	maps.Copy(opts, ctx.AllOptions[name])
 
 	globalValues := config.BuildGlobalValues(ctx.Config)
 	entry := config.GetEntry(ctx.Config, name)
-	vals := make(map[string]any)
-	for n, v := range entry.Options {
-		vals[n] = v
+	vals := maps.Clone(globalValues)
+	if vals == nil {
+		vals = make(map[string]any)
 	}
-	mergeMapNoOverwrite(vals, globalValues)
+	maps.Copy(vals, entry.Options)
 
 	if s := formatOptions(ctx, name, globalValues); s != "" {
 		fmt.Println(s)
 	}
 	for _, d := range api.ConfigToDefines(opts, vals) {
 		fmt.Printf("-D%s\n", d)
-	}
-}
-
-func mergeMapNoOverwrite[K comparable, V any](dst, src map[K]V) {
-	for k, v := range src {
-		if _, exists := dst[k]; !exists {
-			dst[k] = v
-		}
 	}
 }
 

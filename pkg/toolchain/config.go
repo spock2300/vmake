@@ -31,6 +31,28 @@ type Tools struct {
 	MAKE    string `json:"make"`
 }
 
+type ToolEntry struct {
+	Name     string
+	Value    *string
+	Required bool
+}
+
+func (t *Tools) Entries() []ToolEntry {
+	return []ToolEntry{
+		{Name: "CC", Value: &t.CC, Required: true},
+		{Name: "CXX", Value: &t.CXX, Required: true},
+		{Name: "AR", Value: &t.AR, Required: true},
+		{Name: "LD", Value: &t.LD, Required: true},
+		{Name: "STRIP", Value: &t.STRIP},
+		{Name: "RANLIB", Value: &t.RANLIB},
+		{Name: "OBJCOPY", Value: &t.OBJCOPY},
+		{Name: "SIZE", Value: &t.SIZE},
+		{Name: "OBJDUMP", Value: &t.OBJDUMP},
+		{Name: "NM", Value: &t.NM},
+		{Name: "MAKE", Value: &t.MAKE},
+	}
+}
+
 // MakeTool returns the make program to invoke.
 func (t *Toolchain) MakeTool() string {
 	if t.Tools.MAKE != "" {

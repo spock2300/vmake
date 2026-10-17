@@ -561,6 +561,46 @@ func TestObjectCacheCommitOnlyFallbackMaterializes(t *testing.T) {
 	}
 }
 
+func TestObjectCacheCachedRefSelectsMatchingCandidate(t *testing.T) {
+	t.Setenv("VMAKE_GIT_CACHE", "")
+	c := NewObjectCache(t.TempDir())
+	url := "https://example.com/repo"
+	tagCommit := strings.Repeat("a", 40)
+	branchCommit := strings.Repeat("b", 40)
+	repoDir := c.RepoDir(url)
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(cacheMeta{
+		Layout: objectCacheLayout,
+		URL:    url,
+		RefCommits: map[string]string{
+			"refs/tags/v1":  tagCommit,
+			"refs/heads/v1": branchCommit,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(c.metaPath(repoDir), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		commit string
+		want   string
+	}{
+		{tagCommit, "refs/tags/v1"},
+		{branchCommit, "refs/heads/v1"},
+	}
+	for _, tt := range tests {
+		got, ok := c.CachedRef(url, "v1", tt.commit)
+		if !ok || got != tt.want {
+			t.Errorf("CachedRef(%s) = %q, %v; want %q, true", tt.commit[:7], got, ok, tt.want)
+		}
+	}
+}
+
 func loadCacheMeta(t *testing.T, repoDir string) cacheMeta {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(repoDir, "vmake-cache.json"))

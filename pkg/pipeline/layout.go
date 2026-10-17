@@ -71,6 +71,22 @@ func (s *sourceStage) setLayout(name string, layout build.PackageLayout) {
 	s.pkgDirs[name] = &value.Dirs
 }
 
+func (s *sourceStage) setPackageLayout(name string, tools *build.ResolvedTools) error {
+	layout, err := s.makeLayout(name, tools)
+	if err != nil {
+		return err
+	}
+	s.setLayout(name, layout)
+	return nil
+}
+
+func (s *sourceStage) finalizePackageSource(name, sourceRoot string, tools *build.ResolvedTools) error {
+	if err := s.selectPackageSourceRoot(name, sourceRoot); err != nil {
+		return fmt.Errorf("select source for %s: %w", name, err)
+	}
+	return s.setPackageLayout(name, tools)
+}
+
 func (s *sourceStage) rebindLayout(name string, layout build.PackageLayout) error {
 	old := s.layouts[name]
 	if old == nil {

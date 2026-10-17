@@ -90,13 +90,11 @@ func (s *Scheduler) planLink(resolved *ResolvedTarget, objs []string) (*linkActi
 	action.inputs = append(action.inputs, target.PostLinkDeps()...)
 	action.outputs = append(action.outputs, postLinkOutputPaths(target, workDir, resolved.OutputPath)...)
 	commands := []commandSpec{action.command}
-	for _, step := range target.PostLinkSteps() {
-		tool := s.resolvePostLinkTool(step.Tool)
-		if tool == "" {
-			return nil, fmt.Errorf("post-link tool not found: %s", step.Tool)
-		}
-		commands = append(commands, commandSpec{Program: tool, Args: expandPostLinkArgs(step.Args, workDir, resolved.OutputPath)})
+	postCommands, err := s.postLinkCommands(target, workDir, resolved.OutputPath)
+	if err != nil {
+		return nil, err
 	}
+	commands = append(commands, postCommands...)
 	env, err := environmentSignature(s.toolchain.CommandEnv())
 	if err != nil {
 		return nil, err

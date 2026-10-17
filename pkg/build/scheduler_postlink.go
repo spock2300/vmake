@@ -6,27 +6,32 @@ import (
 	"strings"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/pkg/api"
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
-func (s *Scheduler) postLink(resolved *ResolvedTarget) error {
-	steps := resolved.Node.Target.PostLinkSteps()
-	if len(steps) == 0 {
-		return nil
-	}
-
-	workDir := s.pkgs[resolved.Node.PkgName].SourceDir
-
+func (s *Scheduler) postLinkCommands(target *api.Target, workDir, outputPath string) ([]commandSpec, error) {
+	steps := target.PostLinkSteps()
+	commands := make([]commandSpec, 0, len(steps))
 	for _, step := range steps {
 		tool := s.resolvePostLinkTool(step.Tool)
 		if tool == "" {
-			return fmt.Errorf("post-link tool not found: %s", step.Tool)
+			return nil, fmt.Errorf("post-link tool not found: %s", step.Tool)
 		}
+		commands = append(commands, commandSpec{Program: tool, Args: expandPostLinkArgs(step.Args, workDir, outputPath)})
+	}
+	return commands, nil
+}
 
-		args := expandPostLinkArgs(step.Args, workDir, resolved.OutputPath)
-
-		vlog.Info("  %s %s", filepath.Base(tool), strings.Join(args, " "))
-		if _, err := iexec.RunWithOptions(tool, args, iexec.RunOptions{Dir: workDir, Env: s.toolchain.CommandEnv(), Context: s.ctx}); err != nil {
+func (s *Scheduler) postLink(resolved *ResolvedTarget) error {
+	workDir := s.pkgs[resolved.Node.PkgName].SourceDir
+	commands, err := s.postLinkCommands(resolved.Node.Target, workDir, resolved.OutputPath)
+	if err != nil {
+		return err
+	}
+	for _, command := range commands {
+		vlog.Info("  %s %s", filepath.Base(command.Program), strings.Join(command.Args, " "))
+		if _, err := iexec.RunWithOptions(command.Program, command.Args, iexec.RunOptions{Dir: workDir, Env: s.toolchain.CommandEnv(), Context: s.ctx}); err != nil {
 			return err
 		}
 	}

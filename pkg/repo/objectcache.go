@@ -233,39 +233,62 @@ func (c *ObjectCache) saveMeta(repoDir string, meta *cacheMeta) error {
 	return jsonio.Save(c.metaPath(repoDir), meta)
 }
 
+func (c *ObjectCache) lookup(url string) (*cacheMeta, string, bool) {
+	if !c.Enabled() {
+		return nil, "", false
+	}
+	norm := normalizeCacheURL(url)
+	if norm == "" {
+		return nil, "", false
+	}
+	return c.entry(norm, url)
+}
+
+func (c *ObjectCache) refCommit(url, ref string) (commit, localRef string, ok bool) {
+	if ref == "" {
+		return "", "", false
+	}
+	meta, _, ok := c.lookup(url)
+	if !ok {
+		return "", "", false
+	}
+	for _, cand := range refCandidates(ref) {
+		if commit := meta.RefCommits[cand]; commit != "" && validCommitID(commit) {
+			return commit, cand, true
+		}
+	}
+	return "", "", false
+}
+
 // Has reports whether url's commit is present in the cache and anchored. It is
 // local-only and returns false on any doubt, never blocking on the network. It
 // backs the cache inventory API (with List and Remove) and gates the
 // commit-only fallback in cloneRefTree when a ref cannot be refreshed; the
 // regular materialization path uses EnsureCommit/EnsureRef/CachedRef instead.
 func (c *ObjectCache) Has(url, commit string) bool {
-	if !c.Enabled() || !validCommitID(commit) {
+	if !validCommitID(commit) {
 		return false
 	}
-	norm := normalizeCacheURL(url)
-	if norm == "" {
+	_, repoDir, ok := c.lookup(url)
+	if !ok {
 		return false
 	}
-	if _, _, ok := c.entry(norm, url); !ok {
-		return false
-	}
-	return c.hasAnchor(context.Background(), c.repoPath(norm), commit)
+	return c.hasAnchor(context.Background(), repoDir, commit)
 }
 
 // CachedRef returns the local ref name the cache records for ref at commit, or
 // not-found when the cache has no such mapping. It lets a lock-pinned
 // materialization keep the tag in the tree without a network probe.
-func (c *ObjectCache) CachedRef(url, ref, commit string) (string, bool) {
-	if !c.Enabled() || ref == "" || !validCommitID(commit) {
+func (c *ObjectCache) CachedRef(url, ref, wantCommit string) (string, bool) {
+	if ref == "" || !validCommitID(wantCommit) {
 		return "", false
 	}
-	norm := normalizeCacheURL(url)
-	meta, _, ok := c.entry(norm, url)
+	meta, _, ok := c.lookup(url)
 	if !ok {
 		return "", false
 	}
 	for _, cand := range refCandidates(ref) {
-		if meta.RefCommits[cand] == commit {
+		if meta.RefCommits[cand] == wantCommit {
 			return cand, true
 		}
 	}
@@ -276,20 +299,7 @@ func (c *ObjectCache) CachedRef(url, ref, commit string) (string, bool) {
 // It is local-only and lets an unreachable upstream still resolve a ref that
 // was materialized before (see EnsureSource's offline resolution fallback).
 func (c *ObjectCache) CachedRefCommit(url, ref string) (string, string, bool) {
-	if !c.Enabled() || ref == "" {
-		return "", "", false
-	}
-	norm := normalizeCacheURL(url)
-	meta, _, ok := c.entry(norm, url)
-	if !ok {
-		return "", "", false
-	}
-	for _, cand := range refCandidates(ref) {
-		if commit := meta.RefCommits[cand]; commit != "" && validCommitID(commit) {
-			return commit, cand, true
-		}
-	}
-	return "", "", false
+	return c.refCommit(url, ref)
 }
 
 // EnsureCommit guarantees that commit, with the objects reachable at depth 1,
@@ -309,33 +319,14 @@ func (c *ObjectCache) RecordCommit(ctx context.Context, url, commit string) erro
 }
 
 func (c *ObjectCache) ensureCommit(ctx context.Context, url, commit string, bestEffort bool) error {
-	if !c.Enabled() {
-		return fmt.Errorf("git object cache disabled")
-	}
-	norm := normalizeCacheURL(url)
-	if norm == "" || !validCommitID(commit) {
-		return fmt.Errorf("invalid cache request url=%q commit=%q", url, commit)
-	}
-	lock, err := c.lockEntry(ctx, norm)
-	if err != nil {
-		return err
-	}
-	defer lock.Release()
-
-	repoDir, meta, created, err := c.ensureRepo(ctx, norm, url)
-	if err != nil {
-		return err
-	}
-	if err := c.ensureCommitLocked(ctx, repoDir, url, meta, commit, bestEffort); err != nil {
-		if created {
-			// Do not leave an empty shell behind when the very first fetch
-			// fails: a later attempt rebuilds cleanly instead of trusting it.
-			fs.RemoveIfExists(repoDir)
+	return c.ensureCacheEntry(ctx, url, func(norm string) error {
+		if norm == "" || !validCommitID(commit) {
+			return fmt.Errorf("invalid cache request url=%q commit=%q", url, commit)
 		}
-		return err
-	}
-	meta.LastUsed = time.Now().UTC()
-	return c.saveMeta(repoDir, meta)
+		return nil
+	}, func(ctx context.Context, repoDir string, meta *cacheMeta) error {
+		return c.ensureCommitLocked(ctx, repoDir, url, meta, commit, bestEffort)
+	})
 }
 
 // EnsureRef guarantees that ref (a fully qualified local ref name such as
@@ -346,12 +337,28 @@ func (c *ObjectCache) ensureCommit(ctx context.Context, url, commit string, best
 // refs/vmake/<commit> either way, so a later commit-only checkout stays
 // offline-capable even when the ref has moved upstream.
 func (c *ObjectCache) EnsureRef(ctx context.Context, url, ref, commit string) error {
+	return c.ensureCacheEntry(ctx, url, func(norm string) error {
+		if norm == "" || ref == "" || !validCommitID(commit) {
+			return fmt.Errorf("invalid cache ref request url=%q ref=%q", url, ref)
+		}
+		return nil
+	}, func(ctx context.Context, repoDir string, meta *cacheMeta) error {
+		return c.ensureRefLocked(ctx, repoDir, url, meta, ref, commit)
+	})
+}
+
+func (c *ObjectCache) ensureCacheEntry(
+	ctx context.Context,
+	url string,
+	validate func(norm string) error,
+	ensure func(ctx context.Context, repoDir string, meta *cacheMeta) error,
+) error {
 	if !c.Enabled() {
 		return fmt.Errorf("git object cache disabled")
 	}
 	norm := normalizeCacheURL(url)
-	if norm == "" || ref == "" || !validCommitID(commit) {
-		return fmt.Errorf("invalid cache ref request url=%q ref=%q", url, ref)
+	if err := validate(norm); err != nil {
+		return err
 	}
 	lock, err := c.lockEntry(ctx, norm)
 	if err != nil {
@@ -363,8 +370,10 @@ func (c *ObjectCache) EnsureRef(ctx context.Context, url, ref, commit string) er
 	if err != nil {
 		return err
 	}
-	if err := c.ensureRefLocked(ctx, repoDir, url, meta, ref, commit); err != nil {
+	if err := ensure(ctx, repoDir, meta); err != nil {
 		if created {
+			// Do not leave an empty shell behind when the very first fetch
+			// fails: a later attempt rebuilds cleanly instead of trusting it.
 			fs.RemoveIfExists(repoDir)
 		}
 		return err

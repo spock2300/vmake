@@ -96,7 +96,7 @@ func TestCheckoutManifestLocalsSkipsManagedGitSources(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := checkoutManifestLocals(ctx, manifestPath); err != nil {
+	if err := checkoutManifestLocals(ctx, &mf); err != nil {
 		t.Fatalf("managed git source must not be checked out: %v", err)
 	}
 	commit, err := repoPkg.GetCurrentCommit(project)

@@ -27,36 +27,11 @@ func runRebuild(cmd *cobra.Command, args []string) (err error) {
 	}
 	defer report.finish(&err)
 	execution := &RuntimeContext{}
-	return withBuildContext(execution, func() error {
-		if manifestFlag != "" {
-			if err := importManifestIntoLock(execution.Context, manifestFlag); err != nil {
-				return err
-			}
-		}
-		ctx, err := resolveToConfigContext(execution.Context, false)
-		if err != nil {
-			return err
-		}
-		if manifestFlag != "" {
-			if err := checkoutManifestLocals(ctx, manifestFlag); err != nil {
-				return err
-			}
-		}
+	return withResolvedProject(execution, func(ctx *RuntimeContext) error {
 		executeCleanLocal(ctx)
 		vlog.Info("")
-		if err := report.bind(ctx); err != nil {
-			return err
-		}
-		result, err := runBuildPhase(ctx, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag})
-		if err != nil {
-			return err
-		}
-		if installFlag {
-			if err := executeInstall(ctx, result); err != nil {
-				return err
-			}
-		}
-		return report.complete(ctx, result)
+		_, err := runReportedBuild(ctx, report, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag})
+		return err
 	})
 }
 

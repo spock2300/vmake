@@ -9,6 +9,30 @@ import (
 	"testing"
 )
 
+func TestToolsEntriesOrderAndRequired(t *testing.T) {
+	tools := Tools{CC: "cc", CXX: "cxx", AR: "ar", LD: "ld"}
+	entries := tools.Entries()
+	want := []string{"CC", "CXX", "AR", "LD", "STRIP", "RANLIB", "OBJCOPY", "SIZE", "OBJDUMP", "NM", "MAKE"}
+	if len(entries) != len(want) {
+		t.Fatalf("Entries() returned %d tools, want %d", len(entries), len(want))
+	}
+	required := map[string]bool{"CC": true, "CXX": true, "AR": true, "LD": true}
+	for i, entry := range entries {
+		if entry.Name != want[i] {
+			t.Fatalf("entry %d = %q, want %q", i, entry.Name, want[i])
+		}
+		if entry.Value == nil {
+			t.Fatalf("entry %s has nil value", entry.Name)
+		}
+		if entry.Required != required[entry.Name] {
+			t.Fatalf("entry %s required = %v, want %v", entry.Name, entry.Required, required[entry.Name])
+		}
+	}
+	if *entries[0].Value != "cc" || *entries[3].Value != "ld" {
+		t.Fatalf("entries do not reference tool fields: %+v", entries)
+	}
+}
+
 func TestCommandEnvCompilerDirectories(t *testing.T) {
 	root := t.TempDir()
 	install := filepath.Join(root, "installed tools")

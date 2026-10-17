@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/spock2300/vmake/internal/exec"
@@ -253,7 +254,7 @@ func (m *SourceManager) EnsureSource(req SourceRequest) (*SourceResult, error) {
 	commit := req.Commit
 	localRef := ""
 	if commit == "" {
-		if isCommitSHA(req.Ref) {
+		if validCommitID(req.Ref) {
 			commit = req.Ref
 		} else {
 			resolved, refName, err := ResolveRemoteRefContext(m.context(), req.URLs, req.Ref)
@@ -321,15 +322,7 @@ func firstURL(stateURLs, fallback []string) string {
 // URL list is part of a tree's identity: reusing a checkout after the
 // declared upstream changed would silently build the wrong source.
 func sameURLs(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(a, b)
 }
 
 // cachedRefCommit looks up the commit the object cache recorded for ref on any
@@ -429,7 +422,7 @@ func (m *SourceManager) materialize(req SourceRequest, root, srcDir string, stat
 
 func (m *SourceManager) cloneTreeAt(url, dir string, req SourceRequest, commit, localRef string) (string, error) {
 	switch {
-	case isCommitSHA(req.Ref) || (req.Ref == "" && req.Commit != ""):
+	case validCommitID(req.Ref) || (req.Ref == "" && req.Commit != ""):
 		return m.cloneCommitTree(url, dir, commit)
 	case req.Ref == "":
 		return m.cloneHeadTree(url, dir)

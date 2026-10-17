@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spock2300/vmake/internal/fs"
-	"github.com/spock2300/vmake/internal/jsonio"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/repo"
 )
@@ -26,8 +25,8 @@ var manifestShowCmd = &cobra.Command{
 	Short: "Show manifest contents",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		var mf installManifest
-		fatalErr(jsonio.Load(args[0], &mf))
+		mf, err := loadInstallManifest(args[0])
+		fatalErr(err)
 
 		fmt.Printf("VMake:     %s\n", mf.VMake)
 		fmt.Printf("Toolchain: %s\n", mf.Toolchain)
@@ -69,8 +68,8 @@ var manifestCheckoutCmd = &cobra.Command{
 			filterName = args[1]
 		}
 
-		var mf installManifest
-		fatalErr(jsonio.Load(manifestPath, &mf))
+		mf, err := loadInstallManifest(manifestPath)
+		fatalErr(err)
 
 		cwd, err := os.Getwd()
 		fatalErr(err)
@@ -114,10 +113,14 @@ func checkoutLocal(cwd string, entry installManifestEntry) {
 		return
 	}
 
+	ref := repo.ShortCommit(entry.Ref)
+	if ref != entry.Ref {
+		ref += "..."
+	}
 	if err := repo.Checkout(sourceDir, entry.Ref); err != nil {
-		fmt.Printf("  FAIL %s (checkout %s: %v)\n", entry.Name, entry.Ref[:12]+"...", err)
+		fmt.Printf("  FAIL %s (checkout %s: %v)\n", entry.Name, ref, err)
 	} else {
-		fmt.Printf("  OK   %s -> %s\n", entry.Name, entry.Ref[:12]+"...")
+		fmt.Printf("  OK   %s -> %s\n", entry.Name, ref)
 	}
 }
 

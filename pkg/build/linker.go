@@ -68,6 +68,17 @@ func isLibraryArtifact(path string) bool {
 	return false
 }
 
+func splitLinkFlags(ldflags []string) (group, other []string) {
+	for _, flag := range ldflags {
+		if strings.HasPrefix(flag, "-l") || strings.HasPrefix(flag, "-L") {
+			group = append(group, flag)
+		} else {
+			other = append(other, flag)
+		}
+	}
+	return group, other
+}
+
 // wholeArchiveInput reports whether a linker input belongs inside a
 // -Wl,--whole-archive group. A PE DLL and its import library are deliberately
 // excluded: whole-archive on an import library force-imports every DLL export,
@@ -161,14 +172,7 @@ func (l *Linker) binaryCommand(in binaryLinkInput, policy LinkPolicy, workDir st
 			objFiles = append(objFiles, path)
 		}
 	}
-	var groupFlags, otherFlags []string
-	for _, flag := range ldflags {
-		if strings.HasPrefix(flag, "-l") || strings.HasPrefix(flag, "-L") {
-			groupFlags = append(groupFlags, flag)
-		} else {
-			otherFlags = append(otherFlags, flag)
-		}
-	}
+	groupFlags, otherFlags := splitLinkFlags(ldflags)
 	if len(objFiles)+len(libFiles)+len(libs)+len(groupFlags) > 0 {
 		args = append(args, "-Wl,--start-group")
 		args = append(args, objFiles...)
@@ -211,14 +215,7 @@ func (l *Linker) machoBinaryCommand(in binaryLinkInput, workDir string) (command
 			objectFiles = append(objectFiles, path)
 		}
 	}
-	var groupFlags, otherFlags []string
-	for _, flag := range ldflags {
-		if strings.HasPrefix(flag, "-l") || strings.HasPrefix(flag, "-L") {
-			groupFlags = append(groupFlags, flag)
-		} else {
-			otherFlags = append(otherFlags, flag)
-		}
-	}
+	groupFlags, otherFlags := splitLinkFlags(ldflags)
 	args = append(args, objectFiles...)
 	for _, archive := range staticArchives {
 		args = append(args, "-Xlinker", "-force_load", "-Xlinker", archive)

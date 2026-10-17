@@ -61,14 +61,9 @@ func (s *sourceStage) prepareAllPackages() error {
 			return err
 		}
 		s.patchHashes[name] = patchHash
-		if err := s.selectPackageSourceRoot(name, node.Source.Dir); err != nil {
-			return fmt.Errorf("select source for %s: %w", name, err)
-		}
-		layout, err := s.makeLayout(name, resolvedTools)
-		if err != nil {
+		if err := s.finalizePackageSource(name, node.Source.Dir, resolvedTools); err != nil {
 			return err
 		}
-		s.setLayout(name, layout)
 	}
 
 	depsDir := s.rc.ctx.Paths.DepsDir
@@ -278,11 +273,9 @@ func (s *sourceStage) downloadRemoteSources(remote *remoteVersionState, depsDir 
 		s.sourceVersions[name] = entryCfg.Version
 		s.patchHashes[name] = patchHash
 		vlog.Info("  %s@%s -> %s", name, entryCfg.Version, res.SrcDir)
-		layout, err := s.makeLayout(name, resolvedTools)
-		if err != nil {
+		if err := s.setPackageLayout(name, resolvedTools); err != nil {
 			return err
 		}
-		s.setLayout(name, layout)
 		if err := s.preparePackageWorkspace(name); err != nil {
 			return fmt.Errorf("prepare workspace for %s: %w", name, err)
 		}
@@ -401,14 +394,9 @@ func (s *sourceStage) setupSubPackageDirs() error {
 		}
 		s.patchHashes[name] = patchHash
 		sourceRoot := filepath.Join(tree, "src", filepath.FromSlash(relPath))
-		if err := s.selectPackageSourceRoot(name, sourceRoot); err != nil {
-			return fmt.Errorf("select source for %s: %w", name, err)
-		}
-		layout, err := s.makeLayout(name, resolvedTools)
-		if err != nil {
+		if err := s.finalizePackageSource(name, sourceRoot, resolvedTools); err != nil {
 			return err
 		}
-		s.setLayout(name, layout)
 	}
 	return nil
 }

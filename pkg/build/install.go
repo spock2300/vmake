@@ -50,6 +50,39 @@ func (i *ArtifactInstaller) recordFile(pkg, target, source, destination string) 
 	i.files = append(i.files, InstalledFile{pkg, target, source, destination})
 }
 
+func copyArtifact(src, dest string, record func(string, string)) error {
+	if err := fs.EnsureDir(filepath.Dir(dest)); err != nil {
+		return err
+	}
+	vlog.Info("  INSTALL %s -> %s", filepath.Base(src), dest)
+	if err := CopyFile(src, dest); err != nil {
+		return err
+	}
+	if record != nil {
+		record(src, dest)
+	}
+	return nil
+}
+
+func copyImportLibrary(artifactPath, destDir, targetOS string, kind api.TargetKind, record func(string, string)) error {
+	implib := importLibraryPath(artifactPath, targetOS, kind)
+	if implib == "" {
+		return nil
+	}
+	if _, err := os.Stat(implib); err != nil {
+		return nil
+	}
+	dest := filepath.Join(destDir, filepath.Base(implib))
+	vlog.Info("  INSTALL %s -> %s", filepath.Base(implib), dest)
+	if err := CopyFile(implib, dest); err != nil {
+		return err
+	}
+	if record != nil {
+		record(implib, dest)
+	}
+	return nil
+}
+
 func NewArtifactInstaller(graph *BuildGraph, pkgDirs map[string]*api.PkgDirs, defaultPrefix string) *ArtifactInstaller {
 	return &ArtifactInstaller{
 		graph:         graph,
@@ -151,26 +184,14 @@ func (i *ArtifactInstaller) installTarget(node *BuildNode) error {
 		return nil
 	}
 
-	vlog.Info("  INSTALL %s -> %s", filepath.Base(outputPath), destPath)
-
-	if err := fs.EnsureDir(filepath.Dir(destPath)); err != nil {
-		return err
+	record := func(source, destination string) {
+		i.recordFile(pkgName, target.Name(), source, destination)
 	}
-
-	if err := CopyFile(outputPath, destPath); err != nil {
+	if err := copyArtifact(outputPath, destPath, record); err != nil {
 		return fmt.Errorf("install library failed: %w", err)
 	}
-	i.recordFile(pkgName, target.Name(), outputPath, destPath)
-
-	if implib := importLibraryPath(outputPath, pkgInfo.TargetOS, kind); implib != "" {
-		if _, err := os.Stat(implib); err == nil {
-			implibDest := filepath.Join(filepath.Dir(destPath), filepath.Base(implib))
-			vlog.Info("  INSTALL %s -> %s", filepath.Base(implib), implibDest)
-			if err := CopyFile(implib, implibDest); err != nil {
-				return fmt.Errorf("install import library failed: %w", err)
-			}
-			i.recordFile(pkgName, target.Name(), implib, implibDest)
-		}
+	if err := copyImportLibrary(outputPath, filepath.Dir(destPath), pkgInfo.TargetOS, kind, record); err != nil {
+		return fmt.Errorf("install import library failed: %w", err)
 	}
 
 	i.installed[outputPath] = true

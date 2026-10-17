@@ -38,6 +38,31 @@ type buildGroupKey struct {
 	Platform  api.Platform
 }
 
+func (j *BuildJob) newSchedulerFor(
+	env *BuildEnv,
+	session *Session,
+	tc *toolchain.Toolchain,
+	platform api.Platform,
+	tools *ResolvedTools,
+) *Scheduler {
+	return newScheduler(schedulerConfig{
+		Graph:        j.Graph,
+		Toolchain:    tc,
+		Platform:     platform,
+		Layouts:      env.Layouts,
+		Mode:         j.Mode,
+		Options:      env.Options,
+		Packages:     env.Packages,
+		Tools:        tools,
+		Context:      session.ctx,
+		RootDir:      env.RootDir,
+		IncludeTests: j.IncludeTests,
+		NumWorkers:   env.Jobs,
+		KeepGoing:    env.KeepGoing,
+		GlobalFlags:  &env.GlobalFlags,
+	})
+}
+
 func (j *BuildJob) Run() (*Scheduler, error) {
 	if j == nil || j.Graph == nil {
 		return nil, fmt.Errorf("build job has no graph")
@@ -69,22 +94,7 @@ func (j *BuildJob) Run() (*Scheduler, error) {
 	if err != nil {
 		return nil, err
 	}
-	base := newScheduler(schedulerConfig{
-		Graph:        j.Graph,
-		Toolchain:    j.Toolchain,
-		Platform:     defaultPlatform,
-		Layouts:      env.Layouts,
-		Mode:         j.Mode,
-		Options:      env.Options,
-		Packages:     env.Packages,
-		Tools:        defaultTools,
-		Context:      session.ctx,
-		RootDir:      env.RootDir,
-		IncludeTests: j.IncludeTests,
-		NumWorkers:   env.Jobs,
-		KeepGoing:    env.KeepGoing,
-		GlobalFlags:  &env.GlobalFlags,
-	})
+	base := j.newSchedulerFor(env, session, j.Toolchain, defaultPlatform, defaultTools)
 	graphPackages := make(map[string]bool)
 	for _, node := range j.Graph.Nodes {
 		graphPackages[node.PkgName] = true
@@ -130,22 +140,7 @@ func (j *BuildJob) Run() (*Scheduler, error) {
 			if err != nil {
 				return nil, err
 			}
-			runner = newScheduler(schedulerConfig{
-				Graph:        j.Graph,
-				Toolchain:    tc,
-				Platform:     platform,
-				Layouts:      env.Layouts,
-				Mode:         j.Mode,
-				Options:      env.Options,
-				Packages:     env.Packages,
-				Tools:        tools,
-				Context:      session.ctx,
-				RootDir:      env.RootDir,
-				IncludeTests: j.IncludeTests,
-				NumWorkers:   env.Jobs,
-				KeepGoing:    env.KeepGoing,
-				GlobalFlags:  &env.GlobalFlags,
-			})
+			runner = j.newSchedulerFor(env, session, tc, platform, tools)
 			groups[key] = runner
 			additional = append(additional, runner)
 		}

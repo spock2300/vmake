@@ -108,6 +108,17 @@ func collectConfigEntries(opts map[string]*Option, cfgVals map[string]any) []con
 	return entries
 }
 
+func formatDefine(e configEntry) (string, bool) {
+	switch e.kind {
+	case ceBoolTrue, ceInt:
+		return e.macro + "=" + e.val, true
+	case ceString:
+		return fmt.Sprintf("%s=\"%s\"", e.macro, e.val), true
+	default:
+		return "", false
+	}
+}
+
 func (o *Option) MacroDefines(val any) ([]string, error) {
 	macro := configMacroName(o.name)
 	if custom := o.MacroName(); custom != "" {
@@ -128,11 +139,8 @@ func (o *Option) MacroDefines(val any) ([]string, error) {
 		if !validMacroName(e.macro) {
 			return nil, fmt.Errorf("option %q: macro name %q is not a valid C identifier", o.name, e.macro)
 		}
-		switch e.kind {
-		case ceBoolTrue, ceInt:
-			defines = append(defines, e.macro+"="+e.val)
-		case ceString:
-			defines = append(defines, fmt.Sprintf("%s=\"%s\"", e.macro, e.val))
+		if define, ok := formatDefine(e); ok {
+			defines = append(defines, define)
 		}
 	}
 	return defines, nil
@@ -141,11 +149,8 @@ func (o *Option) MacroDefines(val any) ([]string, error) {
 func ConfigToDefines(opts map[string]*Option, cfgVals map[string]any) []string {
 	var defines []string
 	for _, e := range collectConfigEntries(opts, cfgVals) {
-		switch e.kind {
-		case ceBoolTrue, ceInt:
-			defines = append(defines, e.macro+"="+e.val)
-		case ceString:
-			defines = append(defines, fmt.Sprintf("%s=\"%s\"", e.macro, e.val))
+		if define, ok := formatDefine(e); ok {
+			defines = append(defines, define)
 		}
 	}
 	return defines

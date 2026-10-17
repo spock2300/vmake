@@ -14,6 +14,17 @@ import (
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
+func resolveProvidedLib(installDir, lib string) (artifact, ldflag string) {
+	if installDir == "" {
+		return "", "-l" + lib
+	}
+	archivePath := filepath.Join(fs.DetectLibDir(installDir), "lib"+lib+".a")
+	if fs.FileExists(archivePath) {
+		return archivePath, ""
+	}
+	return "", "-l" + lib
+}
+
 func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, error) {
 	result := &depResolveResult{}
 
@@ -38,7 +49,6 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 		}
 
 		if depNode.Target.Kind() == api.TargetVoid && depPkg.InstallDir != "" {
-			libDir := fs.DetectLibDir(depPkg.InstallDir)
 			var libNames []string
 			if len(depNode.Target.ProvidedLibs()) > 0 {
 				libNames = depNode.Target.ProvidedLibs()
@@ -46,11 +56,11 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 				libNames = []string{depNode.Target.Name()}
 			}
 			for _, lib := range libNames {
-				archivePath := filepath.Join(libDir, "lib"+lib+".a")
-				if fs.FileExists(archivePath) {
-					result.artifacts = append(result.artifacts, archivePath)
+				artifact, ldflag := resolveProvidedLib(depPkg.InstallDir, lib)
+				if artifact != "" {
+					result.artifacts = append(result.artifacts, artifact)
 				} else {
-					result.voidLdFlags = append(result.voidLdFlags, "-l"+lib)
+					result.voidLdFlags = append(result.voidLdFlags, ldflag)
 				}
 			}
 		} else if depNode.Target.Kind() != api.TargetVoid {
@@ -73,17 +83,14 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 			result.artifacts = append(result.artifacts, depOutput)
 
 			for _, lib := range depNode.Target.ProvidedLibs() {
-				if lib != depNode.Target.Name() {
-					archivePath := ""
-					if depPkg.InstallDir != "" {
-						libDir := fs.DetectLibDir(depPkg.InstallDir)
-						archivePath = filepath.Join(libDir, "lib"+lib+".a")
-					}
-					if archivePath != "" && fs.FileExists(archivePath) {
-						result.artifacts = append(result.artifacts, archivePath)
-					} else {
-						result.voidLdFlags = append(result.voidLdFlags, "-l"+lib)
-					}
+				if lib == depNode.Target.Name() {
+					continue
+				}
+				artifact, ldflag := resolveProvidedLib(depPkg.InstallDir, lib)
+				if artifact != "" {
+					result.artifacts = append(result.artifacts, artifact)
+				} else {
+					result.voidLdFlags = append(result.voidLdFlags, ldflag)
 				}
 			}
 		}

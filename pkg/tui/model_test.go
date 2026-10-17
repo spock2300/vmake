@@ -437,6 +437,23 @@ func TestIsOptionModified_DetectsChangeFromOpen(t *testing.T) {
 	}
 }
 
+func TestIsOptionModifiedPkgTreatsNilOriginalAsUnset(t *testing.T) {
+	opts := map[string]map[string]*api.Option{
+		"app": {"debug": mkOpt("debug", api.OptionBool, true)},
+	}
+	values := map[string]map[string]any{"app": {"debug": nil}}
+	m := NewModel(mkSources("app"), map[string][]string{}, opts, values, "/w", "", nil, nil, nil)
+	m.selectedPkg = "app"
+	m.buildOptionItems()
+	if !m.isOptionModifiedPkg("app", "debug") {
+		t.Fatal("nil original value should fall back to the default")
+	}
+	m.setValue("debug", true)
+	if m.isOptionModifiedPkg("app", "debug") {
+		t.Fatal("setting the value to the default should clear the modification")
+	}
+}
+
 func TestResetOption_RestoresOpenValue(t *testing.T) {
 	opts := map[string]map[string]*api.Option{
 		"app": {"debug": mkOpt("debug", api.OptionBool, false)},

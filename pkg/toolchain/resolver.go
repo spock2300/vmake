@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
 )
@@ -30,34 +31,17 @@ func ValidateToolchain(tc *Toolchain) []error {
 		return []error{errors.New("toolchain is nil")}
 	}
 
-	tools := []struct {
-		name     string
-		path     string
-		required bool
-	}{
-		{"cc", tc.Tools.CC, true},
-		{"cxx", tc.Tools.CXX, true},
-		{"ar", tc.Tools.AR, true},
-		{"ld", tc.Tools.LD, true},
-		{"strip", tc.Tools.STRIP, false},
-		{"ranlib", tc.Tools.RANLIB, false},
-		{"objcopy", tc.Tools.OBJCOPY, false},
-		{"size", tc.Tools.SIZE, false},
-		{"objdump", tc.Tools.OBJDUMP, false},
-		{"nm", tc.Tools.NM, false},
-		{"make", tc.Tools.MAKE, false},
-	}
-
-	for _, t := range tools {
-		if t.path == "" {
-			if t.required {
-				errs = append(errs, errors.New(t.name+" is not configured"))
+	for _, tool := range tc.Tools.Entries() {
+		name := strings.ToLower(tool.Name)
+		if *tool.Value == "" {
+			if tool.Required {
+				errs = append(errs, errors.New(name+" is not configured"))
 			}
 			continue
 		}
-		_, err := ResolveToolPath(t.path, tc.InstallPath)
+		_, err := ResolveToolPath(*tool.Value, tc.InstallPath)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s %q: %w", t.name, t.path, err))
+			errs = append(errs, fmt.Errorf("%s %q: %w", name, *tool.Value, err))
 		}
 	}
 
