@@ -108,6 +108,30 @@ func TestFilterDepsReplacesNodeDeps(t *testing.T) {
 	}
 }
 
+func TestFilterDepsSubPackageMissingDepListsCandidates(t *testing.T) {
+	r := NewResolver(nil, t.TempDir())
+	current := "parent/tool"
+	r.subParents[current] = "parent"
+	r.sources[current] = buildscript.NewSource(current, "/p/build.go", "/p", api.SourceRemote)
+
+	pkg := api.NewPackage()
+	pkg.OnRequire(func(ctx *api.RequireContext) {
+		ctx.AddRequires("ghost")
+	})
+	pkg.UpdateRequireContext(nil, nil)
+	r.graph.Packages[current] = &PackageNode{ID: current, Pkg: pkg, Deps: []string{}}
+
+	err := r.FilterDeps(current, nil, nil)
+	if err == nil {
+		t.Fatal("missing sibling dependency should fail")
+	}
+	for _, want := range []string{"tried sub-package candidates", "parent/tool/ghost", "parent/ghost"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q, got: %v", want, err)
+		}
+	}
+}
+
 func TestFilterDepsUnknownDepErrors(t *testing.T) {
 	r := NewResolver(nil, t.TempDir())
 	pkg := api.NewPackage()

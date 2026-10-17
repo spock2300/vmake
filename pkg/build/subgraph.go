@@ -8,8 +8,13 @@ import (
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
-func CollectSubGraphPackages(rootPkg string, pkgMeta map[string]PkgBuildMeta, allTargets map[string]map[string]*api.Target, needed map[string]bool) map[string]bool {
+func CollectSubGraphPackages(rootPkg string, pkgMeta map[string]PkgBuildMeta, allTargets map[string]map[string]*api.Target, needed map[string]bool, subParents map[string]string) map[string]bool {
 	visited := make(map[string]bool)
+	resolvePkg := func(currentPkg, depPkg string) string {
+		return api.ResolveSubPackageName(currentPkg, depPkg, subParents, func(candidate string) bool {
+			return needed[candidate]
+		})
+	}
 	var visit func(pkgName string)
 	visit = func(pkgName string) {
 		if visited[pkgName] {
@@ -33,9 +38,13 @@ func CollectSubGraphPackages(rootPkg string, pkgMeta map[string]PkgBuildMeta, al
 		}
 		for _, t := range targets {
 			for _, dep := range t.Deps() {
-				depPkg := dep
-				if idx := strings.Index(dep, ":"); idx >= 0 {
-					depPkg = dep[:idx]
+				depPkg, _, qualified := strings.Cut(dep, ":")
+				if !qualified {
+					if !strings.Contains(depPkg, "/") {
+						continue
+					}
+				} else {
+					depPkg = resolvePkg(pkgName, depPkg)
 				}
 				if needed[depPkg] {
 					visit(depPkg)
@@ -72,7 +81,7 @@ func BuildSubGraph(base *BuildJob, req SubGraphRequest) error {
 	if base.Toolchain == nil {
 		return fmt.Errorf("subgraph has no toolchain")
 	}
-	subPkgs := CollectSubGraphPackages(req.RootPkg, req.PkgMeta, req.Targets, req.Needed)
+	subPkgs := CollectSubGraphPackages(req.RootPkg, req.PkgMeta, req.Targets, req.Needed, base.Env.SubParents)
 	if len(subPkgs) == 0 {
 		return fmt.Errorf("package %s not found", req.RootPkg)
 	}

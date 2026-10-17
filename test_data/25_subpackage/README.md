@@ -6,16 +6,17 @@
 - 子包之间用短名互引（sub_a 的 `ctx.AddRequires("sub_b")` 与 `AddDeps("sub_b:utils_b")`）
 - `pkg:target` 与 `pkg:*` 两种依赖形式
 - 子包版本跟随父包（lockfile 只记录 `subtest/mother`）
+- 子包懒加载（`sub_unused` 的 build.go 故意包含语法错误，但只要未被依赖就不能被加载）
 
-## 前置（一次性）
+## 前置
 
 ```sh
 sh ./setup.sh
 ```
 
-setup.sh 从 `.fixture-src/mother/` 构建本地 bare git 仓（`.fixture/mother.git`，tag v1.0.0），
-并注册 native 仓库 `subtest`（URL 模板 `file://.../.fixture/{name}.git`，全局
-`~/.vmake/repos/subtest`）。
+setup.sh 每次都会从 `.fixture-src/mother/` 重建本地 bare git 仓（`.fixture/mother.git`，
+tag v1.0.0），并注册 native 仓库 `subtest`（URL 模板 `file://.../.fixture/{name}.git`，
+全局 `~/.vmake/repos/subtest`）。commit 时间固定，因此重复重建不会改变 build key。
 
 ## 运行
 
@@ -24,11 +25,11 @@ setup.sh 从 `.fixture-src/mother/` 构建本地 bare git 仓（`.fixture/mother
 ./install/bin/app   # 输出 43（utils_b=21 → utils_a=42 + base=1）
 ```
 
-修改 `.fixture-src/` 后需重建 fixture 并清理项目状态：
+修改 `.fixture-src/` 后重建 fixture（setup.sh 会处理 `.fixture`），并清理项目状态：
 
 ```sh
-rm -rf .fixture .vmake .vmake_deps
 sh ./setup.sh
+rm -rf .vmake .vmake_deps install build
 ```
 
 注意：本测试未覆盖子包 `SetGit`（fixture URL 是机器相关绝对路径，写进 build.go 会破坏可移植性）。

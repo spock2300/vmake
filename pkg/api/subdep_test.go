@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestResolveSubPackageNameAbsolute(t *testing.T) {
 	exists := func(name string) bool { return false }
@@ -76,5 +79,97 @@ func TestSubPackageCandidatesNoParentOrAbsolute(t *testing.T) {
 	}
 	if c := SubPackageCandidates("root/child", "a/dep", map[string]string{"root/child": "root"}); c != nil {
 		t.Errorf("absolute dep → nil candidates, got %v", c)
+	}
+}
+
+func TestSubPackageCandidatesIncludeAllAncestors(t *testing.T) {
+	subParents := map[string]string{
+		"root/a/b/sub": "root",
+		"root/a":       "root",
+	}
+	got := SubPackageCandidates("root/a/b/sub", "dep", subParents)
+	want := []string{
+		"root/a/b/sub/dep",
+		"root/a/b/dep",
+		"root/a/dep",
+		"root/dep",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("candidates = %v, want %v", got, want)
+	}
+}
+
+func TestResolveSubPackageNamePrefersNearestCandidate(t *testing.T) {
+	subParents := map[string]string{"root/a/sub": "root"}
+	existing := map[string]bool{
+		"root/dep":     true,
+		"root/a/dep":   true,
+		"root/a/sub/x": true,
+	}
+	got := ResolveSubPackageName("root/a/sub", "dep", subParents, func(name string) bool {
+		return existing[name]
+	})
+	if got != "root/a/dep" {
+		t.Fatalf("nearest candidate = %q, want root/a/dep", got)
+	}
+}
+
+func TestResolveSubPackageNameNestedChild(t *testing.T) {
+	subParents := map[string]string{"root/a": "root"}
+	got := ResolveSubPackageName("root/a", "child", subParents, func(name string) bool {
+		return name == "root/a/child"
+	})
+	if got != "root/a/child" {
+		t.Fatalf("nested child = %q, want root/a/child", got)
+	}
+}
+
+func TestResolveSubPackageNameSkipsUnknownIntermediate(t *testing.T) {
+	subParents := map[string]string{"root/a/b/sub": "root"}
+	got := ResolveSubPackageName("root/a/b/sub", "dep", subParents, func(name string) bool {
+		return name == "root/a/dep"
+	})
+	if got != "root/a/dep" {
+		t.Fatalf("walk-up = %q, want root/a/dep", got)
+	}
+}
+
+func TestResolveSubPackageNameDoesNotConsultExistsForAbsolute(t *testing.T) {
+	calls := 0
+	got := ResolveSubPackageName("root/a", "other/dep", map[string]string{"root/a": "root"}, func(string) bool {
+		calls++
+		return true
+	})
+	if got != "other/dep" || calls != 0 {
+		t.Fatalf("absolute resolve = %q with %d callbacks, want passthrough without callbacks", got, calls)
+	}
+}
+
+func TestResolveSubPackageNameDoesNotConsultExistsWithoutParent(t *testing.T) {
+	calls := 0
+	got := ResolveSubPackageName("pkg", "dep", map[string]string{}, func(string) bool {
+		calls++
+		return true
+	})
+	if got != "dep" || calls != 0 {
+		t.Fatalf("top-level resolve = %q with %d callbacks, want bare name without callbacks", got, calls)
+	}
+}
+
+func TestSubPackageCandidatesTerminatesOnNonAncestorParent(t *testing.T) {
+	subParents := map[string]string{"root/a": "other/root"}
+	got := SubPackageCandidates("root/a", "dep", subParents)
+	want := []string{"root/a/dep", "root/dep"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("candidates = %v, want %v", got, want)
+	}
+}
+
+func TestSubPackageCandidatesDoNotMutateParents(t *testing.T) {
+	subParents := map[string]string{"root/a": "root"}
+	before := map[string]string{"root/a": "root"}
+	SubPackageCandidates("root/a", "dep", subParents)
+	if !reflect.DeepEqual(subParents, before) {
+		t.Fatalf("subParents mutated: %v, want %v", subParents, before)
 	}
 }

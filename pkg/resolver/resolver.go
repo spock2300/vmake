@@ -318,7 +318,28 @@ func (r *Resolver) findSource(id string, constraint string) (*buildscript.Source
 		return nil, fmt.Errorf("find %s: %w", id, err)
 	}
 
-	return r.findNativeSource(id, repoName, pkgName, constraint)
+	src, nerr := r.findNativeSource(id, repoName, pkgName, constraint)
+	if nerr != nil && strings.Contains(pkgName, "/") {
+		if owner := r.resolvedSubPackageOwner(id); owner != "" {
+			return nil, fmt.Errorf("sub-package %q not found under resolved parent package %q: %w", id, owner, nerr)
+		}
+		return nil, fmt.Errorf("%w (if %q is a native sub-package, its parent must be resolved first: list the parent before the sub-package in AddRequires)", nerr, id)
+	}
+	return src, nerr
+}
+
+func (r *Resolver) resolvedSubPackageOwner(id string) string {
+	parts := strings.Split(id, "/")
+	for i := len(parts) - 1; i >= 2; i-- {
+		parent := strings.Join(parts[:i], "/")
+		if _, ok := r.sources[parent]; ok {
+			return parent
+		}
+		if _, ok := r.graph.Packages[parent]; ok {
+			return parent
+		}
+	}
+	return ""
 }
 
 func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*buildscript.Source, error) {

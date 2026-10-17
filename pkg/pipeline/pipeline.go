@@ -142,15 +142,21 @@ func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, 
 	return cfgVals
 }
 
-func applyBuildContextConfig(buildCtx *api.BuildContext, node *resolver.PackageNode, ctx *RuntimeContext, currentPkg string) {
-	subParents := ctx.Resolver.SubParents()
+func applyBuildContextConfig(buildCtx *api.BuildContext, node *resolver.PackageNode, ctx *RuntimeContext, currentPkg string, needed map[string]bool) {
+	var subParents map[string]string
+	if ctx.Resolver != nil {
+		subParents = ctx.Resolver.SubParents()
+	}
+	var resolvedImports []string
+	for _, depName := range buildCtx.ImportConfigs() {
+		resolvedImports = append(resolvedImports, api.ResolveSubPackageName(currentPkg, depName, subParents, func(candidate string) bool {
+			depNode := ctx.DepGraph.Packages[candidate]
+			return needed[candidate] && depNode != nil && depNode.Pkg != nil
+		}))
+	}
 	if buildCtx.GenConfigDefines() && node.Pkg != nil {
 		var importPkgs []*api.Package
-		for _, depName := range buildCtx.ImportConfigs() {
-			resolved := api.ResolveSubPackageName(currentPkg, depName, subParents, func(candidate string) bool {
-				_, ok := ctx.DepGraph.Packages[candidate]
-				return ok
-			})
+		for _, resolved := range resolvedImports {
 			depNode := ctx.DepGraph.Packages[resolved]
 			if depNode != nil && depNode.Pkg != nil {
 				importPkgs = append(importPkgs, depNode.Pkg)
@@ -169,8 +175,8 @@ func applyBuildContextConfig(buildCtx *api.BuildContext, node *resolver.PackageN
 	if buildCtx.ExportEnabled() && node.Pkg != nil {
 		node.Pkg.SetExportConfig(true)
 	}
-	if imports := buildCtx.ImportConfigs(); len(imports) > 0 && node.Pkg != nil {
-		node.Pkg.SetImportConfigs(imports)
+	if len(resolvedImports) > 0 && node.Pkg != nil {
+		node.Pkg.SetImportConfigs(resolvedImports)
 	}
 	if buildCtx.GenConfigHeader() && node.Pkg != nil {
 		node.Pkg.SetGenConfigHeader(true)

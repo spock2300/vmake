@@ -85,8 +85,8 @@ func (s *declareStage) executeOnePackage(name string, node *resolver.PackageNode
 		return err
 	}
 	platform := platformFromValues(buildCtx.CfgVals)
-	buildCtx.SetBuildSubGraphFunc(func(pkgName string) error { return s.buildSubGraph(pkgName) })
-	buildCtx.SetDepOutputFunc(func(depRef string) string { return s.computeDepOutput(depRef) })
+	buildCtx.SetBuildSubGraphFunc(func(pkgName string) error { return s.buildSubGraph(name, pkgName) })
+	buildCtx.SetDepOutputFunc(func(depRef string) string { return s.computeDepOutput(name, depRef) })
 	flags := api.DefaultBuildFlags(bound.toolchain.Name, platform.OSOrHost())
 	buildCtx.SetDefaultFlags(flags.CFlags, flags.CxxFlags, flags.LdFlags)
 	pkg := node.Pkg
@@ -101,7 +101,7 @@ func (s *declareStage) executeOnePackage(name string, node *resolver.PackageNode
 	pkg.SetPlatform(platform)
 	buildCtx.SetPackage(pkg)
 	pkg.ExecBuildFuncs(s.source.pkgDirs[name].SourceDir, func(fn api.BuildFunc) { fn(buildCtx) })
-	applyBuildContextConfig(buildCtx, node, s.rc.ctx, name)
+	applyBuildContextConfig(buildCtx, node, s.rc.ctx, name, s.conf.needed)
 	targets := make(map[string]*api.Target)
 	for targetName, target := range buildCtx.GetTargets() {
 		targets[targetName] = api.SnapshotTarget(target)
@@ -112,7 +112,22 @@ func (s *declareStage) executeOnePackage(name string, node *resolver.PackageNode
 	return nil
 }
 
-func (s *declareStage) buildSubGraph(rootPkg string) (err error) {
+func (s *declareStage) resolveSubPackageName(currentPkg, name string, exists func(string) bool) string {
+	if name == "" || strings.Contains(name, "/") {
+		return name
+	}
+	var subParents map[string]string
+	if s.rc.ctx.Resolver != nil {
+		subParents = s.rc.ctx.Resolver.SubParents()
+	}
+	return api.ResolveSubPackageName(currentPkg, name, subParents, exists)
+}
+
+func (s *declareStage) buildSubGraph(currentPkg, rootPkg string) (err error) {
+	rootPkg = s.resolveSubPackageName(currentPkg, rootPkg, func(candidate string) bool {
+		_, ok := s.pkgMetaMap[candidate]
+		return ok
+	})
 	if active := s.rc.session.ActiveTarget(); active != "" {
 		return fmt.Errorf("BuildSubGraph(%s) is not allowed while target %s is running", rootPkg, active)
 	}
@@ -140,7 +155,7 @@ func (s *declareStage) buildSubGraph(rootPkg string) (err error) {
 	if err != nil {
 		return err
 	}
-	subPkgs := build.CollectSubGraphPackages(rootPkg, s.pkgMetaMap, s.allTargets, s.conf.needed)
+	subPkgs := build.CollectSubGraphPackages(rootPkg, s.pkgMetaMap, s.allTargets, s.conf.needed, s.rc.ctx.Resolver.SubParents())
 	for _, name := range s.rc.ctx.Resolver.GetOrder() {
 		if !subPkgs[name] || s.bindings[name] == nil {
 			continue
@@ -172,7 +187,7 @@ func (s *declareStage) buildSubGraph(rootPkg string) (err error) {
 		if err := s.executeMainPackages(subPkgs); err != nil {
 			return err
 		}
-		expanded := build.CollectSubGraphPackages(rootPkg, s.pkgMetaMap, s.allTargets, s.conf.needed)
+		expanded := build.CollectSubGraphPackages(rootPkg, s.pkgMetaMap, s.allTargets, s.conf.needed, s.rc.ctx.Resolver.SubParents())
 		if len(expanded) == len(subPkgs) {
 			break
 		}
@@ -202,12 +217,15 @@ func (s *declareStage) resolveDepTargets() map[string]map[string]*api.Target {
 	return s.allTargets
 }
 
-func (s *declareStage) computeDepOutput(depRef string) string {
+func (s *declareStage) computeDepOutput(currentPkg, depRef string) string {
 	pkgName, targetName, ok := strings.Cut(depRef, ":")
 	if !ok {
 		pkgName = depRef
 		targetName = ""
 	}
+	pkgName = s.resolveSubPackageName(currentPkg, pkgName, func(candidate string) bool {
+		return s.conf.needed[candidate] && s.source.pkgDirs[candidate] != nil
+	})
 	pd := s.source.pkgDirs[pkgName]
 	if pd == nil {
 		return ""

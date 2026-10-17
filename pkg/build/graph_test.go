@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
@@ -233,6 +234,110 @@ func TestResolveDepPkgName(t *testing.T) {
 	}
 	if got := d.resolveDepPkgName("parent/sub", "nomatch"); got != "nomatch" {
 		t.Errorf("unresolvable dep should stay bare, got %q", got)
+	}
+}
+
+func TestBuildGraphResolvesSubPackageTargetDependency(t *testing.T) {
+	app := makeTargetWithDeps("app", "lib:build")
+	lib := makeTargetWithDeps("build")
+	targets := map[string]map[string]*api.Target{
+		"parent/tool": {"app": app},
+		"parent/lib":  {"build": lib},
+	}
+	pkgMeta := map[string]PkgBuildMeta{"parent/tool": {}, "parent/lib": {}}
+	subParents := map[string]string{"parent/tool": "parent", "parent/lib": "parent"}
+
+	graph, err := NewBuildGraph(targets, pkgMeta, subParents)
+	if err != nil {
+		t.Fatalf("NewBuildGraph: %v", err)
+	}
+	node, _ := graph.GetNode("parent/tool:app")
+	if !reflect.DeepEqual(node.Deps, []string{"parent/lib:build"}) {
+		t.Fatalf("deps = %v, want [parent/lib:build]", node.Deps)
+	}
+}
+
+func TestBuildGraphResolvesSubPackageWildcardDependency(t *testing.T) {
+	app := makeTargetWithDeps("app", "lib:*")
+	lib := makeTargetWithDeps("build")
+	extra := makeTargetWithDeps("extra")
+	targets := map[string]map[string]*api.Target{
+		"parent/tool": {"app": app},
+		"parent/lib":  {"build": lib, "extra": extra},
+	}
+	pkgMeta := map[string]PkgBuildMeta{"parent/tool": {}, "parent/lib": {}}
+	subParents := map[string]string{"parent/tool": "parent", "parent/lib": "parent"}
+
+	graph, err := NewBuildGraph(targets, pkgMeta, subParents)
+	if err != nil {
+		t.Fatalf("NewBuildGraph: %v", err)
+	}
+	node, _ := graph.GetNode("parent/tool:app")
+	got := append([]string{}, node.Deps...)
+	sort.Strings(got)
+	want := []string{"parent/lib:build", "parent/lib:extra"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("deps = %v, want %v", got, want)
+	}
+}
+
+func TestBuildGraphPrefersNearestSubPackageDependency(t *testing.T) {
+	app := makeTargetWithDeps("app", "lib:build")
+	near := makeTargetWithDeps("build")
+	far := makeTargetWithDeps("build")
+	targets := map[string]map[string]*api.Target{
+		"parent/tool": {"app": app},
+		"parent/lib":  {"build": near},
+		"lib":         {"build": far},
+	}
+	pkgMeta := map[string]PkgBuildMeta{"parent/tool": {}, "parent/lib": {}, "lib": {}}
+	subParents := map[string]string{"parent/tool": "parent", "parent/lib": "parent"}
+
+	graph, err := NewBuildGraph(targets, pkgMeta, subParents)
+	if err != nil {
+		t.Fatalf("NewBuildGraph: %v", err)
+	}
+	node, _ := graph.GetNode("parent/tool:app")
+	if !reflect.DeepEqual(node.Deps, []string{"parent/lib:build"}) {
+		t.Fatalf("deps = %v, want nearest parent/lib:build", node.Deps)
+	}
+}
+
+func TestBuildGraphBareNameStaysOwnTarget(t *testing.T) {
+	app := makeTargetWithDeps("app", "build")
+	own := makeTargetWithDeps("build")
+	other := makeTargetWithDeps("build")
+	targets := map[string]map[string]*api.Target{
+		"parent/tool": {"app": app, "build": own},
+		"build":       {"build": other},
+	}
+	pkgMeta := map[string]PkgBuildMeta{"parent/tool": {}, "build": {}}
+	subParents := map[string]string{"parent/tool": "parent"}
+
+	graph, err := NewBuildGraph(targets, pkgMeta, subParents)
+	if err != nil {
+		t.Fatalf("NewBuildGraph: %v", err)
+	}
+	node, _ := graph.GetNode("parent/tool:app")
+	if !reflect.DeepEqual(node.Deps, []string{"parent/tool:build"}) {
+		t.Fatalf("deps = %v, want own target parent/tool:build", node.Deps)
+	}
+}
+
+func TestBuildGraphMissingSubPackageDepListsCandidates(t *testing.T) {
+	app := makeTargetWithDeps("app", "ghost:build")
+	targets := map[string]map[string]*api.Target{"parent/tool": {"app": app}}
+	pkgMeta := map[string]PkgBuildMeta{"parent/tool": {}}
+	subParents := map[string]string{"parent/tool": "parent"}
+
+	_, err := NewBuildGraph(targets, pkgMeta, subParents)
+	if err == nil {
+		t.Fatal("missing short dependency should fail")
+	}
+	for _, want := range []string{"tried sub-package candidates", "parent/tool/ghost", "parent/ghost"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q, got: %v", want, err)
+		}
 	}
 }
 

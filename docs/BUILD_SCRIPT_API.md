@@ -631,7 +631,8 @@ native 远程包 checkout 内嵌套的 `build.go` 会被识别为**子包**：�
 
 - **发现**：父包（native 仓库）checkout 后自动扫描其中嵌套的 build.go（`Resolver.scanSubPackages`）；registry 包装包**没有**子包概念（DD-1，设计决策）。子包懒加载（DD-3）：只有被依赖时其 build.go 才被解释。
 - **引用子包**：外部包用全名，如 `ctx.AddRequires("subtest/mother/sub_a")`、`AddDeps("subtest/mother/sub_a:*", "subtest/mother:base")`；同一 `AddRequires` 列表中父包必须写在子包之前。
-- **子包互引短名**：子包内部引用兄弟子包时 pkg 部分可写短名（沿祖先链解析，见上文"子包短名"）。
+- **子包互引短名**：子包内部引用兄弟子包时 pkg 部分可写短名（沿祖先链解析，见上文"子包短名"）。除 `AddDeps`/`AddRequires` 外，`DepOutput`/`DepBuildDir`、`BuildSubGraph` 和 `ImportConfig` 也接受同类短名。
+- **父包必须 needed**：仅在 `AddRequires` 中出现父包还不够；若子包进入构建集合，其 native owner 也必须在 needed 集合中，否则配置阶段报错提示补充父包依赖。这样父包补丁、版本锁定和源码树身份才能保持一致。
 - **限制**：父包不能在自己的 `OnRequire` 中引用其子包（发现晚于依赖解析，见 DESIGN_DECISIONS.md 已知限制 5）；本地项目无子包概念（嵌套 build.go 是顶层裸名包，已知限制 1）。
 
 示例见 `test_data/25_subpackage`（含本地 fixture native 仓）。

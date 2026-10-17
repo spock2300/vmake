@@ -409,7 +409,8 @@ A nested `build.go` inside a **native** remote package's checkout becomes a sub-
 - Registry (wrapper) packages have **no** sub-packages — by design (`docs/DESIGN_DECISIONS.md` DD-1)
 - Sub-packages are lazy: their build.go is interpreted only when depended on (DD-3)
 - Reference from outside by full name: `ctx.AddRequires("subtest/mother/sub_a")`, `AddDeps("subtest/mother/sub_a:*")` — the parent must be listed before its sub-packages in the same `AddRequires`
-- Inside a sub-package, siblings can be referenced by short name: `AddRequires("sub_b")`, `AddDeps("sub_b:utils_b")`
+- Inside a sub-package, siblings can be referenced by short name: `AddRequires("sub_b")`, `AddDeps("sub_b:utils_b")`; `DepOutput`/`DepBuildDir`, `BuildSubGraph` and `ImportConfig` accept the same short names
+- A needed sub-package requires its native parent to be needed too; otherwise configuration fails with a hint to list the parent in `AddRequires`
 - A parent cannot reference its own sub-packages in `OnRequire` (discovery runs after dep resolution); local projects have no sub-package concept (nested build.go are top-level packages)
 - Example: `test_data/25_subpackage`
 

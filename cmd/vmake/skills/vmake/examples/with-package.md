@@ -133,7 +133,7 @@ A nested `build.go` inside a **native** remote package's checkout becomes a sub-
 ctx.AddRequires("subtest/mother >=1.0.0", "subtest/mother/sub_a")
 ```
 
-Sub-packages are lazy: their `build.go` is interpreted only when depended on (top-level packages are resolved eagerly). Registry (wrapper) packages have no sub-packages — by design. A working example lives in `test_data/25_subpackage`. See `SKILL.md - Sub-Packages`.
+Sub-packages are lazy: their `build.go` is interpreted only when depended on (top-level packages are resolved eagerly). Registry (wrapper) packages have no sub-packages — by design. Inside a sub-package, siblings can use short names in `AddRequires`/`AddDeps`, `DepOutput`/`DepBuildDir`, `BuildSubGraph`, and `ImportConfig`; a needed sub-package also requires its parent to be needed. A working example lives in `test_data/25_subpackage`. See `SKILL.md - Sub-Packages`.
 
 ## Conditional Dependencies
 

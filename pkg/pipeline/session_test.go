@@ -150,7 +150,7 @@ func TestSessionSubgraphFailureIsNotRetried(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := s.buildSubGraph("dep"); !errors.Is(err, failure) {
+		if err := s.buildSubGraph("", "dep"); !errors.Is(err, failure) {
 			t.Fatalf("build result: %v", err)
 		}
 	}
@@ -205,21 +205,21 @@ func TestSessionCachedSubgraphValidatesConfiguration(t *testing.T) {
 			if err := s.executeOnBuild(); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.buildSubGraph("dep"); !errors.Is(err, failure) {
+			if err := s.buildSubGraph("", "dep"); !errors.Is(err, failure) {
 				t.Fatalf("initial result: %v", err)
 			}
 			cached := s.subGraphErrors["dep"]
 			s.scopeValues = maps.Clone(s.cfg.GlobalValues)
 			s.scopeValues[api.ToolchainOptionName] = "uninstalled-conflicting-toolchain"
 			scope := maps.Clone(s.scopeValues)
-			if err := s.buildSubGraph("dep"); err == nil || !strings.Contains(err.Error(), "package dep was already bound to an incompatible build configuration") {
+			if err := s.buildSubGraph("", "dep"); err == nil || !strings.Contains(err.Error(), "package dep was already bound to an incompatible build configuration") {
 				t.Fatalf("cached configuration mismatch: %v", err)
 			}
 			if !reflect.DeepEqual(s.scopeValues, scope) || s.subGraphErrors["dep"] != cached {
 				t.Fatal("rejected request mutated scope or cached result")
 			}
 			s.scopeValues = nil
-			if err := s.buildSubGraph("dep"); err != cached {
+			if err := s.buildSubGraph("", "dep"); err != cached {
 				t.Fatalf("matching request did not reuse original result: %v, want %v", err, cached)
 			}
 			if declarations != 1 || builds != 1 {
@@ -249,13 +249,13 @@ func TestSessionCachedSubgraphValidatesDependencyBindings(t *testing.T) {
 			if err := s.executeOnBuild(); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.buildSubGraph("app"); err != nil {
+			if err := s.buildSubGraph("", "app"); err != nil {
 				t.Fatal(err)
 			}
 			dirs := *s.pkgDirs["dep"]
 			bound := s.bindings["dep"]
 			config.SetEntry(s.ctx.Config, "dep", &config.EntryConfig{Options: map[string]any{"enabled": true}})
-			if err := s.buildSubGraph("app"); err == nil || !strings.Contains(err.Error(), "package dep was already bound to an incompatible build configuration") {
+			if err := s.buildSubGraph("", "app"); err == nil || !strings.Contains(err.Error(), "package dep was already bound to an incompatible build configuration") {
 				t.Fatalf("cached dependency configuration mismatch: %v", err)
 			}
 			if builds != 1 || s.bindings["dep"] != bound || *s.pkgDirs["dep"] != dirs {
@@ -342,7 +342,7 @@ func TestSessionCachedSubgraphDoesNotRepeatToolchainInstallation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := s.buildSubGraph("dep"); err != nil {
+		if err := s.buildSubGraph("", "dep"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -363,17 +363,17 @@ func TestSessionFailedSubgraphValidatesUnboundRoot(t *testing.T) {
 		declarations++
 		panic("dependency declaration failed")
 	})
-	cached := s.buildSubGraph("app")
+	cached := s.buildSubGraph("", "app")
 	if cached == nil || !strings.Contains(cached.Error(), "dependency declaration failed") || s.bindings["app"] != nil {
 		t.Fatalf("initial failure=%v, root binding=%v", cached, s.bindings["app"])
 	}
 	s.scopeValues = maps.Clone(s.cfg.GlobalValues)
 	s.scopeValues[api.ToolchainOptionName] = "other-uninstalled-toolchain"
-	if err := s.buildSubGraph("app"); err == nil || !strings.Contains(err.Error(), "subgraph package app was already requested with an incompatible build configuration") {
+	if err := s.buildSubGraph("", "app"); err == nil || !strings.Contains(err.Error(), "subgraph package app was already requested with an incompatible build configuration") {
 		t.Fatalf("unbound root configuration mismatch: %v", err)
 	}
 	s.scopeValues = nil
-	if err := s.buildSubGraph("app"); err != cached || declarations != 1 {
+	if err := s.buildSubGraph("", "app"); err != cached || declarations != 1 {
 		t.Fatalf("matching request retried failed declaration: error=%v, declarations=%d", err, declarations)
 	}
 }

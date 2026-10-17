@@ -80,6 +80,14 @@
 
 ---
 
+## DD-7: 子包 required 时 native owner 必须 needed
+
+- 状态: accepted
+- 背景: 子包与父包共享同一 checkout，但依赖图里子包并没有指向父包的隐式边。若子包因某个非 root 本地包解析父包而进入 needed、父包本身却不在 needed 集合，父包补丁不会应用、父包版本也可能没有 lock 条目。
+- 决策: 配置阶段校验：任何 needed 子包的所有者（`Resolver.SubParents()` 的值）也必须 needed；否则报错并提示把父包加入 `AddRequires`。
+- 理由: 相比把父包隐式标记为 needed（会额外构建/安装父包 target），显式报错让依赖声明保持真实，并避免静默使用未打补丁或未锁定的源码树。
+- 涉及代码: `pkg/pipeline/stage_config.go` `validateNeededSubPackageOwners`。
+
 ## 已知限制 / 待议
 
 以下问题已被识别但尚未决策，修改前需单独讨论：
@@ -92,4 +100,8 @@
 5. **父包不能在自己的 OnRequire 中引用其子包**：`findNativeSource` 中 `recurseDeps`
    （执行 OnRequire 依赖解析）先于 `scanSubPackages`（注册子包 source）运行，父包
    OnRequire 中的 `父包/子包` 引用会解析失败。外部包可以按全名引用子包，但同一
-   `AddRequires` 列表中父包必须列在子包之前。
+   `AddRequires` 列表中父包必须列在子包之前；未解析父包时的错误信息会提示这一点。
+6. **子包扫描复用保留目录列表**：`ScanSubPackages` 与本地 `Scan` 共用 `skipDirs`，
+   名为 `build`、`vendor`、`node_modules` 等的目录不会被当作子包。若 native 仓库
+   合法地使用这些目录名声明子包，目前会被静默跳过；修改前需评估第三方源码树的
+   误发现成本。

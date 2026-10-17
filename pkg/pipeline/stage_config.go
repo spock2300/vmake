@@ -3,6 +3,7 @@ package pipeline
 import (
 	"fmt"
 	"maps"
+	"sort"
 
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
@@ -65,8 +66,26 @@ func filterAndCollectNeeded(ctx *RuntimeContext) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := validateNeededSubPackageOwners(needed, ctx.Resolver.SubParents()); err != nil {
+		return nil, err
+	}
 
 	return needed, nil
+}
+
+func validateNeededSubPackageOwners(needed map[string]bool, subParents map[string]string) error {
+	names := make([]string, 0, len(needed))
+	for name := range needed {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		parent := subParents[name]
+		if parent != "" && !needed[parent] {
+			return fmt.Errorf("sub-package %s is required but its native parent %s is not; list %s before %s in AddRequires", name, parent, parent, name)
+		}
+	}
+	return nil
 }
 
 func (r *runContext) toolsForPackage(name string) (*build.ResolvedTools, error) {
