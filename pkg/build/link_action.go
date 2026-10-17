@@ -50,7 +50,13 @@ func (s *Scheduler) planLink(resolved *ResolvedTarget, objs []string) (*linkActi
 		allObjs := append(append([]string{}, objs...), resolved.DepArtifacts...)
 		switch target.Kind() {
 		case api.TargetBinary:
-			action.command, err = s.linker.binaryCommand(allObjs, resolved.AllLinks, resolved.AllLdFlags, resolved.OutputPath, resolved.LinkerScript, policy, workDir)
+			action.command, err = s.linker.binaryCommand(binaryLinkInput{
+				objs:         allObjs,
+				libs:         resolved.AllLinks,
+				ldflags:      resolved.AllLdFlags,
+				outputPath:   resolved.OutputPath,
+				linkerScript: resolved.LinkerScript,
+			}, policy, workDir)
 		case api.TargetStatic:
 			var objects []string
 			for _, path := range allObjs {

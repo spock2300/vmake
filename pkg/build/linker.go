@@ -118,13 +118,26 @@ func (p LinkPolicy) bindingFlags() []string {
 	}
 }
 
-func (l *Linker) binaryCommand(objs, libs, ldflags []string, outputPath, linkerScript string, policy LinkPolicy, workDir string) (commandSpec, error) {
+type binaryLinkInput struct {
+	objs         []string
+	libs         []string
+	ldflags      []string
+	outputPath   string
+	linkerScript string
+}
+
+func (l *Linker) binaryCommand(in binaryLinkInput, policy LinkPolicy, workDir string) (commandSpec, error) {
 	if err := policy.Validate(); err != nil {
 		return commandSpec{}, err
 	}
 	if policy.TargetOS == "darwin" {
-		return l.machoBinaryCommand(objs, libs, ldflags, outputPath, linkerScript, workDir)
+		return l.machoBinaryCommand(in, workDir)
 	}
+	objs := in.objs
+	libs := in.libs
+	ldflags := in.ldflags
+	outputPath := in.outputPath
+	linkerScript := in.linkerScript
 	objs = commandPaths(workDir, objs)
 	ldflags = commandFlags(workDir, ldflags)
 	outputPath = commandPath(workDir, outputPath)
@@ -175,10 +188,14 @@ func (l *Linker) binaryCommand(objs, libs, ldflags []string, outputPath, linkerS
 	return commandSpec{Program: l.ccPath, Args: args}, nil
 }
 
-func (l *Linker) machoBinaryCommand(objs, libs, ldflags []string, outputPath, linkerScript string, workDir string) (commandSpec, error) {
-	if linkerScript != "" {
+func (l *Linker) machoBinaryCommand(in binaryLinkInput, workDir string) (commandSpec, error) {
+	if in.linkerScript != "" {
 		return commandSpec{}, fmt.Errorf("linker scripts are not supported for Mach-O targets")
 	}
+	objs := in.objs
+	libs := in.libs
+	ldflags := in.ldflags
+	outputPath := in.outputPath
 	objs = commandPaths(workDir, objs)
 	ldflags = commandFlags(workDir, ldflags)
 	outputPath = commandPath(workDir, outputPath)
@@ -314,7 +331,13 @@ func (l *Linker) execute(command commandSpec, outputPath, workDir string, archiv
 }
 
 func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScript string, policy LinkPolicy, workDir string) error {
-	command, err := l.binaryCommand(objs, libs, ldflags, outputPath, linkerScript, policy, workDir)
+	command, err := l.binaryCommand(binaryLinkInput{
+		objs:         objs,
+		libs:         libs,
+		ldflags:      ldflags,
+		outputPath:   outputPath,
+		linkerScript: linkerScript,
+	}, policy, workDir)
 	if err != nil {
 		return err
 	}

@@ -69,7 +69,7 @@ func (s *sourceStage) prepareAllPackages() error {
 		if err := s.selectPackageSource(name); err != nil {
 			return fmt.Errorf("select source for %s: %w", name, err)
 		}
-		s.pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, resolvedTools.CCKey(), s.rc.cfg.Mode, opts, packageFlagsHash(s.rc.globalFlagsHash, node), scriptHash, s.sourceCommits[name])
+		s.pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, newLocalPkgKey(resolvedTools.CCKey(), s.rc.cfg.Mode, opts, packageFlagsHash(s.rc.globalFlagsHash, node), scriptHash, s.sourceCommits[name]))
 	}
 
 	depsDir := s.rc.ctx.Paths.DepsDir
@@ -281,8 +281,8 @@ func (s *sourceStage) downloadRemoteSources(remote *remoteVersionState, depsDir 
 		if err != nil {
 			return err
 		}
-		s.pkgDirs[name] = makeRemotePkgDirs(res.Root, "", resolvedTools.CCKey(), s.rc.cfg.Mode, s.conf.allPkgOptions[name],
-			entryCfg.Version, res.Commit, packageFlagsHash(s.rc.globalFlagsHash, node), patchHash, scriptHash)
+		s.pkgDirs[name] = makeRemotePkgDirs(res.Root, "", newRemotePkgKey(resolvedTools.CCKey(), s.rc.cfg.Mode, s.conf.allPkgOptions[name],
+			entryCfg.Version, res.Commit, packageFlagsHash(s.rc.globalFlagsHash, node), patchHash, scriptHash))
 		if err := s.preparePackageWorkspace(name); err != nil {
 			return fmt.Errorf("prepare workspace for %s: %w", name, err)
 		}
@@ -404,13 +404,13 @@ func (s *sourceStage) setupSubPackageDirs() error {
 			return err
 		}
 		s.patchHashes[name] = patchHash
-		s.pkgDirs[name] = makeRemotePkgDirs(tree, relPath, resolvedTools.CCKey(), s.rc.cfg.Mode, opts,
-			version, s.packageCommitKey(name, commit), packageFlagsHash(s.rc.globalFlagsHash, node), patchHash, scriptHash)
+		s.pkgDirs[name] = makeRemotePkgDirs(tree, relPath, newRemotePkgKey(resolvedTools.CCKey(), s.rc.cfg.Mode, opts,
+			version, s.packageCommitKey(name, commit), packageFlagsHash(s.rc.globalFlagsHash, node), patchHash, scriptHash))
 		if err := s.selectPackageSource(name); err != nil {
 			return fmt.Errorf("select source for %s: %w", name, err)
 		}
-		s.pkgDirs[name] = makeRemotePkgDirs(tree, relPath, resolvedTools.CCKey(), s.rc.cfg.Mode, opts,
-			version, s.packageCommitKey(name, commit), packageFlagsHash(s.rc.globalFlagsHash, node), patchHash, scriptHash)
+		s.pkgDirs[name] = makeRemotePkgDirs(tree, relPath, newRemotePkgKey(resolvedTools.CCKey(), s.rc.cfg.Mode, opts,
+			version, s.packageCommitKey(name, commit), packageFlagsHash(s.rc.globalFlagsHash, node), patchHash, scriptHash))
 	}
 	return nil
 }

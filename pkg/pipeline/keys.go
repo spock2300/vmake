@@ -235,26 +235,53 @@ func packageFlagsHash(globalFlagsHash string, node *resolver.PackageNode) string
 	return hex.EncodeToString(hash[:])[:16]
 }
 
-func localKeyExtra(globalFlagsHash, scriptHash string, sourceCommit ...string) string {
-	commit := ""
-	if len(sourceCommit) > 0 {
-		commit = sourceCommit[0]
-	}
+type pkgKey struct {
+	ccKey   string
+	mode    string
+	options map[string]any
+	extra   string
+}
+
+func localPkgKeyExtra(globalFlagsHash, scriptHash, commit string) string {
 	return build.JoinKeyExtra("", commit, globalFlagsHash, "", scriptHash)
 }
 
-func makeLocalPkgDirs(scriptDir, ccKey, mode string, opts map[string]any, globalFlagsHash, scriptHash string, sourceCommit ...string) *api.PkgDirs {
-	buildKey := build.BuildKey(ccKey, mode, opts, localKeyExtra(globalFlagsHash, scriptHash, sourceCommit...))
-	return &api.PkgDirs{
-		SourceDir: scriptDir,
-		BuildDir:  filepath.Join(scriptDir, "build", buildKey),
+func remotePkgKeyExtra(version, commit, globalFlagsHash, patchHash, scriptHash string) string {
+	return build.JoinKeyExtra(version, commit, globalFlagsHash, patchHash, scriptHash)
+}
+
+func newLocalPkgKey(ccKey, mode string, opts map[string]any, globalFlagsHash, scriptHash, commit string) pkgKey {
+	return pkgKey{
+		ccKey:   ccKey,
+		mode:    mode,
+		options: opts,
+		extra:   localPkgKeyExtra(globalFlagsHash, scriptHash, commit),
 	}
 }
 
-func makeRemotePkgDirs(pkgRoot, member, ccKey, mode string, opts map[string]any, version, commit, globalFlagsHash, patchHash, scriptHash string) *api.PkgDirs {
-	buildKey := build.BuildKey(ccKey, mode, opts, build.JoinKeyExtra(version, commit, globalFlagsHash, patchHash, scriptHash))
+func newRemotePkgKey(ccKey, mode string, opts map[string]any, version, commit, globalFlagsHash, patchHash, scriptHash string) pkgKey {
+	return pkgKey{
+		ccKey:   ccKey,
+		mode:    mode,
+		options: opts,
+		extra:   remotePkgKeyExtra(version, commit, globalFlagsHash, patchHash, scriptHash),
+	}
+}
+
+func (k pkgKey) buildKey() string {
+	return build.BuildKey(k.ccKey, k.mode, k.options, k.extra)
+}
+
+func makeLocalPkgDirs(scriptDir string, key pkgKey) *api.PkgDirs {
+	return &api.PkgDirs{
+		SourceDir: scriptDir,
+		BuildDir:  filepath.Join(scriptDir, "build", key.buildKey()),
+	}
+}
+
+func makeRemotePkgDirs(pkgRoot, member string, key pkgKey) *api.PkgDirs {
 	member = filepath.ToSlash(member)
-	output := filepath.Join(pkgRoot, "out", storage.OwnerKey(member), buildKey)
+	output := filepath.Join(pkgRoot, "out", storage.OwnerKey(member), key.buildKey())
 	return &api.PkgDirs{
 		SourceDir:  filepath.Join(pkgRoot, "src", filepath.FromSlash(member)),
 		BuildDir:   filepath.Join(output, "build"),

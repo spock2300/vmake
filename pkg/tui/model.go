@@ -30,12 +30,10 @@ type OptionItem struct {
 const GlobalPkgName = "__global__"
 
 type Model struct {
-	packages []buildscript.Source
-	tree     []*TreeNode
-	flat     []*TreeNode
-	deps     map[string][]string
-	options  map[string]map[string]*api.Option
-	values   map[string]map[string]any
+	tree    []*TreeNode
+	flat    []*TreeNode
+	options map[string]map[string]*api.Option
+	values  map[string]map[string]any
 
 	globalOptions map[string]*api.Option
 	globalValues  map[string]any
@@ -117,6 +115,20 @@ const (
 	overlayLanguage
 )
 
+type modelInput struct {
+	packages         []buildscript.Source
+	deps             map[string][]string
+	options          map[string]map[string]*api.Option
+	values           map[string]map[string]any
+	workDir          string
+	currentToolchain string
+	globalOptions    map[string]*api.Option
+	globalValues     map[string]any
+	kconfigs         map[string][]*api.KConfigEntry
+	description      string
+	displayDefaults  func(toolchain string) map[string]any
+}
+
 func NewModel(
 	packages []buildscript.Source,
 	deps map[string][]string,
@@ -128,6 +140,29 @@ func NewModel(
 	globalValues map[string]any,
 	kconfigs map[string][]*api.KConfigEntry,
 ) Model {
+	return newModel(modelInput{
+		packages:         packages,
+		deps:             deps,
+		options:          options,
+		values:           values,
+		workDir:          workDir,
+		currentToolchain: currentToolchain,
+		globalOptions:    globalOptions,
+		globalValues:     globalValues,
+		kconfigs:         kconfigs,
+	})
+}
+
+func newModel(in modelInput) Model {
+	packages := in.packages
+	deps := in.deps
+	options := in.options
+	values := in.values
+	workDir := in.workDir
+	currentToolchain := in.currentToolchain
+	globalOptions := in.globalOptions
+	globalValues := in.globalValues
+	kconfigs := in.kconfigs
 	if globalValues == nil {
 		globalValues = make(map[string]any)
 	}
@@ -167,21 +202,22 @@ func NewModel(
 	}
 
 	m := Model{
-		packages:      packages,
-		deps:          deps,
-		options:       options,
-		values:        values,
-		treeCursor:    0,
-		optCursor:     0,
-		focusArea:     0,
-		workDir:       workDir,
-		globalOptions: globalOptions,
-		globalValues:  globalValues,
-		kconfigs:      kconfigs,
-		language:      systemLanguage(),
-		menuconfigRan: make(map[string]bool),
-		presetValues:  make(map[string]string),
-		optCounts:     computeOptCounts(options, globalOptions),
+		options:         options,
+		values:          values,
+		treeCursor:      0,
+		optCursor:       0,
+		focusArea:       0,
+		workDir:         workDir,
+		globalOptions:   globalOptions,
+		globalValues:    globalValues,
+		kconfigs:        kconfigs,
+		description:     in.description,
+		origDescription: in.description,
+		displayDefaults: in.displayDefaults,
+		language:        systemLanguage(),
+		menuconfigRan:   make(map[string]bool),
+		presetValues:    make(map[string]string),
+		optCounts:       computeOptCounts(options, globalOptions),
 	}
 	m.origValues = deepCopyValues(values)
 	m.origGlobal = deepCopyGlobal(globalValues)

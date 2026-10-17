@@ -27,7 +27,7 @@ Phase 3: OnBuild (pipeline.RunBuild)
     ├── executeOnBuild — 执行 OnBuild 回调 → 生成 Target
     ├── NewBuildGraph — 构建依赖图 → 拓扑排序
     ├── BuildPipeline.Run — 统一编排调度器
-    │   └── NewScheduler → scheduler.BuildAll()
+    │   └── newScheduler → scheduler.BuildAll()
     │       └── ForEachDefault:
     │           ├── resolveTarget（解析 include/define/flag/dep/genrule）
     │           ├── runGenRules（二进制头文件生成等）
@@ -191,7 +191,7 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 8. **executeOnBuild** — 执行所有 `OnBuild` 回调，生成 `map[string]*Target`
 9. **build.NewBuildGraph** — 构建依赖图，`BuildGraph` 展开包级依赖为 target 级传递闭包
 10. **build.NewBuildPipeline** — 创建 `BuildPipeline`（封装图、工具链、包目录、模式、选项、调度器）
-11. **pipeline.Run()** → `NewScheduler(graph, toolchain, pkgDirs, mode, options)` → `BuildAll()`:
+11. **BuildPipeline.Run()** → `BuildPipeline.newScheduler(...)` → `newScheduler(...)` → `BuildAll()`:
     - `ForEachDefault(includeTests, fn)` 按拓扑顺序构建每个默认 Target
     - 每个原生 Target: resolveTarget → prepareTarget → compileAll → finalizeTarget（链接/prebuilt、postLink、提交成功记录）→ publishTarget；TargetVoid 在 finalizeTarget 调用 BuildFunc
     - 并行编译源文件（`compileAll` 工作池，`--jobs` 控制编译作业数）

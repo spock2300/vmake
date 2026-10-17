@@ -1,7 +1,5 @@
 package pipeline
 
-import "github.com/spock2300/vmake/pkg/build"
-
 func buildPkgKeyExtra(rc *runContext, cfg *configStage, src *sourceStage) (map[string]string, error) {
 	extra := make(map[string]string)
 	for name := range cfg.needed {
@@ -12,7 +10,7 @@ func buildPkgKeyExtra(rc *runContext, cfg *configStage, src *sourceStage) (map[s
 			if err != nil {
 				return nil, err
 			}
-			extra[name] = localKeyExtra(flagsHash, scriptHash, src.sourceCommits[name])
+			extra[name] = localPkgKeyExtra(flagsHash, scriptHash, src.sourceCommits[name])
 			continue
 		}
 		version, commit := src.remotePkgKeyMaterial(name)
@@ -26,7 +24,7 @@ func buildPkgKeyExtra(rc *runContext, cfg *configStage, src *sourceStage) (map[s
 		if err != nil {
 			return nil, err
 		}
-		extra[name] = build.JoinKeyExtra(version, src.packageCommitKey(name, commit), flagsHash, src.patchHashes[name], scriptHash)
+		extra[name] = remotePkgKeyExtra(version, src.packageCommitKey(name, commit), flagsHash, src.patchHashes[name], scriptHash)
 	}
 	return extra, nil
 }

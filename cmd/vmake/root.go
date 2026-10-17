@@ -123,20 +123,62 @@ func pipelinePaths() *pipeline.Paths {
 	}
 }
 
-func resolveParams(ignoreLock bool, workDir, configPath, configDigest, lockPath string, lock *lockfile.Lock, cfg *config.ConfigFile) pipeline.ResolveParams {
+type resolveInputs struct {
+	ignoreLock   bool
+	workDir      string
+	configPath   string
+	configDigest string
+	lock         *lockfile.Lock
+	cfg          *config.ConfigFile
+	paths        *pipeline.Paths
+}
+
+func (in resolveInputs) params(mode, toolchain string) pipeline.ResolveParams {
 	return pipeline.ResolveParams{
-		WorkDir:           workDir,
-		ConfigPath:        configPath,
-		ConfigDigest:      configDigest,
-		Config:            cfg,
-		Lock:              lock,
-		LockPath:          lockPath,
-		IgnoreLock:        ignoreLock,
+		WorkDir:           in.workDir,
+		ConfigPath:        in.configPath,
+		ConfigDigest:      in.configDigest,
+		Config:            in.cfg,
+		Lock:              in.lock,
+		LockPath:          in.paths.LockPath,
+		IgnoreLock:        in.ignoreLock,
 		TrustChecker:      remoteScriptTrustChecker,
-		Paths:             pipelinePaths(),
-		ModeOverride:      modeFlag,
-		ToolchainOverride: toolchainFlag,
+		Paths:             in.paths,
+		ModeOverride:      mode,
+		ToolchainOverride: toolchain,
 	}
+}
+
+func loadResolveInputs(ignoreLock bool, softGitignore bool) (resolveInputs, error) {
+	workDir, err := os.Getwd()
+	if err != nil {
+		return resolveInputs{}, err
+	}
+	cfg, configPath, digest, err := config.LoadProjectSnapshot(findProjectDir())
+	if err != nil {
+		return resolveInputs{}, err
+	}
+	if err := ensureGitignore(findProjectDir()); err != nil {
+		if !softGitignore {
+			return resolveInputs{}, err
+		}
+		vlog.Error("gitignore: %v", err)
+	}
+	cleanupLegacyStorage()
+	paths := pipelinePaths()
+	lock, err := lockfile.LoadOrCreate(paths.LockPath)
+	if err != nil {
+		return resolveInputs{}, err
+	}
+	return resolveInputs{
+		ignoreLock:   ignoreLock,
+		workDir:      workDir,
+		configPath:   configPath,
+		configDigest: digest,
+		lock:         lock,
+		cfg:          cfg,
+		paths:        paths,
+	}, nil
 }
 
 func resolveToConfig(ignoreLock bool) *RuntimeContext {
@@ -147,24 +189,11 @@ func resolveToConfig(ignoreLock bool) *RuntimeContext {
 
 func resolveToConfigContext(execution context.Context, ignoreLock bool) (*RuntimeContext, error) {
 	locks := commandStorageLocks()
-	workDir, err := os.Getwd()
+	inputs, err := loadResolveInputs(ignoreLock, false)
 	if err != nil {
 		return nil, err
 	}
-	cfg, configPath, digest, err := config.LoadProjectSnapshot(findProjectDir())
-	if err != nil {
-		return nil, err
-	}
-	if err := ensureGitignore(findProjectDir()); err != nil {
-		return nil, err
-	}
-	cleanupLegacyStorage()
-	lockPath := getLockfilePath()
-	lock, err := lockfile.LoadOrCreate(lockPath)
-	if err != nil {
-		return nil, err
-	}
-	ctx := pipeline.NewContext(resolveParams(ignoreLock, workDir, configPath, digest, lockPath, lock, cfg))
+	ctx := pipeline.NewContext(inputs.params(modeFlag, toolchainFlag))
 	ctx.Context = execution
 	ctx.Locks = locks
 	if err := pipeline.Require(ctx); err != nil {
@@ -176,28 +205,11 @@ func resolveToConfigContext(execution context.Context, ignoreLock bool) (*Runtim
 	return ctx, nil
 }
 
-func mustLoadLockfile(path string) *lockfile.Lock {
-	l, err := lockfile.LoadOrCreate(path)
-	fatalErr(err)
-	return l
-}
-
 func resolveToConfigBestEffort(ignoreLock bool) (*RuntimeContext, bool) {
 	locks := commandStorageLocks()
-	workDir, err := os.Getwd()
-	if err != nil {
-		vlog.Error("Error: %v", err)
-		os.Exit(1)
-	}
-	cfg, configPath, digest, err := config.LoadProjectSnapshot(findProjectDir())
+	inputs, err := loadResolveInputs(ignoreLock, true)
 	fatalErr(err)
-	if err := ensureGitignore(findProjectDir()); err != nil {
-		vlog.Error("gitignore: %v", err)
-	}
-	cleanupLegacyStorage()
-	lockPath := getLockfilePath()
-	lock := mustLoadLockfile(lockPath)
-	ctx := pipeline.NewContext(resolveParams(ignoreLock, workDir, configPath, digest, lockPath, lock, cfg))
+	ctx := pipeline.NewContext(inputs.params(modeFlag, toolchainFlag))
 	ctx.Locks = locks
 	if err := pipeline.Require(ctx); err != nil {
 		return ctx, false

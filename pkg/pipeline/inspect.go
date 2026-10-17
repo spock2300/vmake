@@ -115,7 +115,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (*Inspection, 
 			if err != nil {
 				return nil, err
 			}
-			pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, tools.CCKey(), pre.cfg.Mode, entry.Options, flagsHash, scriptHash, commit)
+			pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, newLocalPkgKey(tools.CCKey(), pre.cfg.Mode, entry.Options, flagsHash, scriptHash, commit))
 			continue
 		}
 		owner := remoteOwnerName(ctx, name)
@@ -142,8 +142,8 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (*Inspection, 
 		if commit == "" {
 			continue
 		}
-		pkgDirs[name] = makeRemotePkgDirs(tree, member, tools.CCKey(), pre.cfg.Mode, entry.Options,
-			version, commit, flagsHash, patchHash, scriptHash)
+		pkgDirs[name] = makeRemotePkgDirs(tree, member, newRemotePkgKey(tools.CCKey(), pre.cfg.Mode, entry.Options,
+			version, commit, flagsHash, patchHash, scriptHash))
 		if member != "" && node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 {
 			node.Pkg.SetSrcDir(filepath.Join(pkgDirs[name].SourceDir, "src"))
 		}

@@ -348,7 +348,7 @@ func TestResolveWithDefault(t *testing.T) {
 }
 
 func TestMakeLocalPkgDirsLayout(t *testing.T) {
-	dirs := makeLocalPkgDirs("/script", "/usr/bin/gcc@13", "debug", map[string]any{"x": 1}, "gh", "sh")
+	dirs := makeLocalPkgDirs("/script", newLocalPkgKey("/usr/bin/gcc@13", "debug", map[string]any{"x": 1}, "gh", "sh", ""))
 	if dirs.SourceDir != "/script" {
 		t.Errorf("SourceDir = %q", dirs.SourceDir)
 	}
@@ -361,7 +361,7 @@ func TestMakeLocalPkgDirsLayout(t *testing.T) {
 }
 
 func TestMakeRemotePkgDirsLayout(t *testing.T) {
-	dirs := makeRemotePkgDirs("/vd", "", "/usr/bin/gcc@13", "release", map[string]any{"x": 1}, "1.0.0", "c0ffee", "gh", "", "sh")
+	dirs := makeRemotePkgDirs("/vd", "", newRemotePkgKey("/usr/bin/gcc@13", "release", map[string]any{"x": 1}, "1.0.0", "c0ffee", "gh", "", "sh"))
 	if want := filepath.Join("/vd", "src"); dirs.SourceDir != want {
 		t.Errorf("SourceDir = %q, want %q", dirs.SourceDir, want)
 	}
@@ -374,7 +374,7 @@ func TestMakeRemotePkgDirsLayout(t *testing.T) {
 	if dirs.InstallDir == "" {
 		t.Error("remote pkg should have InstallDir")
 	}
-	member := makeRemotePkgDirs("/vd", "nested/member", "/usr/bin/gcc@13", "release", map[string]any{"x": 1}, "1.0.0", "c0ffee", "gh", "", "sh")
+	member := makeRemotePkgDirs("/vd", "nested/member", newRemotePkgKey("/usr/bin/gcc@13", "release", map[string]any{"x": 1}, "1.0.0", "c0ffee", "gh", "", "sh"))
 	if want := filepath.Join("/vd", "src", "nested", "member"); member.SourceDir != want {
 		t.Errorf("member SourceDir = %q, want %q", member.SourceDir, want)
 	}

@@ -40,14 +40,27 @@ func Run(
 	description string,
 	displayDefaults func(toolchain string) map[string]any,
 ) (*ConfigResult, error) {
-	m := NewModel(packages, deps, options, values, workDir, currentToolchain, globalOptions, globalValues, kconfigs)
-	m.description = description
-	m.displayDefaults = displayDefaults
-	m.origDescription = description
+	m := newModel(modelInput{
+		packages:         packages,
+		deps:             deps,
+		options:          options,
+		values:           values,
+		workDir:          workDir,
+		currentToolchain: currentToolchain,
+		globalOptions:    globalOptions,
+		globalValues:     globalValues,
+		kconfigs:         kconfigs,
+		description:      description,
+		displayDefaults:  displayDefaults,
+	})
 	p := tea.NewProgram(&m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		return nil, err
 	}
+	return m.result(), nil
+}
+
+func (m *Model) result() *ConfigResult {
 	return &ConfigResult{
 		Saved:         m.saved,
 		Description:   m.description,
@@ -56,7 +69,7 @@ func Run(
 		GlobalValues:  m.globalValues,
 		MenuconfigRan: m.menuconfigRan,
 		PresetValues:  m.presetValues,
-	}, nil
+	}
 }
 
 func getToolchainValue(globalValues map[string]any) string {

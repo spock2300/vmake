@@ -135,7 +135,7 @@ func (s *declareStage) bindPackage(name string) (*packageBinding, error) {
 		return nil, fmt.Errorf("package %s has no build directories", name)
 	}
 	if node.IsLocal() {
-		s.source.pkgDirs[name] = makeLocalPkgDirs(dirs.SourceDir, tools.CCKey(), s.rc.cfg.Mode, s.conf.allPkgOptions[name], flagsHash, scriptHash, s.source.sourceCommits[name])
+		s.source.pkgDirs[name] = makeLocalPkgDirs(dirs.SourceDir, newLocalPkgKey(tools.CCKey(), s.rc.cfg.Mode, s.conf.allPkgOptions[name], flagsHash, scriptHash, s.source.sourceCommits[name]))
 	} else {
 		version, commit := s.source.remotePkgKeyMaterial(name)
 		owner := remoteOwnerName(s.rc.ctx, name)
@@ -147,7 +147,7 @@ func (s *declareStage) bindPackage(name string) (*packageBinding, error) {
 		if tree == "" {
 			tree = remoteTreeDir(s.rc.ctx, owner)
 		}
-		s.source.pkgDirs[name] = makeRemotePkgDirs(tree, member, tools.CCKey(), s.rc.cfg.Mode, s.conf.allPkgOptions[name], version, s.source.packageCommitKey(name, commit), flagsHash, s.source.patchHashes[name], scriptHash)
+		s.source.pkgDirs[name] = makeRemotePkgDirs(tree, member, newRemotePkgKey(tools.CCKey(), s.rc.cfg.Mode, s.conf.allPkgOptions[name], version, s.source.packageCommitKey(name, commit), flagsHash, s.source.patchHashes[name], scriptHash))
 	}
 	if err := s.source.preparePackageWorkspace(name); err != nil {
 		return nil, err

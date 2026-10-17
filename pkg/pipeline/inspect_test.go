@@ -197,7 +197,7 @@ func TestInspectLocalGitWithMaterializedTree(t *testing.T) {
 	if err := s.selectPackageSource("dep"); err != nil {
 		t.Fatal(err)
 	}
-	s.pkgDirs["dep"] = makeLocalPkgDirs(dep.Source.Dir, "cc-key", s.cfg.Mode, nil, "", "", s.sourceCommits["dep"])
+	s.pkgDirs["dep"] = makeLocalPkgDirs(dep.Source.Dir, newLocalPkgKey("cc-key", s.cfg.Mode, nil, "", "", s.sourceCommits["dep"]))
 	if err := s.preparePackageWorkspace("dep"); err != nil {
 		t.Fatal(err)
 	}

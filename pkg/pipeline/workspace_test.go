@@ -65,7 +65,7 @@ func TestLocalSetGitSingleTreeStableLink(t *testing.T) {
 	if err := s.selectPackageSource("app"); err != nil {
 		t.Fatal(err)
 	}
-	s.pkgDirs["app"] = makeLocalPkgDirs(node.Source.Dir, "cc-key", s.cfg.Mode, nil, "", "", s.sourceCommits["app"])
+	s.pkgDirs["app"] = makeLocalPkgDirs(node.Source.Dir, newLocalPkgKey("cc-key", s.cfg.Mode, nil, "", "", s.sourceCommits["app"]))
 	if err := s.preparePackageWorkspace("app"); err != nil {
 		t.Fatal(err)
 	}
@@ -328,6 +328,18 @@ func TestSetupSubPackageDirsKeepsResolvedParentCommit(t *testing.T) {
 	}
 	if s.remote.trees[name] != tree {
 		t.Fatalf("member tree = %q, want %q", s.remote.trees[name], tree)
+	}
+	extra, err := s.buildPkgKeyExtra()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools, err := s.toolsForPackage(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := build.BuildKey(tools.CCKey(), s.cfg.Mode, s.allPkgOptions[name], extra[name])
+	if got := filepath.Base(filepath.Dir(s.pkgDirs[name].BuildDir)); got != want {
+		t.Fatalf("member BuildDir key = %q, want %q", got, want)
 	}
 }
 

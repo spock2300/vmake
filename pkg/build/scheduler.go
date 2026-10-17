@@ -70,7 +70,6 @@ type Scheduler struct {
 	toolchain     *toolchain.Toolchain
 	platform      api.Platform
 	resolvedTools *ResolvedTools
-	tcName        string
 	mode          string
 	pkgOptions    map[string]map[string]any
 	pkgs          map[string]*PkgInfo
@@ -108,7 +107,6 @@ func newScheduler(graph *BuildGraph, tc *toolchain.Toolchain, pkgDirs map[string
 	compiler := NewCompiler(tools)
 	linker := NewLinker(tools)
 
-	tcName := tc.Name
 	if mode == "" {
 		mode = api.ModeDebug
 	}
@@ -124,7 +122,6 @@ func newScheduler(graph *BuildGraph, tc *toolchain.Toolchain, pkgDirs map[string
 		toolchain:      tc,
 		platform:       platform,
 		resolvedTools:  tools,
-		tcName:         tcName,
 		mode:           mode,
 		pkgOptions:     pkgOptions,
 		pkgs:           make(map[string]*PkgInfo),
