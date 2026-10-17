@@ -15,24 +15,24 @@ import (
 
 // preparePackageWorkspace points a package at its single project-local working
 // tree, materializing it when necessary.
-func (s *buildPhaseState) preparePackageWorkspace(name string) error {
-	node := s.ctx.DepGraph.Packages[name]
+func (s *sourceStage) preparePackageWorkspace(name string) error {
+	node := s.rc.ctx.DepGraph.Packages[name]
 	dirs := s.pkgDirs[name]
 	if node == nil || node.Pkg == nil || dirs == nil {
 		return nil
 	}
-	_, isSub := s.ctx.Resolver.SubParents()[name]
+	_, isSub := s.rc.ctx.Resolver.SubParents()[name]
 	if !node.IsLocal() && !isSub {
 		oldSourceDir := node.Pkg.SourceDir()
 		node.Pkg.SetDirs(*dirs)
-		return rebindRemoteSrcDir(s.ctx, node, dirs, oldSourceDir, name)
+		return rebindRemoteSrcDir(s.rc.ctx, node, dirs, oldSourceDir, name)
 	}
 	urls := node.Pkg.GitURLs()
 	if len(urls) == 0 {
 		oldSourceDir := node.Pkg.SourceDir()
 		node.Pkg.SetDirs(*dirs)
 		if !node.IsLocal() {
-			return rebindRemoteSrcDir(s.ctx, node, dirs, oldSourceDir, name)
+			return rebindRemoteSrcDir(s.rc.ctx, node, dirs, oldSourceDir, name)
 		}
 		return nil
 	}
@@ -53,7 +53,7 @@ func (s *buildPhaseState) preparePackageWorkspace(name string) error {
 		node.Pkg.SetSrcDir(link)
 		return nil
 	}
-	if err := rebindRemoteSrcDir(s.ctx, node, dirs, oldSourceDir, name); err != nil {
+	if err := rebindRemoteSrcDir(s.rc.ctx, node, dirs, oldSourceDir, name); err != nil {
 		return err
 	}
 	if node.Pkg.SrcDirRaw() == "" {
@@ -85,8 +85,8 @@ func rebindRemoteSrcDir(ctx *RuntimeContext, node *resolver.PackageNode, dirs *a
 
 // selectPackageSource materializes the package's own repository (local SetGit
 // packages and native members with their own git URL) into its working tree.
-func (s *buildPhaseState) selectPackageSource(name string) error {
-	node := s.ctx.DepGraph.Packages[name]
+func (s *sourceStage) selectPackageSource(name string) error {
+	node := s.rc.ctx.DepGraph.Packages[name]
 	if node == nil || node.Pkg == nil || len(node.Pkg.GitURLs()) == 0 {
 		return nil
 	}
@@ -117,13 +117,13 @@ func (s *buildPhaseState) selectPackageSource(name string) error {
 		Commit:     expected,
 		PatchHash:  s.patchHashes[name],
 		Submodules: node.Pkg.Submodules(),
-		Refresh:    s.ctx.IgnoreLock,
+		Refresh:    s.rc.ctx.IgnoreLock,
 	}
 	if version == "" {
 		req.Ref = ""
-		req.Refresh = s.ctx.IgnoreLock || repo.IsLocalGitURL(req.URLs[0])
+		req.Refresh = s.rc.ctx.IgnoreLock || repo.IsLocalGitURL(req.URLs[0])
 	}
-	manager := repo.NewSourceManager(s.ctx.Paths.DepsDir, s.ctx.Paths.CacheDir).WithSession(s.ctx.Locks).WithContext(s.ctx.Context)
+	manager := repo.NewSourceManager(s.rc.ctx.Paths.DepsDir, s.rc.ctx.Paths.CacheDir).WithSession(s.rc.ctx.Locks).WithContext(s.rc.ctx.Context)
 	res, err := manager.EnsureSource(req)
 	if err != nil {
 		return err
@@ -134,11 +134,11 @@ func (s *buildPhaseState) selectPackageSource(name string) error {
 	return nil
 }
 
-func (s *buildPhaseState) localSourceVersion(name string, node *resolver.PackageNode) (string, string, string, error) {
+func (s *sourceStage) localSourceVersion(name string, node *resolver.PackageNode) (string, string, string, error) {
 	if !node.IsLocal() || len(node.Pkg.Versions()) == 0 {
 		return "", "", "", nil
 	}
-	pin := config.GetEntry(s.ctx.Config, name).Version
+	pin := config.GetEntry(s.rc.ctx.Config, name).Version
 	if pin == "" {
 		pin, _ = s.lockedVersion(name)
 	}
@@ -155,8 +155,8 @@ func (s *buildPhaseState) localSourceVersion(name string, node *resolver.Package
 		return "", "", "", fmt.Errorf("source version %s for %s has no git ref", version, name)
 	}
 	expected := ""
-	if s.ctx.Lock != nil && !s.ctx.IgnoreLock {
-		if locked, ok := s.ctx.Lock.Get(name); ok && locked.Version == version {
+	if s.rc.ctx.Lock != nil && !s.rc.ctx.IgnoreLock {
+		if locked, ok := s.rc.ctx.Lock.Get(name); ok && locked.Version == version {
 			expected = locked.Commit
 		}
 	}
@@ -170,7 +170,7 @@ func existingLocalSourceCommit(node *resolver.PackageNode) (string, error) {
 	return repo.GetCurrentCommit(node.Pkg.SrcDir())
 }
 
-func (s *buildPhaseState) packageCommitKey(name, ownerCommit string) string {
+func (s *sourceStage) packageCommitKey(name, ownerCommit string) string {
 	return sourceCommitKey(ownerCommit, s.sourceCommits[name])
 }
 

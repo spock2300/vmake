@@ -53,8 +53,12 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) (err error) {
 	vlog.Info("")
 	vlog.Info("Installing...")
 
-	fs.RemoveIfExists(effectivePrefix)
-	fs.EnsureDir(effectivePrefix)
+	if err := fs.RemoveAll(effectivePrefix); err != nil {
+		return fmt.Errorf("clean install prefix: %w", err)
+	}
+	if err := fs.EnsureDir(effectivePrefix); err != nil {
+		return fmt.Errorf("create install prefix: %w", err)
+	}
 
 	installer := build.NewArtifactInstaller(result.Graph, result.PkgDirs, effectivePrefix)
 	installer.SetInstallType(installTypeFlag)

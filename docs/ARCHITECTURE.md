@@ -17,9 +17,10 @@ Phase 2: 配置准备 (pipeline.Configure → runConfigPhase)
     │
 Phase 3: OnBuild (pipeline.RunBuild)
     ├── resolveBuildConfig — 解析构建配置（模式、工具链）
-    ├── filterAndCollectNeeded — 用真实配置重新执行 OnRequire（Resolver.FilterDeps
-    │   替换节点.Deps）→ UpdateOrder → BFS 收集 needed
-    ├── computeDirsAndOptions — 收集包选项、解析各包 SourceDir
+    ├── prepareConfig — filterAndCollectNeeded（用真实配置重新执行 OnRequire，
+    │   Resolver.FilterDeps 替换节点.Deps → UpdateOrder → BFS 收集 needed）
+    │   → 收集包选项与全局 flags
+    ├── newSourceStage — 解析各包 SourceDir
     ├── prepareAllPackages — 下载远程包源码、克隆本地 Git 源码、设置子包目录
     ├── applyPatches — 在各包唯一的工作树上就地应用（git apply --3way，已应用自动跳过）
     ├── restoreKConfigFiles — 恢复 KConfig 配置
@@ -43,6 +44,11 @@ Phase 3: OnBuild (pipeline.RunBuild)
     清理安装前缀 → 复用构建期 OnBuild 声明并执行 OnInstall 回调收集安装项
     → ArtifactInstaller.InstallAll → 安装目标产物 → 生成 manifest.json
 ```
+
+`RunBuild` 内部按阶段拆分状态：`runContext`（请求与共享会话）、`configStage`（needed/options）、
+`sourceStage`（源码树、lock、补丁、KConfig）、`declareStage`（OnBuild 绑定与 target）、
+`planStage`（BuildGraph/BuildPipeline）。各阶段只通过显式字段传递状态，导出 API 不变。
+`Scheduler` 内部按 resolve/compile/link/postlink/publish 分文件，执行语义与产物路径不变。
 
 ### Clean Pipeline
 
@@ -173,11 +179,11 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 
 ### Phase 3: 构建执行
 
-`runBuildPhase` 包含多个子步骤：
+`RunBuild` 包含多个子步骤：
 
 1. **resolveBuildConfig** — 解析构建模式（debug/release/size）和工具链选择
 2. **filterAndCollectNeeded** — 用真实配置重新执行 OnRequire（`Resolver.FilterDeps` 替换节点.Deps）→ `UpdateOrder` → 从 `IsLocal()` 根节点 BFS 遍历，过滤需要构建的包
-3. **computeDirsAndOptions** — 收集包选项并解析各包 SourceDir（BuildDir/InstallDir 随后在 prepareAllPackages/bindPackage 中按构建键生成）
+3. **prepareConfig / newSourceStage** — 收集 needed、包选项与全局 flags，并解析各包 SourceDir（BuildDir/InstallDir 随后在 prepareAllPackages/bindPackage 中按构建键生成）
 4. **prepareAllPackages** — 下载远程包源码、克隆本地 Git 源码、设置子包目录
 5. **writeLockfile** — 写入 `.vmake/vmake.lock`（锁定解析到的版本与 commit）
 6. **applyPatches** — 在各包唯一的工作树上就地应用补丁（已应用则跳过；同一 commit 的补丁集变化先 `checkout --force --detach` + `clean -fdx` 恢复）
