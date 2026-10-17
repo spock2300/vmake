@@ -125,44 +125,15 @@ func (s *declareStage) bindPackage(name string) (*packageBinding, error) {
 		return nil, err
 	}
 	node := s.rc.ctx.DepGraph.Packages[name]
-	scriptHash, err := s.source.scriptHashFor(name)
+	if s.source.layouts[name] == nil && s.source.pkgDirs[name] == nil {
+		return nil, fmt.Errorf("package %s has no build directories", name)
+	}
+	layout, err := s.source.makeLayout(name, tools)
 	if err != nil {
 		return nil, err
 	}
-	flagsHash := packageFlagsHash(s.rc.globalFlagsHash, node)
-	dirs := s.source.pkgDirs[name]
-	if dirs == nil {
-		return nil, fmt.Errorf("package %s has no build directories", name)
-	}
-	if node.IsLocal() {
-		s.source.pkgDirs[name] = makeLocalPkgDirs(dirs.SourceDir, newLocalPkgKey(tools.CCKey(), s.rc.cfg.Mode, s.conf.allPkgOptions[name], flagsHash, scriptHash, s.source.sourceCommits[name]))
-	} else {
-		version, commit := s.source.remotePkgKeyMaterial(name)
-		owner := remoteOwnerName(s.rc.ctx, name)
-		member := remoteMemberPath(s.rc.ctx, name)
-		tree := s.source.remote.trees[name]
-		if tree == "" {
-			tree = s.source.remote.trees[owner]
-		}
-		if tree == "" {
-			tree = remoteTreeDir(s.rc.ctx, owner)
-		}
-		s.source.pkgDirs[name] = makeRemotePkgDirs(tree, member, newRemotePkgKey(tools.CCKey(), s.rc.cfg.Mode, s.conf.allPkgOptions[name], version, s.source.packageCommitKey(name, commit), flagsHash, s.source.patchHashes[name], scriptHash))
-	}
-	if err := s.source.preparePackageWorkspace(name); err != nil {
+	if err := s.source.rebindLayout(name, layout); err != nil {
 		return nil, err
-	}
-	currentDirs := s.source.pkgDirs[name]
-	if dirs.BuildDir != currentDirs.BuildDir || dirs.SourceDir != currentDirs.SourceDir {
-		if err := s.source.applyPatchesFor(name); err != nil {
-			return nil, err
-		}
-		if err := rebaseKConfigSourceDirs(s.rc.ctx, name, dirs.SourceDir, currentDirs.SourceDir); err != nil {
-			return nil, err
-		}
-		if err := restoreKConfigFiles(s.rc.ctx, s.source.pkgDirs, map[string]bool{name: true}); err != nil {
-			return nil, err
-		}
 	}
 	if s.rc.budget == nil {
 		s.rc.budget = &buildruntime.Budget{Jobs: runtime.NumCPU()}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 
@@ -44,20 +43,19 @@ type compileResult struct {
 
 type PkgInfo struct {
 	api.PkgDirs
-	OutputDir string
-	BuildKey  string
+	BuildKey string
 }
 
 func (pi *PkgInfo) OutputPath(subpath string) string {
-	if pi.OutputDir != "" {
-		return filepath.Join(pi.OutputDir, subpath)
+	if pi.BuildDir != "" {
+		return filepath.Join(pi.BuildDir, subpath)
 	}
 	return BuildPath(".", pi.BuildKey, subpath)
 }
 
 func (pi *PkgInfo) GeneratedDir() string {
-	if pi.OutputDir != "" {
-		return filepath.Join(pi.OutputDir, subdirGenerated)
+	if pi.BuildDir != "" {
+		return filepath.Join(pi.BuildDir, subdirGenerated)
 	}
 	return BuildPath(".", pi.BuildKey, subdirGenerated)
 }
@@ -77,7 +75,6 @@ type Scheduler struct {
 	packages      map[string]*api.Package
 	rootDir       string
 	includeTests  bool
-	pkgKeyExtra   map[string]string
 	numWorkers    int
 	keepGoing     bool
 
@@ -86,6 +83,23 @@ type Scheduler struct {
 	globalCxxFlags []string
 	globalLdFlags  []string
 	globalLinks    []string
+}
+
+type schedulerConfig struct {
+	Graph        *BuildGraph
+	Toolchain    *toolchain.Toolchain
+	Platform     api.Platform
+	Layouts      map[string]*PackageLayout
+	Mode         string
+	Options      map[string]map[string]any
+	Packages     map[string]*api.Package
+	Tools        *ResolvedTools
+	Context      context.Context
+	RootDir      string
+	IncludeTests bool
+	NumWorkers   int
+	KeepGoing    bool
+	GlobalFlags  *[4][]string
 }
 
 func NewScheduler(
@@ -100,98 +114,85 @@ func NewScheduler(
 	if err != nil {
 		return nil, err
 	}
-	return newScheduler(graph, tc, pkgDirs, mode, pkgOptions, platform, tools), nil
-}
-
-func newScheduler(graph *BuildGraph, tc *toolchain.Toolchain, pkgDirs map[string]*api.PkgDirs, mode string, pkgOptions map[string]map[string]any, platform api.Platform, tools *ResolvedTools) *Scheduler {
-	compiler := NewCompiler(tools)
-	linker := NewLinker(tools)
-
 	if mode == "" {
 		mode = api.ModeDebug
 	}
+	layouts := make(map[string]*PackageLayout, len(pkgDirs))
+	for name, dirs := range pkgDirs {
+		key, err := BuildKeyE(tools.CCKey(), mode, pkgOptions[name], "")
+		if err != nil {
+			return nil, err
+		}
+		layouts[name] = &PackageLayout{Dirs: *dirs, BuildKey: key, Ready: true}
+	}
+	return newScheduler(schedulerConfig{
+		Graph:     graph,
+		Toolchain: tc,
+		Platform:  platform,
+		Layouts:   layouts,
+		Mode:      mode,
+		Options:   pkgOptions,
+		Tools:     tools,
+	}), nil
+}
 
-	ccWriter := NewCompileCommandsWriter(tools)
+func newScheduler(cfg schedulerConfig) *Scheduler {
+	if cfg.Mode == "" {
+		cfg.Mode = api.ModeDebug
+	}
+	if cfg.Context == nil {
+		cfg.Context = context.Background()
+	}
+	compiler := NewCompiler(cfg.Tools)
+	linker := NewLinker(cfg.Tools)
+	linker.run = gnuRunnerContext(cfg.Context, cfg.Tools.env)
 	manager := toolchain.GetManager()
-
-	s := &Scheduler{
-		ctx:            context.Background(),
-		graph:          graph,
-		compiler:       compiler,
-		linker:         linker,
-		toolchain:      tc,
-		platform:       platform,
-		resolvedTools:  tools,
-		mode:           mode,
-		pkgOptions:     pkgOptions,
-		pkgs:           make(map[string]*PkgInfo),
-		ccWriter:       ccWriter,
-		packages:       make(map[string]*api.Package),
-		globalCFlags:   append([]string{}, manager.GetGlobalCFlags()...),
-		globalCxxFlags: append([]string{}, manager.GetGlobalCxxFlags()...),
-		globalLdFlags:  append([]string{}, manager.GetGlobalLdFlags()...),
-		globalLinks:    append([]string{}, manager.GetGlobalLinks()...),
+	packages := cfg.Packages
+	if packages == nil {
+		packages = make(map[string]*api.Package)
 	}
 
-	for pkgName, pd := range pkgDirs {
-		buildKey := BuildKey(tools.CCKey(), mode, pkgOptions[pkgName], s.pkgExtra(pkgName))
-		info := &PkgInfo{
-			PkgDirs:  *pd,
-			BuildKey: buildKey,
+	s := &Scheduler{
+		ctx:           cfg.Context,
+		graph:         cfg.Graph,
+		compiler:      compiler,
+		linker:        linker,
+		toolchain:     cfg.Toolchain,
+		platform:      cfg.Platform,
+		resolvedTools: cfg.Tools,
+		mode:          cfg.Mode,
+		pkgOptions:    cfg.Options,
+		pkgs:          make(map[string]*PkgInfo),
+		ccWriter:      NewCompileCommandsWriter(cfg.Tools),
+		packages:      packages,
+		rootDir:       cfg.RootDir,
+		includeTests:  cfg.IncludeTests,
+		numWorkers:    cfg.NumWorkers,
+		keepGoing:     cfg.KeepGoing,
+	}
+	if cfg.GlobalFlags != nil {
+		s.globalCFlags = append([]string{}, cfg.GlobalFlags[0]...)
+		s.globalCxxFlags = append([]string{}, cfg.GlobalFlags[1]...)
+		s.globalLdFlags = append([]string{}, cfg.GlobalFlags[2]...)
+		s.globalLinks = append([]string{}, cfg.GlobalFlags[3]...)
+	} else {
+		s.globalCFlags = append([]string{}, manager.GetGlobalCFlags()...)
+		s.globalCxxFlags = append([]string{}, manager.GetGlobalCxxFlags()...)
+		s.globalLdFlags = append([]string{}, manager.GetGlobalLdFlags()...)
+		s.globalLinks = append([]string{}, manager.GetGlobalLinks()...)
+	}
+
+	for pkgName, layout := range cfg.Layouts {
+		if layout == nil {
+			continue
 		}
-		if pd.BuildDir != "" {
-			info.OutputDir = pd.BuildDir
+		s.pkgs[pkgName] = &PkgInfo{
+			PkgDirs:  layout.Dirs,
+			BuildKey: layout.BuildKey,
 		}
-		s.pkgs[pkgName] = info
 	}
 
 	return s
-}
-
-func (s *Scheduler) SetPackage(pkgName string, pkg *api.Package) {
-	s.packages[pkgName] = pkg
-}
-
-func (s *Scheduler) SetRootDir(dir string) {
-	s.rootDir = dir
-}
-
-func (s *Scheduler) SetIncludeTests(v bool) {
-	s.includeTests = v
-}
-
-func (s *Scheduler) SetPkgKeyExtra(extra map[string]string) {
-	s.pkgKeyExtra = maps.Clone(extra)
-	for name, info := range s.pkgs {
-		info.BuildKey = BuildKey(s.toolIdentity(), s.mode, s.pkgOptions[name], s.pkgExtra(name))
-	}
-}
-
-func (s *Scheduler) SetNumWorkers(n int) {
-	s.numWorkers = n
-}
-
-func (s *Scheduler) SetKeepGoing(v bool) {
-	s.keepGoing = v
-}
-
-func (s *Scheduler) SetBuildTargetFunc(fn func(string) error) {
-	s.buildTargetFn = fn
-}
-
-func (s *Scheduler) pkgExtra(pkgName string) string {
-	if s.pkgKeyExtra == nil {
-		return ""
-	}
-	return s.pkgKeyExtra[pkgName]
-}
-
-func (s *Scheduler) SetPkgDirs(pkgName string, dirs *api.PkgDirs) {
-	if info, ok := s.pkgs[pkgName]; ok {
-		info.PkgDirs = *dirs
-	} else {
-		s.pkgs[pkgName] = &PkgInfo{PkgDirs: *dirs}
-	}
 }
 
 func (s *Scheduler) GetPkgInfo(pkgName string) (*PkgInfo, bool) {
@@ -212,7 +213,7 @@ func (s *Scheduler) effectiveSourceDir(pkgName string) string {
 func (s *Scheduler) pkgInfoOf(pkgName string) (*PkgInfo, error) {
 	info := s.pkgs[pkgName]
 	if info == nil {
-		return nil, fmt.Errorf("package %s has no build dirs registered (SetPkgDirs not called)", pkgName)
+		return nil, fmt.Errorf("package %s has no build dirs registered", pkgName)
 	}
 	return info, nil
 }

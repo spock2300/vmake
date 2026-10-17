@@ -35,7 +35,7 @@ func nativeTestScheduler(t *testing.T, dir string, targets ...*api.Target) *Sche
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.SetRootDir(dir)
+	s.rootDir = dir
 	return s
 }
 
@@ -68,7 +68,7 @@ func TestNativeObjectsSeparateTargetsAndSourcePaths(t *testing.T) {
 	writeAssemblyFixture(t, dir, "paths.c", "#include <stdio.h>\nint nested(void); int flat(void); int main(void) { printf(\"%d\\n\", nested()+flat()); return 0; }\n")
 	paths := makeTargetWithDeps("paths").SetKind(api.TargetBinary).AddFiles("paths.c", "src/value.c", "src_value.c", "src/*.c")
 	s = nativeTestScheduler(t, dir, paths)
-	s.SetNumWorkers(4)
+	s.numWorkers = 4
 	if err := s.BuildAll(); err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestNativeSameStemDifferentLanguages(t *testing.T) {
 	library := makeTargetWithDeps("values").SetKind(api.TargetStatic).AddFiles("value.c", "value.cpp", "value.S")
 	target := makeTargetWithDeps("app", "values").SetKind(api.TargetBinary).AddFiles("main.c")
 	s := nativeTestScheduler(t, dir, library, target)
-	s.SetNumWorkers(4)
+	s.numWorkers = 4
 	if err := s.BuildAll(); err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +394,7 @@ func TestCompileFailureCancelsWorkersAndRemovesPartialOutputs(t *testing.T) {
 	target := makeTargetWithDeps("app").SetKind(api.TargetBinary).AddFiles("slow.c", "fail.c")
 	s := nativeTestScheduler(t, dir, target)
 	s.compiler = NewCompiler(&ResolvedTools{CC: tool, CXX: tool})
-	s.SetNumWorkers(2)
+	s.numWorkers = 2
 	start := time.Now()
 	if err := s.Build("p:app"); err == nil || !strings.Contains(err.Error(), "fail.c") {
 		t.Fatalf("original compiler failure was not preserved: %v", err)

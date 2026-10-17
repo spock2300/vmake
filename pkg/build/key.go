@@ -10,9 +10,15 @@ import (
 )
 
 // BuildKey derives the per-package build directory key. extra carries
-// additional key material: source version, commit hash and the global flags
-// hash, joined with "\x00" separators.
+// additional key material: source version, commit hash, the global flags
+// hash, the patch hash and the buildscript hash, joined with "\x00"
+// separators.
 func BuildKey(toolchain, mode string, options map[string]any, extra string) string {
+	key, _ := BuildKeyE(toolchain, mode, options, extra)
+	return key
+}
+
+func BuildKeyE(toolchain, mode string, options map[string]any, extra string) (string, error) {
 	data := map[string]any{
 		"format":     buildFormatVersion,
 		"toolchain":  toolchain,
@@ -25,11 +31,11 @@ func BuildKey(toolchain, mode string, options map[string]any, extra string) stri
 
 	jsonData, err := json.Marshal(data)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("encode build key: %w", err)
 	}
 
 	h := sha256.Sum256(jsonData)
-	return hex.EncodeToString(h[:])
+	return hex.EncodeToString(h[:]), nil
 }
 
 // GlobalFlagsHash summarizes the current global flags/links registered in the

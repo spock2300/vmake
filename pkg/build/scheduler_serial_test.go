@@ -29,7 +29,7 @@ func newTestScheduler(t *testing.T, targets map[string]map[string]*api.Target) (
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			t.Fatal(err)
 		}
-		s.pkgs[pkgName] = &PkgInfo{PkgDirs: api.PkgDirs{SourceDir: dir, BuildDir: filepath.Join(dir, "build")}, OutputDir: filepath.Join(dir, "build")}
+		s.pkgs[pkgName] = &PkgInfo{PkgDirs: api.PkgDirs{SourceDir: dir, BuildDir: filepath.Join(dir, "build")}}
 	}
 	return s, graph
 }
@@ -41,7 +41,7 @@ func TestBuildAllSerialInterleavedPackages(t *testing.T) {
 	}
 	s, graph := newTestScheduler(t, targets)
 	var built []string
-	s.SetBuildTargetFunc(func(name string) error {
+	s.buildTargetFn = (func(name string) error {
 		built = append(built, name)
 		return s.Build(name)
 	})
@@ -60,9 +60,9 @@ func TestBuildAllFailureCascade(t *testing.T) {
 				makeTargetWithDeps("a").SetKind(api.TargetVoid),
 				makeTargetWithDeps("b", "a").SetKind(api.TargetVoid),
 				makeTargetWithDeps("z").SetKind(api.TargetVoid)))
-			s.SetKeepGoing(keepGoing)
+			s.keepGoing = keepGoing
 			var built []string
-			s.SetBuildTargetFunc(func(name string) error {
+			s.buildTargetFn = (func(name string) error {
 				built = append(built, name)
 				if name == "p:a" {
 					return errors.New("compile failed")
@@ -100,7 +100,7 @@ func TestVoidBuildIgnoresOldStampsAndPartialInstall(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	s.SetPackage("p", api.NewPackage().SetDirs(dirs))
+	s.packages["p"] = api.NewPackage().SetDirs(dirs)
 	for i := 0; i < 2; i++ {
 		if err := s.Build("p:external"); err != nil {
 			t.Fatal(err)

@@ -55,7 +55,7 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 			}
 		} else if depNode.Target.Kind() != api.TargetVoid {
 			var depOutput string
-			if depPkg.InstallDir != "" && depPkg.OutputDir == "" {
+			if depPkg.InstallDir != "" && depPkg.BuildDir == "" {
 				depOutput = filepath.Join(depPkg.InstallDir, "lib", targetFilename(depNode.Target.Kind(), depNode.Target.Name(), s.targetOS(depNode.PkgName)))
 			} else {
 				depOutput = s.getTargetOutputPath(depNode)

@@ -126,6 +126,7 @@ func newSourceStage(rc *runContext, cfg *configStage) *sourceStage {
 		rc:             rc,
 		conf:           cfg,
 		pkgDirs:        ResolveAllPackageDirs(rc.ctx.DepGraph),
+		layouts:        make(map[string]*build.PackageLayout),
 		patchHashes:    make(map[string]string),
 		sourceSeeds:    make(map[string]string),
 		sourceCommits:  make(map[string]string),
@@ -216,39 +217,27 @@ func planBuild(rc *runContext, cfg *configStage, src *sourceStage, decl *declare
 		vlog.Info("  - %s", fullName)
 	}
 
-	keyExtra, err := buildPkgKeyExtra(rc, cfg, src)
-	if err != nil {
-		return nil, err
-	}
-
-	bp := build.NewBuildPipeline(graph, rc.cfg.Tc, src.pkgDirs, rc.cfg.Mode, cfg.allPkgOptions, rc.cfg.Platform)
-	bp.SetRootDir(rc.ctx.Paths.ProjectDir)
-	bp.SetIncludeTests(rc.opts.IncludeTests)
-	bp.SetPkgKeyExtra(keyExtra)
-	bp.Session = rc.session
-	bp.GlobalFlags = &rc.globalFlags
-	bp.PackageToolchains = decl.packageToolchains()
-	bp.SetNumWorkers(rc.opts.Jobs)
-	bp.SetKeepGoing(rc.opts.KeepGoing)
-
-	for _, name := range rc.ctx.Resolver.GetOrder() {
-		node := rc.ctx.DepGraph.Packages[name]
-		if cfg.needed[name] && node.Pkg != nil {
-			bp.SetPackage(name, node.Pkg)
-		}
+	env := buildEnvironment(rc, cfg, src, decl)
+	job := &build.BuildJob{
+		Env:          env,
+		Graph:        graph,
+		Toolchain:    rc.cfg.Tc,
+		Platform:     rc.cfg.Platform,
+		Mode:         rc.cfg.Mode,
+		IncludeTests: rc.opts.IncludeTests,
 	}
 
 	vlog.Info("")
 	vlog.Info("Building...")
 
 	return &planStage{
-		graph:    graph,
-		pipeline: bp,
+		graph: graph,
+		job:   job,
 	}, nil
 }
 
 func executePlan(rc *runContext, cfg *configStage, src *sourceStage, decl *declareStage, plan *planStage) (*BuildResult, error) {
-	scheduler, err := plan.pipeline.Run()
+	scheduler, err := plan.job.Run()
 	if err != nil {
 		return nil, err
 	}

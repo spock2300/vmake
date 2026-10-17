@@ -25,6 +25,7 @@ type sourceStage struct {
 	rc             *runContext
 	conf           *configStage
 	pkgDirs        map[string]*api.PkgDirs
+	layouts        map[string]*build.PackageLayout
 	remote         *remoteVersionState
 	patchHashes    map[string]string
 	sourceSeeds    map[string]string
@@ -50,6 +51,6 @@ type declareStage struct {
 }
 
 type planStage struct {
-	graph    *build.BuildGraph
-	pipeline *build.BuildPipeline
+	graph *build.BuildGraph
+	job   *build.BuildJob
 }

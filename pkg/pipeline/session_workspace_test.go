@@ -68,7 +68,7 @@ func workspaceBindingFixture(t *testing.T, remote bool) (*buildPhaseState, *api.
 		s.remote.trees["app"] = res.Root
 		s.remote.commits["app"] = res.Commit
 		s.patchHashes["app"] = patchHash
-		s.pkgDirs["app"] = makeRemotePkgDirs(res.Root, "", newRemotePkgKey(tools.CCKey(), s.cfg.Mode, s.allPkgOptions["app"], "1.0.0", res.Commit, flagsHash, patchHash, scriptHash))
+		s.pkgDirs["app"] = makeRemotePkgDirs(res.Root, "", remotePkgKeyFromParts(tools.CCKey(), s.cfg.Mode, s.allPkgOptions["app"], "1.0.0", res.Commit, flagsHash, patchHash, scriptHash))
 		configRoot = filepath.Join(res.Root, "src", "nested")
 	} else {
 		node.Pkg.SetGit(upstream)
@@ -76,7 +76,7 @@ func workspaceBindingFixture(t *testing.T, remote bool) (*buildPhaseState, *api.
 		if err := s.selectPackageSource("app"); err != nil {
 			t.Fatal(err)
 		}
-		s.pkgDirs["app"] = makeLocalPkgDirs(node.Source.Dir, newLocalPkgKey(tools.CCKey(), s.cfg.Mode, s.allPkgOptions["app"], flagsHash, scriptHash, s.sourceCommits["app"]))
+		s.pkgDirs["app"] = makeLocalPkgDirs(node.Source.Dir, localPkgKeyFromParts(tools.CCKey(), s.cfg.Mode, s.allPkgOptions["app"], flagsHash, scriptHash, s.sourceCommits["app"]))
 		configRoot = filepath.Join(node.Source.Dir, "src", "nested")
 	}
 	k := (&api.KConfigEntry{}).SetSrcDir(configRoot).SetConfigPath(".config")
@@ -105,7 +105,7 @@ func switchWorkspaceToolchain(t *testing.T, s *buildPhaseState) {
 	s.scopeValues[api.ToolchainOptionName] = tc.Name
 }
 
-func TestPkgKeyParityWithBuildPkgKeyExtra(t *testing.T) {
+func TestPkgKeyMatchesExplicitMaterial(t *testing.T) {
 	for _, remote := range []bool{false, true} {
 		name := "local-setgit"
 		if remote {
@@ -113,15 +113,28 @@ func TestPkgKeyParityWithBuildPkgKeyExtra(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			s, _, _ := workspaceBindingFixture(t, remote)
-			extra, err := s.buildPkgKeyExtra()
-			if err != nil {
-				t.Fatal(err)
-			}
 			tools, err := s.toolsForPackage("app")
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := build.BuildKey(tools.CCKey(), s.cfg.Mode, s.allPkgOptions["app"], extra["app"])
+			scriptHash, err := s.scriptHashFor("app")
+			if err != nil {
+				t.Fatal(err)
+			}
+			node := s.ctx.DepGraph.Packages["app"]
+			var extra string
+			if remote {
+				extra = build.JoinKeyExtra(
+					"1.0.0",
+					sourceCommitKey(s.remote.commits["app"], s.sourceCommits["app"]),
+					packageFlagsHash(s.globalFlagsHash, node),
+					s.patchHashes["app"],
+					scriptHash,
+				)
+			} else {
+				extra = build.JoinKeyExtra("", s.sourceCommits["app"], packageFlagsHash(s.globalFlagsHash, node), "", scriptHash)
+			}
+			want := build.BuildKey(tools.CCKey(), s.cfg.Mode, s.allPkgOptions["app"], extra)
 			got := filepath.Base(s.pkgDirs["app"].BuildDir)
 			if remote {
 				got = filepath.Base(filepath.Dir(s.pkgDirs["app"].BuildDir))
@@ -283,7 +296,7 @@ func nativeSiblingBindingFixture(t *testing.T, configSource string) (*buildPhase
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.pkgDirs[name] = makeRemotePkgDirs(tree, member, newRemotePkgKey(tools.CCKey(), s.cfg.Mode, nil, "1.0.0", "commit", packageFlagsHash(s.globalFlagsHash, node), "", scriptHash))
+	s.pkgDirs[name] = makeRemotePkgDirs(tree, member, remotePkgKeyFromParts(tools.CCKey(), s.cfg.Mode, nil, "1.0.0", "commit", packageFlagsHash(s.globalFlagsHash, node), "", scriptHash))
 	configRoot := filepath.Join(tree, "src", "shared")
 	if configSource == "relative" {
 		configRoot = "../shared"

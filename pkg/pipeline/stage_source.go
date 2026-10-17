@@ -56,20 +56,19 @@ func (s *sourceStage) prepareAllPackages() error {
 		if err != nil {
 			return err
 		}
-		opts := s.conf.allPkgOptions[name]
-		scriptHash, err := s.scriptHashFor(name)
-		if err != nil {
-			return err
-		}
 		patchHash, err := patchHashForNode(name, node)
 		if err != nil {
 			return err
 		}
 		s.patchHashes[name] = patchHash
-		if err := s.selectPackageSource(name); err != nil {
+		if err := s.selectPackageSourceRoot(name, node.Source.Dir); err != nil {
 			return fmt.Errorf("select source for %s: %w", name, err)
 		}
-		s.pkgDirs[name] = makeLocalPkgDirs(node.Source.Dir, newLocalPkgKey(resolvedTools.CCKey(), s.rc.cfg.Mode, opts, packageFlagsHash(s.rc.globalFlagsHash, node), scriptHash, s.sourceCommits[name]))
+		layout, err := s.makeLayout(name, resolvedTools)
+		if err != nil {
+			return err
+		}
+		s.setLayout(name, layout)
 	}
 
 	depsDir := s.rc.ctx.Paths.DepsDir
@@ -182,6 +181,7 @@ func (s *sourceStage) writeLockfile() error {
 }
 
 func (s *sourceStage) downloadRemoteSources(remote *remoteVersionState, depsDir string) error {
+	s.remote = remote
 	subParents := s.rc.ctx.Resolver.SubParents()
 	sourceMgr := repo.NewSourceManager(depsDir, s.rc.ctx.Paths.CacheDir).WithSession(s.rc.ctx.Locks).WithContext(s.rc.ctx.Context)
 	for _, name := range s.rc.ctx.Resolver.GetOrder() {
@@ -275,14 +275,14 @@ func (s *sourceStage) downloadRemoteSources(remote *remoteVersionState, depsDir 
 		}
 		remote.commits[name] = res.Commit
 		remote.trees[name] = res.Root
+		s.sourceVersions[name] = entryCfg.Version
 		s.patchHashes[name] = patchHash
 		vlog.Info("  %s@%s -> %s", name, entryCfg.Version, res.SrcDir)
-		scriptHash, err := s.scriptHashFor(name)
+		layout, err := s.makeLayout(name, resolvedTools)
 		if err != nil {
 			return err
 		}
-		s.pkgDirs[name] = makeRemotePkgDirs(res.Root, "", newRemotePkgKey(resolvedTools.CCKey(), s.rc.cfg.Mode, s.conf.allPkgOptions[name],
-			entryCfg.Version, res.Commit, packageFlagsHash(s.rc.globalFlagsHash, node), patchHash, scriptHash))
+		s.setLayout(name, layout)
 		if err := s.preparePackageWorkspace(name); err != nil {
 			return fmt.Errorf("prepare workspace for %s: %w", name, err)
 		}
@@ -394,23 +394,21 @@ func (s *sourceStage) setupSubPackageDirs() error {
 		s.remote.commits[rootParent] = commit
 		s.remote.trees[name] = tree
 		s.remote.commits[name] = commit
-		opts := s.conf.allPkgOptions[name]
-		scriptHash, err := s.scriptHashFor(name)
-		if err != nil {
-			return err
-		}
+		s.sourceVersions[name] = version
 		patchHash, err := patchHashForNode(name, node)
 		if err != nil {
 			return err
 		}
 		s.patchHashes[name] = patchHash
-		s.pkgDirs[name] = makeRemotePkgDirs(tree, relPath, newRemotePkgKey(resolvedTools.CCKey(), s.rc.cfg.Mode, opts,
-			version, s.packageCommitKey(name, commit), packageFlagsHash(s.rc.globalFlagsHash, node), patchHash, scriptHash))
-		if err := s.selectPackageSource(name); err != nil {
+		sourceRoot := filepath.Join(tree, "src", filepath.FromSlash(relPath))
+		if err := s.selectPackageSourceRoot(name, sourceRoot); err != nil {
 			return fmt.Errorf("select source for %s: %w", name, err)
 		}
-		s.pkgDirs[name] = makeRemotePkgDirs(tree, relPath, newRemotePkgKey(resolvedTools.CCKey(), s.rc.cfg.Mode, opts,
-			version, s.packageCommitKey(name, commit), packageFlagsHash(s.rc.globalFlagsHash, node), patchHash, scriptHash))
+		layout, err := s.makeLayout(name, resolvedTools)
+		if err != nil {
+			return err
+		}
+		s.setLayout(name, layout)
 	}
 	return nil
 }
@@ -489,17 +487,6 @@ func (s *sourceStage) treeRootFor(name string) string {
 
 func (s *sourceStage) restoreKConfigs() error {
 	return restoreKConfigFiles(s.rc.ctx, s.pkgDirs, s.conf.needed)
-}
-
-func (s *sourceStage) remotePkgKeyMaterial(name string) (string, string) {
-	if s.remote == nil {
-		return "", ""
-	}
-	name = remoteOwnerName(s.rc.ctx, name)
-	if entry := s.remote.entries[name]; entry != nil {
-		return entry.Version, s.remote.commits[name]
-	}
-	return "", ""
 }
 
 func (r *remoteVersionState) installedPkgs(pkgDirs map[string]*api.PkgDirs) map[string]*api.InstalledPackage {

@@ -26,7 +26,7 @@ Phase 3: OnBuild (pipeline.RunBuild)
     ├── restoreKConfigFiles — 恢复 KConfig 配置
     ├── executeOnBuild — 执行 OnBuild 回调 → 生成 Target
     ├── NewBuildGraph — 构建依赖图 → 拓扑排序
-    ├── BuildPipeline.Run — 统一编排调度器
+    ├── BuildJob.Run — 统一编排调度器
     │   └── newScheduler → scheduler.BuildAll()
     │       └── ForEachDefault:
     │           ├── resolveTarget（解析 include/define/flag/dep/genrule）
@@ -47,7 +47,7 @@ Phase 3: OnBuild (pipeline.RunBuild)
 
 `RunBuild` 内部按阶段拆分状态：`runContext`（请求与共享会话）、`configStage`（needed/options）、
 `sourceStage`（源码树、lock、补丁、KConfig）、`declareStage`（OnBuild 绑定与 target）、
-`planStage`（BuildGraph/BuildPipeline）。各阶段只通过显式字段传递状态，导出 API 不变。
+`planStage`（BuildGraph/BuildJob）。各阶段只通过显式字段传递状态；`pkg/api`、`pkg/plugin`、`pkg/toolchain` 导出 API 不变。
 `Scheduler` 内部按 resolve/compile/link/postlink/publish 分文件，执行语义与产物路径不变。
 
 ### Clean Pipeline
@@ -190,8 +190,8 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 7. **restoreKConfigFiles** — 从 config.json 恢复 KConfig 配置（详见 KConfig 章节）
 8. **executeOnBuild** — 执行所有 `OnBuild` 回调，生成 `map[string]*Target`
 9. **build.NewBuildGraph** — 构建依赖图，`BuildGraph` 展开包级依赖为 target 级传递闭包
-10. **build.NewBuildPipeline** — 创建 `BuildPipeline`（封装图、工具链、包目录、模式、选项、调度器）
-11. **BuildPipeline.Run()** → `BuildPipeline.newScheduler(...)` → `newScheduler(...)` → `BuildAll()`:
+10. **build.BuildEnv / BuildJob** — `BuildEnv` 持有共享的包布局、包对象、toolchain、选项、flags 与 session；`BuildJob` 是某个 graph 的瞬时快照
+11. **BuildJob.Run()** → 按 toolchain + platform 分组 → `newScheduler(...)` → `BuildAll()`:
     - `ForEachDefault(includeTests, fn)` 按拓扑顺序构建每个默认 Target
     - 每个原生 Target: resolveTarget → prepareTarget → compileAll → finalizeTarget（链接/prebuilt、postLink、提交成功记录）→ publishTarget；TargetVoid 在 finalizeTarget 调用 BuildFunc
     - 并行编译源文件（`compileAll` 工作池，`--jobs` 控制编译作业数）
@@ -209,27 +209,32 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 - `SyncConfigDefines(names...)` — 快捷方式：`GenerateConfigDefines` + `ImportConfig`
 - `SetDryRun(v bool)` — 设置为 dry-run 模式（查询/检查等只声明场景使用）；这些场景不物化源码，本地 SetGit 包的工作树缺失时声明得到空 `BuildDir()`，`OnBuild` 中的真实文件 I/O 必须自行守卫
 
-**BuildPipeline**（`pkg/build/pipeline.go`）：
+**BuildEnv / BuildJob**（`pkg/build/job.go`）：
 ```
-BuildPipeline
+BuildEnv
+├── Layouts    map[string]*PackageLayout
+├── Packages   map[string]*api.Package
+├── Toolchains map[string]*toolchain.Toolchain
+├── Options    map[string]map[string]any
+├── GlobalFlags [4][]string
+├── Session    *Session
+├── RootDir    string
+├── Jobs       int
+├── KeepGoing  bool
+└── SubParents map[string]string
+
+BuildJob
+├── Env          *BuildEnv
 ├── Graph        *BuildGraph
 ├── Toolchain    *toolchain.Toolchain
 ├── Platform     api.Platform
-├── PkgDirs      map[string]*api.PkgDirs
 ├── Mode         string
-├── Options      map[string]map[string]any
-├── Packages     map[string]*api.Package
-├── RootDir      string
-├── IncludeTests bool
-├── PkgKeyExtra  map[string]string
-├── NumWorkers   int
-├── Session      *Session
-├── PackageToolchains map[string]*toolchain.Toolchain
-├── GlobalFlags  *[4][]string
-└── KeepGoing    bool
+└── IncludeTests bool
 ```
 
-源码：`pkg/build/scheduler.go`, `pkg/build/graph.go`, `pkg/build/pipeline.go`, `pkg/build/signature.go`, `pkg/build/session.go`
+`BuildJob.Run()` 按 `(toolchain, platform)` 分组调度；所有 scheduler 共享同一份 `BuildEnv` 布局，`BuildJob.Run` 只初始化缺失的容器并复用共享 `Session`。BuildSubGraph 复用 `BuildEnv`，只替换过滤后的 graph。
+
+源码：`pkg/build/scheduler.go`, `pkg/build/graph.go`, `pkg/build/job.go`, `pkg/build/layout.go`, `pkg/build/signature.go`, `pkg/build/session.go`
 
 ## 第三方包流程
 

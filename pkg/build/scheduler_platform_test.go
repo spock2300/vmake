@@ -49,10 +49,9 @@ func TestSchedulerPackagePlatformArtifacts(t *testing.T) {
 				return nil, nil
 			}}
 			for name, info := range s.pkgs {
-				info.OutputDir = info.BuildDir
 				info.InstallDir = filepath.Join(info.SourceDir, "install")
 				if name != "fallback" {
-					s.SetPackage(name, api.NewPackage().SetPlatform(api.Platform{OS: name}))
+					s.packages[name] = api.NewPackage().SetPlatform(api.Platform{OS: name})
 				}
 			}
 			if err := s.BuildAll(); err != nil {
@@ -68,7 +67,7 @@ func TestSchedulerPackagePlatformArtifacts(t *testing.T) {
 					libName, appName = "liblib.dll", "app.exe"
 				}
 				for _, filename := range []string{libName, appName} {
-					for _, dir := range []string{info.OutputDir, filepath.Join(info.InstallDir, "lib")} {
+					for _, dir := range []string{info.BuildDir, filepath.Join(info.InstallDir, "lib")} {
 						if _, err := os.Stat(filepath.Join(dir, filename)); err != nil {
 							t.Errorf("%s package artifact: %v", name, err)
 						}
@@ -77,7 +76,7 @@ func TestSchedulerPackagePlatformArtifacts(t *testing.T) {
 				if targetOS != "windows" {
 					continue
 				}
-				implib := filepath.Join(info.OutputDir, libName+".a")
+				implib := filepath.Join(info.BuildDir, libName+".a")
 				if !slices.ContainsFunc(commands, func(args []string) bool {
 					return slices.Contains(args, commandPath(info.SourceDir, implib))
 				}) {
@@ -107,7 +106,7 @@ func TestSchedulerPackagePlatformArtifacts(t *testing.T) {
 			}
 			consumer := graph.Nodes["linux:app"]
 			consumer.Deps = []string{"windows:lib"}
-			s.pkgs["windows"].OutputDir = ""
+			s.pkgs["windows"].BuildDir = ""
 			deps, err := s.collectDepArtifacts(consumer)
 			if err != nil {
 				t.Fatal(err)
@@ -126,8 +125,7 @@ func TestSchedulerPackagePlatformLinkPolicy(t *testing.T) {
 			target := makeTargetWithDeps("app").SetKind(kind).SetDefault(true).AddExcludeLibs("private")
 			s, _ := newTestScheduler(t, makeTargets("windows", target))
 			s.platform = api.Platform{OS: "linux"}
-			s.SetPackage("windows", api.NewPackage().SetPlatform(api.Platform{OS: "windows"}))
-			s.pkgs["windows"].OutputDir = s.pkgs["windows"].BuildDir
+			s.packages["windows"] = api.NewPackage().SetPlatform(api.Platform{OS: "windows"})
 			s.linker, _ = recordingLinker()
 			if err := s.Build("windows:app"); err == nil || !strings.Contains(err.Error(), "not supported for PE targets") {
 				t.Fatalf("ELF policy on Windows package: %v", err)
@@ -174,10 +172,9 @@ func TestSchedulerPackagePlatformConcurrentAssembly(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	for name, info := range s.pkgs {
-		info.OutputDir = info.BuildDir
 		writeAssemblyFixture(t, info.SourceDir, "source.s", ".byte 1\n")
 		pkg := api.NewPackage().SetPlatform(api.Platform{OS: name, Triple: name + "-triple"})
-		s.SetPackage(name, pkg)
+		s.packages[name] = pkg
 	}
 	for name := range s.pkgs {
 		wg.Go(func() {
@@ -209,20 +206,20 @@ func TestBuildSubGraphPreservesPackagePlatforms(t *testing.T) {
 		t.Fatal(err)
 	}
 	tc := &toolchain.Toolchain{Name: "platform-test", Tools: toolchain.Tools{CC: git, CXX: git, AR: git}}
-	params := &SubGraphParams{
-		Platform: api.Platform{OS: "none", Triple: "root-triple"}, RootDir: t.TempDir(),
-		AllTargets: map[string]map[string]*api.Target{}, PkgDirs: map[string]*api.PkgDirs{},
-		Packages: map[string]*api.Package{}, Needed: map[string]bool{"root": true, "dep": true},
-		PkgMeta: map[string]PkgBuildMeta{"root": {}, "dep": {}},
-	}
+	rootDir := t.TempDir()
+	targets := map[string]map[string]*api.Target{}
+	dirs := map[string]*api.PkgDirs{}
+	packages := map[string]*api.Package{}
+	needed := map[string]bool{"root": true, "dep": true}
+	meta := map[string]PkgBuildMeta{"root": {}, "dep": {}}
 	for name, platform := range map[string]api.Platform{
 		"root": {OS: "windows", Triple: "windows-triple"},
 		"dep":  {OS: "linux", Triple: "linux-triple"},
 	} {
-		dirs := api.PkgDirs{SourceDir: filepath.Join(params.RootDir, name), BuildDir: filepath.Join(params.RootDir, name, "build")}
-		pkg := api.NewPackage().SetPlatform(platform).SetDirs(dirs)
-		params.Packages[name] = pkg
-		params.PkgDirs[name] = &dirs
+		pkgDirs := api.PkgDirs{SourceDir: filepath.Join(rootDir, name), BuildDir: filepath.Join(rootDir, name, "build")}
+		pkg := api.NewPackage().SetPlatform(platform).SetDirs(pkgDirs)
+		packages[name] = pkg
+		dirs[name] = &pkgDirs
 		target := makeTargetWithDeps(name).SetKind(api.TargetVoid).SetDefault(true).SetBuildFunc(func(p *api.Package) error {
 			if p.TargetOS() != platform.OS || p.TargetTriple() != platform.Triple {
 				return fmt.Errorf("%s platform = %s/%s, want %s/%s", name, p.TargetOS(), p.TargetTriple(), platform.OS, platform.Triple)
@@ -232,9 +229,11 @@ func TestBuildSubGraphPreservesPackagePlatforms(t *testing.T) {
 		if name == "root" {
 			target.AddDeps("dep:dep")
 		}
-		params.AllTargets[name] = map[string]*api.Target{name: target}
+		targets[name] = map[string]*api.Target{name: target}
 	}
-	if err := BuildSubGraph("root", tc, tc.Name, api.ModeDebug, params, nil); err != nil {
+	env := testBuildEnv(dirs, packages, map[string]*toolchain.Toolchain{"root": tc, "dep": tc}, NewSession(nil), rootDir)
+	job := testBuildJob(nil, tc, env, api.ModeDebug, api.Platform{OS: "none", Triple: "root-triple"}, false)
+	if err := BuildSubGraph(job, SubGraphRequest{RootPkg: "root", Targets: targets, PkgMeta: meta, Needed: needed}); err != nil {
 		t.Fatal(err)
 	}
 }

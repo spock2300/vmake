@@ -58,9 +58,10 @@ func TestVoidPostLinkLifecycle(t *testing.T) {
 			tc := *native.toolchain
 			tc.Tools.OBJCOPY = objcopy
 			buildDir := filepath.Join(dir, "build")
-			pipeline := NewBuildPipeline(native.graph, &tc, map[string]*api.PkgDirs{"p": {SourceDir: dir, BuildDir: buildDir}}, api.ModeDebug, nil, api.Platform{OS: runtime.GOOS})
-			pipeline.Session, pipeline.RootDir = NewSession(nil), dir
-			_, err := pipeline.Run()
+			dirs := map[string]*api.PkgDirs{"p": {SourceDir: dir, BuildDir: buildDir}}
+			env := testBuildEnv(dirs, testBuildPackages(dirs), nil, NewSession(nil), dir)
+			job := testBuildJob(native.graph, &tc, env, api.ModeDebug, api.Platform{OS: runtime.GOOS}, false)
+			_, err := job.Run()
 			if scenario != "success" {
 				if err == nil {
 					t.Fatal("invalid Void build succeeded")
@@ -76,7 +77,7 @@ func TestVoidPostLinkLifecycle(t *testing.T) {
 				if strings.HasPrefix(scenario, "missing") && !strings.Contains(err.Error(), "post-link output") {
 					t.Fatalf("missing output not diagnosed: %v", err)
 				}
-				if _, err := pipeline.Run(); err == nil || calls != 1 {
+				if _, err := job.Run(); err == nil || calls != 1 {
 					t.Fatalf("failed target retried within session: calls=%d err=%v", calls, err)
 				}
 				return
@@ -91,14 +92,14 @@ func TestVoidPostLinkLifecycle(t *testing.T) {
 			if !sameFileContent(bin, filepath.Join(buildDir, "firmware.copy")) {
 				t.Fatal("post-link steps did not run in order")
 			}
-			if _, err := pipeline.Run(); err != nil || calls != 1 {
+			if _, err := job.Run(); err != nil || calls != 1 {
 				t.Fatalf("successful target repeated within session: calls=%d err=%v", calls, err)
 			}
 			if err := os.Remove(bin); err != nil {
 				t.Fatal(err)
 			}
-			pipeline.Session = NewSession(nil)
-			if _, err := pipeline.Run(); err != nil || calls != 2 {
+			env.Session = NewSession(nil)
+			if _, err := job.Run(); err != nil || calls != 2 {
 				t.Fatalf("next session did not rebuild Void target: calls=%d err=%v", calls, err)
 			}
 			if _, err := os.Stat(bin); err != nil {

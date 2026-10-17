@@ -36,7 +36,7 @@ func (s *sourceStage) preparePackageWorkspace(name string) error {
 		}
 		return nil
 	}
-	if err := s.selectPackageSource(name); err != nil {
+	if err := s.selectPackageSourceRoot(name, dirs.SourceDir); err != nil {
 		return err
 	}
 	oldSourceDir := node.Pkg.SourceDir()
@@ -83,9 +83,10 @@ func rebindRemoteSrcDir(ctx *RuntimeContext, node *resolver.PackageNode, dirs *a
 	return nil
 }
 
-// selectPackageSource materializes the package's own repository (local SetGit
-// packages and native members with their own git URL) into its working tree.
-func (s *sourceStage) selectPackageSource(name string) error {
+// selectPackageSourceRoot materializes the package's own repository (local
+// SetGit packages and native members with their own git URL) into the given
+// source root.
+func (s *sourceStage) selectPackageSourceRoot(name, sourceRoot string) error {
 	node := s.rc.ctx.DepGraph.Packages[name]
 	if node == nil || node.Pkg == nil || len(node.Pkg.GitURLs()) == 0 {
 		return nil
@@ -100,13 +101,12 @@ func (s *sourceStage) selectPackageSource(name string) error {
 	if err != nil {
 		return err
 	}
-	dirs := s.pkgDirs[name]
 	key := name
 	root := ""
 	if node.IsLocal() {
 		key = repo.PackageTreeKey("", name)
-	} else if dirs != nil {
-		root = dirs.SourceDir
+	} else {
+		root = sourceRoot
 	}
 	req := repo.SourceRequest{
 		Key:        key,
@@ -130,7 +130,9 @@ func (s *sourceStage) selectPackageSource(name string) error {
 	}
 	s.sourceSeeds[name] = res.SrcDir
 	s.sourceCommits[name] = res.Commit
-	s.sourceVersions[name] = version
+	if version != "" {
+		s.sourceVersions[name] = version
+	}
 	return nil
 }
 

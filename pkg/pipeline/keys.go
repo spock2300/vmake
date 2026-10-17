@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/spock2300/vmake/internal/fs"
-	"github.com/spock2300/vmake/internal/storage"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/buildscript"
@@ -235,6 +234,22 @@ func packageFlagsHash(globalFlagsHash string, node *resolver.PackageNode) string
 	return hex.EncodeToString(hash[:])[:16]
 }
 
+type keyMaterial struct {
+	version    string
+	commit     string
+	flagsHash  string
+	patchHash  string
+	scriptHash string
+}
+
+func (m keyMaterial) localExtra() string {
+	return build.JoinKeyExtra("", m.commit, m.flagsHash, "", m.scriptHash)
+}
+
+func (m keyMaterial) remoteExtra() string {
+	return build.JoinKeyExtra(m.version, m.commit, m.flagsHash, m.patchHash, m.scriptHash)
+}
+
 type pkgKey struct {
 	ccKey   string
 	mode    string
@@ -242,51 +257,26 @@ type pkgKey struct {
 	extra   string
 }
 
-func localPkgKeyExtra(globalFlagsHash, scriptHash, commit string) string {
-	return build.JoinKeyExtra("", commit, globalFlagsHash, "", scriptHash)
-}
-
-func remotePkgKeyExtra(version, commit, globalFlagsHash, patchHash, scriptHash string) string {
-	return build.JoinKeyExtra(version, commit, globalFlagsHash, patchHash, scriptHash)
-}
-
-func newLocalPkgKey(ccKey, mode string, opts map[string]any, globalFlagsHash, scriptHash, commit string) pkgKey {
+func newLocalPkgKey(ccKey, mode string, opts map[string]any, material keyMaterial) pkgKey {
 	return pkgKey{
 		ccKey:   ccKey,
 		mode:    mode,
 		options: opts,
-		extra:   localPkgKeyExtra(globalFlagsHash, scriptHash, commit),
+		extra:   material.localExtra(),
 	}
 }
 
-func newRemotePkgKey(ccKey, mode string, opts map[string]any, version, commit, globalFlagsHash, patchHash, scriptHash string) pkgKey {
+func newRemotePkgKey(ccKey, mode string, opts map[string]any, material keyMaterial) pkgKey {
 	return pkgKey{
 		ccKey:   ccKey,
 		mode:    mode,
 		options: opts,
-		extra:   remotePkgKeyExtra(version, commit, globalFlagsHash, patchHash, scriptHash),
+		extra:   material.remoteExtra(),
 	}
 }
 
-func (k pkgKey) buildKey() string {
-	return build.BuildKey(k.ccKey, k.mode, k.options, k.extra)
-}
-
-func makeLocalPkgDirs(scriptDir string, key pkgKey) *api.PkgDirs {
-	return &api.PkgDirs{
-		SourceDir: scriptDir,
-		BuildDir:  filepath.Join(scriptDir, "build", key.buildKey()),
-	}
-}
-
-func makeRemotePkgDirs(pkgRoot, member string, key pkgKey) *api.PkgDirs {
-	member = filepath.ToSlash(member)
-	output := filepath.Join(pkgRoot, "out", storage.OwnerKey(member), key.buildKey())
-	return &api.PkgDirs{
-		SourceDir:  filepath.Join(pkgRoot, "src", filepath.FromSlash(member)),
-		BuildDir:   filepath.Join(output, "build"),
-		InstallDir: filepath.Join(output, "install"),
-	}
+func (k pkgKey) buildKeyE() (string, error) {
+	return build.BuildKeyE(k.ccKey, k.mode, k.options, k.extra)
 }
 
 func remoteMemberPath(ctx *RuntimeContext, name string) string {

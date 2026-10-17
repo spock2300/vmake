@@ -55,9 +55,9 @@ func TestVoidCallbackRunsEachSessionWithoutInvalidatingUnchangedNativeInputs(t *
 	dirs := map[string]*api.PkgDirs{"p": {SourceDir: dir, BuildDir: filepath.Join(dir, "build")}}
 	build := func(wantCallbacks, wantActions int, wantValue string) {
 		t.Helper()
-		pipeline := NewBuildPipeline(native.graph, &tc, dirs, api.ModeDebug, nil, api.Platform{OS: runtime.GOOS})
-		pipeline.RootDir, pipeline.Session = dir, NewSession(nil)
-		scheduler, err := pipeline.Run()
+		env := testBuildEnv(dirs, testBuildPackages(dirs), nil, NewSession(nil), dir)
+		job := testBuildJob(native.graph, &tc, env, api.ModeDebug, api.Platform{OS: runtime.GOOS}, false)
+		scheduler, err := job.Run()
 		if err != nil {
 			t.Fatal(err)
 		}

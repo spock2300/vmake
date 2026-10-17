@@ -42,11 +42,10 @@ func TestPipelineUsesPackageToolchainAndCanonicalDependencyPaths(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			pipeline := NewBuildPipeline(graph, native.toolchain, map[string]*api.PkgDirs{"p": {SourceDir: dir}, "q": {SourceDir: dir}}, api.ModeDebug, nil, api.Platform{OS: runtime.GOOS})
-			pipeline.RootDir = dir
-			pipeline.PackageToolchains = map[string]*toolchain.Toolchain{"q": &alternate}
-			pipeline.Session = NewSession(nil)
-			scheduler, err := pipeline.Run()
+			dirs := map[string]*api.PkgDirs{"p": {SourceDir: dir}, "q": {SourceDir: dir}}
+			env := testBuildEnv(dirs, testBuildPackages(dirs), map[string]*toolchain.Toolchain{"p": native.toolchain, "q": &alternate}, NewSession(nil), dir)
+			job := testBuildJob(graph, native.toolchain, env, api.ModeDebug, api.Platform{OS: runtime.GOOS}, false)
+			scheduler, err := job.Run()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -85,14 +84,22 @@ func TestSubGraphAndMainPipelineShareTargetSession(t *testing.T) {
 	packages := map[string]*api.Package{"p": api.NewPackage().SetDirs(*dirs["p"]), "q": api.NewPackage().SetDirs(*dirs["q"])}
 	meta := map[string]PkgBuildMeta{"p": {}, "q": {Deps: []string{"p"}}}
 	session := NewSession(nil)
-	params := &SubGraphParams{
-		AllTargets: targets, PkgMeta: meta, PkgDirs: dirs, Packages: packages,
-		Needed: map[string]bool{"p": true, "q": true}, Platform: api.Platform{OS: runtime.GOOS},
-		Session: session, RootDir: dir,
-		PackageToolchains: map[string]*toolchain.Toolchain{"unrelated": {Name: "missing-toolchain", Tools: toolchain.Tools{CC: filepath.Join(dir, "missing-cc")}}},
+	env := testBuildEnv(dirs, packages, map[string]*toolchain.Toolchain{
+		"p": native.toolchain,
+		"q": native.toolchain,
+		"unrelated": {
+			Name:  "missing-toolchain",
+			Tools: toolchain.Tools{CC: filepath.Join(dir, "missing-cc")},
+		},
+	}, session, dir)
+	base := testBuildJob(nil, native.toolchain, env, api.ModeDebug, api.Platform{OS: runtime.GOOS}, false)
+	req := SubGraphRequest{
+		Targets: targets, PkgMeta: meta,
+		Needed: map[string]bool{"p": true, "q": true},
 	}
 	for _, root := range []string{"p", "q"} {
-		if err := BuildSubGraph(root, native.toolchain, native.toolchain.Name, api.ModeDebug, params, nil); err != nil {
+		req.RootPkg = root
+		if err := BuildSubGraph(base, req); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -100,9 +107,8 @@ func TestSubGraphAndMainPipelineShareTargetSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pipeline := NewBuildPipeline(graph, native.toolchain, dirs, api.ModeDebug, nil, params.Platform)
-	pipeline.Session, pipeline.RootDir, pipeline.Packages = session, dir, packages
-	if _, err := pipeline.Run(); err != nil {
+	base.Graph = graph
+	if _, err := base.Run(); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(executed, []string{"first", "second"}) {

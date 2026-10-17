@@ -1,9 +1,20 @@
 package build
 
 import (
-	"context"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"testing"
+
+	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/toolchain"
 )
+
+func TestBuildKeyERejectsUnsupportedOptions(t *testing.T) {
+	if _, err := BuildKeyE("cc", "debug", map[string]any{"bad": make(chan int)}, ""); err == nil {
+		t.Fatal("BuildKeyE accepted a non-JSON option value")
+	}
+}
 
 func TestBuildKeyDeterministic(t *testing.T) {
 	opts := map[string]any{"a": 1, "b": "x"}
@@ -71,26 +82,66 @@ func TestBuildKeyDiffersOnExtra(t *testing.T) {
 	}
 }
 
-func TestSchedulerUpdatesBuildKeysWhenPackageExtraIsBound(t *testing.T) {
-	s := &Scheduler{ctx: context.Background(),
-		resolvedTools: &ResolvedTools{CC: "/tool/cc", identity: "tool-content"}, mode: "debug",
-		pkgOptions: map[string]map[string]any{"p": {"feature": true}},
-		pkgs: map[string]*PkgInfo{
-			"p": {BuildKey: "unbound", OutputDir: "/stable/output"},
-			"q": {BuildKey: "unbound"},
+func TestNewSchedulerDefaultsModeBeforeBuildingKey(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("git-based tool probe")
+	}
+	tool, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git unavailable")
+	}
+	tc := &toolchain.Toolchain{Name: "test", Tools: toolchain.Tools{CC: tool, CXX: tool, AR: tool}}
+	graph, err := NewBuildGraph(map[string]map[string]*api.Target{
+		"p": {"p": makeTargetWithDeps("p").SetKind(api.TargetVoid)},
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirs := map[string]*api.PkgDirs{"p": {SourceDir: filepath.Join(t.TempDir(), "p"), BuildDir: filepath.Join(t.TempDir(), "p-build")}}
+	s, err := NewScheduler(graph, tc, dirs, "", nil, api.Platform{OS: runtime.GOOS})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, ok := s.GetPkgInfo("p")
+	if !ok {
+		t.Fatal("missing package info")
+	}
+	want := BuildKey(s.toolIdentity(), api.ModeDebug, nil, "")
+	if info.BuildKey != want {
+		t.Fatalf("BuildKey = %q, want debug key %q", info.BuildKey, want)
+	}
+}
+
+func TestSchedulerUsesPackageLayoutKeys(t *testing.T) {
+	layouts := map[string]*PackageLayout{
+		"p": {
+			Dirs:     api.PkgDirs{SourceDir: "/src/p", BuildDir: "/stable/output"},
+			BuildKey: "revision-and-flags",
+			Ready:    true,
+		},
+		"q": {
+			Dirs:     api.PkgDirs{SourceDir: "/src/q", BuildDir: "/stable/q"},
+			BuildKey: "q-key",
+			Ready:    true,
 		},
 	}
-	extra := map[string]string{"p": "revision-and-flags"}
-	s.SetPkgKeyExtra(extra)
-	for name, info := range s.pkgs {
-		want := BuildKey(s.toolIdentity(), s.mode, s.pkgOptions[name], extra[name])
-		if info.BuildKey != want {
-			t.Fatalf("%s key = %s, want %s", name, info.BuildKey, want)
+	s := newScheduler(schedulerConfig{
+		Toolchain: &toolchain.Toolchain{Name: "test"},
+		Layouts:   layouts,
+		Mode:      "debug",
+		Tools:     &ResolvedTools{CC: "/tool/cc", identity: "tool-content"},
+	})
+	for name, layout := range layouts {
+		info, ok := s.GetPkgInfo(name)
+		if !ok {
+			t.Fatalf("missing package info for %s", name)
 		}
-	}
-	extra["p"] = "later-mutation"
-	if s.pkgExtra("p") != "revision-and-flags" || s.pkgs["p"].OutputDir != "/stable/output" {
-		t.Fatal("binding changed stable output or retained mutable extra map")
+		if info.BuildKey != layout.BuildKey {
+			t.Fatalf("%s key = %s, want %s", name, info.BuildKey, layout.BuildKey)
+		}
+		if info.BuildDir != layout.Dirs.BuildDir {
+			t.Fatalf("%s output dir = %s, want %s", name, info.BuildDir, layout.Dirs.BuildDir)
+		}
 	}
 }
 

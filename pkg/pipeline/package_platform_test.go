@@ -226,7 +226,7 @@ func TestInspectUsesUnreachablePackagePlatform(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := makeLocalPkgDirs(node.Source.Dir, newLocalPkgKey(tools.CCKey(), inspection.Mode, config.GetEntry(ctx.Config, "unused").Options, inspection.GlobalFlagsHash, scriptHash, ""))
+	want := makeLocalPkgDirs(node.Source.Dir, localPkgKeyFromParts(tools.CCKey(), inspection.Mode, config.GetEntry(ctx.Config, "unused").Options, inspection.GlobalFlagsHash, scriptHash, ""))
 	if got := inspection.PkgDirs["unused"]; !reflect.DeepEqual(got, want) {
 		t.Errorf("unreachable package directories = %+v, want its platform directories %+v", got, want)
 	}

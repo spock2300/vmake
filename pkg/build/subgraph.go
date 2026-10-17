@@ -6,26 +6,7 @@ import (
 
 	"github.com/spock2300/vmake/pkg/api"
 	vlog "github.com/spock2300/vmake/pkg/log"
-	"github.com/spock2300/vmake/pkg/toolchain"
 )
-
-type SubGraphParams struct {
-	PackageToolchains map[string]*toolchain.Toolchain
-	GlobalFlags       *[4][]string
-	Session           *Session
-	Platform          api.Platform
-	AllTargets        map[string]map[string]*api.Target
-	PkgMeta           map[string]PkgBuildMeta
-	PkgDirs           map[string]*api.PkgDirs
-	Packages          map[string]*api.Package
-	Needed            map[string]bool
-	SubParents        map[string]string
-	IncludeTests      bool
-	PkgKeyExtra       map[string]string
-	RootDir           string
-	NumWorkers        int
-	KeepGoing         bool
-}
 
 func CollectSubGraphPackages(rootPkg string, pkgMeta map[string]PkgBuildMeta, allTargets map[string]map[string]*api.Target, needed map[string]bool) map[string]bool {
 	visited := make(map[string]bool)
@@ -77,54 +58,45 @@ func filterMap[V any](src map[string]V, keys map[string]bool) map[string]V {
 	return dst
 }
 
-func BuildSubGraph(rootPkg string, tc *toolchain.Toolchain, tcName string, mode string, params *SubGraphParams, pkgOptions map[string]map[string]any) error {
-	subPkgs := CollectSubGraphPackages(rootPkg, params.PkgMeta, params.AllTargets, params.Needed)
+type SubGraphRequest struct {
+	RootPkg string
+	Targets map[string]map[string]*api.Target
+	PkgMeta map[string]PkgBuildMeta
+	Needed  map[string]bool
+}
 
-	if len(subPkgs) == 0 {
-		return fmt.Errorf("package %s not found", rootPkg)
+func BuildSubGraph(base *BuildJob, req SubGraphRequest) error {
+	if base == nil || base.Env == nil {
+		return fmt.Errorf("subgraph has no build environment")
 	}
-
-	filteredTargets := filterMap(params.AllTargets, subPkgs)
-	filteredPkgMeta := filterMap(params.PkgMeta, subPkgs)
-	filteredPkgDirs := filterMap(params.PkgDirs, subPkgs)
-
+	if base.Toolchain == nil {
+		return fmt.Errorf("subgraph has no toolchain")
+	}
+	subPkgs := CollectSubGraphPackages(req.RootPkg, req.PkgMeta, req.Targets, req.Needed)
+	if len(subPkgs) == 0 {
+		return fmt.Errorf("package %s not found", req.RootPkg)
+	}
+	targets := filterMap(req.Targets, subPkgs)
+	pkgMeta := filterMap(req.PkgMeta, subPkgs)
 	vlog.Info("")
-	vlog.Info("[subgraph] Building %s (toolchain=%s, mode=%s)", rootPkg, tcName, mode)
-
+	vlog.Info("[subgraph] Building %s (toolchain=%s, mode=%s)", req.RootPkg, base.Toolchain.Name, base.Mode)
 	for pkgName := range subPkgs {
 		defaultMark := ""
-		if meta, ok := filteredPkgMeta[pkgName]; ok && meta.IsRemote() {
+		if meta, ok := pkgMeta[pkgName]; ok && meta.IsRemote() {
 			defaultMark = " (remote)"
 		}
 		vlog.Info("  [subgraph] %s%s", pkgName, defaultMark)
 	}
-
-	graph, err := NewBuildGraph(filteredTargets, filteredPkgMeta, params.SubParents)
+	graph, err := NewBuildGraph(targets, pkgMeta, base.Env.SubParents)
 	if err != nil {
 		return fmt.Errorf("subgraph build graph: %w", err)
 	}
-
-	pipeline := NewBuildPipeline(graph, tc, filteredPkgDirs, mode, filterMap(pkgOptions, subPkgs), params.Platform)
-	pipeline.Session = params.Session
-	pipeline.PackageToolchains = filterMap(params.PackageToolchains, subPkgs)
-	pipeline.GlobalFlags = params.GlobalFlags
-	pipeline.SetIncludeTests(params.IncludeTests)
-	pipeline.SetPkgKeyExtra(params.PkgKeyExtra)
-	pipeline.SetRootDir(params.RootDir)
-	pipeline.SetNumWorkers(params.NumWorkers)
-	pipeline.SetKeepGoing(params.KeepGoing)
-
-	for pkgName := range subPkgs {
-		if pkg, ok := params.Packages[pkgName]; ok {
-			pipeline.SetPackage(pkgName, pkg)
-		}
+	sub := *base
+	sub.Graph = graph
+	if _, err := sub.Run(); err != nil {
+		return fmt.Errorf("subgraph build %s: %w", req.RootPkg, err)
 	}
-
-	if _, err := pipeline.Run(); err != nil {
-		return fmt.Errorf("subgraph build %s: %w", rootPkg, err)
-	}
-
-	vlog.Info("  [subgraph] %s done", rootPkg)
+	vlog.Info("  [subgraph] %s done", req.RootPkg)
 	return nil
 }
 

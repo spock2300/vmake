@@ -182,33 +182,20 @@ func (s *declareStage) buildSubGraph(rootPkg string) (err error) {
 	if bound == nil {
 		return fmt.Errorf("subgraph package %s has no build declaration", rootPkg)
 	}
-	keyExtra, err := buildPkgKeyExtra(s.rc, s.conf, s.source)
-	if err != nil {
-		return err
+	env := buildEnvironment(s.rc, s.conf, s.source, s)
+	job := &build.BuildJob{
+		Env:          env,
+		Toolchain:    bound.toolchain,
+		Platform:     platformFromValues(bound.values),
+		Mode:         s.rc.cfg.Mode,
+		IncludeTests: s.rc.opts.IncludeTests,
 	}
-	params := &build.SubGraphParams{
-		Session:           s.rc.session,
-		GlobalFlags:       &s.rc.globalFlags,
-		Platform:          platformFromValues(bound.values),
-		AllTargets:        s.allTargets,
-		PkgMeta:           s.pkgMetaMap,
-		PkgDirs:           s.source.pkgDirs,
-		Packages:          make(map[string]*api.Package),
-		PackageToolchains: s.packageToolchains(),
-		Needed:            s.conf.needed,
-		SubParents:        s.rc.ctx.Resolver.SubParents(),
-		IncludeTests:      s.rc.opts.IncludeTests,
-		PkgKeyExtra:       keyExtra,
-		RootDir:           s.rc.ctx.Paths.ProjectDir,
-		NumWorkers:        s.rc.opts.Jobs,
-		KeepGoing:         s.rc.opts.KeepGoing,
-	}
-	for name := range subPkgs {
-		if node := s.rc.ctx.DepGraph.Packages[name]; node != nil && node.Pkg != nil {
-			params.Packages[name] = node.Pkg
-		}
-	}
-	return build.BuildSubGraph(rootPkg, bound.toolchain, bound.toolchain.Name, s.rc.cfg.Mode, params, s.conf.allPkgOptions)
+	return build.BuildSubGraph(job, build.SubGraphRequest{
+		RootPkg: rootPkg,
+		Targets: s.allTargets,
+		PkgMeta: s.pkgMetaMap,
+		Needed:  s.conf.needed,
+	})
 }
 
 func (s *declareStage) resolveDepTargets() map[string]map[string]*api.Target {

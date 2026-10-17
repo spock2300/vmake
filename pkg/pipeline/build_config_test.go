@@ -348,7 +348,19 @@ func TestResolveWithDefault(t *testing.T) {
 }
 
 func TestMakeLocalPkgDirsLayout(t *testing.T) {
-	dirs := makeLocalPkgDirs("/script", newLocalPkgKey("/usr/bin/gcc@13", "debug", map[string]any{"x": 1}, "gh", "sh", ""))
+	layout, err := layoutFor(layoutInput{
+		Local:     true,
+		SourceDir: "/script",
+		CCKey:     "/usr/bin/gcc@13",
+		Mode:      "debug",
+		Options:   map[string]any{"x": 1},
+		Material:  keyMaterial{flagsHash: "gh", scriptHash: "sh"},
+		Ready:     true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirs := &layout.Dirs
 	if dirs.SourceDir != "/script" {
 		t.Errorf("SourceDir = %q", dirs.SourceDir)
 	}
@@ -361,7 +373,19 @@ func TestMakeLocalPkgDirsLayout(t *testing.T) {
 }
 
 func TestMakeRemotePkgDirsLayout(t *testing.T) {
-	dirs := makeRemotePkgDirs("/vd", "", newRemotePkgKey("/usr/bin/gcc@13", "release", map[string]any{"x": 1}, "1.0.0", "c0ffee", "gh", "", "sh"))
+	material := keyMaterial{version: "1.0.0", commit: "c0ffee", flagsHash: "gh", scriptHash: "sh"}
+	layout, err := layoutFor(layoutInput{
+		PkgRoot:  "/vd",
+		CCKey:    "/usr/bin/gcc@13",
+		Mode:     "release",
+		Options:  map[string]any{"x": 1},
+		Material: material,
+		Ready:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirs := &layout.Dirs
 	if want := filepath.Join("/vd", "src"); dirs.SourceDir != want {
 		t.Errorf("SourceDir = %q, want %q", dirs.SourceDir, want)
 	}
@@ -374,9 +398,20 @@ func TestMakeRemotePkgDirsLayout(t *testing.T) {
 	if dirs.InstallDir == "" {
 		t.Error("remote pkg should have InstallDir")
 	}
-	member := makeRemotePkgDirs("/vd", "nested/member", newRemotePkgKey("/usr/bin/gcc@13", "release", map[string]any{"x": 1}, "1.0.0", "c0ffee", "gh", "", "sh"))
-	if want := filepath.Join("/vd", "src", "nested", "member"); member.SourceDir != want {
-		t.Errorf("member SourceDir = %q, want %q", member.SourceDir, want)
+	member, err := layoutFor(layoutInput{
+		PkgRoot:  "/vd",
+		Member:   "nested/member",
+		CCKey:    "/usr/bin/gcc@13",
+		Mode:     "release",
+		Options:  map[string]any{"x": 1},
+		Material: material,
+		Ready:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join("/vd", "src", "nested", "member"); member.Dirs.SourceDir != want {
+		t.Errorf("member SourceDir = %q, want %q", member.Dirs.SourceDir, want)
 	}
 }
 

@@ -65,7 +65,7 @@ func TestLocalSetGitSingleTreeStableLink(t *testing.T) {
 	if err := s.selectPackageSource("app"); err != nil {
 		t.Fatal(err)
 	}
-	s.pkgDirs["app"] = makeLocalPkgDirs(node.Source.Dir, newLocalPkgKey("cc-key", s.cfg.Mode, nil, "", "", s.sourceCommits["app"]))
+	s.pkgDirs["app"] = makeLocalPkgDirs(node.Source.Dir, localPkgKeyFromParts("cc-key", s.cfg.Mode, nil, "", "", s.sourceCommits["app"]))
 	if err := s.preparePackageWorkspace("app"); err != nil {
 		t.Fatal(err)
 	}
@@ -275,6 +275,33 @@ func TestNativeMemberSingleTreeAndOwnGit(t *testing.T) {
 			if !strings.HasPrefix(dirs.BuildDir, filepath.Join(tree, "out")+string(filepath.Separator)) {
 				t.Fatalf("member BuildDir = %s, want under %s", dirs.BuildDir, filepath.Join(tree, "out"))
 			}
+			node := s.ctx.DepGraph.Packages[name]
+			tools, err := s.toolsForPackage(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scriptHash, err := s.scriptHashFor(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantExtra := build.JoinKeyExtra(
+				"1.0.0",
+				sourceCommitKey(s.remote.commits["native/root"], s.sourceCommits[name]),
+				packageFlagsHash(s.globalFlagsHash, node),
+				s.patchHashes[name],
+				scriptHash,
+			)
+			wantKey := build.BuildKey(tools.CCKey(), s.cfg.Mode, s.allPkgOptions[name], wantExtra)
+			if got := filepath.Base(filepath.Dir(dirs.BuildDir)); got != wantKey {
+				t.Fatalf("member BuildDir key = %q, want %q", got, wantKey)
+			}
+			insp, err := Inspect(s.ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := insp.PkgDirs[name].BuildDir, dirs.BuildDir; got != want {
+				t.Fatalf("inspect BuildDir = %q, want build %q", got, want)
+			}
 			if setGit {
 				if got := s.ctx.DepGraph.Packages[name].Pkg.SrcDir(); got != filepath.Join(dirs.SourceDir, "src") {
 					t.Fatalf("member SrcDir = %s, want %s", got, filepath.Join(dirs.SourceDir, "src"))
@@ -329,15 +356,22 @@ func TestSetupSubPackageDirsKeepsResolvedParentCommit(t *testing.T) {
 	if s.remote.trees[name] != tree {
 		t.Fatalf("member tree = %q, want %q", s.remote.trees[name], tree)
 	}
-	extra, err := s.buildPkgKeyExtra()
-	if err != nil {
-		t.Fatal(err)
-	}
 	tools, err := s.toolsForPackage(name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := build.BuildKey(tools.CCKey(), s.cfg.Mode, s.allPkgOptions[name], extra[name])
+	scriptHash, err := s.scriptHashFor(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantExtra := build.JoinKeyExtra(
+		"1.0.0",
+		sourceCommitKey(s.remote.commits[owner], s.sourceCommits[name]),
+		packageFlagsHash(s.globalFlagsHash, s.ctx.DepGraph.Packages[name]),
+		s.patchHashes[name],
+		scriptHash,
+	)
+	want := build.BuildKey(tools.CCKey(), s.cfg.Mode, s.allPkgOptions[name], wantExtra)
 	if got := filepath.Base(filepath.Dir(s.pkgDirs[name].BuildDir)); got != want {
 		t.Fatalf("member BuildDir key = %q, want %q", got, want)
 	}
