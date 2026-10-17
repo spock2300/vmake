@@ -684,7 +684,7 @@ func (m *Model) handleOptionAction(visible []OptionItem, presetIdx int, reverse 
 		if len(choices) < 2 {
 			return
 		}
-		current := fmt.Sprintf("%v", m.getValue(item.Name))
+		current := formatValue(m.getValue(item.Name))
 		idx := 0
 		for i, v := range choices {
 			if v == current {
@@ -704,7 +704,7 @@ func (m *Model) handleOptionAction(visible []OptionItem, presetIdx int, reverse 
 	case api.OptionString, api.OptionInt:
 		if !reverse {
 			m.editing = true
-			m.editInput = fmt.Sprintf("%v", m.getValue(item.Name))
+			m.editInput = formatValue(m.getValue(item.Name))
 			m.editCursor = len(m.editInput)
 		}
 	}
@@ -726,7 +726,7 @@ func (m *Model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		m.editing = false
-		if m.editInput == fmt.Sprintf("%v", m.getValue(item.Name)) {
+		if m.editInput == formatValue(m.getValue(item.Name)) {
 			return m, nil
 		}
 		switch item.Opt.Type() {
@@ -1275,14 +1275,14 @@ func (m *Model) renderOptionAligned(item OptionItem, selected bool, nameW, valW 
 				val = checkboxEmptyStyle.Render("○")
 			}
 		case api.OptionString, api.OptionInt:
-			val = inputStyle.Render(fmt.Sprintf("%v", m.getValue(item.Name)))
+			val = inputStyle.Render(formatValue(m.getValue(item.Name)))
 		case api.OptionChoice:
-			val = dropdownStyle.Render(fmt.Sprintf("◀ %v ▶", m.getValue(item.Name)))
+			val = dropdownStyle.Render(fmt.Sprintf("◀ %s ▶", formatValue(m.getValue(item.Name))))
 		}
 	}
 
 	namePad := fmt.Sprintf("%-*s", nameW, name)
-	valRaw := fmt.Sprintf("%v", m.getValue(item.Name))
+	valRaw := formatValue(m.getValue(item.Name))
 	valPad := valW - utf8.RuneCountInString(valRaw)
 	if valPad < 0 {
 		valPad = 0
@@ -1291,7 +1291,7 @@ func (m *Model) renderOptionAligned(item OptionItem, selected bool, nameW, valW 
 	shownDesc := desc
 	if m.editing && selected {
 		if def := m.defaultFor(item.Name); def != nil {
-			shownDesc = fmt.Sprintf("(default: %v)", def)
+			shownDesc = fmt.Sprintf("(default: %s)", formatValue(def))
 		}
 	}
 
@@ -1427,8 +1427,8 @@ func (m *Model) renderDetailOverlay() string {
 	rows := []kv{
 		{m.text(textName), m.choiceOpt},
 		{m.text(textType), opt.Type().String()},
-		{m.text(textDefault), fmt.Sprintf("%v", def)},
-		{m.text(textCurrent), fmt.Sprintf("%v", cur)},
+		{m.text(textDefault), formatValue(def)},
+		{m.text(textCurrent), formatValue(cur)},
 	}
 	modified := m.isOptionModified(m.choiceOpt)
 	status := m.text(textNo)

@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -64,7 +63,7 @@ func centerDialogLines(lines []string, width int) string {
 
 func (m *Model) choiceDialogLayout() dialogLayout {
 	titleText := m.choiceOpt
-	current := fmt.Sprintf("%v", m.getValue(m.choiceOpt))
+	current := formatValue(m.getValue(m.choiceOpt))
 	description := ""
 	if m.overlay == overlayLanguage {
 		titleText = m.text(textLanguage)

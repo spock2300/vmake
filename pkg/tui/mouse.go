@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -91,7 +90,7 @@ func (m *Model) optionRows() ([]optionRow, int, int) {
 		if w := lipgloss.Width(item.Name); w > nameWidth {
 			nameWidth = w
 		}
-		if w := lipgloss.Width(fmt.Sprintf("%v", m.getValue(item.Name))); w > valWidth {
+		if w := lipgloss.Width(formatValue(m.getValue(item.Name))); w > valWidth {
 			valWidth = w
 		}
 	}

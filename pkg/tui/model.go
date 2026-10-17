@@ -1122,7 +1122,7 @@ func (m *Model) openChoiceOverlay(name string, choices []string) {
 	m.choiceOpt = name
 	m.choiceValues = choices
 	m.choiceOff = 0
-	current := fmt.Sprintf("%v", m.getValue(name))
+	current := formatValue(m.getValue(name))
 	m.choiceCursor = 0
 	for i, v := range choices {
 		if v == current {
