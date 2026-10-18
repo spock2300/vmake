@@ -272,7 +272,9 @@ func renderCMakeOutput(phase, output string) (string, []string) {
 func cmakeDiagnosticLine(line string) bool {
 	lower := strings.ToLower(line)
 	return strings.Contains(lower, "warning:") || strings.Contains(lower, "cmake warning") ||
-		strings.Contains(lower, "error:") || strings.Contains(lower, "cmake error")
+		strings.Contains(lower, "cmake deprecation warning") || strings.Contains(lower, "cmake dev warning") ||
+		strings.Contains(lower, "cmake author warning") || strings.Contains(lower, "error:") ||
+		strings.Contains(lower, "cmake error")
 }
 
 func splitCMakeLines(output string) []string {
@@ -384,6 +386,14 @@ func (p *Package) cmakeConfigureArgs(hostOS string, extraArgs ...string) ([]stri
 	}
 	definitions := cmakeDefinitions(extraArgs)
 	for _, arg := range p.CMakeGlobalFlagsArgs() {
+		if languageList {
+			if strings.HasPrefix(arg, "-DCMAKE_C_FLAGS=") && !languages["C"] {
+				continue
+			}
+			if strings.HasPrefix(arg, "-DCMAKE_CXX_FLAGS=") && !languages["CXX"] {
+				continue
+			}
+		}
 		if !definitions[cmakeDefinitionKey(strings.TrimPrefix(arg, "-D"))] {
 			args = append(args, arg)
 		}
