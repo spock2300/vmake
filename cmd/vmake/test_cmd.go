@@ -356,7 +356,11 @@ func runAllTests(ctx context.Context, result *BuildResult, allowNotRun bool) ([]
 			CaptureStderr: true,
 		})
 		if ctx.Err() != nil {
-			return tests[:i], ctx.Err()
+			t.elapsed = time.Since(start)
+			t.notRun = true
+			t.skipReason = "interrupted"
+			tests = append(tests[:i], *t)
+			return tests, ctx.Err()
 		}
 		t.elapsed = time.Since(start)
 		t.passed = runErr == nil
