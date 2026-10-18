@@ -16,7 +16,7 @@ VMake is a modern C/C++ project build tool developed in Go. It provides a concis
 - **TUI Configuration Interface**: Interactive terminal user interface for project configuration
 - **Toolchain Management**: Flexible switching between multiple compiler toolchains, supports cross-compilation
 - **Semantic Versioning**: Built-in semver parsing and constraint matching
-- **Symbol Management**: Five-layer defense (`SetDefaultVisibilityHidden` + `SetVersionScript` + `AddExcludeLibs` + `SetSymbolBinding` + `vmake check-symbols`) controls exported symbols to prevent conflicts and leaks in complex dependency graphs. Default hidden visibility applies only to the declaring package; dependencies keep their own export rules.
+- **Symbol Management**: Five layers — `SetDefaultVisibilityHidden` + `SetVersionScript` + link policy (`AddExcludeLibs`/`SetSymbolBinding`) + `SetSymbolPrefix` + `vmake check-symbols` — control exported symbols to prevent conflicts and leaks in complex dependency graphs. Default hidden visibility applies only to the declaring package; dependencies keep their own export rules.
 
 ## Quick Start
 
@@ -25,6 +25,9 @@ VMake is a modern C/C++ project build tool developed in Go. It provides a concis
 ```bash
 go install github.com/spock2300/vmake/cmd/vmake@latest
 ```
+
+`go install` writes the binary to `$GOBIN` when set, otherwise to
+`$(go env GOPATH)/bin` (default `~/go/bin`); on Windows the file is `vmake.exe`.
 
 ### Windows
 
@@ -88,10 +91,11 @@ aliased.
 
 - Mach-O linking has no GNU linker group: dependency archives are force-loaded
   (`-force_load`), and `TargetShared` links with `-dynamiclib` plus a
-  relocatable `@rpath/<name>` install name. Consumers of `.dylib` dependencies
-  get `-rpath` entries for the dependency directories, `@loader_path` and
-  `@loader_path/../lib`, so in-tree runs and the default `install/bin` +
-  `install/lib` layout resolve the libraries.
+  relocatable `@rpath/<name>` install name. Binary consumers of `.dylib`
+  dependencies get `-rpath` entries for the dependency directories,
+  `@loader_path` and `@loader_path/../lib`; shared-library consumers get the
+  dependency directories and `@loader_path` only. In-tree runs and the default
+  `install/bin` + `install/lib` layout therefore resolve the libraries.
 - `SetVersionScript`, `AddExcludeLibs` and `SetSymbolBinding` are ELF-only and
   fail with a clear error on a macOS target; `vmake check-symbols` reports
   native Mach-O artifacts as not applicable (it audits ELF artifacts only).
@@ -105,11 +109,15 @@ aliased.
 - The Xcode toolchain ships GNU Make 3.81. Simple `p.Make()` projects work, but
   Kconfig/kernel/U-Boot builds need GNU Make 3.82 or newer: install it with
   `brew install make` and point the selected toolchain's `make` at `gmake`.
-  `vmake doctor` reports the detected make version.
+  `vmake doctor` reports the resolved make path and warns when the Make found
+  on macOS is older than 3.82.
 
 ### Debug Mode
 
-Buildscripts are interpreted by yaegi directly — no plugin compilation needed:
+Buildscripts are interpreted by yaegi directly — no plugin compilation needed.
+The interpreter uses the API symbol table compiled into the running binary, so
+rebuild `vmake` after changing `pkg/api`; extension plugins are cloned to
+`~/.vmake/extensions/` and interpreted from there:
 
 ```bash
 cd /path/to/vmake
@@ -161,6 +169,7 @@ vmake/
 │   ├── buildscript/     # Build script scan, interpret, load
 │   ├── pipeline/        # Phase orchestration (require/configure/build)
 │   ├── config/          # Configuration storage
+│   ├── kconfig/         # Kconfig preset handling for firmware builds
 │   ├── lockfile/        # .vmake/vmake.lock read/write (pinned versions)
 │   ├── resolver/        # Dependency resolution
 │   ├── repo/            # Package repository management
@@ -303,16 +312,24 @@ See the [Extension Plugin Guide](docs/EXTENSION_PLUGIN.md) for the complete plug
 
 ```bash
 vmake build [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k]
-vmake test
+vmake test [--toolchain <name>] [--mode <mode>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k]
 vmake clean [--all]
 vmake distclean [--purge-sources]
-vmake rebuild
+vmake rebuild [build/install flags]
 ```
+
+Running `vmake` with no subcommand builds with default options. `vmake build` and
+`vmake rebuild` accept all build/install flags; `vmake test` accepts the build/test
+subset (`--toolchain`, `--mode`, `--manifest`, `--tests`, `--jobs`, `--keep-going`).
 
 ### Configuration Commands
 
 ```bash
-vmake config    # Interactive TUI configuration
+vmake config [--set <[pkg/]option=value>]             # Interactive TUI, or apply options non-interactively
+vmake config list                                     # List configuration files and the active selection
+vmake config use <file.json>                          # Select an existing configuration
+vmake config copy <file.json>                         # Copy the active configuration without switching
+vmake config describe [text]                          # Print or set the active configuration's description
 ```
 
 ### Toolchain Management
@@ -339,8 +356,8 @@ vmake repo untrust <name>                  # Revoke trust
 ```bash
 vmake pkg list
 vmake pkg search <keyword>
-vmake pkg clean <repo/name> [-a]
-vmake pkg update <repo/name>[@version]
+vmake pkg clean <repo/name> [-a]              # -a also removes the package working tree
+vmake pkg update <repo/name>[@version] [--dry-run]
 ```
 
 ### Extension Management
@@ -357,22 +374,31 @@ vmake ext update [name]
 ```bash
 vmake git tag [version] [--minor|--major] [--no-push] [-m|--message <msg>]   # Version tagging
 vmake query [targets|config <pkg>]                    # Show dependency tree / package config
-vmake check-symbols [--strict]                        # Scan built outputs for symbol issues
+vmake check-symbols [--strict]                        # Audit ELF dynamic symbols of local default targets
 vmake lock update|show                                # Re-resolve / show pinned versions (.vmake/vmake.lock)
-vmake init-editor                                     # Generate editor support files for build.go
+vmake init-editor [--local <path>] [--remove]         # Generate editor support (go.mod) for build.go
 vmake doctor                                          # Diagnose platform prerequisites and build.go patterns
 vmake manifest show <path>                            # Show manifest contents
 vmake manifest checkout <path> [name]                 # Checkout packages to recorded versions
-vmake completion <shell>                              # Generate shell completion (bash|zsh|fish|powershell)
-vmake completion install                              # Auto-install shell completion
+vmake completion <shell>                              # Print completion script (bash|zsh|fish|powershell)
+vmake completion install [--shell bash|zsh|fish]      # Auto-install completion (no PowerShell installer)
 vmake update [version]                                # Self-update
 vmake version                                         # Version info
-vmake skill install                                   # Install AI skill
+vmake skill install [--project <dir>]                 # Install AI skill (also under <dir>/.claude/skills)
 vmake skill uninstall                                 # Uninstall AI skill
 vmake skill path                                      # Show skill paths
 ```
 
-Global flags: `-v` (verbose), `-V` (very verbose), `-q` (quiet), `-y` (assume yes for interactive prompts)
+Global flags: `-v` (verbose), `-V` (very verbose), `-q` (quiet), `-y` (assume yes
+for interactive prompts). `--version` is a root-only flag; `-h`/`--help` is
+available on every command.
+
+Environment variables: `VMAKE_CACHE` (shared cache root), `VMAKE_GIT_CACHE=off`
+(disable the shared git object cache), `VMAKE_GIT_TIMEOUT` (network git timeout
+in seconds; `VMAKE_FETCH_TIMEOUT` is a legacy alias), `VMAKE_TRUST_ALL=1` (bypass
+remote-script trust gating for CI), and `VMAKE_LEGACY_ROOT=1` (silence the
+missing-`SetRoot` hint). See [Directory Structure](docs/VMAKE_HOME.md) for the
+storage details.
 
 ## Documentation
 

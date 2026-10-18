@@ -80,7 +80,7 @@ int main(void) {
 - **`SetDefault(value)`** - Default value
 - **`SetDescription(text)`** - Help text
 - **`SetGroup(name)`** - Grouping for TUI
-- **`ctx.If("option", vals...)`** - Conditional for **bool** options (returns the chosen strings when true, `nil` otherwise; pass the slice to Add* methods directly, no `...` spread)
+- **`ctx.If("option", vals...)`** - Conditional for **bool** options (returns the chosen strings when true, `nil` otherwise; pass the slice directly to `...any` helpers such as `AddCFlags`/`AddDefines` — no `...` spread there; `...string` helpers such as `AddDeps` accept a spread)
 - **`ctx.Select("option", map)`** - Map a String/Choice option value to a flag or define
 - **`ctx.String("option")`** - Read a String/Choice option
 
@@ -147,9 +147,9 @@ See `SKILL.md - Multiple Project Configurations` for compatibility and error han
 ## Key Points
 
 - Options are typed: Bool, String, Int, Choice
-- `AddDefines(ctx.If("ssl", "USE_SSL"))` passes the `[]string` directly — `Add*` methods accept `...any` and flatten slices. Do NOT spread with `...` (Go cannot spread `[]string` into `[]any`; `flattenAny` expands the slice for you)
+- `AddDefines(ctx.If("ssl", "USE_SSL"))` passes the `[]string` directly — `...any` methods (`AddDefines`, `AddCFlags`, `AddFiles`, ...) flatten slices. Do NOT spread into those (Go cannot spread `[]string` into `[]any`); `...string` methods such as `AddDeps` do accept `deps...`
 - `ctx.If` only accepts `OptionBool`; `ctx.Select` and `ctx.String` work for String/Choice options, and `ctx.When`/`ctx.Int`/`ctx.Bool` cover the rest (a mismatched accessor is a build error)
-- Options can only be declared in `OnConfig`; `ctx.Option(...)` after the config phase is a build error
+- Options are declared in `OnConfig`; `ctx.Option(...)` on `BuildContext`/`InstallContext`/`CleanContext` after the config phase is a build error. A late declaration through a path that is not locked (for example a captured `*Package`) is never resolved, so only its default/zero value is readable
 - Choice options declare their allowed values with `SetValues(...)`; a non-empty `SetDefault` is validated against them after `OnConfig` (validation is skipped when the default is empty or `SetValues` was never called). `vmake config --set` rejects invalid choices
 - Don't map options to `-O*`: build mode flags are appended after target flags, so the mode's `-O2`/`-O0` wins for GCC — see `SKILL.md - Global Flags & Mode Flags`
 - Turn options into `-DCONFIG_*` defines or a generated `autoconf.h` with `ctx.GenerateConfigDefines()` / `ctx.GenerateConfigHeader()` in `OnBuild` — see `examples/config-to-define.md`

@@ -50,7 +50,7 @@ vmake repo trust official
 
 1. **Phase 1 (OnRequire)**: `AddRequires` registers `"official/zlib >=1.2"` for graph discovery. Top-level packages (registry and native) are resolved eagerly; native sub-packages load only when depended on.
 2. **Phase 2 (OnConfig)**: Build options are defined and resolved via `OnConfig` callbacks.
-3. **Phase 3 (FilterDeps)**: After config is resolved, `OnRequire` runs **again** with real config values from `config.json`, recomputing the dependency list. This enables option-conditional dependencies.
+3. **Phase 3 (FilterDeps)**: After config is resolved, `OnRequire` runs **again** with this package's `entries.<pkg>.options` values (global configuration values are not merged), recomputing the dependency list. This enables option-conditional dependencies.
 4. **Phase 4 (OnBuild)**: Targets must declare explicit `AddDeps("official/zlib")` to create build-graph edges. The scheduler links the library and propagates public includes automatically.
 
 ## Version Constraint Syntax
@@ -137,7 +137,7 @@ Sub-packages are lazy: their `build.go` is interpreted only when depended on (to
 
 ## Conditional Dependencies
 
-`OnRequire` can depend on options. This works because `OnRequire` runs twice — the second pass (Phase 3 `FilterDeps`) sees the user's actual config values. During the first pass (nil config) direct reads like `ctx.Bool(...)` are **build errors** — use the discovery-aware `ctx.When(...)` (returns `true` on the first pass):
+`OnRequire` can depend on options. This works because `OnRequire` runs twice — the second pass (Phase 3 `FilterDeps`) sees the user's package entry values. During the first pass (nil config) direct reads like `ctx.Bool(...)` are **build errors** — use the discovery-aware `ctx.When(...)` (returns `true` on the first pass):
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {
@@ -161,7 +161,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 })
 ```
 
-**Same-set rule:** pass 2 must not add a package that pass 1 did not declare — a dependency that first appears in the FilterDeps pass (e.g. the guard was false with defaults, then the user enabled the option) is a build error; hoist the unconditional `AddRequires` out of the guard. The reverse direction is fine: pass 2's returned list replaces `node.Deps`, so a dependency dropped in pass 2 is pruned from the graph (not an error). See `SKILL.md - OnRequire Two-Phase Execution`.
+**Graph-membership rule:** pass 2's returned list replaces the package's dependency edges. Dropping an edge is fine — the package remains in the resolved graph but becomes unreachable/not needed, so it is excluded from the build unless another root reaches it. Adding one is accepted only when the package is already in the resolved graph (for example because another package requires it); a dependency that first appears in the FilterDeps pass otherwise fails with `dependency ... not found in dependency graph`. Hoist the unconditional `AddRequires` out of the guard. See `SKILL.md - OnRequire Two-Phase Execution`.
 
 ## AddDeps After FilterDeps
 
@@ -184,8 +184,8 @@ Keep `OnRequire` and target dependencies consistent.
 - Package refs use `/`: `repo/name`
 - Version constraints use semver syntax (`>=`/`>` are major-locked when major > 0); one operator plus one version, no compound ranges
 - `AddDeps("official/zlib")` auto-links; no need for manual `-lz`
-- `OnRequire` runs twice: first with nil config (Phase 1), then with real config (Phase 3 `FilterDeps`)
-- Option-conditional deps work because FilterDeps has resolved config values
+- `OnRequire` runs twice: first with nil config (Phase 1), then with this package's entry option values (Phase 3 `FilterDeps`); global configuration values are not merged
+- Option-conditional deps work because FilterDeps has resolved package entry values
 - `AddDeps` uses the final dependency list from `FilterDeps`; a pruned package referenced by `AddDeps` fails at build-graph time
 - Remote packages are resolved from `.vmake/vmake.lock` pins (run `vmake lock update` to re-resolve)
 - Native sub-packages load lazily and use full `parent/sub` names; registry wrappers have none

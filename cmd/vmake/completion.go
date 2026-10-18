@@ -51,7 +51,7 @@ var completionInstallCmd = &cobra.Command{
 	Long: `Detect your shell and install completion automatically.
 
   bash:  ~/.local/share/bash-completion/completions/vmake
-  zsh:   ~/.zsh/completions/_vmake  (adds fpath to ~/.zshrc if needed)
+  zsh:   ~/.zsh/completions/_vmake  (appends fpath to an existing ~/.zshrc)
   fish:  ~/.config/fish/completions/vmake.fish`,
 	Run: runCompletionInstall,
 }

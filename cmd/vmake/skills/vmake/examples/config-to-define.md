@@ -158,9 +158,9 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 })
 ```
 
-Global flags apply to every target of every package in the build. They are appended in declaration order (duplicates are preserved — no deduplication), buffered per package (flags from packages pruned by `FilterDeps` never leak), and their changes rebuild artifacts (global flags are part of the BuildKey). Use sparingly — prefer Mechanism 1 or 2 unless the flag truly needs cross-package visibility.
+Global flags apply to every target of every needed package in the build. They are buffered per package and concatenated in resolver order. Direct `AddGlobal*` calls in `OnConfig` are appended in callback registration order; then `OnApply` callbacks run in sorted option-name order within the package (duplicates are preserved — no deduplication). Flags from packages pruned by `FilterDeps` never leak, and their changes rebuild artifacts (global flags are part of the BuildKey). Use sparingly — prefer Mechanism 1 or 2 unless the flag truly needs cross-package visibility.
 
-**Note**: `val` inside `SetOnApply` is already typed to the declared option type (`string` for Choice) — no `float64` conversion needed for Int options either.
+**Note**: `val` inside `SetOnApply` is already typed to the declared option type (`string` for Choice). `OptionInt` values are normalized from JSON `float64`/`int64` to `int`; other types are passed through unchanged.
 
 ## Mechanism 4: GlobalOption Auto-Export — Global CONFIG_ Macros
 
@@ -202,9 +202,9 @@ All accessors (`Bool`, `Int`, `String`, `BoolStr`, `When`, `If`, `Select`) exist
 | Phase | Values visible |
 |---|---|
 | `OnConfig` | Declared `SetDefault` values plus earlier `SetConfigValue` results only. Values saved in the active configuration (`.vmake/config.json` by default) are NOT loaded yet |
-| `SetOnApply` | The resolved value for that option (saved config value, else default), normalized to the declared type |
+| `SetOnApply` | The resolved value for that option (saved config value, else default); `OptionInt` is normalized to `int`, other types are passed through |
 | `OnBuild` / `OnInstall` / `OnClean` | Full resolved values: saved config + defaults + built-in/global options |
-| `OnRequire` | None during discovery; only `When`/`If`/`Select` are allowed, direct reads are build errors |
+| `OnRequire` | Pass 1 (discovery): none; only `When`/`If`/`Select` are allowed. Pass 2 (`FilterDeps`): this package's `entries.<pkg>.options` values (global config values are not merged); direct reads of those values are allowed |
 
 ```go
 ctx.Bool("debug")           // bool → bool (OptionBool only — accessor must match SetType)

@@ -20,14 +20,14 @@ ctx.Option("mcu").SetType(api.OptionChoice).SetDefault("stm32f405").
 
 ## OnApply Callbacks, Global Flags, and Discovery Reads
 
-`SetOnApply` callbacks run **once per build**, during the config phase, after all option values are resolved (in sorted option-name order). The context carries real option values — reading other options inside the callback works, and `ctx.Select` sees actual values (no discovery pass runs callbacks).
+`SetOnApply` callbacks run **once per build per declaring package**, during the config phase, after all option values are resolved (in sorted option-name order within each package; packages follow resolver order). The context carries real option values — reading other options inside the callback works, and `ctx.Select` sees actual values (no discovery pass runs callbacks).
 
 Global flags registered via `AddGlobalCFlags/CxxFlags/LdFlags/Links` are **buffered per package** and only applied to the toolchain manager for packages that survive `FilterDeps` — flags from pruned packages never leak into the build. Global flag changes also change the BuildKey (via the global-flags hash), so artifacts rebuild when flags change.
 
 Two discovery-era rules still matter:
 
-- In `OnRequire`, direct value reads (`ctx.Bool/String/Int`) are fatal only on the first pass (nil config, discovery); on the `FilterDeps` re-run (real config) they work. On the first pass, use `ctx.When("opt", value)` / `ctx.If(...)` / `ctx.Select(...)` — there `When` returns `true`, `If` returns its `then` items (condition unevaluated), and `Select` returns `""`.
-- Inside `SetOnApply`, `Select` sees the resolved value — but an unmapped choice still yields `""`. `Target.Add*` methods take `...any` and `flattenAny` silently drops empty strings; `AddGlobal*` take `...string` and would pass an empty argument through. Guard before use either way:
+- In `OnRequire`, direct value reads (`ctx.Bool/String/Int`) are fatal only on the first pass (nil config, discovery); on the `FilterDeps` re-run they work for this package's `entries.<pkg>.options` values. Global configuration values are not merged into that pass; unset reads fall back to defaults. On the first pass, use `ctx.When("opt", value)` / `ctx.If(...)` / `ctx.Select(...)` — there `When` returns `true`, `If` returns its `then` items (condition unevaluated), and `Select` returns `""`.
+- Inside `SetOnApply`, `Select` sees the resolved value — but an unmapped choice still yields `""`. `Target.AddFiles`/`AddIncludes`/`AddDefines`/`AddCFlags`/`AddLinks` and the other `...any` target setters expand slices via `flattenAny`, which silently drops empty strings; `AddDeps` also skips exactly empty entries. `AddProvidedLibs` and all `AddGlobal*` take `...string` and would pass an empty argument through. Guard before use either way:
 
 ```go
 ctx.Option("optimization").SetType(api.OptionChoice).
@@ -47,7 +47,7 @@ ctx.Option("optimization").SetType(api.OptionChoice).
 
 ## Patching Source Before Build
 
-Registry packages sometimes need source modifications before building (e.g., enabling a `#define` in a config header). Since `SrcDir()` points to the downloaded source, you can patch files inside `SetBuildFunc` using Go's standard `os` and `strings` packages. Note: the script wrapper covers only a subset of `os` (`ReadFile`/`WriteFile`/`Stat` and friends) and resolves relative paths against the package's `SourceDir()` once it is bound (the build.go's directory before that); unwrapped APIs such as `os.Readlink`/`os.Symlink` and `exec.CommandContext` still use the process cwd, and `os.Chdir` is rejected. Build source paths from `p.SrcDir()`. Raw writes persist in the shared working tree and are not part of the BuildKey — prefer `AddPatches` when the change must trigger a rebuild:
+Registry packages sometimes need source modifications before building (e.g., enabling a `#define` in a config header). Since `SrcDir()` points to the downloaded source, you can patch files inside `SetBuildFunc` using Go's standard `os` and `strings` packages. Note: the script wrapper covers `os.Open`/`OpenFile`/`Create`/`ReadFile`/`WriteFile`/`Stat`/`Lstat`/`Mkdir`/`MkdirAll`/`Remove`/`RemoveAll`/`Rename`/`ReadDir`/`Getwd`/`TempDir`/`CreateTemp`, plus `exec.Command` and `filepath.Walk`/`WalkDir`, and resolves relative paths against the package's `SourceDir()` once it is bound (the build.go's directory before that); unwrapped APIs such as `os.Readlink`/`os.Symlink` and `exec.CommandContext` follow the process cwd (during `OnBuild`/`OnInstall`/`OnClean` that is `SourceDir()`; during `OnConfig` it is the loaded build.go directory — the registry wrapper checkout for registry packages; a `TargetVoid` `SetBuildFunc` runs later and sees the original process cwd), and `os.Chdir` is rejected. Build source paths from `p.SrcDir()`. Raw writes persist in the shared working tree and are not part of the BuildKey — prefer `AddPatches` when the change must trigger a rebuild:
 
 ```go
 SetBuildFunc(func(p *api.Package) error {
@@ -78,20 +78,24 @@ p.AddPatches("patches/fix-cross.patch", "patches/disable-avx.patch")
 - `AddPatches(paths ...string)` — append patch files to the list (applied in declaration order)
 - `SetPatches(paths ...string)` — replace the entire patch list
 - `SetSubmodules(true)` — clone git submodules before applying patches
-- **Remote packages**: patches apply in place to the package's single working tree at `.vmake_deps/<repo>/<pkg>/src` (a native member carrying its own repository gets its own tree under the member directory). Ordered patch content contributes to the build key; a changed patch set restores the tree to its pinned commit before patches are applied.
+- **Remote packages**: patches apply in place to the package's single working tree at `.vmake_deps/<repo>/<owner>/src[/<member>]` (a native member carrying its own repository gets its own tree under the member directory). Ordered patch content contributes to the build key; a changed patch set restores the tree to its pinned commit before patches are applied.
 - **Local packages**: ordinary local sources are patched in place. Local SetGit uses the `.vmake_deps/local/<pkg>/src` working tree exposed through `SrcDir()`. Already-applied patches are detected and skipped.
 - Patch files are relative to the directory containing the package's `build.go`.
 
 Use this when wrapping a library that needs compilation fixes (e.g., cross-compilation `CFLAGS` in a Makefile, missing `#include` guards, hardcoded toolchain assumptions). Raw `os.WriteFile` patching (shown above) is better for simple single-line changes; git patches handle multi-file, multi-line modifications reliably.
 
-## `[]string` Arguments — Never Spread
+## `[]string` Arguments — Spread Only Where the Parameter Is `...string`
 
-`Add*` methods on targets take `...any` and expand slices via `flattenAny`, which also drops empty strings. Pass the slice whole; `xs...` does not compile because Go will not convert `[]string` to `[]any` (yaegi reports the same call-site error through `reflect.CallSlice`).
+Parameters typed `...any` (`AddFiles`, `AddIncludes`, `AddPublicIncludes`, `AddDefines`, `AddLinks`, `AddCFlags`, `AddCxxFlags`, `AddLdFlags`, `AddBinHeader`, `RemoveFiles`) expand slices via `flattenAny`, which also drops empty strings. Pass the slice whole; `xs...` does not compile for these because Go will not convert `[]string` to `[]any` (yaegi reports the same call-site error through `reflect.CallSlice`).
+
+Parameters typed `...string` (`AddDeps`, `AddProvidedLibs`, `AddExcludeLibs`, `AddPostLinkDeps`, `AddPostLinkOutputs`, the scalar `Remove*` methods such as `RemoveCFlags`/`RemoveDeps`, and `SetLanguages`) accept `xs...` normally.
 
 ```go
 flags := []string{"-O2", "-Wall"}
-target.AddCFlags(flags)    // correct
-target.AddCFlags(flags...) // does not compile
+target.AddCFlags(flags)    // correct: ...any flattens the slice
+target.AddCFlags(flags...) // does not compile: []string is not []any
+deps := []string{"utils", "official/zlib"}
+target.AddDeps(deps...)    // correct: ...string accepts a spread
 ```
 
 ## AddRequires vs AddDeps
@@ -100,4 +104,4 @@ target.AddCFlags(flags...) // does not compile
 
 ## Options After the Config Phase
 
-`ctx.Option(...)` may only be called during `OnConfig`; calling it in a later phase is a build error. Resolved values are readable in `OnBuild`/`OnInstall`/`OnClean` and inside `SetOnApply`; during `OnRequire` discovery use the discovery-aware `When`/`If`/`Select`.
+Declare options in `OnConfig`. `BuildContext`, `InstallContext`, and `CleanContext` lock option declaration when the config phase ends, so `ctx.Option(...)` there is a build error. `RequireContext` and `*Package` do not have that guard, but an option declared outside `OnConfig` never participates in value resolution — reads fall back to its default/zero value. Resolved values are readable in `OnBuild`/`OnInstall`/`OnClean` and inside `SetOnApply`; during `OnRequire` discovery use the discovery-aware `When`/`If`/`Select`.

@@ -106,7 +106,7 @@ p.OnRequire(func(ctx *api.RequireContext) {
 ## Package Naming and Discovery
 
 - Every `build.go` found while scanning the project becomes a local package named after its directory **basename**: `lib/detail/build.go` → package `detail`, not `lib/detail`.
-- The scan skips `build/`, `vendor/`, `.vmake_deps/`, `node_modules/`, `.git/`, `.vmake/`, and any other hidden directory.
+- The scan skips `build/`, `vendor/`, `vmake_deps/`, `.vmake_deps/`, `node_modules/`, `.git/`, `.vmake/`, and any other hidden directory.
 - Duplicate names are silently dropped — only the first package with a given basename is loaded, later directories with the same name are ignored. Keep directory names unique.
 
 ## Local vs Remote Dependencies
@@ -149,11 +149,11 @@ Each dependency is a separate local package in its own directory. The `pkg:targe
 
 ## GlobalOption
 
-One declaring package is enough. Multiple packages may declare the same `GlobalOption` only if `Type` and `Default` are identical — otherwise `MergeGlobalOptions` fails the build with a type/default mismatch. Prefer a single declaring package for `SetValues`/`SetDescription`: which definition supplies them in the merged view is unspecified.
+One declaring package is enough. Multiple packages may declare the same `GlobalOption` only if `Type` and `Default` are identical (and, for non-builtin options, `SetValues` is identical) — otherwise `MergeGlobalOptions` fails the build with a mismatch. Merging is deterministic: packages are processed in sorted name order and the first definition wins, so a later `SetDescription` does not replace an earlier one; a later non-empty `SetMacroName` is adopted only when the earlier definition left it empty. Prefer a single declaring package for shared metadata.
 
 ## OnConfig Caveats
 
-`ctx.Bool/String/Int` are strict, per-package reads. In `OnConfig`, a package only sees the options it declared itself: reading another package's option (including its `GlobalOption`) fails with `unknown option` unless this package declares the same `GlobalOption` with identical `Type`/`Default`. The merged global view — all packages' global options plus configured values — is available in `OnBuild`/`OnInstall`/`OnClean` contexts, so do cross-package reads there. In `OnRequire`, use the discovery-aware `ctx.When`/`ctx.If`/`ctx.Select`.
+`ctx.Bool/String/Int` are strict, per-package reads. In `OnConfig`, a package only sees the options it declared itself: reading another package's option (including its `GlobalOption`) fails with `unknown option` unless this package declares the same `GlobalOption` with identical `Type`/`Default` (and `SetValues` for non-builtin options). The merged global view — all packages' global options plus configured values — is available in `OnBuild`/`OnInstall`/`OnClean` contexts, so do cross-package reads there. In `OnRequire`, use the discovery-aware `ctx.When`/`ctx.If`/`ctx.Select`.
 
 ## Running / Verifying
 
@@ -172,7 +172,7 @@ Expected: `vmake build` prints a `Build order:` list containing `lib:utils` befo
 - Cross-package deps use `:` separator: `"lib:utils"` means target `"utils"` from package `"lib"`
 - Local deps need only `AddDeps` (all local `build.go` files are loaded); remote deps need `AddRequires` + `AddDeps`
 - Same-package deps use just the target name: `AddDeps("utils")`
-- Options shared across packages must be declared with `ctx.GlobalOption` (identical `Type`/`Default` required from every declaring package); plain `ctx.Option` is package-local
+- Options shared across packages must be declared with `ctx.GlobalOption` (identical `Type` and `Default`, plus identical `SetValues` for non-builtin options, from every declaring package); plain `ctx.Option` is package-local
 - With an explicit `SetRoot(true)`, BFS starts only from that package — list every package you still want built in `AddRequires`
 
 ## See Also

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,35 +23,39 @@ var pkgCmd = &cobra.Command{
 
 var pkgListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List installed packages",
+	Short: "List package sources",
 	Run: func(cmd *cobra.Command, args []string) {
-		entries, err := fs.ListDirEntries(getDepsDir())
-		if err != nil {
-			if os.IsNotExist(err) {
-				fmt.Println("No packages installed")
-				return
-			}
-			fatalErr(err)
-		}
+		listPackageSources(cmd.OutOrStdout(), getDepsDir())
+	},
+}
 
-		if len(entries) == 0 {
-			fmt.Println("No packages installed")
+func listPackageSources(w io.Writer, depsDir string) {
+	entries, err := fs.ListDirEntries(depsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Fprintln(w, "No package sources")
 			return
 		}
+		fatalErr(err)
+	}
 
-		fmt.Println("Installed packages:")
-		for _, entry := range entries {
-			repoName := entry.Name()
-			repoPath := filepath.Join(getDepsDir(), repoName)
-			pkgs, err := fs.ListDirEntries(repoPath)
-			if err != nil {
-				continue
-			}
-			for _, pkg := range pkgs {
-				fmt.Printf("  %s/%s\n", repoName, pkg.Name())
-			}
+	if len(entries) == 0 {
+		fmt.Fprintln(w, "No package sources")
+		return
+	}
+
+	fmt.Fprintln(w, "Package sources:")
+	for _, entry := range entries {
+		repoName := entry.Name()
+		repoPath := filepath.Join(depsDir, repoName)
+		pkgs, err := fs.ListDirEntries(repoPath)
+		if err != nil {
+			continue
 		}
-	},
+		for _, pkg := range pkgs {
+			fmt.Fprintf(w, "  %s/%s\n", repoName, pkg.Name())
+		}
+	}
 }
 
 var pkgSearchCmd = &cobra.Command{

@@ -56,7 +56,7 @@ vmake hello world
 
 vmake 在启动时自动发现并用 yaegi 解释执行插件源码，无需编译，即时可用。
 
-`vmake ext add` 和 `vmake ext update` 只获取普通 Git 文件及 LFS 指针，不自动下载 LFS 大文件。构建首次使用某个未安装的工具链时，vmake 才下载该工具链对应当前宿主 OS/架构的压缩包。更新扩展不会预取新版本，也不会删除已有压缩包、LFS 缓存或工具链安装目录。这项策略仅用于扩展仓库，不改变项目源码依赖的 Git 下载行为。
+`vmake ext add` 和 `vmake ext update` 只获取普通 Git 文件及 LFS 指针，不自动下载 LFS 大文件。构建首次使用某个未安装的工具链时，vmake 才下载该工具链对应当前宿主 OS/架构的压缩包。更新扩展不会主动预取新版本，也不会清理已有 LFS 对象、已安装的工具链目录或其他缓存；但 `vmake ext update` 执行的 `git pull --ff-only` 会按上游变更更新仓库工作树，上游删除的跟踪文件（包括 `assets/toolchains/` 下的归档指针）也会从检出中消失。这项策略仅用于扩展仓库，不改变项目源码依赖的 Git 下载行为。
 
 ## 目录结构
 
@@ -102,11 +102,13 @@ vmake 在启动时自动发现并用 yaegi 解释执行插件源码，无需编�
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `name` | string | 是 | 插件名，同时也是 CLI 命令名（`vmake <name>`） |
+| `name` | string | 是（未校验） | 插件名，同时也是 CLI 命令名（`vmake <name>`） |
 | `version` | string | 否 | 语义版本号，显示在 `vmake ext list` |
 | `description` | string | 否 | 一句话描述，显示在 `vmake ext list` |
-| `entry` | string | 是 | 入口 Go 源文件的相对路径（如 `src/main.go`） |
+| `entry` | string | 是（未校验） | 入口 Go 源文件的相对路径（如 `src/main.go`）；加载器只取所在目录并合并该目录下选中的 Go 源文件 |
 | `enabled` | bool | 否 | 是否启用，默认 `false`。设为 `true` 时启用该插件 |
+
+`LoadPluginInfo` 只反序列化 JSON，不校验 `name`/`entry` 是否为空；发现阶段只检查 `plugin.json` 存在且 `enabled` 为 `true`。`name` 用作 `vmake <name>` 的命令名；`entry` 只用来确定源码目录（`filepath.Dir(filepath.Join(pluginDir, entry))`），该目录下由 `gosrc.ListGoFiles` 选择的 Go 文件（按宿主 GOOS/GOARCH，排除 `_test.go` 与 `import "C"`）由 `MergeGoSources` 合并，并不会只加载 `entry` 指向的单个文件。`entry` 为空时目录会落到插件目录的父目录（通常是扩展仓库根），从而扫描仓库根下的 `.go` 文件。正常插件应提供非空的 `name` 和指向源码文件的 `entry`。
 
 示例：
 
@@ -292,7 +294,7 @@ err := ctx.RunGitLFS(ctx.RepoDir, "pull", "--include=assets/toolchains/aarch64-g
 |------|------|------|
 | `Name` | `string` | 工具链标识符（如 `"aarch64-linux-gnu"`） |
 | `DisplayName` | `string` | 可读名称（如 `"ARM GCC 12.2.0"`），`vmake toolchain list` 显示 |
-| `Prefix` | `string` | 包含末尾 `-` 的交叉编译前缀（如 `"aarch64-linux-gnu-"`），设为 `""` 表示无前缀；拼接工具名时不再添加 `-` |
+| `Prefix` | `string` | 交叉编译前缀（如 `"aarch64-linux-gnu-"`），作为 `CROSS_COMPILE` 传给外部构建；设置 `InstallPath` 且前缀为相对路径时，`Package.Env()` 会把它改写成 `<InstallPath>/bin/<prefix>` 的斜杠路径。vmake 不会用 `Prefix` 拼接 `Tools` 中的工具名，`Tools` 必须写完整可执行文件名。设为 `""` 表示无前缀 |
 | `TargetOS`/`TargetTriple` | `string` | 项目未设置时使用的目标默认值，可由 `toolchain.json` 或插件注册时提供 |
 | `Tools` | `Tools` | 各工具的可执行文件名 |
 | `InstallPath` | `string` | 工具链安装目录的绝对路径，为空表示尚未安装 |
@@ -313,7 +315,7 @@ err := ctx.RunGitLFS(ctx.RepoDir, "pull", "--include=assets/toolchains/aarch64-g
 | `NM` | `string` | 符号列表 | `"aarch64-linux-gnu-nm"` |
 | `MAKE` | `string` | make 程序，为空时按需解析为 `make` | `"make"` |
 
-`CC`、`CXX`、`AR` 和 `LD` 是必填项，其余可选。
+`CC`、`CXX`、`AR` 和 `LD` 在语义上是必填项，其余可选。`ToolchainDef.Validate`（`toolchain.json` 加载时）不检查这些字段是否存在；缺失会在选择或构建时由 `ValidateToolchain` 报告（如 `cc is not configured`），并禁用该工具链。
 
 ### Toolchain.Env()
 
@@ -336,7 +338,7 @@ err := ctx.RunGitLFS(ctx.RepoDir, "pull", "--include=assets/toolchains/aarch64-g
 
 ### Toolchain.CommandEnv()
 
-`CommandEnv()` 返回单条命令使用的环境变量映射：依次把 `InstallPath/bin`（如有）、绝对路径 `CC` 和 `CXX` 所在目录前置到继承的 `PATH`，重复的工具目录只添加一次。这样直接配置编译器绝对路径的工具链也能让 CMake、Make 及其子进程找到同目录的辅助程序。vmake 不修改进程级 `PATH`，各工具链互不干扰。
+`CommandEnv()` 返回单条命令使用的环境变量映射：依次把 `InstallPath/bin`（如有）、绝对路径 `CC` 和 `CXX` 所在目录前置到继承的 `PATH`，重复的工具目录只添加一次。这样直接配置编译器绝对路径的工具链也能让 CMake、Make 及其子进程找到同目录的辅助程序。该命令环境不会修改进程级 `PATH`，各工具链互不干扰；Windows 启动时的 Git userland PATH 处理见下文。
 
 ## 工具链资源
 
@@ -378,7 +380,7 @@ err := ctx.RunGitLFS(ctx.RepoDir, "pull", "--include=assets/toolchains/aarch64-g
 | `prefix` | string | 否 | 交叉编译前缀，非空时必须包含结尾的连字符 |
 | `target_os` | string | 否 | 项目未设置 `target_os` 时使用的目标系统默认值（裸机为 `none`） |
 | `target_triple` | string | 否 | 项目未设置 `target_triple` 时使用的目标三元组默认值 |
-| `tools` | object | 是 | 各工具的可执行文件名（同 `toolchain.Tools`，`cc`、`cxx`、`ar` 和 `ld` 必填） |
+| `tools` | object | 是 | 各工具的可执行文件名（同 `toolchain.Tools`，`cc`、`cxx`、`ar` 和 `ld` 在语义上必填，由选择/构建时的 `ValidateToolchain` 校验） |
 | `installations` | object | 否 | 以宿主 `OS/architecture` 为键的安装配置；不配置则使用明确配置的工具路径或 PATH |
 
 未列出的字段一律拒绝。`default_flags` 属于项目配置，写在 `toolchain.json` 里会让该定义报错；旧的 `host`、`install` 字段同样不再接受。`target_os`/`target_triple` 是工具链提供的默认值，项目的显式声明或用户配置始终优先。
@@ -399,18 +401,18 @@ err := ctx.RunGitLFS(ctx.RepoDir, "pull", "--include=assets/toolchains/aarch64-g
 工具链的发现与安装由 vmake 自身完成，插件不参与：
 
 1. vmake 启动时扫描每个扩展仓库的子目录，逐个加载 `toolchain.json`，独立记录每份定义的成功或错误
-2. 对每个包含当前宿主 `installations` 条目的工具链，注册按需安装回调
+2. 对每个声明了 `installations` 且包含当前宿主条目的工具链，注册按需安装回调；缺少当前宿主条目的定义在发现阶段记录为定义错误，不会注册回调
 3. 构建通过 `--toolchain <name>`、全局 `toolchain` 选项或实际构建的子图选中未安装的工具链时：
    - `method: "lfs"` → 先检查选中的压缩包；完整文件直接复用，指针或缺失文件才执行 `git -c lfs.fetchrecentalways=false lfs pull --include=assets/toolchains/<file> --exclude=`。只拉取当前检出版本的单个文件，已有 LFS 对象可离线复用；拉取后仍为指针或缺失则报错，不扩大下载范围
    - `method: "http"` → 从 `url` 下载压缩包到临时目录
-4. 校验 SHA256、按 `root_dir` 解压到暂存目录，再整体重命名发布到 `~/.vmake/toolchains/<os>/<arch>/<name>/<version>/`，作为工具链的 `InstallPath`
+4. 若声明了 `sha256` 则校验（未声明时跳过校验），按 `root_dir` 解压到暂存目录，再整体重命名发布到 `~/.vmake/toolchains/<os>/<arch>/<name>/<version>/`，作为工具链的 `InstallPath`
 5. 安装过程持有文件锁，多个项目并发构建时只会安装一次
 
-工具链的程序通过 `InstallPath/bin` 逐条命令解析，vmake 不会修改进程级 `PATH`。
+工具链的程序通过 `InstallPath/bin` 逐条命令解析（有 `InstallPath` 且工具名为相对路径时严格限定在该目录、不回退 PATH；绝对路径工具直接解析；没有 `InstallPath` 时按 PATH 查找），vmake 的工具链选择不会修改进程级 `PATH`。Windows 启动时会把 Git for Windows 的 Unix userland 目录前置到进程 `PATH`（`internal/gitusr`，用于 `sh`、`tar`、`curl` 等），这与工具链选择无关；工具链目录不会加入进程级 PATH，而是在各命令的环境中提供。
 
-列表、查询、诊断、`clean` 和 `lock update` 不会自动安装工具链。操作确实依赖编译器信息而工具不可用时，会提示先执行 `vmake build --toolchain <name>`。`clean` 只删除当前配置（当前工具链、模式与选项）对应的构建输出；`clean --all` 与 `distclean` 删除所有配置的构建输出（`distclean` 默认保留 `.vmake_deps/` 已下载的源码工作树，仅 `--purge-sources` 一并删除），因此可在工具链缺失时清理构建输出；此时无法执行依赖工具链的 `OnClean` 回调会明确提示。第三方插件显式调用下载接口的行为不受此限制。
+列表、查询、诊断、`clean` 和 `lock update` 不会自动安装工具链。操作确实依赖编译器信息而工具不可用时，会提示先执行 `vmake build --toolchain <name>`。`clean` 只删除当前配置（当前工具链、模式与选项）对应的构建输出，并通过 `Inspect` 校验主工具链，主工具链缺失时会失败；`clean --all` 与 `distclean` 不依赖 `Inspect` 成功，删除所有配置的构建输出（`distclean` 默认保留 `.vmake_deps/` 已下载的源码工作树，仅 `--purge-sources` 一并删除），因此可在工具链缺失时清理构建输出；此时无法执行依赖工具链的 `OnClean` 回调会明确提示并跳过。第三方插件显式调用下载接口的行为不受此限制。
 
-错误仅阻止对应工具链；`vmake toolchain list` 显示定义名称、路径及原因，损坏 JSON 无法识别名称时按路径显示。选择错误定义时不会回退到宿主工具链。`vmake ext update/remove` 跳过插件执行，可用于修复或移除扩展。
+错误只影响其名称对应的工具链，其他工具链仍可用；重名定义会禁用整个名称（不会在多个定义之间挑选）。`vmake toolchain list` 显示定义名称、路径及原因，损坏 JSON 无法识别名称时按路径显示。选择错误定义时不会回退到宿主工具链。`vmake ext update/remove` 跳过插件执行，可用于修复或移除扩展。
 
 ### 项目一侧的目标平台
 
@@ -428,9 +430,9 @@ func Main(p *api.Package) {
 }
 ```
 
-解析优先级从高到低：用户配置（`global.options`/包级选项）→ 项目声明的非空默认值 → 工具链默认值 → 空（`target_os` 回退宿主系统）。空值视为未设置，因此不声明也能获得工具链默认值；`target_os` 用 `"host"` 可回到宿主系统，但清除工具链提供的 `target_triple` 需要选择 `toolchain=host` 或没有目标默认值的工具链。
+解析优先级从高到低为：配置中该包 `entries.options` 的显式值 → 包级非全局选项默认值（会覆盖 `global.options`）→ 项目全局选项默认值/配置 `global.options` → 工具链默认值（仅在仍为空时填充）。空字符串视为未设置；`target_os`/`target_triple` 的空值在已设置值时不会清除它。最终 `target_os` 为空时回退宿主系统。因此不声明也能获得工具链默认值；`target_os` 用 `"host"` 可回到宿主系统，但清除工具链提供的 `target_triple` 需要选择 `toolchain=host` 或没有目标默认值的工具链。
 
-`target_os` 决定产物命名、链接策略和 CMake 的 `CMAKE_SYSTEM_NAME`（裸机为 `none`），`target_triple` 提供 `--host=` 与 `CMAKE_*_COMPILER_TARGET`。CPU/ABI 选项（`-mcpu`、`-mthumb`、`--specs` 等）属于项目，工具链不提供。
+`target_os` 决定产物命名、链接策略和 CMake 的 `CMAKE_SYSTEM_NAME`（裸机 `none` 映射为 `Generic`），`target_triple` 提供 `--host=` 与 `CMAKE_*_COMPILER_TARGET`。CPU/ABI 选项（`-mcpu`、`-mthumb`、`--specs` 等）属于项目，工具链不提供。
 
 ## 实战示例
 

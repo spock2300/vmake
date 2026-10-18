@@ -25,8 +25,9 @@ func newCheckSymbolsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "check-symbols",
 		Short: "Audit exported symbols of shared libraries and binaries via nm",
-		Long: `Scan all built TargetShared and TargetBinary outputs using 'nm -D' and
-report issues automatically — no per-target declaration required.
+		Long: `Scan the built default TargetShared and TargetBinary outputs of local
+packages using 'nm -D' and report issues automatically — no per-target
+declaration required.
 
 Detection categories:
   duplicate-export         Same symbol exported by multiple targets (runtime conflict risk)

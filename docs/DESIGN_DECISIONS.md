@@ -64,8 +64,8 @@
 ## DD-5: 单工作树与按需浅克隆
 
 - 状态: accepted（v4；"每包一棵工作树"保留，跨工程共享镜像部分由 DD-6 取代）
-- 决策: 不再维护共享 bare 镜像。每个包在项目内只物化一棵工作树：远程包 `<project>/.vmake_deps/<repo>/<pkg>/src`，本地 SetGit 包 `.vmake_deps/local/<pkg>/src` 并由 `<pkgDir>/src` 链接。版本发现用一次 `git ls-remote`（只传 ref 列表，不传对象），物化时按 depth=1 直接向上游抓取所选 ref：tag 用 `refs/tags/<tag>` 命名空间（annotated tag 取 peeled commit），branch 存到 `refs/remotes/origin/<name>`，只有 commit 时按 SHA 抓取（服务端不支持时回退全量 clone）。子模块同样 `--depth 1`。本地路径源也走同一条 fetch 路径。
-- 决策: 目标 commit 已检出且上游 URL 未变时就地恢复（`checkout --force --detach` + `clean -fdx`），补丁集变化不触网；不同 commit 或上游 URL 变化时整树重建。树身份包含共享同一棵树的 native 子包补丁集（子包无独立仓库时），任一补丁变化都会重置该树，避免在已打补丁的 checkout 上叠加。补丁、Kconfig `.config` 与脚本内源码改动都作用在这一棵树上。所有命令持有独占工程锁（解析阶段可能物化源码树/链接），同一工程的命令串行执行；每棵树另有 `tree_<hash>.lock` 串行物化。
+- 决策: 不再维护共享 bare 镜像。每个包在项目内只物化一棵工作树：远程包 `<project>/.vmake_deps/<repo>/<owner>/src[/<member>]`，本地 SetGit 包 `.vmake_deps/local/<pkg>/src` 并由 `<pkgDir>/src` 链接。未复用锁定工作树时，native 包版本发现用一次 `git ls-remote`（只传 ref 列表，不传对象），物化时按 depth=1 检出所选 ref（v5 起对象优先来自 DD-6 的共享缓存；ref 解析与未命中仍访问上游）：tag 用 `refs/tags/<tag>` 命名空间（annotated tag 取 peeled commit），branch 存到 `refs/remotes/origin/<name>`，只有 commit 时按 SHA 抓取（服务端不支持时回退全量 clone）。子模块同样 `--depth 1`。本地 SetGit 包也走同一条 fetch 路径；普通本地包直接使用其源码目录。
+- 决策: 目标 commit 已检出且上游 URL 未变时就地恢复（`checkout --force --detach` + `clean -fdx`），已锁定 commit 的补丁集变化不重新抓取对象；不同 commit 或上游 URL 变化时整树重建。树身份包含共享同一棵树的 native 子包（无独立仓库且本次 needed）的补丁集，其中任一补丁变化都会重置该树，避免在已打补丁的 checkout 上叠加。补丁、Kconfig `.config` 与脚本内源码改动都作用在这一棵树上。会解析工程或写工程状态的命令持有独占工程锁（解析阶段可能物化源码树/链接），同一工程的命令串行执行；每棵树另有 `tree_<hash>.lock` 串行物化。
 - 理由: 完整镜像的首次构建要下载整库历史（FreeRTOS-Kernel 等仓库在大陆网络下极慢甚至超时）；`ls-remote` + depth=1 只下载所选版本的快照。当时放弃了跨工程共享镜像：跨工程共享由 DD-6（v5）以内容寻址对象缓存恢复，工作树仍按 depth=1 从该缓存本地 checkout；离线能力不再仅限已有工作树。旧 `cache/mirrors`、`cache/v2`、`vmake_deps` 在布局升级时整体删除，不提供兼容迁移。
 
 ---
@@ -74,7 +74,7 @@
 
 - 状态: accepted（v5，取代 DD-5 中"放弃跨工程共享镜像"的结论；"每包一棵 depth=1 浅工作树"保留）
 - 背景: DD-5 为省流量放弃了共享镜像，代价是同一个 commit 在每个工程/CI job 都要重新向上游 depth=1 抓取，离线能力仅限已有工作树。
-- 决策: 恢复跨工程共享，但**不是全量 bare 镜像**：在 `<cacheDir>/git/<urlhash>.git`（`urlhash = storage.OwnerKey(归一化 URL)`，`VMAKE_GIT_CACHE=off` 可关闭）为每个上游 URL 维护一个 bare 仓库，只累积 vmake 实际 fetch 过的对象。版本发现仍是一次 `git ls-remote`；物化时先把所选 ref/commit 的对象按 depth=1 抓进缓存并锚定到 `refs/vmake/<commit>`，再用 `git fetch --depth 1 file://<cache>` 在项目内建出工作树。命中缓存即不触网；上游不可达但元数据 `refCommits` 记录了该 ref 时也能离线重建；缓存缺失/损坏/URL 变化在 `cache_<urlhash 前16位>.lock` 独占下重建，绝不阻塞构建。
+- 决策: 恢复跨工程共享，但**不是全量 bare 镜像**：在 `<cacheDir>/git/<urlhash>.git`（`urlhash = storage.OwnerKey(归一化 URL)`，`VMAKE_GIT_CACHE=off` 可关闭）为每个上游 URL 维护一个 bare 仓库，只累积 vmake 实际 fetch 过的对象。native 包在需要重新解析版本时仍用一次 `git ls-remote`；物化时先把所选 ref/commit 的对象按 depth=1 抓进缓存并锚定到 `refs/vmake/<commit>`，再用 `git fetch --depth 1 file://<cache>` 在项目内建出工作树。已锁定 commit 命中缓存且 checkout 成功时不访问上游；ref 解析（`ls-remote`）、HEAD 物化、缓存未命中，以及服务端拒绝按 SHA 抓取时的回退仍会访问上游。上游不可达但元数据 `refCommits` 记录了该 ref 时也能离线重建；缓存缺失/损坏/URL 变化在 `cache_<urlhash 前16位>.lock` 独占下重建，绝不阻塞构建。
 - 决策: 服务端拒绝按 SHA 抓取（`uploadpack.allowAnySHA1InWant` 关闭）时，缓存兜底只做**限深的 ref tip 抓取**（`--depth 1` 的 `refs/heads/*`、`refs/tags/*`），绝不拉全历史；`cloneHeadTree` 的 commit 记录是 best-effort，只尝试按 SHA 抓取、失败即放弃，不会把一次浅 clone 变成大下载。锚点之外的 commit 仍回退到原网络 clone 路径。
 - 理由: 内容寻址缓存（git 原生 SHA 命名）让同一 commit 跨工程只下载一次，同时保持 depth=1、单 commit、自包含的工作树；布局为纯增量，升级不删除既有工作树或对象缓存。
 

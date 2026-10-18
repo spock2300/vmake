@@ -6,7 +6,7 @@
 
 **核心原则：一切皆包，一切皆依赖。**
 
-uboot、kernel、busybox、app、分区、firmware 都是包。它们遵循完全相同的生命周期（OnRequire → OnConfig → OnBuild → OnInstall），只是每个阶段的实现不同。vmake 通过依赖图自动确定拓扑序，从最底层的工具链组件到最终的固件镜像，逐层构建。
+uboot、kernel、busybox、app、分区、firmware 都是包。它们遵循完全相同的四阶段生命周期（OnRequire → OnConfig → OnBuild → OnInstall），只是每个阶段的实现不同。另有 `OnPackage` 单槽回调，在 `Main` 返回后、本包 `OnRequire` 执行前运行一次；`OnClean` 在清理时执行。vmake 通过依赖图自动确定拓扑序，从最底层的工具链组件到最终的固件镜像，逐层构建。
 
 **设计思路：**
 1. **KConfig 管理** — `vmake config` 嵌套管理 U-Boot/Kernel/Busybox 的 `.config`，统一的预设和 menuconfig 流程
@@ -26,6 +26,8 @@ uboot、kernel、busybox、app、分区、firmware 都是包。它们遵循完�
 OnRequire → OnConfig → OnBuild → OnInstall
 ```
 
+`OnPackage` 不是第五个构建阶段：它是在 `Main` 返回后、本包 `OnRequire` 发现依赖之前执行一次的单槽回调（每包只能注册一个），用于设置 `SetConfigFiles` 等包级元数据。
+
 可选的清理阶段：
 
 ```
@@ -34,6 +36,7 @@ OnClean（vmake clean 时执行，用于自定义清理逻辑如 make clean）
 
 | 阶段 | 职责 | 常见操作 |
 |------|------|----------|
+| **OnPackage** | 包级元数据 | `SetConfigFiles(".config")` |
 | **OnRequire** | 声明依赖 | `AddRequires("busybox", "myapp")` |
 | **OnConfig** | 声明配置项 | `Option("debug")`、`KConfig("busybox")` |
 | **OnBuild** | 定义构建目标 | `Target("xxx").SetKind(...)` + `SetBuildFunc(...)` |
@@ -68,15 +71,17 @@ BuildFunc 中访问依赖产物有两种方式：
 
 **有 InstallDir 的包**（`pkg.Deps()` 自动填充）：
 
-`populateDepsFromGraph` 会为所有有 InstallDir 的依赖包填充 `pkg.Deps()`，不区分本地或远程。没有 InstallDir 的包会被跳过。
+`populateDepsFromGraph` 填充目标依赖边展开后的包（`AddDeps("pkg")`/`AddDeps("pkg:*")` 会展开为该包的 target 及其传递包依赖），且只保留 `InstallDir` 非空的包。本地包没有 `InstallDir`，因此实际可见的通常是远程包的构建暂存安装目录。没有 `InstallDir` 的包会被跳过。
 
 ```go
 for _, dep := range pkg.Deps() {
-    dep.InstallDir  // 完整安装目录
-    dep.BinDir      // bin 子目录
-    dep.LibDir      // lib 子目录
+    dep.InstallDir  // 完整安装目录（远程包的 out/.../install）
+    dep.BinDir      // <InstallDir>/bin；vmake 的 target 自动发布不会写入这里
+    dep.LibDir      // 通常为 <InstallDir>/lib（存在 lib64 时为 lib64）
 }
 ```
+
+构建阶段的自动发布把所有非 Void/Object、非测试 target 的产物复制到 `<InstallDir>/lib`（包括可执行文件），不会写入 `<InstallDir>/bin`；只有执行 `vmake build --install` 时，安装器才按 target 类型写入所选 prefix 的 `bin/`、`lib/` 等目录。依赖的可执行文件应通过 `DepOutput`/`DepBuildDir` 获取，或由该包自己的构建/安装步骤显式放入 `bin/`。
 
 **无 InstallDir 的包**（闭包捕获 `DepOutput` / `DepBuildDir`）：
 
@@ -250,6 +255,8 @@ func (p *Package) EnsureConfig(srcDir string) bool
 3. 若包有 KConfig 条目，调用 `ApplyKConfigPatches` 应用 post-defconfig 补丁
 4. 返回 `bool`：`true` 表示刚生成了配置，`false` 表示已存在
 
+返回值只表示本次是否生成配置，不表示成功/失败：需要生成但缺少预设、`make` 失败或补丁应用失败都会通过 `fatalScript` 中止脚本，不会返回 `false`。若配置已存在且非空，则直接返回 `false`，不会要求预设。
+
 导入 `path/filepath` 后，在 BuildFunc 中使用；KBuild 的 guarded reset 保留 Makefile 对编译 flags 的控制：
 
 ```go
@@ -275,12 +282,12 @@ SetKConfigPatches(map[string]string{
 })
 ```
 
-补丁在三个位置生效：
-- **EnsureConfig**：构建时自动应用
-- **restoreKConfigFiles**：Phase 2.5 恢复 `.config` 后应用
-- **TUI ensureConfigCmd**：交互式配置时应用
+补丁是 post-defconfig 生成步骤的一部分，只在以下条件生效：
+- **EnsureConfig**：仅在 `.config` 缺失/为空、刚执行 preset 生成后应用
+- **restoreKConfigFiles**：仅在 config.json 的 kconfig 内容与磁盘 `.config` 不同、写入后应用；内容已一致时直接跳过，因此只修改 `SetKConfigPatches` 不会让已有配置重新应用补丁
+- **TUI ensureConfigCmd**：仅在 `.config` 不存在/为空时生成后应用；已有非空 `.config` 会直接进入 menuconfig，不重新应用补丁
 
-底层实现为 `api.ApplyKConfigPatches(configPath, patches)`，对 `.config` 文件做字符串替换。
+已有配置需要删除 `.config`，或清空 config.json 中该包的 kconfig（preset 切换路径）后重新生成，才会采用新的补丁值。底层实现为 `api.ApplyKConfigPatches(configPath, patches)`，对 `.config` 文件做字符串替换。
 
 ---
 
@@ -341,7 +348,7 @@ menuconfig 采用两步执行：
 **Step 1: ensureConfigCmd**
 1. 检查 `.config` 是否存在且非空
 2. 若不存在或为空，使用所选工具链的 make 执行 `<preset>` 生成初始配置
-3. 若有 `SetKConfigPatches`，应用补丁
+3. 若刚生成配置且有 `SetKConfigPatches`，应用补丁；已有非空 `.config` 直接跳过本步骤
 
 **Step 2: runMenuconfigCmd**
 1. 在源码目录执行 `MenuconfigCmd()` 程序与 `MenuconfigArgs()` 参数（默认使用所选工具链的 `make menuconfig`），不拆分包含空格的程序路径或参数
@@ -360,10 +367,10 @@ vmake 的 `Package` 有三个目录：`SourceDir`（源码目录）、`BuildDir`
 
 | 包类型 | BuildDir | 原因 |
 |--------|----------|------|
-| 本地包 | `<SourceDir>/build/<key>/` | 与源码分离，key 由工具链+模式+选项生成 |
-| 远程包 | `<项目>/.vmake_deps/<repo>/<pkg>/out/<sha256(member)>/<key>/build/` | 项目内工作树（`.vmake_deps/`）下，与 InstallDir（`.../out/<sha256(member)>/<key>/install`）同级 |
+| 本地包 | `<SourceDir>/build/<key>/` | 与源码分离；key 含工具链+模式+选项+全局 flags/commit/脚本哈希 |
+| 远程包 | `<项目>/.vmake_deps/<repo>/<owner>/out/<sha256(member)>/<key>/build/` | 项目内工作树；`owner` 是根父包，`member` 为 native 子包相对路径（普通包为空）。InstallDir 为同级 `install/` |
 
-其中 `key` 由 `build.BuildKey(toolchain, mode, options, extra)` 生成（`extra` 包含版本、commit、全局 flags 哈希、补丁哈希、脚本哈希），确保不同工具链/模式/选项/版本的构建产物隔离。
+其中 `key` 由 `build.BuildKeyE(toolchain, mode, options, extra)` 生成。远程包的 `extra` 包含版本、commit、全局 flags 哈希、补丁哈希和脚本哈希；本地包的 `extra` 只包含 commit、全局 flags 哈希和脚本哈希，版本与补丁哈希不进入本地键（`pkg/pipeline/keys.go`）。因此远程包在不同工具链/模式/选项/版本/补丁下隔离；本地 `SetGit` 包的版本变化会通过 commit 改变键，补丁变化只重置工作树并复用同一构建目录；普通本地包没有版本/工作树物化，补丁直接作用在包目录。
 
 ### 5.2 交叉编译环境变量
 
@@ -703,7 +710,8 @@ DepBuildDir("rootfs:rootfs")    = <SourceDir>/build/<key>/
                                     ├── staging/      (中间目录)
                                     └── rootfs.sqsh   (分区镜像)
 
-远程包 BuildDir                 = <项目>/.vmake_deps/<repo>/<pkg>/out/<sha256(member)>/<key>/build/
+远程包 BuildDir                 = <项目>/.vmake_deps/<repo>/<owner>/out/<sha256(member)>/<key>/build/
+                                    (owner 为根父包；普通包 member 为空字符串)
 ```
 
 > `DepBuildDir(depRef)` 内部实现为 `filepath.Dir(ctx.DepOutput(depRef))`。TargetVoid 没有实际产物文件，`DepOutput` 返回的路径指向 `<BuildDir>/<targetName>`，该文件不存在但路径有效。下游包通过 `DepBuildDir` 获取 BuildDir，再按约定拼接文件名。
@@ -731,7 +739,7 @@ vmake build
 ├── Phase 2a: OnConfig → 收集 Options + KConfig 条目 → 运行 OnApply 回调
 │   └── KConfig 条目注册完毕，但尚未恢复 .config
 │
-├── Phase 2b: FilterDeps → 使用真实配置重新执行 OnRequire，替换节点依赖，
+├── Phase 2b: FilterDeps → 使用已解析的包级配置重新执行 OnRequire，替换节点依赖，
 │              BFS 收集实际需要的包（移除未选中的条件依赖）
 │
 ├── FilterDeps 之后：物化远程包源码 → 写入 .vmake/vmake.lock → 应用补丁
@@ -833,11 +841,11 @@ my-firmware/
 | 配置生成 | EnsureConfig | 检查 .config 存在性，自动 `make <preset>` + SetKConfigPatches |
 | 配置恢复 | restoreKConfigFiles skip rules | 无条目跳过、空 kconfig 删除、有内容仅变化时写入（避免 mtime 失效） |
 | 交叉编译 | Make() 自动传递 Env() | 不改变 BuildFunc 使用方式，`pkg.Make()` 自动携带 CROSS_COMPILE |
-| BuildDir | 与 SourceDir 分离 | 本地包 `<SourceDir>/build/<key>/`，远程包 `<项目>/.vmake_deps/<repo>/<pkg>/out/<sha256(member)>/<key>/build/` |
+| BuildDir | 与 SourceDir 分离 | 本地包 `<SourceDir>/build/<key>/`，远程包 `<项目>/.vmake_deps/<repo>/<owner>/out/<sha256(member)>/<key>/build/` |
 | 外部增量构建 | TargetVoid + Make/CMake | 每会话进入一次回调，由外部工具检查配置、依赖和产物 |
 | 分区 | 普通包 | BuildFunc 做 overlay + collect + 外部工具生成分区镜像，不新增 API |
 | 固件 | 普通包 | 收集分区镜像文件 → 合成固件，完全用户可控 |
 | 依赖产物路径 | DepBuildDir | 封装 `filepath.Dir(DepOutput(...))`，推荐 API |
 | 文件操作 | api.CopyFile/CopyDir | 属于 pkg/api 包，build.go 插件可直接 import |
 | autoWire | autoWireRequireDeps（v2 已移除） | v2 中移除，每个目标必须显式 AddDeps |
-| pkg.Deps() | 有 InstallDir 即填充 | 不区分本地/远程，由 populateDepsFromGraph 统一处理 |
+| pkg.Deps() | 目标依赖边展开后的包（含传递包依赖）且 InstallDir 非空 | 由 `populateDepsFromGraph` 填充；本地包无 InstallDir，实际主要是远程包的 staging |

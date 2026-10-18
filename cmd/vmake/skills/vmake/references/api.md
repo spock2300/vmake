@@ -18,7 +18,7 @@ Go-based C/C++ build system. Build instructions are written in Go (`build.go`) u
 |-------|-------------|---------|
 | 1 | `OnRequire` | Declare deps (runs with nil config; top-level packages resolved eagerly, native sub-packages lazily) |
 | 2 | `OnConfig` | Define build options, resolve values, run `OnApply` callbacks |
-| 3 | `FilterDeps` | Re-runs `OnRequire` with real config; recomputes deps; BFS needed packages |
+| 3 | `FilterDeps` | Re-runs `OnRequire` with this package's entry option values; recomputes deps; BFS needed packages |
 | 4 | `OnBuild` | Generate build targets |
 | 5 | Compile & Link | Scheduler compiles sources and links targets |
 | 6* | Install | Optional install (only with `--install` flag) |
@@ -86,9 +86,9 @@ Import: `github.com/spock2300/vmake/pkg/api`
 |--------|-----------|-------------|
 | `Target` | `(name string) *Target` | Get or create a target |
 
-### Build Helpers (called on the `*Package` inside `SetBuildFunc`)
+### Build Helpers (methods on the bound `*Package`)
 
-The following helpers return **nothing** and raise a script error on failure; the execution boundary catches it and releases resources: `Run`, `RunIn`, `CMakeConfigure`, `CMakeBuild`, `CMakeInstall` (plus the `CleanContext` `Run`/`RunIn` wrappers). Real-error helpers: `RunEnv`, `Make`, `Configure`. Never `return` a void-return helper — call it as a statement. These are methods on `*Package`, so they are only callable inside `SetBuildFunc(func(p *api.Package) error { ... })`. `BuildContext` offers `Exec` for one-off commands; `CleanContext` has its own `Run`/`RunIn`/`RunEnv`/`Make` wrappers.
+The following helpers return **nothing** and raise a script error on failure; the execution boundary catches it and releases resources: `Run`, `RunIn`, `CMakeConfigure`, `CMakeBuild`, `CMakeInstall` (plus the `CleanContext` `Run`/`RunIn` wrappers). Real-error helpers: `RunEnv`, `Make`, `Configure`. Never `return` a void-return helper — call it as a statement. These are methods on `*Package`: call them from `SetBuildFunc(func(p *api.Package) error { ... })` or from the `p` captured in `Main` while `OnBuild` runs, where VMake has bound the package's source/build directories and toolchain. `OnPackage`, `OnConfig`, and `OnRequire` run before that binding, so toolchain getters (`CC`, `Env`, ...) and command helpers must not be used there. `BuildContext` offers `Exec` for one-off commands; `CleanContext` has its own `Run`/`RunIn`/`RunEnv`/`Make` wrappers.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -157,13 +157,17 @@ operations the helpers cannot express.
   and no greater than that budget; smaller requests reduce parallelism. Bare
   `-j` and inherited Make jobserver tokens are rejected. CMakeInstall stays serial
   unless parallelism is requested. Default make is resolved only when make is used.
-- `CMakeConfigure` re-runs configure only when its fingerprint changes, so repeated
-  builds reuse the configured tree. The fingerprint covers the generated and
+- `CMakeConfigure` re-runs configure when its fingerprint changes or the recorded
+  configure outputs are missing, so repeated builds reuse an intact configured
+  tree. The fingerprint covers the generated and
   forwarded configure arguments, `CMAKE_*`/`PATH` environment, the resolved cmake
   executable contents, and the contents of every
   `CMakeLists.txt`/`CMakePresets.json`/`CMakeUserPresets.json`/`*.cmake`/`*.cmake.in`
-  under `SrcDir()`; the scan skips `.git`, `.vmake_deps`, `<SourceDir>/build`,
-  `CMakeFiles/`, and `cmake_install.cmake`. A cache hit logs
+  under `SrcDir()`; the scan skips `.git`, `.vmake_deps`, `CMakeFiles/`,
+  `cmake_install.cmake`, and the invocation's build roots when they are nested
+  inside `SrcDir()` (`BuildDir()`, `CMakeBuildDir()`, and the parent of `BuildDir()`).
+  A cache hit also requires `CMakeCache.txt`, `CMakeFiles/`, and (when the
+  generator is known) its top-level build file to still exist; it logs
   `cmake configure (cached): <CMakeBuildDir>` and skips configure; each successful
   configure writes `<CMakeBuildDir>/.vmake_configure.json`. Dry-run neither reads
   nor writes the stamp, and any fingerprint failure is treated as a miss, never a
@@ -196,7 +200,7 @@ own build tree and publish the staged archive through the getter.
 | `CC()` | `string` | C compiler |
 | `CXX()` | `string` | C++ compiler |
 | `AR()` | `string` | Archiver |
-| `TargetTriple()` | `string` | Resolved target triple (user configuration → project default → toolchain `target_triple` default), e.g. `arm-none-eabi` |
+| `TargetTriple()` | `string` | Resolved target triple (package entry value → package-local non-global default → project global config/default → toolchain `target_triple` default), e.g. `arm-none-eabi` |
 | `TargetOS()` | `string` | Resolved target OS (same resolution order); `none` for bare metal, host OS when unset |
 | `Prefix()` | `string` | Raw configured toolchain prefix, including the trailing `-`, e.g. `arm-none-eabi-`; does not add the installation path |
 | `CFlags()` / `CXXFlags()` / `LDFlags()` | `string` | Default compiler/linker flags (builtin `host` toolchain only) |
@@ -204,14 +208,14 @@ own build tree and publish the staged archive through the getter.
 | `Size()` | `string` | size tool path |
 | `ObjDump()` | `string` | objdump tool path |
 | `NM()` | `string` | nm tool path |
-| `SourceDir()` | `string` | Package root (where build.go lives) |
+| `SourceDir()` | `string` | Package source root: the local package directory, or the downloaded working tree (`src[/<member>]`) for remote packages; a registry wrapper's build.go stays in `ScriptDir()`, not here |
 | `SrcDir()` | `string` | Source code directory (SourceDir()/src/ when SetGit downloads) |
 | `SrcDirRaw()` | `string` | Raw source dir without the SourceDir fallback; empty unless a source dir was set (the framework sets it itself for `SetGit` workspaces) |
 | `BuildDir()` | `string` | Build scratch directory |
 | `InstallDir()` | `string` | Installation prefix |
 | `CMakeBuildDir()` | `string` | CMake build tree, default BuildDir()/cmake |
 | `CMakeInstallDir()` | `string` | CMake installation prefix, default remote InstallDir() or local BuildDir()/staging |
-| `ScriptDir()` | `string` | Build script directory (set via `SetScriptDir`; defaults to `""`) |
+| `ScriptDir()` | `string` | Directory containing the loaded build.go, set by the loader via `SetScriptDir` (empty only for packages created without a script directory) |
 | `Env()` | `map[string]string` | Toolchain env vars (CC, CXX, AR, etc.) |
 | `Deps()` | `map[string]*InstalledPackage` | Resolved dependencies |
 | `GetRequires()` | `*Requires` | Package requires |
@@ -233,11 +237,17 @@ own build tree and publish the staged archive through the getter.
 | `GetPatches()` | `[]string` | Git patch paths |
 | `ConfigFiles()` | `[]string` | Package configuration-file metadata |
 | `DryRun()` | `bool` | Dry run mode |
-| `SetDep` | `(name string, pkg *InstalledPackage) *Package` | Set resolved dependency |
 
 `Prefix()` includes the separator: append `"gcc"`, never `"-gcc"`. Migrate old callers that add a hyphen themselves. Use `TargetTriple()` for an external argument that expects a target triple such as `arm-none-eabi`.
 
 `p.Env()` resolves configured tools to executable paths. For an installed toolchain, `p.Env()["CROSS_COMPILE"]` includes its `bin` directory and complete prefix, such as `/path/to/toolchain/bin/arm-none-eabi-`; do not append another hyphen. Prefer `p.CMakeConfigure()`, which passes resolved tools automatically. If a special operation requires calling CMake manually, pass `p.Env()["CC"]`, `["CXX"]` and `["AR"]` instead of reconstructing names from a prefix or relying on PATH.
+
+### Dependency State
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `SetDep` | `(name string, pkg *InstalledPackage) *Package` | Record one resolved dependency (fluent) |
+| `SetDeps` | `(deps map[string]*InstalledPackage) *Package` | Replace the resolved dependency map (fluent) |
 
 ### Package KConfig Methods
 
@@ -246,7 +256,7 @@ own build tree and publish the staged archive through the getter.
 | `AddKConfig` | `(name string) *KConfigEntry` | Create KConfig entry (**single entry per package** — a second `AddKConfig` is a build error) |
 | `KConfigEntries` | `() []*KConfigEntry` | All KConfig entries |
 | `SelectedPreset` | `() string` | Selected preset name (selected > default) |
-| `EnsureConfig` | `(srcDir string) bool` | Check `.config` in srcDir exists & non-empty; if not, run `make <preset>` there and apply `SetKConfigPatches`. Fatal when no preset is selected (declare `SetDefaultPreset` or pick one in the TUI) |
+| `EnsureConfig` | `(srcDir string) bool` | Check the KConfig entry's `ConfigPath()` (default `.config`) under srcDir exists & non-empty; if not, run `make <preset>` there (passing `KCONFIG_CONFIG` for a non-default path) and apply `SetKConfigPatches`. Returns true when it regenerated the file; when regeneration is needed but no preset is selected, it is fatal (declare `SetDefaultPreset` or pick one in the TUI). An existing non-empty config needs no preset |
 
 ### Package Linker Script Methods
 
@@ -267,7 +277,7 @@ All setters are fluent (return `*Target`).
 |--------|-----------|-------------|
 | `SetKind` | `(kind TargetKind)` | Binary/Static/Shared/Object/Void |
 | `SetDefault` | `(isDefault bool)` | Include in default build |
-| `SetTest` | `(v bool)` | Mark as test target (does NOT touch isDefault — scheduler decides inclusion; `vmake build` skips tests, `--tests`/`vmake test` include them) |
+| `SetTest` | `(v bool)` | Mark as test target (does NOT touch isDefault — scheduler decides inclusion; `vmake build` skips tests, `--tests`/`vmake test` include them, but a target with `SetDefault(false)` stays excluded everywhere) |
 | `AddFiles` | `(files ...any)` | Source files (globs, strings, []string) |
 | `RemoveFiles` | `(files ...any)` | Exclude files from AddFiles glob expansion (pattern matching) |
 | `AddIncludes` | `(dirs ...any)` | Include directories |
@@ -275,26 +285,20 @@ All setters are fluent (return `*Target`).
 | `AddDefines` | `(defines ...any)` | Preprocessor defines |
 | `AddLinks` | `(libs ...any)` | Libraries to link |
 | `AddProvidedLibs` | `(libs ...string)` | Libraries this target provides to consumers (e.g. `"ssl"`, `"crypto"`) |
-| `AddDeps` | `(targets ...string)` | Dependencies: same pkg (`"utils"`), cross pkg (`"pkg:name"`), wildcard (`"pkg:*"`), third-party (`"official/zlib"`). Empty entries are ignored; whitespace, stray `:` and empty segments are build errors |
+| `AddDeps` | `(targets ...string)` | Dependencies: same pkg (`"utils"`), cross pkg (`"pkg:name"`), wildcard (`"pkg:*"`), third-party (`"official/zlib"`). Empty entries are ignored; whitespace, multiple `:`, empty segments, and path-shape errors in refs without `:` are declaration-time build errors. A malformed path inside a `pkg:target` ref is rejected later at graph construction |
 | `AddCFlags` | `(flags ...any)` | C compiler flags |
 | `AddCxxFlags` | `(flags ...any)` | C++ compiler flags |
 | `AddLdFlags` | `(flags ...any)` | Linker flags |
-| `SetBuildFunc` | `(fn func(p *Package) error)` | Custom build logic (for third-party packages) |
-| `SetPrebuilt` | `(path string)` | Pre-compiled artifact — skip compilation; output is a symlink to the source (copy when post-link steps exist) (fatal on double-set) |
+| `SetBuildFunc` | `(fn func(p *Package) error)` | Custom build logic; executed only for `TargetVoid` (ignored for other kinds) |
+| `SetPrebuilt` | `(path string)` | Pre-compiled artifact — skip compilation; output is a symlink to the source (copy when post-link steps exist) (fatal on double-set; ignored for `TargetVoid`) |
 | `SetInstallDir` | `(dir string)` | Install directory |
 | `SetInstall` | `(install bool)` | Control install |
-| `SetLinkerScript` | `(path string)` | Linker script (passes `-T` to linker; fatal on double-set) |
-| `SetVersionScript` | `(path string)` | Version script for symbol visibility (Shared/Binary only; fatal on double-set) |
-| `AddExcludeLibs` | `(libs ...string)` | Strip symbols from absorbed static archives via `-Wl,--exclude-libs=` |
-| `SetSymbolBinding` | `(mode string)` | `"static"` → `-Bsymbolic`; `"static-functions"` → `-Bsymbolic-functions` |
+| `SetLinkerScript` | `(path string)` | Linker script (passes `-T` to linker; `TargetBinary` only; fatal on double-set) |
+| `SetVersionScript` | `(path string)` | Version script for symbol visibility (Shared/Binary only, ELF only; fatal on double-set) |
+| `AddExcludeLibs` | `(libs ...string)` | Strip symbols from absorbed static archives via `-Wl,--exclude-libs=` (Shared/Binary only, ELF only) |
+| `SetSymbolBinding` | `(mode string)` | `"static"` → `-Bsymbolic`; `"static-functions"` → `-Bsymbolic-functions` (Shared/Binary only, ELF only) |
 | `SetSymbolPrefix` | `(prefix string)` | Post-link `objcopy --prefix-symbols=` (fatal on double-set) |
-
-`AddDeps` ref grammar (`pkg/api/depref.go`): a ref without `:` and `/` is a target of the declaring package; `pkg:target` selects one target; `pkg:*` or a `/`-containing path (e.g. `"official/zlib"`) expands to all targets of that package plus its transitive package deps (flat closure, deduplicated). Validation is fatal at declaration time for whitespace, multiple `:`, empty segments and malformed paths; an exactly empty entry is silently ignored. Unknown targets (`dependency not found`), unknown packages (`package not found in build graph`) and cycles fail at build-graph time. A `pkg` part without `/` in `pkg:target` is first resolved relative to the declaring (sub-)package.
-
-`AddRequires` and `AddDeps` are independent steps: `AddRequires` (in `OnRequire`) resolves and downloads the package, `AddDeps` (in `OnBuild`) creates the build-graph edge including linking and public-include propagation. Third-party packages normally need both.
-
-Sub-packages: a nested `build.go` in a native remote package's checkout is an independent package named `parent/sub`, versioned by the parent (no separate lockfile entry). Only native repos have sub-packages (registry wrappers never do — design decision DD-1, see `docs/DESIGN_DECISIONS.md`); they load lazily when depended on. Reference from outside by full name (`"subtest/mother/sub_a:*"`; list the parent before its sub-packages in `AddRequires`); inside a sub-package use short names for siblings (`"sub_b:utils_b"`). `DepOutput`/`DepBuildDir`, `BuildSubGraph` and `ImportConfig` use the same short-name rule. A needed sub-package requires its native parent to be needed too. A parent cannot require its own sub-packages in `OnRequire`. Example: `test_data/25_subpackage`.
-| `UseDependencyLinkerScript` | `()` | Auto-inherit linker script from dependency |
+| `UseDependencyLinkerScript` | `()` | Auto-inherit linker script from dependency (`TargetBinary` only) |
 | `AddPostLink` | `(tool string, args ...string)` | Post-link step; only the toolchain tools objcopy/size/objdump/nm/strip resolve (other names fail with "post-link tool not found"). Supports the `{output}` placeholder |
 | `AddPostLinkOutputs` | `(paths ...string)` | Explicit extra outputs for missing-output rebuilds and automatic installation; supports `{output}`, SourceDir-relative paths and absolute paths. Hex/Bin/Strip helpers declare their outputs automatically; command arguments never imply outputs |
 | `AddPostLinkHex` | `()` | `objcopy -O ihex {output} {output}.hex` |
@@ -304,7 +308,13 @@ Sub-packages: a nested `build.go` in a native remote package's checkout is an in
 | `AddPostLinkDeps` | `(files ...string)` | Extra input files for post-link steps (SourceDir-relative); any content or permission change (a bare `touch` does not count) or a missing input → relink + re-run all post-link steps. Prebuilt targets with post-link steps are copied before modification and still relink when these inputs change |
 | `AddBinHeader` | `(inputs ...any)` | Binary files → `.h` headers; output to `BuildDir()/generated/`; incremental via mtime |
 
+`AddDeps` ref grammar (`pkg/api/depref.go`): a ref without `:` and `/` is a target of the declaring package; `pkg:target` selects one target; `pkg:*` or a `/`-containing path (e.g. `"official/zlib"`) expands to all targets of that package plus its transitive package deps (flat closure, deduplicated). Validation is fatal at declaration time for whitespace, multiple `:`, empty segments, and path-shape errors (leading/trailing `/` or `//`) in refs without `:`; an exactly empty entry is silently ignored. A malformed path inside a `pkg:target` ref is not validated at declaration and fails during graph construction (`dependency not found` / `package not found in build graph`). Unknown targets (`dependency not found`), unknown packages (`package not found in build graph`) and cycles fail at build-graph time. A `pkg` part without `/` in `pkg:target` is first resolved relative to the declaring (sub-)package.
+
+`AddRequires` and `AddDeps` are independent steps: `AddRequires` (in `OnRequire`) resolves and downloads the package, `AddDeps` (in `OnBuild`) creates the build-graph edge including linking and public-include propagation. Third-party packages normally need both.
+
 `SetLanguages(langs ...string)` exists but has **no effect** — language is auto-detected from file extension (`.c` → C, `.cc/.cpp/.cxx/.C` → C++).
+
+Sub-packages: a nested `build.go` in a native remote package's checkout is an independent package named `parent/sub`, versioned by the parent (no separate lockfile entry). Only native repos have sub-packages (registry wrappers never do — design decision DD-1, see `docs/DESIGN_DECISIONS.md`); they load lazily when depended on. Reference from outside by full name (`"subtest/mother/sub_a:*"`; list the parent before its sub-packages in `AddRequires`); inside a sub-package use short names for siblings (`"sub_b:utils_b"`). `DepOutput`/`DepBuildDir`, `BuildSubGraph` and `ImportConfig` use the same short-name rule. A needed sub-package requires its native parent to be needed too. A parent cannot require its own sub-packages in `OnRequire`. Example: `test_data/25_subpackage`.
 
 ### Removers
 
@@ -384,8 +394,8 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `AddInstalls(src, dest)` | Install entry |
 | `SetInstallFilter(filter)` | Install file filter |
 | `BuildSubGraph(pkgName)` | Build package as independent sub-graph |
-| `DepOutput(depRef) string` | Get output path of dependency target |
-| `DepBuildDir(depRef) string` | Get build directory of dependency target |
+| `DepOutput(depRef) string` | Get output path of dependency target (`pkg` or `pkg:target`; no same-package shorthand or `pkg:*` wildcard) |
+| `DepBuildDir(depRef) string` | Get build directory of dependency target (same ref rules as `DepOutput`) |
 | `Exec(name, args...)` | Run command with logging (script error on failure) |
 | `GenerateConfigHeader()` | Set `genConfigHeader = true`; propagated to `Package.SetGenConfigHeader(true)` — generates `autoconf.h` during scheduler build |
 | `GenerateConfigDefines()` | Set `genConfigDefines = true`; on processing, reads `ImportConfigs()`, merges local + imported options, adds `-DCONFIG_*` defines to all targets |
@@ -417,7 +427,7 @@ All context types embed `ConfigAccessor` for option value access (see below).
 
 | Method | Description |
 |--------|-------------|
-| `SourceDir() string` | Package root directory |
+| `SourceDir() string` | Package source root (the downloaded working tree for remote packages) |
 | `BuildDir() string` | Build output directory |
 | `SrcDir() string` | Source code directory (differs from SourceDir when `SetGit()` is used) |
 | `Run(name, args...)` | Run command in BuildDir (script error on failure; returns nothing) |
@@ -428,7 +438,7 @@ All context types embed `ConfigAccessor` for option value access (see below).
 
 ### RequireContext
 
-OnRequire callbacks execute twice: first during graph discovery with nil config values (Phase 1), then again during FilterDeps with actual config values from config.json (Phase 3). This enables option-conditional dependencies. During discovery, direct value reads (`ctx.Bool/String/Int`) are build errors — use `ctx.When`/`ctx.If`/`ctx.Select`. Pass-2 requires **replace** the dependency edges: a dep whose guard is false in pass 2 is dropped, but a dep declared only in pass 2 (not discovered in Phase 1) is a build error. Declare each dependency where pass 1 can see it — either unconditionally or behind a discovery-aware guard (`ctx.When`/`ctx.If`); pass 1 evaluates `When` as true and `If` as its then-values, so guarded deps are still discovered.
+OnRequire callbacks execute twice: first during graph discovery with nil config values (Phase 1), then again during FilterDeps with this package's `entries.<pkg>.options` values (Phase 3). Global configuration values are not merged into this second pass; unset reads fall back to declared defaults. This enables option-conditional dependencies. During discovery, direct value reads (`ctx.Bool/String/Int`) are build errors — use `ctx.When`/`ctx.If`/`ctx.Select`. Pass-2 requires **replace** this package's dependency edges: a dep whose guard is false in pass 2 is dropped. Adding a dep in pass 2 is accepted only when that package is already in the resolved graph; otherwise `FilterDeps` fails with `dependency ... not found in dependency graph`. Declare each dependency where pass 1 can see it — either unconditionally or behind a discovery-aware guard (`ctx.When`/`ctx.If`); pass 1 evaluates `When` as true and `If` as its then-values, so guarded deps are still discovered.
 
 | Method | Description |
 |--------|-------------|
@@ -449,7 +459,7 @@ Strict in script contexts (`OnConfig`/`OnBuild`/`OnInstall`/`OnClean`/`OnRequire
 | `If` | `(option string, then ...string) []string` | `then` values if the bool option is true; returns `nil` when false. When config is nil (discovery) returns `then` unconditionally; when unset, falls back to the declared default. Bool options only — other types are a build error |
 | `Select` | `(option string, mapping map[string]string) string` | Map option value; returns `""` when config is nil (discovery) or value unmapped |
 | `When` | `(option string, value any) bool` | Compare option value (numerics across int/float64); falls back to declared default when unset; returns `true` when config is nil (discovery) |
-| `Option` | `(name string) *Option` | Get or create option (build error after the config phase) |
+| `Option` | `(name string) *Option` | Get or create option. Intended for `OnConfig`: `BuildContext`, `InstallContext`, and `CleanContext` reject declaration after the config phase (build error). `ConfigContext`, `RequireContext`, and `*Package` do not enforce this, but a late declaration never participates in value resolution — reads fall back to its default/zero value |
 
 ---
 
@@ -464,7 +474,7 @@ All setters are fluent (return `*Option`).
 | `SetDescription` | `(desc string)` | Description |
 | `SetValues` | `(vals ...string)` | Choice values (OptionChoice); defaults must be among them |
 | `SetShowIf` | `(fn func(ctx *ConfigContext) bool)` | Conditional visibility |
-| `SetOnApply` | `(fn func(ctx *ConfigContext, val any))` | Callback after option values resolved, once per build, in sorted option-name order. `val` is normalized to the declared type: `bool` (OptionBool), `int` (OptionInt — JSON `float64` converted to `int`), `string` (OptionString/OptionChoice). The callback's context carries real option values, so reading other options works |
+| `SetOnApply` | `(fn func(ctx *ConfigContext, val any))` | Callback after option values resolved, once per build per package, in sorted option-name order. `val` is normalized for `OptionInt` only (JSON `float64`/`int64` converted to `int`); other types are passed through unchanged. The callback's context carries real option values, so reading other options works |
 | `SetGroup` | `(group string)` | Display group |
 | `SetMacroName` | `(name string)` | Global options only: override the auto-exported `CONFIG_<NAME>` macro name; a `%s`/`%v` in the name renders the option value (`PY32F539xx%s` + `M` → `PY32F539xxM=1`) |
 
@@ -512,7 +522,7 @@ Note: without `SetDefault`, the zero value applies (`false` for OptionBool, `""`
 	const TargetOSOptionName     = "target_os"
 	const TargetTripleOptionName = "target_triple"
 
-Cross-compilation projects declare the platform through these global options; artifact names then follow the target OS (`TargetFilename`, `ExtFor`, `PrefixFor`). A toolchain may declare `target_os`/`target_triple` defaults in `toolchain.json`; the project's `SetDefault` and user configuration take precedence, and empty values count as unset:
+Cross-compilation projects declare the platform through these global options; artifact names then follow the target OS (`TargetFilename`, `ExtFor`, `PrefixFor`). A toolchain may declare `target_os`/`target_triple` defaults in `toolchain.json`; precedence is package entry value → package-local non-global option default → project global config/default → toolchain default, and empty values count as unset:
 
 ```go
 ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString)

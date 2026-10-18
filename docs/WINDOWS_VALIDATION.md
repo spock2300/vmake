@@ -2,6 +2,8 @@
 
 本轮支持 Windows x64 主机构建裸机 / RTOS，使用 GNU ARM 工具链生成 ELF、HEX 和 BIN。按任务要求，不修改子图实现，不在 Windows 验证子图。
 
+> 本文是截至 2026-09-22 的验证记录。Wine、本地环境和远程 CI 的观察属于当时的历史结果，本次文档修订没有重新执行；可与当前代码/脚本核对的部分已按 HEAD 更新。Wine 结果不等同于 Windows 真机验收。
+
 ## 工具链与扩展
 
 ARM 工具链定义为仓库内的 `test_windows/arm_toolchain.json`；CI 通过 `test_windows/setup_toolchain.py` 从定义中的官方 `url` 下载资产、按 SHA256 校验，并安装为 `~/.vmake/extensions/ci-arm/arm-none-eabi/toolchain.json`。vmake 自身扫描扩展仓库并注册工具链定义，不需要插件。定义根据运行主机的 `GOOS/GOARCH` 从 `installations` 中选择平台条目，并通过 `target_os = "none"`、`target_triple = "arm-none-eabi"` 提供目标默认值。`test_windows/arm_firmware/build.go` 在 `OnConfig` 中只声明这两个全局选项（不写默认值），CPU 选项由 `AddGlobalCFlags`／`AddGlobalLdFlags` 提供 `-mcpu=cortex-m4 -mthumb --specs=nosys.specs`，与主机平台和工具链定义分开。
@@ -12,17 +14,17 @@ Windows 资产为 `arm-gnu-toolchain-15.3.rel1-mingw-w64-x86_64-arm-none-eabi.zi
 
 ## 已执行的验证
 
-环境为 Linux、Go 1.27.1、`CGO_ENABLED=0`、deepin-wine11-stable 11.0，以及上述 Windows/Linux ARM GNU 15.3.rel1 编译器。
+环境为 Linux、Go 1.27.1（当时使用的工具链；当前 `go.mod` 要求 Go 1.26.0）、`CGO_ENABLED=0`、deepin-wine11-stable 11.0，以及上述 Windows/Linux ARM GNU 15.3.rel1 编译器。
 
 - Linux 与 Windows/amd64 的 vmake 均编译成功，交付 EXE 的 Go 构建信息确认 `CGO_ENABLED=0`。
 - Linux 作用域单元测试和 vet；Linux ARM 构建、安装与增量回归。
 - Wine 下实际选择并安装 Windows ZIP，编译 C、C++、`.s`、`.S`、静态库，使用链接脚本生成 ELF、HEX、BIN。
 - 验证无修改时跳过、头文件和汇编包含文件修改后重编译、链接脚本修改后重新链接、删除 HEX/BIN 后恢复、rebuild 和 distclean。
-- 中文、空格工程目录和超过 260 字符的产物路径；2400 个独立宏定义令编译参数超过 32 KB，通过 response file 执行。
+- 中文、空格工程目录和超过 260 字符的产物路径；vmake 在 Windows 上执行的 GNU 编译/链接/归档命令始终通过 response file 执行（不是只在参数超长时），测试用 2400 个独立宏定义令编译参数超过 32 KB。
 - Windows 文件/目录链接、错误链接类型修复、循环检测、目录复制、平台脚本筛选、脚本哈希、深层包名和跨进程文件锁回归。
 - Windows Git 冷克隆、Git 跟踪的符号链接、离线共享缓存、固定提交校验、源码刷新和不可变补丁副本测试，均无跳过。Wine 中 MSYS shell 无法正常运行，此项使用临时目录里的官方 BusyBox MinGit 完成，生产代码未增加绕过。
 - Linux 快照全量比较通过；预期变化来自编译数据库新增 `arguments`、工具链指纹变化和已迁移的构建脚本，基线已同步。
-- 真实 GNU Make 验证含空格工具路径、交叉编译前缀、EnsureConfig、CleanContext.Make 和 Configure；`Package.Env()` 继续返回原始路径。
+- 真实 GNU Make 验证含空格工具路径、交叉编译前缀、EnsureConfig、CleanContext.Make 和 Configure；`Package.Env()` 会解析配置的工具路径（有 `InstallPath` 且工具名为相对路径时取 `<InstallPath>/bin`，绝对路径直接解析，无 `InstallPath` 时按 PATH 查找）并转换为斜杠路径。
 
 固定 ARM 测试位于 `test_windows/arm_firmware`；验证入口为 `test_windows/verify_arm.py`。`arm_expected.json` 固定入口地址 `0x08000001` 及 BIN/HEX 哈希；Linux 与 Wine 生成的烧录文件哈希一致。
 
@@ -40,6 +42,8 @@ Windows 资产为 `arm-gnu-toolchain-15.3.rel1-mingw-w64-x86_64-arm-none-eabi.zi
 | 断链过滤 | glob 和过滤复制跳过无关断链；匹配或保留的断链、目录循环仍报错 |
 | 显式 post-link 产物 | debuglink 连续构建不重链；删除声明的 DEBUG/HEX/BIN/STRIP 后恢复；安装只包含声明的额外产物 |
 | 自定义 menuconfig | 已有配置时自定义程序无需 make，独立 argv 和 SrcDir 保持；生成 preset 或默认菜单才解析 make |
+
+重名定义按名称隔离：同名冲突会使该名称不可选，而不是只禁用后加载的那份定义；其他名称不受影响。
 
 Linux 作用域单测与 vet 通过：
 

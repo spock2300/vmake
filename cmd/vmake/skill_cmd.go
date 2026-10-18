@@ -32,7 +32,8 @@ var skillInstallCmd = &cobra.Command{
 so that AI coding assistants (Claude Code, OpenCode, Cursor, etc.) can assist
 with VMake build configuration.
 
-Use --project to also install to the current project's .claude/skills/ directory.`,
+Use --project <dir> to also install to <dir>/.claude/skills/vmake/. The path is
+used verbatim; it does not search upward for a project root.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		installSkill(cmd.Flag("project").Value.String())
 	},
@@ -57,7 +58,7 @@ var skillPathCmd = &cobra.Command{
 }
 
 func init() {
-	skillInstallCmd.Flags().StringP("project", "p", "", "Also install to current project's .claude/skills/ directory")
+	skillInstallCmd.Flags().StringP("project", "p", "", "Also install to <dir>/.claude/skills/ (path used verbatim)")
 	skillCmd.AddCommand(skillInstallCmd)
 	skillCmd.AddCommand(skillUninstallCmd)
 	skillCmd.AddCommand(skillPathCmd)

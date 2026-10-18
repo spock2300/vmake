@@ -16,7 +16,7 @@ VMake 是一个现代化的 C/C++ 项目构建工具，采用 Go 语言开发。
 - **TUI 配置界面**：提供交互式终端用户界面，方便配置项目选项
 - **工具链管理**：支持多种编译工具链的灵活切换，支持交叉编译
 - **语义版本约束**：内置语义版本解析和约束匹配
-- **符号管理**：通过 `SetDefaultVisibilityHidden` + `SetVersionScript` + `AddExcludeLibs` + `SetSymbolBinding` + `vmake check-symbols` 五层防御，控制库的导出符号，避免复杂依赖图中的符号冲突和泄漏。默认符号隐藏仅影响声明它的包，依赖包保留自身的导出规则。
+- **符号管理**：通过 `SetDefaultVisibilityHidden` + `SetVersionScript` + 链接策略（`AddExcludeLibs`/`SetSymbolBinding`）+ `SetSymbolPrefix` + `vmake check-symbols` 五层防御，控制库的导出符号，避免复杂依赖图中的符号冲突和泄漏。默认符号隐藏仅影响声明它的包，依赖包保留自身的导出规则。
 
 ## 快速开始
 
@@ -26,7 +26,8 @@ VMake 是一个现代化的 C/C++ 项目构建工具，采用 Go 语言开发。
 go install github.com/spock2300/vmake/cmd/vmake@latest
 ```
 
-安装后 vmake 位于 `~/go/bin/vmake`。
+`go install` 在设置了 `$GOBIN` 时把二进制安装到该目录，否则安装到
+`$(go env GOPATH)/bin`（默认为 `~/go/bin`）；Windows 上文件名为 `vmake.exe`。
 
 ### Windows
 
@@ -78,9 +79,10 @@ vmake 可在 macOS 上原生运行，前提是安装 Xcode Command Line Tools
 
 - Mach-O 链接没有 GNU 链接器组：依赖归档使用 `-force_load`，
   `TargetShared` 使用 `-dynamiclib` 链接并写入可重定位的
-  `@rpath/<name>` install name；依赖 `.dylib` 的产物会自动获得依赖目录、
-  `@loader_path` 与 `@loader_path/../lib` 的 `-rpath`，因此源码树内运行和
-  默认的 `install/bin` + `install/lib` 布局都能解析到动态库。
+  `@rpath/<name>` install name；依赖 `.dylib` 的可执行文件会获得依赖目录、
+  `@loader_path` 与 `@loader_path/../lib` 的 `-rpath`，共享库消费者只获得
+  依赖目录和 `@loader_path`。因此源码树内运行和默认的
+  `install/bin` + `install/lib` 布局都能解析到动态库。
 - `SetVersionScript`、`AddExcludeLibs`、`SetSymbolBinding` 仅适用于 ELF，
   在 macOS 目标上会直接报错；`vmake check-symbols` 对原生 Mach-O 产物报告
   不适用（它只审计 ELF）。
@@ -92,19 +94,20 @@ vmake 可在 macOS 上原生运行，前提是安装 Xcode Command Line Tools
   `AddPostLinkSize`/`AddPostLinkStrip` 使用系统 `size`/`strip`。
 - Xcode 自带 GNU Make 3.81；Kconfig/Linux 内核/U-Boot 项目需要 GNU Make
   3.82+，可 `brew install make` 后把所选工具链的 `make` 指向 `gmake`。
-  `vmake doctor` 会报告检测到的 make 版本。
+  `vmake doctor` 会报告解析到的 make 路径；在 macOS 上检测到的 GNU Make
+  低于 3.82 时会给出警告。
 
 ### 调试模式
 
-build.go 由 yaegi 解释器直接执行，无需编译为插件：
+build.go 由 yaegi 解释器直接执行，无需编译为插件。解释器使用运行中的
+`vmake` 二进制内置的 API 符号表，因此修改 `pkg/api` 后需要重新构建；
+扩展插件克隆到 `~/.vmake/extensions/`，启动时从那里解释执行：
 
 ```bash
 cd /path/to/vmake
 go build -o vmake ./cmd/vmake
 ./vmake build
 ```
-
-调试模式下，build.go 和扩展插件会直接使用本地 vmake 源码由 yaegi 解释执行，无需编译，避免版本不匹配问题。
 
 ### 基本用法
 
@@ -150,6 +153,7 @@ vmake/
 │   ├── buildscript/     # 构建脚本扫描、解释、加载
 │   ├── pipeline/        # 阶段编排（require/configure/build）
 │   ├── config/          # 配置存储
+│   ├── kconfig/         # 固件构建的 Kconfig 预设处理
 │   ├── lockfile/        # .vmake/vmake.lock 读写（固定版本）
 │   ├── resolver/        # 依赖解析
 │   ├── repo/            # 包仓库管理
@@ -290,16 +294,24 @@ vmake ext add <name> <git-url>
 
 ```bash
 vmake build [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k]
-vmake test
+vmake test [--toolchain <name>] [--mode <mode>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k]
 vmake clean [--all]
 vmake distclean [--purge-sources]
-vmake rebuild
+vmake rebuild [构建/安装选项]
 ```
+
+不带子命令运行 `vmake` 会以默认选项执行构建。`vmake build`/`vmake rebuild`
+接受全部构建/安装选项；`vmake test` 接受构建/测试子集（`--toolchain`、`--mode`、
+`--manifest`、`--tests`、`--jobs`、`--keep-going`）。
 
 ### 配置命令
 
 ```bash
-vmake config    # 交互式 TUI 配置
+vmake config [--set <[pkg/]option=value>]             # 交互式 TUI，或非交互地设置选项
+vmake config list                                     # 列出配置文件及当前选择
+vmake config use <file.json>                          # 选择已有配置
+vmake config copy <file.json>                         # 复制当前配置但不切换
+vmake config describe [text]                          # 打印或设置当前配置的描述
 ```
 
 ### 工具链管理
@@ -326,8 +338,8 @@ vmake repo untrust <name>                  # 撤销信任
 ```bash
 vmake pkg list
 vmake pkg search <keyword>
-vmake pkg clean <repo/name> [-a]
-vmake pkg update <repo/name>[@version]
+vmake pkg clean <repo/name> [-a]              # -a 同时删除包的工作树
+vmake pkg update <repo/name>[@version] [--dry-run]
 ```
 
 ### 扩展管理
@@ -344,22 +356,29 @@ vmake ext update [name]
 ```bash
 vmake git tag [version] [--minor|--major] [--no-push] [-m|--message <msg>]   # 版本标签
 vmake query [targets|config <pkg>]                    # 显示依赖树 / 包配置
-vmake check-symbols [--strict]                        # 扫描已构建产物的符号问题
+vmake check-symbols [--strict]                        # 审计本地默认目标的 ELF 动态符号
 vmake lock update|show                                # 重新解析 / 显示固定版本（.vmake/vmake.lock）
-vmake init-editor                                     # 为 build.go 生成编辑器支持文件
+vmake init-editor [--local <path>] [--remove]         # 为 build.go 生成编辑器支持文件（go.mod）
 vmake doctor                                          # 诊断平台前提与 build.go 模式
 vmake manifest show <path>                            # 显示清单内容
 vmake manifest checkout <path> [name]                 # 按清单检出版本
-vmake completion <shell>                              # 生成 shell 自动补全 (bash|zsh|fish|powershell)
-vmake completion install                              # 自动安装 shell 补全
+vmake completion <shell>                              # 输出补全脚本 (bash|zsh|fish|powershell)
+vmake completion install [--shell bash|zsh|fish]      # 自动安装补全（PowerShell 无自动安装器）
 vmake update [version]                                # 自我更新
 vmake version                                         # 版本信息
-vmake skill install                                   # 安装 AI 技能
+vmake skill install [--project <dir>]                 # 安装 AI 技能（同时安装到 <dir>/.claude/skills）
 vmake skill uninstall                                 # 卸载 AI 技能
 vmake skill path                                      # 显示安装路径
 ```
 
-全局选项：`-v` (verbose), `-V` (very verbose), `-q` (quiet), `-y` (交互提示自动确认)
+全局选项：`-v` (verbose), `-V` (very verbose), `-q` (quiet), `-y` (交互提示自动确认)。
+`--version` 是根命令专用选项；`-h`/`--help` 可用于所有命令。
+
+环境变量：`VMAKE_CACHE`（共享缓存根目录）、`VMAKE_GIT_CACHE=off`（禁用共享
+git 对象缓存）、`VMAKE_GIT_TIMEOUT`（网络 git 操作超时秒数；`VMAKE_FETCH_TIMEOUT`
+是旧别名）、`VMAKE_TRUST_ALL=1`（CI 中绕过远程脚本信任检查）、
+`VMAKE_LEGACY_ROOT=1`（不再提示缺少 `SetRoot`）。存储细节见
+[目录结构](docs/VMAKE_HOME.md)。
 
 ## 开发文档
 

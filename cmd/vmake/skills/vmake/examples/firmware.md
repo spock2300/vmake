@@ -456,7 +456,7 @@ Expected result:
 
 - For a source-tree Makefile, call `pkg.Make("-C", filepath.ToSlash(pkg.SrcDir()), ...)`; return its error and let the helper apply the jobs budget
 - Use `pkg.SrcDir()` when the package downloads source with `SetGit`; package-level `SetSrcDir("src")` and `SetGit` are what map `SrcDir()` to `SourceDir()/src`
-- `EnsureConfig` also applies `SetKConfigPatches` patches after running `make <preset>`, and fails the build if no preset is selected
+- `EnsureConfig` also applies `SetKConfigPatches` patches after running `make <preset>`, and fails the build if regeneration is needed but no preset is selected (an existing non-empty config needs no preset)
 - Local and remote void targets both run their callback once per session; a nonempty InstallDir does not skip the callback
 - Presets are defconfig names passed to `make <preset>` — not complete `.config` files
 - `CopyDirIfExists` returns `nil` when the source is missing; check its returned error rather than pre-checking with `os.Stat`

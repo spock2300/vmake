@@ -33,7 +33,7 @@ extension plugin commands appear here too. For plugin details, run
     `vmake manifest show <path>` - Show manifest contents
   `vmake pkg` - Manage packages
     `vmake pkg clean <repo/name> [--all -a]` - Clean package build outputs
-    `vmake pkg list` - List installed packages
+    `vmake pkg list` - List package sources
     `vmake pkg search [pattern]` - Search for packages
     `vmake pkg update <repo/name>[@version] [--dry-run]` - Update package source (floats to origin/HEAD, or pins @version)
   `vmake query` - Show dependency tree

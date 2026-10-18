@@ -90,7 +90,7 @@ func (p *Package) SetCfgVals(vals map[string]any) *Package  // 设置配置值
 func (p *Package) SetGenConfigHeader(v bool) *Package    // 启用生成配置头文件
 ```
 
-本地包也可通过 `SetGit` 选择外部源码。声明 `AddVersion` 映射时，按依赖约束选择版本并在 `.vmake/vmake.lock` 固定版本和提交；锁定版本的浅工作树已存在时可完全离线构建，工作树被删除后需要一次 `git ls-remote` 重新解析。`vmake lock update` 重新选择版本。没有版本映射时使用仓库 HEAD。项目目录保留，受管理的 `src` 链接指向项目内该包唯一的工作树（`.vmake_deps/local/<包名>/src`）。浅树只包含所选版本（`git fetch --unshallow` 可补全历史）。若 `src` 已是真实目录，构建会报错并保留该目录，需先由用户移开。
+本地包也可通过 `SetGit` 选择外部源码。声明 `AddVersion` 映射时，按依赖约束选择版本并在 `.vmake/vmake.lock` 固定版本和提交；锁定版本的浅工作树已存在时可完全离线构建，工作树被删除后只要共享对象缓存仍保留该提交/引用也可从本地缓存重建，仅在缓存未命中或需要重新解析 ref 时才访问上游。`vmake lock update` 重新选择版本。没有版本映射时使用仓库 HEAD。项目目录保留，受管理的 `src` 链接指向项目内该包唯一的工作树（`.vmake_deps/local/<包名>/src`）。浅树只包含所选版本（`git fetch --unshallow` 可补全历史）。若 `src` 已是真实目录，构建会报错并保留该目录，需先由用户移开。
 
 ### Git Patch
 
@@ -100,7 +100,7 @@ func (p *Package) SetPatches(paths ...string) *Package
 func (p *Package) GetPatches() []string
 ```
 
-Patch 文件在源码下载后、构建前通过 `git apply --3way` 自动应用。已应用的 patch 会被跳过。
+Patch 路径相对 `ScriptDir()`（build.go 所在目录）。Patch 文件在源码下载后、构建前通过 `git apply --3way` 自动应用。已应用的 patch 会被跳过。
 
 ### 目标定义
 
@@ -132,7 +132,9 @@ func (p *Package) ScriptDir() string
 func (p *Package) CC() string
 func (p *Package) CXX() string
 func (p *Package) AR() string
+func (p *Package) TargetOS() string
 func (p *Package) TargetTriple() string
+func (p *Package) SetPlatform(platform Platform) *Package
 func (p *Package) Prefix() string
 func (p *Package) CFlags() string
 func (p *Package) CXXFlags() string
@@ -140,7 +142,7 @@ func (p *Package) LDFlags() string
 func (p *Package) Env() map[string]string
 ```
 
-`TargetTriple()` 返回项目全局选项 `target_triple` 的解析值（例如 `arm-none-eabi`）；旧方法 `CrossTarget()` 已移除。目标系统由全局选项 `target_os` 决定，裸机使用 `none`，空值取运行 vmake 的主机系统。两者按“用户配置 → 项目声明默认值 → 工具链 `toolchain.json` 默认值”的顺序解析，同一个编译器可服务不同目标：
+`TargetTriple()` 返回本包解析后的 `target_triple`（例如 `arm-none-eabi`），`TargetOS()` 返回本包的目标系统；旧方法 `CrossTarget()` 已移除。裸机使用 `none`，`target_os` 为空（或为 `host`）时取运行 vmake 的主机系统。两者按“包级配置值 → 包内声明的非全局 `target_os`/`target_triple` 选项默认值 → 全局配置值/项目全局选项默认值 → 所选工具链 `toolchain.json` 默认值”的顺序解析（空值落到下一级），因此包级默认值可以覆盖项目全局值，同一个编译器可服务不同目标：
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {
@@ -149,7 +151,9 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 })
 ```
 
-`CFlags()`／`CXXFlags()`／`LDFlags()` 返回内置 `host` 工具链的默认选项，交叉工具链下为空；目标 CPU/ABI 选项由 `build.go` 通过 `AddGlobalCFlags` 等或目标级 `AddCFlags` 提供。
+`SetPlatform(api.Platform{OS: ..., Triple: ...})` 直接写入本包平台；常规构建会在 `OnBuild` 回调前按上面的选项解析结果设置平台，因此脚本通常只需读取 `TargetOS()`／`TargetTriple()`。
+
+`CFlags()`／`CXXFlags()`／`LDFlags()` 返回内置 `host` 工具链的默认选项，交叉工具链下为空；同样的值可用 `DefaultBuildFlags(toolchainName, targetOS)` 取得（返回 `DefaultFlags{CFlags, CxxFlags, LdFlags}`，非 `host` 工具链返回零值）。目标 CPU/ABI 选项由 `build.go` 通过 `AddGlobalCFlags` 等或目标级 `AddCFlags` 提供。
 
 `Prefix()` 原样返回工具链配置的前缀，例如 `arm-none-eabi-`，包含末尾的 `-`，不补充安装目录。拼接工具名时直接使用 `p.Prefix() + "gcc"`，不能再添加 `-`。迁移旧脚本时，应检查 `p.Prefix() + "-gcc"` 和传给外部工具链文件的前缀参数；要求目标三元组的参数使用 `TargetTriple()`。
 
@@ -195,9 +199,9 @@ func (p *Package) RunEnv(env map[string]string, name string, args ...string) err
 
 多配置生成器要求所选配置已包含在工程或 preset 声明的 `CMAKE_CONFIGURATION_TYPES` 中。`SetCMakeBuildType` 只选择配置，不改写可用配置集合。例如 Ninja Multi-Config 默认不含 MinSizeRel；需要它时，可向 `CMakeConfigure` 传入 `"-DCMAKE_CONFIGURATION_TYPES=Debug;Release;MinSizeRel"`。
 
-`CMakeConfigure` 严格解析已配置的编译器及 binutils，ASM 默认使用已解析的 CC 驱动。VMake 不将 `Tools.LD` 映射为 `CMAKE_LINKER`，底层链接器由 CMake 根据编译器识别。目标系统决定 `CMAKE_SYSTEM_NAME`；裸机使用 `Generic`、`CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY`，并从宿主查找程序、从目标根查找库和头文件。需要处理器信息时由项目显式传入 `CMAKE_SYSTEM_PROCESSOR`。
+`CMakeConfigure` 严格解析已配置的编译器及 binutils，ASM 默认使用已解析的 CC 驱动。VMake 不将 `Tools.LD` 映射为 `CMAKE_LINKER`，底层链接器由 CMake 根据编译器识别。需要交叉时（`target_triple` 非空或 `target_os` 与宿主不同），`CMAKE_SYSTEM_NAME` 由目标系统决定；裸机使用 `Generic`、`CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY`，并从宿主查找程序、从目标根查找库和头文件。需要处理器信息时由项目显式传入 `CMAKE_SYSTEM_PROCESSOR`。
 
-`CMakeConfigure` 只在指纹变化时重新运行 configure，空闲的重复构建不会重放 configure。指纹包含本次 configure 参数（生成器、目标系统、构建类型、解析后的工具与全局 flags）、`CMAKE_*` 与 `PATH` 环境、cmake 可执行文件的内容，以及 `SrcDir()` 下所有 `CMakeLists.txt`／`CMakePresets.json`／`CMakeUserPresets.json`／`*.cmake`／`*.cmake.in` 的内容哈希；扫描跳过 `.git`、`.vmake_deps`、本次构建根（本地包为 `<SourceDir>/build`，远程包为 `out/<owner>/<key>`）、`CMakeFiles/` 与 `cmake_install.cmake`（含 `SrcDir()` 为符号链接及 `SrcDir()==BuildDir()` 的情形）。命中缓存时输出 `cmake configure (cached): <CMakeBuildDir>` 并跳过 configure；命中还要求 configure 产物仍在（`CMakeCache.txt`、`CMakeFiles/` 及已知生成器的 `build.ninja`／`Makefile`），避免手工删掉构建文件后跳过 configure 导致 `cmake --build` 失败。configure 成功后写入 stamp 文件 `<CMakeBuildDir>/.vmake_configure.json`；dry-run 既不读取也不写入 stamp；指纹计算失败视为 miss，单个不可读输入被跳过（其可读性/内容变化会自然导致 miss），绝不让构建因此失败。使用 `file(GLOB)` 的项目在新增文件时不会触发重新 configure，需要改用 `CONFIGURE_DEPENDS` 或在 `CMakeLists.txt` 中显式列出文件。
+`CMakeConfigure` 只在指纹变化或 configure 产物缺失时重新运行 configure，空闲的重复构建不会重放 configure。指纹包含本次 configure 参数（生成器、目标系统、构建类型、解析后的工具与全局 flags）、`CMAKE_*` 与 `PATH` 环境、cmake 可执行文件的内容，以及 `SrcDir()` 下所有 `CMakeLists.txt`／`CMakePresets.json`／`CMakeUserPresets.json`／`*.cmake`／`*.cmake.in` 的内容哈希；扫描跳过 `.git`、`.vmake_deps`、本次构建根（本地包为 `<SourceDir>/build`，远程包为 `out/<sha256(member)>/<key>`）、`CMakeFiles/` 与 `cmake_install.cmake`；`SrcDir()` 为符号链接时会先解析真实路径再扫描。命中缓存时输出 `cmake configure (cached): <CMakeBuildDir>` 并跳过 configure；命中还要求 configure 产物仍在（`CMakeCache.txt`、`CMakeFiles/` 及已知生成器的 `build.ninja`／`Makefile`），避免手工删掉构建文件后跳过 configure 导致 `cmake --build` 失败。configure 成功后写入 stamp 文件 `<CMakeBuildDir>/.vmake_configure.json`；dry-run 既不读取也不写入 stamp；指纹计算失败视为 miss，单个不可读输入被跳过（其可读性/内容变化会自然导致 miss），绝不让构建因此失败。使用 `file(GLOB)` 的项目在新增文件时不会触发重新 configure，需要改用 `CONFIGURE_DEPENDS` 或在 `CMakeLists.txt` 中显式列出文件。
 
 Windows 主机默认使用 Ninja，尊重显式生成器、`CMAKE_GENERATOR` 环境变量及 configure preset。通过 `CMakeConfigure("--preset", "name")` 使用配置预设；`CMakeBuild` 拒绝 `--preset`，因为 build preset 的 `binaryDir` 会覆盖 API 管理的目录。构建目标和配置分别通过 `--target`、`--config` 选择。API 使用独立 argv 和规范化路径，不提前解析默认 make。`CMakeBuild()` 与 `Make()` 使用本次 `vmake -j N` 的并发上限。参数、环境变量及透传给后端的并发设置只能降低该上限；无限并发、非正数或超过上限均报错。未指定 `-j` 或 `-j0` 时，在构建开始时解析 CPU 数。`CMakeInstall(args...)` 支持 `--component` 等原生安装选项。
 
@@ -205,7 +209,7 @@ Windows 主机默认使用 Ninja，尊重显式生成器、`CMAKE_GENERATOR` 环
 
 ### CMake 编译与链接标志传递
 
-`CMakeConfigure` 自动传递本包的默认符号可见性及 `AddGlobalCFlags`／`AddGlobalCxxFlags`／`AddGlobalLdFlags` 设置的全局 C、CXX 及可执行文件／共享库／模块库链接标志（`CMAKE_EXE_LINKER_FLAGS`、`CMAKE_SHARED_LINKER_FLAGS`、`CMAKE_MODULE_LINKER_FLAGS`）。包级可见性默认值位于全局及显式追加标志之前。显式传入某个 flags 变量会替换该变量的自动值；如需追加项目标志，使用 `Merged*Flags` 保留包级默认值与全局值。ASM flags 由项目显式声明，不自动复制全部 C flags。
+`CMakeConfigure` 自动传递本包的默认符号可见性及 `AddGlobalCFlags`／`AddGlobalCxxFlags`／`AddGlobalLdFlags` 设置的全局 C、CXX 及可执行文件／共享库／模块库链接标志（`CMAKE_EXE_LINKER_FLAGS`、`CMAKE_SHARED_LINKER_FLAGS`、`CMAKE_MODULE_LINKER_FLAGS`）。包级可见性默认值位于全局及显式追加标志之前。显式传入某个 flags 变量会替换该变量的自动值；如需追加项目标志，使用 `Merged*Flags` 保留包级默认值与全局值。ASM flags 由项目显式声明，不自动复制全部 C flags。`AddGlobalLinks` 不参与该自动传递，CMake 工程需自行在 `CMakeLists.txt` 中链接这些库。
 
 ```go
 func (p *Package) CMakeGlobalFlagsArgs() []string
@@ -243,10 +247,19 @@ p.CMakeInstall()
 ```go
 func (p *Package) FullName() string                // 完整包名（repo/name 或 name）
 func (p *Package) GetOptions() map[string]*Option
+func (p *Package) GetRequires() *Requires
+func (p *Package) GitURLs() []string
+func (p *Package) Homepage() string
+func (p *Package) Description() string
+func (p *Package) License() string
+func (p *Package) Submodules() bool
 func (p *Package) DefaultVisibilityHidden() bool
 func (p *Package) VisibilityFlags() (cflags, cxxflags []string)
 func (p *Package) Versions() map[string]string
 func (p *Package) GenConfigHeader() bool           // 配置头文件是否启用
+func (p *Package) ExportConfig() bool
+func (p *Package) ImportConfigs() []string
+func (p *Package) TargetOS() string
 func (p *Package) SrcDirRaw() string               // 原始 srcCodeDir，无 SourceDir 回退（SetSrcDir 未调用时返回空串）
 ```
 
@@ -257,11 +270,13 @@ func (p *Package) SetConfigFiles(files ...string) *Package  // 包级配置文�
 func (p *Package) ConfigFiles() []string
 ```
 
+当前实现只保存这个列表，构建流程没有读取它。
+
 ### 源码与输出目录
 
 ```go
 func (p *Package) SetSrcDir(dir string) *Package    // 设置源码目录（与 SourceDir 不同，当 SetGit 下载源码时使用）
-func (p *Package) SrcDir() string                    // 注意：当 SetGit 下载源码时，SrcDir 返回 <SourceDir>/src/，而非 SourceDir
+func (p *Package) SrcDir() string                    // 返回 SetSrcDir 的值；未设置时回退到 SourceDir（构建阶段本地 SetGit 包通常指向 <SourceDir>/src 链接）
 ```
 
 ### DryRun
@@ -271,7 +286,7 @@ func (p *Package) SetDryRun(v bool) *Package   // 设置 dry run 模式（只打
 func (p *Package) DryRun() bool
 ```
 
-`vmake query`、`query targets`、`check-symbols` 等只声明场景不会物化任何源码：本地 SetGit 包的工作树尚未物化时，其 `BuildDir()` 为空。这类场景下内置的 `Run`/`Make`/`CMake*` 只打印不执行，但脚本自己的 `os.ReadFile`/`os.WriteFile` 等不会被拦截；`OnBuild` 中做真实文件读写前必须用 `p.DryRun()` 或 `p.BuildDir() == ""` 守卫，且不能假定 `SrcDir()` 下的源码存在。
+`vmake query`、`query targets`、`check-symbols` 等只声明场景在 `Inspect` 阶段不会物化源码（前面的依赖解析仍可能拉取远程包）：本地 SetGit 包的工作树尚未物化时，其 `BuildDir()` 为空。这类场景下内置的 `Run`/`Make`/`CMake*` 只打印不执行，但脚本自己的 `os.ReadFile`/`os.WriteFile` 等不会被拦截；`OnBuild` 中做真实文件读写前必须用 `p.DryRun()` 或 `p.BuildDir() == ""` 守卫，且不能假定 `SrcDir()` 下的源码存在。`BuildContext` 也提供 `SetDryRun(bool)`，仅由这类只声明流程使用。`vmake query`/`query targets`/`check-symbols` 复用 `Inspect` 的 eager 依赖图（不执行 `FilterDeps`），可能包含构建时会裁掉的条件依赖；`query config` 直接读取配置，不经过 `Inspect`。
 
 ### 版本选择
 
@@ -286,7 +301,7 @@ func (p *Package) SelectVersionMulti(constraints []string) (string, error)  // �
 
 `ConfigAccessor` 被嵌入到 `Package`、`ConfigContext`、`BuildContext`、`InstallContext`、`CleanContext`、`RequireContext` 中，提供选项值读取和条件表达式。
 
-脚本上下文（Config/Build/Install/Clean/Require）的访问器是**严格的**：读取未声明的选项名、或用与选项 `SetType` 不匹配的方法读取（如对 `OptionInt` 选项用 `Bool()`），会 fatal（panic `*BuildScriptError`）。`OnRequire` 依赖发现阶段选项值尚不可用，直接读取（`Bool()` 等）同样 fatal——请使用发现感知的 `ctx.When` / `ctx.If` / `ctx.Select`。
+脚本上下文（Config/Build/Install/Clean/Require）的访问器是**严格的**：读取未声明的选项名、或用与选项 `SetType` 不匹配的方法读取（如对 `OptionInt` 选项用 `Bool()`），会 fatal（panic `*BuildScriptError`）。`OnRequire` 的首次发现阶段选项值尚不可用，直接读取（`Bool()` 等）同样 fatal——请使用发现感知的 `ctx.When` / `ctx.If` / `ctx.Select`；`FilterDeps` 阶段的第二次 `OnRequire` 可以读取本包声明的选项（以及 `entries.<pkg>.options` 中的包级值）。`Package` 内嵌的访问器不启用严格检查。
 
 ```go
 // 值读取（优先配置值，其次默认值）
@@ -303,8 +318,11 @@ func (a *ConfigAccessor) When(option string, value any) bool
 // 选项管理
 func (a *ConfigAccessor) Option(name string) *Option        // 配置阶段结束后（Build/Install/Clean 上下文）调用会 fatal
 func (a *ConfigAccessor) SetOptions(options map[string]*Option) *ConfigAccessor
+func (a *ConfigAccessor) SetCfgVals(vals map[string]any) *ConfigAccessor
 func (a *ConfigAccessor) MergeGlobals(globalOptions map[string]*Option, globalVals map[string]any)
 ```
+
+只有 `OnConfig` 中通过 `ctx.Option`/`ctx.GlobalOption` 声明的选项会经过正常的选项收集、校验和值解析。`BuildContext`/`InstallContext`/`CleanContext` 上的 `Option()` 因声明已锁定而 fatal；`RequireContext` 和 `Package` 上的 `Option()` 不会立即报错，但不会经过 OnConfig 的收集与校验，不应作为声明配置项的方式。
 
 ## ConfigContext
 
@@ -337,7 +355,7 @@ func (ctx *ConfigContext) ToolchainOption() *Option      // 创建工具链选�
 func (ctx *ConfigContext) AddGlobalCFlags(flags ...string)
 func (ctx *ConfigContext) AddGlobalCxxFlags(flags ...string)
 func (ctx *ConfigContext) AddGlobalLdFlags(flags ...string)
-func (ctx *ConfigContext) AddGlobalLinks(links ...string)  // 添加全局链接库
+func (ctx *ConfigContext) AddGlobalLinks(links ...string)  // 添加全局链接库（原生链接；CMakeConfigure 不自动传递）
 func (ctx *ConfigContext) SetDefaultVisibilityHidden() *ConfigContext  // 仅本包加 -fvisibility=hidden（C++ 另加 -fvisibility-inlines-hidden）
 
 // 依赖 Linker Script
@@ -359,8 +377,8 @@ func (o *Option) SetDefault(v any) *Option
 func (o *Option) SetDescription(desc string) *Option
 func (o *Option) SetValues(vals ...string) *Option        // OptionChoice 使用
 func (o *Option) SetShowIf(fn func(ctx *ConfigContext) bool) *Option  // 条件显示
-func (o *Option) SetOnApply(fn func(ctx *ConfigContext, val any)) *Option  // 选项值解析后的回调，val 已按声明类型归一化（bool/int/string）
-func (o *Option) SetGroup(group string) *Option
+func (o *Option) SetOnApply(fn func(ctx *ConfigContext, val any)) *Option  // 选项值解析后的回调；按选项名排序执行，非声明顺序
+func (o *Option) SetGroup(group string) *Option          // SetGroup(api.GroupGlobal)（"Global"）使选项成为全局选项
 
 // 获取方法
 func (o *Option) Name() string
@@ -372,7 +390,17 @@ func (o *Option) Group() string
 func (o *Option) ShowIf() func(ctx *ConfigContext) bool
 func (o *Option) OnApply() func(ctx *ConfigContext, val any)
 func (o *Option) IsGlobal() bool
+func (o *Option) MacroName() string
+func (o *Option) MacroDefines(val any) ([]string, error)  // 全局宏的 -D 内容，不含 "-D" 前缀
+
+// 相关函数
+func NormalizeOptionValue(opt *Option, val any) any
+func ValidateOption(o *Option) error
 ```
+
+`SetOnApply` 的 `val` 只对 `OptionInt` 做归一化：配置解码产生的 `float64`/`int64` 会转成 `int`；其他类型原样传入。每个包内，所有选项的 `OnApply` 按选项名字典序执行，与声明顺序无关。
+
+配置阶段收集选项时会自动调用 `ValidateOption(o)`，校验默认值类型、Choice 默认值是否在已声明的 `SetValues` 中（列表非空时）以及宏名；`NormalizeOptionValue(opt, val)` 与上面的 `OnApply` 归一化规则相同，仅处理 `OptionInt`。
 
 ## BuildContext
 
@@ -389,7 +417,7 @@ type BuildContext struct {
 // 目标定义
 func (ctx *BuildContext) Target(name string) *Target
 func (ctx *BuildContext) GetTargets() map[string]*Target
-func (ctx *BuildContext) SetDefaultFlags(cflags, cxxflags, ldflags []string)  // 设置所有目标的默认编译/链接标志
+func (ctx *BuildContext) SetDefaultFlags(cflags, cxxflags, ldflags []string)  // 设置此后创建的 target 的默认编译/链接标志（不回溯修改已有 target）
 
 // 条件表达式（继承自 ConfigAccessor）
 func (ctx *BuildContext) If(option string, then ...string) []string
@@ -417,10 +445,18 @@ func (ctx *BuildContext) ExportConfig() *BuildContext
 func (ctx *BuildContext) ImportConfig(pkgNames ...string) *BuildContext
 func (ctx *BuildContext) SyncConfigDefines(pkgNames ...string) *BuildContext
 
+// 配置导出状态
+func (ctx *BuildContext) GenConfigHeader() bool
+func (ctx *BuildContext) GenConfigDefines() bool
+func (ctx *BuildContext) ExportEnabled() bool
+func (ctx *BuildContext) ImportConfigs() []string
+
 // 其他
 func (ctx *BuildContext) PackageName() string
 func (ctx *BuildContext) Exec(name string, args ...string)
 ```
+
+`DepOutput`/`DepBuildDir` 接受 `pkg` 或 `pkg:target`（含子包短名），但不支持 `AddDeps` 的“同包 target 简写”和 `pkg:*` 通配：`DepOutput("utils")` 会把 `utils` 当作包名，`DepOutput("lib:*")` 返回空串。省略 target 时，只有该包恰好一个 target 才返回产物路径，否则返回空串。dry-run 下 `DepOutput` 返回空串（`DepBuildDir` 因此为 `.`），`BuildSubGraph` 直接返回。
 
 ## InstallContext
 
@@ -445,9 +481,10 @@ func (ctx *InstallContext) GetInstallItems() []InstallItem
 
 func (ctx *InstallContext) Bool(name string) bool
 func (ctx *InstallContext) String(name string) string
+func (ctx *InstallContext) Int(name string) int
 ```
 
-`SetPrefix` 为该包设置安装前缀，仅在未传 `--prefix` 时生效（显式 `--prefix` 对所有包优先，其目录会在安装前清空）。不带 `--prefix` 时默认的 `<project>/install` 会清空而自定义前缀不清空，`manifest.json` 仍只写入 CLI/默认前缀；建议传绝对路径。
+`SetPrefix` 为该包设置安装前缀，仅在未传 `--prefix` 时生效（显式 `--prefix` 对所有包优先，其目录会在安装前清空）。不带 `--prefix` 时默认的 `<project>/install` 会清空而自定义前缀不清空，`manifest.json` 仍只写入 CLI/默认前缀；建议传绝对路径。`AddInstalls(src, dest)` 的 `src` 相对包 `SourceDir()`，`dest` 相对安装前缀；缺失的 `src` 会被跳过。
 
 ## CleanContext
 
@@ -480,13 +517,13 @@ p.OnClean(func(ctx *api.CleanContext) {
 
 ## Target
 
-构建目标定义。
+构建目标定义。新 target 默认是 `TargetBinary` 且参与默认构建；重复调用 `Target(name)` 返回同一对象。
 
 ```go
 // 类型设置
 func (t *Target) SetKind(kind TargetKind) *Target
 func (t *Target) SetDefault(isDefault bool) *Target
-func (t *Target) SetTest(v bool) *Target              // 标记为测试目标（不改变 isDefault）
+func (t *Target) SetTest(v bool) *Target              // 标记为测试目标（不改变 isDefault；默认 target 在普通 build 及安装中跳过，--tests/vmake test 才构建）
 
 // 源文件与头文件
 func (t *Target) AddFiles(files ...any) *Target
@@ -508,28 +545,28 @@ func (t *Target) AddCxxFlags(flags ...any) *Target
 func (t *Target) AddLdFlags(flags ...any) *Target
 
 // 第三方包构建
-func (t *Target) SetBuildFunc(fn func(p *Package) error) *Target
-func (t *Target) SetPrebuilt(path string) *Target          // 预编译目标，跳过编译（无后链接步骤时 symlink 到输出路径，有后链接步骤时复制；重复调用 fatal）
+func (t *Target) SetBuildFunc(fn func(p *Package) error) *Target  // 仅 TargetVoid 执行；其他 kind 设置后不会调用
+func (t *Target) SetPrebuilt(path string) *Target          // 预编译目标，跳过编译（无后链接步骤时 symlink 到输出路径，有后链接步骤时复制；TargetVoid 忽略；重复调用 fatal）
 
 // RTOS/嵌入式
-func (t *Target) SetLinkerScript(path string) *Target    // 传递 -T 给链接器（重复调用抛出 BuildScriptError）
-func (t *Target) UseDependencyLinkerScript() *Target       // 从依赖自动继承 linker script
-func (t *Target) SetVersionScript(path string) *Target     // 版本脚本，链接时加 -Wl,--version-script=；仅 Shared/Binary 且仅 ELF（Windows/macOS 目标报错）；路径相对包 SourceDir（重复调用 fatal）
-func (t *Target) AddExcludeLibs(libs ...string) *Target    // 链接时加 -Wl,--exclude-libs=（仅 ELF；追加；ld 按去掉 .a 的完整库名匹配，写 libfoo 而非 foo）
-func (t *Target) SetSymbolBinding(mode string) *Target     // "static" → -Wl,-Bsymbolic；"static-functions" → -Wl,-Bsymbolic-functions（仅 ELF）；空串清除；其他值 fatal
+func (t *Target) SetLinkerScript(path string) *Target    // 仅 TargetBinary：传递 -T 给链接器（Darwin 目标报错；其他 kind 忽略；重复调用抛出 BuildScriptError）
+func (t *Target) UseDependencyLinkerScript() *Target       // 仅 TargetBinary：从依赖自动继承 linker script（找不到时报错）
+func (t *Target) SetVersionScript(path string) *Target     // 版本脚本，链接时加 -Wl,--version-script=；仅 Shared/Binary 且仅 ELF（Windows/macOS 目标报错）；路径拼接在包 SourceDir 之后（绝对路径不会保留为绝对路径）；重复调用 fatal
+func (t *Target) AddExcludeLibs(libs ...string) *Target    // Shared/Binary 链接时加 -Wl,--exclude-libs=（仅 ELF；追加；ld 按去掉 .a 的完整库名匹配，写 libfoo 而非 foo）
+func (t *Target) SetSymbolBinding(mode string) *Target     // Shared/Binary："static" → -Wl,-Bsymbolic；"static-functions" → -Wl,-Bsymbolic-functions（仅 ELF）；空串清除；其他值 fatal
 func (t *Target) SetSymbolPrefix(prefix string) *Target    // post-link 追加 objcopy --prefix-symbols=<prefix>（需所选工具链提供 objcopy，GNU objcopy 不支持 Mach-O；重复调用 fatal）
 func (t *Target) AddPostLink(tool string, args ...string) *Target  // 后链接步骤（仅工具链内置 objcopy/size/objdump/nm/strip），支持 {output} 占位符
 func (t *Target) AddPostLinkOutputs(paths ...string) *Target
-func (t *Target) AddPostLinkDeps(files ...string) *Target  // 声明 post-link 步骤依赖的额外输入文件（SourceDir 相对路径）；任一变化（内容或权限变化、文件缺失）触发 relink + 重跑全部 post-link
+func (t *Target) AddPostLinkDeps(files ...string) *Target  // 声明 post-link 步骤依赖的额外输入文件（SourceDir 相对路径；不展开 {output}）；非 Void 目标上任一变化（内容或权限变化、文件缺失）触发 relink + 重跑全部 post-link
 func (t *Target) AddPostLinkHex() *Target               // objcopy -O ihex {output} {output}.hex
 func (t *Target) AddPostLinkBin() *Target               // objcopy -O binary {output} {output}.bin
 func (t *Target) AddPostLinkSize() *Target              // size {output}
 func (t *Target) AddPostLinkStrip() *Target             // strip -o {output}.stripped {output}
-func (t *Target) AddBinHeader(inputs ...any) *Target    // 将二进制文件转换为 .h 头文件（GenRule），输出到构建目录的 generated/<stem>.h，包含路径自动添加
+func (t *Target) AddBinHeader(inputs ...any) *Target    // 将二进制文件转换为 .h 头文件（GenRule），输入相对 SourceDir，输出到构建目录的 generated/<stem>.h，包含路径自动添加
 
 // 安装控制
-func (t *Target) SetInstallDir(dir string) *Target
-func (t *Target) SetInstall(install bool) *Target
+func (t *Target) SetInstallDir(dir string) *Target     // 安装到前缀下的该子目录（默认按 kind 进入 bin/lib）
+func (t *Target) SetInstall(install bool) *Target      // SetInstall(false) 跳过该 target 的安装
 
 // 移除方法
 func (t *Target) RemoveCFlags(flags ...string) *Target
@@ -577,9 +614,9 @@ func (t *Target) PostLinkDeps() []string
 func (t *Target) ExcludedFiles() []string
 func (t *Target) GenRules() []GenRule
 ```
-`AddFiles/Includes/Defines/Links/CFlags/CxxFlags/LdFlags` 接受 `string` 或 `[]string`（条件表达式返回）。注意 yaegi 限制：不能对 `...any` 参数使用 `[]string...` 展开，直接传 `[]string` 即可（上述方法内部会展开处理）。
+`...any` 方法（`AddFiles`/`AddIncludes`/`AddPublicIncludes`/`AddDefines`/`AddLinks`/`AddCFlags`/`AddCxxFlags`/`AddLdFlags`/`RemoveFiles`/`AddBinHeader`）接受 `string`、`[]string` 或 `[]any`。注意 yaegi 限制：不能对 `...any` 参数使用 `[]string...` 展开，直接传 `[]string` 即可（方法内部会展开）。`...string` 方法（`AddDeps`、`AddProvidedLibs`、`AddExcludeLibs`、`RemoveCFlags`/`RemoveCxxFlags`/`RemoveLdFlags`/`RemoveDefines`/`RemoveIncludes`/`RemovePublicIncludes`/`RemoveLinks`/`RemoveProvidedLibs`/`RemoveDeps`、`SetLanguages`、`AddPostLink` 的参数、`AddPostLinkDeps`/`AddPostLinkOutputs`）可以 `[]string...` 展开，但不能传 `[]any`。
 
-`AddPostLinkOutputs` 显式声明整个目标的后链接产物，支持 `{output}` 占位符；相对路径基于包的 SourceDir，绝对路径保持不变，主产物不会重复计入。任一声明产物缺失会触发重新链接并运行全部后链接步骤；安装阶段只自动安装声明的额外产物。`AddPostLinkHex/Bin/Strip` 自动声明各自产物，`AddPostLinkSize` 和 `SetSymbolPrefix` 不产生额外产物。
+`AddPostLinkOutputs` 显式声明整个目标的后链接产物，支持 `{output}` 占位符；相对路径基于包的 SourceDir，绝对路径保持不变，主产物不会重复计入。非 Void 目标的任一声明产物缺失会触发重新链接并运行全部后链接步骤；`TargetVoid` 没有链接记录，后链接步骤每次构建都会执行，声明的产物缺失会直接报错。安装阶段只自动安装声明的额外产物，且主产物不存在时不会继续安装这些产物。`AddPostLinkHex/Bin/Strip` 自动声明各自产物，`AddPostLinkSize` 和 `SetSymbolPrefix` 不产生额外产物。
 
 `AddPostLink` 的参数不再用于推断产物。已有自定义步骤需要补充输出声明，例如下面的 `.debug` 是第一步的输出，也是第二步的输入：
 
@@ -616,10 +653,12 @@ ctx.Target("mylib").AddPublicIncludes("include", "src", "@foo*.h")
 
 规则：
 
-- **声明时校验**（fatal `*BuildScriptError`）：含空白字符、多个 `:`、`:` 前后任一段为空、包路径畸形（首/尾 `/`、`//`）。空字符串参数被静默跳过，重复引用在图构建时去重。
-- **子包短名**：`pkg:target` 的 pkg 部分不含 `/` 时，会先尝试按当前（子）包路径相对解析（`ResolveSubPackageName`）——兄弟子包之间可写 `AddDeps("mylib:utils")` 而不必写全路径。
-- **图构建时报错**：target 不存在 → `dependency not found`；包不在构建图中 → `package not found in build graph`；循环依赖 → 错误（`api.CheckCycle`）。子包短名解析失败时错误信息附带已尝试的候选路径（`tried sub-package candidates: ...`）。
-- 依赖边同时决定：链接输入（依赖 target 的产物路径）、PublicIncludes 传播、拓扑排序顺序。
+- **声明时校验**（fatal `*BuildScriptError`）：含空白字符、多个 `:`、`:` 前后任一段为空，以及不含 `:` 时首/尾 `/` 或 `//` 的畸形包路径。含 `:` 的引用不会在声明时校验包路径形态，畸形路径会在图构建时表现为 `dependency not found` 或 `package not found in build graph`。空字符串参数被 `AddDeps` 静默跳过，重复引用在图构建时去重。
+- **子包短名**：当前包本身是子包且 `pkg:target` 的 pkg 部分不含 `/` 时，会先沿祖先链尝试相对解析（`ResolveSubPackageName`）——兄弟子包之间可写 `AddDeps("mylib:utils")` 而不必写全路径；顶层包不做这种相对解析。
+- **图构建时报错**：target 不存在 → `dependency not found`；包不在构建图中 → `package not found in build graph`；循环依赖 → 错误（包引用递归由 `api.CheckCycle` 报告，target 级环由拓扑排序报告）。子包短名解析失败时错误信息附带已尝试的候选路径（`tried sub-package candidates: ...`）。
+- 依赖边同时决定：链接输入（依赖 target 的产物路径）、PublicIncludes 传播、拓扑排序顺序。`TargetStatic`/`TargetObject` 不会把依赖的库合并进产物（`TargetStatic` 仍会归档依赖的可重定位 `.o`，`TargetObject` 不合并依赖），库依赖只提供排序和包含路径传播，构建时会打印相应 NOTE。
+
+`api.ParseDepRef(ref string) (*api.DepRef, error)` 可单独解析引用，返回的 `api.DepRef` 含 `Raw`、`Pkg`、`Target`、`Wildcard`、`Qualified`；格式非法时返回 `error`，`AddDeps` 会把它转成 `*BuildScriptError`。
 
 ## 子包（Sub-Package）
 
@@ -631,15 +670,15 @@ native 远程包 checkout 内嵌套的 `build.go` 会被识别为**子包**：�
 
 - **发现**：父包（native 仓库）checkout 后自动扫描其中嵌套的 build.go（`Resolver.scanSubPackages`）；registry 包装包**没有**子包概念（DD-1，设计决策）。子包懒加载（DD-3）：只有被依赖时其 build.go 才被解释。
 - **引用子包**：外部包用全名，如 `ctx.AddRequires("subtest/mother/sub_a")`、`AddDeps("subtest/mother/sub_a:*", "subtest/mother:base")`；同一 `AddRequires` 列表中父包必须写在子包之前。
-- **子包互引短名**：子包内部引用兄弟子包时 pkg 部分可写短名（沿祖先链解析，见上文"子包短名"）。除 `AddDeps`/`AddRequires` 外，`DepOutput`/`DepBuildDir`、`BuildSubGraph` 和 `ImportConfig` 也接受同类短名。
-- **父包必须 needed**：仅在 `AddRequires` 中出现父包还不够；若子包进入构建集合，其 native owner 也必须在 needed 集合中，否则配置阶段报错提示补充父包依赖。这样父包补丁、版本锁定和源码树身份才能保持一致。
+- **子包互引短名**：子包内部引用兄弟子包时 pkg 部分可写短名（沿祖先链解析，见上文"子包短名"）。除 `AddDeps`/`AddRequires` 外，`DepOutput`/`DepBuildDir`、`BuildSubGraph` 和 `ImportConfig` 也接受同类短名。`api.SubPackageCandidates(currentPkg, depName, subParents)` 返回由近到远的候选全名，`api.ResolveSubPackageName` 按 `exists` 回调选择第一个存在的候选。
+- **父包必须 needed**：若子包进入构建集合，其 native owner 也必须在 needed 集合中；否则 `RunBuild` 过滤依赖时（`Configure` 之后）报错提示补充父包依赖。这样父包补丁、版本锁定和源码树身份才能保持一致。
 - **限制**：父包不能在自己的 `OnRequire` 中引用其子包（发现晚于依赖解析，见 DESIGN_DECISIONS.md 已知限制 5）；本地项目无子包概念（嵌套 build.go 是顶层裸名包，已知限制 1）。
 
 示例见 `test_data/25_subpackage`（含本地 fixture native 仓）。
 
 ## 文件 IO 与工作目录（ScriptFS）
 
-build.go 中的相对路径文件 IO 在发现、配置阶段以 **build.go 所在目录** 为基准；进入构建阶段后以包的 `SourceDir()` 为基准。远程包绑定到项目内该包唯一的工作树（`.vmake_deps/`），所有配置共享；补丁与配置会就地修改这棵树，不会写回上游。
+ScriptFS 包装的相对路径在 `pkg.SourceDir()` 已设置时以它为基准，否则以 **build.go 所在目录** 为基准（加载/发现阶段，以及本地 SetGit 源码尚未绑定到 `SourceDir` 时）。`OnBuild`/`OnInstall`/`OnClean` 回调执行期间，进程 cwd 是绑定后的 `SourceDir()`；`OnConfig` 在源码绑定前运行，cwd 是加载的 build.go 目录（registry 包为 wrapper checkout，native/local 通常与 `SourceDir()` 相同）。`TargetVoid` 的 `SetBuildFunc` 由调度器稍后调用，不经过这层 cwd 切换。远程包绑定到项目内该包唯一的工作树（`.vmake_deps/`），所有配置共享；补丁与配置会就地修改这棵树，不会写回上游。
 
 ```go
 data, err := os.ReadFile("configs/app.conf")
@@ -648,11 +687,11 @@ wd, _ := os.Getwd()
 cmd := exec.Command("git", "status")
 ```
 
-覆盖范围：`os.Open/OpenFile/Create/ReadFile/WriteFile/Stat/Lstat/Mkdir/MkdirAll/Remove/RemoveAll/Rename/ReadDir/CreateTemp`、`filepath.Walk/WalkDir`、`exec.Command`（未显式设置 `Dir` 时）。绝对路径原样通过。
+覆盖范围：`os.Open/OpenFile/Create/ReadFile/WriteFile/Stat/Lstat/Mkdir/MkdirAll/Remove/RemoveAll/Rename/ReadDir/Getwd/TempDir/CreateTemp`、`filepath.Walk/WalkDir`、`exec.Command`（未显式设置 `Dir` 时）。绝对路径原样通过；`os.Getwd()` 返回 ScriptFS 基准目录。
 
 限制：
 - `os.Chdir` 返回错误——进程工作目录由回调执行边界管理；请用 `p.RunIn(dir, ...)` 或绝对路径
-- 未包装的长尾 API 仍按进程 cwd 解析——如 `exec.CommandContext`（仅 `exec.Command` 被包装）、`text/template.ParseFiles`、`io/ioutil`；请用 `filepath.Join(p.SourceDir(), ...)` 显式锚定
+- 未包装的长尾 API 仍按进程 cwd 解析：`OnBuild`/`OnInstall`/`OnClean` 期间是 `SourceDir()`，`OnConfig` 是加载的 build.go 目录，`OnRequire`/`OnPackage`（加载阶段）以及 `SetBuildFunc` 等边界外代码则是 vmake 进程 cwd。例如 `exec.CommandContext`（仅 `exec.Command` 被包装）、`text/template.ParseFiles`、`io/ioutil`；请用绝对路径或 `filepath.Join(p.SourceDir(), ...)` 显式锚定
 - 构建产物请继续用 `p.BuildDir()`；外部命令用 `p.Run/p.RunIn`（显式 Dir）
 
 ## RequireContext（依赖声明）
@@ -689,14 +728,25 @@ type PackageMeta struct {
 }
 func (m *PackageMeta) FullName() string
 
+type Platform struct {
+    OS     string
+    Triple string
+}
+func (p Platform) OSOrHost() string
+
+type DefaultFlags struct {
+    CFlags, CxxFlags, LdFlags []string
+}
+
 type TargetKind string
 const (
     TargetBinary TargetKind = "binary"
     TargetStatic TargetKind = "static"
     TargetShared TargetKind = "shared"
     TargetObject TargetKind = "object"
-    TargetVoid   TargetKind = "void"      // 第三方包使用，配合 SetBuildFunc
+    TargetVoid   TargetKind = "void"      // 第三方包使用；SetBuildFunc 仅对该 kind 执行
 )
+func TargetFilename(kind TargetKind, name, targetOS string) string  // 按目标系统命名主产物
 
 type OptionType int
 const (
@@ -732,6 +782,20 @@ type InstallFilterFunc func(path string, isTargetOutput bool) bool
 type RequireInfo struct {
     Name       string
     Constraint string
+}
+
+type Requires struct { ... }
+func (r *Requires) Add(deps ...string)
+func (r *Requires) AddInfos(infos ...RequireInfo)
+func (r *Requires) Get() []RequireInfo
+func (r *Requires) Reset()
+
+type DepRef struct {
+    Raw       string
+    Pkg       string
+    Target    string
+    Wildcard  bool
+    Qualified bool
 }
 
 type PostLinkStep struct {
@@ -783,7 +847,7 @@ func (r *GenRule) OutputStem() string
 
 - `>=1.2` → 只匹配 `1.x.x`（不匹配 `2.0.0`）
 - `>=2.0` → 只匹配 `2.x.x`（不匹配 `3.0.0`，也不匹配 `1.9.9`）
-- `>=0.0.0`（空约束）→ **不锁定**，匹配所有版本（包括 `1.x`, `2.x`）
+- `>=0.0.0`（空约束）→ **不锁定**，匹配所有非 pre-release 版本（包括 `1.x`, `2.x`）
 
 `>` 运算符与 `>=` 一样锁定 major（锚点 major > 0 时）：`>1.0.0` 只匹配 `1.x.x` 且大于 `1.0.0`（不匹配 `2.0.0`）。
 
@@ -855,6 +919,8 @@ const (
 )
 ```
 
+`BuiltInGlobalOptions` 暴露内置 `mode` 选项定义；`toolchain` 由 `MergeGlobalOptions` 按已安装工具链动态加入。`api.GroupGlobal`（`"Global"`，定义在 `pkg/api/option.go`）可用于 `SetGroup`：它会把通过 `ctx.Option` 声明的普通选项标记为全局选项；`ctx.GlobalOption` 是同一操作的简写。
+
 项目平台选项（`pkg/api/platform.go`）由项目按需声明，用于交叉编译：
 
 ```go
@@ -871,7 +937,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 })
 ```
 
-声明这两个选项用于在 TUI/`vmake config --set` 中可见和可覆盖，值本身可以留空：工具链 `toolchain.json` 中的 `target_os` / `target_triple` 默认值会填补未设置的值。`target_os` 决定产物命名、链接策略和 CMake 的 `CMAKE_SYSTEM_NAME`（裸机为 `none`），空值取运行 vmake 的主机系统；`target_triple` 提供 `Configure` 的 `--host=` 与 `CMAKE_*_COMPILER_TARGET`。用户配置（`.vmake/` 当前生效配置文件的 `global.options` 或包级配置，默认文件为 `.vmake/config.json`）与项目声明的非空默认值均优先于工具链默认值；配置中的空字符串视为未设置，会先落回项目声明的默认值、再落回工具链默认值。
+声明这两个选项用于在 TUI/`vmake config --set` 中可见和可覆盖，值本身可以留空：工具链 `toolchain.json` 中的 `target_os` / `target_triple` 默认值会填补未设置的值。`target_os` 决定产物命名、链接策略和 CMake 的 `CMAKE_SYSTEM_NAME`（`target_os=none` 映射为 `Generic`），空值取运行 vmake 的主机系统；`target_triple` 提供 `Configure` 的 `--host=` 与 `CMAKE_*_COMPILER_TARGET`。用户配置（`.vmake/` 当前生效配置文件的 `global.options` 或包级配置，默认文件为 `.vmake/config.json`）与项目声明的非空默认值均优先于工具链默认值。包内通过 `ctx.Option` 声明的非全局 `target_os`/`target_triple` 默认值优先于全局值（包级配置值仍最优先）；配置中的空字符串视为未设置，会落到下一级默认值，最终落到工具链默认值。
 
 `mode` 选项自动添加编译标志：
 
@@ -896,7 +962,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 })
 ```
 
-全局选项在所有 Package 间共享。如果多个 Package 定义同名全局选项，类型、默认值和取值列表必须一致；`SetMacroName` 允许只在部分声明中给出，但非空的宏名必须一致（声明按包名顺序确定性合并，`SetDescription`/`SetGroup` 等展示字段取第一个声明）。
+全局选项在所有 Package 间共享。如果多个 Package 定义同名全局选项，类型和默认值必须一致，取值列表也须一致（内置 `mode`/`toolchain` 只校验类型和默认值，不比较 `SetValues`）；`SetMacroName` 允许只在部分声明中给出，但非空的宏名必须一致（声明按包名顺序确定性合并，`SetDescription`/`SetGroup` 等展示字段取第一个声明）。
 
 ### 全局选项自动导出 CONFIG_ 宏
 
@@ -910,7 +976,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 | String | 同上 | `-DCONFIG_<NAME>="<value>"` |
 | Choice | `CONFIG_<NAME>` + `CONFIG_<NAME>_<VALUE>` | 两条 |
 
-`SetMacroName(name)` 可覆盖宏名：普通名字整体替换默认名；包含 `%s`/`%v` 时把选项值渲染进宏名（`SetMacroName("PY32F539xx%s")` + 值 `M` → `-DPY32F539xxM=1`），且只生成渲染后的宏。`SetMacroName` 仅对全局选项有效。
+Choice 的 `<VALUE>` 会转为大写并把 `-` 替换为 `_`。`SetMacroName(name)` 可覆盖宏名：普通名字整体替换默认名（Choice 仍会额外生成 `<自定义名>_<VALUE>`）；包含 `%s`/`%v` 时把选项值渲染进宏名（`SetMacroName("PY32F539xx%s")` + 值 `M` → `-DPY32F539xxM=1`），且只生成渲染后的宏。`SetMacroName` 仅对全局选项有效。
 
 `mode`、`toolchain`、`target_os`、`target_triple` 默认不导出；重新声明该选项并设置 `SetMacroName` 即可导出（`mode`/`toolchain` 的重声明需与内置类型和默认值一致，宏名冲突时配置阶段报错）。两个全局选项生成同名宏但取值不同时，配置阶段报错；取值相同则去重。
 
@@ -977,9 +1043,10 @@ func GetModeFlags(mode string) (cflags []string, defines []string)  // "debug" -
 | shared (.so/.dylib/.dll) → `lib/` | ✓ | ✓ |
 | static (.a) → `lib/` | ✗ | ✓ |
 | public includes → `include/` | ✗ | ✓ |
+| object 目标产物 | ✗ | ✗ |
 | AddInstalls 自定义文件 | ✓ | ✓ |
 
-默认 `runtime`，只安装运行时所需文件（二进制和动态库）。`sdk` 安装全部内容（含静态库和公共头文件），适合需要二次开发的场景。
+默认 `runtime`，只安装运行时所需文件（二进制和动态库）。`sdk` 还会安装静态库和公共头文件，适合需要二次开发的场景。测试目标和 object 目标从不安装；`TargetVoid` 通常由 `SetBuildFunc` 自行安装，只有构建目录中存在同名主产物时安装器才会继续处理该 target 及其声明的后链接产物。
 
 ## 安装清单
 
@@ -1001,7 +1068,7 @@ KConfig 用于管理基于 `make defconfig` / `make menuconfig` 的固件项目�
 func (p *Package) AddKConfig(name string) *KConfigEntry  // 创建 KConfigEntry（每包仅支持一个，重复调用 fatal）
 func (p *Package) KConfigEntries() []*KConfigEntry
 func (p *Package) SelectedPreset() string          // 返回选中的 preset 名（优先 selectedPreset，其次 defaultPreset）
-func (p *Package) EnsureConfig(srcDir string) bool  // 检查 KConfig 配置（ConfigPath()，默认 ".config"）是否存在且非空，否则以 KCONFIG_CONFIG 指向该文件执行 make <preset> 并应用 patches；返回 true 表示重新生成了配置；未选择 preset 时 fatal
+func (p *Package) EnsureConfig(srcDir string) bool  // 检查 KConfig 配置（ConfigPath()，默认 ".config"）是否存在且非空，否则执行 make <preset> 并应用 patches（非默认 ConfigPath 时通过 KCONFIG_CONFIG 指向该文件）；返回 true 表示重新生成了配置；需要生成但未选择 preset、make 失败或补丁失败时 fatal（已有非空配置时不需要 preset）
 ```
 
 ### ConfigContext KConfig 方法
@@ -1081,7 +1148,7 @@ VMake 支持两种将配置选项导出给 C 代码的方式。两种方式独�
 
 ### GenerateConfigHeader — 生成 autoconf.h
 
-在 `OnBuild` 中调用 `ctx.GenerateConfigHeader()`，vmake 会在构建目录的 `generated/autoconf.h` 中生成类似 Linux 内核的配置头文件，并自动将 `generated/` 加入所有目标的包含路径。
+在 `OnBuild` 中调用 `ctx.GenerateConfigHeader()`，vmake 会在构建目录的 `generated/autoconf.h` 中生成类似 Linux 内核的配置头文件，并自动将 `generated/` 加入该包所有目标的包含路径。
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {
@@ -1122,15 +1189,16 @@ p.OnBuild(func(ctx *api.BuildContext) {
 #ifndef VMAKE_AUTOCONF_H
 #define VMAKE_AUTOCONF_H
 
-#define CONFIG_FEATURE_FOO 1
-/* #undef CONFIG_FEATURE_BAR */
 #define CONFIG_BUFFER_SIZE 4096
 #define CONFIG_DEVICE_NAME "uart0"
+#define CONFIG_FEATURE_FOO 1
 #define CONFIG_PLATFORM "linux"
 #define CONFIG_PLATFORM_LINUX 1
 
 #endif
 ```
+
+选项按名称排序生成，未声明的选项不会出现在输出中；Bool 选项为 false 时写成 `/* #undef CONFIG_<NAME> */`。
 
 在 C 代码中使用：
 
@@ -1159,8 +1227,8 @@ p.OnBuild(func(ctx *api.BuildContext) {
 等效于手动添加：
 
 ```
--DCONFIG_FEATURE_FOO=1 -DCONFIG_BUFFER_SIZE=4096
--DCONFIG_DEVICE_NAME="uart0" -DCONFIG_PLATFORM="linux" -DCONFIG_PLATFORM_LINUX=1
+-DCONFIG_BUFFER_SIZE=4096 -DCONFIG_DEVICE_NAME="uart0"
+-DCONFIG_FEATURE_FOO=1 -DCONFIG_PLATFORM="linux" -DCONFIG_PLATFORM_LINUX=1
 ```
 
 Bool 选项为 false 时不生成 `-D` 宏（与 `#ifdef` 语义一致）。
@@ -1201,6 +1269,8 @@ printf("size=%d\n", CONFIG_BUFFER_SIZE);
 | `ImportConfig(names...)` | 依赖方 | 向 `importConfigs` 追加包名；实际的配置合并和 `-D` 注入在 `GenerateConfigDefines` 的处理块中完成 |
 | `SyncConfigDefines(names...)` | 父包（编排者） | 等价于 `GenerateConfigDefines` + `ImportConfig`，一次性同步多个子包 |
 
+当前实现中 `ExportConfig()` 只设置标志，`ImportConfig` 按名称直接合并、不检查对方是否声明导出；只有 `GenerateConfigDefines`（或 `SyncConfigDefines`）才会注入 `-D`。同时调用 `GenerateConfigHeader` 时，导入的选项也会合并进本包视角的 `autoconf.h`。
+
 示例——芯片包导出配置，驱动包导入，根包统一同步：
 
 ```go
@@ -1240,9 +1310,10 @@ p.OnBuild(func(ctx *api.BuildContext) {
 ```go
 func SplitPackageRef(ref string) (repo, name string, ok bool)
 // "official/zlib" -> ("official", "zlib", true)
+// "zlib" -> ("", "zlib", false)
 ```
 
-用于解析 `repo/name` 格式的包引用。
+用于解析 `repo/name` 格式的包引用；不含 `/` 时 `ok=false`，`name` 为原字符串。
 
 ## 使用示例
 

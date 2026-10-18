@@ -109,7 +109,7 @@ func Main(p *api.Package) {
 
 每个 `build.go` 文件在运行时由 [yaegi](https://github.com/traefik/yaegi) Go 解释器直接解释执行，无需编译为插件。这意味着：
 
-- 构建脚本就是标准 Go 代码，在编写时有 Go 工具链的类型检查，在运行时由解释器执行（无编译期强制，脚本错误在加载时暴露）
+- 构建脚本就是标准 Go 代码，在编写时可借助 Go 工具链/编辑器做类型检查，在运行时由解释器执行（无编译期强制，脚本错误在加载时暴露）
 - 可以直接使用 Go 标准库——字符串处理、文件操作、网络请求，一切触手可及
 - 支持多文件：一个包的 build.go 可以拆分成多个 `.go` 文件
 - 不再需要学习 CMake 那种自成一派的 DSL
@@ -138,7 +138,7 @@ Phase 1: OnRequire  →  扫描 build.go → 解释构建脚本 → 解析依赖
     ↓
 Phase 2a: OnConfig  →  执行配置回调 → 收集 Options → 运行 OnApply 回调 → 合并全局配置
     ↓
-Phase 2b: FilterDeps  →  用真实配置重跑 OnRequire → 更新拓扑排序 → BFS 收集 needed 包
+Phase 2b: FilterDeps  →  用已解析的包级配置重跑 OnRequire → 更新拓扑排序 → BFS 收集 needed 包
     ↓
 Phase 3: OnBuild  →  执行构建回调 → 生成 Targets → 拓扑排序编译/链接
     ↓
@@ -162,9 +162,9 @@ VMake 不依赖外部包管理器。它内置了完整的依赖图解析器，�
 
 Toolchain 抽象层统一管理所有编译工具链：
 
-- 内置 `host` 工具链，默认使用 gcc/g++ 并从 PATH 解析
+- 内置 `host` 工具链：Linux/Windows 默认使用 PATH 中的 `gcc`/`g++`；macOS 使用系统 `cc`/`c++`，且不声明 `objcopy`/`objdump`
 - 扩展仓库通过 `toolchain.json` 声明交叉编译工具链（如 ARM 嵌入式工具链），vmake 自动扫描、按宿主平台下载并注册
-- 目标系统与三元组由项目 `build.go` 声明，自动生成 `CMAKE_SYSTEM_NAME`、`--host` 等跨编译参数
+- 目标系统与三元组由项目 `build.go` 声明（工具链也可提供默认值），自动生成 `CMAKE_SYSTEM_NAME`、`--host` 等跨编译参数
 - 支持 RTOS/嵌入式后处理步骤（objcopy、size、strip）
 
 ---
@@ -189,7 +189,7 @@ VMake 内置了 `vmake skill install` 命令，可以将结构化的知识直接
 Go 是 AI 编程助手训练数据中最丰富的语言之一。当 build.go 就是标准 Go 代码时：
 
 - AI 可以直接复用已有的 Go 知识，无需学习新的 DSL
-- Go 的类型系统天然防止了配置错误（拼写错误、类型不匹配在编译时就能发现）
+- Go 的类型系统天然防止了配置错误（拼写错误、类型不匹配会在解释加载时立即报错，编辑器也能提前检查）
 - AI 可以调用 Go 标准库完成复杂的构建逻辑——字符串处理、JSON 解析、HTTP 请求，全部原生支持
 
 对比 CMake 那种语法怪异、类型系统薄弱的 DSL，AI 生成 Go 代码的准确率高出数个量级。
