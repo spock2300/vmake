@@ -260,6 +260,16 @@ func TestInspectProjectModel(t *testing.T) {
 	if data.Overrides != nil {
 		t.Errorf("unexpected overrides: %v", data.Overrides)
 	}
+	if data.GlobalCFlags != nil || data.GlobalCxxFlags != nil || data.GlobalLdFlags != nil ||
+		data.GlobalLinks != nil || data.GlobalDefines != nil {
+		t.Errorf("empty global flag arrays = %v/%v/%v/%v/%v, want omitted",
+			data.GlobalCFlags, data.GlobalCxxFlags, data.GlobalLdFlags, data.GlobalLinks, data.GlobalDefines)
+	}
+	for _, key := range []string{"globalCFlags", "globalCxxFlags", "globalLdFlags", "globalLinks", "globalDefines"} {
+		if strings.Contains(stdout, `"`+key+`"`) {
+			t.Errorf("inspect emitted %q for a project without global flags", key)
+		}
+	}
 	if !slices.Equal(data.Graph, []inspectEdge{{From: "proj", To: "dep"}}) {
 		t.Errorf("graph = %v", data.Graph)
 	}
@@ -415,6 +425,132 @@ func Main(p *api.Package) {
 	app = inspectTargetNamed(t, inspectPackageNamed(t, decodeInspectEnvelope(t, changed).Data, "proj"), "app")
 	if want := []string{"-Wall", "-Wextra", "-Wpedantic"}; !slices.Equal(app.CFlags, want) {
 		t.Fatalf("app cFlags after edit = %v, want %v", app.CFlags, want)
+	}
+}
+
+func TestInspectGlobalFlags(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.Option("with_extra").SetType(api.OptionBool).SetDefault(false)
+		ctx.Option("turbo").SetType(api.OptionBool).SetDefault(true).
+			SetOnApply(func(ctx *api.ConfigContext, _ any) {
+				ctx.AddGlobalCFlags("-DTURBO")
+			})
+		ctx.GlobalOption("a_board").SetType(api.OptionString).SetDefault("evb")
+		ctx.GlobalOption("z_feature").SetType(api.OptionBool).SetDefault(true)
+		ctx.AddGlobalCFlags("-DROOT_GLOBAL", "-DROOT_GLOBAL")
+		ctx.AddGlobalCxxFlags("-std=c++20")
+		ctx.AddGlobalLdFlags("-Wl,--gc-sections")
+		ctx.AddGlobalLinks("-lm")
+	})
+	p.OnRequire(func(ctx *api.RequireContext) {
+		ctx.AddRequires("dep")
+		if ctx.When("with_extra", true) {
+			ctx.AddRequires("extra")
+		}
+	})
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).
+			AddFiles("src/main.c").
+			AddDeps("dep:deplib")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n")
+	writeExtensionFile(t, filepath.Join(project, "dep", "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.Option("dep_turbo").SetType(api.OptionBool).SetDefault(true).
+			SetOnApply(func(ctx *api.ConfigContext, _ any) {
+				ctx.AddGlobalCFlags("-DDEP_APPLY")
+			})
+		ctx.AddGlobalCFlags("-DDEP_GLOBAL")
+		ctx.AddGlobalLdFlags("-ldep")
+		ctx.AddGlobalLinks("-ldep")
+	})
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("deplib").SetKind(api.TargetStatic).AddFiles("src/lib.c")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "dep", "src", "lib.c"), "int dep(void) { return 0; }\n")
+	writeExtensionFile(t, filepath.Join(project, "extra", "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.AddGlobalCFlags("-DEXTRA_GLOBAL")
+		ctx.AddGlobalCxxFlags("-DEXTRA_CXX")
+		ctx.AddGlobalLdFlags("-DEXTRA_LD")
+		ctx.AddGlobalLinks("-lextra")
+	})
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("extralib").SetKind(api.TargetStatic).AddFiles("src/extra.c")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "extra", "src", "extra.c"), "int extra(void) { return 0; }\n")
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	data := envelope.Data
+	if want := []string{"-DDEP_GLOBAL", "-DDEP_APPLY", "-DROOT_GLOBAL", "-DROOT_GLOBAL", "-DTURBO"}; !slices.Equal(data.GlobalCFlags, want) {
+		t.Errorf("globalCFlags = %v, want %v", data.GlobalCFlags, want)
+	}
+	if want := []string{"-std=c++20"}; !slices.Equal(data.GlobalCxxFlags, want) {
+		t.Errorf("globalCxxFlags = %v, want %v", data.GlobalCxxFlags, want)
+	}
+	if want := []string{"-ldep", "-Wl,--gc-sections"}; !slices.Equal(data.GlobalLdFlags, want) {
+		t.Errorf("globalLdFlags = %v, want %v", data.GlobalLdFlags, want)
+	}
+	if want := []string{"-ldep", "-lm"}; !slices.Equal(data.GlobalLinks, want) {
+		t.Errorf("globalLinks = %v, want %v", data.GlobalLinks, want)
+	}
+	if want := []string{`CONFIG_A_BOARD="evb"`, "CONFIG_Z_FEATURE=1"}; !slices.Equal(data.GlobalDefines, want) {
+		t.Errorf("globalDefines = %v, want %v", data.GlobalDefines, want)
+	}
+	for _, array := range [][]string{data.GlobalCFlags, data.GlobalCxxFlags, data.GlobalLdFlags, data.GlobalLinks} {
+		for _, flag := range array {
+			if strings.Contains(flag, "EXTRA") {
+				t.Errorf("unneeded package flag %q leaked into global flags", flag)
+			}
+		}
+	}
+	extra := inspectPackageNamed(t, data, "extra")
+	if extra.Needed {
+		t.Errorf("package extra is needed despite with_extra=false")
+	}
+	if extra.Targets != nil {
+		t.Errorf("unneeded package extra declared targets: %+v", extra.Targets)
+	}
+	if strings.Contains(stdout, `"globalCFlags": []`) || strings.Contains(stdout, `"globalCxxFlags": []`) ||
+		strings.Contains(stdout, `"globalLdFlags": []`) || strings.Contains(stdout, `"globalLinks": []`) ||
+		strings.Contains(stdout, `"globalDefines": []`) {
+		t.Fatalf("inspect emitted an empty global flag array:\n%s", stdout)
+	}
+
+	again, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("second inspect exit = %d, stderr = %q", code, stderr)
+	}
+	if again != stdout {
+		t.Fatal("global flag lists are not deterministic")
 	}
 }
 
@@ -1853,20 +1989,26 @@ func Main(p *api.Package) {
 	if envelope.Status != "ok" || envelope.Data == nil {
 		t.Fatalf("envelope = %+v", envelope)
 	}
-	if len(envelope.Diagnostics) != 1 {
-		t.Fatalf("diagnostics = %+v", envelope.Diagnostics)
+	if len(envelope.Diagnostics) != 2 {
+		t.Fatalf("diagnostics = %+v, want the declaration warning and the aggregate", envelope.Diagnostics)
 	}
 	diagnostic := envelope.Diagnostics[0]
 	if diagnostic.Severity != "warning" || diagnostic.Code != "VMAKE_W_TARGET_DECLARE" ||
 		!strings.Contains(diagnostic.Message, "broken") || diagnostic.Fix == "" {
 		t.Fatalf("diagnostic = %+v", diagnostic)
 	}
+	aggregate := envelope.Diagnostics[1]
+	if aggregate.Code != "VMAKE_W_OMITTED_TARGETS" ||
+		aggregate.Message != "omitted targets for 1 package(s) because target declaration failed" {
+		t.Fatalf("aggregate diagnostic = %+v", aggregate)
+	}
 	broken := inspectPackageNamed(t, envelope.Data, "broken")
 	if !broken.Needed || broken.Targets != nil {
 		t.Fatalf("broken package = %+v", broken)
 	}
-	if !strings.Contains(stderr, "Warning: cannot declare targets for broken") {
-		t.Fatalf("stderr = %q, want one warning line", stderr)
+	if !strings.Contains(stderr, "Warning: cannot declare targets for broken") ||
+		!strings.HasSuffix(stderr, "Warning: "+aggregate.Message+"\n") {
+		t.Fatalf("stderr = %q, want the per-package warning and the aggregate", stderr)
 	}
 }
 
@@ -1910,8 +2052,8 @@ func Main(p *api.Package) {
 		t.Fatalf("diagnostic = %+v, want read-only declaration warning", diagnostic)
 	}
 	aggregate := envelope.Diagnostics[1]
-	if aggregate.Severity != "warning" || aggregate.Code != "VMAKE_W_READ_ONLY_TARGETS" ||
-		aggregate.Message != "omitted targets for 1 package(s) because dry-run callbacks attempted writes" ||
+	if aggregate.Severity != "warning" || aggregate.Code != "VMAKE_W_OMITTED_TARGETS" ||
+		aggregate.Message != "omitted targets for 1 package(s) (1 due to read-only writes)" ||
 		aggregate.Fix != "Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected." {
 		t.Fatalf("aggregate diagnostic = %+v", aggregate)
 	}
@@ -1938,7 +2080,7 @@ func Main(p *api.Package) {
 	}
 	envelope = decodeInspectEnvelope(t, stdout)
 	if len(envelope.Diagnostics) != 2 || !strings.Contains(envelope.Diagnostics[0].Message, wantReadOnly) ||
-		envelope.Diagnostics[1].Code != "VMAKE_W_READ_ONLY_TARGETS" {
+		envelope.Diagnostics[1].Code != "VMAKE_W_OMITTED_TARGETS" {
 		t.Fatalf("diagnostics after build = %+v", envelope.Diagnostics)
 	}
 	if data, err := os.ReadFile(generated); err != nil || string(data) != "generated" {
@@ -1985,8 +2127,8 @@ func Main(p *api.Package) {
 	if diagnostic.Code != "VMAKE_W_TARGET_DECLARE" || !strings.Contains(diagnostic.Message, wantReadOnly) {
 		t.Fatalf("diagnostic = %+v, want read-only declaration warning", diagnostic)
 	}
-	if aggregate := envelope.Diagnostics[1]; aggregate.Code != "VMAKE_W_READ_ONLY_TARGETS" ||
-		aggregate.Message != "omitted targets for 1 package(s) because dry-run callbacks attempted writes" {
+	if aggregate := envelope.Diagnostics[1]; aggregate.Code != "VMAKE_W_OMITTED_TARGETS" ||
+		aggregate.Message != "omitted targets for 1 package(s) (1 due to read-only writes)" {
 		t.Fatalf("aggregate diagnostic = %+v", aggregate)
 	}
 	if proj := inspectPackageNamed(t, envelope.Data, "ignored"); proj.Targets != nil {
@@ -2036,7 +2178,7 @@ func Main(p *api.Package) {
 `)
 	rootGenerated := filepath.Join(project, "root-generated.txt")
 	libGenerated := filepath.Join(project, "lib", "lib-generated.txt")
-	wantAggregate := "omitted targets for 2 package(s) because dry-run callbacks attempted writes"
+	wantAggregate := "omitted targets for 2 package(s) (2 due to read-only writes)"
 
 	var first *inspectEnvelope
 	for attempt := 0; attempt < 2; attempt++ {
@@ -2058,7 +2200,7 @@ func Main(p *api.Package) {
 			}
 		}
 		aggregate := envelope.Diagnostics[2]
-		if aggregate.Severity != "warning" || aggregate.Code != "VMAKE_W_READ_ONLY_TARGETS" ||
+		if aggregate.Severity != "warning" || aggregate.Code != "VMAKE_W_OMITTED_TARGETS" ||
 			aggregate.Message != wantAggregate ||
 			aggregate.Fix != "Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected." {
 			t.Fatalf("aggregate diagnostic = %+v", aggregate)
@@ -2081,6 +2223,62 @@ func Main(p *api.Package) {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("inspect wrote %s: %v", path, err)
 		}
+	}
+}
+
+func TestInspectOmissionAggregateCountsAllDeclarationFailures(t *testing.T) {
+	project := writeQueryMixedOmissionProject(t)
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	if len(envelope.Diagnostics) != 3 {
+		t.Fatalf("diagnostics = %+v, want two per-package warnings and one aggregate", envelope.Diagnostics)
+	}
+	var readOnly, broken, aggregate *inspectDiagnostic
+	for i := range envelope.Diagnostics {
+		diagnostic := &envelope.Diagnostics[i]
+		switch diagnostic.Code {
+		case "VMAKE_W_TARGET_DECLARE":
+			if diagnostic.Severity != "warning" || diagnostic.Fix == "" {
+				t.Fatalf("per-package diagnostic = %+v", diagnostic)
+			}
+			if strings.Contains(diagnostic.Message, "read-only inspection:") {
+				readOnly = diagnostic
+			} else {
+				broken = diagnostic
+			}
+		case "VMAKE_W_OMITTED_TARGETS":
+			aggregate = diagnostic
+		default:
+			t.Fatalf("unexpected diagnostic %+v", diagnostic)
+		}
+	}
+	if readOnly == nil || broken == nil || aggregate == nil {
+		t.Fatalf("diagnostics = %+v, want both omission causes and the aggregate", envelope.Diagnostics)
+	}
+	if !strings.Contains(broken.Message, "broken") || !strings.Contains(broken.Message, "declaration failure") {
+		t.Fatalf("non-read-only diagnostic = %+v", broken)
+	}
+	if aggregate.Severity != "warning" ||
+		aggregate.Message != "omitted targets for 2 package(s) (1 due to read-only writes)" ||
+		aggregate.Fix != "Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected." {
+		t.Fatalf("aggregate diagnostic = %+v", aggregate)
+	}
+	if !strings.HasSuffix(stderr, "Warning: "+aggregate.Message+"\n") {
+		t.Fatalf("stderr = %q, want the aggregate warning last", stderr)
+	}
+	for _, name := range []string{"lib", "broken"} {
+		if pkg := inspectPackageNamed(t, envelope.Data, name); pkg.Targets != nil {
+			t.Fatalf("%s targets = %+v, want omitted after declaration failure", name, pkg.Targets)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(project, "lib", "generated.txt")); !os.IsNotExist(err) {
+		t.Fatalf("inspect wrote lib/generated.txt: %v", err)
 	}
 }
 

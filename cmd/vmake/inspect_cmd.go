@@ -28,12 +28,15 @@ const (
 	inspectSchemaVersion                = 1
 	inspectFreshnessChangedSourcesLimit = 50
 	inspectResolvedFilesLimit           = 200
-	readOnlyTargetsWarningCode          = "VMAKE_W_READ_ONLY_TARGETS"
+	omittedTargetsWarningCode           = "VMAKE_W_OMITTED_TARGETS"
 	readOnlyTargetsWarningFix           = "Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected."
 )
 
-func readOnlyTargetsMessage(count int) string {
-	return fmt.Sprintf("omitted targets for %d package(s) because dry-run callbacks attempted writes", count)
+func omittedTargetsMessage(total, readOnly int) string {
+	if readOnly == 0 {
+		return fmt.Sprintf("omitted targets for %d package(s) because target declaration failed", total)
+	}
+	return fmt.Sprintf("omitted targets for %d package(s) (%d due to read-only writes)", total, readOnly)
 }
 
 type inspectEnvelope struct {
@@ -62,6 +65,11 @@ type inspectData struct {
 	Toolchain              string                   `json:"toolchain"`
 	ToolchainInfo          *inspectToolchain        `json:"toolchainInfo,omitempty"`
 	Global                 map[string]any           `json:"global"`
+	GlobalCFlags           []string                 `json:"globalCFlags,omitempty"`
+	GlobalCxxFlags         []string                 `json:"globalCxxFlags,omitempty"`
+	GlobalLdFlags          []string                 `json:"globalLdFlags,omitempty"`
+	GlobalLinks            []string                 `json:"globalLinks,omitempty"`
+	GlobalDefines          []string                 `json:"globalDefines,omitempty"`
 	Overrides              map[string]any           `json:"overrides,omitempty"`
 	Roots                  []string                 `json:"roots"`
 	Packages               []inspectPackage         `json:"packages"`
@@ -101,6 +109,7 @@ type inspectBuildReportState struct {
 
 type inspectFreshness struct {
 	Known                  bool     `json:"known"`
+	Heuristic              bool     `json:"heuristic,omitempty"`
 	ReportStatus           string   `json:"reportStatus,omitempty"`
 	ReportFinished         string   `json:"reportFinished,omitempty"`
 	ConfigMatches          *bool    `json:"configMatches,omitempty"`
@@ -212,7 +221,9 @@ flagging the cap. Every target also reports its own declared cFlags, cxxFlags
 and ldFlags when non-empty, in declaration order: raw AddCFlags, AddCxxFlags
 and AddLdFlags values without package/global flags, toolchain defaults or action
 signatures, so a flag edit changes this document even though freshness cannot
-prove the next build is a no-op. These sets are declarations, not action
+prove the next build is a no-op. Top-level globalCFlags, globalCxxFlags,
+globalLdFlags, globalLinks and globalDefines report merged AddGlobal* values
+from needed packages (not target flags or toolchain defaults). These sets are declarations, not action
 decisions: generated or conditional files can appear only after a build. The
 freshness object
 compares the resolved declared files of needed packages with the build report's
@@ -223,9 +234,10 @@ verify action or output freshness. Diagnostics is always an array.
 Dry-run OnBuild runs with interpreted-script file writes disabled: wrapped os
 write APIs fail with a read-only error instead of touching the filesystem, so a
 script that writes produces a VMAKE_W_TARGET_DECLARE warning and that package's
-targets are omitted; one additional VMAKE_W_READ_ONLY_TARGETS warning reports
-how many packages were omitted and how to guard or permit the writes. Reads,
-stats and globs still work. vmake's own state files are unaffected.
+targets are omitted. Any package whose target declaration fails is omitted and
+warned; one additional VMAKE_W_OMITTED_TARGETS warning reports the total omitted
+count, how many were read-only write rejections, and the matching remediation.
+Reads, stats and globs still work. vmake's own state files are unaffected.
 --allow-dry-run-writes disables this guard for scripts that
 must generate inputs before declaring targets; it can modify the build tree and
 should be used only when those writes are expected.
@@ -602,6 +614,11 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 		Toolchain:              inspection.TcName,
 		ToolchainInfo:          inspectToolchainInfo(inspection),
 		Global:                 global,
+		GlobalCFlags:           inspection.GlobalCFlags,
+		GlobalCxxFlags:         inspection.GlobalCxxFlags,
+		GlobalLdFlags:          inspection.GlobalLdFlags,
+		GlobalLinks:            inspection.GlobalLinks,
+		GlobalDefines:          inspection.GlobalMacroDefines,
 		Overrides:              overrides,
 		Roots:                  inspectRoots(ctx, inspection.Needed),
 		Packages:               make([]inspectPackage, 0, len(ctx.DepGraph.Packages)),
@@ -619,6 +636,7 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 	}
 	sources := inspectSourceStates(ctx, inspection)
 	diagnostics := make([]inspectDiagnostic, 0)
+	omitted := 0
 	readOnlyOmitted := 0
 	for _, name := range inspectPackageNames(ctx) {
 		node := ctx.DepGraph.Packages[name]
@@ -663,6 +681,7 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 						fix = readOnlyTargetsWarningFix
 						readOnlyOmitted++
 					}
+					omitted++
 					diagnostics = append(diagnostics, inspectDiagnostic{
 						Severity: "warning",
 						Code:     "VMAKE_W_TARGET_DECLARE",
@@ -677,12 +696,16 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 		data.Packages = append(data.Packages, pkg)
 	}
 	data.Freshness = inspectFreshnessFor(buildReportState, data.Packages)
-	if readOnlyOmitted > 0 {
+	if omitted > 0 {
+		fix := "Fix the package OnBuild callback, then rerun vmake inspect."
+		if readOnlyOmitted > 0 {
+			fix = readOnlyTargetsWarningFix
+		}
 		diagnostics = append(diagnostics, inspectDiagnostic{
 			Severity: "warning",
-			Code:     readOnlyTargetsWarningCode,
-			Message:  readOnlyTargetsMessage(readOnlyOmitted),
-			Fix:      readOnlyTargetsWarningFix,
+			Code:     omittedTargetsWarningCode,
+			Message:  omittedTargetsMessage(omitted, readOnlyOmitted),
+			Fix:      fix,
 		})
 	}
 	if reportDiagnostic != nil {
@@ -769,7 +792,7 @@ func loadInspectReportState(path, configDigest, mode, toolchain string, hypothet
 }
 
 func inspectFreshnessFor(state *inspectBuildReportState, packages []inspectPackage) *inspectFreshness {
-	freshness := &inspectFreshness{}
+	freshness := &inspectFreshness{Heuristic: true}
 	if state == nil {
 		return freshness
 	}

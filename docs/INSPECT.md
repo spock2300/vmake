@@ -15,6 +15,10 @@ view, not a build plan: the target `files` field keeps the declared patterns
 while `resolvedFiles` adds a bounded resolution of those patterns, and
 `cFlags`/`cxxFlags`/`ldFlags` keep the declared flag strings without merged
 globals or action signatures (see [`targets` entries](#targets-entries)).
+Project-wide flags declared by needed packages are reported once in the
+top-level `globalCFlags`/`globalCxxFlags`/`globalLdFlags`/`globalLinks` arrays,
+with auto-exported global-option macros in `globalDefines` (see
+[Global flags](#global-flags)).
 
 The model also reports whether `build/compile_commands.json` and the last
 `build/vmake-build.json` and `build/vmake-test.json` currently exist, each
@@ -122,11 +126,13 @@ declaration: the package's targets are omitted and one
 This happens even when the callback ignores the returned error and continues;
 inspect records the attempt and turns it into a declaration failure, so an
 optimistic `_ = os.WriteFile(...)` in `OnBuild` cannot silently appear to
-succeed. The callback may keep running, but the write did not happen. When one
-or more packages are omitted this way, inspect appends one additional aggregate
-`VMAKE_W_READ_ONLY_TARGETS` warning after the per-package warnings; the
-per-package warnings are retained and the aggregate reports the omitted-package
-count. This guard covers the wrapped symbols only: a script that reaches
+succeed. The callback may keep running, but the write did not happen. Any
+package whose target declaration fails is omitted and warned, whatever the
+cause. When one or more packages are omitted, inspect appends one additional
+aggregate `VMAKE_W_OMITTED_TARGETS` warning after the per-package warnings; the
+per-package warnings are retained, the aggregate reports the total omitted
+count, and its message also states how many omissions were read-only write
+rejections. This guard covers the wrapped symbols only: a script that reaches
 unwrapped stdlib APIs such as `os.MkdirTemp`, `ioutil.*`, or a subprocess is not
 sandboxed, and a script that uses them can still write during inspection. The
 mode is also active while `Require`/`Configure` run, so wrapped writes there are
@@ -192,16 +198,22 @@ that mentions `read-only inspection: interpreted script write to ... is not
 allowed` means the callback tried to write a file while inspect held the
 read-only guard; the file was not created or removed.
 
-The aggregate warning is additional to the per-package diagnostics:
+The aggregate warning is additional to the per-package diagnostics and follows
+them once:
 
 ```json
 {
   "severity": "warning",
-  "code": "VMAKE_W_READ_ONLY_TARGETS",
-  "message": "omitted targets for 2 package(s) because dry-run callbacks attempted writes",
+  "code": "VMAKE_W_OMITTED_TARGETS",
+  "message": "omitted targets for 2 package(s) (1 due to read-only writes)",
   "fix": "Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected."
 }
 ```
+
+The message is `omitted targets for N package(s) because target declaration
+failed` when no omission was a read-only write rejection. When no omission was
+read-only the fix points at the package's `OnBuild` callback; otherwise it names
+the read-only guard.
 
 A needed package whose expected source tree is missing or empty gets one
 warning. Inspect checks the tree without running git, touching the network,
@@ -235,25 +247,29 @@ packages whose source is present, a target-declaration failure does not abort
 query either: it prints one
 `Warning: cannot declare targets for <package>: <error>` line to stderr, omits
 that package's targets or kind label, and continues with the remaining
-packages. The warning is emitted once per package. When one or more of those
-declarations failed because the read-only guard rejected a script write, both
-`query` and `query targets` print one aggregate summary line to stderr after
-the target listing, exit 0, and keep the per-package warnings:
+packages. The warning is emitted once per package. Any target-declaration
+failure, read-only or not, is counted in one aggregate summary line that both
+`query` and `query targets` print to stderr after the target listing, exit 0,
+and keep the per-package warnings:
 
 ```
-Warning: omitted targets for 2 package(s) because dry-run callbacks attempted writes; fix: Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected.
+Warning: omitted targets for 2 package(s) (1 due to read-only writes); fix: Guard generated-file work with p.DryRun(), or run vmake query --allow-dry-run-writes when those writes are expected.
 ```
-`query targets --json` emits one schemaVersion-1 document instead:
+
+When every omission was a non-read-only declaration failure the message reads
+`omitted targets for N package(s) because target declaration failed` and the fix
+points at the package's `OnBuild` callback. `query targets --json` emits one
+schemaVersion-1 document instead:
 `{command:"query targets",status:"ok"|"error",data:{targets:[{package,target,kind}]},
 diagnostics:[]}` with targets sorted by package/target. Source-missing,
-declaration and read-only-omission warnings become diagnostics (the human
-warning lines are suppressed), `data` is null on resolution errors, and human
-mode is unchanged; `--allow-dry-run-writes` opts out of the read-only guard.
+declaration and omission warnings become diagnostics (the human warning lines
+are suppressed), `data` is null on resolution errors, and human mode is
+unchanged; `--allow-dry-run-writes` opts out of the read-only guard.
 
 
-The count is the number of packages whose targets were omitted, and the summary
-line is printed once, after everything on stdout. It is absent when no
-read-only declaration failure occurred.
+The count is the number of packages whose targets were omitted for any
+declaration failure, and the summary line is printed once, after everything on
+stdout. It is absent when no declaration failed.
 
 `build/vmake-build.json` or `build/vmake-test.json` may exist but be unreadable
 or invalid JSON (for example a truncated file left by an interrupted writer, or
@@ -289,6 +305,8 @@ action- or output-freshness check.
 | `toolchain` | string | Effective project toolchain name |
 | `toolchainInfo` | object | `{name, targetOs?, targetTriple?, installPath?, cc?, cxx?, ar?, ld?}`; optional fields are omitted when empty |
 | `global` | object | Effective global option values, including `mode` and `toolchain` |
+| `globalCFlags`, `globalCxxFlags`, `globalLdFlags`, `globalLinks` | array? | Global `AddGlobal*` declarations from needed packages in package resolution then declaration order; duplicates preserved (see [Global flags](#global-flags)) |
+| `globalDefines` | array? | Auto-exported global-option macros as `NAME=value`, sorted, without the `-D` prefix (see [Global flags](#global-flags)) |
 | `overrides` | object | Coerced `--set` values keyed `[package/]option`; omitted when no override was given |
 | `roots` | array | Needed local packages that no resolved package depends on, sorted |
 | `packages` | array | One entry per resolved package, sorted by name |
@@ -304,6 +322,44 @@ action- or output-freshness check.
 | `testReportState` | object? | Identity and result recorded by the test report; same shape as `buildReportState`, omitted when absent or unreadable |
 | `installPrefix` | string | `<root>/install` (the default `--prefix`, even before an install) |
 | `installManifest` | string | `<root>/install/manifest.json` (the expected default manifest path, even before an install) |
+
+## Global flags
+
+`globalCFlags`, `globalCxxFlags`, `globalLdFlags`, `globalLinks` and
+`globalDefines` are additive schemaVersion 1 arrays: they expose the
+project-wide settings the build merges in, which target `cFlags`/`cxxFlags`/
+`ldFlags` deliberately do not repeat. All five are omitted when empty.
+
+The four flag arrays concatenate every `AddGlobalCFlags`,
+`AddGlobalCxxFlags`, `AddGlobalLdFlags` and `AddGlobalLinks` declaration from
+the needed packages. Packages appear in resolution order, and within one
+package all `OnConfig` declarations come before its `OnApply` declarations
+(the config phase collects every package's `OnConfig` first and then runs the
+`OnApply` callbacks, but each callback appends to its own package's list).
+Values are copied verbatim: not sorted, shell-split, variable-expanded or
+de-duplicated, so a flag declared twice appears twice. Packages pruned by
+`FilterDeps` contribute nothing, matching the build. The arrays exclude mode
+flags, toolchain or extension global flags, builtin default build flags, and
+per-target flags. They are declarations
+merged across packages, not the final compile or link command line, and they are
+not action signatures. Because each value applies to every target of every
+needed package, it is reported once at the top level instead of being repeated
+on each target.
+
+`globalDefines` lists the macros auto-exported from global options
+(`CONFIG_<NAME>...`, or a `SetMacroName` replacement) as `NAME=value` entries
+without the `-D` prefix. Unlike the flag arrays it is sorted and de-duplicated
+by macro name, and it is project-wide: every global option declaration
+contributes regardless of which package declared it. The build appends each
+entry as `-D<entry>` to both the C and C++ project flags after the
+package-declared global flags. A `false` boolean emits no define.
+
+To approximate a target's C command line, combine the unreported toolchain
+defaults, the target's `cFlags`, the mode flags, `globalCFlags`, and one
+`-D<entry>` per `globalDefines` entry, in that order; link flags place
+`globalLdFlags` after target `ldFlags`, and `globalLinks` go into the link
+group. Inspect does not execute that merge, so this is guidance, not a command
+line.
 
 ## Build and test state
 
@@ -364,6 +420,7 @@ data keys rather than reject the document:
 ```json
 "freshness": {
   "known": true,
+  "heuristic": true,
   "reportStatus": "succeeded",
   "reportFinished": "2026-10-19T02:00:00.123456789Z",
   "configMatches": true,
@@ -383,7 +440,7 @@ compared with the report finish time; file contents are not read or hashed.
 Missing declared files are skipped silently; a missing source tree is covered by
 `VMAKE_W_SOURCE_MISSING` instead.
 
-- `known` is false when there is no build report, the report is unreadable, or
+- `heuristic` is true: freshness uses declared-source mtimes and is not action-level. Use `vmake build --check` for an action-signature plan. `known` is false when there is no build report, the report is unreadable, or
   its `finished` field is empty or not an RFC 3339 timestamp. When a report
   parses, `reportStatus`, `configMatches` and `effectiveConfigMatches` are still
   reported and `reportFinished` is present only for a parseable timestamp;
@@ -412,10 +469,11 @@ modification times only: it does not capture toolchain or buildscript/action
 changes, generated inputs, headers or other files a target did not declare,
 deleted files, content edits that preserve or backdate a modification time, or
 clock/file-system skew. Declared target flags are reported separately in
-`cFlags`/`cxxFlags`/`ldFlags`, so an `AddCFlags` edit is visible in the document
-even though this heuristic still reports `sourceChanged: false`. `vmake build`
-remains authoritative: `sourceChanged: false` does not prove the next build is a
-no-op.
+`cFlags`/`cxxFlags`/`ldFlags` and global declarations in `globalCFlags`/
+`globalCxxFlags`/`globalLdFlags`/`globalLinks`/`globalDefines`, so a flag edit is
+visible in the document even though this heuristic still reports
+`sourceChanged: false`. `vmake build` remains authoritative: `sourceChanged:
+false` does not prove the next build is a no-op.
 
 ## `packages` entries
 
@@ -476,9 +534,12 @@ flag arrays keep the order the buildscript declared.
 list is copied verbatim and in declaration order, so flag order is preserved and
 the entries are not sorted, de-duplicated, shell-split, or variable-expanded.
 They exclude package and global flags (`AddGlobalCFlags`, `OnApply` flags,
-toolchain default flags) and flags inherited from dependencies; they are a
-declaration, not the compile or link command line. They are also not action
-signatures: inspect does not read or hash action records. An `AddCFlags` (or
+toolchain default flags) and flags inherited from dependencies; global
+declarations are reported separately at the top level in `globalCFlags`/
+`globalCxxFlags`/`globalLdFlags`/`globalLinks` and `globalDefines`, so they are
+visible once rather than repeated on every target. They are a declaration, not
+the compile or link command line. They are also not action signatures: inspect
+does not read or hash action records. An `AddCFlags` (or
 `AddCxxFlags`/`AddLdFlags`) edit therefore changes this document, making the
 change visible in a JSON diff, but `buildDir`, `freshness`, and the report match
 bits still do not prove the next build is a no-op. Run `vmake build` when
@@ -537,8 +598,10 @@ report, and source trees: packages and roots are sorted by name, graph edges by
 `(from, to)`, freshness sources are de-duplicated and sorted, target
 `resolvedFiles` are de-duplicated and sorted, target
 `cFlags`/`cxxFlags`/`ldFlags` keep the buildscript's declaration order,
+`globalCFlags`/`globalCxxFlags`/`globalLdFlags`/`globalLinks` keep package and
+declaration order (duplicates preserved), `globalDefines` is sorted,
 target-declaration diagnostics keep package-name order with the
-`VMAKE_W_READ_ONLY_TARGETS` aggregate last, and JSON object keys follow Go's
+`VMAKE_W_OMITTED_TARGETS` aggregate last, and JSON object keys follow Go's
 `encoding/json` ordering. Consecutive runs are byte-identical. Build- and
 test-state fields are snapshots of the report and compile database files, so
 they stay byte-identical until one of those files changes. The freshness
@@ -556,11 +619,12 @@ or renamed.
 | Invalid `--set` | `status: "error"`, `code: VMAKE_E_OPTION` | 1 | one `Error: ...` line |
 
 Warnings cover target-declaration failures (`VMAKE_W_TARGET_DECLARE`, including
-a dry-run write rejected by the read-only guard), the read-only omission
-aggregate (`VMAKE_W_READ_ONLY_TARGETS`), missing source trees
-(`VMAKE_W_SOURCE_MISSING`), and unreadable build or test reports
-(`VMAKE_W_REPORT_UNREADABLE`). Buildscript stdout is always discarded, including
-on failure; stdout contains one JSON document in every row.
+a dry-run write rejected by the read-only guard), the omission aggregate
+(`VMAKE_W_OMITTED_TARGETS`, which counts read-only and other declaration
+failures), missing source trees (`VMAKE_W_SOURCE_MISSING`), and unreadable
+build or test reports (`VMAKE_W_REPORT_UNREADABLE`). Buildscript stdout is
+always discarded, including on failure; stdout contains one JSON document in
+every row.
 
 ## Side effects
 

@@ -39,15 +39,20 @@ func hasUnmanagedSourceDir(node *resolver.PackageNode) bool {
 }
 
 type Inspection struct {
-	Mode              string
-	TcName            string
-	Tc                *toolchain.Toolchain
-	GlobalValues      map[string]any
-	Tools             *build.ResolvedTools
-	Needed            map[string]bool
-	GlobalFlagsHash   string
-	PkgDirs           map[string]*api.PkgDirs
-	PackageToolchains map[string]*toolchain.Toolchain
+	Mode               string
+	TcName             string
+	Tc                 *toolchain.Toolchain
+	GlobalValues       map[string]any
+	GlobalCFlags       []string
+	GlobalCxxFlags     []string
+	GlobalLdFlags      []string
+	GlobalLinks        []string
+	GlobalMacroDefines []string
+	Tools              *build.ResolvedTools
+	Needed             map[string]bool
+	GlobalFlagsHash    string
+	PkgDirs            map[string]*api.PkgDirs
+	PackageToolchains  map[string]*toolchain.Toolchain
 }
 
 type InspectOptions struct {
@@ -82,6 +87,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 			return nil, err
 		}
 	}
+	globalCFlags, globalCxxFlags, globalLdFlags, globalLinks := neededGlobalFlags(ctx, pre.needed)
 
 	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
 	toolCache := make(map[string]*build.ResolvedTools)
@@ -193,14 +199,36 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 	}
 
 	return &Inspection{
-		Mode:              pre.cfg.Mode,
-		TcName:            pre.cfg.TcName,
-		Tc:                pre.cfg.Tc,
-		GlobalValues:      pre.cfg.GlobalValues,
-		Tools:             pre.tools,
-		Needed:            pre.needed,
-		GlobalFlagsHash:   pre.globalFlagsHash,
-		PkgDirs:           pkgDirs,
-		PackageToolchains: packageToolchains,
+		Mode:               pre.cfg.Mode,
+		TcName:             pre.cfg.TcName,
+		Tc:                 pre.cfg.Tc,
+		GlobalValues:       pre.cfg.GlobalValues,
+		GlobalCFlags:       globalCFlags,
+		GlobalCxxFlags:     globalCxxFlags,
+		GlobalLdFlags:      globalLdFlags,
+		GlobalLinks:        globalLinks,
+		GlobalMacroDefines: append([]string(nil), ctx.GlobalMacroDefines...),
+		Tools:              pre.tools,
+		Needed:             pre.needed,
+		GlobalFlagsHash:    pre.globalFlagsHash,
+		PkgDirs:            pkgDirs,
+		PackageToolchains:  packageToolchains,
 	}, nil
+}
+
+func neededGlobalFlags(ctx *RuntimeContext, needed map[string]bool) (cflags, cxxflags, ldflags, links []string) {
+	for _, name := range ctx.Resolver.GetOrder() {
+		if !needed[name] {
+			continue
+		}
+		buf := ctx.BufferedGlobalFlags[name]
+		if buf == nil {
+			continue
+		}
+		cflags = append(cflags, buf.cFlags...)
+		cxxflags = append(cxxflags, buf.cxxFlags...)
+		ldflags = append(ldflags, buf.ldFlags...)
+		links = append(links, buf.links...)
+	}
+	return cflags, cxxflags, ldflags, links
 }

@@ -87,7 +87,7 @@ Buildscripts should guard generated-file work on `p.DryRun()`; an empty
 `BuildDir()` is not a sufficient guard during inspection. Unwrapped stdlib APIs
 and subprocesses are not sandboxed. Any wrapped write attempt (even one whose
 error the callback ignores) omits that package's targets and emits a
-`VMAKE_W_TARGET_DECLARE` warning; one `VMAKE_W_READ_ONLY_TARGETS` aggregate
+`VMAKE_W_TARGET_DECLARE` warning; one `VMAKE_W_OMITTED_TARGETS` aggregate
 names the omitted package count and the `--allow-dry-run-writes`/p.DryRun fix.
 
 - Build/test reports carry recorded provenance when available: `vmakeVersion`,
@@ -108,7 +108,14 @@ names the omitted package count and the `--allow-dry-run-writes`/p.DryRun fix.
   `AddCFlags`/`AddCxxFlags`/`AddLdFlags` strings in declaration order and are
   omitted when empty; they exclude package/global flags, toolchain defaults, and
   action signatures, so an `AddCFlags` edit changes the JSON without making
-  freshness plan the rebuild. `installs` lists the
+  freshness plan the rebuild. Project-wide global declarations are reported
+  once at the top level: `globalCFlags`/`globalCxxFlags`/`globalLdFlags`/
+  `globalLinks` concatenate `AddGlobal*` calls from needed packages in package
+  resolution order and each package's declaration order (duplicates preserved;
+  `FilterDeps`-pruned packages contribute nothing), and `globalDefines` lists
+  sorted, `-D`-less auto-exported global-option macros (`CONFIG_...`). All five
+  arrays are omitted when empty, and target `cFlags`/`cxxFlags`/`ldFlags` stay
+  target-only. `installs` lists the
   package's `AddInstalls` entries declared in `OnBuild` (`{source, dest}`), and
   `installPath` predicts the prefix-relative artifact path (`bin/app`,
   `lib/libfoo.a`) or omits it for void/object/test/no-install targets.

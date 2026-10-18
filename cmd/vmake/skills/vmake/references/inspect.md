@@ -10,7 +10,11 @@ gets a read-only error instead of creating or deleting a file. The model is a
 declaration-time view, not a build plan: the target `files` field keeps the
 declared patterns, while `resolvedFiles` adds a bounded resolution of them (see
 the `targets` entries below), and `cFlags`/`cxxFlags`/`ldFlags` keep the declared
-flag strings without merged globals or action signatures. Inspect also warns
+flag strings without merged globals or action signatures. Project-wide
+`AddGlobalCFlags`/`AddGlobalCxxFlags`/`AddGlobalLdFlags`/`AddGlobalLinks`
+declarations from needed packages and auto-exported global-option macros are
+reported once at the top level in `globalCFlags`/`globalCxxFlags`/
+`globalLdFlags`/`globalLinks`/`globalDefines`. Inspect also warns
 about needed packages whose source tree
 is not on disk, without fetching or materializing it, and reports the install
 plan declared by `OnBuild` without reading or creating `install/`. State fields
@@ -121,7 +125,7 @@ Reads, stats, directory listings, and `Walk`/`WalkDir` keep working, and normal
 rename, or delete an existing file, so inspecting after a build leaves generated
 files in place. Any dry-run `OnBuild` write attempt fails that package's target
 declaration: its targets are omitted and it gets a `VMAKE_W_TARGET_DECLARE`
-warning carrying the read-only message. When one or more packages are omitted this way, inspect appends one deterministic `VMAKE_W_READ_ONLY_TARGETS` aggregate naming the count and fix. This also applies when the callback
+warning carrying the read-only message. When one or more packages are omitted this way, inspect appends one deterministic `VMAKE_W_OMITTED_TARGETS` aggregate counting all omitted packages (with the read-only subset) and giving the fix. This also applies when the callback
 ignores the returned error (`_ = os.WriteFile(...)`); inspect records the attempt
 and treats it as a declaration failure. The guard covers the wrapped symbols
 only: unwrapped stdlib APIs such as `os.MkdirTemp`, `ioutil.*`, or subprocesses
@@ -137,6 +141,8 @@ too but are not attached to a target-declaration warning.
 | `mode`, `toolchain` | Effective build mode and project toolchain name |
 | `toolchainInfo` | `{name, targetOs?, targetTriple?, installPath?, cc?, cxx?, ar?, ld?}` |
 | `global` | Effective global option values, including `mode` and `toolchain` |
+| `globalCFlags`, `globalCxxFlags`, `globalLdFlags`, `globalLinks` | Global `AddGlobal*` declarations from needed packages in package/declaration order; duplicates preserved; omitted when empty |
+| `globalDefines` | Auto-exported global-option macros as `NAME=value`, sorted, without `-D`; omitted when empty |
 | `overrides` | Typed `--set` values keyed `[package/]option`; omitted when unused |
 | `roots` | Needed local packages that no resolved package depends on, sorted |
 | `packages` | Resolved package entries, sorted by name |
@@ -152,6 +158,36 @@ too but are not attached to a target-declaration warning.
 | `testReportState` | Test report identity/result with the same shape as `buildReportState`; omitted when absent or unreadable |
 | `installPrefix` | `<root>/install` (default `--prefix`, even before an install) |
 | `installManifest` | `<root>/install/manifest.json` (expected default manifest path, even before an install) |
+
+### Global flags
+
+`globalCFlags`, `globalCxxFlags`, `globalLdFlags`, `globalLinks` and
+`globalDefines` are additive schemaVersion 1 arrays and are omitted when empty.
+The four flag arrays concatenate the matching `AddGlobal*` calls from needed
+packages in package resolution order; within one package, `OnConfig`
+declarations precede its `OnApply` declarations. Values are copied
+verbatim and in declaration order: not sorted, shell-split, variable-expanded or
+de-duplicated, so a flag declared twice appears twice. Packages pruned by
+`FilterDeps` contribute nothing, matching the build. The arrays exclude mode
+flags, toolchain/extension global flags, builtin default build flags, and
+per-target flags; they are declarations, not the full
+compile or link command line, and they are not action signatures. Each value
+applies to every target of every needed package, so it is reported once at the
+top level rather than repeated per target.
+
+`globalDefines` lists the macros auto-exported from global options
+(`CONFIG_<NAME>...` or a `SetMacroName` replacement) as `NAME=value` without the
+`-D` prefix. It is sorted, de-duplicated by macro name, and project-wide: every
+global option declaration contributes regardless of which package declared it.
+The build appends each entry as `-D<entry>` to both the C and C++ project flags
+after the package-declared globals; a `false` boolean emits no define.
+
+Target `cFlags`/`cxxFlags`/`ldFlags` remain target-only declarations and exclude
+these globals. To estimate a target's C command line, combine the unreported
+toolchain defaults, target `cFlags`, mode flags, `globalCFlags`, and one
+`-D<entry>` per `globalDefines` entry, in that order; link flags place
+`globalLdFlags` after target `ldFlags`, with `globalLinks` in the link group.
+Inspect does not execute the merge, so this is guidance, not a command line.
 
 `buildReportState` and `testReportState` copy `status`, `buildId`, `command`,
 `started`, `finished`, `mode`, `toolchain`, `summary` and `error` from their
@@ -184,6 +220,7 @@ the document.
 ```json
 "freshness": {
   "known": true,
+  "heuristic": true,
   "reportStatus": "succeeded",
   "reportFinished": "2026-10-19T02:00:00.123456789Z",
   "configMatches": true,
@@ -194,7 +231,7 @@ the document.
 }
 ```
 
-- `known` is false without a build report, when the report is unreadable, or
+- `heuristic` is true: freshness uses declared-source mtimes and is not action-level. Use `vmake build --check` for an action-signature plan. `known` is false without a build report, when the report is unreadable, or
   when its `finished` value is empty or not RFC 3339. A parsable report still
   reports `reportStatus`, `configMatches` and `effectiveConfigMatches`;
   `reportFinished` appears only for a parseable timestamp. `sourceChanged`,
@@ -253,8 +290,11 @@ Each `targets` entry has `name`, `kind` (`binary`/`static`/`shared`/`object`/
 sorted, de-duplicated, shell-split, or variable-expanded) and omitted when
 empty. They exclude package and global flags (`AddGlobalCFlags`, `OnApply`
 flags, toolchain defaults), flags inherited from dependencies, and action
-signatures: they are the target's declaration, not the compiler or linker
-command line. An `AddCFlags` edit therefore now changes the inspect document,
+signatures: global declarations are reported at the top level in
+`globalCFlags`/`globalCxxFlags`/`globalLdFlags`/`globalLinks` and
+`globalDefines` rather than repeated on each target. They are the target's
+declaration, not the compiler or linker command line. An `AddCFlags` edit
+therefore now changes the inspect document,
 so a JSON diff shows the changed declaration even though `freshness` is
 mtime-only and still cannot plan the rebuild; run `vmake build` when
 correctness matters.
@@ -340,8 +380,11 @@ vmake inspect --set dep/dep_mode=slow      # choice validated
 Exit 0 means a model was produced (including models with warning diagnostics);
 exit 1 means it was not. Output is deterministic for the same project,
 configuration, overrides, build report, and source trees: consecutive runs are
-byte-identical, target `resolvedFiles` are de-duplicated and sorted, and
-`cFlags`/`cxxFlags`/`ldFlags` keep the buildscript's declaration order.
+byte-identical, target `resolvedFiles` are de-duplicated and sorted,
+`globalDefines` is sorted, and
+`cFlags`/`cxxFlags`/`ldFlags` keep the buildscript's declaration order while
+`globalCFlags`/`globalCxxFlags`/`globalLdFlags`/`globalLinks` keep package and
+declaration order with duplicates preserved.
 Inspect stats the compile database and declared sources, expands and stats
 declared file patterns, and reads both reports, but never writes any of those
 files through vmake's own operations. During resolution and dry-run declaration
