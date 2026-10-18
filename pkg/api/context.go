@@ -204,6 +204,13 @@ func (ctx *BuildContext) SetPackage(pkg *Package) *BuildContext {
 	return ctx
 }
 
+func (ctx *BuildContext) ExecutedHelperStages() int {
+	if ctx.pkg == nil {
+		return 0
+	}
+	return ctx.pkg.ExecutedHelperStages()
+}
+
 func (ctx *BuildContext) SetBuildSubGraphFunc(fn func(string) error) *BuildContext {
 	ctx.buildSubGraphFunc = fn
 	return ctx

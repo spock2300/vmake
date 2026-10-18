@@ -1155,3 +1155,48 @@ func TestCMakeSlowStageFailureStaysBounded(t *testing.T) {
 		t.Fatalf("heartbeat leaked into the failure summary:\nstdout:\n%s\nerror:\n%s", out, scriptErr.Error())
 	}
 }
+
+func TestCMakeExecutedHelperStageCount(t *testing.T) {
+	vlog.SetLevel(vlog.Quiet)
+	t.Cleanup(func() { vlog.SetLevel(vlog.Normal) })
+	fakeDir := t.TempDir()
+	for _, stage := range []string{"configure", "build", "install"} {
+		writeFakeCMakeStage(t, fakeDir, stage, "")
+	}
+	p := fakeCMakePackage(t, fakeDir)
+	captureCMakeStreams(t, func() { p.CMakeConfigure("-G", "Ninja") })
+	if got := p.ExecutedHelperStages(); got != 1 {
+		t.Fatalf("configure stages = %d, want 1", got)
+	}
+	buildDir := p.CMakeBuildDir()
+	if err := os.MkdirAll(filepath.Join(buildDir, "CMakeFiles"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"CMakeCache.txt", "build.ninja"} {
+		if err := os.WriteFile(filepath.Join(buildDir, name), nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	captureCMakeStreams(t, func() { p.CMakeConfigure("-G", "Ninja") })
+	if got := p.ExecutedHelperStages(); got != 1 {
+		t.Fatalf("cached configure stages = %d, want 1", got)
+	}
+	captureCMakeStreams(t, func() {
+		p.CMakeBuild()
+		p.CMakeInstall()
+	})
+	if got := p.ExecutedHelperStages(); got != 3 {
+		t.Fatalf("build/install stages = %d, want 3", got)
+	}
+
+	dryRun := fakeCMakePackage(t, t.TempDir())
+	dryRun.SetDryRun(true)
+	captureCMakeStreams(t, func() {
+		dryRun.CMakeConfigure("-G", "Ninja")
+		dryRun.CMakeBuild()
+		dryRun.CMakeInstall()
+	})
+	if got := dryRun.ExecutedHelperStages(); got != 0 {
+		t.Fatalf("dry-run stages = %d, want 0", got)
+	}
+}

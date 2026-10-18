@@ -104,6 +104,7 @@ func (p *Package) runMakeInEnv(dir string, extraEnv map[string]string, args ...s
 	if p.logAndDryRun(program, args) {
 		return nil
 	}
+	p.executedHelperStages++
 	env := p.shellEnv(true)
 	for key, value := range extraEnv {
 		env[key] = value

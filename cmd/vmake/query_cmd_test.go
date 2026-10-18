@@ -444,12 +444,16 @@ func TestQueryToleratesTargetDeclarationFailure(t *testing.T) {
 		if strings.Contains(stderr, "Error:") {
 			t.Errorf("%v failed instead of degrading:\n%s", args, stderr)
 		}
+		wantSummary := "Warning: omitted targets for 1 package(s) because target declaration failed; fix: Fix the package OnBuild callback, then rerun vmake query."
+		if !strings.HasSuffix(stderr, wantSummary+"\n") {
+			t.Fatalf("%v stderr = %q, want the omission aggregate last", args, stderr)
+		}
 	}
 }
 
 func TestQueryReadOnlyOmissionSummary(t *testing.T) {
 	project := writeQueryReadOnlyTargetsProject(t)
-	wantSummary := "Warning: omitted targets for 2 package(s) because dry-run callbacks attempted writes; fix: Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected."
+	wantSummary := "Warning: omitted targets for 2 package(s) (2 due to read-only writes); fix: Guard generated-file work with p.DryRun(), or run vmake query --allow-dry-run-writes when those writes are expected."
 	for _, args := range [][]string{{"query"}, {"query", "targets"}} {
 		state := t.TempDir()
 		stdout, stderr, code := runInspectCommandWithState(t, project, state, args...)
@@ -512,6 +516,135 @@ func Main(p *api.Package) {
 `)
 	}
 	return project
+}
+
+func writeQueryMixedOmissionProject(t *testing.T) string {
+	t.Helper()
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+    p.SetRoot(true)
+    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib", "broken") })
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("app").SetKind(api.TargetBinary).AddDeps("lib:lib", "broken:broken")
+    })
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "lib", "build.go"), `package main
+import (
+    "os"
+    "github.com/spock2300/vmake/pkg/api"
+)
+func Main(p *api.Package) {
+    p.OnBuild(func(ctx *api.BuildContext) {
+        _ = os.WriteFile("generated.txt", []byte("generated"), 0644)
+        ctx.Target("lib").SetKind(api.TargetStatic)
+    })
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "broken", "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+    p.OnBuild(func(ctx *api.BuildContext) { panic("declaration failure") })
+}
+`)
+	return project
+}
+
+func TestQueryOmissionAggregateCountsAllDeclarationFailures(t *testing.T) {
+	project := writeQueryMixedOmissionProject(t)
+	wantSummary := "Warning: omitted targets for 2 package(s) (1 due to read-only writes); fix: Guard generated-file work with p.DryRun(), or run vmake query --allow-dry-run-writes when those writes are expected."
+	for _, args := range [][]string{{"query"}, {"query", "targets"}} {
+		stdout, stderr, code := runInspectCommandWithState(t, project, t.TempDir(), args...)
+		if code != 0 {
+			t.Fatalf("%v exit = %d, want 0 (stderr %q)", args, code, stderr)
+		}
+		if got := strings.Count(stderr, "Warning: omitted targets for "); got != 1 {
+			t.Fatalf("%v stderr has %d summary lines, want 1:\n%s", args, got, stderr)
+		}
+		if !strings.HasSuffix(stderr, wantSummary+"\n") {
+			t.Fatalf("%v stderr = %q, want the aggregate summary last", args, stderr)
+		}
+		for _, name := range []string{"lib", "broken"} {
+			if !strings.Contains(stderr, "Warning: cannot declare targets for "+name+":") {
+				t.Fatalf("%v stderr is missing the %s per-package warning:\n%s", args, name, stderr)
+			}
+		}
+		if !strings.Contains(stderr, "read-only inspection:") || !strings.Contains(stderr, "declaration failure") {
+			t.Fatalf("%v stderr does not name both omission causes:\n%s", args, stderr)
+		}
+		if strings.Contains(stdout, "lib (static)") || strings.Contains(stdout, "broken (") {
+			t.Fatalf("%v declared targets for omitted packages:\n%s", args, stdout)
+		}
+		if args[0] == "query" && !strings.Contains(stdout, "app (binary)") {
+			t.Fatalf("%v is missing the declared root target:\n%s", args, stdout)
+		}
+		if len(args) > 1 && !strings.Contains(stdout, "proj:app (binary)") {
+			t.Fatalf("%v is missing the declared root target:\n%s", args, stdout)
+		}
+		if _, err := os.Stat(filepath.Join(project, "lib", "generated.txt")); !os.IsNotExist(err) {
+			t.Fatalf("%v wrote lib/generated.txt: %v", args, err)
+		}
+	}
+}
+
+func TestQueryTargetsJSONOmissionAggregateCountsAllDeclarationFailures(t *testing.T) {
+	project := writeQueryMixedOmissionProject(t)
+	stdout, stderr, code := runInspectCommandWithState(t, project, t.TempDir(), "query", "targets", "--json")
+	if code != 0 {
+		t.Fatalf("query targets --json exit = %d (stderr %q)", code, stderr)
+	}
+	if strings.Contains(stderr, "Warning:") {
+		t.Fatalf("JSON mode printed human warnings on stderr:\n%s", stderr)
+	}
+	document := decodeQueryTargetsDocument(t, stdout)
+	if document.Status != "ok" || document.Data == nil {
+		t.Fatalf("unexpected envelope: %+v", document)
+	}
+	if !reflect.DeepEqual(document.Data.Targets, []queryTargetsTestEntry{{Package: "proj", Target: "app", Kind: "binary"}}) {
+		t.Fatalf("targets = %#v, want only the root target", document.Data.Targets)
+	}
+	perPackage := 0
+	var aggregate *queryTargetsTestDiagnostic
+	for i := range document.Diagnostics {
+		diagnostic := &document.Diagnostics[i]
+		switch diagnostic.Code {
+		case "VMAKE_W_TARGET_DECLARE":
+			perPackage++
+		case "VMAKE_W_OMITTED_TARGETS":
+			aggregate = diagnostic
+		default:
+			t.Fatalf("unexpected diagnostic %+v", diagnostic)
+		}
+	}
+	if perPackage != 2 || aggregate == nil {
+		t.Fatalf("diagnostics = %+v, want two per-package warnings and one aggregate", document.Diagnostics)
+	}
+	packages := make(map[string]queryTargetsTestDiagnostic)
+	for _, diagnostic := range document.Diagnostics {
+		if diagnostic.Package != "" {
+			packages[diagnostic.Package] = diagnostic
+		}
+	}
+	if !strings.Contains(packages["lib"].Message, "read-only inspection:") {
+		t.Fatalf("lib diagnostic = %+v", packages["lib"])
+	}
+	if !strings.Contains(packages["broken"].Message, "declaration failure") {
+		t.Fatalf("broken diagnostic = %+v", packages["broken"])
+	}
+	if !strings.Contains(packages["broken"].Fix, "vmake query targets") {
+		t.Fatalf("broken fix = %q", packages["broken"].Fix)
+	}
+	if aggregate.Message != "omitted targets for 2 package(s) (1 due to read-only writes)" {
+		t.Fatalf("aggregate message = %q", aggregate.Message)
+	}
+	if !strings.Contains(aggregate.Fix, "vmake query --allow-dry-run-writes") {
+		t.Fatalf("aggregate fix = %q", aggregate.Fix)
+	}
+	if _, err := os.Stat(filepath.Join(project, "lib", "generated.txt")); !os.IsNotExist(err) {
+		t.Fatalf("query targets --json wrote lib/generated.txt: %v", err)
+	}
 }
 
 func TestQueryIgnoresBlockedWritesOutsideTargetDeclaration(t *testing.T) {
@@ -755,7 +888,7 @@ func TestQueryTargetsJSONReadOnlyOmissionDiagnostics(t *testing.T) {
 			t.Fatalf("diagnostic %+v is not a warning", diagnostic)
 		}
 	}
-	if !reflect.DeepEqual(codes, []string{"VMAKE_W_TARGET_DECLARE", "VMAKE_W_TARGET_DECLARE", "VMAKE_W_READ_ONLY_TARGETS"}) {
+	if !reflect.DeepEqual(codes, []string{"VMAKE_W_TARGET_DECLARE", "VMAKE_W_TARGET_DECLARE", "VMAKE_W_OMITTED_TARGETS"}) {
 		t.Fatalf("diagnostic codes = %v", codes)
 	}
 	for i, name := range []string{"lib", "tool"} {
@@ -768,7 +901,7 @@ func TestQueryTargetsJSONReadOnlyOmissionDiagnostics(t *testing.T) {
 		}
 	}
 	summary := document.Diagnostics[2]
-	if summary.Message != "omitted targets for 2 package(s) because dry-run callbacks attempted writes" {
+	if summary.Message != "omitted targets for 2 package(s) (2 due to read-only writes)" {
 		t.Fatalf("summary diagnostic = %+v", summary)
 	}
 	for _, name := range []string{"lib", "tool"} {
@@ -878,8 +1011,8 @@ func TestQueryTargetsJSONDeclarationFailureDiagnostic(t *testing.T) {
 	if !reflect.DeepEqual(document.Data.Targets, []queryTargetsTestEntry{{Package: "proj", Target: "app", Kind: "binary"}}) {
 		t.Fatalf("targets = %#v, want only the root target", document.Data.Targets)
 	}
-	if len(document.Diagnostics) != 1 {
-		t.Fatalf("diagnostics = %+v, want one declaration warning", document.Diagnostics)
+	if len(document.Diagnostics) != 2 {
+		t.Fatalf("diagnostics = %+v, want a declaration warning and the aggregate", document.Diagnostics)
 	}
 	diagnostic := document.Diagnostics[0]
 	if diagnostic.Severity != "warning" || diagnostic.Code != "VMAKE_W_TARGET_DECLARE" || diagnostic.Package != "lib" {
@@ -887,5 +1020,11 @@ func TestQueryTargetsJSONDeclarationFailureDiagnostic(t *testing.T) {
 	}
 	if !strings.Contains(diagnostic.Message, "declaration failure") || !strings.Contains(diagnostic.Fix, "Fix the package OnBuild callback") {
 		t.Fatalf("diagnostic = %+v", diagnostic)
+	}
+	aggregate := document.Diagnostics[1]
+	if aggregate.Code != "VMAKE_W_OMITTED_TARGETS" ||
+		aggregate.Message != "omitted targets for 1 package(s) because target declaration failed" ||
+		!strings.Contains(aggregate.Fix, "vmake query targets") {
+		t.Fatalf("aggregate diagnostic = %+v", aggregate)
 	}
 }

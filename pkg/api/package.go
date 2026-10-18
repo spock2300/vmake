@@ -186,6 +186,7 @@ type Package struct {
 	providedLinkerScript    string
 	buildRuntime            *buildruntime.Budget
 	buildContext            context.Context
+	executedHelperStages    int
 }
 
 func NewPackage() *Package {
@@ -531,6 +532,8 @@ func (p *Package) SetDryRun(v bool) *Package {
 }
 
 func (p *Package) DryRun() bool { return p.dryRun }
+
+func (p *Package) ExecutedHelperStages() int { return p.executedHelperStages }
 
 func (p *Package) SetRoot(v bool) *Package {
 	p.isRoot = v

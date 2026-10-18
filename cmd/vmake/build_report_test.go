@@ -1178,8 +1178,70 @@ message(FATAL_ERROR "configure exploded: missing foo dependency")
 	if document.Data.Summary.NoOp {
 		t.Fatalf("cmake configure failure claims no-op: %+v", document.Data.Summary)
 	}
+	if document.Data.Summary.ExternalStages != 1 {
+		t.Fatalf("cmake configure failure external stages = %d, want 1", document.Data.Summary.ExternalStages)
+	}
 	if !strings.Contains(document.Data.Error, "configure exploded") || len(document.Data.Diagnostics) == 0 {
 		t.Fatalf("cmake configure failure lost its diagnostic: error %q, diagnostics %+v", document.Data.Error, document.Data.Diagnostics)
+	}
+	assertJSONDataMatchesReport(t, project, document.Data)
+}
+
+func TestBuildReportCMakeOnlyExternalStages(t *testing.T) {
+	for _, tool := range []string{"cmake", "ninja"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s is not available: %v", tool, err)
+		}
+	}
+	project := filepath.Join(t.TempDir(), "cmake-only")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		p.CMakeConfigure("-G", "Ninja")
+		p.CMakeBuild()
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "CMakeLists.txt"), `cmake_minimum_required(VERSION 3.16)
+project(CMakeOnly LANGUAGES NONE)
+add_custom_target(work ALL COMMAND ${CMAKE_COMMAND} -E touch "${CMAKE_BINARY_DIR}/external.txt")
+`)
+	humanOut, humanErr, code := runBuildCommand(t, project, "-q", "build")
+	if code != 0 {
+		t.Fatalf("build exit = %d (stdout %q, stderr %q)", code, humanOut, humanErr)
+	}
+	if strings.Contains(humanOut, "no compilation") {
+		t.Fatalf("CMake-only build claimed no compilation:\n%s", humanOut)
+	}
+	if !strings.Contains(humanOut, "0 targets (0 built, 0 up to date)") || !strings.Contains(humanOut, ", 2 external stages in ") {
+		t.Fatalf("CMake-only summary = %q, want zero targets and two external stages", humanOut)
+	}
+	report := loadBuildReport(t, project)
+	if report.Summary == nil || report.Summary.NoOp || report.Summary.ExternalStages != 2 {
+		t.Fatalf("CMake-only summary = %+v, want noOp false and two external stages", report.Summary)
+	}
+	if report.Summary.TargetsTotal != 0 || len(report.Targets) != 0 {
+		t.Fatalf("CMake-only build fabricated targets: %+v", report.Targets)
+	}
+
+	stdout, stderr, code := runBuildCommand(t, project, "build", "--json")
+	if code != 0 {
+		t.Fatalf("build --json exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	document := parseJSONBuildOutput(t, stdout)
+	if document.Status != "ok" || document.Data.Status != "succeeded" || document.Data.Summary == nil {
+		t.Fatalf("CMake-only envelope = %+v / data = %+v", document, document.Data)
+	}
+	summary := document.Data.Summary
+	if summary.NoOp || summary.ExternalStages == 0 {
+		t.Fatalf("CMake-only JSON summary = %+v, want noOp false and external stages > 0", summary)
+	}
+	if summary.TargetsTotal != 0 || len(document.Data.Targets) != 0 {
+		t.Fatalf("CMake-only JSON build fabricated targets: %+v", document.Data.Targets)
 	}
 	assertJSONDataMatchesReport(t, project, document.Data)
 }
@@ -1287,8 +1349,8 @@ func TestBuildQuietSummaryAndReportCounts(t *testing.T) {
 	if !slices.Equal(report.Summary.ChangedFiles, []string{"summary:src/main.c"}) {
 		t.Fatalf("cold changed files = %v", report.Summary.ChangedFiles)
 	}
-	if report.Summary.Callbacks != 0 || report.Summary.NoOp {
-		t.Fatalf("cold summary callbacks/no-op = %+v", report.Summary)
+	if report.Summary.Callbacks != 0 || report.Summary.NoOp || report.Summary.ExternalStages != 0 {
+		t.Fatalf("cold summary callbacks/no-op/external stages = %+v", report.Summary)
 	}
 	if len(report.Targets) != 1 || report.Targets[0].Status != build.TargetStatusBuilt || report.Targets[0].DurationMs < 0 {
 		t.Fatalf("cold target results = %+v", report.Targets)
@@ -1303,8 +1365,8 @@ func TestBuildQuietSummaryAndReportCounts(t *testing.T) {
 		report.Summary.FilesCompiled != 0 || report.Summary.FilesLinked != 0 || len(report.Summary.ChangedFiles) != 0 {
 		t.Fatalf("no-op summary report = %+v", report.Summary)
 	}
-	if !report.Summary.NoOp || report.Summary.Callbacks != 0 {
-		t.Fatalf("no-op summary callbacks/no-op = %+v", report.Summary)
+	if !report.Summary.NoOp || report.Summary.Callbacks != 0 || report.Summary.ExternalStages != 0 {
+		t.Fatalf("no-op summary callbacks/no-op/external stages = %+v", report.Summary)
 	}
 	if report.Summary.ActivitiesUpToDate < 2 {
 		t.Fatalf("no-op actionsUpToDate = %d", report.Summary.ActivitiesUpToDate)

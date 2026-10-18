@@ -20,6 +20,7 @@ import (
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/resolver"
 	"github.com/spock2300/vmake/pkg/toolchain"
+	"github.com/spock2300/vmake/pkg/version"
 )
 
 var queryAllowWrites bool
@@ -29,14 +30,20 @@ const (
 	queryTargetsErrorCode   = "VMAKE_E_QUERY"
 	queryTargetsWarnCode    = "VMAKE_W_TARGET_DECLARE"
 	queryTargetsReadOnlyFix = "Guard generated-file work with p.DryRun(), or run vmake query --allow-dry-run-writes when those writes are expected."
+	queryTargetsDeclareFix  = "Fix the package OnBuild callback, then rerun vmake query targets."
+	queryDeclareFix         = "Fix the package OnBuild callback, then rerun vmake query."
 )
 
 type queryTargetsEnvelope struct {
-	SchemaVersion int                 `json:"schemaVersion"`
-	Command       string              `json:"command"`
-	Status        string              `json:"status"`
-	Data          *queryTargetsData   `json:"data"`
-	Diagnostics   []inspectDiagnostic `json:"diagnostics"`
+	SchemaVersion   int                 `json:"schemaVersion"`
+	Command         string              `json:"command"`
+	Status          string              `json:"status"`
+	VMakeVersion    string              `json:"vmakeVersion,omitempty"`
+	VMakeCommit     string              `json:"vmakeCommit,omitempty"`
+	ProjectRevision string              `json:"projectRevision,omitempty"`
+	ProjectDirty    *bool               `json:"projectDirty,omitempty"`
+	Data            *queryTargetsData   `json:"data"`
+	Diagnostics     []inspectDiagnostic `json:"diagnostics"`
 }
 
 type queryTargetsData struct {
@@ -62,9 +69,11 @@ are appended to the line as "+<target> (<kind>)".
 
 Dry-run target declaration runs with interpreted-script writes disabled; a
 callback that writes reports a warning on stderr and that package's targets are
-omitted, without modifying the project. When packages are omitted for blocked
-writes, one stderr summary line after the target listing reports the count and
-the p.DryRun()/--allow-dry-run-writes remediation; the command still exits 0.
+omitted, without modifying the project. Any package whose target declaration
+fails is omitted and warned. When packages are omitted for any declaration
+failure (including blocked writes), one stderr summary line after the target
+listing reports the total count plus the read-only-write count and the
+p.DryRun()/--allow-dry-run-writes remediation; the command still exits 0.
 
 Use "vmake query targets --json" for a machine-readable target list; the tree
 itself has no JSON form.`,
@@ -88,8 +97,10 @@ declaration runs with interpreted-script writes disabled unless
 --allow-dry-run-writes is set. A package whose expected source tree is missing
 keeps its warning; a package whose OnBuild fails to declare targets prints one
 warning and the command continues. Packages omitted because the read-only guard
-rejected a write are counted in one aggregate warning after the listing. All
-warnings go to stderr and the command exits 0.
+rejected a write or because the declaration failed for another reason are
+counted together in one aggregate warning after the listing, which also reports
+how many failures were read-only write rejections. All warnings go to stderr and
+the command exits 0.
 
 With --json, stdout is exactly one schemaVersion 1 document:
 
@@ -98,14 +109,15 @@ With --json, stdout is exactly one schemaVersion 1 document:
    "diagnostics":[]}
 
 Targets are sorted by package then target and are exactly the targets the human
-command prints. Missing-source, failed-declaration and read-only-omission
-warnings become diagnostics with severity "warning", codes
-VMAKE_W_SOURCE_MISSING, VMAKE_W_TARGET_DECLARE and VMAKE_W_READ_ONLY_TARGETS,
-and are not printed as Warning lines on stderr. A resolution error produces
-status "error", data null, one VMAKE_E_QUERY diagnostic, exit code 1, and no
-partial target list on stdout. --allow-dry-run-writes lets dry-run OnBuild
-callbacks materialize inputs; it can modify the build tree and removes the
-read-only-omission diagnostics.`,
+command prints. Missing-source, failed-declaration and omission warnings become
+diagnostics with severity "warning", codes VMAKE_W_SOURCE_MISSING,
+VMAKE_W_TARGET_DECLARE and VMAKE_W_OMITTED_TARGETS, and are not printed as
+Warning lines on stderr. The aggregate omission diagnostic reports every package
+whose targets were omitted and how many of them failed on blocked read-only
+writes. A resolution error produces status "error", data null, one VMAKE_E_QUERY
+diagnostic, exit code 1, and no partial target list on stdout.
+--allow-dry-run-writes lets dry-run OnBuild callbacks materialize inputs; it can
+modify the build tree and removes the read-only-omission diagnostics.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runQueryTargets(targetsJSON)
 		},
@@ -145,6 +157,7 @@ func runQueryTargets(asJSON bool) error {
 	printInspectSourceWarnings(ctx, inspection)
 
 	warned := make(map[string]bool)
+	omitted := 0
 	readOnlyOmitted := 0
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
@@ -156,8 +169,11 @@ func runQueryTargets(asJSON bool) error {
 		}
 		kinds, err := collectTargetKinds(name, inspection.PkgDirs[name], ctx, inspection.PackageToolchains[name], inspection.GlobalValues)
 		if err != nil {
-			if warnTargetDeclare(warned, name, err) {
-				readOnlyOmitted++
+			if counted, readOnly := warnTargetDeclare(warned, name, err); counted {
+				omitted++
+				if readOnly {
+					readOnlyOmitted++
+				}
 			}
 			continue
 		}
@@ -165,7 +181,7 @@ func runQueryTargets(asJSON bool) error {
 			fmt.Printf("%s:%s (%s)\n", name, k.name, k.kind)
 		}
 	}
-	printReadOnlyTargetsSummary(readOnlyOmitted)
+	printOmittedTargetsSummary(omitted, readOnlyOmitted)
 	return nil
 }
 
@@ -200,6 +216,7 @@ func runQueryTargetsJSON() error {
 	diagnostics := inspectSourceDiagnostics(ctx, inspection)
 	targets := make([]queryTargetsEntry, 0)
 	warned := make(map[string]bool)
+	omitted := 0
 	readOnlyOmitted := 0
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
@@ -214,6 +231,7 @@ func runQueryTargetsJSON() error {
 			if !warned[name] {
 				warned[name] = true
 				diagnostic, readOnly := queryTargetDeclareDiagnostic(name, err)
+				omitted++
 				if readOnly {
 					readOnlyOmitted++
 				}
@@ -225,12 +243,16 @@ func runQueryTargetsJSON() error {
 			targets = append(targets, queryTargetsEntry{Package: name, Target: k.name, Kind: k.kind})
 		}
 	}
-	if readOnlyOmitted > 0 {
+	if omitted > 0 {
+		fix := queryTargetsDeclareFix
+		if readOnlyOmitted > 0 {
+			fix = queryTargetsReadOnlyFix
+		}
 		diagnostics = append(diagnostics, inspectDiagnostic{
 			Severity: "warning",
-			Code:     readOnlyTargetsWarningCode,
-			Message:  readOnlyTargetsMessage(readOnlyOmitted),
-			Fix:      queryTargetsReadOnlyFix,
+			Code:     omittedTargetsWarningCode,
+			Message:  omittedTargetsMessage(omitted, readOnlyOmitted),
+			Fix:      fix,
 		})
 	}
 	sort.Slice(targets, func(i, j int) bool {
@@ -251,12 +273,17 @@ func runQueryTargetsJSON() error {
 }
 
 func newQueryTargetsEnvelope() *queryTargetsEnvelope {
+	revision, dirty := projectProvenance(findProjectDir())
 	return &queryTargetsEnvelope{
-		SchemaVersion: inspectSchemaVersion,
-		Command:       queryTargetsCommand,
-		Status:        "ok",
-		Data:          &queryTargetsData{Targets: []queryTargetsEntry{}},
-		Diagnostics:   []inspectDiagnostic{},
+		SchemaVersion:   inspectSchemaVersion,
+		Command:         queryTargetsCommand,
+		Status:          "ok",
+		VMakeVersion:    version.Version,
+		VMakeCommit:     version.GitCommit,
+		ProjectRevision: revision,
+		ProjectDirty:    dirty,
+		Data:            &queryTargetsData{Targets: []queryTargetsEntry{}},
+		Diagnostics:     []inspectDiagnostic{},
 	}
 }
 
@@ -271,11 +298,15 @@ func failQueryTargets(envelope *queryTargetsEnvelope, err error) error {
 	return errors.New(message)
 }
 
-func printReadOnlyTargetsSummary(count int) {
-	if count == 0 {
+func printOmittedTargetsSummary(omitted, readOnlyOmitted int) {
+	if omitted == 0 {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "Warning: %s; fix: %s\n", readOnlyTargetsMessage(count), readOnlyTargetsWarningFix)
+	fix := queryDeclareFix
+	if readOnlyOmitted > 0 {
+		fix = queryTargetsReadOnlyFix
+	}
+	fmt.Fprintf(os.Stderr, "Warning: %s; fix: %s\n", omittedTargetsMessage(omitted, readOnlyOmitted), fix)
 }
 
 func runQueryConfig(cmd *cobra.Command, args []string) {
@@ -381,7 +412,7 @@ func runQuery(cmd *cobra.Command, args []string) {
 		printer.print(root, "", true, true)
 		printed++
 	}
-	printReadOnlyTargetsSummary(printer.readOnlyOmitted)
+	printOmittedTargetsSummary(printer.omitted, printer.readOnlyOmitted)
 }
 
 func formatPkgDir(pkgDir, workDir string) string {
@@ -407,6 +438,7 @@ type treePrinter struct {
 	visited         map[string]bool
 	kinds           map[string][]targetKindInfo
 	warned          map[string]bool
+	omitted         int
 	readOnlyOmitted int
 }
 
@@ -416,28 +448,31 @@ func (p *treePrinter) targetKinds(name string) []targetKindInfo {
 	}
 	kinds, err := collectTargetKinds(name, p.pkgDirs[name], p.ctx, p.tcs[name], p.values)
 	if err != nil {
-		if warnTargetDeclare(p.warned, name, err) {
-			p.readOnlyOmitted++
+		if counted, readOnly := warnTargetDeclare(p.warned, name, err); counted {
+			p.omitted++
+			if readOnly {
+				p.readOnlyOmitted++
+			}
 		}
 	}
 	p.kinds[name] = kinds
 	return kinds
 }
 
-func warnTargetDeclare(warned map[string]bool, name string, err error) bool {
+func warnTargetDeclare(warned map[string]bool, name string, err error) (bool, bool) {
 	if warned[name] {
-		return false
+		return false, false
 	}
 	warned[name] = true
 	diagnostic, readOnly := queryTargetDeclareDiagnostic(name, err)
 	fmt.Fprintf(os.Stderr, "Warning: %s\n", diagnostic.Message)
-	return readOnly
+	return true, readOnly
 }
 
 func queryTargetDeclareDiagnostic(name string, err error) (inspectDiagnostic, bool) {
 	message := err.Error()
 	readOnly := strings.Contains(message, "read-only inspection:")
-	fix := "Fix the package OnBuild callback, then rerun vmake query targets."
+	fix := queryTargetsDeclareFix
 	if readOnly {
 		message = strings.ReplaceAll(message, "panic: ", "")
 		message += " (guard generated-file work with p.DryRun())"

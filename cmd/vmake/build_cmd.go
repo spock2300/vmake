@@ -130,6 +130,7 @@ func emitCheckResult(stdout *os.File, result *BuildResult, runErr error) error {
 	}
 	if jsonOutput {
 		stats := result.Stats
+		projectRevision, projectDirty := projectProvenance(findProjectDir())
 		jsonEnvelopeWritten = true
 		document := &checkJSONEnvelope{
 			SchemaVersion: jsonOutputSchemaVersion,
@@ -144,6 +145,8 @@ func emitCheckResult(stdout *os.File, result *BuildResult, runErr error) error {
 				Caveats:           checkCaveats(stats.PlannedGenerators),
 				UpToDate:          stats.UpToDate,
 				TargetsTotal:      len(result.Targets),
+				ProjectRevision:   projectRevision,
+				ProjectDirty:      projectDirty,
 			},
 			Diagnostics: []buildDiagnostic{},
 		}

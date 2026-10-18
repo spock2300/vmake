@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	exec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/internal/gosrc"
 	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
@@ -213,12 +214,18 @@ func neededPackagesDeclareTests(ctx *RuntimeContext, inspection *pipeline.Inspec
 		if node == nil || node.Source == nil || node.Source.Dir == "" {
 			return true
 		}
-		data, err := os.ReadFile(filepath.Join(node.Source.Dir, "build.go"))
-		if err != nil {
+		files, err := gosrc.ListGoFiles(node.Source.Dir)
+		if err != nil || len(files) == 0 {
 			return true
 		}
-		if strings.Contains(string(data), "SetTest(") {
-			return true
+		for _, file := range files {
+			data, err := os.ReadFile(file)
+			if err != nil {
+				return true
+			}
+			if strings.Contains(string(data), "SetTest(") {
+				return true
+			}
 		}
 	}
 	return false

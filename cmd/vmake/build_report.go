@@ -66,6 +66,7 @@ type buildSummary struct {
 	ArtifactsInstalled int      `json:"artifactsInstalled"`
 	ChangedFiles       []string `json:"changedFiles"`
 	Callbacks          int      `json:"callbacks"`
+	ExternalStages     int      `json:"externalStages"`
 	NoOp               bool     `json:"noOp"`
 }
 
@@ -407,9 +408,13 @@ func printBuildSummary(writer io.Writer, report *buildReport, err error) {
 	if summary.Callbacks > 0 {
 		callbacks = fmt.Sprintf(", %d callbacks", summary.Callbacks)
 	}
-	fmt.Fprintf(writer, "Build succeeded: %d targets (%d built, %d up to date)%s, %d compiled, %d linked, %d installed in %s (buildId=%s)\n",
+	external := ""
+	if summary.ExternalStages > 0 {
+		external = fmt.Sprintf(", %d external stages", summary.ExternalStages)
+	}
+	fmt.Fprintf(writer, "Build succeeded: %d targets (%d built, %d up to date)%s, %d compiled, %d linked, %d installed%s in %s (buildId=%s)\n",
 		summary.TargetsTotal, summary.TargetsBuilt, summary.TargetsUpToDate, callbacks,
-		summary.FilesCompiled, summary.FilesLinked, summary.ArtifactsInstalled,
+		summary.FilesCompiled, summary.FilesLinked, summary.ArtifactsInstalled, external,
 		formatBuildDuration(summary.DurationMs), report.BuildID)
 }
 
@@ -475,6 +480,16 @@ func beginBuildReport(command string) (*buildReport, error) {
 // Git is optional: any failure (not a worktree, unsupported checkout, missing
 // git) omits the fields instead of affecting the build.
 func projectProvenance(root string) (string, *bool) {
+	topLevel, err := iexec.RunWithOptions("git", gitcmd.Args("rev-parse", "--show-toplevel"), iexec.RunOptions{Dir: root, Quiet: true})
+	if err != nil {
+		return "", nil
+	}
+	topDir := strings.TrimSpace(string(topLevel))
+	rootAbs, rootErr := filepath.EvalSymlinks(root)
+	topAbs, topErr := filepath.EvalSymlinks(topDir)
+	if rootErr != nil || topErr != nil || filepath.Clean(rootAbs) != filepath.Clean(topAbs) {
+		return "", nil
+	}
 	revision, err := iexec.RunWithOptions("git", gitcmd.Args("rev-parse", "HEAD"), iexec.RunOptions{Dir: root, Quiet: true})
 	if err != nil {
 		return "", nil
@@ -777,6 +792,7 @@ func newBuildSummary(result *BuildResult, artifacts int) *buildSummary {
 		ActivitiesUpToDate: result.Stats.UpToDate,
 		ArtifactsInstalled: artifacts,
 		ChangedFiles:       changedFiles,
+		ExternalStages:     result.ExternalStages(),
 	}
 	for _, target := range result.Targets {
 		switch target.Status {
@@ -789,7 +805,8 @@ func newBuildSummary(result *BuildResult, artifacts int) *buildSummary {
 			summary.TargetsUpToDate++
 		}
 	}
-	summary.NoOp = summary.FilesCompiled == 0 && summary.FilesLinked == 0 && len(summary.ChangedFiles) == 0
+	summary.NoOp = summary.FilesCompiled == 0 && summary.FilesLinked == 0 &&
+		len(summary.ChangedFiles) == 0 && summary.ExternalStages == 0
 	return summary
 }
 

@@ -142,6 +142,7 @@ func (p *Package) runCapturedCMake(op, phase, dir string, args []string) {
 		p.logAndDryRun("cmake", args)
 		return
 	}
+	p.executedHelperStages++
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		fatalScript(p.Name, op, "create cmake %s directory %q: %v", phase, dir, err)
 	}

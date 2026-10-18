@@ -40,9 +40,9 @@ only for `vmake build --tests` and `vmake test`.
 `summary` repeats `durationMs` and carries `targetsTotal`, `targetsBuilt`,
 `targetsUpToDate`, `targetsFailed`, `testsFound`, `testsPassed`, `testsFailed`,
 `filesCompiled`, `filesLinked`, `actionsUpToDate`, `artifactsInstalled`, and
-`changedFiles`, plus `callbacks` (executed `built` void targets) and `noOp`.
+`changedFiles`, plus `callbacks` (executed `built` void targets), `externalStages` (executed CMake/Make helper stages) and `noOp`.
 
-`targetsBuilt` counts target records with status `built`, including `void` targets whose callbacks always run; `noOp` can be true while `targetsBuilt` is nonzero (for example eight callback targets).
+`targetsBuilt` counts target records with status `built`, including `void` targets whose callbacks always run; `noOp` can be true while `targetsBuilt` is nonzero (for example eight callback targets) but requires `externalStages == 0`; CMake/Make helper work makes it false.
 
 On a failed build or build phase, `summary` describes the work attempted before
 the failure: `targetsFailed` counts distinct failed target names from the
@@ -60,7 +60,7 @@ executed tests only; not-run entries are not failures. Compile/link counts cover
 compile and link actions only, not post-link steps, void callbacks, or
 installation. A no-op
 build therefore has `filesCompiled: 0`, `filesLinked: 0`, `changedFiles: []`,
-and `noOp: true`; it may still have run callbacks and installed artifacts.
+and `noOp: true` (only when `externalStages == 0`); it may still have run callbacks and installed artifacts.
 `changedFiles` is the sorted, unique list of compiled source paths written as
 `package:relative/path` (slash-separated; already absolute or qualified paths
 keep their form), and `[]` when nothing compiled.

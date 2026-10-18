@@ -268,3 +268,35 @@ func TestMakeAndConfigurePreserveSpacedToolPaths(t *testing.T) {
 		t.Errorf("raw CC environment changed: %q", p.Env()["CC"])
 	}
 }
+
+func TestMakeExecutedHelperStageCount(t *testing.T) {
+	makePath, err := exec.LookPath("make")
+	if err != nil {
+		t.Skip(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte("all:\n\t@true\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	p := NewPackage().SetToolchain(&toolchain.Toolchain{Tools: toolchain.Tools{MAKE: makePath}}).
+		SetDirs(PkgDirs{SourceDir: dir, BuildDir: dir})
+	if err := p.Make(); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.ExecutedHelperStages(); got != 1 {
+		t.Fatalf("make stages = %d, want 1", got)
+	}
+	if err := p.Make(); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.ExecutedHelperStages(); got != 2 {
+		t.Fatalf("make stages = %d, want 2", got)
+	}
+	p.SetDryRun(true)
+	if err := p.Make(); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.ExecutedHelperStages(); got != 2 {
+		t.Fatalf("dry-run make stages = %d, want 2", got)
+	}
+}

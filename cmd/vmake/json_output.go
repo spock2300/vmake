@@ -37,6 +37,8 @@ type checkJSONData struct {
 	TargetsTotal      int      `json:"targetsTotal"`
 	VMakeVersion      string   `json:"vmakeVersion,omitempty"`
 	VMakeCommit       string   `json:"vmakeCommit,omitempty"`
+	ProjectRevision   string   `json:"projectRevision,omitempty"`
+	ProjectDirty      *bool    `json:"projectDirty,omitempty"`
 }
 
 // MarshalJSON stamps the running binary's identity onto every check document.

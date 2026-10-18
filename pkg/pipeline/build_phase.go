@@ -34,6 +34,14 @@ type BuildResult struct {
 	BuildCtxs     map[string]*api.BuildContext
 }
 
+func (r *BuildResult) ExternalStages() int {
+	total := 0
+	for _, buildCtx := range r.BuildCtxs {
+		total += buildCtx.ExecutedHelperStages()
+	}
+	return total
+}
+
 type remoteVersionState struct {
 	entries map[string]*config.EntryConfig
 	commits map[string]string
