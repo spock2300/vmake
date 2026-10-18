@@ -46,13 +46,17 @@ func SetQuiet(enabled bool) {
 	quiet = enabled
 }
 
+const DefaultProgressInterval = 10 * time.Second
+
 type RunOptions struct {
-	Dir           string
-	Env           map[string]string
-	Context       context.Context
-	Timeout       time.Duration
-	Quiet         bool
-	CaptureStderr bool
+	Dir              string
+	Env              map[string]string
+	Context          context.Context
+	Timeout          time.Duration
+	Quiet            bool
+	CaptureStderr    bool
+	OnProgress       func(elapsed time.Duration)
+	ProgressInterval time.Duration
 }
 
 type CommandError struct {
@@ -133,7 +137,33 @@ func RunWithOptions(name string, args []string, opts RunOptions) ([]byte, error)
 		cmd.Stderr = stderr
 	}
 
+	var progress sync.WaitGroup
+	progressDone := make(chan struct{})
+	if opts.OnProgress != nil {
+		interval := opts.ProgressInterval
+		if interval <= 0 {
+			interval = DefaultProgressInterval
+		}
+		start := time.Now()
+		progress.Add(1)
+		go func() {
+			defer progress.Done()
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-progressDone:
+					return
+				case <-ticker.C:
+					opts.OnProgress(time.Since(start))
+				}
+			}
+		}()
+	}
+
 	err := cmd.Run()
+	close(progressDone)
+	progress.Wait()
 	if err != nil && ctx != nil && ctx.Err() != nil {
 		err = ctx.Err()
 	}

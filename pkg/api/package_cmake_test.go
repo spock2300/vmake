@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spock2300/vmake/internal/buildruntime"
 	vlog "github.com/spock2300/vmake/pkg/log"
@@ -807,4 +808,103 @@ func captureScriptError(fn func()) (scriptErr *BuildScriptError) {
 	}()
 	fn()
 	return nil
+}
+
+func writeFakeCMakeSleep(t *testing.T, dir, stage string, delay time.Duration) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, stage+".sleep"), []byte(delay.String()), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCMakeLongStageHeartbeat(t *testing.T) {
+	saved := cmakeHeartbeatInterval
+	t.Cleanup(func() { cmakeHeartbeatInterval = saved })
+	t.Cleanup(func() { vlog.SetLevel(vlog.Normal) })
+	tests := []struct {
+		name     string
+		stage    string
+		output   string
+		run      func(*Package)
+		interval time.Duration
+		sleep    time.Duration
+		quiet    bool
+		summary  string
+	}{
+		{"build default", "build", "[1/1] Linking C static library liba.a\n", func(p *Package) { p.CMakeBuild() }, 50 * time.Millisecond, 400 * time.Millisecond, false, "  cmake build: 1 step"},
+		{"configure quiet", "configure", "-- Configuring done (0.1s)\n", func(p *Package) { p.CMakeConfigure("-G", "Ninja") }, 50 * time.Millisecond, 400 * time.Millisecond, true, ""},
+		{"install default", "install", "-- Installing: /tmp/stage/lib/liba.a\n", func(p *Package) { p.CMakeInstall() }, 50 * time.Millisecond, 400 * time.Millisecond, false, "  cmake install: 1 installed, 0 up to date"},
+		{"build fast", "build", "[1/1] Linking C static library liba.a\n", func(p *Package) { p.CMakeBuild() }, 10 * time.Second, 0, false, "  cmake build: 1 step"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fakeDir := t.TempDir()
+			writeFakeCMakeStage(t, fakeDir, test.stage, test.output)
+			if test.sleep > 0 {
+				writeFakeCMakeSleep(t, fakeDir, test.stage, test.sleep)
+			}
+			cmakeHeartbeatInterval = test.interval
+			p := fakeCMakePackage(t, fakeDir)
+			if test.quiet {
+				vlog.SetLevel(vlog.Quiet)
+			} else {
+				vlog.SetLevel(vlog.Normal)
+			}
+			out, errOut := captureCMakeStreams(t, func() { test.run(p) })
+			heartbeats := strings.Count(errOut, "  cmake "+test.stage+": still running (")
+			if test.sleep == 0 {
+				if heartbeats != 0 {
+					t.Fatalf("fast stage printed %d heartbeats:\n%s", heartbeats, errOut)
+				}
+			} else if heartbeats < 2 {
+				t.Fatalf("heartbeats = %d, want at least 2:\n%s", heartbeats, errOut)
+			}
+			if strings.Contains(out, "still running") {
+				t.Fatalf("heartbeat printed to stdout:\n%s", out)
+			}
+			if test.summary == "" {
+				if out != "" {
+					t.Fatalf("quiet stdout = %q, want empty", out)
+				}
+			} else if !strings.Contains(out, test.summary) {
+				t.Fatalf("stdout missing summary %q:\n%s", test.summary, out)
+			}
+		})
+	}
+}
+
+func TestCMakeSlowStageFailureStaysBounded(t *testing.T) {
+	saved := cmakeHeartbeatInterval
+	t.Cleanup(func() { cmakeHeartbeatInterval = saved })
+	t.Cleanup(func() { vlog.SetLevel(vlog.Normal) })
+	cmakeHeartbeatInterval = 50 * time.Millisecond
+	fakeDir := t.TempDir()
+	writeFakeCMakeStage(t, fakeDir, "build", "[1/1] Building C object a.c.o\nFAILED: a.c.o\ncompiler exploded\n")
+	writeFakeCMakeSleep(t, fakeDir, "build", 300*time.Millisecond)
+	if err := os.WriteFile(filepath.Join(fakeDir, "build.exit"), []byte("1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	p := fakeCMakePackage(t, fakeDir)
+	vlog.SetLevel(vlog.Normal)
+	var scriptErr *BuildScriptError
+	out, errOut := captureCMakeStreams(t, func() {
+		scriptErr = captureScriptError(func() { p.CMakeBuild() })
+	})
+	if scriptErr == nil || scriptErr.Op != "CMakeBuild" {
+		t.Fatalf("script error = %+v, want op CMakeBuild", scriptErr)
+	}
+	if heartbeats := strings.Count(errOut, "  cmake build: still running ("); heartbeats < 2 {
+		t.Fatalf("failure heartbeats = %d, want at least 2:\n%s", heartbeats, errOut)
+	}
+	for _, want := range []string{"FAILED: a.c.o", "compiler exploded"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("failure stdout missing %q:\n%s", want, out)
+		}
+		if !strings.Contains(scriptErr.Error(), want) {
+			t.Errorf("script error missing %q:\n%s", want, scriptErr.Error())
+		}
+	}
+	if strings.Contains(scriptErr.Error(), "still running") || strings.Contains(out, "still running") {
+		t.Fatalf("heartbeat leaked into the failure summary:\nstdout:\n%s\nerror:\n%s", out, scriptErr.Error())
+	}
 }

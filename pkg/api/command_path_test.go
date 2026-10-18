@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
@@ -71,6 +72,11 @@ func runFakeCMake(fakeDir string) {
 	}
 	if cwd, err := os.Getwd(); err == nil {
 		_ = os.WriteFile(filepath.Join(fakeDir, stage+".cwd"), []byte(cwd), 0644)
+	}
+	if data, err := os.ReadFile(filepath.Join(fakeDir, stage+".sleep")); err == nil {
+		if delay, err := time.ParseDuration(strings.TrimSpace(string(data))); err == nil {
+			time.Sleep(delay)
+		}
 	}
 	if data, err := os.ReadFile(filepath.Join(fakeDir, stage+".out")); err == nil {
 		_, _ = os.Stdout.Write(data)

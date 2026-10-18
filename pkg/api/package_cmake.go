@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spock2300/vmake/internal/exec"
 	vlog "github.com/spock2300/vmake/pkg/log"
@@ -134,13 +135,14 @@ func (p *Package) CMakeInstall(extraArgs ...string) {
 // single summary line plus non-progress lines at default verbosity and the full
 // log under -v; a failure keeps the whole captured log in the script error.
 // Warning and error lines always stream to stderr so the invocation's warning
-// capture can turn them into diagnostics.
+// capture can turn them into diagnostics. A long stage also prints a periodic
+// stderr heartbeat, including under -q.
 func (p *Package) runCapturedCMake(op, phase, dir string, args []string) {
 	if p.DryRun() {
 		p.logAndDryRun("cmake", args)
 		return
 	}
-	output, err := p.runCMakeCaptured(dir, args)
+	output, err := p.runCMakeCaptured(phase, dir, args)
 	summary, detail := renderCMakeOutput(phase, output)
 	if err != nil {
 		printCMakeDetail(detail, vlog.IsQuiet())
@@ -176,7 +178,9 @@ func printCMakeDetail(lines []string, allErrors bool) {
 	}
 }
 
-func (p *Package) runCMakeCaptured(dir string, args []string) (string, error) {
+var cmakeHeartbeatInterval = exec.DefaultProgressInterval
+
+func (p *Package) runCMakeCaptured(phase, dir string, args []string) (string, error) {
 	name := "cmake"
 	env := p.tc.CommandEnv()
 	if p.tc != nil {
@@ -193,10 +197,14 @@ func (p *Package) runCMakeCaptured(dir string, args []string) (string, error) {
 		}
 	}
 	output, err := exec.RunWithOptions(name, args, exec.RunOptions{
-		Dir:     dir,
-		Env:     env,
-		Context: p.executionContext(),
-		Quiet:   true,
+		Dir:              dir,
+		Env:              env,
+		Context:          p.executionContext(),
+		Quiet:            true,
+		ProgressInterval: cmakeHeartbeatInterval,
+		OnProgress: func(elapsed time.Duration) {
+			vlog.Error("  cmake %s: still running (%s)", phase, elapsed.Round(100*time.Millisecond))
+		},
 	})
 	if err != nil {
 		var commandErr *exec.CommandError

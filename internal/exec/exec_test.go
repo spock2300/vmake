@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -21,6 +23,9 @@ func TestCommandHelper(t *testing.T) {
 		return
 	case "wait":
 		time.Sleep(time.Hour)
+	case "sleep":
+		time.Sleep(time.Second)
+		os.Exit(0)
 	case "emit", "emit-fail":
 		fmt.Println("stdout-message")
 		fmt.Fprintln(os.Stderr, "stderr-message")
@@ -351,5 +356,56 @@ func TestQuietSuppressesSubprocessStreaming(t *testing.T) {
 	})
 	if err != nil || !wantMessages(streamed) {
 		t.Fatalf("default streaming output %q, err %v", streamed, err)
+	}
+}
+
+func TestCommandProgressCallback(t *testing.T) {
+	program, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { SetQuiet(false) })
+	for _, quietMode := range []bool{false, true} {
+		name := "default"
+		if quietMode {
+			name = "quiet"
+		}
+		t.Run(name, func(t *testing.T) {
+			SetQuiet(quietMode)
+			var calls atomic.Int64
+			var mu sync.Mutex
+			var elapsed []time.Duration
+			_, err := RunWithOptions(program, []string{"-test.run=^TestCommandHelper$"}, RunOptions{
+				Env:              map[string]string{"VMAKE_EXEC_HELPER": "sleep"},
+				Quiet:            quietMode,
+				ProgressInterval: 50 * time.Millisecond,
+				OnProgress: func(d time.Duration) {
+					calls.Add(1)
+					mu.Lock()
+					elapsed = append(elapsed, d)
+					mu.Unlock()
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := calls.Load(); got < 3 {
+				t.Fatalf("progress callbacks = %d, want at least 3", got)
+			}
+			afterReturn := calls.Load()
+			time.Sleep(150 * time.Millisecond)
+			if got := calls.Load(); got != afterReturn {
+				t.Fatalf("progress callbacks continued after return: %d -> %d", afterReturn, got)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			last := time.Duration(0)
+			for _, d := range elapsed {
+				if d <= last {
+					t.Fatalf("progress durations = %v, want increasing", elapsed)
+				}
+				last = d
+			}
+		})
 	}
 }
