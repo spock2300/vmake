@@ -135,4 +135,5 @@ Exit 0 means a model was produced (including models with warning diagnostics);
 exit 1 means it was not. Output is deterministic for the same project,
 configuration, and overrides: consecutive runs are byte-identical.
 
-The long-form schema lives in `docs/INSPECT.md` in the vmake source checkout.
+This reference is self-contained. The full repository documentation set
+(including `docs/INSPECT.md`) is not installed with the skill.

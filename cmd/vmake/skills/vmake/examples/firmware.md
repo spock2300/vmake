@@ -4,7 +4,8 @@ A multi-package firmware project using KConfig preset management, external incre
 builds, dependency-driven partition assembly, and `DepBuildDir` for accessing build
 artifacts from other packages. The complete working example is the
 `test_linux/17_firmware` fixture (U-Boot + Linux + BusyBox + apps + rootfs partitions +
-raw firmware image); `docs/FIRMWARE_BUILD_DESIGN.md` explains the design.
+raw firmware image); the design rationale is in the vmake repository and is not
+shipped with this skill.
 
 ## Prerequisites
 
@@ -381,7 +382,7 @@ func padWith(f *os.File, offset, size int64, padding []byte) error {
 
 `p.SetRoot(true)` marks the entry-point package; at most one local package may declare it, and vmake traverses the build graph from that root. `packImage` validates every source first, creates `firmware.img` truncated to the fixed total size, writes each payload at its partition offset, and pads the remaining partition space with `0xFF` (the flash erase value). The fixture's `packImage` also supports directory sources (`writeDirFlat` in `test_linux/17_firmware/firmware/build.go`) for a plain-file config partition.
 
-`firmware.img` is a raw disk image laid out at fixed offsets; vmake never touches the device. Flash it with vendor tooling (write the image to SD/eMMC, or use a vendor download tool), or wrap your flashing tool in an extension plugin that registers a `vmake <plugin> flash` subcommand (see `docs/EXTENSION_PLUGIN.md`).
+`firmware.img` is a raw disk image laid out at fixed offsets; vmake never touches the device. Flash it with vendor tooling (write the image to SD/eMMC, or use a vendor download tool), or wrap your flashing tool in an extension plugin that registers a `vmake <plugin> flash` subcommand (the extension authoring guide is in the vmake repository and is not shipped with this skill).
 
 ## Post-Link Artifacts (HEX / BIN / Size / Strip)
 

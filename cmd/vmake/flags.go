@@ -23,3 +23,10 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.RegisterFlagCompletionFunc("toolchain", completeToolchain)
 	cmd.RegisterFlagCompletionFunc("mode", completeMode)
 }
+
+// addTestFlags registers the build flags for `vmake test`. `--tests` is kept
+// for compatibility, but test always builds and runs test targets.
+func addTestFlags(cmd *cobra.Command) {
+	addBuildFlags(cmd)
+	cmd.Flags().Lookup("tests").Usage = "implied and has no effect; vmake test always builds and runs test targets"
+}

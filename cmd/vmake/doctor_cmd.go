@@ -80,6 +80,8 @@ func runDoctor() {
 		vlog.Fatal("no build.go files found")
 	}
 
+	findings = append(findings, checkStaleProjectMarkers(workDir, sources)...)
+
 	rootCount := 0
 	for _, src := range sources {
 		findings = append(findings, checkAutoWire(src)...)
@@ -105,6 +107,26 @@ func runDoctor() {
 	}
 
 	reportDoctorFindings(workDir, findings)
+}
+
+func checkStaleProjectMarkers(workDir string, sources []buildscript.Source) []doctorFinding {
+	var findings []doctorFinding
+	for _, src := range sources {
+		if src.Dir == "" || src.Dir == workDir {
+			continue
+		}
+		marker := filepath.Join(src.Dir, ".vmake")
+		if info, err := os.Stat(marker); err != nil || !info.IsDir() {
+			continue
+		}
+		findings = append(findings, doctorFinding{
+			Severity: "warn",
+			File:     marker,
+			Category: "staleProjectMarker",
+			Message:  fmt.Sprintf("package %s contains a .vmake directory; running vmake from that directory treats it as the project root. Remove %s if this is a package of the current project.", src.Name, marker),
+		})
+	}
+	return findings
 }
 
 func reportDoctorFindings(workDir string, findings []doctorFinding) {

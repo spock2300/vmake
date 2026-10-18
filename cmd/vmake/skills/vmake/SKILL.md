@@ -99,7 +99,7 @@ file to change.
   never corrupted by `build.go` prints.
 - `compileDatabase`/`buildReport` point at `build/compile_commands.json` and
   `build/vmake-build.json`; the latter holds the last build/rebuild/test result
-  (see `docs/BUILD_RESULT.md`). Full schema: `references/inspect.md`.
+  (see `references/build-result.md`). Full schema: `references/inspect.md`.
 
 ## Build Script Template
 
@@ -309,7 +309,7 @@ Global storage in `~/.vmake/`:
 
 Environment overrides: `VMAKE_CACHE` (cache root), `VMAKE_GIT_CACHE=off` (disable the shared git object cache), `VMAKE_GIT_TIMEOUT` (seconds for network git clone/fetch/submodule/ls-remote, default 1800), `VMAKE_ENV_EXTRA` (comma-separated extra environment variables included in incremental fingerprints), `VMAKE_TRUST_ALL=1` (bypass trust gating, CI). Clone/fetch stream git's transfer progress to the terminal in real time, while `git ls-remote` has no progress output. Commands that resolve dependencies or materialize package sources (`build`, `rebuild`, `lock update`, ...) print a one-line status (package name/tree key, target ref/commit when known, source URL) before resolving a ref, listing native versions, or trying each source URL, so you can tell which step is running; the line can also appear on a cache hit without touching upstream. `-q` suppresses these lines together with git progress, and `query`/`check-symbols` are always quiet. They are not a heartbeat: `git ls-remote`, connection setup and server-side object enumeration can stay silent until the operation completes or hits `VMAKE_GIT_TIMEOUT`.
 
-vmake locates the project root by walking upward from cwd to find `.vmake/`, `build.go`, or (at the starting directory only) `*/build.go` (via `findProjectDir()`). Running outside a project is a hard error.
+vmake locates the project root by walking upward from cwd: a start directory containing `.vmake/` is treated as the project root, an ancestor `.vmake/` without `build.go` is only a container and is ignored, and otherwise the nearest `build.go` is the root (including a start directory whose child directories have `build.go`). Running outside a project is a hard error.
 
 ## Remote Script Trust
 
@@ -404,7 +404,7 @@ ctx.Target("tests").SetKind(api.TargetBinary).SetTest(true).
     AddFiles("tests/*.c").AddDeps("mylib")
 ```
 
-Always define test targets unconditionally in `OnBuild` — `SetTest(true)` controls scheduler visibility, not option guards. `SetTest(true)` does NOT clear `IsDefault`, but `vmake test` runs only targets that are both `IsTest()` and `IsDefault()`, and only `TargetBinary` targets — a test target with `SetDefault(false)` is not run. If no runnable test target exists, `vmake test` exits non-zero with `no test targets found` and publishes a failed report; use `vmake build --tests` to build tests without running them. `vmake build` excludes tests unless `--tests` is passed; cross/bare-metal targets can only be built (`vmake test` refuses to run them). Test targets are never installed and can depend on other test targets. Test runs publish `build/vmake-build.json` with `command:"test"`, per-test `tests[]` entries and test counts in `summary`. `vmake build|rebuild|test --json` prints one result envelope on stdout instead of human summaries, with progress and diagnostics moving to stderr (see `docs/BUILD_RESULT.md`). See `examples/multi-target.md`.
+Always define test targets unconditionally in `OnBuild` — `SetTest(true)` controls scheduler visibility, not option guards. `SetTest(true)` does NOT clear `IsDefault`, but `vmake test` runs only targets that are both `IsTest()` and `IsDefault()`, and only `TargetBinary` targets — a test target with `SetDefault(false)` is not run. If no runnable test target exists, `vmake test` exits non-zero with `no test targets found` and publishes a failed report; use `vmake build --tests` to build tests without running them. `vmake build` excludes tests unless `--tests` is passed; cross/bare-metal targets can only be built (`vmake test` refuses to run them). Test targets are never installed and can depend on other test targets. Test runs publish `build/vmake-build.json` with `command:"test"`, per-test `tests[]` entries and test counts in `summary`. `vmake build|rebuild|test --json` prints one result envelope on stdout instead of human summaries, with progress and diagnostics moving to stderr (see `references/build-result.md`). See `examples/multi-target.md`.
 
 ## Dependencies
 
@@ -446,7 +446,7 @@ Invalid refs (whitespace, multiple `:`, empty segments, and path-shape errors in
 
 A nested `build.go` inside a **native** remote package's checkout becomes a sub-package: an independently loaded package named `parent/sub` with its own options/targets/build dirs, versioned by the parent (not locked separately). Key rules:
 
-- Registry (wrapper) packages have **no** sub-packages — by design (`docs/DESIGN_DECISIONS.md` DD-1)
+- Registry (wrapper) packages have **no** sub-packages — by design (DD-1; repository design docs are not shipped with this skill)
 - Sub-packages are lazy: their build.go is interpreted only when depended on (DD-3)
 - Reference from outside by full name: `ctx.AddRequires("subtest/mother/sub_a")`, `AddDeps("subtest/mother/sub_a:*")` — the parent must be listed before its sub-packages in the same `AddRequires`
 - Inside a sub-package, siblings can be referenced by short name: `AddRequires("sub_b")`, `AddDeps("sub_b:utils_b")`; `DepOutput`/`DepBuildDir`, `BuildSubGraph` and `ImportConfig` accept the same short names
@@ -673,7 +673,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 ```
 
 - `target_os="none"` means bare metal; empty values count as unset and fall back to the project default and then the toolchain default. Use an explicit `"host"` for the host system, and select `toolchain=host` (or a toolchain without target defaults) to clear a toolchain-provided triple. `TargetOS()`/`TargetTriple()` read the resolved values, and artifact names follow the target OS via `TargetFilename(kind, name, target_os)` (or `ExtFor`/`PrefixFor`).
-- Register toolchain repositories with `vmake ext add <name> <git-url>`; their `toolchain.json` files are scanned and installed for the host automatically (authoring: `docs/EXTENSION_PLUGIN.md`). `vmake toolchain list` shows what is available.
+- Register toolchain repositories with `vmake ext add <name> <git-url>`; their `toolchain.json` files are scanned and installed for the host automatically (the extension authoring guide is in the vmake repository and is not shipped with this skill). `vmake toolchain list` shows what is available.
 - List toolchains with `vmake toolchain list` / `vmake toolchain show <name>`; select per invocation with `--toolchain <name>`, or per package via `ctx.ToolchainOption()`. Toolchains contributed by extensions may declare `target_os`/`target_triple` defaults, but never CPU/ABI flags — supply `-mcpu`/`-mthumb`/`--specs` yourself. The `vmake config` TUI shows toolchain-provided defaults for declared but unset options.
 - Validate a cross setup with `vmake doctor --toolchain <name>`.
 - Cross/bare-metal tests cannot execute: `vmake test` refuses non-host targets; use `vmake build --tests`.
@@ -758,6 +758,8 @@ vmake builds packages by BFS from local (directory-based) roots. Remote packages
 
 Without an explicit root, the resolver falls back to a heuristic: when no local package declares `OnRequire`, every local package is a root; once any local package declares requires, a local package that declares none and is depended on by another local package is not treated as a root. A hint is printed when no package calls `SetRoot(true)`. In a larger workspace, call `p.SetRoot(true)` once on the entry package (`Main` or `OnPackage`); a top-level package that only declares options must not be the sole root unless it also `AddRequires` the packages it should build.
 
+Run vmake from the project root or any directory inside it. A stray `.vmake/` in a package directory makes that package look like a project when you run vmake there, so package resolution and the lockfile point at the wrong root. Remove stale package-local `.vmake/` directories; `vmake doctor` reports them as `staleProjectMarker` warnings without changing or deleting anything. An ancestor `.vmake/` without `build.go` is not a project root and is ignored.
+
 Bare `vmake` builds with default options (equivalent to `vmake build` without
 flags); build flags such as `--tests` and `--mode` require the `build` subcommand.
 
@@ -809,7 +811,7 @@ vmake build --manifest install/manifest.json
 
 Build flags: `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`, `--manifest`, `--tests`, `--jobs/-j`, `--keep-going/-k`, `--explain`, `--json`
 Global flags: `-v` verbose, `-V` very-verbose, `-q` quiet, `-y/--yes` assume yes (trust prompts), `-h/--help` help
-`--version` is a root flag; `vmake test` always includes test targets, so `--tests` is redundant there.
+`--version` is a root flag; `vmake test` always builds and runs test targets, so `--tests` is accepted for compatibility but has no effect there.
 
 ## Reading Guide
 
@@ -819,9 +821,11 @@ Global flags: `-v` verbose, `-V` very-verbose, `-q` quiet, `-y/--yes` assume yes
 - **Multi-module workspace** → `examples/multi-module.md`
 - **OnClean / OnInstall lifecycles** → `examples/on-clean.md`, `examples/on-install.md`
 - **Looking up a specific API** → See `references/api.md` for complete method signatures
+- **Build results and `--json`** → `references/build-result.md` (schemaVersion-2 report fields, summary counts, target status, diagnostics, test report, clean interactions)
 - **CLI usage** → See `references/cli.md` for full command tree
 - **Directory / path resolution details** → `references/dirs.md` (BuildKey, SetGit paths, SourceDir vs SrcDir)
 - **Advanced gotchas** → `references/gotchas.md` (static lib deps, OnApply/global flags, source patching)
+- **Repository docs (not shipped)** → `docs/DESIGN_DECISIONS.md`, `docs/EXTENSION_PLUGIN.md`, and `docs/FIRMWARE_BUILD_DESIGN.md` exist only in the vmake source repository and are not installed with this skill. Use the shipped references and examples for operational rules.
 - **Advanced patterns** → `examples/complete.md`, `examples/subbuild.md`, `examples/embedded-rtos.md`, `examples/firmware.md`, `examples/config-propagate.md`, `examples/prebuilt.md`, `examples/third-party-wrapper.md`
 - **Cross-compiling / bare metal** → **Cross-Compiling** above, plus `examples/embedded-rtos.md` and `examples/firmware.md`
 
