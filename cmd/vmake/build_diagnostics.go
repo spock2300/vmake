@@ -100,15 +100,40 @@ func collectBuildDiagnostics(err error, target *build.TargetError, diagnostics *
 		*diagnostics = append(*diagnostics, parsed...)
 		return
 	}
+	before := len(*diagnostics)
 	if multi, ok := err.(interface{ Unwrap() []error }); ok {
 		for _, child := range multi.Unwrap() {
 			collectBuildDiagnostics(child, target, diagnostics)
+		}
+		if target != nil && len(*diagnostics) == before {
+			appendTargetFallback(err, target, diagnostics)
 		}
 		return
 	}
 	if single, ok := err.(interface{ Unwrap() error }); ok {
 		collectBuildDiagnostics(single.Unwrap(), target, diagnostics)
+		if target != nil && len(*diagnostics) == before {
+			appendTargetFallback(err, target, diagnostics)
+		}
+		return
 	}
+	if target != nil {
+		appendTargetFallback(err, target, diagnostics)
+	}
+}
+
+func appendTargetFallback(err error, target *build.TargetError, diagnostics *[]buildDiagnostic) {
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	pkgName := targetPackage(target)
+	*diagnostics = append(*diagnostics, buildDiagnostic{
+		Severity: "error",
+		Code:     buildCodeForTarget(target),
+		Message:  boundDiagnosticMessage(err.Error()),
+		Package:  pkgName,
+		Target:   target.Target,
+	})
 }
 
 func parseGNUDiagnostics(output string) []buildDiagnostic {

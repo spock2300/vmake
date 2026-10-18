@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/pkg/api"
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
@@ -151,7 +152,8 @@ func (s *Scheduler) realizePrebuilt(resolved *ResolvedTarget) error {
 	return CopyFile(absSrc, absDst)
 }
 
-func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) error {
+func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) (err error) {
+	defer scriptcall.Recover(&err)
 	fn := resolved.Node.Target.BuildFunc()
 	if fn == nil {
 		return nil

@@ -2,6 +2,7 @@ package yaegibase
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/traefik/yaegi/interp"
 	"github.com/traefik/yaegi/stdlib"
@@ -9,7 +10,7 @@ import (
 )
 
 func New(extra interp.Exports) (*interp.Interpreter, error) {
-	i := interp.New(interp.Options{})
+	i := interp.New(interp.Options{Stderr: io.Discard})
 	if err := i.Use(stdlib.Symbols); err != nil {
 		return nil, fmt.Errorf("yaegi use stdlib: %w", err)
 	}
