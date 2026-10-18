@@ -169,19 +169,21 @@ func formatCheckSummary(result *BuildResult) string {
 	if stats.PlannedLinks > 0 {
 		pending = append(pending, countLabel(stats.PlannedLinks, "link", "links"))
 	}
+	var summary string
 	if len(pending) > 0 {
 		if stats.PlannedCallbacks > 0 {
 			pending = append(pending, countLabel(stats.PlannedCallbacks, "callback", "callbacks"))
 		}
-		return fmt.Sprintf("Build check: %s pending (%s up to date)", strings.Join(pending, ", "), countLabel(stats.UpToDate, "action", "actions"))
-	}
-	if stats.PlannedCallbacks > 0 {
-		return fmt.Sprintf("Build check: up to date (no compile/link work; %s would run)", countLabel(stats.PlannedCallbacks, "callback", "callbacks"))
+		summary = fmt.Sprintf("Build check: %s pending (%s up to date)", strings.Join(pending, ", "), countLabel(stats.UpToDate, "action", "actions"))
+	} else if stats.PlannedCallbacks > 0 {
+		summary = fmt.Sprintf("Build check: up to date (no compile/link work; %s would run)", countLabel(stats.PlannedCallbacks, "callback", "callbacks"))
+	} else {
+		summary = "Build check: up to date (no compile/link work)"
 	}
 	if stats.PlannedGenerators > 0 {
-		return fmt.Sprintf("Build check: up to date (no compile/link work; %s generate inputs)", countLabel(stats.PlannedGenerators, "target", "targets"))
+		summary += fmt.Sprintf("; %d generated-input target(s) not checked", stats.PlannedGenerators)
 	}
-	return "Build check: up to date (no compile/link work)"
+	return summary
 }
 
 func countLabel(count int, singular, plural string) string {

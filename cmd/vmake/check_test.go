@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spock2300/vmake/pkg/build"
 )
 
 const (
@@ -52,13 +54,42 @@ func writeCheckProject(t *testing.T) string {
 	return project
 }
 
+func writeCheckGeneratorProject(t *testing.T) string {
+	t.Helper()
+	project := filepath.Join(t.TempDir(), "checkgen")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c").AddBinHeader("assets/one.bin", "assets/two.bin")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), `static const unsigned char one[] = {
+#include "one.h"
+};
+static const unsigned char two[] = {
+#include "two.h"
+};
+int main(void) { return sizeof(one) > 0 && sizeof(two) > 0 ? 0 : 1; }
+`)
+	writeExtensionFile(t, filepath.Join(project, "assets", "one.bin"), "one")
+	writeExtensionFile(t, filepath.Join(project, "assets", "two.bin"), "two")
+	return project
+}
+
 type checkTestData struct {
-	WorkPending      bool `json:"workPending"`
-	PlannedCompiles  int  `json:"plannedCompiles"`
-	PlannedLinks     int  `json:"plannedLinks"`
-	PlannedCallbacks int  `json:"plannedCallbacks"`
-	UpToDate         int  `json:"upToDate"`
-	TargetsTotal     int  `json:"targetsTotal"`
+	WorkPending       bool     `json:"workPending"`
+	PlannedCompiles   int      `json:"plannedCompiles"`
+	PlannedLinks      int      `json:"plannedLinks"`
+	PlannedCallbacks  int      `json:"plannedCallbacks"`
+	PlannedGenerators int      `json:"plannedGenerators"`
+	Caveats           []string `json:"caveats"`
+	UpToDate          int      `json:"upToDate"`
+	TargetsTotal      int      `json:"targetsTotal"`
 }
 
 type checkTestDocument struct {
@@ -242,6 +273,98 @@ func mustReadCheckFile(t *testing.T, path string) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func TestBuildCheckGeneratorCaveat(t *testing.T) {
+	project := writeCheckGeneratorProject(t)
+	wantCaveat := "generator rules/config headers are not executed; targets depending on generated inputs may be undercounted"
+
+	document, _, _ := runCheckJSON(t, project, "build", "--check", "--json")
+	assertCheckPlan(t, document.Data, true, 1, 1, 0, 0, 1)
+	if document.Data.PlannedGenerators != 1 {
+		t.Fatalf("plannedGenerators = %d, want 1 (two rules on one target)", document.Data.PlannedGenerators)
+	}
+	if len(document.Data.Caveats) != 1 || document.Data.Caveats[0] != wantCaveat {
+		t.Fatalf("caveats = %v, want [%q]", document.Data.Caveats, wantCaveat)
+	}
+
+	stdout, stderr, code := runBuildCommand(t, project, "build", "--check")
+	if code != 0 {
+		t.Fatalf("cold check exit = %d, stderr = %q", code, stderr)
+	}
+	want := "Build check: 1 compile, 1 link pending (0 actions up to date); 1 generated-input target(s) not checked"
+	if strings.TrimSpace(stdout) != want {
+		t.Fatalf("cold check stdout = %q, want %q", stdout, want)
+	}
+	assertNoCheckArtifacts(t, project)
+
+	stdout, stderr, code = runBuildCommand(t, project, "build")
+	if code != 0 {
+		t.Fatalf("build exit = %d, stderr = %q\n%s", code, stderr, stdout)
+	}
+	buildBefore := snapshotCheckDir(t, filepath.Join(project, "build"))
+
+	document, _, _ = runCheckJSON(t, project, "build", "--check", "--json")
+	assertCheckPlan(t, document.Data, false, 0, 0, 0, 2, 1)
+	if document.Data.PlannedGenerators != 1 {
+		t.Fatalf("up-to-date plannedGenerators = %d, want 1", document.Data.PlannedGenerators)
+	}
+	if len(document.Data.Caveats) != 1 || document.Data.Caveats[0] != wantCaveat {
+		t.Fatalf("up-to-date caveats = %v, want [%q]", document.Data.Caveats, wantCaveat)
+	}
+
+	stdout, stderr, code = runBuildCommand(t, project, "build", "--check")
+	if code != 0 {
+		t.Fatalf("up-to-date check exit = %d, stderr = %q", code, stderr)
+	}
+	want = "Build check: up to date (no compile/link work); 1 generated-input target(s) not checked"
+	if strings.TrimSpace(stdout) != want {
+		t.Fatalf("up-to-date check stdout = %q, want %q", stdout, want)
+	}
+	if after := snapshotCheckDir(t, filepath.Join(project, "build")); !maps.Equal(buildBefore, after) {
+		t.Fatalf("check mutated the build directory:\nbefore: %v\nafter:  %v", buildBefore, after)
+	}
+}
+
+func TestBuildCheckWithoutGeneratorsHasNoCaveat(t *testing.T) {
+	project := writeCheckProject(t)
+	document, _, _ := runCheckJSON(t, project, "build", "--check", "--json")
+	assertCheckPlan(t, document.Data, true, 2, 2, 1, 0, 3)
+	if document.Data.PlannedGenerators != 0 || len(document.Data.Caveats) != 0 {
+		t.Fatalf("plan without generators reports a caveat: plannedGenerators=%d caveats=%v", document.Data.PlannedGenerators, document.Data.Caveats)
+	}
+
+	stdout, stderr, code := runBuildCommand(t, project, "build", "--check")
+	if code != 0 {
+		t.Fatalf("check exit = %d, stderr = %q", code, stderr)
+	}
+	want := "Build check: 2 compiles, 2 links, 1 callback pending (0 actions up to date)"
+	if strings.TrimSpace(stdout) != want {
+		t.Fatalf("check stdout = %q, want %q", stdout, want)
+	}
+}
+
+func TestFormatCheckSummaryGeneratorCaveat(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		stats build.StatsSnapshot
+		want  string
+	}{
+		{"pending", build.StatsSnapshot{PlannedCompiles: 2, PlannedLinks: 2, PlannedCallbacks: 1}, "Build check: 2 compiles, 2 links, 1 callback pending (0 actions up to date)"},
+		{"pending generators", build.StatsSnapshot{PlannedCompiles: 1, PlannedLinks: 1, PlannedGenerators: 1}, "Build check: 1 compile, 1 link pending (0 actions up to date); 1 generated-input target(s) not checked"},
+		{"pending callback generators", build.StatsSnapshot{PlannedCompiles: 2, PlannedLinks: 2, PlannedCallbacks: 1, PlannedGenerators: 2}, "Build check: 2 compiles, 2 links, 1 callback pending (0 actions up to date); 2 generated-input target(s) not checked"},
+		{"callbacks", build.StatsSnapshot{PlannedCallbacks: 1, UpToDate: 4}, "Build check: up to date (no compile/link work; 1 callback would run)"},
+		{"callbacks generators", build.StatsSnapshot{PlannedCallbacks: 1, PlannedGenerators: 3, UpToDate: 4}, "Build check: up to date (no compile/link work; 1 callback would run); 3 generated-input target(s) not checked"},
+		{"generators", build.StatsSnapshot{PlannedGenerators: 2, UpToDate: 4}, "Build check: up to date (no compile/link work); 2 generated-input target(s) not checked"},
+		{"up to date", build.StatsSnapshot{UpToDate: 4}, "Build check: up to date (no compile/link work)"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := &BuildResult{Stats: test.stats}
+			if got := formatCheckSummary(result); got != test.want {
+				t.Fatalf("formatCheckSummary() = %q, want %q", got, test.want)
+			}
+		})
+	}
 }
 
 func TestBuildCheckDetectsSourceFlagAndScriptChanges(t *testing.T) {
