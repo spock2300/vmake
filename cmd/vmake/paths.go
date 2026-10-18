@@ -42,43 +42,64 @@ func findProjectDirSoft() string {
 	return found
 }
 
+// searchProjectDir locates the enclosing project root. A start directory that
+// contains .vmake is itself a project. Otherwise the nearest ancestor that has
+// both .vmake and build.go wins over a nested package build.go; an ancestor
+// .vmake without its own build.go is only a container (for example a shared
+// config directory above several standalone projects) and is ignored. Only
+// after the upward walk finds no project .vmake does the nearest build.go win.
+// Finally the start directory may still be a project root whose packages are
+// child directories containing build.go.
 func searchProjectDir(dir string) (string, bool) {
-	checkSubdirs := true
-	for {
-		if hasProjectMarker(dir, checkSubdirs) {
-			return dir, true
+	start := dir
+	for current := start; ; {
+		if hasProjectConfig(current) && (current == start || hasBuildGo(current)) {
+			return current, true
 		}
-		checkSubdirs = false
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", false
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
 		}
-		dir = parent
+		current = parent
 	}
+	for current := start; ; {
+		if hasBuildGo(current) {
+			return current, true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	if hasChildBuildGo(start) {
+		return start, true
+	}
+	return "", false
 }
 
-func hasProjectMarker(dir string, checkSubdirs bool) bool {
+func hasProjectConfig(dir string) bool {
 	marker := filepath.Join(dir, ".vmake")
 	if marker == vmakeDir {
 		return false
 	}
-	if _, err := os.Stat(marker); err == nil {
-		return true
-	}
-	if _, err := os.Stat(filepath.Join(dir, "build.go")); err == nil {
-		return true
-	}
-	if !checkSubdirs {
+	_, err := os.Stat(marker)
+	return err == nil
+}
+
+func hasBuildGo(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "build.go"))
+	return err == nil
+}
+
+func hasChildBuildGo(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
 		return false
 	}
-	if entries, err := os.ReadDir(dir); err == nil {
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
-			if _, err := os.Stat(filepath.Join(dir, e.Name(), "build.go")); err == nil {
-				return true
-			}
+	for _, e := range entries {
+		if e.IsDir() && hasBuildGo(filepath.Join(dir, e.Name())) {
+			return true
 		}
 	}
 	return false

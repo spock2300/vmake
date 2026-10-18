@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spock2300/vmake/internal/fs"
@@ -141,13 +142,9 @@ func computeReachable(graph *resolver.Graph) (map[string]bool, error) {
 		needed[rootID] = true
 		queue = append(queue, rootID)
 	} else {
-		rootsHint := make([]string, 0)
-		for id, node := range graph.Packages {
-			if node.IsLocal() && node.Pkg != nil && len(node.Pkg.GetRequireFuncs()) > 0 {
-				rootsHint = append(rootsHint, id)
-			}
+		if hint := rootsHint(graph); hint != "" {
+			vlog.Info("%s", hint)
 		}
-		vlog.Info("[hint] no package declares SetRoot(true); consider adding 'p.SetRoot(true)' to one of: %s", strings.Join(rootsHint, ", "))
 		dependedOn := make(map[string]bool)
 		for _, node := range graph.Packages {
 			if !node.IsLocal() {
@@ -193,6 +190,20 @@ func computeReachable(graph *resolver.Graph) (map[string]bool, error) {
 		}
 	}
 	return needed, nil
+}
+
+func rootsHint(graph *resolver.Graph) string {
+	candidates := make([]string, 0, len(graph.Packages))
+	for id, node := range graph.Packages {
+		if node.IsLocal() && node.Pkg != nil {
+			candidates = append(candidates, id)
+		}
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+	sort.Strings(candidates)
+	return fmt.Sprintf("[hint] no package declares SetRoot(true); consider adding 'p.SetRoot(true)' to one of: %s", strings.Join(candidates, ", "))
 }
 
 func collectAllPkgOptions(ctx *RuntimeContext, needed map[string]bool) map[string]map[string]any {

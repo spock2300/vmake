@@ -154,10 +154,7 @@ func (in resolveInputs) params(mode, toolchain string) pipeline.ResolveParams {
 }
 
 func loadResolveInputs(ignoreLock bool, softGitignore bool) (resolveInputs, error) {
-	workDir, err := os.Getwd()
-	if err != nil {
-		return resolveInputs{}, err
-	}
+	workDir := findProjectDir()
 	cfg, configPath, digest, err := config.LoadProjectSnapshot(findProjectDir())
 	if err != nil {
 		return resolveInputs{}, err

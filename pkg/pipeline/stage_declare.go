@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/spock2300/vmake/internal/scriptcall"
@@ -261,8 +262,20 @@ func (s *declareStage) computeDepOutput(currentPkg, depRef string) string {
 func (s *declareStage) logResults() {
 	vlog.Info("")
 	vlog.Info("Targets found:")
-	for pkgName, targets := range s.allTargets {
-		for _, t := range targets {
+	for _, line := range targetListLines(s.allTargets) {
+		vlog.Info("%s", line)
+	}
+
+	vlog.Info("")
+	vlog.Info("Using toolchain: %s, mode: %s", s.rc.cfg.TcName, s.rc.cfg.Mode)
+}
+
+func targetListLines(allTargets map[string]map[string]*api.Target) []string {
+	lines := make([]string, 0)
+	for _, pkgName := range slices.Sorted(maps.Keys(allTargets)) {
+		targets := allTargets[pkgName]
+		for _, targetName := range slices.Sorted(maps.Keys(targets)) {
+			t := targets[targetName]
 			defaultMark := ""
 			testMark := ""
 			if !t.IsDefault() {
@@ -271,10 +284,8 @@ func (s *declareStage) logResults() {
 			if t.IsTest() {
 				testMark = " [test]"
 			}
-			vlog.Info("  - %s:%s (%s)%s%s", pkgName, t.Name(), t.Kind(), defaultMark, testMark)
+			lines = append(lines, fmt.Sprintf("  - %s:%s (%s)%s%s", pkgName, t.Name(), t.Kind(), defaultMark, testMark))
 		}
 	}
-
-	vlog.Info("")
-	vlog.Info("Using toolchain: %s, mode: %s", s.rc.cfg.TcName, s.rc.cfg.Mode)
+	return lines
 }
