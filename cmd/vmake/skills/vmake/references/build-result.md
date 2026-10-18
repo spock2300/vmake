@@ -16,13 +16,13 @@ the installation manifest (`install/manifest.json`). `clean`, `distclean`, and
 | `started`, `finished`, `durationMs` | UTC timestamps and wall-clock duration; `durationMs` is 0 while running |
 | `error` | Concise one-line failure summary (about 300 characters at most); empty on success |
 | `diagnostics` | Always an array. Failure entries have `severity`, `code`, `message`, and optional `file`, `line`, `column`, `package`, `target`. Codes: `VMAKE_E_COMPILE`, `VMAKE_E_LINK`, `VMAKE_E_BUILD`, `VMAKE_E_SCRIPT` |
-| `summary` | Per-invocation counts (see below); present on success and for a test failure after the build phase |
+| `summary` | Per-invocation counts (see below); present on success, on a failure whose scheduler produced a partial result, and for a test failure after the build phase. Omitted when the failure happened before any target was scheduled |
 | `configFile`, `configSha256` | Active configuration name and SHA-256 of the exact configuration bytes used |
 | `global`, `packages` | Effective global values and per-package values for the packages that participated |
 | `toolchain`, `mode` | Effective toolchain and mode |
 | `compileDatabase` | Absolute path to the compilation database, or empty |
-| `targets` | Executed default targets: `package`, `target`, `kind`, `outputs`, `status`, `durationMs` |
-| `tests` | Always an array. For `vmake test`, one entry per executed test binary with `name`, `package`, `target`, `passed`, `elapsedMs` |
+| `targets` | Executed default targets: `package`, `target`, `kind`, `outputs`, `status`, `durationMs`. On failure only targets that completed before the failure are listed |
+| `tests` | Always an array. For `vmake test`, one entry per executed test binary with `name`, `package`, `target`, `passed`, `elapsedMs`, `exitCode`, and `output` |
 | `artifacts` | Files installed by this invocation only: `package`, `target`, `buildPath`, `installPath`, `size`, `sha256` |
 
 A target's `status` is `built` when it compiled or linked something in this
@@ -37,6 +37,12 @@ only for `vmake build --tests` and `vmake test`.
 `targetsUpToDate`, `targetsFailed`, `testsFound`, `testsPassed`, `testsFailed`,
 `filesCompiled`, `filesLinked`, `actionsUpToDate`, `artifactsInstalled`, and
 `changedFiles`, plus `callbacks` (executed `built` void targets) and `noOp`.
+
+On a failed build or build phase, `summary` describes the work attempted before
+the failure: `targetsFailed` counts distinct failed target names from the
+diagnostics (or 1 when a target failure is known without a name),
+`artifactsInstalled` is 0, and no installation runs. A failure before any target
+is scheduled (for example a buildscript error) omits `summary` entirely.
 
 Test counts are 0 for build/rebuild. Compile/link counts cover compile and link
 actions only, not post-link steps, void callbacks, or installation. A no-op
@@ -96,6 +102,12 @@ empty because test runs never install.
 
 - `status` is `succeeded` only when every executed test passed; `tests` holds
   one entry per executed binary.
+- Each `tests[]` entry carries `exitCode` (0 on success, the process exit code
+  on failure, 1 when unavailable) and `output`: the combined stdout/stderr tail
+  captured for that test, trimmed and bounded to 4096 bytes. Longer output starts
+  with `...[truncated]`. `output` is omitted when empty, and entries never
+  include vmake's own `PASS`/`FAIL` progress lines. `PASS`/`FAIL` and child
+  output keep streaming to the console exactly as before.
 - A failing test makes `status` `failed` with `error: "N test(s) failed"` and a
   non-zero exit; the report keeps `summary` test counts because the build phase
   completed.
@@ -103,8 +115,9 @@ empty because test runs never install.
   targets found"`, `status: "failed"`, and `summary.testsFound: 0`.
 - `vmake build --tests` is still a build: zero test targets are not an error
   there and test counts stay 0.
-- If the build phase itself fails, `summary` is omitted but configuration
-  identity and `compileDatabase` are still recorded.
+- If the build phase itself fails, the report keeps the completed build targets
+  and partial `summary` (unless the failure happened before scheduling) along
+  with configuration identity and `compileDatabase`. `artifacts` stays empty.
 - A running record replaces the previous report before work starts; later runs
   overwrite it with a new `buildId`.
 

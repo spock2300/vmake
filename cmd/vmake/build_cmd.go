@@ -88,6 +88,9 @@ func runReportedBuild(ctx *RuntimeContext, report *buildReport, opts BuildOption
 	}
 	result, err := runBuildPhase(ctx, opts)
 	if err != nil {
+		if result != nil {
+			report.partial(ctx, result, err)
+		}
 		return nil, err
 	}
 	if installFlag {

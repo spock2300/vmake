@@ -203,8 +203,5 @@ func (j *BuildJob) Run() (*Scheduler, error) {
 	for _, scheduler := range additional {
 		err = errors.Join(err, scheduler.ccWriter.Save(filepath.Join(root, "build", "compile_commands.json")))
 	}
-	if err != nil {
-		return nil, err
-	}
-	return base, nil
+	return base, err
 }

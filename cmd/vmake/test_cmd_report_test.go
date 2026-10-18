@@ -55,7 +55,7 @@ func TestTestCommandPublishesSucceededReport(t *testing.T) {
 	}
 	test := report.Tests[0]
 	if test.Name != "tests-project:tests" || test.Package != "tests-project" || test.Target != "tests" ||
-		!test.Passed || test.ElapsedMs < 0 {
+		!test.Passed || test.ElapsedMs < 0 || test.ExitCode != 0 {
 		t.Fatalf("test entry = %+v", test)
 	}
 	if report.Summary == nil || report.Summary.TestsFound != 1 || report.Summary.TestsPassed != 1 || report.Summary.TestsFailed != 0 {
@@ -159,7 +159,11 @@ func TestTestCommandBuildFailurePublishesReport(t *testing.T) {
 	if report.CompileDatabase == "" {
 		t.Fatal("build-failure report lost the compile database")
 	}
-	if report.Tests == nil || len(report.Tests) != 0 || report.Summary != nil {
+	if report.Tests == nil || len(report.Tests) != 0 || report.Summary == nil {
 		t.Fatalf("build-failure results = %+v (summary %+v)", report.Tests, report.Summary)
+	}
+	if report.Summary.TargetsFailed != 1 || report.Summary.TargetsBuilt != 0 || report.Summary.TestsFound != 0 ||
+		report.Summary.ArtifactsInstalled != 0 {
+		t.Fatalf("build-failure summary = %+v", report.Summary)
 	}
 }

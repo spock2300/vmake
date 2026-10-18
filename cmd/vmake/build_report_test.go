@@ -419,8 +419,140 @@ func TestBuildReportV2CompileFailure(t *testing.T) {
 	if _, err := os.Stat(report.CompileDatabase); err != nil {
 		t.Fatalf("compile database missing: %v", err)
 	}
-	if len(report.Targets) != 0 || len(report.Artifacts) != 0 || report.Summary != nil {
-		t.Fatalf("failed build report invented results: %+v", report)
+	if len(report.Targets) != 0 || len(report.Artifacts) != 0 || report.Summary == nil {
+		t.Fatalf("failed build report lost its partial summary: %+v", report)
+	}
+	if summary := report.Summary; summary.TargetsTotal != 0 || summary.TargetsBuilt != 0 ||
+		summary.TargetsUpToDate != 0 || summary.TargetsFailed != 1 || summary.FilesLinked != 0 ||
+		summary.ArtifactsInstalled != 0 {
+		t.Fatalf("partial failure summary = %+v", summary)
+	}
+	if report.CompileDatabase == "" || len(report.Packages) == 0 {
+		t.Fatalf("failed build report lost partial identity: %+v", report)
+	}
+}
+
+func writeTwoTargetBuildReportProject(t *testing.T, firstSource, secondSource string) string {
+	t.Helper()
+	project := filepath.Join(t.TempDir(), "partial-failure")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("first").SetKind(api.TargetBinary).AddFiles("src/first.c")
+		ctx.Target("second").SetKind(api.TargetBinary).AddFiles("src/second.c")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "first.c"), firstSource)
+	writeExtensionFile(t, filepath.Join(project, "src", "second.c"), secondSource)
+	return project
+}
+
+func TestBuildReportPartialFailureKeepsCompletedTargets(t *testing.T) {
+	project := writeTwoTargetBuildReportProject(t,
+		"int main(void) { return 0; }\n",
+		"int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
+	stdout, stderr, code := runBuildCommand(t, project, "build")
+	if code != 1 {
+		t.Fatalf("build exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Build failed: src/second.c:2:") {
+		t.Fatalf("failure summary missing:\n%s", stdout)
+	}
+	report := loadBuildReport(t, project)
+	if report.Status != "failed" || len(report.Diagnostics) != 1 {
+		t.Fatalf("report = %+v", report)
+	}
+	diagnostic := report.Diagnostics[0]
+	if diagnostic.Code != "VMAKE_E_COMPILE" || diagnostic.File != "src/second.c" ||
+		diagnostic.Line != 2 || diagnostic.Target != "partial-failure:second" {
+		t.Fatalf("diagnostic = %+v", diagnostic)
+	}
+	if len(report.Targets) != 1 || report.Targets[0].Target != "first" || report.Targets[0].Status != build.TargetStatusBuilt {
+		t.Fatalf("completed targets = %+v", report.Targets)
+	}
+	if len(report.Artifacts) != 0 {
+		t.Fatalf("failed build kept artifacts: %+v", report.Artifacts)
+	}
+	summary := report.Summary
+	if summary == nil || summary.TargetsTotal != 1 || summary.TargetsBuilt != 1 ||
+		summary.TargetsUpToDate != 0 || summary.TargetsFailed != 1 ||
+		summary.FilesCompiled < 1 || summary.FilesLinked != 1 || summary.ArtifactsInstalled != 0 {
+		t.Fatalf("partial summary = %+v", summary)
+	}
+	if !slices.Contains(summary.ChangedFiles, "partial-failure:src/first.c") {
+		t.Fatalf("partial changed files = %v", summary.ChangedFiles)
+	}
+	if report.Toolchain == "" || report.Mode == "" || len(report.Global) == 0 ||
+		report.Global[api.ModeOptionName] != report.Mode ||
+		report.Global[api.ToolchainOptionName] != report.Toolchain ||
+		len(report.Packages) == 0 || report.Packages["partial-failure"] == nil {
+		t.Fatalf("partial identity = %+v (toolchain %q, mode %q)", report.Global, report.Toolchain, report.Mode)
+	}
+	wantDatabase := filepath.Join(project, "build", "compile_commands.json")
+	if report.CompileDatabase != wantDatabase {
+		t.Fatalf("compileDatabase = %q, want %q", report.CompileDatabase, wantDatabase)
+	}
+	if _, err := os.Stat(report.CompileDatabase); err != nil {
+		t.Fatalf("compile database missing: %v", err)
+	}
+	if !strings.Contains(stderr, "error: expected expression") {
+		t.Fatalf("raw diagnostic missing from stderr:\n%s", stderr)
+	}
+}
+
+func TestBuildReportKeepGoingKeepsBothDiagnostics(t *testing.T) {
+	project := writeTwoTargetBuildReportProject(t,
+		"int main(void) {\n\tint first = ;\n\treturn first;\n}\n",
+		"int main(void) {\n\tint second = ;\n\treturn second;\n}\n")
+	stdout, stderr, code := runBuildCommand(t, project, "build", "-k")
+	if code != 1 {
+		t.Fatalf("build -k exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	report := loadBuildReport(t, project)
+	if report.Status != "failed" || len(report.Diagnostics) != 2 {
+		t.Fatalf("keep-going report = %+v", report)
+	}
+	failedTargets := map[string]bool{}
+	for _, diagnostic := range report.Diagnostics {
+		if diagnostic.Code != "VMAKE_E_COMPILE" || diagnostic.File == "" || diagnostic.Line != 2 {
+			t.Fatalf("keep-going diagnostic = %+v", diagnostic)
+		}
+		failedTargets[diagnostic.Target] = true
+	}
+	if !failedTargets["partial-failure:first"] || !failedTargets["partial-failure:second"] {
+		t.Fatalf("keep-going targets = %v", failedTargets)
+	}
+	if len(report.Targets) != 0 || len(report.Artifacts) != 0 {
+		t.Fatalf("keep-going report invented completed work: %+v", report)
+	}
+	if report.Summary == nil || report.Summary.TargetsFailed != 2 || report.Summary.TargetsBuilt != 0 {
+		t.Fatalf("keep-going summary = %+v", report.Summary)
+	}
+}
+
+func TestBuildReportKeepGoingKeepsLaterSuccess(t *testing.T) {
+	project := writeTwoTargetBuildReportProject(t,
+		"int main(void) {\n\tint first = ;\n\treturn first;\n}\n",
+		"int main(void) { return 0; }\n")
+	_, _, code := runBuildCommand(t, project, "build", "-k")
+	if code != 1 {
+		t.Fatalf("build -k exit = %d, want 1", code)
+	}
+	report := loadBuildReport(t, project)
+	if report.Status != "failed" || len(report.Diagnostics) != 1 || report.Diagnostics[0].Target != "partial-failure:first" {
+		t.Fatalf("keep-going report = %+v", report)
+	}
+	if len(report.Targets) != 1 || report.Targets[0].Target != "second" || report.Targets[0].Status != build.TargetStatusBuilt {
+		t.Fatalf("keep-going completed targets = %+v", report.Targets)
+	}
+	if report.Summary == nil || report.Summary.TargetsBuilt != 1 || report.Summary.TargetsFailed != 1 ||
+		report.Summary.FilesLinked != 1 {
+		t.Fatalf("keep-going summary = %+v", report.Summary)
 	}
 }
 
@@ -490,7 +622,7 @@ func Main(p *api.Package) {
 	if report.CompileDatabase != "" {
 		t.Fatalf("script failure before target execution recorded compileDatabase %q", report.CompileDatabase)
 	}
-	if len(report.Targets) != 0 || len(report.Artifacts) != 0 {
+	if len(report.Targets) != 0 || len(report.Artifacts) != 0 || report.Summary != nil {
 		t.Fatalf("script failure invented results: %+v", report)
 	}
 	lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
@@ -816,8 +948,8 @@ func TestBuildQuietSummaryAndReportCounts(t *testing.T) {
 		t.Fatalf("final stderr line = %q", stderrLines[len(stderrLines)-1])
 	}
 	report = loadBuildReport(t, project)
-	if report.Status != "failed" || report.Summary != nil || len(report.Diagnostics) != 1 {
-		t.Fatalf("failure report = %+v", report)
+	if report.Status != "failed" || report.Summary == nil || report.Summary.TargetsFailed != 1 || len(report.Diagnostics) != 1 {
+		t.Fatalf("failure report = %+v (summary %+v)", report, report.Summary)
 	}
 }
 
@@ -1045,7 +1177,7 @@ func TestTestJSONPassing(t *testing.T) {
 	}
 	test := document.Data.Tests[0]
 	if test.Name != "tests-project:tests" || test.Package != "tests-project" || test.Target != "tests" ||
-		!test.Passed || test.ElapsedMs < 0 {
+		!test.Passed || test.ElapsedMs < 0 || test.ExitCode != 0 {
 		t.Fatalf("test entry = %+v", test)
 	}
 	if document.Data.Summary == nil || document.Data.Summary.TestsFound != 1 ||
@@ -1072,7 +1204,7 @@ func TestTestJSONFailure(t *testing.T) {
 	if document.Data.Error != "1 test(s) failed" {
 		t.Fatalf("test failure error = %q", document.Data.Error)
 	}
-	if len(document.Data.Tests) != 1 || document.Data.Tests[0].Passed {
+	if len(document.Data.Tests) != 1 || document.Data.Tests[0].Passed || document.Data.Tests[0].ExitCode != 1 {
 		t.Fatalf("failed test entries = %+v", document.Data.Tests)
 	}
 	if document.Data.Summary == nil || document.Data.Summary.TestsFound != 1 ||
@@ -1084,6 +1216,127 @@ func TestTestJSONFailure(t *testing.T) {
 	}
 	assertNoHumanJSONStdout(t, stdout, "test(s) passed")
 	assertJSONDataMatchesReport(t, project, document.Data)
+}
+
+func TestTestReportCapturesPassingOutput(t *testing.T) {
+	project := writeTestCommandProject(t, `#include <stdio.h>
+int main(void) {
+	printf("captured pass output\n");
+	return 0;
+}
+`)
+	stdout, stderr, code := runBuildCommand(t, project, "test")
+	if code != 0 {
+		t.Fatalf("test exit = %d, stderr = %q\n%s", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, "captured pass output") {
+		t.Fatalf("test stdout was not streamed:\n%s", stdout)
+	}
+	report := loadBuildReport(t, project)
+	if len(report.Tests) != 1 {
+		t.Fatalf("tests = %+v", report.Tests)
+	}
+	test := report.Tests[0]
+	if !test.Passed || test.ExitCode != 0 || !strings.Contains(test.Output, "captured pass output") {
+		t.Fatalf("passing test entry = %+v", test)
+	}
+	if strings.Contains(test.Output, "PASS tests-project:tests") {
+		t.Fatalf("test output captured vmake progress: %q", test.Output)
+	}
+}
+
+func TestTestReportCapturesFailureOutputAndExitCode(t *testing.T) {
+	project := writeTestCommandProject(t, `#include <stdio.h>
+int main(void) {
+	printf("failing stdout marker\n");
+	fprintf(stderr, "failing stderr marker\n");
+	return 3;
+}
+`)
+	stdout, stderr, code := runBuildCommand(t, project, "test")
+	if code != 1 {
+		t.Fatalf("test exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "failing stdout marker") || !strings.Contains(stderr, "failing stderr marker") {
+		t.Fatalf("test output was not streamed (stdout %q, stderr %q)", stdout, stderr)
+	}
+	if !strings.Contains(stderr, "FAIL tests-project:tests") {
+		t.Fatalf("FAIL line missing from stderr:\n%s", stderr)
+	}
+	report := loadBuildReport(t, project)
+	if len(report.Tests) != 1 {
+		t.Fatalf("tests = %+v", report.Tests)
+	}
+	test := report.Tests[0]
+	if test.Passed || test.ExitCode != 3 {
+		t.Fatalf("failed test entry = %+v", test)
+	}
+	if !strings.Contains(test.Output, "failing stdout marker") || !strings.Contains(test.Output, "failing stderr marker") {
+		t.Fatalf("failed test output = %q", test.Output)
+	}
+}
+
+func TestTestReportTruncatesLongOutput(t *testing.T) {
+	project := writeTestCommandProject(t, `#include <stdio.h>
+int main(void) {
+	for (int i = 0; i < 10000; i++) {
+		putchar('x');
+	}
+	return 1;
+}
+`)
+	_, _, code := runBuildCommand(t, project, "test")
+	if code != 1 {
+		t.Fatalf("test exit = %d, want 1", code)
+	}
+	report := loadBuildReport(t, project)
+	if len(report.Tests) != 1 || report.Tests[0].ExitCode != 1 {
+		t.Fatalf("tests = %+v", report.Tests)
+	}
+	output := report.Tests[0].Output
+	if len(output) > buildTestOutputLimit {
+		t.Fatalf("test output is not bounded: %d bytes", len(output))
+	}
+	if !strings.HasPrefix(output, buildTestOutputMarker) {
+		t.Fatalf("test output has no truncation marker: %q", output[:min(len(output), 64)])
+	}
+	raw, err := os.ReadFile(reportPath(project))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) > 16*1024 {
+		t.Fatalf("report with one test output is %d bytes", len(raw))
+	}
+}
+
+func TestTestBuildFailureKeepsCompletedTargets(t *testing.T) {
+	project := writeTestCommandProject(t, "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
+	stdout, stderr, code := runBuildCommand(t, project, "test")
+	if code != 1 {
+		t.Fatalf("test exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Tests failed: tests/test_app.c:2:") {
+		t.Fatalf("build-phase failure summary missing:\n%s", stdout)
+	}
+	report := loadBuildReport(t, project)
+	if report.Status != "failed" || report.Command != reportCommandTest {
+		t.Fatalf("build-phase failure report = %+v", report)
+	}
+	if len(report.Targets) != 1 || report.Targets[0].Target != "app" || report.Targets[0].Status != build.TargetStatusBuilt {
+		t.Fatalf("completed targets = %+v", report.Targets)
+	}
+	summary := report.Summary
+	if summary == nil || summary.TargetsTotal != 1 || summary.TargetsBuilt != 1 ||
+		summary.TargetsFailed != 1 || summary.FilesLinked != 1 || summary.FilesCompiled < 1 ||
+		summary.ArtifactsInstalled != 0 {
+		t.Fatalf("partial summary = %+v", summary)
+	}
+	if report.Artifacts == nil || len(report.Artifacts) != 0 || len(report.Tests) != 0 {
+		t.Fatalf("build-phase failure results = %+v (tests %+v)", report.Artifacts, report.Tests)
+	}
+	if report.CompileDatabase == "" {
+		t.Fatal("build-phase failure lost the compile database")
+	}
 }
 
 func TestTestJSONNoTargets(t *testing.T) {

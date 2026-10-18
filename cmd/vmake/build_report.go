@@ -61,6 +61,8 @@ type buildTestResult struct {
 	Target    string `json:"target"`
 	Passed    bool   `json:"passed"`
 	ElapsedMs int64  `json:"elapsedMs"`
+	ExitCode  int    `json:"exitCode"`
+	Output    string `json:"output,omitempty"`
 }
 
 type buildReport struct {
@@ -235,9 +237,6 @@ func (r *buildReport) finish(result *error) {
 			r.Status = "failed"
 		}
 		r.Artifacts = []buildArtifact{}
-		if r.Command != reportCommandTest {
-			r.Summary = nil
-		}
 	}
 	if r.Summary != nil {
 		r.Summary.DurationMs = r.DurationMs
@@ -296,6 +295,42 @@ func (r *buildReport) bind(ctx *RuntimeContext) error {
 	return jsonio.Save(reportPath(r.Root), r)
 }
 
+// partial records the results a failed build collected before it stopped.
+// Artifacts, installation and completion stay untouched.
+func (r *buildReport) partial(ctx *RuntimeContext, result *BuildResult, err error) {
+	r.Global, r.Targets = result.GlobalValues, result.Targets
+	r.Toolchain, r.Mode = result.TcName, result.Mode
+	if r.Global == nil {
+		r.Global = effectiveGlobalValues(ctx)
+		r.Global[api.ModeOptionName] = r.Mode
+		r.Global[api.ToolchainOptionName] = r.Toolchain
+	}
+	r.setCompileDatabase()
+	for name, buildContext := range result.BuildCtxs {
+		r.Packages[name] = maps.Clone(buildContext.CfgVals)
+	}
+	r.Summary = newBuildSummary(result, 0)
+	r.Summary.TargetsFailed = failedTargetCount(err)
+}
+
+func failedTargetCount(err error) int {
+	diagnostics, _ := buildFailureDetails(err)
+	targets := make(map[string]bool)
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Target != "" {
+			targets[diagnostic.Target] = true
+		}
+	}
+	if len(targets) > 0 {
+		return len(targets)
+	}
+	var targetErr *build.TargetError
+	if errors.As(err, &targetErr) {
+		return 1
+	}
+	return 0
+}
+
 // effectiveGlobalValues mirrors the pipeline's project-wide value resolution so
 // a report published before (or without) a successful build still carries the
 // configuration identity.
@@ -326,6 +361,8 @@ func (r *buildReport) setTestResults(tests []testResult) {
 			Target:    test.targetName,
 			Passed:    test.passed,
 			ElapsedMs: test.elapsed.Milliseconds(),
+			ExitCode:  test.exitCode,
+			Output:    test.output,
 		}
 		if test.passed {
 			passed++

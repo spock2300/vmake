@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -37,6 +40,9 @@ func runTest(cmd *cobra.Command, args []string) error {
 			}
 			result, err := runBuildPhase(ctx, BuildOptions{IncludeTests: true, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag})
 			if err != nil {
+				if result != nil {
+					report.partial(ctx, result, err)
+				}
 				return err
 			}
 			if err := report.complete(ctx, result); err != nil {
@@ -64,6 +70,35 @@ type testResult struct {
 	outputPath  string
 	passed      bool
 	elapsed     time.Duration
+	exitCode    int
+	output      string
+}
+
+const (
+	buildTestOutputLimit  = 4096
+	buildTestOutputMarker = "...[truncated]\n"
+)
+
+func boundedTestOutput(output string) string {
+	output = strings.TrimSpace(output)
+	if len(output) <= buildTestOutputLimit {
+		return output
+	}
+	keep := buildTestOutputLimit - len(buildTestOutputMarker)
+	return buildTestOutputMarker + output[len(output)-keep:]
+}
+
+func testExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var exitErr *osexec.ExitError
+	if errors.As(err, &exitErr) {
+		if code := exitErr.ExitCode(); code >= 0 {
+			return code
+		}
+	}
+	return 1
 }
 
 func runAllTests(ctx context.Context, result *BuildResult) ([]testResult, error) {
@@ -123,12 +158,22 @@ func runAllTests(ctx context.Context, result *BuildResult) ([]testResult, error)
 		vlog.Info("[%s]", t.fullName)
 
 		start := time.Now()
-		err := exec.RunWithEnvContext(ctx, filepath.Dir(t.outputPath), nil, t.outputPath)
+		output, runErr := exec.RunWithOptions(t.outputPath, nil, exec.RunOptions{
+			Dir:           filepath.Dir(t.outputPath),
+			Context:       ctx,
+			CaptureStderr: true,
+		})
 		if ctx.Err() != nil {
 			return tests[:i], ctx.Err()
 		}
 		t.elapsed = time.Since(start)
-		t.passed = err == nil
+		t.passed = runErr == nil
+		t.exitCode = testExitCode(runErr)
+		if commandErr, ok := runErr.(*exec.CommandError); ok {
+			t.output = boundedTestOutput(commandErr.Output)
+		} else {
+			t.output = boundedTestOutput(string(output))
+		}
 
 		if t.passed {
 			vlog.Info("PASS %s (%s)", t.fullName, t.elapsed.Round(time.Millisecond))

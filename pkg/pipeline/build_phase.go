@@ -243,13 +243,15 @@ func planBuild(rc *runContext, cfg *configStage, src *sourceStage, decl *declare
 
 func executePlan(rc *runContext, cfg *configStage, src *sourceStage, decl *declareStage, plan *planStage) (*BuildResult, error) {
 	scheduler, err := plan.job.Run()
-	if err != nil {
+	if scheduler == nil {
 		return nil, err
 	}
 	stats := scheduler.Stats().Snapshot()
 
-	vlog.Info("")
-	vlog.Info("Build succeeded!")
+	if err == nil {
+		vlog.Info("")
+		vlog.Info("Build succeeded!")
+	}
 
 	pkgBuildKeys := make(map[string]string)
 	pkgPlatforms := make(map[string]api.Platform)
@@ -280,5 +282,5 @@ func executePlan(rc *runContext, cfg *configStage, src *sourceStage, decl *decla
 		Mode:          rc.cfg.Mode,
 		InstalledPkgs: src.remote.installedPkgs(src.pkgDirs),
 		BuildCtxs:     decl.buildCtxs,
-	}, nil
+	}, err
 }
