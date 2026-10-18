@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
@@ -163,6 +165,51 @@ func Main(p *api.Package) {
 	writeExtensionFile(t, filepath.Join(project, "dep", "src", "lib.c"), "int dep(void);\nint dep(void) { return 1; }\n")
 	writeExtensionFile(t, filepath.Join(project, "dep", "include", "dep.h"), "#define DEP 1\n")
 	return project
+}
+
+func writeInspectFreshnessProject(t *testing.T) string {
+	t.Helper()
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n")
+	return project
+}
+
+func writeInspectConfig(t *testing.T, project string) string {
+	t.Helper()
+	configPath := filepath.Join(project, ".vmake", "config.json")
+	writeExtensionFile(t, configPath, `{"version":"1"}`)
+	digest, _, err := fileDigest(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digest
+}
+
+func writeInspectBuildReport(t *testing.T, project, finished, configSHA256 string) {
+	t.Helper()
+	writeExtensionFile(t, filepath.Join(project, "build", "vmake-build.json"), fmt.Sprintf(
+		`{"schemaVersion":2,"buildId":"freshness","status":"succeeded","command":"build","started":"2020-01-01T00:00:00Z","finished":%q,"configSha256":%q}`,
+		finished, configSHA256))
+}
+
+func setInspectSourceTime(t *testing.T, paths []string, modTime time.Time) {
+	t.Helper()
+	for _, path := range paths {
+		if err := os.Chtimes(path, modTime, modTime); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func TestInspectProjectModel(t *testing.T) {
@@ -490,6 +537,226 @@ func Main(p *api.Package) { p.SetRoot(true) }
 	}
 }
 
+func TestInspectFreshnessWithoutReport(t *testing.T) {
+	project := writeInspectFreshnessProject(t)
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	data := decodeInspectEnvelope(t, stdout).Data
+	if data == nil || data.BuildReportPresent || data.BuildReportState != nil {
+		t.Fatalf("build report state without a report: %+v", data)
+	}
+	freshness := data.Freshness
+	if freshness == nil || freshness.Known {
+		t.Fatalf("freshness = %+v, want present with known false", freshness)
+	}
+	if freshness.ReportStatus != "" || freshness.ReportFinished != "" || freshness.ConfigMatches != nil ||
+		freshness.SourceChanged != nil || freshness.ChangedSources != nil || freshness.Truncated != nil {
+		t.Fatalf("unknown freshness exposed report/source fields: %+v", freshness)
+	}
+}
+
+func TestInspectFreshnessUnparsableFinish(t *testing.T) {
+	project := writeInspectFreshnessProject(t)
+	digest := writeInspectConfig(t, project)
+
+	for _, finished := range []string{"", "not-a-timestamp"} {
+		writeInspectBuildReport(t, project, finished, digest)
+		stdout, stderr, code := runInspectCommand(t, project, "inspect")
+		if code != 0 || stderr != "" {
+			t.Fatalf("inspect exit = %d, stderr = %q (finished %q)", code, stderr, finished)
+		}
+		data := decodeInspectEnvelope(t, stdout).Data
+		if data == nil || data.BuildReportState == nil {
+			t.Fatalf("parsable report without state: %+v (finished %q)", data, finished)
+		}
+		freshness := data.Freshness
+		if freshness == nil || freshness.Known {
+			t.Fatalf("freshness = %+v, want known false (finished %q)", freshness, finished)
+		}
+		if freshness.ReportStatus != "succeeded" || freshness.ConfigMatches == nil || !*freshness.ConfigMatches {
+			t.Fatalf("freshness identity = %+v (finished %q)", freshness, finished)
+		}
+		if freshness.ReportFinished != "" || freshness.SourceChanged != nil ||
+			freshness.ChangedSources != nil || freshness.Truncated != nil {
+			t.Fatalf("unparsable finish exposed source fields: %+v (finished %q)", freshness, finished)
+		}
+	}
+}
+
+func TestInspectFreshnessAfterBuildAndSourceEdit(t *testing.T) {
+	project := writeInspectProject(t, t.TempDir())
+	if _, stderr, code := runBuildCommand(t, project, "build"); code != 0 {
+		t.Fatalf("build exit = %d, stderr = %q", code, stderr)
+	}
+	report := loadBuildReport(t, project)
+	finished, err := time.Parse(time.RFC3339Nano, report.Finished)
+	if err != nil {
+		t.Fatalf("report finished %q: %v", report.Finished, err)
+	}
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	data := decodeInspectEnvelope(t, stdout).Data
+	freshness := data.Freshness
+	if freshness == nil || !freshness.Known {
+		t.Fatalf("freshness after build = %+v", freshness)
+	}
+	if freshness.ReportStatus != report.Status || freshness.ReportFinished != report.Finished {
+		t.Fatalf("freshness report identity = %+v, report = %+v", freshness, report)
+	}
+	if freshness.ConfigMatches == nil || !*freshness.ConfigMatches {
+		t.Fatalf("freshness configMatches = %+v, want true", freshness.ConfigMatches)
+	}
+	if freshness.SourceChanged == nil || *freshness.SourceChanged {
+		t.Fatalf("freshness sourceChanged = %+v, want false", freshness.SourceChanged)
+	}
+	if len(freshness.ChangedSources) != 0 {
+		t.Fatalf("changedSources after build = %v, want none", freshness.ChangedSources)
+	}
+	if freshness.Truncated == nil || *freshness.Truncated {
+		t.Fatalf("freshness truncated = %+v, want false", freshness.Truncated)
+	}
+
+	edited := finished.Add(2 * time.Second)
+	for _, rel := range []string{"src/main.c", "dep/src/lib.c"} {
+		writeExtensionFile(t, filepath.Join(project, filepath.FromSlash(rel)), "int edited(void) { return 1; }\n")
+	}
+	setInspectSourceTime(t, []string{filepath.Join(project, "src", "main.c"), filepath.Join(project, "dep", "src", "lib.c")}, edited)
+
+	stdout, stderr, code = runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect after edit exit = %d, stderr = %q", code, stderr)
+	}
+	data = decodeInspectEnvelope(t, stdout).Data
+	freshness = data.Freshness
+	if freshness == nil || !freshness.Known {
+		t.Fatalf("freshness after edit = %+v", freshness)
+	}
+	if freshness.ConfigMatches == nil || !*freshness.ConfigMatches {
+		t.Fatalf("source edit changed configMatches: %+v", freshness.ConfigMatches)
+	}
+	if freshness.SourceChanged == nil || !*freshness.SourceChanged {
+		t.Fatalf("sourceChanged after edit = %+v, want true", freshness.SourceChanged)
+	}
+	if want := []string{"dep:src/lib.c", "proj:src/main.c"}; !slices.Equal(freshness.ChangedSources, want) {
+		t.Fatalf("changedSources = %v, want %v", freshness.ChangedSources, want)
+	}
+	if freshness.Truncated == nil || *freshness.Truncated {
+		t.Fatalf("freshness truncated after edit = %+v, want false", freshness.Truncated)
+	}
+
+	again, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("repeat inspect exit = %d, stderr = %q", code, stderr)
+	}
+	if again != stdout {
+		t.Fatal("consecutive inspect runs after a source edit are not byte-identical")
+	}
+}
+
+func TestInspectFreshnessConfigMismatch(t *testing.T) {
+	project := writeInspectFreshnessProject(t)
+	writeInspectConfig(t, project)
+	writeInspectBuildReport(t, project, "2020-01-01T00:00:00Z", "not-the-active-digest")
+	source := filepath.Join(project, "src", "main.c")
+	setInspectSourceTime(t, []string{source}, time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	data := decodeInspectEnvelope(t, stdout).Data
+	if data.BuildReportState == nil || data.BuildReportState.ConfigMatches {
+		t.Fatalf("buildReportState configMatches = %+v, want false", data.BuildReportState)
+	}
+	freshness := data.Freshness
+	if freshness == nil || !freshness.Known {
+		t.Fatalf("freshness with mismatched config = %+v", freshness)
+	}
+	if freshness.ConfigMatches == nil || *freshness.ConfigMatches {
+		t.Fatalf("freshness configMatches = %+v, want false", freshness.ConfigMatches)
+	}
+	if freshness.SourceChanged == nil || !*freshness.SourceChanged {
+		t.Fatalf("freshness sourceChanged = %+v, want true despite config mismatch", freshness.SourceChanged)
+	}
+	if want := []string{"proj:src/main.c"}; !slices.Equal(freshness.ChangedSources, want) {
+		t.Fatalf("changedSources = %v, want %v", freshness.ChangedSources, want)
+	}
+}
+
+func TestInspectFreshnessTruncatesChangedSources(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c")
+		ctx.Target("app_again").SetKind(api.TargetBinary).AddFiles("src/*.c")
+	})
+}
+`)
+	paths := make([]string, 0, 55)
+	for i := 0; i < 55; i++ {
+		path := filepath.Join(project, "src", fmt.Sprintf("f%02d.c", i))
+		writeExtensionFile(t, path, fmt.Sprintf("int f%d(void) { return %d; }\n", i, i))
+		paths = append(paths, path)
+	}
+	setInspectSourceTime(t, paths, time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC))
+	digest := writeInspectConfig(t, project)
+	writeInspectBuildReport(t, project, "2020-01-01T00:00:00Z", digest)
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	data := decodeInspectEnvelope(t, stdout).Data
+	freshness := data.Freshness
+	if freshness == nil || !freshness.Known {
+		t.Fatalf("freshness = %+v", freshness)
+	}
+	if freshness.ConfigMatches == nil || !*freshness.ConfigMatches {
+		t.Fatalf("freshness configMatches = %+v, want true", freshness.ConfigMatches)
+	}
+	if freshness.SourceChanged == nil || !*freshness.SourceChanged {
+		t.Fatalf("freshness sourceChanged = %+v, want true", freshness.SourceChanged)
+	}
+	if freshness.Truncated == nil || !*freshness.Truncated {
+		t.Fatalf("freshness truncated = %+v, want true", freshness.Truncated)
+	}
+	if len(freshness.ChangedSources) != inspectFreshnessChangedSourcesLimit {
+		t.Fatalf("changedSources length = %d, want %d", len(freshness.ChangedSources), inspectFreshnessChangedSourcesLimit)
+	}
+	if !slices.IsSorted(freshness.ChangedSources) {
+		t.Fatalf("changedSources is not sorted: %v", freshness.ChangedSources)
+	}
+	seen := make(map[string]bool, len(freshness.ChangedSources))
+	for _, source := range freshness.ChangedSources {
+		if seen[source] {
+			t.Fatalf("changedSources has duplicate %q: %v", source, freshness.ChangedSources)
+		}
+		seen[source] = true
+	}
+	if first, last := freshness.ChangedSources[0], freshness.ChangedSources[len(freshness.ChangedSources)-1]; first != "proj:src/f00.c" || last != "proj:src/f49.c" {
+		t.Fatalf("changedSources bounds = %q..%q", first, last)
+	}
+
+	again, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("repeat inspect exit = %d, stderr = %q", code, stderr)
+	}
+	if again != stdout {
+		t.Fatal("freshness output is not deterministic")
+	}
+}
+
 func TestInspectUnreadableBuildReport(t *testing.T) {
 	project := filepath.Join(t.TempDir(), "proj")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
@@ -521,6 +788,14 @@ func Main(p *api.Package) {
 		}
 		if data.CompileDatabasePresent {
 			t.Fatal("compileDatabasePresent = true without a compile database")
+		}
+		if data.Freshness == nil || data.Freshness.Known {
+			t.Fatalf("corrupt report freshness = %+v, want known false (report %q)", data.Freshness, corrupt)
+		}
+		if data.Freshness.ReportStatus != "" || data.Freshness.ReportFinished != "" ||
+			data.Freshness.ConfigMatches != nil || data.Freshness.SourceChanged != nil ||
+			data.Freshness.ChangedSources != nil || data.Freshness.Truncated != nil {
+			t.Fatalf("corrupt report freshness exposed fields: %+v (report %q)", data.Freshness, corrupt)
 		}
 		if len(envelope.Diagnostics) != 1 {
 			t.Fatalf("diagnostics = %+v, want one warning (report %q)", envelope.Diagnostics, corrupt)

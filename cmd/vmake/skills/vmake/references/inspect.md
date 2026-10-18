@@ -9,8 +9,10 @@ materializing it, and reports the install plan declared by `OnBuild` without
 reading or creating `install/`. State fields report whether the compile
 database, build report and test report currently exist, each report's identity
 and configuration match, and each needed package's active build directory; they
-do not verify action or output freshness. The build and test reports are
-separate invocations and are never merged.
+do not verify action or output freshness. A `freshness` object adds a heuristic
+that compares the build report's finish time with the declared source files of
+needed packages. The build and test reports are separate invocations and are
+never merged.
 
 ```
 vmake inspect [--set [package/]option=value ...] [-C <dir>]
@@ -105,6 +107,7 @@ Failure (no `data`, exit 1):
 | `buildReport` | `<root>/build/vmake-build.json` (expected path, even before a build) |
 | `buildReportPresent` | Whether that file currently exists |
 | `buildReportState` | Report identity/result when the file exists and parses; omitted when absent or unreadable |
+| `freshness` | Source-freshness heuristic from the build report finish time and declared target files; additive to schemaVersion 1 |
 | `testReport` | `<root>/build/vmake-test.json` |
 | `testReportPresent` | Whether that file currently exists |
 | `testReportState` | Test report identity/result with the same shape as `buildReportState`; omitted when absent or unreadable |
@@ -121,6 +124,50 @@ inspect does not read action records or predict up-to-date targets. A project
 can therefore show `buildReportPresent: true` with a succeeded build state and
 `testReportPresent: true` with a failed or no-tests test state at the same
 time.
+
+### `freshness`
+
+`freshness` is an additive schemaVersion 1 field: a heuristic source-staleness
+signal, not an up-to-date check or build plan. Consumers that compare inspect
+documents across versions should ignore unknown data keys rather than reject
+the document.
+
+```json
+"freshness": {
+  "known": true,
+  "reportStatus": "succeeded",
+  "reportFinished": "2026-10-19T02:00:00.123456789Z",
+  "configMatches": true,
+  "sourceChanged": true,
+  "changedSources": ["firmware:src/main.c"],
+  "truncated": false
+}
+```
+
+- `known` is false without a build report, when the report is unreadable, or
+  when its `finished` value is empty or not RFC 3339. A parsable report still
+  reports `reportStatus` and `configMatches`; `reportFinished` appears only for
+  a parseable timestamp. `sourceChanged`, `changedSources`, and `truncated` are
+  omitted while `known` is false.
+- The heuristic expands the declared `files` of targets in needed packages with
+  the build's glob and exclusion rules, stats each existing match, and compares
+  its modification time with `reportFinished` (contents are not read or
+  hashed). Missing declared files are skipped; absent source trees are covered
+  by `VMAKE_W_SOURCE_MISSING` instead.
+- `changedSources` holds de-duplicated, sorted `pkg:path` entries (path relative
+  to the package source directory, matching `summary.changedFiles` style) for
+  files strictly newer than the finish time, capped at 50; it is omitted when
+  empty. `truncated` is true when more changed; `sourceChanged` is true even
+  when the extra files are not listed.
+- `reportStatus` and `reportFinished` copy the build report's status and finish
+  time; a failed report with a parseable finish is still `known: true`.
+- `configMatches` mirrors `buildReportState.configMatches`, so it is false
+  after a config change or any `--set`. The mismatch alone requires a rebuild;
+  `sourceChanged` is still computed and reported.
+- Limitations: flags, toolchain, or buildscript changes, generated inputs,
+  undeclared headers/files, deleted files, backdated mtimes, and clock skew are
+  invisible. Always run `vmake build` when correctness matters; a false
+  `sourceChanged` does not prove a no-op build.
 
 Each `packages` entry has `name`, `kind` (`local`/`native`/`registry`),
 `needed`, `sourcePresent`, `deps`, optional remote
@@ -202,9 +249,9 @@ vmake inspect --set dep/dep_mode=slow      # choice validated
 
 Exit 0 means a model was produced (including models with warning diagnostics);
 exit 1 means it was not. Output is deterministic for the same project,
-configuration, overrides, and build-state files: consecutive runs are
-byte-identical. Inspect stats the compile database and reads both reports but
-never writes any of those files.
+configuration, overrides, build report, and source modification times:
+consecutive runs are byte-identical. Inspect stats the compile database and
+declared sources and reads both reports but never writes any of those files.
 
 This reference is self-contained. The full repository documentation set
 (including `docs/INSPECT.md`) is not installed with the skill.

@@ -10,10 +10,12 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/internal/glob"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
@@ -21,7 +23,10 @@ import (
 	"github.com/spock2300/vmake/pkg/resolver"
 )
 
-const inspectSchemaVersion = 1
+const (
+	inspectSchemaVersion                = 1
+	inspectFreshnessChangedSourcesLimit = 50
+)
 
 type inspectEnvelope struct {
 	SchemaVersion int                 `json:"schemaVersion"`
@@ -58,6 +63,7 @@ type inspectData struct {
 	BuildReport            string                   `json:"buildReport"`
 	BuildReportPresent     bool                     `json:"buildReportPresent"`
 	BuildReportState       *inspectBuildReportState `json:"buildReportState,omitempty"`
+	Freshness              *inspectFreshness        `json:"freshness,omitempty"`
 	TestReport             string                   `json:"testReport"`
 	TestReportPresent      bool                     `json:"testReportPresent"`
 	TestReportState        *inspectBuildReportState `json:"testReportState,omitempty"`
@@ -74,6 +80,16 @@ type inspectBuildReportState struct {
 	ConfigMatches bool            `json:"configMatches"`
 	Summary       json.RawMessage `json:"summary,omitempty"`
 	Error         string          `json:"error,omitempty"`
+}
+
+type inspectFreshness struct {
+	Known          bool     `json:"known"`
+	ReportStatus   string   `json:"reportStatus,omitempty"`
+	ReportFinished string   `json:"reportFinished,omitempty"`
+	ConfigMatches  *bool    `json:"configMatches,omitempty"`
+	SourceChanged  *bool    `json:"sourceChanged,omitempty"`
+	ChangedSources []string `json:"changedSources,omitempty"`
+	Truncated      *bool    `json:"truncated,omitempty"`
 }
 
 type inspectToolchain struct {
@@ -160,10 +176,12 @@ func newInspectCmd() *cobra.Command {
 The document reports the project root, active configuration, build mode,
 toolchain, effective global values, roots, packages, targets, package
 dependency graph, the compile-database and build-report paths and presence, the
-last build report's status/identity/config match, and each needed package's
-active build directory. These are file-presence and resolved-layout facts:
-inspect does not verify action or output freshness. Diagnostics is always an
-array.
+last build report's status/identity/config match, each needed package's active
+build directory, and a source-freshness heuristic. The freshness object
+compares the declared files of needed packages with the build report's finish
+time; it is not an up-to-date check or a build plan. These are file-presence,
+resolved-layout and declared-source facts: inspect does not verify action or
+output freshness. Diagnostics is always an array.
 
 --set overrides a configuration option for this run only; nothing is written to
 .vmake/config.json. Values are coerced by the declared option type: bool accepts
@@ -529,6 +547,7 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 		}
 		data.Packages = append(data.Packages, pkg)
 	}
+	data.Freshness = inspectFreshnessFor(buildReportState, data.Packages)
 	if reportDiagnostic != nil {
 		diagnostics = append(diagnostics, *reportDiagnostic)
 	}
@@ -592,6 +611,80 @@ func loadInspectReportState(path, configDigest string, hypothetical bool, kind s
 		Summary:       report.Summary,
 		Error:         report.Error,
 	}, nil
+}
+
+func inspectFreshnessFor(state *inspectBuildReportState, packages []inspectPackage) *inspectFreshness {
+	freshness := &inspectFreshness{}
+	if state == nil {
+		return freshness
+	}
+	freshness.ReportStatus = state.Status
+	configMatches := state.ConfigMatches
+	freshness.ConfigMatches = &configMatches
+	finished, err := time.Parse(time.RFC3339Nano, state.Finished)
+	if err != nil {
+		return freshness
+	}
+	freshness.ReportFinished = state.Finished
+	changed := inspectChangedSources(packages, finished)
+	sources := make([]string, 0, len(changed))
+	for source := range changed {
+		sources = append(sources, source)
+	}
+	slices.Sort(sources)
+	truncated := len(sources) > inspectFreshnessChangedSourcesLimit
+	if truncated {
+		sources = sources[:inspectFreshnessChangedSourcesLimit]
+	}
+	sourceChanged := len(changed) > 0
+	freshness.Known = true
+	freshness.SourceChanged = &sourceChanged
+	freshness.ChangedSources = sources
+	freshness.Truncated = &truncated
+	return freshness
+}
+
+func inspectChangedSources(packages []inspectPackage, finished time.Time) map[string]bool {
+	changed := make(map[string]bool)
+	for _, pkg := range packages {
+		if pkg.SourceDir == "" {
+			continue
+		}
+		for _, target := range pkg.Targets {
+			for _, pattern := range target.Files {
+				matches, err := glob.Match(pattern, pkg.SourceDir)
+				if err != nil {
+					continue
+				}
+				for _, match := range matches {
+					if inspectSourceExcluded(match, target.ExcludedFiles) {
+						continue
+					}
+					source := match
+					if !filepath.IsAbs(source) {
+						source = filepath.Join(pkg.SourceDir, filepath.FromSlash(source))
+					}
+					info, err := os.Stat(source)
+					if err != nil || info.IsDir() {
+						continue
+					}
+					if info.ModTime().After(finished) {
+						changed[pkg.Name+":"+filepath.ToSlash(match)] = true
+					}
+				}
+			}
+		}
+	}
+	return changed
+}
+
+func inspectSourceExcluded(source string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if glob.MatchPath(pattern, source) {
+			return true
+		}
+	}
+	return false
 }
 
 func inspectPackageNames(ctx *RuntimeContext) []string {

@@ -14,10 +14,12 @@ The model also reports whether `build/compile_commands.json` and the last
 report's identity and whether its configuration digest matches the active
 configuration, and each needed package's active build-key directory. The build
 report and test report are written by separate invocations; inspect reads both
-without merging them. These fields describe files and resolved
-layout only: inspect does not verify that actions or outputs are fresh, and it
-does not predict which targets are up to date. It never writes the compile
-database or either report.
+without merging them. A `freshness` object adds a source-staleness heuristic
+computed from the build report's finish time and the declared files of needed
+packages. These fields describe files, resolved layout, and declared source
+modification times only: inspect still does not verify that actions or outputs
+are fresh, does not read action records, and does not predict which targets are
+up to date. It never writes the compile database or either report.
 
 ```
 vmake inspect [--set [package/]option=value ...] [-C <dir>]
@@ -180,7 +182,9 @@ A test report warning names `<root>/build/vmake-test.json` and suggests rerunnin
 `vmake test`. Valid reports that predate the current configuration still yield
 their state objects; `configMatches` reports the mismatch independently. A
 report is not evidence that the recorded build/test still matches the worktree:
-inspect checks only the configuration digest, not action or output freshness.
+inspect checks only the configuration digest for that, while the separate
+freshness heuristic compares declared source modification times. Neither is an
+action- or output-freshness check.
 
 ## `data` fields
 
@@ -202,6 +206,7 @@ inspect checks only the configuration digest, not action or output freshness.
 | `buildReport` | string | `<root>/build/vmake-build.json` (see `docs/BUILD_RESULT.md`) |
 | `buildReportPresent` | bool | Whether `<root>/build/vmake-build.json` currently exists |
 | `buildReportState` | object? | Identity and result recorded by the build report; omitted when the report is absent or unreadable (see below) |
+| `freshness` | object | Source-freshness heuristic from the build report's finish time and declared target files (see below); additive to schemaVersion 1 |
 | `testReport` | string | `<root>/build/vmake-test.json` |
 | `testReportPresent` | bool | Whether `<root>/build/vmake-test.json` currently exists |
 | `testReportState` | object? | Identity and result recorded by the test report; same shape as `buildReportState`, omitted when absent or unreadable |
@@ -233,12 +238,66 @@ assume this report describes the configuration being inspected"; it does not by
 itself mean the build is stale.
 
 `compileDatabasePresent`, `buildReportPresent` and `testReportPresent` are
-stat-only checks. A clean tree reports all three `false` (and omits both state
-objects); a successful build normally leaves the database and build report
+stat-only checks. A clean tree reports all three `false`, omits both state
+objects, and reports `freshness.known: false`; a successful build normally
+leaves the database and build report
 behind; a subsequent `vmake test` adds the test report without changing the
 build report. `clean` removes both reports and the database again. Inspect never
 creates, updates, or repairs any of these files. `vmake build --tests` records
 test targets in the build report only, so it does not create a test report.
+
+## Freshness heuristic
+
+`data.freshness` is an additive field (schemaVersion 1, existing fields
+unchanged) that gives a cheap source-staleness signal without running a build.
+Consumers that compare inspect documents across versions should ignore unknown
+data keys rather than reject the document:
+
+```json
+"freshness": {
+  "known": true,
+  "reportStatus": "succeeded",
+  "reportFinished": "2026-10-19T02:00:00.123456789Z",
+  "configMatches": true,
+  "sourceChanged": true,
+  "changedSources": ["firmware:src/main.c", "firmware:src/uart.c"],
+  "truncated": false
+}
+```
+
+It is computed from the build report's `finished` timestamp and the declared
+`files` of targets in needed packages whose source tree is present. Those
+patterns are expanded with the build's glob rules (including exclusions), and
+each existing matched file is stat-ed and compared with the report finish time;
+file contents are not read or hashed. Missing declared files are skipped
+silently; a missing source tree is covered by `VMAKE_W_SOURCE_MISSING` instead.
+
+- `known` is false when there is no build report, the report is unreadable, or
+  its `finished` field is empty or not an RFC 3339 timestamp. When a report
+  parses, `reportStatus` and `configMatches` are still reported and
+  `reportFinished` is present only for a parseable timestamp; `sourceChanged`,
+  `changedSources` and `truncated` are omitted.
+- `reportStatus` and `reportFinished` copy the build report's status and finish
+  time; a failed report with a parseable finish is still `known: true`.
+- `configMatches` mirrors `buildReportState.configMatches`: false after a
+  configuration change or any `--set` run. A false value still leaves
+  `sourceChanged` computed, but the configuration mismatch alone requires a
+  rebuild, so do not read `sourceChanged: false` as "no build needed".
+- `changedSources` lists `pkg:path` entries, where `path` is relative to that
+  package's source directory and slash-separated, matching the
+  `summary.changedFiles` style. It contains declared files whose modification
+  time is strictly newer than the report finish, de-duplicated, sorted, and
+  limited to 50 entries; it is omitted when empty. `truncated` is true when more
+  files changed.
+- `sourceChanged` is true when any declared file is newer, including files
+  beyond the reported limit.
+
+This is a heuristic, not an up-to-date check and not a build plan. It does not
+capture flag, toolchain, or buildscript changes, generated inputs, headers or
+other files a target did not declare, deleted files, content edits that preserve
+or backdate a modification time, or clock/file-system skew. `vmake build`
+remains authoritative: `sourceChanged: false` does not prove the next build is a
+no-op.
 
 ## `packages` entries
 
@@ -320,12 +379,14 @@ exists.
 
 ## Determinism
 
-Output is deterministic for the same project, configuration, and overrides:
-packages and roots are sorted by name, graph edges by `(from, to)`, and JSON
-object keys by Go's `encoding/json` ordering. Consecutive runs are
+Output is deterministic for the same project, configuration, overrides, build
+report, and source modification times: packages and roots are sorted by name,
+graph edges by `(from, to)`, freshness sources are de-duplicated and sorted, and
+JSON object keys follow Go's `encoding/json` ordering. Consecutive runs are
 byte-identical. Build- and test-state fields are snapshots of the report and
 compile database files, so they stay byte-identical until one of those files
-changes.
+changes. The freshness heuristic changes when the build report or a declared
+source's modification time changes.
 
 ## Exit status and stderr
 
@@ -350,10 +411,11 @@ Resolution of native remote packages still follows its normal rules and may
 materialize that package's tree. `inspect` does not read or create `install/`
 and does not resolve the install prefix: `installPrefix` and `installManifest`
 are the expected default paths, while `installs` and `installPath` come from
-dry-run `OnBuild` declarations. Inspect stats `build/compile_commands.json` and
+dry-run `OnBuild` declarations. Inspect stats `build/compile_commands.json`,
 reads `build/vmake-build.json` and `build/vmake-test.json` to report their
-state, but never writes, updates, or deletes those files, and it does not
-inspect action records or outputs. It
-also does not modify the active configuration. With `--set`, resolution and
+state, and expands and stats declared source files for the freshness heuristic.
+It never writes, updates, or deletes the compile database, reports, or sources,
+and it does not inspect action records or outputs. It also does not modify the
+active configuration. With `--set`, resolution and
 `OnConfig`/`OnApply` run twice as described above. The lock/state files it may
 create under `.vmake/` are the same ones every read-only command creates.
