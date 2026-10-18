@@ -632,6 +632,19 @@ func Main(p *api.Package) {
 	if len(report.Targets) != 0 || len(report.Artifacts) != 0 || report.Summary != nil {
 		t.Fatalf("script failure invented results: %+v", report)
 	}
+	raw, err := os.ReadFile(reportPath(project))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rawDocument struct {
+		Summary *buildSummary `json:"summary"`
+	}
+	if err := json.Unmarshal(raw, &rawDocument); err != nil {
+		t.Fatal(err)
+	}
+	if rawDocument.Summary != nil || strings.Contains(string(raw), `"noOp"`) {
+		t.Fatalf("pre-scheduling script failure claims a summary/no-op:\n%s", raw)
+	}
 	lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
 	if !strings.HasPrefix(lines[len(lines)-1], "Error: ") {
 		t.Fatalf("final stderr line = %q", lines[len(lines)-1])
@@ -803,6 +816,158 @@ func TestBuildReportFinishV2(t *testing.T) {
 	if saved.DurationMs <= 0 {
 		t.Fatalf("saved duration = %d", saved.DurationMs)
 	}
+}
+
+func TestBuildReportPartialFailureNeverNoOp(t *testing.T) {
+	root := t.TempDir()
+	report := &buildReport{
+		SchemaVersion: 2,
+		Root:          root,
+		Status:        "running",
+		Started:       time.Now().Add(-25 * time.Millisecond).UTC().Format(time.RFC3339Nano),
+	}
+	result := &BuildResult{
+		Targets:      []build.TargetResult{},
+		GlobalValues: map[string]any{"mode": "debug", "toolchain": "host"},
+		TcName:       "host",
+		Mode:         "debug",
+	}
+	failure := &build.TargetError{
+		Target: "cmake-cfail:cmake_build",
+		Stage:  "link",
+		Err:    &api.BuildScriptError{Package: "cmake-cfail", Op: "CMakeConfigure", Err: errors.New("configure exploded: missing foo dependency")},
+	}
+	report.partial(&RuntimeContext{}, result, failure)
+	if report.Summary == nil {
+		t.Fatal("partial failure lost its summary")
+	}
+	if report.Summary.NoOp {
+		t.Fatalf("partial failure summary claims no-op: %+v", report.Summary)
+	}
+	if report.Summary.TargetsFailed != 1 {
+		t.Fatalf("partial failure targetsFailed = %d, want 1", report.Summary.TargetsFailed)
+	}
+	var finishErr error = failure
+	report.finish(&finishErr, nil)
+	if report.Status != "failed" || report.Summary == nil || report.Summary.NoOp {
+		t.Fatalf("finished report = %+v (summary %+v)", report, report.Summary)
+	}
+	var saved buildReport
+	if err := jsonio.Load(reportPath(root), &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Summary == nil || saved.Summary.NoOp || saved.Summary.TargetsFailed != 1 {
+		t.Fatalf("saved failure summary = %+v", saved.Summary)
+	}
+}
+
+func TestBuildReportFinishFailedSummaryNeverNoOp(t *testing.T) {
+	root := t.TempDir()
+	report := &buildReport{
+		SchemaVersion: 2,
+		Root:          root,
+		Status:        "running",
+		Started:       time.Now().Add(-25 * time.Millisecond).UTC().Format(time.RFC3339Nano),
+		Summary:       &buildSummary{TargetsTotal: 1, TargetsUpToDate: 1, NoOp: true},
+	}
+	var result error = errors.New("failure after results were collected")
+	report.finish(&result, nil)
+	if report.Status != "failed" || report.Summary == nil || report.Summary.NoOp {
+		t.Fatalf("finished report = %+v (summary %+v)", report, report.Summary)
+	}
+	raw, err := os.ReadFile(reportPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Status  string        `json:"status"`
+		Summary *buildSummary `json:"summary"`
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+	if document.Status != "failed" || document.Summary == nil || document.Summary.NoOp {
+		t.Fatalf("saved failure document = %+v (summary %+v)", document, document.Summary)
+	}
+}
+
+func TestBuildReportFailedTargetNeverNoOp(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "target-failure")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import (
+	"fmt"
+
+	"github.com/spock2300/vmake/pkg/api"
+)
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("task").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
+			return fmt.Errorf("target callback exploded")
+		})
+	})
+}
+`)
+	stdout, stderr, code := runBuildCommand(t, project, "build", "--json")
+	if code != 1 {
+		t.Fatalf("build --json exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	document := parseJSONBuildOutput(t, stdout)
+	if document.Status != "error" || document.Data.Status != "failed" {
+		t.Fatalf("failure envelope = %+v / data = %+v", document, document.Data)
+	}
+	summary := document.Data.Summary
+	if summary == nil || summary.NoOp || summary.TargetsFailed != 1 {
+		t.Fatalf("failed target summary = %+v", summary)
+	}
+	if len(document.Data.Targets) != 0 {
+		t.Fatalf("failed target was recorded as completed: %+v", document.Data.Targets)
+	}
+	assertJSONDataMatchesReport(t, project, document.Data)
+}
+
+func TestBuildReportCMakeConfigureFailureNeverNoOp(t *testing.T) {
+	for _, tool := range []string{"cmake", "ninja"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s is not available: %v", tool, err)
+		}
+	}
+	project := filepath.Join(t.TempDir(), "cmake-fail")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("cmake_build").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
+			pkg.CMakeConfigure("-G", "Ninja")
+			return nil
+		})
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "CMakeLists.txt"), `cmake_minimum_required(VERSION 3.16)
+project(CMakeFail LANGUAGES NONE)
+message(FATAL_ERROR "configure exploded: missing foo dependency")
+`)
+	stdout, stderr, code := runBuildCommand(t, project, "build", "--json")
+	if code != 1 {
+		t.Fatalf("build --json exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	document := parseJSONBuildOutput(t, stdout)
+	if document.Status != "error" || document.Data.Status != "failed" || document.Data.Summary == nil {
+		t.Fatalf("cmake failure envelope = %+v / data = %+v", document, document.Data)
+	}
+	if document.Data.Summary.NoOp {
+		t.Fatalf("cmake configure failure claims no-op: %+v", document.Data.Summary)
+	}
+	if !strings.Contains(document.Data.Error, "configure exploded") || len(document.Data.Diagnostics) == 0 {
+		t.Fatalf("cmake configure failure lost its diagnostic: error %q, diagnostics %+v", document.Data.Error, document.Data.Diagnostics)
+	}
+	assertJSONDataMatchesReport(t, project, document.Data)
 }
 
 func TestBuildSummaryErrorPreservesCause(t *testing.T) {
@@ -1675,6 +1840,46 @@ func TestParseBuildWarnings(t *testing.T) {
 	}
 	if warnings[6].Message != "Manually-specified variables were not used by the project:" {
 		t.Fatalf("bare cmake warning = %+v", warnings[6])
+	}
+}
+
+func TestParseBuildWarningsCMakeVariants(t *testing.T) {
+	output := strings.Join([]string{
+		"CMake Deprecation Warning at CMakeLists.txt:1 (cmake_minimum_required):",
+		"  Compatibility with CMake < 3.10 will be removed from a future version.",
+		"  Update the VERSION argument <min> value.",
+		"",
+		"CMake Dev Warning at cmake/checks.cmake:7 (message):",
+		"  dev warning detail",
+		"CMake Author Warning at CMakeLists.txt:9 (message):",
+		"  author warning detail",
+		"",
+	}, "\n")
+	warnings := parseBuildWarnings(output)
+	if len(warnings) != 3 {
+		t.Fatalf("warnings = %+v", warnings)
+	}
+	for i, want := range []struct {
+		file string
+		line int
+		text []string
+	}{
+		{"CMakeLists.txt", 1, []string{"Compatibility with CMake", "Update the VERSION argument"}},
+		{"cmake/checks.cmake", 7, []string{"dev warning detail"}},
+		{"CMakeLists.txt", 9, []string{"author warning detail"}},
+	} {
+		warning := warnings[i]
+		if warning.Severity != "warning" || warning.Code != buildWarningCode || warning.File != want.file || warning.Line != want.line {
+			t.Fatalf("cmake warning %d = %+v", i, warning)
+		}
+		for _, text := range want.text {
+			if !strings.Contains(warning.Message, text) {
+				t.Errorf("cmake warning %d message %q missing %q", i, warning.Message, text)
+			}
+		}
+	}
+	if strings.Contains(warnings[0].Message, "dev warning detail") {
+		t.Fatalf("located warning collected a blank-line-separated warning: %q", warnings[0].Message)
 	}
 }
 

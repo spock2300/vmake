@@ -23,7 +23,7 @@ the installation manifest (`install/manifest.json`). `clean`, `distclean`, and
 | `global`, `packages` | Effective global values and per-package values for the packages that participated |
 | `toolchain`, `mode` | Effective toolchain and mode |
 | `compileDatabase` | Absolute path to the compilation database, or empty |
-| `targets` | Executed default targets: `package`, `target`, `kind`, `outputs`, `status`, `durationMs`. On failure only targets that completed before the failure are listed |
+| `targets` | Executed default targets: `package`, `target`, `kind`, `outputs`, `status`, `durationMs`. On failure only targets that completed before the failure are listed. A failure outside target execution (for example a package-level `OnBuild` CMake configure failure) has no target attribution: `diagnostics[].target` stays empty and `targets[]` may stay empty |
 | `tests` | Always an array. For `vmake test`, one entry per discovered test target: an executed test has `name`, `package`, `target`, `passed`, `elapsedMs`, `exitCode`, optional `signal` (set when a signal terminated the process), and `output`. After a `-k` build failure, a declared target that did not run has `notRun: true`, `skipReason` (`build failed`, `target not built`, `binary missing`, or `unsupported platform`), `passed: false`, and no output or signal. Partial mode executes only targets recorded `built` or `up-to-date` in this invocation's `targets`; a stale binary from an earlier build is recorded as `target not built` and never run |
 | `artifacts` | Files installed by this invocation only: `package`, `target`, `buildPath`, `installPath`, `size`, `sha256` |
 
@@ -40,11 +40,17 @@ only for `vmake build --tests` and `vmake test`.
 `filesCompiled`, `filesLinked`, `actionsUpToDate`, `artifactsInstalled`, and
 `changedFiles`, plus `callbacks` (executed `built` void targets) and `noOp`.
 
+`targetsBuilt` counts target records with status `built`, including `void` targets whose callbacks always run; `noOp` can be true while `targetsBuilt` is nonzero (for example eight callback targets).
+
 On a failed build or build phase, `summary` describes the work attempted before
 the failure: `targetsFailed` counts distinct failed target names from the
 diagnostics (or 1 when a target failure is known without a name),
-`artifactsInstalled` is 0, and no installation runs. A failure before any target
-is scheduled (for example a buildscript error) omits `summary` entirely.
+`artifactsInstalled` is 0, and no installation runs. A failed report never says
+`noOp: true`: when a failure would otherwise look like no work (for example a
+failed `void` callback or CMake configure error before any compilation),
+`noOp` is false even when `targetsFailed` is 0 because no target name is
+known. A failure before any target is scheduled (for example a buildscript
+error) omits `summary` entirely, so it makes no no-op claim either.
 
 Test counts are 0 for build/rebuild. `testsFound` counts discovered test
 targets (executed plus not run), while `testsPassed` and `testsFailed` count
@@ -63,7 +69,14 @@ Counts describe this invocation's work, not repository state.
 Compiler output is parsed from the GNU `file:line[:column]: severity: message`
 form; GNU ld's `file:line: undefined reference to ...` / `multiple definition of
 ...` lines are also recognized. Each diagnostic is attributed to the failing
-target and stage. `error` repeats the first parsed error. A command failure with
+target and stage; a package-scoped failure outside target execution has an
+empty `target`. Located CMake headers (`CMake Warning`,
+`CMake Deprecation Warning`, `CMake Dev Warning`, `CMake Author Warning`,
+`CMake Warning (dev)`, and `CMake Error` at `file:line`) are recognized as
+well: each collects its contiguous indented detail lines (stopping at a blank
+or non-indented line) into one message with `file` and `line`, bounded to 1000
+characters, and every warning variant has severity `warning` with code
+`VMAKE_W_TOOL`. `error` repeats the first parsed error. A command failure with
 no parseable location produces one fallback entry: the last
 `undefined reference`/`multiple definition` line, then the last `error:` line,
 then the trimmed output tail (up to 1000 characters). Buildscript/API errors use

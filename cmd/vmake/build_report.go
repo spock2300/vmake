@@ -489,6 +489,9 @@ func (r *buildReport) finish(result *error, warnings []buildDiagnostic) {
 	}
 	if r.Summary != nil {
 		r.Summary.DurationMs = r.DurationMs
+		if r.Status == "failed" {
+			r.Summary.NoOp = false
+		}
 	}
 	if r.Tests == nil {
 		r.Tests = []buildTestResult{}
@@ -578,6 +581,7 @@ func (r *buildReport) partial(ctx *RuntimeContext, result *BuildResult, err erro
 	}
 	r.Summary = newBuildSummary(result, 0)
 	r.Summary.TargetsFailed = failedTargetCount(err)
+	r.Summary.NoOp = false
 }
 
 func failedTargetCount(err error) int {

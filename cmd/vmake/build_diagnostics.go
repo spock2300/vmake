@@ -32,7 +32,7 @@ type buildDiagnostic struct {
 var (
 	gnuDiagnosticPattern   = regexp.MustCompile(`^(.*?):(\d+):(?:(\d+):)?\s*(fatal error|error|warning|note):\s*(.*)$`)
 	gnuLinkerPattern       = regexp.MustCompile(`^(.*):(\d+):(?:\([^)]*\):)?\s*(undefined reference to .*|multiple definition of .*)$`)
-	cmakeDiagnosticPattern = regexp.MustCompile(`^CMake (Warning|Error)(?: \([^)]*\))? at (.*):(\d+)(?: \([^)]*\))?:$`)
+	cmakeDiagnosticPattern = regexp.MustCompile(`^CMake (?:(?:Deprecation|Dev|Author) )?(Warning|Error)(?: \([^)]*\))? at (.*):(\d+)(?: \([^)]*\))?:$`)
 )
 
 func buildFailureDetails(err error) ([]buildDiagnostic, string) {
@@ -180,7 +180,7 @@ func parseCMakeBareHeader(line string) (string, bool) {
 	return "", false
 }
 
-func cmakeBareDiagnosticMessage(lines []string, index int, severity string) string {
+func cmakeDiagnosticDetails(lines []string, index int) []string {
 	var parts []string
 	for i := index + 1; i < len(lines); i++ {
 		line := strings.TrimSuffix(lines[i], "\r")
@@ -189,6 +189,11 @@ func cmakeBareDiagnosticMessage(lines []string, index int, severity string) stri
 		}
 		parts = append(parts, strings.TrimSpace(line))
 	}
+	return parts
+}
+
+func cmakeBareDiagnosticMessage(lines []string, index int, severity string) string {
+	parts := cmakeDiagnosticDetails(lines, index)
 	if len(parts) == 0 {
 		return "CMake " + severity
 	}
@@ -209,15 +214,8 @@ func parseCMakeDiagnosticHeader(line string) (severity, file string, lineNumber 
 }
 
 func cmakeDiagnosticMessage(lines []string, index int, severity, file string, lineNumber int) string {
-	for i := index + 1; i < len(lines); i++ {
-		text := strings.TrimSpace(lines[i])
-		if text == "" {
-			continue
-		}
-		if strings.HasPrefix(lines[i], " ") || strings.HasPrefix(lines[i], "\t") {
-			return truncateRunes(text, buildDiagnosticMessageLimit)
-		}
-		break
+	if parts := cmakeDiagnosticDetails(lines, index); len(parts) > 0 {
+		return truncateRunes(strings.Join(parts, "\n"), buildDiagnosticMessageLimit)
 	}
 	return fmt.Sprintf("CMake %s at %s:%d", severity, file, lineNumber)
 }
