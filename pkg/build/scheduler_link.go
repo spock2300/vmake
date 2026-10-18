@@ -42,6 +42,9 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 	}
 	decision := checkAction(s.hashes, action.recordPath, action.signature, pkgInfo.SourceDir, action.inputs, action.outputs)
 	if !decision.UpToDate {
+		if s.stats != nil {
+			s.stats.RecordLink(resolved.Node.FullName)
+		}
 		if s.explain {
 			vlog.Info("  EXPLAIN %s: %s", resolved.Node.FullName, decision.Reason)
 		}
@@ -67,6 +70,8 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 		if err := saveActionRecord(s.hashes, action.recordPath, action.signature, pkgInfo.SourceDir, action.inputs, action.outputs); err != nil {
 			return err
 		}
+	} else if s.stats != nil {
+		s.stats.RecordUpToDate()
 	}
 	if err := s.ctx.Err(); err != nil {
 		return err

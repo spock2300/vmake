@@ -23,11 +23,18 @@ type Session struct {
 	outputs map[string]TargetResult
 }
 
+const (
+	TargetStatusBuilt    = "built"
+	TargetStatusUpToDate = "up-to-date"
+)
+
 type TargetResult struct {
-	Package string   `json:"package"`
-	Target  string   `json:"target"`
-	Kind    string   `json:"kind"`
-	Outputs []string `json:"outputs"`
+	Package    string   `json:"package"`
+	Target     string   `json:"target"`
+	Kind       string   `json:"kind"`
+	Outputs    []string `json:"outputs"`
+	Status     string   `json:"status"`
+	DurationMs int64    `json:"durationMs"`
 }
 
 func (s *Session) TargetResults() []TargetResult {

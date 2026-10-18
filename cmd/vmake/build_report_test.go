@@ -323,6 +323,25 @@ func TestBuildReportV2Success(t *testing.T) {
 	if report.BuildID == "" || report.Root != project || report.Mode == "" || report.Toolchain == "" || len(report.Targets) == 0 {
 		t.Fatalf("v1 fields lost: %+v", report)
 	}
+	if report.Summary == nil {
+		t.Fatal("successful report has no summary")
+	}
+	summary := report.Summary
+	if summary.TargetsTotal != 1 || summary.TargetsBuilt != 1 || summary.TargetsUpToDate != 0 || summary.TargetsFailed != 0 ||
+		summary.FilesCompiled != 1 || summary.FilesLinked != 1 || summary.ArtifactsInstalled != 0 ||
+		!slices.Equal(summary.ChangedFiles, []string{"src/main.c"}) {
+		t.Fatalf("summary = %+v", summary)
+	}
+	if summary.DurationMs <= 0 || summary.DurationMs != report.DurationMs {
+		t.Fatalf("summary duration = %d, report duration = %d", summary.DurationMs, report.DurationMs)
+	}
+	if len(report.Targets) != 1 || report.Targets[0].Status != build.TargetStatusBuilt || report.Targets[0].DurationMs < 0 {
+		t.Fatalf("target result = %+v", report.Targets)
+	}
+	if !strings.Contains(stdout, "Build succeeded: 1 targets (1 built, 0 up to date), 1 compiled, 1 linked, 0 installed in ") ||
+		!strings.Contains(stdout, "(buildId="+report.BuildID+")") {
+		t.Fatalf("success summary line missing or wrong:\n%s", stdout)
+	}
 	raw, err := os.ReadFile(reportPath(project))
 	if err != nil {
 		t.Fatal(err)
@@ -531,5 +550,168 @@ func TestBuildSummaryErrorPreservesCause(t *testing.T) {
 	var interrupted *buildInterrupted
 	if !errors.As(err, &interrupted) || interrupted.code != 130 {
 		t.Fatalf("buildInterrupted is not discoverable through the summary wrapper: %v", err)
+	}
+}
+
+func writeBuildSummaryProject(t *testing.T, source string) string {
+	t.Helper()
+	project := filepath.Join(t.TempDir(), "summary")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import (
+	"fmt"
+
+	"github.com/spock2300/vmake/pkg/api"
+)
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		fmt.Println("SCRIPT NOISE")
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), source)
+	return project
+}
+
+func TestBuildQuietSummaryAndReportCounts(t *testing.T) {
+	project := writeBuildSummaryProject(t, "int main(void) { return 0; }\n")
+	quietBuild := func(args ...string) string {
+		t.Helper()
+		stdout, stderr, code := runBuildCommand(t, project, append([]string{"-q", "build"}, args...)...)
+		if code != 0 {
+			t.Fatalf("quiet build exit = %d, stderr = %q", code, stderr)
+		}
+		if stderr != "" {
+			t.Fatalf("quiet success stderr = %q", stderr)
+		}
+		lines := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
+		if len(lines) != 1 || !strings.HasPrefix(lines[0], "Build succeeded: ") {
+			t.Fatalf("quiet stdout = %q, want one summary line", stdout)
+		}
+		if strings.Contains(stdout, "SCRIPT NOISE") {
+			t.Fatalf("buildscript stdout leaked into quiet output: %q", stdout)
+		}
+		return lines[0]
+	}
+
+	cold := quietBuild("-i")
+	for _, want := range []string{"1 targets (1 built, 0 up to date)", "1 compiled, 1 linked, 1 installed", "(buildId="} {
+		if !strings.Contains(cold, want) {
+			t.Fatalf("cold summary %q missing %q", cold, want)
+		}
+	}
+	report := loadBuildReport(t, project)
+	if report.Summary == nil || report.Summary.TargetsBuilt != 1 || report.Summary.TargetsUpToDate != 0 ||
+		report.Summary.FilesCompiled != 1 || report.Summary.FilesLinked != 1 || report.Summary.ArtifactsInstalled != 1 {
+		t.Fatalf("cold summary report = %+v", report.Summary)
+	}
+	if !slices.Equal(report.Summary.ChangedFiles, []string{"src/main.c"}) {
+		t.Fatalf("cold changed files = %v", report.Summary.ChangedFiles)
+	}
+	if len(report.Targets) != 1 || report.Targets[0].Status != build.TargetStatusBuilt || report.Targets[0].DurationMs < 0 {
+		t.Fatalf("cold target results = %+v", report.Targets)
+	}
+
+	noop := quietBuild("-i")
+	if !strings.Contains(noop, "(0 built, 1 up to date)") || !strings.Contains(noop, "0 compiled, 0 linked") {
+		t.Fatalf("no-op summary = %q", noop)
+	}
+	report = loadBuildReport(t, project)
+	if report.Summary == nil || report.Summary.TargetsBuilt != 0 || report.Summary.TargetsUpToDate != 1 ||
+		report.Summary.FilesCompiled != 0 || report.Summary.FilesLinked != 0 || len(report.Summary.ChangedFiles) != 0 {
+		t.Fatalf("no-op summary report = %+v", report.Summary)
+	}
+	if report.Summary.ActivitiesUpToDate < 2 {
+		t.Fatalf("no-op actionsUpToDate = %d", report.Summary.ActivitiesUpToDate)
+	}
+	if report.Summary.ChangedFiles == nil {
+		t.Fatal("no-op changedFiles is null, want []")
+	}
+	if report.Targets[0].Status != build.TargetStatusUpToDate {
+		t.Fatalf("no-op target status = %q", report.Targets[0].Status)
+	}
+
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 1; }\n")
+	incremental := quietBuild("-i")
+	if !strings.Contains(incremental, "(1 built, 0 up to date)") || !strings.Contains(incremental, "1 compiled, 1 linked") {
+		t.Fatalf("incremental summary = %q", incremental)
+	}
+	report = loadBuildReport(t, project)
+	if report.Summary == nil || report.Summary.TargetsBuilt != 1 || report.Summary.FilesCompiled != 1 ||
+		report.Summary.FilesLinked != 1 || !slices.Equal(report.Summary.ChangedFiles, []string{"src/main.c"}) {
+		t.Fatalf("incremental summary report = %+v", report.Summary)
+	}
+	if report.Targets[0].Status != build.TargetStatusBuilt {
+		t.Fatalf("incremental target status = %q", report.Targets[0].Status)
+	}
+
+	stdout, stderr, code := runBuildCommand(t, project, "build")
+	if code != 0 || stderr != "" {
+		t.Fatalf("default build exit = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "SCRIPT NOISE") {
+		t.Fatalf("default output suppressed buildscript stdout: %q", stdout)
+	}
+	lines := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
+	if !strings.HasPrefix(lines[len(lines)-1], "Build succeeded: ") {
+		t.Fatalf("default stdout does not end with the summary: %q", lines[len(lines)-1])
+	}
+
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
+	stdout, stderr, code = runBuildCommand(t, project, "-q", "build")
+	if code != 1 {
+		t.Fatalf("quiet failure exit = %d, stderr = %q", code, stderr)
+	}
+	lines = strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "Build failed: src/main.c:2:") {
+		t.Fatalf("quiet failure stdout = %q", stdout)
+	}
+	if strings.Contains(stdout, "SCRIPT NOISE") {
+		t.Fatalf("quiet failure leaked buildscript stdout: %q", stdout)
+	}
+	if strings.Count(stderr, "error: expected expression") != 1 {
+		t.Fatalf("compiler diagnostic count = %d:\n%s", strings.Count(stderr, "error: expected expression"), stderr)
+	}
+	stderrLines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
+	if !strings.HasPrefix(stderrLines[len(stderrLines)-1], "Error: src/main.c:2:") {
+		t.Fatalf("final stderr line = %q", stderrLines[len(stderrLines)-1])
+	}
+	report = loadBuildReport(t, project)
+	if report.Status != "failed" || report.Summary != nil || len(report.Diagnostics) != 1 {
+		t.Fatalf("failure report = %+v", report)
+	}
+}
+
+func TestBuildReportVoidTargetStatus(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "tasks")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("task").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error { return nil })
+	})
+}
+`)
+	stdout, stderr, code := runBuildCommand(t, project, "-q", "build")
+	if code != 0 || stderr != "" {
+		t.Fatalf("build exit = %d, stderr = %q", code, stderr)
+	}
+	lines := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
+	if len(lines) != 1 || !strings.Contains(lines[0], "(1 built, 0 up to date)") || !strings.Contains(lines[0], "0 compiled, 0 linked") {
+		t.Fatalf("void summary = %q", stdout)
+	}
+	report := loadBuildReport(t, project)
+	if report.Summary == nil || report.Summary.TargetsBuilt != 1 || report.Summary.TargetsUpToDate != 0 ||
+		report.Summary.FilesCompiled != 0 || report.Summary.FilesLinked != 0 || len(report.Summary.ChangedFiles) != 0 {
+		t.Fatalf("void summary report = %+v", report.Summary)
+	}
+	if len(report.Targets) != 1 || report.Targets[0].Status != build.TargetStatusBuilt || report.Targets[0].DurationMs < 0 {
+		t.Fatalf("void target result = %+v", report.Targets)
 	}
 }

@@ -18,6 +18,7 @@ import (
 
 type BuildResult struct {
 	Targets       []build.TargetResult
+	Stats         build.StatsSnapshot
 	InstallFiles  []build.InstalledFile
 	SubGraphRoots map[string]bool
 	AllTargets    map[string]map[string]*api.Target
@@ -245,6 +246,7 @@ func executePlan(rc *runContext, cfg *configStage, src *sourceStage, decl *decla
 	if err != nil {
 		return nil, err
 	}
+	stats := scheduler.Stats().Snapshot()
 
 	vlog.Info("")
 	vlog.Info("Build succeeded!")
@@ -265,6 +267,7 @@ func executePlan(rc *runContext, cfg *configStage, src *sourceStage, decl *decla
 
 	return &BuildResult{
 		Targets:       rc.session.TargetResults(),
+		Stats:         stats,
 		SubGraphRoots: maps.Clone(decl.subGraphBuilt),
 		AllTargets:    decl.allTargets,
 		Graph:         plan.graph,

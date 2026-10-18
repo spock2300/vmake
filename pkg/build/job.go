@@ -44,6 +44,7 @@ func (j *BuildJob) newSchedulerFor(
 	tc *toolchain.Toolchain,
 	platform api.Platform,
 	tools *ResolvedTools,
+	stats *BuildStats,
 ) *Scheduler {
 	return newScheduler(schedulerConfig{
 		Graph:        j.Graph,
@@ -61,6 +62,7 @@ func (j *BuildJob) newSchedulerFor(
 		KeepGoing:    env.KeepGoing,
 		Explain:      j.Explain,
 		GlobalFlags:  &env.GlobalFlags,
+		Stats:        stats,
 	})
 }
 
@@ -95,7 +97,8 @@ func (j *BuildJob) Run() (*Scheduler, error) {
 	if err != nil {
 		return nil, err
 	}
-	base := j.newSchedulerFor(env, session, j.Toolchain, defaultPlatform, defaultTools)
+	stats := NewBuildStats()
+	base := j.newSchedulerFor(env, session, j.Toolchain, defaultPlatform, defaultTools, stats)
 	graphPackages := make(map[string]bool)
 	for _, node := range j.Graph.Nodes {
 		graphPackages[node.PkgName] = true
@@ -141,7 +144,7 @@ func (j *BuildJob) Run() (*Scheduler, error) {
 			if err != nil {
 				return nil, err
 			}
-			runner = j.newSchedulerFor(env, session, tc, platform, tools)
+			runner = j.newSchedulerFor(env, session, tc, platform, tools, stats)
 			groups[key] = runner
 			additional = append(additional, runner)
 		}
@@ -176,7 +179,18 @@ func (j *BuildJob) Run() (*Scheduler, error) {
 			if session.outputs == nil {
 				session.outputs = make(map[string]TargetResult)
 			}
-			session.outputs[name] = TargetResult{Package: node.PkgName, Target: node.Target.Name(), Kind: string(node.Target.Kind()), Outputs: paths}
+			status := TargetStatusUpToDate
+			if runner.Stats().ChangedTarget(name) || node.Target.Kind() == api.TargetVoid {
+				status = TargetStatusBuilt
+			}
+			session.outputs[name] = TargetResult{
+				Package:    node.PkgName,
+				Target:     node.Target.Name(),
+				Kind:       string(node.Target.Kind()),
+				Outputs:    paths,
+				Status:     status,
+				DurationMs: runner.TargetDuration(name),
+			}
 			return nil
 		}
 		return session.Execute(name, run)

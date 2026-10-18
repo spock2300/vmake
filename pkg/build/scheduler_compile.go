@@ -136,6 +136,9 @@ func (s *Scheduler) compileSourceContext(ctx context.Context, resolved *Resolved
 		decision = actionDecision{Reason: "depfile missing or unreadable"}
 	}
 	if decision.UpToDate {
+		if s.stats != nil {
+			s.stats.RecordUpToDate()
+		}
 		return objRel, deps, nil
 	}
 	if s.explain {
@@ -146,6 +149,9 @@ func (s *Scheduler) compileSourceContext(ctx context.Context, resolved *Resolved
 	}
 	if err := ctx.Err(); err != nil {
 		return "", nil, err
+	}
+	if s.stats != nil {
+		s.stats.RecordCompile(resolved.Node.FullName, src)
 	}
 	vlog.Info("  CC %s", src)
 	compiler := *s.compiler

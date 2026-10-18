@@ -18,7 +18,7 @@ CGO_ENABLED=0 go test ./cmd/vmake/... ./pkg/... ./internal/...
 - Firmware fixture 17 is in `test_linux/17_firmware`, not `test_data/`.
 - Windows cross-build: `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o vmake.exe ./cmd/vmake`.
 - CI is Windows-only (`.github/workflows/windows.yml`); it runs the scoped vet/test commands above with `-skip '(?i)subgraph|TestDeclarePackageTargetsDryRunWiring'` and leaves snapshots disabled. Run Linux/macOS verification locally.
-- `build`/`rebuild` always publish `build/vmake-build.json` (schemaVersion 2: status, duration, concise error, parsed diagnostics, targets, hashed installed artifacts); `clean`/`distclean`/`pkg clean` remove it. It is separate from `install/manifest.json`; see `docs/BUILD_RESULT.md`.
+- `build`/`rebuild` always publish `build/vmake-build.json` (schemaVersion 2: status, duration, concise error, parsed diagnostics, success summary/counts, per-target status/duration, hashed installed artifacts); `clean`/`distclean`/`pkg clean` remove it. It is separate from `install/manifest.json`; see `docs/BUILD_RESULT.md`.
 
 ### Build-behavior snapshots
 

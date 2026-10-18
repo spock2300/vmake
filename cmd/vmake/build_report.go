@@ -18,6 +18,7 @@ import (
 	"github.com/spock2300/vmake/internal/jsonio"
 	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/config"
+	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
 type buildArtifact struct {
@@ -27,6 +28,19 @@ type buildArtifact struct {
 	InstallPath string `json:"installPath"`
 	Size        int64  `json:"size"`
 	SHA256      string `json:"sha256"`
+}
+
+type buildSummary struct {
+	DurationMs         int64    `json:"durationMs"`
+	TargetsTotal       int      `json:"targetsTotal"`
+	TargetsBuilt       int      `json:"targetsBuilt"`
+	TargetsUpToDate    int      `json:"targetsUpToDate"`
+	TargetsFailed      int      `json:"targetsFailed"`
+	FilesCompiled      int      `json:"filesCompiled"`
+	FilesLinked        int      `json:"filesLinked"`
+	ActivitiesUpToDate int      `json:"actionsUpToDate"`
+	ArtifactsInstalled int      `json:"artifactsInstalled"`
+	ChangedFiles       []string `json:"changedFiles"`
 }
 
 type buildReport struct {
@@ -40,6 +54,7 @@ type buildReport struct {
 	DurationMs      int64                     `json:"durationMs"`
 	Error           string                    `json:"error"`
 	Diagnostics     []buildDiagnostic         `json:"diagnostics"`
+	Summary         *buildSummary             `json:"summary,omitempty"`
 	ConfigFile      string                    `json:"configFile"`
 	ConfigSHA256    string                    `json:"configSha256"`
 	Global          map[string]any            `json:"global"`
@@ -65,13 +80,59 @@ func withBuildReport(run func(*buildReport) error) (err error) {
 	if err != nil {
 		return err
 	}
+	stdout := os.Stdout
+	restoreStdout := func() {}
+	if vlog.IsQuiet() {
+		if devNull, openErr := os.OpenFile(os.DevNull, os.O_WRONLY, 0); openErr == nil {
+			os.Stdout = devNull
+			restored := false
+			restoreStdout = func() {
+				if restored {
+					return
+				}
+				restored = true
+				os.Stdout = stdout
+				devNull.Close()
+			}
+		}
+	}
 	defer func() {
+		defer restoreStdout()
 		report.finish(&err)
+		restoreStdout()
+		printBuildSummary(stdout, report, err)
 		if err != nil && report.Error != "" {
 			err = &buildSummaryError{summary: report.Error, err: err}
 		}
 	}()
 	return run(report)
+}
+
+func printBuildSummary(writer io.Writer, report *buildReport, err error) {
+	if err != nil {
+		message := report.Error
+		if message == "" {
+			message = firstErrorLine(err)
+		}
+		fmt.Fprintf(writer, "Build failed: %s\n", message)
+		return
+	}
+	summary := report.Summary
+	if summary == nil {
+		fmt.Fprintf(writer, "Build succeeded (buildId=%s)\n", report.BuildID)
+		return
+	}
+	fmt.Fprintf(writer, "Build succeeded: %d targets (%d built, %d up to date), %d compiled, %d linked, %d installed in %s (buildId=%s)\n",
+		summary.TargetsTotal, summary.TargetsBuilt, summary.TargetsUpToDate,
+		summary.FilesCompiled, summary.FilesLinked, summary.ArtifactsInstalled,
+		formatBuildDuration(summary.DurationMs), report.BuildID)
+}
+
+func formatBuildDuration(durationMs int64) string {
+	if durationMs < 1000 {
+		return fmt.Sprintf("%dms", durationMs)
+	}
+	return fmt.Sprintf("%.1fs", float64(durationMs)/1000)
 }
 
 func reportPath(root string) string { return filepath.Join(root, "build", "vmake-build.json") }
@@ -104,6 +165,9 @@ func (r *buildReport) finish(result *error) {
 			r.Status = "failed"
 		}
 		r.Artifacts = []buildArtifact{}
+		r.Summary = nil
+	} else if r.Summary != nil {
+		r.Summary.DurationMs = r.DurationMs
 	}
 	*result = errors.Join(*result, jsonio.Save(reportPath(r.Root), r))
 	if interrupted != nil {
@@ -198,8 +262,33 @@ func (r *buildReport) complete(ctx *RuntimeContext, result *BuildResult) error {
 		}
 		return strings.Compare(a.InstallPath, b.InstallPath)
 	})
+	r.Summary = newBuildSummary(result, len(r.Artifacts))
 	r.completed = true
 	return nil
+}
+
+func newBuildSummary(result *BuildResult, artifacts int) *buildSummary {
+	changedFiles := result.Stats.CompiledFiles
+	if changedFiles == nil {
+		changedFiles = []string{}
+	}
+	summary := &buildSummary{
+		TargetsTotal:       len(result.Targets),
+		FilesCompiled:      result.Stats.Compiled,
+		FilesLinked:        result.Stats.Linked,
+		ActivitiesUpToDate: result.Stats.UpToDate,
+		ArtifactsInstalled: artifacts,
+		ChangedFiles:       changedFiles,
+	}
+	for _, target := range result.Targets {
+		switch target.Status {
+		case build.TargetStatusBuilt:
+			summary.TargetsBuilt++
+		case build.TargetStatusUpToDate:
+			summary.TargetsUpToDate++
+		}
+	}
+	return summary
 }
 
 func invalidateBuildReport() error {

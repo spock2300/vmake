@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spock2300/vmake/pkg/api"
 	vlog "github.com/spock2300/vmake/pkg/log"
@@ -79,6 +80,7 @@ type Scheduler struct {
 	keepGoing     bool
 	explain       bool
 	hashes        *fileHashCache
+	stats         *BuildStats
 
 	buildTargetFn  func(string) error
 	globalCFlags   []string
@@ -103,6 +105,7 @@ type schedulerConfig struct {
 	KeepGoing    bool
 	Explain      bool
 	GlobalFlags  *[4][]string
+	Stats        *BuildStats
 }
 
 func NewScheduler(
@@ -174,6 +177,10 @@ func newScheduler(cfg schedulerConfig) *Scheduler {
 		keepGoing:     cfg.KeepGoing,
 		explain:       cfg.Explain,
 		hashes:        newFileHashCache(),
+		stats:         cfg.Stats,
+	}
+	if s.stats == nil {
+		s.stats = NewBuildStats()
 	}
 	if cfg.GlobalFlags != nil {
 		s.globalCFlags = append([]string{}, cfg.GlobalFlags[0]...)
@@ -198,6 +205,17 @@ func newScheduler(cfg schedulerConfig) *Scheduler {
 	}
 
 	return s
+}
+
+func (s *Scheduler) Stats() *BuildStats {
+	return s.stats
+}
+
+func (s *Scheduler) TargetDuration(fullName string) int64 {
+	if s.stats == nil {
+		return 0
+	}
+	return s.stats.TargetDuration(fullName)
 }
 
 func (s *Scheduler) GetPkgInfo(pkgName string) (*PkgInfo, bool) {
@@ -271,6 +289,12 @@ func (s *Scheduler) depsFailed(node *BuildNode, failedTargets map[string]bool) b
 }
 
 func (s *Scheduler) Build(fullName string) error {
+	start := time.Now()
+	defer func() {
+		if s.stats != nil {
+			s.stats.RecordTargetDuration(fullName, time.Since(start))
+		}
+	}()
 	if err := s.ctx.Err(); err != nil {
 		return err
 	}
