@@ -17,6 +17,42 @@ func TestTestCommandTestsFlagIsDocumentedNoOp(t *testing.T) {
 	}
 }
 
+func TestTestCommandHelpDescribesContract(t *testing.T) {
+	for _, want := range []string{
+		"native test binaries",
+		"target platform is checked",
+		"vmake build --tests",
+		"-k/--keep-going",
+		"Partial mode runs",
+		"notRun",
+		"SKIP <pkg:target> (<reason>)",
+		"no runnable test targets succeeds and exits 0",
+		"--require-tests",
+		"build/vmake-test.json",
+		"signal",
+		"exit",
+	} {
+		if !strings.Contains(testCmd.Long, want) {
+			t.Errorf("test --help missing %q:\n%s", want, testCmd.Long)
+		}
+	}
+
+	for name, want := range map[string][]string{
+		"keep-going":    {"keep building independent targets after a failure", "built by this invocation", "not-run/stale"},
+		"require-tests": {"no runnable test targets", "exit code 1", "exit 0"},
+	} {
+		flag := testCmd.Flags().Lookup(name)
+		if flag == nil {
+			t.Fatalf("vmake test lost its --%s flag", name)
+		}
+		for _, phrase := range want {
+			if !strings.Contains(flag.Usage, phrase) {
+				t.Errorf("--%s help %q missing %q", name, flag.Usage, phrase)
+			}
+		}
+	}
+}
+
 func TestTestCommandAcceptsTestsFlag(t *testing.T) {
 	project := writeTestCommandProject(t, passingTestSource)
 	stdout, stderr, code := runBuildCommand(t, project, "test", "--tests")

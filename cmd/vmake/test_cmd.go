@@ -26,7 +26,26 @@ var requireTestsFlag bool
 var testCmd = &cobra.Command{
 	Use:   "test",
 	Short: "Build and run test targets",
-	RunE:  runTest,
+	Long: `Build the project's test targets and run their native test binaries.
+
+Test targets are default binary targets declared with SetTest(true). Before
+building, the target platform is checked: vmake test refuses to execute tests
+for cross, bare-metal, or triple-configured targets and points at
+'vmake build --tests', which builds them without running them.
+
+With -k/--keep-going a failed build does not abort testing. Partial mode runs
+only the test targets built by this invocation; test targets that were not
+built, or whose binary is missing or stale, are recorded as notRun with a
+skipReason and printed as SKIP <pkg:target> (<reason>) at default verbosity.
+Quiet mode (-q) suppresses those lines.
+
+A project with no runnable test targets succeeds and exits 0. Pass
+--require-tests to make that case fail.
+
+Results are published to build/vmake-test.json (schemaVersion 2) with per-test
+pass/fail, exit code, signal, and output. A failing or signaled test exits 1;
+interrupting vmake with SIGINT/SIGTERM exits 130/143.`,
+	RunE: runTest,
 }
 
 func init() {
@@ -293,6 +312,17 @@ func runAllTests(ctx context.Context, result *BuildResult, allowNotRun bool) ([]
 	}
 
 	if runnable > 0 {
+		vlog.Info("")
+	}
+	skipped := 0
+	for _, test := range tests {
+		if !test.notRun {
+			continue
+		}
+		skipped++
+		vlog.Info("SKIP %s (%s)", test.fullName, test.skipReason)
+	}
+	if skipped > 0 {
 		vlog.Info("")
 	}
 	passed, failed := 0, 0

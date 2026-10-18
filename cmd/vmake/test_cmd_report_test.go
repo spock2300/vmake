@@ -104,6 +104,9 @@ func TestTestCommandPublishesSucceededTestReport(t *testing.T) {
 	if !strings.Contains(stdout, "Tests succeeded: 1/1 passed in ") {
 		t.Fatalf("test summary missing:\n%s", stdout)
 	}
+	if strings.Contains(stdout, "SKIP") {
+		t.Fatalf("fully executed test run printed skip lines:\n%s", stdout)
+	}
 	assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
 	report := loadTestReport(t, project)
 	if report.SchemaVersion != 2 || report.Status != "succeeded" || report.Command != reportCommandTest || report.Error != "" {
@@ -177,6 +180,9 @@ func TestTestCommandNoTargetsSucceeds(t *testing.T) {
 	}
 	if stderr != "" {
 		t.Fatalf("no-tests stderr = %q", stderr)
+	}
+	if strings.Contains(stdout, "SKIP") {
+		t.Fatalf("no-tests output printed skip lines:\n%s", stdout)
 	}
 	assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
 	report := loadTestReport(t, project)
@@ -558,6 +564,9 @@ int main(void) {
 	if !strings.Contains(stdout, "Tests failed: tests/bad.c:2:") {
 		t.Fatalf("build error is not the summary:\n%s", stdout)
 	}
+	if !strings.Contains(stdout, "SKIP tests-project:checkbad (target not built)") {
+		t.Fatalf("stale test SKIP line missing:\n%s", stdout)
+	}
 	report := loadTestReport(t, project)
 	if report.Status != "failed" || !strings.Contains(report.Error, "tests/bad.c:2:") {
 		t.Fatalf("stale-binary report = %+v", report)
@@ -584,6 +593,64 @@ int main(void) {
 	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Code != "VMAKE_E_COMPILE" ||
 		filepath.Base(report.Diagnostics[0].File) != "bad.c" {
 		t.Fatalf("diagnostics = %+v", report.Diagnostics)
+	}
+}
+
+func TestTestCommandPartialOutputPrintsSkipLines(t *testing.T) {
+	project := writePartialTestProject(t, `#include <stdio.h>
+
+int main(void) {
+	printf("partial skip executed ran\n");
+	return 0;
+}
+`)
+	stdout, stderr, code := runBuildCommand(t, project, "test", "-k")
+	if code != 1 {
+		t.Fatalf("test -k exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "partial skip executed ran") {
+		t.Fatalf("built test did not run:\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	passAt := strings.Index(stdout, "PASS tests-project:checkgood")
+	skipAt := strings.Index(stdout, "SKIP tests-project:checkbad (binary missing)")
+	if passAt < 0 || skipAt < 0 {
+		t.Fatalf("partial output is missing PASS or SKIP lines:\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	if skipAt < passAt {
+		t.Fatalf("SKIP line printed before the executed test:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "SKIP tests-project:checkgood") {
+		t.Fatalf("executed test printed as skipped:\n%s", stdout)
+	}
+	report := loadTestReport(t, project)
+	entries := testResultsByName(report.Tests)
+	good, ok := entries["tests-project:checkgood"]
+	if !ok || good.NotRun || !good.Passed {
+		t.Fatalf("executed report entry = %+v", good)
+	}
+	bad, ok := entries["tests-project:checkbad"]
+	if !ok || !bad.NotRun || bad.SkipReason != testSkipBinaryMissing {
+		t.Fatalf("not-run report entry = %+v", bad)
+	}
+}
+
+func TestTestCommandQuietPartialOutputOmitsSkipLines(t *testing.T) {
+	project := writePartialTestProject(t, "int main(void) { return 0; }\n")
+	stdout, stderr, code := runBuildCommand(t, project, "-q", "test", "-k")
+	if code != 1 {
+		t.Fatalf("test -q -k exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if strings.Contains(stdout, "SKIP") {
+		t.Fatalf("quiet partial output printed SKIP lines:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "Tests failed:") {
+		t.Fatalf("quiet partial output lost its summary:\n%s", stdout)
+	}
+	report := loadTestReport(t, project)
+	entries := testResultsByName(report.Tests)
+	bad, ok := entries["tests-project:checkbad"]
+	if !ok || !bad.NotRun || bad.SkipReason != testSkipBinaryMissing {
+		t.Fatalf("quiet not-run report entry = %+v", bad)
 	}
 }
 
