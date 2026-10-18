@@ -243,6 +243,13 @@ the target listing, exit 0, and keep the per-package warnings:
 ```
 Warning: omitted targets for 2 package(s) because dry-run callbacks attempted writes; fix: Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected.
 ```
+`query targets --json` emits one schemaVersion-1 document instead:
+`{command:"query targets",status:"ok"|"error",data:{targets:[{package,target,kind}]},
+diagnostics:[]}` with targets sorted by package/target. Source-missing,
+declaration and read-only-omission warnings become diagnostics (the human
+warning lines are suppressed), `data` is null on resolution errors, and human
+mode is unchanged; `--allow-dry-run-writes` opts out of the read-only guard.
+
 
 The count is the number of packages whose targets were omitted, and the summary
 line is printed once, after everything on stdout. It is absent when no

@@ -1,9 +1,13 @@
 package main
 
 import (
+	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -444,31 +448,7 @@ func TestQueryToleratesTargetDeclarationFailure(t *testing.T) {
 }
 
 func TestQueryReadOnlyOmissionSummary(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
-	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
-import "github.com/spock2300/vmake/pkg/api"
-func Main(p *api.Package) {
-    p.SetRoot(true)
-    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib", "tool") })
-    p.OnBuild(func(ctx *api.BuildContext) {
-        ctx.Target("app").SetKind(api.TargetBinary).AddDeps("lib:lib", "tool:tool")
-    })
-}
-`)
-	for _, name := range []string{"lib", "tool"} {
-		writeExtensionFile(t, filepath.Join(project, name, "build.go"), `package main
-import (
-    "os"
-    "github.com/spock2300/vmake/pkg/api"
-)
-func Main(p *api.Package) {
-    p.OnBuild(func(ctx *api.BuildContext) {
-        _ = os.WriteFile("generated.txt", []byte("generated"), 0644)
-        ctx.Target("`+name+`").SetKind(api.TargetStatic)
-    })
-}
-`)
-	}
+	project := writeQueryReadOnlyTargetsProject(t)
 	wantSummary := "Warning: omitted targets for 2 package(s) because dry-run callbacks attempted writes; fix: Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected."
 	for _, args := range [][]string{{"query"}, {"query", "targets"}} {
 		state := t.TempDir()
@@ -502,6 +482,36 @@ func Main(p *api.Package) {
 			}
 		}
 	}
+}
+
+func writeQueryReadOnlyTargetsProject(t *testing.T) string {
+	t.Helper()
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+    p.SetRoot(true)
+    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib", "tool") })
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("app").SetKind(api.TargetBinary).AddDeps("lib:lib", "tool:tool")
+    })
+}
+`)
+	for _, name := range []string{"lib", "tool"} {
+		writeExtensionFile(t, filepath.Join(project, name, "build.go"), `package main
+import (
+    "os"
+    "github.com/spock2300/vmake/pkg/api"
+)
+func Main(p *api.Package) {
+    p.OnBuild(func(ctx *api.BuildContext) {
+        _ = os.WriteFile("generated.txt", []byte("generated"), 0644)
+        ctx.Target("`+name+`").SetKind(api.TargetStatic)
+    })
+}
+`)
+	}
+	return project
 }
 
 func TestQueryIgnoresBlockedWritesOutsideTargetDeclaration(t *testing.T) {
@@ -569,4 +579,313 @@ func Main(p *api.Package) {
 }
 `)
 	return project
+}
+
+type queryTargetsTestEntry struct {
+	Package string `json:"package"`
+	Target  string `json:"target"`
+	Kind    string `json:"kind"`
+}
+
+type queryTargetsTestDiagnostic struct {
+	Severity string `json:"severity"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+	Package  string `json:"package"`
+	Fix      string `json:"fix"`
+}
+
+type queryTargetsTestDocument struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	Command       string `json:"command"`
+	Status        string `json:"status"`
+	Data          *struct {
+		Targets []queryTargetsTestEntry `json:"targets"`
+	} `json:"data"`
+	Diagnostics []queryTargetsTestDiagnostic `json:"diagnostics"`
+}
+
+func decodeQueryTargetsDocument(t *testing.T, stdout string) *queryTargetsTestDocument {
+	t.Helper()
+	decoder := json.NewDecoder(strings.NewReader(stdout))
+	var document queryTargetsTestDocument
+	if err := decoder.Decode(&document); err != nil {
+		t.Fatalf("stdout is not one JSON document: %v\n%s", err, stdout)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		t.Fatalf("stdout has content after one JSON document: %v\n%s", err, stdout)
+	}
+	return &document
+}
+
+func parseQueryTargetsHuman(t *testing.T, stdout string) []queryTargetsTestEntry {
+	t.Helper()
+	entries := make([]queryTargetsTestEntry, 0)
+	for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
+		if line == "" {
+			continue
+		}
+		open := strings.Index(line, " (")
+		if open < 0 || !strings.HasSuffix(line, ")") {
+			t.Fatalf("unexpected human target line %q", line)
+		}
+		pkg, target, ok := strings.Cut(line[:open], ":")
+		if !ok || pkg == "" || target == "" {
+			t.Fatalf("unexpected human target line %q", line)
+		}
+		entries = append(entries, queryTargetsTestEntry{Package: pkg, Target: target, Kind: strings.TrimSuffix(line[open+2:], ")")})
+	}
+	return entries
+}
+
+func writeQueryTargetsProject(t *testing.T) string {
+	t.Helper()
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+    p.SetRoot(true)
+    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("zlib", "alpha") })
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("zeta").SetKind(api.TargetVoid)
+        ctx.Target("app").SetKind(api.TargetBinary).AddDeps("alpha:alpha", "zlib:zlib")
+    })
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "alpha", "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("beta").SetKind(api.TargetObject)
+        ctx.Target("alpha").SetKind(api.TargetStatic)
+    })
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "zlib", "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+    p.OnBuild(func(ctx *api.BuildContext) { ctx.Target("zlib").SetKind(api.TargetStatic) })
+}
+`)
+	return project
+}
+
+func TestQueryTargetsJSONDocumentAndHumanParity(t *testing.T) {
+	project := writeQueryTargetsProject(t)
+	state := t.TempDir()
+
+	humanOut, humanErr, code := runInspectCommandWithState(t, project, state, "query", "targets")
+	if code != 0 {
+		t.Fatalf("human query targets exit = %d (stderr %q)", code, humanErr)
+	}
+	if humanErr != "" {
+		t.Fatalf("human query targets stderr = %q, want none", humanErr)
+	}
+	human := parseQueryTargetsHuman(t, humanOut)
+	sort.Slice(human, func(i, j int) bool {
+		if human[i].Package != human[j].Package {
+			return human[i].Package < human[j].Package
+		}
+		return human[i].Target < human[j].Target
+	})
+
+	stdout, stderr, code := runInspectCommandWithState(t, project, state, "query", "targets", "--json")
+	if code != 0 {
+		t.Fatalf("query targets --json exit = %d (stderr %q)", code, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("query targets --json stderr = %q, want none", stderr)
+	}
+	if strings.Contains(stdout, "(binary)") {
+		t.Fatalf("JSON stdout contains human target lines:\n%s", stdout)
+	}
+	document := decodeQueryTargetsDocument(t, stdout)
+	if document.SchemaVersion != 1 || document.Command != "query targets" || document.Status != "ok" {
+		t.Fatalf("unexpected envelope: %+v", document)
+	}
+	if document.Diagnostics == nil || len(document.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want an empty array", document.Diagnostics)
+	}
+	want := []queryTargetsTestEntry{
+		{Package: "alpha", Target: "alpha", Kind: "static"},
+		{Package: "alpha", Target: "beta", Kind: "object"},
+		{Package: "proj", Target: "app", Kind: "binary"},
+		{Package: "proj", Target: "zeta", Kind: "void"},
+		{Package: "zlib", Target: "zlib", Kind: "static"},
+	}
+	if document.Data == nil || !reflect.DeepEqual(document.Data.Targets, want) {
+		t.Fatalf("targets = %#v, want %#v", document.Data, want)
+	}
+	if !reflect.DeepEqual(document.Data.Targets, human) {
+		t.Fatalf("JSON targets = %#v, human targets = %#v", document.Data.Targets, human)
+	}
+
+	quietOut, quietErr, code := runInspectCommandWithState(t, project, state, "-q", "query", "targets", "--json")
+	if code != 0 || quietErr != "" {
+		t.Fatalf("-q query targets --json exit = %d, stderr = %q", code, quietErr)
+	}
+	if quietOut != stdout {
+		t.Fatalf("-q changed the JSON document:\n%s\nwant:\n%s", quietOut, stdout)
+	}
+}
+
+func TestQueryTargetsJSONReadOnlyOmissionDiagnostics(t *testing.T) {
+	project := writeQueryReadOnlyTargetsProject(t)
+	state := t.TempDir()
+
+	stdout, stderr, code := runInspectCommandWithState(t, project, state, "query", "targets", "--json")
+	if code != 0 {
+		t.Fatalf("query targets --json exit = %d (stderr %q)", code, stderr)
+	}
+	if strings.Contains(stderr, "Warning:") {
+		t.Fatalf("JSON mode printed human warnings on stderr:\n%s", stderr)
+	}
+	document := decodeQueryTargetsDocument(t, stdout)
+	if document.Status != "ok" || document.Data == nil {
+		t.Fatalf("unexpected envelope: %+v", document)
+	}
+	if !reflect.DeepEqual(document.Data.Targets, []queryTargetsTestEntry{{Package: "proj", Target: "app", Kind: "binary"}}) {
+		t.Fatalf("targets = %#v, want only the root target", document.Data.Targets)
+	}
+	codes := make([]string, 0, len(document.Diagnostics))
+	for _, diagnostic := range document.Diagnostics {
+		codes = append(codes, diagnostic.Code)
+		if diagnostic.Severity != "warning" {
+			t.Fatalf("diagnostic %+v is not a warning", diagnostic)
+		}
+	}
+	if !reflect.DeepEqual(codes, []string{"VMAKE_W_TARGET_DECLARE", "VMAKE_W_TARGET_DECLARE", "VMAKE_W_READ_ONLY_TARGETS"}) {
+		t.Fatalf("diagnostic codes = %v", codes)
+	}
+	for i, name := range []string{"lib", "tool"} {
+		diagnostic := document.Diagnostics[i]
+		if diagnostic.Package != name || !strings.Contains(diagnostic.Message, "cannot declare targets for "+name+":") {
+			t.Fatalf("diagnostic %d = %+v, want package %s", i, diagnostic, name)
+		}
+		if !strings.Contains(diagnostic.Fix, "vmake query --allow-dry-run-writes") {
+			t.Fatalf("diagnostic %d fix = %q", i, diagnostic.Fix)
+		}
+	}
+	summary := document.Diagnostics[2]
+	if summary.Message != "omitted targets for 2 package(s) because dry-run callbacks attempted writes" {
+		t.Fatalf("summary diagnostic = %+v", summary)
+	}
+	for _, name := range []string{"lib", "tool"} {
+		if _, err := os.Stat(filepath.Join(project, name, "generated.txt")); !os.IsNotExist(err) {
+			t.Fatalf("query targets --json wrote %s/generated.txt: %v", name, err)
+		}
+	}
+
+	allowOut, allowErr, code := runInspectCommandWithState(t, project, state, "query", "targets", "--json", "--allow-dry-run-writes")
+	if code != 0 {
+		t.Fatalf("query targets --json --allow-dry-run-writes exit = %d (stderr %q)", code, allowErr)
+	}
+	allowed := decodeQueryTargetsDocument(t, allowOut)
+	if len(allowed.Diagnostics) != 0 {
+		t.Fatalf("--allow-dry-run-writes diagnostics = %+v, want none", allowed.Diagnostics)
+	}
+	if allowed.Data == nil || len(allowed.Data.Targets) != 3 {
+		t.Fatalf("--allow-dry-run-writes targets = %#v, want lib, proj and tool", allowed.Data)
+	}
+	for _, name := range []string{"lib", "tool"} {
+		if _, err := os.Stat(filepath.Join(project, name, "generated.txt")); err != nil {
+			t.Fatalf("--allow-dry-run-writes did not write %s/generated.txt: %v", name, err)
+		}
+	}
+}
+
+func TestQueryTargetsJSONMissingSourceDiagnostic(t *testing.T) {
+	project := writeQueryMissingSourceProject(t)
+	stdout, stderr, code := runInspectCommandWithState(t, project, t.TempDir(), "query", "targets", "--json")
+	if code != 0 {
+		t.Fatalf("query targets --json exit = %d (stderr %q)", code, stderr)
+	}
+	if strings.Contains(stderr, "Warning:") {
+		t.Fatalf("JSON mode printed human warnings on stderr:\n%s", stderr)
+	}
+	document := decodeQueryTargetsDocument(t, stdout)
+	if document.Status != "ok" || document.Data == nil {
+		t.Fatalf("unexpected envelope: %+v", document)
+	}
+	if !reflect.DeepEqual(document.Data.Targets, []queryTargetsTestEntry{{Package: "proj", Target: "app", Kind: "binary"}}) {
+		t.Fatalf("targets = %#v", document.Data.Targets)
+	}
+	if len(document.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %+v, want one missing-source warning", document.Diagnostics)
+	}
+	diagnostic := document.Diagnostics[0]
+	if diagnostic.Severity != "warning" || diagnostic.Code != "VMAKE_W_SOURCE_MISSING" || diagnostic.Package != "lib" {
+		t.Fatalf("diagnostic = %+v", diagnostic)
+	}
+	if !strings.Contains(diagnostic.Message, "not materialized") {
+		t.Fatalf("diagnostic message = %q", diagnostic.Message)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".vmake_deps")); !os.IsNotExist(err) {
+		t.Fatalf("query targets --json fetched package sources: %v", err)
+	}
+}
+
+func TestQueryTargetsJSONResolutionError(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+    p.SetRoot(true)
+    p.OnConfig(func(ctx *api.ConfigContext) { panic("configuration exploded") })
+    p.OnBuild(func(ctx *api.BuildContext) { ctx.Target("app").SetKind(api.TargetBinary) })
+}
+`)
+	stdout, stderr, code := runInspectCommandWithState(t, project, t.TempDir(), "query", "targets", "--json")
+	if code != 1 {
+		t.Fatalf("query targets --json exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	document := decodeQueryTargetsDocument(t, stdout)
+	if document.SchemaVersion != 1 || document.Command != "query targets" || document.Status != "error" {
+		t.Fatalf("unexpected envelope: %+v", document)
+	}
+	if document.Data != nil {
+		t.Fatalf("error envelope carried a partial target document: %+v", document.Data)
+	}
+	if len(document.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %+v, want exactly one error", document.Diagnostics)
+	}
+	diagnostic := document.Diagnostics[0]
+	if diagnostic.Severity != "error" || diagnostic.Code != "VMAKE_E_QUERY" {
+		t.Fatalf("diagnostic = %+v", diagnostic)
+	}
+	if !strings.Contains(diagnostic.Message, "configuration exploded") {
+		t.Fatalf("diagnostic message = %q", diagnostic.Message)
+	}
+	if !strings.Contains(stderr, "Error:") {
+		t.Fatalf("stderr = %q, want one human error line", stderr)
+	}
+}
+
+func TestQueryTargetsJSONDeclarationFailureDiagnostic(t *testing.T) {
+	project := writeQueryPanickingSourceProject(t, true)
+	stdout, stderr, code := runInspectCommandWithState(t, project, t.TempDir(), "query", "targets", "--json")
+	if code != 0 {
+		t.Fatalf("query targets --json exit = %d (stderr %q)", code, stderr)
+	}
+	if strings.Contains(stderr, "panic") || strings.Contains(stderr, "Warning:") {
+		t.Fatalf("JSON mode printed declaration noise on stderr:\n%s", stderr)
+	}
+	document := decodeQueryTargetsDocument(t, stdout)
+	if document.Status != "ok" || document.Data == nil {
+		t.Fatalf("unexpected envelope: %+v", document)
+	}
+	if !reflect.DeepEqual(document.Data.Targets, []queryTargetsTestEntry{{Package: "proj", Target: "app", Kind: "binary"}}) {
+		t.Fatalf("targets = %#v, want only the root target", document.Data.Targets)
+	}
+	if len(document.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %+v, want one declaration warning", document.Diagnostics)
+	}
+	diagnostic := document.Diagnostics[0]
+	if diagnostic.Severity != "warning" || diagnostic.Code != "VMAKE_W_TARGET_DECLARE" || diagnostic.Package != "lib" {
+		t.Fatalf("diagnostic = %+v", diagnostic)
+	}
+	if !strings.Contains(diagnostic.Message, "declaration failure") || !strings.Contains(diagnostic.Fix, "Fix the package OnBuild callback") {
+		t.Fatalf("diagnostic = %+v", diagnostic)
+	}
 }

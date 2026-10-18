@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -23,6 +24,31 @@ import (
 
 var queryAllowWrites bool
 
+const (
+	queryTargetsCommand     = "query targets"
+	queryTargetsErrorCode   = "VMAKE_E_QUERY"
+	queryTargetsWarnCode    = "VMAKE_W_TARGET_DECLARE"
+	queryTargetsReadOnlyFix = "Guard generated-file work with p.DryRun(), or run vmake query --allow-dry-run-writes when those writes are expected."
+)
+
+type queryTargetsEnvelope struct {
+	SchemaVersion int                 `json:"schemaVersion"`
+	Command       string              `json:"command"`
+	Status        string              `json:"status"`
+	Data          *queryTargetsData   `json:"data"`
+	Diagnostics   []inspectDiagnostic `json:"diagnostics"`
+}
+
+type queryTargetsData struct {
+	Targets []queryTargetsEntry `json:"targets"`
+}
+
+type queryTargetsEntry struct {
+	Package string `json:"package"`
+	Target  string `json:"target"`
+	Kind    string `json:"kind"`
+}
+
 func newQueryCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "query",
@@ -38,7 +64,10 @@ Dry-run target declaration runs with interpreted-script writes disabled; a
 callback that writes reports a warning on stderr and that package's targets are
 omitted, without modifying the project. When packages are omitted for blocked
 writes, one stderr summary line after the target listing reports the count and
-the p.DryRun()/--allow-dry-run-writes remediation; the command still exits 0.`,
+the p.DryRun()/--allow-dry-run-writes remediation; the command still exits 0.
+
+Use "vmake query targets --json" for a machine-readable target list; the tree
+itself has no JSON form.`,
 		Run: runQuery,
 	}
 	cmd.PersistentFlags().BoolVar(&queryAllowWrites, "allow-dry-run-writes", false, "let dry-run OnBuild callbacks write files (may modify the build tree)")
@@ -48,11 +77,41 @@ the p.DryRun()/--allow-dry-run-writes remediation; the command still exits 0.`,
 }
 
 func newQueryTargetsCmd() *cobra.Command {
-	return &cobra.Command{
+	var targetsJSON bool
+	cmd := &cobra.Command{
 		Use:   "targets",
 		Short: "List build targets without building",
-		Run:   runQueryTargets,
+		Long: `List the declared targets of needed local packages without building.
+
+Each target prints as "<package>:<target> (<kind>)". Dry-run target
+declaration runs with interpreted-script writes disabled unless
+--allow-dry-run-writes is set. A package whose expected source tree is missing
+keeps its warning; a package whose OnBuild fails to declare targets prints one
+warning and the command continues. Packages omitted because the read-only guard
+rejected a write are counted in one aggregate warning after the listing. All
+warnings go to stderr and the command exits 0.
+
+With --json, stdout is exactly one schemaVersion 1 document:
+
+  {"schemaVersion":1,"command":"query targets","status":"ok",
+   "data":{"targets":[{"package":"firmware","target":"firmware","kind":"binary"}]},
+   "diagnostics":[]}
+
+Targets are sorted by package then target and are exactly the targets the human
+command prints. Missing-source, failed-declaration and read-only-omission
+warnings become diagnostics with severity "warning", codes
+VMAKE_W_SOURCE_MISSING, VMAKE_W_TARGET_DECLARE and VMAKE_W_READ_ONLY_TARGETS,
+and are not printed as Warning lines on stderr. A resolution error produces
+status "error", data null, one VMAKE_E_QUERY diagnostic, exit code 1, and no
+partial target list on stdout. --allow-dry-run-writes lets dry-run OnBuild
+callbacks materialize inputs; it can modify the build tree and removes the
+read-only-omission diagnostics.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runQueryTargets(targetsJSON)
+		},
 	}
+	cmd.Flags().BoolVar(&targetsJSON, "json", false, "emit one JSON document on stdout (warnings become diagnostics)")
+	return cmd
 }
 
 func queryReadOnly() func() {
@@ -72,9 +131,12 @@ func newQueryConfigCmd() *cobra.Command {
 	}
 }
 
-func runQueryTargets(cmd *cobra.Command, args []string) {
+func runQueryTargets(asJSON bool) error {
 	vlog.SetLevel(vlog.Quiet)
 	defer queryReadOnly()()
+	if asJSON {
+		return runQueryTargetsJSON()
+	}
 
 	ctx := resolveToConfig(false)
 	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
@@ -104,6 +166,109 @@ func runQueryTargets(cmd *cobra.Command, args []string) {
 		}
 	}
 	printReadOnlyTargetsSummary(readOnlyOmitted)
+	return nil
+}
+
+func runQueryTargetsJSON() error {
+	envelope := newQueryTargetsEnvelope()
+	if findProjectDirSoft() == "" {
+		return failQueryTargets(envelope, errors.New("not inside a vmake project (no .vmake/, build.go or */build.go found in the current directory or any parent directory)"))
+	}
+	rejectShadowedProjectRootFromCWD()
+
+	restoreStdout := silenceInspectStdout()
+	restoreStderr := silenceInspectStderr()
+	fail := func(err error) error {
+		restoreStdout()
+		restoreStderr()
+		return failQueryTargets(envelope, err)
+	}
+	defer restoreStdout()
+	defer restoreStderr()
+
+	ctx, err := resolveToConfigContext(context.Background(), false)
+	if err != nil {
+		return fail(err)
+	}
+	defer ctx.Resolver.Close()
+	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
+	if err != nil {
+		return fail(err)
+	}
+	scriptfs.TakeBlockedWrites()
+
+	diagnostics := inspectSourceDiagnostics(ctx, inspection)
+	targets := make([]queryTargetsEntry, 0)
+	warned := make(map[string]bool)
+	readOnlyOmitted := 0
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if node == nil || !node.IsLocal() || node.Pkg == nil {
+			continue
+		}
+		if inspection.Needed != nil && !inspection.Needed[name] {
+			continue
+		}
+		kinds, err := collectTargetKinds(name, inspection.PkgDirs[name], ctx, inspection.PackageToolchains[name], inspection.GlobalValues)
+		if err != nil {
+			if !warned[name] {
+				warned[name] = true
+				diagnostic, readOnly := queryTargetDeclareDiagnostic(name, err)
+				if readOnly {
+					readOnlyOmitted++
+				}
+				diagnostics = append(diagnostics, diagnostic)
+			}
+			continue
+		}
+		for _, k := range kinds {
+			targets = append(targets, queryTargetsEntry{Package: name, Target: k.name, Kind: k.kind})
+		}
+	}
+	if readOnlyOmitted > 0 {
+		diagnostics = append(diagnostics, inspectDiagnostic{
+			Severity: "warning",
+			Code:     readOnlyTargetsWarningCode,
+			Message:  readOnlyTargetsMessage(readOnlyOmitted),
+			Fix:      queryTargetsReadOnlyFix,
+		})
+	}
+	sort.Slice(targets, func(i, j int) bool {
+		if targets[i].Package != targets[j].Package {
+			return targets[i].Package < targets[j].Package
+		}
+		if targets[i].Target != targets[j].Target {
+			return targets[i].Target < targets[j].Target
+		}
+		return targets[i].Kind < targets[j].Kind
+	})
+
+	envelope.Data = &queryTargetsData{Targets: targets}
+	envelope.Diagnostics = diagnostics
+	restoreStdout()
+	restoreStderr()
+	return encodeJSONDocument(os.Stdout, envelope)
+}
+
+func newQueryTargetsEnvelope() *queryTargetsEnvelope {
+	return &queryTargetsEnvelope{
+		SchemaVersion: inspectSchemaVersion,
+		Command:       queryTargetsCommand,
+		Status:        "ok",
+		Data:          &queryTargetsData{Targets: []queryTargetsEntry{}},
+		Diagnostics:   []inspectDiagnostic{},
+	}
+}
+
+func failQueryTargets(envelope *queryTargetsEnvelope, err error) error {
+	message := inspectOneLine(err.Error())
+	envelope.Status = "error"
+	envelope.Data = nil
+	envelope.Diagnostics = []inspectDiagnostic{{Severity: "error", Code: queryTargetsErrorCode, Message: message}}
+	if writeErr := encodeJSONDocument(os.Stdout, envelope); writeErr != nil {
+		return writeErr
+	}
+	return errors.New(message)
 }
 
 func printReadOnlyTargetsSummary(count int) {
@@ -264,14 +429,27 @@ func warnTargetDeclare(warned map[string]bool, name string, err error) bool {
 		return false
 	}
 	warned[name] = true
+	diagnostic, readOnly := queryTargetDeclareDiagnostic(name, err)
+	fmt.Fprintf(os.Stderr, "Warning: %s\n", diagnostic.Message)
+	return readOnly
+}
+
+func queryTargetDeclareDiagnostic(name string, err error) (inspectDiagnostic, bool) {
 	message := err.Error()
 	readOnly := strings.Contains(message, "read-only inspection:")
+	fix := "Fix the package OnBuild callback, then rerun vmake query targets."
 	if readOnly {
 		message = strings.ReplaceAll(message, "panic: ", "")
 		message += " (guard generated-file work with p.DryRun())"
+		fix = queryTargetsReadOnlyFix
 	}
-	fmt.Fprintf(os.Stderr, "Warning: cannot declare targets for %s: %s\n", name, message)
-	return readOnly
+	return inspectDiagnostic{
+		Severity: "warning",
+		Code:     queryTargetsWarnCode,
+		Message:  fmt.Sprintf("cannot declare targets for %s: %s", name, message),
+		Package:  name,
+		Fix:      fix,
+	}, readOnly
 }
 
 func (p *treePrinter) print(name, prefix string, isRoot, isLast bool) {

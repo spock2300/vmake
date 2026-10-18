@@ -90,6 +90,9 @@ error the callback ignores) omits that package's targets and emits a
 `VMAKE_W_TARGET_DECLARE` warning; one `VMAKE_W_READ_ONLY_TARGETS` aggregate
 names the omitted package count and the `--allow-dry-run-writes`/p.DryRun fix.
 
+- Build/test reports carry recorded provenance when available: `vmakeVersion`,
+  `vmakeCommit`, and (for git projects) `projectRevision`/`projectDirty`;
+  inspect report states copy them. These are recorded values, not attestation.
 - Envelope: `{schemaVersion, command, status: "ok"|"error", data?, diagnostics}`.
   `diagnostics` is always an array; warnings keep `status: "ok"` and exit 0,
   model failures use `status: "error"` and exit 1.
@@ -115,6 +118,10 @@ names the omitted package count and the `--allow-dry-run-writes`/p.DryRun fix.
   `VMAKE_W_SOURCE_MISSING` warning and `sourcePresent: false`; inspect does not
   fetch, materialize, or link sources for this check. `vmake query` and
   `query targets` print the same warning on stderr without changing stdout.
+  `query targets --json` emits one schema-1 document with sorted
+  `{package,target,kind}` targets and turns source/declaration/read-only
+  omissions into `diagnostics` (human mode unchanged); `--allow-dry-run-writes`
+  opts out of the read-only guard.
 - Needed packages also carry `buildDir`, the absolute build-key directory the
   next build would use, plus `buildKey` for local packages. This is resolved
   layout, not evidence that the directory exists: before a first build or after

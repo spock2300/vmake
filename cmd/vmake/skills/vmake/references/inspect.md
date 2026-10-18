@@ -93,7 +93,10 @@ Failure (no `data`, exit 1):
   such packages untargeted without running their dry-run `OnBuild`; a
   target-declaration failure in a package whose source is present prints one
   `Warning: cannot declare targets for <package>: <error>` and does not stop the
-  command.
+  command. `vmake query targets --json` emits one schemaVersion-1 document with
+  sorted `{package,target,kind}` entries and these warnings as `diagnostics`
+  (human mode unchanged); `--allow-dry-run-writes` opts out of the read-only
+  guard.
 - `VMAKE_W_REPORT_UNREADABLE` — warning: `build/vmake-build.json` or
   `build/vmake-test.json` exists but cannot be read or parsed. The matching
   `buildReportPresent`/`testReportPresent` stays `true`, that state object is
