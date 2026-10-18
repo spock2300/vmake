@@ -387,6 +387,19 @@ git 对象缓存）、`VMAKE_GIT_TIMEOUT`（网络 git 操作超时秒数）、
 `VMAKE_TRUST_ALL=1`（CI 中绕过远程脚本信任检查）。存储细节见
 [目录结构](docs/VMAKE_HOME.md)。
 
+## 故障排查
+
+### 嵌套的 `.vmake` 标记
+
+如果 `vmake doctor` 报告 `nestedProjectMarker` 警告，说明它解析出的项目根目录
+自身包含 `.vmake/`，同时上层还存在另一个项目根（例如仓库根目录已有 `.vmake/`
+和 `build.go`，而 `firmware/.vmake` 是遗留标记）。从该包目录运行 vmake 会把
+这个包当作项目根，因而找不到同级包。警告会列出两个根目录。请在该包目录中运行
+`vmake -C <上层项目根> ...`，或在确认该目录属于上层项目后删除
+`<包>/.vmake`。从真正的项目根运行 doctor 时，同一个标记会以
+`staleProjectMarker` 报告。`vmake doctor` 不会自动删除该标记，也不会自动切换
+根目录。
+
 ## 开发文档
 
 详细的设计文档请参考 [docs](docs/) 目录：

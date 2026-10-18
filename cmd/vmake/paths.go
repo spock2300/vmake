@@ -84,9 +84,17 @@ func validateProjectDir(override string) string {
 // nearest build.go win. Finally the start directory may still be a project
 // root whose packages are child directories containing build.go.
 func searchProjectDir(dir string) (string, bool) {
-	start := dir
+	return searchProjectDirFrom(dir, false)
+}
+
+// searchProjectDirFrom implements the upward project search. In enclosing mode
+// the start directory's own .vmake marker is not enough and a directory whose
+// only buildscripts are children is not an enclosing project; the search looks
+// for a real project root above the start directory instead.
+func searchProjectDirFrom(start string, enclosing bool) (string, bool) {
 	for current := start; ; {
-		if hasProjectConfig(current) && (current == start || hasBuildGo(current)) {
+		startIsProject := current == start && !enclosing
+		if hasProjectConfig(current) && (startIsProject || hasBuildGo(current)) {
 			return current, true
 		}
 		parent := filepath.Dir(current)
@@ -115,10 +123,25 @@ func searchProjectDir(dir string) (string, bool) {
 		}
 		current = parent
 	}
-	if hasChildBuildGo(start) {
+	if !enclosing && hasChildBuildGo(start) {
 		return start, true
 	}
 	return "", false
+}
+
+// findEnclosingProjectRoot locates the project root strictly above start. The
+// start directory's own .vmake marker is not consulted, so a stale
+// package-local marker cannot hide the project that contains it.
+func findEnclosingProjectRoot(start string) (string, bool) {
+	abs, err := filepath.Abs(start)
+	if err != nil {
+		return "", false
+	}
+	parent := filepath.Dir(abs)
+	if parent == abs {
+		return "", false
+	}
+	return searchProjectDirFrom(parent, true)
 }
 
 func hasGitRoot(dir string) bool {

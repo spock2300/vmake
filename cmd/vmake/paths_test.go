@@ -158,6 +158,61 @@ func TestSearchProjectDirNone(t *testing.T) {
 	}
 }
 
+func TestFindEnclosingProjectRoot(t *testing.T) {
+	setPathsTestVmakeDir(t)
+
+	t.Run("skips_start_marker", func(t *testing.T) {
+		root := t.TempDir()
+		makePathsTestDir(t, filepath.Join(root, ".git"))
+		makePathsTestDir(t, filepath.Join(root, ".vmake"))
+		writePathsTestFile(t, filepath.Join(root, "build.go"), "package main\n")
+		pkg := filepath.Join(root, "firmware")
+		makePathsTestDir(t, filepath.Join(pkg, ".vmake"))
+		writePathsTestFile(t, filepath.Join(pkg, "build.go"), "package main\n")
+
+		got, ok := findEnclosingProjectRoot(pkg)
+		if !ok || got != root {
+			t.Fatalf("findEnclosingProjectRoot(pkg) = %q, %v; want %q, true", got, ok, root)
+		}
+	})
+
+	t.Run("build_go_fallback_without_git", func(t *testing.T) {
+		root := t.TempDir()
+		makePathsTestDir(t, filepath.Join(root, ".vmake"))
+		writePathsTestFile(t, filepath.Join(root, "build.go"), "package main\n")
+		pkg := filepath.Join(root, "firmware")
+		makePathsTestDir(t, filepath.Join(pkg, ".vmake"))
+		writePathsTestFile(t, filepath.Join(pkg, "build.go"), "package main\n")
+
+		got, ok := findEnclosingProjectRoot(pkg)
+		if !ok || got != root {
+			t.Fatalf("findEnclosingProjectRoot(pkg) = %q, %v; want %q, true", got, ok, root)
+		}
+	})
+
+	t.Run("none_from_project_root", func(t *testing.T) {
+		root := t.TempDir()
+		makePathsTestDir(t, filepath.Join(root, ".vmake"))
+		writePathsTestFile(t, filepath.Join(root, "build.go"), "package main\n")
+
+		if got, ok := findEnclosingProjectRoot(root); ok {
+			t.Fatalf("findEnclosingProjectRoot(root) = %q, true; want false", got)
+		}
+	})
+
+	t.Run("child_build_go_alone_is_not_enclosing", func(t *testing.T) {
+		base := t.TempDir()
+		root := filepath.Join(base, "project")
+		makePathsTestDir(t, filepath.Join(root, ".vmake"))
+		writePathsTestFile(t, filepath.Join(root, "build.go"), "package main\n")
+		writePathsTestFile(t, filepath.Join(base, "sibling", "build.go"), "package main\n")
+
+		if got, ok := findEnclosingProjectRoot(root); ok {
+			t.Fatalf("findEnclosingProjectRoot(project) = %q, true; a sibling build.go is not an enclosing project", got)
+		}
+	})
+}
+
 func TestLoadResolveInputsUsesProjectRootFromPackageSubdir(t *testing.T) {
 	resetResolveTestGlobals(t)
 	root := t.TempDir()

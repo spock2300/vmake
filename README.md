@@ -407,6 +407,21 @@ included in compile/link/CMake fingerprints), `VMAKE_TRUST_ALL=1` (bypass
 remote-script trust gating for CI). See [Directory Structure](docs/VMAKE_HOME.md) for the
 storage details.
 
+## Troubleshooting
+
+### Nested `.vmake` markers
+
+If `vmake doctor` reports a `nestedProjectMarker` warning, the directory it
+resolved as the project root contains its own `.vmake/` directory while an
+enclosing project root exists (for example `firmware/.vmake` in a repository
+whose root also has `.vmake/` and `build.go`). Running vmake from that package
+directory then treats the package as the project root, so sibling packages are
+not found. The warning names both roots. Run
+`vmake -C <enclosing-project-root> ...` from the package directory, or remove
+`<package>/.vmake` if the directory is a package of the enclosing project. From
+the true project root the same marker is reported as `staleProjectMarker`.
+`vmake doctor` never removes the marker or switches roots automatically.
+
 ## Documentation
 
 Detailed design documents are available in the [docs](docs/) directory:

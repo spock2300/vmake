@@ -52,11 +52,12 @@ type doctorFinding struct {
 }
 
 func runDoctor() {
-	workDir, err := os.Getwd()
+	startDir, err := os.Getwd()
 	if err != nil {
 		vlog.Fatal("getwd: %v", err)
 	}
 
+	workDir := startDir
 	if projectDir := findProjectDirSoft(); projectDir != "" {
 		workDir = projectDir
 	}
@@ -70,6 +71,7 @@ func runDoctor() {
 	if tcErr != nil {
 		findings = append(findings, doctorFinding{Severity: "error", Category: "toolchain", Message: tcErr.Error()})
 	}
+	findings = append(findings, checkNestedProjectMarker(startDir, workDir)...)
 
 	sources, err := buildscript.Scan(workDir)
 	if err != nil {
@@ -107,6 +109,27 @@ func runDoctor() {
 	}
 
 	reportDoctorFindings(workDir, findings)
+}
+
+// checkNestedProjectMarker reports a package-local .vmake marker that wins
+// root detection over an enclosing project. It only fires when the invocation
+// directory itself resolved as the project root; invocations from a package
+// subdirectory or with -C pointing elsewhere are not reported here.
+func checkNestedProjectMarker(startDir, workDir string) []doctorFinding {
+	if filepath.Clean(startDir) != filepath.Clean(workDir) || !hasProjectConfig(workDir) {
+		return nil
+	}
+	enclosing, ok := findEnclosingProjectRoot(workDir)
+	if !ok || filepath.Clean(enclosing) == filepath.Clean(workDir) {
+		return nil
+	}
+	marker := filepath.Join(workDir, ".vmake")
+	return []doctorFinding{{
+		Severity: "warn",
+		File:     marker,
+		Category: "nestedProjectMarker",
+		Message:  fmt.Sprintf("current directory %s has its own .vmake marker, so vmake selected it as the project root instead of the enclosing project root %s; run vmake -C %s ... or remove %s; this nested marker shadows the project root", workDir, enclosing, enclosing, marker),
+	}}
 }
 
 func checkStaleProjectMarkers(workDir string, sources []buildscript.Source) []doctorFinding {
