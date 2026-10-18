@@ -182,12 +182,29 @@ func parseCMakeBareHeader(line string) (string, bool) {
 
 func cmakeDiagnosticDetails(lines []string, index int) []string {
 	var parts []string
+	lastIndent := 0
 	for i := index + 1; i < len(lines); i++ {
 		line := strings.TrimSuffix(lines[i], "\r")
-		if strings.TrimSpace(line) == "" || line[0] != ' ' && line[0] != '\t' {
+		if strings.TrimSpace(line) == "" {
+			next := i + 1
+			for next < len(lines) && strings.TrimSpace(lines[next]) == "" {
+				next++
+			}
+			if next < len(lines) {
+				nextLine := strings.TrimSuffix(lines[next], "\r")
+				nextIndent := len(nextLine) - len(strings.TrimLeft(nextLine, " \t"))
+				if nextIndent > lastIndent && (strings.HasPrefix(nextLine, "    ") || strings.HasPrefix(nextLine, "\t")) {
+					i = next - 1
+					continue
+				}
+			}
+			break
+		}
+		if line[0] != ' ' && line[0] != '\t' {
 			break
 		}
 		parts = append(parts, strings.TrimSpace(line))
+		lastIndent = len(line) - len(strings.TrimLeft(line, " \t"))
 	}
 	return parts
 }

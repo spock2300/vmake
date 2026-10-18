@@ -154,3 +154,26 @@ func TestParseGNUDiagnosticsLocatedCMakeWarningContinuationCapped(t *testing.T) 
 		t.Fatal("message is not bounded")
 	}
 }
+
+func TestParseCMakeDiagnosticDetailsAcrossBlankLine(t *testing.T) {
+	output := strings.Join([]string{
+		"CMake Error at CMakeLists.txt:4 (message):",
+		"  fatal configure failure:",
+		"",
+		"    detail alpha",
+		"    detail beta",
+		"",
+		"-- Configuring incomplete, errors occurred!",
+	}, "\n")
+	diagnostics := parseGNUDiagnostics(output)
+	if len(diagnostics) != 1 {
+		t.Fatalf("diagnostics = %+v", diagnostics)
+	}
+	message := diagnostics[0].Message
+	if !strings.Contains(message, "fatal configure failure") || !strings.Contains(message, "detail alpha") || !strings.Contains(message, "detail beta") {
+		t.Fatalf("message = %q", message)
+	}
+	if strings.Contains(message, "Configuring incomplete") {
+		t.Fatalf("message collected trailing output: %q", message)
+	}
+}
