@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -751,4 +752,237 @@ func Main(p *api.Package) {
 	if len(report.Targets) != 1 || report.Targets[0].Status != build.TargetStatusBuilt || report.Targets[0].DurationMs < 0 {
 		t.Fatalf("void target result = %+v", report.Targets)
 	}
+}
+
+type jsonBuildDocument struct {
+	SchemaVersion int               `json:"schemaVersion"`
+	Command       string            `json:"command"`
+	Status        string            `json:"status"`
+	Data          buildReport       `json:"data"`
+	Diagnostics   []buildDiagnostic `json:"diagnostics"`
+}
+
+func parseJSONBuildOutput(t *testing.T, stdout string) jsonBuildDocument {
+	t.Helper()
+	decoder := json.NewDecoder(strings.NewReader(stdout))
+	var document jsonBuildDocument
+	if err := decoder.Decode(&document); err != nil {
+		t.Fatalf("stdout is not one JSON document: %v\n%s", err, stdout)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		t.Fatalf("stdout contains more than one JSON document (%v)\n%s", err, stdout)
+	}
+	if document.SchemaVersion != 1 {
+		t.Fatalf("envelope schemaVersion = %d, want 1", document.SchemaVersion)
+	}
+	if document.Data.SchemaVersion != 2 {
+		t.Fatalf("data schemaVersion = %d, want 2", document.Data.SchemaVersion)
+	}
+	if document.Command != reportCommandBuild && document.Command != reportCommandTest {
+		t.Fatalf("envelope command = %q", document.Command)
+	}
+	if document.Data.Command != document.Command {
+		t.Fatalf("data command = %q, envelope command = %q", document.Data.Command, document.Command)
+	}
+	if document.Diagnostics == nil || document.Data.Diagnostics == nil {
+		t.Fatalf("diagnostics must be arrays: envelope %#v, data %#v", document.Diagnostics, document.Data.Diagnostics)
+	}
+	if !slices.Equal(document.Diagnostics, document.Data.Diagnostics) {
+		t.Fatalf("envelope diagnostics %+v do not mirror data diagnostics %+v", document.Diagnostics, document.Data.Diagnostics)
+	}
+	return document
+}
+
+func assertNoHumanJSONStdout(t *testing.T, stdout string, phrases ...string) {
+	t.Helper()
+	for _, phrase := range append([]string{"Build succeeded", "Build failed", "Tests succeeded", "Tests failed"}, phrases...) {
+		if strings.Contains(stdout, phrase) {
+			t.Fatalf("stdout contains human text %q:\n%s", phrase, stdout)
+		}
+	}
+}
+
+func assertJSONDataMatchesReport(t *testing.T, project string, data buildReport) {
+	t.Helper()
+	fromFile, err := json.Marshal(loadBuildReport(t, project))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromEnvelope, err := json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(fromFile, fromEnvelope) {
+		t.Fatalf("envelope data differs from the report file:\nfile:     %s\nenvelope: %s", fromFile, fromEnvelope)
+	}
+}
+
+func TestBuildJSONSuccessNoopAndScriptOutput(t *testing.T) {
+	project := writeBuildSummaryProject(t, "int main(void) { return 0; }\n")
+	stdout, stderr, code := runBuildCommand(t, project, "build", "--json")
+	if code != 0 {
+		t.Fatalf("build --json exit = %d, stderr = %q\n%s", code, stderr, stdout)
+	}
+	cold := parseJSONBuildOutput(t, stdout)
+	if cold.Command != reportCommandBuild || cold.Status != "ok" || cold.Data.Status != "succeeded" || cold.Data.Error != "" {
+		t.Fatalf("cold envelope = %+v / data = %+v", cold, cold.Data)
+	}
+	if cold.Data.Summary == nil || cold.Data.Summary.TargetsBuilt != 1 || cold.Data.Summary.TargetsUpToDate != 0 ||
+		cold.Data.Summary.FilesCompiled != 1 || cold.Data.Summary.FilesLinked != 1 ||
+		!slices.Equal(cold.Data.Summary.ChangedFiles, []string{"src/main.c"}) {
+		t.Fatalf("cold summary = %+v", cold.Data.Summary)
+	}
+	if !strings.Contains(stderr, "SCRIPT NOISE") {
+		t.Fatalf("buildscript print is missing from stderr:\n%s", stderr)
+	}
+	assertNoHumanJSONStdout(t, stdout, "SCRIPT NOISE")
+	assertJSONDataMatchesReport(t, project, cold.Data)
+
+	noopStdout, noopStderr, code := runBuildCommand(t, project, "build", "--json")
+	if code != 0 {
+		t.Fatalf("no-op build --json exit = %d, stderr = %q", code, noopStderr)
+	}
+	noop := parseJSONBuildOutput(t, noopStdout)
+	if noop.Status != "ok" || noop.Data.Summary == nil ||
+		noop.Data.Summary.TargetsBuilt != 0 || noop.Data.Summary.TargetsUpToDate != 1 ||
+		noop.Data.Summary.FilesCompiled != 0 || noop.Data.Summary.FilesLinked != 0 ||
+		len(noop.Data.Summary.ChangedFiles) != 0 {
+		t.Fatalf("no-op envelope = %+v / summary = %+v", noop, noop.Data.Summary)
+	}
+	if !strings.Contains(noopStderr, "SCRIPT NOISE") {
+		t.Fatalf("no-op buildscript print is missing from stderr:\n%s", noopStderr)
+	}
+	assertNoHumanJSONStdout(t, noopStdout, "SCRIPT NOISE")
+	assertJSONDataMatchesReport(t, project, noop.Data)
+}
+
+func TestBuildJSONCompileFailure(t *testing.T) {
+	project := writeBuildReportProject(t, "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
+	stdout, stderr, code := runBuildCommand(t, project, "build", "--json")
+	if code != 1 {
+		t.Fatalf("build --json exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	document := parseJSONBuildOutput(t, stdout)
+	if document.Command != reportCommandBuild || document.Status != "error" || document.Data.Status != "failed" {
+		t.Fatalf("failure envelope = %+v / data = %+v", document, document.Data)
+	}
+	if document.Data.Error == "" || !strings.Contains(document.Data.Error, "src/main.c:2:") {
+		t.Fatalf("concise error = %q", document.Data.Error)
+	}
+	if len(document.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %+v", document.Diagnostics)
+	}
+	diagnostic := document.Diagnostics[0]
+	if diagnostic.Code != "VMAKE_E_COMPILE" || diagnostic.File != "src/main.c" || diagnostic.Line != 2 || diagnostic.Column == 0 {
+		t.Fatalf("diagnostic = %+v", diagnostic)
+	}
+	if strings.Count(stderr, "error: expected expression") != 1 {
+		t.Fatalf("compiler diagnostic on stderr %d times:\n%s", strings.Count(stderr, "error: expected expression"), stderr)
+	}
+	lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
+	if !strings.HasPrefix(lines[len(lines)-1], "Error: src/main.c:2:") {
+		t.Fatalf("final stderr line = %q", lines[len(lines)-1])
+	}
+	assertNoHumanJSONStdout(t, stdout)
+	assertJSONDataMatchesReport(t, project, document.Data)
+}
+
+func TestTestJSONPassing(t *testing.T) {
+	project := writeTestCommandProject(t, passingTestSource)
+	stdout, stderr, code := runBuildCommand(t, project, "test", "--json")
+	if code != 0 {
+		t.Fatalf("test --json exit = %d, stderr = %q\n%s", code, stderr, stdout)
+	}
+	document := parseJSONBuildOutput(t, stdout)
+	if document.Command != reportCommandTest || document.Status != "ok" || document.Data.Status != "succeeded" {
+		t.Fatalf("test envelope = %+v / data = %+v", document, document.Data)
+	}
+	if len(document.Data.Tests) != 1 {
+		t.Fatalf("tests = %+v", document.Data.Tests)
+	}
+	test := document.Data.Tests[0]
+	if test.Name != "tests-project:tests" || test.Package != "tests-project" || test.Target != "tests" ||
+		!test.Passed || test.ElapsedMs < 0 {
+		t.Fatalf("test entry = %+v", test)
+	}
+	if document.Data.Summary == nil || document.Data.Summary.TestsFound != 1 ||
+		document.Data.Summary.TestsPassed != 1 || document.Data.Summary.TestsFailed != 0 {
+		t.Fatalf("test summary = %+v", document.Data.Summary)
+	}
+	if !strings.Contains(stderr, "1/1 test(s) passed.") {
+		t.Fatalf("human test progress is missing from stderr:\n%s", stderr)
+	}
+	assertNoHumanJSONStdout(t, stdout, "test(s) passed")
+	assertJSONDataMatchesReport(t, project, document.Data)
+}
+
+func TestTestJSONFailure(t *testing.T) {
+	project := writeTestCommandProject(t, failingTestSource)
+	stdout, stderr, code := runBuildCommand(t, project, "test", "--json")
+	if code != 1 {
+		t.Fatalf("test --json exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	document := parseJSONBuildOutput(t, stdout)
+	if document.Command != reportCommandTest || document.Status != "error" || document.Data.Status != "failed" {
+		t.Fatalf("test failure envelope = %+v / data = %+v", document, document.Data)
+	}
+	if document.Data.Error != "1 test(s) failed" {
+		t.Fatalf("test failure error = %q", document.Data.Error)
+	}
+	if len(document.Data.Tests) != 1 || document.Data.Tests[0].Passed {
+		t.Fatalf("failed test entries = %+v", document.Data.Tests)
+	}
+	if document.Data.Summary == nil || document.Data.Summary.TestsFound != 1 ||
+		document.Data.Summary.TestsPassed != 0 || document.Data.Summary.TestsFailed != 1 {
+		t.Fatalf("failed test summary = %+v", document.Data.Summary)
+	}
+	if !strings.Contains(stderr, "Error: 1 test(s) failed") {
+		t.Fatalf("failure error is missing from stderr:\n%s", stderr)
+	}
+	assertNoHumanJSONStdout(t, stdout, "test(s) passed")
+	assertJSONDataMatchesReport(t, project, document.Data)
+}
+
+func TestTestJSONNoTargets(t *testing.T) {
+	project := writeTestCommandProject(t, "")
+	stdout, stderr, code := runBuildCommand(t, project, "test", "--json")
+	if code != 1 {
+		t.Fatalf("test --json exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	document := parseJSONBuildOutput(t, stdout)
+	if document.Status != "error" || document.Data.Status != "failed" || document.Data.Error != "no test targets found" {
+		t.Fatalf("no-tests envelope = %+v / data = %+v", document, document.Data)
+	}
+	if len(document.Data.Tests) != 0 {
+		t.Fatalf("no-tests entries = %+v", document.Data.Tests)
+	}
+	if document.Data.Summary == nil || document.Data.Summary.TestsFound != 0 {
+		t.Fatalf("no-tests summary = %+v", document.Data.Summary)
+	}
+	if !strings.Contains(stderr, "Error: no test targets found") {
+		t.Fatalf("no-tests error is missing from stderr:\n%s", stderr)
+	}
+	assertNoHumanJSONStdout(t, stdout, "test(s) passed")
+	assertJSONDataMatchesReport(t, project, document.Data)
+}
+
+func TestRebuildJSONSmoke(t *testing.T) {
+	project := writeBuildSummaryProject(t, "int main(void) { return 0; }\n")
+	stdout, stderr, code := runBuildCommand(t, project, "rebuild", "--json")
+	if code != 0 {
+		t.Fatalf("rebuild --json exit = %d, stderr = %q\n%s", code, stderr, stdout)
+	}
+	document := parseJSONBuildOutput(t, stdout)
+	if document.Command != reportCommandBuild || document.Status != "ok" || document.Data.Status != "succeeded" {
+		t.Fatalf("rebuild envelope = %+v / data = %+v", document, document.Data)
+	}
+	if document.Data.Summary == nil || document.Data.Summary.TargetsBuilt != 1 || document.Data.Summary.FilesCompiled != 1 {
+		t.Fatalf("rebuild summary = %+v", document.Data.Summary)
+	}
+	if !strings.Contains(stderr, "SCRIPT NOISE") {
+		t.Fatalf("rebuild buildscript print is missing from stderr:\n%s", stderr)
+	}
+	assertNoHumanJSONStdout(t, stdout, "SCRIPT NOISE")
+	assertJSONDataMatchesReport(t, project, document.Data)
 }

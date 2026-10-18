@@ -19,6 +19,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().IntVarP(&jobsFlag, "jobs", "j", 0, "compile jobs within the active target and Make/CMake ceiling; targets run serially (0 = number of CPUs, 1 = sequential)")
 	cmd.Flags().BoolVarP(&keepGoingFlag, "keep-going", "k", false, "keep building independent targets after a failure")
 	cmd.Flags().BoolVar(&explainFlag, "explain", false, "print why each compile/link action was rebuilt")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit one JSON result document on stdout (progress goes to stderr)")
 	cmd.RegisterFlagCompletionFunc("toolchain", completeToolchain)
 	cmd.RegisterFlagCompletionFunc("mode", completeMode)
 }

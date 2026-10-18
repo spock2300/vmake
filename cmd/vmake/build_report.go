@@ -115,12 +115,28 @@ func withBuildReport(run func(*buildReport) error) (err error) {
 				devNull.Close()
 			}
 		}
+	} else if jsonOutput {
+		os.Stdout = os.Stderr
+		restored := false
+		restoreStdout = func() {
+			if restored {
+				return
+			}
+			restored = true
+			os.Stdout = stdout
+		}
 	}
 	defer func() {
 		defer restoreStdout()
 		report.finish(&err)
 		restoreStdout()
-		printBuildSummary(stdout, report, err)
+		if jsonOutput {
+			if writeErr := writeBuildJSONEnvelope(stdout, report); writeErr != nil {
+				err = errors.Join(err, writeErr)
+			}
+		} else {
+			printBuildSummary(stdout, report, err)
+		}
 		if err != nil && report.Error != "" {
 			err = &buildSummaryError{summary: report.Error, err: err}
 		}

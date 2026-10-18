@@ -21,9 +21,33 @@ The version 2 JSON object contains all version 1 fields plus `durationMs`, `diag
 | tests | Always an array. Empty for build/rebuild; for `vmake test` one entry per executed test binary with `name` (`package:target`), `package`, `target`, `passed` and `elapsedMs` |
 | artifacts | Only files actually installed by this invocation, each with package, target, buildPath, installPath, size, sha256. PE shared targets also record their `.dll.a` import library |
 
-On success `vmake build`/`vmake rebuild` prints one summary line to stdout, for example `Build succeeded: 34 targets (1 built, 33 up to date), 1 compiled, 1 linked, 7 installed in 4.9s (buildId=...)`; it is additive to the existing progress and `Build succeeded!`/`Install succeeded!` lines. On failure the same command prints one `Build failed: <error>` line to stdout while the concise `Error:` line and the raw tool diagnostics remain on stderr. With `-q`, buildscript `fmt.Printf`/`print` output is suppressed so the summary line is the only stdout; stderr is unchanged (compiler warnings and errors still stream). The summary intentionally excludes post-link, `void` callback and installation actions; it is a scheduler-work summary, and `targets[]` carries per-target status.
+On success `vmake build`/`vmake rebuild` prints one summary line to stdout (or one JSON envelope with `--json`; see **Machine-readable invocation** below), for example `Build succeeded: 34 targets (1 built, 33 up to date), 1 compiled, 1 linked, 7 installed in 4.9s (buildId=...)`; it is additive to the existing progress and `Build succeeded!`/`Install succeeded!` lines. On failure the same command prints one `Build failed: <error>` line to stdout while the concise `Error:` line and the raw tool diagnostics remain on stderr. With `-q`, buildscript `fmt.Printf`/`print` output is suppressed so the summary line is the only stdout; stderr is unchanged (compiler warnings and errors still stream). The summary intentionally excludes post-link, `void` callback and installation actions; it is a scheduler-work summary, and `targets[]` carries per-target status.
 
-`vmake test` follows the same report lifecycle with `command:"test"`: the running record replaces any previous report before configuration work, the completed report carries build targets, summary, `tests[]` and the compilation database, and a later failing test run overwrites an earlier succeeded build or test report with a new buildId. Status is `succeeded` only when every executable test target passed; it is `failed` when any test fails or when no test target exists, and the run exits non-zero with the concise error `no test targets found`. `vmake build --tests` is still a build: zero test targets is not an error there and its test counts stay zero. Test reports keep `summary` on test failure because the build phase completed; when the build phase itself fails, `summary` is omitted and the failed report still carries the resolved configuration identity and compilation database. `vmake test` never installs outputs, so `artifacts` is empty. It prints `Tests succeeded: <passed>/<found> passed in <duration> (buildId=...)` on success and `Tests failed: <error>` on failure; with `-q` that is the only stdout.
+`vmake test` follows the same report lifecycle with `command:"test"`: the running record replaces any previous report before configuration work, the completed report carries build targets, summary, `tests[]` and the compilation database, and a later failing test run overwrites an earlier succeeded build or test report with a new buildId. Status is `succeeded` only when every executable test target passed; it is `failed` when any test fails or when no test target exists, and the run exits non-zero with the concise error `no test targets found`. `vmake build --tests` is still a build: zero test targets is not an error there and its test counts stay zero. Test reports keep `summary` on test failure because the build phase completed; when the build phase itself fails, `summary` is omitted and the failed report still carries the resolved configuration identity and compilation database. `vmake test` never installs outputs, so `artifacts` is empty. It prints `Tests succeeded: <passed>/<found> passed in <duration> (buildId=...)` on success and `Tests failed: <error>` on failure; with `-q` that is the only stdout, and in `--json` mode the envelope replaces both lines (see **Machine-readable invocation**).
+
+## Machine-readable invocation
+
+`vmake build --json`, `vmake rebuild --json` and `vmake test --json` write exactly one JSON document to the real stdout when the command finishes:
+
+```json
+{
+  "schemaVersion": 1,
+  "command": "build",
+  "status": "ok",
+  "data": { "schemaVersion": 2, "buildId": "...", "status": "succeeded", "...": "..." },
+  "diagnostics": []
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| schemaVersion | Envelope schema version, currently 1 |
+| command | `build` for build and rebuild, `test` for test |
+| status | `ok` when the report status is succeeded; `error` when it is failed or cancelled |
+| data | The complete schemaVersion 2 report described above, identical to the report written to `build/vmake-build.json` |
+| diagnostics | A copy of `data.diagnostics`; always an array |
+
+While the command runs, vlog progress, buildscript `fmt`/`print` output, child-process stdout and other human text go to stderr instead of stdout. Raw compiler/linker output and the concise final `Error:` line remain on stderr, and JSON mode does not print the human success/failure summary line at all, so `vmake build --json | jq .status` is safe. `--json` does not change the report file, artifacts or exit codes: a failed run still exits non-zero after emitting `status:"error"` with the concise `data.error` and diagnostics. `-q`, `-v` and `-V` keep controlling stderr verbosity; with `-q`, buildscript stdout stays suppressed as in normal quiet mode, while the JSON document is still written to stdout.
 
 The full failing command and raw tool output are deliberately no longer stored in the report: the raw compiler/linker diagnostic remains on stderr (streamed exactly once), and the report carries the parsed form plus the concise summary. On failure the final human `Error:` line on stderr is the same concise summary as `error`. A link or other command failure whose output has no parseable `file:line:column: severity:` prefix yields one fallback diagnostic whose message is the trimmed output tail (up to 1000 characters) with the stage-derived code, and its summary is truncated to the same ~300-character budget.
 
