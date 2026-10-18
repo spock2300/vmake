@@ -131,6 +131,21 @@ still stream to stderr. A CMake stage running longer than 10 seconds prints
 `  cmake <stage>: still running (Ns)` to stderr every 10 seconds, including
 under `-q`; fast stages print no heartbeat.
 
+## Build check (plan mode)
+
+`vmake build --check` (alias `--plan`) resolves the project like a build but
+evaluates action signatures/records without compiling, linking, running `void`
+callbacks or post-link steps, writing action records, installing, or writing
+`build/vmake-build.json`/`compile_commands.json`. Generator rules and
+config-header generation are skipped, so sources produced by generators may be
+undercounted; check is a plan, not a guarantee. `workPending` means
+`plannedCompiles + plannedLinks > 0`; `plannedCallbacks` counts default `void`
+targets whose callbacks would run. Exit is 0 when planning succeeds even with
+pending work, 1 on planning errors, 2 for `--check` with `--install`/`--tests`.
+Human output is one line; `--json` emits `{schemaVersion:1,command:"check",
+status,data:{workPending,plannedCompiles,plannedLinks,plannedCallbacks,
+upToDate,targetsTotal},diagnostics}`.
+
 ## `--json`
 
 `vmake build --json`, `vmake rebuild --json`, and `vmake test --json` write
@@ -203,12 +218,14 @@ outcome.
   `--require-tests` no-tests, or preflight refusal) also records one
   `VMAKE_E_TEST` error diagnostic, so the `--json` envelope's `diagnostics` is
   never empty when `status` is `error`.
-- A host project with no runnable test target builds as needed, then reports
-  `status: "succeeded"`, `summary.testsFound: 0`, prints
-  `Tests succeeded: no test targets`, and exits 0. Pass `--require-tests` to
-  make this case fail with `error: "no test targets found"`, `status: "failed"`,
-  and exit 1 (useful in CI).
-- Test preflight runs before any build action. If the effective root platform
+- A project with no runnable test target is detected before the build phase:
+  it reports `status: "succeeded"`, `summary.testsFound: 0`, prints
+  `Tests succeeded: no test targets`, and exits 0 without compiling anything.
+  Pass `--require-tests` to make this case fail with
+  `error: "no test targets found"`, `status: "failed"`, and exit 1 without
+  building (useful in CI). If target declaration cannot be trusted (missing
+  sources or a script error), vmake falls back to the normal build path.
+- When runnable tests exist, preflight checks the effective root platform. If it
   cannot execute tests (`target_os` is `none`, differs from the host, or
   `target_triple` is non-empty), the run exits 1 with the
   `cannot run tests for project target ... use 'vmake build --tests'` message,

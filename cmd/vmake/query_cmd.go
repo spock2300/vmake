@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -33,7 +34,9 @@ are appended to the line as "+<target> (<kind>)".
 
 Dry-run target declaration runs with interpreted-script writes disabled; a
 callback that writes reports a warning on stderr and that package's targets are
-omitted, without modifying the project.`,
+omitted, without modifying the project. When packages are omitted for blocked
+writes, one stderr summary line after the target listing reports the count and
+the p.DryRun()/--allow-dry-run-writes remediation; the command still exits 0.`,
 		Run: runQuery,
 	}
 	cmd.AddCommand(newQueryTargetsCmd())
@@ -70,9 +73,11 @@ func runQueryTargets(cmd *cobra.Command, args []string) {
 	ctx := resolveToConfig(false)
 	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
 	fatalErr(err)
+	scriptfs.TakeBlockedWrites()
 	printInspectSourceWarnings(ctx, inspection)
 
 	warned := make(map[string]bool)
+	readOnlyOmitted := 0
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if node == nil || !node.IsLocal() || node.Pkg == nil {
@@ -83,13 +88,23 @@ func runQueryTargets(cmd *cobra.Command, args []string) {
 		}
 		kinds, err := collectTargetKinds(name, inspection.PkgDirs[name], ctx, inspection.PackageToolchains[name], inspection.GlobalValues)
 		if err != nil {
-			warnTargetDeclare(warned, name, err)
+			if warnTargetDeclare(warned, name, err) {
+				readOnlyOmitted++
+			}
 			continue
 		}
 		for _, k := range kinds {
 			fmt.Printf("%s:%s (%s)\n", name, k.name, k.kind)
 		}
 	}
+	printReadOnlyTargetsSummary(readOnlyOmitted)
+}
+
+func printReadOnlyTargetsSummary(count int) {
+	if count == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Warning: %s; fix: %s\n", readOnlyTargetsMessage(count), readOnlyTargetsWarningFix)
 }
 
 func runQueryConfig(cmd *cobra.Command, args []string) {
@@ -137,6 +152,7 @@ func runQuery(cmd *cobra.Command, args []string) {
 
 	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
 	fatalErr(err)
+	scriptfs.TakeBlockedWrites()
 	printInspectSourceWarnings(ctx, inspection)
 	workDir := ctx.WorkDir
 
@@ -194,6 +210,7 @@ func runQuery(cmd *cobra.Command, args []string) {
 		printer.print(root, "", true, true)
 		printed++
 	}
+	printReadOnlyTargetsSummary(printer.readOnlyOmitted)
 }
 
 func formatPkgDir(pkgDir, workDir string) string {
@@ -216,9 +233,10 @@ type treePrinter struct {
 	tcs     map[string]*toolchain.Toolchain
 	workDir string
 
-	visited map[string]bool
-	kinds   map[string][]targetKindInfo
-	warned  map[string]bool
+	visited         map[string]bool
+	kinds           map[string][]targetKindInfo
+	warned          map[string]bool
+	readOnlyOmitted int
 }
 
 func (p *treePrinter) targetKinds(name string) []targetKindInfo {
@@ -227,23 +245,27 @@ func (p *treePrinter) targetKinds(name string) []targetKindInfo {
 	}
 	kinds, err := collectTargetKinds(name, p.pkgDirs[name], p.ctx, p.tcs[name], p.values)
 	if err != nil {
-		warnTargetDeclare(p.warned, name, err)
+		if warnTargetDeclare(p.warned, name, err) {
+			p.readOnlyOmitted++
+		}
 	}
 	p.kinds[name] = kinds
 	return kinds
 }
 
-func warnTargetDeclare(warned map[string]bool, name string, err error) {
+func warnTargetDeclare(warned map[string]bool, name string, err error) bool {
 	if warned[name] {
-		return
+		return false
 	}
 	warned[name] = true
 	message := err.Error()
-	if strings.Contains(message, "read-only inspection:") {
+	readOnly := strings.Contains(message, "read-only inspection:")
+	if readOnly {
 		message = strings.ReplaceAll(message, "panic: ", "")
 		message += " (guard generated-file work with p.DryRun())"
 	}
 	fmt.Fprintf(os.Stderr, "Warning: cannot declare targets for %s: %s\n", name, message)
+	return readOnly
 }
 
 func (p *treePrinter) print(name, prefix string, isRoot, isLast bool) {
@@ -361,6 +383,13 @@ func collectTargetKinds(name string, dirs *api.PkgDirs, ctx *RuntimeContext, tc 
 	}
 
 	buildCtx, err := pipeline.DeclareTargets(ctx, name, dirs, tc, globalValues)
+	if blocked := scriptfs.TakeBlockedWrites(); len(blocked) > 0 && err == nil {
+		if len(blocked) == 1 {
+			err = errors.New(blocked[0])
+		} else {
+			err = fmt.Errorf("%s (and %d more blocked write attempts)", blocked[0], len(blocked)-1)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}

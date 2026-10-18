@@ -122,12 +122,16 @@ declaration: the package's targets are omitted and one
 This happens even when the callback ignores the returned error and continues;
 inspect records the attempt and turns it into a declaration failure, so an
 optimistic `_ = os.WriteFile(...)` in `OnBuild` cannot silently appear to
-succeed. The callback may keep running, but the write did not happen. This
-guard covers the wrapped symbols only: a script that reaches unwrapped stdlib
-APIs such as `os.MkdirTemp`, `ioutil.*`, or a subprocess is not sandboxed, and a
-script that uses them can still write during inspection. The mode is also active
-while `Require`/`Configure` run, so wrapped writes there are rejected too, but
-only dry-run `OnBuild` attempts are attached to a target-declaration warning.
+succeed. The callback may keep running, but the write did not happen. When one
+or more packages are omitted this way, inspect appends one additional aggregate
+`VMAKE_W_READ_ONLY_TARGETS` warning after the per-package warnings; the
+per-package warnings are retained and the aggregate reports the omitted-package
+count. This guard covers the wrapped symbols only: a script that reaches
+unwrapped stdlib APIs such as `os.MkdirTemp`, `ioutil.*`, or a subprocess is not
+sandboxed, and a script that uses them can still write during inspection. The
+mode is also active while `Require`/`Configure` run, so wrapped writes there are
+rejected too, but only dry-run `OnBuild` attempts are attached to a
+target-declaration warning.
 Normal `build`/`rebuild` never enables the mode, so scripts that generate files
 in a real build are unaffected.
 
@@ -188,6 +192,17 @@ that mentions `read-only inspection: interpreted script write to ... is not
 allowed` means the callback tried to write a file while inspect held the
 read-only guard; the file was not created or removed.
 
+The aggregate warning is additional to the per-package diagnostics:
+
+```json
+{
+  "severity": "warning",
+  "code": "VMAKE_W_READ_ONLY_TARGETS",
+  "message": "omitted targets for 2 package(s) because dry-run callbacks attempted writes",
+  "fix": "Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected."
+}
+```
+
 A needed package whose expected source tree is missing or empty gets one
 warning. Inspect checks the tree without running git, touching the network,
 creating `<package>/src` links, or writing `.vmake_deps`; a missing tree never
@@ -220,7 +235,18 @@ packages whose source is present, a target-declaration failure does not abort
 query either: it prints one
 `Warning: cannot declare targets for <package>: <error>` line to stderr, omits
 that package's targets or kind label, and continues with the remaining
-packages. The warning is emitted once per package.
+packages. The warning is emitted once per package. When one or more of those
+declarations failed because the read-only guard rejected a script write, both
+`query` and `query targets` print one aggregate summary line to stderr after
+the target listing, exit 0, and keep the per-package warnings:
+
+```
+Warning: omitted targets for 2 package(s) because dry-run callbacks attempted writes; fix: Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected.
+```
+
+The count is the number of packages whose targets were omitted, and the summary
+line is printed once, after everything on stdout. It is absent when no
+read-only declaration failure occurred.
 
 `build/vmake-build.json` or `build/vmake-test.json` may exist but be unreadable
 or invalid JSON (for example a truncated file left by an interrupted writer, or
@@ -503,9 +529,10 @@ Output is deterministic for the same project, configuration, overrides, build
 report, and source trees: packages and roots are sorted by name, graph edges by
 `(from, to)`, freshness sources are de-duplicated and sorted, target
 `resolvedFiles` are de-duplicated and sorted, target
-`cFlags`/`cxxFlags`/`ldFlags` keep the buildscript's declaration order, and JSON
-object keys follow Go's `encoding/json` ordering. Consecutive runs are
-byte-identical. Build- and
+`cFlags`/`cxxFlags`/`ldFlags` keep the buildscript's declaration order,
+target-declaration diagnostics keep package-name order with the
+`VMAKE_W_READ_ONLY_TARGETS` aggregate last, and JSON object keys follow Go's
+`encoding/json` ordering. Consecutive runs are byte-identical. Build- and
 test-state fields are snapshots of the report and compile database files, so
 they stay byte-identical until one of those files changes. The freshness
 heuristic changes when the build report or a declared source's modification time
@@ -522,7 +549,8 @@ or renamed.
 | Invalid `--set` | `status: "error"`, `code: VMAKE_E_OPTION` | 1 | one `Error: ...` line |
 
 Warnings cover target-declaration failures (`VMAKE_W_TARGET_DECLARE`, including
-a dry-run write rejected by the read-only guard), missing source trees
+a dry-run write rejected by the read-only guard), the read-only omission
+aggregate (`VMAKE_W_READ_ONLY_TARGETS`), missing source trees
 (`VMAKE_W_SOURCE_MISSING`), and unreadable build or test reports
 (`VMAKE_W_REPORT_UNREADABLE`). Buildscript stdout is always discarded, including
 on failure; stdout contains one JSON document in every row.

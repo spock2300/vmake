@@ -118,7 +118,7 @@ Reads, stats, directory listings, and `Walk`/`WalkDir` keep working, and normal
 rename, or delete an existing file, so inspecting after a build leaves generated
 files in place. Any dry-run `OnBuild` write attempt fails that package's target
 declaration: its targets are omitted and it gets a `VMAKE_W_TARGET_DECLARE`
-warning carrying the read-only message. This also applies when the callback
+warning carrying the read-only message. When one or more packages are omitted this way, inspect appends one deterministic `VMAKE_W_READ_ONLY_TARGETS` aggregate naming the count and fix. This also applies when the callback
 ignores the returned error (`_ = os.WriteFile(...)`); inspect records the attempt
 and treats it as a declaration failure. The guard covers the wrapped symbols
 only: unwrapped stdlib APIs such as `os.MkdirTemp`, `ioutil.*`, or subprocesses

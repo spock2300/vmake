@@ -28,7 +28,13 @@ const (
 	inspectSchemaVersion                = 1
 	inspectFreshnessChangedSourcesLimit = 50
 	inspectResolvedFilesLimit           = 200
+	readOnlyTargetsWarningCode          = "VMAKE_W_READ_ONLY_TARGETS"
+	readOnlyTargetsWarningFix           = "Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected."
 )
+
+func readOnlyTargetsMessage(count int) string {
+	return fmt.Sprintf("omitted targets for %d package(s) because dry-run callbacks attempted writes", count)
+}
 
 type inspectEnvelope struct {
 	SchemaVersion int                 `json:"schemaVersion"`
@@ -213,8 +219,10 @@ verify action or output freshness. Diagnostics is always an array.
 Dry-run OnBuild runs with interpreted-script file writes disabled: wrapped os
 write APIs fail with a read-only error instead of touching the filesystem, so a
 script that writes produces a VMAKE_W_TARGET_DECLARE warning and that package's
-targets are omitted. Reads, stats and globs still work. vmake's own state files
-are unaffected. --allow-dry-run-writes disables this guard for scripts that
+targets are omitted; one additional VMAKE_W_READ_ONLY_TARGETS warning reports
+how many packages were omitted and how to guard or permit the writes. Reads,
+stats and globs still work. vmake's own state files are unaffected.
+--allow-dry-run-writes disables this guard for scripts that
 must generate inputs before declaring targets; it can modify the build tree and
 should be used only when those writes are expected.
 
@@ -607,6 +615,7 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 	}
 	sources := inspectSourceStates(ctx, inspection)
 	diagnostics := make([]inspectDiagnostic, 0)
+	readOnlyOmitted := 0
 	for _, name := range inspectPackageNames(ctx) {
 		node := ctx.DepGraph.Packages[name]
 		if node == nil || node.Source == nil {
@@ -647,7 +656,8 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 					fix := "Fix the package OnBuild callback, then rerun vmake inspect."
 					if strings.Contains(message, "read-only inspection:") {
 						message = strings.ReplaceAll(message, "panic: ", "")
-						fix = "Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected."
+						fix = readOnlyTargetsWarningFix
+						readOnlyOmitted++
 					}
 					diagnostics = append(diagnostics, inspectDiagnostic{
 						Severity: "warning",
@@ -663,6 +673,14 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 		data.Packages = append(data.Packages, pkg)
 	}
 	data.Freshness = inspectFreshnessFor(buildReportState, data.Packages)
+	if readOnlyOmitted > 0 {
+		diagnostics = append(diagnostics, inspectDiagnostic{
+			Severity: "warning",
+			Code:     readOnlyTargetsWarningCode,
+			Message:  readOnlyTargetsMessage(readOnlyOmitted),
+			Fix:      readOnlyTargetsWarningFix,
+		})
+	}
 	if reportDiagnostic != nil {
 		diagnostics = append(diagnostics, *reportDiagnostic)
 	}

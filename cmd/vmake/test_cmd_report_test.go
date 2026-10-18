@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/spock2300/vmake/internal/jsonio"
+	"github.com/spock2300/vmake/pkg/repo"
 )
 
 const passingTestSource = "int main(void) { return 0; }\n"
@@ -221,6 +222,176 @@ func TestTestCommandRequireTestsFailsWithNoTargets(t *testing.T) {
 	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Severity != "error" ||
 		report.Diagnostics[0].Code != "VMAKE_E_TEST" || report.Diagnostics[0].Message != "no test targets found" {
 		t.Fatalf("require-tests diagnostics = %+v", report.Diagnostics)
+	}
+}
+
+func assertNoTestBuildOutput(t *testing.T, project string) {
+	t.Helper()
+	if dirs := buildKeyDirectories(t, project); len(dirs) != 0 {
+		t.Fatalf("no-tests preflight created build-key directories: %v", dirs)
+	}
+	for _, path := range []string{
+		filepath.Join(project, "build", "compile_commands.json"),
+		filepath.Join(project, "install"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("no-tests preflight created %s: %v", path, err)
+		}
+	}
+}
+
+func TestTestCommandNoTargetsSkipsBuild(t *testing.T) {
+	project := writeTestCommandProject(t, "")
+	stdout, stderr, code := runBuildCommand(t, project, "test")
+	if code != 0 || stderr != "" {
+		t.Fatalf("test exit = %d, stderr = %q\n%s", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, "Tests succeeded: no test targets") {
+		t.Fatalf("no-tests summary missing:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "Building...") || strings.Contains(stdout, "Executing OnBuild") || strings.Contains(stdout, "  CC ") {
+		t.Fatalf("no-tests preflight ran the build:\n%s", stdout)
+	}
+	assertNoTestBuildOutput(t, project)
+	report := loadTestReport(t, project)
+	if report.Status != "succeeded" || report.Command != reportCommandTest || report.Error != "" {
+		t.Fatalf("no-tests report = %+v", report)
+	}
+	if len(report.Targets) != 0 || len(report.Tests) != 0 || len(report.Artifacts) != 0 || report.CompileDatabase != "" {
+		t.Fatalf("no-tests results = %+v (compile database %q)", report, report.CompileDatabase)
+	}
+	summary := report.Summary
+	if summary == nil || summary.TestsFound != 0 || summary.TestsPassed != 0 || summary.TestsFailed != 0 ||
+		summary.TargetsTotal != 0 || summary.FilesCompiled != 0 || summary.FilesLinked != 0 ||
+		summary.ArtifactsInstalled != 0 || !summary.NoOp || summary.ChangedFiles == nil || len(summary.ChangedFiles) != 0 {
+		t.Fatalf("no-tests summary = %+v", summary)
+	}
+}
+
+func TestTestCommandRequireTestsSkipsBuild(t *testing.T) {
+	project := writeTestCommandProject(t, "")
+	writeExtensionFile(t, reportPath(project), `{"schemaVersion":2,"buildId":"previous-build","status":"succeeded","command":"build"}`)
+	buildReportSnapshot := snapshotReport(t, reportPath(project))
+	stdout, stderr, code := runBuildCommand(t, project, "test", "--require-tests")
+	if code != 1 {
+		t.Fatalf("test --require-tests exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Tests failed: no test targets found") {
+		t.Fatalf("require-tests stdout = %q", stdout)
+	}
+	if !strings.Contains(stderr, "Error: no test targets found") {
+		t.Fatalf("require-tests stderr = %q", stderr)
+	}
+	if strings.Contains(stdout, "Building...") || strings.Contains(stdout, "Executing OnBuild") || strings.Contains(stdout, "  CC ") {
+		t.Fatalf("require-tests preflight ran the build:\n%s", stdout)
+	}
+	if dirs := buildKeyDirectories(t, project); len(dirs) != 0 {
+		t.Fatalf("require-tests preflight created build-key directories: %v", dirs)
+	}
+	if _, err := os.Stat(filepath.Join(project, "build", "compile_commands.json")); !os.IsNotExist(err) {
+		t.Fatalf("require-tests preflight created the compile database: %v", err)
+	}
+	assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
+	report := loadTestReport(t, project)
+	if report.Status != "failed" || report.Command != reportCommandTest || report.Error != "no test targets found" {
+		t.Fatalf("require-tests report = %+v", report)
+	}
+	if len(report.Targets) != 0 || len(report.Tests) != 0 || len(report.Artifacts) != 0 {
+		t.Fatalf("require-tests results = %+v", report)
+	}
+	if report.Summary == nil || report.Summary.TestsFound != 0 || report.Summary.TargetsTotal != 0 {
+		t.Fatalf("require-tests summary = %+v", report.Summary)
+	}
+	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Severity != "error" ||
+		report.Diagnostics[0].Code != "VMAKE_E_TEST" || report.Diagnostics[0].Message != "no test targets found" {
+		t.Fatalf("require-tests diagnostics = %+v", report.Diagnostics)
+	}
+}
+
+func TestTestCommandNoTestsPreflightFallsBackOnDeclarationFailure(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "fallback")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		if p.DryRun() {
+			panic("declaration needs a real build")
+		}
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n")
+	stdout, stderr, code := runBuildCommand(t, project, "test")
+	if code != 0 {
+		t.Fatalf("test exit = %d, want 0 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Tests succeeded: no test targets") {
+		t.Fatalf("fallback summary missing:\n%s", stdout)
+	}
+	if dirs := buildKeyDirectories(t, project); len(dirs) != 1 {
+		t.Fatalf("fallback build-key directories = %v, want one real build", dirs)
+	}
+	if _, err := os.Stat(filepath.Join(project, "build", "compile_commands.json")); err != nil {
+		t.Fatalf("fallback build did not write the compile database: %v", err)
+	}
+	report := loadTestReport(t, project)
+	if report.Status != "succeeded" || report.Summary == nil || report.Summary.TestsFound != 0 ||
+		len(report.Targets) == 0 || report.Summary.FilesCompiled == 0 {
+		t.Fatalf("fallback report = %+v (summary %+v)", report, report.Summary)
+	}
+}
+
+func TestTestCommandNoTestsPreflightFallsBackOnMissingSource(t *testing.T) {
+	missing := repo.RepoFileURL(filepath.Join(t.TempDir(), "missing.git"))
+	project := filepath.Join(t.TempDir(), "missing-source")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).AddDeps("lib:lib")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "lib", "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.OnPackage(func(p *api.Package) {
+		p.SetGit("`+missing+`")
+		p.AddVersion("1.0.0", "v1.0.0")
+	})
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("lib").SetKind(api.TargetStatic).AddFiles("src/*.c")
+	})
+}
+`)
+	stdout, stderr, code := runBuildCommand(t, project, "test")
+	if code != 1 {
+		t.Fatalf("test exit = %d, want 1 for the fallback build (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if strings.Contains(stdout, "Tests succeeded: no test targets") {
+		t.Fatalf("missing-source preflight reported no tests instead of falling back:\n%s", stdout)
+	}
+	report := loadTestReport(t, project)
+	if report.Status != "failed" || report.Command != reportCommandTest {
+		t.Fatalf("missing-source report = %+v", report)
+	}
+	if report.Error == "" || strings.Contains(report.Error, "no test targets found") {
+		t.Fatalf("missing-source error = %q, want the fallback build error", report.Error)
+	}
+	for _, diagnostic := range report.Diagnostics {
+		if diagnostic.Code == "VMAKE_E_TEST" && strings.Contains(diagnostic.Message, "no test targets found") {
+			t.Fatalf("missing-source fallback produced a no-tests diagnostic: %+v", diagnostic)
+		}
 	}
 }
 
@@ -682,22 +853,23 @@ int main(void) {
 	}
 }
 
-func TestTestCommandKeepGoingBuildFailureWithoutTestsKeepsTestsEmpty(t *testing.T) {
+func TestTestCommandKeepGoingNoTestsSkipsBuild(t *testing.T) {
 	project := writeTestCommandProject(t, "")
 	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
 	stdout, stderr, code := runBuildCommand(t, project, "test", "-k")
-	if code != 1 {
-		t.Fatalf("test -k exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	if code != 0 || stderr != "" {
+		t.Fatalf("test -k exit = %d, stderr = %q\n%s", code, stderr, stdout)
 	}
-	if !strings.Contains(stdout, "Tests failed: src/main.c:2:") {
-		t.Fatalf("build error is not the summary:\n%s", stdout)
+	if !strings.Contains(stdout, "Tests succeeded: no test targets") {
+		t.Fatalf("no-tests summary missing:\n%s", stdout)
 	}
+	assertNoTestBuildOutput(t, project)
 	report := loadTestReport(t, project)
-	if report.Status != "failed" || report.Command != reportCommandTest {
+	if report.Status != "succeeded" || report.Command != reportCommandTest || report.Error != "" {
 		t.Fatalf("no-tests report = %+v", report)
 	}
-	if len(report.Tests) != 0 {
-		t.Fatalf("no-tests entries = %+v, want none", report.Tests)
+	if len(report.Tests) != 0 || len(report.Targets) != 0 {
+		t.Fatalf("no-tests results = %+v (targets %+v), want none", report.Tests, report.Targets)
 	}
 	if report.Summary == nil || report.Summary.TestsFound != 0 || report.Summary.TestsPassed != 0 ||
 		report.Summary.TestsFailed != 0 {

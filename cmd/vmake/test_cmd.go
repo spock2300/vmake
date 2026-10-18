@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	exec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 	vlog "github.com/spock2300/vmake/pkg/log"
@@ -39,8 +40,12 @@ built, or whose binary is missing or stale, are recorded as notRun with a
 skipReason and printed as SKIP <pkg:target> (<reason>) at default verbosity.
 Quiet mode (-q) suppresses those lines.
 
-A project with no runnable test targets succeeds and exits 0. Pass
---require-tests to make that case fail.
+A project with no runnable test targets succeeds and exits 0 without running
+the build phase: test declares targets cheaply first and skips the build when
+none is a test target, publishing a succeeded test report with testsFound 0.
+Pass --require-tests to make that case fail before the build with
+VMAKE_E_TEST. A declaration that cannot be trusted (missing sources or a
+script error) falls back to the normal build-then-discover path.
 
 Results are published to build/vmake-test.json (schemaVersion 2) with per-test
 pass/fail, exit code, signal, and output. A failing or signaled test exits 1;
@@ -60,6 +65,14 @@ func runTest(cmd *cobra.Command, args []string) error {
 		return withResolvedProject(execution, func(ctx *RuntimeContext) error {
 			if err := report.bind(ctx); err != nil {
 				return err
+			}
+			if tests, known := countRunnableTestTargets(ctx); known && tests == 0 {
+				report.Summary = newBuildSummary(&BuildResult{}, 0)
+				if requireTestsFlag {
+					return errNoTestTargets
+				}
+				report.completed = true
+				return nil
 			}
 			if err := validateTestProject(ctx); err != nil {
 				return err
@@ -135,6 +148,56 @@ func validateTestProject(ctx *RuntimeContext) error {
 		}
 	}
 	return firstErr
+}
+
+// countRunnableTestTargets cheaply declares targets to find the default binary
+// test targets runAllTests would run. It reports false when declaration cannot
+// be trusted, so the caller falls back to the normal build path.
+func countRunnableTestTargets(ctx *RuntimeContext) (int, bool) {
+	restoreStdout := silenceInspectStdout()
+	restoreStderr := silenceInspectStderr()
+	defer func() {
+		restoreStdout()
+		restoreStderr()
+	}()
+	scriptfs.SetReadOnly(true)
+	defer scriptfs.SetReadOnly(false)
+
+	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
+	if err != nil || len(inspection.Needed) == 0 {
+		return 0, false
+	}
+	scriptfs.TakeBlockedWrites()
+	count := 0
+	for _, name := range ctx.Resolver.GetOrder() {
+		if !inspection.Needed[name] {
+			continue
+		}
+		node := ctx.DepGraph.Packages[name]
+		if node == nil || node.Source == nil || !inspectSourcePresent(ctx, name, node) {
+			return 0, false
+		}
+		dirs := inspection.PkgDirs[name]
+		if dirs == nil || dirs.BuildDir == "" {
+			return 0, false
+		}
+		buildCtx, err := pipeline.DeclareTargets(ctx, name, dirs, inspection.PackageToolchains[name], inspection.GlobalValues)
+		if blocked := scriptfs.TakeBlockedWrites(); len(blocked) > 0 && err == nil {
+			err = errors.New(blocked[0])
+		}
+		if err != nil {
+			if strings.Contains(err.Error(), "read-only inspection:") {
+				continue
+			}
+			return 0, false
+		}
+		for _, target := range buildCtx.GetTargets() {
+			if target.IsTest() && target.IsDefault() && target.Kind() == api.TargetBinary {
+				count++
+			}
+		}
+	}
+	return count, true
 }
 
 type testResult struct {

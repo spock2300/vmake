@@ -443,6 +443,101 @@ func TestQueryToleratesTargetDeclarationFailure(t *testing.T) {
 	}
 }
 
+func TestQueryReadOnlyOmissionSummary(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+    p.SetRoot(true)
+    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib", "tool") })
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("app").SetKind(api.TargetBinary).AddDeps("lib:lib", "tool:tool")
+    })
+}
+`)
+	for _, name := range []string{"lib", "tool"} {
+		writeExtensionFile(t, filepath.Join(project, name, "build.go"), `package main
+import (
+    "os"
+    "github.com/spock2300/vmake/pkg/api"
+)
+func Main(p *api.Package) {
+    p.OnBuild(func(ctx *api.BuildContext) {
+        _ = os.WriteFile("generated.txt", []byte("generated"), 0644)
+        ctx.Target("`+name+`").SetKind(api.TargetStatic)
+    })
+}
+`)
+	}
+	wantSummary := "Warning: omitted targets for 2 package(s) because dry-run callbacks attempted writes; fix: Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected."
+	for _, args := range [][]string{{"query"}, {"query", "targets"}} {
+		state := t.TempDir()
+		stdout, stderr, code := runInspectCommandWithState(t, project, state, args...)
+		if code != 0 {
+			t.Fatalf("%v exit = %d, want 0 (stderr %q)", args, code, stderr)
+		}
+		if got := strings.Count(stderr, "Warning: omitted targets for "); got != 1 {
+			t.Fatalf("%v stderr has %d summary lines, want 1:\n%s", args, got, stderr)
+		}
+		if !strings.HasSuffix(stderr, wantSummary+"\n") {
+			t.Fatalf("%v stderr = %q, want the omission summary last", args, stderr)
+		}
+		for _, name := range []string{"lib", "tool"} {
+			if !strings.Contains(stderr, "Warning: cannot declare targets for "+name+":") {
+				t.Fatalf("%v stderr is missing the %s per-package warning:\n%s", args, name, stderr)
+			}
+		}
+		if args[0] == "query" && !strings.Contains(stdout, "app (binary)") {
+			t.Fatalf("%v is missing the declared root target:\n%s", args, stdout)
+		}
+		if len(args) > 1 && !strings.Contains(stdout, "proj:app (binary)") {
+			t.Fatalf("%v is missing the declared root target:\n%s", args, stdout)
+		}
+		if strings.Contains(stdout, "lib (static)") || strings.Contains(stdout, "tool (static)") {
+			t.Fatalf("%v declared targets for read-only omitted packages:\n%s", args, stdout)
+		}
+		for _, name := range []string{"lib", "tool"} {
+			if _, err := os.Stat(filepath.Join(project, name, "generated.txt")); !os.IsNotExist(err) {
+				t.Fatalf("%v wrote %s/generated.txt: %v", args, name, err)
+			}
+		}
+	}
+}
+
+func TestQueryIgnoresBlockedWritesOutsideTargetDeclaration(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+import (
+    "os"
+    "github.com/spock2300/vmake/pkg/api"
+)
+func Main(p *api.Package) {
+    p.SetRoot(true)
+    p.OnConfig(func(ctx *api.ConfigContext) {
+        _ = os.WriteFile("config-generated.txt", []byte("config"), 0644)
+    })
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("app").SetKind(api.TargetBinary)
+    })
+}
+`)
+	for _, args := range [][]string{{"query"}, {"query", "targets"}} {
+		stdout, stderr, code := runInspectCommandWithState(t, project, t.TempDir(), args...)
+		if code != 0 {
+			t.Fatalf("%v exit = %d, want 0 (stderr %q)", args, code, stderr)
+		}
+		if !strings.Contains(stdout, "app (binary)") {
+			t.Fatalf("%v is missing the declared target:\n%s", args, stdout)
+		}
+		if strings.Contains(stderr, "cannot declare targets") || strings.Contains(stderr, "omitted targets for ") {
+			t.Fatalf("%v attributed a resolution-time blocked write to a package declaration:\n%s", args, stderr)
+		}
+		if _, err := os.Stat(filepath.Join(project, "config-generated.txt")); !os.IsNotExist(err) {
+			t.Fatalf("%v wrote config-generated.txt: %v", args, err)
+		}
+	}
+}
+
 func writeQueryPanickingSourceProject(t *testing.T, materialize bool) string {
 	t.Helper()
 	project := filepath.Join(t.TempDir(), "proj")

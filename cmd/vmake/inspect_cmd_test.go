@@ -1866,15 +1866,21 @@ func Main(p *api.Package) {
 	if envelope.Status != "ok" || envelope.Data == nil {
 		t.Fatalf("envelope = %+v", envelope)
 	}
-	if len(envelope.Diagnostics) != 1 {
-		t.Fatalf("diagnostics = %+v, want one target-declaration warning", envelope.Diagnostics)
+	if len(envelope.Diagnostics) != 2 {
+		t.Fatalf("diagnostics = %+v, want one target-declaration warning and one read-only aggregate", envelope.Diagnostics)
 	}
 	diagnostic := envelope.Diagnostics[0]
 	if diagnostic.Severity != "warning" || diagnostic.Code != "VMAKE_W_TARGET_DECLARE" || !strings.Contains(diagnostic.Message, wantReadOnly) {
 		t.Fatalf("diagnostic = %+v, want read-only declaration warning", diagnostic)
 	}
-	if stderr != "Warning: "+diagnostic.Message+"\n" {
-		t.Fatalf("stderr = %q, want one warning line", stderr)
+	aggregate := envelope.Diagnostics[1]
+	if aggregate.Severity != "warning" || aggregate.Code != "VMAKE_W_READ_ONLY_TARGETS" ||
+		aggregate.Message != "omitted targets for 1 package(s) because dry-run callbacks attempted writes" ||
+		aggregate.Fix != "Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected." {
+		t.Fatalf("aggregate diagnostic = %+v", aggregate)
+	}
+	if stderr != "Warning: "+diagnostic.Message+"\nWarning: "+aggregate.Message+"\n" {
+		t.Fatalf("stderr = %q, want declaration and aggregate warning lines", stderr)
 	}
 	if proj := inspectPackageNamed(t, envelope.Data, "ro"); proj.Targets != nil {
 		t.Fatalf("ro targets = %+v, want omitted after read-only declaration failure", proj.Targets)
@@ -1895,7 +1901,8 @@ func Main(p *api.Package) {
 		t.Fatalf("inspect after build exit = %d, stderr = %q", code, stderr)
 	}
 	envelope = decodeInspectEnvelope(t, stdout)
-	if len(envelope.Diagnostics) != 1 || !strings.Contains(envelope.Diagnostics[0].Message, wantReadOnly) {
+	if len(envelope.Diagnostics) != 2 || !strings.Contains(envelope.Diagnostics[0].Message, wantReadOnly) ||
+		envelope.Diagnostics[1].Code != "VMAKE_W_READ_ONLY_TARGETS" {
 		t.Fatalf("diagnostics after build = %+v", envelope.Diagnostics)
 	}
 	if data, err := os.ReadFile(generated); err != nil || string(data) != "generated" {
@@ -1935,12 +1942,16 @@ func Main(p *api.Package) {
 	if envelope.Status != "ok" || envelope.Data == nil {
 		t.Fatalf("envelope = %+v", envelope)
 	}
-	if len(envelope.Diagnostics) != 1 {
-		t.Fatalf("diagnostics = %+v, want one blocked-write warning", envelope.Diagnostics)
+	if len(envelope.Diagnostics) != 2 {
+		t.Fatalf("diagnostics = %+v, want one blocked-write warning and one aggregate", envelope.Diagnostics)
 	}
 	diagnostic := envelope.Diagnostics[0]
 	if diagnostic.Code != "VMAKE_W_TARGET_DECLARE" || !strings.Contains(diagnostic.Message, wantReadOnly) {
 		t.Fatalf("diagnostic = %+v, want read-only declaration warning", diagnostic)
+	}
+	if aggregate := envelope.Diagnostics[1]; aggregate.Code != "VMAKE_W_READ_ONLY_TARGETS" ||
+		aggregate.Message != "omitted targets for 1 package(s) because dry-run callbacks attempted writes" {
+		t.Fatalf("aggregate diagnostic = %+v", aggregate)
 	}
 	if proj := inspectPackageNamed(t, envelope.Data, "ignored"); proj.Targets != nil {
 		t.Fatalf("ignored targets = %+v, want omitted after blocked write", proj.Targets)
@@ -1950,6 +1961,90 @@ func Main(p *api.Package) {
 	}
 	if data, err := os.ReadFile(kept); err != nil || string(data) != "keep" {
 		t.Fatalf("inspect removed kept/keep.txt: %q, %v", data, err)
+	}
+}
+
+func TestInspectReadOnlyAggregateOmission(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "aggregate")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import (
+	"os"
+
+	"github.com/spock2300/vmake/pkg/api"
+)
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
+	p.OnBuild(func(ctx *api.BuildContext) {
+		_ = os.WriteFile("root-generated.txt", []byte("root"), 0644)
+		ctx.Target("app").SetKind(api.TargetBinary).AddDeps("lib:lib")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "lib", "build.go"), `package main
+
+import (
+	"os"
+
+	"github.com/spock2300/vmake/pkg/api"
+)
+
+func Main(p *api.Package) {
+	p.OnBuild(func(ctx *api.BuildContext) {
+		_ = os.WriteFile("lib-generated.txt", []byte("lib"), 0644)
+		ctx.Target("lib").SetKind(api.TargetStatic)
+	})
+}
+`)
+	rootGenerated := filepath.Join(project, "root-generated.txt")
+	libGenerated := filepath.Join(project, "lib", "lib-generated.txt")
+	wantAggregate := "omitted targets for 2 package(s) because dry-run callbacks attempted writes"
+
+	var first *inspectEnvelope
+	for attempt := 0; attempt < 2; attempt++ {
+		stdout, stderr, code := runInspectCommand(t, project, "inspect")
+		if code != 0 {
+			t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+		}
+		envelope := decodeInspectEnvelope(t, stdout)
+		if envelope.Status != "ok" || envelope.Data == nil {
+			t.Fatalf("envelope = %+v", envelope)
+		}
+		if len(envelope.Diagnostics) != 3 {
+			t.Fatalf("diagnostics = %+v, want two per-package warnings and one aggregate", envelope.Diagnostics)
+		}
+		for i, name := range []string{"aggregate", "lib"} {
+			if got := envelope.Diagnostics[i]; got.Code != "VMAKE_W_TARGET_DECLARE" || !strings.Contains(got.Message, "read-only inspection:") ||
+				!strings.Contains(got.Message, "cannot declare targets for "+name+":") {
+				t.Fatalf("per-package diagnostic[%d] = %+v", i, got)
+			}
+		}
+		aggregate := envelope.Diagnostics[2]
+		if aggregate.Severity != "warning" || aggregate.Code != "VMAKE_W_READ_ONLY_TARGETS" ||
+			aggregate.Message != wantAggregate ||
+			aggregate.Fix != "Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected." {
+			t.Fatalf("aggregate diagnostic = %+v", aggregate)
+		}
+		if !strings.HasSuffix(stderr, "Warning: "+wantAggregate+"\n") {
+			t.Fatalf("stderr = %q, want aggregate warning last", stderr)
+		}
+		if got := strings.Count(stderr, "Warning: cannot declare targets for "); got != 2 {
+			t.Fatalf("stderr has %d per-package warnings, want 2:\n%s", got, stderr)
+		}
+		if attempt == 0 {
+			first = envelope
+			continue
+		}
+		if !reflect.DeepEqual(first.Diagnostics, envelope.Diagnostics) {
+			t.Fatalf("diagnostics are not deterministic:\nfirst:  %+v\nsecond: %+v", first.Diagnostics, envelope.Diagnostics)
+		}
+	}
+	for _, path := range []string{rootGenerated, libGenerated} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("inspect wrote %s: %v", path, err)
+		}
 	}
 }
 
