@@ -20,6 +20,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVarP(&keepGoingFlag, "keep-going", "k", false, "keep building independent targets after a failure")
 	cmd.Flags().BoolVar(&explainFlag, "explain", false, "print why each compile/link action was rebuilt")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit one JSON result document on stdout (progress goes to stderr)")
+	cmd.Flags().StringVar(&outputFlag, "output", "", "write one JSON result document to PATH instead of stdout (implies --json; - means stdout)")
 	cmd.RegisterFlagCompletionFunc("toolchain", completeToolchain)
 	cmd.RegisterFlagCompletionFunc("mode", completeMode)
 }

@@ -250,6 +250,11 @@ func TestBuildReportBootstrapChild(t *testing.T) {
 
 func runBuildCommand(t *testing.T, projectDir string, args ...string) (string, string, int) {
 	t.Helper()
+	return runBuildCommandEnv(t, projectDir, nil, args...)
+}
+
+func runBuildCommandEnv(t *testing.T, projectDir string, extraEnv []string, args ...string) (string, string, int) {
+	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -261,6 +266,7 @@ func runBuildCommand(t *testing.T, projectDir string, args ...string) (string, s
 		"VMAKE_TEST_BUILD_DIR="+t.TempDir(),
 		"VMAKE_CACHE="+t.TempDir(),
 	)
+	cmd.Env = append(cmd.Env, extraEnv...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -1666,5 +1672,290 @@ func TestMergeBuildDiagnosticsKeepsErrorsFirst(t *testing.T) {
 	}
 	if merged[2].Message != "generic warning" {
 		t.Fatalf("generic warning = %+v", merged[2])
+	}
+}
+
+type jsonPreReportDocument struct {
+	SchemaVersion int               `json:"schemaVersion"`
+	Command       string            `json:"command"`
+	Status        string            `json:"status"`
+	Data          json.RawMessage   `json:"data"`
+	Diagnostics   []buildDiagnostic `json:"diagnostics"`
+}
+
+func parsePreReportJSON(t *testing.T, stdout string) jsonPreReportDocument {
+	t.Helper()
+	decoder := json.NewDecoder(strings.NewReader(stdout))
+	var document jsonPreReportDocument
+	if err := decoder.Decode(&document); err != nil {
+		t.Fatalf("stdout is not one JSON document: %v\n%s", err, stdout)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		t.Fatalf("stdout contains more than one JSON document (%v)\n%s", err, stdout)
+	}
+	if document.SchemaVersion != 1 {
+		t.Fatalf("pre-report schemaVersion = %d, want 1", document.SchemaVersion)
+	}
+	if document.Status != "error" {
+		t.Fatalf("pre-report status = %q, want error", document.Status)
+	}
+	if string(document.Data) != "null" {
+		t.Fatalf("pre-report data = %s, want null", document.Data)
+	}
+	if len(document.Diagnostics) == 0 {
+		t.Fatalf("pre-report has no diagnostics: %s", stdout)
+	}
+	return document
+}
+
+func readJSONBuildFile(t *testing.T, path string) jsonBuildDocument {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return parseJSONBuildOutput(t, string(data))
+}
+
+func TestExitCodeMatrix(t *testing.T) {
+	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
+	stdout, stderr, code := runBuildCommand(t, project, "build")
+	if code != 0 {
+		t.Fatalf("success exit = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "Build succeeded!") {
+		t.Fatalf("success stdout = %q", stdout)
+	}
+
+	stdout, stderr, code = runBuildCommand(t, project, "build", "--bad-flag")
+	if code != 2 {
+		t.Fatalf("unknown flag exit = %d, want 2 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("unknown flag stdout = %q, want empty", stdout)
+	}
+	if !strings.Contains(stderr, "Error: unknown flag: --bad-flag") {
+		t.Fatalf("unknown flag stderr = %q", stderr)
+	}
+
+	broken := writeBuildReportProject(t, "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
+	stdout, stderr, code = runBuildCommand(t, broken, "build")
+	if code != 1 {
+		t.Fatalf("compile failure exit = %d, want 1 (stderr %q)", code, stderr)
+	}
+	if !strings.Contains(stdout, "Build failed:") {
+		t.Fatalf("compile failure stdout = %q", stdout)
+	}
+
+	outside := t.TempDir()
+	stdout, stderr, code = runBuildCommand(t, outside, "build")
+	if code != 2 {
+		t.Fatalf("outside project exit = %d, want 2 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "not inside a vmake project") {
+		t.Fatalf("outside project stderr = %q", stderr)
+	}
+
+	if _, stderr, code = runBuildCommand(t, project, "--help"); code != 0 {
+		t.Fatalf("--help exit = %d, stderr = %q", code, stderr)
+	}
+	if _, stderr, code = runBuildCommand(t, project, "version"); code != 0 {
+		t.Fatalf("version exit = %d, stderr = %q", code, stderr)
+	}
+	if _, stderr, code = runBuildCommand(t, project, "cache", "remove"); code != 2 {
+		t.Fatalf("missing argument exit = %d, want 2 (stderr %q)", code, stderr)
+	}
+}
+
+func TestBuildJSONPreReportUnknownFlag(t *testing.T) {
+	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
+	stdout, stderr, code := runBuildCommand(t, project, "build", "--json", "--bad-flag")
+	if code != 2 {
+		t.Fatalf("unknown flag exit = %d, want 2 (stderr %q)", code, stderr)
+	}
+	document := parsePreReportJSON(t, stdout)
+	if document.Command != reportCommandBuild || document.Diagnostics[0].Code != "VMAKE_E_USAGE" ||
+		!strings.Contains(document.Diagnostics[0].Message, "unknown flag: --bad-flag") {
+		t.Fatalf("pre-report = %+v", document)
+	}
+	if !strings.Contains(stderr, "Error: unknown flag: --bad-flag") {
+		t.Fatalf("human error missing from stderr: %q", stderr)
+	}
+	if _, err := os.Stat(reportPath(project)); !os.IsNotExist(err) {
+		t.Fatalf("pre-report failure wrote a build report: %v", err)
+	}
+}
+
+func TestBuildJSONPreReportOutsideProject(t *testing.T) {
+	outside := t.TempDir()
+	for _, command := range []string{reportCommandBuild, reportCommandRebuild, reportCommandTest} {
+		stdout, stderr, code := runBuildCommand(t, outside, command, "--json")
+		if code != 2 {
+			t.Fatalf("%s outside project exit = %d, want 2 (stdout %q, stderr %q)", command, code, stdout, stderr)
+		}
+		document := parsePreReportJSON(t, stdout)
+		if document.Command != command || document.Diagnostics[0].Code != "VMAKE_E_USAGE" ||
+			!strings.Contains(document.Diagnostics[0].Message, "not inside a vmake project") {
+			t.Fatalf("%s pre-report = %+v", command, document)
+		}
+		if !strings.Contains(stderr, "not inside a vmake project") {
+			t.Fatalf("%s human error missing from stderr: %q", command, stderr)
+		}
+	}
+}
+
+func TestBuildJSONPreReportStorageFailure(t *testing.T) {
+	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
+	cacheFile := filepath.Join(t.TempDir(), "cache-file")
+	writeExtensionFile(t, cacheFile, "")
+	stdout, stderr, code := runBuildCommandEnv(t, project, []string{"VMAKE_CACHE=" + cacheFile}, "build", "--json")
+	if code != 1 {
+		t.Fatalf("storage failure exit = %d, want 1 (stderr %q)", code, stderr)
+	}
+	document := parsePreReportJSON(t, stdout)
+	if document.Command != reportCommandBuild || document.Diagnostics[0].Code != "VMAKE_E_BUILD" {
+		t.Fatalf("storage failure pre-report = %+v", document)
+	}
+	if !strings.Contains(stderr, "Error: ") {
+		t.Fatalf("human storage error missing from stderr: %q", stderr)
+	}
+}
+
+func TestBuildJSONPreReportOutputFile(t *testing.T) {
+	outside := t.TempDir()
+	output := filepath.Join(t.TempDir(), "pre-report.json")
+	stdout, stderr, code := runBuildCommand(t, outside, "build", "--output", output)
+	if code != 2 {
+		t.Fatalf("outside project --output exit = %d, want 2 (stderr %q)", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("outside project --output stdout = %q, want empty", stdout)
+	}
+	document := readJSONPreReportFile(t, output)
+	if document.Command != reportCommandBuild || document.Diagnostics[0].Code != "VMAKE_E_USAGE" {
+		t.Fatalf("pre-report file = %+v", document)
+	}
+}
+
+func readJSONPreReportFile(t *testing.T, path string) jsonPreReportDocument {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return parsePreReportJSON(t, string(data))
+}
+
+func TestBuildOutputFileSuccess(t *testing.T) {
+	project := writeBuildSummaryProject(t, "int main(void) { return 0; }\n")
+	stdout, stderr, code := runBuildCommand(t, project, "build", "--output", "result.json")
+	if code != 0 {
+		t.Fatalf("build --output exit = %d, stderr = %q", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("build --output stdout = %q, want empty", stdout)
+	}
+	if !strings.Contains(stderr, "SCRIPT NOISE") {
+		t.Fatalf("buildscript output missing from stderr: %q", stderr)
+	}
+	document := readJSONBuildFile(t, filepath.Join(project, "result.json"))
+	if document.Command != reportCommandBuild || document.Status != "ok" || document.Data.Status != "succeeded" {
+		t.Fatalf("envelope = %+v / data = %+v", document, document.Data)
+	}
+	if document.ReportPath != reportPath(project) {
+		t.Fatalf("reportPath = %q, want %q", document.ReportPath, reportPath(project))
+	}
+	assertJSONDataMatchesReport(t, project, document.Data)
+}
+
+func TestBuildOutputFileFailure(t *testing.T) {
+	project := writeBuildReportProject(t, "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
+	output := filepath.Join(t.TempDir(), "failure.json")
+	stdout, stderr, code := runBuildCommand(t, project, "build", "--output", output)
+	if code != 1 {
+		t.Fatalf("failing build --output exit = %d, want 1 (stderr %q)", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("failing build --output stdout = %q, want empty", stdout)
+	}
+	document := readJSONBuildFile(t, output)
+	if document.Command != reportCommandBuild || document.Status != "error" || document.Data.Status != "failed" {
+		t.Fatalf("failure envelope = %+v / data = %+v", document, document.Data)
+	}
+	if len(document.Diagnostics) != 1 || document.Diagnostics[0].Code != "VMAKE_E_COMPILE" {
+		t.Fatalf("failure diagnostics = %+v", document.Diagnostics)
+	}
+	if !strings.Contains(stderr, "Error: ") {
+		t.Fatalf("human failure line missing from stderr: %q", stderr)
+	}
+	assertJSONDataMatchesReport(t, project, document.Data)
+}
+
+func TestBuildOutputMissingParent(t *testing.T) {
+	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
+	output := filepath.Join(t.TempDir(), "missing", "result.json")
+	stdout, stderr, code := runBuildCommand(t, project, "build", "--output", output)
+	if code != 1 {
+		t.Fatalf("missing parent exit = %d, want 1 (stdout %q)", code, stdout)
+	}
+	if stdout != "" {
+		t.Fatalf("missing parent stdout = %q, want empty", stdout)
+	}
+	if !strings.Contains(stderr, "output directory") || !strings.Contains(stderr, "does not exist") {
+		t.Fatalf("missing parent stderr = %q", stderr)
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("missing parent wrote a result file: %v", err)
+	}
+	if report := loadBuildReport(t, project); report.Status != "succeeded" {
+		t.Fatalf("build itself failed: %+v", report)
+	}
+}
+
+func TestBuildOutputFlagWinsOverJSON(t *testing.T) {
+	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
+	output := filepath.Join(project, "both.json")
+	stdout, stderr, code := runBuildCommand(t, project, "build", "--json", "--output", output)
+	if code != 0 {
+		t.Fatalf("--json --output exit = %d, stderr = %q", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("--json --output stdout = %q, want empty", stdout)
+	}
+	document := readJSONBuildFile(t, output)
+	if document.Status != "ok" || document.Command != reportCommandBuild {
+		t.Fatalf("--json --output envelope = %+v", document)
+	}
+}
+
+func TestBuildOutputDashUsesStdout(t *testing.T) {
+	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
+	stdout, stderr, code := runBuildCommand(t, project, "build", "--output", "-")
+	if code != 0 {
+		t.Fatalf("--output - exit = %d, stderr = %q", code, stderr)
+	}
+	document := parseJSONBuildOutput(t, stdout)
+	if document.Status != "ok" || document.Command != reportCommandBuild {
+		t.Fatalf("--output - envelope = %+v", document)
+	}
+}
+
+func TestTestOutputFile(t *testing.T) {
+	project := writeTestCommandProject(t, passingTestSource)
+	output := filepath.Join(project, "test-result.json")
+	stdout, stderr, code := runBuildCommand(t, project, "test", "--output", output)
+	if code != 0 {
+		t.Fatalf("test --output exit = %d, stderr = %q", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("test --output stdout = %q, want empty", stdout)
+	}
+	if !strings.Contains(stderr, "1/1 test(s) passed.") {
+		t.Fatalf("test progress missing from stderr: %q", stderr)
+	}
+	document := readJSONBuildFile(t, output)
+	if document.Command != reportCommandTest || document.Status != "ok" || len(document.Data.Tests) != 1 {
+		t.Fatalf("test envelope = %+v / data = %+v", document, document.Data)
 	}
 }

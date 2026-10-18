@@ -35,6 +35,9 @@ func init() {
 	RootCmd.PersistentFlags().BoolVarP(&veryVerbose, "very-verbose", "V", false, "very verbose output")
 	RootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "quiet mode")
 	RootCmd.PersistentFlags().BoolVarP(&yesFlag, "yes", "y", false, "assume yes for interactive prompts (e.g. trusting remote repositories)")
+	RootCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return &usageError{err: err}
+	})
 	RootCmd.AddCommand(newQueryCmd())
 	RootCmd.AddCommand(newInspectCmd())
 	RootCmd.AddCommand(newCheckSymbolsCmd())
@@ -59,6 +62,9 @@ It uses Go buildscripts for configuration and provides a TUI for option manageme
 	SilenceUsage: true,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		commandStorageExclusive = requiresExclusiveStorage(cmd)
+		if cmd.Flags().Changed("output") {
+			jsonOutput = true
+		}
 		switch {
 		case veryVerbose:
 			vlog.SetLevel(vlog.VeryVerbose)
@@ -89,6 +95,8 @@ func requiresExclusiveStorage(cmd *cobra.Command) bool {
 }
 
 func Execute() {
+	preReportJSON = detectPreReportJSON(os.Args[1:])
+	wrapCommandArgs(RootCmd)
 	err := RootCmd.Execute()
 	releaseExtensionRepoLocks()
 	if commandStorage != nil {
@@ -103,7 +111,23 @@ func Execute() {
 		if errors.As(err, &interrupted) {
 			os.Exit(interrupted.code)
 		}
-		os.Exit(1)
+		exitWithError(err)
+	}
+}
+
+func wrapCommandArgs(cmd *cobra.Command) {
+	for _, child := range cmd.Commands() {
+		wrapCommandArgs(child)
+	}
+	if cmd.Args == nil {
+		return
+	}
+	validate := cmd.Args
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		if err := validate(cmd, args); err != nil {
+			return &usageError{err: err}
+		}
+		return nil
 	}
 }
 

@@ -29,7 +29,7 @@ func findProjectDir() string {
 		}
 		root = parent
 	}
-	fatalMsg("not inside a vmake project (no .vmake/, build.go or */build.go found in %s or any parent directory)", root)
+	fatalUsage("not inside a vmake project (no .vmake/, build.go or */build.go found in %s or any parent directory)", root)
 	return ""
 }
 

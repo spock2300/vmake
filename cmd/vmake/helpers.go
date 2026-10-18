@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -13,15 +14,36 @@ import (
 	"github.com/spock2300/vmake/pkg/repo"
 )
 
+type usageError struct{ err error }
+
+func (e *usageError) Error() string { return e.err.Error() }
+
+func (e *usageError) Unwrap() error { return e.err }
+
 func fatalErr(err error) {
 	if err != nil {
 		vlog.Error("Error: %v", err)
-		os.Exit(1)
+		exitWithError(err)
 	}
 }
 
 func fatalMsg(format string, args ...any) {
 	vlog.Error(format, args...)
+	exitWithError(fmt.Errorf(format, args...))
+}
+
+func fatalUsage(format string, args ...any) {
+	err := &usageError{err: fmt.Errorf(format, args...)}
+	vlog.Error("%v", err)
+	exitWithError(err)
+}
+
+func exitWithError(err error) {
+	emitPreReportJSON(err)
+	var usage *usageError
+	if errors.As(err, &usage) {
+		os.Exit(2)
+	}
 	os.Exit(1)
 }
 

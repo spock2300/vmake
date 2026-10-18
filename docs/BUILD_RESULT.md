@@ -27,7 +27,7 @@ On success `vmake build`/`vmake rebuild` prints one summary line to stdout (or o
 
 ## Machine-readable invocation
 
-`vmake build --json`, `vmake rebuild --json` and `vmake test --json` write exactly one JSON document to the real stdout when the command finishes:
+`vmake build --json`, `vmake rebuild --json` and `vmake test --json` write exactly one JSON document to the real stdout when the command finishes. `--output PATH` (see **Output file** below) writes the same document to a file instead:
 
 ```json
 {
@@ -56,6 +56,40 @@ On success `vmake build`/`vmake rebuild` prints one summary line to stdout (or o
 `reportPath`, `installManifest` and `invocation` are invocation metadata and are not added to the on-disk report; the envelope is the self-locating document a machine consumer should keep. `vmake rebuild --json` reports `command`, `invocation` and `data.command` as `rebuild`, while its human success line stays a build summary.
 
 While the command runs, vlog progress, buildscript `fmt`/`print` output, child-process stdout and other human text go to stderr instead of stdout. Raw compiler/linker output and the concise final `Error:` line remain on stderr, and JSON mode does not print the human success/failure summary line at all, so `vmake build --json | jq .status` is safe. `--json` does not change the report file, artifacts or exit codes: a failed run still exits non-zero after emitting `status:"error"` with the concise `data.error` and diagnostics. `-q`, `-v` and `-V` keep controlling stderr verbosity; with `-q`, buildscript stdout stays suppressed as in normal quiet mode, while the JSON document is still written to stdout.
+
+### Output file
+
+`vmake build|rebuild|test --output PATH` implies `--json` and writes the JSON envelope to `PATH` instead of stdout; stdout stays empty. Human progress, raw diagnostics and the final `Error:` line go to stderr exactly as in `--json` mode. A relative `PATH` resolves against the process working directory, and `--output -` is equivalent to `--json` (stdout). When both `--json` and `--output` are given, the file wins and nothing is written to stdout. The parent directory must already exist; vmake does not create it. The document is written to a temporary file in the destination directory and renamed into place, so a consumer never reads a half-written envelope. A write failure (for example a missing parent directory) is a clean error on stderr and the run exits 1 even when the build itself succeeded; the report under `build/` is unaffected. `--output` is accepted only by `build`, `rebuild` and `test`.
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Success, including `--help` and `version` |
+| 1 | Operation failure: compile/link/buildscript/test failure, no test targets, report or result-write failure, storage failure |
+| 2 | Usage or project-resolution failure: unknown/invalid flag, missing required argument, not inside a vmake project |
+| 130 | Interrupted by SIGINT |
+| 143 | Interrupted by SIGTERM (non-Windows) |
+
+The exit code does not depend on `--json`/`--output`; the requested envelope is emitted before the process exits with the code above. Ordinary build, script and test failures are never reported as 2.
+
+### Errors before the report exists
+
+When `--json` or `--output` was requested but the invocation fails before the normal envelope can be produced (flag-parsing error, not inside a vmake project, storage-lock acquisition, or another pre-report failure), vmake still emits exactly one generic envelope:
+
+```json
+{
+  "schemaVersion": 1,
+  "command": "build",
+  "status": "error",
+  "data": null,
+  "diagnostics": [
+    { "severity": "error", "code": "VMAKE_E_USAGE", "message": "unknown flag: --nope" }
+  ]
+}
+```
+
+`command` is the first non-flag argument when it is `build`, `rebuild` or `test`; other invocations get no document. `data` is `null`, and `reportPath`, `installManifest` and `invocation` are omitted. The diagnostic code is `VMAKE_E_USAGE` for usage/project-resolution errors and `VMAKE_E_BUILD` for other failures. The human error is still printed once on stderr. The request is detected from the raw command line so it works even when flag parsing fails; an invocation that reaches the normal report path emits only that envelope (never both). The generic envelope is not produced for `--help`/`version`, and `--json --output PATH` writes it to PATH with stdout empty.
 
 The full failing command and raw tool output are deliberately no longer stored in the report: the raw compiler/linker diagnostic remains on stderr (streamed exactly once), and the report carries the parsed form plus the concise summary. On failure the final human `Error:` line on stderr is the same concise summary as `error`. A link or other command failure whose output has no parseable location yields one fallback diagnostic with the stage-derived code; its message prefers the last `undefined reference`/`multiple definition` line, then the last `error:` line, and only then the trimmed output tail (up to 1000 characters), and its summary is truncated to the same ~300-character budget. GNU ld's `file:line:(section): undefined reference to ...` and `multiple definition of ...` lines are parsed as located errors, so a link failure summary names the source location and the unresolved symbol instead of a build-key path prefix.
 

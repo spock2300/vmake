@@ -5,7 +5,7 @@ extension plugin commands appear here too. For plugin details, run
 `vmake <plugin> --help`.
 
 `vmake [--quiet -q --verbose -v --very-verbose -V --yes -y]` - VMake - A Go-based C/C++ build system
-  `vmake build [--explain --install -i --install-type <value> --jobs <value> -j --json --keep-going -k --manifest <value> --mode <value> --prefix <value> -p --tests --toolchain <value>]` - Build the project
+  `vmake build [--explain --install -i --install-type <value> --jobs <value> -j --json --keep-going -k --manifest <value> --mode <value> --output <value> --prefix <value> -p --tests --toolchain <value>]` - Build the project
   `vmake cache` - Inspect and remove shared git object caches
     `vmake cache list` - List cached upstream repositories
     `vmake cache remove <url>` - Remove one cached upstream repository
@@ -45,7 +45,7 @@ extension plugin commands appear here too. For plugin details, run
   `vmake query` - Show dependency tree
     `vmake query config <pkg>` - Show effective option values and generated defines
     `vmake query targets` - List build targets without building
-  `vmake rebuild [--explain --install -i --install-type <value> --jobs <value> -j --json --keep-going -k --manifest <value> --mode <value> --prefix <value> -p --tests --toolchain <value>]` - Rebuild the project
+  `vmake rebuild [--explain --install -i --install-type <value> --jobs <value> -j --json --keep-going -k --manifest <value> --mode <value> --output <value> --prefix <value> -p --tests --toolchain <value>]` - Rebuild the project
   `vmake repo` - Manage package repositories
     `vmake repo add <name> <git-url-or-template> [--native -n]` - Add a package repository
     `vmake repo list` - List all package repositories
@@ -57,7 +57,7 @@ extension plugin commands appear here too. For plugin details, run
     `vmake skill install [--project <value> -p]` - Install VMake skill for AI assistants
     `vmake skill path` - Show skill installation paths
     `vmake skill uninstall` - Uninstall VMake skill
-  `vmake test [--explain --jobs <value> -j --json --keep-going -k --manifest <value> --mode <value> --tests --toolchain <value>]` - Build and run test targets
+  `vmake test [--explain --jobs <value> -j --json --keep-going -k --manifest <value> --mode <value> --output <value> --tests --toolchain <value>]` - Build and run test targets
   `vmake toolchain` - Show toolchain information
     `vmake toolchain list` - List available toolchains
     `vmake toolchain show [name]` - Show toolchain details
