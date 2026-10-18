@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -190,7 +191,7 @@ func TestBuildReportNeverSucceedsBeforeCompletion(t *testing.T) {
 	for _, failure := range []error{context.Canceled, errors.New("failed"), nil} {
 		r := &buildReport{Root: t.TempDir(), Status: "running"}
 		result := failure
-		r.finish(&result)
+		r.finish(&result, nil)
 		if result == nil || r.Status == "succeeded" {
 			t.Fatalf("%+v / %v", r, result)
 		}
@@ -220,7 +221,7 @@ func TestBuildReportPanicCannotPublishSuccess(t *testing.T) {
 			}
 		}()
 		var err error
-		defer r.finish(&err)
+		defer r.finish(&err, nil)
 		panic("unexpected interruption")
 	}()
 	var saved buildReport
@@ -775,7 +776,7 @@ func TestBuildReportFinishV2(t *testing.T) {
 		Stage:  "compile",
 		Err:    &iexec.CommandError{Command: "gcc", Output: "src/main.c:4:2: error: boom\n", Err: errors.New("exit status 1")},
 	}
-	report.finish(&result)
+	report.finish(&result, nil)
 	if report.Status != "failed" || report.Error != "src/main.c:4:2: boom" || len(report.Diagnostics) != 1 || report.DurationMs <= 0 {
 		t.Fatalf("report = %+v", report)
 	}
@@ -1027,11 +1028,14 @@ func Main(p *api.Package) {
 }
 
 type jsonBuildDocument struct {
-	SchemaVersion int               `json:"schemaVersion"`
-	Command       string            `json:"command"`
-	Status        string            `json:"status"`
-	Data          buildReport       `json:"data"`
-	Diagnostics   []buildDiagnostic `json:"diagnostics"`
+	SchemaVersion   int               `json:"schemaVersion"`
+	Command         string            `json:"command"`
+	Status          string            `json:"status"`
+	ReportPath      string            `json:"reportPath"`
+	InstallManifest string            `json:"installManifest"`
+	Invocation      string            `json:"invocation"`
+	Data            buildReport       `json:"data"`
+	Diagnostics     []buildDiagnostic `json:"diagnostics"`
 }
 
 func parseJSONBuildOutput(t *testing.T, stdout string) jsonBuildDocument {
@@ -1051,11 +1055,20 @@ func parseJSONBuildOutput(t *testing.T, stdout string) jsonBuildDocument {
 	if document.Data.SchemaVersion != 2 {
 		t.Fatalf("data schemaVersion = %d, want 2", document.Data.SchemaVersion)
 	}
-	if document.Command != reportCommandBuild && document.Command != reportCommandTest {
+	if document.Command != reportCommandBuild && document.Command != reportCommandRebuild && document.Command != reportCommandTest {
 		t.Fatalf("envelope command = %q", document.Command)
 	}
 	if document.Data.Command != document.Command {
 		t.Fatalf("data command = %q, envelope command = %q", document.Data.Command, document.Command)
+	}
+	if document.Invocation != document.Command {
+		t.Fatalf("invocation = %q, envelope command = %q", document.Invocation, document.Command)
+	}
+	if !filepath.IsAbs(document.ReportPath) || filepath.Base(document.ReportPath) != "vmake-build.json" {
+		t.Fatalf("reportPath = %q, want an absolute vmake-build.json path", document.ReportPath)
+	}
+	if !filepath.IsAbs(document.InstallManifest) || filepath.Base(document.InstallManifest) != "manifest.json" {
+		t.Fatalf("installManifest = %q, want an absolute manifest.json path", document.InstallManifest)
 	}
 	if document.Diagnostics == nil || document.Data.Diagnostics == nil {
 		t.Fatalf("diagnostics must be arrays: envelope %#v, data %#v", document.Diagnostics, document.Data.Diagnostics)
@@ -1369,15 +1382,289 @@ func TestRebuildJSONSmoke(t *testing.T) {
 		t.Fatalf("rebuild --json exit = %d, stderr = %q\n%s", code, stderr, stdout)
 	}
 	document := parseJSONBuildOutput(t, stdout)
-	if document.Command != reportCommandBuild || document.Status != "ok" || document.Data.Status != "succeeded" {
+	if document.Command != reportCommandRebuild || document.Invocation != reportCommandRebuild ||
+		document.Data.Command != reportCommandRebuild ||
+		document.Status != "ok" || document.Data.Status != "succeeded" {
 		t.Fatalf("rebuild envelope = %+v / data = %+v", document, document.Data)
 	}
 	if document.Data.Summary == nil || document.Data.Summary.TargetsBuilt != 1 || document.Data.Summary.FilesCompiled != 1 {
 		t.Fatalf("rebuild summary = %+v", document.Data.Summary)
+	}
+	if document.ReportPath != reportPath(project) {
+		t.Fatalf("rebuild reportPath = %q, want %q", document.ReportPath, reportPath(project))
+	}
+	if document.InstallManifest != filepath.Join(project, "install", "manifest.json") {
+		t.Fatalf("rebuild installManifest = %q", document.InstallManifest)
 	}
 	if !strings.Contains(stderr, "SCRIPT NOISE") {
 		t.Fatalf("rebuild buildscript print is missing from stderr:\n%s", stderr)
 	}
 	assertNoHumanJSONStdout(t, stdout, "SCRIPT NOISE")
 	assertJSONDataMatchesReport(t, project, document.Data)
+}
+
+func countWarningLines(output, marker string) int {
+	count := 0
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, "warning:") && strings.Contains(line, marker) {
+			count++
+		}
+	}
+	return count
+}
+
+func writeBuildWarningProject(t *testing.T, source string) string {
+	t.Helper()
+	project := filepath.Join(t.TempDir(), "warning")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c").AddCFlags("-Wno-error")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), source)
+	return project
+}
+
+func TestBuildReportSuccessWarnings(t *testing.T) {
+	project := writeBuildWarningProject(t, "static int vmake_warning_probe;\n\nint main(void) { return 0; }\n")
+	stdout, stderr, code := runBuildCommand(t, project, "build")
+	if code != 0 {
+		t.Fatalf("warning build exit = %d, stderr = %q\n%s", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, "Build succeeded") {
+		t.Fatalf("success summary missing:\n%s", stdout)
+	}
+	if countWarningLines(stderr, "vmake_warning_probe") != 1 {
+		t.Fatalf("compiler warning on stderr %d times:\n%s", countWarningLines(stderr, "vmake_warning_probe"), stderr)
+	}
+	report := loadBuildReport(t, project)
+	if report.Status != "succeeded" || report.Error != "" {
+		t.Fatalf("warning report = %+v", report)
+	}
+	if len(report.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %+v, want one warning", report.Diagnostics)
+	}
+	warning := report.Diagnostics[0]
+	if warning.Severity != "warning" || warning.Code != buildWarningCode || filepath.Base(warning.File) != "main.c" ||
+		warning.Line <= 0 || !strings.Contains(warning.Message, "vmake_warning_probe") {
+		t.Fatalf("warning diagnostic = %+v", warning)
+	}
+	noopStdout, noopStderr, code := runBuildCommand(t, project, "-q", "build")
+	if code != 0 || noopStderr != "" {
+		t.Fatalf("no-op build exit = %d, stderr = %q", code, noopStderr)
+	}
+	if !strings.HasPrefix(noopStdout, "Build succeeded: no compilation") {
+		t.Fatalf("no-op stdout = %q", noopStdout)
+	}
+	report = loadBuildReport(t, project)
+	if report.Diagnostics == nil || len(report.Diagnostics) != 0 {
+		t.Fatalf("clean no-op diagnostics = %#v, want []", report.Diagnostics)
+	}
+}
+
+func TestBuildJSONQuietWarningDiagnostics(t *testing.T) {
+	project := writeBuildWarningProject(t, "static int vmake_warning_probe;\n\nint main(void) { return 0; }\n")
+	stdout, stderr, code := runBuildCommand(t, project, "-q", "build", "--json")
+	if code != 0 {
+		t.Fatalf("quiet JSON build exit = %d, stderr = %q\n%s", code, stderr, stdout)
+	}
+	document := parseJSONBuildOutput(t, stdout)
+	if document.Status != "ok" || document.Data.Status != "succeeded" || document.Data.Error != "" {
+		t.Fatalf("quiet warning envelope = %+v / data = %+v", document, document.Data)
+	}
+	if len(document.Diagnostics) != 1 || len(document.Data.Diagnostics) != 1 {
+		t.Fatalf("quiet warning diagnostics = %+v", document.Diagnostics)
+	}
+	warning := document.Diagnostics[0]
+	if warning.Severity != "warning" || warning.Code != buildWarningCode ||
+		filepath.Base(warning.File) != "main.c" || !strings.Contains(warning.Message, "vmake_warning_probe") {
+		t.Fatalf("quiet warning diagnostic = %+v", warning)
+	}
+	if countWarningLines(stderr, "vmake_warning_probe") != 1 {
+		t.Fatalf("compiler warning streamed %d times:\n%s", countWarningLines(stderr, "vmake_warning_probe"), stderr)
+	}
+	assertNoHumanJSONStdout(t, stdout)
+	assertJSONDataMatchesReport(t, project, document.Data)
+}
+
+func TestBuildJSONEnvelopePaths(t *testing.T) {
+	wantManifest := func(project string) string { return filepath.Join(project, "install", "manifest.json") }
+
+	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
+	stdout, stderr, code := runBuildCommand(t, project, "build", "--json")
+	if code != 0 {
+		t.Fatalf("success build --json exit = %d, stderr = %q\n%s", code, stderr, stdout)
+	}
+	success := parseJSONBuildOutput(t, stdout)
+	if success.ReportPath != reportPath(project) || success.InstallManifest != wantManifest(project) ||
+		success.Invocation != reportCommandBuild {
+		t.Fatalf("success paths = reportPath %q, installManifest %q, invocation %q", success.ReportPath, success.InstallManifest, success.Invocation)
+	}
+	if len(success.Diagnostics) != 0 {
+		t.Fatalf("clean build diagnostics = %+v, want []", success.Diagnostics)
+	}
+	assertJSONDataMatchesReport(t, project, success.Data)
+
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
+	stdout, stderr, code = runBuildCommand(t, project, "build", "--json")
+	if code != 1 {
+		t.Fatalf("failure build --json exit = %d, want 1 (stderr %q)\n%s", code, stderr, stdout)
+	}
+	failure := parseJSONBuildOutput(t, stdout)
+	if failure.ReportPath != reportPath(project) || failure.InstallManifest != wantManifest(project) ||
+		failure.Invocation != reportCommandBuild || failure.Status != "error" {
+		t.Fatalf("failure paths = %+v", failure)
+	}
+	assertJSONDataMatchesReport(t, project, failure.Data)
+
+	testProject := writeTestCommandProject(t, passingTestSource)
+	stdout, stderr, code = runBuildCommand(t, testProject, "test", "--json")
+	if code != 0 {
+		t.Fatalf("test --json exit = %d, stderr = %q\n%s", code, stderr, stdout)
+	}
+	testDocument := parseJSONBuildOutput(t, stdout)
+	if testDocument.ReportPath != reportPath(testProject) ||
+		testDocument.InstallManifest != wantManifest(testProject) ||
+		testDocument.Invocation != reportCommandTest {
+		t.Fatalf("test paths = reportPath %q, installManifest %q, invocation %q",
+			testDocument.ReportPath, testDocument.InstallManifest, testDocument.Invocation)
+	}
+	assertJSONDataMatchesReport(t, testProject, testDocument.Data)
+}
+
+func TestBuildReportFailureKeepsWarningsAfterErrors(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "warning-failure")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("warned").SetKind(api.TargetBinary).AddFiles("src/warned.c").AddCFlags("-Wno-error")
+		ctx.Target("broken").SetKind(api.TargetBinary).AddFiles("src/broken.c").AddDeps("warned")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "warned.c"), "static int vmake_warning_probe;\n\nint main(void) { return 0; }\n")
+	writeExtensionFile(t, filepath.Join(project, "src", "broken.c"), "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
+	stdout, stderr, code := runBuildCommand(t, project, "build")
+	if code != 1 {
+		t.Fatalf("warning failure exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if countWarningLines(stderr, "vmake_warning_probe") != 1 {
+		t.Fatalf("compiler warning on stderr %d times:\n%s", countWarningLines(stderr, "vmake_warning_probe"), stderr)
+	}
+	report := loadBuildReport(t, project)
+	if report.Status != "failed" || len(report.Diagnostics) != 2 {
+		t.Fatalf("warning failure report = %+v", report)
+	}
+	if report.Diagnostics[0].Severity != "error" || report.Diagnostics[0].Code != "VMAKE_E_COMPILE" ||
+		filepath.Base(report.Diagnostics[0].File) != "broken.c" {
+		t.Fatalf("first diagnostic is not the error: %+v", report.Diagnostics[0])
+	}
+	warning := report.Diagnostics[1]
+	if warning.Severity != "warning" || warning.Code != buildWarningCode ||
+		filepath.Base(warning.File) != "warned.c" || !strings.Contains(warning.Message, "vmake_warning_probe") {
+		t.Fatalf("warning diagnostic = %+v", warning)
+	}
+	if !strings.Contains(report.Error, "broken.c:2:") {
+		t.Fatalf("failure summary = %q", report.Error)
+	}
+}
+
+func TestParseBuildWarnings(t *testing.T) {
+	output := strings.Join([]string{
+		"src/main.c:8:12: warning: unused variable 'x' [-Wunused-variable]",
+		"src/main.c:8:12: warning: unused variable 'x' [-Wunused-variable]",
+		"src/main.c:9: warning: warning without a column",
+		"warning: generic warning\r",
+		"ld: warning: cannot find entry symbol _start",
+		`C:\project\src\main.c:12:3: warning: windows path warning`,
+		"src/main.c:10:5: error: not a warning",
+		"note: not a warning either",
+		"CMake Warning at CMakeLists.txt:12 (message):",
+	}, "\n")
+	warnings := parseBuildWarnings(output)
+	if len(warnings) != 5 {
+		t.Fatalf("warnings = %+v", warnings)
+	}
+	for _, warning := range warnings {
+		if warning.Severity != "warning" || warning.Code != buildWarningCode {
+			t.Fatalf("warning entry = %+v", warning)
+		}
+	}
+	located := warnings[0]
+	if located.File != "src/main.c" || located.Line != 8 || located.Column != 12 ||
+		located.Message != "unused variable 'x' [-Wunused-variable]" {
+		t.Fatalf("located warning = %+v", located)
+	}
+	if warnings[1].File != "src/main.c" || warnings[1].Line != 9 || warnings[1].Column != 0 {
+		t.Fatalf("columnless warning = %+v", warnings[1])
+	}
+	if warnings[2].File != "" || warnings[2].Message != "generic warning" {
+		t.Fatalf("generic warning = %+v", warnings[2])
+	}
+	if warnings[3].File != "" || warnings[3].Message != "ld: cannot find entry symbol _start" {
+		t.Fatalf("tool warning = %+v", warnings[3])
+	}
+	if warnings[4].File != `C:\project\src\main.c` || warnings[4].Line != 12 || warnings[4].Column != 3 {
+		t.Fatalf("windows warning = %+v", warnings[4])
+	}
+}
+
+func TestParseBuildWarningsCapped(t *testing.T) {
+	var output strings.Builder
+	for i := 0; i < buildWarningLimit+10; i++ {
+		fmt.Fprintf(&output, "src/w%d.c:1: warning: warning number %d\n", i, i)
+	}
+	output.WriteString("src/w0.c:1: warning: warning number 0\n")
+	warnings := parseBuildWarnings(output.String())
+	if len(warnings) != buildWarningLimit {
+		t.Fatalf("warnings = %d, want %d", len(warnings), buildWarningLimit)
+	}
+}
+
+func TestBuildStderrCaptureKeepsBoundedTail(t *testing.T) {
+	capture := &buildStderrCapture{}
+	capture.append(bytes.Repeat([]byte("x"), buildStderrCaptureSize))
+	capture.append([]byte("\nsrc/main.c:4:2: warning: retained tail\n"))
+	if len(capture.buffer) != buildStderrCaptureSize {
+		t.Fatalf("capture length = %d, want %d", len(capture.buffer), buildStderrCaptureSize)
+	}
+	warnings := capture.warnings()
+	if len(warnings) != 1 || warnings[0].File != "src/main.c" || warnings[0].Line != 4 {
+		t.Fatalf("tail warnings = %+v", warnings)
+	}
+}
+
+func TestMergeBuildDiagnosticsKeepsErrorsFirst(t *testing.T) {
+	diagnostics := []buildDiagnostic{
+		{Severity: "error", Code: "VMAKE_E_COMPILE", File: "src/broken.c", Line: 2, Column: 1, Message: "boom", Package: "pkg", Target: "pkg:broken"},
+		{Severity: "warning", Code: "VMAKE_E_COMPILE", File: "src/warned.c", Line: 3, Column: 7, Message: "warned", Package: "pkg", Target: "pkg:warned"},
+	}
+	warnings := []buildDiagnostic{
+		{Severity: "warning", Code: buildWarningCode, File: "src/warned.c", Line: 3, Column: 7, Message: "warned"},
+		{Severity: "warning", Code: buildWarningCode, Message: "generic warning"},
+	}
+	merged := mergeBuildDiagnostics(diagnostics, warnings)
+	if len(merged) != 3 {
+		t.Fatalf("merged = %+v", merged)
+	}
+	if merged[0].Severity != "error" || merged[0].Code != "VMAKE_E_COMPILE" {
+		t.Fatalf("error moved: %+v", merged[0])
+	}
+	if merged[1].Severity != "warning" || merged[1].Code != buildWarningCode ||
+		merged[1].Target != "pkg:warned" {
+		t.Fatalf("merged warning = %+v", merged[1])
+	}
+	if merged[2].Message != "generic warning" {
+		t.Fatalf("generic warning = %+v", merged[2])
+	}
 }

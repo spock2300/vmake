@@ -11,11 +11,11 @@ the installation manifest (`install/manifest.json`). `clean`, `distclean`, and
 | Field | Meaning |
 |-------|---------|
 | `schemaVersion`, `buildId`, `root` | Report schema (2), unique invocation ID, absolute project root |
-| `command` | `build` for build/rebuild, `test` for `vmake test` |
+| `command` | `build` for a build, `rebuild` for `vmake rebuild`, `test` for `vmake test` |
 | `status` | `running`, `succeeded`, `failed`, or `cancelled`; for test, `succeeded` only when every executed test passed |
 | `started`, `finished`, `durationMs` | UTC timestamps and wall-clock duration; `durationMs` is 0 while running |
 | `error` | Concise one-line failure summary (about 300 characters at most); empty on success |
-| `diagnostics` | Always an array. Failure entries have `severity`, `code`, `message`, and optional `file`, `line`, `column`, `package`, `target`. Codes: `VMAKE_E_COMPILE`, `VMAKE_E_LINK`, `VMAKE_E_BUILD`, `VMAKE_E_SCRIPT` |
+| `diagnostics` | Always an array. Success entries are tool warnings; failure entries are errors followed by warnings. Each has `severity`, `code`, `message`, and optional `file`, `line`, `column`, `package`, `target`. Codes: `VMAKE_E_COMPILE`, `VMAKE_E_LINK`, `VMAKE_E_BUILD`, `VMAKE_E_SCRIPT` for errors, `VMAKE_W_TOOL` for warnings |
 | `summary` | Per-invocation counts (see below); present on success, on a failure whose scheduler produced a partial result, and for a test failure after the build phase. Omitted when the failure happened before any target was scheduled |
 | `configFile`, `configSha256` | Active configuration name and SHA-256 of the exact configuration bytes used |
 | `global`, `packages` | Effective global values and per-package values for the packages that participated |
@@ -65,6 +65,22 @@ then the trimmed output tail (up to 1000 characters). Buildscript/API errors use
 `VMAKE_E_SCRIPT` and carry the package name. Raw tool output and the full failing
 command stay on stderr; they are not stored in the report.
 
+## Success warnings
+
+A succeeded build or test run collects the warnings streamed to stderr during
+the invocation into `diagnostics`. GNU `file:line[:column]: warning: message`
+lines become located entries with `file`/`line`/`column`; generic
+`warning: message` and `tool: warning: message` lines become unlocated entries.
+Every warning uses `severity: "warning"` and `code: "VMAKE_W_TOOL"`, is
+deduplicated by file/line/column/message, and the list is capped at 50 entries.
+Warnings never change `status` or `error`, and they are not repeated in stderr;
+the raw warning still streams exactly once. A clean run reports an empty
+`diagnostics` array.
+
+On failure, `diagnostics` contains the parsed errors first and warnings after
+them (warnings parsed from the failing command keep their `package`/`target`);
+`error` still summarizes the first error.
+
 ## `--json`
 
 `vmake build --json`, `vmake rebuild --json`, and `vmake test --json` write
@@ -77,6 +93,9 @@ printed.
   "schemaVersion": 1,
   "command": "build",
   "status": "ok",
+  "reportPath": "/abs/project/build/vmake-build.json",
+  "installManifest": "/abs/project/install/manifest.json",
+  "invocation": "build",
   "data": {
     "schemaVersion": 2,
     "buildId": "...",
@@ -88,11 +107,16 @@ printed.
 ```
 
 The envelope's `status` is `ok` when `data.status` is `succeeded`; otherwise
-`error`. `diagnostics` is a copy of `data.diagnostics` and is always an array.
-`data` is the complete report identical to `build/vmake-build.json`. `--json`
-does not change the report file, artifacts, or exit codes; a failed run still
-exits non-zero after emitting `status: "error"`. `-q`, `-v`, and `-V` keep
-controlling stderr verbosity.
+`error`. `command` and `invocation` are `build`, `rebuild`, or `test` and match
+`data.command`. `reportPath` is the absolute `<root>/build/vmake-build.json` path
+this invocation wrote, and `installManifest` is the absolute manifest path for
+the invocation's install prefix (`<root>/install/manifest.json` by default, or
+`<--prefix>/manifest.json`); both are envelope-only and are not added to the
+on-disk report. `diagnostics` is a copy of `data.diagnostics` and is always an
+array, so success warnings survive `-q --json`. `data` is the complete report
+identical to `build/vmake-build.json`. `--json` does not change the report file,
+artifacts, or exit codes; a failed run still exits non-zero after emitting
+`status: "error"`. `-q`, `-v`, and `-V` keep controlling stderr verbosity.
 
 ## Test reports
 

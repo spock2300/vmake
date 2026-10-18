@@ -11,8 +11,11 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spock2300/vmake/internal/jsonio"
@@ -24,8 +27,13 @@ import (
 )
 
 const (
-	reportCommandBuild = "build"
-	reportCommandTest  = "test"
+	reportCommandBuild   = "build"
+	reportCommandRebuild = "rebuild"
+	reportCommandTest    = "test"
+
+	buildWarningCode       = "VMAKE_W_TOOL"
+	buildWarningLimit      = 50
+	buildStderrCaptureSize = 256 * 1024
 )
 
 type buildArtifact struct {
@@ -104,6 +112,7 @@ func withBuildReport(run func(*buildReport) error) (err error) {
 	if err != nil {
 		return err
 	}
+	capture, stopCapture := startBuildStderrCapture()
 	stdout := os.Stdout
 	restoreStdout := func() {}
 	if vlog.IsQuiet() {
@@ -132,7 +141,8 @@ func withBuildReport(run func(*buildReport) error) (err error) {
 	}
 	defer func() {
 		defer restoreStdout()
-		report.finish(&err)
+		stopCapture()
+		report.finish(&err, capture.warnings())
 		restoreStdout()
 		if jsonOutput {
 			if writeErr := writeBuildJSONEnvelope(stdout, report); writeErr != nil {
@@ -146,6 +156,159 @@ func withBuildReport(run func(*buildReport) error) (err error) {
 		}
 	}()
 	return run(report)
+}
+
+type buildStderrCapture struct {
+	mu     sync.Mutex
+	buffer []byte
+}
+
+func (c *buildStderrCapture) append(data []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(data) >= buildStderrCaptureSize {
+		c.buffer = append(c.buffer[:0], data[len(data)-buildStderrCaptureSize:]...)
+		return
+	}
+	c.buffer = append(c.buffer, data...)
+	if len(c.buffer) > buildStderrCaptureSize {
+		copy(c.buffer, c.buffer[len(c.buffer)-buildStderrCaptureSize:])
+		c.buffer = c.buffer[:buildStderrCaptureSize]
+	}
+}
+
+func (c *buildStderrCapture) warnings() []buildDiagnostic {
+	c.mu.Lock()
+	output := string(c.buffer)
+	c.mu.Unlock()
+	return parseBuildWarnings(output)
+}
+
+func startBuildStderrCapture() (*buildStderrCapture, func()) {
+	capture := &buildStderrCapture{}
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		return capture, func() {}
+	}
+	stderr := os.Stderr
+	os.Stderr = writer
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer reader.Close()
+		buffer := make([]byte, 32*1024)
+		for {
+			n, readErr := reader.Read(buffer)
+			if n > 0 {
+				capture.append(buffer[:n])
+				if _, writeErr := stderr.Write(buffer[:n]); writeErr != nil {
+					return
+				}
+			}
+			if readErr != nil {
+				return
+			}
+		}
+	}()
+	return capture, func() {
+		os.Stderr = stderr
+		writer.Close()
+		<-done
+	}
+}
+
+var (
+	gnuWarningPattern  = regexp.MustCompile(`^\s*(.*?):(\d+):(?:(\d+):)?\s*warning:\s*(.*)$`)
+	toolWarningPattern = regexp.MustCompile(`^\s*(?:([^\s:]+):\s*)?warning:\s*(.+)$`)
+)
+
+func parseBuildWarnings(output string) []buildDiagnostic {
+	warnings := []buildDiagnostic{}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(output, "\n") {
+		warning, ok := parseBuildWarning(strings.TrimSuffix(line, "\r"))
+		if !ok {
+			continue
+		}
+		key := warningDiagnosticKey(warning)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		warnings = append(warnings, warning)
+		if len(warnings) == buildWarningLimit {
+			break
+		}
+	}
+	return warnings
+}
+
+func parseBuildWarning(line string) (buildDiagnostic, bool) {
+	if match := gnuWarningPattern.FindStringSubmatch(line); match != nil {
+		file := strings.TrimSpace(match[1])
+		message := strings.TrimSpace(match[4])
+		if file != "" && message != "" {
+			lineNumber, _ := strconv.Atoi(match[2])
+			column, _ := strconv.Atoi(match[3])
+			return buildDiagnostic{
+				Severity: "warning",
+				Code:     buildWarningCode,
+				Message:  truncateRunes(message, buildDiagnosticMessageLimit),
+				File:     file,
+				Line:     lineNumber,
+				Column:   column,
+			}, true
+		}
+	}
+	if match := toolWarningPattern.FindStringSubmatch(line); match != nil {
+		message := strings.TrimSpace(match[2])
+		if match[1] != "" {
+			message = match[1] + ": " + message
+		}
+		if message != "" {
+			return buildDiagnostic{
+				Severity: "warning",
+				Code:     buildWarningCode,
+				Message:  truncateRunes(message, buildDiagnosticMessageLimit),
+			}, true
+		}
+	}
+	return buildDiagnostic{}, false
+}
+
+func warningDiagnosticKey(diagnostic buildDiagnostic) string {
+	return diagnostic.File + "\x00" + strconv.Itoa(diagnostic.Line) + "\x00" +
+		strconv.Itoa(diagnostic.Column) + "\x00" + diagnostic.Message
+}
+
+func mergeBuildDiagnostics(diagnostics, warnings []buildDiagnostic) []buildDiagnostic {
+	merged := make([]buildDiagnostic, 0, len(diagnostics)+len(warnings))
+	pending := make([]buildDiagnostic, 0, len(warnings))
+	seen := make(map[string]bool, len(warnings))
+	addWarning := func(diagnostic buildDiagnostic) {
+		if len(pending) == buildWarningLimit {
+			return
+		}
+		diagnostic.Severity = "warning"
+		diagnostic.Code = buildWarningCode
+		key := warningDiagnosticKey(diagnostic)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		pending = append(pending, diagnostic)
+	}
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Severity == "warning" {
+			addWarning(diagnostic)
+			continue
+		}
+		merged = append(merged, diagnostic)
+	}
+	for _, warning := range warnings {
+		addWarning(warning)
+	}
+	return append(merged, pending...)
 }
 
 func printBuildSummary(writer io.Writer, report *buildReport, err error) {
@@ -218,7 +381,7 @@ func beginBuildReport() (*buildReport, error) {
 	return r, jsonio.Save(reportPath(r.Root), r)
 }
 
-func (r *buildReport) finish(result *error) {
+func (r *buildReport) finish(result *error, warnings []buildDiagnostic) {
 	interrupted := recover()
 	if interrupted != nil {
 		*result = fmt.Errorf("build panicked: %v", interrupted)
@@ -228,7 +391,8 @@ func (r *buildReport) finish(result *error) {
 	}
 	r.Finished = time.Now().UTC().Format(time.RFC3339Nano)
 	r.DurationMs = reportDuration(r.Started, r.Finished)
-	r.Diagnostics, r.Error = buildFailureDetails(*result)
+	diagnostics, summary := buildFailureDetails(*result)
+	r.Diagnostics, r.Error = mergeBuildDiagnostics(diagnostics, warnings), summary
 	r.Status = "succeeded"
 	if *result != nil {
 		if errors.Is(*result, context.Canceled) {

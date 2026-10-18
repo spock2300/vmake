@@ -22,6 +22,7 @@ func init() {
 func runRebuild(cmd *cobra.Command, args []string) error {
 	commandStorageLocks()
 	return withBuildReport(func(report *buildReport) error {
+		report.Command = reportCommandRebuild
 		execution := &RuntimeContext{}
 		return withResolvedProject(execution, func(ctx *RuntimeContext) error {
 			executeCleanLocal(ctx)
