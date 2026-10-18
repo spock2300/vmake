@@ -316,7 +316,7 @@ func (s *Scheduler) Build(fullName string) error {
 	}
 	workDir := pkgInfo.SourceDir
 
-	vlog.Info("[%s]", fullName)
+	vlog.Verbose("[%s]", fullName)
 
 	resolved, err := s.resolveTarget(node)
 	if err != nil {

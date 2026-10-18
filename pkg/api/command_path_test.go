@@ -57,15 +57,21 @@ func logCMakeInvocation() {
 	log.Close()
 }
 
-// runFakeCMake emits the canned output for the invoked stage (--build or
-// --install) from <fakeDir>/<stage>.out, .err and .exit. Tests use it to
-// exercise captured CMake output without a real CMake/Ninja installation.
+// runFakeCMake emits the canned output for the invoked stage (configure,
+// --build or --install) from <fakeDir>/<stage>.out, .err and .exit. Tests use
+// it to exercise captured CMake output without a real CMake/Ninja installation.
 func runFakeCMake(fakeDir string) {
 	logCMakeInvocation()
 	if len(os.Args) < 2 {
 		os.Exit(2)
 	}
 	stage := strings.TrimPrefix(os.Args[1], "--")
+	if hasCMakeOption(os.Args[1:], "-S") {
+		stage = "configure"
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		_ = os.WriteFile(filepath.Join(fakeDir, stage+".cwd"), []byte(cwd), 0644)
+	}
 	if data, err := os.ReadFile(filepath.Join(fakeDir, stage+".out")); err == nil {
 		_, _ = os.Stdout.Write(data)
 	}

@@ -248,11 +248,6 @@ func executePlan(rc *runContext, cfg *configStage, src *sourceStage, decl *decla
 	}
 	stats := scheduler.Stats().Snapshot()
 
-	if err == nil {
-		vlog.Info("")
-		vlog.Info("Build succeeded!")
-	}
-
 	pkgBuildKeys := make(map[string]string)
 	pkgPlatforms := make(map[string]api.Platform)
 	for _, name := range rc.ctx.Resolver.GetOrder() {

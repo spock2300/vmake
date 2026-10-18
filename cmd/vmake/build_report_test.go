@@ -315,7 +315,7 @@ func TestBuildReportV2Success(t *testing.T) {
 	if code != 0 || stderr != "" {
 		t.Fatalf("build exit = %d, stderr = %q", code, stderr)
 	}
-	if !strings.Contains(stdout, "Build succeeded!") {
+	if !strings.Contains(stdout, "Build succeeded: ") {
 		t.Fatalf("success stdout changed:\n%s", stdout)
 	}
 	report := loadBuildReport(t, project)
@@ -840,6 +840,37 @@ func Main(p *api.Package) {
 `)
 	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), source)
 	return project
+}
+
+func TestBuildOutputTargetHeadersVerboseOnly(t *testing.T) {
+	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
+	stdout, stderr, code := runBuildCommand(t, project, "build")
+	if code != 0 || stderr != "" {
+		t.Fatalf("build exit = %d, stderr = %q", code, stderr)
+	}
+	report := loadBuildReport(t, project)
+	if len(report.Targets) == 0 {
+		t.Fatalf("report has no targets")
+	}
+	header := fmt.Sprintf("[%s:%s]", report.Targets[0].Package, report.Targets[0].Target)
+	if strings.Contains(stdout, header) {
+		t.Fatalf("default stdout contains target header %q:\n%s", header, stdout)
+	}
+	if strings.Contains(stdout, "Build succeeded!") {
+		t.Fatalf("default stdout contains the removed progress line:\n%s", stdout)
+	}
+	lines := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
+	if !strings.HasPrefix(lines[len(lines)-1], "Build succeeded: ") || strings.Count(stdout, "Build succeeded") != 1 {
+		t.Fatalf("default stdout does not end with exactly one summary:\n%s", stdout)
+	}
+
+	verbose, stderr, code := runBuildCommand(t, project, "-v", "build")
+	if code != 0 || stderr != "" {
+		t.Fatalf("verbose build exit = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(verbose, header) {
+		t.Fatalf("verbose stdout missing target header %q:\n%s", header, verbose)
+	}
 }
 
 func TestBuildQuietSummaryAndReportCounts(t *testing.T) {
@@ -1596,9 +1627,11 @@ func TestParseBuildWarnings(t *testing.T) {
 		"src/main.c:10:5: error: not a warning",
 		"note: not a warning either",
 		"CMake Warning at CMakeLists.txt:12 (message):",
+		"CMake Warning:",
+		"  Manually-specified variables were not used by the project:",
 	}, "\n")
 	warnings := parseBuildWarnings(output)
-	if len(warnings) != 5 {
+	if len(warnings) != 7 {
 		t.Fatalf("warnings = %+v", warnings)
 	}
 	for _, warning := range warnings {
@@ -1622,6 +1655,12 @@ func TestParseBuildWarnings(t *testing.T) {
 	}
 	if warnings[4].File != `C:\project\src\main.c` || warnings[4].Line != 12 || warnings[4].Column != 3 {
 		t.Fatalf("windows warning = %+v", warnings[4])
+	}
+	if warnings[5].File != "CMakeLists.txt" || warnings[5].Line != 12 || !strings.Contains(warnings[5].Message, "CMake warning") {
+		t.Fatalf("cmake warning = %+v", warnings[5])
+	}
+	if warnings[6].Message != "Manually-specified variables were not used by the project:" {
+		t.Fatalf("bare cmake warning = %+v", warnings[6])
 	}
 }
 
@@ -1724,7 +1763,7 @@ func TestExitCodeMatrix(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("success exit = %d, stderr = %q", code, stderr)
 	}
-	if !strings.Contains(stdout, "Build succeeded!") {
+	if !strings.Contains(stdout, "Build succeeded: ") {
 		t.Fatalf("success stdout = %q", stdout)
 	}
 

@@ -81,6 +81,29 @@ On failure, `diagnostics` contains the parsed errors first and warnings after
 them (warnings parsed from the failing command keep their `package`/`target`);
 `error` still summarizes the first error.
 
+## Console output
+
+The default console view is action lines plus the final summary. Per-target
+`[package:target]` headers are verbose detail: they print only with `-v`, while
+compile/link/generate/install actions and buildscript prints still appear at
+default. The report and `summary.changedFiles` carry package/target context.
+
+A successful build/rebuild ends with exactly one `Build succeeded: ...` summary
+line; the separate `Build succeeded!` progress line no longer exists.
+`vmake build --install` still prints `Install succeeded!` after the build phase.
+
+CMake helper output is captured. `CMakeConfigure` prints one
+`cmake configure: done` line (or `cmake configure (cached): <dir>` when its
+fingerprint is unchanged); `CMakeBuild`/`CMakeInstall` print step and
+installed/up-to-date counts. CMake `-- ...` configure scaffolding, Ninja
+progress and `-- Up-to-date` install lines are hidden from default output
+(Ninja steps and installed counts are summarized), and the full captured log is
+printed with `-v`. CMake warning/error lines, including compiler
+`file:line: warning:` lines from the build stage, stream to stderr instead of
+stdout, so the warning capture can report them as `VMAKE_W_TOOL` diagnostics.
+With `-q`, a successful configure prints nothing on stdout; warnings and errors
+still stream to stderr.
+
 ## `--json`
 
 `vmake build --json`, `vmake rebuild --json`, and `vmake test --json` write

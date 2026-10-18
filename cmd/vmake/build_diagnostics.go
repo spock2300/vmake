@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -29,8 +30,9 @@ type buildDiagnostic struct {
 }
 
 var (
-	gnuDiagnosticPattern = regexp.MustCompile(`^(.*?):(\d+):(?:(\d+):)?\s*(fatal error|error|warning|note):\s*(.*)$`)
-	gnuLinkerPattern     = regexp.MustCompile(`^(.*):(\d+):(?:\([^)]*\):)?\s*(undefined reference to .*|multiple definition of .*)$`)
+	gnuDiagnosticPattern   = regexp.MustCompile(`^(.*?):(\d+):(?:(\d+):)?\s*(fatal error|error|warning|note):\s*(.*)$`)
+	gnuLinkerPattern       = regexp.MustCompile(`^(.*):(\d+):(?:\([^)]*\):)?\s*(undefined reference to .*|multiple definition of .*)$`)
+	cmakeDiagnosticPattern = regexp.MustCompile(`^CMake (Warning|Error)(?: \([^)]*\))? at (.*):(\d+)(?: \([^)]*\))?:$`)
 )
 
 func buildFailureDetails(err error) ([]buildDiagnostic, string) {
@@ -111,8 +113,9 @@ func collectBuildDiagnostics(err error, target *build.TargetError, diagnostics *
 
 func parseGNUDiagnostics(output string) []buildDiagnostic {
 	diagnostics := []buildDiagnostic{}
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSuffix(line, "\r")
+	lines := strings.Split(output, "\n")
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSuffix(lines[i], "\r")
 		if match := gnuDiagnosticPattern.FindStringSubmatch(line); match != nil {
 			file := strings.TrimSpace(match[1])
 			if file == "" {
@@ -145,9 +148,74 @@ func parseGNUDiagnostics(output string) []buildDiagnostic {
 				File:     file,
 				Line:     lineNumber,
 			})
+			continue
+		}
+		if severity, file, lineNumber, ok := parseCMakeDiagnosticHeader(line); ok {
+			message := cmakeDiagnosticMessage(lines, i, severity, file, lineNumber)
+			diagnostics = append(diagnostics, buildDiagnostic{
+				Severity: severity,
+				Message:  message,
+				File:     file,
+				Line:     lineNumber,
+			})
+			continue
+		}
+		if severity, ok := parseCMakeBareHeader(line); ok {
+			diagnostics = append(diagnostics, buildDiagnostic{
+				Severity: severity,
+				Message:  cmakeBareDiagnosticMessage(lines, i, severity),
+			})
 		}
 	}
 	return diagnostics
+}
+
+func parseCMakeBareHeader(line string) (string, bool) {
+	switch strings.TrimSpace(line) {
+	case "CMake Warning:":
+		return "warning", true
+	case "CMake Error:":
+		return "error", true
+	}
+	return "", false
+}
+
+func cmakeBareDiagnosticMessage(lines []string, index int, severity string) string {
+	for i := index + 1; i < len(lines); i++ {
+		text := strings.TrimSpace(lines[i])
+		if text == "" {
+			continue
+		}
+		return truncateRunes(text, buildDiagnosticMessageLimit)
+	}
+	return "CMake " + severity
+}
+
+func parseCMakeDiagnosticHeader(line string) (severity, file string, lineNumber int, ok bool) {
+	match := cmakeDiagnosticPattern.FindStringSubmatch(line)
+	if match == nil {
+		return "", "", 0, false
+	}
+	lineNumber, _ = strconv.Atoi(match[3])
+	file = strings.TrimSpace(match[2])
+	if file == "" {
+		return "", "", 0, false
+	}
+	return strings.ToLower(match[1]), file, lineNumber, true
+}
+
+func cmakeDiagnosticMessage(lines []string, index int, severity, file string, lineNumber int) string {
+	for i := index + 1; i < len(lines); i++ {
+		text := strings.TrimSpace(lines[i])
+		if text == "" {
+			continue
+		}
+		if strings.HasPrefix(lines[i], " ") || strings.HasPrefix(lines[i], "\t") {
+			return truncateRunes(text, buildDiagnosticMessageLimit)
+		}
+		break
+	}
+	return fmt.Sprintf("CMake %s at %s:%d", severity, file, lineNumber)
 }
 
 func fallbackCommandMessage(output string) string {

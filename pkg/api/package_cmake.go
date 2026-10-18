@@ -93,10 +93,17 @@ func (p *Package) CMakeConfigure(extraArgs ...string) {
 	if err := os.Remove(p.cmakeConfigureStampPath()); err != nil && !os.IsNotExist(err) {
 		vlog.Debug("  cmake configure: remove stale stamp: %v", err)
 	}
-	p.runCMakeConfigure(args, extraArgs)
+	p.runCapturedCMake("CMakeConfigure", "configure", p.cmakeConfigureDir(extraArgs), args)
 	if err := p.saveCMakeConfigureStamp(args, fingerprint); err != nil {
 		vlog.Debug("  cmake configure: record fingerprint: %v", err)
 	}
+}
+
+func (p *Package) cmakeConfigureDir(extraArgs []string) string {
+	if hasCMakeOption(extraArgs, "--preset") {
+		return p.SrcDir()
+	}
+	return p.dirs.BuildDir
 }
 
 func (p *Package) runCMakeConfigure(args, extraArgs []string) {
@@ -112,7 +119,7 @@ func (p *Package) CMakeBuild(extraArgs ...string) {
 	if err != nil {
 		fatalScript(p.Name, "CMakeBuild", "%v", err)
 	}
-	p.runCapturedCMake("CMakeBuild", "build", args)
+	p.runCapturedCMake("CMakeBuild", "build", p.dirs.BuildDir, args)
 }
 
 func (p *Package) CMakeInstall(extraArgs ...string) {
@@ -120,42 +127,56 @@ func (p *Package) CMakeInstall(extraArgs ...string) {
 	if err != nil {
 		fatalScript(p.Name, "CMakeInstall", "%v", err)
 	}
-	p.runCapturedCMake("CMakeInstall", "install", args)
+	p.runCapturedCMake("CMakeInstall", "install", p.dirs.BuildDir, args)
 }
 
 // runCapturedCMake runs one cmake stage with captured output. Success prints a
 // single summary line plus non-progress lines at default verbosity and the full
 // log under -v; a failure keeps the whole captured log in the script error.
-func (p *Package) runCapturedCMake(op, phase string, args []string) {
+// Warning and error lines always stream to stderr so the invocation's warning
+// capture can turn them into diagnostics.
+func (p *Package) runCapturedCMake(op, phase, dir string, args []string) {
 	if p.DryRun() {
 		p.logAndDryRun("cmake", args)
 		return
 	}
-	output, err := p.runCMakeCaptured(args)
+	output, err := p.runCMakeCaptured(dir, args)
 	summary, detail := renderCMakeOutput(phase, output)
 	if err != nil {
-		for _, line := range detail {
-			if vlog.IsQuiet() {
-				vlog.Error("%s", line)
-			} else {
-				vlog.Info("%s", line)
-			}
-		}
+		printCMakeDetail(detail, vlog.IsQuiet())
 		for _, line := range splitCMakeLines(output) {
 			vlog.Verbose("%s", line)
 		}
 		fatalScript(p.Name, op, "%v", err)
 	}
 	vlog.Info("%s", summary)
-	for _, line := range detail {
-		vlog.Info("%s", line)
-	}
+	printCMakeDetail(detail, false)
 	for _, line := range splitCMakeLines(output) {
 		vlog.Verbose("%s", line)
 	}
 }
 
-func (p *Package) runCMakeCaptured(args []string) (string, error) {
+// printCMakeDetail streams default-visible CMake detail. Warning/error lines
+// and their indented continuation lines go to stderr; allErrors sends every
+// line there too (the quiet failure path).
+func printCMakeDetail(lines []string, allErrors bool) {
+	inDiagnostic := false
+	for _, line := range lines {
+		switch {
+		case cmakeDiagnosticLine(line):
+			inDiagnostic = true
+		case line == "" || line[0] != ' ' && line[0] != '\t':
+			inDiagnostic = false
+		}
+		if inDiagnostic || allErrors {
+			vlog.Error("%s", line)
+		} else {
+			vlog.Info("%s", line)
+		}
+	}
+}
+
+func (p *Package) runCMakeCaptured(dir string, args []string) (string, error) {
 	name := "cmake"
 	env := p.tc.CommandEnv()
 	if p.tc != nil {
@@ -172,7 +193,7 @@ func (p *Package) runCMakeCaptured(args []string) (string, error) {
 		}
 	}
 	output, err := exec.RunWithOptions(name, args, exec.RunOptions{
-		Dir:     p.dirs.BuildDir,
+		Dir:     dir,
 		Env:     env,
 		Context: p.executionContext(),
 		Quiet:   true,
@@ -190,8 +211,10 @@ func (p *Package) runCMakeCaptured(args []string) (string, error) {
 var cmakeProgressLine = regexp.MustCompile(`^(?:\[\d+/\d+\]|\[\s*\d+%\])`)
 
 // renderCMakeOutput reports the one-line summary and the default-visible
-// detail lines for a captured build/install stage. Ninja progress and CMake
-// up-to-date chatter are counted but hidden; install scaffolding is hidden.
+// detail lines for a captured configure/build/install stage. Ninja progress and
+// CMake up-to-date chatter are counted but hidden; install scaffolding is
+// hidden. Configure hides its "-- ..." progress scaffolding while keeping
+// warning and error lines.
 func renderCMakeOutput(phase, output string) (string, []string) {
 	var steps, installed, upToDate int
 	var detail []string
@@ -206,9 +229,13 @@ func renderCMakeOutput(phase, output string) (string, []string) {
 		case strings.HasPrefix(line, "-- Installing:"):
 			installed++
 			detail = append(detail, line)
+		case phase == "configure" && strings.HasPrefix(line, "-- ") && !cmakeDiagnosticLine(line):
 		default:
 			detail = append(detail, line)
 		}
+	}
+	if phase == "configure" {
+		return "  cmake configure: done", detail
 	}
 	if phase == "install" {
 		return fmt.Sprintf("  cmake install: %d installed, %d up to date", installed, upToDate), detail
@@ -220,6 +247,12 @@ func renderCMakeOutput(phase, output string) (string, []string) {
 		return "  cmake build: 1 step", detail
 	}
 	return fmt.Sprintf("  cmake build: %d steps", steps), detail
+}
+
+func cmakeDiagnosticLine(line string) bool {
+	lower := strings.ToLower(line)
+	return strings.Contains(lower, "warning:") || strings.Contains(lower, "cmake warning") ||
+		strings.Contains(lower, "error:") || strings.Contains(lower, "cmake error")
 }
 
 func splitCMakeLines(output string) []string {

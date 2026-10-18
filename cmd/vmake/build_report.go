@@ -225,8 +225,29 @@ var (
 func parseBuildWarnings(output string) []buildDiagnostic {
 	warnings := []buildDiagnostic{}
 	seen := map[string]bool{}
-	for _, line := range strings.Split(output, "\n") {
-		warning, ok := parseBuildWarning(strings.TrimSuffix(line, "\r"))
+	lines := strings.Split(output, "\n")
+	for i, line := range lines {
+		line = strings.TrimSuffix(line, "\r")
+		warning, ok := parseBuildWarning(line)
+		if !ok {
+			if severity, file, lineNumber, isCMake := parseCMakeDiagnosticHeader(line); isCMake && severity == "warning" {
+				warning = buildDiagnostic{
+					Severity: "warning",
+					Code:     buildWarningCode,
+					Message:  cmakeDiagnosticMessage(lines, i, severity, file, lineNumber),
+					File:     file,
+					Line:     lineNumber,
+				}
+				ok = true
+			} else if severity, isCMake := parseCMakeBareHeader(line); isCMake && severity == "warning" {
+				warning = buildDiagnostic{
+					Severity: "warning",
+					Code:     buildWarningCode,
+					Message:  cmakeBareDiagnosticMessage(lines, i, severity),
+				}
+				ok = true
+			}
+		}
 		if !ok {
 			continue
 		}

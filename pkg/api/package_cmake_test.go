@@ -409,6 +409,41 @@ func captureCMakeStdout(t *testing.T, fn func()) string {
 	return <-done
 }
 
+func captureCMakeStreams(t *testing.T, fn func()) (string, string) {
+	t.Helper()
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldOut, oldErr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = outW, errW
+	doneOut := make(chan string, 1)
+	doneErr := make(chan string, 1)
+	go func() {
+		defer outR.Close()
+		var sb strings.Builder
+		_, _ = io.Copy(&sb, outR)
+		doneOut <- sb.String()
+	}()
+	go func() {
+		defer errR.Close()
+		var sb strings.Builder
+		_, _ = io.Copy(&sb, errR)
+		doneErr <- sb.String()
+	}()
+	defer func() {
+		os.Stdout, os.Stderr = oldOut, oldErr
+	}()
+	fn()
+	_ = outW.Close()
+	_ = errW.Close()
+	return <-doneOut, <-doneErr
+}
+
 func TestCMakeBuildInstallOutputCaptured(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -417,6 +452,7 @@ func TestCMakeBuildInstallOutputCaptured(t *testing.T) {
 		run        func(*Package)
 		summary    string
 		wantDetail []string
+		wantStderr []string
 		wantHidden []string
 	}{
 		{
@@ -444,12 +480,12 @@ func TestCMakeBuildInstallOutputCaptured(t *testing.T) {
 			wantHidden: []string{"ninja: no work to do"},
 		},
 		{
-			name:       "build warnings stay visible",
+			name:       "build warnings use stderr",
 			stage:      "build",
-			output:     "[1/1] Building C object a.c.o\nCMake Warning:\n  unused variable\n",
+			output:     "[1/1] Building C object a.c.o\nCMake Warning:\n  unused variable\nsrc/a.c:3:1: warning: unused parameter 'x'\n",
 			run:        func(p *Package) { p.CMakeBuild() },
 			summary:    "  cmake build: 1 step",
-			wantDetail: []string{"CMake Warning:", "  unused variable"},
+			wantStderr: []string{"CMake Warning:", "  unused variable", "src/a.c:3:1: warning: unused parameter 'x'"},
 			wantHidden: []string{"[1/1]"},
 		},
 		{
@@ -477,7 +513,7 @@ func TestCMakeBuildInstallOutputCaptured(t *testing.T) {
 			p := fakeCMakePackage(t, fakeDir)
 			vlog.SetLevel(vlog.Normal)
 			defer vlog.SetLevel(vlog.Normal)
-			out := captureCMakeStdout(t, func() { test.run(p) })
+			out, errOut := captureCMakeStreams(t, func() { test.run(p) })
 			if !strings.Contains(out, test.summary) {
 				t.Fatalf("stdout missing summary %q:\n%s", test.summary, out)
 			}
@@ -486,12 +522,202 @@ func TestCMakeBuildInstallOutputCaptured(t *testing.T) {
 					t.Errorf("stdout missing detail %q:\n%s", want, out)
 				}
 			}
+			for _, want := range test.wantStderr {
+				if !strings.Contains(errOut, want) {
+					t.Errorf("stderr missing diagnostic %q:\n%s", want, errOut)
+				}
+				if strings.Contains(out, want) {
+					t.Errorf("stdout contains stderr line %q:\n%s", want, out)
+				}
+			}
 			for _, hidden := range test.wantHidden {
 				if strings.Contains(out, hidden) {
 					t.Errorf("stdout contains hidden output %q:\n%s", hidden, out)
 				}
 			}
 		})
+	}
+}
+
+func TestCMakeConfigureOutputCaptured(t *testing.T) {
+	fakeDir := t.TempDir()
+	writeFakeCMakeStage(t, fakeDir, "configure", strings.Join([]string{
+		"-- The C compiler identification is GNU 12.3.0",
+		"-- Detecting C compiler ABI info",
+		"-- Detecting C compiler ABI info - done",
+		"-- Check for working C compiler: /usr/bin/gcc - skipped",
+		"-- Configuring done (0.1s)",
+		"-- Generating done (0.0s)",
+		"-- Build files have been written to: /tmp/project/build/cmake",
+		"",
+	}, "\n"))
+	p := fakeCMakePackage(t, fakeDir)
+	vlog.SetLevel(vlog.Normal)
+	defer vlog.SetLevel(vlog.Normal)
+	out, errOut := captureCMakeStreams(t, func() { p.CMakeConfigure("-G", "Ninja") })
+	if !strings.Contains(out, "  cmake configure: done") {
+		t.Fatalf("stdout missing configure summary:\n%s", out)
+	}
+	for _, hidden := range []string{"-- The C compiler", "-- Detecting", "-- Configuring done", "-- Generating done", "-- Build files"} {
+		if strings.Contains(out, hidden) {
+			t.Errorf("stdout contains configure scaffolding %q:\n%s", hidden, out)
+		}
+	}
+	if errOut != "" {
+		t.Fatalf("configure success stderr = %q, want empty", errOut)
+	}
+}
+
+func TestCMakeConfigureRoutesWarningsAndErrorsToStderr(t *testing.T) {
+	fakeDir := t.TempDir()
+	writeFakeCMakeStage(t, fakeDir, "configure", strings.Join([]string{
+		"-- Configuring done (0.1s)",
+		"CMake Warning at CMakeLists.txt:3 (message):",
+		"  Manually-specified variables were not used",
+		"src/a.c:3:1: warning: unused parameter 'x'",
+		"",
+	}, "\n"))
+	p := fakeCMakePackage(t, fakeDir)
+	vlog.SetLevel(vlog.Normal)
+	defer vlog.SetLevel(vlog.Normal)
+	out, errOut := captureCMakeStreams(t, func() { p.CMakeConfigure("-G", "Ninja") })
+	for _, want := range []string{"CMake Warning at CMakeLists.txt:3 (message):", "  Manually-specified variables were not used", "src/a.c:3:1: warning: unused parameter 'x'"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr missing diagnostic %q:\n%s", want, errOut)
+		}
+		if strings.Contains(out, want) {
+			t.Errorf("stdout contains diagnostic %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "  cmake configure: done") {
+		t.Errorf("stdout missing configure summary:\n%s", out)
+	}
+}
+
+func TestCMakeConfigureCapturedLogVisibleOnlyWhenVerbose(t *testing.T) {
+	fakeDir := t.TempDir()
+	writeFakeCMakeStage(t, fakeDir, "configure", "-- The C compiler identification is GNU 12.3.0\n-- Configuring done (0.1s)\n-- Build files have been written to: /tmp/build\n")
+	p := fakeCMakePackage(t, fakeDir)
+	vlog.SetLevel(vlog.VerboseLevel)
+	defer vlog.SetLevel(vlog.Normal)
+	out, _ := captureCMakeStreams(t, func() { p.CMakeConfigure("-G", "Ninja") })
+	for _, want := range []string{"-- The C compiler identification is GNU 12.3.0", "-- Configuring done (0.1s)", "-- Build files have been written", "  cmake configure: done"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("verbose stdout missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestCMakeConfigureQuiet(t *testing.T) {
+	fakeDir := t.TempDir()
+	writeFakeCMakeStage(t, fakeDir, "configure", "-- Configuring done (0.1s)\nwarning: generic configure warning\n")
+	p := fakeCMakePackage(t, fakeDir)
+	vlog.SetLevel(vlog.Quiet)
+	defer vlog.SetLevel(vlog.Normal)
+	out, errOut := captureCMakeStreams(t, func() { p.CMakeConfigure("-G", "Ninja") })
+	if out != "" {
+		t.Fatalf("quiet stdout = %q, want empty", out)
+	}
+	if !strings.Contains(errOut, "warning: generic configure warning") {
+		t.Fatalf("quiet stderr missing warning:\n%s", errOut)
+	}
+}
+
+func TestCMakeConfigureCachedSkipsExecution(t *testing.T) {
+	fakeDir := t.TempDir()
+	writeFakeCMakeStage(t, fakeDir, "configure", "-- Configuring done (0.1s)\n")
+	p := fakeCMakePackage(t, fakeDir)
+	logPath := filepath.Join(t.TempDir(), "cmake.log")
+	t.Setenv("VMAKE_TEST_CMAKE_LOG", logPath)
+	vlog.SetLevel(vlog.Normal)
+	defer vlog.SetLevel(vlog.Normal)
+	out, _ := captureCMakeStreams(t, func() { p.CMakeConfigure("-G", "Ninja") })
+	if !strings.Contains(out, "  cmake configure: done") {
+		t.Fatalf("first configure stdout = %q", out)
+	}
+	buildDir := p.CMakeBuildDir()
+	if err := os.MkdirAll(filepath.Join(buildDir, "CMakeFiles"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"CMakeCache.txt", "build.ninja", "Makefile"} {
+		if err := os.WriteFile(filepath.Join(buildDir, name), []byte("fixture\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, errOut := captureCMakeStreams(t, func() { p.CMakeConfigure("-G", "Ninja") })
+	if !strings.Contains(out, "  cmake configure (cached): ") {
+		t.Fatalf("cached configure stdout = %q", out)
+	}
+	if errOut != "" {
+		t.Fatalf("cached configure stderr = %q", errOut)
+	}
+	if got := countCMakeConfigureCalls(t, logPath); got != 1 {
+		t.Fatalf("cached configure ran cmake %d times, want 1", got)
+	}
+}
+
+func TestCMakeConfigureWorkingDirectory(t *testing.T) {
+	fakeDir := t.TempDir()
+	writeFakeCMakeStage(t, fakeDir, "configure", "-- Configuring done (0.1s)\n")
+	p := fakeCMakePackage(t, fakeDir)
+	vlog.SetLevel(vlog.Quiet)
+	defer vlog.SetLevel(vlog.Normal)
+	configureDir := func() string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(fakeDir, "configure.cwd"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	p.CMakeConfigure("-G", "Ninja")
+	if got, want := configureDir(), p.dirs.BuildDir; got != want {
+		t.Fatalf("configure working directory = %q, want BuildDir %q", got, want)
+	}
+	p.CMakeConfigure("--preset", "fixture")
+	if got, want := configureDir(), p.SrcDir(); got != want {
+		t.Fatalf("preset configure working directory = %q, want SrcDir %q", got, want)
+	}
+}
+
+func TestCMakeConfigureFailureKeepsCapturedOutput(t *testing.T) {
+	fakeDir := t.TempDir()
+	writeFakeCMakeStage(t, fakeDir, "configure", "-- Check for working C compiler: /usr/bin/gcc - broken\n-- Configuring incomplete, errors occurred!\n")
+	if err := os.WriteFile(filepath.Join(fakeDir, "configure.err"), []byte("CMake Error at CMakeLists.txt:3 (message):\n  compiler does not work\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fakeDir, "configure.exit"), []byte("1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	p := fakeCMakePackage(t, fakeDir)
+	vlog.SetLevel(vlog.Normal)
+	defer vlog.SetLevel(vlog.Normal)
+	var scriptErr *BuildScriptError
+	out, errOut := captureCMakeStreams(t, func() {
+		scriptErr = captureScriptError(func() { p.CMakeConfigure("-G", "Ninja") })
+	})
+	if scriptErr == nil || scriptErr.Package != p.Name || scriptErr.Op != "CMakeConfigure" {
+		t.Fatalf("script error = %+v, want package %q op CMakeConfigure", scriptErr, p.Name)
+	}
+	for _, want := range []string{"CMake Error at CMakeLists.txt:3 (message):", "  compiler does not work"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr missing captured error %q:\n%s", want, errOut)
+		}
+	}
+	if out != "" {
+		t.Errorf("default configure failure stdout = %q, want empty", out)
+	}
+	for _, want := range []string{"CMake Error at CMakeLists.txt:3 (message):", "compiler does not work", "Configuring incomplete"} {
+		if !strings.Contains(scriptErr.Error(), want) {
+			t.Errorf("script error missing captured output %q:\n%s", want, scriptErr.Error())
+		}
+	}
+	vlog.SetLevel(vlog.VerboseLevel)
+	verboseOut, _ := captureCMakeStreams(t, func() { scriptErr = captureScriptError(func() { p.CMakeConfigure("-G", "Ninja") }) })
+	for _, want := range []string{"-- Check for working C compiler: /usr/bin/gcc - broken", "-- Configuring incomplete, errors occurred!"} {
+		if !strings.Contains(verboseOut, want) {
+			t.Errorf("verbose failure stdout missing %q:\n%s", want, verboseOut)
+		}
 	}
 }
 
