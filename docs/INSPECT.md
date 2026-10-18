@@ -11,15 +11,17 @@ reading or creating `install/`.
 
 The model also reports whether `build/compile_commands.json` and the last
 `build/vmake-build.json` and `build/vmake-test.json` currently exist, each
-report's identity and whether its configuration digest matches the active
-configuration, and each needed package's active build-key directory. The build
-report and test report are written by separate invocations; inspect reads both
-without merging them. A `freshness` object adds a source-staleness heuristic
-computed from the build report's finish time and the declared files of needed
-packages. These fields describe files, resolved layout, and declared source
-modification times only: inspect still does not verify that actions or outputs
-are fresh, does not read action records, and does not predict which targets are
-up to date. It never writes the compile database or either report.
+report's identity, whether its configuration digest matches the active
+configuration file, and whether the effective configuration (the file plus any
+no-op `--set` overrides) matches. It also reports each needed package's active
+build-key directory. The build report and test report are written by separate
+invocations; inspect reads both without merging them. A `freshness` object adds
+a source-staleness heuristic computed from the build report's finish time and
+the declared files of needed packages. These fields describe files, resolved
+layout, and declared source modification times only: inspect still does not
+verify that actions or outputs are fresh, does not read action records, and does
+not predict which targets are up to date. It never writes the compile database
+or either report.
 
 ```
 vmake inspect [--set [package/]option=value ...] [-C <dir>]
@@ -34,6 +36,14 @@ changing the process cwd. An invalid selection is a usage error (exit 2).
 configuration is evaluated as if the project had those values, but nothing is
 persisted. The effective overrides are echoed in `data.overrides`, using the
 option's natural JSON type.
+
+Each report state's `configMatches` stays false for any `--set` run, because the
+report records only the configuration-file digest. The additive
+`effectiveConfigMatches` fields answer the effective question: they are true
+when that digest matches **and** every override equals the value already in
+effect (the file's value or, when the file has none, the declared default).
+Probing an option with the value it already has therefore keeps the effective
+match bit while the strict file-level bit remains false.
 
 Values are coerced with the option's declared type, matching `vmake config
 --set`:
@@ -226,7 +236,10 @@ same object shape is used for both. Each copies the report's identity fields:
 | `buildId` | string | Report build ID |
 | `command` | string? | `build`/`rebuild` for the build report, `test` for the test report; omitted when the report lacks it |
 | `started`, `finished` | string | RFC 3339 timestamps recorded in the report; `finished` may be empty while a build is running |
+| `mode`, `toolchain` | string? | The report's recorded build mode and toolchain; omitted when the report lacks them |
+| `modeMatches`, `toolchainMatches` | bool | Whether the report's recorded mode/toolchain equals the inspected one (missing values count as matching) |
 | `configMatches` | bool | Whether the report's `configSha256` equals `data.configSha256` and no `--set` override was supplied |
+| `effectiveConfigMatches` | bool | Whether the report's `configSha256` equals `data.configSha256`, the recorded mode/toolchain match, and every `--set` override is a no-op against the current effective value |
 | `summary` | object? | The report's `summary` object copied verbatim; omitted when the report has none |
 | `error` | string? | The report's concise error; omitted when empty |
 
@@ -236,6 +249,19 @@ the overrides model a hypothetical configuration whose effective values may
 differ from the file hash recorded by the build. A false value means "do not
 assume this report describes the configuration being inspected"; it does not by
 itself mean the build is stale.
+
+`effectiveConfigMatches` is the override-aware counterpart. It is true only
+when the digest matches, the recorded mode/toolchain match the inspected ones,
+and every `--set` override equals the value already in effect, so a probe such
+as `--set firmware/diagnostics=true` on a configuration that already enables
+`diagnostics` leaves it true. It is false when an override changes an effective
+value, when the digest differs, or when the report was produced with another
+mode/toolchain. Values are compared after option-type normalization against the
+configuration file's value or, when the file has none, the declared default; a
+missing effective value is not a no-op.
+`effectiveConfigMatches` is additive to schemaVersion 1: `configMatches` keeps
+its strict file-level meaning, and consumers that compare inspect documents
+across versions should ignore unknown data keys rather than reject the document.
 
 `compileDatabasePresent`, `buildReportPresent` and `testReportPresent` are
 stat-only checks. A clean tree reports all three `false`, omits both state
@@ -259,6 +285,7 @@ data keys rather than reject the document:
   "reportStatus": "succeeded",
   "reportFinished": "2026-10-19T02:00:00.123456789Z",
   "configMatches": true,
+  "effectiveConfigMatches": true,
   "sourceChanged": true,
   "changedSources": ["firmware:src/main.c", "firmware:src/uart.c"],
   "truncated": false
@@ -274,15 +301,19 @@ silently; a missing source tree is covered by `VMAKE_W_SOURCE_MISSING` instead.
 
 - `known` is false when there is no build report, the report is unreadable, or
   its `finished` field is empty or not an RFC 3339 timestamp. When a report
-  parses, `reportStatus` and `configMatches` are still reported and
-  `reportFinished` is present only for a parseable timestamp; `sourceChanged`,
-  `changedSources` and `truncated` are omitted.
+  parses, `reportStatus`, `configMatches` and `effectiveConfigMatches` are still
+  reported and `reportFinished` is present only for a parseable timestamp;
+  `sourceChanged`, `changedSources` and `truncated` are omitted.
 - `reportStatus` and `reportFinished` copy the build report's status and finish
   time; a failed report with a parseable finish is still `known: true`.
 - `configMatches` mirrors `buildReportState.configMatches`: false after a
   configuration change or any `--set` run. A false value still leaves
   `sourceChanged` computed, but the configuration mismatch alone requires a
   rebuild, so do not read `sourceChanged: false` as "no build needed".
+- `effectiveConfigMatches` mirrors `buildReportState.effectiveConfigMatches`:
+  true when the digest matches and every `--set` override restates the value
+  already in effect, so probing an option with its current value keeps this bit
+  true while `configMatches` stays false. It is additive to schemaVersion 1.
 - `changedSources` lists `pkg:path` entries, where `path` is relative to that
   package's source directory and slash-separated, matching the
   `summary.changedFiles` style. It contains declared files whose modification

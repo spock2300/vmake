@@ -105,6 +105,11 @@ func validateProjectDir(override string) string {
 	if !hasProjectConfig(dir) && !hasBuildGo(dir) && !hasChildBuildGo(dir) {
 		fatalUsage("--project %q is not a vmake project (no .vmake/, build.go or */build.go found)", dir)
 	}
+	if !hasProjectConfig(dir) {
+		if enclosing, ok := findEnclosingProjectRoot(dir); ok && filepath.Clean(enclosing) != filepath.Clean(dir) {
+			fatalUsage("--project %q is a package inside project %q; use --project %q or create a .vmake marker in %q for an intentional nested project", dir, enclosing, enclosing, dir)
+		}
+	}
 	return dir
 }
 

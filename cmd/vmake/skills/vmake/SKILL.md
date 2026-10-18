@@ -106,7 +106,10 @@ file to change.
   directory) capped at 50, with `truncated` set when more changed;
   `sourceChanged` is true even beyond the cap. `known` is false without a
   parsable build report/finish. `configMatches` mirrors the build report state
-  and a false value alone requires a rebuild. This is not an up-to-date check
+  (false after a config change or any `--set`); `effectiveConfigMatches` is the
+  override-aware bit and stays true when every `--set` restates the value
+  already in effect. Both are additive schemaVersion 1 fields, and a false
+  `configMatches` alone requires a rebuild. This is not an up-to-date check
   or build plan: flags, toolchain, buildscripts, generated inputs, undeclared
   files, deleted files, and clock skew are invisible, so run `vmake build` when
   correctness matters.
@@ -117,7 +120,8 @@ file to change.
   choice keep the raw text (so a string may be `"42"` or `"true"`). Each
   `--set` resolves twice to learn the types, roughly doubling resolution time
   and repeating `OnConfig`/`OnApply` side effects. Unknown packages/options and
-  wrong types or choices fail with `VMAKE_E_OPTION`.
+  wrong types or choices fail with `VMAKE_E_OPTION`. Restating the active value
+  keeps `effectiveConfigMatches` true while `configMatches` stays false.
 - Buildscript stdout is discarded while the model is resolved, so the JSON is
   never corrupted by `build.go` prints.
 - `compileDatabase`/`buildReport`/`testReport` point at
@@ -125,10 +129,14 @@ file to change.
   `build/vmake-test.json`; the matching `*Present` fields say whether those
   files currently exist. When a report exists and parses, `buildReportState` or
   `testReportState` copies its `status`, `buildId`, `command`, `started`,
-  `finished`, `summary`, and `error`, and sets `configMatches` (true only for
-  the same `configSha256` with no `--set`). The two reports are separate
-  invocations: a succeeded build state and a failed or no-tests test state can
-  coexist. This describes recorded runs, not whether actions or outputs are
+  `finished`, `mode`, `toolchain`, `summary`, and `error`, and sets
+  `configMatches` (true only for the same `configSha256` with no `--set`),
+  `modeMatches`/`toolchainMatches`, and `effectiveConfigMatches` (true when the
+  digest matches, the recorded mode/toolchain match, and every `--set` restates
+  the value already in effect). Both match fields are additive to schemaVersion
+  1; ignore unknown keys when comparing documents across versions. The two
+  reports are separate invocations: a succeeded build state and a failed or
+  no-tests test state can coexist. This describes recorded runs, not whether actions or outputs are
   fresh. A corrupt report keeps its `*Present: true`, omits that state, and adds
   one `VMAKE_W_REPORT_UNREADABLE` warning; inspect never rewrites it. The
   install paths are the default `install/` and `install/manifest.json`;

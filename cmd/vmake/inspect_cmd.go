@@ -72,24 +72,30 @@ type inspectData struct {
 }
 
 type inspectBuildReportState struct {
-	Status        string          `json:"status"`
-	BuildID       string          `json:"buildId"`
-	Command       string          `json:"command,omitempty"`
-	Started       string          `json:"started"`
-	Finished      string          `json:"finished"`
-	ConfigMatches bool            `json:"configMatches"`
-	Summary       json.RawMessage `json:"summary,omitempty"`
-	Error         string          `json:"error,omitempty"`
+	Status                 string          `json:"status"`
+	BuildID                string          `json:"buildId"`
+	Command                string          `json:"command,omitempty"`
+	Started                string          `json:"started"`
+	Finished               string          `json:"finished"`
+	Mode                   string          `json:"mode,omitempty"`
+	Toolchain              string          `json:"toolchain,omitempty"`
+	ConfigMatches          bool            `json:"configMatches"`
+	ModeMatches            bool            `json:"modeMatches"`
+	ToolchainMatches       bool            `json:"toolchainMatches"`
+	EffectiveConfigMatches bool            `json:"effectiveConfigMatches"`
+	Summary                json.RawMessage `json:"summary,omitempty"`
+	Error                  string          `json:"error,omitempty"`
 }
 
 type inspectFreshness struct {
-	Known          bool     `json:"known"`
-	ReportStatus   string   `json:"reportStatus,omitempty"`
-	ReportFinished string   `json:"reportFinished,omitempty"`
-	ConfigMatches  *bool    `json:"configMatches,omitempty"`
-	SourceChanged  *bool    `json:"sourceChanged,omitempty"`
-	ChangedSources []string `json:"changedSources,omitempty"`
-	Truncated      *bool    `json:"truncated,omitempty"`
+	Known                  bool     `json:"known"`
+	ReportStatus           string   `json:"reportStatus,omitempty"`
+	ReportFinished         string   `json:"reportFinished,omitempty"`
+	ConfigMatches          *bool    `json:"configMatches,omitempty"`
+	EffectiveConfigMatches *bool    `json:"effectiveConfigMatches,omitempty"`
+	SourceChanged          *bool    `json:"sourceChanged,omitempty"`
+	ChangedSources         []string `json:"changedSources,omitempty"`
+	Truncated              *bool    `json:"truncated,omitempty"`
 }
 
 type inspectToolchain struct {
@@ -176,7 +182,8 @@ func newInspectCmd() *cobra.Command {
 The document reports the project root, active configuration, build mode,
 toolchain, effective global values, roots, packages, targets, package
 dependency graph, the compile-database and build-report paths and presence, the
-last build report's status/identity/config match, each needed package's active
+last build report's status and identity, its strict configuration-file match and
+effective (override-aware) configuration match, each needed package's active
 build directory, and a source-freshness heuristic. The freshness object
 compares the declared files of needed packages with the build report's finish
 time; it is not an up-to-date check or a build plan. These are file-presence,
@@ -187,7 +194,10 @@ output freshness. Diagnostics is always an array.
 .vmake/config.json. Values are coerced by the declared option type: bool accepts
 true/false, on/off, and 1/0; int requires an integer; string and choice values
 keep their raw text, so a string can be "42" or "true". Unknown packages, unknown
-options, wrong value types and invalid choice values are rejected.
+options, wrong value types and invalid choice values are rejected. Any --set
+keeps the report states' configMatches false because that is the strict
+configuration-file answer; effectiveConfigMatches stays true when every
+override equals the value already in effect.
 
 On success the envelope has status "ok". On failure it has status "error" with
 diagnostics, vmake exits 1, and stderr carries one human-readable error line.`,
@@ -235,6 +245,7 @@ func runInspect(execution context.Context, setFlags []string) error {
 	}
 	defer ctx.Resolver.Close()
 
+	baselines := captureInspectOverrideBaselines(ctx, overrides)
 	for _, override := range overrides {
 		applySetValue(ctx, override.pkgName, override.optName, override.value)
 	}
@@ -261,7 +272,8 @@ func runInspect(execution context.Context, setFlags []string) error {
 	if err != nil {
 		return fail("VMAKE_E_INSPECT", err)
 	}
-	data, diagnostics := buildInspectData(ctx, inspection, inspectOverrideValues(overrides))
+	overridesChanged := !overridesNoOp(ctx, baselines, overrides)
+	data, diagnostics := buildInspectData(ctx, inspection, inspectOverrideValues(overrides), overridesChanged)
 	envelope.Data = data
 	envelope.Diagnostics = diagnostics
 	restoreStdout()
@@ -461,7 +473,69 @@ func inspectOverrideValues(overrides []inspectOverride) map[string]any {
 	return values
 }
 
-func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, overrides map[string]any) (*inspectData, []inspectDiagnostic) {
+type inspectOverrideBaseline struct {
+	value   any
+	present bool
+}
+
+func captureInspectOverrideBaselines(ctx *RuntimeContext, overrides []inspectOverride) []inspectOverrideBaseline {
+	baselines := make([]inspectOverrideBaseline, len(overrides))
+	for i, override := range overrides {
+		baseline := &baselines[i]
+		switch {
+		case override.pkgName == "" && override.optName == api.ModeOptionName:
+			baseline.value, baseline.present = pipeline.ResolveMode(ctx.Config, ctx.ModeOverride), true
+		case override.pkgName == "" && override.optName == api.ToolchainOptionName:
+			baseline.value, baseline.present = pipeline.ResolveToolchainName(ctx.Config, ctx.ToolchainOverride), true
+		case override.pkgName == "":
+			if ctx.Config != nil && ctx.Config.Global != nil {
+				baseline.value, baseline.present = ctx.Config.Global.Options[override.optName]
+			}
+		case ctx.Config != nil:
+			baseline.value, baseline.present = config.GetEntry(ctx.Config, override.pkgName).Options[override.optName]
+		}
+		if baseline.value == nil {
+			baseline.present = false
+		}
+	}
+	return baselines
+}
+
+func overridesNoOp(ctx *RuntimeContext, baselines []inspectOverrideBaseline, overrides []inspectOverride) bool {
+	if len(baselines) != len(overrides) {
+		return false
+	}
+	for i, override := range overrides {
+		opt := inspectDeclaredOption(ctx, override)
+		if opt == nil {
+			return false
+		}
+		effective := baselines[i].value
+		if !baselines[i].present || (override.pkgName == "" && effective == "" && inspectTargetOption(override.optName)) {
+			effective = opt.Default()
+		}
+		if effective == nil {
+			return false
+		}
+		if api.NormalizeOptionValue(opt, effective) != api.NormalizeOptionValue(opt, override.value) {
+			return false
+		}
+	}
+	return true
+}
+
+func inspectDeclaredOption(ctx *RuntimeContext, override inspectOverride) *api.Option {
+	if override.pkgName == "" {
+		return ctx.GlobalOptions[override.optName]
+	}
+	return ctx.AllOptions[override.pkgName][override.optName]
+}
+
+func inspectTargetOption(name string) bool {
+	return name == api.TargetOSOptionName || name == api.TargetTripleOptionName
+}
+
+func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, overrides map[string]any, overridesChanged bool) (*inspectData, []inspectDiagnostic) {
 	root := ctx.Paths.ProjectDir
 	installRoot := filepath.Join(root, "install")
 	global := inspection.GlobalValues
@@ -470,9 +544,10 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 	}
 	compileDatabase := filepath.Join(root, "build", "compile_commands.json")
 	buildReport := reportPath(root)
-	buildReportPresent, buildReportState, reportDiagnostic := loadInspectReportState(buildReport, ctx.ConfigDigest, len(overrides) > 0, "build")
+	hypothetical := len(overrides) > 0
+	buildReportPresent, buildReportState, reportDiagnostic := loadInspectReportState(buildReport, ctx.ConfigDigest, inspection.Mode, inspection.TcName, hypothetical, overridesChanged, "build")
 	testReport := testReportPath(root)
-	testReportPresent, testReportState, testDiagnostic := loadInspectReportState(testReport, ctx.ConfigDigest, len(overrides) > 0, "test")
+	testReportPresent, testReportState, testDiagnostic := loadInspectReportState(testReport, ctx.ConfigDigest, inspection.Mode, inspection.TcName, hypothetical, overridesChanged, "test")
 	data := &inspectData{
 		Root:                   root,
 		ConfigFile:             filepath.Base(ctx.ConfigPath),
@@ -572,7 +647,7 @@ func inspectBuildDirFields(dirs *api.PkgDirs, local bool) (string, string) {
 	return dirs.BuildDir, filepath.Base(dirs.BuildDir)
 }
 
-func loadInspectReportState(path, configDigest string, hypothetical bool, kind string) (bool, *inspectBuildReportState, *inspectDiagnostic) {
+func loadInspectReportState(path, configDigest, mode, toolchain string, hypothetical, overridesChanged bool, kind string) (bool, *inspectBuildReportState, *inspectDiagnostic) {
 	if !inspectPathExists(path) {
 		return false, nil, nil
 	}
@@ -580,6 +655,8 @@ func loadInspectReportState(path, configDigest string, hypothetical bool, kind s
 		Status       string          `json:"status"`
 		BuildID      string          `json:"buildId"`
 		Command      string          `json:"command"`
+		Mode         string          `json:"mode"`
+		Toolchain    string          `json:"toolchain"`
 		Started      string          `json:"started"`
 		Finished     string          `json:"finished"`
 		ConfigSHA256 string          `json:"configSha256"`
@@ -601,15 +678,23 @@ func loadInspectReportState(path, configDigest string, hypothetical bool, kind s
 			Fix:      fmt.Sprintf("Rerun vmake %s to rewrite build/vmake-%s.json.", kind, kind),
 		}
 	}
+	digestMatches := report.ConfigSHA256 == configDigest
+	modeMatches := report.Mode == "" || report.Mode == mode
+	toolchainMatches := report.Toolchain == "" || report.Toolchain == toolchain
 	return true, &inspectBuildReportState{
-		Status:        report.Status,
-		BuildID:       report.BuildID,
-		Command:       report.Command,
-		Started:       report.Started,
-		Finished:      report.Finished,
-		ConfigMatches: !hypothetical && report.ConfigSHA256 == configDigest,
-		Summary:       report.Summary,
-		Error:         report.Error,
+		Status:                 report.Status,
+		BuildID:                report.BuildID,
+		Command:                report.Command,
+		Started:                report.Started,
+		Finished:               report.Finished,
+		Mode:                   report.Mode,
+		Toolchain:              report.Toolchain,
+		ConfigMatches:          !hypothetical && digestMatches,
+		ModeMatches:            modeMatches,
+		ToolchainMatches:       toolchainMatches,
+		EffectiveConfigMatches: !overridesChanged && digestMatches && modeMatches && toolchainMatches,
+		Summary:                report.Summary,
+		Error:                  report.Error,
 	}, nil
 }
 
@@ -621,6 +706,8 @@ func inspectFreshnessFor(state *inspectBuildReportState, packages []inspectPacka
 	freshness.ReportStatus = state.Status
 	configMatches := state.ConfigMatches
 	freshness.ConfigMatches = &configMatches
+	effectiveConfigMatches := state.EffectiveConfigMatches
+	freshness.EffectiveConfigMatches = &effectiveConfigMatches
 	finished, err := time.Parse(time.RFC3339Nano, state.Finished)
 	if err != nil {
 		return freshness
@@ -664,6 +751,9 @@ func inspectChangedSources(packages []inspectPackage, finished time.Time) map[st
 					if !filepath.IsAbs(source) {
 						source = filepath.Join(pkg.SourceDir, filepath.FromSlash(source))
 					}
+					if inspectPathUnder(source, pkg.BuildDir) {
+						continue
+					}
 					info, err := os.Stat(source)
 					if err != nil || info.IsDir() {
 						continue
@@ -676,6 +766,17 @@ func inspectChangedSources(packages []inspectPackage, finished time.Time) map[st
 		}
 	}
 	return changed
+}
+
+func inspectPathUnder(path, dir string) bool {
+	if path == "" || dir == "" {
+		return false
+	}
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func inspectSourceExcluded(source string, patterns []string) bool {

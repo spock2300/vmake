@@ -413,6 +413,9 @@ func TestInspectBuildStateAndPackageDirs(t *testing.T) {
 	if !state.ConfigMatches {
 		t.Fatal("buildReportState.configMatches = false for the build's own configuration")
 	}
+	if !state.EffectiveConfigMatches {
+		t.Fatal("buildReportState.effectiveConfigMatches = false for the build's own configuration")
+	}
 	var wantSummary, gotSummary any
 	if err := json.Unmarshal(report.Summary, &wantSummary); err != nil {
 		t.Fatal(err)
@@ -449,6 +452,9 @@ func TestInspectBuildStateAndPackageDirs(t *testing.T) {
 	data = decodeInspectEnvelope(t, stdout).Data
 	if data.BuildReportState == nil || data.BuildReportState.ConfigMatches {
 		t.Fatalf("--set buildReportState = %+v, want configMatches false", data.BuildReportState)
+	}
+	if data.BuildReportState.EffectiveConfigMatches {
+		t.Fatalf("changed --set buildReportState = %+v, want effectiveConfigMatches false", data.BuildReportState)
 	}
 	if dep := inspectPackageNamed(t, data, "dep"); dep.Needed || dep.BuildDir != "" || dep.BuildKey != "" {
 		t.Fatalf("pruned package kept build fields: %+v", dep)
@@ -519,11 +525,14 @@ func Main(p *api.Package) { p.SetRoot(true) }
 	}
 	data := decodeInspectEnvelope(t, stdout).Data
 	state := data.BuildReportState
-	if state == nil || !state.ConfigMatches || state.BuildID != "abc123" || state.Status != "succeeded" {
+	if state == nil || !state.ConfigMatches || !state.EffectiveConfigMatches || state.BuildID != "abc123" || state.Status != "succeeded" {
 		t.Fatalf("matching report state = %+v", state)
 	}
 	if string(state.Summary) == "" {
 		t.Fatal("matching report state lost the summary")
+	}
+	if data.Freshness == nil || data.Freshness.EffectiveConfigMatches == nil || !*data.Freshness.EffectiveConfigMatches {
+		t.Fatalf("matching freshness effectiveConfigMatches = %+v", data.Freshness)
 	}
 
 	writeReport("not-the-active-digest")
@@ -532,9 +541,97 @@ func Main(p *api.Package) { p.SetRoot(true) }
 		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
 	}
 	data = decodeInspectEnvelope(t, stdout).Data
-	if data.BuildReportState == nil || data.BuildReportState.ConfigMatches {
-		t.Fatalf("mismatched report state = %+v, want configMatches false", data.BuildReportState)
+	if data.BuildReportState == nil || data.BuildReportState.ConfigMatches || data.BuildReportState.EffectiveConfigMatches {
+		t.Fatalf("mismatched report state = %+v, want both config match fields false", data.BuildReportState)
 	}
+	if data.Freshness == nil || data.Freshness.EffectiveConfigMatches == nil || *data.Freshness.EffectiveConfigMatches {
+		t.Fatalf("mismatched freshness effectiveConfigMatches = %+v", data.Freshness)
+	}
+}
+
+func TestInspectEffectiveConfigMatches(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.Option("retries").SetType(api.OptionInt).SetDefault(3)
+		ctx.Option("label").SetType(api.OptionString).SetDefault("default")
+		ctx.GlobalOption("board").SetType(api.OptionString)
+	})
+}
+`)
+	configPath := filepath.Join(project, ".vmake", "config.json")
+	writeExtensionFile(t, configPath, `{"version":"1","global":{"mode":"release","options":{"board":"demo"}},"entries":{"proj":{"options":{"retries":5}}}}`)
+	digest, _, err := fileDigest(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := `{"schemaVersion":2,"buildId":"effective","status":"succeeded","command":"%s","started":"2026-01-01T00:00:00Z","finished":"2026-01-01T00:00:01Z","configSha256":"` + digest + `","summary":{"targetsTotal":1}}`
+	writeExtensionFile(t, filepath.Join(project, "build", "vmake-build.json"), fmt.Sprintf(report, "build"))
+	writeExtensionFile(t, filepath.Join(project, "build", "vmake-test.json"), fmt.Sprintf(report, "test"))
+
+	check := func(t *testing.T, args []string, wantConfig, wantEffective bool) {
+		t.Helper()
+		stdout, stderr, code := runInspectCommand(t, project, append([]string{"inspect"}, args...)...)
+		if code != 0 || stderr != "" {
+			t.Fatalf("inspect %v exit = %d, stderr = %q", args, code, stderr)
+		}
+		data := decodeInspectEnvelope(t, stdout).Data
+		for _, state := range []struct {
+			name  string
+			value *inspectBuildReportState
+		}{
+			{"buildReportState", data.BuildReportState},
+			{"testReportState", data.TestReportState},
+		} {
+			if state.value == nil {
+				t.Fatalf("%s missing for inspect %v", state.name, args)
+			}
+			if state.value.ConfigMatches != wantConfig || state.value.EffectiveConfigMatches != wantEffective {
+				t.Fatalf("%s configMatches/effectiveConfigMatches = %v/%v, want %v/%v for inspect %v",
+					state.name, state.value.ConfigMatches, state.value.EffectiveConfigMatches, wantConfig, wantEffective, args)
+			}
+		}
+		if data.Freshness == nil || data.Freshness.ConfigMatches == nil || data.Freshness.EffectiveConfigMatches == nil {
+			t.Fatalf("freshness config match fields missing for inspect %v: %+v", args, data.Freshness)
+		}
+		if *data.Freshness.ConfigMatches != wantConfig || *data.Freshness.EffectiveConfigMatches != wantEffective {
+			t.Fatalf("freshness configMatches/effectiveConfigMatches = %v/%v, want %v/%v for inspect %v",
+				*data.Freshness.ConfigMatches, *data.Freshness.EffectiveConfigMatches, wantConfig, wantEffective, args)
+		}
+	}
+
+	check(t, nil, true, true)
+	check(t, []string{"--set", "proj/retries=5"}, false, true)
+	check(t, []string{"--set", "proj/label=default"}, false, true)
+	check(t, []string{"--set", "mode=release"}, false, true)
+	check(t, []string{"--set", "board=demo"}, false, true)
+	check(t, []string{"--set", "proj/retries=5", "--set", "mode=release"}, false, true)
+	check(t, []string{"--set", "proj/retries=4"}, false, false)
+	check(t, []string{"--set", "mode=debug"}, false, false)
+	check(t, []string{"--set", "proj/retries=5", "--set", "proj/retries=4"}, false, false)
+	check(t, []string{"--set", "board=other"}, false, false)
+
+	mismatched := `{"schemaVersion":2,"buildId":"other","status":"succeeded","command":"build","started":"2026-01-01T00:00:00Z","finished":"2026-01-01T00:00:01Z","configSha256":"not-the-active-digest"}`
+	writeExtensionFile(t, filepath.Join(project, "build", "vmake-build.json"), mismatched)
+	writeExtensionFile(t, filepath.Join(project, "build", "vmake-test.json"), mismatched)
+	check(t, []string{"--set", "proj/retries=5"}, false, false)
+
+	writeExtensionFile(t, configPath, `{"version":"1"}`)
+	digest, _, err = fileDigest(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report = `{"schemaVersion":2,"buildId":"effective","status":"succeeded","command":"%s","started":"2026-01-01T00:00:00Z","finished":"2026-01-01T00:00:01Z","configSha256":"` + digest + `","summary":{"targetsTotal":1}}`
+	writeExtensionFile(t, filepath.Join(project, "build", "vmake-build.json"), fmt.Sprintf(report, "build"))
+	writeExtensionFile(t, filepath.Join(project, "build", "vmake-test.json"), fmt.Sprintf(report, "test"))
+	check(t, nil, true, true)
+	check(t, []string{"--set", "mode=debug"}, false, true)
+	check(t, []string{"--set", "mode=release"}, false, false)
 }
 
 func TestInspectFreshnessWithoutReport(t *testing.T) {
@@ -553,7 +650,8 @@ func TestInspectFreshnessWithoutReport(t *testing.T) {
 		t.Fatalf("freshness = %+v, want present with known false", freshness)
 	}
 	if freshness.ReportStatus != "" || freshness.ReportFinished != "" || freshness.ConfigMatches != nil ||
-		freshness.SourceChanged != nil || freshness.ChangedSources != nil || freshness.Truncated != nil {
+		freshness.EffectiveConfigMatches != nil || freshness.SourceChanged != nil ||
+		freshness.ChangedSources != nil || freshness.Truncated != nil {
 		t.Fatalf("unknown freshness exposed report/source fields: %+v", freshness)
 	}
 }
@@ -578,6 +676,9 @@ func TestInspectFreshnessUnparsableFinish(t *testing.T) {
 		}
 		if freshness.ReportStatus != "succeeded" || freshness.ConfigMatches == nil || !*freshness.ConfigMatches {
 			t.Fatalf("freshness identity = %+v (finished %q)", freshness, finished)
+		}
+		if freshness.EffectiveConfigMatches == nil || !*freshness.EffectiveConfigMatches {
+			t.Fatalf("freshness effectiveConfigMatches = %+v (finished %q)", freshness.EffectiveConfigMatches, finished)
 		}
 		if freshness.ReportFinished != "" || freshness.SourceChanged != nil ||
 			freshness.ChangedSources != nil || freshness.Truncated != nil {
@@ -612,6 +713,9 @@ func TestInspectFreshnessAfterBuildAndSourceEdit(t *testing.T) {
 	if freshness.ConfigMatches == nil || !*freshness.ConfigMatches {
 		t.Fatalf("freshness configMatches = %+v, want true", freshness.ConfigMatches)
 	}
+	if freshness.EffectiveConfigMatches == nil || !*freshness.EffectiveConfigMatches {
+		t.Fatalf("freshness effectiveConfigMatches = %+v, want true", freshness.EffectiveConfigMatches)
+	}
 	if freshness.SourceChanged == nil || *freshness.SourceChanged {
 		t.Fatalf("freshness sourceChanged = %+v, want false", freshness.SourceChanged)
 	}
@@ -639,6 +743,9 @@ func TestInspectFreshnessAfterBuildAndSourceEdit(t *testing.T) {
 	}
 	if freshness.ConfigMatches == nil || !*freshness.ConfigMatches {
 		t.Fatalf("source edit changed configMatches: %+v", freshness.ConfigMatches)
+	}
+	if freshness.EffectiveConfigMatches == nil || !*freshness.EffectiveConfigMatches {
+		t.Fatalf("source edit changed effectiveConfigMatches: %+v", freshness.EffectiveConfigMatches)
 	}
 	if freshness.SourceChanged == nil || !*freshness.SourceChanged {
 		t.Fatalf("sourceChanged after edit = %+v, want true", freshness.SourceChanged)
@@ -680,6 +787,9 @@ func TestInspectFreshnessConfigMismatch(t *testing.T) {
 	}
 	if freshness.ConfigMatches == nil || *freshness.ConfigMatches {
 		t.Fatalf("freshness configMatches = %+v, want false", freshness.ConfigMatches)
+	}
+	if freshness.EffectiveConfigMatches == nil || *freshness.EffectiveConfigMatches {
+		t.Fatalf("freshness effectiveConfigMatches = %+v, want false", freshness.EffectiveConfigMatches)
 	}
 	if freshness.SourceChanged == nil || !*freshness.SourceChanged {
 		t.Fatalf("freshness sourceChanged = %+v, want true despite config mismatch", freshness.SourceChanged)
@@ -724,6 +834,9 @@ func Main(p *api.Package) {
 	}
 	if freshness.ConfigMatches == nil || !*freshness.ConfigMatches {
 		t.Fatalf("freshness configMatches = %+v, want true", freshness.ConfigMatches)
+	}
+	if freshness.EffectiveConfigMatches == nil || !*freshness.EffectiveConfigMatches {
+		t.Fatalf("freshness effectiveConfigMatches = %+v, want true", freshness.EffectiveConfigMatches)
 	}
 	if freshness.SourceChanged == nil || !*freshness.SourceChanged {
 		t.Fatalf("freshness sourceChanged = %+v, want true", freshness.SourceChanged)
@@ -793,7 +906,8 @@ func Main(p *api.Package) {
 			t.Fatalf("corrupt report freshness = %+v, want known false (report %q)", data.Freshness, corrupt)
 		}
 		if data.Freshness.ReportStatus != "" || data.Freshness.ReportFinished != "" ||
-			data.Freshness.ConfigMatches != nil || data.Freshness.SourceChanged != nil ||
+			data.Freshness.ConfigMatches != nil || data.Freshness.EffectiveConfigMatches != nil ||
+			data.Freshness.SourceChanged != nil ||
 			data.Freshness.ChangedSources != nil || data.Freshness.Truncated != nil {
 			t.Fatalf("corrupt report freshness exposed fields: %+v (report %q)", data.Freshness, corrupt)
 		}
@@ -1751,14 +1865,16 @@ func TestInspectReportsBuildAndTestStateSeparately(t *testing.T) {
 		t.Fatalf("build report state missing: present=%v state=%+v", data.BuildReportPresent, data.BuildReportState)
 	}
 	if data.BuildReportState.Command != reportCommandBuild || data.BuildReportState.BuildID != buildStateBefore.BuildID ||
-		data.BuildReportState.Status != "succeeded" || !data.BuildReportState.ConfigMatches {
+		data.BuildReportState.Status != "succeeded" || !data.BuildReportState.ConfigMatches ||
+		!data.BuildReportState.EffectiveConfigMatches {
 		t.Fatalf("buildReportState = %+v, report = %+v", data.BuildReportState, buildStateBefore)
 	}
 	if data.TestReport != testReportPath(project) || !data.TestReportPresent || data.TestReportState == nil {
 		t.Fatalf("test report state missing: path=%q present=%v state=%+v", data.TestReport, data.TestReportPresent, data.TestReportState)
 	}
 	if data.TestReportState.Command != reportCommandTest || data.TestReportState.BuildID != testStateBefore.BuildID ||
-		data.TestReportState.Status != "succeeded" || !data.TestReportState.ConfigMatches {
+		data.TestReportState.Status != "succeeded" || !data.TestReportState.ConfigMatches ||
+		!data.TestReportState.EffectiveConfigMatches {
 		t.Fatalf("testReportState = %+v, report = %+v", data.TestReportState, testStateBefore)
 	}
 	if string(data.TestReportState.Summary) == "" {
