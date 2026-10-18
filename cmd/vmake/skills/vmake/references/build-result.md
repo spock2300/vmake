@@ -24,7 +24,7 @@ the installation manifest (`install/manifest.json`). `clean`, `distclean`, and
 | `toolchain`, `mode` | Effective toolchain and mode |
 | `compileDatabase` | Absolute path to the compilation database, or empty |
 | `targets` | Executed default targets: `package`, `target`, `kind`, `outputs`, `status`, `durationMs`. On failure only targets that completed before the failure are listed |
-| `tests` | Always an array. For `vmake test`, one entry per executed test binary with `name`, `package`, `target`, `passed`, `elapsedMs`, `exitCode`, optional `signal` (set when a signal terminated the process), and `output` |
+| `tests` | Always an array. For `vmake test`, one entry per discovered test target: an executed test has `name`, `package`, `target`, `passed`, `elapsedMs`, `exitCode`, optional `signal` (set when a signal terminated the process), and `output`. After a `-k` build failure, a declared target that did not run has `notRun: true`, `skipReason` (`build failed`, `binary missing`, or `unsupported platform`), `passed: false`, and no output or signal |
 | `artifacts` | Files installed by this invocation only: `package`, `target`, `buildPath`, `installPath`, `size`, `sha256` |
 
 A target's `status` is `built` when it compiled or linked something in this
@@ -46,8 +46,11 @@ diagnostics (or 1 when a target failure is known without a name),
 `artifactsInstalled` is 0, and no installation runs. A failure before any target
 is scheduled (for example a buildscript error) omits `summary` entirely.
 
-Test counts are 0 for build/rebuild. Compile/link counts cover compile and link
-actions only, not post-link steps, void callbacks, or installation. A no-op
+Test counts are 0 for build/rebuild. `testsFound` counts discovered test
+targets (executed plus not run), while `testsPassed` and `testsFailed` count
+executed tests only; not-run entries are not failures. Compile/link counts cover
+compile and link actions only, not post-link steps, void callbacks, or
+installation. A no-op
 build therefore has `filesCompiled: 0`, `filesLinked: 0`, `changedFiles: []`,
 and `noOp: true`; it may still have run callbacks and installed artifacts.
 `changedFiles` is the sorted, unique list of compiled source paths written as
@@ -163,7 +166,9 @@ report from an earlier `vmake build` is left byte-for-byte intact for every test
 outcome.
 
 - `status` is `succeeded` when every executed test passed; a host project with
-  no runnable test target also succeeds unless `--require-tests` is given.
+  no runnable test target also succeeds unless `--require-tests` is given. A
+  `-k` build-phase failure stays `failed` even when surviving test binaries
+  execute and pass; the build error remains `error`.
 - Each `tests[]` entry carries `exitCode` (0 on success, the process exit code
   on failure, -1 when a signal terminated it, 1 when unavailable), `signal`
   (omitted unless a signal terminated the process; platform wording such as
@@ -200,6 +205,12 @@ outcome.
 - If the build phase itself fails, the report keeps the completed build targets
   and partial `summary` (unless the failure happened before scheduling) along
   with configuration identity and `compileDatabase`. `artifacts` stays empty.
+- With `-k`, a build-phase failure still runs the test binaries that were
+  built. Executed entries keep their normal pass/exit/signal/output fields;
+  declared targets without a runnable binary get `notRun: true` and
+  `skipReason` and do not count as failures. The report stays `failed` with the
+  build error as `error`, and the command exits 1. Without `-k`, a build-phase
+  failure records no test entries.
 - A running test record replaces the previous test report before work starts;
   later test runs overwrite it with a new `buildId`. The build report keeps its
   own build ID.

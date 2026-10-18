@@ -426,3 +426,179 @@ int main(void) {
 		t.Fatalf("failed test output = %q", output)
 	}
 }
+
+func writePartialTestProject(t *testing.T, goodTestSource string) string {
+	t.Helper()
+	project := filepath.Join(t.TempDir(), "tests-project")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c")
+		ctx.Target("checkgood").SetKind(api.TargetBinary).SetTest(true).AddFiles("tests/good.c")
+		ctx.Target("checkbad").SetKind(api.TargetBinary).SetTest(true).AddFiles("tests/bad.c")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n")
+	writeExtensionFile(t, filepath.Join(project, "tests", "good.c"), goodTestSource)
+	writeExtensionFile(t, filepath.Join(project, "tests", "bad.c"), "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
+	return project
+}
+
+func testResultsByName(tests []buildTestResult) map[string]buildTestResult {
+	entries := make(map[string]buildTestResult, len(tests))
+	for _, test := range tests {
+		entries[test.Name] = test
+	}
+	return entries
+}
+
+func TestTestCommandKeepGoingRunsBuiltTestsAfterBuildFailure(t *testing.T) {
+	project := writePartialTestProject(t, `#include <stdio.h>
+
+int main(void) {
+	printf("keep-going test ran\n");
+	return 0;
+}
+`)
+	stdout, stderr, code := runBuildCommand(t, project, "test", "-k")
+	if code != 1 {
+		t.Fatalf("test -k exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "keep-going test ran") || !strings.Contains(stdout, "PASS tests-project:checkgood") {
+		t.Fatalf("built test did not run:\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Tests failed: tests/bad.c:2:") {
+		t.Fatalf("build error is not the summary:\n%s", stdout)
+	}
+	report := loadTestReport(t, project)
+	if report.Status != "failed" || report.Command != reportCommandTest || !strings.Contains(report.Error, "tests/bad.c:2:") {
+		t.Fatalf("keep-going report = %+v", report)
+	}
+	if len(report.Tests) != 2 {
+		t.Fatalf("tests = %+v", report.Tests)
+	}
+	entries := testResultsByName(report.Tests)
+	good, ok := entries["tests-project:checkgood"]
+	if !ok {
+		t.Fatalf("executed test entry missing: %+v", report.Tests)
+	}
+	if good.NotRun || good.SkipReason != "" || !good.Passed || good.ExitCode != 0 ||
+		!strings.Contains(good.Output, "keep-going test ran") {
+		t.Fatalf("executed test entry = %+v", good)
+	}
+	bad, ok := entries["tests-project:checkbad"]
+	if !ok {
+		t.Fatalf("not-run test entry missing: %+v", report.Tests)
+	}
+	if !bad.NotRun || bad.SkipReason != testSkipBinaryMissing || bad.Passed || bad.ExitCode != 0 || bad.Output != "" {
+		t.Fatalf("not-run test entry = %+v", bad)
+	}
+	summary := report.Summary
+	if summary == nil || summary.TestsFound != 2 || summary.TestsPassed != 1 || summary.TestsFailed != 0 ||
+		summary.TargetsFailed != 1 {
+		t.Fatalf("keep-going summary = %+v", summary)
+	}
+	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Code != "VMAKE_E_COMPILE" ||
+		filepath.Base(report.Diagnostics[0].File) != "bad.c" {
+		t.Fatalf("diagnostics = %+v", report.Diagnostics)
+	}
+}
+
+func TestTestCommandBuildFailureWithoutKeepGoingRecordsNoTests(t *testing.T) {
+	project := writePartialTestProject(t, `#include <stdio.h>
+
+int main(void) {
+	printf("fail-fast test ran\n");
+	return 0;
+}
+`)
+	stdout, stderr, code := runBuildCommand(t, project, "test")
+	if code != 1 {
+		t.Fatalf("test exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if strings.Contains(stdout, "fail-fast test ran") || strings.Contains(stdout, "PASS tests-project:checkgood") {
+		t.Fatalf("fail-fast build ran tests:\n%s", stdout)
+	}
+	report := loadTestReport(t, project)
+	if report.Status != "failed" || report.Command != reportCommandTest || !strings.Contains(report.Error, "tests/bad.c:2:") {
+		t.Fatalf("fail-fast report = %+v", report)
+	}
+	if len(report.Tests) != 0 {
+		t.Fatalf("fail-fast tests = %+v, want none", report.Tests)
+	}
+	if report.Summary == nil || report.Summary.TestsFound != 0 || report.Summary.TestsPassed != 0 ||
+		report.Summary.TestsFailed != 0 {
+		t.Fatalf("fail-fast summary = %+v", report.Summary)
+	}
+}
+
+func TestTestCommandKeepGoingBuildFailureWithoutTestsKeepsTestsEmpty(t *testing.T) {
+	project := writeTestCommandProject(t, "")
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
+	stdout, stderr, code := runBuildCommand(t, project, "test", "-k")
+	if code != 1 {
+		t.Fatalf("test -k exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Tests failed: src/main.c:2:") {
+		t.Fatalf("build error is not the summary:\n%s", stdout)
+	}
+	report := loadTestReport(t, project)
+	if report.Status != "failed" || report.Command != reportCommandTest {
+		t.Fatalf("no-tests report = %+v", report)
+	}
+	if len(report.Tests) != 0 {
+		t.Fatalf("no-tests entries = %+v, want none", report.Tests)
+	}
+	if report.Summary == nil || report.Summary.TestsFound != 0 || report.Summary.TestsPassed != 0 ||
+		report.Summary.TestsFailed != 0 {
+		t.Fatalf("no-tests summary = %+v", report.Summary)
+	}
+}
+
+func TestTestCommandKeepGoingCapturesSignalAfterBuildFailure(t *testing.T) {
+	if !testSignalsSupported {
+		t.Skip("process signal status is unavailable on this platform")
+	}
+	project := writePartialTestProject(t, `#include <signal.h>
+#include <stdio.h>
+
+int main(void) {
+	fprintf(stderr, "partial crash marker\n");
+	raise(SIGSEGV);
+	return 0;
+}
+`)
+	stdout, stderr, code := runBuildCommand(t, project, "test", "-k")
+	if code != 1 {
+		t.Fatalf("test -k exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "FAIL tests-project:checkgood") {
+		t.Fatalf("FAIL line missing from stderr:\n%s", stderr)
+	}
+	if !strings.Contains(stdout, "Tests failed: tests/bad.c:2:") {
+		t.Fatalf("build error is not the summary:\n%s", stdout)
+	}
+	report := loadTestReport(t, project)
+	entries := testResultsByName(report.Tests)
+	good, ok := entries["tests-project:checkgood"]
+	if !ok {
+		t.Fatalf("executed test entry missing: %+v", report.Tests)
+	}
+	if good.NotRun || good.Passed || good.ExitCode != -1 || good.Signal != "segmentation fault" ||
+		!strings.Contains(good.Output, "partial crash marker") {
+		t.Fatalf("signaled test entry = %+v", good)
+	}
+	bad, ok := entries["tests-project:checkbad"]
+	if !ok || !bad.NotRun || bad.SkipReason != testSkipBinaryMissing {
+		t.Fatalf("not-run test entry = %+v", bad)
+	}
+	if report.Summary == nil || report.Summary.TestsFound != 2 || report.Summary.TestsPassed != 0 ||
+		report.Summary.TestsFailed != 1 {
+		t.Fatalf("signal summary = %+v", report.Summary)
+	}
+}

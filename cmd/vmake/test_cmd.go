@@ -48,6 +48,11 @@ func runTest(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				if result != nil {
 					report.partial(ctx, result, err)
+					if keepGoingFlag {
+						report.cutWarnings()
+						tests, _ := runAllTests(ctx.Context, result, true)
+						report.setTestResults(tests)
+					}
 				}
 				return err
 			}
@@ -55,7 +60,7 @@ func runTest(cmd *cobra.Command, args []string) error {
 				return err
 			}
 			report.cutWarnings()
-			tests, err := runAllTests(ctx.Context, result)
+			tests, err := runAllTests(ctx.Context, result, false)
 			report.setTestResults(tests)
 			if errors.Is(err, errNoTestTargets) && !requireTestsFlag {
 				return nil
@@ -118,6 +123,8 @@ type testResult struct {
 	targetName  string
 	outputPath  string
 	passed      bool
+	notRun      bool
+	skipReason  string
 	elapsed     time.Duration
 	exitCode    int
 	signal      string
@@ -127,6 +134,10 @@ type testResult struct {
 const (
 	buildTestOutputLimit  = 4096
 	buildTestOutputMarker = "...[truncated]\n"
+
+	testSkipBuildFailed   = "build failed"
+	testSkipBinaryMissing = "binary missing"
+	testSkipUnsupported   = "unsupported platform"
 )
 
 var errNoTestTargets = errors.New("no test targets found")
@@ -156,7 +167,7 @@ func testExitCode(err error) (int, string) {
 	return 1, ""
 }
 
-func runAllTests(ctx context.Context, result *BuildResult) ([]testResult, error) {
+func runAllTests(ctx context.Context, result *BuildResult, allowNotRun bool) ([]testResult, error) {
 	var tests []testResult
 
 	for _, fullName := range result.Graph.Order {
@@ -171,40 +182,69 @@ func runAllTests(ctx context.Context, result *BuildResult) ([]testResult, error)
 			continue
 		}
 
+		test := testResult{
+			fullName:    fullName,
+			packageName: node.PkgName,
+			targetName:  node.Target.Name(),
+		}
 		pkgDirs, ok := result.PkgDirs[node.PkgName]
 		if !ok {
+			if allowNotRun {
+				test.notRun, test.skipReason = true, testSkipBuildFailed
+				tests = append(tests, test)
+			}
 			continue
 		}
 		platform, ok := result.PkgPlatforms[node.PkgName]
 		if !ok {
+			if allowNotRun {
+				test.notRun, test.skipReason = true, testSkipUnsupported
+				tests = append(tests, test)
+				continue
+			}
 			return nil, fmt.Errorf("test target %s has no resolved package platform", fullName)
 		}
+		test.outputPath = filepath.Join(pkgDirs.BuildDir, api.TargetFilename(node.Target.Kind(), node.Target.Name(), platform.OSOrHost()))
 		if err := validateTestExecution(platform, runtime.GOOS); err != nil {
+			if allowNotRun {
+				test.notRun, test.skipReason = true, testSkipUnsupported
+				tests = append(tests, test)
+				continue
+			}
 			return nil, err
 		}
-
-		outputPath := filepath.Join(pkgDirs.BuildDir, api.TargetFilename(node.Target.Kind(), node.Target.Name(), platform.OSOrHost()))
-		if _, err := os.Stat(outputPath); err != nil {
-			vlog.Error("FAIL %s (binary not found: %s)", fullName, outputPath)
+		if _, err := os.Stat(test.outputPath); err != nil {
+			if allowNotRun {
+				test.notRun, test.skipReason = true, testSkipBinaryMissing
+				tests = append(tests, test)
+				continue
+			}
+			vlog.Error("FAIL %s (binary not found: %s)", fullName, test.outputPath)
 			return nil, fmt.Errorf("test binary missing: %w", err)
 		}
 
-		tests = append(tests, testResult{
-			fullName:    fullName,
-			packageName: node.PkgName,
-			targetName:  node.Target.Name(),
-			outputPath:  outputPath,
-		})
+		tests = append(tests, test)
 	}
 
 	if len(tests) == 0 {
 		return nil, errNoTestTargets
 	}
 
-	vlog.Info("")
-	vlog.Info("Running %d test(s)...", len(tests))
+	runnable := 0
+	for _, test := range tests {
+		if !test.notRun {
+			runnable++
+		}
+	}
+	if runnable > 0 {
+		vlog.Info("")
+		vlog.Info("Running %d test(s)...", runnable)
+	}
 
 	for i := range tests {
+		if tests[i].notRun {
+			continue
+		}
 		if err := ctx.Err(); err != nil {
 			return tests[:i], err
 		}
@@ -237,16 +277,23 @@ func runAllTests(ctx context.Context, result *BuildResult) ([]testResult, error)
 		}
 	}
 
-	vlog.Info("")
-	passed := 0
-	for _, t := range tests {
-		if t.passed {
+	if runnable > 0 {
+		vlog.Info("")
+	}
+	passed, failed := 0, 0
+	for _, test := range tests {
+		if test.notRun {
+			continue
+		}
+		if test.passed {
 			passed++
+		} else {
+			failed++
 		}
 	}
 
-	if passed == len(tests) {
-		return tests, nil
+	if failed > 0 {
+		return tests, fmt.Errorf("%d test(s) failed", failed)
 	}
-	return tests, fmt.Errorf("%d test(s) failed", len(tests)-passed)
+	return tests, nil
 }

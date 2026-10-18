@@ -67,14 +67,16 @@ type buildSummary struct {
 }
 
 type buildTestResult struct {
-	Name      string `json:"name"`
-	Package   string `json:"package"`
-	Target    string `json:"target"`
-	Passed    bool   `json:"passed"`
-	ElapsedMs int64  `json:"elapsedMs"`
-	ExitCode  int    `json:"exitCode"`
-	Signal    string `json:"signal,omitempty"`
-	Output    string `json:"output,omitempty"`
+	Name       string `json:"name"`
+	Package    string `json:"package"`
+	Target     string `json:"target"`
+	Passed     bool   `json:"passed"`
+	NotRun     bool   `json:"notRun,omitempty"`
+	SkipReason string `json:"skipReason,omitempty"`
+	ElapsedMs  int64  `json:"elapsedMs"`
+	ExitCode   int    `json:"exitCode"`
+	Signal     string `json:"signal,omitempty"`
+	Output     string `json:"output,omitempty"`
 }
 
 type buildReport struct {
@@ -621,14 +623,19 @@ func (r *buildReport) setTestResults(tests []testResult) {
 	passed, failed := 0, 0
 	for i, test := range tests {
 		r.Tests[i] = buildTestResult{
-			Name:      test.fullName,
-			Package:   test.packageName,
-			Target:    test.targetName,
-			Passed:    test.passed,
-			ElapsedMs: test.elapsed.Milliseconds(),
-			ExitCode:  test.exitCode,
-			Signal:    test.signal,
-			Output:    test.output,
+			Name:       test.fullName,
+			Package:    test.packageName,
+			Target:     test.targetName,
+			Passed:     test.passed,
+			NotRun:     test.notRun,
+			SkipReason: test.skipReason,
+			ElapsedMs:  test.elapsed.Milliseconds(),
+			ExitCode:   test.exitCode,
+			Signal:     test.signal,
+			Output:     test.output,
+		}
+		if test.notRun {
+			continue
 		}
 		if test.passed {
 			passed++
