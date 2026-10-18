@@ -12,9 +12,48 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/traefik/yaegi/interp"
 )
+
+var (
+	readOnly      atomic.Bool
+	blockedMu     sync.Mutex
+	blockedWrites []string
+)
+
+func SetReadOnly(enabled bool) {
+	readOnly.Store(enabled)
+	blockedMu.Lock()
+	blockedWrites = nil
+	blockedMu.Unlock()
+}
+
+func TakeBlockedWrites() []string {
+	blockedMu.Lock()
+	defer blockedMu.Unlock()
+	writes := blockedWrites
+	blockedWrites = nil
+	return writes
+}
+
+func (s *ScriptFS) writeBlocked(paths ...string) error {
+	if !readOnly.Load() {
+		return nil
+	}
+	resolved := make([]string, len(paths))
+	for i, p := range paths {
+		resolved[i] = s.resolve(p)
+	}
+	err := fmt.Errorf("read-only inspection: interpreted script write to %s is not allowed", strings.Join(resolved, " -> "))
+	blockedMu.Lock()
+	blockedWrites = append(blockedWrites, err.Error())
+	blockedMu.Unlock()
+	return err
+}
 
 type ScriptFS struct {
 	base     string
@@ -80,22 +119,56 @@ func (s *ScriptFS) Exports() interp.Exports {
 
 func (s *ScriptFS) open(name string) (*os.File, error) { return os.Open(s.resolve(name)) }
 func (s *ScriptFS) openFile(name string, flag int, perm os.FileMode) (*os.File, error) {
+	if flag&(os.O_WRONLY|os.O_RDWR|os.O_CREATE|os.O_TRUNC|os.O_APPEND) != 0 {
+		if err := s.writeBlocked(name); err != nil {
+			return nil, err
+		}
+	}
 	return os.OpenFile(s.resolve(name), flag, perm)
 }
-func (s *ScriptFS) create(name string) (*os.File, error) { return os.Create(s.resolve(name)) }
+func (s *ScriptFS) create(name string) (*os.File, error) {
+	if err := s.writeBlocked(name); err != nil {
+		return nil, err
+	}
+	return os.Create(s.resolve(name))
+}
 func (s *ScriptFS) readFile(name string) ([]byte, error) { return os.ReadFile(s.resolve(name)) }
 func (s *ScriptFS) writeFile(name string, data []byte, perm os.FileMode) error {
+	if err := s.writeBlocked(name); err != nil {
+		return err
+	}
 	return os.WriteFile(s.resolve(name), data, perm)
 }
-func (s *ScriptFS) stat(name string) (os.FileInfo, error)     { return os.Stat(s.resolve(name)) }
-func (s *ScriptFS) lstat(name string) (os.FileInfo, error)    { return os.Lstat(s.resolve(name)) }
-func (s *ScriptFS) mkdir(name string, perm os.FileMode) error { return os.Mkdir(s.resolve(name), perm) }
+func (s *ScriptFS) stat(name string) (os.FileInfo, error)  { return os.Stat(s.resolve(name)) }
+func (s *ScriptFS) lstat(name string) (os.FileInfo, error) { return os.Lstat(s.resolve(name)) }
+func (s *ScriptFS) mkdir(name string, perm os.FileMode) error {
+	if err := s.writeBlocked(name); err != nil {
+		return err
+	}
+	return os.Mkdir(s.resolve(name), perm)
+}
 func (s *ScriptFS) mkdirAll(name string, perm os.FileMode) error {
+	if err := s.writeBlocked(name); err != nil {
+		return err
+	}
 	return os.MkdirAll(s.resolve(name), perm)
 }
-func (s *ScriptFS) remove(name string) error    { return os.Remove(s.resolve(name)) }
-func (s *ScriptFS) removeAll(path string) error { return os.RemoveAll(s.resolve(path)) }
+func (s *ScriptFS) remove(name string) error {
+	if err := s.writeBlocked(name); err != nil {
+		return err
+	}
+	return os.Remove(s.resolve(name))
+}
+func (s *ScriptFS) removeAll(path string) error {
+	if err := s.writeBlocked(path); err != nil {
+		return err
+	}
+	return os.RemoveAll(s.resolve(path))
+}
 func (s *ScriptFS) rename(oldpath, newpath string) error {
+	if err := s.writeBlocked(oldpath, newpath); err != nil {
+		return err
+	}
 	return os.Rename(s.resolve(oldpath), s.resolve(newpath))
 }
 func (s *ScriptFS) readDir(name string) ([]os.DirEntry, error) { return os.ReadDir(s.resolve(name)) }
@@ -109,6 +182,13 @@ func (s *ScriptFS) chdir(string) error {
 func (s *ScriptFS) tempDir() string { return os.TempDir() }
 
 func (s *ScriptFS) createTemp(dir, pattern string) (*os.File, error) {
+	blocked := dir
+	if blocked == "" {
+		blocked = os.TempDir()
+	}
+	if err := s.writeBlocked(blocked); err != nil {
+		return nil, err
+	}
 	return os.CreateTemp(s.resolve(dir), pattern)
 }
 

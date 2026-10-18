@@ -78,18 +78,33 @@ options, deps, `sourcePresent`, active `buildDir`, and targets), the package
 recorded `buildReportState`, the `freshness` heuristic, and the expected
 `installPrefix`/`installManifest` paths. It never builds or installs, so prefer
 it over scraping `query` text when you need to decide which package, target, or
-file to change.
+file to change. While dry-run `OnBuild` runs it enforces read-only
+interpreted-script file IO: wrapped `os` write/remove/rename/create calls and
+write-flag `OpenFile` fail with `read-only inspection: ... is not allowed`
+instead of touching the project, while reads, stats, and globs keep working. `inspect --allow-dry-run-writes` disables the guard for callbacks that must materialize inputs; it can modify the build tree.
+Buildscripts should guard generated-file work on `p.DryRun()`; an empty
+`BuildDir()` is not a sufficient guard during inspection. Unwrapped stdlib APIs
+and subprocesses are not sandboxed. Any wrapped write attempt (even one whose
+error the callback ignores) omits that package's targets and emits a
+`VMAKE_W_TARGET_DECLARE` warning.
 
 - Envelope: `{schemaVersion, command, status: "ok"|"error", data?, diagnostics}`.
   `diagnostics` is always an array; warnings keep `status: "ok"` and exit 0,
   model failures use `status: "error"` and exit 1.
 - Targets are listed only for needed packages; a package pruned by `FilterDeps`
-  has none. `files` keeps the declared globs (inspect does not expand them).
-  `installs` lists the package's `AddInstalls` entries declared in `OnBuild`
-  (`{source, dest}`), and `installPath` predicts the prefix-relative artifact
-  path (`bin/app`, `lib/libfoo.a`) or omits it for void/object/test/no-install
-  targets. `OnInstall` does not run and the install prefix is not resolved, so
-  these values are declarations, not evidence that a file exists.
+  has none. `files`/`excludedFiles` keep the declared patterns. `resolvedFiles`
+  resolves them with the same glob and exclusion rules as the build:
+  source-dir-relative slash paths, sorted, de-duplicated, capped at 200.
+  `resolvedFileCount` is the full count before the cap and
+  `resolvedFilesTruncated` is present only when the cap applied; all three
+  fields are omitted when nothing matches. The list is declaration-time only
+  (no contents read, no writes); a declared generated file appears only after a
+  build has created it. `installs` lists the
+  package's `AddInstalls` entries declared in `OnBuild` (`{source, dest}`), and
+  `installPath` predicts the prefix-relative artifact path (`bin/app`,
+  `lib/libfoo.a`) or omits it for void/object/test/no-install targets.
+  `OnInstall` does not run and the install prefix is not resolved, so these
+  values are declarations, not evidence that a file exists.
 - A needed package whose source tree is absent gets a
   `VMAKE_W_SOURCE_MISSING` warning and `sourcePresent: false`; inspect does not
   fetch, materialize, or link sources for this check. `vmake query` and
@@ -100,8 +115,9 @@ file to change.
   `clean` it may be absent. Inspect does not read action records or outputs, so
   it cannot tell you a target is up to date.
 - `freshness` (additive schemaVersion 1) is a heuristic: it expands the declared
-  `files` of needed packages whose source tree is present and compares each
-  file's mtime with the build report's `finished` time. `changedSources` lists
+  `files` of needed packages whose source tree is present (the same expansion as
+  `resolvedFiles`, then skips `buildDir` paths) and compares each file's mtime
+  with the build report's `finished` time. `changedSources` lists
   sorted, unique `pkg:path` entries (path relative to the package source
   directory) capped at 50, with `truncated` set when more changed;
   `sourceChanged` is true even beyond the cap. `known` is false without a

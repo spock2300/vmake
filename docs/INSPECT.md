@@ -3,11 +3,17 @@
 `vmake inspect` prints the resolved project model as a single JSON document on
 stdout. It is the machine-readable counterpart of `vmake query`: it performs
 resolution and `OnConfig`/`OnBuild` declaration only, so it never compiles,
-links, installs, or writes `build/`, `install/`, or `.vmake/config.json`. It also
-reports needed packages whose source tree is not on disk yet, without fetching
-or materializing them, and the install plan declared by `OnBuild` (extra
-`AddInstalls` entries and predicted prefix-relative target paths) without
-reading or creating `install/`.
+links, installs, or writes `build/`, `install/`, or `.vmake/config.json` itself.
+Dry-run `OnBuild` callbacks run under a read-only interpreted-script file API
+(see [Read-only dry-run](#read-only-dry-run)), so wrapped file writes fail
+instead of touching the project; APIs outside the wrapped set remain a script's
+responsibility. It also reports needed packages whose source tree is not on disk
+yet, without fetching or materializing them, and the install plan declared by
+`OnBuild` (extra `AddInstalls` entries and predicted prefix-relative target
+paths) without reading or creating `install/`. The model is a declaration-time
+view, not a build plan: the target `files` field keeps the declared patterns
+while `resolvedFiles` adds a bounded resolution of those patterns (see
+[`targets` entries](#targets-entries)).
 
 The model also reports whether `build/compile_commands.json` and the last
 `build/vmake-build.json` and `build/vmake-test.json` currently exist, each
@@ -18,10 +24,10 @@ build-key directory. The build report and test report are written by separate
 invocations; inspect reads both without merging them. A `freshness` object adds
 a source-staleness heuristic computed from the build report's finish time and
 the declared files of needed packages. These fields describe files, resolved
-layout, and declared source modification times only: inspect still does not
-verify that actions or outputs are fresh, does not read action records, and does
-not predict which targets are up to date. It never writes the compile database
-or either report.
+layout, declared source modification times, and declaration-time resolved file
+sets: inspect still does not verify that actions or outputs are fresh, does not
+read action records, and does not predict which targets are up to date. It
+never writes the compile database or either report.
 
 ```
 vmake inspect [--set [package/]option=value ...] [-C <dir>]
@@ -85,6 +91,45 @@ suppressed while `Require`/`Configure` run (so interpreter panic traces cannot
 corrupt the human error line) and is then restored for the documented
 `Warning:`/`Error:` lines; it is not a general buildscript log for `inspect`.
 
+## Read-only dry-run
+
+Inspect enables a process-wide read-only mode for interpreted-script file IO
+before it starts resolution and restores it with a deferred reset on every
+return path. While the mode is enabled, these wrapped `os` symbols fail without
+touching the filesystem, returning
+
+```
+read-only inspection: interpreted script write to <resolved absolute path> is not allowed
+```
+
+- `WriteFile`, `Create`, `CreateTemp`, `Mkdir`, `MkdirAll`, `Remove`, `RemoveAll`;
+- `Rename`, whose error names both the old and the new path;
+- `OpenFile` when the flags contain any of `O_WRONLY`, `O_RDWR`, `O_CREATE`,
+  `O_TRUNC`, `O_APPEND`. `O_RDONLY` opens still work.
+
+`--allow-dry-run-writes` disables this guard for projects whose callbacks must materialize generated inputs before declaring targets. It may modify the build tree; use it only when those writes are expected, and do not rely on the resulting generated files as build inputs.
+
+Reads, `Stat`/`Lstat`, `ReadDir`, and `Walk`/`WalkDir` continue to work. Writes
+performed by vmake itself (locks, plugin state, or the JSON document) do not go
+through the script API and are unaffected. Existing files are not truncated,
+renamed, or deleted by a rejected call, so an inspect run after a build leaves
+build-generated files in place.
+
+A dry-run callback that attempts a wrapped write fails its package's target
+declaration: the package's targets are omitted and one
+`VMAKE_W_TARGET_DECLARE` warning carries the read-only message (see below).
+This happens even when the callback ignores the returned error and continues;
+inspect records the attempt and turns it into a declaration failure, so an
+optimistic `_ = os.WriteFile(...)` in `OnBuild` cannot silently appear to
+succeed. The callback may keep running, but the write did not happen. This
+guard covers the wrapped symbols only: a script that reaches unwrapped stdlib
+APIs such as `os.MkdirTemp`, `ioutil.*`, or a subprocess is not sandboxed, and a
+script that uses them can still write during inspection. The mode is also active
+while `Require`/`Configure` run, so wrapped writes there are rejected too, but
+only dry-run `OnBuild` attempts are attached to a target-declaration warning.
+Normal `build`/`rebuild` never enables the mode, so scripts that generate files
+in a real build are unaffected.
+
 ## Envelope
 
 Success:
@@ -137,7 +182,10 @@ Target declaration is skipped when a needed package's source tree is missing
 (see `VMAKE_W_SOURCE_MISSING` below): the package's targets are omitted and no
 `VMAKE_W_TARGET_DECLARE` warning is produced, because a dry-run `OnBuild`
 failure in that state reflects the absent tree, not a broken callback. Only the
-source-missing warning is reported for such a package.
+source-missing warning is reported for such a package. A declaration warning
+that mentions `read-only inspection: interpreted script write to ... is not
+allowed` means the callback tried to write a file while inspect held the
+read-only guard; the file was not created or removed.
 
 A needed package whose expected source tree is missing or empty gets one
 warning. Inspect checks the tree without running git, touching the network,
@@ -294,10 +342,12 @@ data keys rather than reject the document:
 
 It is computed from the build report's `finished` timestamp and the declared
 `files` of targets in needed packages whose source tree is present. Those
-patterns are expanded with the build's glob rules (including exclusions), and
-each existing matched file is stat-ed and compared with the report finish time;
-file contents are not read or hashed. Missing declared files are skipped
-silently; a missing source tree is covered by `VMAKE_W_SOURCE_MISSING` instead.
+patterns are expanded with the build's glob and exclusion rules (the same
+expansion that produces target `resolvedFiles`), paths under the active
+`buildDir` are skipped, and each remaining existing matched file is stat-ed and
+compared with the report finish time; file contents are not read or hashed.
+Missing declared files are skipped silently; a missing source tree is covered by
+`VMAKE_W_SOURCE_MISSING` instead.
 
 - `known` is false when there is no build report, the report is unreadable, or
   its `finished` field is empty or not an RFC 3339 timestamp. When a report
@@ -371,7 +421,10 @@ order the buildscript declared.
 |-------|------|---------|
 | `name`, `kind` | string | Target name and kind (`binary`, `static`, `shared`, `object`, `void`) |
 | `default`, `test` | bool | Default build membership and test-target flag |
-| `files`, `excludedFiles`, `includes`, `publicIncludes`, `defines` | array? | Declared inputs and compile settings |
+| `files`, `excludedFiles`, `includes`, `publicIncludes`, `defines` | array? | Declared inputs and compile settings; `files`/`excludedFiles` keep the declared glob patterns |
+| `resolvedFiles` | array? | Declaration-time expansion of `files` minus `excludedFiles`, package-source-dir-relative slash paths, sorted, de-duplicated, capped at 200; omitted when no file matches |
+| `resolvedFileCount` | int? | Full number of matched files before the 200-entry cap; omitted when no file matches |
+| `resolvedFilesTruncated` | bool? | True when more than 200 files matched and `resolvedFiles` was capped; omitted otherwise |
 | `languages`, `links` | array? | Declared language overrides and link libraries |
 | `deps` | array? | Declared target dependencies (`pkg:target` or `:target`) |
 | `postLinkOutputs` | array? | Declared post-link output patterns |
@@ -398,26 +451,46 @@ are copied only with `--install-type sdk`; test targets are never installed.
 `installPath` is a prediction, not evidence that the artifact exists. These
 install fields are additive to schemaVersion 1; existing fields are unchanged.
 
-Targets are listed only for needed packages. A package pruned by `FilterDeps`
+`resolvedFiles` uses the same expansion as the build: every pattern in `files`
+is globbed against the package `sourceDir`, each match is dropped when
+`excludedFiles` matches it, and the remaining existing regular files are made
+relative to the package source directory, slash-separated, de-duplicated, and
+sorted. The list is declaration-time only: it performs glob expansion and
+`stat`, never reads file contents and never writes. It is capped at 200 entries
+to bound output size; `resolvedFileCount` always reports the full before-cap
+count and `resolvedFilesTruncated` is true when the cap applied. All three
+fields are omitted when the target declares no `files` or nothing matches (an
+empty directory or a pattern that matches nothing). A declared generated file,
+for example one under the active `buildDir`, matches only after a build has
+created it, so it can appear in a later inspect run; declaration order is not
+preserved because the list is sorted. Unlike the freshness heuristic,
+`resolvedFiles` does not skip paths under `buildDir`: a generated file that a
+target actually compiles is a resolved source once it exists.
+
+`resolvedFiles` is additive to schemaVersion 1: `files` still reports the
+declared patterns unchanged, and consumers that compare inspect documents across
+versions should ignore unknown data keys rather than reject the document.
+Targets are listed only for needed packages; a package pruned by `FilterDeps`
 (for example a conditional or test-only package that is disabled in the current
 configuration) has no `targets`, even though it remains in `packages` and the
 graph. A needed package whose source tree is missing also has no `targets`:
 inspect does not run its dry-run `OnBuild` declaration, and the only warning is
-`VMAKE_W_SOURCE_MISSING`. `files` keeps the declared globs; inspect does not
-expand them to concrete files. Inspect does not build or install, so `output`,
-`installDir`, and `installPath` are predictions, not evidence that an artifact
-exists.
+`VMAKE_W_SOURCE_MISSING`, so no resolved file fields appear. Inspect does not
+build or install, so `output`, `installDir`, and `installPath` are predictions,
+not evidence that an artifact exists.
 
 ## Determinism
 
 Output is deterministic for the same project, configuration, overrides, build
-report, and source modification times: packages and roots are sorted by name,
-graph edges by `(from, to)`, freshness sources are de-duplicated and sorted, and
-JSON object keys follow Go's `encoding/json` ordering. Consecutive runs are
-byte-identical. Build- and test-state fields are snapshots of the report and
-compile database files, so they stay byte-identical until one of those files
-changes. The freshness heuristic changes when the build report or a declared
-source's modification time changes.
+report, and source trees: packages and roots are sorted by name, graph edges by
+`(from, to)`, freshness sources are de-duplicated and sorted, target
+`resolvedFiles` are de-duplicated and sorted, and JSON object keys follow Go's
+`encoding/json` ordering. Consecutive runs are byte-identical. Build- and
+test-state fields are snapshots of the report and compile database files, so
+they stay byte-identical until one of those files changes. The freshness
+heuristic changes when the build report or a declared source's modification time
+changes; resolved file lists also change when matching files are added, removed,
+or renamed.
 
 ## Exit status and stderr
 
@@ -428,8 +501,9 @@ source's modification time changes.
 | `Require`/`Configure`/inspection failure | `status: "error"`, no `data` | 1 | one `Error: ...` line |
 | Invalid `--set` | `status: "error"`, `code: VMAKE_E_OPTION` | 1 | one `Error: ...` line |
 
-Warnings cover target-declaration failures (`VMAKE_W_TARGET_DECLARE`), missing
-source trees (`VMAKE_W_SOURCE_MISSING`), and unreadable build or test reports
+Warnings cover target-declaration failures (`VMAKE_W_TARGET_DECLARE`, including
+a dry-run write rejected by the read-only guard), missing source trees
+(`VMAKE_W_SOURCE_MISSING`), and unreadable build or test reports
 (`VMAKE_W_REPORT_UNREADABLE`). Buildscript stdout is always discarded, including
 on failure; stdout contains one JSON document in every row.
 
@@ -444,9 +518,17 @@ and does not resolve the install prefix: `installPrefix` and `installManifest`
 are the expected default paths, while `installs` and `installPath` come from
 dry-run `OnBuild` declarations. Inspect stats `build/compile_commands.json`,
 reads `build/vmake-build.json` and `build/vmake-test.json` to report their
-state, and expands and stats declared source files for the freshness heuristic.
-It never writes, updates, or deletes the compile database, reports, or sources,
-and it does not inspect action records or outputs. It also does not modify the
-active configuration. With `--set`, resolution and
+state, and expands and stats declared source files for the freshness heuristic
+and `resolvedFiles`. It never writes, updates, or deletes the compile database,
+reports, or sources through vmake's own file operations, and it does not inspect
+action records or outputs. During resolution and dry-run declaration it also
+rejects interpreted-script writes through the wrapped `os` APIs described in
+[Read-only dry-run](#read-only-dry-run); a rejected call does not create,
+truncate, rename, or delete anything. Unwrapped stdlib APIs and subprocesses are
+not sandboxed, so a buildscript that uses them remains responsible for guarding
+its own writes on `p.DryRun()`; during inspection `BuildDir()` is the resolved
+active build-key directory even before it exists, so an empty `BuildDir()` is
+not a sufficient guard. It also does not modify
+the active configuration. With `--set`, resolution and
 `OnConfig`/`OnApply` run twice as described above. The lock/state files it may
 create under `.vmake/` are the same ones every read-only command creates.

@@ -870,6 +870,241 @@ func Main(p *api.Package) {
 	}
 }
 
+func TestInspectResolvedFiles(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c").RemoveFiles("src/skip.c")
+		ctx.Target("docs").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error { return nil })
+		ctx.Target("nomatch").SetKind(api.TargetObject).AddFiles("missing/*.c")
+	})
+}
+`)
+	for _, name := range []string{"b.c", "a.c", "skip.c"} {
+		writeExtensionFile(t, filepath.Join(project, "src", name), "int f(void) { return 0; }\n")
+	}
+	writeExtensionFile(t, filepath.Join(project, "src", "notes.txt"), "not a source\n")
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || len(envelope.Diagnostics) != 0 || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	proj := inspectPackageNamed(t, envelope.Data, "proj")
+	app := inspectTargetNamed(t, proj, "app")
+	if !slices.Equal(app.Files, []string{"src/*.c"}) || !slices.Equal(app.ExcludedFiles, []string{"src/skip.c"}) {
+		t.Fatalf("declared patterns = %v / %v", app.Files, app.ExcludedFiles)
+	}
+	if want := []string{"src/a.c", "src/b.c"}; !slices.Equal(app.ResolvedFiles, want) {
+		t.Fatalf("resolvedFiles = %v, want %v", app.ResolvedFiles, want)
+	}
+	if app.ResolvedFileCount != 2 || app.ResolvedFilesTruncated {
+		t.Fatalf("resolvedFileCount/truncated = %d/%v", app.ResolvedFileCount, app.ResolvedFilesTruncated)
+	}
+
+	docs := inspectTargetNamed(t, proj, "docs")
+	if docs.ResolvedFiles != nil || docs.ResolvedFileCount != 0 || docs.ResolvedFilesTruncated {
+		t.Fatalf("docs resolved fields = %v/%d/%v, want omitted", docs.ResolvedFiles, docs.ResolvedFileCount, docs.ResolvedFilesTruncated)
+	}
+	nomatch := inspectTargetNamed(t, proj, "nomatch")
+	if nomatch.ResolvedFiles != nil || nomatch.ResolvedFileCount != 0 || nomatch.ResolvedFilesTruncated {
+		t.Fatalf("nomatch resolved fields = %v/%d/%v, want omitted", nomatch.ResolvedFiles, nomatch.ResolvedFileCount, nomatch.ResolvedFilesTruncated)
+	}
+	if _, err := os.Stat(filepath.Join(project, "build")); !os.IsNotExist(err) {
+		t.Fatalf("inspect created build/: %v", err)
+	}
+
+	again, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("second inspect exit = %d, stderr = %q", code, stderr)
+	}
+	if again != stdout {
+		t.Fatal("resolved file lists are not deterministic")
+	}
+}
+
+func TestInspectResolvedFilesCap(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c")
+	})
+}
+`)
+	const total = inspectResolvedFilesLimit + 5
+	for i := 0; i < total; i++ {
+		writeExtensionFile(t, filepath.Join(project, "src", fmt.Sprintf("f%03d.c", i)), "int f(void) { return 0; }\n")
+	}
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	app := inspectTargetNamed(t, inspectPackageNamed(t, envelope.Data, "proj"), "app")
+	if len(app.ResolvedFiles) != inspectResolvedFilesLimit {
+		t.Fatalf("resolvedFiles length = %d, want %d", len(app.ResolvedFiles), inspectResolvedFilesLimit)
+	}
+	if !slices.IsSorted(app.ResolvedFiles) {
+		t.Fatalf("resolvedFiles is not sorted: %v", app.ResolvedFiles)
+	}
+	if app.ResolvedFiles[0] != "src/f000.c" || app.ResolvedFiles[len(app.ResolvedFiles)-1] != "src/f199.c" {
+		t.Fatalf("resolvedFiles bounds = %q..%q", app.ResolvedFiles[0], app.ResolvedFiles[len(app.ResolvedFiles)-1])
+	}
+	if app.ResolvedFileCount != total || !app.ResolvedFilesTruncated {
+		t.Fatalf("resolvedFileCount/truncated = %d/%v, want %d/true", app.ResolvedFileCount, app.ResolvedFilesTruncated, total)
+	}
+}
+
+func TestInspectResolvedFilesGeneratedAfterBuild(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import (
+	"path/filepath"
+
+	"github.com/spock2300/vmake/pkg/api"
+)
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		generated, err := filepath.Rel(p.SourceDir(), filepath.Join(p.BuildDir(), "generated.c"))
+		if err != nil {
+			panic(err)
+		}
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c").AddFiles(filepath.ToSlash(generated))
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n")
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	data := decodeInspectEnvelope(t, stdout).Data
+	proj := inspectPackageNamed(t, data, "proj")
+	app := inspectTargetNamed(t, proj, "app")
+	if !slices.Equal(app.ResolvedFiles, []string{"src/main.c"}) {
+		t.Fatalf("resolvedFiles before generated file = %v, want src/main.c", app.ResolvedFiles)
+	}
+	if proj.BuildDir == "" {
+		t.Fatal("inspect did not resolve a build directory")
+	}
+
+	generated := filepath.Join(proj.BuildDir, "generated.c")
+	writeExtensionFile(t, generated, "int generated(void) { return 0; }\n")
+	rel, err := filepath.Rel(project, generated)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code = runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect after generated file exit = %d, stderr = %q", code, stderr)
+	}
+	app = inspectTargetNamed(t, inspectPackageNamed(t, decodeInspectEnvelope(t, stdout).Data, "proj"), "app")
+	if want := []string{filepath.ToSlash(rel), "src/main.c"}; !slices.Equal(app.ResolvedFiles, want) {
+		t.Fatalf("resolvedFiles after generated file = %v, want %v", app.ResolvedFiles, want)
+	}
+	if app.ResolvedFileCount != 2 {
+		t.Fatalf("resolvedFileCount after generated file = %d, want 2", app.ResolvedFileCount)
+	}
+}
+
+func TestInspectResolvedFilesMissingSource(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary)
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "lib", "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.OnPackage(func(p *api.Package) {
+		p.SetGit("https://example.invalid/lib.git")
+		p.AddVersion("1.0.0", "v1.0.0")
+	})
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("lib").SetKind(api.TargetStatic).AddFiles("src/*.c")
+	})
+}
+`)
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	lib := inspectPackageNamed(t, envelope.Data, "lib")
+	if lib.SourcePresent || lib.Targets != nil {
+		t.Fatalf("lib source=%v targets=%+v, want absent source without targets", lib.SourcePresent, lib.Targets)
+	}
+	if len(envelope.Diagnostics) != 1 || envelope.Diagnostics[0].Code != "VMAKE_W_SOURCE_MISSING" {
+		t.Fatalf("diagnostics = %+v", envelope.Diagnostics)
+	}
+}
+
+func TestInspectResolvedFilesFirmwareSample(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".work", "arena", "project"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		t.Skipf("firmware sample project %s unavailable", root)
+	}
+	stdout, stderr, code := runInspectCommand(t, root, "inspect", "--set", "toolchain=host")
+	if code != 0 {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	var firmware *inspectTarget
+	for i := range envelope.Data.Packages {
+		pkg := &envelope.Data.Packages[i]
+		if pkg.Name != "firmware" {
+			continue
+		}
+		for j := range pkg.Targets {
+			if pkg.Targets[j].Name == "firmware" {
+				firmware = &pkg.Targets[j]
+			}
+		}
+	}
+	if firmware == nil {
+		t.Skip("firmware sample has no firmware:firmware target")
+	}
+	if !slices.Contains(firmware.ResolvedFiles, "src/main.c") {
+		t.Fatalf("firmware resolvedFiles = %v, want src/main.c", firmware.ResolvedFiles)
+	}
+}
+
 func TestInspectUnreadableBuildReport(t *testing.T) {
 	project := filepath.Join(t.TempDir(), "proj")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
@@ -1451,6 +1686,168 @@ func Main(p *api.Package) {
 	}
 	if !strings.Contains(stderr, "Warning: cannot declare targets for broken") {
 		t.Fatalf("stderr = %q, want one warning line", stderr)
+	}
+}
+
+func TestInspectReadOnlyDryRun(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "ro")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import (
+	"os"
+
+	"github.com/spock2300/vmake/pkg/api"
+)
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		if err := os.WriteFile("generated.txt", []byte("generated"), 0644); err != nil {
+			panic(err)
+		}
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n")
+	generated := filepath.Join(project, "generated.txt")
+	wantReadOnly := "read-only inspection: interpreted script write to " + generated + " is not allowed"
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	if len(envelope.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %+v, want one target-declaration warning", envelope.Diagnostics)
+	}
+	diagnostic := envelope.Diagnostics[0]
+	if diagnostic.Severity != "warning" || diagnostic.Code != "VMAKE_W_TARGET_DECLARE" || !strings.Contains(diagnostic.Message, wantReadOnly) {
+		t.Fatalf("diagnostic = %+v, want read-only declaration warning", diagnostic)
+	}
+	if stderr != "Warning: "+diagnostic.Message+"\n" {
+		t.Fatalf("stderr = %q, want one warning line", stderr)
+	}
+	if proj := inspectPackageNamed(t, envelope.Data, "ro"); proj.Targets != nil {
+		t.Fatalf("ro targets = %+v, want omitted after read-only declaration failure", proj.Targets)
+	}
+	if _, err := os.Stat(generated); !os.IsNotExist(err) {
+		t.Fatalf("inspect created generated.txt: %v", err)
+	}
+
+	if buildStdout, buildStderr, buildCode := runBuildCommand(t, project, "build"); buildCode != 0 {
+		t.Fatalf("build exit = %d, stderr = %q\n%s", buildCode, buildStderr, buildStdout)
+	}
+	if data, err := os.ReadFile(generated); err != nil || string(data) != "generated" {
+		t.Fatalf("normal build did not write generated.txt: %q, %v", data, err)
+	}
+
+	stdout, stderr, code = runInspectCommand(t, project, "inspect")
+	if code != 0 {
+		t.Fatalf("inspect after build exit = %d, stderr = %q", code, stderr)
+	}
+	envelope = decodeInspectEnvelope(t, stdout)
+	if len(envelope.Diagnostics) != 1 || !strings.Contains(envelope.Diagnostics[0].Message, wantReadOnly) {
+		t.Fatalf("diagnostics after build = %+v", envelope.Diagnostics)
+	}
+	if data, err := os.ReadFile(generated); err != nil || string(data) != "generated" {
+		t.Fatalf("inspect after build changed generated.txt: %q, %v", data, err)
+	}
+}
+
+func TestInspectReadOnlyBlocksIgnoredWrite(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "ignored")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import (
+	"os"
+
+	"github.com/spock2300/vmake/pkg/api"
+)
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		_ = os.WriteFile("ignored.txt", []byte("ignored"), 0644)
+		_ = os.RemoveAll("kept")
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n")
+	kept := filepath.Join(project, "kept", "keep.txt")
+	writeExtensionFile(t, kept, "keep")
+	wantReadOnly := "read-only inspection: interpreted script write to " + filepath.Join(project, "ignored.txt") + " is not allowed"
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	if len(envelope.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %+v, want one blocked-write warning", envelope.Diagnostics)
+	}
+	diagnostic := envelope.Diagnostics[0]
+	if diagnostic.Code != "VMAKE_W_TARGET_DECLARE" || !strings.Contains(diagnostic.Message, wantReadOnly) {
+		t.Fatalf("diagnostic = %+v, want read-only declaration warning", diagnostic)
+	}
+	if proj := inspectPackageNamed(t, envelope.Data, "ignored"); proj.Targets != nil {
+		t.Fatalf("ignored targets = %+v, want omitted after blocked write", proj.Targets)
+	}
+	if _, err := os.Stat(filepath.Join(project, "ignored.txt")); !os.IsNotExist(err) {
+		t.Fatalf("inspect created ignored.txt: %v", err)
+	}
+	if data, err := os.ReadFile(kept); err != nil || string(data) != "keep" {
+		t.Fatalf("inspect removed kept/keep.txt: %q, %v", data, err)
+	}
+}
+
+func TestInspectReadOnlyAllowsReads(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "reads")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import (
+	"os"
+	"path/filepath"
+
+	"github.com/spock2300/vmake/pkg/api"
+)
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		if _, err := os.ReadFile("src/main.c"); err != nil {
+			panic(err)
+		}
+		if _, err := os.Stat("src"); err != nil {
+			panic(err)
+		}
+		if err := filepath.Walk("src", func(path string, info os.FileInfo, err error) error { return err }); err != nil {
+			panic(err)
+		}
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n")
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || len(envelope.Diagnostics) != 0 || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	app := inspectTargetNamed(t, inspectPackageNamed(t, envelope.Data, "reads"), "app")
+	if !slices.Equal(app.ResolvedFiles, []string{"src/main.c"}) || app.ResolvedFileCount != 1 {
+		t.Fatalf("app resolved files = %v (%d), want src/main.c", app.ResolvedFiles, app.ResolvedFileCount)
 	}
 }
 

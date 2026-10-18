@@ -16,6 +16,7 @@ import (
 
 	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/glob"
+	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
@@ -26,6 +27,7 @@ import (
 const (
 	inspectSchemaVersion                = 1
 	inspectFreshnessChangedSourcesLimit = 50
+	inspectResolvedFilesLimit           = 200
 )
 
 type inspectEnvelope struct {
@@ -130,24 +132,27 @@ type inspectPackage struct {
 }
 
 type inspectTarget struct {
-	Name            string           `json:"name"`
-	Kind            string           `json:"kind"`
-	Default         bool             `json:"default"`
-	Test            bool             `json:"test"`
-	Files           []string         `json:"files,omitempty"`
-	ExcludedFiles   []string         `json:"excludedFiles,omitempty"`
-	Includes        []string         `json:"includes,omitempty"`
-	PublicIncludes  []string         `json:"publicIncludes,omitempty"`
-	Defines         []string         `json:"defines,omitempty"`
-	Languages       []string         `json:"languages,omitempty"`
-	Links           []string         `json:"links,omitempty"`
-	Deps            []string         `json:"deps,omitempty"`
-	PostLinkOutputs []string         `json:"postLinkOutputs,omitempty"`
-	Output          string           `json:"output,omitempty"`
-	InstallDir      string           `json:"installDir,omitempty"`
-	NoInstall       bool             `json:"noInstall,omitempty"`
-	Installs        []inspectInstall `json:"installs,omitempty"`
-	InstallPath     string           `json:"installPath,omitempty"`
+	Name                   string           `json:"name"`
+	Kind                   string           `json:"kind"`
+	Default                bool             `json:"default"`
+	Test                   bool             `json:"test"`
+	Files                  []string         `json:"files,omitempty"`
+	ExcludedFiles          []string         `json:"excludedFiles,omitempty"`
+	ResolvedFiles          []string         `json:"resolvedFiles,omitempty"`
+	ResolvedFilesTruncated bool             `json:"resolvedFilesTruncated,omitempty"`
+	ResolvedFileCount      int              `json:"resolvedFileCount,omitempty"`
+	Includes               []string         `json:"includes,omitempty"`
+	PublicIncludes         []string         `json:"publicIncludes,omitempty"`
+	Defines                []string         `json:"defines,omitempty"`
+	Languages              []string         `json:"languages,omitempty"`
+	Links                  []string         `json:"links,omitempty"`
+	Deps                   []string         `json:"deps,omitempty"`
+	PostLinkOutputs        []string         `json:"postLinkOutputs,omitempty"`
+	Output                 string           `json:"output,omitempty"`
+	InstallDir             string           `json:"installDir,omitempty"`
+	NoInstall              bool             `json:"noInstall,omitempty"`
+	Installs               []inspectInstall `json:"installs,omitempty"`
+	InstallPath            string           `json:"installPath,omitempty"`
 }
 
 type inspectInstall struct {
@@ -174,6 +179,7 @@ type inspectOptionDeclarations struct {
 
 func newInspectCmd() *cobra.Command {
 	var setFlags []string
+	var allowDryRunWrites bool
 	cmd := &cobra.Command{
 		Use:   "inspect",
 		Short: "Print a machine-readable project model",
@@ -184,11 +190,25 @@ toolchain, effective global values, roots, packages, targets, package
 dependency graph, the compile-database and build-report paths and presence, the
 last build report's status and identity, its strict configuration-file match and
 effective (override-aware) configuration match, each needed package's active
-build directory, and a source-freshness heuristic. The freshness object
-compares the declared files of needed packages with the build report's finish
-time; it is not an up-to-date check or a build plan. These are file-presence,
-resolved-layout and declared-source facts: inspect does not verify action or
-output freshness. Diagnostics is always an array.
+build directory, and a source-freshness heuristic. Every target keeps its
+declared file patterns and adds a bounded, declaration-time resolution of those
+patterns against the package source directory: resolvedFiles is sorted,
+de-duplicated, slash-separated and capped at 200 entries, with
+resolvedFileCount reporting the full pre-cap count and resolvedFilesTruncated
+flagging the cap. These sets are declarations, not action decisions: generated
+or conditional files can appear only after a build. The freshness object
+compares the resolved declared files of needed packages with the build report's
+finish time; it is not an up-to-date check or a build plan. These are
+file-presence, resolved-layout and declared-source facts: inspect does not
+verify action or output freshness. Diagnostics is always an array.
+
+Dry-run OnBuild runs with interpreted-script file writes disabled: wrapped os
+write APIs fail with a read-only error instead of touching the filesystem, so a
+script that writes produces a VMAKE_W_TARGET_DECLARE warning and that package's
+targets are omitted. Reads, stats and globs still work. vmake's own state files
+are unaffected. --allow-dry-run-writes disables this guard for scripts that
+must generate inputs before declaring targets; it can modify the build tree and
+should be used only when those writes are expected.
 
 --set overrides a configuration option for this run only; nothing is written to
 .vmake/config.json. Values are coerced by the declared option type: bool accepts
@@ -204,13 +224,18 @@ diagnostics, vmake exits 1, and stderr carries one human-readable error line.`,
 		Args: cobra.NoArgs,
 	}
 	cmd.Flags().StringArrayVar(&setFlags, "set", nil, "override an option for this run only (format: [pkg/]option=value)")
+	cmd.Flags().BoolVar(&allowDryRunWrites, "allow-dry-run-writes", false, "let dry-run OnBuild callbacks write files (may modify the build tree)")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		return runInspect(cmd.Context(), setFlags)
+		return runInspect(cmd.Context(), setFlags, allowDryRunWrites)
 	}
 	return cmd
 }
 
-func runInspect(execution context.Context, setFlags []string) error {
+func runInspect(execution context.Context, setFlags []string, allowDryRunWrites bool) error {
+	if !allowDryRunWrites {
+		scriptfs.SetReadOnly(true)
+		defer scriptfs.SetReadOnly(false)
+	}
 	vlog.SetLevel(vlog.Quiet)
 	iexec.SetQuiet(true)
 	envelope := &inspectEnvelope{SchemaVersion: inspectSchemaVersion, Command: "inspect", Status: "ok", Diagnostics: []inspectDiagnostic{}}
@@ -272,6 +297,7 @@ func runInspect(execution context.Context, setFlags []string) error {
 	if err != nil {
 		return fail("VMAKE_E_INSPECT", err)
 	}
+	scriptfs.TakeBlockedWrites()
 	overridesChanged := !overridesNoOp(ctx, baselines, overrides)
 	data, diagnostics := buildInspectData(ctx, inspection, inspectOverrideValues(overrides), overridesChanged)
 	envelope.Data = data
@@ -731,36 +757,65 @@ func inspectFreshnessFor(state *inspectBuildReportState, packages []inspectPacka
 	return freshness
 }
 
+func inspectTargetSourceFiles(sourceDir string, patterns, excluded []string) []string {
+	if sourceDir == "" {
+		return nil
+	}
+	seen := make(map[string]bool)
+	files := make([]string, 0)
+	for _, pattern := range patterns {
+		matches, err := glob.Match(pattern, sourceDir)
+		if err != nil {
+			continue
+		}
+		for _, match := range matches {
+			if inspectSourceExcluded(match, excluded) {
+				continue
+			}
+			source := match
+			if !filepath.IsAbs(source) {
+				source = filepath.Join(sourceDir, filepath.FromSlash(source))
+			}
+			info, err := os.Stat(source)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			rel := match
+			if filepath.IsAbs(rel) {
+				if within, err := filepath.Rel(sourceDir, rel); err == nil {
+					rel = within
+				}
+			}
+			rel = filepath.ToSlash(rel)
+			if seen[rel] {
+				continue
+			}
+			seen[rel] = true
+			files = append(files, rel)
+		}
+	}
+	sort.Strings(files)
+	return files
+}
+
 func inspectChangedSources(packages []inspectPackage, finished time.Time) map[string]bool {
 	changed := make(map[string]bool)
 	for _, pkg := range packages {
-		if pkg.SourceDir == "" {
-			continue
-		}
 		for _, target := range pkg.Targets {
-			for _, pattern := range target.Files {
-				matches, err := glob.Match(pattern, pkg.SourceDir)
-				if err != nil {
+			for _, match := range inspectTargetSourceFiles(pkg.SourceDir, target.Files, target.ExcludedFiles) {
+				source := match
+				if !filepath.IsAbs(source) {
+					source = filepath.Join(pkg.SourceDir, filepath.FromSlash(source))
+				}
+				if inspectPathUnder(source, pkg.BuildDir) {
 					continue
 				}
-				for _, match := range matches {
-					if inspectSourceExcluded(match, target.ExcludedFiles) {
-						continue
-					}
-					source := match
-					if !filepath.IsAbs(source) {
-						source = filepath.Join(pkg.SourceDir, filepath.FromSlash(source))
-					}
-					if inspectPathUnder(source, pkg.BuildDir) {
-						continue
-					}
-					info, err := os.Stat(source)
-					if err != nil || info.IsDir() {
-						continue
-					}
-					if info.ModTime().After(finished) {
-						changed[pkg.Name+":"+filepath.ToSlash(match)] = true
-					}
+				info, err := os.Stat(source)
+				if err != nil || info.IsDir() {
+					continue
+				}
+				if info.ModTime().After(finished) {
+					changed[pkg.Name+":"+match] = true
 				}
 			}
 		}
@@ -1012,6 +1067,13 @@ func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name s
 		dirs = &api.PkgDirs{SourceDir: inspectSourceDir(inspection, name, node)}
 	}
 	buildCtx, err := pipeline.DeclareTargets(ctx, name, dirs, inspection.PackageToolchains[name], inspection.GlobalValues)
+	if blocked := scriptfs.TakeBlockedWrites(); len(blocked) > 0 && err == nil {
+		if len(blocked) == 1 {
+			err = errors.New(blocked[0])
+		} else {
+			err = fmt.Errorf("%s (and %d more blocked write attempts)", blocked[0], len(blocked)-1)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1048,6 +1110,14 @@ func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name s
 			NoInstall:       target.NoInstall(),
 			Installs:        installs,
 			InstallPath:     inspectTargetInstallPath(target, targetOS),
+		}
+		if resolved := inspectTargetSourceFiles(dirs.SourceDir, target.Files(), target.ExcludedFiles()); len(resolved) > 0 {
+			entry.ResolvedFileCount = len(resolved)
+			if len(resolved) > inspectResolvedFilesLimit {
+				resolved = resolved[:inspectResolvedFilesLimit]
+				entry.ResolvedFilesTruncated = true
+			}
+			entry.ResolvedFiles = resolved
 		}
 		if target.Kind() != api.TargetVoid {
 			entry.Output = api.TargetFilename(target.Kind(), target.Name(), targetOS)
