@@ -37,7 +37,9 @@ type buildReport struct {
 	Status          string                    `json:"status"`
 	Started         string                    `json:"started"`
 	Finished        string                    `json:"finished"`
+	DurationMs      int64                     `json:"durationMs"`
 	Error           string                    `json:"error"`
+	Diagnostics     []buildDiagnostic         `json:"diagnostics"`
 	ConfigFile      string                    `json:"configFile"`
 	ConfigSHA256    string                    `json:"configSha256"`
 	Global          map[string]any            `json:"global"`
@@ -49,6 +51,29 @@ type buildReport struct {
 	Artifacts       []buildArtifact           `json:"artifacts"`
 }
 
+type buildSummaryError struct {
+	summary string
+	err     error
+}
+
+func (e *buildSummaryError) Error() string { return e.summary }
+
+func (e *buildSummaryError) Unwrap() error { return e.err }
+
+func withBuildReport(run func(*buildReport) error) (err error) {
+	report, err := beginBuildReport()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		report.finish(&err)
+		if err != nil && report.Error != "" {
+			err = &buildSummaryError{summary: report.Error, err: err}
+		}
+	}()
+	return run(report)
+}
+
 func reportPath(root string) string { return filepath.Join(root, "build", "vmake-build.json") }
 
 func beginBuildReport() (*buildReport, error) {
@@ -56,7 +81,7 @@ func beginBuildReport() (*buildReport, error) {
 	if _, err := rand.Read(id); err != nil {
 		return nil, err
 	}
-	r := &buildReport{SchemaVersion: 1, BuildID: hex.EncodeToString(id), Root: findProjectDir(), Status: "running", Started: time.Now().UTC().Format(time.RFC3339Nano), Targets: []build.TargetResult{}, Artifacts: []buildArtifact{}, Global: map[string]any{}, Packages: map[string]map[string]any{}}
+	r := &buildReport{SchemaVersion: 2, BuildID: hex.EncodeToString(id), Root: findProjectDir(), Status: "running", Started: time.Now().UTC().Format(time.RFC3339Nano), Targets: []build.TargetResult{}, Artifacts: []buildArtifact{}, Diagnostics: []buildDiagnostic{}, Global: map[string]any{}, Packages: map[string]map[string]any{}}
 	return r, jsonio.Save(reportPath(r.Root), r)
 }
 
@@ -69,19 +94,37 @@ func (r *buildReport) finish(result *error) {
 		*result = fmt.Errorf("build interrupted before results were collected")
 	}
 	r.Finished = time.Now().UTC().Format(time.RFC3339Nano)
+	r.DurationMs = reportDuration(r.Started, r.Finished)
+	r.Diagnostics, r.Error = buildFailureDetails(*result)
 	r.Status = "succeeded"
 	if *result != nil {
-		r.Status = "failed"
 		if errors.Is(*result, context.Canceled) {
 			r.Status = "cancelled"
+		} else {
+			r.Status = "failed"
 		}
-		r.Error = (*result).Error()
 		r.Artifacts = []buildArtifact{}
 	}
 	*result = errors.Join(*result, jsonio.Save(reportPath(r.Root), r))
 	if interrupted != nil {
 		panic(interrupted)
 	}
+}
+
+func reportDuration(started, finished string) int64 {
+	start, err := time.Parse(time.RFC3339Nano, started)
+	if err != nil {
+		return 0
+	}
+	end, err := time.Parse(time.RFC3339Nano, finished)
+	if err != nil {
+		return 0
+	}
+	duration := end.Sub(start)
+	if duration <= 0 {
+		return 0
+	}
+	return duration.Milliseconds()
 }
 
 func fileDigest(path string) (string, int64, error) {

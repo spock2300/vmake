@@ -1,15 +1,22 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/jsonio"
+	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/build"
 )
 
 func TestBuildReportActualInstallsAndInvalidation(t *testing.T) {
@@ -186,8 +193,8 @@ func TestBuildReportNeverSucceedsBeforeCompletion(t *testing.T) {
 		if result == nil || r.Status == "succeeded" {
 			t.Fatalf("%+v / %v", r, result)
 		}
-		if errors.Is(failure, context.Canceled) && r.Status != "cancelled" {
-			t.Fatal(r.Status)
+		if errors.Is(failure, context.Canceled) && (r.Status != "cancelled" || r.Error != "build cancelled") {
+			t.Fatalf("cancelled report = %+v", r)
 		}
 		data, err := os.ReadFile(reportPath(r.Root))
 		if err != nil {
@@ -197,7 +204,7 @@ func TestBuildReportNeverSucceedsBeforeCompletion(t *testing.T) {
 		if err := json.Unmarshal(data, &saved); err != nil {
 			t.Fatal(err)
 		}
-		if saved.Status != r.Status || len(saved.Artifacts) != 0 {
+		if saved.Status != r.Status || len(saved.Artifacts) != 0 || saved.Diagnostics == nil {
 			t.Fatalf("%+v", saved)
 		}
 	}
@@ -221,5 +228,308 @@ func TestBuildReportPanicCannotPublishSuccess(t *testing.T) {
 	}
 	if saved.Status != "failed" || len(saved.Artifacts) != 0 {
 		t.Fatalf("%+v", saved)
+	}
+}
+
+func TestBuildReportBootstrapChild(t *testing.T) {
+	dir := os.Getenv("VMAKE_TEST_BUILD_DIR")
+	if dir == "" {
+		return
+	}
+	separator := slices.Index(os.Args, "--")
+	if separator < 0 {
+		t.Fatal("missing command arguments")
+	}
+	vmakeDir = dir
+	os.Args = append([]string{"vmake"}, os.Args[separator+1:]...)
+	main()
+	os.Exit(0)
+}
+
+func runBuildCommand(t *testing.T, projectDir string, args ...string) (string, string, int) {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandArgs := append([]string{"-test.run=^TestBuildReportBootstrapChild$", "--"}, args...)
+	cmd := exec.Command(exe, commandArgs...)
+	cmd.Dir = projectDir
+	cmd.Env = append(os.Environ(),
+		"VMAKE_TEST_BUILD_DIR="+t.TempDir(),
+		"VMAKE_CACHE="+t.TempDir(),
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	code := 0
+	if err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("run build: %v", err)
+		}
+		code = exitErr.ExitCode()
+	}
+	return stdout.String(), stderr.String(), code
+}
+
+func writeBuildReportProject(t *testing.T, source string) string {
+	t.Helper()
+	project := filepath.Join(t.TempDir(), "scratch")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), source)
+	return project
+}
+
+func loadBuildReport(t *testing.T, project string) buildReport {
+	t.Helper()
+	var report buildReport
+	if err := jsonio.Load(reportPath(project), &report); err != nil {
+		t.Fatal(err)
+	}
+	return report
+}
+
+func TestBuildReportV2Success(t *testing.T) {
+	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
+	stdout, stderr, code := runBuildCommand(t, project, "build")
+	if code != 0 || stderr != "" {
+		t.Fatalf("build exit = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "Build succeeded!") {
+		t.Fatalf("success stdout changed:\n%s", stdout)
+	}
+	report := loadBuildReport(t, project)
+	if report.SchemaVersion != 2 || report.Status != "succeeded" || report.Error != "" {
+		t.Fatalf("report = %+v", report)
+	}
+	if report.DurationMs <= 0 {
+		t.Fatalf("durationMs = %d", report.DurationMs)
+	}
+	if report.Diagnostics == nil || len(report.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want []", report.Diagnostics)
+	}
+	if report.BuildID == "" || report.Root != project || report.Mode == "" || report.Toolchain == "" || len(report.Targets) == 0 {
+		t.Fatalf("v1 fields lost: %+v", report)
+	}
+	raw, err := os.ReadFile(reportPath(project))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"diagnostics": []`) {
+		t.Fatalf("success report diagnostics are not an empty JSON array:\n%s", raw)
+	}
+}
+
+func TestBuildReportV2CompileFailure(t *testing.T) {
+	project := writeBuildReportProject(t, "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
+	stdout, stderr, code := runBuildCommand(t, project, "build")
+	if code != 1 {
+		t.Fatalf("build exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	report := loadBuildReport(t, project)
+	if report.SchemaVersion != 2 || report.Status != "failed" {
+		t.Fatalf("report = %+v", report)
+	}
+	if report.Error == "" || len(report.Error) >= 300 || strings.Contains(report.Error, "\n") || strings.Contains(report.Error, " -I") {
+		t.Fatalf("concise error = %q", report.Error)
+	}
+	if !strings.Contains(report.Error, "src/main.c:2:") {
+		t.Fatalf("error does not point at the source: %q", report.Error)
+	}
+	if len(report.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %+v", report.Diagnostics)
+	}
+	diagnostic := report.Diagnostics[0]
+	if diagnostic.Severity != "error" || diagnostic.Code != "VMAKE_E_COMPILE" ||
+		diagnostic.File != "src/main.c" || diagnostic.Line != 2 || diagnostic.Column == 0 {
+		t.Fatalf("diagnostic = %+v", diagnostic)
+	}
+	if diagnostic.Package != "scratch" || diagnostic.Target != "scratch:app" || diagnostic.Message == "" {
+		t.Fatalf("diagnostic context = %+v", diagnostic)
+	}
+	if strings.Count(stderr, "error: expected expression") != 1 {
+		t.Fatalf("compiler diagnostic on stderr %d times:\n%s", strings.Count(stderr, "error: expected expression"), stderr)
+	}
+	lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
+	final := lines[len(lines)-1]
+	if !strings.HasPrefix(final, "Error: ") {
+		t.Fatalf("final stderr line = %q", final)
+	}
+	summarized := strings.TrimPrefix(final, "Error: ")
+	if summarized != report.Error || len(summarized) >= 300 {
+		t.Fatalf("final line %q != report error %q", summarized, report.Error)
+	}
+}
+
+func TestBuildReportV2LinkFallback(t *testing.T) {
+	project := writeBuildReportProject(t, "extern int missing_function(void);\nint main(void) { return missing_function(); }\n")
+	_, stderr, code := runBuildCommand(t, project, "build")
+	if code != 1 {
+		t.Fatalf("build exit = %d, want 1 (stderr %q)", code, stderr)
+	}
+	report := loadBuildReport(t, project)
+	if report.Status != "failed" || len(report.Diagnostics) != 1 {
+		t.Fatalf("report = %+v", report)
+	}
+	diagnostic := report.Diagnostics[0]
+	if diagnostic.Code != "VMAKE_E_LINK" || diagnostic.Severity != "error" || diagnostic.File != "" {
+		t.Fatalf("fallback diagnostic = %+v", diagnostic)
+	}
+	if diagnostic.Package != "scratch" || diagnostic.Target != "scratch:app" || diagnostic.Message == "" {
+		t.Fatalf("fallback context = %+v", diagnostic)
+	}
+	if report.Error == "" || len(report.Error) >= 300 || strings.Contains(report.Error, "\n") {
+		t.Fatalf("fallback summary = %q", report.Error)
+	}
+}
+
+func TestBuildReportV2ScriptError(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "scratch")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Bool("definitely_not_an_option")
+	})
+}
+`)
+	_, stderr, code := runBuildCommand(t, project, "build")
+	if code != 1 {
+		t.Fatalf("build exit = %d, want 1 (stderr %q)", code, stderr)
+	}
+	report := loadBuildReport(t, project)
+	if report.Status != "failed" || len(report.Diagnostics) != 1 {
+		t.Fatalf("report = %+v", report)
+	}
+	diagnostic := report.Diagnostics[0]
+	if diagnostic.Code != "VMAKE_E_SCRIPT" || diagnostic.Severity != "error" || diagnostic.Package != "scratch" {
+		t.Fatalf("script diagnostic = %+v", diagnostic)
+	}
+	if !strings.Contains(diagnostic.Message, "unknown option") || report.Error != diagnostic.Message {
+		t.Fatalf("script summary = %q / %q", report.Error, diagnostic.Message)
+	}
+	lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
+	if !strings.HasPrefix(lines[len(lines)-1], "Error: ") {
+		t.Fatalf("final stderr line = %q", lines[len(lines)-1])
+	}
+}
+
+func TestBuildFailureDetails(t *testing.T) {
+	commandErr := &iexec.CommandError{
+		Command: "gcc -c src/main.c",
+		Output:  "src/main.c:7:3: warning: unused variable\nsrc/main.c:9:11: error: expected ';' before '}' token\n",
+		Err:     errors.New("exit status 1"),
+	}
+	targetErr := &build.TargetError{Target: "firmware:firmware", Stage: "compile", Err: commandErr}
+	diagnostics, summary := buildFailureDetails(targetErr)
+	if len(diagnostics) != 2 {
+		t.Fatalf("diagnostics = %+v", diagnostics)
+	}
+	if diagnostics[0].Severity != "warning" || diagnostics[0].Line != 7 || diagnostics[0].Column != 3 {
+		t.Fatalf("warning diagnostic = %+v", diagnostics[0])
+	}
+	errorDiagnostic := diagnostics[1]
+	if errorDiagnostic.Code != "VMAKE_E_COMPILE" || errorDiagnostic.File != "src/main.c" || errorDiagnostic.Line != 9 ||
+		errorDiagnostic.Column != 11 || errorDiagnostic.Package != "firmware" || errorDiagnostic.Target != "firmware:firmware" {
+		t.Fatalf("error diagnostic = %+v", errorDiagnostic)
+	}
+	if summary != "src/main.c:9:11: expected ';' before '}' token" {
+		t.Fatalf("summary = %q", summary)
+	}
+
+	fallback := &build.TargetError{Target: "app", Stage: "link", Err: &iexec.CommandError{Command: "ld", Output: "collect2: fatal: cannot find ld\n", Err: errors.New("exit status 1")}}
+	diagnostics, summary = buildFailureDetails(fallback)
+	if len(diagnostics) != 1 || diagnostics[0].Code != "VMAKE_E_LINK" || diagnostics[0].Severity != "error" ||
+		diagnostics[0].Message != "collect2: fatal: cannot find ld" || diagnostics[0].Package != "app" || diagnostics[0].Target != "app" {
+		t.Fatalf("fallback = %+v", diagnostics)
+	}
+	if summary != "collect2: fatal: cannot find ld" {
+		t.Fatalf("fallback summary = %q", summary)
+	}
+
+	scriptErr := &api.BuildScriptError{Package: "firmware", Op: "Bool", Err: errors.New(`unknown option "nope"`)}
+	diagnostics, summary = buildFailureDetails(scriptErr)
+	if len(diagnostics) != 1 || diagnostics[0].Code != "VMAKE_E_SCRIPT" || diagnostics[0].Package != "firmware" {
+		t.Fatalf("script = %+v", diagnostics)
+	}
+	if summary != `package firmware: Bool: unknown option "nope"` {
+		t.Fatalf("script summary = %q", summary)
+	}
+
+	diagnostics, summary = buildFailureDetails(context.Canceled)
+	if len(diagnostics) != 0 || summary != "build cancelled" {
+		t.Fatalf("cancellation = %+v / %q", diagnostics, summary)
+	}
+
+	long := strings.Repeat("x", 500)
+	diagnostics, summary = buildFailureDetails(errors.New(long + "\nsecond line"))
+	if len(diagnostics) != 0 || len(summary) >= 300 || strings.HasSuffix(summary, "second line") {
+		t.Fatalf("long summary = %q", summary)
+	}
+}
+
+func TestBuildReportFinishV2(t *testing.T) {
+	root := t.TempDir()
+	report := &buildReport{
+		SchemaVersion: 2,
+		Root:          root,
+		Status:        "running",
+		Started:       time.Now().Add(-25 * time.Millisecond).UTC().Format(time.RFC3339Nano),
+		Artifacts:     []buildArtifact{{Package: "stale"}},
+	}
+	var result error = &build.TargetError{
+		Target: "firmware:firmware",
+		Stage:  "compile",
+		Err:    &iexec.CommandError{Command: "gcc", Output: "src/main.c:4:2: error: boom\n", Err: errors.New("exit status 1")},
+	}
+	report.finish(&result)
+	if report.Status != "failed" || report.Error != "src/main.c:4:2: boom" || len(report.Diagnostics) != 1 || report.DurationMs <= 0 {
+		t.Fatalf("report = %+v", report)
+	}
+	if len(report.Artifacts) != 0 {
+		t.Fatalf("failed report kept artifacts: %+v", report.Artifacts)
+	}
+	var targetErr *build.TargetError
+	if !errors.As(result, &targetErr) {
+		t.Fatalf("finish dropped the error tree: %v", result)
+	}
+	var saved buildReport
+	if err := jsonio.Load(reportPath(root), &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.SchemaVersion != 2 || saved.Status != "failed" || saved.Error != report.Error || len(saved.Diagnostics) != 1 {
+		t.Fatalf("saved report = %+v", saved)
+	}
+	if saved.DurationMs <= 0 {
+		t.Fatalf("saved duration = %d", saved.DurationMs)
+	}
+}
+
+func TestBuildSummaryErrorPreservesCause(t *testing.T) {
+	err := &buildSummaryError{summary: "build cancelled", err: &buildInterrupted{code: 130}}
+	if err.Error() != "build cancelled" {
+		t.Fatalf("Error() = %q", err.Error())
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatal("context.Canceled is not discoverable through the summary wrapper")
+	}
+	var interrupted *buildInterrupted
+	if !errors.As(err, &interrupted) || interrupted.code != 130 {
+		t.Fatalf("buildInterrupted is not discoverable through the summary wrapper: %v", err)
 	}
 }

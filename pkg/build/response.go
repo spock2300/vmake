@@ -17,7 +17,7 @@ func gnuRunner(env map[string]string) cmdRunner {
 
 func gnuRunnerContext(ctx context.Context, env map[string]string) cmdRunner {
 	run := func(name, dir string, args ...string) ([]byte, error) {
-		return iexec.RunWithOptions(name, args, iexec.RunOptions{Dir: dir, Env: env, Context: ctx})
+		return iexec.RunWithOptions(name, args, iexec.RunOptions{Dir: dir, Env: env, Context: ctx, CaptureStderr: true})
 	}
 	return func(name, dir string, args ...string) ([]byte, error) {
 		if runtime.GOOS == "windows" {

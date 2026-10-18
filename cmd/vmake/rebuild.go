@@ -19,19 +19,16 @@ func init() {
 	addBuildFlags(rebuildCmd)
 }
 
-func runRebuild(cmd *cobra.Command, args []string) (err error) {
+func runRebuild(cmd *cobra.Command, args []string) error {
 	commandStorageLocks()
-	report, err := beginBuildReport()
-	if err != nil {
-		return err
-	}
-	defer report.finish(&err)
-	execution := &RuntimeContext{}
-	return withResolvedProject(execution, func(ctx *RuntimeContext) error {
-		executeCleanLocal(ctx)
-		vlog.Info("")
-		_, err := runReportedBuild(ctx, report, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag})
-		return err
+	return withBuildReport(func(report *buildReport) error {
+		execution := &RuntimeContext{}
+		return withResolvedProject(execution, func(ctx *RuntimeContext) error {
+			executeCleanLocal(ctx)
+			vlog.Info("")
+			_, err := runReportedBuild(ctx, report, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag})
+			return err
+		})
 	})
 }
 

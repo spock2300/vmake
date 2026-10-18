@@ -31,7 +31,7 @@ func (s *Scheduler) postLink(resolved *ResolvedTarget) error {
 	}
 	for _, command := range commands {
 		vlog.Info("  %s %s", filepath.Base(command.Program), strings.Join(command.Args, " "))
-		if _, err := iexec.RunWithOptions(command.Program, command.Args, iexec.RunOptions{Dir: workDir, Env: s.toolchain.CommandEnv(), Context: s.ctx}); err != nil {
+		if _, err := iexec.RunWithOptions(command.Program, command.Args, iexec.RunOptions{Dir: workDir, Env: s.toolchain.CommandEnv(), Context: s.ctx, CaptureStderr: true}); err != nil {
 			return err
 		}
 	}

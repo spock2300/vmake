@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -46,11 +47,45 @@ func SetQuiet(enabled bool) {
 }
 
 type RunOptions struct {
-	Dir     string
-	Env     map[string]string
-	Context context.Context
-	Timeout time.Duration
-	Quiet   bool
+	Dir           string
+	Env           map[string]string
+	Context       context.Context
+	Timeout       time.Duration
+	Quiet         bool
+	CaptureStderr bool
+}
+
+type CommandError struct {
+	Command string
+	Output  string
+	Err     error
+}
+
+func (e *CommandError) Error() string {
+	output := TrimOutput([]byte(e.Output))
+	if output == "" {
+		return fmt.Sprintf("%s: %v", e.Command, e.Err)
+	}
+	return fmt.Sprintf("%s: %v\n%s", e.Command, e.Err, output)
+}
+
+func (e *CommandError) Unwrap() error { return e.Err }
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func Run(name string, args ...string) ([]byte, error) {
@@ -81,34 +116,34 @@ func RunWithOptions(name string, args []string, opts RunOptions) ([]byte, error)
 
 	cmd := buildCmd(ctx, name, args, opts.Dir, opts.Env)
 
-	capture := opts.Quiet || quiet
-	var buf bytes.Buffer
+	var buf lockedBuffer
+	stderr := io.Writer(os.Stderr)
+	if opts.CaptureStderr {
+		stderr = io.MultiWriter(os.Stderr, &buf)
+	}
 	switch {
 	case opts.Quiet:
 		cmd.Stdout = &buf
 		cmd.Stderr = &buf
 	case quiet:
 		cmd.Stdout = &buf
-		cmd.Stderr = os.Stderr
+		cmd.Stderr = stderr
 	default:
 		cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
-		cmd.Stderr = os.Stderr
+		cmd.Stderr = stderr
 	}
 
 	err := cmd.Run()
 	if err != nil && ctx != nil && ctx.Err() != nil {
 		err = ctx.Err()
 	}
-	output := buf.Bytes()
+	output := buf.String()
 
 	if err != nil {
-		if capture {
-			return nil, fmt.Errorf("%s: %w\n%s", cmdLine, err, string(output))
-		}
-		return nil, fmt.Errorf("%s: %w\n%s", cmdLine, err, TrimOutput(output))
+		return nil, &CommandError{Command: cmdLine, Output: output, Err: err}
 	}
 
-	return output, nil
+	return []byte(output), nil
 }
 
 func buildCmd(ctx context.Context, name string, args []string, dir string, env map[string]string) *exec.Cmd {

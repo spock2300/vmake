@@ -216,7 +216,30 @@ func TestCommandContextAndTimeoutBothApply(t *testing.T) {
 	}
 }
 
-func TestQuietSuppressesSubprocessStreaming(t *testing.T) {
+func captureProcessOutput(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldOut, oldErr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = write, write
+	runErr := fn()
+	os.Stdout, os.Stderr = oldOut, oldErr
+	if err := write.Close(); err != nil {
+		t.Fatal(err)
+	}
+	output, err := io.ReadAll(read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := read.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return string(output), runErr
+}
+
+func TestCommandErrorCaptureStderr(t *testing.T) {
 	program, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -225,26 +248,57 @@ func TestQuietSuppressesSubprocessStreaming(t *testing.T) {
 	env := func(mode string) map[string]string {
 		return map[string]string{"VMAKE_EXEC_HELPER": mode}
 	}
-	capture := func(fn func() error) (string, error) {
-		read, write, err := os.Pipe()
-		if err != nil {
-			t.Fatal(err)
-		}
-		oldOut, oldErr := os.Stdout, os.Stderr
-		os.Stdout, os.Stderr = write, write
-		runErr := fn()
-		os.Stdout, os.Stderr = oldOut, oldErr
-		if err := write.Close(); err != nil {
-			t.Fatal(err)
-		}
-		output, err := io.ReadAll(read)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := read.Close(); err != nil {
-			t.Fatal(err)
-		}
-		return string(output), runErr
+
+	var output []byte
+	streamed, err := captureProcessOutput(t, func() error {
+		var runErr error
+		output, runErr = RunWithOptions(program, args, RunOptions{Env: env("emit-fail"), CaptureStderr: true})
+		return runErr
+	})
+	if err == nil {
+		t.Fatal("failed command returned no error")
+	}
+	var commandErr *CommandError
+	if !errors.As(err, &commandErr) {
+		t.Fatalf("error type = %T, want *CommandError", err)
+	}
+	if !strings.Contains(commandErr.Command, "TestCommandHelper") || commandErr.Err == nil {
+		t.Fatalf("command error = %+v", commandErr)
+	}
+	if !strings.Contains(commandErr.Output, "stdout-message") || !strings.Contains(commandErr.Output, "stderr-message") {
+		t.Fatalf("captured output = %q", commandErr.Output)
+	}
+	var exitErr *osexec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("error does not unwrap to the process exit: %v", err)
+	}
+	if !strings.Contains(streamed, "stdout-message") || !strings.Contains(streamed, "stderr-message") {
+		t.Fatalf("stderr capture mode stopped streaming: %q", streamed)
+	}
+	if !strings.Contains(err.Error(), "stdout-message") || !strings.Contains(err.Error(), "stderr-message") {
+		t.Fatalf("CommandError text lost output: %v", err)
+	}
+	if output != nil {
+		t.Fatalf("failed command returned output: %q", output)
+	}
+
+	streamed, err = captureProcessOutput(t, func() error {
+		output, err = RunWithOptions(program, args, RunOptions{Env: env("emit"), CaptureStderr: true})
+		return err
+	})
+	if err != nil || !strings.Contains(string(output), "stdout-message") || strings.Count(streamed, "stderr-message") != 1 {
+		t.Fatalf("captured stderr success output = %q, streamed = %q, err = %v", output, streamed, err)
+	}
+}
+
+func TestQuietSuppressesSubprocessStreaming(t *testing.T) {
+	program, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"-test.run=^TestCommandHelper$"}
+	env := func(mode string) map[string]string {
+		return map[string]string{"VMAKE_EXEC_HELPER": mode}
 	}
 	wantMessages := func(output string) bool {
 		return strings.Contains(output, "stdout-message") && strings.Contains(output, "stderr-message")
@@ -258,20 +312,20 @@ func TestQuietSuppressesSubprocessStreaming(t *testing.T) {
 	t.Cleanup(func() { SetQuiet(false) })
 
 	SetQuiet(true)
-	streamed, err := capture(func() error {
+	streamed, err := captureProcessOutput(t, func() error {
 		return RunWithEnvContext(nil, "", env("emit"), program, args...)
 	})
 	if err != nil || !wantStderr(streamed) {
 		t.Fatalf("quiet success streamed %q, err %v", streamed, err)
 	}
-	streamed, err = capture(func() error {
+	streamed, err = captureProcessOutput(t, func() error {
 		return RunWithEnvContext(nil, "", env("emit-fail"), program, args...)
 	})
 	if err == nil || !wantStdout(err.Error()) || !wantStderr(streamed) {
 		t.Fatalf("quiet failure streamed %q, err %v", streamed, err)
 	}
 	var optionsOutput string
-	streamed, err = capture(func() error {
+	streamed, err = captureProcessOutput(t, func() error {
 		output, runErr := RunWithOptions(program, args, RunOptions{Env: env("emit")})
 		optionsOutput = string(output)
 		return runErr
@@ -279,16 +333,20 @@ func TestQuietSuppressesSubprocessStreaming(t *testing.T) {
 	if err != nil || !wantStdout(optionsOutput) || !wantStderr(streamed) {
 		t.Fatalf("quiet options success streamed %q, output %q, err %v", streamed, optionsOutput, err)
 	}
-	streamed, err = capture(func() error {
+	streamed, err = captureProcessOutput(t, func() error {
 		_, runErr := RunWithOptions(program, args, RunOptions{Env: env("emit-fail")})
 		return runErr
 	})
+	var commandErr *CommandError
+	if !errors.As(err, &commandErr) {
+		t.Fatalf("quiet failure error type = %T, want *CommandError", err)
+	}
 	if err == nil || !wantStdout(err.Error()) || !wantStderr(streamed) {
 		t.Fatalf("quiet options failure streamed %q, err %v", streamed, err)
 	}
 
 	SetQuiet(false)
-	streamed, err = capture(func() error {
+	streamed, err = captureProcessOutput(t, func() error {
 		return RunWithEnvContext(nil, "", env("emit"), program, args...)
 	})
 	if err != nil || !wantMessages(streamed) {

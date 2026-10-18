@@ -29,17 +29,14 @@ func init() {
 	addBuildFlags(buildCmd)
 }
 
-func runBuild(cmd *cobra.Command, args []string) (err error) {
+func runBuild(cmd *cobra.Command, args []string) error {
 	commandStorageLocks()
-	report, err := beginBuildReport()
-	if err != nil {
-		return err
-	}
-	defer report.finish(&err)
-	execution := &RuntimeContext{}
-	return withResolvedProject(execution, func(ctx *RuntimeContext) error {
-		_, err := runReportedBuild(ctx, report, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag})
-		return err
+	return withBuildReport(func(report *buildReport) error {
+		execution := &RuntimeContext{}
+		return withResolvedProject(execution, func(ctx *RuntimeContext) error {
+			_, err := runReportedBuild(ctx, report, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag})
+			return err
+		})
 	})
 }
 

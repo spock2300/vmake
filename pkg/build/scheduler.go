@@ -300,20 +300,20 @@ func (s *Scheduler) Build(fullName string) error {
 	}
 
 	if err := s.prepareTarget(resolved, pkgInfo, workDir); err != nil {
-		return err
+		return wrapTargetError(fullName, "prepare", err)
 	}
 
 	numFiles := len(resolved.SourceFiles)
 	if numFiles == 0 || node.Target.Prebuilt() != "" {
-		return s.finalizeTarget(resolved, pkgInfo, nil)
+		return wrapTargetError(fullName, "link", s.finalizeTarget(resolved, pkgInfo, nil))
 	}
 
 	objs, err := s.compileAll(resolved, pkgInfo)
 	if err != nil {
-		return err
+		return wrapTargetError(fullName, "compile", err)
 	}
 
-	return s.finalizeTarget(resolved, pkgInfo, objs)
+	return wrapTargetError(fullName, "link", s.finalizeTarget(resolved, pkgInfo, objs))
 }
 
 func (s *Scheduler) prepareTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, workDir string) error {
