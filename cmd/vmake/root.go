@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	exec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/storage"
 	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/lockfile"
@@ -35,6 +36,7 @@ func init() {
 	RootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "quiet mode")
 	RootCmd.PersistentFlags().BoolVarP(&yesFlag, "yes", "y", false, "assume yes for interactive prompts (e.g. trusting remote repositories)")
 	RootCmd.AddCommand(newQueryCmd())
+	RootCmd.AddCommand(newInspectCmd())
 	RootCmd.AddCommand(newCheckSymbolsCmd())
 	RootCmd.AddCommand(newInitEditorCmd())
 	RootCmd.AddCommand(newLockCmd())
@@ -65,6 +67,7 @@ It uses Go buildscripts for configuration and provides a TUI for option manageme
 		case quiet:
 			vlog.SetLevel(vlog.Quiet)
 		}
+		exec.SetQuiet(vlog.IsQuiet())
 		if len(gitUserlandDirs) > 0 {
 			vlog.Debug("git userland on PATH: %v", gitUserlandDirs)
 		}

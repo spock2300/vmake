@@ -72,16 +72,16 @@ func TestAssemblyIncludesInvalidateObjects(t *testing.T) {
 			}
 			record := filepath.Join(dir, "compile.json")
 			inputs := append([]string{"source" + ext}, deps...)
-			if err := saveActionRecord(record, "assembly", dir, inputs, []string{"source.o"}); err != nil {
+			if err := saveActionRecord(nil, record, "assembly", dir, inputs, []string{"source.o"}); err != nil {
 				t.Fatal(err)
 			}
-			if !actionUpToDate(record, "assembly", dir, inputs, []string{"source.o"}) {
+			if !actionUpToDate(nil, record, "assembly", dir, inputs, []string{"source.o"}) {
 				t.Fatal("unchanged object marked stale")
 			}
 			if err := os.WriteFile(filepath.Join(dir, "asm.inc"), []byte(".byte 8\n"), 0644); err != nil {
 				t.Fatal(err)
 			}
-			if actionUpToDate(record, "assembly", dir, inputs, []string{"source.o"}) {
+			if actionUpToDate(nil, record, "assembly", dir, inputs, []string{"source.o"}) {
 				t.Fatal("assembly include edit did not invalidate object")
 			}
 		})

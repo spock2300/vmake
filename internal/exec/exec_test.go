@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
@@ -15,11 +16,18 @@ import (
 
 func TestCommandHelper(t *testing.T) {
 	mode := os.Getenv("VMAKE_EXEC_HELPER")
-	if mode == "" {
+	switch mode {
+	case "":
 		return
-	}
-	if mode == "wait" {
+	case "wait":
 		time.Sleep(time.Hour)
+	case "emit", "emit-fail":
+		fmt.Println("stdout-message")
+		fmt.Fprintln(os.Stderr, "stderr-message")
+		if mode == "emit" {
+			os.Exit(0)
+		}
+		os.Exit(5)
 	}
 	program, err := os.Executable()
 	if err != nil {
@@ -205,5 +213,85 @@ func TestCommandContextAndTimeoutBothApply(t *testing.T) {
 				t.Fatalf("earlier timeout not honored: %v (%s)", err, time.Since(start))
 			}
 		})
+	}
+}
+
+func TestQuietSuppressesSubprocessStreaming(t *testing.T) {
+	program, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"-test.run=^TestCommandHelper$"}
+	env := func(mode string) map[string]string {
+		return map[string]string{"VMAKE_EXEC_HELPER": mode}
+	}
+	capture := func(fn func() error) (string, error) {
+		read, write, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		oldOut, oldErr := os.Stdout, os.Stderr
+		os.Stdout, os.Stderr = write, write
+		runErr := fn()
+		os.Stdout, os.Stderr = oldOut, oldErr
+		if err := write.Close(); err != nil {
+			t.Fatal(err)
+		}
+		output, err := io.ReadAll(read)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := read.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return string(output), runErr
+	}
+	wantMessages := func(output string) bool {
+		return strings.Contains(output, "stdout-message") && strings.Contains(output, "stderr-message")
+	}
+	wantStdout := func(output string) bool {
+		return strings.Contains(output, "stdout-message") && !strings.Contains(output, "stderr-message")
+	}
+	wantStderr := func(output string) bool {
+		return strings.Count(output, "stderr-message") == 1 && !strings.Contains(output, "stdout-message")
+	}
+	t.Cleanup(func() { SetQuiet(false) })
+
+	SetQuiet(true)
+	streamed, err := capture(func() error {
+		return RunWithEnvContext(nil, "", env("emit"), program, args...)
+	})
+	if err != nil || !wantStderr(streamed) {
+		t.Fatalf("quiet success streamed %q, err %v", streamed, err)
+	}
+	streamed, err = capture(func() error {
+		return RunWithEnvContext(nil, "", env("emit-fail"), program, args...)
+	})
+	if err == nil || !wantStdout(err.Error()) || !wantStderr(streamed) {
+		t.Fatalf("quiet failure streamed %q, err %v", streamed, err)
+	}
+	var optionsOutput string
+	streamed, err = capture(func() error {
+		output, runErr := RunWithOptions(program, args, RunOptions{Env: env("emit")})
+		optionsOutput = string(output)
+		return runErr
+	})
+	if err != nil || !wantStdout(optionsOutput) || !wantStderr(streamed) {
+		t.Fatalf("quiet options success streamed %q, output %q, err %v", streamed, optionsOutput, err)
+	}
+	streamed, err = capture(func() error {
+		_, runErr := RunWithOptions(program, args, RunOptions{Env: env("emit-fail")})
+		return runErr
+	})
+	if err == nil || !wantStdout(err.Error()) || !wantStderr(streamed) {
+		t.Fatalf("quiet options failure streamed %q, err %v", streamed, err)
+	}
+
+	SetQuiet(false)
+	streamed, err = capture(func() error {
+		return RunWithEnvContext(nil, "", env("emit"), program, args...)
+	})
+	if err != nil || !wantMessages(streamed) {
+		t.Fatalf("default streaming output %q, err %v", streamed, err)
 	}
 }

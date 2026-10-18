@@ -96,7 +96,7 @@ CGO_ENABLED=0 go build -o vmake ./cmd/vmake
 - API misuse raises `*BuildScriptError` through `fatalScript` (`pkg/api/errors.go`), recovered by script execution boundaries. New API validation must use that path rather than exiting with `vlog.Fatal`. Ordinary library errors are returned to callers.
 - Preserve strict contracts: fix invalid callers rather than adding fallback chains or silent defaults. IDE integrations, distributed builds, and MSVC support are outside the current scope.
 
-Detailed references: `docs/ARCHITECTURE.md` for execution flow, `docs/BUILD_SCRIPT_API.md` for script contracts, `docs/VMAKE_HOME.md` for storage layout, `docs/EXTENSION_PLUGIN.md` for plugins/toolchains, and `docs/DESIGN_DECISIONS.md` for intentional resolver limitations.
+Detailed references: `docs/ARCHITECTURE.md` for execution flow, `docs/BUILD_SCRIPT_API.md` for script contracts, `docs/INSPECT.md` for the `vmake inspect` JSON schema, `docs/VMAKE_HOME.md` for storage layout, `docs/EXTENSION_PLUGIN.md` for plugins/toolchains, and `docs/DESIGN_DECISIONS.md` for intentional resolver limitations.
 
 ## Coding Guidelines
 

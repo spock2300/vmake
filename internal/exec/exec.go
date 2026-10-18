@@ -39,6 +39,12 @@ func SetLogger(l Logger) {
 	logger = l
 }
 
+var quiet bool
+
+func SetQuiet(enabled bool) {
+	quiet = enabled
+}
+
 type RunOptions struct {
 	Dir     string
 	Env     map[string]string
@@ -75,11 +81,16 @@ func RunWithOptions(name string, args []string, opts RunOptions) ([]byte, error)
 
 	cmd := buildCmd(ctx, name, args, opts.Dir, opts.Env)
 
+	capture := opts.Quiet || quiet
 	var buf bytes.Buffer
-	if opts.Quiet {
+	switch {
+	case opts.Quiet:
 		cmd.Stdout = &buf
 		cmd.Stderr = &buf
-	} else {
+	case quiet:
+		cmd.Stdout = &buf
+		cmd.Stderr = os.Stderr
+	default:
 		cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
 		cmd.Stderr = os.Stderr
 	}
@@ -91,7 +102,7 @@ func RunWithOptions(name string, args []string, opts RunOptions) ([]byte, error)
 	output := buf.Bytes()
 
 	if err != nil {
-		if opts.Quiet {
+		if capture {
 			return nil, fmt.Errorf("%s: %w\n%s", cmdLine, err, string(output))
 		}
 		return nil, fmt.Errorf("%s: %w\n%s", cmdLine, err, TrimOutput(output))
@@ -138,13 +149,21 @@ func RunWithEnv(dir string, env map[string]string, name string, args ...string) 
 
 func RunWithEnvContext(ctx context.Context, dir string, env map[string]string, name string, args ...string) error {
 	cmd := buildCmd(ctx, name, args, dir, env)
-	cmd.Stdout = os.Stdout
+	var buf bytes.Buffer
+	if quiet {
+		cmd.Stdout = &buf
+	} else {
+		cmd.Stdout = os.Stdout
+	}
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
 	if err != nil && ctx != nil && ctx.Err() != nil {
 		err = ctx.Err()
 	}
 	if err != nil {
+		if quiet {
+			return fmt.Errorf("%s: %w\n%s", FormatCommandLine(name, args), err, buf.String())
+		}
 		return fmt.Errorf("%s: %w", FormatCommandLine(name, args), err)
 	}
 	return nil

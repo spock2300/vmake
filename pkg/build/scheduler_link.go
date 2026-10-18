@@ -40,7 +40,7 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 	if err != nil {
 		return err
 	}
-	decision := checkAction(action.recordPath, action.signature, pkgInfo.SourceDir, action.inputs, action.outputs)
+	decision := checkAction(s.hashes, action.recordPath, action.signature, pkgInfo.SourceDir, action.inputs, action.outputs)
 	if !decision.UpToDate {
 		if s.explain {
 			vlog.Info("  EXPLAIN %s: %s", resolved.Node.FullName, decision.Reason)
@@ -64,7 +64,7 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 		if err := s.ctx.Err(); err != nil {
 			return err
 		}
-		if err := saveActionRecord(action.recordPath, action.signature, pkgInfo.SourceDir, action.inputs, action.outputs); err != nil {
+		if err := saveActionRecord(s.hashes, action.recordPath, action.signature, pkgInfo.SourceDir, action.inputs, action.outputs); err != nil {
 			return err
 		}
 	}
@@ -82,7 +82,7 @@ func (s *Scheduler) needRelink(resolved *ResolvedTarget, objs []string) bool {
 	if err != nil {
 		return true
 	}
-	return !actionUpToDate(action.recordPath, action.signature, s.pkgs[resolved.Node.PkgName].SourceDir, action.inputs, action.outputs)
+	return !actionUpToDate(s.hashes, action.recordPath, action.signature, s.pkgs[resolved.Node.PkgName].SourceDir, action.inputs, action.outputs)
 }
 
 func (s *Scheduler) realizePrebuilt(resolved *ResolvedTarget) error {

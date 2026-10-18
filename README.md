@@ -378,6 +378,7 @@ vmake ext untrust <name>                    # Revoke trust
 ```bash
 vmake git tag [version] [--minor|--major] [--no-push] [-m|--message <msg>]   # Version tagging
 vmake query [targets|config <pkg>]                    # Show dependency tree / package config
+vmake inspect [--set [pkg/]option=value]              # Print the machine-readable project model (JSON)
 vmake check-symbols [--strict]                        # Audit ELF dynamic symbols of local default targets
 vmake cache list                                      # List cached upstream repositories
 vmake cache remove <url>                              # Remove one cache namespace

@@ -78,6 +78,7 @@ type Scheduler struct {
 	numWorkers    int
 	keepGoing     bool
 	explain       bool
+	hashes        *fileHashCache
 
 	buildTargetFn  func(string) error
 	globalCFlags   []string
@@ -172,6 +173,7 @@ func newScheduler(cfg schedulerConfig) *Scheduler {
 		numWorkers:    cfg.NumWorkers,
 		keepGoing:     cfg.KeepGoing,
 		explain:       cfg.Explain,
+		hashes:        newFileHashCache(),
 	}
 	if cfg.GlobalFlags != nil {
 		s.globalCFlags = append([]string{}, cfg.GlobalFlags[0]...)

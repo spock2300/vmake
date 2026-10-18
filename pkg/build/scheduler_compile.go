@@ -131,7 +131,7 @@ func (s *Scheduler) compileSourceContext(ctx context.Context, resolved *Resolved
 	deps, depErr := ParseDepFile(resolveWorkPath(workDir, objRel+".d"))
 	inputs := append([]string{src}, deps...)
 	outputs := []string{objRel, objRel + ".d"}
-	decision := checkAction(recordPath, signature, workDir, inputs, outputs)
+	decision := checkAction(s.hashes, recordPath, signature, workDir, inputs, outputs)
 	if depErr != nil && decision.UpToDate {
 		decision = actionDecision{Reason: "depfile missing or unreadable"}
 	}
@@ -157,7 +157,7 @@ func (s *Scheduler) compileSourceContext(ctx context.Context, resolved *Resolved
 	if err := ctx.Err(); err != nil {
 		return "", nil, errors.Join(err, removeCompileFiles(workDir, objRel, objRel+".d"))
 	}
-	if err := saveActionRecord(recordPath, signature, workDir, append([]string{src}, deps...), outputs); err != nil {
+	if err := saveActionRecord(s.hashes, recordPath, signature, workDir, append([]string{src}, deps...), outputs); err != nil {
 		return "", nil, err
 	}
 	return objRel, deps, nil

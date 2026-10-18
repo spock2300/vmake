@@ -60,12 +60,33 @@ include the ones your project needs:
 - **Custom clean logic** → `OnClean` hooks for `vmake clean`/`distclean`. See `examples/on-clean.md`.
 - **Broad tour of options, deps, tests, install, and post-link** → See `examples/complete.md`.
 - **Pin dependency versions for reproducible or CI builds** → `.vmake/vmake.lock` + `vmake build --manifest install/manifest.json`. See **Reproducible Builds (vmake.lock + --manifest)** below.
+- **Orient yourself in an unfamiliar project** → `vmake inspect` prints the whole resolved model (packages, targets, options, deps, toolchain) as one JSON document. See **Machine-Readable Project Model** below.
 
 For CMake projects, let VMake's CMake API manage toolchain resolution, platform paths,
 build directories, installation prefixes, build configuration, and parallelism.
 Keep build.go focused on project options and project-specific steps. Invoke `cmake`
 directly only for special operations the API cannot express; do not duplicate these
 general rules in build.go. See `references/api.md` for settings and migration details.
+
+## Machine-Readable Project Model
+
+`vmake inspect` prints one JSON document (schemaVersion 1) with the project
+model: `root`, `configFile`, `configSha256`, `mode`, `toolchain`,
+`toolchainInfo`, `global` values, `roots`, `packages` (with options, deps and
+targets), the package `graph`, and the `compileDatabase`/`buildReport` paths.
+It never builds or installs, so prefer it over scraping `query` text when you
+need to decide which package, target, or file to change.
+
+- Envelope: `{schemaVersion, command, status: "ok"|"error", data?, diagnostics}`.
+  `diagnostics` is always an array; warnings keep `status: "ok"` and exit 0,
+  model failures use `status: "error"` and exit 1.
+- `--set [pkg/]option=value` (repeatable) evaluates a hypothetical
+  configuration and echoes it in `data.overrides`; it never writes
+  `.vmake/config.json`. Unknown packages/options, wrong types and invalid
+  choices fail with `VMAKE_E_OPTION`.
+- `compileDatabase`/`buildReport` point at `build/compile_commands.json` and
+  `build/vmake-build.json`; the latter holds the last `vmake build` result (see
+  `docs/BUILD_RESULT.md`). Full schema: `docs/INSPECT.md`.
 
 ## Build Script Template
 

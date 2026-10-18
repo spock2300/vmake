@@ -83,10 +83,10 @@ func TestAssemblyCompilerDependencies(t *testing.T) {
 					}
 					record := filepath.Join(dir, "compile.json")
 					inputs := append([]string{source}, deps...)
-					if err := saveActionRecord(record, "assembly", dir, inputs, []string{obj}); err != nil {
+					if err := saveActionRecord(nil, record, "assembly", dir, inputs, []string{obj}); err != nil {
 						t.Fatal(err)
 					}
-					if !actionUpToDate(record, "assembly", dir, inputs, []string{obj}) {
+					if !actionUpToDate(nil, record, "assembly", dir, inputs, []string{obj}) {
 						t.Fatal("unchanged object is stale")
 					}
 					for _, dep := range want {
@@ -98,13 +98,13 @@ func TestAssemblyCompilerDependencies(t *testing.T) {
 						if err := os.WriteFile(path, append(data, []byte("\n")...), 0644); err != nil {
 							t.Fatal(err)
 						}
-						if actionUpToDate(record, "assembly", dir, inputs, []string{obj}) {
+						if actionUpToDate(nil, record, "assembly", dir, inputs, []string{obj}) {
 							t.Fatalf("edit to %s did not invalidate object", dep)
 						}
 						if err := os.Remove(path); err != nil {
 							t.Fatal(err)
 						}
-						if actionUpToDate(record, "assembly", dir, inputs, []string{obj}) {
+						if actionUpToDate(nil, record, "assembly", dir, inputs, []string{obj}) {
 							t.Fatalf("deletion of %s did not invalidate object", dep)
 						}
 						if err := os.WriteFile(path, data, 0644); err != nil {
@@ -113,10 +113,10 @@ func TestAssemblyCompilerDependencies(t *testing.T) {
 						if _, err := compiler.Compile(source, obj, opts, dir); err != nil {
 							t.Fatal(err)
 						}
-						if err := saveActionRecord(record, "assembly", dir, inputs, []string{obj}); err != nil {
+						if err := saveActionRecord(nil, record, "assembly", dir, inputs, []string{obj}); err != nil {
 							t.Fatal(err)
 						}
-						if !actionUpToDate(record, "assembly", dir, inputs, []string{obj}) {
+						if !actionUpToDate(nil, record, "assembly", dir, inputs, []string{obj}) {
 							t.Fatalf("recompiled object is stale after restoring %s", dep)
 						}
 					}

@@ -124,7 +124,7 @@ func saveTestLinkRecord(t *testing.T, scheduler *Scheduler, resolved *ResolvedTa
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := saveActionRecord(action.recordPath, action.signature, scheduler.pkgs[resolved.Node.PkgName].SourceDir, action.inputs, action.outputs); err != nil {
+	if err := saveActionRecord(nil, action.recordPath, action.signature, scheduler.pkgs[resolved.Node.PkgName].SourceDir, action.inputs, action.outputs); err != nil {
 		t.Fatal(err)
 	}
 }

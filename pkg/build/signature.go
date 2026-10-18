@@ -11,6 +11,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/spock2300/vmake/internal/envsig"
 	"github.com/spock2300/vmake/internal/jsonio"
@@ -78,7 +80,52 @@ func environmentSignature(overrides map[string]string) (string, error) {
 	return digestValue(env)
 }
 
-func fingerprintFiles(workDir string, paths []string) ([]fileState, error) {
+type fileHashCache struct {
+	mu     sync.Mutex
+	hashes map[string]fileHashEntry
+}
+
+type fileHashEntry struct {
+	info    os.FileInfo
+	changed time.Time
+	hasTime bool
+	hash    string
+}
+
+func newFileHashCache() *fileHashCache {
+	return &fileHashCache{hashes: make(map[string]fileHashEntry)}
+}
+
+func (c *fileHashCache) hash(path string, info os.FileInfo) (string, error) {
+	if c == nil {
+		return FileHash(path)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if entry, ok := c.hashes[path]; ok && sameFileIdentity(entry, path, info) {
+		return entry.hash, nil
+	}
+	hash, err := FileHash(path)
+	if err != nil {
+		return "", err
+	}
+	changed, hasTime := fileChangeTime(path, info)
+	c.hashes[path] = fileHashEntry{info: info, changed: changed, hasTime: hasTime, hash: hash}
+	return hash, nil
+}
+
+func sameFileIdentity(entry fileHashEntry, path string, info os.FileInfo) bool {
+	if entry.info.Size() != info.Size() || entry.info.Mode() != info.Mode() || !entry.info.ModTime().Equal(info.ModTime()) || !os.SameFile(entry.info, info) {
+		return false
+	}
+	if !entry.hasTime {
+		return true
+	}
+	changed, hasTime := fileChangeTime(path, info)
+	return hasTime && entry.changed.Equal(changed)
+}
+
+func fingerprintFiles(cache *fileHashCache, workDir string, paths []string) ([]fileState, error) {
 	resolved := make([]string, 0, len(paths))
 	for _, path := range paths {
 		if path == "" {
@@ -101,7 +148,7 @@ func fingerprintFiles(workDir string, paths []string) ([]fileState, error) {
 		if !info.Mode().IsRegular() {
 			return nil, fmt.Errorf("action input or output is not a regular file: %s", path)
 		}
-		hash, err := FileHash(path)
+		hash, err := cache.hash(path, info)
 		if err != nil {
 			return nil, err
 		}
@@ -115,11 +162,11 @@ type actionDecision struct {
 	Reason   string
 }
 
-func actionUpToDate(recordPath, signature, workDir string, inputs, outputs []string) bool {
-	return checkAction(recordPath, signature, workDir, inputs, outputs).UpToDate
+func actionUpToDate(cache *fileHashCache, recordPath, signature, workDir string, inputs, outputs []string) bool {
+	return checkAction(cache, recordPath, signature, workDir, inputs, outputs).UpToDate
 }
 
-func checkAction(recordPath, signature, workDir string, inputs, outputs []string) actionDecision {
+func checkAction(cache *fileHashCache, recordPath, signature, workDir string, inputs, outputs []string) actionDecision {
 	var record actionRecord
 	if err := jsonio.Load(recordPath, &record); err != nil {
 		if os.IsNotExist(err) {
@@ -133,14 +180,14 @@ func checkAction(recordPath, signature, workDir string, inputs, outputs []string
 	if record.Signature != signature {
 		return actionDecision{Reason: "command, tool or environment changed"}
 	}
-	currentInputs, err := fingerprintFiles(workDir, inputs)
+	currentInputs, err := fingerprintFiles(cache, workDir, inputs)
 	if err != nil {
 		return actionDecision{Reason: "input missing or unreadable"}
 	}
 	if !equalFileStates(record.Inputs, currentInputs) {
 		return actionDecision{Reason: "inputs changed"}
 	}
-	currentOutputs, err := fingerprintFiles(workDir, outputs)
+	currentOutputs, err := fingerprintFiles(cache, workDir, outputs)
 	if err != nil {
 		return actionDecision{Reason: "output missing or unreadable"}
 	}
@@ -154,12 +201,12 @@ func equalFileStates(a, b []fileState) bool {
 	return slices.Equal(a, b)
 }
 
-func saveActionRecord(recordPath, signature, workDir string, inputs, outputs []string) error {
-	inputStates, err := fingerprintFiles(workDir, inputs)
+func saveActionRecord(cache *fileHashCache, recordPath, signature, workDir string, inputs, outputs []string) error {
+	inputStates, err := fingerprintFiles(cache, workDir, inputs)
 	if err != nil {
 		return fmt.Errorf("record action inputs: %w", err)
 	}
-	outputStates, err := fingerprintFiles(workDir, outputs)
+	outputStates, err := fingerprintFiles(cache, workDir, outputs)
 	if err != nil {
 		return fmt.Errorf("record action outputs: %w", err)
 	}
