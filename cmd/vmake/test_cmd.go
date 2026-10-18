@@ -28,13 +28,24 @@ func init() {
 
 func runTest(cmd *cobra.Command, args []string) error {
 	commandStorageLocks()
-	execution := &RuntimeContext{}
-	return withResolvedProject(execution, func(ctx *RuntimeContext) error {
-		result, err := runBuildPhase(ctx, BuildOptions{IncludeTests: true, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag})
-		if err != nil {
+	return withBuildReport(func(report *buildReport) error {
+		report.Command = reportCommandTest
+		execution := &RuntimeContext{}
+		return withResolvedProject(execution, func(ctx *RuntimeContext) error {
+			if err := report.bind(ctx); err != nil {
+				return err
+			}
+			result, err := runBuildPhase(ctx, BuildOptions{IncludeTests: true, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag})
+			if err != nil {
+				return err
+			}
+			if err := report.complete(ctx, result); err != nil {
+				return err
+			}
+			tests, err := runAllTests(ctx.Context, result)
+			report.setTestResults(tests)
 			return err
-		}
-		return runAllTests(ctx.Context, result)
+		})
 	})
 }
 
@@ -47,13 +58,15 @@ func validateTestExecution(platform api.Platform, hostOS string) error {
 }
 
 type testResult struct {
-	fullName   string
-	outputPath string
-	passed     bool
-	elapsed    time.Duration
+	fullName    string
+	packageName string
+	targetName  string
+	outputPath  string
+	passed      bool
+	elapsed     time.Duration
 }
 
-func runAllTests(ctx context.Context, result *BuildResult) error {
+func runAllTests(ctx context.Context, result *BuildResult) ([]testResult, error) {
 	var tests []testResult
 
 	for _, fullName := range result.Graph.Order {
@@ -74,27 +87,28 @@ func runAllTests(ctx context.Context, result *BuildResult) error {
 		}
 		platform, ok := result.PkgPlatforms[node.PkgName]
 		if !ok {
-			return fmt.Errorf("test target %s has no resolved package platform", fullName)
+			return nil, fmt.Errorf("test target %s has no resolved package platform", fullName)
 		}
 		if err := validateTestExecution(platform, runtime.GOOS); err != nil {
-			return err
+			return nil, err
 		}
 
 		outputPath := filepath.Join(pkgDirs.BuildDir, api.TargetFilename(node.Target.Kind(), node.Target.Name(), platform.OSOrHost()))
 		if _, err := os.Stat(outputPath); err != nil {
 			vlog.Error("FAIL %s (binary not found: %s)", fullName, outputPath)
-			return fmt.Errorf("test binary missing: %w", err)
+			return nil, fmt.Errorf("test binary missing: %w", err)
 		}
 
 		tests = append(tests, testResult{
-			fullName:   fullName,
-			outputPath: outputPath,
+			fullName:    fullName,
+			packageName: node.PkgName,
+			targetName:  node.Target.Name(),
+			outputPath:  outputPath,
 		})
 	}
 
 	if len(tests) == 0 {
-		vlog.Info("No test targets found.")
-		return nil
+		return nil, fmt.Errorf("no test targets found")
 	}
 
 	vlog.Info("")
@@ -102,7 +116,7 @@ func runAllTests(ctx context.Context, result *BuildResult) error {
 
 	for i := range tests {
 		if err := ctx.Err(); err != nil {
-			return err
+			return tests[:i], err
 		}
 		t := &tests[i]
 		vlog.Info("")
@@ -111,7 +125,7 @@ func runAllTests(ctx context.Context, result *BuildResult) error {
 		start := time.Now()
 		err := exec.RunWithEnvContext(ctx, filepath.Dir(t.outputPath), nil, t.outputPath)
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return tests[:i], ctx.Err()
 		}
 		t.elapsed = time.Since(start)
 		t.passed = err == nil
@@ -133,9 +147,8 @@ func runAllTests(ctx context.Context, result *BuildResult) error {
 
 	if passed == len(tests) {
 		fmt.Printf("%d/%d test(s) passed.\n", passed, len(tests))
-	} else {
-		fmt.Printf("%d/%d test(s) passed, %d failed.\n", passed, len(tests), len(tests)-passed)
-		return fmt.Errorf("%d test(s) failed", len(tests)-passed)
+		return tests, nil
 	}
-	return nil
+	fmt.Printf("%d/%d test(s) passed, %d failed.\n", passed, len(tests), len(tests)-passed)
+	return tests, fmt.Errorf("%d test(s) failed", len(tests)-passed)
 }

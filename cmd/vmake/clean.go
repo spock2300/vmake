@@ -39,18 +39,23 @@ type pkgCleanEntry struct {
 }
 
 func cleanPackages(entries []pkgCleanEntry, ctx *RuntimeContext, cleanAll bool) error {
+	_, err := cleanPackagesInspection(entries, ctx, cleanAll)
+	return err
+}
+
+func cleanPackagesInspection(entries []pkgCleanEntry, ctx *RuntimeContext, cleanAll bool) (*pipeline.Inspection, error) {
 	if cleanAll {
 		for _, pkg := range entries {
 			cleanAllBuildDirs(pkg.Dir, pkg.Name)
 		}
 		cleanAllRemoteOutputs(ctx.Paths.DepsDir)
 		vlog.Info("Clean completed!")
-		return nil
+		return nil, nil
 	}
 
 	insp, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{SkipUnresolvedPackages: true, FilterDeps: true, FreezeDeps: true})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	for _, name := range ctx.Resolver.GetOrder() {
@@ -72,7 +77,66 @@ func cleanPackages(entries []pkgCleanEntry, ctx *RuntimeContext, cleanAll bool) 
 	}
 
 	vlog.Info("Clean completed!")
-	return nil
+	return insp, nil
+}
+
+// remainingBuildDirectories counts build-key directories other than the active
+// configuration that clean left in place. Local packages keep their keys under
+// <package>/build/, remote packages under <tree>/out/<owner>/.
+func remainingBuildDirectories(ctx *RuntimeContext, insp *pipeline.Inspection) int {
+	active := make(map[string]map[string]bool)
+	mark := func(parent, key string) {
+		if active[parent] == nil {
+			active[parent] = make(map[string]bool)
+		}
+		if key != "" {
+			active[parent][key] = true
+		}
+	}
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if node == nil || node.Source == nil {
+			continue
+		}
+		var dirs *api.PkgDirs
+		if insp != nil {
+			dirs = insp.PkgDirs[name]
+		}
+		if node.IsLocal() {
+			key := ""
+			if dirs != nil && dirs.BuildDir != "" {
+				key = filepath.Base(dirs.BuildDir)
+			}
+			mark(filepath.Join(node.Source.Dir, "build"), key)
+			continue
+		}
+		if dirs == nil || dirs.BuildDir == "" {
+			continue
+		}
+		keyDir := filepath.Dir(dirs.BuildDir)
+		mark(filepath.Dir(keyDir), filepath.Base(keyDir))
+	}
+
+	total := 0
+	for parent, current := range active {
+		entries, err := os.ReadDir(parent)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") && !current[entry.Name()] {
+				total++
+			}
+		}
+	}
+	return total
+}
+
+func removeStaleCompileDatabase(ctx *RuntimeContext) {
+	if ctx == nil || ctx.Paths == nil || ctx.Paths.ProjectDir == "" {
+		return
+	}
+	removeIfExists(filepath.Join(ctx.Paths.ProjectDir, "build", "compile_commands.json"), "", "build/compile_commands.json", false)
 }
 
 // cleanAllRemoteOutputs removes every per-build output directory below the
@@ -134,6 +198,7 @@ func runClean(cmd *cobra.Command, args []string) {
 		}
 		entries := scanPackages(ctx.WorkDir)
 		fatalErr(cleanPackages(entries, ctx, true))
+		removeStaleCompileDatabase(ctx)
 		return
 	}
 
@@ -147,7 +212,14 @@ func runClean(cmd *cobra.Command, args []string) {
 	}
 
 	entries := collectCleanEntries(ctx)
-	fatalErr(cleanPackages(entries, ctx, cleanAllFlag))
+	insp, err := cleanPackagesInspection(entries, ctx, cleanAllFlag)
+	fatalErr(err)
+	removeStaleCompileDatabase(ctx)
+	if !cleanAllFlag {
+		if remaining := remainingBuildDirectories(ctx, insp); remaining > 0 {
+			vlog.Info("Note: %d build director(ies) for other configurations remain; use 'vmake clean --all' or 'vmake distclean' to remove them.", remaining)
+		}
+	}
 }
 
 func collectCleanEntries(ctx *RuntimeContext) []pkgCleanEntry {

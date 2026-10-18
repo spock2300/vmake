@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
@@ -285,5 +286,111 @@ func TestCleanHooksWithoutFilterRunForUnneededPackages(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("unneeded package OnClean did not run: %v", err)
+	}
+}
+
+func buildKeyDirectories(t *testing.T, project string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(project, "build"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatal(err)
+	}
+	var dirs []string
+	for _, entry := range entries {
+		if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+			dirs = append(dirs, entry.Name())
+		}
+	}
+	return dirs
+}
+
+func TestCleanReportsRemainingConfigurationsAndRemovesCompileDatabase(t *testing.T) {
+	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
+	if _, stderr, code := runBuildCommand(t, project, "build"); code != 0 {
+		t.Fatalf("debug build exit = %d, stderr = %q", code, stderr)
+	}
+	if _, stderr, code := runBuildCommand(t, project, "build", "--mode", "release"); code != 0 {
+		t.Fatalf("release build exit = %d, stderr = %q", code, stderr)
+	}
+	database := filepath.Join(project, "build", "compile_commands.json")
+	if _, err := os.Stat(database); err != nil {
+		t.Fatalf("compile database missing before clean: %v", err)
+	}
+	before := buildKeyDirectories(t, project)
+	if len(before) != 2 {
+		t.Fatalf("build key directories before clean = %v, want two configurations", before)
+	}
+
+	stdout, stderr, code := runBuildCommand(t, project, "clean")
+	if code != 0 {
+		t.Fatalf("clean exit = %d, stderr = %q", code, stderr)
+	}
+	if strings.Count(stdout, "Note:") != 1 || !strings.Contains(stdout, "Note: 1 build director(ies) for other configurations remain") {
+		t.Fatalf("clean note missing or duplicated:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "'vmake clean --all' or 'vmake distclean'") {
+		t.Fatalf("clean note lacks the removal suggestion:\n%s", stdout)
+	}
+	if after := buildKeyDirectories(t, project); len(after) != 1 || (after[0] != before[0] && after[0] != before[1]) {
+		t.Fatalf("clean removed or invented other-configuration keys: before %v, after %v", before, after)
+	}
+	if _, err := os.Stat(database); !os.IsNotExist(err) {
+		t.Fatalf("stale compile database survived clean: %v", err)
+	}
+	if _, err := os.Stat(reportPath(project)); !os.IsNotExist(err) {
+		t.Fatalf("build report survived clean: %v", err)
+	}
+
+	stdout, stderr, code = runBuildCommand(t, project, "clean", "--all")
+	if code != 0 {
+		t.Fatalf("clean --all exit = %d, stderr = %q", code, stderr)
+	}
+	if strings.Contains(stdout, "Note:") {
+		t.Fatalf("clean --all still warned about remaining configurations:\n%s", stdout)
+	}
+	if after := buildKeyDirectories(t, project); len(after) != 0 {
+		t.Fatalf("clean --all left build key directories: %v", after)
+	}
+}
+
+func TestRemainingBuildDirectoriesCountsOtherConfigurations(t *testing.T) {
+	root := t.TempDir()
+	newLocalNode := func(dir, name string) *resolver.PackageNode {
+		t.Helper()
+		path := filepath.Join(dir, "build.go")
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("package main\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return resolver.NewPackageNode(name, buildscript.NewSource(name, path, dir, api.SourceLocal), api.NewPackage().SetName(name))
+	}
+	appDir, extraDir := filepath.Join(root, "app"), filepath.Join(root, "extra")
+	r := resolver.NewResolver(nil, filepath.Join(root, ".vmake_deps"))
+	r.Graph().Packages["app"] = newLocalNode(appDir, "app")
+	r.Graph().Packages["extra"] = newLocalNode(extraDir, "extra")
+	r.Graph().Order = []string{"app", "extra"}
+	ctx := &RuntimeContext{Resolver: r, DepGraph: r.Graph()}
+	insp := &pipeline.Inspection{
+		Needed: map[string]bool{"app": true},
+		PkgDirs: map[string]*api.PkgDirs{
+			"app": {SourceDir: appDir, BuildDir: filepath.Join(appDir, "build", "active")},
+		},
+	}
+	for _, dir := range []string{
+		filepath.Join(appDir, "build", "active"),
+		filepath.Join(appDir, "build", "other"),
+		filepath.Join(extraDir, "build", "leftover"),
+	} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := remainingBuildDirectories(ctx, insp); got != 2 {
+		t.Fatalf("remaining build directories = %d, want 2", got)
 	}
 }

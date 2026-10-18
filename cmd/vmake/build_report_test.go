@@ -323,11 +323,21 @@ func TestBuildReportV2Success(t *testing.T) {
 	if report.BuildID == "" || report.Root != project || report.Mode == "" || report.Toolchain == "" || len(report.Targets) == 0 {
 		t.Fatalf("v1 fields lost: %+v", report)
 	}
+	if report.Command != reportCommandBuild {
+		t.Fatalf("command = %q, want %q", report.Command, reportCommandBuild)
+	}
+	if len(report.Global) == 0 || report.Global["mode"] != report.Mode || report.Global["toolchain"] != report.Toolchain {
+		t.Fatalf("global identity = %+v (mode %q, toolchain %q)", report.Global, report.Mode, report.Toolchain)
+	}
+	if report.Tests == nil || len(report.Tests) != 0 {
+		t.Fatalf("tests = %#v, want []", report.Tests)
+	}
 	if report.Summary == nil {
 		t.Fatal("successful report has no summary")
 	}
 	summary := report.Summary
 	if summary.TargetsTotal != 1 || summary.TargetsBuilt != 1 || summary.TargetsUpToDate != 0 || summary.TargetsFailed != 0 ||
+		summary.TestsFound != 0 || summary.TestsPassed != 0 || summary.TestsFailed != 0 ||
 		summary.FilesCompiled != 1 || summary.FilesLinked != 1 || summary.ArtifactsInstalled != 0 ||
 		!slices.Equal(summary.ChangedFiles, []string{"src/main.c"}) {
 		t.Fatalf("summary = %+v", summary)
@@ -353,6 +363,7 @@ func TestBuildReportV2Success(t *testing.T) {
 
 func TestBuildReportV2CompileFailure(t *testing.T) {
 	project := writeBuildReportProject(t, "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
+	writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","global":{"mode":"release"}}`)
 	stdout, stderr, code := runBuildCommand(t, project, "build")
 	if code != 1 {
 		t.Fatalf("build exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
@@ -389,6 +400,23 @@ func TestBuildReportV2CompileFailure(t *testing.T) {
 	summarized := strings.TrimPrefix(final, "Error: ")
 	if summarized != report.Error || len(summarized) >= 300 {
 		t.Fatalf("final line %q != report error %q", summarized, report.Error)
+	}
+	if report.Toolchain == "" || report.Mode == "" || len(report.Global) == 0 ||
+		report.Global[api.ModeOptionName] != report.Mode || report.Global[api.ToolchainOptionName] != report.Toolchain {
+		t.Fatalf("failure identity = %+v (toolchain %q, mode %q)", report.Global, report.Toolchain, report.Mode)
+	}
+	if report.Mode != api.ModeRelease || report.ConfigFile != "config.json" {
+		t.Fatalf("failure identity ignored the selected config: mode %q, configFile %q", report.Mode, report.ConfigFile)
+	}
+	wantDatabase := filepath.Join(project, "build", "compile_commands.json")
+	if report.CompileDatabase != wantDatabase {
+		t.Fatalf("compileDatabase = %q, want %q", report.CompileDatabase, wantDatabase)
+	}
+	if _, err := os.Stat(report.CompileDatabase); err != nil {
+		t.Fatalf("compile database missing: %v", err)
+	}
+	if len(report.Targets) != 0 || len(report.Artifacts) != 0 || report.Summary != nil {
+		t.Fatalf("failed build report invented results: %+v", report)
 	}
 }
 
@@ -441,6 +469,15 @@ func Main(p *api.Package) {
 	}
 	if !strings.Contains(diagnostic.Message, "unknown option") || report.Error != diagnostic.Message {
 		t.Fatalf("script summary = %q / %q", report.Error, diagnostic.Message)
+	}
+	if report.Toolchain == "" || report.Mode == "" || len(report.Global) == 0 {
+		t.Fatalf("script failure identity = %+v (toolchain %q, mode %q)", report.Global, report.Toolchain, report.Mode)
+	}
+	if report.CompileDatabase != "" {
+		t.Fatalf("script failure before target execution recorded compileDatabase %q", report.CompileDatabase)
+	}
+	if len(report.Targets) != 0 || len(report.Artifacts) != 0 {
+		t.Fatalf("script failure invented results: %+v", report)
 	}
 	lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
 	if !strings.HasPrefix(lines[len(lines)-1], "Error: ") {

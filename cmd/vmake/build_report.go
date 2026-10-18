@@ -16,9 +16,16 @@ import (
 	"time"
 
 	"github.com/spock2300/vmake/internal/jsonio"
+	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/pipeline"
+)
+
+const (
+	reportCommandBuild = "build"
+	reportCommandTest  = "test"
 )
 
 type buildArtifact struct {
@@ -36,11 +43,22 @@ type buildSummary struct {
 	TargetsBuilt       int      `json:"targetsBuilt"`
 	TargetsUpToDate    int      `json:"targetsUpToDate"`
 	TargetsFailed      int      `json:"targetsFailed"`
+	TestsFound         int      `json:"testsFound"`
+	TestsPassed        int      `json:"testsPassed"`
+	TestsFailed        int      `json:"testsFailed"`
 	FilesCompiled      int      `json:"filesCompiled"`
 	FilesLinked        int      `json:"filesLinked"`
 	ActivitiesUpToDate int      `json:"actionsUpToDate"`
 	ArtifactsInstalled int      `json:"artifactsInstalled"`
 	ChangedFiles       []string `json:"changedFiles"`
+}
+
+type buildTestResult struct {
+	Name      string `json:"name"`
+	Package   string `json:"package"`
+	Target    string `json:"target"`
+	Passed    bool   `json:"passed"`
+	ElapsedMs int64  `json:"elapsedMs"`
 }
 
 type buildReport struct {
@@ -49,6 +67,7 @@ type buildReport struct {
 	BuildID         string                    `json:"buildId"`
 	Root            string                    `json:"root"`
 	Status          string                    `json:"status"`
+	Command         string                    `json:"command,omitempty"`
 	Started         string                    `json:"started"`
 	Finished        string                    `json:"finished"`
 	DurationMs      int64                     `json:"durationMs"`
@@ -63,6 +82,7 @@ type buildReport struct {
 	Mode            string                    `json:"mode"`
 	CompileDatabase string                    `json:"compileDatabase"`
 	Targets         []build.TargetResult      `json:"targets"`
+	Tests           []buildTestResult         `json:"tests"`
 	Artifacts       []buildArtifact           `json:"artifacts"`
 }
 
@@ -109,6 +129,10 @@ func withBuildReport(run func(*buildReport) error) (err error) {
 }
 
 func printBuildSummary(writer io.Writer, report *buildReport, err error) {
+	if report.Command == reportCommandTest {
+		printTestSummary(writer, report, err)
+		return
+	}
 	if err != nil {
 		message := report.Error
 		if message == "" {
@@ -128,6 +152,24 @@ func printBuildSummary(writer io.Writer, report *buildReport, err error) {
 		formatBuildDuration(summary.DurationMs), report.BuildID)
 }
 
+func printTestSummary(writer io.Writer, report *buildReport, err error) {
+	if err != nil {
+		message := report.Error
+		if message == "" {
+			message = firstErrorLine(err)
+		}
+		fmt.Fprintf(writer, "Tests failed: %s\n", message)
+		return
+	}
+	summary := report.Summary
+	if summary == nil {
+		fmt.Fprintf(writer, "Tests succeeded (buildId=%s)\n", report.BuildID)
+		return
+	}
+	fmt.Fprintf(writer, "Tests succeeded: %d/%d passed in %s (buildId=%s)\n",
+		summary.TestsPassed, summary.TestsFound, formatBuildDuration(summary.DurationMs), report.BuildID)
+}
+
 func formatBuildDuration(durationMs int64) string {
 	if durationMs < 1000 {
 		return fmt.Sprintf("%dms", durationMs)
@@ -142,7 +184,7 @@ func beginBuildReport() (*buildReport, error) {
 	if _, err := rand.Read(id); err != nil {
 		return nil, err
 	}
-	r := &buildReport{SchemaVersion: 2, BuildID: hex.EncodeToString(id), Root: findProjectDir(), Status: "running", Started: time.Now().UTC().Format(time.RFC3339Nano), Targets: []build.TargetResult{}, Artifacts: []buildArtifact{}, Diagnostics: []buildDiagnostic{}, Global: map[string]any{}, Packages: map[string]map[string]any{}}
+	r := &buildReport{SchemaVersion: 2, BuildID: hex.EncodeToString(id), Root: findProjectDir(), Status: "running", Command: reportCommandBuild, Started: time.Now().UTC().Format(time.RFC3339Nano), Targets: []build.TargetResult{}, Tests: []buildTestResult{}, Artifacts: []buildArtifact{}, Diagnostics: []buildDiagnostic{}, Global: map[string]any{}, Packages: map[string]map[string]any{}}
 	return r, jsonio.Save(reportPath(r.Root), r)
 }
 
@@ -165,13 +207,27 @@ func (r *buildReport) finish(result *error) {
 			r.Status = "failed"
 		}
 		r.Artifacts = []buildArtifact{}
-		r.Summary = nil
-	} else if r.Summary != nil {
+		if r.Command != reportCommandTest {
+			r.Summary = nil
+		}
+	}
+	if r.Summary != nil {
 		r.Summary.DurationMs = r.DurationMs
 	}
+	if r.Tests == nil {
+		r.Tests = []buildTestResult{}
+	}
+	r.setCompileDatabase()
 	*result = errors.Join(*result, jsonio.Save(reportPath(r.Root), r))
 	if interrupted != nil {
 		panic(interrupted)
+	}
+}
+
+func (r *buildReport) setCompileDatabase() {
+	path := filepath.Join(r.Root, "build", "compile_commands.json")
+	if _, err := os.Stat(path); err == nil {
+		r.CompileDatabase = path
 	}
 }
 
@@ -204,7 +260,56 @@ func fileDigest(path string) (string, int64, error) {
 
 func (r *buildReport) bind(ctx *RuntimeContext) error {
 	r.ConfigFile, r.ConfigSHA256 = filepath.Base(ctx.ConfigPath), ctx.ConfigDigest
+	r.Toolchain = pipeline.ResolveToolchainName(ctx.Config, ctx.ToolchainOverride)
+	r.Mode = pipeline.ResolveMode(ctx.Config, ctx.ModeOverride)
+	r.Global = effectiveGlobalValues(ctx)
+	r.Global[api.ModeOptionName] = r.Mode
+	r.Global[api.ToolchainOptionName] = r.Toolchain
 	return jsonio.Save(reportPath(r.Root), r)
+}
+
+// effectiveGlobalValues mirrors the pipeline's project-wide value resolution so
+// a report published before (or without) a successful build still carries the
+// configuration identity.
+func effectiveGlobalValues(ctx *RuntimeContext) map[string]any {
+	values := make(map[string]any)
+	for name, option := range ctx.GlobalOptions {
+		values[name] = option.Default()
+	}
+	for name, value := range config.BuildGlobalValues(ctx.Config) {
+		if value == nil {
+			continue
+		}
+		if value == "" && (name == api.TargetOSOptionName || name == api.TargetTripleOptionName) {
+			continue
+		}
+		values[name] = value
+	}
+	return values
+}
+
+func (r *buildReport) setTestResults(tests []testResult) {
+	r.Tests = make([]buildTestResult, len(tests))
+	passed, failed := 0, 0
+	for i, test := range tests {
+		r.Tests[i] = buildTestResult{
+			Name:      test.fullName,
+			Package:   test.packageName,
+			Target:    test.targetName,
+			Passed:    test.passed,
+			ElapsedMs: test.elapsed.Milliseconds(),
+		}
+		if test.passed {
+			passed++
+		} else {
+			failed++
+		}
+	}
+	if r.Summary != nil {
+		r.Summary.TestsFound = len(tests)
+		r.Summary.TestsPassed = passed
+		r.Summary.TestsFailed = failed
+	}
 }
 
 func (r *buildReport) complete(ctx *RuntimeContext, result *BuildResult) error {
