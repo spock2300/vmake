@@ -73,12 +73,14 @@ type buildTestResult struct {
 	Passed    bool   `json:"passed"`
 	ElapsedMs int64  `json:"elapsedMs"`
 	ExitCode  int    `json:"exitCode"`
+	Signal    string `json:"signal,omitempty"`
 	Output    string `json:"output,omitempty"`
 }
 
 type buildReport struct {
 	completed       bool
 	location        string
+	warningCut      func()
 	SchemaVersion   int                       `json:"schemaVersion"`
 	BuildID         string                    `json:"buildId"`
 	Root            string                    `json:"root"`
@@ -121,6 +123,12 @@ func withReport(command string, run func(*buildReport) error) (err error) {
 		return err
 	}
 	capture, stopCapture := startBuildStderrCapture()
+	report.warningCut = func() {
+		capture.cut(stopCapture)
+		if jsonOutput && !vlog.IsQuiet() {
+			os.Stdout = os.Stderr
+		}
+	}
 	stdout := os.Stdout
 	restoreStdout := func() {}
 	if vlog.IsQuiet() {
@@ -167,8 +175,10 @@ func withReport(command string, run func(*buildReport) error) (err error) {
 }
 
 type buildStderrCapture struct {
-	mu     sync.Mutex
-	buffer []byte
+	mu      sync.Mutex
+	buffer  []byte
+	frozen  []buildDiagnostic
+	cutDone bool
 }
 
 func (c *buildStderrCapture) append(data []byte) {
@@ -185,11 +195,28 @@ func (c *buildStderrCapture) append(data []byte) {
 	}
 }
 
+func (c *buildStderrCapture) cut(stop func()) {
+	c.mu.Lock()
+	if c.cutDone {
+		c.mu.Unlock()
+		return
+	}
+	c.cutDone = true
+	c.mu.Unlock()
+	stop()
+	c.mu.Lock()
+	c.frozen = parseBuildWarnings(string(c.buffer))
+	c.buffer = nil
+	c.mu.Unlock()
+}
+
 func (c *buildStderrCapture) warnings() []buildDiagnostic {
 	c.mu.Lock()
-	output := string(c.buffer)
-	c.mu.Unlock()
-	return parseBuildWarnings(output)
+	defer c.mu.Unlock()
+	if c.cutDone {
+		return c.frozen
+	}
+	return parseBuildWarnings(string(c.buffer))
 }
 
 func startBuildStderrCapture() (*buildStderrCapture, func()) {
@@ -218,10 +245,13 @@ func startBuildStderrCapture() (*buildStderrCapture, func()) {
 			}
 		}
 	}()
+	var once sync.Once
 	return capture, func() {
-		os.Stderr = stderr
-		writer.Close()
-		<-done
+		once.Do(func() {
+			os.Stderr = stderr
+			writer.Close()
+			<-done
+		})
 	}
 }
 
@@ -442,6 +472,9 @@ func (r *buildReport) finish(result *error, warnings []buildDiagnostic) {
 	r.Finished = time.Now().UTC().Format(time.RFC3339Nano)
 	r.DurationMs = reportDuration(r.Started, r.Finished)
 	diagnostics, summary := buildFailureDetails(*result)
+	if *result != nil && r.Command == reportCommandTest && !errors.Is(*result, context.Canceled) && !hasErrorDiagnostic(diagnostics) {
+		diagnostics = append(diagnostics, buildDiagnostic{Severity: "error", Code: "VMAKE_E_TEST", Message: summary})
+	}
 	r.Diagnostics, r.Error = mergeBuildDiagnostics(diagnostics, warnings), summary
 	r.Status = "succeeded"
 	if *result != nil {
@@ -463,6 +496,24 @@ func (r *buildReport) finish(result *error, warnings []buildDiagnostic) {
 	if interrupted != nil {
 		panic(interrupted)
 	}
+}
+
+func (r *buildReport) cutWarnings() {
+	if r.warningCut == nil {
+		return
+	}
+	cut := r.warningCut
+	r.warningCut = nil
+	cut()
+}
+
+func hasErrorDiagnostic(diagnostics []buildDiagnostic) bool {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Severity == "error" {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *buildReport) setCompileDatabase() {
@@ -576,6 +627,7 @@ func (r *buildReport) setTestResults(tests []testResult) {
 			Passed:    test.passed,
 			ElapsedMs: test.elapsed.Milliseconds(),
 			ExitCode:  test.exitCode,
+			Signal:    test.signal,
 			Output:    test.output,
 		}
 		if test.passed {

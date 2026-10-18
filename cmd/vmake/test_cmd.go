@@ -54,6 +54,7 @@ func runTest(cmd *cobra.Command, args []string) error {
 			if err := report.complete(ctx, result); err != nil {
 				return err
 			}
+			report.cutWarnings()
 			tests, err := runAllTests(ctx.Context, result)
 			report.setTestResults(tests)
 			if errors.Is(err, errNoTestTargets) && !requireTestsFlag {
@@ -119,6 +120,7 @@ type testResult struct {
 	passed      bool
 	elapsed     time.Duration
 	exitCode    int
+	signal      string
 	output      string
 }
 
@@ -138,17 +140,20 @@ func boundedTestOutput(output string) string {
 	return buildTestOutputMarker + output[len(output)-keep:]
 }
 
-func testExitCode(err error) int {
+func testExitCode(err error) (int, string) {
 	if err == nil {
-		return 0
+		return 0, ""
 	}
 	var exitErr *osexec.ExitError
 	if errors.As(err, &exitErr) {
+		if signal, ok := testProcessSignal(exitErr); ok {
+			return -1, signal
+		}
 		if code := exitErr.ExitCode(); code >= 0 {
-			return code
+			return code, ""
 		}
 	}
-	return 1
+	return 1, ""
 }
 
 func runAllTests(ctx context.Context, result *BuildResult) ([]testResult, error) {
@@ -218,7 +223,7 @@ func runAllTests(ctx context.Context, result *BuildResult) ([]testResult, error)
 		}
 		t.elapsed = time.Since(start)
 		t.passed = runErr == nil
-		t.exitCode = testExitCode(runErr)
+		t.exitCode, t.signal = testExitCode(runErr)
 		if commandErr, ok := runErr.(*exec.CommandError); ok {
 			t.output = boundedTestOutput(commandErr.Output)
 		} else {
@@ -241,9 +246,7 @@ func runAllTests(ctx context.Context, result *BuildResult) ([]testResult, error)
 	}
 
 	if passed == len(tests) {
-		fmt.Printf("%d/%d test(s) passed.\n", passed, len(tests))
 		return tests, nil
 	}
-	fmt.Printf("%d/%d test(s) passed, %d failed.\n", passed, len(tests), len(tests)-passed)
 	return tests, fmt.Errorf("%d test(s) failed", len(tests)-passed)
 }

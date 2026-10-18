@@ -140,7 +140,7 @@ func TestTestCommandUsesPackagePlatform(t *testing.T) {
 			}
 			out, err := extensionCommand(t, state, project, "test")
 			if test.native {
-				if err != nil || !strings.Contains(out, "1/1 test(s) passed") {
+				if err != nil || !strings.Contains(out, "Tests succeeded: 1/1 passed") {
 					t.Fatalf("native package: %v\n%s", err, out)
 				}
 				return

@@ -17,14 +17,14 @@ the installation manifest (`install/manifest.json`). `clean`, `distclean`, and
 | `status` | `running`, `succeeded`, `failed`, or `cancelled`; for test, `succeeded` when every executed test passed or (by default) when no test target was declared |
 | `started`, `finished`, `durationMs` | UTC timestamps and wall-clock duration; `durationMs` is 0 while running |
 | `error` | Concise one-line failure summary (about 300 characters at most); empty on success |
-| `diagnostics` | Always an array. Success entries are tool warnings; failure entries are errors followed by warnings. Each has `severity`, `code`, `message`, and optional `file`, `line`, `column`, `package`, `target`. Codes: `VMAKE_E_COMPILE`, `VMAKE_E_LINK`, `VMAKE_E_BUILD`, `VMAKE_E_SCRIPT` for errors, `VMAKE_W_TOOL` for warnings |
+| `diagnostics` | Always an array. Success entries are build-phase tool warnings; failure entries are errors followed by warnings. Each has `severity`, `code`, `message`, and optional `file`, `line`, `column`, `package`, `target`. Codes: `VMAKE_E_COMPILE`, `VMAKE_E_LINK`, `VMAKE_E_BUILD`, `VMAKE_E_SCRIPT`, `VMAKE_E_TEST` for errors, `VMAKE_W_TOOL` for warnings |
 | `summary` | Per-invocation counts (see below); present on success, on a failure whose scheduler produced a partial result, and for a test failure after the build phase. Omitted when the failure happened before any target was scheduled |
 | `configFile`, `configSha256` | Active configuration name and SHA-256 of the exact configuration bytes used |
 | `global`, `packages` | Effective global values and per-package values for the packages that participated |
 | `toolchain`, `mode` | Effective toolchain and mode |
 | `compileDatabase` | Absolute path to the compilation database, or empty |
 | `targets` | Executed default targets: `package`, `target`, `kind`, `outputs`, `status`, `durationMs`. On failure only targets that completed before the failure are listed |
-| `tests` | Always an array. For `vmake test`, one entry per executed test binary with `name`, `package`, `target`, `passed`, `elapsedMs`, `exitCode`, and `output` |
+| `tests` | Always an array. For `vmake test`, one entry per executed test binary with `name`, `package`, `target`, `passed`, `elapsedMs`, `exitCode`, optional `signal` (set when a signal terminated the process), and `output` |
 | `artifacts` | Files installed by this invocation only: `package`, `target`, `buildPath`, `installPath`, `size`, `sha256` |
 
 A target's `status` is `built` when it compiled or linked something in this
@@ -64,13 +64,20 @@ target and stage. `error` repeats the first parsed error. A command failure with
 no parseable location produces one fallback entry: the last
 `undefined reference`/`multiple definition` line, then the last `error:` line,
 then the trimmed output tail (up to 1000 characters). Buildscript/API errors use
-`VMAKE_E_SCRIPT` and carry the package name. Raw tool output and the full failing
-command stay on stderr; they are not stored in the report.
+`VMAKE_E_SCRIPT` and carry the package name. A `vmake test` failure that has no
+build diagnostic (a failed test, `--require-tests` with no runnable test target,
+or a test preflight refusal) gets exactly one `VMAKE_E_TEST` error entry whose
+message is the same concise summary carried by `error`; per-test details stay in
+`tests[]`. Raw tool output and the full failing command stay on stderr; they are
+not stored in the report.
 
 ## Success warnings
 
 A succeeded build or test run collects the warnings streamed to stderr during
-the invocation into `diagnostics`. GNU `file:line[:column]: warning: message`
+the build phase into `diagnostics`. The capture is cut before `vmake test` runs
+test binaries, so test program stdout/stderr (including the stdout redirect used
+by `--json`) never becomes a `VMAKE_W_TOOL` entry; build-phase warnings and a
+failure before test execution keep theirs. GNU `file:line[:column]: warning: message`
 lines become located entries with `file`/`line`/`column`; generic
 `warning: message` and `tool: warning: message` lines become unlocated entries.
 Every warning uses `severity: "warning"` and `code: "VMAKE_W_TOOL"`, is
@@ -104,7 +111,9 @@ printed with `-v`. CMake warning/error lines, including compiler
 `file:line: warning:` lines from the build stage, stream to stderr instead of
 stdout, so the warning capture can report them as `VMAKE_W_TOOL` diagnostics.
 With `-q`, a successful configure prints nothing on stdout; warnings and errors
-still stream to stderr.
+still stream to stderr. A CMake stage running longer than 10 seconds prints
+`  cmake <stage>: still running (Ns)` to stderr every 10 seconds, including
+under `-q`; fast stages print no heartbeat.
 
 ## `--json`
 
@@ -156,14 +165,26 @@ outcome.
 - `status` is `succeeded` when every executed test passed; a host project with
   no runnable test target also succeeds unless `--require-tests` is given.
 - Each `tests[]` entry carries `exitCode` (0 on success, the process exit code
-  on failure, 1 when unavailable) and `output`: the combined stdout/stderr tail
-  captured for that test, trimmed and bounded to 4096 bytes. Longer output starts
-  with `...[truncated]`. `output` is omitted when empty, and entries never
+  on failure, -1 when a signal terminated it, 1 when unavailable), `signal`
+  (omitted unless a signal terminated the process; platform wording such as
+  `segmentation fault` or `killed`), and `output`: the combined stdout/stderr
+  tail captured for that test, trimmed and bounded to 4096 bytes. Longer output
+  starts with `...[truncated]`. `output` is omitted when empty, and entries never
   include vmake's own `PASS`/`FAIL` progress lines. `PASS`/`FAIL` and child
-  output keep streaming to the console exactly as before.
+  output keep streaming to the console exactly as before, but test program
+  output is never parsed as a build warning: the stderr warning capture is cut
+  before tests run.
+- Test binaries execute with their working directory set to the package's
+  `BuildDir()` (the directory containing the test executable), so relative paths
+  in a test program resolve there.
+- The report is the only overall test summary line; there is no separate
+  `N/M test(s) passed` stdout line. Per-test `PASS`/`FAIL` lines remain.
 - A failing test makes `status` `failed` with `error: "N test(s) failed"` and a
   non-zero exit; the report keeps `summary` test counts because the build phase
-  completed.
+  completed. A test-stage failure with no build diagnostic (failed test,
+  `--require-tests` no-tests, or preflight refusal) also records one
+  `VMAKE_E_TEST` error diagnostic, so the `--json` envelope's `diagnostics` is
+  never empty when `status` is `error`.
 - A host project with no runnable test target builds as needed, then reports
   `status: "succeeded"`, `summary.testsFound: 0`, prints
   `Tests succeeded: no test targets`, and exits 0. Pass `--require-tests` to

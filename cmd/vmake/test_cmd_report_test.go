@@ -101,7 +101,7 @@ func TestTestCommandPublishesSucceededTestReport(t *testing.T) {
 	if code != 0 || stderr != "" {
 		t.Fatalf("test exit = %d, stderr = %q\n%s", code, stderr, stdout)
 	}
-	if !strings.Contains(stdout, "1/1 test(s) passed.") || !strings.Contains(stdout, "Tests succeeded: 1/1 passed in ") {
+	if !strings.Contains(stdout, "Tests succeeded: 1/1 passed in ") {
 		t.Fatalf("test summary missing:\n%s", stdout)
 	}
 	assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
@@ -139,7 +139,7 @@ func TestTestCommandFailurePreservesBuildReport(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("test exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "0/1 test(s) passed, 1 failed.") || !strings.Contains(stdout, "Tests failed: 1 test(s) failed") {
+	if !strings.Contains(stdout, "Tests failed: 1 test(s) failed") {
 		t.Fatalf("failure summary missing:\n%s", stdout)
 	}
 	if !strings.Contains(stderr, "Error: 1 test(s) failed") {
@@ -155,6 +155,10 @@ func TestTestCommandFailurePreservesBuildReport(t *testing.T) {
 	}
 	if report.Summary == nil || report.Summary.TestsFound != 1 || report.Summary.TestsPassed != 0 || report.Summary.TestsFailed != 1 {
 		t.Fatalf("failed summary = %+v", report.Summary)
+	}
+	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Severity != "error" ||
+		report.Diagnostics[0].Code != "VMAKE_E_TEST" || report.Diagnostics[0].Message != "1 test(s) failed" {
+		t.Fatalf("failed test diagnostics = %+v", report.Diagnostics)
 	}
 	if report.CompileDatabase == "" || len(report.Artifacts) != 0 {
 		t.Fatalf("failed test report fields = %+v", report)
@@ -208,6 +212,10 @@ func TestTestCommandRequireTestsFailsWithNoTargets(t *testing.T) {
 	if report.Summary == nil || report.Summary.TestsFound != 0 {
 		t.Fatalf("require-tests summary = %+v", report.Summary)
 	}
+	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Severity != "error" ||
+		report.Diagnostics[0].Code != "VMAKE_E_TEST" || report.Diagnostics[0].Message != "no test targets found" {
+		t.Fatalf("require-tests diagnostics = %+v", report.Diagnostics)
+	}
 }
 
 func TestTestCommandBareMetalPreflight(t *testing.T) {
@@ -244,6 +252,10 @@ func TestTestCommandBareMetalPreflight(t *testing.T) {
 	if report.Tests == nil || len(report.Tests) != 0 || len(report.Artifacts) != 0 {
 		t.Fatalf("preflight results = %+v (artifacts %+v)", report.Tests, report.Artifacts)
 	}
+	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Severity != "error" ||
+		report.Diagnostics[0].Code != "VMAKE_E_TEST" || !strings.Contains(report.Diagnostics[0].Message, "use 'vmake build --tests'") {
+		t.Fatalf("preflight diagnostics = %+v", report.Diagnostics)
+	}
 }
 
 func TestTestCommandBuildFailurePreservesBuildReport(t *testing.T) {
@@ -274,5 +286,143 @@ func TestTestCommandBuildFailurePreservesBuildReport(t *testing.T) {
 	if report.Summary.TargetsFailed != 1 || report.Summary.TargetsBuilt != 0 || report.Summary.TargetsUpToDate != 1 || report.Summary.TestsFound != 0 ||
 		report.Summary.ArtifactsInstalled != 0 {
 		t.Fatalf("build-failure summary = %+v", report.Summary)
+	}
+}
+
+func writeWarningTestProject(t *testing.T) string {
+	t.Helper()
+	project := filepath.Join(t.TempDir(), "warning-tests-project")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c").AddCFlags("-Wno-error")
+		ctx.Target("tests").SetKind(api.TargetBinary).SetTest(true).AddFiles("tests/test_app.c")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "static int vmake_warning_probe;\n\nint main(void) { return 0; }\n")
+	writeExtensionFile(t, filepath.Join(project, "tests", "test_app.c"), `#include <stdio.h>
+
+int main(void) {
+	fprintf(stderr, "tests/check.c:7: warning: test stderr warning marker\n");
+	printf("src/thing.c:9: warning: test stdout warning marker\n");
+	return 0;
+}
+`)
+	return project
+}
+
+func TestTestWarningOutputNeverBecomesABuildWarning(t *testing.T) {
+	for _, mode := range []struct {
+		name string
+		args []string
+	}{
+		{name: "default", args: []string{"test"}},
+		{name: "json", args: []string{"test", "--json"}},
+		{name: "json-quiet", args: []string{"-q", "test", "--json"}},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			project := writeWarningTestProject(t)
+			stdout, stderr, code := runBuildCommand(t, project, mode.args...)
+			if code != 0 {
+				t.Fatalf("test exit = %d, stderr = %q\n%s", code, stderr, stdout)
+			}
+			report := loadTestReport(t, project)
+			if len(report.Diagnostics) != 1 {
+				t.Fatalf("diagnostics = %+v, want the build-phase warning only", report.Diagnostics)
+			}
+			warning := report.Diagnostics[0]
+			if warning.Severity != "warning" || warning.Code != buildWarningCode ||
+				filepath.Base(warning.File) != "main.c" || !strings.Contains(warning.Message, "vmake_warning_probe") {
+				t.Fatalf("build-phase warning = %+v", warning)
+			}
+			if len(report.Tests) != 1 || !report.Tests[0].Passed {
+				t.Fatalf("tests = %+v", report.Tests)
+			}
+			output := report.Tests[0].Output
+			if !strings.Contains(output, "test stdout warning marker") || !strings.Contains(output, "test stderr warning marker") {
+				t.Fatalf("test output = %q", output)
+			}
+			for _, diagnostic := range report.Diagnostics {
+				if strings.Contains(diagnostic.Message, "test stdout warning marker") ||
+					strings.Contains(diagnostic.Message, "test stderr warning marker") {
+					t.Fatalf("test output leaked into diagnostics: %+v", report.Diagnostics)
+				}
+			}
+		})
+	}
+}
+
+func TestTestCommandReportsSignalOutcome(t *testing.T) {
+	if !testSignalsSupported {
+		t.Skip("process signal status is unavailable on this platform")
+	}
+	project := writeTestCommandProject(t, `#include <signal.h>
+#include <stdio.h>
+
+int main(void) {
+	fprintf(stderr, "crashing test marker\n");
+	raise(SIGSEGV);
+	return 0;
+}
+`)
+	stdout, stderr, code := runBuildCommand(t, project, "test")
+	if code != 1 {
+		t.Fatalf("test exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "FAIL tests-project:tests") {
+		t.Fatalf("FAIL line missing from stderr:\n%s", stderr)
+	}
+	report := loadTestReport(t, project)
+	if len(report.Tests) != 1 {
+		t.Fatalf("tests = %+v", report.Tests)
+	}
+	test := report.Tests[0]
+	if test.Passed || test.ExitCode != -1 || test.Signal != "segmentation fault" {
+		t.Fatalf("signaled test entry = %+v", test)
+	}
+	if !strings.Contains(test.Output, "crashing test marker") {
+		t.Fatalf("signaled test output = %q", test.Output)
+	}
+	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Code != "VMAKE_E_TEST" {
+		t.Fatalf("signaled test diagnostics = %+v", report.Diagnostics)
+	}
+}
+
+func TestTestFailureWarningOutputNeverBecomesABuildWarning(t *testing.T) {
+	project := writeWarningTestProject(t)
+	writeExtensionFile(t, filepath.Join(project, "tests", "test_app.c"), `#include <stdio.h>
+
+int main(void) {
+	fprintf(stderr, "tests/check.c:7: warning: failing test stderr marker\n");
+	printf("src/thing.c:9: warning: failing test stdout marker\n");
+	return 3;
+}
+`)
+	stdout, stderr, code := runBuildCommand(t, project, "test", "--json")
+	if code != 1 {
+		t.Fatalf("test exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	report := loadTestReport(t, project)
+	if len(report.Diagnostics) != 2 {
+		t.Fatalf("diagnostics = %+v, want the test error and the build warning", report.Diagnostics)
+	}
+	if report.Diagnostics[0].Severity != "error" || report.Diagnostics[0].Code != "VMAKE_E_TEST" ||
+		report.Diagnostics[0].Message != "1 test(s) failed" {
+		t.Fatalf("test failure diagnostic = %+v", report.Diagnostics[0])
+	}
+	if report.Diagnostics[1].Code != buildWarningCode || filepath.Base(report.Diagnostics[1].File) != "main.c" {
+		t.Fatalf("build warning = %+v", report.Diagnostics[1])
+	}
+	if len(report.Tests) != 1 || report.Tests[0].Passed || report.Tests[0].ExitCode != 3 {
+		t.Fatalf("failed test entry = %+v", report.Tests)
+	}
+	output := report.Tests[0].Output
+	if !strings.Contains(output, "failing test stderr marker") || !strings.Contains(output, "failing test stdout marker") {
+		t.Fatalf("failed test output = %q", output)
 	}
 }

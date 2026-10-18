@@ -1244,7 +1244,7 @@ func TestTestJSONPassing(t *testing.T) {
 		document.Data.Summary.TestsPassed != 1 || document.Data.Summary.TestsFailed != 0 {
 		t.Fatalf("test summary = %+v", document.Data.Summary)
 	}
-	if !strings.Contains(stderr, "1/1 test(s) passed.") {
+	if !strings.Contains(stderr, "PASS tests-project:tests") {
 		t.Fatalf("human test progress is missing from stderr:\n%s", stderr)
 	}
 	assertNoHumanJSONStdout(t, stdout, "test(s) passed")
@@ -1270,6 +1270,10 @@ func TestTestJSONFailure(t *testing.T) {
 	if document.Data.Summary == nil || document.Data.Summary.TestsFound != 1 ||
 		document.Data.Summary.TestsPassed != 0 || document.Data.Summary.TestsFailed != 1 {
 		t.Fatalf("failed test summary = %+v", document.Data.Summary)
+	}
+	if len(document.Diagnostics) != 1 || document.Diagnostics[0].Severity != "error" ||
+		document.Diagnostics[0].Code != "VMAKE_E_TEST" || document.Diagnostics[0].Message != "1 test(s) failed" {
+		t.Fatalf("failed test diagnostics = %+v", document.Diagnostics)
 	}
 	if !strings.Contains(stderr, "Error: 1 test(s) failed") {
 		t.Fatalf("failure error is missing from stderr:\n%s", stderr)
@@ -1699,6 +1703,18 @@ func TestBuildStderrCaptureKeepsBoundedTail(t *testing.T) {
 	}
 }
 
+func TestBuildStderrCaptureCutFreezesWarnings(t *testing.T) {
+	capture := &buildStderrCapture{}
+	capture.append([]byte("src/build.c:3: warning: build phase warning\n"))
+	capture.cut(func() {})
+	capture.append([]byte("src/test.c:4: warning: test output\n"))
+	warnings := capture.warnings()
+	if len(warnings) != 1 || filepath.Base(warnings[0].File) != "build.c" ||
+		!strings.Contains(warnings[0].Message, "build phase warning") {
+		t.Fatalf("warnings after cut = %+v", warnings)
+	}
+}
+
 func TestMergeBuildDiagnosticsKeepsErrorsFirst(t *testing.T) {
 	diagnostics := []buildDiagnostic{
 		{Severity: "error", Code: "VMAKE_E_COMPILE", File: "src/broken.c", Line: 2, Column: 1, Message: "boom", Package: "pkg", Target: "pkg:broken"},
@@ -2000,7 +2016,7 @@ func TestTestOutputFile(t *testing.T) {
 	if stdout != "" {
 		t.Fatalf("test --output stdout = %q, want empty", stdout)
 	}
-	if !strings.Contains(stderr, "1/1 test(s) passed.") {
+	if !strings.Contains(stderr, "PASS tests-project:tests") {
 		t.Fatalf("test progress missing from stderr: %q", stderr)
 	}
 	document := readJSONBuildFile(t, output)
