@@ -26,12 +26,14 @@ var (
 )
 
 type checkJSONData struct {
-	WorkPending      bool `json:"workPending"`
-	PlannedCompiles  int  `json:"plannedCompiles"`
-	PlannedLinks     int  `json:"plannedLinks"`
-	PlannedCallbacks int  `json:"plannedCallbacks"`
-	UpToDate         int  `json:"upToDate"`
-	TargetsTotal     int  `json:"targetsTotal"`
+	WorkPending       bool     `json:"workPending"`
+	PlannedCompiles   int      `json:"plannedCompiles"`
+	PlannedLinks      int      `json:"plannedLinks"`
+	PlannedCallbacks  int      `json:"plannedCallbacks"`
+	PlannedGenerators int      `json:"plannedGenerators,omitempty"`
+	Caveats           []string `json:"caveats,omitempty"`
+	UpToDate          int      `json:"upToDate"`
+	TargetsTotal      int      `json:"targetsTotal"`
 }
 
 // checkJSONEnvelope is the machine document for `vmake build --check`. Unlike

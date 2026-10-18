@@ -347,6 +347,13 @@ func (s *Scheduler) Build(fullName string) error {
 
 func (s *Scheduler) prepareTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, workDir string) error {
 	if s.check {
+		node := resolved.Node
+		pkg := s.packages[node.PkgName]
+		if len(node.Target.GenRules()) > 0 || (pkg != nil && pkg.GenConfigHeader()) {
+			if s.stats != nil {
+				s.stats.RecordPlannedGenerator(node.FullName)
+			}
+		}
 		return nil
 	}
 	node := resolved.Node

@@ -76,6 +76,7 @@ On failure the line is `Build check failed: <concise error>` and the human error
 | workPending | `plannedCompiles + plannedLinks > 0`; planned callbacks alone keep it false |
 | plannedCompiles | Pending compile actions, one per source file whose action signature/inputs do not match |
 | plannedLinks | Pending link actions (including targets whose compile or dependency artifact will change) |
+| plannedGenerators | Generator/config-header targets not executed; see `caveats` |
 | plannedCallbacks | Default `void` targets whose build callback or post-link steps would run |
 | upToDate | Compile/link actions verified up to date, the same action count as a build report's `actionsUpToDate` |
 | targetsTotal | Default, non-test targets in the plan (including `void` targets) |

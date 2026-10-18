@@ -9,38 +9,42 @@ import (
 )
 
 type BuildStats struct {
-	mu               sync.Mutex
-	compiled         int
-	linked           int
-	upToDate         int
-	plannedCompiles  int
-	plannedLinks     int
-	plannedCallbacks int
-	compiledFiles    map[string]bool
-	changedTargets   map[string]bool
-	plannedTargets   map[string]bool
-	compilePlanned   map[string]bool
-	targetDuration   map[string]int64
+	mu                sync.Mutex
+	compiled          int
+	linked            int
+	upToDate          int
+	plannedCompiles   int
+	plannedLinks      int
+	plannedCallbacks  int
+	plannedGenerators int
+	compiledFiles     map[string]bool
+	changedTargets    map[string]bool
+	plannedTargets    map[string]bool
+	compilePlanned    map[string]bool
+	generatorTargets  map[string]bool
+	targetDuration    map[string]int64
 }
 
 type StatsSnapshot struct {
-	Compiled         int
-	Linked           int
-	UpToDate         int
-	PlannedCompiles  int
-	PlannedLinks     int
-	PlannedCallbacks int
-	CompiledFiles    []string
-	ChangedTargets   []string
+	Compiled          int
+	Linked            int
+	UpToDate          int
+	PlannedCompiles   int
+	PlannedLinks      int
+	PlannedCallbacks  int
+	PlannedGenerators int
+	CompiledFiles     []string
+	ChangedTargets    []string
 }
 
 func NewBuildStats() *BuildStats {
 	return &BuildStats{
-		compiledFiles:  make(map[string]bool),
-		changedTargets: make(map[string]bool),
-		plannedTargets: make(map[string]bool),
-		compilePlanned: make(map[string]bool),
-		targetDuration: make(map[string]int64),
+		compiledFiles:    make(map[string]bool),
+		changedTargets:   make(map[string]bool),
+		plannedTargets:   make(map[string]bool),
+		compilePlanned:   make(map[string]bool),
+		generatorTargets: make(map[string]bool),
+		targetDuration:   make(map[string]int64),
 	}
 }
 
@@ -98,6 +102,16 @@ func (s *BuildStats) RecordPlannedCallback(target string) {
 	s.plannedCallbacks++
 }
 
+func (s *BuildStats) RecordPlannedGenerator(target string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.generatorTargets[target] {
+		return
+	}
+	s.generatorTargets[target] = true
+	s.plannedGenerators++
+}
+
 func (s *BuildStats) CompilePlanned(target string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -132,14 +146,15 @@ func (s *BuildStats) Snapshot() StatsSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return StatsSnapshot{
-		Compiled:         s.compiled,
-		Linked:           s.linked,
-		UpToDate:         s.upToDate,
-		PlannedCompiles:  s.plannedCompiles,
-		PlannedLinks:     s.plannedLinks,
-		PlannedCallbacks: s.plannedCallbacks,
-		CompiledFiles:    sortedKeys(s.compiledFiles),
-		ChangedTargets:   sortedKeys(s.changedTargets),
+		Compiled:          s.compiled,
+		Linked:            s.linked,
+		UpToDate:          s.upToDate,
+		PlannedCompiles:   s.plannedCompiles,
+		PlannedLinks:      s.plannedLinks,
+		PlannedCallbacks:  s.plannedCallbacks,
+		PlannedGenerators: s.plannedGenerators,
+		CompiledFiles:     sortedKeys(s.compiledFiles),
+		ChangedTargets:    sortedKeys(s.changedTargets),
 	}
 }
 

@@ -136,12 +136,14 @@ func emitCheckResult(stdout *os.File, result *BuildResult, runErr error) error {
 			Command:       reportCommandCheck,
 			Status:        "ok",
 			Data: &checkJSONData{
-				WorkPending:      stats.PlannedCompiles > 0 || stats.PlannedLinks > 0,
-				PlannedCompiles:  stats.PlannedCompiles,
-				PlannedLinks:     stats.PlannedLinks,
-				PlannedCallbacks: stats.PlannedCallbacks,
-				UpToDate:         stats.UpToDate,
-				TargetsTotal:     len(result.Targets),
+				WorkPending:       stats.PlannedCompiles > 0 || stats.PlannedLinks > 0,
+				PlannedCompiles:   stats.PlannedCompiles,
+				PlannedLinks:      stats.PlannedLinks,
+				PlannedCallbacks:  stats.PlannedCallbacks,
+				PlannedGenerators: stats.PlannedGenerators,
+				Caveats:           checkCaveats(stats.PlannedGenerators),
+				UpToDate:          stats.UpToDate,
+				TargetsTotal:      len(result.Targets),
 			},
 			Diagnostics: []buildDiagnostic{},
 		}
@@ -149,6 +151,13 @@ func emitCheckResult(stdout *os.File, result *BuildResult, runErr error) error {
 	}
 	fmt.Fprintln(stdout, formatCheckSummary(result))
 	return nil
+}
+
+func checkCaveats(generators int) []string {
+	if generators == 0 {
+		return nil
+	}
+	return []string{"generator rules/config headers are not executed; targets depending on generated inputs may be undercounted"}
 }
 
 func formatCheckSummary(result *BuildResult) string {
@@ -168,6 +177,9 @@ func formatCheckSummary(result *BuildResult) string {
 	}
 	if stats.PlannedCallbacks > 0 {
 		return fmt.Sprintf("Build check: up to date (no compile/link work; %s would run)", countLabel(stats.PlannedCallbacks, "callback", "callbacks"))
+	}
+	if stats.PlannedGenerators > 0 {
+		return fmt.Sprintf("Build check: up to date (no compile/link work; %s generate inputs)", countLabel(stats.PlannedGenerators, "target", "targets"))
 	}
 	return "Build check: up to date (no compile/link work)"
 }
