@@ -16,6 +16,7 @@ import (
 
 	exec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/build"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
 )
@@ -135,9 +136,10 @@ const (
 	buildTestOutputLimit  = 4096
 	buildTestOutputMarker = "...[truncated]\n"
 
-	testSkipBuildFailed   = "build failed"
-	testSkipBinaryMissing = "binary missing"
-	testSkipUnsupported   = "unsupported platform"
+	testSkipBuildFailed    = "build failed"
+	testSkipTargetNotBuilt = "target not built"
+	testSkipBinaryMissing  = "binary missing"
+	testSkipUnsupported    = "unsupported platform"
 )
 
 var errNoTestTargets = errors.New("no test targets found")
@@ -169,6 +171,14 @@ func testExitCode(err error) (int, string) {
 
 func runAllTests(ctx context.Context, result *BuildResult, allowNotRun bool) ([]testResult, error) {
 	var tests []testResult
+
+	builtTargets := make(map[string]bool, len(result.Targets))
+	for _, target := range result.Targets {
+		if target.Status != build.TargetStatusBuilt && target.Status != build.TargetStatusUpToDate {
+			continue
+		}
+		builtTargets[target.Package+"\x00"+target.Target] = true
+	}
 
 	for _, fullName := range result.Graph.Order {
 		node, err := result.Graph.GetNode(fullName)
@@ -221,6 +231,11 @@ func runAllTests(ctx context.Context, result *BuildResult, allowNotRun bool) ([]
 			}
 			vlog.Error("FAIL %s (binary not found: %s)", fullName, test.outputPath)
 			return nil, fmt.Errorf("test binary missing: %w", err)
+		}
+		if allowNotRun && !builtTargets[node.PkgName+"\x00"+node.Target.Name()] {
+			test.notRun, test.skipReason = true, testSkipTargetNotBuilt
+			tests = append(tests, test)
+			continue
 		}
 
 		tests = append(tests, test)

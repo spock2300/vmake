@@ -509,6 +509,84 @@ int main(void) {
 	}
 }
 
+func TestTestCommandKeepGoingSkipsStaleBinaries(t *testing.T) {
+	project := writePartialTestProject(t, `#include <stdio.h>
+
+int main(void) {
+	printf("stale regression good ran\n");
+	return 0;
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "tests", "bad.c"), `#include <stdio.h>
+
+int main(void) {
+	printf("stale regression bad ran\n");
+	return 0;
+}
+`)
+	if stdout, stderr, code := runBuildCommand(t, project, "build", "--tests"); code != 0 {
+		t.Fatalf("setup build exit = %d, stderr = %q\n%s", code, stderr, stdout)
+	}
+	var built buildReport
+	if err := jsonio.Load(reportPath(project), &built); err != nil {
+		t.Fatal(err)
+	}
+	var staleBinary string
+	for _, target := range built.Targets {
+		if target.Target == "checkbad" && len(target.Outputs) > 0 {
+			staleBinary = target.Outputs[0]
+		}
+	}
+	if staleBinary == "" {
+		t.Fatalf("stale test binary not recorded: %+v", built.Targets)
+	}
+	writeExtensionFile(t, filepath.Join(project, "tests", "bad.c"), "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
+	if _, err := os.Stat(staleBinary); err != nil {
+		t.Fatalf("stale test binary missing before rerun: %v", err)
+	}
+
+	stdout, stderr, code := runBuildCommand(t, project, "test", "-k")
+	if code != 1 {
+		t.Fatalf("test -k exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if strings.Contains(stdout, "stale regression bad ran") {
+		t.Fatalf("stale test binary executed:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "stale regression good ran") || !strings.Contains(stdout, "PASS tests-project:checkgood") {
+		t.Fatalf("built test did not run:\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Tests failed: tests/bad.c:2:") {
+		t.Fatalf("build error is not the summary:\n%s", stdout)
+	}
+	report := loadTestReport(t, project)
+	if report.Status != "failed" || !strings.Contains(report.Error, "tests/bad.c:2:") {
+		t.Fatalf("stale-binary report = %+v", report)
+	}
+	if len(report.Tests) != 2 {
+		t.Fatalf("tests = %+v", report.Tests)
+	}
+	entries := testResultsByName(report.Tests)
+	good, ok := entries["tests-project:checkgood"]
+	if !ok || good.NotRun || good.SkipReason != "" || !good.Passed || good.ExitCode != 0 ||
+		!strings.Contains(good.Output, "stale regression good ran") {
+		t.Fatalf("executed test entry = %+v", good)
+	}
+	bad, ok := entries["tests-project:checkbad"]
+	if !ok || !bad.NotRun || bad.SkipReason != testSkipTargetNotBuilt || bad.Passed ||
+		bad.ExitCode != 0 || bad.Output != "" {
+		t.Fatalf("stale test entry = %+v", bad)
+	}
+	summary := report.Summary
+	if summary == nil || summary.TestsFound != 2 || summary.TestsPassed != 1 || summary.TestsFailed != 0 ||
+		summary.TargetsFailed != 1 {
+		t.Fatalf("stale-binary summary = %+v", summary)
+	}
+	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Code != "VMAKE_E_COMPILE" ||
+		filepath.Base(report.Diagnostics[0].File) != "bad.c" {
+		t.Fatalf("diagnostics = %+v", report.Diagnostics)
+	}
+}
+
 func TestTestCommandBuildFailureWithoutKeepGoingRecordsNoTests(t *testing.T) {
 	project := writePartialTestProject(t, `#include <stdio.h>
 

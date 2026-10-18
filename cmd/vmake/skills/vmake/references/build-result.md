@@ -24,7 +24,7 @@ the installation manifest (`install/manifest.json`). `clean`, `distclean`, and
 | `toolchain`, `mode` | Effective toolchain and mode |
 | `compileDatabase` | Absolute path to the compilation database, or empty |
 | `targets` | Executed default targets: `package`, `target`, `kind`, `outputs`, `status`, `durationMs`. On failure only targets that completed before the failure are listed |
-| `tests` | Always an array. For `vmake test`, one entry per discovered test target: an executed test has `name`, `package`, `target`, `passed`, `elapsedMs`, `exitCode`, optional `signal` (set when a signal terminated the process), and `output`. After a `-k` build failure, a declared target that did not run has `notRun: true`, `skipReason` (`build failed`, `binary missing`, or `unsupported platform`), `passed: false`, and no output or signal |
+| `tests` | Always an array. For `vmake test`, one entry per discovered test target: an executed test has `name`, `package`, `target`, `passed`, `elapsedMs`, `exitCode`, optional `signal` (set when a signal terminated the process), and `output`. After a `-k` build failure, a declared target that did not run has `notRun: true`, `skipReason` (`build failed`, `target not built`, `binary missing`, or `unsupported platform`), `passed: false`, and no output or signal. Partial mode executes only targets recorded `built` or `up-to-date` in this invocation's `targets`; a stale binary from an earlier build is recorded as `target not built` and never run |
 | `artifacts` | Files installed by this invocation only: `package`, `target`, `buildPath`, `installPath`, `size`, `sha256` |
 
 A target's `status` is `built` when it compiled or linked something in this
@@ -205,12 +205,13 @@ outcome.
 - If the build phase itself fails, the report keeps the completed build targets
   and partial `summary` (unless the failure happened before scheduling) along
   with configuration identity and `compileDatabase`. `artifacts` stays empty.
-- With `-k`, a build-phase failure still runs the test binaries that were
-  built. Executed entries keep their normal pass/exit/signal/output fields;
-  declared targets without a runnable binary get `notRun: true` and
-  `skipReason` and do not count as failures. The report stays `failed` with the
-  build error as `error`, and the command exits 1. Without `-k`, a build-phase
-  failure records no test entries.
+- With `-k`, a build-phase failure still runs the test binaries this invocation
+  built successfully: only targets recorded as `built` or `up-to-date` in the
+  report's `targets` are executed, and a stale binary left by an earlier build
+  gets `skipReason: "target not built"` instead of running. Executed entries
+  keep their normal pass/exit/signal/output fields; declared targets that did
+  not run get `notRun: true` and `skipReason` and do not count as failures. The report stays `failed` with the build error as `error`, and the
+  command exits 1. Without `-k`, a build-phase failure records no test entries.
 - A running test record replaces the previous test report before work starts;
   later test runs overwrite it with a new `buildId`. The build report keeps its
   own build ID.
