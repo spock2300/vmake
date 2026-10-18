@@ -787,6 +787,29 @@ vmake build --manifest install/manifest.json
 
 `--manifest` resolves the recorded git URLs, refs, and revisions and writes the resulting version/commit pins into `vmake.lock` before dependency resolution, so the graph is built from the pinned versions. During `vmake build --manifest`, local packages with a managed `SetGit` source are skipped by manifest checkout — the build materializes the recorded source version on its own; the separate `vmake manifest checkout` command performs raw checkouts of local entries in their package directories. `vmake manifest show install.json` displays contents; `vmake manifest checkout install.json` restores sources without building. With a valid lock entry and cached checkout, resolution is fully offline.
 
+## Build Output and Log Levels
+
+Default `build`/`rebuild`/`test` output is the progress view: phase headings,
+`Found N package(s)`, the toolchain line, per-target actions (`CC`, `LINK`,
+`GEN`, `INSTALL`/`SKIP`), warnings and errors, CMake build/install summaries
+(for example `  cmake install: 3 installed, 138 up to date`), and the final
+one-line `Build succeeded: ...` summary. Detail-only lists are hidden: package
+names, option/Kconfig counts, dependency lists, `Targets found:`, `Build order:`,
+source/version resolution lines, and `NOTE ... ordering/includes only` lines.
+
+- `-v` (`--verbose`): adds those lists and the full captured CMake
+  `CMakeBuild`/`CMakeInstall` log, including Ninja `[n/N]` progress and
+  `-- Up-to-date:` lines. `-v` is materially larger than the default view.
+- `-V` (`--very-verbose`): adds debug output such as executed tool commands.
+- `-q` (`--quiet`): suppresses the progress view; stdout keeps only the final
+  one-line summary.
+
+`CMakeBuild`/`CMakeInstall` capture their combined output instead of streaming
+it. On success only the summary and any warnings/notes print at default
+verbosity; on failure the captured error lines are printed and the full
+captured log stays attached to the script error and build report, so no
+diagnostics are lost. `CMakeConfigure` output is unchanged.
+
 ## CLI Quick Reference
 
 | Command | Description |

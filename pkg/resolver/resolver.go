@@ -415,9 +415,9 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 		}
 		versions = map[string]string{pinVersion: tag}
 		selectedVersion = pinVersion
-		vlog.Info("  %s@%s (pinned, cached)", id, selectedVersion)
+		vlog.Verbose("  %s@%s (pinned, cached)", id, selectedVersion)
 	} else {
-		vlog.Info("  %s: listing versions from %s", id, strings.Join(urls, ", "))
+		vlog.Verbose("  %s: listing versions from %s", id, strings.Join(urls, ", "))
 		tags, err := repo.ListRemoteTagsContext(r.ctx, urls)
 		if err != nil {
 			return nil, fmt.Errorf("list tags for %s: %w", id, err)
@@ -434,7 +434,7 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 		}
 		selectedVersion = selected
 
-		vlog.Info("  %s@%s", id, selectedVersion)
+		vlog.Verbose("  %s@%s", id, selectedVersion)
 
 		expectedCommit := ""
 		if selectedVersion == pinVersion {
@@ -580,7 +580,7 @@ func (r *Resolver) scanSubPackages(parentID, checkoutDir string) {
 		r.sources[ss.Name] = ss
 		r.subParents[ss.Name] = parentID
 	}
-	vlog.Info("  %s: found %d sub-package(s)", parentID, len(subs))
+	vlog.Verbose("  %s: found %d sub-package(s)", parentID, len(subs))
 }
 
 func (r *Resolver) checkWrapperCommit(id, repoName string) error {

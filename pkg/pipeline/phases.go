@@ -33,7 +33,8 @@ func Require(ctx *RuntimeContext) (err error) {
 	for _, pkg := range packages {
 		pkgNames = append(pkgNames, pkg.Name)
 	}
-	vlog.Info("Found %d package(s): %s", len(packages), strings.Join(pkgNames, ", "))
+	vlog.Info("Found %d package(s)", len(packages))
+	vlog.Verbose("  %s", strings.Join(pkgNames, ", "))
 
 	r := resolver.NewResolver(repo.NewRepoManager(ctx.Paths.ReposDir), ctx.Paths.DepsDir)
 	r.SetContext(ctx.Context)
@@ -55,9 +56,9 @@ func Require(ctx *RuntimeContext) (err error) {
 	for _, name := range ctx.DepGraph.Order {
 		node := ctx.DepGraph.Packages[name]
 		if node.IsLocal() {
-			vlog.Info("  %s (local)", name)
+			vlog.Verbose("  %s (local)", name)
 		} else {
-			vlog.Info("  %s", name)
+			vlog.Verbose("  %s", name)
 		}
 	}
 
@@ -127,7 +128,7 @@ func collectAllOptionsAndKConfigs(ctx *RuntimeContext) error {
 				}
 			}
 			ctx.AllOptions[name] = opts
-			vlog.Info("  %s: %d option(s)", name, len(opts))
+			vlog.Verbose("  %s: %d option(s)", name, len(opts))
 		}
 
 		if node.Pkg != nil {
@@ -150,7 +151,7 @@ func collectAllOptionsAndKConfigs(ctx *RuntimeContext) error {
 					}
 				}
 				ctx.AllKConfigs[name] = entries
-				vlog.Info("  %s: %d kconfig(s)", name, len(entries))
+				vlog.Verbose("  %s: %d kconfig(s)", name, len(entries))
 			}
 		}
 	}

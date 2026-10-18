@@ -1,12 +1,15 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 
+	"github.com/spock2300/vmake/internal/exec"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
@@ -109,7 +112,7 @@ func (p *Package) CMakeBuild(extraArgs ...string) {
 	if err != nil {
 		fatalScript(p.Name, "CMakeBuild", "%v", err)
 	}
-	p.Run("cmake", args...)
+	p.runCapturedCMake("CMakeBuild", "build", args)
 }
 
 func (p *Package) CMakeInstall(extraArgs ...string) {
@@ -117,7 +120,116 @@ func (p *Package) CMakeInstall(extraArgs ...string) {
 	if err != nil {
 		fatalScript(p.Name, "CMakeInstall", "%v", err)
 	}
-	p.Run("cmake", args...)
+	p.runCapturedCMake("CMakeInstall", "install", args)
+}
+
+// runCapturedCMake runs one cmake stage with captured output. Success prints a
+// single summary line plus non-progress lines at default verbosity and the full
+// log under -v; a failure keeps the whole captured log in the script error.
+func (p *Package) runCapturedCMake(op, phase string, args []string) {
+	if p.DryRun() {
+		p.logAndDryRun("cmake", args)
+		return
+	}
+	output, err := p.runCMakeCaptured(args)
+	summary, detail := renderCMakeOutput(phase, output)
+	if err != nil {
+		for _, line := range detail {
+			if vlog.IsQuiet() {
+				vlog.Error("%s", line)
+			} else {
+				vlog.Info("%s", line)
+			}
+		}
+		for _, line := range splitCMakeLines(output) {
+			vlog.Verbose("%s", line)
+		}
+		fatalScript(p.Name, op, "%v", err)
+	}
+	vlog.Info("%s", summary)
+	for _, line := range detail {
+		vlog.Info("%s", line)
+	}
+	for _, line := range splitCMakeLines(output) {
+		vlog.Verbose("%s", line)
+	}
+}
+
+func (p *Package) runCMakeCaptured(args []string) (string, error) {
+	name := "cmake"
+	env := p.tc.CommandEnv()
+	if p.tc != nil {
+		for _, tool := range p.tc.Tools.Entries() {
+			configured := *tool.Value
+			if configured != "" && name == configured {
+				path, err := toolchain.ResolveToolPath(configured, p.tc.InstallPath)
+				if err != nil {
+					return "", err
+				}
+				name = path
+				break
+			}
+		}
+	}
+	output, err := exec.RunWithOptions(name, args, exec.RunOptions{
+		Dir:     p.dirs.BuildDir,
+		Env:     env,
+		Context: p.executionContext(),
+		Quiet:   true,
+	})
+	if err != nil {
+		var commandErr *exec.CommandError
+		if errors.As(err, &commandErr) {
+			return commandErr.Output, err
+		}
+		return string(output), err
+	}
+	return string(output), nil
+}
+
+var cmakeProgressLine = regexp.MustCompile(`^(?:\[\d+/\d+\]|\[\s*\d+%\])`)
+
+// renderCMakeOutput reports the one-line summary and the default-visible
+// detail lines for a captured build/install stage. Ninja progress and CMake
+// up-to-date chatter are counted but hidden; install scaffolding is hidden.
+func renderCMakeOutput(phase, output string) (string, []string) {
+	var steps, installed, upToDate int
+	var detail []string
+	for _, line := range splitCMakeLines(output) {
+		switch {
+		case cmakeProgressLine.MatchString(line):
+			steps++
+		case strings.HasPrefix(line, "ninja: no work to do"):
+		case strings.HasPrefix(line, "-- Up-to-date:"):
+			upToDate++
+		case strings.HasPrefix(line, "-- Install configuration:"):
+		case strings.HasPrefix(line, "-- Installing:"):
+			installed++
+			detail = append(detail, line)
+		default:
+			detail = append(detail, line)
+		}
+	}
+	if phase == "install" {
+		return fmt.Sprintf("  cmake install: %d installed, %d up to date", installed, upToDate), detail
+	}
+	switch steps {
+	case 0:
+		return "  cmake build: up to date", detail
+	case 1:
+		return "  cmake build: 1 step", detail
+	}
+	return fmt.Sprintf("  cmake build: %d steps", steps), detail
+}
+
+func splitCMakeLines(output string) []string {
+	var lines []string
+	for _, line := range strings.Split(output, "\n") {
+		if line = strings.TrimSuffix(line, "\r"); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
 
 func (p *Package) cmakeDir(dir string) string {

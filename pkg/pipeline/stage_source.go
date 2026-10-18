@@ -142,7 +142,7 @@ func (s *sourceStage) writeLockfile() error {
 	if s.rc.ctx.Lock != nil {
 		for _, name := range s.rc.ctx.Lock.SortedNames() {
 			if _, ok := updated.Get(name); !ok {
-				vlog.Info("  lock: dropped stale entry %s", name)
+				vlog.Verbose("  lock: dropped stale entry %s", name)
 			}
 		}
 	}
@@ -257,7 +257,7 @@ func (s *sourceStage) downloadRemoteSources(remote *remoteVersionState, depsDir 
 		remote.trees[name] = res.Root
 		s.sourceVersions[name] = entryCfg.Version
 		s.patchHashes[name] = patchHash
-		vlog.Info("  %s@%s -> %s", name, entryCfg.Version, res.SrcDir)
+		vlog.Verbose("  %s@%s -> %s", name, entryCfg.Version, res.SrcDir)
 		if err := s.setPackageLayout(name, resolvedTools); err != nil {
 			return err
 		}

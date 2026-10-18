@@ -260,10 +260,10 @@ func (s *declareStage) computeDepOutput(currentPkg, depRef string) string {
 }
 
 func (s *declareStage) logResults() {
-	vlog.Info("")
-	vlog.Info("Targets found:")
+	vlog.Verbose("")
+	vlog.Verbose("Targets found:")
 	for _, line := range targetListLines(s.allTargets) {
-		vlog.Info("%s", line)
+		vlog.Verbose("%s", line)
 	}
 
 	vlog.Info("")

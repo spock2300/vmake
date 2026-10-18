@@ -257,7 +257,7 @@ func (s *Scheduler) checkLibDependencies(resolved *ResolvedTarget) {
 	}
 	for _, artifact := range resolved.DepArtifacts {
 		if isLibraryArtifact(artifact) {
-			vlog.Info("  NOTE %s: library dependency %s provides build ordering/includes only; it is not merged into the %s output", resolved.Node.FullName, filepath.Base(artifact), kind)
+			vlog.Verbose("  NOTE %s: library dependency %s provides build ordering/includes only; it is not merged into the %s output", resolved.Node.FullName, filepath.Base(artifact), kind)
 		}
 	}
 }

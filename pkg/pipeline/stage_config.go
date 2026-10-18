@@ -77,7 +77,7 @@ func filterDependencies(ctx *RuntimeContext, log bool) error {
 			return fmt.Errorf("%s: filter deps: %w", name, err)
 		}
 		if log && len(node.Deps) > 0 {
-			vlog.Info("  %s: deps=%v", name, node.Deps)
+			vlog.Verbose("  %s: deps=%v", name, node.Deps)
 		}
 	}
 	if err := ctx.Resolver.UpdateOrder(); err != nil {

@@ -215,10 +215,10 @@ func planBuild(rc *runContext, cfg *configStage, src *sourceStage, decl *declare
 		return nil, err
 	}
 
-	vlog.Info("")
-	vlog.Info("Build order:")
+	vlog.Verbose("")
+	vlog.Verbose("Build order:")
 	for _, fullName := range graph.Order {
-		vlog.Info("  - %s", fullName)
+		vlog.Verbose("  - %s", fullName)
 	}
 
 	env := buildEnvironment(rc, cfg, src, decl)

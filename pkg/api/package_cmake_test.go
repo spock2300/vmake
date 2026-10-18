@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/spock2300/vmake/internal/buildruntime"
+	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -331,12 +333,252 @@ func TestCMakeDryRunDoesNotExecuteOrCreateDirectories(t *testing.T) {
 	p := NewPackage().SetDirs(PkgDirs{SourceDir: filepath.Join(root, "missing-source"), BuildDir: filepath.Join(root, "missing-build")}).
 		SetToolchain(&toolchain.Toolchain{}).SetDryRun(true)
 	t.Setenv("PATH", "")
-	p.CMakeConfigure()
-	p.CMakeConfigure("--preset", "fixture")
-	p.CMakeBuild()
-	p.CMakeInstall("--component", "Development")
+	out := captureCMakeStdout(t, func() {
+		p.CMakeConfigure()
+		p.CMakeConfigure("--preset", "fixture")
+		p.CMakeBuild()
+		p.CMakeInstall("--component", "Development")
+	})
+	for _, want := range []string{"  cmake -S ", " -B ", "  cmake --build ", "  cmake --install ", "--component Development"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("dry-run stdout missing %q:\n%s", want, out)
+		}
+	}
 	entries, err := os.ReadDir(root)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("dry-run created files: %v, %v", entries, err)
 	}
+}
+
+func fakeCMakePackage(t *testing.T, fakeDir string) *Package {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	program, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "cmake"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(bin, name), data, 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("VMAKE_TEST_CMAKE_FAKE_DIR", fakeDir)
+	return NewPackage().SetName("cmake-fixture").
+		SetDirs(PkgDirs{SourceDir: t.TempDir(), BuildDir: t.TempDir()}).
+		SetToolchain(&toolchain.Toolchain{})
+}
+
+func writeFakeCMakeStage(t *testing.T, dir, stage, stdout string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, stage+".out"), []byte(stdout), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func captureCMakeStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		defer r.Close()
+		var sb strings.Builder
+		_, _ = io.Copy(&sb, r)
+		done <- sb.String()
+	}()
+	defer func() {
+		os.Stdout = old
+		_ = w.Close()
+	}()
+	fn()
+	_ = w.Close()
+	return <-done
+}
+
+func TestCMakeBuildInstallOutputCaptured(t *testing.T) {
+	tests := []struct {
+		name       string
+		stage      string
+		output     string
+		run        func(*Package)
+		summary    string
+		wantDetail []string
+		wantHidden []string
+	}{
+		{
+			name:       "build progress",
+			stage:      "build",
+			output:     "[1/2] Building C object CMakeFiles/a.dir/a.c.o\n[2/2] Linking C static library liba.a\n",
+			run:        func(p *Package) { p.CMakeBuild() },
+			summary:    "  cmake build: 2 steps",
+			wantHidden: []string{"[1/2]", "[2/2]"},
+		},
+		{
+			name:       "build makefile generator progress",
+			stage:      "build",
+			output:     "[ 50%] Building C object CMakeFiles/a.dir/a.c.o\n[100%] Linking C static library liba.a\n",
+			run:        func(p *Package) { p.CMakeBuild() },
+			summary:    "  cmake build: 2 steps",
+			wantHidden: []string{"[ 50%]", "[100%]"},
+		},
+		{
+			name:       "build up to date",
+			stage:      "build",
+			output:     "ninja: no work to do.\n",
+			run:        func(p *Package) { p.CMakeBuild() },
+			summary:    "  cmake build: up to date",
+			wantHidden: []string{"ninja: no work to do"},
+		},
+		{
+			name:       "build warnings stay visible",
+			stage:      "build",
+			output:     "[1/1] Building C object a.c.o\nCMake Warning:\n  unused variable\n",
+			run:        func(p *Package) { p.CMakeBuild() },
+			summary:    "  cmake build: 1 step",
+			wantDetail: []string{"CMake Warning:", "  unused variable"},
+			wantHidden: []string{"[1/1]"},
+		},
+		{
+			name:       "install summary and installed files",
+			stage:      "install",
+			output:     "-- Installing: /tmp/stage/lib/liba.a\n-- Up-to-date: /tmp/stage/include/a.h\n-- Installing: /tmp/stage/share/doc\n",
+			run:        func(p *Package) { p.CMakeInstall() },
+			summary:    "  cmake install: 2 installed, 1 up to date",
+			wantDetail: []string{"-- Installing: /tmp/stage/lib/liba.a", "-- Installing: /tmp/stage/share/doc"},
+			wantHidden: []string{"-- Up-to-date:"},
+		},
+		{
+			name:       "install up to date",
+			stage:      "install",
+			output:     "-- Up-to-date: /tmp/stage/lib/liba.a\n-- Up-to-date: /tmp/stage/include/a.h\n",
+			run:        func(p *Package) { p.CMakeInstall() },
+			summary:    "  cmake install: 0 installed, 2 up to date",
+			wantHidden: []string{"-- Up-to-date:"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fakeDir := t.TempDir()
+			writeFakeCMakeStage(t, fakeDir, test.stage, test.output)
+			p := fakeCMakePackage(t, fakeDir)
+			vlog.SetLevel(vlog.Normal)
+			defer vlog.SetLevel(vlog.Normal)
+			out := captureCMakeStdout(t, func() { test.run(p) })
+			if !strings.Contains(out, test.summary) {
+				t.Fatalf("stdout missing summary %q:\n%s", test.summary, out)
+			}
+			for _, want := range test.wantDetail {
+				if !strings.Contains(out, want) {
+					t.Errorf("stdout missing detail %q:\n%s", want, out)
+				}
+			}
+			for _, hidden := range test.wantHidden {
+				if strings.Contains(out, hidden) {
+					t.Errorf("stdout contains hidden output %q:\n%s", hidden, out)
+				}
+			}
+		})
+	}
+}
+
+func TestCMakeCapturedLogVisibleOnlyWhenVerbose(t *testing.T) {
+	fakeDir := t.TempDir()
+	writeFakeCMakeStage(t, fakeDir, "build", "[1/2] Building C object a.c.o\n[2/2] Linking C static library liba.a\n")
+	p := fakeCMakePackage(t, fakeDir)
+	vlog.SetLevel(vlog.VerboseLevel)
+	defer vlog.SetLevel(vlog.Normal)
+	out := captureCMakeStdout(t, func() { p.CMakeBuild() })
+	for _, want := range []string{"[1/2] Building C object a.c.o", "[2/2] Linking C static library liba.a", "  cmake build: 2 steps"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("verbose stdout missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestCMakeCapturedOutputQuiet(t *testing.T) {
+	fakeDir := t.TempDir()
+	writeFakeCMakeStage(t, fakeDir, "install", "-- Installing: /tmp/stage/lib/liba.a\n")
+	p := fakeCMakePackage(t, fakeDir)
+	vlog.SetLevel(vlog.Quiet)
+	defer vlog.SetLevel(vlog.Normal)
+	out := captureCMakeStdout(t, func() { p.CMakeInstall() })
+	if out != "" {
+		t.Fatalf("quiet stdout = %q, want empty", out)
+	}
+}
+
+func TestCMakeFailureKeepsFullCapturedOutput(t *testing.T) {
+	for _, stage := range []string{"build", "install"} {
+		t.Run(stage, func(t *testing.T) {
+			fakeDir := t.TempDir()
+			writeFakeCMakeStage(t, fakeDir, stage, "[1/1] Building C object a.c.o\nFAILED: a.c.o\ncompiler exploded\n")
+			if err := os.WriteFile(filepath.Join(fakeDir, stage+".exit"), []byte("1\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			p := fakeCMakePackage(t, fakeDir)
+			vlog.SetLevel(vlog.Normal)
+			defer vlog.SetLevel(vlog.Normal)
+			run := func() {
+				if stage == "build" {
+					p.CMakeBuild()
+				} else {
+					p.CMakeInstall()
+				}
+			}
+			var scriptErr *BuildScriptError
+			out := captureCMakeStdout(t, func() {
+				scriptErr = captureScriptError(run)
+			})
+			if scriptErr == nil {
+				t.Fatal("expected a script error")
+			}
+			for _, want := range []string{"FAILED: a.c.o", "compiler exploded"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("default failure stdout missing captured output %q:\n%s", want, out)
+				}
+			}
+			if strings.Contains(out, "[1/1]") {
+				t.Errorf("default failure stdout contains progress line:\n%s", out)
+			}
+			wantOp := "CMakeBuild"
+			if stage == "install" {
+				wantOp = "CMakeInstall"
+			}
+			if scriptErr.Package != p.Name || scriptErr.Op != wantOp {
+				t.Fatalf("script error = %+v, want package %q op %q", scriptErr, p.Name, wantOp)
+			}
+			for _, want := range []string{"[1/1] Building C object a.c.o", "FAILED: a.c.o", "compiler exploded"} {
+				if !strings.Contains(scriptErr.Error(), want) {
+					t.Errorf("error missing captured output %q:\n%s", want, scriptErr.Error())
+				}
+			}
+			vlog.SetLevel(vlog.VerboseLevel)
+			verboseOut := captureCMakeStdout(t, func() { scriptErr = captureScriptError(run) })
+			if !strings.Contains(verboseOut, "[1/1] Building C object a.c.o") {
+				t.Errorf("verbose failure stdout missing captured log:\n%s", verboseOut)
+			}
+		})
+	}
+}
+
+func captureScriptError(fn func()) (scriptErr *BuildScriptError) {
+	defer func() {
+		scriptErr, _ = recover().(*BuildScriptError)
+	}()
+	fn()
+	return nil
 }

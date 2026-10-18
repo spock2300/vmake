@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/buildscript"
+	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
 func captureResolverStdout(t *testing.T, fn func()) string {
@@ -38,6 +39,8 @@ func TestResolveNativeLogsVersionListing(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
 	}
+	vlog.SetLevel(vlog.VerboseLevel)
+	defer vlog.SetLevel(vlog.Normal)
 	url := writeNativeRepoWithVersions(t)
 	r := newNativeTestResolver(t, url)
 	a := localRequiringSource(t, "a", "testnative/conflictpkg >=1.2")

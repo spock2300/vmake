@@ -10,7 +10,7 @@ type Level int
 const (
 	Quiet Level = iota
 	Normal
-	Verbose
+	VerboseLevel
 	VeryVerbose
 )
 
@@ -27,6 +27,14 @@ func IsQuiet() bool {
 
 func Debug(format string, args ...any) {
 	if level >= VeryVerbose {
+		fmt.Printf(format+"\n", args...)
+	}
+}
+
+// Verbose prints detail-only output (-v) that is not part of the default
+// progress view.
+func Verbose(format string, args ...any) {
+	if level >= VerboseLevel {
 		fmt.Printf(format+"\n", args...)
 	}
 }

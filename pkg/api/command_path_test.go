@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -22,17 +23,15 @@ func TestMain(m *testing.M) {
 }
 
 func runCMakeWrapper() {
+	if fakeDir := os.Getenv("VMAKE_TEST_CMAKE_FAKE_DIR"); fakeDir != "" {
+		runFakeCMake(fakeDir)
+	}
 	real := os.Getenv("VMAKE_TEST_CMAKE_REAL")
 	if real == "" {
 		fmt.Fprintln(os.Stderr, "cmake wrapper: VMAKE_TEST_CMAKE_REAL is not set")
 		os.Exit(2)
 	}
-	if logPath := os.Getenv("VMAKE_TEST_CMAKE_LOG"); logPath != "" {
-		if log, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
-			fmt.Fprintln(log, strings.Join(os.Args[1:], " "))
-			log.Close()
-		}
-	}
+	logCMakeInvocation()
 	cmd := exec.Command(real, os.Args[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -43,6 +42,43 @@ func runCMakeWrapper() {
 		os.Exit(1)
 	}
 	os.Exit(0)
+}
+
+func logCMakeInvocation() {
+	logPath := os.Getenv("VMAKE_TEST_CMAKE_LOG")
+	if logPath == "" {
+		return
+	}
+	log, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	fmt.Fprintln(log, strings.Join(os.Args[1:], " "))
+	log.Close()
+}
+
+// runFakeCMake emits the canned output for the invoked stage (--build or
+// --install) from <fakeDir>/<stage>.out, .err and .exit. Tests use it to
+// exercise captured CMake output without a real CMake/Ninja installation.
+func runFakeCMake(fakeDir string) {
+	logCMakeInvocation()
+	if len(os.Args) < 2 {
+		os.Exit(2)
+	}
+	stage := strings.TrimPrefix(os.Args[1], "--")
+	if data, err := os.ReadFile(filepath.Join(fakeDir, stage+".out")); err == nil {
+		_, _ = os.Stdout.Write(data)
+	}
+	if data, err := os.ReadFile(filepath.Join(fakeDir, stage+".err")); err == nil {
+		_, _ = os.Stderr.Write(data)
+	}
+	code := 0
+	if data, err := os.ReadFile(filepath.Join(fakeDir, stage+".exit")); err == nil {
+		if n, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+			code = n
+		}
+	}
+	os.Exit(code)
 }
 
 func commandPathPackage(t *testing.T, installed bool) *Package {

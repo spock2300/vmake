@@ -57,13 +57,24 @@ func collectBuildDiagnostics(err error, target *build.TargetError, diagnostics *
 		return
 	}
 	if scriptErr, ok := err.(*api.BuildScriptError); ok {
-		diagnostic := buildDiagnostic{Severity: "error", Code: "VMAKE_E_SCRIPT", Message: scriptErr.Error(), Package: scriptErr.Package}
+		pkgName := scriptErr.Package
+		targetName := ""
 		if target != nil {
-			diagnostic.Target = target.Target
-			if diagnostic.Package == "" {
-				diagnostic.Package = targetPackage(target)
+			targetName = target.Target
+			if pkgName == "" {
+				pkgName = targetPackage(target)
 			}
 		}
+		if parsed := parseGNUDiagnostics(scriptErr.Error()); len(parsed) > 0 {
+			for i := range parsed {
+				parsed[i].Code = "VMAKE_E_SCRIPT"
+				parsed[i].Package = pkgName
+				parsed[i].Target = targetName
+			}
+			*diagnostics = append(*diagnostics, parsed...)
+			return
+		}
+		diagnostic := buildDiagnostic{Severity: "error", Code: "VMAKE_E_SCRIPT", Message: boundDiagnosticMessage(scriptErr.Error()), Package: pkgName, Target: targetName}
 		*diagnostics = append(*diagnostics, diagnostic)
 		return
 	}
@@ -233,6 +244,14 @@ func firstErrorLine(err error) string {
 
 func summarizeBuildLine(line string) string {
 	return truncateRunes(strings.Join(strings.Fields(line), " "), buildSummaryLimit)
+}
+
+func boundDiagnosticMessage(text string) string {
+	const marker = "...[truncated]\n"
+	if len([]rune(text)) <= buildDiagnosticMessageLimit {
+		return text
+	}
+	return marker + tailRunes(text, buildDiagnosticMessageLimit-len([]rune(marker)))
 }
 
 func truncateRunes(text string, limit int) string {

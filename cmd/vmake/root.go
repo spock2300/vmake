@@ -63,7 +63,7 @@ It uses Go buildscripts for configuration and provides a TUI for option manageme
 		case veryVerbose:
 			vlog.SetLevel(vlog.VeryVerbose)
 		case verbose:
-			vlog.SetLevel(vlog.Verbose)
+			vlog.SetLevel(vlog.VerboseLevel)
 		case quiet:
 			vlog.SetLevel(vlog.Quiet)
 		}
