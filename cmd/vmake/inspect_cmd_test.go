@@ -323,6 +323,101 @@ func TestInspectProjectModel(t *testing.T) {
 	}
 }
 
+func TestInspectTargetFlags(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeProject := func(extraCFlag string) {
+		t.Helper()
+		writeExtensionFile(t, filepath.Join(project, "build.go"), fmt.Sprintf(`package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.Option("turbo").SetType(api.OptionBool).SetDefault(true).
+			SetOnApply(func(ctx *api.ConfigContext, val any) {
+				ctx.AddGlobalCFlags("-DGLOBAL_TURBO")
+			})
+	})
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).
+			AddFiles("src/main.c").
+			AddCFlags("-Wall", "-Wextra").
+			AddIncludes("include").
+			AddCxxFlags("-std=c++20").
+			AddCFlags(%q).
+			AddLdFlags("-Wl,--gc-sections", "-lm").
+			AddDefines("APP_FLAGS=1")
+		ctx.Target("plain").SetKind(api.TargetObject).AddFiles("src/plain.c")
+		ctx.Target("linkonly").SetKind(api.TargetBinary).AddLdFlags("-nostdlib")
+	})
+}
+`, extraCFlag))
+	}
+	writeProject("-Werror")
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n")
+	writeExtensionFile(t, filepath.Join(project, "src", "plain.c"), "int plain(void) { return 0; }\n")
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	proj := inspectPackageNamed(t, envelope.Data, "proj")
+	app := inspectTargetNamed(t, proj, "app")
+	if want := []string{"-Wall", "-Wextra", "-Werror"}; !slices.Equal(app.CFlags, want) {
+		t.Errorf("app cFlags = %v, want %v", app.CFlags, want)
+	}
+	if want := []string{"-std=c++20"}; !slices.Equal(app.CxxFlags, want) {
+		t.Errorf("app cxxFlags = %v, want %v", app.CxxFlags, want)
+	}
+	if want := []string{"-Wl,--gc-sections", "-lm"}; !slices.Equal(app.LdFlags, want) {
+		t.Errorf("app ldFlags = %v, want %v", app.LdFlags, want)
+	}
+	plain := inspectTargetNamed(t, proj, "plain")
+	if plain.CFlags != nil || plain.CxxFlags != nil || plain.LdFlags != nil {
+		t.Errorf("plain flag fields = %v/%v/%v, want omitted", plain.CFlags, plain.CxxFlags, plain.LdFlags)
+	}
+	linkonly := inspectTargetNamed(t, proj, "linkonly")
+	if linkonly.CFlags != nil || linkonly.CxxFlags != nil || !slices.Equal(linkonly.LdFlags, []string{"-nostdlib"}) {
+		t.Errorf("linkonly flag fields = %v/%v/%v, want only ldFlags", linkonly.CFlags, linkonly.CxxFlags, linkonly.LdFlags)
+	}
+	for _, target := range []*inspectTarget{app, plain, linkonly} {
+		for _, flag := range slices.Concat(target.CFlags, target.CxxFlags, target.LdFlags) {
+			if flag == "-DGLOBAL_TURBO" {
+				t.Errorf("%s flags contain the merged global flag %q", target.Name, flag)
+			}
+		}
+	}
+	if strings.Contains(stdout, `"cFlags": []`) || strings.Contains(stdout, `"cxxFlags": []`) || strings.Contains(stdout, `"ldFlags": []`) {
+		t.Fatalf("inspect emitted an empty flag array:\n%s", stdout)
+	}
+
+	again, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("second inspect exit = %d, stderr = %q", code, stderr)
+	}
+	if again != stdout {
+		t.Fatal("target flag lists are not deterministic")
+	}
+
+	writeProject("-Wpedantic")
+	changed, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect after flag edit exit = %d, stderr = %q", code, stderr)
+	}
+	if changed == stdout {
+		t.Fatal("an AddCFlags edit did not change the inspect document")
+	}
+	app = inspectTargetNamed(t, inspectPackageNamed(t, decodeInspectEnvelope(t, changed).Data, "proj"), "app")
+	if want := []string{"-Wall", "-Wextra", "-Wpedantic"}; !slices.Equal(app.CFlags, want) {
+		t.Fatalf("app cFlags after edit = %v, want %v", app.CFlags, want)
+	}
+}
+
 func TestInspectBuildStateAndPackageDirs(t *testing.T) {
 	project := writeInspectProject(t, t.TempDir())
 
@@ -1102,6 +1197,56 @@ func TestInspectResolvedFilesFirmwareSample(t *testing.T) {
 	}
 	if !slices.Contains(firmware.ResolvedFiles, "src/main.c") {
 		t.Fatalf("firmware resolvedFiles = %v, want src/main.c", firmware.ResolvedFiles)
+	}
+}
+
+func TestInspectTargetFlagsFirmwareSample(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".work", "arena", "project"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		t.Skipf("firmware sample project %s unavailable", root)
+	}
+	stdout, stderr, code := runInspectCommand(t, root, "inspect", "--set", "toolchain=host")
+	if code != 0 {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	var gpu *inspectTarget
+	for i := range envelope.Data.Packages {
+		pkg := &envelope.Data.Packages[i]
+		for j := range pkg.Targets {
+			target := &pkg.Targets[j]
+			for _, flag := range slices.Concat(target.CFlags, target.CxxFlags, target.LdFlags) {
+				if flag == "-DCONFIG_GRAPHICS_ACCEL" || flag == "-DCONFIG_FIRMWARE_LVGL" {
+					t.Fatalf("%s:%s flags contain the sample's merged global flag %q", pkg.Name, target.Name, flag)
+				}
+			}
+		}
+		if pkg.Name == "py32-gpu" {
+			for j := range pkg.Targets {
+				if pkg.Targets[j].Name == "py32-gpu" {
+					gpu = &pkg.Targets[j]
+				}
+			}
+		}
+	}
+	if gpu == nil || len(gpu.CFlags) == 0 {
+		t.Skip("firmware sample has no flag-bearing py32-gpu target")
+	}
+	for _, want := range []string{"-fshort-enums", "-fshort-wchar"} {
+		if !slices.Contains(gpu.CFlags, want) {
+			t.Fatalf("py32-gpu cFlags = %v, missing declared flag %q", gpu.CFlags, want)
+		}
+	}
+	for _, toolchainDefault := range []string{"-Wstrict-prototypes", "-fstack-protector-strong"} {
+		if slices.Contains(gpu.CFlags, toolchainDefault) {
+			t.Fatalf("py32-gpu cFlags = %v, contains host toolchain default %q", gpu.CFlags, toolchainDefault)
+		}
 	}
 }
 

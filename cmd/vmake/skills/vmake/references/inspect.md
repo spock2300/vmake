@@ -9,8 +9,9 @@ declaration it also disables interpreted-script file writes through the wrapped
 gets a read-only error instead of creating or deleting a file. The model is a
 declaration-time view, not a build plan: the target `files` field keeps the
 declared patterns, while `resolvedFiles` adds a bounded resolution of them (see
-the `targets` entries below). Inspect also warns about needed packages whose
-source tree
+the `targets` entries below), and `cFlags`/`cxxFlags`/`ldFlags` keep the declared
+flag strings without merged globals or action signatures. Inspect also warns
+about needed packages whose source tree
 is not on disk, without fetching or materializing it, and reports the install
 plan declared by `OnBuild` without reading or creating `install/`. State fields
 report whether the compile database, build report and test report currently
@@ -215,10 +216,13 @@ the document.
   true when the digest matches and every `--set` restates the value already in
   effect, so probing a current value keeps this bit true while `configMatches`
   stays false. It is additive to schemaVersion 1.
-- Limitations: flags, toolchain, or buildscript changes, generated inputs,
+- Limitations: toolchain or buildscript/action changes, generated inputs,
   undeclared headers/files, deleted files, backdated mtimes, and clock skew are
-  invisible. Always run `vmake build` when correctness matters; a false
-  `sourceChanged` does not prove a no-op build.
+  invisible to this heuristic. Declared target flags are reported separately in
+  `cFlags`/`cxxFlags`/`ldFlags`, so an `AddCFlags` edit is visible in the
+  document while `sourceChanged` can still be false. Always run `vmake build`
+  when correctness matters; a false `sourceChanged` does not prove a no-op
+  build.
 
 Each `packages` entry has `name`, `kind` (`local`/`native`/`registry`),
 `needed`, `sourcePresent`, `deps`, optional remote
@@ -236,10 +240,21 @@ the last path element; remote packages omit it because their `buildDir` ends in
 
 Each `targets` entry has `name`, `kind` (`binary`/`static`/`shared`/`object`/
 `void`), `default`, `test`, declared `files`/`excludedFiles`/`includes`/
-`publicIncludes`/`defines`/`languages`/`links`/`deps`/`postLinkOutputs`,
-`resolvedFiles`/`resolvedFileCount`/`resolvedFilesTruncated`, `output` (artifact
-name; empty for `void`), `installDir`, `noInstall`, `installs`, and
-`installPath`.
+`publicIncludes`/`defines`/`cFlags`/`cxxFlags`/`ldFlags`/`languages`/`links`/
+`deps`/`postLinkOutputs`, `resolvedFiles`/`resolvedFileCount`/
+`resolvedFilesTruncated`, `output` (artifact name; empty for `void`),
+`installDir`, `noInstall`, `installs`, and `installPath`.
+
+`cFlags`, `cxxFlags` and `ldFlags` are the target's own `AddCFlags`/
+`AddCxxFlags`/`AddLdFlags` values, copied verbatim in declaration order (not
+sorted, de-duplicated, shell-split, or variable-expanded) and omitted when
+empty. They exclude package and global flags (`AddGlobalCFlags`, `OnApply`
+flags, toolchain defaults), flags inherited from dependencies, and action
+signatures: they are the target's declaration, not the compiler or linker
+command line. An `AddCFlags` edit therefore now changes the inspect document,
+so a JSON diff shows the changed declaration even though `freshness` is
+mtime-only and still cannot plan the rebuild; run `vmake build` when
+correctness matters.
 
 `resolvedFiles` is a declaration-time, bounded expansion of the declared
 `files`: each pattern is globbed against the package source directory, matches
@@ -322,7 +337,8 @@ vmake inspect --set dep/dep_mode=slow      # choice validated
 Exit 0 means a model was produced (including models with warning diagnostics);
 exit 1 means it was not. Output is deterministic for the same project,
 configuration, overrides, build report, and source trees: consecutive runs are
-byte-identical, and target `resolvedFiles` are de-duplicated and sorted.
+byte-identical, target `resolvedFiles` are de-duplicated and sorted, and
+`cFlags`/`cxxFlags`/`ldFlags` keep the buildscript's declaration order.
 Inspect stats the compile database and declared sources, expands and stats
 declared file patterns, and reads both reports, but never writes any of those
 files through vmake's own operations. During resolution and dry-run declaration

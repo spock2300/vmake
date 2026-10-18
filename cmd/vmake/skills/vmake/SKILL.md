@@ -99,7 +99,11 @@ error the callback ignores) omits that package's targets and emits a
   `resolvedFilesTruncated` is present only when the cap applied; all three
   fields are omitted when nothing matches. The list is declaration-time only
   (no contents read, no writes); a declared generated file appears only after a
-  build has created it. `installs` lists the
+  build has created it. `cFlags`/`cxxFlags`/`ldFlags` list the target's own
+  `AddCFlags`/`AddCxxFlags`/`AddLdFlags` strings in declaration order and are
+  omitted when empty; they exclude package/global flags, toolchain defaults, and
+  action signatures, so an `AddCFlags` edit changes the JSON without making
+  freshness plan the rebuild. `installs` lists the
   package's `AddInstalls` entries declared in `OnBuild` (`{source, dest}`), and
   `installPath` predicts the prefix-relative artifact path (`bin/app`,
   `lib/libfoo.a`) or omits it for void/object/test/no-install targets.
@@ -126,9 +130,11 @@ error the callback ignores) omits that package's targets and emits a
   override-aware bit and stays true when every `--set` restates the value
   already in effect. Both are additive schemaVersion 1 fields, and a false
   `configMatches` alone requires a rebuild. This is not an up-to-date check
-  or build plan: flags, toolchain, buildscripts, generated inputs, undeclared
-  files, deleted files, and clock skew are invisible, so run `vmake build` when
-  correctness matters.
+  or build plan: toolchain, buildscript/action, generated-input, undeclared-file,
+  deleted-file, and clock-skew changes are invisible to it, so run `vmake build`
+  when correctness matters. Declared target flags are reported separately in
+  `cFlags`/`cxxFlags`/`ldFlags`; a flag edit shows there while `sourceChanged`
+  can stay false.
 - `--set [pkg/]option=value` (repeatable) evaluates a hypothetical
   configuration and echoes typed values in `data.overrides`; it never writes
   `.vmake/config.json`. Values are coerced by the declared type: bool accepts
@@ -461,7 +467,7 @@ ctx.Target("tests").SetKind(api.TargetBinary).SetTest(true).
     AddFiles("tests/*.c").AddDeps("mylib")
 ```
 
-Always define test targets unconditionally in `OnBuild` — `SetTest(true)` controls scheduler visibility, not option guards. `SetTest(true)` does NOT clear `IsDefault`, but `vmake test` runs only targets that are both `IsTest()` and `IsDefault()`, and only `TargetBinary` targets — a test target with `SetDefault(false)` is not run. A host project with no runnable test target still builds as needed, then reports `testsFound: 0` and exits 0 with `Tests succeeded: no test targets`; pass `--require-tests` in CI to make that case exit 1 with `no test targets found`. `vmake test` refuses a non-host/bare-metal project before building (the error points at `vmake build --tests`, which builds tests without running them) and writes the failure to its own report. `vmake build` excludes tests unless `--tests` is passed. Test targets are never installed and can depend on other test targets. Test runs publish `build/vmake-test.json` (schemaVersion 2, `command:"test"`, per-test `tests[]` entries and test counts in `summary`); build/rebuild keep publishing `build/vmake-build.json`, so a test run never overwrites the last build result. `vmake build|rebuild|test --json` prints one result envelope on stdout instead of human summaries, with progress and diagnostics moving to stderr; `reportPath` points at the report the command wrote (see `references/build-result.md`). See `examples/multi-target.md`.
+Always define test targets unconditionally in `OnBuild` — `SetTest(true)` controls scheduler visibility, not option guards. `SetTest(true)` does NOT clear `IsDefault`, but `vmake test` runs only targets that are both `IsTest()` and `IsDefault()`, and only `TargetBinary` targets — a test target with `SetDefault(false)` is not run. A host project with no runnable test target still builds as needed, then reports `testsFound: 0` and exits 0 with `Tests succeeded: no test targets`; pass `--require-tests` in CI to make that case exit 1 with `no test targets found`. `vmake test` refuses a non-host/bare-metal project before building (the error points at `vmake build --tests`, which builds tests without running them) and writes the failure to its own report. `vmake build` excludes tests unless `--tests` is passed. With `-k`, a failed build does not abort testing: partial mode runs only the test targets built by this invocation, and targets that were not built, are missing their binary, or carry a stale binary are recorded as `notRun` with a `skipReason` and printed as `SKIP <pkg:target> (<reason>)` on stdout; `-q` suppresses those lines while the report keeps them. Test targets are never installed and can depend on other test targets. Test runs publish `build/vmake-test.json` (schemaVersion 2, `command:"test"`, per-test `tests[]` entries and test counts in `summary`); build/rebuild keep publishing `build/vmake-build.json`, so a test run never overwrites the last build result. `vmake build|rebuild|test --json` prints one result envelope on stdout instead of human summaries, with progress and diagnostics moving to stderr; `reportPath` points at the report the command wrote (see `references/build-result.md`). See `examples/multi-target.md`.
 
 ## Dependencies
 
@@ -865,7 +871,7 @@ diagnostics are lost. `CMakeConfigure` output is unchanged.
 |---------|-------------|
 | `vmake build` | Build (serial targets; `-j N` bounds per-target compilation and Make/CMake helpers; `-k` keeps going after failure) |
 | `vmake build --tests` | Build including test targets |
-| `vmake test` | Build + run test targets |
+| `vmake test` | Build + run test targets (`-k` partial mode prints `SKIP` lines for not-run tests) |
 | `vmake rebuild` | Clean + build |
 | `vmake config` | TUI for the selected configuration (`--set opt=val` / `--set pkg/opt=val` non-interactive) |
 | `vmake config list/use/copy/describe` | List files, select an existing file, copy the active configuration in `.vmake/`, or print/set its description |

@@ -144,6 +144,9 @@ type inspectTarget struct {
 	Includes               []string         `json:"includes,omitempty"`
 	PublicIncludes         []string         `json:"publicIncludes,omitempty"`
 	Defines                []string         `json:"defines,omitempty"`
+	CFlags                 []string         `json:"cFlags,omitempty"`
+	CxxFlags               []string         `json:"cxxFlags,omitempty"`
+	LdFlags                []string         `json:"ldFlags,omitempty"`
 	Languages              []string         `json:"languages,omitempty"`
 	Links                  []string         `json:"links,omitempty"`
 	Deps                   []string         `json:"deps,omitempty"`
@@ -195,8 +198,13 @@ declared file patterns and adds a bounded, declaration-time resolution of those
 patterns against the package source directory: resolvedFiles is sorted,
 de-duplicated, slash-separated and capped at 200 entries, with
 resolvedFileCount reporting the full pre-cap count and resolvedFilesTruncated
-flagging the cap. These sets are declarations, not action decisions: generated
-or conditional files can appear only after a build. The freshness object
+flagging the cap. Every target also reports its own declared cFlags, cxxFlags
+and ldFlags when non-empty, in declaration order: raw AddCFlags, AddCxxFlags
+and AddLdFlags values without package/global flags, toolchain defaults or action
+signatures, so a flag edit changes this document even though freshness cannot
+prove the next build is a no-op. These sets are declarations, not action
+decisions: generated or conditional files can appear only after a build. The
+freshness object
 compares the resolved declared files of needed packages with the build report's
 finish time; it is not an up-to-date check or a build plan. These are
 file-presence, resolved-layout and declared-source facts: inspect does not
@@ -635,11 +643,17 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 			if source.Present {
 				targets, err := inspectTargets(ctx, inspection, name, node)
 				if err != nil {
+					message := fmt.Sprintf("cannot declare targets for %s: %v", name, err)
+					fix := "Fix the package OnBuild callback, then rerun vmake inspect."
+					if strings.Contains(message, "read-only inspection:") {
+						message = strings.ReplaceAll(message, "panic: ", "")
+						fix = "Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected."
+					}
 					diagnostics = append(diagnostics, inspectDiagnostic{
 						Severity: "warning",
 						Code:     "VMAKE_W_TARGET_DECLARE",
-						Message:  fmt.Sprintf("cannot declare targets for %s: %v", name, err),
-						Fix:      "Fix the package OnBuild callback, then rerun vmake inspect.",
+						Message:  message,
+						Fix:      fix,
 					})
 				} else {
 					pkg.Targets = targets
@@ -1085,6 +1099,10 @@ func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name s
 	if node.Pkg != nil {
 		targetOS = node.Pkg.TargetOS()
 	}
+	defaults := api.DefaultFlags{}
+	if tc := inspection.PackageToolchains[name]; tc != nil {
+		defaults = api.DefaultBuildFlags(tc.Name, targetOS)
+	}
 	installItems := buildCtx.GetInstallItems()
 	installs := make([]inspectInstall, 0, len(installItems))
 	for _, item := range installItems {
@@ -1102,6 +1120,9 @@ func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name s
 			Includes:        append([]string{}, target.Includes()...),
 			PublicIncludes:  append([]string{}, target.PublicIncludes()...),
 			Defines:         append([]string{}, target.Defines()...),
+			CFlags:          inspectDeclaredFlags(target.CFlags(), defaults.CFlags),
+			CxxFlags:        inspectDeclaredFlags(target.CxxFlags(), defaults.CxxFlags),
+			LdFlags:         inspectDeclaredFlags(target.LdFlags(), defaults.LdFlags),
 			Languages:       append([]string{}, target.Languages()...),
 			Links:           append([]string{}, target.Links()...),
 			Deps:            append([]string{}, target.Deps()...),
@@ -1126,6 +1147,13 @@ func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name s
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
 	return targets, nil
+}
+
+func inspectDeclaredFlags(flags, seeded []string) []string {
+	if len(seeded) > 0 && len(flags) >= len(seeded) && slices.Equal(flags[:len(seeded)], seeded) {
+		flags = flags[len(seeded):]
+	}
+	return append([]string{}, flags...)
 }
 
 func inspectTargetInstallPath(target *api.Target, targetOS string) string {

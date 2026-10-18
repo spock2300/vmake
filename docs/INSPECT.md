@@ -12,8 +12,9 @@ yet, without fetching or materializing them, and the install plan declared by
 `OnBuild` (extra `AddInstalls` entries and predicted prefix-relative target
 paths) without reading or creating `install/`. The model is a declaration-time
 view, not a build plan: the target `files` field keeps the declared patterns
-while `resolvedFiles` adds a bounded resolution of those patterns (see
-[`targets` entries](#targets-entries)).
+while `resolvedFiles` adds a bounded resolution of those patterns, and
+`cFlags`/`cxxFlags`/`ldFlags` keep the declared flag strings without merged
+globals or action signatures (see [`targets` entries](#targets-entries)).
 
 The model also reports whether `build/compile_commands.json` and the last
 `build/vmake-build.json` and `build/vmake-test.json` currently exist, each
@@ -373,10 +374,13 @@ Missing declared files are skipped silently; a missing source tree is covered by
 - `sourceChanged` is true when any declared file is newer, including files
   beyond the reported limit.
 
-This is a heuristic, not an up-to-date check and not a build plan. It does not
-capture flag, toolchain, or buildscript changes, generated inputs, headers or
-other files a target did not declare, deleted files, content edits that preserve
-or backdate a modification time, or clock/file-system skew. `vmake build`
+This is a heuristic, not an up-to-date check and not a build plan. It compares
+modification times only: it does not capture toolchain or buildscript/action
+changes, generated inputs, headers or other files a target did not declare,
+deleted files, content edits that preserve or backdate a modification time, or
+clock/file-system skew. Declared target flags are reported separately in
+`cFlags`/`cxxFlags`/`ldFlags`, so an `AddCFlags` edit is visible in the document
+even though this heuristic still reports `sourceChanged: false`. `vmake build`
 remains authoritative: `sourceChanged: false` does not prove the next build is a
 no-op.
 
@@ -414,14 +418,15 @@ and the field is omitted.
 
 ## `targets` entries
 
-Targets are sorted by name. Argument lists such as `files` or `deps` keep the
-order the buildscript declared.
+Targets are sorted by name. Argument lists such as `files`, `deps`, and the
+flag arrays keep the order the buildscript declared.
 
 | Field | Type | Meaning |
 |-------|------|---------|
 | `name`, `kind` | string | Target name and kind (`binary`, `static`, `shared`, `object`, `void`) |
 | `default`, `test` | bool | Default build membership and test-target flag |
 | `files`, `excludedFiles`, `includes`, `publicIncludes`, `defines` | array? | Declared inputs and compile settings; `files`/`excludedFiles` keep the declared glob patterns |
+| `cFlags`, `cxxFlags`, `ldFlags` | array? | Declared target compiler and linker flags from `AddCFlags`/`AddCxxFlags`/`AddLdFlags`, raw strings in declaration order; omitted when the target declares none |
 | `resolvedFiles` | array? | Declaration-time expansion of `files` minus `excludedFiles`, package-source-dir-relative slash paths, sorted, de-duplicated, capped at 200; omitted when no file matches |
 | `resolvedFileCount` | int? | Full number of matched files before the 200-entry cap; omitted when no file matches |
 | `resolvedFilesTruncated` | bool? | True when more than 200 files matched and `resolvedFiles` was capped; omitted otherwise |
@@ -433,6 +438,19 @@ order the buildscript declared.
 | `noInstall` | bool? | True when the target opts out of installation |
 | `installs` | array? | Package-level `AddInstalls` entries `{source, dest}` declared by the dry-run `OnBuild`; omitted when none |
 | `installPath` | string? | Predicted prefix-relative, slash-separated install path (`bin/app`, `lib/libfoo.a`); omitted for `void`, `object`, `noInstall`, and test targets |
+
+`cFlags`, `cxxFlags` and `ldFlags` are the target's own declared values: each
+list is copied verbatim and in declaration order, so flag order is preserved and
+the entries are not sorted, de-duplicated, shell-split, or variable-expanded.
+They exclude package and global flags (`AddGlobalCFlags`, `OnApply` flags,
+toolchain default flags) and flags inherited from dependencies; they are a
+declaration, not the compile or link command line. They are also not action
+signatures: inspect does not read or hash action records. An `AddCFlags` (or
+`AddCxxFlags`/`AddLdFlags`) edit therefore changes this document, making the
+change visible in a JSON diff, but `buildDir`, `freshness`, and the report match
+bits still do not prove the next build is a no-op. Run `vmake build` when
+correctness matters. The flag fields are additive to schemaVersion 1 and are
+omitted, like the other optional array fields, when empty.
 
 `installs` is package-level: every target of a package that called
 `AddInstalls` in `OnBuild` carries the same entries, because the API does not
@@ -484,8 +502,10 @@ not evidence that an artifact exists.
 Output is deterministic for the same project, configuration, overrides, build
 report, and source trees: packages and roots are sorted by name, graph edges by
 `(from, to)`, freshness sources are de-duplicated and sorted, target
-`resolvedFiles` are de-duplicated and sorted, and JSON object keys follow Go's
-`encoding/json` ordering. Consecutive runs are byte-identical. Build- and
+`resolvedFiles` are de-duplicated and sorted, target
+`cFlags`/`cxxFlags`/`ldFlags` keep the buildscript's declaration order, and JSON
+object keys follow Go's `encoding/json` ordering. Consecutive runs are
+byte-identical. Build- and
 test-state fields are snapshots of the report and compile database files, so
 they stay byte-identical until one of those files changes. The freshness
 heuristic changes when the build report or a declared source's modification time
