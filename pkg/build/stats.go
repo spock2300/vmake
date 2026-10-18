@@ -9,27 +9,37 @@ import (
 )
 
 type BuildStats struct {
-	mu             sync.Mutex
-	compiled       int
-	linked         int
-	upToDate       int
-	compiledFiles  map[string]bool
-	changedTargets map[string]bool
-	targetDuration map[string]int64
+	mu               sync.Mutex
+	compiled         int
+	linked           int
+	upToDate         int
+	plannedCompiles  int
+	plannedLinks     int
+	plannedCallbacks int
+	compiledFiles    map[string]bool
+	changedTargets   map[string]bool
+	plannedTargets   map[string]bool
+	compilePlanned   map[string]bool
+	targetDuration   map[string]int64
 }
 
 type StatsSnapshot struct {
-	Compiled       int
-	Linked         int
-	UpToDate       int
-	CompiledFiles  []string
-	ChangedTargets []string
+	Compiled         int
+	Linked           int
+	UpToDate         int
+	PlannedCompiles  int
+	PlannedLinks     int
+	PlannedCallbacks int
+	CompiledFiles    []string
+	ChangedTargets   []string
 }
 
 func NewBuildStats() *BuildStats {
 	return &BuildStats{
 		compiledFiles:  make(map[string]bool),
 		changedTargets: make(map[string]bool),
+		plannedTargets: make(map[string]bool),
+		compilePlanned: make(map[string]bool),
 		targetDuration: make(map[string]int64),
 	}
 }
@@ -67,6 +77,39 @@ func (s *BuildStats) RecordUpToDate() {
 	s.upToDate++
 }
 
+func (s *BuildStats) RecordPlannedCompile(target, _ string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.plannedCompiles++
+	s.compilePlanned[target] = true
+	s.plannedTargets[target] = true
+}
+
+func (s *BuildStats) RecordPlannedLink(target string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.plannedLinks++
+	s.plannedTargets[target] = true
+}
+
+func (s *BuildStats) RecordPlannedCallback(target string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.plannedCallbacks++
+}
+
+func (s *BuildStats) CompilePlanned(target string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.compilePlanned[target]
+}
+
+func (s *BuildStats) TargetPlanned(target string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.plannedTargets[target]
+}
+
 func (s *BuildStats) ChangedTarget(target string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -89,11 +132,14 @@ func (s *BuildStats) Snapshot() StatsSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return StatsSnapshot{
-		Compiled:       s.compiled,
-		Linked:         s.linked,
-		UpToDate:       s.upToDate,
-		CompiledFiles:  sortedKeys(s.compiledFiles),
-		ChangedTargets: sortedKeys(s.changedTargets),
+		Compiled:         s.compiled,
+		Linked:           s.linked,
+		UpToDate:         s.upToDate,
+		PlannedCompiles:  s.plannedCompiles,
+		PlannedLinks:     s.plannedLinks,
+		PlannedCallbacks: s.plannedCallbacks,
+		CompiledFiles:    sortedKeys(s.compiledFiles),
+		ChangedTargets:   sortedKeys(s.changedTargets),
 	}
 }
 

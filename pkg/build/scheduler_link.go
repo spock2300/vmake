@@ -15,6 +15,12 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 		return err
 	}
 	if resolved.Node.Target.Kind() == api.TargetVoid {
+		if s.check {
+			if s.stats != nil && (resolved.Node.Target.BuildFunc() != nil || len(resolved.Node.Target.PostLinkSteps()) > 0) {
+				s.stats.RecordPlannedCallback(resolved.Node.FullName)
+			}
+			return nil
+		}
 		if err := s.buildVoidTarget(resolved); err != nil {
 			return err
 		}
@@ -41,7 +47,13 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 		return err
 	}
 	decision := checkAction(s.hashes, action.recordPath, action.signature, pkgInfo.SourceDir, action.inputs, action.outputs)
-	if !decision.UpToDate {
+	if !decision.UpToDate || (s.check && s.referencedWorkPending(resolved)) {
+		if s.check {
+			if s.stats != nil {
+				s.stats.RecordPlannedLink(resolved.Node.FullName)
+			}
+			return nil
+		}
 		if s.stats != nil {
 			s.stats.RecordLink(resolved.Node.FullName)
 		}
@@ -73,6 +85,9 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 	} else if s.stats != nil {
 		s.stats.RecordUpToDate()
 	}
+	if s.check {
+		return nil
+	}
 	if err := s.ctx.Err(); err != nil {
 		return err
 	}
@@ -80,6 +95,25 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 		return s.publishTarget(resolved, pkgInfo)
 	}
 	return nil
+}
+
+// referencedWorkPending reports whether an input of this target's link action
+// will change in this check run. Link signatures fingerprint their inputs, so a
+// dependency artifact that exists unchanged does not make the link pending by
+// itself; only a dependency that plans to replace its artifact can.
+func (s *Scheduler) referencedWorkPending(resolved *ResolvedTarget) bool {
+	if s.stats == nil {
+		return false
+	}
+	if s.stats.CompilePlanned(resolved.Node.FullName) {
+		return true
+	}
+	for _, dep := range resolved.Node.Deps {
+		if s.stats.TargetPlanned(dep) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Scheduler) needRelink(resolved *ResolvedTarget, objs []string) bool {

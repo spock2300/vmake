@@ -76,6 +76,7 @@ type Scheduler struct {
 	packages      map[string]*api.Package
 	rootDir       string
 	includeTests  bool
+	check         bool
 	numWorkers    int
 	keepGoing     bool
 	explain       bool
@@ -101,6 +102,7 @@ type schedulerConfig struct {
 	Context      context.Context
 	RootDir      string
 	IncludeTests bool
+	Check        bool
 	NumWorkers   int
 	KeepGoing    bool
 	Explain      bool
@@ -173,6 +175,7 @@ func newScheduler(cfg schedulerConfig) *Scheduler {
 		packages:      packages,
 		rootDir:       cfg.RootDir,
 		includeTests:  cfg.IncludeTests,
+		check:         cfg.Check,
 		numWorkers:    cfg.NumWorkers,
 		keepGoing:     cfg.KeepGoing,
 		explain:       cfg.Explain,
@@ -273,8 +276,10 @@ func (s *Scheduler) BuildAll() error {
 	if root == "" {
 		root = "."
 	}
-	if err := s.ccWriter.Save(filepath.Join(root, "build", "compile_commands.json")); err != nil {
-		errs = append(errs, err)
+	if !s.check {
+		if err := s.ccWriter.Save(filepath.Join(root, "build", "compile_commands.json")); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	return errors.Join(errs...)
 }
@@ -341,6 +346,9 @@ func (s *Scheduler) Build(fullName string) error {
 }
 
 func (s *Scheduler) prepareTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, workDir string) error {
+	if s.check {
+		return nil
+	}
 	node := resolved.Node
 
 	genRules := node.Target.GenRules()

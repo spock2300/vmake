@@ -45,6 +45,7 @@ type BuildOptions struct {
 	Jobs         int
 	KeepGoing    bool
 	Explain      bool
+	Check        bool
 }
 
 func newRunContext(ctx *RuntimeContext, opts BuildOptions, cfg *buildConfig) *runContext {
@@ -183,11 +184,13 @@ func prepareSources(rc *runContext, cfg *configStage) (*sourceStage, error) {
 	if err := src.restoreKConfigs(); err != nil {
 		return nil, err
 	}
-	if err := clearRemoteInstallDirs(src.layouts); err != nil {
-		return nil, err
-	}
-	if err := os.Remove(filepath.Join(rc.ctx.Paths.ProjectDir, "build", "compile_commands.json")); err != nil && !os.IsNotExist(err) {
-		return nil, err
+	if !rc.opts.Check {
+		if err := clearRemoteInstallDirs(src.layouts); err != nil {
+			return nil, err
+		}
+		if err := os.Remove(filepath.Join(rc.ctx.Paths.ProjectDir, "build", "compile_commands.json")); err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
 	}
 	return src, nil
 }
@@ -230,10 +233,15 @@ func planBuild(rc *runContext, cfg *configStage, src *sourceStage, decl *declare
 		Mode:         rc.cfg.Mode,
 		IncludeTests: rc.opts.IncludeTests,
 		Explain:      rc.opts.Explain,
+		Check:        rc.opts.Check,
 	}
 
 	vlog.Info("")
-	vlog.Info("Building...")
+	if rc.opts.Check {
+		vlog.Info("Checking...")
+	} else {
+		vlog.Info("Building...")
+	}
 
 	return &planStage{
 		graph: graph,

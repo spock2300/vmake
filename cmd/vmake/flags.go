@@ -4,6 +4,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	checkFlag bool
+	planFlag  bool
+)
+
 func addInstallFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVarP(&installFlag, "install", "i", false, "install after build")
 	cmd.Flags().StringVarP(&prefixFlag, "prefix", "p", "", "installation prefix (default: <project>/install)")
@@ -23,6 +28,14 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&outputFlag, "output", "", "write one JSON result document to PATH instead of stdout (implies --json; - means stdout)")
 	cmd.RegisterFlagCompletionFunc("toolchain", completeToolchain)
 	cmd.RegisterFlagCompletionFunc("mode", completeMode)
+}
+
+// addCheckFlags registers plan mode on `vmake build`. Check resolves the
+// project and reports pending compile/link/callback work without executing
+// any action.
+func addCheckFlags(cmd *cobra.Command) {
+	cmd.Flags().BoolVar(&checkFlag, "check", false, "plan the next build and report pending compile/link/callback work without executing it")
+	cmd.Flags().BoolVar(&planFlag, "plan", false, "alias for --check")
 }
 
 // addTestFlags registers the build flags for `vmake test`. `--tests` is kept

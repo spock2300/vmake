@@ -15,6 +15,8 @@ import (
 
 const jsonOutputSchemaVersion = 1
 
+const reportCommandCheck = "check"
+
 var (
 	jsonOutput          bool
 	outputFlag          string
@@ -22,6 +24,25 @@ var (
 	preReportJSON       *preReportRequest
 	processStdout       io.Writer = os.Stdout
 )
+
+type checkJSONData struct {
+	WorkPending      bool `json:"workPending"`
+	PlannedCompiles  int  `json:"plannedCompiles"`
+	PlannedLinks     int  `json:"plannedLinks"`
+	PlannedCallbacks int  `json:"plannedCallbacks"`
+	UpToDate         int  `json:"upToDate"`
+	TargetsTotal     int  `json:"targetsTotal"`
+}
+
+// checkJSONEnvelope is the machine document for `vmake build --check`. Unlike
+// build/test it has no build report; data is the plan and is null on error.
+type checkJSONEnvelope struct {
+	SchemaVersion int               `json:"schemaVersion"`
+	Command       string            `json:"command"`
+	Status        string            `json:"status"`
+	Data          *checkJSONData    `json:"data"`
+	Diagnostics   []buildDiagnostic `json:"diagnostics"`
+}
 
 type buildJSONEnvelope struct {
 	SchemaVersion   int               `json:"schemaVersion"`
@@ -55,6 +76,7 @@ var preReportValueFlags = map[string]bool{
 
 func detectPreReportJSON(args []string) *preReportRequest {
 	request := &preReportRequest{}
+	checkRequested := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
@@ -66,6 +88,9 @@ func detectPreReportJSON(args []string) *preReportRequest {
 		switch {
 		case arg == "--json":
 			request.requested = true
+			continue
+		case arg == "--check" || arg == "--plan":
+			checkRequested = true
 			continue
 		case arg == "--output":
 			request.requested = true
@@ -92,7 +117,12 @@ func detectPreReportJSON(args []string) *preReportRequest {
 		return nil
 	}
 	switch request.command {
-	case reportCommandBuild, reportCommandRebuild, reportCommandTest:
+	case reportCommandBuild:
+		if checkRequested {
+			request.command = reportCommandCheck
+		}
+		return request
+	case reportCommandRebuild, reportCommandTest:
 		return request
 	}
 	return nil

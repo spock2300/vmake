@@ -78,7 +78,10 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 				depOutput += ".a"
 			}
 			if !fs.FileExists(depOutput) {
-				return nil, fmt.Errorf("dependency artifact missing: %s (was the dependency target %s built?)", depOutput, depName)
+				if !s.check {
+					return nil, fmt.Errorf("dependency artifact missing: %s (was the dependency target %s built?)", depOutput, depName)
+				}
+				vlog.Verbose("  plan: dependency artifact %s does not exist yet", depOutput)
 			}
 			result.artifacts = append(result.artifacts, depOutput)
 
