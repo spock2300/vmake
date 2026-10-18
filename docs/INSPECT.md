@@ -10,12 +10,14 @@ or materializing them, and the install plan declared by `OnBuild` (extra
 reading or creating `install/`.
 
 The model also reports whether `build/compile_commands.json` and the last
-`build/vmake-build.json` currently exist, the report's identity and whether its
-configuration digest matches the active configuration, and each needed
-package's active build-key directory. These fields describe files and resolved
+`build/vmake-build.json` and `build/vmake-test.json` currently exist, each
+report's identity and whether its configuration digest matches the active
+configuration, and each needed package's active build-key directory. The build
+report and test report are written by separate invocations; inspect reads both
+without merging them. These fields describe files and resolved
 layout only: inspect does not verify that actions or outputs are fresh, and it
 does not predict which targets are up to date. It never writes the compile
-database or build report.
+database or either report.
 
 ```
 vmake inspect [--set [package/]option=value ...] [-C <dir>]
@@ -159,10 +161,11 @@ query either: it prints one
 that package's targets or kind label, and continues with the remaining
 packages. The warning is emitted once per package.
 
-`build/vmake-build.json` may exist but be unreadable or invalid JSON (for
-example a truncated file left by an interrupted writer, or a hand-edited file).
-Inspect keeps `buildReportPresent: true`, omits `buildReportState`, and appends
-one warning; it never rewrites or removes the file:
+`build/vmake-build.json` or `build/vmake-test.json` may exist but be unreadable
+or invalid JSON (for example a truncated file left by an interrupted writer, or
+a hand-edited file). Inspect keeps the matching `buildReportPresent: true` /
+`testReportPresent: true`, omits that document's state object, and appends one
+warning per unreadable document; it never rewrites or removes either file:
 
 ```json
 {
@@ -173,10 +176,11 @@ one warning; it never rewrites or removes the file:
 }
 ```
 
-A valid report that predates the current configuration still yields
-`buildReportState`; `configMatches` reports the mismatch. A report is not
-evidence that the recorded build still matches the worktree: inspect checks
-only the configuration digest, not action or output freshness.
+A test report warning names `<root>/build/vmake-test.json` and suggests rerunning
+`vmake test`. Valid reports that predate the current configuration still yield
+their state objects; `configMatches` reports the mismatch independently. A
+report is not evidence that the recorded build/test still matches the worktree:
+inspect checks only the configuration digest, not action or output freshness.
 
 ## `data` fields
 
@@ -198,19 +202,24 @@ only the configuration digest, not action or output freshness.
 | `buildReport` | string | `<root>/build/vmake-build.json` (see `docs/BUILD_RESULT.md`) |
 | `buildReportPresent` | bool | Whether `<root>/build/vmake-build.json` currently exists |
 | `buildReportState` | object? | Identity and result recorded by the build report; omitted when the report is absent or unreadable (see below) |
+| `testReport` | string | `<root>/build/vmake-test.json` |
+| `testReportPresent` | bool | Whether `<root>/build/vmake-test.json` currently exists |
+| `testReportState` | object? | Identity and result recorded by the test report; same shape as `buildReportState`, omitted when absent or unreadable |
 | `installPrefix` | string | `<root>/install` (the default `--prefix`, even before an install) |
 | `installManifest` | string | `<root>/install/manifest.json` (the expected default manifest path, even before an install) |
 
-## Build state
+## Build and test state
 
 `buildReportState` is present when `build/vmake-build.json` exists and parses as
-a JSON object. It copies the report's identity fields:
+a JSON object; `testReportState` is present for `build/vmake-test.json` under
+the same rule. They are independent snapshots of separate invocations, and the
+same object shape is used for both. Each copies the report's identity fields:
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `status` | string | `succeeded`, `failed`, `cancelled`, or `running` as recorded by the last build/rebuild/test |
+| `status` | string | `succeeded`, `failed`, `cancelled`, or `running` as recorded by the report |
 | `buildId` | string | Report build ID |
-| `command` | string? | `build`, `rebuild`, or `test`; omitted when the report lacks it |
+| `command` | string? | `build`/`rebuild` for the build report, `test` for the test report; omitted when the report lacks it |
 | `started`, `finished` | string | RFC 3339 timestamps recorded in the report; `finished` may be empty while a build is running |
 | `configMatches` | bool | Whether the report's `configSha256` equals `data.configSha256` and no `--set` override was supplied |
 | `summary` | object? | The report's `summary` object copied verbatim; omitted when the report has none |
@@ -223,10 +232,13 @@ differ from the file hash recorded by the build. A false value means "do not
 assume this report describes the configuration being inspected"; it does not by
 itself mean the build is stale.
 
-`compileDatabasePresent` and `buildReportPresent` are stat-only checks. A clean
-tree reports both `false` (and omits `buildReportState`); a successful build
-normally leaves both files behind and therefore reports both `true`. `clean`
-removes them again. Inspect never creates, updates, or repairs either file.
+`compileDatabasePresent`, `buildReportPresent` and `testReportPresent` are
+stat-only checks. A clean tree reports all three `false` (and omits both state
+objects); a successful build normally leaves the database and build report
+behind; a subsequent `vmake test` adds the test report without changing the
+build report. `clean` removes both reports and the database again. Inspect never
+creates, updates, or repairs any of these files. `vmake build --tests` records
+test targets in the build report only, so it does not create a test report.
 
 ## `packages` entries
 
@@ -311,8 +323,9 @@ exists.
 Output is deterministic for the same project, configuration, and overrides:
 packages and roots are sorted by name, graph edges by `(from, to)`, and JSON
 object keys by Go's `encoding/json` ordering. Consecutive runs are
-byte-identical. Build-state fields are a snapshot of the report and compile
-database files, so they stay byte-identical until one of those files changes.
+byte-identical. Build- and test-state fields are snapshots of the report and
+compile database files, so they stay byte-identical until one of those files
+changes.
 
 ## Exit status and stderr
 
@@ -324,7 +337,7 @@ database files, so they stay byte-identical until one of those files changes.
 | Invalid `--set` | `status: "error"`, `code: VMAKE_E_OPTION` | 1 | one `Error: ...` line |
 
 Warnings cover target-declaration failures (`VMAKE_W_TARGET_DECLARE`), missing
-source trees (`VMAKE_W_SOURCE_MISSING`), and unreadable build reports
+source trees (`VMAKE_W_SOURCE_MISSING`), and unreadable build or test reports
 (`VMAKE_W_REPORT_UNREADABLE`). Buildscript stdout is always discarded, including
 on failure; stdout contains one JSON document in every row.
 
@@ -338,8 +351,9 @@ materialize that package's tree. `inspect` does not read or create `install/`
 and does not resolve the install prefix: `installPrefix` and `installManifest`
 are the expected default paths, while `installs` and `installPath` come from
 dry-run `OnBuild` declarations. Inspect stats `build/compile_commands.json` and
-reads `build/vmake-build.json` to report build state, but never writes, updates,
-or deletes either file, and it does not inspect action records or outputs. It
+reads `build/vmake-build.json` and `build/vmake-test.json` to report their
+state, but never writes, updates, or deletes those files, and it does not
+inspect action records or outputs. It
 also does not modify the active configuration. With `--set`, resolution and
 `OnConfig`/`OnApply` run twice as described above. The lock/state files it may
 create under `.vmake/` are the same ones every read-only command creates.

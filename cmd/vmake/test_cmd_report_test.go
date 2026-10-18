@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/spock2300/vmake/internal/jsonio"
 )
 
 const passingTestSource = "int main(void) { return 0; }\n"
@@ -37,8 +41,62 @@ func Main(p *api.Package) {
 	return project
 }
 
-func TestTestCommandPublishesSucceededReport(t *testing.T) {
+func writeBareMetalTestProject(t *testing.T) string {
+	t.Helper()
 	project := writeTestCommandProject(t, passingTestSource)
+	writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","global":{"options":{"target_os":"none","target_triple":"arm-none-eabi"}}}`)
+	return project
+}
+
+func loadTestReport(t *testing.T, project string) buildReport {
+	t.Helper()
+	var report buildReport
+	if err := jsonio.Load(testReportPath(project), &report); err != nil {
+		t.Fatal(err)
+	}
+	return report
+}
+
+type reportSnapshot struct {
+	data    []byte
+	modTime time.Time
+}
+
+func snapshotReport(t *testing.T, path string) reportSnapshot {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reportSnapshot{data: data, modTime: info.ModTime()}
+}
+
+func assertReportUnchanged(t *testing.T, path string, before reportSnapshot) {
+	t.Helper()
+	after := snapshotReport(t, path)
+	if !bytes.Equal(before.data, after.data) {
+		t.Fatalf("%s was rewritten:\nbefore: %s\nafter:  %s", path, before.data, after.data)
+	}
+	if !before.modTime.Equal(after.modTime) {
+		t.Fatalf("%s mtime changed: %v -> %v", path, before.modTime, after.modTime)
+	}
+}
+
+func buildAndSnapshotBuildReport(t *testing.T, project string) reportSnapshot {
+	t.Helper()
+	if stdout, stderr, code := runBuildCommand(t, project, "build"); code != 0 {
+		t.Fatalf("setup build exit = %d, stderr = %q\n%s", code, stderr, stdout)
+	}
+	return snapshotReport(t, reportPath(project))
+}
+
+func TestTestCommandPublishesSucceededTestReport(t *testing.T) {
+	project := writeTestCommandProject(t, passingTestSource)
+	buildReportSnapshot := buildAndSnapshotBuildReport(t, project)
 	stdout, stderr, code := runBuildCommand(t, project, "test")
 	if code != 0 || stderr != "" {
 		t.Fatalf("test exit = %d, stderr = %q\n%s", code, stderr, stdout)
@@ -46,9 +104,13 @@ func TestTestCommandPublishesSucceededReport(t *testing.T) {
 	if !strings.Contains(stdout, "1/1 test(s) passed.") || !strings.Contains(stdout, "Tests succeeded: 1/1 passed in ") {
 		t.Fatalf("test summary missing:\n%s", stdout)
 	}
-	report := loadBuildReport(t, project)
+	assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
+	report := loadTestReport(t, project)
 	if report.SchemaVersion != 2 || report.Status != "succeeded" || report.Command != reportCommandTest || report.Error != "" {
-		t.Fatalf("report = %+v", report)
+		t.Fatalf("test report = %+v", report)
+	}
+	if report.BuildID == "" || report.Root != project || report.DurationMs <= 0 {
+		t.Fatalf("test report identity = %+v", report)
 	}
 	if len(report.Tests) != 1 {
 		t.Fatalf("tests = %+v", report.Tests)
@@ -69,15 +131,9 @@ func TestTestCommandPublishesSucceededReport(t *testing.T) {
 	}
 }
 
-func TestTestCommandFailureOverwritesSucceededReport(t *testing.T) {
+func TestTestCommandFailurePreservesBuildReport(t *testing.T) {
 	project := writeTestCommandProject(t, passingTestSource)
-	if _, stderr, code := runBuildCommand(t, project, "build"); code != 0 {
-		t.Fatalf("setup build exit = %d, stderr = %q", code, stderr)
-	}
-	previous := loadBuildReport(t, project)
-	if previous.Status != "succeeded" || previous.Command != reportCommandBuild {
-		t.Fatalf("setup report = %+v", previous)
-	}
+	buildReportSnapshot := buildAndSnapshotBuildReport(t, project)
 	writeExtensionFile(t, filepath.Join(project, "tests", "test_app.c"), failingTestSource)
 	stdout, stderr, code := runBuildCommand(t, project, "test")
 	if code != 1 {
@@ -89,9 +145,10 @@ func TestTestCommandFailureOverwritesSucceededReport(t *testing.T) {
 	if !strings.Contains(stderr, "Error: 1 test(s) failed") {
 		t.Fatalf("failure error missing:\n%s", stderr)
 	}
-	report := loadBuildReport(t, project)
-	if report.Status != "failed" || report.Command != reportCommandTest || report.BuildID == previous.BuildID {
-		t.Fatalf("failed report = %+v", report)
+	assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
+	report := loadTestReport(t, project)
+	if report.Status != "failed" || report.Command != reportCommandTest || report.BuildID == "" {
+		t.Fatalf("failed test report = %+v", report)
 	}
 	if len(report.Tests) != 1 || report.Tests[0].Passed || report.Tests[0].Name != "tests-project:tests" {
 		t.Fatalf("failed test entries = %+v", report.Tests)
@@ -104,28 +161,22 @@ func TestTestCommandFailureOverwritesSucceededReport(t *testing.T) {
 	}
 }
 
-func TestTestCommandNoTargetsFails(t *testing.T) {
+func TestTestCommandNoTargetsSucceeds(t *testing.T) {
 	project := writeTestCommandProject(t, "")
-	if stdout, stderr, code := runBuildCommand(t, project, "build", "--tests"); code != 0 {
-		t.Fatalf("build --tests exit = %d, stderr = %q\n%s", code, stderr, stdout)
-	}
-	previous := loadBuildReport(t, project)
-	if previous.Status != "succeeded" || previous.Command != reportCommandBuild || previous.Summary == nil || previous.Summary.TestsFound != 0 {
-		t.Fatalf("build --tests should stay a successful build with zero tests: %+v", previous)
-	}
+	buildReportSnapshot := buildAndSnapshotBuildReport(t, project)
 	stdout, stderr, code := runBuildCommand(t, project, "test")
-	if code != 1 {
-		t.Fatalf("test exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("test exit = %d, want 0 (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "Tests failed: no test targets found") {
-		t.Fatalf("no-tests stdout = %q", stdout)
+	if !strings.Contains(stdout, "Tests succeeded: no test targets") {
+		t.Fatalf("no-tests summary missing:\n%s", stdout)
 	}
-	if !strings.Contains(stderr, "Error: no test targets found") {
+	if stderr != "" {
 		t.Fatalf("no-tests stderr = %q", stderr)
 	}
-	report := loadBuildReport(t, project)
-	if report.Status != "failed" || report.Command != reportCommandTest ||
-		report.Error != "no test targets found" || report.BuildID == previous.BuildID {
+	assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
+	report := loadTestReport(t, project)
+	if report.Status != "succeeded" || report.Command != reportCommandTest || report.Error != "" {
 		t.Fatalf("no-tests report = %+v", report)
 	}
 	if report.Tests == nil || len(report.Tests) != 0 {
@@ -136,17 +187,78 @@ func TestTestCommandNoTargetsFails(t *testing.T) {
 	}
 }
 
-func TestTestCommandBuildFailurePublishesReport(t *testing.T) {
+func TestTestCommandRequireTestsFailsWithNoTargets(t *testing.T) {
+	project := writeTestCommandProject(t, "")
+	buildReportSnapshot := buildAndSnapshotBuildReport(t, project)
+	stdout, stderr, code := runBuildCommand(t, project, "test", "--require-tests")
+	if code != 1 {
+		t.Fatalf("test --require-tests exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Tests failed: no test targets found") {
+		t.Fatalf("require-tests stdout = %q", stdout)
+	}
+	if !strings.Contains(stderr, "Error: no test targets found") {
+		t.Fatalf("require-tests stderr = %q", stderr)
+	}
+	assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
+	report := loadTestReport(t, project)
+	if report.Status != "failed" || report.Command != reportCommandTest || report.Error != "no test targets found" {
+		t.Fatalf("require-tests report = %+v", report)
+	}
+	if report.Summary == nil || report.Summary.TestsFound != 0 {
+		t.Fatalf("require-tests summary = %+v", report.Summary)
+	}
+}
+
+func TestTestCommandBareMetalPreflight(t *testing.T) {
+	project := writeBareMetalTestProject(t)
+	writeExtensionFile(t, reportPath(project), `{"schemaVersion":2,"buildId":"previous-build","status":"succeeded","command":"build"}`)
+	buildReportSnapshot := snapshotReport(t, reportPath(project))
+	stdout, stderr, code := runBuildCommand(t, project, "test")
+	if code != 1 {
+		t.Fatalf("bare-metal test exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, `cannot run tests for project target (target_os=none, target_triple="arm-none-eabi")`) {
+		t.Fatalf("preflight message missing from stdout:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "use 'vmake build --tests'") {
+		t.Fatalf("preflight hint missing from stderr:\n%s", stderr)
+	}
+	if strings.Contains(stdout, "Building...") || strings.Contains(stdout, "Executing OnBuild") || strings.Contains(stdout, "  CC ") {
+		t.Fatalf("preflight ran the build:\n%s", stdout)
+	}
+	if dirs := buildKeyDirectories(t, project); len(dirs) != 0 {
+		t.Fatalf("preflight created build-key directories: %v", dirs)
+	}
+	if _, err := os.Stat(filepath.Join(project, "build", "compile_commands.json")); !os.IsNotExist(err) {
+		t.Fatalf("preflight created the compile database: %v", err)
+	}
+	assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
+	report := loadTestReport(t, project)
+	if report.Status != "failed" || report.Command != reportCommandTest {
+		t.Fatalf("preflight report = %+v", report)
+	}
+	if !strings.Contains(report.Error, "use 'vmake build --tests'") || report.Summary != nil {
+		t.Fatalf("preflight error/summary = %q / %+v", report.Error, report.Summary)
+	}
+	if report.Tests == nil || len(report.Tests) != 0 || len(report.Artifacts) != 0 {
+		t.Fatalf("preflight results = %+v (artifacts %+v)", report.Tests, report.Artifacts)
+	}
+}
+
+func TestTestCommandBuildFailurePreservesBuildReport(t *testing.T) {
 	project := writeTestCommandProject(t, passingTestSource)
-	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
+	buildReportSnapshot := buildAndSnapshotBuildReport(t, project)
+	writeExtensionFile(t, filepath.Join(project, "tests", "test_app.c"), "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
 	stdout, stderr, code := runBuildCommand(t, project, "test")
 	if code != 1 {
 		t.Fatalf("test exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "Tests failed: src/main.c:2:") {
+	if !strings.Contains(stdout, "Tests failed: tests/test_app.c:2:") {
 		t.Fatalf("build-failure summary missing:\n%s", stdout)
 	}
-	report := loadBuildReport(t, project)
+	assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
+	report := loadTestReport(t, project)
 	if report.Status != "failed" || report.Command != reportCommandTest || report.BuildID == "" {
 		t.Fatalf("build-failure report = %+v", report)
 	}
@@ -156,13 +268,10 @@ func TestTestCommandBuildFailurePublishesReport(t *testing.T) {
 	if report.Toolchain == "" || report.Mode == "" || len(report.Global) == 0 {
 		t.Fatalf("build-failure identity = %+v (toolchain %q, mode %q)", report.Global, report.Toolchain, report.Mode)
 	}
-	if report.CompileDatabase == "" {
-		t.Fatal("build-failure report lost the compile database")
-	}
 	if report.Tests == nil || len(report.Tests) != 0 || report.Summary == nil {
 		t.Fatalf("build-failure results = %+v (summary %+v)", report.Tests, report.Summary)
 	}
-	if report.Summary.TargetsFailed != 1 || report.Summary.TargetsBuilt != 0 || report.Summary.TestsFound != 0 ||
+	if report.Summary.TargetsFailed != 1 || report.Summary.TargetsBuilt != 0 || report.Summary.TargetsUpToDate != 1 || report.Summary.TestsFound != 0 ||
 		report.Summary.ArtifactsInstalled != 0 {
 		t.Fatalf("build-failure summary = %+v", report.Summary)
 	}

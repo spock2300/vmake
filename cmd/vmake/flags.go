@@ -30,4 +30,5 @@ func addBuildFlags(cmd *cobra.Command) {
 func addTestFlags(cmd *cobra.Command) {
 	addBuildFlags(cmd)
 	cmd.Flags().Lookup("tests").Usage = "implied and has no effect; vmake test always builds and runs test targets"
+	cmd.Flags().BoolVar(&requireTestsFlag, "require-tests", false, "fail when the project declares no runnable test targets")
 }

@@ -34,6 +34,9 @@ const (
 	buildWarningCode       = "VMAKE_W_TOOL"
 	buildWarningLimit      = 50
 	buildStderrCaptureSize = 256 * 1024
+
+	buildReportFile = "vmake-build.json"
+	testReportFile  = "vmake-test.json"
 )
 
 type buildArtifact struct {
@@ -75,6 +78,7 @@ type buildTestResult struct {
 
 type buildReport struct {
 	completed       bool
+	location        string
 	SchemaVersion   int                       `json:"schemaVersion"`
 	BuildID         string                    `json:"buildId"`
 	Root            string                    `json:"root"`
@@ -107,8 +111,12 @@ func (e *buildSummaryError) Error() string { return e.summary }
 
 func (e *buildSummaryError) Unwrap() error { return e.err }
 
-func withBuildReport(run func(*buildReport) error) (err error) {
-	report, err := beginBuildReport()
+func withBuildReport(run func(*buildReport) error) error {
+	return withReport(reportCommandBuild, run)
+}
+
+func withReport(command string, run func(*buildReport) error) (err error) {
+	report, err := beginBuildReport(command)
 	if err != nil {
 		return err
 	}
@@ -380,6 +388,10 @@ func printTestSummary(writer io.Writer, report *buildReport, err error) {
 		fmt.Fprintf(writer, "Tests succeeded (buildId=%s)\n", report.BuildID)
 		return
 	}
+	if summary.TestsFound == 0 {
+		fmt.Fprintf(writer, "Tests succeeded: no test targets (buildId=%s)\n", report.BuildID)
+		return
+	}
 	fmt.Fprintf(writer, "Tests succeeded: %d/%d passed in %s (buildId=%s)\n",
 		summary.TestsPassed, summary.TestsFound, formatBuildDuration(summary.DurationMs), report.BuildID)
 }
@@ -391,15 +403,32 @@ func formatBuildDuration(durationMs int64) string {
 	return fmt.Sprintf("%.1fs", float64(durationMs)/1000)
 }
 
-func reportPath(root string) string { return filepath.Join(root, "build", "vmake-build.json") }
+func reportPath(root string) string { return filepath.Join(root, "build", buildReportFile) }
 
-func beginBuildReport() (*buildReport, error) {
+func testReportPath(root string) string { return filepath.Join(root, "build", testReportFile) }
+
+func reportPathFor(root, command string) string {
+	if command == reportCommandTest {
+		return testReportPath(root)
+	}
+	return reportPath(root)
+}
+
+func (r *buildReport) reportPath() string {
+	if r.location != "" {
+		return r.location
+	}
+	return reportPathFor(r.Root, r.Command)
+}
+
+func beginBuildReport(command string) (*buildReport, error) {
 	id := make([]byte, 16)
 	if _, err := rand.Read(id); err != nil {
 		return nil, err
 	}
-	r := &buildReport{SchemaVersion: 2, BuildID: hex.EncodeToString(id), Root: findProjectDir(), Status: "running", Command: reportCommandBuild, Started: time.Now().UTC().Format(time.RFC3339Nano), Targets: []build.TargetResult{}, Tests: []buildTestResult{}, Artifacts: []buildArtifact{}, Diagnostics: []buildDiagnostic{}, Global: map[string]any{}, Packages: map[string]map[string]any{}}
-	return r, jsonio.Save(reportPath(r.Root), r)
+	root := findProjectDir()
+	r := &buildReport{SchemaVersion: 2, BuildID: hex.EncodeToString(id), Root: root, Status: "running", Command: command, Started: time.Now().UTC().Format(time.RFC3339Nano), Targets: []build.TargetResult{}, Tests: []buildTestResult{}, Artifacts: []buildArtifact{}, Diagnostics: []buildDiagnostic{}, Global: map[string]any{}, Packages: map[string]map[string]any{}, location: reportPathFor(root, command)}
+	return r, jsonio.Save(r.reportPath(), r)
 }
 
 func (r *buildReport) finish(result *error, warnings []buildDiagnostic) {
@@ -430,7 +459,7 @@ func (r *buildReport) finish(result *error, warnings []buildDiagnostic) {
 		r.Tests = []buildTestResult{}
 	}
 	r.setCompileDatabase()
-	*result = errors.Join(*result, jsonio.Save(reportPath(r.Root), r))
+	*result = errors.Join(*result, jsonio.Save(r.reportPath(), r))
 	if interrupted != nil {
 		panic(interrupted)
 	}
@@ -477,7 +506,7 @@ func (r *buildReport) bind(ctx *RuntimeContext) error {
 	r.Global = effectiveGlobalValues(ctx)
 	r.Global[api.ModeOptionName] = r.Mode
 	r.Global[api.ToolchainOptionName] = r.Toolchain
-	return jsonio.Save(reportPath(r.Root), r)
+	return jsonio.Save(r.reportPath(), r)
 }
 
 // partial records the results a failed build collected before it stopped.
@@ -651,7 +680,12 @@ func newBuildSummary(result *BuildResult, artifacts int) *buildSummary {
 }
 
 func invalidateBuildReport() error {
-	err := os.Remove(reportPath(findProjectDir()))
+	root := findProjectDir()
+	return errors.Join(removeReport(reportPath(root)), removeReport(testReportPath(root)))
+}
+
+func removeReport(path string) error {
+	err := os.Remove(path)
 	if os.IsNotExist(err) {
 		return nil
 	}

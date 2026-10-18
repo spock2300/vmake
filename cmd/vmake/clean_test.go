@@ -394,3 +394,28 @@ func TestRemainingBuildDirectoriesCountsOtherConfigurations(t *testing.T) {
 		t.Fatalf("remaining build directories = %d, want 2", got)
 	}
 }
+
+func TestCleanRemovesBuildAndTestReports(t *testing.T) {
+	for _, command := range []string{"clean", "distclean"} {
+		t.Run(command, func(t *testing.T) {
+			project := writeTestCommandProject(t, passingTestSource)
+			buildReportSnapshot := buildAndSnapshotBuildReport(t, project)
+			if stdout, stderr, code := runBuildCommand(t, project, "test"); code != 0 {
+				t.Fatalf("test exit = %d, stderr = %q\n%s", code, stderr, stdout)
+			}
+			if _, err := os.Stat(testReportPath(project)); err != nil {
+				t.Fatalf("test report missing before clean: %v", err)
+			}
+			assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
+			stdout, stderr, code := runBuildCommand(t, project, command)
+			if code != 0 {
+				t.Fatalf("%s exit = %d, stderr = %q\n%s", command, code, stderr, stdout)
+			}
+			for _, path := range []string{reportPath(project), testReportPath(project)} {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("%s survived %s: %v", path, command, err)
+				}
+			}
+		})
+	}
+}

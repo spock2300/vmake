@@ -8,6 +8,7 @@ import (
 	osexec "os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,7 +17,10 @@ import (
 	exec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/pkg/api"
 	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/pipeline"
 )
+
+var requireTestsFlag bool
 
 var testCmd = &cobra.Command{
 	Use:   "test",
@@ -31,11 +35,13 @@ func init() {
 
 func runTest(cmd *cobra.Command, args []string) error {
 	commandStorageLocks()
-	return withBuildReport(func(report *buildReport) error {
-		report.Command = reportCommandTest
+	return withReport(reportCommandTest, func(report *buildReport) error {
 		execution := &RuntimeContext{}
 		return withResolvedProject(execution, func(ctx *RuntimeContext) error {
 			if err := report.bind(ctx); err != nil {
+				return err
+			}
+			if err := validateTestProject(ctx); err != nil {
 				return err
 			}
 			result, err := runBuildPhase(ctx, BuildOptions{IncludeTests: true, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag})
@@ -50,6 +56,9 @@ func runTest(cmd *cobra.Command, args []string) error {
 			}
 			tests, err := runAllTests(ctx.Context, result)
 			report.setTestResults(tests)
+			if errors.Is(err, errNoTestTargets) && !requireTestsFlag {
+				return nil
+			}
 			return err
 		})
 	})
@@ -61,6 +70,45 @@ func validateTestExecution(platform api.Platform, hostOS string) error {
 		return fmt.Errorf("cannot run tests for project target (target_os=%s, target_triple=%q) on %s; use 'vmake build --tests' to build them without execution", targetOS, platform.Triple, hostOS)
 	}
 	return nil
+}
+
+func validateTestProject(ctx *RuntimeContext) error {
+	dependedOn := make(map[string]bool)
+	for _, node := range ctx.DepGraph.Packages {
+		if node == nil {
+			continue
+		}
+		for _, dep := range node.Deps {
+			dependedOn[dep] = true
+		}
+	}
+	roots := make([]string, 0)
+	for name, node := range ctx.DepGraph.Packages {
+		if node != nil && node.IsLocal() && !dependedOn[name] {
+			roots = append(roots, name)
+		}
+	}
+	sort.Strings(roots)
+	if len(roots) == 0 {
+		platform, err := pipeline.ProjectPlatform(ctx)
+		if err != nil {
+			return err
+		}
+		return validateTestExecution(platform, runtime.GOOS)
+	}
+	var firstErr error
+	for _, name := range roots {
+		platform, err := pipeline.PackagePlatform(ctx, name)
+		if err != nil {
+			return err
+		}
+		if err := validateTestExecution(platform, runtime.GOOS); err == nil {
+			return nil
+		} else if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 type testResult struct {
@@ -78,6 +126,8 @@ const (
 	buildTestOutputLimit  = 4096
 	buildTestOutputMarker = "...[truncated]\n"
 )
+
+var errNoTestTargets = errors.New("no test targets found")
 
 func boundedTestOutput(output string) string {
 	output = strings.TrimSpace(output)
@@ -143,7 +193,7 @@ func runAllTests(ctx context.Context, result *BuildResult) ([]testResult, error)
 	}
 
 	if len(tests) == 0 {
-		return nil, fmt.Errorf("no test targets found")
+		return nil, errNoTestTargets
 	}
 
 	vlog.Info("")

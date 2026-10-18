@@ -108,17 +108,19 @@ when you need to decide which package, target, or file to change.
   wrong types or choices fail with `VMAKE_E_OPTION`.
 - Buildscript stdout is discarded while the model is resolved, so the JSON is
   never corrupted by `build.go` prints.
-- `compileDatabase`/`buildReport` point at `build/compile_commands.json` and
-  `build/vmake-build.json`; `compileDatabasePresent`/`buildReportPresent` say
-  whether those files currently exist. When the report exists and parses,
-  `buildReportState` copies its `status`, `buildId`, `command`, `started`,
+- `compileDatabase`/`buildReport`/`testReport` point at
+  `build/compile_commands.json`, `build/vmake-build.json` and
+  `build/vmake-test.json`; the matching `*Present` fields say whether those
+  files currently exist. When a report exists and parses, `buildReportState` or
+  `testReportState` copies its `status`, `buildId`, `command`, `started`,
   `finished`, `summary`, and `error`, and sets `configMatches` (true only for
-  the same `configSha256` with no `--set`). This describes the last recorded
-  build, not whether actions or outputs are fresh. A corrupt report keeps
-  `buildReportPresent: true`, omits the state, and adds one
-  `VMAKE_W_REPORT_UNREADABLE` warning; inspect never rewrites it. The install
-  paths are the default `install/` and `install/manifest.json`; `--prefix`
-  overrides them. Full schema: `references/inspect.md`.
+  the same `configSha256` with no `--set`). The two reports are separate
+  invocations: a succeeded build state and a failed or no-tests test state can
+  coexist. This describes recorded runs, not whether actions or outputs are
+  fresh. A corrupt report keeps its `*Present: true`, omits that state, and adds
+  one `VMAKE_W_REPORT_UNREADABLE` warning; inspect never rewrites it. The
+  install paths are the default `install/` and `install/manifest.json`;
+  `--prefix` overrides them. Full schema: `references/inspect.md`.
 
 ## Build Script Template
 
@@ -423,7 +425,7 @@ ctx.Target("tests").SetKind(api.TargetBinary).SetTest(true).
     AddFiles("tests/*.c").AddDeps("mylib")
 ```
 
-Always define test targets unconditionally in `OnBuild` — `SetTest(true)` controls scheduler visibility, not option guards. `SetTest(true)` does NOT clear `IsDefault`, but `vmake test` runs only targets that are both `IsTest()` and `IsDefault()`, and only `TargetBinary` targets — a test target with `SetDefault(false)` is not run. If no runnable test target exists, `vmake test` exits non-zero with `no test targets found` and publishes a failed report; use `vmake build --tests` to build tests without running them. `vmake build` excludes tests unless `--tests` is passed; cross/bare-metal targets can only be built (`vmake test` refuses to run them). Test targets are never installed and can depend on other test targets. Test runs publish `build/vmake-build.json` with `command:"test"`, per-test `tests[]` entries and test counts in `summary`. `vmake build|rebuild|test --json` prints one result envelope on stdout instead of human summaries, with progress and diagnostics moving to stderr (see `references/build-result.md`). See `examples/multi-target.md`.
+Always define test targets unconditionally in `OnBuild` — `SetTest(true)` controls scheduler visibility, not option guards. `SetTest(true)` does NOT clear `IsDefault`, but `vmake test` runs only targets that are both `IsTest()` and `IsDefault()`, and only `TargetBinary` targets — a test target with `SetDefault(false)` is not run. A host project with no runnable test target still builds as needed, then reports `testsFound: 0` and exits 0 with `Tests succeeded: no test targets`; pass `--require-tests` in CI to make that case exit 1 with `no test targets found`. `vmake test` refuses a non-host/bare-metal project before building (the error points at `vmake build --tests`, which builds tests without running them) and writes the failure to its own report. `vmake build` excludes tests unless `--tests` is passed. Test targets are never installed and can depend on other test targets. Test runs publish `build/vmake-test.json` (schemaVersion 2, `command:"test"`, per-test `tests[]` entries and test counts in `summary`); build/rebuild keep publishing `build/vmake-build.json`, so a test run never overwrites the last build result. `vmake build|rebuild|test --json` prints one result envelope on stdout instead of human summaries, with progress and diagnostics moving to stderr; `reportPath` points at the report the command wrote (see `references/build-result.md`). See `examples/multi-target.md`.
 
 ## Dependencies
 
@@ -695,7 +697,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 - Register toolchain repositories with `vmake ext add <name> <git-url>`; their `toolchain.json` files are scanned and installed for the host automatically (the extension authoring guide is in the vmake repository and is not shipped with this skill). `vmake toolchain list` shows what is available.
 - List toolchains with `vmake toolchain list` / `vmake toolchain show <name>`; select per invocation with `--toolchain <name>`, or per package via `ctx.ToolchainOption()`. Toolchains contributed by extensions may declare `target_os`/`target_triple` defaults, but never CPU/ABI flags — supply `-mcpu`/`-mthumb`/`--specs` yourself. The `vmake config` TUI shows toolchain-provided defaults for declared but unset options.
 - Validate a cross setup with `vmake doctor --toolchain <name>`.
-- Cross/bare-metal tests cannot execute: `vmake test` refuses non-host targets; use `vmake build --tests`.
+- Cross/bare-metal tests cannot execute: `vmake test` refuses non-host targets before building; use `vmake build --tests`.
 - For bare-metal linking (libc, crt0, `-nostdlib`, `EXTERN`), see `examples/embedded-rtos.md` and `references/gotchas.md`.
 
 ## RTOS / Embedded
@@ -851,7 +853,7 @@ diagnostics are lost. `CMakeConfigure` output is unchanged.
 | `vmake update [version]` | Update vmake |
 | `vmake version` | Version info (`vmake --version` also prints it) |
 
-Build flags: `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`, `--manifest`, `--tests`, `--jobs/-j`, `--keep-going/-k`, `--explain`, `--json`, `--output`
+Build flags: `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`, `--manifest`, `--tests`, `--jobs/-j`, `--keep-going/-k`, `--explain`, `--json`, `--output`; `vmake test` also accepts `--require-tests`
 Global flags: `-v` verbose, `-V` very-verbose, `-q` quiet, `-y/--yes` assume yes (trust prompts), `-h/--help` help
 `--version` is a root flag; `vmake test` always builds and runs test targets, so `--tests` is accepted for compatibility but has no effect there.
 

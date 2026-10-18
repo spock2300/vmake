@@ -6,10 +6,11 @@ dry-run `OnBuild` target declaration only: it never compiles, links, installs,
 or writes `build/`, `install/`, or `.vmake/config.json`. It also warns about
 needed packages whose source tree is not on disk, without fetching or
 materializing it, and reports the install plan declared by `OnBuild` without
-reading or creating `install/`. Build-state fields report whether the compile
-database and build report currently exist, the last report's identity and
-configuration match, and each needed package's active build directory; they do
-not verify action or output freshness.
+reading or creating `install/`. State fields report whether the compile
+database, build report and test report currently exist, each report's identity
+and configuration match, and each needed package's active build directory; they
+do not verify action or output freshness. The build and test reports are
+separate invocations and are never merged.
 
 ```
 vmake inspect [--set [package/]option=value ...] [-C <dir>]
@@ -80,10 +81,11 @@ Failure (no `data`, exit 1):
   target-declaration failure in a package whose source is present prints one
   `Warning: cannot declare targets for <package>: <error>` and does not stop the
   command.
-- `VMAKE_W_REPORT_UNREADABLE` — warning: `build/vmake-build.json` exists but
-  cannot be read or parsed. `buildReportPresent` stays `true`,
-  `buildReportState` is omitted, `status` stays `"ok"`, exit is 0, and `fix`
-  tells the user to rerun a build. Inspect never rewrites the file.
+- `VMAKE_W_REPORT_UNREADABLE` — warning: `build/vmake-build.json` or
+  `build/vmake-test.json` exists but cannot be read or parsed. The matching
+  `buildReportPresent`/`testReportPresent` stays `true`, that state object is
+  omitted, `status` stays `"ok"`, exit is 0, and `fix` tells the user to rerun
+  the command that writes the document. Inspect never rewrites either file.
 
 ## `data` fields
 
@@ -103,16 +105,22 @@ Failure (no `data`, exit 1):
 | `buildReport` | `<root>/build/vmake-build.json` (expected path, even before a build) |
 | `buildReportPresent` | Whether that file currently exists |
 | `buildReportState` | Report identity/result when the file exists and parses; omitted when absent or unreadable |
+| `testReport` | `<root>/build/vmake-test.json` |
+| `testReportPresent` | Whether that file currently exists |
+| `testReportState` | Test report identity/result with the same shape as `buildReportState`; omitted when absent or unreadable |
 | `installPrefix` | `<root>/install` (default `--prefix`, even before an install) |
 | `installManifest` | `<root>/install/manifest.json` (expected default manifest path, even before an install) |
 
-`buildReportState` copies `status`, `buildId`, `command`, `started`,
-`finished`, `summary` and `error` from the report when present. Its
-`configMatches` is true only when the report's `configSha256` equals
+`buildReportState` and `testReportState` copy `status`, `buildId`, `command`,
+`started`, `finished`, `summary` and `error` from their report when present.
+`configMatches` is true only when that report's `configSha256` equals
 `data.configSha256` and no `--set` override was supplied, so a normal
-`inspect --set` reports `false`. These fields are a snapshot of the reported
-build, not evidence that actions or outputs are current: inspect does not read
-action records or predict up-to-date targets.
+`inspect --set` reports `false` for both. These fields are snapshots of the
+reported build and test runs, not evidence that actions or outputs are current:
+inspect does not read action records or predict up-to-date targets. A project
+can therefore show `buildReportPresent: true` with a succeeded build state and
+`testReportPresent: true` with a failed or no-tests test state at the same
+time.
 
 Each `packages` entry has `name`, `kind` (`local`/`native`/`registry`),
 `needed`, `sourcePresent`, `deps`, optional remote
@@ -195,8 +203,8 @@ vmake inspect --set dep/dep_mode=slow      # choice validated
 Exit 0 means a model was produced (including models with warning diagnostics);
 exit 1 means it was not. Output is deterministic for the same project,
 configuration, overrides, and build-state files: consecutive runs are
-byte-identical. Inspect stats the compile database and reads the build report
-but never writes either file.
+byte-identical. Inspect stats the compile database and reads both reports but
+never writes any of those files.
 
 This reference is self-contained. The full repository documentation set
 (including `docs/INSPECT.md`) is not installed with the skill.

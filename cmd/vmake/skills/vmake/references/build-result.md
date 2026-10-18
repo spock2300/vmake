@@ -1,18 +1,20 @@
 # Build Results and `--json`
 
-`vmake build` (including bare `vmake`), `vmake rebuild`, and `vmake test`
-atomically publish `build/vmake-build.json` in the project root. The file
-records the latest invocation only and uses schemaVersion 2. It is separate from
+`vmake build` (including bare `vmake`) and `vmake rebuild` atomically publish
+`build/vmake-build.json` in the project root. `vmake test` publishes its own
+`build/vmake-test.json` with `command: "test"` and the same schemaVersion 2
+shape. Each file records the latest invocation of its own command only, so a
+test run never rewrites the build report and vice versa. They are separate from
 the installation manifest (`install/manifest.json`). `clean`, `distclean`, and
-`pkg clean` invalidate it.
+`pkg clean` remove both reports.
 
 ## Report fields
 
 | Field | Meaning |
 |-------|---------|
 | `schemaVersion`, `buildId`, `root` | Report schema (2), unique invocation ID, absolute project root |
-| `command` | `build` for a build, `rebuild` for `vmake rebuild`, `test` for `vmake test` |
-| `status` | `running`, `succeeded`, `failed`, or `cancelled`; for test, `succeeded` only when every executed test passed |
+| `command` | `build` for a build, `rebuild` for `vmake rebuild`, `test` for `vmake test` (the test report lives in `build/vmake-test.json`) |
+| `status` | `running`, `succeeded`, `failed`, or `cancelled`; for test, `succeeded` when every executed test passed or (by default) when no test target was declared |
 | `started`, `finished`, `durationMs` | UTC timestamps and wall-clock duration; `durationMs` is 0 while running |
 | `error` | Concise one-line failure summary (about 300 characters at most); empty on success |
 | `diagnostics` | Always an array. Success entries are tool warnings; failure entries are errors followed by warnings. Each has `severity`, `code`, `message`, and optional `file`, `line`, `column`, `package`, `target`. Codes: `VMAKE_E_COMPILE`, `VMAKE_E_LINK`, `VMAKE_E_BUILD`, `VMAKE_E_SCRIPT` for errors, `VMAKE_W_TOOL` for warnings |
@@ -131,24 +133,28 @@ printed.
 
 The envelope's `status` is `ok` when `data.status` is `succeeded`; otherwise
 `error`. `command` and `invocation` are `build`, `rebuild`, or `test` and match
-`data.command`. `reportPath` is the absolute `<root>/build/vmake-build.json` path
-this invocation wrote, and `installManifest` is the absolute manifest path for
-the invocation's install prefix (`<root>/install/manifest.json` by default, or
-`<--prefix>/manifest.json`); both are envelope-only and are not added to the
-on-disk report. `diagnostics` is a copy of `data.diagnostics` and is always an
-array, so success warnings survive `-q --json`. `data` is the complete report
-identical to `build/vmake-build.json`. `--json` does not change the report file,
+`data.command`. `reportPath` is the absolute report path this invocation wrote:
+`<root>/build/vmake-build.json` for build/rebuild and
+`<root>/build/vmake-test.json` for test. `installManifest` is the absolute
+manifest path for the invocation's install prefix
+(`<root>/install/manifest.json` by default, or `<--prefix>/manifest.json`);
+both are envelope-only and are not added to the on-disk report. `diagnostics`
+is a copy of `data.diagnostics` and is always an array, so success warnings
+survive `-q --json`. `data` is the complete report identical to the file named
+by `reportPath`. `--json` does not change the report file,
 artifacts, or exit codes; a failed run still exits non-zero after emitting
 `status: "error"`. `-q`, `-v`, and `-V` keep controlling stderr verbosity.
 
-## Test reports
+## Test report
 
-`vmake test` writes `command: "test"`: it builds test targets, then runs every
-target that is `IsTest()`, `IsDefault()`, and `TargetBinary`. `artifacts` is
-empty because test runs never install.
+`vmake test` writes `build/vmake-test.json` with `command: "test"`: it builds
+test targets, then runs every target that is `IsTest()`, `IsDefault()`, and
+`TargetBinary`. `artifacts` is empty because test runs never install. The build
+report from an earlier `vmake build` is left byte-for-byte intact for every test
+outcome.
 
-- `status` is `succeeded` only when every executed test passed; `tests` holds
-  one entry per executed binary.
+- `status` is `succeeded` when every executed test passed; a host project with
+  no runnable test target also succeeds unless `--require-tests` is given.
 - Each `tests[]` entry carries `exitCode` (0 on success, the process exit code
   on failure, 1 when unavailable) and `output`: the combined stdout/stderr tail
   captured for that test, trimmed and bounded to 4096 bytes. Longer output starts
@@ -158,26 +164,39 @@ empty because test runs never install.
 - A failing test makes `status` `failed` with `error: "N test(s) failed"` and a
   non-zero exit; the report keeps `summary` test counts because the build phase
   completed.
-- When no runnable test target exists, the run fails with `error: "no test
-  targets found"`, `status: "failed"`, and `summary.testsFound: 0`.
-- `vmake build --tests` is still a build: zero test targets are not an error
-  there and test counts stay 0.
+- A host project with no runnable test target builds as needed, then reports
+  `status: "succeeded"`, `summary.testsFound: 0`, prints
+  `Tests succeeded: no test targets`, and exits 0. Pass `--require-tests` to
+  make this case fail with `error: "no test targets found"`, `status: "failed"`,
+  and exit 1 (useful in CI).
+- Test preflight runs before any build action. If the effective root platform
+  cannot execute tests (`target_os` is `none`, differs from the host, or
+  `target_triple` is non-empty), the run exits 1 with the
+  `cannot run tests for project target ... use 'vmake build --tests'` message,
+  writes a failed test report, and does not compile anything or create the
+  compilation database. `vmake build --tests` is still a build: zero test
+  targets are not an error there and test counts stay 0.
 - If the build phase itself fails, the report keeps the completed build targets
   and partial `summary` (unless the failure happened before scheduling) along
   with configuration identity and `compileDatabase`. `artifacts` stays empty.
-- A running record replaces the previous report before work starts; later runs
-  overwrite it with a new `buildId`.
+- A running test record replaces the previous test report before work starts;
+  later test runs overwrite it with a new `buildId`. The build report keeps its
+  own build ID.
+- `vmake inspect` exposes the two documents separately: `buildReport`/
+  `buildReportPresent`/`buildReportState` read `build/vmake-build.json`, and
+  `testReport`/`testReportPresent`/`testReportState` read
+  `build/vmake-test.json` (see `references/inspect.md`).
 
 Cross/bare-metal targets cannot be executed by `vmake test`; build them with
 `vmake build --tests` instead.
 
 ## Clean and stale reports
 
-`vmake clean` removes `build/vmake-build.json` and the stale
-`build/compile_commands.json`. When build-key directories for other
+`vmake clean` removes `build/vmake-build.json`, `build/vmake-test.json`, and the
+stale `build/compile_commands.json`. When build-key directories for other
 configurations remain, it prints one note with their count and suggests
 `vmake clean --all` or `vmake distclean`, which remove them. `distclean` and
-`pkg clean` also invalidate the report.
+`pkg clean` also remove both reports.
 
 Until a later command overwrites it or clean removes it, an existing file is
 only the last report, not proof of a current successful build. Consumers should

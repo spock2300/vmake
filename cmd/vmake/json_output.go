@@ -137,7 +137,7 @@ func newBuildJSONEnvelope(report *buildReport) *buildJSONEnvelope {
 		SchemaVersion:   jsonOutputSchemaVersion,
 		Command:         command,
 		Status:          status,
-		ReportPath:      reportPath(report.Root),
+		ReportPath:      report.reportPath(),
 		InstallManifest: installManifestPath(report.Root),
 		Invocation:      command,
 		Data:            report,

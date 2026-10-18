@@ -1452,3 +1452,57 @@ func Main(p *api.Package) {
 		t.Fatalf("proj targets = %+v, want app declared for its present source", targets)
 	}
 }
+
+func TestInspectReportsBuildAndTestStateSeparately(t *testing.T) {
+	project := writeTestCommandProject(t, passingTestSource)
+	if stdout, stderr, code := runBuildCommand(t, project, "build"); code != 0 {
+		t.Fatalf("build exit = %d, stderr = %q\n%s", code, stderr, stdout)
+	}
+	if stdout, stderr, code := runBuildCommand(t, project, "test"); code != 0 {
+		t.Fatalf("test exit = %d, stderr = %q\n%s", code, stderr, stdout)
+	}
+	buildStateBefore := loadBuildReport(t, project)
+	testStateBefore := loadTestReport(t, project)
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	data := decodeInspectEnvelope(t, stdout).Data
+	if data == nil {
+		t.Fatal("inspect returned no data")
+	}
+	if !data.BuildReportPresent || data.BuildReportState == nil {
+		t.Fatalf("build report state missing: present=%v state=%+v", data.BuildReportPresent, data.BuildReportState)
+	}
+	if data.BuildReportState.Command != reportCommandBuild || data.BuildReportState.BuildID != buildStateBefore.BuildID ||
+		data.BuildReportState.Status != "succeeded" || !data.BuildReportState.ConfigMatches {
+		t.Fatalf("buildReportState = %+v, report = %+v", data.BuildReportState, buildStateBefore)
+	}
+	if data.TestReport != testReportPath(project) || !data.TestReportPresent || data.TestReportState == nil {
+		t.Fatalf("test report state missing: path=%q present=%v state=%+v", data.TestReport, data.TestReportPresent, data.TestReportState)
+	}
+	if data.TestReportState.Command != reportCommandTest || data.TestReportState.BuildID != testStateBefore.BuildID ||
+		data.TestReportState.Status != "succeeded" || !data.TestReportState.ConfigMatches {
+		t.Fatalf("testReportState = %+v, report = %+v", data.TestReportState, testStateBefore)
+	}
+	if string(data.TestReportState.Summary) == "" {
+		t.Fatal("testReportState lost the summary")
+	}
+
+	if stdout, stderr, code := runInspectCommand(t, project, "clean"); code != 0 {
+		t.Fatalf("clean exit = %d, stderr = %q\n%s", code, stderr, stdout)
+	}
+	stdout, stderr, code = runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect after clean exit = %d, stderr = %q", code, stderr)
+	}
+	data = decodeInspectEnvelope(t, stdout).Data
+	if data == nil {
+		t.Fatal("inspect after clean returned no data")
+	}
+	if data.BuildReportPresent || data.BuildReportState != nil || data.TestReportPresent || data.TestReportState != nil {
+		t.Fatalf("reports survived clean: build=%v/%+v test=%v/%+v",
+			data.BuildReportPresent, data.BuildReportState, data.TestReportPresent, data.TestReportState)
+	}
+}

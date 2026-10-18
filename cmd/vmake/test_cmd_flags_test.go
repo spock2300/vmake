@@ -26,7 +26,7 @@ func TestTestCommandAcceptsTestsFlag(t *testing.T) {
 	if !strings.Contains(stdout, "Tests succeeded: 1/1 passed") {
 		t.Fatalf("test --tests summary missing:\n%s", stdout)
 	}
-	report := loadBuildReport(t, project)
+	report := loadTestReport(t, project)
 	if report.Command != reportCommandTest || report.Status != "succeeded" || len(report.Tests) != 1 || !report.Tests[0].Passed {
 		t.Fatalf("test --tests report = %+v", report)
 	}

@@ -58,6 +58,9 @@ type inspectData struct {
 	BuildReport            string                   `json:"buildReport"`
 	BuildReportPresent     bool                     `json:"buildReportPresent"`
 	BuildReportState       *inspectBuildReportState `json:"buildReportState,omitempty"`
+	TestReport             string                   `json:"testReport"`
+	TestReportPresent      bool                     `json:"testReportPresent"`
+	TestReportState        *inspectBuildReportState `json:"testReportState,omitempty"`
 	InstallPrefix          string                   `json:"installPrefix"`
 	InstallManifest        string                   `json:"installManifest"`
 }
@@ -448,8 +451,10 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 		global = make(map[string]any)
 	}
 	compileDatabase := filepath.Join(root, "build", "compile_commands.json")
-	buildReport := filepath.Join(root, "build", "vmake-build.json")
-	buildReportPresent, buildReportState, reportDiagnostic := loadInspectBuildReportState(buildReport, ctx.ConfigDigest, len(overrides) > 0)
+	buildReport := reportPath(root)
+	buildReportPresent, buildReportState, reportDiagnostic := loadInspectReportState(buildReport, ctx.ConfigDigest, len(overrides) > 0, "build")
+	testReport := testReportPath(root)
+	testReportPresent, testReportState, testDiagnostic := loadInspectReportState(testReport, ctx.ConfigDigest, len(overrides) > 0, "test")
 	data := &inspectData{
 		Root:                   root,
 		ConfigFile:             filepath.Base(ctx.ConfigPath),
@@ -467,6 +472,9 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 		BuildReport:            buildReport,
 		BuildReportPresent:     buildReportPresent,
 		BuildReportState:       buildReportState,
+		TestReport:             testReport,
+		TestReportPresent:      testReportPresent,
+		TestReportState:        testReportState,
 		InstallPrefix:          installRoot,
 		InstallManifest:        filepath.Join(installRoot, "manifest.json"),
 	}
@@ -524,6 +532,9 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 	if reportDiagnostic != nil {
 		diagnostics = append(diagnostics, *reportDiagnostic)
 	}
+	if testDiagnostic != nil {
+		diagnostics = append(diagnostics, *testDiagnostic)
+	}
 	return data, diagnostics
 }
 
@@ -542,7 +553,7 @@ func inspectBuildDirFields(dirs *api.PkgDirs, local bool) (string, string) {
 	return dirs.BuildDir, filepath.Base(dirs.BuildDir)
 }
 
-func loadInspectBuildReportState(path, configDigest string, hypothetical bool) (bool, *inspectBuildReportState, *inspectDiagnostic) {
+func loadInspectReportState(path, configDigest string, hypothetical bool, kind string) (bool, *inspectBuildReportState, *inspectDiagnostic) {
 	if !inspectPathExists(path) {
 		return false, nil, nil
 	}
@@ -567,8 +578,8 @@ func loadInspectBuildReportState(path, configDigest string, hypothetical bool) (
 		return true, nil, &inspectDiagnostic{
 			Severity: "warning",
 			Code:     "VMAKE_W_REPORT_UNREADABLE",
-			Message:  fmt.Sprintf("cannot read build report %s: %v", path, err),
-			Fix:      "Rerun vmake build to rewrite build/vmake-build.json.",
+			Message:  fmt.Sprintf("cannot read %s report %s: %v", kind, path, err),
+			Fix:      fmt.Sprintf("Rerun vmake %s to rewrite build/vmake-%s.json.", kind, kind),
 		}
 	}
 	return true, &inspectBuildReportState{

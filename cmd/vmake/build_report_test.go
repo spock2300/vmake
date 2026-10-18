@@ -1101,8 +1101,12 @@ func parseJSONBuildOutput(t *testing.T, stdout string) jsonBuildDocument {
 	if document.Invocation != document.Command {
 		t.Fatalf("invocation = %q, envelope command = %q", document.Invocation, document.Command)
 	}
-	if !filepath.IsAbs(document.ReportPath) || filepath.Base(document.ReportPath) != "vmake-build.json" {
-		t.Fatalf("reportPath = %q, want an absolute vmake-build.json path", document.ReportPath)
+	wantReportFile := buildReportFile
+	if document.Command == reportCommandTest {
+		wantReportFile = testReportFile
+	}
+	if !filepath.IsAbs(document.ReportPath) || filepath.Base(document.ReportPath) != wantReportFile {
+		t.Fatalf("reportPath = %q, want an absolute %s path", document.ReportPath, wantReportFile)
 	}
 	if !filepath.IsAbs(document.InstallManifest) || filepath.Base(document.InstallManifest) != "manifest.json" {
 		t.Fatalf("installManifest = %q, want an absolute manifest.json path", document.InstallManifest)
@@ -1127,7 +1131,13 @@ func assertNoHumanJSONStdout(t *testing.T, stdout string, phrases ...string) {
 
 func assertJSONDataMatchesReport(t *testing.T, project string, data buildReport) {
 	t.Helper()
-	fromFile, err := json.Marshal(loadBuildReport(t, project))
+	var report buildReport
+	if data.Command == reportCommandTest {
+		report = loadTestReport(t, project)
+	} else {
+		report = loadBuildReport(t, project)
+	}
+	fromFile, err := json.Marshal(report)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1282,7 +1292,7 @@ int main(void) {
 	if !strings.Contains(stdout, "captured pass output") {
 		t.Fatalf("test stdout was not streamed:\n%s", stdout)
 	}
-	report := loadBuildReport(t, project)
+	report := loadTestReport(t, project)
 	if len(report.Tests) != 1 {
 		t.Fatalf("tests = %+v", report.Tests)
 	}
@@ -1313,7 +1323,7 @@ int main(void) {
 	if !strings.Contains(stderr, "FAIL tests-project:tests") {
 		t.Fatalf("FAIL line missing from stderr:\n%s", stderr)
 	}
-	report := loadBuildReport(t, project)
+	report := loadTestReport(t, project)
 	if len(report.Tests) != 1 {
 		t.Fatalf("tests = %+v", report.Tests)
 	}
@@ -1339,7 +1349,7 @@ int main(void) {
 	if code != 1 {
 		t.Fatalf("test exit = %d, want 1", code)
 	}
-	report := loadBuildReport(t, project)
+	report := loadTestReport(t, project)
 	if len(report.Tests) != 1 || report.Tests[0].ExitCode != 1 {
 		t.Fatalf("tests = %+v", report.Tests)
 	}
@@ -1350,7 +1360,7 @@ int main(void) {
 	if !strings.HasPrefix(output, buildTestOutputMarker) {
 		t.Fatalf("test output has no truncation marker: %q", output[:min(len(output), 64)])
 	}
-	raw, err := os.ReadFile(reportPath(project))
+	raw, err := os.ReadFile(testReportPath(project))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1368,7 +1378,7 @@ func TestTestBuildFailureKeepsCompletedTargets(t *testing.T) {
 	if !strings.Contains(stdout, "Tests failed: tests/test_app.c:2:") {
 		t.Fatalf("build-phase failure summary missing:\n%s", stdout)
 	}
-	report := loadBuildReport(t, project)
+	report := loadTestReport(t, project)
 	if report.Status != "failed" || report.Command != reportCommandTest {
 		t.Fatalf("build-phase failure report = %+v", report)
 	}
@@ -1392,11 +1402,11 @@ func TestTestBuildFailureKeepsCompletedTargets(t *testing.T) {
 func TestTestJSONNoTargets(t *testing.T) {
 	project := writeTestCommandProject(t, "")
 	stdout, stderr, code := runBuildCommand(t, project, "test", "--json")
-	if code != 1 {
-		t.Fatalf("test --json exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("test --json exit = %d, want 0 (stdout %q, stderr %q)", code, stdout, stderr)
 	}
 	document := parseJSONBuildOutput(t, stdout)
-	if document.Status != "error" || document.Data.Status != "failed" || document.Data.Error != "no test targets found" {
+	if document.Status != "ok" || document.Data.Status != "succeeded" || document.Data.Error != "" {
 		t.Fatalf("no-tests envelope = %+v / data = %+v", document, document.Data)
 	}
 	if len(document.Data.Tests) != 0 {
@@ -1405,8 +1415,8 @@ func TestTestJSONNoTargets(t *testing.T) {
 	if document.Data.Summary == nil || document.Data.Summary.TestsFound != 0 {
 		t.Fatalf("no-tests summary = %+v", document.Data.Summary)
 	}
-	if !strings.Contains(stderr, "Error: no test targets found") {
-		t.Fatalf("no-tests error is missing from stderr:\n%s", stderr)
+	if strings.Contains(stderr, "Error:") {
+		t.Fatalf("no-tests stderr carries an error:\n%s", stderr)
 	}
 	assertNoHumanJSONStdout(t, stdout, "test(s) passed")
 	assertJSONDataMatchesReport(t, project, document.Data)
@@ -1566,7 +1576,7 @@ func TestBuildJSONEnvelopePaths(t *testing.T) {
 		t.Fatalf("test --json exit = %d, stderr = %q\n%s", code, stderr, stdout)
 	}
 	testDocument := parseJSONBuildOutput(t, stdout)
-	if testDocument.ReportPath != reportPath(testProject) ||
+	if testDocument.ReportPath != testReportPath(testProject) ||
 		testDocument.InstallManifest != wantManifest(testProject) ||
 		testDocument.Invocation != reportCommandTest {
 		t.Fatalf("test paths = reportPath %q, installManifest %q, invocation %q",
