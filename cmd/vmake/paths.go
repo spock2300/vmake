@@ -7,11 +7,19 @@ import (
 	"github.com/spock2300/vmake/pkg/lockfile"
 )
 
-var cachedProjectDir string
+var (
+	cachedProjectDir string
+	projectOverride  string
+)
 
 func findProjectDir() string {
 	if cachedProjectDir != "" {
 		return cachedProjectDir
+	}
+	if projectOverride != "" {
+		found := validateProjectDir(projectOverride)
+		cachedProjectDir = found
+		return found
 	}
 	dir, err := os.Getwd()
 	if err != nil {
@@ -34,6 +42,9 @@ func findProjectDir() string {
 }
 
 func findProjectDirSoft() string {
+	if projectOverride != "" {
+		return validateProjectDir(projectOverride)
+	}
 	dir, err := os.Getwd()
 	if err != nil {
 		return ""
@@ -42,18 +53,50 @@ func findProjectDirSoft() string {
 	return found
 }
 
+// validateProjectDir resolves and checks an explicit --project directory. The
+// path is relative to the process cwd; it must exist and look like a project.
+func validateProjectDir(override string) string {
+	dir, err := filepath.Abs(override)
+	if err != nil {
+		fatalUsage("invalid --project directory %q: %v", override, err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		fatalUsage("--project directory %q does not exist", dir)
+	}
+	if !info.IsDir() {
+		fatalUsage("--project path %q is not a directory", dir)
+	}
+	if !hasProjectConfig(dir) && !hasBuildGo(dir) && !hasChildBuildGo(dir) {
+		fatalUsage("--project %q is not a vmake project (no .vmake/, build.go or */build.go found)", dir)
+	}
+	return dir
+}
+
 // searchProjectDir locates the enclosing project root. A start directory that
 // contains .vmake is itself a project. Otherwise the nearest ancestor that has
 // both .vmake and build.go wins over a nested package build.go; an ancestor
 // .vmake without its own build.go is only a container (for example a shared
-// config directory above several standalone projects) and is ignored. Only
-// after the upward walk finds no project .vmake does the nearest build.go win.
-// Finally the start directory may still be a project root whose packages are
-// child directories containing build.go.
+// config directory above several standalone projects) and is ignored. Then a
+// git root with its own build.go wins over the nearest package build.go: a
+// fresh clone whose root build.go has no .vmake yet must not turn a package
+// subdirectory into a nested project. Only after those searches does the
+// nearest build.go win. Finally the start directory may still be a project
+// root whose packages are child directories containing build.go.
 func searchProjectDir(dir string) (string, bool) {
 	start := dir
 	for current := start; ; {
 		if hasProjectConfig(current) && (current == start || hasBuildGo(current)) {
+			return current, true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	for current := start; ; {
+		if hasGitRoot(current) && hasBuildGo(current) {
 			return current, true
 		}
 		parent := filepath.Dir(current)
@@ -76,6 +119,11 @@ func searchProjectDir(dir string) (string, bool) {
 		return start, true
 	}
 	return "", false
+}
+
+func hasGitRoot(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil
 }
 
 func hasProjectConfig(dir string) bool {

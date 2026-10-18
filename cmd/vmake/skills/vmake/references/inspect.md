@@ -12,8 +12,13 @@ configuration match, and each needed package's active build directory; they do
 not verify action or output freshness.
 
 ```
-vmake inspect [--set [package/]option=value ...]
+vmake inspect [--set [package/]option=value ...] [-C <dir>]
 ```
+
+`-C`/`--project` is the global project-root override. It is resolved against
+the process cwd, must be an existing project directory (`.vmake/`, `build.go`,
+or an immediate child with `build.go`), and does not change the process cwd. An
+invalid selection exits 2.
 
 Buildscript stdout is discarded while the model is resolved, so stdout always
 contains exactly one JSON document even when `build.go` prints. On success
@@ -59,7 +64,9 @@ Failure (no `data`, exit 1):
   type, or an invalid choice.
 - `VMAKE_W_TARGET_DECLARE` — warning: one package's `OnBuild` failed while
   targets were declared. Its `targets` are omitted, `status` stays `"ok"`, exit
-  is 0, and a `fix` field is present.
+  is 0, and a `fix` field is present. Declaration is skipped when the package's
+  source tree is missing, so that state reports only `VMAKE_W_SOURCE_MISSING`
+  instead of a misleading declaration failure.
 - `VMAKE_W_SOURCE_MISSING` — warning: a needed package's expected source tree
   is missing or empty. `message` names the package and the URL/version to fetch
   when known; `package` carries the package name. `status` stays `"ok"` and exit
@@ -68,7 +75,11 @@ Failure (no `data`, exit 1):
   `.vmake_deps/<repo>/<owner>/src[/<member>]`, and plain local packages their
   package directory. `vmake query` and `vmake query targets` print the same
   `Warning: ...` lines to stderr for missing needed packages while their tree
-  or target list stays unchanged on stdout and they exit 0.
+  or target list stays unchanged on stdout and they exit 0. Query also leaves
+  such packages untargeted without running their dry-run `OnBuild`; a
+  target-declaration failure in a package whose source is present prints one
+  `Warning: cannot declare targets for <package>: <error>` and does not stop the
+  command.
 - `VMAKE_W_REPORT_UNREADABLE` — warning: `build/vmake-build.json` exists but
   cannot be read or parsed. `buildReportPresent` stays `true`,
   `buildReportState` is omitted, `status` stays `"ok"`, exit is 0, and `fix`
@@ -140,9 +151,12 @@ artifact and are not repeated. Static libraries are installed only with
 existing fields are unchanged.
 
 Targets are listed only for needed packages; a package pruned by `FilterDeps`
-has none. `files` keeps the declared globs; inspect does not expand them into
-source lists. Inspect does not build or install, so `output`, `installDir`, and
-`installPath` are predictions, not evidence that an artifact exists.
+has none. A needed package whose source tree is missing also has no targets,
+because inspect skips its dry-run `OnBuild` declaration and warns only with
+`VMAKE_W_SOURCE_MISSING`. `files` keeps the declared globs; inspect does not
+expand them into source lists. Inspect does not build or install, so `output`,
+`installDir`, and `installPath` are predictions, not evidence that an artifact
+exists.
 
 ## `--set` overrides
 

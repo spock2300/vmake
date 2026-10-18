@@ -505,16 +505,18 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 		}
 		if pkg.Needed {
 			pkg.BuildDir, pkg.BuildKey = inspectBuildDirFields(inspection.PkgDirs[name], node.IsLocal())
-			targets, err := inspectTargets(ctx, inspection, name, node)
-			if err != nil {
-				diagnostics = append(diagnostics, inspectDiagnostic{
-					Severity: "warning",
-					Code:     "VMAKE_W_TARGET_DECLARE",
-					Message:  fmt.Sprintf("cannot declare targets for %s: %v", name, err),
-					Fix:      "Fix the package OnBuild callback, then rerun vmake inspect.",
-				})
-			} else {
-				pkg.Targets = targets
+			if source.Present {
+				targets, err := inspectTargets(ctx, inspection, name, node)
+				if err != nil {
+					diagnostics = append(diagnostics, inspectDiagnostic{
+						Severity: "warning",
+						Code:     "VMAKE_W_TARGET_DECLARE",
+						Message:  fmt.Sprintf("cannot declare targets for %s: %v", name, err),
+						Fix:      "Fix the package OnBuild callback, then rerun vmake inspect.",
+					})
+				} else {
+					pkg.Targets = targets
+				}
 			}
 		}
 		data.Packages = append(data.Packages, pkg)

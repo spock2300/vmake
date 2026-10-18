@@ -1396,3 +1396,59 @@ func TestInspectCommandRegistration(t *testing.T) {
 		t.Fatalf("CLI reference missing inspect:\n%s", ref)
 	}
 }
+
+func TestInspectSkipsTargetDeclarationForMissingSource(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).AddDeps("lib:lib")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "lib", "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.OnPackage(func(p *api.Package) {
+		p.SetGit("https://example.invalid/lib.git")
+		p.AddVersion("1.0.0", "v1.0.0")
+	})
+	p.OnBuild(func(ctx *api.BuildContext) {
+		panic("declaration failure")
+	})
+}
+`)
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	if len(envelope.Diagnostics) != 1 || envelope.Diagnostics[0].Code != "VMAKE_W_SOURCE_MISSING" {
+		t.Fatalf("diagnostics = %+v, want only the source-missing warning", envelope.Diagnostics)
+	}
+	lib := inspectPackageNamed(t, envelope.Data, "lib")
+	if !lib.Needed || lib.SourcePresent || lib.Targets != nil {
+		t.Fatalf("lib package = %+v, want needed missing source without targets", lib)
+	}
+	if strings.Contains(stderr, "panic") || strings.Contains(stderr, "VMAKE_W_TARGET_DECLARE") {
+		t.Fatalf("stderr = %q, want only the source warning", stderr)
+	}
+	if stderr != "Warning: "+envelope.Diagnostics[0].Message+"\n" {
+		t.Fatalf("stderr = %q, want one warning line", stderr)
+	}
+	proj := inspectPackageNamed(t, envelope.Data, "proj")
+	if targets := proj.Targets; len(targets) != 1 || targets[0].Name != "app" {
+		t.Fatalf("proj targets = %+v, want app declared for its present source", targets)
+	}
+}

@@ -392,3 +392,86 @@ func Main(p *api.Package) {
 		t.Errorf("crypto expanded %d times, want once:\n%s", got, out)
 	}
 }
+
+func TestQueryToleratesMissingSourceTargetPanic(t *testing.T) {
+	project := writeQueryPanickingSourceProject(t, false)
+	state := t.TempDir()
+	for _, args := range [][]string{{"query"}, {"query", "targets"}} {
+		stdout, stderr, code := runInspectCommandWithState(t, project, state, args...)
+		if code != 0 {
+			t.Fatalf("%v exit = %d, want 0 (stderr %q)", args, code, stderr)
+		}
+		if !strings.Contains(stdout, "app (binary)") && !strings.Contains(stdout, "proj:app (binary)") {
+			t.Errorf("%v stdout is missing the declared root target:\n%s", args, stdout)
+		}
+		if strings.Contains(stdout, "lib (static)") {
+			t.Errorf("%v declared targets from an unmaterialized source tree:\n%s", args, stdout)
+		}
+		if strings.Contains(stderr, "panic") || strings.Contains(stderr, "cannot declare targets") {
+			t.Errorf("%v ran OnBuild for a package whose source is missing:\n%s", args, stderr)
+		}
+		if !strings.Contains(stderr, "Warning: package lib source is not materialized") {
+			t.Errorf("%v stderr is missing the source warning:\n%s", args, stderr)
+		}
+		if _, err := os.Stat(filepath.Join(project, ".vmake_deps")); !os.IsNotExist(err) {
+			t.Fatalf("%v fetched package sources: %v", args, err)
+		}
+	}
+}
+
+func TestQueryToleratesTargetDeclarationFailure(t *testing.T) {
+	project := writeQueryPanickingSourceProject(t, true)
+	state := t.TempDir()
+	for _, args := range [][]string{{"query"}, {"query", "targets"}} {
+		stdout, stderr, code := runInspectCommandWithState(t, project, state, args...)
+		if code != 0 {
+			t.Fatalf("%v exit = %d, want 0 (stderr %q)", args, code, stderr)
+		}
+		if !strings.Contains(stdout, "app (binary)") && !strings.Contains(stdout, "proj:app (binary)") {
+			t.Errorf("%v stdout is missing the declared root target:\n%s", args, stdout)
+		}
+		warning := "Warning: cannot declare targets for lib:"
+		if !strings.Contains(stderr, warning) {
+			t.Fatalf("%v stderr is missing %q:\n%s", args, warning, stderr)
+		}
+		if got := strings.Count(stderr, warning); got != 1 {
+			t.Errorf("%v wrote %d %q warnings, want 1:\n%s", args, got, warning, stderr)
+		}
+		if strings.Contains(stderr, "Error:") {
+			t.Errorf("%v failed instead of degrading:\n%s", args, stderr)
+		}
+	}
+}
+
+func writeQueryPanickingSourceProject(t *testing.T, materialize bool) string {
+	t.Helper()
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+    p.SetRoot(true)
+    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("app").SetKind(api.TargetBinary).AddDeps("lib:lib")
+    })
+}
+`)
+	libDir := filepath.Join(project, "lib")
+	pkgDecl := ""
+	if !materialize {
+		pkgDecl = `    p.OnPackage(func(p *api.Package) {
+        p.SetGit("https://example.invalid/lib.git")
+        p.AddVersion("1.0.0", "v1.0.0")
+    })
+`
+	}
+	writeExtensionFile(t, filepath.Join(libDir, "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+`+pkgDecl+`    p.OnBuild(func(ctx *api.BuildContext) {
+        panic("declaration failure")
+    })
+}
+`)
+	return project
+}

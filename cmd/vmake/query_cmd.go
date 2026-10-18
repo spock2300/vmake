@@ -61,6 +61,7 @@ func runQueryTargets(cmd *cobra.Command, args []string) {
 	fatalErr(err)
 	printInspectSourceWarnings(ctx, inspection)
 
+	warned := make(map[string]bool)
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if node == nil || !node.IsLocal() || node.Pkg == nil {
@@ -69,7 +70,11 @@ func runQueryTargets(cmd *cobra.Command, args []string) {
 		if inspection.Needed != nil && !inspection.Needed[name] {
 			continue
 		}
-		kinds := collectTargetKinds(name, inspection.PkgDirs[name], ctx, inspection.PackageToolchains[name], inspection.GlobalValues)
+		kinds, err := collectTargetKinds(name, inspection.PkgDirs[name], ctx, inspection.PackageToolchains[name], inspection.GlobalValues)
+		if err != nil {
+			warnTargetDeclare(warned, name, err)
+			continue
+		}
 		for _, k := range kinds {
 			fmt.Printf("%s:%s (%s)\n", name, k.name, k.kind)
 		}
@@ -120,7 +125,7 @@ func runQuery(cmd *cobra.Command, args []string) {
 	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
 	fatalErr(err)
 	printInspectSourceWarnings(ctx, inspection)
-	workDir, _ := os.Getwd()
+	workDir := ctx.WorkDir
 
 	graph := ctx.DepGraph.Packages
 	order := ctx.Resolver.GetOrder()
@@ -162,6 +167,7 @@ func runQuery(cmd *cobra.Command, args []string) {
 		workDir: workDir,
 		visited: make(map[string]bool),
 		kinds:   make(map[string][]targetKindInfo),
+		warned:  make(map[string]bool),
 	}
 	printed := 0
 	for _, root := range roots {
@@ -199,15 +205,27 @@ type treePrinter struct {
 
 	visited map[string]bool
 	kinds   map[string][]targetKindInfo
+	warned  map[string]bool
 }
 
 func (p *treePrinter) targetKinds(name string) []targetKindInfo {
 	if kinds, ok := p.kinds[name]; ok {
 		return kinds
 	}
-	kinds := collectTargetKinds(name, p.pkgDirs[name], p.ctx, p.tcs[name], p.values)
+	kinds, err := collectTargetKinds(name, p.pkgDirs[name], p.ctx, p.tcs[name], p.values)
+	if err != nil {
+		warnTargetDeclare(p.warned, name, err)
+	}
 	p.kinds[name] = kinds
 	return kinds
+}
+
+func warnTargetDeclare(warned map[string]bool, name string, err error) {
+	if warned[name] {
+		return
+	}
+	warned[name] = true
+	fmt.Fprintf(os.Stderr, "Warning: cannot declare targets for %s: %v\n", name, err)
 }
 
 func (p *treePrinter) print(name, prefix string, isRoot, isLast bool) {
@@ -315,18 +333,23 @@ type targetKindInfo struct {
 	kind string
 }
 
-func collectTargetKinds(name string, dirs *api.PkgDirs, ctx *RuntimeContext, tc *toolchain.Toolchain, globalValues map[string]any) []targetKindInfo {
+func collectTargetKinds(name string, dirs *api.PkgDirs, ctx *RuntimeContext, tc *toolchain.Toolchain, globalValues map[string]any) ([]targetKindInfo, error) {
 	node := ctx.DepGraph.Packages[name]
 	if node == nil || node.Pkg == nil {
-		return nil
+		return nil, nil
+	}
+	if !inspectSourcePresent(ctx, name, node) {
+		return nil, nil
 	}
 
 	buildCtx, err := pipeline.DeclareTargets(ctx, name, dirs, tc, globalValues)
-	fatalErr(err)
+	if err != nil {
+		return nil, err
+	}
 
 	targets := buildCtx.GetTargets()
 	if len(targets) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	result := make([]targetKindInfo, 0, len(targets))
@@ -347,7 +370,7 @@ func collectTargetKinds(name string, dirs *api.PkgDirs, ctx *RuntimeContext, tc 
 			break
 		}
 	}
-	return result
+	return result, nil
 }
 
 func formatOptions(ctx *RuntimeContext, name string, globalValues map[string]any) string {

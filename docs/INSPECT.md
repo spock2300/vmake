@@ -18,8 +18,13 @@ does not predict which targets are up to date. It never writes the compile
 database or build report.
 
 ```
-vmake inspect [--set [package/]option=value ...]
+vmake inspect [--set [package/]option=value ...] [-C <dir>]
 ```
+
+`-C`/`--project` is the global project-root override: it resolves against the
+process cwd, must be an existing directory with `.vmake/`, `build.go`, or an
+immediate child containing `build.go`, and is used as the project root without
+changing the process cwd. An invalid selection is a usage error (exit 2).
 
 `--set` may be repeated. Each override applies to this run only: the in-memory
 configuration is evaluated as if the project had those values, but nothing is
@@ -114,6 +119,12 @@ and one warning is appended:
 }
 ```
 
+Target declaration is skipped when a needed package's source tree is missing
+(see `VMAKE_W_SOURCE_MISSING` below): the package's targets are omitted and no
+`VMAKE_W_TARGET_DECLARE` warning is produced, because a dry-run `OnBuild`
+failure in that state reflects the absent tree, not a broken callback. Only the
+source-missing warning is reported for such a package.
+
 A needed package whose expected source tree is missing or empty gets one
 warning. Inspect checks the tree without running git, touching the network,
 creating `<package>/src` links, or writing `.vmake_deps`; a missing tree never
@@ -138,7 +149,15 @@ stderr.
 
 The same non-fetching check backs `vmake query` and `vmake query targets`: each
 prints one `Warning: ...` line per missing needed package to stderr, keeps the
-tree or target list unchanged on stdout, exits 0, and does not fetch.
+tree or target list unchanged on stdout, exits 0, and does not fetch. Query also
+skips dry-run target declaration for packages whose source tree is missing, so
+they keep their untargeted tree label (or are omitted from `query targets`)
+instead of surfacing an `OnBuild` panic caused only by the absent tree. For
+packages whose source is present, a target-declaration failure does not abort
+query either: it prints one
+`Warning: cannot declare targets for <package>: <error>` line to stderr, omits
+that package's targets or kind label, and continues with the remaining
+packages. The warning is emitted once per package.
 
 `build/vmake-build.json` may exist but be unreadable or invalid JSON (for
 example a truncated file left by an interrupted writer, or a hand-edited file).
@@ -229,7 +248,7 @@ removes them again. Inspect never creates, updates, or repairs either file.
 | `toolchain` | string? | Per-package toolchain, present for needed packages |
 | `options` | object? | Declared options of this package with effective values (global declarations included); omitted when none |
 | `deps` | array | Package dependency names, sorted; always present |
-| `targets` | array? | Declared targets; present only for needed packages and omitted when the package declares none |
+| `targets` | array? | Declared targets; present only for needed packages and omitted when the package declares none or its source tree is missing |
 
 `buildDir` comes from the same layout used by `RunBuild`, so it names the
 directory the next build would use for the current mode, options, flags,
@@ -280,9 +299,12 @@ install fields are additive to schemaVersion 1; existing fields are unchanged.
 Targets are listed only for needed packages. A package pruned by `FilterDeps`
 (for example a conditional or test-only package that is disabled in the current
 configuration) has no `targets`, even though it remains in `packages` and the
-graph. `files` keeps the declared globs; inspect does not expand them to concrete
-files. Inspect does not build or install, so `output`, `installDir`, and
-`installPath` are predictions, not evidence that an artifact exists.
+graph. A needed package whose source tree is missing also has no `targets`:
+inspect does not run its dry-run `OnBuild` declaration, and the only warning is
+`VMAKE_W_SOURCE_MISSING`. `files` keeps the declared globs; inspect does not
+expand them to concrete files. Inspect does not build or install, so `output`,
+`installDir`, and `installPath` are predictions, not evidence that an artifact
+exists.
 
 ## Determinism
 

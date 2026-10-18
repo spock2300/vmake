@@ -49,6 +49,8 @@ var preReportValueFlags = map[string]bool{
 	"--prefix":       true,
 	"-p":             true,
 	"--install-type": true,
+	"--project":      true,
+	"-C":             true,
 }
 
 func detectPreReportJSON(args []string) *preReportRequest {

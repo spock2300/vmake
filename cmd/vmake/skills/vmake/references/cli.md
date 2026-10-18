@@ -4,7 +4,7 @@ Generated from the live command tree at install time, so installed
 extension plugin commands appear here too. For plugin details, run
 `vmake <plugin> --help`.
 
-`vmake [--quiet -q --verbose -v --very-verbose -V --yes -y]` - VMake - A Go-based C/C++ build system
+`vmake [--project <value> -C --quiet -q --verbose -v --very-verbose -V --yes -y]` - VMake - A Go-based C/C++ build system
   `vmake build [--explain --install -i --install-type <value> --jobs <value> -j --json --keep-going -k --manifest <value> --mode <value> --output <value> --prefix <value> -p --tests --toolchain <value>]` - Build the project
   `vmake cache` - Inspect and remove shared git object caches
     `vmake cache list` - List cached upstream repositories

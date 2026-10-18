@@ -54,11 +54,14 @@ func resetResolveTestGlobals(t *testing.T) {
 	t.Helper()
 	oldProjectDir := cachedProjectDir
 	oldVmakeDir := vmakeDir
+	oldOverride := projectOverride
 	cachedProjectDir = ""
 	vmakeDir = t.TempDir()
+	projectOverride = ""
 	t.Cleanup(func() {
 		cachedProjectDir = oldProjectDir
 		vmakeDir = oldVmakeDir
+		projectOverride = oldOverride
 	})
 	t.Setenv("VMAKE_CACHE", t.TempDir())
 }
