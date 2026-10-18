@@ -29,10 +29,12 @@ var testCmd = &cobra.Command{
 	Short: "Build and run test targets",
 	Long: `Build the project's test targets and run their native test binaries.
 
-Test targets are default binary targets declared with SetTest(true). Before
-building, the target platform is checked: vmake test refuses to execute tests
-for cross, bare-metal, or triple-configured targets and points at
-'vmake build --tests', which builds them without running them.
+Test targets are default binary targets declared with SetTest(true). vmake
+first checks whether any runnable test target is declared; when none is, it
+skips the build and succeeds (or fails with --require-tests). When tests exist,
+the target platform is checked: vmake test refuses to execute tests for cross,
+bare-metal, or triple-configured targets and points at 'vmake build --tests',
+which builds them without running them.
 
 With -k/--keep-going a failed build does not abort testing. Partial mode runs
 only the test targets built by this invocation; test targets that were not
@@ -169,6 +171,7 @@ func countRunnableTestTargets(ctx *RuntimeContext) (int, bool) {
 	}
 	scriptfs.TakeBlockedWrites()
 	count := 0
+	blocked := false
 	for _, name := range ctx.Resolver.GetOrder() {
 		if !inspection.Needed[name] {
 			continue
@@ -187,6 +190,7 @@ func countRunnableTestTargets(ctx *RuntimeContext) (int, bool) {
 		}
 		if err != nil {
 			if strings.Contains(err.Error(), "read-only inspection:") {
+				blocked = true
 				continue
 			}
 			return 0, false
@@ -197,7 +201,27 @@ func countRunnableTestTargets(ctx *RuntimeContext) (int, bool) {
 			}
 		}
 	}
+	if blocked && count == 0 && neededPackagesDeclareTests(ctx, inspection) {
+		return 0, false
+	}
 	return count, true
+}
+
+func neededPackagesDeclareTests(ctx *RuntimeContext, inspection *pipeline.Inspection) bool {
+	for name := range inspection.Needed {
+		node := ctx.DepGraph.Packages[name]
+		if node == nil || node.Source == nil || node.Source.Dir == "" {
+			return true
+		}
+		data, err := os.ReadFile(filepath.Join(node.Source.Dir, "build.go"))
+		if err != nil {
+			return true
+		}
+		if strings.Contains(string(data), "SetTest(") {
+			return true
+		}
+	}
+	return false
 }
 
 type testResult struct {
