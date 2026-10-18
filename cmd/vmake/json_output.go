@@ -11,6 +11,7 @@ import (
 
 	"github.com/spock2300/vmake/internal/fs"
 	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/version"
 )
 
 const jsonOutputSchemaVersion = 1
@@ -34,6 +35,17 @@ type checkJSONData struct {
 	Caveats           []string `json:"caveats,omitempty"`
 	UpToDate          int      `json:"upToDate"`
 	TargetsTotal      int      `json:"targetsTotal"`
+	VMakeVersion      string   `json:"vmakeVersion,omitempty"`
+	VMakeCommit       string   `json:"vmakeCommit,omitempty"`
+}
+
+// MarshalJSON stamps the running binary's identity onto every check document.
+// Check data has no build report, so this is the only place it can identify the
+// vmake binary that produced the plan.
+func (d checkJSONData) MarshalJSON() ([]byte, error) {
+	d.VMakeVersion, d.VMakeCommit = version.Version, version.GitCommit
+	type plan checkJSONData
+	return json.Marshal(plan(d))
 }
 
 // checkJSONEnvelope is the machine document for `vmake build --check`. Unlike

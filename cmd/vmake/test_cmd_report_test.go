@@ -198,6 +198,21 @@ func TestTestCommandNoTargetsSucceeds(t *testing.T) {
 	}
 }
 
+func TestTestReportProvenance(t *testing.T) {
+	project := writeTestCommandProject(t, "")
+	revision := initProvenanceGitRepo(t, project)
+
+	stdout, stderr, code := runBuildCommand(t, project, "test")
+	if code != 0 {
+		t.Fatalf("test exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	report := loadTestReport(t, project)
+	if report.Command != reportCommandTest || report.Status != "succeeded" {
+		t.Fatalf("test report = %+v", report)
+	}
+	assertReportProvenance(t, report, revision, false)
+}
+
 func TestTestCommandRequireTestsFailsWithNoTargets(t *testing.T) {
 	project := writeTestCommandProject(t, "")
 	buildReportSnapshot := buildAndSnapshotBuildReport(t, project)

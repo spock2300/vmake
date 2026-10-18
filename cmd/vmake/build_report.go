@@ -18,12 +18,15 @@ import (
 	"sync"
 	"time"
 
+	iexec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/internal/gitcmd"
 	"github.com/spock2300/vmake/internal/jsonio"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
+	"github.com/spock2300/vmake/pkg/version"
 )
 
 const (
@@ -88,6 +91,10 @@ type buildReport struct {
 	Root            string                    `json:"root"`
 	Status          string                    `json:"status"`
 	Command         string                    `json:"command,omitempty"`
+	VMakeVersion    string                    `json:"vmakeVersion,omitempty"`
+	VMakeCommit     string                    `json:"vmakeCommit,omitempty"`
+	ProjectRevision string                    `json:"projectRevision,omitempty"`
+	ProjectDirty    *bool                     `json:"projectDirty,omitempty"`
 	Started         string                    `json:"started"`
 	Finished        string                    `json:"finished"`
 	DurationMs      int64                     `json:"durationMs"`
@@ -459,8 +466,52 @@ func beginBuildReport(command string) (*buildReport, error) {
 		return nil, err
 	}
 	root := findProjectDir()
-	r := &buildReport{SchemaVersion: 2, BuildID: hex.EncodeToString(id), Root: root, Status: "running", Command: command, Started: time.Now().UTC().Format(time.RFC3339Nano), Targets: []build.TargetResult{}, Tests: []buildTestResult{}, Artifacts: []buildArtifact{}, Diagnostics: []buildDiagnostic{}, Global: map[string]any{}, Packages: map[string]map[string]any{}, location: reportPathFor(root, command)}
+	r := &buildReport{SchemaVersion: 2, BuildID: hex.EncodeToString(id), Root: root, Status: "running", Command: command, VMakeVersion: version.Version, VMakeCommit: version.GitCommit, Started: time.Now().UTC().Format(time.RFC3339Nano), Targets: []build.TargetResult{}, Tests: []buildTestResult{}, Artifacts: []buildArtifact{}, Diagnostics: []buildDiagnostic{}, Global: map[string]any{}, Packages: map[string]map[string]any{}, location: reportPathFor(root, command)}
+	r.ProjectRevision, r.ProjectDirty = projectProvenance(root)
 	return r, jsonio.Save(r.reportPath(), r)
+}
+
+// projectProvenance records the project worktree revision at report start.
+// Git is optional: any failure (not a worktree, unsupported checkout, missing
+// git) omits the fields instead of affecting the build.
+func projectProvenance(root string) (string, *bool) {
+	revision, err := iexec.RunWithOptions("git", gitcmd.Args("rev-parse", "HEAD"), iexec.RunOptions{Dir: root, Quiet: true})
+	if err != nil {
+		return "", nil
+	}
+	head := strings.TrimSpace(string(revision))
+	if head == "" {
+		return "", nil
+	}
+	status, err := iexec.RunWithOptions("git", gitcmd.Args(projectStatusArgs()...), iexec.RunOptions{
+		Dir:   root,
+		Quiet: true,
+		Env:   map[string]string{"GIT_OPTIONAL_LOCKS": "0"},
+	})
+	if err != nil {
+		return head, nil
+	}
+	dirty := strings.TrimSpace(string(status)) != ""
+	return head, &dirty
+}
+
+// projectStatusArgs ignores vmake's own state and output directories so a
+// checkout stays clean even when the project does not gitignore them. Every
+// other change, including untracked source, still marks the report dirty.
+func projectStatusArgs() []string {
+	args := []string{"status", "--porcelain", "--", "."}
+	for _, path := range []string{
+		"build",
+		"install",
+		".vmake/_locks",
+		".vmake/layout",
+		".vmake/vmake.lock",
+		".vmake_deps",
+		"vmake_deps",
+	} {
+		args = append(args, ":(exclude)"+path)
+	}
+	return args
 }
 
 func (r *buildReport) finish(result *error, warnings []buildDiagnostic) {

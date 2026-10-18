@@ -593,6 +593,42 @@ func TestInspectBuildDirFields(t *testing.T) {
 	}
 }
 
+func TestInspectReportStateProvenance(t *testing.T) {
+	project := writeInspectFreshnessProject(t)
+	revision := initProvenanceGitRepo(t, project)
+
+	if _, stderr, code := runInspectCommand(t, project, "build"); code != 0 {
+		t.Fatalf("build exit = %d, stderr = %q", code, stderr)
+	}
+	buildReport := loadBuildReport(t, project)
+	assertReportProvenance(t, buildReport, revision, false)
+
+	if _, stderr, code := runInspectCommand(t, project, "test"); code != 0 {
+		t.Fatalf("test exit = %d, stderr = %q", code, stderr)
+	}
+	testReport := loadTestReport(t, project)
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	data := decodeInspectEnvelope(t, stdout).Data
+	if data == nil || data.BuildReportState == nil || data.TestReportState == nil {
+		t.Fatalf("inspect report state missing: %+v", data)
+	}
+	buildState, testState := data.BuildReportState, data.TestReportState
+	if buildState.VMakeVersion != buildReport.VMakeVersion || buildState.VMakeCommit != buildReport.VMakeCommit ||
+		buildState.ProjectRevision != buildReport.ProjectRevision || buildState.ProjectDirty == nil ||
+		*buildState.ProjectDirty != *buildReport.ProjectDirty {
+		t.Fatalf("buildReportState provenance = %+v, report provenance = %+v", buildState, buildReport)
+	}
+	if testState.VMakeVersion != testReport.VMakeVersion || testState.VMakeCommit != testReport.VMakeCommit ||
+		testState.ProjectRevision != testReport.ProjectRevision || testState.ProjectDirty == nil ||
+		testReport.ProjectDirty == nil || *testState.ProjectDirty != *testReport.ProjectDirty {
+		t.Fatalf("testReportState provenance = %+v, report provenance = %+v", testState, testReport)
+	}
+}
+
 func TestInspectBuildReportConfigMatch(t *testing.T) {
 	project := filepath.Join(t.TempDir(), "proj")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main

@@ -22,6 +22,8 @@ the installation manifest (`install/manifest.json`). `clean`, `distclean`, and
 | `configFile`, `configSha256` | Active configuration name and SHA-256 of the exact configuration bytes used |
 | `global`, `packages` | Effective global values and per-package values for the packages that participated |
 | `toolchain`, `mode` | Effective toolchain and mode |
+| `vmakeVersion`, `vmakeCommit` | Version and abbreviated VCS commit embedded in the running vmake binary (`dev`/`unknown` when unavailable); captured when the report begins and preserved by finish/partial writes |
+| `projectRevision`, `projectDirty` | Full git HEAD and whether the project tree had uncommitted changes when the report began. Both are omitted outside a supported git worktree. The dirty scan excludes vmake's own `build/`, `install/`, `.vmake/_locks/`, `.vmake/layout`, `.vmake/vmake.lock`, `.vmake_deps/`, and `vmake_deps/` paths but counts any other untracked file, including source. Recorded observations, not security attestations |
 | `compileDatabase` | Absolute path to the compilation database, or empty |
 | `targets` | Executed default targets: `package`, `target`, `kind`, `outputs`, `status`, `durationMs`. On failure only targets that completed before the failure are listed. A failure outside target execution (for example a package-level `OnBuild` CMake configure failure) has no target attribution: `diagnostics[].target` stays empty and `targets[]` may stay empty |
 | `tests` | Always an array. For `vmake test`, one entry per discovered test target: an executed test has `name`, `package`, `target`, `passed`, `elapsedMs`, `exitCode`, optional `signal` (set when a signal terminated the process), and `output`. After a `-k` build failure, a declared target that did not run has `notRun: true`, `skipReason` (`build failed`, `target not built`, `binary missing`, or `unsupported platform`), `passed: false`, and no output or signal. Partial mode executes only targets recorded `built` or `up-to-date` in this invocation's `targets`; a stale binary from an earlier build is recorded as `target not built` and never run |
@@ -138,13 +140,20 @@ evaluates action signatures/records without compiling, linking, running `void`
 callbacks or post-link steps, writing action records, installing, or writing
 `build/vmake-build.json`/`compile_commands.json`. Generator rules and
 config-header generation are skipped, so sources produced by generators may be
-undercounted; check is a plan, not a guarantee. `workPending` means
-`plannedCompiles + plannedLinks > 0`; `plannedCallbacks` counts default `void`
-targets whose callbacks would run. Exit is 0 when planning succeeds even with
-pending work, 1 on planning errors, 2 for `--check` with `--install`/`--tests`.
-Human output is one line; `--json` emits `{schemaVersion:1,command:"check",
-status,data:{workPending,plannedCompiles,plannedLinks,plannedCallbacks,
-upToDate,targetsTotal},diagnostics}`.
+undercounted; check is a plan, not a guarantee. A default target with generator
+rules or in a package with a generated config header counts once in
+`plannedGenerators`, even with several rules, and the human plan line ends with
+`; N generated-input target(s) not checked` in both pending and up-to-date
+forms. `workPending` means `plannedCompiles + plannedLinks > 0`;
+`plannedCallbacks` counts default `void` targets whose callbacks would run.
+Exit is 0 when planning succeeds even with pending work, 1 on planning errors,
+2 for `--check` with `--install`/`--tests`. Human output is one line; `--json`
+emits `{schemaVersion:1,command:"check",status,data:{workPending,
+plannedCompiles,plannedLinks,plannedCallbacks,plannedGenerators,caveats,
+upToDate,targetsTotal,vmakeVersion,vmakeCommit},diagnostics}`;
+`plannedGenerators`/`caveats` are omitted when zero/empty, and
+`vmakeVersion`/`vmakeCommit` identify the running binary on every check
+document (check writes no build report).
 
 ## `--json`
 

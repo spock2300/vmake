@@ -83,6 +83,10 @@ type inspectBuildReportState struct {
 	Status                 string          `json:"status"`
 	BuildID                string          `json:"buildId"`
 	Command                string          `json:"command,omitempty"`
+	VMakeVersion           string          `json:"vmakeVersion,omitempty"`
+	VMakeCommit            string          `json:"vmakeCommit,omitempty"`
+	ProjectRevision        string          `json:"projectRevision,omitempty"`
+	ProjectDirty           *bool           `json:"projectDirty,omitempty"`
 	Started                string          `json:"started"`
 	Finished               string          `json:"finished"`
 	Mode                   string          `json:"mode,omitempty"`
@@ -710,16 +714,20 @@ func loadInspectReportState(path, configDigest, mode, toolchain string, hypothet
 		return false, nil, nil
 	}
 	var report struct {
-		Status       string          `json:"status"`
-		BuildID      string          `json:"buildId"`
-		Command      string          `json:"command"`
-		Mode         string          `json:"mode"`
-		Toolchain    string          `json:"toolchain"`
-		Started      string          `json:"started"`
-		Finished     string          `json:"finished"`
-		ConfigSHA256 string          `json:"configSha256"`
-		Summary      json.RawMessage `json:"summary"`
-		Error        string          `json:"error"`
+		Status          string          `json:"status"`
+		BuildID         string          `json:"buildId"`
+		Command         string          `json:"command"`
+		VMakeVersion    string          `json:"vmakeVersion"`
+		VMakeCommit     string          `json:"vmakeCommit"`
+		ProjectRevision string          `json:"projectRevision"`
+		ProjectDirty    *bool           `json:"projectDirty"`
+		Mode            string          `json:"mode"`
+		Toolchain       string          `json:"toolchain"`
+		Started         string          `json:"started"`
+		Finished        string          `json:"finished"`
+		ConfigSHA256    string          `json:"configSha256"`
+		Summary         json.RawMessage `json:"summary"`
+		Error           string          `json:"error"`
 	}
 	data, err := os.ReadFile(path)
 	if err == nil && !strings.HasPrefix(strings.TrimSpace(string(data)), "{") {
@@ -743,6 +751,10 @@ func loadInspectReportState(path, configDigest, mode, toolchain string, hypothet
 		Status:                 report.Status,
 		BuildID:                report.BuildID,
 		Command:                report.Command,
+		VMakeVersion:           report.VMakeVersion,
+		VMakeCommit:            report.VMakeCommit,
+		ProjectRevision:        report.ProjectRevision,
+		ProjectDirty:           report.ProjectDirty,
 		Started:                report.Started,
 		Finished:               report.Finished,
 		Mode:                   report.Mode,

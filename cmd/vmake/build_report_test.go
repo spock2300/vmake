@@ -19,6 +19,7 @@ import (
 	"github.com/spock2300/vmake/internal/jsonio"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
+	"github.com/spock2300/vmake/pkg/version"
 )
 
 func TestBuildReportActualInstallsAndInvalidation(t *testing.T) {
@@ -307,6 +308,219 @@ func loadBuildReport(t *testing.T, project string) buildReport {
 		t.Fatal(err)
 	}
 	return report
+}
+
+func initProvenanceGitRepo(t *testing.T, project string) string {
+	return commitProvenanceGitRepo(t, project, true)
+}
+
+func commitProvenanceGitRepo(t *testing.T, project string, ignoreGenerated bool) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	if ignoreGenerated {
+		writeExtensionFile(t, filepath.Join(project, ".gitignore"), ".vmake/\n.vmake_deps/\nbuild/\ninstall/\n")
+	}
+	git := func(args ...string) string {
+		t.Helper()
+		commandArgs := append([]string{
+			"-c", "user.name=vmake test",
+			"-c", "user.email=vmake@example.invalid",
+			"-c", "commit.gpgsign=false",
+		}, args...)
+		cmd := exec.Command("git", commandArgs...)
+		cmd.Dir = project
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q")
+	git("add", ".")
+	git("commit", "-q", "-m", "initial")
+	return git("rev-parse", "HEAD")
+}
+
+func assertReportProvenance(t *testing.T, report buildReport, revision string, dirty bool) {
+	t.Helper()
+	if report.VMakeVersion != version.Version || report.VMakeCommit != version.GitCommit {
+		t.Fatalf("vmake provenance = %q/%q, want %q/%q",
+			report.VMakeVersion, report.VMakeCommit, version.Version, version.GitCommit)
+	}
+	if report.ProjectRevision != revision {
+		t.Fatalf("projectRevision = %q, want %q", report.ProjectRevision, revision)
+	}
+	if report.ProjectDirty == nil || *report.ProjectDirty != dirty {
+		t.Fatalf("projectDirty = %v, want %v", report.ProjectDirty, dirty)
+	}
+}
+
+func TestBuildReportProvenanceGitWorktree(t *testing.T) {
+	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
+	revision := initProvenanceGitRepo(t, project)
+
+	stdout, stderr, code := runBuildCommand(t, project, "build")
+	if code != 0 {
+		t.Fatalf("build exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	assertReportProvenance(t, loadBuildReport(t, project), revision, false)
+}
+
+func TestBuildReportProvenanceCleanTempRepo(t *testing.T) {
+	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
+	revision := commitProvenanceGitRepo(t, project, false)
+
+	stdout, stderr, code := runBuildCommand(t, project, "build")
+	if code != 0 {
+		t.Fatalf("build exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	assertReportProvenance(t, loadBuildReport(t, project), revision, false)
+}
+
+func TestCheckJSONDataCarriesVMakeProvenance(t *testing.T) {
+	var encoded bytes.Buffer
+	document := &checkJSONEnvelope{
+		SchemaVersion: jsonOutputSchemaVersion,
+		Command:       reportCommandCheck,
+		Status:        "ok",
+		Data:          &checkJSONData{TargetsTotal: 1},
+	}
+	if err := encodeJSONDocument(&encoded, document); err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Data struct {
+			VMakeVersion string `json:"vmakeVersion"`
+			VMakeCommit  string `json:"vmakeCommit"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(encoded.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Data.VMakeVersion != version.Version || decoded.Data.VMakeCommit != version.GitCommit {
+		t.Fatalf("check provenance = %q/%q, want %q/%q",
+			decoded.Data.VMakeVersion, decoded.Data.VMakeCommit, version.Version, version.GitCommit)
+	}
+}
+
+func TestProjectProvenanceIgnoresGeneratedPaths(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), "package main\n")
+	revision := commitProvenanceGitRepo(t, project, false)
+	for _, path := range []string{
+		"build/key/object.o",
+		"install/bin/app",
+		".vmake/_locks/project.lock",
+		".vmake/layout",
+		".vmake/vmake.lock",
+		".vmake_deps/local/pkg/file.c",
+		"vmake_deps/old/file.c",
+	} {
+		writeExtensionFile(t, filepath.Join(project, filepath.FromSlash(path)), "generated")
+	}
+
+	head, dirty := projectProvenance(project)
+	if head != revision {
+		t.Fatalf("revision = %q, want %q", head, revision)
+	}
+	if dirty == nil || *dirty {
+		t.Fatalf("generated paths marked the worktree dirty: %v", dirty)
+	}
+
+	writeExtensionFile(t, filepath.Join(project, "notes.c"), "untracked source\n")
+	if _, dirty = projectProvenance(project); dirty == nil || !*dirty {
+		t.Fatalf("untracked source did not mark the worktree dirty: %v", dirty)
+	}
+}
+
+func TestBuildReportProvenanceDirtyWorktree(t *testing.T) {
+	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
+	revision := initProvenanceGitRepo(t, project)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n// dirty\n")
+
+	stdout, stderr, code := runBuildCommand(t, project, "build")
+	if code != 0 {
+		t.Fatalf("build exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	assertReportProvenance(t, loadBuildReport(t, project), revision, true)
+}
+
+func TestBuildReportProvenanceSurvivesPartialFailure(t *testing.T) {
+	project := writeBuildReportProject(t, "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
+	revision := initProvenanceGitRepo(t, project)
+
+	stdout, stderr, code := runBuildCommand(t, project, "build")
+	if code != 1 {
+		t.Fatalf("build exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	report := loadBuildReport(t, project)
+	if report.Status != "failed" || report.Summary == nil {
+		t.Fatalf("partial failure report = %+v", report)
+	}
+	assertReportProvenance(t, report, revision, false)
+}
+
+func TestBuildReportProvenanceOmittedOutsideGit(t *testing.T) {
+	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
+	if _, err := exec.LookPath("git"); err == nil {
+		if exec.Command("git", "-C", project, "rev-parse", "--show-toplevel").Run() == nil {
+			t.Skip("temporary project is inside a git worktree")
+		}
+	}
+
+	stdout, stderr, code := runBuildCommand(t, project, "build")
+	if code != 0 {
+		t.Fatalf("build exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	report := loadBuildReport(t, project)
+	if report.VMakeVersion != version.Version || report.VMakeCommit != version.GitCommit {
+		t.Fatalf("vmake provenance = %q/%q, want %q/%q",
+			report.VMakeVersion, report.VMakeCommit, version.Version, version.GitCommit)
+	}
+	if report.ProjectRevision != "" || report.ProjectDirty != nil {
+		t.Fatalf("non-git project recorded revision/dirty: %+v", report)
+	}
+	raw, err := os.ReadFile(reportPath(project))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"projectRevision", "projectDirty"} {
+		if _, ok := document[field]; ok {
+			t.Fatalf("non-git report contains %s:\n%s", field, raw)
+		}
+	}
+}
+
+func TestBuildReportProvenanceRecordedAtBegin(t *testing.T) {
+	resetResolveTestGlobals(t)
+	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
+	revision := initProvenanceGitRepo(t, project)
+	t.Chdir(project)
+
+	report, err := beginBuildReport(reportCommandBuild)
+	if err != nil {
+		t.Fatal(err)
+	}
+	running := loadBuildReport(t, project)
+	if running.Status != "running" {
+		t.Fatalf("running report status = %q", running.Status)
+	}
+	assertReportProvenance(t, running, revision, false)
+
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n// dirty after begin\n")
+	finishErr := errors.New("stop after begin")
+	report.finish(&finishErr, nil)
+	finished := loadBuildReport(t, project)
+	if finished.Status != "failed" {
+		t.Fatalf("finished report status = %q", finished.Status)
+	}
+	assertReportProvenance(t, finished, revision, false)
 }
 
 func TestBuildReportV2Success(t *testing.T) {
