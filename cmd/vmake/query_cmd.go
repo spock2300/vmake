@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
@@ -28,7 +29,11 @@ func newQueryCmd() *cobra.Command {
 Each package is expanded once; later occurrences are printed as "<label> (*)".
 A package is labelled by its primary target as "<pkg> (<kind>)", or
 "<pkg>:<target> (<kind>)" when that target is named differently. Extra targets
-are appended to the line as "+<target> (<kind>)".`,
+are appended to the line as "+<target> (<kind>)".
+
+Dry-run target declaration runs with interpreted-script writes disabled; a
+callback that writes reports a warning on stderr and that package's targets are
+omitted, without modifying the project.`,
 		Run: runQuery,
 	}
 	cmd.AddCommand(newQueryTargetsCmd())
@@ -44,6 +49,11 @@ func newQueryTargetsCmd() *cobra.Command {
 	}
 }
 
+func queryReadOnly() func() {
+	scriptfs.SetReadOnly(true)
+	return func() { scriptfs.SetReadOnly(false) }
+}
+
 func newQueryConfigCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "config <pkg>",
@@ -55,6 +65,7 @@ func newQueryConfigCmd() *cobra.Command {
 
 func runQueryTargets(cmd *cobra.Command, args []string) {
 	vlog.SetLevel(vlog.Quiet)
+	defer queryReadOnly()()
 
 	ctx := resolveToConfig(false)
 	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
@@ -83,6 +94,7 @@ func runQueryTargets(cmd *cobra.Command, args []string) {
 
 func runQueryConfig(cmd *cobra.Command, args []string) {
 	vlog.SetLevel(vlog.Quiet)
+	defer queryReadOnly()()
 
 	name := args[0]
 	ctx := resolveToConfig(false)
@@ -119,6 +131,7 @@ func runQueryConfig(cmd *cobra.Command, args []string) {
 
 func runQuery(cmd *cobra.Command, args []string) {
 	vlog.SetLevel(vlog.Quiet)
+	defer queryReadOnly()()
 
 	ctx := resolveToConfig(false)
 
@@ -225,7 +238,12 @@ func warnTargetDeclare(warned map[string]bool, name string, err error) {
 		return
 	}
 	warned[name] = true
-	fmt.Fprintf(os.Stderr, "Warning: cannot declare targets for %s: %v\n", name, err)
+	message := err.Error()
+	if strings.Contains(message, "read-only inspection:") {
+		message = strings.ReplaceAll(message, "panic: ", "")
+		message += " (guard generated-file work with p.DryRun())"
+	}
+	fmt.Fprintf(os.Stderr, "Warning: cannot declare targets for %s: %s\n", name, message)
 }
 
 func (p *treePrinter) print(name, prefix string, isRoot, isLast bool) {
