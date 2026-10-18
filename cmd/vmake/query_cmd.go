@@ -21,6 +21,8 @@ import (
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
+var queryAllowWrites bool
+
 func newQueryCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "query",
@@ -39,6 +41,7 @@ writes, one stderr summary line after the target listing reports the count and
 the p.DryRun()/--allow-dry-run-writes remediation; the command still exits 0.`,
 		Run: runQuery,
 	}
+	cmd.PersistentFlags().BoolVar(&queryAllowWrites, "allow-dry-run-writes", false, "let dry-run OnBuild callbacks write files (may modify the build tree)")
 	cmd.AddCommand(newQueryTargetsCmd())
 	cmd.AddCommand(newQueryConfigCmd())
 	return cmd
@@ -53,6 +56,9 @@ func newQueryTargetsCmd() *cobra.Command {
 }
 
 func queryReadOnly() func() {
+	if queryAllowWrites {
+		return func() {}
+	}
 	scriptfs.SetReadOnly(true)
 	return func() { scriptfs.SetReadOnly(false) }
 }

@@ -42,7 +42,7 @@ extension plugin commands appear here too. For plugin details, run
     `vmake pkg list` - List package sources
     `vmake pkg search [pattern]` - Search for packages
     `vmake pkg update <repo/name>[@version] [--dry-run]` - Update package source (floats to origin/HEAD, or pins @version)
-  `vmake query` - Show dependency tree
+  `vmake query [--allow-dry-run-writes]` - Show dependency tree
     `vmake query config <pkg>` - Show effective option values and generated defines
     `vmake query targets` - List build targets without building
   `vmake rebuild [--explain --install -i --install-type <value> --jobs <value> -j --json --keep-going -k --manifest <value> --mode <value> --output <value> --prefix <value> -p --tests --toolchain <value>]` - Rebuild the project
