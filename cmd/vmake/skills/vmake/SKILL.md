@@ -60,7 +60,7 @@ include the ones your project needs:
 - **Custom clean logic** → `OnClean` hooks for `vmake clean`/`distclean`. See `examples/on-clean.md`.
 - **Broad tour of options, deps, tests, install, and post-link** → See `examples/complete.md`.
 - **Pin dependency versions for reproducible or CI builds** → `.vmake/vmake.lock` + `vmake build --manifest install/manifest.json`. See **Reproducible Builds (vmake.lock + --manifest)** below.
-- **Orient yourself in an unfamiliar project** → `vmake inspect` prints the whole resolved model (packages, targets, options, deps, toolchain) as one JSON document. See **Machine-Readable Project Model** below.
+- **Orient yourself in an unfamiliar project** → `vmake inspect` prints the resolution/declaration model (packages, targets, options, deps, toolchain) as one JSON document; it does not build. See **Machine-Readable Project Model** below.
 
 For CMake projects, let VMake's CMake API manage toolchain resolution, platform paths,
 build directories, installation prefixes, build configuration, and parallelism.
@@ -71,15 +71,22 @@ general rules in build.go. See `references/api.md` for settings and migration de
 ## Machine-Readable Project Model
 
 `vmake inspect` prints one JSON document (schemaVersion 1) with the project
-model: `root`, `configFile`, `configSha256`, `mode`, `toolchain`,
-`toolchainInfo`, `global` values, `roots`, `packages` (with options, deps and
-targets), the package `graph`, and the `compileDatabase`/`buildReport` paths.
-It never builds or installs, so prefer it over scraping `query` text when you
-need to decide which package, target, or file to change.
+resolution/declaration model: `root`, `configFile`, `configSha256`, `mode`,
+`toolchain`, `toolchainInfo`, `global` values, `roots`, `packages` (with
+options, deps, `sourcePresent`, and targets), the package `graph`, and the
+`compileDatabase`/`buildReport` paths. It never builds or installs, so prefer it
+over scraping `query` text when you need to decide which package, target, or
+file to change.
 
 - Envelope: `{schemaVersion, command, status: "ok"|"error", data?, diagnostics}`.
   `diagnostics` is always an array; warnings keep `status: "ok"` and exit 0,
   model failures use `status: "error"` and exit 1.
+- Targets are listed only for needed packages; a package pruned by `FilterDeps`
+  has none. `files` keeps the declared globs (inspect does not expand them), and
+  `output`/`installDir` are predictions because nothing is built or installed.
+- A needed package whose source tree is absent gets a
+  `VMAKE_W_SOURCE_MISSING` warning and `sourcePresent: false`; inspect does not
+  fetch, materialize, or link sources for this check.
 - `--set [pkg/]option=value` (repeatable) evaluates a hypothetical
   configuration and echoes typed values in `data.overrides`; it never writes
   `.vmake/config.json`. Values are coerced by the declared type: bool accepts
@@ -397,7 +404,7 @@ ctx.Target("tests").SetKind(api.TargetBinary).SetTest(true).
     AddFiles("tests/*.c").AddDeps("mylib")
 ```
 
-Always define test targets unconditionally in `OnBuild` — `SetTest(true)` controls scheduler visibility, not option guards. `SetTest(true)` does NOT clear `IsDefault`, but `vmake test` runs only targets that are both `IsTest()` and `IsDefault()`, and only `TargetBinary` targets — a test target with `SetDefault(false)` is not run. If no runnable test target exists, `vmake test` exits non-zero with `no test targets found` and publishes a failed report; use `vmake build --tests` to build tests without running them. `vmake build` excludes tests unless `--tests` is passed; cross/bare-metal targets can only be built (`vmake test` refuses to run them). Test targets are never installed and can depend on other test targets. Test runs publish `build/vmake-build.json` with `command:"test"`, per-test `tests[]` entries and test counts in `summary`. See `examples/multi-target.md`.
+Always define test targets unconditionally in `OnBuild` — `SetTest(true)` controls scheduler visibility, not option guards. `SetTest(true)` does NOT clear `IsDefault`, but `vmake test` runs only targets that are both `IsTest()` and `IsDefault()`, and only `TargetBinary` targets — a test target with `SetDefault(false)` is not run. If no runnable test target exists, `vmake test` exits non-zero with `no test targets found` and publishes a failed report; use `vmake build --tests` to build tests without running them. `vmake build` excludes tests unless `--tests` is passed; cross/bare-metal targets can only be built (`vmake test` refuses to run them). Test targets are never installed and can depend on other test targets. Test runs publish `build/vmake-build.json` with `command:"test"`, per-test `tests[]` entries and test counts in `summary`. `vmake build|rebuild|test --json` prints one result envelope on stdout instead of human summaries, with progress and diagnostics moving to stderr (see `docs/BUILD_RESULT.md`). See `examples/multi-target.md`.
 
 ## Dependencies
 
@@ -800,7 +807,7 @@ vmake build --manifest install/manifest.json
 | `vmake update [version]` | Update vmake |
 | `vmake version` | Version info (`vmake --version` also prints it) |
 
-Build flags: `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`, `--manifest`, `--tests`, `--jobs/-j`, `--keep-going/-k`, `--explain`
+Build flags: `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`, `--manifest`, `--tests`, `--jobs/-j`, `--keep-going/-k`, `--explain`, `--json`
 Global flags: `-v` verbose, `-V` very-verbose, `-q` quiet, `-y/--yes` assume yes (trust prompts), `-h/--help` help
 `--version` is a root flag; `vmake test` always includes test targets, so `--tests` is redundant there.
 

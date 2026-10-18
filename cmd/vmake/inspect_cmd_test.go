@@ -13,6 +13,9 @@ import (
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/pipeline"
+	"github.com/spock2300/vmake/pkg/resolver"
 )
 
 func TestInspectBootstrapChild(t *testing.T) {
@@ -32,6 +35,11 @@ func TestInspectBootstrapChild(t *testing.T) {
 
 func runInspectCommand(t *testing.T, projectDir string, args ...string) (string, string, int) {
 	t.Helper()
+	return runInspectCommandWithState(t, projectDir, t.TempDir(), args...)
+}
+
+func runInspectCommandWithState(t *testing.T, projectDir, vmakeDir string, args ...string) (string, string, int) {
+	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -40,7 +48,7 @@ func runInspectCommand(t *testing.T, projectDir string, args ...string) (string,
 	cmd := exec.Command(exe, commandArgs...)
 	cmd.Dir = projectDir
 	cmd.Env = append(os.Environ(),
-		"VMAKE_TEST_INSPECT_DIR="+t.TempDir(),
+		"VMAKE_TEST_INSPECT_DIR="+vmakeDir,
 		"VMAKE_CACHE="+t.TempDir(),
 		"VMAKE_TRUST_ALL=1",
 	)
@@ -683,6 +691,248 @@ func Main(p *api.Package) {
 	}
 }
 
+func TestInspectSourceMissingWarning(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary)
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "lib", "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.OnPackage(func(p *api.Package) {
+		p.SetGit("https://example.invalid/lib.git")
+		p.AddVersion("1.0.0", "v1.0.0")
+	})
+}
+`)
+	libDir := filepath.Join(project, "lib")
+	checkWarning := func(t *testing.T) {
+		t.Helper()
+		stdout, stderr, code := runInspectCommand(t, project, "inspect")
+		if code != 0 {
+			t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+		}
+		envelope := decodeInspectEnvelope(t, stdout)
+		if envelope.Status != "ok" || envelope.Data == nil {
+			t.Fatalf("envelope = %+v", envelope)
+		}
+		if len(envelope.Diagnostics) != 1 {
+			t.Fatalf("diagnostics = %+v", envelope.Diagnostics)
+		}
+		diagnostic := envelope.Diagnostics[0]
+		if diagnostic.Severity != "warning" || diagnostic.Code != "VMAKE_W_SOURCE_MISSING" || diagnostic.Package != "lib" {
+			t.Fatalf("diagnostic = %+v", diagnostic)
+		}
+		for _, want := range []string{"package lib", "https://example.invalid/lib.git", "version 1.0.0"} {
+			if !strings.Contains(diagnostic.Message, want) {
+				t.Errorf("diagnostic message %q missing %q", diagnostic.Message, want)
+			}
+		}
+		if stderr != "Warning: "+diagnostic.Message+"\n" {
+			t.Fatalf("stderr = %q, want one warning line", stderr)
+		}
+		lib := inspectPackageNamed(t, envelope.Data, "lib")
+		if !lib.Needed || lib.SourcePresent {
+			t.Fatalf("lib package = %+v", lib)
+		}
+		if proj := inspectPackageNamed(t, envelope.Data, "proj"); !proj.SourcePresent {
+			t.Fatalf("plain local package sourcePresent = false")
+		}
+	}
+
+	checkWarning(t)
+	if err := os.MkdirAll(filepath.Join(libDir, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	checkWarning(t)
+
+	writeExtensionFile(t, filepath.Join(libDir, "src", "lib.c"), "int lib(void) { return 1; }\n")
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("materialized inspect exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if len(envelope.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %+v, want none", envelope.Diagnostics)
+	}
+	if lib := inspectPackageNamed(t, envelope.Data, "lib"); !lib.SourcePresent {
+		t.Fatalf("populated lib source reported as absent")
+	}
+	if _, err := os.Stat(filepath.Join(project, ".vmake_deps")); !os.IsNotExist(err) {
+		t.Fatalf("inspect materialized sources: %v", err)
+	}
+}
+
+func TestInspectSourceMissingWarningRemoteRegistry(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	state := t.TempDir()
+	repoDir := filepath.Join(state, "repos", "official")
+	writeExtensionFile(t, filepath.Join(repoDir, "packages", "d", "demo", "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.OnPackage(func(p *api.Package) {
+		p.SetGit("https://example.invalid/demo.git")
+		p.AddVersion("1.0.0", "v1.0.0")
+	})
+}
+`)
+	runGitLine(t, repoDir, "init", "-q")
+	runGitLine(t, repoDir, "config", "user.email", "test@example.com")
+	runGitLine(t, repoDir, "config", "user.name", "test")
+	runGitLine(t, repoDir, "add", "-A")
+	runGitLine(t, repoDir, "commit", "-q", "-m", "registry")
+
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("official/demo") })
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).AddDeps("official/demo:*")
+	})
+}
+`)
+	stdout, stderr, code := runInspectCommandWithState(t, project, state, "inspect")
+	if code != 0 {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	if len(envelope.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %+v", envelope.Diagnostics)
+	}
+	diagnostic := envelope.Diagnostics[0]
+	if diagnostic.Severity != "warning" || diagnostic.Code != "VMAKE_W_SOURCE_MISSING" || diagnostic.Package != "official/demo" {
+		t.Fatalf("diagnostic = %+v", diagnostic)
+	}
+	for _, want := range []string{"package official/demo", "https://example.invalid/demo.git", "version 1.0.0"} {
+		if !strings.Contains(diagnostic.Message, want) {
+			t.Errorf("diagnostic message %q missing %q", diagnostic.Message, want)
+		}
+	}
+	if stderr != "Warning: "+diagnostic.Message+"\n" {
+		t.Fatalf("stderr = %q, want one warning line", stderr)
+	}
+	demo := inspectPackageNamed(t, envelope.Data, "official/demo")
+	if !demo.Needed || demo.SourcePresent {
+		t.Fatalf("remote package = %+v", demo)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".vmake_deps")); !os.IsNotExist(err) {
+		t.Fatalf("inspect materialized the remote source tree: %v", err)
+	}
+}
+
+func TestInspectExpectedSourceDirectories(t *testing.T) {
+	deps := t.TempDir()
+	res := resolver.NewResolver(nil, deps)
+	ctx := &RuntimeContext{Paths: &pipeline.Paths{DepsDir: deps}, Resolver: res}
+	remoteNode := func(name, dir string) *resolver.PackageNode {
+		return resolver.NewPackageNode(name, buildscript.NewSource(name, filepath.Join(dir, "build.go"), dir, api.SourceRemote), api.NewPackage())
+	}
+
+	registry := remoteNode("official/demo", filepath.Join(deps, "wrapper"))
+	registryDir := filepath.Join(deps, "official", "demo", "src")
+	if got := inspectExpectedSourceDir(ctx, "official/demo", registry); got != registryDir {
+		t.Fatalf("registry source dir = %q, want %q", got, registryDir)
+	}
+	if inspectSourcePresent(ctx, "official/demo", registry) {
+		t.Fatal("absent registry tree reported present")
+	}
+	if err := os.MkdirAll(registryDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if inspectSourcePresent(ctx, "official/demo", registry) {
+		t.Fatal("empty registry tree reported present")
+	}
+	writeExtensionFile(t, filepath.Join(registryDir, "payload.c"), "int demo(void) { return 0; }\n")
+	if !inspectSourcePresent(ctx, "official/demo", registry) {
+		t.Fatal("populated registry tree reported absent")
+	}
+
+	res.SubParents()["native/root/member"] = "native/root"
+	member := remoteNode("native/root/member", filepath.Join(deps, "native", "root", "src", "member"))
+	memberDir := filepath.Join(deps, "native", "root", "src", "member")
+	if got := inspectExpectedSourceDir(ctx, "native/root/member", member); got != memberDir {
+		t.Fatalf("shared native member dir = %q, want %q", got, memberDir)
+	}
+	writeExtensionFile(t, filepath.Join(memberDir, "build.go"), "package main\n")
+	if !inspectSourcePresent(ctx, "native/root/member", member) {
+		t.Fatal("shared native member tree reported absent")
+	}
+	member.Pkg.SetGit("https://example.invalid/member.git")
+	if got, want := inspectExpectedSourceDir(ctx, "native/root/member", member), filepath.Join(memberDir, "src"); got != want {
+		t.Fatalf("own-git native member dir = %q, want %q", got, want)
+	}
+	if inspectSourcePresent(ctx, "native/root/member", member) {
+		t.Fatal("own-git native member tree reported present before materialization")
+	}
+
+	localDir := filepath.Join(t.TempDir(), "lib")
+	if err := os.MkdirAll(localDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	local := resolver.NewPackageNode("lib", buildscript.NewSource("lib", filepath.Join(localDir, "build.go"), localDir, api.SourceLocal), api.NewPackage())
+	local.Pkg.SetGit("https://example.invalid/lib.git")
+	if got, want := inspectExpectedSourceDir(ctx, "lib", local), filepath.Join(localDir, "src"); got != want {
+		t.Fatalf("local SetGit source dir = %q, want %q", got, want)
+	}
+	if inspectSourcePresent(ctx, "lib", local) {
+		t.Fatal("absent local SetGit tree reported present")
+	}
+
+	plainDir := filepath.Join(t.TempDir(), "plain")
+	writeExtensionFile(t, filepath.Join(plainDir, "build.go"), "package main\n")
+	plain := resolver.NewPackageNode("plain", buildscript.NewSource("plain", filepath.Join(plainDir, "build.go"), plainDir, api.SourceLocal), api.NewPackage())
+	if got := inspectExpectedSourceDir(ctx, "plain", plain); got != plainDir {
+		t.Fatalf("plain local source dir = %q, want %q", got, plainDir)
+	}
+	if !inspectSourcePresent(ctx, "plain", plain) {
+		t.Fatal("plain local package dir reported absent")
+	}
+}
+
+func checkInspectWarnings(t *testing.T, envelope *inspectEnvelope, stderr string) {
+	t.Helper()
+	if len(envelope.Diagnostics) == 0 {
+		if stderr != "" {
+			t.Fatalf("inspect wrote stderr without diagnostics: %q", stderr)
+		}
+		return
+	}
+	lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
+	if len(lines) != len(envelope.Diagnostics) {
+		t.Fatalf("stderr = %q, want one warning line per diagnostic", stderr)
+	}
+	for i, diagnostic := range envelope.Diagnostics {
+		if diagnostic.Severity != "warning" {
+			t.Fatalf("diagnostic = %+v, want warning", diagnostic)
+		}
+		if want := "Warning: " + diagnostic.Message; lines[i] != want {
+			t.Fatalf("stderr line %d = %q, want %q", i, lines[i], want)
+		}
+	}
+}
+
 func TestInspectFixtures(t *testing.T) {
 	fixtures := []string{
 		filepath.Join("..", "..", "test_data", "01_simple_c"),
@@ -706,13 +956,14 @@ func TestInspectFixtures(t *testing.T) {
 				t.Fatal(err)
 			}
 			stdout, stderr, code := runInspectCommand(t, root, "inspect")
-			if code != 0 || stderr != "" {
+			if code != 0 {
 				t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
 			}
 			envelope := decodeInspectEnvelope(t, stdout)
 			if envelope.SchemaVersion != 1 || envelope.Command != "inspect" || envelope.Status != "ok" || envelope.Data == nil {
 				t.Fatalf("envelope = %+v", envelope)
 			}
+			checkInspectWarnings(t, envelope, stderr)
 			data := envelope.Data
 			if data.Root != root || data.Mode == "" || data.Toolchain == "" || data.CompileDatabase == "" || data.BuildReport == "" {
 				t.Fatalf("data header = %+v", data)
@@ -737,12 +988,13 @@ func TestInspectFixtures(t *testing.T) {
 				t.Fatalf("global = %v, graph = %v", data.Global, data.Graph)
 			}
 			again, stderr, code := runInspectCommand(t, root, "inspect")
-			if code != 0 || stderr != "" {
+			if code != 0 {
 				t.Fatalf("second inspect exit = %d, stderr = %q", code, stderr)
 			}
 			if again != stdout {
 				t.Fatal("consecutive inspect runs are not byte-identical")
 			}
+			checkInspectWarnings(t, decodeInspectEnvelope(t, again), stderr)
 			after, err := os.ReadFile(filepath.Join(root, ".vmake", "config.json"))
 			if err != nil && !os.IsNotExist(err) {
 				t.Fatal(err)

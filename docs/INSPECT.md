@@ -3,7 +3,9 @@
 `vmake inspect` prints the resolved project model as a single JSON document on
 stdout. It is the machine-readable counterpart of `vmake query`: it performs
 resolution and `OnConfig`/`OnBuild` declaration only, so it never compiles,
-links, installs, or writes `build/`, `install/`, or `.vmake/config.json`.
+links, installs, or writes `build/`, `install/`, or `.vmake/config.json`. It also
+reports needed packages whose source tree is not on disk yet, without fetching
+or materializing them.
 
 ```
 vmake inspect [--set [package/]option=value ...]
@@ -102,6 +104,28 @@ and one warning is appended:
 }
 ```
 
+A needed package whose expected source tree is missing or empty gets one
+warning. Inspect checks the tree without running git, touching the network,
+creating `<package>/src` links, or writing `.vmake_deps`; a missing tree never
+fails the model. Expected paths:
+
+- local `SetGit` packages: `<package>/src`,
+- remote packages: `<root>/.vmake_deps/<repo>/<owner>/src[/<member>]`,
+- plain local packages: the package directory.
+
+```json
+{
+  "severity": "warning",
+  "code": "VMAKE_W_SOURCE_MISSING",
+  "message": "package hostap source is not materialized; the next build will fetch https://git.w1.fi/hostap.git (version 2.12)",
+  "package": "hostap"
+}
+```
+
+The message includes the resolved URL and version when available. Warnings keep
+`status: "ok"` and exit 0, and each diagnostic produces one `Warning:` line on
+stderr.
+
 ## `data` fields
 
 | Field | Type | Meaning |
@@ -132,6 +156,7 @@ and one warning is appended:
 | `url` | string? | Resolved source URL for remote packages |
 | `path` | string? | Local packages: source directory relative to `root` (slash-separated) |
 | `sourceDir` | string? | Absolute source directory |
+| `sourcePresent` | bool | Whether the expected source tree exists and is non-empty (see `VMAKE_W_SOURCE_MISSING`) |
 | `needed` | bool | Whether the package is reachable from the build roots |
 | `description` | string? | `SetDescription` value |
 | `toolchain` | string? | Per-package toolchain, present for needed packages |
@@ -156,6 +181,13 @@ order the buildscript declared.
 | `installDir` | string? | Per-target install subdirectory override |
 | `noInstall` | bool? | True when the target opts out of installation |
 
+Targets are listed only for needed packages. A package pruned by `FilterDeps`
+(for example a conditional or test-only package that is disabled in the current
+configuration) has no `targets`, even though it remains in `packages` and the
+graph. `files` keeps the declared globs; inspect does not expand them to concrete
+files. Inspect does not build or install, so `output` and `installDir` are
+predictions, not evidence that an artifact exists.
+
 ## Determinism
 
 Output is deterministic for the same project, configuration, and overrides:
@@ -168,17 +200,21 @@ byte-identical.
 | Situation | stdout | exit | stderr |
 |-----------|--------|------|--------|
 | Model produced | `status: "ok"` envelope | 0 | empty |
-| Model produced with target warnings | `status: "ok"` envelope with warning diagnostics | 0 | one `Warning: ...` line per warning |
+| Model produced with warnings | `status: "ok"` envelope with warning diagnostics | 0 | one `Warning: ...` line per warning |
 | `Require`/`Configure`/inspection failure | `status: "error"`, no `data` | 1 | one `Error: ...` line |
 | Invalid `--set` | `status: "error"`, `code: VMAKE_E_OPTION` | 1 | one `Error: ...` line |
 
-Buildscript stdout is always discarded, including on failure; stdout contains
-one JSON document in every row.
+Warnings cover target-declaration failures (`VMAKE_W_TARGET_DECLARE`) and
+missing source trees (`VMAKE_W_SOURCE_MISSING`). Buildscript stdout is always
+discarded, including on failure; stdout contains one JSON document in every row.
 
 ## Side effects
 
-`inspect` acquires the project lock and may lazily resolve sources exactly like
-`query`; it does not modify `build/`, `install/`, or the active configuration.
-With `--set`, resolution and `OnConfig`/`OnApply` run twice as described above.
-The lock/state files it may create under `.vmake/` are the same ones every
-read-only command creates.
+`inspect` acquires the project lock and performs dependency resolution like
+`query`. The missing-source check only reads directories: it does not run git,
+touch the network, create `<package>/src` links, or write `.vmake_deps`.
+Resolution of native remote packages still follows its normal rules and may
+materialize that package's tree. `inspect` does not modify `build/`, `install/`,
+or the active configuration. With `--set`, resolution and `OnConfig`/`OnApply`
+run twice as described above. The lock/state files it may create under `.vmake/`
+are the same ones every read-only command creates.

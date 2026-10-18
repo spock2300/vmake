@@ -37,6 +37,7 @@ type inspectDiagnostic struct {
 	Message  string `json:"message"`
 	File     string `json:"file,omitempty"`
 	Line     int    `json:"line,omitempty"`
+	Package  string `json:"package,omitempty"`
 	Fix      string `json:"fix,omitempty"`
 }
 
@@ -68,20 +69,21 @@ type inspectToolchain struct {
 }
 
 type inspectPackage struct {
-	Name        string          `json:"name"`
-	Kind        string          `json:"kind"`
-	Repo        string          `json:"repo,omitempty"`
-	Version     string          `json:"version,omitempty"`
-	Commit      string          `json:"commit,omitempty"`
-	URL         string          `json:"url,omitempty"`
-	Path        string          `json:"path,omitempty"`
-	SourceDir   string          `json:"sourceDir,omitempty"`
-	Needed      bool            `json:"needed"`
-	Description string          `json:"description,omitempty"`
-	Toolchain   string          `json:"toolchain,omitempty"`
-	Options     map[string]any  `json:"options,omitempty"`
-	Deps        []string        `json:"deps"`
-	Targets     []inspectTarget `json:"targets,omitempty"`
+	Name          string          `json:"name"`
+	Kind          string          `json:"kind"`
+	Repo          string          `json:"repo,omitempty"`
+	Version       string          `json:"version,omitempty"`
+	Commit        string          `json:"commit,omitempty"`
+	URL           string          `json:"url,omitempty"`
+	Path          string          `json:"path,omitempty"`
+	SourceDir     string          `json:"sourceDir,omitempty"`
+	SourcePresent bool            `json:"sourcePresent"`
+	Needed        bool            `json:"needed"`
+	Description   string          `json:"description,omitempty"`
+	Toolchain     string          `json:"toolchain,omitempty"`
+	Options       map[string]any  `json:"options,omitempty"`
+	Deps          []string        `json:"deps"`
+	Targets       []inspectTarget `json:"targets,omitempty"`
 }
 
 type inspectTarget struct {
@@ -438,11 +440,12 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 			continue
 		}
 		pkg := inspectPackage{
-			Name:      name,
-			Kind:      inspectPackageKind(node),
-			SourceDir: inspectSourceDir(inspection, name, node),
-			Needed:    inspection.Needed[name],
-			Deps:      inspectSortedStrings(node.Deps),
+			Name:          name,
+			Kind:          inspectPackageKind(node),
+			SourceDir:     inspectSourceDir(inspection, name, node),
+			SourcePresent: inspectSourcePresent(ctx, name, node),
+			Needed:        inspection.Needed[name],
+			Deps:          inspectSortedStrings(node.Deps),
 		}
 		if node.IsLocal() && node.Source.Dir != "" {
 			if rel, err := filepath.Rel(root, node.Source.Dir); err == nil {
@@ -458,6 +461,15 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 			pkg.Toolchain = tc.Name
 		}
 		pkg.Options = inspectPackageOptions(ctx, name, inspection)
+		if pkg.Needed && !pkg.SourcePresent {
+			url, version := inspectSourceReference(ctx, name, node, &pkg)
+			diagnostics = append(diagnostics, inspectDiagnostic{
+				Severity: "warning",
+				Code:     "VMAKE_W_SOURCE_MISSING",
+				Message:  inspectSourceMissingMessage(name, url, version),
+				Package:  name,
+			})
+		}
 		if pkg.Needed {
 			targets, err := inspectTargets(ctx, inspection, name, node)
 			if err != nil {
@@ -503,6 +515,89 @@ func inspectSourceDir(inspection *pipeline.Inspection, name string, node *resolv
 		return node.Source.Dir
 	}
 	return ""
+}
+
+func inspectSourcePresent(ctx *RuntimeContext, name string, node *resolver.PackageNode) bool {
+	return inspectSourceTreePopulated(inspectExpectedSourceDir(ctx, name, node))
+}
+
+func inspectExpectedSourceDir(ctx *RuntimeContext, name string, node *resolver.PackageNode) string {
+	if node.Source == nil {
+		return ""
+	}
+	if node.IsLocal() {
+		if node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 {
+			return filepath.Join(node.Source.Dir, "src")
+		}
+		return node.Source.Dir
+	}
+	owner := name
+	member := ""
+	if parent, ok := ctx.Resolver.SubParents()[name]; ok {
+		owner = parent
+		member = strings.TrimPrefix(name, parent+"/")
+	}
+	dir := filepath.Join(ctx.Paths.DepsDir, filepath.FromSlash(owner), "src", filepath.FromSlash(member))
+	if member != "" && node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 {
+		dir = filepath.Join(dir, "src")
+	}
+	return dir
+}
+
+func inspectSourceTreePopulated(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	entries, err := os.ReadDir(dir)
+	return err == nil && len(entries) > 0
+}
+
+func inspectSourceReference(ctx *RuntimeContext, name string, node *resolver.PackageNode, pkg *inspectPackage) (string, string) {
+	url, version := pkg.URL, pkg.Version
+	if node.Pkg == nil {
+		return url, version
+	}
+	if urls := node.Pkg.GitURLs(); url == "" && len(urls) > 0 {
+		url = urls[0]
+	}
+	if version != "" {
+		return url, version
+	}
+	if ctx.Config != nil {
+		version = config.GetEntry(ctx.Config, name).Version
+	}
+	if version == "" && ctx.Lock != nil {
+		if locked, ok := ctx.Lock.Get(name); ok {
+			version = locked.Version
+		}
+	}
+	if version != "" {
+		return url, version
+	}
+	if node.IsLocal() || len(node.Constraints) > 0 {
+		if selected, err := node.Pkg.SelectVersionMulti(node.Constraints); err == nil {
+			version = selected
+		}
+		return url, version
+	}
+	if selected, err := node.Pkg.SelectVersion(""); err == nil {
+		version = selected
+	}
+	return url, version
+}
+
+func inspectSourceMissingMessage(name, url, version string) string {
+	message := fmt.Sprintf("package %s source is not materialized; the next build will fetch", name)
+	switch {
+	case url != "" && version != "":
+		return fmt.Sprintf("%s %s (version %s)", message, url, version)
+	case url != "":
+		return message + " " + url
+	case version != "":
+		return message + " version " + version
+	default:
+		return message + " it"
+	}
 }
 
 func inspectRemoteMetadata(ctx *RuntimeContext, name string, node *resolver.PackageNode, pkg *inspectPackage) {
