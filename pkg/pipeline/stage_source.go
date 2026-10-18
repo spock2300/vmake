@@ -23,6 +23,9 @@ func (s *sourceStage) prepareAllPackages() error {
 		trees:   make(map[string]string),
 	}
 
+	vlog.Info("")
+	vlog.Info("Downloading package sources...")
+
 	for _, name := range s.rc.ctx.Resolver.GetOrder() {
 		if !s.conf.needed[name] {
 			continue
@@ -52,9 +55,6 @@ func (s *sourceStage) prepareAllPackages() error {
 	}
 
 	depsDir := s.rc.ctx.Paths.DepsDir
-
-	vlog.Info("")
-	vlog.Info("Downloading package sources...")
 
 	if err := s.downloadRemoteSources(remote, depsDir); err != nil {
 		return err

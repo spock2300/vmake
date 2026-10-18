@@ -12,6 +12,7 @@ import (
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
+	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/repo"
 )
 
@@ -186,6 +187,7 @@ var pkgUpdateCmd = &cobra.Command{
 			urlTemplate, err := repoMgr.GetNativeURL(repoName)
 			fatalErr(err)
 			pkg.SetGit(repo.ResolveNativeURL(urlTemplate, pkgName))
+			vlog.Info("  %s: listing versions from %s", pkgRef, strings.Join(pkg.GitURLs(), ", "))
 			tags, err := repo.ListRemoteTags(pkg.GitURLs())
 			fatalErr(err)
 			pkg.SetVersions(repo.FilterValidVersions(tags))

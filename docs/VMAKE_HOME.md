@@ -59,7 +59,7 @@ CLI：`vmake repo add|remove|list|update|trust|untrust`
 
 需要加载项目解析输入的命令先取得 `project/.vmake/_locks/project.lock`（独占）：任何会解析依赖的命令都可能物化源码树或创建源码链接，因此同工程命令串行（`doctor`、`pkg list`、`manifest show` 等不经过 `loadResolveInputs` 的命令除外）。全局缓存的生命周期锁在构建/读取时共享，在 `clean`/`distclean`/`pkg clean`/`rebuild`、`lock update` 和 `pkg update` 时独占（`requiresExclusiveStorage`）；`ext update`/`repo update` 不经过该存储会话。同一棵树在同一时间只允许一个物化操作（`tree_<hash>.lock`），每个缓存 bare 仓库的写入与 checkout 由 `cache_<urlhash 前16位>.lock` 串行（不同 URL 不同锁）。构建与 `lock update` 在 `Require`/`Configure` 完成后的配置阶段取得所需远程包（native 子包归并到根父包）的 `owner_<sha256(name)>.lock`，并持有到命令结束，而不是整个命令期间。
 
-网络 git 操作默认超时 30 分钟，并把 git 自己的进度实时透传到终端（`-q` 时静默）。网络较慢时可提高上限：
+网络 git 操作默认超时 30 分钟；clone/fetch 在传输阶段把 git 进度实时透传到终端，而 `git ls-remote` 本身没有进度输出。解析依赖或物化包源码的命令（如 `build`/`rebuild`/`lock update`/`pkg update`）会在解析 ref、列举 native 版本或尝试每个源 URL 前先打印一行状态（包名/树键、已知的目标 ref/commit、源 URL），便于判断当前步骤；缓存命中时这行也可能出现，但通常不触网。这些状态行与 git 进度都在 `-q` 下静默，`query`/`check-symbols` 固定静默。状态行不是心跳：`git ls-remote`、建立连接和服务端枚举对象期间 git 自身没有输出，可能一直静默到操作完成或触发 `VMAKE_GIT_TIMEOUT`。网络较慢时可提高上限：
 
 ```bash
 VMAKE_GIT_TIMEOUT=7200 vmake build   # 秒

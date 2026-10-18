@@ -417,6 +417,7 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 		selectedVersion = pinVersion
 		vlog.Info("  %s@%s (pinned, cached)", id, selectedVersion)
 	} else {
+		vlog.Info("  %s: listing versions from %s", id, strings.Join(urls, ", "))
 		tags, err := repo.ListRemoteTagsContext(r.ctx, urls)
 		if err != nil {
 			return nil, fmt.Errorf("list tags for %s: %w", id, err)

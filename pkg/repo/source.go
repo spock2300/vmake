@@ -257,6 +257,11 @@ func (m *SourceManager) EnsureSource(req SourceRequest) (*SourceResult, error) {
 		if validCommitID(req.Ref) {
 			commit = req.Ref
 		} else {
+			refLabel := req.Ref
+			if refLabel == "" {
+				refLabel = "HEAD"
+			}
+			vlog.Info("  %s: resolving %s from %s", req.Key, refLabel, strings.Join(req.URLs, ", "))
 			resolved, refName, err := ResolveRemoteRefContext(m.context(), req.URLs, req.Ref)
 			if err != nil {
 				if cached, cachedRef, ok := cachedRefCommit(m.cache, req.URLs, req.Ref); ok {
@@ -380,6 +385,7 @@ func (m *SourceManager) materialize(req SourceRequest, root, srcDir string, stat
 			return "", "", err
 		}
 		fs.RemoveIfExists(tmp)
+		vlog.Info("  %s: preparing source %s from %s", req.Key, ShortCommit(commit), url)
 		actual, err := m.cloneTreeAt(url, tmp, req, commit, localRef)
 		if err != nil {
 			if ctxErr := m.context().Err(); ctxErr != nil {
@@ -594,6 +600,7 @@ func (m *SourceManager) restoreTree(req SourceRequest, srcDir, commit string) er
 		return fmt.Errorf("clean %s for %s: %w", ShortCommit(commit), req.Key, err)
 	}
 	if req.Submodules {
+		vlog.Info("  %s: updating submodules in %s", req.Key, srcDir)
 		if err := InitSubmodulesContext(m.context(), srcDir); err != nil {
 			return fmt.Errorf("init submodules for %s: %w", req.Key, err)
 		}

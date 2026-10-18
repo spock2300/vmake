@@ -136,6 +136,7 @@ func importManifestIntoLock(ctx context.Context, mf *installManifest) error {
 			if entry.URL == "" {
 				return fmt.Errorf("manifest entry %s has no URL; cannot resolve commit for %s", entry.Name, entry.Ref)
 			}
+			vlog.Info("  %s: resolving %s from %s", entry.Name, entry.Ref, entry.URL)
 			commit, err := repo.ResolveRemoteCommitContext(ctx, entry.URL, entry.Ref)
 			if err != nil {
 				return fmt.Errorf("resolve commit for %s@%s: %w", entry.Name, entry.Ref, err)
