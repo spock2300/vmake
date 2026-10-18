@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/spock2300/vmake/pkg/api"
 )
 
 func TestInspectBootstrapChild(t *testing.T) {
@@ -105,6 +107,9 @@ func Main(p *api.Package) {
 		ctx.Option("retries").
 			SetType(api.OptionInt).
 			SetDefault(3)
+		ctx.Option("label").
+			SetType(api.OptionString).
+			SetDefault("default")
 	})
 	p.OnRequire(func(ctx *api.RequireContext) {
 		if ctx.When("with_dep", true) {
@@ -204,7 +209,7 @@ func TestInspectProjectModel(t *testing.T) {
 	if !slices.Equal(proj.Deps, []string{"dep"}) {
 		t.Errorf("root deps = %v", proj.Deps)
 	}
-	if proj.Options["with_dep"] != true || proj.Options["retries"] != float64(3) {
+	if proj.Options["with_dep"] != true || proj.Options["retries"] != float64(3) || proj.Options["label"] != "default" {
 		t.Errorf("root options = %v", proj.Options)
 	}
 	app := inspectTargetNamed(t, proj, "app")
@@ -245,6 +250,109 @@ func TestInspectProjectModel(t *testing.T) {
 			t.Fatalf("inspect created %s: %v", dir, err)
 		}
 	}
+}
+
+func writeInspectStdoutProject(t *testing.T) string {
+	t.Helper()
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import (
+	"fmt"
+
+	"github.com/spock2300/vmake/pkg/api"
+)
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnConfig(func(ctx *api.ConfigContext) {
+		fmt.Println("INSPECT_ONCONFIG_STDOUT")
+		ctx.Option("gate").SetType(api.OptionBool).SetDefault(true)
+	})
+	p.OnRequire(func(ctx *api.RequireContext) {
+		fmt.Println("INSPECT_ONREQUIRE_STDOUT")
+	})
+	p.OnBuild(func(ctx *api.BuildContext) {
+		fmt.Println("INSPECT_ONBUILD_STDOUT")
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n")
+	return project
+}
+
+func TestInspectSuppressesBuildscriptStdout(t *testing.T) {
+	project := writeInspectStdoutProject(t)
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("exit = %d, stderr = %q", code, stderr)
+	}
+	if strings.Contains(stdout, "INSPECT_") {
+		t.Fatalf("buildscript stdout leaked into the JSON document:\n%s", stdout)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	if len(envelope.Data.Roots) != 1 || envelope.Data.Roots[0] != "proj" {
+		t.Fatalf("roots = %v", envelope.Data.Roots)
+	}
+
+	stdout, stderr, code = runInspectCommand(t, project, "inspect", "--set", "proj/gate=maybe")
+	if code != 1 {
+		t.Fatalf("invalid --set exit = %d, want 1 (stderr %q)", code, stderr)
+	}
+	if strings.Contains(stdout, "INSPECT_") {
+		t.Fatalf("buildscript stdout leaked into the error envelope:\n%s", stdout)
+	}
+	envelope = decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "error" || envelope.Data != nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	if len(envelope.Diagnostics) != 1 || envelope.Diagnostics[0].Code != "VMAKE_E_OPTION" {
+		t.Fatalf("diagnostics = %+v", envelope.Diagnostics)
+	}
+	if strings.Count(stderr, "\n") != 1 || !strings.HasPrefix(stderr, "Error: ") {
+		t.Fatalf("stderr = %q, want one human error line", stderr)
+	}
+
+	t.Run("configure_failure", func(t *testing.T) {
+		broken := filepath.Join(t.TempDir(), "broken")
+		writeExtensionFile(t, filepath.Join(broken, "build.go"), `package main
+
+import (
+	"fmt"
+
+	"github.com/spock2300/vmake/pkg/api"
+)
+
+func Main(p *api.Package) {
+	p.OnConfig(func(ctx *api.ConfigContext) {
+		fmt.Println("INSPECT_BROKEN_STDOUT")
+		panic("configure failure")
+	})
+}
+`)
+		stdout, stderr, code := runInspectCommand(t, broken, "inspect")
+		if code != 1 {
+			t.Fatalf("exit = %d, want 1 (stderr %q)", code, stderr)
+		}
+		if strings.Contains(stdout, "INSPECT_") {
+			t.Fatalf("buildscript stdout leaked into the error envelope:\n%s", stdout)
+		}
+		envelope := decodeInspectEnvelope(t, stdout)
+		if envelope.Status != "error" || envelope.Data != nil {
+			t.Fatalf("envelope = %+v", envelope)
+		}
+		if len(envelope.Diagnostics) != 1 || envelope.Diagnostics[0].Code != "VMAKE_E_INSPECT" {
+			t.Fatalf("diagnostics = %+v", envelope.Diagnostics)
+		}
+		if strings.Count(stderr, "\n") != 1 || !strings.HasPrefix(stderr, "Error: ") {
+			t.Fatalf("stderr = %q, want one human error line", stderr)
+		}
+	})
 }
 
 func TestInspectSetOverridesAreHypothetical(t *testing.T) {
@@ -303,6 +411,110 @@ func TestInspectSetOverridesAreHypothetical(t *testing.T) {
 	}
 }
 
+func TestInspectSetTypedCoercion(t *testing.T) {
+	project := writeInspectProject(t, t.TempDir())
+	configPath := filepath.Join(project, ".vmake", "config.json")
+
+	for _, raw := range []string{"42", "true", "on", "false", ""} {
+		t.Run("string_"+raw, func(t *testing.T) {
+			stdout, stderr, code := runInspectCommand(t, project, "inspect", "--set", "proj/label="+raw)
+			if code != 0 || stderr != "" {
+				t.Fatalf("exit = %d, stderr = %q", code, stderr)
+			}
+			data := decodeInspectEnvelope(t, stdout).Data
+			if data.Overrides["proj/label"] != raw {
+				t.Errorf("overrides = %#v, want string %q", data.Overrides, raw)
+			}
+			if got := inspectPackageNamed(t, data, "proj").Options["label"]; got != raw {
+				t.Errorf("effective label = %#v, want string %q", got, raw)
+			}
+		})
+	}
+
+	for _, test := range []struct {
+		raw  string
+		want bool
+	}{
+		{"true", true}, {"false", false},
+		{"on", true}, {"off", false},
+		{"1", true}, {"0", false},
+	} {
+		t.Run("bool_"+test.raw, func(t *testing.T) {
+			stdout, stderr, code := runInspectCommand(t, project, "inspect", "--set", "proj/with_dep="+test.raw)
+			if code != 0 || stderr != "" {
+				t.Fatalf("exit = %d, stderr = %q", code, stderr)
+			}
+			data := decodeInspectEnvelope(t, stdout).Data
+			if data.Overrides["proj/with_dep"] != test.want {
+				t.Errorf("overrides = %#v, want bool %v", data.Overrides, test.want)
+			}
+			if got := inspectPackageNamed(t, data, "proj").Options["with_dep"]; got != test.want {
+				t.Errorf("effective with_dep = %#v, want bool %v", got, test.want)
+			}
+		})
+	}
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect", "--set", "proj/retries=42")
+	if code != 0 || stderr != "" {
+		t.Fatalf("int override exit = %d, stderr = %q", code, stderr)
+	}
+	data := decodeInspectEnvelope(t, stdout).Data
+	if data.Overrides["proj/retries"] != float64(42) {
+		t.Errorf("overrides = %#v, want number 42", data.Overrides)
+	}
+	if got := inspectPackageNamed(t, data, "proj").Options["retries"]; got != float64(42) {
+		t.Errorf("effective retries = %#v, want number 42", got)
+	}
+
+	first, stderr, code := runInspectCommand(t, project, "inspect", "--set", "proj/label=42")
+	if code != 0 || stderr != "" {
+		t.Fatalf("first typed run exit = %d, stderr = %q", code, stderr)
+	}
+	again, stderr, code := runInspectCommand(t, project, "inspect", "--set", "proj/label=42")
+	if code != 0 || stderr != "" {
+		t.Fatalf("second typed run exit = %d, stderr = %q", code, stderr)
+	}
+	if again != first {
+		t.Fatal("consecutive inspect --set runs are not byte-identical")
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("%s was written by inspect --set: %v", configPath, err)
+	}
+	for _, dir := range []string{"build", "install"} {
+		if _, err := os.Stat(filepath.Join(project, dir)); !os.IsNotExist(err) {
+			t.Fatalf("inspect --set created %s: %v", dir, err)
+		}
+	}
+}
+
+func TestCoerceInspectOverridesLeavesUndeclaredOptionsRaw(t *testing.T) {
+	overrides, err := coerceInspectOverrides([]inspectOverride{
+		{pkgName: "proj", optName: "lazy", raw: "on"},
+		{pkgName: "proj", optName: "label", raw: "42"},
+	}, &inspectOptionDeclarations{
+		packageOptions: map[string]map[string]*api.Option{
+			"proj": {"label": (&api.Option{}).SetType(api.OptionString)},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overrides[0].value != "on" {
+		t.Errorf("undeclared option value = %#v, want raw string \"on\"", overrides[0].value)
+	}
+	if overrides[1].value != "42" {
+		t.Errorf("declared string option value = %#v, want \"42\"", overrides[1].value)
+	}
+
+	overrides, err = coerceInspectOverrides([]inspectOverride{{pkgName: "proj", optName: "lazy", raw: "on"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overrides[0].value != "on" {
+		t.Errorf("nil declarations value = %#v, want raw string \"on\"", overrides[0].value)
+	}
+}
+
 func TestInspectSetErrors(t *testing.T) {
 	project := writeInspectProject(t, t.TempDir())
 	configPath := filepath.Join(project, ".vmake", "config.json")
@@ -314,7 +526,7 @@ func TestInspectSetErrors(t *testing.T) {
 		{"unknown_package", []string{"--set", "nope/x=1"}},
 		{"unknown_option", []string{"--set", "proj/nope=1"}},
 		{"unknown_global", []string{"--set", "nope=1"}},
-		{"wrong_type", []string{"--set", "proj/with_dep=1"}},
+		{"wrong_type", []string{"--set", "proj/with_dep=maybe"}},
 		{"wrong_type_string", []string{"--set", "proj/retries=quick"}},
 		{"invalid_choice", []string{"--set", "dep/dep_mode=warp"}},
 	} {
@@ -344,7 +556,7 @@ func TestInspectSetErrors(t *testing.T) {
 	}
 }
 
-func TestInspectSetTypeErrorDuringConfigure(t *testing.T) {
+func TestInspectSetInvalidBoolValue(t *testing.T) {
 	project := filepath.Join(t.TempDir(), "proj")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
@@ -377,6 +589,9 @@ func Main(p *api.Package) {
 	}
 	if len(envelope.Diagnostics) != 1 || envelope.Diagnostics[0].Code != "VMAKE_E_OPTION" || envelope.Diagnostics[0].Severity != "error" {
 		t.Fatalf("diagnostics = %+v", envelope.Diagnostics)
+	}
+	if !strings.Contains(envelope.Diagnostics[0].Message, "invalid bool value") {
+		t.Fatalf("diagnostic = %+v, want an invalid bool value message", envelope.Diagnostics[0])
 	}
 	if strings.Count(stderr, "\n") != 1 || !strings.HasPrefix(stderr, "Error: ") || strings.Contains(stderr, "panic:") {
 		t.Fatalf("stderr = %q, want one human error line", stderr)

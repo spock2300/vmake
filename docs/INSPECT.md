@@ -11,11 +11,27 @@ vmake inspect [--set [package/]option=value ...]
 
 `--set` may be repeated. Each override applies to this run only: the in-memory
 configuration is evaluated as if the project had those values, but nothing is
-persisted. The effective overrides are echoed in `data.overrides`.
+persisted. The effective overrides are echoed in `data.overrides`, using the
+option's natural JSON type.
 
-The value is coerced without knowing the option type first: `true`/`false`
-become booleans, decimal integers become numbers, everything else stays a
-string. After `OnConfig` has declared the options, overrides are validated:
+Values are coerced with the option's declared type, matching `vmake config
+--set`:
+
+- `OptionBool`: `true`/`false`, `on`/`off`, and `1`/`0` (case-insensitive).
+- `OptionInt`: numeric text whose value is integral; `42`, `42.0`, and `1e3`
+  are accepted, `quick` and `1.5` are rejected.
+- `OptionString`: the raw text, so `42`, `true`, and `on` stay strings.
+- `OptionChoice`: the raw text, validated against the declared choice set.
+
+The declared type is discovered by a first resolution pass (`Require` +
+`Configure` without overrides). A second, fresh context applies the typed
+overrides before `Configure` and continues as usual. `inspect --set` therefore
+resolves dependencies and runs `OnConfig`/`OnApply` twice (roughly 2x resolution)
+and may repeat any side effects those callbacks have; plain `inspect` remains a
+single pass. If an option is not declared in the first pass because the
+hypothetical override changes dependency selection, its raw text is stored and
+the post-`Configure` validation reports a type mismatch. Overrides are validated
+after the second `Configure`:
 
 - unknown package or unknown option,
 - a package-prefixed global option,
@@ -24,6 +40,19 @@ string. After `OnConfig` has declared the options, overrides are validated:
 
 produce a `VMAKE_E_OPTION` diagnostic and exit status 1. The reference
 implementation silently ignored unknown overrides; vmake rejects them.
+
+## Output isolation
+
+Buildscript `fmt.Println`/`os.Stdout` writes cannot corrupt the JSON document.
+For the whole resolution and target-declaration phase (both `--set` passes,
+`Require`, `Configure`, inspection, and dry-run `OnBuild`), `inspect` points
+`os.Stdout` at the null device and restores the real stdout before writing the
+envelope or warnings. The same restoration applies to error paths, so a failing
+run still emits exactly one JSON document followed by the one-line `Error:` on
+stderr. Buildscript stdout is discarded, not forwarded. Stderr is temporarily
+suppressed while `Require`/`Configure` run (so interpreter panic traces cannot
+corrupt the human error line) and is then restored for the documented
+`Warning:`/`Error:` lines; it is not a general buildscript log for `inspect`.
 
 ## Envelope
 
@@ -143,9 +172,13 @@ byte-identical.
 | `Require`/`Configure`/inspection failure | `status: "error"`, no `data` | 1 | one `Error: ...` line |
 | Invalid `--set` | `status: "error"`, `code: VMAKE_E_OPTION` | 1 | one `Error: ...` line |
 
+Buildscript stdout is always discarded, including on failure; stdout contains
+one JSON document in every row.
+
 ## Side effects
 
 `inspect` acquires the project lock and may lazily resolve sources exactly like
 `query`; it does not modify `build/`, `install/`, or the active configuration.
+With `--set`, resolution and `OnConfig`/`OnApply` run twice as described above.
 The lock/state files it may create under `.vmake/` are the same ones every
 read-only command creates.

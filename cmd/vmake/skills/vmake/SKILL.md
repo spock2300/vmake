@@ -81,12 +81,18 @@ need to decide which package, target, or file to change.
   `diagnostics` is always an array; warnings keep `status: "ok"` and exit 0,
   model failures use `status: "error"` and exit 1.
 - `--set [pkg/]option=value` (repeatable) evaluates a hypothetical
-  configuration and echoes it in `data.overrides`; it never writes
-  `.vmake/config.json`. Unknown packages/options, wrong types and invalid
-  choices fail with `VMAKE_E_OPTION`.
+  configuration and echoes typed values in `data.overrides`; it never writes
+  `.vmake/config.json`. Values are coerced by the declared type: bool accepts
+  `true`/`false`, `on`/`off`, and `1`/`0`; int needs an integer; string and
+  choice keep the raw text (so a string may be `"42"` or `"true"`). Each
+  `--set` resolves twice to learn the types, roughly doubling resolution time
+  and repeating `OnConfig`/`OnApply` side effects. Unknown packages/options and
+  wrong types or choices fail with `VMAKE_E_OPTION`.
+- Buildscript stdout is discarded while the model is resolved, so the JSON is
+  never corrupted by `build.go` prints.
 - `compileDatabase`/`buildReport` point at `build/compile_commands.json` and
   `build/vmake-build.json`; the latter holds the last `vmake build` result (see
-  `docs/BUILD_RESULT.md`). Full schema: `docs/INSPECT.md`.
+  `docs/BUILD_RESULT.md`). Full schema: `references/inspect.md`.
 
 ## Build Script Template
 

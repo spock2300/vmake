@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -112,7 +111,13 @@ type inspectEdge struct {
 type inspectOverride struct {
 	pkgName string
 	optName string
+	raw     string
 	value   any
+}
+
+type inspectOptionDeclarations struct {
+	packageOptions map[string]map[string]*api.Option
+	globalOptions  map[string]*api.Option
 }
 
 func newInspectCmd() *cobra.Command {
@@ -128,9 +133,10 @@ dependency graph, and the compile-database and build-report paths. Diagnostics
 is always an array.
 
 --set overrides a configuration option for this run only; nothing is written to
-.vmake/config.json. The value is coerced to bool for true/false, to a number
-for integers, and to a string otherwise. Unknown packages, unknown options,
-wrong value types and invalid choice values are rejected.
+.vmake/config.json. Values are coerced by the declared option type: bool accepts
+true/false, on/off, and 1/0; int requires an integer; string and choice values
+keep their raw text, so a string can be "42" or "true". Unknown packages, unknown
+options, wrong value types and invalid choice values are rejected.
 
 On success the envelope has status "ok". On failure it has status "error" with
 diagnostics, vmake exits 1, and stderr carries one human-readable error line.`,
@@ -155,12 +161,26 @@ func runInspect(execution context.Context, setFlags []string) error {
 	if findProjectDirSoft() == "" {
 		return failInspect(envelope, "VMAKE_E_INSPECT", errors.New("not inside a vmake project (no .vmake/, build.go or */build.go found in the current directory or any parent directory)"))
 	}
+	restoreStdout := silenceInspectStdout()
+	defer restoreStdout()
 	restoreStderr := silenceInspectStderr()
 	defer restoreStderr()
+	fail := func(code string, err error) error {
+		restoreStdout()
+		restoreStderr()
+		return failInspect(envelope, code, err)
+	}
+
+	if len(overrides) > 0 {
+		overrides, err = coerceInspectOverrides(overrides, collectInspectOptionDeclarations(execution))
+		if err != nil {
+			return fail("VMAKE_E_OPTION", err)
+		}
+	}
+
 	ctx, err := newInspectRuntime(execution)
 	if err != nil {
-		restoreStderr()
-		return failInspect(envelope, "VMAKE_E_INSPECT", err)
+		return fail("VMAKE_E_INSPECT", err)
 	}
 	defer ctx.Resolver.Close()
 
@@ -174,27 +194,27 @@ func runInspect(execution context.Context, setFlags []string) error {
 					continue
 				}
 				if overrideErr := validateInspectOverride(ctx, override); overrideErr != nil {
-					restoreStderr()
-					return failInspect(envelope, "VMAKE_E_OPTION", overrideErr)
+					return fail("VMAKE_E_OPTION", overrideErr)
 				}
 			}
 		}
-		restoreStderr()
-		return failInspect(envelope, "VMAKE_E_INSPECT", err)
+		return fail("VMAKE_E_INSPECT", err)
 	}
 	restoreStderr()
 	for _, override := range overrides {
 		if err := validateInspectOverride(ctx, override); err != nil {
-			return failInspect(envelope, "VMAKE_E_OPTION", err)
+			return fail("VMAKE_E_OPTION", err)
 		}
 	}
 	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
 	if err != nil {
-		return failInspect(envelope, "VMAKE_E_INSPECT", err)
+		return fail("VMAKE_E_INSPECT", err)
 	}
 	data, diagnostics := buildInspectData(ctx, inspection, inspectOverrideValues(overrides))
 	envelope.Data = data
 	envelope.Diagnostics = diagnostics
+	restoreStdout()
+	restoreStderr()
 	if err := writeInspectEnvelope(envelope); err != nil {
 		return err
 	}
@@ -204,20 +224,28 @@ func runInspect(execution context.Context, setFlags []string) error {
 	return nil
 }
 
+func silenceInspectStdout() func() {
+	return silenceInspectStream(&os.Stdout)
+}
+
 func silenceInspectStderr() func() {
+	return silenceInspectStream(&os.Stderr)
+}
+
+func silenceInspectStream(stream **os.File) func() {
 	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
 		return func() {}
 	}
-	original := os.Stderr
-	os.Stderr = devNull
+	original := *stream
+	*stream = devNull
 	restored := false
 	return func() {
 		if restored {
 			return
 		}
 		restored = true
-		os.Stderr = original
+		*stream = original
 		devNull.Close()
 	}
 }
@@ -266,22 +294,56 @@ func parseInspectOverrides(flags []string) ([]inspectOverride, error) {
 		if err != nil {
 			return nil, err
 		}
-		overrides = append(overrides, inspectOverride{pkgName: pkgName, optName: optName, value: coerceInspectValue(raw)})
+		overrides = append(overrides, inspectOverride{pkgName: pkgName, optName: optName, raw: raw})
 	}
 	return overrides, nil
 }
 
-func coerceInspectValue(raw string) any {
-	if strings.EqualFold(raw, "true") {
-		return true
+func collectInspectOptionDeclarations(execution context.Context) *inspectOptionDeclarations {
+	ctx, err := newInspectRuntime(execution)
+	if err != nil {
+		return nil
 	}
-	if strings.EqualFold(raw, "false") {
-		return false
+	defer ctx.Resolver.Close()
+	_ = pipeline.Configure(ctx) // best effort; pass 2 reports the authoritative error
+	if ctx.AllOptions == nil && ctx.GlobalOptions == nil {
+		return nil
 	}
-	if value, err := strconv.ParseInt(raw, 10, 64); err == nil {
-		return float64(value)
+	return &inspectOptionDeclarations{packageOptions: ctx.AllOptions, globalOptions: ctx.GlobalOptions}
+}
+
+func coerceInspectOverrides(overrides []inspectOverride, declarations *inspectOptionDeclarations) ([]inspectOverride, error) {
+	for i := range overrides {
+		override := &overrides[i]
+		opt := declarations.declared(override.pkgName, override.optName)
+		if opt == nil {
+			override.value = override.raw
+			continue
+		}
+		value, err := coerceValue(override.raw, opt.Type())
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", override.key(), err)
+		}
+		override.value = value
 	}
-	return raw
+	return overrides, nil
+}
+
+func (d *inspectOptionDeclarations) declared(pkgName, optName string) *api.Option {
+	if d == nil {
+		return nil
+	}
+	if pkgName == "" {
+		return d.globalOptions[optName]
+	}
+	return d.packageOptions[pkgName][optName]
+}
+
+func (o inspectOverride) key() string {
+	if o.pkgName == "" {
+		return o.optName
+	}
+	return o.pkgName + "/" + o.optName
 }
 
 func validateInspectOverride(ctx *RuntimeContext, override inspectOverride) error {
@@ -289,10 +351,7 @@ func validateInspectOverride(ctx *RuntimeContext, override inspectOverride) erro
 	if err != nil {
 		return err
 	}
-	key := override.optName
-	if override.pkgName != "" {
-		key = override.pkgName + "/" + override.optName
-	}
+	key := override.key()
 	switch opt.Type() {
 	case api.OptionBool:
 		if _, ok := override.value.(bool); !ok {
@@ -346,11 +405,7 @@ func inspectOverrideValues(overrides []inspectOverride) map[string]any {
 	}
 	values := make(map[string]any, len(overrides))
 	for _, override := range overrides {
-		key := override.optName
-		if override.pkgName != "" {
-			key = override.pkgName + "/" + override.optName
-		}
-		values[key] = override.value
+		values[override.key()] = override.value
 	}
 	return values
 }
