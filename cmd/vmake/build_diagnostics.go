@@ -182,7 +182,6 @@ func parseCMakeBareHeader(line string) (string, bool) {
 
 func cmakeDiagnosticDetails(lines []string, index int) []string {
 	var parts []string
-	lastIndent := 0
 	for i := index + 1; i < len(lines); i++ {
 		line := strings.TrimSuffix(lines[i], "\r")
 		if strings.TrimSpace(line) == "" {
@@ -192,8 +191,7 @@ func cmakeDiagnosticDetails(lines []string, index int) []string {
 			}
 			if next < len(lines) {
 				nextLine := strings.TrimSuffix(lines[next], "\r")
-				nextIndent := len(nextLine) - len(strings.TrimLeft(nextLine, " \t"))
-				if nextIndent > lastIndent && (strings.HasPrefix(nextLine, "    ") || strings.HasPrefix(nextLine, "\t")) {
+				if (strings.HasPrefix(nextLine, " ") || strings.HasPrefix(nextLine, "\t")) && !cmakeDiagnosticTrailer(nextLine) {
 					i = next - 1
 					continue
 				}
@@ -204,9 +202,21 @@ func cmakeDiagnosticDetails(lines []string, index int) []string {
 			break
 		}
 		parts = append(parts, strings.TrimSpace(line))
-		lastIndent = len(line) - len(strings.TrimLeft(line, " \t"))
 	}
 	return parts
+}
+
+func cmakeDiagnosticTrailer(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	for _, prefix := range []string{
+		"-- ", "cmake --", "cmake build", "ninja:", "gmake", "make[", "Build files", "Configuring",
+		"Generating done", "See also", "Error:",
+	} {
+		if strings.HasPrefix(trimmed, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func cmakeBareDiagnosticMessage(lines []string, index int, severity string) string {

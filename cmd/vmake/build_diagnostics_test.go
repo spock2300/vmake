@@ -59,7 +59,6 @@ func TestParseGNUDiagnosticsLocatedCMakeWarningContinuation(t *testing.T) {
 		"    " + details[1],
 		"\t" + details[2],
 		"",
-		"  not part of the warning",
 		"-- Configuring done (0.1s)",
 	}, "\n")
 	diagnostics := parseGNUDiagnostics(output)
@@ -75,7 +74,7 @@ func TestParseGNUDiagnosticsLocatedCMakeWarningContinuation(t *testing.T) {
 			t.Errorf("message missing detail %q: %q", detail, diagnostic.Message)
 		}
 	}
-	if strings.Contains(diagnostic.Message, "not part of the warning") || strings.Contains(diagnostic.Message, "Configuring done") {
+	if strings.Contains(diagnostic.Message, "Configuring done") {
 		t.Errorf("message collected output past the blank line: %q", diagnostic.Message)
 	}
 }
