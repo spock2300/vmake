@@ -42,6 +42,10 @@ Requires a successful build first; scans existing build/ outputs.`,
 		},
 	}
 	cmd.Flags().BoolVar(&strict, "strict", false, "exit non-zero on any non-info finding")
+	cmd.Flags().StringVar(&toolchainFlag, "toolchain", "", "override toolchain")
+	cmd.Flags().StringVar(&modeFlag, "mode", "", "override build mode")
+	cmd.RegisterFlagCompletionFunc("toolchain", completeToolchain)
+	cmd.RegisterFlagCompletionFunc("mode", completeMode)
 	return cmd
 }
 
@@ -66,12 +70,12 @@ func runCheckSymbols(strict bool) {
 	vlog.SetLevel(vlog.Quiet)
 
 	ctx := resolveToConfig(false)
-	insp, err := pipeline.Inspect(ctx)
+	insp, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
 	if err != nil {
 		vlog.Fatal("inspect: %v", err)
 	}
 
-	artifacts, err := discoverArtifacts(ctx, insp.PkgDirs, insp.PackageToolchains, insp.GlobalValues)
+	artifacts, err := discoverArtifacts(ctx, insp.PkgDirs, insp.PackageToolchains, insp.Needed, insp.GlobalValues)
 	fatalErr(err)
 	if len(artifacts) == 0 {
 		fmt.Println("No built Shared/Binary targets found. Run 'vmake build' first.")
@@ -101,6 +105,10 @@ func runCheckSymbols(strict bool) {
 			continue
 		}
 		tc := insp.PackageToolchains[a.pkgName]
+		if tc == nil {
+			findings = append(findings, finding{category: "tool-error", severity: "error", subject: a.pkgName + ":" + a.targetName, detail: "package has no resolved toolchain"})
+			continue
+		}
 		nm, err := toolchain.ResolveToolPath(tc.Tools.NM, tc.InstallPath)
 		if err != nil {
 			findings = append(findings, finding{category: "tool-error", severity: "error", subject: a.pkgName + ":" + a.targetName, detail: fmt.Sprintf("resolve nm %q: %v", tc.Tools.NM, err)})
@@ -133,17 +141,31 @@ func runCheckSymbols(strict bool) {
 	}
 }
 
-func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, tcs map[string]*toolchain.Toolchain, globalValues map[string]any) ([]scanArtifact, error) {
+func findBuiltOutput(buildDir, filename string) string {
+	if buildDir == "" {
+		return ""
+	}
+	return filepath.Join(buildDir, filename)
+}
+
+func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, tcs map[string]*toolchain.Toolchain, needed map[string]bool, globalValues map[string]any) ([]scanArtifact, error) {
 	var out []scanArtifact
 	for name, node := range ctx.DepGraph.Packages {
 		if node == nil || node.Pkg == nil || !node.IsLocal() {
+			continue
+		}
+		if needed != nil && !needed[name] {
 			continue
 		}
 		dirs := pkgDirs[name]
 		if dirs == nil {
 			continue
 		}
-		buildCtx, err := pipeline.DeclareTargets(ctx, name, dirs, tcs[name], globalValues)
+		tc := tcs[name]
+		if tc == nil {
+			continue
+		}
+		buildCtx, err := pipeline.DeclareTargets(ctx, name, dirs, tc, globalValues)
 		if err != nil {
 			return nil, err
 		}
@@ -174,23 +196,6 @@ func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, tcs
 		return out[i].targetName < out[j].targetName
 	})
 	return out, nil
-}
-
-func findBuiltOutput(buildDir, filename string) string {
-	if buildDir == "" {
-		return ""
-	}
-	direct := filepath.Join(buildDir, filename)
-	if _, err := os.Stat(direct); err == nil {
-		return direct
-	}
-	pattern := filepath.Join(filepath.Dir(buildDir), "*", filename)
-	matches, _ := filepath.Glob(pattern)
-	if len(matches) == 0 {
-		return direct
-	}
-	sort.Strings(matches)
-	return matches[len(matches)-1]
 }
 
 var (

@@ -293,8 +293,8 @@ vmake ext add <name> <git-url>
 ### 构建命令
 
 ```bash
-vmake build [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k]
-vmake test [--toolchain <name>] [--mode <mode>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k]
+vmake build [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k] [--explain]
+vmake test [--toolchain <name>] [--mode <mode>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k] [--explain]
 vmake clean [--all]
 vmake distclean [--purge-sources]
 vmake rebuild [构建/安装选项]
@@ -329,9 +329,11 @@ vmake repo add --native <name> <url>       # Native 仓库（URL 模板含 {name
 vmake repo remove <name>
 vmake repo list
 vmake repo update <name>
-vmake repo trust <name>                    # 信任远程仓库的 buildscript
+vmake repo trust <name>                    # 信任远程 registry 仓库的 buildscript
 vmake repo untrust <name>                  # 撤销信任
 ```
+
+Native 仓库按解析到的 package commit 在构建时信任（`vmake build --yes`），`repo trust` 会拒绝 native 仓库。
 
 ### 包管理
 
@@ -349,6 +351,8 @@ vmake ext add <name> <url>
 vmake ext remove <name>
 vmake ext list
 vmake ext update [name]
+vmake ext trust <name>                      # 信任当前干净的 commit
+vmake ext untrust <name>                    # 撤销信任
 ```
 
 ### 其他命令
@@ -357,6 +361,8 @@ vmake ext update [name]
 vmake git tag [version] [--minor|--major] [--no-push] [-m|--message <msg>]   # 版本标签
 vmake query [targets|config <pkg>]                    # 显示依赖树 / 包配置
 vmake check-symbols [--strict]                        # 审计本地默认目标的 ELF 动态符号
+vmake cache list                                      # 列出共享 git 对象缓存
+vmake cache remove <url>                              # 删除单个缓存命名空间
 vmake lock update|show                                # 重新解析 / 显示固定版本（.vmake/vmake.lock）
 vmake init-editor [--local <path>] [--remove]         # 为 build.go 生成编辑器支持文件（go.mod）
 vmake doctor                                          # 诊断平台前提与 build.go 模式
@@ -375,9 +381,9 @@ vmake skill path                                      # 显示安装路径
 `--version` 是根命令专用选项；`-h`/`--help` 可用于所有命令。
 
 环境变量：`VMAKE_CACHE`（共享缓存根目录）、`VMAKE_GIT_CACHE=off`（禁用共享
-git 对象缓存）、`VMAKE_GIT_TIMEOUT`（网络 git 操作超时秒数；`VMAKE_FETCH_TIMEOUT`
-是旧别名）、`VMAKE_TRUST_ALL=1`（CI 中绕过远程脚本信任检查）、
-`VMAKE_LEGACY_ROOT=1`（不再提示缺少 `SetRoot`）。存储细节见
+git 对象缓存）、`VMAKE_GIT_TIMEOUT`（网络 git 操作超时秒数）、
+`VMAKE_ENV_EXTRA`（逗号分隔的额外环境变量，纳入编译/链接/CMake 增量指纹）、
+`VMAKE_TRUST_ALL=1`（CI 中绕过远程脚本信任检查）。存储细节见
 [目录结构](docs/VMAKE_HOME.md)。
 
 ## 开发文档

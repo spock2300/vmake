@@ -354,7 +354,7 @@ func TestMakeLocalPkgDirsLayout(t *testing.T) {
 		CCKey:     "/usr/bin/gcc@13",
 		Mode:      "debug",
 		Options:   map[string]any{"x": 1},
-		Material:  keyMaterial{flagsHash: "gh", scriptHash: "sh"},
+		Material:  keyMaterial{flagsHash: "gh"},
 		Ready:     true,
 	})
 	if err != nil {
@@ -373,7 +373,7 @@ func TestMakeLocalPkgDirsLayout(t *testing.T) {
 }
 
 func TestMakeRemotePkgDirsLayout(t *testing.T) {
-	material := keyMaterial{version: "1.0.0", commit: "c0ffee", flagsHash: "gh", scriptHash: "sh"}
+	material := keyMaterial{version: "1.0.0", commit: "c0ffee", flagsHash: "gh"}
 	layout, err := layoutFor(layoutInput{
 		PkgRoot:  "/vd",
 		CCKey:    "/usr/bin/gcc@13",

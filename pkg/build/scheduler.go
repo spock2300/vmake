@@ -77,6 +77,7 @@ type Scheduler struct {
 	includeTests  bool
 	numWorkers    int
 	keepGoing     bool
+	explain       bool
 
 	buildTargetFn  func(string) error
 	globalCFlags   []string
@@ -99,6 +100,7 @@ type schedulerConfig struct {
 	IncludeTests bool
 	NumWorkers   int
 	KeepGoing    bool
+	Explain      bool
 	GlobalFlags  *[4][]string
 }
 
@@ -169,6 +171,7 @@ func newScheduler(cfg schedulerConfig) *Scheduler {
 		includeTests:  cfg.IncludeTests,
 		numWorkers:    cfg.NumWorkers,
 		keepGoing:     cfg.KeepGoing,
+		explain:       cfg.Explain,
 	}
 	if cfg.GlobalFlags != nil {
 		s.globalCFlags = append([]string{}, cfg.GlobalFlags[0]...)

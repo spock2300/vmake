@@ -8,7 +8,7 @@ import (
 )
 
 func TestLayoutForLocalExactPaths(t *testing.T) {
-	material := keyMaterial{commit: "abc", flagsHash: "flags", scriptHash: "script"}
+	material := keyMaterial{commit: "abc", flagsHash: "flags"}
 	layout, err := layoutFor(layoutInput{
 		Local:     true,
 		SourceDir: "/src/pkg",
@@ -21,7 +21,7 @@ func TestLayoutForLocalExactPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantKey := "42488ebef6ed1090f31a395f2e069141c310282282b604fdc66fd1092de99e59"
+	wantKey := "c966a9af47d2c1476cafdf245722587dfcf1331a0c6966b22f19c77a6aad68eb"
 	if layout.BuildKey != wantKey {
 		t.Fatalf("BuildKey = %q, want %q", layout.BuildKey, wantKey)
 	}
@@ -37,7 +37,7 @@ func TestLayoutForLocalExactPaths(t *testing.T) {
 }
 
 func TestLayoutForRemoteMemberExactPaths(t *testing.T) {
-	material := keyMaterial{version: "1.0.0", commit: "commit", flagsHash: "flags", patchHash: "patch", scriptHash: "script"}
+	material := keyMaterial{version: "1.0.0", commit: "commit", flagsHash: "flags", patchHash: "patch"}
 	layout, err := layoutFor(layoutInput{
 		PkgRoot:  "/deps/native/root",
 		Member:   "nested/member",
@@ -50,7 +50,7 @@ func TestLayoutForRemoteMemberExactPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantKey := "1c29027a038a09b90f237a1a12d6baf105506d900e6b5d882f304ef0375b4c15"
+	wantKey := "e05b58c4383404ec6def9f94704703cd6f00ca74b62ce10c16e42aaafd040fbb"
 	output := filepath.Join("/deps/native/root", "out", storage.OwnerKey("nested/member"), wantKey)
 	if want := filepath.Join("/deps/native/root", "src", "nested", "member"); layout.Dirs.SourceDir != want {
 		t.Errorf("SourceDir = %q, want %q", layout.Dirs.SourceDir, want)

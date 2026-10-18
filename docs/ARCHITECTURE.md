@@ -85,6 +85,7 @@ vmake clean
 | `--tests` | | 包含测试目标 |
 | `--jobs` | `-j` | target 内部编译及 Make/CMake helper 的并行上限；所有 target 串行（0 = NumCPU，负数报错） |
 | `--keep-going` | `-k` | 某个 target 失败后继续构建其余独立 target |
+| `--explain` | | 输出每个编译/链接动作被重建的原因 |
 
 ### Install Type 过滤
 
@@ -188,7 +189,7 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 `RunBuild` 包含多个子步骤：
 
 1. **resolveBuildConfig** — 解析构建模式（debug/release/size）和工具链选择
-2. **filterAndCollectNeeded** — 用已解析的包级配置重新执行 OnRequire（`Resolver.FilterDeps` 替换节点.Deps）→ `UpdateOrder` → 从根包 BFS 遍历，过滤需要构建的包：恰好一个本地包声明 `SetRoot(true)` 时以它为根，多个报错；未声明时按启发式选择本地根（存在带 `OnRequire` 的本地包时，被其他本地包依赖且无 `OnRequire` 的本地包不作为根），`VMAKE_LEGACY_ROOT=1` 仅抑制无根提示
+2. **filterAndCollectNeeded** — 用已解析的包级配置重新执行 OnRequire（`Resolver.FilterDeps` 替换节点.Deps）→ `UpdateOrder` → 从根包 BFS 遍历，过滤需要构建的包：恰好一个本地包声明 `SetRoot(true)` 时以它为根，多个报错；未声明时按启发式选择本地根（存在带 `OnRequire` 的本地包时，被其他本地包依赖且无 `OnRequire` 的本地包不作为根），并提示建议声明 `SetRoot(true)`
 3. **prepareConfig / newSourceStage** — 收集 needed、包选项与全局 flags，并解析各包 SourceDir（BuildDir/InstallDir 随后在 prepareAllPackages 的 `setPackageLayout` 中按构建键生成）
 4. **prepareAllPackages** — 下载远程包源码、克隆本地 Git 源码、设置子包目录
 5. **writeLockfile** — 写入 `.vmake/vmake.lock`（锁定解析到的版本与 commit）
@@ -362,9 +363,14 @@ vmake (RootCmd)
 │   ├── add        # 添加扩展仓库
 │   ├── remove     # 删除扩展仓库
 │   ├── list       # 列出扩展和插件
+│   ├── trust      # 信任扩展仓库的当前干净 commit
+│   ├── untrust    # 撤销扩展仓库信任
 │   └── update     # 更新扩展仓库
 ├── git
 │   └── tag        # Git 标签操作（支持版本号自动递增）
+├── cache          # 共享 git 对象缓存
+│   ├── list       # 列出缓存的 upstream 仓库
+│   └── remove     # 删除单个缓存命名空间
 ├── lock           # vmake.lock 管理（.vmake/vmake.lock）
 │   ├── update     # 重新解析并更新锁定版本
 │   └── show       # 显示锁定版本

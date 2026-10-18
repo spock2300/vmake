@@ -71,16 +71,11 @@ func TestGitNetworkTimeoutOverride(t *testing.T) {
 	if got := gitNetworkTimeout(); got != 77*time.Second {
 		t.Fatalf("VMAKE_GIT_TIMEOUT = %s, want 77s", got)
 	}
-	t.Setenv("VMAKE_GIT_TIMEOUT", "")
-	t.Setenv("VMAKE_FETCH_TIMEOUT", "42")
-	if got := gitNetworkTimeout(); got != 42*time.Second {
-		t.Fatalf("VMAKE_FETCH_TIMEOUT fallback = %s, want 42s", got)
-	}
 	t.Setenv("VMAKE_GIT_TIMEOUT", "not-a-number")
-	if got := gitNetworkTimeout(); got != 42*time.Second {
-		t.Fatalf("invalid VMAKE_GIT_TIMEOUT = %s, want fallback 42s", got)
+	if got := gitNetworkTimeout(); got != 30*time.Minute {
+		t.Fatalf("invalid VMAKE_GIT_TIMEOUT = %s, want default 30m", got)
 	}
-	t.Setenv("VMAKE_FETCH_TIMEOUT", "")
+	t.Setenv("VMAKE_GIT_TIMEOUT", "")
 	if got := gitNetworkTimeout(); got != 30*time.Minute {
 		t.Fatalf("default timeout = %s, want 30m", got)
 	}

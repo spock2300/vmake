@@ -201,7 +201,7 @@ func (p *Package) RunEnv(env map[string]string, name string, args ...string) err
 
 `CMakeConfigure` 严格解析已配置的编译器及 binutils，ASM 默认使用已解析的 CC 驱动。VMake 不将 `Tools.LD` 映射为 `CMAKE_LINKER`，底层链接器由 CMake 根据编译器识别。需要交叉时（`target_triple` 非空或 `target_os` 与宿主不同），`CMAKE_SYSTEM_NAME` 由目标系统决定；裸机使用 `Generic`、`CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY`，并从宿主查找程序、从目标根查找库和头文件。需要处理器信息时由项目显式传入 `CMAKE_SYSTEM_PROCESSOR`。
 
-`CMakeConfigure` 只在指纹变化或 configure 产物缺失时重新运行 configure，空闲的重复构建不会重放 configure。指纹包含本次 configure 参数（生成器、目标系统、构建类型、解析后的工具与全局 flags）、`CMAKE_*` 与 `PATH` 环境、cmake 可执行文件的内容，以及 `SrcDir()` 下所有 `CMakeLists.txt`／`CMakePresets.json`／`CMakeUserPresets.json`／`*.cmake`／`*.cmake.in` 的内容哈希；扫描跳过 `.git`、`.vmake_deps`、本次构建根（本地包为 `<SourceDir>/build`，远程包为 `out/<sha256(member)>/<key>`）、`CMakeFiles/` 与 `cmake_install.cmake`；`SrcDir()` 为符号链接时会先解析真实路径再扫描。命中缓存时输出 `cmake configure (cached): <CMakeBuildDir>` 并跳过 configure；命中还要求 configure 产物仍在（`CMakeCache.txt`、`CMakeFiles/` 及已知生成器的 `build.ninja`／`Makefile`），避免手工删掉构建文件后跳过 configure 导致 `cmake --build` 失败。configure 成功后写入 stamp 文件 `<CMakeBuildDir>/.vmake_configure.json`；dry-run 既不读取也不写入 stamp；指纹计算失败视为 miss，单个不可读输入被跳过（其可读性/内容变化会自然导致 miss），绝不让构建因此失败。使用 `file(GLOB)` 的项目在新增文件时不会触发重新 configure，需要改用 `CONFIGURE_DEPENDS` 或在 `CMakeLists.txt` 中显式列出文件。
+`CMakeConfigure` 只在指纹变化或 configure 产物缺失时重新运行 configure，空闲的重复构建不会重放 configure。指纹包含本次 configure 参数（生成器、目标系统、构建类型、解析后的工具与全局 flags）、configure 会读取的环境（`PATH`、`CMAKE_*`、`PKG_CONFIG_PATH`、`SDKROOT` 等，以及 `VMAKE_ENV_EXTRA` 指定的变量；已被 `-D` 显式覆盖的 `CC`/`CXX`/`AR` 与 `CFLAGS`/`CXXFLAGS`/`CPPFLAGS`/`LDFLAGS` 不计入）、cmake 可执行文件的内容，以及 `SrcDir()` 下所有 `CMakeLists.txt`／`CMakePresets.json`／`CMakeUserPresets.json`／`*.cmake`／`*.cmake.in` 的内容哈希；扫描跳过 `.git`、`.vmake_deps`、本次构建根（本地包为 `<SourceDir>/build`，远程包为 `out/<sha256(member)>/<key>`）、`CMakeFiles/` 与 `cmake_install.cmake`；`SrcDir()` 为符号链接时会先解析真实路径再扫描。命中缓存时输出 `cmake configure (cached): <CMakeBuildDir>` 并跳过 configure；命中还要求 configure 产物仍在（`CMakeCache.txt`、`CMakeFiles/` 及已知生成器的 `build.ninja`／`Makefile`），避免手工删掉构建文件后跳过 configure 导致 `cmake --build` 失败。configure 成功后写入 stamp 文件 `<CMakeBuildDir>/.vmake_configure.json`；dry-run 既不读取也不写入 stamp；指纹计算失败视为 miss，单个不可读输入被跳过（其可读性/内容变化会自然导致 miss），绝不让构建因此失败。使用 `file(GLOB)` 的项目在新增文件时不会触发重新 configure，需要改用 `CONFIGURE_DEPENDS` 或在 `CMakeLists.txt` 中显式列出文件。
 
 Windows 主机默认使用 Ninja，尊重显式生成器、`CMAKE_GENERATOR` 环境变量及 configure preset。通过 `CMakeConfigure("--preset", "name")` 使用配置预设；`CMakeBuild` 拒绝 `--preset`，因为 build preset 的 `binaryDir` 会覆盖 API 管理的目录。构建目标和配置分别通过 `--target`、`--config` 选择。API 使用独立 argv 和规范化路径，不提前解析默认 make。`CMakeBuild()` 与 `Make()` 使用本次 `vmake -j N` 的并发上限。参数、环境变量及透传给后端的并发设置只能降低该上限；无限并发、非正数或超过上限均报错。未指定 `-j` 或 `-j0` 时，在构建开始时解析 CPU 数。`CMakeInstall(args...)` 支持 `--component` 等原生安装选项。
 
@@ -286,7 +286,7 @@ func (p *Package) SetDryRun(v bool) *Package   // 设置 dry run 模式（只打
 func (p *Package) DryRun() bool
 ```
 
-`vmake query`、`query targets`、`check-symbols` 等只声明场景在 `Inspect` 阶段不会物化源码（前面的依赖解析仍可能拉取远程包）：本地 SetGit 包的工作树尚未物化时，其 `BuildDir()` 为空。这类场景下内置的 `Run`/`Make`/`CMake*` 只打印不执行，但脚本自己的 `os.ReadFile`/`os.WriteFile` 等不会被拦截；`OnBuild` 中做真实文件读写前必须用 `p.DryRun()` 或 `p.BuildDir() == ""` 守卫，且不能假定 `SrcDir()` 下的源码存在。`BuildContext` 也提供 `SetDryRun(bool)`，仅由这类只声明流程使用。`vmake query`/`query targets`/`check-symbols` 复用 `Inspect` 的 eager 依赖图（不执行 `FilterDeps`），可能包含构建时会裁掉的条件依赖；`query config` 直接读取配置，不经过 `Inspect`。
+`vmake query`、`query targets`、`check-symbols` 等只声明场景在 `Inspect` 阶段不会物化源码（前面的依赖解析仍可能拉取远程包）：本地 SetGit 包的工作树尚未物化时，其 `BuildDir()` 为空。这类场景下内置的 `Run`/`Make`/`CMake*` 只打印不执行，但脚本自己的 `os.ReadFile`/`os.WriteFile` 等不会被拦截；`OnBuild` 中做真实文件读写前必须用 `p.DryRun()` 或 `p.BuildDir() == ""` 守卫，且不能假定 `SrcDir()` 下的源码存在。`BuildContext` 也提供 `SetDryRun(bool)`，仅由这类只声明流程使用。`vmake query`/`query targets`/`check-symbols` 与非 `--all` 的 `clean` 使用 `InspectWithOptions(... FilterDeps: true)`，在声明前按当前配置过滤依赖，因此与 `RunBuild` 的包集合一致；`clean --all` 扫描所有配置与包，不经过该过滤。直接调用 `Inspect` 仍保留 eager 图。`query config` 直接读取配置，不经过 `Inspect`。
 
 ### 版本选择
 
@@ -898,12 +898,13 @@ func MatchVersion(available []string, constraint string) (string, bool)
 | `--toolchain` | | 覆盖工具链 |
 | `--mode` | | 覆盖构建模式（debug/release/size） |
 | `--install` | `-i` | 构建后安装 |
-| `--prefix` | `-p` | 安装前缀（默认：`./install/`） |
+| `--prefix` | `-p` | 安装前缀（默认 `./install/`）；项目内只允许默认 `install/` 及其子目录，其他项目内路径会被拒绝以避免清理源码；项目外自定义路径必须为空目录或带有上次 vmake 写入的 `.vmake-install` 标记，否则拒绝清理 |
 | `--install-type` | | `runtime`（默认）或 `sdk` |
 | `--manifest` | | 从清单文件固定版本 |
 | `--tests` | | 包含测试目标 |
 | `--jobs` | `-j` | 当前 target 的编译并行上限，同时约束 Make/CMake helper（0 = CPU 数，1 = 串行）；target 之间始终串行 |
 | `--keep-going` | `-k` | 某目标失败后继续构建其他独立目标 |
+| `--explain` | | 输出编译/链接目标重建原因 |
 
 ## 全局选项
 

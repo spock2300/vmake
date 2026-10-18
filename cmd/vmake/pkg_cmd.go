@@ -190,7 +190,12 @@ var pkgUpdateCmd = &cobra.Command{
 			fatalErr(err)
 			pkg.SetVersions(repo.FilterValidVersions(tags))
 		} else {
+			lock, err := repoMgr.Lock(repoName, false)
+			fatalErr(err)
+			defer lock.Release()
 			buildGoPath, err := repoMgr.FindPackageGo(repoName, pkgName)
+			fatalErr(err)
+			commit, err := repo.GetCurrentCommit(repoMgr.Path(repoName))
 			fatalErr(err)
 			interpreted, err := buildscript.LoadBuildScriptWithTrust(buildscript.Source{
 				Name:   pkgRef,
@@ -198,6 +203,7 @@ var pkgUpdateCmd = &cobra.Command{
 				Dir:    filepath.Dir(buildGoPath),
 				Origin: api.SourceRemote,
 				Repo:   repoName,
+				Commit: commit,
 			}, remoteScriptTrustChecker)
 			fatalErr(err)
 			pkg.SetVersions(interpreted.Versions())

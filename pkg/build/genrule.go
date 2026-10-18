@@ -3,9 +3,12 @@ package build
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/pkg/api"
@@ -48,18 +51,40 @@ func runGenRulesContext(ctx context.Context, rules []api.GenRule, generatedDir, 
 
 		output := filepath.Join(generatedDir, rule.OutputStem()+".h")
 
-		if !needGenRule(input, output) {
+		if genRuleMatchesInput(output, rule.Input()) && !needGenRule(input, output) {
 			vlog.Info("  GEN [skip] %s -> %s", rule.Input(), rule.OutputStem()+".h")
 			continue
 		}
 
 		vlog.Info("  GEN %s -> %s", rule.Input(), rule.OutputStem()+".h")
-		if err := generateBinHeaderContext(ctx, input, output); err != nil {
+		if err := generateBinHeaderContext(ctx, input, rule.Input(), output); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+// genRuleMarker is the first line of a generated header. It records which
+// buildscript input produced the file so a rule change regenerates it even
+// when the input mtime is older than the existing header. The declared input is
+// hashed to keep the comment valid for arbitrary paths.
+func genRuleMarker(input string) string {
+	sum := sha256.Sum256([]byte(input))
+	return "/* vmake gen: " + hex.EncodeToString(sum[:]) + " */"
+}
+
+func genRuleMatchesInput(output, input string) bool {
+	file, err := os.Open(output)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	line, err := bufio.NewReader(file).ReadString('\n')
+	if err != nil && line == "" {
+		return false
+	}
+	return strings.TrimRight(line, "\r\n") == genRuleMarker(input)
 }
 
 func needGenRule(input, output string) bool {
@@ -76,11 +101,7 @@ func needGenRule(input, output string) bool {
 	return inInfo.ModTime().After(outInfo.ModTime())
 }
 
-func generateBinHeader(input, output string) error {
-	return generateBinHeaderContext(context.Background(), input, output)
-}
-
-func generateBinHeaderContext(ctx context.Context, input, output string) (err error) {
+func generateBinHeaderContext(ctx context.Context, input, declaredInput, output string) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -104,6 +125,9 @@ func generateBinHeaderContext(ctx context.Context, input, output string) (err er
 	}()
 
 	w := bufio.NewWriterSize(f, 32*1024)
+	if _, err := fmt.Fprintf(w, "%s\n", genRuleMarker(declaredInput)); err != nil {
+		return fmt.Errorf("write %s: %w", output, err)
+	}
 
 	var line [82]byte
 	n := len(data)

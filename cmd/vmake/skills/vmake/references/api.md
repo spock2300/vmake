@@ -306,7 +306,7 @@ All setters are fluent (return `*Target`).
 | `AddPostLinkSize` | `()` | `size {output}` |
 | `AddPostLinkStrip` | `()` | `strip -o {output}.stripped {output}` |
 | `AddPostLinkDeps` | `(files ...string)` | Extra input files for post-link steps (SourceDir-relative); any content or permission change (a bare `touch` does not count) or a missing input → relink + re-run all post-link steps. Prebuilt targets with post-link steps are copied before modification and still relink when these inputs change |
-| `AddBinHeader` | `(inputs ...any)` | Binary files → `.h` headers; output to `BuildDir()/generated/`; incremental via mtime |
+| `AddBinHeader` | `(inputs ...any)` | Binary files → `.h` headers; output to `BuildDir()/generated/`; incremental via mtime and the input recorded in the generated header's first line |
 
 `AddDeps` ref grammar (`pkg/api/depref.go`): a ref without `:` and `/` is a target of the declaring package; `pkg:target` selects one target; `pkg:*` or a `/`-containing path (e.g. `"official/zlib"`) expands to all targets of that package plus its transitive package deps (flat closure, deduplicated). Validation is fatal at declaration time for whitespace, multiple `:`, empty segments, and path-shape errors (leading/trailing `/` or `//`) in refs without `:`; an exactly empty entry is silently ignored. A malformed path inside a `pkg:target` ref is not validated at declaration and fails during graph construction (`dependency not found` / `package not found in build graph`). Unknown targets (`dependency not found`), unknown packages (`package not found in build graph`) and cycles fail at build-graph time. A `pkg` part without `/` in `pkg:target` is first resolved relative to the declaring (sub-)package.
 

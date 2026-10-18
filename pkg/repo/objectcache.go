@@ -126,11 +126,14 @@ func normalizeCacheURL(raw string) string {
 		return ""
 	}
 	s = strings.TrimRight(s, "/")
-	// Dropping one trailing ".git" merges "repo" and "repo.git" into a single
-	// namespace: both spell the same upstream repository, and vmake only ever
-	// clones by URL, so the cosmetic suffix must not split the object cache.
-	s = strings.TrimSuffix(s, ".git")
-	s = strings.TrimRight(s, "/")
+	local := localCachePath(s)
+	// A trailing ".git" is cosmetic for network URLs and scp-style remotes.
+	// Local paths are real filesystem identities: /tmp/repo and /tmp/repo.git
+	// may be different repositories and must not share a namespace.
+	if !local {
+		s = strings.TrimSuffix(s, ".git")
+		s = strings.TrimRight(s, "/")
+	}
 	if i := strings.Index(s, "://"); i >= 0 {
 		rest := s[i+3:]
 		authority, path := rest, ""
@@ -143,12 +146,43 @@ func normalizeCacheURL(raw string) string {
 			authority = lowerHostPrefix(authority)
 		}
 		s = s[:i+3] + authority + path
-	} else if at := strings.LastIndex(s, "@"); at >= 0 {
+	} else if !local {
 		// scp-style "user@host:path": lowercase only the host, never the
-		// userinfo before '@' or the path after ':'.
-		s = s[:at+1] + lowerHostPrefix(s[at+1:])
+		// userinfo before '@' or the path after ':'. Local paths may legitimately
+		// contain '@' and are case-sensitive.
+		if at := strings.LastIndex(s, "@"); at >= 0 {
+			s = s[:at+1] + lowerHostPrefix(s[at+1:])
+		}
 	}
 	return s
+}
+
+func localCachePath(value string) bool {
+	if u, err := url.Parse(value); err == nil && strings.EqualFold(u.Scheme, "file") {
+		return true
+	}
+	if strings.Contains(value, "://") {
+		return false
+	}
+	if filepath.IsAbs(value) || strings.HasPrefix(value, ".") {
+		return true
+	}
+	if volume := filepath.VolumeName(value); volume != "" {
+		return true
+	}
+	return !isSCPLikeURL(value)
+}
+
+func isSCPLikeURL(value string) bool {
+	colon := strings.Index(value, ":")
+	slash := strings.IndexAny(value, `/\\`)
+	if colon <= 0 {
+		return false
+	}
+	if slash >= 0 && slash < colon {
+		return false
+	}
+	return strings.Contains(value[:colon], "@")
 }
 
 // lowerHostPrefix lowercases the host portion of an authority or scp-style
@@ -402,27 +436,52 @@ func (c *ObjectCache) List() ([]CacheEntry, error) {
 		if err := jsonio.Load(c.metaPath(repoDir), &meta); err != nil || meta.URL == "" {
 			continue
 		}
+		if c.repoPath(normalizeCacheURL(meta.URL)) != repoDir {
+			// A namespace keyed by an older URL normalization is unusable
+			// under the current key. Hide it instead of advertising an entry
+			// that Remove cannot match.
+			continue
+		}
 		out = append(out, CacheEntry{URL: meta.URL, Path: repoDir, LastUsed: meta.LastUsed, Commits: len(meta.Commits)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].URL < out[j].URL })
 	return out, nil
 }
 
-// Remove deletes the cache namespace for url. It is a no-op for an unknown URL
-// and leaves the namespace's lock file in place. It deliberately ignores
-// Enabled(): a cache populated while the cache was on must still be removable
-// after VMAKE_GIT_CACHE=off.
+// Remove deletes the cache namespace for url. It leaves the namespace's lock
+// file in place and deliberately ignores Enabled(): a cache populated while the
+// cache was on must still be removable after VMAKE_GIT_CACHE=off. A directory
+// without vmake's ownership marker is never deleted; an owned directory with
+// corrupt metadata can be removed so users can recover a damaged cache.
 func (c *ObjectCache) Remove(url string) error {
 	norm := normalizeCacheURL(url)
 	if norm == "" {
-		return nil
+		return fmt.Errorf("cache URL is empty")
 	}
 	lock, err := c.lockEntry(context.Background(), norm)
 	if err != nil {
 		return err
 	}
 	defer lock.Release()
-	return fs.RemoveAll(c.repoPath(norm))
+	repoDir := c.repoPath(norm)
+	if !dirExists(repoDir) {
+		c.removeStaging(filepath.Dir(repoDir), filepath.Base(repoDir))
+		return fmt.Errorf("cache namespace %s not found", repoDir)
+	}
+	if !c.owned(repoDir) {
+		return fmt.Errorf("cache path %s is not owned by vmake; refusing to remove it", repoDir)
+	}
+	var meta cacheMeta
+	if err := jsonio.Load(c.metaPath(repoDir), &meta); err == nil && meta.URL != "" {
+		if normalizeCacheURL(meta.URL) != norm {
+			return fmt.Errorf("cache namespace %s belongs to %q; refusing to remove it for %q", repoDir, meta.URL, url)
+		}
+	}
+	if err := fs.RemoveAll(repoDir); err != nil {
+		return err
+	}
+	c.removeStaging(filepath.Dir(repoDir), filepath.Base(repoDir))
+	return nil
 }
 
 // ensureRepo returns the usable bare repository for a namespace, rebuilding a
@@ -430,23 +489,76 @@ func (c *ObjectCache) Remove(url string) error {
 // created reports whether the repository was (re)initialized here, so a failed
 // first fetch can be cleaned up without discarding a populated cache.
 func (c *ObjectCache) ensureRepo(ctx context.Context, norm, url string) (string, *cacheMeta, bool, error) {
-	if meta, repoDir, ok := c.entry(norm, url); ok {
+	repoDir := c.repoPath(norm)
+	if meta, _, ok := c.entry(norm, url); ok && usableBareRepo(repoDir) {
 		return repoDir, meta, false, nil
 	}
-	repoDir := c.repoPath(norm)
-	if err := fs.RemoveAll(repoDir); err != nil {
+	if dirExists(repoDir) {
+		if !c.owned(repoDir) && !emptyDir(repoDir) {
+			return "", nil, false, fmt.Errorf("cache path %s is not owned by vmake; refusing to delete it", repoDir)
+		}
+		if err := fs.RemoveAll(repoDir); err != nil {
+			return "", nil, false, err
+		}
+	}
+	parent := filepath.Dir(repoDir)
+	if err := fs.EnsureDir(parent); err != nil {
 		return "", nil, false, err
 	}
-	if err := fs.EnsureDir(repoDir); err != nil {
-		return "", nil, false, err
+	c.removeStaging(parent, filepath.Base(repoDir))
+	staging, err := os.MkdirTemp(parent, "."+filepath.Base(repoDir)+".tmp-*")
+	if err != nil {
+		return "", nil, false, fmt.Errorf("create cache staging directory: %w", err)
 	}
-	if err := gitRunContext(ctx, repoDir, []string{"init", "--bare"}, 0); err != nil {
-		return "", nil, false, fmt.Errorf("init object cache %s: %w", repoDir, err)
+	keep := false
+	defer func() {
+		if !keep {
+			_ = fs.RemoveAll(staging)
+		}
+	}()
+	// Write ownership metadata before running git. Staging keeps a failure from
+	// leaving a half-initialized final namespace; the rename below publishes it
+	// atomically.
+	meta := newCacheMeta(url)
+	if err := c.saveMeta(staging, meta); err != nil {
+		return "", nil, false, fmt.Errorf("write cache metadata %s: %w", staging, err)
 	}
-	if err := gitRunContext(ctx, repoDir, []string{"remote", "add", "origin", url}, 0); err != nil {
-		return "", nil, false, fmt.Errorf("add origin to object cache %s: %w", repoDir, err)
+	if err := gitRunContext(ctx, staging, []string{"init", "--bare"}, 0); err != nil {
+		return "", nil, false, fmt.Errorf("init object cache %s: %w", staging, err)
 	}
-	return repoDir, newCacheMeta(url), true, nil
+	if err := gitRunContext(ctx, staging, []string{"remote", "add", "origin", url}, 0); err != nil {
+		return "", nil, false, fmt.Errorf("add origin to object cache %s: %w", staging, err)
+	}
+	if err := os.Rename(staging, repoDir); err != nil {
+		return "", nil, false, fmt.Errorf("publish cache namespace %s: %w", repoDir, err)
+	}
+	keep = true
+	return repoDir, meta, true, nil
+}
+
+func usableBareRepo(repoDir string) bool {
+	return dirExists(filepath.Join(repoDir, "objects")) &&
+		fs.FileExists(filepath.Join(repoDir, "HEAD")) &&
+		fs.FileExists(filepath.Join(repoDir, "config"))
+}
+
+func emptyDir(path string) bool {
+	entries, err := os.ReadDir(path)
+	return err == nil && len(entries) == 0
+}
+
+func (c *ObjectCache) removeStaging(parent, base string) {
+	matches, _ := filepath.Glob(filepath.Join(parent, "."+base+".tmp-*"))
+	for _, path := range matches {
+		_ = fs.RemoveAll(path)
+	}
+}
+
+// owned reports whether repoDir carries vmake's metadata marker. A directory
+// without it may belong to the user or to another tool sharing VMAKE_CACHE.
+func (c *ObjectCache) owned(repoDir string) bool {
+	_, err := os.Stat(c.metaPath(repoDir))
+	return err == nil
 }
 
 func (c *ObjectCache) ensureCommitLocked(ctx context.Context, repoDir, url string, meta *cacheMeta, commit string, bestEffort bool) error {

@@ -2,7 +2,9 @@ package pipeline
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/spock2300/vmake/internal/storage"
 	"github.com/spock2300/vmake/pkg/api"
@@ -116,15 +118,10 @@ func (s *sourceStage) rebindLayout(name string, layout build.PackageLayout) erro
 func (s *sourceStage) keyMaterialFor(name string) (keyMaterial, error) {
 	node := s.rc.ctx.DepGraph.Packages[name]
 	flagsHash := packageFlagsHash(s.rc.globalFlagsHash, node)
-	scriptHash, err := s.scriptHashFor(name)
-	if err != nil {
-		return keyMaterial{}, err
-	}
 	if node == nil || node.IsLocal() {
 		return keyMaterial{
-			commit:     s.sourceCommits[name],
-			flagsHash:  flagsHash,
-			scriptHash: scriptHash,
+			commit:    s.sourceCommits[name],
+			flagsHash: flagsHash,
 		}, nil
 	}
 	owner := remoteOwnerName(s.rc.ctx, name)
@@ -148,11 +145,10 @@ func (s *sourceStage) keyMaterialFor(name string) (keyMaterial, error) {
 		commit = node.Native.Commit
 	}
 	return keyMaterial{
-		version:    version,
-		commit:     s.packageCommitKey(name, commit),
-		flagsHash:  flagsHash,
-		patchHash:  s.patchHashes[name],
-		scriptHash: scriptHash,
+		version:   version,
+		commit:    s.packageCommitKey(name, commit),
+		flagsHash: flagsHash,
+		patchHash: s.patchHashes[name],
 	}, nil
 }
 
@@ -197,4 +193,29 @@ func (s *sourceStage) makeLayout(name string, tools *build.ResolvedTools) (build
 		Material: material,
 		Ready:    true,
 	})
+}
+
+// clearRemoteInstallDirs removes stale published files from remote package
+// install staging before OnBuild runs. Buildscript text no longer rotates the
+// build directory, so files published by a previous script must not survive
+// when the script stops declaring them.
+func clearRemoteInstallDirs(layouts map[string]*build.PackageLayout) error {
+	names := make([]string, 0, len(layouts))
+	for name := range layouts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		layout := layouts[name]
+		if layout == nil || layout.Dirs.InstallDir == "" {
+			continue
+		}
+		if err := os.RemoveAll(layout.Dirs.InstallDir); err != nil {
+			return fmt.Errorf("clear install dir for %s: %w", name, err)
+		}
+		if err := os.MkdirAll(layout.Dirs.InstallDir, 0755); err != nil {
+			return fmt.Errorf("create install dir for %s: %w", name, err)
+		}
+	}
+	return nil
 }

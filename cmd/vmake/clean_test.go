@@ -186,7 +186,7 @@ func TestCleanHooksRecoverScriptError(t *testing.T) {
 	r.Graph().Packages["app"] = resolver.NewPackageNode("app", buildscript.NewSource("app", path, root, api.SourceLocal), pkg)
 	r.Graph().Order = []string{"app"}
 	ctx := &RuntimeContext{Resolver: r, DepGraph: r.Graph(), Config: &config.ConfigFile{Global: &config.GlobalConfig{Toolchain: tcName}}, Paths: &pipeline.Paths{ProjectDir: root}}
-	err = executeCleanHooks(ctx, false, true)
+	err = executeCleanHooks(ctx, false, true, true)
 	var scriptErr *api.BuildScriptError
 	if !errors.As(err, &scriptErr) {
 		t.Fatalf("OnClean error was not returned: %v", err)
@@ -249,5 +249,41 @@ func TestValidPkgRefComponent(t *testing.T) {
 		if validPkgRefComponent(bad) {
 			t.Errorf("validPkgRefComponent(%q) = true", bad)
 		}
+	}
+}
+
+func TestCleanHooksWithoutFilterRunForUnneededPackages(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "build.go")
+	if err := os.WriteFile(path, []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	host, err := toolchain.GetManager().GetToolchain("host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := build.ResolveTools(host, api.Platform{}); err != nil {
+		t.Skipf("host tools unavailable: %v", err)
+	}
+	marker := filepath.Join(root, "unneeded-cleaned")
+	app := api.NewPackage().SetName("app").SetRoot(true)
+	unneeded := api.NewPackage().SetName("unneeded")
+	unneeded.OnClean(func(*api.CleanContext) {
+		_ = os.WriteFile(marker, []byte("cleaned"), 0644)
+	})
+	r := resolver.NewResolver(nil, filepath.Join(root, ".vmake_deps"))
+	r.Graph().Packages["app"] = resolver.NewPackageNode("app", buildscript.NewSource("app", path, root, api.SourceLocal), app)
+	r.Graph().Packages["unneeded"] = resolver.NewPackageNode("unneeded", buildscript.NewSource("unneeded", path, root, api.SourceLocal), unneeded)
+	r.Graph().Order = []string{"app", "unneeded"}
+	ctx := &RuntimeContext{
+		Resolver: r, DepGraph: r.Graph(),
+		Config: &config.ConfigFile{Global: &config.GlobalConfig{Toolchain: "host"}},
+		Paths:  &pipeline.Paths{ProjectDir: root, DepsDir: filepath.Join(root, ".vmake_deps"), CacheDir: filepath.Join(root, "cache")},
+	}
+	if err := executeCleanHooks(ctx, false, true, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("unneeded package OnClean did not run: %v", err)
 	}
 }

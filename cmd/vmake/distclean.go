@@ -39,7 +39,7 @@ func runDistClean(cmd *cobra.Command, args []string) {
 	if ok {
 		vlog.Info("")
 		vlog.Info("Executing OnClean...")
-		if err := executeCleanHooks(ctx, false, false); err != nil {
+		if err := executeCleanHooks(ctx, false, false, false); err != nil {
 			vlog.Error("Skipping OnClean: %v", err)
 		}
 	}

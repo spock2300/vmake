@@ -93,11 +93,11 @@ func TestSessionToolsSeparateSameNameDefinitions(t *testing.T) {
 func TestSessionToolsSeparateEnvironmentAndPlatform(t *testing.T) {
 	tc, _, probes := toolProbeFixture(t)
 	session := NewSession(nil)
-	t.Setenv("VMAKE_TOOL_PROBE_TEST", "first")
+	t.Setenv("CPATH", "first")
 	if _, err := session.ResolveTools(tc, api.Platform{}); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("VMAKE_TOOL_PROBE_TEST", "second")
+	t.Setenv("CPATH", "second")
 	if _, err := session.ResolveTools(tc, api.Platform{}); err != nil {
 		t.Fatal(err)
 	}

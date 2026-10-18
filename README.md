@@ -311,8 +311,8 @@ See the [Extension Plugin Guide](docs/EXTENSION_PLUGIN.md) for the complete plug
 ### Build Commands
 
 ```bash
-vmake build [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k]
-vmake test [--toolchain <name>] [--mode <mode>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k]
+vmake build [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k] [--explain]
+vmake test [--toolchain <name>] [--mode <mode>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k] [--explain]
 vmake clean [--all]
 vmake distclean [--purge-sources]
 vmake rebuild [build/install flags]
@@ -347,9 +347,11 @@ vmake repo add --native <name> <url>       # Native repo (URL template with {nam
 vmake repo remove <name>
 vmake repo list
 vmake repo update <name>
-vmake repo trust <name>                    # Trust a remote repo's buildscripts
+vmake repo trust <name>                    # Trust a remote registry repo's buildscripts
 vmake repo untrust <name>                  # Revoke trust
 ```
+
+Native repos are trusted per resolved package commit at build time (`vmake build --yes`); `repo trust` rejects them.
 
 ### Package Management
 
@@ -367,6 +369,8 @@ vmake ext add <name> <url>
 vmake ext remove <name>
 vmake ext list
 vmake ext update [name]
+vmake ext trust <name>                      # Trust the current clean commit
+vmake ext untrust <name>                    # Revoke trust
 ```
 
 ### Other Commands
@@ -375,6 +379,8 @@ vmake ext update [name]
 vmake git tag [version] [--minor|--major] [--no-push] [-m|--message <msg>]   # Version tagging
 vmake query [targets|config <pkg>]                    # Show dependency tree / package config
 vmake check-symbols [--strict]                        # Audit ELF dynamic symbols of local default targets
+vmake cache list                                      # List cached upstream repositories
+vmake cache remove <url>                              # Remove one cache namespace
 vmake lock update|show                                # Re-resolve / show pinned versions (.vmake/vmake.lock)
 vmake init-editor [--local <path>] [--remove]         # Generate editor support (go.mod) for build.go
 vmake doctor                                          # Diagnose platform prerequisites and build.go patterns
@@ -395,9 +401,9 @@ available on every command.
 
 Environment variables: `VMAKE_CACHE` (shared cache root), `VMAKE_GIT_CACHE=off`
 (disable the shared git object cache), `VMAKE_GIT_TIMEOUT` (network git timeout
-in seconds; `VMAKE_FETCH_TIMEOUT` is a legacy alias), `VMAKE_TRUST_ALL=1` (bypass
-remote-script trust gating for CI), and `VMAKE_LEGACY_ROOT=1` (silence the
-missing-`SetRoot` hint). See [Directory Structure](docs/VMAKE_HOME.md) for the
+in seconds), `VMAKE_ENV_EXTRA` (comma-separated extra environment variables
+included in compile/link/CMake fingerprints), `VMAKE_TRUST_ALL=1` (bypass
+remote-script trust gating for CI). See [Directory Structure](docs/VMAKE_HOME.md) for the
 storage details.
 
 ## Documentation

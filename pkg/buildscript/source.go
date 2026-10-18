@@ -12,6 +12,10 @@ type Source struct {
 	// Repo is the remote repository name the script originates from
 	// ("official", "mynative"). Empty for local project scripts.
 	Repo string
+	// URL and Commit identify the exact remote revision whose script is being
+	// executed. Commit is required for remote trust decisions.
+	URL    string
+	Commit string
 }
 
 func NewSource(name, path, dir string, origin api.SourceOrigin) *Source {

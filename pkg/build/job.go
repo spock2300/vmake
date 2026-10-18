@@ -3,7 +3,6 @@ package build
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 
@@ -31,6 +30,7 @@ type BuildJob struct {
 	Platform     api.Platform
 	Mode         string
 	IncludeTests bool
+	Explain      bool
 }
 
 type buildGroupKey struct {
@@ -59,6 +59,7 @@ func (j *BuildJob) newSchedulerFor(
 		IncludeTests: j.IncludeTests,
 		NumWorkers:   env.Jobs,
 		KeepGoing:    env.KeepGoing,
+		Explain:      j.Explain,
 		GlobalFlags:  &env.GlobalFlags,
 	})
 }
@@ -179,14 +180,6 @@ func (j *BuildJob) Run() (*Scheduler, error) {
 			return nil
 		}
 		return session.Execute(name, run)
-	}
-	for _, fullName := range j.Graph.Order {
-		node := j.Graph.Nodes[fullName]
-		if info, _ := base.GetPkgInfo(node.PkgName); info != nil && info.InstallDir != "" {
-			if err := os.MkdirAll(info.InstallDir, 0755); err != nil {
-				return nil, fmt.Errorf("create install dir: %w", err)
-			}
-		}
 	}
 	err = base.BuildAll()
 	root := env.RootDir

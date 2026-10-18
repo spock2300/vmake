@@ -70,6 +70,20 @@ func TestCleanupLegacyStorageKeepsV3Trees(t *testing.T) {
 	}
 }
 
+func TestCleanupLegacyStorageRemovesLegacyTrust(t *testing.T) {
+	cleanupStorageFixture(t)
+	legacy := filepath.Join(vmakeDir, "config.json")
+	if err := os.WriteFile(legacy, []byte(`{"trustedRepos":["official"]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cleanupLegacyStorage()
+
+	if fs.FileExists(legacy) {
+		t.Fatal("legacy trust file survived the upgrade")
+	}
+}
+
 func TestRequiresExclusiveStorage(t *testing.T) {
 	cases := []struct {
 		args []string

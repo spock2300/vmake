@@ -43,21 +43,8 @@ func makeBuildConfig(ctx *RuntimeContext, tc *toolchain.Toolchain, tcName string
 func filterAndCollectNeeded(ctx *RuntimeContext) (map[string]bool, error) {
 	vlog.Info("")
 	vlog.Info("Filtering dependencies...")
-	for _, name := range ctx.Resolver.GetOrder() {
-		node := ctx.DepGraph.Packages[name]
-		if node.Pkg == nil {
-			continue
-		}
-		entry := config.GetEntry(ctx.Config, name)
-		opts := ctx.AllOptions[name]
-		if err := ctx.Resolver.FilterDeps(name, entry.Options, opts); err != nil {
-			return nil, fmt.Errorf("%s: filter deps: %w", name, err)
-		} else if len(node.Deps) > 0 {
-			vlog.Info("  %s: deps=%v", name, node.Deps)
-		}
-	}
-	if err := ctx.Resolver.UpdateOrder(); err != nil {
-		return nil, fmt.Errorf("dependency cycle: %w", err)
+	if err := filterDependencies(ctx, true); err != nil {
+		return nil, err
 	}
 
 	ctx.DepGraph.Freeze()
@@ -71,6 +58,32 @@ func filterAndCollectNeeded(ctx *RuntimeContext) (map[string]bool, error) {
 	}
 
 	return needed, nil
+}
+
+func filterDependencies(ctx *RuntimeContext, log bool) error {
+	if ctx == nil || ctx.DepGraph == nil || ctx.Resolver == nil || ctx.DepGraph.IsFrozen() {
+		return nil
+	}
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if node == nil || node.Pkg == nil {
+			continue
+		}
+		var options map[string]any
+		if ctx.Config != nil {
+			options = config.GetEntry(ctx.Config, name).Options
+		}
+		if err := ctx.Resolver.FilterDeps(name, options, ctx.AllOptions[name]); err != nil {
+			return fmt.Errorf("%s: filter deps: %w", name, err)
+		}
+		if log && len(node.Deps) > 0 {
+			vlog.Info("  %s: deps=%v", name, node.Deps)
+		}
+	}
+	if err := ctx.Resolver.UpdateOrder(); err != nil {
+		return fmt.Errorf("dependency cycle: %w", err)
+	}
+	return nil
 }
 
 func validateNeededSubPackageOwners(needed map[string]bool, subParents map[string]string) error {

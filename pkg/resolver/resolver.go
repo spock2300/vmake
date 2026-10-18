@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/spock2300/vmake/internal/flock"
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/toposort"
 	"github.com/spock2300/vmake/pkg/api"
@@ -80,6 +81,7 @@ type Resolver struct {
 	ignoreLock   bool
 	configPins   map[string]string
 	trustChecker buildscript.ScriptTrustChecker
+	repoLocks    map[string]*flock.FileLock
 }
 
 func NewResolver(repoMgr *repo.RepoManager, depsDir string) *Resolver {
@@ -90,6 +92,7 @@ func NewResolver(repoMgr *repo.RepoManager, depsDir string) *Resolver {
 		repoMgr:    repoMgr,
 		depsDir:    depsDir,
 		subParents: make(map[string]string),
+		repoLocks:  make(map[string]*flock.FileLock),
 	}
 }
 
@@ -111,6 +114,20 @@ func (r *Resolver) SetLockfile(l *lockfile.Lock, ignore bool) {
 
 func (r *Resolver) SetTrustChecker(c buildscript.ScriptTrustChecker) {
 	r.trustChecker = c
+}
+
+// Close releases the shared repository locks held since resolution. Callers
+// that finish an invocation must call it; until then a repository cannot be
+// updated by another process, and holding the locks for the process lifetime
+// would block an in-process exclusive lock (flock is not reentrant).
+func (r *Resolver) Close() {
+	if r == nil {
+		return
+	}
+	for _, lock := range r.repoLocks {
+		_ = lock.Release()
+	}
+	r.repoLocks = make(map[string]*flock.FileLock)
 }
 
 func (r *Resolver) SetConfigPins(pins map[string]string) {
@@ -297,6 +314,18 @@ func (r *Resolver) recurseDeps(node *PackageNode, path []string) error {
 }
 
 func (r *Resolver) findSource(id string, constraint string) (*buildscript.Source, error) {
+	if r.repoMgr != nil {
+		repoName, _, _ := api.SplitPackageRef(id)
+		if repoName != "" {
+			if _, ok := r.repoLocks[repoName]; !ok {
+				lock, err := r.repoMgr.Lock(repoName, false)
+				if err != nil {
+					return nil, err
+				}
+				r.repoLocks[repoName] = lock
+			}
+		}
+	}
 	if src, ok := r.sources[id]; ok {
 		return src, nil
 	}
@@ -310,6 +339,12 @@ func (r *Resolver) findSource(id string, constraint string) (*buildscript.Source
 		}
 		src := buildscript.NewSource(id, buildGo, filepath.Dir(buildGo), api.SourceRemote)
 		src.Repo = repoName
+		// Trust binds to the wrapper checkout's commit when it is available.
+		// A trust checker refuses an empty commit; loading without one is only
+		// used by tests and by callers that deliberately pass no checker.
+		if head, headErr := repo.GetCurrentCommitContext(r.ctx, r.repoMgr.Path(repoName)); headErr == nil {
+			src.Commit = head
+		}
 		r.sources[id] = src
 		return src, nil
 	}
@@ -418,6 +453,8 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 	}
 	src := buildscript.NewSource(id, buildGo, res.SrcDir, api.SourceRemote)
 	src.Repo = repoName
+	src.URL = gitURL
+	src.Commit = res.Commit
 
 	r.sources[id] = src
 
@@ -529,9 +566,16 @@ func (r *Resolver) scanSubPackages(parentID, checkoutDir string) {
 		return
 	}
 	repoName, _, _ := api.SplitPackageRef(parentID)
+	var parentCommit, parentURL string
+	if node := r.graph.Packages[parentID]; node != nil && node.Native != nil {
+		parentCommit = node.Native.Commit
+		parentURL = node.Native.GitURL
+	}
 	for i := range subs {
 		ss := &subs[i]
 		ss.Repo = repoName
+		ss.Commit = parentCommit
+		ss.URL = parentURL
 		r.sources[ss.Name] = ss
 		r.subParents[ss.Name] = parentID
 	}

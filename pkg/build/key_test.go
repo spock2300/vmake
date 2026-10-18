@@ -68,14 +68,13 @@ func TestBuildKeyEmpty(t *testing.T) {
 
 func TestBuildKeyDiffersOnExtra(t *testing.T) {
 	opts := map[string]any{"a": 1}
-	k1 := BuildKey("gcc", "debug", opts, JoinKeyExtra("1.0.0", "abc", "h1", "", "s1"))
-	k2 := BuildKey("gcc", "debug", opts, JoinKeyExtra("1.1.0", "abc", "h1", "", "s1"))
-	k3 := BuildKey("gcc", "debug", opts, JoinKeyExtra("1.0.0", "def", "h1", "", "s1"))
-	k4 := BuildKey("gcc", "debug", opts, JoinKeyExtra("1.0.0", "abc", "h2", "", "s1"))
-	k5 := BuildKey("gcc", "debug", opts, JoinKeyExtra("1.0.0", "abc", "h1", "p1", "s1"))
-	k6 := BuildKey("gcc", "debug", opts, JoinKeyExtra("1.0.0", "abc", "h1", "", "s2"))
-	if k1 == k2 || k1 == k3 || k1 == k4 || k1 == k5 || k1 == k6 {
-		t.Error("BuildKey should differ when version/commit/globalFlags/patchHash/scriptHash differ")
+	k1 := BuildKey("gcc", "debug", opts, JoinKeyExtra("1.0.0", "abc", "h1", ""))
+	k2 := BuildKey("gcc", "debug", opts, JoinKeyExtra("1.1.0", "abc", "h1", ""))
+	k3 := BuildKey("gcc", "debug", opts, JoinKeyExtra("1.0.0", "def", "h1", ""))
+	k4 := BuildKey("gcc", "debug", opts, JoinKeyExtra("1.0.0", "abc", "h2", ""))
+	k5 := BuildKey("gcc", "debug", opts, JoinKeyExtra("1.0.0", "abc", "h1", "p1"))
+	if k1 == k2 || k1 == k3 || k1 == k4 || k1 == k5 {
+		t.Error("BuildKey should differ when version/commit/globalFlags/patchHash differ")
 	}
 	if BuildKey("gcc", "debug", opts, "") == k1 {
 		t.Error("BuildKey should differ between empty and non-empty extra")
@@ -166,6 +165,12 @@ func TestBuildCompileArgsNoDepFile(t *testing.T) {
 		if a == "-MMD" || a == "-MP" || a == "-MF" {
 			t.Errorf("dep file args should be omitted when depPath empty, got %v", args)
 		}
+	}
+}
+
+func TestJoinKeyExtraHasFourComponents(t *testing.T) {
+	if got, want := JoinKeyExtra("v", "c", "f", "p"), "v\x00c\x00f\x00p\x00"; got != want {
+		t.Fatalf("JoinKeyExtra = %q, want %q", got, want)
 	}
 }
 

@@ -9,10 +9,15 @@ import (
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
+// layoutFormatVersion versions the per-package build-directory key. It is
+// independent of action-record and signature versions so changing an action
+// format does not rotate every build directory.
+const layoutFormatVersion = 2
+
 // BuildKey derives the per-package build directory key. extra carries
 // additional key material: source version, commit hash, the global flags
-// hash, the patch hash and the buildscript hash, joined with "\x00"
-// separators.
+// hash and the patch hash, joined with "\x00" separators. Buildscript text
+// belongs to action signatures, not this coarse key.
 func BuildKey(toolchain, mode string, options map[string]any, extra string) string {
 	key, _ := BuildKeyE(toolchain, mode, options, extra)
 	return key
@@ -20,7 +25,7 @@ func BuildKey(toolchain, mode string, options map[string]any, extra string) stri
 
 func BuildKeyE(toolchain, mode string, options map[string]any, extra string) (string, error) {
 	data := map[string]any{
-		"format":     buildFormatVersion,
+		"format":     layoutFormatVersion,
 		"toolchain":  toolchain,
 		"build_mode": mode,
 		"options":    options,
@@ -58,8 +63,10 @@ func GlobalFlagsHash() string {
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
-// JoinKeyExtra combines version/commit/globalFlagsHash/patchHash/scriptHash
-// into BuildKey extra material.
-func JoinKeyExtra(version, commit, globalFlagsHash, patchHash, scriptHash string) string {
-	return version + "\x00" + commit + "\x00" + globalFlagsHash + "\x00" + patchHash + "\x00" + scriptHash
+// JoinKeyExtra combines version, commit, global flags and patch identity into
+// BuildKey extra material.
+func JoinKeyExtra(version, commit, globalFlagsHash, patchHash string) string {
+	// Keep the historical trailing separator so dropping the buildscript-hash
+	// component rotates each existing build directory exactly once.
+	return version + "\x00" + commit + "\x00" + globalFlagsHash + "\x00" + patchHash + "\x00"
 }

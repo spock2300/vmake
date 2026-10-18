@@ -74,16 +74,12 @@ func TestCheckoutManifestLocalsSkipsManagedGitSources(t *testing.T) {
 			SetGit("https://example.invalid/upstream.git"))
 	plain := resolver.NewPackageNode("local/plain",
 		buildscript.NewSource("local/plain", "build.go", project, api.SourceLocal), api.NewPackage())
-	ctx := &RuntimeContext{Context: context.Background(), DepGraph: &resolver.Graph{Packages: map[string]*resolver.PackageNode{
+	ctx := &RuntimeContext{Context: context.Background(), WorkDir: root, DepGraph: &resolver.Graph{Packages: map[string]*resolver.PackageNode{
 		"local/managed": managed,
 		"local/plain":   plain,
 	}}}
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	rel, err := filepath.Rel(cwd, project)
+	rel, err := filepath.Rel(root, project)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,5 +104,84 @@ func TestCheckoutManifestLocalsSkipsManagedGitSources(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(project, "main.c")); err != nil || string(data) != "v1\n" {
 		t.Fatalf("plain local package content = %q, %v", data, err)
+	}
+}
+
+func TestResolveManifestEntryPathUsesProjectRoot(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	if err := os.MkdirAll(project, 0755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveManifestEntryPath(project, filepath.Join("src", "pkg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(project, "src", "pkg"); got != want {
+		t.Fatalf("resolved path = %q, want %q", got, want)
+	}
+	got, err = resolveManifestEntryPath(project, filepath.Join("src", "..", "lib"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(project, "lib"); got != want {
+		t.Fatalf("normalized path = %q, want %q", got, want)
+	}
+	if _, err := resolveManifestEntryPath(project, filepath.Join("..", "outside")); err == nil {
+		t.Fatal("path escaping the project was accepted")
+	}
+}
+
+func TestCheckoutLocalRejectsEscapingPaths(t *testing.T) {
+	project := t.TempDir()
+	for _, path := range []string{filepath.Join("..", "outside"), ""} {
+		entry := installManifestEntry{Name: "local/pkg", Source: "local", Ref: strings.Repeat("0", 40), Path: path}
+		if err := checkoutLocal(project, entry); err == nil {
+			t.Errorf("checkoutLocal accepted manifest path %q", path)
+		}
+	}
+}
+
+func TestCheckoutLocalAcceptsRootPackage(t *testing.T) {
+	project := t.TempDir()
+	runGitLine(t, project, "init", "-q", "-b", "master")
+	runGitLine(t, project, "config", "user.email", "test@example.com")
+	runGitLine(t, project, "config", "user.name", "test")
+	if err := os.WriteFile(filepath.Join(project, "build.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGitLine(t, project, "add", "-A")
+	runGitLine(t, project, "commit", "-q", "-m", "v1")
+	first, err := repoPkg.GetCurrentCommit(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "build.go"), []byte("package main\n\n// v2\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGitLine(t, project, "add", "-A")
+	runGitLine(t, project, "commit", "-q", "-m", "v2")
+
+	entry := installManifestEntry{Name: "app", Source: "local", Ref: first, Path: "."}
+	if err := checkoutLocal(project, entry); err != nil {
+		t.Fatalf("checkoutLocal rejected a root package manifest entry: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(project, "build.go")); err != nil || string(data) != "package main\n" {
+		t.Fatalf("root package was not restored: %q, %v", data, err)
+	}
+}
+
+func TestCheckoutManifestLocalsRejectsPathNotMatchingPackage(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	if err := os.MkdirAll(project, 0755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := &RuntimeContext{Context: context.Background(), WorkDir: root, DepGraph: &resolver.Graph{Packages: map[string]*resolver.PackageNode{
+		"local/plain": resolver.NewPackageNode("local/plain", buildscript.NewSource("local/plain", "build.go", project, api.SourceLocal), api.NewPackage()),
+	}}}
+	entry := installManifestEntry{Name: "local/plain", Source: "local", Ref: strings.Repeat("0", 40), Path: "other"}
+	if err := checkoutManifestLocals(ctx, &installManifest{Packages: []installManifestEntry{entry}}); err == nil {
+		t.Fatal("manifest path not matching the package source was accepted")
 	}
 }

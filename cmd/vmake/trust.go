@@ -7,149 +7,193 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/spock2300/vmake/internal/jsonio"
+	"github.com/spock2300/vmake/internal/gitstore"
+	"github.com/spock2300/vmake/internal/truststore"
+	"github.com/spock2300/vmake/pkg/buildscript"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	repoPkg "github.com/spock2300/vmake/pkg/repo"
 )
 
-type globalConfig struct {
-	TrustedRepos   []string          `json:"trustedRepos,omitempty"`
-	TrustedCommits map[string]string `json:"trustedCommits,omitempty"`
+const (
+	trustKindRepo      = "repo"
+	trustKindExtension = "extension"
+)
+
+func trustStorePath() string {
+	return filepath.Join(vmakeDir, "trust.json")
 }
 
-func globalConfigPath() string {
-	return filepath.Join(vmakeDir, "config.json")
+func openTrustStore() (*truststore.Store, error) {
+	return truststore.Open(trustStorePath())
 }
 
-func loadGlobalConfig() *globalConfig {
-	cfg := &globalConfig{}
-	if err := jsonio.Load(globalConfigPath(), cfg); err != nil {
-		return &globalConfig{}
+func trustAllEnabled() bool {
+	return os.Getenv("VMAKE_TRUST_ALL") == "1"
+}
+
+func remoteScriptTrustChecker(src buildscript.Source) error {
+	if trustAllEnabled() {
+		return nil
 	}
-	return cfg
-}
-
-func saveGlobalConfig(cfg *globalConfig) error {
-	return jsonio.Save(globalConfigPath(), cfg)
-}
-
-func isRepoTrusted(repo string) bool {
-	cfg := loadGlobalConfig()
-	for _, r := range cfg.TrustedRepos {
-		if r == repo {
-			return true
-		}
+	if src.Commit == "" {
+		return fmt.Errorf("cannot verify trust for repository %q: the resolved commit is empty", src.Repo)
 	}
-	return false
-}
-
-func trustedRepoHead(repo string) (string, bool) {
-	mgr := getRepoManager()
-	if !mgr.Exists(repo) {
-		return "", false
-	}
-	commit, err := repoPkg.GetCurrentCommit(mgr.Path(repo))
+	store, err := openTrustStore()
 	if err != nil {
-		return "", false
-	}
-	return commit, true
-}
-
-func recordTrustedCommit(repo, commit string) {
-	cfg := loadGlobalConfig()
-	if cfg.TrustedCommits == nil {
-		cfg.TrustedCommits = make(map[string]string)
-	}
-	if cfg.TrustedCommits[repo] == commit {
-		return
-	}
-	cfg.TrustedCommits[repo] = commit
-	if err := saveGlobalConfig(cfg); err != nil {
-		vlog.Error("record trusted commit for %s: %v", repo, err)
-	}
-}
-
-func addTrustedRepo(repo string) error {
-	cfg := loadGlobalConfig()
-	for _, r := range cfg.TrustedRepos {
-		if r == repo {
-			return nil
-		}
-	}
-	cfg.TrustedRepos = append(cfg.TrustedRepos, repo)
-	if err := saveGlobalConfig(cfg); err != nil {
 		return err
 	}
-	if head, ok := trustedRepoHead(repo); ok {
-		recordTrustedCommit(repo, head)
+	trusted, err := store.Verify(trustKindRepo, src.Repo, src.URL, src.Commit)
+	if err != nil {
+		return err
 	}
-	vlog.Info("Trusted repository '%s' (recorded in %s)", repo, globalConfigPath())
-	return nil
+	if trusted {
+		return nil
+	}
+	subject := fmt.Sprintf("The remote repository %q provides build.go scripts at commit %s that vmake will execute (full system access).", src.Repo, repoPkg.ShortCommit(src.Commit))
+	if !confirmTrust(subject) {
+		return fmt.Errorf("its build.go scripts are not trusted; run 'vmake repo trust %s' after reviewing the repository", src.Repo)
+	}
+	return store.Trust(trustKindRepo, src.Repo, src.URL, src.Commit)
 }
 
-func removeTrustedRepo(repo string) error {
-	cfg := loadGlobalConfig()
-	var kept []string
-	for _, r := range cfg.TrustedRepos {
-		if r != repo {
-			kept = append(kept, r)
-		}
-	}
-	cfg.TrustedRepos = kept
-	return saveGlobalConfig(cfg)
-}
-
-func confirmTrustRemoteRepo(repo string) bool {
-	if yesFlag {
-		if err := addTrustedRepo(repo); err != nil {
-			vlog.Error("record trust for %s: %v", repo, err)
-			return false
-		}
+func confirmTrust(subject string) bool {
+	if trustAllEnabled() || yesFlag {
 		return true
 	}
 	if fi, err := os.Stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
 		return false
 	}
-	vlog.Info("")
-	vlog.Info("The remote repository '%s' provides build.go scripts that vmake will", repo)
-	vlog.Info("execute (full system access). Trust this repository?")
+	fmt.Println()
+	fmt.Println(subject)
 	fmt.Print("Trust? [y/N]: ")
 	var answer string
 	fmt.Fscanln(bufio.NewReader(os.Stdin), &answer)
 	answer = strings.ToLower(strings.TrimSpace(answer))
-	if answer != "y" && answer != "yes" {
-		return false
-	}
-	return addTrustedRepo(repo) == nil
+	return answer == "y" || answer == "yes"
 }
 
-func remoteScriptTrustChecker(repo string) error {
-	if os.Getenv("VMAKE_TRUST_ALL") == "1" {
-		return nil
+func repoTrustCommit(name string) (string, error) {
+	mgr := getRepoManager()
+	if !mgr.Exists(name) {
+		return "", fmt.Errorf("repository %q not found", name)
 	}
-	if isRepoTrusted(repo) {
-		return verifyTrustedCommit(repo)
+	if mgr.IsNative(name) {
+		return "", fmt.Errorf("native repository %q is trusted per package commit on first build; use --yes with a build, or inspect and trust the resolved package version", name)
 	}
-	if confirmTrustRemoteRepo(repo) {
-		return verifyTrustedCommit(repo)
-	}
-	return fmt.Errorf("its build.go scripts are not trusted; pass --yes or run 'vmake repo trust %s'", repo)
+	return repoPkg.GetCurrentCommit(mgr.Path(name))
 }
 
-func verifyTrustedCommit(repo string) error {
-	head, ok := trustedRepoHead(repo)
-	if !ok {
-		return nil
+func addTrustedRepo(name string) error {
+	lock, err := getRepoManager().Lock(name, true)
+	if err != nil {
+		return err
 	}
-	cfg := loadGlobalConfig()
-	recorded := cfg.TrustedCommits[repo]
-	if recorded == "" {
-		recordTrustedCommit(repo, head)
-		return nil
+	defer lock.Release()
+	commit, err := repoTrustCommit(name)
+	if err != nil {
+		return err
 	}
-	if head == recorded {
-		return nil
+	store, err := openTrustStore()
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("repository '%s' content changed since it was trusted (recorded %s, now %s); run 'vmake repo trust %s' to re-confirm",
-		repo, repoPkg.ShortCommit(recorded), repoPkg.ShortCommit(head), repo)
+	if err := store.Trust(trustKindRepo, name, "", commit); err != nil {
+		return err
+	}
+	fmt.Printf("Trusted repository '%s' at %s (recorded in %s)\n", name, repoPkg.ShortCommit(commit), trustStorePath())
+	return nil
+}
+
+func removeTrustedRepo(name string) error {
+	if err := gitstore.ValidateName(name); err != nil {
+		return err
+	}
+	store, err := openTrustStore()
+	if err != nil {
+		return err
+	}
+	return store.Revoke(trustKindRepo, name)
+}
+
+func revokeRepoTrustBestEffort(name string) {
+	if err := removeTrustedRepo(name); err != nil {
+		vlog.Error("reset trust for repository %s: %v", name, err)
+	}
+}
+
+func extensionTrustCommit(name string) (string, error) {
+	mgr := getPluginManager()
+	if !mgr.Exists(name) {
+		return "", fmt.Errorf("extension repository %q not found", name)
+	}
+	commit, err := mgr.Commit(name)
+	if err != nil {
+		return "", fmt.Errorf("read extension repository %q: %w", name, err)
+	}
+	clean, err := mgr.Clean(name)
+	if err != nil {
+		return "", fmt.Errorf("inspect extension repository %q: %w", name, err)
+	}
+	if !clean {
+		return "", fmt.Errorf("extension repository %q has local changes; commit or discard them before trusting it", name)
+	}
+	return commit, nil
+}
+
+func extensionTrusted(name string) (bool, error) {
+	if trustAllEnabled() {
+		return true, nil
+	}
+	mgr := getPluginManager()
+	if !mgr.Exists(name) {
+		return false, nil
+	}
+	commit, err := mgr.Commit(name)
+	if err != nil {
+		return false, err
+	}
+	clean, err := mgr.Clean(name)
+	if err != nil {
+		return false, err
+	}
+	if !clean {
+		return false, nil
+	}
+	store, err := openTrustStore()
+	if err != nil {
+		return false, err
+	}
+	return store.Verify(trustKindExtension, name, mgr.URL(name), commit)
+}
+
+func trustExtension(name string) error {
+	lock, err := getPluginManager().LockRepo(name, true)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	commit, err := extensionTrustCommit(name)
+	if err != nil {
+		return err
+	}
+	store, err := openTrustStore()
+	if err != nil {
+		return err
+	}
+	if err := store.Trust(trustKindExtension, name, getPluginManager().URL(name), commit); err != nil {
+		return err
+	}
+	fmt.Printf("Trusted extension '%s' at %s (recorded in %s)\n", name, repoPkg.ShortCommit(commit), trustStorePath())
+	return nil
+}
+
+func revokeExtension(name string) error {
+	if err := gitstore.ValidateName(name); err != nil {
+		return err
+	}
+	store, err := openTrustStore()
+	if err != nil {
+		return err
+	}
+	return store.Revoke(trustKindExtension, name)
 }

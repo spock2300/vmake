@@ -48,14 +48,14 @@ func cleanPackages(entries []pkgCleanEntry, ctx *RuntimeContext, cleanAll bool) 
 		return nil
 	}
 
-	insp, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{SkipUnresolvedPackages: true})
+	insp, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{SkipUnresolvedPackages: true, FilterDeps: true, FreezeDeps: true})
 	if err != nil {
 		return err
 	}
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
-		if node == nil || node.Source == nil {
+		if node == nil || node.Source == nil || (insp.Needed != nil && !insp.Needed[name]) {
 			continue
 		}
 		dirs := insp.PkgDirs[name]
@@ -139,7 +139,7 @@ func runClean(cmd *cobra.Command, args []string) {
 
 	vlog.Info("")
 	vlog.Info("Executing OnClean...")
-	if err := executeCleanHooks(ctx, false, true); err != nil {
+	if err := executeCleanHooks(ctx, false, true, !cleanAllFlag); err != nil {
 		if !cleanAllFlag {
 			fatalErr(err)
 		}
@@ -161,7 +161,7 @@ func collectCleanEntries(ctx *RuntimeContext) []pkgCleanEntry {
 	return entries
 }
 
-func executeCleanHooks(ctx *RuntimeContext, localOnly, skipUnresolved bool) (err error) {
+func executeCleanHooks(ctx *RuntimeContext, localOnly, skipUnresolved, filterDeps bool) (err error) {
 	defer scriptcall.Recover(&err)
 	var insp *pipeline.Inspection
 	for _, name := range ctx.Resolver.GetOrder() {
@@ -179,10 +179,13 @@ func executeCleanHooks(ctx *RuntimeContext, localOnly, skipUnresolved bool) (err
 		}
 		if insp == nil {
 			var err error
-			insp, err = pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{SkipUnresolvedPackages: skipUnresolved})
+			insp, err = pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{SkipUnresolvedPackages: skipUnresolved, FilterDeps: filterDeps, FreezeDeps: filterDeps})
 			if err != nil {
 				return fmt.Errorf("OnClean: %w", err)
 			}
+		}
+		if filterDeps && insp.Needed != nil && !insp.Needed[name] {
+			continue
 		}
 		dirs := insp.PkgDirs[name]
 		if dirs == nil || dirs.BuildDir == "" {

@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -138,5 +140,48 @@ func TestExtractZipCannotFollowDestinationSymlink(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(outside, "escaped.txt")); !os.IsNotExist(err) {
 		t.Fatalf("outside file exists: %v", err)
+	}
+}
+
+func TestDownloadFileHTTPSRestrictsProtocols(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fake curl is Unix-only")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	argsPath := filepath.Join(dir, "args")
+	script := `#!/bin/sh
+printf '%s\n' "$@" > "$ARGS_FILE"
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    printf 'downloaded' > "$1"
+    exit 0
+  fi
+  shift
+done
+exit 1
+`
+	if err := os.WriteFile(filepath.Join(bin, "curl"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ARGS_FILE", argsPath)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	dest := filepath.Join(dir, "asset")
+	if err := DownloadFileHTTPS("https://example.invalid/asset", dest); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(data)
+	for _, want := range []string{"--proto\n=https", "--proto-redir\n=https", "https://example.invalid/asset"} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("curl args missing %q:\n%s", want, args)
+		}
 	}
 }

@@ -175,3 +175,42 @@ func assertSkipSmudgeUnchanged(t *testing.T, dir string) {
 		t.Errorf("extension command persisted LFS filter configuration: %s", config)
 	}
 }
+
+func TestManagerCleanRejectsIgnoredGoFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	root := t.TempDir()
+	mgr := NewManager(root)
+	repo := mgr.Path("fixture")
+	if err := os.MkdirAll(repo, 0755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@example.com", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@example.com")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, output)
+		}
+	}
+	run("init", "-q", "-b", "master")
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("*.gen.go\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "build.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "-A")
+	run("commit", "-q", "-m", "initial")
+	if clean, err := mgr.Clean("fixture"); err != nil || !clean {
+		t.Fatalf("fresh repo clean = %v, %v", clean, err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "generated.gen.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if clean, err := mgr.Clean("fixture"); err != nil || clean {
+		t.Fatalf("ignored Go file was accepted: clean=%v err=%v", clean, err)
+	}
+}

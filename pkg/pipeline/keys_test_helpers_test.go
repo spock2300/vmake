@@ -8,17 +8,16 @@ import (
 	"github.com/spock2300/vmake/pkg/build"
 )
 
-func localPkgKeyFromParts(ccKey, mode string, opts map[string]any, globalFlagsHash, scriptHash, commit string) pkgKey {
-	return newLocalPkgKey(ccKey, mode, opts, keyMaterial{commit: commit, flagsHash: globalFlagsHash, scriptHash: scriptHash})
+func localPkgKeyFromParts(ccKey, mode string, opts map[string]any, globalFlagsHash, commit string) pkgKey {
+	return newLocalPkgKey(ccKey, mode, opts, keyMaterial{commit: commit, flagsHash: globalFlagsHash})
 }
 
-func remotePkgKeyFromParts(ccKey, mode string, opts map[string]any, version, commit, globalFlagsHash, patchHash, scriptHash string) pkgKey {
+func remotePkgKeyFromParts(ccKey, mode string, opts map[string]any, version, commit, globalFlagsHash, patchHash string) pkgKey {
 	return newRemotePkgKey(ccKey, mode, opts, keyMaterial{
-		version:    version,
-		commit:     commit,
-		flagsHash:  globalFlagsHash,
-		patchHash:  patchHash,
-		scriptHash: scriptHash,
+		version:   version,
+		commit:    commit,
+		flagsHash: globalFlagsHash,
+		patchHash: patchHash,
 	})
 }
 

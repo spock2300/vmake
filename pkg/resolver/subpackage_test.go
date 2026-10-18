@@ -92,7 +92,7 @@ func newSubPackageTestResolver(t *testing.T, bare string) *Resolver {
 	if err := mgr.AddNative("testnative", template); err != nil {
 		t.Fatal(err)
 	}
-	r := NewResolver(mgr, depsDir)
+	r := newTrustedTestResolver(mgr, depsDir)
 	r.SetSourceManager(repo.NewSourceManager(depsDir, cacheDir))
 	return r
 }
@@ -269,7 +269,7 @@ func TestResolveRegistryPackageHasNoSubPackages(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	r := NewResolver(repo.NewRepoManager(reposDir), depsDir)
+	r := newTrustedTestResolver(repo.NewRepoManager(reposDir), depsDir)
 	r.SetSourceManager(repo.NewSourceManager(depsDir, cacheDir))
 	if err := r.ResolveAll([]buildscript.Source{*localRequiringSources(t, "root", "testreg/module")}); err != nil {
 		t.Fatal(err)

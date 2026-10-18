@@ -80,16 +80,27 @@ func (p *Package) CMakeConfigure(extraArgs ...string) {
 		vlog.Info("  cmake configure (cached): %s", filepath.ToSlash(p.CMakeBuildDir()))
 		return
 	}
+	if p.DryRun() {
+		p.runCMakeConfigure(args, extraArgs)
+		return
+	}
+	// A failed or interrupted configure may have mutated CMakeCache.txt and
+	// CMakeFiles. Drop the previous stamp before running so a later invocation
+	// cannot reuse a tree that no longer matches it.
+	if err := os.Remove(p.cmakeConfigureStampPath()); err != nil && !os.IsNotExist(err) {
+		vlog.Debug("  cmake configure: remove stale stamp: %v", err)
+	}
+	p.runCMakeConfigure(args, extraArgs)
+	if err := p.saveCMakeConfigureStamp(args, fingerprint); err != nil {
+		vlog.Debug("  cmake configure: record fingerprint: %v", err)
+	}
+}
+
+func (p *Package) runCMakeConfigure(args, extraArgs []string) {
 	if hasCMakeOption(extraArgs, "--preset") {
 		p.RunIn(p.SrcDir(), "cmake", args...)
 	} else {
 		p.Run("cmake", args...)
-	}
-	if p.DryRun() {
-		return
-	}
-	if err := p.saveCMakeConfigureStamp(args, fingerprint); err != nil {
-		vlog.Debug("  cmake configure: record fingerprint: %v", err)
 	}
 }
 

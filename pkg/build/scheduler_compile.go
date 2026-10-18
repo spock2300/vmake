@@ -123,7 +123,7 @@ func (s *Scheduler) compileSourceContext(ctx context.Context, resolved *Resolved
 		Tools       string
 		Environment string
 		Command     commandSpec
-	}{buildFormatVersion, resolved.Node.FullName, workDir, s.targetOS(resolved.Node.PkgName), s.toolIdentity(), env, commandSpec{Program: compilerPath, Args: compileArgs(opts, objRel, src, flags, objRel+".d", workDir)}})
+	}{actionRecordVersion, resolved.Node.FullName, workDir, s.targetOS(resolved.Node.PkgName), s.toolIdentity(), env, commandSpec{Program: compilerPath, Args: compileArgs(opts, objRel, src, flags, objRel+".d", workDir)}})
 	if err != nil {
 		return "", nil, err
 	}
@@ -131,8 +131,15 @@ func (s *Scheduler) compileSourceContext(ctx context.Context, resolved *Resolved
 	deps, depErr := ParseDepFile(resolveWorkPath(workDir, objRel+".d"))
 	inputs := append([]string{src}, deps...)
 	outputs := []string{objRel, objRel + ".d"}
-	if depErr == nil && actionUpToDate(recordPath, signature, workDir, inputs, outputs) {
+	decision := checkAction(recordPath, signature, workDir, inputs, outputs)
+	if depErr != nil && decision.UpToDate {
+		decision = actionDecision{Reason: "depfile missing or unreadable"}
+	}
+	if decision.UpToDate {
 		return objRel, deps, nil
+	}
+	if s.explain {
+		vlog.Info("  EXPLAIN %s: %s", src, decision.Reason)
 	}
 	if err := invalidateActionRecord(recordPath); err != nil {
 		return "", nil, err

@@ -13,7 +13,6 @@ import (
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
-	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/repo"
@@ -90,17 +89,6 @@ func resolvePackageTools(ctx *RuntimeContext, name string, tc *toolchain.Toolcha
 	return tools, nil
 }
 
-func scriptHashForNode(name string, node *resolver.PackageNode) (string, error) {
-	if node == nil || node.Source == nil {
-		return "", nil
-	}
-	h, err := buildscript.ScriptSetHash(node.Source.Dir)
-	if err != nil {
-		return "", fmt.Errorf("hash buildscript for %s: %w", name, err)
-	}
-	return h, nil
-}
-
 func patchHashForNode(name string, node *resolver.PackageNode) (string, error) {
 	if node == nil || node.Pkg == nil || len(node.Pkg.GetPatches()) == 0 {
 		return "", nil
@@ -153,16 +141,13 @@ func computeReachable(graph *resolver.Graph) (map[string]bool, error) {
 		needed[rootID] = true
 		queue = append(queue, rootID)
 	} else {
-		if os.Getenv("VMAKE_LEGACY_ROOT") != "1" {
-			rootsHint := make([]string, 0)
-			for id, node := range graph.Packages {
-				if node.IsLocal() && node.Pkg != nil && len(node.Pkg.GetRequireFuncs()) > 0 {
-					rootsHint = append(rootsHint, id)
-				}
+		rootsHint := make([]string, 0)
+		for id, node := range graph.Packages {
+			if node.IsLocal() && node.Pkg != nil && len(node.Pkg.GetRequireFuncs()) > 0 {
+				rootsHint = append(rootsHint, id)
 			}
-			vlog.Info("[hint] no package declares SetRoot(true); consider adding 'p.SetRoot(true)' to one of: %s", strings.Join(rootsHint, ", "))
-			vlog.Info("[hint] set VMAKE_LEGACY_ROOT=1 to silence this warning (legacy heuristic will be used)")
 		}
+		vlog.Info("[hint] no package declares SetRoot(true); consider adding 'p.SetRoot(true)' to one of: %s", strings.Join(rootsHint, ", "))
 		dependedOn := make(map[string]bool)
 		for _, node := range graph.Packages {
 			if !node.IsLocal() {
@@ -235,19 +220,24 @@ func packageFlagsHash(globalFlagsHash string, node *resolver.PackageNode) string
 }
 
 type keyMaterial struct {
-	version    string
-	commit     string
-	flagsHash  string
-	patchHash  string
-	scriptHash string
+	version   string
+	commit    string
+	flagsHash string
+	patchHash string
 }
 
 func (m keyMaterial) localExtra() string {
-	return build.JoinKeyExtra("", m.commit, m.flagsHash, "", m.scriptHash)
+	// Buildscript text is intentionally not part of the build-directory key:
+	// a comment-only build.go edit must not discard every action record. The
+	// commands, includes, defines and file lists produced by the script are
+	// captured by each action signature instead.
+	return build.JoinKeyExtra("", m.commit, m.flagsHash, "")
 }
 
 func (m keyMaterial) remoteExtra() string {
-	return build.JoinKeyExtra(m.version, m.commit, m.flagsHash, m.patchHash, m.scriptHash)
+	// Patch and source identity affect the materialized tree, so they stay in
+	// the remote build-directory key. Buildscript text is action-level.
+	return build.JoinKeyExtra(m.version, m.commit, m.flagsHash, m.patchHash)
 }
 
 type pkgKey struct {

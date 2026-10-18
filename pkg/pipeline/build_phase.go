@@ -43,6 +43,7 @@ type BuildOptions struct {
 	IncludeTests bool
 	Jobs         int
 	KeepGoing    bool
+	Explain      bool
 }
 
 func newRunContext(ctx *RuntimeContext, opts BuildOptions, cfg *buildConfig) *runContext {
@@ -131,7 +132,6 @@ func newSourceStage(rc *runContext, cfg *configStage) *sourceStage {
 		sourceSeeds:    make(map[string]string),
 		sourceCommits:  make(map[string]string),
 		sourceVersions: make(map[string]string),
-		scriptHashes:   make(map[string]string),
 	}
 }
 
@@ -182,6 +182,9 @@ func prepareSources(rc *runContext, cfg *configStage) (*sourceStage, error) {
 	if err := src.restoreKConfigs(); err != nil {
 		return nil, err
 	}
+	if err := clearRemoteInstallDirs(src.layouts); err != nil {
+		return nil, err
+	}
 	if err := os.Remove(filepath.Join(rc.ctx.Paths.ProjectDir, "build", "compile_commands.json")); err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
@@ -225,6 +228,7 @@ func planBuild(rc *runContext, cfg *configStage, src *sourceStage, decl *declare
 		Platform:     rc.cfg.Platform,
 		Mode:         rc.cfg.Mode,
 		IncludeTests: rc.opts.IncludeTests,
+		Explain:      rc.opts.Explain,
 	}
 
 	vlog.Info("")

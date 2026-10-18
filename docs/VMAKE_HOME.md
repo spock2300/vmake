@@ -21,7 +21,9 @@
 │   ├── git/                       # 共享内容寻址 git 对象缓存（VMAKE_GIT_CACHE=off 关闭）
 │   │   └── <urlhash>.git/         # 每个上游 URL 一个 bare 仓库：objects/ + refs/vmake/<sha> + vmake-cache.json
 │   └── _locks/                    # 生命周期锁、owner 锁、per-tree 与 per-cache-repo 锁
-├── config.json                    # 全局配置（trustedRepos 远程脚本信任）
+├── _locks/                        # 包仓库与扩展仓库锁（repo_<hash>.lock、ext_<hash>.lock）
+├── trust.json                     # 包仓库与扩展仓库信任（按 commit 绑定）
+├── trust.json.lock                # trust.json 的读写锁（位于文件旁，不在 _locks/ 下）
 └── repos/                         # 包仓库索引（git clone）
     └── <repo>/
         └── packages/
@@ -30,7 +32,7 @@
                     └── build.go
 ```
 
-旧版布局（`~/.vmake/sources`、`cache/v2`、`cache/_localgit`、`cache/mirrors`、项目 `vmake_deps/`）会在升级后首次执行加载项目配置/依赖的命令时清理（`loadResolveInputs` 中的 `cleanupLegacyStorage`；`doctor`、`pkg list`、`toolchain list`、`manifest show` 等不经过该路径的命令不会触发），依赖重新物化；不提供兼容迁移（布局标记 `.vmake/layout`，见 `cmd/vmake/storage.go`）。`cache/git/` 是当前布局，升级时不删除。
+旧版布局（`~/.vmake/sources`、旧全局信任文件 `~/.vmake/config.json`、`cache/v2`、`cache/_localgit`、`cache/mirrors`、项目 `vmake_deps/`）会在升级后首次执行加载项目配置/依赖的命令时清理（`loadResolveInputs` 中的 `cleanupLegacyStorage`；`doctor`、`pkg list`、`toolchain list`、`manifest show` 等不经过该路径的命令不会触发），依赖重新物化；旧的信任记录不迁移，`~/.vmake/config.json` 删除后需重新 `vmake repo trust` / `vmake ext trust`，或在下一次构建的确认提示中授权。不提供兼容迁移（布局标记 `.vmake/layout`，见 `cmd/vmake/storage.go`）。`cache/git/` 是当前布局，升级时不删除。
 
 ## repos/
 
@@ -47,8 +49,11 @@ CLI：`vmake repo add|remove|list|update|trust|untrust`
 
 缓存根保存锁、生命周期状态与共享 git 对象缓存。`VMAKE_CACHE` 环境变量可覆盖根路径（`cmd/vmake/paths.go` `getCacheDir`）。
 
-- `git/` — 共享内容寻址 git 对象缓存，每个上游 URL 一个 bare 仓库（`<urlhash>.git`，`urlhash = storage.OwnerKey(归一化 URL)`）。仓库只累积 vmake 实际 fetch 过的对象，用 `refs/vmake/<sha>` 锚点固定；commit 已缓存的请求再从该缓存本地 depth=1 checkout。设 `VMAKE_GIT_CACHE=off` 可完全关闭
+- `git/` — 共享内容寻址 git 对象缓存，每个上游 URL 一个 bare 仓库（`<urlhash>.git`，`urlhash = storage.OwnerKey(归一化 URL)`）。首次初始化在 `.<urlhash>.git.tmp-*` staging 目录中写入标记并执行 `git init`，完成后原子 rename 为最终命名空间；进程中断留下的 staging 目录由同一命名空间的锁持有者清理。仓库只累积 vmake 实际 fetch 过的对象，用 `refs/vmake/<sha>` 锚点固定；commit 已缓存的请求再从该缓存本地 depth=1 checkout。设 `VMAKE_GIT_CACHE=off` 可完全关闭
 - `_locks/` — 生命周期锁、owner 锁、per-tree 物化锁与 per-cache-repo 锁（`cache_<urlhash 前16位>.lock`）；锁文件位于工作树与缓存仓库之外，清理时不删除
+- 缓存命名空间必须带 `vmake-cache.json` 标记；缺失且非空的目录视为外部数据，vmake 不会删除它（缓存未命中时回退到直接抓取上游）。空目录、只有标记但缺少 `HEAD`/`config`/`objects` 的半初始化目录会在锁内重建；标记存在但元数据损坏的目录可通过 `vmake cache remove <url>` 删除。
+
+包仓库与扩展仓库的锁在 `~/.vmake/_locks/`（`repo_<hash>.lock`、`ext_<hash>.lock`），把仓库 commit 检查与 buildscript/插件加载串行化；扩展仓库的共享锁保留到进程退出，因此构建期工具链安装与插件执行期间 `ext update/trust/remove` 会等待。`flock` 不可重入，信任判定不能回调会加独占锁的命令。
 
 工作树存放在项目内（见下节），物化时按需 `git ls-remote` 解析版本、把所选 ref/commit 的对象按 depth=1 抓进 `cache/git/` 并锚定，再从缓存本地 fetch 出工作树。命中缓存后不触网只适用于 **commit 已固定且对象已缓存** 的请求；需要解析版本/ref 的请求仍可能先访问上游（失败时可用缓存记录的 ref→commit 或现有树离线兜底），默认分支 HEAD 物化直接 clone 上游，缓存未命中或服务器拒绝按 SHA fetch 时回退到上游/full clone。缓存缺失/损坏或 URL 变化会在锁内重建；上游不可达且无缓存兜底时构建会失败。
 
@@ -57,26 +62,47 @@ CLI：`vmake repo add|remove|list|update|trust|untrust`
 网络 git 操作默认超时 30 分钟，并把 git 自己的进度实时透传到终端（`-q` 时静默）。网络较慢时可提高上限：
 
 ```bash
-VMAKE_GIT_TIMEOUT=7200 vmake build   # 秒；VMAKE_FETCH_TIMEOUT 为兼容别名
+VMAKE_GIT_TIMEOUT=7200 vmake build   # 秒
 VMAKE_GIT_CACHE=off vmake build      # 关闭共享 git 对象缓存，直接向上游 depth=1 抓取
+VMAKE_ENV_EXTRA=MY_FLAG,OTHER vmake build  # 把额外环境变量纳入增量指纹
 ```
+
+CLI：`vmake cache list` 查看缓存命名空间，`vmake cache remove <url>` 删除单个命名空间（交互终端需确认；非交互环境必须传 `-y`，否则报错）。
 
 源码：`pkg/repo/source.go`、`pkg/repo/git.go`、`pkg/repo/storage.go`、`internal/storage/`
 
-## config.json
+## trust.json
 
-全局配置文件，记录远程仓库脚本信任状态：
+全局信任库，记录包仓库和扩展仓库被信任的确切 commit：
 
 ```json
 {
-  "trustedRepos": ["official"],
-  "trustedCommits": { "official": "<commit>" }
+  "version": 1,
+  "records": {
+    "repo:official@<sha>": {
+      "kind": "repo",
+      "name": "official",
+      "commit": "<sha>",
+      "trustedAt": "2026-10-18T00:00:00Z"
+    },
+    "extension:tools@<sha>": {
+      "kind": "extension",
+      "name": "tools",
+      "url": "https://example.invalid/tools.git",
+      "commit": "<sha>",
+      "trustedAt": "2026-10-18T00:00:00Z"
+    }
+  }
 }
 ```
 
-由 `vmake repo trust|untrust <name>` 管理；`VMAKE_TRUST_ALL=1` 可跳过信任检查（CI 场景）。
+- 记录键是 `kind:name@commit`：每个 commit 一条记录，同一仓库的多个 commit（例如同一 native 仓库里固定在不同版本的两个包）各自保留信任，不会互相覆盖。
+- 包仓库由 `vmake repo trust|untrust <name>` 管理；`repo update` 成功后清除信任。包仓库信任只绑定 commit，不检查工作区内容。native 仓库按解析到的 package commit 在构建时信任，不能使用 `repo trust`（交互式构建中用 `--yes`，或先 review 后再执行构建）。
+- 扩展仓库由 `vmake ext trust|untrust <name>` 管理；`ext add` 可交互确认，`ext update` 仅在 HEAD commit 变化时清除信任，`ext remove` 清除信任。
+- 扩展和包仓库的 `HEAD` 与记录不一致、扩展工作树有本地修改，或信任文件损坏时，脚本/插件不会执行。native 包校验的是解析到的 package commit，而不是仓库 HEAD。
+- `VMAKE_TRUST_ALL=1` 可跳过信任检查（仅限 CI/测试；它同时影响包仓库和扩展仓库）。
 
-源码：`cmd/vmake/trust.go`
+源码：`internal/truststore/`、`cmd/vmake/trust.go`
 
 ## extensions/
 
@@ -100,15 +126,16 @@ extensions/<repo-name>/
   "name": "tc",
   "version": "1.0.0",
   "description": "Toolchain management",
-  "entry": "src/main.go",
+  "apiVersion": 1,
+  "sourceDir": "src",
   "enabled": true
 }
 ```
 
 源码：`pkg/plugin/manager.go`（嵌入 `*gitstore.Store`）
-CLI：`vmake ext add|remove|list|update`
+CLI：`vmake ext add|remove|list|update|trust|untrust`
 
-插件源码由 yaegi 解释器动态加载（`extensions/<repo>/<plugin-name>/src/main.go`），无需编译，不产生 `.so` 文件。
+插件源码由 yaegi 解释器动态加载（`extensions/<repo>/<plugin-name>/src/main.go`），无需编译，不产生 `.so` 文件。只有 `~/.vmake/trust.json` 中记录了当前干净 HEAD 的仓库才会注册工具链或加载插件；`vmake ext update` 仅在 HEAD commit 变化时清除该信任。加载插件时取得的仓库共享锁保留到进程退出，构建期工具链安装读取的仍是校验过的 commit。
 
 仓库中的 `toolchain.json` 由 vmake 自身扫描注册，不需要插件参与；只提供编译器的仓库可以不含任何插件代码。
 
@@ -152,7 +179,7 @@ toolchains/<host-os>/<host-arch>/<name>/<version>/
 
 `owner` 对普通包就是包名，对 native 子包是其根父包；`member` 是子包相对父包的路径，普通包为空字符串（`sha256("")` 仍形成一级目录）。
 
-`buildKey` 由格式版本、工具链身份（含工具内容）、构建模式、选项组合，以及有序全局 flags、commit、buildscript 哈希等共同生成（`pkg/build/key.go` `BuildKey`）。远程包的键还包含版本号与补丁集哈希；本地包的键不包含版本和补丁集，只由通用的工具链/模式/选项/全局 flags/commit/buildscript 哈希组成。远程包的版本或补丁集变化时会重建或恢复工作树（同一 commit 的补丁变化走 `checkout --force --detach` + `clean -fdx`，不触网）；本地 `SetGit` 包的补丁变化也会重置工作树，但沿用同一构建目录，已有对象是否重编由增量规则决定。切换工具链/选项只更换 `out/<buildKey>`（远程包）或包内 `build/<buildKey>`（本地包）。
+`buildKey` 由格式版本、工具链身份（含工具内容）、构建模式、选项组合、有序全局 flags 与 commit 共同生成（`pkg/build/key.go` `BuildKey`）。远程包的键还包含版本号与补丁集哈希；本地包的键不包含版本和补丁集。build.go 文本不进入构建键，命令、include/define、文件列表等实际构建输入由 action 签名捕获，因此只改注释不会切换构建目录。远程包的版本或补丁集变化时会重建或恢复工作树（同一 commit 的补丁变化走 `checkout --force --detach` + `clean -fdx`，不触网）；本地 `SetGit` 包的补丁变化也会重置工作树，但沿用同一构建目录，已有对象是否重编由增量规则决定。切换工具链/选项只更换 `out/<buildKey>`（远程包）或包内 `build/<buildKey>`（本地包）。
 
 本地 SetGit 包保留 `<包目录>/src` 符号链接指向 `.vmake_deps/local/<包名>/src`，因此 `AddFiles("src/...")`、`p.SourceDir()/src/...` 等既有写法不变；链接目标不再随构建键变化。vmake 只在项目根写入 `.vmake_deps/` 到 `.gitignore`；本地 SetGit 包应在自己的 `.gitignore` 中忽略 `src/`（多数包已经如此，否则 `git status` 会显示该链接）。
 
@@ -215,7 +242,7 @@ vmake config use config.json
 
 TUI 和 `vmake config --set` 仅保存当前配置。构建、测试、查询、清理、`doctor` 和 `lock update` 均读取当前配置。配置选择相对于现有项目定位规则找到的根目录，构建脚本扫描范围保持不变；子目录被识别为独立项目时使用其自身配置。
 
-所有配置共享 `.vmake/vmake.lock`，切换本身不改写依赖锁。依赖版本选择与锁更新沿用原有规则。构建缓存键不包含配置文件名，等效配置可以复用产物；`clean` 清理当前配置对应的构建输出，`clean --all` 和 `distclean` 保留所有配置及选择文件。安装仍默认使用 `install/`，同时保留多个安装结果时指定不同的 `--prefix`。
+所有配置共享 `.vmake/vmake.lock`，切换本身不改写依赖锁。依赖版本选择与锁更新沿用原有规则。构建缓存键不包含配置文件名，等效配置可以复用产物；`clean` 清理当前配置对应的构建输出，`clean --all` 和 `distclean` 保留所有配置及选择文件。安装仍默认使用 `install/`；同时保留多个安装结果时，可在项目外指定不同的 `--prefix`（项目内只允许默认 `install/` 子树）。
 
 每份项目配置的结构（`pkg/config/store.go`）：
 

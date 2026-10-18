@@ -59,7 +59,7 @@ func Install(def ToolchainDef, repoDir, toolchainsDir string) (*Toolchain, error
 		}
 	case "http":
 		archivePath = filepath.Join(stage, installCfg.File)
-		if err := assets.DownloadFile(installCfg.URL, archivePath); err != nil {
+		if err := assets.DownloadFileHTTPS(installCfg.URL, archivePath); err != nil {
 			return nil, fmt.Errorf("failed to download: %w", err)
 		}
 	}

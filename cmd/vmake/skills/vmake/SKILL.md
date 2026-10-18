@@ -242,10 +242,13 @@ For `BuildKey` naming, `SourceDir` vs `SrcDir` distinction, and `SetGit` path re
 Remote and local `SetGit` sources materialize as **one shallow working tree per package** inside the project, checked out depth-1 from a shared content-addressed object cache. Builds write configuration-specific outputs into per-build-key directories, never copies of the source. This is storage isolation, not a script sandbox.
 
 ```
-~/.vmake/cache/
-├── git/<urlhash>.git/                 # shared object cache: one bare repo per upstream URL
-│   └── objects/ + refs/vmake/<sha> + vmake-cache.json
-└── _locks/                            # lifecycle + per-owner + per-tree + per-cache-repo locks
+~/.vmake/
+├── trust.json                         # commit-bound trust records
+├── _locks/                            # repo_<hash>.lock + ext_<hash>.lock (repo/extension updates)
+└── cache/
+    ├── git/<urlhash>.git/             # shared object cache: one bare repo per upstream URL
+    │   └── objects/ + refs/vmake/<sha> + vmake-cache.json
+    └── _locks/                        # lifecycle + per-owner + per-tree + per-cache-repo locks
 
 project/.vmake_deps/
 ├── <repo>/<owner>/
@@ -259,23 +262,24 @@ project/.vmake_deps/
 - Working trees are normally depth-1 fetches from the cache: tags land in `refs/tags/`, branches in `refs/remotes/origin/`, and only the selected version's objects are downloaded. HEAD/default-branch materialization clones upstream directly, and cache misses or SHA-refusing servers fall back to upstream/full clone. `git log` is truncated by the shallow boundary (use `git fetch --unshallow` when full history is needed).
 - A commit change recreates the tree; a patch-set change on the same commit restores it in place (`git checkout --force --detach <commit>` + `clean -fdx`) without network access. Switching toolchain/mode/options only switches `out/<buildKey>` (remote) or the package's `build/<buildKey>` (local). Patches and Kconfig `.config` apply to the tree; ordinary external build output is not transactional, so a failed callback may leave partial files and the next session calls it again.
 - `.vmake/vmake.lock` pins remote versions/commits, versioned local `SetGit` versions/commits, the source kind, and registry wrapper commits. When the locked version's tree already exists, or its commit is in the object cache, builds run fully offline; resolution otherwise needs one small `git ls-remote`. `vmake lock update` re-resolves.
-- Commands that resolve dependencies take the exclusive `project/.vmake/_locks/project.lock`, so commands against one project serialize (resolution may materialize trees or links). Each tree materialization is serialized by `_locks/tree_<hash>.lock` and each cache repository by `_locks/cache_<urlhash[:16]>.lock`; builds and `lock update` additionally hold `_locks/owner_<sha256(name)>.lock` for every needed remote package (native sub-packages fold into their root parent); the cache lifecycle lock is shared for builds/reads and exclusive for cleanup.
+- Commands that resolve dependencies take the exclusive `project/.vmake/_locks/project.lock`, so commands against one project serialize (resolution may materialize trees or links). Each tree materialization is serialized by `cache/_locks/tree_<hash>.lock`, each cache repository by `cache/_locks/cache_<urlhash[:16]>.lock`, and package/extension repository checks against updates by `~/.vmake/_locks/repo_<hash>.lock`/`ext_<hash>.lock`; builds and `lock update` additionally hold `_locks/owner_<sha256(name)>.lock` for every needed remote package (native sub-packages fold into their root parent); the cache lifecycle lock is shared for builds/reads and exclusive for cleanup.
 
 Global storage in `~/.vmake/`:
-- `~/.vmake/cache/git/<urlhash>.git/` — shared content-addressed object cache, one bare repo per upstream URL (accumulates fetched objects, anchored under `refs/vmake/<commit>`; `VMAKE_GIT_CACHE=off` disables)
+- `~/.vmake/cache/git/<urlhash>.git/` — shared content-addressed object cache, one bare repo per upstream URL (initialized in a `.tmp-*` staging directory and atomically renamed; accumulates fetched objects, anchored under `refs/vmake/<commit>`; `VMAKE_GIT_CACHE=off` disables)
 - `~/.vmake/cache/_locks/` — lifecycle, per-owner, per-tree and per-cache-repo locks (legacy `cache/mirrors` is removed by the layout upgrade)
+- `~/.vmake/_locks/` — package and extension repository locks; trust decisions never take an exclusive lock while a shared one is held (`flock` is not reentrant)
 - `~/.vmake/repos/` — registry repo clones (buildscript metadata only)
 - `~/.vmake/toolchains/` — installed toolchains (`<host-os>/<host-arch>/<name>/<version>/`)
 - `~/.vmake/extensions/` — extension repos
-- `~/.vmake/config.json` — `trustedRepos`/`trustedCommits` (remote-script trust)
+- `~/.vmake/trust.json` — commit-bound trust records for package repos and extensions
 
-Environment overrides: `VMAKE_CACHE` (cache root), `VMAKE_GIT_CACHE=off` (disable the shared git object cache), `VMAKE_GIT_TIMEOUT` (seconds for network git clone/fetch/submodule/ls-remote, default 1800; `VMAKE_FETCH_TIMEOUT` is a legacy alias), `VMAKE_TRUST_ALL=1` (bypass trust gating, CI), `VMAKE_LEGACY_ROOT=1` (silence the missing-`SetRoot` hint). Network git commands stream git's own progress to the terminal in real time (suppressed with `-q`).
+Environment overrides: `VMAKE_CACHE` (cache root), `VMAKE_GIT_CACHE=off` (disable the shared git object cache), `VMAKE_GIT_TIMEOUT` (seconds for network git clone/fetch/submodule/ls-remote, default 1800), `VMAKE_ENV_EXTRA` (comma-separated extra environment variables included in incremental fingerprints), `VMAKE_TRUST_ALL=1` (bypass trust gating, CI). Network git commands stream git's own progress to the terminal in real time (suppressed with `-q`).
 
 vmake locates the project root by walking upward from cwd to find `.vmake/`, `build.go`, or (at the starting directory only) `*/build.go` (via `findProjectDir()`). Running outside a project is a hard error.
 
 ## Remote Script Trust
 
-`build.go` files from remote repositories execute with full system access. On first use of an untrusted repo, vmake prompts (TTY) or refuses (non-TTY). Manage with `vmake repo trust/untrust <name>`, auto-approve with `--yes/-y`, or bypass with `VMAKE_TRUST_ALL=1` (CI). `vmake repo update` removes trust so content drift requires explicit re-trust.
+`build.go` files from remote repositories and extension plugin code execute with full system access. Trust is bound to the exact resolved commit: records are keyed `kind:name@commit`, so separate commits of one repository are trusted independently. On first use of an untrusted package repo, vmake prompts (TTY) or refuses (non-TTY); native packages are trusted per resolved package commit. Extensions load only when their repo is trusted, clean, and at the recorded HEAD; `vmake ext update`/`repo update` clear trust. Manage with `vmake repo trust|untrust <name>` and `vmake ext trust|untrust <name>`, auto-approve with `--yes/-y`, or bypass with `VMAKE_TRUST_ALL=1` (CI).
 
 ## Package Types
 
@@ -754,11 +758,12 @@ vmake build --manifest install/manifest.json
 | `vmake query` | Dependency tree; `query targets`, `query config <pkg>` |
 | `vmake lock update/show` | Re-resolve / print `.vmake/vmake.lock` pins |
 | `vmake toolchain list/show` | Toolchain info |
-| `vmake repo add/list/remove/update/trust/untrust` | Package repos + trust management |
+| `vmake repo add/list/remove/update/trust/untrust` | Package repos + commit-bound trust |
+| `vmake ext add/list/remove/update/trust/untrust` | Extension repos + commit-bound trust |
+| `vmake cache list` / `vmake cache remove <url>` | Inspect shared git object caches or delete one namespace (`-y` required without a TTY) |
 | `vmake pkg list/search/clean/update` | Packages (`pkg update <repo/name>[@version] [--dry-run]`) |
-| `vmake ext add/list/remove/update` | Extension repos |
 | `vmake manifest show/checkout` | Install manifest |
-| `vmake check-symbols [--strict]` | Audit dynamic symbols of local packages' default Shared/Binary targets via nm -D (ELF; PE and no-dynsym artifacts report not-applicable) |
+| `vmake check-symbols [--mode <value> --strict --toolchain <value>]` | Audit dynamic symbols of local packages' default Shared/Binary targets via nm -D (ELF; PE and no-dynsym artifacts report not-applicable) |
 | `vmake doctor` | Diagnose platform prerequisites (symlinks, Git userland, make, toolchain) and build.go issues |
 | `vmake init-editor [--local <path>] [--remove]` | Generate a scratch go.mod so gopls supports build.go |
 | `vmake completion <shell>` | Print completion for bash/zsh/fish/powershell |
@@ -768,7 +773,7 @@ vmake build --manifest install/manifest.json
 | `vmake update [version]` | Update vmake |
 | `vmake version` | Version info (`vmake --version` also prints it) |
 
-Build flags: `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`, `--manifest`, `--tests`, `--jobs/-j`, `--keep-going/-k`
+Build flags: `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`, `--manifest`, `--tests`, `--jobs/-j`, `--keep-going/-k`, `--explain`
 Global flags: `-v` verbose, `-V` very-verbose, `-q` quiet, `-y/--yes` assume yes (trust prompts), `-h/--help` help
 `--version` is a root flag; `vmake test` always includes test targets, so `--tests` is redundant there.
 

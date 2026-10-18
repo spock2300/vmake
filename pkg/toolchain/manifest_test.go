@@ -156,10 +156,37 @@ func TestLFSArchiveNamesCannotExpandPathFilters(t *testing.T) {
 			if err := def.Validate(); err == nil || !strings.Contains(err.Error(), "LFS archive file") {
 				t.Fatalf("LFS filename %q validation = %v", file, err)
 			}
-			def.Installations["linux/amd64"] = InstallConfig{Method: "http", File: file, RootDir: ".", URL: "https://example.invalid/archive"}
+			def.Installations["linux/amd64"] = InstallConfig{Method: "http", File: file, RootDir: ".", URL: "https://example.invalid/archive", Sha256: strings.Repeat("0", 64)}
 			if err := def.Validate(); err != nil {
 				t.Fatalf("HTTP filename %q unexpectedly rejected: %v", file, err)
 			}
 		})
+	}
+}
+
+func TestHTTPInstallRequiresSHAAndHTTPS(t *testing.T) {
+	base := testToolchainDef()
+	host := "linux/amd64"
+	for _, tc := range []struct {
+		name string
+		cfg  InstallConfig
+	}{
+		{"missing sha", InstallConfig{Method: "http", File: "a.zip", RootDir: ".", URL: "https://example.invalid/a.zip"}},
+		{"bad sha", InstallConfig{Method: "http", File: "a.zip", RootDir: ".", URL: "https://example.invalid/a.zip", Sha256: "not-a-hash"}},
+		{"http scheme", InstallConfig{Method: "http", File: "a.zip", RootDir: ".", URL: "http://example.invalid/a.zip", Sha256: strings.Repeat("a", 64)}},
+		{"relative url", InstallConfig{Method: "http", File: "a.zip", RootDir: ".", URL: "/a.zip", Sha256: strings.Repeat("a", 64)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			def := base
+			def.Installations = map[string]InstallConfig{host: tc.cfg}
+			if err := def.Validate(); err == nil {
+				t.Fatal("Validate accepted an insecure HTTP installation")
+			}
+		})
+	}
+	def := base
+	def.Installations = map[string]InstallConfig{host: {Method: "http", File: "a.zip", RootDir: ".", URL: "https://example.invalid/a.zip", Sha256: strings.Repeat("a", 64)}}
+	if err := def.Validate(); err != nil {
+		t.Fatalf("valid HTTPS installation rejected: %v", err)
 	}
 }

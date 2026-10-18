@@ -197,7 +197,7 @@ func TestInspectLocalGitWithMaterializedTree(t *testing.T) {
 	if err := s.selectPackageSource("dep"); err != nil {
 		t.Fatal(err)
 	}
-	s.pkgDirs["dep"] = makeLocalPkgDirs(dep.Source.Dir, localPkgKeyFromParts("cc-key", s.cfg.Mode, nil, "", "", s.sourceCommits["dep"]))
+	s.pkgDirs["dep"] = makeLocalPkgDirs(dep.Source.Dir, localPkgKeyFromParts("cc-key", s.cfg.Mode, nil, "", s.sourceCommits["dep"]))
 	if err := s.preparePackageWorkspace("dep"); err != nil {
 		t.Fatal(err)
 	}
@@ -212,5 +212,115 @@ func TestInspectLocalGitWithMaterializedTree(t *testing.T) {
 	}
 	if !strings.HasPrefix(dirs.BuildDir, filepath.Join(dep.Source.Dir, "build")+string(filepath.Separator)) {
 		t.Fatalf("materialized local git BuildDir = %s, want under %s", dirs.BuildDir, filepath.Join(dep.Source.Dir, "build"))
+	}
+}
+
+func TestInspectFilterDepsMatchesConditionalBuildGraph(t *testing.T) {
+	host, err := toolchain.GetManager().GetToolchain("host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := build.ResolveTools(host, api.Platform{}); err != nil {
+		t.Skipf("host tools unavailable: %v", err)
+	}
+	s := sessionFixture(t)
+	app := s.ctx.DepGraph.Packages["app"]
+	app.Pkg.SetRoot(true)
+	app.Pkg.OnRequire(func(ctx *api.RequireContext) {
+		if ctx.Bool("use_dep") {
+			ctx.AddRequires("dep")
+		}
+	})
+	options := api.NewConfigContext("app")
+	options.Option("use_dep").SetType(api.OptionBool).SetDefault(false)
+	if s.ctx.AllOptions == nil {
+		s.ctx.AllOptions = map[string]map[string]*api.Option{}
+	}
+	s.ctx.AllOptions["app"] = options.GetOptions()
+
+	config.SetEntry(s.ctx.Config, "app", &config.EntryConfig{Options: map[string]any{"use_dep": true}})
+	enabled, err := InspectWithOptions(s.ctx, InspectOptions{FilterDeps: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled.Needed["dep"] {
+		t.Fatal("enabled conditional dependency was filtered out")
+	}
+
+	config.SetEntry(s.ctx.Config, "app", &config.EntryConfig{Options: map[string]any{"use_dep": false}})
+	disabled, err := InspectWithOptions(s.ctx, InspectOptions{FilterDeps: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disabled.Needed["dep"] {
+		t.Fatal("disabled conditional dependency remained in the inspected graph")
+	}
+}
+
+func TestInspectFilterDepsRejectsOrphanSubPackage(t *testing.T) {
+	host, err := toolchain.GetManager().GetToolchain("host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := build.ResolveTools(host, api.Platform{}); err != nil {
+		t.Skipf("host tools unavailable: %v", err)
+	}
+	s := sessionFixture(t)
+	app := s.ctx.DepGraph.Packages["app"]
+	app.Pkg.SetRoot(true)
+	app.Deps = []string{"dep"}
+	s.ctx.Resolver.SubParents()["dep"] = "missing/parent"
+
+	_, err = InspectWithOptions(s.ctx, InspectOptions{FilterDeps: true})
+	if err == nil || !strings.Contains(err.Error(), "native parent") {
+		t.Fatalf("orphan sub-package inspection error = %v, want native parent error", err)
+	}
+}
+
+func TestInspectFilterDepsSkipsUnneededToolchain(t *testing.T) {
+	host, err := toolchain.GetManager().GetToolchain("host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := build.ResolveTools(host, api.Platform{}); err != nil {
+		t.Skipf("host tools unavailable: %v", err)
+	}
+	s := sessionFixture(t)
+	s.ctx.DepGraph.Packages["app"].Pkg.SetRoot(true)
+	missing := "inspect-filter-skip-" + storage.OwnerKey(s.ctx.Paths.ProjectDir)[:16]
+	config.SetEntry(s.ctx.Config, "dep", &config.EntryConfig{Options: map[string]any{api.ToolchainOptionName: missing}})
+
+	inspection, err := InspectWithOptions(s.ctx, InspectOptions{FilterDeps: true})
+	if err != nil {
+		t.Fatalf("filtered inspection resolved an unneeded package: %v", err)
+	}
+	if inspection.PackageToolchains["dep"] != nil || inspection.PkgDirs["dep"] != nil {
+		t.Fatalf("unneeded package was resolved: %+v", inspection.PkgDirs["dep"])
+	}
+	if inspection.PackageToolchains["app"] != host {
+		t.Fatal("needed package used the wrong toolchain")
+	}
+}
+
+func TestInspectFreezeDepsPreventsRepeatedOnRequire(t *testing.T) {
+	host, err := toolchain.GetManager().GetToolchain("host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := build.ResolveTools(host, api.Platform{}); err != nil {
+		t.Skipf("host tools unavailable: %v", err)
+	}
+	s := sessionFixture(t)
+	app := s.ctx.DepGraph.Packages["app"]
+	app.Pkg.SetRoot(true)
+	calls := 0
+	app.Pkg.OnRequire(func(*api.RequireContext) { calls++ })
+	for i := 0; i < 2; i++ {
+		if _, err := InspectWithOptions(s.ctx, InspectOptions{FilterDeps: true, FreezeDeps: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("OnRequire ran %d times, want 1 after FreezeDeps", calls)
 	}
 }

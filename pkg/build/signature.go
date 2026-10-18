@@ -12,10 +12,13 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spock2300/vmake/internal/envsig"
 	"github.com/spock2300/vmake/internal/jsonio"
 )
 
-const buildFormatVersion = 2
+// actionRecordVersion versions the on-disk action record and the signatures
+// embedded in it. It is independent of layoutFormatVersion.
+const actionRecordVersion = 2
 
 type fileState struct {
 	Path string `json:"path"`
@@ -57,12 +60,18 @@ func environmentSignature(overrides map[string]string) (string, error) {
 		}
 		return key
 	}
+	// Only variables that can affect compiler, linker or CMake output are
+	// fingerprinted. Hashing the whole process environment made unrelated
+	// changes (MAKEFLAGS, TERM, PWD, VMAKE_*) discard every action record.
+	// VMAKE_ENV_EXTRA is an additive escape hatch for unusual toolchains.
 	for _, item := range os.Environ() {
 		key, value, ok := strings.Cut(item, "=")
-		if ok {
+		if ok && envsig.Allowed(keyOf(key)) {
 			env[keyOf(key)] = value
 		}
 	}
+	// Toolchain-provided overrides are explicit inputs even when they use a key
+	// outside the allowlist.
 	for key, value := range overrides {
 		env[keyOf(key)] = value
 	}
@@ -101,17 +110,44 @@ func fingerprintFiles(workDir string, paths []string) ([]fileState, error) {
 	return states, nil
 }
 
+type actionDecision struct {
+	UpToDate bool
+	Reason   string
+}
+
 func actionUpToDate(recordPath, signature, workDir string, inputs, outputs []string) bool {
+	return checkAction(recordPath, signature, workDir, inputs, outputs).UpToDate
+}
+
+func checkAction(recordPath, signature, workDir string, inputs, outputs []string) actionDecision {
 	var record actionRecord
-	if err := jsonio.Load(recordPath, &record); err != nil || record.Version != buildFormatVersion || record.Signature != signature {
-		return false
+	if err := jsonio.Load(recordPath, &record); err != nil {
+		if os.IsNotExist(err) {
+			return actionDecision{Reason: "no action record"}
+		}
+		return actionDecision{Reason: "unreadable action record"}
+	}
+	if record.Version != actionRecordVersion {
+		return actionDecision{Reason: "action record version changed"}
+	}
+	if record.Signature != signature {
+		return actionDecision{Reason: "command, tool or environment changed"}
 	}
 	currentInputs, err := fingerprintFiles(workDir, inputs)
-	if err != nil || !equalFileStates(record.Inputs, currentInputs) {
-		return false
+	if err != nil {
+		return actionDecision{Reason: "input missing or unreadable"}
+	}
+	if !equalFileStates(record.Inputs, currentInputs) {
+		return actionDecision{Reason: "inputs changed"}
 	}
 	currentOutputs, err := fingerprintFiles(workDir, outputs)
-	return err == nil && equalFileStates(record.Outputs, currentOutputs)
+	if err != nil {
+		return actionDecision{Reason: "output missing or unreadable"}
+	}
+	if !equalFileStates(record.Outputs, currentOutputs) {
+		return actionDecision{Reason: "outputs changed"}
+	}
+	return actionDecision{UpToDate: true}
 }
 
 func equalFileStates(a, b []fileState) bool {
@@ -127,7 +163,7 @@ func saveActionRecord(recordPath, signature, workDir string, inputs, outputs []s
 	if err != nil {
 		return fmt.Errorf("record action outputs: %w", err)
 	}
-	return jsonio.Save(recordPath, actionRecord{Version: buildFormatVersion, Signature: signature, Inputs: inputStates, Outputs: outputStates})
+	return jsonio.Save(recordPath, actionRecord{Version: actionRecordVersion, Signature: signature, Inputs: inputStates, Outputs: outputStates})
 }
 
 func invalidateActionRecord(path string) error {

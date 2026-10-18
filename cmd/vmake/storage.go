@@ -15,6 +15,15 @@ const storageLayoutVersion = "5"
 // first run after an upgrade. There is no migration: dependencies are
 // re-materialized and rebuilt.
 func cleanupLegacyStorage() {
+	legacyTrust := filepath.Join(vmakeDir, "config.json")
+	if fs.FileExists(legacyTrust) {
+		if err := os.Remove(legacyTrust); err != nil {
+			vlog.Error("remove legacy trust file %s: %v", legacyTrust, err)
+		} else {
+			vlog.Info("Removed legacy trust file %s (re-trust repositories with 'vmake repo trust')", legacyTrust)
+		}
+	}
+
 	legacyGlobal := filepath.Join(vmakeDir, "sources")
 	if fs.FileExists(legacyGlobal) {
 		if err := os.RemoveAll(legacyGlobal); err != nil {

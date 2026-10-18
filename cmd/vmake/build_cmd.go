@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -37,7 +38,7 @@ func runBuild(cmd *cobra.Command, args []string) (err error) {
 	defer report.finish(&err)
 	execution := &RuntimeContext{}
 	return withResolvedProject(execution, func(ctx *RuntimeContext) error {
-		_, err := runReportedBuild(ctx, report, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag})
+		_, err := runReportedBuild(ctx, report, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag})
 		return err
 	})
 }
@@ -59,6 +60,9 @@ func withResolvedProject(execution *RuntimeContext, run func(*RuntimeContext) er
 		if err != nil {
 			return err
 		}
+		if ctx.Resolver != nil {
+			defer ctx.Resolver.Close()
+		}
 		if mf != nil {
 			if err := checkoutManifestLocals(ctx, mf); err != nil {
 				return err
@@ -71,6 +75,19 @@ func withResolvedProject(execution *RuntimeContext, run func(*RuntimeContext) er
 func runReportedBuild(ctx *RuntimeContext, report *buildReport, opts BuildOptions) (*BuildResult, error) {
 	if err := report.bind(ctx); err != nil {
 		return nil, err
+	}
+	if installFlag {
+		projectDir := ""
+		if ctx.Paths != nil {
+			projectDir = ctx.Paths.ProjectDir
+		}
+		prefix := prefixFlag
+		if prefix == "" && projectDir != "" {
+			prefix = filepath.Join(projectDir, "install")
+		}
+		if err := validateInstallPrefix(prefix, projectDir, installStorageRoots(ctx)...); err != nil {
+			return nil, err
+		}
 	}
 	result, err := runBuildPhase(ctx, opts)
 	if err != nil {
@@ -144,7 +161,7 @@ func importManifestIntoLock(ctx context.Context, mf *installManifest) error {
 // against the project repository, and the build materializes the recorded
 // source version on its own.
 func checkoutManifestLocals(ctx *RuntimeContext, mf *installManifest) error {
-	cwd, err := os.Getwd()
+	base, err := manifestProjectDir(ctx)
 	if err != nil {
 		return err
 	}
@@ -156,11 +173,32 @@ func checkoutManifestLocals(ctx *RuntimeContext, mf *installManifest) error {
 		if entry.Ref == "" || entry.Ref == "unknown" || entry.Path == "" {
 			continue
 		}
-		if node := localManifestNode(ctx, entry.Name); node != nil && len(node.Pkg.GitURLs()) > 0 {
+		target, err := resolveManifestEntryPath(base, entry.Path)
+		if err != nil {
+			return err
+		}
+		node := localManifestNode(ctx, entry.Name)
+		if node == nil {
+			return fmt.Errorf("manifest local package %q not found in the project graph", entry.Name)
+		}
+		if !node.IsLocal() {
+			return fmt.Errorf("manifest package %q is not a local package", entry.Name)
+		}
+		if len(node.Pkg.GitURLs()) > 0 {
 			vlog.Info("  skip checkout %s (managed git source)", entry.Name)
 			continue
 		}
-		if err := repo.CheckoutContext(ctx.Context, filepath.Join(cwd, entry.Path), entry.Ref); err != nil {
+		if node.Source == nil {
+			return fmt.Errorf("manifest local package %q has no source directory", entry.Name)
+		}
+		sourceDir, err := filepath.Abs(node.Source.Dir)
+		if err != nil {
+			return fmt.Errorf("resolve manifest source for %s: %w", entry.Name, err)
+		}
+		if target != canonicalInstallPath(sourceDir) {
+			return fmt.Errorf("manifest path %q does not match local package %q source directory", entry.Path, entry.Name)
+		}
+		if err := repo.CheckoutContext(ctx.Context, target, entry.Ref); err != nil {
 			return err
 		}
 		shortRef := repo.ShortCommit(entry.Ref)
@@ -170,6 +208,42 @@ func checkoutManifestLocals(ctx *RuntimeContext, mf *installManifest) error {
 		vlog.Info("  checkout %s -> %s", entry.Name, shortRef)
 	}
 	return nil
+}
+
+func manifestProjectDir(ctx *RuntimeContext) (string, error) {
+	if ctx != nil && ctx.Paths != nil && ctx.Paths.ProjectDir != "" {
+		return ctx.Paths.ProjectDir, nil
+	}
+	if ctx != nil && ctx.WorkDir != "" {
+		return ctx.WorkDir, nil
+	}
+	return os.Getwd()
+}
+
+// resolveManifestEntryPath resolves a manifest path against the project root
+// and rejects paths that escape it. A path may contain ".." as long as the
+// resolved location remains inside the project.
+func resolveManifestEntryPath(projectDir, entryPath string) (string, error) {
+	if strings.TrimSpace(entryPath) == "" {
+		return "", fmt.Errorf("manifest path is empty")
+	}
+	if filepath.IsAbs(entryPath) {
+		return "", fmt.Errorf("manifest path %q must be relative to the project root", entryPath)
+	}
+	if filepath.VolumeName(entryPath) != "" {
+		return "", fmt.Errorf("manifest path %q must not contain a volume", entryPath)
+	}
+	absolute, err := filepath.Abs(projectDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve project root %q: %w", projectDir, err)
+	}
+	base := canonicalInstallPath(absolute)
+	target := canonicalInstallPath(filepath.Join(absolute, entryPath))
+	rel, err := filepath.Rel(base, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("manifest path %q escapes the project root", entryPath)
+	}
+	return target, nil
 }
 
 func localManifestNode(ctx *RuntimeContext, name string) *resolver.PackageNode {

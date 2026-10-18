@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spock2300/vmake/internal/jsonio"
+	"github.com/spock2300/vmake/internal/truststore"
+	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/buildscript"
 	repoPkg "github.com/spock2300/vmake/pkg/repo"
 )
 
@@ -46,72 +48,80 @@ func runGitLine(t *testing.T, dir string, args ...string) {
 	}
 }
 
-func saveTrustConfig(t *testing.T, cfg *globalConfig) {
-	t.Helper()
-	if err := jsonio.Save(globalConfigPath(), cfg); err != nil {
+func TestRemoteScriptTrustCheckerBindsCommit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	_, commit := setupTrustRepo(t)
+	store, err := openTrustStore()
+	if err != nil {
 		t.Fatal(err)
 	}
-}
-
-func TestVerifyTrustedCommitBootstrapRecords(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not on PATH")
-	}
-	_, commit := setupTrustRepo(t)
-
-	saveTrustConfig(t, &globalConfig{TrustedRepos: []string{"testrepo"}})
-
-	if err := verifyTrustedCommit("testrepo"); err != nil {
-		t.Fatalf("bootstrap should pass: %v", err)
-	}
-
-	cfg := loadGlobalConfig()
-	if cfg.TrustedCommits["testrepo"] != commit {
-		t.Errorf("bootstrap should record commit %s, got %q", commit, cfg.TrustedCommits["testrepo"])
-	}
-}
-
-func TestVerifyTrustedCommitMatchPasses(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not on PATH")
-	}
-	_, commit := setupTrustRepo(t)
-
-	saveTrustConfig(t, &globalConfig{
-		TrustedRepos:   []string{"testrepo"},
-		TrustedCommits: map[string]string{"testrepo": commit},
-	})
-
-	if err := verifyTrustedCommit("testrepo"); err != nil {
-		t.Fatalf("matching commit should pass: %v", err)
-	}
-}
-
-func TestVerifyTrustedCommitMismatchFails(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not on PATH")
-	}
-	_, commit := setupTrustRepo(t)
-
-	cloneDir := filepath.Join(vmakeDir, "repos", "testrepo")
-	if err := os.WriteFile(filepath.Join(cloneDir, "wrapper.txt"), []byte("v2-evil\n"), 0644); err != nil {
+	if err := store.Trust(trustKindRepo, "testrepo", "", commit); err != nil {
 		t.Fatal(err)
 	}
-	runGitLine(t, cloneDir, "add", "-A")
-	runGitLine(t, cloneDir, "commit", "-q", "-m", "v2")
-
-	saveTrustConfig(t, &globalConfig{
-		TrustedRepos:   []string{"testrepo"},
-		TrustedCommits: map[string]string{"testrepo": commit},
-	})
-
-	err := verifyTrustedCommit("testrepo")
-	if err == nil {
-		t.Fatal("changed repo content should fail trust verification")
+	base := buildscript.Source{Name: "testrepo/pkg", Repo: "testrepo", Commit: commit, Origin: api.SourceRemote}
+	if err := remoteScriptTrustChecker(base); err != nil {
+		t.Fatalf("trusted commit rejected: %v", err)
 	}
-	for _, want := range []string{"changed since it was trusted", "vmake repo trust testrepo"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error should mention %q, got: %v", want, err)
-		}
+	changed := base
+	changed.Commit = strings.Repeat("0", len(commit))
+	if err := remoteScriptTrustChecker(changed); err == nil {
+		t.Fatal("changed commit was accepted")
+	}
+	missing := base
+	missing.Commit = ""
+	if err := remoteScriptTrustChecker(missing); err == nil {
+		t.Fatal("empty commit was accepted")
+	}
+}
+
+func TestAddAndRemoveTrustedRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	_, commit := setupTrustRepo(t)
+	if err := addTrustedRepo("testrepo"); err != nil {
+		t.Fatal(err)
+	}
+	store, err := openTrustStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, err := store.Verify(trustKindRepo, "testrepo", "", commit)
+	if err != nil || !ok {
+		t.Fatalf("trust record missing: %v, %v", ok, err)
+	}
+	if err := removeTrustedRepo("testrepo"); err != nil {
+		t.Fatal(err)
+	}
+	ok, err = store.Verify(trustKindRepo, "testrepo", "", commit)
+	if err != nil || ok {
+		t.Fatalf("trust record survived removal: %v, %v", ok, err)
+	}
+}
+
+func TestTrustStoreCorruptionFailsClosed(t *testing.T) {
+	setupTrustRepo(t)
+	path := filepath.Join(vmakeDir, "trust.json")
+	if err := os.WriteFile(path, []byte(`{"version":1,"records":`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openTrustStore(); err == nil {
+		t.Fatal("corrupt trust store was accepted")
+	}
+	if err := remoteScriptTrustChecker(buildscript.Source{Repo: "testrepo", Commit: strings.Repeat("a", 40), Origin: api.SourceRemote}); err == nil {
+		t.Fatal("trust checker accepted a corrupt store")
+	}
+}
+
+func TestTrustStoreUsesStrictSchema(t *testing.T) {
+	setupTrustRepo(t)
+	path := filepath.Join(vmakeDir, "trust.json")
+	if err := os.WriteFile(path, []byte(`{"version":1,"records":{},"extra":true}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := truststore.Open(path); err == nil {
+		t.Fatal("trust store accepted an unknown field")
 	}
 }

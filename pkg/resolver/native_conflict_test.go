@@ -14,6 +14,12 @@ import (
 	"github.com/spock2300/vmake/pkg/repo"
 )
 
+func newTrustedTestResolver(repoMgr *repo.RepoManager, depsDir string) *Resolver {
+	r := NewResolver(repoMgr, depsDir)
+	r.SetTrustChecker(func(buildscript.Source) error { return nil })
+	return r
+}
+
 func gitCmd(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
@@ -92,7 +98,7 @@ func newNativeTestResolver(t *testing.T, pkgGitURL string) *Resolver {
 		t.Fatal(err)
 	}
 
-	r := NewResolver(repoMgr, depsDir)
+	r := newTrustedTestResolver(repoMgr, depsDir)
 	r.SetSourceManager(repo.NewSourceManager(depsDir, cacheDir))
 	return r
 }
@@ -155,7 +161,7 @@ func TestResolveNativeConfigPinReusesTreeOffline(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := NewResolver(repoMgr, depsDir)
+	r := newTrustedTestResolver(repoMgr, depsDir)
 	r.SetSourceManager(repo.NewSourceManager(depsDir, cacheDir))
 	if err := r.ResolveAll([]buildscript.Source{*localRequiringSource(t, "a", "testnative/conflictpkg >=1.2")}); err != nil {
 		t.Fatal(err)
@@ -170,7 +176,7 @@ func TestResolveNativeConfigPinReusesTreeOffline(t *testing.T) {
 	if err := os.RemoveAll(cacheDir); err != nil {
 		t.Fatal(err)
 	}
-	pinned := NewResolver(repoMgr, depsDir)
+	pinned := newTrustedTestResolver(repoMgr, depsDir)
 	pinned.SetSourceManager(repo.NewSourceManager(depsDir, cacheDir))
 	lock := lockfile.New()
 	lock.Set("testnative/conflictpkg", &lockfile.LockedPkg{Version: "1.9.0", Commit: node.Native.Commit, Source: "native"})

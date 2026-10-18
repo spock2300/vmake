@@ -9,7 +9,7 @@ import (
 	"github.com/spock2300/vmake/pkg/api"
 )
 
-func TestScriptHostSelectionAndHash(t *testing.T) {
+func TestScriptHostSelection(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, data string) {
 		t.Helper()
@@ -23,8 +23,7 @@ func Main(p *api.Package) { p.SetName(hostName()) }
 `)
 	selected := "host_" + runtime.GOOS + "_" + runtime.GOARCH + ".go"
 	write(selected, "package main\nfunc hostName() string { return \"host\" }\n")
-	ignored := "//go:build !" + runtime.GOOS + "\n\npackage main\nfunc hostName() string { return \"other\" }\n"
-	write("other.go", ignored)
+	write("other.go", "//go:build !"+runtime.GOOS+"\n\npackage main\nfunc hostName() string { return \"other\" }\n")
 	write("cgo.go", "//go:build cgo\n\npackage main\nfunc hostName() string { return \"cgo\" }\n")
 	src := Source{Name: "script", Dir: dir, Path: filepath.Join(dir, "build.go"), Origin: api.SourceLocal}
 	pkg, err := LoadBuildScript(src)
@@ -34,19 +33,23 @@ func Main(p *api.Package) { p.SetName(hostName()) }
 	if pkg.Name != "host" {
 		t.Fatalf("loaded name = %s", pkg.Name)
 	}
-	before, err := ScriptSetHash(dir)
+	files, err := ListGoFiles(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	write("other.go", ignored+"\nvar ignoredValue = 1\n")
-	afterIgnored, err := ScriptSetHash(dir)
-	if err != nil || afterIgnored != before {
-		t.Fatalf("ignored edit changed hash: %s -> %s, %v", before, afterIgnored, err)
+	got := make(map[string]bool, len(files))
+	for _, file := range files {
+		got[filepath.Base(file)] = true
 	}
-	write(selected, "package main\nfunc hostName() string { return \"changed\" }\n")
-	afterSelected, err := ScriptSetHash(dir)
-	if err != nil || afterSelected == before {
-		t.Fatalf("selected edit did not change hash: %s -> %s, %v", before, afterSelected, err)
+	for _, name := range []string{"build.go", selected} {
+		if !got[name] {
+			t.Errorf("selected file %s missing from %v", name, files)
+		}
+	}
+	for _, name := range []string{"other.go", "cgo.go"} {
+		if got[name] {
+			t.Errorf("inactive file %s was selected in %v", name, files)
+		}
 	}
 }
 

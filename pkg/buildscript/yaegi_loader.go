@@ -21,18 +21,29 @@ func yaegiExports() interp.Exports {
 }
 
 // ScriptTrustChecker decides whether scripts from a remote repository may be
-// executed. It may prompt or record trust; an error refuses execution.
-type ScriptTrustChecker func(repo string) error
+// executed. The source carries the resolved commit so trust can be bound to an
+// exact revision; an empty commit must be treated as untrusted.
+type ScriptTrustChecker func(src Source) error
 
+// LoadBuildScript loads a buildscript without a trust checker. Remote sources
+// are rejected by LoadBuildScriptWithTrust; use that entry point for remote
+// packages.
 func LoadBuildScript(src Source) (*api.Package, error) {
 	return LoadBuildScriptWithTrust(src, nil)
 }
 
 // LoadBuildScriptWithTrust gates remote scripts on a trust decision before
-// interpretation. Scripts from untrusted repositories are refused.
+// interpretation. Remote scripts without a repository identity or a trust
+// checker are refused rather than executed by default.
 func LoadBuildScriptWithTrust(src Source, trustChecker ScriptTrustChecker) (*api.Package, error) {
-	if src.IsRemote() && src.Repo != "" && trustChecker != nil {
-		if err := trustChecker(src.Repo); err != nil {
+	if src.IsRemote() {
+		if src.Repo == "" {
+			return nil, fmt.Errorf("remote buildscript %q has no repository identity", src.Name)
+		}
+		if trustChecker == nil {
+			return nil, fmt.Errorf("remote buildscript %q has no trust checker", src.Name)
+		}
+		if err := trustChecker(src); err != nil {
 			return nil, fmt.Errorf("untrusted repository %q: %w", src.Repo, err)
 		}
 	}

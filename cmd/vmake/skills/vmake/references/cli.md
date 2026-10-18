@@ -5,8 +5,11 @@ extension plugin commands appear here too. For plugin details, run
 `vmake <plugin> --help`.
 
 `vmake [--quiet -q --verbose -v --very-verbose -V --yes -y]` - VMake - A Go-based C/C++ build system
-  `vmake build [--install -i --install-type <value> --jobs <value> -j --keep-going -k --manifest <value> --mode <value> --prefix <value> -p --tests --toolchain <value>]` - Build the project
-  `vmake check-symbols [--strict]` - Audit exported symbols of shared libraries and binaries via nm
+  `vmake build [--explain --install -i --install-type <value> --jobs <value> -j --keep-going -k --manifest <value> --mode <value> --prefix <value> -p --tests --toolchain <value>]` - Build the project
+  `vmake cache` - Inspect and remove shared git object caches
+    `vmake cache list` - List cached upstream repositories
+    `vmake cache remove <url>` - Remove one cached upstream repository
+  `vmake check-symbols [--mode <value> --strict --toolchain <value>]` - Audit exported symbols of shared libraries and binaries via nm
   `vmake clean [--all]` - Clean build artifacts
   `vmake completion [shell]` - Generate shell completion script
     `vmake completion install [--shell <value>]` - Install shell completion to your profile
@@ -21,6 +24,8 @@ extension plugin commands appear here too. For plugin details, run
     `vmake ext add <name> <git-url>` - Add an extension repository
     `vmake ext list` - List extension repositories and plugins
     `vmake ext remove <name>` - Remove an extension repository
+    `vmake ext trust <name>` - Trust an extension repository at its current commit
+    `vmake ext untrust <name>` - Revoke trust for an extension repository
     `vmake ext update [name]` - Update extension repositories
   `vmake git` - Git version management commands
     `vmake git tag [version] [--major --message <value> -m --minor --no-push]` - Create version tag, update latest, and push
@@ -39,7 +44,7 @@ extension plugin commands appear here too. For plugin details, run
   `vmake query` - Show dependency tree
     `vmake query config <pkg>` - Show effective option values and generated defines
     `vmake query targets` - List build targets without building
-  `vmake rebuild [--install -i --install-type <value> --jobs <value> -j --keep-going -k --manifest <value> --mode <value> --prefix <value> -p --tests --toolchain <value>]` - Rebuild the project
+  `vmake rebuild [--explain --install -i --install-type <value> --jobs <value> -j --keep-going -k --manifest <value> --mode <value> --prefix <value> -p --tests --toolchain <value>]` - Rebuild the project
   `vmake repo` - Manage package repositories
     `vmake repo add <name> <git-url-or-template> [--native -n]` - Add a package repository
     `vmake repo list` - List all package repositories
@@ -51,7 +56,7 @@ extension plugin commands appear here too. For plugin details, run
     `vmake skill install [--project <value> -p]` - Install VMake skill for AI assistants
     `vmake skill path` - Show skill installation paths
     `vmake skill uninstall` - Uninstall VMake skill
-  `vmake test [--jobs <value> -j --keep-going -k --manifest <value> --mode <value> --tests --toolchain <value>]` - Build and run test targets
+  `vmake test [--explain --jobs <value> -j --keep-going -k --manifest <value> --mode <value> --tests --toolchain <value>]` - Build and run test targets
   `vmake toolchain` - Show toolchain information
     `vmake toolchain list` - List available toolchains
     `vmake toolchain show [name]` - Show toolchain details

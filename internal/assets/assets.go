@@ -23,11 +23,24 @@ func RunGitLFS(repoDir string, args ...string) error {
 }
 
 func DownloadFile(url, dest string) error {
+	return downloadFile(url, dest, false)
+}
+
+// DownloadFileHTTPS downloads a file and refuses redirects that leave HTTPS.
+func DownloadFileHTTPS(url, dest string) error {
+	return downloadFile(url, dest, true)
+}
+
+func downloadFile(url, dest string, httpsOnly bool) error {
 	if err := fs.EnsureParentDir(dest); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
-
-	if err := iexec.RunToStdout("", "curl", "--fail", "-L", "-o", msysPath(dest), url); err != nil {
+	args := []string{"--fail", "-L", "-o", msysPath(dest)}
+	if httpsOnly {
+		args = append(args, "--proto", "=https", "--proto-redir", "=https")
+	}
+	args = append(args, url)
+	if err := iexec.RunToStdout("", "curl", args...); err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
 

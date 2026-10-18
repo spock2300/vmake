@@ -18,15 +18,25 @@ func TestNormalizeCacheURL(t *testing.T) {
 		"https://github.com/foo/bar.git/": "https://github.com/foo/bar",
 		"git@github.com:user/repo.git":    "git@github.com:user/repo",
 		"git@GitHub.com:User/Repo.git":    "git@github.com:User/Repo",
-		"file:///tmp/local/repo.git":      "file:///tmp/local/repo",
-		"/tmp/local/repo.git":             "/tmp/local/repo",
+		"file:///tmp/local/repo.git":      "file:///tmp/local/repo.git",
+		"/tmp/local/repo.git":             "/tmp/local/repo.git",
 		"ssh://git@Host:2222/x/y.git":     "ssh://git@host:2222/x/y",
 		"ssh://Git@Host:2222/x/y.git":     "ssh://Git@host:2222/x/y",
+		"/data/lib@V1":                    "/data/lib@V1",
 	}
 	for raw, want := range cases {
 		if got := normalizeCacheURL(raw); got != want {
 			t.Errorf("normalizeCacheURL(%q) = %q, want %q", raw, got, want)
 		}
+	}
+	if normalizeCacheURL("/data/lib@V1") == normalizeCacheURL("/data/lib@v1") {
+		t.Fatal("local paths differing only in '@' suffix case share a namespace")
+	}
+	if normalizeCacheURL("/tmp/repo") == normalizeCacheURL("/tmp/repo.git") {
+		t.Fatal("local repositories with and without .git share a namespace")
+	}
+	if normalizeCacheURL("file:///tmp/repo") == normalizeCacheURL("file:///tmp/repo.git") {
+		t.Fatal("file URL repositories with and without .git share a namespace")
 	}
 }
 
@@ -641,5 +651,151 @@ func assertCacheMetaRewritten(t *testing.T, repoDir, url string) {
 	}
 	if normalizeCacheURL(meta.URL) != normalizeCacheURL(url) {
 		t.Fatalf("cache metadata url = %q, want %q", meta.URL, url)
+	}
+}
+
+func TestObjectCacheRefusesForeignDirectory(t *testing.T) {
+	requireGit(t)
+	src := writePatchableSource(t)
+	runGit(t, src, "tag", "v1.0.0")
+	gitURL := fileURL(t, src)
+	cache := t.TempDir()
+	c := NewObjectCache(cache)
+	repoDir := c.RepoDir(gitURL)
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(repoDir, "keep.txt")
+	if err := os.WriteFile(foreign, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewSourceManager(t.TempDir(), cache).EnsureSource(SourceRequest{Key: "native/sample", URLs: []string{gitURL}, Ref: "v1.0.0"}); err != nil {
+		t.Fatalf("cache miss with a foreign directory blocked the build: %v", err)
+	}
+	if _, err := os.Stat(foreign); err != nil {
+		t.Fatalf("foreign file was removed: %v", err)
+	}
+}
+
+func TestObjectCacheRemoveRejectsMetadataMismatch(t *testing.T) {
+	requireGit(t)
+	src := writePatchableSource(t)
+	runGit(t, src, "tag", "v1.0.0")
+	gitURL := fileURL(t, src)
+	cache := t.TempDir()
+	if _, err := NewSourceManager(t.TempDir(), cache).EnsureSource(SourceRequest{Key: "native/sample", URLs: []string{gitURL}, Ref: "v1.0.0"}); err != nil {
+		t.Fatal(err)
+	}
+	c := NewObjectCache(cache)
+	repoDir := c.RepoDir(gitURL)
+	metaPath := filepath.Join(repoDir, "vmake-cache.json")
+	var raw map[string]any
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	raw["url"] = "https://elsewhere.invalid/repo"
+	tampered, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metaPath, tampered, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Remove(gitURL); err == nil {
+		t.Fatal("Remove accepted a namespace whose metadata URL does not match")
+	}
+	if _, err := os.Stat(repoDir); err != nil {
+		t.Fatalf("mismatched namespace was removed: %v", err)
+	}
+}
+
+func TestObjectCacheRemoveCorruptOwnedNamespace(t *testing.T) {
+	cache := t.TempDir()
+	c := NewObjectCache(cache)
+	gitURL := "https://example.invalid/repo"
+	repoDir := c.RepoDir(gitURL)
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "vmake-cache.json"), []byte("{"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Remove(gitURL); err != nil {
+		t.Fatalf("Remove corrupt owned cache: %v", err)
+	}
+	if _, err := os.Stat(repoDir); !os.IsNotExist(err) {
+		t.Fatalf("corrupt owned cache was not removed: %v", err)
+	}
+}
+
+func TestObjectCacheRebuildsMetadataOnlyNamespace(t *testing.T) {
+	requireGit(t)
+	c := NewObjectCache(t.TempDir())
+	url := "https://example.invalid/repo"
+	repoDir := c.RepoDir(url)
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.saveMeta(repoDir, newCacheMeta(url)); err != nil {
+		t.Fatal(err)
+	}
+	got, _, created, err := c.ensureRepo(context.Background(), normalizeCacheURL(url), url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created || got != repoDir || !dirExists(filepath.Join(got, "objects")) {
+		t.Fatalf("metadata-only namespace was not rebuilt: dir=%q created=%v", got, created)
+	}
+}
+
+func TestObjectCacheRebuildsEmptyNamespace(t *testing.T) {
+	requireGit(t)
+	cache := t.TempDir()
+	c := NewObjectCache(cache)
+	url := "https://example.invalid/empty"
+	repoDir := c.RepoDir(url)
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	got, _, created, err := c.ensureRepo(context.Background(), normalizeCacheURL(url), url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created || got != repoDir || !usableBareRepo(got) {
+		t.Fatalf("empty namespace was not rebuilt: dir=%q created=%v", got, created)
+	}
+	matches, _ := filepath.Glob(filepath.Join(filepath.Dir(repoDir), "."+filepath.Base(repoDir)+".tmp-*"))
+	if len(matches) != 0 {
+		t.Fatalf("staging directories left behind: %v", matches)
+	}
+}
+
+func TestObjectCacheRemoveRejectsEmptyURL(t *testing.T) {
+	c := NewObjectCache(t.TempDir())
+	if err := c.Remove("   "); err == nil {
+		t.Fatal("Remove accepted an empty URL")
+	}
+}
+
+func TestObjectCacheListHidesStaleNormalization(t *testing.T) {
+	c := NewObjectCache(t.TempDir())
+	url := "/tmp/local/repo.git"
+	legacyDir := c.repoPath(strings.TrimSuffix(url, ".git"))
+	if err := os.MkdirAll(legacyDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.saveMeta(legacyDir, newCacheMeta(url)); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := c.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("List advertised a namespace keyed by an older normalization: %#v", entries)
 	}
 }

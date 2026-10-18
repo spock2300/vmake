@@ -1,12 +1,15 @@
 package plugin
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"time"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/internal/flock"
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/gitcmd"
 	"github.com/spock2300/vmake/internal/gitstore"
@@ -31,6 +34,11 @@ type ExtensionRepo struct {
 }
 
 func (m *Manager) AddRepo(name, gitURL string) error {
+	lock, err := m.LockRepo(name, true)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
 	return m.Store.Add(name, gitURL, cloneExtensionRepo)
 }
 
@@ -45,7 +53,33 @@ func cloneExtensionRepo(gitURL, dir string) error {
 	return nil
 }
 
+// LockRepo acquires a repository-scoped lock. Extension loading holds a shared
+// lock from the trust check through plugin loading; update/trust acquire the
+// exclusive lock so the checked commit cannot change underneath the loader.
+func (m *Manager) LockRepo(name string, exclusive bool) (*flock.FileLock, error) {
+	if err := gitstore.ValidateName(name); err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256([]byte(name))
+	lockPath := filepath.Join(m.vmakeDir, "_locks", "ext_"+hex.EncodeToString(sum[:])[:16]+".lock")
+	if exclusive {
+		return flock.Acquire(lockPath)
+	}
+	return flock.AcquireShared(lockPath)
+}
+
 func (m *Manager) UpdateRepo(name string) error {
+	lock, err := m.LockRepo(name, true)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	return m.UpdateRepoLocked(name)
+}
+
+// UpdateRepoLocked updates an extension repository while the caller holds its
+// exclusive LockRepo lock.
+func (m *Manager) UpdateRepoLocked(name string) error {
 	repoPath := m.Path(name)
 	if !m.Exists(name) {
 		return fmt.Errorf("extension repo '%s' not found", name)
@@ -72,6 +106,9 @@ func (m *Manager) ListRepos() []ExtensionRepo {
 	}
 
 	for _, name := range names {
+		if err := gitstore.ValidateName(name); err != nil {
+			continue
+		}
 		repoPath := filepath.Join(m.BaseDir(), name)
 		url := m.getRepoURL(repoPath)
 		repos = append(repos, ExtensionRepo{
@@ -90,6 +127,52 @@ func (m *Manager) getRepoURL(repoPath string) string {
 		return ""
 	}
 	return iexec.TrimOutput(output)
+}
+
+// URL returns the configured origin URL for an extension repository.
+func (m *Manager) URL(name string) string {
+	if !m.Exists(name) {
+		return ""
+	}
+	return m.getRepoURL(m.Path(name))
+}
+
+// Commit returns the current HEAD of an extension repository.
+func (m *Manager) Commit(name string) (string, error) {
+	if !m.Exists(name) {
+		return "", fmt.Errorf("extension repo '%s' not found", name)
+	}
+	output, err := iexec.RunWithEnvCaptured(m.Path(name), nil, "git", gitcmd.Args("rev-parse", "HEAD")...)
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse HEAD in %s: %w", m.Path(name), err)
+	}
+	commit := iexec.TrimOutput(output)
+	if commit == "" {
+		return "", fmt.Errorf("extension repo '%s' has no HEAD", name)
+	}
+	return commit, nil
+}
+
+// Clean reports whether an extension repository has no modified or untracked
+// files. Ignored Go files are also rejected: MergeGoSources includes them in
+// the interpreted program even though plain `git status` hides them. Trust
+// records are only valid for the exact clean tree that was reviewed.
+func (m *Manager) Clean(name string) (bool, error) {
+	if !m.Exists(name) {
+		return false, fmt.Errorf("extension repo '%s' not found", name)
+	}
+	output, err := iexec.RunWithEnvCaptured(m.Path(name), nil, "git", gitcmd.Args("status", "--porcelain", "--untracked-files=all")...)
+	if err != nil {
+		return false, fmt.Errorf("git status in %s: %w", m.Path(name), err)
+	}
+	if len(iexec.TrimOutput(output)) != 0 {
+		return false, nil
+	}
+	ignored, err := iexec.RunWithEnvCaptured(m.Path(name), nil, "git", gitcmd.Args("ls-files", "--others", "--ignored", "--exclude-standard", "--", "*.go")...)
+	if err != nil {
+		return false, fmt.Errorf("git ls-files in %s: %w", m.Path(name), err)
+	}
+	return len(iexec.TrimOutput(ignored)) == 0, nil
 }
 
 type DiscoveredPlugin struct {

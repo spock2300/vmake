@@ -57,12 +57,15 @@ func runQueryTargets(cmd *cobra.Command, args []string) {
 	vlog.SetLevel(vlog.Quiet)
 
 	ctx := resolveToConfig(false)
-	inspection, err := pipeline.Inspect(ctx)
+	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
 	fatalErr(err)
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if node == nil || !node.IsLocal() || node.Pkg == nil {
+			continue
+		}
+		if inspection.Needed != nil && !inspection.Needed[name] {
 			continue
 		}
 		kinds := collectTargetKinds(name, inspection.PkgDirs[name], ctx, inspection.PackageToolchains[name], inspection.GlobalValues)
@@ -113,7 +116,7 @@ func runQuery(cmd *cobra.Command, args []string) {
 
 	ctx := resolveToConfig(false)
 
-	inspection, err := pipeline.Inspect(ctx)
+	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
 	fatalErr(err)
 	workDir, _ := os.Getwd()
 
@@ -137,9 +140,13 @@ func runQuery(cmd *cobra.Command, args []string) {
 
 	roots := make([]string, 0)
 	for name := range localSet {
-		if !dependedOn[name] {
-			roots = append(roots, name)
+		if dependedOn[name] {
+			continue
 		}
+		if inspection.Needed != nil && !inspection.Needed[name] {
+			continue
+		}
+		roots = append(roots, name)
 	}
 	sort.Strings(roots)
 

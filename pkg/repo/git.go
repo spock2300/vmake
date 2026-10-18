@@ -23,16 +23,14 @@ func runGitCmd(args []string, opts exec.RunOptions) ([]byte, error) {
 }
 
 // gitNetworkTimeout is the timeout for network git operations (clone, fetch,
-// submodule init, ls-remote). VMAKE_GIT_TIMEOUT (seconds) overrides it;
-// VMAKE_FETCH_TIMEOUT is accepted as a legacy alias. The default is generous
+// submodule init, ls-remote). VMAKE_GIT_TIMEOUT (seconds) overrides it. The
+// default is generous
 // because slow upstreams (e.g. GitHub from mainland China) can take a long
 // time; successful commands finish early, and progress is streamed meanwhile.
 func gitNetworkTimeout() time.Duration {
-	for _, key := range []string{"VMAKE_GIT_TIMEOUT", "VMAKE_FETCH_TIMEOUT"} {
-		if s := os.Getenv(key); s != "" {
-			if secs, err := strconv.Atoi(s); err == nil && secs > 0 {
-				return time.Duration(secs) * time.Second
-			}
+	if s := os.Getenv("VMAKE_GIT_TIMEOUT"); s != "" {
+		if secs, err := strconv.Atoi(s); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
 		}
 	}
 	return 30 * time.Minute

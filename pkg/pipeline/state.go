@@ -31,7 +31,6 @@ type sourceStage struct {
 	sourceSeeds    map[string]string
 	sourceCommits  map[string]string
 	sourceVersions map[string]string
-	scriptHashes   map[string]string
 }
 
 type declareStage struct {

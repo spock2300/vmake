@@ -40,7 +40,11 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 	if err != nil {
 		return err
 	}
-	if !actionUpToDate(action.recordPath, action.signature, pkgInfo.SourceDir, action.inputs, action.outputs) {
+	decision := checkAction(action.recordPath, action.signature, pkgInfo.SourceDir, action.inputs, action.outputs)
+	if !decision.UpToDate {
+		if s.explain {
+			vlog.Info("  EXPLAIN %s: %s", resolved.Node.FullName, decision.Reason)
+		}
 		if err := invalidateActionRecord(action.recordPath); err != nil {
 			return err
 		}

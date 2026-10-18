@@ -10,4 +10,5 @@ var (
 	testsFlag       bool
 	jobsFlag        int
 	keepGoingFlag   bool
+	explainFlag     bool
 )

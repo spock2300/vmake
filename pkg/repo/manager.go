@@ -1,10 +1,13 @@
 package repo
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"strings"
 
+	"github.com/spock2300/vmake/internal/flock"
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/gitstore"
 )
@@ -18,10 +21,20 @@ func NewRepoManager(reposDir string) *RepoManager {
 }
 
 func (m *RepoManager) Add(name, gitURL string) error {
+	lock, err := m.Lock(name, true)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
 	return m.Store.Add(name, gitURL, Clone)
 }
 
 func (m *RepoManager) AddNative(name, urlTemplate string) error {
+	lock, err := m.Lock(name, true)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
 	repoPath := m.Path(name)
 	if m.Exists(name) {
 		return fmt.Errorf("'%s' already exists", name)
@@ -48,7 +61,32 @@ func (m *RepoManager) ListInfo() []RepoInfo {
 	return result
 }
 
+// Lock acquires a repository-scoped lock. Registry resolution holds a shared
+// lock from the wrapper commit read through buildscript loading; update and
+// trust commands take the exclusive lock.
+func (m *RepoManager) Lock(name string, exclusive bool) (*flock.FileLock, error) {
+	if err := gitstore.ValidateName(name); err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256([]byte(name))
+	lockPath := filepath.Join(filepath.Dir(m.BaseDir()), "_locks", "repo_"+hex.EncodeToString(sum[:])[:16]+".lock")
+	if exclusive {
+		return flock.Acquire(lockPath)
+	}
+	return flock.AcquireShared(lockPath)
+}
+
 func (m *RepoManager) Update(name string) error {
+	lock, err := m.Lock(name, true)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	return m.UpdateLocked(name)
+}
+
+// UpdateLocked updates a registry while the caller holds its exclusive lock.
+func (m *RepoManager) UpdateLocked(name string) error {
 	repoPath := m.Path(name)
 	if !m.Exists(name) {
 		return fmt.Errorf("repo '%s' not found", name)
@@ -82,10 +120,12 @@ func (m *RepoManager) GetNativeURL(name string) (string, error) {
 }
 
 func (m *RepoManager) FindPackage(repo, name string) (string, error) {
-	if len(name) == 0 {
-		return "", fmt.Errorf("package name is empty")
+	if err := gitstore.ValidateName(repo); err != nil {
+		return "", err
 	}
-
+	if err := gitstore.ValidateName(name); err != nil {
+		return "", err
+	}
 	firstChar := strings.ToLower(string(name[0]))
 	pkgPath := filepath.Join(m.BaseDir(), repo, "packages", firstChar, name)
 

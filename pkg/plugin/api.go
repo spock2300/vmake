@@ -10,6 +10,8 @@ type Info struct {
 	Version     string `json:"version"`
 	Description string `json:"description"`
 	Entry       string `json:"entry"`
+	SourceDir   string `json:"sourceDir,omitempty"`
+	APIVersion  int    `json:"apiVersion,omitempty"`
 	Enabled     bool   `json:"enabled"`
 }
 

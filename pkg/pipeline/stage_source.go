@@ -16,21 +16,6 @@ import (
 	"github.com/spock2300/vmake/pkg/repo"
 )
 
-func (s *sourceStage) scriptHashFor(name string) (string, error) {
-	if h, ok := s.scriptHashes[name]; ok {
-		return h, nil
-	}
-	h, err := scriptHashForNode(name, s.rc.ctx.DepGraph.Packages[name])
-	if err != nil {
-		return "", err
-	}
-	if h == "" {
-		return "", nil
-	}
-	s.scriptHashes[name] = h
-	return h, nil
-}
-
 func (s *sourceStage) prepareAllPackages() error {
 	remote := &remoteVersionState{
 		entries: make(map[string]*config.EntryConfig),

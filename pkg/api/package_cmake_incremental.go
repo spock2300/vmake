@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spock2300/vmake/internal/envsig"
 	"github.com/spock2300/vmake/internal/jsonio"
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
@@ -186,7 +187,7 @@ func (p *Package) cmakeConfigureFingerprint(args []string) (string, error) {
 		Args:        args,
 		CMakePath:   cmakePath,
 		CMakeDigest: cmakeDigest,
-		Env:         cmakeConfigureEnv(),
+		Env:         p.cmakeConfigureEnv(),
 		Files:       files,
 	})
 }
@@ -397,22 +398,35 @@ func lookPathCandidates(name string, suffixes []string) []string {
 	return candidates
 }
 
-func cmakeConfigureEnv() map[string]string {
+func (p *Package) cmakeConfigureEnv() map[string]string {
+	// Fingerprint the environment the command actually receives, including the
+	// toolchain-augmented PATH, but not unrelated session variables.
+	inherited := p.cmakeCommandEnvironment()
 	env := make(map[string]string)
-	for _, item := range os.Environ() {
-		key, value, ok := strings.Cut(item, "=")
-		if !ok {
+	for key, value := range inherited {
+		upper := strings.ToUpper(key)
+		if cmakeEnvOverridden(upper) {
 			continue
 		}
-		if !strings.EqualFold(key, "PATH") && !strings.HasPrefix(strings.ToUpper(key), "CMAKE_") {
-			continue
+		if upper == "PATH" || strings.HasPrefix(upper, "CMAKE_") || envsig.Allowed(upper) {
+			if runtime.GOOS == "windows" {
+				key = upper
+			}
+			env[key] = value
 		}
-		if runtime.GOOS == "windows" {
-			key = strings.ToUpper(key)
-		}
-		env[key] = value
 	}
 	return env
+}
+
+// cmakeEnvOverridden lists variables vmake sets explicitly with -D or that
+// CMake only reads while seeding a fresh cache. Hashing them would trigger
+// reconfigures that cannot change the configure result.
+func cmakeEnvOverridden(key string) bool {
+	switch key {
+	case "CC", "CXX", "AR", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS":
+		return true
+	}
+	return false
 }
 
 func digestCMakeValue(value any) (string, error) {

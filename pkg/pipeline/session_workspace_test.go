@@ -45,10 +45,6 @@ func workspaceBindingFixture(t *testing.T, remote bool) (*buildPhaseState, *api.
 	if err != nil {
 		t.Fatal(err)
 	}
-	scriptHash, err := s.scriptHashFor("app")
-	if err != nil {
-		t.Fatal(err)
-	}
 	flagsHash := packageFlagsHash(s.globalFlagsHash, node)
 	var configRoot string
 	if remote {
@@ -68,7 +64,7 @@ func workspaceBindingFixture(t *testing.T, remote bool) (*buildPhaseState, *api.
 		s.remote.trees["app"] = res.Root
 		s.remote.commits["app"] = res.Commit
 		s.patchHashes["app"] = patchHash
-		s.pkgDirs["app"] = makeRemotePkgDirs(res.Root, "", remotePkgKeyFromParts(tools.CCKey(), s.cfg.Mode, s.allPkgOptions["app"], "1.0.0", res.Commit, flagsHash, patchHash, scriptHash))
+		s.pkgDirs["app"] = makeRemotePkgDirs(res.Root, "", remotePkgKeyFromParts(tools.CCKey(), s.cfg.Mode, s.allPkgOptions["app"], "1.0.0", res.Commit, flagsHash, patchHash))
 		configRoot = filepath.Join(res.Root, "src", "nested")
 	} else {
 		node.Pkg.SetGit(upstream)
@@ -76,7 +72,7 @@ func workspaceBindingFixture(t *testing.T, remote bool) (*buildPhaseState, *api.
 		if err := s.selectPackageSource("app"); err != nil {
 			t.Fatal(err)
 		}
-		s.pkgDirs["app"] = makeLocalPkgDirs(node.Source.Dir, localPkgKeyFromParts(tools.CCKey(), s.cfg.Mode, s.allPkgOptions["app"], flagsHash, scriptHash, s.sourceCommits["app"]))
+		s.pkgDirs["app"] = makeLocalPkgDirs(node.Source.Dir, localPkgKeyFromParts(tools.CCKey(), s.cfg.Mode, s.allPkgOptions["app"], flagsHash, s.sourceCommits["app"]))
 		configRoot = filepath.Join(node.Source.Dir, "src", "nested")
 	}
 	k := (&api.KConfigEntry{}).SetSrcDir(configRoot).SetConfigPath(".config")
@@ -117,10 +113,6 @@ func TestPkgKeyMatchesExplicitMaterial(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			scriptHash, err := s.scriptHashFor("app")
-			if err != nil {
-				t.Fatal(err)
-			}
 			node := s.ctx.DepGraph.Packages["app"]
 			var extra string
 			if remote {
@@ -129,10 +121,9 @@ func TestPkgKeyMatchesExplicitMaterial(t *testing.T) {
 					sourceCommitKey(s.remote.commits["app"], s.sourceCommits["app"]),
 					packageFlagsHash(s.globalFlagsHash, node),
 					s.patchHashes["app"],
-					scriptHash,
 				)
 			} else {
-				extra = build.JoinKeyExtra("", s.sourceCommits["app"], packageFlagsHash(s.globalFlagsHash, node), "", scriptHash)
+				extra = build.JoinKeyExtra("", s.sourceCommits["app"], packageFlagsHash(s.globalFlagsHash, node), "")
 			}
 			want := build.BuildKey(tools.CCKey(), s.cfg.Mode, s.allPkgOptions["app"], extra)
 			got := filepath.Base(s.pkgDirs["app"].BuildDir)
@@ -292,11 +283,7 @@ func nativeSiblingBindingFixture(t *testing.T, configSource string) (*buildPhase
 	if err != nil {
 		t.Fatal(err)
 	}
-	scriptHash, err := s.scriptHashFor(name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.pkgDirs[name] = makeRemotePkgDirs(tree, member, remotePkgKeyFromParts(tools.CCKey(), s.cfg.Mode, nil, "1.0.0", "commit", packageFlagsHash(s.globalFlagsHash, node), "", scriptHash))
+	s.pkgDirs[name] = makeRemotePkgDirs(tree, member, remotePkgKeyFromParts(tools.CCKey(), s.cfg.Mode, nil, "1.0.0", "commit", packageFlagsHash(s.globalFlagsHash, node), ""))
 	configRoot := filepath.Join(tree, "src", "shared")
 	if configSource == "relative" {
 		configRoot = "../shared"

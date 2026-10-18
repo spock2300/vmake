@@ -2,7 +2,6 @@ package plugin
 
 import (
 	"fmt"
-	"path/filepath"
 
 	"github.com/traefik/yaegi/interp"
 
@@ -33,7 +32,10 @@ func Load(pluginDir string) (*LoadedPlugin, error) {
 		return nil, fmt.Errorf("load plugin info: %w", err)
 	}
 
-	entryDir := filepath.Dir(filepath.Join(pluginDir, info.Entry))
+	entryDir, err := info.SourceDirectory(pluginDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve plugin source: %w", err)
+	}
 
 	i, err := yaegibase.New(pluginExports())
 	if err != nil {

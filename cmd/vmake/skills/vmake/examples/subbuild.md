@@ -4,7 +4,7 @@ Demonstrates building a separate host tool as an independent sub-graph, then exe
 
 ## Prerequisites
 
-- The sub-graph package must be reachable in the dependency graph. Without `SetRoot(true)`, VMake treats every local package as a root except local packages that have no `OnRequire` callback and are depended on by another local package, and only when at least one local package uses `OnRequire`; excluded packages still build when reachable from a root. The fallback logs a hint; `VMAKE_LEGACY_ROOT=1` only silences that hint. With an explicit root, declare `tools` with `ctx.AddRequires("tools")` in `OnRequire`.
+- The sub-graph package must be reachable in the dependency graph. Without `SetRoot(true)`, VMake treats every local package as a root except local packages that have no `OnRequire` callback and are depended on by another local package, and only when at least one local package uses `OnRequire`; excluded packages still build when reachable from a root. The fallback logs a hint recommending `SetRoot(true)`. With an explicit root, declare `tools` with `ctx.AddRequires("tools")` in `OnRequire`.
 - The sub-graph package's own dependencies must resolve and build (fixture `test_data/07_subbuild_codegen` adds `official/tinyexpr` to the codegen binary).
 - A working toolchain for the tool package — typically `host` selected via `ctx.ToolchainOption()`/`vmake config` while the main package cross-compiles. The sub-graph builds with the tool package's own toolchain.
 

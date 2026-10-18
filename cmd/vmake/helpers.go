@@ -3,11 +3,10 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/spock2300/vmake/internal/gitstore"
 	"github.com/spock2300/vmake/pkg/api"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/plugin"
@@ -50,13 +49,7 @@ func mustSplitPkgRef(ref string) (string, string) {
 }
 
 func validPkgRefComponent(s string) bool {
-	if s == "" || s == "." || s == ".." {
-		return false
-	}
-	if strings.ContainsAny(s, `/\`) {
-		return false
-	}
-	return filepath.IsLocal(s)
+	return gitstore.ValidateName(s) == nil
 }
 
 func newActionCmd(use, short, verb, entityType string, action func(name string) error) *cobra.Command {

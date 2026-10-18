@@ -110,7 +110,7 @@ func (s *Scheduler) planLink(resolved *ResolvedTarget, objs []string) (*linkActi
 		Commands    []commandSpec
 		Inputs      []string
 		Outputs     []string
-	}{buildFormatVersion, resolved.Node.FullName, target.Kind(), workDir, policy.TargetOS, s.toolIdentity(), env, commands, action.inputs, action.outputs})
+	}{actionRecordVersion, resolved.Node.FullName, target.Kind(), workDir, policy.TargetOS, s.toolIdentity(), env, commands, action.inputs, action.outputs})
 	if err != nil {
 		return nil, err
 	}

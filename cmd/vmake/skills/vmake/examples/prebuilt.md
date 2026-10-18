@@ -190,7 +190,7 @@ inputs:
 1. **First build**: no record → materialize the prebuilt output (log line `PREBUILT libdrv.a`)
 2. **Unchanged**: signature, inputs and outputs all match → skip
 3. **Prebuilt file changed**: its content hash changed → re-materialize the output
-4. **Path changed in build.go**: the buildscript hash is part of the BuildKey, so a fresh `BuildDir` is used and the artifact is materialized there
+4. **Path changed in build.go**: the target's prebuilt input and link action change, so the action signature invalidates and the artifact is materialized in the existing `BuildDir`
 
 Source file existence is verified — a clear error is returned if the prebuilt
 file is not found.

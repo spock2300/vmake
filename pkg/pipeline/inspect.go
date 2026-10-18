@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/config"
@@ -51,16 +52,35 @@ type Inspection struct {
 
 type InspectOptions struct {
 	SkipUnresolvedPackages bool
+	FilterDeps             bool
+	// FreezeDeps seals the filtered graph for the rest of this invocation.
+	// Commands that inspect before cleaning/building should set it so repeated
+	// inspection does not execute OnRequire again or observe a different set.
+	FreezeDeps bool
 }
 
 func Inspect(ctx *RuntimeContext) (*Inspection, error) {
 	return InspectWithOptions(ctx, InspectOptions{})
 }
 
-func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (*Inspection, error) {
+func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection, err error) {
+	defer scriptcall.Recover(&err)
+	if opts.FilterDeps {
+		if err := filterDependencies(ctx, false); err != nil {
+			return nil, err
+		}
+		if opts.FreezeDeps {
+			ctx.DepGraph.Freeze()
+		}
+	}
 	pre, err := prepareBuildPrelude(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if opts.FilterDeps {
+		if err := validateNeededSubPackageOwners(pre.needed, ctx.Resolver.SubParents()); err != nil {
+			return nil, err
+		}
 	}
 
 	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
@@ -70,6 +90,10 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (*Inspection, 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if node == nil || node.Source == nil {
+			continue
+		}
+		if opts.FilterDeps && !pre.needed[name] {
+			delete(pkgDirs, name)
 			continue
 		}
 		tcName := resolvePkgToolchain(ctx.Config, name, pre.cfg.TcName)
@@ -102,10 +126,6 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (*Inspection, 
 			return nil, err
 		}
 		entry := config.GetEntry(ctx.Config, name)
-		scriptHash, err := scriptHashForNode(name, node)
-		if err != nil {
-			return nil, err
-		}
 		flagsHash := packageFlagsHash(pre.globalFlagsHash, node)
 		if node.IsLocal() {
 			if node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 && !DetectExistingSrcDir(node) {
@@ -121,7 +141,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (*Inspection, 
 				CCKey:     tools.CCKey(),
 				Mode:      pre.cfg.Mode,
 				Options:   entry.Options,
-				Material:  keyMaterial{commit: commit, flagsHash: flagsHash, scriptHash: scriptHash},
+				Material:  keyMaterial{commit: commit, flagsHash: flagsHash},
 				Ready:     true,
 			})
 			if err != nil {
@@ -160,7 +180,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (*Inspection, 
 			CCKey:    tools.CCKey(),
 			Mode:     pre.cfg.Mode,
 			Options:  entry.Options,
-			Material: keyMaterial{version: version, commit: commit, flagsHash: flagsHash, patchHash: patchHash, scriptHash: scriptHash},
+			Material: keyMaterial{version: version, commit: commit, flagsHash: flagsHash, patchHash: patchHash},
 			Ready:    true,
 		})
 		if err != nil {

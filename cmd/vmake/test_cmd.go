@@ -30,7 +30,7 @@ func runTest(cmd *cobra.Command, args []string) error {
 	commandStorageLocks()
 	execution := &RuntimeContext{}
 	return withResolvedProject(execution, func(ctx *RuntimeContext) error {
-		result, err := runBuildPhase(ctx, BuildOptions{IncludeTests: true, Jobs: jobsFlag, KeepGoing: keepGoingFlag})
+		result, err := runBuildPhase(ctx, BuildOptions{IncludeTests: true, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag})
 		if err != nil {
 			return err
 		}

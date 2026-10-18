@@ -87,6 +87,7 @@ func requiresExclusiveStorage(cmd *cobra.Command) bool {
 
 func Execute() {
 	err := RootCmd.Execute()
+	releaseExtensionRepoLocks()
 	if commandStorage != nil {
 		closeErr := commandStorage.Close()
 		commandStorage = nil

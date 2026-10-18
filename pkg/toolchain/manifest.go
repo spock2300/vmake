@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/gitstore"
 )
 
 type InstallConfig struct {
@@ -64,7 +66,7 @@ func LoadToolchainDef(path string) (*ToolchainDef, error) {
 		return nil, &DefinitionError{path: path, err: err}
 	}
 	var name string
-	if err := json.Unmarshal(fields["name"], &name); err != nil || !validPathComponent(name) {
+	if err := json.Unmarshal(fields["name"], &name); err != nil || !validNameComponent(name) {
 		name = ""
 	}
 	for _, field := range []string{"host", "install"} {
@@ -110,18 +112,18 @@ func (d *ToolchainDef) installationFor(hostOS, hostArch string) (*InstallConfig,
 }
 
 func (d *ToolchainDef) Validate() error {
-	if !validPathComponent(d.Name) {
+	if !validNameComponent(d.Name) {
 		return fmt.Errorf("missing or invalid name %q", d.Name)
 	}
 	if d.Prefix != "" && !strings.HasSuffix(d.Prefix, "-") {
 		return fmt.Errorf("toolchain %s: prefix must include its trailing hyphen", d.Name)
 	}
-	if len(d.Installations) > 0 && !validPathComponent(d.Version) {
+	if len(d.Installations) > 0 && !validNameComponent(d.Version) {
 		return fmt.Errorf("toolchain %s: installations require a valid version", d.Name)
 	}
 	for host, install := range d.Installations {
 		parts := strings.Split(host, "/")
-		if len(parts) != 2 || !validPathComponent(parts[0]) || !validPathComponent(parts[1]) {
+		if len(parts) != 2 || !validNameComponent(parts[0]) || !validNameComponent(parts[1]) {
 			return fmt.Errorf("toolchain %s: invalid installation host %q; expected OS/architecture", d.Name, host)
 		}
 		if install.RootDir != "." && !validPathComponent(install.RootDir) {
@@ -136,11 +138,26 @@ func (d *ToolchainDef) Validate() error {
 		if install.Method != "lfs" && install.Method != "http" {
 			return fmt.Errorf("toolchain %s installation %s: unknown method %q", d.Name, host, install.Method)
 		}
-		if install.Method == "http" && install.URL == "" {
-			return fmt.Errorf("toolchain %s installation %s: missing URL", d.Name, host)
+		if install.Method == "http" {
+			if install.URL == "" {
+				return fmt.Errorf("toolchain %s installation %s: missing URL", d.Name, host)
+			}
+			parsed, err := url.Parse(install.URL)
+			if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+				return fmt.Errorf("toolchain %s installation %s: URL must be an absolute https URL", d.Name, host)
+			}
+			if !validSHA256(install.Sha256) {
+				return fmt.Errorf("toolchain %s installation %s: http installations require a 64-character sha256", d.Name, host)
+			}
+		} else if install.Sha256 != "" && !validSHA256(install.Sha256) {
+			return fmt.Errorf("toolchain %s installation %s: invalid sha256", d.Name, host)
 		}
 	}
 	return nil
+}
+
+func validNameComponent(value string) bool {
+	return gitstore.ValidateName(value) == nil
 }
 
 func validPathComponent(value string) bool {
@@ -209,4 +226,16 @@ func ScanRepoToolchains(repoDir string) ([]ToolchainDef, error) {
 	}
 
 	return results, errors.Join(failures...)
+}
+
+func validSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, c := range value {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
 }

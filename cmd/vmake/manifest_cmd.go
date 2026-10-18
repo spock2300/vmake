@@ -71,8 +71,7 @@ var manifestCheckoutCmd = &cobra.Command{
 		mf, err := loadInstallManifest(manifestPath)
 		fatalErr(err)
 
-		cwd, err := os.Getwd()
-		fatalErr(err)
+		base := findProjectDir()
 
 		sourceMgr := repo.NewSourceManager(getDepsDir(), getCacheDir()).
 			WithSession(commandStorageLocks()).
@@ -87,7 +86,7 @@ var manifestCheckoutCmd = &cobra.Command{
 
 			switch entry.Source {
 			case "local":
-				checkoutLocal(cwd, entry)
+				fatalErr(checkoutLocal(base, entry))
 			case "native", "registry":
 				checkoutRemote(sourceMgr, entry)
 			default:
@@ -101,16 +100,21 @@ var manifestCheckoutCmd = &cobra.Command{
 	},
 }
 
-func checkoutLocal(cwd string, entry installManifestEntry) {
+func checkoutLocal(projectDir string, entry installManifestEntry) error {
 	if entry.Ref == "" || entry.Ref == "unknown" {
 		fmt.Printf("  SKIP %s (no ref recorded)\n", entry.Name)
-		return
+		return nil
 	}
-
-	sourceDir := filepath.Join(cwd, entry.Path)
+	sourceDir, err := resolveManifestEntryPath(projectDir, entry.Path)
+	if err != nil {
+		return fmt.Errorf("checkout %s: %w", entry.Name, err)
+	}
 	if !fs.FileExists(sourceDir) {
 		fmt.Printf("  SKIP %s (path not found: %s)\n", entry.Name, entry.Path)
-		return
+		return nil
+	}
+	if !fs.FileExists(filepath.Join(sourceDir, "build.go")) {
+		return fmt.Errorf("checkout %s: %s is not a package directory (build.go not found)", entry.Name, entry.Path)
 	}
 
 	ref := repo.ShortCommit(entry.Ref)
@@ -118,10 +122,10 @@ func checkoutLocal(cwd string, entry installManifestEntry) {
 		ref += "..."
 	}
 	if err := repo.Checkout(sourceDir, entry.Ref); err != nil {
-		fmt.Printf("  FAIL %s (checkout %s: %v)\n", entry.Name, ref, err)
-	} else {
-		fmt.Printf("  OK   %s -> %s\n", entry.Name, ref)
+		return fmt.Errorf("checkout %s at %s: %w", entry.Name, ref, err)
 	}
+	fmt.Printf("  OK   %s -> %s\n", entry.Name, ref)
+	return nil
 }
 
 func checkoutRemote(sourceMgr *repo.SourceManager, entry installManifestEntry) {

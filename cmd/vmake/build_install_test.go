@@ -51,6 +51,115 @@ func TestInstallReusesBuildDeclaration(t *testing.T) {
 	}
 }
 
+func TestValidateInstallPrefixRejectsDestructiveTargets(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	if err := os.MkdirAll(project, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, prefix := range []string{"", project, root, filepath.Dir(root)} {
+		if err := validateInstallPrefix(prefix, project); err == nil {
+			t.Errorf("validateInstallPrefix(%q) accepted a destructive target", prefix)
+		}
+	}
+	if err := validateInstallPrefix(filepath.Join(project, "src"), project); err == nil {
+		t.Errorf("project subdirectory accepted as install prefix")
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		if err := validateInstallPrefix(cwd, project); err == nil {
+			t.Errorf("current working directory accepted as install prefix")
+		}
+	}
+	if err := validateInstallPrefix(filepath.Join(project, "install"), project); err != nil {
+		t.Errorf("project-local prefix rejected: %v", err)
+	}
+	if err := validateInstallPrefix(filepath.Join(project, "install", "nested"), project); err != nil {
+		t.Errorf("default install subdirectory rejected: %v", err)
+	}
+	storage := filepath.Join(root, "vmake-state")
+	if err := os.MkdirAll(filepath.Join(storage, "cache"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateInstallPrefix(filepath.Join(storage, "cache"), project, storage); err == nil {
+		t.Error("vmake storage subdirectory accepted as install prefix")
+	}
+	regular := filepath.Join(root, "not-a-directory")
+	if err := os.WriteFile(regular, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateInstallPrefix(regular, project); err == nil {
+		t.Error("regular file accepted as install prefix")
+	}
+	nonEmpty := filepath.Join(root, "existing-custom")
+	if err := os.MkdirAll(nonEmpty, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nonEmpty, "keep"), []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateInstallPrefix(nonEmpty, project); err == nil {
+		t.Error("non-empty custom install prefix accepted without an ownership marker")
+	}
+	if err := os.WriteFile(filepath.Join(nonEmpty, installOwnershipMarker), []byte("vmake\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateInstallPrefix(nonEmpty, project); err != nil {
+		t.Errorf("owned custom install prefix rejected: %v", err)
+	}
+	empty := filepath.Join(root, "empty-custom")
+	if err := os.MkdirAll(empty, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateInstallPrefix(empty, project); err != nil {
+		t.Errorf("empty custom install prefix rejected: %v", err)
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if err := validateInstallPrefix(home, project); err == nil {
+			t.Errorf("home directory accepted as install prefix")
+		}
+	}
+	if runtime.GOOS != "windows" {
+		if err := validateInstallPrefix(string(filepath.Separator), project); err == nil {
+			t.Errorf("filesystem root accepted as install prefix")
+		}
+	}
+}
+
+func TestValidateInstallPrefixFollowsSymlinkedDirectory(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	outside := filepath.Join(root, "outside")
+	for _, dir := range []string{project, outside} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(root, "install-link")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := validateInstallPrefix(link, project); err != nil {
+		t.Fatalf("symlinked install directory rejected: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "keep"), []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateInstallPrefix(link, project); err == nil {
+		t.Error("non-empty symlinked install directory accepted without an ownership marker")
+	}
+	fileTarget := filepath.Join(root, "file-target")
+	if err := os.WriteFile(fileTarget, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	fileLink := filepath.Join(root, "file-link")
+	if err := os.Symlink(fileTarget, fileLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateInstallPrefix(fileLink, project); err == nil {
+		t.Error("symlink to a regular file accepted as install prefix")
+	}
+}
+
 func TestInstallPrefixPriority(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

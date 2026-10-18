@@ -18,7 +18,7 @@ func loadPluginsForCommand(args []string) {
 	cmd, _, err := RootCmd.Find(args)
 	if err == nil {
 		for current := cmd; current != nil; current = current.Parent() {
-			if current == extCmd {
+			if current == extCmd || current == cacheCmd {
 				return
 			}
 		}

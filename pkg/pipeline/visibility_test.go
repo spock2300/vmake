@@ -101,7 +101,6 @@ func TestPackageVisibilityCacheIsolation(t *testing.T) {
 			r.Graph().Packages = map[string]*resolver.PackageNode{"app": app, "dependency": dependency}
 			s := newBuildPhaseState(&RuntimeContext{Resolver: r, DepGraph: r.Graph()}, BuildOptions{})
 			s.needed = map[string]bool{"app": true, "dependency": true}
-			s.scriptHashes = map[string]string{"app": "app-script", "dependency": "dependency-script"}
 			s.globalFlagsHash = "global-flags"
 			s.remote = &remoteVersionState{
 				entries: map[string]*config.EntryConfig{"dependency": {Version: "1.0"}},

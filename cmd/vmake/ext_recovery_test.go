@@ -39,13 +39,18 @@ func TestExtensionBootstrapChild(t *testing.T) {
 
 func extensionCommand(t *testing.T, dir, workDir string, args ...string) (string, error) {
 	t.Helper()
+	return extensionCommandEnv(t, dir, workDir, []string{"VMAKE_TRUST_ALL=1"}, args...)
+}
+
+func extensionCommandEnv(t *testing.T, dir, workDir string, extraEnv []string, args ...string) (string, error) {
+	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
 	commandArgs := append([]string{"-test.run=^TestExtensionBootstrapChild$", "--"}, args...)
 	cmd := exec.Command(exe, commandArgs...)
-	cmd.Env = append(os.Environ(), "VMAKE_TEST_EXT_DIR="+dir)
+	cmd.Env = append(os.Environ(), append([]string{"VMAKE_TEST_EXT_DIR=" + dir}, extraEnv...)...)
 	cmd.Dir = workDir
 	out, err := cmd.CombinedOutput()
 	return string(out), err
@@ -99,6 +104,16 @@ func writeTargetDefinition(t *testing.T, path, name, targetOS, triple string) {
 		t.Fatal(err)
 	}
 	writeExtensionFile(t, path, string(data))
+}
+
+func TestUntrustedExtensionDoesNotExecute(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "extensions", "fixture")
+	writeExtensionLoader(t, repo)
+	out, _ := extensionCommandEnv(t, dir, dir, []string{"VMAKE_TRUST_ALL=0"}, "toolchain", "list")
+	if strings.Contains(out, "PLUGIN_EXECUTED") {
+		t.Fatalf("untrusted extension executed:\n%s", out)
+	}
 }
 
 func TestExtensionDefinitionsFailIndependently(t *testing.T) {
@@ -230,4 +245,25 @@ func TestRegisterRepoToolchainsRetainsDanglingManifest(t *testing.T) {
 		}
 	}
 	t.Fatal("dangling manifest was silently skipped")
+}
+
+func TestRemoveExtensionRecoversFromCorruptTrustStore(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "extensions", "fixture")
+	if err := os.MkdirAll(repo, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "trust.json"), []byte("{"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	previous := vmakeDir
+	vmakeDir = dir
+	t.Cleanup(func() { vmakeDir = previous })
+
+	if err := removeExtensionRepo("fixture"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(repo); !os.IsNotExist(err) {
+		t.Fatalf("extension repo was not removed: %v", err)
+	}
 }

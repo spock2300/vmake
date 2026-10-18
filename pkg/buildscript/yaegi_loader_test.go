@@ -3,6 +3,7 @@ package buildscript
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
@@ -68,7 +69,11 @@ func Main(p *api.Package) {
 	if err := os.WriteFile(path, []byte(script), 0644); err != nil {
 		t.Fatal(err)
 	}
-	pkg, err := LoadBuildScript(*NewSource("native/sample", path, seed, api.SourceRemote))
+	src := NewSource("native/sample", path, seed, api.SourceRemote)
+	src.Repo = "native/sample"
+	src.URL = "https://example.invalid/sample.git"
+	src.Commit = strings.Repeat("0", 40)
+	pkg, err := LoadBuildScriptWithTrust(*src, func(Source) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,5 +192,28 @@ func TestLoadBuildScript_CompleteAPI(t *testing.T) {
 	targets := buildCtx.GetTargets()
 	if len(targets) < 4 {
 		t.Errorf("expected at least 4 targets, got %d: %v", len(targets), targetKeys(targets))
+	}
+}
+
+func TestRemoteBuildScriptRequiresRepositoryAndTrust(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "build.go")
+	script := `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {}
+`
+	if err := os.WriteFile(path, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	src := NewSource("remote", path, dir, api.SourceRemote)
+	if _, err := LoadBuildScript(*src); err == nil {
+		t.Fatal("remote script without repository identity was loaded")
+	}
+	src.Repo = "native/remote"
+	if _, err := LoadBuildScript(*src); err == nil {
+		t.Fatal("remote script without trust checker was loaded")
+	}
+	if _, err := LoadBuildScriptWithTrust(*src, func(Source) error { return nil }); err != nil {
+		t.Fatalf("trusted remote script failed: %v", err)
 	}
 }

@@ -30,7 +30,7 @@ func runRebuild(cmd *cobra.Command, args []string) (err error) {
 	return withResolvedProject(execution, func(ctx *RuntimeContext) error {
 		executeCleanLocal(ctx)
 		vlog.Info("")
-		_, err := runReportedBuild(ctx, report, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag})
+		_, err := runReportedBuild(ctx, report, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag})
 		return err
 	})
 }
@@ -38,7 +38,7 @@ func runRebuild(cmd *cobra.Command, args []string) (err error) {
 func executeCleanLocal(ctx *RuntimeContext) {
 	vlog.Info("")
 	vlog.Info("Executing OnClean...")
-	if err := executeCleanHooks(ctx, true, true); err != nil {
+	if err := executeCleanHooks(ctx, true, true, true); err != nil {
 		vlog.Error("Skipping OnClean: %v", err)
 	}
 	if err := cleanPackages(collectCleanEntries(ctx), ctx, false); err != nil {

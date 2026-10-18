@@ -20,7 +20,8 @@
   "name": "hello",
   "version": "1.0.0",
   "description": "Hello extension plugin",
-  "entry": "src/main.go",
+  "apiVersion": 1,
+  "sourceDir": "src",
   "enabled": true
 }
 ```
@@ -56,6 +57,18 @@ vmake hello world
 
 vmake 在启动时自动发现并用 yaegi 解释执行插件源码，无需编译，即时可用。
 
+## 信任与执行
+
+扩展代码以完整系统权限运行。vmake 只加载**在确切 commit 上被信任**的扩展：
+
+- `vmake ext add` 克隆后展示仓库并询问是否信任；非交互环境需要 `-y` 或后续执行 `vmake ext trust <name>`。
+- `vmake ext update` 仅在 HEAD commit 变化时清除信任；必须重新 review 并执行 `vmake ext trust <name>`。更新失败且 HEAD 未变化时保留原信任。
+- 扩展工作树有本地修改、未跟踪文件、被 `.gitignore` 忽略的 `.go` 文件、HEAD 与信任记录不一致、或仓库不是 vmake 可识别的 git 仓库时，插件和 `toolchain.json` 都不会加载。
+- `vmake ext untrust <name>`/`vmake ext remove <name>` 撤销信任。
+- `VMAKE_TRUST_ALL=1` 仅用于 CI/测试，会跳过包仓库和扩展仓库的信任检查。
+- `plugin.json` 的 `name` 必须是合法命令名；`entry`/`sourceDir` 必须位于插件目录内。`apiVersion` 当前为 `1`，更高版本会被拒绝。
+- `method: "http"` 的工具链必须使用 `https` 且提供 64 位十六进制 `sha256`；下载过程拒绝重定向到非 HTTPS。
+
 `vmake ext add` 和 `vmake ext update` 只获取普通 Git 文件及 LFS 指针，不自动下载 LFS 大文件。构建首次使用某个未安装的工具链时，vmake 才下载该工具链对应当前宿主 OS/架构的压缩包。更新扩展不会主动预取新版本，也不会清理已有 LFS 对象、已安装的工具链目录或其他缓存；但 `vmake ext update` 执行的 `git pull --ff-only` 会按上游变更更新仓库工作树，上游删除的跟踪文件（包括 `assets/toolchains/` 下的归档指针）也会从检出中消失。这项策略仅用于扩展仓库，不改变项目源码依赖的 Git 下载行为。
 
 ## 目录结构
@@ -75,7 +88,7 @@ vmake 在启动时自动发现并用 yaegi 解释执行插件源码，无需编�
         └── *.tar.gz
 ```
 
-每个扩展仓库是一个 Git 仓库。仓库根目录下的每个子目录可以是一个插件（含 `plugin.json`）或一个工具链声明（含 `toolchain.json`）。一个仓库可以包含任意数量的插件和工具链，vmake 启动时自动发现并注册工具链、加载所有插件；只含 `toolchain.json` 的仓库不需要任何插件代码。
+每个扩展仓库是一个 Git 仓库。仓库根目录下的每个子目录可以是一个插件（含 `plugin.json`）或一个工具链声明（含 `toolchain.json`）。一个仓库可以包含任意数量的插件和工具链；vmake 启动时自动发现并注册**已信任且工作树干净**的仓库中的工具链、加载其插件。只含 `toolchain.json` 的仓库不需要任何插件代码。
 
 示例：一个仓库 `embedded-tools` 包含烧录和监控两个插件，以及一个 arm-gcc 工具链声明：
 
@@ -102,13 +115,15 @@ vmake 在启动时自动发现并用 yaegi 解释执行插件源码，无需编�
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `name` | string | 是（未校验） | 插件名，同时也是 CLI 命令名（`vmake <name>`） |
+| `name` | string | 是 | 插件名，同时也是 CLI 命令名（`vmake <name>`）；必须是单个合法路径组件 |
 | `version` | string | 否 | 语义版本号，显示在 `vmake ext list` |
 | `description` | string | 否 | 一句话描述，显示在 `vmake ext list` |
-| `entry` | string | 是（未校验） | 入口 Go 源文件的相对路径（如 `src/main.go`）；加载器只取所在目录并合并该目录下选中的 Go 源文件 |
+| `entry` | string | 二选一 | 入口 Go 源文件的相对路径（如 `src/main.go`）；加载器只取所在目录并合并该目录下选中的 Go 源文件；不得逃逸插件目录 |
+| `sourceDir` | string | 二选一 | 插件源码目录的相对路径（推荐，如 `src`）；不得逃逸插件目录 |
+| `apiVersion` | int | 否 | 插件 API 版本，当前为 `1`；缺省按 `1` 处理，更高版本拒绝加载 |
 | `enabled` | bool | 否 | 是否启用，默认 `false`。设为 `true` 时启用该插件 |
 
-`LoadPluginInfo` 只反序列化 JSON，不校验 `name`/`entry` 是否为空；发现阶段只检查 `plugin.json` 存在且 `enabled` 为 `true`。`name` 用作 `vmake <name>` 的命令名；`entry` 只用来确定源码目录（`filepath.Dir(filepath.Join(pluginDir, entry))`），该目录下由 `gosrc.ListGoFiles` 选择的 Go 文件（按宿主 GOOS/GOARCH，排除 `_test.go` 与 `import "C"`）由 `MergeGoSources` 合并，并不会只加载 `entry` 指向的单个文件。`entry` 为空时目录会落到插件目录的父目录（通常是扩展仓库根），从而扫描仓库根下的 `.go` 文件。正常插件应提供非空的 `name` 和指向源码文件的 `entry`。
+`LoadPluginInfo` 校验 `name`、`apiVersion` 和源码路径：`name` 必须是单个合法路径组件；`entry`/`sourceDir` 必须是插件目录内的相对路径且解析后仍位于该目录；缺失或逃逸时报错。`sourceDir` 直接指定源码目录；`entry` 只用来确定其所在目录。该目录下由 `gosrc.ListGoFiles` 选择的 Go 文件（按宿主 GOOS/GOARCH，排除 `_test.go` 与 `import "C"`）由 `MergeGoSources` 合并。`apiVersion` 缺省按 `1` 处理，更高版本拒绝加载。
 
 示例：
 
@@ -393,7 +408,7 @@ err := ctx.RunGitLFS(ctx.RepoDir, "pull", "--include=assets/toolchains/aarch64-g
 | `file` | string | 是 | 压缩包文件名：`lfs` 方法时位于扩展仓库 `assets/toolchains/` 下，不能包含逗号、通配符 `*?[]` 或首尾空白，以保证只匹配一个文件；`http` 方法的文件名规则不变 |
 | `url` | string | 否 | HTTP 下载URL（method 为 http 时必填） |
 | `format` | string | 否 | 压缩格式（`tar.gz`/`tar.xz`/`tar.bz2`/`zip`），为空时自动检测 |
-| `sha256` | string | 否 | SHA256 校验和，可选 |
+| `sha256` | string | HTTP 必填 | SHA256 校验和；`method: "http"` 时必须提供 |
 | `root_dir` | string | 是 | 归档中的工具链根目录；`.` 表示归档根目录 |
 
 ### 自动下载机制
@@ -405,7 +420,7 @@ err := ctx.RunGitLFS(ctx.RepoDir, "pull", "--include=assets/toolchains/aarch64-g
 3. 构建通过 `--toolchain <name>`、全局 `toolchain` 选项或实际构建的子图选中未安装的工具链时：
    - `method: "lfs"` → 先检查选中的压缩包；完整文件直接复用，指针或缺失文件才执行 `git -c lfs.fetchrecentalways=false lfs pull --include=assets/toolchains/<file> --exclude=`。只拉取当前检出版本的单个文件，已有 LFS 对象可离线复用；拉取后仍为指针或缺失则报错，不扩大下载范围
    - `method: "http"` → 从 `url` 下载压缩包到临时目录
-4. 若声明了 `sha256` 则校验（未声明时跳过校验），按 `root_dir` 解压到暂存目录，再整体重命名发布到 `~/.vmake/toolchains/<os>/<arch>/<name>/<version>/`，作为工具链的 `InstallPath`
+4. `method: "http"` 必须声明 `sha256` 并使用 HTTPS；校验通过后按 `root_dir` 解压到暂存目录，再整体重命名发布到 `~/.vmake/toolchains/<os>/<arch>/<name>/<version>/`，作为工具链的 `InstallPath`
 5. 安装过程持有文件锁，多个项目并发构建时只会安装一次
 
 工具链的程序通过 `InstallPath/bin` 逐条命令解析（有 `InstallPath` 且工具名为相对路径时严格限定在该目录、不回退 PATH；绝对路径工具直接解析；没有 `InstallPath` 时按 PATH 查找），vmake 的工具链选择不会修改进程级 `PATH`。Windows 启动时会把 Git for Windows 的 Unix userland 目录前置到进程 `PATH`（`internal/gitusr`，用于 `sh`、`tar`、`curl` 等），这与工具链选择无关；工具链目录不会加入进程级 PATH，而是在各命令的环境中提供。

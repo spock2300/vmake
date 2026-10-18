@@ -46,12 +46,17 @@ var repoAddCmd = &cobra.Command{
 		if repoAddNative {
 			fatalErr(mgr.AddNative(name, url))
 			fmt.Printf("Added native repository '%s' with URL template '%s'\n", name, url)
-		} else {
-			fatalErr(mgr.Add(name, url))
-			fmt.Printf("Added repository '%s' from %s\n", name, url)
+			fmt.Printf("Native scripts are trusted per package commit on first build; review the resolved package before passing --yes.\n")
+			return
 		}
-		if !isRepoTrusted(name) {
-			confirmTrustRemoteRepo(name)
+		fatalErr(mgr.Add(name, url))
+		fmt.Printf("Added repository '%s' from %s\n", name, url)
+		if confirmTrust(fmt.Sprintf("The remote repository %q provides build.go scripts that vmake will execute (full system access).", name)) {
+			if err := addTrustedRepo(name); err != nil {
+				vlog.Error("record trust for repository %s: %v", name, err)
+			}
+		} else {
+			fmt.Printf("Repository '%s' is untrusted; run 'vmake repo trust %s' after reviewing it.\n", name, name)
 		}
 	},
 }
@@ -62,7 +67,6 @@ var repoTrustCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		fatalErr(addTrustedRepo(args[0]))
-		fmt.Printf("Trusted repository '%s'\n", args[0])
 	},
 }
 
@@ -71,13 +75,27 @@ var repoUntrustCmd = &cobra.Command{
 	Short: "Revoke trust for a repository",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		fatalErr(removeTrustedRepo(args[0]))
-		fmt.Printf("Untrusted repository '%s'\n", args[0])
+		name := args[0]
+		lock, ok := getRepoManager().Lock(name, true)
+		fatalErr(ok)
+		defer lock.Release()
+		fatalErr(removeTrustedRepo(name))
+		fmt.Printf("Untrusted repository '%s'\n", name)
 	},
 }
 
 var repoRemoveCmd = newActionCmd("remove <name>", "Remove a package repository", "Removed", "repository", func(name string) error {
-	return getRepoManager().Remove(name)
+	mgr := getRepoManager()
+	lock, err := mgr.Lock(name, true)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	if err := mgr.Remove(name); err != nil {
+		return err
+	}
+	revokeRepoTrustBestEffort(name)
+	return nil
 })
 
 var repoListCmd = &cobra.Command{
@@ -102,15 +120,17 @@ var repoListCmd = &cobra.Command{
 }
 
 var repoUpdateCmd = newActionCmd("update <name>", "Update a package repository", "Updated", "repository", func(name string) error {
-	if err := getRepoManager().Update(name); err != nil {
+	mgr := getRepoManager()
+	lock, err := mgr.Lock(name, true)
+	if err != nil {
 		return err
 	}
-	if isRepoTrusted(name) {
-		if err := removeTrustedRepo(name); err != nil {
-			return fmt.Errorf("reset trust for updated repository %s: %w", name, err)
-		}
-		vlog.Info("repository '%s' updated: content changed, trust reset", name)
-		vlog.Info("run 'vmake repo trust %s' (or the next build) to re-confirm the new scripts", name)
+	defer lock.Release()
+	if err := mgr.UpdateLocked(name); err != nil {
+		return err
 	}
+	revokeRepoTrustBestEffort(name)
+	vlog.Info("repository '%s' updated: trust reset", name)
+	vlog.Info("run 'vmake repo trust %s' (or pass --yes to a build) to re-confirm the new scripts", name)
 	return nil
 })

@@ -618,3 +618,51 @@ func TestCMakeConfigureStateReusesFingerprint(t *testing.T) {
 		t.Fatalf("reused fingerprint %q != recomputed %q", stamp.Fingerprint, want)
 	}
 }
+
+func TestCMakeConfigureFailureRemovesStamp(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake cmake shell script")
+	}
+	f := newCMakeIncrementalFixture(t)
+	args := f.saveStamp(t)
+	writeCMakeFile(t, f.source, "CMakeLists.txt", "changed project()\n")
+	writeFakeCMake(t, f.bin, "#!/bin/sh\necho partial > \"$PWD/CMakeCache.txt\"\nmkdir -p CMakeFiles\nexit 1\n")
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("CMakeConfigure did not report the configure failure")
+			}
+		}()
+		f.pkg.CMakeConfigure()
+	}()
+	if _, err := os.Stat(f.pkg.cmakeConfigureStampPath()); !os.IsNotExist(err) {
+		t.Fatalf("failed configure left a stamp: %v (args %v)", err, args)
+	}
+}
+
+func TestCMakeConfigureEnvIncludesExtraKeys(t *testing.T) {
+	f := newCMakeIncrementalFixture(t)
+	t.Setenv("MY_CMAKE_FLAG", "value")
+	t.Setenv("VMAKE_ENV_EXTRA", "MY_CMAKE_FLAG")
+	env := f.pkg.cmakeConfigureEnv()
+	if env["MY_CMAKE_FLAG"] != "value" {
+		t.Fatalf("VMAKE_ENV_EXTRA key missing from CMake fingerprint: %#v", env)
+	}
+}
+
+func TestCMakeConfigureEnvIgnoresOverriddenVariables(t *testing.T) {
+	f := newCMakeIncrementalFixture(t)
+	t.Setenv("CC", "cc-override")
+	t.Setenv("CFLAGS", "-Dignored")
+	t.Setenv("LDFLAGS", "-Lignored")
+	t.Setenv("PKG_CONFIG_PATH", "/tmp/pkgconfig")
+	env := f.pkg.cmakeConfigureEnv()
+	for _, key := range []string{"CC", "CFLAGS", "LDFLAGS"} {
+		if _, ok := env[key]; ok {
+			t.Errorf("%s must not participate in the CMake fingerprint: %#v", key, env)
+		}
+	}
+	if env["PKG_CONFIG_PATH"] != "/tmp/pkgconfig" {
+		t.Errorf("PKG_CONFIG_PATH missing from CMake fingerprint: %#v", env)
+	}
+}
