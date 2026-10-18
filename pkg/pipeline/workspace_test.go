@@ -262,7 +262,7 @@ func TestNativeMemberSingleTreeAndOwnGit(t *testing.T) {
 		}
 		t.Run(label, func(t *testing.T) {
 			s, tree, name := nativeMemberFixture(t, "member", setGit)
-			if err := s.setupSubPackageDirs(); err != nil {
+			if err := s.setupSubPackageDirs(&sourceDownloadLog{}); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.cloneSubPackageGitSources(); err != nil {
@@ -342,7 +342,7 @@ func TestSetupSubPackageDirsKeepsResolvedParentCommit(t *testing.T) {
 	s.remote.commits[owner] = "resolved-commit"
 	config.SetEntry(s.ctx.Config, owner, &config.EntryConfig{Version: "1.0.0"})
 
-	if err := s.setupSubPackageDirs(); err != nil {
+	if err := s.setupSubPackageDirs(&sourceDownloadLog{}); err != nil {
 		t.Fatal(err)
 	}
 	if s.remote.commits[owner] != "resolved-commit" || s.remote.commits[name] != "resolved-commit" {
@@ -411,7 +411,7 @@ func TestDownloadRemoteSourcesBindsDirsBeforePatchApply(t *testing.T) {
 	s.ctx.DepGraph.Packages["native/sample"] = node
 	s.remote.entries["native/sample"] = &config.EntryConfig{}
 
-	if err := s.downloadRemoteSources(s.remote, s.ctx.Paths.DepsDir); err != nil {
+	if err := s.downloadRemoteSources(s.remote, s.ctx.Paths.DepsDir, &sourceDownloadLog{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.applyPatchesToNeeded(); err != nil {
@@ -520,7 +520,7 @@ func TestDownloadRemoteSourcesUsesSharedTreePatchIdentity(t *testing.T) {
 	s.needed = map[string]bool{owner: true, member: true}
 	s.remote.entries[owner] = &config.EntryConfig{Version: "1.0.0"}
 
-	if err := s.downloadRemoteSources(s.remote, s.ctx.Paths.DepsDir); err != nil {
+	if err := s.downloadRemoteSources(s.remote, s.ctx.Paths.DepsDir, &sourceDownloadLog{}); err != nil {
 		t.Fatal(err)
 	}
 	want, err := s.treePatchHash(owner)

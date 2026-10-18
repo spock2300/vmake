@@ -320,8 +320,12 @@ func (p *Package) cmakeConfigureArgs(hostOS string, extraArgs ...string) ([]stri
 		"-DCMAKE_INSTALL_PREFIX=" + filepath.ToSlash(p.CMakeInstallDir()),
 	}
 	languages, languageList := cmakeProjectLanguageList(p.SrcDir())
+	// Compiler and compiler-target arguments follow the project's declared
+	// languages so CMake does not report vmake-provided variables it never
+	// consumes; binutils stay unconditional. Without a parseable language list
+	// every compiler is injected.
 	for _, tool := range []struct{ key, language, name string }{
-		{"CMAKE_C_COMPILER", "", p.tc.Tools.CC},
+		{"CMAKE_C_COMPILER", "C", p.tc.Tools.CC},
 		{"CMAKE_CXX_COMPILER", "CXX", p.tc.Tools.CXX},
 		{"CMAKE_ASM_COMPILER", "ASM", p.tc.Tools.CC},
 		{"CMAKE_AR", "", p.tc.Tools.AR},
@@ -365,7 +369,9 @@ func (p *Package) cmakeConfigureArgs(hostOS string, extraArgs ...string) ([]stri
 		)
 	}
 	if p.TargetTriple() != "" {
-		args = append(args, "-DCMAKE_C_COMPILER_TARGET="+p.TargetTriple())
+		if !languageList || languages["C"] {
+			args = append(args, "-DCMAKE_C_COMPILER_TARGET="+p.TargetTriple())
+		}
 		if !languageList || languages["CXX"] {
 			args = append(args, "-DCMAKE_CXX_COMPILER_TARGET="+p.TargetTriple())
 		}

@@ -65,7 +65,7 @@ func Main(p *api.Package) { p.SetRoot(true) }
 						} else if _, err := os.Stat(artifact); err != nil {
 							t.Errorf("clean removed a directory outside the current configuration: %v\n%s", err, out)
 						}
-					} else if !strings.Contains(out, "Downloading package sources") {
+					} else if !strings.Contains(out, "Filtering dependencies") {
 						t.Errorf("lock update did not complete:\n%s", out)
 					}
 				} else {

@@ -104,7 +104,7 @@ A successful build/rebuild ends with exactly one `Build succeeded: ...` summary
 line; the separate `Build succeeded!` progress line no longer exists.
 `vmake build --install` still prints `Install succeeded!` after the build phase.
 
-CMake helper output is captured. `CMakeConfigure` prints one
+`Downloading package sources...` appears only when a needed source actually needs materialization or a remote resolve; no-op builds omit the heading. CMake helper output is captured. `CMakeConfigure` prints one
 `cmake configure: done` line (or `cmake configure (cached): <dir>` when its
 fingerprint is unchanged); `CMakeBuild`/`CMakeInstall` print step and
 installed/up-to-date counts. CMake `-- ...` configure scaffolding, Ninja

@@ -202,7 +202,7 @@ func TestSetupSubPackageDirsNestedMember(t *testing.T) {
 	s.remote.commits[owner] = "resolved-commit"
 	s.remote.trees[owner] = tree
 
-	if err := s.setupSubPackageDirs(); err != nil {
+	if err := s.setupSubPackageDirs(&sourceDownloadLog{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.sourceVersions[sub]; got != "1.0.0" {
@@ -243,7 +243,7 @@ func TestSetupSubPackageDirsRequiresParentVersion(t *testing.T) {
 	s.needed[owner], s.needed[sub] = true, true
 	s.allPkgOptions[sub] = nil
 
-	err := s.setupSubPackageDirs()
+	err := s.setupSubPackageDirs(&sourceDownloadLog{})
 	if err == nil || !strings.Contains(err.Error(), "has no resolved version") {
 		t.Fatalf("setup error = %v, want missing parent version", err)
 	}

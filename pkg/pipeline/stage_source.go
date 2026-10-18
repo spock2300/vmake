@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -14,7 +15,23 @@ import (
 	"github.com/spock2300/vmake/pkg/lockfile"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/repo"
+	"github.com/spock2300/vmake/pkg/resolver"
 )
+
+// sourceDownloadLog prints the source-download banner only when a package tree
+// actually needs materialization, so no-op builds keep their existing shape.
+type sourceDownloadLog struct {
+	printed bool
+}
+
+func (l *sourceDownloadLog) print() {
+	if l == nil || l.printed {
+		return
+	}
+	l.printed = true
+	vlog.Info("")
+	vlog.Info("Downloading package sources...")
+}
 
 func (s *sourceStage) prepareAllPackages() error {
 	remote := &remoteVersionState{
@@ -22,9 +39,7 @@ func (s *sourceStage) prepareAllPackages() error {
 		commits: make(map[string]string),
 		trees:   make(map[string]string),
 	}
-
-	vlog.Info("")
-	vlog.Info("Downloading package sources...")
+	downloadLog := &sourceDownloadLog{}
 
 	for _, name := range s.rc.ctx.Resolver.GetOrder() {
 		if !s.conf.needed[name] {
@@ -49,6 +64,9 @@ func (s *sourceStage) prepareAllPackages() error {
 			return err
 		}
 		s.patchHashes[name] = patchHash
+		if s.localSourceNeedsMaterialization(name, node) {
+			downloadLog.print()
+		}
 		if err := s.finalizePackageSource(name, node.Source.Dir, resolvedTools); err != nil {
 			return err
 		}
@@ -56,12 +74,12 @@ func (s *sourceStage) prepareAllPackages() error {
 
 	depsDir := s.rc.ctx.Paths.DepsDir
 
-	if err := s.downloadRemoteSources(remote, depsDir); err != nil {
+	if err := s.downloadRemoteSources(remote, depsDir, downloadLog); err != nil {
 		return err
 	}
 	s.remote = remote
 
-	if err := s.setupSubPackageDirs(); err != nil {
+	if err := s.setupSubPackageDirs(downloadLog); err != nil {
 		return err
 	}
 
@@ -160,7 +178,7 @@ func (s *sourceStage) writeLockfile() error {
 	return nil
 }
 
-func (s *sourceStage) downloadRemoteSources(remote *remoteVersionState, depsDir string) error {
+func (s *sourceStage) downloadRemoteSources(remote *remoteVersionState, depsDir string, downloadLog *sourceDownloadLog) error {
 	s.remote = remote
 	subParents := s.rc.ctx.Resolver.SubParents()
 	sourceMgr := repo.NewSourceManager(depsDir, s.rc.ctx.Paths.CacheDir).WithSession(s.rc.ctx.Locks).WithContext(s.rc.ctx.Context)
@@ -241,7 +259,7 @@ func (s *sourceStage) downloadRemoteSources(remote *remoteVersionState, depsDir 
 				ref = entryCfg.Version
 			}
 		}
-		res, err := sourceMgr.EnsureSource(repo.SourceRequest{
+		req := repo.SourceRequest{
 			Key:        name,
 			URLs:       pkg.GitURLs(),
 			Version:    entryCfg.Version,
@@ -249,7 +267,11 @@ func (s *sourceStage) downloadRemoteSources(remote *remoteVersionState, depsDir 
 			Commit:     expectedCommit,
 			PatchHash:  treePatchHash,
 			Submodules: pkg.Submodules(),
-		})
+		}
+		if !s.sourceRequestReady(req) {
+			downloadLog.print()
+		}
+		res, err := sourceMgr.EnsureSource(req)
 		if err != nil {
 			return fmt.Errorf("failed to download %s: %w", name, err)
 		}
@@ -318,6 +340,75 @@ func (s *sourceStage) lockedVersion(name string) (string, bool) {
 	return "", false
 }
 
+// sourceRequestReady reports whether a package tree is already materialized at
+// the identity EnsureSource would request, mirroring its reuse rules without
+// materializing anything. A false result only decides whether the source
+// phase banner is printed before the tree is fetched or recreated.
+func (s *sourceStage) sourceRequestReady(req repo.SourceRequest) bool {
+	manager := repo.NewSourceManager(s.rc.ctx.Paths.DepsDir, s.rc.ctx.Paths.CacheDir).WithSession(s.rc.ctx.Locks).WithContext(s.rc.ctx.Context)
+	root := req.Root
+	if root == "" {
+		root = manager.TreeDir(req.Key)
+	}
+	state, err := manager.ReadState(root)
+	if err != nil || state == nil || state.Commit == "" {
+		return false
+	}
+	if len(req.URLs) > 0 && !slices.Equal(state.URLs, req.URLs) {
+		return false
+	}
+	if manager.CommitAt(root) != state.Commit {
+		return false
+	}
+	if state.PatchHash != req.PatchHash || state.Submodules != req.Submodules {
+		return false
+	}
+	if req.Commit != "" {
+		return state.Commit == req.Commit
+	}
+	return state.Ref == req.Ref && state.Version == req.Version
+}
+
+// localSourceNeedsMaterialization predicts whether finalizing a local SetGit
+// package will touch its managed tree.
+func (s *sourceStage) localSourceNeedsMaterialization(name string, node *resolver.PackageNode) bool {
+	if node.Pkg == nil || len(node.Pkg.GitURLs()) == 0 {
+		return false
+	}
+	version, ref, expected, err := s.localSourceVersion(name, node)
+	if err != nil {
+		return true
+	}
+	req := repo.SourceRequest{
+		Key:        repo.PackageTreeKey("", name),
+		URLs:       node.Pkg.GitURLs(),
+		Version:    version,
+		Ref:        ref,
+		Commit:     expected,
+		PatchHash:  s.patchHashes[name],
+		Submodules: node.Pkg.Submodules(),
+	}
+	if version == "" {
+		req.Ref = ""
+	}
+	return !s.sourceRequestReady(req)
+}
+
+// ownGitSourceNeedsMaterialization predicts whether a native member with its
+// own repository will materialize a fresh tree.
+func (s *sourceStage) ownGitSourceNeedsMaterialization(name, sourceRoot string, node *resolver.PackageNode) bool {
+	if node.Pkg == nil || len(node.Pkg.GitURLs()) == 0 {
+		return false
+	}
+	return !s.sourceRequestReady(repo.SourceRequest{
+		Key:        name,
+		Root:       sourceRoot,
+		URLs:       node.Pkg.GitURLs(),
+		PatchHash:  s.patchHashes[name],
+		Submodules: node.Pkg.Submodules(),
+	})
+}
+
 func (s *sourceStage) cloneLocalGitSources() error {
 	for _, name := range s.rc.ctx.Resolver.GetOrder() {
 		node := s.rc.ctx.DepGraph.Packages[name]
@@ -331,7 +422,7 @@ func (s *sourceStage) cloneLocalGitSources() error {
 	return nil
 }
 
-func (s *sourceStage) setupSubPackageDirs() error {
+func (s *sourceStage) setupSubPackageDirs(downloadLog *sourceDownloadLog) error {
 	subParents := s.rc.ctx.Resolver.SubParents()
 	if len(subParents) == 0 {
 		return nil
@@ -379,6 +470,9 @@ func (s *sourceStage) setupSubPackageDirs() error {
 		}
 		s.patchHashes[name] = patchHash
 		sourceRoot := filepath.Join(tree, "src", filepath.FromSlash(relPath))
+		if s.ownGitSourceNeedsMaterialization(name, sourceRoot, node) {
+			downloadLog.print()
+		}
 		if err := s.finalizePackageSource(name, sourceRoot, resolvedTools); err != nil {
 			return err
 		}

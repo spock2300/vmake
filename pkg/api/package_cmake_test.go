@@ -176,9 +176,21 @@ func TestCMakeConfigureLanguageAwareCompilerInjection(t *testing.T) {
 			absent:     []string{"CMAKE_CXX_COMPILER", "CMAKE_ASM_COMPILER", "CMAKE_CXX_COMPILER_TARGET", "CMAKE_ASM_COMPILER_TARGET"},
 		},
 		{
+			name:       "cxx only",
+			cmakelists: "cmake_minimum_required(VERSION 3.20)\nproject(cxxonly LANGUAGES CXX)\n",
+			want:       []string{"CMAKE_CXX_COMPILER", "CMAKE_CXX_COMPILER_TARGET", "CMAKE_AR", "CMAKE_RANLIB", "CMAKE_STRIP", "CMAKE_OBJCOPY", "CMAKE_NM"},
+			absent:     []string{"CMAKE_C_COMPILER", "CMAKE_ASM_COMPILER", "CMAKE_C_COMPILER_TARGET", "CMAKE_ASM_COMPILER_TARGET"},
+		},
+		{
+			name:       "asm only",
+			cmakelists: "project(asmonly LANGUAGES ASM)\n",
+			want:       []string{"CMAKE_ASM_COMPILER", "CMAKE_ASM_COMPILER_TARGET", "CMAKE_AR", "CMAKE_RANLIB", "CMAKE_STRIP", "CMAKE_OBJCOPY", "CMAKE_NM"},
+			absent:     []string{"CMAKE_C_COMPILER", "CMAKE_CXX_COMPILER", "CMAKE_C_COMPILER_TARGET", "CMAKE_CXX_COMPILER_TARGET"},
+		},
+		{
 			name:       "c and cxx",
 			cmakelists: "project(app LANGUAGES C CXX)\n",
-			want:       []string{"CMAKE_C_COMPILER", "CMAKE_CXX_COMPILER", "CMAKE_CXX_COMPILER_TARGET"},
+			want:       []string{"CMAKE_C_COMPILER", "CMAKE_CXX_COMPILER", "CMAKE_C_COMPILER_TARGET", "CMAKE_CXX_COMPILER_TARGET"},
 			absent:     []string{"CMAKE_ASM_COMPILER", "CMAKE_ASM_COMPILER_TARGET"},
 		},
 		{
@@ -197,7 +209,7 @@ func TestCMakeConfigureLanguageAwareCompilerInjection(t *testing.T) {
 			name:       "commented project is ignored",
 			cmakelists: "# project(commented LANGUAGES C)\nproject(real LANGUAGES CXX) # trailing comment\n",
 			want:       []string{"CMAKE_CXX_COMPILER", "CMAKE_CXX_COMPILER_TARGET"},
-			absent:     []string{"CMAKE_ASM_COMPILER", "CMAKE_ASM_COMPILER_TARGET"},
+			absent:     []string{"CMAKE_C_COMPILER", "CMAKE_ASM_COMPILER", "CMAKE_C_COMPILER_TARGET", "CMAKE_ASM_COMPILER_TARGET"},
 		},
 		{
 			name:       "project without languages",
@@ -284,6 +296,63 @@ func TestCMakeConfigureCOnlyOmitsUnusedCompilerWarning(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCMakeConfigureCXXOnlyOmitsUnusedCompilerWarningAndBuilds(t *testing.T) {
+	for _, program := range []string{"cmake", "ninja"} {
+		if _, err := exec.LookPath(program); err != nil {
+			t.Skip(err)
+		}
+	}
+	tc := toolchain.GetBuiltinHost()
+	for _, tool := range []string{tc.Tools.CXX, tc.Tools.AR, tc.Tools.RANLIB, tc.Tools.STRIP, tc.Tools.OBJCOPY, tc.Tools.NM} {
+		if tool == "" {
+			continue
+		}
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(err)
+		}
+	}
+	source := t.TempDir()
+	cmakelists := "cmake_minimum_required(VERSION 3.20)\nproject(cxxonly LANGUAGES CXX)\nadd_library(cxxonly STATIC src/main.cpp)\n"
+	if err := os.WriteFile(filepath.Join(source, "CMakeLists.txt"), []byte(cmakelists), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(source, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "src", "main.cpp"), []byte("int value() { return 1; }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	p := NewPackage().SetDirs(PkgDirs{SourceDir: source, BuildDir: t.TempDir()}).SetToolchain(tc)
+	vlog.SetLevel(vlog.Normal)
+	defer vlog.SetLevel(vlog.Normal)
+	var scriptErr *BuildScriptError
+	out, errOut := captureCMakeStreams(t, func() {
+		scriptErr = captureScriptError(func() {
+			p.CMakeConfigure("-G", "Ninja")
+			p.CMakeBuild()
+		})
+	})
+	if scriptErr != nil {
+		t.Fatalf("CXX-only CMake build failed: %v\nstdout:\n%s\nstderr:\n%s", scriptErr, out, errOut)
+	}
+	for _, unwanted := range []string{"Manually-specified variables", "CMAKE_C_COMPILER", "CMAKE_ASM_COMPILER"} {
+		if strings.Contains(errOut, unwanted) {
+			t.Errorf("CXX-only configure stderr mentions %q:\n%s", unwanted, errOut)
+		}
+	}
+	for _, want := range []string{"  cmake configure: done", "  cmake build: "} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "  cmake build: up to date") {
+		t.Errorf("first CXX-only build reported no work:\n%s", out)
+	}
+	if matches, err := filepath.Glob(filepath.Join(p.CMakeBuildDir(), "*cxxonly.*")); err != nil || len(matches) == 0 {
+		t.Errorf("CXX-only library was not built: %v, %v", matches, err)
 	}
 }
 
