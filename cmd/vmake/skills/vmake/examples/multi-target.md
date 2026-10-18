@@ -77,7 +77,7 @@ The install prefix defaults to `./install/` (`--prefix`/`-p` overrides it). `Tar
 
 ## Test Target Selection
 
-`vmake build` excludes test targets unless `--tests` is passed. `vmake test` builds and runs only targets where `IsTest() && IsDefault()` and `Kind() == api.TargetBinary`. Because new targets are default, plain `SetTest(true)` keeps a test runnable; combining `SetTest(true)` with `SetDefault(false)` makes `vmake test` silently skip the target (it is not an error).
+`vmake build` excludes test targets unless `--tests` is passed. `vmake test` builds and runs only targets where `IsTest() && IsDefault()` and `Kind() == api.TargetBinary`. Because new targets are default, plain `SetTest(true)` keeps a test runnable; combining `SetTest(true)` with `SetDefault(false)` excludes the target from `vmake test`. If no runnable test target exists, `vmake test` exits non-zero with `no test targets found` and publishes a failed report; `vmake build --tests` still builds the test targets without running them.
 
 ## Prerequisites
 
@@ -115,7 +115,7 @@ The object artifact is linked directly into dependents. See `examples/complete.m
 - Multiple targets in single `OnBuild`
 - New targets default to `api.TargetBinary` and `IsDefault() == true`; use `SetKind` for static, shared, object, and void targets
 - Dependencies resolved automatically - "mylib" builds before "myapp"
-- `SetTest(true)` targets are skipped by plain `vmake build` and never installed; `SetTest(true)` plus `SetDefault(false)` silently excludes the target from `vmake test` (which requires `IsTest() && IsDefault()`)
+- `SetTest(true)` targets are skipped by plain `vmake build` and never installed; `SetTest(true)` plus `SetDefault(false)` excludes the target from `vmake test` (which requires `IsTest() && IsDefault()`); no runnable test target makes `vmake test` exit non-zero with `no test targets found`
 - `AddPublicIncludes` implies `AddIncludes` — no need to call both for the same directory
 - `AddDeps("mylib")` propagates public includes — `myapp` and `tests` get `-Iinclude` automatically
 

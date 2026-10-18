@@ -91,8 +91,8 @@ need to decide which package, target, or file to change.
 - Buildscript stdout is discarded while the model is resolved, so the JSON is
   never corrupted by `build.go` prints.
 - `compileDatabase`/`buildReport` point at `build/compile_commands.json` and
-  `build/vmake-build.json`; the latter holds the last `vmake build` result (see
-  `docs/BUILD_RESULT.md`). Full schema: `references/inspect.md`.
+  `build/vmake-build.json`; the latter holds the last build/rebuild/test result
+  (see `docs/BUILD_RESULT.md`). Full schema: `references/inspect.md`.
 
 ## Build Script Template
 
@@ -227,9 +227,9 @@ On ELF and PE **binary** links, dependency archives from `AddDeps` land inside `
 
 ### `vmake clean` vs `vmake distclean`
 
-`vmake clean` runs `OnClean` hooks then removes build outputs (objects, binaries) for the current configuration; keeps the source trees under `.vmake_deps/`. `--all` removes every build-key output directory.
+`vmake clean` runs `OnClean` hooks then removes build outputs (objects, binaries) and `build/compile_commands.json` for the current configuration; keeps the source trees under `.vmake_deps/`. If build-key directories for other configurations remain, it prints one note with their count. `--all` removes every build-key output directory.
 
-`vmake distclean` also runs `OnClean` hooks, then removes all emitted outputs, `install/`, `compile_commands.json`, and the build report. Downloaded working trees under `.vmake_deps/` are kept and reused, so the next build does not re-download; pass `--purge-sources` to delete them too. Use distclean when modifying `build.go` and the build ignores your changes.
+`vmake distclean` also runs `OnClean` hooks, then removes all emitted outputs, `install/`, `compile_commands.json`, and the build report. Downloaded working trees under `.vmake_deps/` are kept and reused, so the next build does not re-download; pass `--purge-sources` to delete them too. Buildscript edits normally invalidate the affected actions; a full distclean is only needed to reclaim stale outputs/orphan keys or when a buildscript writes an untracked file into `BuildDir()` that the build still consumes.
 
 ### Patching source before build in registry packages
 
@@ -397,7 +397,7 @@ ctx.Target("tests").SetKind(api.TargetBinary).SetTest(true).
     AddFiles("tests/*.c").AddDeps("mylib")
 ```
 
-Always define test targets unconditionally in `OnBuild` — `SetTest(true)` controls scheduler visibility, not option guards. `SetTest(true)` does NOT clear `IsDefault`, but `vmake test` runs only targets that are both `IsTest()` and `IsDefault()`, and only `TargetBinary` targets — a test target with `SetDefault(false)` is silently skipped. `vmake build` excludes tests unless `--tests` is passed; cross/bare-metal targets can only be built (`vmake test` refuses to run them). Test targets are never installed and can depend on other test targets. See `examples/multi-target.md`.
+Always define test targets unconditionally in `OnBuild` — `SetTest(true)` controls scheduler visibility, not option guards. `SetTest(true)` does NOT clear `IsDefault`, but `vmake test` runs only targets that are both `IsTest()` and `IsDefault()`, and only `TargetBinary` targets — a test target with `SetDefault(false)` is not run. If no runnable test target exists, `vmake test` exits non-zero with `no test targets found` and publishes a failed report; use `vmake build --tests` to build tests without running them. `vmake build` excludes tests unless `--tests` is passed; cross/bare-metal targets can only be built (`vmake test` refuses to run them). Test targets are never installed and can depend on other test targets. Test runs publish `build/vmake-build.json` with `command:"test"`, per-test `tests[]` entries and test counts in `summary`. See `examples/multi-target.md`.
 
 ## Dependencies
 
