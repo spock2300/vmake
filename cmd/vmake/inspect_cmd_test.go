@@ -194,6 +194,12 @@ func TestInspectProjectModel(t *testing.T) {
 	if want := filepath.Join(project, "build", "vmake-build.json"); data.BuildReport != want {
 		t.Errorf("buildReport = %q, want %q", data.BuildReport, want)
 	}
+	if want := filepath.Join(project, "install"); data.InstallPrefix != want {
+		t.Errorf("installPrefix = %q, want %q", data.InstallPrefix, want)
+	}
+	if want := filepath.Join(project, "install", "manifest.json"); data.InstallManifest != want {
+		t.Errorf("installManifest = %q, want %q", data.InstallManifest, want)
+	}
 	if !slices.Equal(data.Roots, []string{"proj"}) {
 		t.Errorf("roots = %v", data.Roots)
 	}
@@ -224,13 +230,19 @@ func TestInspectProjectModel(t *testing.T) {
 	if app.Kind != "binary" || !app.Default || app.Test || app.Output != "app" {
 		t.Errorf("app target = %+v", app)
 	}
+	if app.InstallPath != "bin/app" {
+		t.Errorf("app installPath = %q, want bin/app", app.InstallPath)
+	}
+	if app.Installs != nil {
+		t.Errorf("app installs = %+v, want none", app.Installs)
+	}
 	if !slices.Equal(app.Files, []string{"src/*.c"}) || !slices.Equal(app.Includes, []string{"include"}) ||
 		!slices.Equal(app.PublicIncludes, []string{"include"}) || !slices.Equal(app.Defines, []string{"APP_DEFINE=1"}) ||
 		!slices.Equal(app.Deps, []string{"dep:deplib"}) {
 		t.Errorf("app target fields = %+v", app)
 	}
 	docs := inspectTargetNamed(t, proj, "docs")
-	if docs.Kind != "void" || docs.Output != "" || docs.Files != nil {
+	if docs.Kind != "void" || docs.Output != "" || docs.Files != nil || docs.InstallPath != "" {
 		t.Errorf("docs target = %+v", docs)
 	}
 
@@ -244,6 +256,9 @@ func TestInspectProjectModel(t *testing.T) {
 	deplib := inspectTargetNamed(t, dep, "deplib")
 	if deplib.Kind != "static" || deplib.Output != "libdeplib.a" || !slices.Equal(deplib.PublicIncludes, []string{"include"}) {
 		t.Errorf("deplib target = %+v", deplib)
+	}
+	if deplib.InstallPath != "lib/libdeplib.a" {
+		t.Errorf("deplib installPath = %q, want lib/libdeplib.a", deplib.InstallPath)
 	}
 
 	again, stderr, code := runInspectCommand(t, project, "inspect")
@@ -288,6 +303,98 @@ func Main(p *api.Package) {
 `)
 	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n")
 	return project
+}
+
+func TestInspectInstallPlan(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnInstall(func(ctx *api.InstallContext) {
+		ctx.AddInstalls("oninstall.conf", "etc/oninstall.conf")
+		panic("OnInstall must not run during inspect")
+	})
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.AddInstalls("config/app.conf", "etc/app.conf")
+		ctx.AddInstalls("docs/readme.txt", "share/doc/readme.txt")
+		ctx.Target("app").SetKind(api.TargetBinary).SetInstallDir("sbin")
+		ctx.Target("lib").SetKind(api.TargetStatic)
+		ctx.Target("void").SetKind(api.TargetVoid)
+		ctx.Target("obj").SetKind(api.TargetObject)
+		ctx.Target("off").SetKind(api.TargetBinary).SetInstall(false)
+		ctx.Target("tests").SetKind(api.TargetBinary).SetTest(true)
+		ctx.Target("fw").SetKind(api.TargetBinary).
+			AddPostLinkOutputs("{output}.hex", "{output}.bin")
+	})
+}
+`)
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("successful inspect wrote stderr: %q", stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	data := envelope.Data
+	if want := filepath.Join(project, "install"); data.InstallPrefix != want {
+		t.Errorf("installPrefix = %q, want %q", data.InstallPrefix, want)
+	}
+	if want := filepath.Join(project, "install", "manifest.json"); data.InstallManifest != want {
+		t.Errorf("installManifest = %q, want %q", data.InstallManifest, want)
+	}
+	proj := inspectPackageNamed(t, data, "proj")
+	wantInstalls := []inspectInstall{
+		{Source: "config/app.conf", Dest: "etc/app.conf"},
+		{Source: "docs/readme.txt", Dest: "share/doc/readme.txt"},
+	}
+	for _, test := range []struct {
+		target      string
+		installPath string
+	}{
+		{"app", "sbin/app"},
+		{"lib", "lib/liblib.a"},
+		{"void", ""},
+		{"obj", ""},
+		{"off", ""},
+		{"tests", ""},
+		{"fw", "bin/fw"},
+	} {
+		target := inspectTargetNamed(t, proj, test.target)
+		if target.InstallPath != test.installPath {
+			t.Errorf("%s installPath = %q, want %q", test.target, target.InstallPath, test.installPath)
+		}
+		if !slices.Equal(target.Installs, wantInstalls) {
+			t.Errorf("%s installs = %+v, want the package-level entries", test.target, target.Installs)
+		}
+	}
+	fw := inspectTargetNamed(t, proj, "fw")
+	if !slices.Equal(fw.PostLinkOutputs, []string{"{output}.hex", "{output}.bin"}) {
+		t.Errorf("fw postLinkOutputs = %v", fw.PostLinkOutputs)
+	}
+	if strings.Contains(stdout, "oninstall.conf") {
+		t.Fatalf("inspect executed OnInstall:\n%s", stdout)
+	}
+	for _, dir := range []string{"build", "install"} {
+		if _, err := os.Stat(filepath.Join(project, dir)); !os.IsNotExist(err) {
+			t.Fatalf("inspect created %s: %v", dir, err)
+		}
+	}
+
+	again, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("second inspect exit = %d, stderr = %q", code, stderr)
+	}
+	if again != stdout {
+		t.Fatal("consecutive inspect runs are not byte-identical")
+	}
 }
 
 func TestInspectSuppressesBuildscriptStdout(t *testing.T) {

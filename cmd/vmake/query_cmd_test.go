@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -189,6 +190,117 @@ func Main(p *api.Package) {
 			t.Fatalf("%v fetched package sources: %v", args, err)
 		}
 	}
+}
+
+func TestQueryWarnsAboutMissingNeededSources(t *testing.T) {
+	for _, test := range []struct {
+		name               string
+		args               []string
+		missingStdout      []string
+		materializedStdout []string
+	}{
+		{
+			name:               "tree",
+			args:               []string{"query"},
+			missingStdout:      []string{"app (binary) [.]", "└── lib [lib]"},
+			materializedStdout: []string{"app (binary) [.]", "└── lib (static) [lib]"},
+		},
+		{
+			name:               "targets",
+			args:               []string{"query", "targets"},
+			missingStdout:      []string{"proj:app (binary)"},
+			materializedStdout: []string{"proj:app (binary)", "lib:lib (static)"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project := writeQueryMissingSourceProject(t)
+			state := t.TempDir()
+			warning := "Warning: package lib source is not materialized; the next build will fetch https://example.invalid/lib.git (version 1.0.0)\n"
+
+			stdout, stderr, code := runInspectCommandWithState(t, project, state, test.args...)
+			if code != 0 {
+				t.Fatalf("%v exit = %d, stderr = %q", test.args, code, stderr)
+			}
+			if stderr != warning {
+				t.Fatalf("%v stderr = %q, want %q", test.args, stderr, warning)
+			}
+			if strings.Contains(stdout, "Warning:") {
+				t.Fatalf("%v wrote the warning to stdout:\n%s", test.args, stdout)
+			}
+			for _, want := range test.missingStdout {
+				if !strings.Contains(stdout, want) {
+					t.Errorf("%v stdout missing %q:\n%s", test.args, want, stdout)
+				}
+			}
+			if strings.Contains(stdout, "lib (static)") {
+				t.Errorf("%v declared targets from an unmaterialized source tree:\n%s", test.args, stdout)
+			}
+			if _, err := os.Stat(filepath.Join(project, ".vmake_deps")); !os.IsNotExist(err) {
+				t.Fatalf("%v fetched package sources: %v", test.args, err)
+			}
+
+			writeExtensionFile(t, filepath.Join(project, "lib", "src", "lib.c"), "int lib(void) { return 1; }\n")
+			if _, err := exec.LookPath("git"); err != nil {
+				t.Skip("git not on PATH")
+			}
+			src := filepath.Join(project, "lib", "src")
+			runGitLine(t, src, "init", "-q")
+			runGitLine(t, src, "config", "user.email", "test@example.com")
+			runGitLine(t, src, "config", "user.name", "test")
+			runGitLine(t, src, "add", "-A")
+			runGitLine(t, src, "commit", "-q", "-m", "materialized")
+			stdout, stderr, code = runInspectCommandWithState(t, project, state, test.args...)
+			if code != 0 {
+				t.Fatalf("%v materialized exit = %d, stderr = %q", test.args, code, stderr)
+			}
+			if stderr != "" {
+				t.Fatalf("%v materialized stderr = %q, want none", test.args, stderr)
+			}
+			for _, want := range test.materializedStdout {
+				if !strings.Contains(stdout, want) {
+					t.Errorf("%v materialized stdout missing %q:\n%s", test.args, want, stdout)
+				}
+			}
+		})
+	}
+}
+
+func writeQueryMissingSourceProject(t *testing.T) string {
+	t.Helper()
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+    p.SetRoot(true)
+    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("app").SetKind(api.TargetBinary).AddDeps("lib:lib")
+    })
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "lib", "build.go"), `package main
+import (
+    "os"
+    "path/filepath"
+    "github.com/spock2300/vmake/pkg/api"
+)
+func Main(p *api.Package) {
+    p.OnPackage(func(p *api.Package) {
+        p.SetGit("https://example.invalid/lib.git")
+        p.AddVersion("1.0.0", "v1.0.0")
+    })
+    p.OnBuild(func(ctx *api.BuildContext) {
+        if p.BuildDir() == "" {
+            return
+        }
+        if _, err := os.ReadFile(filepath.Join(p.SourceDir(), "src", "lib.c")); err != nil {
+            panic(err)
+        }
+        ctx.Target("lib").SetKind(api.TargetStatic).AddFiles("src/*.c")
+    })
+}
+`)
+	return project
 }
 
 func TestQueryCompactTreeRendering(t *testing.T) {

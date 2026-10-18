@@ -73,20 +73,26 @@ general rules in build.go. See `references/api.md` for settings and migration de
 `vmake inspect` prints one JSON document (schemaVersion 1) with the project
 resolution/declaration model: `root`, `configFile`, `configSha256`, `mode`,
 `toolchain`, `toolchainInfo`, `global` values, `roots`, `packages` (with
-options, deps, `sourcePresent`, and targets), the package `graph`, and the
-`compileDatabase`/`buildReport` paths. It never builds or installs, so prefer it
-over scraping `query` text when you need to decide which package, target, or
+options, deps, `sourcePresent`, and targets), the package `graph`, the
+`compileDatabase`/`buildReport` paths, and the expected
+`installPrefix`/`installManifest` paths. It never builds or installs, so prefer
+it over scraping `query` text when you need to decide which package, target, or
 file to change.
 
 - Envelope: `{schemaVersion, command, status: "ok"|"error", data?, diagnostics}`.
   `diagnostics` is always an array; warnings keep `status: "ok"` and exit 0,
   model failures use `status: "error"` and exit 1.
 - Targets are listed only for needed packages; a package pruned by `FilterDeps`
-  has none. `files` keeps the declared globs (inspect does not expand them), and
-  `output`/`installDir` are predictions because nothing is built or installed.
+  has none. `files` keeps the declared globs (inspect does not expand them).
+  `installs` lists the package's `AddInstalls` entries declared in `OnBuild`
+  (`{source, dest}`), and `installPath` predicts the prefix-relative artifact
+  path (`bin/app`, `lib/libfoo.a`) or omits it for void/object/test/no-install
+  targets. `OnInstall` does not run and the install prefix is not resolved, so
+  these values are declarations, not evidence that a file exists.
 - A needed package whose source tree is absent gets a
   `VMAKE_W_SOURCE_MISSING` warning and `sourcePresent: false`; inspect does not
-  fetch, materialize, or link sources for this check.
+  fetch, materialize, or link sources for this check. `vmake query` and
+  `query targets` print the same warning on stderr without changing stdout.
 - `--set [pkg/]option=value` (repeatable) evaluates a hypothetical
   configuration and echoes typed values in `data.overrides`; it never writes
   `.vmake/config.json`. Values are coerced by the declared type: bool accepts
@@ -99,7 +105,9 @@ file to change.
   never corrupted by `build.go` prints.
 - `compileDatabase`/`buildReport` point at `build/compile_commands.json` and
   `build/vmake-build.json`; the latter holds the last build/rebuild/test result
-  (see `references/build-result.md`). Full schema: `references/inspect.md`.
+  (see `references/build-result.md`). `installPrefix`/`installManifest` point at
+  the default `install/` and `install/manifest.json`; `--prefix` overrides them.
+  Full schema: `references/inspect.md`.
 
 ## Build Script Template
 

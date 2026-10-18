@@ -59,6 +59,7 @@ func runQueryTargets(cmd *cobra.Command, args []string) {
 	ctx := resolveToConfig(false)
 	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
 	fatalErr(err)
+	printInspectSourceWarnings(ctx, inspection)
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
@@ -118,6 +119,7 @@ func runQuery(cmd *cobra.Command, args []string) {
 
 	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
 	fatalErr(err)
+	printInspectSourceWarnings(ctx, inspection)
 	workDir, _ := os.Getwd()
 
 	graph := ctx.DepGraph.Packages

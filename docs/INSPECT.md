@@ -5,7 +5,9 @@ stdout. It is the machine-readable counterpart of `vmake query`: it performs
 resolution and `OnConfig`/`OnBuild` declaration only, so it never compiles,
 links, installs, or writes `build/`, `install/`, or `.vmake/config.json`. It also
 reports needed packages whose source tree is not on disk yet, without fetching
-or materializing them.
+or materializing them, and the install plan declared by `OnBuild` (extra
+`AddInstalls` entries and predicted prefix-relative target paths) without
+reading or creating `install/`.
 
 ```
 vmake inspect [--set [package/]option=value ...]
@@ -126,6 +128,10 @@ The message includes the resolved URL and version when available. Warnings keep
 `status: "ok"` and exit 0, and each diagnostic produces one `Warning:` line on
 stderr.
 
+The same non-fetching check backs `vmake query` and `vmake query targets`: each
+prints one `Warning: ...` line per missing needed package to stderr, keeps the
+tree or target list unchanged on stdout, exits 0, and does not fetch.
+
 ## `data` fields
 
 | Field | Type | Meaning |
@@ -143,6 +149,8 @@ stderr.
 | `graph` | array | Package dependency edges `{from, to}`, sorted by `from` then `to` |
 | `compileDatabase` | string | `<root>/build/compile_commands.json` (the expected path, even before a build) |
 | `buildReport` | string | `<root>/build/vmake-build.json` (see `docs/BUILD_RESULT.md`) |
+| `installPrefix` | string | `<root>/install` (the default `--prefix`, even before an install) |
+| `installManifest` | string | `<root>/install/manifest.json` (the expected default manifest path, even before an install) |
 
 ## `packages` entries
 
@@ -180,13 +188,32 @@ order the buildscript declared.
 | `output` | string? | Artifact name from `api.TargetFilename(kind, name, target_os)`; empty and omitted for `void` |
 | `installDir` | string? | Per-target install subdirectory override |
 | `noInstall` | bool? | True when the target opts out of installation |
+| `installs` | array? | Package-level `AddInstalls` entries `{source, dest}` declared by the dry-run `OnBuild`; omitted when none |
+| `installPath` | string? | Predicted prefix-relative, slash-separated install path (`bin/app`, `lib/libfoo.a`); omitted for `void`, `object`, `noInstall`, and test targets |
+
+`installs` is package-level: every target of a package that called
+`AddInstalls` in `OnBuild` carries the same entries, because the API does not
+associate extra install items with a target. `source` is exactly as declared
+(usually relative to the package `SourceDir()`), and `dest` is relative to the
+install prefix. `OnInstall` is not executed during inspection, so entries
+declared there are absent.
+
+`installPath` uses `target.InstallDir` when set and otherwise the kind's
+default directory (`bin` for binaries, `lib` for static and shared libraries).
+It is relative to the install prefix; `--prefix` and package
+`InstallContext.SetPrefix` are not resolved. Post-link outputs are installed
+beside the target artifact (for example `install/bin/firmware.hex` next to
+`install/bin/firmware`) and are not repeated in `installPath`. Static libraries
+are copied only with `--install-type sdk`; test targets are never installed.
+`installPath` is a prediction, not evidence that the artifact exists. These
+install fields are additive to schemaVersion 1; existing fields are unchanged.
 
 Targets are listed only for needed packages. A package pruned by `FilterDeps`
 (for example a conditional or test-only package that is disabled in the current
 configuration) has no `targets`, even though it remains in `packages` and the
 graph. `files` keeps the declared globs; inspect does not expand them to concrete
-files. Inspect does not build or install, so `output` and `installDir` are
-predictions, not evidence that an artifact exists.
+files. Inspect does not build or install, so `output`, `installDir`, and
+`installPath` are predictions, not evidence that an artifact exists.
 
 ## Determinism
 
@@ -214,7 +241,10 @@ discarded, including on failure; stdout contains one JSON document in every row.
 `query`. The missing-source check only reads directories: it does not run git,
 touch the network, create `<package>/src` links, or write `.vmake_deps`.
 Resolution of native remote packages still follows its normal rules and may
-materialize that package's tree. `inspect` does not modify `build/`, `install/`,
-or the active configuration. With `--set`, resolution and `OnConfig`/`OnApply`
-run twice as described above. The lock/state files it may create under `.vmake/`
+materialize that package's tree. `inspect` does not read or create `install/`
+and does not resolve the install prefix: `installPrefix` and `installManifest`
+are the expected default paths, while `installs` and `installPath` come from
+dry-run `OnBuild` declarations. `inspect` also does not modify `build/` or the
+active configuration. With `--set`, resolution and `OnConfig`/`OnApply` run
+twice as described above. The lock/state files it may create under `.vmake/`
 are the same ones every read-only command creates.

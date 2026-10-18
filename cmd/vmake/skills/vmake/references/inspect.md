@@ -5,7 +5,8 @@
 dry-run `OnBuild` target declaration only: it never compiles, links, installs,
 or writes `build/`, `install/`, or `.vmake/config.json`. It also warns about
 needed packages whose source tree is not on disk, without fetching or
-materializing it.
+materializing it, and reports the install plan declared by `OnBuild` without
+reading or creating `install/`.
 
 ```
 vmake inspect [--set [package/]option=value ...]
@@ -62,7 +63,9 @@ Failure (no `data`, exit 1):
   is 0. Inspect checks the tree without fetching, linking, or writing
   `.vmake_deps`: local `SetGit` packages use `<package>/src`, remote packages
   `.vmake_deps/<repo>/<owner>/src[/<member>]`, and plain local packages their
-  package directory.
+  package directory. `vmake query` and `vmake query targets` print the same
+  `Warning: ...` lines to stderr for missing needed packages while their tree
+  or target list stays unchanged on stdout and they exit 0.
 
 ## `data` fields
 
@@ -79,6 +82,8 @@ Failure (no `data`, exit 1):
 | `graph` | Package dependency edges `{from, to}`, sorted |
 | `compileDatabase` | `<root>/build/compile_commands.json` (expected path, even before a build) |
 | `buildReport` | `<root>/build/vmake-build.json` (last build result) |
+| `installPrefix` | `<root>/install` (default `--prefix`, even before an install) |
+| `installManifest` | `<root>/install/manifest.json` (expected default manifest path, even before an install) |
 
 Each `packages` entry has `name`, `kind` (`local`/`native`/`registry`),
 `needed`, `sourcePresent`, `deps`, optional remote
@@ -91,11 +96,29 @@ source tree is missing or empty; that package also gets a
 Each `targets` entry has `name`, `kind` (`binary`/`static`/`shared`/`object`/
 `void`), `default`, `test`, declared `files`/`excludedFiles`/`includes`/
 `publicIncludes`/`defines`/`languages`/`links`/`deps`/`postLinkOutputs`,
-`output` (artifact name; empty for `void`), `installDir`, and `noInstall`.
+`output` (artifact name; empty for `void`), `installDir`, `noInstall`,
+`installs`, and `installPath`.
+
+`installs` lists the package-level `AddInstalls` entries `{source, dest}`
+declared by the dry-run `OnBuild`; every target of that package carries the
+same entries, because the API does not associate extra install items with a
+target. `source` is as declared (usually relative to `SourceDir()`) and `dest`
+is relative to the install prefix. `OnInstall` does not run during inspection,
+so entries declared there are absent.
+
+`installPath` is the predicted prefix-relative slash-separated artifact path
+using `installDir` or the kind default (`bin`/`lib`), for example `bin/app` or
+`lib/libfoo.a`; it is omitted for `void`, `object`, `noInstall`, and test
+targets. It assumes the default install prefix: `--prefix` and per-package
+`SetPrefix` are not resolved. Post-link outputs are installed beside the
+artifact and are not repeated. Static libraries are installed only with
+`--install-type sdk`. These install fields are additive to schemaVersion 1;
+existing fields are unchanged.
+
 Targets are listed only for needed packages; a package pruned by `FilterDeps`
 has none. `files` keeps the declared globs; inspect does not expand them into
-source lists. Inspect does not build or install, so `output` and `installDir`
-are predictions.
+source lists. Inspect does not build or install, so `output`, `installDir`, and
+`installPath` are predictions, not evidence that an artifact exists.
 
 ## `--set` overrides
 

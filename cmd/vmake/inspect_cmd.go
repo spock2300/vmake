@@ -55,6 +55,8 @@ type inspectData struct {
 	Graph           []inspectEdge     `json:"graph"`
 	CompileDatabase string            `json:"compileDatabase"`
 	BuildReport     string            `json:"buildReport"`
+	InstallPrefix   string            `json:"installPrefix"`
+	InstallManifest string            `json:"installManifest"`
 }
 
 type inspectToolchain struct {
@@ -87,22 +89,29 @@ type inspectPackage struct {
 }
 
 type inspectTarget struct {
-	Name            string   `json:"name"`
-	Kind            string   `json:"kind"`
-	Default         bool     `json:"default"`
-	Test            bool     `json:"test"`
-	Files           []string `json:"files,omitempty"`
-	ExcludedFiles   []string `json:"excludedFiles,omitempty"`
-	Includes        []string `json:"includes,omitempty"`
-	PublicIncludes  []string `json:"publicIncludes,omitempty"`
-	Defines         []string `json:"defines,omitempty"`
-	Languages       []string `json:"languages,omitempty"`
-	Links           []string `json:"links,omitempty"`
-	Deps            []string `json:"deps,omitempty"`
-	PostLinkOutputs []string `json:"postLinkOutputs,omitempty"`
-	Output          string   `json:"output,omitempty"`
-	InstallDir      string   `json:"installDir,omitempty"`
-	NoInstall       bool     `json:"noInstall,omitempty"`
+	Name            string           `json:"name"`
+	Kind            string           `json:"kind"`
+	Default         bool             `json:"default"`
+	Test            bool             `json:"test"`
+	Files           []string         `json:"files,omitempty"`
+	ExcludedFiles   []string         `json:"excludedFiles,omitempty"`
+	Includes        []string         `json:"includes,omitempty"`
+	PublicIncludes  []string         `json:"publicIncludes,omitempty"`
+	Defines         []string         `json:"defines,omitempty"`
+	Languages       []string         `json:"languages,omitempty"`
+	Links           []string         `json:"links,omitempty"`
+	Deps            []string         `json:"deps,omitempty"`
+	PostLinkOutputs []string         `json:"postLinkOutputs,omitempty"`
+	Output          string           `json:"output,omitempty"`
+	InstallDir      string           `json:"installDir,omitempty"`
+	NoInstall       bool             `json:"noInstall,omitempty"`
+	Installs        []inspectInstall `json:"installs,omitempty"`
+	InstallPath     string           `json:"installPath,omitempty"`
+}
+
+type inspectInstall struct {
+	Source string `json:"source"`
+	Dest   string `json:"dest"`
 }
 
 type inspectEdge struct {
@@ -414,6 +423,7 @@ func inspectOverrideValues(overrides []inspectOverride) map[string]any {
 
 func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, overrides map[string]any) (*inspectData, []inspectDiagnostic) {
 	root := ctx.Paths.ProjectDir
+	installRoot := filepath.Join(root, "install")
 	global := inspection.GlobalValues
 	if global == nil {
 		global = make(map[string]any)
@@ -432,18 +442,22 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 		Graph:           inspectGraph(ctx),
 		CompileDatabase: filepath.Join(root, "build", "compile_commands.json"),
 		BuildReport:     filepath.Join(root, "build", "vmake-build.json"),
+		InstallPrefix:   installRoot,
+		InstallManifest: filepath.Join(installRoot, "manifest.json"),
 	}
+	sources := inspectSourceStates(ctx, inspection)
 	diagnostics := make([]inspectDiagnostic, 0)
 	for _, name := range inspectPackageNames(ctx) {
 		node := ctx.DepGraph.Packages[name]
 		if node == nil || node.Source == nil {
 			continue
 		}
+		source := sources[name]
 		pkg := inspectPackage{
 			Name:          name,
 			Kind:          inspectPackageKind(node),
 			SourceDir:     inspectSourceDir(inspection, name, node),
-			SourcePresent: inspectSourcePresent(ctx, name, node),
+			SourcePresent: source.Present,
 			Needed:        inspection.Needed[name],
 			Deps:          inspectSortedStrings(node.Deps),
 		}
@@ -461,14 +475,8 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 			pkg.Toolchain = tc.Name
 		}
 		pkg.Options = inspectPackageOptions(ctx, name, inspection)
-		if pkg.Needed && !pkg.SourcePresent {
-			url, version := inspectSourceReference(ctx, name, node, &pkg)
-			diagnostics = append(diagnostics, inspectDiagnostic{
-				Severity: "warning",
-				Code:     "VMAKE_W_SOURCE_MISSING",
-				Message:  inspectSourceMissingMessage(name, url, version),
-				Package:  name,
-			})
+		if source.Diagnostic != nil {
+			diagnostics = append(diagnostics, *source.Diagnostic)
 		}
 		if pkg.Needed {
 			targets, err := inspectTargets(ctx, inspection, name, node)
@@ -517,6 +525,50 @@ func inspectSourceDir(inspection *pipeline.Inspection, name string, node *resolv
 	return ""
 }
 
+type inspectSourceState struct {
+	Present    bool
+	Diagnostic *inspectDiagnostic
+}
+
+func inspectSourceStates(ctx *RuntimeContext, inspection *pipeline.Inspection) map[string]inspectSourceState {
+	states := make(map[string]inspectSourceState, len(ctx.DepGraph.Packages))
+	for _, name := range inspectPackageNames(ctx) {
+		node := ctx.DepGraph.Packages[name]
+		if node == nil || node.Source == nil {
+			continue
+		}
+		state := inspectSourceState{Present: inspectSourcePresent(ctx, name, node)}
+		if inspection.Needed[name] && !state.Present {
+			url, version := inspectSourceReference(ctx, name, node)
+			state.Diagnostic = &inspectDiagnostic{
+				Severity: "warning",
+				Code:     "VMAKE_W_SOURCE_MISSING",
+				Message:  inspectSourceMissingMessage(name, url, version),
+				Package:  name,
+			}
+		}
+		states[name] = state
+	}
+	return states
+}
+
+func inspectSourceDiagnostics(ctx *RuntimeContext, inspection *pipeline.Inspection) []inspectDiagnostic {
+	states := inspectSourceStates(ctx, inspection)
+	diagnostics := make([]inspectDiagnostic, 0)
+	for _, name := range inspectPackageNames(ctx) {
+		if diagnostic := states[name].Diagnostic; diagnostic != nil {
+			diagnostics = append(diagnostics, *diagnostic)
+		}
+	}
+	return diagnostics
+}
+
+func printInspectSourceWarnings(ctx *RuntimeContext, inspection *pipeline.Inspection) {
+	for _, diagnostic := range inspectSourceDiagnostics(ctx, inspection) {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", diagnostic.Message)
+	}
+}
+
 func inspectSourcePresent(ctx *RuntimeContext, name string, node *resolver.PackageNode) bool {
 	return inspectSourceTreePopulated(inspectExpectedSourceDir(ctx, name, node))
 }
@@ -552,7 +604,11 @@ func inspectSourceTreePopulated(dir string) bool {
 	return err == nil && len(entries) > 0
 }
 
-func inspectSourceReference(ctx *RuntimeContext, name string, node *resolver.PackageNode, pkg *inspectPackage) (string, string) {
+func inspectSourceReference(ctx *RuntimeContext, name string, node *resolver.PackageNode) (string, string) {
+	pkg := inspectPackage{}
+	if node.Source != nil && !node.IsLocal() {
+		inspectRemoteMetadata(ctx, name, node, &pkg)
+	}
 	url, version := pkg.URL, pkg.Version
 	if node.Pkg == nil {
 		return url, version
@@ -675,6 +731,11 @@ func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name s
 	if node.Pkg != nil {
 		targetOS = node.Pkg.TargetOS()
 	}
+	installItems := buildCtx.GetInstallItems()
+	installs := make([]inspectInstall, 0, len(installItems))
+	for _, item := range installItems {
+		installs = append(installs, inspectInstall{Source: item.Src, Dest: item.Dest})
+	}
 	targets := make([]inspectTarget, 0, len(registered))
 	for _, target := range registered {
 		entry := inspectTarget{
@@ -693,6 +754,8 @@ func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name s
 			PostLinkOutputs: append([]string{}, target.PostLinkOutputs()...),
 			InstallDir:      target.InstallDir(),
 			NoInstall:       target.NoInstall(),
+			Installs:        installs,
+			InstallPath:     inspectTargetInstallPath(target, targetOS),
 		}
 		if target.Kind() != api.TargetVoid {
 			entry.Output = api.TargetFilename(target.Kind(), target.Name(), targetOS)
@@ -701,6 +764,22 @@ func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name s
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
 	return targets, nil
+}
+
+func inspectTargetInstallPath(target *api.Target, targetOS string) string {
+	kind := target.Kind()
+	if target.NoInstall() || target.IsTest() || kind == api.TargetVoid || kind == api.TargetObject {
+		return ""
+	}
+	output := api.TargetFilename(kind, target.Name(), targetOS)
+	if output == "" {
+		return ""
+	}
+	dir := target.InstallDir()
+	if dir == "" {
+		dir = kind.InstallDir()
+	}
+	return filepath.ToSlash(filepath.Join(".", dir, output))
 }
 
 func inspectToolchainInfo(inspection *pipeline.Inspection) *inspectToolchain {
