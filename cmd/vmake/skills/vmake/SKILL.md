@@ -75,9 +75,10 @@ resolution/declaration model: `root`, `configFile`, `configSha256`, `mode`,
 `toolchain`, `toolchainInfo`, `global` values, `roots`, `packages` (with
 options, deps, `sourcePresent`, active `buildDir`, and targets), the package
 `graph`, the `compileDatabase`/`buildReport` paths and presence flags, the
-recorded `buildReportState`, and the expected `installPrefix`/`installManifest`
-paths. It never builds or installs, so prefer it over scraping `query` text
-when you need to decide which package, target, or file to change.
+recorded `buildReportState`, the `freshness` heuristic, and the expected
+`installPrefix`/`installManifest` paths. It never builds or installs, so prefer
+it over scraping `query` text when you need to decide which package, target, or
+file to change.
 
 - Envelope: `{schemaVersion, command, status: "ok"|"error", data?, diagnostics}`.
   `diagnostics` is always an array; warnings keep `status: "ok"` and exit 0,
@@ -98,6 +99,17 @@ when you need to decide which package, target, or file to change.
   layout, not evidence that the directory exists: before a first build or after
   `clean` it may be absent. Inspect does not read action records or outputs, so
   it cannot tell you a target is up to date.
+- `freshness` (additive schemaVersion 1) is a heuristic: it expands the declared
+  `files` of needed packages whose source tree is present and compares each
+  file's mtime with the build report's `finished` time. `changedSources` lists
+  sorted, unique `pkg:path` entries (path relative to the package source
+  directory) capped at 50, with `truncated` set when more changed;
+  `sourceChanged` is true even beyond the cap. `known` is false without a
+  parsable build report/finish. `configMatches` mirrors the build report state
+  and a false value alone requires a rebuild. This is not an up-to-date check
+  or build plan: flags, toolchain, buildscripts, generated inputs, undeclared
+  files, deleted files, and clock skew are invisible, so run `vmake build` when
+  correctness matters.
 - `--set [pkg/]option=value` (repeatable) evaluates a hypothetical
   configuration and echoes typed values in `data.overrides`; it never writes
   `.vmake/config.json`. Values are coerced by the declared type: bool accepts
@@ -779,7 +791,7 @@ vmake builds packages by BFS from local (directory-based) roots. Remote packages
 
 Without an explicit root, the resolver falls back to a heuristic: when no local package declares `OnRequire`, every local package is a root; once any local package declares requires, a local package that declares none and is depended on by another local package is not treated as a root. A hint is printed when no package calls `SetRoot(true)`. In a larger workspace, call `p.SetRoot(true)` once on the entry package (`Main` or `OnPackage`); a top-level package that only declares options must not be the sole root unless it also `AddRequires` the packages it should build.
 
-Run vmake from the project root or any directory inside it. A fresh clone without a root `.vmake/` resolves its git root when that root has `build.go`, so starting from a package directory does not create a package-local `.vmake/`; use `vmake -C <dir>` to select a root explicitly. A stray `.vmake/` in a package directory makes that package look like a project when you run vmake there, so package resolution and the lockfile point at the wrong root. Remove stale package-local `.vmake/` directories; `vmake doctor` reports them as `staleProjectMarker` warnings without changing or deleting anything. An ancestor `.vmake/` without `build.go` is not a project root and is ignored.
+Run vmake from the project root or any directory inside it. A fresh clone without a root `.vmake/` resolves its git root when that root has `build.go`, so starting from a package directory does not create a package-local `.vmake/`; use `vmake -C <dir>` to select a root explicitly. A stray `.vmake/` in a package directory makes that package look like a project when you run vmake there. When an enclosing project also exists, commands that need a project root (`build`, `inspect`, `query`, ...) reject the shadowed root: they exit 2 before writing anything and print `current directory <package> has a .vmake marker shadowing the enclosing project <root>; run vmake -C <root> ... or remove <package>/.vmake`. Use `-C` (the shadow check is skipped when it is set) or remove the stale package-local `.vmake/`; a nested project that intentionally owns its own `.vmake/` and `build.go` must be selected with `-C <nested-root>`. `vmake doctor` reports the marker without changing or deleting anything: `nestedProjectMarker` (exit 0) from the package directory, `staleProjectMarker` from the enclosing root. An ancestor `.vmake/` without `build.go` is not a project root and is ignored.
 
 Bare `vmake` builds with default options (equivalent to `vmake build` without
 flags); build flags such as `--tests` and `--mode` require the `build` subcommand.
@@ -844,7 +856,7 @@ diagnostics are lost. `CMakeConfigure` output is unchanged.
 | `vmake pkg list/search/clean/update` | Packages (`pkg update <repo/name>[@version] [--dry-run]`) |
 | `vmake manifest show/checkout` | Install manifest |
 | `vmake check-symbols [--mode <value> --strict --toolchain <value>]` | Audit dynamic symbols of local packages' default Shared/Binary targets via nm -D (ELF; PE and no-dynsym artifacts report not-applicable) |
-| `vmake doctor` | Diagnose platform prerequisites (symlinks, Git userland, make, toolchain) and build.go issues |
+| `vmake doctor [--json]` | Diagnose platform prerequisites (symlinks, Git userland, make, toolchain) and build.go issues; `--json` prints one schemaVersion 1 doc on stdout (`status`, `root`, `findings`) and exits 1 only for error findings |
 | `vmake init-editor [--local <path>] [--remove]` | Generate a scratch go.mod so gopls supports build.go |
 | `vmake completion <shell>` | Print completion for bash/zsh/fish/powershell |
 | `vmake completion install [--shell <shell>]` | Auto-install completion (bash/zsh/fish; no PowerShell installer) |

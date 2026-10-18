@@ -52,7 +52,8 @@ vmake's storage layout is built on symbolic links, which Windows only permits in
 **Developer Mode** (Settings → System → For developers) or from an elevated shell.
 Run `vmake doctor` to check all of the above; it reports the status of symlinks, the
 Git userland, `make` and the selected C toolchain. Use `vmake doctor --toolchain NAME`
-to diagnose a specific toolchain.
+to diagnose a specific toolchain, and `vmake doctor --json` for one machine-readable
+document on stdout (see [Machine-readable doctor](#machine-readable-doctor)).
 
 Toolchains describe which programs to run; they may also declare `target_os`
 (bare metal: `none`) and `target_triple` (e.g. `arm-none-eabi`) defaults. The
@@ -384,7 +385,7 @@ vmake cache list                                      # List cached upstream rep
 vmake cache remove <url>                              # Remove one cache namespace
 vmake lock update|show                                # Re-resolve / show pinned versions (.vmake/vmake.lock)
 vmake init-editor [--local <path>] [--remove]         # Generate editor support (go.mod) for build.go
-vmake doctor                                          # Diagnose platform prerequisites and build.go patterns
+vmake doctor [--json]                                 # Diagnose platform prerequisites and build.go patterns
 vmake manifest show <path>                            # Show manifest contents
 vmake manifest checkout <path> [name]                 # Checkout packages to recorded versions
 vmake completion <shell>                              # Print completion script (bash|zsh|fish|powershell)
@@ -411,16 +412,46 @@ storage details.
 
 ### Nested `.vmake` markers
 
-If `vmake doctor` reports a `nestedProjectMarker` warning, the directory it
-resolved as the project root contains its own `.vmake/` directory while an
-enclosing project root exists (for example `firmware/.vmake` in a repository
-whose root also has `.vmake/` and `build.go`). Running vmake from that package
-directory then treats the package as the project root, so sibling packages are
-not found. The warning names both roots. Run
-`vmake -C <enclosing-project-root> ...` from the package directory, or remove
-`<package>/.vmake` if the directory is a package of the enclosing project. From
-the true project root the same marker is reported as `staleProjectMarker`.
-`vmake doctor` never removes the marker or switches roots automatically.
+A `.vmake/` directory inside a package shadows the enclosing project. Without
+`-C`/`--project`, vmake resolves the invocation directory itself as the project
+root, so sibling packages and the enclosing configuration are not found. Commands
+that need a project root (`build`, `inspect`, `query`, ...) now reject that case
+before doing any work: they exit 2 and print
+
+```
+current directory <package> has a .vmake marker shadowing the enclosing project <root>; run vmake -C <root> ... or remove <package>/.vmake
+```
+
+Run `vmake -C <enclosing-project-root> ...` from the package directory, or remove
+`<package>/.vmake` if the directory is a package of the enclosing project. A nested
+project that intentionally has its own `.vmake/` and `build.go` inside such a
+workspace must be selected explicitly with `-C <nested-root>`; the shadow check is
+skipped whenever `-C` is set. `vmake doctor` stays diagnostic: from the package
+directory it reports `nestedProjectMarker` as a warning and exits 0. From the true
+project root the same marker is reported as `staleProjectMarker`. `vmake doctor`
+never removes the marker or switches roots automatically.
+
+### Machine-readable doctor
+
+`vmake doctor --json` prints exactly one JSON document on stdout and suppresses the
+human findings:
+
+```json
+{
+  "schemaVersion": 1,
+  "status": "ok",
+  "root": "/path/to/project",
+  "findings": []
+}
+```
+
+`status` is `ok`, `warnings` or `error`. `findings` lists only warnings and errors
+(clean `ok` checks are omitted), each with `severity` (`warn`/`error`), `category`,
+`file` (relative to the project root when it is inside it, otherwise absolute or
+empty) and `message`; a shadowed package directory includes a
+`nestedProjectMarker` finding. Findings are sorted so repeated runs produce the
+same document. The exit status is 0 for `ok`/`warnings` and 1 when any error
+finding exists, matching the human output.
 
 ## Documentation
 

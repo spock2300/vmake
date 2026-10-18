@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -568,4 +571,229 @@ func Main(p *api.Package) {
 
 	check(t, true)
 	check(t, true)
+}
+
+const shadowedRootBuildGo = `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+}
+`
+
+const shadowedPackageBuildGo = `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+}
+`
+
+func writeShadowedProject(t *testing.T) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	for _, dir := range []string{
+		filepath.Join(root, ".git"),
+		filepath.Join(root, ".vmake"),
+		filepath.Join(root, "firmware", ".vmake"),
+	} {
+		makePathsTestDir(t, dir)
+	}
+	writePathsTestFile(t, filepath.Join(root, "build.go"), shadowedRootBuildGo)
+	writePathsTestFile(t, filepath.Join(root, ".vmake", "config.json"), "{}\n")
+	writePathsTestFile(t, filepath.Join(root, "firmware", "build.go"), shadowedPackageBuildGo)
+	writePathsTestFile(t, filepath.Join(root, "firmware", ".vmake", "config.json"), "{}\n")
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved, filepath.Join(resolved, "firmware")
+}
+
+func shadowedTreeSnapshot(t *testing.T, root string) []string {
+	t.Helper()
+	var paths []string
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == root {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		paths = append(paths, rel)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(paths)
+	return paths
+}
+
+func TestShadowedRootBootstrapChild(t *testing.T) {
+	dir := os.Getenv("VMAKE_TEST_SHADOW_DIR")
+	if dir == "" {
+		return
+	}
+	separator := slices.Index(os.Args, "--")
+	if separator < 0 {
+		t.Fatal("missing command arguments")
+	}
+	vmakeDir = dir
+	os.Args = append([]string{"vmake"}, os.Args[separator+1:]...)
+	main()
+	os.Exit(0)
+}
+
+func runShadowedRootCommand(t *testing.T, workDir string, args ...string) (string, string, int) {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandArgs := append([]string{"-test.run=^TestShadowedRootBootstrapChild$", "--"}, args...)
+	cmd := exec.Command(exe, commandArgs...)
+	cmd.Dir = workDir
+	cmd.Env = append(os.Environ(),
+		"VMAKE_TEST_SHADOW_DIR="+t.TempDir(),
+		"VMAKE_CACHE="+t.TempDir(),
+		"VMAKE_TRUST_ALL=1",
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	code := 0
+	if err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("run %v: %v", args, err)
+		}
+		code = exitErr.ExitCode()
+	}
+	return stdout.String(), stderr.String(), code
+}
+
+func TestShadowedRootRejectsHardRootCommands(t *testing.T) {
+	for _, command := range []string{"build", "inspect"} {
+		t.Run(command, func(t *testing.T) {
+			root, pkg := writeShadowedProject(t)
+			before := shadowedTreeSnapshot(t, root)
+			marker := filepath.Join(pkg, ".vmake")
+
+			stdout, stderr, code := runShadowedRootCommand(t, pkg, command)
+			if code != 2 {
+				t.Fatalf("%s from %s exit = %d, want 2 (stdout %q, stderr %q)", command, pkg, code, stdout, stderr)
+			}
+			for _, want := range []string{
+				"project root " + pkg + " has a .vmake marker shadowing the enclosing project " + root,
+				"run vmake -C " + root + " ...",
+				"remove " + marker,
+			} {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("%s stderr missing %q:\n%s", command, want, stderr)
+				}
+			}
+			if stdout != "" {
+				t.Errorf("%s wrote to stdout before rejecting the shadowed root:\n%s", command, stdout)
+			}
+
+			after := shadowedTreeSnapshot(t, root)
+			if !slices.Equal(before, after) {
+				t.Errorf("%s mutated the shadowed project tree:\nbefore %v\nafter  %v", command, before, after)
+			}
+			if _, err := os.Stat(marker); err != nil {
+				t.Errorf("%s removed the nested marker: %v", command, err)
+			}
+		})
+	}
+}
+
+func TestShadowedRootRejectsFromDescendant(t *testing.T) {
+	root, pkg := writeShadowedProject(t)
+	descendant := filepath.Join(pkg, "src")
+	if err := os.MkdirAll(descendant, 0755); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := runShadowedRootCommand(t, descendant, "build")
+	if code != 2 {
+		t.Fatalf("build from descendant exit = %d, want 2 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "project root "+pkg+" has a .vmake marker shadowing the enclosing project "+root) {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
+func TestShadowedRootProjectOverrideResolvesEnclosingProject(t *testing.T) {
+	root, pkg := writeShadowedProject(t)
+	stdout, stderr, code := runShadowedRootCommand(t, pkg, "-C", "..", "inspect")
+	if code != 0 {
+		t.Fatalf("inspect -C .. exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	if envelope.Data.Root != root {
+		t.Fatalf("inspect root = %q, want enclosing project %q", envelope.Data.Root, root)
+	}
+}
+
+func TestShadowedRootDoesNotAffectProjectRoot(t *testing.T) {
+	root, _ := writeShadowedProject(t)
+	stdout, stderr, code := runShadowedRootCommand(t, root, "build")
+	if code != 0 {
+		t.Fatalf("build from project root exit = %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+	if strings.Contains(stderr, "shadowing the enclosing project") {
+		t.Fatalf("build from the project root reported a shadowed root:\n%s", stderr)
+	}
+}
+
+func TestShadowedRootExplicitNestedOverride(t *testing.T) {
+	_, pkg := writeShadowedProject(t)
+	stdout, stderr, code := runShadowedRootCommand(t, pkg, "-C", ".", "inspect")
+	if code != 0 {
+		t.Fatalf("inspect -C . from the nested project exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	if envelope.Data.Root != pkg {
+		t.Fatalf("inspect root = %q, want the explicitly selected nested project %q", envelope.Data.Root, pkg)
+	}
+}
+
+func TestShadowedRootFreshCloneWithoutRootMarker(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writePathsTestFile(t, filepath.Join(root, "build.go"), shadowedRootBuildGo)
+	writePathsTestFile(t, filepath.Join(root, "firmware", "build.go"), shadowedPackageBuildGo)
+	writePathsTestFile(t, filepath.Join(root, "firmware", ".vmake", "config.json"), "{}\n")
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := filepath.Join(root, "firmware")
+
+	stdout, stderr, code := runShadowedRootCommand(t, pkg, "inspect")
+	if code != 2 {
+		t.Fatalf("inspect from a fresh clone exit = %d, want 2 (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "shadowing the enclosing project "+root) {
+		t.Fatalf("stderr does not name the git root %q:\n%s", root, stderr)
+	}
+	for _, path := range []string{filepath.Join(root, ".vmake"), filepath.Join(root, ".gitignore"), filepath.Join(pkg, ".gitignore")} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("rejected inspect created %s: %v", path, err)
+		}
+	}
 }

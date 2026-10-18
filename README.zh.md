@@ -47,7 +47,8 @@ vmake 可在 Windows 上原生运行，并支持在 Windows 主机上进行 ARM 
 vmake 的存储布局依赖符号链接，而 Windows 仅在**开发者模式**（设置 → 系统 → 开发者选项）
 或管理员终端下允许创建。运行 `vmake doctor` 可检查以上全部前提：它会报告符号链接、
 Git 用户态工具、`make` 与所选 C 工具链的状态；使用 `vmake doctor --toolchain NAME`
-可诊断指定工具链。
+可诊断指定工具链；`vmake doctor --json` 会在 stdout 输出一份机器可读文档（见
+[机器可读的 doctor 输出](#机器可读的-doctor-输出)）。
 
 工具链描述要运行哪些程序，还可声明 `target_os`（裸机为 `none`）与 `target_triple`
 （如 `arm-none-eabi`）默认值。项目在需要查看或覆盖这些值时声明对应的全局选项，并自行
@@ -366,7 +367,7 @@ vmake cache list                                      # 列出共享 git 对象�
 vmake cache remove <url>                              # 删除单个缓存命名空间
 vmake lock update|show                                # 重新解析 / 显示固定版本（.vmake/vmake.lock）
 vmake init-editor [--local <path>] [--remove]         # 为 build.go 生成编辑器支持文件（go.mod）
-vmake doctor                                          # 诊断平台前提与 build.go 模式
+vmake doctor [--json]                                 # 诊断平台前提与 build.go 模式
 vmake manifest show <path>                            # 显示清单内容
 vmake manifest checkout <path> [name]                 # 按清单检出版本
 vmake completion <shell>                              # 输出补全脚本 (bash|zsh|fish|powershell)
@@ -391,14 +392,39 @@ git 对象缓存）、`VMAKE_GIT_TIMEOUT`（网络 git 操作超时秒数）、
 
 ### 嵌套的 `.vmake` 标记
 
-如果 `vmake doctor` 报告 `nestedProjectMarker` 警告，说明它解析出的项目根目录
-自身包含 `.vmake/`，同时上层还存在另一个项目根（例如仓库根目录已有 `.vmake/`
-和 `build.go`，而 `firmware/.vmake` 是遗留标记）。从该包目录运行 vmake 会把
-这个包当作项目根，因而找不到同级包。警告会列出两个根目录。请在该包目录中运行
-`vmake -C <上层项目根> ...`，或在确认该目录属于上层项目后删除
-`<包>/.vmake`。从真正的项目根运行 doctor 时，同一个标记会以
-`staleProjectMarker` 报告。`vmake doctor` 不会自动删除该标记，也不会自动切换
-根目录。
+包目录中的 `.vmake/` 会遮蔽上层项目。未指定 `-C`/`--project` 时，vmake 会把
+调用目录本身当作项目根，因而找不到同级包和上层配置。需要项目根的命令（`build`、
+`inspect`、`query` 等）现在会在执行任何工作之前拒绝这种情况：以退出码 2 结束并打印
+
+```
+current directory <包目录> has a .vmake marker shadowing the enclosing project <上层项目根>; run vmake -C <上层项目根> ... or remove <包目录>/.vmake
+```
+
+请在该包目录中运行 `vmake -C <上层项目根> ...`，或在确认该目录属于上层项目后删除
+`<包>/.vmake`。若上层工作区内确实存在一个拥有独立 `.vmake/` 和 `build.go` 的嵌套
+项目，必须用 `-C <嵌套项目根>` 显式选择它；只要设置了 `-C` 就不会触发遮蔽检查。
+`vmake doctor` 仍然只做诊断：从该包目录运行时会报告 `nestedProjectMarker` 警告并以
+退出码 0 结束；从真正的项目根运行时，同一个标记会以 `staleProjectMarker` 报告。
+`vmake doctor` 不会自动删除该标记，也不会自动切换根目录。
+
+### 机器可读的 doctor 输出
+
+`vmake doctor --json` 会在 stdout 输出恰好一份 JSON 文档，并抑制人类可读行：
+
+```json
+{
+  "schemaVersion": 1,
+  "status": "ok",
+  "root": "/path/to/project",
+  "findings": []
+}
+```
+
+`status` 为 `ok`、`warnings` 或 `error`。`findings` 只列出警告和错误（干净的 `ok`
+检查会被省略），每项包含 `severity`（`warn`/`error`）、`category`、`file`（位于项目根
+内时为相对路径，否则为绝对路径或空）和 `message`；被遮蔽的包目录会包含
+`nestedProjectMarker`。findings 会排序，因此重复运行产生相同文档。退出码在
+`ok`/`warnings` 时为 0，存在错误 finding 时为 1，与人类可读输出一致。
 
 ## 开发文档
 

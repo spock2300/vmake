@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -32,23 +33,40 @@ but may become errors in future vmake versions:
   - [noRoot] No package declares SetRoot(true). vmake currently uses heuristics
     to pick build roots, but these may produce surprising results in projects
     with mixed apps/libraries. Adding SetRoot(true) to the entry-point package
-    makes the build intent explicit.`,
+    makes the build intent explicit.
+
+With --json, prints one machine-readable document (schemaVersion 1) on stdout
+and suppresses the human lines: {"schemaVersion":1,"status":"ok"|"warnings"|
+"error","root":"...","findings":[{"severity":"warn"|"error","category":"...",
+"file":"...","message":"..."}]}. Only warnings and errors are listed, so a
+clean project has an empty findings array. The exit status is 0 for ok/warnings
+and 1 when any error finding exists.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		runDoctor()
 	},
 }
 
+var doctorJSON bool
+
 func init() {
 	RootCmd.AddCommand(doctorCmd)
 	doctorCmd.Flags().StringVar(&toolchainFlag, "toolchain", "", "toolchain to diagnose (default: project selection)")
+	doctorCmd.Flags().BoolVar(&doctorJSON, "json", false, "emit one JSON diagnostic document on stdout")
 	doctorCmd.RegisterFlagCompletionFunc("toolchain", completeToolchain)
 }
 
 type doctorFinding struct {
-	Severity string
-	File     string
-	Category string
-	Message  string
+	Severity string `json:"severity"`
+	Category string `json:"category"`
+	File     string `json:"file"`
+	Message  string `json:"message"`
+}
+
+type doctorJSONDocument struct {
+	SchemaVersion int             `json:"schemaVersion"`
+	Status        string          `json:"status"`
+	Root          string          `json:"root"`
+	Findings      []doctorFinding `json:"findings"`
 }
 
 func runDoctor() {
@@ -63,6 +81,9 @@ func runDoctor() {
 	}
 	cfg, _, err := config.LoadProject(workDir)
 	if err != nil {
+		if doctorJSON {
+			reportDoctorJSON(workDir, nil, &doctorFinding{Severity: "error", Category: "config", Message: err.Error()})
+		}
 		vlog.Fatal("load project config: %v", err)
 	}
 	tcName := pipeline.ResolveToolchainName(cfg, toolchainFlag)
@@ -75,9 +96,15 @@ func runDoctor() {
 
 	sources, err := buildscript.Scan(workDir)
 	if err != nil {
+		if doctorJSON {
+			reportDoctorJSON(workDir, findings, &doctorFinding{Severity: "error", Category: "scan", Message: err.Error()})
+		}
 		vlog.Fatal("scan: %v", err)
 	}
 	if len(sources) == 0 {
+		if doctorJSON {
+			reportDoctorJSON(workDir, findings, &doctorFinding{Severity: "error", Category: "noBuildGo", Message: fmt.Sprintf("no build.go files found in %s", workDir)})
+		}
 		reportDoctorFindings(workDir, findings)
 		vlog.Fatal("no build.go files found")
 	}
@@ -108,7 +135,70 @@ func runDoctor() {
 		})
 	}
 
+	if doctorJSON {
+		reportDoctorJSON(workDir, findings, nil)
+	}
 	reportDoctorFindings(workDir, findings)
+}
+
+// reportDoctorJSON prints the machine-readable doctor result and exits. Only
+// warning and error findings are listed, sorted so equal runs produce the same
+// document. A failure that prevents a normal diagnosis is reported as an error
+// finding.
+func reportDoctorJSON(workDir string, findings []doctorFinding, failure *doctorFinding) {
+	if failure != nil {
+		findings = append(findings, *failure)
+	}
+	reported := make([]doctorFinding, 0, len(findings))
+	for _, f := range findings {
+		if f.Severity != "warn" && f.Severity != "error" {
+			continue
+		}
+		f.File = doctorRelativeFile(workDir, f.File)
+		reported = append(reported, f)
+	}
+	sort.Slice(reported, func(i, j int) bool {
+		if reported[i].Severity != reported[j].Severity {
+			return reported[i].Severity == "error"
+		}
+		if reported[i].Category != reported[j].Category {
+			return reported[i].Category < reported[j].Category
+		}
+		if reported[i].File != reported[j].File {
+			return reported[i].File < reported[j].File
+		}
+		return reported[i].Message < reported[j].Message
+	})
+
+	status := "ok"
+	code := 0
+	for _, f := range reported {
+		if f.Severity == "error" {
+			status = "error"
+			code = 1
+			break
+		}
+		status = "warnings"
+	}
+	document := doctorJSONDocument{SchemaVersion: 1, Status: status, Root: workDir, Findings: reported}
+	if err := encodeJSONDocument(os.Stdout, document); err != nil {
+		vlog.Error("Error: %v", err)
+		code = 1
+	}
+	os.Exit(code)
+}
+
+// doctorRelativeFile reports paths under the project root relative to it, like
+// the human output, and leaves external paths absolute.
+func doctorRelativeFile(root, file string) string {
+	if file == "" {
+		return ""
+	}
+	rel, err := filepath.Rel(root, file)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return file
+	}
+	return rel
 }
 
 // checkNestedProjectMarker reports a package-local .vmake marker that wins

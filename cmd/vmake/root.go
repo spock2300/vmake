@@ -64,6 +64,10 @@ It uses Go buildscripts for configuration and provides a TUI for option manageme
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		if projectOverride != "" {
 			findProjectDir()
+		} else if cmd.Name() == "inspect" {
+			// inspect silences stdout/stderr while resolving, so report a
+			// shadowed root before it starts.
+			rejectShadowedProjectRootFromCWD()
 		}
 		commandStorageExclusive = requiresExclusiveStorage(cmd)
 		if cmd.Flags().Changed("output") {

@@ -26,6 +26,9 @@ func findProjectDir() string {
 		fatalMsg("get working directory: %v", err)
 	}
 	if found, ok := searchProjectDir(dir); ok {
+		if projectOverride == "" {
+			rejectShadowedProjectRoot(found)
+		}
 		cachedProjectDir = found
 		return found
 	}
@@ -51,6 +54,38 @@ func findProjectDirSoft() string {
 	}
 	found, _ := searchProjectDir(dir)
 	return found
+}
+
+// rejectShadowedProjectRoot fails when the resolved project root is a nested
+// .vmake marker while an enclosing project also exists. Such a package-local
+// marker silently hides the real project, so require an explicit -C/--project
+// root (or removal of the marker) instead of using the nested root. Calling
+// from a descendant still reports the selected nested root. findProjectDirSoft
+// and doctor deliberately skip this check to keep diagnosing the nested root.
+func rejectShadowedProjectRoot(root string) {
+	if projectOverride != "" || !hasProjectConfig(root) {
+		return
+	}
+	enclosing, ok := findEnclosingProjectRoot(root)
+	if !ok || filepath.Clean(enclosing) == filepath.Clean(root) {
+		return
+	}
+	marker := filepath.Join(root, ".vmake")
+	fatalUsage("project root %s has a .vmake marker shadowing the enclosing project %s; run vmake -C %s ... or remove %s", root, enclosing, enclosing, marker)
+}
+
+// rejectShadowedProjectRootFromCWD applies the shadowed-root check before a
+// command replaces os.Stdout/os.Stderr (inspect does this while resolving), so
+// the usage error stays visible.
+func rejectShadowedProjectRootFromCWD() {
+	if projectOverride != "" {
+		return
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	rejectShadowedProjectRoot(dir)
 }
 
 // validateProjectDir resolves and checks an explicit --project directory. The
