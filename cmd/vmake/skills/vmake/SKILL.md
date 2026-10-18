@@ -73,11 +73,11 @@ general rules in build.go. See `references/api.md` for settings and migration de
 `vmake inspect` prints one JSON document (schemaVersion 1) with the project
 resolution/declaration model: `root`, `configFile`, `configSha256`, `mode`,
 `toolchain`, `toolchainInfo`, `global` values, `roots`, `packages` (with
-options, deps, `sourcePresent`, and targets), the package `graph`, the
-`compileDatabase`/`buildReport` paths, and the expected
-`installPrefix`/`installManifest` paths. It never builds or installs, so prefer
-it over scraping `query` text when you need to decide which package, target, or
-file to change.
+options, deps, `sourcePresent`, active `buildDir`, and targets), the package
+`graph`, the `compileDatabase`/`buildReport` paths and presence flags, the
+recorded `buildReportState`, and the expected `installPrefix`/`installManifest`
+paths. It never builds or installs, so prefer it over scraping `query` text
+when you need to decide which package, target, or file to change.
 
 - Envelope: `{schemaVersion, command, status: "ok"|"error", data?, diagnostics}`.
   `diagnostics` is always an array; warnings keep `status: "ok"` and exit 0,
@@ -93,6 +93,11 @@ file to change.
   `VMAKE_W_SOURCE_MISSING` warning and `sourcePresent: false`; inspect does not
   fetch, materialize, or link sources for this check. `vmake query` and
   `query targets` print the same warning on stderr without changing stdout.
+- Needed packages also carry `buildDir`, the absolute build-key directory the
+  next build would use, plus `buildKey` for local packages. This is resolved
+  layout, not evidence that the directory exists: before a first build or after
+  `clean` it may be absent. Inspect does not read action records or outputs, so
+  it cannot tell you a target is up to date.
 - `--set [pkg/]option=value` (repeatable) evaluates a hypothetical
   configuration and echoes typed values in `data.overrides`; it never writes
   `.vmake/config.json`. Values are coerced by the declared type: bool accepts
@@ -104,10 +109,16 @@ file to change.
 - Buildscript stdout is discarded while the model is resolved, so the JSON is
   never corrupted by `build.go` prints.
 - `compileDatabase`/`buildReport` point at `build/compile_commands.json` and
-  `build/vmake-build.json`; the latter holds the last build/rebuild/test result
-  (see `references/build-result.md`). `installPrefix`/`installManifest` point at
-  the default `install/` and `install/manifest.json`; `--prefix` overrides them.
-  Full schema: `references/inspect.md`.
+  `build/vmake-build.json`; `compileDatabasePresent`/`buildReportPresent` say
+  whether those files currently exist. When the report exists and parses,
+  `buildReportState` copies its `status`, `buildId`, `command`, `started`,
+  `finished`, `summary`, and `error`, and sets `configMatches` (true only for
+  the same `configSha256` with no `--set`). This describes the last recorded
+  build, not whether actions or outputs are fresh. A corrupt report keeps
+  `buildReportPresent: true`, omits the state, and adds one
+  `VMAKE_W_REPORT_UNREADABLE` warning; inspect never rewrites it. The install
+  paths are the default `install/` and `install/manifest.json`; `--prefix`
+  overrides them. Full schema: `references/inspect.md`.
 
 ## Build Script Template
 
@@ -840,9 +851,11 @@ diagnostics are lost. `CMakeConfigure` output is unchanged.
 | `vmake update [version]` | Update vmake |
 | `vmake version` | Version info (`vmake --version` also prints it) |
 
-Build flags: `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`, `--manifest`, `--tests`, `--jobs/-j`, `--keep-going/-k`, `--explain`, `--json`
+Build flags: `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`, `--manifest`, `--tests`, `--jobs/-j`, `--keep-going/-k`, `--explain`, `--json`, `--output`
 Global flags: `-v` verbose, `-V` very-verbose, `-q` quiet, `-y/--yes` assume yes (trust prompts), `-h/--help` help
 `--version` is a root flag; `vmake test` always builds and runs test targets, so `--tests` is accepted for compatibility but has no effect there.
+
+`vmake build|rebuild|test --json` writes one schemaVersion-1 envelope to stdout with human progress on stderr; `--output PATH` (or `-` for stdout) implies `--json` and writes that envelope to a file instead, leaving stdout empty and requiring the parent directory to exist. Exit codes do not depend on the machine mode: 0 success, 1 build/script/test/operation failure, 2 usage or project-resolution failure (bad flag, missing argument, not inside a project), 130/143 interrupted. A run that fails before any report exists (bad flag, outside a project, storage lock) still emits the requested envelope with `data:null` and a `VMAKE_E_USAGE`/`VMAKE_E_BUILD` diagnostic; reaching the normal report path emits only the full envelope.
 
 ## Reading Guide
 

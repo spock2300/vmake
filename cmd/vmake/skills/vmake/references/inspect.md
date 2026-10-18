@@ -6,7 +6,10 @@ dry-run `OnBuild` target declaration only: it never compiles, links, installs,
 or writes `build/`, `install/`, or `.vmake/config.json`. It also warns about
 needed packages whose source tree is not on disk, without fetching or
 materializing it, and reports the install plan declared by `OnBuild` without
-reading or creating `install/`.
+reading or creating `install/`. Build-state fields report whether the compile
+database and build report currently exist, the last report's identity and
+configuration match, and each needed package's active build directory; they do
+not verify action or output freshness.
 
 ```
 vmake inspect [--set [package/]option=value ...]
@@ -66,6 +69,10 @@ Failure (no `data`, exit 1):
   package directory. `vmake query` and `vmake query targets` print the same
   `Warning: ...` lines to stderr for missing needed packages while their tree
   or target list stays unchanged on stdout and they exit 0.
+- `VMAKE_W_REPORT_UNREADABLE` — warning: `build/vmake-build.json` exists but
+  cannot be read or parsed. `buildReportPresent` stays `true`,
+  `buildReportState` is omitted, `status` stays `"ok"`, exit is 0, and `fix`
+  tells the user to rerun a build. Inspect never rewrites the file.
 
 ## `data` fields
 
@@ -81,9 +88,20 @@ Failure (no `data`, exit 1):
 | `packages` | Resolved package entries, sorted by name |
 | `graph` | Package dependency edges `{from, to}`, sorted |
 | `compileDatabase` | `<root>/build/compile_commands.json` (expected path, even before a build) |
-| `buildReport` | `<root>/build/vmake-build.json` (last build result) |
+| `compileDatabasePresent` | Whether that file currently exists (presence only) |
+| `buildReport` | `<root>/build/vmake-build.json` (expected path, even before a build) |
+| `buildReportPresent` | Whether that file currently exists |
+| `buildReportState` | Report identity/result when the file exists and parses; omitted when absent or unreadable |
 | `installPrefix` | `<root>/install` (default `--prefix`, even before an install) |
 | `installManifest` | `<root>/install/manifest.json` (expected default manifest path, even before an install) |
+
+`buildReportState` copies `status`, `buildId`, `command`, `started`,
+`finished`, `summary` and `error` from the report when present. Its
+`configMatches` is true only when the report's `configSha256` equals
+`data.configSha256` and no `--set` override was supplied, so a normal
+`inspect --set` reports `false`. These fields are a snapshot of the reported
+build, not evidence that actions or outputs are current: inspect does not read
+action records or predict up-to-date targets.
 
 Each `packages` entry has `name`, `kind` (`local`/`native`/`registry`),
 `needed`, `sourcePresent`, `deps`, optional remote
@@ -92,6 +110,12 @@ Each `packages` entry has `name`, `kind` (`local`/`native`/`registry`),
 packages that declare targets). `sourcePresent` is false when the expected
 source tree is missing or empty; that package also gets a
 `VMAKE_W_SOURCE_MISSING` warning when it is needed.
+
+Needed packages also carry `buildDir`, the absolute build-key directory from
+the same layout the next build would use; it may not exist yet (before a first
+build or after `clean`). Local packages also carry `buildKey` when the key is
+the last path element; remote packages omit it because their `buildDir` ends in
+`build`.
 
 Each `targets` entry has `name`, `kind` (`binary`/`static`/`shared`/`object`/
 `void`), `default`, `test`, declared `files`/`excludedFiles`/`includes`/
@@ -156,7 +180,9 @@ vmake inspect --set dep/dep_mode=slow      # choice validated
 
 Exit 0 means a model was produced (including models with warning diagnostics);
 exit 1 means it was not. Output is deterministic for the same project,
-configuration, and overrides: consecutive runs are byte-identical.
+configuration, overrides, and build-state files: consecutive runs are
+byte-identical. Inspect stats the compile database and reads the build report
+but never writes either file.
 
 This reference is self-contained. The full repository documentation set
 (including `docs/INSPECT.md`) is not installed with the skill.

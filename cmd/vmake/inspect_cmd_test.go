@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"strings"
@@ -159,7 +160,7 @@ func Main(p *api.Package) {
 	})
 }
 `)
-	writeExtensionFile(t, filepath.Join(project, "dep", "src", "lib.c"), "int dep(void) { return 1; }\n")
+	writeExtensionFile(t, filepath.Join(project, "dep", "src", "lib.c"), "int dep(void);\nint dep(void) { return 1; }\n")
 	writeExtensionFile(t, filepath.Join(project, "dep", "include", "dep.h"), "#define DEP 1\n")
 	return project
 }
@@ -271,6 +272,272 @@ func TestInspectProjectModel(t *testing.T) {
 	for _, dir := range []string{"build", "install"} {
 		if _, err := os.Stat(filepath.Join(project, dir)); !os.IsNotExist(err) {
 			t.Fatalf("inspect created %s: %v", dir, err)
+		}
+	}
+}
+
+func TestInspectBuildStateAndPackageDirs(t *testing.T) {
+	project := writeInspectProject(t, t.TempDir())
+
+	checkAbsent := func(t *testing.T) *inspectData {
+		t.Helper()
+		stdout, stderr, code := runInspectCommand(t, project, "inspect")
+		if code != 0 {
+			t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+		}
+		envelope := decodeInspectEnvelope(t, stdout)
+		if envelope.Status != "ok" || envelope.Data == nil {
+			t.Fatalf("envelope = %+v", envelope)
+		}
+		if len(envelope.Diagnostics) != 0 {
+			t.Fatalf("diagnostics = %+v, want none", envelope.Diagnostics)
+		}
+		data := envelope.Data
+		if data.CompileDatabasePresent || data.BuildReportPresent || data.BuildReportState != nil {
+			t.Fatalf("build state present before a build: db=%v report=%v state=%+v",
+				data.CompileDatabasePresent, data.BuildReportPresent, data.BuildReportState)
+		}
+		for _, want := range []struct {
+			pkg  string
+			base string
+		}{{"proj", project}, {"dep", filepath.Join(project, "dep")}} {
+			pkg := inspectPackageNamed(t, data, want.pkg)
+			if !pkg.Needed || pkg.BuildDir == "" || !filepath.IsAbs(pkg.BuildDir) {
+				t.Fatalf("%s buildDir = %q (needed %v)", want.pkg, pkg.BuildDir, pkg.Needed)
+			}
+			if !strings.HasPrefix(pkg.BuildDir, filepath.Join(want.base, "build")+string(filepath.Separator)) {
+				t.Fatalf("%s buildDir = %q, want a path under %s", want.pkg, pkg.BuildDir, filepath.Join(want.base, "build"))
+			}
+			if pkg.BuildKey == "" || pkg.BuildKey != filepath.Base(pkg.BuildDir) {
+				t.Fatalf("%s buildKey = %q, buildDir = %q", want.pkg, pkg.BuildKey, pkg.BuildDir)
+			}
+			if _, err := os.Stat(pkg.BuildDir); !os.IsNotExist(err) {
+				t.Fatalf("inspect materialized %s build dir %s: %v", want.pkg, pkg.BuildDir, err)
+			}
+		}
+		return data
+	}
+	checkAbsent(t)
+
+	if _, stderr, code := runInspectCommand(t, project, "build"); code != 0 {
+		t.Fatalf("build exit = %d, stderr = %q", code, stderr)
+	}
+	rawReport, err := os.ReadFile(filepath.Join(project, "build", "vmake-build.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		BuildID string          `json:"buildId"`
+		Status  string          `json:"status"`
+		Summary json.RawMessage `json:"summary"`
+	}
+	if err := json.Unmarshal(rawReport, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "succeeded" || report.BuildID == "" || len(report.Summary) == 0 {
+		t.Fatalf("build report = %+v", report)
+	}
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect after build exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	if len(envelope.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %+v, want none", envelope.Diagnostics)
+	}
+	data := envelope.Data
+	if !data.CompileDatabasePresent || !data.BuildReportPresent {
+		t.Fatalf("presence after build: db=%v report=%v", data.CompileDatabasePresent, data.BuildReportPresent)
+	}
+	state := data.BuildReportState
+	if state == nil {
+		t.Fatal("buildReportState is absent after a successful build")
+	}
+	if state.Status != "succeeded" || state.BuildID != report.BuildID || state.Command != "build" {
+		t.Fatalf("buildReportState = %+v, report = %+v", state, report)
+	}
+	if state.Started == "" || state.Finished == "" || state.Error != "" {
+		t.Fatalf("buildReportState identity = %+v", state)
+	}
+	if !state.ConfigMatches {
+		t.Fatal("buildReportState.configMatches = false for the build's own configuration")
+	}
+	var wantSummary, gotSummary any
+	if err := json.Unmarshal(report.Summary, &wantSummary); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(state.Summary, &gotSummary); err != nil {
+		t.Fatalf("buildReportState.summary = %s: %v", state.Summary, err)
+	}
+	if !reflect.DeepEqual(gotSummary, wantSummary) {
+		t.Fatalf("buildReportState.summary = %s, report summary = %s", state.Summary, report.Summary)
+	}
+	for _, name := range []string{"proj", "dep"} {
+		pkg := inspectPackageNamed(t, data, name)
+		if pkg.BuildDir == "" || pkg.BuildKey == "" {
+			t.Fatalf("%s buildDir/buildKey missing after build: %+v", name, pkg)
+		}
+		info, err := os.Stat(pkg.BuildDir)
+		if err != nil || !info.IsDir() {
+			t.Fatalf("%s buildDir %q is not a directory: %v", name, pkg.BuildDir, err)
+		}
+	}
+
+	again, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("second inspect exit = %d, stderr = %q", code, stderr)
+	}
+	if again != stdout {
+		t.Fatal("consecutive inspect runs after a build are not byte-identical")
+	}
+
+	stdout, stderr, code = runInspectCommand(t, project, "inspect", "--set", "proj/with_dep=false")
+	if code != 0 || stderr != "" {
+		t.Fatalf("hypothetical inspect exit = %d, stderr = %q", code, stderr)
+	}
+	data = decodeInspectEnvelope(t, stdout).Data
+	if data.BuildReportState == nil || data.BuildReportState.ConfigMatches {
+		t.Fatalf("--set buildReportState = %+v, want configMatches false", data.BuildReportState)
+	}
+	if dep := inspectPackageNamed(t, data, "dep"); dep.Needed || dep.BuildDir != "" || dep.BuildKey != "" {
+		t.Fatalf("pruned package kept build fields: %+v", dep)
+	}
+
+	if stdout, stderr, code := runInspectCommand(t, project, "clean"); code != 0 {
+		t.Fatalf("clean exit = %d, stderr = %q\n%s", code, stderr, stdout)
+	}
+	data = checkAbsent(t)
+	for _, name := range []string{"proj", "dep"} {
+		pkg := inspectPackageNamed(t, data, name)
+		if _, err := os.Stat(pkg.BuildDir); !os.IsNotExist(err) {
+			t.Fatalf("%s build dir survived clean: %q", name, pkg.BuildDir)
+		}
+	}
+}
+
+func TestInspectBuildDirFields(t *testing.T) {
+	key := "debug-abc"
+	local := &api.PkgDirs{SourceDir: "/src/lib", BuildDir: filepath.Join("/src/lib", "build", key)}
+	dir, buildKey := inspectBuildDirFields(local, true)
+	if dir != local.BuildDir || buildKey != key {
+		t.Fatalf("local fields = %q/%q", dir, buildKey)
+	}
+	if dir, buildKey := inspectBuildDirFields(local, false); dir != local.BuildDir || buildKey != "" {
+		t.Fatalf("remote-like fields = %q/%q", dir, buildKey)
+	}
+	remote := &api.PkgDirs{SourceDir: "/deps/owner/src", BuildDir: filepath.Join("/deps/owner/out", "member", key, "build")}
+	if dir, buildKey := inspectBuildDirFields(remote, false); dir != remote.BuildDir || buildKey != "" {
+		t.Fatalf("remote fields = %q/%q", dir, buildKey)
+	}
+	odd := &api.PkgDirs{BuildDir: filepath.Join("/tmp", key)}
+	if _, buildKey := inspectBuildDirFields(odd, true); buildKey != "" {
+		t.Fatalf("non-layout build dir got buildKey %q", buildKey)
+	}
+	if dir, buildKey := inspectBuildDirFields(nil, true); dir != "" || buildKey != "" {
+		t.Fatalf("nil dirs = %q/%q", dir, buildKey)
+	}
+	if dir, buildKey := inspectBuildDirFields(&api.PkgDirs{SourceDir: "/src"}, true); dir != "" || buildKey != "" {
+		t.Fatalf("empty build dir = %q/%q", dir, buildKey)
+	}
+}
+
+func TestInspectBuildReportConfigMatch(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) { p.SetRoot(true) }
+`)
+	configPath := filepath.Join(project, ".vmake", "config.json")
+	writeExtensionFile(t, configPath, `{"version":"1","global":{"mode":"release"}}`)
+	digest, _, err := fileDigest(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reportPath := filepath.Join(project, "build", "vmake-build.json")
+	writeReport := func(configSHA256 string) {
+		t.Helper()
+		writeExtensionFile(t, reportPath, `{"schemaVersion":2,"buildId":"abc123","status":"succeeded","command":"build","started":"2026-01-01T00:00:00Z","finished":"2026-01-01T00:00:01Z","configSha256":"`+configSHA256+`","summary":{"targetsTotal":1,"targetsBuilt":1}}`)
+	}
+
+	writeReport(digest)
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	data := decodeInspectEnvelope(t, stdout).Data
+	state := data.BuildReportState
+	if state == nil || !state.ConfigMatches || state.BuildID != "abc123" || state.Status != "succeeded" {
+		t.Fatalf("matching report state = %+v", state)
+	}
+	if string(state.Summary) == "" {
+		t.Fatal("matching report state lost the summary")
+	}
+
+	writeReport("not-the-active-digest")
+	stdout, stderr, code = runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	data = decodeInspectEnvelope(t, stdout).Data
+	if data.BuildReportState == nil || data.BuildReportState.ConfigMatches {
+		t.Fatalf("mismatched report state = %+v, want configMatches false", data.BuildReportState)
+	}
+}
+
+func TestInspectUnreadableBuildReport(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n")
+	reportPath := filepath.Join(project, "build", "vmake-build.json")
+	for _, corrupt := range []string{"{this is not a build report\n", "null", "[]", ""} {
+		writeExtensionFile(t, reportPath, corrupt)
+		stdout, stderr, code := runInspectCommand(t, project, "inspect")
+		if code != 0 {
+			t.Fatalf("inspect exit = %d, stderr = %q (report %q)", code, stderr, corrupt)
+		}
+		envelope := decodeInspectEnvelope(t, stdout)
+		if envelope.Status != "ok" || envelope.Data == nil {
+			t.Fatalf("envelope = %+v (report %q)", envelope, corrupt)
+		}
+		data := envelope.Data
+		if !data.BuildReportPresent || data.BuildReportState != nil {
+			t.Fatalf("corrupt report %q: present=%v state=%+v", corrupt, data.BuildReportPresent, data.BuildReportState)
+		}
+		if data.CompileDatabasePresent {
+			t.Fatal("compileDatabasePresent = true without a compile database")
+		}
+		if len(envelope.Diagnostics) != 1 {
+			t.Fatalf("diagnostics = %+v, want one warning (report %q)", envelope.Diagnostics, corrupt)
+		}
+		diagnostic := envelope.Diagnostics[0]
+		if diagnostic.Severity != "warning" || diagnostic.Code != "VMAKE_W_REPORT_UNREADABLE" || !strings.Contains(diagnostic.Message, reportPath) {
+			t.Fatalf("diagnostic = %+v (report %q)", diagnostic, corrupt)
+		}
+		if stderr != "Warning: "+diagnostic.Message+"\n" {
+			t.Fatalf("stderr = %q, want one warning line (report %q)", stderr, corrupt)
+		}
+		after, err := os.ReadFile(reportPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != corrupt {
+			t.Fatalf("inspect rewrote the corrupt build report: %q", after)
 		}
 	}
 }

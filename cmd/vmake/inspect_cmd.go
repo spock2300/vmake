@@ -42,21 +42,35 @@ type inspectDiagnostic struct {
 }
 
 type inspectData struct {
-	Root            string            `json:"root"`
-	ConfigFile      string            `json:"configFile"`
-	ConfigSHA256    string            `json:"configSha256"`
-	Mode            string            `json:"mode"`
-	Toolchain       string            `json:"toolchain"`
-	ToolchainInfo   *inspectToolchain `json:"toolchainInfo,omitempty"`
-	Global          map[string]any    `json:"global"`
-	Overrides       map[string]any    `json:"overrides,omitempty"`
-	Roots           []string          `json:"roots"`
-	Packages        []inspectPackage  `json:"packages"`
-	Graph           []inspectEdge     `json:"graph"`
-	CompileDatabase string            `json:"compileDatabase"`
-	BuildReport     string            `json:"buildReport"`
-	InstallPrefix   string            `json:"installPrefix"`
-	InstallManifest string            `json:"installManifest"`
+	Root                   string                   `json:"root"`
+	ConfigFile             string                   `json:"configFile"`
+	ConfigSHA256           string                   `json:"configSha256"`
+	Mode                   string                   `json:"mode"`
+	Toolchain              string                   `json:"toolchain"`
+	ToolchainInfo          *inspectToolchain        `json:"toolchainInfo,omitempty"`
+	Global                 map[string]any           `json:"global"`
+	Overrides              map[string]any           `json:"overrides,omitempty"`
+	Roots                  []string                 `json:"roots"`
+	Packages               []inspectPackage         `json:"packages"`
+	Graph                  []inspectEdge            `json:"graph"`
+	CompileDatabase        string                   `json:"compileDatabase"`
+	CompileDatabasePresent bool                     `json:"compileDatabasePresent"`
+	BuildReport            string                   `json:"buildReport"`
+	BuildReportPresent     bool                     `json:"buildReportPresent"`
+	BuildReportState       *inspectBuildReportState `json:"buildReportState,omitempty"`
+	InstallPrefix          string                   `json:"installPrefix"`
+	InstallManifest        string                   `json:"installManifest"`
+}
+
+type inspectBuildReportState struct {
+	Status        string          `json:"status"`
+	BuildID       string          `json:"buildId"`
+	Command       string          `json:"command,omitempty"`
+	Started       string          `json:"started"`
+	Finished      string          `json:"finished"`
+	ConfigMatches bool            `json:"configMatches"`
+	Summary       json.RawMessage `json:"summary,omitempty"`
+	Error         string          `json:"error,omitempty"`
 }
 
 type inspectToolchain struct {
@@ -80,6 +94,8 @@ type inspectPackage struct {
 	Path          string          `json:"path,omitempty"`
 	SourceDir     string          `json:"sourceDir,omitempty"`
 	SourcePresent bool            `json:"sourcePresent"`
+	BuildDir      string          `json:"buildDir,omitempty"`
+	BuildKey      string          `json:"buildKey,omitempty"`
 	Needed        bool            `json:"needed"`
 	Description   string          `json:"description,omitempty"`
 	Toolchain     string          `json:"toolchain,omitempty"`
@@ -140,8 +156,11 @@ func newInspectCmd() *cobra.Command {
 
 The document reports the project root, active configuration, build mode,
 toolchain, effective global values, roots, packages, targets, package
-dependency graph, and the compile-database and build-report paths. Diagnostics
-is always an array.
+dependency graph, the compile-database and build-report paths and presence, the
+last build report's status/identity/config match, and each needed package's
+active build directory. These are file-presence and resolved-layout facts:
+inspect does not verify action or output freshness. Diagnostics is always an
+array.
 
 --set overrides a configuration option for this run only; nothing is written to
 .vmake/config.json. Values are coerced by the declared option type: bool accepts
@@ -428,22 +447,28 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 	if global == nil {
 		global = make(map[string]any)
 	}
+	compileDatabase := filepath.Join(root, "build", "compile_commands.json")
+	buildReport := filepath.Join(root, "build", "vmake-build.json")
+	buildReportPresent, buildReportState, reportDiagnostic := loadInspectBuildReportState(buildReport, ctx.ConfigDigest, len(overrides) > 0)
 	data := &inspectData{
-		Root:            root,
-		ConfigFile:      filepath.Base(ctx.ConfigPath),
-		ConfigSHA256:    ctx.ConfigDigest,
-		Mode:            inspection.Mode,
-		Toolchain:       inspection.TcName,
-		ToolchainInfo:   inspectToolchainInfo(inspection),
-		Global:          global,
-		Overrides:       overrides,
-		Roots:           inspectRoots(ctx, inspection.Needed),
-		Packages:        make([]inspectPackage, 0, len(ctx.DepGraph.Packages)),
-		Graph:           inspectGraph(ctx),
-		CompileDatabase: filepath.Join(root, "build", "compile_commands.json"),
-		BuildReport:     filepath.Join(root, "build", "vmake-build.json"),
-		InstallPrefix:   installRoot,
-		InstallManifest: filepath.Join(installRoot, "manifest.json"),
+		Root:                   root,
+		ConfigFile:             filepath.Base(ctx.ConfigPath),
+		ConfigSHA256:           ctx.ConfigDigest,
+		Mode:                   inspection.Mode,
+		Toolchain:              inspection.TcName,
+		ToolchainInfo:          inspectToolchainInfo(inspection),
+		Global:                 global,
+		Overrides:              overrides,
+		Roots:                  inspectRoots(ctx, inspection.Needed),
+		Packages:               make([]inspectPackage, 0, len(ctx.DepGraph.Packages)),
+		Graph:                  inspectGraph(ctx),
+		CompileDatabase:        compileDatabase,
+		CompileDatabasePresent: inspectPathExists(compileDatabase),
+		BuildReport:            buildReport,
+		BuildReportPresent:     buildReportPresent,
+		BuildReportState:       buildReportState,
+		InstallPrefix:          installRoot,
+		InstallManifest:        filepath.Join(installRoot, "manifest.json"),
 	}
 	sources := inspectSourceStates(ctx, inspection)
 	diagnostics := make([]inspectDiagnostic, 0)
@@ -479,6 +504,7 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 			diagnostics = append(diagnostics, *source.Diagnostic)
 		}
 		if pkg.Needed {
+			pkg.BuildDir, pkg.BuildKey = inspectBuildDirFields(inspection.PkgDirs[name], node.IsLocal())
 			targets, err := inspectTargets(ctx, inspection, name, node)
 			if err != nil {
 				diagnostics = append(diagnostics, inspectDiagnostic{
@@ -493,7 +519,66 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 		}
 		data.Packages = append(data.Packages, pkg)
 	}
+	if reportDiagnostic != nil {
+		diagnostics = append(diagnostics, *reportDiagnostic)
+	}
 	return data, diagnostics
+}
+
+func inspectPathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func inspectBuildDirFields(dirs *api.PkgDirs, local bool) (string, string) {
+	if dirs == nil || dirs.BuildDir == "" {
+		return "", ""
+	}
+	if !local || filepath.Base(filepath.Dir(dirs.BuildDir)) != "build" {
+		return dirs.BuildDir, ""
+	}
+	return dirs.BuildDir, filepath.Base(dirs.BuildDir)
+}
+
+func loadInspectBuildReportState(path, configDigest string, hypothetical bool) (bool, *inspectBuildReportState, *inspectDiagnostic) {
+	if !inspectPathExists(path) {
+		return false, nil, nil
+	}
+	var report struct {
+		Status       string          `json:"status"`
+		BuildID      string          `json:"buildId"`
+		Command      string          `json:"command"`
+		Started      string          `json:"started"`
+		Finished     string          `json:"finished"`
+		ConfigSHA256 string          `json:"configSha256"`
+		Summary      json.RawMessage `json:"summary"`
+		Error        string          `json:"error"`
+	}
+	data, err := os.ReadFile(path)
+	if err == nil && !strings.HasPrefix(strings.TrimSpace(string(data)), "{") {
+		err = errors.New("report is not a JSON object")
+	}
+	if err == nil {
+		err = json.Unmarshal(data, &report)
+	}
+	if err != nil {
+		return true, nil, &inspectDiagnostic{
+			Severity: "warning",
+			Code:     "VMAKE_W_REPORT_UNREADABLE",
+			Message:  fmt.Sprintf("cannot read build report %s: %v", path, err),
+			Fix:      "Rerun vmake build to rewrite build/vmake-build.json.",
+		}
+	}
+	return true, &inspectBuildReportState{
+		Status:        report.Status,
+		BuildID:       report.BuildID,
+		Command:       report.Command,
+		Started:       report.Started,
+		Finished:      report.Finished,
+		ConfigMatches: !hypothetical && report.ConfigSHA256 == configDigest,
+		Summary:       report.Summary,
+		Error:         report.Error,
+	}, nil
 }
 
 func inspectPackageNames(ctx *RuntimeContext) []string {
