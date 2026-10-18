@@ -181,14 +181,18 @@ func parseCMakeBareHeader(line string) (string, bool) {
 }
 
 func cmakeBareDiagnosticMessage(lines []string, index int, severity string) string {
+	var parts []string
 	for i := index + 1; i < len(lines); i++ {
-		text := strings.TrimSpace(lines[i])
-		if text == "" {
-			continue
+		line := strings.TrimSuffix(lines[i], "\r")
+		if strings.TrimSpace(line) == "" || line[0] != ' ' && line[0] != '\t' {
+			break
 		}
-		return truncateRunes(text, buildDiagnosticMessageLimit)
+		parts = append(parts, strings.TrimSpace(line))
 	}
-	return "CMake " + severity
+	if len(parts) == 0 {
+		return "CMake " + severity
+	}
+	return truncateRunes(strings.Join(parts, "\n"), buildDiagnosticMessageLimit)
 }
 
 func parseCMakeDiagnosticHeader(line string) (severity, file string, lineNumber int, ok bool) {

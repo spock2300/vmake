@@ -1678,6 +1678,55 @@ func TestParseBuildWarnings(t *testing.T) {
 	}
 }
 
+func TestParseBuildWarningsBareCMakeContinuation(t *testing.T) {
+	variables := []string{"CMAKE_ASM_COMPILER", "CMAKE_CXX_COMPILER", "CMAKE_FOO_COMPILER", "CMAKE_BAR_COMPILER"}
+	lines := []string{
+		"CMake Warning:",
+		"  Manually-specified variables were not used by the project:",
+	}
+	for _, variable := range variables {
+		lines = append(lines, "    "+variable)
+	}
+	lines = append(lines, "", "  cmake build: 2 steps", "-- Configuring done (0.1s)")
+	warnings := parseBuildWarnings(strings.Join(lines, "\n"))
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %+v", warnings)
+	}
+	warning := warnings[0]
+	if warning.Severity != "warning" || warning.Code != buildWarningCode || warning.File != "" {
+		t.Fatalf("bare cmake warning = %+v", warning)
+	}
+	for _, variable := range variables {
+		if !strings.Contains(warning.Message, variable) {
+			t.Errorf("message missing continuation %q: %q", variable, warning.Message)
+		}
+	}
+	if strings.Contains(warning.Message, "cmake build") || strings.Contains(warning.Message, "Configuring done") {
+		t.Errorf("message collected output past the blank line: %q", warning.Message)
+	}
+}
+
+func TestParseBuildWarningsBareCMakeContinuationCapped(t *testing.T) {
+	line := strings.Repeat("x", buildDiagnosticMessageLimit)
+	output := strings.Join([]string{
+		"CMake Warning:",
+		"  " + line,
+		"  " + line,
+		"  " + line,
+		"",
+	}, "\n")
+	warnings := parseBuildWarnings(output)
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %+v", warnings)
+	}
+	if got := len([]rune(warnings[0].Message)); got != buildDiagnosticMessageLimit {
+		t.Fatalf("message length = %d, want %d", got, buildDiagnosticMessageLimit)
+	}
+	if strings.Contains(warnings[0].Message, line+line) {
+		t.Fatal("message is not bounded")
+	}
+}
+
 func TestParseBuildWarningsCapped(t *testing.T) {
 	var output strings.Builder
 	for i := 0; i < buildWarningLimit+10; i++ {

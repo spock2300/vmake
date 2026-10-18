@@ -141,6 +141,184 @@ func TestCMakeRejectsConflictingManagedArguments(t *testing.T) {
 	}
 }
 
+func TestCMakeConfigureLanguageAwareCompilerInjection(t *testing.T) {
+	toolchainStub := func(t *testing.T) *toolchain.Toolchain {
+		t.Helper()
+		program, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tool := filepath.ToSlash(program)
+		return &toolchain.Toolchain{Tools: toolchain.Tools{
+			CC: tool, CXX: tool, AR: tool, RANLIB: tool, STRIP: tool, OBJCOPY: tool, NM: tool,
+		}}
+	}
+	allCompilers := []string{
+		"CMAKE_C_COMPILER", "CMAKE_CXX_COMPILER", "CMAKE_ASM_COMPILER",
+		"CMAKE_C_COMPILER_TARGET", "CMAKE_CXX_COMPILER_TARGET", "CMAKE_ASM_COMPILER_TARGET",
+	}
+	tests := []struct {
+		name       string
+		cmakelists string
+		want       []string
+		absent     []string
+	}{
+		{
+			name:       "c only",
+			cmakelists: "cmake_minimum_required(VERSION 3.20)\nproject(conly LANGUAGES C)\n",
+			want:       []string{"CMAKE_C_COMPILER", "CMAKE_C_COMPILER_TARGET", "CMAKE_AR", "CMAKE_RANLIB", "CMAKE_STRIP", "CMAKE_OBJCOPY", "CMAKE_NM"},
+			absent:     []string{"CMAKE_CXX_COMPILER", "CMAKE_ASM_COMPILER", "CMAKE_CXX_COMPILER_TARGET", "CMAKE_ASM_COMPILER_TARGET"},
+		},
+		{
+			name:       "legacy c only",
+			cmakelists: "cmake_minimum_required(VERSION 3.20)\nproject(conly C)\n",
+			want:       []string{"CMAKE_C_COMPILER", "CMAKE_C_COMPILER_TARGET", "CMAKE_AR", "CMAKE_RANLIB", "CMAKE_STRIP", "CMAKE_OBJCOPY", "CMAKE_NM"},
+			absent:     []string{"CMAKE_CXX_COMPILER", "CMAKE_ASM_COMPILER", "CMAKE_CXX_COMPILER_TARGET", "CMAKE_ASM_COMPILER_TARGET"},
+		},
+		{
+			name:       "c and cxx",
+			cmakelists: "project(app LANGUAGES C CXX)\n",
+			want:       []string{"CMAKE_C_COMPILER", "CMAKE_CXX_COMPILER", "CMAKE_CXX_COMPILER_TARGET"},
+			absent:     []string{"CMAKE_ASM_COMPILER", "CMAKE_ASM_COMPILER_TARGET"},
+		},
+		{
+			name:       "asm without cxx",
+			cmakelists: "project(app LANGUAGES C ASM)\n",
+			want:       []string{"CMAKE_C_COMPILER", "CMAKE_ASM_COMPILER", "CMAKE_ASM_COMPILER_TARGET"},
+			absent:     []string{"CMAKE_CXX_COMPILER", "CMAKE_CXX_COMPILER_TARGET"},
+		},
+		{
+			name:       "multiline project",
+			cmakelists: "cmake_minimum_required(VERSION 3.20)\nproject(\n  app\n  VERSION 1.0\n  LANGUAGES C CXX\n  DESCRIPTION \"multi line\"\n)\n",
+			want:       []string{"CMAKE_CXX_COMPILER", "CMAKE_CXX_COMPILER_TARGET"},
+			absent:     []string{"CMAKE_ASM_COMPILER", "CMAKE_ASM_COMPILER_TARGET"},
+		},
+		{
+			name:       "commented project is ignored",
+			cmakelists: "# project(commented LANGUAGES C)\nproject(real LANGUAGES CXX) # trailing comment\n",
+			want:       []string{"CMAKE_CXX_COMPILER", "CMAKE_CXX_COMPILER_TARGET"},
+			absent:     []string{"CMAKE_ASM_COMPILER", "CMAKE_ASM_COMPILER_TARGET"},
+		},
+		{
+			name:       "project without languages",
+			cmakelists: "project(app VERSION 1.0)\n",
+			want:       allCompilers,
+		},
+		{
+			name:       "missing cmakelists",
+			cmakelists: "",
+			want:       allCompilers,
+		},
+		{
+			name:       "unparseable languages",
+			cmakelists: "project(app LANGUAGES ${APP_LANGUAGES})\n",
+			want:       allCompilers,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := t.TempDir()
+			if test.cmakelists != "" {
+				if err := os.WriteFile(filepath.Join(source, "CMakeLists.txt"), []byte(test.cmakelists), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			p := NewPackage().
+				SetDirs(PkgDirs{SourceDir: source, BuildDir: t.TempDir()}).
+				SetPlatform(Platform{OS: "linux", Triple: "arm-none-eabi"}).
+				SetToolchain(toolchainStub(t))
+			args, err := p.cmakeConfigureArgs(runtime.GOOS)
+			if err != nil {
+				t.Fatal(err)
+			}
+			definitions := cmakeDefinitions(args)
+			for _, key := range test.want {
+				if !definitions[key] {
+					t.Errorf("missing %s in configure arguments: %q", key, args)
+				}
+			}
+			for _, key := range test.absent {
+				if definitions[key] {
+					t.Errorf("unexpected %s in configure arguments: %q", key, args)
+				}
+			}
+		})
+	}
+}
+
+func TestCMakeConfigureCOnlyOmitsUnusedCompilerWarning(t *testing.T) {
+	for _, program := range []string{"cmake", "ninja"} {
+		if _, err := exec.LookPath(program); err != nil {
+			t.Skip(err)
+		}
+	}
+	tc := toolchain.GetBuiltinHost()
+	for _, tool := range []string{tc.Tools.CC, tc.Tools.CXX, tc.Tools.AR, tc.Tools.RANLIB, tc.Tools.STRIP, tc.Tools.OBJCOPY, tc.Tools.NM} {
+		if tool == "" {
+			continue
+		}
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(err)
+		}
+	}
+	for _, test := range []struct {
+		name    string
+		project string
+	}{
+		{"languages keyword", "project(conly LANGUAGES C)"},
+		{"legacy form", "project(conly C)"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := t.TempDir()
+			cmakelists := "cmake_minimum_required(VERSION 3.20)\n" + test.project + "\n"
+			if err := os.WriteFile(filepath.Join(source, "CMakeLists.txt"), []byte(cmakelists), 0644); err != nil {
+				t.Fatal(err)
+			}
+			p := NewPackage().SetDirs(PkgDirs{SourceDir: source, BuildDir: t.TempDir()}).SetToolchain(tc)
+			vlog.SetLevel(vlog.Normal)
+			defer vlog.SetLevel(vlog.Normal)
+			_, errOut := captureCMakeStreams(t, func() { p.CMakeConfigure("-G", "Ninja") })
+			for _, unwanted := range []string{"Manually-specified variables", "CMAKE_CXX_COMPILER", "CMAKE_ASM_COMPILER"} {
+				if strings.Contains(errOut, unwanted) {
+					t.Errorf("C-only configure stderr mentions %q:\n%s", unwanted, errOut)
+				}
+			}
+		})
+	}
+}
+
+func TestCMakeCapturedStagesCreateMissingBuildDirectory(t *testing.T) {
+	fakeDir := t.TempDir()
+	for _, stage := range []string{"configure", "build", "install"} {
+		writeFakeCMakeStage(t, fakeDir, stage, "")
+	}
+	p := fakeCMakePackage(t, fakeDir)
+	buildDir := filepath.Join(p.BuildDir(), "not", "yet", "created")
+	p.SetDirs(PkgDirs{SourceDir: p.SourceDir(), BuildDir: buildDir})
+	vlog.SetLevel(vlog.Quiet)
+	defer vlog.SetLevel(vlog.Normal)
+	var scriptErr *BuildScriptError
+	out, errOut := captureCMakeStreams(t, func() {
+		scriptErr = captureScriptError(func() {
+			p.CMakeConfigure("-G", "Ninja")
+			p.CMakeBuild()
+			p.CMakeInstall()
+		})
+	})
+	if scriptErr != nil {
+		t.Fatalf("captured CMake failed: %v\nstdout:\n%s\nstderr:\n%s", scriptErr, out, errOut)
+	}
+	for _, stage := range []string{"configure", "build", "install"} {
+		data, err := os.ReadFile(filepath.Join(fakeDir, stage+".cwd"))
+		if err != nil {
+			t.Fatalf("%s did not run: %v", stage, err)
+		}
+		if got := string(data); got != buildDir {
+			t.Errorf("%s working directory = %q, want %q", stage, got, buildDir)
+		}
+	}
+}
+
 func TestCMakeBuildAndInstallOverrides(t *testing.T) {
 	for _, key := range []string{"MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "CMAKE_BUILD_PARALLEL_LEVEL"} {
 		t.Setenv(key, "")
