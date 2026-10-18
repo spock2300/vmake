@@ -28,7 +28,10 @@ type buildDiagnostic struct {
 	Target   string `json:"target,omitempty"`
 }
 
-var gnuDiagnosticPattern = regexp.MustCompile(`^(.*?):(\d+):(?:(\d+):)?\s*(fatal error|error|warning|note):\s*(.*)$`)
+var (
+	gnuDiagnosticPattern = regexp.MustCompile(`^(.*?):(\d+):(?:(\d+):)?\s*(fatal error|error|warning|note):\s*(.*)$`)
+	gnuLinkerPattern     = regexp.MustCompile(`^(.*):(\d+):(?:\([^)]*\):)?\s*(undefined reference to .*|multiple definition of .*)$`)
+)
 
 func buildFailureDetails(err error) ([]buildDiagnostic, string) {
 	diagnostics := []buildDiagnostic{}
@@ -68,7 +71,7 @@ func collectBuildDiagnostics(err error, target *build.TargetError, diagnostics *
 		code := buildCodeForTarget(target)
 		parsed := parseGNUDiagnostics(commandErr.Output)
 		if len(parsed) == 0 {
-			message := tailRunes(strings.TrimSpace(commandErr.Output), buildDiagnosticMessageLimit)
+			message := fallbackCommandMessage(commandErr.Output)
 			if message == "" && commandErr.Err != nil {
 				message = commandErr.Err.Error()
 			}
@@ -98,29 +101,68 @@ func collectBuildDiagnostics(err error, target *build.TargetError, diagnostics *
 func parseGNUDiagnostics(output string) []buildDiagnostic {
 	diagnostics := []buildDiagnostic{}
 	for _, line := range strings.Split(output, "\n") {
-		match := gnuDiagnosticPattern.FindStringSubmatch(strings.TrimSuffix(line, "\r"))
-		if match == nil {
+		line = strings.TrimSuffix(line, "\r")
+		if match := gnuDiagnosticPattern.FindStringSubmatch(line); match != nil {
+			file := strings.TrimSpace(match[1])
+			if file == "" {
+				continue
+			}
+			lineNumber, _ := strconv.Atoi(match[2])
+			column, _ := strconv.Atoi(match[3])
+			severity := match[4]
+			if severity == "fatal error" {
+				severity = "error"
+			}
+			diagnostics = append(diagnostics, buildDiagnostic{
+				Severity: severity,
+				Message:  strings.TrimSpace(match[5]),
+				File:     file,
+				Line:     lineNumber,
+				Column:   column,
+			})
 			continue
 		}
-		file := strings.TrimSpace(match[1])
-		if file == "" {
-			continue
+		if match := gnuLinkerPattern.FindStringSubmatch(line); match != nil {
+			file := strings.TrimSpace(match[1])
+			if file == "" {
+				continue
+			}
+			lineNumber, _ := strconv.Atoi(match[2])
+			diagnostics = append(diagnostics, buildDiagnostic{
+				Severity: "error",
+				Message:  strings.TrimSpace(match[3]),
+				File:     file,
+				Line:     lineNumber,
+			})
 		}
-		lineNumber, _ := strconv.Atoi(match[2])
-		column, _ := strconv.Atoi(match[3])
-		severity := match[4]
-		if severity == "fatal error" {
-			severity = "error"
-		}
-		diagnostics = append(diagnostics, buildDiagnostic{
-			Severity: severity,
-			Message:  strings.TrimSpace(match[5]),
-			File:     file,
-			Line:     lineNumber,
-			Column:   column,
-		})
 	}
 	return diagnostics
+}
+
+func fallbackCommandMessage(output string) string {
+	if message := lastOutputLineContaining(output, "undefined reference", "multiple definition"); message != "" {
+		return message
+	}
+	if message := lastOutputLineContaining(output, "error:"); message != "" {
+		return message
+	}
+	return tailRunes(strings.TrimSpace(output), buildDiagnosticMessageLimit)
+}
+
+func lastOutputLineContaining(output string, needles ...string) string {
+	lines := strings.Split(output, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.Join(strings.Fields(lines[i]), " ")
+		if line == "" {
+			continue
+		}
+		for _, needle := range needles {
+			if strings.Contains(line, needle) {
+				return truncateRunes(line, buildDiagnosticMessageLimit)
+			}
+		}
+	}
+	return ""
 }
 
 func buildCodeForTarget(target *build.TargetError) string {

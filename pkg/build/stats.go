@@ -1,7 +1,9 @@
 package build
 
 import (
+	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -36,8 +38,20 @@ func (s *BuildStats) RecordCompile(target, source string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.compiled++
-	s.compiledFiles[source] = true
+	s.compiledFiles[qualifiedChangedFile(target, source)] = true
 	s.changedTargets[target] = true
+}
+
+func qualifiedChangedFile(target, source string) string {
+	file := filepath.ToSlash(source)
+	if filepath.IsAbs(source) || strings.Contains(file, ":") {
+		return file
+	}
+	pkg, _, ok := strings.Cut(target, ":")
+	if !ok {
+		pkg = target
+	}
+	return pkg + ":" + file
 }
 
 func (s *BuildStats) RecordLink(target string) {

@@ -51,6 +51,8 @@ type buildSummary struct {
 	ActivitiesUpToDate int      `json:"actionsUpToDate"`
 	ArtifactsInstalled int      `json:"artifactsInstalled"`
 	ChangedFiles       []string `json:"changedFiles"`
+	Callbacks          int      `json:"callbacks"`
+	NoOp               bool     `json:"noOp"`
 }
 
 type buildTestResult struct {
@@ -162,8 +164,18 @@ func printBuildSummary(writer io.Writer, report *buildReport, err error) {
 		fmt.Fprintf(writer, "Build succeeded (buildId=%s)\n", report.BuildID)
 		return
 	}
-	fmt.Fprintf(writer, "Build succeeded: %d targets (%d built, %d up to date), %d compiled, %d linked, %d installed in %s (buildId=%s)\n",
-		summary.TargetsTotal, summary.TargetsBuilt, summary.TargetsUpToDate,
+	if summary.NoOp {
+		fmt.Fprintf(writer, "Build succeeded: no compilation (%d targets, %d up to date, %d callbacks, %d installed) in %s (buildId=%s)\n",
+			summary.TargetsTotal, summary.TargetsUpToDate, summary.Callbacks,
+			summary.ArtifactsInstalled, formatBuildDuration(summary.DurationMs), report.BuildID)
+		return
+	}
+	callbacks := ""
+	if summary.Callbacks > 0 {
+		callbacks = fmt.Sprintf(", %d callbacks", summary.Callbacks)
+	}
+	fmt.Fprintf(writer, "Build succeeded: %d targets (%d built, %d up to date)%s, %d compiled, %d linked, %d installed in %s (buildId=%s)\n",
+		summary.TargetsTotal, summary.TargetsBuilt, summary.TargetsUpToDate, callbacks,
 		summary.FilesCompiled, summary.FilesLinked, summary.ArtifactsInstalled,
 		formatBuildDuration(summary.DurationMs), report.BuildID)
 }
@@ -405,10 +417,14 @@ func newBuildSummary(result *BuildResult, artifacts int) *buildSummary {
 		switch target.Status {
 		case build.TargetStatusBuilt:
 			summary.TargetsBuilt++
+			if target.Kind == string(api.TargetVoid) {
+				summary.Callbacks++
+			}
 		case build.TargetStatusUpToDate:
 			summary.TargetsUpToDate++
 		}
 	}
+	summary.NoOp = summary.FilesCompiled == 0 && summary.FilesLinked == 0 && len(summary.ChangedFiles) == 0
 	return summary
 }
 

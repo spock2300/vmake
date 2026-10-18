@@ -25,7 +25,7 @@ func TestBuildStatsRecordingAndSnapshot(t *testing.T) {
 	if snapshot.Compiled != 3 || snapshot.Linked != 1 || snapshot.UpToDate != 2 {
 		t.Fatalf("snapshot counts = %+v", snapshot)
 	}
-	if !slices.Equal(snapshot.CompiledFiles, []string{"src/a.c", "src/b.c"}) {
+	if !slices.Equal(snapshot.CompiledFiles, []string{"a:src/a.c", "a:src/b.c", "b:src/a.c"}) {
 		t.Fatalf("compiled files = %v", snapshot.CompiledFiles)
 	}
 	if !slices.Equal(snapshot.ChangedTargets, []string{"a:a", "b:b"}) {
@@ -64,8 +64,26 @@ func TestBuildStatsConcurrentRecording(t *testing.T) {
 	if snapshot.Compiled != 400 || snapshot.Linked != 400 || snapshot.UpToDate != 400 {
 		t.Fatalf("snapshot counts = %+v", snapshot)
 	}
-	if !slices.Equal(snapshot.CompiledFiles, []string{"src/main.c"}) {
+	if !slices.Equal(snapshot.CompiledFiles, []string{"p:src/main.c"}) {
 		t.Fatalf("compiled files = %v", snapshot.CompiledFiles)
+	}
+}
+
+func TestBuildStatsQualifiedChangedFiles(t *testing.T) {
+	stats := NewBuildStats()
+	stats.RecordCompile("app:app", "src/main.c")
+	stats.RecordCompile("app:app", "src/main.c")
+	stats.RecordCompile("lib:lib", "src/main.c")
+	stats.RecordCompile("lib:lib", "/absolute/generated/table.c")
+	stats.RecordCompile("lib:lib", "vendor:src/vendor.c")
+	stats.RecordCompile("standalone", "src/only.c")
+	snapshot := stats.Snapshot()
+	want := []string{"/absolute/generated/table.c", "app:src/main.c", "lib:src/main.c", "standalone:src/only.c", "vendor:src/vendor.c"}
+	if !slices.Equal(snapshot.CompiledFiles, want) {
+		t.Fatalf("compiled files = %v, want %v", snapshot.CompiledFiles, want)
+	}
+	if snapshot.Compiled != 6 {
+		t.Fatalf("compiled count = %d", snapshot.Compiled)
 	}
 }
 
@@ -87,7 +105,7 @@ func TestSchedulerRecordsBuildStats(t *testing.T) {
 	if !s.Stats().ChangedTarget("p:app") {
 		t.Fatal("built target is not marked changed")
 	}
-	if !slices.Equal(snapshot.CompiledFiles, []string{"main.c"}) {
+	if !slices.Equal(snapshot.CompiledFiles, []string{"p:main.c"}) {
 		t.Fatalf("compiled files = %v", snapshot.CompiledFiles)
 	}
 	if s.TargetDuration("p:app") < 0 {

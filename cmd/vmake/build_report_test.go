@@ -340,8 +340,11 @@ func TestBuildReportV2Success(t *testing.T) {
 	if summary.TargetsTotal != 1 || summary.TargetsBuilt != 1 || summary.TargetsUpToDate != 0 || summary.TargetsFailed != 0 ||
 		summary.TestsFound != 0 || summary.TestsPassed != 0 || summary.TestsFailed != 0 ||
 		summary.FilesCompiled != 1 || summary.FilesLinked != 1 || summary.ArtifactsInstalled != 0 ||
-		!slices.Equal(summary.ChangedFiles, []string{"src/main.c"}) {
+		!slices.Equal(summary.ChangedFiles, []string{"scratch:src/main.c"}) {
 		t.Fatalf("summary = %+v", summary)
+	}
+	if summary.Callbacks != 0 || summary.NoOp {
+		t.Fatalf("compiled build reported callbacks/no-op: %+v", summary)
 	}
 	if summary.DurationMs <= 0 || summary.DurationMs != report.DurationMs {
 		t.Fatalf("summary duration = %d, report duration = %d", summary.DurationMs, report.DurationMs)
@@ -421,7 +424,7 @@ func TestBuildReportV2CompileFailure(t *testing.T) {
 	}
 }
 
-func TestBuildReportV2LinkFallback(t *testing.T) {
+func TestBuildReportV2LinkFailure(t *testing.T) {
 	project := writeBuildReportProject(t, "extern int missing_function(void);\nint main(void) { return missing_function(); }\n")
 	_, stderr, code := runBuildCommand(t, project, "build")
 	if code != 1 {
@@ -432,14 +435,24 @@ func TestBuildReportV2LinkFallback(t *testing.T) {
 		t.Fatalf("report = %+v", report)
 	}
 	diagnostic := report.Diagnostics[0]
-	if diagnostic.Code != "VMAKE_E_LINK" || diagnostic.Severity != "error" || diagnostic.File != "" {
-		t.Fatalf("fallback diagnostic = %+v", diagnostic)
+	if diagnostic.Code != "VMAKE_E_LINK" || diagnostic.Severity != "error" ||
+		filepath.Base(diagnostic.File) != "main.c" || diagnostic.Line != 2 {
+		t.Fatalf("link diagnostic = %+v", diagnostic)
+	}
+	if !strings.Contains(diagnostic.Message, "undefined reference to") || !strings.Contains(diagnostic.Message, "missing_function") {
+		t.Fatalf("link diagnostic message = %q", diagnostic.Message)
 	}
 	if diagnostic.Package != "scratch" || diagnostic.Target != "scratch:app" || diagnostic.Message == "" {
-		t.Fatalf("fallback context = %+v", diagnostic)
+		t.Fatalf("link context = %+v", diagnostic)
 	}
 	if report.Error == "" || len(report.Error) >= 300 || strings.Contains(report.Error, "\n") {
-		t.Fatalf("fallback summary = %q", report.Error)
+		t.Fatalf("link summary = %q", report.Error)
+	}
+	if !strings.Contains(report.Error, "undefined reference to") || !strings.Contains(report.Error, "missing_function") {
+		t.Fatalf("link summary does not name the unresolved symbol: %q", report.Error)
+	}
+	if strings.Contains(report.Error, "/object/") || strings.Contains(report.Error, filepath.Join(project, "build")) {
+		t.Fatalf("link summary leaked build-key paths: %q", report.Error)
 	}
 }
 
@@ -537,6 +550,82 @@ func TestBuildFailureDetails(t *testing.T) {
 	diagnostics, summary = buildFailureDetails(errors.New(long + "\nsecond line"))
 	if len(diagnostics) != 0 || len(summary) >= 300 || strings.HasSuffix(summary, "second line") {
 		t.Fatalf("long summary = %q", summary)
+	}
+
+	longPath := "/tmp/" + strings.Repeat("object-hash", 40) + "/main.o"
+	symbolFallback := &build.TargetError{Target: "firmware:app", Stage: "link", Err: &iexec.CommandError{
+		Command: "ld",
+		Output:  longPath + ": in function `call':\n/usr/bin/ld: main.o: undefined reference to `wanted_symbol'\ncollect2: error: ld returned 1 exit status\n",
+		Err:     errors.New("exit status 1"),
+	}}
+	diagnostics, summary = buildFailureDetails(symbolFallback)
+	if len(diagnostics) != 1 || diagnostics[0].Code != "VMAKE_E_LINK" || diagnostics[0].File != "" ||
+		!strings.Contains(diagnostics[0].Message, "undefined reference to `wanted_symbol'") {
+		t.Fatalf("symbol fallback = %+v", diagnostics)
+	}
+	if summary != "/usr/bin/ld: main.o: undefined reference to `wanted_symbol'" {
+		t.Fatalf("symbol fallback summary = %q", summary)
+	}
+
+	errorFallback := &build.TargetError{Target: "firmware:app", Stage: "link", Err: &iexec.CommandError{
+		Command: "ld",
+		Output:  longPath + ": cannot open\ncollect2: error: ld returned 1 exit status\n",
+		Err:     errors.New("exit status 1"),
+	}}
+	diagnostics, summary = buildFailureDetails(errorFallback)
+	if len(diagnostics) != 1 || summary != "collect2: error: ld returned 1 exit status" {
+		t.Fatalf("error fallback = %+v / %q", diagnostics, summary)
+	}
+}
+
+func TestGNUDiagnosticsParsesLinkerSymbols(t *testing.T) {
+	output := strings.Join([]string{
+		"/usr/bin/ld: /tmp/build/key/object/hash/main.o: in function `call':",
+		"/tmp/project/src/main.c:15: undefined reference to `missing_symbol'",
+		"src/generated.c:9:(.text.call+0x5): undefined reference to `other_symbol'",
+		"src/duplicate.c:7: multiple definition of `duplicate_symbol'",
+		"collect2: error: ld returned 1 exit status",
+	}, "\n")
+	diagnostics := parseGNUDiagnostics(output)
+	if len(diagnostics) != 3 {
+		t.Fatalf("diagnostics = %+v", diagnostics)
+	}
+	for i, want := range []struct {
+		file    string
+		line    int
+		message string
+	}{
+		{"/tmp/project/src/main.c", 15, "undefined reference to `missing_symbol'"},
+		{"src/generated.c", 9, "undefined reference to `other_symbol'"},
+		{"src/duplicate.c", 7, "multiple definition of `duplicate_symbol'"},
+	} {
+		got := diagnostics[i]
+		if got.Severity != "error" || got.Code != "" || got.Column != 0 || got.File != want.file || got.Line != want.line || got.Message != want.message {
+			t.Fatalf("diagnostic %d = %+v, want file %q line %d message %q", i, got, want.file, want.line, want.message)
+		}
+	}
+}
+
+func TestBuildFailureDetailsLinkerDiagnostic(t *testing.T) {
+	output := strings.Join([]string{
+		"/usr/bin/ld: /tmp/build/key/object/hash/main.o: in function `call':",
+		"/tmp/project/src/main.c:15:(.text.call+0x5): undefined reference to `missing_symbol'",
+		"collect2: error: ld returned 1 exit status",
+	}, "\n")
+	targetErr := &build.TargetError{Target: "firmware:app", Stage: "link", Err: &iexec.CommandError{Command: "gcc", Output: output, Err: errors.New("exit status 1")}}
+	diagnostics, summary := buildFailureDetails(targetErr)
+	if len(diagnostics) != 1 {
+		t.Fatalf("diagnostics = %+v", diagnostics)
+	}
+	diagnostic := diagnostics[0]
+	if diagnostic.Code != "VMAKE_E_LINK" || diagnostic.Severity != "error" ||
+		diagnostic.File != "/tmp/project/src/main.c" || diagnostic.Line != 15 ||
+		diagnostic.Package != "firmware" || diagnostic.Target != "firmware:app" ||
+		diagnostic.Message != "undefined reference to `missing_symbol'" {
+		t.Fatalf("diagnostic = %+v", diagnostic)
+	}
+	if summary != "/tmp/project/src/main.c:15: undefined reference to `missing_symbol'" {
+		t.Fatalf("summary = %q", summary)
 	}
 }
 
@@ -646,21 +735,27 @@ func TestBuildQuietSummaryAndReportCounts(t *testing.T) {
 		report.Summary.FilesCompiled != 1 || report.Summary.FilesLinked != 1 || report.Summary.ArtifactsInstalled != 1 {
 		t.Fatalf("cold summary report = %+v", report.Summary)
 	}
-	if !slices.Equal(report.Summary.ChangedFiles, []string{"src/main.c"}) {
+	if !slices.Equal(report.Summary.ChangedFiles, []string{"summary:src/main.c"}) {
 		t.Fatalf("cold changed files = %v", report.Summary.ChangedFiles)
+	}
+	if report.Summary.Callbacks != 0 || report.Summary.NoOp {
+		t.Fatalf("cold summary callbacks/no-op = %+v", report.Summary)
 	}
 	if len(report.Targets) != 1 || report.Targets[0].Status != build.TargetStatusBuilt || report.Targets[0].DurationMs < 0 {
 		t.Fatalf("cold target results = %+v", report.Targets)
 	}
 
 	noop := quietBuild("-i")
-	if !strings.Contains(noop, "(0 built, 1 up to date)") || !strings.Contains(noop, "0 compiled, 0 linked") {
+	if !strings.HasPrefix(noop, "Build succeeded: no compilation (1 targets, 1 up to date, 0 callbacks,") {
 		t.Fatalf("no-op summary = %q", noop)
 	}
 	report = loadBuildReport(t, project)
 	if report.Summary == nil || report.Summary.TargetsBuilt != 0 || report.Summary.TargetsUpToDate != 1 ||
 		report.Summary.FilesCompiled != 0 || report.Summary.FilesLinked != 0 || len(report.Summary.ChangedFiles) != 0 {
 		t.Fatalf("no-op summary report = %+v", report.Summary)
+	}
+	if !report.Summary.NoOp || report.Summary.Callbacks != 0 {
+		t.Fatalf("no-op summary callbacks/no-op = %+v", report.Summary)
 	}
 	if report.Summary.ActivitiesUpToDate < 2 {
 		t.Fatalf("no-op actionsUpToDate = %d", report.Summary.ActivitiesUpToDate)
@@ -679,8 +774,11 @@ func TestBuildQuietSummaryAndReportCounts(t *testing.T) {
 	}
 	report = loadBuildReport(t, project)
 	if report.Summary == nil || report.Summary.TargetsBuilt != 1 || report.Summary.FilesCompiled != 1 ||
-		report.Summary.FilesLinked != 1 || !slices.Equal(report.Summary.ChangedFiles, []string{"src/main.c"}) {
+		report.Summary.FilesLinked != 1 || !slices.Equal(report.Summary.ChangedFiles, []string{"summary:src/main.c"}) {
 		t.Fatalf("incremental summary report = %+v", report.Summary)
+	}
+	if report.Summary.NoOp || report.Summary.Callbacks != 0 {
+		t.Fatalf("incremental summary callbacks/no-op = %+v", report.Summary)
 	}
 	if report.Targets[0].Status != build.TargetStatusBuilt {
 		t.Fatalf("incremental target status = %q", report.Targets[0].Status)
@@ -732,25 +830,67 @@ import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
 	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c")
 		ctx.Target("task").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error { return nil })
 	})
 }
 `)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n")
 	stdout, stderr, code := runBuildCommand(t, project, "-q", "build")
 	if code != 0 || stderr != "" {
 		t.Fatalf("build exit = %d, stderr = %q", code, stderr)
 	}
 	lines := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
-	if len(lines) != 1 || !strings.Contains(lines[0], "(1 built, 0 up to date)") || !strings.Contains(lines[0], "0 compiled, 0 linked") {
+	if len(lines) != 1 || !strings.Contains(lines[0], "(2 built, 0 up to date), 1 callbacks, 1 compiled, 1 linked, 0 installed") {
 		t.Fatalf("void summary = %q", stdout)
 	}
 	report := loadBuildReport(t, project)
-	if report.Summary == nil || report.Summary.TargetsBuilt != 1 || report.Summary.TargetsUpToDate != 0 ||
-		report.Summary.FilesCompiled != 0 || report.Summary.FilesLinked != 0 || len(report.Summary.ChangedFiles) != 0 {
+	if report.Summary == nil || report.Summary.TargetsBuilt != 2 || report.Summary.TargetsUpToDate != 0 ||
+		report.Summary.FilesCompiled != 1 || report.Summary.FilesLinked != 1 || report.Summary.Callbacks != 1 ||
+		report.Summary.NoOp || !slices.Equal(report.Summary.ChangedFiles, []string{"tasks:src/main.c"}) {
 		t.Fatalf("void summary report = %+v", report.Summary)
 	}
-	if len(report.Targets) != 1 || report.Targets[0].Status != build.TargetStatusBuilt || report.Targets[0].DurationMs < 0 {
-		t.Fatalf("void target result = %+v", report.Targets)
+	if len(report.Targets) != 2 {
+		t.Fatalf("void target results = %+v", report.Targets)
+	}
+	foundTask := false
+	for _, target := range report.Targets {
+		if target.DurationMs < 0 || target.Status != build.TargetStatusBuilt {
+			t.Fatalf("target result = %+v", target)
+		}
+		if target.Target == "task" {
+			foundTask = true
+			if target.Kind != string(api.TargetVoid) {
+				t.Fatalf("void target kind = %+v", target)
+			}
+		}
+	}
+	if !foundTask {
+		t.Fatal("void target was not executed")
+	}
+
+	stdout, stderr, code = runBuildCommand(t, project, "-q", "build")
+	if code != 0 || stderr != "" {
+		t.Fatalf("no-op build exit = %d, stderr = %q", code, stderr)
+	}
+	lines = strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "Build succeeded: no compilation (2 targets, 1 up to date, 1 callbacks,") {
+		t.Fatalf("void no-op summary = %q", stdout)
+	}
+	report = loadBuildReport(t, project)
+	if report.Summary == nil || report.Summary.TargetsBuilt != 1 || report.Summary.TargetsUpToDate != 1 ||
+		report.Summary.FilesCompiled != 0 || report.Summary.FilesLinked != 0 || report.Summary.Callbacks != 1 ||
+		!report.Summary.NoOp || len(report.Summary.ChangedFiles) != 0 {
+		t.Fatalf("void no-op summary report = %+v", report.Summary)
+	}
+	for _, target := range report.Targets {
+		want := build.TargetStatusUpToDate
+		if target.Target == "task" {
+			want = build.TargetStatusBuilt
+		}
+		if target.Status != want {
+			t.Fatalf("target result = %+v, want status %q", target, want)
+		}
 	}
 }
 
@@ -830,7 +970,8 @@ func TestBuildJSONSuccessNoopAndScriptOutput(t *testing.T) {
 	}
 	if cold.Data.Summary == nil || cold.Data.Summary.TargetsBuilt != 1 || cold.Data.Summary.TargetsUpToDate != 0 ||
 		cold.Data.Summary.FilesCompiled != 1 || cold.Data.Summary.FilesLinked != 1 ||
-		!slices.Equal(cold.Data.Summary.ChangedFiles, []string{"src/main.c"}) {
+		cold.Data.Summary.Callbacks != 0 || cold.Data.Summary.NoOp ||
+		!slices.Equal(cold.Data.Summary.ChangedFiles, []string{"summary:src/main.c"}) {
 		t.Fatalf("cold summary = %+v", cold.Data.Summary)
 	}
 	if !strings.Contains(stderr, "SCRIPT NOISE") {
@@ -847,6 +988,7 @@ func TestBuildJSONSuccessNoopAndScriptOutput(t *testing.T) {
 	if noop.Status != "ok" || noop.Data.Summary == nil ||
 		noop.Data.Summary.TargetsBuilt != 0 || noop.Data.Summary.TargetsUpToDate != 1 ||
 		noop.Data.Summary.FilesCompiled != 0 || noop.Data.Summary.FilesLinked != 0 ||
+		!noop.Data.Summary.NoOp || noop.Data.Summary.Callbacks != 0 ||
 		len(noop.Data.Summary.ChangedFiles) != 0 {
 		t.Fatalf("no-op envelope = %+v / summary = %+v", noop, noop.Data.Summary)
 	}
