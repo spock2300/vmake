@@ -294,6 +294,41 @@ func (ctx *BuildContext) Exec(name string, args ...string) {
 	}
 }
 
+func (ctx *BuildContext) BuildPath(elem ...string) string {
+	if ctx.pkg != nil {
+		return ctx.pkg.BuildPath(elem...)
+	}
+	if len(elem) == 0 {
+		return BuildDirToken
+	}
+	parts := make([]string, 0, len(elem)+1)
+	parts = append(parts, BuildDirToken)
+	parts = append(parts, elem...)
+	return filepath.Join(parts...)
+}
+
+func (ctx *BuildContext) WriteBuildFile(relPath string, content any) string {
+	if ctx.pkg == nil {
+		fatalScript(ctx.PackageName(), "WriteBuildFile", "no package associated with context")
+	}
+	return ctx.pkg.WriteBuildFile(relPath, content)
+}
+
+func (ctx *BuildContext) GenerateFile(relPath string, fn func() ([]byte, error)) string {
+	if ctx.pkg == nil {
+		fatalScript(ctx.PackageName(), "GenerateFile", "no package associated with context")
+	}
+	return ctx.pkg.GenerateFile(relPath, fn)
+}
+
+func (ctx *BuildContext) Generate(fn func() error) *BuildContext {
+	if ctx.pkg == nil {
+		fatalScript(ctx.PackageName(), "Generate", "no package associated with context")
+	}
+	ctx.pkg.Generate(fn)
+	return ctx
+}
+
 type InstallContext struct {
 	ConfigAccessor
 	*InstallItemHolder

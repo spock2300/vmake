@@ -97,6 +97,7 @@ func YaegiSymbols() map[string]reflect.Value {
 		"SourceRemote":        reflect.ValueOf(SourceRemote),
 		"ModeOptionName":      reflect.ValueOf(ModeOptionName),
 		"ToolchainOptionName": reflect.ValueOf(ToolchainOptionName),
+		"BuildDirToken":       reflect.ValueOf(BuildDirToken),
 		"ModeDebug":           reflect.ValueOf(ModeDebug),
 		"ModeRelease":         reflect.ValueOf(ModeRelease),
 		"ModeSize":            reflect.ValueOf(ModeSize),

@@ -217,9 +217,9 @@ func (i *ArtifactInstaller) installTarget(node *BuildNode) error {
 	return i.installPublicIncludes(node, pkgInfo, prefix)
 }
 
-func copyPublicIncludes(target *api.Target, baseDir, includeDir string, record func(string, string)) error {
+func copyPublicIncludes(target *api.Target, baseDir, buildDir, includeDir string, record func(string, string)) error {
 	for _, inc := range target.PublicIncludes() {
-		srcPath := filepath.Join(baseDir, inc)
+		srcPath := resolvePkgPath(baseDir, buildDir, inc)
 		info, err := os.Stat(srcPath)
 		if err != nil {
 			if !os.IsNotExist(err) {
@@ -279,7 +279,12 @@ func (i *ArtifactInstaller) installPublicIncludes(node *BuildNode, pkgInfo *PkgI
 	if !i.isSDK() {
 		return nil
 	}
-	return copyPublicIncludes(node.Target, i.pkgDirs[node.PkgName].SourceDir, filepath.Join(prefix, "include"), func(source, destination string) {
+	dirs := i.pkgDirs[node.PkgName]
+	buildDir := pkgInfo.BuildDir
+	if buildDir == "" && dirs != nil {
+		buildDir = dirs.BuildDir
+	}
+	return copyPublicIncludes(node.Target, dirs.SourceDir, buildDir, filepath.Join(prefix, "include"), func(source, destination string) {
 		i.recordFile(node.PkgName, node.Target.Name(), source, destination)
 	})
 }
@@ -297,12 +302,16 @@ func (i *ArtifactInstaller) installExtraItems(node *BuildNode) error {
 
 	prefix := i.getEffectivePrefix(pkgInfo)
 	pkgDir := pkgDirs.SourceDir
+	buildDir := pkgInfo.BuildDir
+	if buildDir == "" {
+		buildDir = pkgDirs.BuildDir
+	}
 
 	for _, item := range pkgInfo.InstallItems {
 		if err := i.ctx.Err(); err != nil {
 			return err
 		}
-		srcPath := filepath.Join(pkgDir, item.Src)
+		srcPath := resolvePkgPath(pkgDir, buildDir, item.Src)
 		destPath := filepath.Join(prefix, item.Dest)
 
 		if pkgInfo.InstallFilter != nil {

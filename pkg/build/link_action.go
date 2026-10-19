@@ -39,7 +39,7 @@ func (s *Scheduler) planLink(resolved *ResolvedTarget, objs []string) (*linkActi
 	}
 	var err error
 	if target.Prebuilt() != "" {
-		source := resolveWorkPath(workDir, target.Prebuilt())
+		source := info.ResolvePath(target.Prebuilt())
 		action.inputs = append(action.inputs, source)
 		operation := "copy"
 		if len(target.PostLinkSteps()) == 0 {
@@ -87,7 +87,9 @@ func (s *Scheduler) planLink(resolved *ResolvedTarget, objs []string) (*linkActi
 		}
 	}
 	action.inputs = append(action.inputs, resolved.VersionScript, resolved.LinkerScript)
-	action.inputs = append(action.inputs, target.PostLinkDeps()...)
+	for _, dep := range target.PostLinkDeps() {
+		action.inputs = append(action.inputs, expandBuildDirToken(info.EffectiveBuildDir(), dep))
+	}
 	action.outputs = append(action.outputs, postLinkOutputPaths(target, workDir, resolved.OutputPath)...)
 	commands := []commandSpec{action.command}
 	postCommands, err := s.postLinkCommands(target, workDir, resolved.OutputPath)

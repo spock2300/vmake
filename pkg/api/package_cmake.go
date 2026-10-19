@@ -41,7 +41,7 @@ func (p *Package) SetCMakeBuildType(config string) *Package {
 
 func (p *Package) CMakeBuildDir() string {
 	if p.cmakeBuildDir == "" {
-		return filepath.Join(p.dirs.BuildDir, "cmake")
+		return p.BuildPath("cmake")
 	}
 	return p.cmakeDir(p.cmakeBuildDir)
 }
@@ -53,7 +53,7 @@ func (p *Package) CMakeInstallDir() string {
 	if p.dirs.InstallDir != "" {
 		return p.dirs.InstallDir
 	}
-	return filepath.Join(p.dirs.BuildDir, "staging")
+	return p.BuildPath("staging")
 }
 
 func (p *Package) CMakeGlobalFlagsArgs() []string {
@@ -292,7 +292,7 @@ func (p *Package) cmakeDir(dir string) string {
 	if filepath.IsAbs(dir) {
 		return dir
 	}
-	return filepath.Join(p.dirs.BuildDir, dir)
+	return p.BuildPath(dir)
 }
 
 func (p *Package) cmakeBuildType() string {

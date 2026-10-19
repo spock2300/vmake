@@ -47,6 +47,20 @@ type PkgInfo struct {
 	BuildKey string
 }
 
+func (pi *PkgInfo) EffectiveBuildDir() string {
+	if pi.BuildDir != "" {
+		return pi.BuildDir
+	}
+	return BuildPath(".", pi.BuildKey, "")
+}
+
+func (pi *PkgInfo) ResolvePath(path string) string {
+	if pi == nil {
+		return path
+	}
+	return resolvePkgPath(pi.SourceDir, pi.EffectiveBuildDir(), path)
+}
+
 func (pi *PkgInfo) OutputPath(subpath string) string {
 	if pi.BuildDir != "" {
 		return filepath.Join(pi.BuildDir, subpath)
@@ -74,6 +88,7 @@ type Scheduler struct {
 	pkgs          map[string]*PkgInfo
 	ccWriter      *CompileCommandsWriter
 	packages      map[string]*api.Package
+	pkgGenerated  map[string]bool
 	rootDir       string
 	includeTests  bool
 	check         bool
@@ -173,6 +188,7 @@ func newScheduler(cfg schedulerConfig) *Scheduler {
 		pkgs:          make(map[string]*PkgInfo),
 		ccWriter:      NewCompileCommandsWriter(cfg.Tools),
 		packages:      packages,
+		pkgGenerated:  make(map[string]bool),
 		rootDir:       cfg.RootDir,
 		includeTests:  cfg.IncludeTests,
 		check:         cfg.Check,
@@ -323,6 +339,10 @@ func (s *Scheduler) Build(fullName string) error {
 
 	vlog.Verbose("[%s]", fullName)
 
+	if err := s.ensurePackageGenerated(node.PkgName); err != nil {
+		return wrapTargetError(fullName, "prepare", err)
+	}
+
 	resolved, err := s.resolveTarget(node)
 	if err != nil {
 		return wrapTargetError(fullName, "prepare", err)
@@ -349,11 +369,35 @@ func (s *Scheduler) Build(fullName string) error {
 	return wrapTargetError(fullName, stage, s.finalizeTarget(resolved, pkgInfo, objs))
 }
 
+func (s *Scheduler) ensurePackageGenerated(pkgName string) error {
+	if s.check || s.pkgGenerated[pkgName] {
+		return nil
+	}
+	if s.pkgGenerated == nil {
+		s.pkgGenerated = make(map[string]bool)
+	}
+	s.pkgGenerated[pkgName] = true
+	pkg := s.packages[pkgName]
+	if pkg == nil || !pkg.HasGenerators() {
+		return nil
+	}
+	pkgInfo := s.pkgs[pkgName]
+	if pkgInfo == nil {
+		return nil
+	}
+	buildDir := resolveWorkPath(pkgInfo.SourceDir, pkgInfo.EffectiveBuildDir())
+	return pkg.RunGenerators(s.effectiveSourceDir(pkgName), buildDir, func(outPath string) {
+		if s.hashes != nil {
+			s.hashes.evict(pkgInfo.SourceDir, []string{outPath})
+		}
+	})
+}
+
 func (s *Scheduler) prepareTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, workDir string) error {
 	if s.check {
 		node := resolved.Node
 		pkg := s.packages[node.PkgName]
-		if len(node.Target.GenRules()) > 0 || (pkg != nil && pkg.GenConfigHeader()) {
+		if len(node.Target.GenRules()) > 0 || (pkg != nil && (pkg.GenConfigHeader() || pkg.HasGenerators())) {
 			if s.stats != nil {
 				s.stats.RecordPlannedGenerator(node.FullName)
 			}

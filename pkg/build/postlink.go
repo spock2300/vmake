@@ -20,10 +20,15 @@ func postLinkOutputPaths(target *api.Target, sourceDir, outputPath string) []str
 }
 
 func expandPostLinkArgs(templates []string, sourceDir, outputPath string) []string {
+	buildDir := ""
+	if outputPath != "" {
+		buildDir = filepath.Dir(outputPath)
+	}
 	outputPath = commandPath(sourceDir, outputPath)
 	args := make([]string, len(templates))
 	for index, template := range templates {
-		args[index] = strings.ReplaceAll(template, "{output}", outputPath)
+		expanded := strings.ReplaceAll(template, "{output}", outputPath)
+		args[index] = expandBuildDirToken(buildDir, expanded)
 	}
 	return args
 }

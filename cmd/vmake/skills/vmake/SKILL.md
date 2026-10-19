@@ -83,7 +83,7 @@ file to change. While dry-run `OnBuild` runs it enforces read-only
 interpreted-script file IO: wrapped `os` write/remove/rename/create calls and
 write-flag `OpenFile` fail with `read-only inspection: ... is not allowed`
 instead of touching the project, while reads, stats, and globs keep working. `inspect --allow-dry-run-writes` disables the guard for callbacks that must materialize inputs; it can modify the build tree.
-Buildscripts should guard generated-file work on `p.DryRun()`; an empty
+Buildscripts should use declarative `WriteBuildFile`, `GenerateFile`, `Generate`, and `BuildPath` in `OnBuild` (or guard procedural file work on `p.DryRun()`); an empty
 `BuildDir()` is not a sufficient guard during inspection. Unwrapped stdlib APIs
 and subprocesses are not sandboxed. Any wrapped write attempt (even one whose
 error the callback ignores) omits that package's targets and emits a

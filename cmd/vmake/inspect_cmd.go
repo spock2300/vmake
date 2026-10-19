@@ -824,13 +824,17 @@ func inspectFreshnessFor(state *inspectBuildReportState, packages []inspectPacka
 	return freshness
 }
 
-func inspectTargetSourceFiles(sourceDir string, patterns, excluded []string) []string {
+func inspectTargetSourceFiles(sourceDir, buildDir string, patterns, excluded []string) []string {
 	if sourceDir == "" {
 		return nil
 	}
 	seen := make(map[string]bool)
 	files := make([]string, 0)
-	for _, pattern := range patterns {
+	for _, rawPattern := range patterns {
+		pattern, ok := expandInspectBuildPattern(buildDir, rawPattern)
+		if !ok {
+			continue
+		}
 		matches, err := glob.Match(pattern, sourceDir)
 		if err != nil {
 			continue
@@ -865,11 +869,29 @@ func inspectTargetSourceFiles(sourceDir string, patterns, excluded []string) []s
 	return files
 }
 
+func expandInspectBuildPattern(buildDir, pattern string) (string, bool) {
+	slashed := filepath.ToSlash(pattern)
+	if slashed == api.BuildDirToken {
+		if buildDir == "" {
+			return "", false
+		}
+		return buildDir, true
+	}
+	prefix := api.BuildDirToken + "/"
+	if strings.HasPrefix(slashed, prefix) {
+		if buildDir == "" {
+			return "", false
+		}
+		return filepath.Join(buildDir, filepath.FromSlash(strings.TrimPrefix(slashed, prefix))), true
+	}
+	return pattern, true
+}
+
 func inspectChangedSources(packages []inspectPackage, finished time.Time) map[string]bool {
 	changed := make(map[string]bool)
 	for _, pkg := range packages {
 		for _, target := range pkg.Targets {
-			for _, match := range inspectTargetSourceFiles(pkg.SourceDir, target.Files, target.ExcludedFiles) {
+			for _, match := range inspectTargetSourceFiles(pkg.SourceDir, pkg.BuildDir, target.Files, target.ExcludedFiles) {
 				source := match
 				if !filepath.IsAbs(source) {
 					source = filepath.Join(pkg.SourceDir, filepath.FromSlash(source))
@@ -1185,7 +1207,7 @@ func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name s
 			Installs:        installs,
 			InstallPath:     inspectTargetInstallPath(target, targetOS),
 		}
-		if resolved := inspectTargetSourceFiles(dirs.SourceDir, target.Files(), target.ExcludedFiles()); len(resolved) > 0 {
+		if resolved := inspectTargetSourceFiles(dirs.SourceDir, dirs.BuildDir, target.Files(), target.ExcludedFiles()); len(resolved) > 0 {
 			entry.ResolvedFileCount = len(resolved)
 			if len(resolved) > inspectResolvedFilesLimit {
 				resolved = resolved[:inspectResolvedFilesLimit]

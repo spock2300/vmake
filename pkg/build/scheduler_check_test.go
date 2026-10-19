@@ -120,3 +120,57 @@ func TestSchedulerCheckPlansWithoutExecuting(t *testing.T) {
 		t.Fatalf("pending check mutated the build directory:\nbefore: %v\nafter:  %v", before, after)
 	}
 }
+
+func TestSchedulerDeclarativePackageGenerators(t *testing.T) {
+	dir := t.TempDir()
+	writeAssemblyFixture(t, dir, "main.c", "#include \"gen_cfg.h\"\nextern int gen_value(void);\nint main(void) { return gen_value() - GEN_EXPECTED; }\n")
+
+	pkg := api.NewPackage().SetName("p")
+	buildDir := filepath.Join(dir, "build")
+	pkg.SetDirs(api.PkgDirs{SourceDir: dir, BuildDir: buildDir})
+
+	var app *api.Target
+	genRuns := 0
+	pkg.OnBuild(func(ctx *api.BuildContext) {
+		pkg.WriteBuildFile("generated/gen_cfg.h", "#define GEN_EXPECTED 7\n")
+		genSrc := pkg.GenerateFile("generated/gen_val.c", func() ([]byte, error) {
+			genRuns++
+			return []byte("int gen_value(void) { return 7; }\n"), nil
+		})
+		app = ctx.Target("app").
+			SetKind(api.TargetBinary).
+			AddFiles("main.c", genSrc).
+			AddIncludes(pkg.BuildPath("generated"))
+	})
+	buildCtx := api.NewBuildContext("p", nil).SetPackage(pkg)
+	pkg.ExecBuildFuncs(dir, func(fn api.BuildFunc) { fn(buildCtx) })
+
+	s := nativeTestScheduler(t, dir, app)
+	s.packages["p"] = pkg
+
+	s.check = true
+	s.stats = NewBuildStats()
+	if err := s.BuildAll(); err != nil {
+		t.Fatal(err)
+	}
+	snap := s.Stats().Snapshot()
+	if snap.PlannedCompiles != 2 || snap.PlannedLinks != 1 || snap.PlannedGenerators != 1 {
+		t.Fatalf("check snapshot = %+v, want 2 compiles, 1 link, 1 generator", snap)
+	}
+	if genRuns != 0 {
+		t.Fatalf("check executed generator %d time(s)", genRuns)
+	}
+
+	s.check = false
+	s.stats = NewBuildStats()
+	if err := s.BuildAll(); err != nil {
+		t.Fatal(err)
+	}
+	if genRuns != 1 {
+		t.Fatalf("build executed generator %d time(s), want 1", genRuns)
+	}
+	snap = s.Stats().Snapshot()
+	if snap.Compiled != 2 || snap.Linked != 1 {
+		t.Fatalf("build snapshot = %+v, want 2 compiled, 1 linked", snap)
+	}
+}

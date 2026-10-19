@@ -129,3 +129,39 @@ func TestRecursiveMatchMissingRoot(t *testing.T) {
 		t.Fatalf("missing root matches = %v, %v", got, err)
 	}
 }
+
+func TestMatchAbsolutePatterns(t *testing.T) {
+	dir := t.TempDir()
+	genDir := filepath.Join(dir, "build", "generated")
+	nestedDir := filepath.Join(genDir, "sub")
+	if err := os.MkdirAll(nestedDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(genDir, "a.c"), []byte("a"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nestedDir, "b.c"), []byte("b"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	gotSingle, err := Match(filepath.Join(genDir, "*.c"), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSingle := []string{filepath.Join("build", "generated", "a.c")}
+	if !reflect.DeepEqual(gotSingle, wantSingle) {
+		t.Fatalf("Match single-star abs = %v, want %v", gotSingle, wantSingle)
+	}
+
+	gotDouble, err := Match(filepath.ToSlash(genDir)+"/**/*.c", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDouble := []string{
+		filepath.Join("build", "generated", "a.c"),
+		filepath.Join("build", "generated", "sub", "b.c"),
+	}
+	if !reflect.DeepEqual(gotDouble, wantDouble) {
+		t.Fatalf("Match double-star abs = %v, want %v", gotDouble, wantDouble)
+	}
+}

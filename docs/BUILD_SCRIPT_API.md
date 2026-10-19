@@ -115,16 +115,26 @@ func (p *Package) GetTargets() map[string]*Target
 func (p *Package) Deps() map[string]*InstalledPackage
 ```
 
-### 目录信息
+### 目录信息与构建目录文件生成
 
 ```go
 func (p *Package) SourceDir() string
 func (p *Package) BuildDir() string
+func (p *Package) BuildPath(elem ...string) string
+func (p *Package) WriteBuildFile(relPath string, content any) string
+func (p *Package) GenerateFile(relPath string, fn func() ([]byte, error)) string
+func (p *Package) Generate(fn func() error) *Package
 func (p *Package) InstallDir() string
 func (p *Package) CMakeBuildDir() string
 func (p *Package) CMakeInstallDir() string
 func (p *Package) ScriptDir() string
 ```
+
+`BuildPath(elem ...string)` 拼接包构建目录下的路径：当 `BuildDir()` 已解析时返回绝对路径；当本地 `SetGit` 包在只读检查/查询阶段尚未物化源码树且 `BuildDir()` 为空时，返回以符号令牌 `api.BuildDirToken`（`"$builddir"`）为前缀的路径。`AddFiles`、`AddIncludes`、`AddPublicIncludes`、`SetLinkerScript`、`SetProvidedLinkerScript`、`SetVersionScript`、`SetPrebuilt`、`AddPostLinkDeps`、`AddPostLinkOutputs` 与 `AddInstalls` 均原生接受相对 `SourceDir()` 的路径、绝对路径及 `BuildPath(...)` 返回的路径，因此脚本中无需再写 `if p.BuildDir() == "" { return }` 或 `filepath.Rel(p.SourceDir(), p.BuildDir())`。
+
+`WriteBuildFile`、`GenerateFile` 与 `Generate`（`BuildContext` 上也提供同名方法）用于在 `OnBuild` 中以声明式方式注册构建目录文件生成：
+- 在 `OnBuild` 执行期间调用不会立即触碰磁盘，而是注册生成步骤并立即返回 `p.BuildPath(relPath)`，使 `vmake inspect`、`vmake query`、`vmake query targets` 和 `vmake build --check` 在只读模式下也能完整声明目标图而不触发写拦截警告。
+- 在真正的 `vmake build` 调度阶段，调度器会在解析/编译该包目标（以及消费其 `PublicIncludes` 或 `ProvidedLinkerScript` 的依赖目标）之前自动执行这些生成步骤；`WriteBuildFile` 与 `GenerateFile` 仅在内容实际变化时覆写文件（保持未变文件的 mtime 并自动使哈希缓存失效）。
 
 ### 编译器信息（代理 Toolchain）
 
@@ -450,6 +460,12 @@ func (ctx *BuildContext) GenConfigHeader() bool
 func (ctx *BuildContext) GenConfigDefines() bool
 func (ctx *BuildContext) ExportEnabled() bool
 func (ctx *BuildContext) ImportConfigs() []string
+
+// 构建目录路径与声明式文件生成
+func (ctx *BuildContext) BuildPath(elem ...string) string
+func (ctx *BuildContext) WriteBuildFile(relPath string, content any) string
+func (ctx *BuildContext) GenerateFile(relPath string, fn func() ([]byte, error)) string
+func (ctx *BuildContext) Generate(fn func() error) *BuildContext
 
 // 其他
 func (ctx *BuildContext) PackageName() string

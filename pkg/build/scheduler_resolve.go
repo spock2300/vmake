@@ -39,10 +39,13 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 			continue
 		}
 
+		if err := s.ensurePackageGenerated(depNode.PkgName); err != nil {
+			return nil, err
+		}
+
 		if len(depNode.Target.PublicIncludes()) > 0 {
-			srcDir := s.pkgs[depNode.PkgName].SourceDir
 			for _, pubInc := range depNode.Target.PublicIncludes() {
-				result.includes = append(result.includes, filepath.Join(srcDir, pubInc))
+				result.includes = append(result.includes, depPkg.ResolvePath(pubInc))
 			}
 		} else if depPkg.InstallDir != "" {
 			result.includes = append(result.includes, filepath.Join(depPkg.InstallDir, "include"))
@@ -103,6 +106,12 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 }
 
 func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
+	pkgInfo, err := s.pkgInfoOf(node.PkgName)
+	if err != nil {
+		return nil, err
+	}
+	buildDir := pkgInfo.EffectiveBuildDir()
+
 	modeFlags, modeDefines := api.GetModeFlags(s.mode)
 	var visibilityCFlags, visibilityCxxFlags []string
 	if pkg := s.packages[node.PkgName]; pkg != nil {
@@ -127,11 +136,11 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	resolved.AllLinks = append(resolved.AllLinks, s.globalLinks...)
 
 	for _, inc := range node.Target.Includes() {
-		resolved.AllIncludes = append(resolved.AllIncludes, inc)
+		resolved.AllIncludes = append(resolved.AllIncludes, expandBuildDirToken(buildDir, inc))
 	}
 
 	for _, pubInc := range node.Target.PublicIncludes() {
-		resolved.AllIncludes = append(resolved.AllIncludes, pubInc)
+		resolved.AllIncludes = append(resolved.AllIncludes, expandBuildDirToken(buildDir, pubInc))
 	}
 
 	deps, err := s.collectDepArtifacts(node)
@@ -146,15 +155,16 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	resolved.AllLdFlags = append(resolved.AllLdFlags, deps.voidLdFlags...)
 
 	excludes := node.Target.ExcludedFiles()
-	pkgInfo, err := s.pkgInfoOf(node.PkgName)
-	if err != nil {
-		return nil, err
-	}
 	sourceDir := pkgInfo.SourceDir
-	for _, pattern := range node.Target.Files() {
+	pkg := s.packages[node.PkgName]
+	for _, rawPattern := range node.Target.Files() {
+		pattern := expandBuildDirToken(buildDir, rawPattern)
 		files, err := glob.Match(pattern, sourceDir)
 		if err != nil {
 			return nil, err
+		}
+		if s.check && len(files) == 0 && pkg != nil {
+			files = matchPlannedGeneratedFiles(pattern, sourceDir, resolveWorkPath(sourceDir, buildDir), pkg.GeneratedFiles())
 		}
 		for _, f := range files {
 			if !matchesAny(f, excludes) {
@@ -166,7 +176,6 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	resolved.OutputPath = s.getTargetOutputPath(node)
 
 	genRules := node.Target.GenRules()
-	pkg := s.packages[node.PkgName]
 	needGenerated := len(genRules) > 0 || (pkg != nil && pkg.GenConfigHeader())
 	if needGenerated {
 		generatedDir := pkgInfo.GeneratedDir()
@@ -178,25 +187,24 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 		if kind != api.TargetShared && kind != api.TargetBinary {
 			return nil, fmt.Errorf("SetVersionScript(%q): only valid on TargetShared/TargetBinary, got %q", vs, kind)
 		}
-		if pkgInfo != nil {
-			resolved.VersionScript = filepath.Join(pkgInfo.SourceDir, vs)
-		} else {
-			resolved.VersionScript = vs
-		}
+		resolved.VersionScript = pkgInfo.ResolvePath(vs)
 	}
 
 	if node.Target.Kind() == api.TargetBinary {
 		linkerScript := node.Target.LinkerScript()
 		if linkerScript != "" {
-			linkerScript = resolveWorkPath(pkgInfo.SourceDir, linkerScript)
+			linkerScript = pkgInfo.ResolvePath(linkerScript)
 		}
 		if linkerScript == "" && node.Target.UseDepLinkerScript() {
 			for _, depFullName := range node.Deps {
 				depPkgName, _, _ := strings.Cut(depFullName, ":")
 				depPkg := s.packages[depPkgName]
 				if depPkg != nil && depPkg.ProvidedLinkerScript() != "" {
+					if err := s.ensurePackageGenerated(depPkgName); err != nil {
+						return nil, err
+					}
 					if depInfo := s.pkgs[depPkgName]; depInfo != nil {
-						linkerScript = filepath.Join(depInfo.SourceDir, depPkg.ProvidedLinkerScript())
+						linkerScript = depInfo.ResolvePath(depPkg.ProvidedLinkerScript())
 					}
 					break
 				}
@@ -208,9 +216,10 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 		if linkerScript != "" {
 			info, err := os.Stat(linkerScript)
 			if err != nil {
-				return nil, fmt.Errorf("linker script %s: %w", linkerScript, err)
-			}
-			if !info.Mode().IsRegular() {
+				if !(s.check && os.IsNotExist(err)) {
+					return nil, fmt.Errorf("linker script %s: %w", linkerScript, err)
+				}
+			} else if !info.Mode().IsRegular() {
 				return nil, fmt.Errorf("linker script %s is not a regular file", linkerScript)
 			}
 		}
@@ -226,6 +235,34 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	resolved.SourceFiles = unique(resolved.SourceFiles)
 
 	return resolved, nil
+}
+
+func matchPlannedGeneratedFiles(pattern, sourceDir, buildDir string, generated []string) []string {
+	if len(generated) == 0 {
+		return nil
+	}
+	absSource, err := filepath.Abs(sourceDir)
+	if err != nil {
+		return nil
+	}
+	absBuild, err := filepath.Abs(buildDir)
+	if err != nil {
+		return nil
+	}
+	absPattern := resolveWorkPath(absSource, pattern)
+	var out []string
+	for _, relGen := range generated {
+		absGen := filepath.Join(absBuild, relGen)
+		if filepath.Clean(absPattern) != filepath.Clean(absGen) && !glob.MatchPath(filepath.ToSlash(absPattern), filepath.ToSlash(absGen)) {
+			continue
+		}
+		if rel, err := filepath.Rel(absSource, absGen); err == nil {
+			out = append(out, rel)
+		} else {
+			out = append(out, absGen)
+		}
+	}
+	return out
 }
 
 func targetFilename(kind api.TargetKind, name, targetOS string) string {

@@ -333,6 +333,9 @@ func detectVersionScriptViolations(artifacts []scanArtifact) []finding {
 			continue
 		}
 		scriptPath := a.versionScript
+		if expanded, ok := expandInspectBuildPattern(filepath.Dir(a.outputPath), scriptPath); ok {
+			scriptPath = expanded
+		}
 		if !filepath.IsAbs(scriptPath) {
 			for _, dir := range []string{a.sourceDir, ".", filepath.Dir(a.outputPath)} {
 				if dir == "" {

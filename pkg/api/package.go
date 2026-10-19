@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -143,6 +144,14 @@ type PkgDirs struct {
 	InstallDir string
 }
 
+const BuildDirToken = "$builddir"
+
+type buildGenerator struct {
+	relPath string
+	run     func() ([]byte, error)
+	exec    func() error
+}
+
 type Package struct {
 	PackageMeta
 	ConfigAccessor
@@ -182,6 +191,9 @@ type Package struct {
 	exportConfig            bool
 	importConfigs           []string
 	dryRun                  bool
+	declaringBuild          bool
+	generators              []buildGenerator
+	onGenWrite              func(string)
 	isRoot                  bool
 	providedLinkerScript    string
 	buildRuntime            *buildruntime.Budget
@@ -408,6 +420,9 @@ func (p *Package) ExecConfigFuncs(dir string, fn func(ConfigFunc)) {
 }
 
 func (p *Package) ExecBuildFuncs(dir string, fn func(BuildFunc)) {
+	p.generators = nil
+	p.declaringBuild = true
+	defer func() { p.declaringBuild = false }()
 	execFuncs(p.Name, dir, p.buildFuncs, fn)
 }
 
@@ -563,6 +578,190 @@ func (p *Package) SourceDir() string    { return p.dirs.SourceDir }
 func (p *Package) BuildDir() string     { return p.dirs.BuildDir }
 func (p *Package) InstallDir() string   { return p.dirs.InstallDir }
 func (p *Package) GetPatches() []string { return p.patches }
+
+func (p *Package) BuildPath(elem ...string) string {
+	base := p.dirs.BuildDir
+	if base == "" {
+		base = BuildDirToken
+	}
+	if len(elem) == 0 {
+		return base
+	}
+	parts := make([]string, 0, len(elem)+1)
+	parts = append(parts, base)
+	parts = append(parts, elem...)
+	return filepath.Join(parts...)
+}
+
+func (p *Package) WriteBuildFile(relPath string, content any) string {
+	cleaned := cleanBuildRelPath(p.FullName(), "WriteBuildFile", relPath)
+	var data []byte
+	switch v := content.(type) {
+	case string:
+		data = []byte(v)
+	case []byte:
+		data = append([]byte(nil), v...)
+	default:
+		fatalScript(p.FullName(), "WriteBuildFile", "unsupported content type %T (expected string or []byte)", content)
+	}
+	if p.declaringBuild {
+		p.generators = append(p.generators, buildGenerator{
+			relPath: cleaned,
+			run: func() ([]byte, error) {
+				return data, nil
+			},
+		})
+		return p.BuildPath(cleaned)
+	}
+	if p.dryRun {
+		return p.BuildPath(cleaned)
+	}
+	if p.dirs.BuildDir == "" {
+		fatalScript(p.FullName(), "WriteBuildFile", "build directory is not set")
+	}
+	outPath := filepath.Join(p.dirs.BuildDir, cleaned)
+	if err := writeFileIfChanged(outPath, data, p.onGenWrite); err != nil {
+		fatalScript(p.FullName(), "WriteBuildFile", "%v", err)
+	}
+	return outPath
+}
+
+func (p *Package) GenerateFile(relPath string, fn func() ([]byte, error)) string {
+	cleaned := cleanBuildRelPath(p.FullName(), "GenerateFile", relPath)
+	if fn == nil {
+		fatalScript(p.FullName(), "GenerateFile", "generator callback must not be nil")
+	}
+	if p.declaringBuild {
+		p.generators = append(p.generators, buildGenerator{
+			relPath: cleaned,
+			run:     fn,
+		})
+		return p.BuildPath(cleaned)
+	}
+	if p.dryRun {
+		return p.BuildPath(cleaned)
+	}
+	if p.dirs.BuildDir == "" {
+		fatalScript(p.FullName(), "GenerateFile", "build directory is not set")
+	}
+	data, err := fn()
+	if err != nil {
+		fatalScript(p.FullName(), "GenerateFile", "%v", err)
+	}
+	outPath := filepath.Join(p.dirs.BuildDir, cleaned)
+	if err := writeFileIfChanged(outPath, data, p.onGenWrite); err != nil {
+		fatalScript(p.FullName(), "GenerateFile", "%v", err)
+	}
+	return outPath
+}
+
+func (p *Package) Generate(fn func() error) *Package {
+	if fn == nil {
+		fatalScript(p.FullName(), "Generate", "generator callback must not be nil")
+	}
+	if p.declaringBuild {
+		p.generators = append(p.generators, buildGenerator{
+			exec: fn,
+		})
+		return p
+	}
+	if p.dryRun {
+		return p
+	}
+	if err := fn(); err != nil {
+		fatalScript(p.FullName(), "Generate", "%v", err)
+	}
+	return p
+}
+
+func (p *Package) HasGenerators() bool {
+	return len(p.generators) > 0
+}
+
+func (p *Package) GeneratedFiles() []string {
+	var files []string
+	for _, g := range p.generators {
+		if g.relPath != "" {
+			files = append(files, g.relPath)
+		}
+	}
+	return files
+}
+
+func (p *Package) RunGenerators(sourceDir, buildDir string, onWrite func(string)) (err error) {
+	if len(p.generators) == 0 || p.dryRun {
+		return nil
+	}
+	if buildDir == "" {
+		buildDir = p.dirs.BuildDir
+	}
+	if buildDir == "" {
+		return fmt.Errorf("package %s: build directory is not set", p.FullName())
+	}
+	if sourceDir == "" {
+		sourceDir = p.SrcDir()
+	}
+	prevBuildDir := p.dirs.BuildDir
+	prevOnWrite := p.onGenWrite
+	p.dirs.BuildDir = buildDir
+	p.onGenWrite = onWrite
+	defer func() {
+		p.dirs.BuildDir = prevBuildDir
+		p.onGenWrite = prevOnWrite
+		if r := recover(); r != nil {
+			err = normalizeScriptPanic(p.Name, r)
+		}
+	}()
+	execInDir(sourceDir, func() {
+		for _, g := range p.generators {
+			if g.exec != nil {
+				if runErr := g.exec(); runErr != nil {
+					fatalScript(p.FullName(), "Generate", "%v", runErr)
+				}
+				continue
+			}
+			data, runErr := g.run()
+			if runErr != nil {
+				fatalScript(p.FullName(), "GenerateFile", "%v (%s)", runErr, g.relPath)
+			}
+			outPath := filepath.Join(buildDir, g.relPath)
+			if writeErr := writeFileIfChanged(outPath, data, onWrite); writeErr != nil {
+				fatalScript(p.FullName(), "GenerateFile", "%v", writeErr)
+			}
+		}
+	})
+	return err
+}
+
+func cleanBuildRelPath(pkgName, op, relPath string) string {
+	if strings.TrimSpace(relPath) == "" {
+		fatalScript(pkgName, op, "relative path must not be empty")
+	}
+	if filepath.IsAbs(relPath) {
+		fatalScript(pkgName, op, "path must be relative to build directory: %s", relPath)
+	}
+	cleaned := filepath.Clean(filepath.FromSlash(relPath))
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		fatalScript(pkgName, op, "path escapes build directory: %s", relPath)
+	}
+	return cleaned
+}
+
+func writeFileIfChanged(outPath string, data []byte, onWrite func(string)) error {
+	if existing, err := os.ReadFile(outPath); err == nil && bytes.Equal(existing, data) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+		return fmt.Errorf("create directory for %s: %w", outPath, err)
+	}
+	if err := os.WriteFile(outPath, data, 0644); err != nil {
+		return fmt.Errorf("write %s: %w", outPath, err)
+	}
+	if onWrite != nil {
+		onWrite(outPath)
+	}
+	return nil
+}
 
 func (p *Package) CC() string     { return p.tc.Tools.CC }
 func (p *Package) CXX() string    { return p.tc.Tools.CXX }

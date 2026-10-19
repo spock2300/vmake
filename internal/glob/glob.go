@@ -44,7 +44,11 @@ func Match(pattern, dir string) ([]string, error) {
 }
 
 func matchSingleStar(pattern, dir string) ([]string, error) {
-	matches, err := filepath.Glob(filepath.Join(dir, pattern))
+	globPattern := filepath.Join(dir, filepath.FromSlash(pattern))
+	if isAbsPattern(pattern) {
+		globPattern = filepath.FromSlash(pattern)
+	}
+	matches, err := filepath.Glob(globPattern)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +72,17 @@ func matchDoubleStar(pattern, dir string) ([]string, error) {
 	for prefixLen < len(parts) && !strings.ContainsAny(parts[prefixLen], "*?[\\") {
 		prefixLen++
 	}
-	baseDir := filepath.Join(dir, filepath.FromSlash(strings.Join(parts[:prefixLen], "/")))
+	absPattern := isAbsPattern(pattern)
+	var baseDir string
+	if absPattern {
+		prefix := strings.Join(parts[:prefixLen], "/")
+		if prefix == "" || strings.HasSuffix(prefix, ":") {
+			prefix += "/"
+		}
+		baseDir = filepath.FromSlash(prefix)
+	} else {
+		baseDir = filepath.Join(dir, filepath.FromSlash(strings.Join(parts[:prefixLen], "/")))
+	}
 
 	err := fs.Walk(baseDir, func(file string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -76,9 +90,13 @@ func matchDoubleStar(pattern, dir string) ([]string, error) {
 				return nil
 			}
 			if info != nil && info.Mode()&os.ModeSymlink != 0 && os.IsNotExist(err) {
-				rel, relErr := filepath.Rel(dir, file)
-				if relErr != nil {
-					return relErr
+				rel := file
+				if !absPattern {
+					var relErr error
+					rel, relErr = filepath.Rel(dir, file)
+					if relErr != nil {
+						return relErr
+					}
 				}
 				if !MatchPath(pattern, rel) {
 					return nil
@@ -89,9 +107,13 @@ func matchDoubleStar(pattern, dir string) ([]string, error) {
 		if info.IsDir() {
 			return nil
 		}
-		rel, err := filepath.Rel(dir, file)
-		if err != nil {
-			return err
+		rel := file
+		if !absPattern {
+			var relErr error
+			rel, relErr = filepath.Rel(dir, file)
+			if relErr != nil {
+				return relErr
+			}
 		}
 		if MatchPath(pattern, rel) {
 			result = append(result, file)
@@ -100,6 +122,10 @@ func matchDoubleStar(pattern, dir string) ([]string, error) {
 	})
 	sort.Strings(result)
 	return result, err
+}
+
+func isAbsPattern(pattern string) bool {
+	return strings.HasPrefix(pattern, "/") || filepath.IsAbs(filepath.FromSlash(pattern))
 }
 
 func MatchPath(pattern, name string) bool {

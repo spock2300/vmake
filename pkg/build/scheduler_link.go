@@ -32,7 +32,7 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 			return err
 		}
 		for _, output := range expandPostLinkArgs(resolved.Node.Target.PostLinkOutputs(), pkgInfo.SourceDir, resolved.OutputPath) {
-			path := resolveWorkPath(pkgInfo.SourceDir, output)
+			path := pkgInfo.ResolvePath(output)
 			info, err := os.Stat(path)
 			if err != nil {
 				return fmt.Errorf("post-link output %s: %w", path, err)
@@ -127,9 +127,10 @@ func (s *Scheduler) needRelink(resolved *ResolvedTarget, objs []string) bool {
 
 func (s *Scheduler) realizePrebuilt(resolved *ResolvedTarget) error {
 	src := resolved.Node.Target.Prebuilt()
-	workDir := s.pkgs[resolved.Node.PkgName].SourceDir
+	pkgInfo := s.pkgs[resolved.Node.PkgName]
+	workDir := pkgInfo.SourceDir
 	absDst := resolveWorkPath(workDir, resolved.OutputPath)
-	absSrc := resolveWorkPath(workDir, src)
+	absSrc := pkgInfo.ResolvePath(src)
 
 	if _, err := os.Stat(absSrc); err != nil {
 		return fmt.Errorf("prebuilt file not found: %s: %w", absSrc, err)

@@ -106,8 +106,12 @@ The following helpers return **nothing** and raise a script error on failure; th
 | `CMakeInstall` | `(args ...string)` | Install CMakeBuildDir using the same default configuration; accepts --component and other install options |
 | `Configure` | `(extraArgs ...string) error` | SrcDir/configure --prefix=... (+ --host when cross) |
 | `Make` | `(args ...string) error` | make -C BuildDir with `pkg.Env()` and the session jobs budget (**returns real error**) |
+| `BuildPath` | `(elem ...string) string` | Path inside `BuildDir()` (returns symbolic `$builddir/...` when `BuildDir()` is empty during unmaterialized inspection) |
+| `WriteBuildFile` | `(relPath string, content any) string` | Declaratively register a `string`/`[]byte` file under `BuildDir()` during `OnBuild` (written if changed when the package builds) and return its `BuildPath` |
+| `GenerateFile` | `(relPath string, fn func() ([]byte, error)) string` | Declaratively register a generated file callback under `BuildDir()` during `OnBuild` and return its `BuildPath` |
+| `Generate` | `(fn func() error) *Package` | Declaratively register a multi-file generator callback during `OnBuild` (runs before target resolution/compilation during `build`) |
 
-Dry-run aware: in dry-run mode (query/check-symbols), all helpers log commands without executing them. Inspection does not materialize sources: a local SetGit package without a working tree declares with an empty `BuildDir()`. Guard real file I/O in `OnBuild` with `p.DryRun()` or `p.BuildDir() == ""` instead of assuming `SrcDir()` exists.
+Dry-run aware: in dry-run mode (inspect/query/check-symbols), command helpers log without executing, and `WriteBuildFile`/`GenerateFile`/`Generate` record declarative generators without touching the filesystem. Prefer `WriteBuildFile`/`GenerateFile`/`Generate` and `BuildPath` over raw `os.WriteFile` and `filepath.Rel(p.SourceDir(), p.BuildDir())` in `OnBuild`; target/package path setters (`AddFiles`, `AddIncludes`, `AddPublicIncludes`, `SetLinkerScript`, `SetProvidedLinkerScript`, `SetVersionScript`, `SetPrebuilt`, `AddPostLinkDeps`, `AddPostLinkOutputs`, `AddInstalls`) accept `SourceDir`-relative paths, absolute paths, and `BuildPath` (`$builddir/...`) paths directly.
 
 ```go
 ctx.Target("zlib").SetKind(api.TargetVoid).SetBuildFunc(func(p *api.Package) error {
@@ -396,6 +400,10 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `BuildSubGraph(pkgName)` | Build package as independent sub-graph |
 | `DepOutput(depRef) string` | Get output path of dependency target (`pkg` or `pkg:target`; no same-package shorthand or `pkg:*` wildcard) |
 | `DepBuildDir(depRef) string` | Get build directory of dependency target (same ref rules as `DepOutput`) |
+| `BuildPath(elem...) string` | Join path elements under `BuildDir()` (or `$builddir` when `BuildDir()` is empty) |
+| `WriteBuildFile(relPath, content) string` | Register a build-dir file write (`string` or `[]byte`) deferred until build execution; returns `BuildPath(relPath)` |
+| `GenerateFile(relPath, fn) string` | Register a single-file generator callback deferred until build execution; returns `BuildPath(relPath)` |
+| `Generate(fn) *BuildContext` | Register a generator callback deferred until build execution |
 | `Exec(name, args...)` | Run command with logging (script error on failure) |
 | `GenerateConfigHeader()` | Set `genConfigHeader = true`; propagated to `Package.SetGenConfigHeader(true)` — generates `autoconf.h` during scheduler build |
 | `GenerateConfigDefines()` | Set `genConfigDefines = true`; on processing, reads `ImportConfigs()`, merges local + imported options, adds `-DCONFIG_*` defines to all targets |
