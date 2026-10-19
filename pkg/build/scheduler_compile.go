@@ -146,12 +146,6 @@ func (s *Scheduler) compileSourceContext(ctx context.Context, resolved *Resolved
 		}
 		return objRel, deps, nil
 	}
-	if s.check {
-		if s.stats != nil {
-			s.stats.RecordPlannedCompile(resolved.Node.FullName, src)
-		}
-		return objRel, deps, nil
-	}
 	if s.explain {
 		vlog.Info("  EXPLAIN %s: %s", src, decision.Reason)
 	}

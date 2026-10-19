@@ -38,11 +38,11 @@ func TestLinkStatic_RemovesStaleMembers(t *testing.T) {
 	objA := mkObj("a", "a")
 	objB := mkObj("b", "b")
 
-	if err := linker.LinkStatic([]string{objA, objB}, archive, dir); err != nil {
+	if err := linker.execute(linker.staticCommand([]string{objA, objB}, archive, dir), archive, dir, true); err != nil {
 		t.Fatalf("first LinkStatic: %v", err)
 	}
 
-	if err := linker.LinkStatic([]string{objA}, archive, dir); err != nil {
+	if err := linker.execute(linker.staticCommand([]string{objA}, archive, dir), archive, dir, true); err != nil {
 		t.Fatalf("second LinkStatic: %v", err)
 	}
 

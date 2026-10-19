@@ -70,9 +70,6 @@ It uses Go buildscripts for configuration and provides a TUI for option manageme
 			rejectShadowedProjectRootFromCWD()
 		}
 		commandStorageExclusive = requiresExclusiveStorage(cmd)
-		if cmd.Flags().Changed("output") {
-			jsonOutput = true
-		}
 		switch {
 		case veryVerbose:
 			vlog.SetLevel(vlog.VeryVerbose)
@@ -103,7 +100,6 @@ func requiresExclusiveStorage(cmd *cobra.Command) bool {
 }
 
 func Execute() {
-	preReportJSON = detectPreReportJSON(os.Args[1:])
 	wrapCommandArgs(RootCmd)
 	err := RootCmd.Execute()
 	releaseExtensionRepoLocks()
@@ -259,7 +255,8 @@ func resolveToConfigContext(execution context.Context, ignoreLock bool) (*Runtim
 }
 
 func applyEphemeralOverrides(ctx *RuntimeContext, overrides []inspectOverride) error {
-	for _, override := range overrides {
+	for i := range overrides {
+		override := &overrides[i]
 		opt, err := inspectOverrideOption(ctx, override.pkgName, override.optName)
 		if err != nil {
 			return err
@@ -269,7 +266,7 @@ func applyEphemeralOverrides(ctx *RuntimeContext, overrides []inspectOverride) e
 			return fmt.Errorf("%s: %w", override.key(), err)
 		}
 		override.value = value
-		if err := validateInspectOverride(ctx, override); err != nil {
+		if err := validateInspectOverride(ctx, *override); err != nil {
 			return err
 		}
 		applySetValue(ctx, override.pkgName, override.optName, value)

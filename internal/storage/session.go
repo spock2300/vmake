@@ -60,10 +60,6 @@ func AcquireContext(ctx context.Context, projectDir, cacheDir string, exclusive 
 	return s, nil
 }
 
-func (s *Session) AcquireOwners(owners []string) error {
-	return s.AcquireOwnersContext(context.Background(), owners)
-}
-
 func (s *Session) AcquireOwnersContext(ctx context.Context, owners []string) (err error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -108,10 +104,6 @@ func (s *Session) AcquireOwnersContext(ctx context.Context, owners []string) (er
 	}
 	s.sealed = true
 	return nil
-}
-
-func (s *Session) Exclusive() bool {
-	return s != nil && !s.closed && s.exclusive
 }
 
 func (s *Session) CheckAccess(cacheDir string, exclusive bool) error {

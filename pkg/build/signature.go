@@ -162,10 +162,6 @@ type actionDecision struct {
 	Reason   string
 }
 
-func actionUpToDate(cache *fileHashCache, recordPath, signature, workDir string, inputs, outputs []string) bool {
-	return checkAction(cache, recordPath, signature, workDir, inputs, outputs).UpToDate
-}
-
 func checkAction(cache *fileHashCache, recordPath, signature, workDir string, inputs, outputs []string) actionDecision {
 	var record actionRecord
 	if err := jsonio.Load(recordPath, &record); err != nil {

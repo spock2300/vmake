@@ -31,7 +31,6 @@ type BuildJob struct {
 	Mode         string
 	IncludeTests bool
 	Explain      bool
-	Check        bool
 }
 
 type buildGroupKey struct {
@@ -59,7 +58,6 @@ func (j *BuildJob) newSchedulerFor(
 		Context:      session.ctx,
 		RootDir:      env.RootDir,
 		IncludeTests: j.IncludeTests,
-		Check:        j.Check,
 		NumWorkers:   env.Jobs,
 		KeepGoing:    env.KeepGoing,
 		Explain:      j.Explain,
@@ -180,7 +178,7 @@ func (j *BuildJob) Run() (*Scheduler, error) {
 				session.outputs = make(map[string]TargetResult)
 			}
 			status := TargetStatusUpToDate
-			if !runner.check && (runner.Stats().ChangedTarget(name) || node.Target.Kind() == api.TargetVoid) {
+			if runner.Stats().ChangedTarget(name) || node.Target.Kind() == api.TargetVoid {
 				status = TargetStatusBuilt
 			}
 			session.outputs[name] = TargetResult{
@@ -201,10 +199,8 @@ func (j *BuildJob) Run() (*Scheduler, error) {
 	if root == "" {
 		root = "."
 	}
-	if !j.Check {
-		for _, scheduler := range additional {
-			err = errors.Join(err, scheduler.ccWriter.Save(filepath.Join(root, "build", "compile_commands.json")))
-		}
+	for _, scheduler := range additional {
+		err = errors.Join(err, scheduler.ccWriter.Save(filepath.Join(root, "build", "compile_commands.json")))
 	}
 	return base, err
 }

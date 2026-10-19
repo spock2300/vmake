@@ -326,33 +326,3 @@ func (l *Linker) execute(command commandSpec, outputPath, workDir string, archiv
 	_, err := l.run(command.Program, workDir, command.Args...)
 	return err
 }
-
-func (l *Linker) LinkBinary(objs, libs, ldflags []string, outputPath, linkerScript string, policy LinkPolicy, workDir string) error {
-	command, err := l.binaryCommand(binaryLinkInput{
-		objs:         objs,
-		libs:         libs,
-		ldflags:      ldflags,
-		outputPath:   outputPath,
-		linkerScript: linkerScript,
-	}, policy, workDir)
-	if err != nil {
-		return err
-	}
-	return l.execute(command, outputPath, workDir, false)
-}
-
-func (l *Linker) LinkStatic(objs []string, outputPath, workDir string) error {
-	return l.execute(l.staticCommand(objs, outputPath, workDir), outputPath, workDir, true)
-}
-
-func (l *Linker) LinkShared(objs, ldflags []string, outputPath string, policy LinkPolicy, workDir string) error {
-	command, err := l.sharedCommand(objs, ldflags, outputPath, policy, workDir)
-	if err != nil {
-		return err
-	}
-	return l.execute(command, outputPath, workDir, false)
-}
-
-func (l *Linker) LinkObject(objs []string, outputPath, workDir string) error {
-	return l.execute(l.objectCommand(objs, outputPath, workDir), outputPath, workDir, false)
-}

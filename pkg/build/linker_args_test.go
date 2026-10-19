@@ -13,22 +13,23 @@ func TestLinkBinaryELFArgv(t *testing.T) {
 	objs := []string{"a.o", "libfoo.a", "libbar.so", "libbaz.dll.a"}
 	ldflags := []string{"-Wl,-z,now", "-L/opt/lib", "-lz", "-pthread"}
 
-	err := l.LinkBinary(
-		objs,
-		[]string{"m"},
-		ldflags,
-		"out/app",
-		"link.ld",
-		LinkPolicy{
-			TargetOS:      "linux",
-			VersionScript: "v.map",
-			ExcludeLibs:   []string{"libfoo"},
-			SymbolBinding: "static",
-		},
-		dir,
-	)
+	cmd, err := l.binaryCommand(binaryLinkInput{
+		objs:         objs,
+		libs:         []string{"m"},
+		ldflags:      ldflags,
+		outputPath:   "out/app",
+		linkerScript: "link.ld",
+	}, LinkPolicy{
+		TargetOS:      "linux",
+		VersionScript: "v.map",
+		ExcludeLibs:   []string{"libfoo"},
+		SymbolBinding: "static",
+	}, dir)
 	if err != nil {
-		t.Fatalf("LinkBinary: %v", err)
+		t.Fatalf("binaryCommand: %v", err)
+	}
+	if err := l.execute(cmd, "out/app", dir, false); err != nil {
+		t.Fatalf("execute: %v", err)
 	}
 
 	want := []string{
@@ -56,10 +57,10 @@ func TestLinkBinaryELFArgv(t *testing.T) {
 		t.Fatalf("argv = %#v\nwant     %#v", *got, want)
 	}
 	if !slices.Equal(objs, []string{"a.o", "libfoo.a", "libbar.so", "libbaz.dll.a"}) {
-		t.Errorf("LinkBinary modified objs: %#v", objs)
+		t.Errorf("binaryCommand modified objs: %#v", objs)
 	}
 	if !slices.Equal(ldflags, []string{"-Wl,-z,now", "-L/opt/lib", "-lz", "-pthread"}) {
-		t.Errorf("LinkBinary modified ldflags: %#v", ldflags)
+		t.Errorf("binaryCommand modified ldflags: %#v", ldflags)
 	}
 }
 
@@ -118,14 +119,17 @@ func TestLinkBinaryMachOArgv(t *testing.T) {
 	dylib := "libshared.dylib"
 	output := "app"
 
-	err := l.LinkBinary(
-		[]string{object, archive, dylib},
-		[]string{"m"},
-		[]string{"-Wl,-dead_strip", "-L.", "-lz"},
-		output, "", LinkPolicy{TargetOS: "darwin"}, dir,
-	)
+	cmd, err := l.binaryCommand(binaryLinkInput{
+		objs:       []string{object, archive, dylib},
+		libs:       []string{"m"},
+		ldflags:    []string{"-Wl,-dead_strip", "-L.", "-lz"},
+		outputPath: output,
+	}, LinkPolicy{TargetOS: "darwin"}, dir)
 	if err != nil {
-		t.Fatalf("LinkBinary: %v", err)
+		t.Fatalf("binaryCommand: %v", err)
+	}
+	if err := l.execute(cmd, output, dir, false); err != nil {
+		t.Fatalf("execute: %v", err)
 	}
 
 	want := []string{

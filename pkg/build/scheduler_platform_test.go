@@ -100,7 +100,7 @@ func TestSchedulerPackagePlatformArtifacts(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if !s.needRelink(resolved, nil) {
+				if !testNeedRelink(t, s, resolved, nil) {
 					t.Error("missing package import library did not require relink")
 				}
 			}

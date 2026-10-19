@@ -95,7 +95,7 @@ func TestStorageChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if err := s.AcquireOwners(req.Owners); err != nil {
+	if err := s.AcquireOwnersContext(context.Background(), req.Owners); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -182,13 +182,13 @@ func TestOwnersAreOrderedAndReentrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	if err := s.AcquireOwners([]string{"repo/b", "repo/a", "repo/b"}); err != nil {
+	if err := s.AcquireOwnersContext(context.Background(), []string{"repo/b", "repo/a", "repo/b"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AcquireOwners([]string{"repo/a"}); err != nil {
+	if err := s.AcquireOwnersContext(context.Background(), []string{"repo/a"}); err != nil {
 		t.Fatalf("synchronous child could not reuse owners: %v", err)
 	}
-	if err := s.AcquireOwners([]string{"repo/c"}); err == nil {
+	if err := s.AcquireOwnersContext(context.Background(), []string{"repo/c"}); err == nil {
 		t.Fatal("late owner acquisition was accepted")
 	}
 	child := startStorageChild(t, childRequest{Cache: cache, Owners: []string{"repo/a", "repo/b"}})

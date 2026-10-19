@@ -218,62 +218,37 @@ func (a *ConfigAccessor) Select(option string, mapping map[string]string) []stri
 	return nil
 }
 
-func (a *ConfigAccessor) When(option string, value any) bool {
-	if a.CfgVals == nil {
-		return true
-	}
-	if a.strict && a.owner != "" {
-		opt, hasOpt := a.Options[option]
-		if _, hasVal := a.CfgVals[option]; !hasVal && !hasOpt {
-			fatalScript(a.owner, "When", "unknown option %q (fix the name or declare it via ctx.Option first)", option)
-		}
-		if hasOpt {
-			a.checkValueType(opt, value, option, "When")
-		}
-	}
-	val := a.CfgVals[option]
-	if val == nil {
-		if opt, ok := a.Options[option]; ok {
-			val = opt.Default()
-		}
-	}
-	return valuesEqual(val, value)
+func (a *ConfigAccessor) When(option string, values ...any) bool {
+	return a.matchOptionValues(option, "When", values)
 }
 
-func (a *ConfigAccessor) WhenNot(option string, value any) bool {
+func (a *ConfigAccessor) WhenNot(option string, values ...any) bool {
+	matched := a.matchOptionValues(option, "WhenNot", values)
 	if a.CfgVals == nil {
 		return true
 	}
-	if a.strict && a.owner != "" {
-		opt, hasOpt := a.Options[option]
-		if _, hasVal := a.CfgVals[option]; !hasVal && !hasOpt {
-			fatalScript(a.owner, "WhenNot", "unknown option %q (fix the name or declare it via ctx.Option first)", option)
-		}
-		if hasOpt {
-			a.checkValueType(opt, value, option, "WhenNot")
-		}
-	}
-	val := a.CfgVals[option]
-	if val == nil {
-		if opt, ok := a.Options[option]; ok {
-			val = opt.Default()
-		}
-	}
-	return !valuesEqual(val, value)
+	return !matched
 }
 
 func (a *ConfigAccessor) WhenAny(option string, values ...any) bool {
+	return a.When(option, values...)
+}
+
+func (a *ConfigAccessor) matchOptionValues(option, method string, values []any) bool {
+	if len(values) == 0 {
+		fatalScript(a.owner, method, "option %q requires at least one comparison value", option)
+	}
 	if a.CfgVals == nil {
 		return true
 	}
 	if a.strict && a.owner != "" {
 		opt, hasOpt := a.Options[option]
 		if _, hasVal := a.CfgVals[option]; !hasVal && !hasOpt {
-			fatalScript(a.owner, "WhenAny", "unknown option %q (fix the name or declare it via ctx.Option first)", option)
+			fatalScript(a.owner, method, "unknown option %q (fix the name or declare it via ctx.Option first)", option)
 		}
 		if hasOpt {
 			for _, value := range values {
-				a.checkValueType(opt, value, option, "WhenAny")
+				a.checkValueType(opt, value, option, method)
 			}
 		}
 	}

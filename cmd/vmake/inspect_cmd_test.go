@@ -8,12 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
@@ -165,51 +163,6 @@ func Main(p *api.Package) {
 	writeExtensionFile(t, filepath.Join(project, "dep", "src", "lib.c"), "int dep(void);\nint dep(void) { return 1; }\n")
 	writeExtensionFile(t, filepath.Join(project, "dep", "include", "dep.h"), "#define DEP 1\n")
 	return project
-}
-
-func writeInspectFreshnessProject(t *testing.T) string {
-	t.Helper()
-	project := filepath.Join(t.TempDir(), "proj")
-	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
-
-import "github.com/spock2300/vmake/pkg/api"
-
-func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c")
-	})
-}
-`)
-	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n")
-	return project
-}
-
-func writeInspectConfig(t *testing.T, project string) string {
-	t.Helper()
-	configPath := filepath.Join(project, ".vmake", "config.json")
-	writeExtensionFile(t, configPath, `{"version":"1"}`)
-	digest, _, err := fileDigest(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return digest
-}
-
-func writeInspectBuildReport(t *testing.T, project, finished, configSHA256 string) {
-	t.Helper()
-	writeExtensionFile(t, filepath.Join(project, "build", "vmake-build.json"), fmt.Sprintf(
-		`{"schemaVersion":2,"buildId":"freshness","status":"succeeded","command":"build","started":"2020-01-01T00:00:00Z","finished":%q,"configSha256":%q}`,
-		finished, configSHA256))
-}
-
-func setInspectSourceTime(t *testing.T, paths []string, modTime time.Time) {
-	t.Helper()
-	for _, path := range paths {
-		if err := os.Chtimes(path, modTime, modTime); err != nil {
-			t.Fatal(err)
-		}
-	}
 }
 
 func TestInspectProjectModel(t *testing.T) {
@@ -571,9 +524,9 @@ func TestInspectBuildStateAndPackageDirs(t *testing.T) {
 			t.Fatalf("diagnostics = %+v, want none", envelope.Diagnostics)
 		}
 		data := envelope.Data
-		if data.CompileDatabasePresent || data.BuildReportPresent || data.BuildReportState != nil {
-			t.Fatalf("build state present before a build: db=%v report=%v state=%+v",
-				data.CompileDatabasePresent, data.BuildReportPresent, data.BuildReportState)
+		if data.CompileDatabasePresent || data.BuildReportPresent {
+			t.Fatalf("build state present before a build: db=%v report=%v",
+				data.CompileDatabasePresent, data.BuildReportPresent)
 		}
 		for _, want := range []struct {
 			pkg  string
@@ -600,21 +553,6 @@ func TestInspectBuildStateAndPackageDirs(t *testing.T) {
 	if _, stderr, code := runInspectCommand(t, project, "build"); code != 0 {
 		t.Fatalf("build exit = %d, stderr = %q", code, stderr)
 	}
-	rawReport, err := os.ReadFile(filepath.Join(project, "build", "vmake-build.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var report struct {
-		BuildID string          `json:"buildId"`
-		Status  string          `json:"status"`
-		Summary json.RawMessage `json:"summary"`
-	}
-	if err := json.Unmarshal(rawReport, &report); err != nil {
-		t.Fatal(err)
-	}
-	if report.Status != "succeeded" || report.BuildID == "" || len(report.Summary) == 0 {
-		t.Fatalf("build report = %+v", report)
-	}
 
 	stdout, stderr, code := runInspectCommand(t, project, "inspect")
 	if code != 0 || stderr != "" {
@@ -630,32 +568,6 @@ func TestInspectBuildStateAndPackageDirs(t *testing.T) {
 	data := envelope.Data
 	if !data.CompileDatabasePresent || !data.BuildReportPresent {
 		t.Fatalf("presence after build: db=%v report=%v", data.CompileDatabasePresent, data.BuildReportPresent)
-	}
-	state := data.BuildReportState
-	if state == nil {
-		t.Fatal("buildReportState is absent after a successful build")
-	}
-	if state.Status != "succeeded" || state.BuildID != report.BuildID || state.Command != "build" {
-		t.Fatalf("buildReportState = %+v, report = %+v", state, report)
-	}
-	if state.Started == "" || state.Finished == "" || state.Error != "" {
-		t.Fatalf("buildReportState identity = %+v", state)
-	}
-	if !state.ConfigMatches {
-		t.Fatal("buildReportState.configMatches = false for the build's own configuration")
-	}
-	if !state.EffectiveConfigMatches {
-		t.Fatal("buildReportState.effectiveConfigMatches = false for the build's own configuration")
-	}
-	var wantSummary, gotSummary any
-	if err := json.Unmarshal(report.Summary, &wantSummary); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(state.Summary, &gotSummary); err != nil {
-		t.Fatalf("buildReportState.summary = %s: %v", state.Summary, err)
-	}
-	if !reflect.DeepEqual(gotSummary, wantSummary) {
-		t.Fatalf("buildReportState.summary = %s, report summary = %s", state.Summary, report.Summary)
 	}
 	for _, name := range []string{"proj", "dep"} {
 		pkg := inspectPackageNamed(t, data, name)
@@ -681,12 +593,6 @@ func TestInspectBuildStateAndPackageDirs(t *testing.T) {
 		t.Fatalf("hypothetical inspect exit = %d, stderr = %q", code, stderr)
 	}
 	data = decodeInspectEnvelope(t, stdout).Data
-	if data.BuildReportState == nil || data.BuildReportState.ConfigMatches {
-		t.Fatalf("--set buildReportState = %+v, want configMatches false", data.BuildReportState)
-	}
-	if data.BuildReportState.EffectiveConfigMatches {
-		t.Fatalf("changed --set buildReportState = %+v, want effectiveConfigMatches false", data.BuildReportState)
-	}
 	if dep := inspectPackageNamed(t, data, "dep"); dep.Needed || dep.BuildDir != "" || dep.BuildKey != "" {
 		t.Fatalf("pruned package kept build fields: %+v", dep)
 	}
@@ -726,649 +632,6 @@ func TestInspectBuildDirFields(t *testing.T) {
 	}
 	if dir, buildKey := inspectBuildDirFields(&api.PkgDirs{SourceDir: "/src"}, true); dir != "" || buildKey != "" {
 		t.Fatalf("empty build dir = %q/%q", dir, buildKey)
-	}
-}
-
-func TestInspectReportStateProvenance(t *testing.T) {
-	project := writeInspectFreshnessProject(t)
-	revision := initProvenanceGitRepo(t, project)
-
-	if _, stderr, code := runInspectCommand(t, project, "build"); code != 0 {
-		t.Fatalf("build exit = %d, stderr = %q", code, stderr)
-	}
-	buildReport := loadBuildReport(t, project)
-	assertReportProvenance(t, buildReport, revision, false)
-
-	if _, stderr, code := runInspectCommand(t, project, "test"); code != 0 {
-		t.Fatalf("test exit = %d, stderr = %q", code, stderr)
-	}
-	testReport := loadTestReport(t, project)
-
-	stdout, stderr, code := runInspectCommand(t, project, "inspect")
-	if code != 0 || stderr != "" {
-		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
-	}
-	data := decodeInspectEnvelope(t, stdout).Data
-	if data == nil || data.BuildReportState == nil || data.TestReportState == nil {
-		t.Fatalf("inspect report state missing: %+v", data)
-	}
-	buildState, testState := data.BuildReportState, data.TestReportState
-	if buildState.VMakeVersion != buildReport.VMakeVersion || buildState.VMakeCommit != buildReport.VMakeCommit ||
-		buildState.ProjectRevision != buildReport.ProjectRevision || buildState.ProjectDirty == nil ||
-		*buildState.ProjectDirty != *buildReport.ProjectDirty {
-		t.Fatalf("buildReportState provenance = %+v, report provenance = %+v", buildState, buildReport)
-	}
-	if testState.VMakeVersion != testReport.VMakeVersion || testState.VMakeCommit != testReport.VMakeCommit ||
-		testState.ProjectRevision != testReport.ProjectRevision || testState.ProjectDirty == nil ||
-		testReport.ProjectDirty == nil || *testState.ProjectDirty != *testReport.ProjectDirty {
-		t.Fatalf("testReportState provenance = %+v, report provenance = %+v", testState, testReport)
-	}
-}
-
-func TestInspectBuildReportConfigMatch(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
-	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
-
-import "github.com/spock2300/vmake/pkg/api"
-
-func Main(p *api.Package) { p.SetRoot(true) }
-`)
-	configPath := filepath.Join(project, ".vmake", "config.json")
-	writeExtensionFile(t, configPath, `{"version":"1","global":{"mode":"release"}}`)
-	digest, _, err := fileDigest(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reportPath := filepath.Join(project, "build", "vmake-build.json")
-	writeReport := func(configSHA256 string) {
-		t.Helper()
-		writeExtensionFile(t, reportPath, `{"schemaVersion":2,"buildId":"abc123","status":"succeeded","command":"build","started":"2026-01-01T00:00:00Z","finished":"2026-01-01T00:00:01Z","configSha256":"`+configSHA256+`","summary":{"targetsTotal":1,"targetsBuilt":1}}`)
-	}
-
-	writeReport(digest)
-	stdout, stderr, code := runInspectCommand(t, project, "inspect")
-	if code != 0 || stderr != "" {
-		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
-	}
-	data := decodeInspectEnvelope(t, stdout).Data
-	state := data.BuildReportState
-	if state == nil || !state.ConfigMatches || !state.EffectiveConfigMatches || state.BuildID != "abc123" || state.Status != "succeeded" {
-		t.Fatalf("matching report state = %+v", state)
-	}
-	if string(state.Summary) == "" {
-		t.Fatal("matching report state lost the summary")
-	}
-	if data.Freshness == nil || data.Freshness.EffectiveConfigMatches == nil || !*data.Freshness.EffectiveConfigMatches {
-		t.Fatalf("matching freshness effectiveConfigMatches = %+v", data.Freshness)
-	}
-
-	writeReport("not-the-active-digest")
-	stdout, stderr, code = runInspectCommand(t, project, "inspect")
-	if code != 0 || stderr != "" {
-		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
-	}
-	data = decodeInspectEnvelope(t, stdout).Data
-	if data.BuildReportState == nil || data.BuildReportState.ConfigMatches || data.BuildReportState.EffectiveConfigMatches {
-		t.Fatalf("mismatched report state = %+v, want both config match fields false", data.BuildReportState)
-	}
-	if data.Freshness == nil || data.Freshness.EffectiveConfigMatches == nil || *data.Freshness.EffectiveConfigMatches {
-		t.Fatalf("mismatched freshness effectiveConfigMatches = %+v", data.Freshness)
-	}
-}
-
-func TestInspectEffectiveConfigMatches(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
-	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
-
-import "github.com/spock2300/vmake/pkg/api"
-
-func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnConfig(func(ctx *api.ConfigContext) {
-		ctx.Option("retries").SetType(api.OptionInt).SetDefault(3)
-		ctx.Option("label").SetType(api.OptionString).SetDefault("default")
-		ctx.GlobalOption("board").SetType(api.OptionString)
-	})
-}
-`)
-	configPath := filepath.Join(project, ".vmake", "config.json")
-	writeExtensionFile(t, configPath, `{"version":"1","global":{"mode":"release","options":{"board":"demo"}},"entries":{"proj":{"options":{"retries":5}}}}`)
-	digest, _, err := fileDigest(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	report := `{"schemaVersion":2,"buildId":"effective","status":"succeeded","command":"%s","started":"2026-01-01T00:00:00Z","finished":"2026-01-01T00:00:01Z","configSha256":"` + digest + `","summary":{"targetsTotal":1}}`
-	writeExtensionFile(t, filepath.Join(project, "build", "vmake-build.json"), fmt.Sprintf(report, "build"))
-	writeExtensionFile(t, filepath.Join(project, "build", "vmake-test.json"), fmt.Sprintf(report, "test"))
-
-	check := func(t *testing.T, args []string, wantConfig, wantEffective bool) {
-		t.Helper()
-		stdout, stderr, code := runInspectCommand(t, project, append([]string{"inspect"}, args...)...)
-		if code != 0 || stderr != "" {
-			t.Fatalf("inspect %v exit = %d, stderr = %q", args, code, stderr)
-		}
-		data := decodeInspectEnvelope(t, stdout).Data
-		for _, state := range []struct {
-			name  string
-			value *inspectBuildReportState
-		}{
-			{"buildReportState", data.BuildReportState},
-			{"testReportState", data.TestReportState},
-		} {
-			if state.value == nil {
-				t.Fatalf("%s missing for inspect %v", state.name, args)
-			}
-			if state.value.ConfigMatches != wantConfig || state.value.EffectiveConfigMatches != wantEffective {
-				t.Fatalf("%s configMatches/effectiveConfigMatches = %v/%v, want %v/%v for inspect %v",
-					state.name, state.value.ConfigMatches, state.value.EffectiveConfigMatches, wantConfig, wantEffective, args)
-			}
-		}
-		if data.Freshness == nil || data.Freshness.ConfigMatches == nil || data.Freshness.EffectiveConfigMatches == nil {
-			t.Fatalf("freshness config match fields missing for inspect %v: %+v", args, data.Freshness)
-		}
-		if *data.Freshness.ConfigMatches != wantConfig || *data.Freshness.EffectiveConfigMatches != wantEffective {
-			t.Fatalf("freshness configMatches/effectiveConfigMatches = %v/%v, want %v/%v for inspect %v",
-				*data.Freshness.ConfigMatches, *data.Freshness.EffectiveConfigMatches, wantConfig, wantEffective, args)
-		}
-	}
-
-	check(t, nil, true, true)
-	check(t, []string{"--set", "proj/retries=5"}, false, true)
-	check(t, []string{"--set", "proj/label=default"}, false, true)
-	check(t, []string{"--set", "mode=release"}, false, true)
-	check(t, []string{"--set", "board=demo"}, false, true)
-	check(t, []string{"--set", "proj/retries=5", "--set", "mode=release"}, false, true)
-	check(t, []string{"--set", "proj/retries=4"}, false, false)
-	check(t, []string{"--set", "mode=debug"}, false, false)
-	check(t, []string{"--set", "proj/retries=5", "--set", "proj/retries=4"}, false, false)
-	check(t, []string{"--set", "board=other"}, false, false)
-
-	mismatched := `{"schemaVersion":2,"buildId":"other","status":"succeeded","command":"build","started":"2026-01-01T00:00:00Z","finished":"2026-01-01T00:00:01Z","configSha256":"not-the-active-digest"}`
-	writeExtensionFile(t, filepath.Join(project, "build", "vmake-build.json"), mismatched)
-	writeExtensionFile(t, filepath.Join(project, "build", "vmake-test.json"), mismatched)
-	check(t, []string{"--set", "proj/retries=5"}, false, false)
-
-	writeExtensionFile(t, configPath, `{"version":"1"}`)
-	digest, _, err = fileDigest(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	report = `{"schemaVersion":2,"buildId":"effective","status":"succeeded","command":"%s","started":"2026-01-01T00:00:00Z","finished":"2026-01-01T00:00:01Z","configSha256":"` + digest + `","summary":{"targetsTotal":1}}`
-	writeExtensionFile(t, filepath.Join(project, "build", "vmake-build.json"), fmt.Sprintf(report, "build"))
-	writeExtensionFile(t, filepath.Join(project, "build", "vmake-test.json"), fmt.Sprintf(report, "test"))
-	check(t, nil, true, true)
-	check(t, []string{"--set", "mode=debug"}, false, true)
-	check(t, []string{"--set", "mode=release"}, false, false)
-}
-
-func TestInspectFreshnessWithoutReport(t *testing.T) {
-	project := writeInspectFreshnessProject(t)
-
-	stdout, stderr, code := runInspectCommand(t, project, "inspect")
-	if code != 0 || stderr != "" {
-		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
-	}
-	data := decodeInspectEnvelope(t, stdout).Data
-	if data == nil || data.BuildReportPresent || data.BuildReportState != nil {
-		t.Fatalf("build report state without a report: %+v", data)
-	}
-	freshness := data.Freshness
-	if freshness == nil || freshness.Known {
-		t.Fatalf("freshness = %+v, want present with known false", freshness)
-	}
-	if freshness.ReportStatus != "" || freshness.ReportFinished != "" || freshness.ConfigMatches != nil ||
-		freshness.EffectiveConfigMatches != nil || freshness.SourceChanged != nil ||
-		freshness.ChangedSources != nil || freshness.Truncated != nil {
-		t.Fatalf("unknown freshness exposed report/source fields: %+v", freshness)
-	}
-}
-
-func TestInspectFreshnessUnparsableFinish(t *testing.T) {
-	project := writeInspectFreshnessProject(t)
-	digest := writeInspectConfig(t, project)
-
-	for _, finished := range []string{"", "not-a-timestamp"} {
-		writeInspectBuildReport(t, project, finished, digest)
-		stdout, stderr, code := runInspectCommand(t, project, "inspect")
-		if code != 0 || stderr != "" {
-			t.Fatalf("inspect exit = %d, stderr = %q (finished %q)", code, stderr, finished)
-		}
-		data := decodeInspectEnvelope(t, stdout).Data
-		if data == nil || data.BuildReportState == nil {
-			t.Fatalf("parsable report without state: %+v (finished %q)", data, finished)
-		}
-		freshness := data.Freshness
-		if freshness == nil || freshness.Known {
-			t.Fatalf("freshness = %+v, want known false (finished %q)", freshness, finished)
-		}
-		if freshness.ReportStatus != "succeeded" || freshness.ConfigMatches == nil || !*freshness.ConfigMatches {
-			t.Fatalf("freshness identity = %+v (finished %q)", freshness, finished)
-		}
-		if freshness.EffectiveConfigMatches == nil || !*freshness.EffectiveConfigMatches {
-			t.Fatalf("freshness effectiveConfigMatches = %+v (finished %q)", freshness.EffectiveConfigMatches, finished)
-		}
-		if freshness.ReportFinished != "" || freshness.SourceChanged != nil ||
-			freshness.ChangedSources != nil || freshness.Truncated != nil {
-			t.Fatalf("unparsable finish exposed source fields: %+v (finished %q)", freshness, finished)
-		}
-	}
-}
-
-func TestInspectFreshnessAfterBuildAndSourceEdit(t *testing.T) {
-	project := writeInspectProject(t, t.TempDir())
-	if _, stderr, code := runBuildCommand(t, project, "build"); code != 0 {
-		t.Fatalf("build exit = %d, stderr = %q", code, stderr)
-	}
-	report := loadBuildReport(t, project)
-	finished, err := time.Parse(time.RFC3339Nano, report.Finished)
-	if err != nil {
-		t.Fatalf("report finished %q: %v", report.Finished, err)
-	}
-
-	stdout, stderr, code := runInspectCommand(t, project, "inspect")
-	if code != 0 || stderr != "" {
-		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
-	}
-	data := decodeInspectEnvelope(t, stdout).Data
-	freshness := data.Freshness
-	if freshness == nil || !freshness.Known {
-		t.Fatalf("freshness after build = %+v", freshness)
-	}
-	if freshness.ReportStatus != report.Status || freshness.ReportFinished != report.Finished {
-		t.Fatalf("freshness report identity = %+v, report = %+v", freshness, report)
-	}
-	if freshness.ConfigMatches == nil || !*freshness.ConfigMatches {
-		t.Fatalf("freshness configMatches = %+v, want true", freshness.ConfigMatches)
-	}
-	if freshness.EffectiveConfigMatches == nil || !*freshness.EffectiveConfigMatches {
-		t.Fatalf("freshness effectiveConfigMatches = %+v, want true", freshness.EffectiveConfigMatches)
-	}
-	if freshness.SourceChanged == nil || *freshness.SourceChanged {
-		t.Fatalf("freshness sourceChanged = %+v, want false", freshness.SourceChanged)
-	}
-	if len(freshness.ChangedSources) != 0 {
-		t.Fatalf("changedSources after build = %v, want none", freshness.ChangedSources)
-	}
-	if freshness.Truncated == nil || *freshness.Truncated {
-		t.Fatalf("freshness truncated = %+v, want false", freshness.Truncated)
-	}
-
-	edited := finished.Add(2 * time.Second)
-	for _, rel := range []string{"src/main.c", "dep/src/lib.c"} {
-		writeExtensionFile(t, filepath.Join(project, filepath.FromSlash(rel)), "int edited(void) { return 1; }\n")
-	}
-	setInspectSourceTime(t, []string{filepath.Join(project, "src", "main.c"), filepath.Join(project, "dep", "src", "lib.c")}, edited)
-
-	stdout, stderr, code = runInspectCommand(t, project, "inspect")
-	if code != 0 || stderr != "" {
-		t.Fatalf("inspect after edit exit = %d, stderr = %q", code, stderr)
-	}
-	data = decodeInspectEnvelope(t, stdout).Data
-	freshness = data.Freshness
-	if freshness == nil || !freshness.Known {
-		t.Fatalf("freshness after edit = %+v", freshness)
-	}
-	if freshness.ConfigMatches == nil || !*freshness.ConfigMatches {
-		t.Fatalf("source edit changed configMatches: %+v", freshness.ConfigMatches)
-	}
-	if freshness.EffectiveConfigMatches == nil || !*freshness.EffectiveConfigMatches {
-		t.Fatalf("source edit changed effectiveConfigMatches: %+v", freshness.EffectiveConfigMatches)
-	}
-	if freshness.SourceChanged == nil || !*freshness.SourceChanged {
-		t.Fatalf("sourceChanged after edit = %+v, want true", freshness.SourceChanged)
-	}
-	if want := []string{"dep:src/lib.c", "proj:src/main.c"}; !slices.Equal(freshness.ChangedSources, want) {
-		t.Fatalf("changedSources = %v, want %v", freshness.ChangedSources, want)
-	}
-	if freshness.Truncated == nil || *freshness.Truncated {
-		t.Fatalf("freshness truncated after edit = %+v, want false", freshness.Truncated)
-	}
-
-	again, stderr, code := runInspectCommand(t, project, "inspect")
-	if code != 0 || stderr != "" {
-		t.Fatalf("repeat inspect exit = %d, stderr = %q", code, stderr)
-	}
-	if again != stdout {
-		t.Fatal("consecutive inspect runs after a source edit are not byte-identical")
-	}
-}
-
-func TestInspectFreshnessConfigMismatch(t *testing.T) {
-	project := writeInspectFreshnessProject(t)
-	writeInspectConfig(t, project)
-	writeInspectBuildReport(t, project, "2020-01-01T00:00:00Z", "not-the-active-digest")
-	source := filepath.Join(project, "src", "main.c")
-	setInspectSourceTime(t, []string{source}, time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC))
-
-	stdout, stderr, code := runInspectCommand(t, project, "inspect")
-	if code != 0 || stderr != "" {
-		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
-	}
-	data := decodeInspectEnvelope(t, stdout).Data
-	if data.BuildReportState == nil || data.BuildReportState.ConfigMatches {
-		t.Fatalf("buildReportState configMatches = %+v, want false", data.BuildReportState)
-	}
-	freshness := data.Freshness
-	if freshness == nil || !freshness.Known {
-		t.Fatalf("freshness with mismatched config = %+v", freshness)
-	}
-	if freshness.ConfigMatches == nil || *freshness.ConfigMatches {
-		t.Fatalf("freshness configMatches = %+v, want false", freshness.ConfigMatches)
-	}
-	if freshness.EffectiveConfigMatches == nil || *freshness.EffectiveConfigMatches {
-		t.Fatalf("freshness effectiveConfigMatches = %+v, want false", freshness.EffectiveConfigMatches)
-	}
-	if freshness.SourceChanged == nil || !*freshness.SourceChanged {
-		t.Fatalf("freshness sourceChanged = %+v, want true despite config mismatch", freshness.SourceChanged)
-	}
-	if want := []string{"proj:src/main.c"}; !slices.Equal(freshness.ChangedSources, want) {
-		t.Fatalf("changedSources = %v, want %v", freshness.ChangedSources, want)
-	}
-}
-
-func TestInspectFreshnessTruncatesChangedSources(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
-	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
-
-import "github.com/spock2300/vmake/pkg/api"
-
-func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c")
-		ctx.Target("app_again").SetKind(api.TargetBinary).AddFiles("src/*.c")
-	})
-}
-`)
-	paths := make([]string, 0, 55)
-	for i := 0; i < 55; i++ {
-		path := filepath.Join(project, "src", fmt.Sprintf("f%02d.c", i))
-		writeExtensionFile(t, path, fmt.Sprintf("int f%d(void) { return %d; }\n", i, i))
-		paths = append(paths, path)
-	}
-	setInspectSourceTime(t, paths, time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC))
-	digest := writeInspectConfig(t, project)
-	writeInspectBuildReport(t, project, "2020-01-01T00:00:00Z", digest)
-
-	stdout, stderr, code := runInspectCommand(t, project, "inspect")
-	if code != 0 || stderr != "" {
-		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
-	}
-	data := decodeInspectEnvelope(t, stdout).Data
-	freshness := data.Freshness
-	if freshness == nil || !freshness.Known {
-		t.Fatalf("freshness = %+v", freshness)
-	}
-	if freshness.ConfigMatches == nil || !*freshness.ConfigMatches {
-		t.Fatalf("freshness configMatches = %+v, want true", freshness.ConfigMatches)
-	}
-	if freshness.EffectiveConfigMatches == nil || !*freshness.EffectiveConfigMatches {
-		t.Fatalf("freshness effectiveConfigMatches = %+v, want true", freshness.EffectiveConfigMatches)
-	}
-	if freshness.SourceChanged == nil || !*freshness.SourceChanged {
-		t.Fatalf("freshness sourceChanged = %+v, want true", freshness.SourceChanged)
-	}
-	if freshness.Truncated == nil || !*freshness.Truncated {
-		t.Fatalf("freshness truncated = %+v, want true", freshness.Truncated)
-	}
-	if len(freshness.ChangedSources) != inspectFreshnessChangedSourcesLimit {
-		t.Fatalf("changedSources length = %d, want %d", len(freshness.ChangedSources), inspectFreshnessChangedSourcesLimit)
-	}
-	if !slices.IsSorted(freshness.ChangedSources) {
-		t.Fatalf("changedSources is not sorted: %v", freshness.ChangedSources)
-	}
-	seen := make(map[string]bool, len(freshness.ChangedSources))
-	for _, source := range freshness.ChangedSources {
-		if seen[source] {
-			t.Fatalf("changedSources has duplicate %q: %v", source, freshness.ChangedSources)
-		}
-		seen[source] = true
-	}
-	if first, last := freshness.ChangedSources[0], freshness.ChangedSources[len(freshness.ChangedSources)-1]; first != "proj:src/f00.c" || last != "proj:src/f49.c" {
-		t.Fatalf("changedSources bounds = %q..%q", first, last)
-	}
-
-	again, stderr, code := runInspectCommand(t, project, "inspect")
-	if code != 0 || stderr != "" {
-		t.Fatalf("repeat inspect exit = %d, stderr = %q", code, stderr)
-	}
-	if again != stdout {
-		t.Fatal("freshness output is not deterministic")
-	}
-}
-
-func TestInspectResolvedFiles(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
-	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
-
-import "github.com/spock2300/vmake/pkg/api"
-
-func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c").RemoveFiles("src/skip.c")
-		ctx.Target("docs").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error { return nil })
-		ctx.Target("nomatch").SetKind(api.TargetObject).AddFiles("missing/*.c")
-	})
-}
-`)
-	for _, name := range []string{"b.c", "a.c", "skip.c"} {
-		writeExtensionFile(t, filepath.Join(project, "src", name), "int f(void) { return 0; }\n")
-	}
-	writeExtensionFile(t, filepath.Join(project, "src", "notes.txt"), "not a source\n")
-
-	stdout, stderr, code := runInspectCommand(t, project, "inspect")
-	if code != 0 || stderr != "" {
-		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
-	}
-	envelope := decodeInspectEnvelope(t, stdout)
-	if envelope.Status != "ok" || len(envelope.Diagnostics) != 0 || envelope.Data == nil {
-		t.Fatalf("envelope = %+v", envelope)
-	}
-	proj := inspectPackageNamed(t, envelope.Data, "proj")
-	app := inspectTargetNamed(t, proj, "app")
-	if !slices.Equal(app.Files, []string{"src/*.c"}) || !slices.Equal(app.ExcludedFiles, []string{"src/skip.c"}) {
-		t.Fatalf("declared patterns = %v / %v", app.Files, app.ExcludedFiles)
-	}
-	if want := []string{"src/a.c", "src/b.c"}; !slices.Equal(app.ResolvedFiles, want) {
-		t.Fatalf("resolvedFiles = %v, want %v", app.ResolvedFiles, want)
-	}
-	if app.ResolvedFileCount != 2 || app.ResolvedFilesTruncated {
-		t.Fatalf("resolvedFileCount/truncated = %d/%v", app.ResolvedFileCount, app.ResolvedFilesTruncated)
-	}
-
-	docs := inspectTargetNamed(t, proj, "docs")
-	if docs.ResolvedFiles != nil || docs.ResolvedFileCount != 0 || docs.ResolvedFilesTruncated {
-		t.Fatalf("docs resolved fields = %v/%d/%v, want omitted", docs.ResolvedFiles, docs.ResolvedFileCount, docs.ResolvedFilesTruncated)
-	}
-	nomatch := inspectTargetNamed(t, proj, "nomatch")
-	if nomatch.ResolvedFiles != nil || nomatch.ResolvedFileCount != 0 || nomatch.ResolvedFilesTruncated {
-		t.Fatalf("nomatch resolved fields = %v/%d/%v, want omitted", nomatch.ResolvedFiles, nomatch.ResolvedFileCount, nomatch.ResolvedFilesTruncated)
-	}
-	if _, err := os.Stat(filepath.Join(project, "build")); !os.IsNotExist(err) {
-		t.Fatalf("inspect created build/: %v", err)
-	}
-
-	again, stderr, code := runInspectCommand(t, project, "inspect")
-	if code != 0 || stderr != "" {
-		t.Fatalf("second inspect exit = %d, stderr = %q", code, stderr)
-	}
-	if again != stdout {
-		t.Fatal("resolved file lists are not deterministic")
-	}
-}
-
-func TestInspectResolvedFilesCap(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
-	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
-
-import "github.com/spock2300/vmake/pkg/api"
-
-func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c")
-	})
-}
-`)
-	const total = inspectResolvedFilesLimit + 5
-	for i := 0; i < total; i++ {
-		writeExtensionFile(t, filepath.Join(project, "src", fmt.Sprintf("f%03d.c", i)), "int f(void) { return 0; }\n")
-	}
-
-	stdout, stderr, code := runInspectCommand(t, project, "inspect")
-	if code != 0 || stderr != "" {
-		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
-	}
-	envelope := decodeInspectEnvelope(t, stdout)
-	app := inspectTargetNamed(t, inspectPackageNamed(t, envelope.Data, "proj"), "app")
-	if len(app.ResolvedFiles) != inspectResolvedFilesLimit {
-		t.Fatalf("resolvedFiles length = %d, want %d", len(app.ResolvedFiles), inspectResolvedFilesLimit)
-	}
-	if !slices.IsSorted(app.ResolvedFiles) {
-		t.Fatalf("resolvedFiles is not sorted: %v", app.ResolvedFiles)
-	}
-	if app.ResolvedFiles[0] != "src/f000.c" || app.ResolvedFiles[len(app.ResolvedFiles)-1] != "src/f199.c" {
-		t.Fatalf("resolvedFiles bounds = %q..%q", app.ResolvedFiles[0], app.ResolvedFiles[len(app.ResolvedFiles)-1])
-	}
-	if app.ResolvedFileCount != total || !app.ResolvedFilesTruncated {
-		t.Fatalf("resolvedFileCount/truncated = %d/%v, want %d/true", app.ResolvedFileCount, app.ResolvedFilesTruncated, total)
-	}
-}
-
-func TestInspectResolvedFilesGeneratedAfterBuild(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
-	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
-
-import (
-	"path/filepath"
-
-	"github.com/spock2300/vmake/pkg/api"
-)
-
-func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnBuild(func(ctx *api.BuildContext) {
-		generated, err := filepath.Rel(p.SourceDir(), filepath.Join(p.BuildDir(), "generated.c"))
-		if err != nil {
-			panic(err)
-		}
-		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c").AddFiles(filepath.ToSlash(generated))
-	})
-}
-`)
-	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n")
-
-	stdout, stderr, code := runInspectCommand(t, project, "inspect")
-	if code != 0 || stderr != "" {
-		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
-	}
-	data := decodeInspectEnvelope(t, stdout).Data
-	proj := inspectPackageNamed(t, data, "proj")
-	app := inspectTargetNamed(t, proj, "app")
-	if !slices.Equal(app.ResolvedFiles, []string{"src/main.c"}) {
-		t.Fatalf("resolvedFiles before generated file = %v, want src/main.c", app.ResolvedFiles)
-	}
-	if proj.BuildDir == "" {
-		t.Fatal("inspect did not resolve a build directory")
-	}
-
-	generated := filepath.Join(proj.BuildDir, "generated.c")
-	writeExtensionFile(t, generated, "int generated(void) { return 0; }\n")
-	rel, err := filepath.Rel(project, generated)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	stdout, stderr, code = runInspectCommand(t, project, "inspect")
-	if code != 0 || stderr != "" {
-		t.Fatalf("inspect after generated file exit = %d, stderr = %q", code, stderr)
-	}
-	app = inspectTargetNamed(t, inspectPackageNamed(t, decodeInspectEnvelope(t, stdout).Data, "proj"), "app")
-	if want := []string{filepath.ToSlash(rel), "src/main.c"}; !slices.Equal(app.ResolvedFiles, want) {
-		t.Fatalf("resolvedFiles after generated file = %v, want %v", app.ResolvedFiles, want)
-	}
-	if app.ResolvedFileCount != 2 {
-		t.Fatalf("resolvedFileCount after generated file = %d, want 2", app.ResolvedFileCount)
-	}
-}
-
-func TestInspectResolvedFilesMissingSource(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
-	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
-
-import "github.com/spock2300/vmake/pkg/api"
-
-func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
-	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetBinary)
-	})
-}
-`)
-	writeExtensionFile(t, filepath.Join(project, "lib", "build.go"), `package main
-
-import "github.com/spock2300/vmake/pkg/api"
-
-func Main(p *api.Package) {
-	p.OnPackage(func(p *api.Package) {
-		p.SetGit("https://example.invalid/lib.git")
-		p.AddVersion("1.0.0", "v1.0.0")
-	})
-	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("lib").SetKind(api.TargetStatic).AddFiles("src/*.c")
-	})
-}
-`)
-
-	stdout, stderr, code := runInspectCommand(t, project, "inspect")
-	if code != 0 {
-		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
-	}
-	envelope := decodeInspectEnvelope(t, stdout)
-	lib := inspectPackageNamed(t, envelope.Data, "lib")
-	if lib.SourcePresent || lib.Targets != nil {
-		t.Fatalf("lib source=%v targets=%+v, want absent source without targets", lib.SourcePresent, lib.Targets)
-	}
-	if len(envelope.Diagnostics) != 1 || envelope.Diagnostics[0].Code != "VMAKE_W_SOURCE_MISSING" {
-		t.Fatalf("diagnostics = %+v", envelope.Diagnostics)
-	}
-}
-
-func TestInspectResolvedFilesFirmwareSample(t *testing.T) {
-	root, err := filepath.Abs(filepath.Join("..", "..", ".work", "arena", "project"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info, err := os.Stat(root); err != nil || !info.IsDir() {
-		t.Skipf("firmware sample project %s unavailable", root)
-	}
-	stdout, stderr, code := runInspectCommand(t, root, "inspect", "--set", "toolchain=host")
-	if code != 0 {
-		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
-	}
-	envelope := decodeInspectEnvelope(t, stdout)
-	if envelope.Status != "ok" || envelope.Data == nil {
-		t.Fatalf("envelope = %+v", envelope)
-	}
-	var firmware *inspectTarget
-	for i := range envelope.Data.Packages {
-		pkg := &envelope.Data.Packages[i]
-		if pkg.Name != "firmware" {
-			continue
-		}
-		for j := range pkg.Targets {
-			if pkg.Targets[j].Name == "firmware" {
-				firmware = &pkg.Targets[j]
-			}
-		}
-	}
-	if firmware == nil {
-		t.Skip("firmware sample has no firmware:firmware target")
-	}
-	if !slices.Contains(firmware.ResolvedFiles, "src/main.c") {
-		t.Fatalf("firmware resolvedFiles = %v, want src/main.c", firmware.ResolvedFiles)
 	}
 }
 
@@ -1418,67 +681,6 @@ func TestInspectTargetFlagsFirmwareSample(t *testing.T) {
 	for _, toolchainDefault := range []string{"-Wstrict-prototypes", "-fstack-protector-strong"} {
 		if slices.Contains(gpu.CFlags, toolchainDefault) {
 			t.Fatalf("py32-gpu cFlags = %v, contains host toolchain default %q", gpu.CFlags, toolchainDefault)
-		}
-	}
-}
-
-func TestInspectUnreadableBuildReport(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
-	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
-
-import "github.com/spock2300/vmake/pkg/api"
-
-func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/*.c")
-	})
-}
-`)
-	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n")
-	reportPath := filepath.Join(project, "build", "vmake-build.json")
-	for _, corrupt := range []string{"{this is not a build report\n", "null", "[]", ""} {
-		writeExtensionFile(t, reportPath, corrupt)
-		stdout, stderr, code := runInspectCommand(t, project, "inspect")
-		if code != 0 {
-			t.Fatalf("inspect exit = %d, stderr = %q (report %q)", code, stderr, corrupt)
-		}
-		envelope := decodeInspectEnvelope(t, stdout)
-		if envelope.Status != "ok" || envelope.Data == nil {
-			t.Fatalf("envelope = %+v (report %q)", envelope, corrupt)
-		}
-		data := envelope.Data
-		if !data.BuildReportPresent || data.BuildReportState != nil {
-			t.Fatalf("corrupt report %q: present=%v state=%+v", corrupt, data.BuildReportPresent, data.BuildReportState)
-		}
-		if data.CompileDatabasePresent {
-			t.Fatal("compileDatabasePresent = true without a compile database")
-		}
-		if data.Freshness == nil || data.Freshness.Known {
-			t.Fatalf("corrupt report freshness = %+v, want known false (report %q)", data.Freshness, corrupt)
-		}
-		if data.Freshness.ReportStatus != "" || data.Freshness.ReportFinished != "" ||
-			data.Freshness.ConfigMatches != nil || data.Freshness.EffectiveConfigMatches != nil ||
-			data.Freshness.SourceChanged != nil ||
-			data.Freshness.ChangedSources != nil || data.Freshness.Truncated != nil {
-			t.Fatalf("corrupt report freshness exposed fields: %+v (report %q)", data.Freshness, corrupt)
-		}
-		if len(envelope.Diagnostics) != 1 {
-			t.Fatalf("diagnostics = %+v, want one warning (report %q)", envelope.Diagnostics, corrupt)
-		}
-		diagnostic := envelope.Diagnostics[0]
-		if diagnostic.Severity != "warning" || diagnostic.Code != "VMAKE_W_REPORT_UNREADABLE" || !strings.Contains(diagnostic.Message, reportPath) {
-			t.Fatalf("diagnostic = %+v (report %q)", diagnostic, corrupt)
-		}
-		if stderr != "Warning: "+diagnostic.Message+"\n" {
-			t.Fatalf("stderr = %q, want one warning line (report %q)", stderr, corrupt)
-		}
-		after, err := os.ReadFile(reportPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(after) != corrupt {
-			t.Fatalf("inspect rewrote the corrupt build report: %q", after)
 		}
 	}
 }
@@ -1810,34 +1012,6 @@ func TestInspectSetTypedCoercion(t *testing.T) {
 	}
 }
 
-func TestCoerceInspectOverridesLeavesUndeclaredOptionsRaw(t *testing.T) {
-	overrides, err := coerceInspectOverrides([]inspectOverride{
-		{pkgName: "proj", optName: "lazy", raw: "on"},
-		{pkgName: "proj", optName: "label", raw: "42"},
-	}, &inspectOptionDeclarations{
-		packageOptions: map[string]map[string]*api.Option{
-			"proj": {"label": (&api.Option{}).SetType(api.OptionString)},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if overrides[0].value != "on" {
-		t.Errorf("undeclared option value = %#v, want raw string \"on\"", overrides[0].value)
-	}
-	if overrides[1].value != "42" {
-		t.Errorf("declared string option value = %#v, want \"42\"", overrides[1].value)
-	}
-
-	overrides, err = coerceInspectOverrides([]inspectOverride{{pkgName: "proj", optName: "lazy", raw: "on"}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if overrides[0].value != "on" {
-		t.Errorf("nil declarations value = %#v, want raw string \"on\"", overrides[0].value)
-	}
-}
-
 func TestInspectSetErrors(t *testing.T) {
 	project := writeInspectProject(t, t.TempDir())
 	configPath := filepath.Join(project, ".vmake", "config.json")
@@ -1989,26 +1163,20 @@ func Main(p *api.Package) {
 	if envelope.Status != "ok" || envelope.Data == nil {
 		t.Fatalf("envelope = %+v", envelope)
 	}
-	if len(envelope.Diagnostics) != 2 {
-		t.Fatalf("diagnostics = %+v, want the declaration warning and the aggregate", envelope.Diagnostics)
+	if len(envelope.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %+v, want the declaration warning", envelope.Diagnostics)
 	}
 	diagnostic := envelope.Diagnostics[0]
 	if diagnostic.Severity != "warning" || diagnostic.Code != "VMAKE_W_TARGET_DECLARE" ||
 		!strings.Contains(diagnostic.Message, "broken") || diagnostic.Fix == "" {
 		t.Fatalf("diagnostic = %+v", diagnostic)
 	}
-	aggregate := envelope.Diagnostics[1]
-	if aggregate.Code != "VMAKE_W_OMITTED_TARGETS" ||
-		aggregate.Message != "omitted targets for 1 package(s) because target declaration failed" {
-		t.Fatalf("aggregate diagnostic = %+v", aggregate)
-	}
 	broken := inspectPackageNamed(t, envelope.Data, "broken")
 	if !broken.Needed || broken.Targets != nil {
 		t.Fatalf("broken package = %+v", broken)
 	}
-	if !strings.Contains(stderr, "Warning: cannot declare targets for broken") ||
-		!strings.HasSuffix(stderr, "Warning: "+aggregate.Message+"\n") {
-		t.Fatalf("stderr = %q, want the per-package warning and the aggregate", stderr)
+	if stderr != "Warning: "+diagnostic.Message+"\n" {
+		t.Fatalf("stderr = %q, want the per-package warning", stderr)
 	}
 }
 
@@ -2044,21 +1212,17 @@ func Main(p *api.Package) {
 	if envelope.Status != "ok" || envelope.Data == nil {
 		t.Fatalf("envelope = %+v", envelope)
 	}
-	if len(envelope.Diagnostics) != 2 {
-		t.Fatalf("diagnostics = %+v, want one target-declaration warning and one read-only aggregate", envelope.Diagnostics)
+	if len(envelope.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %+v, want one target-declaration warning", envelope.Diagnostics)
 	}
 	diagnostic := envelope.Diagnostics[0]
-	if diagnostic.Severity != "warning" || diagnostic.Code != "VMAKE_W_TARGET_DECLARE" || !strings.Contains(diagnostic.Message, wantReadOnly) {
+	if diagnostic.Severity != "warning" || diagnostic.Code != "VMAKE_W_TARGET_DECLARE" ||
+		!strings.Contains(diagnostic.Message, wantReadOnly) ||
+		diagnostic.Fix != "Guard generated-file work with p.DryRun()." {
 		t.Fatalf("diagnostic = %+v, want read-only declaration warning", diagnostic)
 	}
-	aggregate := envelope.Diagnostics[1]
-	if aggregate.Severity != "warning" || aggregate.Code != "VMAKE_W_OMITTED_TARGETS" ||
-		aggregate.Message != "omitted targets for 1 package(s) (1 due to read-only writes)" ||
-		aggregate.Fix != "Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected." {
-		t.Fatalf("aggregate diagnostic = %+v", aggregate)
-	}
-	if stderr != "Warning: "+diagnostic.Message+"\nWarning: "+aggregate.Message+"\n" {
-		t.Fatalf("stderr = %q, want declaration and aggregate warning lines", stderr)
+	if stderr != "Warning: "+diagnostic.Message+"\n" {
+		t.Fatalf("stderr = %q, want declaration warning line", stderr)
 	}
 	if proj := inspectPackageNamed(t, envelope.Data, "ro"); proj.Targets != nil {
 		t.Fatalf("ro targets = %+v, want omitted after read-only declaration failure", proj.Targets)
@@ -2079,8 +1243,7 @@ func Main(p *api.Package) {
 		t.Fatalf("inspect after build exit = %d, stderr = %q", code, stderr)
 	}
 	envelope = decodeInspectEnvelope(t, stdout)
-	if len(envelope.Diagnostics) != 2 || !strings.Contains(envelope.Diagnostics[0].Message, wantReadOnly) ||
-		envelope.Diagnostics[1].Code != "VMAKE_W_OMITTED_TARGETS" {
+	if len(envelope.Diagnostics) != 1 || !strings.Contains(envelope.Diagnostics[0].Message, wantReadOnly) {
 		t.Fatalf("diagnostics after build = %+v", envelope.Diagnostics)
 	}
 	if data, err := os.ReadFile(generated); err != nil || string(data) != "generated" {
@@ -2120,16 +1283,12 @@ func Main(p *api.Package) {
 	if envelope.Status != "ok" || envelope.Data == nil {
 		t.Fatalf("envelope = %+v", envelope)
 	}
-	if len(envelope.Diagnostics) != 2 {
-		t.Fatalf("diagnostics = %+v, want one blocked-write warning and one aggregate", envelope.Diagnostics)
+	if len(envelope.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %+v, want one blocked-write warning", envelope.Diagnostics)
 	}
 	diagnostic := envelope.Diagnostics[0]
 	if diagnostic.Code != "VMAKE_W_TARGET_DECLARE" || !strings.Contains(diagnostic.Message, wantReadOnly) {
 		t.Fatalf("diagnostic = %+v, want read-only declaration warning", diagnostic)
-	}
-	if aggregate := envelope.Diagnostics[1]; aggregate.Code != "VMAKE_W_OMITTED_TARGETS" ||
-		aggregate.Message != "omitted targets for 1 package(s) (1 due to read-only writes)" {
-		t.Fatalf("aggregate diagnostic = %+v", aggregate)
 	}
 	if proj := inspectPackageNamed(t, envelope.Data, "ignored"); proj.Targets != nil {
 		t.Fatalf("ignored targets = %+v, want omitted after blocked write", proj.Targets)
@@ -2139,146 +1298,6 @@ func Main(p *api.Package) {
 	}
 	if data, err := os.ReadFile(kept); err != nil || string(data) != "keep" {
 		t.Fatalf("inspect removed kept/keep.txt: %q, %v", data, err)
-	}
-}
-
-func TestInspectReadOnlyAggregateOmission(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "aggregate")
-	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
-
-import (
-	"os"
-
-	"github.com/spock2300/vmake/pkg/api"
-)
-
-func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
-	p.OnBuild(func(ctx *api.BuildContext) {
-		_ = os.WriteFile("root-generated.txt", []byte("root"), 0644)
-		ctx.Target("app").SetKind(api.TargetBinary).AddDeps("lib:lib")
-	})
-}
-`)
-	writeExtensionFile(t, filepath.Join(project, "lib", "build.go"), `package main
-
-import (
-	"os"
-
-	"github.com/spock2300/vmake/pkg/api"
-)
-
-func Main(p *api.Package) {
-	p.OnBuild(func(ctx *api.BuildContext) {
-		_ = os.WriteFile("lib-generated.txt", []byte("lib"), 0644)
-		ctx.Target("lib").SetKind(api.TargetStatic)
-	})
-}
-`)
-	rootGenerated := filepath.Join(project, "root-generated.txt")
-	libGenerated := filepath.Join(project, "lib", "lib-generated.txt")
-	wantAggregate := "omitted targets for 2 package(s) (2 due to read-only writes)"
-
-	var first *inspectEnvelope
-	for attempt := 0; attempt < 2; attempt++ {
-		stdout, stderr, code := runInspectCommand(t, project, "inspect")
-		if code != 0 {
-			t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
-		}
-		envelope := decodeInspectEnvelope(t, stdout)
-		if envelope.Status != "ok" || envelope.Data == nil {
-			t.Fatalf("envelope = %+v", envelope)
-		}
-		if len(envelope.Diagnostics) != 3 {
-			t.Fatalf("diagnostics = %+v, want two per-package warnings and one aggregate", envelope.Diagnostics)
-		}
-		for i, name := range []string{"aggregate", "lib"} {
-			if got := envelope.Diagnostics[i]; got.Code != "VMAKE_W_TARGET_DECLARE" || !strings.Contains(got.Message, "read-only inspection:") ||
-				!strings.Contains(got.Message, "cannot declare targets for "+name+":") {
-				t.Fatalf("per-package diagnostic[%d] = %+v", i, got)
-			}
-		}
-		aggregate := envelope.Diagnostics[2]
-		if aggregate.Severity != "warning" || aggregate.Code != "VMAKE_W_OMITTED_TARGETS" ||
-			aggregate.Message != wantAggregate ||
-			aggregate.Fix != "Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected." {
-			t.Fatalf("aggregate diagnostic = %+v", aggregate)
-		}
-		if !strings.HasSuffix(stderr, "Warning: "+wantAggregate+"\n") {
-			t.Fatalf("stderr = %q, want aggregate warning last", stderr)
-		}
-		if got := strings.Count(stderr, "Warning: cannot declare targets for "); got != 2 {
-			t.Fatalf("stderr has %d per-package warnings, want 2:\n%s", got, stderr)
-		}
-		if attempt == 0 {
-			first = envelope
-			continue
-		}
-		if !reflect.DeepEqual(first.Diagnostics, envelope.Diagnostics) {
-			t.Fatalf("diagnostics are not deterministic:\nfirst:  %+v\nsecond: %+v", first.Diagnostics, envelope.Diagnostics)
-		}
-	}
-	for _, path := range []string{rootGenerated, libGenerated} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("inspect wrote %s: %v", path, err)
-		}
-	}
-}
-
-func TestInspectOmissionAggregateCountsAllDeclarationFailures(t *testing.T) {
-	project := writeQueryMixedOmissionProject(t)
-	stdout, stderr, code := runInspectCommand(t, project, "inspect")
-	if code != 0 {
-		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
-	}
-	envelope := decodeInspectEnvelope(t, stdout)
-	if envelope.Status != "ok" || envelope.Data == nil {
-		t.Fatalf("envelope = %+v", envelope)
-	}
-	if len(envelope.Diagnostics) != 3 {
-		t.Fatalf("diagnostics = %+v, want two per-package warnings and one aggregate", envelope.Diagnostics)
-	}
-	var readOnly, broken, aggregate *inspectDiagnostic
-	for i := range envelope.Diagnostics {
-		diagnostic := &envelope.Diagnostics[i]
-		switch diagnostic.Code {
-		case "VMAKE_W_TARGET_DECLARE":
-			if diagnostic.Severity != "warning" || diagnostic.Fix == "" {
-				t.Fatalf("per-package diagnostic = %+v", diagnostic)
-			}
-			if strings.Contains(diagnostic.Message, "read-only inspection:") {
-				readOnly = diagnostic
-			} else {
-				broken = diagnostic
-			}
-		case "VMAKE_W_OMITTED_TARGETS":
-			aggregate = diagnostic
-		default:
-			t.Fatalf("unexpected diagnostic %+v", diagnostic)
-		}
-	}
-	if readOnly == nil || broken == nil || aggregate == nil {
-		t.Fatalf("diagnostics = %+v, want both omission causes and the aggregate", envelope.Diagnostics)
-	}
-	if !strings.Contains(broken.Message, "broken") || !strings.Contains(broken.Message, "declaration failure") {
-		t.Fatalf("non-read-only diagnostic = %+v", broken)
-	}
-	if aggregate.Severity != "warning" ||
-		aggregate.Message != "omitted targets for 2 package(s) (1 due to read-only writes)" ||
-		aggregate.Fix != "Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected." {
-		t.Fatalf("aggregate diagnostic = %+v", aggregate)
-	}
-	if !strings.HasSuffix(stderr, "Warning: "+aggregate.Message+"\n") {
-		t.Fatalf("stderr = %q, want the aggregate warning last", stderr)
-	}
-	for _, name := range []string{"lib", "broken"} {
-		if pkg := inspectPackageNamed(t, envelope.Data, name); pkg.Targets != nil {
-			t.Fatalf("%s targets = %+v, want omitted after declaration failure", name, pkg.Targets)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(project, "lib", "generated.txt")); !os.IsNotExist(err) {
-		t.Fatalf("inspect wrote lib/generated.txt: %v", err)
 	}
 }
 
@@ -2320,8 +1339,8 @@ func Main(p *api.Package) {
 		t.Fatalf("envelope = %+v", envelope)
 	}
 	app := inspectTargetNamed(t, inspectPackageNamed(t, envelope.Data, "reads"), "app")
-	if !slices.Equal(app.ResolvedFiles, []string{"src/main.c"}) || app.ResolvedFileCount != 1 {
-		t.Fatalf("app resolved files = %v (%d), want src/main.c", app.ResolvedFiles, app.ResolvedFileCount)
+	if !slices.Equal(app.Files, []string{"src/*.c"}) {
+		t.Fatalf("app files = %v, want [src/*.c]", app.Files)
 	}
 }
 
@@ -2721,8 +1740,6 @@ func TestInspectReportsBuildAndTestStateSeparately(t *testing.T) {
 	if stdout, stderr, code := runBuildCommand(t, project, "test"); code != 0 {
 		t.Fatalf("test exit = %d, stderr = %q\n%s", code, stderr, stdout)
 	}
-	buildStateBefore := loadBuildReport(t, project)
-	testStateBefore := loadTestReport(t, project)
 
 	stdout, stderr, code := runInspectCommand(t, project, "inspect")
 	if code != 0 || stderr != "" {
@@ -2732,24 +1749,11 @@ func TestInspectReportsBuildAndTestStateSeparately(t *testing.T) {
 	if data == nil {
 		t.Fatal("inspect returned no data")
 	}
-	if !data.BuildReportPresent || data.BuildReportState == nil {
-		t.Fatalf("build report state missing: present=%v state=%+v", data.BuildReportPresent, data.BuildReportState)
+	if !data.BuildReportPresent {
+		t.Fatal("buildReportPresent = false")
 	}
-	if data.BuildReportState.Command != reportCommandBuild || data.BuildReportState.BuildID != buildStateBefore.BuildID ||
-		data.BuildReportState.Status != "succeeded" || !data.BuildReportState.ConfigMatches ||
-		!data.BuildReportState.EffectiveConfigMatches {
-		t.Fatalf("buildReportState = %+v, report = %+v", data.BuildReportState, buildStateBefore)
-	}
-	if data.TestReport != testReportPath(project) || !data.TestReportPresent || data.TestReportState == nil {
-		t.Fatalf("test report state missing: path=%q present=%v state=%+v", data.TestReport, data.TestReportPresent, data.TestReportState)
-	}
-	if data.TestReportState.Command != reportCommandTest || data.TestReportState.BuildID != testStateBefore.BuildID ||
-		data.TestReportState.Status != "succeeded" || !data.TestReportState.ConfigMatches ||
-		!data.TestReportState.EffectiveConfigMatches {
-		t.Fatalf("testReportState = %+v, report = %+v", data.TestReportState, testStateBefore)
-	}
-	if string(data.TestReportState.Summary) == "" {
-		t.Fatal("testReportState lost the summary")
+	if data.TestReport != testReportPath(project) || !data.TestReportPresent {
+		t.Fatalf("test report missing: path=%q present=%v", data.TestReport, data.TestReportPresent)
 	}
 
 	if stdout, stderr, code := runInspectCommand(t, project, "clean"); code != 0 {
@@ -2763,9 +1767,8 @@ func TestInspectReportsBuildAndTestStateSeparately(t *testing.T) {
 	if data == nil {
 		t.Fatal("inspect after clean returned no data")
 	}
-	if data.BuildReportPresent || data.BuildReportState != nil || data.TestReportPresent || data.TestReportState != nil {
-		t.Fatalf("reports survived clean: build=%v/%+v test=%v/%+v",
-			data.BuildReportPresent, data.BuildReportState, data.TestReportPresent, data.TestReportState)
+	if data.BuildReportPresent || data.TestReportPresent {
+		t.Fatalf("reports survived clean: build=%v test=%v", data.BuildReportPresent, data.TestReportPresent)
 	}
 }
 

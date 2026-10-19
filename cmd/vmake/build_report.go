@@ -11,15 +11,10 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
-	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	iexec "github.com/spock2300/vmake/internal/exec"
-	"github.com/spock2300/vmake/internal/gitcmd"
 	"github.com/spock2300/vmake/internal/jsonio"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
@@ -33,10 +28,6 @@ const (
 	reportCommandBuild   = "build"
 	reportCommandRebuild = "rebuild"
 	reportCommandTest    = "test"
-
-	buildWarningCode       = "VMAKE_W_TOOL"
-	buildWarningLimit      = 50
-	buildStderrCaptureSize = 256 * 1024
 
 	buildReportFile = "vmake-build.json"
 	testReportFile  = "vmake-test.json"
@@ -86,7 +77,6 @@ type buildTestResult struct {
 type buildReport struct {
 	completed       bool
 	location        string
-	warningCut      func()
 	SchemaVersion   int                       `json:"schemaVersion"`
 	BuildID         string                    `json:"buildId"`
 	Root            string                    `json:"root"`
@@ -94,8 +84,6 @@ type buildReport struct {
 	Command         string                    `json:"command,omitempty"`
 	VMakeVersion    string                    `json:"vmakeVersion,omitempty"`
 	VMakeCommit     string                    `json:"vmakeCommit,omitempty"`
-	ProjectRevision string                    `json:"projectRevision,omitempty"`
-	ProjectDirty    *bool                     `json:"projectDirty,omitempty"`
 	Started         string                    `json:"started"`
 	Finished        string                    `json:"finished"`
 	DurationMs      int64                     `json:"durationMs"`
@@ -132,13 +120,6 @@ func withReport(command string, run func(*buildReport) error) (err error) {
 	if err != nil {
 		return err
 	}
-	capture, stopCapture := startBuildStderrCapture()
-	report.warningCut = func() {
-		capture.cut(stopCapture)
-		if jsonOutput && !vlog.IsQuiet() {
-			os.Stdout = os.Stderr
-		}
-	}
 	stdout := os.Stdout
 	restoreStdout := func() {}
 	if vlog.IsQuiet() {
@@ -154,255 +135,17 @@ func withReport(command string, run func(*buildReport) error) (err error) {
 				devNull.Close()
 			}
 		}
-	} else if jsonOutput {
-		os.Stdout = os.Stderr
-		restored := false
-		restoreStdout = func() {
-			if restored {
-				return
-			}
-			restored = true
-			os.Stdout = stdout
-		}
 	}
 	defer func() {
 		defer restoreStdout()
-		stopCapture()
-		report.finish(&err, capture.warnings())
+		report.finish(&err)
 		restoreStdout()
-		if jsonOutput {
-			if writeErr := writeBuildJSONEnvelope(stdout, report); writeErr != nil {
-				err = errors.Join(err, writeErr)
-			}
-		} else {
-			printBuildSummary(stdout, report, err)
-		}
+		printBuildSummary(stdout, report, err)
 		if err != nil && report.Error != "" {
 			err = &buildSummaryError{summary: report.Error, err: err}
 		}
 	}()
 	return run(report)
-}
-
-type buildStderrCapture struct {
-	mu      sync.Mutex
-	buffer  []byte
-	frozen  []buildDiagnostic
-	cutDone bool
-}
-
-func (c *buildStderrCapture) append(data []byte) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(data) >= buildStderrCaptureSize {
-		c.buffer = append(c.buffer[:0], data[len(data)-buildStderrCaptureSize:]...)
-		return
-	}
-	c.buffer = append(c.buffer, data...)
-	if len(c.buffer) > buildStderrCaptureSize {
-		copy(c.buffer, c.buffer[len(c.buffer)-buildStderrCaptureSize:])
-		c.buffer = c.buffer[:buildStderrCaptureSize]
-	}
-}
-
-func (c *buildStderrCapture) cut(stop func()) {
-	c.mu.Lock()
-	if c.cutDone {
-		c.mu.Unlock()
-		return
-	}
-	c.cutDone = true
-	c.mu.Unlock()
-	stop()
-	c.mu.Lock()
-	c.frozen = parseBuildWarnings(string(c.buffer))
-	c.buffer = nil
-	c.mu.Unlock()
-}
-
-func (c *buildStderrCapture) warnings() []buildDiagnostic {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.cutDone {
-		return c.frozen
-	}
-	return parseBuildWarnings(string(c.buffer))
-}
-
-func startBuildStderrCapture() (*buildStderrCapture, func()) {
-	capture := &buildStderrCapture{}
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		return capture, func() {}
-	}
-	stderr := os.Stderr
-	os.Stderr = writer
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		defer reader.Close()
-		buffer := make([]byte, 32*1024)
-		for {
-			n, readErr := reader.Read(buffer)
-			if n > 0 {
-				capture.append(buffer[:n])
-				if _, writeErr := stderr.Write(buffer[:n]); writeErr != nil {
-					return
-				}
-			}
-			if readErr != nil {
-				return
-			}
-		}
-	}()
-	var once sync.Once
-	return capture, func() {
-		once.Do(func() {
-			os.Stderr = stderr
-			writer.Close()
-			<-done
-		})
-	}
-}
-
-var (
-	gnuWarningPattern  = regexp.MustCompile(`^\s*(.*?):(\d+):(?:(\d+):)?\s*warning:\s*(.*)$`)
-	toolWarningPattern = regexp.MustCompile(`^\s*(?:([^\s:]+):\s*)?warning:\s*(.+)$`)
-)
-
-func parseBuildWarnings(output string) []buildDiagnostic {
-	warnings := []buildDiagnostic{}
-	seen := map[string]bool{}
-	msgCount := map[string]int{}
-	firstIdx := map[string]int{}
-	lines := strings.Split(output, "\n")
-	for i, line := range lines {
-		line = strings.TrimSuffix(line, "\r")
-		warning, ok := parseBuildWarning(line)
-		if !ok {
-			if severity, file, lineNumber, isCMake := parseCMakeDiagnosticHeader(line); isCMake && severity == "warning" {
-				warning = buildDiagnostic{
-					Severity: "warning",
-					Code:     buildWarningCode,
-					Message:  cmakeDiagnosticMessage(lines, i, severity, file, lineNumber),
-					File:     file,
-					Line:     lineNumber,
-				}
-				ok = true
-			} else if severity, isCMake := parseCMakeBareHeader(line); isCMake && severity == "warning" {
-				warning = buildDiagnostic{
-					Severity: "warning",
-					Code:     buildWarningCode,
-					Message:  cmakeBareDiagnosticMessage(lines, i, severity),
-				}
-				ok = true
-			}
-		}
-		if !ok {
-			continue
-		}
-		key := warningDiagnosticKey(warning)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		if msgCount[warning.Message] >= 3 {
-			warnings[firstIdx[warning.Message]].RepeatedCount++
-			continue
-		}
-		if len(warnings) == buildWarningLimit {
-			break
-		}
-		if msgCount[warning.Message] == 0 {
-			firstIdx[warning.Message] = len(warnings)
-		}
-		msgCount[warning.Message]++
-		warnings = append(warnings, warning)
-	}
-	return warnings
-}
-
-func parseBuildWarning(line string) (buildDiagnostic, bool) {
-	if match := gnuWarningPattern.FindStringSubmatch(line); match != nil {
-		file := strings.TrimSpace(match[1])
-		message := strings.TrimSpace(match[4])
-		if file != "" && message != "" {
-			lineNumber, _ := strconv.Atoi(match[2])
-			column, _ := strconv.Atoi(match[3])
-			return buildDiagnostic{
-				Severity: "warning",
-				Code:     buildWarningCode,
-				Message:  truncateRunes(message, buildDiagnosticMessageLimit),
-				File:     file,
-				Line:     lineNumber,
-				Column:   column,
-			}, true
-		}
-	}
-	if match := toolWarningPattern.FindStringSubmatch(line); match != nil {
-		message := strings.TrimSpace(match[2])
-		if match[1] != "" {
-			message = match[1] + ": " + message
-		}
-		if message != "" {
-			return buildDiagnostic{
-				Severity: "warning",
-				Code:     buildWarningCode,
-				Message:  truncateRunes(message, buildDiagnosticMessageLimit),
-			}, true
-		}
-	}
-	return buildDiagnostic{}, false
-}
-
-func warningDiagnosticKey(diagnostic buildDiagnostic) string {
-	return diagnostic.File + "\x00" + strconv.Itoa(diagnostic.Line) + "\x00" +
-		strconv.Itoa(diagnostic.Column) + "\x00" + diagnostic.Message
-}
-
-func mergeBuildDiagnostics(diagnostics, warnings []buildDiagnostic) []buildDiagnostic {
-	merged := make([]buildDiagnostic, 0, len(diagnostics)+len(warnings))
-	pending := make([]buildDiagnostic, 0, len(warnings))
-	seen := make(map[string]bool, len(warnings))
-	msgCount := make(map[string]int)
-	firstIdx := make(map[string]int)
-	addWarning := func(diagnostic buildDiagnostic) {
-		diagnostic.Severity = "warning"
-		diagnostic.Code = buildWarningCode
-		key := warningDiagnosticKey(diagnostic)
-		if seen[key] {
-			if diagnostic.RepeatedCount > 0 {
-				if idx, ok := firstIdx[diagnostic.Message]; ok {
-					pending[idx].RepeatedCount += diagnostic.RepeatedCount
-				}
-			}
-			return
-		}
-		seen[key] = true
-		if msgCount[diagnostic.Message] >= 3 {
-			pending[firstIdx[diagnostic.Message]].RepeatedCount += 1 + diagnostic.RepeatedCount
-			return
-		}
-		if len(pending) == buildWarningLimit {
-			return
-		}
-		if msgCount[diagnostic.Message] == 0 {
-			firstIdx[diagnostic.Message] = len(pending)
-		}
-		msgCount[diagnostic.Message]++
-		pending = append(pending, diagnostic)
-	}
-	for _, diagnostic := range diagnostics {
-		if diagnostic.Severity == "warning" {
-			addWarning(diagnostic)
-			continue
-		}
-		merged = append(merged, diagnostic)
-	}
-	for _, warning := range warnings {
-		addWarning(warning)
-	}
-	return append(merged, pending...)
 }
 
 func printBuildSummary(writer io.Writer, report *buildReport, err error) {
@@ -497,64 +240,10 @@ func beginBuildReport(command string) (*buildReport, error) {
 	}
 	root := findProjectDir()
 	r := &buildReport{SchemaVersion: 2, BuildID: hex.EncodeToString(id), Root: root, Status: "running", Command: command, VMakeVersion: version.Version, VMakeCommit: version.GitCommit, Started: time.Now().UTC().Format(time.RFC3339Nano), Targets: []build.TargetResult{}, Tests: []buildTestResult{}, Artifacts: []buildArtifact{}, Diagnostics: []buildDiagnostic{}, Global: map[string]any{}, Packages: map[string]map[string]any{}, location: reportPathFor(root, command)}
-	r.ProjectRevision, r.ProjectDirty = projectProvenance(root)
 	return r, jsonio.Save(r.reportPath(), r)
 }
 
-// projectProvenance records the project worktree revision at report start.
-// Git is optional: any failure (not a worktree, unsupported checkout, missing
-// git) omits the fields instead of affecting the build.
-func projectProvenance(root string) (string, *bool) {
-	topLevel, err := iexec.RunWithOptions("git", gitcmd.Args("rev-parse", "--show-toplevel"), iexec.RunOptions{Dir: root, Quiet: true})
-	if err != nil {
-		return "", nil
-	}
-	topDir := strings.TrimSpace(string(topLevel))
-	rootAbs, rootErr := filepath.EvalSymlinks(root)
-	topAbs, topErr := filepath.EvalSymlinks(topDir)
-	if rootErr != nil || topErr != nil || filepath.Clean(rootAbs) != filepath.Clean(topAbs) {
-		return "", nil
-	}
-	revision, err := iexec.RunWithOptions("git", gitcmd.Args("rev-parse", "HEAD"), iexec.RunOptions{Dir: root, Quiet: true})
-	if err != nil {
-		return "", nil
-	}
-	head := strings.TrimSpace(string(revision))
-	if head == "" {
-		return "", nil
-	}
-	status, err := iexec.RunWithOptions("git", gitcmd.Args(projectStatusArgs()...), iexec.RunOptions{
-		Dir:   root,
-		Quiet: true,
-		Env:   map[string]string{"GIT_OPTIONAL_LOCKS": "0"},
-	})
-	if err != nil {
-		return "", nil
-	}
-	dirty := strings.TrimSpace(string(status)) != ""
-	return head, &dirty
-}
-
-// projectStatusArgs ignores vmake's own state and output directories so a
-// checkout stays clean even when the project does not gitignore them. Every
-// other change, including untracked source, still marks the report dirty.
-func projectStatusArgs() []string {
-	args := []string{"status", "--porcelain", "--", "."}
-	for _, path := range []string{
-		"build",
-		"install",
-		".vmake/_locks",
-		".vmake/layout",
-		".vmake/vmake.lock",
-		".vmake_deps",
-		"vmake_deps",
-	} {
-		args = append(args, ":(exclude)"+path)
-	}
-	return args
-}
-
-func (r *buildReport) finish(result *error, warnings []buildDiagnostic) {
+func (r *buildReport) finish(result *error) {
 	interrupted := recover()
 	if interrupted != nil {
 		*result = fmt.Errorf("build panicked: %v", interrupted)
@@ -568,7 +257,7 @@ func (r *buildReport) finish(result *error, warnings []buildDiagnostic) {
 	if *result != nil && r.Command == reportCommandTest && !errors.Is(*result, context.Canceled) && !hasErrorDiagnostic(diagnostics) {
 		diagnostics = append(diagnostics, buildDiagnostic{Severity: "error", Code: "VMAKE_E_TEST", Message: summary})
 	}
-	r.Diagnostics, r.Error = mergeBuildDiagnostics(diagnostics, warnings), summary
+	r.Diagnostics, r.Error = diagnostics, summary
 	r.Status = "succeeded"
 	if *result != nil {
 		if errors.Is(*result, context.Canceled) {
@@ -592,15 +281,6 @@ func (r *buildReport) finish(result *error, warnings []buildDiagnostic) {
 	if interrupted != nil {
 		panic(interrupted)
 	}
-}
-
-func (r *buildReport) cutWarnings() {
-	if r.warningCut == nil {
-		return
-	}
-	cut := r.warningCut
-	r.warningCut = nil
-	cut()
 }
 
 func hasErrorDiagnostic(diagnostics []buildDiagnostic) bool {

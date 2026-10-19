@@ -29,8 +29,12 @@ func TestLinkSharedWindowsEmitsImportLibrary(t *testing.T) {
 	dir := t.TempDir()
 	output := filepath.Join(dir, "libfoo.dll")
 
-	if err := l.LinkShared([]string{"a.o"}, nil, output, LinkPolicy{TargetOS: "windows"}, dir); err != nil {
-		t.Fatalf("LinkShared: %v", err)
+	cmd, err := l.sharedCommand([]string{"a.o"}, nil, output, LinkPolicy{TargetOS: "windows"}, dir)
+	if err != nil {
+		t.Fatalf("sharedCommand: %v", err)
+	}
+	if err := l.execute(cmd, output, dir, false); err != nil {
+		t.Fatalf("execute: %v", err)
 	}
 	if !slices.Contains(*got, "-Wl,--out-implib="+output+".a") {
 		t.Fatalf("args = %v, want -Wl,--out-implib=%s.a", *got, output)
@@ -42,8 +46,12 @@ func TestLinkSharedLinuxOmitsImportLibrary(t *testing.T) {
 	dir := t.TempDir()
 	output := filepath.Join(dir, "libfoo.so")
 
-	if err := l.LinkShared([]string{"a.o"}, nil, output, LinkPolicy{TargetOS: "linux"}, dir); err != nil {
-		t.Fatalf("LinkShared: %v", err)
+	cmd, err := l.sharedCommand([]string{"a.o"}, nil, output, LinkPolicy{TargetOS: "linux"}, dir)
+	if err != nil {
+		t.Fatalf("sharedCommand: %v", err)
+	}
+	if err := l.execute(cmd, output, dir, false); err != nil {
+		t.Fatalf("execute: %v", err)
 	}
 	for _, arg := range *got {
 		if len(arg) > 12 && arg[:12] == "-Wl,--out-i" {
@@ -125,7 +133,7 @@ func TestNeedRelinkMissingImportLibrary(t *testing.T) {
 	}
 	resolved := &ResolvedTarget{Node: node, OutputPath: dll}
 
-	if !s.needRelink(resolved, nil) {
+	if !testNeedRelink(t, s, resolved, nil) {
 		t.Error("a PE shared target without its import library must relink")
 	}
 
@@ -137,7 +145,7 @@ func TestNeedRelinkMissingImportLibrary(t *testing.T) {
 		t.Fatal(err)
 	}
 	saveTestLinkRecord(t, s, resolved, nil)
-	if s.needRelink(resolved, nil) {
+	if testNeedRelink(t, s, resolved, nil) {
 		t.Error("a PE shared target with DLL and import library present must not relink")
 	}
 }

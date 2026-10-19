@@ -31,12 +31,21 @@ func nativeTestScheduler(t *testing.T, dir string, targets ...*api.Target) *Sche
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := NewScheduler(graph, &toolchain.Toolchain{Name: "test", Tools: tools}, map[string]*api.PkgDirs{"p": {SourceDir: dir, BuildDir: filepath.Join(dir, "build")}}, api.ModeDebug, nil, api.Platform{OS: runtime.GOOS})
+	tc := &toolchain.Toolchain{Name: "test", Tools: tools}
+	platform := api.Platform{OS: runtime.GOOS}
+	resolvedTools, err := ResolveTools(tc, platform)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.rootDir = dir
-	return s
+	return newScheduler(schedulerConfig{
+		Graph:     graph,
+		Toolchain: tc,
+		Platform:  platform,
+		Layouts:   map[string]*PackageLayout{"p": {Dirs: api.PkgDirs{SourceDir: dir, BuildDir: filepath.Join(dir, "build")}, BuildKey: "k", Ready: true}},
+		Mode:      api.ModeDebug,
+		Tools:     resolvedTools,
+		RootDir:   dir,
+	})
 }
 
 func readNativeValue(t *testing.T, scheduler *Scheduler, target string) string {
@@ -255,23 +264,36 @@ func TestNativeToolContentChangeWithStableVersionRebuilds(t *testing.T) {
 	writeTool("1")
 	tc := *s.toolchain
 	tc.Tools.CC = tool
-	newScheduler := func() *Scheduler {
+	buildFresh := func() *Scheduler {
 		t.Helper()
-		fresh, err := NewScheduler(s.graph, &tc, map[string]*api.PkgDirs{"p": {SourceDir: dir, BuildDir: filepath.Join(dir, "build")}}, api.ModeDebug, nil, api.Platform{OS: runtime.GOOS})
+		platform := api.Platform{OS: runtime.GOOS}
+		tools, err := ResolveTools(&tc, platform)
 		if err != nil {
 			t.Fatal(err)
 		}
+		key, err := BuildKeyE(tools.CCKey(), api.ModeDebug, nil, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		fresh := newScheduler(schedulerConfig{
+			Graph:     s.graph,
+			Toolchain: &tc,
+			Platform:  platform,
+			Layouts:   map[string]*PackageLayout{"p": {Dirs: api.PkgDirs{SourceDir: dir, BuildDir: filepath.Join(dir, "build")}, BuildKey: key, Ready: true}},
+			Mode:      api.ModeDebug,
+			Tools:     tools,
+		})
 		if err := fresh.Build("p:app"); err != nil {
 			t.Fatal(err)
 		}
 		return fresh
 	}
-	first := newScheduler()
+	first := buildFresh()
 	if got := readNativeValue(t, first, "app"); got != "1" {
 		t.Fatalf("first tool produced %s", got)
 	}
 	writeTool("2")
-	second := newScheduler()
+	second := buildFresh()
 	if first.resolvedTools.CCVersion != second.resolvedTools.CCVersion {
 		t.Fatal("fixture changed version output")
 	}

@@ -58,11 +58,15 @@ func TestMakeExecutesWithBoundBudget(t *testing.T) {
 			t.Fatalf("MAKEFLAGS = %q, %v; want %s", data, err, want)
 		}
 	}
-	t.Setenv("MAKEFLAGS", "-j8")
-	if err := p.Make(); err == nil || !strings.Contains(err.Error(), "MAKEFLAGS") {
-		t.Fatalf("oversized inherited MAKEFLAGS: %v", err)
+	t.Setenv("MAKEFLAGS", "-j2")
+	if err := p.Make(); err != nil {
+		t.Fatal(err)
 	}
-	if os.Getenv("MAKEFLAGS") != "-j8" {
+	data, err := os.ReadFile(filepath.Join(dir, "parallel.txt"))
+	if err != nil || !strings.Contains(string(data), "-j2") || strings.Contains(string(data), "-j3") {
+		t.Fatalf("MAKEFLAGS = %q, %v; want -j2", data, err)
+	}
+	if os.Getenv("MAKEFLAGS") != "-j2" {
 		t.Fatal("helper changed process environment")
 	}
 }

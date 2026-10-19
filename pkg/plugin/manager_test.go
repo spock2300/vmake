@@ -80,9 +80,7 @@ func TestExtensionRepositoriesSkipLFSSmudge(t *testing.T) {
 	}
 	assertExtensionPointers(t, extension, "revision two\n")
 	assertSkipSmudgeUnchanged(t, extension)
-	if err := repo.Pull(ordinary); err != nil {
-		t.Fatal(err)
-	}
+	managerGit(t, ordinary, "pull", "--ff-only")
 	assertManagerFile(t, ordinary, "README.md", "revision two\n")
 	assertManagerFile(t, ordinary, "assets/toolchains/linux-tool.bin", "linux compiler payload two\n")
 	if got := os.Getenv("GIT_LFS_SKIP_SMUDGE"); got != "0" {

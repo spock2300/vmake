@@ -104,7 +104,7 @@ func (s *sourceStage) rebindLayout(name string, layout build.PackageLayout) erro
 	if !changed {
 		return nil
 	}
-	if !s.rc.opts.Check && layout.Dirs.InstallDir != "" && (old == nil || old.Dirs.InstallDir != layout.Dirs.InstallDir) {
+	if layout.Dirs.InstallDir != "" && (old == nil || old.Dirs.InstallDir != layout.Dirs.InstallDir) {
 		if err := clearInstallDir(name, layout.Dirs.InstallDir); err != nil {
 			return err
 		}

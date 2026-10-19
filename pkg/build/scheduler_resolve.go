@@ -94,10 +94,7 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 				depOutput += ".a"
 			}
 			if !fs.FileExists(depOutput) {
-				if !s.check {
-					return nil, fmt.Errorf("dependency artifact missing: %s (was the dependency target %s built?)", depOutput, depName)
-				}
-				vlog.Verbose("  plan: dependency artifact %s does not exist yet", depOutput)
+				return nil, fmt.Errorf("dependency artifact missing: %s (was the dependency target %s built?)", depOutput, depName)
 			}
 			if depNode.Target.IsLinkable() {
 				result.artifacts = append(result.artifacts, depOutput)
@@ -209,9 +206,6 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 		if err != nil {
 			return nil, err
 		}
-		if s.check && len(files) == 0 && pkg != nil {
-			files = matchPlannedGeneratedFiles(pattern, sourceDir, resolveWorkPath(sourceDir, buildDir), pkg.GeneratedFiles())
-		}
 		for _, f := range files {
 			if !matchesAny(f, excludes) {
 				resolved.SourceFiles = append(resolved.SourceFiles, f)
@@ -262,9 +256,7 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 		if linkerScript != "" {
 			info, err := os.Stat(linkerScript)
 			if err != nil {
-				if !(s.check && os.IsNotExist(err)) {
-					return nil, fmt.Errorf("linker script %s: %w", linkerScript, err)
-				}
+				return nil, fmt.Errorf("linker script %s: %w", linkerScript, err)
 			} else if !info.Mode().IsRegular() {
 				return nil, fmt.Errorf("linker script %s is not a regular file", linkerScript)
 			}
@@ -281,34 +273,6 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	resolved.SourceFiles = unique(resolved.SourceFiles)
 
 	return resolved, nil
-}
-
-func matchPlannedGeneratedFiles(pattern, sourceDir, buildDir string, generated []string) []string {
-	if len(generated) == 0 {
-		return nil
-	}
-	absSource, err := filepath.Abs(sourceDir)
-	if err != nil {
-		return nil
-	}
-	absBuild, err := filepath.Abs(buildDir)
-	if err != nil {
-		return nil
-	}
-	absPattern := resolveWorkPath(absSource, pattern)
-	var out []string
-	for _, relGen := range generated {
-		absGen := filepath.Join(absBuild, relGen)
-		if filepath.Clean(absPattern) != filepath.Clean(absGen) && !glob.MatchPath(filepath.ToSlash(absPattern), filepath.ToSlash(absGen)) {
-			continue
-		}
-		if rel, err := filepath.Rel(absSource, absGen); err == nil {
-			out = append(out, rel)
-		} else {
-			out = append(out, absGen)
-		}
-	}
-	return out
 }
 
 func targetFilename(kind api.TargetKind, name, targetOS string) string {

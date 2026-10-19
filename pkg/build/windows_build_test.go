@@ -75,13 +75,13 @@ func TestAssemblyIncludesInvalidateObjects(t *testing.T) {
 			if err := saveActionRecord(nil, record, "assembly", dir, inputs, []string{"source.o"}); err != nil {
 				t.Fatal(err)
 			}
-			if !actionUpToDate(nil, record, "assembly", dir, inputs, []string{"source.o"}) {
+			if !checkAction(nil, record, "assembly", dir, inputs, []string{"source.o"}).UpToDate {
 				t.Fatal("unchanged object marked stale")
 			}
 			if err := os.WriteFile(filepath.Join(dir, "asm.inc"), []byte(".byte 8\n"), 0644); err != nil {
 				t.Fatal(err)
 			}
-			if actionUpToDate(nil, record, "assembly", dir, inputs, []string{"source.o"}) {
+			if checkAction(nil, record, "assembly", dir, inputs, []string{"source.o"}).UpToDate {
 				t.Fatal("assembly include edit did not invalidate object")
 			}
 		})
@@ -99,13 +99,13 @@ func TestMissingPostLinkOutputRelinks(t *testing.T) {
 		}
 	}
 	saveTestLinkRecord(t, s, resolved, nil)
-	if s.needRelink(resolved, nil) {
+	if testNeedRelink(t, s, resolved, nil) {
 		t.Fatal("unchanged outputs trigger relink")
 	}
 	if err := os.Remove(filepath.Join(dir, "firmware.hex")); err != nil {
 		t.Fatal(err)
 	}
-	if !s.needRelink(resolved, nil) {
+	if !testNeedRelink(t, s, resolved, nil) {
 		t.Fatal("missing hex does not trigger relink")
 	}
 }

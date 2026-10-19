@@ -594,7 +594,6 @@ func (p *Package) BuildPath(elem ...string) string {
 }
 
 func (p *Package) WriteBuildFile(relPath string, content any) string {
-	cleaned := cleanBuildRelPath(p.FullName(), "WriteBuildFile", relPath)
 	var data []byte
 	switch v := content.(type) {
 	case string:
@@ -604,32 +603,19 @@ func (p *Package) WriteBuildFile(relPath string, content any) string {
 	default:
 		fatalScript(p.FullName(), "WriteBuildFile", "unsupported content type %T (expected string or []byte)", content)
 	}
-	if p.declaringBuild {
-		p.generators = append(p.generators, buildGenerator{
-			relPath: cleaned,
-			run: func() ([]byte, error) {
-				return data, nil
-			},
-		})
-		return p.BuildPath(cleaned)
-	}
-	if p.dryRun {
-		return p.BuildPath(cleaned)
-	}
-	if p.dirs.BuildDir == "" {
-		fatalScript(p.FullName(), "WriteBuildFile", "build directory is not set")
-	}
-	outPath := filepath.Join(p.dirs.BuildDir, cleaned)
-	if err := writeFileIfChanged(outPath, data, p.onGenWrite); err != nil {
-		fatalScript(p.FullName(), "WriteBuildFile", "%v", err)
-	}
-	return outPath
+	return p.generateFile("WriteBuildFile", relPath, func() ([]byte, error) {
+		return data, nil
+	})
 }
 
 func (p *Package) GenerateFile(relPath string, fn func() ([]byte, error)) string {
-	cleaned := cleanBuildRelPath(p.FullName(), "GenerateFile", relPath)
+	return p.generateFile("GenerateFile", relPath, fn)
+}
+
+func (p *Package) generateFile(op, relPath string, fn func() ([]byte, error)) string {
+	cleaned := cleanBuildRelPath(p.FullName(), op, relPath)
 	if fn == nil {
-		fatalScript(p.FullName(), "GenerateFile", "generator callback must not be nil")
+		fatalScript(p.FullName(), op, "generator callback must not be nil")
 	}
 	if p.declaringBuild {
 		p.generators = append(p.generators, buildGenerator{
@@ -642,15 +628,15 @@ func (p *Package) GenerateFile(relPath string, fn func() ([]byte, error)) string
 		return p.BuildPath(cleaned)
 	}
 	if p.dirs.BuildDir == "" {
-		fatalScript(p.FullName(), "GenerateFile", "build directory is not set")
+		fatalScript(p.FullName(), op, "build directory is not set")
 	}
 	data, err := fn()
 	if err != nil {
-		fatalScript(p.FullName(), "GenerateFile", "%v", err)
+		fatalScript(p.FullName(), op, "%v", err)
 	}
 	outPath := filepath.Join(p.dirs.BuildDir, cleaned)
 	if err := writeFileIfChanged(outPath, data, p.onGenWrite); err != nil {
-		fatalScript(p.FullName(), "GenerateFile", "%v", err)
+		fatalScript(p.FullName(), op, "%v", err)
 	}
 	return outPath
 }

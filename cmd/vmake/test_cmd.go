@@ -16,40 +16,23 @@ import (
 	"github.com/spf13/cobra"
 
 	exec "github.com/spock2300/vmake/internal/exec"
-	"github.com/spock2300/vmake/internal/gosrc"
-	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/api"
-	"github.com/spock2300/vmake/pkg/build"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
 )
-
-var requireTestsFlag bool
 
 var testCmd = &cobra.Command{
 	Use:   "test",
 	Short: "Build and run test targets",
 	Long: `Build the project's test targets and run their native test binaries.
 
-Test targets are default binary targets declared with SetTest(true). vmake
-first checks whether any runnable test target is declared; when none is, it
-skips the build and succeeds (or fails with --require-tests). When tests exist,
-the target platform is checked: vmake test refuses to execute tests for cross,
-bare-metal, or triple-configured targets and points at 'vmake build --tests',
-which builds them without running them.
+Test targets are default binary targets declared with SetTest(true). The target
+platform is checked before building: vmake test refuses to execute tests for
+cross, bare-metal, or triple-configured targets and points at
+'vmake build --tests', which builds them without running them.
 
-With -k/--keep-going a failed build does not abort testing. Partial mode runs
-only the test targets built by this invocation; test targets that were not
-built, or whose binary is missing or stale, are recorded as notRun with a
-skipReason and printed as SKIP <pkg:target> (<reason>) at default verbosity.
-Quiet mode (-q) suppresses those lines.
-
-A project with no runnable test targets succeeds and exits 0 without running
-the build phase: test declares targets cheaply first and skips the build when
-none is a test target, publishing a succeeded test report with testsFound 0.
-Pass --require-tests to make that case fail before the build with
-VMAKE_E_TEST. A declaration that cannot be trusted (missing sources or a
-script error) falls back to the normal build-then-discover path.
+A project with no runnable test targets succeeds and exits 0, publishing a
+succeeded test report with testsFound 0.
 
 Results are published to build/vmake-test.json (schemaVersion 2) with per-test
 pass/fail, exit code, signal, and output. A failing or signaled test exits 1;
@@ -70,14 +53,6 @@ func runTest(cmd *cobra.Command, args []string) error {
 			if err := report.bind(ctx); err != nil {
 				return err
 			}
-			if tests, known := countRunnableTestTargets(ctx); known && tests == 0 {
-				report.Summary = newBuildSummary(&BuildResult{}, 0)
-				if requireTestsFlag {
-					return errNoTestTargets
-				}
-				report.completed = true
-				return nil
-			}
 			if err := validateTestProject(ctx); err != nil {
 				return err
 			}
@@ -85,21 +60,15 @@ func runTest(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				if result != nil {
 					report.partial(ctx, result, err)
-					if keepGoingFlag && ctx.Context.Err() == nil {
-						report.cutWarnings()
-						tests, _ := runAllTests(ctx.Context, result, true)
-						report.setTestResults(tests)
-					}
 				}
 				return err
 			}
 			if err := report.complete(ctx, result); err != nil {
 				return err
 			}
-			report.cutWarnings()
-			tests, err := runAllTests(ctx.Context, result, false)
+			tests, err := runAllTests(ctx.Context, result)
 			report.setTestResults(tests)
-			if errors.Is(err, errNoTestTargets) && !requireTestsFlag {
+			if errors.Is(err, errNoTestTargets) {
 				return nil
 			}
 			return err
@@ -160,84 +129,6 @@ func validateTestProject(ctx *RuntimeContext) error {
 	return firstErr
 }
 
-// countRunnableTestTargets cheaply declares targets to find the default binary
-// test targets runAllTests would run. It reports false when declaration cannot
-// be trusted, so the caller falls back to the normal build path.
-func countRunnableTestTargets(ctx *RuntimeContext) (int, bool) {
-	restoreStdout := silenceInspectStdout()
-	restoreStderr := silenceInspectStderr()
-	defer func() {
-		restoreStdout()
-		restoreStderr()
-	}()
-	scriptfs.SetReadOnly(true)
-	defer scriptfs.SetReadOnly(false)
-
-	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
-	if err != nil || len(inspection.Needed) == 0 {
-		return 0, false
-	}
-	scriptfs.TakeBlockedWrites()
-	count := 0
-	blocked := false
-	for _, name := range ctx.Resolver.GetOrder() {
-		if !inspection.Needed[name] {
-			continue
-		}
-		node := ctx.DepGraph.Packages[name]
-		if node == nil || node.Source == nil || !inspectSourcePresent(ctx, name, node) {
-			return 0, false
-		}
-		dirs := inspection.PkgDirs[name]
-		if dirs == nil || dirs.BuildDir == "" {
-			return 0, false
-		}
-		buildCtx, err := pipeline.DeclareTargets(ctx, name, dirs, inspection.PackageToolchains[name], inspection.GlobalValues)
-		if blocked := scriptfs.TakeBlockedWrites(); len(blocked) > 0 && err == nil {
-			err = errors.New(blocked[0])
-		}
-		if err != nil {
-			if strings.Contains(err.Error(), "read-only inspection:") {
-				blocked = true
-				continue
-			}
-			return 0, false
-		}
-		for _, target := range buildCtx.GetTargets() {
-			if target.IsTest() && target.IsDefault() && target.Kind() == api.TargetBinary {
-				count++
-			}
-		}
-	}
-	if blocked && count == 0 && neededPackagesDeclareTests(ctx, inspection) {
-		return 0, false
-	}
-	return count, true
-}
-
-func neededPackagesDeclareTests(ctx *RuntimeContext, inspection *pipeline.Inspection) bool {
-	for name := range inspection.Needed {
-		node := ctx.DepGraph.Packages[name]
-		if node == nil || node.Source == nil || node.Source.Dir == "" {
-			return true
-		}
-		files, err := gosrc.ListGoFiles(node.Source.Dir)
-		if err != nil || len(files) == 0 {
-			return true
-		}
-		for _, file := range files {
-			data, err := os.ReadFile(file)
-			if err != nil {
-				return true
-			}
-			if strings.Contains(string(data), "SetTest(") {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 type testResult struct {
 	fullName    string
 	packageName string
@@ -255,11 +146,6 @@ type testResult struct {
 const (
 	buildTestOutputLimit  = 4096
 	buildTestOutputMarker = "...[truncated]\n"
-
-	testSkipBuildFailed    = "build failed"
-	testSkipTargetNotBuilt = "target not built"
-	testSkipBinaryMissing  = "binary missing"
-	testSkipUnsupported    = "unsupported platform"
 )
 
 var errNoTestTargets = errors.New("no test targets found")
@@ -293,16 +179,8 @@ func testExitCode(err error) (int, string) {
 	return 1, ""
 }
 
-func runAllTests(ctx context.Context, result *BuildResult, allowNotRun bool) ([]testResult, error) {
+func runAllTests(ctx context.Context, result *BuildResult) ([]testResult, error) {
 	var tests []testResult
-
-	builtTargets := make(map[string]bool, len(result.Targets))
-	for _, target := range result.Targets {
-		if target.Status != build.TargetStatusBuilt && target.Status != build.TargetStatusUpToDate {
-			continue
-		}
-		builtTargets[target.Package+"\x00"+target.Target] = true
-	}
 
 	for _, fullName := range result.Graph.Order {
 		node, err := result.Graph.GetNode(fullName)
@@ -316,74 +194,39 @@ func runAllTests(ctx context.Context, result *BuildResult, allowNotRun bool) ([]
 			continue
 		}
 
-		test := testResult{
-			fullName:    fullName,
-			packageName: node.PkgName,
-			targetName:  node.Target.Name(),
-		}
 		pkgDirs, ok := result.PkgDirs[node.PkgName]
 		if !ok {
-			if allowNotRun {
-				test.notRun, test.skipReason = true, testSkipBuildFailed
-				tests = append(tests, test)
-			}
 			continue
 		}
 		platform, ok := result.PkgPlatforms[node.PkgName]
 		if !ok {
-			if allowNotRun {
-				test.notRun, test.skipReason = true, testSkipUnsupported
-				tests = append(tests, test)
-				continue
-			}
 			return nil, fmt.Errorf("test target %s has no resolved package platform", fullName)
 		}
-		test.outputPath = filepath.Join(pkgDirs.BuildDir, api.TargetFilename(node.Target.Kind(), node.Target.Name(), platform.OSOrHost()))
+		outputPath := filepath.Join(pkgDirs.BuildDir, api.TargetFilename(node.Target.Kind(), node.Target.Name(), platform.OSOrHost()))
 		if err := validateTestExecution(platform, runtime.GOOS); err != nil {
-			if allowNotRun {
-				test.notRun, test.skipReason = true, testSkipUnsupported
-				tests = append(tests, test)
-				continue
-			}
 			return nil, err
 		}
-		if _, err := os.Stat(test.outputPath); err != nil {
-			if allowNotRun {
-				test.notRun, test.skipReason = true, testSkipBinaryMissing
-				tests = append(tests, test)
-				continue
-			}
-			vlog.Error("FAIL %s (binary not found: %s)", fullName, test.outputPath)
+		if _, err := os.Stat(outputPath); err != nil {
+			vlog.Error("FAIL %s (binary not found: %s)", fullName, outputPath)
 			return nil, fmt.Errorf("test binary missing: %w", err)
 		}
-		if allowNotRun && !builtTargets[node.PkgName+"\x00"+node.Target.Name()] {
-			test.notRun, test.skipReason = true, testSkipTargetNotBuilt
-			tests = append(tests, test)
-			continue
-		}
 
-		tests = append(tests, test)
+		tests = append(tests, testResult{
+			fullName:    fullName,
+			packageName: node.PkgName,
+			targetName:  node.Target.Name(),
+			outputPath:  outputPath,
+		})
 	}
 
 	if len(tests) == 0 {
 		return nil, errNoTestTargets
 	}
 
-	runnable := 0
-	for _, test := range tests {
-		if !test.notRun {
-			runnable++
-		}
-	}
-	if runnable > 0 {
-		vlog.Info("")
-		vlog.Info("Running %d test(s)...", runnable)
-	}
+	vlog.Info("")
+	vlog.Info("Running %d test(s)...", len(tests))
 
 	for i := range tests {
-		if tests[i].notRun {
-			continue
-		}
 		if err := ctx.Err(); err != nil {
 			return tests[:i], err
 		}
@@ -420,28 +263,10 @@ func runAllTests(ctx context.Context, result *BuildResult, allowNotRun bool) ([]
 		}
 	}
 
-	if runnable > 0 {
-		vlog.Info("")
-	}
-	skipped := 0
+	vlog.Info("")
+	failed := 0
 	for _, test := range tests {
-		if !test.notRun {
-			continue
-		}
-		skipped++
-		vlog.Info("SKIP %s (%s)", test.fullName, test.skipReason)
-	}
-	if skipped > 0 {
-		vlog.Info("")
-	}
-	passed, failed := 0, 0
-	for _, test := range tests {
-		if test.notRun {
-			continue
-		}
-		if test.passed {
-			passed++
-		} else {
+		if !test.passed {
 			failed++
 		}
 	}

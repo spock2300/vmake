@@ -10,12 +10,10 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
-	"github.com/spock2300/vmake/internal/glob"
 	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/config"
@@ -25,19 +23,9 @@ import (
 )
 
 const (
-	inspectSchemaVersion                = 1
-	inspectFreshnessChangedSourcesLimit = 50
-	inspectResolvedFilesLimit           = 200
-	omittedTargetsWarningCode           = "VMAKE_W_OMITTED_TARGETS"
-	readOnlyTargetsWarningFix           = "Guard generated-file work with p.DryRun(), or run vmake inspect --allow-dry-run-writes when those writes are expected."
+	inspectSchemaVersion      = 1
+	readOnlyTargetsWarningFix = "Guard generated-file work with p.DryRun()."
 )
-
-func omittedTargetsMessage(total, readOnly int) string {
-	if readOnly == 0 {
-		return fmt.Sprintf("omitted targets for %d package(s) because target declaration failed", total)
-	}
-	return fmt.Sprintf("omitted targets for %d package(s) (%d due to read-only writes)", total, readOnly)
-}
 
 type inspectEnvelope struct {
 	SchemaVersion int                 `json:"schemaVersion"`
@@ -79,45 +67,10 @@ type inspectData struct {
 	CompileDatabasePresent bool                        `json:"compileDatabasePresent"`
 	BuildReport            string                      `json:"buildReport"`
 	BuildReportPresent     bool                        `json:"buildReportPresent"`
-	BuildReportState       *inspectBuildReportState    `json:"buildReportState,omitempty"`
-	Freshness              *inspectFreshness           `json:"freshness,omitempty"`
 	TestReport             string                      `json:"testReport"`
 	TestReportPresent      bool                        `json:"testReportPresent"`
-	TestReportState        *inspectBuildReportState    `json:"testReportState,omitempty"`
 	InstallPrefix          string                      `json:"installPrefix"`
 	InstallManifest        string                      `json:"installManifest"`
-}
-
-type inspectBuildReportState struct {
-	Status                 string          `json:"status"`
-	BuildID                string          `json:"buildId"`
-	Command                string          `json:"command,omitempty"`
-	VMakeVersion           string          `json:"vmakeVersion,omitempty"`
-	VMakeCommit            string          `json:"vmakeCommit,omitempty"`
-	ProjectRevision        string          `json:"projectRevision,omitempty"`
-	ProjectDirty           *bool           `json:"projectDirty,omitempty"`
-	Started                string          `json:"started"`
-	Finished               string          `json:"finished"`
-	Mode                   string          `json:"mode,omitempty"`
-	Toolchain              string          `json:"toolchain,omitempty"`
-	ConfigMatches          bool            `json:"configMatches"`
-	ModeMatches            bool            `json:"modeMatches"`
-	ToolchainMatches       bool            `json:"toolchainMatches"`
-	EffectiveConfigMatches bool            `json:"effectiveConfigMatches"`
-	Summary                json.RawMessage `json:"summary,omitempty"`
-	Error                  string          `json:"error,omitempty"`
-}
-
-type inspectFreshness struct {
-	Known                  bool     `json:"known"`
-	Heuristic              bool     `json:"heuristic,omitempty"`
-	ReportStatus           string   `json:"reportStatus,omitempty"`
-	ReportFinished         string   `json:"reportFinished,omitempty"`
-	ConfigMatches          *bool    `json:"configMatches,omitempty"`
-	EffectiveConfigMatches *bool    `json:"effectiveConfigMatches,omitempty"`
-	SourceChanged          *bool    `json:"sourceChanged,omitempty"`
-	ChangedSources         []string `json:"changedSources,omitempty"`
-	Truncated              *bool    `json:"truncated,omitempty"`
 }
 
 type inspectToolchain struct {
@@ -161,38 +114,35 @@ type inspectPackage struct {
 }
 
 type inspectTarget struct {
-	Name                   string           `json:"name"`
-	Kind                   string           `json:"kind"`
-	Default                bool             `json:"default"`
-	Test                   bool             `json:"test"`
-	Files                  []string         `json:"files,omitempty"`
-	ExcludedFiles          []string         `json:"excludedFiles,omitempty"`
-	ResolvedFiles          []string         `json:"resolvedFiles,omitempty"`
-	ResolvedFilesTruncated bool             `json:"resolvedFilesTruncated,omitempty"`
-	ResolvedFileCount      int              `json:"resolvedFileCount,omitempty"`
-	Includes               []string         `json:"includes,omitempty"`
-	PublicIncludes         []string         `json:"publicIncludes,omitempty"`
-	Defines                []string         `json:"defines,omitempty"`
-	PublicDefines          []string         `json:"publicDefines,omitempty"`
-	CFlags                 []string         `json:"cFlags,omitempty"`
-	PublicCFlags           []string         `json:"publicCFlags,omitempty"`
-	CxxFlags               []string         `json:"cxxFlags,omitempty"`
-	PublicCxxFlags         []string         `json:"publicCxxFlags,omitempty"`
-	LdFlags                []string         `json:"ldFlags,omitempty"`
-	PublicLdFlags          []string         `json:"publicLdFlags,omitempty"`
-	Links                  []string         `json:"links,omitempty"`
-	PublicLinks            []string         `json:"publicLinks,omitempty"`
-	Deps                   []string         `json:"deps,omitempty"`
-	LinkerScript           string           `json:"linkerScript,omitempty"`
-	KeepGlobalSymbols      string           `json:"keepGlobalSymbols,omitempty"`
-	Inputs                 []string         `json:"inputs,omitempty"`
-	Outputs                []string         `json:"outputs,omitempty"`
-	PostLinkOutputs        []string         `json:"postLinkOutputs,omitempty"`
-	Output                 string           `json:"output,omitempty"`
-	InstallDir             string           `json:"installDir,omitempty"`
-	NoInstall              bool             `json:"noInstall,omitempty"`
-	Installs               []inspectInstall `json:"installs,omitempty"`
-	InstallPath            string           `json:"installPath,omitempty"`
+	Name              string           `json:"name"`
+	Kind              string           `json:"kind"`
+	Default           bool             `json:"default"`
+	Test              bool             `json:"test"`
+	Files             []string         `json:"files,omitempty"`
+	ExcludedFiles     []string         `json:"excludedFiles,omitempty"`
+	Includes          []string         `json:"includes,omitempty"`
+	PublicIncludes    []string         `json:"publicIncludes,omitempty"`
+	Defines           []string         `json:"defines,omitempty"`
+	PublicDefines     []string         `json:"publicDefines,omitempty"`
+	CFlags            []string         `json:"cFlags,omitempty"`
+	PublicCFlags      []string         `json:"publicCFlags,omitempty"`
+	CxxFlags          []string         `json:"cxxFlags,omitempty"`
+	PublicCxxFlags    []string         `json:"publicCxxFlags,omitempty"`
+	LdFlags           []string         `json:"ldFlags,omitempty"`
+	PublicLdFlags     []string         `json:"publicLdFlags,omitempty"`
+	Links             []string         `json:"links,omitempty"`
+	PublicLinks       []string         `json:"publicLinks,omitempty"`
+	Deps              []string         `json:"deps,omitempty"`
+	LinkerScript      string           `json:"linkerScript,omitempty"`
+	KeepGlobalSymbols string           `json:"keepGlobalSymbols,omitempty"`
+	Inputs            []string         `json:"inputs,omitempty"`
+	Outputs           []string         `json:"outputs,omitempty"`
+	PostLinkOutputs   []string         `json:"postLinkOutputs,omitempty"`
+	Output            string           `json:"output,omitempty"`
+	InstallDir        string           `json:"installDir,omitempty"`
+	NoInstall         bool             `json:"noInstall,omitempty"`
+	Installs          []inspectInstall `json:"installs,omitempty"`
+	InstallPath       string           `json:"installPath,omitempty"`
 }
 
 type inspectInstall struct {
@@ -212,14 +162,8 @@ type inspectOverride struct {
 	value   any
 }
 
-type inspectOptionDeclarations struct {
-	packageOptions map[string]map[string]*api.Option
-	globalOptions  map[string]*api.Option
-}
-
 func newInspectCmd() *cobra.Command {
 	var setFlags []string
-	var allowDryRunWrites bool
 	cmd := &cobra.Command{
 		Use:   "inspect",
 		Short: "Print a machine-readable project model",
@@ -227,65 +171,42 @@ func newInspectCmd() *cobra.Command {
 
 The document reports the project root, active configuration, build mode,
 toolchain, effective global values, roots, packages, targets, package
-dependency graph, the compile-database and build-report paths and presence, the
-last build report's status and identity, its strict configuration-file match and
-effective (override-aware) configuration match, each needed package's active
-build directory, and a source-freshness heuristic. Every target keeps its
-declared file patterns and adds a bounded, declaration-time resolution of those
-patterns against the package source directory: resolvedFiles is sorted,
-de-duplicated, slash-separated and capped at 200 entries, with
-resolvedFileCount reporting the full pre-cap count and resolvedFilesTruncated
-flagging the cap. Every target also reports its own declared cFlags, cxxFlags
-and ldFlags when non-empty, in declaration order: raw AddCFlags, AddCxxFlags
-and AddLdFlags values without package/global flags, toolchain defaults or action
-signatures, so a flag edit changes this document even though freshness cannot
-prove the next build is a no-op. Top-level globalCFlags, globalCxxFlags,
-globalLdFlags, globalLinks and globalDefines report merged AddGlobal* values
-from needed packages (not target flags or toolchain defaults). These sets are declarations, not action
-decisions: generated or conditional files can appear only after a build. The
-freshness object
-compares the resolved declared files of needed packages with the build report's
-finish time; it is not an up-to-date check or a build plan. These are
-file-presence, resolved-layout and declared-source facts: inspect does not
-verify action or output freshness. Diagnostics is always an array.
+dependency graph, the compile-database and build/test-report paths and
+presence, and each needed package's active build directory. Every target reports
+its declared file patterns and its own declared cFlags, cxxFlags and ldFlags
+when non-empty, in declaration order: raw AddCFlags, AddCxxFlags and AddLdFlags
+values without package/global flags, toolchain defaults or action signatures.
+Top-level globalCFlags, globalCxxFlags, globalLdFlags, globalLinks and
+globalDefines report merged AddGlobal* values from needed packages (not target
+flags or toolchain defaults). Diagnostics is always an array.
 
 Dry-run OnBuild runs with interpreted-script file writes disabled: wrapped os
 write APIs fail with a read-only error instead of touching the filesystem, so a
 script that writes produces a VMAKE_W_TARGET_DECLARE warning and that package's
 targets are omitted. Any package whose target declaration fails is omitted and
-warned; one additional VMAKE_W_OMITTED_TARGETS warning reports the total omitted
-count, how many were read-only write rejections, and the matching remediation.
-Reads, stats and globs still work. vmake's own state files are unaffected.
---allow-dry-run-writes disables this guard for scripts that
-must generate inputs before declaring targets; it can modify the build tree and
-should be used only when those writes are expected.
+warned. Reads, stats and globs still work. vmake's own state files are
+unaffected.
 
 --set overrides a configuration option for this run only; nothing is written to
 .vmake/config.json. Values are coerced by the declared option type: bool accepts
 true/false, on/off, and 1/0; int requires an integer; string and choice values
 keep their raw text, so a string can be "42" or "true". Unknown packages, unknown
-options, wrong value types and invalid choice values are rejected. Any --set
-keeps the report states' configMatches false because that is the strict
-configuration-file answer; effectiveConfigMatches stays true when every
-override equals the value already in effect.
+options, wrong value types and invalid choice values are rejected.
 
 On success the envelope has status "ok". On failure it has status "error" with
 diagnostics, vmake exits 1, and stderr carries one human-readable error line.`,
 		Args: cobra.NoArgs,
 	}
 	cmd.Flags().StringArrayVarP(&setFlags, "set", "s", nil, "override an option for this run only (format: [pkg/]option=value)")
-	cmd.Flags().BoolVar(&allowDryRunWrites, "allow-dry-run-writes", false, "let dry-run OnBuild callbacks write files (may modify the build tree)")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		return runInspect(cmd.Context(), setFlags, allowDryRunWrites)
+		return runInspect(cmd.Context(), setFlags)
 	}
 	return cmd
 }
 
-func runInspect(execution context.Context, setFlags []string, allowDryRunWrites bool) error {
-	if !allowDryRunWrites {
-		scriptfs.SetReadOnly(true)
-		defer scriptfs.SetReadOnly(false)
-	}
+func runInspect(execution context.Context, setFlags []string) error {
+	scriptfs.SetReadOnly(true)
+	defer scriptfs.SetReadOnly(false)
 	vlog.SetLevel(vlog.Quiet)
 	iexec.SetQuiet(true)
 	envelope := &inspectEnvelope{SchemaVersion: inspectSchemaVersion, Command: "inspect", Status: "ok", Diagnostics: []inspectDiagnostic{}}
@@ -307,49 +228,40 @@ func runInspect(execution context.Context, setFlags []string, allowDryRunWrites 
 		return failInspect(envelope, code, err)
 	}
 
+	inputs, err := loadResolveInputs(false, false)
+	if err != nil {
+		return fail("VMAKE_E_INSPECT", err)
+	}
+	ctx := newRuntimeContext(inputs, commandStorageLocks())
+	ctx.Context = execution
+	var overrideErr error
 	if len(overrides) > 0 {
-		overrides, err = coerceInspectOverrides(overrides, collectInspectOptionDeclarations(execution))
-		if err != nil {
-			return fail("VMAKE_E_OPTION", err)
+		ctx.OnOptionsCollected = func(c *RuntimeContext) error {
+			overrideErr = applyEphemeralOverrides(c, overrides)
+			return overrideErr
 		}
 	}
-
-	ctx, err := newInspectRuntime(execution)
-	if err != nil {
+	if err := pipeline.Require(ctx); err != nil {
+		if ctx.Resolver != nil {
+			ctx.Resolver.Close()
+		}
 		return fail("VMAKE_E_INSPECT", err)
 	}
 	defer ctx.Resolver.Close()
 
-	baselines := captureInspectOverrideBaselines(ctx, overrides)
-	for _, override := range overrides {
-		applySetValue(ctx, override.pkgName, override.optName, override.value)
-	}
 	if err := pipeline.Configure(ctx); err != nil {
-		if ctx.AllOptions != nil {
-			for _, override := range overrides {
-				if override.pkgName == "" && ctx.GlobalOptions == nil {
-					continue
-				}
-				if overrideErr := validateInspectOverride(ctx, override); overrideErr != nil {
-					return fail("VMAKE_E_OPTION", overrideErr)
-				}
-			}
+		if overrideErr != nil {
+			return fail("VMAKE_E_OPTION", overrideErr)
 		}
 		return fail("VMAKE_E_INSPECT", err)
 	}
 	restoreStderr()
-	for _, override := range overrides {
-		if err := validateInspectOverride(ctx, override); err != nil {
-			return fail("VMAKE_E_OPTION", err)
-		}
-	}
 	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
 	if err != nil {
 		return fail("VMAKE_E_INSPECT", err)
 	}
 	scriptfs.TakeBlockedWrites()
-	overridesChanged := !overridesNoOp(ctx, baselines, overrides)
-	data, diagnostics := buildInspectData(ctx, inspection, inspectOverrideValues(overrides), overridesChanged)
+	data, diagnostics := buildInspectData(ctx, inspection, inspectOverrideValues(overrides))
 	envelope.Data = data
 	envelope.Diagnostics = diagnostics
 	restoreStdout()
@@ -389,22 +301,6 @@ func silenceInspectStream(stream **os.File) func() {
 	}
 }
 
-func newInspectRuntime(execution context.Context) (*RuntimeContext, error) {
-	inputs, err := loadResolveInputs(false, false)
-	if err != nil {
-		return nil, err
-	}
-	ctx := newRuntimeContext(inputs, commandStorageLocks())
-	ctx.Context = execution
-	if err := pipeline.Require(ctx); err != nil {
-		if ctx.Resolver != nil {
-			ctx.Resolver.Close()
-		}
-		return nil, err
-	}
-	return ctx, nil
-}
-
 func failInspect(envelope *inspectEnvelope, code string, err error) error {
 	message := inspectOneLine(err.Error())
 	envelope.Status = "error"
@@ -436,46 +332,6 @@ func parseInspectOverrides(flags []string) ([]inspectOverride, error) {
 		overrides = append(overrides, inspectOverride{pkgName: pkgName, optName: optName, raw: raw})
 	}
 	return overrides, nil
-}
-
-func collectInspectOptionDeclarations(execution context.Context) *inspectOptionDeclarations {
-	ctx, err := newInspectRuntime(execution)
-	if err != nil {
-		return nil
-	}
-	defer ctx.Resolver.Close()
-	_ = pipeline.Configure(ctx) // best effort; pass 2 reports the authoritative error
-	if ctx.AllOptions == nil && ctx.GlobalOptions == nil {
-		return nil
-	}
-	return &inspectOptionDeclarations{packageOptions: ctx.AllOptions, globalOptions: ctx.GlobalOptions}
-}
-
-func coerceInspectOverrides(overrides []inspectOverride, declarations *inspectOptionDeclarations) ([]inspectOverride, error) {
-	for i := range overrides {
-		override := &overrides[i]
-		opt := declarations.declared(override.pkgName, override.optName)
-		if opt == nil {
-			override.value = override.raw
-			continue
-		}
-		value, err := coerceValue(override.raw, opt.Type())
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", override.key(), err)
-		}
-		override.value = value
-	}
-	return overrides, nil
-}
-
-func (d *inspectOptionDeclarations) declared(pkgName, optName string) *api.Option {
-	if d == nil {
-		return nil
-	}
-	if pkgName == "" {
-		return d.globalOptions[optName]
-	}
-	return d.packageOptions[pkgName][optName]
 }
 
 func (o inspectOverride) key() string {
@@ -549,69 +405,7 @@ func inspectOverrideValues(overrides []inspectOverride) map[string]any {
 	return values
 }
 
-type inspectOverrideBaseline struct {
-	value   any
-	present bool
-}
-
-func captureInspectOverrideBaselines(ctx *RuntimeContext, overrides []inspectOverride) []inspectOverrideBaseline {
-	baselines := make([]inspectOverrideBaseline, len(overrides))
-	for i, override := range overrides {
-		baseline := &baselines[i]
-		switch {
-		case override.pkgName == "" && override.optName == api.ModeOptionName:
-			baseline.value, baseline.present = pipeline.ResolveMode(ctx.Config, ctx.ModeOverride), true
-		case override.pkgName == "" && override.optName == api.ToolchainOptionName:
-			baseline.value, baseline.present = pipeline.ResolveToolchainName(ctx.Config, ctx.ToolchainOverride), true
-		case override.pkgName == "":
-			if ctx.Config != nil && ctx.Config.Global != nil {
-				baseline.value, baseline.present = ctx.Config.Global.Options[override.optName]
-			}
-		case ctx.Config != nil:
-			baseline.value, baseline.present = config.GetEntry(ctx.Config, override.pkgName).Options[override.optName]
-		}
-		if baseline.value == nil {
-			baseline.present = false
-		}
-	}
-	return baselines
-}
-
-func overridesNoOp(ctx *RuntimeContext, baselines []inspectOverrideBaseline, overrides []inspectOverride) bool {
-	if len(baselines) != len(overrides) {
-		return false
-	}
-	for i, override := range overrides {
-		opt := inspectDeclaredOption(ctx, override)
-		if opt == nil {
-			return false
-		}
-		effective := baselines[i].value
-		if !baselines[i].present || (override.pkgName == "" && effective == "" && inspectTargetOption(override.optName)) {
-			effective = opt.Default()
-		}
-		if effective == nil {
-			return false
-		}
-		if api.NormalizeOptionValue(opt, effective) != api.NormalizeOptionValue(opt, override.value) {
-			return false
-		}
-	}
-	return true
-}
-
-func inspectDeclaredOption(ctx *RuntimeContext, override inspectOverride) *api.Option {
-	if override.pkgName == "" {
-		return ctx.GlobalOptions[override.optName]
-	}
-	return ctx.AllOptions[override.pkgName][override.optName]
-}
-
-func inspectTargetOption(name string) bool {
-	return name == api.TargetOSOptionName || name == api.TargetTripleOptionName
-}
-
-func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, overrides map[string]any, overridesChanged bool) (*inspectData, []inspectDiagnostic) {
+func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, overrides map[string]any) (*inspectData, []inspectDiagnostic) {
 	root := ctx.Paths.ProjectDir
 	installRoot := filepath.Join(root, "install")
 	global := inspection.GlobalValues
@@ -620,10 +414,7 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 	}
 	compileDatabase := filepath.Join(root, "build", "compile_commands.json")
 	buildReport := reportPath(root)
-	hypothetical := len(overrides) > 0
-	buildReportPresent, buildReportState, reportDiagnostic := loadInspectReportState(buildReport, ctx.ConfigDigest, inspection.Mode, inspection.TcName, hypothetical, overridesChanged, "build")
 	testReport := testReportPath(root)
-	testReportPresent, testReportState, testDiagnostic := loadInspectReportState(testReport, ctx.ConfigDigest, inspection.Mode, inspection.TcName, hypothetical, overridesChanged, "test")
 	data := &inspectData{
 		Root:                   root,
 		ConfigFile:             filepath.Base(ctx.ConfigPath),
@@ -645,18 +436,14 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 		CompileDatabase:        compileDatabase,
 		CompileDatabasePresent: inspectPathExists(compileDatabase),
 		BuildReport:            buildReport,
-		BuildReportPresent:     buildReportPresent,
-		BuildReportState:       buildReportState,
+		BuildReportPresent:     inspectPathExists(buildReport),
 		TestReport:             testReport,
-		TestReportPresent:      testReportPresent,
-		TestReportState:        testReportState,
+		TestReportPresent:      inspectPathExists(testReport),
 		InstallPrefix:          installRoot,
 		InstallManifest:        filepath.Join(installRoot, "manifest.json"),
 	}
 	sources := inspectSourceStates(ctx, inspection)
 	diagnostics := make([]inspectDiagnostic, 0)
-	omitted := 0
-	readOnlyOmitted := 0
 	for _, name := range inspectPackageNames(ctx) {
 		node := ctx.DepGraph.Packages[name]
 		if node == nil || node.Source == nil {
@@ -699,9 +486,7 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 					if strings.Contains(message, "read-only inspection:") {
 						message = strings.ReplaceAll(message, "panic: ", "")
 						fix = readOnlyTargetsWarningFix
-						readOnlyOmitted++
 					}
-					omitted++
 					diagnostics = append(diagnostics, inspectDiagnostic{
 						Severity: "warning",
 						Code:     "VMAKE_W_TARGET_DECLARE",
@@ -714,25 +499,6 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 			}
 		}
 		data.Packages = append(data.Packages, pkg)
-	}
-	data.Freshness = inspectFreshnessFor(buildReportState, data.Packages)
-	if omitted > 0 {
-		fix := "Fix the package OnBuild callback, then rerun vmake inspect."
-		if readOnlyOmitted > 0 {
-			fix = readOnlyTargetsWarningFix
-		}
-		diagnostics = append(diagnostics, inspectDiagnostic{
-			Severity: "warning",
-			Code:     omittedTargetsWarningCode,
-			Message:  omittedTargetsMessage(omitted, readOnlyOmitted),
-			Fix:      fix,
-		})
-	}
-	if reportDiagnostic != nil {
-		diagnostics = append(diagnostics, *reportDiagnostic)
-	}
-	if testDiagnostic != nil {
-		diagnostics = append(diagnostics, *testDiagnostic)
 	}
 	return data, diagnostics
 }
@@ -750,206 +516,6 @@ func inspectBuildDirFields(dirs *api.PkgDirs, local bool) (string, string) {
 		return dirs.BuildDir, ""
 	}
 	return dirs.BuildDir, filepath.Base(dirs.BuildDir)
-}
-
-func loadInspectReportState(path, configDigest, mode, toolchain string, hypothetical, overridesChanged bool, kind string) (bool, *inspectBuildReportState, *inspectDiagnostic) {
-	if !inspectPathExists(path) {
-		return false, nil, nil
-	}
-	var report struct {
-		Status          string          `json:"status"`
-		BuildID         string          `json:"buildId"`
-		Command         string          `json:"command"`
-		VMakeVersion    string          `json:"vmakeVersion"`
-		VMakeCommit     string          `json:"vmakeCommit"`
-		ProjectRevision string          `json:"projectRevision"`
-		ProjectDirty    *bool           `json:"projectDirty"`
-		Mode            string          `json:"mode"`
-		Toolchain       string          `json:"toolchain"`
-		Started         string          `json:"started"`
-		Finished        string          `json:"finished"`
-		ConfigSHA256    string          `json:"configSha256"`
-		Summary         json.RawMessage `json:"summary"`
-		Error           string          `json:"error"`
-	}
-	data, err := os.ReadFile(path)
-	if err == nil && !strings.HasPrefix(strings.TrimSpace(string(data)), "{") {
-		err = errors.New("report is not a JSON object")
-	}
-	if err == nil {
-		err = json.Unmarshal(data, &report)
-	}
-	if err != nil {
-		return true, nil, &inspectDiagnostic{
-			Severity: "warning",
-			Code:     "VMAKE_W_REPORT_UNREADABLE",
-			Message:  fmt.Sprintf("cannot read %s report %s: %v", kind, path, err),
-			Fix:      fmt.Sprintf("Rerun vmake %s to rewrite build/vmake-%s.json.", kind, kind),
-		}
-	}
-	digestMatches := report.ConfigSHA256 == configDigest
-	modeMatches := report.Mode == "" || report.Mode == mode
-	toolchainMatches := report.Toolchain == "" || report.Toolchain == toolchain
-	return true, &inspectBuildReportState{
-		Status:                 report.Status,
-		BuildID:                report.BuildID,
-		Command:                report.Command,
-		VMakeVersion:           report.VMakeVersion,
-		VMakeCommit:            report.VMakeCommit,
-		ProjectRevision:        report.ProjectRevision,
-		ProjectDirty:           report.ProjectDirty,
-		Started:                report.Started,
-		Finished:               report.Finished,
-		Mode:                   report.Mode,
-		Toolchain:              report.Toolchain,
-		ConfigMatches:          !hypothetical && digestMatches,
-		ModeMatches:            modeMatches,
-		ToolchainMatches:       toolchainMatches,
-		EffectiveConfigMatches: !overridesChanged && digestMatches && modeMatches && toolchainMatches,
-		Summary:                report.Summary,
-		Error:                  report.Error,
-	}, nil
-}
-
-func inspectFreshnessFor(state *inspectBuildReportState, packages []inspectPackage) *inspectFreshness {
-	freshness := &inspectFreshness{Heuristic: true}
-	if state == nil {
-		return freshness
-	}
-	freshness.ReportStatus = state.Status
-	configMatches := state.ConfigMatches
-	freshness.ConfigMatches = &configMatches
-	effectiveConfigMatches := state.EffectiveConfigMatches
-	freshness.EffectiveConfigMatches = &effectiveConfigMatches
-	finished, err := time.Parse(time.RFC3339Nano, state.Finished)
-	if err != nil {
-		return freshness
-	}
-	freshness.ReportFinished = state.Finished
-	changed := inspectChangedSources(packages, finished)
-	sources := make([]string, 0, len(changed))
-	for source := range changed {
-		sources = append(sources, source)
-	}
-	slices.Sort(sources)
-	truncated := len(sources) > inspectFreshnessChangedSourcesLimit
-	if truncated {
-		sources = sources[:inspectFreshnessChangedSourcesLimit]
-	}
-	sourceChanged := len(changed) > 0
-	freshness.Known = true
-	freshness.SourceChanged = &sourceChanged
-	freshness.ChangedSources = sources
-	freshness.Truncated = &truncated
-	return freshness
-}
-
-func inspectTargetSourceFiles(sourceDir, buildDir string, patterns, excluded []string) []string {
-	if sourceDir == "" {
-		return nil
-	}
-	seen := make(map[string]bool)
-	files := make([]string, 0)
-	for _, rawPattern := range patterns {
-		pattern, ok := expandInspectBuildPattern(buildDir, rawPattern)
-		if !ok {
-			continue
-		}
-		matches, err := glob.Match(pattern, sourceDir)
-		if err != nil {
-			continue
-		}
-		for _, match := range matches {
-			if inspectSourceExcluded(match, excluded) {
-				continue
-			}
-			source := match
-			if !filepath.IsAbs(source) {
-				source = filepath.Join(sourceDir, filepath.FromSlash(source))
-			}
-			info, err := os.Stat(source)
-			if err != nil || info.IsDir() {
-				continue
-			}
-			rel := match
-			if filepath.IsAbs(rel) {
-				if within, err := filepath.Rel(sourceDir, rel); err == nil {
-					rel = within
-				}
-			}
-			rel = filepath.ToSlash(rel)
-			if seen[rel] {
-				continue
-			}
-			seen[rel] = true
-			files = append(files, rel)
-		}
-	}
-	sort.Strings(files)
-	return files
-}
-
-func expandInspectBuildPattern(buildDir, pattern string) (string, bool) {
-	slashed := filepath.ToSlash(pattern)
-	if slashed == api.BuildDirToken {
-		if buildDir == "" {
-			return "", false
-		}
-		return buildDir, true
-	}
-	prefix := api.BuildDirToken + "/"
-	if strings.HasPrefix(slashed, prefix) {
-		if buildDir == "" {
-			return "", false
-		}
-		return filepath.Join(buildDir, filepath.FromSlash(strings.TrimPrefix(slashed, prefix))), true
-	}
-	return pattern, true
-}
-
-func inspectChangedSources(packages []inspectPackage, finished time.Time) map[string]bool {
-	changed := make(map[string]bool)
-	for _, pkg := range packages {
-		for _, target := range pkg.Targets {
-			for _, match := range inspectTargetSourceFiles(pkg.SourceDir, pkg.BuildDir, target.Files, target.ExcludedFiles) {
-				source := match
-				if !filepath.IsAbs(source) {
-					source = filepath.Join(pkg.SourceDir, filepath.FromSlash(source))
-				}
-				if inspectPathUnder(source, pkg.BuildDir) {
-					continue
-				}
-				info, err := os.Stat(source)
-				if err != nil || info.IsDir() {
-					continue
-				}
-				if info.ModTime().After(finished) {
-					changed[pkg.Name+":"+match] = true
-				}
-			}
-		}
-	}
-	return changed
-}
-
-func inspectPathUnder(path, dir string) bool {
-	if path == "" || dir == "" {
-		return false
-	}
-	rel, err := filepath.Rel(dir, path)
-	if err != nil {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-func inspectSourceExcluded(source string, patterns []string) bool {
-	for _, pattern := range patterns {
-		if glob.MatchPath(pattern, source) {
-			return true
-		}
-	}
-	return false
 }
 
 func inspectPackageNames(ctx *RuntimeContext) []string {
@@ -1284,14 +850,6 @@ func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name s
 			NoInstall:         target.NoInstall(),
 			Installs:          installs,
 			InstallPath:       inspectTargetInstallPath(target, targetOS),
-		}
-		if resolved := inspectTargetSourceFiles(dirs.SourceDir, dirs.BuildDir, target.Files(), target.ExcludedFiles()); len(resolved) > 0 {
-			entry.ResolvedFileCount = len(resolved)
-			if len(resolved) > inspectResolvedFilesLimit {
-				resolved = resolved[:inspectResolvedFilesLimit]
-				entry.ResolvedFilesTruncated = true
-			}
-			entry.ResolvedFiles = resolved
 		}
 		if target.Kind() != api.TargetVoid {
 			entry.Output = api.TargetFilename(target.Kind(), target.Name(), targetOS)

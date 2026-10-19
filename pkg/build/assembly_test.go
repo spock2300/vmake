@@ -86,7 +86,7 @@ func TestAssemblyCompilerDependencies(t *testing.T) {
 					if err := saveActionRecord(nil, record, "assembly", dir, inputs, []string{obj}); err != nil {
 						t.Fatal(err)
 					}
-					if !actionUpToDate(nil, record, "assembly", dir, inputs, []string{obj}) {
+					if !checkAction(nil, record, "assembly", dir, inputs, []string{obj}).UpToDate {
 						t.Fatal("unchanged object is stale")
 					}
 					for _, dep := range want {
@@ -98,13 +98,13 @@ func TestAssemblyCompilerDependencies(t *testing.T) {
 						if err := os.WriteFile(path, append(data, []byte("\n")...), 0644); err != nil {
 							t.Fatal(err)
 						}
-						if actionUpToDate(nil, record, "assembly", dir, inputs, []string{obj}) {
+						if checkAction(nil, record, "assembly", dir, inputs, []string{obj}).UpToDate {
 							t.Fatalf("edit to %s did not invalidate object", dep)
 						}
 						if err := os.Remove(path); err != nil {
 							t.Fatal(err)
 						}
-						if actionUpToDate(nil, record, "assembly", dir, inputs, []string{obj}) {
+						if checkAction(nil, record, "assembly", dir, inputs, []string{obj}).UpToDate {
 							t.Fatalf("deletion of %s did not invalidate object", dep)
 						}
 						if err := os.WriteFile(path, data, 0644); err != nil {
@@ -116,7 +116,7 @@ func TestAssemblyCompilerDependencies(t *testing.T) {
 						if err := saveActionRecord(nil, record, "assembly", dir, inputs, []string{obj}); err != nil {
 							t.Fatal(err)
 						}
-						if !actionUpToDate(nil, record, "assembly", dir, inputs, []string{obj}) {
+						if !checkAction(nil, record, "assembly", dir, inputs, []string{obj}).UpToDate {
 							t.Fatalf("recompiled object is stale after restoring %s", dep)
 						}
 					}

@@ -164,8 +164,3 @@ func matchParts(pattern, name []string) bool {
 	matched, err := path.Match(pattern[0], name[0])
 	return err == nil && matched && matchParts(pattern[1:], name[1:])
 }
-
-func IsCppFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	return ext == ".cpp" || ext == ".cc" || ext == ".cxx" || ext == ".C"
-}

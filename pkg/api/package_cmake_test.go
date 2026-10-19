@@ -2,12 +2,14 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +18,79 @@ import (
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
+
+func TestMain(m *testing.M) {
+	switch filepath.Base(os.Args[0]) {
+	case "cmake", "cmake.exe":
+		if fakeDir := os.Getenv("VMAKE_TEST_CMAKE_FAKE_DIR"); fakeDir != "" {
+			runFakeCMake(fakeDir)
+		}
+	}
+	os.Exit(m.Run())
+}
+
+func logCMakeInvocation() {
+	logPath := os.Getenv("VMAKE_TEST_CMAKE_LOG")
+	if logPath == "" {
+		return
+	}
+	log, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	fmt.Fprintln(log, strings.Join(os.Args[1:], " "))
+	log.Close()
+}
+
+func runFakeCMake(fakeDir string) {
+	logCMakeInvocation()
+	if len(os.Args) < 2 {
+		os.Exit(2)
+	}
+	stage := strings.TrimPrefix(os.Args[1], "--")
+	if hasCMakeOption(os.Args[1:], "-S") {
+		stage = "configure"
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		_ = os.WriteFile(filepath.Join(fakeDir, stage+".cwd"), []byte(cwd), 0644)
+	}
+	if data, err := os.ReadFile(filepath.Join(fakeDir, stage+".sleep")); err == nil {
+		if delay, err := time.ParseDuration(strings.TrimSpace(string(data))); err == nil {
+			time.Sleep(delay)
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(fakeDir, stage+".out")); err == nil {
+		_, _ = os.Stdout.Write(data)
+	}
+	if data, err := os.ReadFile(filepath.Join(fakeDir, stage+".err")); err == nil {
+		_, _ = os.Stderr.Write(data)
+	}
+	code := 0
+	if data, err := os.ReadFile(filepath.Join(fakeDir, stage+".exit")); err == nil {
+		if n, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+			code = n
+		}
+	}
+	os.Exit(code)
+}
+
+func countCMakeConfigureCalls(t *testing.T, logPath string) int {
+	t.Helper()
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		t.Fatal(err)
+	}
+	count := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if strings.HasPrefix(line, "-S ") {
+			count++
+		}
+	}
+	return count
+}
 
 func TestCMakeDirectoriesAndConfiguration(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "工程 space")
@@ -425,7 +500,7 @@ func TestCMakeBuildAndInstallOverrides(t *testing.T) {
 	for _, parallel := range [][]string{{"-j", "2"}, {"-j2"}, {"--parallel", "2"}, {"--parallel=2"}} {
 		extra := append([]string{"--config", "Debug"}, parallel...)
 		args, err := p.cmakeBuildArgs(extra...)
-		want := []string{"--build", filepath.ToSlash(p.CMakeBuildDir()), "--parallel", "2", "--config", "Debug"}
+		want := append([]string{"--build", filepath.ToSlash(p.CMakeBuildDir())}, extra...)
 		if err != nil || !slices.Equal(args, want) {
 			t.Fatalf("explicit arguments = %q, want %q, error %v", args, want, err)
 		}
@@ -436,14 +511,9 @@ func TestCMakeBuildAndInstallOverrides(t *testing.T) {
 	}
 	t.Setenv("CMAKE_BUILD_PARALLEL_LEVEL", "2")
 	args, err = p.cmakeBuildArgs()
-	if i := slices.Index(args, "--parallel"); err != nil || i < 0 || args[i+1] != "2" {
-		t.Fatalf("smaller parallel environment ignored: %q, %v", args, err)
-	}
-	for _, value := range []string{"5", "", "0", "-1"} {
-		t.Setenv("CMAKE_BUILD_PARALLEL_LEVEL", value)
-		if args, err = p.cmakeBuildArgs(); err == nil {
-			t.Fatalf("invalid parallel environment %q accepted: %q", value, args)
-		}
+	wantEnv := []string{"--build", filepath.ToSlash(p.CMakeBuildDir()), "--config", "MinSizeRel"}
+	if err != nil || !slices.Equal(args, wantEnv) {
+		t.Fatalf("CMAKE_BUILD_PARALLEL_LEVEL should suppress default --parallel: %q, %v", args, err)
 	}
 	args, err = p.cmakeInstallArgs("--config=Debug", "--component", "Development")
 	want := []string{"--install", filepath.ToSlash(p.CMakeBuildDir()), "--prefix", filepath.ToSlash(p.CMakeInstallDir()), "--config=Debug", "--component", "Development"}

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/spock2300/vmake/internal/jsonio"
-	"github.com/spock2300/vmake/pkg/repo"
 )
 
 const passingTestSource = "int main(void) { return 0; }\n"
@@ -105,9 +104,6 @@ func TestTestCommandPublishesSucceededTestReport(t *testing.T) {
 	if !strings.Contains(stdout, "Tests succeeded: 1/1 passed in ") {
 		t.Fatalf("test summary missing:\n%s", stdout)
 	}
-	if strings.Contains(stdout, "SKIP") {
-		t.Fatalf("fully executed test run printed skip lines:\n%s", stdout)
-	}
 	assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
 	report := loadTestReport(t, project)
 	if report.SchemaVersion != 2 || report.Status != "succeeded" || report.Command != reportCommandTest || report.Error != "" {
@@ -182,9 +178,6 @@ func TestTestCommandNoTargetsSucceeds(t *testing.T) {
 	if stderr != "" {
 		t.Fatalf("no-tests stderr = %q", stderr)
 	}
-	if strings.Contains(stdout, "SKIP") {
-		t.Fatalf("no-tests output printed skip lines:\n%s", stdout)
-	}
 	assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
 	report := loadTestReport(t, project)
 	if report.Status != "succeeded" || report.Command != reportCommandTest || report.Error != "" {
@@ -195,218 +188,6 @@ func TestTestCommandNoTargetsSucceeds(t *testing.T) {
 	}
 	if report.Summary == nil || report.Summary.TestsFound != 0 || report.Summary.TestsPassed != 0 || report.Summary.TestsFailed != 0 {
 		t.Fatalf("no-tests summary = %+v", report.Summary)
-	}
-}
-
-func TestTestReportProvenance(t *testing.T) {
-	project := writeTestCommandProject(t, "")
-	revision := initProvenanceGitRepo(t, project)
-
-	stdout, stderr, code := runBuildCommand(t, project, "test")
-	if code != 0 {
-		t.Fatalf("test exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	report := loadTestReport(t, project)
-	if report.Command != reportCommandTest || report.Status != "succeeded" {
-		t.Fatalf("test report = %+v", report)
-	}
-	assertReportProvenance(t, report, revision, false)
-}
-
-func TestTestCommandRequireTestsFailsWithNoTargets(t *testing.T) {
-	project := writeTestCommandProject(t, "")
-	buildReportSnapshot := buildAndSnapshotBuildReport(t, project)
-	stdout, stderr, code := runBuildCommand(t, project, "test", "--require-tests")
-	if code != 1 {
-		t.Fatalf("test --require-tests exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "Tests failed: no test targets found") {
-		t.Fatalf("require-tests stdout = %q", stdout)
-	}
-	if !strings.Contains(stderr, "Error: no test targets found") {
-		t.Fatalf("require-tests stderr = %q", stderr)
-	}
-	assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
-	report := loadTestReport(t, project)
-	if report.Status != "failed" || report.Command != reportCommandTest || report.Error != "no test targets found" {
-		t.Fatalf("require-tests report = %+v", report)
-	}
-	if report.Summary == nil || report.Summary.TestsFound != 0 {
-		t.Fatalf("require-tests summary = %+v", report.Summary)
-	}
-	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Severity != "error" ||
-		report.Diagnostics[0].Code != "VMAKE_E_TEST" || report.Diagnostics[0].Message != "no test targets found" {
-		t.Fatalf("require-tests diagnostics = %+v", report.Diagnostics)
-	}
-}
-
-func assertNoTestBuildOutput(t *testing.T, project string) {
-	t.Helper()
-	if dirs := buildKeyDirectories(t, project); len(dirs) != 0 {
-		t.Fatalf("no-tests preflight created build-key directories: %v", dirs)
-	}
-	for _, path := range []string{
-		filepath.Join(project, "build", "compile_commands.json"),
-		filepath.Join(project, "install"),
-	} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("no-tests preflight created %s: %v", path, err)
-		}
-	}
-}
-
-func TestTestCommandNoTargetsSkipsBuild(t *testing.T) {
-	project := writeTestCommandProject(t, "")
-	stdout, stderr, code := runBuildCommand(t, project, "test")
-	if code != 0 || stderr != "" {
-		t.Fatalf("test exit = %d, stderr = %q\n%s", code, stderr, stdout)
-	}
-	if !strings.Contains(stdout, "Tests succeeded: no test targets") {
-		t.Fatalf("no-tests summary missing:\n%s", stdout)
-	}
-	if strings.Contains(stdout, "Building...") || strings.Contains(stdout, "Executing OnBuild") || strings.Contains(stdout, "  CC ") {
-		t.Fatalf("no-tests preflight ran the build:\n%s", stdout)
-	}
-	assertNoTestBuildOutput(t, project)
-	report := loadTestReport(t, project)
-	if report.Status != "succeeded" || report.Command != reportCommandTest || report.Error != "" {
-		t.Fatalf("no-tests report = %+v", report)
-	}
-	if len(report.Targets) != 0 || len(report.Tests) != 0 || len(report.Artifacts) != 0 || report.CompileDatabase != "" {
-		t.Fatalf("no-tests results = %+v (compile database %q)", report, report.CompileDatabase)
-	}
-	summary := report.Summary
-	if summary == nil || summary.TestsFound != 0 || summary.TestsPassed != 0 || summary.TestsFailed != 0 ||
-		summary.TargetsTotal != 0 || summary.FilesCompiled != 0 || summary.FilesLinked != 0 ||
-		summary.ArtifactsInstalled != 0 || !summary.NoOp || summary.ChangedFiles == nil || len(summary.ChangedFiles) != 0 {
-		t.Fatalf("no-tests summary = %+v", summary)
-	}
-}
-
-func TestTestCommandRequireTestsSkipsBuild(t *testing.T) {
-	project := writeTestCommandProject(t, "")
-	writeExtensionFile(t, reportPath(project), `{"schemaVersion":2,"buildId":"previous-build","status":"succeeded","command":"build"}`)
-	buildReportSnapshot := snapshotReport(t, reportPath(project))
-	stdout, stderr, code := runBuildCommand(t, project, "test", "--require-tests")
-	if code != 1 {
-		t.Fatalf("test --require-tests exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "Tests failed: no test targets found") {
-		t.Fatalf("require-tests stdout = %q", stdout)
-	}
-	if !strings.Contains(stderr, "Error: no test targets found") {
-		t.Fatalf("require-tests stderr = %q", stderr)
-	}
-	if strings.Contains(stdout, "Building...") || strings.Contains(stdout, "Executing OnBuild") || strings.Contains(stdout, "  CC ") {
-		t.Fatalf("require-tests preflight ran the build:\n%s", stdout)
-	}
-	if dirs := buildKeyDirectories(t, project); len(dirs) != 0 {
-		t.Fatalf("require-tests preflight created build-key directories: %v", dirs)
-	}
-	if _, err := os.Stat(filepath.Join(project, "build", "compile_commands.json")); !os.IsNotExist(err) {
-		t.Fatalf("require-tests preflight created the compile database: %v", err)
-	}
-	assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
-	report := loadTestReport(t, project)
-	if report.Status != "failed" || report.Command != reportCommandTest || report.Error != "no test targets found" {
-		t.Fatalf("require-tests report = %+v", report)
-	}
-	if len(report.Targets) != 0 || len(report.Tests) != 0 || len(report.Artifacts) != 0 {
-		t.Fatalf("require-tests results = %+v", report)
-	}
-	if report.Summary == nil || report.Summary.TestsFound != 0 || report.Summary.TargetsTotal != 0 {
-		t.Fatalf("require-tests summary = %+v", report.Summary)
-	}
-	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Severity != "error" ||
-		report.Diagnostics[0].Code != "VMAKE_E_TEST" || report.Diagnostics[0].Message != "no test targets found" {
-		t.Fatalf("require-tests diagnostics = %+v", report.Diagnostics)
-	}
-}
-
-func TestTestCommandNoTestsPreflightFallsBackOnDeclarationFailure(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "fallback")
-	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
-
-import "github.com/spock2300/vmake/pkg/api"
-
-func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnBuild(func(ctx *api.BuildContext) {
-		if p.DryRun() {
-			panic("declaration needs a real build")
-		}
-		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c")
-	})
-}
-`)
-	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n")
-	stdout, stderr, code := runBuildCommand(t, project, "test")
-	if code != 0 {
-		t.Fatalf("test exit = %d, want 0 (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "Tests succeeded: no test targets") {
-		t.Fatalf("fallback summary missing:\n%s", stdout)
-	}
-	if dirs := buildKeyDirectories(t, project); len(dirs) != 1 {
-		t.Fatalf("fallback build-key directories = %v, want one real build", dirs)
-	}
-	if _, err := os.Stat(filepath.Join(project, "build", "compile_commands.json")); err != nil {
-		t.Fatalf("fallback build did not write the compile database: %v", err)
-	}
-	report := loadTestReport(t, project)
-	if report.Status != "succeeded" || report.Summary == nil || report.Summary.TestsFound != 0 ||
-		len(report.Targets) == 0 || report.Summary.FilesCompiled == 0 {
-		t.Fatalf("fallback report = %+v (summary %+v)", report, report.Summary)
-	}
-}
-
-func TestTestCommandNoTestsPreflightFallsBackOnMissingSource(t *testing.T) {
-	missing := repo.RepoFileURL(filepath.Join(t.TempDir(), "missing.git"))
-	project := filepath.Join(t.TempDir(), "missing-source")
-	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
-
-import "github.com/spock2300/vmake/pkg/api"
-
-func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
-	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetBinary).AddDeps("lib:lib")
-	})
-}
-`)
-	writeExtensionFile(t, filepath.Join(project, "lib", "build.go"), `package main
-
-import "github.com/spock2300/vmake/pkg/api"
-
-func Main(p *api.Package) {
-	p.OnPackage(func(p *api.Package) {
-		p.SetGit("`+missing+`")
-		p.AddVersion("1.0.0", "v1.0.0")
-	})
-	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("lib").SetKind(api.TargetStatic).AddFiles("src/*.c")
-	})
-}
-`)
-	stdout, stderr, code := runBuildCommand(t, project, "test")
-	if code != 1 {
-		t.Fatalf("test exit = %d, want 1 for the fallback build (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	if strings.Contains(stdout, "Tests succeeded: no test targets") {
-		t.Fatalf("missing-source preflight reported no tests instead of falling back:\n%s", stdout)
-	}
-	report := loadTestReport(t, project)
-	if report.Status != "failed" || report.Command != reportCommandTest {
-		t.Fatalf("missing-source report = %+v", report)
-	}
-	if report.Error == "" || strings.Contains(report.Error, "no test targets found") {
-		t.Fatalf("missing-source error = %q, want the fallback build error", report.Error)
-	}
-	for _, diagnostic := range report.Diagnostics {
-		if diagnostic.Code == "VMAKE_E_TEST" && strings.Contains(diagnostic.Message, "no test targets found") {
-			t.Fatalf("missing-source fallback produced a no-tests diagnostic: %+v", diagnostic)
-		}
 	}
 }
 
@@ -481,74 +262,6 @@ func TestTestCommandBuildFailurePreservesBuildReport(t *testing.T) {
 	}
 }
 
-func writeWarningTestProject(t *testing.T) string {
-	t.Helper()
-	project := filepath.Join(t.TempDir(), "warning-tests-project")
-	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
-
-import "github.com/spock2300/vmake/pkg/api"
-
-func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c").AddCFlags("-Wno-error")
-		ctx.Target("tests").SetKind(api.TargetBinary).SetTest(true).AddFiles("tests/test_app.c")
-	})
-}
-`)
-	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "static int vmake_warning_probe;\n\nint main(void) { return 0; }\n")
-	writeExtensionFile(t, filepath.Join(project, "tests", "test_app.c"), `#include <stdio.h>
-
-int main(void) {
-	fprintf(stderr, "tests/check.c:7: warning: test stderr warning marker\n");
-	printf("src/thing.c:9: warning: test stdout warning marker\n");
-	return 0;
-}
-`)
-	return project
-}
-
-func TestTestWarningOutputNeverBecomesABuildWarning(t *testing.T) {
-	for _, mode := range []struct {
-		name string
-		args []string
-	}{
-		{name: "default", args: []string{"test"}},
-		{name: "json", args: []string{"test", "--json"}},
-		{name: "json-quiet", args: []string{"-q", "test", "--json"}},
-	} {
-		t.Run(mode.name, func(t *testing.T) {
-			project := writeWarningTestProject(t)
-			stdout, stderr, code := runBuildCommand(t, project, mode.args...)
-			if code != 0 {
-				t.Fatalf("test exit = %d, stderr = %q\n%s", code, stderr, stdout)
-			}
-			report := loadTestReport(t, project)
-			if len(report.Diagnostics) != 1 {
-				t.Fatalf("diagnostics = %+v, want the build-phase warning only", report.Diagnostics)
-			}
-			warning := report.Diagnostics[0]
-			if warning.Severity != "warning" || warning.Code != buildWarningCode ||
-				filepath.Base(warning.File) != "main.c" || !strings.Contains(warning.Message, "vmake_warning_probe") {
-				t.Fatalf("build-phase warning = %+v", warning)
-			}
-			if len(report.Tests) != 1 || !report.Tests[0].Passed {
-				t.Fatalf("tests = %+v", report.Tests)
-			}
-			output := report.Tests[0].Output
-			if !strings.Contains(output, "test stdout warning marker") || !strings.Contains(output, "test stderr warning marker") {
-				t.Fatalf("test output = %q", output)
-			}
-			for _, diagnostic := range report.Diagnostics {
-				if strings.Contains(diagnostic.Message, "test stdout warning marker") ||
-					strings.Contains(diagnostic.Message, "test stderr warning marker") {
-					t.Fatalf("test output leaked into diagnostics: %+v", report.Diagnostics)
-				}
-			}
-		})
-	}
-}
-
 func TestTestCommandReportsSignalOutcome(t *testing.T) {
 	if !testSignalsSupported {
 		t.Skip("process signal status is unavailable on this platform")
@@ -585,40 +298,6 @@ int main(void) {
 	}
 }
 
-func TestTestFailureWarningOutputNeverBecomesABuildWarning(t *testing.T) {
-	project := writeWarningTestProject(t)
-	writeExtensionFile(t, filepath.Join(project, "tests", "test_app.c"), `#include <stdio.h>
-
-int main(void) {
-	fprintf(stderr, "tests/check.c:7: warning: failing test stderr marker\n");
-	printf("src/thing.c:9: warning: failing test stdout marker\n");
-	return 3;
-}
-`)
-	stdout, stderr, code := runBuildCommand(t, project, "test", "--json")
-	if code != 1 {
-		t.Fatalf("test exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	report := loadTestReport(t, project)
-	if len(report.Diagnostics) != 2 {
-		t.Fatalf("diagnostics = %+v, want the test error and the build warning", report.Diagnostics)
-	}
-	if report.Diagnostics[0].Severity != "error" || report.Diagnostics[0].Code != "VMAKE_E_TEST" ||
-		report.Diagnostics[0].Message != "1 test(s) failed" {
-		t.Fatalf("test failure diagnostic = %+v", report.Diagnostics[0])
-	}
-	if report.Diagnostics[1].Code != buildWarningCode || filepath.Base(report.Diagnostics[1].File) != "main.c" {
-		t.Fatalf("build warning = %+v", report.Diagnostics[1])
-	}
-	if len(report.Tests) != 1 || report.Tests[0].Passed || report.Tests[0].ExitCode != 3 {
-		t.Fatalf("failed test entry = %+v", report.Tests)
-	}
-	output := report.Tests[0].Output
-	if !strings.Contains(output, "failing test stderr marker") || !strings.Contains(output, "failing test stdout marker") {
-		t.Fatalf("failed test output = %q", output)
-	}
-}
-
 func writePartialTestProject(t *testing.T, goodTestSource string) string {
 	t.Helper()
 	project := filepath.Join(t.TempDir(), "tests-project")
@@ -641,206 +320,7 @@ func Main(p *api.Package) {
 	return project
 }
 
-func testResultsByName(tests []buildTestResult) map[string]buildTestResult {
-	entries := make(map[string]buildTestResult, len(tests))
-	for _, test := range tests {
-		entries[test.Name] = test
-	}
-	return entries
-}
-
-func TestTestCommandKeepGoingRunsBuiltTestsAfterBuildFailure(t *testing.T) {
-	project := writePartialTestProject(t, `#include <stdio.h>
-
-int main(void) {
-	printf("keep-going test ran\n");
-	return 0;
-}
-`)
-	stdout, stderr, code := runBuildCommand(t, project, "test", "-k")
-	if code != 1 {
-		t.Fatalf("test -k exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "keep-going test ran") || !strings.Contains(stdout, "PASS tests-project:checkgood") {
-		t.Fatalf("built test did not run:\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
-	}
-	if !strings.Contains(stdout, "Tests failed: tests/bad.c:2:") {
-		t.Fatalf("build error is not the summary:\n%s", stdout)
-	}
-	report := loadTestReport(t, project)
-	if report.Status != "failed" || report.Command != reportCommandTest || !strings.Contains(report.Error, "tests/bad.c:2:") {
-		t.Fatalf("keep-going report = %+v", report)
-	}
-	if len(report.Tests) != 2 {
-		t.Fatalf("tests = %+v", report.Tests)
-	}
-	entries := testResultsByName(report.Tests)
-	good, ok := entries["tests-project:checkgood"]
-	if !ok {
-		t.Fatalf("executed test entry missing: %+v", report.Tests)
-	}
-	if good.NotRun || good.SkipReason != "" || !good.Passed || good.ExitCode != 0 ||
-		!strings.Contains(good.Output, "keep-going test ran") {
-		t.Fatalf("executed test entry = %+v", good)
-	}
-	bad, ok := entries["tests-project:checkbad"]
-	if !ok {
-		t.Fatalf("not-run test entry missing: %+v", report.Tests)
-	}
-	if !bad.NotRun || bad.SkipReason != testSkipBinaryMissing || bad.Passed || bad.ExitCode != 0 || bad.Output != "" {
-		t.Fatalf("not-run test entry = %+v", bad)
-	}
-	summary := report.Summary
-	if summary == nil || summary.TestsFound != 2 || summary.TestsPassed != 1 || summary.TestsFailed != 0 ||
-		summary.TargetsFailed != 1 {
-		t.Fatalf("keep-going summary = %+v", summary)
-	}
-	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Code != "VMAKE_E_COMPILE" ||
-		filepath.Base(report.Diagnostics[0].File) != "bad.c" {
-		t.Fatalf("diagnostics = %+v", report.Diagnostics)
-	}
-}
-
-func TestTestCommandKeepGoingSkipsStaleBinaries(t *testing.T) {
-	project := writePartialTestProject(t, `#include <stdio.h>
-
-int main(void) {
-	printf("stale regression good ran\n");
-	return 0;
-}
-`)
-	writeExtensionFile(t, filepath.Join(project, "tests", "bad.c"), `#include <stdio.h>
-
-int main(void) {
-	printf("stale regression bad ran\n");
-	return 0;
-}
-`)
-	if stdout, stderr, code := runBuildCommand(t, project, "build", "--tests"); code != 0 {
-		t.Fatalf("setup build exit = %d, stderr = %q\n%s", code, stderr, stdout)
-	}
-	var built buildReport
-	if err := jsonio.Load(reportPath(project), &built); err != nil {
-		t.Fatal(err)
-	}
-	var staleBinary string
-	for _, target := range built.Targets {
-		if target.Target == "checkbad" && len(target.Outputs) > 0 {
-			staleBinary = target.Outputs[0]
-		}
-	}
-	if staleBinary == "" {
-		t.Fatalf("stale test binary not recorded: %+v", built.Targets)
-	}
-	writeExtensionFile(t, filepath.Join(project, "tests", "bad.c"), "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
-	if _, err := os.Stat(staleBinary); err != nil {
-		t.Fatalf("stale test binary missing before rerun: %v", err)
-	}
-
-	stdout, stderr, code := runBuildCommand(t, project, "test", "-k")
-	if code != 1 {
-		t.Fatalf("test -k exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	if strings.Contains(stdout, "stale regression bad ran") {
-		t.Fatalf("stale test binary executed:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "stale regression good ran") || !strings.Contains(stdout, "PASS tests-project:checkgood") {
-		t.Fatalf("built test did not run:\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
-	}
-	if !strings.Contains(stdout, "Tests failed: tests/bad.c:2:") {
-		t.Fatalf("build error is not the summary:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "SKIP tests-project:checkbad (target not built)") {
-		t.Fatalf("stale test SKIP line missing:\n%s", stdout)
-	}
-	report := loadTestReport(t, project)
-	if report.Status != "failed" || !strings.Contains(report.Error, "tests/bad.c:2:") {
-		t.Fatalf("stale-binary report = %+v", report)
-	}
-	if len(report.Tests) != 2 {
-		t.Fatalf("tests = %+v", report.Tests)
-	}
-	entries := testResultsByName(report.Tests)
-	good, ok := entries["tests-project:checkgood"]
-	if !ok || good.NotRun || good.SkipReason != "" || !good.Passed || good.ExitCode != 0 ||
-		!strings.Contains(good.Output, "stale regression good ran") {
-		t.Fatalf("executed test entry = %+v", good)
-	}
-	bad, ok := entries["tests-project:checkbad"]
-	if !ok || !bad.NotRun || bad.SkipReason != testSkipTargetNotBuilt || bad.Passed ||
-		bad.ExitCode != 0 || bad.Output != "" {
-		t.Fatalf("stale test entry = %+v", bad)
-	}
-	summary := report.Summary
-	if summary == nil || summary.TestsFound != 2 || summary.TestsPassed != 1 || summary.TestsFailed != 0 ||
-		summary.TargetsFailed != 1 {
-		t.Fatalf("stale-binary summary = %+v", summary)
-	}
-	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Code != "VMAKE_E_COMPILE" ||
-		filepath.Base(report.Diagnostics[0].File) != "bad.c" {
-		t.Fatalf("diagnostics = %+v", report.Diagnostics)
-	}
-}
-
-func TestTestCommandPartialOutputPrintsSkipLines(t *testing.T) {
-	project := writePartialTestProject(t, `#include <stdio.h>
-
-int main(void) {
-	printf("partial skip executed ran\n");
-	return 0;
-}
-`)
-	stdout, stderr, code := runBuildCommand(t, project, "test", "-k")
-	if code != 1 {
-		t.Fatalf("test -k exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "partial skip executed ran") {
-		t.Fatalf("built test did not run:\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
-	}
-	passAt := strings.Index(stdout, "PASS tests-project:checkgood")
-	skipAt := strings.Index(stdout, "SKIP tests-project:checkbad (binary missing)")
-	if passAt < 0 || skipAt < 0 {
-		t.Fatalf("partial output is missing PASS or SKIP lines:\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
-	}
-	if skipAt < passAt {
-		t.Fatalf("SKIP line printed before the executed test:\n%s", stdout)
-	}
-	if strings.Contains(stdout, "SKIP tests-project:checkgood") {
-		t.Fatalf("executed test printed as skipped:\n%s", stdout)
-	}
-	report := loadTestReport(t, project)
-	entries := testResultsByName(report.Tests)
-	good, ok := entries["tests-project:checkgood"]
-	if !ok || good.NotRun || !good.Passed {
-		t.Fatalf("executed report entry = %+v", good)
-	}
-	bad, ok := entries["tests-project:checkbad"]
-	if !ok || !bad.NotRun || bad.SkipReason != testSkipBinaryMissing {
-		t.Fatalf("not-run report entry = %+v", bad)
-	}
-}
-
-func TestTestCommandQuietPartialOutputOmitsSkipLines(t *testing.T) {
-	project := writePartialTestProject(t, "int main(void) { return 0; }\n")
-	stdout, stderr, code := runBuildCommand(t, project, "-q", "test", "-k")
-	if code != 1 {
-		t.Fatalf("test -q -k exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	if strings.Contains(stdout, "SKIP") {
-		t.Fatalf("quiet partial output printed SKIP lines:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "Tests failed:") {
-		t.Fatalf("quiet partial output lost its summary:\n%s", stdout)
-	}
-	report := loadTestReport(t, project)
-	entries := testResultsByName(report.Tests)
-	bad, ok := entries["tests-project:checkbad"]
-	if !ok || !bad.NotRun || bad.SkipReason != testSkipBinaryMissing {
-		t.Fatalf("quiet not-run report entry = %+v", bad)
-	}
-}
-
-func TestTestCommandBuildFailureWithoutKeepGoingRecordsNoTests(t *testing.T) {
+func TestTestCommandBuildFailureRecordsNoTests(t *testing.T) {
 	project := writePartialTestProject(t, `#include <stdio.h>
 
 int main(void) {
@@ -848,89 +328,24 @@ int main(void) {
 	return 0;
 }
 `)
-	stdout, stderr, code := runBuildCommand(t, project, "test")
-	if code != 1 {
-		t.Fatalf("test exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	if strings.Contains(stdout, "fail-fast test ran") || strings.Contains(stdout, "PASS tests-project:checkgood") {
-		t.Fatalf("fail-fast build ran tests:\n%s", stdout)
-	}
-	report := loadTestReport(t, project)
-	if report.Status != "failed" || report.Command != reportCommandTest || !strings.Contains(report.Error, "tests/bad.c:2:") {
-		t.Fatalf("fail-fast report = %+v", report)
-	}
-	if len(report.Tests) != 0 {
-		t.Fatalf("fail-fast tests = %+v, want none", report.Tests)
-	}
-	if report.Summary == nil || report.Summary.TestsFound != 0 || report.Summary.TestsPassed != 0 ||
-		report.Summary.TestsFailed != 0 {
-		t.Fatalf("fail-fast summary = %+v", report.Summary)
-	}
-}
-
-func TestTestCommandKeepGoingNoTestsSkipsBuild(t *testing.T) {
-	project := writeTestCommandProject(t, "")
-	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
-	stdout, stderr, code := runBuildCommand(t, project, "test", "-k")
-	if code != 0 || stderr != "" {
-		t.Fatalf("test -k exit = %d, stderr = %q\n%s", code, stderr, stdout)
-	}
-	if !strings.Contains(stdout, "Tests succeeded: no test targets") {
-		t.Fatalf("no-tests summary missing:\n%s", stdout)
-	}
-	assertNoTestBuildOutput(t, project)
-	report := loadTestReport(t, project)
-	if report.Status != "succeeded" || report.Command != reportCommandTest || report.Error != "" {
-		t.Fatalf("no-tests report = %+v", report)
-	}
-	if len(report.Tests) != 0 || len(report.Targets) != 0 {
-		t.Fatalf("no-tests results = %+v (targets %+v), want none", report.Tests, report.Targets)
-	}
-	if report.Summary == nil || report.Summary.TestsFound != 0 || report.Summary.TestsPassed != 0 ||
-		report.Summary.TestsFailed != 0 {
-		t.Fatalf("no-tests summary = %+v", report.Summary)
-	}
-}
-
-func TestTestCommandKeepGoingCapturesSignalAfterBuildFailure(t *testing.T) {
-	if !testSignalsSupported {
-		t.Skip("process signal status is unavailable on this platform")
-	}
-	project := writePartialTestProject(t, `#include <signal.h>
-#include <stdio.h>
-
-int main(void) {
-	fprintf(stderr, "partial crash marker\n");
-	raise(SIGSEGV);
-	return 0;
-}
-`)
-	stdout, stderr, code := runBuildCommand(t, project, "test", "-k")
-	if code != 1 {
-		t.Fatalf("test -k exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	if !strings.Contains(stderr, "FAIL tests-project:checkgood") {
-		t.Fatalf("FAIL line missing from stderr:\n%s", stderr)
-	}
-	if !strings.Contains(stdout, "Tests failed: tests/bad.c:2:") {
-		t.Fatalf("build error is not the summary:\n%s", stdout)
-	}
-	report := loadTestReport(t, project)
-	entries := testResultsByName(report.Tests)
-	good, ok := entries["tests-project:checkgood"]
-	if !ok {
-		t.Fatalf("executed test entry missing: %+v", report.Tests)
-	}
-	if good.NotRun || good.Passed || good.ExitCode != -1 || good.Signal != "segmentation fault" ||
-		!strings.Contains(good.Output, "partial crash marker") {
-		t.Fatalf("signaled test entry = %+v", good)
-	}
-	bad, ok := entries["tests-project:checkbad"]
-	if !ok || !bad.NotRun || bad.SkipReason != testSkipBinaryMissing {
-		t.Fatalf("not-run test entry = %+v", bad)
-	}
-	if report.Summary == nil || report.Summary.TestsFound != 2 || report.Summary.TestsPassed != 0 ||
-		report.Summary.TestsFailed != 1 {
-		t.Fatalf("signal summary = %+v", report.Summary)
+	for _, args := range [][]string{{"test"}, {"test", "-k"}} {
+		stdout, stderr, code := runBuildCommand(t, project, args...)
+		if code != 1 {
+			t.Fatalf("%v exit = %d, want 1 (stdout %q, stderr %q)", args, code, stdout, stderr)
+		}
+		if strings.Contains(stdout, "fail-fast test ran") || strings.Contains(stdout, "PASS tests-project:checkgood") {
+			t.Fatalf("%v ran tests after build failure:\n%s", args, stdout)
+		}
+		report := loadTestReport(t, project)
+		if report.Status != "failed" || report.Command != reportCommandTest || !strings.Contains(report.Error, "tests/bad.c:2:") {
+			t.Fatalf("%v report = %+v", args, report)
+		}
+		if len(report.Tests) != 0 {
+			t.Fatalf("%v tests = %+v, want none", args, report.Tests)
+		}
+		if report.Summary == nil || report.Summary.TestsFound != 0 || report.Summary.TestsPassed != 0 ||
+			report.Summary.TestsFailed != 0 {
+			t.Fatalf("%v summary = %+v", args, report.Summary)
+		}
 	}
 }

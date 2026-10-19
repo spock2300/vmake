@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -68,10 +67,6 @@ func networkGitError(action string, err error) error {
 	return fmt.Errorf("%s: %w", action, err)
 }
 
-func gitRun(dir string, args []string, timeout time.Duration) error {
-	return gitRunContext(context.Background(), dir, args, timeout)
-}
-
 func gitRunContext(ctx context.Context, dir string, args []string, timeout time.Duration) error {
 	_, err := runGitCmd(args, exec.RunOptions{Context: ctx, Dir: dir, Timeout: timeout, Quiet: true})
 	if err != nil {
@@ -86,14 +81,6 @@ func Clone(url, dir string) error {
 
 func CloneContext(ctx context.Context, url, dir string) error {
 	return cloneRepo(ctx, url, dir, nil)
-}
-
-func CloneHead(url, dir string) error {
-	return CloneHeadContext(context.Background(), url, dir)
-}
-
-func CloneHeadContext(ctx context.Context, url, dir string) error {
-	return cloneRepo(ctx, url, dir, []string{"--depth", "1", "--single-branch", "--no-tags"})
 }
 
 func cloneRepo(ctx context.Context, url, dir string, flags []string) error {
@@ -387,57 +374,9 @@ func FetchAndResetContext(ctx context.Context, dir string) error {
 	return gitRunContext(ctx, dir, []string{"reset", "--hard", "origin/HEAD"}, 0)
 }
 
-func EnsureRepoAtRef(gitURL, repoDir, ref string) error {
-	return EnsureRepoAtRefContext(context.Background(), gitURL, repoDir, ref)
-}
-
-func EnsureRepoAtRefContext(ctx context.Context, gitURL, repoDir, ref string) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if ref != "" {
-		already, err := IsAlreadyAtRefContext(ctx, repoDir, ref)
-		if err != nil {
-			return err
-		}
-		if already {
-			return nil
-		}
-	}
-
-	if !dirExists(repoDir) || !dirExists(filepath.Join(repoDir, ".git")) {
-		if err := CloneContext(ctx, gitURL, repoDir); err != nil {
-			return err
-		}
-	} else {
-		if err := FetchTagsContext(ctx, repoDir); err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			fs.RemoveIfExists(repoDir)
-			if err := CloneContext(ctx, gitURL, repoDir); err != nil {
-				return err
-			}
-		}
-	}
-
-	if ref == "" {
-		return nil
-	}
-
-	return CheckoutContext(ctx, repoDir, ref)
-}
-
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
-}
-
-func Pull(dir string) error {
-	return gitRun(dir, []string{"pull", "--ff-only"}, 2*time.Minute)
 }
 
 func GetCurrentCommit(dir string) (string, error) {
@@ -448,20 +387,6 @@ func GetCurrentCommitContext(ctx context.Context, dir string) (string, error) {
 	output, err := runGitCmd([]string{"rev-parse", "HEAD"}, exec.RunOptions{Context: ctx, Dir: dir, Quiet: true})
 	if err != nil {
 		return "", err
-	}
-	return exec.TrimOutput(output), nil
-}
-
-// ResolveCommit resolves a tag or ref to its commit SHA inside an existing
-// clone. Used by manifest import to pin real commits without materializing.
-func ResolveCommit(dir, ref string) (string, error) {
-	return ResolveCommitContext(context.Background(), dir, ref)
-}
-
-func ResolveCommitContext(ctx context.Context, dir, ref string) (string, error) {
-	output, err := runGitCmd([]string{"rev-parse", ref + "^{commit}"}, exec.RunOptions{Context: ctx, Dir: dir, Quiet: true})
-	if err != nil {
-		return "", fmt.Errorf("resolve %s in %s: %w", ref, dir, err)
 	}
 	return exec.TrimOutput(output), nil
 }
@@ -533,29 +458,6 @@ func GitRevParse(dir string) string {
 		return "unknown"
 	}
 	return commit
-}
-
-func IsAlreadyAtRef(dir, ref string) bool {
-	already, _ := IsAlreadyAtRefContext(context.Background(), dir, ref)
-	return already
-}
-
-func IsAlreadyAtRefContext(ctx context.Context, dir, ref string) (bool, error) {
-	head, err := GetCurrentCommitContext(ctx, dir)
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return false, err
-		}
-		return false, nil
-	}
-	output, err := runGitCmd([]string{"rev-parse", ref + "^{}"}, exec.RunOptions{Context: ctx, Dir: dir, Quiet: true})
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return false, err
-		}
-		return false, nil
-	}
-	return head == exec.TrimOutput(output), nil
 }
 
 func IsPatchApplied(dir, patchFile string) bool {

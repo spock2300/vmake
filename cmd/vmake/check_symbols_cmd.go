@@ -326,6 +326,24 @@ func detectReservedPrefixes(artifacts []scanArtifact) []finding {
 	return findings
 }
 
+func expandInspectBuildPattern(buildDir, pattern string) (string, bool) {
+	slashed := filepath.ToSlash(pattern)
+	if slashed == api.BuildDirToken {
+		if buildDir == "" {
+			return "", false
+		}
+		return buildDir, true
+	}
+	prefix := api.BuildDirToken + "/"
+	if strings.HasPrefix(slashed, prefix) {
+		if buildDir == "" {
+			return "", false
+		}
+		return filepath.Join(buildDir, filepath.FromSlash(strings.TrimPrefix(slashed, prefix))), true
+	}
+	return pattern, true
+}
+
 func detectVersionScriptViolations(artifacts []scanArtifact) []finding {
 	var findings []finding
 	for i := range artifacts {

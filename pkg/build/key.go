@@ -5,9 +5,25 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 
+	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
+
+// PackageLayout is the single source of truth for a package's build and
+// install directories and its stable build key. Ready is false when the
+// layout cannot be materialized yet, for example for a local SetGit package
+// whose managed source tree has not been created.
+type PackageLayout struct {
+	Dirs     api.PkgDirs
+	BuildKey string
+	Ready    bool
+}
+
+func BuildPath(baseDir, buildKey, subdir string) string {
+	return filepath.Join(baseDir, "build", buildKey, subdir)
+}
 
 // layoutFormatVersion versions the per-package build-directory key. It is
 // independent of action-record and signature versions so changing an action

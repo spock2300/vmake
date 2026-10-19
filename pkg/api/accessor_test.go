@@ -176,7 +176,7 @@ func TestAccessorWhenNotAndWhenAny(t *testing.T) {
 	disc := ConfigAccessor{Options: map[string]*Option{}}
 	disc.setStrictOwner("strictpkg")
 	disc.discover = true
-	if !disc.WhenNot("mode", "size") {
+	if !disc.WhenNot("mode", "size", "debug") {
 		t.Error("WhenNot in discover mode should return true")
 	}
 	if !disc.WhenAny("chip", "a", "b") {
@@ -186,11 +186,17 @@ func TestAccessorWhenNotAndWhenAny(t *testing.T) {
 	a := newStrictAccessor()
 	a.Option("chip").SetValues("a", "b", "c").SetDefault("b")
 	a.CfgVals["chip"] = "b"
-	if !a.WhenNot("chip", "a") {
-		t.Error("WhenNot(chip=b, a) should be true")
+	if !a.When("chip", "a", "b") {
+		t.Error("When(chip=b, a, b) should be true")
 	}
-	if a.WhenNot("chip", "b") {
-		t.Error("WhenNot(chip=b, b) should be false")
+	if a.When("chip", "a", "c") {
+		t.Error("When(chip=b, a, c) should be false")
+	}
+	if !a.WhenNot("chip", "a", "c") {
+		t.Error("WhenNot(chip=b, a, c) should be true")
+	}
+	if a.WhenNot("chip", "a", "b") {
+		t.Error("WhenNot(chip=b, a, b) should be false")
 	}
 	if !a.WhenAny("chip", "a", "b") {
 		t.Error("WhenAny(chip=b, a, b) should be true")
@@ -198,6 +204,8 @@ func TestAccessorWhenNotAndWhenAny(t *testing.T) {
 	if a.WhenAny("chip", "a", "c") {
 		t.Error("WhenAny(chip=b, a, c) should be false")
 	}
+	expectBuildScriptError(t, func() { a.When("chip") }, "When")
+	expectBuildScriptError(t, func() { a.WhenNot("chip") }, "WhenNot")
 }
 
 func TestNormalizeOptionValueFloat64ToInt(t *testing.T) {

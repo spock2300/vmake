@@ -1,9 +1,6 @@
 package build
 
 import (
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
@@ -78,36 +75,6 @@ func TestBuildKeyDiffersOnExtra(t *testing.T) {
 	}
 	if BuildKey("gcc", "debug", opts, "") == k1 {
 		t.Error("BuildKey should differ between empty and non-empty extra")
-	}
-}
-
-func TestNewSchedulerDefaultsModeBeforeBuildingKey(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("git-based tool probe")
-	}
-	tool, err := exec.LookPath("git")
-	if err != nil {
-		t.Skip("git unavailable")
-	}
-	tc := &toolchain.Toolchain{Name: "test", Tools: toolchain.Tools{CC: tool, CXX: tool, AR: tool}}
-	graph, err := NewBuildGraph(map[string]map[string]*api.Target{
-		"p": {"p": makeTargetWithDeps("p").SetKind(api.TargetVoid)},
-	}, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dirs := map[string]*api.PkgDirs{"p": {SourceDir: filepath.Join(t.TempDir(), "p"), BuildDir: filepath.Join(t.TempDir(), "p-build")}}
-	s, err := NewScheduler(graph, tc, dirs, "", nil, api.Platform{OS: runtime.GOOS})
-	if err != nil {
-		t.Fatal(err)
-	}
-	info, ok := s.GetPkgInfo("p")
-	if !ok {
-		t.Fatal("missing package info")
-	}
-	want := BuildKey(s.toolIdentity(), api.ModeDebug, nil, "")
-	if info.BuildKey != want {
-		t.Fatalf("BuildKey = %q, want debug key %q", info.BuildKey, want)
 	}
 }
 

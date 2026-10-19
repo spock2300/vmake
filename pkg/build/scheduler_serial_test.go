@@ -128,3 +128,12 @@ func saveTestLinkRecord(t *testing.T, scheduler *Scheduler, resolved *ResolvedTa
 		t.Fatal(err)
 	}
 }
+
+func testNeedRelink(t *testing.T, scheduler *Scheduler, resolved *ResolvedTarget, objects []string) bool {
+	t.Helper()
+	action, err := scheduler.planLink(resolved, objects)
+	if err != nil {
+		return true
+	}
+	return !checkAction(scheduler.hashes, action.recordPath, action.signature, scheduler.pkgs[resolved.Node.PkgName].SourceDir, action.inputs, action.outputs).UpToDate
+}

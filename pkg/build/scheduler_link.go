@@ -23,12 +23,6 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 		if len(target.Inputs()) > 0 || len(target.Outputs()) > 0 {
 			return s.finalizeIncrementalVoid(resolved, pkgInfo)
 		}
-		if s.check {
-			if s.stats != nil && (target.BuildFunc() != nil || len(target.PostLinkSteps()) > 0) {
-				s.stats.RecordPlannedCallback(resolved.Node.FullName)
-			}
-			return nil
-		}
 		if err := s.buildVoidTarget(resolved); err != nil {
 			return err
 		}
@@ -45,13 +39,7 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 		return err
 	}
 	decision := checkAction(s.hashes, action.recordPath, action.signature, pkgInfo.SourceDir, action.inputs, action.outputs)
-	if !decision.UpToDate || (s.check && s.referencedWorkPending(resolved)) {
-		if s.check {
-			if s.stats != nil {
-				s.stats.RecordPlannedLink(resolved.Node.FullName)
-			}
-			return nil
-		}
+	if !decision.UpToDate {
 		if s.stats != nil {
 			s.stats.RecordLink(resolved.Node.FullName)
 		}
@@ -82,9 +70,6 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 		}
 	} else if s.stats != nil {
 		s.stats.RecordUpToDate()
-	}
-	if s.check {
-		return nil
 	}
 	if err := s.ctx.Err(); err != nil {
 		return err
@@ -156,15 +141,9 @@ func (s *Scheduler) finalizeIncrementalVoid(resolved *ResolvedTarget, pkgInfo *P
 		return err
 	}
 	decision := checkAction(s.hashes, recordPath, signature, pkgInfo.SourceDir, inputs, outputs)
-	if decision.UpToDate && !(s.check && s.referencedWorkPending(resolved)) {
+	if decision.UpToDate {
 		if s.stats != nil {
 			s.stats.RecordUpToDate()
-		}
-		return nil
-	}
-	if s.check {
-		if s.stats != nil && (target.BuildFunc() != nil || len(target.PostLinkSteps()) > 0) {
-			s.stats.RecordPlannedCallback(resolved.Node.FullName)
 		}
 		return nil
 	}
@@ -187,33 +166,6 @@ func (s *Scheduler) finalizeIncrementalVoid(resolved *ResolvedTarget, pkgInfo *P
 		return err
 	}
 	return saveActionRecord(s.hashes, recordPath, signature, pkgInfo.SourceDir, inputs, outputs)
-}
-
-// referencedWorkPending reports whether an input of this target's link action
-// will change in this check run. Link signatures fingerprint their inputs, so a
-// dependency artifact that exists unchanged does not make the link pending by
-// itself; only a dependency that plans to replace its artifact can.
-func (s *Scheduler) referencedWorkPending(resolved *ResolvedTarget) bool {
-	if s.stats == nil {
-		return false
-	}
-	if s.stats.CompilePlanned(resolved.Node.FullName) {
-		return true
-	}
-	for _, dep := range resolved.Node.Deps {
-		if s.stats.TargetPlanned(dep) {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *Scheduler) needRelink(resolved *ResolvedTarget, objs []string) bool {
-	action, err := s.planLink(resolved, objs)
-	if err != nil {
-		return true
-	}
-	return !actionUpToDate(s.hashes, action.recordPath, action.signature, s.pkgs[resolved.Node.PkgName].SourceDir, action.inputs, action.outputs)
 }
 
 func (s *Scheduler) realizePrebuilt(resolved *ResolvedTarget) error {

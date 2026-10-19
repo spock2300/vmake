@@ -125,7 +125,7 @@ func (p *Package) ScriptDir() string
 `BuildPath(elem ...string)` 拼接包构建目录下的路径：当 `BuildDir()` 已解析时返回绝对路径；当本地 `SetGit` 包在只读检查/查询阶段尚未物化源码树且 `BuildDir()` 为空时，返回以符号令牌 `api.BuildDirToken`（`"$builddir"`）为前缀的路径。`AddFiles`、`AddIncludes`、`AddPublicIncludes`、`SetLinkerScript`、`SetProvidedLinkerScript`、`SetVersionScript`、`SetPrebuilt`、`AddPostLinkDeps`、`AddPostLinkOutputs` 与 `AddInstalls` 均原生接受相对 `SourceDir()` 的路径、绝对路径及 `BuildPath(...)` 返回的路径，因此脚本中无需再写 `if p.BuildDir() == "" { return }` 或 `filepath.Rel(p.SourceDir(), p.BuildDir())`。
 
 `WriteBuildFile`、`GenerateFile` 与 `Generate`（`BuildContext` 上也提供同名方法）用于在 `OnBuild` 中以声明式方式注册构建目录文件生成：
-- 在 `OnBuild` 执行期间调用不会立即触碰磁盘，而是注册生成步骤并立即返回 `p.BuildPath(relPath)`，使 `vmake inspect`、`vmake query`、`vmake query targets` 和 `vmake build --check` 在只读模式下也能完整声明目标图而不触发写拦截警告。
+- 在 `OnBuild` 执行期间调用不会立即触碰磁盘，而是注册生成步骤并立即返回 `p.BuildPath(relPath)`，使 `vmake inspect`、`vmake query` 和 `vmake query targets` 在只读模式下也能完整声明目标图而不触发写拦截警告。
 - 在真正的 `vmake build` 调度阶段，调度器会在解析/编译该包目标（以及消费其 `PublicIncludes` 或 `ProvidedLinkerScript` 的依赖目标）之前自动执行这些生成步骤；`WriteBuildFile` 与 `GenerateFile` 仅在内容实际变化时覆写文件（保持未变文件的 mtime 并自动使哈希缓存失效）。
 
 ### 编译器信息（代理 Toolchain）
@@ -144,7 +144,7 @@ func (p *Package) LDFlags() string
 func (p *Package) Env() map[string]string
 ```
 
-`TargetTriple()` 返回本包解析后的 `target_triple`（例如 `arm-none-eabi`），`TargetOS()` 返回本包的目标系统；旧方法 `CrossTarget()` 已移除。裸机使用 `none`，`target_os` 为空（或为 `host`）时取运行 vmake 的主机系统。两者按“包级配置值 → 包内声明的非全局 `target_os`/`target_triple` 选项默认值 → 全局配置值/项目全局选项默认值 → 所选工具链 `toolchain.json` 默认值”的顺序解析（空值落到下一级），因此包级默认值可以覆盖项目全局值，同一个编译器可服务不同目标：
+`TargetTriple()` 返回本包解析后的 `target_triple`（例如 `arm-none-eabi`），`TargetOS()` 返回本包的目标系统。裸机使用 `none`，`target_os` 为空（或为 `host`）时取运行 vmake 的主机系统。两者按“包级配置值 → 包内声明的非全局 `target_os`/`target_triple` 选项默认值 → 全局配置值/项目全局选项默认值 → 所选工具链 `toolchain.json` 默认值”的顺序解析（空值落到下一级），因此包级默认值可以覆盖项目全局值，同一个编译器可服务不同目标：
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {
@@ -278,7 +278,7 @@ func (p *Package) SetDryRun(v bool) *Package   // 设置 dry run 模式（只打
 func (p *Package) DryRun() bool
 ```
 
-`vmake inspect`、`vmake query`、`query targets`、`check-symbols` 与 `vmake test` 的无测试预检等只声明场景在 `Inspect` 阶段不会物化源码（前面的依赖解析仍可能拉取远程包）：本地 SetGit 包的工作树尚未物化时，其 `BuildDir()` 为空；源码已存在时 `BuildDir()` 为已解析的活动构建键目录。这类场景下内置的 `Run`/`Make`/`CMake*` 只打印不执行，`inspect`/`query`/`query targets` 与 `test` 预检还会对经 `scriptfs` 包装的 `os` 写操作启用只读拦截（`--allow-dry-run-writes` 可显式放行），未包装的写接口与子进程仍需脚本自行处理；`OnBuild` 中做真实文件写入前必须用 `p.DryRun()` 守卫（读操作或路径拼接还需兼顾 `p.BuildDir() == ""`），且不能假定 `SrcDir()` 下的源码存在。`BuildContext` 也提供 `SetDryRun(bool)`，仅由这类只声明流程使用。`vmake inspect`/`query`/`query targets`/`check-symbols`、`test` 预检与非 `--all` 的 `clean` 使用 `InspectWithOptions(... FilterDeps: true)`，在声明前按当前配置过滤依赖，因此与 `RunBuild` 的包集合一致；`clean --all` 扫描所有配置与包，不经过该过滤。直接调用 `Inspect` 仍保留 eager 图。`query config` 直接读取配置，不经过 `Inspect`。
+`vmake inspect`、`vmake query`、`query targets` 与 `check-symbols` 等只声明场景在 `Inspect` 阶段不会物化源码（前面的依赖解析仍可能拉取远程包）：本地 SetGit 包的工作树尚未物化时，其 `BuildDir()` 为空；源码已存在时 `BuildDir()` 为已解析的活动构建键目录。这类场景下内置的 `Run`/`Make`/`CMake*` 只打印不执行，`inspect` 与 `query` 还会对经 `scriptfs` 包装的 `os` 写操作启用只读拦截，未包装的写接口与子进程仍需脚本自行处理；`OnBuild` 中做真实文件写入前必须用 `p.DryRun()` 守卫（读操作或路径拼接还需兼顾 `p.BuildDir() == ""`），且不能假定 `SrcDir()` 下的源码存在。`BuildContext` 也提供 `SetDryRun(bool)`，仅由这类只声明流程使用。`vmake inspect`/`query`/`query targets`/`check-symbols` 与非 `--all` 的 `clean` 使用 `InspectWithOptions(... FilterDeps: true)`，在声明前按当前配置过滤依赖，因此与 `RunBuild` 的包集合一致；`clean --all` 扫描所有配置与包，不经过该过滤。直接调用 `Inspect` 仍保留 eager 图。`query config` 直接读取配置，不经过 `Inspect`。
 
 ### 版本选择
 

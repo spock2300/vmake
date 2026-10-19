@@ -129,18 +129,7 @@ func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, 
 			}
 		}
 	}
-	if opts, ok := allPkgOptions[name]; ok {
-		for k, v := range opts {
-			if allOpts != nil {
-				if opt, declared := allOpts[k]; declared && opt.IsGlobal() {
-					if _, hasGlobal := globalValues[k]; hasGlobal && api.NormalizeOptionValue(opt, v) == api.NormalizeOptionValue(opt, opt.Default()) {
-						continue
-					}
-				}
-			}
-			cfgVals[k] = v
-		}
-	}
+	mergePkgOptions(cfgVals, allPkgOptions[name], allOpts, globalValues)
 	for k, v := range globalValues {
 		if _, exists := cfgVals[k]; !exists {
 			cfgVals[k] = v
@@ -148,6 +137,17 @@ func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, 
 	}
 	maps.Copy(cfgVals, packagePlatformValues(ctx, name, globalValues))
 	return cfgVals
+}
+
+func mergePkgOptions(dst, pkgOpts map[string]any, allOpts map[string]*api.Option, globalValues map[string]any) {
+	for k, v := range pkgOpts {
+		if opt, declared := allOpts[k]; declared && opt.IsGlobal() {
+			if _, hasGlobal := globalValues[k]; hasGlobal && api.NormalizeOptionValue(opt, v) == api.NormalizeOptionValue(opt, opt.Default()) {
+				continue
+			}
+		}
+		dst[k] = v
+	}
 }
 
 func applyBuildContextConfig(buildCtx *api.BuildContext, node *resolver.PackageNode, ctx *RuntimeContext, currentPkg string, needed map[string]bool) {

@@ -202,12 +202,6 @@ func RunToStdout(dir, name string, args ...string) error {
 	return RunWithEnv(dir, nil, name, args...)
 }
 
-func RunFatal(dir, name string, args ...string) {
-	if err := RunToStdout(dir, name, args...); err != nil {
-		logger.Fatal("command failed: %v", err)
-	}
-}
-
 func RunWithEnv(dir string, env map[string]string, name string, args ...string) error {
 	return RunWithEnvContext(nil, dir, env, name, args...)
 }
@@ -236,6 +230,10 @@ func RunWithEnvContext(ctx context.Context, dir string, env map[string]string, n
 
 func LookPath(name string) (string, error) {
 	return exec.LookPath(name)
+}
+
+func LookPathInEnvPath(file, pathEnv string) (string, error) {
+	return lookPathEnv(file, append(os.Environ(), "PATH="+pathEnv, "NoDefaultCurrentDirectoryInExePath=1"))
 }
 
 func RunWithEnvCaptured(dir string, env map[string]string, name string, args ...string) ([]byte, error) {

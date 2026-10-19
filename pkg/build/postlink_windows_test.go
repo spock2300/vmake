@@ -50,7 +50,7 @@ func TestPostLinkPrefixedWindowsOutput(t *testing.T) {
 		resolvedTools: &ResolvedTools{OBJCOPY: "objcopy"},
 	}
 	saveTestLinkRecord(t, scheduler, resolved, nil)
-	if scheduler.needRelink(resolved, nil) {
+	if testNeedRelink(t, scheduler, resolved, nil) {
 		t.Fatal("existing prefixed post-link output triggers relinking")
 	}
 	prefix := filepath.Join(dir, "install")
@@ -65,7 +65,7 @@ func TestPostLinkPrefixedWindowsOutput(t *testing.T) {
 	if err := os.Remove(derived); err != nil {
 		t.Fatal(err)
 	}
-	if !scheduler.needRelink(resolved, nil) {
+	if !testNeedRelink(t, scheduler, resolved, nil) {
 		t.Fatal("missing prefixed post-link output does not trigger relinking")
 	}
 }

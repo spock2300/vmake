@@ -71,7 +71,6 @@ func TestCollectDepArtifactsPublicAttributesAndLinkable(t *testing.T) {
 		Graph:     graph,
 		Toolchain: &toolchain.Toolchain{},
 		Tools:     &ResolvedTools{},
-		Check:     true,
 		Layouts: map[string]*PackageLayout{
 			"leaf": {Dirs: api.PkgDirs{SourceDir: leafDir, BuildDir: leafDir}, BuildKey: "k", Ready: true},
 			"mid":  {Dirs: api.PkgDirs{SourceDir: midDir, BuildDir: midDir}, BuildKey: "k", Ready: true},
@@ -79,6 +78,21 @@ func TestCollectDepArtifactsPublicAttributesAndLinkable(t *testing.T) {
 		},
 		GlobalFlags: &[4][]string{},
 	})
+
+	wantMid := s.getTargetOutputPath(&BuildNode{PkgName: "mid", Target: mid})
+	if err := os.MkdirAll(filepath.Dir(wantMid), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wantMid, []byte("arch"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	wantLeaf := s.getTargetOutputPath(&BuildNode{PkgName: "leaf", Target: leaf})
+	if err := os.MkdirAll(filepath.Dir(wantLeaf), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wantLeaf, []byte("obj"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	appNode, err := graph.GetNode("app:app")
 	if err != nil {
@@ -88,7 +102,6 @@ func TestCollectDepArtifactsPublicAttributesAndLinkable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveTarget: %v", err)
 	}
-	wantMid := s.getTargetOutputPath(&BuildNode{PkgName: "mid", Target: mid})
 	if !reflect.DeepEqual(resolved.DepArtifacts, []string{wantMid}) {
 		t.Fatalf("DepArtifacts = %v, want [%s] (leaf is SetLinkable(false))", resolved.DepArtifacts, wantMid)
 	}

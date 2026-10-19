@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -192,7 +191,7 @@ func TestBuildReportNeverSucceedsBeforeCompletion(t *testing.T) {
 	for _, failure := range []error{context.Canceled, errors.New("failed"), nil} {
 		r := &buildReport{Root: t.TempDir(), Status: "running"}
 		result := failure
-		r.finish(&result, nil)
+		r.finish(&result)
 		if result == nil || r.Status == "succeeded" {
 			t.Fatalf("%+v / %v", r, result)
 		}
@@ -222,7 +221,7 @@ func TestBuildReportPanicCannotPublishSuccess(t *testing.T) {
 			}
 		}()
 		var err error
-		defer r.finish(&err, nil)
+		defer r.finish(&err)
 		panic("unexpected interruption")
 	}()
 	var saved buildReport
@@ -328,219 +327,6 @@ func loadBuildReport(t *testing.T, project string) buildReport {
 	return report
 }
 
-func initProvenanceGitRepo(t *testing.T, project string) string {
-	return commitProvenanceGitRepo(t, project, true)
-}
-
-func commitProvenanceGitRepo(t *testing.T, project string, ignoreGenerated bool) string {
-	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git is not available")
-	}
-	if ignoreGenerated {
-		writeExtensionFile(t, filepath.Join(project, ".gitignore"), ".vmake/\n.vmake_deps/\nbuild/\ninstall/\n")
-	}
-	git := func(args ...string) string {
-		t.Helper()
-		commandArgs := append([]string{
-			"-c", "user.name=vmake test",
-			"-c", "user.email=vmake@example.invalid",
-			"-c", "commit.gpgsign=false",
-		}, args...)
-		cmd := exec.Command("git", commandArgs...)
-		cmd.Dir = project
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-	git("init", "-q")
-	git("add", ".")
-	git("commit", "-q", "-m", "initial")
-	return git("rev-parse", "HEAD")
-}
-
-func assertReportProvenance(t *testing.T, report buildReport, revision string, dirty bool) {
-	t.Helper()
-	if report.VMakeVersion != version.Version || report.VMakeCommit != version.GitCommit {
-		t.Fatalf("vmake provenance = %q/%q, want %q/%q",
-			report.VMakeVersion, report.VMakeCommit, version.Version, version.GitCommit)
-	}
-	if report.ProjectRevision != revision {
-		t.Fatalf("projectRevision = %q, want %q", report.ProjectRevision, revision)
-	}
-	if report.ProjectDirty == nil || *report.ProjectDirty != dirty {
-		t.Fatalf("projectDirty = %v, want %v", report.ProjectDirty, dirty)
-	}
-}
-
-func TestBuildReportProvenanceGitWorktree(t *testing.T) {
-	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
-	revision := initProvenanceGitRepo(t, project)
-
-	stdout, stderr, code := runBuildCommand(t, project, "build")
-	if code != 0 {
-		t.Fatalf("build exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	assertReportProvenance(t, loadBuildReport(t, project), revision, false)
-}
-
-func TestBuildReportProvenanceCleanTempRepo(t *testing.T) {
-	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
-	revision := commitProvenanceGitRepo(t, project, false)
-
-	stdout, stderr, code := runBuildCommand(t, project, "build")
-	if code != 0 {
-		t.Fatalf("build exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	assertReportProvenance(t, loadBuildReport(t, project), revision, false)
-}
-
-func TestCheckJSONDataCarriesVMakeProvenance(t *testing.T) {
-	var encoded bytes.Buffer
-	document := &checkJSONEnvelope{
-		SchemaVersion: jsonOutputSchemaVersion,
-		Command:       reportCommandCheck,
-		Status:        "ok",
-		Data:          &checkJSONData{TargetsTotal: 1},
-	}
-	if err := encodeJSONDocument(&encoded, document); err != nil {
-		t.Fatal(err)
-	}
-	var decoded struct {
-		Data struct {
-			VMakeVersion string `json:"vmakeVersion"`
-			VMakeCommit  string `json:"vmakeCommit"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(encoded.Bytes(), &decoded); err != nil {
-		t.Fatal(err)
-	}
-	if decoded.Data.VMakeVersion != version.Version || decoded.Data.VMakeCommit != version.GitCommit {
-		t.Fatalf("check provenance = %q/%q, want %q/%q",
-			decoded.Data.VMakeVersion, decoded.Data.VMakeCommit, version.Version, version.GitCommit)
-	}
-}
-
-func TestProjectProvenanceIgnoresGeneratedPaths(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
-	writeExtensionFile(t, filepath.Join(project, "build.go"), "package main\n")
-	revision := commitProvenanceGitRepo(t, project, false)
-	for _, path := range []string{
-		"build/key/object.o",
-		"install/bin/app",
-		".vmake/_locks/project.lock",
-		".vmake/layout",
-		".vmake/vmake.lock",
-		".vmake_deps/local/pkg/file.c",
-		"vmake_deps/old/file.c",
-	} {
-		writeExtensionFile(t, filepath.Join(project, filepath.FromSlash(path)), "generated")
-	}
-
-	head, dirty := projectProvenance(project)
-	if head != revision {
-		t.Fatalf("revision = %q, want %q", head, revision)
-	}
-	if dirty == nil || *dirty {
-		t.Fatalf("generated paths marked the worktree dirty: %v", dirty)
-	}
-
-	writeExtensionFile(t, filepath.Join(project, "notes.c"), "untracked source\n")
-	if _, dirty = projectProvenance(project); dirty == nil || !*dirty {
-		t.Fatalf("untracked source did not mark the worktree dirty: %v", dirty)
-	}
-}
-
-func TestBuildReportProvenanceDirtyWorktree(t *testing.T) {
-	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
-	revision := initProvenanceGitRepo(t, project)
-	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n// dirty\n")
-
-	stdout, stderr, code := runBuildCommand(t, project, "build")
-	if code != 0 {
-		t.Fatalf("build exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	assertReportProvenance(t, loadBuildReport(t, project), revision, true)
-}
-
-func TestBuildReportProvenanceSurvivesPartialFailure(t *testing.T) {
-	project := writeBuildReportProject(t, "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
-	revision := initProvenanceGitRepo(t, project)
-
-	stdout, stderr, code := runBuildCommand(t, project, "build")
-	if code != 1 {
-		t.Fatalf("build exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	report := loadBuildReport(t, project)
-	if report.Status != "failed" || report.Summary == nil {
-		t.Fatalf("partial failure report = %+v", report)
-	}
-	assertReportProvenance(t, report, revision, false)
-}
-
-func TestBuildReportProvenanceOmittedOutsideGit(t *testing.T) {
-	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
-	if _, err := exec.LookPath("git"); err == nil {
-		if exec.Command("git", "-C", project, "rev-parse", "--show-toplevel").Run() == nil {
-			t.Skip("temporary project is inside a git worktree")
-		}
-	}
-
-	stdout, stderr, code := runBuildCommand(t, project, "build")
-	if code != 0 {
-		t.Fatalf("build exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	report := loadBuildReport(t, project)
-	if report.VMakeVersion != version.Version || report.VMakeCommit != version.GitCommit {
-		t.Fatalf("vmake provenance = %q/%q, want %q/%q",
-			report.VMakeVersion, report.VMakeCommit, version.Version, version.GitCommit)
-	}
-	if report.ProjectRevision != "" || report.ProjectDirty != nil {
-		t.Fatalf("non-git project recorded revision/dirty: %+v", report)
-	}
-	raw, err := os.ReadFile(reportPath(project))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var document map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &document); err != nil {
-		t.Fatal(err)
-	}
-	for _, field := range []string{"projectRevision", "projectDirty"} {
-		if _, ok := document[field]; ok {
-			t.Fatalf("non-git report contains %s:\n%s", field, raw)
-		}
-	}
-}
-
-func TestBuildReportProvenanceRecordedAtBegin(t *testing.T) {
-	resetResolveTestGlobals(t)
-	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
-	revision := initProvenanceGitRepo(t, project)
-	t.Chdir(project)
-
-	report, err := beginBuildReport(reportCommandBuild)
-	if err != nil {
-		t.Fatal(err)
-	}
-	running := loadBuildReport(t, project)
-	if running.Status != "running" {
-		t.Fatalf("running report status = %q", running.Status)
-	}
-	assertReportProvenance(t, running, revision, false)
-
-	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n// dirty after begin\n")
-	finishErr := errors.New("stop after begin")
-	report.finish(&finishErr, nil)
-	finished := loadBuildReport(t, project)
-	if finished.Status != "failed" {
-		t.Fatalf("finished report status = %q", finished.Status)
-	}
-	assertReportProvenance(t, finished, revision, false)
-}
-
 func TestBuildReportV2Success(t *testing.T) {
 	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
 	stdout, stderr, code := runBuildCommand(t, project, "build")
@@ -553,6 +339,9 @@ func TestBuildReportV2Success(t *testing.T) {
 	report := loadBuildReport(t, project)
 	if report.SchemaVersion != 2 || report.Status != "succeeded" || report.Error != "" {
 		t.Fatalf("report = %+v", report)
+	}
+	if report.VMakeVersion != version.Version || report.VMakeCommit != version.GitCommit {
+		t.Fatalf("vmake provenance = %q/%q, want %q/%q", report.VMakeVersion, report.VMakeCommit, version.Version, version.GitCommit)
 	}
 	if report.DurationMs <= 0 {
 		t.Fatalf("durationMs = %d", report.DurationMs)
@@ -1027,7 +816,7 @@ func TestBuildReportFinishV2(t *testing.T) {
 		Stage:  "compile",
 		Err:    &iexec.CommandError{Command: "gcc", Output: "src/main.c:4:2: error: boom\n", Err: errors.New("exit status 1")},
 	}
-	report.finish(&result, nil)
+	report.finish(&result)
 	if report.Status != "failed" || report.Error != "src/main.c:4:2: boom" || len(report.Diagnostics) != 1 || report.DurationMs <= 0 {
 		t.Fatalf("report = %+v", report)
 	}
@@ -1080,7 +869,7 @@ func TestBuildReportPartialFailureNeverNoOp(t *testing.T) {
 		t.Fatalf("partial failure targetsFailed = %d, want 1", report.Summary.TargetsFailed)
 	}
 	var finishErr error = failure
-	report.finish(&finishErr, nil)
+	report.finish(&finishErr)
 	if report.Status != "failed" || report.Summary == nil || report.Summary.NoOp {
 		t.Fatalf("finished report = %+v (summary %+v)", report, report.Summary)
 	}
@@ -1103,7 +892,7 @@ func TestBuildReportFinishFailedSummaryNeverNoOp(t *testing.T) {
 		Summary:       &buildSummary{TargetsTotal: 1, TargetsUpToDate: 1, NoOp: true},
 	}
 	var result error = errors.New("failure after results were collected")
-	report.finish(&result, nil)
+	report.finish(&result)
 	if report.Status != "failed" || report.Summary == nil || report.Summary.NoOp {
 		t.Fatalf("finished report = %+v (summary %+v)", report, report.Summary)
 	}
@@ -1142,22 +931,21 @@ func Main(p *api.Package) {
 	})
 }
 `)
-	stdout, stderr, code := runBuildCommand(t, project, "build", "--json")
+	stdout, stderr, code := runBuildCommand(t, project, "build")
 	if code != 1 {
-		t.Fatalf("build --json exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+		t.Fatalf("build exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	document := parseJSONBuildOutput(t, stdout)
-	if document.Status != "error" || document.Data.Status != "failed" {
-		t.Fatalf("failure envelope = %+v / data = %+v", document, document.Data)
+	report := loadBuildReport(t, project)
+	if report.Status != "failed" {
+		t.Fatalf("failure report = %+v", report)
 	}
-	summary := document.Data.Summary
+	summary := report.Summary
 	if summary == nil || summary.NoOp || summary.TargetsFailed != 1 {
 		t.Fatalf("failed target summary = %+v", summary)
 	}
-	if len(document.Data.Targets) != 0 {
-		t.Fatalf("failed target was recorded as completed: %+v", document.Data.Targets)
+	if len(report.Targets) != 0 {
+		t.Fatalf("failed target was recorded as completed: %+v", report.Targets)
 	}
-	assertJSONDataMatchesReport(t, project, document.Data)
 }
 
 func TestBuildReportCMakeConfigureFailureNeverNoOp(t *testing.T) {
@@ -1185,24 +973,23 @@ func Main(p *api.Package) {
 project(CMakeFail LANGUAGES NONE)
 message(FATAL_ERROR "configure exploded: missing foo dependency")
 `)
-	stdout, stderr, code := runBuildCommand(t, project, "build", "--json")
+	stdout, stderr, code := runBuildCommand(t, project, "build")
 	if code != 1 {
-		t.Fatalf("build --json exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
+		t.Fatalf("build exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	document := parseJSONBuildOutput(t, stdout)
-	if document.Status != "error" || document.Data.Status != "failed" || document.Data.Summary == nil {
-		t.Fatalf("cmake failure envelope = %+v / data = %+v", document, document.Data)
+	report := loadBuildReport(t, project)
+	if report.Status != "failed" || report.Summary == nil {
+		t.Fatalf("cmake failure report = %+v", report)
 	}
-	if document.Data.Summary.NoOp {
-		t.Fatalf("cmake configure failure claims no-op: %+v", document.Data.Summary)
+	if report.Summary.NoOp {
+		t.Fatalf("cmake configure failure claims no-op: %+v", report.Summary)
 	}
-	if document.Data.Summary.ExternalStages != 1 {
-		t.Fatalf("cmake configure failure external stages = %d, want 1", document.Data.Summary.ExternalStages)
+	if report.Summary.ExternalStages != 1 {
+		t.Fatalf("cmake configure failure external stages = %d, want 1", report.Summary.ExternalStages)
 	}
-	if !strings.Contains(document.Data.Error, "configure exploded") || len(document.Data.Diagnostics) == 0 {
-		t.Fatalf("cmake configure failure lost its diagnostic: error %q, diagnostics %+v", document.Data.Error, document.Data.Diagnostics)
+	if !strings.Contains(report.Error, "CMakeConfigure") || len(report.Diagnostics) == 0 {
+		t.Fatalf("cmake configure failure lost its diagnostic: error %q, diagnostics %+v", report.Error, report.Diagnostics)
 	}
-	assertJSONDataMatchesReport(t, project, document.Data)
 }
 
 func TestBuildReportCMakeOnlyExternalStages(t *testing.T) {
@@ -1245,23 +1032,6 @@ add_custom_target(work ALL COMMAND ${CMAKE_COMMAND} -E touch "${CMAKE_BINARY_DIR
 	if report.Summary.TargetsTotal != 0 || len(report.Targets) != 0 {
 		t.Fatalf("CMake-only build fabricated targets: %+v", report.Targets)
 	}
-
-	stdout, stderr, code := runBuildCommand(t, project, "build", "--json")
-	if code != 0 {
-		t.Fatalf("build --json exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	document := parseJSONBuildOutput(t, stdout)
-	if document.Status != "ok" || document.Data.Status != "succeeded" || document.Data.Summary == nil {
-		t.Fatalf("CMake-only envelope = %+v / data = %+v", document, document.Data)
-	}
-	summary := document.Data.Summary
-	if summary.NoOp || summary.ExternalStages == 0 {
-		t.Fatalf("CMake-only JSON summary = %+v, want noOp false and external stages > 0", summary)
-	}
-	if summary.TargetsTotal != 0 || len(document.Data.Targets) != 0 {
-		t.Fatalf("CMake-only JSON build fabricated targets: %+v", document.Data.Targets)
-	}
-	assertJSONDataMatchesReport(t, project, document.Data)
 }
 
 func TestBuildSummaryErrorPreservesCause(t *testing.T) {
@@ -1523,224 +1293,6 @@ func Main(p *api.Package) {
 	}
 }
 
-type jsonBuildDocument struct {
-	SchemaVersion   int               `json:"schemaVersion"`
-	Command         string            `json:"command"`
-	Status          string            `json:"status"`
-	ReportPath      string            `json:"reportPath"`
-	InstallManifest string            `json:"installManifest"`
-	Invocation      string            `json:"invocation"`
-	Data            buildReport       `json:"data"`
-	Diagnostics     []buildDiagnostic `json:"diagnostics"`
-}
-
-func parseJSONBuildOutput(t *testing.T, stdout string) jsonBuildDocument {
-	t.Helper()
-	decoder := json.NewDecoder(strings.NewReader(stdout))
-	var document jsonBuildDocument
-	if err := decoder.Decode(&document); err != nil {
-		t.Fatalf("stdout is not one JSON document: %v\n%s", err, stdout)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		t.Fatalf("stdout contains more than one JSON document (%v)\n%s", err, stdout)
-	}
-	if document.SchemaVersion != 1 {
-		t.Fatalf("envelope schemaVersion = %d, want 1", document.SchemaVersion)
-	}
-	if document.Data.SchemaVersion != 2 {
-		t.Fatalf("data schemaVersion = %d, want 2", document.Data.SchemaVersion)
-	}
-	if document.Command != reportCommandBuild && document.Command != reportCommandRebuild && document.Command != reportCommandTest {
-		t.Fatalf("envelope command = %q", document.Command)
-	}
-	if document.Data.Command != document.Command {
-		t.Fatalf("data command = %q, envelope command = %q", document.Data.Command, document.Command)
-	}
-	if document.Invocation != document.Command {
-		t.Fatalf("invocation = %q, envelope command = %q", document.Invocation, document.Command)
-	}
-	wantReportFile := buildReportFile
-	if document.Command == reportCommandTest {
-		wantReportFile = testReportFile
-	}
-	if !filepath.IsAbs(document.ReportPath) || filepath.Base(document.ReportPath) != wantReportFile {
-		t.Fatalf("reportPath = %q, want an absolute %s path", document.ReportPath, wantReportFile)
-	}
-	if !filepath.IsAbs(document.InstallManifest) || filepath.Base(document.InstallManifest) != "manifest.json" {
-		t.Fatalf("installManifest = %q, want an absolute manifest.json path", document.InstallManifest)
-	}
-	if document.Diagnostics == nil || document.Data.Diagnostics == nil {
-		t.Fatalf("diagnostics must be arrays: envelope %#v, data %#v", document.Diagnostics, document.Data.Diagnostics)
-	}
-	if !slices.Equal(document.Diagnostics, document.Data.Diagnostics) {
-		t.Fatalf("envelope diagnostics %+v do not mirror data diagnostics %+v", document.Diagnostics, document.Data.Diagnostics)
-	}
-	return document
-}
-
-func assertNoHumanJSONStdout(t *testing.T, stdout string, phrases ...string) {
-	t.Helper()
-	for _, phrase := range append([]string{"Build succeeded", "Build failed", "Tests succeeded", "Tests failed"}, phrases...) {
-		if strings.Contains(stdout, phrase) {
-			t.Fatalf("stdout contains human text %q:\n%s", phrase, stdout)
-		}
-	}
-}
-
-func assertJSONDataMatchesReport(t *testing.T, project string, data buildReport) {
-	t.Helper()
-	var report buildReport
-	if data.Command == reportCommandTest {
-		report = loadTestReport(t, project)
-	} else {
-		report = loadBuildReport(t, project)
-	}
-	fromFile, err := json.Marshal(report)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fromEnvelope, err := json.Marshal(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(fromFile, fromEnvelope) {
-		t.Fatalf("envelope data differs from the report file:\nfile:     %s\nenvelope: %s", fromFile, fromEnvelope)
-	}
-}
-
-func TestBuildJSONSuccessNoopAndScriptOutput(t *testing.T) {
-	project := writeBuildSummaryProject(t, "int main(void) { return 0; }\n")
-	stdout, stderr, code := runBuildCommand(t, project, "build", "--json")
-	if code != 0 {
-		t.Fatalf("build --json exit = %d, stderr = %q\n%s", code, stderr, stdout)
-	}
-	cold := parseJSONBuildOutput(t, stdout)
-	if cold.Command != reportCommandBuild || cold.Status != "ok" || cold.Data.Status != "succeeded" || cold.Data.Error != "" {
-		t.Fatalf("cold envelope = %+v / data = %+v", cold, cold.Data)
-	}
-	if cold.Data.Summary == nil || cold.Data.Summary.TargetsBuilt != 1 || cold.Data.Summary.TargetsUpToDate != 0 ||
-		cold.Data.Summary.FilesCompiled != 1 || cold.Data.Summary.FilesLinked != 1 ||
-		cold.Data.Summary.Callbacks != 0 || cold.Data.Summary.NoOp ||
-		!slices.Equal(cold.Data.Summary.ChangedFiles, []string{"summary:src/main.c"}) {
-		t.Fatalf("cold summary = %+v", cold.Data.Summary)
-	}
-	if !strings.Contains(stderr, "SCRIPT NOISE") {
-		t.Fatalf("buildscript print is missing from stderr:\n%s", stderr)
-	}
-	assertNoHumanJSONStdout(t, stdout, "SCRIPT NOISE")
-	assertJSONDataMatchesReport(t, project, cold.Data)
-
-	noopStdout, noopStderr, code := runBuildCommand(t, project, "build", "--json")
-	if code != 0 {
-		t.Fatalf("no-op build --json exit = %d, stderr = %q", code, noopStderr)
-	}
-	noop := parseJSONBuildOutput(t, noopStdout)
-	if noop.Status != "ok" || noop.Data.Summary == nil ||
-		noop.Data.Summary.TargetsBuilt != 0 || noop.Data.Summary.TargetsUpToDate != 1 ||
-		noop.Data.Summary.FilesCompiled != 0 || noop.Data.Summary.FilesLinked != 0 ||
-		!noop.Data.Summary.NoOp || noop.Data.Summary.Callbacks != 0 ||
-		len(noop.Data.Summary.ChangedFiles) != 0 {
-		t.Fatalf("no-op envelope = %+v / summary = %+v", noop, noop.Data.Summary)
-	}
-	if !strings.Contains(noopStderr, "SCRIPT NOISE") {
-		t.Fatalf("no-op buildscript print is missing from stderr:\n%s", noopStderr)
-	}
-	assertNoHumanJSONStdout(t, noopStdout, "SCRIPT NOISE")
-	assertJSONDataMatchesReport(t, project, noop.Data)
-}
-
-func TestBuildJSONCompileFailure(t *testing.T) {
-	project := writeBuildReportProject(t, "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
-	stdout, stderr, code := runBuildCommand(t, project, "build", "--json")
-	if code != 1 {
-		t.Fatalf("build --json exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	document := parseJSONBuildOutput(t, stdout)
-	if document.Command != reportCommandBuild || document.Status != "error" || document.Data.Status != "failed" {
-		t.Fatalf("failure envelope = %+v / data = %+v", document, document.Data)
-	}
-	if document.Data.Error == "" || !strings.Contains(document.Data.Error, "src/main.c:2:") {
-		t.Fatalf("concise error = %q", document.Data.Error)
-	}
-	if len(document.Diagnostics) != 1 {
-		t.Fatalf("diagnostics = %+v", document.Diagnostics)
-	}
-	diagnostic := document.Diagnostics[0]
-	if diagnostic.Code != "VMAKE_E_COMPILE" || diagnostic.File != "src/main.c" || diagnostic.Line != 2 || diagnostic.Column == 0 {
-		t.Fatalf("diagnostic = %+v", diagnostic)
-	}
-	if strings.Count(stderr, "error: expected expression") != 1 {
-		t.Fatalf("compiler diagnostic on stderr %d times:\n%s", strings.Count(stderr, "error: expected expression"), stderr)
-	}
-	lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
-	if !strings.HasPrefix(lines[len(lines)-1], "Error: src/main.c:2:") {
-		t.Fatalf("final stderr line = %q", lines[len(lines)-1])
-	}
-	assertNoHumanJSONStdout(t, stdout)
-	assertJSONDataMatchesReport(t, project, document.Data)
-}
-
-func TestTestJSONPassing(t *testing.T) {
-	project := writeTestCommandProject(t, passingTestSource)
-	stdout, stderr, code := runBuildCommand(t, project, "test", "--json")
-	if code != 0 {
-		t.Fatalf("test --json exit = %d, stderr = %q\n%s", code, stderr, stdout)
-	}
-	document := parseJSONBuildOutput(t, stdout)
-	if document.Command != reportCommandTest || document.Status != "ok" || document.Data.Status != "succeeded" {
-		t.Fatalf("test envelope = %+v / data = %+v", document, document.Data)
-	}
-	if len(document.Data.Tests) != 1 {
-		t.Fatalf("tests = %+v", document.Data.Tests)
-	}
-	test := document.Data.Tests[0]
-	if test.Name != "tests-project:tests" || test.Package != "tests-project" || test.Target != "tests" ||
-		!test.Passed || test.ElapsedMs < 0 || test.ExitCode != 0 {
-		t.Fatalf("test entry = %+v", test)
-	}
-	if document.Data.Summary == nil || document.Data.Summary.TestsFound != 1 ||
-		document.Data.Summary.TestsPassed != 1 || document.Data.Summary.TestsFailed != 0 {
-		t.Fatalf("test summary = %+v", document.Data.Summary)
-	}
-	if !strings.Contains(stderr, "PASS tests-project:tests") {
-		t.Fatalf("human test progress is missing from stderr:\n%s", stderr)
-	}
-	assertNoHumanJSONStdout(t, stdout, "test(s) passed")
-	assertJSONDataMatchesReport(t, project, document.Data)
-}
-
-func TestTestJSONFailure(t *testing.T) {
-	project := writeTestCommandProject(t, failingTestSource)
-	stdout, stderr, code := runBuildCommand(t, project, "test", "--json")
-	if code != 1 {
-		t.Fatalf("test --json exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	document := parseJSONBuildOutput(t, stdout)
-	if document.Command != reportCommandTest || document.Status != "error" || document.Data.Status != "failed" {
-		t.Fatalf("test failure envelope = %+v / data = %+v", document, document.Data)
-	}
-	if document.Data.Error != "1 test(s) failed" {
-		t.Fatalf("test failure error = %q", document.Data.Error)
-	}
-	if len(document.Data.Tests) != 1 || document.Data.Tests[0].Passed || document.Data.Tests[0].ExitCode != 1 {
-		t.Fatalf("failed test entries = %+v", document.Data.Tests)
-	}
-	if document.Data.Summary == nil || document.Data.Summary.TestsFound != 1 ||
-		document.Data.Summary.TestsPassed != 0 || document.Data.Summary.TestsFailed != 1 {
-		t.Fatalf("failed test summary = %+v", document.Data.Summary)
-	}
-	if len(document.Diagnostics) != 1 || document.Diagnostics[0].Severity != "error" ||
-		document.Diagnostics[0].Code != "VMAKE_E_TEST" || document.Diagnostics[0].Message != "1 test(s) failed" {
-		t.Fatalf("failed test diagnostics = %+v", document.Diagnostics)
-	}
-	if !strings.Contains(stderr, "Error: 1 test(s) failed") {
-		t.Fatalf("failure error is missing from stderr:\n%s", stderr)
-	}
-	assertNoHumanJSONStdout(t, stdout, "test(s) passed")
-	assertJSONDataMatchesReport(t, project, document.Data)
-}
-
 func TestTestReportCapturesPassingOutput(t *testing.T) {
 	project := writeTestCommandProject(t, `#include <stdio.h>
 int main(void) {
@@ -1862,475 +1414,6 @@ func TestTestBuildFailureKeepsCompletedTargets(t *testing.T) {
 	}
 }
 
-func TestTestJSONNoTargets(t *testing.T) {
-	project := writeTestCommandProject(t, "")
-	stdout, stderr, code := runBuildCommand(t, project, "test", "--json")
-	if code != 0 {
-		t.Fatalf("test --json exit = %d, want 0 (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	document := parseJSONBuildOutput(t, stdout)
-	if document.Status != "ok" || document.Data.Status != "succeeded" || document.Data.Error != "" {
-		t.Fatalf("no-tests envelope = %+v / data = %+v", document, document.Data)
-	}
-	if len(document.Data.Tests) != 0 {
-		t.Fatalf("no-tests entries = %+v", document.Data.Tests)
-	}
-	if document.Data.Summary == nil || document.Data.Summary.TestsFound != 0 {
-		t.Fatalf("no-tests summary = %+v", document.Data.Summary)
-	}
-	if strings.Contains(stderr, "Error:") {
-		t.Fatalf("no-tests stderr carries an error:\n%s", stderr)
-	}
-	assertNoHumanJSONStdout(t, stdout, "test(s) passed")
-	assertJSONDataMatchesReport(t, project, document.Data)
-}
-
-func TestRebuildJSONSmoke(t *testing.T) {
-	project := writeBuildSummaryProject(t, "int main(void) { return 0; }\n")
-	stdout, stderr, code := runBuildCommand(t, project, "rebuild", "--json")
-	if code != 0 {
-		t.Fatalf("rebuild --json exit = %d, stderr = %q\n%s", code, stderr, stdout)
-	}
-	document := parseJSONBuildOutput(t, stdout)
-	if document.Command != reportCommandRebuild || document.Invocation != reportCommandRebuild ||
-		document.Data.Command != reportCommandRebuild ||
-		document.Status != "ok" || document.Data.Status != "succeeded" {
-		t.Fatalf("rebuild envelope = %+v / data = %+v", document, document.Data)
-	}
-	if document.Data.Summary == nil || document.Data.Summary.TargetsBuilt != 1 || document.Data.Summary.FilesCompiled != 1 {
-		t.Fatalf("rebuild summary = %+v", document.Data.Summary)
-	}
-	if document.ReportPath != reportPath(project) {
-		t.Fatalf("rebuild reportPath = %q, want %q", document.ReportPath, reportPath(project))
-	}
-	if document.InstallManifest != filepath.Join(project, "install", "manifest.json") {
-		t.Fatalf("rebuild installManifest = %q", document.InstallManifest)
-	}
-	if !strings.Contains(stderr, "SCRIPT NOISE") {
-		t.Fatalf("rebuild buildscript print is missing from stderr:\n%s", stderr)
-	}
-	assertNoHumanJSONStdout(t, stdout, "SCRIPT NOISE")
-	assertJSONDataMatchesReport(t, project, document.Data)
-}
-
-func countWarningLines(output, marker string) int {
-	count := 0
-	for _, line := range strings.Split(output, "\n") {
-		if strings.Contains(line, "warning:") && strings.Contains(line, marker) {
-			count++
-		}
-	}
-	return count
-}
-
-func writeBuildWarningProject(t *testing.T, source string) string {
-	t.Helper()
-	project := filepath.Join(t.TempDir(), "warning")
-	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
-
-import "github.com/spock2300/vmake/pkg/api"
-
-func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c").AddCFlags("-Wno-error")
-	})
-}
-`)
-	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), source)
-	return project
-}
-
-func TestBuildReportSuccessWarnings(t *testing.T) {
-	project := writeBuildWarningProject(t, "static int vmake_warning_probe;\n\nint main(void) { return 0; }\n")
-	stdout, stderr, code := runBuildCommand(t, project, "build")
-	if code != 0 {
-		t.Fatalf("warning build exit = %d, stderr = %q\n%s", code, stderr, stdout)
-	}
-	if !strings.Contains(stdout, "Build succeeded") {
-		t.Fatalf("success summary missing:\n%s", stdout)
-	}
-	if countWarningLines(stderr, "vmake_warning_probe") != 1 {
-		t.Fatalf("compiler warning on stderr %d times:\n%s", countWarningLines(stderr, "vmake_warning_probe"), stderr)
-	}
-	report := loadBuildReport(t, project)
-	if report.Status != "succeeded" || report.Error != "" {
-		t.Fatalf("warning report = %+v", report)
-	}
-	if len(report.Diagnostics) != 1 {
-		t.Fatalf("diagnostics = %+v, want one warning", report.Diagnostics)
-	}
-	warning := report.Diagnostics[0]
-	if warning.Severity != "warning" || warning.Code != buildWarningCode || filepath.Base(warning.File) != "main.c" ||
-		warning.Line <= 0 || !strings.Contains(warning.Message, "vmake_warning_probe") {
-		t.Fatalf("warning diagnostic = %+v", warning)
-	}
-	noopStdout, noopStderr, code := runBuildCommand(t, project, "-q", "build")
-	if code != 0 || noopStderr != "" {
-		t.Fatalf("no-op build exit = %d, stderr = %q", code, noopStderr)
-	}
-	if !strings.HasPrefix(noopStdout, "Build succeeded: no compilation") {
-		t.Fatalf("no-op stdout = %q", noopStdout)
-	}
-	report = loadBuildReport(t, project)
-	if report.Diagnostics == nil || len(report.Diagnostics) != 0 {
-		t.Fatalf("clean no-op diagnostics = %#v, want []", report.Diagnostics)
-	}
-}
-
-func TestBuildJSONQuietWarningDiagnostics(t *testing.T) {
-	project := writeBuildWarningProject(t, "static int vmake_warning_probe;\n\nint main(void) { return 0; }\n")
-	stdout, stderr, code := runBuildCommand(t, project, "-q", "build", "--json")
-	if code != 0 {
-		t.Fatalf("quiet JSON build exit = %d, stderr = %q\n%s", code, stderr, stdout)
-	}
-	document := parseJSONBuildOutput(t, stdout)
-	if document.Status != "ok" || document.Data.Status != "succeeded" || document.Data.Error != "" {
-		t.Fatalf("quiet warning envelope = %+v / data = %+v", document, document.Data)
-	}
-	if len(document.Diagnostics) != 1 || len(document.Data.Diagnostics) != 1 {
-		t.Fatalf("quiet warning diagnostics = %+v", document.Diagnostics)
-	}
-	warning := document.Diagnostics[0]
-	if warning.Severity != "warning" || warning.Code != buildWarningCode ||
-		filepath.Base(warning.File) != "main.c" || !strings.Contains(warning.Message, "vmake_warning_probe") {
-		t.Fatalf("quiet warning diagnostic = %+v", warning)
-	}
-	if countWarningLines(stderr, "vmake_warning_probe") != 1 {
-		t.Fatalf("compiler warning streamed %d times:\n%s", countWarningLines(stderr, "vmake_warning_probe"), stderr)
-	}
-	assertNoHumanJSONStdout(t, stdout)
-	assertJSONDataMatchesReport(t, project, document.Data)
-}
-
-func TestBuildJSONEnvelopePaths(t *testing.T) {
-	wantManifest := func(project string) string { return filepath.Join(project, "install", "manifest.json") }
-
-	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
-	stdout, stderr, code := runBuildCommand(t, project, "build", "--json")
-	if code != 0 {
-		t.Fatalf("success build --json exit = %d, stderr = %q\n%s", code, stderr, stdout)
-	}
-	success := parseJSONBuildOutput(t, stdout)
-	if success.ReportPath != reportPath(project) || success.InstallManifest != wantManifest(project) ||
-		success.Invocation != reportCommandBuild {
-		t.Fatalf("success paths = reportPath %q, installManifest %q, invocation %q", success.ReportPath, success.InstallManifest, success.Invocation)
-	}
-	if len(success.Diagnostics) != 0 {
-		t.Fatalf("clean build diagnostics = %+v, want []", success.Diagnostics)
-	}
-	assertJSONDataMatchesReport(t, project, success.Data)
-
-	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
-	stdout, stderr, code = runBuildCommand(t, project, "build", "--json")
-	if code != 1 {
-		t.Fatalf("failure build --json exit = %d, want 1 (stderr %q)\n%s", code, stderr, stdout)
-	}
-	failure := parseJSONBuildOutput(t, stdout)
-	if failure.ReportPath != reportPath(project) || failure.InstallManifest != wantManifest(project) ||
-		failure.Invocation != reportCommandBuild || failure.Status != "error" {
-		t.Fatalf("failure paths = %+v", failure)
-	}
-	assertJSONDataMatchesReport(t, project, failure.Data)
-
-	testProject := writeTestCommandProject(t, passingTestSource)
-	stdout, stderr, code = runBuildCommand(t, testProject, "test", "--json")
-	if code != 0 {
-		t.Fatalf("test --json exit = %d, stderr = %q\n%s", code, stderr, stdout)
-	}
-	testDocument := parseJSONBuildOutput(t, stdout)
-	if testDocument.ReportPath != testReportPath(testProject) ||
-		testDocument.InstallManifest != wantManifest(testProject) ||
-		testDocument.Invocation != reportCommandTest {
-		t.Fatalf("test paths = reportPath %q, installManifest %q, invocation %q",
-			testDocument.ReportPath, testDocument.InstallManifest, testDocument.Invocation)
-	}
-	assertJSONDataMatchesReport(t, testProject, testDocument.Data)
-}
-
-func TestBuildReportFailureKeepsWarningsAfterErrors(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "warning-failure")
-	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
-
-import "github.com/spock2300/vmake/pkg/api"
-
-func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("warned").SetKind(api.TargetBinary).AddFiles("src/warned.c").AddCFlags("-Wno-error")
-		ctx.Target("broken").SetKind(api.TargetBinary).AddFiles("src/broken.c").AddDeps("warned")
-	})
-}
-`)
-	writeExtensionFile(t, filepath.Join(project, "src", "warned.c"), "static int vmake_warning_probe;\n\nint main(void) { return 0; }\n")
-	writeExtensionFile(t, filepath.Join(project, "src", "broken.c"), "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
-	stdout, stderr, code := runBuildCommand(t, project, "build")
-	if code != 1 {
-		t.Fatalf("warning failure exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
-	}
-	if countWarningLines(stderr, "vmake_warning_probe") != 1 {
-		t.Fatalf("compiler warning on stderr %d times:\n%s", countWarningLines(stderr, "vmake_warning_probe"), stderr)
-	}
-	report := loadBuildReport(t, project)
-	if report.Status != "failed" || len(report.Diagnostics) != 2 {
-		t.Fatalf("warning failure report = %+v", report)
-	}
-	if report.Diagnostics[0].Severity != "error" || report.Diagnostics[0].Code != "VMAKE_E_COMPILE" ||
-		filepath.Base(report.Diagnostics[0].File) != "broken.c" {
-		t.Fatalf("first diagnostic is not the error: %+v", report.Diagnostics[0])
-	}
-	warning := report.Diagnostics[1]
-	if warning.Severity != "warning" || warning.Code != buildWarningCode ||
-		filepath.Base(warning.File) != "warned.c" || !strings.Contains(warning.Message, "vmake_warning_probe") {
-		t.Fatalf("warning diagnostic = %+v", warning)
-	}
-	if !strings.Contains(report.Error, "broken.c:2:") {
-		t.Fatalf("failure summary = %q", report.Error)
-	}
-}
-
-func TestParseBuildWarnings(t *testing.T) {
-	output := strings.Join([]string{
-		"src/main.c:8:12: warning: unused variable 'x' [-Wunused-variable]",
-		"src/main.c:8:12: warning: unused variable 'x' [-Wunused-variable]",
-		"src/main.c:9: warning: warning without a column",
-		"warning: generic warning\r",
-		"ld: warning: cannot find entry symbol _start",
-		`C:\project\src\main.c:12:3: warning: windows path warning`,
-		"src/main.c:10:5: error: not a warning",
-		"note: not a warning either",
-		"CMake Warning at CMakeLists.txt:12 (message):",
-		"CMake Warning:",
-		"  Manually-specified variables were not used by the project:",
-	}, "\n")
-	warnings := parseBuildWarnings(output)
-	if len(warnings) != 7 {
-		t.Fatalf("warnings = %+v", warnings)
-	}
-	for _, warning := range warnings {
-		if warning.Severity != "warning" || warning.Code != buildWarningCode {
-			t.Fatalf("warning entry = %+v", warning)
-		}
-	}
-	located := warnings[0]
-	if located.File != "src/main.c" || located.Line != 8 || located.Column != 12 ||
-		located.Message != "unused variable 'x' [-Wunused-variable]" {
-		t.Fatalf("located warning = %+v", located)
-	}
-	if warnings[1].File != "src/main.c" || warnings[1].Line != 9 || warnings[1].Column != 0 {
-		t.Fatalf("columnless warning = %+v", warnings[1])
-	}
-	if warnings[2].File != "" || warnings[2].Message != "generic warning" {
-		t.Fatalf("generic warning = %+v", warnings[2])
-	}
-	if warnings[3].File != "" || warnings[3].Message != "ld: cannot find entry symbol _start" {
-		t.Fatalf("tool warning = %+v", warnings[3])
-	}
-	if warnings[4].File != `C:\project\src\main.c` || warnings[4].Line != 12 || warnings[4].Column != 3 {
-		t.Fatalf("windows warning = %+v", warnings[4])
-	}
-	if warnings[5].File != "CMakeLists.txt" || warnings[5].Line != 12 || !strings.Contains(warnings[5].Message, "CMake warning") {
-		t.Fatalf("cmake warning = %+v", warnings[5])
-	}
-	if warnings[6].Message != "Manually-specified variables were not used by the project:" {
-		t.Fatalf("bare cmake warning = %+v", warnings[6])
-	}
-}
-
-func TestParseBuildWarningsCMakeVariants(t *testing.T) {
-	output := strings.Join([]string{
-		"CMake Deprecation Warning at CMakeLists.txt:1 (cmake_minimum_required):",
-		"  Compatibility with CMake < 3.10 will be removed from a future version.",
-		"  Update the VERSION argument <min> value.",
-		"",
-		"CMake Dev Warning at cmake/checks.cmake:7 (message):",
-		"  dev warning detail",
-		"CMake Author Warning at CMakeLists.txt:9 (message):",
-		"  author warning detail",
-		"",
-	}, "\n")
-	warnings := parseBuildWarnings(output)
-	if len(warnings) != 3 {
-		t.Fatalf("warnings = %+v", warnings)
-	}
-	for i, want := range []struct {
-		file string
-		line int
-		text []string
-	}{
-		{"CMakeLists.txt", 1, []string{"Compatibility with CMake", "Update the VERSION argument"}},
-		{"cmake/checks.cmake", 7, []string{"dev warning detail"}},
-		{"CMakeLists.txt", 9, []string{"author warning detail"}},
-	} {
-		warning := warnings[i]
-		if warning.Severity != "warning" || warning.Code != buildWarningCode || warning.File != want.file || warning.Line != want.line {
-			t.Fatalf("cmake warning %d = %+v", i, warning)
-		}
-		for _, text := range want.text {
-			if !strings.Contains(warning.Message, text) {
-				t.Errorf("cmake warning %d message %q missing %q", i, warning.Message, text)
-			}
-		}
-	}
-	if strings.Contains(warnings[0].Message, "dev warning detail") {
-		t.Fatalf("located warning collected a blank-line-separated warning: %q", warnings[0].Message)
-	}
-}
-
-func TestParseBuildWarningsBareCMakeContinuation(t *testing.T) {
-	variables := []string{"CMAKE_ASM_COMPILER", "CMAKE_CXX_COMPILER", "CMAKE_FOO_COMPILER", "CMAKE_BAR_COMPILER"}
-	lines := []string{
-		"CMake Warning:",
-		"  Manually-specified variables were not used by the project:",
-	}
-	for _, variable := range variables {
-		lines = append(lines, "    "+variable)
-	}
-	lines = append(lines, "", "  cmake build: 2 steps", "-- Configuring done (0.1s)")
-	warnings := parseBuildWarnings(strings.Join(lines, "\n"))
-	if len(warnings) != 1 {
-		t.Fatalf("warnings = %+v", warnings)
-	}
-	warning := warnings[0]
-	if warning.Severity != "warning" || warning.Code != buildWarningCode || warning.File != "" {
-		t.Fatalf("bare cmake warning = %+v", warning)
-	}
-	for _, variable := range variables {
-		if !strings.Contains(warning.Message, variable) {
-			t.Errorf("message missing continuation %q: %q", variable, warning.Message)
-		}
-	}
-	if strings.Contains(warning.Message, "cmake build") || strings.Contains(warning.Message, "Configuring done") {
-		t.Errorf("message collected output past the blank line: %q", warning.Message)
-	}
-}
-
-func TestParseBuildWarningsBareCMakeContinuationCapped(t *testing.T) {
-	line := strings.Repeat("x", buildDiagnosticMessageLimit)
-	output := strings.Join([]string{
-		"CMake Warning:",
-		"  " + line,
-		"  " + line,
-		"  " + line,
-		"",
-	}, "\n")
-	warnings := parseBuildWarnings(output)
-	if len(warnings) != 1 {
-		t.Fatalf("warnings = %+v", warnings)
-	}
-	if got := len([]rune(warnings[0].Message)); got != buildDiagnosticMessageLimit {
-		t.Fatalf("message length = %d, want %d", got, buildDiagnosticMessageLimit)
-	}
-	if strings.Contains(warnings[0].Message, line+line) {
-		t.Fatal("message is not bounded")
-	}
-}
-
-func TestParseBuildWarningsCapped(t *testing.T) {
-	var output strings.Builder
-	for i := 0; i < buildWarningLimit+10; i++ {
-		fmt.Fprintf(&output, "src/w%d.c:1: warning: warning number %d\n", i, i)
-	}
-	output.WriteString("src/w0.c:1: warning: warning number 0\n")
-	warnings := parseBuildWarnings(output.String())
-	if len(warnings) != buildWarningLimit {
-		t.Fatalf("warnings = %d, want %d", len(warnings), buildWarningLimit)
-	}
-}
-
-func TestBuildStderrCaptureKeepsBoundedTail(t *testing.T) {
-	capture := &buildStderrCapture{}
-	capture.append(bytes.Repeat([]byte("x"), buildStderrCaptureSize))
-	capture.append([]byte("\nsrc/main.c:4:2: warning: retained tail\n"))
-	if len(capture.buffer) != buildStderrCaptureSize {
-		t.Fatalf("capture length = %d, want %d", len(capture.buffer), buildStderrCaptureSize)
-	}
-	warnings := capture.warnings()
-	if len(warnings) != 1 || warnings[0].File != "src/main.c" || warnings[0].Line != 4 {
-		t.Fatalf("tail warnings = %+v", warnings)
-	}
-}
-
-func TestBuildStderrCaptureCutFreezesWarnings(t *testing.T) {
-	capture := &buildStderrCapture{}
-	capture.append([]byte("src/build.c:3: warning: build phase warning\n"))
-	capture.cut(func() {})
-	capture.append([]byte("src/test.c:4: warning: test output\n"))
-	warnings := capture.warnings()
-	if len(warnings) != 1 || filepath.Base(warnings[0].File) != "build.c" ||
-		!strings.Contains(warnings[0].Message, "build phase warning") {
-		t.Fatalf("warnings after cut = %+v", warnings)
-	}
-}
-
-func TestMergeBuildDiagnosticsKeepsErrorsFirst(t *testing.T) {
-	diagnostics := []buildDiagnostic{
-		{Severity: "error", Code: "VMAKE_E_COMPILE", File: "src/broken.c", Line: 2, Column: 1, Message: "boom", Package: "pkg", Target: "pkg:broken"},
-		{Severity: "warning", Code: "VMAKE_E_COMPILE", File: "src/warned.c", Line: 3, Column: 7, Message: "warned", Package: "pkg", Target: "pkg:warned"},
-	}
-	warnings := []buildDiagnostic{
-		{Severity: "warning", Code: buildWarningCode, File: "src/warned.c", Line: 3, Column: 7, Message: "warned"},
-		{Severity: "warning", Code: buildWarningCode, Message: "generic warning"},
-	}
-	merged := mergeBuildDiagnostics(diagnostics, warnings)
-	if len(merged) != 3 {
-		t.Fatalf("merged = %+v", merged)
-	}
-	if merged[0].Severity != "error" || merged[0].Code != "VMAKE_E_COMPILE" {
-		t.Fatalf("error moved: %+v", merged[0])
-	}
-	if merged[1].Severity != "warning" || merged[1].Code != buildWarningCode ||
-		merged[1].Target != "pkg:warned" {
-		t.Fatalf("merged warning = %+v", merged[1])
-	}
-	if merged[2].Message != "generic warning" {
-		t.Fatalf("generic warning = %+v", merged[2])
-	}
-}
-
-type jsonPreReportDocument struct {
-	SchemaVersion int               `json:"schemaVersion"`
-	Command       string            `json:"command"`
-	Status        string            `json:"status"`
-	Data          json.RawMessage   `json:"data"`
-	Diagnostics   []buildDiagnostic `json:"diagnostics"`
-}
-
-func parsePreReportJSON(t *testing.T, stdout string) jsonPreReportDocument {
-	t.Helper()
-	decoder := json.NewDecoder(strings.NewReader(stdout))
-	var document jsonPreReportDocument
-	if err := decoder.Decode(&document); err != nil {
-		t.Fatalf("stdout is not one JSON document: %v\n%s", err, stdout)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		t.Fatalf("stdout contains more than one JSON document (%v)\n%s", err, stdout)
-	}
-	if document.SchemaVersion != 1 {
-		t.Fatalf("pre-report schemaVersion = %d, want 1", document.SchemaVersion)
-	}
-	if document.Status != "error" {
-		t.Fatalf("pre-report status = %q, want error", document.Status)
-	}
-	if string(document.Data) != "null" {
-		t.Fatalf("pre-report data = %s, want null", document.Data)
-	}
-	if len(document.Diagnostics) == 0 {
-		t.Fatalf("pre-report has no diagnostics: %s", stdout)
-	}
-	return document
-}
-
-func readJSONBuildFile(t *testing.T, path string) jsonBuildDocument {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	return parseJSONBuildOutput(t, string(data))
-}
-
 func TestExitCodeMatrix(t *testing.T) {
 	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
 	stdout, stderr, code := runBuildCommand(t, project, "build")
@@ -2381,227 +1464,6 @@ func TestExitCodeMatrix(t *testing.T) {
 	}
 }
 
-func TestBuildJSONPreReportUnknownFlag(t *testing.T) {
-	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
-	stdout, stderr, code := runBuildCommand(t, project, "build", "--json", "--bad-flag")
-	if code != 2 {
-		t.Fatalf("unknown flag exit = %d, want 2 (stderr %q)", code, stderr)
-	}
-	document := parsePreReportJSON(t, stdout)
-	if document.Command != reportCommandBuild || document.Diagnostics[0].Code != "VMAKE_E_USAGE" ||
-		!strings.Contains(document.Diagnostics[0].Message, "unknown flag: --bad-flag") {
-		t.Fatalf("pre-report = %+v", document)
-	}
-	if !strings.Contains(stderr, "Error: unknown flag: --bad-flag") {
-		t.Fatalf("human error missing from stderr: %q", stderr)
-	}
-	if _, err := os.Stat(reportPath(project)); !os.IsNotExist(err) {
-		t.Fatalf("pre-report failure wrote a build report: %v", err)
-	}
-}
-
-func TestBuildJSONPreReportOutsideProject(t *testing.T) {
-	outside := t.TempDir()
-	for _, command := range []string{reportCommandBuild, reportCommandRebuild, reportCommandTest} {
-		stdout, stderr, code := runBuildCommand(t, outside, command, "--json")
-		if code != 2 {
-			t.Fatalf("%s outside project exit = %d, want 2 (stdout %q, stderr %q)", command, code, stdout, stderr)
-		}
-		document := parsePreReportJSON(t, stdout)
-		if document.Command != command || document.Diagnostics[0].Code != "VMAKE_E_USAGE" ||
-			!strings.Contains(document.Diagnostics[0].Message, "not inside a vmake project") {
-			t.Fatalf("%s pre-report = %+v", command, document)
-		}
-		if !strings.Contains(stderr, "not inside a vmake project") {
-			t.Fatalf("%s human error missing from stderr: %q", command, stderr)
-		}
-	}
-}
-
-func TestBuildJSONPreReportStorageFailure(t *testing.T) {
-	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
-	cacheFile := filepath.Join(t.TempDir(), "cache-file")
-	writeExtensionFile(t, cacheFile, "")
-	stdout, stderr, code := runBuildCommandEnv(t, project, []string{"VMAKE_CACHE=" + cacheFile}, "build", "--json")
-	if code != 1 {
-		t.Fatalf("storage failure exit = %d, want 1 (stderr %q)", code, stderr)
-	}
-	document := parsePreReportJSON(t, stdout)
-	if document.Command != reportCommandBuild || document.Diagnostics[0].Code != "VMAKE_E_BUILD" {
-		t.Fatalf("storage failure pre-report = %+v", document)
-	}
-	if !strings.Contains(stderr, "Error: ") {
-		t.Fatalf("human storage error missing from stderr: %q", stderr)
-	}
-}
-
-func TestBuildJSONPreReportOutputFile(t *testing.T) {
-	outside := t.TempDir()
-	output := filepath.Join(t.TempDir(), "pre-report.json")
-	stdout, stderr, code := runBuildCommand(t, outside, "build", "--output", output)
-	if code != 2 {
-		t.Fatalf("outside project --output exit = %d, want 2 (stderr %q)", code, stderr)
-	}
-	if stdout != "" {
-		t.Fatalf("outside project --output stdout = %q, want empty", stdout)
-	}
-	document := readJSONPreReportFile(t, output)
-	if document.Command != reportCommandBuild || document.Diagnostics[0].Code != "VMAKE_E_USAGE" {
-		t.Fatalf("pre-report file = %+v", document)
-	}
-}
-
-func readJSONPreReportFile(t *testing.T, path string) jsonPreReportDocument {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	return parsePreReportJSON(t, string(data))
-}
-
-func TestBuildOutputFileSuccess(t *testing.T) {
-	project := writeBuildSummaryProject(t, "int main(void) { return 0; }\n")
-	stdout, stderr, code := runBuildCommand(t, project, "build", "--output", "result.json")
-	if code != 0 {
-		t.Fatalf("build --output exit = %d, stderr = %q", code, stderr)
-	}
-	if stdout != "" {
-		t.Fatalf("build --output stdout = %q, want empty", stdout)
-	}
-	if !strings.Contains(stderr, "SCRIPT NOISE") {
-		t.Fatalf("buildscript output missing from stderr: %q", stderr)
-	}
-	document := readJSONBuildFile(t, filepath.Join(project, "result.json"))
-	if document.Command != reportCommandBuild || document.Status != "ok" || document.Data.Status != "succeeded" {
-		t.Fatalf("envelope = %+v / data = %+v", document, document.Data)
-	}
-	if document.ReportPath != reportPath(project) {
-		t.Fatalf("reportPath = %q, want %q", document.ReportPath, reportPath(project))
-	}
-	assertJSONDataMatchesReport(t, project, document.Data)
-}
-
-func TestBuildOutputFileFailure(t *testing.T) {
-	project := writeBuildReportProject(t, "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
-	output := filepath.Join(t.TempDir(), "failure.json")
-	stdout, stderr, code := runBuildCommand(t, project, "build", "--output", output)
-	if code != 1 {
-		t.Fatalf("failing build --output exit = %d, want 1 (stderr %q)", code, stderr)
-	}
-	if stdout != "" {
-		t.Fatalf("failing build --output stdout = %q, want empty", stdout)
-	}
-	document := readJSONBuildFile(t, output)
-	if document.Command != reportCommandBuild || document.Status != "error" || document.Data.Status != "failed" {
-		t.Fatalf("failure envelope = %+v / data = %+v", document, document.Data)
-	}
-	if len(document.Diagnostics) != 1 || document.Diagnostics[0].Code != "VMAKE_E_COMPILE" {
-		t.Fatalf("failure diagnostics = %+v", document.Diagnostics)
-	}
-	if !strings.Contains(stderr, "Error: ") {
-		t.Fatalf("human failure line missing from stderr: %q", stderr)
-	}
-	assertJSONDataMatchesReport(t, project, document.Data)
-}
-
-func TestBuildOutputMissingParent(t *testing.T) {
-	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
-	output := filepath.Join(t.TempDir(), "missing", "result.json")
-	stdout, stderr, code := runBuildCommand(t, project, "build", "--output", output)
-	if code != 1 {
-		t.Fatalf("missing parent exit = %d, want 1 (stdout %q)", code, stdout)
-	}
-	if stdout != "" {
-		t.Fatalf("missing parent stdout = %q, want empty", stdout)
-	}
-	if !strings.Contains(stderr, "output directory") || !strings.Contains(stderr, "does not exist") {
-		t.Fatalf("missing parent stderr = %q", stderr)
-	}
-	if _, err := os.Stat(output); !os.IsNotExist(err) {
-		t.Fatalf("missing parent wrote a result file: %v", err)
-	}
-	if report := loadBuildReport(t, project); report.Status != "succeeded" {
-		t.Fatalf("build itself failed: %+v", report)
-	}
-}
-
-func TestBuildOutputFlagWinsOverJSON(t *testing.T) {
-	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
-	output := filepath.Join(project, "both.json")
-	stdout, stderr, code := runBuildCommand(t, project, "build", "--json", "--output", output)
-	if code != 0 {
-		t.Fatalf("--json --output exit = %d, stderr = %q", code, stderr)
-	}
-	if stdout != "" {
-		t.Fatalf("--json --output stdout = %q, want empty", stdout)
-	}
-	document := readJSONBuildFile(t, output)
-	if document.Status != "ok" || document.Command != reportCommandBuild {
-		t.Fatalf("--json --output envelope = %+v", document)
-	}
-}
-
-func TestBuildOutputDashUsesStdout(t *testing.T) {
-	project := writeBuildReportProject(t, "int main(void) { return 0; }\n")
-	stdout, stderr, code := runBuildCommand(t, project, "build", "--output", "-")
-	if code != 0 {
-		t.Fatalf("--output - exit = %d, stderr = %q", code, stderr)
-	}
-	document := parseJSONBuildOutput(t, stdout)
-	if document.Status != "ok" || document.Command != reportCommandBuild {
-		t.Fatalf("--output - envelope = %+v", document)
-	}
-}
-
-func TestTestOutputFile(t *testing.T) {
-	project := writeTestCommandProject(t, passingTestSource)
-	output := filepath.Join(project, "test-result.json")
-	stdout, stderr, code := runBuildCommand(t, project, "test", "--output", output)
-	if code != 0 {
-		t.Fatalf("test --output exit = %d, stderr = %q", code, stderr)
-	}
-	if stdout != "" {
-		t.Fatalf("test --output stdout = %q, want empty", stdout)
-	}
-	if !strings.Contains(stderr, "PASS tests-project:tests") {
-		t.Fatalf("test progress missing from stderr: %q", stderr)
-	}
-	document := readJSONBuildFile(t, output)
-	if document.Command != reportCommandTest || document.Status != "ok" || len(document.Data.Tests) != 1 {
-		t.Fatalf("test envelope = %+v / data = %+v", document, document.Data)
-	}
-}
-
-func TestParseBuildWarningsFoldsRepeatedMessages(t *testing.T) {
-	var b strings.Builder
-	for i := 1; i <= 60; i++ {
-		fmt.Fprintf(&b, "include/common.h:%d:2: warning: 'OLD_API' is deprecated\n", i)
-	}
-	b.WriteString("src/main.c:10:5: warning: unused variable 'x'\n")
-	warnings := parseBuildWarnings(b.String())
-	if len(warnings) != 4 {
-		t.Fatalf("len(warnings) = %d, want 4 (%+v)", len(warnings), warnings)
-	}
-	if warnings[0].RepeatedCount != 57 {
-		t.Fatalf("warnings[0].RepeatedCount = %d, want 57", warnings[0].RepeatedCount)
-	}
-	if warnings[1].RepeatedCount != 0 || warnings[2].RepeatedCount != 0 {
-		t.Fatalf("warnings[1..2] should have RepeatedCount 0: %+v", warnings[1:3])
-	}
-	if warnings[3].File != "src/main.c" || warnings[3].Message != "unused variable 'x'" {
-		t.Fatalf("warnings[3] = %+v, want main.c warning preserved after folding", warnings[3])
-	}
-
-	merged := mergeBuildDiagnostics(
-		[]buildDiagnostic{{Severity: "warning", Code: "VMAKE_E_COMPILE", File: "include/common.h", Line: 1, Column: 2, Message: "'OLD_API' is deprecated"}},
-		warnings,
-	)
-	if len(merged) != 4 || merged[0].RepeatedCount != 57 {
-		t.Fatalf("merged = %+v", merged)
-	}
-}
-
 func TestParseBerkeleySizeAndBuildReportSize(t *testing.T) {
 	sample := "   text\t   data\t    bss\t    dec\t    hex\tfilename\n  12345\t    678\t    901\t  13924\t   3664\tbuild/app.elf\n"
 	sz := build.TargetSize{Text: 12345, Data: 678, Bss: 901, Total: 13924}
@@ -2618,15 +1480,15 @@ func Main(p *api.Package) {
 }
 `)
 	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "static int global_data = 42;\nstatic int global_bss;\nint main(void) { return global_data + global_bss; }\n")
-	stdout, stderr, code := runBuildCommand(t, project, "build", "--json")
+	stdout, stderr, code := runBuildCommand(t, project, "build")
 	if code != 0 {
-		t.Fatalf("build --json exit = %d, stderr = %q\n%s", code, stderr, stdout)
+		t.Fatalf("build exit = %d, stderr = %q\n%s", code, stderr, stdout)
 	}
-	doc := parseJSONBuildOutput(t, stdout)
-	if len(doc.Data.Targets) != 1 || doc.Data.Targets[0].Size == nil {
-		t.Fatalf("targets = %+v, want non-nil Size", doc.Data.Targets)
+	report := loadBuildReport(t, project)
+	if len(report.Targets) != 1 || report.Targets[0].Size == nil {
+		t.Fatalf("targets = %+v, want non-nil Size", report.Targets)
 	}
-	gotSize := doc.Data.Targets[0].Size
+	gotSize := report.Targets[0].Size
 	if gotSize.Text <= 0 || gotSize.Total <= 0 || gotSize.Total != gotSize.Text+gotSize.Data+gotSize.Bss {
 		t.Fatalf("target size = %+v (sample=%+v, raw=%q)", gotSize, sz, sample)
 	}

@@ -16,7 +16,7 @@ vmake rebuild                          # Clean + build in one step
 vmake test                             # Build & run native test targets (CTest-style)
 vmake config --set pkg.opt=val         # Non-interactive config override (skip TUI)
 vmake config list | use <name>         # Manage multiple configs under .vmake/
-vmake inspect [--target <pkg:t>]       # Read-only JSON build graph & freshness
+vmake inspect [--target <pkg:t>]       # Read-only JSON build graph
 vmake query [targets|deps|config|plan] # Focused JSON slices for agents
 vmake check-symbols [-p <pkg>]         # Verify ELF symbols against policy
 vmake clean [--all] | distclean        # Clean build outputs or reset project
@@ -25,7 +25,7 @@ vmake doctor [--toolchain <name>]      # Check environment and toolchain readine
 ```
 
 - **Build & Test Reports**: `build`/`rebuild` write `build/vmake-build.json` and `test` writes `build/vmake-test.json` (schemaVersion 2: status, duration, concise error, parsed compiler/linker diagnostics, target timings, test results, SHA-256 installed artifacts). `clean`/`distclean`/`pkg clean` remove both. Full schema: [references/build-result.md](references/build-result.md).
-- **Inspection & Dry-Run Discipline**: `inspect`, `query`, `check-symbols`, and `test` preflight evaluate `OnBuild` in dry-run mode without materializing sources (`p.DryRun() == true`, `scriptfs` read-only unless `--allow-dry-run-writes`). Prefer declarative `p.WriteBuildFile`, `p.GenerateFile`, `p.Generate`, and `p.BuildPath` in `OnBuild` (they defer writes to scheduler execution and emit `$builddir/...` when `BuildDir()` is empty); guard any procedural `os.WriteFile` on `!p.DryRun()`. Full schema: [references/inspect.md](references/inspect.md).
+- **Inspection & Dry-Run Discipline**: `inspect`, `query`, and `check-symbols` evaluate `OnBuild` in dry-run mode without materializing sources (`p.DryRun() == true`, `scriptfs` read-only). Prefer declarative `p.WriteBuildFile`, `p.GenerateFile`, `p.Generate`, and `p.BuildPath` in `OnBuild` (they defer writes to scheduler execution and emit `$builddir/...` when `BuildDir()` is empty); guard any procedural `os.WriteFile` on `!p.DryRun()`. Full schema: [references/inspect.md](references/inspect.md).
 - **Full CLI Reference**: See [references/cli.md](references/cli.md).
 
 ## Build Script Structure

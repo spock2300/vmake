@@ -5,7 +5,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -504,29 +503,6 @@ func TestCMakeGeneratorMainFile(t *testing.T) {
 	}
 	if got := cmakeGeneratorMainFile(nil); got != want {
 		t.Errorf("host default -> %q, want %q", got, want)
-	}
-}
-
-// TestCMakePathCandidatesMatchesExecLookup pins the candidate generation to
-// internal/exec's command lookup: with PATHEXT in effect an extensionless bare
-// name is never tried, while a name that already carries an extension keeps
-// its bare form.
-func TestCMakePathCandidatesMatchesExecLookup(t *testing.T) {
-	suffixes := pathextSuffixes(".COM;.EXE")
-	if got := lookPathCandidates("cmake", suffixes); !reflect.DeepEqual(got, []string{"cmake.COM", "cmake.EXE"}) {
-		t.Fatalf("candidates for an extensionless name = %q", got)
-	}
-	if got := lookPathCandidates("cmake.exe", suffixes); !reflect.DeepEqual(got, []string{"cmake.exe", "cmake.exe.COM", "cmake.exe.EXE"}) {
-		t.Fatalf("candidates for an extension name = %q", got)
-	}
-	if got := lookPathCandidates("cmake", nil); !reflect.DeepEqual(got, []string{"cmake"}) {
-		t.Fatalf("candidates without PATHEXT = %q", got)
-	}
-	if got := pathextSuffixes("EXE;.CMD"); !reflect.DeepEqual(got, []string{".EXE", ".CMD"}) {
-		t.Fatalf("pathextSuffixes without leading dots = %q", got)
-	}
-	if got := pathextSuffixes(""); !reflect.DeepEqual(got, []string{".COM", ".EXE", ".BAT", ".CMD"}) {
-		t.Fatalf("pathextSuffixes default = %q", got)
 	}
 }
 

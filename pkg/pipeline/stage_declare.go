@@ -206,7 +206,6 @@ func (s *declareStage) buildSubGraph(currentPkg, rootPkg string) (err error) {
 		Mode:         s.rc.cfg.Mode,
 		IncludeTests: s.rc.opts.IncludeTests,
 		Explain:      s.rc.opts.Explain,
-		Check:        s.rc.opts.Check,
 	}
 	return build.BuildSubGraph(job, build.SubGraphRequest{
 		RootPkg: rootPkg,

@@ -187,14 +187,7 @@ func applyAllConfigCallbacks(ctx *RuntimeContext) {
 				applyVals[optName] = val
 			}
 		}
-		for optName, val := range entry.Options {
-			if opt, declared := opts[optName]; declared && opt.IsGlobal() {
-				if _, hasGlobal := globalVals[optName]; hasGlobal && api.NormalizeOptionValue(opt, val) == api.NormalizeOptionValue(opt, opt.Default()) {
-					continue
-				}
-			}
-			applyVals[optName] = val
-		}
+		mergePkgOptions(applyVals, entry.Options, opts, globalVals)
 		applyCtx.SetCfgVals(applyVals)
 		bindGlobalFlagCallbacks(applyCtx, buf)
 

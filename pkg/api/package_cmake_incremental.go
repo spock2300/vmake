@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/spock2300/vmake/internal/envsig"
+	exec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/jsonio"
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
@@ -288,7 +289,7 @@ func nestedCMakePath(root, dir string) (string, bool) {
 }
 
 func (p *Package) resolveCMakeExecutable() (string, string) {
-	path, err := lookPathInPathValue("cmake", p.cmakeCommandEnvironment(), p.cmakeCommandPath())
+	path, err := exec.LookPathInEnvPath("cmake", p.cmakeCommandPath())
 	if err != nil || path == "" {
 		return "", ""
 	}
@@ -336,66 +337,6 @@ func (p *Package) cmakeCommandPath() string {
 		}
 	}
 	return os.Getenv("PATH")
-}
-
-// lookPathInPathValue resolves name against pathValue with the same candidate
-// generation as internal/exec's command lookup: with PATHEXT in effect an
-// extensionless bare name is not a candidate.
-func lookPathInPathValue(name string, env map[string]string, pathValue string) (string, error) {
-	var suffixes []string
-	if runtime.GOOS == "windows" {
-		suffixes = pathextSuffixes(env["PATHEXT"])
-	}
-	candidates := lookPathCandidates(name, suffixes)
-	for _, dir := range filepath.SplitList(pathValue) {
-		if dir == "" {
-			continue
-		}
-		for _, candidate := range candidates {
-			path := filepath.Join(dir, candidate)
-			info, err := os.Stat(path)
-			if err != nil || info.IsDir() {
-				continue
-			}
-			if runtime.GOOS != "windows" && info.Mode()&0111 == 0 {
-				continue
-			}
-			return path, nil
-		}
-	}
-	return "", fmt.Errorf("%s not found in PATH", name)
-}
-
-// pathextSuffixes splits PATHEXT into lookup suffixes, falling back to the
-// Windows default when the value is empty. Every suffix keeps a leading dot.
-func pathextSuffixes(value string) []string {
-	if value == "" {
-		value = ".COM;.EXE;.BAT;.CMD"
-	}
-	var suffixes []string
-	for _, extension := range strings.Split(value, ";") {
-		if extension == "" {
-			continue
-		}
-		if extension[0] != '.' {
-			extension = "." + extension
-		}
-		suffixes = append(suffixes, extension)
-	}
-	return suffixes
-}
-
-// lookPathCandidates lists the file names to try for name. The bare name is
-// only tried when it already carries an extension or no PATHEXT suffixes apply.
-func lookPathCandidates(name string, suffixes []string) []string {
-	candidates := make([]string, 0, len(suffixes)+1)
-	if filepath.Ext(name) != "" || len(suffixes) == 0 {
-		candidates = append(candidates, name)
-	}
-	for _, suffix := range suffixes {
-		candidates = append(candidates, name+suffix)
-	}
-	return candidates
 }
 
 func (p *Package) cmakeConfigureEnv() map[string]string {

@@ -65,10 +65,19 @@ func TestPostLinkDebuglinkIncrementalAndInstall(t *testing.T) {
 	tc := &toolchain.Toolchain{Name: "postlink-test", Tools: toolchain.Tools{
 		CC: resolved["gcc"], CXX: resolved["g++"], AR: resolved["ar"], OBJCOPY: resolved["objcopy"], STRIP: resolved["strip"], SIZE: resolved["size"],
 	}}
-	scheduler, err := NewScheduler(graph, tc, dirs, api.ModeDebug, nil, api.Platform{OS: "linux"})
+	platform := api.Platform{OS: "linux"}
+	tools, err := ResolveTools(tc, platform)
 	if err != nil {
 		t.Fatal(err)
 	}
+	scheduler := newScheduler(schedulerConfig{
+		Graph:     graph,
+		Toolchain: tc,
+		Platform:  platform,
+		Layouts:   map[string]*PackageLayout{"p": {Dirs: *dirs["p"], BuildKey: "k", Ready: true}},
+		Mode:      api.ModeDebug,
+		Tools:     tools,
+	})
 	links := 0
 	scheduler.linker.run = func(name, dir string, args ...string) ([]byte, error) {
 		links++

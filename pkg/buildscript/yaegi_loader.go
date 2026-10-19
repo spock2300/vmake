@@ -94,12 +94,12 @@ func loadBuildScript(src Source) (_ *api.Package, err error) {
 		pkg.SetScriptDir(dir)
 	}
 
-	runScriptFunc(src.Name, func() {
+	api.RunScriptSafe(src.Name, func() {
 		mainFunc(pkg)
 	})
 
 	if fn := pkg.GetPackageFunc(); fn != nil {
-		runScriptFunc(src.Name, func() {
+		api.RunScriptSafe(src.Name, func() {
 			fn(pkg)
 		})
 	}
@@ -107,7 +107,7 @@ func loadBuildScript(src Source) (_ *api.Package, err error) {
 	if len(pkg.GetRequireFuncs()) > 0 {
 		ctx := api.NewRequireContextForConfig(src.Name, nil, pkg.Options, pkg.GetRequireFuncs())
 		for _, fn := range pkg.GetRequireFuncs() {
-			runScriptFunc(src.Name, func() {
+			api.RunScriptSafe(src.Name, func() {
 				fn(ctx)
 			})
 		}
@@ -115,26 +115,4 @@ func loadBuildScript(src Source) (_ *api.Package, err error) {
 	}
 
 	return pkg, nil
-}
-
-func runScriptFunc(pkgName string, fn func()) {
-	defer func() {
-		if r := recover(); r != nil {
-			var bse *api.BuildScriptError
-			if existing, ok := r.(*api.BuildScriptError); ok {
-				bse = existing
-				if bse.Package == "" {
-					bse.Package = pkgName
-				}
-			} else {
-				bse = &api.BuildScriptError{
-					Package: pkgName,
-					Op:      "panic",
-					Err:     fmt.Errorf("%v", r),
-				}
-			}
-			panic(bse)
-		}
-	}()
-	fn()
 }

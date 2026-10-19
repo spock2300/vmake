@@ -142,8 +142,8 @@ func (t *Target) AddPublicLinks(libs ...any) *Target {
 	return t
 }
 
-func (t *Target) AddProvidedLibs(libs ...string) *Target {
-	t.providedLibs = append(t.providedLibs, libs...)
+func (t *Target) AddProvidedLibs(libs ...any) *Target {
+	t.providedLibs = append(t.providedLibs, flattenAny(libs)...)
 	return t
 }
 
@@ -241,8 +241,8 @@ func (t *Target) SetVersionScript(path string) *Target {
 	return t
 }
 
-func (t *Target) AddExcludeLibs(libs ...string) *Target {
-	t.excludeLibs = append(t.excludeLibs, libs...)
+func (t *Target) AddExcludeLibs(libs ...any) *Target {
+	t.excludeLibs = append(t.excludeLibs, flattenAny(libs)...)
 	return t
 }
 
@@ -309,8 +309,8 @@ func (t *Target) AddInputs(files ...any) *Target {
 	return t
 }
 
-func (t *Target) RemoveInputs(files ...string) *Target {
-	t.inputs = removeStrings(t.inputs, files...)
+func (t *Target) RemoveInputs(files ...any) *Target {
+	t.inputs = removeStrings(t.inputs, flattenAny(files)...)
 	return t
 }
 
@@ -321,8 +321,8 @@ func (t *Target) AddOutputs(files ...any) *Target {
 	return t
 }
 
-func (t *Target) RemoveOutputs(files ...string) *Target {
-	t.outputs = removeStrings(t.outputs, files...)
+func (t *Target) RemoveOutputs(files ...any) *Target {
+	t.outputs = removeStrings(t.outputs, flattenAny(files)...)
 	return t
 }
 
@@ -413,73 +413,73 @@ func (t *Target) PostLinkSteps() []PostLinkStep { return t.postLinks }
 func (t *Target) PostLinkDeps() []string        { return t.postLinkDeps }
 func (t *Target) PostLinkOutputs() []string     { return t.postLinkOutputs }
 
-func (t *Target) RemoveCFlags(flags ...string) *Target {
-	t.cflags = removeStrings(t.cflags, flags...)
+func (t *Target) RemoveCFlags(flags ...any) *Target {
+	t.cflags = removeStrings(t.cflags, flattenAny(flags)...)
 	return t
 }
 
-func (t *Target) RemovePublicCFlags(flags ...string) *Target {
-	t.publicCFlags = removeStrings(t.publicCFlags, flags...)
+func (t *Target) RemovePublicCFlags(flags ...any) *Target {
+	t.publicCFlags = removeStrings(t.publicCFlags, flattenAny(flags)...)
 	return t
 }
 
-func (t *Target) RemoveCxxFlags(flags ...string) *Target {
-	t.cxxflags = removeStrings(t.cxxflags, flags...)
+func (t *Target) RemoveCxxFlags(flags ...any) *Target {
+	t.cxxflags = removeStrings(t.cxxflags, flattenAny(flags)...)
 	return t
 }
 
-func (t *Target) RemovePublicCxxFlags(flags ...string) *Target {
-	t.publicCxxFlags = removeStrings(t.publicCxxFlags, flags...)
+func (t *Target) RemovePublicCxxFlags(flags ...any) *Target {
+	t.publicCxxFlags = removeStrings(t.publicCxxFlags, flattenAny(flags)...)
 	return t
 }
 
-func (t *Target) RemoveLdFlags(flags ...string) *Target {
-	t.ldflags = removeStrings(t.ldflags, flags...)
+func (t *Target) RemoveLdFlags(flags ...any) *Target {
+	t.ldflags = removeStrings(t.ldflags, flattenAny(flags)...)
 	return t
 }
 
-func (t *Target) RemovePublicLdFlags(flags ...string) *Target {
-	t.publicLdFlags = removeStrings(t.publicLdFlags, flags...)
+func (t *Target) RemovePublicLdFlags(flags ...any) *Target {
+	t.publicLdFlags = removeStrings(t.publicLdFlags, flattenAny(flags)...)
 	return t
 }
 
-func (t *Target) RemoveDefines(defines ...string) *Target {
-	t.defines = removeStrings(t.defines, defines...)
+func (t *Target) RemoveDefines(defines ...any) *Target {
+	t.defines = removeStrings(t.defines, flattenAny(defines)...)
 	return t
 }
 
-func (t *Target) RemovePublicDefines(defines ...string) *Target {
-	t.publicDefines = removeStrings(t.publicDefines, defines...)
+func (t *Target) RemovePublicDefines(defines ...any) *Target {
+	t.publicDefines = removeStrings(t.publicDefines, flattenAny(defines)...)
 	return t
 }
 
-func (t *Target) RemoveIncludes(dirs ...string) *Target {
-	t.includes = removeStrings(t.includes, dirs...)
+func (t *Target) RemoveIncludes(dirs ...any) *Target {
+	t.includes = removeStrings(t.includes, flattenAny(dirs)...)
 	return t
 }
 
-func (t *Target) RemovePublicIncludes(dirs ...string) *Target {
-	t.publicIncludes = removeStrings(t.publicIncludes, dirs...)
+func (t *Target) RemovePublicIncludes(dirs ...any) *Target {
+	t.publicIncludes = removeStrings(t.publicIncludes, flattenAny(dirs)...)
 	return t
 }
 
-func (t *Target) RemoveLinks(libs ...string) *Target {
-	t.links = removeStrings(t.links, libs...)
+func (t *Target) RemoveLinks(libs ...any) *Target {
+	t.links = removeStrings(t.links, flattenAny(libs)...)
 	return t
 }
 
-func (t *Target) RemovePublicLinks(libs ...string) *Target {
-	t.publicLinks = removeStrings(t.publicLinks, libs...)
+func (t *Target) RemovePublicLinks(libs ...any) *Target {
+	t.publicLinks = removeStrings(t.publicLinks, flattenAny(libs)...)
 	return t
 }
 
-func (t *Target) RemoveProvidedLibs(libs ...string) *Target {
-	t.providedLibs = removeStrings(t.providedLibs, libs...)
+func (t *Target) RemoveProvidedLibs(libs ...any) *Target {
+	t.providedLibs = removeStrings(t.providedLibs, flattenAny(libs)...)
 	return t
 }
 
-func (t *Target) RemoveDeps(targets ...string) *Target {
-	t.deps = removeStrings(t.deps, targets...)
+func (t *Target) RemoveDeps(targets ...any) *Target {
+	t.deps = removeStrings(t.deps, flattenAny(targets)...)
 	return t
 }
 

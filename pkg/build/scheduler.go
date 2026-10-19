@@ -91,7 +91,6 @@ type Scheduler struct {
 	pkgGenerated  map[string]bool
 	rootDir       string
 	includeTests  bool
-	check         bool
 	numWorkers    int
 	keepGoing     bool
 	explain       bool
@@ -117,46 +116,11 @@ type schedulerConfig struct {
 	Context      context.Context
 	RootDir      string
 	IncludeTests bool
-	Check        bool
 	NumWorkers   int
 	KeepGoing    bool
 	Explain      bool
 	GlobalFlags  *[4][]string
 	Stats        *BuildStats
-}
-
-func NewScheduler(
-	graph *BuildGraph,
-	tc *toolchain.Toolchain,
-	pkgDirs map[string]*api.PkgDirs,
-	mode string,
-	pkgOptions map[string]map[string]any,
-	platform api.Platform,
-) (*Scheduler, error) {
-	tools, err := ResolveTools(tc, platform)
-	if err != nil {
-		return nil, err
-	}
-	if mode == "" {
-		mode = api.ModeDebug
-	}
-	layouts := make(map[string]*PackageLayout, len(pkgDirs))
-	for name, dirs := range pkgDirs {
-		key, err := BuildKeyE(tools.CCKey(), mode, pkgOptions[name], "")
-		if err != nil {
-			return nil, err
-		}
-		layouts[name] = &PackageLayout{Dirs: *dirs, BuildKey: key, Ready: true}
-	}
-	return newScheduler(schedulerConfig{
-		Graph:     graph,
-		Toolchain: tc,
-		Platform:  platform,
-		Layouts:   layouts,
-		Mode:      mode,
-		Options:   pkgOptions,
-		Tools:     tools,
-	}), nil
 }
 
 func newScheduler(cfg schedulerConfig) *Scheduler {
@@ -191,7 +155,6 @@ func newScheduler(cfg schedulerConfig) *Scheduler {
 		pkgGenerated:  make(map[string]bool),
 		rootDir:       cfg.RootDir,
 		includeTests:  cfg.IncludeTests,
-		check:         cfg.Check,
 		numWorkers:    cfg.NumWorkers,
 		keepGoing:     cfg.KeepGoing,
 		explain:       cfg.Explain,
@@ -292,10 +255,8 @@ func (s *Scheduler) BuildAll() error {
 	if root == "" {
 		root = "."
 	}
-	if !s.check {
-		if err := s.ccWriter.Save(filepath.Join(root, "build", "compile_commands.json")); err != nil {
-			errs = append(errs, err)
-		}
+	if err := s.ccWriter.Save(filepath.Join(root, "build", "compile_commands.json")); err != nil {
+		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }
@@ -370,7 +331,7 @@ func (s *Scheduler) Build(fullName string) error {
 }
 
 func (s *Scheduler) ensurePackageGenerated(pkgName string) error {
-	if s.check || s.pkgGenerated[pkgName] {
+	if s.pkgGenerated[pkgName] {
 		return nil
 	}
 	if s.pkgGenerated == nil {
@@ -394,16 +355,6 @@ func (s *Scheduler) ensurePackageGenerated(pkgName string) error {
 }
 
 func (s *Scheduler) prepareTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, workDir string) error {
-	if s.check {
-		node := resolved.Node
-		pkg := s.packages[node.PkgName]
-		if len(node.Target.GenRules()) > 0 || (pkg != nil && (pkg.GenConfigHeader() || pkg.HasGenerators())) {
-			if s.stats != nil {
-				s.stats.RecordPlannedGenerator(node.FullName)
-			}
-		}
-		return nil
-	}
 	node := resolved.Node
 
 	genRules := node.Target.GenRules()

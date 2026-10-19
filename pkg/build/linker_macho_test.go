@@ -31,14 +31,17 @@ func TestLinkBinaryMachOForceLoadsArchives(t *testing.T) {
 	dylib := filepath.Join(dir, "libshared.dylib")
 	output := filepath.Join(dir, "app")
 
-	err := l.LinkBinary(
-		[]string{object, archive, dylib},
-		[]string{"m"},
-		[]string{"-Wl,-dead_strip", "-L" + dir, "-lz"},
-		output, "", LinkPolicy{TargetOS: "darwin"}, dir,
-	)
+	cmd, err := l.binaryCommand(binaryLinkInput{
+		objs:       []string{object, archive, dylib},
+		libs:       []string{"m"},
+		ldflags:    []string{"-Wl,-dead_strip", "-L" + dir, "-lz"},
+		outputPath: output,
+	}, LinkPolicy{TargetOS: "darwin"}, dir)
 	if err != nil {
-		t.Fatalf("LinkBinary: %v", err)
+		t.Fatalf("binaryCommand: %v", err)
+	}
+	if err := l.execute(cmd, output, dir, false); err != nil {
+		t.Fatalf("execute: %v", err)
 	}
 	args := *got
 	for _, flag := range []string{"--start-group", "--end-group", "--whole-archive", "--no-whole-archive"} {
@@ -71,9 +74,14 @@ func TestLinkBinaryMachOForceLoadKeepsCommaPathsIntact(t *testing.T) {
 	l, got := recordingLinker()
 	dir := t.TempDir()
 	archive := filepath.Join(dir, "lib,comma.a")
+	output := filepath.Join(dir, "app")
 
-	if err := l.LinkBinary([]string{"a.o", archive}, nil, nil, filepath.Join(dir, "app"), "", LinkPolicy{TargetOS: "darwin"}, dir); err != nil {
-		t.Fatalf("LinkBinary: %v", err)
+	cmd, err := l.binaryCommand(binaryLinkInput{objs: []string{"a.o", archive}, outputPath: output}, LinkPolicy{TargetOS: "darwin"}, dir)
+	if err != nil {
+		t.Fatalf("binaryCommand: %v", err)
+	}
+	if err := l.execute(cmd, output, dir, false); err != nil {
+		t.Fatalf("execute: %v", err)
 	}
 	args := *got
 	if !hasSequence(args, "-Xlinker", "-force_load", "-Xlinker", archive) {
@@ -89,8 +97,13 @@ func TestLinkBinaryMachOForceLoadKeepsCommaPathsIntact(t *testing.T) {
 func TestLinkBinaryMachOSkipsRPathsWithoutDylibs(t *testing.T) {
 	l, got := recordingLinker()
 	dir := t.TempDir()
-	if err := l.LinkBinary([]string{filepath.Join(dir, "main.o"), filepath.Join(dir, "libdep.a")}, nil, nil, filepath.Join(dir, "app"), "", LinkPolicy{TargetOS: "darwin"}, dir); err != nil {
-		t.Fatalf("LinkBinary: %v", err)
+	output := filepath.Join(dir, "app")
+	cmd, err := l.binaryCommand(binaryLinkInput{objs: []string{filepath.Join(dir, "main.o"), filepath.Join(dir, "libdep.a")}, outputPath: output}, LinkPolicy{TargetOS: "darwin"}, dir)
+	if err != nil {
+		t.Fatalf("binaryCommand: %v", err)
+	}
+	if err := l.execute(cmd, output, dir, false); err != nil {
+		t.Fatalf("execute: %v", err)
 	}
 	if strings.Contains(strings.Join(*got, " "), "-rpath") {
 		t.Fatalf("args = %v, want no rpath entries for exclusively static inputs", *got)
@@ -100,9 +113,9 @@ func TestLinkBinaryMachOSkipsRPathsWithoutDylibs(t *testing.T) {
 func TestLinkBinaryMachORejectsLinkerScript(t *testing.T) {
 	l, _ := recordingLinker()
 	dir := t.TempDir()
-	err := l.LinkBinary([]string{"a.o"}, nil, nil, filepath.Join(dir, "app"), filepath.Join(dir, "link.ld"), LinkPolicy{TargetOS: "darwin"}, dir)
+	_, err := l.binaryCommand(binaryLinkInput{objs: []string{"a.o"}, outputPath: filepath.Join(dir, "app"), linkerScript: filepath.Join(dir, "link.ld")}, LinkPolicy{TargetOS: "darwin"}, dir)
 	if err == nil || !strings.Contains(err.Error(), "linker scripts") {
-		t.Fatalf("LinkBinary with a linker script = %v, want an unsupported error", err)
+		t.Fatalf("binaryCommand with a linker script = %v, want an unsupported error", err)
 	}
 }
 
@@ -111,8 +124,12 @@ func TestLinkSharedMachOUsesDynamiclib(t *testing.T) {
 	dir := t.TempDir()
 	output := filepath.Join(dir, "libfoo.dylib")
 
-	if err := l.LinkShared([]string{"a.o"}, []string{"-pie", "-Wl,-dead_strip"}, output, LinkPolicy{TargetOS: "darwin"}, dir); err != nil {
-		t.Fatalf("LinkShared: %v", err)
+	cmd, err := l.sharedCommand([]string{"a.o"}, []string{"-pie", "-Wl,-dead_strip"}, output, LinkPolicy{TargetOS: "darwin"}, dir)
+	if err != nil {
+		t.Fatalf("sharedCommand: %v", err)
+	}
+	if err := l.execute(cmd, output, dir, false); err != nil {
+		t.Fatalf("execute: %v", err)
 	}
 	args := *got
 	if len(args) < 2 || args[1] != "-dynamiclib" {
@@ -143,8 +160,12 @@ func TestLinkSharedMachORPathsDylibDependencies(t *testing.T) {
 	dylib := filepath.Join(depDir, "libbar.dylib")
 	output := filepath.Join(dir, "libfoo.dylib")
 
-	if err := l.LinkShared([]string{filepath.Join(dir, "a.o"), dylib}, nil, output, LinkPolicy{TargetOS: "darwin"}, dir); err != nil {
-		t.Fatalf("LinkShared: %v", err)
+	cmd, err := l.sharedCommand([]string{filepath.Join(dir, "a.o"), dylib}, nil, output, LinkPolicy{TargetOS: "darwin"}, dir)
+	if err != nil {
+		t.Fatalf("sharedCommand: %v", err)
+	}
+	if err := l.execute(cmd, output, dir, false); err != nil {
+		t.Fatalf("execute: %v", err)
 	}
 	args := *got
 	for _, rpath := range []string{depDir, "@loader_path"} {

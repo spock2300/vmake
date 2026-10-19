@@ -39,7 +39,6 @@ func fatalUsage(format string, args ...any) {
 }
 
 func exitWithError(err error) {
-	emitPreReportJSON(err)
 	var usage *usageError
 	if errors.As(err, &usage) {
 		os.Exit(2)
