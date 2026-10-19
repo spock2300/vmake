@@ -413,7 +413,11 @@ func cmakeProjectLanguageList(srcDir string) (map[string]bool, bool) {
 	if err != nil {
 		return nil, false
 	}
-	body, ok := cmakeCommandArguments(stripCMakeComments(string(data)), "project")
+	stripped := stripCMakeComments(string(data))
+	if _, ok := cmakeCommandArguments(stripped, "enable_language"); ok {
+		return nil, false
+	}
+	body, ok := cmakeCommandArguments(stripped, "project")
 	if !ok {
 		return nil, false
 	}
@@ -424,12 +428,20 @@ func cmakeProjectLanguageList(srcDir string) (map[string]bool, bool) {
 		}
 		languages := make(map[string]bool)
 		for _, language := range args[i+1:] {
+			if cmakeProjectKeywords[language] {
+				break
+			}
 			if strings.ContainsAny(language, "${\"") {
 				return nil, false
 			}
-			if canonical, ok := cmakeLanguageNames[language]; ok {
-				languages[canonical] = true
+			canonical, ok := cmakeLanguageNames[language]
+			if !ok {
+				return nil, false
 			}
+			languages[canonical] = true
+		}
+		if len(languages) == 0 {
+			return nil, false
 		}
 		return languages, true
 	}
@@ -448,6 +460,14 @@ func cmakeProjectLanguageList(srcDir string) (map[string]bool, bool) {
 		}
 	}
 	return nil, false
+}
+
+var cmakeProjectKeywords = map[string]bool{
+	"VERSION":        true,
+	"COMPAT_VERSION": true,
+	"DESCRIPTION":    true,
+	"HOMEPAGE_URL":   true,
+	"SPDX_LICENSE":   true,
 }
 
 // cmakeLanguageNames maps the case-sensitive project() language names CMake

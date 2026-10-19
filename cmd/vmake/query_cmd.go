@@ -105,6 +105,8 @@ the command exits 0.
 With --json, stdout is exactly one schemaVersion 1 document:
 
   {"schemaVersion":1,"command":"query targets","status":"ok",
+   "vmakeVersion":"...","vmakeCommit":"...",
+   "projectRevision":"...","projectDirty":false,
    "data":{"targets":[{"package":"firmware","target":"firmware","kind":"binary"}]},
    "diagnostics":[]}
 
@@ -151,6 +153,7 @@ func runQueryTargets(asJSON bool) error {
 	}
 
 	ctx := resolveToConfig(false)
+	defer ctx.Resolver.Close()
 	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
 	fatalErr(err)
 	scriptfs.TakeBlockedWrites()
@@ -186,11 +189,12 @@ func runQueryTargets(asJSON bool) error {
 }
 
 func runQueryTargetsJSON() error {
-	envelope := newQueryTargetsEnvelope()
-	if findProjectDirSoft() == "" {
+	rejectShadowedProjectRootFromCWD()
+	root := findProjectDirSoft()
+	envelope := newQueryTargetsEnvelope(root)
+	if root == "" {
 		return failQueryTargets(envelope, errors.New("not inside a vmake project (no .vmake/, build.go or */build.go found in the current directory or any parent directory)"))
 	}
-	rejectShadowedProjectRootFromCWD()
 
 	restoreStdout := silenceInspectStdout()
 	restoreStderr := silenceInspectStderr()
@@ -272,8 +276,12 @@ func runQueryTargetsJSON() error {
 	return encodeJSONDocument(os.Stdout, envelope)
 }
 
-func newQueryTargetsEnvelope() *queryTargetsEnvelope {
-	revision, dirty := projectProvenance(findProjectDir())
+func newQueryTargetsEnvelope(root string) *queryTargetsEnvelope {
+	var revision string
+	var dirty *bool
+	if root != "" {
+		revision, dirty = projectProvenance(root)
+	}
 	return &queryTargetsEnvelope{
 		SchemaVersion:   inspectSchemaVersion,
 		Command:         queryTargetsCommand,
@@ -315,6 +323,7 @@ func runQueryConfig(cmd *cobra.Command, args []string) {
 
 	name := args[0]
 	ctx := resolveToConfig(false)
+	defer ctx.Resolver.Close()
 
 	node := ctx.DepGraph.Packages[name]
 	if node == nil {
@@ -351,6 +360,7 @@ func runQuery(cmd *cobra.Command, args []string) {
 	defer queryReadOnly()()
 
 	ctx := resolveToConfig(false)
+	defer ctx.Resolver.Close()
 
 	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
 	fatalErr(err)

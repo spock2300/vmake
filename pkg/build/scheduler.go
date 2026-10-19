@@ -317,7 +317,7 @@ func (s *Scheduler) Build(fullName string) error {
 
 	pkgInfo, err := s.pkgInfoOf(node.PkgName)
 	if err != nil {
-		return err
+		return wrapTargetError(fullName, "prepare", err)
 	}
 	workDir := pkgInfo.SourceDir
 
@@ -325,16 +325,20 @@ func (s *Scheduler) Build(fullName string) error {
 
 	resolved, err := s.resolveTarget(node)
 	if err != nil {
-		return err
+		return wrapTargetError(fullName, "prepare", err)
 	}
 
 	if err := s.prepareTarget(resolved, pkgInfo, workDir); err != nil {
 		return wrapTargetError(fullName, "prepare", err)
 	}
 
+	stage := "link"
+	if node.Target.Kind() == api.TargetVoid {
+		stage = "build"
+	}
 	numFiles := len(resolved.SourceFiles)
 	if numFiles == 0 || node.Target.Prebuilt() != "" {
-		return wrapTargetError(fullName, "link", s.finalizeTarget(resolved, pkgInfo, nil))
+		return wrapTargetError(fullName, stage, s.finalizeTarget(resolved, pkgInfo, nil))
 	}
 
 	objs, err := s.compileAll(resolved, pkgInfo)
@@ -342,7 +346,7 @@ func (s *Scheduler) Build(fullName string) error {
 		return wrapTargetError(fullName, "compile", err)
 	}
 
-	return wrapTargetError(fullName, "link", s.finalizeTarget(resolved, pkgInfo, objs))
+	return wrapTargetError(fullName, stage, s.finalizeTarget(resolved, pkgInfo, objs))
 }
 
 func (s *Scheduler) prepareTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, workDir string) error {

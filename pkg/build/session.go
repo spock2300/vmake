@@ -21,6 +21,7 @@ type Session struct {
 	tools   map[string]*ResolvedTools
 	active  string
 	outputs map[string]TargetResult
+	stats   *BuildStats
 }
 
 const (
@@ -50,11 +51,18 @@ func (s *Session) TargetResults() []TargetResult {
 	return result
 }
 
+func (s *Session) Stats() *BuildStats {
+	if s.stats == nil {
+		s.stats = NewBuildStats()
+	}
+	return s.stats
+}
+
 func NewSession(ctx context.Context) *Session {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return &Session{ctx: ctx, results: make(map[string]targetResult)}
+	return &Session{ctx: ctx, results: make(map[string]targetResult), stats: NewBuildStats()}
 }
 
 func (s *Session) ResolveTools(tc *toolchain.Toolchain, platform api.Platform) (*ResolvedTools, error) {

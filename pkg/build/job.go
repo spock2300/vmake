@@ -99,7 +99,7 @@ func (j *BuildJob) Run() (*Scheduler, error) {
 	if err != nil {
 		return nil, err
 	}
-	stats := NewBuildStats()
+	stats := session.Stats()
 	base := j.newSchedulerFor(env, session, j.Toolchain, defaultPlatform, defaultTools, stats)
 	graphPackages := make(map[string]bool)
 	for _, node := range j.Graph.Nodes {
@@ -118,17 +118,15 @@ func (j *BuildJob) Run() (*Scheduler, error) {
 	groups := make(map[buildGroupKey]*Scheduler)
 	var additional []*Scheduler
 	runners := make(map[string]*Scheduler)
-	names := make([]string, 0, len(env.Toolchains))
-	for name := range env.Toolchains {
-		if graphPackages[name] {
-			names = append(names, name)
-		}
+	names := make([]string, 0, len(graphPackages))
+	for name := range graphPackages {
+		names = append(names, name)
 	}
 	sort.Strings(names)
 	for _, name := range names {
 		tc := env.Toolchains[name]
 		if tc == nil {
-			continue
+			tc = j.Toolchain
 		}
 		platform := defaultPlatform
 		if pkg := env.Packages[name]; pkg != nil {

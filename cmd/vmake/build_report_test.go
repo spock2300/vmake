@@ -249,6 +249,24 @@ func TestBuildReportBootstrapChild(t *testing.T) {
 	os.Exit(0)
 }
 
+func TestBoundedTestOutputUTF8Boundary(t *testing.T) {
+	keep := buildTestOutputLimit - len(buildTestOutputMarker)
+	input := "head-" + "中" + strings.Repeat("b", keep-1)
+	got := boundedTestOutput(input)
+	if len(got) > buildTestOutputLimit {
+		t.Fatalf("len(got) = %d, exceeds %d", len(got), buildTestOutputLimit)
+	}
+	data, err := json.Marshal(struct {
+		Output string `json:"output"`
+	}{Output: got})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `\ufffd`) || strings.ContainsRune(got, '\uFFFD') {
+		t.Fatalf("truncated output contains invalid UTF-8 replacement rune: %q", got)
+	}
+}
+
 func runBuildCommand(t *testing.T, projectDir string, args ...string) (string, string, int) {
 	t.Helper()
 	return runBuildCommandEnv(t, projectDir, nil, args...)

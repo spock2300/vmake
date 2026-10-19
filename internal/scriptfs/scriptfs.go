@@ -106,6 +106,8 @@ func (s *ScriptFS) Exports() interp.Exports {
 			"Chdir":      reflect.ValueOf(s.chdir),
 			"TempDir":    reflect.ValueOf(s.tempDir),
 			"CreateTemp": reflect.ValueOf(s.createTemp),
+			"MkdirTemp":  reflect.ValueOf(s.mkdirTemp),
+			"Symlink":    reflect.ValueOf(s.symlink),
 		},
 		"os/exec/exec": {
 			"Command": reflect.ValueOf(s.command),
@@ -171,6 +173,12 @@ func (s *ScriptFS) rename(oldpath, newpath string) error {
 	}
 	return os.Rename(s.resolve(oldpath), s.resolve(newpath))
 }
+func (s *ScriptFS) symlink(oldname, newname string) error {
+	if err := s.writeBlocked(newname); err != nil {
+		return err
+	}
+	return os.Symlink(oldname, s.resolve(newname))
+}
 func (s *ScriptFS) readDir(name string) ([]os.DirEntry, error) { return os.ReadDir(s.resolve(name)) }
 
 func (s *ScriptFS) getwd() (string, error) { return s.Base(), nil }
@@ -190,6 +198,17 @@ func (s *ScriptFS) createTemp(dir, pattern string) (*os.File, error) {
 		return nil, err
 	}
 	return os.CreateTemp(s.resolve(dir), pattern)
+}
+
+func (s *ScriptFS) mkdirTemp(dir, pattern string) (string, error) {
+	blocked := dir
+	if blocked == "" {
+		blocked = os.TempDir()
+	}
+	if err := s.writeBlocked(blocked); err != nil {
+		return "", err
+	}
+	return os.MkdirTemp(s.resolve(dir), pattern)
 }
 
 func (s *ScriptFS) command(name string, args ...string) *exec.Cmd {

@@ -696,7 +696,7 @@ func (m *Model) effectiveGlobalValue(values map[string]any, name string) any {
 		if def := opt.Default(); def != nil && def != "" {
 			return def
 		}
-		if def := m.displayFallback(name); def != nil {
+		if def := m.displayFallbackFor(values, name); def != nil {
 			return def
 		}
 		if v, ok := values[name]; ok {
@@ -756,8 +756,35 @@ func (m *Model) setValue(name string, val any) {
 }
 
 func (m *Model) checkChanges() {
-	globalChanged := !globalValuesEqual(m.globalValues, m.origGlobal)
-	m.hasChanges = !valuesEqual(m.values, m.origValues) || globalChanged || m.modifiedPresetCount() > 0 || m.description != m.origDescription
+	m.hasChanges = !valuesEqual(m.values, m.origValues) || m.globalValuesChanged() || m.modifiedPresetCount() > 0 || m.description != m.origDescription
+}
+
+func (m *Model) globalValuesChanged() bool {
+	seen := make(map[string]bool)
+	for name := range m.globalOptions {
+		seen[name] = true
+		if m.isOptionModifiedGlobal(name) {
+			return true
+		}
+	}
+	for name, v := range m.globalValues {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		if !sameValue(v, m.origGlobal[name]) {
+			return true
+		}
+	}
+	for name, v := range m.origGlobal {
+		if seen[name] {
+			continue
+		}
+		if !sameValue(m.globalValues[name], v) {
+			return true
+		}
+	}
+	return false
 }
 
 func globalValuesEqual(a, b map[string]any) bool {
@@ -1013,10 +1040,14 @@ func (m *Model) declaredDefault(name string) any {
 }
 
 func (m *Model) displayFallback(name string) any {
+	return m.displayFallbackFor(m.globalValues, name)
+}
+
+func (m *Model) displayFallbackFor(values map[string]any, name string) any {
 	if m.displayDefaults == nil {
 		return nil
 	}
-	toolchainName, _ := m.globalValues[api.ToolchainOptionName].(string)
+	toolchainName, _ := values[api.ToolchainOptionName].(string)
 	if toolchainName == "" {
 		toolchainName = "host"
 	}

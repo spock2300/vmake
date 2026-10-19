@@ -501,12 +501,16 @@ func (m *SourceManager) cloneRefTree(url, dir string, req SourceRequest, commit,
 	if localRef == "" {
 		// A lock-pinned request knows the commit but not the namespace. Prefer
 		// the cache's recorded mapping (no network); only probe the source when
-		// the cache has never seen this ref, so the tag ref lands in the tree
-		// for git describe.
+		// the commit is not already cached, so an offline cached build never
+		// blocks on upstream and an uncached build still records the tag ref.
 		if cached, ok := m.cache.CachedRef(url, req.Ref, commit); ok {
 			localRef = cached
-		} else if _, detected, err := resolveRemoteRefOne(m.context(), url, req.Ref); err == nil {
-			localRef = detected
+		} else if !m.cache.Has(url, commit) {
+			if _, detected, err := resolveRemoteRefOne(m.context(), url, req.Ref); err == nil {
+				localRef = detected
+			} else if ctxErr := m.context().Err(); ctxErr != nil {
+				return "", ctxErr
+			}
 		}
 	}
 	if localRef == "" {

@@ -187,11 +187,13 @@ func (r *Resolver) ResolveAll(localSources []buildscript.Source) error {
 			continue
 		}
 		if _, err := r.resolveRecursive(src.Name, "", nil); err != nil {
+			r.Close()
 			return err
 		}
 	}
 
 	if err := r.UpdateOrder(); err != nil {
+		r.Close()
 		return err
 	}
 	return nil
@@ -314,6 +316,9 @@ func (r *Resolver) recurseDeps(node *PackageNode, path []string) error {
 }
 
 func (r *Resolver) findSource(id string, constraint string) (*buildscript.Source, error) {
+	if src, ok := r.sources[id]; ok && src.IsLocal() {
+		return src, nil
+	}
 	if r.repoMgr != nil {
 		repoName, _, _ := api.SplitPackageRef(id)
 		if repoName != "" {

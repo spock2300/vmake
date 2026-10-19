@@ -61,8 +61,12 @@ var extUntrustCmd = &cobra.Command{
 	Use: "untrust <name>", Short: "Revoke trust for an extension repository",
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		fatalErr(revokeExtension(args[0]))
-		fmt.Printf("Untrusted extension '%s'\n", args[0])
+		name := args[0]
+		lock, err := getPluginManager().LockRepo(name, true)
+		fatalErr(err)
+		defer lock.Release()
+		fatalErr(revokeExtension(name))
+		fmt.Printf("Untrusted extension '%s'\n", name)
 	},
 }
 
@@ -223,7 +227,7 @@ func loadPlugins() {
 		}
 		if !ok {
 			_ = lock.Release()
-			vlog.Info("extension repository '%s' is not trusted at its current commit; plugins and toolchains were not loaded (run 'vmake ext trust %s')", repo.Name, repo.Name)
+			vlog.Error("extension repository '%s' is not trusted at its current commit; plugins and toolchains were not loaded (run 'vmake ext trust %s')", repo.Name, repo.Name)
 			continue
 		}
 		extensionRepoLocks = append(extensionRepoLocks, lock)

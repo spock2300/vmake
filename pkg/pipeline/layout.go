@@ -104,6 +104,11 @@ func (s *sourceStage) rebindLayout(name string, layout build.PackageLayout) erro
 	if !changed {
 		return nil
 	}
+	if !s.rc.opts.Check && layout.Dirs.InstallDir != "" && (old == nil || old.Dirs.InstallDir != layout.Dirs.InstallDir) {
+		if err := clearInstallDir(name, layout.Dirs.InstallDir); err != nil {
+			return err
+		}
+	}
 	if err := s.applyPatchesFor(name); err != nil {
 		return err
 	}
@@ -210,12 +215,19 @@ func clearRemoteInstallDirs(layouts map[string]*build.PackageLayout) error {
 		if layout == nil || layout.Dirs.InstallDir == "" {
 			continue
 		}
-		if err := os.RemoveAll(layout.Dirs.InstallDir); err != nil {
-			return fmt.Errorf("clear install dir for %s: %w", name, err)
+		if err := clearInstallDir(name, layout.Dirs.InstallDir); err != nil {
+			return err
 		}
-		if err := os.MkdirAll(layout.Dirs.InstallDir, 0755); err != nil {
-			return fmt.Errorf("create install dir for %s: %w", name, err)
-		}
+	}
+	return nil
+}
+
+func clearInstallDir(name, dir string) error {
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("clear install dir for %s: %w", name, err)
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create install dir for %s: %w", name, err)
 	}
 	return nil
 }

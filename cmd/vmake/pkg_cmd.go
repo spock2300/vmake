@@ -112,7 +112,11 @@ func searchRegistryRepo(repoName, pattern string) {
 }
 
 func searchNativeRepo(repoName, pattern string) {
-	depsDir := filepath.Join(getDepsDir(), repoName)
+	projectDir := findProjectDirSoft()
+	if projectDir == "" {
+		return
+	}
+	depsDir := filepath.Join(projectDir, ".vmake_deps", repoName)
 	entries, err := fs.ListDirEntries(depsDir)
 	if err != nil {
 		return

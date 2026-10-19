@@ -56,12 +56,13 @@ func runCheck() error {
 	if testsFlag {
 		return &usageError{err: fmt.Errorf("--check cannot be combined with --tests; test targets are not planned")}
 	}
+	projectRevision, projectDirty := projectProvenance(findProjectDir())
 	stdout := os.Stdout
 	restore := redirectCheckStdout(stdout)
 	defer restore()
 	result, runErr := resolveCheck()
 	restore()
-	return emitCheckResult(stdout, result, runErr)
+	return emitCheckResult(stdout, result, runErr, projectRevision, projectDirty)
 }
 
 func resolveCheck() (*BuildResult, error) {
@@ -106,7 +107,7 @@ func redirectCheckStdout(stdout *os.File) func() {
 	}
 }
 
-func emitCheckResult(stdout *os.File, result *BuildResult, runErr error) error {
+func emitCheckResult(stdout *os.File, result *BuildResult, runErr error, projectRevision string, projectDirty *bool) error {
 	if runErr != nil {
 		diagnostics, summary := buildFailureDetails(runErr)
 		if len(diagnostics) == 0 {
@@ -130,7 +131,6 @@ func emitCheckResult(stdout *os.File, result *BuildResult, runErr error) error {
 	}
 	if jsonOutput {
 		stats := result.Stats
-		projectRevision, projectDirty := projectProvenance(findProjectDir())
 		jsonEnvelopeWritten = true
 		document := &checkJSONEnvelope{
 			SchemaVersion: jsonOutputSchemaVersion,

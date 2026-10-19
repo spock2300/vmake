@@ -367,10 +367,10 @@ vmake 的 `Package` 有三个目录：`SourceDir`（源码目录）、`BuildDir`
 
 | 包类型 | BuildDir | 原因 |
 |--------|----------|------|
-| 本地包 | `<SourceDir>/build/<key>/` | 与源码分离；key 含工具链+模式+选项+全局 flags/commit/脚本哈希 |
+| 本地包 | `<SourceDir>/build/<key>/` | 与源码分离；key 含工具链+模式+选项+全局 flags/commit |
 | 远程包 | `<项目>/.vmake_deps/<repo>/<owner>/out/<sha256(member)>/<key>/build/` | 项目内工作树；`owner` 是根父包，`member` 为 native 子包相对路径（普通包为空）。InstallDir 为同级 `install/` |
 
-其中 `key` 由 `build.BuildKeyE(toolchain, mode, options, extra)` 生成。远程包的 `extra` 包含版本、commit、全局 flags 哈希、补丁哈希和脚本哈希；本地包的 `extra` 只包含 commit、全局 flags 哈希和脚本哈希，版本与补丁哈希不进入本地键（`pkg/pipeline/keys.go`）。因此远程包在不同工具链/模式/选项/版本/补丁下隔离；本地 `SetGit` 包的版本变化会通过 commit 改变键，补丁变化只重置工作树并复用同一构建目录；普通本地包没有版本/工作树物化，补丁直接作用在包目录。
+其中 `key` 由 `build.BuildKeyE(toolchain, mode, options, extra)` 生成。远程包的 `extra` 包含版本、commit、全局 flags 哈希和补丁哈希；本地包的 `extra` 只包含已物化源码 commit 和全局 flags 哈希，版本与补丁哈希不进入本地键（`pkg/pipeline/keys.go`）。构建脚本文本不进入 `BuildKey`（编译/链接命令、include/define 与文件列表由动作签名捕获，仅修改注释不会轮换 `BuildDir`）。因此远程包在不同工具链/模式/选项/版本/补丁下隔离；本地 `SetGit` 包的版本变化会通过 commit 改变键，补丁变化只重置工作树并复用同一构建目录；普通本地包没有版本/工作树物化，补丁直接作用在包目录。
 
 ### 5.2 交叉编译环境变量
 

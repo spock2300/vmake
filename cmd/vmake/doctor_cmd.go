@@ -202,11 +202,10 @@ func doctorRelativeFile(root, file string) string {
 }
 
 // checkNestedProjectMarker reports a package-local .vmake marker that wins
-// root detection over an enclosing project. It only fires when the invocation
-// directory itself resolved as the project root; invocations from a package
-// subdirectory or with -C pointing elsewhere are not reported here.
+// root detection over an enclosing project. Invocations with -C pointing
+// elsewhere are not reported here.
 func checkNestedProjectMarker(startDir, workDir string) []doctorFinding {
-	if filepath.Clean(startDir) != filepath.Clean(workDir) || !hasProjectConfig(workDir) {
+	if projectOverride != "" || !hasProjectConfig(workDir) {
 		return nil
 	}
 	enclosing, ok := findEnclosingProjectRoot(workDir)
@@ -330,21 +329,29 @@ var deprecatedAPIs = []struct {
 }
 
 func checkDeprecated(src buildscript.Source) []doctorFinding {
-	data, err := os.ReadFile(src.Path)
-	if err != nil {
-		return nil
+	files := []string{src.Path}
+	if src.Dir != "" {
+		if listed, err := gosrc.ListGoFiles(src.Dir); err == nil && len(listed) > 0 {
+			files = listed
+		}
 	}
-	content := string(data)
 
 	var findings []doctorFinding
-	for _, d := range deprecatedAPIs {
-		if strings.Contains(content, d.old) {
-			findings = append(findings, doctorFinding{
-				Severity: "warn",
-				File:     src.Path,
-				Category: d.category,
-				Message:  fmt.Sprintf("use %s instead of deprecated %s", d.new, strings.TrimSuffix(d.old, "(")),
-			})
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		for _, d := range deprecatedAPIs {
+			if strings.Contains(content, d.old) {
+				findings = append(findings, doctorFinding{
+					Severity: "warn",
+					File:     file,
+					Category: d.category,
+					Message:  fmt.Sprintf("use %s instead of deprecated %s", d.new, strings.TrimSuffix(d.old, "(")),
+				})
+			}
 		}
 	}
 	return findings

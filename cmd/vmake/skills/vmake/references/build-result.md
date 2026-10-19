@@ -26,7 +26,7 @@ the installation manifest (`install/manifest.json`). `clean`, `distclean`, and
 | `projectRevision`, `projectDirty` | Full git HEAD and whether the project tree had uncommitted changes when the report began. Both are omitted outside a supported git worktree. The dirty scan excludes vmake's own `build/`, `install/`, `.vmake/_locks/`, `.vmake/layout`, `.vmake/vmake.lock`, `.vmake_deps/`, and `vmake_deps/` paths but counts any other untracked file, including source. Recorded observations, not security attestations |
 | `compileDatabase` | Absolute path to the compilation database, or empty |
 | `targets` | Executed default targets: `package`, `target`, `kind`, `outputs`, `status`, `durationMs`. On failure only targets that completed before the failure are listed. A failure outside target execution (for example a package-level `OnBuild` CMake configure failure) has no target attribution: `diagnostics[].target` stays empty and `targets[]` may stay empty |
-| `tests` | Always an array. For `vmake test`, one entry per discovered test target: an executed test has `name`, `package`, `target`, `passed`, `elapsedMs`, `exitCode`, optional `signal` (set when a signal terminated the process), and `output`. After a `-k` build failure, a declared target that did not run has `notRun: true`, `skipReason` (`build failed`, `target not built`, `binary missing`, or `unsupported platform`), `passed: false`, and no output or signal. Partial mode executes only targets recorded `built` or `up-to-date` in this invocation's `targets`; a stale binary from an earlier build is recorded as `target not built` and never run |
+| `tests` | Always an array. For `vmake test`, one entry per discovered test target: an executed test has `name`, `package`, `target`, `passed`, `elapsedMs`, `exitCode`, optional `signal` (set when a signal terminated the process), and `output`. After a `-k` build failure or interruption, a declared target that did not run has `notRun: true`, `skipReason` (`build failed`, `target not built`, `binary missing`, `interrupted`, or `unsupported platform`), `passed: false`, and no output or signal. Partial mode executes only targets recorded `built` or `up-to-date` in this invocation's `targets`; a stale binary from an earlier build is recorded as `target not built` and never run |
 | `artifacts` | Files installed by this invocation only: `package`, `target`, `buildPath`, `installPath`, `size`, `sha256` |
 
 A target's `status` is `built` when it compiled or linked something in this
@@ -72,13 +72,14 @@ Compiler output is parsed from the GNU `file:line[:column]: severity: message`
 form; GNU ld's `file:line: undefined reference to ...` / `multiple definition of
 ...` lines are also recognized. Each diagnostic is attributed to the failing
 target and stage; a package-scoped failure outside target execution has an
-empty `target`. Located CMake headers (`CMake Warning`,
+empty `target`. Located and bare CMake headers (`CMake Warning`,
 `CMake Deprecation Warning`, `CMake Dev Warning`, `CMake Author Warning`,
-`CMake Warning (dev)`, and `CMake Error` at `file:line`) are recognized as
-well: each collects its contiguous indented detail lines (stopping at a blank
-or non-indented line) into one message with `file` and `line`, bounded to 1000
-characters, and every warning variant has severity `warning` with code
-`VMAKE_W_TOOL`. `error` repeats the first parsed error. A command failure with
+`CMake Warning (dev)`, and `CMake Error`, either `at file:line` or `:`) are
+recognized as well: each collects its indented detail lines (including blank
+lines between indented detail, stopping at a non-indented trailer line) into one
+message with optional `file` and `line`, bounded to 1000 characters, and every
+warning variant has severity `warning` with code `VMAKE_W_TOOL`. `error`
+repeats the first parsed error. A command failure with
 no parseable location produces one fallback entry: the last
 `undefined reference`/`multiple definition` line, then the last `error:` line,
 then the trimmed output tail (up to 1000 characters). Buildscript/API errors use
@@ -150,8 +151,9 @@ Exit is 0 when planning succeeds even with pending work, 1 on planning errors,
 2 for `--check` with `--install`/`--tests`. Human output is one line; `--json`
 emits `{schemaVersion:1,command:"check",status,data:{workPending,
 plannedCompiles,plannedLinks,plannedCallbacks,plannedGenerators,caveats,
-upToDate,targetsTotal,vmakeVersion,vmakeCommit},diagnostics}`;
-`plannedGenerators`/`caveats` are omitted when zero/empty, and
+upToDate,targetsTotal,vmakeVersion,vmakeCommit,projectRevision,projectDirty},diagnostics}`;
+`plannedGenerators`/`caveats` are omitted when zero/empty, `projectRevision` and
+`projectDirty` are included when the project is a git worktree, and
 `vmakeVersion`/`vmakeCommit` identify the running binary on every check
 document (check writes no build report).
 

@@ -34,6 +34,11 @@ type Store struct {
 
 func Open(path string) (*Store, error) {
 	store := &Store{path: path}
+	lock, err := flock.AcquireShared(store.lockPath())
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Release()
 	if _, err := store.load(); err != nil {
 		return nil, err
 	}

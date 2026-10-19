@@ -66,7 +66,7 @@ vmake clean
 仅当 `pipeline.Require`（依赖解析）失败时，`resolveToConfigBestEffort` 返回 ok=false，`clean --all` 降级为扫描目录并清理全部构建产物；
 配置加载或 `pipeline.Configure` 失败仍直接报错；普通 `clean` 在 Require 失败时报错并提示改用 `--all`/`distclean`（降级路径不执行 OnClean 回调）
 
-`clean`、`distclean` 和 `pkg clean` 同时删除 `build/vmake-build.json` 构建报告（见 `docs/BUILD_RESULT.md`）。
+`clean`、`distclean` 和 `pkg clean` 同时删除 `build/vmake-build.json` 与 `build/vmake-test.json` 报告（见 `docs/BUILD_RESULT.md`）。
 
 `distclean` 按同一套规则清理全部配置的构建产物后，再删除 `install/` 与 `build/compile_commands.json`，
 但保留 `.vmake_deps/` 中已下载的工作树（`src/`、`state.json`），下次构建直接复用；传 `--purge-sources` 才连同工作树一起删除。
@@ -86,6 +86,9 @@ vmake clean
 | `--jobs` | `-j` | target 内部编译及 Make/CMake helper 的并行上限；所有 target 串行（0 = NumCPU，负数报错） |
 | `--keep-going` | `-k` | 某个 target 失败后继续构建其余独立 target |
 | `--explain` | | 输出每个编译/链接动作被重建的原因 |
+| `--check` (`--plan`) | | 只评估动作签名与计划，不执行编译/链接/回调/安装或写报告 |
+| `--json` | | 在 stdout 输出单个机器可读 JSON 报告信封 |
+| `--output` | | 隐含 `--json`，将 JSON 信封写入指定文件（`-` 表示 stdout） |
 
 ### Install Type 过滤
 
@@ -214,7 +217,7 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 - `ExportConfig()` — 设置配置导出标志
 - `ImportConfig(names...)` — 注册可导入的包名
 - `SyncConfigDefines(names...)` — 快捷方式：`GenerateConfigDefines` + `ImportConfig`
-- `SetDryRun(v bool)` — 设置为 dry-run 模式（查询/检查等只声明场景使用）；这些场景不物化源码，本地 SetGit 包的工作树缺失时声明得到空 `BuildDir()`，`OnBuild` 中的真实文件 I/O 必须自行守卫
+- `SetDryRun(v bool)` — 设置为 dry-run 模式（查询/检查等只声明场景使用）；这些场景不物化源码，`inspect`/`query`/`test` 预检还会对包装的 `os` 写操作启用只读拦截，`OnBuild` 中的真实文件写入必须用 `p.DryRun()` 守卫（本地 SetGit 包工作树缺失时 `BuildDir()` 为空）
 
 **BuildEnv / BuildJob**（`pkg/build/job.go`）：
 ```

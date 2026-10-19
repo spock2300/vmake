@@ -504,7 +504,7 @@ func projectProvenance(root string) (string, *bool) {
 		Env:   map[string]string{"GIT_OPTIONAL_LOCKS": "0"},
 	})
 	if err != nil {
-		return head, nil
+		return "", nil
 	}
 	dirty := strings.TrimSpace(string(status)) != ""
 	return head, &dirty

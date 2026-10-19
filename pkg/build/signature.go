@@ -201,11 +201,28 @@ func equalFileStates(a, b []fileState) bool {
 	return slices.Equal(a, b)
 }
 
+func (c *fileHashCache) evict(workDir string, paths []string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		if absolute, err := filepath.Abs(resolveWorkPath(workDir, path)); err == nil {
+			delete(c.hashes, filepath.Clean(absolute))
+		}
+	}
+}
+
 func saveActionRecord(cache *fileHashCache, recordPath, signature, workDir string, inputs, outputs []string) error {
 	inputStates, err := fingerprintFiles(cache, workDir, inputs)
 	if err != nil {
 		return fmt.Errorf("record action inputs: %w", err)
 	}
+	cache.evict(workDir, outputs)
 	outputStates, err := fingerprintFiles(cache, workDir, outputs)
 	if err != nil {
 		return fmt.Errorf("record action outputs: %w", err)

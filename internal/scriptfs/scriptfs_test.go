@@ -111,8 +111,8 @@ func TestExportsShape(t *testing.T) {
 	}
 	osSyms := exports["os/os"]
 	for _, name := range []string{"Open", "OpenFile", "Create", "ReadFile", "WriteFile",
-		"Stat", "Lstat", "Mkdir", "MkdirAll", "Remove", "RemoveAll", "Rename",
-		"ReadDir", "Getwd", "Chdir", "TempDir", "CreateTemp"} {
+		"Stat", "Lstat", "Mkdir", "MkdirAll", "MkdirTemp", "Remove", "RemoveAll", "Rename",
+		"Symlink", "ReadDir", "Getwd", "Chdir", "TempDir", "CreateTemp"} {
 		if _, ok := osSyms[name]; !ok {
 			t.Errorf("os exports missing %s", name)
 		}
@@ -163,10 +163,17 @@ func TestReadOnlyRejectsWrites(t *testing.T) {
 		{"MkdirAll", filepath.Join(base, "newdir", "deep"), func() error {
 			return s.mkdirAll("newdir/deep", 0755)
 		}},
+		{"MkdirTemp", os.TempDir(), func() error {
+			_, err := s.mkdirTemp("", "vmake-readonly-dir-*")
+			return err
+		}},
 		{"Remove", keptFile, func() error { return s.remove("kept.txt") }},
 		{"RemoveAll", filepath.Join(base, "kept-dir"), func() error { return s.removeAll("kept-dir") }},
 		{"Rename", renamed + " -> " + filepath.Join(base, "rename-new.txt"), func() error {
 			return s.rename("rename-old.txt", "rename-new.txt")
+		}},
+		{"Symlink", filepath.Join(base, "link.txt"), func() error {
+			return s.symlink("kept.txt", "link.txt")
 		}},
 	}
 	for _, c := range cases {

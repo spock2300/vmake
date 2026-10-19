@@ -35,7 +35,7 @@ read action records, and does not predict which targets are up to date. It
 never writes the compile database or either report.
 
 ```
-vmake inspect [--set [package/]option=value ...] [-C <dir>]
+vmake inspect [--set [package/]option=value ...] [--allow-dry-run-writes] [-C <dir>]
 ```
 
 `-C`/`--project` is the global project-root override: it resolves against the
@@ -107,7 +107,7 @@ touching the filesystem, returning
 read-only inspection: interpreted script write to <resolved absolute path> is not allowed
 ```
 
-- `WriteFile`, `Create`, `CreateTemp`, `Mkdir`, `MkdirAll`, `Remove`, `RemoveAll`;
+- `WriteFile`, `Create`, `CreateTemp`, `MkdirTemp`, `Mkdir`, `MkdirAll`, `Remove`, `RemoveAll`, `Symlink`;
 - `Rename`, whose error names both the old and the new path;
 - `OpenFile` when the flags contain any of `O_WRONLY`, `O_RDWR`, `O_CREATE`,
   `O_TRUNC`, `O_APPEND`. `O_RDONLY` opens still work.
@@ -133,7 +133,7 @@ aggregate `VMAKE_W_OMITTED_TARGETS` warning after the per-package warnings; the
 per-package warnings are retained, the aggregate reports the total omitted
 count, and its message also states how many omissions were read-only write
 rejections. This guard covers the wrapped symbols only: a script that reaches
-unwrapped stdlib APIs such as `os.MkdirTemp`, `ioutil.*`, or a subprocess is not
+unwrapped stdlib APIs such as `ioutil.*` or a subprocess is not
 sandboxed, and a script that uses them can still write during inspection. The
 mode is also active while `Require`/`Configure` run, so wrapped writes there are
 rejected too, but only dry-run `OnBuild` attempts are attached to a
@@ -260,7 +260,7 @@ When every omission was a non-read-only declaration failure the message reads
 `omitted targets for N package(s) because target declaration failed` and the fix
 points at the package's `OnBuild` callback. `query targets --json` emits one
 schemaVersion-1 document instead:
-`{command:"query targets",status:"ok"|"error",data:{targets:[{package,target,kind}]},
+`{command:"query targets",status:"ok"|"error",data:{targets:[{package,target,kind}],vmakeVersion,vmakeCommit,projectRevision?,projectDirty?},
 diagnostics:[]}` with targets sorted by package/target. Source-missing,
 declaration and omission warnings become diagnostics (the human warning lines
 are suppressed), `data` is null on resolution errors, and human mode is
@@ -375,6 +375,9 @@ same object shape is used for both. Each copies the report's identity fields:
 | `command` | string? | `build`/`rebuild` for the build report, `test` for the test report; omitted when the report lacks it |
 | `started`, `finished` | string | RFC 3339 timestamps recorded in the report; `finished` may be empty while a build is running |
 | `mode`, `toolchain` | string? | The report's recorded build mode and toolchain; omitted when the report lacks them |
+| `vmakeVersion`, `vmakeCommit` | string? | Version and abbreviated VCS commit embedded in the vmake binary that wrote the report; omitted when the report lacks them |
+| `projectRevision` | string? | Full git HEAD recorded when the report began; omitted when the report lacks it |
+| `projectDirty` | bool? | Whether the project git worktree had uncommitted changes when the report began; omitted when the report lacks it |
 | `modeMatches`, `toolchainMatches` | bool | Whether the report's recorded mode/toolchain equals the inspected one (missing values count as matching) |
 | `configMatches` | bool | Whether the report's `configSha256` equals `data.configSha256` and no `--set` override was supplied |
 | `effectiveConfigMatches` | bool | Whether the report's `configSha256` equals `data.configSha256`, the recorded mode/toolchain match, and every `--set` override is a no-op against the current effective value |

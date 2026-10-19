@@ -235,9 +235,15 @@ func resolveToConfigContext(execution context.Context, ignoreLock bool) (*Runtim
 	ctx := newRuntimeContext(inputs, locks)
 	ctx.Context = execution
 	if err := pipeline.Require(ctx); err != nil {
+		if ctx.Resolver != nil {
+			ctx.Resolver.Close()
+		}
 		return nil, err
 	}
 	if err := pipeline.Configure(ctx); err != nil {
+		if ctx.Resolver != nil {
+			ctx.Resolver.Close()
+		}
 		return nil, err
 	}
 	return ctx, nil

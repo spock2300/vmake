@@ -286,7 +286,7 @@ func (p *Package) SetDryRun(v bool) *Package   // 设置 dry run 模式（只打
 func (p *Package) DryRun() bool
 ```
 
-`vmake query`、`query targets`、`check-symbols` 等只声明场景在 `Inspect` 阶段不会物化源码（前面的依赖解析仍可能拉取远程包）：本地 SetGit 包的工作树尚未物化时，其 `BuildDir()` 为空。这类场景下内置的 `Run`/`Make`/`CMake*` 只打印不执行，但脚本自己的 `os.ReadFile`/`os.WriteFile` 等不会被拦截；`OnBuild` 中做真实文件读写前必须用 `p.DryRun()` 或 `p.BuildDir() == ""` 守卫，且不能假定 `SrcDir()` 下的源码存在。`BuildContext` 也提供 `SetDryRun(bool)`，仅由这类只声明流程使用。`vmake query`/`query targets`/`check-symbols` 与非 `--all` 的 `clean` 使用 `InspectWithOptions(... FilterDeps: true)`，在声明前按当前配置过滤依赖，因此与 `RunBuild` 的包集合一致；`clean --all` 扫描所有配置与包，不经过该过滤。直接调用 `Inspect` 仍保留 eager 图。`query config` 直接读取配置，不经过 `Inspect`。
+`vmake inspect`、`vmake query`、`query targets`、`check-symbols` 与 `vmake test` 的无测试预检等只声明场景在 `Inspect` 阶段不会物化源码（前面的依赖解析仍可能拉取远程包）：本地 SetGit 包的工作树尚未物化时，其 `BuildDir()` 为空；源码已存在时 `BuildDir()` 为已解析的活动构建键目录。这类场景下内置的 `Run`/`Make`/`CMake*` 只打印不执行，`inspect`/`query`/`query targets` 与 `test` 预检还会对经 `scriptfs` 包装的 `os` 写操作启用只读拦截（`--allow-dry-run-writes` 可显式放行），未包装的写接口与子进程仍需脚本自行处理；`OnBuild` 中做真实文件写入前必须用 `p.DryRun()` 守卫（读操作或路径拼接还需兼顾 `p.BuildDir() == ""`），且不能假定 `SrcDir()` 下的源码存在。`BuildContext` 也提供 `SetDryRun(bool)`，仅由这类只声明流程使用。`vmake inspect`/`query`/`query targets`/`check-symbols`、`test` 预检与非 `--all` 的 `clean` 使用 `InspectWithOptions(... FilterDeps: true)`，在声明前按当前配置过滤依赖，因此与 `RunBuild` 的包集合一致；`clean --all` 扫描所有配置与包，不经过该过滤。直接调用 `Inspect` 仍保留 eager 图。`query config` 直接读取配置，不经过 `Inspect`。
 
 ### 版本选择
 

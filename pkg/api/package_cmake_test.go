@@ -226,6 +226,22 @@ func TestCMakeConfigureLanguageAwareCompilerInjection(t *testing.T) {
 			cmakelists: "project(app LANGUAGES ${APP_LANGUAGES})\n",
 			want:       allCompilers,
 		},
+		{
+			name:       "languages followed by version keyword",
+			cmakelists: "project(app LANGUAGES C VERSION 1.0 DESCRIPTION \"c only\")\n",
+			want:       []string{"CMAKE_C_COMPILER", "CMAKE_C_COMPILER_TARGET"},
+			absent:     []string{"CMAKE_CXX_COMPILER", "CMAKE_ASM_COMPILER", "CMAKE_CXX_COMPILER_TARGET", "CMAKE_ASM_COMPILER_TARGET"},
+		},
+		{
+			name:       "enable_language falls back to all compilers",
+			cmakelists: "project(app LANGUAGES C)\nenable_language(ASM)\n",
+			want:       allCompilers,
+		},
+		{
+			name:       "asm dialect falls back to all compilers",
+			cmakelists: "project(app LANGUAGES C ASM-ATT)\n",
+			want:       allCompilers,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

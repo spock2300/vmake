@@ -964,3 +964,23 @@ func TestTruncateRunes(t *testing.T) {
 		t.Error("truncate to 0 should be empty")
 	}
 }
+
+func TestResetGlobalOptionToDefault_KeepsHasChangesConsistentWithModifiedCount(t *testing.T) {
+	globalOpts := map[string]*api.Option{
+		"label": mkOpt("label", api.OptionString, ""),
+	}
+	m := NewModel(mkSources("app"), map[string][]string{}, map[string]map[string]*api.Option{}, map[string]map[string]any{}, "/w", "", globalOpts, map[string]any{}, nil)
+	m.selectedPkg = GlobalPkgName
+	m.buildOptionItems()
+	if m.hasChanges || m.modifiedCount() != 0 {
+		t.Fatalf("initial hasChanges=%v, modifiedCount=%d", m.hasChanges, m.modifiedCount())
+	}
+	m.resetOptionToDefault("label")
+	if m.hasChanges != (m.modifiedCount() > 0) {
+		t.Fatalf("after resetOptionToDefault on unset empty-default global option: hasChanges=%v, modifiedCount=%d", m.hasChanges, m.modifiedCount())
+	}
+	if m.hasChanges {
+		t.Fatal("resetting unset global option to its default should not mark model as changed")
+	}
+}
+

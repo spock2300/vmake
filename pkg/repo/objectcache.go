@@ -529,7 +529,7 @@ func (c *ObjectCache) ensureRepo(ctx context.Context, norm, url string) (string,
 	if err := gitRunContext(ctx, staging, []string{"remote", "add", "origin", url}, 0); err != nil {
 		return "", nil, false, fmt.Errorf("add origin to object cache %s: %w", staging, err)
 	}
-	if err := os.Rename(staging, repoDir); err != nil {
+	if err := fs.RenameRetry(staging, repoDir); err != nil {
 		return "", nil, false, fmt.Errorf("publish cache namespace %s: %w", repoDir, err)
 	}
 	keep = true

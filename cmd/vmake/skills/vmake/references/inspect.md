@@ -27,7 +27,7 @@ source files of needed packages. The build and test reports are separate
 invocations and are never merged.
 
 ```
-vmake inspect [--set [package/]option=value ...] [-C <dir>]
+vmake inspect [--set [package/]option=value ...] [--allow-dry-run-writes] [-C <dir>]
 ```
 
 `-C`/`--project` is the global project-root override. It is resolved against
@@ -85,6 +85,10 @@ Failure (no `data`, exit 1):
   Declaration is skipped when the package's source tree is missing, so that
   state reports only `VMAKE_W_SOURCE_MISSING` instead of a misleading
   declaration failure.
+- `VMAKE_W_OMITTED_TARGETS` — warning: aggregate summary emitted when one or
+  more needed packages had their targets omitted due to declaration failures or
+  read-only write attempts, naming the omitted count and the
+  `--allow-dry-run-writes`/`p.DryRun()` fix.
 - `VMAKE_W_SOURCE_MISSING` — warning: a needed package's expected source tree
   is missing or empty. `message` names the package and the URL/version to fetch
   when known; `package` carries the package name. `status` stays `"ok"` and exit
@@ -98,7 +102,8 @@ Failure (no `data`, exit 1):
   target-declaration failure in a package whose source is present prints one
   `Warning: cannot declare targets for <package>: <error>` and does not stop the
   command. `vmake query targets --json` emits one schemaVersion-1 document with
-  sorted `{package,target,kind}` entries and these warnings as `diagnostics`
+  sorted `{package,target,kind}` entries (plus `vmakeVersion`, `vmakeCommit`,
+  and git `projectRevision`/`projectDirty`) and these warnings as `diagnostics`
   (human mode unchanged); `--allow-dry-run-writes` opts out of the read-only
   guard.
 - `VMAKE_W_REPORT_UNREADABLE` — warning: `build/vmake-build.json` or
@@ -112,9 +117,9 @@ Failure (no `data`, exit 1):
 From before resolution until the command returns, inspect enables a
 process-wide read-only mode for interpreted-script file IO (`--allow-dry-run-writes` disables the guard for callbacks that must materialize inputs; it may modify the build tree) and restores it on
 every return path. The wrapped `os` symbols `WriteFile`, `Create`, `CreateTemp`,
-`Mkdir`, `MkdirAll`, `Remove`, `RemoveAll`, and `Rename` fail without touching
-the filesystem, as does `OpenFile` when its flags contain `O_WRONLY`, `O_RDWR`,
-`O_CREATE`, `O_TRUNC`, or `O_APPEND`. The error is:
+`Mkdir`, `MkdirAll`, `MkdirTemp`, `Remove`, `RemoveAll`, `Rename`, and `Symlink`
+fail without touching the filesystem, as does `OpenFile` when its flags contain
+`O_WRONLY`, `O_RDWR`, `O_CREATE`, `O_TRUNC`, or `O_APPEND`. The error is:
 
 ```
 read-only inspection: interpreted script write to <resolved absolute path> is not allowed
@@ -128,7 +133,7 @@ declaration: its targets are omitted and it gets a `VMAKE_W_TARGET_DECLARE`
 warning carrying the read-only message. When one or more packages are omitted this way, inspect appends one deterministic `VMAKE_W_OMITTED_TARGETS` aggregate counting all omitted packages (with the read-only subset) and giving the fix. This also applies when the callback
 ignores the returned error (`_ = os.WriteFile(...)`); inspect records the attempt
 and treats it as a declaration failure. The guard covers the wrapped symbols
-only: unwrapped stdlib APIs such as `os.MkdirTemp`, `ioutil.*`, or subprocesses
+only: unwrapped stdlib APIs such as `ioutil.*` or subprocesses
 are not sandboxed. Writes attempted during `Require`/`Configure` are rejected
 too but are not attached to a target-declaration warning.
 
@@ -190,7 +195,8 @@ toolchain defaults, target `cFlags`, mode flags, `globalCFlags`, and one
 Inspect does not execute the merge, so this is guidance, not a command line.
 
 `buildReportState` and `testReportState` copy `status`, `buildId`, `command`,
-`started`, `finished`, `mode`, `toolchain`, `summary` and `error` from their
+`started`, `finished`, `mode`, `toolchain`, `vmakeVersion`, `vmakeCommit`,
+`projectRevision`, `projectDirty`, `summary` and `error` from their
 report when present, plus `modeMatches` and `toolchainMatches`.
 `configMatches` is true only when that report's `configSha256` equals
 `data.configSha256` and no `--set` override was supplied, so a normal

@@ -51,6 +51,9 @@ func remoteScriptTrustChecker(src buildscript.Source) error {
 	}
 	subject := fmt.Sprintf("The remote repository %q provides build.go scripts at commit %s that vmake will execute (full system access).", src.Repo, repoPkg.ShortCommit(src.Commit))
 	if !confirmTrust(subject) {
+		if src.URL != "" {
+			return fmt.Errorf("its build.go scripts are not trusted; re-run with --yes after reviewing the package at commit %s", repoPkg.ShortCommit(src.Commit))
+		}
 		return fmt.Errorf("its build.go scripts are not trusted; run 'vmake repo trust %s' after reviewing the repository", src.Repo)
 	}
 	return store.Trust(trustKindRepo, src.Repo, src.URL, src.Commit)

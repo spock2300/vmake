@@ -45,7 +45,7 @@ include the ones your project needs:
 - **Config options → C compiler defines (auto `-DCONFIG_*` or `autoconf.h`)** → Four mechanisms, including global option auto-export. See `examples/config-to-define.md`.
 - **Multiple targets (lib + binary + tests)** → See `examples/multi-target.md`.
 - **Run tests** → `SetTest(true)` targets + `vmake test` on host targets, or `vmake build --tests` for cross/bare-metal. See `examples/multi-target.md`.
-- **Check whether a build is needed** → `vmake build --check` (alias `--plan`): evaluates action signatures without compiling/linking/writing reports or the compile database; JSON data has `workPending`, `plannedCompiles`, `plannedLinks`, `plannedCallbacks`, `upToDate`.
+- **Check whether a build is needed** → `vmake build --check` (alias `--plan`): evaluates action signatures without compiling/linking/writing reports or the compile database; JSON data has `workPending`, `plannedCompiles`, `plannedLinks`, `plannedCallbacks`, `plannedGenerators`, `caveats`, `upToDate`, `targetsTotal`, `vmakeVersion`, `vmakeCommit`, and (when in git) `projectRevision`/`projectDirty`.
 - **Multi-module workspace (lib/ + app/ directories)** → See `examples/multi-module.md`.
 - **Third-party packages** → `OnRequire` + `AddRequires` + `AddDeps`. See `examples/with-package.md`.
 - **Build a CMake project** → Prefer `CMakeConfigure`, `CMakeBuild`, and `CMakeInstall` inside `TargetVoid` + `SetBuildFunc`. See `examples/third-party-wrapper.md`.
@@ -126,7 +126,8 @@ names the omitted package count and the `--allow-dry-run-writes`/p.DryRun fix.
   fetch, materialize, or link sources for this check. `vmake query` and
   `query targets` print the same warning on stderr without changing stdout.
   `query targets --json` emits one schema-1 document with sorted
-  `{package,target,kind}` targets and turns source/declaration/read-only
+  `{package,target,kind}` targets (plus `vmakeVersion`, `vmakeCommit`, and git
+  `projectRevision`/`projectDirty`) and turns source/declaration/read-only
   omissions into `diagnostics` (human mode unchanged); `--allow-dry-run-writes`
   opts out of the read-only guard.
 - Needed packages also carry `buildDir`, the absolute build-key directory the
@@ -167,7 +168,8 @@ names the omitted package count and the `--allow-dry-run-writes`/p.DryRun fix.
   `build/vmake-test.json`; the matching `*Present` fields say whether those
   files currently exist. When a report exists and parses, `buildReportState` or
   `testReportState` copies its `status`, `buildId`, `command`, `started`,
-  `finished`, `mode`, `toolchain`, `summary`, and `error`, and sets
+  `finished`, `mode`, `toolchain`, `vmakeVersion`, `vmakeCommit`,
+  `projectRevision`, `projectDirty`, `summary`, and `error`, and sets
   `configMatches` (true only for the same `configSha256` with no `--set`),
   `modeMatches`/`toolchainMatches`, and `effectiveConfigMatches` (true when the
   digest matches, the recorded mode/toolchain match, and every `--set` restates
@@ -313,9 +315,9 @@ On ELF and PE **binary** links, dependency archives from `AddDeps` land inside `
 
 ### `vmake clean` vs `vmake distclean`
 
-`vmake clean` runs `OnClean` hooks then removes build outputs (objects, binaries) and `build/compile_commands.json` for the current configuration; keeps the source trees under `.vmake_deps/`. If build-key directories for other configurations remain, it prints one note with their count. `--all` removes every build-key output directory.
+`vmake clean` runs `OnClean` hooks then removes build outputs (objects, binaries), `build/compile_commands.json`, `build/vmake-build.json`, and `build/vmake-test.json` for the current configuration; keeps the source trees under `.vmake_deps/`. If build-key directories for other configurations remain, it prints one note with their count. `--all` removes every build-key output directory.
 
-`vmake distclean` also runs `OnClean` hooks, then removes all emitted outputs, `install/`, `compile_commands.json`, and the build report. Downloaded working trees under `.vmake_deps/` are kept and reused, so the next build does not re-download; pass `--purge-sources` to delete them too. Buildscript edits normally invalidate the affected actions; a full distclean is only needed to reclaim stale outputs/orphan keys or when a buildscript writes an untracked file into `BuildDir()` that the build still consumes.
+`vmake distclean` also runs `OnClean` hooks, then removes all emitted outputs, `install/`, `compile_commands.json`, and the build and test reports (`build/vmake-build.json` and `build/vmake-test.json`). Downloaded working trees under `.vmake_deps/` are kept and reused, so the next build does not re-download; pass `--purge-sources` to delete them too. Buildscript edits normally invalidate the affected actions; a full distclean is only needed to reclaim stale outputs/orphan keys or when a buildscript writes an untracked file into `BuildDir()` that the build still consumes.
 
 ### Patching source before build in registry packages
 
@@ -893,7 +895,8 @@ diagnostics are lost. `CMakeConfigure` output is unchanged.
 | `vmake config list/use/copy/describe` | List files, select an existing file, copy the active configuration in `.vmake/`, or print/set its description |
 | `vmake clean [--all]` | Execute OnClean hooks then remove build outputs (keeps source trees) |
 | `vmake distclean [--purge-sources]` | Deep clean: outputs + install/ (keeps .vmake_deps/ working trees unless `--purge-sources`) |
-| `vmake query` | Dependency tree; `query targets`, `query config <pkg>` |
+| `vmake inspect [--set [pkg/]opt=val] [--allow-dry-run-writes]` | Print the resolved project model (packages, targets, options, deps, toolchain, reports, freshness) as one JSON document on stdout |
+| `vmake query` | Dependency tree; `query targets [--json]`, `query config <pkg>` |
 | `vmake lock update/show` | Re-resolve / print `.vmake/vmake.lock` pins |
 | `vmake toolchain list/show` | Toolchain info |
 | `vmake repo add/list/remove/update/trust/untrust` | Package repos + commit-bound trust |
@@ -911,8 +914,8 @@ diagnostics are lost. `CMakeConfigure` output is unchanged.
 | `vmake update [version]` | Update vmake |
 | `vmake version` | Version info (`vmake --version` also prints it) |
 
-Build flags: `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`, `--manifest`, `--tests`, `--jobs/-j`, `--keep-going/-k`, `--explain`, `--json`, `--output`; `vmake test` also accepts `--require-tests`
-Global flags: `-v` verbose, `-V` very-verbose, `-q` quiet, `-y/--yes` assume yes (trust prompts), `-h/--help` help
+Build flags: `--mode`, `--toolchain`, `--install/-i`, `--prefix/-p`, `--install-type`, `--manifest`, `--tests`, `--jobs/-j`, `--keep-going/-k`, `--explain`, `--check` (`--plan`), `--json`, `--output`; `vmake test` also accepts `--require-tests`
+Global flags: `-C/--project` project root override, `-v` verbose, `-V` very-verbose, `-q` quiet, `-y/--yes` assume yes (trust prompts), `-h/--help` help
 `--version` is a root flag; `vmake test` always builds and runs test targets, so `--tests` is accepted for compatibility but has no effect there.
 
 `vmake build|rebuild|test --json` writes one schemaVersion-1 envelope to stdout with human progress on stderr; `--output PATH` (or `-` for stdout) implies `--json` and writes that envelope to a file instead, leaving stdout empty and requiring the parent directory to exist. Exit codes do not depend on the machine mode: 0 success, 1 build/script/test/operation failure, 2 usage or project-resolution failure (bad flag, missing argument, not inside a project), 130/143 interrupted. A run that fails before any report exists (bad flag, outside a project, storage lock) still emits the requested envelope with `data:null` and a `VMAKE_E_USAGE`/`VMAKE_E_BUILD` diagnostic; reaching the normal report path emits only the full envelope.

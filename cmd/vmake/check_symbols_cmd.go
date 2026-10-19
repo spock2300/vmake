@@ -52,6 +52,7 @@ Requires a successful build first; scans existing build/ outputs.`,
 type scanArtifact struct {
 	pkgName       string
 	targetName    string
+	sourceDir     string
 	outputPath    string
 	kind          api.TargetKind
 	versionScript string
@@ -70,6 +71,7 @@ func runCheckSymbols(strict bool) {
 	vlog.SetLevel(vlog.Quiet)
 
 	ctx := resolveToConfig(false)
+	defer ctx.Resolver.Close()
 	insp, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
 	if err != nil {
 		vlog.Fatal("inspect: %v", err)
@@ -183,6 +185,7 @@ func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, tcs
 			out = append(out, scanArtifact{
 				pkgName:       name,
 				targetName:    t.Name(),
+				sourceDir:     dirs.SourceDir,
 				outputPath:    outputPath,
 				kind:          kind,
 				versionScript: t.VersionScript(),
@@ -331,7 +334,10 @@ func detectVersionScriptViolations(artifacts []scanArtifact) []finding {
 		}
 		scriptPath := a.versionScript
 		if !filepath.IsAbs(scriptPath) {
-			for _, dir := range []string{".", filepath.Dir(a.outputPath)} {
+			for _, dir := range []string{a.sourceDir, ".", filepath.Dir(a.outputPath)} {
+				if dir == "" {
+					continue
+				}
 				candidate := filepath.Join(dir, scriptPath)
 				if _, err := os.Stat(candidate); err == nil {
 					scriptPath = candidate

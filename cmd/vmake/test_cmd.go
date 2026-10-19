@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -84,7 +85,7 @@ func runTest(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				if result != nil {
 					report.partial(ctx, result, err)
-					if keepGoingFlag {
+					if keepGoingFlag && ctx.Context.Err() == nil {
 						report.cutWarnings()
 						tests, _ := runAllTests(ctx.Context, result, true)
 						report.setTestResults(tests)
@@ -115,19 +116,25 @@ func validateTestExecution(platform api.Platform, hostOS string) error {
 }
 
 func validateTestProject(ctx *RuntimeContext) error {
+	var explicitRoots []string
 	dependedOn := make(map[string]bool)
-	for _, node := range ctx.DepGraph.Packages {
+	for name, node := range ctx.DepGraph.Packages {
 		if node == nil {
 			continue
+		}
+		if node.IsLocal() && node.Pkg != nil && node.Pkg.IsRoot() {
+			explicitRoots = append(explicitRoots, name)
 		}
 		for _, dep := range node.Deps {
 			dependedOn[dep] = true
 		}
 	}
-	roots := make([]string, 0)
-	for name, node := range ctx.DepGraph.Packages {
-		if node != nil && node.IsLocal() && !dependedOn[name] {
-			roots = append(roots, name)
+	roots := explicitRoots
+	if len(roots) == 0 {
+		for name, node := range ctx.DepGraph.Packages {
+			if node != nil && node.IsLocal() && !dependedOn[name] {
+				roots = append(roots, name)
+			}
 		}
 	}
 	sort.Strings(roots)
@@ -263,7 +270,11 @@ func boundedTestOutput(output string) string {
 		return output
 	}
 	keep := buildTestOutputLimit - len(buildTestOutputMarker)
-	return buildTestOutputMarker + output[len(output)-keep:]
+	tail := output[len(output)-keep:]
+	for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+		tail = tail[1:]
+	}
+	return buildTestOutputMarker + tail
 }
 
 func testExitCode(err error) (int, string) {

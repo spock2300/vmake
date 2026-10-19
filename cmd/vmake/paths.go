@@ -32,15 +32,7 @@ func findProjectDir() string {
 		cachedProjectDir = found
 		return found
 	}
-	root := dir
-	for {
-		parent := filepath.Dir(root)
-		if parent == root {
-			break
-		}
-		root = parent
-	}
-	fatalUsage("not inside a vmake project (no .vmake/, build.go or */build.go found in %s or any parent directory)", root)
+	fatalUsage("not inside a vmake project (no .vmake/, build.go or */build.go found in %s or any parent directory)", dir)
 	return ""
 }
 
@@ -85,7 +77,9 @@ func rejectShadowedProjectRootFromCWD() {
 	if err != nil {
 		return
 	}
-	rejectShadowedProjectRoot(dir)
+	if found, ok := searchProjectDir(dir); ok {
+		rejectShadowedProjectRoot(found)
+	}
 }
 
 // validateProjectDir resolves and checks an explicit --project directory. The
