@@ -206,13 +206,9 @@ p.OnBuild(func(ctx *api.BuildContext) {
 
 ## External Incremental Builds
 
-VMake calls each local or remote `TargetVoid` once per vmake invocation. Make/CMake decides which work is incremental. `SetConfigFiles` stores package configuration metadata; it does not skip callbacks or declare target inputs:
+By default, VMake calls each reachable local or remote `TargetVoid` once per vmake invocation while Make/CMake decides which work is incremental (`CMakeConfigure` fingerprints its inputs in `<CMakeBuildDir>/.vmake_configure.json`). For custom script-driven `TargetVoid` targets without Make/CMake, you can opt into VMake-managed incremental skipping by declaring **both** `AddInputs` and `AddOutputs` on the target:
 
 ```go
-p.OnPackage(func(p *api.Package) {
-    p.SetConfigFiles(".config")
-})
-
 p.OnBuild(func(ctx *api.BuildContext) {
     ctx.Target("mylib").
         SetKind(api.TargetVoid).
@@ -225,7 +221,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 })
 ```
 
-Synchronous subgraphs and the main graph share completed target state. A later invocation calls the callback again, including after a failed build or a partially populated installation directory.
+Synchronous subgraphs and the main graph share completed target state. Unless `AddInputs` and `AddOutputs` are both declared and up to date, a later invocation calls the `TargetVoid` callback again, including after a failed build or a partially populated installation directory.
 
 ## KConfig for Firmware Wrappers
 
@@ -234,8 +230,7 @@ Firmware wrapper packages (U-Boot, kernel, etc.) combine KConfig preset manageme
 ```go
 p.OnPackage(func(p *api.Package) {
     p.SetGit("https://github.com/u-boot/u-boot.git").
-        AddVersion("2024.04", "v2024.04").
-        SetConfigFiles(".config")
+        AddVersion("2024.04", "v2024.04")
 })
 
 p.OnConfig(func(ctx *api.ConfigContext) {

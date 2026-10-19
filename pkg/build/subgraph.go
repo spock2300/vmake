@@ -41,7 +41,10 @@ func CollectSubGraphPackages(rootPkg string, pkgMeta map[string]PkgBuildMeta, al
 				depPkg, _, qualified := strings.Cut(dep, ":")
 				if !qualified {
 					if !strings.Contains(depPkg, "/") {
-						continue
+						if targets[depPkg] != nil {
+							continue
+						}
+						depPkg = resolvePkg(pkgName, depPkg)
 					}
 				} else {
 					depPkg = resolvePkg(pkgName, depPkg)

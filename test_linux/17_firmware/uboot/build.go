@@ -5,10 +5,6 @@ import (
 )
 
 func Main(p *api.Package) {
-	p.OnPackage(func(p *api.Package) {
-		p.SetConfigFiles(".config")
-	})
-
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.KConfig("u-boot").
 			SetDescription("U-Boot configuration").

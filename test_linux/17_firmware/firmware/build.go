@@ -33,10 +33,7 @@ type partition struct {
 
 func Main(p *api.Package) {
 	p.SetRoot(true)
-
-	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("uboot", "linux", "main_rootfs", "recovery_rootfs", "app_partition", "configs")
-	})
+	p.AddRequires("uboot", "linux", "main_rootfs", "recovery_rootfs", "app_partition", "configs")
 
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ubootBuildDir := ctx.DepBuildDir("uboot:uboot")
@@ -47,11 +44,7 @@ func Main(p *api.Package) {
 		configsDir := ctx.DepBuildDir("configs:configs")
 
 		ctx.Target("firmware").SetKind(api.TargetVoid).
-			AddDeps(
-				"uboot:uboot", "linux:linux",
-				"main_rootfs:main_rootfs", "recovery_rootfs:recovery_rootfs",
-				"app_partition:app_partition", "configs:configs",
-			).
+			UseRequires().
 			SetBuildFunc(func(pkg *api.Package) error {
 				layout := []partition{
 					{"uboot", filepath.Join(ubootBuildDir, "u-boot.bin"), partUboot, partUbootSize},

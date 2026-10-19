@@ -404,12 +404,55 @@ func TestPackageConfigPropagationFlags(t *testing.T) {
 	if !p.GenConfigHeader() {
 		t.Error("GenConfigHeader should be true")
 	}
-	p.SetExportConfig(true)
-	if !p.ExportConfig() {
-		t.Error("ExportConfig should be true")
-	}
 	p.SetImportConfigs([]string{"foo", "bar"})
 	if !reflect.DeepEqual(p.ImportConfigs(), []string{"foo", "bar"}) {
 		t.Errorf("ImportConfigs = %v", p.ImportConfigs())
+	}
+}
+
+func TestPackageAddRequiresAndUpdateRequireContext(t *testing.T) {
+	p := NewPackage().SetName("app")
+	p.AddRequires("chip", "board ~1.0")
+	p.OnRequire(func(ctx *RequireContext) {
+		if ctx.When("extra", true) {
+			ctx.AddRequires("rtos")
+		}
+	})
+
+	p.UpdateRequireContext(map[string]any{"extra": false}, map[string]*Option{
+		"extra": (&Option{name: "extra"}).SetDefault(false),
+	})
+	got := p.GetRequires().Get()
+	want := []RequireInfo{{Name: "chip"}, {Name: "board", Constraint: "~1.0"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("filtered requires = %v, want %v", got, want)
+	}
+}
+
+func TestPackageExecBuildFuncsResetsBuildProvidedLinkerScript(t *testing.T) {
+	p := NewPackage().SetName("chip")
+	p.OnConfig(func(ctx *ConfigContext) {
+		ctx.SetProvidedLinkerScript("config.ld")
+	})
+	p.OnBuild(func(ctx *BuildContext) {})
+	p.ExecConfigFuncs(".", func(fn ConfigFunc) {
+		fn(NewConfigContextWithPackage("chip", p))
+	})
+	p.ExecBuildFuncs(".", func(fn BuildFunc) {})
+	if p.ProvidedLinkerScript() != "config.ld" {
+		t.Fatalf("config linker script was cleared: %q", p.ProvidedLinkerScript())
+	}
+
+	p2 := NewPackage().SetName("chip")
+	p2.OnBuild(func(ctx *BuildContext) {})
+	p2.ExecBuildFuncs(".", func(fn BuildFunc) {
+		p2.SetProvidedLinkerScript("build.ld")
+	})
+	if p2.ProvidedLinkerScript() != "build.ld" {
+		t.Fatalf("build linker script = %q, want build.ld", p2.ProvidedLinkerScript())
+	}
+	p2.ExecBuildFuncs(".", func(fn BuildFunc) {})
+	if p2.ProvidedLinkerScript() != "" {
+		t.Fatalf("stale build linker script was not reset: %q", p2.ProvidedLinkerScript())
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"sort"
 	"testing"
 )
 
@@ -583,16 +582,6 @@ func TestPackageScriptDir(t *testing.T) {
 	p.SetScriptDir("/script")
 	if p.ScriptDir() != "/script" {
 		t.Errorf("ScriptDir = %q", p.ScriptDir())
-	}
-}
-
-func TestPackageConfigFiles(t *testing.T) {
-	p := NewPackage()
-	p.SetConfigFiles("a.cfg", "b.cfg")
-	files := p.ConfigFiles()
-	sort.Strings(files)
-	if !reflect.DeepEqual(files, []string{"a.cfg", "b.cfg"}) {
-		t.Errorf("ConfigFiles = %v", files)
 	}
 }
 

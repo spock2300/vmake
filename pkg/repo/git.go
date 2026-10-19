@@ -37,15 +37,17 @@ func gitNetworkTimeout() time.Duration {
 }
 
 func networkGitOptions(ctx context.Context, dir string) exec.RunOptions {
+	env := map[string]string{"GIT_TERMINAL_PROMPT": "0"}
 	opts := exec.RunOptions{
 		Context: ctx,
 		Dir:     dir,
 		Timeout: gitNetworkTimeout(),
 		Quiet:   vlog.IsQuiet(),
+		Env:     env,
 	}
 	if !opts.Quiet {
 		// Show git's own progress lines without the built-in delay.
-		opts.Env = map[string]string{"GIT_PROGRESS_DELAY": "0"}
+		env["GIT_PROGRESS_DELAY"] = "0"
 	}
 	return opts
 }

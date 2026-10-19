@@ -40,10 +40,11 @@ type RuntimeContext struct {
 	LockPath            string
 	IgnoreLock          bool
 
-	Paths             *Paths
-	TrustChecker      buildscript.ScriptTrustChecker
-	ModeOverride      string
-	ToolchainOverride string
+	Paths              *Paths
+	TrustChecker       buildscript.ScriptTrustChecker
+	ModeOverride       string
+	ToolchainOverride  string
+	OnOptionsCollected func(*RuntimeContext) error
 }
 
 type packageGlobalFlags struct {
@@ -130,6 +131,13 @@ func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, 
 	}
 	if opts, ok := allPkgOptions[name]; ok {
 		for k, v := range opts {
+			if allOpts != nil {
+				if opt, declared := allOpts[k]; declared && opt.IsGlobal() {
+					if _, hasGlobal := globalValues[k]; hasGlobal && api.NormalizeOptionValue(opt, v) == api.NormalizeOptionValue(opt, opt.Default()) {
+						continue
+					}
+				}
+			}
 			cfgVals[k] = v
 		}
 	}
@@ -171,9 +179,6 @@ func applyBuildContextConfig(buildCtx *api.BuildContext, node *resolver.PackageN
 		for _, t := range buildCtx.GetTargets() {
 			t.AddDefines(args...)
 		}
-	}
-	if buildCtx.ExportEnabled() && node.Pkg != nil {
-		node.Pkg.SetExportConfig(true)
 	}
 	if len(resolvedImports) > 0 && node.Pkg != nil {
 		node.Pkg.SetImportConfigs(resolvedImports)

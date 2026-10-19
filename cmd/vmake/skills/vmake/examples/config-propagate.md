@@ -58,7 +58,7 @@ func Main(p *api.Package) {
 
 After this, every target in `chip` is compiled with `-DCONFIG_MCU="stm32f405" -DCONFIG_MCU_STM32F405=1 -DCONFIG_USE_DMA=1` (choice/string values are quoted; a choice option additionally emits `CONFIG_<NAME>_<VALUE>=1`; bools emit `=1` when true and nothing when false).
 
-`ctx.ExportConfig()` is intentionally absent: it only records a package flag (`Package.SetExportConfig(true)`, applied by the build phase) that no build path reads today. Propagation is driven entirely by the importing package's `ImportConfig`/`SyncConfigDefines` plus `GenerateConfigDefines`/`GenerateConfigHeader`.
+Propagation is driven directly by the importing package's `ImportConfig`/`SyncConfigDefines` plus `GenerateConfigDefines`/`GenerateConfigHeader` — no export call is needed in `chip`.
 
 ## rtos/build.go (Import Config from chip)
 
@@ -170,7 +170,6 @@ The chip-only compile of `chip/src/chip.c` shows just `-DCONFIG_CHIP_FEATURE_A=1
 - **`SyncConfigDefines("a", "b")`** — Shorthand for `GenerateConfigDefines()` + `ImportConfig("a", "b")`, for packages that want the defines without spelling out both calls
 - **`GenerateConfigDefines()`** — Converts local + imported options to `-DCONFIG_*` compiler defines, added to ALL targets in this package. Call position within `OnBuild` does not matter — the defines are applied after the OnBuild callbacks have declared the targets
 - **`GenerateConfigHeader()`** — Generates `autoconf.h` from local + imported options. Package-local only, does NOT cross packages
-- **`ExportConfig()`** — Currently inert: it only sets a package flag with no consumer read path; do not rely on it for propagation
 
 ## Key Rules
 
@@ -189,6 +188,6 @@ The chip-only compile of `chip/src/chip.c` shows just `-DCONFIG_CHIP_FEATURE_A=1
 - The choice macro pair emitted by the merge — `SKILL.md - OptionChoice Generates Dual Macros`
 - Type/default validation that applies to global options only — `SKILL.md - GlobalOption Cross-Package Consistency`
 - build.go pitfalls — `SKILL.md - Common Mistakes`
-- `references/api.md` — BuildContext: GenerateConfigDefines, GenerateConfigHeader, ImportConfig, SyncConfigDefines, ExportConfig
+- `references/api.md` — BuildContext: GenerateConfigDefines, GenerateConfigHeader, ImportConfig, SyncConfigDefines
 - `references/dirs.md` — `BuildDir()` and the `generated/` directory layout
 - `examples/config-to-define.md` — the three option→define/header mechanisms compared

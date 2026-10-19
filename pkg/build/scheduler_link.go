@@ -15,9 +15,16 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 	if err := s.ctx.Err(); err != nil {
 		return err
 	}
-	if resolved.Node.Target.Kind() == api.TargetVoid {
+	target := resolved.Node.Target
+	if len(target.PostLinkDeps()) > 0 && len(target.PostLinkSteps()) == 0 {
+		return fmt.Errorf("target %s: AddPostLinkDeps requires at least one post-link step (use AddInputs/AddOutputs for TargetVoid incremental tracking)", resolved.Node.FullName)
+	}
+	if target.Kind() == api.TargetVoid {
+		if len(target.Inputs()) > 0 || len(target.Outputs()) > 0 {
+			return s.finalizeIncrementalVoid(resolved, pkgInfo)
+		}
 		if s.check {
-			if s.stats != nil && (resolved.Node.Target.BuildFunc() != nil || len(resolved.Node.Target.PostLinkSteps()) > 0) {
+			if s.stats != nil && (target.BuildFunc() != nil || len(target.PostLinkSteps()) > 0) {
 				s.stats.RecordPlannedCallback(resolved.Node.FullName)
 			}
 			return nil
@@ -31,17 +38,7 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 		if err := s.ctx.Err(); err != nil {
 			return err
 		}
-		for _, output := range expandPostLinkArgs(resolved.Node.Target.PostLinkOutputs(), pkgInfo.SourceDir, resolved.OutputPath) {
-			path := pkgInfo.ResolvePath(output)
-			info, err := os.Stat(path)
-			if err != nil {
-				return fmt.Errorf("post-link output %s: %w", path, err)
-			}
-			if !info.Mode().IsRegular() {
-				return fmt.Errorf("post-link output is not a regular file: %s", path)
-			}
-		}
-		return nil
+		return verifyPostLinkOutputs(target, pkgInfo, resolved.OutputPath)
 	}
 	action, err := s.planLink(resolved, objs)
 	if err != nil {
@@ -96,6 +93,100 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 		return s.publishTarget(resolved, pkgInfo)
 	}
 	return nil
+}
+
+func verifyPostLinkOutputs(target *api.Target, pkgInfo *PkgInfo, outputPath string) error {
+	for _, output := range expandPostLinkArgs(target.PostLinkOutputs(), pkgInfo.SourceDir, outputPath) {
+		path := pkgInfo.ResolvePath(output)
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("post-link output %s: %w", path, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("post-link output is not a regular file: %s", path)
+		}
+	}
+	return nil
+}
+
+func (s *Scheduler) finalizeIncrementalVoid(resolved *ResolvedTarget, pkgInfo *PkgInfo) error {
+	target := resolved.Node.Target
+	if len(target.Inputs()) == 0 || len(target.Outputs()) == 0 {
+		return fmt.Errorf("target %s: TargetVoid incremental tracking requires both AddInputs and AddOutputs", resolved.Node.FullName)
+	}
+	buildDir := pkgInfo.EffectiveBuildDir()
+	var inputs []string
+	for _, in := range target.Inputs() {
+		inputs = append(inputs, expandBuildDirToken(buildDir, in))
+	}
+	for _, dep := range target.PostLinkDeps() {
+		inputs = append(inputs, expandBuildDirToken(buildDir, dep))
+	}
+	var outputs []string
+	for _, out := range target.Outputs() {
+		outputs = append(outputs, expandBuildDirToken(buildDir, out))
+	}
+	outputs = append(outputs, postLinkOutputPaths(target, pkgInfo.SourceDir, resolved.OutputPath)...)
+
+	postCommands, err := s.postLinkCommands(target, pkgInfo.SourceDir, resolved.OutputPath)
+	if err != nil {
+		return err
+	}
+	var cmdEnv map[string]string
+	if s.toolchain != nil {
+		cmdEnv = s.toolchain.CommandEnv()
+	}
+	env, err := environmentSignature(cmdEnv)
+	if err != nil {
+		return err
+	}
+	recordPath := resolveWorkPath(pkgInfo.SourceDir, pkgInfo.OutputPath(filepath.Join("state", pathKey(target.Name())+".void.json")))
+	signature, err := digestValue(struct {
+		Version     int
+		Target      string
+		Kind        api.TargetKind
+		WorkDir     string
+		Tools       string
+		Environment string
+		Commands    []commandSpec
+		Inputs      []string
+		Outputs     []string
+	}{actionRecordVersion, resolved.Node.FullName, target.Kind(), pkgInfo.SourceDir, s.toolIdentity(), env, postCommands, inputs, outputs})
+	if err != nil {
+		return err
+	}
+	decision := checkAction(s.hashes, recordPath, signature, pkgInfo.SourceDir, inputs, outputs)
+	if decision.UpToDate && !(s.check && s.referencedWorkPending(resolved)) {
+		if s.stats != nil {
+			s.stats.RecordUpToDate()
+		}
+		return nil
+	}
+	if s.check {
+		if s.stats != nil && (target.BuildFunc() != nil || len(target.PostLinkSteps()) > 0) {
+			s.stats.RecordPlannedCallback(resolved.Node.FullName)
+		}
+		return nil
+	}
+	if s.explain {
+		vlog.Info("  EXPLAIN %s: %s", resolved.Node.FullName, decision.Reason)
+	}
+	if err := invalidateActionRecord(recordPath); err != nil {
+		return err
+	}
+	if err := s.buildVoidTarget(resolved); err != nil {
+		return err
+	}
+	if err := s.postLink(resolved); err != nil {
+		return err
+	}
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+	if err := verifyPostLinkOutputs(target, pkgInfo, resolved.OutputPath); err != nil {
+		return err
+	}
+	return saveActionRecord(s.hashes, recordPath, signature, pkgInfo.SourceDir, inputs, outputs)
 }
 
 // referencedWorkPending reports whether an input of this target's link action

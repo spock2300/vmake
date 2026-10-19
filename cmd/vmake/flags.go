@@ -5,8 +5,9 @@ import (
 )
 
 var (
-	checkFlag bool
-	planFlag  bool
+	checkFlag         bool
+	planFlag          bool
+	ephemeralSetFlags []string
 )
 
 func addInstallFlags(cmd *cobra.Command) {
@@ -19,6 +20,7 @@ func addInstallFlags(cmd *cobra.Command) {
 func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&toolchainFlag, "toolchain", "", "override toolchain")
 	cmd.Flags().StringVar(&modeFlag, "mode", "", "override build mode")
+	cmd.Flags().StringArrayVarP(&ephemeralSetFlags, "set", "s", nil, "override an option for this run only (format: [pkg/]option=value)")
 	cmd.Flags().StringVar(&manifestFlag, "manifest", "", "pin versions from manifest file")
 	cmd.Flags().BoolVar(&testsFlag, "tests", false, "build test targets")
 	cmd.Flags().IntVarP(&jobsFlag, "jobs", "j", 0, "compile jobs within the active target and Make/CMake ceiling; targets run serially (0 = number of CPUs, 1 = sequential)")

@@ -5,6 +5,7 @@ const GroupGlobal = "Global"
 type Option struct {
 	name        string
 	optType     OptionType
+	typeSet     bool
 	defaultVal  any
 	description string
 	values      []string
@@ -16,11 +17,22 @@ type Option struct {
 
 func (o *Option) SetType(t OptionType) *Option {
 	o.optType = t
+	o.typeSet = true
 	return o
 }
 
 func (o *Option) SetDefault(v any) *Option {
 	o.defaultVal = v
+	if !o.typeSet && len(o.values) == 0 {
+		switch v.(type) {
+		case bool:
+			o.optType = OptionBool
+		case int:
+			o.optType = OptionInt
+		case string:
+			o.optType = OptionString
+		}
+	}
 	return o
 }
 
@@ -31,6 +43,9 @@ func (o *Option) SetDescription(desc string) *Option {
 
 func (o *Option) SetValues(vals ...string) *Option {
 	o.values = vals
+	if !o.typeSet {
+		o.optType = OptionChoice
+	}
 	return o
 }
 

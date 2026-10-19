@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+type TargetSize struct {
+	Text  int64 `json:"text"`
+	Data  int64 `json:"data"`
+	Bss   int64 `json:"bss"`
+	Total int64 `json:"total"`
+}
+
 type BuildStats struct {
 	mu                sync.Mutex
 	compiled          int
@@ -23,6 +30,7 @@ type BuildStats struct {
 	compilePlanned    map[string]bool
 	generatorTargets  map[string]bool
 	targetDuration    map[string]int64
+	targetSize        map[string]*TargetSize
 }
 
 type StatsSnapshot struct {
@@ -45,6 +53,7 @@ func NewBuildStats() *BuildStats {
 		compilePlanned:   make(map[string]bool),
 		generatorTargets: make(map[string]bool),
 		targetDuration:   make(map[string]int64),
+		targetSize:       make(map[string]*TargetSize),
 	}
 }
 
@@ -140,6 +149,18 @@ func (s *BuildStats) TargetDuration(target string) int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.targetDuration[target]
+}
+
+func (s *BuildStats) RecordTargetSize(target string, size *TargetSize) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.targetSize[target] = size
+}
+
+func (s *BuildStats) TargetSize(target string) *TargetSize {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.targetSize[target]
 }
 
 func (s *BuildStats) Snapshot() StatsSnapshot {

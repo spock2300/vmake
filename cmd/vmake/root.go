@@ -227,6 +227,10 @@ func newRuntimeContext(inputs resolveInputs, locks *storage.Session) *RuntimeCon
 }
 
 func resolveToConfigContext(execution context.Context, ignoreLock bool) (*RuntimeContext, error) {
+	overrides, err := parseInspectOverrides(ephemeralSetFlags)
+	if err != nil {
+		return nil, err
+	}
 	locks := commandStorageLocks()
 	inputs, err := loadResolveInputs(ignoreLock, false)
 	if err != nil {
@@ -234,6 +238,11 @@ func resolveToConfigContext(execution context.Context, ignoreLock bool) (*Runtim
 	}
 	ctx := newRuntimeContext(inputs, locks)
 	ctx.Context = execution
+	if len(overrides) > 0 {
+		ctx.OnOptionsCollected = func(c *RuntimeContext) error {
+			return applyEphemeralOverrides(c, overrides)
+		}
+	}
 	if err := pipeline.Require(ctx); err != nil {
 		if ctx.Resolver != nil {
 			ctx.Resolver.Close()
@@ -247,6 +256,25 @@ func resolveToConfigContext(execution context.Context, ignoreLock bool) (*Runtim
 		return nil, err
 	}
 	return ctx, nil
+}
+
+func applyEphemeralOverrides(ctx *RuntimeContext, overrides []inspectOverride) error {
+	for _, override := range overrides {
+		opt, err := inspectOverrideOption(ctx, override.pkgName, override.optName)
+		if err != nil {
+			return err
+		}
+		value, err := coerceValue(override.raw, opt.Type())
+		if err != nil {
+			return fmt.Errorf("%s: %w", override.key(), err)
+		}
+		override.value = value
+		if err := validateInspectOverride(ctx, override); err != nil {
+			return err
+		}
+		applySetValue(ctx, override.pkgName, override.optName, value)
+	}
+	return nil
 }
 
 func resolveToConfigBestEffort(ignoreLock bool) (*RuntimeContext, bool) {

@@ -87,7 +87,17 @@ func NewBuildGraph(
 			fullName := fmt.Sprintf("%s:%s", pkgName, targetName)
 			node := graph.Nodes[fullName]
 
-			resolved, err := resolver.resolveDeps(target.Deps(), pkgName, nil)
+			deps := target.Deps()
+			if target.UsesRequires() {
+				if meta, ok := pkgMeta[pkgName]; ok && len(meta.Deps) > 0 {
+					reqDeps := make([]string, 0, len(meta.Deps)+len(deps))
+					for _, depPkg := range meta.Deps {
+						reqDeps = append(reqDeps, depPkg+":*")
+					}
+					deps = append(reqDeps, deps...)
+				}
+			}
+			resolved, err := resolver.resolveDeps(deps, pkgName, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -170,10 +180,15 @@ func (d *depResolver) resolveDep(dep string, currentPkg string, path []string) (
 	}
 
 	qualified := currentPkg + ":" + dep
-	if _, exists := d.nodes[qualified]; !exists {
-		return nil, fmt.Errorf("dependency not found: %s", dep)
+	if _, exists := d.nodes[qualified]; exists {
+		return []string{qualified}, nil
 	}
-	return []string{qualified}, nil
+	if resolvedPkg := d.resolveDepPkgName(currentPkg, dep); resolvedPkg != currentPkg {
+		if _, ok := d.pkgMeta[resolvedPkg]; ok {
+			return d.resolvePackageRef(resolvedPkg, path)
+		}
+	}
+	return nil, fmt.Errorf("dependency not found: %s", dep)
 }
 
 func (d *depResolver) resolveDepPkgName(currentPkg, depName string) string {

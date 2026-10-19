@@ -85,6 +85,11 @@ feed:
 
 type depResolveResult struct {
 	includes    []string
+	defines     []string
+	cflags      []string
+	cxxflags    []string
+	ldflags     []string
+	links       []string
 	voidLdFlags []string
 	artifacts   []string
 }

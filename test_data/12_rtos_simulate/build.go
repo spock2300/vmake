@@ -3,18 +3,14 @@ package main
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("chip_sim")
-	})
+	p.AddRequires("chip_sim")
 
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.Option("debug").
-			SetType(api.OptionBool).
 			SetDefault(true).
 			SetDescription("Enable debug symbols")
 
 		ctx.Option("optimize").
-			SetType(api.OptionChoice).
 			SetDefault("O2").
 			SetValues("O0", "O2", "Os").
 			SetDescription("Optimization level")
@@ -32,7 +28,7 @@ func Main(p *api.Package) {
 				"-Wl,--print-memory-usage",
 				"-nostartfiles",
 			).
-			AddDeps("chip_sim:chip").
+			UseRequires().
 			UseDependencyLinkerScript().
 			AddPostLinkHex().
 			AddPostLinkBin().

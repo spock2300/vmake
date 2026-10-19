@@ -386,7 +386,7 @@ func (s *Scheduler) ensurePackageGenerated(pkgName string) error {
 		return nil
 	}
 	buildDir := resolveWorkPath(pkgInfo.SourceDir, pkgInfo.EffectiveBuildDir())
-	return pkg.RunGenerators(s.effectiveSourceDir(pkgName), buildDir, func(outPath string) {
+	return pkg.RunGenerators(pkgInfo.SourceDir, buildDir, func(outPath string) {
 		if s.hashes != nil {
 			s.hashes.evict(pkgInfo.SourceDir, []string{outPath})
 		}

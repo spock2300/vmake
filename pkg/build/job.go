@@ -190,6 +190,7 @@ func (j *BuildJob) Run() (*Scheduler, error) {
 				Outputs:    paths,
 				Status:     status,
 				DurationMs: runner.TargetDuration(name),
+				Size:       runner.Stats().TargetSize(name),
 			}
 			return nil
 		}

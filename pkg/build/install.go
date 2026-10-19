@@ -291,10 +291,14 @@ func (i *ArtifactInstaller) installPublicIncludes(node *BuildNode, pkgInfo *PkgI
 
 func (i *ArtifactInstaller) installExtraItems(node *BuildNode) error {
 	pkgName := node.PkgName
+	if i.installed["extra:"+pkgName] {
+		return nil
+	}
 	pkgInfo, ok := i.pkgInfo[pkgName]
 	if !ok {
 		return nil
 	}
+	i.installed["extra:"+pkgName] = true
 	pkgDirs, err := i.packageDirs(pkgName)
 	if err != nil {
 		return err

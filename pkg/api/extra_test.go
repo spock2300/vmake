@@ -129,11 +129,92 @@ func TestTargetAddProvidedLibs(t *testing.T) {
 	}
 }
 
-func TestTargetSetLanguages(t *testing.T) {
+func TestTargetPublicAttributes(t *testing.T) {
 	tr := NewTargetRegistry()
-	tgt := tr.Target("t").SetLanguages("c", "c++")
-	if !reflect.DeepEqual(tgt.Languages(), []string{"c", "c++"}) {
-		t.Errorf("Languages = %v", tgt.Languages())
+	tgt := tr.Target("t").
+		AddPublicDefines("DEF_A=1", "DEF_B").
+		RemovePublicDefines("DEF_B").
+		AddPublicCFlags("-Wfoo", "-Wbar").
+		RemovePublicCFlags("-Wbar").
+		AddPublicCxxFlags("-std=c++20", "-fno-rtti").
+		RemovePublicCxxFlags("-fno-rtti").
+		AddPublicLdFlags("-Wl,--gc-sections", "-Wl,-s").
+		RemovePublicLdFlags("-Wl,-s").
+		AddPublicLinks("m", "pthread").
+		RemovePublicLinks("pthread")
+
+	if !reflect.DeepEqual(tgt.PublicDefines(), []string{"DEF_A=1"}) {
+		t.Errorf("PublicDefines = %v", tgt.PublicDefines())
+	}
+	if !reflect.DeepEqual(tgt.PublicCFlags(), []string{"-Wfoo"}) {
+		t.Errorf("PublicCFlags = %v", tgt.PublicCFlags())
+	}
+	if !reflect.DeepEqual(tgt.PublicCxxFlags(), []string{"-std=c++20"}) {
+		t.Errorf("PublicCxxFlags = %v", tgt.PublicCxxFlags())
+	}
+	if !reflect.DeepEqual(tgt.PublicLdFlags(), []string{"-Wl,--gc-sections"}) {
+		t.Errorf("PublicLdFlags = %v", tgt.PublicLdFlags())
+	}
+	if !reflect.DeepEqual(tgt.PublicLinks(), []string{"m"}) {
+		t.Errorf("PublicLinks = %v", tgt.PublicLinks())
+	}
+
+	snap := SnapshotTarget(tgt)
+	tgt.AddPublicDefines("MUTATED").AddPublicLinks("dl")
+	if !reflect.DeepEqual(snap.PublicDefines(), []string{"DEF_A=1"}) {
+		t.Errorf("snap PublicDefines = %v", snap.PublicDefines())
+	}
+	if !reflect.DeepEqual(snap.PublicLinks(), []string{"m"}) {
+		t.Errorf("snap PublicLinks = %v", snap.PublicLinks())
+	}
+}
+
+func TestTargetUseRequiresAndLinkable(t *testing.T) {
+	tr := NewTargetRegistry()
+	tgt := tr.Target("t")
+	if tgt.UsesRequires() {
+		t.Error("UsesRequires should default to false")
+	}
+	if !tgt.IsLinkable() {
+		t.Error("IsLinkable should default to true")
+	}
+	tgt.UseRequires().SetLinkable(false)
+	if !tgt.UsesRequires() {
+		t.Error("UsesRequires should be true after UseRequires()")
+	}
+	if tgt.IsLinkable() {
+		t.Error("IsLinkable should be false after SetLinkable(false)")
+	}
+	snap := SnapshotTarget(tgt)
+	if !snap.UsesRequires() || snap.IsLinkable() {
+		t.Error("SnapshotTarget did not preserve UsesRequires or IsLinkable")
+	}
+}
+
+func TestTargetInputsOutputsAndKeepGlobalSymbols(t *testing.T) {
+	tr := NewTargetRegistry()
+	tgt := tr.Target("t").
+		AddInputs("a.in", "b.in").
+		RemoveInputs("b.in").
+		AddOutputs("a.out", "b.out").
+		RemoveOutputs("b.out").
+		SetKeepGlobalSymbols("keep.syms")
+
+	if !reflect.DeepEqual(tgt.Inputs(), []string{"a.in"}) {
+		t.Errorf("Inputs = %v", tgt.Inputs())
+	}
+	if !reflect.DeepEqual(tgt.Outputs(), []string{"a.out"}) {
+		t.Errorf("Outputs = %v", tgt.Outputs())
+	}
+	if tgt.KeepGlobalSymbols() != "keep.syms" {
+		t.Errorf("KeepGlobalSymbols = %q", tgt.KeepGlobalSymbols())
+	}
+	if !reflect.DeepEqual(tgt.PostLinkDeps(), []string{"keep.syms"}) {
+		t.Errorf("PostLinkDeps = %v", tgt.PostLinkDeps())
+	}
+	steps := tgt.PostLinkSteps()
+	if len(steps) != 1 || steps[0].Tool != "objcopy" || !reflect.DeepEqual(steps[0].Args, []string{"--keep-global-symbols=keep.syms", "{output}"}) {
+		t.Errorf("PostLinkSteps = %+v", steps)
 	}
 }
 

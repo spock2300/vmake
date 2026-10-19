@@ -524,7 +524,7 @@ flag arrays keep the order the buildscript declared.
 | `resolvedFiles` | array? | Declaration-time expansion of `files` minus `excludedFiles`, package-source-dir-relative slash paths, sorted, de-duplicated, capped at 200; omitted when no file matches |
 | `resolvedFileCount` | int? | Full number of matched files before the 200-entry cap; omitted when no file matches |
 | `resolvedFilesTruncated` | bool? | True when more than 200 files matched and `resolvedFiles` was capped; omitted otherwise |
-| `languages`, `links` | array? | Declared language overrides and link libraries |
+| `links` | array? | Declared link libraries (`-l`) |
 | `deps` | array? | Declared target dependencies (`pkg:target` or `:target`) |
 | `postLinkOutputs` | array? | Declared post-link output patterns |
 | `output` | string? | Artifact name from `api.TargetFilename(kind, name, target_os)`; empty and omitted for `void` |

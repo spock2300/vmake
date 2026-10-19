@@ -3,6 +3,8 @@ package api
 import (
 	"fmt"
 	"math"
+	"slices"
+	"sort"
 	"strings"
 )
 
@@ -187,15 +189,33 @@ func (a *ConfigAccessor) If(option string, then ...string) []string {
 	return a.ifCond(a.boolQuiet(option), then...)
 }
 
-func (a *ConfigAccessor) Select(option string, mapping map[string]string) string {
+func (a *ConfigAccessor) Select(option string, mapping map[string]string) []string {
 	if a.CfgVals == nil {
-		return ""
+		seen := make(map[string]bool, len(mapping))
+		vals := make([]string, 0, len(mapping))
+		for _, v := range mapping {
+			if v != "" && !seen[v] {
+				seen[v] = true
+				vals = append(vals, v)
+			}
+		}
+		sort.Strings(vals)
+		return vals
 	}
 	val := a.String(option)
-	if mapped, ok := mapping[val]; ok {
-		return mapped
+	if a.strict && a.owner != "" {
+		if opt, ok := a.Options[option]; ok && opt.Type() == OptionChoice && len(opt.Values()) > 0 {
+			for k := range mapping {
+				if !slices.Contains(opt.Values(), k) {
+					fatalScript(a.owner, "Select", "option %q choice mapping key %q is not in SetValues(%v)", option, k, opt.Values())
+				}
+			}
+		}
 	}
-	return ""
+	if mapped, ok := mapping[val]; ok && mapped != "" {
+		return []string{mapped}
+	}
+	return nil
 }
 
 func (a *ConfigAccessor) When(option string, value any) bool {
@@ -218,6 +238,57 @@ func (a *ConfigAccessor) When(option string, value any) bool {
 		}
 	}
 	return valuesEqual(val, value)
+}
+
+func (a *ConfigAccessor) WhenNot(option string, value any) bool {
+	if a.CfgVals == nil {
+		return true
+	}
+	if a.strict && a.owner != "" {
+		opt, hasOpt := a.Options[option]
+		if _, hasVal := a.CfgVals[option]; !hasVal && !hasOpt {
+			fatalScript(a.owner, "WhenNot", "unknown option %q (fix the name or declare it via ctx.Option first)", option)
+		}
+		if hasOpt {
+			a.checkValueType(opt, value, option, "WhenNot")
+		}
+	}
+	val := a.CfgVals[option]
+	if val == nil {
+		if opt, ok := a.Options[option]; ok {
+			val = opt.Default()
+		}
+	}
+	return !valuesEqual(val, value)
+}
+
+func (a *ConfigAccessor) WhenAny(option string, values ...any) bool {
+	if a.CfgVals == nil {
+		return true
+	}
+	if a.strict && a.owner != "" {
+		opt, hasOpt := a.Options[option]
+		if _, hasVal := a.CfgVals[option]; !hasVal && !hasOpt {
+			fatalScript(a.owner, "WhenAny", "unknown option %q (fix the name or declare it via ctx.Option first)", option)
+		}
+		if hasOpt {
+			for _, value := range values {
+				a.checkValueType(opt, value, option, "WhenAny")
+			}
+		}
+	}
+	val := a.CfgVals[option]
+	if val == nil {
+		if opt, ok := a.Options[option]; ok {
+			val = opt.Default()
+		}
+	}
+	for _, value := range values {
+		if valuesEqual(val, value) {
+			return true
+		}
+	}
+	return false
 }
 
 func valuesEqual(a, b any) bool {
@@ -319,9 +390,6 @@ func ValidateOption(o *Option) error {
 		return nil
 	}
 	if o.macroName != "" {
-		if !o.IsGlobal() {
-			return fmt.Errorf("option %q: SetMacroName requires a global option (ctx.GlobalOption)", o.name)
-		}
 		if strings.Contains(o.macroName, "%") {
 			if strings.Count(o.macroName, "%") != 1 || (!strings.Contains(o.macroName, "%s") && !strings.Contains(o.macroName, "%v")) {
 				return fmt.Errorf("option %q: SetMacroName template %q must contain exactly one %%s or %%v verb", o.name, o.macroName)

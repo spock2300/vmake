@@ -188,6 +188,11 @@ func applyAllConfigCallbacks(ctx *RuntimeContext) {
 			}
 		}
 		for optName, val := range entry.Options {
+			if opt, declared := opts[optName]; declared && opt.IsGlobal() {
+				if _, hasGlobal := globalVals[optName]; hasGlobal && api.NormalizeOptionValue(opt, val) == api.NormalizeOptionValue(opt, opt.Default()) {
+					continue
+				}
+			}
 			applyVals[optName] = val
 		}
 		applyCtx.SetCfgVals(applyVals)
@@ -287,7 +292,7 @@ func collectGlobalMacroDefines(opts map[string]*api.Option, vals map[string]any)
 	return defines, nil
 }
 
-func buildToolchainAndGlobalOptions(ctx *RuntimeContext) error {
+func mergeGlobalOptions(ctx *RuntimeContext) error {
 	mgr := toolchain.GetManager()
 	var tcList []string
 	if tcs, err := mgr.ListToolchains(); err == nil {
@@ -302,6 +307,10 @@ func buildToolchainAndGlobalOptions(ctx *RuntimeContext) error {
 	if err != nil {
 		return fmt.Errorf("global options error: %w", err)
 	}
+	return nil
+}
+
+func updateGlobalMacroDefines(ctx *RuntimeContext) error {
 	values := config.BuildGlobalValues(ctx.Config)
 	values[api.ModeOptionName] = ResolveMode(ctx.Config, ctx.ModeOverride)
 	values[api.ToolchainOptionName] = ResolveToolchainName(ctx.Config, ctx.ToolchainOverride)
@@ -320,8 +329,16 @@ func runConfigPhase(ctx *RuntimeContext) error {
 	if err := collectAllOptionsAndKConfigs(ctx); err != nil {
 		return err
 	}
+	if err := mergeGlobalOptions(ctx); err != nil {
+		return err
+	}
+	if ctx.OnOptionsCollected != nil {
+		if err := ctx.OnOptionsCollected(ctx); err != nil {
+			return err
+		}
+	}
 	applyAllConfigCallbacks(ctx)
-	return buildToolchainAndGlobalOptions(ctx)
+	return updateGlobalMacroDefines(ctx)
 }
 
 func resolveWithDefault(flagVal, configVal, defaultVal string) string {

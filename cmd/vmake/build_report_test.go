@@ -2572,3 +2572,123 @@ func TestTestOutputFile(t *testing.T) {
 		t.Fatalf("test envelope = %+v / data = %+v", document, document.Data)
 	}
 }
+
+func TestParseBuildWarningsFoldsRepeatedMessages(t *testing.T) {
+	var b strings.Builder
+	for i := 1; i <= 60; i++ {
+		fmt.Fprintf(&b, "include/common.h:%d:2: warning: 'OLD_API' is deprecated\n", i)
+	}
+	b.WriteString("src/main.c:10:5: warning: unused variable 'x'\n")
+	warnings := parseBuildWarnings(b.String())
+	if len(warnings) != 4 {
+		t.Fatalf("len(warnings) = %d, want 4 (%+v)", len(warnings), warnings)
+	}
+	if warnings[0].RepeatedCount != 57 {
+		t.Fatalf("warnings[0].RepeatedCount = %d, want 57", warnings[0].RepeatedCount)
+	}
+	if warnings[1].RepeatedCount != 0 || warnings[2].RepeatedCount != 0 {
+		t.Fatalf("warnings[1..2] should have RepeatedCount 0: %+v", warnings[1:3])
+	}
+	if warnings[3].File != "src/main.c" || warnings[3].Message != "unused variable 'x'" {
+		t.Fatalf("warnings[3] = %+v, want main.c warning preserved after folding", warnings[3])
+	}
+
+	merged := mergeBuildDiagnostics(
+		[]buildDiagnostic{{Severity: "warning", Code: "VMAKE_E_COMPILE", File: "include/common.h", Line: 1, Column: 2, Message: "'OLD_API' is deprecated"}},
+		warnings,
+	)
+	if len(merged) != 4 || merged[0].RepeatedCount != 57 {
+		t.Fatalf("merged = %+v", merged)
+	}
+}
+
+func TestParseBerkeleySizeAndBuildReportSize(t *testing.T) {
+	sample := "   text\t   data\t    bss\t    dec\t    hex\tfilename\n  12345\t    678\t    901\t  13924\t   3664\tbuild/app.elf\n"
+	sz := build.TargetSize{Text: 12345, Data: 678, Bss: 901, Total: 13924}
+	project := filepath.Join(t.TempDir(), "sizeproj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c").AddPostLinkSize()
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "static int global_data = 42;\nstatic int global_bss;\nint main(void) { return global_data + global_bss; }\n")
+	stdout, stderr, code := runBuildCommand(t, project, "build", "--json")
+	if code != 0 {
+		t.Fatalf("build --json exit = %d, stderr = %q\n%s", code, stderr, stdout)
+	}
+	doc := parseJSONBuildOutput(t, stdout)
+	if len(doc.Data.Targets) != 1 || doc.Data.Targets[0].Size == nil {
+		t.Fatalf("targets = %+v, want non-nil Size", doc.Data.Targets)
+	}
+	gotSize := doc.Data.Targets[0].Size
+	if gotSize.Text <= 0 || gotSize.Total <= 0 || gotSize.Total != gotSize.Text+gotSize.Data+gotSize.Bss {
+		t.Fatalf("target size = %+v (sample=%+v, raw=%q)", gotSize, sz, sample)
+	}
+}
+
+func TestEphemeralSetFlagAndQueryConfigGlobalDefines(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "setproj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.GlobalOption("chip").SetValues("A", "B").SetDefault("A")
+		ctx.Option("greeting").SetType(api.OptionString).SetDefault("hello")
+	})
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.GenerateConfigDefines()
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c")
+		if ctx.String("greeting") == "override" {
+			ctx.Target("extra").SetKind(api.TargetStatic).AddFiles("src/extra.c")
+		}
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), `
+#ifndef CONFIG_CHIP_B
+#error "expected CONFIG_CHIP_B"
+#endif
+int main(void) { return 0; }
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "extra.c"), "int extra(void);\nint extra(void) { return 1; }\n")
+	cfgPath := filepath.Join(project, ".vmake", "config.json")
+	origCfg := `{"version":"1","global":{"options":{"chip":"A"}},"entries":{"setproj":{"options":{"greeting":"hello"}}}}`
+	writeExtensionFile(t, cfgPath, origCfg)
+
+	qOut, qErr, code := runBuildCommand(t, project, "query", "config", "setproj", "-s", "chip=B", "-s", "setproj/greeting=override")
+	if code != 0 {
+		t.Fatalf("query config exit = %d, stderr = %q\n%s", code, qErr, qOut)
+	}
+	if !strings.Contains(qOut, "-DCONFIG_CHIP_B=1") || !strings.Contains(qOut, `-DCONFIG_GREETING="override"`) {
+		t.Fatalf("query config output missing expected defines:\n%s", qOut)
+	}
+
+	qtOut, qtErr, code := runBuildCommand(t, project, "query", "targets", "-s", "setproj/greeting=override")
+	if code != 0 || !strings.Contains(qtOut, "setproj:extra (static)") {
+		t.Fatalf("query targets exit = %d, stderr = %q, stdout = %q", code, qtErr, qtOut)
+	}
+
+	bOut, bErr, code := runBuildCommand(t, project, "build", "-s", "chip=B", "-s", "setproj/greeting=override")
+	if code != 0 {
+		t.Fatalf("build -s exit = %d, stderr = %q\n%s", code, bErr, bOut)
+	}
+	diskCfg, err := os.ReadFile(cfgPath)
+	if err != nil || string(diskCfg) != origCfg {
+		t.Fatalf("config.json modified on disk: %q, err=%v", string(diskCfg), err)
+	}
+
+	_, badErr, badCode := runBuildCommand(t, project, "build", "-s", "chip=INVALID")
+	if badCode == 0 || !strings.Contains(badErr, "invalid choice") {
+		t.Fatalf("expected invalid choice failure, got code=%d stderr=%q", badCode, badErr)
+	}
+}
+

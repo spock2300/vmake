@@ -9,7 +9,6 @@ import (
 func Main(p *api.Package) {
 	p.OnPackage(func(p *api.Package) {
 		p.SetGit("https://git.busybox.net/busybox")
-		p.SetConfigFiles(".config")
 	})
 
 	p.OnConfig(func(ctx *api.ConfigContext) {

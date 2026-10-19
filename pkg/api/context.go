@@ -73,28 +73,45 @@ func (ctx *ConfigContext) SetGlobalLinksFunc(fn func(...string)) *ConfigContext 
 	return ctx
 }
 
-func (ctx *ConfigContext) AddGlobalCFlags(flags ...string) {
-	if ctx.addGlobalCFlags != nil {
-		ctx.addGlobalCFlags(flags...)
+func (ctx *ConfigContext) AddGlobalCFlags(flags ...any) {
+	if strs := flattenAny(flags); len(strs) > 0 && ctx.addGlobalCFlags != nil {
+		ctx.addGlobalCFlags(strs...)
 	}
 }
 
-func (ctx *ConfigContext) AddGlobalCxxFlags(flags ...string) {
-	if ctx.addGlobalCxxFlags != nil {
-		ctx.addGlobalCxxFlags(flags...)
+func (ctx *ConfigContext) AddGlobalCxxFlags(flags ...any) {
+	if strs := flattenAny(flags); len(strs) > 0 && ctx.addGlobalCxxFlags != nil {
+		ctx.addGlobalCxxFlags(strs...)
 	}
 }
 
-func (ctx *ConfigContext) AddGlobalLdFlags(flags ...string) {
-	if ctx.addGlobalLdFlags != nil {
-		ctx.addGlobalLdFlags(flags...)
+func (ctx *ConfigContext) AddGlobalLdFlags(flags ...any) {
+	if strs := flattenAny(flags); len(strs) > 0 && ctx.addGlobalLdFlags != nil {
+		ctx.addGlobalLdFlags(strs...)
 	}
 }
 
-func (ctx *ConfigContext) AddGlobalLinks(links ...string) {
-	if ctx.addGlobalLinks != nil {
-		ctx.addGlobalLinks(links...)
+func (ctx *ConfigContext) AddGlobalLinks(links ...any) {
+	if strs := flattenAny(links); len(strs) > 0 && ctx.addGlobalLinks != nil {
+		ctx.addGlobalLinks(strs...)
 	}
+}
+
+func (ctx *ConfigContext) AddGlobalDefines(defines ...any) {
+	strs := flattenAny(defines)
+	if len(strs) == 0 {
+		return
+	}
+	flags := make([]string, len(strs))
+	for i, d := range strs {
+		if strings.HasPrefix(d, "-D") {
+			flags[i] = d
+		} else {
+			flags[i] = "-D" + d
+		}
+	}
+	ctx.AddGlobalCFlags(flags)
+	ctx.AddGlobalCxxFlags(flags)
 }
 
 func (ctx *ConfigContext) SetDefaultVisibilityHidden() *ConfigContext {
@@ -175,7 +192,6 @@ type BuildContext struct {
 	pkg               *Package
 	genConfigHeader   bool
 	genConfigDefines  bool
-	exportConfig      bool
 	importConfigs     []string
 	buildSubGraphFunc func(pkgName string) error
 	depOutputFunc     func(depRef string) string
@@ -201,6 +217,13 @@ func (ctx *BuildContext) SetDryRun(v bool) *BuildContext {
 
 func (ctx *BuildContext) SetPackage(pkg *Package) *BuildContext {
 	ctx.pkg = pkg
+	return ctx
+}
+
+func (ctx *BuildContext) SetProvidedLinkerScript(path string) *BuildContext {
+	if ctx.pkg != nil {
+		ctx.pkg.SetProvidedLinkerScript(path)
+	}
 	return ctx
 }
 
@@ -244,7 +267,11 @@ func (ctx *BuildContext) DepOutput(depRef string) string {
 }
 
 func (ctx *BuildContext) DepBuildDir(depRef string) string {
-	return filepath.Dir(ctx.DepOutput(depRef))
+	out := ctx.DepOutput(depRef)
+	if out == "" {
+		return ""
+	}
+	return filepath.Dir(out)
 }
 
 func (ctx *BuildContext) GenerateConfigHeader() *BuildContext {
@@ -254,11 +281,6 @@ func (ctx *BuildContext) GenerateConfigHeader() *BuildContext {
 
 func (ctx *BuildContext) GenerateConfigDefines() *BuildContext {
 	ctx.genConfigDefines = true
-	return ctx
-}
-
-func (ctx *BuildContext) ExportConfig() *BuildContext {
-	ctx.exportConfig = true
 	return ctx
 }
 
@@ -275,7 +297,6 @@ func (ctx *BuildContext) SyncConfigDefines(pkgNames ...string) *BuildContext {
 
 func (ctx *BuildContext) GenConfigHeader() bool   { return ctx.genConfigHeader }
 func (ctx *BuildContext) GenConfigDefines() bool  { return ctx.genConfigDefines }
-func (ctx *BuildContext) ExportEnabled() bool     { return ctx.exportConfig }
 func (ctx *BuildContext) ImportConfigs() []string { return ctx.importConfigs }
 
 func (ctx *BuildContext) Exec(name string, args ...string) {

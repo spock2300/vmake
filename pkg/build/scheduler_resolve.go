@@ -27,12 +27,31 @@ func resolveProvidedLib(installDir, lib string) (artifact, ldflag string) {
 
 func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, error) {
 	result := &depResolveResult{}
+	visited := map[string]bool{node.FullName: true}
+	var transQueue []string
+
+	collectPublicAttrs := func(depNode *BuildNode, depPkg *PkgInfo) {
+		if len(depNode.Target.PublicIncludes()) > 0 {
+			for _, pubInc := range depNode.Target.PublicIncludes() {
+				result.includes = append(result.includes, depPkg.ResolvePath(pubInc))
+			}
+		} else if depPkg.InstallDir != "" {
+			result.includes = append(result.includes, filepath.Join(depPkg.InstallDir, "include"))
+		}
+		result.defines = append(result.defines, depNode.Target.PublicDefines()...)
+		result.cflags = append(result.cflags, depNode.Target.PublicCFlags()...)
+		result.cxxflags = append(result.cxxflags, depNode.Target.PublicCxxFlags()...)
+		result.ldflags = append(result.ldflags, depNode.Target.PublicLdFlags()...)
+		result.links = append(result.links, depNode.Target.PublicLinks()...)
+	}
 
 	for _, depName := range node.Deps {
+		visited[depName] = true
 		depNode, err := s.graph.GetNode(depName)
 		if err != nil {
 			return nil, fmt.Errorf("dependency not found: %s", depName)
 		}
+		transQueue = append(transQueue, depNode.Deps...)
 
 		depPkg := s.pkgs[depNode.PkgName]
 		if depPkg == nil {
@@ -43,13 +62,7 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 			return nil, err
 		}
 
-		if len(depNode.Target.PublicIncludes()) > 0 {
-			for _, pubInc := range depNode.Target.PublicIncludes() {
-				result.includes = append(result.includes, depPkg.ResolvePath(pubInc))
-			}
-		} else if depPkg.InstallDir != "" {
-			result.includes = append(result.includes, filepath.Join(depPkg.InstallDir, "include"))
-		}
+		collectPublicAttrs(depNode, depPkg)
 
 		if depNode.Target.Kind() == api.TargetVoid && depPkg.InstallDir != "" {
 			var libNames []string
@@ -86,20 +99,43 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 				}
 				vlog.Verbose("  plan: dependency artifact %s does not exist yet", depOutput)
 			}
-			result.artifacts = append(result.artifacts, depOutput)
+			if depNode.Target.IsLinkable() {
+				result.artifacts = append(result.artifacts, depOutput)
 
-			for _, lib := range depNode.Target.ProvidedLibs() {
-				if lib == depNode.Target.Name() {
-					continue
-				}
-				artifact, ldflag := resolveProvidedLib(depPkg.InstallDir, lib)
-				if artifact != "" {
-					result.artifacts = append(result.artifacts, artifact)
-				} else {
-					result.voidLdFlags = append(result.voidLdFlags, ldflag)
+				for _, lib := range depNode.Target.ProvidedLibs() {
+					if lib == depNode.Target.Name() {
+						continue
+					}
+					artifact, ldflag := resolveProvidedLib(depPkg.InstallDir, lib)
+					if artifact != "" {
+						result.artifacts = append(result.artifacts, artifact)
+					} else {
+						result.voidLdFlags = append(result.voidLdFlags, ldflag)
+					}
 				}
 			}
 		}
+	}
+
+	for i := 0; i < len(transQueue); i++ {
+		transName := transQueue[i]
+		if visited[transName] {
+			continue
+		}
+		visited[transName] = true
+		transNode, err := s.graph.GetNode(transName)
+		if err != nil {
+			return nil, fmt.Errorf("dependency not found: %s", transName)
+		}
+		transQueue = append(transQueue, transNode.Deps...)
+		transPkg := s.pkgs[transNode.PkgName]
+		if transPkg == nil {
+			continue
+		}
+		if err := s.ensurePackageGenerated(transNode.PkgName); err != nil {
+			return nil, err
+		}
+		collectPublicAttrs(transNode, transPkg)
 	}
 
 	return result, nil
@@ -148,6 +184,16 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 		return nil, err
 	}
 	resolved.AllIncludes = append(resolved.AllIncludes, deps.includes...)
+	resolved.AllDefines = append(resolved.AllDefines, node.Target.PublicDefines()...)
+	resolved.AllDefines = append(resolved.AllDefines, deps.defines...)
+	resolved.AllCFlags = append(resolved.AllCFlags, node.Target.PublicCFlags()...)
+	resolved.AllCFlags = append(resolved.AllCFlags, deps.cflags...)
+	resolved.AllCxxFlags = append(resolved.AllCxxFlags, node.Target.PublicCxxFlags()...)
+	resolved.AllCxxFlags = append(resolved.AllCxxFlags, deps.cxxflags...)
+	resolved.AllLdFlags = append(resolved.AllLdFlags, node.Target.PublicLdFlags()...)
+	resolved.AllLdFlags = append(resolved.AllLdFlags, deps.ldflags...)
+	resolved.AllLinks = append(resolved.AllLinks, node.Target.PublicLinks()...)
+	resolved.AllLinks = append(resolved.AllLinks, deps.links...)
 	resolved.DepArtifacts = deps.artifacts
 
 	s.checkLibDependencies(resolved)

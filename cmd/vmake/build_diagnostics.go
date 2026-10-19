@@ -19,14 +19,15 @@ const (
 )
 
 type buildDiagnostic struct {
-	Severity string `json:"severity"`
-	Code     string `json:"code"`
-	Message  string `json:"message"`
-	File     string `json:"file,omitempty"`
-	Line     int    `json:"line,omitempty"`
-	Column   int    `json:"column,omitempty"`
-	Package  string `json:"package,omitempty"`
-	Target   string `json:"target,omitempty"`
+	Severity      string `json:"severity"`
+	Code          string `json:"code"`
+	Message       string `json:"message"`
+	File          string `json:"file,omitempty"`
+	Line          int    `json:"line,omitempty"`
+	Column        int    `json:"column,omitempty"`
+	Package       string `json:"package,omitempty"`
+	Target        string `json:"target,omitempty"`
+	RepeatedCount int    `json:"repeatedCount,omitempty"`
 }
 
 var (

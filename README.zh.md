@@ -257,7 +257,7 @@ ctx.Int(name string) int
 // 条件判断
 ctx.If(option string, then ...string) []string
 ctx.When(option string, value any) bool
-ctx.Select(option string, mapping map[string]string) string
+ctx.Select(option string, mapping map[string]string) []string
 
 // 目标配置
 ctx.Target(name string) *Target

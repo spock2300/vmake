@@ -273,6 +273,8 @@ var (
 func parseBuildWarnings(output string) []buildDiagnostic {
 	warnings := []buildDiagnostic{}
 	seen := map[string]bool{}
+	msgCount := map[string]int{}
+	firstIdx := map[string]int{}
 	lines := strings.Split(output, "\n")
 	for i, line := range lines {
 		line = strings.TrimSuffix(line, "\r")
@@ -304,10 +306,18 @@ func parseBuildWarnings(output string) []buildDiagnostic {
 			continue
 		}
 		seen[key] = true
-		warnings = append(warnings, warning)
+		if msgCount[warning.Message] >= 3 {
+			warnings[firstIdx[warning.Message]].RepeatedCount++
+			continue
+		}
 		if len(warnings) == buildWarningLimit {
 			break
 		}
+		if msgCount[warning.Message] == 0 {
+			firstIdx[warning.Message] = len(warnings)
+		}
+		msgCount[warning.Message]++
+		warnings = append(warnings, warning)
 	}
 	return warnings
 }
@@ -354,17 +364,32 @@ func mergeBuildDiagnostics(diagnostics, warnings []buildDiagnostic) []buildDiagn
 	merged := make([]buildDiagnostic, 0, len(diagnostics)+len(warnings))
 	pending := make([]buildDiagnostic, 0, len(warnings))
 	seen := make(map[string]bool, len(warnings))
+	msgCount := make(map[string]int)
+	firstIdx := make(map[string]int)
 	addWarning := func(diagnostic buildDiagnostic) {
-		if len(pending) == buildWarningLimit {
-			return
-		}
 		diagnostic.Severity = "warning"
 		diagnostic.Code = buildWarningCode
 		key := warningDiagnosticKey(diagnostic)
 		if seen[key] {
+			if diagnostic.RepeatedCount > 0 {
+				if idx, ok := firstIdx[diagnostic.Message]; ok {
+					pending[idx].RepeatedCount += diagnostic.RepeatedCount
+				}
+			}
 			return
 		}
 		seen[key] = true
+		if msgCount[diagnostic.Message] >= 3 {
+			pending[firstIdx[diagnostic.Message]].RepeatedCount += 1 + diagnostic.RepeatedCount
+			return
+		}
+		if len(pending) == buildWarningLimit {
+			return
+		}
+		if msgCount[diagnostic.Message] == 0 {
+			firstIdx[diagnostic.Message] = len(pending)
+		}
+		msgCount[diagnostic.Message]++
 		pending = append(pending, diagnostic)
 	}
 	for _, diagnostic := range diagnostics {

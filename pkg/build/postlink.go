@@ -28,7 +28,11 @@ func expandPostLinkArgs(templates []string, sourceDir, outputPath string) []stri
 	args := make([]string, len(templates))
 	for index, template := range templates {
 		expanded := strings.ReplaceAll(template, "{output}", outputPath)
-		args[index] = expandBuildDirToken(buildDir, expanded)
+		if flag, val, ok := strings.Cut(expanded, "="); ok && strings.HasPrefix(flag, "-") {
+			args[index] = flag + "=" + expandBuildDirToken(buildDir, val)
+		} else {
+			args[index] = expandBuildDirToken(buildDir, expanded)
+		}
 	}
 	return args
 }

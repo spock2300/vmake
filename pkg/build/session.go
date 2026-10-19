@@ -30,12 +30,13 @@ const (
 )
 
 type TargetResult struct {
-	Package    string   `json:"package"`
-	Target     string   `json:"target"`
-	Kind       string   `json:"kind"`
-	Outputs    []string `json:"outputs"`
-	Status     string   `json:"status"`
-	DurationMs int64    `json:"durationMs"`
+	Package    string      `json:"package"`
+	Target     string      `json:"target"`
+	Kind       string      `json:"kind"`
+	Outputs    []string    `json:"outputs"`
+	Status     string      `json:"status"`
+	DurationMs int64       `json:"durationMs"`
+	Size       *TargetSize `json:"size,omitempty"`
 }
 
 func (s *Session) TargetResults() []TargetResult {

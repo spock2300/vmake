@@ -26,7 +26,7 @@ uboot、kernel、busybox、app、分区、firmware 都是包。它们遵循完�
 OnRequire → OnConfig → OnBuild → OnInstall
 ```
 
-`OnPackage` 不是第五个构建阶段：它是在 `Main` 返回后、本包 `OnRequire` 发现依赖之前执行一次的单槽回调（每包只能注册一个），用于设置 `SetConfigFiles` 等包级元数据。
+`OnPackage` 不是第五个构建阶段：它是在 `Main` 返回后、本包 `OnRequire` 发现依赖之前执行一次的单槽回调（每包只能注册一个），用于设置 `SetGit`、`SetKConfig` 等包级元数据。
 
 可选的清理阶段：
 
@@ -36,7 +36,7 @@ OnClean（vmake clean 时执行，用于自定义清理逻辑如 make clean）
 
 | 阶段 | 职责 | 常见操作 |
 |------|------|----------|
-| **OnPackage** | 包级元数据 | `SetConfigFiles(".config")` |
+| **OnPackage** | 包级元数据 | `SetGit(...)`、`SetKConfig(...)` |
 | **OnRequire** | 声明依赖 | `AddRequires("busybox", "myapp")` |
 | **OnConfig** | 声明配置项 | `Option("debug")`、`KConfig("busybox")` |
 | **OnBuild** | 定义构建目标 | `Target("xxx").SetKind(...)` + `SetBuildFunc(...)` |
@@ -291,23 +291,9 @@ SetKConfigPatches(map[string]string{
 
 ---
 
-## 3.7 SetConfigFiles 与外部增量构建
+## 3.7 外部增量构建
 
-### SetConfigFiles
-
-```go
-func (p *Package) SetConfigFiles(files ...string) *Package
-```
-
-保存包级配置文件元数据。它不控制 TargetVoid 回调跳过，也不会自动成为原生 target 的输入。通常在 `OnPackage` 中设置：
-
-```go
-p.OnPackage(func(p *api.Package) {
-    p.SetConfigFiles(".config")
-})
-```
-
-本地和远程包的 TargetVoid 回调在每个构建会话执行一次；VMake 不使用 `.vmake_stamp` 或非空安装目录跳过回调。同步子图与主图共享会话，已完成 target 不重复执行。回调内的 Make/CMake 负责读取配置、检查依赖及增量执行；失败后下一次构建仍进入回调。所有 VMake target 串行，`-j` 作为 target 内部编译及 Make/CMake helper 的并行上限。
+默认情况下，本地和远程包的 `TargetVoid` 回调在每个构建会话执行一次（若同时通过 `AddInputs` 和 `AddOutputs` 声明了输入与输出，则在产物完整且输入未变化时跳过回调）。同步子图与主图共享会话，已完成 target 不重复执行。回调内的 Make/CMake 负责读取配置、检查依赖及增量执行；失败后下一次构建仍进入回调。所有 VMake target 串行，`-j` 作为 target 内部编译及 Make/CMake helper 的并行上限。
 
 ---
 
@@ -415,10 +401,6 @@ import (
 )
 
 func Main(p *api.Package) {
-    p.OnPackage(func(p *api.Package) {
-        p.SetConfigFiles(".config")
-    })
-
     p.OnConfig(func(ctx *api.ConfigContext) {
         ctx.KConfig("u-boot").
             SetDescription("U-Boot configuration").
@@ -455,10 +437,6 @@ import (
 )
 
 func Main(p *api.Package) {
-    p.OnPackage(func(p *api.Package) {
-        p.SetConfigFiles(".config")
-    })
-
     p.OnConfig(func(ctx *api.ConfigContext) {
         ctx.KConfig("linux").
             SetDescription("Linux kernel configuration").
@@ -499,7 +477,6 @@ import (
 func Main(p *api.Package) {
     p.OnPackage(func(p *api.Package) {
         p.SetGit("https://git.busybox.net/busybox")
-        p.SetConfigFiles(".config")
     })
 
     p.OnConfig(func(ctx *api.ConfigContext) {

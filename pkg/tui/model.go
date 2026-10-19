@@ -187,7 +187,17 @@ func newModel(in modelInput) Model {
 		if values[pkgName] == nil {
 			values[pkgName] = make(map[string]any)
 		}
-		fillOptionDefaults(values[pkgName], opts)
+		for name, opt := range opts {
+			if opt.IsGlobal() {
+				delete(values[pkgName], name)
+				continue
+			}
+			if _, ok := values[pkgName][name]; !ok {
+				if def := opt.Default(); def != nil {
+					values[pkgName][name] = def
+				}
+			}
+		}
 	}
 
 	m := Model{

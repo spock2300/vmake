@@ -2768,3 +2768,95 @@ func TestInspectReportsBuildAndTestStateSeparately(t *testing.T) {
 			data.BuildReportPresent, data.BuildReportState, data.TestReportPresent, data.TestReportState)
 	}
 }
+
+func TestInspectTargetFieldsUseRequiresAndOptionDefs(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnRequire(func(ctx *api.RequireContext) {
+		ctx.AddRequires("dep_a", "dep_b")
+	})
+	p.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.GlobalOption("board").SetValues("evb", "mini").SetDefault("evb").SetDescription("Target board")
+		ctx.Option("baud").SetType(api.OptionInt).SetDefault(115200).SetDescription("UART baudrate").SetGroup("UART")
+	})
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("gen").
+			SetKind(api.TargetVoid).
+			AddInputs("schema.idl").
+			AddOutputs("gen.h").
+			SetBuildFunc(func(pkg *api.Package) error { return nil })
+		ctx.Target("app").
+			SetKind(api.TargetBinary).
+			AddFiles("src/main.c").
+			AddPublicDefines("PUB_DEF=1").
+			AddPublicCFlags("-fpub-c").
+			AddPublicCxxFlags("-fpub-cxx").
+			AddPublicLdFlags("-Wl,--pub").
+			AddPublicLinks("m").
+			SetLinkerScript("board.ld").
+			SetKeepGlobalSymbols("keep.syms").
+			UseRequires().
+			AddDeps("gen")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "src", "main.c"), "int main(void) { return 0; }\n")
+	for _, dep := range []string{"dep_a", "dep_b"} {
+		writeExtensionFile(t, filepath.Join(project, dep, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("lib").SetKind(api.TargetStatic).AddFiles("lib.c")
+	})
+}
+`)
+		writeExtensionFile(t, filepath.Join(project, dep, "lib.c"), "int "+dep+"(void) { return 1; }\n")
+	}
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect", "-s", "board=mini")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect exit = %d, stderr = %q\n%s", code, stderr, stdout)
+	}
+	if strings.Contains(stdout, `"languages"`) {
+		t.Fatalf("inspect JSON still contains removed languages field:\n%s", stdout)
+	}
+	data := decodeInspectEnvelope(t, stdout).Data
+	if data == nil {
+		t.Fatal("inspect returned nil data")
+	}
+	boardDef, ok := data.GlobalOptionDefs["board"]
+	if !ok || boardDef.Type != "choice" || boardDef.Default != "evb" || boardDef.Description != "Target board" ||
+		!slices.Equal(boardDef.Values, []string{"evb", "mini"}) || boardDef.Group != api.GroupGlobal {
+		t.Fatalf("globalOptionDefs[board] = %+v", boardDef)
+	}
+	pkg := inspectPackageNamed(t, data, "proj")
+	baudDef, ok := pkg.OptionDefs["baud"]
+	if !ok || baudDef.Type != "int" || baudDef.Default != float64(115200) || baudDef.Description != "UART baudrate" || baudDef.Group != "UART" {
+		t.Fatalf("pkg.OptionDefs[baud] = %+v", baudDef)
+	}
+	app := inspectTargetNamed(t, pkg, "app")
+	if !slices.Equal(app.PublicDefines, []string{"PUB_DEF=1"}) ||
+		!slices.Equal(app.PublicCFlags, []string{"-fpub-c"}) ||
+		!slices.Equal(app.PublicCxxFlags, []string{"-fpub-cxx"}) ||
+		!slices.Equal(app.PublicLdFlags, []string{"-Wl,--pub"}) ||
+		!slices.Equal(app.PublicLinks, []string{"m"}) ||
+		app.LinkerScript != "board.ld" ||
+		app.KeepGlobalSymbols != "keep.syms" {
+		t.Fatalf("app target fields = %+v", app)
+	}
+	if !slices.Equal(app.Deps, []string{"dep_a:*", "dep_b:*", "gen"}) {
+		t.Fatalf("app.Deps = %v, want [dep_a:* dep_b:* gen]", app.Deps)
+	}
+	gen := inspectTargetNamed(t, pkg, "gen")
+	if !slices.Equal(gen.Inputs, []string{"schema.idl"}) || !slices.Equal(gen.Outputs, []string{"gen.h"}) {
+		t.Fatalf("gen target inputs/outputs = %+v", gen)
+	}
+}
+

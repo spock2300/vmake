@@ -80,6 +80,7 @@ itself has no JSON form.`,
 		Run: runQuery,
 	}
 	cmd.PersistentFlags().BoolVar(&queryAllowWrites, "allow-dry-run-writes", false, "let dry-run OnBuild callbacks write files (may modify the build tree)")
+	cmd.PersistentFlags().StringArrayVarP(&ephemeralSetFlags, "set", "s", nil, "override an option for this run only (format: [pkg/]option=value)")
 	cmd.AddCommand(newQueryTargetsCmd())
 	cmd.AddCommand(newQueryConfigCmd())
 	return cmd
@@ -349,6 +350,9 @@ func runQueryConfig(cmd *cobra.Command, args []string) {
 
 	if s := formatOptions(ctx, name, globalValues); s != "" {
 		fmt.Println(s)
+	}
+	for _, d := range ctx.GlobalMacroDefines {
+		fmt.Printf("-D%s\n", d)
 	}
 	for _, d := range api.ConfigToDefines(opts, vals) {
 		fmt.Printf("-D%s\n", d)

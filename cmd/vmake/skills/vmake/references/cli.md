@@ -5,11 +5,11 @@ extension plugin commands appear here too. For plugin details, run
 `vmake <plugin> --help`.
 
 `vmake [--project <value> -C --quiet -q --verbose -v --very-verbose -V --yes -y]` - VMake - A Go-based C/C++ build system
-  `vmake build [--check --explain --install -i --install-type <value> --jobs <value> -j --json --keep-going -k --manifest <value> --mode <value> --output <value> --plan --prefix <value> -p --tests --toolchain <value>]` - Build the project
+  `vmake build [--check --explain --install -i --install-type <value> --jobs <value> -j --json --keep-going -k --manifest <value> --mode <value> --output <value> --plan --prefix <value> -p --set <value> -s --tests --toolchain <value>]` - Build the project
   `vmake cache` - Inspect and remove shared git object caches
     `vmake cache list` - List cached upstream repositories
     `vmake cache remove <url>` - Remove one cached upstream repository
-  `vmake check-symbols [--mode <value> --strict --toolchain <value>]` - Audit exported symbols of shared libraries and binaries via nm
+  `vmake check-symbols [--mode <value> --set <value> -s --strict --toolchain <value>]` - Audit exported symbols of shared libraries and binaries via nm
   `vmake clean [--all]` - Clean build artifacts
   `vmake completion [shell]` - Generate shell completion script
     `vmake completion install [--shell <value>]` - Install shell completion to your profile
@@ -30,7 +30,7 @@ extension plugin commands appear here too. For plugin details, run
   `vmake git` - Git version management commands
     `vmake git tag [version] [--major --message <value> -m --minor --no-push]` - Create version tag, update latest, and push
   `vmake init-editor [--local <value> --remove]` - Generate editor support files for build.go (go.mod for gopls)
-  `vmake inspect [--allow-dry-run-writes --set <value>]` - Print a machine-readable project model
+  `vmake inspect [--allow-dry-run-writes --set <value> -s]` - Print a machine-readable project model
   `vmake lock` - Manage .vmake/vmake.lock (pinned dependency versions)
     `vmake lock show` - Print locked dependency versions
     `vmake lock update` - Re-resolve dependency versions and rewrite vmake.lock
@@ -42,10 +42,10 @@ extension plugin commands appear here too. For plugin details, run
     `vmake pkg list` - List package sources
     `vmake pkg search [pattern]` - Search for packages
     `vmake pkg update <repo/name>[@version] [--dry-run]` - Update package source (floats to origin/HEAD, or pins @version)
-  `vmake query [--allow-dry-run-writes]` - Show dependency tree
+  `vmake query [--allow-dry-run-writes --set <value> -s]` - Show dependency tree
     `vmake query config <pkg>` - Show effective option values and generated defines
     `vmake query targets [--json]` - List build targets without building
-  `vmake rebuild [--explain --install -i --install-type <value> --jobs <value> -j --json --keep-going -k --manifest <value> --mode <value> --output <value> --prefix <value> -p --tests --toolchain <value>]` - Rebuild the project
+  `vmake rebuild [--explain --install -i --install-type <value> --jobs <value> -j --json --keep-going -k --manifest <value> --mode <value> --output <value> --prefix <value> -p --set <value> -s --tests --toolchain <value>]` - Rebuild the project
   `vmake repo` - Manage package repositories
     `vmake repo add <name> <git-url-or-template> [--native -n]` - Add a package repository
     `vmake repo list` - List all package repositories
@@ -57,7 +57,7 @@ extension plugin commands appear here too. For plugin details, run
     `vmake skill install [--project <value> -p]` - Install VMake skill for AI assistants
     `vmake skill path` - Show skill installation paths
     `vmake skill uninstall` - Uninstall VMake skill
-  `vmake test [--explain --jobs <value> -j --json --keep-going -k --manifest <value> --mode <value> --output <value> --require-tests --tests --toolchain <value>]` - Build and run test targets
+  `vmake test [--explain --jobs <value> -j --json --keep-going -k --manifest <value> --mode <value> --output <value> --require-tests --set <value> -s --tests --toolchain <value>]` - Build and run test targets
   `vmake toolchain` - Show toolchain information
     `vmake toolchain list` - List available toolchains
     `vmake toolchain show [name]` - Show toolchain details

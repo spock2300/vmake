@@ -5,20 +5,17 @@ import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.Option("debug").
-			SetType(api.OptionBool).
 			SetDefault(false).
 			SetDescription("Enable debug mode").
 			SetGroup("General")
 
 		ctx.Option("optimization").
-			SetType(api.OptionChoice).
 			SetDefault("O2").
 			SetValues("O0", "O1", "O2", "O3", "Os").
 			SetDescription("Optimization level").
 			SetGroup("General")
 
 		ctx.Option("ssl").
-			SetType(api.OptionBool).
 			SetDefault(false).
 			SetDescription("Enable SSL support").
 			SetGroup("SSL")

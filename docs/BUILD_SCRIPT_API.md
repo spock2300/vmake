@@ -56,8 +56,6 @@ Package 是插件的主入口类型，包含生命周期方法和元信息设置
 type Package struct {
     PackageMeta
     ConfigAccessor
-    *TargetRegistry
-    *InstallItemHolder
     // ... 内部字段
 }
 ```
@@ -102,16 +100,10 @@ func (p *Package) GetPatches() []string
 
 Patch 路径相对 `ScriptDir()`（build.go 所在目录）。Patch 文件在源码下载后、构建前通过 `git apply --3way` 自动应用。已应用的 patch 会被跳过。
 
-### 目标定义
-
-```go
-func (p *Package) Target(name string) *Target
-func (p *Package) GetTargets() map[string]*Target
-```
-
 ### 包依赖
 
 ```go
+func (p *Package) AddRequires(deps ...any) *Package // 直接在 Main(p) 中声明固定包依赖（支持 string、[]string，无需单独写 OnRequire）
 func (p *Package) Deps() map[string]*InstalledPackage
 ```
 
@@ -267,20 +259,10 @@ func (p *Package) DefaultVisibilityHidden() bool
 func (p *Package) VisibilityFlags() (cflags, cxxflags []string)
 func (p *Package) Versions() map[string]string
 func (p *Package) GenConfigHeader() bool           // 配置头文件是否启用
-func (p *Package) ExportConfig() bool
 func (p *Package) ImportConfigs() []string
 func (p *Package) TargetOS() string
 func (p *Package) SrcDirRaw() string               // 原始 srcCodeDir，无 SourceDir 回退（SetSrcDir 未调用时返回空串）
 ```
-
-### 配置文件声明
-
-```go
-func (p *Package) SetConfigFiles(files ...string) *Package  // 包级配置文件列表，不控制自定义回调是否执行
-func (p *Package) ConfigFiles() []string
-```
-
-当前实现只保存这个列表，构建流程没有读取它。
 
 ### 源码与输出目录
 
@@ -311,7 +293,7 @@ func (p *Package) SelectVersionMulti(constraints []string) (string, error)  // �
 
 `ConfigAccessor` 被嵌入到 `Package`、`ConfigContext`、`BuildContext`、`InstallContext`、`CleanContext`、`RequireContext` 中，提供选项值读取和条件表达式。
 
-脚本上下文（Config/Build/Install/Clean/Require）的访问器是**严格的**：读取未声明的选项名、或用与选项 `SetType` 不匹配的方法读取（如对 `OptionInt` 选项用 `Bool()`），会 fatal（panic `*BuildScriptError`）。`OnRequire` 的首次发现阶段选项值尚不可用，直接读取（`Bool()` 等）同样 fatal——请使用发现感知的 `ctx.When` / `ctx.If` / `ctx.Select`；`FilterDeps` 阶段的第二次 `OnRequire` 可以读取本包声明的选项（以及 `entries.<pkg>.options` 中的包级值）。`Package` 内嵌的访问器不启用严格检查。
+脚本上下文（Config/Build/Install/Clean/Require）的访问器是**严格的**：读取未声明的选项名、或用与选项类型不匹配的方法读取（如对 `OptionInt` 选项用 `Bool()`），会 fatal（panic `*BuildScriptError`）。`OnRequire` 的首次发现阶段选项值尚不可用，直接读取（`Bool()` 等）同样 fatal——请使用发现感知的 `ctx.When` / `ctx.WhenNot` / `ctx.WhenAny` / `ctx.If` / `ctx.Select`；`FilterDeps` 阶段的第二次 `OnRequire` 可以读取本包声明的选项（以及 `entries.<pkg>.options` 中的包级值）。`Package` 内嵌的访问器不启用严格检查。
 
 ```go
 // 值读取（优先配置值，其次默认值）
@@ -322,8 +304,10 @@ func (a *ConfigAccessor) BoolStr(name string) string          // "ON" / "OFF"
 
 // 条件表达式
 func (a *ConfigAccessor) If(option string, then ...string) []string
-func (a *ConfigAccessor) Select(option string, mapping map[string]string) string
+func (a *ConfigAccessor) Select(option string, mapping map[string]string) []string
 func (a *ConfigAccessor) When(option string, value any) bool
+func (a *ConfigAccessor) WhenNot(option string, value any) bool
+func (a *ConfigAccessor) WhenAny(option string, values ...any) bool
 
 // 选项管理
 func (a *ConfigAccessor) Option(name string) *Option        // 配置阶段结束后（Build/Install/Clean 上下文）调用会 fatal
@@ -362,33 +346,35 @@ func (ctx *ConfigContext) Toolchains() []string
 func (ctx *ConfigContext) ToolchainOption() *Option      // 创建工具链选择选项（自动填充可用工具链）
 
 // 全局编译/链接标志（在 OnConfig 和 OnApply 回调中有效）
-func (ctx *ConfigContext) AddGlobalCFlags(flags ...string)
-func (ctx *ConfigContext) AddGlobalCxxFlags(flags ...string)
-func (ctx *ConfigContext) AddGlobalLdFlags(flags ...string)
-func (ctx *ConfigContext) AddGlobalLinks(links ...string)  // 添加全局链接库（原生链接；CMakeConfigure 不自动传递）
+func (ctx *ConfigContext) AddGlobalCFlags(flags ...any)
+func (ctx *ConfigContext) AddGlobalCxxFlags(flags ...any)
+func (ctx *ConfigContext) AddGlobalLdFlags(flags ...any)
+func (ctx *ConfigContext) AddGlobalLinks(links ...any)    // 添加全局链接库（原生链接；CMakeConfigure 不自动传递）
+func (ctx *ConfigContext) AddGlobalDefines(defines ...any) // 同时向全局 C 和 C++ 标志追加 -D<define>
 func (ctx *ConfigContext) SetDefaultVisibilityHidden() *ConfigContext  // 仅本包加 -fvisibility=hidden（C++ 另加 -fvisibility-inlines-hidden）
 
 // 依赖 Linker Script
 func (ctx *ConfigContext) SetProvidedLinkerScript(path string) *ConfigContext
 ```
 
-`SetDefaultVisibilityHidden()` 在 `OnConfig` 或选项 `OnApply` 中启用本包所有目标的默认符号隐藏，重复调用幂等；无关联包时报告 `BuildScriptError`。本地、远程、Registry 和 Native 包采用相同语义，依赖包保留自身的导出规则，不会被注入 `-fvisibility=default`。多个自有包需要隐藏时，分别在各自的 `OnConfig` 中声明。显式 `AddGlobalCFlags`／`AddGlobalCxxFlags` 仍影响所有包，包括显式传入的 hidden 标志。
+`SetDefaultVisibilityHidden()` 在 `OnConfig` 或选项 `OnApply` 中启用本包所有目标的默认符号隐藏，重复调用幂等；无关联包时报告 `BuildScriptError`。本地、远程、Registry 和 Native 包采用相同语义，依赖包保留自身的导出规则，不会被注入 `-fvisibility=default`。多个自有包需要隐藏时，分别在各自的 `OnConfig` 中声明。显式 `AddGlobalCFlags`／`AddGlobalCxxFlags` 仍影响所有包，包括显式传入的 hidden 标志。 When 宏或标志仅面向特定库的下游目标时，优先在目标上使用 `AddPublicDefines`／`AddPublicCFlags`／`AddPublicCxxFlags`／`AddPublicLdFlags`／`AddPublicLinks`，避免修改全局标志导致全工程 `BuildDir` 旋转。
 
 `DefaultVisibilityHidden()` 返回本包是否启用隐藏；`VisibilityFlags()` 返回对应的 C 和 C++ 默认标志，未启用时均为空。切换包级隐藏策略只改变该包的构建缓存标识；全局标志变化仍影响所有包。
 
 ## Option
 
-配置选项定义。
+配置选项定义。`SetDefault` 和 `SetValues` 会自动推断选项类型（`bool` → `OptionBool`，`int` → `OptionInt`，`string` → `OptionString`，调用 `SetValues(...)` → `OptionChoice`），因此常规声明无需显式调用 `SetType`。
 
 ```go
 // 设置方法（链式调用）
-func (o *Option) SetType(t OptionType) *Option
-func (o *Option) SetDefault(v any) *Option
+func (o *Option) SetType(t OptionType) *Option             // 可选；SetDefault / SetValues 会自动推断类型
+func (o *Option) SetDefault(v any) *Option                 // 设置默认值（未显式 SetType 时按 v 自动推断类型）
 func (o *Option) SetDescription(desc string) *Option
-func (o *Option) SetValues(vals ...string) *Option        // OptionChoice 使用
+func (o *Option) SetValues(vals ...string) *Option         // 设置可选值列表（未显式 SetType 时自动推断为 OptionChoice）
+func (o *Option) SetMacroName(name string) *Option         // 自定义宏名（对包级 Option 与 GlobalOption 均生效）
 func (o *Option) SetShowIf(fn func(ctx *ConfigContext) bool) *Option  // 条件显示
 func (o *Option) SetOnApply(fn func(ctx *ConfigContext, val any)) *Option  // 选项值解析后的回调；按选项名排序执行，非声明顺序
-func (o *Option) SetGroup(group string) *Option          // SetGroup(api.GroupGlobal)（"Global"）使选项成为全局选项
+func (o *Option) SetGroup(group string) *Option            // SetGroup(api.GroupGlobal)（"Global"）使选项成为全局选项
 
 // 获取方法
 func (o *Option) Name() string
@@ -401,7 +387,7 @@ func (o *Option) ShowIf() func(ctx *ConfigContext) bool
 func (o *Option) OnApply() func(ctx *ConfigContext, val any)
 func (o *Option) IsGlobal() bool
 func (o *Option) MacroName() string
-func (o *Option) MacroDefines(val any) ([]string, error)  // 全局宏的 -D 内容，不含 "-D" 前缀
+func (o *Option) MacroDefines(val any) ([]string, error)  // 宏的 -D 内容，不含 "-D" 前缀
 
 // 相关函数
 func NormalizeOptionValue(opt *Option, val any) any
@@ -431,8 +417,10 @@ func (ctx *BuildContext) SetDefaultFlags(cflags, cxxflags, ldflags []string)  //
 
 // 条件表达式（继承自 ConfigAccessor）
 func (ctx *BuildContext) If(option string, then ...string) []string
-func (ctx *BuildContext) Select(option string, mapping map[string]string) string
+func (ctx *BuildContext) Select(option string, mapping map[string]string) []string
 func (ctx *BuildContext) When(option string, value any) bool
+func (ctx *BuildContext) WhenNot(option string, value any) bool
+func (ctx *BuildContext) WhenAny(option string, values ...any) bool
 
 // 读取 Package 内选项值
 func (ctx *BuildContext) Bool(name string) bool
@@ -448,17 +436,15 @@ func (ctx *BuildContext) BuildSubGraph(pkgName string)
 func (ctx *BuildContext) DepOutput(depRef string) string
 func (ctx *BuildContext) DepBuildDir(depRef string) string
 
-// 配置导出
+// 配置生成与导入
 func (ctx *BuildContext) GenerateConfigHeader() *BuildContext
 func (ctx *BuildContext) GenerateConfigDefines() *BuildContext
-func (ctx *BuildContext) ExportConfig() *BuildContext
 func (ctx *BuildContext) ImportConfig(pkgNames ...string) *BuildContext
 func (ctx *BuildContext) SyncConfigDefines(pkgNames ...string) *BuildContext
 
-// 配置导出状态
+// 配置生成与导入状态
 func (ctx *BuildContext) GenConfigHeader() bool
 func (ctx *BuildContext) GenConfigDefines() bool
-func (ctx *BuildContext) ExportEnabled() bool
 func (ctx *BuildContext) ImportConfigs() []string
 
 // 构建目录路径与声明式文件生成
@@ -472,7 +458,7 @@ func (ctx *BuildContext) PackageName() string
 func (ctx *BuildContext) Exec(name string, args ...string)
 ```
 
-`DepOutput`/`DepBuildDir` 接受 `pkg` 或 `pkg:target`（含子包短名），但不支持 `AddDeps` 的“同包 target 简写”和 `pkg:*` 通配：`DepOutput("utils")` 会把 `utils` 当作包名，`DepOutput("lib:*")` 返回空串。省略 target 时，只有该包恰好一个 target 才返回产物路径，否则返回空串。dry-run 下 `DepOutput` 返回空串（`DepBuildDir` 因此为 `.`），`BuildSubGraph` 直接返回。
+`DepOutput`/`DepBuildDir` 接受 `pkg` 或 `pkg:target`（含子包短名），但不支持 `AddDeps` 的“同包 target 简写”和 `pkg:*` 通配：`DepOutput("utils")` 会把 `utils` 当作包名，`DepOutput("lib:*")` 返回空串。省略 target 时，只有该包恰好一个 target 才返回产物路径，否则返回空串。dry-run 下 `DepOutput` 返回空串（`DepBuildDir` 因此为空串），`BuildSubGraph` 直接返回。
 
 ## InstallContext
 
@@ -540,6 +526,7 @@ p.OnClean(func(ctx *api.CleanContext) {
 func (t *Target) SetKind(kind TargetKind) *Target
 func (t *Target) SetDefault(isDefault bool) *Target
 func (t *Target) SetTest(v bool) *Target              // 标记为测试目标（不改变 isDefault；默认 target 在普通 build 及安装中跳过，--tests/vmake test 才构建）
+func (t *Target) SetLinkable(v bool) *Target          // 默认为 true；设为 false 时 TargetObject/TargetStatic 仍正常编译并暴露给 DepOutput，但不会自动作为对象/静态库链接进下游依赖它的目标
 
 // 源文件与头文件
 func (t *Target) AddFiles(files ...any) *Target
@@ -548,20 +535,27 @@ func (t *Target) AddPublicIncludes(args ...any) *Target  // dirs + optional @"pa
 
 // 编译配置
 func (t *Target) AddDefines(defines ...any) *Target
-func (t *Target) SetLanguages(langs ...string) *Target   // 目前无效果：语言按源文件扩展名自动识别
+func (t *Target) AddPublicDefines(defines ...any) *Target  // 沿 AddDeps 传播给直接及传递依赖方
 
 // 链接配置
 func (t *Target) AddLinks(libs ...any) *Target
+func (t *Target) AddPublicLinks(libs ...any) *Target       // 沿 AddDeps 传播给直接及传递依赖方
 func (t *Target) AddProvidedLibs(libs ...string) *Target
-func (t *Target) AddDeps(targets ...string) *Target
+func (t *Target) AddDeps(targets ...any) *Target           // 支持 string、[]string（如 ctx.If/ctx.Select）；支持同包 target、"pkg:target"、"pkg:*"，以及已声明在 AddRequires 中的裸包名（无同名本地 target 时自动按 "pkg:*" 解析）
+func (t *Target) UseRequires() *Target                     // 自动将本包当前生效的所有 AddRequires 包作为 "pkg:*" 依赖加入本 target
 
 // 编译/链接选项
 func (t *Target) AddCFlags(flags ...any) *Target
+func (t *Target) AddPublicCFlags(flags ...any) *Target     // 沿 AddDeps 传播给直接及传递依赖方
 func (t *Target) AddCxxFlags(flags ...any) *Target
+func (t *Target) AddPublicCxxFlags(flags ...any) *Target   // 沿 AddDeps 传播给直接及传递依赖方
 func (t *Target) AddLdFlags(flags ...any) *Target
+func (t *Target) AddPublicLdFlags(flags ...any) *Target    // 沿 AddDeps 传播给直接及传递依赖方
 
-// 第三方包构建
+// 第三方包与增量 Void 构建
 func (t *Target) SetBuildFunc(fn func(p *Package) error) *Target  // 仅 TargetVoid 执行；其他 kind 设置后不会调用
+func (t *Target) AddInputs(files ...any) *Target          // TargetVoid 可选增量输入文件/glob（需与 AddOutputs 同时声明才启用增量跳过）
+func (t *Target) AddOutputs(files ...any) *Target         // TargetVoid 可选增量输出文件（相对路径未以 BuildDir 开头时基于 BuildDir 解析）
 func (t *Target) SetPrebuilt(path string) *Target          // 预编译目标，跳过编译（无后链接步骤时 symlink 到输出路径，有后链接步骤时复制；TargetVoid 忽略；重复调用 fatal）
 
 // RTOS/嵌入式
@@ -571,6 +565,7 @@ func (t *Target) SetVersionScript(path string) *Target     // 版本脚本，链
 func (t *Target) AddExcludeLibs(libs ...string) *Target    // Shared/Binary 链接时加 -Wl,--exclude-libs=（仅 ELF；追加；ld 按去掉 .a 的完整库名匹配，写 libfoo 而非 foo）
 func (t *Target) SetSymbolBinding(mode string) *Target     // Shared/Binary："static" → -Wl,-Bsymbolic；"static-functions" → -Wl,-Bsymbolic-functions（仅 ELF）；空串清除；其他值 fatal
 func (t *Target) SetSymbolPrefix(prefix string) *Target    // post-link 追加 objcopy --prefix-symbols=<prefix>（需所选工具链提供 objcopy，GNU objcopy 不支持 Mach-O；重复调用 fatal）
+func (t *Target) SetKeepGlobalSymbols(path string) *Target // post-link 追加 objcopy --keep-global-symbols=<path> {output} 并自动将 path 加入 AddPostLinkDeps（重复调用 fatal）
 func (t *Target) AddPostLink(tool string, args ...string) *Target  // 后链接步骤（仅工具链内置 objcopy/size/objdump/nm/strip），支持 {output} 占位符
 func (t *Target) AddPostLinkOutputs(paths ...string) *Target
 func (t *Target) AddPostLinkDeps(files ...string) *Target  // 声明 post-link 步骤依赖的额外输入文件（SourceDir 相对路径；不展开 {output}）；非 Void 目标上任一变化（内容或权限变化、文件缺失）触发 relink + 重跑全部 post-link
@@ -586,14 +581,21 @@ func (t *Target) SetInstall(install bool) *Target      // SetInstall(false) 跳�
 
 // 移除方法
 func (t *Target) RemoveCFlags(flags ...string) *Target
+func (t *Target) RemovePublicCFlags(flags ...string) *Target
 func (t *Target) RemoveCxxFlags(flags ...string) *Target
+func (t *Target) RemovePublicCxxFlags(flags ...string) *Target
 func (t *Target) RemoveLdFlags(flags ...string) *Target
+func (t *Target) RemovePublicLdFlags(flags ...string) *Target
 func (t *Target) RemoveDefines(defines ...string) *Target
+func (t *Target) RemovePublicDefines(defines ...string) *Target
 func (t *Target) RemoveIncludes(dirs ...string) *Target
 func (t *Target) RemovePublicIncludes(dirs ...string) *Target
 func (t *Target) RemoveLinks(libs ...string) *Target
+func (t *Target) RemovePublicLinks(libs ...string) *Target
 func (t *Target) RemoveProvidedLibs(libs ...string) *Target
 func (t *Target) RemoveDeps(targets ...string) *Target
+func (t *Target) RemoveInputs(files ...string) *Target
+func (t *Target) RemoveOutputs(files ...string) *Target
 func (t *Target) RemoveFiles(files ...any) *Target   // 从 AddFiles 扩展结果中排除文件（模式匹配）
 
 // 获取方法
@@ -601,19 +603,27 @@ func (t *Target) Name() string
 func (t *Target) Kind() TargetKind
 func (t *Target) IsDefault() bool
 func (t *Target) IsTest() bool
+func (t *Target) IsLinkable() bool
 func (t *Target) Files() []string
 func (t *Target) Includes() []string
 func (t *Target) PublicIncludes() []string
 func (t *Target) Defines() []string
-func (t *Target) Languages() []string
+func (t *Target) PublicDefines() []string
 func (t *Target) IncludeRule(dir string) []string
 func (t *Target) HasDep(depRef string) bool
 func (t *Target) Links() []string
+func (t *Target) PublicLinks() []string
 func (t *Target) ProvidedLibs() []string
 func (t *Target) Deps() []string
+func (t *Target) UsesRequires() bool
 func (t *Target) CFlags() []string
+func (t *Target) PublicCFlags() []string
 func (t *Target) CxxFlags() []string
+func (t *Target) PublicCxxFlags() []string
 func (t *Target) LdFlags() []string
+func (t *Target) PublicLdFlags() []string
+func (t *Target) Inputs() []string
+func (t *Target) Outputs() []string
 func (t *Target) InstallDir() string
 func (t *Target) NoInstall() bool
 func (t *Target) BuildFunc() func(*Package) error
@@ -624,13 +634,14 @@ func (t *Target) VersionScript() string
 func (t *Target) ExcludeLibs() []string
 func (t *Target) SymbolBinding() string
 func (t *Target) SymbolPrefix() string
+func (t *Target) KeepGlobalSymbols() string
 func (t *Target) PostLinkSteps() []PostLinkStep
 func (t *Target) PostLinkOutputs() []string
 func (t *Target) PostLinkDeps() []string
 func (t *Target) ExcludedFiles() []string
 func (t *Target) GenRules() []GenRule
 ```
-`...any` 方法（`AddFiles`/`AddIncludes`/`AddPublicIncludes`/`AddDefines`/`AddLinks`/`AddCFlags`/`AddCxxFlags`/`AddLdFlags`/`RemoveFiles`/`AddBinHeader`）接受 `string`、`[]string` 或 `[]any`。注意 yaegi 限制：不能对 `...any` 参数使用 `[]string...` 展开，直接传 `[]string` 即可（方法内部会展开）。`...string` 方法（`AddDeps`、`AddProvidedLibs`、`AddExcludeLibs`、`RemoveCFlags`/`RemoveCxxFlags`/`RemoveLdFlags`/`RemoveDefines`/`RemoveIncludes`/`RemovePublicIncludes`/`RemoveLinks`/`RemoveProvidedLibs`/`RemoveDeps`、`SetLanguages`、`AddPostLink` 的参数、`AddPostLinkDeps`/`AddPostLinkOutputs`）可以 `[]string...` 展开，但不能传 `[]any`。
+`...any` 方法（`AddFiles`/`AddIncludes`/`AddPublicIncludes`/`AddDefines`/`AddPublicDefines`/`AddLinks`/`AddPublicLinks`/`AddCFlags`/`AddPublicCFlags`/`AddCxxFlags`/`AddPublicCxxFlags`/`AddLdFlags`/`AddPublicLdFlags`/`AddDeps`/`AddRequires`/`AddGlobalCFlags`/`AddGlobalCxxFlags`/`AddGlobalLdFlags`/`AddGlobalLinks`/`AddGlobalDefines`/`AddInputs`/`AddOutputs`/`RemoveFiles`/`AddBinHeader`）接受 `string`、`[]string` 或 `[]any`。注意 yaegi 限制：不能对 `...any` 参数使用 `[]string...` 展开，直接传 `[]string` 即可（方法内部会展开）。`...string` 方法（`AddProvidedLibs`、`AddExcludeLibs`、`Remove*` 标量移除方法、`AddPostLink` 的参数、`AddPostLinkDeps`/`AddPostLinkOutputs`）可以 `[]string...` 展开，但不能传 `[]any`。
 
 `AddPostLinkOutputs` 显式声明整个目标的后链接产物，支持 `{output}` 占位符；相对路径基于包的 SourceDir，绝对路径保持不变，主产物不会重复计入。非 Void 目标的任一声明产物缺失会触发重新链接并运行全部后链接步骤；`TargetVoid` 没有链接记录，后链接步骤每次构建都会执行，声明的产物缺失会直接报错。安装阶段只自动安装声明的额外产物，且主产物不存在时不会继续安装这些产物。`AddPostLinkHex/Bin/Strip` 自动声明各自产物，`AddPostLinkSize` 和 `SetSymbolPrefix` 不产生额外产物。
 
@@ -658,7 +669,7 @@ ctx.Target("mylib").AddPublicIncludes("include", "src", "@foo*.h")
 
 ### AddDeps 依赖引用格式
 
-`AddDeps(targets ...string)` 的每个参数是一个依赖引用（`pkg/api/depref.go` `ParseDepRef`），支持 4 种格式：
+`AddDeps(targets ...any)` 的每个展开后的字符串参数是一个依赖引用（`pkg/api/depref.go` `ParseDepRef`），支持 4 种格式：
 
 | 格式 | 示例 | 含义 |
 |------|------|------|
@@ -716,7 +727,7 @@ RequireContext 嵌入了 `ConfigAccessor`，因此 `Bool()`、`String()`、`If()
 
 ```go
 // 项目依赖声明
-func (ctx *RequireContext) AddRequires(deps ...string) *RequireContext   // "official/zlib >=1.2"
+func (ctx *RequireContext) AddRequires(deps ...any) *RequireContext   // "official/zlib >=1.2", ctx.If(...), ctx.Select(...)
 func (ctx *RequireContext) GetRequires() []RequireInfo
 func (ctx *RequireContext) ResetRequires()
 func (ctx *RequireContext) RunFuncs()
@@ -801,7 +812,7 @@ type RequireInfo struct {
 }
 
 type Requires struct { ... }
-func (r *Requires) Add(deps ...string)
+func (r *Requires) Add(deps ...any)
 func (r *Requires) AddInfos(infos ...RequireInfo)
 func (r *Requires) Get() []RequireInfo
 func (r *Requires) Reset()
@@ -993,16 +1004,16 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 | String | 同上 | `-DCONFIG_<NAME>="<value>"` |
 | Choice | `CONFIG_<NAME>` + `CONFIG_<NAME>_<VALUE>` | 两条 |
 
-Choice 的 `<VALUE>` 会转为大写并把 `-` 替换为 `_`。`SetMacroName(name)` 可覆盖宏名：普通名字整体替换默认名（Choice 仍会额外生成 `<自定义名>_<VALUE>`）；包含 `%s`/`%v` 时把选项值渲染进宏名（`SetMacroName("PY32F539xx%s")` + 值 `M` → `-DPY32F539xxM=1`），且只生成渲染后的宏。`SetMacroName` 仅对全局选项有效。
+Choice 的 `<VALUE>` 会转为大写并把 `-` 替换为 `_`。`SetMacroName(name)` 可覆盖宏名（对全局选项与包级选项均有效，包级选项通过 `GenerateConfigDefines`／`GenerateConfigHeader` 生成时同样使用该自定义宏名）：普通名字整体替换默认名（Choice 仍会额外生成 `<自定义名>_<VALUE>`）；包含 `%s`/`%v` 时把选项值渲染进宏名（`SetMacroName("PY32F539xx%s")` + 值 `M` → `-DPY32F539xxM=1`），且只生成渲染后的宏。
 
 `mode`、`toolchain`、`target_os`、`target_triple` 默认不导出；重新声明该选项并设置 `SetMacroName` 即可导出（`mode`/`toolchain` 的重声明需与内置类型和默认值一致，宏名冲突时配置阶段报错）。两个全局选项生成同名宏但取值不同时，配置阶段报错；取值相同则去重。
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {
-    ctx.GlobalOption("cpu_clock_hz").SetType(api.OptionInt).SetDefault(416000000)
-    ctx.GlobalOption("mcu").SetType(api.OptionChoice).
+    ctx.GlobalOption("cpu_clock_hz").SetDefault(416000000)
+    ctx.GlobalOption("mcu").
         SetDefault("py32f539").SetValues("py32f539")
-    ctx.GlobalOption("variant").SetType(api.OptionChoice).
+    ctx.GlobalOption("variant").
         SetDefault("M").SetValues("G", "L", "M").
         SetMacroName("PY32F539xx%s")
 })
@@ -1282,19 +1293,17 @@ printf("size=%d\n", CONFIG_BUFFER_SIZE);
 
 | API | 调用者 | 作用 |
 |-----|--------|------|
-| `ExportConfig()` | 被依赖方 | 设置 `exportConfig = true` 标志，传给 Package.SetExportConfig(true) |
 | `ImportConfig(names...)` | 依赖方 | 向 `importConfigs` 追加包名；实际的配置合并和 `-D` 注入在 `GenerateConfigDefines` 的处理块中完成 |
 | `SyncConfigDefines(names...)` | 父包（编排者） | 等价于 `GenerateConfigDefines` + `ImportConfig`，一次性同步多个子包 |
 
-当前实现中 `ExportConfig()` 只设置标志，`ImportConfig` 按名称直接合并、不检查对方是否声明导出；只有 `GenerateConfigDefines`（或 `SyncConfigDefines`）才会注入 `-D`。同时调用 `GenerateConfigHeader` 时，导入的选项也会合并进本包视角的 `autoconf.h`。
+`ImportConfig` 按名称直接合并被导入包的选项（无需被依赖方做任何导出声明）；只有 `GenerateConfigDefines`（或 `SyncConfigDefines`）才会注入 `-D`。同时调用 `GenerateConfigHeader` 时，导入的选项也会合并进本包视角的 `autoconf.h`。
 
-示例——芯片包导出配置，驱动包导入，根包统一同步：
+示例——芯片包定义配置，驱动包导入，根包统一同步：
 
 ```go
-// chip/build.go — 芯片包（被依赖方，声明导出）
+// chip/build.go — 芯片包（被依赖方）
 p.OnBuild(func(ctx *api.BuildContext) {
     ctx.GenerateConfigDefines()
-    ctx.ExportConfig()
 
     ctx.Target("chip").SetKind(api.TargetStatic).
         AddFiles("src/*.c")

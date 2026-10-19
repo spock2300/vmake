@@ -22,28 +22,25 @@ ctx.Option("mcu").SetType(api.OptionChoice).SetDefault("stm32f405").
 
 `SetOnApply` callbacks run **once per build per declaring package**, during the config phase, after all option values are resolved (in sorted option-name order within each package; packages follow resolver order). The context carries real option values — reading other options inside the callback works, and `ctx.Select` sees actual values (no discovery pass runs callbacks).
 
-Global flags registered via `AddGlobalCFlags/CxxFlags/LdFlags/Links` are **buffered per package** and only applied to the toolchain manager for packages that survive `FilterDeps` — flags from pruned packages never leak into the build. Global flag changes also change the BuildKey (via the global-flags hash), so artifacts rebuild when flags change.
+Global flags registered via `AddGlobalCFlags/CxxFlags/LdFlags/Links/Defines` are **buffered per package** and only applied to the toolchain manager for packages that survive `FilterDeps` — flags from pruned packages never leak into the build. Global flag changes also change the BuildKey (via the global-flags hash), so every package's `BuildDir` rotates when global flags change. When only consumers of a specific target need defines, flags, or links, prefer `AddPublicDefines` / `AddPublicCFlags` / `AddPublicCxxFlags` / `AddPublicLdFlags` / `AddPublicLinks` on that target instead of global flags.
 
 Two discovery-era rules still matter:
 
-- In `OnRequire`, direct value reads (`ctx.Bool/String/Int`) are fatal only on the first pass (nil config, discovery); on the `FilterDeps` re-run they work for this package's `entries.<pkg>.options` values. Global configuration values are not merged into that pass; unset reads fall back to defaults. On the first pass, use `ctx.When("opt", value)` / `ctx.If(...)` / `ctx.Select(...)` — there `When` returns `true`, `If` returns its `then` items (condition unevaluated), and `Select` returns `""`.
-- Inside `SetOnApply`, `Select` sees the resolved value — but an unmapped choice still yields `""`. `Target.AddFiles`/`AddIncludes`/`AddDefines`/`AddCFlags`/`AddLinks` and the other `...any` target setters expand slices via `flattenAny`, which silently drops empty strings; `AddDeps` also skips exactly empty entries. `AddProvidedLibs` and all `AddGlobal*` take `...string` and would pass an empty argument through. Guard before use either way:
+- In `OnRequire`, direct value reads (`ctx.Bool/String/Int`) are fatal only on the first pass (nil config, discovery); on the `FilterDeps` re-run they work for this package's `entries.<pkg>.options` values. Global configuration values are not merged into that pass; unset reads fall back to defaults. On the first pass, use `ctx.When("opt", value)` / `ctx.WhenNot("opt", value)` / `ctx.WhenAny("opt", values...)` / `ctx.If(...)` / `ctx.Select(...)` — there `When`, `WhenNot`, and `WhenAny` return `true`, `If` returns its `then` items (condition unevaluated), and `Select` returns all unique non-empty values in `mapping` sorted so `ctx.AddRequires(ctx.Select(...))` discovers every branch.
+- Inside `SetOnApply` and `OnBuild`, `Select` sees the resolved value and returns `[]string{mapped}` (or `nil` when unmapped/empty). `Target.AddFiles`/`AddIncludes`/`AddDefines`/`AddCFlags`/`AddLinks`/`AddDeps`, `AddRequires`, and `AddGlobal*` all take `...any` and expand slices via `flattenAny` (which drops empty strings), so `ctx.If(...)` and `ctx.Select(...)` can be passed directly:
 
 ```go
-ctx.Option("optimization").SetType(api.OptionChoice).
+ctx.Option("optimization").
     SetDefault("O2").
     SetValues("O0", "O1", "O2", "O3", "Os").
     SetOnApply(func(ctx *api.ConfigContext, val any) {
-        optFlag := ctx.Select("optimization", map[string]string{
+        ctx.AddGlobalCFlags(ctx.Select("optimization", map[string]string{
             "O0": "-O0", "O1": "-O1", "O2": "-O2", "O3": "-O3", "Os": "-Os",
-        })
-        if optFlag != "" { // unmapped values Select to ""
-            ctx.AddGlobalCFlags(optFlag)
-        }
+        }))
     })
 ```
 
-- `When` compares numerics across `int`/`float64` (JSON round-trips decode numbers as `float64`) — `ctx.When("threads", 4)` works regardless of how the value was stored.
+- `When`, `WhenNot`, and `WhenAny` compare numerics across `int`/`float64` (JSON round-trips decode numbers as `float64`) — `ctx.When("threads", 4)` works regardless of how the value was stored.
 
 ## Patching Source Before Build
 
@@ -86,22 +83,22 @@ Use this when wrapping a library that needs compilation fixes (e.g., cross-compi
 
 ## `[]string` Arguments — Spread Only Where the Parameter Is `...string`
 
-Parameters typed `...any` (`AddFiles`, `AddIncludes`, `AddPublicIncludes`, `AddDefines`, `AddLinks`, `AddCFlags`, `AddCxxFlags`, `AddLdFlags`, `AddBinHeader`, `RemoveFiles`) expand slices via `flattenAny`, which also drops empty strings. Pass the slice whole; `xs...` does not compile for these because Go will not convert `[]string` to `[]any` (yaegi reports the same call-site error through `reflect.CallSlice`).
+Parameters typed `...any` (`AddFiles`, `AddIncludes`, `AddPublicIncludes`, `AddDefines`, `AddPublicDefines`, `AddLinks`, `AddPublicLinks`, `AddCFlags`, `AddPublicCFlags`, `AddCxxFlags`, `AddPublicCxxFlags`, `AddLdFlags`, `AddPublicLdFlags`, `AddDeps`, `AddRequires`, `AddGlobalCFlags`, `AddGlobalCxxFlags`, `AddGlobalLdFlags`, `AddGlobalLinks`, `AddGlobalDefines`, `AddInputs`, `AddOutputs`, `AddBinHeader`, `RemoveFiles`) expand slices via `flattenAny`, which also drops empty strings. Pass the slice whole; `xs...` does not compile for these because Go will not convert `[]string` to `[]any` (yaegi reports the same call-site error through `reflect.CallSlice`).
 
-Parameters typed `...string` (`AddDeps`, `AddProvidedLibs`, `AddExcludeLibs`, `AddPostLinkDeps`, `AddPostLinkOutputs`, the scalar `Remove*` methods such as `RemoveCFlags`/`RemoveDeps`, and `SetLanguages`) accept `xs...` normally.
+Parameters typed `...string` (`AddProvidedLibs`, `AddExcludeLibs`, `AddPostLinkDeps`, `AddPostLinkOutputs`, and the scalar `Remove*` methods such as `RemoveCFlags`/`RemoveDeps`) accept `xs...` normally.
 
 ```go
 flags := []string{"-O2", "-Wall"}
 target.AddCFlags(flags)    // correct: ...any flattens the slice
 target.AddCFlags(flags...) // does not compile: []string is not []any
 deps := []string{"utils", "official/zlib"}
-target.AddDeps(deps...)    // correct: ...string accepts a spread
+target.AddDeps(deps)       // correct: AddDeps also takes ...any and flattens []string
 ```
 
 ## AddRequires vs AddDeps
 
-`AddRequires` (in `OnRequire`) only resolves and downloads a package; `AddDeps` (in `OnBuild`) creates the build-graph edge that links its artifact and propagates public includes. Third-party packages normally need both, and a resolved package that is unreachable from a local root is not built.
+`AddRequires` (in `Main(p)` via `p.AddRequires(...)` or in `OnRequire` via `ctx.AddRequires(...)`) only resolves and downloads a package; `AddDeps` (or `t.UseRequires()`) in `OnBuild` creates the build-graph edge that links its artifact and propagates public includes/defines/flags/links. Third-party packages normally need both, and a resolved package that is unreachable from a local root is not built. Prefer `t.UseRequires()` on the main target when it should depend on all active package requires, or pass bare required package names to `t.AddDeps("shell", "wifi")` (auto-resolved to `pkg:*` when no local target matches).
 
 ## Options After the Config Phase
 
-Declare options in `OnConfig`. `BuildContext`, `InstallContext`, and `CleanContext` lock option declaration when the config phase ends, so `ctx.Option(...)` there is a build error. `RequireContext` and `*Package` do not have that guard, but an option declared outside `OnConfig` never participates in value resolution — reads fall back to its default/zero value. Resolved values are readable in `OnBuild`/`OnInstall`/`OnClean` and inside `SetOnApply`; during `OnRequire` discovery use the discovery-aware `When`/`If`/`Select`.
+Declare options in `OnConfig`. `BuildContext`, `InstallContext`, and `CleanContext` lock option declaration when the config phase ends, so `ctx.Option(...)` there is a build error. `RequireContext` and `*Package` do not have that guard, but an option declared outside `OnConfig` never participates in value resolution — reads fall back to its default/zero value. Resolved values are readable in `OnBuild`/`OnInstall`/`OnClean` and inside `SetOnApply`; during `OnRequire` discovery use the discovery-aware `When`/`WhenNot`/`WhenAny`/`If`/`Select`.

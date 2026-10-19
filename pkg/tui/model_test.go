@@ -984,3 +984,23 @@ func TestResetGlobalOptionToDefault_KeepsHasChangesConsistentWithModifiedCount(t
 	}
 }
 
+func TestNewModel_DoesNotCopyOrKeepGlobalOptionsInPackageValues(t *testing.T) {
+	ctx := api.NewConfigContext("chip")
+	gOpt := ctx.GlobalOption("board").SetDefault("evb1")
+	pOpt := ctx.Option("debug").SetDefault(false)
+	opts := map[string]map[string]*api.Option{
+		"chip": {"board": gOpt, "debug": pOpt},
+	}
+	globalOpts := map[string]*api.Option{"board": gOpt}
+	values := map[string]map[string]any{
+		"chip": {"board": "evb1"},
+	}
+	m := NewModel(mkSources("chip"), map[string][]string{}, opts, values, "/w", "", globalOpts, map[string]any{"board": "evb2"}, nil)
+	if _, exists := m.values["chip"]["board"]; exists {
+		t.Fatalf("package values should not retain global option key, got %v", m.values["chip"])
+	}
+	if m.values["chip"]["debug"] != false {
+		t.Fatalf("package option default should still be populated, got %v", m.values["chip"])
+	}
+}
+

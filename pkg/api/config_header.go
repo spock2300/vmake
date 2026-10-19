@@ -103,7 +103,23 @@ func collectConfigEntries(opts map[string]*Option, cfgVals map[string]any) []con
 		if val == nil {
 			continue
 		}
-		entries = append(entries, macroEntries(configMacroName(name), typ, val)...)
+		macro := configMacroName(name)
+		if custom := opt.MacroName(); custom != "" {
+			if strings.Contains(custom, "%") {
+				if typ == OptionBool {
+					if b, ok := val.(bool); !ok || !b {
+						continue
+					}
+				} else if fmt.Sprintf("%v", val) == "" {
+					continue
+				}
+				rendered := fmt.Sprintf(custom, fmt.Sprintf("%v", val))
+				entries = append(entries, configEntry{macro: rendered, val: "1", kind: ceBoolTrue})
+				continue
+			}
+			macro = custom
+		}
+		entries = append(entries, macroEntries(macro, typ, val)...)
 	}
 	return entries
 }

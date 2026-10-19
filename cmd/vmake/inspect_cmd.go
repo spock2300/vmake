@@ -58,33 +58,34 @@ type inspectDiagnostic struct {
 }
 
 type inspectData struct {
-	Root                   string                   `json:"root"`
-	ConfigFile             string                   `json:"configFile"`
-	ConfigSHA256           string                   `json:"configSha256"`
-	Mode                   string                   `json:"mode"`
-	Toolchain              string                   `json:"toolchain"`
-	ToolchainInfo          *inspectToolchain        `json:"toolchainInfo,omitempty"`
-	Global                 map[string]any           `json:"global"`
-	GlobalCFlags           []string                 `json:"globalCFlags,omitempty"`
-	GlobalCxxFlags         []string                 `json:"globalCxxFlags,omitempty"`
-	GlobalLdFlags          []string                 `json:"globalLdFlags,omitempty"`
-	GlobalLinks            []string                 `json:"globalLinks,omitempty"`
-	GlobalDefines          []string                 `json:"globalDefines,omitempty"`
-	Overrides              map[string]any           `json:"overrides,omitempty"`
-	Roots                  []string                 `json:"roots"`
-	Packages               []inspectPackage         `json:"packages"`
-	Graph                  []inspectEdge            `json:"graph"`
-	CompileDatabase        string                   `json:"compileDatabase"`
-	CompileDatabasePresent bool                     `json:"compileDatabasePresent"`
-	BuildReport            string                   `json:"buildReport"`
-	BuildReportPresent     bool                     `json:"buildReportPresent"`
-	BuildReportState       *inspectBuildReportState `json:"buildReportState,omitempty"`
-	Freshness              *inspectFreshness        `json:"freshness,omitempty"`
-	TestReport             string                   `json:"testReport"`
-	TestReportPresent      bool                     `json:"testReportPresent"`
-	TestReportState        *inspectBuildReportState `json:"testReportState,omitempty"`
-	InstallPrefix          string                   `json:"installPrefix"`
-	InstallManifest        string                   `json:"installManifest"`
+	Root                   string                      `json:"root"`
+	ConfigFile             string                      `json:"configFile"`
+	ConfigSHA256           string                      `json:"configSha256"`
+	Mode                   string                      `json:"mode"`
+	Toolchain              string                      `json:"toolchain"`
+	ToolchainInfo          *inspectToolchain           `json:"toolchainInfo,omitempty"`
+	Global                 map[string]any              `json:"global"`
+	GlobalOptionDefs       map[string]inspectOptionDef `json:"globalOptionDefs,omitempty"`
+	GlobalCFlags           []string                    `json:"globalCFlags,omitempty"`
+	GlobalCxxFlags         []string                    `json:"globalCxxFlags,omitempty"`
+	GlobalLdFlags          []string                    `json:"globalLdFlags,omitempty"`
+	GlobalLinks            []string                    `json:"globalLinks,omitempty"`
+	GlobalDefines          []string                    `json:"globalDefines,omitempty"`
+	Overrides              map[string]any              `json:"overrides,omitempty"`
+	Roots                  []string                    `json:"roots"`
+	Packages               []inspectPackage            `json:"packages"`
+	Graph                  []inspectEdge               `json:"graph"`
+	CompileDatabase        string                      `json:"compileDatabase"`
+	CompileDatabasePresent bool                        `json:"compileDatabasePresent"`
+	BuildReport            string                      `json:"buildReport"`
+	BuildReportPresent     bool                        `json:"buildReportPresent"`
+	BuildReportState       *inspectBuildReportState    `json:"buildReportState,omitempty"`
+	Freshness              *inspectFreshness           `json:"freshness,omitempty"`
+	TestReport             string                      `json:"testReport"`
+	TestReportPresent      bool                        `json:"testReportPresent"`
+	TestReportState        *inspectBuildReportState    `json:"testReportState,omitempty"`
+	InstallPrefix          string                      `json:"installPrefix"`
+	InstallManifest        string                      `json:"installManifest"`
 }
 
 type inspectBuildReportState struct {
@@ -130,24 +131,33 @@ type inspectToolchain struct {
 	LD           string `json:"ld,omitempty"`
 }
 
+type inspectOptionDef struct {
+	Type        string   `json:"type"`
+	Default     any      `json:"default,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Values      []string `json:"values,omitempty"`
+	Group       string   `json:"group,omitempty"`
+}
+
 type inspectPackage struct {
-	Name          string          `json:"name"`
-	Kind          string          `json:"kind"`
-	Repo          string          `json:"repo,omitempty"`
-	Version       string          `json:"version,omitempty"`
-	Commit        string          `json:"commit,omitempty"`
-	URL           string          `json:"url,omitempty"`
-	Path          string          `json:"path,omitempty"`
-	SourceDir     string          `json:"sourceDir,omitempty"`
-	SourcePresent bool            `json:"sourcePresent"`
-	BuildDir      string          `json:"buildDir,omitempty"`
-	BuildKey      string          `json:"buildKey,omitempty"`
-	Needed        bool            `json:"needed"`
-	Description   string          `json:"description,omitempty"`
-	Toolchain     string          `json:"toolchain,omitempty"`
-	Options       map[string]any  `json:"options,omitempty"`
-	Deps          []string        `json:"deps"`
-	Targets       []inspectTarget `json:"targets,omitempty"`
+	Name          string                      `json:"name"`
+	Kind          string                      `json:"kind"`
+	Repo          string                      `json:"repo,omitempty"`
+	Version       string                      `json:"version,omitempty"`
+	Commit        string                      `json:"commit,omitempty"`
+	URL           string                      `json:"url,omitempty"`
+	Path          string                      `json:"path,omitempty"`
+	SourceDir     string                      `json:"sourceDir,omitempty"`
+	SourcePresent bool                        `json:"sourcePresent"`
+	BuildDir      string                      `json:"buildDir,omitempty"`
+	BuildKey      string                      `json:"buildKey,omitempty"`
+	Needed        bool                        `json:"needed"`
+	Description   string                      `json:"description,omitempty"`
+	Toolchain     string                      `json:"toolchain,omitempty"`
+	Options       map[string]any              `json:"options,omitempty"`
+	OptionDefs    map[string]inspectOptionDef `json:"optionDefs,omitempty"`
+	Deps          []string                    `json:"deps"`
+	Targets       []inspectTarget             `json:"targets,omitempty"`
 }
 
 type inspectTarget struct {
@@ -163,12 +173,20 @@ type inspectTarget struct {
 	Includes               []string         `json:"includes,omitempty"`
 	PublicIncludes         []string         `json:"publicIncludes,omitempty"`
 	Defines                []string         `json:"defines,omitempty"`
+	PublicDefines          []string         `json:"publicDefines,omitempty"`
 	CFlags                 []string         `json:"cFlags,omitempty"`
+	PublicCFlags           []string         `json:"publicCFlags,omitempty"`
 	CxxFlags               []string         `json:"cxxFlags,omitempty"`
+	PublicCxxFlags         []string         `json:"publicCxxFlags,omitempty"`
 	LdFlags                []string         `json:"ldFlags,omitempty"`
-	Languages              []string         `json:"languages,omitempty"`
+	PublicLdFlags          []string         `json:"publicLdFlags,omitempty"`
 	Links                  []string         `json:"links,omitempty"`
+	PublicLinks            []string         `json:"publicLinks,omitempty"`
 	Deps                   []string         `json:"deps,omitempty"`
+	LinkerScript           string           `json:"linkerScript,omitempty"`
+	KeepGlobalSymbols      string           `json:"keepGlobalSymbols,omitempty"`
+	Inputs                 []string         `json:"inputs,omitempty"`
+	Outputs                []string         `json:"outputs,omitempty"`
 	PostLinkOutputs        []string         `json:"postLinkOutputs,omitempty"`
 	Output                 string           `json:"output,omitempty"`
 	InstallDir             string           `json:"installDir,omitempty"`
@@ -255,7 +273,7 @@ On success the envelope has status "ok". On failure it has status "error" with
 diagnostics, vmake exits 1, and stderr carries one human-readable error line.`,
 		Args: cobra.NoArgs,
 	}
-	cmd.Flags().StringArrayVar(&setFlags, "set", nil, "override an option for this run only (format: [pkg/]option=value)")
+	cmd.Flags().StringArrayVarP(&setFlags, "set", "s", nil, "override an option for this run only (format: [pkg/]option=value)")
 	cmd.Flags().BoolVar(&allowDryRunWrites, "allow-dry-run-writes", false, "let dry-run OnBuild callbacks write files (may modify the build tree)")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return runInspect(cmd.Context(), setFlags, allowDryRunWrites)
@@ -614,6 +632,7 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 		Toolchain:              inspection.TcName,
 		ToolchainInfo:          inspectToolchainInfo(inspection),
 		Global:                 global,
+		GlobalOptionDefs:       inspectOptionDefs(ctx.GlobalOptions),
 		GlobalCFlags:           inspection.GlobalCFlags,
 		GlobalCxxFlags:         inspection.GlobalCxxFlags,
 		GlobalLdFlags:          inspection.GlobalLdFlags,
@@ -666,6 +685,7 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 			pkg.Toolchain = tc.Name
 		}
 		pkg.Options = inspectPackageOptions(ctx, name, inspection)
+		pkg.OptionDefs = inspectOptionDefs(ctx.AllOptions[name])
 		if source.Diagnostic != nil {
 			diagnostics = append(diagnostics, *source.Diagnostic)
 		}
@@ -1150,6 +1170,56 @@ func inspectPackageOptions(ctx *RuntimeContext, name string, inspection *pipelin
 	return values
 }
 
+func inspectOptionDefs(opts map[string]*api.Option) map[string]inspectOptionDef {
+	if len(opts) == 0 {
+		return nil
+	}
+	defs := make(map[string]inspectOptionDef, len(opts))
+	for optName, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		var def any
+		if opt.Default() != nil {
+			def = api.NormalizeOptionValue(opt, opt.Default())
+		}
+		defs[optName] = inspectOptionDef{
+			Type:        opt.Type().String(),
+			Default:     def,
+			Description: opt.Description(),
+			Values:      append([]string(nil), opt.Values()...),
+			Group:       opt.Group(),
+		}
+	}
+	if len(defs) == 0 {
+		return nil
+	}
+	return defs
+}
+
+func inspectTargetDeps(target *api.Target, node *resolver.PackageNode) []string {
+	deps := target.Deps()
+	if !target.UsesRequires() || node == nil || len(node.Deps) == 0 {
+		return append([]string{}, deps...)
+	}
+	seen := make(map[string]bool, len(node.Deps)+len(deps))
+	out := make([]string, 0, len(node.Deps)+len(deps))
+	for _, depPkg := range node.Deps {
+		item := depPkg + ":*"
+		if !seen[item] {
+			seen[item] = true
+			out = append(out, item)
+		}
+	}
+	for _, dep := range deps {
+		if !seen[dep] {
+			seen[dep] = true
+			out = append(out, dep)
+		}
+	}
+	return out
+}
+
 func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name string, node *resolver.PackageNode) ([]inspectTarget, error) {
 	dirs := inspection.PkgDirs[name]
 	if dirs == nil {
@@ -1186,26 +1256,34 @@ func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name s
 	targets := make([]inspectTarget, 0, len(registered))
 	for _, target := range registered {
 		entry := inspectTarget{
-			Name:            target.Name(),
-			Kind:            string(target.Kind()),
-			Default:         target.IsDefault(),
-			Test:            target.IsTest(),
-			Files:           append([]string{}, target.Files()...),
-			ExcludedFiles:   append([]string{}, target.ExcludedFiles()...),
-			Includes:        append([]string{}, target.Includes()...),
-			PublicIncludes:  append([]string{}, target.PublicIncludes()...),
-			Defines:         append([]string{}, target.Defines()...),
-			CFlags:          inspectDeclaredFlags(target.CFlags(), defaults.CFlags),
-			CxxFlags:        inspectDeclaredFlags(target.CxxFlags(), defaults.CxxFlags),
-			LdFlags:         inspectDeclaredFlags(target.LdFlags(), defaults.LdFlags),
-			Languages:       append([]string{}, target.Languages()...),
-			Links:           append([]string{}, target.Links()...),
-			Deps:            append([]string{}, target.Deps()...),
-			PostLinkOutputs: append([]string{}, target.PostLinkOutputs()...),
-			InstallDir:      target.InstallDir(),
-			NoInstall:       target.NoInstall(),
-			Installs:        installs,
-			InstallPath:     inspectTargetInstallPath(target, targetOS),
+			Name:              target.Name(),
+			Kind:              string(target.Kind()),
+			Default:           target.IsDefault(),
+			Test:              target.IsTest(),
+			Files:             append([]string{}, target.Files()...),
+			ExcludedFiles:     append([]string{}, target.ExcludedFiles()...),
+			Includes:          append([]string{}, target.Includes()...),
+			PublicIncludes:    append([]string{}, target.PublicIncludes()...),
+			Defines:           append([]string{}, target.Defines()...),
+			PublicDefines:     append([]string{}, target.PublicDefines()...),
+			CFlags:            inspectDeclaredFlags(target.CFlags(), defaults.CFlags),
+			PublicCFlags:      append([]string{}, target.PublicCFlags()...),
+			CxxFlags:          inspectDeclaredFlags(target.CxxFlags(), defaults.CxxFlags),
+			PublicCxxFlags:    append([]string{}, target.PublicCxxFlags()...),
+			LdFlags:           inspectDeclaredFlags(target.LdFlags(), defaults.LdFlags),
+			PublicLdFlags:     append([]string{}, target.PublicLdFlags()...),
+			Links:             append([]string{}, target.Links()...),
+			PublicLinks:       append([]string{}, target.PublicLinks()...),
+			LinkerScript:      target.LinkerScript(),
+			KeepGlobalSymbols: target.KeepGlobalSymbols(),
+			Deps:              inspectTargetDeps(target, node),
+			Inputs:            append([]string{}, target.Inputs()...),
+			Outputs:           append([]string{}, target.Outputs()...),
+			PostLinkOutputs:   append([]string{}, target.PostLinkOutputs()...),
+			InstallDir:        target.InstallDir(),
+			NoInstall:         target.NoInstall(),
+			Installs:          installs,
+			InstallPath:       inspectTargetInstallPath(target, targetOS),
 		}
 		if resolved := inspectTargetSourceFiles(dirs.SourceDir, dirs.BuildDir, target.Files(), target.ExcludedFiles()); len(resolved) > 0 {
 			entry.ResolvedFileCount = len(resolved)

@@ -192,6 +192,32 @@ func TestGlobalMacroUsesGlobalValueDespiteEntryOverride(t *testing.T) {
 	}
 }
 
+func TestStaleDefaultEntryDoesNotOverrideConfiguredGlobalOption(t *testing.T) {
+	r, chip := singleChipGraph(t)
+	var applied any
+	chip.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.GlobalOption("clock").SetDefault(100).
+			SetOnApply(func(_ *api.ConfigContext, val any) { applied = val })
+	})
+	cfg := emptyConfig()
+	cfg.Global = &config.GlobalConfig{Options: map[string]any{"clock": 200}}
+	config.SetEntry(cfg, "chip", &config.EntryConfig{Options: map[string]any{"clock": float64(100)}})
+	ctx := &RuntimeContext{Resolver: r, DepGraph: r.Graph(), Config: cfg}
+	if err := runConfigPhase(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if applied != 200 {
+		t.Fatalf("OnApply saw %v, want global value 200", applied)
+	}
+	values, err := PackageConfigValues(ctx, "chip", map[string]any{"clock": 200})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values["clock"] != 200 {
+		t.Errorf("package view = %v, want global value 200", values["clock"])
+	}
+}
+
 func contains(slice []string, want string) bool {
 	for _, s := range slice {
 		if s == want {

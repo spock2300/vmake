@@ -275,6 +275,7 @@ func writeManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 		return err
 	}
 	var packages []installManifestEntry
+	gitCache := make(map[string]gitProvenance)
 	for _, name := range ctx.DepGraph.Order {
 		node := ctx.DepGraph.Packages[name]
 		if _, isSub := ctx.Resolver.SubParents()[name]; isSub {
@@ -289,12 +290,12 @@ func writeManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 			if relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
 				return fmt.Errorf("local package %s source %q is outside project root %q", name, sourceDir, base)
 			}
-			gitDir := node.Pkg.SrcDir()
+			prov := resolveGitProvenance(node.Pkg.SrcDir(), gitCache)
 			packages = append(packages, installManifestEntry{
 				Name:    name,
-				Version: gitDescribe(gitDir),
+				Version: prov.version,
 				Source:  "local",
-				Ref:     gitRevParse(gitDir),
+				Ref:     prov.ref,
 				Path:    relPath,
 			})
 			continue
@@ -334,6 +335,43 @@ func writeManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 	}
 	path := filepath.Join(effectivePrefix, "manifest.json")
 	return jsonio.Save(path, mf)
+}
+
+type gitProvenance struct {
+	version string
+	ref     string
+}
+
+func resolveGitProvenance(dir string, cache map[string]gitProvenance) gitProvenance {
+	key := gitRepoCacheKey(dir)
+	if cached, ok := cache[key]; ok {
+		return cached
+	}
+	ref := gitRevParse(dir)
+	ver := ref
+	if out, err := exec.RunWithOptions("git", gitcmd.Args("describe", "--tags", "--always", "--dirty"), exec.RunOptions{Dir: dir, Quiet: true}); err == nil {
+		ver = strings.TrimSpace(string(out))
+	}
+	res := gitProvenance{version: ver, ref: ref}
+	cache[key] = res
+	return res
+}
+
+func gitRepoCacheKey(dir string) string {
+	canon := canonicalInstallPath(dir)
+	if canon == "" {
+		return dir
+	}
+	for cur := canon; ; {
+		if _, err := os.Stat(filepath.Join(cur, ".git")); err == nil {
+			return cur
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return canon
+		}
+		cur = parent
+	}
 }
 
 func gitDescribe(dir string) string {

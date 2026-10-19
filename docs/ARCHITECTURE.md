@@ -214,7 +214,6 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 - `DepBuildDir(depRef)` — 获取依赖构建目录
 - `GenerateConfigHeader()` — 启用配置头文件自动生成
 - `GenerateConfigDefines()` — 启用配置宏定义自动生成
-- `ExportConfig()` — 设置配置导出标志
 - `ImportConfig(names...)` — 注册可导入的包名
 - `SyncConfigDefines(names...)` — 快捷方式：`GenerateConfigDefines` + `ImportConfig`
 - `SetDryRun(v bool)` — 设置为 dry-run 模式（查询/检查等只声明场景使用）；这些场景不物化源码，`inspect`/`query`/`test` 预检还会对包装的 `os` 写操作启用只读拦截，`OnBuild` 中的真实文件写入必须用 `p.DryRun()` 守卫（本地 SetGit 包工作树缺失时 `BuildDir()` 为空）
@@ -646,7 +645,7 @@ type KConfigEntry struct {
 
 所有 target 按依赖图串行执行。`BuildSubGraph` 在声明阶段同步完成，子图与主图共享 `Session`，同一 target 本会话只执行一次；配置、工具链和已发布路径不能在之后的声明中发生冲突。安装复用本会话声明的目标。
 
-`TargetVoid` 的 `BuildFunc` 每个构建会话执行一次，不根据 `.vmake_stamp` 或非空 `InstallDir` 跳过。Make/CMake 自己决定增量工作。`SetConfigFiles` 保留包级元数据，不控制回调跳过，也不代表 target 输入声明。
+默认情况下，`TargetVoid` 的 `BuildFunc` 每个构建会话执行一次，由 Make/CMake 自己决定增量工作（`CMakeConfigure` 通过 `<CMakeBuildDir>/.vmake_configure.json` 指纹跳过无变更配置）；若同时显式声明了 `AddInputs` 与 `AddOutputs`，VMake 会在全部输出存在且输入与动作签名均未变化时跳过 `BuildFunc`。
 
 ### autoWireRequireDeps（v2 已移除）
 

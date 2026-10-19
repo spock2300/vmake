@@ -68,10 +68,6 @@ import (
 )
 
 func Main(p *api.Package) {
-    p.OnPackage(func(p *api.Package) {
-        p.SetConfigFiles(".config")
-    })
-
     p.OnConfig(func(ctx *api.ConfigContext) {
         ctx.KConfig("u-boot").
             AddPreset("sandbox_defconfig").
@@ -106,10 +102,6 @@ import (
 )
 
 func Main(p *api.Package) {
-    p.OnPackage(func(p *api.Package) {
-        p.SetConfigFiles(".config")
-    })
-
     p.OnConfig(func(ctx *api.ConfigContext) {
         ctx.KConfig("linux").
             AddPreset("x86_64_defconfig").
@@ -149,7 +141,6 @@ func Main(p *api.Package) {
     p.OnPackage(func(p *api.Package) {
         p.SetGit("https://git.busybox.net/busybox")
         p.AddVersion("1.36.1", "1_36_1") // optional pin; omit to track the default branch
-        p.SetConfigFiles(".config")
     })
 
     p.OnConfig(func(ctx *api.ConfigContext) {
@@ -444,9 +435,8 @@ Expected result:
 - **SetKConfigPatches** — Override specific config values after defconfig generation
 - **SetGit** — Local packages download source to `SourceDir()/src`; `SrcDir()` returns that tree
 - **KConfig SetSrcDir** — Locates the KConfig `.config` for the config TUI and restore logic; it does not set the package source dir
-- **SetConfigFiles** — Stores package configuration-file metadata; does not control target skipping
 - **SetRoot** — One package declares `p.SetRoot(true)` to anchor the build graph
-- **External incrementality** — Void callbacks run once per build session; Make checks configuration, sources, dependencies, and outputs
+- **External incrementality** — Void callbacks run once per build session by default (or skip when `AddInputs` and `AddOutputs` are both declared and unchanged); Make checks configuration, sources, dependencies, and outputs
 - **DepBuildDir** — `ctx.DepBuildDir("busybox:busybox")` returns the dependency's build directory
 - **DepOutput** — `ctx.DepOutput("myapp:myapp")` returns the dependency's output binary path
 - **api.CopyFile/CopyDir/CopyDirIfExists** — File copy utilities from the `api` package; `CopyDirIfExists` is a no-op for a missing source

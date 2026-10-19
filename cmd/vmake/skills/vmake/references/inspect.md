@@ -286,7 +286,7 @@ the last path element; remote packages omit it because their `buildDir` ends in
 
 Each `targets` entry has `name`, `kind` (`binary`/`static`/`shared`/`object`/
 `void`), `default`, `test`, declared `files`/`excludedFiles`/`includes`/
-`publicIncludes`/`defines`/`cFlags`/`cxxFlags`/`ldFlags`/`languages`/`links`/
+`publicIncludes`/`defines`/`cFlags`/`cxxFlags`/`ldFlags`/`links`/
 `deps`/`postLinkOutputs`, `resolvedFiles`/`resolvedFileCount`/
 `resolvedFilesTruncated`, `output` (artifact name; empty for `void`),
 `installDir`, `noInstall`, `installs`, and `installPath`.

@@ -221,7 +221,7 @@ vmake test
 - Global options apply across packages
 - Integer options need `strconv.Itoa()` for defines
 - Object targets useful for multi-stage builds
-- Language is auto-detected from file extension (`.c` → C, `.cpp` → C++) — no need to set manually; `SetLanguages` only records the value and is not consumed by the scheduler
+- Language is auto-detected from file extension (`.c` → C, `.cpp`/`.cc`/`.cxx` → C++) — no manual setting needed
 - Mode flags are appended after target flags (target → mode → global), so per-target `-O*` flags lose to the mode's `-O2`/`-O0` for GCC — select the mode instead (`vmake build --mode debug`); see `SKILL.md - Global Flags & Mode Flags`
 - The builtin `host` toolchain already injects `-Wall -Wextra` and `-fPIC` when compiling and `-Wl,--as-needed` when linking (ELF targets), so the targets don't repeat them; see `SKILL.md - Default Build Flags`
 - Global options may be declared by multiple packages, but each declaration must use the same `Type` and `Default` (and, for non-builtin options, the same `SetValues`); non-empty `SetMacroName` values must agree. Merging is deterministic — sorted package names, first definition wins. Only global options are cross-validated; see `SKILL.md - GlobalOption Cross-Package Consistency`

@@ -22,13 +22,19 @@ type Target struct {
 	publicIncludes     []string
 	includeRules       map[string][]string
 	defines            []string
-	languages          []string
+	publicDefines      []string
 	links              []string
+	publicLinks        []string
 	providedLibs       []string
 	deps               []string
+	useRequires        bool
+	noLink             bool
 	cflags             []string
+	publicCFlags       []string
 	cxxflags           []string
+	publicCxxFlags     []string
 	ldflags            []string
+	publicLdFlags      []string
 	installDir         string
 	noInstall          bool
 	buildFunc          func(p *Package) error
@@ -38,10 +44,13 @@ type Target struct {
 	excludeLibs        []string
 	symbolBinding      string
 	symbolPrefix       string
+	keepGlobalSymbols  string
 	useDepLinkerScript bool
 	postLinks          []PostLinkStep
 	postLinkDeps       []string
 	postLinkOutputs    []string
+	inputs             []string
+	outputs            []string
 	genRules           []GenRule
 }
 
@@ -118,8 +127,8 @@ func (t *Target) AddDefines(defines ...any) *Target {
 	return t
 }
 
-func (t *Target) SetLanguages(langs ...string) *Target {
-	t.languages = langs
+func (t *Target) AddPublicDefines(defines ...any) *Target {
+	t.publicDefines = append(t.publicDefines, flattenAny(defines)...)
 	return t
 }
 
@@ -128,13 +137,18 @@ func (t *Target) AddLinks(libs ...any) *Target {
 	return t
 }
 
+func (t *Target) AddPublicLinks(libs ...any) *Target {
+	t.publicLinks = append(t.publicLinks, flattenAny(libs)...)
+	return t
+}
+
 func (t *Target) AddProvidedLibs(libs ...string) *Target {
 	t.providedLibs = append(t.providedLibs, libs...)
 	return t
 }
 
-func (t *Target) AddDeps(targets ...string) *Target {
-	for _, d := range targets {
+func (t *Target) AddDeps(targets ...any) *Target {
+	for _, d := range flattenAny(targets) {
 		if d == "" {
 			continue
 		}
@@ -146,8 +160,27 @@ func (t *Target) AddDeps(targets ...string) *Target {
 	return t
 }
 
+func (t *Target) UseRequires() *Target {
+	t.useRequires = true
+	return t
+}
+
+func (t *Target) UsesRequires() bool { return t.useRequires }
+
+func (t *Target) SetLinkable(v bool) *Target {
+	t.noLink = !v
+	return t
+}
+
+func (t *Target) IsLinkable() bool { return !t.noLink }
+
 func (t *Target) AddCFlags(flags ...any) *Target {
 	t.cflags = append(t.cflags, flattenAny(flags)...)
+	return t
+}
+
+func (t *Target) AddPublicCFlags(flags ...any) *Target {
+	t.publicCFlags = append(t.publicCFlags, flattenAny(flags)...)
 	return t
 }
 
@@ -156,8 +189,18 @@ func (t *Target) AddCxxFlags(flags ...any) *Target {
 	return t
 }
 
+func (t *Target) AddPublicCxxFlags(flags ...any) *Target {
+	t.publicCxxFlags = append(t.publicCxxFlags, flattenAny(flags)...)
+	return t
+}
+
 func (t *Target) AddLdFlags(flags ...any) *Target {
 	t.ldflags = append(t.ldflags, flattenAny(flags)...)
+	return t
+}
+
+func (t *Target) AddPublicLdFlags(flags ...any) *Target {
+	t.publicLdFlags = append(t.publicLdFlags, flattenAny(flags)...)
 	return t
 }
 
@@ -225,6 +268,20 @@ func (t *Target) SetSymbolPrefix(prefix string) *Target {
 	return t
 }
 
+func (t *Target) SetKeepGlobalSymbols(path string) *Target {
+	if t.keepGlobalSymbols != "" {
+		fatalScript(t.pkgName, "SetKeepGlobalSymbols", "keep-global-symbols file already set to %s", t.keepGlobalSymbols)
+	}
+	t.keepGlobalSymbols = path
+	t.postLinks = append(t.postLinks, PostLinkStep{
+		Tool: "objcopy",
+		Args: []string{"--keep-global-symbols=" + path, "{output}"},
+	})
+	return t.AddPostLinkDeps(path)
+}
+
+func (t *Target) KeepGlobalSymbols() string { return t.keepGlobalSymbols }
+
 func (t *Target) UseDependencyLinkerScript() *Target {
 	t.useDepLinkerScript = true
 	return t
@@ -246,6 +303,30 @@ func (t *Target) AddPostLinkOutputs(paths ...string) *Target {
 	t.postLinkOutputs = append(t.postLinkOutputs, paths...)
 	return t
 }
+
+func (t *Target) AddInputs(files ...any) *Target {
+	t.inputs = append(t.inputs, flattenAny(files)...)
+	return t
+}
+
+func (t *Target) RemoveInputs(files ...string) *Target {
+	t.inputs = removeStrings(t.inputs, files...)
+	return t
+}
+
+func (t *Target) Inputs() []string { return t.inputs }
+
+func (t *Target) AddOutputs(files ...any) *Target {
+	t.outputs = append(t.outputs, flattenAny(files)...)
+	return t
+}
+
+func (t *Target) RemoveOutputs(files ...string) *Target {
+	t.outputs = removeStrings(t.outputs, files...)
+	return t
+}
+
+func (t *Target) Outputs() []string { return t.outputs }
 
 func (t *Target) AddPostLinkHex() *Target {
 	t.postLinks = append(t.postLinks, PostLinkStep{Tool: "objcopy", Args: []string{"-O", "ihex", "{output}", "{output}.hex"}})
@@ -290,8 +371,9 @@ func (t *Target) ExcludedFiles() []string  { return t.excludeFiles }
 func (t *Target) Includes() []string       { return t.includes }
 func (t *Target) PublicIncludes() []string { return t.publicIncludes }
 func (t *Target) Defines() []string        { return t.defines }
-func (t *Target) Languages() []string      { return t.languages }
+func (t *Target) PublicDefines() []string  { return t.publicDefines }
 func (t *Target) Links() []string          { return t.links }
+func (t *Target) PublicLinks() []string    { return t.publicLinks }
 func (t *Target) ProvidedLibs() []string   { return t.providedLibs }
 func (t *Target) Deps() []string           { return t.deps }
 
@@ -303,10 +385,13 @@ func (t *Target) HasDep(depRef string) bool {
 	}
 	return false
 }
-func (t *Target) CFlags() []string   { return t.cflags }
-func (t *Target) CxxFlags() []string { return t.cxxflags }
-func (t *Target) LdFlags() []string  { return t.ldflags }
-func (t *Target) InstallDir() string { return t.installDir }
+func (t *Target) CFlags() []string         { return t.cflags }
+func (t *Target) PublicCFlags() []string   { return t.publicCFlags }
+func (t *Target) CxxFlags() []string       { return t.cxxflags }
+func (t *Target) PublicCxxFlags() []string { return t.publicCxxFlags }
+func (t *Target) LdFlags() []string        { return t.ldflags }
+func (t *Target) PublicLdFlags() []string  { return t.publicLdFlags }
+func (t *Target) InstallDir() string       { return t.installDir }
 
 func (t *Target) SetInstallDir(dir string) *Target {
 	t.installDir = dir
@@ -333,8 +418,18 @@ func (t *Target) RemoveCFlags(flags ...string) *Target {
 	return t
 }
 
+func (t *Target) RemovePublicCFlags(flags ...string) *Target {
+	t.publicCFlags = removeStrings(t.publicCFlags, flags...)
+	return t
+}
+
 func (t *Target) RemoveCxxFlags(flags ...string) *Target {
 	t.cxxflags = removeStrings(t.cxxflags, flags...)
+	return t
+}
+
+func (t *Target) RemovePublicCxxFlags(flags ...string) *Target {
+	t.publicCxxFlags = removeStrings(t.publicCxxFlags, flags...)
 	return t
 }
 
@@ -343,8 +438,18 @@ func (t *Target) RemoveLdFlags(flags ...string) *Target {
 	return t
 }
 
+func (t *Target) RemovePublicLdFlags(flags ...string) *Target {
+	t.publicLdFlags = removeStrings(t.publicLdFlags, flags...)
+	return t
+}
+
 func (t *Target) RemoveDefines(defines ...string) *Target {
 	t.defines = removeStrings(t.defines, defines...)
+	return t
+}
+
+func (t *Target) RemovePublicDefines(defines ...string) *Target {
+	t.publicDefines = removeStrings(t.publicDefines, defines...)
 	return t
 }
 
@@ -360,6 +465,11 @@ func (t *Target) RemovePublicIncludes(dirs ...string) *Target {
 
 func (t *Target) RemoveLinks(libs ...string) *Target {
 	t.links = removeStrings(t.links, libs...)
+	return t
+}
+
+func (t *Target) RemovePublicLinks(libs ...string) *Target {
+	t.publicLinks = removeStrings(t.publicLinks, libs...)
 	return t
 }
 

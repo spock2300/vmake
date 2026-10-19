@@ -19,11 +19,6 @@ func TestBuildContextConfigPropagationFlags(t *testing.T) {
 		t.Error("GenConfigDefines should be true")
 	}
 
-	ctx.ExportConfig()
-	if !ctx.ExportEnabled() {
-		t.Error("ExportEnabled should be true")
-	}
-
 	ctx.ImportConfig("foo", "bar")
 	if !reflect.DeepEqual(ctx.ImportConfigs(), []string{"foo", "bar"}) {
 		t.Errorf("ImportConfigs = %v", ctx.ImportConfigs())
@@ -71,6 +66,9 @@ func TestBuildContextDepOutputDryRun(t *testing.T) {
 	if got := ctx.DepOutput("any:thing"); got != "" {
 		t.Errorf("DepOutput dry-run = %q, want empty", got)
 	}
+	if got := ctx.DepBuildDir("any:thing"); got != "" {
+		t.Errorf("DepBuildDir dry-run = %q, want empty", got)
+	}
 }
 
 func TestBuildContextDepBuildDir(t *testing.T) {
@@ -84,16 +82,32 @@ func TestBuildContextDepBuildDir(t *testing.T) {
 	}
 }
 
+func TestBuildContextSetProvidedLinkerScriptDelegates(t *testing.T) {
+	pkg := NewPackage()
+	ctx := NewBuildContext("chip", nil).SetPackage(pkg)
+	ctx.SetProvidedLinkerScript("linker/flash.ld")
+	if pkg.ProvidedLinkerScript() != "linker/flash.ld" {
+		t.Errorf("ProvidedLinkerScript = %q, want linker/flash.ld", pkg.ProvidedLinkerScript())
+	}
+}
+
 func TestConfigContextGlobalFlagsBuffered(t *testing.T) {
-	var collected []string
+	var collected, collectedCxx []string
 	ctx := NewConfigContext("app")
 	ctx.SetGlobalCFlagsFunc(func(flags ...string) {
 		collected = append(collected, flags...)
 	})
+	ctx.SetGlobalCxxFlagsFunc(func(flags ...string) {
+		collectedCxx = append(collectedCxx, flags...)
+	})
 
 	ctx.AddGlobalCFlags("-a", "-b")
-	if !reflect.DeepEqual(collected, []string{"-a", "-b"}) {
-		t.Errorf("collected = %v", collected)
+	ctx.AddGlobalDefines("FOO=1", "-DBAR")
+	if !reflect.DeepEqual(collected, []string{"-a", "-b", "-DFOO=1", "-DBAR"}) {
+		t.Errorf("collected C = %v", collected)
+	}
+	if !reflect.DeepEqual(collectedCxx, []string{"-DFOO=1", "-DBAR"}) {
+		t.Errorf("collected CXX = %v", collectedCxx)
 	}
 }
 

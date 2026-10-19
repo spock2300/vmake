@@ -16,8 +16,8 @@ type Requires struct {
 	requires []RequireInfo
 }
 
-func (r *Requires) Add(deps ...string) {
-	for _, dep := range deps {
+func (r *Requires) Add(deps ...any) {
+	for _, dep := range flattenAny(deps) {
 		if dep == "" {
 			continue
 		}
@@ -62,7 +62,7 @@ func NewRequireContextForConfig(pkgName string, cfgVals map[string]any, options 
 	}
 }
 
-func (ctx *RequireContext) AddRequires(deps ...string) *RequireContext {
+func (ctx *RequireContext) AddRequires(deps ...any) *RequireContext {
 	ctx.Requires.Add(deps...)
 	return ctx
 }

@@ -213,8 +213,8 @@ func TestOptionMacroDefinesTemplate(t *testing.T) {
 
 func TestValidateOptionMacroName(t *testing.T) {
 	local := &Option{name: "flag", optType: OptionBool, macroName: "CONFIG_FLAG"}
-	if err := ValidateOption(local); err == nil {
-		t.Error("SetMacroName on a package option should fail")
+	if err := ValidateOption(local); err != nil {
+		t.Errorf("package option with SetMacroName should pass: %v", err)
 	}
 	global := &Option{name: "flag", optType: OptionBool, group: GroupGlobal, macroName: "CONFIG_FLAG"}
 	if err := ValidateOption(global); err != nil {
@@ -237,6 +237,21 @@ func TestValidateOptionMacroName(t *testing.T) {
 	}
 	if err := ValidateOption(broken); err == nil {
 		t.Error("choice value rendering an invalid macro name should fail")
+	}
+}
+
+func TestConfigToDefinesAndHeaderCustomMacroName(t *testing.T) {
+	opts := map[string]*Option{
+		"freq":    {name: "freq", optType: OptionInt, defaultVal: 8000000, macroName: "HSE_VALUE"},
+		"variant": {name: "variant", optType: OptionChoice, defaultVal: "M", macroName: "PY32F539xx%s"},
+	}
+	defs := ConfigToDefines(opts, nil)
+	if !reflect.DeepEqual(defs, []string{"HSE_VALUE=8000000", "PY32F539xxM=1"}) {
+		t.Fatalf("ConfigToDefines = %v", defs)
+	}
+	header := ConfigToHeader(opts, nil)
+	if !strings.Contains(header, "#define HSE_VALUE 8000000\n") || !strings.Contains(header, "#define PY32F539xxM 1\n") {
+		t.Fatalf("ConfigToHeader = %s", header)
 	}
 }
 

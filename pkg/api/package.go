@@ -155,61 +155,65 @@ type buildGenerator struct {
 type Package struct {
 	PackageMeta
 	ConfigAccessor
-	*TargetRegistry
-	*InstallItemHolder
-	gitURLs                 []string
-	homepage                string
-	description             string
-	license                 string
-	versions                map[string]string
-	submodules              bool
-	requires                Requires
-	requireFuncs            []RequireFunc
-	configFuncs             []ConfigFunc
-	buildFuncs              []BuildFunc
-	installFuncs            []InstallFunc
-	cleanFuncs              []CleanFunc
-	packageFunc             PackageFunc
-	scriptDir               string
-	srcCodeDir              string
-	dirs                    PkgDirs
-	cmakeBuildDir           string
-	cmakeInstallDir         string
-	cmakeConfig             string
-	tc                      *toolchain.Toolchain
-	platform                Platform
-	globalCFlags            []string
-	globalCxxFlags          []string
-	globalLdFlags           []string
-	globalLinks             []string
-	defaultVisibilityHidden bool
-	deps                    map[string]*InstalledPackage
-	patches                 []string
-	configFiles             []string
-	kconfigEntries          []*KConfigEntry
-	genConfigHdr            bool
-	exportConfig            bool
-	importConfigs           []string
-	dryRun                  bool
-	declaringBuild          bool
-	generators              []buildGenerator
-	onGenWrite              func(string)
-	isRoot                  bool
-	providedLinkerScript    string
-	buildRuntime            *buildruntime.Budget
-	buildContext            context.Context
-	executedHelperStages    int
+	gitURLs                       []string
+	homepage                      string
+	description                   string
+	license                       string
+	versions                      map[string]string
+	submodules                    bool
+	requires                      Requires
+	baseRequires                  []RequireInfo
+	requireFuncs                  []RequireFunc
+	configFuncs                   []ConfigFunc
+	buildFuncs                    []BuildFunc
+	installFuncs                  []InstallFunc
+	cleanFuncs                    []CleanFunc
+	packageFunc                   PackageFunc
+	scriptDir                     string
+	srcCodeDir                    string
+	dirs                          PkgDirs
+	cmakeBuildDir                 string
+	cmakeInstallDir               string
+	cmakeConfig                   string
+	tc                            *toolchain.Toolchain
+	platform                      Platform
+	globalCFlags                  []string
+	globalCxxFlags                []string
+	globalLdFlags                 []string
+	globalLinks                   []string
+	defaultVisibilityHidden       bool
+	deps                          map[string]*InstalledPackage
+	patches                       []string
+	kconfigEntries                []*KConfigEntry
+	genConfigHdr                  bool
+	importConfigs                 []string
+	dryRun                        bool
+	declaringBuild                bool
+	generators                    []buildGenerator
+	onGenWrite                    func(string)
+	isRoot                        bool
+	providedLinkerScript          string
+	providedLinkerScriptFromBuild bool
+	buildRuntime                  *buildruntime.Budget
+	buildContext                  context.Context
+	executedHelperStages          int
 }
 
 func NewPackage() *Package {
 	return &Package{
-		ConfigAccessor:    NewConfigAccessor(nil, nil),
-		TargetRegistry:    NewTargetRegistry(),
-		InstallItemHolder: &InstallItemHolder{},
-		versions:          make(map[string]string),
-		requires:          Requires{},
-		deps:              make(map[string]*InstalledPackage),
+		ConfigAccessor: NewConfigAccessor(nil, nil),
+		versions:       make(map[string]string),
+		requires:       Requires{},
+		deps:           make(map[string]*InstalledPackage),
 	}
+}
+
+func (p *Package) AddRequires(deps ...any) *Package {
+	var added Requires
+	added.Add(deps...)
+	p.requires.AddInfos(added.Get()...)
+	p.baseRequires = append(p.baseRequires, added.Get()...)
+	return p
 }
 
 func (p *Package) SetProvidedLinkerScript(path string) *Package {
@@ -217,6 +221,7 @@ func (p *Package) SetProvidedLinkerScript(path string) *Package {
 		fatalScript(p.FullName(), "SetProvidedLinkerScript", "linker script already set to %s", p.providedLinkerScript)
 	}
 	p.providedLinkerScript = path
+	p.providedLinkerScriptFromBuild = p.declaringBuild
 	return p
 }
 
@@ -421,6 +426,10 @@ func (p *Package) ExecConfigFuncs(dir string, fn func(ConfigFunc)) {
 
 func (p *Package) ExecBuildFuncs(dir string, fn func(BuildFunc)) {
 	p.generators = nil
+	if p.providedLinkerScriptFromBuild {
+		p.providedLinkerScript = ""
+		p.providedLinkerScriptFromBuild = false
+	}
 	p.declaringBuild = true
 	defer func() { p.declaringBuild = false }()
 	execFuncs(p.Name, dir, p.buildFuncs, fn)
@@ -435,10 +444,11 @@ func (p *Package) ExecCleanFuncs(dir string, fn func(CleanFunc)) {
 }
 
 func (p *Package) UpdateRequireContext(cfgVals map[string]any, options map[string]*Option) {
-	if len(p.requireFuncs) == 0 {
+	if len(p.requireFuncs) == 0 && len(p.baseRequires) == 0 {
 		return
 	}
 	ctx := NewRequireContextForConfig(p.Name, cfgVals, options, nil)
+	ctx.Requires.AddInfos(p.baseRequires...)
 	RunScriptSafe(p.Name, func() {
 		for _, fn := range p.requireFuncs {
 			fn(ctx)
@@ -488,13 +498,6 @@ func (p *Package) SetPatches(paths ...string) *Package {
 	p.patches = paths
 	return p
 }
-
-func (p *Package) SetConfigFiles(files ...string) *Package {
-	p.configFiles = files
-	return p
-}
-
-func (p *Package) ConfigFiles() []string { return p.configFiles }
 
 func (p *Package) SetCfgVals(vals map[string]any) *Package {
 	p.CfgVals = vals
@@ -559,9 +562,6 @@ func (p *Package) IsRoot() bool { return p.isRoot }
 
 func (p *Package) SetGenConfigHeader(v bool) *Package { p.genConfigHdr = v; return p }
 func (p *Package) GenConfigHeader() bool              { return p.genConfigHdr }
-
-func (p *Package) SetExportConfig(v bool) *Package { p.exportConfig = v; return p }
-func (p *Package) ExportConfig() bool              { return p.exportConfig }
 
 func (p *Package) SetImportConfigs(names []string) *Package { p.importConfigs = names; return p }
 func (p *Package) ImportConfigs() []string                  { return p.importConfigs }
@@ -699,7 +699,7 @@ func (p *Package) RunGenerators(sourceDir, buildDir string, onWrite func(string)
 		return fmt.Errorf("package %s: build directory is not set", p.FullName())
 	}
 	if sourceDir == "" {
-		sourceDir = p.SrcDir()
+		sourceDir = p.SourceDir()
 	}
 	prevBuildDir := p.dirs.BuildDir
 	prevOnWrite := p.onGenWrite

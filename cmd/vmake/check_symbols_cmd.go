@@ -44,6 +44,7 @@ Requires a successful build first; scans existing build/ outputs.`,
 	cmd.Flags().BoolVar(&strict, "strict", false, "exit non-zero on any non-info finding")
 	cmd.Flags().StringVar(&toolchainFlag, "toolchain", "", "override toolchain")
 	cmd.Flags().StringVar(&modeFlag, "mode", "", "override build mode")
+	cmd.Flags().StringArrayVarP(&ephemeralSetFlags, "set", "s", nil, "override an option for this run only (format: [pkg/]option=value)")
 	cmd.RegisterFlagCompletionFunc("toolchain", completeToolchain)
 	cmd.RegisterFlagCompletionFunc("mode", completeMode)
 	return cmd

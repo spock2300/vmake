@@ -189,29 +189,30 @@ Value rules match `GenerateConfigDefines`:
 | String | `"uart0"` | `-DCONFIG_X="uart0"` |
 | Choice | `"fast"` | `-DCONFIG_X="fast"` + `-DCONFIG_X_FAST=1` |
 
-- `SetMacroName("NAME")` replaces the default name entirely; when the name contains `%s`/`%v`, the option value is rendered into it (`PY32F539xx%s` + `M` → `PY32F539xxM=1`) and only that macro is emitted.
+- `SetMacroName("NAME")` replaces the default `CONFIG_<NAME>` macro name on **both** package options (emitted by `GenerateConfigDefines` / `GenerateConfigHeader`) and global options (auto-exported to every package); when the name contains `%s`/`%v`, the option value is rendered into it (`PY32F539xx%s` + `M` → `PY32F539xxM=1`) and only that macro is emitted.
 - `mode`, `toolchain`, `target_os`, `target_triple` are skipped by default. Redeclare the option with a `SetMacroName` to opt it in; a `mode`/`toolchain` redeclaration must match the built-in Type/Default.
-- `SetMacroName` is only valid on global options (`ctx.GlobalOption`); using it on a package option is a validation error.
 - Two global options producing the same macro with different values abort the configuration phase; identical definitions are deduplicated.
 - A package-level value left in `entries.<pkg>.options` for a global option still wins inside that package, but the exported macro always uses the global value; remove stale entry values when moving an option to `GlobalOption`.
 
 ## Reading Config Values
 
-All accessors (`Bool`, `Int`, `String`, `BoolStr`, `When`, `If`, `Select`) exist on a shared `ConfigAccessor`, but **which values they see depends on the phase**:
+All accessors (`Bool`, `Int`, `String`, `BoolStr`, `When`, `WhenNot`, `WhenAny`, `If`, `Select`) exist on a shared `ConfigAccessor`, but **which values they see depends on the phase**:
 
 | Phase | Values visible |
 |---|---|
 | `OnConfig` | Declared `SetDefault` values plus earlier `SetConfigValue` results only. Values saved in the active configuration (`.vmake/config.json` by default) are NOT loaded yet |
 | `SetOnApply` | The resolved value for that option (saved config value, else default); `OptionInt` is normalized to `int`, other types are passed through |
 | `OnBuild` / `OnInstall` / `OnClean` | Full resolved values: saved config + defaults + built-in/global options |
-| `OnRequire` | Pass 1 (discovery): none; only `When`/`If`/`Select` are allowed. Pass 2 (`FilterDeps`): this package's `entries.<pkg>.options` values (global config values are not merged); direct reads of those values are allowed |
+| `OnRequire` | Pass 1 (discovery): none; only `When`/`WhenNot`/`WhenAny`/`If`/`Select` are allowed. Pass 2 (`FilterDeps`): this package's `entries.<pkg>.options` values (global config values are not merged); direct reads of those values are allowed |
 
 ```go
-ctx.Bool("debug")           // bool → bool (OptionBool only — accessor must match SetType)
+ctx.Bool("debug")           // bool → bool (OptionBool only — accessor must match type)
 ctx.Int("tick_hz")          // int → int (OptionInt only)
 ctx.String("platform")      // string → string (OptionString/OptionChoice only)
 ctx.BoolStr("debug")        // bool → "ON" / "OFF"
 ctx.When("x", "val")        // true iff option "x" == "val" (works in OnRequire too)
+ctx.WhenNot("x", "val")     // true iff option "x" != "val" (works in OnRequire too)
+ctx.WhenAny("x", "a", "b")  // true iff option "x" is "a" or "b" (works in OnRequire too)
 ```
 
 In `OnConfig`, options must already be declared (`ctx.Option(...)`) in that same callback before they can be read. Do not branch on user configuration there — move that logic to `OnBuild`, `OnInstall`, `OnClean`, or `SetOnApply`.

@@ -107,7 +107,7 @@ vmake build --mode debug
 | Method | Use Case |
 |--------|----------|
 | `ctx.If("debug", "-g", "-O0")` | Toggle flags for a **bool** option (returns `[]string`, pass directly) |
-| `ctx.Select("platform", {...})` | Platform-specific flags (returns `string`) |
+| `ctx.Select("platform", {...})` | Map option value to flags or dependencies (returns `[]string`, pass directly) |
 | `ctx.When("level", 2)` | Compare an int option (returns `bool`) |
 | `ctx.If("debug", "DEBUG")` | Conditional defines |
 
@@ -115,7 +115,7 @@ vmake build --mode debug
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {
-	ctx.Option("ssl").SetType(api.OptionBool).SetDefault(false)
+	ctx.Option("ssl").SetDefault(false)
 })
 
 p.OnRequire(func(ctx *api.RequireContext) {
@@ -125,15 +125,15 @@ p.OnRequire(func(ctx *api.RequireContext) {
 })
 ```
 
-`OnRequire` runs twice. In pass 1 (discovery, nil config) the condition is unknown: `When` returns `true`, so the package is resolved eagerly. In pass 2 (`FilterDeps`, this package's `entries.<pkg>.options` values; global configuration values are not merged) the returned list replaces this package's dependency edges: a false condition drops the edge, while adding a package is accepted only if it is already in the resolved graph (otherwise `FilterDeps` fails with `dependency ... not found in dependency graph`). Declare each dependency where pass 1 can see it — unconditionally or behind a discovery-aware guard. See `SKILL.md - OnRequire Two-Phase Execution`.
+`OnRequire` runs twice. In pass 1 (discovery, nil config) the condition is unknown: `When` returns `true` and `Select` returns all mapped values, so packages are resolved eagerly. In pass 2 (`FilterDeps`, this package's `entries.<pkg>.options` values; global configuration values are not merged) the returned list replaces this package's dependency edges: a false condition or unselected choice drops the edge, while adding a package is accepted only if it is already in the resolved graph (otherwise `FilterDeps` fails with `dependency ... not found in dependency graph`). Declare each dependency where pass 1 can see it — unconditionally or behind a discovery-aware guard. See `SKILL.md - OnRequire Two-Phase Execution`.
 
 ## Key Points
 
-- `ctx.If` returns a `[]string` — pass it directly to `...any` target helpers such as `AddCFlags`/`AddDefines`/`AddFiles` (`AddCFlags(ctx.If(...))`); `flattenAny` expands `[]string`/`[]any` items. Do not spread into those — Go cannot spread a `[]string` into an `...any` parameter. `...string` helpers such as `AddDeps` accept a spread normally.
+- `ctx.If` and `ctx.Select` return `[]string` — pass them directly to `...any` helpers such as `AddCFlags`/`AddDefines`/`AddFiles`/`AddDeps`/`AddRequires` (`AddCFlags(ctx.If(...))`, `AddRequires(ctx.Select(...))`); `flattenAny` expands `[]string`/`[]any` items. Do not spread into those — Go cannot spread a `[]string` into an `...any` parameter.
 - `ctx.If("opt", "a", "b")` returns `["a", "b"]` when true and `nil` when false; during discovery (nil config) it returns the values unconditionally
 - `ctx.If` only accepts bool options; `ctx.When(option, value)` compares any type (in `OnBuild` and pass 2) and is the safe discovery-aware helper
 - Multiple conditionals can stack
-- In `OnRequire`, direct reads (`ctx.Bool/String/Int`) are fatal only on pass 1 (nil config); pass 2 (`FilterDeps`) reads this package's entry values. On pass 1, `When` → `true`, `If` → its values, `Select` → `""`
+- In `OnRequire`, direct reads (`ctx.Bool/String/Int`) are fatal only on pass 1 (nil config); pass 2 (`FilterDeps`) reads this package's entry values. On pass 1, `When` → `true`, `If` → its values, `Select` → all mapped values sorted
 - Target `-O*` flags are appended before mode flags, so the mode's `-O2`/`-O0` wins for GCC — prefer `vmake build --mode debug` over per-target `-O` flags; see `SKILL.md - Global Flags & Mode Flags`
 
 ## See Also

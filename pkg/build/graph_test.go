@@ -13,7 +13,7 @@ import (
 func makeTargetWithDeps(name string, deps ...string) *api.Target {
 	tr := api.NewTargetRegistry()
 	t := tr.Target(name)
-	t.AddDeps(deps...)
+	t.AddDeps(deps)
 	return t
 }
 
@@ -397,5 +397,33 @@ func TestBuildPath(t *testing.T) {
 	want := filepath.Join("/base", "build", "abc123", "objects")
 	if got != want {
 		t.Errorf("BuildPath = %q, want %q", got, want)
+	}
+}
+
+func TestBuildGraphUseRequiresAndBarePackageDep(t *testing.T) {
+	chip := makeTargetWithDeps("chip")
+	board := makeTargetWithDeps("board", "chip")
+	app := makeTargetWithDeps("app").UseRequires()
+
+	targets := map[string]map[string]*api.Target{
+		"app":   {"app": app},
+		"board": {"board": board},
+		"chip":  {"chip": chip},
+	}
+	pkgMeta := map[string]PkgBuildMeta{
+		"app":   {Deps: []string{"board"}},
+		"board": {Deps: []string{"chip"}},
+		"chip":  {},
+	}
+	graph, err := NewBuildGraph(targets, pkgMeta, nil)
+	if err != nil {
+		t.Fatalf("NewBuildGraph: %v", err)
+	}
+	appNode, _ := graph.GetNode("app:app")
+	got := append([]string{}, appNode.Deps...)
+	sort.Strings(got)
+	want := []string{"board:board", "chip:chip"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("app deps = %v, want %v", got, want)
 	}
 }
