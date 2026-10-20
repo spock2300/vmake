@@ -51,7 +51,7 @@ vmake repo trust official
 1. **Phase 1 (OnRequire)**: `AddRequires` registers `"official/zlib >=1.2"` for graph discovery. Top-level packages (registry and native) are resolved eagerly; native sub-packages load only when depended on.
 2. **Phase 2 (OnConfig)**: Build options are defined and resolved via `OnConfig` callbacks.
 3. **Phase 3 (FilterDeps)**: After config is resolved, `OnRequire` runs **again** with this package's `entries.<pkg>.options` values (global configuration values are not merged), recomputing the dependency list. This enables option-conditional dependencies.
-4. **Phase 4 (OnBuild)**: Targets must declare explicit `AddDeps("official/zlib")` to create build-graph edges. The scheduler links the library and propagates public includes automatically.
+4. **Phase 4 (OnBuild)**: Targets create the build-graph edge with `AddDeps("official/zlib")` or `UseRequires()`; `AddRequires` alone does not create the target edge. The scheduler links the library and propagates public includes automatically.
 
 ## Version Constraint Syntax
 
@@ -64,9 +64,9 @@ vmake repo trust official
 | `~1.2.0` | Pessimistic (>=1.2.0, <1.3.0) |
 | `=1.2.0` | Exact match |
 
-Constraints are parsed by `ParseConstraint` in `pkg/api/semver.go`: **one operator plus one version**, where missing minor/patch components default to 0 (`1.2` parses as `1.2.0`). Compound ranges such as `>=1.2 <2.0` are not supported — split them into separate `AddRequires` calls for the same package if needed. A version given without an operator (`"official/zlib 1.2"`) is treated as `>=1.2`; a requirement with no version at all (`"official/zlib"`) is treated as `>=0.0.0`, so any version matches and no major lock applies.
+Constraints are parsed by `ParseConstraint` in `pkg/api/semver.go`: **one operator plus one version**, where missing minor/patch components default to 0 (`1.2` parses as `1.2.0`). Compound ranges such as `>=1.2 <2.0` are not supported — split them into separate `AddRequires` calls for the same package if needed. A version given without an operator (`"official/zlib 1.2"`) is treated as `>=1.2`; a requirement with no version at all (`"official/zlib"`) is treated as `>=0.0.0`, so any stable version matches and no major lock applies. Prereleases still need a pinned prerelease, as described below.
 
-The **highest satisfying version** is selected. When several packages constrain the same dependency, all constraints must match (`SelectVersionMulti`); mutually unsatisfiable constraints fail resolution. Prereleases are excluded unless a constraint pins that same `major.minor.patch` prerelease — a `>=1.2.0-rc1` constraint admits `1.2.0-rc2`, but not `1.2.1-rc1`.
+The **highest satisfying version** is selected. For package-declared version maps, all constraints must match (`SelectVersionMulti`). Native tag selection uses the first constraint to choose a tag and validates the remaining constraints against that choice, so a lower tag that satisfies the intersection can still be rejected. Prereleases are excluded unless a constraint pins that same `major.minor.patch` prerelease — a `>=1.2.0-rc1` constraint admits `1.2.0-rc2`, but not `1.2.1-rc1`.
 
 Version pins in entries of the active configuration (`.vmake/config.json` by default, or the file selected in `.vmake/project.json`) take precedence over latest matching tags; set a pin by editing the `version` field of that package's entry in the file. `.vmake/vmake.lock` pins survive until `vmake lock update`.
 
@@ -157,7 +157,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
         SetKind(api.TargetBinary).
         AddFiles("src/*.c").
         AddDeps("test_build/mathlib")
-    // AddDeps("official/openssl") needed here too -- no auto-wiring
+    // AddDeps("official/openssl"), or call UseRequires() to wire all active requires
 })
 ```
 
@@ -194,9 +194,9 @@ Keep `OnRequire` and target dependencies consistent.
 
 ```bash
 vmake repo list    # "Repositories:" with "official (registry)" after the bootstrap above
-vmake build        # resolves + downloads + builds; ends with "Build succeeded!" and writes .vmake/vmake.lock
+vmake build        # resolves + downloads + builds; ends with "Build succeeded: ..." and writes .vmake/vmake.lock
 vmake query        # dependency tree including official/zlib (with version for native packages)
-vmake lock show    # e.g. "official/zlib 1.2.13 (registry, <commit>)"; before the first build: "vmake.lock is empty ..."
+vmake lock show    # e.g. "official/zlib 1.2.13 (registry, <commit>)"; a missing lock file is an error, while an existing empty lock prints "vmake.lock is empty ..."
 ```
 
 ## See Also

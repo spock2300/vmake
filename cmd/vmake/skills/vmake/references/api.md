@@ -28,7 +28,7 @@ Go-based C/C++ build system. Build instructions are written in Go (`build.go`) u
 
 ## Conditional API
 
-`If` (if bool then values), `Select` (map option value), `When` (compare value, returns bool), `WhenNot` (discovery-safe inverse compare; returns `true` during discovery when config is nil), `WhenAny` (discovery-safe multi-value compare; returns `true` during discovery).
+`If` (if bool then values), `Select` (map option value), `When` (matches any of the supplied values, returns bool), `WhenNot` (discovery-safe inverse compare; returns `true` during discovery when config is nil), `WhenAny` (alias for `When` with multiple values).
 
 All setter methods return the receiver for chaining (exceptions: `SetDefaultFlags` returns nothing; `ConfigContext.AddGlobalCFlags`/`AddGlobalCxxFlags`/`AddGlobalDefines`/`AddGlobalLdFlags`/`AddGlobalLinks` return nothing). Use `filepath.Join()` for filesystem paths. Package IDs use `/` (e.g., `official/zlib`), target IDs use `:` (e.g., `lib:utils`). `SetBuildFunc` callback receives `*Package`, returns `error`.
 
@@ -154,11 +154,13 @@ operations the helpers cannot express.
   that override should retain package defaults and global flags. ASM flags must
   be explicit. Make/Configure inherit the merged C/CXX/linker flags through `pkg.Env()`.
 - Windows defaults to Ninja unless a generator or configure preset is explicit. Build
-  uses the normalized VMake jobs budget (`-j0` means CPU count). Explicit
-  arguments, backend arguments and environment parallel settings must be positive
-  and no greater than that budget; smaller requests reduce parallelism. Bare
-  `-j` and inherited Make jobserver tokens are rejected. CMakeInstall stays serial
-  unless parallelism is requested. Default make is resolved only when make is used.
+  uses the normalized VMake jobs budget (`-j0` means CPU count). If the caller
+  passes `-j`/`--jobs`/`--parallel` or sets `CMAKE_BUILD_PARALLEL_LEVEL`, VMake
+  forwards that value unchanged and does not add its own `-jN`; explicit values
+  are not clamped to the budget. Make jobserver flags in
+  `MAKEFLAGS`/`GNUMAKEFLAGS`/`MFLAGS` also suppress the automatic `-jN`.
+  CMakeInstall stays serial unless parallelism is requested. Default make is
+  resolved only when make is used.
 - `CMakeConfigure` re-runs configure when its fingerprint changes or the recorded
   configure outputs are missing, so repeated builds reuse an intact configured
   tree. The fingerprint covers the generated and
@@ -220,6 +222,7 @@ own build tree and publish the staged archive through the getter.
 | `ScriptDir()` | `string` | Directory containing the loaded build.go, set by the loader via `SetScriptDir` (empty only for packages created without a script directory) |
 | `Env()` | `map[string]string` | Toolchain env vars (CC, CXX, AR, etc.) |
 | `Deps()` | `map[string]*InstalledPackage` | Resolved dependencies |
+| `GetOptions()` | `map[string]*Option` | Package option map |
 | `GetRequires()` | `*Requires` | Package requires |
 | `GitURLs()` | `[]string` | Git repository URLs |
 | `Homepage()` | `string` | Project homepage |
@@ -287,9 +290,9 @@ All setters are fluent (return `*Target`).
 | `AddPublicDefines` | `(defines ...any)` | Preprocessor defines applied to this target and propagated to dependents along `AddDeps` |
 | `AddLinks` | `(libs ...any)` | Libraries to link (`-l`) |
 | `AddPublicLinks` | `(libs ...any)` | Link libraries (`-l`) applied to this target and propagated to dependents along `AddDeps` |
-| `AddProvidedLibs` | `(libs ...string)` | Libraries this target provides to consumers (e.g. `"ssl"`, `"crypto"`) |
-| `AddDeps` | `(targets ...any)` | Dependencies (`string`, `[]string` such as `ctx.If`/`ctx.Select`): same pkg (`"utils"`), bare required/known pkg (`"shell"` → `"shell:*"`), cross pkg (`"pkg:name"`), wildcard (`"pkg:*"`), third-party (`"official/zlib"`). Empty entries are ignored; whitespace, multiple `:`, empty segments, and path-shape errors in refs without `:` are declaration-time build errors |
-| `UseRequires` | `()` | Wire all active required packages of this package (post-`FilterDeps`) as `pkg:*` dependencies on this target |
+| `AddProvidedLibs` | `(libs ...any)` | Libraries this target provides to consumers (e.g. `"ssl"`, `"crypto"`; accepts slices via `flattenAny`) |
+| `AddDeps` | `(targets ...any)` | Dependencies (`string`, `[]string` such as `ctx.If`/`ctx.Select`): same pkg (`"utils"`), bare required/known pkg (`"shell"` → `"shell:*"`), cross pkg (`"<pkg>:<target>"`), wildcard (`"<pkg>:*"`), third-party (`"official/zlib"`). Empty entries are ignored; whitespace, multiple `:`, empty segments, and path-shape errors in refs without `:` are declaration-time build errors |
+| `UseRequires` | `()` | Wire all active required packages of this package (post-`FilterDeps`) as `<pkg>:*` dependencies on this target |
 | `AddCFlags` | `(flags ...any)` | C compiler flags |
 | `AddPublicCFlags` | `(flags ...any)` | C compiler flags applied to this target and propagated to dependents along `AddDeps` |
 | `AddCxxFlags` | `(flags ...any)` | C++ compiler flags |
@@ -297,14 +300,14 @@ All setters are fluent (return `*Target`).
 | `AddLdFlags` | `(flags ...any)` | Linker flags |
 | `AddPublicLdFlags` | `(flags ...any)` | Linker flags applied to this target and propagated to dependents along `AddDeps` |
 | `SetBuildFunc` | `(fn func(p *Package) error)` | Custom build logic; executed only for `TargetVoid` (ignored for other kinds) |
-| `AddInputs` | `(paths ...any)` | Input files/globs for opt-in incremental `TargetVoid` (when paired with `AddOutputs`, skips `SetBuildFunc` when inputs/outputs are unchanged) |
-| `AddOutputs` | `(paths ...any)` | Output files for opt-in incremental `TargetVoid` |
+| `AddInputs` | `(paths ...any)` | Literal input files for opt-in incremental `TargetVoid` (no glob expansion). Both `AddInputs` and `AddOutputs` are required when either is declared; declaring only one is a build error. With neither, the callback runs once per invocation. Skip decision covers the action signature plus input/output hashes |
+| `AddOutputs` | `(paths ...any)` | Literal output files for opt-in incremental `TargetVoid` (no glob expansion) |
 | `SetPrebuilt` | `(path string)` | Pre-compiled artifact — skip compilation; output is a symlink to the source (copy when post-link steps exist) (fatal on double-set; ignored for `TargetVoid`) |
 | `SetInstallDir` | `(dir string)` | Install directory |
 | `SetInstall` | `(install bool)` | Control install |
 | `SetLinkerScript` | `(path string)` | Linker script (passes `-T` to linker; `TargetBinary` only; fatal on double-set) |
 | `SetVersionScript` | `(path string)` | Version script for symbol visibility (Shared/Binary only, ELF only; fatal on double-set) |
-| `AddExcludeLibs` | `(libs ...string)` | Strip symbols from absorbed static archives via `-Wl,--exclude-libs=` (Shared/Binary only, ELF only) |
+| `AddExcludeLibs` | `(libs ...any)` | Strip symbols from absorbed static archives via `-Wl,--exclude-libs=` (Shared/Binary only, ELF only; accepts slices via `flattenAny`) |
 | `SetSymbolBinding` | `(mode string)` | `"static"` → `-Bsymbolic`; `"static-functions"` → `-Bsymbolic-functions` (Shared/Binary only, ELF only) |
 | `SetSymbolPrefix` | `(prefix string)` | Post-link `objcopy --prefix-symbols=` (fatal on double-set) |
 | `SetKeepGlobalSymbols` | `(path string)` | Post-link `objcopy --keep-global-symbols=<path> {output}` and auto-registers `path` in `AddPostLinkDeps` (fatal on double-set) |
@@ -318,7 +321,7 @@ All setters are fluent (return `*Target`).
 | `AddPostLinkDeps` | `(files ...string)` | Extra input files for post-link steps (SourceDir-relative); any content or permission change (a bare `touch` does not count) or a missing input → relink + re-run all post-link steps. Prebuilt targets with post-link steps are copied before modification and still relink when these inputs change |
 | `AddBinHeader` | `(inputs ...any)` | Binary files → `.h` headers; output to `BuildDir()/generated/`; incremental via mtime and the input recorded in the generated header's first line |
 
-`AddDeps` ref grammar (`pkg/api/depref.go`): a ref without `:` and `/` matches a target of the declaring package first, or if none exists and the name matches a required/known package in the build graph, expands to `pkg:*`; `pkg:target` selects one target; `pkg:*` or a `/`-containing path (e.g. `"official/zlib"`) expands to all targets of that package plus its transitive package deps (flat closure, deduplicated). `t.UseRequires()` wires all active required packages of the declaring package (post-`FilterDeps`) as `pkg:*` deps automatically. Validation is fatal at declaration time for whitespace, multiple `:`, empty segments, and path-shape errors (leading/trailing `/` or `//`) in refs without `:`; an exactly empty entry is silently ignored. Unknown targets (`dependency not found`), unknown packages (`package not found in build graph`) and cycles fail at build-graph time. A `pkg` part without `/` in `pkg:target` is first resolved relative to the declaring (sub-)package.
+`AddDeps` ref grammar (`pkg/api/depref.go`): a ref without `:` and `/` matches a target of the declaring package first, or if none exists and the name matches a required/known package in the build graph, expands to `<pkg>:*`; `<pkg>:<target>` selects one target; `<pkg>:*` or a `/`-containing path (e.g. `"official/zlib"`) expands to all targets of that package plus its transitive package deps (flat closure, deduplicated). The text before `:` is the package name; there is no literal `pkg:` marker. `t.UseRequires()` wires all active required packages of the declaring package (post-`FilterDeps`) as `<pkg>:*` deps automatically. Validation is fatal at declaration time for whitespace, multiple `:`, empty segments, and path-shape errors (leading/trailing `/` or `//`) in refs without `:`; an exactly empty entry is silently ignored. Unknown targets (`dependency not found`), unknown packages (`package not found in build graph`) and cycles fail at build-graph time. A package part without `/` in `<pkg>:<target>` is first resolved relative to the declaring (sub-)package.
 
 `AddPublicIncludes`, `AddPublicDefines`, `AddPublicCFlags`, `AddPublicCxxFlags`, `AddPublicLdFlags`, and `AddPublicLinks` apply to the target itself and propagate transitively along `AddDeps` edges to dependents. Prefer these over `AddGlobal*` when flags/defines belong to a module or library rather than every package in the workspace (global flag changes rotate every package's `BuildDir`).
 
@@ -328,7 +331,7 @@ Sub-packages: a nested `build.go` in a native remote package's checkout is an in
 
 ### Removers
 
-`RemoveCFlags`, `RemovePublicCFlags`, `RemoveCxxFlags`, `RemovePublicCxxFlags`, `RemoveLdFlags`, `RemovePublicLdFlags`, `RemoveDefines`, `RemovePublicDefines`, `RemoveIncludes`, `RemovePublicIncludes`, `RemoveLinks`, `RemovePublicLinks`, `RemoveDeps`, `RemoveProvidedLibs`, `RemoveInputs`, `RemoveOutputs` — each takes variadic `...string`, returns `*Target`. These perform immediate exact-match deletion from internal slices.
+`RemoveCFlags`, `RemovePublicCFlags`, `RemoveCxxFlags`, `RemovePublicCxxFlags`, `RemoveLdFlags`, `RemovePublicLdFlags`, `RemoveDefines`, `RemovePublicDefines`, `RemoveIncludes`, `RemovePublicIncludes`, `RemoveLinks`, `RemovePublicLinks`, `RemoveDeps`, `RemoveProvidedLibs`, `RemoveInputs`, `RemoveOutputs` — each takes variadic `...any` (slices accepted via `flattenAny`), returns `*Target`. These perform immediate exact-match deletion from internal slices.
 
 `RemoveFiles` takes variadic `...any` (like `AddFiles`) but uses **deferred pattern matching** — patterns are matched against glob-expanded paths at build time, not removed from the rule list. This lets you exclude files like `RemoveFiles("src/test_*.c")` after a broad `AddFiles("src/*.c")`.
 
@@ -408,9 +411,10 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `PackageName() string` | Package name |
 | `AddInstalls(src, dest)` | Install entry |
 | `SetInstallFilter(filter)` | Install file filter |
-| `BuildSubGraph(pkgName)` | Build package as independent sub-graph |
-| `DepOutput(depRef) string` | Get output path of dependency target (`pkg` or `pkg:target`; no same-package shorthand or `pkg:*` wildcard) |
-| `DepBuildDir(depRef) string` | Get build directory of dependency target (same ref rules as `DepOutput`) |
+| `BuildSubGraph(pkgName)` | Build package as independent sub-graph; no-op in dry-run |
+| `DepOutput(depRef) string` | Get output path of dependency target (`<pkg>` or `<pkg>:<target>`; no same-package shorthand or `<pkg>:*` wildcard); returns `""` in dry-run |
+| `DepBuildDir(depRef) string` | Get build directory of dependency target (same ref rules as `DepOutput`); returns `""` in dry-run or when `DepOutput` is empty |
+| `SetProvidedLinkerScript(path string) *BuildContext` | Forward a linker script to the bound package (`SetProvidedLinkerScript`) |
 | `BuildPath(elem...) string` | Join path elements under `BuildDir()` (or `$builddir` when `BuildDir()` is empty) |
 | `WriteBuildFile(relPath, content) string` | Register a build-dir file write (`string` or `[]byte`) deferred until build execution; returns `BuildPath(relPath)` |
 | `GenerateFile(relPath, fn) string` | Register a single-file generator callback deferred until build execution; returns `BuildPath(relPath)` |
@@ -473,10 +477,13 @@ Strict in script contexts (`OnConfig`/`OnBuild`/`OnInstall`/`OnClean`/`OnRequire
 | `String` | `(name string) string` | Get string value (strict: OptionString/OptionChoice) |
 | `Int` | `(name string) int` | Get int value (strict: OptionInt; coerces float64/int64) |
 | `BoolStr` | `(name string) string` | Returns "ON"/"OFF" |
+| `SetCfgVals` | `(vals map[string]any) *ConfigAccessor` | Replace the raw configuration values |
+| `SetOptions` | `(options map[string]*Option) *ConfigAccessor` | Replace the option map |
+| `MergeGlobals` | `(globalOptions map[string]*Option, globalVals map[string]any)` | Merge global options/values into this accessor |
 | `If` | `(option string, then ...string) []string` | `then` values if the bool option is true; returns `nil` when false. When config is nil (discovery) returns `then` unconditionally; when unset, falls back to the declared default. Bool options only — other types are a build error |
 | `Select` | `(option string, mapping map[string]string) []string` | Map option value to `[]string{mapped}` (or `nil` when unmapped/empty); when config is nil (discovery), returns all unique non-empty values in `mapping` sorted so `AddRequires(ctx.Select(...))` discovers every branch. In strict mode on `OptionChoice`, keys not in `SetValues` are a build error |
-| `When` | `(option string, value any) bool` | Compare option value (numerics across int/float64); falls back to declared default when unset; returns `true` when config is nil (discovery) |
-| `WhenNot` | `(option string, value any) bool` | Discovery-safe inverse compare: returns `true` when config is nil (discovery), otherwise `!When(option, value)` |
+| `When` | `(option string, values ...any) bool` | True when the option matches any supplied value (numerics across int/float64); requires at least one value; falls back to declared default when unset; returns `true` when config is nil (discovery) |
+| `WhenNot` | `(option string, values ...any) bool` | Discovery-safe inverse compare; requires at least one value; returns `true` when config is nil (discovery), otherwise `!When(option, values...)` |
 | `WhenAny` | `(option string, values ...any) bool` | Discovery-safe multi-value compare: returns `true` when config is nil (discovery), otherwise `true` if the option matches any of `values` |
 | `Option` | `(name string) *Option` | Get or create option. Intended for `OnConfig`: `BuildContext`, `InstallContext`, and `CleanContext` reject declaration after the config phase (build error). `ConfigContext`, `RequireContext`, and `*Package` do not enforce this, but a late declaration never participates in value resolution — reads fall back to its default/zero value |
 
@@ -494,10 +501,10 @@ All setters are fluent (return `*Option`).
 | `SetValues` | `(vals ...string)` | Choice values; auto-infers `OptionChoice` when `SetType` was not explicitly set; defaults must be among them |
 | `SetShowIf` | `(fn func(ctx *ConfigContext) bool)` | Conditional visibility |
 | `SetOnApply` | `(fn func(ctx *ConfigContext, val any))` | Callback after option values resolved, once per build per package, in sorted option-name order. `val` is normalized for `OptionInt` only (JSON `float64`/`int64` converted to `int`); other types are passed through unchanged. The callback's context carries real option values, so reading other options works |
-| `SetGroup` | `(group string)` | Display group |
+| `SetGroup` | `(group string)` | Display group; `GroupGlobal` also makes the option global (`IsGlobal()` is `group == GroupGlobal`) |
 | `SetMacroName` | `(name string)` | Override the generated `CONFIG_<NAME>` macro name on both package options (`GenerateConfigDefines`/`GenerateConfigHeader`) and global options (auto-exported); a `%s`/`%v` in the name renders the option value (`PY32F539xx%s` + `M` → `PY32F539xxM=1`) |
 
-Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()`, `OnApply()`, `Group()`, `MacroName()`, `IsGlobal()`.
+Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()`, `OnApply()`, `Group()`, `MacroName()`, `IsGlobal()`, `MacroDefines(val any) ([]string, error)`.
 
 Note: without `SetDefault`, the zero value applies (`false` for OptionBool, `""` for OptionString/OptionChoice, `0` for OptionInt). An unset Choice default is not validated against `SetValues`.
 
@@ -540,6 +547,10 @@ Note: without `SetDefault`, the zero value applies (`false` for OptionBool, `""`
 
 	const TargetOSOptionName     = "target_os"
 	const TargetTripleOptionName = "target_triple"
+	const BuildDirToken          = "$builddir"
+	const GroupGlobal            = "Global"
+
+	var BuiltInGlobalOptions = map[string]*Option{...}
 
 Cross-compilation projects declare the platform through these global options; artifact names then follow the target OS (`TargetFilename`, `ExtFor`, `PrefixFor`). A toolchain may declare `target_os`/`target_triple` defaults in `toolchain.json`; precedence is package entry value → package-local non-global option default → project global config/default → toolchain default, and empty values count as unset:
 
@@ -554,8 +565,30 @@ ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString)
 
 	type PkgDirs struct { SourceDir string; BuildDir string; InstallDir string }
 
+	type Platform struct { OS string; Triple string }
+	func (p Platform) OSOrHost() string
+
+	type DefaultFlags struct { CFlags, CxxFlags, LdFlags []string }
+
+	type DepRef struct { Raw, Pkg, Target string; Wildcard, Qualified bool }
+
+	type BuildScriptError struct { Package, Op string; Err error }
+	func (e *BuildScriptError) Error() string
+	func (e *BuildScriptError) Unwrap() error
+
+	type InstallItemHolder struct { ... }
+	func (h *InstallItemHolder) AddInstalls(src, dest string) *InstallItemHolder
+	func (h *InstallItemHolder) GetInstallItems() []InstallItem
+	func (h *InstallItemHolder) SetInstallFilter(filter InstallFilterFunc) *InstallItemHolder
+	func (h *InstallItemHolder) GetInstallFilter() InstallFilterFunc
+
+	type TargetRegistry struct { ... }
+	func (r *TargetRegistry) Target(name string) *Target
+	func (r *TargetRegistry) GetTargets() map[string]*Target
+	func (r *TargetRegistry) SetDefaultFlags(cflags, cxxflags, ldflags []string)
+
 	type Requires struct { ... }
-	func (r *Requires) Add(deps ...string)
+	func (r *Requires) Add(deps ...any)
 	func (r *Requires) AddInfos(infos ...RequireInfo)
 	func (r *Requires) Get() []RequireInfo
 	func (r *Requires) Reset()
@@ -623,6 +656,9 @@ ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString)
 	func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext
 	func NewInstallContext(pkgName string, cfgVals map[string]any) *InstallContext
 	func NewCleanContext(pkgName string, cfgVals map[string]any) *CleanContext
+	func NewConfigAccessor(cfgVals map[string]any, options map[string]*Option) ConfigAccessor
+	func NewTargetRegistry() *TargetRegistry
+	func NewRequireContextForConfig(pkgName string, cfgVals map[string]any, options map[string]*Option, funcs []RequireFunc) *RequireContext
 
 ---
 
@@ -652,9 +688,17 @@ Available as `api.CopyFile`, `api.CopyDir`, etc. — useful in `SetBuildFunc` fo
 	func ResolveSubPackageName(currentPkg, depName string, subParents map[string]string, exists func(string) bool) string
 	func CheckCycle(path []string, current string) error
 
-### Build Mode
+### Build Mode and Defaults
 
 	func GetModeFlags(mode string) (cflags []string, defines []string) // debug: -O0 -g; release: -O2 + NDEBUG; size: -Os + NDEBUG
+	func DefaultBuildFlags(toolchainName, targetOS string) DefaultFlags // host-only defaults; empty for other toolchains
+
+### Options and Dependency Refs
+
+	func NormalizeOptionValue(opt *Option, val any) any
+	func ValidateOption(o *Option) error
+	func ParseDepRef(ref string) (*DepRef, error)
+	func SubPackageCandidates(currentPkg, depName string, subParents map[string]string) []string
 
 ### Config Export & Merge
 
@@ -690,4 +734,4 @@ func MatchVersion(available []string, constraint string) (string, bool)
 | `=` | exact match (including pre) | — |
 | `~` | lock major.minor, patch ≥ | Yes |
 
-`>=` and `>` with constraint major > 0 restrict to the same major version (`>=1.2` and `>1.0` won't match `2.0.0`); `>=0.x` / `>0.x` are not major-locked. Empty constraint (`>=0.0.0`) matches all. Selection: highest version satisfying all constraints (mutually satisfiable across packages). Pre-release: `1.0.0-rc.1 < 1.0.0`; pre-releases only match when the constraint itself pins a pre-release of the same `major.minor.patch`; numeric identifiers < alpha identifiers in pre-release segments.
+`>=` and `>` with constraint major > 0 restrict to the same major version (`>=1.2` and `>1.0` won't match `2.0.0`); `>=0.x` / `>0.x` are not major-locked. An empty constraint parses as `>=0.0.0`, but prerelease versions still match only when the constraint pins a prerelease of the same `major.minor.patch`; an empty constraint therefore does not match a prerelease-only list. Selection: highest version satisfying all constraints (mutually satisfiable across packages). Pre-release: `1.0.0-rc.1 < 1.0.0`; numeric identifiers < alpha identifiers in pre-release segments.

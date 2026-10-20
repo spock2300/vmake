@@ -4,6 +4,7 @@ The candidate answer is between `<<<ANSWER>>>` and `<<<END>>>`.
 
 PASS only if the answer states all of these vmake facts:
 - The BuildKey includes the format version, toolchain identity, build mode, options, and the global-flags hash.
+- `SetDefaultVisibilityHidden()` adds a `default-visibility=hidden` marker to that package's flag material and therefore rotates its BuildDir.
 - A local `SetGit` package additionally contributes its resolved source commit.
 - A remote package additionally contributes source version, commit, and patch-set hash.
 - Buildscript text is action-level: commands, includes, defines, and file lists are captured by action signatures, so a comment-only build.go edit does not rotate the BuildDir.

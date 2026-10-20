@@ -441,13 +441,13 @@ Expected result:
 - **DepBuildDir** — `ctx.DepBuildDir("busybox:busybox")` returns the dependency's build directory
 - **DepOutput** — `ctx.DepOutput("myapp:myapp")` returns the dependency's output binary path
 - **api.CopyFile/CopyDir/CopyDirIfExists** — File copy utilities from the `api` package; `CopyDirIfExists` is a no-op for a missing source
-- **Explicit AddDeps** — Targets must declare `AddDeps` for build-graph edges; `AddRequires` alone only handles package resolution
+- **Explicit AddDeps or UseRequires** — Targets must create build-graph edges with `AddDeps` or `UseRequires`; `AddRequires` alone only handles package inclusion/resolution
 - **Empty root build.go** — All work happens in sub-packages; the firmware package provides the root
 
 ## Key Points
 
 - For a source-tree Makefile, call `pkg.Make("-C", filepath.ToSlash(pkg.SrcDir()), ...)`; return its error and let the helper apply the jobs budget
-- Use `pkg.SrcDir()` when the package downloads source with `SetGit`; package-level `SetSrcDir("src")` and `SetGit` are what map `SrcDir()` to `SourceDir()/src`
+- Use `pkg.SrcDir()` when the package downloads source with `SetGit`; `SetGit` is what maps `SrcDir()` to `SourceDir()/src`. Package-level `SetSrcDir("src")` replaces the raw path with `"src"`; it does not prepend `SourceDir()`
 - `EnsureConfig` also applies `SetKConfigPatches` patches after running `make <preset>`, and fails the build if regeneration is needed but no preset is selected (an existing non-empty config needs no preset)
 - Local and remote void targets both run their callback once per session; a nonempty InstallDir does not skip the callback
 - Presets are defconfig names passed to `make <preset>` — not complete `.config` files

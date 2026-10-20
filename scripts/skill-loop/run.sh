@@ -18,7 +18,8 @@ SKILL="$ROOT/cmd/vmake/skills/vmake"
 MODEL=${VMAKE_SKILL_MODEL:-deepseek/deepseek-flash}
 MAX_ROUNDS=${VMAKE_SKILL_ROUNDS:-3}
 KEEP=${VMAKE_SKILL_KEEP:-0}
-TASKS=${VMAKE_SKILL_TASKS:-"compiler multi platform doctor-json install-manifest onrequire public buildkey dryrun targets options prebuilt symbols subgraph install cmake firmware packages inspect-report clean mode buildscope"}
+AGENT_TIMEOUT=${VMAKE_SKILL_AGENT_TIMEOUT:-1800}
+TASKS=${VMAKE_SKILL_TASKS:-"compiler multi platform doctor-json install-manifest onrequire public buildkey dryrun targets options prebuilt symbols subgraph install cmake firmware packages inspect-report clean mode buildscope factcheck-skill factcheck-api factcheck-refs factcheck-examples"}
 WORK=${VMAKE_SKILL_WORK:-$(mktemp -d /tmp/vmake-skill-loop.XXXXXX)}
 TC_NAME=${VMAKE_SKILL_TC_NAME:-skill-loop-tc-$$}
 VMAKE="$WORK/bin/vmake"
@@ -83,7 +84,14 @@ git -C "$WORK/tc/repo" -c user.email=skill-loop@example.com -c user.name=skill-l
 run_agent() {
   local dir=$1 title=$2 prompt=$3 out=$4
   ( cd "$dir" && "$OPENCODE_BIN" run --format json --auto --model "$MODEL" \
-      --title "$title" "$(cat "$prompt")" ) >"$out" 2>"$out.err"
+      --title "$title" "$(cat "$prompt")" ) >"$out" 2>"$out.err" &
+  local pid=$!
+  ( sleep "$AGENT_TIMEOUT"; kill "$pid" 2>/dev/null || true ) &
+  local watchdog=$!
+  local status=0
+  wait "$pid" || status=$?
+  kill "$watchdog" 2>/dev/null || true
+  return "$status"
 }
 
 extract_text() {
@@ -212,8 +220,28 @@ task_knowledge() {
   pass_task "$violations"
 }
 
+task_factcheck() {
+  local dir=$1 name=$2
+  local prompt="$HERE/prompts/$name.md"
+  rm -rf "$dir"
+  mkdir -p "$dir"
+  if [ ! -f "$prompt" ]; then
+    fail_task "missing factcheck prompt for $name"; return
+  fi
+  if ! run_agent "$ROUND_SRC" "skill-loop $name" "$prompt" "$dir/transcript.json"; then
+    fail_task "factchecker failed to run"; return
+  fi
+  extract_text "$dir/transcript.json" "$dir/answer.txt"
+  if grep -Eq '^[[:space:]]*PASS' "$dir/answer.txt"; then
+    pass_task 0
+  else
+    fail_task "factcheck reported discrepancies: $(head -1 "$dir/answer.txt" 2>/dev/null)" 0
+  fi
+}
+
 run_round() {
   local src=$1 label=$2
+  ROUND_SRC=$src
   local rd="$WORK/rounds/$label"
   mkdir -p "$rd"
   log "round $label: build and install skill from $src"
@@ -232,6 +260,7 @@ run_round() {
     total=$((total + 1))
     case "$task" in
       compiler|multi) "task_$task" "$rd/$task" ;;
+      factcheck-*) task_factcheck "$rd/$task" "$task" ;;
       *) task_knowledge "$rd/$task" "$task" ;;
     esac
     passes=$((passes + TASK_PASS))
@@ -245,6 +274,13 @@ run_round() {
         head -40 "$rd/$task/answer.txt" 2>/dev/null || true
         printf '```\n\n  Commands:\n\n```text\n'
         head -40 "$rd/$task/commands.txt" 2>/dev/null || true
+        printf '```\n\n'
+      } >> "$rd/summary.md"
+    fi
+    if [[ "$task" == factcheck-* && "$TASK_PASS" -eq 0 ]]; then
+      {
+        printf '\n  Full factcheck output:\n\n```text\n'
+        cat "$rd/$task/answer.txt" 2>/dev/null || true
         printf '```\n\n'
       } >> "$rd/summary.md"
     fi

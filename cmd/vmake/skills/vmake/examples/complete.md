@@ -182,7 +182,7 @@ vmake config --set myproject/shared_lib=true
 vmake build
 # -> build/<buildKey>/myapp
 # -> build/<buildKey>/libmylib.a       (default)
-# -> build/<buildKey>/libmylib.so      (shared_lib=true; libmylib.dll on Windows)
+# -> build/<buildKey>/libmylib.so      (shared_lib=true; libmylib.dylib on macOS, libmylib.dll on Windows)
 # Windows binary: build\<buildKey>\myapp.exe
 
 vmake test
@@ -197,7 +197,7 @@ vmake test
 - **`ctx.Int(name)`** - Read int option value
 - **`SetShowIf(func)`** - Conditional option visibility
 - **`api.TargetObject`** - Intermediate object file target
-- **`api.TargetShared`** - Shared library (.so)
+- **`api.TargetShared`** - Shared library (`.so` on Linux, `.dylib` on macOS, `.dll` on Windows)
 - **`ctx.When(option, value)`** - Returns bool for imperative conditionals
 - **`ctx.Select(option, map)`** - Map a choice value to a define
 - **Dynamic target creation** - Targets inside `if` blocks
@@ -222,7 +222,7 @@ vmake test
 - Integer options need `strconv.Itoa()` for defines
 - Object targets useful for multi-stage builds
 - Language is auto-detected from file extension (`.c` → C, `.cpp`/`.cc`/`.cxx` → C++) — no manual setting needed
-- Mode flags are appended after target flags (target → mode → global), so per-target `-O*` flags lose to the mode's `-O2`/`-O0` for GCC — select the mode instead (`vmake build --mode debug`); see `SKILL.md - Global Flags & Mode Flags`
+- Flags are ordered private target → mode → global → public target/propagated public, so per-target private `-O*` flags lose to the mode's `-O2`/`-O0`, and public flags can override the global flag — select the mode instead (`vmake build --mode debug`); see `SKILL.md - Global Flags & Mode Flags`
 - The builtin `host` toolchain already injects `-Wall -Wextra` and `-fPIC` when compiling and `-Wl,--as-needed` when linking (ELF targets), so the targets don't repeat them; see `SKILL.md - Default Build Flags`
 - Global options may be declared by multiple packages, but each declaration must use the same `Type` and `Default` (and, for non-builtin options, the same `SetValues`); non-empty `SetMacroName` values must agree. Merging is deterministic — sorted package names, first definition wins. Only global options are cross-validated; see `SKILL.md - GlobalOption Cross-Package Consistency`
 - `benchmark` uses `SetTest(true)`, so `vmake test` builds and runs it; `debug_info` keeps `SetDefault(false)` and is never built automatically (listed as `[disabled]`)

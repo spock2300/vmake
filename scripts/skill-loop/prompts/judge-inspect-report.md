@@ -6,7 +6,7 @@ PASS only if the answer states all of these vmake facts:
 - `vmake inspect` prints one JSON project model (schemaVersion 1) with root/config/mode/toolchain, global values, roots, packages, targets, graph, compile database, build/test report paths, and diagnostics.
 - `vmake query` prints the dependency tree; `vmake query targets` lists targets without building; `vmake query config <pkg>` shows effective option values and generated defines.
 - `build/vmake-build.json` (schemaVersion 2) records status, duration, error, parsed diagnostics, summary, targets, tests, and installed artifacts; `vmake test` writes a separate `build/vmake-test.json`.
-- `inspect`/`query` run `OnBuild` in dry-run mode with read-only `scriptfs` and do not materialize sources or execute builds.
+- `inspect`, `query`, and `query targets` run `OnBuild` in dry-run mode with read-only `scriptfs`; `query config <pkg>` only reads configuration. The missing-source check does not fetch, but native remote resolution may materialize a tree; no build executes.
 
 FAIL if the answer recommends `vmake doctor --json`, says inspection executes the build or writes files, or confuses the build and test reports.
 

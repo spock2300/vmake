@@ -1,6 +1,6 @@
 # Third-Party Package Wrapper
 
-Wrapping an external C/C++ library (CMake, Autotools, etc.) as a vmake package using `TargetVoid` and `SetBuildFunc`. This is the pattern used for **registry repo** packages, and for local packages that wrap a downloaded library.
+Wrapping an external C/C++ library (CMake, Autotools, etc.) as a vmake package using `TargetVoid` and `SetBuildFunc`. This is the pattern used for **registry repo** packages and remote wrappers. A local wrapper has an empty `InstallDir()`, so `AddProvidedLibs` on its `TargetVoid` is not published to consumers; use `SetPrebuilt` plus public includes/links, or publish install items.
 
 For CMake projects, prefer `CMakeConfigure`, `CMakeBuild`, and `CMakeInstall`.
 They manage the toolchain, paths, build configuration, global flags, and
@@ -154,7 +154,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 
 ## Autotools Example
 
-`p.Configure()` runs `<SrcDir>/configure` with the working directory set to `BuildDir()` (out-of-source build) and appends `--prefix=p.InstallDir()` and `--host=p.TargetTriple()`. `p.Make()` then starts with `-C <BuildDir>`, so the matching build is `p.Make()` / `p.Make("install")` — do NOT point make at `SrcDir()` after configure, or it will not find the generated Makefile:
+`p.Configure()` runs `<SrcDir>/configure` with the working directory set to `BuildDir()` (out-of-source build) and appends `--prefix=p.InstallDir()`; it also appends `--host=p.TargetTriple()` only when the triple is non-empty. `p.Make()` then starts with `-C <BuildDir>`, so the matching build is `p.Make()` / `p.Make("install")` — do NOT point make at `SrcDir()` after configure, or it will not find the generated Makefile:
 
 ```go
 p.OnBuild(func(ctx *api.BuildContext) {
@@ -210,18 +210,18 @@ By default, VMake calls each reachable local or remote `TargetVoid` once per vma
 
 ```go
 p.OnBuild(func(ctx *api.BuildContext) {
-    ctx.Target("mylib").
+    ctx.Target("generate").
         SetKind(api.TargetVoid).
+        AddInputs("schema.json").
+        AddOutputs("$builddir/generated/api.h").
         SetBuildFunc(func(p *api.Package) error {
-            p.CMakeConfigure("-DBUILD_SHARED_LIBS=OFF")
-            p.CMakeBuild()
-            p.CMakeInstall()
+            p.Run("codegen", "-o", p.BuildPath("generated/api.h"))
             return nil
         })
 })
 ```
 
-Synchronous subgraphs and the main graph share completed target state. Unless `AddInputs` and `AddOutputs` are both declared and up to date, a later invocation calls the `TargetVoid` callback again, including after a failed build or a partially populated installation directory.
+Synchronous subgraphs and the main graph share completed target state. Unless `AddInputs` and `AddOutputs` are both declared and up to date, a later invocation calls the `TargetVoid` callback again, including after a failed build or a partially populated installation directory. Declaring only one of the two is a build error; CMake/Make wrappers do not need this opt-in.
 
 ## KConfig for Firmware Wrappers
 
@@ -322,8 +322,8 @@ p.OnBuild(func(ctx *api.BuildContext) {
 
 ## Running / Verifying
 
-- Wrapper package (local build.go): run `vmake build` from the wrapper's project directory. A `TargetVoid` wrapper succeeds when its `Configure`/`Make`/`CMake*` commands succeed — the run ends with `Build succeeded!`, and `vmake query targets` lists the declared targets.
-- Consuming project: `vmake build --install` resolves and checks out the registry package, builds dependencies first, then links the app. `vmake query` prints the dependency tree; a successful build ends with `Build succeeded!` (plus `Install succeeded!` with `--install`).
+- Wrapper package (local build.go): run `vmake build` from the wrapper's project directory. A `TargetVoid` wrapper succeeds when its `Configure`/`Make`/`CMake*` commands succeed — the run ends with a `Build succeeded: ... (buildId=...)` summary, and `vmake query targets` lists the declared targets.
+- Consuming project: `vmake build --install` resolves and checks out the registry package, builds dependencies first, then links the app. `vmake query` prints the dependency tree; a successful `--install` run prints `Install succeeded!` and ends with the `Build succeeded: ...` summary.
 - Installed layout: for a local library target, `vmake build --install --install-type sdk` publishes the archive/shared library under `install/lib/` and the forwarded public headers under `install/include/` (static libraries are skipped at install without `sdk`). Remote packages publish into their own `InstallDir()` under the project's `.vmake_deps/` tree.
 - The first run needs network access unless the pinned commit is already recorded in `.vmake/vmake.lock` and materialized under the project's `.vmake_deps/`; registry repos must be added/trusted first (`vmake repo add`).
 

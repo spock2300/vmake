@@ -5,7 +5,7 @@ The most minimal VMake build script - builds a single C binary from source files
 ## Prerequisites
 
 - `vmake` is installed. The built-in `host` toolchain uses `gcc`/`g++` on Linux and `cc`/`c++` on macOS; run `vmake doctor` to check it. Do not add compiler paths to `PATH`; select a `toolchain.json` for any other compiler.
-- Run from anywhere inside the project: VMake searches upward from the current directory for `.vmake/`, `build.go`, or a `*/build.go` directly below the starting directory.
+- VMake searches upward from the current directory for `.vmake/`, `build.go`, or a `*/build.go`. The output commands below assume you are at the project root; from elsewhere use `vmake -C <project> build` and absolute output paths.
 
 ## build.go
 
@@ -69,7 +69,7 @@ ls build/                  # list variants if the glob is ambiguous
 - Glob patterns (`src/*.c`) match multiple files and resolve against `SourceDir()` (the `build.go` directory), not the current working directory
 - A glob that matches nothing is not an error: a binary target fails later at link time with no inputs, while a static target produces an empty archive
 - For local packages the output binary goes to `build/<buildKey>/<target>`; remote packages build under `.vmake_deps/<repo>/<pkg>/out/<sha256(member)>/<buildKey>/build/`
-- `<buildKey>` hashes the build format version, toolchain, mode, options, and the global-flags hash; a local `SetGit` package additionally hashes its current source commit
+- `<buildKey>` hashes the build format version, toolchain, mode, options, and the global-flags hash (plus a `default-visibility=hidden` marker when active); local `SetGit` packages add their source commit, remote packages add version/commit/patch hash
 
 ## See Also
 

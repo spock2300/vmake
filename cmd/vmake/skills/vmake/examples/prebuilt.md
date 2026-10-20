@@ -96,9 +96,9 @@ ctx.Target("app").AddDeps("openssl:*")
 
 For a remote package, the qualified package reference implies the wildcard form:
 `AddDeps("official/openssl")` expands to all of that package's targets and their
-transitive deps. A bare name without `/` or `:` is always a **same-package target**
-reference — `AddDeps("openssl")` on a target in another package is an error, not
-a package-level dependency.
+transitive deps. A bare name first resolves to a same-package target; if none
+exists and the name is a required/known package, it expands to `<pkg>:*`. Use
+`openssl:ssl` / `openssl:*` when you want an explicit cross-package reference.
 
 ## With System Library Dependencies
 

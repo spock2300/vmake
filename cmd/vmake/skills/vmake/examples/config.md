@@ -79,8 +79,8 @@ int main(void) {
 - **`SetType(api.OptionBool/Choice/String/Int)`** - Option type
 - **`SetDefault(value)`** - Default value
 - **`SetDescription(text)`** - Help text
-- **`SetGroup(name)`** - Grouping for TUI
-- **`ctx.If("option", vals...)`** - Conditional for **bool** options (returns the chosen strings when true, `nil` otherwise; pass the slice directly to `...any` helpers such as `AddCFlags`/`AddDefines` — no `...` spread there; `...string` helpers such as `AddDeps` accept a spread)
+- **`SetGroup(name)`** - TUI group; `SetGroup(api.GroupGlobal)` also makes the option global (`IsGlobal()`), so it is excluded from package `GenerateConfigDefines`/`GenerateConfigHeader` output and handled as a global option
+- **`ctx.If("option", vals...)`** - Conditional for **bool** options (returns the chosen strings when true, `nil` otherwise; pass the slice directly to `...any` helpers such as `AddCFlags`/`AddDefines`/`AddDeps` — no `...` spread there)
 - **`ctx.Select("option", map)`** - Map a String/Choice option value to a flag or define
 - **`ctx.String("option")`** - Read a String/Choice option
 
@@ -147,7 +147,7 @@ See `SKILL.md - Multiple Project Configurations` for compatibility and error han
 ## Key Points
 
 - Options are typed: Bool, String, Int, Choice
-- `AddDefines(ctx.If("ssl", "USE_SSL"))` passes the `[]string` directly — `...any` methods (`AddDefines`, `AddCFlags`, `AddFiles`, ...) flatten slices. Do NOT spread into those (Go cannot spread `[]string` into `[]any`); `...string` methods such as `AddDeps` do accept `deps...`
+- `AddDefines(ctx.If("ssl", "USE_SSL"))` passes the `[]string` directly — `...any` methods (`AddDefines`, `AddCFlags`, `AddFiles`, `AddDeps`, ...) flatten slices. Do NOT spread into those (Go cannot spread `[]string` into `[]any`); `AddDeps`/`AddRequires` are also `...any`, so pass the slice directly rather than `deps...`
 - `ctx.If` only accepts `OptionBool`; `ctx.Select` and `ctx.String` work for String/Choice options, and `ctx.When`/`ctx.Int`/`ctx.Bool` cover the rest (a mismatched accessor is a build error)
 - Options are declared in `OnConfig`; `ctx.Option(...)` on `BuildContext`/`InstallContext`/`CleanContext` after the config phase is a build error. A late declaration through a path that is not locked (for example a captured `*Package`) is never resolved, so only its default/zero value is readable
 - Choice options declare their allowed values with `SetValues(...)`; a non-empty `SetDefault` is validated against them after `OnConfig` (validation is skipped when the default is empty or `SetValues` was never called). `vmake config --set <pkg>/<option>=<value>` rejects invalid choices

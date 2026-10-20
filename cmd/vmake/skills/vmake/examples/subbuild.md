@@ -79,8 +79,7 @@ myproject/
 ├── build.go
 ├── tools/
 │   ├── build.go          # Host tool package
-│   └── src/
-│       └── codegen.c     # Code generator source
+│   └── codegen.c         # Code generator source
 ├── src/
 │   └── main.c            # Uses generated.h
 └── output/
@@ -108,11 +107,11 @@ Phase 1-3: Main build.go
 
 ## Key Points
 
-- `BuildSubGraph` runs synchronously and in-process, sharing the parent invocation's session and already-completed targets: a target built by the sub-graph is not rebuilt when the main graph reaches it.
+- `BuildSubGraph` runs synchronously and in-process, sharing the parent invocation's session and already-completed targets: a target built by the sub-graph is not rebuilt when the main graph reaches it. In dry-run (`inspect`/`query`/`check-symbols`), `BuildSubGraph` is a no-op and `DepOutput`/`DepBuildDir` return empty strings.
 - The sub-graph package must be in the needed/required set. Without `SetRoot(true)` the fallback root heuristic includes `tools` here (see Prerequisites), so this example works as written. Under an explicit `p.SetRoot(true)` the root must declare `ctx.AddRequires("tools")` in `OnRequire`; local nested `build.go` files are registered under their **directory basename** (`tools/` → package `tools`). Requesting a package outside the needed set fails with "not found in required packages".
 - Call `BuildSubGraph` from `OnBuild` only. It runs before the next statement and is rejected while a target callback (`SetBuildFunc`) is executing ("not allowed while target ... is running"); a recursive request for a sub-graph that is still being built is rejected too.
-- Toolchain is read from the package's config entry (or global default). A later request for the same sub-graph package with an incompatible toolchain/option scope fails with "already requested with an incompatible build configuration".
-- `DepOutput("pkg:target")` returns the deterministic output path; `DepBuildDir("pkg:target")` returns the directory containing that output (useful for locating generated headers or other build artifacts).
+- Toolchain is read from the package's config entry (or global default). A later request for the same sub-graph package with an incompatible toolchain/option scope fails with an "incompatible build configuration" error (the exact text depends on whether the package binding or the request signature changed).
+- `DepOutput("tools:codegen")` returns the deterministic output path; `DepBuildDir("tools:codegen")` returns the directory containing that output (useful for locating generated headers or other build artifacts).
 - Targets declared by the sub-graph remain in the shared target table, so the main graph can still reference them (see "Linking Sub-Graph Libraries").
 - `ctx.Exec` runs with the process working directory set to the executing package's `SourceDir()`. Relative arguments such as `output/generated.h` land in the project root when the **root** package runs it, but in `tools/` when the `tools` package's own `OnBuild` runs the same call. Use `ctx.DepBuildDir(...)` or absolute paths when a file must be shared between packages.
 - `ctx.Exec` outputs have no incremental declaration: every `vmake build` invocation runs the command again, even when nothing changed. Make the tool itself incremental/idempotent, or use declared generation (for example `AddBinHeader`) where applicable.
@@ -148,7 +147,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 
 `DepOutput("sublib:sublib")` returns the path to `libsublib.a`. Adding it via `AddLdFlags` passes the full `.a` path directly to the linker without asking the main graph to resolve the sub-graph package's toolchain; with `AddDeps` make sure the package's `ctx.ToolchainOption()` selects the same toolchain that produced the artifact.
 
-Fixtures `test_data/15_subgraph_siblings` and `test_data/16_subgraph_cross_tc` use this pattern: 15 nests `t15gen` inside `t15lib`, and 16 selects a separate toolchain for the sub-graph package via `ctx.ToolchainOption()`.
+Fixtures `test_data/15_subgraph_siblings` and `test_data/16_subgraph_cross_tc` use this pattern: 15 nests `t15gen` inside `t15lib`; 16 exposes `ctx.ToolchainOption()` for the sub-graph package, though its committed default is still `host`.
 
 ### Nested Sub-Graphs
 

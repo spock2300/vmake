@@ -24,15 +24,15 @@ the installation manifest (`install/manifest.json`). `clean`, `distclean`, and
 | `toolchain`, `mode` | Effective toolchain and mode |
 | `vmakeVersion`, `vmakeCommit` | Version and abbreviated VCS commit embedded in the running vmake binary (`dev`/`unknown` when unavailable); captured when the report begins and preserved by finish/partial writes |
 | `compileDatabase` | Absolute path to the compilation database, or empty |
-| `targets` | Executed default targets: `package`, `target`, `kind`, `outputs`, `status`, `durationMs`. On failure only targets that completed before the failure are listed. A failure outside target execution (for example a package-level `OnBuild` CMake configure failure) has no target attribution: `diagnostics[].target` stays empty and `targets[]` may stay empty |
-| `tests` | Always an array. For `vmake test`, one entry per executed test target: `name`, `package`, `target`, `passed`, `elapsedMs`, `exitCode`, optional `signal` (set when a signal terminated the process), and `output` |
+| `targets` | Executed default targets: `package`, `target`, `kind`, `outputs`, `status`, `durationMs`, optional `size` (`text`/`data`/`bss`/`total` from `AddPostLinkSize`). On failure the failing/partial target is omitted; with `--keep-going`, later independent targets that completed may still be listed. A failure outside target execution (for example a package-level `OnBuild` CMake configure failure) has no target attribution: `diagnostics[].target` stays empty and `targets[]` may stay empty |
+| `tests` | Always an array. For `vmake test`, one entry per test target: `name`, `package`, `target`, `passed`, `elapsedMs`, `exitCode`, optional `signal` (set when a signal terminated the process), `output`, and on interruption `notRun`/`skipReason` (for example `skipReason: "interrupted"`) |
 | `artifacts` | Files installed by this invocation only: `package`, `target`, `buildPath`, `installPath`, `size`, `sha256` |
 
 A target's `status` is `built` when it compiled or linked something in this
 invocation, or when it is a `void` target (its build callback always runs);
 otherwise it is `up-to-date`. `durationMs` is nonnegative and 0 when too fast to
 measure. Non-default targets are never executed or recorded. Test targets appear
-only for `vmake build --tests` and `vmake test`.
+for `vmake build --tests`, `vmake rebuild --tests`, and `vmake test`.
 
 ## Summary counts
 
@@ -79,8 +79,9 @@ then the trimmed output tail (up to 1000 characters). Buildscript/API errors use
 `VMAKE_E_SCRIPT` and carry the package name. A `vmake test` failure that has no
 build diagnostic (a failed test or a test platform preflight refusal) gets
 exactly one `VMAKE_E_TEST` error entry whose message is the same concise summary
-carried by `error`; per-test details stay in `tests[]`. Raw tool output and the
-full failing command stay on stderr; they are not stored in the report.
+carried by `error`; per-test details stay in `tests[]`. Raw compiler/linker
+output streams to stderr on failure. The full failing command is logged only at
+debug verbosity (`-V`, on stdout) and is not stored in the report.
 
 ## Console output
 

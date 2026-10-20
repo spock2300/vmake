@@ -27,7 +27,7 @@ CGO_ENABLED=0 go test ./cmd/vmake/... ./pkg/... ./internal/...
 - `TestSkillCLIExamples` validates fenced `vmake` commands against the Cobra tree; the other `TestSkill*` tests check cross-references, API symbols, Go blocks, and removed CLI flags. Run them after any CLI or skill edit.
 - After changing the embedded skill, rebuild `vmake` and run `vmake skill install` before testing an agent; editing the repository alone leaves the installed copy stale.
 - Treat a fresh solver as the reward signal: give it a temporary project and only the installed skill, then check task success, `export PATH/CC/...` violations, and whether it can name the resolved compiler path. Fix the smallest doc cluster, rerun the same task plus a regression task, and revert changes that do not improve the result.
-- `scripts/skill-loop/run.sh` automates this loop with solver, judge, and author sessions; see `scripts/skill-loop/README.md` before changing its tasks or reward.
+- `scripts/skill-loop/run.sh` automates this loop with solver, judge, author, and factcheck sessions; see `scripts/skill-loop/README.md` and `COVERAGE.md` before changing its tasks or reward. The `factcheck-*` tasks audit Markdown against code/CLI and are the detail-level regression signal.
 - Skill content is limited to vmake behavior, its own requirements, and vmake-specific workflows. Do not add general OS/toolchain installation tutorials (Xcode/Homebrew/Ninja setup, distribution package advice); extra external knowledge is a burden for the agent.
 - Product gaps (for example, there is no package/target build filter) must be documented as gaps, not papered over with invented flags.
 

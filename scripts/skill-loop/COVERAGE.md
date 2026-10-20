@@ -14,6 +14,12 @@ flags are checked, and `api.*` symbols are checked.
 Behavior coverage is cluster-based, not sentence-by-sentence. The tasks are
 listed in `README.md`; a task can cover several sections.
 
+A separate **detail audit** checks the Markdown against code/CLI rather than
+behavior: `factcheck-skill`, `factcheck-api`, `factcheck-refs`, and
+`factcheck-examples`. These tasks have repository access and return `PASS` or a
+numbered discrepancy list. All current skill files have been through this
+audit; the factcheck tasks keep it repeatable.
+
 ## SKILL.md
 
 | Section | Covered by | Level |

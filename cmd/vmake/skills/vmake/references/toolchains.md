@@ -1,21 +1,29 @@
 # Toolchain Resolution and Compiler Paths
 
-vmake selects one toolchain per build and resolves its tools itself. Do not add
-compiler directories to `PATH`, and do not set `CC`/`CXX`/`AR`/`LD` in the shell
-or in `build.go`. The only PATH entry vmake needs is the `vmake` binary itself.
+vmake selects one toolchain per package and resolves its tools itself; one
+invocation can use different toolchains when package entries override the
+project selection. Do not add compiler directories to `PATH`, and do not set
+`CC`/`CXX`/`AR`/`LD` in the shell or in `build.go`. Non-host toolchains with an
+`InstallPath` resolve without PATH; manifests without `installations` or with an
+uninstalled archive can still resolve relative names from PATH. The built-in
+`host`, `git`, `make`, and `cmake` use PATH.
 Hand-run tools and host test scripts are different: they may need the toolchain
 on PATH, so use the absolute paths from `p.Env()` or prepend it only for that
 command.
 
 ## Resolution Order
 
-1. `--toolchain <name>` on `build`/`test`/`doctor`/`check-symbols`/`inspect`/`query`.
-2. The project `toolchain` option in the active configuration:
+1. A package config entry `entries.<pkg>.options.toolchain` overrides the
+   project/flag selection for that package during a build.
+2. `--toolchain <name>` on `build`/`test`/`rebuild`/`doctor`/`check-symbols`;
+   `inspect`/`query` only accept `--set toolchain=<name>`.
+3. The project `toolchain` option in the active configuration:
    `vmake config --set toolchain=<name>`.
-3. The built-in `host` toolchain.
+4. The built-in `host` toolchain.
 
-The selected name is reported by `vmake inspect` (`toolchainInfo`) and by
-`build/vmake-build.json` (`toolchain`).
+The top-level `vmake inspect` `toolchainInfo` and `build/vmake-build.json`
+`toolchain` report the project selection; per-package names appear in
+`packages[].toolchain`.
 
 ## Built-in host
 
@@ -27,6 +35,10 @@ The built-in `host` toolchain uses these executable names from `PATH`:
 | macOS | `cc` | `c++` | `ar` | `ld` |
 | Windows | `gcc` | `g++` | `ar` | `ld` |
 
+It also configures `strip`, `ranlib`, `objcopy`, `size`, `objdump`, and `nm`
+(macOS leaves `objcopy`/`objdump` unset). `ValidateToolchain` resolves every
+configured tool, so a PATH containing only CC/CXX/AR/LD is not a valid `host`.
+
 A Linux machine with only clang does not satisfy the built-in `host`; declare a
 toolchain that names the clang executables, or install gcc/g++. On macOS the
 built-in `host` intentionally uses Apple clang (`cc`/`c++`) and leaves
@@ -34,8 +46,11 @@ built-in `host` intentionally uses Apple clang (`cc`/`c++`) and leaves
 
 ## Extension toolchains
 
-A toolchain is declared by a `toolchain.json` in an extension repository
-subdirectory. It can also declare installable archives:
+A toolchain is declared by a `toolchain.json` in an immediate subdirectory of a
+registered extension repository. The repository must be trusted and have a
+clean worktree; a project-local `toolchain.json` alone is not scanned. Plugins
+can also register a toolchain dynamically via `RegisterToolchain`. The file can
+declare installable archives:
 
 ```json
 {
@@ -69,13 +84,15 @@ values.
 
 `installations` is keyed by host `GOOS/GOARCH` (`linux/amd64`,
 `darwin/arm64`, `windows/amd64`, ...). Each entry declares `method` (`"lfs"`
-or `"http"`), the archive `file` (a literal filename, no wildcards), and
-`root_dir`, the single directory name inside the archive that contains `bin`
+or `"http"`), the archive `file`, and `root_dir`, the single directory name
+inside the archive that contains `bin`
 (`.` for the archive root). `method: "lfs"` reads `assets/toolchains/<file>`
 from the extension repository and pulls it through Git LFS when needed;
 `method: "http"` additionally requires an absolute HTTPS `url` and the
-archive's 64-character `sha256`, and downloads on first use. `format` is
-optional (`tar.gz`, `tar.xz`, `tar.bz2`, `zip`; auto-detected when empty).
+archive's 64-character `sha256`, and downloads on first use. For `lfs`, `file`
+must be a literal filename (no commas, wildcards, or surrounding whitespace);
+for `http`, it must still be a single path component. `format` is optional
+(`tar.gz`, `tar.xz`, `tar.bz2`, `zip`; auto-detected when empty).
 The top-level `version` is required when `installations` is present. Unknown
 fields are rejected, including the legacy `host`/`install` fields and
 `default_flags`.
@@ -90,13 +107,15 @@ Rules:
 - When `InstallPath` is set, relative tool names resolve **only** under
   `<InstallPath>/bin`. There is no PATH fallback, so a typo fails instead of
   silently using a host compiler.
-- `prefix` is for external build systems (`CROSS_COMPILE`); vmake never builds
-  tool names by concatenating the prefix with `tools` values.
+- `prefix` is for external build systems (`CROSS_COMPILE`); a non-empty prefix
+  must end with `-` or validation rejects the manifest. vmake never builds tool
+  names by concatenating the prefix with `tools` values.
 - `target_os` / `target_triple` are fallback defaults; explicit project values win.
 
-`vmake toolchain list` shows declared toolchains and whether they are installed.
-`vmake toolchain show <name>` prints the configured name, the resolved absolute
-path, and whether it came from an absolute path, `InstallPath`, or `PATH`.
+`vmake toolchain list` shows declared toolchains and whether their configured
+tools resolve; that label is not an archive-installation check. `vmake toolchain
+show <name>` prints the configured name, the resolved absolute path, and whether
+it came from an absolute path, `InstallPath`, or `PATH`.
 
 ## Compiler outside PATH
 
@@ -140,9 +159,11 @@ show` prints the absolute path, which is the answer to "where is the compiler?".
 `cxx`, `ar`, and `ld`.
 
 `vmake toolchain show` does not install a manifest toolchain. If `Install Path`
-is absent, the toolchain is not installed yet; relative names may resolve from
-PATH and can be host tools rather than the archive's tools. Run a build with
-`--toolchain <name>` to install it, then re-run `show` to see the install path.
+is absent, either the manifest has no `installations` entry (the absolute-tools
+pattern; there is nothing to install) or its archive is not installed yet.
+Only manifests with `installations` get an install handler; a build with
+`--toolchain <name>` installs those. Until then, relative names may resolve from
+PATH and can be host tools rather than the archive's tools.
 
 ## Inside build.go
 
@@ -155,8 +176,9 @@ PATH and can be host tools rather than the archive's tools. Run a build with
 | Make with the selected toolchain | `p.Make(...)` |
 
 `p.Env()` resolves `CC`/`CXX`/`AR`/`LD` and the optional binutils to absolute
-paths and includes `CROSS_COMPILE`, `CFLAGS`, `CXXFLAGS`, `LDFLAGS`, `MAKE` (the
-configured make name or `make`), and the optional
+paths and includes `CROSS_COMPILE` when the toolchain sets a prefix, `CFLAGS`,
+`CXXFLAGS`, `LDFLAGS`, `MAKE` (the resolved path when `tools.make` is
+configured, literal `make` when unset), and the optional
 `STRIP`/`RANLIB`/`OBJCOPY`/`SIZE`/`OBJDUMP`/`NM` entries. It includes `PATH` when
 the toolchain contributes directories (an installed toolchain or absolute
 compilers); the built-in `host` leaves `PATH` to the inherited process

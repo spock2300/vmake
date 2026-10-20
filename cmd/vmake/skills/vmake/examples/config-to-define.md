@@ -54,7 +54,7 @@ C code: `#if CONFIG_DEBUG`, configure with `vmake config`.
 
 `SyncConfigDefines("a", "b")` is shorthand for `GenerateConfigDefines()` + `ImportConfig("a", "b")` (see `examples/config-propagate.md`).
 
-**Limitation**: macro name is always `CONFIG_<OPTION_NAME>` (uppercased, `-` → `_`); disabled bools emit no `-D` at all. If your C code expects a different name (e.g., `LWIP_STATS`), use Mechanism 2.
+The default macro name is `CONFIG_<OPTION_NAME>` (uppercased, `-` → `_`); `SetMacroName("LWIP_STATS")` overrides it on package and global options. Disabled bools emit no `-D` at all.
 
 ## GenerateConfigHeader: generated/autoconf.h
 
@@ -192,7 +192,7 @@ Value rules match `GenerateConfigDefines`:
 - `SetMacroName("NAME")` replaces the default `CONFIG_<NAME>` macro name on **both** package options (emitted by `GenerateConfigDefines` / `GenerateConfigHeader`) and global options (auto-exported to every package); when the name contains `%s`/`%v`, the option value is rendered into it (`PY32F539xx%s` + `M` → `PY32F539xxM=1`) and only that macro is emitted.
 - `mode`, `toolchain`, `target_os`, `target_triple` are skipped by default. Redeclare the option with a `SetMacroName` to opt it in; a `mode`/`toolchain` redeclaration must match the built-in Type/Default.
 - Two global options producing the same macro with different values abort the configuration phase; identical definitions are deduplicated.
-- A package-level value left in `entries.<pkg>.options` for a global option still wins inside that package, but the exported macro always uses the global value; remove stale entry values when moving an option to `GlobalOption`.
+- A non-default package-level value in `entries.<pkg>.options` for a global option still wins inside that package, but the exported macro always uses the global value. A package value equal to the option's default is ignored when a global value exists; remove stale entry values when moving an option to `GlobalOption`.
 
 ## Reading Config Values
 

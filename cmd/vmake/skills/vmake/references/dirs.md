@@ -25,7 +25,7 @@ BuildDir path by package origin:
 - **Local packages**: `<SourceDir>/build/<buildKey>/`
 - **Remote packages**: `.vmake_deps/<repo>/<owner>/out/<sha256(member)>/<buildKey>/build/` — the sibling `install/` holds published headers/libs. The package's single working tree lives at `.vmake_deps/<repo>/<owner>/src`; native subpackages use `src/<member>`, and switching configurations only changes the `out/<sha256(member)>/<buildKey>` directory
 
-The BuildKey hashes the format version and `(toolchain identity, build_mode, options)` plus extra material: the **global-flags hash** for every package; local `SetGit` packages additionally contribute the resolved **source commit**; remote packages contribute **source version, commit and patch-set hash**. Buildscript text is action-level: commands, includes/defines and file lists are captured by action signatures, so a comment-only build.go edit does not rotate `BuildDir`. `AddBinHeader` rules additionally record the declared input in the generated header's first line so switching the input regenerates the header even without a key rotation. Artifacts written into `BuildDir()` by the script outside declared actions are not tracked. Version switches, global flag changes and remote patch edits produce a fresh key instead of silently reusing stale artifacts. A local `SetGit` patch-only change is restored into the existing tree but does not rotate its `BuildDir`. The BuildKey is deterministic — same inputs always produce the same hash. `compile_commands.json` is rebuilt for the current session and merged across schedulers by `(source file, object output)` at `<project root>/build/compile_commands.json`. `AddBinHeader` output goes to `BuildDir()/generated/`.
+The BuildKey hashes the format version and `(toolchain identity, build_mode, options)` plus extra material: the **global-flags hash** for every package, extended with a `default-visibility=hidden` marker when `SetDefaultVisibilityHidden()` is active; local `SetGit` packages additionally contribute the resolved **source commit**; remote packages contribute **source version, commit and patch-set hash**. Buildscript text is action-level: commands, includes/defines and file lists are captured by action signatures, so a comment-only build.go edit does not rotate `BuildDir`. `AddBinHeader` rules additionally record the declared input in the generated header's first line so switching the input regenerates the header even without a key rotation. Artifacts written into `BuildDir()` by the script outside declared actions are not tracked. Version switches, global flag changes and remote patch edits produce a fresh key instead of silently reusing stale artifacts. A local `SetGit` patch-only change is restored into the existing tree but does not rotate its `BuildDir`. The BuildKey is deterministic — same inputs always produce the same hash. `compile_commands.json` is rebuilt for the current session and merged across schedulers by `(source file, object output)` at `<project root>/build/compile_commands.json`. `AddBinHeader` output goes to `BuildDir()/generated/`.
 
 ## SourceDir vs SrcDir
 
@@ -37,7 +37,7 @@ For local packages without SetGit, `SrcDir()` defaults to `SourceDir()` unless `
 
 Path getters are bound after the package's source preparation; do not rely on `SourceDir()`/`BuildDir()`/`SrcDir()` before the build phase (they may still be empty in `OnPackage`/`OnConfig` and are populated for `OnBuild`).
 
-Inspection and dry-run commands (`vmake inspect`, `vmake query`, `query targets`, `check-symbols`) declare targets without materializing sources, and `inspect`/`query` also block interpreted-script writes. Needed packages with a present source tree still carry their computed `BuildDir()` during `inspect` (only local `SetGit` packages whose working tree is absent declare with an empty `BuildDir()`); `OnBuild` must guard real file I/O with `p.DryRun()` rather than relying on `p.BuildDir() == ""`, and must not assume the `src` link resolves.
+Inspection and dry-run commands (`vmake inspect`, `vmake query`, `query targets`, `check-symbols`) declare targets in dry-run, and `inspect`/`query` block interpreted-script writes. The declaration step does not materialize sources, but native remote resolution during `Require` may materialize a tree. Needed packages with a present source tree still carry their computed `BuildDir()` during `inspect`; a local `SetGit` package or remote package whose expected tree is absent omits `buildDir`. `OnBuild` must guard real file I/O with `p.DryRun()` rather than relying on `p.BuildDir() == ""`, and must not assume the `src` link resolves.
 
 ## Action → Directory
 
@@ -46,7 +46,7 @@ Inspection and dry-run commands (`vmake inspect`, `vmake query`, `query targets`
 | `p.Make(...)` | `BuildDir()` | For a source-tree Makefile use `p.Make("-C", filepath.ToSlash(absSrcDir), ...)` with an absolute `SrcDir()` |
 | `p.Run(...)` / `p.RunIn(dir, ...)` | `BuildDir()` by default | `RunIn` selects the directory explicitly |
 | `p.Configure(...)` | configures `SrcDir()` out-of-source into `BuildDir()` | install prefix from `InstallDir()`; empty for local packages |
-| `CMakeConfigure` / `CMakeBuild` / `CMakeInstall` | `CMakeBuildDir()` / `CMakeInstallDir()` | see CMake Directories |
+| `CMakeConfigure` / `CMakeBuild` / `CMakeInstall` | `BuildDir()` (configure with `--preset` uses `SrcDir()`) | `CMakeBuildDir()`/`CMakeInstallDir()` are passed as `-B`/`--build`/`--install`/`--prefix` arguments; see CMake Directories |
 | `SetPrebuilt(path)` source | existing file at `path` (absolute or `SourceDir()`-relative) | output published at `BuildDir()/<TargetFilename>` (symlink, or copy with post-link steps) |
 | Install / publish | remote `InstallDir()`; local `--prefix` (default `./install/`) | `InstallDir()` is empty for local packages |
 
@@ -87,17 +87,17 @@ before the first build after migration.
 
 ## Target Source Paths
 
-All `AddFiles` paths are `SourceDir()`-relative (even with `SetGit`, use `"src/tasks.c"` not `"tasks.c"`). `AddPublicIncludes` propagated to dependents resolves from `SourceDir()` (via `filepath.Join` with the dep's `PkgDirs.SourceDir`).
+Relative `AddFiles` paths are `SourceDir()`-relative (even with `SetGit`, use `"src/tasks.c"` not `"tasks.c"`); absolute paths are used as-is. Relative `AddPublicIncludes` propagated to dependents resolves from `SourceDir()` through `PkgInfo.ResolvePath`; absolute paths are preserved.
 
 ## Path Resolution for Packages Using SetGit
 
 When a **local** package uses `SetGit`, `SourceDir()` and `SrcDir()` differ: `SourceDir()` is where `build.go` lives, `SrcDir()` = `SourceDir()/src/` is the downloaded source. This causes non-obvious path resolution behavior in `OnBuild` (registry packages instead resolve paths directly from the downloaded checkout root — `SourceDir()` — with no `src/` nesting):
 
-- **`AddFiles`** paths resolve from `SourceDir()`. Use `"src/tasks.c"`, NOT `"tasks.c"`. Single filenames without glob characters (`*`, `?`) may silently match nothing — always use the `src/` prefix.
+- **`AddFiles`** relative paths resolve from `SourceDir()`. Use `"src/tasks.c"`, NOT `"tasks.c"`; a bare filename only matches at the package root. Absolute paths are used as-is.
 - **`AddIncludes`** paths resolve from `SourceDir()`. Use `"src/include"` to reach downloaded headers.
-- **`AddPublicIncludes`** paths propagate to dependents resolved from `SourceDir()` (via `filepath.Join(depPkg.SourceDir, pubInc)`). Use `"src/include"` to reach headers downloaded by `SetGit` (resolves to `SourceDir()/src/include/`). The target itself gets `AddPublicIncludes` paths as raw `-I` entries, resolved relative to CWD (which the scheduler sets to `SourceDir()` before compilation).
+- **`AddPublicIncludes`** relative paths propagate to dependents resolved from `SourceDir()` through `PkgInfo.ResolvePath`; absolute paths are preserved. Use `"src/include"` to reach headers downloaded by `SetGit` (resolves to `SourceDir()/src/include/`). The target itself gets `AddPublicIncludes` paths as raw `-I` entries, resolved relative to CWD (which the scheduler sets to `SourceDir()` before compilation).
 - **Relative parent paths** (`"../include"`) in `AddPublicIncludes` resolve to the parent of `SourceDir()` (`filepath.Join(SourceDir, "../include")`), i.e. outside the package. Conversely, on registry packages a `"src/..."` prefix produces doubled paths (e.g., `/path/src/src/include`) because `SourceDir()` is already the downloaded checkout root. Avoid both — place headers inside `SrcDir()/include/` (local `SetGit` packages) or at the checkout root (registry packages).
-- **Absolute paths** in `AddFiles` (and in `AddPublicIncludes` when propagated to dependents) get `SourceDir()` prepended, creating wrong paths like `/src/home/user/project/src/file`. Always use relative paths.
+- **Absolute paths** in `AddFiles` (and in `AddPublicIncludes` when propagated to dependents) are used as-is; they do not get `SourceDir()` prepended. Prefer relative paths for portability.
 
 ```go
 // Correct pattern for a local package wrapping a SetGit download:

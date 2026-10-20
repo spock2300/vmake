@@ -98,7 +98,7 @@ func Main(p *api.Package) {
 - Name resolution: import names are resolved against the needed packages in the build graph (local `build.go` packages are loaded up front; a remote package enters the graph only when reachable via `AddRequires` from a local root; a package pruned by `FilterDeps` does not qualify). `AddDeps` on targets that link or include it supplies the build edge. Unresolvable names are silently skipped (no error).
 - Ordering is not a concern: every package's `OnConfig` option collection and resolution completes before any `OnBuild` runs, so the merge sees final definitions and values regardless of graph order. It is graph membership, not a per-package require edge, that makes a package importable.
 - **Warning:** imported and local options with the same name are NOT validated for type or default consistency. The local definition and its value/default win, so the imported value is never used directly; if the local option has no default, the imported value is still coerced by the local type — a string under a local bool silently becomes `/* #undef */`/no define, and a string under a local int renders as `%!d(...)` in the macro. Keep shared option names, types and defaults aligned.
-- Imported (non-global) options cannot be read with `ctx.Bool/String/Int` in the importing package: the accessor only knows this package's own options plus global options, and an unknown name is a build error. Consume imported config through the generated defines or `autoconf.h`, or copy the value into a local option in `OnConfig`.
+- Imported (non-global) options cannot be read with `ctx.Bool/String/Int` in the importing package: the accessor only knows this package's own options plus global options, and an unknown name is a build error. `OnConfig` runs before imported values are merged, so it cannot copy them either. Consume imported config through the generated defines or `autoconf.h`.
 - Global options (`ctx.GlobalOption`, every option in `Group("Global")`, including `mode`/`toolchain`) are excluded from generated defines and `autoconf.h`. Read them directly with the accessors instead.
 
 ## firmware/build.go (Import + Generate autoconf.h)
@@ -132,7 +132,7 @@ func Main(p *api.Package) {
 
 ## Running / Verifying
 
-`test_data/20_config_propagate` exercises exactly this flow: `chip/build.go` calls `GenerateConfigDefines()`, and the root `build.go` calls `GenerateConfigDefines()` + `ImportConfig("chip")`.
+`test_data/20_config_propagate` is a smaller version: it has a root package and `chip/`, and the root calls `ctx.SyncConfigDefines("chip")`. The `rtos/` layout above is illustrative.
 
 ```bash
 (cd test_data/20_config_propagate && ../../vmake build --install)

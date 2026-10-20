@@ -150,21 +150,22 @@ control, use Layer 1 (compile-time visibility).
   (they are collected as declared symbols), so `vmake check-symbols` will NOT
   catch a `//` mistake — prefer `/* */`
 
-Audit-parser limitations: `global: *;` and `extern "C++" { ... }` are not
-modeled by the version-script checker. `global: *;` yields an empty declared
-set and `extern "C++"` contributes literal `extern`/`C++` tokens, so either
-form makes every real export a `version-script-violation` false positive.
+Audit-parser limitations: `global: *;` yields an empty declared set, so every
+real export is a `version-script-violation`. `extern "C++"` blocks are not
+modeled reliably: symbols inside may be collected literally, and lines after the
+closing brace may be skipped. Global wildcard patterns other than `*` are
+compared literally, so `global: foo_*;` reports `foo_api` as a violation.
 
 ### Version Script Path Resolution
 
-`SetVersionScript` paths are resolved against the package's `SourceDir()` at
-build time (an absolute path is still joined under `SourceDir()`, so always pass
-a SourceDir-relative path). `vmake check-symbols` resolves the same literal
-against the current working directory first, then the built artifact's
-directory. If the audit cannot open the file it emits a warn-level
-`version-script-violation` with `could not parse <path>` under `--strict`. Keep
-one consistent SourceDir-relative path (e.g. `"linker/export.map"`) and run the
-audit from the project root, or from the directory where that path resolves.
+`SetVersionScript` relative paths resolve against the package's `SourceDir()` at
+build time; absolute paths are used as-is. `vmake check-symbols` looks for the
+same literal in `SourceDir()` first, then the current working directory, then
+the built artifact's directory. If the audit cannot open the file it emits a
+warn-level `version-script-violation` with `could not parse <path>` in every
+run; `--strict` only changes the exit status. Keep one consistent
+SourceDir-relative path (e.g. `"linker/export.map"`) and run the audit from the
+project root, or from the directory where that path resolves.
 
 ## Layer 3: Link Policy
 
@@ -231,7 +232,7 @@ and reports:
 
 - **Cross-target duplicate exports**: the same symbol exported by two targets
   in the build graph (collision risk at final link)
-- **C++ mangled leaks**: `_Z*` symbols exported from C-facing libraries
+- **C++ mangled leaks**: `_Z*` symbols exported from any scanned shared library or binary (the audit does not know whether the library is C-facing, so it also flags intentional C++ exports)
 - **Reserved-prefix leaks**: `__libc_*` and similar reserved prefixes
 - **Version-script violations**: exports outside what a declared
   `SetVersionScript` allows

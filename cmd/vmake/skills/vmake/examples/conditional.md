@@ -85,7 +85,7 @@ func Main(p *api.Package) {
 - **`ctx.When`** - Compare any option type imperatively (`ctx.When("level", 2)` returns a bool)
 - **`ctx.String`** - Read string option value
 - **`ctx.Bool`** - Read bool option value
-- **`SetGroup`** - Organize options in TUI
+- **`SetGroup`** - Organize options in the TUI; `GroupGlobal` also makes the option global (excluded from package-generated defines/header)
 
 ## Usage
 

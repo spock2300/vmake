@@ -77,7 +77,7 @@ The install prefix defaults to `./install/` (`--prefix`/`-p` overrides it). `Tar
 
 ## Test Target Selection
 
-`vmake build` excludes test targets unless `--tests` is passed. `vmake test` builds and runs only targets where `IsTest() && IsDefault()` and `Kind() == api.TargetBinary`. Because new targets are default, plain `SetTest(true)` keeps a test runnable; combining `SetTest(true)` with `SetDefault(false)` excludes the target from `vmake test`. If no runnable test target exists, `vmake test` skips the build and exits 0 with `Tests succeeded: no test targets`; there is no flag that turns that into a failure. `vmake build --tests` still builds declared test targets without running them.
+`vmake build` excludes test targets unless `--tests` is passed. `vmake test` first builds all default targets (the same build phase as `vmake build --tests`), then runs only targets where `IsTest() && IsDefault()` and `Kind() == api.TargetBinary`. Because new targets are default, plain `SetTest(true)` keeps a test runnable; combining `SetTest(true)` with `SetDefault(false)` excludes the target from both `vmake test` execution and `--tests` building. If no runnable test target exists, the build still runs and `vmake test` exits 0 with `Tests succeeded: no test targets`; there is no flag that turns that into a failure. `vmake build --tests` builds default test targets without running them.
 
 ## Prerequisites
 
@@ -87,9 +87,9 @@ The install prefix defaults to `./install/` (`--prefix`/`-p` overrides it). `Tar
 ## Running / Verifying
 
 ```bash
-vmake build                                # "Build succeeded!"; build/<buildKey>/libmylib.a + myapp; no tests binary
+vmake build                                # "Build succeeded: ..."; build/<buildKey>/libmylib.a + myapp; no tests binary
 vmake build --tests                        # also builds build/<buildKey>/tests
-vmake test                                 # builds and runs the test binary; expected "1/1 test(s) passed."
+vmake test                                 # builds all defaults and runs the test binary; expected "Tests succeeded: 1/1 passed in ... (buildId=...)"
 vmake build --install                      # install/bin/myapp only
 vmake build --install --install-type sdk   # adds install/lib/libmylib.a + install/include/mylib.h
 ```
@@ -115,13 +115,13 @@ The object artifact is linked directly into dependents. See `examples/complete.m
 - Multiple targets in single `OnBuild`
 - New targets default to `api.TargetBinary` and `IsDefault() == true`; use `SetKind` for static, shared, object, and void targets
 - Dependencies resolved automatically - "mylib" builds before "myapp"
-- `SetTest(true)` targets are skipped by plain `vmake build` and never installed; `SetTest(true)` plus `SetDefault(false)` excludes the target from `vmake test` (which requires `IsTest() && IsDefault()`); no runnable test target makes `vmake test` exit 0 with `Tests succeeded: no test targets`
+- `SetTest(true)` targets are skipped by plain `vmake build` and never installed; `SetTest(true)` plus `SetDefault(false)` excludes the target from both `vmake test` execution and `--tests` building; no runnable test target still builds defaults, then exits 0 with `Tests succeeded: no test targets`
 - `AddPublicIncludes` implies `AddIncludes` — no need to call both for the same directory
 - `AddDeps("mylib")` propagates public includes — `myapp` and `tests` get `-Iinclude` automatically
 
 ## Cross-Package Dependencies
 
-Use the `pkg:target` format to depend on targets from other packages:
+Use the `<pkg>:<target>` format to depend on targets from other packages:
 
 ```go
 p.OnBuild(func(ctx *api.BuildContext) {

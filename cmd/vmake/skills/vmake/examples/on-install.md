@@ -1,6 +1,6 @@
 # OnInstall Lifecycle
 
-Demonstrates registering extra install entries with `OnInstall`. This phase runs during `vmake build --install` (there is no standalone `vmake install` command), after all builds succeed but BEFORE any files are copied into the prefix — the hook only registers entries and filters, it cannot run shell commands. The registered entries are copied together with the target outputs.
+Demonstrates registering extra install entries with `OnInstall`. This phase runs during `vmake build --install` (there is no standalone `vmake install` command), after all builds succeed but BEFORE any files are copied into the prefix. `InstallContext` exposes only option reads and install registration; it has no `Run`/`RunIn`/`Exec`/`Make`/`SrcDir`, but the callback is ordinary Go and can capture `p` or use `os/exec`. The registered entries are copied together with the target outputs.
 
 ## Prerequisites
 
@@ -41,9 +41,9 @@ func Main(p *api.Package) {
 - `OnInstall` runs during `vmake build --install` (or `vmake rebuild --install`), right after all targets are compiled and linked, BEFORE files are copied — its `AddInstalls` items are copied together with target outputs
 - `AddInstalls` in both `OnBuild` (via `BuildContext`) and `OnInstall` (via `InstallContext`) accept the same `(source, dest)` signature; `source` resolves against the package `SourceDir()`, `dest` is relative to the prefix
 - Use `OnInstall` for entries that don't belong to any specific target (docs, licenses, config templates)
-- `InstallContext` exposes option reads plus install registration only: there is no `Run`/`RunIn`/`Exec`/`Make`/`SrcDir`. Do shell work in `OnBuild`/`SetBuildFunc` or in a post-link step
+- `InstallContext` exposes option reads plus install registration only: there is no `Run`/`RunIn`/`Exec`/`Make`/`SrcDir`. If you need shell work, capture `p` and use `p.Run`/`os/exec`, or do it in `OnBuild`/a post-link step
 - `ctx.SetPrefix(dir)` sets a per-package install prefix for this package's target outputs and extra entries, applied only when the `--prefix` flag is omitted; an explicit `--prefix` wins for every package and its directory is removed and re-created before installation. Prefer an absolute path. Without `--prefix`, the default `<project>/install` directory is removed while a custom prefix is left in place, so files from earlier installs can survive there and are not listed in the build report. `manifest.json` is still written only to the CLI/default prefix
-- Filter precedence: the `InstallContext` filter wins; when it is not set, the `BuildContext` filter is used. It receives `(path, isTargetOutput)`, where `path` is the built output path for target artifacts and the SourceDir-relative source for extra items
+- Filter precedence: the `InstallContext` filter wins; when it is not set, the `BuildContext` filter is used. For target artifacts it receives the built output path and `isTargetOutput=true`. For extra `AddInstalls` items it receives `item.Src` and `false`; for a directory item the same filter is also used as a `CopyFilter` for every walked entry, with the absolute walked path and `info.IsDir()` as the second argument. `item.Src` may be SourceDir-relative, absolute, or a `$builddir` token
 - `AddInstalls` entries registered from `OnInstall` are installed regardless of `--install-type`; the type filter only applies to target outputs:
 
 | `--install-type` | Installed target outputs |

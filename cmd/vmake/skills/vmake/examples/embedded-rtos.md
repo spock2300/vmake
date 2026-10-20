@@ -173,7 +173,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 })
 ```
 
-- `target_os="none"` marks bare metal and drives artifact naming and link policy; `target_triple` feeds `Configure --host` and CMake's compiler target. Resolution order: package entry value → package-local non-global option default → project global config/default → toolchain default (`toolchain.json`) → empty.
+- `target_os="none"` marks bare metal and drives artifact naming and link policy; `target_triple` feeds `Configure --host` and CMake's compiler target. Resolution order: package entry value → package-local non-global option default → project global config/default → toolchain default (`toolchain.json` or a plugin-registered `Toolchain.TargetOS`/`TargetTriple`) → host OS. `target_os=host` also selects the host OS.
 - Select the compiler with `vmake build --toolchain arm-none-eabi` (or the `toolchain` option in the active configuration). Toolchains contributed by extensions may carry `target_os`/`target_triple` defaults but never CPU flags, so declare `-mcpu`/`-mthumb`/`--specs` yourself. Validate with `vmake doctor --toolchain arm-none-eabi`. See `SKILL.md - Cross-Compiling`.
 - `-nostartfiles` skips the **target** crt0/startup files provided by the compiler driver's spec; it does **not** unlink libc, so it is not bare-metal linking. A hosted libc stays linked. For bare metal use `-nostdlib` plus explicit libgcc/libc links (see the next section) or `--specs=nosys.specs` (hosted newlib, syscall stubs).
 - Cross/bare-metal test binaries cannot execute on the host: `vmake test` refuses non-host targets with a clear error. Use `vmake build --tests` to compile them.
@@ -217,7 +217,7 @@ execution is refused — use `vmake build --tests` to build without running.
 | `AddPostLinkOutputs(paths...)` | Declares extra outputs for missing-file rebuilds and automatic installation |
 | `AddPostLinkDeps(files...)` | Declares extra SourceDir-relative inputs; changing one relinks and re-runs every post-link step |
 
-Hex/Bin/Strip declare their outputs automatically. Custom steps must declare outputs explicitly; command arguments do not imply outputs. Output templates support `{output}`, with relative paths based on SourceDir.
+Hex/Bin/Strip declare their outputs automatically. Custom steps that produce files must declare those outputs with `AddPostLinkOutputs`; command arguments never imply outputs. Report-only steps such as `size`, `objdump`, or `nm` need no output declaration. Output templates support `{output}`, with relative paths based on SourceDir.
 
 ## Static Libs, libc, and Archive Pull-In
 
@@ -265,7 +265,7 @@ static const unsigned char logo[] = {
 ```
 
 - Include path for the `generated/` directory is automatically added
-- Incremental: only regenerates when source binary is newer than header
+- Incremental: regenerates when the source binary is newer than the header, the header is missing, or the declared input path/hash marker changes
 
 ## Running / Verifying
 

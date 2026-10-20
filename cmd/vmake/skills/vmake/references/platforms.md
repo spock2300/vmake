@@ -6,16 +6,17 @@ for resolution order and [dirs.md](dirs.md) for storage paths.
 
 ## Linux
 
-- The built-in `host` toolchain uses `gcc`/`g++` (plus `ar`/`ld`) from `PATH`.
+- The built-in `host` toolchain uses `gcc`/`g++`/`ar`/`ld`, `strip`, `ranlib`,
+  `objcopy`, `size`, `objdump`, and `nm` from `PATH`.
 - A host with only clang does not satisfy `host`; declare a toolchain whose
   `tools.cc` and `tools.cxx` name the clang executables.
 
 ## macOS
 
-- The built-in `host` toolchain uses `cc`/`c++` and leaves `objcopy`/`objdump`
-  unset. Post-link helpers that need `objcopy` (`AddPostLinkHex`,
-  `AddPostLinkBin`, `SetSymbolPrefix`) require a selected toolchain that
-  declares it.
+- The built-in `host` toolchain uses `cc`/`c++`/`ar`/`ld`, `strip`, `ranlib`,
+  `nm`, and `size`, and leaves `objcopy`/`objdump` unset. Post-link helpers that
+  need `objcopy` (`AddPostLinkHex`, `AddPostLinkBin`, `SetSymbolPrefix`) require
+  a selected toolchain that declares it.
 - Kconfig, Linux kernel, and U-Boot builds need GNU Make 3.82+; select a
   toolchain whose `make` is `gmake`. `vmake doctor` prints the resolved make
   path and warns when the macOS Make is older than 3.82.
@@ -44,10 +45,11 @@ resolved absolute path.
 
 ## Cross-platform notes
 
-- `target_os` (`linux`, `windows`, `darwin`, `none`) controls artifact naming,
-  linker flags, and CMake settings independently of the host OS; `target_triple`
-  supplies the compiler target (`--host=` and the CMake compiler target). Values
-  are not aliased; use `none` for bare metal.
+- `target_os` controls artifact naming, linker flags, and CMake settings
+  independently of the host OS; `target_triple` supplies the compiler target
+  (`--host=` and the CMake compiler target). `host` maps to the host OS and
+  `none` is bare metal; CMake also recognizes `freebsd`, `openbsd`, `netbsd`,
+  and `android`. Other values are not aliased.
 - `vmake test` refuses a cross target with
   `cannot run tests for project target (...) on <host>` and points to
   `vmake build --tests` to build the test targets without running them.

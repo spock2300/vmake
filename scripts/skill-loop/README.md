@@ -49,6 +49,13 @@ Tasks:
 20. `clean` - `clean`/`clean --all`/`distclean`, `OnClean`, preserved sources.
 21. `mode` - debug/release/size flags, global flag ordering, BuildKey rotation.
 22. `buildscope` - no target filter, `-p` prefix, `SetRoot(true)`.
+23. `factcheck-skill` - audit SKILL.md against code/CLI.
+24. `factcheck-api` - audit references/api.md signatures and behavior.
+25. `factcheck-refs` - audit dirs/gotchas/inspect/build-result/platforms/toolchains.
+26. `factcheck-examples` - audit every example against code/CLI.
+
+The factcheck tasks run with repository access and return `PASS` or a
+discrepancy list; that full list is passed to the author.
 
 Score tuple: `(passes, -violations, -words)`.
 - More passes wins.
@@ -69,6 +76,7 @@ Environment variables:
 | --- | --- | --- |
 | `VMAKE_SKILL_MODEL` | `deepseek/deepseek-flash` | model for all agent sessions |
 | `VMAKE_SKILL_ROUNDS` | `3` | maximum author rounds |
+| `VMAKE_SKILL_AGENT_TIMEOUT` | `1800` | per-agent timeout in seconds |
 | `VMAKE_SKILL_TASKS` | all tasks | space-separated subset, e.g. `onrequire public buildkey` |
 | `VMAKE_SKILL_WORK` | `mktemp -d` | work directory |
 | `VMAKE_SKILL_KEEP` | `0` | keep the work directory and logs |

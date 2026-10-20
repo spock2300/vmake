@@ -1,7 +1,7 @@
 # Multi-Module Workspace
 
 Multiple packages in a single workspace, each with its own `build.go`.
-Demonstrates cross-package dependencies with the `pkg:target` format.
+Demonstrates cross-package dependencies with the `<pkg>:<target>` format.
 
 ## Prerequisites
 
@@ -111,7 +111,7 @@ p.OnRequire(func(ctx *api.RequireContext) {
 
 ## Local vs Remote Dependencies
 
-All local `build.go` files are scanned and loaded up front, so a local dependency only needs a target edge (`AddDeps("lib:utils")`); `AddRequires` is not required for it unless an explicit root made it unreachable. Remote dependencies need both: `AddRequires` for resolution/download and `AddDeps` for the build-graph edge. See `SKILL.md - Dependencies`.
+All local `build.go` files are scanned and loaded up front, so a local dependency only needs a target edge (`AddDeps("lib:utils")` or `UseRequires()`); `AddRequires` is not required for it unless an explicit root made it unreachable. Remote dependencies need `AddRequires` for resolution/download and `AddDeps`/`UseRequires()` for the target edge. See `SKILL.md - Dependencies`.
 
 If a local package is not in the needed set (for example an explicit root does not require it), its targets are never declared and a target referencing it fails at build-graph time with `dependency not found` or `package not found in build graph`.
 
@@ -145,7 +145,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 })
 ```
 
-Each dependency is a separate local package in its own directory. The `pkg:target` format ensures correct build order and propagates public includes.
+Each dependency is a separate local package in its own directory. The `<pkg>:<target>` format ensures correct build order and propagates public includes.
 
 ## GlobalOption
 
@@ -158,19 +158,19 @@ One declaring package is enough. Multiple packages may declare the same `GlobalO
 ## Running / Verifying
 
 ```bash
-vmake build                    # "Build succeeded!"; lib:utils builds before app:app
+vmake build                    # "Build succeeded: ..."; lib:utils builds before app:app
 vmake config --set debug=true  # non-interactive write to the active configuration
 vmake doctor                   # toolchain/platform findings + "[warn] ... (noRoot)" because this example declares no root
 vmake query                    # dependency tree with targets, versions and package dirs
 ```
 
-Expected: `vmake build` prints a `Build order:` list containing `lib:utils` before `app:app` and ends with `Build succeeded!`. `vmake doctor` prints the `noRoot` warning for this example; once a root is declared the warning disappears and the summary reports `OK: no issues` (or only unrelated platform findings).
+Expected: `vmake build -v` prints a `Build order:` list containing `lib:utils` before `app:app`; plain `vmake build` ends with a `Build succeeded: ...` summary. `vmake doctor` prints the `noRoot` warning for this example; once a root is declared the warning disappears and the summary reports `OK: no issues` (or only unrelated platform findings).
 
 ## Key Points
 
 - Package name = directory basename (e.g., `lib/` → package name `"lib"`); skipped directories and duplicate basenames are ignored
 - Cross-package deps use `:` separator: `"lib:utils"` means target `"utils"` from package `"lib"`
-- Local deps need only `AddDeps` (all local `build.go` files are loaded); remote deps need `AddRequires` + `AddDeps`
+- Local deps need only a target edge (`AddDeps` or `UseRequires`; all local `build.go` files are loaded); remote deps need `AddRequires` plus `AddDeps`/`UseRequires`
 - Same-package deps use just the target name: `AddDeps("utils")`
 - Options shared across packages must be declared with `ctx.GlobalOption` (identical `Type` and `Default`, plus identical `SetValues` for non-builtin options, from every declaring package); plain `ctx.Option` is package-local
 - With an explicit `SetRoot(true)`, BFS starts only from that package — list every package you still want built in `AddRequires`

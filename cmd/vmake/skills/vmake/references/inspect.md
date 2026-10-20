@@ -3,7 +3,9 @@
 `vmake inspect` prints the resolved project model as one JSON document
 (schemaVersion 1) on stdout. It runs dependency resolution, `OnConfig`, and
 dry-run `OnBuild` target declaration only: it never compiles, links, installs,
-or writes `build/`, `install/`, or `.vmake/config.json` itself. During dry-run
+or writes `build/`, `install/`, or `.vmake/config.json` itself. Resolution may
+still initialize `.vmake/layout` and extend `.gitignore` with `.vmake_deps/`.
+During dry-run
 declaration it also disables interpreted-script file writes through the wrapped
 `os` APIs (see **Read-only dry-run** below), so a callback that tries to write
 gets a read-only error instead of creating or deleting a file. The model is a
@@ -14,9 +16,10 @@ strings without merged globals or action signatures. Project-wide
 declarations from needed packages and auto-exported global-option macros are
 reported once at the top level in `globalCFlags`/`globalCxxFlags`/
 `globalLdFlags`/`globalLinks`/`globalDefines`. Inspect also warns about needed
-packages whose source tree is not on disk, without fetching or materializing it,
-and reports the install plan declared by `OnBuild` without reading or creating
-`install/`. Presence fields report whether the compile database, build report
+packages whose source tree is not on disk; the missing-source check itself does
+not fetch or materialize it, but native remote resolution may materialize a
+tree. It reports the install plan declared by `OnBuild` without reading or
+creating `install/`. Presence fields report whether the compile database, build report
 and test report currently exist, and each needed package carries its active
 build directory; they do not verify action or output freshness.
 
@@ -126,7 +129,7 @@ writes on `p.DryRun()`. The guard covers the wrapped symbols only.
 | `mode`, `toolchain` | Effective build mode and project toolchain name |
 | `toolchainInfo` | `{name, targetOs?, targetTriple?, installPath?, cc?, cxx?, ar?, ld?}` |
 | `global` | Effective global option values, including `mode` and `toolchain` |
-| `globalOptionDefs` | Declared global options `{name, type, default?, description?, values?, effective?}`, sorted by name; omitted when none |
+| `globalOptionDefs` | Object keyed by option name; each value is `{type, default?, description?, values?, group?}`; omitted when none. Effective values are in `global` |
 | `globalCFlags`, `globalCxxFlags`, `globalLdFlags`, `globalLinks` | Global `AddGlobal*` declarations from needed packages in package/declaration order; duplicates preserved; omitted when empty |
 | `globalDefines` | Auto-exported global-option macros as `NAME=value`, sorted, without `-D`; omitted when empty |
 | `overrides` | Typed `--set` values keyed `[package/]option`; omitted when unused |
@@ -164,16 +167,17 @@ Each `packages` entry has `name`, `kind` (`local`/`native`/`registry`),
 `needed`, `sourcePresent`, `deps`, optional remote
 `repo`/`version`/`commit`/`url`, local `path` and absolute `sourceDir`,
 `description`, `toolchain`, `options` (effective values), `optionDefs`
-(declared option schemas and effective values), and `targets` (needed packages
-that declare targets). `sourcePresent` is false when the expected source tree is
+(object keyed by option name with the same `{type, default?, description?,
+values?, group?}` schema), and `targets` (needed packages that declare targets). `sourcePresent` is false when the expected source tree is
 missing or empty; that package also gets a `VMAKE_W_SOURCE_MISSING` warning when
 it is needed.
 
 Needed packages also carry `buildDir`, the absolute build-key directory from
 the same layout the next build would use; it may not exist yet (before a first
-build or after `clean`). Local packages also carry `buildKey` when the key is
-the last path element; remote packages omit it because their `buildDir` ends in
-`build`.
+build or after `clean`). It is omitted when a local `SetGit` or remote package's
+expected source tree is absent, because the layout cannot be computed. Local
+packages also carry `buildKey` when the key is the last path element; remote
+packages omit it because their `buildDir` ends in `build`.
 
 Each `targets` entry has `name`, `kind` (`binary`/`static`/`shared`/`object`/
 `void`), `default`, `test`, declared `files`/`excludedFiles`/`includes`/
