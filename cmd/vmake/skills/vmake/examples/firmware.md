@@ -392,6 +392,7 @@ ctx.Target("myapp").
 - `AddPostLinkHex`/`AddPostLinkBin`/`AddPostLinkStrip` run `objcopy`/`strip` and declare their outputs (`{output}.hex`, `{output}.bin`, `{output}.stripped`) automatically.
 - `AddPostLink(tool, args...)` runs a custom step; use the `{output}` placeholder and `AddPostLinkOutputs(...)` to declare what it writes — command arguments never imply outputs.
 - `AddPostLinkDeps(...)` declares extra input files (SourceDir-relative) that must trigger relinking when changed.
+- A bootable firmware binary also needs `t.SetLinkerScript("board.ld")` (or `t.UseDependencyLinkerScript()`) and the project `target_os`/`target_triple`; `pkg.Make()` runs the make program resolved by the selected toolchain (`make` or `gmake`).
 - `Package.ObjCopy()`, `Size()`, `ObjDump()`, `NM()` return the selected toolchain's tools for custom commands.
 
 See `examples/embedded-rtos.md` for the full post-link table and `SKILL.md - RTOS / Embedded`.

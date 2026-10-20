@@ -61,7 +61,7 @@ vmake build --install -p /opt/myapp      # explicit prefix
 vmake build --install --install-type sdk # also static libs + public headers
 ```
 
-- The CLI/default prefix directory is removed and re-created before installation, then `manifest.json` (toolchain, mode, package versions/refs) is written into it. A per-package `SetPrefix` directory is not cleared.
+- The CLI/default prefix directory is removed and re-created before installation, then `manifest.json` (vmake version, toolchain, mode, generation time, package versions/refs) is written into it. Installed artifact paths/sizes/hashes are in `build/vmake-build.json`, not the manifest. Installation reuses the invocation's `BuildContext`s without replaying `OnBuild`. A per-package `SetPrefix` directory is not cleared.
 - Expected output: `Installing...`, `INSTALL <file> -> <prefix>/...` lines, then `Install succeeded!`.
 - A missing source file is only reported as `SKIP <source> (not found)` and does **not** fail the install. A stat error other than "not found" does fail.
 

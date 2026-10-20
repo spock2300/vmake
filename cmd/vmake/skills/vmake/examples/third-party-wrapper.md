@@ -206,7 +206,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 
 ## External Incremental Builds
 
-By default, VMake calls each reachable local or remote `TargetVoid` once per vmake invocation while Make/CMake decides which work is incremental (`CMakeConfigure` fingerprints its inputs in `<CMakeBuildDir>/.vmake_configure.json`). For custom script-driven `TargetVoid` targets without Make/CMake, you can opt into VMake-managed incremental skipping by declaring **both** `AddInputs` and `AddOutputs` on the target:
+By default, VMake calls each reachable local or remote `TargetVoid` once per vmake invocation while Make/CMake decides which work is incremental (`CMakeConfigure` fingerprints its inputs in `<CMakeBuildDir>/.vmake_configure.json` and skips an unchanged configure; new `file(GLOB)` matches do not invalidate it unless `CONFIGURE_DEPENDS` is used or the build tree is cleaned). For custom script-driven `TargetVoid` targets without Make/CMake, you can opt into VMake-managed incremental skipping by declaring **both** `AddInputs` and `AddOutputs` on the target:
 
 ```go
 p.OnBuild(func(ctx *api.BuildContext) {

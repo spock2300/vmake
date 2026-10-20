@@ -38,6 +38,17 @@ Tasks:
 9. `dryrun` - declarative writes in `OnBuild` and `p.DryRun()` guards.
 10. `targets` - `TargetVoid/Object/Static/Shared/Binary`, `SetTest`, `SetLinkable(false)`.
 11. `options` - choice options, `CONFIG_*`, `autoconf.h`, `ImportConfig`/`SyncConfigDefines`.
+12. `prebuilt` - `SetPrebuilt`, `CMakeInstallDir`, public headers/links.
+13. `symbols` - visibility, export lists, version scripts, ELF-only policy.
+14. `subgraph` - `BuildSubGraph`, `DepOutput`, `DepBuildDir`.
+15. `install` - `OnInstall`/`AddInstalls`, `SetInstall(false)`, `SetInstallDir`, manifest.
+16. `cmake` - `CMakeConfigure/Build/Install`, configure fingerprint, toolchain use.
+17. `firmware` - KConfig presets, `EnsureConfig`, post-link HEX/BIN/Size.
+18. `packages` - version constraints, `SetGit`, lockfile, repo/extension trust.
+19. `inspect-report` - inspect JSON, build/test reports, query commands.
+20. `clean` - `clean`/`clean --all`/`distclean`, `OnClean`, preserved sources.
+21. `mode` - debug/release/size flags, global flag ordering, BuildKey rotation.
+22. `buildscope` - no target filter, `-p` prefix, `SetRoot(true)`.
 
 Score tuple: `(passes, -violations, -words)`.
 - More passes wins.
@@ -81,6 +92,7 @@ if you want a generalization signal rather than only the optimization target.
 
 ## Limits
 
-This is a development harness, not part of `go test`. It spends model tokens and
+See [COVERAGE.md](COVERAGE.md) for the section-by-section map and the
+remaining gaps. This is a development harness, not part of `go test`. It spends model tokens and
 can take minutes per round. The "optimal" result is relative to the task suite:
 if a task is missing, the loop cannot discover the corresponding skill gap.

@@ -18,10 +18,12 @@ Four rules prevent the expensive misunderstandings; each links to its section.
    `vmake toolchain list`, a `toolchain.json`, or an extension — see
    *Toolchains & Compiler Discovery*. Hand-run tools (`nm`, `objcopy`,
    `addr2line`) and some host test scripts do need the toolchain on PATH.
-2. **Modes inject flags; global flags append after them.** `release` =
-   `-O2 -DNDEBUG`, `debug` = `-O0 -g`; the last `-O` wins, so a global
-   `AddGlobalCFlags("-g3")` keeps release optimization *and* adds debug
-   info — see *Global Flags & Mode Flags*.
+2. **Target flags, then mode flags, then global flags.** `release` = `-O2 -DNDEBUG`,
+   `debug` = `-O0 -g`; mode flags are appended after target flags and before
+   global flags, so a global `-O3` wins and a global `AddGlobalCFlags("-g3")`
+   keeps release optimization *and* adds debug info. Global flags are buffered
+   per package and applied only to packages that survive `FilterDeps` — see
+   *Global Flags & Mode Flags*.
 3. **Any flag, define or mode change rotates the BuildKey.** After editing
    build.go or global flags, `vmake distclean` first; the build lands in a new
    `build/<hash>` and `install/` keeps the old artifact until `vmake build -i`.
@@ -146,7 +148,7 @@ Callbacks execute in strict pipeline order across all packages:
 | --- | --- | --- |
 | **Root Package** | Project root `build.go` | Entry point (`p.SetRoot(true)` when root is a sub-package); owns top-level targets and global options |
 | **Local Sub-package** | Subdirectory with `build.go` | Referenced by relative path (`"math"`, `"drivers/spi"`); shares project root |
-| **Local SetGit Package** | Subdirectory `build.go` + `p.SetGit(...)` | Cloned into `.vmake_deps/local/<pkg>/src`, symlinked at `<pkgDir>/src`; `SrcDir()` points to `src` |
+| **Local SetGit Package** | Subdirectory `build.go` + `p.SetGit(...)` | Cloned into `.vmake_deps/local/<pkg>/src`, symlinked at `<pkgDir>/src`; `SrcDir()` points to `src`; `AddPatches`/`SetPatches` can patch this tree |
 | **Registry Package** | `~/.vmake/repos/<repo>/<pkg>/build.go` | Referenced as `"repo/pkg"`; `p.SetGit(...)` downloads upstream source into `.vmake_deps/` |
 | **Native VMake Repo** | Git repo with root `build.go` | Registered via `vmake repo add`; sub-packages lazily inherit parent version |
 
@@ -288,7 +290,7 @@ ctx.GlobalOption("board_rev").SetDefault("revB").SetValues("revA", "revB").
     })
 ```
 
-The built-in global `"mode"` option (`debug`, `release`, `size`) automatically injects `-O0 -g`, `-O2 -DNDEBUG`, or `-Os -DNDEBUG`.
+The built-in global `"mode"` option (`debug`, `release`, `size`) automatically injects `-O0 -g`, `-O2 -DNDEBUG`, or `-Os -DNDEBUG`. Flags are ordered target → mode → global, so a global `-O` overrides the mode's optimization level. `AddGlobal*` calls from `SetOnApply` are buffered per package and applied only to packages that survive `FilterDeps`.
 
 ### GlobalOption Cross-Package Consistency
 
@@ -338,7 +340,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 })
 ```
 
-Call `pkg.EnsureConfig(pkg.SrcDir())` inside the `TargetVoid` `SetBuildFunc` before `pkg.Make(...)`.
+Call `pkg.EnsureConfig(pkg.SrcDir())` inside the `TargetVoid` `SetBuildFunc` before `pkg.Make(...)`. Firmware binaries also use a linker script via `t.SetLinkerScript(...)` or `t.UseDependencyLinkerScript()`, set `target_os`/`target_triple` (bare metal is `target_os=none` with a triple such as `arm-none-eabi`), and use a toolchain whose resolved make program (`make`/`gmake`) `pkg.Make()` runs.
 
 ## Install
 
@@ -346,7 +348,9 @@ Call `pkg.EnsureConfig(pkg.SrcDir())` inside the `TargetVoid` `SetBuildFunc` bef
 
 ### OnInstall Lifecycle
 
-Use `p.OnInstall(func(ctx *api.InstallContext) { ctx.AddInstalls("include", "include") })` (or `ctx.AddInstalls` in `OnBuild`) to stage headers, configs, and extra assets into `install/`.
+Use `p.OnInstall(func(ctx *api.InstallContext) { ctx.AddInstalls("include", "include") })` (or `ctx.AddInstalls` in `OnBuild`) to stage headers, configs, and extra assets into `install/`. The install phase runs after builds and reuses the invocation's `BuildContext`s without replaying `OnBuild`.
+
+`install/manifest.json` records the vmake version, toolchain, mode, generation time, and package versions/refs. Installed artifact paths/sizes/hashes are recorded in `build/vmake-build.json`, not in the manifest.
 
 ## Multi-File Build Scripts
 
@@ -362,6 +366,8 @@ p.CMakeBuild()
 p.CMakeInstall()
 ```
 
+`CMakeConfigure` fingerprints its inputs in `<CMakeBuildDir>/.vmake_configure.json` and skips an unchanged configure. New files matched only by `file(GLOB)` do not invalidate that fingerprint unless `CONFIGURE_DEPENDS` is used or the build tree is cleaned.
+
 For in-source Makefiles, pass an absolute path with forward slashes: `p.Make("-C", filepath.ToSlash(p.SrcDir()), "all")`.
 
 ## Build Scope
@@ -371,8 +377,9 @@ For in-source Makefiles, pass an absolute path with forward slashes: `p.Make("-C
 
 ## Clean
 
-- `vmake clean` runs `OnClean`, removes the active configuration's build/install outputs and `build/compile_commands.json`, and preserves `.vmake_deps/` source trees and other configurations' `BuildDir`s.
-- `vmake clean --all` removes `build/` and `install/` across all configurations; `vmake distclean` also removes `.vmake/` (`--purge-sources` deletes `.vmake_deps/`).
+- `vmake clean` runs `OnClean`, removes the active configuration's build outputs and `build/compile_commands.json`, and preserves `.vmake_deps/` source trees, `install/`, and other configurations' `BuildDir`s.
+- `vmake clean --all` removes all configurations' build outputs and `build/compile_commands.json`, but keeps `install/`; `vmake distclean` also removes `install/` and `.vmake/` (`--purge-sources` deletes `.vmake_deps/`).
+- `clean`, `distclean`, and `pkg clean` remove both `build/vmake-build.json` and `build/vmake-test.json`. With a missing toolchain, `clean --all`/`distclean` still remove outputs and skip toolchain-dependent `OnClean` with a warning; plain `clean` fails its toolchain check.
 
 ## Repository & Toolchain Commands
 

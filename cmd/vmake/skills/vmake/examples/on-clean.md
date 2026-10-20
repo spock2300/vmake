@@ -37,8 +37,9 @@ func Main(p *api.Package) {
 ## Key Points
 
 - `OnClean` is a **separate pipeline** from build — it doesn't run during `vmake build`
-- `vmake clean` executes `OnClean` hooks first, then removes the current configuration's build outputs; `vmake clean --all` removes every configuration's output directories. Source trees under `.vmake_deps/` are kept in both cases.
-- `vmake distclean` also executes `OnClean` hooks, then removes all outputs, `install/`, `build/compile_commands.json`, and the build report. Downloaded working trees under `.vmake_deps/` are kept and reused (no re-download on the next build); pass `--purge-sources` to remove them too
+- `vmake clean` executes `OnClean` hooks first, then removes the current configuration's build outputs and `build/compile_commands.json`; `vmake clean --all` removes all configurations' build outputs and `build/compile_commands.json`. Both keep `install/` and source trees under `.vmake_deps/`.
+- `vmake distclean` also executes `OnClean` hooks, then removes all outputs, `install/`, `build/compile_commands.json`, the build report, and `.vmake/`. Downloaded working trees under `.vmake_deps/` are kept and reused (no re-download on the next build); pass `--purge-sources` to remove them too
+- With a missing toolchain, `vmake clean --all` and `vmake distclean` still remove outputs and skip toolchain-dependent `OnClean` with a warning; plain `vmake clean` fails its toolchain check
 - `vmake rebuild` executes the hooks (local packages only) before its clean + build, so hooks must be safe to run on a tree that is about to be rebuilt
 - Failure semantics: a failing command raises a `BuildScriptError`. Plain `vmake clean` aborts with that error; `vmake clean --all`, `vmake distclean` and `vmake rebuild` log `Skipping OnClean: ...` and continue
 - The hook executes with its working directory set to the package `SourceDir()`. Wrapped `os.*` relative paths resolve against the bound package `SourceDir()` (before binding, the loaded `build.go` directory), so for a registry package they follow the downloaded source tree, not `ScriptDir()` (the wrapper checkout). `os.Chdir` is rejected because it would break parallel builds — use `RunIn` instead
@@ -50,8 +51,8 @@ func Main(p *api.Package) {
 
 | Command | OnClean hooks | Local `build/` dirs | `build/compile_commands.json` | `install/` | `.vmake_deps/` |
 |---|---|---|---|---|---|
-| `vmake clean` | run (current configuration) | current configuration only | kept | kept | kept |
-| `vmake clean --all` | run, failures skipped | all configurations | kept | kept | kept |
+| `vmake clean` | run (current configuration) | current configuration only | removed | kept | kept |
+| `vmake clean --all` | run, failures skipped | all configurations | removed | kept | kept |
 | `vmake distclean` | run, failures skipped | all configurations | removed | removed | kept (removed by `--purge-sources`) |
 
 **Do not delete `.vmake_deps/` or the project's `.vmake/_locks/` directory from a hook.** Deleting project working trees through a hook destroys source modifications and forces a re-download. Only remove artifacts your own build produced, using paths under `ctx.SrcDir()` / `ctx.BuildDir()`.
@@ -62,7 +63,7 @@ func Main(p *api.Package) {
 vmake build                     # create artifacts your hook knows about
 vmake clean                     # expected: Executing OnClean... then Clean completed!
 vmake clean --all               # every configuration
-vmake distclean                 # + install/; keeps .vmake_deps/ (use --purge-sources to remove)
+vmake distclean                 # + .vmake/; keeps .vmake_deps/ (use --purge-sources to remove)
 ```
 
 ## When to Use OnClean
