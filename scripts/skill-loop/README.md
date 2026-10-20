@@ -29,9 +29,15 @@ Tasks:
    macOS requirements without turning into a general installation tutorial.
 4. `doctor_json` - judge whether the skill correctly says `vmake doctor` has no
    JSON output and points at `vmake inspect` / `vmake toolchain show`.
-5. `install_manifest` - judge whether the skill gives a complete
+5. `install-manifest` - judge whether the skill gives a complete
    `toolchain.json` for a first-use HTTPS installation (`version`,
    `installations`, `method`, `file`, `root_dir`, `url`, `sha256`).
+6. `onrequire` - two-phase `OnRequire` discovery and `ctx.When`/`If`/`Select`.
+7. `public` - `AddPublic*` propagation versus global flags and BuildKey rotation.
+8. `buildkey` - what rotates `build/<pkg>/<buildKey>/`, including action signatures.
+9. `dryrun` - declarative writes in `OnBuild` and `p.DryRun()` guards.
+10. `targets` - `TargetVoid/Object/Static/Shared/Binary`, `SetTest`, `SetLinkable(false)`.
+11. `options` - choice options, `CONFIG_*`, `autoconf.h`, `ImportConfig`/`SyncConfigDefines`.
 
 Score tuple: `(passes, -violations, -words)`.
 - More passes wins.
@@ -52,6 +58,7 @@ Environment variables:
 | --- | --- | --- |
 | `VMAKE_SKILL_MODEL` | `deepseek/deepseek-flash` | model for all agent sessions |
 | `VMAKE_SKILL_ROUNDS` | `3` | maximum author rounds |
+| `VMAKE_SKILL_TASKS` | all tasks | space-separated subset, e.g. `onrequire public buildkey` |
 | `VMAKE_SKILL_WORK` | `mktemp -d` | work directory |
 | `VMAKE_SKILL_KEEP` | `0` | keep the work directory and logs |
 

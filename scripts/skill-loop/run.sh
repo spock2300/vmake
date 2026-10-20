@@ -18,6 +18,7 @@ SKILL="$ROOT/cmd/vmake/skills/vmake"
 MODEL=${VMAKE_SKILL_MODEL:-deepseek/deepseek-flash}
 MAX_ROUNDS=${VMAKE_SKILL_ROUNDS:-3}
 KEEP=${VMAKE_SKILL_KEEP:-0}
+TASKS=${VMAKE_SKILL_TASKS:-"compiler multi platform doctor-json install-manifest onrequire public buildkey dryrun targets options"}
 WORK=${VMAKE_SKILL_WORK:-$(mktemp -d /tmp/vmake-skill-loop.XXXXXX)}
 TC_NAME=${VMAKE_SKILL_TC_NAME:-skill-loop-tc-$$}
 VMAKE="$WORK/bin/vmake"
@@ -186,11 +187,16 @@ run_judge() {
   grep -Eq '^[[:space:]]*PASS' "$out_text"
 }
 
-task_platform() {
-  local dir=$1
+task_knowledge() {
+  local dir=$1 name=$2
+  local prompt="$HERE/prompts/$name.md"
+  local rubric="$HERE/prompts/judge-$name.md"
   rm -rf "$dir"
   mkdir -p "$dir"
-  if ! run_agent "$dir" "skill-loop platform" "$HERE/prompts/platform.md" "$dir/transcript.json"; then
+  if [ ! -f "$prompt" ] || [ ! -f "$rubric" ]; then
+    fail_task "missing prompt or rubric for $name"; return
+  fi
+  if ! run_agent "$dir" "skill-loop $name" "$prompt" "$dir/transcript.json"; then
     fail_task "solver failed to run"; return
   fi
   extract_commands "$dir/transcript.json" "$dir/commands.txt"
@@ -200,48 +206,8 @@ task_platform() {
   if [ "$violations" -gt 0 ]; then
     fail_task "solver mutated PATH/CC/... or read the vmake source repo" "$violations"; return
   fi
-  if ! run_judge "$dir/judge" "$dir/answer.txt" "$HERE/prompts/judge-platform.md" "$dir/judge.json" "$dir/judge.txt"; then
-    fail_task "platform rubric failed: $(head -1 "$dir/judge.txt" 2>/dev/null)"; return
-  fi
-  pass_task "$violations"
-}
-
-task_doctor_json() {
-  local dir=$1
-  rm -rf "$dir"
-  mkdir -p "$dir"
-  if ! run_agent "$dir" "skill-loop doctor-json" "$HERE/prompts/doctor-json.md" "$dir/transcript.json"; then
-    fail_task "solver failed to run"; return
-  fi
-  extract_commands "$dir/transcript.json" "$dir/commands.txt"
-  extract_text "$dir/transcript.json" "$dir/answer.txt"
-  local violations
-  violations=$(count_violations "$dir/commands.txt")
-  if [ "$violations" -gt 0 ]; then
-    fail_task "solver mutated PATH/CC/... or read the vmake source repo" "$violations"; return
-  fi
-  if ! run_judge "$dir/judge" "$dir/answer.txt" "$HERE/prompts/judge-doctor-json.md" "$dir/judge.json" "$dir/judge.txt"; then
-    fail_task "doctor-json rubric failed: $(head -1 "$dir/judge.txt" 2>/dev/null)"; return
-  fi
-  pass_task "$violations"
-}
-
-task_install_manifest() {
-  local dir=$1
-  rm -rf "$dir"
-  mkdir -p "$dir"
-  if ! run_agent "$dir" "skill-loop install-manifest" "$HERE/prompts/install-manifest.md" "$dir/transcript.json"; then
-    fail_task "solver failed to run"; return
-  fi
-  extract_commands "$dir/transcript.json" "$dir/commands.txt"
-  extract_text "$dir/transcript.json" "$dir/answer.txt"
-  local violations
-  violations=$(count_violations "$dir/commands.txt")
-  if [ "$violations" -gt 0 ]; then
-    fail_task "solver mutated PATH/CC/... or read the vmake source repo" "$violations"; return
-  fi
-  if ! run_judge "$dir/judge" "$dir/answer.txt" "$HERE/prompts/judge-install-manifest.md" "$dir/judge.json" "$dir/judge.txt"; then
-    fail_task "install-manifest rubric failed: $(head -1 "$dir/judge.txt" 2>/dev/null)"; return
+  if ! run_judge "$dir/judge" "$dir/answer.txt" "$rubric" "$dir/judge.json" "$dir/judge.txt"; then
+    fail_task "$name rubric failed: $(head -1 "$dir/judge.txt" 2>/dev/null)"; return
   fi
   pass_task "$violations"
 }
@@ -262,9 +228,12 @@ run_round() {
     printf '# Round %s\n\n' "$label"
   } >> "$rd/summary.md"
 
-  for task in compiler multi platform doctor_json install_manifest; do
+  for task in $TASKS; do
     total=$((total + 1))
-    "task_$task" "$rd/$task"
+    case "$task" in
+      compiler|multi) "task_$task" "$rd/$task" ;;
+      *) task_knowledge "$rd/$task" "$task" ;;
+    esac
     passes=$((passes + TASK_PASS))
     violations=$((violations + TASK_VIOLATIONS))
     if [ "$TASK_PASS" -eq 1 ]; then

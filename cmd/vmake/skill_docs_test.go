@@ -326,6 +326,152 @@ func TestSkillAPISymbols(t *testing.T) {
 	}
 }
 
+type skillAPITypeInfo struct {
+	methods map[string]map[string]bool
+	embeds  map[string][]string
+}
+
+func loadSkillAPITypeInfo(t *testing.T) skillAPITypeInfo {
+	t.Helper()
+	dir := filepath.Join("..", "..", "pkg", "api")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := skillAPITypeInfo{
+		methods: map[string]map[string]bool{},
+		embeds:  map[string][]string{},
+	}
+	fset := token.NewFileSet()
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range file.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if d.Recv == nil || len(d.Recv.List) == 0 {
+					continue
+				}
+				typ := skillAPITypeName(d.Recv.List[0].Type)
+				if typ == "" {
+					continue
+				}
+				if info.methods[typ] == nil {
+					info.methods[typ] = map[string]bool{}
+				}
+				info.methods[typ][d.Name.Name] = true
+			case *ast.GenDecl:
+				for _, spec := range d.Specs {
+					typeSpec, ok := spec.(*ast.TypeSpec)
+					if !ok {
+						continue
+					}
+					structType, ok := typeSpec.Type.(*ast.StructType)
+					if !ok {
+						continue
+					}
+					for _, field := range structType.Fields.List {
+						if len(field.Names) != 0 {
+							continue
+						}
+						if embedded := skillAPITypeName(field.Type); embedded != "" {
+							info.embeds[typeSpec.Name.Name] = append(info.embeds[typeSpec.Name.Name], embedded)
+						}
+					}
+				}
+			}
+		}
+	}
+	return info
+}
+
+func skillAPITypeName(expr ast.Expr) string {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return e.Name
+	case *ast.StarExpr:
+		return skillAPITypeName(e.X)
+	default:
+		return ""
+	}
+}
+
+func (info skillAPITypeInfo) allMethods(typ string) map[string]bool {
+	result := map[string]bool{}
+	visited := map[string]bool{}
+	var walk func(string)
+	walk = func(current string) {
+		if visited[current] {
+			return
+		}
+		visited[current] = true
+		for name := range info.methods[current] {
+			result[name] = true
+		}
+		for _, embedded := range info.embeds[current] {
+			walk(embedded)
+		}
+	}
+	walk(typ)
+	return result
+}
+
+func TestSkillMethodReferences(t *testing.T) {
+	info := loadSkillAPITypeInfo(t)
+	allowed := map[string]map[string]bool{
+		"p":      info.allMethods("Package"),
+		"ctx":    map[string]bool{},
+		"t":      info.allMethods("Target"),
+		"target": info.allMethods("Target"),
+	}
+	for _, ctxType := range []string{"BuildContext", "ConfigContext", "RequireContext", "InstallContext", "CleanContext"} {
+		for method := range info.allMethods(ctxType) {
+			allowed["ctx"][method] = true
+		}
+	}
+	for rel, content := range skillMarkdownFiles(t) {
+		for blockIndex, block := range skillGoFenceRE.FindAllStringSubmatch(content, -1) {
+			file, err := parseSkillBlock(block[1])
+			if err != nil {
+				continue
+			}
+			seen := map[string]bool{}
+			ast.Inspect(file, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				selector, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				receiver, ok := selector.X.(*ast.Ident)
+				if !ok {
+					return true
+				}
+				methods, known := allowed[receiver.Name]
+				if !known {
+					return true
+				}
+				key := receiver.Name + "." + selector.Sel.Name
+				if methods[selector.Sel.Name] || seen[key] {
+					return true
+				}
+				seen[key] = true
+				t.Errorf("%s: go block %d calls %s, which is not a method on the corresponding pkg/api type",
+					rel, blockIndex+1, key)
+				return true
+			})
+		}
+	}
+}
+
 func apiCallableNames(t *testing.T) map[string]bool {
 	t.Helper()
 	dir := filepath.Join("..", "..", "pkg", "api")
@@ -415,6 +561,9 @@ func TestSkillGoBlocksParse(t *testing.T) {
 			if err != nil {
 				t.Errorf("%s: go block %d does not parse: %v", rel, i+1, err)
 				continue
+			}
+			if f.Name.Name != "main" {
+				t.Errorf("%s: go block %d uses package %q, want main", rel, i+1, f.Name.Name)
 			}
 			files[i] = f
 		}

@@ -90,10 +90,10 @@ If the compiler is missing, run `vmake toolchain list` first. A declared but uni
 
 ## Build Script Structure
 
-Every `build.go` uses `package buildscript`, imports `"github.com/spock2300/vmake/pkg/api"`, and exports `func Main(p *api.Package)`:
+Every `build.go` uses `package main`, imports `"github.com/spock2300/vmake/pkg/api"`, and exports `func Main(p *api.Package)`:
 
 ```go
-package buildscript
+package main
 
 import "github.com/spock2300/vmake/pkg/api"
 
@@ -350,7 +350,7 @@ Use `p.OnInstall(func(ctx *api.InstallContext) { ctx.AddInstalls("include", "inc
 
 ## Multi-File Build Scripts
 
-If a package directory contains multiple `.go` files (`package buildscript`), VMake merges them using the host's `GOOS`/`GOARCH` (`_test.go` and `import "C"` files are excluded). Helper functions and tables can live in sibling `.go` files alongside `build.go`.
+If a package directory contains multiple `.go` files (`package main`), VMake merges them using the host's `GOOS`/`GOARCH` (`_test.go` and `import "C"` files are excluded). Helper functions and tables can live in sibling `.go` files alongside `build.go`.
 
 ## Wrapping Third-Party Libraries
 
