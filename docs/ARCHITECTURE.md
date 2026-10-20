@@ -86,9 +86,6 @@ vmake clean
 | `--jobs` | `-j` | target 内部编译及 Make/CMake helper 的并行上限；所有 target 串行（0 = NumCPU，负数报错） |
 | `--keep-going` | `-k` | 某个 target 失败后继续构建其余独立 target |
 | `--explain` | | 输出每个编译/链接动作被重建的原因 |
-| `--check` (`--plan`) | | 只评估动作签名与计划，不执行编译/链接/回调/安装或写报告 |
-| `--json` | | 在 stdout 输出单个机器可读 JSON 报告信封 |
-| `--output` | | 隐含 `--json`，将 JSON 信封写入指定文件（`-` 表示 stdout） |
 
 ### Install Type 过滤
 

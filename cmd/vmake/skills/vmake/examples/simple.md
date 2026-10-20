@@ -4,7 +4,7 @@ The most minimal VMake build script - builds a single C binary from source files
 
 ## Prerequisites
 
-- `vmake` is installed and a host C compiler (gcc or clang) is on PATH.
+- `vmake` is installed. The built-in `host` toolchain uses `gcc`/`g++` on Linux and `cc`/`c++` on macOS; run `vmake doctor` to check it. Do not add compiler paths to `PATH`; select a `toolchain.json` for any other compiler.
 - Run from anywhere inside the project: VMake searches upward from the current directory for `.vmake/`, `build.go`, or a `*/build.go` directly below the starting directory.
 
 ## build.go
@@ -55,6 +55,7 @@ int main(void) {
 
 ```bash
 vmake doctor               # verify the host C toolchain once
+vmake toolchain show host  # show resolved compiler paths
 vmake build
 ./build/*/hello            # <buildKey> is the 64-hex SHA-256 build directory key
 ls build/                  # list variants if the glob is ambiguous

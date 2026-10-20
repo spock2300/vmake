@@ -20,6 +20,17 @@ CGO_ENABLED=0 go test ./cmd/vmake/... ./pkg/... ./internal/...
 - CI is Windows-only (`.github/workflows/windows.yml`); it runs the scoped vet/test commands above with `-skip '(?i)subgraph|TestDeclarePackageTargetsDryRunWiring'` and leaves snapshots disabled. Run Linux/macOS verification locally.
 - `build`/`rebuild` publish `build/vmake-build.json` and `test` publishes `build/vmake-test.json` (schemaVersion 2: command, status, duration, concise error, parsed diagnostics, success summary/counts, per-target status/duration/size, test results and hashed installed artifacts); `clean`/`distclean`/`pkg clean` remove both, and `clean` also removes the stale `build/compile_commands.json` and notes remaining other-configuration build keys. Reports are separate from `install/manifest.json`; see `docs/BUILD_RESULT.md`.
 
+### Skill documentation loop
+
+`cmd/vmake/skills/vmake/` is shipped documentation and must match the live CLI.
+
+- `TestSkillCLIExamples` validates fenced `vmake` commands against the Cobra tree; the other `TestSkill*` tests check cross-references, API symbols, Go blocks, and removed CLI flags. Run them after any CLI or skill edit.
+- After changing the embedded skill, rebuild `vmake` and run `vmake skill install` before testing an agent; editing the repository alone leaves the installed copy stale.
+- Treat a fresh solver as the reward signal: give it a temporary project and only the installed skill, then check task success, `export PATH/CC/...` violations, and whether it can name the resolved compiler path. Fix the smallest doc cluster, rerun the same task plus a regression task, and revert changes that do not improve the result.
+- `scripts/skill-loop/run.sh` automates this loop with solver, judge, and author sessions; see `scripts/skill-loop/README.md` before changing its tasks or reward.
+- Skill content is limited to vmake behavior, its own requirements, and vmake-specific workflows. Do not add general OS/toolchain installation tutorials (Xcode/Homebrew/Ninja setup, distribution package advice); extra external knowledge is a burden for the agent.
+- Product gaps (for example, there is no package/target build filter) must be documented as gaps, not papered over with invented flags.
+
 ### Build-behavior snapshots
 
 `test_data/_snapshot` is a separate Go module. Rebuild the root `vmake` binary first; the tests execute it rather than compiling it themselves:

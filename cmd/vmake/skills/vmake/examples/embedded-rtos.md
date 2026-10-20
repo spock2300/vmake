@@ -12,7 +12,7 @@ Typical multi-package layout: a **chip package** provides the linker script via
 | Requirement | Why |
 |-------------|-----|
 | cross toolchain registered with vmake (e.g. `arm-none-eabi` from an extension repository) | the firmware target is compiled/linked by vmake |
-| `vmake doctor --toolchain <name>` clean | validates resolved compiler/linker/objcopy paths |
+| `vmake doctor --toolchain <name>` clean | validates that the selected compiler/linker/objcopy resolve; `vmake toolchain show <name>` prints their paths |
 | host C compiler | only for host-simulated RTOS projects such as `test_data/12_rtos_simulate` |
 
 ## chip/build.go (linker-script BSP)

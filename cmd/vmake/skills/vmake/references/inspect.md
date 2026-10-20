@@ -210,7 +210,7 @@ choices exit 1 with `VMAKE_E_OPTION`.
 
 The value is coerced with the option's declared type during the single
 resolution pass once `OnConfig` declarations are collected, matching
-`vmake config --set`:
+`vmake config --set <pkg>/<option>=<value>`:
 
 - bool: `true`/`false`, `on`/`off`, `1`/`0` (case-insensitive)
 - int: numeric text with an integral value (`42`, `42.0`, `1e3`); `quick` and

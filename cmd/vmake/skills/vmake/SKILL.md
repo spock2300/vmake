@@ -1,32 +1,92 @@
 ---
 name: vmake
-description: Build C/C++ projects using Go-based build scripts interpreted by yaegi. Use when working in a repository containing build.go files, creating or modifying vmake build scripts, configuring cross-compilation toolchains, wrapping third-party C/C++ libraries (CMake/Make/Autotools), managing vmake packages/repositories, or troubleshooting vmake builds.
+description: VMake C/C++ build system, Go build.go scripts interpreted by yaegi. Load this skill before the first vmake command of a session (vmake, build, rebuild, config -s, distclean, clean, inspect, query, test) and before editing build.go or interpreting any build output, compiler flag, toolchain choice or install/ artifact. It is authoritative over guesses — compilers are resolved internally (never export PATH/CC/CFLAGS), mode flags (release -O2 -DNDEBUG, debug -O0 -g) vs AddGlobalCFlags merge order, BuildKey invalidation and mandatory distclean, debug symbols (-g/DWARF) and what a .map file cannot do, CMake/Make/Autotools wrapping, cross-compilation, packages and repositories, and diagnosing vmake failures.
 ---
 
 # VMake Build System
 
 VMake builds C/C++ projects using Go scripts (`build.go`) interpreted at runtime by [yaegi](https://github.com/traefik/yaegi). There is no DSL — build scripts are standard Go files using `github.com/spock2300/vmake/pkg/api`.
 
+## 0. Before You Run vmake
+
+Four rules prevent the expensive misunderstandings; each links to its section.
+
+1. **Compilers are resolved, never inherited.** Do not `export PATH`, `CC`,
+   `CXX`, `AR` or `LD` to make a build pass, and do not assume a build needs
+   the toolchain on PATH: vmake invokes the resolved tool by absolute path,
+   including for CMake stages such as picolibc. A missing compiler means
+   `vmake toolchain list`, a `toolchain.json`, or an extension — see
+   *Toolchains & Compiler Discovery*. Hand-run tools (`nm`, `objcopy`,
+   `addr2line`) and some host test scripts do need the toolchain on PATH.
+2. **Modes inject flags; global flags append after them.** `release` =
+   `-O2 -DNDEBUG`, `debug` = `-O0 -g`; the last `-O` wins, so a global
+   `AddGlobalCFlags("-g3")` keeps release optimization *and* adds debug
+   info — see *Global Flags & Mode Flags*.
+3. **Any flag, define or mode change rotates the BuildKey.** After editing
+   build.go or global flags, `vmake distclean` first; the build lands in a new
+   `build/<hash>` and `install/` keeps the old artifact until `vmake build -i`.
+4. **`-g` is host-side data.** DWARF grows the ELF (megabytes) but not the
+   flashed image; a source-level debugger needs an ELF built with `-g`, and a
+   `.map` file carries addresses only — no lines or variables. Rebuilt images
+   still differ whenever embedded `__FILE__` build paths change, so reflash or
+   re-verify before debugging against a fresh build.
+
 ## Quick Commands
 
 ```bash
 vmake                                  # Build all targets (default command)
-vmake build -p <pkg> -t <target> -j 8  # Scoped parallel build (-j0 = CPU count)
+vmake build -j 8                       # Parallel compilation within each target (-j0 = CPU count)
 vmake rebuild                          # Clean + build in one step
 vmake test                             # Build & run native test targets (CTest-style)
 vmake config --set pkg.opt=val         # Non-interactive config override (skip TUI)
-vmake config list | use <name>         # Manage multiple configs under .vmake/
-vmake inspect [--target <pkg:t>]       # Read-only JSON build graph
-vmake query [targets|deps|config|plan] # Focused JSON slices for agents
-vmake check-symbols [-p <pkg>]         # Verify ELF symbols against policy
-vmake clean [--all] | distclean        # Clean build outputs or reset project
-vmake lock update [pkg...]             # Re-resolve remote/SetGit versions in vmake.lock
+vmake config list                      # List configurations under .vmake/
+vmake config use <name>.json           # Select a configuration
+vmake inspect                          # Read-only JSON project model
+vmake query                            # Dependency tree
+vmake query targets                    # Targets without building
+vmake check-symbols                    # Verify ELF symbols against policy
+vmake clean                            # Clean build outputs
+vmake distclean                        # Reset project (keeps sources unless --purge-sources)
+vmake lock update                      # Re-resolve remote/SetGit versions in vmake.lock
 vmake doctor [--toolchain <name>]      # Check environment and toolchain readiness
+vmake toolchain list                   # List toolchains
+vmake toolchain show <name>            # Toolchain details and resolved tool paths
 ```
 
 - **Build & Test Reports**: `build`/`rebuild` write `build/vmake-build.json` and `test` writes `build/vmake-test.json` (schemaVersion 2: status, duration, concise error, parsed compiler/linker diagnostics, target timings, test results, SHA-256 installed artifacts). `clean`/`distclean`/`pkg clean` remove both. Full schema: [references/build-result.md](references/build-result.md).
 - **Inspection & Dry-Run Discipline**: `inspect`, `query`, and `check-symbols` evaluate `OnBuild` in dry-run mode without materializing sources (`p.DryRun() == true`, `scriptfs` read-only). Prefer declarative `p.WriteBuildFile`, `p.GenerateFile`, `p.Generate`, and `p.BuildPath` in `OnBuild` (they defer writes to scheduler execution and emit `$builddir/...` when `BuildDir()` is empty); guard any procedural `os.WriteFile` on `!p.DryRun()`. Full schema: [references/inspect.md](references/inspect.md).
 - **Full CLI Reference**: See [references/cli.md](references/cli.md).
+- **Stale Skill**: If a command here fails with an unknown flag or subcommand, the installed skill may be older than the `vmake` binary. Run `vmake version` and reinstall with `vmake skill install`.
+
+## Toolchains & Compiler Discovery
+
+vmake resolves compilers itself. Do not `export PATH`, `CC`, `CXX`, `AR`, or `LD`, and do not edit shell profiles to make a build pass. The only PATH entry vmake needs is the `vmake` binary itself; see *Before You Run vmake* for hand-run tools and host test scripts.
+
+Resolution order:
+
+1. `--toolchain <name>` or the project `toolchain` option.
+2. Built-in `host`: `gcc`/`g++`/`ar`/`ld` from PATH on Linux; `cc`/`c++` on macOS. A Linux host with only clang is not the built-in `host`.
+3. Extension `toolchain.json`: relative tool names resolve only under `<InstallPath>/bin` with no PATH fallback; absolute tool names are used as-is. Installed toolchains live in `~/.vmake/toolchains/<os>/<arch>/<name>/<version>/`.
+
+Inspect instead of guessing:
+
+```bash
+vmake toolchain list
+vmake toolchain show <name>
+vmake doctor --toolchain <name>
+```
+
+Inside `OnBuild`, `p.Env()["CC"]` is the resolved absolute path. `p.Env()` also includes `CROSS_COMPILE`, `CFLAGS`, and the other tool variables; it includes `PATH` when the toolchain contributes directories (an installed toolchain or absolute compilers). `p.CC()` returns the configured name, which may be relative. Use `p.CMakeConfigure()` and `p.Make()` rather than reconstructing compiler paths.
+
+If the compiler is missing, run `vmake toolchain list` first. A declared but uninstalled toolchain installs on the first build that selects it; a compiler outside PATH needs a `toolchain.json` entry or an extension repository, not a PATH export. See [references/toolchains.md](references/toolchains.md).
+
+## Platform Prerequisites
+
+- **Linux**: the built-in `host` toolchain uses `gcc`/`g++` from `PATH`; a clang-only host must declare a toolchain that names its clang executables.
+- **macOS**: the built-in `host` toolchain uses `cc`/`c++` and leaves `objcopy`/`objdump` unset; Kconfig/kernel/U-Boot builds need GNU Make 3.82+ and a toolchain whose `make` is `gmake` (`vmake doctor` warns below 3.82).
+- **Windows**: vmake storage needs real symlinks (Developer Mode or an elevated shell; no junctions); the full Git for Windows userland is required (MinGit is insufficient) and supplies neither a compiler nor make; use MinGW-w64 for native Windows and the ARM GNU Toolchain for bare metal (MSVC is out of scope); CMake helpers default to Ninja.
+- `vmake doctor [--toolchain <name>]` checks symlinks, the Git userland, make, and the selected toolchain, but not CMake/Ninja; full host requirements: [references/platforms.md](references/platforms.md).
+- **Cross targets**: `target_os`/`target_triple` control artifacts and the compiler target; `vmake test` refuses cross targets and points to `vmake build --tests`.
 
 ## Build Script Structure
 
@@ -147,7 +207,7 @@ ctx.Target("math_test").SetKind(api.TargetBinary).SetTest(true).
 ```
 
 - Test targets are **excluded from normal `vmake build` and `install/`**.
-- `vmake test` builds and executes native test targets (`-p <pkg>`, `-t <target>`, `-j N`, `--filter <substr>`, `--timeout <dur>`, `--verbose`), writing `build/vmake-test.json`.
+- `vmake test` builds and executes native test targets (`-j N`, `-k`, `--mode`, `-s`, `--toolchain`, `--manifest`, `--explain`), writing `build/vmake-test.json`. There is no package/target filter flag.
 - For cross/bare-metal targets (`target_os=none`), compile test binaries without running them via `vmake build --tests`.
 
 ## Dependencies
@@ -202,8 +262,9 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 Manage multiple named configurations (`.vmake/<name>.json`) sharing `.vmake/vmake.lock`:
 
 ```bash
-vmake config copy default release_o3 && vmake config use release_o3
-vmake --config release_o3 build
+vmake config copy release_o3.json
+vmake config use release_o3.json
+vmake build
 ```
 
 ### Generated Defines Always Use the CONFIG_ Prefix
@@ -242,8 +303,11 @@ The built-in `host` toolchain automatically adds `-Wall -Wextra`, `-MMD -MP` (he
 Set `target_os` (`linux`, `windows`, `darwin`, `none`) and `target_triple` via toolchain manifests or project options:
 
 ```bash
-vmake config --toolchain arm-gcc --set target_os=none --set target_triple=arm-none-eabi
+vmake config --set toolchain=arm-gcc --set target_os=none --set target_triple=arm-none-eabi
+vmake build
 ```
+
+`--toolchain <name>` on `build`/`test` overrides the selection for one invocation.
 
 Inspect `p.TargetOS()` and `p.TargetTriple()` in `OnBuild` when platform-specific files or flags are needed.
 
@@ -302,8 +366,8 @@ For in-source Makefiles, pass an absolute path with forward slashes: `p.Make("-C
 
 ## Build Scope
 
-- `vmake build` builds all default targets in local packages reachable from the current directory.
-- `vmake build -p <pkg>` scopes to `<pkg>` and its dependencies; `-t <target>` scopes to a single target and its transitive target dependencies.
+- `vmake build` builds all default targets in needed local packages. Roots are inferred from the local package graph, or from the single package that declares `SetRoot(true)`.
+- There is **no package/target filter flag**. `-p`/`--prefix` is the installation prefix, not a package selector. To narrow a build, declare `SetRoot(true)` on the intended entry package or use a separate project. Use `vmake -C <dir>` to select the project root.
 
 ## Clean
 
@@ -315,8 +379,9 @@ For in-source Makefiles, pass an absolute path with forward slashes: `p.Make("-C
 ```bash
 vmake repo add <name> <url>          # Register a package repository
 vmake repo update [name]             # Pull latest repo definitions
-vmake ext install <url>              # Install toolchain/command plugin extension
-vmake trust list | repo <n> | ext <n> # Manage ~/.vmake/trust.json records
+vmake repo trust <name>              # Trust a repository at its current commit
+vmake ext add <name> <url>           # Add an extension repository (plugins/toolchains)
+vmake ext trust <name>               # Trust an extension at its current commit
 ```
 
 ## Common Mistakes
@@ -339,6 +404,8 @@ vmake trust list | repo <n> | ext <n> # Manage ~/.vmake/trust.json records
 
 - **Complete API Signatures**: [references/api.md](references/api.md)
 - **CLI Commands & Flags**: [references/cli.md](references/cli.md)
+- **Toolchain Resolution & Compiler Paths**: [references/toolchains.md](references/toolchains.md)
+- **Platform Prerequisites (Linux, macOS, Windows)**: [references/platforms.md](references/platforms.md)
 - **Inspect & Query JSON Schema**: [references/inspect.md](references/inspect.md)
 - **Build & Test Result JSON (`vmake-build.json`)**: [references/build-result.md](references/build-result.md)
 - **Directories, Caching & Lockfiles**: [references/dirs.md](references/dirs.md)

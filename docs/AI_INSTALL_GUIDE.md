@@ -6,9 +6,11 @@ AI 阅读此文档后，按顺序执行以下命令即可完成安装。
 
 - Go 1.26+
 - C/C++ 编译器（按平台准备）：
-  - Linux：PATH 中的 GCC/G++
+  - Linux：PATH 中的 GCC/G++（内置 `host` 工具链使用 `gcc`/`g++`；只有 clang 的机器需要声明自己的工具链）
   - macOS：Xcode Command Line Tools（提供 `cc`/`c++`），无需 GNU binutils
   - Windows：原生构建使用 MinGW-w64，裸机构建使用 ARM GNU 工具链；此外还需要完整版 Git for Windows，并启用开发者模式（vmake 的存储布局依赖符号链接）
+
+vmake 自己解析编译器路径。不要为了构建去 `export PATH`、`CC`、`CXX`、`AR` 或 `LD`：内置 `host` 只按上面的名字查找，交叉编译器或不在 PATH 的编译器应写进 `toolchain.json` 并用 `--toolchain` 选择。`vmake toolchain show <name>` 会打印解析后的绝对路径；`vmake doctor` 会检查工具链是否可用。
 
 ## 安装步骤
 
@@ -26,7 +28,7 @@ GOPATH 布局下可执行：
 export PATH=$PATH:$(go env GOPATH)/bin
 ```
 
-如需持久化，将上述命令追加到 shell 配置文件（`~/.bashrc`、`~/.zshrc` 等）。
+这条 `export PATH` 只是为了找到 `vmake` 二进制本身，不是为了让 vmake 找到编译器。编译器由 vmake 的工具链解析，见上节。如需持久化，将上述命令追加到 shell 配置文件（`~/.bashrc`、`~/.zshrc` 等）。
 
 ### 2. 安装命令行补全
 
@@ -70,6 +72,7 @@ vmake skill install --project .
 - `SKILL.md` — 核心指南（构建阶段、决策树、API 速查、RTOS 支持）
 - `references/api.md` — 完整 API 方法签名
 - `references/cli.md` — CLI 命令参考（安装时从实际命令树生成）
+- `references/toolchains.md` — 工具链解析、编译器路径与 `toolchain.json`
 - `references/dirs.md` — 目录与路径解析规则
 - `references/gotchas.md` — 高级陷阱与修复模式
 - `examples/` — 各场景 build.go 示例
@@ -79,4 +82,6 @@ vmake skill install --project .
 ```bash
 vmake version
 vmake skill path
+vmake doctor
+vmake toolchain show host
 ```

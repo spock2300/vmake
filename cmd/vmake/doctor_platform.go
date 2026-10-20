@@ -2,9 +2,11 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
@@ -83,10 +85,14 @@ func checkToolchain(tc *toolchain.Toolchain) []doctorFinding {
 	}
 
 	if errs := toolchain.ValidateToolchain(tc); len(errs) == 0 {
+		message := fmt.Sprintf("selected toolchain %q: all configured tools found", tc.Name)
+		if summary := resolvedToolSummary(tc); summary != "" {
+			message += " (" + summary + ")"
+		}
 		findings = append(findings, doctorFinding{
 			Severity: "ok",
 			Category: "binutils",
-			Message:  fmt.Sprintf("selected toolchain %q: all configured tools found", tc.Name),
+			Message:  message,
 		})
 	} else {
 		for _, err := range errs {
@@ -99,6 +105,28 @@ func checkToolchain(tc *toolchain.Toolchain) []doctorFinding {
 	}
 
 	return findings
+}
+
+func resolvedToolSummary(tc *toolchain.Toolchain) string {
+	var parts []string
+	for _, item := range []struct {
+		name  string
+		value string
+	}{
+		{"CC", tc.Tools.CC},
+		{"CXX", tc.Tools.CXX},
+		{"AR", tc.Tools.AR},
+		{"LD", tc.Tools.LD},
+	} {
+		if item.value == "" {
+			continue
+		}
+		path, err := toolchain.ResolveToolPath(item.value, tc.InstallPath)
+		if err == nil {
+			parts = append(parts, item.name+"="+filepath.ToSlash(path))
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 func toolHint() string {

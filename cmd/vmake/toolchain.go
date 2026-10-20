@@ -83,6 +83,28 @@ func formatToolchainDefinitionError(err *toolchain.DefinitionError) string {
 	return fmt.Sprintf("%s [%s]: %v", err.Name(), path, err.Unwrap())
 }
 
+func formatToolchainTool(tc *toolchain.Toolchain, name, configured string) string {
+	label := name + ":"
+	if configured == "" {
+		return fmt.Sprintf("%-8s (not configured)", label)
+	}
+	installPath := tc.InstallPath
+	if name == "MAKE" && tc.Tools.MAKE == "" {
+		installPath = ""
+	}
+	resolved, err := toolchain.ResolveToolPath(configured, installPath)
+	if err != nil {
+		return fmt.Sprintf("%-8s %s (not found: %v)", label, configured, err)
+	}
+	source := "PATH"
+	if filepath.IsAbs(configured) {
+		source = "absolute"
+	} else if installPath != "" {
+		source = "install"
+	}
+	return fmt.Sprintf("%-8s %s -> %s [%s]", label, configured, filepath.ToSlash(resolved), source)
+}
+
 func runToolchainShow(cmd *cobra.Command, args []string) {
 	mgr := toolchain.GetManager()
 
@@ -106,13 +128,28 @@ func runToolchainShow(cmd *cobra.Command, args []string) {
 		}
 	}
 	vlog.Info("")
+	if tc.Prefix != "" {
+		vlog.Info("Prefix: %s", tc.Prefix)
+	}
 	vlog.Info("Tools:")
-	vlog.Info("  CC:     %s", tc.Tools.CC)
-	vlog.Info("  CXX:    %s", tc.Tools.CXX)
-	vlog.Info("  AR:     %s", tc.Tools.AR)
-	vlog.Info("  LD:     %s", tc.Tools.LD)
-	vlog.Info("  STRIP:  %s", tc.Tools.STRIP)
-	vlog.Info("  RANLIB: %s", tc.Tools.RANLIB)
+	for _, item := range []struct {
+		name  string
+		value string
+	}{
+		{"CC", tc.Tools.CC},
+		{"CXX", tc.Tools.CXX},
+		{"AR", tc.Tools.AR},
+		{"LD", tc.Tools.LD},
+		{"STRIP", tc.Tools.STRIP},
+		{"RANLIB", tc.Tools.RANLIB},
+		{"OBJCOPY", tc.Tools.OBJCOPY},
+		{"SIZE", tc.Tools.SIZE},
+		{"OBJDUMP", tc.Tools.OBJDUMP},
+		{"NM", tc.Tools.NM},
+		{"MAKE", tc.MakeTool()},
+	} {
+		vlog.Info("  %s", formatToolchainTool(tc, item.name, item.value))
+	}
 	vlog.Info("")
 
 	if tc.InstallPath != "" {

@@ -52,8 +52,9 @@ vmake's storage layout is built on symbolic links, which Windows only permits in
 **Developer Mode** (Settings → System → For developers) or from an elevated shell.
 Run `vmake doctor` to check all of the above; it reports the status of symlinks, the
 Git userland, `make` and the selected C toolchain. Use `vmake doctor --toolchain NAME`
-to diagnose a specific toolchain, and `vmake doctor --json` for one machine-readable
-document on stdout (see [Machine-readable doctor](#machine-readable-doctor)).
+to diagnose a specific toolchain. `vmake toolchain show NAME` prints each configured
+tool and its resolved absolute path. Compilers are resolved by the selected toolchain;
+do not add compiler directories to `PATH`.
 
 Toolchains describe which programs to run; they may also declare `target_os`
 (bare metal: `none`) and `target_triple` (e.g. `arm-none-eabi`) defaults. The
@@ -385,7 +386,9 @@ vmake cache list                                      # List cached upstream rep
 vmake cache remove <url>                              # Remove one cache namespace
 vmake lock update|show                                # Re-resolve / show pinned versions (.vmake/vmake.lock)
 vmake init-editor [--local <path>] [--remove]         # Generate editor support (go.mod) for build.go
-vmake doctor [--json]                                 # Diagnose platform prerequisites and build.go patterns
+vmake doctor [--toolchain <name>]                      # Diagnose platform prerequisites and build.go patterns
+vmake toolchain list                                   # List available toolchains
+vmake toolchain show [name]                            # Show toolchain details and resolved tool paths
 vmake manifest show <path>                            # Show manifest contents
 vmake manifest checkout <path> [name]                 # Checkout packages to recorded versions
 vmake completion <shell>                              # Print completion script (bash|zsh|fish|powershell)
@@ -430,28 +433,6 @@ skipped whenever `-C` is set. `vmake doctor` stays diagnostic: from the package
 directory it reports `nestedProjectMarker` as a warning and exits 0. From the true
 project root the same marker is reported as `staleProjectMarker`. `vmake doctor`
 never removes the marker or switches roots automatically.
-
-### Machine-readable doctor
-
-`vmake doctor --json` prints exactly one JSON document on stdout and suppresses the
-human findings:
-
-```json
-{
-  "schemaVersion": 1,
-  "status": "ok",
-  "root": "/path/to/project",
-  "findings": []
-}
-```
-
-`status` is `ok`, `warnings` or `error`. `findings` lists only warnings and errors
-(clean `ok` checks are omitted), each with `severity` (`warn`/`error`), `category`,
-`file` (relative to the project root when it is inside it, otherwise absolute or
-empty) and `message`; a shadowed package directory includes a
-`nestedProjectMarker` finding. Findings are sorted so repeated runs produce the
-same document. The exit status is 0 for `ok`/`warnings` and 1 when any error
-finding exists, matching the human output.
 
 ## Documentation
 

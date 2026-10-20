@@ -1,5 +1,13 @@
 # Advanced Gotchas
 
+## Do Not Export PATH or CC for vmake
+
+vmake resolves the selected toolchain's tools for every command it runs. Adding a compiler directory to `PATH`, or setting `CC`/`CXX`/`AR`/`LD` in the shell or in `build.go`, does not select that compiler. The built-in `host` toolchain still asks for `gcc`/`g++` (Linux) or `cc`/`c++` (macOS), and an extension toolchain resolves relative names only under its own `<InstallPath>/bin` with no PATH fallback.
+
+Use `vmake toolchain show <name>` to see the resolved absolute paths. Inside `build.go`, `p.Env()["CC"]` is the absolute path while `p.CC()` is the configured name; pass `p.Env()` to manual build commands and prefer `p.CMakeConfigure()`/`p.Make()`. If the compiler is outside PATH, declare it in a `toolchain.json` and select it with `--toolchain` or `vmake config --set toolchain=<name>`. See [toolchains.md](toolchains.md).
+
+This rule covers vmake's own commands. A command you run yourself (`nm`, `objcopy`, `addr2line`) or a host test script is different: it may need the toolchain on PATH. Use the absolute paths from `p.Env()` or prepend the toolchain directory only for that command.
+
 ## Static Library Deps with Symbols Not Referenced by Your Code
 
 On ELF and PE binary links, vmake places `AddDeps` dependency archives inside `--start-group`/`--end-group` and wraps `.a`/`.so`/`.dylib` inputs in `-Wl,--whole-archive` (PE `.dll.a` import libraries are excluded), so every object of such an archive is pulled in; shared-library links pass archives as plain inputs and pull only referenced members. On Mach-O targets there is no group or whole-archive: dependency archives are force-loaded with `-force_load`, with the same all-members effect. Your `-l`/`-L` ldflags are inside the group but not whole-archived; what lands after the group are libraries the compiler driver appends itself (e.g., libc pulled in by `-specs=nano.specs`). A library supplied as a plain `-l` fails when its symbols are only referenced by those post-group libraries — nothing in the group caused the linker to scan it. Symptom: `undefined reference to ...` from libc/crt code.

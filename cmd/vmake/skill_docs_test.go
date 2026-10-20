@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -12,17 +13,22 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
 	"github.com/spock2300/vmake/pkg/api"
 )
 
 var updateSkillCLIRef = flag.Bool("update-skill-ref", false, "rewrite the checked-in skill CLI reference snapshot")
 
 var (
-	skillGoFenceRE    = regexp.MustCompile("(?is)```go(?:lang)?[^\n]*\n(.*?)```")
-	skillHeadingRefRE = regexp.MustCompile("SKILL\\.md - ([^\n`]+?)(?:`|$)")
-	skillFileRefRE    = regexp.MustCompile(`(?:examples|references)/[A-Za-z0-9_./-]+\.md`)
-	skillLineRefRE    = regexp.MustCompile(`[A-Za-z0-9_./-]+\.(?:go|md|json|sh|py):\d+`)
-	skillAPIRefRE     = regexp.MustCompile(`\bapi\.([A-Z][A-Za-z0-9_]*)`)
+	skillGoFenceRE      = regexp.MustCompile("(?is)```go(?:lang)?[^\n]*\n(.*?)```")
+	skillBashFenceRE    = regexp.MustCompile("(?ms)```(?:bash|sh)[^\n]*\n(.*?)```")
+	skillShellCommentRE = regexp.MustCompile(`\s+#.*$`)
+	skillHeadingRefRE   = regexp.MustCompile("SKILL\\.md - ([^\n`]+?)(?:`|$)")
+	skillFileRefRE      = regexp.MustCompile(`(?:examples|references)/[A-Za-z0-9_./-]+\.md`)
+	skillLineRefRE      = regexp.MustCompile(`[A-Za-z0-9_./-]+\.(?:go|md|json|sh|py):\d+`)
+	skillAPIRefRE       = regexp.MustCompile(`\bapi\.([A-Z][A-Za-z0-9_]*)`)
 )
 
 var skillPredeclaredCalls = map[string]bool{
@@ -79,6 +85,184 @@ func TestSkillCLISnapshot(t *testing.T) {
 	}
 	if strings.ReplaceAll(string(want), "\r\n", "\n") != got {
 		t.Fatalf("references/cli.md is stale; run: go test ./cmd/vmake -run '^TestSkillCLISnapshot$' -update-skill-ref")
+	}
+}
+
+func TestSkillCLIExamples(t *testing.T) {
+	for rel, content := range skillMarkdownFiles(t) {
+		if rel == "references/cli.md" {
+			continue
+		}
+		for _, example := range skillCLIExamples(content) {
+			args := splitSkillShellArgs(example)
+			if len(args) == 0 || args[0] != "vmake" {
+				continue
+			}
+			if err := validateSkillCLICommand(RootCmd, args[1:]); err != nil {
+				t.Errorf("%s: %v: %s", rel, err, example)
+			}
+		}
+	}
+}
+
+func skillCLIExamples(content string) []string {
+	var examples []string
+	add := func(line string) {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			return
+		}
+		line = strings.TrimPrefix(line, "$ ")
+		line = strings.TrimSpace(skillShellCommentRE.ReplaceAllString(line, ""))
+		for _, part := range strings.FieldsFunc(line, func(r rune) bool {
+			return r == '&' || r == '|' || r == ';'
+		}) {
+			part = strings.TrimSpace(part)
+			if part == "vmake" || strings.HasPrefix(part, "vmake ") {
+				examples = append(examples, part)
+			}
+		}
+	}
+	for _, block := range skillBashFenceRE.FindAllStringSubmatch(content, -1) {
+		for _, line := range strings.Split(block[1], "\n") {
+			add(line)
+		}
+	}
+	return examples
+}
+
+func splitSkillShellArgs(line string) []string {
+	var args []string
+	var current strings.Builder
+	quote := rune(0)
+	flush := func() {
+		if current.Len() > 0 {
+			args = append(args, current.String())
+			current.Reset()
+		}
+	}
+	for _, r := range line {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				current.WriteRune(r)
+			}
+		case r == '\'' || r == '"':
+			quote = r
+		case r == ' ' || r == '\t':
+			flush()
+		default:
+			current.WriteRune(r)
+		}
+	}
+	flush()
+	return args
+}
+
+func validateSkillCLICommand(root *cobra.Command, args []string) error {
+	cmd := root
+	var positional []string
+	for i := 0; i < len(args); i++ {
+		token := strings.Trim(args[i], "[]")
+		if token == "" {
+			continue
+		}
+		if token == "--" {
+			positional = append(positional, args[i+1:]...)
+			break
+		}
+		if strings.HasPrefix(token, "-") && token != "-" {
+			name, _, hasValue := splitSkillCLIFlag(token)
+			flag := lookupSkillCLIFlag(cmd, name)
+			if flag == nil {
+				return fmt.Errorf("unknown flag %q for %q", token, cmd.CommandPath())
+			}
+			if !hasValue && flag.NoOptDefVal == "" {
+				if i+1 >= len(args) {
+					return fmt.Errorf("flag %q needs a value", token)
+				}
+				i++
+			}
+			continue
+		}
+		if sub := skillSubCommand(cmd, token); sub != nil {
+			cmd = sub
+			continue
+		}
+		if cmd.HasSubCommands() {
+			return fmt.Errorf("unknown subcommand %q for %q", token, cmd.CommandPath())
+		}
+		positional = append(positional, token)
+	}
+	if cmd.Args != nil {
+		if err := cmd.Args(cmd, positional); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func splitSkillCLIFlag(token string) (name, value string, hasValue bool) {
+	body := strings.TrimLeft(token, "-")
+	if idx := strings.IndexByte(body, '='); idx >= 0 {
+		return body[:idx], body[idx+1:], true
+	}
+	if len(token) == 2 || strings.HasPrefix(token, "--") {
+		return body, "", false
+	}
+	return body[:1], body[1:], true
+}
+
+func lookupSkillCLIFlag(cmd *cobra.Command, name string) *pflag.Flag {
+	if flag := cmd.Flags().Lookup(name); flag != nil {
+		return flag
+	}
+	if flag := cmd.PersistentFlags().Lookup(name); flag != nil {
+		return flag
+	}
+	if flag := cmd.InheritedFlags().Lookup(name); flag != nil {
+		return flag
+	}
+	if len(name) != 1 {
+		return nil
+	}
+	if flag := cmd.Flags().ShorthandLookup(name); flag != nil {
+		return flag
+	}
+	if flag := cmd.PersistentFlags().ShorthandLookup(name); flag != nil {
+		return flag
+	}
+	return cmd.InheritedFlags().ShorthandLookup(name)
+}
+
+func skillSubCommand(cmd *cobra.Command, name string) *cobra.Command {
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == name {
+			return sub
+		}
+	}
+	return nil
+}
+
+var removedSkillCLIFlags = []string{
+	"--require-tests",
+	"--allow-dry-run-writes",
+	"--json",
+	"--check",
+	"--plan",
+	"--output",
+}
+
+func TestSkillRemovedCLIFlags(t *testing.T) {
+	for rel, content := range skillMarkdownFiles(t) {
+		for _, flag := range removedSkillCLIFlags {
+			pattern := regexp.MustCompile(regexp.QuoteMeta(flag) + `\b`)
+			if pattern.MatchString(content) {
+				t.Errorf("%s: documents removed flag %s", rel, flag)
+			}
+		}
 	}
 }
 

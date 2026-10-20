@@ -199,9 +199,9 @@ own build tree and publish the staged archive through the getter.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `CC()` | `string` | C compiler |
-| `CXX()` | `string` | C++ compiler |
-| `AR()` | `string` | Archiver |
+| `CC()` | `string` | Configured C compiler name (may be relative; use `p.Env()["CC"]` for the absolute path) |
+| `CXX()` | `string` | Configured C++ compiler name (use `p.Env()["CXX"]` for the absolute path) |
+| `AR()` | `string` | Configured archiver name (use `p.Env()["AR"]` for the absolute path) |
 | `TargetTriple()` | `string` | Resolved target triple (package entry value → package-local non-global default → project global config/default → toolchain `target_triple` default), e.g. `arm-none-eabi` |
 | `TargetOS()` | `string` | Resolved target OS (same resolution order); `none` for bare metal, host OS when unset |
 | `Prefix()` | `string` | Raw configured toolchain prefix, including the trailing `-`, e.g. `arm-none-eabi-`; does not add the installation path |
@@ -240,7 +240,7 @@ own build tree and publish the staged archive through the getter.
 
 `Prefix()` includes the separator: append `"gcc"`, never `"-gcc"`. Migrate old callers that add a hyphen themselves. Use `TargetTriple()` for an external argument that expects a target triple such as `arm-none-eabi`.
 
-`p.Env()` resolves configured tools to executable paths. For an installed toolchain, `p.Env()["CROSS_COMPILE"]` includes its `bin` directory and complete prefix, such as `/path/to/toolchain/bin/arm-none-eabi-`; do not append another hyphen. Prefer `p.CMakeConfigure()`, which passes resolved tools automatically. If a special operation requires calling CMake manually, pass `p.Env()["CC"]`, `["CXX"]` and `["AR"]` instead of reconstructing names from a prefix or relying on PATH.
+`p.Env()` resolves configured tools to **absolute executable paths**. For an installed toolchain, `p.Env()["CROSS_COMPILE"]` includes its `bin` directory and complete prefix, such as `/path/to/toolchain/bin/arm-none-eabi-`; do not append another hyphen. When the toolchain contributes directories (an installed toolchain or absolute compilers), `p.Env()["PATH"]` already has the toolchain's `bin` and compiler directories prepended; the built-in `host` leaves `PATH` to the inherited process environment. Do not export PATH or CC/CXX/AR/LD in the shell or in the script. `p.CC()`/`p.CXX()`/`p.AR()` return the configured names, which may be relative; use `p.Env()["CC"]`, `["CXX"]` and `["AR"]` when an external command needs the executable path. Prefer `p.CMakeConfigure()`, which passes resolved tools automatically.
 
 ### Dependency State
 

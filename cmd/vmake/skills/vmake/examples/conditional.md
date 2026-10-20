@@ -4,7 +4,7 @@ Comprehensive demonstration of conditional expressions: bool toggles, platform s
 
 ## Prerequisites
 
-- VMake installed with a host C toolchain (gcc or clang); run from the project directory (VMake searches upward for `build.go` or `.vmake/`).
+- VMake installed with a host C toolchain (`gcc`/`g++` on Linux, `cc`/`c++` on macOS); run from the project directory (VMake searches upward for `build.go` or `.vmake/`).
 
 ## build.go
 

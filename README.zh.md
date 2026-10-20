@@ -47,8 +47,8 @@ vmake 可在 Windows 上原生运行，并支持在 Windows 主机上进行 ARM 
 vmake 的存储布局依赖符号链接，而 Windows 仅在**开发者模式**（设置 → 系统 → 开发者选项）
 或管理员终端下允许创建。运行 `vmake doctor` 可检查以上全部前提：它会报告符号链接、
 Git 用户态工具、`make` 与所选 C 工具链的状态；使用 `vmake doctor --toolchain NAME`
-可诊断指定工具链；`vmake doctor --json` 会在 stdout 输出一份机器可读文档（见
-[机器可读的 doctor 输出](#机器可读的-doctor-输出)）。
+可诊断指定工具链；`vmake toolchain show <name>` 会打印每个工具解析后的绝对路径。
+编译器由所选工具链解析，不要把编译器目录加进 `PATH`。
 
 工具链描述要运行哪些程序，还可声明 `target_os`（裸机为 `none`）与 `target_triple`
 （如 `arm-none-eabi`）默认值。项目在需要查看或覆盖这些值时声明对应的全局选项，并自行
@@ -367,7 +367,9 @@ vmake cache list                                      # 列出共享 git 对象�
 vmake cache remove <url>                              # 删除单个缓存命名空间
 vmake lock update|show                                # 重新解析 / 显示固定版本（.vmake/vmake.lock）
 vmake init-editor [--local <path>] [--remove]         # 为 build.go 生成编辑器支持文件（go.mod）
-vmake doctor [--json]                                 # 诊断平台前提与 build.go 模式
+vmake doctor [--toolchain <name>]                      # 诊断平台前提与 build.go 模式
+vmake toolchain list                                  # 列出可用工具链
+vmake toolchain show [name]                           # 显示工具链详情与解析后的工具路径
 vmake manifest show <path>                            # 显示清单内容
 vmake manifest checkout <path> [name]                 # 按清单检出版本
 vmake completion <shell>                              # 输出补全脚本 (bash|zsh|fish|powershell)
@@ -406,25 +408,6 @@ current directory <包目录> has a .vmake marker shadowing the enclosing projec
 `vmake doctor` 仍然只做诊断：从该包目录运行时会报告 `nestedProjectMarker` 警告并以
 退出码 0 结束；从真正的项目根运行时，同一个标记会以 `staleProjectMarker` 报告。
 `vmake doctor` 不会自动删除该标记，也不会自动切换根目录。
-
-### 机器可读的 doctor 输出
-
-`vmake doctor --json` 会在 stdout 输出恰好一份 JSON 文档，并抑制人类可读行：
-
-```json
-{
-  "schemaVersion": 1,
-  "status": "ok",
-  "root": "/path/to/project",
-  "findings": []
-}
-```
-
-`status` 为 `ok`、`warnings` 或 `error`。`findings` 只列出警告和错误（干净的 `ok`
-检查会被省略），每项包含 `severity`（`warn`/`error`）、`category`、`file`（位于项目根
-内时为相对路径，否则为绝对路径或空）和 `message`；被遮蔽的包目录会包含
-`nestedProjectMarker`。findings 会排序，因此重复运行产生相同文档。退出码在
-`ok`/`warnings` 时为 0，存在错误 finding 时为 1，与人类可读输出一致。
 
 ## 开发文档
 

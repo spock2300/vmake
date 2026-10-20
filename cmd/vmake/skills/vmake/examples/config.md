@@ -4,7 +4,7 @@ Demonstrates the option system: defining build-time options and using conditiona
 
 ## Prerequisites
 
-- VMake installed with a host C toolchain (gcc or clang); run from the project directory (VMake searches upward for `build.go` or `.vmake/`).
+- VMake installed with a host C toolchain (`gcc`/`g++` on Linux, `cc`/`c++` on macOS); run from the project directory (VMake searches upward for `build.go` or `.vmake/`).
 
 ## build.go
 
@@ -150,7 +150,7 @@ See `SKILL.md - Multiple Project Configurations` for compatibility and error han
 - `AddDefines(ctx.If("ssl", "USE_SSL"))` passes the `[]string` directly — `...any` methods (`AddDefines`, `AddCFlags`, `AddFiles`, ...) flatten slices. Do NOT spread into those (Go cannot spread `[]string` into `[]any`); `...string` methods such as `AddDeps` do accept `deps...`
 - `ctx.If` only accepts `OptionBool`; `ctx.Select` and `ctx.String` work for String/Choice options, and `ctx.When`/`ctx.Int`/`ctx.Bool` cover the rest (a mismatched accessor is a build error)
 - Options are declared in `OnConfig`; `ctx.Option(...)` on `BuildContext`/`InstallContext`/`CleanContext` after the config phase is a build error. A late declaration through a path that is not locked (for example a captured `*Package`) is never resolved, so only its default/zero value is readable
-- Choice options declare their allowed values with `SetValues(...)`; a non-empty `SetDefault` is validated against them after `OnConfig` (validation is skipped when the default is empty or `SetValues` was never called). `vmake config --set` rejects invalid choices
+- Choice options declare their allowed values with `SetValues(...)`; a non-empty `SetDefault` is validated against them after `OnConfig` (validation is skipped when the default is empty or `SetValues` was never called). `vmake config --set <pkg>/<option>=<value>` rejects invalid choices
 - Don't map options to `-O*`: build mode flags are appended after target flags, so the mode's `-O2`/`-O0` wins for GCC — see `SKILL.md - Global Flags & Mode Flags`
 - Turn options into `-DCONFIG_*` defines or a generated `autoconf.h` with `ctx.GenerateConfigDefines()` / `ctx.GenerateConfigHeader()` in `OnBuild` — see `examples/config-to-define.md`
 - Reading an option with a mismatched accessor (e.g. `ctx.Bool` on an OptionChoice) is a build error — use the accessor matching `SetType`: `ctx.Bool`, `ctx.String`, `ctx.Int` (there is no Choice accessor; OptionChoice is read with `ctx.String`)

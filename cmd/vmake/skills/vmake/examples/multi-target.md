@@ -77,11 +77,11 @@ The install prefix defaults to `./install/` (`--prefix`/`-p` overrides it). `Tar
 
 ## Test Target Selection
 
-`vmake build` excludes test targets unless `--tests` is passed. `vmake test` builds and runs only targets where `IsTest() && IsDefault()` and `Kind() == api.TargetBinary`. Because new targets are default, plain `SetTest(true)` keeps a test runnable; combining `SetTest(true)` with `SetDefault(false)` excludes the target from `vmake test`. If no runnable test target exists, `vmake test` skips the build and exits 0 with `Tests succeeded: no test targets` (pass `--require-tests` to fail with `no test targets found`); `vmake build --tests` still builds declared test targets without running them.
+`vmake build` excludes test targets unless `--tests` is passed. `vmake test` builds and runs only targets where `IsTest() && IsDefault()` and `Kind() == api.TargetBinary`. Because new targets are default, plain `SetTest(true)` keeps a test runnable; combining `SetTest(true)` with `SetDefault(false)` excludes the target from `vmake test`. If no runnable test target exists, `vmake test` skips the build and exits 0 with `Tests succeeded: no test targets`; there is no flag that turns that into a failure. `vmake build --tests` still builds declared test targets without running them.
 
 ## Prerequisites
 
-- A C compiler reachable by the host toolchain (`cc`/`gcc`/`clang`) — run `vmake doctor` to check
+- The built-in `host` toolchain needs `gcc`/`g++` on Linux or `cc`/`c++` on macOS, or a declared `toolchain.json` — run `vmake doctor` to check
 - Run from the project directory containing `build.go` (or a subdirectory inside it)
 
 ## Running / Verifying
@@ -115,7 +115,7 @@ The object artifact is linked directly into dependents. See `examples/complete.m
 - Multiple targets in single `OnBuild`
 - New targets default to `api.TargetBinary` and `IsDefault() == true`; use `SetKind` for static, shared, object, and void targets
 - Dependencies resolved automatically - "mylib" builds before "myapp"
-- `SetTest(true)` targets are skipped by plain `vmake build` and never installed; `SetTest(true)` plus `SetDefault(false)` excludes the target from `vmake test` (which requires `IsTest() && IsDefault()`); no runnable test target makes `vmake test` exit 0 unless `--require-tests` is passed (then it fails with `no test targets found`)
+- `SetTest(true)` targets are skipped by plain `vmake build` and never installed; `SetTest(true)` plus `SetDefault(false)` excludes the target from `vmake test` (which requires `IsTest() && IsDefault()`); no runnable test target makes `vmake test` exit 0 with `Tests succeeded: no test targets`
 - `AddPublicIncludes` implies `AddIncludes` — no need to call both for the same directory
 - `AddDeps("mylib")` propagates public includes — `myapp` and `tests` get `-Iinclude` automatically
 
