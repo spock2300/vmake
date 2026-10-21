@@ -395,7 +395,7 @@ vmake completion <shell>                              # Print completion script 
 vmake completion install [--shell bash|zsh|fish]      # Auto-install completion (no PowerShell installer)
 vmake update [version]                                # Self-update
 vmake version                                         # Version info
-vmake skill install [--project <dir>]                 # Install AI skill (also under <dir>/.claude/skills)
+vmake skill install [--project <dir>]                 # Install AI skill (also under <dir>/.agents/skills)
 vmake skill uninstall                                 # Uninstall AI skill
 vmake skill path                                      # Show skill paths
 ```

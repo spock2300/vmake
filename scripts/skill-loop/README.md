@@ -84,7 +84,7 @@ Environment variables:
 Requirements: `opencode`, `jq`, `git`, `go`, and a host `gcc`/`g++`/`ar`/`ld`.
 
 The script installs the current candidate skill into the real
-`~/.claude/skills/vmake` and `~/.agents/skills/vmake`, registers a temporary
+`~/.agents/skills/vmake`, registers a temporary
 temporary `skill-loop-tc-<pid>` extension in `~/.vmake`, and removes the
 extension on exit.
 

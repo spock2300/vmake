@@ -28,11 +28,11 @@ var skillCmd = &cobra.Command{
 var skillInstallCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Install VMake skill for AI assistants",
-	Long: `Installs the VMake skill to ~/.claude/skills/vmake/ and ~/.agents/skills/vmake/
+	Long: `Installs the VMake skill to ~/.agents/skills/vmake/
 so that AI coding assistants (Claude Code, OpenCode, Cursor, etc.) can assist
 with VMake build configuration.
 
-Use --project <dir> to also install to <dir>/.claude/skills/vmake/. The path is
+Use --project <dir> to also install to <dir>/.agents/skills/vmake/. The path is
 used verbatim; it does not search upward for a project root.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		installSkill(cmd.Flag("project").Value.String())
@@ -52,31 +52,27 @@ var skillPathCmd = &cobra.Command{
 	Short: "Show skill installation paths",
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Installation paths:")
-		fmt.Printf("  Claude Code: %s\n", getSkillPath("claude"))
-		fmt.Printf("  OpenCode:   %s\n", getSkillPath("agents"))
+		fmt.Printf("  Agents: %s\n", getSkillPath())
 	},
 }
 
 func init() {
-	skillInstallCmd.Flags().StringP("project", "p", "", "Also install to <dir>/.claude/skills/ (path used verbatim)")
+	skillInstallCmd.Flags().StringP("project", "p", "", "Also install to <dir>/.agents/skills/ (path used verbatim)")
 	skillCmd.AddCommand(skillInstallCmd)
 	skillCmd.AddCommand(skillUninstallCmd)
 	skillCmd.AddCommand(skillPathCmd)
 	RootCmd.AddCommand(skillCmd)
 }
 
-func getSkillPath(which string) string {
+func getSkillPath() string {
 	home, _ := os.UserHomeDir()
-	if which == "claude" {
-		return filepath.Join(home, ".claude", "skills", "vmake")
-	}
 	return filepath.Join(home, ".agents", "skills", "vmake")
 }
 
 func installSkill(projectPath string) {
-	targets := []string{getSkillPath("claude"), getSkillPath("agents")}
+	targets := []string{getSkillPath()}
 	if projectPath != "" {
-		targets = append(targets, filepath.Join(projectPath, ".claude", "skills", "vmake"))
+		targets = append(targets, filepath.Join(projectPath, ".agents", "skills", "vmake"))
 	}
 
 	wasInstalled := isAlreadyInstalled(targets)
@@ -108,7 +104,7 @@ func installSkill(projectPath string) {
 }
 
 func uninstallSkill() {
-	targets := []string{getSkillPath("claude"), getSkillPath("agents")}
+	targets := []string{getSkillPath()}
 	for _, target := range targets {
 		if err := fs.RemoveAll(target); err != nil {
 			fatalMsg("Failed to uninstall skill: %v", err)

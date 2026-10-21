@@ -57,7 +57,7 @@ vmake skill install
 ```
 
 使用 `--project` 或 `-p` 参数可将 Skill 额外安装到指定目录下的
-`.claude/skills/vmake/`。参数按给定路径原样拼接，不会向上查找项目根；
+`.agents/skills/vmake/`。参数按给定路径原样拼接，不会向上查找项目根；
 `--project .` 表示当前目录：
 
 ```bash
@@ -65,8 +65,7 @@ vmake skill install --project .
 ```
 
 全局安装位置（每次安装都会写入）：
-- `~/.claude/skills/vmake/` — Claude Code
-- `~/.agents/skills/vmake/` — OpenCode
+- `~/.agents/skills/vmake/` — 支持 `.agents` 标准的 AI 编码助手（Claude Code、OpenCode 等）
 
 包含内容：
 - `SKILL.md` — 核心指南（构建阶段、决策树、API 速查、RTOS 支持）

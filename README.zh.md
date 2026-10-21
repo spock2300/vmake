@@ -376,7 +376,7 @@ vmake completion <shell>                              # 输出补全脚本 (bash
 vmake completion install [--shell bash|zsh|fish]      # 自动安装补全（PowerShell 无自动安装器）
 vmake update [version]                                # 自我更新
 vmake version                                         # 版本信息
-vmake skill install [--project <dir>]                 # 安装 AI 技能（同时安装到 <dir>/.claude/skills）
+vmake skill install [--project <dir>]                 # 安装 AI 技能（同时安装到 <dir>/.agents/skills）
 vmake skill uninstall                                 # 卸载 AI 技能
 vmake skill path                                      # 显示安装路径
 ```
