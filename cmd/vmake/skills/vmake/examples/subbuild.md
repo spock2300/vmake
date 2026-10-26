@@ -23,7 +23,9 @@ func Main(p *api.Package) {
     p.OnBuild(func(ctx *api.BuildContext) {
         ctx.BuildSubGraph("tools")
 
-        os.MkdirAll("output", 0755)
+        if !p.DryRun() {
+            os.MkdirAll("output", 0755)
+        }
         ctx.Exec(ctx.DepOutput("tools:codegen"), "output/generated.h")
 
         ctx.Target("app").

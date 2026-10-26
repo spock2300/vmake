@@ -10,7 +10,9 @@ func Main(p *api.Package) {
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.BuildSubGraph("t15gen")
 
-		os.MkdirAll("include", 0755)
+		if !p.DryRun() {
+			os.MkdirAll("include", 0755)
+		}
 		ctx.Exec(ctx.DepOutput("t15gen:gen"), "include/subgen.h")
 
 		ctx.Target("sublib").
