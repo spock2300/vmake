@@ -199,6 +199,79 @@ func Main(p *api.Package) {
 	}
 }
 
+func TestInspectNoTargetsReportsMissingSources(t *testing.T) {
+	project := writeQueryMissingSourceProject(t)
+	stdout, stderr, code := runInspectCommand(t, project, "inspect", "--no-targets")
+	if code != 0 {
+		t.Fatalf("inspect --no-targets exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	found := false
+	for _, diagnostic := range envelope.Diagnostics {
+		if diagnostic.Code == "VMAKE_W_SOURCE_MISSING" && diagnostic.Package == "lib" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("diagnostics = %+v, want VMAKE_W_SOURCE_MISSING for lib", envelope.Diagnostics)
+	}
+	lib := inspectPackageNamed(t, envelope.Data, "lib")
+	if len(lib.Targets) != 0 {
+		t.Fatalf("targets = %+v, want none", lib.Targets)
+	}
+	if !strings.Contains(stderr, "Warning: package lib source is not materialized") {
+		t.Fatalf("stderr = %q, want source-missing warning", stderr)
+	}
+}
+
+func TestInspectLocalOptionShadowsGlobalName(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).AddDeps("lib:lib")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "lib", "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.Option("mode").SetType(api.OptionChoice).SetValues("a", "b").SetDefault("a")
+	})
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("lib").SetKind(api.TargetStatic)
+	})
+}
+`)
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	lib := inspectPackageNamed(t, envelope.Data, "lib")
+	if got := lib.Options["mode"]; got != "a" {
+		t.Fatalf("lib option mode = %v, want local default a", got)
+	}
+	if def := lib.OptionDefs["mode"].Default; def != "a" {
+		t.Fatalf("lib optionDefs mode default = %v, want a", def)
+	}
+}
+
 func TestInspectProjectModel(t *testing.T) {
 	project := writeInspectProject(t, t.TempDir())
 

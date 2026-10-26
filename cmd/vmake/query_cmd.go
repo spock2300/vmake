@@ -122,12 +122,7 @@ func runQueryConfig(cmd *cobra.Command, args []string) {
 	maps.Copy(opts, ctx.AllOptions[name])
 
 	globalValues := config.BuildGlobalValues(ctx.Config)
-	entry := config.GetEntry(ctx.Config, name)
-	vals := maps.Clone(globalValues)
-	if vals == nil {
-		vals = make(map[string]any)
-	}
-	maps.Copy(vals, entry.Options)
+	vals := packageConfigValues(ctx, name, globalValues)
 
 	if s := formatOptions(ctx, name, globalValues); s != "" {
 		fmt.Println(s)

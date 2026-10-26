@@ -571,23 +571,6 @@ func inspectSourceStates(ctx *RuntimeContext, inspection *pipeline.Inspection) m
 	return states
 }
 
-func inspectSourceDiagnostics(ctx *RuntimeContext, inspection *pipeline.Inspection) []inspectDiagnostic {
-	states := inspectSourceStates(ctx, inspection)
-	diagnostics := make([]inspectDiagnostic, 0)
-	for _, name := range inspectPackageNames(ctx) {
-		if diagnostic := states[name].Diagnostic; diagnostic != nil {
-			diagnostics = append(diagnostics, *diagnostic)
-		}
-	}
-	return diagnostics
-}
-
-func printInspectSourceWarnings(ctx *RuntimeContext, inspection *pipeline.Inspection) {
-	for _, diagnostic := range inspectSourceDiagnostics(ctx, inspection) {
-		fmt.Fprintf(os.Stderr, "Warning: %s\n", diagnostic.Message)
-	}
-}
-
 func inspectSourcePresent(ctx *RuntimeContext, name string, node *resolver.PackageNode) bool {
 	return inspectSourceTreePopulated(inspectExpectedSourceDir(ctx, name, node))
 }
@@ -742,10 +725,31 @@ func inspectPackageOptions(ctx *RuntimeContext, name string, inspection *pipelin
 }
 
 func packageConfigAccessor(ctx *RuntimeContext, name string, globalValues map[string]any) api.ConfigAccessor {
-	entry := config.GetEntry(ctx.Config, name)
-	acc := api.NewConfigAccessor(maps.Clone(entry.Options), maps.Clone(ctx.AllOptions[name]))
+	acc := api.NewConfigAccessor(packageConfigValues(ctx, name, globalValues), maps.Clone(ctx.AllOptions[name]))
 	acc.MergeGlobals(ctx.GlobalOptions, globalValues)
 	return acc
+}
+
+func packageConfigValues(ctx *RuntimeContext, name string, globalValues map[string]any) map[string]any {
+	opts := ctx.AllOptions[name]
+	values := maps.Clone(config.GetEntry(ctx.Config, name).Options)
+	if values == nil {
+		values = make(map[string]any)
+	}
+	for optName, opt := range opts {
+		if _, resolved := globalValues[optName]; resolved && opt.IsGlobal() {
+			continue
+		}
+		if _, exists := values[optName]; !exists && opt.Default() != nil {
+			values[optName] = opt.Default()
+		}
+	}
+	for optName, value := range globalValues {
+		if _, exists := values[optName]; !exists {
+			values[optName] = value
+		}
+	}
+	return values
 }
 
 func inspectOptionDefs(opts map[string]*api.Option) map[string]inspectOptionDef {

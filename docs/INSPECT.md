@@ -291,7 +291,7 @@ of these files.
 | `description` | string? | `SetDescription` value |
 | `toolchain` | string? | Per-package toolchain, present for needed packages |
 | `options` | object? | Declared options of this package with effective values (global declarations included); omitted when none |
-| `optionDefs` | array? | Declared package options `{name, type, default?, description?, values?, effective?}`, sorted by name; omitted when none |
+| `optionDefs` | object? | Declared package options keyed by option name with `{type, default?, description?, values?, group?}`; omitted when none |
 | `deps` | array | Package dependency names, sorted; always present |
 | `targets` | array? | Declared targets; present only for needed packages and omitted when the package declares none, its source tree is missing, or inspect runs with `--no-targets` |
 

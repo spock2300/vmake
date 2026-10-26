@@ -233,6 +233,17 @@ func Main(p *api.Package) {
 	})
 }
 `)
+	missingTargets, stderr, code := runInspectCommandWithState(t, project, state, "query", "targets")
+	if code != 0 {
+		t.Fatalf("query targets with missing remote source exit = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stderr, "Warning: package official/demo source is not materialized") {
+		t.Fatalf("query targets stderr = %q, want missing-source warning", stderr)
+	}
+	if strings.Contains(missingTargets, "official/demo:demo") {
+		t.Fatalf("query targets declared targets without a source tree:\n%s", missingTargets)
+	}
+
 	writeExtensionFile(t, filepath.Join(project, ".vmake_deps", "official", "demo", "src", "demo.c"), "int demo(void) { return 0; }\n")
 
 	inspected, stderr, code := runInspectCommandWithState(t, project, state, "inspect")
