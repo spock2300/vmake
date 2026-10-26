@@ -192,6 +192,7 @@ type Package struct {
 	generators                    []buildGenerator
 	onGenWrite                    func(string)
 	isRoot                        bool
+	chipProfile                   ChipProfile
 	providedLinkerScript          string
 	providedLinkerScriptFromBuild bool
 	buildRuntime                  *buildruntime.Budget
@@ -559,6 +560,25 @@ func (p *Package) SetRoot(v bool) *Package {
 }
 
 func (p *Package) IsRoot() bool { return p.isRoot }
+
+func (p *Package) SetChipProfile(profile ChipProfile) *Package {
+	profile.Name = strings.TrimSpace(profile.Name)
+	profile.PreferredToolchain = strings.TrimSpace(profile.PreferredToolchain)
+	profile.TargetOS = strings.TrimSpace(profile.TargetOS)
+	profile.TargetTriple = strings.TrimSpace(profile.TargetTriple)
+	if profile.Name == "" {
+		fatalScript(p.FullName(), "SetChipProfile", "chip name must not be empty")
+	}
+	p.chipProfile = profile
+	return p
+}
+
+func (p *Package) ChipProfile() (ChipProfile, bool) {
+	if p.chipProfile.Name == "" {
+		return ChipProfile{}, false
+	}
+	return p.chipProfile, true
+}
 
 func (p *Package) SetGenConfigHeader(v bool) *Package { p.genConfigHdr = v; return p }
 func (p *Package) GenConfigHeader() bool              { return p.genConfigHdr }

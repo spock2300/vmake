@@ -58,7 +58,7 @@ func runConfig(cmd *cobra.Command, args []string) {
 
 	globalValues := config.BuildGlobalValues(ctx.Config)
 
-	currentTC := pipeline.ResolveToolchainName(ctx.Config, "")
+	currentTC := pipeline.ResolveToolchainName(ctx.Config, "", ctx.PreferredToolchain)
 
 	var sources []buildscript.Source
 	localPkgs := make(map[string]bool)
@@ -82,7 +82,7 @@ func runConfig(cmd *cobra.Command, args []string) {
 	}
 
 	ctx.Resolver.Close()
-	result, err := tui.Run(sources, deps, ctx.AllOptions, values, ctx.WorkDir, currentTC, ctx.GlobalOptions, globalValues, ctx.AllKConfigs, ctx.Config.Description, pipeline.ToolchainTargetDefaults)
+	result, err := tui.Run(sources, deps, ctx.AllOptions, values, ctx.WorkDir, currentTC, ctx.GlobalOptions, globalValues, ctx.ChipProfiles, ctx.AllKConfigs, ctx.Config.Description, pipeline.ToolchainTargetDefaults)
 	fatalErr(err)
 
 	if !result.Saved {
@@ -141,20 +141,32 @@ func saveConfigResult(ctx *RuntimeContext, result *tui.ConfigResult) error {
 	if ctx.Config.Global == nil {
 		ctx.Config.Global = &config.GlobalConfig{Options: make(map[string]any)}
 	}
-	ctx.Config.Global.Toolchain = result.Toolchain
+	if ctx.Config.Global.Options == nil {
+		ctx.Config.Global.Options = make(map[string]any)
+	}
+	if result.DerivedGlobals[api.ToolchainOptionName] {
+		ctx.Config.Global.Toolchain = ""
+	} else {
+		ctx.Config.Global.Toolchain = result.Toolchain
+	}
+	for name := range result.DerivedGlobals {
+		if name == api.TargetOSOptionName || name == api.TargetTripleOptionName {
+			delete(ctx.Config.Global.Options, name)
+		}
+	}
 
 	for k, v := range result.GlobalValues {
-		if k == "toolchain" {
+		if k == api.ToolchainOptionName {
 			continue
 		}
-		if k == "mode" {
+		if result.DerivedGlobals[k] {
+			continue
+		}
+		if k == api.ModeOptionName {
 			if s, ok := v.(string); ok {
 				ctx.Config.Global.Mode = s
 			}
 		} else {
-			if ctx.Config.Global.Options == nil {
-				ctx.Config.Global.Options = make(map[string]any)
-			}
 			ctx.Config.Global.Options[k] = v
 		}
 	}

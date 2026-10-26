@@ -81,13 +81,20 @@ func RunBuild(ctx *RuntimeContext, opts BuildOptions) (_ *BuildResult, err error
 		opts.Jobs = runtime.NumCPU()
 	}
 
+	needed, err := filterAndCollectNeeded(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := resolveActiveChip(ctx, needed); err != nil {
+		return nil, err
+	}
 	cfg, err := resolveBuildConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
 	rc := newRunContext(ctx, opts, cfg)
 
-	conf, err := prepareConfig(rc)
+	conf, err := prepareConfig(rc, needed)
 	if err != nil {
 		return nil, err
 	}
@@ -112,13 +119,20 @@ func RunBuild(ctx *RuntimeContext, opts BuildOptions) (_ *BuildResult, err error
 
 func UpdateLock(ctx *RuntimeContext) (err error) {
 	defer scriptcall.Recover(&err)
+	needed, err := filterAndCollectNeeded(ctx)
+	if err != nil {
+		return err
+	}
+	if err := resolveActiveChip(ctx, needed); err != nil {
+		return err
+	}
 	cfg, err := resolveExistingBuildConfig(ctx)
 	if err != nil {
 		return err
 	}
 	rc := newRunContext(ctx, BuildOptions{}, cfg)
 
-	conf, err := prepareConfig(rc)
+	conf, err := prepareConfig(rc, needed)
 	if err != nil {
 		return err
 	}
@@ -144,11 +158,7 @@ func newSourceStage(rc *runContext, cfg *configStage) *sourceStage {
 	}
 }
 
-func prepareConfig(rc *runContext) (*configStage, error) {
-	needed, err := filterAndCollectNeeded(rc.ctx)
-	if err != nil {
-		return nil, err
-	}
+func prepareConfig(rc *runContext, needed map[string]bool) (*configStage, error) {
 	if err := acquireStorageOwners(rc.ctx, needed); err != nil {
 		return nil, err
 	}

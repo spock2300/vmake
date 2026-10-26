@@ -178,16 +178,9 @@ func applyAllConfigCallbacks(ctx *RuntimeContext) {
 			ctx.BufferedGlobalFlags[name] = buf
 		}
 
-		entry := config.GetEntry(ctx.Config, name)
 		applyCtx := api.NewConfigContextWithPackage(name, node.Pkg)
 		applyCtx.SetOptions(opts)
-		applyVals := make(map[string]any, len(entry.Options)+len(globalVals))
-		for optName, val := range globalVals {
-			if opt, declared := opts[optName]; declared && opt.IsGlobal() {
-				applyVals[optName] = val
-			}
-		}
-		mergePkgOptions(applyVals, entry.Options, opts, globalVals)
+		applyVals := packageConfigValuesWithGlobals(ctx, name, globalVals)
 		applyCtx.SetCfgVals(applyVals)
 		bindGlobalFlagCallbacks(applyCtx, buf)
 
@@ -210,6 +203,22 @@ func applyAllConfigCallbacks(ctx *RuntimeContext) {
 			api.RunScriptSafe(name, func() { opt.OnApply()(applyCtx, val) })
 		}
 	}
+}
+
+func packageConfigValuesWithGlobals(ctx *RuntimeContext, name string, globalVals map[string]any) map[string]any {
+	if ctx == nil || ctx.Config == nil {
+		return nil
+	}
+	opts := ctx.AllOptions[name]
+	entry := config.GetEntry(ctx.Config, name)
+	values := make(map[string]any, len(entry.Options)+len(globalVals))
+	for optName, val := range globalVals {
+		if opt, declared := opts[optName]; declared && opt.IsGlobal() {
+			values[optName] = val
+		}
+	}
+	mergePkgOptions(values, entry.Options, opts, globalVals)
+	return values
 }
 
 func applyGlobalFlagsFromNeeded(ctx *RuntimeContext, needed map[string]bool) {
@@ -306,7 +315,7 @@ func mergeGlobalOptions(ctx *RuntimeContext) error {
 func updateGlobalMacroDefines(ctx *RuntimeContext) error {
 	values := config.BuildGlobalValues(ctx.Config)
 	values[api.ModeOptionName] = ResolveMode(ctx.Config, ctx.ModeOverride)
-	values[api.ToolchainOptionName] = ResolveToolchainName(ctx.Config, ctx.ToolchainOverride)
+	values[api.ToolchainOptionName] = ResolveToolchainName(ctx.Config, ctx.ToolchainOverride, ctx.PreferredToolchain)
 	defines, err := collectGlobalMacroDefines(ctx.GlobalOptions, values)
 	if err != nil {
 		return fmt.Errorf("global option macro export: %w", err)
@@ -322,9 +331,13 @@ func runConfigPhase(ctx *RuntimeContext) error {
 	if err := collectAllOptionsAndKConfigs(ctx); err != nil {
 		return err
 	}
+	if err := collectChipProfiles(ctx); err != nil {
+		return err
+	}
 	if err := mergeGlobalOptions(ctx); err != nil {
 		return err
 	}
+	extendChipChoice(ctx)
 	if ctx.OnOptionsCollected != nil {
 		if err := ctx.OnOptionsCollected(ctx); err != nil {
 			return err
@@ -352,12 +365,15 @@ func ResolveMode(cfg *config.ConfigFile, flagValue string) string {
 	return resolveWithDefault(flagValue, configMode, api.ModeDebug)
 }
 
-func ResolveToolchainName(cfg *config.ConfigFile, flagValue string) string {
+func ResolveToolchainName(cfg *config.ConfigFile, flagValue, fallback string) string {
 	var configTC string
-	if cfg.Global != nil {
+	if cfg != nil && cfg.Global != nil {
 		configTC = cfg.Global.Toolchain
 	}
-	return resolveWithDefault(flagValue, configTC, toolchain.GetManager().GetDefaultToolchain())
+	if fallback == "" {
+		fallback = toolchain.GetManager().GetDefaultToolchain()
+	}
+	return resolveWithDefault(flagValue, configTC, fallback)
 }
 
 func resolvePkgToolchain(cfg *config.ConfigFile, pkgName, defaultTc string) string {
@@ -368,12 +384,12 @@ func resolvePkgToolchain(cfg *config.ConfigFile, pkgName, defaultTc string) stri
 	return defaultTc
 }
 
-func GetToolchain(cfg *config.ConfigFile, toolchainFlag string) (*toolchain.Toolchain, string, error) {
+func GetToolchain(cfg *config.ConfigFile, toolchainFlag, fallback string) (*toolchain.Toolchain, string, error) {
 	mgr := toolchain.GetManager()
-	tcName := ResolveToolchainName(cfg, toolchainFlag)
+	tcName := ResolveToolchainName(cfg, toolchainFlag, fallback)
 	tc, err := mgr.SelectToolchain(tcName)
 	if err != nil {
-		return nil, "", err
+		return nil, tcName, err
 	}
 	return tc, tcName, nil
 }

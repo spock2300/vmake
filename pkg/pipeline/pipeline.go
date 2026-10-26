@@ -32,6 +32,9 @@ type RuntimeContext struct {
 	DepGraph            *resolver.Graph
 	AllOptions          map[string]map[string]*api.Option
 	AllKConfigs         map[string][]*api.KConfigEntry
+	ChipProfiles        map[string]api.ChipProfile
+	ChipProfile         api.ChipProfile
+	PreferredToolchain  string
 	GlobalOptions       map[string]*api.Option
 	Resolver            *resolver.Resolver
 	BufferedGlobalFlags map[string]*packageGlobalFlags

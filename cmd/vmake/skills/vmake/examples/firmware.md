@@ -399,7 +399,7 @@ See `examples/embedded-rtos.md` for the full post-link table and `SKILL.md - RTO
 
 ## Cross-Compiling
 
-The targets vmake compiles itself (`myapp`, plus any `AddFiles` target in a wrapper) follow the project platform. Declare it as global options and select the compiler with `--toolchain`:
+The targets vmake compiles itself (`myapp`, plus any `AddFiles` target in a wrapper) follow the project platform. An embedded chip package should declare its compiler and platform with `ctx.SetChipProfile(...)`; the active profile supplies the default toolchain and target values after `FilterDeps`. Declare project target options as global options when they must be visible/overridable, and use `--toolchain` for an explicit one-off override:
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {

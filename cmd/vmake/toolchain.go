@@ -14,7 +14,7 @@ import (
 var toolchainCmd = &cobra.Command{
 	Use:   "toolchain",
 	Short: "Show toolchain information",
-	Long:  `Show information about the default system toolchain.`,
+	Long:  `Show information about the built-in fallback system toolchain.`,
 }
 
 var toolchainListCmd = &cobra.Command{
@@ -28,7 +28,7 @@ var toolchainShowCmd = &cobra.Command{
 	Use:   "show [name]",
 	Short: "Show toolchain details",
 	Long: `Display detailed information about a specific toolchain.
-If no name is provided, shows the default toolchain (host).`,
+If no name is provided, shows the built-in fallback toolchain (host).`,
 	Run: runToolchainShow,
 }
 
@@ -53,7 +53,7 @@ func runToolchainList(cmd *cobra.Command, args []string) {
 	for name, tc := range toolchains {
 		mark := ""
 		if name == defaultTC {
-			mark = " (default)"
+			mark = " (built-in fallback)"
 		}
 		status := "installed"
 		if len(toolchain.ValidateToolchain(tc)) > 0 {

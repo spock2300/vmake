@@ -24,6 +24,12 @@ import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
     p.OnConfig(func(ctx *api.ConfigContext) {
+        ctx.SetChipProfile(api.ChipProfile{
+            Name:               "sim_v1",
+            PreferredToolchain: "arm-none-eabi",
+            TargetOS:           "none",
+            TargetTriple:       "arm-none-eabi",
+        })
         ctx.SetProvidedLinkerScript("linker/sim.ld")
     })
     p.OnBuild(func(ctx *api.BuildContext) {
@@ -37,6 +43,12 @@ attached to the package (not to a target) with `SetProvidedLinkerScript`. `AddDe
 in the firmware package expands to **all targets of `chip` plus all targets of every package
 `chip` depends on**, so the archive and public includes of a real HAL package arrive without
 listing each target.
+
+The `ChipProfile` makes the chip package the owner of the compiler and target defaults.
+Only chip packages required by the filtered build participate, so a repository may contain
+multiple chips with the same or different compilers. The TUI uses the project's `chip`
+choice to switch the toolchain and target preview; derived values are not written to
+`.vmake/config.json` unless the user changes them explicitly.
 
 ## Full HAL package (chip + driver sources)
 

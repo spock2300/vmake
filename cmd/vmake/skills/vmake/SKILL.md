@@ -72,8 +72,32 @@ vmake resolves compilers itself. Do not `export PATH`, `CC`, `CXX`, `AR`, or `LD
 Resolution order:
 
 1. A package config entry `entries.<pkg>.options.toolchain` for that package.
-2. `--toolchain <name>` or the project `toolchain` option.
-3. The built-in `host` toolchain.
+2. `--toolchain <name>`.
+3. The project `toolchain` option in the active configuration.
+4. The `PreferredToolchain` of the active chip profile after `FilterDeps`.
+5. The built-in `host` toolchain.
+
+An embedded project declares the chip profile in the chip package's `OnConfig`:
+
+```go
+ctx.SetChipProfile(api.ChipProfile{
+    Name:               "py32f539",
+    PreferredToolchain: "arm-none-eabi",
+    TargetOS:           "none",
+    TargetTriple:       "arm-none-eabi",
+})
+```
+
+The root package declares the global `chip` choice; vmake appends profile
+names to it but does not create it. Only local chip packages in the filtered
+build participate; unused chips do not conflict. The TUI's `chip` choice
+switches the toolchain and target preview, and derived values are not pinned
+into `.vmake/config.json`. Explicit configuration still wins.
+
+`FilterDeps` can read the configured values of global options that the package
+declares, so the root's `OnRequire` can use `ctx.When(api.ChipOptionName, ...)`
+or `ctx.Select(api.ChipOptionName, ...)` to select boards and chip-specific
+packages.
 
 How the selected toolchain resolves its tools:
 
@@ -151,7 +175,7 @@ The high-level phases are listed below. During script loading, each package runs
 1. **`OnPackage`** — git URL (`SetGit`), patches (`AddPatches`), Kconfig metadata.
 2. **`OnRequire` (Discovery pass)** — eager dependency discovery before config values exist (`When`/`WhenNot`/`WhenAny` return `true`).
 3. **`OnConfig` + `SetOnApply`** — declare options, load `.vmake/<active>.json`, run `SetOnApply` callbacks for resolved packages (option names sorted within each package). Buffered global C/CXX/LD flags and links from packages later pruned by `FilterDeps` are filtered out; global-option macros are collected before `FilterDeps` and are not filtered.
-4. **`FilterDeps` (`OnRequire` re-run)** — prune unreachable conditional dependencies using resolved entry option values.
+4. **`FilterDeps` (`OnRequire` re-run)** — prune unreachable conditional dependencies using resolved entry option values and the configured values of global options the package declares.
 5. **Source Preparation** — fetch/checkout git sources, write `.vmake/vmake.lock`, apply git patches, restore Kconfig `.config` files.
 6. **`OnBuild`** — declare targets; scheduler executes targets serially in topological dependency order with parallel C/C++ compilation within each target.
 7. **`OnInstall`** — only with `--install`: register extra install entries/filters/prefix (declaration only; no copying). After the callbacks, the installer copies target outputs and registered items into `install/` and writes `install/manifest.json`, reusing `BuildContext`s without replaying `OnBuild`.
@@ -258,7 +282,7 @@ Local subdirectories containing `build.go` use their directory basename (`"spi"`
    - `ctx.WhenAny(opt, val1, val2, ...)` — equals any of `vals` (returns `true` during discovery)
    - `ctx.If(opt, then...)` — returns `then` during discovery, or when bool `opt` is true
    - `ctx.Select(opt, map)` — returns all mapped values during discovery, or the active choice's mapped value in `FilterDeps`/`OnBuild` (pass directly to `AddRequires` / `AddDeps` / `AddCFlags`)
-2. **FilterDeps (Phase 2)**: Runs after `OnConfig`/`SetOnApply` with this package's resolved entry option values so unselected dependency branches are pruned before source materialization and build.
+2. **FilterDeps (Phase 2)**: Runs after `OnConfig`/`SetOnApply` with this package's resolved entry option values (and configured values of its declared global options) so unselected dependency branches are pruned before source materialization and build.
 
 ## Option & Conditional
 
@@ -329,7 +353,7 @@ vmake config --set toolchain=arm-gcc --set target_os=none --set target_triple=ar
 vmake build
 ```
 
-`target_os`/`target_triple` are project-declared global options, not built-in like `mode`/`toolchain`; `--set` fails unless the project declares them in `OnConfig` (toolchain defaults still fill unset values). `--toolchain <name>` on `build`/`test` overrides the selection for one invocation.
+`target_os`/`target_triple` are project-declared global options, not built-in like `mode`/`toolchain`; `--set` fails unless the project declares them in `OnConfig` (a chip profile's target defaults and the toolchain defaults still fill unset values). `--toolchain <name>` on `build`/`test` overrides the selection for one invocation.
 
 Inspect `p.TargetOS()` and `p.TargetTriple()` in `OnBuild` when platform-specific files or flags are needed.
 

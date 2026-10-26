@@ -52,6 +52,42 @@ func TestLoadBuildScript_Simple(t *testing.T) {
 	}
 }
 
+func TestLoadBuildScriptChipProfile(t *testing.T) {
+	dir := t.TempDir()
+	script := `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+    p.OnConfig(func(ctx *api.ConfigContext) {
+        ctx.SetChipProfile(api.ChipProfile{
+            Name: "chip-a",
+            PreferredToolchain: "tc-a",
+            TargetOS: "none",
+            TargetTriple: "triple-a",
+        })
+    })
+}
+`
+	path := filepath.Join(dir, "build.go")
+	if err := os.WriteFile(path, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	src := Source{Name: "chip", Path: path, Dir: dir, Origin: api.SourceLocal}
+	pkg, err := LoadBuildScript(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfgCtx := api.NewConfigContextWithPackage("chip", pkg)
+	pkg.ExecConfigFuncs(dir, func(fn api.ConfigFunc) { fn(cfgCtx) })
+	profile, ok := pkg.ChipProfile()
+	if !ok {
+		t.Fatal("chip profile not recorded")
+	}
+	if profile.Name != "chip-a" || profile.PreferredToolchain != "tc-a" ||
+		profile.TargetOS != "none" || profile.TargetTriple != "triple-a" {
+		t.Fatalf("chip profile = %+v", profile)
+	}
+}
+
 func TestRuntimeFilesystemUsesPackageWorkspace(t *testing.T) {
 	seed, workspace := t.TempDir(), t.TempDir()
 	script := `package main

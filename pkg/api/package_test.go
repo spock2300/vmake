@@ -258,6 +258,27 @@ func TestPackageSrcDirFallback(t *testing.T) {
 	}
 }
 
+func TestPackageChipProfile(t *testing.T) {
+	p := NewPackage()
+	if _, ok := p.ChipProfile(); ok {
+		t.Fatal("empty package should have no chip profile")
+	}
+	p.SetChipProfile(ChipProfile{
+		Name:               " chip-a ",
+		PreferredToolchain: " tc-a ",
+		TargetOS:           " none ",
+		TargetTriple:       " triple-a ",
+	})
+	profile, ok := p.ChipProfile()
+	if !ok {
+		t.Fatal("chip profile missing")
+	}
+	if profile.Name != "chip-a" || profile.PreferredToolchain != "tc-a" ||
+		profile.TargetOS != "none" || profile.TargetTriple != "triple-a" {
+		t.Fatalf("profile = %+v", profile)
+	}
+}
+
 func TestPackageRoot(t *testing.T) {
 	p := NewPackage()
 	if p.IsRoot() {

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,13 +19,14 @@ import (
 )
 
 type ConfigResult struct {
-	Saved         bool
-	Description   string
-	Values        map[string]map[string]any
-	Toolchain     string
-	GlobalValues  map[string]any
-	MenuconfigRan map[string]bool
-	PresetValues  map[string]string
+	Saved          bool
+	Description    string
+	Values         map[string]map[string]any
+	Toolchain      string
+	GlobalValues   map[string]any
+	DerivedGlobals map[string]bool
+	MenuconfigRan  map[string]bool
+	PresetValues   map[string]string
 }
 
 func Run(
@@ -36,6 +38,7 @@ func Run(
 	currentToolchain string,
 	globalOptions map[string]*api.Option,
 	globalValues map[string]any,
+	chipProfiles map[string]api.ChipProfile,
 	kconfigs map[string][]*api.KConfigEntry,
 	description string,
 	displayDefaults func(toolchain string) map[string]any,
@@ -49,6 +52,7 @@ func Run(
 		currentToolchain: currentToolchain,
 		globalOptions:    globalOptions,
 		globalValues:     globalValues,
+		chipProfiles:     chipProfiles,
 		kconfigs:         kconfigs,
 		description:      description,
 		displayDefaults:  displayDefaults,
@@ -62,13 +66,14 @@ func Run(
 
 func (m *Model) result() *ConfigResult {
 	return &ConfigResult{
-		Saved:         m.saved,
-		Description:   m.description,
-		Values:        m.values,
-		Toolchain:     getToolchainValue(m.globalValues),
-		GlobalValues:  m.globalValues,
-		MenuconfigRan: m.menuconfigRan,
-		PresetValues:  m.presetValues,
+		Saved:          m.saved,
+		Description:    m.description,
+		Values:         m.values,
+		Toolchain:      getToolchainValue(m.globalValues),
+		GlobalValues:   m.globalValues,
+		DerivedGlobals: maps.Clone(m.derivedGlobals),
+		MenuconfigRan:  m.menuconfigRan,
+		PresetValues:   m.presetValues,
 	}
 }
 

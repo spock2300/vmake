@@ -16,7 +16,7 @@ func resolveBuildConfig(ctx *RuntimeContext) (*buildConfig, error) {
 	if _, err := ProjectPlatform(ctx); err != nil {
 		return nil, err
 	}
-	tc, tcName, err := GetToolchain(ctx.Config, ctx.ToolchainOverride)
+	tc, tcName, err := GetToolchain(ctx.Config, ctx.ToolchainOverride, ctx.PreferredToolchain)
 	if err != nil {
 		return nil, err
 	}
@@ -29,6 +29,9 @@ func makeBuildConfig(ctx *RuntimeContext, tc *toolchain.Toolchain, tcName string
 	globalValues[api.ModeOptionName] = mode
 	globalValues[api.ToolchainOptionName] = tcName
 	platformValues := maps.Clone(globalValues)
+	if ctx.ChipProfile.Name != "" && chipTargetsApply(ctx.ChipProfile, tcName) {
+		fillTargetDefaults(platformValues, ctx.ChipProfile.TargetOS, ctx.ChipProfile.TargetTriple)
+	}
 	fillTargetDefaults(platformValues, tc.TargetOS, tc.TargetTriple)
 
 	return &buildConfig{
@@ -64,15 +67,16 @@ func filterDependencies(ctx *RuntimeContext, log bool) error {
 	if ctx == nil || ctx.DepGraph == nil || ctx.Resolver == nil || ctx.DepGraph.IsFrozen() {
 		return nil
 	}
+	var globalVals map[string]any
+	if ctx.Config != nil {
+		globalVals = config.BuildGlobalValues(ctx.Config)
+	}
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if node == nil || node.Pkg == nil {
 			continue
 		}
-		var options map[string]any
-		if ctx.Config != nil {
-			options = config.GetEntry(ctx.Config, name).Options
-		}
+		options := packageConfigValuesWithGlobals(ctx, name, globalVals)
 		if err := ctx.Resolver.FilterDeps(name, options, ctx.AllOptions[name]); err != nil {
 			return fmt.Errorf("%s: filter deps: %w", name, err)
 		}

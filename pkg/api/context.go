@@ -122,6 +122,14 @@ func (ctx *ConfigContext) SetDefaultVisibilityHidden() *ConfigContext {
 	return ctx
 }
 
+func (ctx *ConfigContext) SetChipProfile(profile ChipProfile) *ConfigContext {
+	if ctx.pkg == nil {
+		fatalScript(ctx.PackageName(), "SetChipProfile", "no package associated with context")
+	}
+	ctx.pkg.SetChipProfile(profile)
+	return ctx
+}
+
 func (ctx *ConfigContext) SetProvidedLinkerScript(path string) *ConfigContext {
 	if ctx.pkg != nil {
 		ctx.pkg.SetProvidedLinkerScript(path)

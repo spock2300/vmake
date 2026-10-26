@@ -6,6 +6,7 @@ func YaegiSymbols() map[string]reflect.Value {
 	return map[string]reflect.Value{
 		"Package":                reflect.ValueOf((*Package)(nil)),
 		"Platform":               reflect.ValueOf((*Platform)(nil)),
+		"ChipProfile":            reflect.ValueOf((*ChipProfile)(nil)),
 		"DefaultFlags":           reflect.ValueOf((*DefaultFlags)(nil)),
 		"DefaultBuildFlags":      reflect.ValueOf(DefaultBuildFlags),
 		"TargetOSOptionName":     reflect.ValueOf(TargetOSOptionName),
@@ -97,6 +98,7 @@ func YaegiSymbols() map[string]reflect.Value {
 		"SourceRemote":        reflect.ValueOf(SourceRemote),
 		"ModeOptionName":      reflect.ValueOf(ModeOptionName),
 		"ToolchainOptionName": reflect.ValueOf(ToolchainOptionName),
+		"ChipOptionName":      reflect.ValueOf(ChipOptionName),
 		"BuildDirToken":       reflect.ValueOf(BuildDirToken),
 		"ModeDebug":           reflect.ValueOf(ModeDebug),
 		"ModeRelease":         reflect.ValueOf(ModeRelease),

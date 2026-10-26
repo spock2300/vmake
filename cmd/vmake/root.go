@@ -251,6 +251,7 @@ func resolveToConfigContext(execution context.Context, ignoreLock bool) (*Runtim
 		}
 		return nil, err
 	}
+	pipeline.ResolveActiveChipForDisplay(ctx)
 	return ctx, nil
 }
 
@@ -283,6 +284,7 @@ func resolveToConfigBestEffort(ignoreLock bool) (*RuntimeContext, bool) {
 		return ctx, false
 	}
 	fatalErr(pipeline.Configure(ctx))
+	pipeline.ResolveActiveChipForDisplay(ctx)
 	return ctx, true
 }
 

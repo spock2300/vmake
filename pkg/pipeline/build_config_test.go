@@ -312,18 +312,23 @@ func TestResolveModePrecedence(t *testing.T) {
 
 func TestResolveToolchainNamePrecedence(t *testing.T) {
 	cfg := &config.ConfigFile{Global: &config.GlobalConfig{Toolchain: "arm-gcc"}}
-	got := ResolveToolchainName(cfg, "explicit-tc")
+	got := ResolveToolchainName(cfg, "explicit-tc", "")
 	if got != "explicit-tc" {
 		t.Errorf("flag should win: got %q", got)
 	}
 
-	got = ResolveToolchainName(cfg, "")
+	got = ResolveToolchainName(cfg, "", "")
 	if got != "arm-gcc" {
 		t.Errorf("config should be fallback: got %q", got)
 	}
 
 	cfg.Global.Toolchain = ""
-	got = ResolveToolchainName(cfg, "")
+	got = ResolveToolchainName(cfg, "", "chip-tc")
+	if got != "chip-tc" {
+		t.Errorf("chip fallback should be used: got %q", got)
+	}
+
+	got = ResolveToolchainName(cfg, "", "")
 	if got != "host" {
 		t.Errorf("default should be host: got %q", got)
 	}

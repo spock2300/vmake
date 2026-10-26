@@ -328,7 +328,7 @@ func fileDigest(path string) (string, int64, error) {
 
 func (r *buildReport) bind(ctx *RuntimeContext) error {
 	r.ConfigFile, r.ConfigSHA256 = filepath.Base(ctx.ConfigPath), ctx.ConfigDigest
-	r.Toolchain = pipeline.ResolveToolchainName(ctx.Config, ctx.ToolchainOverride)
+	r.Toolchain = pipeline.ResolveToolchainName(ctx.Config, ctx.ToolchainOverride, ctx.PreferredToolchain)
 	r.Mode = pipeline.ResolveMode(ctx.Config, ctx.ModeOverride)
 	r.Global = effectiveGlobalValues(ctx)
 	r.Global[api.ModeOptionName] = r.Mode

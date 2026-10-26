@@ -40,7 +40,7 @@ but may become errors in future vmake versions:
 
 func init() {
 	RootCmd.AddCommand(doctorCmd)
-	doctorCmd.Flags().StringVar(&toolchainFlag, "toolchain", "", "toolchain to diagnose (default: project selection)")
+	doctorCmd.Flags().StringVar(&toolchainFlag, "toolchain", "", "toolchain to diagnose (default: active config, or host when unset)")
 	doctorCmd.RegisterFlagCompletionFunc("toolchain", completeToolchain)
 }
 
@@ -65,7 +65,7 @@ func runDoctor() {
 	if err != nil {
 		vlog.Fatal("load project config: %v", err)
 	}
-	tcName := pipeline.ResolveToolchainName(cfg, toolchainFlag)
+	tcName := pipeline.ResolveToolchainName(cfg, toolchainFlag, "")
 	tc, tcErr := toolchain.GetManager().GetToolchain(tcName)
 	findings := checkPlatform(tc)
 	if tcErr != nil {

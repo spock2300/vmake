@@ -73,6 +73,7 @@ Import: `github.com/spock2300/vmake/pkg/api`
 | `SetImportConfigs` | `(names []string)` | Set imported config package names |
 | `SetDryRun` | `(v bool)` | Dry run mode |
 | `SetRoot` | `(v bool)` | Mark as root package |
+| `SetChipProfile` | `(profile ChipProfile) *Package` | Declare the chip name, preferred toolchain, and target defaults |
 | `SetGlobalFlags` | `(cflags, cxxflags, ldflags, links []string)` | Set global compiler/linker flags |
 | `SetCMakeBuildDir` | `(dir string) *Package` | Set CMake build directory; relative to BuildDir unless absolute |
 | `SetCMakeInstallDir` | `(dir string) *Package` | Set CMake install prefix; relative to BuildDir unless absolute |
@@ -233,6 +234,7 @@ own build tree and publish the staged archive through the getter.
 | `GenConfigHeader()` | `bool` | Generated config header enabled |
 | `ImportConfigs()` | `[]string` | Imported config package names |
 | `IsRoot()` | `bool` | Whether marked as root package |
+| `ChipProfile()` | `(ChipProfile, bool)` | Declared chip profile |
 | `GlobalCFlags()` / `GlobalCxxFlags()` / `GlobalLdFlags()` / `GlobalLinks()` | `[]string` | Global flags |
 | `GetRef` | `(version string) string` | Git ref for a version |
 | `SelectVersion` | `(constraint string) (string, error)` | Best version match |
@@ -394,6 +396,7 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `PackageName() string` | Package name |
 | `KConfig(name) *KConfigEntry` | Create KConfig entry (single slot — a second call is a build error) |
 | `SetProvidedLinkerScript(path) *ConfigContext` | Declare linker script for consumers |
+| `SetChipProfile(profile ChipProfile) *ConfigContext` | Declare the chip profile on this package (usually a chip package's OnConfig) |
 | `AddGlobalCFlags(flags ...any)` | Add global C flags (`string`, `[]string` such as `ctx.If`/`ctx.Select`; effective in OnConfig and OnApply; only applied for packages that survive FilterDeps) |
 | `AddGlobalCxxFlags(flags ...any)` | Add global C++ flags (same) |
 | `AddGlobalDefines(defines ...any)` | Add `-D` preprocessor defines to both global C and C++ flags (same) |
@@ -547,12 +550,20 @@ Note: without `SetDefault`, the zero value applies (`false` for OptionBool, `""`
 
 	const TargetOSOptionName     = "target_os"
 	const TargetTripleOptionName = "target_triple"
+	const ChipOptionName         = "chip"
 	const BuildDirToken          = "$builddir"
 	const GroupGlobal            = "Global"
 
+	type ChipProfile struct {
+		Name               string
+		PreferredToolchain string
+		TargetOS           string
+		TargetTriple       string
+	}
+
 	var BuiltInGlobalOptions = map[string]*Option{...}
 
-Cross-compilation projects declare the platform through these global options; artifact names then follow the target OS (`TargetFilename`, `ExtFor`, `PrefixFor`). A toolchain may declare `target_os`/`target_triple` defaults in `toolchain.json`; precedence is package entry value → package-local non-global option default → project global config/default → toolchain default, and empty values count as unset:
+Cross-compilation projects declare the platform through these global options; artifact names then follow the target OS (`TargetFilename`, `ExtFor`, `PrefixFor`). A toolchain may declare `target_os`/`target_triple` defaults in `toolchain.json`; precedence is package entry value → package-local non-global option default → project global config/default → active chip profile → toolchain default, and empty values count as unset:
 
 ```go
 ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString)

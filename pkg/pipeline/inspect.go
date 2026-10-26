@@ -78,7 +78,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 			ctx.DepGraph.Freeze()
 		}
 	}
-	pre, err := prepareBuildPrelude(ctx)
+	pre, err := prepareBuildPrelude(ctx, opts.FilterDeps)
 	if err != nil {
 		return nil, err
 	}

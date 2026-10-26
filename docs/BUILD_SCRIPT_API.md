@@ -86,6 +86,8 @@ func (p *Package) SetName(name string) *Package          // 包名
 func (p *Package) SetScriptDir(dir string) *Package      // 构建脚本目录
 func (p *Package) SetCfgVals(vals map[string]any) *Package  // 设置配置值
 func (p *Package) SetGenConfigHeader(v bool) *Package    // 启用生成配置头文件
+func (p *Package) SetChipProfile(profile ChipProfile) *Package  // 声明芯片平台 profile
+func (p *Package) ChipProfile() (ChipProfile, bool)
 ```
 
 本地包也可通过 `SetGit` 选择外部源码。声明 `AddVersion` 映射时，按依赖约束选择版本并在 `.vmake/vmake.lock` 固定版本和提交；锁定版本的浅工作树已存在时可完全离线构建，工作树被删除后只要共享对象缓存仍保留该提交/引用也可从本地缓存重建，仅在缓存未命中或需要重新解析 ref 时才访问上游。`vmake lock update` 重新选择版本。没有版本映射时使用仓库 HEAD。项目目录保留，受管理的 `src` 链接指向项目内该包唯一的工作树（`.vmake_deps/local/<包名>/src`）。浅树只包含所选版本（`git fetch --unshallow` 可补全历史）。若 `src` 已是真实目录，构建会报错并保留该目录，需先由用户移开。
@@ -144,7 +146,7 @@ func (p *Package) LDFlags() string
 func (p *Package) Env() map[string]string
 ```
 
-`TargetTriple()` 返回本包解析后的 `target_triple`（例如 `arm-none-eabi`），`TargetOS()` 返回本包的目标系统。裸机使用 `none`，`target_os` 为空（或为 `host`）时取运行 vmake 的主机系统。两者按“包级配置值 → 包内声明的非全局 `target_os`/`target_triple` 选项默认值 → 全局配置值/项目全局选项默认值 → 所选工具链 `toolchain.json` 默认值”的顺序解析（空值落到下一级），因此包级默认值可以覆盖项目全局值，同一个编译器可服务不同目标：
+`TargetTriple()` 返回本包解析后的 `target_triple`（例如 `arm-none-eabi`），`TargetOS()` 返回本包的目标系统。裸机使用 `none`，`target_os` 为空（或为 `host`）时取运行 vmake 的主机系统。两者按“包级配置值 → 包内声明的非全局 `target_os`/`target_triple` 选项默认值 → 全局配置值/项目全局选项默认值 → 当前芯片 profile → 所选工具链 `toolchain.json` 默认值”的顺序解析（空值落到下一级），因此包级默认值可以覆盖项目全局值，同一个编译器可服务不同目标：
 
 ```go
 p.OnConfig(func(ctx *api.ConfigContext) {
@@ -293,7 +295,7 @@ func (p *Package) SelectVersionMulti(constraints []string) (string, error)  // �
 
 `ConfigAccessor` 被嵌入到 `Package`、`ConfigContext`、`BuildContext`、`InstallContext`、`CleanContext`、`RequireContext` 中，提供选项值读取和条件表达式。
 
-脚本上下文（Config/Build/Install/Clean/Require）的访问器是**严格的**：读取未声明的选项名、或用与选项类型不匹配的方法读取（如对 `OptionInt` 选项用 `Bool()`），会 fatal（panic `*BuildScriptError`）。`OnRequire` 的首次发现阶段选项值尚不可用，直接读取（`Bool()` 等）同样 fatal——请使用发现感知的 `ctx.When` / `ctx.WhenNot` / `ctx.WhenAny` / `ctx.If` / `ctx.Select`；`FilterDeps` 阶段的第二次 `OnRequire` 可以读取本包声明的选项（以及 `entries.<pkg>.options` 中的包级值）。`Package` 内嵌的访问器不启用严格检查。
+脚本上下文（Config/Build/Install/Clean/Require）的访问器是**严格的**：读取未声明的选项名、或用与选项类型不匹配的方法读取（如对 `OptionInt` 选项用 `Bool()`），会 fatal（panic `*BuildScriptError`）。`OnRequire` 的首次发现阶段选项值尚不可用，直接读取（`Bool()` 等）同样 fatal——请使用发现感知的 `ctx.When` / `ctx.WhenNot` / `ctx.WhenAny` / `ctx.If` / `ctx.Select`；`FilterDeps` 阶段的第二次 `OnRequire` 可以读取本包声明的选项、`entries.<pkg>.options` 中的包级值，以及本包声明为全局选项的 `global.options` 配置值。`Package` 内嵌的访问器不启用严格检查。
 
 ```go
 // 值读取（优先配置值，其次默认值）
@@ -352,6 +354,7 @@ func (ctx *ConfigContext) AddGlobalLdFlags(flags ...any)
 func (ctx *ConfigContext) AddGlobalLinks(links ...any)    // 添加全局链接库（原生链接；CMakeConfigure 不自动传递）
 func (ctx *ConfigContext) AddGlobalDefines(defines ...any) // 同时向全局 C 和 C++ 标志追加 -D<define>
 func (ctx *ConfigContext) SetDefaultVisibilityHidden() *ConfigContext  // 仅本包加 -fvisibility=hidden（C++ 另加 -fvisibility-inlines-hidden）
+func (ctx *ConfigContext) SetChipProfile(profile ChipProfile) *ConfigContext  // 声明芯片平台 profile（通常写在芯片包 OnConfig）
 
 // 依赖 Linker Script
 func (ctx *ConfigContext) SetProvidedLinkerScript(path string) *ConfigContext
@@ -965,7 +968,44 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 })
 ```
 
-声明这两个选项用于在 TUI/`vmake config --set` 中可见和可覆盖，值本身可以留空：工具链 `toolchain.json` 中的 `target_os` / `target_triple` 默认值会填补未设置的值。`target_os` 决定产物命名、链接策略和 CMake 的 `CMAKE_SYSTEM_NAME`（`target_os=none` 映射为 `Generic`），空值取运行 vmake 的主机系统；`target_triple` 提供 `Configure` 的 `--host=` 与 `CMAKE_*_COMPILER_TARGET`。用户配置（`.vmake/` 当前生效配置文件的 `global.options` 或包级配置，默认文件为 `.vmake/config.json`）与项目声明的非空默认值均优先于工具链默认值。包内通过 `ctx.Option` 声明的非全局 `target_os`/`target_triple` 默认值优先于全局值（包级配置值仍最优先）；配置中的空字符串视为未设置，会落到下一级默认值，最终落到工具链默认值。
+声明这两个选项用于在 TUI/`vmake config --set` 中可见和可覆盖，值本身可以留空：工具链 `toolchain.json` 中的 `target_os` / `target_triple` 默认值会填补未设置的值。`target_os` 决定产物命名、链接策略和 CMake 的 `CMAKE_SYSTEM_NAME`（`target_os=none` 映射为 `Generic`），空值取运行 vmake 的主机系统；`target_triple` 提供 `Configure` 的 `--host=` 与 `CMAKE_*_COMPILER_TARGET`。用户配置（`.vmake/` 当前生效配置文件的 `global.options` 或包级配置，默认文件为 `.vmake/config.json`）与项目声明的非空默认值均优先于工具链默认值。包内通过 `ctx.Option` 声明的非全局 `target_os`/`target_triple` 默认值优先于全局值（包级配置值仍最优先）；配置中的空字符串视为未设置，会落到下一级默认值，最终落到工具链默认值。当前芯片 profile 的 `TargetOS`/`TargetTriple` 位于项目全局值与工具链默认值之间。
+
+### 芯片平台 profile
+
+芯片包用 `ChipProfile` 同时声明芯片名称、首选工具链和平台默认值：
+
+```go
+const ChipOptionName = "chip"
+
+type ChipProfile struct {
+    Name               string
+    PreferredToolchain string
+    TargetOS           string
+    TargetTriple       string
+}
+
+func (ctx *ConfigContext) SetChipProfile(profile ChipProfile) *ConfigContext
+func (p *Package) ChipProfile() (ChipProfile, bool)
+```
+
+```go
+p.OnConfig(func(ctx *api.ConfigContext) {
+    ctx.SetChipProfile(api.ChipProfile{
+        Name:               "py32f539",
+        PreferredToolchain: "arm-none-eabi",
+        TargetOS:           "none",
+        TargetTriple:       "arm-none-eabi",
+    })
+})
+```
+
+- 只收集本地包的 profile；同一芯片 `Name` 的重复声明必须完全一致。
+- root 包应声明全局 `chip` choice（例如 `ctx.GlobalOption(api.ChipOptionName).SetDefault("py32f539").SetValues("py32f539")`）；vmake 会把 profile 的 `Name` 追加到已声明 choice 的 `Values()`，但不会自动创建 `chip` 选项。TUI 用 `chip` 切换芯片/SoC。
+- 构建在 `FilterDeps` 后按实际需要的芯片包选择 profile；未使用的芯片包不参与冲突。
+- 多个 needed 芯片 package 声明不同 profile 时报错；显式 `--toolchain`/`global.toolchain` 存在时，若无法从 needed 集合唯一确定 profile 则跳过 profile 选择，否则仍保留已确定芯片的平台默认值。
+- 当前活动芯片的 `PreferredToolchain` 位于活动配置之后、`host` 之前；其 `TargetOS`/`TargetTriple` 位于项目全局值与工具链默认值之间。选择显式不同的工具链时，工具链的 target 优先；同一 target triple 的替代工具链仍使用芯片平台默认值。
+- TUI 切换 `chip` 时会把工具链/平台预览切到对应 profile；保存时推导出的工具链和 target 值不会写入配置，显式配置的值始终保留。
+- `FilterDeps` 阶段能读取本包声明为全局选项的配置值（包括 `chip`），因此 root 的 `OnRequire` 可以用 `ctx.When(api.ChipOptionName, ...)` / `ctx.Select(api.ChipOptionName, ...)` 选择板级/芯片依赖。
 
 `mode` 选项自动添加编译标志：
 
@@ -1018,6 +1058,8 @@ p.OnConfig(func(ctx *api.ConfigContext) {
         SetMacroName("PY32F539xx%s")
 })
 ```
+
+这里的 `mcu` 只是普通全局选项示例，不会触发芯片 profile 解析；vmake 的芯片选择器是 `chip`，且只有声明了 `ChipProfile` 的本地芯片包才参与。
 
 `vmake config --set variant=L` 后，每个包获得：
 

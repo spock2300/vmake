@@ -19,7 +19,24 @@ command.
    `inspect`/`query` only accept `--set toolchain=<name>`.
 3. The project `toolchain` option in the active configuration:
    `vmake config --set toolchain=<name>`.
-4. The built-in `host` toolchain.
+4. The `PreferredToolchain` of the active chip profile. A chip package declares
+   it with `ctx.SetChipProfile(api.ChipProfile{...})`; only chip packages in the
+   `FilterDeps` needed set participate. The root package declares the global
+   `chip` choice, and vmake appends profile names to it (it does not create the
+   option). The TUI uses `chip` to switch the toolchain/target preview. Explicit
+   `--toolchain` or `global.toolchain` bypasses chip-profile conflict checks.
+5. The built-in `host` toolchain.
+
+A renamed toolchain whose manifest target triple matches the active chip profile
+still uses the chip's `target_os`/`target_triple`; a host or different-architecture
+toolchain override does not.
+
+`vmake toolchain list` marks `host` as the built-in fallback. The active
+project/chip default may differ; `vmake config` shows it. `vmake build`
+auto-installs a registered manifest toolchain on first use, while `inspect`,
+`clean`, and `lock update` fail with a hint instead of installing. `vmake
+doctor` does not execute `OnConfig`, so pass `--toolchain <name>` to diagnose a
+chip-profile default.
 
 The top-level `vmake inspect` `toolchainInfo` and `build/vmake-build.json`
 `toolchain` report the project selection; per-package names appear in
@@ -133,7 +150,8 @@ vmake -y ext add my-toolchain ~/my-toolchain
 vmake build --toolchain my-gcc
 ```
 
-To make it the project default:
+To make it the project default, either declare it in the active chip package's
+`ChipProfile` or pin it in the configuration:
 
 ```bash
 vmake config --set toolchain=my-gcc

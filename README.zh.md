@@ -52,8 +52,10 @@ Git 用户态工具、`make` 与所选 C 工具链的状态；使用 `vmake doct
 
 工具链描述要运行哪些程序，还可声明 `target_os`（裸机为 `none`）与 `target_triple`
 （如 `arm-none-eabi`）默认值。项目在需要查看或覆盖这些值时声明对应的全局选项，并自行
-负责匹配的 CPU/ABI 标志；显式的项目值始终优先于工具链默认值。目标 OS 独立于宿主 OS
-决定产物命名、链接器标志和 CMake 设置。
+负责匹配的 CPU/ABI 标志；显式的项目值始终优先于工具链默认值。芯片包可用
+`ctx.SetChipProfile(...)` 同时声明首选工具链和平台默认值；vmake 按 FilterDeps 后实际
+需要的芯片包选择 profile，因此多颗芯片可以使用相同或不同的编译器，TUI 切换 `chip`
+时也会跟随切换工具链预览。目标 OS 独立于宿主 OS 决定产物命名、链接器标志和 CMake 设置。
 `vmake test` 运行本机测试二进制；交叉编译的测试目标请使用 `vmake build --tests`。
 `vmake check-symbols` 在任一宿主平台上都能用所选工具链的 `nm` 检查 ELF 动态符号；
 PE 文件和不含动态符号表的 ELF 文件会报告为不适用。Windows 子图行为不在当前兼容性验证范围内。

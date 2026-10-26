@@ -36,8 +36,11 @@ type Model struct {
 	options map[string]map[string]*api.Option
 	values  map[string]map[string]any
 
-	globalOptions map[string]*api.Option
-	globalValues  map[string]any
+	globalOptions  map[string]*api.Option
+	globalValues   map[string]any
+	chipProfiles   map[string]api.ChipProfile
+	derivedGlobals map[string]bool
+	origDerived    map[string]bool
 
 	displayDefaults func(toolchain string) map[string]any
 
@@ -125,6 +128,7 @@ type modelInput struct {
 	currentToolchain string
 	globalOptions    map[string]*api.Option
 	globalValues     map[string]any
+	chipProfiles     map[string]api.ChipProfile
 	kconfigs         map[string][]*api.KConfigEntry
 	description      string
 	displayDefaults  func(toolchain string) map[string]any
@@ -163,12 +167,46 @@ func newModel(in modelInput) Model {
 	currentToolchain := in.currentToolchain
 	globalOptions := in.globalOptions
 	globalValues := in.globalValues
+	chipProfiles := in.chipProfiles
+	if chipProfiles == nil {
+		chipProfiles = make(map[string]api.ChipProfile)
+	}
 	kconfigs := in.kconfigs
 	if globalValues == nil {
 		globalValues = make(map[string]any)
 	}
-	if _, ok := globalValues["toolchain"]; !ok && currentToolchain != "" {
-		globalValues["toolchain"] = currentToolchain
+	explicitToolchain := false
+	if value, ok := globalValues[api.ToolchainOptionName].(string); ok && value != "" {
+		explicitToolchain = true
+	}
+	chip := ""
+	if value, ok := globalValues[api.ChipOptionName].(string); ok {
+		chip = value
+	}
+	if chip == "" {
+		if opt, ok := globalOptions[api.ChipOptionName]; ok {
+			if value, ok := opt.Default().(string); ok {
+				chip = value
+			}
+		}
+	}
+	profile, hasProfile := chipProfiles[chip]
+	derivedGlobals := make(map[string]bool)
+	if !explicitToolchain {
+		delete(globalValues, api.ToolchainOptionName)
+		toolchainName := currentToolchain
+		if toolchainName == "" && hasProfile {
+			toolchainName = profile.PreferredToolchain
+		}
+		if toolchainName != "" {
+			globalValues[api.ToolchainOptionName] = toolchainName
+		}
+		derivedGlobals[api.ToolchainOptionName] = true
+	}
+	for _, name := range []string{api.TargetOSOptionName, api.TargetTripleOptionName} {
+		if value, ok := globalValues[name].(string); !ok || value == "" {
+			derivedGlobals[name] = true
+		}
 	}
 	if _, ok := globalValues["mode"]; !ok {
 		if opt, ok := globalOptions["mode"]; ok {
@@ -209,6 +247,8 @@ func newModel(in modelInput) Model {
 		workDir:         workDir,
 		globalOptions:   globalOptions,
 		globalValues:    globalValues,
+		chipProfiles:    chipProfiles,
+		derivedGlobals:  derivedGlobals,
 		kconfigs:        kconfigs,
 		description:     in.description,
 		origDescription: in.description,
@@ -220,6 +260,7 @@ func newModel(in modelInput) Model {
 	}
 	m.origValues = deepCopyValues(values)
 	m.origGlobal = deepCopyGlobal(globalValues)
+	m.origDerived = maps.Clone(derivedGlobals)
 	m.tree = buildDepTree(packages, deps)
 	m.rebuildFlat()
 
@@ -754,6 +795,14 @@ func (m *Model) getValue(name string) any {
 func (m *Model) setValue(name string, val any) {
 	if m.selectedPkg == GlobalPkgName {
 		m.globalValues[name] = val
+		switch name {
+		case api.ToolchainOptionName, api.TargetOSOptionName, api.TargetTripleOptionName:
+			m.derivedGlobals[name] = false
+		case api.ChipOptionName:
+			if value, ok := val.(string); ok {
+				m.applyChipProfile(value)
+			}
+		}
 		m.checkChanges()
 		return
 	}
@@ -762,6 +811,56 @@ func (m *Model) setValue(name string, val any) {
 		m.values[m.selectedPkg] = make(map[string]any)
 	}
 	m.values[m.selectedPkg][name] = val
+	m.checkChanges()
+}
+
+func (m *Model) chipFor(values map[string]any) string {
+	if value, ok := values[api.ChipOptionName].(string); ok && value != "" {
+		return value
+	}
+	if opt, ok := m.globalOptions[api.ChipOptionName]; ok {
+		if value, ok := opt.Default().(string); ok {
+			return value
+		}
+	}
+	return ""
+}
+
+func (m *Model) currentChipProfile() (api.ChipProfile, bool) {
+	chip := m.chipFor(m.globalValues)
+	if chip == "" {
+		return api.ChipProfile{}, false
+	}
+	profile, ok := m.chipProfiles[chip]
+	return profile, ok
+}
+
+func (m *Model) applyChipProfile(chip string) {
+	profile, ok := m.chipProfiles[chip]
+	if !ok {
+		if m.derivedGlobals[api.ToolchainOptionName] {
+			delete(m.globalValues, api.ToolchainOptionName)
+		}
+		for _, name := range []string{api.TargetOSOptionName, api.TargetTripleOptionName} {
+			if m.derivedGlobals[name] {
+				delete(m.globalValues, name)
+			}
+		}
+		m.checkChanges()
+		return
+	}
+	if m.derivedGlobals[api.ToolchainOptionName] {
+		if profile.PreferredToolchain != "" {
+			m.globalValues[api.ToolchainOptionName] = profile.PreferredToolchain
+		} else {
+			delete(m.globalValues, api.ToolchainOptionName)
+		}
+	}
+	for _, name := range []string{api.TargetOSOptionName, api.TargetTripleOptionName} {
+		if m.derivedGlobals[name] {
+			delete(m.globalValues, name)
+		}
+	}
 	m.checkChanges()
 }
 
@@ -1012,8 +1111,16 @@ func (m *Model) isOptionModified(name string) bool {
 
 func (m *Model) resetOption(name string) {
 	if m.selectedPkg == GlobalPkgName {
+		if isChipGlobal(name) && m.origDerived[name] {
+			m.clearGlobalValue(name)
+			return
+		}
 		if value, ok := m.origGlobal[name]; ok {
 			m.setValue(name, value)
+			if isChipGlobal(name) {
+				m.derivedGlobals[name] = m.origDerived[name]
+			}
+			m.checkChanges()
 			return
 		}
 		m.clearGlobalValue(name)
@@ -1032,21 +1139,82 @@ func (m *Model) resetOptionToDefault(name string) {
 	}
 	if def != nil && def != "" {
 		m.setValue(name, def)
+		if isChipGlobal(name) {
+			m.derivedGlobals[name] = true
+		}
+		m.checkChanges()
 		return
 	}
 	m.clearGlobalValue(name)
 }
 
+func isChipGlobal(name string) bool {
+	return name == api.ToolchainOptionName ||
+		name == api.TargetOSOptionName ||
+		name == api.TargetTripleOptionName
+}
+
 func (m *Model) clearGlobalValue(name string) {
-	delete(m.globalValues, name)
+	switch name {
+	case api.ToolchainOptionName:
+		if profile, ok := m.currentChipProfile(); ok && profile.PreferredToolchain != "" {
+			m.globalValues[name] = profile.PreferredToolchain
+		} else {
+			delete(m.globalValues, name)
+		}
+		m.derivedGlobals[name] = true
+	case api.TargetOSOptionName, api.TargetTripleOptionName:
+		delete(m.globalValues, name)
+		m.derivedGlobals[name] = true
+	case api.ChipOptionName:
+		delete(m.globalValues, name)
+		m.applyChipProfile(m.chipFor(m.globalValues))
+	default:
+		delete(m.globalValues, name)
+	}
 	m.checkChanges()
 }
 
 func (m *Model) declaredDefault(name string) any {
+	if profile, ok := m.currentChipProfile(); ok {
+		switch name {
+		case api.ToolchainOptionName:
+			if profile.PreferredToolchain != "" {
+				return profile.PreferredToolchain
+			}
+		case api.TargetOSOptionName, api.TargetTripleOptionName:
+			toolchainName, _ := m.effectiveGlobalValue(m.globalValues, api.ToolchainOptionName).(string)
+			if m.chipTargetsApply(profile, toolchainName) {
+				if name == api.TargetOSOptionName && profile.TargetOS != "" {
+					return profile.TargetOS
+				}
+				if name == api.TargetTripleOptionName && profile.TargetTriple != "" {
+					return profile.TargetTriple
+				}
+			}
+		}
+	}
 	if opt, ok := m.selectedOptions()[name]; ok {
 		return opt.Default()
 	}
 	return nil
+}
+
+func (m *Model) chipTargetsApply(profile api.ChipProfile, toolchainName string) bool {
+	if profile.Name == "" {
+		return false
+	}
+	if profile.PreferredToolchain == "" || toolchainName == profile.PreferredToolchain {
+		return true
+	}
+	if toolchainName == "" || toolchainName == "host" {
+		return false
+	}
+	if m.displayDefaults == nil {
+		return true
+	}
+	triple, _ := m.displayDefaults(toolchainName)[api.TargetTripleOptionName].(string)
+	return triple == "" || triple == profile.TargetTriple
 }
 
 func (m *Model) displayFallback(name string) any {
@@ -1054,6 +1222,28 @@ func (m *Model) displayFallback(name string) any {
 }
 
 func (m *Model) displayFallbackFor(values map[string]any, name string) any {
+	if name != api.TargetOSOptionName && name != api.TargetTripleOptionName {
+		return m.toolchainDisplayFallback(values, name)
+	}
+	if profile, ok := m.chipProfiles[m.chipFor(values)]; ok {
+		toolchainName, _ := m.effectiveGlobalValue(values, api.ToolchainOptionName).(string)
+		if m.chipTargetsApply(profile, toolchainName) {
+			switch name {
+			case api.TargetOSOptionName:
+				if profile.TargetOS != "" {
+					return profile.TargetOS
+				}
+			case api.TargetTripleOptionName:
+				if profile.TargetTriple != "" {
+					return profile.TargetTriple
+				}
+			}
+		}
+	}
+	return m.toolchainDisplayFallback(values, name)
+}
+
+func (m *Model) toolchainDisplayFallback(values map[string]any, name string) any {
 	if m.displayDefaults == nil {
 		return nil
 	}

@@ -60,8 +60,11 @@ Toolchains describe which programs to run; they may also declare `target_os`
 (bare metal: `none`) and `target_triple` (e.g. `arm-none-eabi`) defaults. The
 project declares those global options when it wants to see or override them, and
 owns the matching CPU/ABI flags; explicit project values always win over the
-toolchain defaults. The target OS controls output naming, linker flags and CMake
-settings independently of the host OS.
+toolchain defaults. A chip package can declare its compiler and platform with
+`ctx.SetChipProfile(...)`; vmake uses the profile of the chip package needed by
+the filtered build, so multiple chips can use the same or different compilers.
+The target OS controls output naming, linker flags and CMake settings
+independently of the host OS.
 `vmake test` runs native test binaries; use `vmake build --tests` for cross-compiled
 test targets. `vmake check-symbols` can inspect ELF dynamic symbols on either host
 using the selected toolchain's `nm`; PE files and ELF files without a dynamic

@@ -79,7 +79,11 @@ func fillTargetDefaults(values map[string]any, os, triple string) {
 
 func ProjectPlatform(ctx *RuntimeContext) (api.Platform, error) {
 	values := projectGlobalValues(ctx)
-	targetOS, triple := toolchainTargetDefaults(ResolveToolchainName(ctx.Config, ctx.ToolchainOverride))
+	tcName := ResolveToolchainName(ctx.Config, ctx.ToolchainOverride, ctx.PreferredToolchain)
+	if ctx.ChipProfile.Name != "" && chipTargetsApply(ctx.ChipProfile, tcName) {
+		fillTargetDefaults(values, ctx.ChipProfile.TargetOS, ctx.ChipProfile.TargetTriple)
+	}
+	targetOS, triple := toolchainTargetDefaults(tcName)
 	fillTargetDefaults(values, targetOS, triple)
 	return checkedPlatform(values, "project")
 }
@@ -97,7 +101,7 @@ func checkedPlatform(values map[string]any, owner string) (api.Platform, error) 
 
 func PackagePlatform(ctx *RuntimeContext, name string) (api.Platform, error) {
 	values := projectGlobalValues(ctx)
-	values[api.ToolchainOptionName] = ResolveToolchainName(ctx.Config, ctx.ToolchainOverride)
+	values[api.ToolchainOptionName] = ResolveToolchainName(ctx.Config, ctx.ToolchainOverride, ctx.PreferredToolchain)
 	if _, err := checkedPlatform(values, "project"); err != nil {
 		return api.Platform{}, err
 	}
@@ -125,11 +129,15 @@ func packagePlatformValues(ctx *RuntimeContext, name string, base map[string]any
 			values[key] = value
 		}
 	}
-	defaultTC := ResolveToolchainName(ctx.Config, ctx.ToolchainOverride)
+	defaultTC := ResolveToolchainName(ctx.Config, ctx.ToolchainOverride, ctx.PreferredToolchain)
 	if tc, ok := base[api.ToolchainOptionName].(string); ok && tc != "" {
 		defaultTC = tc
 	}
-	targetOS, triple := toolchainTargetDefaults(resolvePkgToolchain(ctx.Config, name, defaultTC))
+	packageTC := resolvePkgToolchain(ctx.Config, name, defaultTC)
+	if ctx.ChipProfile.Name != "" && chipTargetsApply(ctx.ChipProfile, packageTC) {
+		fillTargetDefaults(values, ctx.ChipProfile.TargetOS, ctx.ChipProfile.TargetTriple)
+	}
+	targetOS, triple := toolchainTargetDefaults(packageTC)
 	fillTargetDefaults(values, targetOS, triple)
 	return values
 }
