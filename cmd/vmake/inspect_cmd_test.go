@@ -272,6 +272,42 @@ func Main(p *api.Package) {
 	}
 }
 
+func TestInspectGlobalOptionEntryDefaultUsesGlobalValue(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{
+		"version": "1",
+		"global": {"options": {"board": "custom"}},
+		"entries": {"proj": {"options": {"board": "evb"}}}
+	}`)
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.GlobalOption("board").SetDefault("evb").SetValues("evb", "custom")
+	})
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary)
+	})
+}
+`)
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	app := inspectPackageNamed(t, envelope.Data, "proj")
+	if got := app.Options["board"]; got != "custom" {
+		t.Fatalf("board = %v, want global value custom", got)
+	}
+}
+
 func TestInspectProjectModel(t *testing.T) {
 	project := writeInspectProject(t, t.TempDir())
 

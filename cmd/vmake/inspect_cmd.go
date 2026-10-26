@@ -736,6 +736,18 @@ func packageConfigValues(ctx *RuntimeContext, name string, globalValues map[stri
 	if values == nil {
 		values = make(map[string]any)
 	}
+	for optName, value := range values {
+		opt, declared := opts[optName]
+		if !declared || !opt.IsGlobal() {
+			continue
+		}
+		if _, resolved := globalValues[optName]; !resolved {
+			continue
+		}
+		if api.NormalizeOptionValue(opt, value) == api.NormalizeOptionValue(opt, opt.Default()) {
+			delete(values, optName)
+		}
+	}
 	for optName, opt := range opts {
 		if _, resolved := globalValues[optName]; resolved && opt.IsGlobal() {
 			continue
