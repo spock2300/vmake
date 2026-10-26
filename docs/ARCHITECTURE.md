@@ -213,7 +213,7 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 - `GenerateConfigDefines()` — 启用配置宏定义自动生成
 - `ImportConfig(names...)` — 注册可导入的包名
 - `SyncConfigDefines(names...)` — 快捷方式：`GenerateConfigDefines` + `ImportConfig`
-- `SetDryRun(v bool)` — 设置为 dry-run 模式（查询/检查等只声明场景使用）；这些场景不物化源码，`inspect`/`query`/`test` 预检还会对包装的 `os` 写操作启用只读拦截，`OnBuild` 中的真实文件写入必须用 `p.DryRun()` 守卫（本地 SetGit 包工作树缺失时 `BuildDir()` 为空）
+- `SetDryRun(v bool)` — 设置为 dry-run 模式（查询/检查等只声明场景使用）；这些场景不物化源码，`inspect`/`query`/`test` 预检还会对包装的 `os` 写操作启用只读拦截，`OnBuild` 中的真实文件写入必须用 `p.DryRun()` 守卫（本地 SetGit 包工作树缺失时 `BuildDir()` 为空）。`vmake inspect --no-targets` 不执行 `OnBuild`，仅解析配置与包集合。
 
 **BuildEnv / BuildJob**（`pkg/build/job.go`）：
 ```
@@ -374,7 +374,7 @@ vmake (RootCmd)
 │   ├── update     # 重新解析并更新锁定版本
 │   └── show       # 显示锁定版本
 ├── query          # 依赖树查询
-│   ├── targets    # 列出本地包的构建 target（不构建）
+│   ├── targets    # 列出 needed 包（含远程）的构建 target（不构建）
 │   └── config     # 显示某包生效的选项值与生成的宏定义
 ├── manifest       # 安装清单管理
 │   ├── show       # 显示清单内容

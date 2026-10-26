@@ -4,6 +4,9 @@
 stdout. It is the machine-readable counterpart of `vmake query`: it performs
 resolution and `OnConfig`/`OnBuild` declaration only, so it never compiles,
 links, installs, or writes `build/`, `install/`, or `.vmake/config.json` itself.
+With `--no-targets`, dry-run `OnBuild` target declaration is skipped entirely,
+so the package, option, graph, source-presence and directory model is available
+without executing build callbacks.
 Dry-run `OnBuild` callbacks run under a read-only interpreted-script file API
 (see [Read-only dry-run](#read-only-dry-run)), so wrapped file writes fail
 instead of touching the project; APIs outside the wrapped set remain a script's
@@ -27,7 +30,7 @@ predict which targets are up to date. It never writes the compile database or
 either report.
 
 ```
-vmake inspect [--set [package/]option=value ...] [-C <dir>]
+vmake inspect [--no-targets] [--set [package/]option=value ...] [-C <dir>]
 ```
 
 `-C`/`--project` is the global project-root override: it resolves against the
@@ -57,6 +60,15 @@ Invalid overrides:
 - an `OptionChoice` value outside the declared choice set,
 
 produce a `VMAKE_E_OPTION` diagnostic and exit status 1.
+
+## `--no-targets`
+
+`--no-targets` skips dry-run `OnBuild` target declaration for every package.
+`data.packages[].targets` is omitted, and no `VMAKE_W_TARGET_DECLARE`
+diagnostics are produced. Source-presence warnings, package metadata, options,
+the dependency graph, build directories and report presence are still reported.
+This mode does not execute `OnBuild` at all and is intended for machine consumers
+that only need the package/dependency model.
 
 ## Output isolation
 
@@ -196,7 +208,9 @@ packages whose source is present, a target-declaration failure does not abort
 query either: it prints one
 `Warning: cannot declare targets for <package>: <error>` line to stderr, omits
 that package's targets or kind label, and continues with the remaining
-packages.
+packages. `vmake query targets` lists every needed package
+with a materialized source tree, including local and remote packages; the
+dependency tree labels those same packages by their primary target.
 
 ## `data` fields
 
@@ -279,7 +293,7 @@ of these files.
 | `options` | object? | Declared options of this package with effective values (global declarations included); omitted when none |
 | `optionDefs` | array? | Declared package options `{name, type, default?, description?, values?, effective?}`, sorted by name; omitted when none |
 | `deps` | array | Package dependency names, sorted; always present |
-| `targets` | array? | Declared targets; present only for needed packages and omitted when the package declares none or its source tree is missing |
+| `targets` | array? | Declared targets; present only for needed packages and omitted when the package declares none, its source tree is missing, or inspect runs with `--no-targets` |
 
 ## `targets` entries
 
@@ -320,9 +334,10 @@ Targets are listed only for needed packages; a package pruned by `FilterDeps`
 has no `targets`, even though it remains in `packages` and the graph. A needed
 package whose source tree is missing also has no `targets`: inspect does not run
 its dry-run `OnBuild` declaration, and the only warning is
-`VMAKE_W_SOURCE_MISSING`. Inspect does not build or install, so `output`,
-`installDir`, and `installPath` are predictions, not evidence that an artifact
-exists.
+`VMAKE_W_SOURCE_MISSING`. With `--no-targets`, no package has `targets`, and no
+target-declaration warning is produced. Inspect does not build or install, so
+`output`, `installDir`, and `installPath` are predictions, not evidence that an
+artifact exists.
 
 ## Determinism
 

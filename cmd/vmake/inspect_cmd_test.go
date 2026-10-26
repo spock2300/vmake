@@ -165,6 +165,40 @@ func Main(p *api.Package) {
 	return project
 }
 
+func TestInspectNoTargetsSkipsDeclaration(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		panic("OnBuild must not run with --no-targets")
+	})
+}
+`)
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect", "--no-targets")
+	if code != 0 {
+		t.Fatalf("inspect --no-targets exit = %d, stderr = %q", code, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("inspect --no-targets stderr = %q, want none", stderr)
+	}
+	envelope := decodeInspectEnvelope(t, stdout)
+	if envelope.Status != "ok" || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	if len(envelope.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %+v, want none", envelope.Diagnostics)
+	}
+	root := inspectPackageNamed(t, envelope.Data, "proj")
+	if len(root.Targets) != 0 {
+		t.Fatalf("targets = %+v, want none", root.Targets)
+	}
+}
+
 func TestInspectProjectModel(t *testing.T) {
 	project := writeInspectProject(t, t.TempDir())
 
@@ -1862,4 +1896,3 @@ func Main(p *api.Package) {
 		t.Fatalf("gen target inputs/outputs = %+v", gen)
 	}
 }
-

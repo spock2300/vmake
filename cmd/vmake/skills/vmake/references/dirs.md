@@ -37,7 +37,7 @@ For local packages without SetGit, `SrcDir()` defaults to `SourceDir()` unless `
 
 Path getters are bound after the package's source preparation; do not rely on `SourceDir()`/`BuildDir()`/`SrcDir()` before the build phase (they may still be empty in `OnPackage`/`OnConfig` and are populated for `OnBuild`).
 
-Inspection and dry-run commands (`vmake inspect`, `vmake query`, `query targets`, `check-symbols`) declare targets in dry-run, and `inspect`/`query` block interpreted-script writes. The declaration step does not materialize sources, but native remote resolution during `Require` may materialize a tree. Needed packages with a present source tree still carry their computed `BuildDir()` during `inspect`; a local `SetGit` package or remote package whose expected tree is absent omits `buildDir`. `OnBuild` must guard real file I/O with `p.DryRun()` rather than relying on `p.BuildDir() == ""`, and must not assume the `src` link resolves.
+Inspection and dry-run commands (`vmake inspect` without `--no-targets`, `vmake query`, `query targets`, `check-symbols`) declare targets in dry-run, and `inspect`/`query` block interpreted-script writes. `vmake inspect --no-targets` skips `OnBuild` declaration entirely. The declaration step does not materialize sources, but native remote resolution during `Require` may materialize a tree. Needed packages with a present source tree still carry their computed `BuildDir()` during `inspect`; a local `SetGit` package or remote package whose expected tree is absent omits `buildDir`. `OnBuild` must guard real file I/O with `p.DryRun()` rather than relying on `p.BuildDir() == ""`, and must not assume the `src` link resolves.
 
 ## Action → Directory
 

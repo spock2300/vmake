@@ -362,8 +362,8 @@ vmake ext untrust <name>                    # 撤销信任
 
 ```bash
 vmake git tag [version] [--minor|--major] [--no-push] [-m|--message <msg>]   # 版本标签
-vmake query [targets|config <pkg>]                    # 显示依赖树 / 包配置
-vmake inspect [--set [pkg/]option=value]              # 输出机器可读的项目模型（JSON）
+vmake query [targets|config <pkg>]                    # 显示依赖树 / target 列表（含远程包）/ 包配置
+vmake inspect [--no-targets] [--set [pkg/]option=value]  # 输出机器可读的项目模型（JSON）
 vmake check-symbols [--strict]                        # 审计本地默认目标的 ELF 动态符号
 vmake cache list                                      # 列出共享 git 对象缓存
 vmake cache remove <url>                              # 删除单个缓存命名空间

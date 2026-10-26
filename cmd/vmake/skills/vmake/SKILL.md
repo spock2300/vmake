@@ -49,8 +49,9 @@ vmake config --set pkg/opt=val         # Non-interactive config override (skip T
 vmake config list                      # List configurations under .vmake/
 vmake config use <name>.json           # Select a configuration
 vmake inspect                          # Dry-run JSON project model (may initialize .vmake/ and .gitignore)
+vmake inspect --no-targets             # Package/dependency JSON without running OnBuild
 vmake query                            # Dependency tree
-vmake query targets                    # Targets without building
+vmake query targets                    # Targets without building (local + remote)
 vmake check-symbols                    # Verify ELF symbols against policy
 vmake clean                            # Clean build outputs
 vmake distclean                        # Reset project (keeps sources unless --purge-sources)
@@ -61,7 +62,7 @@ vmake toolchain show <name>            # Toolchain details and resolved tool pat
 ```
 
 - **Build & Test Reports**: `build`/`rebuild` write `build/vmake-build.json` and `test` writes `build/vmake-test.json` (schemaVersion 2: status, duration, concise error, parsed compiler/linker diagnostics, target timings, test results, SHA-256 installed artifacts). `clean`/`distclean`/`pkg clean` remove both. Full schema: [references/build-result.md](references/build-result.md).
-- **Inspection & Dry-Run Discipline**: `inspect`, `query`, and `query targets` evaluate `OnBuild` in dry-run mode with read-only `scriptfs` (`p.DryRun() == true`); `query config <pkg>` only reads configuration and does not evaluate `OnBuild`. `check-symbols` declares targets in dry-run but does not set `scriptfs` read-only. Prefer declarative `p.WriteBuildFile`, `p.GenerateFile`, `p.Generate`, and `p.BuildPath` in `OnBuild` (they defer writes to scheduler execution and emit `$builddir/...` when `BuildDir()` is empty); guard any procedural `os.WriteFile` on `!p.DryRun()`. Full schema: [references/inspect.md](references/inspect.md).
+- **Inspection & Dry-Run Discipline**: `inspect`, `query`, and `query targets` evaluate `OnBuild` in dry-run mode with read-only `scriptfs` (`p.DryRun() == true`); `inspect --no-targets` skips `OnBuild` entirely, and `query config <pkg>` only reads configuration and does not evaluate `OnBuild`. `check-symbols` declares targets in dry-run but does not set `scriptfs` read-only. Prefer declarative `p.WriteBuildFile`, `p.GenerateFile`, `p.Generate`, and `p.BuildPath` in `OnBuild` (they defer writes to scheduler execution and emit `$builddir/...` when `BuildDir()` is empty); guard any procedural `os.WriteFile` on `!p.DryRun()`. Full schema: [references/inspect.md](references/inspect.md).
 - **Full CLI Reference**: See [references/cli.md](references/cli.md).
 - **Stale Skill**: If a command here fails with an unknown flag or subcommand, the installed skill may be older than the `vmake` binary. Run `vmake version` and reinstall with `vmake skill install`.
 
@@ -444,7 +445,7 @@ Native repositories are trusted per package commit on first build; `repo trust` 
 2. **Reading options directly in `OnRequire`**: `ctx.Bool`/`String`/`Int` fail during Phase 1 discovery. Always use `ctx.When`, `ctx.WhenNot`, `ctx.WhenAny`, `ctx.If`, or `ctx.Select`.
 3. **Using `AddGlobal*` for library-specific flags**: `AddGlobalCFlags`/`AddGlobalDefines` change the global-flags hash and rotate every package's `BuildDir`. Use `t.AddPublicCFlags`/`t.AddPublicDefines`/`t.AddPublicLinks` on the library target instead.
 4. **Declaring options outside `OnConfig`**: Calling `ctx.Option(...)` in `OnBuild`/`OnInstall` raises a `*BuildScriptError`.
-5. **Procedural file writes in `OnBuild` without dry-run guards**: `vmake inspect` and `query` run `OnBuild` with read-only `scriptfs`. Use `p.WriteBuildFile`/`p.GenerateFile` or guard with `if !p.DryRun()`.
+5. **Procedural file writes in `OnBuild` without dry-run guards**: `vmake inspect` (without `--no-targets`) and `query` run `OnBuild` with read-only `scriptfs`. Use `p.WriteBuildFile`/`p.GenerateFile` or guard with `if !p.DryRun()`.
 6. **Passing relative or backslash paths to `p.Make("-C", ...)`**: Always use `filepath.ToSlash(p.SrcDir())`.
 
 ## Writing New Build Scripts — Checklist

@@ -30,7 +30,7 @@ extension plugin commands appear here too. For plugin details, run
   `vmake git` - Git version management commands
     `vmake git tag [version] [--major --message <value> -m --minor --no-push]` - Create version tag, update latest, and push
   `vmake init-editor [--local <value> --remove]` - Generate editor support files for build.go (go.mod for gopls)
-  `vmake inspect [--set <value> -s]` - Print a machine-readable project model
+  `vmake inspect [--no-targets --set <value> -s]` - Print a machine-readable project model
   `vmake lock` - Manage .vmake/vmake.lock (pinned dependency versions)
     `vmake lock show` - Print locked dependency versions
     `vmake lock update` - Re-resolve dependency versions and rewrite vmake.lock

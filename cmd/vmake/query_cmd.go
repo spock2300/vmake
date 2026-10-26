@@ -1,13 +1,11 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -18,7 +16,6 @@ import (
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/resolver"
-	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 func newQueryCmd() *cobra.Command {
@@ -30,7 +27,8 @@ func newQueryCmd() *cobra.Command {
 Each package is expanded once; later occurrences are printed as "<label> (*)".
 A package is labelled by its primary target as "<pkg> (<kind>)", or
 "<pkg>:<target> (<kind>)" when that target is named differently. Extra targets
-are appended to the line as "+<target> (<kind>)".
+are appended to the line as "+<target> (<kind>)". Targets are shown for every
+needed package with a materialized source tree, including remote packages.
 
 Dry-run target declaration runs with interpreted-script writes disabled; a
 callback that writes reports a warning on stderr and that package's targets are
@@ -48,9 +46,10 @@ func newQueryTargetsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "targets",
 		Short: "List build targets without building",
-		Long: `List the declared targets of needed local packages without building.
+		Long: `List the declared targets of needed packages without building.
 
-Each target prints as "<package>:<target> (<kind>)". Dry-run target
+Each target prints as "<package>:<target> (<kind>)". Both local and remote
+packages are listed when their source tree is present. Dry-run target
 declaration runs with interpreted-script writes disabled. A package whose
 expected source tree is missing keeps its warning; a package whose OnBuild
 fails to declare targets prints one warning on stderr and the command
@@ -84,23 +83,16 @@ func runQueryTargets() error {
 	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
 	fatalErr(err)
 	scriptfs.TakeBlockedWrites()
-	printInspectSourceWarnings(ctx, inspection)
+	data, diagnostics := buildInspectData(ctx, inspection, nil, true)
+	printInspectDiagnostics(diagnostics)
+	packages := inspectPackageIndex(data)
 
-	warned := make(map[string]bool)
 	for _, name := range ctx.Resolver.GetOrder() {
-		node := ctx.DepGraph.Packages[name]
-		if node == nil || !node.IsLocal() || node.Pkg == nil {
+		pkg := packages[name]
+		if pkg == nil || !pkg.Needed {
 			continue
 		}
-		if inspection.Needed != nil && !inspection.Needed[name] {
-			continue
-		}
-		kinds, err := collectTargetKinds(name, inspection.PkgDirs[name], ctx, inspection.PackageToolchains[name], inspection.GlobalValues)
-		if err != nil {
-			warnTargetDeclare(warned, name, err)
-			continue
-		}
-		for _, k := range kinds {
+		for _, k := range targetKindsFromInspectTargets(pkg.Targets, name) {
 			fmt.Printf("%s:%s (%s)\n", name, k.name, k.kind)
 		}
 	}
@@ -158,53 +150,22 @@ func runQuery(cmd *cobra.Command, args []string) {
 	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
 	fatalErr(err)
 	scriptfs.TakeBlockedWrites()
-	printInspectSourceWarnings(ctx, inspection)
+	data, diagnostics := buildInspectData(ctx, inspection, nil, true)
+	printInspectDiagnostics(diagnostics)
 	workDir := ctx.WorkDir
 
 	graph := ctx.DepGraph.Packages
-	order := ctx.Resolver.GetOrder()
-
-	localSet := make(map[string]bool)
-	dependedOn := make(map[string]bool)
-	for _, name := range order {
-		node := graph[name]
-		if node == nil {
-			continue
-		}
-		if node.IsLocal() {
-			localSet[name] = true
-		}
-		for _, d := range node.Deps {
-			dependedOn[d] = true
-		}
-	}
-
-	roots := make([]string, 0)
-	for name := range localSet {
-		if dependedOn[name] {
-			continue
-		}
-		if inspection.Needed != nil && !inspection.Needed[name] {
-			continue
-		}
-		roots = append(roots, name)
-	}
-	sort.Strings(roots)
-
 	printer := &treePrinter{
-		w:       os.Stdout,
-		ctx:     ctx,
-		graph:   graph,
-		pkgDirs: inspection.PkgDirs,
-		values:  inspection.GlobalValues,
-		tcs:     inspection.PackageToolchains,
-		workDir: workDir,
-		visited: make(map[string]bool),
-		kinds:   make(map[string][]targetKindInfo),
-		warned:  make(map[string]bool),
+		w:          os.Stdout,
+		ctx:        ctx,
+		inspection: inspection,
+		graph:      graph,
+		packages:   inspectPackageIndex(data),
+		workDir:    workDir,
+		visited:    make(map[string]bool),
 	}
 	printed := 0
-	for _, root := range roots {
+	for _, root := range data.Roots {
 		node := graph[root]
 		if node == nil || (len(printer.targetKinds(root)) == 0 && len(node.Deps) == 0) {
 			continue
@@ -229,42 +190,22 @@ func formatPkgDir(pkgDir, workDir string) string {
 }
 
 type treePrinter struct {
-	w       *os.File
-	ctx     *RuntimeContext
-	graph   map[string]*resolver.PackageNode
-	pkgDirs map[string]*api.PkgDirs
-	values  map[string]any
-	tcs     map[string]*toolchain.Toolchain
-	workDir string
+	w          *os.File
+	ctx        *RuntimeContext
+	inspection *pipeline.Inspection
+	graph      map[string]*resolver.PackageNode
+	packages   map[string]*inspectPackage
+	workDir    string
 
 	visited map[string]bool
-	kinds   map[string][]targetKindInfo
-	warned  map[string]bool
 }
 
 func (p *treePrinter) targetKinds(name string) []targetKindInfo {
-	if kinds, ok := p.kinds[name]; ok {
-		return kinds
+	pkg := p.packages[name]
+	if pkg == nil {
+		return nil
 	}
-	kinds, err := collectTargetKinds(name, p.pkgDirs[name], p.ctx, p.tcs[name], p.values)
-	if err != nil {
-		warnTargetDeclare(p.warned, name, err)
-	}
-	p.kinds[name] = kinds
-	return kinds
-}
-
-func warnTargetDeclare(warned map[string]bool, name string, err error) {
-	if warned[name] {
-		return
-	}
-	warned[name] = true
-	message := err.Error()
-	if strings.Contains(message, "read-only inspection:") {
-		message = strings.ReplaceAll(message, "panic: ", "")
-		message += " (guard generated-file work with p.DryRun())"
-	}
-	fmt.Fprintf(os.Stderr, "Warning: cannot declare targets for %s: %s\n", name, message)
+	return targetKindsFromInspectTargets(pkg.Targets, name)
 }
 
 func (p *treePrinter) print(name, prefix string, isRoot, isLast bool) {
@@ -282,12 +223,8 @@ func (p *treePrinter) print(name, prefix string, isRoot, isLast bool) {
 		}
 	}
 
-	label := name
-	var kinds []targetKindInfo
-	if node.IsLocal() {
-		kinds = p.targetKinds(name)
-		label = p.label(name, kinds)
-	}
+	kinds := p.targetKinds(name)
+	label := p.label(name, kinds)
 	if p.visited[name] {
 		fmt.Fprintf(p.w, "%s%s%s (*)\n", prefix, connector, label)
 		return
@@ -344,13 +281,13 @@ func (p *treePrinter) parts(name string, kinds []targetKindInfo, node *resolver.
 		}
 	}
 	var pkgDir string
-	if node.IsLocal() && p.pkgDirs[name] != nil {
-		pkgDir = p.pkgDirs[name].SourceDir
+	if node.IsLocal() && p.inspection.PkgDirs[name] != nil {
+		pkgDir = p.inspection.PkgDirs[name].SourceDir
 	}
 	if dir := formatPkgDir(pkgDir, p.workDir); dir != "" {
 		parts = append(parts, dir)
 	}
-	if opts := formatOptions(p.ctx, name, p.values); opts != "" {
+	if opts := formatOptions(p.ctx, name, p.inspection.GlobalValues); opts != "" {
 		parts = append(parts, opts)
 	}
 	return parts
@@ -372,42 +309,14 @@ type targetKindInfo struct {
 	kind string
 }
 
-func collectTargetKinds(name string, dirs *api.PkgDirs, ctx *RuntimeContext, tc *toolchain.Toolchain, globalValues map[string]any) ([]targetKindInfo, error) {
-	node := ctx.DepGraph.Packages[name]
-	if node == nil || node.Pkg == nil {
-		return nil, nil
-	}
-	if !inspectSourcePresent(ctx, name, node) {
-		return nil, nil
-	}
-
-	buildCtx, err := pipeline.DeclareTargets(ctx, name, dirs, tc, globalValues)
-	if blocked := scriptfs.TakeBlockedWrites(); len(blocked) > 0 && err == nil {
-		if len(blocked) == 1 {
-			err = errors.New(blocked[0])
-		} else {
-			err = fmt.Errorf("%s (and %d more blocked write attempts)", blocked[0], len(blocked)-1)
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	targets := buildCtx.GetTargets()
+func targetKindsFromInspectTargets(targets []inspectTarget, name string) []targetKindInfo {
 	if len(targets) == 0 {
-		return nil, nil
+		return nil
 	}
-
 	result := make([]targetKindInfo, 0, len(targets))
 	for _, t := range targets {
-		result = append(result, targetKindInfo{name: t.Name(), kind: string(t.Kind())})
+		result = append(result, targetKindInfo{name: t.Name, kind: t.Kind})
 	}
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].name != result[j].name {
-			return result[i].name < result[j].name
-		}
-		return result[i].kind < result[j].kind
-	})
 	for i, k := range result {
 		if k.name == name {
 			primary := result[i]
@@ -416,7 +325,25 @@ func collectTargetKinds(name string, dirs *api.PkgDirs, ctx *RuntimeContext, tc 
 			break
 		}
 	}
-	return result, nil
+	return result
+}
+
+func inspectPackageIndex(data *inspectData) map[string]*inspectPackage {
+	packages := make(map[string]*inspectPackage, len(data.Packages))
+	for i := range data.Packages {
+		packages[data.Packages[i].Name] = &data.Packages[i]
+	}
+	return packages
+}
+
+func printInspectDiagnostics(diagnostics []inspectDiagnostic) {
+	for _, diagnostic := range diagnostics {
+		message := diagnostic.Message
+		if diagnostic.Code == "VMAKE_W_TARGET_DECLARE" && strings.Contains(message, "read-only inspection:") {
+			message += " (guard generated-file work with p.DryRun())"
+		}
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", message)
+	}
 }
 
 func formatOptions(ctx *RuntimeContext, name string, globalValues map[string]any) string {
@@ -425,9 +352,7 @@ func formatOptions(ctx *RuntimeContext, name string, globalValues map[string]any
 		return ""
 	}
 
-	entry := config.GetEntry(ctx.Config, name)
-	acc := api.NewConfigAccessor(entry.Options, opts)
-	acc.MergeGlobals(ctx.GlobalOptions, globalValues)
+	acc := packageConfigAccessor(ctx, name, globalValues)
 
 	var parts []string
 	for _, oname := range slices.Sorted(maps.Keys(opts)) {

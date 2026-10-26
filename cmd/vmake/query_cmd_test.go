@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spock2300/vmake/pkg/api"
 )
 
 func TestQueryCMakeTargetDirectories(t *testing.T) {
@@ -189,6 +191,100 @@ func Main(p *api.Package) {
 		if _, err := os.Stat(filepath.Join(project, ".vmake_deps")); !os.IsNotExist(err) {
 			t.Fatalf("%v fetched package sources: %v", args, err)
 		}
+	}
+}
+
+func TestQueryTargetsMatchInspectForRemotePackages(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	state := t.TempDir()
+	repoDir := filepath.Join(state, "repos", "official")
+	writeExtensionFile(t, filepath.Join(repoDir, "packages", "d", "demo", "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.OnPackage(func(p *api.Package) {
+		p.SetGit("https://example.invalid/demo.git")
+		p.AddVersion("1.0.0", "v1.0.0")
+	})
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("demo").SetKind(api.TargetStatic).AddFiles("*.c")
+	})
+}
+`)
+	runGitLine(t, repoDir, "init", "-q")
+	runGitLine(t, repoDir, "config", "user.email", "test@example.com")
+	runGitLine(t, repoDir, "config", "user.name", "test")
+	runGitLine(t, repoDir, "add", "-A")
+	runGitLine(t, repoDir, "commit", "-q", "-m", "registry")
+
+	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("official/demo") })
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).AddDeps("official/demo:*")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, ".vmake_deps", "official", "demo", "src", "demo.c"), "int demo(void) { return 0; }\n")
+
+	inspected, stderr, code := runInspectCommandWithState(t, project, state, "inspect")
+	if code != 0 {
+		t.Fatalf("inspect exit = %d, stderr = %q", code, stderr)
+	}
+	envelope := decodeInspectEnvelope(t, inspected)
+	if envelope.Status != "ok" || envelope.Data == nil {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	demo := inspectPackageNamed(t, envelope.Data, "official/demo")
+	if !demo.Needed || !demo.SourcePresent {
+		t.Fatalf("remote package = %+v", demo)
+	}
+	if len(demo.Targets) != 1 || demo.Targets[0].Name != "demo" || demo.Targets[0].Kind != string(api.TargetStatic) {
+		t.Fatalf("remote targets = %+v", demo.Targets)
+	}
+
+	want := make(map[string]bool)
+	for _, pkg := range envelope.Data.Packages {
+		if !pkg.Needed {
+			continue
+		}
+		for _, target := range pkg.Targets {
+			want[pkg.Name+":"+target.Name+" ("+target.Kind+")"] = true
+		}
+	}
+	listed, stderr, code := runInspectCommandWithState(t, project, state, "query", "targets")
+	if code != 0 {
+		t.Fatalf("query targets exit = %d, stderr = %q", code, stderr)
+	}
+	got := make(map[string]bool)
+	for _, line := range strings.Split(strings.TrimSpace(listed), "\n") {
+		if line != "" {
+			got[line] = true
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("query targets = %v, want %v", got, want)
+	}
+	for line := range want {
+		if !got[line] {
+			t.Errorf("query targets missing %q:\n%s", line, listed)
+		}
+	}
+
+	tree, stderr, code := runInspectCommandWithState(t, project, state, "query")
+	if code != 0 {
+		t.Fatalf("query exit = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(tree, "official/demo:demo (static)") {
+		t.Errorf("query tree does not label the remote target:\n%s", tree)
 	}
 }
 

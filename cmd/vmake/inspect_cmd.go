@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -164,6 +165,7 @@ type inspectOverride struct {
 
 func newInspectCmd() *cobra.Command {
 	var setFlags []string
+	var noTargets bool
 	cmd := &cobra.Command{
 		Use:   "inspect",
 		Short: "Print a machine-readable project model",
@@ -193,18 +195,24 @@ true/false, on/off, and 1/0; int requires an integer; string and choice values
 keep their raw text, so a string can be "42" or "true". Unknown packages, unknown
 options, wrong value types and invalid choice values are rejected.
 
+With --no-targets, dry-run OnBuild target declaration is skipped for every
+package, so data.packages[].targets is omitted and no VMAKE_W_TARGET_DECLARE
+diagnostics are produced. Package, option, graph, source-presence and directory
+data are still reported. This mode does not execute OnBuild.
+
 On success the envelope has status "ok". On failure it has status "error" with
 diagnostics, vmake exits 1, and stderr carries one human-readable error line.`,
 		Args: cobra.NoArgs,
 	}
 	cmd.Flags().StringArrayVarP(&setFlags, "set", "s", nil, "override an option for this run only (format: [pkg/]option=value)")
+	cmd.Flags().BoolVar(&noTargets, "no-targets", false, "skip dry-run OnBuild target declaration")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		return runInspect(cmd.Context(), setFlags)
+		return runInspect(cmd.Context(), setFlags, !noTargets)
 	}
 	return cmd
 }
 
-func runInspect(execution context.Context, setFlags []string) error {
+func runInspect(execution context.Context, setFlags []string, includeTargets bool) error {
 	scriptfs.SetReadOnly(true)
 	defer scriptfs.SetReadOnly(false)
 	vlog.SetLevel(vlog.Quiet)
@@ -261,7 +269,7 @@ func runInspect(execution context.Context, setFlags []string) error {
 		return fail("VMAKE_E_INSPECT", err)
 	}
 	scriptfs.TakeBlockedWrites()
-	data, diagnostics := buildInspectData(ctx, inspection, inspectOverrideValues(overrides))
+	data, diagnostics := buildInspectData(ctx, inspection, inspectOverrideValues(overrides), includeTargets)
 	envelope.Data = data
 	envelope.Diagnostics = diagnostics
 	restoreStdout()
@@ -405,7 +413,7 @@ func inspectOverrideValues(overrides []inspectOverride) map[string]any {
 	return values
 }
 
-func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, overrides map[string]any) (*inspectData, []inspectDiagnostic) {
+func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, overrides map[string]any, includeTargets bool) (*inspectData, []inspectDiagnostic) {
 	root := ctx.Paths.ProjectDir
 	installRoot := filepath.Join(root, "install")
 	global := inspection.GlobalValues
@@ -478,21 +486,10 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 		}
 		if pkg.Needed {
 			pkg.BuildDir, pkg.BuildKey = inspectBuildDirFields(inspection.PkgDirs[name], node.IsLocal())
-			if source.Present {
+			if includeTargets && source.Present {
 				targets, err := inspectTargets(ctx, inspection, name, node)
 				if err != nil {
-					message := fmt.Sprintf("cannot declare targets for %s: %v", name, err)
-					fix := "Fix the package OnBuild callback, then rerun vmake inspect."
-					if strings.Contains(message, "read-only inspection:") {
-						message = strings.ReplaceAll(message, "panic: ", "")
-						fix = readOnlyTargetsWarningFix
-					}
-					diagnostics = append(diagnostics, inspectDiagnostic{
-						Severity: "warning",
-						Code:     "VMAKE_W_TARGET_DECLARE",
-						Message:  message,
-						Fix:      fix,
-					})
+					diagnostics = append(diagnostics, inspectTargetDiagnostic(name, err))
 				} else {
 					pkg.Targets = targets
 				}
@@ -714,26 +711,41 @@ func inspectPackageOptions(ctx *RuntimeContext, name string, inspection *pipelin
 		return nil
 	}
 	entry := config.GetEntry(ctx.Config, name)
+	acc := packageConfigAccessor(ctx, name, inspection.GlobalValues)
 	values := make(map[string]any, len(opts))
 	for optName, opt := range opts {
-		var value any
+		var raw any
 		if opt.IsGlobal() {
-			value = inspection.GlobalValues[optName]
+			raw = inspection.GlobalValues[optName]
 		} else {
-			value = entry.Options[optName]
+			raw = entry.Options[optName]
 		}
-		if value == nil {
-			value = opt.Default()
+		if raw == nil {
+			raw = opt.Default()
 		}
-		if value == nil {
+		if raw == nil {
 			continue
 		}
-		values[optName] = api.NormalizeOptionValue(opt, value)
+		switch opt.Type() {
+		case api.OptionBool:
+			values[optName] = acc.Bool(optName)
+		case api.OptionInt:
+			values[optName] = acc.Int(optName)
+		default:
+			values[optName] = acc.String(optName)
+		}
 	}
 	if len(values) == 0 {
 		return nil
 	}
 	return values
+}
+
+func packageConfigAccessor(ctx *RuntimeContext, name string, globalValues map[string]any) api.ConfigAccessor {
+	entry := config.GetEntry(ctx.Config, name)
+	acc := api.NewConfigAccessor(maps.Clone(entry.Options), maps.Clone(ctx.AllOptions[name]))
+	acc.MergeGlobals(ctx.GlobalOptions, globalValues)
+	return acc
 }
 
 func inspectOptionDefs(opts map[string]*api.Option) map[string]inspectOptionDef {
@@ -787,6 +799,9 @@ func inspectTargetDeps(target *api.Target, node *resolver.PackageNode) []string 
 }
 
 func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name string, node *resolver.PackageNode) ([]inspectTarget, error) {
+	if node == nil || node.Pkg == nil || !inspectSourcePresent(ctx, name, node) {
+		return nil, nil
+	}
 	dirs := inspection.PkgDirs[name]
 	if dirs == nil {
 		dirs = &api.PkgDirs{SourceDir: inspectSourceDir(inspection, name, node)}
@@ -858,6 +873,21 @@ func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name s
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
 	return targets, nil
+}
+
+func inspectTargetDiagnostic(name string, err error) inspectDiagnostic {
+	message := fmt.Sprintf("cannot declare targets for %s: %v", name, err)
+	fix := "Fix the package OnBuild callback, then rerun vmake inspect."
+	if strings.Contains(message, "read-only inspection:") {
+		message = strings.ReplaceAll(message, "panic: ", "")
+		fix = readOnlyTargetsWarningFix
+	}
+	return inspectDiagnostic{
+		Severity: "warning",
+		Code:     "VMAKE_W_TARGET_DECLARE",
+		Message:  message,
+		Fix:      fix,
+	}
 }
 
 func inspectDeclaredFlags(flags, seeded []string) []string {

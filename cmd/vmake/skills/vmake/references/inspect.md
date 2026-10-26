@@ -3,8 +3,10 @@
 `vmake inspect` prints the resolved project model as one JSON document
 (schemaVersion 1) on stdout. It runs dependency resolution, `OnConfig`, and
 dry-run `OnBuild` target declaration only: it never compiles, links, installs,
-or writes `build/`, `install/`, or `.vmake/config.json` itself. Resolution may
-still initialize `.vmake/layout` and extend `.gitignore` with `.vmake_deps/`.
+or writes `build/`, `install/`, or `.vmake/config.json` itself. With
+`--no-targets`, dry-run `OnBuild` target declaration is skipped entirely.
+Resolution may still initialize `.vmake/layout` and extend `.gitignore` with
+`.vmake_deps/`.
 During dry-run
 declaration it also disables interpreted-script file writes through the wrapped
 `os` APIs (see **Read-only dry-run** below), so a callback that tries to write
@@ -24,8 +26,13 @@ and test report currently exist, and each needed package carries its active
 build directory; they do not verify action or output freshness.
 
 ```
-vmake inspect [--set [package/]option=value ...] [-C <dir>]
+vmake inspect [--no-targets] [--set [package/]option=value ...] [-C <dir>]
 ```
+
+`--no-targets` skips dry-run `OnBuild` target declaration for every package.
+`data.packages[].targets` is omitted and no `VMAKE_W_TARGET_DECLARE`
+diagnostics are produced; package, option, graph, source-presence and directory
+data are still reported.
 
 `-C`/`--project` is the global project-root override. It is resolved against
 the process cwd, must be an existing project directory (`.vmake/`, `build.go`,
@@ -94,7 +101,9 @@ Failure (no `data`, exit 1):
   such packages untargeted without running their dry-run `OnBuild`; a
   target-declaration failure in a package whose source is present prints one
   `Warning: cannot declare targets for <package>: <error>` and does not stop the
-  command.
+  command. `vmake query targets` lists every needed package with a materialized
+  source tree, including local and remote packages; the tree labels those same
+  packages by their primary target.
 
 ## Read-only dry-run
 
@@ -168,9 +177,10 @@ Each `packages` entry has `name`, `kind` (`local`/`native`/`registry`),
 `repo`/`version`/`commit`/`url`, local `path` and absolute `sourceDir`,
 `description`, `toolchain`, `options` (effective values), `optionDefs`
 (object keyed by option name with the same `{type, default?, description?,
-values?, group?}` schema), and `targets` (needed packages that declare targets). `sourcePresent` is false when the expected source tree is
-missing or empty; that package also gets a `VMAKE_W_SOURCE_MISSING` warning when
-it is needed.
+values?, group?}` schema), and `targets` (needed packages that declare targets;
+omitted for every package with `--no-targets`). `sourcePresent` is false when
+the expected source tree is missing or empty; that package also gets a
+`VMAKE_W_SOURCE_MISSING` warning when it is needed.
 
 Needed packages also carry `buildDir`, the absolute build-key directory from
 the same layout the next build would use; it may not exist yet (before a first
@@ -226,6 +236,7 @@ Examples:
 
 ```sh
 vmake inspect
+vmake inspect --no-targets                 # package/dependency model only
 vmake inspect --set mode=release --set proj/retries=5
 vmake inspect --set proj/label=42          # string option keeps "42"
 vmake inspect --set proj/with_dep=on       # bool alias becomes true
