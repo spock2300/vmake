@@ -220,9 +220,21 @@ func runExtProvision(cmd *cobra.Command, args []string) {
 		return
 	}
 	var failures []error
+	counts := make(map[string]int, len(defs))
+	for i := range defs {
+		counts[defs[i].Name]++
+	}
+	duplicateReported := make(map[string]bool)
 	installed, skipped := 0, 0
 	for i := range defs {
 		def := &defs[i]
+		if counts[def.Name] > 1 {
+			if !duplicateReported[def.Name] {
+				failures = append(failures, fmt.Errorf("toolchain '%s' is defined more than once", def.Name))
+				duplicateReported[def.Name] = true
+			}
+			continue
+		}
 		installation, err := def.Installation()
 		if err != nil {
 			fmt.Printf("Skipping toolchain '%s': %v\n", def.Name, err)

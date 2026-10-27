@@ -48,13 +48,18 @@ func writeProvisionArchive(t *testing.T, repo, tool, payload string) {
 	}
 }
 
-func writeProvisionDefinition(t *testing.T, repo string, def toolchain.ToolchainDef) {
+func writeProvisionDefinitionDir(t *testing.T, repo, dir string, def toolchain.ToolchainDef) {
 	t.Helper()
 	data, err := json.Marshal(def)
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeExtensionFile(t, filepath.Join(repo, def.Name, "toolchain.json"), string(data))
+	writeExtensionFile(t, filepath.Join(repo, dir, "toolchain.json"), string(data))
+}
+
+func writeProvisionDefinition(t *testing.T, repo string, def toolchain.ToolchainDef) {
+	t.Helper()
+	writeProvisionDefinitionDir(t, repo, def.Name, def)
 }
 
 func provisionToolchainDef(name, version, tool string, installations map[string]toolchain.InstallConfig) toolchain.ToolchainDef {
@@ -113,6 +118,28 @@ func TestExtProvisionSkipsUnsupportedHost(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("provision output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestExtProvisionRejectsDuplicateToolchainNames(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "extensions", "fixture")
+	tool := provisionToolName("cross-tool")
+	writeProvisionArchive(t, repo, tool, "payload")
+	host := runtime.GOOS + "/" + runtime.GOARCH
+	def := provisionToolchainDef("fixture-tc", "1", tool, map[string]toolchain.InstallConfig{
+		host: {Method: "lfs", File: "toolchain.zip", Format: "zip", RootDir: "toolchain-root"},
+	})
+	writeProvisionDefinitionDir(t, repo, "first", def)
+	writeProvisionDefinitionDir(t, repo, "second", def)
+
+	out, err := extensionCommand(t, dir, dir, "ext", "provision", "fixture")
+	if err == nil || !strings.Contains(out, "defined more than once") {
+		t.Fatalf("duplicate definitions were provisioned: %v\n%s", err, out)
+	}
+	installed := filepath.Join(dir, "toolchains", runtime.GOOS, runtime.GOARCH, def.Name, def.Version)
+	if _, err := os.Stat(installed); !os.IsNotExist(err) {
+		t.Fatalf("duplicate definitions created %s: %v", installed, err)
 	}
 }
 
