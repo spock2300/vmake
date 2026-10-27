@@ -75,6 +75,20 @@ func confirmTrust(subject string) bool {
 	return answer == "y" || answer == "yes"
 }
 
+func repoScriptTrusted(name, commit string) (bool, error) {
+	if trustAllEnabled() {
+		return true, nil
+	}
+	if commit == "" {
+		return false, nil
+	}
+	store, err := openTrustStore()
+	if err != nil {
+		return false, err
+	}
+	return store.Verify(trustKindRepo, name, "", commit)
+}
+
 func repoTrustCommit(name string) (string, error) {
 	mgr := getRepoManager()
 	if !mgr.Exists(name) {

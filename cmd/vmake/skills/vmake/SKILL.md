@@ -50,6 +50,8 @@ vmake config list                      # List configurations under .vmake/
 vmake config use <name>.json           # Select a configuration
 vmake inspect                          # Dry-run JSON project model (may initialize .vmake/ and .gitignore)
 vmake inspect --no-targets             # Package/dependency JSON without running OnBuild
+vmake pkg search tls --details         # Search names, descriptions and licenses in trusted repositories
+vmake pkg show official/zlib           # Package metadata, versions and AddRequires snippet
 vmake query                            # Dependency tree
 vmake query targets                    # Targets without building (local + remote)
 vmake check-symbols                    # Verify ELF symbols against policy
@@ -62,6 +64,7 @@ vmake toolchain show <name>            # Toolchain details and resolved tool pat
 ```
 
 - **Build & Test Reports**: `build`/`rebuild` write `build/vmake-build.json` and `test` writes `build/vmake-test.json` (schemaVersion 2: status, duration, concise error, parsed compiler/linker diagnostics, target timings, test results, SHA-256 installed artifacts). `clean`/`distclean`/`pkg clean` remove both. Full schema: [references/build-result.md](references/build-result.md).
+- **Package Discovery**: `pkg search` scans repository directories and matches repository/package names by default; `--details` reads `build.go` only for trusted repositories and also matches description, license and latest version. `--for-project` adds cached/locked/installed status; installed status uses the default `<project>/install/manifest.json`, so custom `--prefix` installs are not detected. `pkg show` prints metadata and an `AddRequires` snippet. Native repositories only expose packages already cached in the current project; native sub-packages are not listed separately and are read through their parent package. Neither command writes an index or cache.
 - **Inspection & Dry-Run Discipline**: `inspect`, `query`, and `query targets` evaluate `OnBuild` in dry-run mode with read-only `scriptfs` (`p.DryRun() == true`); `inspect --no-targets` skips `OnBuild` entirely, and `query config <pkg>` only reads configuration and does not evaluate `OnBuild`. `check-symbols` declares targets in dry-run but does not set `scriptfs` read-only. Prefer declarative `p.WriteBuildFile`, `p.GenerateFile`, `p.Generate`, and `p.BuildPath` in `OnBuild` (they defer writes to scheduler execution and emit `$builddir/...` when `BuildDir()` is empty); guard any procedural `os.WriteFile` on `!p.DryRun()`. Full schema: [references/inspect.md](references/inspect.md).
 - **Full CLI Reference**: See [references/cli.md](references/cli.md).
 - **Stale Skill**: If a command here fails with an unknown flag or subcommand, the installed skill may be older than the `vmake` binary. Run `vmake version` and reinstall with `vmake skill install`.

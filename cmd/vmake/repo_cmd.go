@@ -109,12 +109,18 @@ var repoListCmd = &cobra.Command{
 		}
 
 		fmt.Println("Repositories:")
+		mgr := getRepoManager()
 		for _, info := range infos {
-			kind := "registry"
 			if info.Native {
-				kind = "native"
+				fmt.Printf("  %s (native)\n", info.Name)
+				continue
 			}
-			fmt.Printf("  %s (%s)\n", info.Name, kind)
+			count, err := mgr.ListPackages(info.Name)
+			if err != nil {
+				fmt.Printf("  %s (registry)\n", info.Name)
+				continue
+			}
+			fmt.Printf("  %s (registry, %d packages)\n", info.Name, len(count))
 		}
 	},
 }

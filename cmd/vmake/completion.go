@@ -223,6 +223,35 @@ func completeExtRepoName(cmd *cobra.Command, args []string, toComplete string) (
 	return completeSliceField(getPluginManager().ListRepos(), func(r plugin.ExtensionRepo) string { return r.Name })
 }
 
+func completeCatalogPkgRef(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	mgr := getRepoManager()
+	depsDir := ""
+	if projectDir := findProjectDirSoft(); projectDir != "" {
+		depsDir = filepath.Join(projectDir, ".vmake_deps")
+	}
+	var refs []string
+	for _, info := range mgr.ListInfo() {
+		if info.Native {
+			if depsDir == "" {
+				continue
+			}
+			names, _ := listNativePackagesAt(depsDir, info.Name)
+			for _, name := range names {
+				refs = append(refs, info.Name+"/"+name)
+			}
+			continue
+		}
+		names, err := mgr.ListPackages(info.Name)
+		if err != nil {
+			continue
+		}
+		for _, name := range names {
+			refs = append(refs, info.Name+"/"+name)
+		}
+	}
+	return refs, cobra.ShellCompDirectiveNoFileComp
+}
+
 func completePkgRef(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	depsDir := getDepsDir()
 	repoEntries, err := fs.ListDirEntries(depsDir)

@@ -249,7 +249,6 @@ func skillSubCommand(cmd *cobra.Command, name string) *cobra.Command {
 var removedSkillCLIFlags = []string{
 	"--require-tests",
 	"--allow-dry-run-writes",
-	"--json",
 	"--check",
 	"--plan",
 	"--output",

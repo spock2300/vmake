@@ -30,6 +30,22 @@ func fakeToolName(name string) string {
 	return name
 }
 
+func TestFormatToolchainTarget(t *testing.T) {
+	for _, test := range []struct {
+		tc   *toolchain.Toolchain
+		want string
+	}{
+		{&toolchain.Toolchain{TargetOS: "none", TargetTriple: "arm-none-eabi"}, "none/arm-none-eabi"},
+		{&toolchain.Toolchain{TargetOS: "linux"}, "linux"},
+		{&toolchain.Toolchain{TargetTriple: "aarch64-linux-gnu"}, "aarch64-linux-gnu"},
+		{&toolchain.Toolchain{}, ""},
+	} {
+		if got := formatToolchainTarget(test.tc); got != test.want {
+			t.Errorf("formatToolchainTarget(%+v) = %q, want %q", test.tc, got, test.want)
+		}
+	}
+}
+
 func TestFormatToolchainTool(t *testing.T) {
 	binDir := t.TempDir()
 	t.Setenv("PATH", binDir)

@@ -362,7 +362,8 @@ Native repos are trusted per resolved package commit at build time (`vmake build
 
 ```bash
 vmake pkg list
-vmake pkg search <keyword>
+vmake pkg search <keyword>                     # names only; --details also matches description/license
+vmake pkg show <repo/name>[@version]           # metadata, versions, dependencies, AddRequires snippet
 vmake pkg clean <repo/name> [-a]              # -a also removes the package working tree
 vmake pkg update <repo/name>[@version] [--dry-run]
 ```

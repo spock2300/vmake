@@ -18,16 +18,72 @@ import (
 
 var pkgCmd = &cobra.Command{
 	Use:   "pkg",
-	Short: "Manage packages",
-	Long:  `Manage third-party packages.`,
+	Short: "Discover packages and manage project sources",
+	Long:  `Search registered repositories for available packages and manage packages materialized in this project.`,
 }
 
 var pkgListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List package sources",
+	Short: "List packages materialized in this project",
+	Long:  `List package working trees under .vmake_deps, including trees no longer needed by the active configuration.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		listPackageSources(cmd.OutOrStdout(), getDepsDir())
 	},
+}
+
+var (
+	pkgSearchRepo       string
+	pkgSearchDetails    bool
+	pkgSearchForProject bool
+	pkgSearchJSON       bool
+	pkgShowForProject   bool
+	pkgShowJSON         bool
+)
+
+var pkgSearchCmd = &cobra.Command{
+	Use:   "search [pattern]",
+	Short: "Search registered repositories for packages",
+	Long: `Search package sources by repository directory layout.
+
+Registry packages are listed from ~/.vmake/repos/<repo>/packages/.
+Native packages are listed from this project's .vmake_deps/<repo>/<pkg>/src/.
+Native repositories have no global catalog, so packages that are not cached in
+the current project cannot be discovered. Native sub-packages are not listed
+separately; they are read through their parent package.
+
+The pattern matches repository and package names. Use --details to read each
+build.go and also match descriptions, licenses and latest versions; details
+require the repository or package commit to be trusted and are skipped with a
+warning otherwise.
+
+--for-project adds cached, locked and installed status. Installed status comes
+from the default <project>/install/manifest.json; packages installed with a
+custom --prefix are not detected.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runPkgSearch,
+}
+
+var pkgShowCmd = &cobra.Command{
+	Use:   "show <repo/pkg>[@version]",
+	Short: "Show package metadata",
+	Long: `Show package metadata from its build.go.
+
+Registry packages are read from the repository checkout. Native packages must
+already be cached in this project's .vmake_deps. Remote scripts run only when
+their repository or package commit is trusted; otherwise only directory and
+trust status are shown.
+
+Requires lists dependencies discovered without configuration values; options may
+make some of them conditional. Options and targets are resolved only when the
+package is part of a project; use 'vmake query config' and 'vmake inspect' for
+those.
+
+Use --for-project to include cached, locked and installed state. Installed
+status comes from the default <project>/install/manifest.json; packages
+installed with a custom --prefix are not detected. Native sub-packages are read
+through their parent package; pass the parent package name.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runPkgShow,
 }
 
 func listPackageSources(w io.Writer, depsDir string) {
@@ -55,83 +111,6 @@ func listPackageSources(w io.Writer, depsDir string) {
 		}
 		for _, pkg := range pkgs {
 			fmt.Fprintf(w, "  %s/%s\n", repoName, pkg.Name())
-		}
-	}
-}
-
-var pkgSearchCmd = &cobra.Command{
-	Use:   "search [pattern]",
-	Short: "Search for packages",
-	Args:  cobra.MaximumNArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		pattern := ""
-		if len(args) > 0 {
-			pattern = args[0]
-		}
-
-		mgr := getRepoManager()
-
-		infos := mgr.ListInfo()
-		if len(infos) == 0 {
-			fmt.Println("No repositories found. Use 'vmake repo add' to add one.")
-			return
-		}
-
-		fmt.Println("Available packages:")
-		for _, info := range infos {
-			if !info.Native {
-				searchRegistryRepo(info.Name, pattern)
-			} else {
-				searchNativeRepo(info.Name, pattern)
-			}
-		}
-	},
-}
-
-func searchRegistryRepo(repoName, pattern string) {
-	repoPath := filepath.Join(getReposDir(), repoName, "packages")
-	letterDirs, err := fs.ListDirEntries(repoPath)
-	if err != nil {
-		return
-	}
-
-	for _, letterDir := range letterDirs {
-		pkgDir := filepath.Join(repoPath, letterDir.Name())
-		pkgs, err := fs.ListDirEntries(pkgDir)
-		if err != nil {
-			continue
-		}
-
-		for _, pkg := range pkgs {
-			fullName := repoName + "/" + pkg.Name()
-			if pattern == "" || strings.Contains(fullName, pattern) {
-				fmt.Printf("  %s\n", fullName)
-			}
-		}
-	}
-}
-
-func searchNativeRepo(repoName, pattern string) {
-	projectDir := findProjectDirSoft()
-	if projectDir == "" {
-		return
-	}
-	depsDir := filepath.Join(projectDir, ".vmake_deps", repoName)
-	entries, err := fs.ListDirEntries(depsDir)
-	if err != nil {
-		return
-	}
-
-	for _, entry := range entries {
-		pkgName := entry.Name()
-		srcDir := filepath.Join(depsDir, pkgName, "src")
-		buildGo := filepath.Join(srcDir, "build.go")
-		if !fs.FileExists(buildGo) {
-			continue
-		}
-		fullName := repoName + "/" + pkgName
-		if pattern == "" || strings.Contains(fullName, pattern) {
-			fmt.Printf("  %s (cached)\n", fullName)
 		}
 	}
 }
@@ -248,13 +227,22 @@ var pkgUpdateCmd = &cobra.Command{
 func init() {
 	pkgCmd.AddCommand(pkgListCmd)
 	pkgCmd.AddCommand(pkgSearchCmd)
+	pkgCmd.AddCommand(pkgShowCmd)
 	pkgCmd.AddCommand(pkgCleanCmd)
 	pkgCmd.AddCommand(pkgUpdateCmd)
 	RootCmd.AddCommand(pkgCmd)
 
 	pkgCleanCmd.Flags().BoolVarP(&pkgCleanAll, "all", "a", false, "also clean source code")
 	pkgUpdateCmd.Flags().BoolVar(&pkgUpdateDryRun, "dry-run", false, "show what would be fetched without fetching")
+	pkgSearchCmd.Flags().StringVar(&pkgSearchRepo, "repo", "", "limit the search to one repository")
+	pkgSearchCmd.Flags().BoolVar(&pkgSearchDetails, "details", false, "read build.go; also match description, license and version")
+	pkgSearchCmd.Flags().BoolVar(&pkgSearchForProject, "for-project", false, "include cached, locked and installed status")
+	pkgSearchCmd.Flags().BoolVar(&pkgSearchJSON, "json", false, "print machine-readable JSON")
+	pkgShowCmd.Flags().BoolVar(&pkgShowForProject, "for-project", false, "include cached, locked and installed status")
+	pkgShowCmd.Flags().BoolVar(&pkgShowJSON, "json", false, "print machine-readable JSON")
 
 	pkgUpdateCmd.ValidArgsFunction = completePkgRef
 	pkgCleanCmd.ValidArgsFunction = completePkgRef
+	pkgShowCmd.ValidArgsFunction = completeCatalogPkgRef
+	pkgSearchCmd.RegisterFlagCompletionFunc("repo", completeRepoName)
 }

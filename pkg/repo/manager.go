@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spock2300/vmake/internal/flock"
@@ -117,6 +118,38 @@ func (m *RepoManager) GetNativeURL(name string) (string, error) {
 		return "", fmt.Errorf("repo '%s' is not a native repo", name)
 	}
 	return cfg.URL, nil
+}
+
+func (m *RepoManager) ListPackages(repo string) ([]string, error) {
+	if err := gitstore.ValidateName(repo); err != nil {
+		return nil, err
+	}
+	repoPath := m.Path(repo)
+	if !fs.FileExists(repoPath) {
+		return nil, fmt.Errorf("repository '%s' not found", repo)
+	}
+	root := filepath.Join(repoPath, "packages")
+	if !fs.FileExists(root) {
+		return nil, nil
+	}
+	letters, err := fs.ListDirs(root)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, letter := range letters {
+		pkgs, err := fs.ListDirs(filepath.Join(root, letter))
+		if err != nil {
+			continue
+		}
+		for _, name := range pkgs {
+			if fs.FileExists(filepath.Join(root, letter, name, "build.go")) {
+				names = append(names, name)
+			}
+		}
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 func (m *RepoManager) FindPackage(repo, name string) (string, error) {

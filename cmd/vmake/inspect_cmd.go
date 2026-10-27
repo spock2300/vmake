@@ -226,9 +226,9 @@ func runInspect(execution context.Context, setFlags []string, includeTargets boo
 	if findProjectDirSoft() == "" {
 		return failInspect(envelope, "VMAKE_E_INSPECT", errors.New("not inside a vmake project (no .vmake/, build.go or */build.go found in the current directory or any parent directory)"))
 	}
-	restoreStdout := silenceInspectStdout()
+	restoreStdout := silenceStdout()
 	defer restoreStdout()
-	restoreStderr := silenceInspectStderr()
+	restoreStderr := silenceStderr()
 	defer restoreStderr()
 	fail := func(code string, err error) error {
 		restoreStdout()
@@ -283,15 +283,15 @@ func runInspect(execution context.Context, setFlags []string, includeTargets boo
 	return nil
 }
 
-func silenceInspectStdout() func() {
-	return silenceInspectStream(&os.Stdout)
+func silenceStdout() func() {
+	return silenceStream(&os.Stdout)
 }
 
-func silenceInspectStderr() func() {
-	return silenceInspectStream(&os.Stderr)
+func silenceStderr() func() {
+	return silenceStream(&os.Stderr)
 }
 
-func silenceInspectStream(stream **os.File) func() {
+func silenceStream(stream **os.File) func() {
 	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
 		return func() {}

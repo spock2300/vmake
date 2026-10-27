@@ -32,7 +32,7 @@
                     └── build.go
 ```
 
-旧版布局（`~/.vmake/sources`、旧全局信任文件 `~/.vmake/config.json`、`cache/v2`、`cache/_localgit`、`cache/mirrors`、项目 `vmake_deps/`）会在升级后首次执行加载项目配置/依赖的命令时清理（`loadResolveInputs` 中的 `cleanupLegacyStorage`；`doctor`、`pkg list`、`toolchain list`、`manifest show` 等不经过该路径的命令不会触发），依赖重新物化；旧的信任记录不迁移，`~/.vmake/config.json` 删除后需重新 `vmake repo trust` / `vmake ext trust`，或在下一次构建的确认提示中授权。不提供兼容迁移（布局标记 `.vmake/layout`，见 `cmd/vmake/storage.go`）。`cache/git/` 是当前布局，升级时不删除。
+旧版布局（`~/.vmake/sources`、旧全局信任文件 `~/.vmake/config.json`、`cache/v2`、`cache/_localgit`、`cache/mirrors`、项目 `vmake_deps/`）会在升级后首次执行加载项目配置/依赖的命令时清理（`loadResolveInputs` 中的 `cleanupLegacyStorage`；`doctor`、`pkg list`、`pkg search`、`pkg show`、`toolchain list`、`manifest show` 等不经过该路径的命令不会触发），依赖重新物化；旧的信任记录不迁移，`~/.vmake/config.json` 删除后需重新 `vmake repo trust` / `vmake ext trust`，或在下一次构建的确认提示中授权。不提供兼容迁移（布局标记 `.vmake/layout`，见 `cmd/vmake/storage.go`）。`cache/git/` 是当前布局，升级时不删除。
 
 ## repos/
 
@@ -57,7 +57,7 @@ CLI：`vmake repo add|remove|list|update|trust|untrust`
 
 工作树存放在项目内（见下节），物化时按需 `git ls-remote` 解析版本、把所选 ref/commit 的对象按 depth=1 抓进 `cache/git/` 并锚定，再从缓存本地 fetch 出工作树。命中缓存后不触网只适用于 **commit 已固定且对象已缓存** 的请求；需要解析版本/ref 的请求仍可能先访问上游（失败时可用缓存记录的 ref→commit 或现有树离线兜底），默认分支 HEAD 物化直接 clone 上游，缓存未命中或服务器拒绝按 SHA fetch 时回退到上游/full clone。缓存缺失/损坏或 URL 变化会在锁内重建；上游不可达且无缓存兜底时构建会失败。
 
-需要加载项目解析输入的命令先取得 `project/.vmake/_locks/project.lock`（独占）：任何会解析依赖的命令都可能物化源码树或创建源码链接，因此同工程命令串行（`doctor`、`pkg list`、`manifest show` 等不经过 `loadResolveInputs` 的命令除外）。全局缓存的生命周期锁在构建/读取时共享，在 `clean`/`distclean`/`pkg clean`/`rebuild`、`lock update` 和 `pkg update` 时独占（`requiresExclusiveStorage`）；`ext update`/`repo update` 不经过该存储会话。同一棵树在同一时间只允许一个物化操作（`tree_<hash>.lock`），每个缓存 bare 仓库的写入与 checkout 由 `cache_<urlhash 前16位>.lock` 串行（不同 URL 不同锁）。构建与 `lock update` 在 `Require`/`Configure` 完成后的配置阶段取得所需远程包（native 子包归并到根父包）的 `owner_<sha256(name)>.lock`，并持有到命令结束，而不是整个命令期间。
+需要加载项目解析输入的命令先取得 `project/.vmake/_locks/project.lock`（独占）：任何会解析依赖的命令都可能物化源码树或创建源码链接，因此同工程命令串行（`doctor`、`pkg list`、`pkg search`、`pkg show`、`manifest show` 等不经过 `loadResolveInputs` 的命令除外）。全局缓存的生命周期锁在构建/读取时共享，在 `clean`/`distclean`/`pkg clean`/`rebuild`、`lock update` 和 `pkg update` 时独占（`requiresExclusiveStorage`）；`ext update`/`repo update` 不经过该存储会话。同一棵树在同一时间只允许一个物化操作（`tree_<hash>.lock`），每个缓存 bare 仓库的写入与 checkout 由 `cache_<urlhash 前16位>.lock` 串行（不同 URL 不同锁）。构建与 `lock update` 在 `Require`/`Configure` 完成后的配置阶段取得所需远程包（native 子包归并到根父包）的 `owner_<sha256(name)>.lock`，并持有到命令结束，而不是整个命令期间。
 
 网络 git 操作默认超时 30 分钟；clone/fetch 在传输阶段把 git 进度实时透传到终端，而 `git ls-remote` 本身没有进度输出。解析依赖或物化包源码的命令（如 `build`/`rebuild`/`lock update`/`pkg update`）会在解析 ref、列举 native 版本或尝试每个源 URL 前先打印一行状态（包名/树键、已知的目标 ref/commit、源 URL），便于判断当前步骤；缓存命中时这行也可能出现，但通常不触网。这些状态行与 git 进度都在 `-q` 下静默，`query`/`check-symbols` 固定静默。状态行不是心跳：`git ls-remote`、建立连接和服务端枚举对象期间 git 自身没有输出，可能一直静默到操作完成或触发 `VMAKE_GIT_TIMEOUT`。网络较慢时可提高上限：
 
@@ -186,7 +186,7 @@ toolchains/<host-os>/<host-arch>/<name>/<version>/
 `vmake clean` 只删除当前配置的构建键目录，`clean --all` 删除所有配置的产物，两者都保留 `.vmake_deps/` 源码树；`vmake distclean` 同样保留下载的工作树（下次构建直接复用，不重新下载），只有加 `--purge-sources` 才删除整个 `.vmake_deps/`。`vmake pkg clean <repo/name>` 删除单个包的构建产物，`-a` 连工作树一并删除；下次构建会重新物化该树，但共享对象缓存已有该 commit 时无需重新下载对象（版本/ref 解析仍可能访问上游）。该命令也会删除 `build/vmake-build.json` 与 `build/vmake-test.json`。
 
 源码：`cmd/vmake/paths.go` (`getDepsDir`, `findProjectDir`), `pkg/repo/source.go`, `pkg/repo/storage.go`
-CLI：`vmake pkg list|search|clean|update`
+CLI：`vmake pkg list|search|show|clean|update`
 
 ## 项目目录
 

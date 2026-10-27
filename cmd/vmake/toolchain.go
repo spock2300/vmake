@@ -61,6 +61,9 @@ func runToolchainList(cmd *cobra.Command, args []string) {
 		}
 		vlog.Info("  %s%s [%s]", name, mark, status)
 		vlog.Info("    Display: %s", tc.DisplayName)
+		if target := formatToolchainTarget(tc); target != "" {
+			vlog.Info("    Target:  %s", target)
+		}
 		vlog.Info("    CC:      %s", tc.Tools.CC)
 		vlog.Info("    CXX:     %s", tc.Tools.CXX)
 	}
@@ -81,6 +84,17 @@ func formatToolchainDefinitionError(err *toolchain.DefinitionError) string {
 		return fmt.Sprintf("%s [unidentified]: %v", path, err.Unwrap())
 	}
 	return fmt.Sprintf("%s [%s]: %v", err.Name(), path, err.Unwrap())
+}
+
+func formatToolchainTarget(tc *toolchain.Toolchain) string {
+	switch {
+	case tc.TargetOS != "" && tc.TargetTriple != "":
+		return tc.TargetOS + "/" + tc.TargetTriple
+	case tc.TargetOS != "":
+		return tc.TargetOS
+	default:
+		return tc.TargetTriple
+	}
 }
 
 func formatToolchainTool(tc *toolchain.Toolchain, name, configured string) string {

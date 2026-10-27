@@ -355,7 +355,8 @@ vmake (RootCmd)
 │   └── untrust    # 撤销仓库信任
 ├── pkg            # 包管理
 │   ├── list       # 列出项目内的包源码
-│   ├── search     # 搜索包
+│   ├── search     # 搜索仓库包（默认匹配名称；--details 读取 build.go 并匹配描述/许可证）
+│   ├── show       # 显示包元数据、版本、依赖和 AddRequires 片段
 │   ├── clean      # 清理包构建产物（`-a` 一并删除工作树）
 │   └── update     # 更新包源码
 ├── ext            # 扩展仓库管理

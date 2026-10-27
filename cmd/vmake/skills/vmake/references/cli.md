@@ -38,10 +38,11 @@ extension plugin commands appear here too. For plugin details, run
   `vmake manifest` - Inspect and restore install manifests
     `vmake manifest checkout <path> [name]` - Checkout packages to recorded versions
     `vmake manifest show <path>` - Show manifest contents
-  `vmake pkg` - Manage packages
+  `vmake pkg` - Discover packages and manage project sources
     `vmake pkg clean <repo/name> [--all -a]` - Clean package build outputs
-    `vmake pkg list` - List package sources
-    `vmake pkg search [pattern]` - Search for packages
+    `vmake pkg list` - List packages materialized in this project
+    `vmake pkg search [pattern] [--details --for-project --json --repo <value>]` - Search registered repositories for packages
+    `vmake pkg show <repo/pkg>[@version] [--for-project --json]` - Show package metadata
     `vmake pkg update <repo/name>[@version] [--dry-run]` - Update package source (floats to origin/HEAD, or pins @version)
   `vmake query [--set <value> -s]` - Show dependency tree
     `vmake query config <pkg>` - Show effective option values and generated defines
