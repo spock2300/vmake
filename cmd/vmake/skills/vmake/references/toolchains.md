@@ -183,6 +183,14 @@ Only manifests with `installations` get an install handler; a build with
 `--toolchain <name>` installs those. Until then, relative names may resolve from
 PATH and can be host tools rather than the archive's tools.
 
+To install the current host's archives before a build, run
+`vmake ext provision <repo>` after trusting the extension. It installs every
+declared toolchain that has an `installations` entry for the current host,
+reuses already installed directories, and skips entries for other hosts.
+`vmake ext add` and `vmake ext update` still do not download archives; they
+only fetch Git files and LFS pointers. `ext provision` does not execute plugin
+code.
+
 ## Inside build.go
 
 | Need | Use |

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 
 	"github.com/spf13/cobra"
 
@@ -80,11 +82,17 @@ var extUpdateCmd = &cobra.Command{
 If no name is given, all repositories are updated.`, Run: runExtUpdate,
 }
 
+var extProvisionCmd = &cobra.Command{
+	Use: "provision <name>", Short: "Install the current host's toolchains declared by an extension repository",
+	Args: cobra.ExactArgs(1), Run: runExtProvision,
+}
+
 func init() {
 	RootCmd.AddCommand(extCmd)
-	extCmd.AddCommand(extAddCmd, extRemoveCmd, extListCmd, extUpdateCmd, extTrustCmd, extUntrustCmd)
+	extCmd.AddCommand(extAddCmd, extRemoveCmd, extListCmd, extUpdateCmd, extProvisionCmd, extTrustCmd, extUntrustCmd)
 	extRemoveCmd.ValidArgsFunction = completeExtRepoName
 	extUpdateCmd.ValidArgsFunction = completeExtRepoName
+	extProvisionCmd.ValidArgsFunction = completeExtRepoName
 	extTrustCmd.ValidArgsFunction = completeExtRepoName
 	extUntrustCmd.ValidArgsFunction = completeExtRepoName
 }
@@ -179,6 +187,67 @@ func runExtUpdate(cmd *cobra.Command, args []string) {
 		fmt.Println("Done. Trust was reset for updated repositories; review and run 'vmake ext trust <name>'.")
 	} else {
 		fmt.Println("Done. No trust records changed.")
+	}
+}
+
+func runExtProvision(cmd *cobra.Command, args []string) {
+	name := args[0]
+	mgr := getPluginManager()
+	if !mgr.Exists(name) {
+		fatalErr(fmt.Errorf("extension repository '%s' not found", name))
+	}
+	repoDir := mgr.Path(name)
+	lock, err := mgr.LockRepo(name, false)
+	fatalErr(err)
+	defs, scanErr := func() ([]toolchain.ToolchainDef, error) {
+		defer lock.Release()
+		trusted, err := extensionTrusted(name)
+		fatalErr(err)
+		if !trusted {
+			fatalErr(fmt.Errorf("extension repository '%s' is not trusted at its current commit or has local changes; run 'vmake ext trust %s' after reviewing it", name, name))
+		}
+		if trustAllEnabled() && hasGitRoot(repoDir) {
+			clean, err := mgr.Clean(name)
+			fatalErr(err)
+			if !clean {
+				fatalErr(fmt.Errorf("extension repository '%s' has local changes; commit or discard them before provisioning", name))
+			}
+		}
+		return toolchain.ScanRepoToolchains(repoDir)
+	}()
+	if len(defs) == 0 && scanErr == nil {
+		fmt.Printf("Extension '%s' declares no toolchains\n", name)
+		return
+	}
+	var failures []error
+	installed, skipped := 0, 0
+	for i := range defs {
+		def := &defs[i]
+		installation, err := def.Installation()
+		if err != nil {
+			fmt.Printf("Skipping toolchain '%s': %v\n", def.Name, err)
+			skipped++
+			continue
+		}
+		if installation == nil {
+			fmt.Printf("Skipping toolchain '%s': no installations declared\n", def.Name)
+			skipped++
+			continue
+		}
+		tc, err := toolchain.Install(*def, repoDir, getToolchainsDir())
+		if err != nil {
+			failures = append(failures, fmt.Errorf("toolchain '%s': %w", def.Name, err))
+			continue
+		}
+		installed++
+		fmt.Printf("Toolchain '%s' is ready at %s\n", def.Name, tc.InstallPath)
+	}
+	if scanErr != nil {
+		failures = append(failures, scanErr)
+	}
+	fmt.Printf("Provisioned %d toolchain(s) for %s/%s (%d skipped)\n", installed, runtime.GOOS, runtime.GOARCH, skipped)
+	if len(failures) > 0 {
+		fatalErr(errors.Join(failures...))
 	}
 }
 

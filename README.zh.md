@@ -354,6 +354,7 @@ vmake ext add <name> <url>
 vmake ext remove <name>
 vmake ext list
 vmake ext update [name]
+vmake ext provision <name>                  # 安装当前宿主声明的工具链
 vmake ext trust <name>                      # 信任当前干净的 commit
 vmake ext untrust <name>                    # 撤销信任
 ```

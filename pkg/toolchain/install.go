@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spock2300/vmake/internal/assets"
 	iexec "github.com/spock2300/vmake/internal/exec"
@@ -100,7 +101,7 @@ func materializeToolchainAsset(repoDir, archivePath, file string) error {
 		return fmt.Errorf("read toolchain archive: %w", err)
 	}
 	args := gitcmd.Args("-c", "lfs.fetchrecentalways=false", "lfs", "pull", "--include", "assets/toolchains/"+file, "--exclude", "")
-	if err := iexec.RunToStdout(repoDir, "git", args...); err != nil {
+	if _, err := iexec.RunWithOptions("git", args, iexec.RunOptions{Dir: repoDir, Timeout: 30 * time.Minute}); err != nil {
 		return fmt.Errorf("download toolchain archive: %w", err)
 	}
 	pointer, err = isToolchainAssetPointer(archivePath)

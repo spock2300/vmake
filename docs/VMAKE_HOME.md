@@ -98,7 +98,7 @@ CLI：`vmake cache list` 查看缓存命名空间，`vmake cache remove <url>` �
 
 - 记录键是 `kind:name@commit`：每个 commit 一条记录，同一仓库的多个 commit（例如同一 native 仓库里固定在不同版本的两个包）各自保留信任，不会互相覆盖。
 - 包仓库由 `vmake repo trust|untrust <name>` 管理；`repo update` 成功后清除信任。包仓库信任只绑定 commit，不检查工作区内容。native 仓库按解析到的 package commit 在构建时信任，不能使用 `repo trust`（交互式构建中用 `--yes`，或先 review 后再执行构建）。
-- 扩展仓库由 `vmake ext trust|untrust <name>` 管理；`ext add` 可交互确认，`ext update` 仅在 HEAD commit 变化时清除信任，`ext remove` 清除信任。
+- 扩展仓库由 `vmake ext trust|untrust <name>` 管理；`ext add` 可交互确认，`ext update` 仅在 HEAD commit 变化时清除信任，`ext remove` 清除信任，`ext provision` 安装当前宿主有 `installations` 条目的工具链。
 - 扩展和包仓库的 `HEAD` 与记录不一致、扩展工作树有本地修改，或信任文件损坏时，脚本/插件不会执行。native 包校验的是解析到的 package commit，而不是仓库 HEAD。
 - `VMAKE_TRUST_ALL=1` 可跳过信任检查（仅限 CI/测试；它同时影响包仓库和扩展仓库）。
 
@@ -133,7 +133,7 @@ extensions/<repo-name>/
 ```
 
 源码：`pkg/plugin/manager.go`（嵌入 `*gitstore.Store`）
-CLI：`vmake ext add|remove|list|update|trust|untrust`
+CLI：`vmake ext add|remove|list|update|provision|trust|untrust`
 
 插件源码由 yaegi 解释器动态加载（`extensions/<repo>/<plugin-name>/src/main.go`），无需编译，不产生 `.so` 文件。只有 `~/.vmake/trust.json` 中记录了当前干净 HEAD 的仓库才会注册工具链或加载插件；`vmake ext update` 仅在 HEAD commit 变化时清除该信任。加载插件时取得的仓库共享锁保留到进程退出，构建期工具链安装读取的仍是校验过的 commit。
 

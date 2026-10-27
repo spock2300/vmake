@@ -168,6 +168,67 @@ func TestExtensionLFSDownloadsOnFirstBuild(t *testing.T) {
 	command(dir, "ext", "list")
 	command(dir, "toolchain", "list")
 	assertAssets("", 0)
+
+	t.Run("provision downloads only current host archives", func(t *testing.T) {
+		provisionState := filepath.Join(dir, "provision state")
+		out, err := extensionCommand(t, provisionState, dir, "ext", "add", "fixture", remote)
+		if err != nil {
+			t.Fatalf("ext add: %v\n%s", err, out)
+		}
+		provisionClone := filepath.Join(provisionState, "extensions", "fixture")
+		countObjects := func() int {
+			t.Helper()
+			count := 0
+			err := filepath.WalkDir(filepath.Join(provisionClone, ".git", "lfs", "objects"), func(path string, entry fs.DirEntry, err error) error {
+				if os.IsNotExist(err) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				if !entry.IsDir() {
+					count++
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return count
+		}
+		if got := countObjects(); got != 0 {
+			t.Fatalf("ext add downloaded %d LFS objects", got)
+		}
+
+		out, err = extensionCommand(t, provisionState, dir, "ext", "provision", "fixture")
+		if err != nil {
+			t.Fatalf("ext provision: %v\n%s", err, out)
+		}
+		if got := countObjects(); got != 2 {
+			t.Fatalf("ext provision downloaded %d LFS objects, want 2 current-host archives", got)
+		}
+		hostFile := def.Installations[host].File
+		for name := range archives {
+			data, err := os.ReadFile(filepath.Join(provisionClone, "assets", "toolchains", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch name {
+			case hostFile, "unused.zip":
+				if !bytes.Equal(data, archives[name]) {
+					t.Errorf("current-host archive %s was not materialized", name)
+				}
+			default:
+				if !bytes.HasPrefix(data, []byte("version https://git-lfs.github.com/spec/v1")) {
+					t.Errorf("other-host archive %s was materialized", name)
+				}
+			}
+		}
+		if _, err := os.Stat(filepath.Join(def.InstallDir(filepath.Join(provisionState, "toolchains")), "payload.txt")); err != nil {
+			t.Fatalf("ext provision did not publish the host toolchain: %v", err)
+		}
+	})
+
 	project := filepath.Join(dir, "project")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"

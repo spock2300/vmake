@@ -374,6 +374,7 @@ vmake ext add <name> <url>
 vmake ext remove <name>
 vmake ext list
 vmake ext update [name]
+vmake ext provision <name>                  # Install toolchains declared for this host
 vmake ext trust <name>                      # Trust the current clean commit
 vmake ext untrust <name>                    # Revoke trust
 ```

@@ -809,7 +809,7 @@ func Main(ctx *plugin.Context) {
 }
 ```
 
-`toolchain.Manager.RegisterRepo(repoDir, toolchainsDir)`（`pkg/toolchain/discovery.go`）扫描并注册所有子目录中的 `toolchain.json`，不需要插件参与。含当前宿主 `installations` 条目的工具链自动注册按需安装回调，由 `toolchain.Install`（`pkg/toolchain/install.go`）加锁、校验声明的 SHA256、暂存解压后重命名发布。支持 `method: "lfs"`（Git LFS）和 `method: "http"` 两种下载方式。
+`toolchain.Manager.RegisterRepo(repoDir, toolchainsDir)`（`pkg/toolchain/discovery.go`）扫描并注册所有子目录中的 `toolchain.json`，不需要插件参与。含当前宿主 `installations` 条目的工具链自动注册按需安装回调，由 `toolchain.Install`（`pkg/toolchain/install.go`）加锁、校验声明的 SHA256、暂存解压后重命名发布。支持 `method: "lfs"`（Git LFS）和 `method: "http"` 两种下载方式。`vmake ext provision <repo>` 对已信任的扩展仓库显式触发同一安装路径，按当前宿主预取所有可安装工具链；`ext add/update` 仍然不预取。
 
 `default_flags` 写进 `toolchain.json` 会被拒绝，它属于项目配置。`target_os` / `target_triple` 可以由工具链声明为默认值，仅在项目未显式设置时生效：`api.Platform` 按包解析 `target_os` / `target_triple`（`pkg/pipeline/platform.go`）：包级显式配置 → 包内非全局选项默认值 → 全局配置/项目全局默认值 → 工具链默认值；默认编译选项由 `api.DefaultBuildFlags`（`pkg/api/default_flags.go`）在内置 `host` 工具链下提供。
 

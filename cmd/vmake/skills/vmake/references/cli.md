@@ -23,6 +23,7 @@ extension plugin commands appear here too. For plugin details, run
   `vmake ext` - Manage extension repositories
     `vmake ext add <name> <git-url>` - Add an extension repository
     `vmake ext list` - List extension repositories and plugins
+    `vmake ext provision <name>` - Install the current host's toolchains declared by an extension repository
     `vmake ext remove <name>` - Remove an extension repository
     `vmake ext trust <name>` - Trust an extension repository at its current commit
     `vmake ext untrust <name>` - Revoke trust for an extension repository

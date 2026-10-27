@@ -117,7 +117,7 @@ vmake doctor --toolchain <name>
 
 Inside `OnBuild`, `p.Env()["CC"]` is the resolved absolute path. `p.Env()` also includes `CFLAGS` and the other tool variables, plus `CROSS_COMPILE` when the toolchain sets a prefix; it includes `PATH` when the toolchain contributes directories (an installed toolchain or absolute compilers). `p.CC()` returns the configured name, which may be relative. Use `p.CMakeConfigure()` and `p.Make()` rather than reconstructing compiler paths.
 
-If the compiler is missing, run `vmake toolchain list` first. A declared but uninstalled toolchain installs on the first build that selects it; a compiler outside PATH needs a `toolchain.json` entry or an extension repository, not a PATH export. See [references/toolchains.md](references/toolchains.md).
+If the compiler is missing, run `vmake toolchain list` first. A declared but uninstalled toolchain installs on the first build that selects it; to prefetch the current host's archives explicitly, run `vmake ext provision <repo>` after the extension is trusted. A compiler outside PATH needs a `toolchain.json` entry or an extension repository, not a PATH export. See [references/toolchains.md](references/toolchains.md).
 
 ## Platform Prerequisites
 
@@ -435,6 +435,7 @@ vmake repo update <name>             # Pull latest definitions for a registry re
 vmake repo trust <name>              # Trust a registry repository at its current commit
 vmake ext add <name> <url>           # Add an extension repository (plugins/toolchains)
 vmake ext trust <name>               # Trust an extension at its current commit
+vmake ext provision <name>           # Install toolchains declared for the current host
 ```
 
 Native repositories are trusted per package commit on first build; `repo trust` and `repo update` reject them.

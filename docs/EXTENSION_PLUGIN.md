@@ -71,6 +71,8 @@ vmake 在启动时自动发现并用 yaegi 解释执行插件源码，无需编�
 
 `vmake ext add` 和 `vmake ext update` 只获取普通 Git 文件及 LFS 指针，不自动下载 LFS 大文件。构建首次使用某个未安装的工具链时，vmake 才下载该工具链对应当前宿主 OS/架构的压缩包。更新扩展不会主动预取新版本，也不会清理已有 LFS 对象、已安装的工具链目录或其他缓存；但 `vmake ext update` 执行的 `git pull --ff-only` 会按上游变更更新仓库工作树，上游删除的跟踪文件（包括 `assets/toolchains/` 下的归档指针）也会从检出中消失。这项策略仅用于扩展仓库，不改变项目源码依赖的 Git 下载行为。
 
+需要提前安装当前宿主工具链时（例如桌面客户端在安装或更新编译器扩展后预热），执行 `vmake ext provision <repo>`。该命令要求扩展已信任且工作树干净，不执行插件代码；它读取 `toolchain.json`，对每个当前宿主有 `installations` 条目的工具链调用 `toolchain.Install` 完成下载、锁、校验、暂存和原子发布；已安装的工具链直接复用，不会下载其他宿主的归档。`ext add/update` 本身仍然不预取。
+
 ## 目录结构
 
 ```
@@ -423,11 +425,13 @@ err := ctx.RunGitLFS(ctx.RepoDir, "pull", "--include=assets/toolchains/aarch64-g
 4. `method: "http"` 必须声明 `sha256` 并使用 HTTPS；校验通过后按 `root_dir` 解压到暂存目录，再整体重命名发布到 `~/.vmake/toolchains/<os>/<arch>/<name>/<version>/`，作为工具链的 `InstallPath`
 5. 安装过程持有文件锁，多个项目并发构建时只会安装一次
 
+需要主动预取时，`vmake ext provision <repo>` 对扩展仓库执行同样的安装流程：逐个处理当前宿主有 `installations` 条目的工具链，跳过仅针对其他宿主或未声明安装方式的定义。它不执行插件代码；`ext add/update` 仍然只拉普通文件和 LFS 指针。
+
 工具链的程序通过 `InstallPath/bin` 逐条命令解析（有 `InstallPath` 且工具名为相对路径时严格限定在该目录、不回退 PATH；绝对路径工具直接解析；没有 `InstallPath` 时按 PATH 查找），vmake 的工具链选择不会修改进程级 `PATH`。Windows 启动时会把 Git for Windows 的 Unix userland 目录前置到进程 `PATH`（`internal/gitusr`，用于 `sh`、`tar`、`curl` 等），这与工具链选择无关；工具链目录不会加入进程级 PATH，而是在各命令的环境中提供。
 
 列表、查询、诊断、`clean` 和 `lock update` 不会自动安装工具链。操作确实依赖编译器信息而工具不可用时，会提示先执行 `vmake build --toolchain <name>`。`clean` 只删除当前配置（当前工具链、模式与选项）对应的构建输出，并通过 `Inspect` 校验主工具链，主工具链缺失时会失败；`clean --all` 与 `distclean` 不依赖 `Inspect` 成功，删除所有配置的构建输出（`distclean` 默认保留 `.vmake_deps/` 已下载的源码工作树，仅 `--purge-sources` 一并删除），因此可在工具链缺失时清理构建输出；此时无法执行依赖工具链的 `OnClean` 回调会明确提示并跳过。第三方插件显式调用下载接口的行为不受此限制。
 
-错误只影响其名称对应的工具链，其他工具链仍可用；重名定义会禁用整个名称（不会在多个定义之间挑选）。`vmake toolchain list` 显示定义名称、路径及原因，损坏 JSON 无法识别名称时按路径显示。选择错误定义时不会回退到宿主工具链。`vmake ext update/remove` 跳过插件执行，可用于修复或移除扩展。
+错误只影响其名称对应的工具链，其他工具链仍可用；重名定义会禁用整个名称（不会在多个定义之间挑选）。`vmake toolchain list` 显示定义名称、路径及原因，损坏 JSON 无法识别名称时按路径显示。选择错误定义时不会回退到宿主工具链。`vmake ext update/remove/provision` 跳过插件执行，可用于修复、移除或预装扩展。
 
 ### 项目一侧的目标平台
 
