@@ -10,7 +10,14 @@ import (
 )
 
 func New(extra interp.Exports) (*interp.Interpreter, error) {
-	i := interp.New(interp.Options{Stderr: io.Discard})
+	return NewWithOptions(interp.Options{Stderr: io.Discard}, extra)
+}
+
+// NewWithOptions is New with caller-provided interpreter options. Build
+// scripts use it to expose local Go packages through a virtual GOPATH while
+// keeping yaegi's default stderr sink.
+func NewWithOptions(opts interp.Options, extra interp.Exports) (*interp.Interpreter, error) {
+	i := interp.New(opts)
 	if err := i.Use(stdlib.Symbols); err != nil {
 		return nil, fmt.Errorf("yaegi use stdlib: %w", err)
 	}

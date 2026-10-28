@@ -16,6 +16,8 @@ type Source struct {
 	// executed. Commit is required for remote trust decisions.
 	URL    string
 	Commit string
+	// Script binds local Go imports to this source's own project or checkout.
+	Script ScriptOptions
 }
 
 func NewSource(name, path, dir string, origin api.SourceOrigin) *Source {

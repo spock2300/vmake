@@ -178,8 +178,9 @@ func (r *Resolver) UpdateOrder() error {
 
 func (r *Resolver) ResolveAll(localSources []buildscript.Source) error {
 	for _, src := range localSources {
-		s := buildscript.NewSource(src.Name, src.Path, src.Dir, api.SourceLocal)
-		r.sources[s.Name] = s
+		s := src
+		s.Origin = api.SourceLocal
+		r.sources[s.Name] = &s
 	}
 
 	for _, src := range localSources {
@@ -344,6 +345,11 @@ func (r *Resolver) findSource(id string, constraint string) (*buildscript.Source
 		}
 		src := buildscript.NewSource(id, buildGo, filepath.Dir(buildGo), api.SourceRemote)
 		src.Repo = repoName
+		scriptOpts, optsErr := buildscript.DetectScriptOptions(filepath.Dir(buildGo), filepath.Dir(buildGo))
+		if optsErr != nil {
+			return nil, optsErr
+		}
+		src.Script = scriptOpts
 		// Trust binds to the wrapper checkout's commit when it is available.
 		// A trust checker refuses an empty commit; loading without one is only
 		// used by tests and by callers that deliberately pass no checker.
@@ -461,6 +467,11 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 	src.Repo = repoName
 	src.URL = gitURL
 	src.Commit = res.Commit
+	scriptOpts, optsErr := buildscript.DetectScriptOptions(res.SrcDir, res.SrcDir)
+	if optsErr != nil {
+		return nil, optsErr
+	}
+	src.Script = scriptOpts
 
 	r.sources[id] = src
 

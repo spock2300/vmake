@@ -70,6 +70,7 @@ func runConfig(cmd *cobra.Command, args []string) {
 				Path:   node.Source.Path,
 				Dir:    node.Source.Dir,
 				Origin: node.Source.Origin,
+				Script: node.Source.Script,
 			})
 			localPkgs[node.Source.Name] = true
 		}

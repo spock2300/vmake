@@ -2,6 +2,8 @@ package buildscript
 
 import (
 	"fmt"
+	"io"
+	"path/filepath"
 
 	"github.com/traefik/yaegi/interp"
 
@@ -52,7 +54,20 @@ func LoadBuildScriptWithTrust(src Source, trustChecker ScriptTrustChecker) (*api
 
 func loadBuildScript(src Source) (_ *api.Package, err error) {
 	defer scriptcall.Recover(&err)
-	i, err := yaegibase.New(yaegiExports())
+	interpOpts := interp.Options{Stderr: io.Discard}
+	if src.Script.ModulePath != "" && src.Script.ModuleRoot != "" {
+		projectDir := src.Script.ProjectDir
+		if projectDir == "" {
+			projectDir = src.Script.ModuleRoot
+		}
+		goPath := filepath.Join(projectDir, ".vmake", "script-gopath")
+		interpOpts.GoPath = goPath
+		interpOpts.SourcecodeFilesystem = moduleFS{
+			prefix: filepath.Join(goPath, "src", filepath.FromSlash(src.Script.ModulePath)),
+			root:   src.Script.ModuleRoot,
+		}
+	}
+	i, err := yaegibase.NewWithOptions(interpOpts, yaegiExports())
 	if err != nil {
 		return nil, err
 	}

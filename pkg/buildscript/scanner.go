@@ -47,11 +47,16 @@ func Scan(rootDir string) ([]Source, error) {
 			seen[dir] = true
 			namesSeen[pkgName] = true
 
+			opts, err := DetectScriptOptions(dir, rootDir)
+			if err != nil {
+				return err
+			}
 			sources = append(sources, Source{
 				Name:   pkgName,
 				Path:   path,
 				Dir:    dir,
 				Origin: api.SourceLocal,
+				Script: opts,
 			})
 		}
 
@@ -107,11 +112,16 @@ func ScanSubPackages(rootDir string, parentID string) ([]Source, error) {
 			}
 			seen[dir] = true
 
+			opts, err := DetectScriptOptions(dir, rootDir)
+			if err != nil {
+				return err
+			}
 			sources = append(sources, Source{
 				Name:   qualifiedName,
 				Path:   path,
 				Dir:    dir,
 				Origin: api.SourceRemote,
+				Script: opts,
 			})
 		}
 

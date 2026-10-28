@@ -306,27 +306,38 @@ func loadRegistryPackage(mgr *repo.RepoManager, repoName, pkgName, commit string
 	if err != nil {
 		return nil, err
 	}
-	return loadPackageScript(buildscript.Source{
+	src := buildscript.Source{
 		Name:   repoName + "/" + pkgName,
 		Path:   buildGo,
 		Dir:    filepath.Dir(buildGo),
 		Origin: api.SourceRemote,
 		Repo:   repoName,
 		Commit: commit,
-	})
+	}
+	src.Script, err = buildscript.DetectScriptOptions(src.Dir, src.Dir)
+	if err != nil {
+		return nil, err
+	}
+	return loadPackageScript(src)
 }
 
 func loadNativePackage(depsDir, repoName, pkgName string, state *repo.TreeState) (*api.Package, error) {
 	root := filepath.Join(depsDir, repoName, pkgName)
 	srcDir := filepath.Join(root, "src")
-	return loadPackageScript(buildscript.Source{
+	src := buildscript.Source{
 		Name:   repoName + "/" + pkgName,
 		Path:   filepath.Join(srcDir, "build.go"),
 		Dir:    srcDir,
 		Origin: api.SourceRemote,
 		Repo:   repoName,
 		Commit: state.Commit,
-	})
+	}
+	opts, err := buildscript.DetectScriptOptions(srcDir, srcDir)
+	if err != nil {
+		return nil, err
+	}
+	src.Script = opts
+	return loadPackageScript(src)
 }
 
 func loadPackageScript(src buildscript.Source) (*api.Package, error) {
@@ -439,14 +450,19 @@ func loadPkgShow(repoName, pkgName, version string) (*pkgShowResult, error) {
 		result.Trusted = trusted
 	}
 	if result.Trusted {
-		interpreted, err = loadPackageScript(buildscript.Source{
+		src := buildscript.Source{
 			Name:   repoName + "/" + pkgName,
 			Path:   buildGo,
 			Dir:    filepath.Dir(buildGo),
 			Origin: api.SourceRemote,
 			Repo:   repoName,
 			Commit: commit,
-		})
+		}
+		src.Script, err = buildscript.DetectScriptOptions(src.Dir, src.Dir)
+		if err != nil {
+			return nil, fmt.Errorf("script options for %s: %w", src.Dir, err)
+		}
+		interpreted, err = loadPackageScript(src)
 		if err != nil {
 			return nil, fmt.Errorf("read metadata from %s: %w", buildGo, err)
 		}

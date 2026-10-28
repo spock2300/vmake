@@ -182,14 +182,17 @@ var pkgUpdateCmd = &cobra.Command{
 			fatalErr(err)
 			commit, err := repo.GetCurrentCommit(repoMgr.Path(repoName))
 			fatalErr(err)
-			interpreted, err := buildscript.LoadBuildScriptWithTrust(buildscript.Source{
+			src := buildscript.Source{
 				Name:   pkgRef,
 				Path:   buildGoPath,
 				Dir:    filepath.Dir(buildGoPath),
 				Origin: api.SourceRemote,
 				Repo:   repoName,
 				Commit: commit,
-			}, remoteScriptTrustChecker)
+			}
+			src.Script, err = buildscript.DetectScriptOptions(src.Dir, src.Dir)
+			fatalErr(err)
+			interpreted, err := buildscript.LoadBuildScriptWithTrust(src, remoteScriptTrustChecker)
 			fatalErr(err)
 			pkg.SetVersions(interpreted.Versions())
 			pkg.SetGit(interpreted.GitURLs()...)
