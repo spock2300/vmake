@@ -345,7 +345,8 @@ func (r *Resolver) findSource(id string, constraint string) (*buildscript.Source
 		}
 		src := buildscript.NewSource(id, buildGo, filepath.Dir(buildGo), api.SourceRemote)
 		src.Repo = repoName
-		scriptOpts, optsErr := buildscript.DetectScriptOptions(filepath.Dir(buildGo), filepath.Dir(buildGo))
+		scriptOpts, optsErr := buildscript.DetectScriptOptions(filepath.Dir(buildGo),
+			r.repoMgr.Path(repoName))
 		if optsErr != nil {
 			return nil, optsErr
 		}

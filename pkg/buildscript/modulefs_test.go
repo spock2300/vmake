@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestModuleFSReadsModuleAndFallsBack(t *testing.T) {
+func TestModuleFSReadsModuleAndRejectsOutside(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "helper.go"), []byte("package helper\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -23,8 +23,8 @@ func TestModuleFSReadsModuleAndFallsBack(t *testing.T) {
 	if _, err := fs.Stat(fsys, filepath.Join(prefix, "missing.go")); err == nil {
 		t.Fatal("missing module file was accepted")
 	}
-	if _, err := fs.ReadFile(fsys, filepath.Join(root, "helper.go")); err != nil {
-		t.Fatalf("fallback read: %v", err)
+	if _, err := fs.ReadFile(fsys, filepath.Join(root, "helper.go")); err == nil {
+		t.Fatal("path outside the virtual GOPATH was accepted")
 	}
 }
 

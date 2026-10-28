@@ -22,7 +22,7 @@ func (m moduleFS) Open(name string) (fs.File, error) {
 		return os.Open(m.root)
 	}
 	if !strings.HasPrefix(name, prefix+string(os.PathSeparator)) {
-		return os.Open(name)
+		return nil, fs.ErrNotExist
 	}
 	rel := strings.TrimPrefix(name, prefix)
 	rel = strings.TrimPrefix(rel, string(os.PathSeparator))

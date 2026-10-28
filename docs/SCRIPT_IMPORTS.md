@@ -72,7 +72,9 @@ Local package imports are bound to one `buildscript.Source`:
 
 The search for `vmake.json`/`go.mod` starts at the build script directory and
 stops at the owning project/checkout root. This also supports build scripts in
-subdirectories and monorepos.
+subdirectories and monorepos. For a vmake registry package the stop root is the
+repository checkout, so a module declaration at the repository root is visible
+while the consuming project's configuration is not.
 
 ## Script IO semantics
 

@@ -314,7 +314,7 @@ func loadRegistryPackage(mgr *repo.RepoManager, repoName, pkgName, commit string
 		Repo:   repoName,
 		Commit: commit,
 	}
-	src.Script, err = buildscript.DetectScriptOptions(src.Dir, src.Dir)
+	src.Script, err = buildscript.DetectScriptOptions(src.Dir, mgr.Path(repoName))
 	if err != nil {
 		return nil, err
 	}
@@ -458,7 +458,7 @@ func loadPkgShow(repoName, pkgName, version string) (*pkgShowResult, error) {
 			Repo:   repoName,
 			Commit: commit,
 		}
-		src.Script, err = buildscript.DetectScriptOptions(src.Dir, src.Dir)
+		src.Script, err = buildscript.DetectScriptOptions(src.Dir, mgr.Path(repoName))
 		if err != nil {
 			return nil, fmt.Errorf("script options for %s: %w", src.Dir, err)
 		}
