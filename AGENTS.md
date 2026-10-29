@@ -17,7 +17,7 @@ CGO_ENABLED=0 go test ./cmd/vmake/... ./pkg/... ./internal/...
 - Run each integration project from its own directory: `(cd test_data/01_simple_c && ../../vmake build)`. Do not invoke a build from the `test_data/` parent.
 - Firmware fixture 17 is in `test_linux/17_firmware`, not `test_data/`.
 - Windows cross-build: `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o vmake.exe ./cmd/vmake`.
-- CI is Windows-only (`.github/workflows/windows.yml`); it runs the scoped vet/test commands above with `-skip '(?i)subgraph|TestDeclarePackageTargetsDryRunWiring'` and leaves snapshots disabled. Run Linux/macOS verification locally.
+- The Windows workflow (`.github/workflows/windows.yml`) runs only on manual `workflow_dispatch`, not on push or pull_request; it runs the scoped vet/test commands above with `-skip '(?i)subgraph|TestDeclarePackageTargetsDryRunWiring'` and leaves snapshots disabled. Run Linux/macOS verification locally.
 - `build`/`rebuild` publish `build/vmake-build.json` and `test` publishes `build/vmake-test.json` (schemaVersion 2: command, status, duration, concise error, parsed diagnostics, success summary/counts, per-target status/duration/size, test results and hashed installed artifacts); `clean`/`distclean`/`pkg clean` remove both, and `clean` also removes the stale `build/compile_commands.json` and notes remaining other-configuration build keys. Reports are separate from `install/manifest.json`; see `docs/BUILD_RESULT.md`.
 
 ### Skill documentation loop
