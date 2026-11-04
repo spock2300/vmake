@@ -161,6 +161,8 @@ toolchains/<host-os>/<host-arch>/<name>/<version>/
 
 `.vmake_deps/` 为远程包和本地 `SetGit` 包保存每个包唯一的一棵工作树：所有构建配置共享同一份源码，补丁、Kconfig `.config` 和脚本内的源码改动都作用在它上面。普通本地包（未 `SetGit`）不在其中，vmake 既不复制也不重置其源码，补丁直接作用在包目录上。构建产物按构建键分开存放，不复制源码。
 
+`vmake pkg link <repo/name> <path>` 会把 native 父包或 registry 包的上游源码指向一个本地 git 工作树，记录在 `.vmake/local.json`（机器本地，不进入 lock/config）。link 期间该包不物化到 `.vmake_deps/.../src`，版本、tag 和 `AddRequires` 版本约束都不参与；构建/安装输出仍写在 `.vmake_deps/<repo>/<owner>/out/...`。native 包随 link 树扫描子包；带自身 `SetGit` 源的 native 子包把第三方源码物化到 `.vmake_deps/<owner>/third_party/<member>`，避免写入链接仓库。link 包声明 patch 或 KConfig 时拒绝（native own-Git 子包的第三方 patch 除外）。`vmake pkg unlink <repo/name>` 删除记录，下一次构建恢复 lock 版本。
+
 ```
 .vmake_deps/
 ├── <repo>/<owner>/
@@ -181,12 +183,12 @@ toolchains/<host-os>/<host-arch>/<name>/<version>/
 
 `buildKey` 由格式版本、工具链身份（含工具内容）、构建模式、选项组合、有序全局 flags 与 commit 共同生成（`pkg/build/key.go` `BuildKey`）。远程包的键还包含版本号与补丁集哈希；本地包的键不包含版本和补丁集。build.go 文本不进入构建键，命令、include/define、文件列表等实际构建输入由 action 签名捕获，因此只改注释不会切换构建目录。远程包的版本或补丁集变化时会重建或恢复工作树（同一 commit 的补丁变化走 `checkout --force --detach` + `clean -fdx`，不触网）；本地 `SetGit` 包的补丁变化也会重置工作树，但沿用同一构建目录，已有对象是否重编由增量规则决定。切换工具链/选项只更换 `out/<buildKey>`（远程包）或包内 `build/<buildKey>`（本地包）。
 
-本地 SetGit 包保留 `<包目录>/src` 符号链接指向 `.vmake_deps/local/<包名>/src`，因此 `AddFiles("src/...")`、`p.SourceDir()/src/...` 等既有写法不变；链接目标不再随构建键变化。vmake 只在项目根写入 `.vmake_deps/` 到 `.gitignore`；本地 SetGit 包应在自己的 `.gitignore` 中忽略 `src/`（多数包已经如此，否则 `git status` 会显示该链接）。
+本地 SetGit 包保留 `<包目录>/src` 符号链接指向 `.vmake_deps/local/<包名>/src`，因此 `AddFiles("src/...")`、`p.SourceDir()/src/...` 等既有写法不变；链接目标不再随构建键变化。vmake 在项目根把 `.vmake_deps/` 写入 `.gitignore`；`vmake pkg link` 在需要时把 `.vmake/local.json` 也加入，若该文件已被 git 跟踪则拒绝链接。本地 SetGit 包应在自己的 `.gitignore` 中忽略 `src/`（多数包已经如此，否则 `git status` 会显示该链接）。
 
-`vmake clean` 只删除当前配置的构建键目录，`clean --all` 删除所有配置的产物，两者都保留 `.vmake_deps/` 源码树；`vmake distclean` 同样保留下载的工作树（下次构建直接复用，不重新下载），只有加 `--purge-sources` 才删除整个 `.vmake_deps/`。`vmake pkg clean <repo/name>` 删除单个包的构建产物，`-a` 连工作树一并删除；下次构建会重新物化该树，但共享对象缓存已有该 commit 时无需重新下载对象（版本/ref 解析仍可能访问上游）。该命令也会删除 `build/vmake-build.json` 与 `build/vmake-test.json`。
+`vmake clean` 只删除当前配置的构建键目录，`clean --all` 删除所有配置的产物（包括 `pkg link` 包在 `.vmake_deps` 下的 `out/`），两者都保留 `.vmake_deps/` 源码树和 `.vmake/local.json` 链接；`vmake distclean` 同样保留下载的工作树（下次构建直接复用，不重新下载），只有加 `--purge-sources` 才删除整个 `.vmake_deps/`。`vmake pkg clean <repo/name>` 删除单个包的构建产物，`-a` 连工作树一并删除但不删除 link 记录；下次构建会重新物化该树，但共享对象缓存已有该 commit 时无需重新下载对象（版本/ref 解析仍可能访问上游）。该命令也会删除 `build/vmake-build.json` 与 `build/vmake-test.json`。
 
 源码：`cmd/vmake/paths.go` (`getDepsDir`, `findProjectDir`), `pkg/repo/source.go`, `pkg/repo/storage.go`
-CLI：`vmake pkg list|search|show|clean|update`
+CLI：`vmake pkg list|search|show|clean|update|link|unlink`
 
 ## 项目目录
 
@@ -200,11 +202,13 @@ project/
 │   ├── config.json                # 默认配置
 │   ├── config-debug.json          # 其他配置，格式与默认配置相同
 │   ├── vmake.lock                 # 所有配置共享的远程包/有版本的本地 SetGit 包版本、commit、来源及 registry wrapper commit 锁
+│   ├── local.json                 # 机器本地的源码 link（vmake pkg link；不提交）
 │   ├── layout                     # 存储布局版本标记（当前 "5"）
 │   └── _locks/project.lock        # 工程独占锁（同工程命令串行）
 ├── .vmake_deps/                   # 第三方源码工作树与产物（自动生成，已 gitignore）
 │   └── <repo>/<owner>/
 │       ├── src/                   # 唯一工作树
+│       ├── third_party/<member>/  # pkg link 下 native own-Git 子包的第三方源码
 │       └── out/<sha256(member)>/<buildKey>/
 ├── install/                       # 安装输出（--prefix 默认 ./install）
 └── build/                         # 构建输出与结果
@@ -216,7 +220,7 @@ project/
         └── <target>               # 最终产物
 ```
 
-`vmake.lock` 的每条记录包含 `version`、`commit`、`source`（`registry`/`native`/`git`）；registry 包还记录提供 wrapper 的仓库 HEAD `wrapperCommit`，解析时会校验该 commit 未漂移。
+`vmake.lock` 的每条记录包含 `version`、`commit`、`source`（`registry`/`native`/`git`）；registry 包还记录提供 wrapper 的仓库 HEAD `wrapperCommit`，解析时会校验该 commit 未漂移。被 `pkg link` 的包保留旧 lock 条目，但 link 期间不读取、不校验、不重写；`vmake lock update` 跳过这些包。
 
 `project.json` 仅保存配置文件名：
 

@@ -69,6 +69,10 @@ func (g *Graph) IsFrozen() bool {
 	return g.frozen
 }
 
+// LocalLinkVersion identifies a package whose source and version selection are
+// fully local. Linked packages ignore lock/config pins, tags and constraints.
+const LocalLinkVersion = "0.0.0-local"
+
 type Resolver struct {
 	ctx          context.Context
 	sources      map[string]*buildscript.Source
@@ -80,19 +84,21 @@ type Resolver struct {
 	lockfile     *lockfile.Lock
 	ignoreLock   bool
 	configPins   map[string]string
+	sourceLinks  map[string]string
 	trustChecker buildscript.ScriptTrustChecker
 	repoLocks    map[string]*flock.FileLock
 }
 
 func NewResolver(repoMgr *repo.RepoManager, depsDir string) *Resolver {
 	return &Resolver{
-		ctx:        context.Background(),
-		sources:    make(map[string]*buildscript.Source),
-		graph:      &Graph{Packages: make(map[string]*PackageNode)},
-		repoMgr:    repoMgr,
-		depsDir:    depsDir,
-		subParents: make(map[string]string),
-		repoLocks:  make(map[string]*flock.FileLock),
+		ctx:         context.Background(),
+		sources:     make(map[string]*buildscript.Source),
+		graph:       &Graph{Packages: make(map[string]*PackageNode)},
+		repoMgr:     repoMgr,
+		depsDir:     depsDir,
+		subParents:  make(map[string]string),
+		sourceLinks: make(map[string]string),
+		repoLocks:   make(map[string]*flock.FileLock),
 	}
 }
 
@@ -132,6 +138,22 @@ func (r *Resolver) Close() {
 
 func (r *Resolver) SetConfigPins(pins map[string]string) {
 	r.configPins = pins
+}
+
+// SetSourceLinks maps package IDs to local working trees. A linked native
+// package loads build.go and sub-packages from the tree; a linked registry
+// package keeps its registry wrapper build.go and replaces only the source
+// tree.
+func (r *Resolver) SetSourceLinks(links map[string]string) {
+	r.sourceLinks = links
+	if r.sourceLinks == nil {
+		r.sourceLinks = make(map[string]string)
+	}
+}
+
+func (r *Resolver) sourceLink(id string) (string, bool) {
+	path, ok := r.sourceLinks[id]
+	return path, ok && path != ""
 }
 
 func (r *Resolver) SubParents() map[string]string {
@@ -268,7 +290,8 @@ func (r *Resolver) resolveRecursive(id string, constraint string, path []string)
 		node.Constraints = append(node.Constraints, constraint)
 	}
 
-	if len(node.Constraints) > 0 && node.Pkg != nil && len(node.Pkg.Versions()) > 0 {
+	if len(node.Constraints) > 0 && node.Pkg != nil && len(node.Pkg.Versions()) > 0 &&
+		!(node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource) {
 		if _, err := node.Pkg.SelectVersionMulti(node.Constraints); err != nil {
 			return nil, fmt.Errorf("package %s: %w", id, err)
 		}
@@ -282,12 +305,32 @@ func (r *Resolver) resolveOne(id string, src *buildscript.Source, path []string)
 	if err != nil {
 		return nil, fmt.Errorf("load %s: %w", id, err)
 	}
+	if src.Link != nil && src.Link.Native {
+		if _, isSub := r.subParents[id]; isSub && len(pkg.GitURLs()) > 0 {
+			src.Link.LocalSource = false
+		}
+	}
+	if err := r.validateLinkedPatches(id, src, pkg); err != nil {
+		return nil, err
+	}
 
 	return r.resolveFromCache(id, pkg, src, path)
 }
 
 func (r *Resolver) PreparePackage(src *buildscript.Source) (*api.Package, error) {
 	return buildscript.LoadBuildScriptWithTrust(*src, r.trustChecker)
+}
+
+func (r *Resolver) validateLinkedPatches(id string, src *buildscript.Source, pkg *api.Package) error {
+	if src == nil || src.Link == nil || pkg == nil || len(pkg.GetPatches()) == 0 {
+		return nil
+	}
+	if src.Link.Native {
+		if _, isSub := r.subParents[id]; isSub && len(pkg.GitURLs()) > 0 {
+			return nil
+		}
+	}
+	return fmt.Errorf("linked package %s declares patches; patches are only supported for native sub-packages with their own git source", id)
 }
 
 func (r *Resolver) resolveFromCache(id string, pkg *api.Package, src *buildscript.Source, path []string) (*PackageNode, error) {
@@ -340,8 +383,11 @@ func (r *Resolver) findSource(id string, constraint string) (*buildscript.Source
 
 	buildGo, err := r.repoMgr.FindPackageGo(repoName, pkgName)
 	if err == nil {
-		if werr := r.checkWrapperCommit(id, repoName); werr != nil {
-			return nil, werr
+		linkPath, linked := r.sourceLink(id)
+		if !linked {
+			if werr := r.checkWrapperCommit(id, repoName); werr != nil {
+				return nil, werr
+			}
 		}
 		src := buildscript.NewSource(id, buildGo, filepath.Dir(buildGo), api.SourceRemote)
 		src.Repo = repoName
@@ -356,6 +402,17 @@ func (r *Resolver) findSource(id string, constraint string) (*buildscript.Source
 		// used by tests and by callers that deliberately pass no checker.
 		if head, headErr := repo.GetCurrentCommitContext(r.ctx, r.repoMgr.Path(repoName)); headErr == nil {
 			src.Commit = head
+		}
+		if linked {
+			linkCommit, headErr := repo.GetCurrentCommitContext(r.ctx, linkPath)
+			if headErr != nil {
+				return nil, fmt.Errorf("read linked source %s: %w", linkPath, headErr)
+			}
+			src.Link = &buildscript.SourceLink{
+				Path:        linkPath,
+				Commit:      linkCommit,
+				LocalSource: true,
+			}
 		}
 		r.sources[id] = src
 		return src, nil
@@ -389,6 +446,54 @@ func (r *Resolver) resolvedSubPackageOwner(id string) string {
 	return ""
 }
 
+func (r *Resolver) findNativeLink(id, repoName, constraint, linkPath, gitURL string) (*buildscript.Source, error) {
+	buildGo := filepath.Join(linkPath, "build.go")
+	if !fs.FileExists(buildGo) {
+		return nil, fmt.Errorf("linked native package %s has no build.go in %s", id, linkPath)
+	}
+	commit, err := repo.GetCurrentCommitContext(r.ctx, linkPath)
+	if err != nil {
+		return nil, fmt.Errorf("read linked native package %s at %s: %w", id, linkPath, err)
+	}
+	src := buildscript.NewSource(id, buildGo, linkPath, api.SourceRemote)
+	src.Repo = repoName
+	src.URL = gitURL
+	src.Commit = commit
+	src.Link = &buildscript.SourceLink{
+		Path:        linkPath,
+		Commit:      commit,
+		Native:      true,
+		LocalSource: true,
+	}
+	scriptOpts, optsErr := buildscript.DetectScriptOptions(linkPath, linkPath)
+	if optsErr != nil {
+		return nil, optsErr
+	}
+	src.Script = scriptOpts
+	r.sources[id] = src
+
+	pkg, err := r.PreparePackage(src)
+	if err != nil {
+		return nil, fmt.Errorf("load %s: %w", id, err)
+	}
+	if err := r.validateLinkedPatches(id, src, pkg); err != nil {
+		return nil, err
+	}
+
+	node := NewPackageNode(id, src, pkg).WithNative(gitURL, nil, LocalLinkVersion)
+	node.Native.Commit = commit
+	if constraint != "" {
+		node.Constraints = append(node.Constraints, constraint)
+	}
+	r.graph.Packages[id] = node
+
+	if err := r.recurseDeps(node, []string{id}); err != nil {
+		return nil, err
+	}
+	r.scanSubPackages(id, linkPath)
+	return src, nil
+}
+
 func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*buildscript.Source, error) {
 	if r.sourceMgr == nil {
 		return nil, fmt.Errorf("resolver for %s has no source manager configured", id)
@@ -399,6 +504,10 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 	}
 
 	gitURL := repo.ResolveNativeURL(urlTemplate, pkgName)
+
+	if linkPath, ok := r.sourceLink(id); ok {
+		return r.findNativeLink(id, repoName, constraint, linkPath, gitURL)
+	}
 
 	pkgStub := api.NewPackage()
 	pkgStub.Repo = repoName
@@ -492,7 +601,8 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 		return nil, err
 	}
 
-	if len(node.Constraints) > 0 && len(pkg.Versions()) > 0 {
+	if len(node.Constraints) > 0 && len(pkg.Versions()) > 0 &&
+		!(src.Link != nil && src.Link.LocalSource) {
 		if _, err := pkg.SelectVersionMulti(node.Constraints); err != nil {
 			return nil, fmt.Errorf("package %s: %w", id, err)
 		}
@@ -585,15 +695,36 @@ func (r *Resolver) scanSubPackages(parentID, checkoutDir string) {
 	}
 	repoName, _, _ := api.SplitPackageRef(parentID)
 	var parentCommit, parentURL string
-	if node := r.graph.Packages[parentID]; node != nil && node.Native != nil {
-		parentCommit = node.Native.Commit
-		parentURL = node.Native.GitURL
+	var parentLink *buildscript.SourceLink
+	if node := r.graph.Packages[parentID]; node != nil {
+		if node.Native != nil {
+			parentCommit = node.Native.Commit
+			parentURL = node.Native.GitURL
+		}
+		if node.Source != nil && node.Source.Link != nil && node.Source.Link.Native {
+			parentLink = node.Source.Link
+		}
 	}
 	for i := range subs {
 		ss := &subs[i]
 		ss.Repo = repoName
 		ss.Commit = parentCommit
 		ss.URL = parentURL
+		if parentLink != nil {
+			rel, relErr := filepath.Rel(checkoutDir, ss.Dir)
+			if relErr == nil {
+				linkDir := filepath.Join(parentLink.Path, rel)
+				ss.Dir = linkDir
+				ss.Path = filepath.Join(linkDir, "build.go")
+				ss.Link = &buildscript.SourceLink{
+					Path:        linkDir,
+					Commit:      parentLink.Commit,
+					Native:      true,
+					LocalSource: true,
+				}
+				ss.Commit = parentLink.Commit
+			}
+		}
 		r.sources[ss.Name] = ss
 		r.subParents[ss.Name] = parentID
 	}
@@ -629,6 +760,9 @@ func validateNodeConstraints(node *PackageNode, constraint string, path []string
 	}
 	if !slices.Contains(node.Constraints, constraint) {
 		node.Constraints = append(node.Constraints, constraint)
+	}
+	if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {
+		return nil
 	}
 	requirer := requirerName(path)
 

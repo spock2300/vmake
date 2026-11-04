@@ -1,18 +1,24 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/gitcmd"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/repo"
 )
 
@@ -27,8 +33,28 @@ var pkgListCmd = &cobra.Command{
 	Short: "List packages materialized in this project",
 	Long:  `List package working trees under .vmake_deps, including trees no longer needed by the active configuration.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		printSourceLinks(cmd.OutOrStdout())
 		listPackageSources(cmd.OutOrStdout(), getDepsDir())
 	},
+}
+
+func printSourceLinks(w io.Writer) {
+	local, err := config.LoadLocal(findProjectDir())
+	if err != nil {
+		fatalErr(err)
+	}
+	if len(local.Links) == 0 {
+		return
+	}
+	names := make([]string, 0, len(local.Links))
+	for name := range local.Links {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	fmt.Fprintln(w, "Source links:")
+	for _, name := range names {
+		fmt.Fprintf(w, "  %s -> %s\n", name, local.Links[name])
+	}
 }
 
 var (
@@ -139,6 +165,91 @@ var pkgCleanCmd = &cobra.Command{
 	},
 }
 
+var pkgLinkCmd = &cobra.Command{
+	Use:   "link <repo/name> <path>",
+	Short: "Build a package from a local working tree",
+	Long: `Link a native or registry package to a local git working tree.
+
+A linked native package loads build.go and sub-packages from the linked tree.
+A linked registry package keeps its registry wrapper build.go and replaces only
+the upstream source tree. Links are machine-local, stored in
+.vmake/local.json, and ignore package versions, tags and version constraints.`,
+	Args: cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		commandStorageLocks()
+		projectDir := findProjectDir()
+		name, path := args[0], args[1]
+		abs, err := pipeline.ValidateSourceLink(commandContext(), projectDir, getDepsDir(), getReposDir(), name, path)
+		fatalErr(err)
+		if err := ensureLocalLinkIgnored(projectDir); err != nil {
+			fatalErr(err)
+		}
+		local, err := config.LoadLocal(projectDir)
+		fatalErr(err)
+		local.Links[name] = abs
+		fatalErr(config.SaveLocal(projectDir, local))
+		fmt.Printf("Linked %s -> %s\n", name, abs)
+		fmt.Println("Build outputs remain under .vmake_deps; the package version and constraints are ignored while linked.")
+	},
+}
+
+var pkgUnlinkCmd = &cobra.Command{
+	Use:   "unlink <repo/name>",
+	Short: "Remove a local source link",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		commandStorageLocks()
+		projectDir := findProjectDir()
+		name := args[0]
+		local, err := config.LoadLocal(projectDir)
+		fatalErr(err)
+		if _, ok := local.Links[name]; !ok {
+			fatalMsg("package %s is not linked", name)
+		}
+		delete(local.Links, name)
+		fatalErr(config.SaveLocal(projectDir, local))
+		fmt.Printf("Unlinked %s\n", name)
+	},
+}
+
+func commandContext() context.Context {
+	return context.Background()
+}
+
+func ensureLocalLinkIgnored(projectDir string) error {
+	rel := filepath.ToSlash(filepath.Join(".vmake", config.LocalFileName))
+	opts := iexec.RunOptions{Dir: projectDir, Quiet: true, CaptureStderr: true}
+	if out, err := iexec.RunWithOptions("git", gitcmd.Args("rev-parse", "--is-inside-work-tree"), opts); err == nil &&
+		strings.TrimSpace(string(out)) == "true" {
+		if _, err := iexec.RunWithOptions("git", gitcmd.Args("ls-files", "--error-unmatch", rel), opts); err == nil {
+			return fmt.Errorf("%s is tracked by git; add it to .gitignore before linking", rel)
+		}
+	}
+	gitignore := filepath.Join(projectDir, ".gitignore")
+	content, _ := os.ReadFile(gitignore)
+	for _, line := range strings.Split(string(content), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "!") {
+			continue
+		}
+		if line == rel || line == ".vmake/" || line == ".vmake" || line == ".vmake/*" {
+			return nil
+		}
+	}
+	f, err := os.OpenFile(gitignore, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if len(content) > 0 && !strings.HasSuffix(string(content), "\n") {
+		if _, err := f.WriteString("\n"); err != nil {
+			return err
+		}
+	}
+	_, err = f.WriteString(rel + "\n")
+	return err
+}
+
 var pkgCleanAll bool
 var pkgUpdateDryRun bool
 
@@ -160,6 +271,11 @@ var pkgUpdateCmd = &cobra.Command{
 		repoName, pkgName := mustSplitPkgRef(pkgRef)
 		if strings.Contains(pkgName, "/") {
 			fatalMsg("Error: sub-packages are updated through their parent package: %s", pkgRef)
+		}
+		local, err := config.LoadLocal(findProjectDir())
+		fatalErr(err)
+		if path, ok := local.Links[pkgRef]; ok {
+			fatalMsg("package %s is linked to %s; run 'vmake pkg unlink %s' first", pkgRef, path, pkgRef)
 		}
 
 		repoMgr := getRepoManager()
@@ -234,6 +350,8 @@ func init() {
 	pkgCmd.AddCommand(pkgShowCmd)
 	pkgCmd.AddCommand(pkgCleanCmd)
 	pkgCmd.AddCommand(pkgUpdateCmd)
+	pkgCmd.AddCommand(pkgLinkCmd)
+	pkgCmd.AddCommand(pkgUnlinkCmd)
 	RootCmd.AddCommand(pkgCmd)
 
 	pkgCleanCmd.Flags().BoolVarP(&pkgCleanAll, "all", "a", false, "also clean source code")
@@ -247,6 +365,7 @@ func init() {
 
 	pkgUpdateCmd.ValidArgsFunction = completePkgRef
 	pkgCleanCmd.ValidArgsFunction = completePkgRef
+	pkgUnlinkCmd.ValidArgsFunction = completePkgRef
 	pkgShowCmd.ValidArgsFunction = completeCatalogPkgRef
 	pkgSearchCmd.RegisterFlagCompletionFunc("repo", completeRepoName)
 }

@@ -20,6 +20,12 @@ func Require(ctx *RuntimeContext) (err error) {
 	defer scriptcall.Recover(&err)
 	vlog.Info("Scanning %s...", ctx.WorkDir)
 
+	links, err := ValidateSourceLinks(ctx)
+	if err != nil {
+		return err
+	}
+	ctx.SourceLinks = links
+
 	packages, err := buildscript.Scan(ctx.WorkDir)
 	if err != nil {
 		return err
@@ -42,6 +48,7 @@ func Require(ctx *RuntimeContext) (err error) {
 	r.SetLockfile(ctx.Lock, ctx.IgnoreLock)
 	r.SetTrustChecker(ctx.TrustChecker)
 	r.SetConfigPins(collectConfigPins(ctx.Config))
+	r.SetSourceLinks(ctx.SourceLinks)
 	ctx.Resolver = r
 
 	vlog.Info("")
@@ -133,6 +140,9 @@ func collectAllOptionsAndKConfigs(ctx *RuntimeContext) error {
 
 		if node.Pkg != nil {
 			entries := node.Pkg.KConfigEntries()
+			if len(entries) > 0 && node.Source != nil && node.Source.Link != nil {
+				return fmt.Errorf("linked package %s declares KConfig; linked sources do not support KConfig", name)
+			}
 			if len(entries) > 0 {
 				for _, e := range entries {
 					if e.ConfigPath() == "" {

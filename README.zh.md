@@ -345,6 +345,8 @@ vmake pkg list
 vmake pkg search <keyword>
 vmake pkg clean <repo/name> [-a]              # -a 同时删除包的工作树
 vmake pkg update <repo/name>[@version] [--dry-run]
+vmake pkg link <repo/name> <path>              # 使用本地 git 工作树作为包源码
+vmake pkg unlink <repo/name>                   # 恢复 lock 中的远程源码
 ```
 
 ### 扩展管理

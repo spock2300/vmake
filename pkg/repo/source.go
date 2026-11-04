@@ -161,6 +161,37 @@ func (m *SourceManager) treeHead(srcDir string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// validateManagedPath refuses symlinks in the managed dependency path. VMake
+// may reset or clean these trees; following a link could modify a user source
+// checkout.
+func (m *SourceManager) validateManagedPath(path string) error {
+	rel, err := filepath.Rel(m.depDir, path)
+	if err != nil {
+		return fmt.Errorf("resolve managed path %s: %w", path, err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("managed path %s is outside %s", path, m.depDir)
+	}
+	current := m.depDir
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "." || part == "" {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return fmt.Errorf("inspect managed path %s: %w", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("managed path %s is a symlink; use 'vmake pkg link' for local sources", current)
+		}
+	}
+	return nil
+}
+
 // SourceRequest describes one materialization request. Key identifies the
 // package (locks, logging); Root overrides the default <depDir>/<key> tree
 // location (used for native members carrying their own repository).
@@ -204,6 +235,12 @@ func (m *SourceManager) EnsureSource(req SourceRequest) (*SourceResult, error) {
 		}
 	}
 	srcDir := filepath.Join(root, "src")
+	if err := m.validateManagedPath(root); err != nil {
+		return nil, err
+	}
+	if err := m.validateManagedPath(srcDir); err != nil {
+		return nil, err
+	}
 
 	release, err := m.acquireAccess(false)
 	if err != nil {

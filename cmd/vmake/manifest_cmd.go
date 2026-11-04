@@ -44,6 +44,9 @@ var manifestShowCmd = &cobra.Command{
 		for _, p := range mf.Packages {
 			ref := p.Ref
 			urlOrPath := p.Path
+			if p.LinkPath != "" {
+				urlOrPath = p.LinkPath
+			}
 			if urlOrPath == "" {
 				urlOrPath = p.URL
 			}
@@ -83,6 +86,10 @@ var manifestCheckoutCmd = &cobra.Command{
 				continue
 			}
 			found = true
+			if entry.Linked {
+				fmt.Printf("  SKIP %s (linked to %s; run 'vmake pkg unlink %s' first)\n", entry.Name, entry.LinkPath, entry.Name)
+				continue
+			}
 
 			switch entry.Source {
 			case "local":

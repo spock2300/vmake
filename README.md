@@ -366,6 +366,8 @@ vmake pkg search <keyword>                     # names only; --details also matc
 vmake pkg show <repo/name>[@version]           # metadata, versions, dependencies, AddRequires snippet
 vmake pkg clean <repo/name> [-a]              # -a also removes the package working tree
 vmake pkg update <repo/name>[@version] [--dry-run]
+vmake pkg link <repo/name> <path>              # build from a local git working tree
+vmake pkg unlink <repo/name>                   # restore the locked remote source
 ```
 
 ### Extension Management

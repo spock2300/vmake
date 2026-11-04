@@ -12,6 +12,9 @@ func (m *SourceManager) CleanTree(key string) error {
 	if err != nil {
 		return err
 	}
+	if err := m.validateManagedPath(root); err != nil {
+		return err
+	}
 	return internalfs.RemoveAll(root)
 }
 
@@ -20,6 +23,9 @@ func (m *SourceManager) CleanTree(key string) error {
 func (m *SourceManager) CleanOutputs(key string) error {
 	root, err := m.treePath(key)
 	if err != nil {
+		return err
+	}
+	if err := m.validateManagedPath(root); err != nil {
 		return err
 	}
 	return internalfs.RemoveAll(filepath.Join(root, "out"))
@@ -32,6 +38,9 @@ func (m *SourceManager) CleanSource(repoName, name string) error {
 	key := PackageTreeKey(repoName, name)
 	root, err := m.treePath(key)
 	if err != nil {
+		return err
+	}
+	if err := m.validateManagedPath(root); err != nil {
 		return err
 	}
 	return internalfs.RemoveAll(root)

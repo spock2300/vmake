@@ -109,6 +109,9 @@ func patchHashForNode(name string, node *resolver.PackageNode) (string, error) {
 }
 
 func remoteVersionKey(ctx *RuntimeContext, name string, node *resolver.PackageNode, entry *config.EntryConfig) (string, string, bool) {
+	if node != nil && node.Source != nil && node.Source.Link != nil {
+		return resolver.LocalLinkVersion, node.Source.Link.Commit, true
+	}
 	if entry != nil && entry.Version != "" {
 		commit := ""
 		if ctx.Lock != nil && !ctx.IgnoreLock {
@@ -238,10 +241,11 @@ func packageFlagsHash(globalFlagsHash string, node *resolver.PackageNode) string
 }
 
 type keyMaterial struct {
-	version   string
-	commit    string
-	flagsHash string
-	patchHash string
+	version    string
+	commit     string
+	flagsHash  string
+	patchHash  string
+	sourceLink string
 }
 
 func (m keyMaterial) localExtra() string {
@@ -255,7 +259,11 @@ func (m keyMaterial) localExtra() string {
 func (m keyMaterial) remoteExtra() string {
 	// Patch and source identity affect the materialized tree, so they stay in
 	// the remote build-directory key. Buildscript text is action-level.
-	return build.JoinKeyExtra(m.version, m.commit, m.flagsHash, m.patchHash)
+	extra := build.JoinKeyExtra(m.version, m.commit, m.flagsHash, m.patchHash)
+	if m.sourceLink != "" {
+		extra += m.sourceLink + "\x00"
+	}
+	return extra
 }
 
 type pkgKey struct {

@@ -194,6 +194,21 @@ func TestCleanHooksRecoverScriptError(t *testing.T) {
 	}
 }
 
+func TestCleanAllLinkedOutputs(t *testing.T) {
+	dep := t.TempDir()
+	out := filepath.Join(dep, "native", "pkg", "out", "owner", "buildkey", "build")
+	if err := os.MkdirAll(out, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, "artifact.o"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cleanAllRemoteOutputs(dep, map[string]string{"native/pkg": "/tmp/linked"})
+	if _, err := os.Stat(filepath.Join(out, "artifact.o")); !os.IsNotExist(err) {
+		t.Fatalf("linked output was not cleaned: %v", err)
+	}
+}
+
 func TestCleanAllRemoteOutputsFindsNestedTrees(t *testing.T) {
 	dep := t.TempDir()
 	writeTree := func(root string) {
@@ -217,7 +232,7 @@ func TestCleanAllRemoteOutputsFindsNestedTrees(t *testing.T) {
 	writeTree(top)
 	writeTree(nested)
 
-	cleanAllRemoteOutputs(dep)
+	cleanAllRemoteOutputs(dep, nil)
 
 	for _, root := range []string{top, nested} {
 		out := filepath.Join(root, "out")

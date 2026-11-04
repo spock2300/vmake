@@ -12,22 +12,27 @@ import (
 )
 
 type layoutInput struct {
-	Local     bool
-	SourceDir string
-	PkgRoot   string
-	Member    string
-	CCKey     string
-	Mode      string
-	Options   map[string]any
-	Material  keyMaterial
-	Ready     bool
+	Local          bool
+	SourceDir      string
+	SourceOverride string
+	PkgRoot        string
+	Member         string
+	CCKey          string
+	Mode           string
+	Options        map[string]any
+	Material       keyMaterial
+	Ready          bool
 }
 
 func layoutFor(in layoutInput) (build.PackageLayout, error) {
 	member := filepath.ToSlash(in.Member)
 	sourceDir := in.SourceDir
 	if !in.Local {
-		sourceDir = filepath.Join(in.PkgRoot, "src", filepath.FromSlash(member))
+		if in.SourceOverride != "" {
+			sourceDir = in.SourceOverride
+		} else {
+			sourceDir = filepath.Join(in.PkgRoot, "src", filepath.FromSlash(member))
+		}
 	}
 	if !in.Ready {
 		return build.PackageLayout{
@@ -149,11 +154,16 @@ func (s *sourceStage) keyMaterialFor(name string) (keyMaterial, error) {
 	if commit == "" && node.Native != nil {
 		commit = node.Native.Commit
 	}
+	sourceLink := ""
+	if node.Source != nil && node.Source.Link != nil {
+		sourceLink = node.Source.Link.Path
+	}
 	return keyMaterial{
-		version:   version,
-		commit:    s.packageCommitKey(name, commit),
-		flagsHash: flagsHash,
-		patchHash: s.patchHashes[name],
+		version:    version,
+		commit:     s.packageCommitKey(name, commit),
+		flagsHash:  flagsHash,
+		patchHash:  s.patchHashes[name],
+		sourceLink: sourceLink,
 	}, nil
 }
 
@@ -189,14 +199,19 @@ func (s *sourceStage) makeLayout(name string, tools *build.ResolvedTools) (build
 	if tree == "" {
 		tree = remoteTreeDir(s.rc.ctx, owner)
 	}
+	sourceOverride := ""
+	if node.Source != nil && node.Source.Link != nil {
+		sourceOverride = node.Source.Link.Path
+	}
 	return layoutFor(layoutInput{
-		PkgRoot:  tree,
-		Member:   member,
-		CCKey:    tools.CCKey(),
-		Mode:     s.rc.cfg.Mode,
-		Options:  s.conf.allPkgOptions[name],
-		Material: material,
-		Ready:    true,
+		PkgRoot:        tree,
+		SourceOverride: sourceOverride,
+		Member:         member,
+		CCKey:          tools.CCKey(),
+		Mode:           s.rc.cfg.Mode,
+		Options:        s.conf.allPkgOptions[name],
+		Material:       material,
+		Ready:          true,
 	})
 }
 

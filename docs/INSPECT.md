@@ -285,12 +285,14 @@ of these files.
 | `name` | string | Package name |
 | `kind` | string | `local`, `native`, or `registry` |
 | `repo` | string? | Repository name for remote packages |
-| `version` | string? | Selected version (config pin, lockfile, or native selection) |
-| `commit` | string? | Resolved commit for remote packages |
+| `version` | string? | Selected version (config pin, lockfile, or native selection); linked packages report `0.0.0-local` |
+| `commit` | string? | Resolved commit for remote packages; linked packages report the link tree HEAD |
 | `url` | string? | Resolved source URL for remote packages |
 | `path` | string? | Local packages: source directory relative to `root` (slash-separated) |
-| `sourceDir` | string? | Absolute source directory |
+| `sourceDir` | string? | Absolute source directory; a linked package reports its local working tree |
 | `sourcePresent` | bool | Whether the expected source tree exists and is non-empty (see `VMAKE_W_SOURCE_MISSING`) |
+| `linked` | bool? | Present and true when `vmake pkg link` supplies the package source |
+| `linkPath` | string? | Absolute linked source path when `linked` is true |
 | `buildDir` | string? | Absolute active build-key directory from the resolved layout; present for needed packages with a layout, even before the directory exists |
 | `buildKey` | string? | Build key (the last path element) for local packages; omitted for remote packages, whose `buildDir` ends in `build` |
 | `needed` | bool | Whether the package is reachable from the build roots |
@@ -375,7 +377,10 @@ failure; stdout contains one JSON document in every row.
 `query`. The missing-source check only reads directories: it does not run git,
 touch the network, create `<package>/src` links, or write `.vmake_deps`.
 Resolution of native remote packages still follows its normal rules and may
-materialize that package's tree. `inspect` does not read or create `install/`
+materialize that package's tree, except packages linked through
+`.vmake/local.json`: those are read from the linked working tree without
+materialization and ignore lock/config versions and version constraints.
+`inspect` does not read or create `install/`
 and does not resolve the install prefix: `installPrefix` and `installManifest`
 are the expected default paths, while `installs` and `installPath` come from
 dry-run `OnBuild` declarations. Inspect stats `build/compile_commands.json`,

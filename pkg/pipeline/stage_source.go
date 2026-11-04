@@ -35,9 +35,10 @@ func (l *sourceDownloadLog) print() {
 
 func (s *sourceStage) prepareAllPackages() error {
 	remote := &remoteVersionState{
-		entries: make(map[string]*config.EntryConfig),
-		commits: make(map[string]string),
-		trees:   make(map[string]string),
+		entries:  make(map[string]*config.EntryConfig),
+		commits:  make(map[string]string),
+		trees:    make(map[string]string),
+		versions: make(map[string]string),
 	}
 	downloadLog := &sourceDownloadLog{}
 
@@ -115,8 +116,20 @@ func (s *sourceStage) writeLockfile() error {
 		return nil
 	}
 	updated := lockfile.New()
+	if s.rc.ctx.Lock != nil {
+		for name := range s.rc.ctx.SourceLinks {
+			if old, ok := s.rc.ctx.Lock.Get(name); ok {
+				updated.Set(name, old)
+			}
+		}
+	}
 	for _, name := range s.rc.ctx.Resolver.GetOrder() {
 		node := s.rc.ctx.DepGraph.Packages[name]
+		if node.Source != nil && node.Source.Link != nil {
+			// Linked packages keep their old lock entry (if any) but never
+			// write the linked HEAD into the shared lockfile.
+			continue
+		}
 		if node.IsLocal() {
 			if version := s.sourceVersions[name]; version != "" {
 				updated.Set(name, &lockfile.LockedPkg{Version: version, Commit: s.sourceCommits[name], Source: "git"})
@@ -193,6 +206,22 @@ func (s *sourceStage) downloadRemoteSources(remote *remoteVersionState, depsDir 
 		resolvedTools, err := s.rc.toolsForPackage(name)
 		if err != nil {
 			return err
+		}
+		if node.Source != nil && node.Source.Link != nil {
+			version := resolver.LocalLinkVersion
+			s.sourceVersions[name] = version
+			s.patchHashes[name] = ""
+			remote.commits[name] = node.Source.Link.Commit
+			remote.trees[name] = remoteTreeDir(s.rc.ctx, name)
+			remote.setVersion(name, version)
+			vlog.Verbose("  %s@%s (linked %s)", name, version, node.Source.Link.Path)
+			if err := s.setPackageLayout(name, resolvedTools); err != nil {
+				return err
+			}
+			if err := s.preparePackageWorkspace(name); err != nil {
+				return fmt.Errorf("prepare workspace for %s: %w", name, err)
+			}
+			continue
 		}
 		entryCfg := remote.entries[name]
 		repoName, pkgName, ok := api.SplitPackageRef(name)
@@ -475,16 +504,24 @@ func (s *sourceStage) setupSubPackageDirs(downloadLog *sourceDownloadLog) error 
 		s.remote.trees[name] = tree
 		s.remote.commits[name] = commit
 		s.sourceVersions[name] = version
+		s.remote.setVersion(name, version)
 		patchHash, err := patchHashForNode(name, node)
 		if err != nil {
 			return err
 		}
 		s.patchHashes[name] = patchHash
 		sourceRoot := filepath.Join(tree, "src", filepath.FromSlash(relPath))
-		if s.ownGitSourceNeedsMaterialization(name, sourceRoot, node) {
+		if parentNode != nil && parentNode.Source != nil && parentNode.Source.Link != nil {
+			sourceRoot = filepath.Join(parentNode.Source.Link.Path, filepath.FromSlash(relPath))
+		}
+		materializeRoot := sourceRoot
+		if thirdPartyRoot := linkedThirdPartyRoot(s.rc.ctx, name, node); thirdPartyRoot != "" {
+			materializeRoot = thirdPartyRoot
+		}
+		if s.ownGitSourceNeedsMaterialization(name, materializeRoot, node) {
 			downloadLog.print()
 		}
-		if err := s.finalizePackageSource(name, sourceRoot, resolvedTools); err != nil {
+		if err := s.finalizePackageSource(name, materializeRoot, resolvedTools); err != nil {
 			return err
 		}
 	}
@@ -527,6 +564,9 @@ func (s *sourceStage) applyPatchesFor(name string) error {
 	if node == nil || node.Pkg == nil {
 		return nil
 	}
+	if node.Source != nil && node.Source.Link != nil && pathWithin(node.Source.Link.Path, node.Pkg.SrcDir()) {
+		return fmt.Errorf("apply patches for %s: linked source %s is user-managed", name, node.Source.Link.Path)
+	}
 	if err := applyPatchesContext(s.rc.ctx.Context, node.Pkg, node.Pkg.SrcDir()); err != nil {
 		s.clearPatchState(name)
 		return fmt.Errorf("apply patches for %s: %w", name, err)
@@ -555,6 +595,9 @@ func (s *sourceStage) treeRootFor(name string) string {
 		return filepath.Join(s.rc.ctx.Paths.DepsDir, "local", name)
 	}
 	if _, isSub := s.rc.ctx.Resolver.SubParents()[name]; isSub {
+		if root := linkedThirdPartyRoot(s.rc.ctx, name, node); root != "" {
+			return root
+		}
 		if len(node.Pkg.GitURLs()) > 0 && s.pkgDirs[name] != nil {
 			return s.pkgDirs[name].SourceDir
 		}
@@ -574,8 +617,15 @@ func (r *remoteVersionState) installedPkgs(pkgDirs map[string]*api.PkgDirs) map[
 	result := make(map[string]*api.InstalledPackage)
 	for name, d := range pkgDirs {
 		if d.InstallDir != "" {
-			if rc, ok := r.entries[name]; ok {
-				result[name] = api.NewInstalledPackage(name, rc.Version, d.InstallDir, nil)
+			version := ""
+			entry, hasEntry := r.entries[name]
+			if v, ok := r.versions[name]; ok {
+				version = v
+			} else if hasEntry {
+				version = entry.Version
+			}
+			if hasEntry || version != "" {
+				result[name] = api.NewInstalledPackage(name, version, d.InstallDir, nil)
 			}
 		}
 	}

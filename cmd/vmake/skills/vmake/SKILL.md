@@ -52,6 +52,8 @@ vmake inspect                          # Dry-run JSON project model (may initial
 vmake inspect --no-targets             # Package/dependency JSON without running OnBuild
 vmake pkg search tls --details         # Search names, descriptions and licenses in trusted repositories
 vmake pkg show official/zlib           # Package metadata, versions and AddRequires snippet
+vmake pkg link hl/sdk ../sdk           # Build a native/registry package from a local git tree
+vmake pkg unlink hl/sdk                # Restore the locked remote source
 vmake query                            # Dependency tree
 vmake query targets                    # Targets without building (local + remote)
 vmake check-symbols                    # Verify ELF symbols against policy
@@ -195,6 +197,7 @@ The high-level phases are listed below. During script loading, each package runs
 | **Local SetGit Package** | Subdirectory `build.go` + `p.SetGit(...)` | Cloned into `.vmake_deps/local/<pkg>/src`, symlinked at `<pkgDir>/src`; `SrcDir()` points to `src`; `AddPatches`/`SetPatches` can patch this tree |
 | **Registry Package** | `~/.vmake/repos/<repo>/packages/<first-char>/<pkg>/build.go` | Referenced as `"repo/pkg"`; `p.SetGit(...)` downloads upstream source into `.vmake_deps/` |
 | **Native VMake Repo** | Git repo with root `build.go` | Registered via `vmake repo add --native`; trusted per package commit on first build; sub-packages lazily inherit parent version. `repo trust`/`repo update` do not apply to native repos |
+| **Local Source Link** | `.vmake/local.json` | `vmake pkg link <repo/name> <git-tree>`; native links load build.go/sub-packages locally, registry links replace only the upstream source. Version/tag/constraints are ignored; outputs stay under `.vmake_deps`. `pkg unlink` restores the lock |
 
 ## Target API at a Glance
 
@@ -438,7 +441,7 @@ For in-source Makefiles, pass an absolute path with forward slashes: `p.Make("-C
 ## Clean
 
 - `vmake clean` runs `OnClean`, removes the active configuration's build outputs and `build/compile_commands.json`, and preserves `.vmake_deps/` source trees, `install/`, and other configurations' `BuildDir`s.
-- `vmake clean --all` removes all configurations' build outputs and `build/compile_commands.json`, but keeps `install/`; `vmake distclean` also removes `install/` (`--purge-sources` deletes `.vmake_deps/`) but keeps `.vmake/` configuration and lock files.
+- `vmake clean --all` removes all configurations' build outputs and `build/compile_commands.json`, but keeps `install/`; it also removes `pkg link` packages' `.vmake_deps` outputs. `vmake distclean` also removes `install/` (`--purge-sources` deletes `.vmake_deps/`) but keeps `.vmake/` configuration, lock files, and `.vmake/local.json` links.
 - `clean`, `distclean`, and `pkg clean` remove both `build/vmake-build.json` and `build/vmake-test.json`. With a missing toolchain, `clean --all`/`distclean` still remove outputs and skip toolchain-dependent `OnClean` with a warning; plain `clean` fails its toolchain check.
 
 ## Repository & Toolchain Commands
@@ -451,9 +454,11 @@ vmake repo trust <name>              # Trust a registry repository at its curren
 vmake ext add <name> <url>           # Add an extension repository (plugins/toolchains)
 vmake ext trust <name>               # Trust an extension at its current commit
 vmake ext provision <name>           # Install toolchains declared for the current host
+vmake pkg link <repo/name> <path>   # Use a local git tree as the package source
+vmake pkg unlink <repo/name>        # Remove the local source link
 ```
 
-Native repositories are trusted per package commit on first build; `repo trust` and `repo update` reject them.
+Native repositories are trusted per package commit on first build; `repo trust` and `repo update` reject them. `pkg link` records the path in `.vmake/local.json` (machine-local, not lock/config); `pkg update` rejects linked packages.
 
 ## Common Mistakes
 

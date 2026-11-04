@@ -23,12 +23,14 @@ import (
 )
 
 type installManifestEntry struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-	Source  string `json:"source"`
-	URL     string `json:"url,omitempty"`
-	Ref     string `json:"ref,omitempty"`
-	Path    string `json:"path,omitempty"`
+	Name     string `json:"name"`
+	Version  string `json:"version"`
+	Source   string `json:"source"`
+	URL      string `json:"url,omitempty"`
+	Ref      string `json:"ref,omitempty"`
+	Path     string `json:"path,omitempty"`
+	Linked   bool   `json:"linked,omitempty"`
+	LinkPath string `json:"linkPath,omitempty"`
 }
 
 const installOwnershipMarker = ".vmake-install"
@@ -308,6 +310,22 @@ func writeManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 			Name:    name,
 			Version: ip.Version,
 			Source:  "registry",
+		}
+		if node.Source != nil && node.Source.Link != nil {
+			entry.Source = "registry"
+			if node.IsNative() {
+				entry.Source = "native"
+				entry.URL = node.Native.GitURL
+			} else if node.Pkg != nil {
+				if urls := node.Pkg.GitURLs(); len(urls) > 0 {
+					entry.URL = urls[0]
+				}
+			}
+			entry.Linked = true
+			entry.LinkPath = node.Source.Link.Path
+			entry.Ref = node.Source.Link.Commit
+			packages = append(packages, entry)
+			continue
 		}
 		if node.IsNative() {
 			entry.Source = "native"

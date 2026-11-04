@@ -48,7 +48,7 @@ func cleanPackagesInspection(entries []pkgCleanEntry, ctx *RuntimeContext, clean
 		for _, pkg := range entries {
 			cleanAllBuildDirs(pkg.Dir, pkg.Name)
 		}
-		cleanAllRemoteOutputs(ctx.Paths.DepsDir)
+		cleanAllRemoteOutputs(ctx.Paths.DepsDir, ctx.SourceLinks)
 		vlog.Info("Clean completed!")
 		return nil, nil
 	}
@@ -143,7 +143,7 @@ func removeStaleCompileDatabase(ctx *RuntimeContext) {
 // package trees' out/ directories, for all configurations. Tree roots are
 // located by their state.json so arbitrary nesting (native members) is
 // covered.
-func cleanAllRemoteOutputs(depDir string) {
+func cleanAllRemoteOutputs(depDir string, links map[string]string) {
 	_ = filepath.WalkDir(depDir, func(path string, entry os.DirEntry, err error) error {
 		if err != nil || entry.IsDir() || entry.Name() != "state.json" {
 			return nil
@@ -152,6 +152,9 @@ func cleanAllRemoteOutputs(depDir string) {
 		cleanOutputDirs(filepath.Join(root, "out"), filepath.Base(root))
 		return nil
 	})
+	for name := range links {
+		cleanOutputDirs(filepath.Join(depDir, filepath.FromSlash(name), "out"), name)
+	}
 }
 
 func cleanOutputDirs(outDir, pkgName string) {

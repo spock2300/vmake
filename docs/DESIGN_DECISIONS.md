@@ -88,6 +88,14 @@
 - 理由: 相比把父包隐式标记为 needed（会额外构建/安装父包 target），显式报错让依赖声明保持真实，并避免静默使用未打补丁或未锁定的源码树。
 - 涉及代码: `pkg/pipeline/stage_config.go` `validateNeededSubPackageOwners`。
 
+## DD-8: 本地源码 link 是完全本地覆盖
+
+- 状态: accepted
+- 背景: native/registry 包通常从 lock 物化到 `.vmake_deps`，开发 SDK 时无法直接编译本地工作树。
+- 决策: `vmake pkg link <repo/name> <path>` 把包源码指向本地 git 工作树，记录在机器本地的 `.vmake/local.json`。link 期间该包不参与版本解析：不读 config/lock 版本、不查 tag、不校验 `AddRequires` 约束；版本标识为 `0.0.0-local`，commit 为 link 树 HEAD。native link 的 build.go 与子包来自 link 树；registry link 仍使用 registry wrapper build.go，只替换上游源码。构建/安装输出仍写在 `.vmake_deps/<repo>/<owner>/out/...`。lock 旧条目保留但不读取/不重写，`lock update` 跳过 link 包。
+- 限制: link 包声明的 patch 被拒绝（native own-Git 子包的第三方 patch 除外）；link 包声明的 KConfig 被拒绝；link 树的 build hooks 仍会执行并可能修改该工作树；`.vmake_deps` 到 tree root 的 symlink 被拒绝，避免清理/checkout 跟随到用户仓库。
+- 理由: 开发期需要“改源码立即构建”，而发布期需要可复现的 tag+lock；把两者分开，避免为了调试制造临时 tag 或直接改动物化树。
+
 ## 已知限制 / 待议
 
 以下问题已被识别但尚未决策，修改前需单独讨论：

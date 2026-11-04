@@ -111,7 +111,9 @@ func runQueryConfig(cmd *cobra.Command, args []string) {
 	if node == nil {
 		fatalMsg("package %q not found", name)
 	}
-	if node.IsNative() {
+	if node.Source != nil && node.Source.Link != nil {
+		fmt.Printf("%s@%s (linked %s)\n", name, resolver.LocalLinkVersion, node.Source.Link.Path)
+	} else if node.IsNative() {
 		fmt.Printf("%s@%s\n", name, node.Native.Selected)
 	}
 

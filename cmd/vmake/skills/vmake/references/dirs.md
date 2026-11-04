@@ -4,7 +4,7 @@
 
 | Property | What it returns | When to use |
 |----------|-----------------|-------------|
-| `SourceDir()` | Package root — the `build.go` dir for local packages; for remote packages the member directory inside the package’s single working tree (`.vmake_deps/<repo>/<owner>/src[/<member>]`) | Package metadata files, overlay dirs |
+| `SourceDir()` | Package root — the `build.go` dir for local packages; for remote packages the member directory inside the package’s single working tree (`.vmake_deps/<repo>/<owner>/src[/<member>]`); for `pkg link` packages the linked working tree (or the `.vmake_deps/<owner>/third_party/<member>` build.go directory for native own-Git sub-packages) | Package metadata files, overlay dirs |
 | `SrcDir()` | Source code dir (`SourceDir()/src/` for local `SetGit` packages; a native member carrying its own repository is set to its nested tree; otherwise falls back to `SourceDir()`) | Source files for firmware/third-party builds |
 | `SrcDirRaw()` | Raw source dir without the SourceDir fallback; the framework sets it for `SetGit` workspaces | Inspecting the configured source dir |
 | `BuildDir()` | Scratch dir for intermediate artifacts | Build outputs and action success records |
@@ -32,6 +32,8 @@ The BuildKey hashes the format version and `(toolchain identity, build_mode, opt
 For local `SetGit`, `SourceDir()` stays at the package root. `SourceDir()/src` is a managed symlink to the package's single working tree at `.vmake_deps/local/<pkg>/src`; the link target no longer changes with the build key. Use `SrcDir()` for this actual source tree.
 
 Remote registry and native packages build directly in their working tree at `.vmake_deps/<repo>/<owner>/src`; native subpackages use their relative path inside it (`src/<member>`), and a member carrying its own repository gets a nested tree at the member directory. `SourceDir()` points there before OnBuild runs; patches apply to `SrcDir()` in place (a changed patch set resets the tree to its pinned commit first). `ScriptDir()` identifies the loaded buildscript's directory and may differ. Build outputs live in `out/<sha256(member)>/<buildKey>/{build,install}` beside `src`; do not treat the tree as immutable — it is the shared writable source for every configuration of the project.
+
+A `pkg link` package is the exception: `SourceDir()` is the linked git tree (native parent) or its member directory, while `BuildDir()`/`InstallDir()` stay under `.vmake_deps/<owner>/out/...`. Native sub-packages with their own `SetGit` source keep `SourceDir()` in the linked tree but `SrcDir()` points at `.vmake_deps/<owner>/third_party/<member>/src`. Link packages ignore lock/config versions, tags and constraints; `pkg unlink` restores the materialized tree.
 
 For local packages without SetGit, `SrcDir()` defaults to `SourceDir()` unless `SetSrcDir` overrides it. `SrcDirRaw()` reports the raw source-dir setting without the fallback. Once OnBuild exposes paths or synchronous subgraphs build a package, the session retains those paths through installation.
 

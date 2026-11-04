@@ -43,9 +43,17 @@ func (r *BuildResult) ExternalStages() int {
 }
 
 type remoteVersionState struct {
-	entries map[string]*config.EntryConfig
-	commits map[string]string
-	trees   map[string]string
+	entries  map[string]*config.EntryConfig
+	commits  map[string]string
+	trees    map[string]string
+	versions map[string]string
+}
+
+func (r *remoteVersionState) setVersion(name, version string) {
+	if r.versions == nil {
+		r.versions = make(map[string]string)
+	}
+	r.versions[name] = version
 }
 
 type BuildOptions struct {

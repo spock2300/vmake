@@ -159,7 +159,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		owner := remoteOwnerName(ctx, name)
 		member := remoteMemberPath(ctx, name)
 		tree := remoteTreeDir(ctx, owner)
-		sourceDir := filepath.Join(tree, "src", filepath.FromSlash(member))
+		sourceDir := effectiveSourceDir(ctx, name, node)
 		if info, err := os.Stat(sourceDir); err != nil || !info.IsDir() {
 			continue
 		}
@@ -171,9 +171,17 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		if err != nil {
 			return nil, err
 		}
+		sourceLink := ""
+		if node.Source != nil && node.Source.Link != nil {
+			sourceLink = node.Source.Link.Path
+		}
+		commitRoot := sourceDir
+		if thirdPartyRoot := linkedThirdPartyRoot(ctx, name, node); thirdPartyRoot != "" {
+			commitRoot = thirdPartyRoot
+		}
 		if commit != "" && member != "" && node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 {
 			sourceMgr := repo.NewSourceManager(ctx.Paths.DepsDir, ctx.Paths.CacheDir).WithSession(ctx.Locks).WithContext(ctx.Context)
-			if sourceCommit := sourceMgr.CommitAt(sourceDir); sourceCommit != "" {
+			if sourceCommit := sourceMgr.CommitAt(commitRoot); sourceCommit != "" {
 				commit = sourceCommitKey(commit, sourceCommit)
 			}
 		}
@@ -181,19 +189,22 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 			continue
 		}
 		layout, err := layoutFor(layoutInput{
-			PkgRoot:  tree,
-			Member:   member,
-			CCKey:    tools.CCKey(),
-			Mode:     pre.cfg.Mode,
-			Options:  entry.Options,
-			Material: keyMaterial{version: version, commit: commit, flagsHash: flagsHash, patchHash: patchHash},
-			Ready:    true,
+			PkgRoot:        tree,
+			SourceOverride: sourceLink,
+			Member:         member,
+			CCKey:          tools.CCKey(),
+			Mode:           pre.cfg.Mode,
+			Options:        entry.Options,
+			Material:       keyMaterial{version: version, commit: commit, flagsHash: flagsHash, patchHash: patchHash, sourceLink: sourceLink},
+			Ready:          true,
 		})
 		if err != nil {
 			return nil, err
 		}
 		pkgDirs[name] = &layout.Dirs
-		if member != "" && node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 {
+		if thirdPartySrc := linkedThirdPartySrcDir(ctx, name, node); thirdPartySrc != "" {
+			node.Pkg.SetSrcDir(thirdPartySrc)
+		} else if member != "" && node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 {
 			node.Pkg.SetSrcDir(filepath.Join(layout.Dirs.SourceDir, "src"))
 		}
 	}

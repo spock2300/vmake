@@ -38,7 +38,7 @@ func LoadBuildScript(src Source) (*api.Package, error) {
 // interpretation. Remote scripts without a repository identity or a trust
 // checker are refused rather than executed by default.
 func LoadBuildScriptWithTrust(src Source, trustChecker ScriptTrustChecker) (*api.Package, error) {
-	if src.IsRemote() {
+	if src.IsRemote() && !(src.Link != nil && src.Link.Native) {
 		if src.Repo == "" {
 			return nil, fmt.Errorf("remote buildscript %q has no repository identity", src.Name)
 		}

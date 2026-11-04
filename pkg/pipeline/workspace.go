@@ -36,7 +36,12 @@ func (s *sourceStage) preparePackageWorkspace(name string) error {
 		}
 		return nil
 	}
-	if err := s.selectPackageSourceRoot(name, dirs.SourceDir); err != nil {
+	sourceRoot := dirs.SourceDir
+	thirdPartyRoot := linkedThirdPartyRoot(s.rc.ctx, name, node)
+	if thirdPartyRoot != "" {
+		sourceRoot = thirdPartyRoot
+	}
+	if err := s.selectPackageSourceRoot(name, sourceRoot); err != nil {
 		return err
 	}
 	oldSourceDir := node.Pkg.SourceDir()
@@ -55,6 +60,10 @@ func (s *sourceStage) preparePackageWorkspace(name string) error {
 	}
 	if err := rebindRemoteSrcDir(s.rc.ctx, node, dirs, oldSourceDir, name); err != nil {
 		return err
+	}
+	if thirdPartyRoot != "" {
+		node.Pkg.SetSrcDir(filepath.Join(thirdPartyRoot, "src"))
+		return nil
 	}
 	if node.Pkg.SrcDirRaw() == "" {
 		node.Pkg.SetSrcDir(filepath.Join(dirs.SourceDir, "src"))

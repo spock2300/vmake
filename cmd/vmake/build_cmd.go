@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spock2300/vmake/internal/jsonio"
+	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/lockfile"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/repo"
@@ -121,10 +122,18 @@ func importManifestIntoLock(ctx context.Context, mf *installManifest) error {
 	if err != nil {
 		return err
 	}
+	local, err := config.LoadLocal(findProjectDir())
+	if err != nil {
+		return err
+	}
 	changed := false
 	for _, entry := range mf.Packages {
 		switch entry.Source {
 		case "native", "registry":
+			if _, linked := local.Links[entry.Name]; linked {
+				vlog.Info("  skip manifest entry %s (linked)", entry.Name)
+				continue
+			}
 			if entry.Ref == "" {
 				vlog.Info("  skip manifest entry %s (empty ref)", entry.Name)
 				continue

@@ -103,6 +103,8 @@ type inspectPackage struct {
 	Path          string                      `json:"path,omitempty"`
 	SourceDir     string                      `json:"sourceDir,omitempty"`
 	SourcePresent bool                        `json:"sourcePresent"`
+	Linked        bool                        `json:"linked,omitempty"`
+	LinkPath      string                      `json:"linkPath,omitempty"`
 	BuildDir      string                      `json:"buildDir,omitempty"`
 	BuildKey      string                      `json:"buildKey,omitempty"`
 	Needed        bool                        `json:"needed"`
@@ -539,6 +541,9 @@ func inspectSourceDir(inspection *pipeline.Inspection, name string, node *resolv
 	if dirs := inspection.PkgDirs[name]; dirs != nil && dirs.SourceDir != "" {
 		return dirs.SourceDir
 	}
+	if node.Source != nil && node.Source.Link != nil {
+		return node.Source.Link.Path
+	}
 	if node.Source != nil {
 		return node.Source.Dir
 	}
@@ -580,6 +585,12 @@ func inspectExpectedSourceDir(ctx *RuntimeContext, name string, node *resolver.P
 	if node.Source == nil {
 		return ""
 	}
+	if node.Source.Link != nil {
+		if root := linkedThirdPartyRootForInspect(ctx, name, node); root != "" {
+			return filepath.Join(root, "src")
+		}
+		return node.Source.Link.Path
+	}
 	if node.IsLocal() {
 		if node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 {
 			return filepath.Join(node.Source.Dir, "src")
@@ -597,6 +608,18 @@ func inspectExpectedSourceDir(ctx *RuntimeContext, name string, node *resolver.P
 		dir = filepath.Join(dir, "src")
 	}
 	return dir
+}
+
+func linkedThirdPartyRootForInspect(ctx *RuntimeContext, name string, node *resolver.PackageNode) string {
+	if node == nil || node.Source == nil || node.Source.Link == nil || !node.Source.Link.Native {
+		return ""
+	}
+	parent, isSub := ctx.Resolver.SubParents()[name]
+	if !isSub || parent == "" || node.Pkg == nil || len(node.Pkg.GitURLs()) == 0 {
+		return ""
+	}
+	member := strings.TrimPrefix(name, parent+"/")
+	return filepath.Join(ctx.Paths.DepsDir, filepath.FromSlash(parent), "third_party", filepath.FromSlash(member))
 }
 
 func inspectSourceTreePopulated(dir string) bool {
@@ -663,29 +686,37 @@ func inspectRemoteMetadata(ctx *RuntimeContext, name string, node *resolver.Pack
 	pkg.Repo = node.Source.Repo
 	pkg.Commit = node.Source.Commit
 	pkg.URL = node.Source.URL
-	if entry := config.GetEntry(ctx.Config, name); entry.Version != "" {
-		pkg.Version = entry.Version
+	if node.Source.Link != nil {
+		pkg.Linked = true
+		pkg.LinkPath = node.Source.Link.Path
+		pkg.Commit = node.Source.Link.Commit
+		pkg.Version = resolver.LocalLinkVersion
 	}
-	if ctx.Lock != nil {
-		if locked, ok := ctx.Lock.Get(name); ok {
+	if node.Source.Link == nil {
+		if entry := config.GetEntry(ctx.Config, name); entry.Version != "" {
+			pkg.Version = entry.Version
+		}
+		if ctx.Lock != nil {
+			if locked, ok := ctx.Lock.Get(name); ok {
+				if pkg.Version == "" {
+					pkg.Version = locked.Version
+				}
+				if pkg.Commit == "" {
+					pkg.Commit = locked.Commit
+				}
+			}
+		}
+		if node.Native != nil {
 			if pkg.Version == "" {
-				pkg.Version = locked.Version
+				pkg.Version = node.Native.Selected
 			}
 			if pkg.Commit == "" {
-				pkg.Commit = locked.Commit
+				pkg.Commit = node.Native.Commit
 			}
 		}
 	}
-	if node.Native != nil {
-		if pkg.URL == "" {
-			pkg.URL = node.Native.GitURL
-		}
-		if pkg.Version == "" {
-			pkg.Version = node.Native.Selected
-		}
-		if pkg.Commit == "" {
-			pkg.Commit = node.Native.Commit
-		}
+	if node.Native != nil && pkg.URL == "" {
+		pkg.URL = node.Native.GitURL
 	}
 }
 

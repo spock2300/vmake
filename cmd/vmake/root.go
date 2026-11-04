@@ -162,6 +162,7 @@ type resolveInputs struct {
 	configDigest string
 	lock         *lockfile.Lock
 	cfg          *config.ConfigFile
+	sourceLinks  map[string]string
 	paths        *pipeline.Paths
 }
 
@@ -174,6 +175,7 @@ func (in resolveInputs) params(mode, toolchain string) pipeline.ResolveParams {
 		Lock:              in.lock,
 		LockPath:          in.paths.LockPath,
 		IgnoreLock:        in.ignoreLock,
+		SourceLinks:       in.sourceLinks,
 		TrustChecker:      remoteScriptTrustChecker,
 		Paths:             in.paths,
 		ModeOverride:      mode,
@@ -199,6 +201,10 @@ func loadResolveInputs(ignoreLock bool, softGitignore bool) (resolveInputs, erro
 	if err != nil {
 		return resolveInputs{}, err
 	}
+	local, err := config.LoadLocal(workDir)
+	if err != nil {
+		return resolveInputs{}, fmt.Errorf("load %s: %w", config.LocalPath(workDir), err)
+	}
 	return resolveInputs{
 		ignoreLock:   ignoreLock,
 		workDir:      workDir,
@@ -206,6 +212,7 @@ func loadResolveInputs(ignoreLock bool, softGitignore bool) (resolveInputs, erro
 		configDigest: digest,
 		lock:         lock,
 		cfg:          cfg,
+		sourceLinks:  local.Links,
 		paths:        paths,
 	}, nil
 }

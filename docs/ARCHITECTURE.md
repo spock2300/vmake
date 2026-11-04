@@ -308,6 +308,18 @@ AddRequires          1. 检查 registry 仓库（未找到）      LoadBuildScri
 8. 创建 `PackageNode`，注册到 `graph.Packages`（`WithNative` 写入 `Native *NativePackageInfo`）
 9. 仍在 Phase 1：`PreparePackage` 用 yaegi 加载 build.go，随后 `recurseDeps` 继续解析依赖
 
+### 本地源码 link (`vmake pkg link`)
+
+`.vmake/local.json` 保存机器本地的 `{"links":{"repo/name":"/abs/path"}}`。link 在解析阶段生效，不写入 `vmake.lock` 或共享配置：
+
+1. `Require` 先校验 link：路径必须是 git 工作树、不能在 `.vmake_deps`/项目根/仓库目录内；native 父包必须有 `build.go`，registry 包必须能在已注册仓库中找到 wrapper。
+2. native link：`findNativeSource` 直接使用 link 树加载 build.go 和子包，不调用 `EnsureSource`；`Source.Link.Native=true`，子包继承 link 路径与 commit。
+3. registry link：registry wrapper build.go 仍从仓库读取，`Source.Dir` 保持 wrapper 目录；`Source.Link.Path` 是上游源码树，`Source.Link.Native=false`。wrapper 的版本元数据不参与选择或校验。
+4. link 包忽略 lock/config 版本、tag 和 `AddRequires` 版本约束；版本标识为 `0.0.0-local`，commit 为 link 树的 HEAD。只有 native 子包自己的 `SetGit` 第三方源码仍按原逻辑选择其 upstream 版本。
+5. 源码阶段跳过 link 包的 `EnsureSource`：`remote.trees` 仍是 `.vmake_deps/<owner>` 输出根，`layoutFor` 的 `SourceOverride` 指向 link 树。带自身 `SetGit` 的 native 子包物化到 `.vmake_deps/<owner>/third_party/<member>`。
+6. link 包声明 patch 时拒绝（native own-Git 子包的第三方 patch 除外）。`writeLockfile` 保留旧条目但不更新；`clean --all`/`distclean` 通过 link 记录清理 `.vmake_deps` 输出，保留 link 记录。
+7. `.vmake_deps` 到 tree root 的每一级都拒绝 symlink，避免 `checkout`/`clean` 跟随到用户工作树。
+
 ### PackageNode Native 字段
 
 ```go
@@ -475,7 +487,8 @@ Source
 ├── Name   string          // 包名（如 "official/zlib"）
 ├── Dir    string          // 包目录
 ├── Origin api.SourceOrigin // SourceLocal 或 SourceRemote
-└── Repo   string          // 脚本来源的远程仓库名（如 "official"），本地脚本为空
+├── Repo   string          // 脚本来源的远程仓库名（如 "official"），本地脚本为空
+└── Link   *SourceLink     // 本地源码 link：Path/Commit/Native/LocalSource
 ```
 
 ### BuildGraph (`pkg/build/graph.go`)

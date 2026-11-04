@@ -8,6 +8,38 @@ import (
 	"testing"
 )
 
+func TestEnsureLocalLinkIgnored(t *testing.T) {
+	dir := t.TempDir()
+	if err := ensureLocalLinkIgnored(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureLocalLinkIgnored(dir); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), ".vmake/local.json"); got != 1 {
+		t.Fatalf(".vmake/local.json entries = %d, content %q", got, data)
+	}
+}
+
+func TestEnsureLocalLinkIgnoredHonorsVmakeDirectoryRule(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".gitignore")
+	if err := os.WriteFile(path, []byte(".vmake/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureLocalLinkIgnored(dir); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != ".vmake/\n" {
+		t.Fatalf("gitignore changed for existing .vmake/ rule: %q", data)
+	}
+}
+
 func TestListPackageSources(t *testing.T) {
 	dir := t.TempDir()
 

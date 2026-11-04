@@ -45,6 +45,7 @@ type RuntimeContext struct {
 	Lock                *lockfile.Lock
 	LockPath            string
 	IgnoreLock          bool
+	SourceLinks         map[string]string
 
 	Paths              *Paths
 	TrustChecker       buildscript.ScriptTrustChecker
@@ -68,6 +69,7 @@ type ResolveParams struct {
 	Lock              *lockfile.Lock
 	LockPath          string
 	IgnoreLock        bool
+	SourceLinks       map[string]string
 	TrustChecker      buildscript.ScriptTrustChecker
 	Paths             *Paths
 	ModeOverride      string
@@ -83,6 +85,7 @@ func NewContext(p ResolveParams) *RuntimeContext {
 		Lock:              p.Lock,
 		LockPath:          p.LockPath,
 		IgnoreLock:        p.IgnoreLock,
+		SourceLinks:       p.SourceLinks,
 		Paths:             p.Paths,
 		TrustChecker:      p.TrustChecker,
 		ModeOverride:      p.ModeOverride,

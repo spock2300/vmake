@@ -16,6 +16,7 @@ import (
 	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/lockfile"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/repo"
@@ -57,6 +58,8 @@ type pkgShowResult struct {
 	Name          string     `json:"name"`
 	Source        string     `json:"source"`
 	Path          string     `json:"path,omitempty"`
+	Linked        bool       `json:"linked,omitempty"`
+	LinkPath      string     `json:"linkPath,omitempty"`
 	Trusted       bool       `json:"trusted"`
 	Version       string     `json:"version,omitempty"`
 	Ref           string     `json:"ref,omitempty"`
@@ -248,6 +251,19 @@ func searchNativeRepo(repoName string, opts pkgSearchOptions, statuses *pkgStatu
 	if err != nil {
 		return nil, []string{fmt.Sprintf("%s: %v", repoName, err)}
 	}
+	links := make(map[string]string)
+	if local, loadErr := config.LoadLocal(projectDir); loadErr == nil {
+		for ref, path := range local.Links {
+			linkRepo, linkName, ok := api.SplitPackageRef(ref)
+			if ok && linkRepo == repoName && !strings.Contains(linkName, "/") {
+				links[linkName] = path
+				if !containsString(names, linkName) {
+					names = append(names, linkName)
+				}
+			}
+		}
+		sort.Strings(names)
+	}
 
 	var warnings []string
 	if len(names) == 0 {
@@ -256,7 +272,23 @@ func searchNativeRepo(repoName string, opts pkgSearchOptions, statuses *pkgStatu
 	sources := repo.NewSourceManager(depsDir, getCacheDir())
 	entries := make([]pkgSearchEntry, 0, len(names))
 	for _, name := range names {
-		entry := pkgSearchEntry{Repo: repoName, Name: name, Source: "native", Cached: true}
+		linkPath := links[name]
+		entry := pkgSearchEntry{Repo: repoName, Name: name, Source: "native", Cached: linkPath == ""}
+		if linkPath != "" {
+			if opts.details {
+				interpreted, err := loadLinkedNativePackage(repoName, name, linkPath)
+				if err != nil {
+					warnings = append(warnings, fmt.Sprintf("%s/%s: %v", repoName, name, err))
+				} else {
+					applySearchMetadata(&entry, interpreted, nil)
+				}
+			}
+			if statuses != nil {
+				entry.Status = statuses.forPackage(repoName, name)
+			}
+			entries = append(entries, entry)
+			continue
+		}
 		root := sources.TreeDir(repo.PackageTreeKey(repoName, name))
 		state, _ := sources.ReadState(root)
 		if opts.details {
@@ -340,6 +372,32 @@ func loadNativePackage(depsDir, repoName, pkgName string, state *repo.TreeState)
 	return loadPackageScript(src)
 }
 
+func loadLinkedNativePackage(repoName, pkgName, linkPath string) (*api.Package, error) {
+	commit, err := repo.GetCurrentCommit(linkPath)
+	if err != nil {
+		return nil, err
+	}
+	src := buildscript.Source{
+		Name:   repoName + "/" + pkgName,
+		Path:   filepath.Join(linkPath, "build.go"),
+		Dir:    linkPath,
+		Origin: api.SourceRemote,
+		Repo:   repoName,
+		Commit: commit,
+		Link: &buildscript.SourceLink{
+			Path:        linkPath,
+			Commit:      commit,
+			Native:      true,
+			LocalSource: true,
+		},
+	}
+	src.Script, err = buildscript.DetectScriptOptions(linkPath, linkPath)
+	if err != nil {
+		return nil, err
+	}
+	return loadPackageScript(src)
+}
+
 func loadPackageScript(src buildscript.Source) (*api.Package, error) {
 	restoreStdout := silenceStdout()
 	restoreStderr := silenceStderr()
@@ -401,11 +459,21 @@ func loadPkgShow(repoName, pkgName, version string) (*pkgShowResult, error) {
 		Repo:          repoName,
 		Name:          pkgName,
 	}
+	if projectDir := findProjectDirSoft(); projectDir != "" {
+		if local, loadErr := config.LoadLocal(projectDir); loadErr == nil {
+			if link, ok := local.Links[repoName+"/"+pkgName]; ok {
+				result.Linked = true
+				result.LinkPath = link
+			}
+		}
+	}
 	var buildGo string
 	var commit string
+	var err error
 	var state *repo.TreeState
 	var interpreted *api.Package
 	versionsKnown := false
+	linked := false
 	native := mgr.IsNative(repoName)
 	if native {
 		result.Source = "native"
@@ -413,18 +481,33 @@ func loadPkgShow(repoName, pkgName, version string) (*pkgShowResult, error) {
 		if projectDir == "" {
 			return nil, &usageError{err: fmt.Errorf("native package %q is project-local; run inside a vmake project", repoName+"/"+pkgName)}
 		}
-		depsDir := filepath.Join(projectDir, ".vmake_deps")
-		sources := repo.NewSourceManager(depsDir, getCacheDir())
-		root := sources.TreeDir(repo.PackageTreeKey(repoName, pkgName))
-		state, _ = sources.ReadState(root)
-		if state == nil || state.Commit == "" {
-			return nil, fmt.Errorf("package '%s/%s' is not cached in this project; run 'vmake pkg update %s/%s' first", repoName, pkgName, repoName, pkgName)
+		if local, loadErr := config.LoadLocal(projectDir); loadErr == nil {
+			if link, ok := local.Links[repoName+"/"+pkgName]; ok {
+				linked = true
+				buildGo = filepath.Join(link, "build.go")
+				if !fs.FileExists(buildGo) {
+					return nil, fmt.Errorf("linked native package '%s/%s' has no build.go in %s", repoName, pkgName, link)
+				}
+				commit, loadErr = repo.GetCurrentCommit(link)
+				if loadErr != nil {
+					return nil, loadErr
+				}
+			}
 		}
-		buildGo = filepath.Join(root, "src", "build.go")
-		if !fs.FileExists(buildGo) {
-			return nil, fmt.Errorf("package '%s/%s' has no cached build.go; run 'vmake pkg update %s/%s' first", repoName, pkgName, repoName, pkgName)
+		if !linked {
+			depsDir := filepath.Join(projectDir, ".vmake_deps")
+			sources := repo.NewSourceManager(depsDir, getCacheDir())
+			root := sources.TreeDir(repo.PackageTreeKey(repoName, pkgName))
+			state, _ = sources.ReadState(root)
+			if state == nil || state.Commit == "" {
+				return nil, fmt.Errorf("package '%s/%s' is not cached in this project; run 'vmake pkg update %s/%s' first", repoName, pkgName, repoName, pkgName)
+			}
+			buildGo = filepath.Join(root, "src", "build.go")
+			if !fs.FileExists(buildGo) {
+				return nil, fmt.Errorf("package '%s/%s' has no cached build.go; run 'vmake pkg update %s/%s' first", repoName, pkgName, repoName, pkgName)
+			}
+			commit = state.Commit
 		}
-		commit = state.Commit
 	} else {
 		result.Source = "registry"
 		lock, err := mgr.Lock(repoName, false)
@@ -443,11 +526,15 @@ func loadPkgShow(repoName, pkgName, version string) (*pkgShowResult, error) {
 	}
 
 	result.Path = buildGo
-	trusted, err := repoScriptTrusted(repoName, commit)
-	if err != nil {
-		result.Warning = fmt.Sprintf("cannot verify trust: %v", err)
+	if linked {
+		result.Trusted = true
 	} else {
-		result.Trusted = trusted
+		trusted, err := repoScriptTrusted(repoName, commit)
+		if err != nil {
+			result.Warning = fmt.Sprintf("cannot verify trust: %v", err)
+		} else {
+			result.Trusted = trusted
+		}
 	}
 	if result.Trusted {
 		src := buildscript.Source{
@@ -458,7 +545,17 @@ func loadPkgShow(repoName, pkgName, version string) (*pkgShowResult, error) {
 			Repo:   repoName,
 			Commit: commit,
 		}
-		src.Script, err = buildscript.DetectScriptOptions(src.Dir, mgr.Path(repoName))
+		if linked {
+			src.Link = &buildscript.SourceLink{
+				Path:        filepath.Dir(buildGo),
+				Commit:      commit,
+				Native:      true,
+				LocalSource: true,
+			}
+			src.Script, err = buildscript.DetectScriptOptions(src.Dir, src.Dir)
+		} else {
+			src.Script, err = buildscript.DetectScriptOptions(src.Dir, mgr.Path(repoName))
+		}
 		if err != nil {
 			return nil, fmt.Errorf("script options for %s: %w", src.Dir, err)
 		}
@@ -731,6 +828,9 @@ func writePkgShowTable(w io.Writer, result *pkgShowResult) error {
 	fmt.Fprintf(tw, "  Source\t%s\n", result.Source)
 	if result.Path != "" {
 		fmt.Fprintf(tw, "  Path\t%s\n", inspectOneLine(result.Path))
+	}
+	if result.Linked {
+		fmt.Fprintf(tw, "  Linked\t%s\n", inspectOneLine(result.LinkPath))
 	}
 	fmt.Fprintf(tw, "  Trusted\t%s\n", yesNo(result.Trusted))
 	if result.Description != "" {
