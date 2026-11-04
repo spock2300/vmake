@@ -15,6 +15,8 @@ type ConfigAccessor struct {
 	strict   bool
 	discover bool
 
+	lookup        func(pkg, name string) (any, *Option, error)
+	lenientCross  bool
 	optionsLocked bool
 }
 
@@ -36,6 +38,84 @@ func (a *ConfigAccessor) setStrictOwner(owner string) {
 func (a *ConfigAccessor) SetCfgVals(vals map[string]any) *ConfigAccessor {
 	a.CfgVals = vals
 	return a
+}
+
+func (a *ConfigAccessor) SetConfigLookup(fn func(pkg, name string) (any, *Option, error)) *ConfigAccessor {
+	a.lookup = fn
+	return a
+}
+
+func configRef(name string) (pkg, opt string, cross bool, err error) {
+	index := strings.LastIndex(name, "/")
+	if index < 0 {
+		return "", "", false, nil
+	}
+	if index == 0 || index == len(name)-1 {
+		return "", "", true, fmt.Errorf("invalid cross-package option reference %q", name)
+	}
+	return name[:index], name[index+1:], true, nil
+}
+
+func (a *ConfigAccessor) crossUnavailable(op, name string) {
+	if a.discover {
+		fatalScript(a.owner, op, "cross-package option %q is not available during dependency discovery; use a global option or move the read to OnBuild", name)
+	}
+	fatalScript(a.owner, op, "cross-package option %q is only available in OnBuild; declare a GlobalOption or read it in the owning package", name)
+}
+
+func (a *ConfigAccessor) resolveCross(name, op string, checkAccessor bool) (val any, opt *Option, hasVal, cross bool) {
+	pkg, optName, isCross, err := configRef(name)
+	if !isCross {
+		return nil, nil, false, false
+	}
+	if err != nil {
+		if a.lenientCross {
+			return nil, nil, false, true
+		}
+		fatalScript(a.owner, op, "%v", err)
+	}
+	if a.lenientCross {
+		return nil, nil, false, true
+	}
+	if a.lookup == nil {
+		a.crossUnavailable(op, name)
+	}
+	val, opt, err = a.lookup(pkg, optName)
+	if err != nil {
+		fatalScript(a.owner, op, "read %q: %v", name, err)
+	}
+	if opt == nil {
+		fatalScript(a.owner, op, "unknown option %q", name)
+	}
+	if checkAccessor {
+		a.checkAccessorType(opt, op, name)
+	}
+	if val != nil {
+		a.checkValueType(opt, val, name, op)
+	}
+	return val, opt, val != nil, true
+}
+
+func (a *ConfigAccessor) resolvedValue(name, op string, checkAccessor bool) (any, *Option, bool) {
+	if val, opt, hasVal, cross := a.resolveCross(name, op, checkAccessor); cross {
+		return val, opt, hasVal
+	}
+	if checkAccessor {
+		a.valueRead(name, op)
+	} else if a.strict && a.owner != "" {
+		if _, hasVal := a.CfgVals[name]; !hasVal {
+			if _, hasOpt := a.Options[name]; !hasOpt {
+				fatalScript(a.owner, op, "unknown option %q (fix the name or declare it via ctx.Option first)", name)
+			}
+		}
+		if opt := a.Options[name]; opt != nil {
+			if val := a.CfgVals[name]; val != nil {
+				a.checkValueType(opt, val, name, op)
+			}
+		}
+	}
+	val, hasVal := a.CfgVals[name]
+	return val, a.Options[name], hasVal
 }
 
 func (a *ConfigAccessor) valueRead(name, op string) {
@@ -92,15 +172,15 @@ func (a *ConfigAccessor) checkValueType(opt *Option, val any, name, op string) {
 	}
 }
 
-func getTypedValue[T any](
-	vals map[string]any,
-	opts map[string]*Option,
-	name string,
+func getTypedValueResolved[T any](
+	val any,
+	opt *Option,
+	hasVal bool,
 	getDefault func(*Option) T,
 	zero T,
 	coerce func(any) (T, bool),
 ) T {
-	if val, ok := vals[name]; ok {
+	if hasVal {
 		if v, ok := val.(T); ok {
 			return v
 		}
@@ -110,50 +190,58 @@ func getTypedValue[T any](
 			}
 		}
 	}
-	if opt, ok := opts[name]; ok {
+	if opt != nil {
 		return getDefault(opt)
 	}
 	return zero
 }
 
+func boolDefault(o *Option) bool {
+	if d, ok := o.defaultVal.(bool); ok {
+		return d
+	}
+	return false
+}
+
+func stringDefault(o *Option) string {
+	if d, ok := o.defaultVal.(string); ok {
+		return d
+	}
+	return ""
+}
+
+func intDefault(o *Option) int {
+	if d, ok := o.defaultVal.(int); ok {
+		return d
+	}
+	return 0
+}
+
+func coerceInt(val any) (int, bool) {
+	switch v := val.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	}
+	return 0, false
+}
+
 func (a *ConfigAccessor) Bool(name string) bool {
-	a.valueRead(name, "Bool")
-	return getTypedValue(a.CfgVals, a.Options, name, func(o *Option) bool {
-		if d, ok := o.defaultVal.(bool); ok {
-			return d
-		}
-		return false
-	}, false, nil)
+	val, opt, hasVal := a.resolvedValue(name, "Bool", true)
+	return getTypedValueResolved(val, opt, hasVal, boolDefault, false, nil)
 }
 
 func (a *ConfigAccessor) String(name string) string {
-	a.valueRead(name, "String")
-	return getTypedValue(a.CfgVals, a.Options, name, func(o *Option) string {
-		if d, ok := o.defaultVal.(string); ok {
-			return d
-		}
-		return ""
-	}, "", nil)
+	val, opt, hasVal := a.resolvedValue(name, "String", true)
+	return getTypedValueResolved(val, opt, hasVal, stringDefault, "", nil)
 }
 
 func (a *ConfigAccessor) Int(name string) int {
-	a.valueRead(name, "Int")
-	return getTypedValue(a.CfgVals, a.Options, name, func(o *Option) int {
-		if d, ok := o.defaultVal.(int); ok {
-			return d
-		}
-		return 0
-	}, 0, func(val any) (int, bool) {
-		switch v := val.(type) {
-		case int:
-			return v, true
-		case int64:
-			return int(v), true
-		case float64:
-			return int(v), true
-		}
-		return 0, false
-	})
+	val, opt, hasVal := a.resolvedValue(name, "Int", true)
+	return getTypedValueResolved(val, opt, hasVal, intDefault, 0, coerceInt)
 }
 
 func (a *ConfigAccessor) BoolStr(name string) string {
@@ -164,12 +252,8 @@ func (a *ConfigAccessor) BoolStr(name string) string {
 }
 
 func (a *ConfigAccessor) boolQuiet(name string) bool {
-	return getTypedValue(a.CfgVals, a.Options, name, func(o *Option) bool {
-		if d, ok := o.defaultVal.(bool); ok {
-			return d
-		}
-		return false
-	}, false, nil)
+	val, hasVal := a.CfgVals[name]
+	return getTypedValueResolved(val, a.Options[name], hasVal, boolDefault, false, nil)
 }
 
 func (a *ConfigAccessor) ifCond(cond bool, then ...string) []string {
@@ -183,13 +267,21 @@ func (a *ConfigAccessor) ifCond(cond bool, then ...string) []string {
 }
 
 func (a *ConfigAccessor) If(option string, then ...string) []string {
-	if !a.discover {
-		a.valueRead(option, "Bool")
+	if a.discover {
+		if _, _, cross, _ := configRef(option); cross {
+			a.crossUnavailable("If", option)
+		}
+		return a.ifCond(a.boolQuiet(option), then...)
 	}
-	return a.ifCond(a.boolQuiet(option), then...)
+	return a.ifCond(a.Bool(option), then...)
 }
 
 func (a *ConfigAccessor) Select(option string, mapping map[string]string) []string {
+	if a.discover {
+		if _, _, cross, _ := configRef(option); cross {
+			a.crossUnavailable("Select", option)
+		}
+	}
 	if a.CfgVals == nil {
 		seen := make(map[string]bool, len(mapping))
 		vals := make([]string, 0, len(mapping))
@@ -202,9 +294,10 @@ func (a *ConfigAccessor) Select(option string, mapping map[string]string) []stri
 		sort.Strings(vals)
 		return vals
 	}
-	val := a.String(option)
+	val, opt, hasVal := a.resolvedValue(option, "String", true)
+	selected := getTypedValueResolved(val, opt, hasVal, stringDefault, "", nil)
 	if a.strict && a.owner != "" {
-		if opt, ok := a.Options[option]; ok && opt.Type() == OptionChoice && len(opt.Values()) > 0 {
+		if opt != nil && opt.Type() == OptionChoice && len(opt.Values()) > 0 {
 			for k := range mapping {
 				if !slices.Contains(opt.Values(), k) {
 					fatalScript(a.owner, "Select", "option %q choice mapping key %q is not in SetValues(%v)", option, k, opt.Values())
@@ -212,7 +305,7 @@ func (a *ConfigAccessor) Select(option string, mapping map[string]string) []stri
 			}
 		}
 	}
-	if mapped, ok := mapping[val]; ok && mapped != "" {
+	if mapped, ok := mapping[selected]; ok && mapped != "" {
 		return []string{mapped}
 	}
 	return nil
@@ -224,6 +317,9 @@ func (a *ConfigAccessor) When(option string, values ...any) bool {
 
 func (a *ConfigAccessor) WhenNot(option string, values ...any) bool {
 	matched := a.matchOptionValues(option, "WhenNot", values)
+	if _, _, cross, _ := configRef(option); cross {
+		return !matched
+	}
 	if a.CfgVals == nil {
 		return true
 	}
@@ -238,25 +334,24 @@ func (a *ConfigAccessor) matchOptionValues(option, method string, values []any) 
 	if len(values) == 0 {
 		fatalScript(a.owner, method, "option %q requires at least one comparison value", option)
 	}
-	if a.CfgVals == nil {
+	_, _, cross, _ := configRef(option)
+	if a.discover {
+		if cross {
+			a.crossUnavailable(method, option)
+		}
 		return true
 	}
-	if a.strict && a.owner != "" {
-		opt, hasOpt := a.Options[option]
-		if _, hasVal := a.CfgVals[option]; !hasVal && !hasOpt {
-			fatalScript(a.owner, method, "unknown option %q (fix the name or declare it via ctx.Option first)", option)
-		}
-		if hasOpt {
-			for _, value := range values {
-				a.checkValueType(opt, value, option, method)
-			}
+	if !cross && a.CfgVals == nil {
+		return true
+	}
+	val, opt, hasVal := a.resolvedValue(option, method, false)
+	if opt != nil {
+		for _, value := range values {
+			a.checkValueType(opt, value, option, method)
 		}
 	}
-	val := a.CfgVals[option]
-	if val == nil {
-		if opt, ok := a.Options[option]; ok {
-			val = opt.Default()
-		}
+	if !hasVal && opt != nil {
+		val = opt.Default()
 	}
 	for _, value := range values {
 		if valuesEqual(val, value) {
@@ -310,6 +405,9 @@ func numericValue(v any) (float64, bool) {
 }
 
 func (a *ConfigAccessor) Option(name string) *Option {
+	if strings.Contains(name, "/") {
+		fatalScript(a.owner, "Option", "option name %q must not contain '/'; cross-package reads are read-only, use ctx.Bool(%q)", name, "pkg/option")
+	}
 	if a.optionsLocked {
 		fatalScript(a.owner, "Option", "option %q declared after the config phase; declare options in OnConfig", name)
 	}
@@ -363,6 +461,9 @@ func NormalizeOptionValue(opt *Option, val any) any {
 func ValidateOption(o *Option) error {
 	if o == nil {
 		return nil
+	}
+	if strings.Contains(o.name, "/") {
+		return fmt.Errorf("option name %q must not contain '/'", o.name)
 	}
 	if o.macroName != "" {
 		if strings.Contains(o.macroName, "%") {

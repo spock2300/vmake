@@ -85,6 +85,17 @@ func (s *declareStage) executeOnePackage(name string, node *resolver.PackageNode
 	if err != nil {
 		return err
 	}
+	lookupBase := s.scopeValues
+	if lookupBase == nil {
+		lookupBase = s.rc.cfg.GlobalValues
+	}
+	buildCtx.SetConfigLookup(newConfigLookup(s.rc.ctx, lookupBase, func(pkg string) (map[string]any, bool) {
+		binding := s.bindings[pkg]
+		if binding == nil {
+			return nil, false
+		}
+		return binding.values, true
+	}))
 	platform := platformFromValues(buildCtx.CfgVals)
 	buildCtx.SetBuildSubGraphFunc(func(pkgName string) error { return s.buildSubGraph(name, pkgName) })
 	buildCtx.SetDepOutputFunc(func(depRef string) string { return s.computeDepOutput(name, depRef) })

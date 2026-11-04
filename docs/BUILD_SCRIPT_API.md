@@ -297,6 +297,8 @@ func (p *Package) SelectVersionMulti(constraints []string) (string, error)  // �
 
 脚本上下文（Config/Build/Install/Clean/Require）的访问器是**严格的**：读取未声明的选项名、或用与选项类型不匹配的方法读取（如对 `OptionInt` 选项用 `Bool()`），会 fatal（panic `*BuildScriptError`）。`OnRequire` 的首次发现阶段选项值尚不可用，直接读取（`Bool()` 等）同样 fatal——请使用发现感知的 `ctx.When` / `ctx.WhenNot` / `ctx.WhenAny` / `ctx.If` / `ctx.Select`；`FilterDeps` 阶段的第二次 `OnRequire` 可以读取本包声明的选项、`entries.<pkg>.options` 中的包级值，以及本包声明为全局选项的 `global.options` 配置值。`Package` 内嵌的访问器不启用严格检查。
 
+`OnBuild` 中的值访问器还接受 `<pkg>/<option>` 形式的跨包引用（`Bool` / `String` / `Int` / `If` / `Select` / `When*`）。包名取最后一个 `/` 之前的部分（支持 `official/zlib` 这类远程 ID），option 取之后的部分；值取 owner 包的解析结果（entry override → 默认值 → global fallback），不是 owner 在 `SetOnApply`/`OnBuild` 中派生的值。全局选项的限定读取同样使用 owner 包的生效值（含该包的 `entries.<pkg>.options` override），因此可能不同于读取方包内的裸名读取；`target_os`/`target_triple` 即使没有包声明也能解析。跨包读取只在 `OnBuild`（以及捕获 `BuildContext` 的 `SetBuildFunc` 闭包）中可用，`OnConfig`/`OnRequire`/`OnInstall`/`OnClean` 会报错。未知包/选项、类型不匹配和非法引用都会 fatal。`Option()` 只用于本包声明，名称包含 `/` 会被拒绝；跨包读取是只读的。
+
 ```go
 // 值读取（优先配置值，其次默认值）
 func (a *ConfigAccessor) Bool(name string) bool

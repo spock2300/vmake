@@ -50,6 +50,7 @@ func NewConfigContextWithPackage(pkgName string, pkg *Package) *ConfigContext {
 func (ctx *ConfigContext) SetLenient() *ConfigContext {
 	ctx.strict = false
 	ctx.owner = ""
+	ctx.lenientCross = true
 	return ctx
 }
 
@@ -146,6 +147,9 @@ func (ctx *ConfigContext) KConfig(name string) *KConfigEntry {
 }
 
 func (ctx *ConfigContext) SetConfigValue(name string, val any) *ConfigContext {
+	if strings.Contains(name, "/") {
+		fatalScript(ctx.PackageName(), "SetConfigValue", "config key %q must not contain '/'; cross-package writes are not supported", name)
+	}
 	ctx.CfgVals[name] = val
 	return ctx
 }

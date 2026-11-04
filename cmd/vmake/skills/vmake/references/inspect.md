@@ -20,8 +20,11 @@ reported once at the top level in `globalCFlags`/`globalCxxFlags`/
 `globalLdFlags`/`globalLinks`/`globalDefines`. Inspect also warns about needed
 packages whose source tree is not on disk; the missing-source check itself does
 not fetch or materialize it, but native remote resolution may materialize a
-tree. It reports the install plan declared by `OnBuild` without reading or
-creating `install/`. Presence fields report whether the compile database, build report
+tree. `DeclareTargets` does not populate `p.GlobalCFlags()`/`p.GlobalCxxFlags()`
+during dry-run, but cross-package option reads (`ctx.Bool("pkg/option")`) do
+resolve from the config stage; target kinds and files therefore reflect the
+configured options. It reports the install plan declared by `OnBuild` without
+reading or creating `install/`. Presence fields report whether the compile database, build report
 and test report currently exist, and each needed package carries its active
 build directory; they do not verify action or output freshness.
 

@@ -474,6 +474,8 @@ Unconditional package dependencies can be declared directly via `p.AddRequires(d
 
 Strict in script contexts (`OnConfig`/`OnBuild`/`OnInstall`/`OnClean`/`OnRequire`): reading an unknown option name, or using an accessor that mismatches the option's `SetType`, is a **build error** (not a silent zero value). During `OnRequire` discovery, direct reads (`Bool`/`String`/`Int`) are also build errors — use the discovery-aware `If`/`Select`/`When`/`WhenNot`/`WhenAny`. TUI/CLI read paths stay lenient.
 
+In `OnBuild` (including `Target.SetBuildFunc` closures that capture the `BuildContext`), the value accessors also accept `<pkg>/<option>`: the package is the full package ID and the option is the segment after the last `/`. The value is the owner package's resolved configuration (entry override, then declared default, then global fallback), not a value derived in the owner's `SetOnApply`/`OnBuild`; a package-qualified global option therefore includes that package's `entries` override and can differ from the bare-name read in the reader. `target_os`/`target_triple` resolve even when no package declares them. Cross-package reads are not available in `OnConfig`, `OnRequire`, `OnInstall`, or `OnClean`. Unknown packages/options, type mismatches, and malformed references are build errors. `Option` is declaration-only and rejects names containing `/`.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `Bool` | `(name string) bool` | Get bool value (strict: only for OptionBool) |
@@ -488,7 +490,7 @@ Strict in script contexts (`OnConfig`/`OnBuild`/`OnInstall`/`OnClean`/`OnRequire
 | `When` | `(option string, values ...any) bool` | True when the option matches any supplied value (numerics across int/float64); requires at least one value; falls back to declared default when unset; returns `true` when config is nil (discovery) |
 | `WhenNot` | `(option string, values ...any) bool` | Discovery-safe inverse compare; requires at least one value; returns `true` when config is nil (discovery), otherwise `!When(option, values...)` |
 | `WhenAny` | `(option string, values ...any) bool` | Discovery-safe multi-value compare: returns `true` when config is nil (discovery), otherwise `true` if the option matches any of `values` |
-| `Option` | `(name string) *Option` | Get or create option. Intended for `OnConfig`: `BuildContext`, `InstallContext`, and `CleanContext` reject declaration after the config phase (build error). `ConfigContext`, `RequireContext`, and `*Package` do not enforce this, but a late declaration never participates in value resolution — reads fall back to its default/zero value |
+| `Option` | `(name string) *Option` | Get or create option. Intended for `OnConfig`: `BuildContext`, `InstallContext`, and `CleanContext` reject declaration after the config phase (build error). `ConfigContext`, `RequireContext`, and `*Package` do not enforce this, but a late declaration never participates in value resolution — reads fall back to its default/zero value. Names containing `/` are rejected; cross-package reads are read-only |
 
 ---
 

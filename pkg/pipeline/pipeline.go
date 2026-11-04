@@ -2,7 +2,10 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"maps"
+	"sort"
+	"strings"
 
 	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/internal/storage"
@@ -98,6 +101,71 @@ func newBuildContext(ctx *RuntimeContext, name string, globalValues map[string]a
 	}
 	buildCtx.MergeGlobals(ctx.GlobalOptions, globalValues)
 	return buildCtx, nil
+}
+
+func newConfigLookup(ctx *RuntimeContext, base map[string]any, bound func(string) (map[string]any, bool)) func(string, string) (any, *api.Option, error) {
+	if base == nil && ctx.Config != nil {
+		base = projectGlobalValues(ctx)
+	}
+	values := make(map[string]map[string]any)
+	return func(pkg, name string) (any, *api.Option, error) {
+		if ctx.DepGraph == nil || ctx.DepGraph.Packages[pkg] == nil {
+			return nil, nil, fmt.Errorf("package %q is not in the resolved dependency graph", pkg)
+		}
+		node := ctx.DepGraph.Packages[pkg]
+		opts := ctx.AllOptions[pkg]
+		if opts == nil && node.Pkg != nil {
+			opts = node.Pkg.GetOptions()
+		}
+		opt := opts[name]
+		if opt == nil {
+			opt = ctx.GlobalOptions[name]
+		}
+		if opt == nil {
+			opt = implicitPlatformOption(name)
+		}
+		if opt == nil {
+			names := make([]string, 0, len(opts)+len(ctx.GlobalOptions))
+			for optionName := range opts {
+				names = append(names, optionName)
+			}
+			for optionName := range ctx.GlobalOptions {
+				if _, exists := opts[optionName]; !exists {
+					names = append(names, optionName)
+				}
+			}
+			sort.Strings(names)
+			if len(names) == 0 {
+				return nil, nil, fmt.Errorf("option %q not found in package %q", name, pkg)
+			}
+			return nil, nil, fmt.Errorf("option %q not found in package %q (available: %s)", name, pkg, strings.Join(names, ", "))
+		}
+		if bound != nil {
+			if resolved, ok := bound(pkg); ok {
+				return resolved[name], opt, nil
+			}
+		}
+		if ctx.Config == nil {
+			return base[name], opt, nil
+		}
+		if resolved, ok := values[pkg]; ok {
+			return resolved[name], opt, nil
+		}
+		resolved, err := PackageConfigValues(ctx, pkg, base)
+		if err != nil {
+			return nil, nil, err
+		}
+		values[pkg] = resolved
+		return resolved[name], opt, nil
+	}
+}
+
+func implicitPlatformOption(name string) *api.Option {
+	switch name {
+	case api.TargetOSOptionName, api.TargetTripleOptionName:
+		return (&api.Option{}).SetType(api.OptionString)
+	}
+	return nil
 }
 
 func PackageConfigValues(ctx *RuntimeContext, name string, globalValues map[string]any) (map[string]any, error) {
@@ -198,6 +266,7 @@ func DeclareTargets(ctx *RuntimeContext, name string, dirs *api.PkgDirs, tc *too
 	if err != nil {
 		return nil, err
 	}
+	buildCtx.SetConfigLookup(newConfigLookup(ctx, globalValues, nil))
 	platform := platformFromValues(buildCtx.CfgVals)
 	buildCtx.SetDryRun(true)
 	buildCtx.SetBuildSubGraphFunc(func(string) error { return nil })

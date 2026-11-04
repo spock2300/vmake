@@ -202,7 +202,7 @@ All accessors (`Bool`, `Int`, `String`, `BoolStr`, `When`, `WhenNot`, `WhenAny`,
 |---|---|
 | `OnConfig` | Declared `SetDefault` values plus earlier `SetConfigValue` results only. Values saved in the active configuration (`.vmake/config.json` by default) are NOT loaded yet |
 | `SetOnApply` | The resolved value for that option (saved config value, else default); `OptionInt` is normalized to `int`, other types are passed through |
-| `OnBuild` / `OnInstall` / `OnClean` | Full resolved values: saved config + defaults + built-in/global options |
+| `OnBuild` / `OnInstall` / `OnClean` | Full resolved values: saved config + defaults + built-in/global options. `OnBuild` additionally accepts `<pkg>/<option>` cross-package reads |
 | `OnRequire` | Pass 1 (discovery): none; only `When`/`WhenNot`/`WhenAny`/`If`/`Select` are allowed. Pass 2 (`FilterDeps`): this package's `entries.<pkg>.options` values (global config values are not merged); direct reads of those values are allowed |
 
 ```go
@@ -210,10 +210,13 @@ ctx.Bool("debug")           // bool → bool (OptionBool only — accessor must 
 ctx.Int("tick_hz")          // int → int (OptionInt only)
 ctx.String("platform")      // string → string (OptionString/OptionChoice only)
 ctx.BoolStr("debug")        // bool → "ON" / "OFF"
+ctx.Bool("firmware/graphics_accel") // OnBuild only: another package's resolved package-local option
 ctx.When("x", "val")        // true iff option "x" == "val" (works in OnRequire too)
 ctx.WhenNot("x", "val")     // true iff option "x" != "val" (works in OnRequire too)
 ctx.WhenAny("x", "a", "b")  // true iff option "x" is "a" or "b" (works in OnRequire too)
 ```
+
+Global options (`chip`, `toolchain`, custom `GlobalOption`s) are normally read by bare name. A package-qualified global read (`owner/chip`) resolves the owner's effective value, including that package's `entries.<pkg>.options` override, so it can differ from the bare-name read.
 
 In `OnConfig`, options must already be declared (`ctx.Option(...)`) in that same callback before they can be read. Do not branch on user configuration there — move that logic to `OnBuild`, `OnInstall`, `OnClean`, or `SetOnApply`.
 

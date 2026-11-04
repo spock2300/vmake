@@ -42,7 +42,7 @@ func Main(p *api.Package) {
 }
 ```
 
-The root `build.go` defines options shared across all sub-packages via `GlobalOption` (options declared with plain `ctx.Option` are **package-local** — a sub-package reading them is an unknown-option build error). It has no `OnBuild` — all targets are in sub-packages. It also declares no `SetRoot`, so this example relies on the default root heuristic (see Root Selection below). If you don't need shared options, the root `build.go` can be empty (`func Main(p *api.Package) {}`).
+The root `build.go` defines options shared across all sub-packages via `GlobalOption`. A plain `ctx.Option` is **package-local**: a sub-package cannot read it by bare name, but it can read it explicitly as `root/<option>` in `OnBuild` (only `OnBuild` supports cross-package reads). It has no `OnBuild` — all targets are in sub-packages. It also declares no `SetRoot`, so this example relies on the default root heuristic (see Root Selection below). If you don't need shared options, the root `build.go` can be empty (`func Main(p *api.Package) {}`).
 
 ## lib/build.go
 
@@ -153,7 +153,7 @@ One declaring package is enough. Multiple packages may declare the same `GlobalO
 
 ## OnConfig Caveats
 
-`ctx.Bool/String/Int` are strict, per-package reads. In `OnConfig`, a package only sees the options it declared itself: reading another package's option (including its `GlobalOption`) fails with `unknown option` unless this package declares the same `GlobalOption` with identical `Type`/`Default` (and `SetValues` for non-builtin options). The merged global view — all packages' global options plus configured values — is available in `OnBuild`/`OnInstall`/`OnClean` contexts, so do cross-package reads there. In `OnRequire`, use the discovery-aware `ctx.When`/`ctx.If`/`ctx.Select`.
+`ctx.Bool/String/Int` are strict, per-package reads. In `OnConfig`, a package only sees the options it declared itself: reading another package's option (including its `GlobalOption`) fails with `unknown option` unless this package declares the same `GlobalOption` with identical `Type`/`Default` (and `SetValues` for non-builtin options). Bare-name global reads — all packages' global options plus configured values — work in `OnBuild`/`OnInstall`/`OnClean` contexts. In `OnBuild` you can also read another package's option explicitly as `<pkg>/<option>`; the value is that owner's effective configuration, and cross-package reads are unavailable in `OnConfig`, `OnRequire`, `OnInstall`, and `OnClean`. In `OnRequire`, use the discovery-aware `ctx.When`/`ctx.If`/`ctx.Select`.
 
 ## Running / Verifying
 
@@ -172,7 +172,7 @@ Expected: `vmake build -v` prints a `Build order:` list containing `lib:utils` b
 - Cross-package deps use `:` separator: `"lib:utils"` means target `"utils"` from package `"lib"`
 - Local deps need only a target edge (`AddDeps` or `UseRequires`; all local `build.go` files are loaded); remote deps need `AddRequires` plus `AddDeps`/`UseRequires`
 - Same-package deps use just the target name: `AddDeps("utils")`
-- Options shared across packages must be declared with `ctx.GlobalOption` (identical `Type` and `Default`, plus identical `SetValues` for non-builtin options, from every declaring package); plain `ctx.Option` is package-local
+- Options that every package should read by bare name must be declared with `ctx.GlobalOption` (identical `Type` and `Default`, plus identical `SetValues` for non-builtin options, from every declaring package); plain `ctx.Option` is package-local but can be read explicitly as `<pkg>/<option>` in `OnBuild`
 - With an explicit `SetRoot(true)`, BFS starts only from that package — list every package you still want built in `AddRequires`
 
 ## See Also

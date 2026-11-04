@@ -338,6 +338,16 @@ The built-in global `"mode"` option (`debug`, `release`, `size`) automatically i
 
 `ctx.GlobalOption(name)` defines a workspace-wide default and exports `-DCONFIG_<UPPER_NAME>` defines by default. A non-default `entries.<pkg>.options.<name>` value can override the effective value for that package, while the exported macro still uses the global value. `mode` and `toolchain` are built-in; `target_os`/`target_triple` are project-declared. All four names are skipped from global macro export unless `SetMacroName` supplies a name. Multiple declarations must agree on `Type` and `Default`; `Values` must agree for non-builtin options. `MacroName` conflicts only when both declarations are non-empty and differ; a later non-empty name is adopted when the earlier one is empty.
 
+### Cross-Package Option Reads
+
+In `OnBuild`, `ctx.Bool/String/Int`, `ctx.If`, `ctx.Select`, and `ctx.When*` also accept a `<pkg>/<option>` reference. The package is the full package ID; the option is the segment after the last `/` (remote IDs such as `official/zlib` therefore work). The value is the owner's resolved configuration — entry override, then declared default, then global fallback — not a value derived in the owner's `SetOnApply`/`OnBuild`.
+
+- Cross-package reads are available only in `OnBuild` (including `Target.SetBuildFunc` closures that capture the `BuildContext`), not in `OnConfig`, `OnRequire`, `OnInstall`, or `OnClean`.
+- A package-qualified read of a global option (for example `firmware/chip`) resolves the owner's effective value, including its `entries.<pkg>.options` override; it can therefore differ from the bare-name read in the reading package. `target_os`/`target_triple` resolve even when no package declares them.
+- Unknown packages/options, type mismatches, and malformed references are build errors.
+- A composite condition is not a single option. Read every participating option, or publish a derived value from the owner; do not assume `ctx.Bool("owner/switch")` equals the owner's `-D` capability macro.
+- Do not infer options from `p.GlobalCFlags()` or generated `-D` flags; those are compiler flags, not the option model.
+
 ### Default Build Flags
 
 The built-in `host` toolchain applies `api.DefaultBuildFlags("host", target_os)` to targets:
