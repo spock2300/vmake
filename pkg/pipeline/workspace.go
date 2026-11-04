@@ -97,7 +97,7 @@ func (s *sourceStage) selectPackageSourceRoot(name, sourceRoot string) error {
 	if node.IsLocal() && hasUnmanagedSourceDir(node) {
 		return fmt.Errorf("SetGit source %s already exists as a real directory; move it aside before creating a managed source link", filepath.Join(node.Source.Dir, "src"))
 	}
-	version, ref, expected, err := s.localSourceVersion(name, node)
+	version, ref, expected, err := s.resolvePackageSourceVersion(name, node)
 	if err != nil {
 		return err
 	}
@@ -136,7 +136,7 @@ func (s *sourceStage) selectPackageSourceRoot(name, sourceRoot string) error {
 	return nil
 }
 
-func (s *sourceStage) localSourceVersion(name string, node *resolver.PackageNode) (string, string, string, error) {
+func (s *sourceStage) resolvePackageSourceVersion(name string, node *resolver.PackageNode) (string, string, string, error) {
 	_, isSub := s.rc.ctx.Resolver.SubParents()[name]
 	if (!node.IsLocal() && !isSub) || len(node.Pkg.Versions()) == 0 {
 		return "", "", "", nil

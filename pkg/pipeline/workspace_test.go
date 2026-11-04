@@ -533,3 +533,35 @@ func TestDownloadRemoteSourcesUsesSharedTreePatchIdentity(t *testing.T) {
 		t.Fatalf("recorded tree patch hash = %#v, %v; want %q", state, err, want)
 	}
 }
+
+func TestResolvePackageSourceVersionForSubPackage(t *testing.T) {
+	s := sessionFixture(t)
+	dir := t.TempDir()
+	name := "native/root/member"
+	node := resolver.NewPackageNode(name,
+		buildscript.NewSource(name, filepath.Join(dir, "build.go"), dir, api.SourceRemote),
+		api.NewPackage().SetName(name))
+	node.Pkg.AddVersion("1.2.0", "v1.2.0").AddVersion("2.0.0", "v2.0.0")
+	s.ctx.Resolver.SubParents()[name] = "native/root"
+	config.SetEntry(s.ctx.Config, name, &config.EntryConfig{Version: "1.2.0"})
+
+	version, ref, commit, err := s.resolvePackageSourceVersion(name, node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != "1.2.0" || ref != "v1.2.0" || commit != "" {
+		t.Fatalf("sub-package version = %q/%q/%q, want 1.2.0/v1.2.0/empty", version, ref, commit)
+	}
+
+	remote := resolver.NewPackageNode("vendor/pkg",
+		buildscript.NewSource("vendor/pkg", filepath.Join(dir, "remote.go"), dir, api.SourceRemote),
+		api.NewPackage().SetName("vendor/pkg"))
+	remote.Pkg.AddVersion("3.0.0", "v3.0.0")
+	version, ref, commit, err = s.resolvePackageSourceVersion("vendor/pkg", remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != "" || ref != "" || commit != "" {
+		t.Fatalf("remote package version = %q/%q/%q, want empty", version, ref, commit)
+	}
+}

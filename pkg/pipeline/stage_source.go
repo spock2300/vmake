@@ -375,7 +375,7 @@ func (s *sourceStage) localSourceNeedsMaterialization(name string, node *resolve
 	if node.Pkg == nil || len(node.Pkg.GitURLs()) == 0 {
 		return false
 	}
-	version, ref, expected, err := s.localSourceVersion(name, node)
+	version, ref, expected, err := s.resolvePackageSourceVersion(name, node)
 	if err != nil {
 		return true
 	}
@@ -400,7 +400,7 @@ func (s *sourceStage) ownGitSourceNeedsMaterialization(name, sourceRoot string, 
 	if node.Pkg == nil || len(node.Pkg.GitURLs()) == 0 {
 		return false
 	}
-	version, ref, expected, err := s.localSourceVersion(name, node)
+	version, ref, expected, err := s.resolvePackageSourceVersion(name, node)
 	if err != nil {
 		return true
 	}

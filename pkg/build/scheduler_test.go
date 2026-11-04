@@ -222,3 +222,60 @@ func TestObjectPathIdentityAndReadableName(t *testing.T) {
 		}
 	}
 }
+
+func TestCollectDepArtifactsVoidTargetWithoutProvidedLibs(t *testing.T) {
+	vendor := makeTargetWithDeps("vendor").SetKind(api.TargetVoid)
+	wrapped := makeTargetWithDeps("wrapped").SetKind(api.TargetVoid).AddProvidedLibs("wrapped")
+	app := makeTargetWithDeps("app")
+	app.AddDeps("dep:vendor", "wrapper:wrapped")
+
+	graph, err := NewBuildGraph(map[string]map[string]*api.Target{
+		"app":     {"app": app},
+		"dep":     {"vendor": vendor},
+		"wrapper": {"wrapped": wrapped},
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("NewBuildGraph: %v", err)
+	}
+
+	installDir := t.TempDir()
+	wrapperDir := t.TempDir()
+	s := &Scheduler{
+		ctx:   context.Background(),
+		graph: graph,
+		pkgs: map[string]*PkgInfo{
+			"dep":     {PkgDirs: api.PkgDirs{InstallDir: installDir}},
+			"wrapper": {PkgDirs: api.PkgDirs{InstallDir: wrapperDir}},
+		},
+	}
+	appNode, err := graph.GetNode("app:app")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deps, err := s.collectDepArtifacts(appNode)
+	if err != nil {
+		t.Fatalf("collectDepArtifacts: %v", err)
+	}
+	if len(deps.artifacts) != 0 {
+		t.Fatalf("void artifacts without lib = %v, want none", deps.artifacts)
+	}
+	if !reflect.DeepEqual(deps.voidLdFlags, []string{"-lwrapped"}) {
+		t.Fatalf("void ldflags = %v, want [-lwrapped]", deps.voidLdFlags)
+	}
+
+	if err := os.MkdirAll(filepath.Join(installDir, "lib"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(installDir, "lib", "libvendor.a")
+	if err := os.WriteFile(archive, []byte("archive"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	deps, err = s.collectDepArtifacts(appNode)
+	if err != nil {
+		t.Fatalf("collectDepArtifacts: %v", err)
+	}
+	if !reflect.DeepEqual(deps.artifacts, []string{archive}) {
+		t.Fatalf("void artifacts = %v, want [%s]", deps.artifacts, archive)
+	}
+}

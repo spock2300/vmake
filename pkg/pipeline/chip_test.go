@@ -289,3 +289,28 @@ func TestChipTargetsApply(t *testing.T) {
 		t.Error("empty profile should not apply")
 	}
 }
+
+func TestCollectChipProfilesIncludesRemotePackages(t *testing.T) {
+	local := localNode("app")
+	remote := remoteNode("vendor/sdk/chip")
+	remote.Pkg.SetChipProfile(api.ChipProfile{Name: "remote-chip", PreferredToolchain: "arm", TargetOS: "none"})
+	ctx := chipTestContext(t, local, remote)
+	if err := collectChipProfiles(ctx); err != nil {
+		t.Fatal(err)
+	}
+	profile, ok := ctx.ChipProfiles["remote-chip"]
+	if !ok || profile.PreferredToolchain != "arm" || profile.TargetOS != "none" {
+		t.Fatalf("remote chip profile = %+v, ok=%v", profile, ok)
+	}
+}
+
+func TestCollectChipProfilesRemoteConflict(t *testing.T) {
+	local := localNode("chip-local")
+	local.Pkg.SetChipProfile(api.ChipProfile{Name: "shared-chip", PreferredToolchain: "local-tc"})
+	remote := remoteNode("vendor/sdk/chip")
+	remote.Pkg.SetChipProfile(api.ChipProfile{Name: "shared-chip", PreferredToolchain: "remote-tc"})
+	ctx := chipTestContext(t, local, remote)
+	if err := collectChipProfiles(ctx); err == nil || !strings.Contains(err.Error(), "shared-chip") {
+		t.Fatalf("remote conflict error = %v", err)
+	}
+}

@@ -206,3 +206,26 @@ func TestResolveSubPackageNameFromConsumer(t *testing.T) {
 		t.Fatalf("consumer resolve = %q, want hl/sdk/system/freertos/kernel", got)
 	}
 }
+
+func TestSubPackageCandidatesForConsumer(t *testing.T) {
+	subParents := map[string]string{"hl/sdk/system/freertos/kernel": "hl/sdk"}
+	got := SubPackageCandidates("firmware", "kernel", subParents)
+	want := []string{"hl/sdk/system/freertos/kernel"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("consumer candidates = %v, want %v", got, want)
+	}
+	subParents["hl/sdk/system/chip/kernel"] = "hl/sdk"
+	if got := SubPackageCandidates("firmware", "kernel", subParents); got != nil {
+		t.Fatalf("ambiguous consumer candidates = %v, want nil", got)
+	}
+}
+
+func TestResolveSubPackageNamePrefersExistingBareConsumerPackage(t *testing.T) {
+	subParents := map[string]string{"hl/sdk/system/freertos/kernel": "hl/sdk"}
+	got := ResolveSubPackageName("firmware", "kernel", subParents, func(name string) bool {
+		return name == "kernel" || name == "hl/sdk/system/freertos/kernel"
+	})
+	if got != "kernel" {
+		t.Fatalf("consumer resolve = %q, want kernel", got)
+	}
+}

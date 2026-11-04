@@ -427,3 +427,18 @@ func TestBuildGraphUseRequiresAndBarePackageDep(t *testing.T) {
 		t.Fatalf("app deps = %v, want %v", got, want)
 	}
 }
+
+func TestBuildGraphMissingConsumerSubPackageDepListsCandidate(t *testing.T) {
+	app := makeTargetWithDeps("app", "kernel:build")
+	targets := map[string]map[string]*api.Target{"firmware": {"app": app}}
+	pkgMeta := map[string]PkgBuildMeta{"firmware": {}}
+	subParents := map[string]string{"hl/sdk/system/freertos/kernel": "hl/sdk"}
+
+	_, err := NewBuildGraph(targets, pkgMeta, subParents)
+	if err == nil {
+		t.Fatal("missing short dependency should fail")
+	}
+	if !strings.Contains(err.Error(), "hl/sdk/system/freertos/kernel") {
+		t.Fatalf("error should mention the unique sub-package candidate, got: %v", err)
+	}
+}
