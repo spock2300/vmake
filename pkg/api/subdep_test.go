@@ -173,3 +173,36 @@ func TestSubPackageCandidatesDoNotMutateParents(t *testing.T) {
 		t.Fatalf("subParents mutated: %v, want %v", subParents, before)
 	}
 }
+
+func TestSubPackageCandidatesIncludesUniqueCousin(t *testing.T) {
+	subParents := map[string]string{
+		"hl/sdk/system/chip/py32":       "hl/sdk",
+		"hl/sdk/system/freertos/kernel": "hl/sdk",
+	}
+	got := SubPackageCandidates("hl/sdk/system/chip/py32", "kernel", subParents)
+	want := []string{
+		"hl/sdk/system/chip/py32/kernel",
+		"hl/sdk/system/chip/kernel",
+		"hl/sdk/system/kernel",
+		"hl/sdk/kernel",
+		"hl/sdk/system/freertos/kernel",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("candidates = %v, want %v", got, want)
+	}
+}
+
+func TestResolveSubPackageNameFromConsumer(t *testing.T) {
+	subParents := map[string]string{
+		"hl/sdk/system/freertos/kernel": "hl/sdk",
+	}
+	existing := map[string]bool{
+		"hl/sdk/system/freertos/kernel": true,
+	}
+	got := ResolveSubPackageName("firmware", "kernel", subParents, func(name string) bool {
+		return existing[name]
+	})
+	if got != "hl/sdk/system/freertos/kernel" {
+		t.Fatalf("consumer resolve = %q, want hl/sdk/system/freertos/kernel", got)
+	}
+}

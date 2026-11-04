@@ -234,31 +234,71 @@ func coerceValue(raw string, optType api.OptionType) (any, error) {
 	}
 }
 
-func resolveSetOption(pkgName, optName string, ctx *RuntimeContext) (*api.Option, error) {
+func resolveSetPackageName(ctx *RuntimeContext, pkgName string) string {
+	if pkgName == "" || strings.Contains(pkgName, "/") || ctx == nil {
+		return pkgName
+	}
+	if _, ok := ctx.AllOptions[pkgName]; ok {
+		return pkgName
+	}
+	if ctx.DepGraph != nil && ctx.DepGraph.Packages[pkgName] != nil {
+		return pkgName
+	}
+	suffix := "/" + pkgName
+	match := ""
+	for candidate := range ctx.AllOptions {
+		if strings.HasSuffix(candidate, suffix) {
+			if match != "" && match != candidate {
+				return pkgName
+			}
+			match = candidate
+		}
+	}
+	if match != "" {
+		return match
+	}
+	if ctx.DepGraph != nil {
+		for candidate := range ctx.DepGraph.Packages {
+			if strings.HasSuffix(candidate, suffix) {
+				if match != "" && match != candidate {
+					return pkgName
+				}
+				match = candidate
+			}
+		}
+	}
+	if match != "" {
+		return match
+	}
+	return pkgName
+}
+
+func resolveSetPackageOption(pkgName, optName string, ctx *RuntimeContext) (string, *api.Option, error) {
 	if pkgName == "" {
 		opt, ok := ctx.GlobalOptions[optName]
 		if !ok {
 			available := sortedOptionNames(ctx.GlobalOptions)
-			return nil, fmt.Errorf("global option %q not found (available: %s)", optName, strings.Join(available, ", "))
+			return "", nil, fmt.Errorf("global option %q not found (available: %s)", optName, strings.Join(available, ", "))
 		}
-		return opt, nil
+		return "", opt, nil
 	}
 
-	pkgOpts, ok := ctx.AllOptions[pkgName]
+	resolvedPkg := resolveSetPackageName(ctx, pkgName)
+	pkgOpts, ok := ctx.AllOptions[resolvedPkg]
 	if !ok {
 		available := sortedPackageNames(ctx.AllOptions)
-		return nil, fmt.Errorf("package %q not found (available: %s)", pkgName, strings.Join(available, ", "))
+		return "", nil, fmt.Errorf("package %q not found (available: %s)", pkgName, strings.Join(available, ", "))
 	}
 
 	opt, ok := pkgOpts[optName]
 	if !ok {
 		available := sortedOptionNames(pkgOpts)
-		return nil, fmt.Errorf("option %q not found in package %q (available: %s)", optName, pkgName, strings.Join(available, ", "))
+		return "", nil, fmt.Errorf("option %q not found in package %q (available: %s)", optName, resolvedPkg, strings.Join(available, ", "))
 	}
 	if opt.IsGlobal() {
-		return nil, fmt.Errorf("option %q in package %q is global; set it without a package prefix: %s=...", optName, pkgName, optName)
+		return "", nil, fmt.Errorf("option %q in package %q is global; set it without a package prefix: %s=...", optName, resolvedPkg, optName)
 	}
-	return opt, nil
+	return resolvedPkg, opt, nil
 }
 
 func applySetValue(ctx *RuntimeContext, pkgName, optName string, value any) {
@@ -300,12 +340,14 @@ func runSetConfig(ctx *RuntimeContext, flags []string) {
 		entries = append(entries, setEntry{pkgName: pkgName, optName: optName, rawVal: rawVal})
 	}
 
-	for _, e := range entries {
-		opt, err := resolveSetOption(e.pkgName, e.optName, ctx)
+	for i := range entries {
+		e := &entries[i]
+		resolvedPkg, opt, err := resolveSetPackageOption(e.pkgName, e.optName, ctx)
 		if err != nil {
 			vlog.Error("Error: %v", err)
 			os.Exit(1)
 		}
+		e.pkgName = resolvedPkg
 
 		value, err := coerceValue(e.rawVal, opt.Type())
 		if err != nil {

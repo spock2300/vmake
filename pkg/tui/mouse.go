@@ -20,6 +20,9 @@ type optionLine struct {
 }
 
 func (m *Model) treePanelWidth() int {
+	if m.width <= 0 {
+		return m.treeWidth
+	}
 	return min(m.treeWidth, max(10, m.width/2-1))
 }
 

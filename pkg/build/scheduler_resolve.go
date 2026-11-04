@@ -65,19 +65,17 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 		collectPublicAttrs(depNode, depPkg)
 
 		if depNode.Target.Kind() == api.TargetVoid && depPkg.InstallDir != "" {
-			var libNames []string
 			if len(depNode.Target.ProvidedLibs()) > 0 {
-				libNames = depNode.Target.ProvidedLibs()
-			} else {
-				libNames = []string{depNode.Target.Name()}
-			}
-			for _, lib := range libNames {
-				artifact, ldflag := resolveProvidedLib(depPkg.InstallDir, lib)
-				if artifact != "" {
-					result.artifacts = append(result.artifacts, artifact)
-				} else {
-					result.voidLdFlags = append(result.voidLdFlags, ldflag)
+				for _, lib := range depNode.Target.ProvidedLibs() {
+					artifact, ldflag := resolveProvidedLib(depPkg.InstallDir, lib)
+					if artifact != "" {
+						result.artifacts = append(result.artifacts, artifact)
+					} else {
+						result.voidLdFlags = append(result.voidLdFlags, ldflag)
+					}
 				}
+			} else if artifact, _ := resolveProvidedLib(depPkg.InstallDir, depNode.Target.Name()); artifact != "" {
+				result.artifacts = append(result.artifacts, artifact)
 			}
 		} else if depNode.Target.Kind() != api.TargetVoid {
 			var depOutput string

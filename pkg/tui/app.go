@@ -320,6 +320,12 @@ func (m *Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.focusArea = 0
 			if len(m.flat) > 0 {
 				m.treeCursor = 0
+				for i, n := range m.flat {
+					if nodeDirectMatch(n, query, m.options, m.globalOptions) {
+						m.treeCursor = i
+						break
+					}
+				}
 				m.selectCurrentNode()
 				m.ensureTreeCursorVisible()
 			}
@@ -1076,7 +1082,7 @@ func (m *Model) renderTree() string {
 		}
 
 		name := node.Name
-		if node.PkgName == GlobalPkgName {
+		if node.PkgName == GlobalPkgName || node.PkgName == RemoteGroupPkgName {
 			name = m.packageLabel(node.PkgName)
 		}
 		count := 0
@@ -1088,7 +1094,7 @@ func (m *Model) renderTree() string {
 		if count > 0 {
 			badgeLen = utf8.RuneCountInString(fmt.Sprintf(" (%d)", count))
 		}
-		avail := m.treeWidth - fixed - badgeLen
+		avail := contentWidth - fixed - badgeLen
 		if avail < 1 {
 			avail = 1
 		}

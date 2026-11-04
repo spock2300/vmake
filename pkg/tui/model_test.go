@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
 )
@@ -1003,4 +1005,162 @@ func TestNewModel_DoesNotCopyOrKeepGlobalOptionsInPackageValues(t *testing.T) {
 		t.Fatalf("package option default should still be populated, got %v", m.values["chip"])
 	}
 }
+
+func TestBuildDepTree_SeparatesRemotePackagesIntoGroup(t *testing.T) {
+	sources := mkSources("hl-demo", "firmware", "board-evb", "lvgl-demos")
+	deps := map[string][]string{
+		"firmware": {
+			"hl/hl-mcu-sdk",
+			"hl/hl-mcu-sdk/system",
+			"board-evb",
+			"lvgl-demos",
+		},
+		"board-evb": {
+			"hl/hl-mcu-sdk",
+			"hl/hl-mcu-sdk/system/chip/puya/py32f539",
+		},
+		"lvgl-demos": {
+			"hl/hl-mcu-sdk",
+			"hl/hl-mcu-sdk/system/freertos/lvgl",
+		},
+		"hl/hl-mcu-sdk":                           {},
+		"hl/hl-mcu-sdk/system":                    {"hl/hl-mcu-sdk/system/freertos/lvgl"},
+		"hl/hl-mcu-sdk/system/chip/puya/py32f539": {},
+		"hl/hl-mcu-sdk/system/freertos/lvgl":      {},
+	}
+
+	tree := buildDepTree(sources, deps)
+	if len(tree) != 4 {
+		t.Fatalf("expected Global + hl-demo + firmware + Remote (4 top nodes), got %d", len(tree))
+	}
+	if tree[0].PkgName != GlobalPkgName || tree[1].PkgName != "hl-demo" || tree[2].PkgName != "firmware" || tree[3].PkgName != RemoteGroupPkgName {
+		t.Fatalf("unexpected top node PkgNames: %q, %q, %q, %q", tree[0].PkgName, tree[1].PkgName, tree[2].PkgName, tree[3].PkgName)
+	}
+
+	fwNode := tree[2]
+	if len(fwNode.Children) != 2 || fwNode.Children[0].PkgName != "board-evb" || fwNode.Children[1].PkgName != "lvgl-demos" {
+		t.Fatalf("firmware should only keep local children [board-evb, lvgl-demos], got %v", flatNodeNames(fwNode.Children))
+	}
+
+	remoteNode := tree[3]
+	if remoteNode.Expanded {
+		t.Fatal("Remote group should start collapsed by default")
+	}
+	if len(remoteNode.Children) != 1 || remoteNode.Children[0].PkgName != "hl/hl-mcu-sdk" {
+		t.Fatalf("expected single remote root hl/hl-mcu-sdk under Remote, got %v", flatNodeNames(remoteNode.Children))
+	}
+
+	sdkNode := remoteNode.Children[0]
+	if !sdkNode.Expanded || !sdkNode.IsExternal {
+		t.Fatalf("remote root node should be external and pre-expanded under Remote: expanded=%v external=%v", sdkNode.Expanded, sdkNode.IsExternal)
+	}
+	if len(sdkNode.Children) != 1 || sdkNode.Children[0].Name != "system" || sdkNode.Children[0].PkgName != "hl/hl-mcu-sdk/system" {
+		t.Fatalf("expected system node under hl/hl-mcu-sdk, got %v", flatNodeNames(sdkNode.Children))
+	}
+	sysNode := sdkNode.Children[0]
+	if len(sysNode.Children) != 2 || sysNode.Children[0].Name != "chip" || sysNode.Children[1].Name != "freertos" {
+		t.Fatalf("expected [chip, freertos] under system, got %v", flatNodeNames(sysNode.Children))
+	}
+	puyaNode := sysNode.Children[0].Children[0]
+	if puyaNode.Name != "puya" || len(puyaNode.Children) != 1 || puyaNode.Children[0].Name != "py32f539" || puyaNode.Children[0].PkgName != "hl/hl-mcu-sdk/system/chip/puya/py32f539" {
+		t.Fatalf("unexpected chip/puya/py32f539 hierarchy: %+v", puyaNode)
+	}
+	rtosNode := sysNode.Children[1]
+	if len(rtosNode.Children) != 1 || rtosNode.Children[0].Name != "lvgl" || rtosNode.Children[0].PkgName != "hl/hl-mcu-sdk/system/freertos/lvgl" {
+		t.Fatalf("unexpected freertos/lvgl hierarchy: %+v", rtosNode.Children)
+	}
+}
+
+func TestRemoteGroup_SearchAndJumpExpandsRemoteSubpackage(t *testing.T) {
+	sources := mkSources("firmware")
+	deps := map[string][]string{
+		"firmware":                           {"hl/hl-mcu-sdk", "hl/hl-mcu-sdk/system/freertos/lvgl"},
+		"hl/hl-mcu-sdk":                      {},
+		"hl/hl-mcu-sdk/system/freertos/lvgl": {},
+	}
+	opts := map[string]map[string]*api.Option{
+		"firmware":                           {"board": mkOpt("board", api.OptionString, "evb")},
+		"hl/hl-mcu-sdk/system/freertos/lvgl": {"demo": mkOpt("demo", api.OptionChoice, "auto_meter").SetValues("widgets", "auto_meter")},
+	}
+	m := NewModel(sources, deps, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m.width = 100
+	m.height = 24
+	m.language = languageChinese
+
+	treeBefore := stripAnsi(m.renderTree())
+	if !strings.Contains(treeBefore, "远程") {
+		t.Fatalf("collapsed Chinese tree should display 远程 group:\n%s", treeBefore)
+	}
+	if strings.Contains(treeBefore, "lvgl") {
+		t.Fatalf("collapsed Remote group should hide subpackages initially:\n%s", treeBefore)
+	}
+
+	if pkg, _ := m.findFirstMatch("freertos"); pkg != "hl/hl-mcu-sdk/system/freertos/lvgl" {
+		t.Fatalf("findFirstMatch(freertos) = %q, want real package hl/hl-mcu-sdk/system/freertos/lvgl", pkg)
+	}
+
+	m.handleKey(keyRunes("/"))
+	m.handleKey(keyRunes("demo"))
+	if got := m.filteredMatchCount(); got != 1 {
+		t.Fatalf("filteredMatchCount(demo) = %d, want 1", got)
+	}
+	m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.filterActive || m.filterInput != "" {
+		t.Fatalf("single-match Enter should exit filter mode: active=%v input=%q", m.filterActive, m.filterInput)
+	}
+	if m.selectedPkg != "hl/hl-mcu-sdk/system/freertos/lvgl" {
+		t.Fatalf("selectedPkg = %q, want hl/hl-mcu-sdk/system/freertos/lvgl", m.selectedPkg)
+	}
+	treeAfter := stripAnsi(m.renderTree())
+	for _, seg := range []string{"hl/hl-mcu-sdk", "system", "freertos", "lvgl (1)"} {
+		if !strings.Contains(treeAfter, seg) {
+			t.Fatalf("expanded Remote group should display %q:\n%s", seg, treeAfter)
+		}
+	}
+	optionsOut := stripAnsi(m.renderOptions())
+	if !strings.Contains(optionsOut, "选项 · hl/hl-mcu-sdk/system/freertos/lvgl") {
+		t.Fatalf("options header should show full remote package name:\n%s", optionsOut)
+	}
+}
+
+func TestRenderTree_PreservesCountBadgeWithinContentWidth(t *testing.T) {
+	sources := mkSources("firmware")
+	deps := map[string][]string{
+		"firmware": {
+			"hl/hl-mcu-sdk",
+			"hl/hl-mcu-sdk/system/freertos/cherryusb",
+			"hl/hl-mcu-sdk/system/freertos/lvgl-resources",
+			"hl/hl-mcu-sdk/system/freertos/lvgl-resources-files",
+		},
+	}
+	cherryOpts := make(map[string]*api.Option)
+	for i := 0; i < 15; i++ {
+		name := fmt.Sprintf("opt_%02d", i)
+		cherryOpts[name] = mkOpt(name, api.OptionBool, false)
+	}
+	opts := map[string]map[string]*api.Option{
+		"hl/hl-mcu-sdk/system/freertos/cherryusb":      cherryOpts,
+		"hl/hl-mcu-sdk/system/freertos/lvgl-resources": {"res": mkOpt("res", api.OptionBool, true)},
+	}
+	m := NewModel(sources, deps, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m.width = 80
+	m.height = 30
+	m.expandAll()
+
+	treeOut := stripAnsi(m.renderTree())
+	for _, want := range []string{"cherryusb (15)", "lvgl-resources (1)", "lvgl-resources-files"} {
+		if !strings.Contains(treeOut, want) {
+			t.Errorf("width=80: expected %q to render completely without clipping:\n%s", want, treeOut)
+		}
+	}
+
+	m.width = 60
+	narrowOut := stripAnsi(m.renderTree())
+	for _, want := range []string{"… (15)", "… (1)"} {
+		if !strings.Contains(narrowOut, want) {
+			t.Errorf("width=60: expected %q to preserve badge without clipping:\n%s", want, narrowOut)
+		}
+	}
+}
+
 

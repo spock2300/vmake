@@ -130,14 +130,15 @@ func (s *sourceStage) selectPackageSourceRoot(name, sourceRoot string) error {
 	}
 	s.sourceSeeds[name] = res.SrcDir
 	s.sourceCommits[name] = res.Commit
-	if version != "" {
+	if node.IsLocal() && version != "" {
 		s.sourceVersions[name] = version
 	}
 	return nil
 }
 
 func (s *sourceStage) localSourceVersion(name string, node *resolver.PackageNode) (string, string, string, error) {
-	if !node.IsLocal() || len(node.Pkg.Versions()) == 0 {
+	_, isSub := s.rc.ctx.Resolver.SubParents()[name]
+	if (!node.IsLocal() && !isSub) || len(node.Pkg.Versions()) == 0 {
 		return "", "", "", nil
 	}
 	pin := config.GetEntry(s.rc.ctx.Config, name).Version

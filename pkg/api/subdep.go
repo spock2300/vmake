@@ -15,6 +15,14 @@ func ResolveSubPackageName(currentPkg, depName string, subParents map[string]str
 				return candidate
 			}
 		}
+		return depName
+	}
+	if !strings.Contains(depName, "/") && len(subParents) > 0 {
+		if unique := uniqueSubPackageByLeaf(depName, "", subParents); unique != "" {
+			if !exists(depName) && exists(unique) {
+				return unique
+			}
+		}
 	}
 	return depName
 }
@@ -42,5 +50,35 @@ func SubPackageCandidates(currentPkg, depName string, subParents map[string]stri
 		}
 		current = current[:idx]
 	}
+	if unique := uniqueSubPackageByLeaf(depName, rootParent, subParents); unique != "" {
+		alreadyPresent := false
+		for _, c := range candidates {
+			if c == unique {
+				alreadyPresent = true
+				break
+			}
+		}
+		if !alreadyPresent {
+			candidates = append(candidates, unique)
+		}
+	}
 	return candidates
+}
+
+func uniqueSubPackageByLeaf(depName, rootParent string, subParents map[string]string) string {
+	suffix := "/" + depName
+	match := ""
+	for sub, owner := range subParents {
+		if rootParent != "" && owner != rootParent {
+			continue
+		}
+		if !strings.HasSuffix(sub, suffix) {
+			continue
+		}
+		if match != "" && match != sub {
+			return ""
+		}
+		match = sub
+	}
+	return match
 }

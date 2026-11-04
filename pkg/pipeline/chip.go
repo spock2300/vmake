@@ -21,7 +21,7 @@ func collectChipProfiles(ctx *RuntimeContext) error {
 	owners := make(map[string]string)
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
-		if node == nil || node.Pkg == nil || !node.IsLocal() {
+		if node == nil || node.Pkg == nil {
 			continue
 		}
 		profile, ok := node.Pkg.ChipProfile()
@@ -115,7 +115,7 @@ func neededChipProfile(ctx *RuntimeContext, needed map[string]bool) (api.ChipPro
 			continue
 		}
 		node := ctx.DepGraph.Packages[name]
-		if node == nil || node.Pkg == nil || !node.IsLocal() {
+		if node == nil || node.Pkg == nil {
 			continue
 		}
 		candidate, ok := node.Pkg.ChipProfile()
@@ -193,7 +193,7 @@ func ResolveActiveChipForDisplay(ctx *RuntimeContext) {
 	unique := make(map[api.ChipProfile]bool)
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
-		if node == nil || node.Pkg == nil || !node.IsLocal() {
+		if node == nil || node.Pkg == nil {
 			continue
 		}
 		if profile, ok := node.Pkg.ChipProfile(); ok {

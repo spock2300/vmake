@@ -20,6 +20,7 @@ const (
 	textNoOptions          textID = "no_options"
 	textGeneral            textID = "general"
 	textGlobal             textID = "global"
+	textRemote             textID = "remote"
 	textPreset             textID = "preset"
 	textRunMenuconfig      textID = "run_menuconfig"
 	textUnsavedChanges     textID = "unsaved_changes"
@@ -94,8 +95,11 @@ func (m *Model) languageLabel() string {
 }
 
 func (m *Model) packageLabel(name string) string {
-	if name == GlobalPkgName {
+	switch name {
+	case GlobalPkgName:
 		return m.text(textGlobal)
+	case RemoteGroupPkgName:
+		return m.text(textRemote)
 	}
 	return name
 }

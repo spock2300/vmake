@@ -18,6 +18,7 @@ type TreeNode struct {
 	Children   []*TreeNode
 	Expanded   bool
 	IsExternal bool
+	IsGroup    bool
 	Depth      int
 	Prefix     string
 }
@@ -28,7 +29,10 @@ type OptionItem struct {
 	Opt   *api.Option
 }
 
-const GlobalPkgName = "__global__"
+const (
+	GlobalPkgName      = "__global__"
+	RemoteGroupPkgName = "__remote__"
+)
 
 type Model struct {
 	tree    []*TreeNode
@@ -340,11 +344,15 @@ func flattenTreeSearch(nodes []*TreeNode, q string, options map[string]map[strin
 	return result
 }
 
-func searchVisible(n *TreeNode, q string, options map[string]map[string]*api.Option, globalOptions map[string]*api.Option) bool {
-	if n.PkgName == "" {
+func nodeDirectMatch(n *TreeNode, q string, options map[string]map[string]*api.Option, globalOptions map[string]*api.Option) bool {
+	if n == nil || n.IsGroup || n.PkgName == "" || n.PkgName == RemoteGroupPkgName {
+		return false
+	}
+	q = strings.ToLower(q)
+	if strings.Contains(strings.ToLower(n.Name), q) {
 		return true
 	}
-	if strings.Contains(strings.ToLower(n.Name), q) {
+	if n.PkgName != GlobalPkgName && strings.Contains(strings.ToLower(n.PkgName), q) {
 		return true
 	}
 	var opts map[string]*api.Option
@@ -354,12 +362,19 @@ func searchVisible(n *TreeNode, q string, options map[string]map[string]*api.Opt
 		opts = options[n.PkgName]
 	}
 	for name, opt := range opts {
-		if strings.Contains(strings.ToLower(name), q) {
+		if strings.Contains(strings.ToLower(name), q) || strings.Contains(strings.ToLower(opt.Description()), q) {
 			return true
 		}
-		if strings.Contains(strings.ToLower(opt.Description()), q) {
-			return true
-		}
+	}
+	return false
+}
+
+func searchVisible(n *TreeNode, q string, options map[string]map[string]*api.Option, globalOptions map[string]*api.Option) bool {
+	if n.PkgName == "" && !n.IsGroup {
+		return true
+	}
+	if nodeDirectMatch(n, q, options, globalOptions) {
+		return true
 	}
 	for _, c := range n.Children {
 		if searchVisible(c, q, options, globalOptions) {
@@ -380,8 +395,8 @@ func (m *Model) findFirstMatch(query string) (pkgName, optName string) {
 }
 
 func searchNodeMatch(n *TreeNode, q string, options map[string]map[string]*api.Option, globalOptions map[string]*api.Option) (pkgName, optName string) {
-	if n.PkgName != "" {
-		if strings.Contains(strings.ToLower(n.Name), q) {
+	if !n.IsGroup && n.PkgName != "" && n.PkgName != RemoteGroupPkgName {
+		if strings.Contains(strings.ToLower(n.Name), q) || (n.PkgName != GlobalPkgName && strings.Contains(strings.ToLower(n.PkgName), q)) {
 			return n.PkgName, ""
 		}
 		var opts map[string]*api.Option
@@ -415,6 +430,9 @@ func (m *Model) expandToPkg(target string) bool {
 
 func expandToPkgRec(n *TreeNode, target string) bool {
 	if n.PkgName == target {
+		if target == RemoteGroupPkgName {
+			n.Expanded = true
+		}
 		return true
 	}
 	for _, c := range n.Children {
@@ -456,9 +474,13 @@ func (m *Model) jumpToMatch(pkgName, optName string) bool {
 func (m *Model) filteredMatchCount() int {
 	n := 0
 	for _, node := range m.flat {
-		if node.PkgName != "" && node.PkgName != GlobalPkgName {
-			n++
+		if node.IsGroup || node.PkgName == "" || node.PkgName == GlobalPkgName || node.PkgName == RemoteGroupPkgName {
+			continue
 		}
+		if m.filterInput != "" && !nodeDirectMatch(node, m.filterInput, m.options, m.globalOptions) {
+			continue
+		}
+		n++
 	}
 	return n
 }
@@ -493,14 +515,16 @@ func flattenTreeFiltered(nodes []*TreeNode, optCounts map[string]int, kconfigs m
 }
 
 func isDisplayable(n *TreeNode, optCounts map[string]int, kconfigs map[string][]*api.KConfigEntry) bool {
-	if n.PkgName == "" || n.PkgName == GlobalPkgName {
+	if n.PkgName == GlobalPkgName || (n.PkgName == "" && !n.IsGroup) {
 		return true
 	}
-	if optCounts[n.PkgName] > 0 {
-		return true
-	}
-	if len(kconfigs[n.PkgName]) > 0 {
-		return true
+	if !n.IsGroup {
+		if optCounts[n.PkgName] > 0 {
+			return true
+		}
+		if len(kconfigs[n.PkgName]) > 0 {
+			return true
+		}
 	}
 	for _, c := range n.Children {
 		if isDisplayable(c, optCounts, kconfigs) {
@@ -577,47 +601,47 @@ func buildDepTree(packages []buildscript.Source, deps map[string][]string) []*Tr
 
 	localSet := make(map[string]bool)
 	for _, pkg := range packages {
-		localSet[pkg.Name] = true
-	}
-
-	pkgMap := make(map[string]buildscript.Source)
-	for _, pkg := range packages {
-		pkgMap[pkg.Name] = pkg
+		if pkg.Origin != api.SourceRemote {
+			localSet[pkg.Name] = true
+		}
 	}
 
 	depSet := make(map[string]bool)
-	for _, depList := range deps {
+	for from, depList := range deps {
+		if !localSet[from] {
+			continue
+		}
 		for _, d := range depList {
-			depSet[d] = true
+			if localSet[d] {
+				depSet[d] = true
+			}
 		}
 	}
 
 	var roots []string
 	for _, pkg := range packages {
-		if !depSet[pkg.Name] {
+		if localSet[pkg.Name] && !depSet[pkg.Name] {
 			roots = append(roots, pkg.Name)
 		}
 	}
 
-	var localNodes []*TreeNode
+	var topNodes []*TreeNode
 	for _, name := range roots {
-		localNodes = append(localNodes, buildDepSubtree(name, localSet, pkgMap, deps, 1, make(map[string]bool)))
+		topNodes = append(topNodes, buildDepSubtree(name, localSet, deps, 1, make(map[string]bool)))
 	}
 
-	for i, child := range localNodes {
-		if i < len(localNodes)-1 {
-			child.Prefix = "├─"
-		} else {
-			child.Prefix = "└─"
-		}
+	if remoteNode := buildRemoteGroupNode(packages, localSet, deps); remoteNode != nil {
+		topNodes = append(topNodes, remoteNode)
 	}
+
+	setChildPrefixes(topNodes)
 
 	result := []*TreeNode{globalNode}
-	result = append(result, localNodes...)
+	result = append(result, topNodes...)
 	return result
 }
 
-func buildDepSubtree(name string, localSet map[string]bool, pkgMap map[string]buildscript.Source, deps map[string][]string, depth int, visited map[string]bool) *TreeNode {
+func buildDepSubtree(name string, localSet map[string]bool, deps map[string][]string, depth int, visited map[string]bool) *TreeNode {
 	if visited[name] {
 		return nil
 	}
@@ -629,31 +653,162 @@ func buildDepSubtree(name string, localSet map[string]bool, pkgMap map[string]bu
 		Depth:   depth,
 	}
 
-	if !localSet[name] {
-		node.IsExternal = true
-	}
-
-	depNames := deps[name]
-	if len(depNames) == 0 {
-		return node
-	}
-
-	for _, depName := range depNames {
-		child := buildDepSubtree(depName, localSet, pkgMap, deps, depth+1, visited)
+	for _, depName := range deps[name] {
+		if !localSet[depName] {
+			continue
+		}
+		child := buildDepSubtree(depName, localSet, deps, depth+1, visited)
 		if child != nil {
 			node.Children = append(node.Children, child)
 		}
 	}
 
-	for i, child := range node.Children {
-		if i < len(node.Children)-1 {
+	setChildPrefixes(node.Children)
+	return node
+}
+
+func buildRemoteGroupNode(packages []buildscript.Source, localSet map[string]bool, deps map[string][]string) *TreeNode {
+	remoteSet := make(map[string]bool)
+	for _, pkg := range packages {
+		if !localSet[pkg.Name] && pkg.Name != "" {
+			remoteSet[pkg.Name] = true
+		}
+	}
+	for name, depList := range deps {
+		if !localSet[name] && name != "" {
+			remoteSet[name] = true
+		}
+		for _, dep := range depList {
+			if !localSet[dep] && dep != "" {
+				remoteSet[dep] = true
+			}
+		}
+	}
+	if len(remoteSet) == 0 {
+		return nil
+	}
+
+	type subEntry struct {
+		rel  string
+		full string
+	}
+	grouped := make(map[string][]subEntry)
+	var roots []string
+	seenRoot := make(map[string]bool)
+
+	for name := range remoteSet {
+		root, rel := remoteRootAndRel(name)
+		if !seenRoot[root] {
+			seenRoot[root] = true
+			roots = append(roots, root)
+		}
+		if rel != "" {
+			grouped[root] = append(grouped[root], subEntry{rel: rel, full: name})
+		}
+	}
+	sort.Strings(roots)
+
+	remoteNode := &TreeNode{
+		Name:     "Remote",
+		PkgName:  RemoteGroupPkgName,
+		Expanded: false,
+		IsGroup:  true,
+		Depth:    1,
+	}
+
+	for _, root := range roots {
+		trieRoot := &remoteTrieNode{
+			name:     root,
+			fullPath: root,
+			byName:   make(map[string]*remoteTrieNode),
+		}
+		for _, sub := range grouped[root] {
+			cur := trieRoot
+			curPath := root
+			for _, seg := range strings.Split(sub.rel, "/") {
+				if seg == "" {
+					continue
+				}
+				curPath += "/" + seg
+				next, ok := cur.byName[seg]
+				if !ok {
+					next = &remoteTrieNode{
+						name:     seg,
+						fullPath: curPath,
+						byName:   make(map[string]*remoteTrieNode),
+					}
+					cur.children = append(cur.children, next)
+					cur.byName[seg] = next
+				}
+				cur = next
+			}
+		}
+		rootNode := &TreeNode{
+			Name:       root,
+			PkgName:    root,
+			IsExternal: true,
+			IsGroup:    !remoteSet[root],
+			Depth:      2,
+			Children:   buildRemoteTreeNodes(trieRoot, remoteSet, 3),
+		}
+		if len(rootNode.Children) > 0 {
+			rootNode.Expanded = true
+		}
+		remoteNode.Children = append(remoteNode.Children, rootNode)
+	}
+	setChildPrefixes(remoteNode.Children)
+	return remoteNode
+}
+
+type remoteTrieNode struct {
+	name     string
+	fullPath string
+	children []*remoteTrieNode
+	byName   map[string]*remoteTrieNode
+}
+
+func buildRemoteTreeNodes(t *remoteTrieNode, remoteSet map[string]bool, depth int) []*TreeNode {
+	if len(t.children) == 0 {
+		return nil
+	}
+	sort.Slice(t.children, func(i, j int) bool {
+		return t.children[i].name < t.children[j].name
+	})
+	var nodes []*TreeNode
+	for _, c := range t.children {
+		node := &TreeNode{
+			Name:       c.name,
+			PkgName:    c.fullPath,
+			IsExternal: true,
+			IsGroup:    !remoteSet[c.fullPath],
+			Depth:      depth,
+		}
+		node.Children = buildRemoteTreeNodes(c, remoteSet, depth+1)
+		if len(node.Children) > 0 {
+			node.Expanded = true
+		}
+		nodes = append(nodes, node)
+	}
+	setChildPrefixes(nodes)
+	return nodes
+}
+
+func remoteRootAndRel(name string) (root, rel string) {
+	parts := strings.SplitN(name, "/", 3)
+	if len(parts) < 3 {
+		return name, ""
+	}
+	return parts[0] + "/" + parts[1], parts[2]
+}
+
+func setChildPrefixes(children []*TreeNode) {
+	for i, child := range children {
+		if i < len(children)-1 {
 			child.Prefix = "├─"
 		} else {
 			child.Prefix = "└─"
 		}
 	}
-
-	return node
 }
 
 func flattenTree(nodes []*TreeNode) []*TreeNode {

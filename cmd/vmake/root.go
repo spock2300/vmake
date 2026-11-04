@@ -258,6 +258,7 @@ func resolveToConfigContext(execution context.Context, ignoreLock bool) (*Runtim
 func applyEphemeralOverrides(ctx *RuntimeContext, overrides []inspectOverride) error {
 	for i := range overrides {
 		override := &overrides[i]
+		override.pkgName = resolveSetPackageName(ctx, override.pkgName)
 		opt, err := inspectOverrideOption(ctx, override.pkgName, override.optName)
 		if err != nil {
 			return err

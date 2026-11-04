@@ -388,6 +388,7 @@ func inspectOverrideOption(ctx *RuntimeContext, pkgName, optName string) (*api.O
 		}
 		return opt, nil
 	}
+	pkgName = resolveSetPackageName(ctx, pkgName)
 	if ctx.DepGraph == nil || ctx.DepGraph.Packages[pkgName] == nil {
 		return nil, fmt.Errorf("package %q not found", pkgName)
 	}

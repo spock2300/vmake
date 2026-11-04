@@ -400,13 +400,24 @@ func (s *sourceStage) ownGitSourceNeedsMaterialization(name, sourceRoot string, 
 	if node.Pkg == nil || len(node.Pkg.GitURLs()) == 0 {
 		return false
 	}
-	return !s.sourceRequestReady(repo.SourceRequest{
+	version, ref, expected, err := s.localSourceVersion(name, node)
+	if err != nil {
+		return true
+	}
+	req := repo.SourceRequest{
 		Key:        name,
 		Root:       sourceRoot,
 		URLs:       node.Pkg.GitURLs(),
+		Version:    version,
+		Ref:        ref,
+		Commit:     expected,
 		PatchHash:  s.patchHashes[name],
 		Submodules: node.Pkg.Submodules(),
-	})
+	}
+	if version == "" {
+		req.Ref = ""
+	}
+	return !s.sourceRequestReady(req)
 }
 
 func (s *sourceStage) cloneLocalGitSources() error {
