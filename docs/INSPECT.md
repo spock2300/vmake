@@ -43,6 +43,12 @@ configuration is evaluated as if the project had those values, but nothing is
 persisted. The effective overrides are echoed in `data.overrides`, using the
 option's natural JSON type.
 
+`[package]` may be a full package name or a trailing path segment that is
+unique among resolved packages (for example `kernel/debug` for
+`vendor/sdk/kernel`). The same rule applies to `vmake config --set` and every
+other command that accepts `--set`; an ambiguous segment is rejected as an
+unknown package.
+
 Values are coerced with the option's declared type during the single resolution
 pass once `OnConfig` declarations are collected, matching `vmake config --set`:
 

@@ -686,7 +686,7 @@ ctx.Target("mylib").AddPublicIncludes("include", "src", "@foo*.h")
 规则：
 
 - **声明时校验**（fatal `*BuildScriptError`）：含空白字符、多个 `:`、`:` 前后任一段为空，以及不含 `:` 时首/尾 `/` 或 `//` 的畸形包路径。含 `:` 的引用不会在声明时校验包路径形态，畸形路径会在图构建时表现为 `dependency not found` 或 `package not found in build graph`。空字符串参数被 `AddDeps` 静默跳过，重复引用在图构建时去重。
-- **子包短名**：当前包本身是子包且 `pkg:target` 的 pkg 部分不含 `/` 时，会先沿祖先链尝试相对解析（`ResolveSubPackageName`）——兄弟子包之间可写 `AddDeps("mylib:utils")` 而不必写全路径；顶层包不做这种相对解析。
+- **子包短名**：`pkg:target` 的 pkg 部分不含 `/` 时先按当前包位置解析（`ResolveSubPackageName`）。子包沿祖先链相对解析，兄弟子包之间可写 `AddDeps("mylib:utils")` 而不必写全路径；非子包（含顶层包）按末段在全部已发现子包中做唯一匹配（如 `AddDeps("kernel:*")` 命中唯一的 `.../kernel`），存在多个同末段子包时不做替换。顶层短名只能命中父 native 包已解析后发现的子包：`AddRequires` 中应把父包列在子包之前，`OnBuild` 阶段则使用完整依赖图。
 - **图构建时报错**：target 不存在 → `dependency not found`；包不在构建图中 → `package not found in build graph`；循环依赖 → 错误（包引用递归由 `api.CheckCycle` 报告，target 级环由拓扑排序报告）。子包短名解析失败时错误信息附带已尝试的候选路径（`tried sub-package candidates: ...`）。
 - 依赖边同时决定：链接输入（依赖 target 的产物路径）、PublicIncludes 传播、拓扑排序顺序。`TargetStatic`/`TargetObject` 不会把依赖的库合并进产物（`TargetStatic` 仍会归档依赖的可重定位 `.o`，`TargetObject` 不合并依赖），库依赖只提供排序和包含路径传播，构建时会打印相应 NOTE。
 
@@ -701,8 +701,8 @@ native 远程包 checkout 内嵌套的 `build.go` 会被识别为**子包**：�
 要点：
 
 - **发现**：父包（native 仓库）checkout 后自动扫描其中嵌套的 build.go（`Resolver.scanSubPackages`）；registry 包装包**没有**子包概念（DD-1，设计决策）。子包懒加载（DD-3）：只有被依赖时其 build.go 才被解释。
-- **引用子包**：外部包用全名，如 `ctx.AddRequires("subtest/mother/sub_a")`、`AddDeps("subtest/mother/sub_a:*", "subtest/mother:base")`；同一 `AddRequires` 列表中父包必须写在子包之前。
-- **子包互引短名**：子包内部引用兄弟子包时 pkg 部分可写短名（沿祖先链解析，见上文"子包短名"）。除 `AddDeps`/`AddRequires` 外，`DepOutput`/`DepBuildDir`、`BuildSubGraph` 和 `ImportConfig` 也接受同类短名。`api.SubPackageCandidates(currentPkg, depName, subParents)` 返回由近到远的候选全名，`api.ResolveSubPackageName` 按 `exists` 回调选择第一个存在的候选。
+- **引用子包**：外部包推荐用全名，如 `ctx.AddRequires("subtest/mother/sub_a")`、`AddDeps("subtest/mother/sub_a:*", "subtest/mother:base")`；同一 `AddRequires` 列表中父包必须写在子包之前。末段在全部已发现子包中唯一时也可用短名（见上文"子包短名"）。
+- **子包互引短名**：子包内部引用兄弟子包时 pkg 部分可写短名（沿祖先链解析，见上文"子包短名"）。除 `AddDeps`/`AddRequires` 外，`DepOutput`/`DepBuildDir`、`BuildSubGraph` 和 `ImportConfig` 也接受同类短名。`api.SubPackageCandidates(currentPkg, depName, subParents)` 返回由近到远的候选全名：子包会追加同一 native 根下的唯一同末段子包，非子包调用方返回全局唯一同末段子包；`api.ResolveSubPackageName` 按 `exists` 回调选择第一个存在的候选，非子包调用方优先保留已存在的裸包名。
 - **父包必须 needed**：若子包进入构建集合，其 native owner 也必须在 needed 集合中；否则 `RunBuild` 过滤依赖时（`Configure` 之后）报错提示补充父包依赖。这样父包补丁、版本锁定和源码树身份才能保持一致。
 - **限制**：父包不能在自己的 `OnRequire` 中引用其子包（发现晚于依赖解析，见 DESIGN_DECISIONS.md 已知限制 5）；本地项目无子包概念（嵌套 build.go 是顶层裸名包，已知限制 1）。
 
@@ -776,7 +776,7 @@ const (
     TargetStatic TargetKind = "static"
     TargetShared TargetKind = "shared"
     TargetObject TargetKind = "object"
-    TargetVoid   TargetKind = "void"      // 第三方包使用；SetBuildFunc 仅对该 kind 执行
+    TargetVoid   TargetKind = "void"      // 第三方包使用；SetBuildFunc 仅对该 kind 执行；未声明 ProvidedLibs 时仅自动链接安装目录中的同名静态库 lib<name>.a
 )
 func TargetFilename(kind TargetKind, name, targetOS string) string  // 按目标系统命名主产物
 
@@ -1001,9 +1001,9 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 })
 ```
 
-- 只收集本地包的 profile；同一芯片 `Name` 的重复声明必须完全一致。
+- 收集所有已解析包（本地、native 与 registry）的 profile；同一芯片 `Name` 的重复声明必须完全一致，否则在配置阶段报错，即使其中一个包未进入最终 needed 集合。
 - root 包应声明全局 `chip` choice（例如 `ctx.GlobalOption(api.ChipOptionName).SetDefault("py32f539").SetValues("py32f539")`）；vmake 会把 profile 的 `Name` 追加到已声明 choice 的 `Values()`，但不会自动创建 `chip` 选项。TUI 用 `chip` 切换芯片/SoC。
-- 构建在 `FilterDeps` 后按实际需要的芯片包选择 profile；未使用的芯片包不参与冲突。
+- 构建在 `FilterDeps` 后按实际需要的芯片包选择 profile；不同 `Name` 的未使用芯片包不参与冲突。
 - 多个 needed 芯片 package 声明不同 profile 时报错；显式 `--toolchain`/`global.toolchain` 存在时，若无法从 needed 集合唯一确定 profile 则跳过 profile 选择，否则仍保留已确定芯片的平台默认值。
 - 当前活动芯片的 `PreferredToolchain` 位于活动配置之后、`host` 之前；其 `TargetOS`/`TargetTriple` 位于项目全局值与工具链默认值之间。选择显式不同的工具链时，工具链的 target 优先；同一 target triple 的替代工具链仍使用芯片平台默认值。
 - TUI 切换 `chip` 时会把工具链/平台预览切到对应 profile；保存时推导出的工具链和 target 值不会写入配置，显式配置的值始终保留。
@@ -1061,7 +1061,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 })
 ```
 
-这里的 `mcu` 只是普通全局选项示例，不会触发芯片 profile 解析；vmake 的芯片选择器是 `chip`，且只有声明了 `ChipProfile` 的本地芯片包才参与。
+这里的 `mcu` 只是普通全局选项示例，不会触发芯片 profile 解析；vmake 的芯片选择器是 `chip`，任何声明了 `ChipProfile` 的包（本地或远程）都参与。
 
 `vmake config --set variant=L` 后，每个包获得：
 

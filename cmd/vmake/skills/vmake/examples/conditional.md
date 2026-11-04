@@ -94,8 +94,8 @@ func Main(p *api.Package) {
 vmake config
 # Enable debug, set platform to windows
 
-# Or non-interactively: the package prefix is the build.go directory name
-# and is required for non-global options
+# Or non-interactively: the package prefix may be a full package name or a
+# unique trailing path segment; it is required for non-global options
 vmake config --set myproject/debug=true --set myproject/platform=windows
 
 vmake build --mode debug

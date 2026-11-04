@@ -292,7 +292,7 @@ All setters are fluent (return `*Target`).
 | `AddPublicDefines` | `(defines ...any)` | Preprocessor defines applied to this target and propagated to dependents along `AddDeps` |
 | `AddLinks` | `(libs ...any)` | Libraries to link (`-l`) |
 | `AddPublicLinks` | `(libs ...any)` | Link libraries (`-l`) applied to this target and propagated to dependents along `AddDeps` |
-| `AddProvidedLibs` | `(libs ...any)` | Libraries this target provides to consumers (e.g. `"ssl"`, `"crypto"`; accepts slices via `flattenAny`) |
+| `AddProvidedLibs` | `(libs ...any)` | Libraries this target provides to consumers (e.g. `"ssl"`, `"crypto"`; accepts slices via `flattenAny`). A void target without declared libs only auto-links the installed same-name static archive `lib<name>.a` |
 | `AddDeps` | `(targets ...any)` | Dependencies (`string`, `[]string` such as `ctx.If`/`ctx.Select`): same pkg (`"utils"`), bare required/known pkg (`"shell"` → `"shell:*"`), cross pkg (`"<pkg>:<target>"`), wildcard (`"<pkg>:*"`), third-party (`"official/zlib"`). Empty entries are ignored; whitespace, multiple `:`, empty segments, and path-shape errors in refs without `:` are declaration-time build errors |
 | `UseRequires` | `()` | Wire all active required packages of this package (post-`FilterDeps`) as `<pkg>:*` dependencies on this target |
 | `AddCFlags` | `(flags ...any)` | C compiler flags |
@@ -329,7 +329,7 @@ All setters are fluent (return `*Target`).
 
 Source language is auto-detected from file extension (`.c` → C, `.cc/.cpp/.cxx/.C` → C++).
 
-Sub-packages: a nested `build.go` in a native remote package's checkout is an independent package named `parent/sub`, versioned by the parent (no separate lockfile entry). Only native repos have sub-packages (registry wrappers never do — design decision DD-1; repository design docs are not shipped with this skill); they load lazily when depended on. Reference from outside by full name (`"subtest/mother/sub_a:*"`; list the parent before its sub-packages in `AddRequires`); inside a sub-package use short names for siblings (`"sub_b:utils_b"`). `DepOutput`/`DepBuildDir`, `BuildSubGraph` and `ImportConfig` use the same short-name rule. A needed sub-package requires its native parent to be needed too. A parent cannot require its own sub-packages in `OnRequire`. Example: `test_data/25_subpackage`.
+Sub-packages: a nested `build.go` in a native remote package's checkout is an independent package named `parent/sub`, versioned by the parent (no separate lockfile entry). Only native repos have sub-packages (registry wrappers never do — design decision DD-1; repository design docs are not shipped with this skill); they load lazily when depended on. Reference from outside by full name (`"subtest/mother/sub_a:*"`; list the parent before its sub-packages in `AddRequires`), or by a trailing name that is unique among discovered sub-packages; inside a sub-package use short names for siblings (`"sub_b:utils_b"`). `DepOutput`/`DepBuildDir`, `BuildSubGraph` and `ImportConfig` use the same short-name rule. A needed sub-package requires its native parent to be needed too. A parent cannot require its own sub-packages in `OnRequire`. Example: `test_data/25_subpackage`.
 
 ### Removers
 

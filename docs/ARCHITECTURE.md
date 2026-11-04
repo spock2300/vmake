@@ -166,7 +166,7 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 ```
 
 1. 执行所有 `OnConfig` 回调，收集 `Option` 定义
-2. `api.MergeGlobalOptions` 合并全局选项定义（内置 `mode` + `toolchain` + 用户定义）；同阶段收集本地芯片包的 `ChipProfile`，并把 profile 中的芯片名称加入全局 `chip` choice。`ConfigAccessor.MergeGlobals` 将全局定义与值合并进脚本上下文作为回退（不覆盖已有值）
+2. `api.MergeGlobalOptions` 合并全局选项定义（内置 `mode` + `toolchain` + 用户定义）；同阶段收集所有已解析包（本地与远程）的 `ChipProfile`，并把 profile 中的芯片名称加入全局 `chip` choice。`ConfigAccessor.MergeGlobals` 将全局定义与值合并进脚本上下文作为回退（不覆盖已有值）
 3. `OnApply` 回调按选项名排序执行；配置值在后续 TUI 或 CLI flag 中加载
 
 源码：`cmd/vmake/root.go`, `pkg/api/accessor.go`
@@ -189,7 +189,7 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 `RunBuild` 包含多个子步骤：
 
 1. **filterAndCollectNeeded** — 用已解析的包级配置（以及本包声明为全局选项的配置值）重新执行 OnRequire（`Resolver.FilterDeps` 替换节点.Deps）→ `UpdateOrder` → 从根包 BFS 遍历，过滤需要构建的包：恰好一个本地包声明 `SetRoot(true)` 时以它为根，多个报错；未声明时按启发式选择本地根（存在带 `OnRequire` 的本地包时，被其他本地包依赖且无 `OnRequire` 的本地包不作为根），并提示建议声明 `SetRoot(true)`
-2. **resolveActiveChip / resolveBuildConfig** — 从 needed 中的本地芯片包选择 `ChipProfile`，得到首选工具链和平台默认值；显式 `--toolchain`/`global.toolchain` 仍优先。随后解析构建模式（debug/release/size）和工具链
+2. **resolveActiveChip / resolveBuildConfig** — 从 needed 中的芯片包（本地或远程）选择 `ChipProfile`，得到首选工具链和平台默认值；显式 `--toolchain`/`global.toolchain` 仍优先。随后解析构建模式（debug/release/size）和工具链
 3. **prepareConfig / newSourceStage** — 收集 needed、包选项与全局 flags，并解析各包 SourceDir（BuildDir/InstallDir 随后在 prepareAllPackages 的 `setPackageLayout` 中按构建键生成）
 4. **prepareAllPackages** — 下载远程包源码、克隆本地 Git 源码、设置子包目录
 5. **writeLockfile** — 写入 `.vmake/vmake.lock`（锁定解析到的版本与 commit）
@@ -408,7 +408,7 @@ VMake 使用 `AddDeps` 统一管理所有依赖类型：
 | 通配依赖 | `AddDeps("lib:*")` 或 `AddDeps("official/zlib:*")` | `:*` 结尾，展开为该包所有 target + 传递依赖 |
 | 第三方包 | `AddDeps("official/zlib")` | 含 `/`，展开为该包所有 target + 传递依赖 |
 
-`pkg:target` 中不含 `/` 的 pkg 部分会先按当前（子）包路径相对解析（`ResolveSubPackageName`），兄弟子包之间可用短名。`DepOutput`/`DepBuildDir`、`BuildSubGraph` 和 `ImportConfig` 使用同一短名规则。子包进入 needed 集合时，其 native owner 必须同时 needed（否则构建准备阶段报错），以保证父包补丁与版本锁定生效。`AddDeps` 会静默跳过空字符串；其余声明时即 fatal（`ParseDepRef`）的引用包括：含空白、多个 `:`、`:` 前后段为空，以及不含 `:` 时包路径首/尾 `/` 或 `//`；含 `:` 的引用不会在声明时校验包路径形态，畸形路径会在图构建时表现为 `dependency not found` 或 `package not found in build graph`。target/包不存在或循环依赖在构建图时报错。
+`pkg:target` 中不含 `/` 的 pkg 部分会先按当前（子）包路径相对解析（`ResolveSubPackageName`），兄弟子包之间可用短名；当前包不是子包时，按末段在所有已发现子包中做唯一匹配（多个同末段子包则不解析）。`DepOutput`/`DepBuildDir`、`BuildSubGraph` 和 `ImportConfig` 使用同一短名规则。子包进入 needed 集合时，其 native owner 必须同时 needed（否则构建准备阶段报错），以保证父包补丁与版本锁定生效。`AddDeps` 会静默跳过空字符串；其余声明时即 fatal（`ParseDepRef`）的引用包括：含空白、多个 `:`、`:` 前后段为空，以及不含 `:` 时包路径首/尾 `/` 或 `//`；含 `:` 的引用不会在声明时校验包路径形态，畸形路径会在图构建时表现为 `dependency not found` 或 `package not found in build graph`。target/包不存在或循环依赖在构建图时报错。
 
 ### 解析流程
 

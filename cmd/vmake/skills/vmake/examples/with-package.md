@@ -127,7 +127,7 @@ func Main(p *api.Package) {
 
 ## Sub-Packages
 
-A nested `build.go` inside a **native** remote package's checkout becomes a sub-package named `parent/sub`, with its own options, targets, and build directories. Reference it from outside by full name, listing the parent before its sub-packages in the same `AddRequires`:
+A nested `build.go` inside a **native** remote package's checkout becomes a sub-package named `parent/sub`, with its own options, targets, and build directories. Reference it from outside by full name (listing the parent before its sub-packages in the same `AddRequires`), or by a trailing segment that is unique among discovered sub-packages:
 
 ```go
 ctx.AddRequires("subtest/mother >=1.0.0", "subtest/mother/sub_a")

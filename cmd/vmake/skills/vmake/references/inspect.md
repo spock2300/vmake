@@ -225,6 +225,12 @@ exists.
 only; nothing is persisted. Unknown packages/options, wrong types, and invalid
 choices exit 1 with `VMAKE_E_OPTION`.
 
+`[package]` may be a full package name or a trailing path segment that is
+unique among resolved packages (for example `kernel/debug` for
+`vendor/sdk/kernel`). The same rule applies to `vmake config --set` and every
+other command that accepts `--set`; an ambiguous segment is rejected as an
+unknown package.
+
 The value is coerced with the option's declared type during the single
 resolution pass once `OnConfig` declarations are collected, matching
 `vmake config --set <pkg>/<option>=<value>`:

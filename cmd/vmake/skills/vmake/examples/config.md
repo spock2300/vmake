@@ -91,7 +91,8 @@ int main(void) {
 vmake config
 
 # Or set option values non-interactively (format: [pkg/]option=value).
-# The package prefix is the build.go directory name and is required for non-global options.
+# The package prefix may be a full package name or a unique trailing path segment;
+# it is required for non-global options.
 vmake config --set myproject/debug=true --set myproject/features=full
 
 # Show effective option values and generated -DCONFIG_* defines

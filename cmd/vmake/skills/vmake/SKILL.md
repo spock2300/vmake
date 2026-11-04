@@ -93,8 +93,10 @@ ctx.SetChipProfile(api.ChipProfile{
 ```
 
 The root package declares the global `chip` choice; vmake appends profile
-names to it but does not create it. Only local chip packages in the filtered
-build participate; unused chips do not conflict. The TUI's `chip` choice
+names to it but does not create it. Every resolved package (local or remote)
+may declare chip profiles; only packages in the filtered build participate in
+selection, and different chip names do not conflict. Duplicate declarations of
+the same chip name must match exactly or configuration fails. The TUI's `chip` choice
 switches the toolchain and target preview, and derived values are not pinned
 into `.vmake/config.json`. Explicit configuration still wins.
 
