@@ -44,7 +44,7 @@ func TestListPackageSources(t *testing.T) {
 	dir := t.TempDir()
 
 	var empty bytes.Buffer
-	listPackageSources(&empty, dir)
+	listPackageSources(&empty, dir, nil)
 	if got := empty.String(); got != "No package sources\n" {
 		t.Fatalf("empty output = %q", got)
 	}
@@ -52,11 +52,25 @@ func TestListPackageSources(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "official", "zlib"), 0755); err != nil {
 		t.Fatal(err)
 	}
+	var noSource bytes.Buffer
+	listPackageSources(&noSource, dir, nil)
+	if got := noSource.String(); got != "No package sources\n" {
+		t.Fatalf("output without src = %q", got)
+	}
+	var linkedNoSource bytes.Buffer
+	listPackageSources(&linkedNoSource, dir, map[string]string{"official/zlib": "/tmp/zlib"})
+	if got := linkedNoSource.String(); got != "No package sources\n" {
+		t.Fatalf("output for linked package without src = %q", got)
+	}
+
+	if err := os.MkdirAll(filepath.Join(dir, "official", "zlib", "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	var out bytes.Buffer
-	listPackageSources(&out, dir)
+	listPackageSources(&out, dir, map[string]string{"official/zlib": "/tmp/zlib"})
 	got := out.String()
-	for _, want := range []string{"Package sources:", "official/zlib"} {
+	for _, want := range []string{"Package sources:", "official/zlib (linked; stale materialized source)"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output %q does not contain %q", got, want)
 		}

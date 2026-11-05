@@ -310,7 +310,7 @@ AddRequires          1. 检查 registry 仓库（未找到）      LoadBuildScri
 
 ### 本地源码 link (`vmake pkg link`)
 
-`.vmake/local.json` 保存机器本地的 `{"links":{"repo/name":"/abs/path"}}`。link 在解析阶段生效，不写入 `vmake.lock` 或共享配置：
+`.vmake/local.json` 保存机器本地的 `{"links":{"repo/name":"/abs/path"}}`。link 在解析阶段生效，不写入 `vmake.lock` 或共享配置。link 命令保存记录后删除该包已有的 `.vmake_deps/<repo>/<owner>/src` 和 `state.json`，保留 `out/` 与 own-Git 子包的 `third_party/`；unlink 后下一次构建重新物化：
 
 1. `Require` 先校验 link：路径必须是 git 工作树、不能在 `.vmake_deps`/项目根/仓库目录内；native 父包必须有 `build.go`，registry 包必须能在已注册仓库中找到 wrapper。
 2. native link：`findNativeSource` 直接使用 link 树加载 build.go 和子包，不调用 `EnsureSource`；`Source.Link.Native=true`，子包继承 link 路径与 commit。

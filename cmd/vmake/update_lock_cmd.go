@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/lockfile"
 	"github.com/spock2300/vmake/pkg/pipeline"
 )
@@ -32,10 +33,15 @@ func newLockUpdateCmd() *cobra.Command {
 downloads the selected versions and rewrites the lock.
 
 Version pins from the active project configuration take precedence over latest matching tags.
-All project configurations share .vmake/vmake.lock.`,
+All project configurations share .vmake/vmake.lock. Packages with an active
+'vmake pkg link' keep their existing lock entry; unlink them before updating
+their version.`,
 		Run: func(cmd *cobra.Command, args []string) {
 			ctx := resolveToConfig(true)
 			fatalErr(pipeline.UpdateLock(ctx))
+			if local, err := config.LoadLocal(findProjectDir()); err == nil && len(local.Links) > 0 {
+				fmt.Println("Linked packages keep their existing lock entries; run 'vmake pkg unlink <pkg>' before updating their version.")
+			}
 		},
 	}
 }
@@ -53,13 +59,21 @@ func newLockShowCmd() *cobra.Command {
 				fmt.Println("vmake.lock is empty (no remote dependencies locked yet)")
 				return
 			}
+			var links map[string]string
+			if local, err := config.LoadLocal(findProjectDir()); err == nil {
+				links = local.Links
+			}
 			for _, name := range l.SortedNames() {
 				p := l.Packages[name]
 				commit := p.Commit
 				if len(commit) > 12 {
 					commit = commit[:12]
 				}
-				fmt.Printf("%s %s (%s, %s)\n", name, p.Version, p.Source, commit)
+				suffix := ""
+				if _, linked := links[name]; linked {
+					suffix = " [linked; ignored]"
+				}
+				fmt.Printf("%s %s (%s, %s)%s\n", name, p.Version, p.Source, commit, suffix)
 			}
 		},
 	}

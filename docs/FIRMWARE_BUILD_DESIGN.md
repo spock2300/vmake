@@ -819,7 +819,7 @@ my-firmware/
 | 配置恢复 | restoreKConfigFiles skip rules | 无条目跳过、空 kconfig 删除、有内容仅变化时写入（避免 mtime 失效） |
 | 交叉编译 | Make() 自动传递 Env() | 不改变 BuildFunc 使用方式，`pkg.Make()` 自动携带 CROSS_COMPILE |
 | BuildDir | 与 SourceDir 分离 | 本地包 `<SourceDir>/build/<key>/`，远程包 `<项目>/.vmake_deps/<repo>/<owner>/out/<sha256(member)>/<key>/build/`；`pkg link` 只改变 SourceDir，产物仍在 `.vmake_deps` |
-| 本地源码 link | `pkg link` | 使用本地 git 工作树，忽略版本/tag/约束；native 子包第三方源码在 `.vmake_deps/<owner>/third_party/<member>` |
+| 本地源码 link | `pkg link` | 使用本地 git 工作树，忽略版本/tag/约束；link 时删除该包物化 `src`/`state.json`，保留输出与 native 子包第三方源码；unlink 后下一次构建重新物化 |
 | 外部增量构建 | TargetVoid + Make/CMake | 每会话进入一次回调，由外部工具检查配置、依赖和产物 |
 | 分区 | 普通包 | BuildFunc 做 overlay + collect + 外部工具生成分区镜像，不新增 API |
 | 固件 | 普通包 | 收集分区镜像文件 → 合成固件，完全用户可控 |

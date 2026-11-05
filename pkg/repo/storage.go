@@ -45,3 +45,25 @@ func (m *SourceManager) CleanSource(repoName, name string) error {
 	}
 	return internalfs.RemoveAll(root)
 }
+
+// CleanMaterializedSource removes a package's materialized working tree and
+// its state file while keeping per-build outputs and own-Git third-party
+// source trees.
+func (m *SourceManager) CleanMaterializedSource(repoName, name string) error {
+	key := PackageTreeKey(repoName, name)
+	root, err := m.treePath(key)
+	if err != nil {
+		return err
+	}
+	if err := m.validateManagedPath(root); err != nil {
+		return err
+	}
+	srcDir := filepath.Join(root, "src")
+	if err := m.validateManagedPath(srcDir); err != nil {
+		return err
+	}
+	if err := internalfs.RemoveAll(srcDir); err != nil {
+		return err
+	}
+	return internalfs.RemoveAll(m.statePath(root))
+}

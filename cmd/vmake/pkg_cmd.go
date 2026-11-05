@@ -34,29 +34,29 @@ var pkgListCmd = &cobra.Command{
 	Long: `List package working trees under .vmake_deps, including trees no longer needed by the active configuration.
 
 Active source links are printed first. A linked package builds directly from its
-worktree, so no tag or version bump is required.`,
+worktree, so no tag or version bump is required. Packages without a materialized
+src directory are not listed under Package sources; their remaining outputs and
+third-party sources stay on disk.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		printSourceLinks(cmd.OutOrStdout())
-		listPackageSources(cmd.OutOrStdout(), getDepsDir())
+		local, err := config.LoadLocal(findProjectDir())
+		fatalErr(err)
+		printSourceLinks(cmd.OutOrStdout(), local.Links)
+		listPackageSources(cmd.OutOrStdout(), getDepsDir(), local.Links)
 	},
 }
 
-func printSourceLinks(w io.Writer) {
-	local, err := config.LoadLocal(findProjectDir())
-	if err != nil {
-		fatalErr(err)
-	}
-	if len(local.Links) == 0 {
+func printSourceLinks(w io.Writer, links map[string]string) {
+	if len(links) == 0 {
 		return
 	}
-	names := make([]string, 0, len(local.Links))
-	for name := range local.Links {
+	names := make([]string, 0, len(links))
+	for name := range links {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	fmt.Fprintln(w, "Source links:")
 	for _, name := range names {
-		fmt.Fprintf(w, "  %s -> %s\n", name, local.Links[name])
+		fmt.Fprintf(w, "  %s -> %s\n", name, links[name])
 	}
 }
 
@@ -115,7 +115,7 @@ through their parent package; pass the parent package name.`,
 	RunE: runPkgShow,
 }
 
-func listPackageSources(w io.Writer, depsDir string) {
+func listPackageSources(w io.Writer, depsDir string, links map[string]string) {
 	entries, err := fs.ListDirEntries(depsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -125,12 +125,7 @@ func listPackageSources(w io.Writer, depsDir string) {
 		fatalErr(err)
 	}
 
-	if len(entries) == 0 {
-		fmt.Fprintln(w, "No package sources")
-		return
-	}
-
-	fmt.Fprintln(w, "Package sources:")
+	lines := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		repoName := entry.Name()
 		repoPath := filepath.Join(depsDir, repoName)
@@ -139,8 +134,25 @@ func listPackageSources(w io.Writer, depsDir string) {
 			continue
 		}
 		for _, pkg := range pkgs {
-			fmt.Fprintf(w, "  %s/%s\n", repoName, pkg.Name())
+			pkgName := repoName + "/" + pkg.Name()
+			if !fs.FileExists(filepath.Join(repoPath, pkg.Name(), "src")) {
+				continue
+			}
+			line := "  " + pkgName
+			if _, linked := links[pkgName]; linked {
+				line += " (linked; stale materialized source)"
+			}
+			lines = append(lines, line)
 		}
+	}
+
+	if len(lines) == 0 {
+		fmt.Fprintln(w, "No package sources")
+		return
+	}
+	fmt.Fprintln(w, "Package sources:")
+	for _, line := range lines {
+		fmt.Fprintln(w, line)
 	}
 }
 
@@ -173,14 +185,21 @@ var pkgLinkCmd = &cobra.Command{
 	Short: "Build a package from a local working tree",
 	Long: `Link a native or registry package to a local git working tree.
 
-A linked native package loads build.go and sub-packages from the linked tree.
-A linked registry package keeps its registry wrapper build.go and replaces only
-the upstream source tree. Links are machine-local, stored in
-.vmake/local.json, and ignore package versions, tags and version constraints.
+A linked native package loads build.go, sub-packages, OnConfig options and the
+flags/defines they produce from the linked tree. A linked registry package keeps
+its registry wrapper build.go and replaces only the upstream source tree. Links
+are machine-local, stored in .vmake/local.json, and ignore package versions,
+tags and version constraints.
 
 While linked, edit the worktree and rerun the build; uncommitted edits are
 compiled, and no commit, tag, version bump or lock update is required. The
-existing lock entry is kept unchanged until you unlink.`,
+existing lock entry is kept unchanged until you unlink.
+
+Linking removes any existing materialized src/state for the package under
+.vmake_deps. Per-build outputs and own-Git third-party source trees are kept.
+Path validation does not interpret the linked buildscript; a link later rejected
+for KConfig or patches has already removed the old tree. After unlink, the next
+build uses the existing lock entry when present.`,
 	Args: cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		commandStorageLocks()
@@ -195,16 +214,26 @@ existing lock entry is kept unchanged until you unlink.`,
 		fatalErr(err)
 		local.Links[name] = abs
 		fatalErr(config.SaveLocal(projectDir, local))
+
+		repoName, pkgName := mustSplitPkgRef(name)
+		sourceMgr := repo.NewSourceManager(getDepsDir(), getCacheDir()).WithSession(commandStorageLocks())
+		if err := sourceMgr.CleanMaterializedSource(repoName, pkgName); err != nil {
+			fatalErr(fmt.Errorf("link saved for %s, but removing materialized source failed: %w", name, err))
+		}
 		fmt.Printf("Linked %s -> %s\n", name, abs)
-		fmt.Println("Build outputs remain under .vmake_deps; edit the linked tree and rerun the build directly (uncommitted edits are compiled; no tag or version bump is needed).")
+		fmt.Println("Removed the materialized src/state for this package; build outputs and third-party sources are kept.")
+		fmt.Println("The linked tree supplies the package while linked; its vmake.lock entry is ignored until 'vmake pkg unlink'.")
 	},
 }
 
 var pkgUnlinkCmd = &cobra.Command{
 	Use:   "unlink <repo/name>",
 	Short: "Remove a local source link",
-	Long:  `Remove the local source link. The next build restores the locked remote source.`,
-	Args:  cobra.ExactArgs(1),
+	Long: `Remove the local source link. The next build uses the package's vmake.lock
+entry when present; otherwise it resolves and writes one. Untagged working-tree
+HEADs are not selected after unlink. Run 'vmake lock update' only if you want
+to re-resolve newer versions; config pins and version constraints still apply.`,
+	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		commandStorageLocks()
 		projectDir := findProjectDir()
@@ -216,7 +245,8 @@ var pkgUnlinkCmd = &cobra.Command{
 		}
 		delete(local.Links, name)
 		fatalErr(config.SaveLocal(projectDir, local))
-		fmt.Printf("Unlinked %s\n", name)
+		fmt.Printf("Unlinked %s; the next build uses the existing vmake.lock entry when present.\n", name)
+		fmt.Println("Run 'vmake lock update' only if you want to re-resolve newer versions.")
 	},
 }
 
@@ -263,8 +293,11 @@ var pkgUpdateDryRun bool
 
 var pkgUpdateCmd = &cobra.Command{
 	Use:   "update <repo/name>[@version]",
-	Short: "Update package source (floats to origin/HEAD, or pins @version)",
-	Args:  cobra.ExactArgs(1),
+	Short: "Update package source tree (does not change vmake.lock)",
+	Long: `Update the materialized source tree for a package. With @version, materialize
+that version; without it, float to origin/HEAD. This command does not read or
+rewrite .vmake/vmake.lock; run 'vmake lock update' to re-resolve versions.`,
+	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		pkgRef := args[0]
 		version := ""
@@ -326,6 +359,7 @@ var pkgUpdateCmd = &cobra.Command{
 		if version != "" {
 			if pkgUpdateDryRun {
 				fmt.Printf("Would materialize %s@%s into .vmake_deps\n", pkgRef, version)
+				printPkgUpdateLockHint()
 				return
 			}
 			ref := pkg.GetRef(version)
@@ -340,16 +374,23 @@ var pkgUpdateCmd = &cobra.Command{
 			})
 			fatalErr(err)
 			fmt.Printf("Updated source for '%s' -> %s@%s (%s)\n", pkgRef, pkgRef, version, repo.ShortCommit(res.Commit))
+			printPkgUpdateLockHint()
 			return
 		}
 
 		if pkgUpdateDryRun {
 			fmt.Printf("Would fetch latest for '%s' (floating working tree)\n", pkgRef)
+			printPkgUpdateLockHint()
 			return
 		}
 		fatalErr(sourceMgr.UpdateSource(pkg))
 		fmt.Printf("Updated source for package '%s'\n", pkgRef)
+		printPkgUpdateLockHint()
 	},
+}
+
+func printPkgUpdateLockHint() {
+	fmt.Println("vmake.lock is unchanged; run 'vmake lock update' to re-resolve project versions.")
 }
 
 func init() {

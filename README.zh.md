@@ -344,9 +344,9 @@ Native 仓库按解析到的 package commit 在构建时信任（`vmake build --
 vmake pkg list
 vmake pkg search <keyword>
 vmake pkg clean <repo/name> [-a]              # -a 同时删除包的工作树
-vmake pkg update <repo/name>[@version] [--dry-run]
+vmake pkg update <repo/name>[@version] [--dry-run]  # 只更新源码；不修改 vmake.lock
 vmake pkg link <repo/name> <path>              # 使用本地 git 工作树作为包源码
-vmake pkg unlink <repo/name>                   # 恢复 lock 中的远程源码
+vmake pkg unlink <repo/name>                   # 下一次构建使用 lock 中的源码
 ```
 
 ### 扩展管理

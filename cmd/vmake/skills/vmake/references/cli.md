@@ -45,7 +45,7 @@ extension plugin commands appear here too. For plugin details, run
     `vmake pkg search [pattern] [--details --for-project --json --repo <value>]` - Search registered repositories for packages
     `vmake pkg show <repo/pkg>[@version] [--for-project --json]` - Show package metadata
     `vmake pkg unlink <repo/name>` - Remove a local source link
-    `vmake pkg update <repo/name>[@version] [--dry-run]` - Update package source (floats to origin/HEAD, or pins @version)
+    `vmake pkg update <repo/name>[@version] [--dry-run]` - Update package source tree (does not change vmake.lock)
   `vmake query [--set <value> -s]` - Show dependency tree
     `vmake query config <pkg>` - Show effective option values and generated defines
     `vmake query targets` - List build targets without building

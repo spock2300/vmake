@@ -52,8 +52,8 @@ vmake inspect                          # Dry-run JSON project model (may initial
 vmake inspect --no-targets             # Package/dependency JSON without running OnBuild
 vmake pkg search tls --details         # Search names, descriptions and licenses in trusted repositories
 vmake pkg show official/zlib           # Package metadata, versions and AddRequires snippet
-vmake pkg link <repo>/<pkg> ../<pkg>   # Compile from a local git tree; no tag/version bump needed
-vmake pkg unlink <repo>/<pkg>          # Next build restores the locked remote source
+vmake pkg link <repo>/<pkg> ../<pkg>   # Compile from a local git tree; removes stale .vmake_deps src
+vmake pkg unlink <repo>/<pkg>          # Next build uses vmake.lock; run lock update for newer versions
 vmake query                            # Dependency tree
 vmake query targets                    # Targets without building (local + remote)
 vmake check-symbols                    # Verify ELF symbols against policy
@@ -65,7 +65,8 @@ vmake toolchain list                   # List toolchains
 vmake toolchain show <name>            # Toolchain details and resolved tool paths
 ```
 
-- **Local Source Development**: `vmake pkg link <repo>/<pkg> <path>` (run in the consuming project) builds that package from the local git worktree. Check `vmake pkg list` first: if the package appears under `Source links:`, edit it and rerun `vmake build`. No commit, tag, version bump, `vmake lock update`, or `vmake pkg update` is required to test; uncommitted edits are compiled. A commit is optional and may rotate the linked package's build directory; a tag is not needed. Tag and update the lock only for a release after `vmake pkg unlink`.
+- **Local Source Development**: `vmake pkg link <repo>/<pkg> <path>` (run in the consuming project) builds that package from the local git worktree and removes any existing `.vmake_deps/.../src` and `state.json` for it; per-build outputs and own-Git `third_party/` sources stay. Check `vmake pkg list` (the package appears under `Source links:`) and optionally `vmake inspect --no-targets` (`linked: true`, version `0.0.0-local`). A native link supplies build.go, sub-packages, OnConfig options and the flags/defines they produce; a registry link keeps the wrapper build.go and replaces only upstream source. No commit, tag, version bump, `vmake lock update`, or `vmake pkg update` is required to test; uncommitted edits are compiled. A commit is optional and may rotate the linked package's build directory; a tag is not needed.
+- **Switching Back from a Link**: `vmake pkg unlink <repo>/<pkg>` removes the link; the next build uses the existing `vmake.lock` entry when present (otherwise it resolves and writes one), and untagged linked HEADs are not selected. `vmake pkg update @<version>` only refreshes the materialized source and does not rewrite the lock; run `vmake lock update` only if you want to re-resolve newer versions before building (config pins and version constraints still apply).
 - **Build & Test Reports**: `build`/`rebuild` write `build/vmake-build.json` and `test` writes `build/vmake-test.json` (schemaVersion 2: status, duration, concise error, parsed compiler/linker diagnostics, target timings, test results, SHA-256 installed artifacts). `clean`/`distclean`/`pkg clean` remove both. Full schema: [references/build-result.md](references/build-result.md).
 - **Package Discovery**: `pkg search` scans repository directories and matches repository/package names by default; `--details` reads `build.go` only for trusted repositories and also matches description, license and latest version. `--for-project` adds cached/locked/installed status; installed status uses the default `<project>/install/manifest.json`, so custom `--prefix` installs are not detected. `pkg show` prints metadata and an `AddRequires` snippet. Native repositories only expose packages already cached in the current project; native sub-packages are not listed separately and are read through their parent package. Neither command writes an index or cache.
 - **Inspection & Dry-Run Discipline**: `inspect`, `query`, and `query targets` evaluate `OnBuild` in dry-run mode with read-only `scriptfs` (`p.DryRun() == true`); `inspect --no-targets` skips `OnBuild` entirely, and `query config <pkg>` only reads configuration and does not evaluate `OnBuild`. `check-symbols` declares targets in dry-run but does not set `scriptfs` read-only. Prefer declarative `p.WriteBuildFile`, `p.GenerateFile`, `p.Generate`, and `p.BuildPath` in `OnBuild` (they defer writes to scheduler execution and emit `$builddir/...` when `BuildDir()` is empty); guard any procedural `os.WriteFile` on `!p.DryRun()`. Full schema: [references/inspect.md](references/inspect.md).
@@ -198,7 +199,7 @@ The high-level phases are listed below. During script loading, each package runs
 | **Local SetGit Package** | Subdirectory `build.go` + `p.SetGit(...)` | Cloned into `.vmake_deps/local/<pkg>/src`, symlinked at `<pkgDir>/src`; `SrcDir()` points to `src`; `AddPatches`/`SetPatches` can patch this tree |
 | **Registry Package** | `~/.vmake/repos/<repo>/packages/<first-char>/<pkg>/build.go` | Referenced as `"repo/pkg"`; `p.SetGit(...)` downloads upstream source into `.vmake_deps/` |
 | **Native VMake Repo** | Git repo with root `build.go` | Registered via `vmake repo add --native`; trusted per package commit on first build; sub-packages lazily inherit parent version. `repo trust`/`repo update` do not apply to native repos |
-| **Local Source Link** | `.vmake/local.json` | `vmake pkg link <repo/name> <git-tree>`; native links load build.go/sub-packages locally, registry links replace only the upstream source. The linked package itself ignores versions, tags and constraints, and no tag or version bump is needed while linked; edit and rebuild directly. Outputs stay under `.vmake_deps`; `pkg unlink` makes the next build use the locked source |
+| **Local Source Link** | `.vmake/local.json` | `vmake pkg link <repo/name> <git-tree>`; native links load build.go, sub-packages, options and their flags/defines locally, registry links replace only the upstream source. Linking removes the materialized `src`/`state.json` and keeps outputs plus own-Git third-party sources. The linked package itself ignores versions, tags and constraints, and no tag or version bump is needed while linked; edit and rebuild directly. Outputs stay under `.vmake_deps`; `pkg unlink` makes the next build use the lock |
 
 ## Target API at a Glance
 
@@ -281,7 +282,7 @@ Local subdirectories containing `build.go` use their directory basename (`"spi"`
 
 ### Version Constraints
 
-`AddRequires` supports one operator plus one version (`>=`, `>`, `<=`, `<`, `=`, `~`; for example `"official/zlib >= 1.2.11"` or `"official/cjson ~1.7"`). `>=`/`>` are major-locked when the major is > 0; `<=`/`<` are not. Prereleases match only when the constraint pins a prerelease of the same `major.minor.patch`. A bare version is `>=`, and exact selection requires `=`; `AddVersion` keys are candidate versions, not exact matches. An empty constraint is `>=0.0.0`; if the package declares `AddVersion` keys, the highest stable match is selected, while the default branch is used only when no versions are declared and is not written to `.vmake/vmake.lock`. `^` ranges are not supported. Explicitly selected versions/commits are pinned in the lock. The linked package itself bypasses version selection and reports `0.0.0-local`; native sub-packages that declare their own `SetGit` source still select that upstream source. Never tag or bump a linked package to make a consumer build see local changes.
+`AddRequires` supports one operator plus one version (`>=`, `>`, `<=`, `<`, `=`, `~`; for example `"official/zlib >= 1.2.11"` or `"official/cjson ~1.7"`). `>=`/`>` are major-locked when the major is > 0; `<=`/`<` are not. Prereleases match only when the constraint pins a prerelease of the same `major.minor.patch`. A bare version is `>=`, and exact selection requires `=`; `AddVersion` keys are candidate versions, not exact matches. An empty constraint is `>=0.0.0`; if the package declares `AddVersion` keys, the highest stable match is selected, while the default branch is used only when no versions are declared and is not written to `.vmake/vmake.lock`. `^` ranges are not supported. Explicitly selected versions/commits are pinned in the lock. The linked package itself bypasses version selection and reports `0.0.0-local`; native sub-packages that declare their own `SetGit` source still select that upstream source. Never tag or bump a linked package to make a consumer build see local changes. While linked, the preserved lock entry is ignored and `vmake lock update` keeps it; after `pkg unlink`, run `vmake lock update` to re-resolve versions (config pins and constraints still apply).
 
 ### OnRequire Two-Phase Execution
 
@@ -455,11 +456,11 @@ vmake repo trust <name>              # Trust a registry repository at its curren
 vmake ext add <name> <url>           # Add an extension repository (plugins/toolchains)
 vmake ext trust <name>               # Trust an extension at its current commit
 vmake ext provision <name>           # Install toolchains declared for the current host
-vmake pkg link <repo/name> <path>   # Build from a local worktree; no tag/version bump needed
-vmake pkg unlink <repo/name>        # Next build restores the locked source
+vmake pkg link <repo/name> <path>   # Build from a local worktree; removes stale .vmake_deps src
+vmake pkg unlink <repo/name>        # Next build uses vmake.lock; run lock update for newer versions
 ```
 
-Native repositories are trusted per package commit on first build; `repo trust` and `repo update` reject them. `pkg link` records the path in `.vmake/local.json` (machine-local, not lock/config); `pkg update` rejects linked packages. While a package is linked, edit its worktree and rerun `vmake build`; no tag, version bump, or lock update is needed.
+Native repositories are trusted per package commit on first build; `repo trust` and `repo update` reject them. `pkg link` records the path in `.vmake/local.json` (machine-local, not lock/config) and removes the package's materialized `src`/`state.json`; `pkg update` rejects linked packages. While a package is linked, edit its worktree and rerun `vmake build`; no tag, version bump, or lock update is needed. `lock update` keeps linked packages' existing lock entries unchanged.
 
 ## Common Mistakes
 
@@ -470,6 +471,7 @@ Native repositories are trusted per package commit on first build; `repo trust` 
 5. **Procedural file writes in `OnBuild` without dry-run guards**: `vmake inspect` (without `--no-targets`) and `query` run `OnBuild` with read-only `scriptfs`. Use `p.WriteBuildFile`/`p.GenerateFile` or guard with `if !p.DryRun()`.
 6. **Passing relative or backslash paths to `p.Make("-C", ...)`**: Always use `filepath.ToSlash(p.SrcDir())`.
 7. **Tagging or version-bumping a `pkg link`ed package**: A linked package is built from the worktree as-is, including uncommitted edits. Edit files and rerun `vmake build`; no commit, tag, version bump, `vmake lock update`, or `vmake pkg update` is required to test. A commit is optional and moves the linked HEAD/build key; a tag points at HEAD and excludes uncommitted edits. Tag and update the lock only for a release after `vmake pkg unlink`.
+8. **Expecting `vmake pkg update @<version>` to change the build**: `pkg update` only refreshes the materialized source tree; `.vmake/vmake.lock` still selects the old version. Run `vmake lock update` to re-resolve project versions (config pins and constraints still apply).
 
 ## Writing New Build Scripts — Checklist
 

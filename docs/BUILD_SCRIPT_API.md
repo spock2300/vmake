@@ -712,7 +712,7 @@ native 远程包 checkout 内嵌套的 `build.go` 会被识别为**子包**：�
 
 ScriptFS 包装的相对路径在 `pkg.SourceDir()` 已设置时以它为基准，否则以 **build.go 所在目录** 为基准（加载/发现阶段，以及本地 SetGit 源码尚未绑定到 `SourceDir` 时）。`OnBuild`/`OnInstall`/`OnClean` 回调执行期间，进程 cwd 是绑定后的 `SourceDir()`；`OnConfig` 在源码绑定前运行，cwd 是加载的 build.go 目录（registry 包为 wrapper checkout，native/local 通常与 `SourceDir()` 相同）。`TargetVoid` 的 `SetBuildFunc` 由调度器稍后调用，不经过这层 cwd 切换。远程包绑定到项目内该包唯一的工作树（`.vmake_deps/`），所有配置共享；补丁与配置会就地修改这棵树，不会写回上游。
 
-`vmake pkg link <repo/name> <path>` 是例外：`SourceDir()` 指向本地 git 工作树，`BuildDir()`/`InstallDir()` 仍在 `.vmake_deps/<repo>/<owner>/out/...`；link 包不读取版本/tag/lock 约束。native link 的子包来自同一棵树；带自身 `SetGit` 的 native 子包把第三方源码放在 `.vmake_deps/<owner>/third_party/<member>`，`SrcDir()` 指向那里。`vmake pkg unlink` 恢复物化树。
+`vmake pkg link <repo/name> <path>` 是例外：`SourceDir()` 指向本地 git 工作树，`BuildDir()`/`InstallDir()` 仍在 `.vmake_deps/<repo>/<owner>/out/...`；link 包不读取版本/tag/lock 约束。native link 的子包来自同一棵树；带自身 `SetGit` 的 native 子包把第三方源码放在 `.vmake_deps/<owner>/third_party/<member>`，`SrcDir()` 指向那里。link 会删除该包已有的物化 `src` 和 `state.json`，保留输出与 own-Git 第三方源码；`vmake pkg unlink` 后下一次构建重新物化。
 
 ```go
 data, err := os.ReadFile("configs/app.conf")
