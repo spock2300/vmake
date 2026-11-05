@@ -31,7 +31,10 @@ var pkgCmd = &cobra.Command{
 var pkgListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List packages materialized in this project",
-	Long:  `List package working trees under .vmake_deps, including trees no longer needed by the active configuration.`,
+	Long: `List package working trees under .vmake_deps, including trees no longer needed by the active configuration.
+
+Active source links are printed first. A linked package builds directly from its
+worktree, so no tag or version bump is required.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		printSourceLinks(cmd.OutOrStdout())
 		listPackageSources(cmd.OutOrStdout(), getDepsDir())
@@ -173,7 +176,11 @@ var pkgLinkCmd = &cobra.Command{
 A linked native package loads build.go and sub-packages from the linked tree.
 A linked registry package keeps its registry wrapper build.go and replaces only
 the upstream source tree. Links are machine-local, stored in
-.vmake/local.json, and ignore package versions, tags and version constraints.`,
+.vmake/local.json, and ignore package versions, tags and version constraints.
+
+While linked, edit the worktree and rerun the build; uncommitted edits are
+compiled, and no commit, tag, version bump or lock update is required. The
+existing lock entry is kept unchanged until you unlink.`,
 	Args: cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		commandStorageLocks()
@@ -189,13 +196,14 @@ the upstream source tree. Links are machine-local, stored in
 		local.Links[name] = abs
 		fatalErr(config.SaveLocal(projectDir, local))
 		fmt.Printf("Linked %s -> %s\n", name, abs)
-		fmt.Println("Build outputs remain under .vmake_deps; the package version and constraints are ignored while linked.")
+		fmt.Println("Build outputs remain under .vmake_deps; edit the linked tree and rerun the build directly (uncommitted edits are compiled; no tag or version bump is needed).")
 	},
 }
 
 var pkgUnlinkCmd = &cobra.Command{
 	Use:   "unlink <repo/name>",
 	Short: "Remove a local source link",
+	Long:  `Remove the local source link. The next build restores the locked remote source.`,
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		commandStorageLocks()
