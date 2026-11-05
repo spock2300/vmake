@@ -99,6 +99,7 @@ func (s *declareStage) executeOnePackage(name string, node *resolver.PackageNode
 	platform := platformFromValues(buildCtx.CfgVals)
 	buildCtx.SetBuildSubGraphFunc(func(pkgName string) error { return s.buildSubGraph(name, pkgName) })
 	buildCtx.SetDepOutputFunc(func(depRef string) string { return s.computeDepOutput(name, depRef) })
+	buildCtx.SetDepSrcDirFunc(func(depRef string) string { return s.computeDepSrcDir(name, depRef) })
 	flags := api.DefaultBuildFlags(bound.toolchain.Name, platform.OSOrHost())
 	buildCtx.SetDefaultFlags(flags.CFlags, flags.CxxFlags, flags.LdFlags)
 	pkg := node.Pkg
@@ -228,6 +229,27 @@ func (s *declareStage) buildSubGraph(currentPkg, rootPkg string) (err error) {
 
 func (s *declareStage) resolveDepTargets() map[string]map[string]*api.Target {
 	return s.allTargets
+}
+
+// computeDepSrcDir resolves a dependency reference to that package's upstream
+// source root. Target names are accepted for symmetry with computeDepOutput but
+// do not affect the result.
+func (s *declareStage) computeDepSrcDir(currentPkg, depRef string) string {
+	pkgName, _, ok := strings.Cut(depRef, ":")
+	if !ok {
+		pkgName = depRef
+	}
+	pkgName = s.resolveSubPackageName(currentPkg, pkgName, func(candidate string) bool {
+		return s.conf.needed[candidate] && s.source.pkgDirs[candidate] != nil
+	})
+	if pkgName == "" || s.source.pkgDirs[pkgName] == nil {
+		return ""
+	}
+	node := s.rc.ctx.DepGraph.Packages[pkgName]
+	if node == nil || node.Pkg == nil {
+		return ""
+	}
+	return node.Pkg.SrcDir()
 }
 
 func (s *declareStage) computeDepOutput(currentPkg, depRef string) string {

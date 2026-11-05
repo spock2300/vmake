@@ -274,6 +274,7 @@ func DeclareTargets(ctx *RuntimeContext, name string, dirs *api.PkgDirs, tc *too
 	buildCtx.SetDryRun(true)
 	buildCtx.SetBuildSubGraphFunc(func(string) error { return nil })
 	buildCtx.SetDepOutputFunc(func(string) string { return "" })
+	buildCtx.SetDepSrcDirFunc(func(string) string { return "" })
 
 	if node != nil && node.Pkg != nil {
 		pkg := node.Pkg

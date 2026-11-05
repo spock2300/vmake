@@ -62,6 +62,33 @@ func TestComputeDepOutputResolvesSubPackageShortName(t *testing.T) {
 	}
 }
 
+func TestComputeDepSrcDirResolvesPackageSource(t *testing.T) {
+	s := sessionFixture(t)
+	owner, tool, lib := "native/root", "native/root/tool", "native/root/lib"
+	toolDir := filepath.Join(t.TempDir(), "tool")
+	libDir := filepath.Join(t.TempDir(), "lib")
+	addSubPackageNode(s, owner, "", filepath.Join(t.TempDir(), "root"))
+	addSubPackageNode(s, tool, owner, toolDir)
+	libNode := addSubPackageNode(s, lib, owner, libDir)
+	for _, name := range []string{owner, tool, lib} {
+		s.needed[name] = true
+	}
+	s.pkgDirs[tool] = &api.PkgDirs{SourceDir: toolDir, BuildDir: t.TempDir()}
+	s.pkgDirs[lib] = &api.PkgDirs{SourceDir: libDir, BuildDir: t.TempDir()}
+	upstream := filepath.Join(t.TempDir(), "third_party", "lib", "src")
+	libNode.Pkg.SetSrcDir(upstream)
+
+	if got := s.computeDepSrcDir(tool, "lib"); got != upstream {
+		t.Fatalf("short package ref = %q, want %q", got, upstream)
+	}
+	if got := s.computeDepSrcDir(tool, lib+":utils"); got != upstream {
+		t.Fatalf("full package ref = %q, want %q", got, upstream)
+	}
+	if got := s.computeDepSrcDir(tool, "missing"); got != "" {
+		t.Fatalf("missing package = %q, want empty", got)
+	}
+}
+
 func TestComputeDepOutputPrefersNearestSubPackage(t *testing.T) {
 	s := sessionFixture(t)
 	s.allTargets = make(map[string]map[string]*api.Target)

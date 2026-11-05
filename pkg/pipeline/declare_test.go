@@ -28,11 +28,13 @@ func TestDeclarePackageTargetsDryRunWiring(t *testing.T) {
 	var sawBuildDir string
 	var sawCC string
 	var depOutput = "sentinel"
+	var depSrcDir = "sentinel"
 	node.Pkg.OnBuild(func(ctx *api.BuildContext) {
 		sawDryRun = node.Pkg.DryRun()
 		sawBuildDir = node.Pkg.BuildDir()
 		sawCC = node.Pkg.CC()
 		depOutput = ctx.DepOutput("other:tgt")
+		depSrcDir = ctx.DepSrcDir("other")
 		ctx.BuildSubGraph("other")
 		ctx.Exec("vmake-definitely-missing-cmd-xyz")
 		ctx.Target("app").SetKind(api.TargetBinary)
@@ -61,6 +63,9 @@ func TestDeclarePackageTargetsDryRunWiring(t *testing.T) {
 	}
 	if depOutput != "" {
 		t.Errorf("DepOutput in dry-run = %q, want empty stub", depOutput)
+	}
+	if depSrcDir != "" {
+		t.Errorf("DepSrcDir in dry-run = %q, want empty stub", depSrcDir)
 	}
 	if node.Pkg.DryRun() {
 		t.Error("package dry-run must be restored to false after declarations")

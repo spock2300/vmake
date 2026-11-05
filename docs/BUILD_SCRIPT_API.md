@@ -440,6 +440,7 @@ func (ctx *BuildContext) SetInstallFilter(filter InstallFilterFunc) *InstallItem
 func (ctx *BuildContext) BuildSubGraph(pkgName string)
 func (ctx *BuildContext) DepOutput(depRef string) string
 func (ctx *BuildContext) DepBuildDir(depRef string) string
+func (ctx *BuildContext) DepSrcDir(depRef string) string
 
 // 配置生成与导入
 func (ctx *BuildContext) GenerateConfigHeader() *BuildContext
@@ -463,7 +464,7 @@ func (ctx *BuildContext) PackageName() string
 func (ctx *BuildContext) Exec(name string, args ...string)
 ```
 
-`DepOutput`/`DepBuildDir` 接受 `pkg` 或 `pkg:target`（含子包短名），但不支持 `AddDeps` 的“同包 target 简写”和 `pkg:*` 通配：`DepOutput("utils")` 会把 `utils` 当作包名，`DepOutput("lib:*")` 返回空串。省略 target 时，只有该包恰好一个 target 才返回产物路径，否则返回空串。dry-run 下 `DepOutput` 返回空串（`DepBuildDir` 因此为空串），`BuildSubGraph` 直接返回。
+`DepOutput`/`DepBuildDir`/`DepSrcDir` 接受 `pkg` 或 `pkg:target`（含子包短名），但不支持 `AddDeps` 的“同包 target 简写”和 `pkg:*` 通配：`DepOutput("utils")` 会把 `utils` 当作包名，`DepOutput("lib:*")` 返回空串。省略 target 时，只有该包恰好一个 target 才返回产物路径，否则返回空串。`DepSrcDir` 返回该依赖包的 `SrcDir()`（SetGit 上游 checkout 根；link 模式下为消费工程的 `third_party/<member>/src`），target 部分仅用于引用解析。dry-run 下三者均返回空串，`BuildSubGraph` 直接返回。
 
 ## InstallContext
 
@@ -702,7 +703,7 @@ native 远程包 checkout 内嵌套的 `build.go` 会被识别为**子包**：�
 
 - **发现**：父包（native 仓库）checkout 后自动扫描其中嵌套的 build.go（`Resolver.scanSubPackages`）；registry 包装包**没有**子包概念（DD-1，设计决策）。子包懒加载（DD-3）：只有被依赖时其 build.go 才被解释。
 - **引用子包**：外部包推荐用全名，如 `ctx.AddRequires("subtest/mother/sub_a")`、`AddDeps("subtest/mother/sub_a:*", "subtest/mother:base")`；同一 `AddRequires` 列表中父包必须写在子包之前。末段在全部已发现子包中唯一时也可用短名（见上文"子包短名"）。
-- **子包互引短名**：子包内部引用兄弟子包时 pkg 部分可写短名（沿祖先链解析，见上文"子包短名"）。除 `AddDeps`/`AddRequires` 外，`DepOutput`/`DepBuildDir`、`BuildSubGraph` 和 `ImportConfig` 也接受同类短名。`api.SubPackageCandidates(currentPkg, depName, subParents)` 返回由近到远的候选全名：子包会追加同一 native 根下的唯一同末段子包，非子包调用方返回全局唯一同末段子包；`api.ResolveSubPackageName` 按 `exists` 回调选择第一个存在的候选，非子包调用方优先保留已存在的裸包名。
+- **子包互引短名**：子包内部引用兄弟子包时 pkg 部分可写短名（沿祖先链解析，见上文"子包短名"）。除 `AddDeps`/`AddRequires` 外，`DepOutput`/`DepBuildDir`/`DepSrcDir`、`BuildSubGraph` 和 `ImportConfig` 也接受同类短名。`api.SubPackageCandidates(currentPkg, depName, subParents)` 返回由近到远的候选全名：子包会追加同一 native 根下的唯一同末段子包，非子包调用方返回全局唯一同末段子包；`api.ResolveSubPackageName` 按 `exists` 回调选择第一个存在的候选，非子包调用方优先保留已存在的裸包名。
 - **父包必须 needed**：若子包进入构建集合，其 native owner 也必须在 needed 集合中；否则 `RunBuild` 过滤依赖时（`Configure` 之后）报错提示补充父包依赖。这样父包补丁、版本锁定和源码树身份才能保持一致。
 - **限制**：父包不能在自己的 `OnRequire` 中引用其子包（发现晚于依赖解析，见 DESIGN_DECISIONS.md 已知限制 5）；本地项目无子包概念（嵌套 build.go 是顶层裸名包，已知限制 1）。
 

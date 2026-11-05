@@ -209,6 +209,7 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 - `BuildSubGraph(pkgName)` — 在 OnBuild 声明期间同步构建包及其依赖，与主图共享会话状态；不能从正在执行的 target 回调重入
 - `DepOutput(depRef)` — 获取依赖目标输出文件路径
 - `DepBuildDir(depRef)` — 获取依赖构建目录
+- `DepSrcDir(depRef)` — 获取依赖包的上游源码根（`SrcDir()`，含 link 的 `third_party`）
 - `GenerateConfigHeader()` — 启用配置头文件自动生成
 - `GenerateConfigDefines()` — 启用配置宏定义自动生成
 - `ImportConfig(names...)` — 注册可导入的包名
@@ -420,7 +421,7 @@ VMake 使用 `AddDeps` 统一管理所有依赖类型：
 | 通配依赖 | `AddDeps("lib:*")` 或 `AddDeps("official/zlib:*")` | `:*` 结尾，展开为该包所有 target + 传递依赖 |
 | 第三方包 | `AddDeps("official/zlib")` | 含 `/`，展开为该包所有 target + 传递依赖 |
 
-`pkg:target` 中不含 `/` 的 pkg 部分会先按当前（子）包路径相对解析（`ResolveSubPackageName`），兄弟子包之间可用短名；当前包不是子包时，按末段在所有已发现子包中做唯一匹配（多个同末段子包则不解析）。`DepOutput`/`DepBuildDir`、`BuildSubGraph` 和 `ImportConfig` 使用同一短名规则。子包进入 needed 集合时，其 native owner 必须同时 needed（否则构建准备阶段报错），以保证父包补丁与版本锁定生效。`AddDeps` 会静默跳过空字符串；其余声明时即 fatal（`ParseDepRef`）的引用包括：含空白、多个 `:`、`:` 前后段为空，以及不含 `:` 时包路径首/尾 `/` 或 `//`；含 `:` 的引用不会在声明时校验包路径形态，畸形路径会在图构建时表现为 `dependency not found` 或 `package not found in build graph`。target/包不存在或循环依赖在构建图时报错。
+`pkg:target` 中不含 `/` 的 pkg 部分会先按当前（子）包路径相对解析（`ResolveSubPackageName`），兄弟子包之间可用短名；当前包不是子包时，按末段在所有已发现子包中做唯一匹配（多个同末段子包则不解析）。`DepOutput`/`DepBuildDir`/`DepSrcDir`、`BuildSubGraph` 和 `ImportConfig` 使用同一短名规则。子包进入 needed 集合时，其 native owner 必须同时 needed（否则构建准备阶段报错），以保证父包补丁与版本锁定生效。`AddDeps` 会静默跳过空字符串；其余声明时即 fatal（`ParseDepRef`）的引用包括：含空白、多个 `:`、`:` 前后段为空，以及不含 `:` 时包路径首/尾 `/` 或 `//`；含 `:` 的引用不会在声明时校验包路径形态，畸形路径会在图构建时表现为 `dependency not found` 或 `package not found in build graph`。target/包不存在或循环依赖在构建图时报错。
 
 ### 解析流程
 

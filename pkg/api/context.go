@@ -207,6 +207,7 @@ type BuildContext struct {
 	importConfigs     []string
 	buildSubGraphFunc func(pkgName string) error
 	depOutputFunc     func(depRef string) string
+	depSrcDirFunc     func(depRef string) string
 	dryRun            bool
 }
 
@@ -256,6 +257,11 @@ func (ctx *BuildContext) SetDepOutputFunc(fn func(string) string) *BuildContext 
 	return ctx
 }
 
+func (ctx *BuildContext) SetDepSrcDirFunc(fn func(string) string) *BuildContext {
+	ctx.depSrcDirFunc = fn
+	return ctx
+}
+
 func (ctx *BuildContext) BuildSubGraph(pkgName string) {
 	if ctx.dryRun {
 		return
@@ -284,6 +290,21 @@ func (ctx *BuildContext) DepBuildDir(depRef string) string {
 		return ""
 	}
 	return filepath.Dir(out)
+}
+
+// DepSrcDir returns the dependency package's upstream source directory
+// (Package.SrcDir). It is the same root used by the dependency's own build
+// script, so generators can read its checked-out sources without assuming a
+// shared directory layout. The reference accepts "<package>" or
+// "<package>:<target>"; a missing package or target yields an empty string.
+func (ctx *BuildContext) DepSrcDir(depRef string) string {
+	if ctx.dryRun {
+		return ""
+	}
+	if ctx.depSrcDirFunc == nil {
+		fatalScript(ctx.PackageName(), "DepSrcDir", "not available")
+	}
+	return ctx.depSrcDirFunc(depRef)
 }
 
 func (ctx *BuildContext) GenerateConfigHeader() *BuildContext {
