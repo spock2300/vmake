@@ -43,7 +43,7 @@ func init() {
 	RootCmd.AddCommand(newInspectCmd())
 	RootCmd.AddCommand(newCheckSymbolsCmd())
 	RootCmd.AddCommand(newInitEditorCmd())
-	RootCmd.AddCommand(newLockCmd())
+	RootCmd.AddCommand(newDepsCmd())
 }
 
 type RuntimeContext = pipeline.RuntimeContext
@@ -92,7 +92,7 @@ It uses Go buildscripts for configuration and provides a TUI for option manageme
 func requiresExclusiveStorage(cmd *cobra.Command) bool {
 	for current := cmd; current != nil; current = current.Parent() {
 		switch current.Name() {
-		case "clean", "distclean", "rebuild", "update":
+		case "clean", "distclean", "rebuild", "update", "sync", "pin", "unpin", "fetch":
 			return true
 		}
 	}
@@ -162,6 +162,7 @@ type resolveInputs struct {
 	configDigest string
 	lock         *lockfile.Lock
 	cfg          *config.ConfigFile
+	pins         map[string]string
 	sourceLinks  map[string]string
 	paths        *pipeline.Paths
 }
@@ -175,6 +176,7 @@ func (in resolveInputs) params(mode, toolchain string) pipeline.ResolveParams {
 		Lock:              in.lock,
 		LockPath:          in.paths.LockPath,
 		IgnoreLock:        in.ignoreLock,
+		Pins:              in.pins,
 		SourceLinks:       in.sourceLinks,
 		TrustChecker:      remoteScriptTrustChecker,
 		Paths:             in.paths,
@@ -186,6 +188,10 @@ func (in resolveInputs) params(mode, toolchain string) pipeline.ResolveParams {
 func loadResolveInputs(ignoreLock bool, softGitignore bool) (resolveInputs, error) {
 	workDir := findProjectDir()
 	cfg, configPath, digest, err := config.LoadProjectSnapshot(findProjectDir())
+	if err != nil {
+		return resolveInputs{}, err
+	}
+	pins, err := config.LoadProjectPins(workDir)
 	if err != nil {
 		return resolveInputs{}, err
 	}
@@ -212,6 +218,7 @@ func loadResolveInputs(ignoreLock bool, softGitignore bool) (resolveInputs, erro
 		configDigest: digest,
 		lock:         lock,
 		cfg:          cfg,
+		pins:         pins,
 		sourceLinks:  local.Links,
 		paths:        paths,
 	}, nil
@@ -241,6 +248,13 @@ func resolveToConfigContext(execution context.Context, ignoreLock bool) (*Runtim
 	}
 	ctx := newRuntimeContext(inputs, locks)
 	ctx.Context = execution
+	if lockedFlag {
+		ctx.LockPolicy.StrictWrapper = true
+		ctx.LockPolicy.Locked = true
+	}
+	if offlineFlag {
+		ctx.LockPolicy.Offline = true
+	}
 	if len(overrides) > 0 {
 		ctx.OnOptionsCollected = func(c *RuntimeContext) error {
 			return applyEphemeralOverrides(c, overrides)

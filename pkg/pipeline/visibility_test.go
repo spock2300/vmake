@@ -103,8 +103,8 @@ func TestPackageVisibilityCacheIsolation(t *testing.T) {
 			s.needed = map[string]bool{"app": true, "dependency": true}
 			s.globalFlagsHash = "global-flags"
 			s.remote = &remoteVersionState{
-				entries: map[string]*config.EntryConfig{"dependency": {Version: "1.0"}},
-				commits: map[string]string{"dependency": "commit"},
+				versions: map[string]string{"dependency": "1.0"},
+				commits:  map[string]string{"dependency": "commit"},
 			}
 			before, err := s.buildPkgKeyExtra()
 			if err != nil {

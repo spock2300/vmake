@@ -143,9 +143,7 @@ func (s *sourceStage) keyMaterialFor(name string) (keyMaterial, error) {
 			version = s.sourceVersions[owner]
 		}
 		if version == "" {
-			if entry := s.remote.entries[owner]; entry != nil {
-				version = entry.Version
-			}
+			version = s.remote.versions[owner]
 		}
 	}
 	if version == "" && node.Native != nil {
@@ -172,19 +170,28 @@ func (s *sourceStage) makeLayout(name string, tools *build.ResolvedTools) (build
 	if node == nil || node.Source == nil {
 		return build.PackageLayout{}, fmt.Errorf("package %s has no source", name)
 	}
-	material, err := s.keyMaterialFor(name)
-	if err != nil {
-		return build.PackageLayout{}, err
+	ready := tools != nil && s.rc.cfg != nil
+	ccKey := ""
+	mode := ""
+	var material keyMaterial
+	if ready {
+		var err error
+		material, err = s.keyMaterialFor(name)
+		if err != nil {
+			return build.PackageLayout{}, err
+		}
+		ccKey = tools.CCKey()
+		mode = s.rc.cfg.Mode
 	}
 	if node.IsLocal() {
 		return layoutFor(layoutInput{
 			Local:     true,
 			SourceDir: node.Source.Dir,
-			CCKey:     tools.CCKey(),
-			Mode:      s.rc.cfg.Mode,
+			CCKey:     ccKey,
+			Mode:      mode,
 			Options:   s.conf.allPkgOptions[name],
 			Material:  material,
-			Ready:     true,
+			Ready:     ready,
 		})
 	}
 	owner := remoteOwnerName(s.rc.ctx, name)
@@ -207,11 +214,11 @@ func (s *sourceStage) makeLayout(name string, tools *build.ResolvedTools) (build
 		PkgRoot:        tree,
 		SourceOverride: sourceOverride,
 		Member:         member,
-		CCKey:          tools.CCKey(),
-		Mode:           s.rc.cfg.Mode,
+		CCKey:          ccKey,
+		Mode:           mode,
 		Options:        s.conf.allPkgOptions[name],
 		Material:       material,
-		Ready:          true,
+		Ready:          ready,
 	})
 }
 

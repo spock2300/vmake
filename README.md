@@ -316,8 +316,8 @@ See the [Extension Plugin Guide](docs/EXTENSION_PLUGIN.md) for the complete plug
 ### Build Commands
 
 ```bash
-vmake build [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k] [--explain]
-vmake test [--toolchain <name>] [--mode <mode>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k] [--explain]
+vmake build [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k] [--explain] [--locked] [--offline]
+vmake test [--toolchain <name>] [--mode <mode>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k] [--explain] [--locked] [--offline]
 vmake clean [--all]
 vmake distclean [--purge-sources]
 vmake rebuild [build/install flags]
@@ -325,7 +325,7 @@ vmake rebuild [build/install flags]
 
 Running `vmake` with no subcommand builds with default options. `vmake build` and
 `vmake rebuild` accept all build/install flags; `vmake test` accepts the build/test
-subset (`--toolchain`, `--mode`, `--manifest`, `--tests`, `--jobs`, `--keep-going`).
+subset (`--toolchain`, `--mode`, `--manifest`, `--tests`, `--jobs`, `--keep-going`, `--locked`, `--offline`).
 
 ### Configuration Commands
 
@@ -358,16 +358,22 @@ vmake repo untrust <name>                  # Revoke trust
 
 Native repos are trusted per resolved package commit at build time (`vmake build --yes`); `repo trust` rejects them.
 
-### Package Management
+### Package & Dependency Management
 
 ```bash
 vmake pkg list
 vmake pkg search <keyword>                     # names only; --details also matches description/license
 vmake pkg show <repo/name>[@version]           # metadata, versions, dependencies, AddRequires snippet
 vmake pkg clean <repo/name> [-a]              # -a also removes the package working tree
-vmake pkg update <repo/name>[@version] [--dry-run]  # source only; vmake.lock is unchanged
 vmake pkg link <repo/name> <path>              # build from a local git working tree
 vmake pkg unlink <repo/name>                   # next build uses the locked source
+
+vmake deps status [--json]                                         # audit lockfile, pins, constraints, and working trees
+vmake deps sync [--json]                                           # reconcile working trees and vmake.lock without floating locked packages
+vmake deps update [pkg[@ver|commit]...] [--dry-run] [--refresh-repos] [--json]  # upgrade dependencies within constraints and update vmake.lock
+vmake deps pin <pkg>@<ver|commit> [--dry-run] [--json]             # pin package in .vmake/project.json and update vmake.lock
+vmake deps unpin <pkg> [--json]                                    # remove pin from .vmake/project.json (keeps current lock entry)
+vmake deps fetch [pkg...] [--all] [--offline] [--json]             # materialize locked dependency sources and populate shared git cache
 ```
 
 ### Extension Management
@@ -391,7 +397,6 @@ vmake inspect [--no-targets] [--set [pkg/]option=value]  # Print the machine-rea
 vmake check-symbols [--strict]                        # Audit ELF dynamic symbols of local default targets
 vmake cache list                                      # List cached upstream repositories
 vmake cache remove <url>                              # Remove one cache namespace
-vmake lock update|show                                # Re-resolve / show pinned versions (.vmake/vmake.lock)
 vmake init-editor [--local <path>] [--remove]         # Generate editor support (go.mod) for build.go
 vmake doctor [--toolchain <name>]                      # Diagnose platform prerequisites and build.go patterns
 vmake toolchain list                                   # List available toolchains

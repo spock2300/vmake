@@ -285,7 +285,7 @@ of these files.
 | `name` | string | Package name |
 | `kind` | string | `local`, `native`, or `registry` |
 | `repo` | string? | Repository name for remote packages |
-| `version` | string? | Selected version (config pin, lockfile, or native selection); linked packages report `0.0.0-local` |
+| `version` | string? | Selected version (project pin, lockfile, or native selection); linked packages report `0.0.0-local` |
 | `commit` | string? | Resolved commit for remote packages; linked packages report the link tree HEAD |
 | `url` | string? | Resolved source URL for remote packages |
 | `path` | string? | Local packages: source directory relative to `root` (slash-separated) |
@@ -379,7 +379,7 @@ touch the network, create `<package>/src` links, or write `.vmake_deps`.
 Resolution of native remote packages still follows its normal rules and may
 materialize that package's tree, except packages linked through
 `.vmake/local.json`: those are read from the linked working tree without
-materialization and ignore lock/config versions and version constraints.
+materialization and ignore lock/project pins and version constraints.
 `inspect` does not read or create `install/`
 and does not resolve the install prefix: `installPrefix` and `installManifest`
 are the expected default paths, while `installs` and `installPath` come from

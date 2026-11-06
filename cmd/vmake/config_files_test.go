@@ -207,7 +207,7 @@ func TestConfigConsumersRejectMissingSelectionFromSubdirectory(t *testing.T) {
 	writeExtensionFile(t, filepath.Join(project, "build.go"), "package main")
 	writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","entries":{}}`)
 	writeExtensionFile(t, filepath.Join(project, ".vmake", "project.json"), `{"config":"missing-selected.json"}`)
-	for _, args := range [][]string{{"build"}, {"test"}, {"query"}, {"config", "--set", "mode=debug"}, {"clean"}, {"distclean"}, {"lock", "update"}, {"doctor"}} {
+	for _, args := range [][]string{{"build"}, {"test"}, {"query"}, {"config", "--set", "mode=debug"}, {"clean"}, {"distclean"}, {"deps", "update"}, {"doctor"}} {
 		out, err := extensionCommand(t, state, child, args...)
 		if err == nil || !strings.Contains(out, filepath.Join(project, ".vmake", "missing-selected.json")) {
 			t.Errorf("%v did not reject project selection: %v\n%s", args, err, out)
@@ -238,7 +238,7 @@ func TestConfigDoctorUsesProjectSelection(t *testing.T) {
 func TestConfigTUISavesOnlySelectedFile(t *testing.T) {
 	project := t.TempDir()
 	original := `{"version":"1","entries":{}}`
-	selected := `{"version":"1","entries":{"firmware":{"version":"v1","kconfig":"CONFIG_KEEP=y\n","selected_preset":"board"}}}`
+	selected := `{"version":"1","entries":{"firmware":{"kconfig":"CONFIG_KEEP=y\n","selected_preset":"board"}}}`
 	writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), original)
 	writeExtensionFile(t, filepath.Join(project, ".vmake", "board.json"), selected)
 	writeExtensionFile(t, filepath.Join(project, ".vmake", "project.json"), `{"config":"board.json"}`)
@@ -260,7 +260,7 @@ func TestConfigTUISavesOnlySelectedFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry := saved.Entries["firmware"]
-	if saved.Description != "Board A 调试配置" || saved.Global.Mode != "debug" || entry.Options["enabled"] != true || entry.Version != "v1" || entry.KConfig != "CONFIG_KEEP=y\n" || entry.SelectedPreset != "board" {
+	if saved.Description != "Board A 调试配置" || saved.Global.Mode != "debug" || entry.Options["enabled"] != true || entry.KConfig != "CONFIG_KEEP=y\n" || entry.SelectedPreset != "board" {
 		data, _ := json.Marshal(saved)
 		t.Fatalf("TUI saved unexpected config: %s", data)
 	}

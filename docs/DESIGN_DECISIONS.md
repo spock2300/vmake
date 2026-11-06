@@ -92,7 +92,7 @@
 
 - 状态: accepted
 - 背景: native/registry 包通常从 lock 物化到 `.vmake_deps`，开发 SDK 时无法直接编译本地工作树。
-- 决策: `vmake pkg link <repo/name> <path>` 把包源码指向本地 git 工作树，记录在机器本地的 `.vmake/local.json`。link 时删除该包已有的 `.vmake_deps/<repo>/<owner>/src` 和 `state.json`，保留 `out/` 与 own-Git 子包的 `third_party/`；link 期间该包不参与版本解析：不读 config/lock 版本、不查 tag、不校验 `AddRequires` 约束；版本标识为 `0.0.0-local`，commit 为 link 树 HEAD。native link 的 build.go 与子包来自 link 树；registry link 仍使用 registry wrapper build.go，只替换上游源码。构建/安装输出仍写在 `.vmake_deps/<repo>/<owner>/out/...`。lock 旧条目保留但不读取/不重写，`lock update` 跳过 link 包；unlink 后下一次构建重新物化。
+- 决策: `vmake pkg link <repo/name> <path>` 把包源码指向本地 git 工作树，记录在机器本地的 `.vmake/local.json`。link 时删除该包已有的 `.vmake_deps/<repo>/<owner>/src` 和 `state.json`，保留 `out/` 与 own-Git 子包的 `third_party/`；link 期间该包不参与版本解析：不读 pin/lock 版本、不查 tag、不校验 `AddRequires` 约束；版本标识为 `0.0.0-local`，commit 为 link 树 HEAD。native link 的 build.go 与子包来自 link 树；registry link 仍使用 registry wrapper build.go，只替换上游源码。构建/安装输出仍写在 `.vmake_deps/<repo>/<owner>/out/...`。lock 旧条目保留但不读取/不重写，`deps` 写操作跳过 link 包；unlink 后下一次构建重新物化。
 - 限制: link 包声明的 patch 被拒绝（native own-Git 子包的第三方 patch 除外）；link 包声明的 KConfig 被拒绝；link 树的 build hooks 仍会执行并可能修改该工作树；`.vmake_deps` 到 tree root 的 symlink 被拒绝，避免清理/checkout 跟随到用户仓库。
 - 理由: 开发期需要“改源码立即构建”，而发布期需要可复现的 tag+lock；把两者分开，避免为了调试制造临时 tag 或直接改动物化树。
 

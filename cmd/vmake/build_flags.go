@@ -11,4 +11,6 @@ var (
 	jobsFlag        int
 	keepGoingFlag   bool
 	explainFlag     bool
+	lockedFlag      bool
+	offlineFlag     bool
 )

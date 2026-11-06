@@ -19,7 +19,8 @@ const (
 )
 
 type projectFile struct {
-	Config string `json:"config"`
+	Config string            `json:"config,omitempty"`
+	Pins   map[string]string `json:"pins,omitempty"`
 }
 
 type ProjectConfigInfo struct {
@@ -73,14 +74,85 @@ func projectSelection(projectDir string) (projectFile, bool, error) {
 	if err != nil {
 		return projectFile{}, false, fmt.Errorf("read project selection %s: %w", path, err)
 	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return projectFile{}, false, fmt.Errorf("parse project selection %s: %w", path, err)
+	}
+	if raw == nil {
+		return projectFile{}, false, fmt.Errorf("project selection %s: invalid null content", path)
+	}
 	var project projectFile
 	if err := json.Unmarshal(data, &project); err != nil {
 		return projectFile{}, false, fmt.Errorf("parse project selection %s: %w", path, err)
 	}
-	if err := ValidateFilename(project.Config); err != nil {
-		return projectFile{}, false, fmt.Errorf("project selection %s: %w", path, err)
+	for pkg, ver := range project.Pins {
+		if strings.TrimSpace(pkg) == "" || strings.TrimSpace(ver) == "" {
+			return projectFile{}, false, fmt.Errorf("project selection %s: invalid empty pin for %q", path, pkg)
+		}
 	}
-	return project, true, nil
+	_, hasConfig := raw["config"]
+	if hasConfig {
+		if err := ValidateFilename(project.Config); err != nil {
+			return projectFile{}, false, fmt.Errorf("project selection %s: %w", path, err)
+		}
+		return project, true, nil
+	}
+	if len(project.Pins) == 0 {
+		if err := ValidateFilename(project.Config); err != nil {
+			return projectFile{}, false, fmt.Errorf("project selection %s: %w", path, err)
+		}
+	}
+	project.Config = DefaultFilename
+	return project, false, nil
+}
+
+func LoadProjectPins(projectDir string) (map[string]string, error) {
+	project, _, err := projectSelection(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	if len(project.Pins) == 0 {
+		return make(map[string]string), nil
+	}
+	out := make(map[string]string, len(project.Pins))
+	for k, v := range project.Pins {
+		out[k] = v
+	}
+	return out, nil
+}
+
+func SaveProjectPins(projectDir string, pins map[string]string) error {
+	project, explicit, err := projectSelection(projectDir)
+	if err != nil {
+		return err
+	}
+	cleaned := make(map[string]string, len(pins))
+	for k, v := range pins {
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		if k == "" || v == "" {
+			return fmt.Errorf("invalid empty pin for %q", k)
+		}
+		cleaned[k] = v
+	}
+	path := filepath.Join(projectDir, ".vmake", ProjectFilename)
+	if len(cleaned) == 0 && !explicit {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove project selection %s: %w", path, err)
+		}
+		return nil
+	}
+	out := projectFile{}
+	if explicit {
+		out.Config = project.Config
+	}
+	if len(cleaned) > 0 {
+		out.Pins = cleaned
+	}
+	if err := jsonio.Save(path, out); err != nil {
+		return fmt.Errorf("save project selection %s: %w", path, err)
+	}
+	return nil
 }
 
 func readProjectConfig(path string, allowMissing bool) (*ConfigFile, []byte, error) {
@@ -120,7 +192,8 @@ func UseProjectConfig(projectDir, name string) (string, error) {
 	if err := ValidateFilename(name); err != nil {
 		return "", err
 	}
-	if _, _, err := projectSelection(projectDir); err != nil {
+	project, _, err := projectSelection(projectDir)
+	if err != nil {
 		return "", err
 	}
 	dir := filepath.Join(projectDir, ".vmake")
@@ -131,7 +204,8 @@ func UseProjectConfig(projectDir, name string) (string, error) {
 		name = match
 	}
 	path := filepath.Join(dir, ProjectFilename)
-	if err := jsonio.Save(path, projectFile{Config: name}); err != nil {
+	project.Config = name
+	if err := jsonio.Save(path, project); err != nil {
 		return "", fmt.Errorf("save project selection %s: %w", path, err)
 	}
 	return name, nil

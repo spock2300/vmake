@@ -117,7 +117,9 @@ func addTrustedRepo(name string) error {
 	if err := store.Trust(trustKindRepo, name, "", commit); err != nil {
 		return err
 	}
-	fmt.Printf("Trusted repository '%s' at %s (recorded in %s)\n", name, repoPkg.ShortCommit(commit), trustStorePath())
+	if !vlog.IsQuiet() {
+		fmt.Printf("Trusted repository '%s' at %s (recorded in %s)\n", name, repoPkg.ShortCommit(commit), trustStorePath())
+	}
 	return nil
 }
 

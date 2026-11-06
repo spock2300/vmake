@@ -11,7 +11,7 @@ import (
 
 func TestNonbuildCommandsDoNotInstallToolchains(t *testing.T) {
 	for _, state := range []string{"installed", "missing tools", "unregistered"} {
-		for _, command := range [][]string{{"clean"}, {"clean", "--all"}, {"lock", "update"}} {
+		for _, command := range [][]string{{"clean"}, {"clean", "--all"}, {"deps", "update"}} {
 			t.Run(state+"/"+strings.Join(command, " "), func(t *testing.T) {
 				dir := t.TempDir()
 				stateDir := filepath.Join(dir, "state")
@@ -53,7 +53,8 @@ func Main(p *api.Package) { p.SetRoot(true) }
 				writeExtensionFile(t, artifact, "artifact")
 				out, err := extensionCommand(t, stateDir, project, command...)
 				cleanAll := len(command) == 2 && command[1] == "--all"
-				if state == "installed" || cleanAll {
+				isDeps := command[0] == "deps"
+				if state == "installed" || cleanAll || isDeps {
 					if err != nil {
 						t.Errorf("%v: %v\n%s", command, err, out)
 					}
@@ -66,7 +67,7 @@ func Main(p *api.Package) { p.SetRoot(true) }
 							t.Errorf("clean removed a directory outside the current configuration: %v\n%s", err, out)
 						}
 					} else if !strings.Contains(out, "Filtering dependencies") {
-						t.Errorf("lock update did not complete:\n%s", out)
+						t.Errorf("deps update did not complete:\n%s", out)
 					}
 				} else {
 					if err == nil || !strings.Contains(out, "vmake build --toolchain pending") {

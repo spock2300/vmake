@@ -35,7 +35,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	return withBuildReport(func(report *buildReport) error {
 		execution := &RuntimeContext{}
 		return withResolvedProject(execution, func(ctx *RuntimeContext) error {
-			_, err := runReportedBuild(ctx, report, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag})
+			_, err := runReportedBuild(ctx, report, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag, Locked: lockedFlag, Offline: offlineFlag})
 			return err
 		})
 	})
@@ -43,6 +43,9 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 func withResolvedProject(execution *RuntimeContext, run func(*RuntimeContext) error) error {
 	return withBuildContext(execution, func() error {
+		if lockedFlag && manifestFlag != "" {
+			return fmt.Errorf("--locked cannot be combined with --manifest")
+		}
 		var mf *installManifest
 		if manifestFlag != "" {
 			var err error
@@ -134,28 +137,32 @@ func importManifestIntoLock(ctx context.Context, mf *installManifest) error {
 				vlog.Info("  skip manifest entry %s (linked)", entry.Name)
 				continue
 			}
-			if entry.Ref == "" {
+			ref := entry.Ref
+			if ref == "" {
+				ref = entry.Version
+			}
+			if ref == "" {
 				vlog.Info("  skip manifest entry %s (empty ref)", entry.Name)
 				continue
 			}
 			version := entry.Version
-			if version == "" {
-				version = entry.Ref
+			if version == "" && !repo.IsCommitID(ref) {
+				version = ref
 			}
 			if entry.URL == "" {
-				return fmt.Errorf("manifest entry %s has no URL; cannot resolve commit for %s", entry.Name, entry.Ref)
+				return fmt.Errorf("manifest entry %s has no URL; cannot resolve commit for %s", entry.Name, ref)
 			}
-			vlog.Info("  %s: resolving %s from %s", entry.Name, entry.Ref, entry.URL)
-			commit, err := repo.ResolveRemoteCommitContext(ctx, entry.URL, entry.Ref)
+			vlog.Info("  %s: resolving %s from %s", entry.Name, ref, entry.URL)
+			commit, err := repo.ResolveRemoteCommitContext(ctx, entry.URL, ref)
 			if err != nil {
-				return fmt.Errorf("resolve commit for %s@%s: %w", entry.Name, entry.Ref, err)
+				return fmt.Errorf("resolve commit for %s@%s: %w", entry.Name, ref, err)
 			}
 			l.Set(entry.Name, &lockfile.LockedPkg{
 				Version: version,
 				Commit:  commit,
 				Source:  entry.Source,
 			})
-			vlog.Info("  pin %s -> %s (%s, commit %s)", entry.Name, version, entry.Source, repo.ShortCommit(commit))
+			vlog.Info("  pin %s -> %s (%s, commit %s)", entry.Name, lockfile.DisplayVersion(version, commit), entry.Source, repo.ShortCommit(commit))
 			changed = true
 		}
 	}

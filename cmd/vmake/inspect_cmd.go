@@ -645,8 +645,8 @@ func inspectSourceReference(ctx *RuntimeContext, name string, node *resolver.Pac
 	if version != "" {
 		return url, version
 	}
-	if ctx.Config != nil {
-		version = config.GetEntry(ctx.Config, name).Version
+	if ctx.Pins != nil {
+		version = ctx.Pins[name]
 	}
 	if version == "" && ctx.Lock != nil {
 		if locked, ok := ctx.Lock.Get(name); ok {
@@ -693,8 +693,8 @@ func inspectRemoteMetadata(ctx *RuntimeContext, name string, node *resolver.Pack
 		pkg.Version = resolver.LocalLinkVersion
 	}
 	if node.Source.Link == nil {
-		if entry := config.GetEntry(ctx.Config, name); entry.Version != "" {
-			pkg.Version = entry.Version
+		if ctx.Pins != nil && ctx.Pins[name] != "" {
+			pkg.Version = ctx.Pins[name]
 		}
 		if ctx.Lock != nil {
 			if locked, ok := ctx.Lock.Get(name); ok {

@@ -25,6 +25,13 @@ func Require(ctx *RuntimeContext) (err error) {
 		return err
 	}
 	ctx.SourceLinks = links
+	if ctx.Pins == nil && ctx.Paths != nil && ctx.Paths.ProjectDir != "" {
+		pins, err := config.LoadProjectPins(ctx.Paths.ProjectDir)
+		if err != nil {
+			return err
+		}
+		ctx.Pins = pins
+	}
 
 	packages, err := buildscript.Scan(ctx.WorkDir)
 	if err != nil {
@@ -46,8 +53,9 @@ func Require(ctx *RuntimeContext) (err error) {
 	r.SetContext(ctx.Context)
 	r.SetSourceManager(repo.NewSourceManager(ctx.Paths.DepsDir, ctx.Paths.CacheDir).WithSession(ctx.Locks).WithContext(ctx.Context))
 	r.SetLockfile(ctx.Lock, ctx.IgnoreLock)
+	r.SetLockPolicy(ctx.effectiveLockPolicy())
 	r.SetTrustChecker(ctx.TrustChecker)
-	r.SetConfigPins(collectConfigPins(ctx.Config))
+	r.SetConfigPins(ctx.Pins)
 	r.SetSourceLinks(ctx.SourceLinks)
 	ctx.Resolver = r
 
@@ -78,16 +86,6 @@ func Configure(ctx *RuntimeContext) (err error) {
 		return err
 	}
 	return runConfigPhase(ctx)
-}
-
-func collectConfigPins(cfg *config.ConfigFile) map[string]string {
-	pins := make(map[string]string)
-	for name, entry := range cfg.Entries {
-		if entry != nil && entry.Version != "" {
-			pins[name] = entry.Version
-		}
-	}
-	return pins
 }
 
 func bindGlobalFlagCallbacks(cfgCtx *api.ConfigContext, buf *packageGlobalFlags) {

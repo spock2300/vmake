@@ -23,7 +23,6 @@ type GlobalConfig struct {
 }
 
 type EntryConfig struct {
-	Version        string         `json:"version,omitempty"`
 	Options        map[string]any `json:"options,omitempty"`
 	KConfig        string         `json:"kconfig,omitempty"`
 	SelectedPreset string         `json:"selected_preset,omitempty"`

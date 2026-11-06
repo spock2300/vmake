@@ -39,7 +39,7 @@ func sessionFixture(t *testing.T) *buildPhaseState {
 	s.cfg = makeBuildConfig(ctx, tc, tc.Name)
 	s.needed = map[string]bool{"app": true, "dep": true}
 	s.computeDirsAndOptions()
-	s.remote = &remoteVersionState{entries: map[string]*config.EntryConfig{}, commits: map[string]string{}, trees: map[string]string{}}
+	s.remote = &remoteVersionState{versions: map[string]string{}, commits: map[string]string{}, trees: map[string]string{}}
 	return s
 }
 

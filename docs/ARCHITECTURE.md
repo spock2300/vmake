@@ -21,8 +21,9 @@ Phase 3: OnBuild (pipeline.RunBuild)
     │   Resolver.FilterDeps 替换节点.Deps → UpdateOrder → BFS 收集 needed）
     │   → 收集包选项与全局 flags
     ├── newSourceStage — 解析各包 SourceDir
-    ├── prepareAllPackages — 下载远程包源码、克隆本地 Git 源码、设置子包目录
+    ├── prepareAllPackages — 下载远程包源码、克隆本地 Git 源码、设置子包目录（--locked 时先校验 vmake.lock）
     ├── applyPatchesToNeeded — 在各包唯一的工作树上就地应用（git apply --3way，已应用自动跳过）
+    ├── verifyLocked / writeLockfile — 校验或写入 .vmake/vmake.lock
     ├── restoreKConfigs — 恢复 KConfig 配置
     ├── executeOnBuild — 执行 OnBuild 回调 → 生成 Target
     ├── NewBuildGraph — 构建依赖图 → 拓扑排序
@@ -86,6 +87,8 @@ vmake clean
 | `--jobs` | `-j` | target 内部编译及 Make/CMake helper 的并行上限；所有 target 串行（0 = NumCPU，负数报错） |
 | `--keep-going` | `-k` | 某个 target 失败后继续构建其余独立 target |
 | `--explain` | | 输出每个编译/链接动作被重建的原因 |
+| `--locked` | | 强制所有版本化或 SetGit 包命中 `vmake.lock` 且满足约束/pin，且禁止改写 `vmake.lock` |
+| `--offline` | | 禁止任何网络访问，仅从本地工作树或共享 git 对象缓存物化 |
 
 ### Install Type 过滤
 
@@ -191,9 +194,9 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 1. **filterAndCollectNeeded** — 用已解析的包级配置（以及本包声明为全局选项的配置值）重新执行 OnRequire（`Resolver.FilterDeps` 替换节点.Deps）→ `UpdateOrder` → 从根包 BFS 遍历，过滤需要构建的包：恰好一个本地包声明 `SetRoot(true)` 时以它为根，多个报错；未声明时按启发式选择本地根（存在带 `OnRequire` 的本地包时，被其他本地包依赖且无 `OnRequire` 的本地包不作为根），并提示建议声明 `SetRoot(true)`
 2. **resolveActiveChip / resolveBuildConfig** — 从 needed 中的芯片包（本地或远程）选择 `ChipProfile`，得到首选工具链和平台默认值；显式 `--toolchain`/`global.toolchain` 仍优先。随后解析构建模式（debug/release/size）和工具链
 3. **prepareConfig / newSourceStage** — 收集 needed、包选项与全局 flags，并解析各包 SourceDir（BuildDir/InstallDir 随后在 prepareAllPackages 的 `setPackageLayout` 中按构建键生成）
-4. **prepareAllPackages** — 下载远程包源码、克隆本地 Git 源码、设置子包目录
-5. **writeLockfile** — 写入 `.vmake/vmake.lock`（锁定解析到的版本与 commit）
-6. **applyPatchesToNeeded** — 在各包唯一的工作树上就地应用补丁（已应用则跳过；同一 commit 已锁定时，补丁集变化先 `checkout --force --detach` + `clean -fdx` 恢复）
+4. **prepareAllPackages** — 下载远程包源码、克隆本地 Git 源码、设置子包目录（`--locked` 模式下先通过 `verifyLockBeforePrepare` 校验锁文件）
+5. **applyPatchesToNeeded** — 在各包唯一的工作树上就地应用补丁（已应用则跳过；同一 commit 已锁定时，补丁集变化先 `checkout --force --detach` + `clean -fdx` 恢复）
+6. **verifyLocked / writeLockfile** — 补丁验证通过后，校验（`--locked`）或写入 `.vmake/vmake.lock`（锁定解析到的版本与 commit）
 7. **restoreKConfigs** — 从 config.json 恢复 KConfig 配置（详见 KConfig 章节）
 8. **executeOnBuild** — 执行所有 `OnBuild` 回调，生成 `map[string]*Target`
 9. **build.NewBuildGraph** — 构建依赖图，`BuildGraph` 展开包级依赖为 target 级传递闭包
@@ -294,7 +297,7 @@ AddRequires          1. 检查 registry 仓库（未找到）      LoadBuildScri
 | **版本来源** | `AddVersion()` 手动映射 | git tag（自动过滤有效 semver） |
 | **版本选择时机** | Phase 3（源码下载时按约束 `SelectVersionMulti`；Phase 1 仅校验约束） | Phase 1（build.go 加载前 — 需先物化浅工作树） |
 | **添加命令** | `vmake repo add name url` | `vmake repo add --native name "https://..../{name}.git"` |
-| **更新** | `vmake repo update name` | `vmake pkg update repo/name` |
+| **更新** | `vmake repo update name` + `vmake deps update` | `vmake deps update repo/name` |
 | **搜索** | 列出仓库中所有包 | 仅显示已缓存的包 |
 
 ### Native 源码解析流程 (`findNativeSource`)
@@ -303,7 +306,7 @@ AddRequires          1. 检查 registry 仓库（未找到）      LoadBuildScri
 2. 解析 URL 模板（`{name}` → 包名，`repo.ResolveNativeURL`）
 3. 有锁定 commit 且工作树已检出该 commit 时直接 `EnsureSource`（ResolveOnly）复用，并用 `DescribeTagContext` 重建版本映射；否则 `repo.ListRemoteTagsContext` 用一次 `git ls-remote` 列出上游 tag（不下载对象）
 4. `repo.FilterValidVersions` 过滤有效 semver
-5. `selectNativeVersion`（config.json pin → vmake.lock → `repo.SelectNativeVersion` 按约束选择最高匹配版本）
+5. `selectNativeVersion`（`.vmake/project.json` `pins` → `vmake.lock` → `repo.SelectNativeVersion` 按约束选择最高匹配版本）
 6. `sourceMgr.EnsureSource`（ResolveOnly）把选中 ref/commit 的浅工作树物化到项目内唯一工作树 `.vmake_deps/<repo>/<owner>/src[/<member>]`：对象优先来自共享内容寻址缓存，缓存未命中或 ref 解析仍访问上游；Phase 3 在同一棵树上恢复并应用补丁
 7. 在工作树 `src` 根查找 `build.go`
 8. 创建 `PackageNode`，注册到 `graph.Packages`（`WithNative` 写入 `Native *NativePackageInfo`）
@@ -363,15 +366,23 @@ vmake (RootCmd)
 │   ├── add            # 添加 registry 仓库
 │   ├── remove     # 删除仓库
 │   ├── list       # 列出仓库（显示 registry/native 类型）
-│   ├── update     # 更新仓库（native 仓库提示使用 pkg update）
+│   ├── update     # 更新仓库（native 仓库提示使用 deps update）
 │   ├── trust      # 信任仓库的 build.go 脚本
 │   └── untrust    # 撤销仓库信任
-├── pkg            # 包管理
+├── pkg            # 包查询、清理与本地源码替换
 │   ├── list       # 列出项目内的包源码
 │   ├── search     # 搜索仓库包（默认匹配名称；--details 读取 build.go 并匹配描述/许可证）
 │   ├── show       # 显示包元数据、版本、依赖和 AddRequires 片段
 │   ├── clean      # 清理包构建产物（`-a` 一并删除工作树）
-│   └── update     # 更新包源码
+│   ├── link       # 将包源码指向本地 git 工作树
+│   └── unlink     # 取消本地源码 link
+├── deps           # 依赖版本、锁文件（.vmake/vmake.lock）、项目级 pin 与源码同步管理
+│   ├── status     # 检查全工程依赖锁、pin、约束及本地工作树对齐状态（支持 --json）
+│   ├── sync       # 补齐缺失 lock 条目并使本地工作树对齐 vmake.lock
+│   ├── update     # 在约束内升级全部或指定依赖（支持 pkg@ver|commit、--dry-run、--refresh-repos）并重写 vmake.lock
+│   ├── pin        # 在 .vmake/project.json 中锁定包版本或 40 位 commit SHA
+│   ├── unpin      # 取消项目级版本 pin
+│   └── fetch      # 按 vmake.lock 物化依赖源码并填充共享 git 对象缓存（支持 --all、--offline）
 ├── ext            # 扩展仓库管理
 │   ├── add        # 添加扩展仓库
 │   ├── remove     # 删除扩展仓库
@@ -384,9 +395,6 @@ vmake (RootCmd)
 ├── cache          # 共享 git 对象缓存
 │   ├── list       # 列出缓存的 upstream 仓库
 │   └── remove     # 删除单个缓存命名空间
-├── lock           # vmake.lock 管理（.vmake/vmake.lock）
-│   ├── update     # 重新解析并更新锁定版本
-│   └── show       # 显示锁定版本
 ├── query          # 依赖树查询
 │   ├── targets    # 列出 needed 包（含远程）的构建 target（不构建）
 │   └── config     # 显示某包生效的选项值与生成的宏定义
@@ -538,7 +546,6 @@ GlobalConfig
 └── Options   map[string]any // 全局选项回退值
 
 EntryConfig
-├── Version        string                  // 第三方包的版本（可选）
 ├── Options        map[string]any          // 配置选项
 ├── KConfig        string                  // KConfig 配置内容
 └── SelectedPreset string                  // 选中的 KConfig preset 名称

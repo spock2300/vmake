@@ -33,8 +33,9 @@ toolchain override does not.
 
 `vmake toolchain list` marks `host` as the built-in fallback. The active
 project/chip default may differ; `vmake config` shows it. `vmake build`
-auto-installs a registered manifest toolchain on first use, while `inspect`,
-`clean`, and `lock update` fail with a hint instead of installing. `vmake
+auto-installs a registered manifest toolchain on first use, while `inspect` and
+`clean` fail with a hint instead of installing (`deps` commands do not require an
+installed toolchain). `vmake
 doctor` does not execute `OnConfig`, so pass `--toolchain <name>` to diagnose a
 chip-profile default.
 

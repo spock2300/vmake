@@ -108,25 +108,26 @@ func patchHashForNode(name string, node *resolver.PackageNode) (string, error) {
 	return h, nil
 }
 
-func remoteVersionKey(ctx *RuntimeContext, name string, node *resolver.PackageNode, entry *config.EntryConfig) (string, string, bool) {
+func remoteVersionKey(ctx *RuntimeContext, name string, node *resolver.PackageNode) (string, string, bool) {
 	if node != nil && node.Source != nil && node.Source.Link != nil {
 		return resolver.LocalLinkVersion, node.Source.Link.Commit, true
 	}
-	if entry != nil && entry.Version != "" {
+	if target, _, hasPin := ctx.packagePin(name); hasPin {
+		if repo.IsCommitID(target) {
+			return "", target, true
+		}
 		commit := ""
-		if ctx.Lock != nil && !ctx.IgnoreLock {
-			if locked, ok := ctx.Lock.Get(name); ok && locked.Version == entry.Version {
-				commit = locked.Commit
-			}
+		if locked, ok := ctx.lockedEntry(name); ok && locked.Version == target {
+			commit = locked.Commit
+		} else if node != nil && node.Native != nil && node.Native.Selected == target {
+			commit = node.Native.Commit
 		}
-		return entry.Version, commit, true
+		return target, commit, true
 	}
-	if ctx.Lock != nil && !ctx.IgnoreLock {
-		if locked, ok := ctx.Lock.Get(name); ok && locked.Version != "" {
-			return locked.Version, locked.Commit, true
-		}
+	if locked, ok := ctx.lockedEntry(name); ok {
+		return locked.Version, locked.Commit, true
 	}
-	if node.Native != nil && node.Native.Selected != "" {
+	if node != nil && node.Native != nil && (node.Native.Selected != "" || node.Native.Commit != "") {
 		return node.Native.Selected, node.Native.Commit, true
 	}
 	return "", "", false

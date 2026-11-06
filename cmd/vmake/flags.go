@@ -21,6 +21,8 @@ func addCommonBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().IntVarP(&jobsFlag, "jobs", "j", 0, "compile jobs within the active target and Make/CMake ceiling; targets run serially (0 = number of CPUs, 1 = sequential)")
 	cmd.Flags().BoolVarP(&keepGoingFlag, "keep-going", "k", false, "keep building independent targets after a failure")
 	cmd.Flags().BoolVar(&explainFlag, "explain", false, "print why each compile/link action was rebuilt")
+	cmd.Flags().BoolVar(&lockedFlag, "locked", false, "require .vmake/vmake.lock to be up-to-date and forbid lockfile changes")
+	cmd.Flags().BoolVar(&offlineFlag, "offline", false, "materialize dependency sources strictly from ~/.vmake/cache/git/ without network access")
 	cmd.RegisterFlagCompletionFunc("toolchain", completeToolchain)
 	cmd.RegisterFlagCompletionFunc("mode", completeMode)
 }

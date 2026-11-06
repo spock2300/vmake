@@ -11,7 +11,6 @@ import (
 	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
-	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
@@ -43,7 +42,6 @@ func (r *BuildResult) ExternalStages() int {
 }
 
 type remoteVersionState struct {
-	entries  map[string]*config.EntryConfig
 	commits  map[string]string
 	trees    map[string]string
 	versions map[string]string
@@ -61,6 +59,8 @@ type BuildOptions struct {
 	Jobs         int
 	KeepGoing    bool
 	Explain      bool
+	Locked       bool
+	Offline      bool
 }
 
 func newRunContext(ctx *RuntimeContext, opts BuildOptions, cfg *buildConfig) *runContext {
@@ -125,34 +125,6 @@ func RunBuild(ctx *RuntimeContext, opts BuildOptions) (_ *BuildResult, err error
 	return executePlan(rc, conf, src, decl, plan)
 }
 
-func UpdateLock(ctx *RuntimeContext) (err error) {
-	defer scriptcall.Recover(&err)
-	needed, err := filterAndCollectNeeded(ctx)
-	if err != nil {
-		return err
-	}
-	if err := resolveActiveChip(ctx, needed); err != nil {
-		return err
-	}
-	cfg, err := resolveExistingBuildConfig(ctx)
-	if err != nil {
-		return err
-	}
-	rc := newRunContext(ctx, BuildOptions{}, cfg)
-
-	conf, err := prepareConfig(rc, needed)
-	if err != nil {
-		return err
-	}
-
-	src, err := prepareSourcesForLock(rc, conf)
-	if err != nil {
-		return err
-	}
-
-	return src.writeLockfile()
-}
-
 func newSourceStage(rc *runContext, cfg *configStage) *sourceStage {
 	return &sourceStage{
 		rc:             rc,
@@ -163,6 +135,8 @@ func newSourceStage(rc *runContext, cfg *configStage) *sourceStage {
 		sourceSeeds:    make(map[string]string),
 		sourceCommits:  make(map[string]string),
 		sourceVersions: make(map[string]string),
+		offline:        rc.opts.Offline || rc.ctx.LockPolicy.Offline,
+		locked:         rc.opts.Locked || rc.ctx.LockPolicy.Locked,
 	}
 }
 
@@ -200,10 +174,14 @@ func prepareSources(rc *runContext, cfg *configStage) (*sourceStage, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := src.writeLockfile(); err != nil {
+	if err := src.applyPatchesToNeeded(); err != nil {
 		return nil, err
 	}
-	if err := src.applyPatchesToNeeded(); err != nil {
+	if rc.opts.Locked {
+		if err := src.verifyLocked(); err != nil {
+			return nil, err
+		}
+	} else if err := src.writeLockfile(); err != nil {
 		return nil, err
 	}
 	if err := src.restoreKConfigs(); err != nil {

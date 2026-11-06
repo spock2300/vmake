@@ -8,7 +8,6 @@ import (
 
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/pkg/api"
-	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/repo"
 	"github.com/spock2300/vmake/pkg/resolver"
 )
@@ -51,6 +50,10 @@ func (s *sourceStage) preparePackageWorkspace(name string) error {
 		if treeSrc == "" {
 			return fmt.Errorf("package %s has no materialized source tree", name)
 		}
+		if s.dryRun {
+			node.Pkg.SetSrcDir(treeSrc)
+			return nil
+		}
 		link := filepath.Join(node.Source.Dir, "src")
 		if err := fs.EnsureSymlink(link, treeSrc); err != nil {
 			return err
@@ -60,6 +63,10 @@ func (s *sourceStage) preparePackageWorkspace(name string) error {
 	}
 	if err := rebindRemoteSrcDir(s.rc.ctx, node, dirs, oldSourceDir, name); err != nil {
 		return err
+	}
+	if s.dryRun && s.sourceSeeds[name] != "" {
+		node.Pkg.SetSrcDir(s.sourceSeeds[name])
+		return nil
 	}
 	if thirdPartyRoot != "" {
 		node.Pkg.SetSrcDir(filepath.Join(thirdPartyRoot, "src"))
@@ -117,6 +124,7 @@ func (s *sourceStage) selectPackageSourceRoot(name, sourceRoot string) error {
 	} else {
 		root = sourceRoot
 	}
+	refresh := s.rc.ctx.isLockIgnoredFor(name)
 	req := repo.SourceRequest{
 		Key:        key,
 		Root:       root,
@@ -126,20 +134,19 @@ func (s *sourceStage) selectPackageSourceRoot(name, sourceRoot string) error {
 		Commit:     expected,
 		PatchHash:  s.patchHashes[name],
 		Submodules: node.Pkg.Submodules(),
-		Refresh:    s.rc.ctx.IgnoreLock,
+		Refresh:    refresh,
 	}
-	if version == "" {
+	if version == "" && expected == "" {
 		req.Ref = ""
-		req.Refresh = s.rc.ctx.IgnoreLock || repo.IsLocalGitURL(req.URLs[0])
+		req.Refresh = refresh || repo.IsLocalGitURL(req.URLs[0])
 	}
-	manager := repo.NewSourceManager(s.rc.ctx.Paths.DepsDir, s.rc.ctx.Paths.CacheDir).WithSession(s.rc.ctx.Locks).WithContext(s.rc.ctx.Context)
-	res, err := manager.EnsureSource(req)
+	res, err := s.ensureSource(req)
 	if err != nil {
 		return err
 	}
 	s.sourceSeeds[name] = res.SrcDir
 	s.sourceCommits[name] = res.Commit
-	if node.IsLocal() && version != "" {
+	if node.IsLocal() {
 		s.sourceVersions[name] = version
 	}
 	return nil
@@ -147,12 +154,30 @@ func (s *sourceStage) selectPackageSourceRoot(name, sourceRoot string) error {
 
 func (s *sourceStage) resolvePackageSourceVersion(name string, node *resolver.PackageNode) (string, string, string, error) {
 	_, isSub := s.rc.ctx.Resolver.SubParents()[name]
-	if (!node.IsLocal() && !isSub) || len(node.Pkg.Versions()) == 0 {
+	pin, _, hasPin := s.rc.ctx.packagePin(name)
+	if hasPin && repo.IsCommitID(pin) {
+		return "", pin, pin, nil
+	}
+	if !node.IsLocal() && !isSub {
 		return "", "", "", nil
 	}
-	pin := config.GetEntry(s.rc.ctx.Config, name).Version
-	if pin == "" {
-		pin, _ = s.lockedVersion(name)
+	if len(node.Pkg.Versions()) == 0 {
+		if hasPin && pin != "" {
+			return "", "", "", fmt.Errorf("package %s declares no versions; specify a 40-character commit SHA instead of %q", name, pin)
+		}
+		if locked, ok := s.rc.ctx.lockedEntry(name); ok && locked.Version == "" && locked.Commit != "" {
+			return "", locked.Commit, locked.Commit, nil
+		}
+		return "", "", "", nil
+	}
+	if !hasPin {
+		if locked, ok := s.rc.ctx.lockedEntry(name); ok {
+			if locked.Version != "" {
+				pin = locked.Version
+			} else if locked.Commit != "" {
+				return "", locked.Commit, locked.Commit, nil
+			}
+		}
 	}
 	constraints := append([]string{}, node.Constraints...)
 	if pin != "" {
@@ -167,10 +192,8 @@ func (s *sourceStage) resolvePackageSourceVersion(name string, node *resolver.Pa
 		return "", "", "", fmt.Errorf("source version %s for %s has no git ref", version, name)
 	}
 	expected := ""
-	if s.rc.ctx.Lock != nil && !s.rc.ctx.IgnoreLock {
-		if locked, ok := s.rc.ctx.Lock.Get(name); ok && locked.Version == version {
-			expected = locked.Commit
-		}
+	if locked, ok := s.rc.ctx.lockedEntry(name); ok && locked.Version == version {
+		expected = locked.Commit
 	}
 	return version, ref, expected, nil
 }

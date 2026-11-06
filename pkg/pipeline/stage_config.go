@@ -106,6 +106,9 @@ func validateNeededSubPackageOwners(needed map[string]bool, subParents map[strin
 }
 
 func (r *runContext) toolsForPackage(name string) (*build.ResolvedTools, error) {
+	if r.cfg == nil {
+		return nil, nil
+	}
 	tcName := resolvePkgToolchain(r.ctx.Config, name, r.cfg.TcName)
 	tc := r.cfg.Tc
 	if tcName != r.cfg.TcName {

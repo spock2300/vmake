@@ -45,6 +45,8 @@ type RuntimeContext struct {
 	Lock                *lockfile.Lock
 	LockPath            string
 	IgnoreLock          bool
+	LockPolicy          resolver.LockPolicy
+	Pins                map[string]string
 	SourceLinks         map[string]string
 
 	Paths              *Paths
@@ -69,6 +71,8 @@ type ResolveParams struct {
 	Lock              *lockfile.Lock
 	LockPath          string
 	IgnoreLock        bool
+	LockPolicy        resolver.LockPolicy
+	Pins              map[string]string
 	SourceLinks       map[string]string
 	TrustChecker      buildscript.ScriptTrustChecker
 	Paths             *Paths
@@ -85,12 +89,72 @@ func NewContext(p ResolveParams) *RuntimeContext {
 		Lock:              p.Lock,
 		LockPath:          p.LockPath,
 		IgnoreLock:        p.IgnoreLock,
+		LockPolicy:        p.LockPolicy,
+		Pins:              p.Pins,
 		SourceLinks:       p.SourceLinks,
 		Paths:             p.Paths,
 		TrustChecker:      p.TrustChecker,
 		ModeOverride:      p.ModeOverride,
 		ToolchainOverride: p.ToolchainOverride,
 	}
+}
+
+func (ctx *RuntimeContext) effectiveLockPolicy() resolver.LockPolicy {
+	if ctx == nil {
+		return resolver.LockPolicy{}
+	}
+	p := ctx.LockPolicy
+	if ctx.IgnoreLock {
+		p.IgnoreAll = true
+	}
+	return p
+}
+
+func (ctx *RuntimeContext) packagePin(name string) (target string, fromTarget bool, ok bool) {
+	if ctx == nil {
+		return "", false, false
+	}
+	if ctx.LockPolicy.Targets != nil {
+		if t := strings.TrimSpace(ctx.LockPolicy.Targets[name]); t != "" {
+			return t, true, true
+		}
+	}
+	if ctx.LockPolicy.Float != nil && ctx.LockPolicy.Float[name] {
+		return "", false, false
+	}
+	if ctx.Pins != nil {
+		if p := strings.TrimSpace(ctx.Pins[name]); p != "" {
+			return p, false, true
+		}
+	}
+	return "", false, false
+}
+
+func (ctx *RuntimeContext) isLockIgnoredFor(name string) bool {
+	if ctx == nil {
+		return false
+	}
+	if ctx.IgnoreLock || ctx.LockPolicy.IgnoreAll {
+		return true
+	}
+	if ctx.LockPolicy.Float != nil && ctx.LockPolicy.Float[name] {
+		return true
+	}
+	if ctx.LockPolicy.Targets != nil && strings.TrimSpace(ctx.LockPolicy.Targets[name]) != "" {
+		return true
+	}
+	return false
+}
+
+func (ctx *RuntimeContext) lockedEntry(name string) (*lockfile.LockedPkg, bool) {
+	if ctx == nil || ctx.Lock == nil || ctx.isLockIgnoredFor(name) {
+		return nil, false
+	}
+	locked, ok := ctx.Lock.Get(name)
+	if !ok || (locked.Version == "" && locked.Commit == "") {
+		return nil, false
+	}
+	return locked, true
 }
 
 func newBuildContext(ctx *RuntimeContext, name string, globalValues map[string]any) (*api.BuildContext, error) {

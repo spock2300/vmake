@@ -9,7 +9,6 @@ import (
 
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
-	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/lockfile"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/resolver"
@@ -94,7 +93,7 @@ func TestPrepareAllPackagesPrintsDownloadHeadingForRemoteSource(t *testing.T) {
 		api.NewPackage().SetRepo("native").SetName("sample"))
 	node.Pkg.SetGit(upstream).AddVersion("1.0.0", "v1.0.0")
 	s.ctx.DepGraph.Packages["native/sample"] = node
-	config.SetEntry(s.ctx.Config, "native/sample", &config.EntryConfig{Version: "1.0.0"})
+	s.ctx.Pins = map[string]string{"native/sample": "1.0.0"}
 
 	vlog.SetLevel(vlog.Normal)
 	defer vlog.SetLevel(vlog.Normal)

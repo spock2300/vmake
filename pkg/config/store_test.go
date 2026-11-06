@@ -19,7 +19,6 @@ func TestLoad_NewFormat(t *testing.T) {
 		},
 		"entries": {
 			"mypkg": {
-				"version": "1.0.0",
 				"options": {"key": "value"}
 			}
 		}
@@ -45,9 +44,6 @@ func TestLoad_NewFormat(t *testing.T) {
 	}
 
 	entry := GetEntry(cfg, "mypkg")
-	if entry.Version != "1.0.0" {
-		t.Errorf("mypkg.Version = %q, want %q", entry.Version, "1.0.0")
-	}
 	if entry.Options["key"] != "value" {
 		t.Errorf("mypkg.Options[key] = %v, want %q", entry.Options["key"], "value")
 	}
@@ -113,12 +109,12 @@ func TestGetEntry_NilEntries(t *testing.T) {
 
 func TestSetEntry(t *testing.T) {
 	cfg := newConfigFile()
-	entry := &EntryConfig{Version: "2.0", Options: map[string]any{"x": 1}}
+	entry := &EntryConfig{Options: map[string]any{"x": 1}}
 	SetEntry(cfg, "pkg", entry)
 
 	got := GetEntry(cfg, "pkg")
-	if got.Version != "2.0" {
-		t.Errorf("Version = %q, want %q", got.Version, "2.0")
+	if got.Options["x"] != 1 {
+		t.Errorf("Options[x] = %v, want 1", got.Options["x"])
 	}
 }
 
@@ -151,7 +147,7 @@ func TestSaveAndLoad(t *testing.T) {
 	original := newConfigFile()
 	original.Global.Toolchain = "gcc"
 	original.Global.Mode = "release"
-	SetEntry(original, "pkg1", &EntryConfig{Version: "1.0", Options: map[string]any{"flag": true}})
+	SetEntry(original, "pkg1", &EntryConfig{Options: map[string]any{"flag": true}})
 
 	if err := Save(path, original); err != nil {
 		t.Fatalf("Save failed: %v", err)

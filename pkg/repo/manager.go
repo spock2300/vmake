@@ -93,7 +93,7 @@ func (m *RepoManager) UpdateLocked(name string) error {
 		return fmt.Errorf("repo '%s' not found", name)
 	}
 	if _, isNative, _ := LoadNativeConfig(repoPath); isNative {
-		return fmt.Errorf("native repo '%s' has no registry to update; use 'vmake pkg update <repo/name>' instead", name)
+		return fmt.Errorf("native repo '%s' has no registry to update; use 'vmake deps update <repo/name>' instead", name)
 	}
 	return FetchAndReset(repoPath)
 }

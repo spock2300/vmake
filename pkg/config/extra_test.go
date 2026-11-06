@@ -32,12 +32,12 @@ func TestLoadMissingParentDir(t *testing.T) {
 func TestGetEntryExistingNilOptions(t *testing.T) {
 	cfg := &ConfigFile{
 		Entries: map[string]*EntryConfig{
-			"pkg": {Version: "1.0"},
+			"pkg": {SelectedPreset: "defconfig"},
 		},
 	}
 	entry := GetEntry(cfg, "pkg")
-	if entry.Version != "1.0" {
-		t.Errorf("Version = %q", entry.Version)
+	if entry.SelectedPreset != "defconfig" {
+		t.Errorf("SelectedPreset = %q", entry.SelectedPreset)
 	}
 	if entry.Options == nil {
 		t.Error("Options should be initialized")
@@ -46,12 +46,12 @@ func TestGetEntryExistingNilOptions(t *testing.T) {
 
 func TestSetEntryNilMap(t *testing.T) {
 	cfg := &ConfigFile{Version: "1"}
-	SetEntry(cfg, "x", &EntryConfig{Version: "2.0"})
+	SetEntry(cfg, "x", &EntryConfig{SelectedPreset: "board"})
 	if cfg.Entries == nil {
 		t.Fatal("Entries should be initialized")
 	}
-	if cfg.Entries["x"].Version != "2.0" {
-		t.Errorf("got version %q", cfg.Entries["x"].Version)
+	if cfg.Entries["x"].SelectedPreset != "board" {
+		t.Errorf("got preset %q", cfg.Entries["x"].SelectedPreset)
 	}
 }
 
@@ -83,7 +83,7 @@ func TestUnmarshalJSONEntryParseFailure(t *testing.T) {
 		"version": "1",
 		"global": {"toolchain": "gcc"},
 		"entries": {
-			"good": {"version": "1.0"},
+			"good": {"selected_preset": "def"},
 			"bad": "not-an-object"
 		}
 	}`
@@ -127,7 +127,6 @@ func TestSaveProducesValidJSON(t *testing.T) {
 	cfg.Global.Mode = "release"
 	cfg.Global.Options["custom"] = "val"
 	SetEntry(cfg, "pkg", &EntryConfig{
-		Version:        "1.0",
 		Options:        map[string]any{"opt": true},
 		KConfig:        "CONFIG_X=y",
 		SelectedPreset: "defconfig",
@@ -161,7 +160,7 @@ func TestRoundTripMultipleEntries(t *testing.T) {
 	path := filepath.Join(dir, "config.json")
 	original := newConfigFile()
 	for _, name := range []string{"alpha", "beta", "gamma"} {
-		SetEntry(original, name, &EntryConfig{Version: name + "_ver"})
+		SetEntry(original, name, &EntryConfig{SelectedPreset: name + "_preset"})
 	}
 	if err := Save(path, original); err != nil {
 		t.Fatal(err)

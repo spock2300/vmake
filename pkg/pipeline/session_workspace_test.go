@@ -53,7 +53,7 @@ func workspaceBindingFixture(t *testing.T, remote bool) (*buildPhaseState, *api.
 		if err != nil {
 			t.Fatal(err)
 		}
-		s.remote.entries["app"] = &config.EntryConfig{Version: "1.0.0"}
+		s.remote.setVersion("app", "1.0.0")
 		manager := repo.NewSourceManager(s.ctx.Paths.DepsDir, s.ctx.Paths.CacheDir).WithSession(s.ctx.Locks).WithContext(s.ctx.Context)
 		res, err := manager.EnsureSource(repo.SourceRequest{
 			Key: "app", URLs: []string{upstream}, Version: "1.0.0", Commit: commit, PatchHash: patchHash,
@@ -276,7 +276,7 @@ func nativeSiblingBindingFixture(t *testing.T, configSource string) (*buildPhase
 	node.ID = name
 	node.Source = buildscript.NewSource(name, filepath.Join(packageRoot, "build.go"), packageRoot, api.SourceRemote)
 	node.Pkg.SetRepo("native").SetName("root/member").SetScriptDir(packageRoot).SetSrcDir("../shared")
-	s.remote.entries[owner] = &config.EntryConfig{Version: "1.0.0"}
+	s.remote.setVersion(owner, "1.0.0")
 	s.remote.trees[owner], s.remote.trees[name] = tree, tree
 	s.remote.commits[owner] = "commit"
 	tools, err := s.toolsForPackage(name)

@@ -27,7 +27,7 @@ func runRebuild(cmd *cobra.Command, args []string) error {
 		return withResolvedProject(execution, func(ctx *RuntimeContext) error {
 			executeCleanLocal(ctx)
 			vlog.Info("")
-			_, err := runReportedBuild(ctx, report, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag})
+			_, err := runReportedBuild(ctx, report, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag, Locked: lockedFlag, Offline: offlineFlag})
 			return err
 		})
 	})

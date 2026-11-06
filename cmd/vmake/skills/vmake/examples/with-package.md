@@ -68,7 +68,7 @@ Constraints are parsed by `ParseConstraint` in `pkg/api/semver.go`: **one operat
 
 The **highest satisfying version** is selected. For package-declared version maps, all constraints must match (`SelectVersionMulti`). Native tag selection uses the first constraint to choose a tag and validates the remaining constraints against that choice, so a lower tag that satisfies the intersection can still be rejected. Prereleases are excluded unless a constraint pins that same `major.minor.patch` prerelease — a `>=1.2.0-rc1` constraint admits `1.2.0-rc2`, but not `1.2.1-rc1`.
 
-Version pins in entries of the active configuration (`.vmake/config.json` by default, or the file selected in `.vmake/project.json`) take precedence over latest matching tags; set a pin by editing the `version` field of that package's entry in the file. `.vmake/vmake.lock` pins survive until `vmake lock update`.
+Project-wide version or commit pins in `.vmake/project.json` (`pins.<pkg>`, set via `vmake deps pin <pkg>@<ver|commit>`) take precedence over latest matching tags and are shared across all project configurations. `.vmake/vmake.lock` records the resolved versions and commits and survives until `vmake deps update`.
 
 ## Package Repository
 
@@ -84,7 +84,7 @@ vmake repo trust mylib
 vmake repo untrust mylib
 ```
 
-Resolved versions and commits are pinned into `.vmake/vmake.lock` — commit it for reproducible builds; `vmake lock update` re-resolves.
+Resolved versions and commits are pinned into `.vmake/vmake.lock` — commit it for reproducible builds; `vmake deps update` re-resolves.
 
 ## Consuming a Package
 
@@ -187,7 +187,7 @@ Keep `OnRequire` and target dependencies consistent.
 - `OnRequire` runs twice: first with nil config (Phase 1), then with this package's entry option values (Phase 3 `FilterDeps`); global configuration values are not merged
 - Option-conditional deps work because FilterDeps has resolved package entry values
 - `AddDeps` uses the final dependency list from `FilterDeps`; a pruned package referenced by `AddDeps` fails at build-graph time
-- Remote packages are resolved from `.vmake/vmake.lock` pins (run `vmake lock update` to re-resolve)
+- Remote packages are resolved from `.vmake/vmake.lock` pins (run `vmake deps update` to re-resolve)
 - Native sub-packages load lazily and use full `parent/sub` names; registry wrappers have none
 
 ## Running / Verifying
@@ -196,7 +196,7 @@ Keep `OnRequire` and target dependencies consistent.
 vmake repo list    # "Repositories:" with "official (registry)" after the bootstrap above
 vmake build        # resolves + downloads + builds; ends with "Build succeeded: ..." and writes .vmake/vmake.lock
 vmake query        # dependency tree including official/zlib (with version for native packages)
-vmake lock show    # e.g. "official/zlib 1.2.13 (registry, <commit>)"; a missing lock file is an error, while an existing empty lock prints "vmake.lock is empty ..."
+vmake deps status  # shows official/zlib version, commit, pin, working tree and cache state
 ```
 
 ## See Also

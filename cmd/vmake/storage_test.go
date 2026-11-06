@@ -97,9 +97,13 @@ func TestRequiresExclusiveStorage(t *testing.T) {
 		{[]string{"clean"}, true},
 		{[]string{"distclean"}, true},
 		{[]string{"rebuild"}, true},
-		{[]string{"lock", "update"}, true},
+		{[]string{"deps", "status"}, false},
+		{[]string{"deps", "sync"}, true},
+		{[]string{"deps", "update"}, true},
+		{[]string{"deps", "pin", "official/zlib@1.0.0"}, true},
+		{[]string{"deps", "unpin", "official/zlib"}, true},
+		{[]string{"deps", "fetch"}, true},
 		{[]string{"pkg", "clean", "official/zlib"}, true},
-		{[]string{"pkg", "update", "official/zlib"}, true},
 	}
 	for _, tc := range cases {
 		cmd, _, err := RootCmd.Find(tc.args)

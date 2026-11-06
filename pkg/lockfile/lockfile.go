@@ -98,3 +98,79 @@ func (l *Lock) Equal(other *Lock) bool {
 	}
 	return true
 }
+
+type Change struct {
+	Name       string `json:"name"`
+	Kind       string `json:"kind"`
+	OldVersion string `json:"oldVersion,omitempty"`
+	OldCommit  string `json:"oldCommit,omitempty"`
+	NewVersion string `json:"newVersion,omitempty"`
+	NewCommit  string `json:"newCommit,omitempty"`
+	Source     string `json:"source,omitempty"`
+}
+
+func Diff(old, updated *Lock) []Change {
+	if old == nil {
+		old = New()
+	}
+	if updated == nil {
+		updated = New()
+	}
+	seen := make(map[string]bool, len(old.Packages)+len(updated.Packages))
+	for name := range old.Packages {
+		seen[name] = true
+	}
+	for name := range updated.Packages {
+		seen[name] = true
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var changes []Change
+	for _, name := range names {
+		oldPkg, inOld := old.Packages[name]
+		newPkg, inNew := updated.Packages[name]
+		switch {
+		case !inOld && inNew:
+			changes = append(changes, Change{
+				Name:       name,
+				Kind:       "added",
+				NewVersion: newPkg.Version,
+				NewCommit:  newPkg.Commit,
+				Source:     newPkg.Source,
+			})
+		case inOld && !inNew:
+			changes = append(changes, Change{
+				Name:       name,
+				Kind:       "removed",
+				OldVersion: oldPkg.Version,
+				OldCommit:  oldPkg.Commit,
+				Source:     oldPkg.Source,
+			})
+		case inOld && inNew && *oldPkg != *newPkg:
+			changes = append(changes, Change{
+				Name:       name,
+				Kind:       "updated",
+				OldVersion: oldPkg.Version,
+				OldCommit:  oldPkg.Commit,
+				NewVersion: newPkg.Version,
+				NewCommit:  newPkg.Commit,
+				Source:     newPkg.Source,
+			})
+		}
+	}
+	return changes
+}
+
+func DisplayVersion(version, commit string) string {
+	if version != "" {
+		return version
+	}
+	if len(commit) > 12 {
+		return commit[:12]
+	}
+	return commit
+}

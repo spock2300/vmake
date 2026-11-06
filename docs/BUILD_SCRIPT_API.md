@@ -90,7 +90,7 @@ func (p *Package) SetChipProfile(profile ChipProfile) *Package  // 声明芯片�
 func (p *Package) ChipProfile() (ChipProfile, bool)
 ```
 
-本地包也可通过 `SetGit` 选择外部源码。声明 `AddVersion` 映射时，按依赖约束选择版本并在 `.vmake/vmake.lock` 固定版本和提交；锁定版本的浅工作树已存在时可完全离线构建，工作树被删除后只要共享对象缓存仍保留该提交/引用也可从本地缓存重建，仅在缓存未命中或需要重新解析 ref 时才访问上游。`vmake lock update` 重新选择版本。没有版本映射时使用仓库 HEAD。项目目录保留，受管理的 `src` 链接指向项目内该包唯一的工作树（`.vmake_deps/local/<包名>/src`）。浅树只包含所选版本（`git fetch --unshallow` 可补全历史）。若 `src` 已是真实目录，构建会报错并保留该目录，需先由用户移开。
+本地包也可通过 `SetGit` 选择外部源码。声明 `AddVersion` 映射时，按依赖约束选择版本并在 `.vmake/vmake.lock` 固定版本和提交；锁定版本的浅工作树已存在时可完全离线构建，工作树被删除后只要共享对象缓存仍保留该提交/引用也可从本地缓存重建，仅在缓存未命中或需要重新解析 ref 时才访问上游。`vmake deps update` 重新选择版本。没有版本映射时使用仓库 HEAD。项目目录保留，受管理的 `src` 链接指向项目内该包唯一的工作树（`.vmake_deps/local/<包名>/src`）。浅树只包含所选版本（`git fetch --unshallow` 可补全历史）。若 `src` 已是真实目录，构建会报错并保留该目录，需先由用户移开。
 
 ### Git Patch
 
@@ -1617,7 +1617,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 | **源码位置** | build.go 在仓库中，源码在别处 | build.go 在包的 git 仓库根目录 |
 | **版本来源** | `AddVersion()` 手动映射 | git tag（自动过滤有效 semver） |
 | **添加命令** | `vmake repo add name url` | `vmake repo add --native name "https://..../{name}.git"` |
-| **更新** | `vmake repo update name` | `vmake pkg update repo/name` |
+| **更新** | `vmake repo update name` | `vmake deps update repo/name` |
 
 ## 扩展插件 API
 

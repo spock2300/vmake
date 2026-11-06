@@ -433,6 +433,18 @@ func validCommitID(commit string) bool {
 	return (len(commit) == 40 || len(commit) == 64) && strings.Trim(commit, "0123456789abcdef") == ""
 }
 
+func IsCommitID(commit string) bool {
+	return validCommitID(commit)
+}
+
+func IsDirtyContext(ctx context.Context, dir string) bool {
+	output, err := runGitCmd([]string{"status", "--porcelain"}, exec.RunOptions{Context: ctx, Dir: dir, Quiet: true})
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(output)) != ""
+}
+
 // DescribeTag returns the tag exactly pointing at HEAD, or "" when HEAD is
 // not tagged. Local-only; used to rebuild version->tag maps from cached
 // checkouts without touching the network.

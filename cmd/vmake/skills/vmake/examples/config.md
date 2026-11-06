@@ -116,8 +116,9 @@ vmake config list
 ```
 
 The selection is stored in `.vmake/project.json` as
-`{"config":"config-minimal.json"}`. Each file uses the existing configuration
-format, including package versions, options and KConfig data, plus an optional
+`{"config":"config-minimal.json"}` (alongside optional project-wide dependency
+`pins` managed by `vmake deps pin` / `vmake deps unpin`). Each configuration file
+stores global and per-package options and KConfig data, plus an optional
 top-level `description` line shown by `config list` and by completion. `copy`
 leaves the selection unchanged and rejects existing destinations; `describe`
 prints or sets the active description; `use` switches it without running build
@@ -127,7 +128,7 @@ to create it from the active configuration before switching back, since `use`
 requires an existing file. In the TUI the description is the fixed `Description`
 row at the top of the options panel, edited with `D` or a click.
 
-A configuration file in full (a remote package's `version` field is a pin; edit the file directly to set it):
+A configuration file in full:
 
 ```json
 {
@@ -135,8 +136,7 @@ A configuration file in full (a remote package's `version` field is a pin; edit 
   "description": "Board A debug build",
   "global": { "toolchain": "host", "mode": "debug" },
   "entries": {
-    "myproject": { "options": { "debug": true } },
-    "official/zlib": { "version": "1.3.1" }
+    "myproject": { "options": { "debug": true } }
   }
 }
 ```

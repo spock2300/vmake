@@ -11,7 +11,6 @@ import (
 
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
-	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/lockfile"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/repo"
@@ -34,22 +33,17 @@ func (l *sourceDownloadLog) print() {
 }
 
 func (s *sourceStage) prepareAllPackages() error {
+	if s.locked {
+		if err := s.verifyLockBeforePrepare(); err != nil {
+			return err
+		}
+	}
 	remote := &remoteVersionState{
-		entries:  make(map[string]*config.EntryConfig),
 		commits:  make(map[string]string),
 		trees:    make(map[string]string),
 		versions: make(map[string]string),
 	}
 	downloadLog := &sourceDownloadLog{}
-
-	for _, name := range s.rc.ctx.Resolver.GetOrder() {
-		if !s.conf.needed[name] {
-			continue
-		}
-		if !s.rc.ctx.DepGraph.Packages[name].IsLocal() {
-			remote.entries[name] = config.GetEntry(s.rc.ctx.Config, name)
-		}
-	}
 
 	for _, name := range s.rc.ctx.Resolver.GetOrder() {
 		node := s.rc.ctx.DepGraph.Packages[name]
@@ -95,6 +89,21 @@ func (s *sourceStage) prepareAllPackages() error {
 	return nil
 }
 
+func (s *sourceStage) ensureSource(req repo.SourceRequest) (*repo.SourceResult, error) {
+	if s.offline {
+		req.Offline = true
+	}
+	manager := repo.NewSourceManager(s.rc.ctx.Paths.DepsDir, s.rc.ctx.Paths.CacheDir).WithSession(s.rc.ctx.Locks).WithContext(s.rc.ctx.Context)
+	if !s.dryRun || s.sourceRequestReady(req) {
+		return manager.EnsureSource(req)
+	}
+	dryRunManager := repo.NewSourceManager(s.dryRunDepsDir, s.rc.ctx.Paths.CacheDir).WithSession(s.rc.ctx.Locks).WithContext(s.rc.ctx.Context)
+	if req.Root != "" {
+		req.Root = filepath.Join(s.dryRunDepsDir, "sub", filepath.FromSlash(req.Key))
+	}
+	return dryRunManager.EnsureSource(req)
+}
+
 func (s *sourceStage) registryWrapperCommit(name string) (string, error) {
 	repoName, _, ok := api.SplitPackageRef(name)
 	if !ok {
@@ -111,10 +120,48 @@ func (s *sourceStage) registryWrapperCommit(name string) (string, error) {
 	return commit, nil
 }
 
-func (s *sourceStage) writeLockfile() error {
-	if s.rc.ctx.LockPath == "" {
-		return nil
+func (s *sourceStage) verifyLockBeforePrepare() error {
+	subParents := s.rc.ctx.Resolver.SubParents()
+	for _, name := range s.rc.ctx.Resolver.GetOrder() {
+		if !s.conf.needed[name] {
+			continue
+		}
+		node := s.rc.ctx.DepGraph.Packages[name]
+		if node == nil || (node.Source != nil && node.Source.Link != nil) {
+			continue
+		}
+		if _, isSub := subParents[name]; isSub {
+			continue
+		}
+		if node.IsLocal() && (node.Pkg == nil || len(node.Pkg.GitURLs()) == 0) {
+			continue
+		}
+		if s.rc.ctx.Lock == nil || len(s.rc.ctx.Lock.Packages) == 0 {
+			return fmt.Errorf("--locked: vmake.lock is out of date or missing; run 'vmake deps sync' or 'vmake deps update'")
+		}
+		locked, ok := s.rc.ctx.Lock.Get(name)
+		if !ok || locked.Commit == "" {
+			return fmt.Errorf("--locked: package %s is not locked in vmake.lock; run 'vmake deps sync' or 'vmake deps update'", name)
+		}
+		if pin, _, hasPin := s.rc.ctx.packagePin(name); hasPin {
+			if (repo.IsCommitID(pin) && locked.Commit != pin) || (!repo.IsCommitID(pin) && locked.Version != pin) {
+				return fmt.Errorf("--locked: package %s is pinned to %s in .vmake/project.json, but vmake.lock has %s; run 'vmake deps sync'", name, pin, lockfile.DisplayVersion(locked.Version, locked.Commit))
+			}
+		}
+		if !node.IsLocal() && node.Native == nil && locked.WrapperCommit != "" {
+			wrapperCommit, err := s.registryWrapperCommit(name)
+			if err != nil {
+				return err
+			}
+			if wrapperCommit != "" && wrapperCommit != locked.WrapperCommit {
+				return fmt.Errorf("--locked: registry wrapper commit for %s changed (%s -> %s); run 'vmake deps update %s'", name, repo.ShortCommit(locked.WrapperCommit), repo.ShortCommit(wrapperCommit), name)
+			}
+		}
 	}
+	return nil
+}
+
+func (s *sourceStage) buildLockfile() (*lockfile.Lock, error) {
 	updated := lockfile.New()
 	if s.rc.ctx.Lock != nil {
 		for name := range s.rc.ctx.SourceLinks {
@@ -123,33 +170,46 @@ func (s *sourceStage) writeLockfile() error {
 			}
 		}
 	}
+	subParents := s.rc.ctx.Resolver.SubParents()
 	for _, name := range s.rc.ctx.Resolver.GetOrder() {
 		node := s.rc.ctx.DepGraph.Packages[name]
 		if node.Source != nil && node.Source.Link != nil {
-			// Linked packages keep their old lock entry (if any) but never
-			// write the linked HEAD into the shared lockfile.
+			continue
+		}
+		if _, isSub := subParents[name]; isSub {
 			continue
 		}
 		if node.IsLocal() {
-			if version := s.sourceVersions[name]; version != "" {
+			if version := s.sourceVersions[name]; version != "" || s.sourceCommits[name] != "" {
 				updated.Set(name, &lockfile.LockedPkg{Version: version, Commit: s.sourceCommits[name], Source: "git"})
-			} else if node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 && len(node.Pkg.Versions()) > 0 && s.rc.ctx.Lock != nil {
+			} else if node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 && s.rc.ctx.Lock != nil && !s.rc.ctx.isLockIgnoredFor(name) {
 				if old, ok := s.rc.ctx.Lock.Get(name); ok && old.Source == "git" {
 					updated.Set(name, old)
 				}
 			}
 			continue
 		}
-		if _, isSub := s.rc.ctx.Resolver.SubParents()[name]; isSub {
-			continue
+		version := s.sourceVersions[name]
+		commit := ""
+		if s.remote != nil {
+			if version == "" {
+				version = s.remote.versions[name]
+			}
+			commit = s.remote.commits[name]
 		}
-		entry := s.remote.entries[name]
-		if entry == nil || entry.Version == "" {
-			if s.rc.ctx.Lock != nil {
+		if version == "" && commit == "" {
+			if s.rc.ctx.Lock != nil && !s.rc.ctx.isLockIgnoredFor(name) {
 				if old, ok := s.rc.ctx.Lock.Get(name); ok {
 					updated.Set(name, old)
+					continue
 				}
 			}
+			if node.Native != nil && (node.Native.Selected != "" || node.Native.Commit != "") {
+				version = node.Native.Selected
+				commit = node.Native.Commit
+			}
+		}
+		if version == "" && commit == "" {
 			continue
 		}
 		source := "registry"
@@ -157,18 +217,58 @@ func (s *sourceStage) writeLockfile() error {
 			source = "native"
 		}
 		locked := &lockfile.LockedPkg{
-			Version: entry.Version,
-			Commit:  s.remote.commits[name],
+			Version: version,
+			Commit:  commit,
 			Source:  source,
 		}
 		if source == "registry" {
 			wrapperCommit, err := s.registryWrapperCommit(name)
 			if err != nil {
-				return fmt.Errorf("pin wrapper commit for %s: %w", name, err)
+				return nil, fmt.Errorf("pin wrapper commit for %s: %w", name, err)
 			}
 			locked.WrapperCommit = wrapperCommit
 		}
 		updated.Set(name, locked)
+	}
+	return updated, nil
+}
+
+func (s *sourceStage) verifyLocked() error {
+	updated, err := s.buildLockfile()
+	if err != nil {
+		return err
+	}
+	if len(updated.Packages) == 0 && (s.rc.ctx.Lock == nil || len(s.rc.ctx.Lock.Packages) == 0) {
+		return nil
+	}
+	if s.rc.ctx.Lock == nil || !s.rc.ctx.Lock.Equal(updated) {
+		changes := lockfile.Diff(s.rc.ctx.Lock, updated)
+		if len(changes) > 0 {
+			var names []string
+			for _, ch := range changes {
+				names = append(names, fmt.Sprintf("%s (%s)", ch.Name, ch.Kind))
+			}
+			return fmt.Errorf("--locked: vmake.lock is out of date (%s); run 'vmake deps sync' or 'vmake deps update'", strings.Join(names, ", "))
+		}
+		return fmt.Errorf("--locked: vmake.lock is out of date or missing; run 'vmake deps sync' or 'vmake deps update'")
+	}
+	return nil
+}
+
+func (s *sourceStage) writeLockfile() error {
+	if s.rc.ctx.LockPath == "" {
+		return nil
+	}
+	updated, err := s.buildLockfile()
+	if err != nil {
+		return err
+	}
+	return s.saveLockfile(updated)
+}
+
+func (s *sourceStage) saveLockfile(updated *lockfile.Lock) error {
+	if s.rc.ctx.LockPath == "" {
+		return nil
 	}
 	if s.rc.ctx.Lock != nil {
 		for _, name := range s.rc.ctx.Lock.SortedNames() {
@@ -177,7 +277,7 @@ func (s *sourceStage) writeLockfile() error {
 			}
 		}
 	}
-	if len(updated.Packages) == 0 {
+	if len(updated.Packages) == 0 && (s.rc.ctx.Lock == nil || len(s.rc.ctx.Lock.Packages) == 0) {
 		return nil
 	}
 	if s.rc.ctx.Lock != nil && s.rc.ctx.Lock.Equal(updated) {
@@ -194,7 +294,6 @@ func (s *sourceStage) writeLockfile() error {
 func (s *sourceStage) downloadRemoteSources(remote *remoteVersionState, depsDir string, downloadLog *sourceDownloadLog) error {
 	s.remote = remote
 	subParents := s.rc.ctx.Resolver.SubParents()
-	sourceMgr := repo.NewSourceManager(depsDir, s.rc.ctx.Paths.CacheDir).WithSession(s.rc.ctx.Locks).WithContext(s.rc.ctx.Context)
 	for _, name := range s.rc.ctx.Resolver.GetOrder() {
 		node := s.rc.ctx.DepGraph.Packages[name]
 		if !s.conf.needed[name] || node.IsLocal() {
@@ -223,15 +322,27 @@ func (s *sourceStage) downloadRemoteSources(remote *remoteVersionState, depsDir 
 			}
 			continue
 		}
-		entryCfg := remote.entries[name]
+		target, fromTarget, hasPin := s.rc.ctx.packagePin(name)
+		version := ""
+		pinnedCommit := ""
+		if hasPin {
+			if repo.IsCommitID(target) {
+				pinnedCommit = target
+			} else {
+				version = target
+			}
+		}
 		repoName, pkgName, ok := api.SplitPackageRef(name)
 		if !ok {
 			return fmt.Errorf("invalid package ref %q", name)
 		}
 		pkg := api.NewPackage().SetRepo(repoName).SetName(pkgName)
 		if node.IsNative() {
-			if entryCfg.Version == "" {
-				entryCfg.Version = node.Native.Selected
+			if !hasPin && version == "" {
+				version = node.Native.Selected
+			}
+			if pinnedCommit == "" && node.Native.Commit != "" && (version == node.Native.Selected || version == "") {
+				pinnedCommit = node.Native.Commit
 			}
 			pkg.SetGit(node.Native.GitURL)
 			pkg.SetVersions(node.Native.Versions)
@@ -251,10 +362,27 @@ func (s *sourceStage) downloadRemoteSources(remote *remoteVersionState, depsDir 
 			pkg.SetGit(interpreted.GitURLs()...)
 		}
 
-		if locked, isLocked := s.lockedVersion(name); isLocked && entryCfg.Version == "" {
-			entryCfg.Version = locked
+		if !hasPin && version == "" && pinnedCommit == "" {
+			if locked, isLocked := s.rc.ctx.lockedEntry(name); isLocked {
+				version = locked.Version
+				if version == "" {
+					pinnedCommit = locked.Commit
+				}
+			}
 		}
-		if entryCfg.Version == "" && len(pkg.GetVersions()) > 0 {
+		if hasPin && version != "" {
+			if len(pkg.Versions()) > 0 {
+				if _, exists := pkg.Versions()[version]; !exists {
+					if fromTarget {
+						return fmt.Errorf("requested version %s for %s not found in declared versions", version, name)
+					}
+					return fmt.Errorf("config-pinned version %s for %s not found in declared versions", version, name)
+				}
+			} else if len(pkg.GitURLs()) > 0 && !node.IsNative() {
+				return fmt.Errorf("package %s declares no versions; specify a 40-character commit SHA instead of %q", name, version)
+			}
+		}
+		if version == "" && pinnedCommit == "" && len(pkg.GetVersions()) > 0 {
 			var selected string
 			var err error
 			if len(node.Constraints) > 0 {
@@ -265,11 +393,11 @@ func (s *sourceStage) downloadRemoteSources(remote *remoteVersionState, depsDir 
 			if err != nil {
 				return err
 			}
-			entryCfg.Version = selected
+			version = selected
 		}
-		expectedCommit := ""
-		if s.rc.ctx.Lock != nil && !s.rc.ctx.IgnoreLock {
-			if locked, ok := s.rc.ctx.Lock.Get(name); ok && locked.Commit != "" && locked.Version == entryCfg.Version {
+		expectedCommit := pinnedCommit
+		if expectedCommit == "" {
+			if locked, ok := s.rc.ctx.lockedEntry(name); ok && locked.Commit != "" && locked.Version == version {
 				expectedCommit = locked.Commit
 			}
 		}
@@ -282,33 +410,35 @@ func (s *sourceStage) downloadRemoteSources(remote *remoteVersionState, depsDir 
 			return err
 		}
 		ref := ""
-		if entryCfg.Version != "" {
-			ref = pkg.GetRef(entryCfg.Version)
+		if version != "" {
+			ref = pkg.GetRef(version)
 			if ref == "" {
-				ref = entryCfg.Version
+				ref = version
 			}
 		}
 		req := repo.SourceRequest{
 			Key:        name,
 			URLs:       pkg.GitURLs(),
-			Version:    entryCfg.Version,
+			Version:    version,
 			Ref:        ref,
 			Commit:     expectedCommit,
 			PatchHash:  treePatchHash,
 			Submodules: pkg.Submodules(),
+			Refresh:    expectedCommit == "" && s.rc.ctx.isLockIgnoredFor(name),
 		}
 		if !s.sourceRequestReady(req) {
 			downloadLog.print()
 		}
-		res, err := sourceMgr.EnsureSource(req)
+		res, err := s.ensureSource(req)
 		if err != nil {
 			return fmt.Errorf("failed to download %s: %w", name, err)
 		}
 		remote.commits[name] = res.Commit
 		remote.trees[name] = res.Root
-		s.sourceVersions[name] = entryCfg.Version
+		remote.setVersion(name, version)
+		s.sourceVersions[name] = version
 		s.patchHashes[name] = patchHash
-		vlog.Verbose("  %s@%s -> %s", name, entryCfg.Version, res.SrcDir)
+		vlog.Verbose("  %s@%s -> %s", name, version, res.SrcDir)
 		if err := s.setPackageLayout(name, resolvedTools); err != nil {
 			return err
 		}
@@ -359,16 +489,6 @@ func (s *sourceStage) treePatchHash(owner string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil))[:16], nil
 }
 
-func (s *sourceStage) lockedVersion(name string) (string, bool) {
-	if s.rc.ctx.Lock == nil || s.rc.ctx.IgnoreLock {
-		return "", false
-	}
-	if locked, ok := s.rc.ctx.Lock.Get(name); ok && locked.Version != "" {
-		return locked.Version, true
-	}
-	return "", false
-}
-
 // sourceRequestReady reports whether a package tree is already materialized at
 // the identity EnsureSource would request, mirroring its reuse rules without
 // materializing anything. A false result only decides whether the source
@@ -394,6 +514,9 @@ func (s *sourceStage) sourceRequestReady(req repo.SourceRequest) bool {
 	}
 	if req.Commit != "" {
 		return state.Commit == req.Commit
+	}
+	if req.Refresh {
+		return false
 	}
 	return state.Ref == req.Ref && state.Version == req.Version
 }
@@ -487,8 +610,12 @@ func (s *sourceStage) setupSubPackageDirs(downloadLog *sourceDownloadLog) error 
 
 		relPath := strings.TrimPrefix(name, rootParent+"/")
 		parentNode := s.rc.ctx.DepGraph.Packages[rootParent]
-		parentEntry := config.GetEntry(s.rc.ctx.Config, rootParent)
-		version, commit, ok := remoteVersionKey(s.rc.ctx, rootParent, parentNode, parentEntry)
+		version, commit, ok := remoteVersionKey(s.rc.ctx, rootParent, parentNode)
+		if !ok && s.remote != nil {
+			version = s.remote.versions[rootParent]
+			commit = s.remote.commits[rootParent]
+			ok = version != "" || commit != ""
+		}
 		if !ok {
 			return fmt.Errorf("native parent %s has no resolved version", rootParent)
 		}
@@ -575,6 +702,9 @@ func (s *sourceStage) applyPatchesFor(name string) error {
 }
 
 func (s *sourceStage) clearPatchState(name string) {
+	if s.dryRun {
+		return
+	}
 	root := s.treeRootFor(name)
 	if root == "" {
 		return
@@ -611,20 +741,13 @@ func (s *sourceStage) restoreKConfigs() error {
 }
 
 func (r *remoteVersionState) installedPkgs(pkgDirs map[string]*api.PkgDirs) map[string]*api.InstalledPackage {
-	if len(pkgDirs) == 0 {
+	if len(pkgDirs) == 0 || r == nil {
 		return nil
 	}
 	result := make(map[string]*api.InstalledPackage)
 	for name, d := range pkgDirs {
 		if d.InstallDir != "" {
-			version := ""
-			entry, hasEntry := r.entries[name]
-			if v, ok := r.versions[name]; ok {
-				version = v
-			} else if hasEntry {
-				version = entry.Version
-			}
-			if hasEntry || version != "" {
+			if version, ok := r.versions[name]; ok {
 				result[name] = api.NewInstalledPackage(name, version, d.InstallDir, nil)
 			}
 		}

@@ -61,7 +61,7 @@ func cleanupLegacyStorage() {
 	// v4+ keeps the single-tree .vmake_deps layout: trees are the only source
 	// checkout now and survive upgrades. The directory only exists in the
 	// single-tree layout (v3+), so it is kept even when the marker was never
-	// written (for example sources pre-downloaded by 'vmake pkg update' before
+	// written (for example sources pre-downloaded by 'vmake deps fetch' before
 	// the first build). Pre-v3 directories are removed wholesale.
 	legacyDirs := []string{filepath.Join(root, "vmake_deps")}
 	treesDir := filepath.Join(root, ".vmake_deps")

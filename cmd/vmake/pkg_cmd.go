@@ -14,10 +14,7 @@ import (
 	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/gitcmd"
-	"github.com/spock2300/vmake/pkg/api"
-	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
-	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/repo"
 )
@@ -192,8 +189,8 @@ are machine-local, stored in .vmake/local.json, and ignore package versions,
 tags and version constraints.
 
 While linked, edit the worktree and rerun the build; uncommitted edits are
-compiled, and no commit, tag, version bump or lock update is required. The
-existing lock entry is kept unchanged until you unlink.
+compiled, and no commit, tag, version bump or 'vmake deps update' is required.
+The existing lock entry is kept unchanged until you unlink.
 
 Linking removes any existing materialized src/state for the package under
 .vmake_deps. Per-build outputs and own-Git third-party source trees are kept.
@@ -231,8 +228,8 @@ var pkgUnlinkCmd = &cobra.Command{
 	Short: "Remove a local source link",
 	Long: `Remove the local source link. The next build uses the package's vmake.lock
 entry when present; otherwise it resolves and writes one. Untagged working-tree
-HEADs are not selected after unlink. Run 'vmake lock update' only if you want
-to re-resolve newer versions; config pins and version constraints still apply.`,
+HEADs are not selected after unlink. Run 'vmake deps update' only if you want
+to re-resolve newer versions; project pins and version constraints still apply.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		commandStorageLocks()
@@ -246,7 +243,7 @@ to re-resolve newer versions; config pins and version constraints still apply.`,
 		delete(local.Links, name)
 		fatalErr(config.SaveLocal(projectDir, local))
 		fmt.Printf("Unlinked %s; the next build uses the existing vmake.lock entry when present.\n", name)
-		fmt.Println("Run 'vmake lock update' only if you want to re-resolve newer versions.")
+		fmt.Println("Run 'vmake deps update' only if you want to re-resolve newer versions.")
 	},
 }
 
@@ -289,122 +286,17 @@ func ensureLocalLinkIgnored(projectDir string) error {
 }
 
 var pkgCleanAll bool
-var pkgUpdateDryRun bool
-
-var pkgUpdateCmd = &cobra.Command{
-	Use:   "update <repo/name>[@version]",
-	Short: "Update package source tree (does not change vmake.lock)",
-	Long: `Update the materialized source tree for a package. With @version, materialize
-that version; without it, float to origin/HEAD. This command does not read or
-rewrite .vmake/vmake.lock; run 'vmake lock update' to re-resolve versions.`,
-	Args: cobra.ExactArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		pkgRef := args[0]
-		version := ""
-		if idx := strings.Index(pkgRef, "@"); idx >= 0 {
-			version = pkgRef[idx+1:]
-			pkgRef = pkgRef[:idx]
-			if version == "" {
-				fatalMsg("empty version after '@' in %s", args[0])
-			}
-		}
-
-		repoName, pkgName := mustSplitPkgRef(pkgRef)
-		if strings.Contains(pkgName, "/") {
-			fatalMsg("Error: sub-packages are updated through their parent package: %s", pkgRef)
-		}
-		local, err := config.LoadLocal(findProjectDir())
-		fatalErr(err)
-		if path, ok := local.Links[pkgRef]; ok {
-			fatalMsg("package %s is linked to %s; run 'vmake pkg unlink %s' first", pkgRef, path, pkgRef)
-		}
-
-		repoMgr := getRepoManager()
-		sourceMgr := repo.NewSourceManager(getDepsDir(), getCacheDir()).WithSession(commandStorageLocks())
-
-		pkg := newPkgRef(repoName, pkgName)
-		if repoMgr.IsNative(repoName) {
-			urlTemplate, err := repoMgr.GetNativeURL(repoName)
-			fatalErr(err)
-			pkg.SetGit(repo.ResolveNativeURL(urlTemplate, pkgName))
-			vlog.Info("  %s: listing versions from %s", pkgRef, strings.Join(pkg.GitURLs(), ", "))
-			tags, err := repo.ListRemoteTags(pkg.GitURLs())
-			fatalErr(err)
-			pkg.SetVersions(repo.FilterValidVersions(tags))
-		} else {
-			lock, err := repoMgr.Lock(repoName, false)
-			fatalErr(err)
-			defer lock.Release()
-			buildGoPath, err := repoMgr.FindPackageGo(repoName, pkgName)
-			fatalErr(err)
-			commit, err := repo.GetCurrentCommit(repoMgr.Path(repoName))
-			fatalErr(err)
-			src := buildscript.Source{
-				Name:   pkgRef,
-				Path:   buildGoPath,
-				Dir:    filepath.Dir(buildGoPath),
-				Origin: api.SourceRemote,
-				Repo:   repoName,
-				Commit: commit,
-			}
-			src.Script, err = buildscript.DetectScriptOptions(src.Dir,
-				repoMgr.Path(repoName))
-			fatalErr(err)
-			interpreted, err := buildscript.LoadBuildScriptWithTrust(src, remoteScriptTrustChecker)
-			fatalErr(err)
-			pkg.SetVersions(interpreted.Versions())
-			pkg.SetGit(interpreted.GitURLs()...)
-		}
-
-		if version != "" {
-			if pkgUpdateDryRun {
-				fmt.Printf("Would materialize %s@%s into .vmake_deps\n", pkgRef, version)
-				printPkgUpdateLockHint()
-				return
-			}
-			ref := pkg.GetRef(version)
-			if ref == "" {
-				ref = version
-			}
-			res, err := sourceMgr.EnsureSource(repo.SourceRequest{
-				Key:     repo.PackageTreeKey(repoName, pkgName),
-				URLs:    pkg.GitURLs(),
-				Version: version,
-				Ref:     ref,
-			})
-			fatalErr(err)
-			fmt.Printf("Updated source for '%s' -> %s@%s (%s)\n", pkgRef, pkgRef, version, repo.ShortCommit(res.Commit))
-			printPkgUpdateLockHint()
-			return
-		}
-
-		if pkgUpdateDryRun {
-			fmt.Printf("Would fetch latest for '%s' (floating working tree)\n", pkgRef)
-			printPkgUpdateLockHint()
-			return
-		}
-		fatalErr(sourceMgr.UpdateSource(pkg))
-		fmt.Printf("Updated source for package '%s'\n", pkgRef)
-		printPkgUpdateLockHint()
-	},
-}
-
-func printPkgUpdateLockHint() {
-	fmt.Println("vmake.lock is unchanged; run 'vmake lock update' to re-resolve project versions.")
-}
 
 func init() {
 	pkgCmd.AddCommand(pkgListCmd)
 	pkgCmd.AddCommand(pkgSearchCmd)
 	pkgCmd.AddCommand(pkgShowCmd)
 	pkgCmd.AddCommand(pkgCleanCmd)
-	pkgCmd.AddCommand(pkgUpdateCmd)
 	pkgCmd.AddCommand(pkgLinkCmd)
 	pkgCmd.AddCommand(pkgUnlinkCmd)
 	RootCmd.AddCommand(pkgCmd)
 
 	pkgCleanCmd.Flags().BoolVarP(&pkgCleanAll, "all", "a", false, "also clean source code")
-	pkgUpdateCmd.Flags().BoolVar(&pkgUpdateDryRun, "dry-run", false, "show what would be fetched without fetching")
 	pkgSearchCmd.Flags().StringVar(&pkgSearchRepo, "repo", "", "limit the search to one repository")
 	pkgSearchCmd.Flags().BoolVar(&pkgSearchDetails, "details", false, "read build.go; also match description, license and version")
 	pkgSearchCmd.Flags().BoolVar(&pkgSearchForProject, "for-project", false, "include cached, locked and installed status")
@@ -412,7 +304,6 @@ func init() {
 	pkgShowCmd.Flags().BoolVar(&pkgShowForProject, "for-project", false, "include cached, locked and installed status")
 	pkgShowCmd.Flags().BoolVar(&pkgShowJSON, "json", false, "print machine-readable JSON")
 
-	pkgUpdateCmd.ValidArgsFunction = completePkgRef
 	pkgCleanCmd.ValidArgsFunction = completePkgRef
 	pkgUnlinkCmd.ValidArgsFunction = completePkgRef
 	pkgShowCmd.ValidArgsFunction = completeCatalogPkgRef

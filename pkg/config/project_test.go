@@ -49,7 +49,7 @@ func TestProjectConfigLegacyAndCopy(t *testing.T) {
 			t.Fatalf("copy created %s: %v", name, err)
 		}
 	}
-	content := "{\n  \"version\": \"1\", \"global\": {\"mode\":\"debug\"},\n  \"entries\": {\"app\": {\"version\":\"v1\",\"options\":{\"n\":2},\"kconfig\":\"CONFIG_X=y\\n\",\"selected_preset\":\"board\"}},\n  \"extension\": {\"keep\":true}\n}\n"
+	content := "{\n  \"version\": \"1\", \"global\": {\"mode\":\"debug\"},\n  \"entries\": {\"app\": {\"options\":{\"n\":2},\"kconfig\":\"CONFIG_X=y\\n\",\"selected_preset\":\"board\"}},\n  \"extension\": {\"keep\":true}\n}\n"
 	writeProjectFile(t, root, DefaultFilename, content)
 	if err := CopyProjectConfig(root, "board.json"); err != nil {
 		t.Fatal(err)
@@ -77,7 +77,20 @@ func TestProjectConfigLegacyAndCopy(t *testing.T) {
 }
 
 func TestProjectSelectionErrors(t *testing.T) {
-	for _, selection := range []string{"{", "null", "{}", `{"config":null}`, `{"config":12}`, `{"config":""}`, `{"config":"../outside.json"}`, `{"config":"project.json"}`} {
+	for _, selection := range []string{
+		"{",
+		"null",
+		"{}",
+		`{"config":null}`,
+		`{"config":12}`,
+		`{"config":""}`,
+		`{"config":"../outside.json"}`,
+		`{"config":"project.json"}`,
+		`{"config":"config.json","pins":"bad"}`,
+		`{"config":"config.json","pins":{"pkg":""}}`,
+		`{"config":"config.json","pins":{"":"1.0.0"}}`,
+		`{"config":"config.json","pins":{"pkg":123}}`,
+	} {
 		t.Run(selection, func(t *testing.T) {
 			root := t.TempDir()
 			writeProjectFile(t, root, DefaultFilename, `{"version":"1","entries":{}}`)
@@ -303,5 +316,52 @@ func TestProjectDescriptionValidation(t *testing.T) {
 	writeProjectFile(t, root, ProjectFilename, `{"config":"missing.json"}`)
 	if _, err := SetProjectDescription(root, "text"); err == nil || !strings.Contains(err.Error(), ProjectFilename) {
 		t.Fatalf("wrote description for missing explicit selection: %v", err)
+	}
+}
+
+func TestProjectPinsRoundTripAndConfigPreservation(t *testing.T) {
+	root := t.TempDir()
+	pins, err := LoadProjectPins(root)
+	if err != nil || len(pins) != 0 {
+		t.Fatalf("initial pins: %v, %v", pins, err)
+	}
+	if err := SaveProjectPins(root, map[string]string{"official/zlib": "1.3.1"}); err != nil {
+		t.Fatalf("SaveProjectPins: %v", err)
+	}
+	pins, err = LoadProjectPins(root)
+	if err != nil || !reflect.DeepEqual(pins, map[string]string{"official/zlib": "1.3.1"}) {
+		t.Fatalf("loaded pins: %v, %v", pins, err)
+	}
+	cfg, path, err := LoadProject(root)
+	if err != nil || filepath.Base(path) != DefaultFilename || cfg == nil {
+		t.Fatalf("LoadProject with pins only: %+v, %s, %v", cfg, path, err)
+	}
+	writeProjectFile(t, root, "board.json", `{"version":"1","entries":{}}`)
+	if _, err := UseProjectConfig(root, "board.json"); err != nil {
+		t.Fatalf("UseProjectConfig: %v", err)
+	}
+	pins, err = LoadProjectPins(root)
+	if err != nil || !reflect.DeepEqual(pins, map[string]string{"official/zlib": "1.3.1"}) {
+		t.Fatalf("UseProjectConfig lost pins: %v, %v", pins, err)
+	}
+	if err := SaveProjectPins(root, nil); err != nil {
+		t.Fatalf("SaveProjectPins(nil): %v", err)
+	}
+	_, path, err = LoadProject(root)
+	if err != nil || filepath.Base(path) != "board.json" {
+		t.Fatalf("SaveProjectPins(nil) lost explicit config: %s, %v", path, err)
+	}
+}
+
+func TestProjectPinsRemovesFileWhenImplicitConfig(t *testing.T) {
+	root := t.TempDir()
+	if err := SaveProjectPins(root, map[string]string{"pkg": "1.0.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveProjectPins(root, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".vmake", ProjectFilename)); !os.IsNotExist(err) {
+		t.Fatalf("expected project.json removed when pins empty and config implicit, got err=%v", err)
 	}
 }

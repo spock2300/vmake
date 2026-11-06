@@ -5,7 +5,7 @@ extension plugin commands appear here too. For plugin details, run
 `vmake <plugin> --help`.
 
 `vmake [--project <value> -C --quiet -q --verbose -v --very-verbose -V --yes -y]` - VMake - A Go-based C/C++ build system
-  `vmake build [--explain --install -i --install-type <value> --jobs <value> -j --keep-going -k --manifest <value> --mode <value> --prefix <value> -p --set <value> -s --tests --toolchain <value>]` - Build the project
+  `vmake build [--explain --install -i --install-type <value> --jobs <value> -j --keep-going -k --locked --manifest <value> --mode <value> --offline --prefix <value> -p --set <value> -s --tests --toolchain <value>]` - Build the project
   `vmake cache` - Inspect and remove shared git object caches
     `vmake cache list` - List cached upstream repositories
     `vmake cache remove <url>` - Remove one cached upstream repository
@@ -18,6 +18,13 @@ extension plugin commands appear here too. For plugin details, run
     `vmake config describe [text]` - Print or set the description of the active configuration
     `vmake config list` - List project configuration files and the active selection
     `vmake config use <filename.json>` - Select an existing configuration in .vmake/project.json
+  `vmake deps` - Manage project dependencies, pins, working trees and .vmake/vmake.lock
+    `vmake deps fetch [pkg...] [--all --json --offline]` - Materialize locked dependency sources into .vmake_deps/ without building
+    `vmake deps pin <pkg>@<version|commit> [--dry-run --json]` - Pin a dependency version or commit in .vmake/project.json and vmake.lock
+    `vmake deps status [--json]` - Show unified dependency state across lock, pins, working trees and cache
+    `vmake deps sync [--json]` - Synchronize working trees and vmake.lock without floating locked packages
+    `vmake deps unpin <pkg> [--json]` - Remove a dependency pin from .vmake/project.json
+    `vmake deps update [pkg[@version|commit]...] [--dry-run --json --refresh-repos]` - Re-resolve dependencies and rewrite vmake.lock
   `vmake distclean [--purge-sources]` - Deep clean all build artifacts
   `vmake doctor [--toolchain <value>]` - Diagnose platform prerequisites and build.go patterns
   `vmake ext` - Manage extension repositories
@@ -32,9 +39,6 @@ extension plugin commands appear here too. For plugin details, run
     `vmake git tag [version] [--major --message <value> -m --minor --no-push]` - Create version tag, update latest, and push
   `vmake init-editor [--local <value> --remove]` - Generate editor support files for build.go (go.mod for gopls)
   `vmake inspect [--no-targets --set <value> -s]` - Print a machine-readable project model
-  `vmake lock` - Manage .vmake/vmake.lock (pinned dependency versions)
-    `vmake lock show` - Print locked dependency versions
-    `vmake lock update` - Re-resolve dependency versions and rewrite vmake.lock
   `vmake manifest` - Inspect and restore install manifests
     `vmake manifest checkout <path> [name]` - Checkout packages to recorded versions
     `vmake manifest show <path>` - Show manifest contents
@@ -45,11 +49,10 @@ extension plugin commands appear here too. For plugin details, run
     `vmake pkg search [pattern] [--details --for-project --json --repo <value>]` - Search registered repositories for packages
     `vmake pkg show <repo/pkg>[@version] [--for-project --json]` - Show package metadata
     `vmake pkg unlink <repo/name>` - Remove a local source link
-    `vmake pkg update <repo/name>[@version] [--dry-run]` - Update package source tree (does not change vmake.lock)
   `vmake query [--set <value> -s]` - Show dependency tree
     `vmake query config <pkg>` - Show effective option values and generated defines
     `vmake query targets` - List build targets without building
-  `vmake rebuild [--explain --install -i --install-type <value> --jobs <value> -j --keep-going -k --manifest <value> --mode <value> --prefix <value> -p --set <value> -s --tests --toolchain <value>]` - Rebuild the project
+  `vmake rebuild [--explain --install -i --install-type <value> --jobs <value> -j --keep-going -k --locked --manifest <value> --mode <value> --offline --prefix <value> -p --set <value> -s --tests --toolchain <value>]` - Rebuild the project
   `vmake repo` - Manage package repositories
     `vmake repo add <name> <git-url-or-template> [--native -n]` - Add a package repository
     `vmake repo list` - List all package repositories
@@ -61,7 +64,7 @@ extension plugin commands appear here too. For plugin details, run
     `vmake skill install [--project <value> -p]` - Install VMake skill for AI assistants
     `vmake skill path` - Show skill installation paths
     `vmake skill uninstall` - Uninstall VMake skill
-  `vmake test [--explain --jobs <value> -j --keep-going -k --manifest <value> --mode <value> --set <value> -s --toolchain <value>]` - Build and run test targets
+  `vmake test [--explain --jobs <value> -j --keep-going -k --locked --manifest <value> --mode <value> --offline --set <value> -s --toolchain <value>]` - Build and run test targets
   `vmake toolchain` - Show toolchain information
     `vmake toolchain list` - List available toolchains
     `vmake toolchain show [name]` - Show toolchain details

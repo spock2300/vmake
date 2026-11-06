@@ -296,8 +296,8 @@ vmake ext add <name> <git-url>
 ### 构建命令
 
 ```bash
-vmake build [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k] [--explain]
-vmake test [--toolchain <name>] [--mode <mode>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k] [--explain]
+vmake build [--toolchain <name>] [--mode <mode>] [-i|--install] [-p|--prefix <dir>] [--install-type <type>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k] [--explain] [--locked] [--offline]
+vmake test [--toolchain <name>] [--mode <mode>] [--manifest <file>] [--tests] [--jobs/-j <n>] [--keep-going/-k] [--explain] [--locked] [--offline]
 vmake clean [--all]
 vmake distclean [--purge-sources]
 vmake rebuild [构建/安装选项]
@@ -305,7 +305,7 @@ vmake rebuild [构建/安装选项]
 
 不带子命令运行 `vmake` 会以默认选项执行构建。`vmake build`/`vmake rebuild`
 接受全部构建/安装选项；`vmake test` 接受构建/测试子集（`--toolchain`、`--mode`、
-`--manifest`、`--tests`、`--jobs`、`--keep-going`）。
+`--manifest`、`--tests`、`--jobs`、`--keep-going`、`--locked`、`--offline`）。
 
 ### 配置命令
 
@@ -338,15 +338,22 @@ vmake repo untrust <name>                  # 撤销信任
 
 Native 仓库按解析到的 package commit 在构建时信任（`vmake build --yes`），`repo trust` 会拒绝 native 仓库。
 
-### 包管理
+### 包与依赖管理
 
 ```bash
 vmake pkg list
 vmake pkg search <keyword>
+vmake pkg show <repo/name>[@version]           # 元数据、版本、依赖与 AddRequires 片段
 vmake pkg clean <repo/name> [-a]              # -a 同时删除包的工作树
-vmake pkg update <repo/name>[@version] [--dry-run]  # 只更新源码；不修改 vmake.lock
 vmake pkg link <repo/name> <path>              # 使用本地 git 工作树作为包源码
 vmake pkg unlink <repo/name>                   # 下一次构建使用 lock 中的源码
+
+vmake deps status [--json]                                         # 检查锁文件、pin、约束与本地工作树对齐状态
+vmake deps sync [--json]                                           # 补齐缺失 lock 条目并使本地工作树对齐 vmake.lock
+vmake deps update [pkg[@ver|commit]...] [--dry-run] [--refresh-repos] [--json]  # 在约束内升级依赖并更新 vmake.lock
+vmake deps pin <pkg>@<ver|commit> [--dry-run] [--json]             # 在 .vmake/project.json 中锁定版本或 40 位 commit SHA
+vmake deps unpin <pkg> [--json]                                    # 取消项目级版本 pin（保留当前 lock 版本）
+vmake deps fetch [pkg...] [--all] [--offline] [--json]             # 按 vmake.lock 物化依赖源码并填充共享 git 缓存
 ```
 
 ### 扩展管理
@@ -370,7 +377,6 @@ vmake inspect [--no-targets] [--set [pkg/]option=value]  # 输出机器可读的
 vmake check-symbols [--strict]                        # 审计本地默认目标的 ELF 动态符号
 vmake cache list                                      # 列出共享 git 对象缓存
 vmake cache remove <url>                              # 删除单个缓存命名空间
-vmake lock update|show                                # 重新解析 / 显示固定版本（.vmake/vmake.lock）
 vmake init-editor [--local <path>] [--remove]         # 为 build.go 生成编辑器支持文件（go.mod）
 vmake doctor [--toolchain <name>]                      # 诊断平台前提与 build.go 模式
 vmake toolchain list                                  # 列出可用工具链

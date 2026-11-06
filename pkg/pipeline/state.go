@@ -31,6 +31,10 @@ type sourceStage struct {
 	sourceSeeds    map[string]string
 	sourceCommits  map[string]string
 	sourceVersions map[string]string
+	offline        bool
+	locked         bool
+	dryRun         bool
+	dryRunDepsDir  string
 }
 
 type declareStage struct {

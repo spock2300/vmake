@@ -3,6 +3,7 @@ package resolver
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -73,6 +74,16 @@ func (g *Graph) IsFrozen() bool {
 // fully local. Linked packages ignore lock/config pins, tags and constraints.
 const LocalLinkVersion = "0.0.0-local"
 
+type LockPolicy struct {
+	IgnoreAll     bool
+	Float         map[string]bool
+	Targets       map[string]string
+	StrictWrapper bool
+	Locked        bool
+	Offline       bool
+	DryRun        bool
+}
+
 type Resolver struct {
 	ctx          context.Context
 	sources      map[string]*buildscript.Source
@@ -80,9 +91,11 @@ type Resolver struct {
 	repoMgr      *repo.RepoManager
 	depsDir      string
 	sourceMgr    *repo.SourceManager
+	dryRunDir    string
+	dryRunMgr    *repo.SourceManager
 	subParents   map[string]string
 	lockfile     *lockfile.Lock
-	ignoreLock   bool
+	lockPolicy   LockPolicy
 	configPins   map[string]string
 	sourceLinks  map[string]string
 	trustChecker buildscript.ScriptTrustChecker
@@ -115,7 +128,11 @@ func (r *Resolver) SetSourceManager(sm *repo.SourceManager) {
 
 func (r *Resolver) SetLockfile(l *lockfile.Lock, ignore bool) {
 	r.lockfile = l
-	r.ignoreLock = ignore
+	r.lockPolicy.IgnoreAll = ignore
+}
+
+func (r *Resolver) SetLockPolicy(policy LockPolicy) {
+	r.lockPolicy = policy
 }
 
 func (r *Resolver) SetTrustChecker(c buildscript.ScriptTrustChecker) {
@@ -134,6 +151,11 @@ func (r *Resolver) Close() {
 		_ = lock.Release()
 	}
 	r.repoLocks = make(map[string]*flock.FileLock)
+	if r.dryRunDir != "" {
+		_ = os.RemoveAll(r.dryRunDir)
+		r.dryRunDir = ""
+		r.dryRunMgr = nil
+	}
 }
 
 func (r *Resolver) SetConfigPins(pins map[string]string) {
@@ -265,6 +287,9 @@ func (r *Resolver) resolveRecursive(id string, constraint string, path []string)
 		if err := validateNodeConstraints(node, constraint, path); err != nil {
 			return nil, err
 		}
+		if err := r.validatePinnedNodeConstraints(node); err != nil {
+			return nil, err
+		}
 		return node, nil
 	}
 
@@ -279,6 +304,9 @@ func (r *Resolver) resolveRecursive(id string, constraint string, path []string)
 		if err := validateNodeConstraints(node, constraint, path); err != nil {
 			return nil, err
 		}
+		if err := r.validatePinnedNodeConstraints(node); err != nil {
+			return nil, err
+		}
 		return node, nil
 	}
 
@@ -290,6 +318,9 @@ func (r *Resolver) resolveRecursive(id string, constraint string, path []string)
 		node.Constraints = append(node.Constraints, constraint)
 	}
 
+	if err := r.validatePinnedNodeConstraints(node); err != nil {
+		return nil, err
+	}
 	if len(node.Constraints) > 0 && node.Pkg != nil && len(node.Pkg.Versions()) > 0 &&
 		!(node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource) {
 		if _, err := node.Pkg.SelectVersionMulti(node.Constraints); err != nil {
@@ -508,6 +539,9 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 	if linkPath, ok := r.sourceLink(id); ok {
 		return r.findNativeLink(id, repoName, constraint, linkPath, gitURL)
 	}
+	if err := r.checkLockedEntry(id); err != nil {
+		return nil, err
+	}
 
 	pkgStub := api.NewPackage()
 	pkgStub.Repo = repoName
@@ -522,22 +556,44 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 	key := repo.PackageTreeKey(repoName, pkgName)
 	urls := []string{gitURL}
 
-	if hasPin && pinCommit != "" && r.sourceMgr.HasTreeCommit(key, pinCommit) {
-		if err := r.checkConstraint(id, pinVersion, constraint); err != nil {
-			return nil, err
+	if hasPin && pinCommit != "" && (r.sourceMgr.HasTreeCommitFromURLs(key, pinCommit, urls) || r.sourceMgr.HasCachedCommit(urls, pinCommit) || r.lockPolicy.Offline) {
+		if pinVersion != "" {
+			if err := r.checkConstraint(id, pinVersion, constraint); err != nil {
+				return nil, err
+			}
 		}
-		res, err = r.sourceMgr.EnsureSource(repo.SourceRequest{Key: key, URLs: urls, Version: pinVersion, Commit: pinCommit, ResolveOnly: true})
+		res, err = r.ensureNativeSource(key, repo.SourceRequest{Key: key, URLs: urls, Version: pinVersion, Commit: pinCommit, ResolveOnly: true})
 		if err != nil {
 			return nil, err
 		}
-		tag, err := repo.DescribeTagContext(r.ctx, res.SrcDir)
+		if pinVersion != "" {
+			tag, err := repo.DescribeTagContext(r.ctx, res.SrcDir)
+			if err != nil {
+				return nil, err
+			}
+			if tag == "" {
+				tag = pinVersion
+			}
+			versions = map[string]string{pinVersion: tag}
+			selectedVersion = pinVersion
+			vlog.Verbose("  %s@%s (pinned, cached)", id, selectedVersion)
+		} else {
+			selectedVersion = ""
+			vlog.Verbose("  %s@%s (commit-pinned, cached)", id, repo.ShortCommit(pinCommit))
+		}
+	} else if hasPin && pinVersion == "" && pinCommit != "" {
+		res, err = r.ensureNativeSource(key, repo.SourceRequest{
+			Key: key, URLs: urls, Commit: pinCommit, ResolveOnly: true,
+		})
 		if err != nil {
 			return nil, err
 		}
-		versions = map[string]string{pinVersion: tag}
-		selectedVersion = pinVersion
-		vlog.Verbose("  %s@%s (pinned, cached)", id, selectedVersion)
+		selectedVersion = ""
+		vlog.Verbose("  %s@%s", id, repo.ShortCommit(res.Commit))
 	} else {
+		if r.lockPolicy.Offline {
+			return nil, fmt.Errorf("offline mode: cannot list tags for %s without network", id)
+		}
 		vlog.Verbose("  %s: listing versions from %s", id, strings.Join(urls, ", "))
 		tags, err := repo.ListRemoteTagsContext(r.ctx, urls)
 		if err != nil {
@@ -561,7 +617,7 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 		if selectedVersion == pinVersion {
 			expectedCommit = pinCommit
 		}
-		res, err = r.sourceMgr.EnsureSource(repo.SourceRequest{
+		res, err = r.ensureNativeSource(key, repo.SourceRequest{
 			Key: key, URLs: urls, Version: selectedVersion, Ref: ref, Commit: expectedCommit, ResolveOnly: true,
 		})
 		if err != nil {
@@ -613,21 +669,67 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 	return src, nil
 }
 
-func (r *Resolver) selectNativeVersion(id string, versions map[string]string, constraint string) (string, string, error) {
-	if pin, ok := r.configPins[id]; ok && pin != "" {
-		ref, exists := versions[pin]
-		if !exists {
-			return "", "", fmt.Errorf("config-pinned version %s for %s not found in upstream tags", pin, id)
+func (r *Resolver) ensureNativeSource(key string, req repo.SourceRequest) (*repo.SourceResult, error) {
+	if r.lockPolicy.Offline {
+		req.Offline = true
+	}
+	if !r.lockPolicy.DryRun {
+		return r.sourceMgr.EnsureSource(req)
+	}
+	if req.Commit != "" && r.sourceMgr.HasTreeCommitFromURLs(key, req.Commit, req.URLs) {
+		root := r.sourceMgr.TreeDir(key)
+		url := ""
+		if len(req.URLs) > 0 {
+			url = req.URLs[0]
 		}
-		if err := r.checkConstraint(id, pin, constraint); err != nil {
+		return &repo.SourceResult{Root: root, SrcDir: filepath.Join(root, "src"), URL: url, Commit: req.Commit}, nil
+	}
+	if r.dryRunMgr == nil {
+		dir, err := os.MkdirTemp("", "vmake-dryrun-*")
+		if err != nil {
+			return nil, fmt.Errorf("create dry-run temp dir: %w", err)
+		}
+		r.dryRunDir = dir
+		r.dryRunMgr = repo.NewSourceManager(dir, r.sourceMgr.CacheDir()).WithSession(r.sourceMgr.Session()).WithContext(r.ctx)
+	}
+	return r.dryRunMgr.EnsureSource(req)
+}
+
+func (r *Resolver) targetOrPin(id string) (target string, fromTarget bool, ok bool) {
+	if r.lockPolicy.Targets != nil {
+		if t := strings.TrimSpace(r.lockPolicy.Targets[id]); t != "" {
+			return t, true, true
+		}
+	}
+	if r.lockPolicy.Float != nil && r.lockPolicy.Float[id] {
+		return "", false, false
+	}
+	if r.configPins != nil {
+		if p := strings.TrimSpace(r.configPins[id]); p != "" {
+			return p, false, true
+		}
+	}
+	return "", false, false
+}
+
+func (r *Resolver) selectNativeVersion(id string, versions map[string]string, constraint string) (string, string, error) {
+	if target, fromTarget, ok := r.targetOrPin(id); ok {
+		ref, exists := versions[target]
+		if !exists {
+			if fromTarget {
+				return "", "", fmt.Errorf("requested version %s for %s not found in upstream tags", target, id)
+			}
+			return "", "", fmt.Errorf("config-pinned version %s for %s not found in upstream tags", target, id)
+		}
+		if err := r.checkConstraint(id, target, constraint); err != nil {
 			return "", "", err
 		}
-		return pin, ref, nil
+		return target, ref, nil
 	}
-	if locked, ok := r.lockfileEntry(id); ok {
+	if locked, ok := r.lockfileEntry(id); ok && locked.Version != "" {
 		ref, exists := versions[locked.Version]
 		if !exists {
-			return "", "", fmt.Errorf("locked version %s for %s not found in upstream tags; run 'vmake lock update' to re-resolve", locked.Version, id)
+			return "", "", fmt.Errorf("locked version %s for %s not found in upstream tags; run 'vmake deps update %s' to re-resolve", locked.Version, id, id)
 		}
 		if err := r.checkConstraint(id, locked.Version, constraint); err != nil {
 			return "", "", err
@@ -638,14 +740,16 @@ func (r *Resolver) selectNativeVersion(id string, versions map[string]string, co
 }
 
 func (r *Resolver) pinnedVersion(id string) (version, commit string, ok bool) {
-	if v, ok := r.configPins[id]; ok && v != "" {
-		// A config pin takes precedence over tag selection, but a matching
-		// lock entry still supplies the commit so a materialized tree can be
-		// reused offline.
-		if locked, lok := r.lockfileEntry(id); lok && locked.Version == v && locked.Commit != "" {
-			return v, locked.Commit, true
+	if target, fromTarget, hasTarget := r.targetOrPin(id); hasTarget {
+		if repo.IsCommitID(target) {
+			return "", target, true
 		}
-		return v, "", true
+		if !fromTarget && r.lockfile != nil {
+			if locked, lok := r.lockfile.Get(id); lok && locked.Version == target && locked.Commit != "" {
+				return target, locked.Commit, true
+			}
+		}
+		return target, "", true
 	}
 	if locked, ok := r.lockfileEntry(id); ok {
 		return locked.Version, locked.Commit, true
@@ -663,17 +767,23 @@ func (r *Resolver) checkConstraint(id, version, constraint string) error {
 	}
 	v, ok := api.ParseVersion(version)
 	if !ok || !c.Match(v) {
-		return fmt.Errorf("version %s for %s violates constraint %q; run 'vmake lock update' to re-resolve", version, id, constraint)
+		return fmt.Errorf("version %s for %s violates constraint %q; run 'vmake deps update' to re-resolve", version, id, constraint)
 	}
 	return nil
 }
 
 func (r *Resolver) lockfileEntry(id string) (*lockfile.LockedPkg, bool) {
-	if r.lockfile == nil || r.ignoreLock {
+	if r.lockfile == nil || r.lockPolicy.IgnoreAll {
+		return nil, false
+	}
+	if r.lockPolicy.Float != nil && r.lockPolicy.Float[id] {
+		return nil, false
+	}
+	if r.lockPolicy.Targets != nil && strings.TrimSpace(r.lockPolicy.Targets[id]) != "" {
 		return nil, false
 	}
 	locked, ok := r.lockfile.Get(id)
-	if !ok || locked.Version == "" {
+	if !ok || (locked.Version == "" && locked.Commit == "") {
 		return nil, false
 	}
 	return locked, true
@@ -731,7 +841,31 @@ func (r *Resolver) scanSubPackages(parentID, checkoutDir string) {
 	vlog.Verbose("  %s: found %d sub-package(s)", parentID, len(subs))
 }
 
+func (r *Resolver) checkLockedEntry(id string) error {
+	if !r.lockPolicy.Locked {
+		return nil
+	}
+	if r.lockfile == nil || len(r.lockfile.Packages) == 0 {
+		return fmt.Errorf("--locked: vmake.lock is out of date or missing; run 'vmake deps sync' or 'vmake deps update'")
+	}
+	locked, ok := r.lockfile.Get(id)
+	if !ok || locked.Commit == "" {
+		return fmt.Errorf("--locked: package %s is not locked in vmake.lock; run 'vmake deps sync' or 'vmake deps update'", id)
+	}
+	if r.configPins != nil {
+		if pin := strings.TrimSpace(r.configPins[id]); pin != "" {
+			if (repo.IsCommitID(pin) && locked.Commit != pin) || (!repo.IsCommitID(pin) && locked.Version != pin) {
+				return fmt.Errorf("--locked: package %s is pinned to %s in .vmake/project.json, but vmake.lock has %s; run 'vmake deps sync'", id, pin, lockfile.DisplayVersion(locked.Version, locked.Commit))
+			}
+		}
+	}
+	return nil
+}
+
 func (r *Resolver) checkWrapperCommit(id, repoName string) error {
+	if !r.lockPolicy.StrictWrapper {
+		return nil
+	}
 	locked, ok := r.lockfileEntry(id)
 	if !ok || locked.WrapperCommit == "" {
 		return nil
@@ -741,8 +875,51 @@ func (r *Resolver) checkWrapperCommit(id, repoName string) error {
 		return fmt.Errorf("read HEAD of registry '%s': %w", repoName, err)
 	}
 	if head != locked.WrapperCommit {
-		return fmt.Errorf("registry '%s' content changed since lock (wrapper commit %s expected, now %s); run 'vmake lock update' to re-resolve",
+		return fmt.Errorf("registry '%s' content changed since lock (wrapper commit %s expected, now %s); run 'vmake deps update' to re-resolve",
 			repoName, repo.ShortCommit(locked.WrapperCommit), repo.ShortCommit(head))
+	}
+	return nil
+}
+
+func (r *Resolver) validatePinnedNodeConstraints(node *PackageNode) error {
+	if node == nil || node.Native != nil || node.Pkg == nil {
+		return nil
+	}
+	if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {
+		return nil
+	}
+	if target, fromTarget, hasTarget := r.targetOrPin(node.ID); hasTarget {
+		if repo.IsCommitID(target) {
+			return nil
+		}
+		if len(node.Pkg.Versions()) > 0 {
+			if _, exists := node.Pkg.Versions()[target]; !exists {
+				if fromTarget {
+					return fmt.Errorf("requested version %s for %s not found in declared versions", target, node.ID)
+				}
+				return fmt.Errorf("config-pinned version %s for %s not found in declared versions", target, node.ID)
+			}
+		} else if len(node.Pkg.GitURLs()) > 0 {
+			return fmt.Errorf("package %s declares no versions; specify a 40-character commit SHA instead of %q", node.ID, target)
+		}
+		for _, c := range node.Constraints {
+			if err := r.checkConstraint(node.ID, target, c); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if locked, lok := r.lockfileEntry(node.ID); lok && locked.Version != "" {
+		if len(node.Pkg.Versions()) > 0 {
+			if _, exists := node.Pkg.Versions()[locked.Version]; !exists {
+				return fmt.Errorf("locked version %s for %s not found in declared versions; run 'vmake deps update %s' to re-resolve", locked.Version, node.ID, node.ID)
+			}
+		}
+		for _, c := range node.Constraints {
+			if err := r.checkConstraint(node.ID, locked.Version, c); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

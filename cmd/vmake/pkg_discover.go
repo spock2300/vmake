@@ -500,11 +500,11 @@ func loadPkgShow(repoName, pkgName, version string) (*pkgShowResult, error) {
 			root := sources.TreeDir(repo.PackageTreeKey(repoName, pkgName))
 			state, _ = sources.ReadState(root)
 			if state == nil || state.Commit == "" {
-				return nil, fmt.Errorf("package '%s/%s' is not cached in this project; run 'vmake pkg update %s/%s' first", repoName, pkgName, repoName, pkgName)
+				return nil, fmt.Errorf("package '%s/%s' is not cached in this project; run 'vmake deps fetch %s/%s' or 'vmake build' first", repoName, pkgName, repoName, pkgName)
 			}
 			buildGo = filepath.Join(root, "src", "build.go")
 			if !fs.FileExists(buildGo) {
-				return nil, fmt.Errorf("package '%s/%s' has no cached build.go; run 'vmake pkg update %s/%s' first", repoName, pkgName, repoName, pkgName)
+				return nil, fmt.Errorf("package '%s/%s' has no cached build.go; run 'vmake deps fetch %s/%s' or 'vmake build' first", repoName, pkgName, repoName, pkgName)
 			}
 			commit = state.Commit
 		}

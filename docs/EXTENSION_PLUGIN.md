@@ -429,7 +429,7 @@ err := ctx.RunGitLFS(ctx.RepoDir, "pull", "--include=assets/toolchains/aarch64-g
 
 工具链的程序通过 `InstallPath/bin` 逐条命令解析（有 `InstallPath` 且工具名为相对路径时严格限定在该目录、不回退 PATH；绝对路径工具直接解析；没有 `InstallPath` 时按 PATH 查找），vmake 的工具链选择不会修改进程级 `PATH`。Windows 启动时会把 Git for Windows 的 Unix userland 目录前置到进程 `PATH`（`internal/gitusr`，用于 `sh`、`tar`、`curl` 等），这与工具链选择无关；工具链目录不会加入进程级 PATH，而是在各命令的环境中提供。
 
-列表、查询、诊断、`clean` 和 `lock update` 不会自动安装工具链。操作确实依赖编译器信息而工具不可用时，会提示先执行 `vmake build --toolchain <name>`。`clean` 只删除当前配置（当前工具链、模式与选项）对应的构建输出，并通过 `Inspect` 校验主工具链，主工具链缺失时会失败；`clean --all` 与 `distclean` 不依赖 `Inspect` 成功，删除所有配置的构建输出（`distclean` 默认保留 `.vmake_deps/` 已下载的源码工作树，仅 `--purge-sources` 一并删除），因此可在工具链缺失时清理构建输出；此时无法执行依赖工具链的 `OnClean` 回调会明确提示并跳过。第三方插件显式调用下载接口的行为不受此限制。
+列表、查询、诊断、`clean` 和 `deps` 命令不会自动安装工具链。操作确实依赖编译器信息而工具不可用时，会提示先执行 `vmake build --toolchain <name>`。`clean` 只删除当前配置（当前工具链、模式与选项）对应的构建输出，并通过 `Inspect` 校验主工具链，主工具链缺失时会失败；`clean --all` 与 `distclean` 不依赖 `Inspect` 成功，删除所有配置的构建输出（`distclean` 默认保留 `.vmake_deps/` 已下载的源码工作树，仅 `--purge-sources` 一并删除），因此可在工具链缺失时清理构建输出；此时无法执行依赖工具链的 `OnClean` 回调会明确提示并跳过。第三方插件显式调用下载接口的行为不受此限制。
 
 错误只影响其名称对应的工具链，其他工具链仍可用；重名定义会禁用整个名称（不会在多个定义之间挑选）。`vmake toolchain list` 显示定义名称、路径及原因，损坏 JSON 无法识别名称时按路径显示。选择错误定义时不会回退到宿主工具链。`vmake ext update/remove/provision` 跳过插件执行，可用于修复、移除或预装扩展。
 

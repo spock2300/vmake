@@ -9,7 +9,6 @@ import (
 
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
-	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/lockfile"
 	"github.com/spock2300/vmake/pkg/resolver"
 )
@@ -182,7 +181,7 @@ func TestWriteLockfileSkipsSubPackages(t *testing.T) {
 	s.ctx.DepGraph.Packages[owner], s.ctx.DepGraph.Packages[sub] = parent, subNode
 	s.ctx.DepGraph.Order = []string{owner, sub}
 	s.ctx.Resolver.SubParents()[sub] = owner
-	s.remote.entries[owner] = &config.EntryConfig{Version: "1.0.0"}
+	s.remote.setVersion(owner, "1.0.0")
 	s.remote.commits[owner] = "abc123"
 	s.ctx.LockPath = filepath.Join(t.TempDir(), "vmake.lock")
 	s.ctx.Lock = lockfile.New()
@@ -220,12 +219,12 @@ func TestSetupSubPackageDirsNestedMember(t *testing.T) {
 		buildscript.NewSource(sub, filepath.Join(packageRoot, "build.go"), packageRoot, api.SourceRemote),
 		api.NewPackage().SetName(sub))
 	s.ctx.DepGraph.Packages[owner], s.ctx.DepGraph.Packages[sub] = parent, node
-	config.SetEntry(s.ctx.Config, owner, &config.EntryConfig{Version: "1.0.0"})
+	s.ctx.Pins = map[string]string{owner: "1.0.0"}
 	s.ctx.DepGraph.Order = []string{owner, sub}
 	s.ctx.Resolver.SubParents()[sub] = owner
 	s.needed[owner], s.needed[sub] = true, true
 	s.allPkgOptions[sub] = nil
-	s.remote.entries[owner] = &config.EntryConfig{Version: "1.0.0"}
+	s.remote.setVersion(owner, "1.0.0")
 	s.remote.commits[owner] = "resolved-commit"
 	s.remote.trees[owner] = tree
 

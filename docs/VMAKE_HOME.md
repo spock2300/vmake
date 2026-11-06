@@ -57,9 +57,9 @@ CLI：`vmake repo add|remove|list|update|trust|untrust`
 
 工作树存放在项目内（见下节），物化时按需 `git ls-remote` 解析版本、把所选 ref/commit 的对象按 depth=1 抓进 `cache/git/` 并锚定，再从缓存本地 fetch 出工作树。命中缓存后不触网只适用于 **commit 已固定且对象已缓存** 的请求；需要解析版本/ref 的请求仍可能先访问上游（失败时可用缓存记录的 ref→commit 或现有树离线兜底），默认分支 HEAD 物化直接 clone 上游，缓存未命中或服务器拒绝按 SHA fetch 时回退到上游/full clone。缓存缺失/损坏或 URL 变化会在锁内重建；上游不可达且无缓存兜底时构建会失败。
 
-需要加载项目解析输入的命令先取得 `project/.vmake/_locks/project.lock`（独占）：任何会解析依赖的命令都可能物化源码树或创建源码链接，因此同工程命令串行（`doctor`、`pkg list`、`pkg search`、`pkg show`、`manifest show` 等不经过 `loadResolveInputs` 的命令除外）。全局缓存的生命周期锁在构建/读取时共享，在 `clean`/`distclean`/`pkg clean`/`rebuild`、`lock update` 和 `pkg update` 时独占（`requiresExclusiveStorage`）；`ext update`/`repo update` 不经过该存储会话。同一棵树在同一时间只允许一个物化操作（`tree_<hash>.lock`），每个缓存 bare 仓库的写入与 checkout 由 `cache_<urlhash 前16位>.lock` 串行（不同 URL 不同锁）。构建与 `lock update` 在 `Require`/`Configure` 完成后的配置阶段取得所需远程包（native 子包归并到根父包）的 `owner_<sha256(name)>.lock`，并持有到命令结束，而不是整个命令期间。
+需要加载项目解析输入的命令先取得 `project/.vmake/_locks/project.lock`（独占）：任何会解析依赖的命令都可能物化源码树或创建源码链接，因此同工程命令串行（`doctor`、`pkg list`、`pkg search`、`pkg show`、`manifest show` 等不经过 `loadResolveInputs` 的命令除外）。全局缓存的生命周期锁在构建/读取时共享，在 `clean`/`distclean`/`pkg clean`/`rebuild` 和 `deps sync|update|pin|unpin|fetch` 时独占（`requiresExclusiveStorage`）；`ext update`/`repo update` 不经过该存储会话。同一棵树在同一时间只允许一个物化操作（`tree_<hash>.lock`），每个缓存 bare 仓库的写入与 checkout 由 `cache_<urlhash 前16位>.lock` 串行（不同 URL 不同锁）。构建与 `deps` 写操作在 `Require`/`Configure` 完成后的配置阶段取得所需远程包（native 子包归并到根父包）的 `owner_<sha256(name)>.lock`，并持有到命令结束，而不是整个命令期间。
 
-网络 git 操作默认超时 30 分钟；clone/fetch 在传输阶段把 git 进度实时透传到终端，而 `git ls-remote` 本身没有进度输出。解析依赖或物化包源码的命令（如 `build`/`rebuild`/`lock update`/`pkg update`）会在解析 ref、列举 native 版本或尝试每个源 URL 前先打印一行状态（包名/树键、已知的目标 ref/commit、源 URL），便于判断当前步骤；缓存命中时这行也可能出现，但通常不触网。这些状态行与 git 进度都在 `-q` 下静默，`query`/`check-symbols` 固定静默。状态行不是心跳：`git ls-remote`、建立连接和服务端枚举对象期间 git 自身没有输出，可能一直静默到操作完成或触发 `VMAKE_GIT_TIMEOUT`。网络较慢时可提高上限：
+网络 git 操作默认超时 30 分钟；clone/fetch 在传输阶段把 git 进度实时透传到终端，而 `git ls-remote` 本身没有进度输出。解析依赖或物化包源码的命令（如 `build`/`rebuild`/`deps sync`/`deps update`/`deps pin`/`deps fetch`）会在解析 ref、列举 native 版本或尝试每个源 URL 前先打印一行状态（包名/树键、已知的目标 ref/commit、源 URL），便于判断当前步骤；缓存命中时这行也可能出现，但通常不触网。这些状态行与 git 进度都在 `-q` 下静默，`query`/`check-symbols` 固定静默。状态行不是心跳：`git ls-remote`、建立连接和服务端枚举对象期间 git 自身没有输出，可能一直静默到操作完成或触发 `VMAKE_GIT_TIMEOUT`。网络较慢时可提高上限：
 
 ```bash
 VMAKE_GIT_TIMEOUT=7200 vmake build   # 秒
@@ -161,7 +161,7 @@ toolchains/<host-os>/<host-arch>/<name>/<version>/
 
 `.vmake_deps/` 为远程包和本地 `SetGit` 包保存每个包唯一的一棵工作树：所有构建配置共享同一份源码，补丁、Kconfig `.config` 和脚本内的源码改动都作用在它上面。普通本地包（未 `SetGit`）不在其中，vmake 既不复制也不重置其源码，补丁直接作用在包目录上。构建产物按构建键分开存放，不复制源码。
 
-`vmake pkg link <repo/name> <path>` 会把 native 父包或 registry 包的上游源码指向一个本地 git 工作树，记录在 `.vmake/local.json`（机器本地，不进入 lock/config）。link 时删除该包已有的 `.vmake_deps/<repo>/<owner>/src` 和 `state.json`，避免旧版本源码继续造成误解；`out/` 与 own-Git 子包的 `third_party/` 保留。link 期间该包不物化到 `.vmake_deps/.../src`，版本、tag 和 `AddRequires` 版本约束都不参与；构建/安装输出仍写在 `.vmake_deps/<repo>/<owner>/out/...`。native 包随 link 树扫描子包；带自身 `SetGit` 源的 native 子包把第三方源码物化到 `.vmake_deps/<owner>/third_party/<member>`，避免写入链接仓库。link 包声明 patch 或 KConfig 时拒绝（native own-Git 子包的第三方 patch 除外）。`vmake pkg unlink <repo/name>` 删除记录，下一次构建使用 lock 中的版本（无 lock 条目时重新解析并写入）。`vmake pkg update @<version>` 只刷新物化源码，不修改 lock；需要切换版本时使用 `vmake lock update`。
+`vmake pkg link <repo/name> <path>` 会把 native 父包或 registry 包的上游源码指向一个本地 git 工作树，记录在 `.vmake/local.json`（机器本地，不进入 lock/config）。link 时删除该包已有的 `.vmake_deps/<repo>/<owner>/src` 和 `state.json`，避免旧版本源码继续造成误解；`out/` 与 own-Git 子包的 `third_party/` 保留。link 期间该包不物化到 `.vmake_deps/.../src`，版本、tag 和 `AddRequires` 版本约束都不参与；构建/安装输出仍写在 `.vmake_deps/<repo>/<owner>/out/...`。native 包随 link 树扫描子包；带自身 `SetGit` 源的 native 子包把第三方源码物化到 `.vmake_deps/<owner>/third_party/<member>`，避免写入链接仓库。link 包声明 patch 或 KConfig 时拒绝（native own-Git 子包的第三方 patch 除外）。`vmake pkg unlink <repo/name>` 删除记录，下一次构建使用 lock 中的版本（无 lock 条目时重新解析并写入）。需要更新依赖版本或同步工作树时使用 `vmake deps update` / `vmake deps sync` / `vmake deps pin`。
 
 ```
 .vmake_deps/
@@ -188,20 +188,20 @@ toolchains/<host-os>/<host-arch>/<name>/<version>/
 `vmake clean` 只删除当前配置的构建键目录，`clean --all` 删除所有配置的产物（包括 `pkg link` 包在 `.vmake_deps` 下的 `out/`），两者都保留 `.vmake_deps/` 源码树和 `.vmake/local.json` 链接；`vmake distclean` 同样保留下载的工作树（下次构建直接复用，不重新下载），只有加 `--purge-sources` 才删除整个 `.vmake_deps/`。`pkg link` 已删除的 `src`/`state.json` 不会由 clean/distclean 恢复；unlink 后下一次构建重新物化。`vmake pkg clean <repo/name>` 删除单个包的构建产物，`-a` 连工作树一并删除但不删除 link 记录；下次构建会重新物化该树，但共享对象缓存已有该 commit 时无需重新下载对象（版本/ref 解析仍可能访问上游）。该命令也会删除 `build/vmake-build.json` 与 `build/vmake-test.json`。
 
 源码：`cmd/vmake/paths.go` (`getDepsDir`, `findProjectDir`), `pkg/repo/source.go`, `pkg/repo/storage.go`
-CLI：`vmake pkg list|search|show|clean|update|link|unlink`
+CLI：`vmake pkg list|search|show|clean|link|unlink`、`vmake deps status|sync|update|pin|unpin|fetch`
 
 ## 项目目录
 
-每个项目可在 `.vmake/` 中保存多份配置，由 `.vmake/project.json` 选择当前生效的文件。没有 `project.json` 的旧工程仍使用 `config.json`，不会自动生成选择文件。
+每个项目可在 `.vmake/` 中保存多份配置，由 `.vmake/project.json` 选择当前生效的文件并记录全工程共享的依赖 pin（`pins`）。没有 `project.json` 的旧工程仍使用 `config.json`，不会自动生成选择文件。
 
 ```
 project/
 ├── build.go                       # 项目构建脚本
 ├── .vmake/
-│   ├── project.json               # 当前配置选择（可选）
+│   ├── project.json               # 当前配置选择与项目级依赖 pin（可选）
 │   ├── config.json                # 默认配置
 │   ├── config-debug.json          # 其他配置，格式与默认配置相同
-│   ├── vmake.lock                 # 所有配置共享的远程包/有版本的本地 SetGit 包版本、commit、来源及 registry wrapper commit 锁
+│   ├── vmake.lock                 # 所有配置共享的远程包/本地 SetGit 包版本、commit、来源及 registry wrapper commit 锁
 │   ├── local.json                 # 机器本地的源码 link（vmake pkg link；不提交）
 │   ├── layout                     # 存储布局版本标记（当前 "5"）
 │   └── _locks/project.lock        # 工程独占锁（同工程命令串行）
@@ -220,17 +220,20 @@ project/
         └── <target>               # 最终产物
 ```
 
-`vmake.lock` 的每条记录包含 `version`、`commit`、`source`（`registry`/`native`/`git`）；registry 包还记录提供 wrapper 的仓库 HEAD `wrapperCommit`，解析时会校验该 commit 未漂移。被 `pkg link` 的包保留旧 lock 条目，但 link 期间不读取、不校验、不重写；`vmake lock update` 跳过这些包。
+`vmake.lock` 的每条记录包含 `version`、`commit`、`source`（`registry`/`native`/`git`）；registry 包还记录提供 wrapper 的仓库 HEAD `wrapperCommit`，解析时会校验该 commit 未漂移。被 `pkg link` 的包保留旧 lock 条目，但 link 期间不读取、不校验、不重写；`vmake deps` 写操作跳过这些包。
 
-`project.json` 仅保存配置文件名：
+`project.json` 保存配置文件名与全工程共享的依赖 pin（`vmake deps pin|unpin`）：
 
 ```json
 {
-  "config": "config-debug.json"
+  "config": "config-debug.json",
+  "pins": {
+    "official/zlib": "1.3.1"
+  }
 }
 ```
 
-文件名必须以 `.json` 结尾，位于 `.vmake/` 内，不接受路径或保留名称 `project.json`。显式选择的文件缺失或 JSON 无法解析时会报错，不退回默认配置；损坏的 `project.json` 需要修正后再执行命令。
+文件名必须以 `.json` 结尾，位于 `.vmake/` 内，不接受路径或保留名称 `project.json`。显式选择的文件缺失或 JSON 无法解析时会报错，不退回默认配置；损坏的 `project.json` 需要修正后再执行命令。`vmake config use` 切换配置时会保留 `pins`。
 
 ```bash
 vmake config list
@@ -245,9 +248,9 @@ vmake config use config.json
 
 说明是配置文件顶层的文本（可含换行），最长 200 字符，可为中文；不参与依赖解析，也不进入构建缓存键。TUI 选项面板顶部常驻一行 `Description`，按 `D` 或点击该行编辑，随 `Ctrl+S` 与其他修改一起保存。
 
-TUI 和 `vmake config --set` 仅保存当前配置。构建、测试、查询、清理、`doctor` 和 `lock update` 均读取当前配置。配置选择相对于现有项目定位规则找到的根目录，构建脚本扫描范围保持不变；子目录被识别为独立项目时使用其自身配置。
+TUI 和 `vmake config --set` 仅保存当前配置。构建、测试、查询、清理、`doctor` 和 `deps` 均读取当前配置。配置选择相对于现有项目定位规则找到的根目录，构建脚本扫描范围保持不变；子目录被识别为独立项目时使用其自身配置。
 
-所有配置共享 `.vmake/vmake.lock`，切换本身不改写依赖锁。依赖版本选择与锁更新沿用原有规则。构建缓存键不包含配置文件名，等效配置可以复用产物；`clean` 清理当前配置对应的构建输出，`clean --all` 和 `distclean` 保留所有配置及选择文件。安装仍默认使用 `install/`；同时保留多个安装结果时，可在项目外指定不同的 `--prefix`（项目内只允许默认 `install/` 子树）。
+所有配置共享 `.vmake/vmake.lock` 与 `.vmake/project.json` 中的 `pins`，切换配置本身不改写依赖锁。构建缓存键不包含配置文件名，等效配置可以复用产物；`clean` 清理当前配置对应的构建输出，`clean --all` 和 `distclean` 保留所有配置及选择文件。安装仍默认使用 `install/`；同时保留多个安装结果时，可在项目外指定不同的 `--prefix`（项目内只允许默认 `install/` 子树）。
 
 每份项目配置的结构（`pkg/config/store.go`）：
 
@@ -265,7 +268,6 @@ TUI 和 `vmake config --set` 仅保存当前配置。构建、测试、查询、
       "options": { "verbose": false }
     },
     "official/zlib": {
-      "version": "1.3.1",
       "options": { "shared": false },
       "kconfig": "",
       "selected_preset": ""

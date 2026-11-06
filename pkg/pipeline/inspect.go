@@ -163,7 +163,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		if info, err := os.Stat(sourceDir); err != nil || !info.IsDir() {
 			continue
 		}
-		version, commit, ok := remoteVersionKey(ctx, owner, ctx.DepGraph.Packages[owner], config.GetEntry(ctx.Config, owner))
+		version, commit, ok := remoteVersionKey(ctx, owner, ctx.DepGraph.Packages[owner])
 		if !ok {
 			continue
 		}

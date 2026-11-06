@@ -72,6 +72,10 @@ func (m *SourceManager) WithSession(session *storage.Session) *SourceManager {
 	return m
 }
 
+func (m *SourceManager) Session() *storage.Session {
+	return m.session
+}
+
 func (m *SourceManager) acquireAccess(exclusive bool) (func(), error) {
 	if err := m.context().Err(); err != nil {
 		return nil, err
@@ -92,6 +96,22 @@ func (m *SourceManager) acquireAccess(exclusive bool) (func(), error) {
 // TreeDir is the package tree root for key inside the dependency directory.
 func (m *SourceManager) TreeDir(key string) string {
 	return filepath.Join(m.depDir, filepath.FromSlash(key))
+}
+
+func (m *SourceManager) CacheDir() string {
+	return m.cacheRoot
+}
+
+func (m *SourceManager) HasCachedCommit(urls []string, commit string) bool {
+	if commit == "" || m.cache == nil || !m.cache.Enabled() {
+		return false
+	}
+	for _, url := range urls {
+		if m.cache.Has(url, commit) {
+			return true
+		}
+	}
+	return false
 }
 
 // treePath resolves a tree key and rejects keys that would escape the
@@ -209,6 +229,7 @@ type SourceRequest struct {
 	Submodules  bool
 	Refresh     bool
 	ResolveOnly bool
+	Offline     bool
 }
 
 type SourceResult struct {
@@ -293,6 +314,15 @@ func (m *SourceManager) EnsureSource(req SourceRequest) (*SourceResult, error) {
 	if commit == "" {
 		if validCommitID(req.Ref) {
 			commit = req.Ref
+		} else if req.Offline {
+			if cached, cachedRef, ok := cachedRefCommit(m.cache, req.URLs, req.Ref); ok {
+				commit = cached
+				localRef = cachedRef
+			} else if state != nil && state.Commit != "" && m.treeHead(srcDir) == state.Commit && offlineRefMatch(state, req) {
+				commit = state.Commit
+			} else {
+				return nil, fmt.Errorf("offline mode: cannot resolve %s for %s without network", req.Ref, req.Key)
+			}
 		} else {
 			refLabel := req.Ref
 			if refLabel == "" {
@@ -466,8 +496,11 @@ func (m *SourceManager) materialize(req SourceRequest, root, srcDir string, stat
 func (m *SourceManager) cloneTreeAt(url, dir string, req SourceRequest, commit, localRef string) (string, error) {
 	switch {
 	case validCommitID(req.Ref) || (req.Ref == "" && req.Commit != ""):
-		return m.cloneCommitTree(url, dir, commit)
+		return m.cloneCommitTree(url, dir, commit, req.Offline)
 	case req.Ref == "":
+		if req.Offline {
+			return "", fmt.Errorf("offline mode: cannot clone HEAD of %s without network", url)
+		}
 		return m.cloneHeadTree(url, dir)
 	default:
 		return m.cloneRefTree(url, dir, req, commit, localRef)
@@ -479,7 +512,13 @@ func (m *SourceManager) cloneTreeAt(url, dir string, req SourceRequest, commit, 
 // on a cache miss it fetches from the source. Servers without
 // allowReachableSHA1InWant cannot serve arbitrary commits; those fall back to
 // a full clone, which is slow but correct.
-func (m *SourceManager) cloneCommitTree(url, dir, commit string) (string, error) {
+func (m *SourceManager) cloneCommitTree(url, dir, commit string, offline bool) (string, error) {
+	if offline {
+		if !m.cache.Enabled() || !m.cache.Has(url, commit) {
+			return "", fmt.Errorf("offline mode: commit %s for %s is not in object cache", ShortCommit(commit), url)
+		}
+		return m.checkoutCachedTree(url, dir, "refs/vmake/"+commit, commit)
+	}
 	if m.cache.Enabled() {
 		if err := m.cache.EnsureCommit(m.context(), url, commit); err == nil {
 			if actual, err := m.checkoutCachedTree(url, dir, "refs/vmake/"+commit, commit); err == nil {
@@ -535,6 +574,12 @@ func (m *SourceManager) cloneHeadTree(url, dir string) (string, error) {
 // commit still resolves to the same commit. The ref is served from the shared
 // object cache when possible so a cache hit never touches the upstream.
 func (m *SourceManager) cloneRefTree(url, dir string, req SourceRequest, commit, localRef string) (string, error) {
+	if req.Offline {
+		if commit != "" && m.cache.Enabled() && m.cache.Has(url, commit) {
+			return m.cloneCommitTree(url, dir, commit, true)
+		}
+		return "", fmt.Errorf("offline mode: ref %s for %s is not in object cache", req.Ref, url)
+	}
 	if localRef == "" {
 		// A lock-pinned request knows the commit but not the namespace. Prefer
 		// the cache's recorded mapping (no network); only probe the source when
@@ -551,7 +596,7 @@ func (m *SourceManager) cloneRefTree(url, dir string, req SourceRequest, commit,
 		}
 	}
 	if localRef == "" {
-		return m.cloneCommitTree(url, dir, commit)
+		return m.cloneCommitTree(url, dir, commit, false)
 	}
 	if m.cache.Enabled() {
 		if err := m.cache.EnsureRef(m.context(), url, localRef, commit); err == nil {
@@ -561,7 +606,7 @@ func (m *SourceManager) cloneRefTree(url, dir string, req SourceRequest, commit,
 			}
 			if actual, err := m.checkoutCachedTree(url, dir, "+"+localRef+":"+target, commit); err == nil {
 				if req.Commit != "" && actual != req.Commit {
-					return "", fmt.Errorf("%s resolves to %s, lock expects %s; run 'vmake lock update' to re-resolve", req.Ref, ShortCommit(actual), ShortCommit(req.Commit))
+					return "", fmt.Errorf("%s resolves to %s, lock expects %s; run 'vmake deps update' to re-resolve", req.Ref, ShortCommit(actual), ShortCommit(req.Commit))
 				}
 				return actual, nil
 			} else {
@@ -574,7 +619,7 @@ func (m *SourceManager) cloneRefTree(url, dir string, req SourceRequest, commit,
 			// The ref could not be refreshed (for example the upstream is
 			// unreachable) but its commit is already cached: materialize from
 			// the anchor. The content is correct; only the tag is missing.
-			if actual, cerr := m.cloneCommitTree(url, dir, commit); cerr == nil {
+			if actual, cerr := m.cloneCommitTree(url, dir, commit, false); cerr == nil {
 				return actual, nil
 			} else {
 				vlog.Info("  git object cache: commit-only checkout of %s from %s failed, fetching from upstream: %v", ShortCommit(commit), url, cerr)
@@ -593,7 +638,7 @@ func (m *SourceManager) cloneRefTree(url, dir string, req SourceRequest, commit,
 		return "", err
 	}
 	if req.Commit != "" && actual != req.Commit {
-		return "", fmt.Errorf("%s resolves to %s, lock expects %s; run 'vmake lock update' to re-resolve", req.Ref, ShortCommit(actual), ShortCommit(req.Commit))
+		return "", fmt.Errorf("%s resolves to %s, lock expects %s; run 'vmake deps update' to re-resolve", req.Ref, ShortCommit(actual), ShortCommit(req.Commit))
 	}
 	if err := CheckoutDetachContext(m.context(), dir, actual); err != nil {
 		return "", err
@@ -671,11 +716,22 @@ func (m *SourceManager) ClearPatchState(root string) error {
 // HasTreeCommit reports whether the package tree for key already sits at
 // commit, allowing fully offline reuse even when the source is unreachable.
 func (m *SourceManager) HasTreeCommit(key, commit string) bool {
+	return m.HasTreeCommitFromURLs(key, commit, nil)
+}
+
+func (m *SourceManager) HasTreeCommitFromURLs(key, commit string, urls []string) bool {
 	if commit == "" {
 		return false
 	}
 	root, err := m.treePath(key)
 	if err != nil {
+		return false
+	}
+	st, err := m.ReadState(root)
+	if err != nil || st == nil || st.Commit != commit {
+		return false
+	}
+	if len(urls) > 0 && !sameURLs(st.URLs, urls) {
 		return false
 	}
 	return m.CommitAt(root) == commit
@@ -725,30 +781,6 @@ func IsLocalGitURL(url string) bool {
 		return false
 	}
 	return true
-}
-
-// UpdateSource floats a package working tree at origin/HEAD for
-// `vmake pkg update`. An unchanged upstream commit keeps the existing tree
-// (including local modifications); otherwise the tree is re-created in place.
-func (m *SourceManager) UpdateSource(pkg *api.Package) error {
-	urls := pkg.GitURLs()
-	if len(urls) == 0 {
-		return fmt.Errorf("package %s has no git URL", pkg.FullName())
-	}
-	key := PackageTreeKey(pkg.Repo, pkg.Name)
-	root := m.TreeDir(key)
-	req := SourceRequest{Key: key, URLs: urls, Refresh: true, Submodules: pkg.Submodules()}
-	if state, err := m.ReadState(root); err == nil && state != nil {
-		req.PatchHash = state.PatchHash
-	}
-	res, err := m.EnsureSource(req)
-	if err != nil {
-		return err
-	}
-	// A stale `out/` tree from a previous commit could still be linked into
-	// build outputs; drop it so the next build repopulates cleanly.
-	fs.RemoveIfExists(filepath.Join(res.Root, "out"))
-	return nil
 }
 
 // PackageTreeKey is the tree key for a repo/package pair. Local SetGit

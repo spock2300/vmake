@@ -12,7 +12,6 @@ import (
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/buildscript"
-	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/lockfile"
 	"github.com/spock2300/vmake/pkg/repo"
 	"github.com/spock2300/vmake/pkg/resolver"
@@ -139,15 +138,15 @@ func TestLocalSetGitRefSelectionAndLock(t *testing.T) {
 	}
 	s.ctx.Lock = locked
 	node.Constraints = nil
-	s.ctx.IgnoreLock = true
+	s.ctx.LockPolicy = resolver.LockPolicy{Float: map[string]bool{"app": true}}
 	updated := newBuildPhaseState(s.ctx, BuildOptions{})
 	if err := updated.selectPackageSource("app"); err != nil {
 		t.Fatal(err)
 	}
 	if updated.sourceVersions["app"] != "2.0.0" || updated.sourceCommits["app"] == first {
-		t.Fatalf("lock update retained previous selection: %s/%s", updated.sourceVersions["app"], updated.sourceCommits["app"])
+		t.Fatalf("deps update retained previous selection: %s/%s", updated.sourceVersions["app"], updated.sourceCommits["app"])
 	}
-	s.ctx.IgnoreLock = false
+	s.ctx.LockPolicy = resolver.LockPolicy{}
 	// Bring the tree back to the locked version while the source is still
 	// reachable; a locked build must then reuse it without the network.
 	back := newBuildPhaseState(s.ctx, BuildOptions{})
@@ -337,10 +336,10 @@ func TestSetupSubPackageDirsKeepsResolvedParentCommit(t *testing.T) {
 	s.needed[owner] = true
 	s.allPkgOptions[name] = nil
 	s.ctx.Resolver.SubParents()[name] = owner
-	s.remote.entries[owner] = &config.EntryConfig{Version: "1.0.0"}
+	s.remote.setVersion(owner, "1.0.0")
 	s.remote.trees[owner] = tree
 	s.remote.commits[owner] = "resolved-commit"
-	config.SetEntry(s.ctx.Config, owner, &config.EntryConfig{Version: "1.0.0"})
+	s.ctx.Pins = map[string]string{owner: "1.0.0"}
 
 	if err := s.setupSubPackageDirs(&sourceDownloadLog{}); err != nil {
 		t.Fatal(err)
@@ -409,7 +408,7 @@ func TestDownloadRemoteSourcesBindsDirsBeforePatchApply(t *testing.T) {
 		api.NewPackage().SetRepo("native").SetName("sample"))
 	node.Pkg.SetScriptDir(scriptDir).AddPatches("change.patch").SetGit(upstream)
 	s.ctx.DepGraph.Packages["native/sample"] = node
-	s.remote.entries["native/sample"] = &config.EntryConfig{}
+	s.remote.setVersion("native/sample", "")
 
 	if err := s.downloadRemoteSources(s.remote, s.ctx.Paths.DepsDir, &sourceDownloadLog{}); err != nil {
 		t.Fatal(err)
@@ -518,7 +517,7 @@ func TestDownloadRemoteSourcesUsesSharedTreePatchIdentity(t *testing.T) {
 	s.ctx.DepGraph.Order = []string{owner, member}
 	s.ctx.Resolver.SubParents()[member] = owner
 	s.needed = map[string]bool{owner: true, member: true}
-	s.remote.entries[owner] = &config.EntryConfig{Version: "1.0.0"}
+	s.remote.setVersion(owner, "1.0.0")
 
 	if err := s.downloadRemoteSources(s.remote, s.ctx.Paths.DepsDir, &sourceDownloadLog{}); err != nil {
 		t.Fatal(err)
@@ -543,7 +542,7 @@ func TestResolvePackageSourceVersionForSubPackage(t *testing.T) {
 		api.NewPackage().SetName(name))
 	node.Pkg.AddVersion("1.2.0", "v1.2.0").AddVersion("2.0.0", "v2.0.0")
 	s.ctx.Resolver.SubParents()[name] = "native/root"
-	config.SetEntry(s.ctx.Config, name, &config.EntryConfig{Version: "1.2.0"})
+	s.ctx.Pins = map[string]string{name: "1.2.0"}
 
 	version, ref, commit, err := s.resolvePackageSourceVersion(name, node)
 	if err != nil {

@@ -56,7 +56,7 @@ func runTest(cmd *cobra.Command, args []string) error {
 			if err := validateTestProject(ctx); err != nil {
 				return err
 			}
-			result, err := runBuildPhase(ctx, BuildOptions{IncludeTests: true, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag})
+			result, err := runBuildPhase(ctx, BuildOptions{IncludeTests: true, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag, Locked: lockedFlag, Offline: offlineFlag})
 			if err != nil {
 				if result != nil {
 					report.partial(ctx, result, err)

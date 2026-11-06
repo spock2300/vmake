@@ -4,7 +4,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/lockfile"
 	"github.com/spock2300/vmake/pkg/resolver"
 )
@@ -39,8 +38,8 @@ func TestWriteLockfilePrunesStaleEntries(t *testing.T) {
 	}
 	s := newBuildPhaseState(ctx, BuildOptions{})
 	s.remote = &remoteVersionState{
-		entries: map[string]*config.EntryConfig{"testnative/foo": {Version: "1.9.0"}},
-		commits: map[string]string{"testnative/foo": "bbbb"},
+		versions: map[string]string{"testnative/foo": "1.9.0"},
+		commits:  map[string]string{"testnative/foo": "bbbb"},
 	}
 
 	if err := s.writeLockfile(); err != nil {
