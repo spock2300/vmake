@@ -78,8 +78,8 @@ func runQueryTargets() error {
 	vlog.SetLevel(vlog.Quiet)
 	defer queryReadOnly()()
 
-	ctx := resolveToConfig(false)
-	defer ctx.Resolver.Close()
+	ctx := mustOpenProject(projectOptions{})
+	defer closeProject(ctx)
 	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
 	fatalErr(err)
 	scriptfs.TakeBlockedWrites()
@@ -104,8 +104,8 @@ func runQueryConfig(cmd *cobra.Command, args []string) {
 	defer queryReadOnly()()
 
 	name := args[0]
-	ctx := resolveToConfig(false)
-	defer ctx.Resolver.Close()
+	ctx := mustOpenProject(projectOptions{})
+	defer closeProject(ctx)
 
 	node := ctx.DepGraph.Packages[name]
 	if node == nil {
@@ -141,8 +141,8 @@ func runQuery(cmd *cobra.Command, args []string) {
 	vlog.SetLevel(vlog.Quiet)
 	defer queryReadOnly()()
 
-	ctx := resolveToConfig(false)
-	defer ctx.Resolver.Close()
+	ctx := mustOpenProject(projectOptions{})
+	defer closeProject(ctx)
 
 	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
 	fatalErr(err)

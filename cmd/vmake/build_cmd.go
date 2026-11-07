@@ -57,13 +57,11 @@ func withResolvedProject(execution *RuntimeContext, run func(*RuntimeContext) er
 				return err
 			}
 		}
-		ctx, err := resolveToConfigContext(execution.Context, false)
+		ctx, err := openProject(projectOptions{execution: execution.Context})
 		if err != nil {
 			return err
 		}
-		if ctx.Resolver != nil {
-			defer ctx.Resolver.Close()
-		}
+		defer closeProject(ctx)
 		if mf != nil {
 			if err := checkoutManifestLocals(ctx, mf); err != nil {
 				return err

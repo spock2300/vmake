@@ -71,8 +71,8 @@ type finding struct {
 func runCheckSymbols(strict bool) {
 	vlog.SetLevel(vlog.Quiet)
 
-	ctx := resolveToConfig(false)
-	defer ctx.Resolver.Close()
+	ctx := mustOpenProject(projectOptions{})
+	defer closeProject(ctx)
 	insp, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
 	if err != nil {
 		vlog.Fatal("inspect: %v", err)

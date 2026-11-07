@@ -10,7 +10,7 @@ import (
 	"github.com/spock2300/vmake/pkg/pipeline"
 )
 
-func TestResolveInputsParams(t *testing.T) {
+func TestNewRuntimeContextPreservesParams(t *testing.T) {
 	cfg := &config.ConfigFile{}
 	lock := &lockfile.Lock{}
 	paths := &pipeline.Paths{
@@ -20,32 +20,36 @@ func TestResolveInputsParams(t *testing.T) {
 		ReposDir:   "/repos",
 		LockPath:   "/project/.vmake/vmake.lock",
 	}
-	in := resolveInputs{
-		ignoreLock:   true,
-		workDir:      "/work",
-		configPath:   "/project/.vmake/config.json",
-		configDigest: "digest",
-		lock:         lock,
-		cfg:          cfg,
-		paths:        paths,
+	params := pipeline.ResolveParams{
+		WorkDir:           "/work",
+		ConfigPath:        "/project/.vmake/config.json",
+		ConfigDigest:      "digest",
+		Config:            cfg,
+		Lock:              lock,
+		LockPath:          paths.LockPath,
+		IgnoreLock:        true,
+		Paths:             paths,
+		ModeOverride:      "release",
+		ToolchainOverride: "gcc",
+		TrustChecker:      remoteScriptTrustChecker,
 	}
-	got := in.params("release", "gcc")
-	if got.WorkDir != "/work" || got.ConfigPath != "/project/.vmake/config.json" || got.ConfigDigest != "digest" {
-		t.Fatalf("unexpected load fields: %+v", got)
+	ctx := newRuntimeContext(params, nil)
+	if ctx.WorkDir != "/work" || ctx.ConfigPath != "/project/.vmake/config.json" || ctx.ConfigDigest != "digest" {
+		t.Fatalf("unexpected load fields: %+v", ctx)
 	}
-	if got.Config != cfg || got.Lock != lock || got.Paths != paths {
+	if ctx.Config != cfg || ctx.Lock != lock || ctx.Paths != paths {
 		t.Fatal("pointer fields were not preserved")
 	}
-	if got.LockPath != paths.LockPath {
-		t.Errorf("LockPath = %q, want %q", got.LockPath, paths.LockPath)
+	if ctx.LockPath != paths.LockPath {
+		t.Errorf("LockPath = %q, want %q", ctx.LockPath, paths.LockPath)
 	}
-	if !got.IgnoreLock {
+	if !ctx.IgnoreLock {
 		t.Error("IgnoreLock = false, want true")
 	}
-	if got.ModeOverride != "release" || got.ToolchainOverride != "gcc" {
-		t.Errorf("overrides = %q/%q", got.ModeOverride, got.ToolchainOverride)
+	if ctx.ModeOverride != "release" || ctx.ToolchainOverride != "gcc" {
+		t.Errorf("overrides = %q/%q", ctx.ModeOverride, ctx.ToolchainOverride)
 	}
-	if got.TrustChecker == nil {
+	if ctx.TrustChecker == nil {
 		t.Error("TrustChecker should be set")
 	}
 }
@@ -66,40 +70,51 @@ func resetResolveTestGlobals(t *testing.T) {
 	t.Setenv("VMAKE_CACHE", t.TempDir())
 }
 
-func TestLoadResolveInputs(t *testing.T) {
+func TestLoadResolveParams(t *testing.T) {
 	resetResolveTestGlobals(t)
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".vmake"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(dir)
+	oldMode, oldToolchain := modeFlag, toolchainFlag
+	modeFlag, toolchainFlag = "release", "gcc"
+	t.Cleanup(func() {
+		modeFlag, toolchainFlag = oldMode, oldToolchain
+	})
 
-	inputs, err := loadResolveInputs(true, false)
+	params, err := loadResolveParams(true, false)
 	if err != nil {
-		t.Fatalf("loadResolveInputs: %v", err)
+		t.Fatalf("loadResolveParams: %v", err)
 	}
-	if inputs.workDir != dir {
-		t.Errorf("workDir = %q, want %q", inputs.workDir, dir)
+	if params.WorkDir != dir {
+		t.Errorf("workDir = %q, want %q", params.WorkDir, dir)
 	}
-	if inputs.cfg == nil || inputs.lock == nil || inputs.paths == nil {
-		t.Fatal("loadResolveInputs returned incomplete inputs")
+	if params.Config == nil || params.Lock == nil || params.Paths == nil {
+		t.Fatal("loadResolveParams returned incomplete inputs")
 	}
-	if !inputs.ignoreLock {
+	if !params.IgnoreLock {
 		t.Error("ignoreLock was not preserved")
 	}
-	if inputs.paths.ProjectDir != dir {
-		t.Errorf("ProjectDir = %q, want %q", inputs.paths.ProjectDir, dir)
+	if params.ModeOverride != "release" || params.ToolchainOverride != "gcc" {
+		t.Errorf("overrides = %q/%q", params.ModeOverride, params.ToolchainOverride)
+	}
+	if params.TrustChecker == nil {
+		t.Error("TrustChecker should be set")
+	}
+	if params.Paths.ProjectDir != dir {
+		t.Errorf("ProjectDir = %q, want %q", params.Paths.ProjectDir, dir)
 	}
 	wantLock := filepath.Join(dir, ".vmake", lockfile.LockfileName)
-	if inputs.paths.LockPath != wantLock {
-		t.Errorf("LockPath = %q, want %q", inputs.paths.LockPath, wantLock)
+	if params.Paths.LockPath != wantLock {
+		t.Errorf("LockPath = %q, want %q", params.Paths.LockPath, wantLock)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".gitignore")); err != nil {
 		t.Errorf("ensureGitignore did not run: %v", err)
 	}
 }
 
-func TestLoadResolveInputsSoftGitignore(t *testing.T) {
+func TestLoadResolveParamsSoftGitignore(t *testing.T) {
 	resetResolveTestGlobals(t)
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".vmake"), 0755); err != nil {
@@ -110,10 +125,10 @@ func TestLoadResolveInputsSoftGitignore(t *testing.T) {
 	}
 	t.Chdir(dir)
 
-	if _, err := loadResolveInputs(false, false); err == nil {
+	if _, err := loadResolveParams(false, false); err == nil {
 		t.Fatal("strict gitignore failure should return an error")
 	}
-	if _, err := loadResolveInputs(false, true); err != nil {
+	if _, err := loadResolveParams(false, true); err != nil {
 		t.Fatalf("soft gitignore failure should continue: %v", err)
 	}
 }

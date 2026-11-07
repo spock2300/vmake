@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -79,15 +78,12 @@ availability.`,
 			if jsonOut {
 				vlog.SetLevel(vlog.Quiet)
 			}
-			ctx, err := resolveDepsContext(cmd.Context(), resolver.LockPolicy{DryRun: true}, nil)
+			policy := resolver.LockPolicy{DryRun: true}
+			ctx, err := openProject(projectOptions{execution: cmd.Context(), policy: &policy})
 			if err != nil {
 				return err
 			}
-			defer func() {
-				if ctx.Resolver != nil {
-					ctx.Resolver.Close()
-				}
-			}()
+			defer closeProject(ctx)
 			report, err := pipeline.InspectDepsStatus(ctx)
 			if err != nil {
 				return err
@@ -127,15 +123,12 @@ and recorded in .vmake/vmake.lock, and stale lock entries are pruned.`,
 			if jsonOut {
 				vlog.SetLevel(vlog.Quiet)
 			}
-			ctx, err := resolveDepsContext(cmd.Context(), resolver.LockPolicy{}, nil)
+			policy := resolver.LockPolicy{}
+			ctx, err := openProject(projectOptions{execution: cmd.Context(), policy: &policy})
 			if err != nil {
 				return err
 			}
-			defer func() {
-				if ctx.Resolver != nil {
-					ctx.Resolver.Close()
-				}
-			}()
+			defer closeProject(ctx)
 			res, err := pipeline.SyncOrUpdateDeps(ctx, false)
 			if err != nil {
 				return err
@@ -194,15 +187,11 @@ writing a persistent pin to .vmake/project.json.`,
 					return err
 				}
 			}
-			ctx, err := resolveDepsContext(cmd.Context(), policy, nil)
+			ctx, err := openProject(projectOptions{execution: cmd.Context(), policy: &policy})
 			if err != nil {
 				return err
 			}
-			defer func() {
-				if ctx.Resolver != nil {
-					ctx.Resolver.Close()
-				}
-			}()
+			defer closeProject(ctx)
 			if err := validateRequestedPackagesInGraph(ctx, requested); err != nil {
 				return err
 			}
@@ -273,15 +262,11 @@ Project pins are shared by all configurations in .vmake/ and prevent bare
 				Targets: map[string]string{pkgName: target},
 				DryRun:  dryRun,
 			}
-			ctx, err := resolveDepsContext(cmd.Context(), policy, updatedPins)
+			ctx, err := openProject(projectOptions{execution: cmd.Context(), policy: &policy, pins: updatedPins})
 			if err != nil {
 				return err
 			}
-			defer func() {
-				if ctx.Resolver != nil {
-					ctx.Resolver.Close()
-				}
-			}()
+			defer closeProject(ctx)
 			if err := validateRequestedPackagesInGraph(ctx, []string{pkgName}); err != nil {
 				return err
 			}
@@ -380,19 +365,16 @@ without contacting upstream git remotes.`,
 			if fetchAll && len(args) > 0 {
 				return &usageError{err: fmt.Errorf("cannot combine package arguments with --all")}
 			}
-			ctx, err := resolveDepsContext(cmd.Context(), resolver.LockPolicy{
+			policy := resolver.LockPolicy{
 				Locked:        true,
 				StrictWrapper: true,
 				Offline:       offline,
-			}, nil)
+			}
+			ctx, err := openProject(projectOptions{execution: cmd.Context(), policy: &policy})
 			if err != nil {
 				return err
 			}
-			defer func() {
-				if ctx.Resolver != nil {
-					ctx.Resolver.Close()
-				}
-			}()
+			defer closeProject(ctx)
 			if err := validateRequestedPackagesInGraph(ctx, args); err != nil {
 				return err
 			}
@@ -423,43 +405,6 @@ without contacting upstream git remotes.`,
 	cmd.Flags().BoolVar(&offline, "offline", false, "materialize strictly from ~/.vmake/cache/git/ without network access")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "print machine-readable JSON")
 	return cmd
-}
-
-func resolveDepsContext(execution context.Context, policy resolver.LockPolicy, overridePins map[string]string) (*RuntimeContext, error) {
-	overrides, err := parseInspectOverrides(ephemeralSetFlags)
-	if err != nil {
-		return nil, err
-	}
-	locks := commandStorageLocks()
-	inputs, err := loadResolveInputs(policy.IgnoreAll, false)
-	if err != nil {
-		return nil, err
-	}
-	if overridePins != nil {
-		inputs.pins = overridePins
-	}
-	ctx := newRuntimeContext(inputs, locks)
-	ctx.Context = execution
-	ctx.LockPolicy = policy
-	if len(overrides) > 0 {
-		ctx.OnOptionsCollected = func(c *RuntimeContext) error {
-			return applyEphemeralOverrides(c, overrides)
-		}
-	}
-	if err := pipeline.Require(ctx); err != nil {
-		if ctx.Resolver != nil {
-			ctx.Resolver.Close()
-		}
-		return nil, err
-	}
-	if err := pipeline.Configure(ctx); err != nil {
-		if ctx.Resolver != nil {
-			ctx.Resolver.Close()
-		}
-		return nil, err
-	}
-	pipeline.ResolveActiveChipForDisplay(ctx)
-	return ctx, nil
 }
 
 func parseDepsUpdateArgs(args []string, links map[string]string, pins map[string]string, dryRun bool) (resolver.LockPolicy, []string, error) {

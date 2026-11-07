@@ -35,7 +35,8 @@ func init() {
 func runDistClean(cmd *cobra.Command, args []string) {
 	commandStorageLocks()
 	fatalErr(invalidateBuildReport())
-	ctx, ok := resolveToConfigBestEffort(false)
+	ctx, ok := openProjectBestEffort(projectOptions{softGitignore: true})
+	defer closeProject(ctx)
 	if ok {
 		vlog.Info("")
 		vlog.Info("Executing OnClean...")

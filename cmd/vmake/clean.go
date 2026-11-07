@@ -193,7 +193,7 @@ func scanPackages(workDir string) []pkgCleanEntry {
 
 func runClean(cmd *cobra.Command, args []string) {
 	commandStorageLocks()
-	ctx, ok := resolveToConfigBestEffort(false)
+	ctx, ok := openProjectBestEffort(projectOptions{softGitignore: true})
 	if !ok {
 		if !cleanAllFlag {
 			fatalErr(fmt.Errorf("project configuration is unavailable; run 'vmake clean --all' or 'vmake distclean' to remove every build directory"))
@@ -204,7 +204,7 @@ func runClean(cmd *cobra.Command, args []string) {
 		removeStaleCompileDatabase(ctx)
 		return
 	}
-	defer ctx.Resolver.Close()
+	defer closeProject(ctx)
 	fatalErr(invalidateBuildReport())
 
 	vlog.Info("")

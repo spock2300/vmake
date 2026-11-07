@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -155,49 +154,19 @@ func pipelinePaths() *pipeline.Paths {
 	}
 }
 
-type resolveInputs struct {
-	ignoreLock   bool
-	workDir      string
-	configPath   string
-	configDigest string
-	lock         *lockfile.Lock
-	cfg          *config.ConfigFile
-	pins         map[string]string
-	sourceLinks  map[string]string
-	paths        *pipeline.Paths
-}
-
-func (in resolveInputs) params(mode, toolchain string) pipeline.ResolveParams {
-	return pipeline.ResolveParams{
-		WorkDir:           in.workDir,
-		ConfigPath:        in.configPath,
-		ConfigDigest:      in.configDigest,
-		Config:            in.cfg,
-		Lock:              in.lock,
-		LockPath:          in.paths.LockPath,
-		IgnoreLock:        in.ignoreLock,
-		Pins:              in.pins,
-		SourceLinks:       in.sourceLinks,
-		TrustChecker:      remoteScriptTrustChecker,
-		Paths:             in.paths,
-		ModeOverride:      mode,
-		ToolchainOverride: toolchain,
-	}
-}
-
-func loadResolveInputs(ignoreLock bool, softGitignore bool) (resolveInputs, error) {
+func loadResolveParams(ignoreLock bool, softGitignore bool) (pipeline.ResolveParams, error) {
 	workDir := findProjectDir()
 	cfg, configPath, digest, err := config.LoadProjectSnapshot(findProjectDir())
 	if err != nil {
-		return resolveInputs{}, err
+		return pipeline.ResolveParams{}, err
 	}
 	pins, err := config.LoadProjectPins(workDir)
 	if err != nil {
-		return resolveInputs{}, err
+		return pipeline.ResolveParams{}, err
 	}
 	if err := ensureGitignore(findProjectDir()); err != nil {
 		if !softGitignore {
-			return resolveInputs{}, err
+			return pipeline.ResolveParams{}, err
 		}
 		vlog.Error("gitignore: %v", err)
 	}
@@ -205,109 +174,33 @@ func loadResolveInputs(ignoreLock bool, softGitignore bool) (resolveInputs, erro
 	paths := pipelinePaths()
 	lock, err := lockfile.LoadOrCreate(paths.LockPath)
 	if err != nil {
-		return resolveInputs{}, err
+		return pipeline.ResolveParams{}, err
 	}
 	local, err := config.LoadLocal(workDir)
 	if err != nil {
-		return resolveInputs{}, fmt.Errorf("load %s: %w", config.LocalPath(workDir), err)
+		return pipeline.ResolveParams{}, fmt.Errorf("load %s: %w", config.LocalPath(workDir), err)
 	}
-	return resolveInputs{
-		ignoreLock:   ignoreLock,
-		workDir:      workDir,
-		configPath:   configPath,
-		configDigest: digest,
-		lock:         lock,
-		cfg:          cfg,
-		pins:         pins,
-		sourceLinks:  local.Links,
-		paths:        paths,
+	return pipeline.ResolveParams{
+		WorkDir:           workDir,
+		ConfigPath:        configPath,
+		ConfigDigest:      digest,
+		Config:            cfg,
+		Lock:              lock,
+		LockPath:          paths.LockPath,
+		IgnoreLock:        ignoreLock,
+		Pins:              pins,
+		SourceLinks:       local.Links,
+		TrustChecker:      remoteScriptTrustChecker,
+		Paths:             paths,
+		ModeOverride:      modeFlag,
+		ToolchainOverride: toolchainFlag,
 	}, nil
 }
 
-func resolveToConfig(ignoreLock bool) *RuntimeContext {
-	ctx, err := resolveToConfigContext(context.Background(), ignoreLock)
-	fatalErr(err)
-	return ctx
-}
-
-func newRuntimeContext(inputs resolveInputs, locks *storage.Session) *RuntimeContext {
-	ctx := pipeline.NewContext(inputs.params(modeFlag, toolchainFlag))
+func newRuntimeContext(params pipeline.ResolveParams, locks *storage.Session) *RuntimeContext {
+	ctx := pipeline.NewContext(params)
 	ctx.Locks = locks
 	return ctx
-}
-
-func resolveToConfigContext(execution context.Context, ignoreLock bool) (*RuntimeContext, error) {
-	overrides, err := parseInspectOverrides(ephemeralSetFlags)
-	if err != nil {
-		return nil, err
-	}
-	locks := commandStorageLocks()
-	inputs, err := loadResolveInputs(ignoreLock, false)
-	if err != nil {
-		return nil, err
-	}
-	ctx := newRuntimeContext(inputs, locks)
-	ctx.Context = execution
-	if lockedFlag {
-		ctx.LockPolicy.StrictWrapper = true
-		ctx.LockPolicy.Locked = true
-	}
-	if offlineFlag {
-		ctx.LockPolicy.Offline = true
-	}
-	if len(overrides) > 0 {
-		ctx.OnOptionsCollected = func(c *RuntimeContext) error {
-			return applyEphemeralOverrides(c, overrides)
-		}
-	}
-	if err := pipeline.Require(ctx); err != nil {
-		if ctx.Resolver != nil {
-			ctx.Resolver.Close()
-		}
-		return nil, err
-	}
-	if err := pipeline.Configure(ctx); err != nil {
-		if ctx.Resolver != nil {
-			ctx.Resolver.Close()
-		}
-		return nil, err
-	}
-	pipeline.ResolveActiveChipForDisplay(ctx)
-	return ctx, nil
-}
-
-func applyEphemeralOverrides(ctx *RuntimeContext, overrides []inspectOverride) error {
-	for i := range overrides {
-		override := &overrides[i]
-		override.pkgName = resolveSetPackageName(ctx, override.pkgName)
-		opt, err := inspectOverrideOption(ctx, override.pkgName, override.optName)
-		if err != nil {
-			return err
-		}
-		value, err := coerceValue(override.raw, opt.Type())
-		if err != nil {
-			return fmt.Errorf("%s: %w", override.key(), err)
-		}
-		override.value = value
-		if err := validateInspectOverride(ctx, *override); err != nil {
-			return err
-		}
-		applySetValue(ctx, override.pkgName, override.optName, value)
-	}
-	return nil
-}
-
-func resolveToConfigBestEffort(ignoreLock bool) (*RuntimeContext, bool) {
-	locks := commandStorageLocks()
-	inputs, err := loadResolveInputs(ignoreLock, true)
-	fatalErr(err)
-	ctx := newRuntimeContext(inputs, locks)
-	if err := pipeline.Require(ctx); err != nil {
-		return ctx, false
-	}
-	fatalErr(pipeline.Configure(ctx))
-	pipeline.ResolveActiveChipForDisplay(ctx)
-	return ctx, true
 }
 
 func ensureGitignore(workDir string) error {

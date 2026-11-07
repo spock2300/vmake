@@ -37,7 +37,8 @@ func init() {
 }
 
 func runConfig(cmd *cobra.Command, args []string) {
-	ctx := resolveToConfig(false)
+	ctx := mustOpenProject(projectOptions{})
+	defer closeProject(ctx)
 
 	if len(setFlags) > 0 {
 		runSetConfig(ctx, setFlags)
@@ -82,8 +83,21 @@ func runConfig(cmd *cobra.Command, args []string) {
 		deps[name] = node.Deps
 	}
 
-	ctx.Resolver.Close()
-	result, err := tui.Run(sources, deps, ctx.AllOptions, values, ctx.WorkDir, currentTC, ctx.GlobalOptions, globalValues, ctx.ChipProfiles, ctx.AllKConfigs, ctx.Config.Description, pipeline.ToolchainTargetDefaults)
+	closeProject(ctx)
+	result, err := tui.Run(tui.Input{
+		Packages:         sources,
+		Deps:             deps,
+		Options:          ctx.AllOptions,
+		Values:           values,
+		WorkDir:          ctx.WorkDir,
+		CurrentToolchain: currentTC,
+		GlobalOptions:    ctx.GlobalOptions,
+		GlobalValues:     globalValues,
+		ChipProfiles:     ctx.ChipProfiles,
+		KConfigs:         ctx.AllKConfigs,
+		Description:      ctx.Config.Description,
+		DisplayDefaults:  pipeline.ToolchainTargetDefaults,
+	})
 	fatalErr(err)
 
 	if !result.Saved {

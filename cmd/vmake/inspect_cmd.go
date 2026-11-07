@@ -238,33 +238,15 @@ func runInspect(execution context.Context, setFlags []string, includeTargets boo
 		return failInspect(envelope, code, err)
 	}
 
-	inputs, err := loadResolveInputs(false, false)
+	ctx, err := openProject(projectOptions{execution: execution, overrides: overrides})
 	if err != nil {
-		return fail("VMAKE_E_INSPECT", err)
-	}
-	ctx := newRuntimeContext(inputs, commandStorageLocks())
-	ctx.Context = execution
-	var overrideErr error
-	if len(overrides) > 0 {
-		ctx.OnOptionsCollected = func(c *RuntimeContext) error {
-			overrideErr = applyEphemeralOverrides(c, overrides)
-			return overrideErr
-		}
-	}
-	if err := pipeline.Require(ctx); err != nil {
-		if ctx.Resolver != nil {
-			ctx.Resolver.Close()
+		var overrideErr *optionOverrideError
+		if errors.As(err, &overrideErr) {
+			return fail("VMAKE_E_OPTION", overrideErr.err)
 		}
 		return fail("VMAKE_E_INSPECT", err)
 	}
-	defer ctx.Resolver.Close()
-
-	if err := pipeline.Configure(ctx); err != nil {
-		if overrideErr != nil {
-			return fail("VMAKE_E_OPTION", overrideErr)
-		}
-		return fail("VMAKE_E_INSPECT", err)
-	}
+	defer closeProject(ctx)
 	restoreStderr()
 	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
 	if err != nil {

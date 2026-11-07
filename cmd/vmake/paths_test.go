@@ -216,7 +216,7 @@ func TestFindEnclosingProjectRoot(t *testing.T) {
 	})
 }
 
-func TestLoadResolveInputsUsesProjectRootFromPackageSubdir(t *testing.T) {
+func TestLoadResolveParamsUsesProjectRootFromPackageSubdir(t *testing.T) {
 	resetResolveTestGlobals(t)
 	root := t.TempDir()
 	makePathsTestDir(t, filepath.Join(root, ".vmake"))
@@ -225,18 +225,18 @@ func TestLoadResolveInputsUsesProjectRootFromPackageSubdir(t *testing.T) {
 	writePathsTestFile(t, filepath.Join(sub, "build.go"), "package main\n")
 	t.Chdir(sub)
 
-	inputs, err := loadResolveInputs(false, false)
+	params, err := loadResolveParams(false, false)
 	if err != nil {
-		t.Fatalf("loadResolveInputs: %v", err)
+		t.Fatalf("loadResolveParams: %v", err)
 	}
-	if inputs.workDir != root {
-		t.Errorf("workDir = %q, want project root %q", inputs.workDir, root)
+	if params.WorkDir != root {
+		t.Errorf("workDir = %q, want project root %q", params.WorkDir, root)
 	}
-	if inputs.paths.ProjectDir != root {
-		t.Errorf("ProjectDir = %q, want project root %q", inputs.paths.ProjectDir, root)
+	if params.Paths.ProjectDir != root {
+		t.Errorf("ProjectDir = %q, want project root %q", params.Paths.ProjectDir, root)
 	}
 	if _, err := os.Stat(filepath.Join(sub, ".gitignore")); !os.IsNotExist(err) {
-		t.Errorf("loadResolveInputs wrote .gitignore in the package subdirectory: %v", err)
+		t.Errorf("loadResolveParams wrote .gitignore in the package subdirectory: %v", err)
 	}
 }
 
@@ -361,7 +361,7 @@ func TestSearchProjectDirNestedVmakeBeatsGitRoot(t *testing.T) {
 	}
 }
 
-func TestLoadResolveInputsUsesProjectOverride(t *testing.T) {
+func TestLoadResolveParamsUsesProjectOverride(t *testing.T) {
 	resetResolveTestGlobals(t)
 	project := t.TempDir()
 	makePathsTestDir(t, filepath.Join(project, ".vmake"))
@@ -370,21 +370,21 @@ func TestLoadResolveInputsUsesProjectOverride(t *testing.T) {
 	t.Chdir(outside)
 	projectOverride = project
 
-	inputs, err := loadResolveInputs(false, false)
+	params, err := loadResolveParams(false, false)
 	if err != nil {
-		t.Fatalf("loadResolveInputs: %v", err)
+		t.Fatalf("loadResolveParams: %v", err)
 	}
-	if inputs.workDir != project {
-		t.Errorf("workDir = %q, want project override %q", inputs.workDir, project)
+	if params.WorkDir != project {
+		t.Errorf("workDir = %q, want project override %q", params.WorkDir, project)
 	}
-	if inputs.paths.ProjectDir != project {
-		t.Errorf("ProjectDir = %q, want project override %q", inputs.paths.ProjectDir, project)
+	if params.Paths.ProjectDir != project {
+		t.Errorf("ProjectDir = %q, want project override %q", params.Paths.ProjectDir, project)
 	}
 	if _, err := os.Stat(filepath.Join(outside, ".gitignore")); !os.IsNotExist(err) {
-		t.Errorf("loadResolveInputs initialized the invocation directory: %v", err)
+		t.Errorf("loadResolveParams initialized the invocation directory: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(project, ".gitignore")); err != nil {
-		t.Errorf("loadResolveInputs did not initialize the project override: %v", err)
+		t.Errorf("loadResolveParams did not initialize the project override: %v", err)
 	}
 }
 
