@@ -65,10 +65,10 @@ built-in `host` intentionally uses Apple clang (`cc`/`c++`) and leaves
 ## Extension toolchains
 
 A toolchain is declared by a `toolchain.json` in an immediate subdirectory of a
-registered extension repository. The repository must be trusted and have a
-clean worktree; a project-local `toolchain.json` alone is not scanned. Plugins
-can also register a toolchain dynamically via `RegisterToolchain`. The file can
-declare installable archives:
+registered extension repository. The repository must be trusted; a
+project-local `toolchain.json` alone is not scanned. Plugins can also register
+a toolchain dynamically via `RegisterToolchain`. The file can declare
+installable archives:
 
 ```json
 {

@@ -11,12 +11,12 @@ import (
 	"github.com/spock2300/vmake/internal/truststore"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	vlog "github.com/spock2300/vmake/pkg/log"
-	repoPkg "github.com/spock2300/vmake/pkg/repo"
 )
 
 const (
 	trustKindRepo      = "repo"
 	trustKindExtension = "extension"
+	trustKeptNotice    = "Repository trust is kept across updates; updated code runs without another review."
 )
 
 func trustStorePath() string {
@@ -31,32 +31,41 @@ func trustAllEnabled() bool {
 	return os.Getenv("VMAKE_TRUST_ALL") == "1"
 }
 
+func repoTrustURL(name string) (string, error) {
+	mgr := getRepoManager()
+	if !mgr.Exists(name) {
+		return "", nil
+	}
+	if mgr.IsNative(name) {
+		return mgr.GetNativeURL(name)
+	}
+	return mgr.URL(name)
+}
+
 func remoteScriptTrustChecker(src buildscript.Source) error {
 	if trustAllEnabled() {
 		return nil
 	}
-	if src.Commit == "" {
-		return fmt.Errorf("cannot verify trust for repository %q: the resolved commit is empty", src.Repo)
+	repoURL, err := repoTrustURL(src.Repo)
+	if err != nil {
+		return err
 	}
 	store, err := openTrustStore()
 	if err != nil {
 		return err
 	}
-	trusted, err := store.Verify(trustKindRepo, src.Repo, src.URL, src.Commit)
+	trusted, err := store.Verify(trustKindRepo, src.Repo, repoURL)
 	if err != nil {
 		return err
 	}
 	if trusted {
 		return nil
 	}
-	subject := fmt.Sprintf("The remote repository %q provides build.go scripts at commit %s that vmake will execute (full system access).", src.Repo, repoPkg.ShortCommit(src.Commit))
+	subject := fmt.Sprintf("The repository %q provides build.go scripts that vmake will execute (full system access). Trusting it also trusts all future updates.", src.Repo)
 	if !confirmTrust(subject) {
-		if src.URL != "" {
-			return fmt.Errorf("its build.go scripts are not trusted; re-run with --yes after reviewing the package at commit %s", repoPkg.ShortCommit(src.Commit))
-		}
 		return fmt.Errorf("its build.go scripts are not trusted; run 'vmake repo trust %s' after reviewing the repository", src.Repo)
 	}
-	return store.Trust(trustKindRepo, src.Repo, src.URL, src.Commit)
+	return store.Trust(trustKindRepo, src.Repo, repoURL)
 }
 
 func confirmTrust(subject string) bool {
@@ -75,38 +84,32 @@ func confirmTrust(subject string) bool {
 	return answer == "y" || answer == "yes"
 }
 
-func repoScriptTrusted(name, commit string) (bool, error) {
+func repoScriptTrusted(name string) (bool, error) {
 	if trustAllEnabled() {
 		return true, nil
 	}
-	if commit == "" {
-		return false, nil
+	repoURL, err := repoTrustURL(name)
+	if err != nil {
+		return false, err
 	}
 	store, err := openTrustStore()
 	if err != nil {
 		return false, err
 	}
-	return store.Verify(trustKindRepo, name, "", commit)
-}
-
-func repoTrustCommit(name string) (string, error) {
-	mgr := getRepoManager()
-	if !mgr.Exists(name) {
-		return "", fmt.Errorf("repository %q not found", name)
-	}
-	if mgr.IsNative(name) {
-		return "", fmt.Errorf("native repository %q is trusted per package commit on first build; use --yes with a build, or inspect and trust the resolved package version", name)
-	}
-	return repoPkg.GetCurrentCommit(mgr.Path(name))
+	return store.Verify(trustKindRepo, name, repoURL)
 }
 
 func addTrustedRepo(name string) error {
-	lock, err := getRepoManager().Lock(name, true)
+	mgr := getRepoManager()
+	lock, err := mgr.Lock(name, true)
 	if err != nil {
 		return err
 	}
 	defer lock.Release()
-	commit, err := repoTrustCommit(name)
+	if !mgr.Exists(name) {
+		return fmt.Errorf("repository %q not found", name)
+	}
+	repoURL, err := repoTrustURL(name)
 	if err != nil {
 		return err
 	}
@@ -114,11 +117,15 @@ func addTrustedRepo(name string) error {
 	if err != nil {
 		return err
 	}
-	if err := store.Trust(trustKindRepo, name, "", commit); err != nil {
+	if err := store.Trust(trustKindRepo, name, repoURL); err != nil {
 		return err
 	}
 	if !vlog.IsQuiet() {
-		fmt.Printf("Trusted repository '%s' at %s (recorded in %s)\n", name, repoPkg.ShortCommit(commit), trustStorePath())
+		if repoURL == "" {
+			fmt.Printf("Trusted repository '%s' without an origin URL; trust is bound to its name only (recorded in %s)\n", name, trustStorePath())
+		} else {
+			fmt.Printf("Trusted repository '%s' (recorded in %s)\n", name, trustStorePath())
+		}
 	}
 	return nil
 }
@@ -140,25 +147,6 @@ func revokeRepoTrustBestEffort(name string) {
 	}
 }
 
-func extensionTrustCommit(name string) (string, error) {
-	mgr := getPluginManager()
-	if !mgr.Exists(name) {
-		return "", fmt.Errorf("extension repository %q not found", name)
-	}
-	commit, err := mgr.Commit(name)
-	if err != nil {
-		return "", fmt.Errorf("read extension repository %q: %w", name, err)
-	}
-	clean, err := mgr.Clean(name)
-	if err != nil {
-		return "", fmt.Errorf("inspect extension repository %q: %w", name, err)
-	}
-	if !clean {
-		return "", fmt.Errorf("extension repository %q has local changes; commit or discard them before trusting it", name)
-	}
-	return commit, nil
-}
-
 func extensionTrusted(name string) (bool, error) {
 	if trustAllEnabled() {
 		return true, nil
@@ -167,42 +155,33 @@ func extensionTrusted(name string) (bool, error) {
 	if !mgr.Exists(name) {
 		return false, nil
 	}
-	commit, err := mgr.Commit(name)
-	if err != nil {
-		return false, err
-	}
-	clean, err := mgr.Clean(name)
-	if err != nil {
-		return false, err
-	}
-	if !clean {
-		return false, nil
-	}
 	store, err := openTrustStore()
 	if err != nil {
 		return false, err
 	}
-	return store.Verify(trustKindExtension, name, mgr.URL(name), commit)
+	return store.Verify(trustKindExtension, name, mgr.URL(name))
 }
 
 func trustExtension(name string) error {
-	lock, err := getPluginManager().LockRepo(name, true)
+	mgr := getPluginManager()
+	lock, err := mgr.LockRepo(name, true)
 	if err != nil {
 		return err
 	}
 	defer lock.Release()
-	commit, err := extensionTrustCommit(name)
-	if err != nil {
-		return err
+	if !mgr.Exists(name) {
+		return fmt.Errorf("extension repository %q not found", name)
 	}
 	store, err := openTrustStore()
 	if err != nil {
 		return err
 	}
-	if err := store.Trust(trustKindExtension, name, getPluginManager().URL(name), commit); err != nil {
+	if err := store.Trust(trustKindExtension, name, mgr.URL(name)); err != nil {
 		return err
 	}
-	fmt.Printf("Trusted extension '%s' at %s (recorded in %s)\n", name, repoPkg.ShortCommit(commit), trustStorePath())
+	if !vlog.IsQuiet() {
+		fmt.Printf("Trusted extension '%s' (recorded in %s)\n", name, trustStorePath())
+	}
 	return nil
 }
 

@@ -40,11 +40,11 @@ func Main(p *api.Package) {
 # Could be any name; "official" is the convention used by this example.
 vmake repo add official <your-registry-url>    # `official` is the local name you choose
 
-# Confirm trust if you skipped the interactive prompt; records the repo commit in ~/.vmake/trust.json.
+# Confirm trust if you skipped the interactive prompt; records the repository identity in ~/.vmake/trust.json.
 vmake repo trust official
 ```
 
-`vmake repo add` clones the registry and, on a TTY, offers to trust its `build.go` scripts (they run with full system access). On a non-TTY stdin (CI, piped input) the prompt is skipped and trust is not recorded; the first build then fails with `its build.go scripts are not trusted; run 'vmake repo trust official' after reviewing the repository`. Use `--yes`/`-y` or `VMAKE_TRUST_ALL=1` in CI. `vmake repo update` fetches new content and resets trust, so re-trust after updating.
+`vmake repo add` clones the registry and, on a TTY, offers to trust its `build.go` scripts (they run with full system access). On a non-TTY stdin (CI, piped input) the prompt is skipped and trust is not recorded; the first build then fails with `its build.go scripts are not trusted; run 'vmake repo trust official' after reviewing the repository`. Use `--yes`/`-y` or `VMAKE_TRUST_ALL=1` in CI. Trust is per repository: `vmake repo update` and new commits keep the existing trust.
 
 ## How It Works
 
@@ -79,7 +79,7 @@ vmake repo list
 # Add custom package repo (offers to trust its build.go scripts at add time)
 vmake repo add mylib https://github.com/user/mylib.git
 
-# Trust management (remote build.go runs with full system access)
+# Trust management (remote build.go runs with full system access; updates stay trusted)
 vmake repo trust mylib
 vmake repo untrust mylib
 ```
@@ -174,7 +174,7 @@ Keep `OnRequire` and target dependencies consistent.
 
 ## Where Files Land
 
-- Registry clone: `~/.vmake/repos/<repo>/`; trust: `~/.vmake/trust.json` (commit-bound records)
+- Registry clone: `~/.vmake/repos/<repo>/`; trust: `~/.vmake/trust.json` (repository-identity records)
 - Shared object cache + locks: `~/.vmake/cache/git/<urlhash>.git/` (content-addressed, one bare repo per upstream URL) and `~/.vmake/cache/_locks/` (`VMAKE_CACHE` overrides the cache root; `VMAKE_GIT_CACHE=off` disables the cache)
 - Working tree and outputs: `.vmake_deps/<repo>/<pkg>/{src,out/<sha256(member)>/<buildKey>}` (shallow depth-1 tree)
 - Pins: `.vmake/vmake.lock`

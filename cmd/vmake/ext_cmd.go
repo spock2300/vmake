@@ -52,7 +52,7 @@ func removeExtensionRepo(name string) error {
 }
 
 var extTrustCmd = &cobra.Command{
-	Use: "trust <name>", Short: "Trust an extension repository at its current commit",
+	Use: "trust <name>", Short: "Trust an extension repository and its future updates",
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		fatalErr(trustExtension(args[0]))
@@ -102,7 +102,7 @@ func runExtAdd(cmd *cobra.Command, args []string) {
 	mgr := getPluginManager()
 	fatalErr(mgr.AddRepo(name, gitURL))
 	fmt.Printf("Added extension repository '%s' from %s\n", name, gitURL)
-	if confirmTrust(fmt.Sprintf("The extension repository %q provides code that vmake will execute (full system access).", name)) {
+	if confirmTrust(fmt.Sprintf("The extension repository %q provides code that vmake will execute (full system access). Trusting it also trusts all future updates.", name)) {
 		if err := trustExtension(name); err != nil {
 			vlog.Error("record trust for extension %s: %v", name, err)
 			fmt.Printf("Extension '%s' remains untrusted; run 'vmake ext trust %s' after reviewing it.\n", name, name)
@@ -160,13 +160,9 @@ func runExtUpdate(cmd *cobra.Command, args []string) {
 	if len(args) == 1 {
 		name := args[0]
 		fmt.Printf("Updating extension repository '%s'...\n", name)
-		changed, err := updateExtensionRepo(mgr, name)
-		fatalErr(err)
-		if changed {
-			fmt.Printf("Updated '%s'. Trust was reset; review and run 'vmake ext trust %s'.\n", name, name)
-		} else {
-			fmt.Printf("Updated '%s'. No commit change; trust was kept.\n", name)
-		}
+		fatalErr(updateExtensionRepo(mgr, name))
+		fmt.Printf("Updated '%s'.\n", name)
+		fmt.Println(trustKeptNotice)
 		return
 	}
 	repos := mgr.ListRepos()
@@ -174,20 +170,14 @@ func runExtUpdate(cmd *cobra.Command, args []string) {
 		fmt.Println("No extension repositories found")
 		return
 	}
-	changedAny := false
 	for _, r := range repos {
 		fmt.Printf("Updating '%s'...\n", r.Name)
-		changed, err := updateExtensionRepo(mgr, r.Name)
-		if err != nil {
+		if err := updateExtensionRepo(mgr, r.Name); err != nil {
 			vlog.Error("  Error: %v", err)
 		}
-		changedAny = changedAny || changed
 	}
-	if changedAny {
-		fmt.Println("Done. Trust was reset for updated repositories; review and run 'vmake ext trust <name>'.")
-	} else {
-		fmt.Println("Done. No trust records changed.")
-	}
+	fmt.Println("Done.")
+	fmt.Println(trustKeptNotice)
 }
 
 func runExtProvision(cmd *cobra.Command, args []string) {
@@ -204,14 +194,7 @@ func runExtProvision(cmd *cobra.Command, args []string) {
 		trusted, err := extensionTrusted(name)
 		fatalErr(err)
 		if !trusted {
-			fatalErr(fmt.Errorf("extension repository '%s' is not trusted at its current commit or has local changes; run 'vmake ext trust %s' after reviewing it", name, name))
-		}
-		if trustAllEnabled() && hasGitRoot(repoDir) {
-			clean, err := mgr.Clean(name)
-			fatalErr(err)
-			if !clean {
-				fatalErr(fmt.Errorf("extension repository '%s' has local changes; commit or discard them before provisioning", name))
-			}
+			fatalErr(fmt.Errorf("extension repository '%s' is not trusted; run 'vmake ext trust %s' after reviewing it", name, name))
 		}
 		return toolchain.ScanRepoToolchains(repoDir)
 	}()
@@ -263,22 +246,13 @@ func runExtProvision(cmd *cobra.Command, args []string) {
 	}
 }
 
-func updateExtensionRepo(mgr *plugin.Manager, name string) (bool, error) {
+func updateExtensionRepo(mgr *plugin.Manager, name string) error {
 	lock, err := mgr.LockRepo(name, true)
 	if err != nil {
-		return false, err
+		return err
 	}
 	defer lock.Release()
-	before, beforeErr := mgr.Commit(name)
-	err = mgr.UpdateRepoLocked(name)
-	after, afterErr := mgr.Commit(name)
-	changed := beforeErr != nil || afterErr != nil || after != before
-	if changed {
-		if revokeErr := revokeExtension(name); revokeErr != nil {
-			vlog.Error("reset trust for extension %s: %v", name, revokeErr)
-		}
-	}
-	return changed, err
+	return mgr.UpdateRepoLocked(name)
 }
 
 var extensionRepoLocks []*flock.FileLock
@@ -308,7 +282,7 @@ func loadPlugins() {
 		}
 		if !ok {
 			_ = lock.Release()
-			vlog.Error("extension repository '%s' is not trusted at its current commit; plugins and toolchains were not loaded (run 'vmake ext trust %s')", repo.Name, repo.Name)
+			vlog.Error("extension repository '%s' is not trusted; plugins and toolchains were not loaded (run 'vmake ext trust %s')", repo.Name, repo.Name)
 			continue
 		}
 		extensionRepoLocks = append(extensionRepoLocks, lock)

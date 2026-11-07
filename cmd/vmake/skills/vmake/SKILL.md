@@ -203,7 +203,7 @@ The high-level phases are listed below. During script loading, each package runs
 | **Local Sub-package** | Subdirectory with `build.go` | Referenced by directory basename (`"math"`, `"spi"`); nested paths are not package names, and duplicate basenames are skipped |
 | **Local SetGit Package** | Subdirectory `build.go` + `p.SetGit(...)` | Cloned into `.vmake_deps/local/<pkg>/src`, symlinked at `<pkgDir>/src`; `SrcDir()` points to `src`; `AddPatches`/`SetPatches` can patch this tree |
 | **Registry Package** | `~/.vmake/repos/<repo>/packages/<first-char>/<pkg>/build.go` | Referenced as `"repo/pkg"`; `p.SetGit(...)` downloads upstream source into `.vmake_deps/` |
-| **Native VMake Repo** | Git repo with root `build.go` | Registered via `vmake repo add --native`; trusted per package commit on first build; sub-packages lazily inherit parent version. `repo trust`/`repo update` do not apply to native repos |
+| **Native VMake Repo** | Git repo with root `build.go` | Registered via `vmake repo add --native`; trusted per repository, no commit required; sub-packages lazily inherit parent version. `repo trust` applies to native repos; `repo update` does not |
 | **Local Source Link** | `.vmake/local.json` | `vmake pkg link <repo/name> <git-tree>`; native links load build.go, sub-packages, options and their flags/defines locally, registry links replace only the upstream source. Linking removes the materialized `src`/`state.json` and keeps outputs plus own-Git third-party sources. The linked package itself ignores versions, tags and constraints, and no tag or version bump is needed while linked; edit and rebuild directly. Outputs stay under `.vmake_deps`; `pkg unlink` makes the next build use the lock |
 
 ## Target API at a Glance
@@ -457,15 +457,15 @@ For in-source Makefiles, pass an absolute path with forward slashes: `p.Make("-C
 vmake repo add <name> <url>          # Register a registry package repository
 vmake repo add --native <name> <url> # Register a native VMake repository
 vmake repo update <name>             # Pull latest definitions for a registry repository
-vmake repo trust <name>              # Trust a registry repository at its current commit
+vmake repo trust <name>              # Trust a repository and its future updates
 vmake ext add <name> <url>           # Add an extension repository (plugins/toolchains)
-vmake ext trust <name>               # Trust an extension at its current commit
+vmake ext trust <name>               # Trust an extension and its future updates
 vmake ext provision <name>           # Install toolchains declared for the current host
 vmake pkg link <repo/name> <path>   # Build from a local worktree; removes stale .vmake_deps src
 vmake pkg unlink <repo/name>        # Next build uses vmake.lock; run deps update for newer versions
 ```
 
-Native repositories are trusted per package commit on first build; `repo trust` and `repo update` reject them. `pkg link` records the path in `.vmake/local.json` (machine-local, not lock/config) and removes the package's materialized `src`/`state.json`; `deps update` and `deps pin` reject linked packages. While a package is linked, edit its worktree and rerun `vmake build`; no tag, version bump, or `deps update` is needed. `deps update` keeps linked packages' existing lock entries unchanged.
+Native repositories are trusted per repository; `repo trust` works without a resolved package or commit, and `repo update` still does not apply to them. Trust survives new commits and `deps update`. `pkg link` records the path in `.vmake/local.json` (machine-local, not lock/config) and removes the package's materialized `src`/`state.json`; `deps update` and `deps pin` reject linked packages. While a package is linked, edit its worktree and rerun `vmake build`; no tag, version bump, or `deps update` is needed. `deps update` keeps linked packages' existing lock entries unchanged.
 
 ## Common Mistakes
 

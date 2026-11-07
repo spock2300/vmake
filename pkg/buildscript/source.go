@@ -29,8 +29,8 @@ type Source struct {
 	// Repo is the remote repository name the script originates from
 	// ("official", "mynative"). Empty for local project scripts.
 	Repo string
-	// URL and Commit identify the exact remote revision whose script is being
-	// executed. Commit is required for remote trust decisions.
+	// URL identifies the remote script's source. Commit records the exact
+	// revision being loaded; trust is bound to the repository identity instead.
 	URL    string
 	Commit string
 	// Link is set when the package source is a local working tree.

@@ -23,8 +23,8 @@ func yaegiExports() interp.Exports {
 }
 
 // ScriptTrustChecker decides whether scripts from a remote repository may be
-// executed. The source carries the resolved commit so trust can be bound to an
-// exact revision; an empty commit must be treated as untrusted.
+// executed. Trust is bound to the repository identity, not to a resolved
+// commit.
 type ScriptTrustChecker func(src Source) error
 
 // LoadBuildScript loads a buildscript without a trust checker. Remote sources

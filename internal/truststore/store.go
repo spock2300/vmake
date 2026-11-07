@@ -13,13 +13,14 @@ import (
 	"github.com/spock2300/vmake/internal/jsonio"
 )
 
-const Version = 1
+// Version 2 records trust per repository identity (kind + name), not per commit.
+// Files written by older versions are treated as an empty store.
+const Version = 2
 
 type Record struct {
 	Kind      string    `json:"kind"`
 	Name      string    `json:"name"`
 	URL       string    `json:"url,omitempty"`
-	Commit    string    `json:"commit"`
 	TrustedAt time.Time `json:"trustedAt"`
 }
 
@@ -45,7 +46,7 @@ func Open(path string) (*Store, error) {
 	return store, nil
 }
 
-func (s *Store) Verify(kind, name, url, commit string) (bool, error) {
+func (s *Store) Verify(kind, name, url string) (bool, error) {
 	if err := validateKey(kind, name); err != nil {
 		return false, err
 	}
@@ -58,8 +59,8 @@ func (s *Store) Verify(kind, name, url, commit string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	record, ok := data.Records[keyOf(kind, name, commit)]
-	if !ok || record.Commit != commit {
+	record, ok := data.Records[keyOf(kind, name)]
+	if !ok {
 		return false, nil
 	}
 	if url != "" && record.URL != "" && record.URL != url {
@@ -68,16 +69,13 @@ func (s *Store) Verify(kind, name, url, commit string) (bool, error) {
 	return true, nil
 }
 
-func (s *Store) Trust(kind, name, url, commit string) error {
+func (s *Store) Trust(kind, name, url string) error {
 	if err := validateKey(kind, name); err != nil {
 		return err
 	}
-	if err := validateCommit(commit); err != nil {
-		return fmt.Errorf("cannot trust %s %q: %w", kind, name, err)
-	}
 	return s.update(func(data *file) {
-		data.Records[keyOf(kind, name, commit)] = Record{
-			Kind: kind, Name: name, URL: url, Commit: commit, TrustedAt: time.Now().UTC(),
+		data.Records[keyOf(kind, name)] = Record{
+			Kind: kind, Name: name, URL: url, TrustedAt: time.Now().UTC(),
 		}
 	})
 }
@@ -87,11 +85,7 @@ func (s *Store) Revoke(kind, name string) error {
 		return err
 	}
 	return s.update(func(data *file) {
-		for key, record := range data.Records {
-			if record.Kind == kind && record.Name == name {
-				delete(data.Records, key)
-			}
-		}
+		delete(data.Records, keyOf(kind, name))
 	})
 }
 
@@ -118,6 +112,15 @@ func (s *Store) load() (*file, error) {
 		}
 		return nil, fmt.Errorf("read trust store %s: %w", s.path, err)
 	}
+	var header struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(raw, &header); err != nil {
+		return nil, fmt.Errorf("trust store %s is corrupt: %w", s.path, err)
+	}
+	if header.Version != Version {
+		return data, nil
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(data); err != nil {
@@ -127,17 +130,14 @@ func (s *Store) load() (*file, error) {
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return nil, fmt.Errorf("trust store %s has trailing data: %w", s.path, err)
 	}
-	if data.Version != Version {
-		return nil, fmt.Errorf("trust store %s has unsupported version %d (want %d)", s.path, data.Version, Version)
-	}
 	if data.Records == nil {
 		data.Records = map[string]Record{}
 	}
 	for key, record := range data.Records {
-		if record.Kind == "" || record.Name == "" || record.Commit == "" {
+		if record.Kind == "" || record.Name == "" {
 			return nil, fmt.Errorf("trust store %s has an incomplete record %q", s.path, key)
 		}
-		if key != keyOf(record.Kind, record.Name, record.Commit) {
+		if key != keyOf(record.Kind, record.Name) {
 			return nil, fmt.Errorf("trust store %s has a mismatched record %q", s.path, key)
 		}
 	}
@@ -148,6 +148,7 @@ func (s *Store) save(data *file) error {
 	if data.Records == nil {
 		data.Records = map[string]Record{}
 	}
+	data.Version = Version
 	return jsonio.Save(s.path, data)
 }
 
@@ -165,16 +166,6 @@ func validateKey(kind, name string) error {
 	return nil
 }
 
-func validateCommit(commit string) error {
-	if commit == "" {
-		return fmt.Errorf("a commit is required")
-	}
-	if strings.ContainsAny(commit, ":@") {
-		return fmt.Errorf("invalid commit %q", commit)
-	}
-	return nil
-}
-
-func keyOf(kind, name, commit string) string {
-	return kind + ":" + name + "@" + commit
+func keyOf(kind, name string) string {
+	return kind + ":" + name
 }

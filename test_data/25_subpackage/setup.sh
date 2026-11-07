@@ -24,5 +24,5 @@ rm -rf .fixture/work
 URL="file://$(pwd)/.fixture/{name}.git"
 if [ ! -f "$HOME/.vmake/repos/$REPO_NAME/repo.json" ]; then
 	$VMAKE repo add --native "$REPO_NAME" "$URL"
-	$VMAKE repo trust "$REPO_NAME"
 fi
+$VMAKE repo trust "$REPO_NAME"

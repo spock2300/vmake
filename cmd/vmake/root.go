@@ -33,7 +33,7 @@ func init() {
 	RootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	RootCmd.PersistentFlags().BoolVarP(&veryVerbose, "very-verbose", "V", false, "very verbose output")
 	RootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "quiet mode")
-	RootCmd.PersistentFlags().BoolVarP(&yesFlag, "yes", "y", false, "assume yes for interactive prompts (e.g. trusting remote repositories)")
+	RootCmd.PersistentFlags().BoolVarP(&yesFlag, "yes", "y", false, "assume yes for interactive prompts (e.g. trusting repositories; trust persists for future updates)")
 	RootCmd.PersistentFlags().StringVarP(&projectOverride, "project", "C", "", "project root directory (default: search upward from the current directory)")
 	RootCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		return &usageError{err: err}

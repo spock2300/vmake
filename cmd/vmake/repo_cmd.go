@@ -46,12 +46,11 @@ var repoAddCmd = &cobra.Command{
 		if repoAddNative {
 			fatalErr(mgr.AddNative(name, url))
 			fmt.Printf("Added native repository '%s' with URL template '%s'\n", name, url)
-			fmt.Printf("Native scripts are trusted per package commit on first build; review the resolved package before passing --yes.\n")
-			return
+		} else {
+			fatalErr(mgr.Add(name, url))
+			fmt.Printf("Added repository '%s' from %s\n", name, url)
 		}
-		fatalErr(mgr.Add(name, url))
-		fmt.Printf("Added repository '%s' from %s\n", name, url)
-		if confirmTrust(fmt.Sprintf("The remote repository %q provides build.go scripts that vmake will execute (full system access).", name)) {
+		if confirmTrust(fmt.Sprintf("The repository %q provides build.go scripts that vmake will execute (full system access). Trusting it also trusts all future updates.", name)) {
 			if err := addTrustedRepo(name); err != nil {
 				vlog.Error("record trust for repository %s: %v", name, err)
 			}
@@ -63,7 +62,7 @@ var repoAddCmd = &cobra.Command{
 
 var repoTrustCmd = &cobra.Command{
 	Use:   "trust <name>",
-	Short: "Trust a repository's build.go scripts",
+	Short: "Trust a repository and its future updates",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		fatalErr(addTrustedRepo(args[0]))
@@ -125,18 +124,18 @@ var repoListCmd = &cobra.Command{
 	},
 }
 
-var repoUpdateCmd = newActionCmd("update <name>", "Update a package repository", "Updated", "repository", func(name string) error {
-	mgr := getRepoManager()
-	lock, err := mgr.Lock(name, true)
-	if err != nil {
-		return err
-	}
-	defer lock.Release()
-	if err := mgr.UpdateLocked(name); err != nil {
-		return err
-	}
-	revokeRepoTrustBestEffort(name)
-	vlog.Info("repository '%s' updated: trust reset", name)
-	vlog.Info("run 'vmake repo trust %s' (or pass --yes to a build) to re-confirm the new scripts", name)
-	return nil
-})
+var repoUpdateCmd = &cobra.Command{
+	Use:   "update <name>",
+	Short: "Update a package repository",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		name := args[0]
+		mgr := getRepoManager()
+		lock, err := mgr.Lock(name, true)
+		fatalErr(err)
+		defer lock.Release()
+		fatalErr(mgr.UpdateLocked(name))
+		fmt.Printf("Updated repository '%s'\n", name)
+		fmt.Println(trustKeptNotice)
+	},
+}

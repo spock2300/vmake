@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"os"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
@@ -207,6 +206,9 @@ writing a persistent pin to .vmake/project.json.`,
 				action = "Would update"
 			}
 			printDepsUpdateSummary(cmd.OutOrStdout(), action, res, ctx.SourceLinks)
+			if !dryRun && len(res.Changes) > 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), trustKeptNotice)
+			}
 			return nil
 		},
 	}
@@ -517,14 +519,6 @@ func refreshRegistryReposForUpdate(requested []string) error {
 		lock.Release()
 		if err != nil {
 			return err
-		}
-		if yesFlag || os.Getenv("VMAKE_TRUST_ALL") == "1" {
-			if err := addTrustedRepo(info.Name); err != nil {
-				return err
-			}
-		} else {
-			revokeRepoTrustBestEffort(info.Name)
-			vlog.Info("repository '%s' updated: trust reset (pass --yes or run 'vmake repo trust %s')", info.Name, info.Name)
 		}
 	}
 	return nil

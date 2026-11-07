@@ -268,18 +268,17 @@ func TestRepoScriptTrusted(t *testing.T) {
 	t.Cleanup(func() { vmakeDir = previous })
 	t.Setenv("VMAKE_TRUST_ALL", "")
 
-	commit := strings.Repeat("a", 40)
-	if trusted, err := repoScriptTrusted("official", commit); err != nil || trusted {
+	if trusted, err := repoScriptTrusted("official"); err != nil || trusted {
 		t.Fatalf("untrusted result = %v, %v", trusted, err)
 	}
 	store, err := openTrustStore()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Trust(trustKindRepo, "official", "", commit); err != nil {
+	if err := store.Trust(trustKindRepo, "official", ""); err != nil {
 		t.Fatal(err)
 	}
-	if trusted, err := repoScriptTrusted("official", commit); err != nil || !trusted {
+	if trusted, err := repoScriptTrusted("official"); err != nil || !trusted {
 		t.Fatalf("trusted result = %v, %v", trusted, err)
 	}
 }
@@ -307,10 +306,6 @@ func Main(p *api.Package) {
 	runGitLine(t, repoDir, "config", "user.name", "test")
 	runGitLine(t, repoDir, "add", "-A")
 	runGitLine(t, repoDir, "commit", "-q", "-m", "v1")
-	commit, err := repo.GetCurrentCommit(repoDir)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	result, err := loadPkgShow("official", "broken", "")
 	if err != nil {
@@ -324,7 +319,7 @@ func Main(p *api.Package) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Trust(trustKindRepo, "official", "", commit); err != nil {
+	if err := store.Trust(trustKindRepo, "official", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := loadPkgShow("official", "broken", ""); err == nil {

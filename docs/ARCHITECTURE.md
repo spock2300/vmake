@@ -368,7 +368,7 @@ vmake (RootCmd)
 │   ├── remove     # 删除仓库
 │   ├── list       # 列出仓库（显示 registry/native 类型）
 │   ├── update     # 更新仓库（native 仓库提示使用 deps update）
-│   ├── trust      # 信任仓库的 build.go 脚本
+│   ├── trust      # 信任仓库及其后续更新
 │   └── untrust    # 撤销仓库信任
 ├── pkg            # 包查询、清理与本地源码替换
 │   ├── list       # 列出项目内的包源码
@@ -388,7 +388,7 @@ vmake (RootCmd)
 │   ├── add        # 添加扩展仓库
 │   ├── remove     # 删除扩展仓库
 │   ├── list       # 列出扩展和插件
-│   ├── trust      # 信任扩展仓库的当前干净 commit
+│   ├── trust      # 信任扩展仓库及其后续更新
 │   ├── untrust    # 撤销扩展仓库信任
 │   └── update     # 更新扩展仓库
 ├── git

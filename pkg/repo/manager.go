@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	exec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/flock"
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/gitstore"
@@ -118,6 +119,24 @@ func (m *RepoManager) GetNativeURL(name string) (string, error) {
 		return "", fmt.Errorf("repo '%s' is not a native repo", name)
 	}
 	return cfg.URL, nil
+}
+
+// URL returns the configured origin URL for a registry repository. A
+// repository without a remote yields an empty URL; an unreadable repository
+// configuration is an error. Native repositories store their URL template in
+// repo.json instead.
+func (m *RepoManager) URL(name string) (string, error) {
+	if !m.Exists(name) {
+		return "", nil
+	}
+	output, err := runGitCmd([]string{"config", "--local", "--get", "remote.origin.url"}, exec.RunOptions{Dir: m.Path(name), Quiet: true})
+	if err != nil {
+		if code, ok := exec.ExitCode(err); ok && code == 1 {
+			return "", nil
+		}
+		return "", fmt.Errorf("read origin URL for repository %q: %w", name, err)
+	}
+	return exec.TrimOutput(output), nil
 }
 
 func (m *RepoManager) ListPackages(repo string) ([]string, error) {

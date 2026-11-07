@@ -333,11 +333,11 @@ vmake repo add --native <name> <url>       # Native 仓库（URL 模板含 {name
 vmake repo remove <name>
 vmake repo list
 vmake repo update <name>
-vmake repo trust <name>                    # 信任远程 registry 仓库的 buildscript
+vmake repo trust <name>                    # 信任仓库及其后续更新
 vmake repo untrust <name>                  # 撤销信任
 ```
 
-Native 仓库按解析到的 package commit 在构建时信任（`vmake build --yes`），`repo trust` 会拒绝 native 仓库。
+`repo trust` 对 registry 和 native 仓库都可用；native 信任不需要已解析的 package 或 commit。
 
 ### 包与依赖管理
 
@@ -365,7 +365,7 @@ vmake ext remove <name>
 vmake ext list
 vmake ext update [name]
 vmake ext provision <name>                  # 安装当前宿主声明的工具链
-vmake ext trust <name>                      # 信任当前干净的 commit
+vmake ext trust <name>                      # 信任仓库及其后续更新
 vmake ext untrust <name>                    # 撤销信任
 ```
 

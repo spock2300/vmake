@@ -55,7 +55,7 @@ func cloneExtensionRepo(gitURL, dir string) error {
 
 // LockRepo acquires a repository-scoped lock. Extension loading holds a shared
 // lock from the trust check through plugin loading; update/trust acquire the
-// exclusive lock so the checked commit cannot change underneath the loader.
+// exclusive lock so the trusted worktree cannot change underneath the loader.
 func (m *Manager) LockRepo(name string, exclusive bool) (*flock.FileLock, error) {
 	if err := gitstore.ValidateName(name); err != nil {
 		return nil, err
@@ -151,28 +151,6 @@ func (m *Manager) Commit(name string) (string, error) {
 		return "", fmt.Errorf("extension repo '%s' has no HEAD", name)
 	}
 	return commit, nil
-}
-
-// Clean reports whether an extension repository has no modified or untracked
-// files. Ignored Go files are also rejected: MergeGoSources includes them in
-// the interpreted program even though plain `git status` hides them. Trust
-// records are only valid for the exact clean tree that was reviewed.
-func (m *Manager) Clean(name string) (bool, error) {
-	if !m.Exists(name) {
-		return false, fmt.Errorf("extension repo '%s' not found", name)
-	}
-	output, err := iexec.RunWithEnvCaptured(m.Path(name), nil, "git", gitcmd.Args("status", "--porcelain", "--untracked-files=all")...)
-	if err != nil {
-		return false, fmt.Errorf("git status in %s: %w", m.Path(name), err)
-	}
-	if len(iexec.TrimOutput(output)) != 0 {
-		return false, nil
-	}
-	ignored, err := iexec.RunWithEnvCaptured(m.Path(name), nil, "git", gitcmd.Args("ls-files", "--others", "--ignored", "--exclude-standard", "--", "*.go")...)
-	if err != nil {
-		return false, fmt.Errorf("git ls-files in %s: %w", m.Path(name), err)
-	}
-	return len(iexec.TrimOutput(ignored)) == 0, nil
 }
 
 type DiscoveredPlugin struct {

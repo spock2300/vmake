@@ -20,7 +20,7 @@ func cleanupLegacyStorage() {
 		if err := os.Remove(legacyTrust); err != nil {
 			vlog.Error("remove legacy trust file %s: %v", legacyTrust, err)
 		} else {
-			vlog.Info("Removed legacy trust file %s (re-trust repositories with 'vmake repo trust')", legacyTrust)
+			vlog.Info("Removed legacy trust file %s (re-trust repositories with 'vmake repo trust' and extensions with 'vmake ext trust')", legacyTrust)
 		}
 	}
 

@@ -22,7 +22,7 @@
 │   │   └── <urlhash>.git/         # 每个上游 URL 一个 bare 仓库：objects/ + refs/vmake/<sha> + vmake-cache.json
 │   └── _locks/                    # 生命周期锁、owner 锁、per-tree 与 per-cache-repo 锁
 ├── _locks/                        # 包仓库与扩展仓库锁（repo_<hash>.lock、ext_<hash>.lock）
-├── trust.json                     # 包仓库与扩展仓库信任（按 commit 绑定）
+├── trust.json                     # 包仓库与扩展仓库信任（按仓库身份绑定）
 ├── trust.json.lock                # trust.json 的读写锁（位于文件旁，不在 _locks/ 下）
 └── repos/                         # 包仓库索引（git clone）
     └── <repo>/
@@ -32,7 +32,7 @@
                     └── build.go
 ```
 
-旧版布局（`~/.vmake/sources`、旧全局信任文件 `~/.vmake/config.json`、`cache/v2`、`cache/_localgit`、`cache/mirrors`、项目 `vmake_deps/`）会在升级后首次执行加载项目配置/依赖的命令时清理（`loadResolveParams` 中的 `cleanupLegacyStorage`；`doctor`、`pkg list`、`pkg search`、`pkg show`、`toolchain list`、`manifest show` 等不经过该路径的命令不会触发），依赖重新物化；旧的信任记录不迁移，`~/.vmake/config.json` 删除后需重新 `vmake repo trust` / `vmake ext trust`，或在下一次构建的确认提示中授权。不提供兼容迁移（布局标记 `.vmake/layout`，见 `cmd/vmake/storage.go`）。`cache/git/` 是当前布局，升级时不删除。
+旧版布局（`~/.vmake/sources`、旧全局信任文件 `~/.vmake/config.json`、`cache/v2`、`cache/_localgit`、`cache/mirrors`、项目 `vmake_deps/`）会在升级后首次执行加载项目配置/依赖的命令时清理（`loadResolveParams` 中的 `cleanupLegacyStorage`；`doctor`、`pkg list`、`pkg search`、`pkg show`、`toolchain list`、`manifest show` 等不经过该路径的命令不会触发），依赖重新物化；旧的信任记录不迁移，`~/.vmake/config.json` 删除后需重新 `vmake repo trust` / `vmake ext trust`，或在下一次构建的确认提示中授权。当前 `trust.json` 只读取 version 2；旧版本文件按空库处理并在下一次写入时重建。不提供兼容迁移（布局标记 `.vmake/layout`，见 `cmd/vmake/storage.go`）。`cache/git/` 是当前布局，升级时不删除。
 
 ## repos/
 
@@ -53,7 +53,7 @@ CLI：`vmake repo add|remove|list|update|trust|untrust`
 - `_locks/` — 生命周期锁、owner 锁、per-tree 物化锁与 per-cache-repo 锁（`cache_<urlhash 前16位>.lock`）；锁文件位于工作树与缓存仓库之外，清理时不删除
 - 缓存命名空间必须带 `vmake-cache.json` 标记；缺失且非空的目录视为外部数据，vmake 不会删除它（缓存未命中时回退到直接抓取上游）。空目录、只有标记但缺少 `HEAD`/`config`/`objects` 的半初始化目录会在锁内重建；标记存在但元数据损坏的目录可通过 `vmake cache remove <url>` 删除。
 
-包仓库与扩展仓库的锁在 `~/.vmake/_locks/`（`repo_<hash>.lock`、`ext_<hash>.lock`），把仓库 commit 检查与 buildscript/插件加载串行化；扩展仓库的共享锁保留到进程退出，因此构建期工具链安装与插件执行期间 `ext update/trust/remove` 会等待。`flock` 不可重入，信任判定不能回调会加独占锁的命令。
+包仓库与扩展仓库的锁在 `~/.vmake/_locks/`（`repo_<hash>.lock`、`ext_<hash>.lock`），把仓库身份/信任检查与 buildscript/插件加载串行化；扩展仓库的共享锁保留到进程退出，因此构建期工具链安装与插件执行期间 `ext update/trust/remove` 会等待。`flock` 不可重入，信任判定不能回调会加独占锁的命令。
 
 工作树存放在项目内（见下节），物化时按需 `git ls-remote` 解析版本、把所选 ref/commit 的对象按 depth=1 抓进 `cache/git/` 并锚定，再从缓存本地 fetch 出工作树。命中缓存后不触网只适用于 **commit 已固定且对象已缓存** 的请求；需要解析版本/ref 的请求仍可能先访问上游（失败时可用缓存记录的 ref→commit 或现有树离线兜底），默认分支 HEAD 物化直接 clone 上游，缓存未命中或服务器拒绝按 SHA fetch 时回退到上游/full clone。缓存缺失/损坏或 URL 变化会在锁内重建；上游不可达且无缓存兜底时构建会失败。
 
@@ -73,34 +73,39 @@ CLI：`vmake cache list` 查看缓存命名空间，`vmake cache remove <url>` �
 
 ## trust.json
 
-全局信任库，记录包仓库和扩展仓库被信任的确切 commit：
+全局信任库，按仓库身份记录包仓库和扩展仓库，不再绑定 commit：
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "records": {
-    "repo:official@<sha>": {
+    "repo:official": {
       "kind": "repo",
       "name": "official",
-      "commit": "<sha>",
-      "trustedAt": "2026-10-18T00:00:00Z"
+      "url": "https://github.com/example/vmake-packages",
+      "trustedAt": "2026-11-07T00:00:00Z"
     },
-    "extension:tools@<sha>": {
+    "repo:myorg": {
+      "kind": "repo",
+      "name": "myorg",
+      "url": "https://git.example.com/{name}.git",
+      "trustedAt": "2026-11-07T00:00:00Z"
+    },
+    "extension:tools": {
       "kind": "extension",
       "name": "tools",
       "url": "https://example.invalid/tools.git",
-      "commit": "<sha>",
-      "trustedAt": "2026-10-18T00:00:00Z"
+      "trustedAt": "2026-11-07T00:00:00Z"
     }
   }
 }
 ```
 
-- 记录键是 `kind:name@commit`：每个 commit 一条记录，同一仓库的多个 commit（例如同一 native 仓库里固定在不同版本的两个包）各自保留信任，不会互相覆盖。
-- 包仓库由 `vmake repo trust|untrust <name>` 管理；`repo update` 成功后清除信任。包仓库信任只绑定 commit，不检查工作区内容。native 仓库按解析到的 package commit 在构建时信任，不能使用 `repo trust`（交互式构建中用 `--yes`，或先 review 后再执行构建）。
-- 扩展仓库由 `vmake ext trust|untrust <name>` 管理；`ext add` 可交互确认，`ext update` 仅在 HEAD commit 变化时清除信任，`ext remove` 清除信任，`ext provision` 安装当前宿主有 `installations` 条目的工具链。
-- 扩展和包仓库的 `HEAD` 与记录不一致、扩展工作树有本地修改，或信任文件损坏时，脚本/插件不会执行。native 包校验的是解析到的 package commit，而不是仓库 HEAD。
-- `VMAKE_TRUST_ALL=1` 可跳过信任检查（仅限 CI/测试；它同时影响包仓库和扩展仓库）。
+- 记录键是 `kind:name`；同一仓库后续的新 commit/新 package 继续使用同一条记录，不再逐 commit 授权。
+- 包仓库由 `vmake repo trust|untrust <name>` 管理；registry 和 native 都可用，`repo trust` 不需要提交或已解析的 package commit。`repo update`/`deps update` 保持信任，`repo remove`/`untrust` 撤销。native 记录的 URL 是 `repo.json` 中的 URL 模板。
+- 扩展仓库由 `vmake ext trust|untrust <name>` 管理；`ext add` 可交互确认，`ext update` 保持信任，`ext remove`/`untrust` 撤销，`ext provision` 安装当前宿主有 `installations` 条目的工具链。扩展不要求工作树干净；本地修改随仓库信任一起执行。
+- 记录中保存了 URL 且与当前仓库 URL（registry 的 `remote.origin.url`、native 的 URL 模板、扩展的 origin URL）不一致时视为未信任，需要重新 `trust`。正常 update 不改变 URL；仓库没有配置 origin 时退化为按名称信任（`repo trust` 会提示），registry 仓库配置无法读取时按错误处理。
+- 信任文件损坏（version 2 的 JSON 无效）时，包脚本/插件不会执行；旧版本文件按空库处理。`VMAKE_TRUST_ALL=1` 可跳过信任检查（仅限 CI/测试；它同时影响包仓库和扩展仓库）。
 
 源码：`internal/truststore/`、`cmd/vmake/trust.go`
 
@@ -135,7 +140,7 @@ extensions/<repo-name>/
 源码：`pkg/plugin/manager.go`（嵌入 `*gitstore.Store`）
 CLI：`vmake ext add|remove|list|update|provision|trust|untrust`
 
-插件源码由 yaegi 解释器动态加载（`extensions/<repo>/<plugin-name>/src/main.go`），无需编译，不产生 `.so` 文件。只有 `~/.vmake/trust.json` 中记录了当前干净 HEAD 的仓库才会注册工具链或加载插件；`vmake ext update` 仅在 HEAD commit 变化时清除该信任。加载插件时取得的仓库共享锁保留到进程退出，构建期工具链安装读取的仍是校验过的 commit。
+插件源码由 yaegi 解释器动态加载（`extensions/<repo>/<plugin-name>/src/main.go`），无需编译，不产生 `.so` 文件。只有 `~/.vmake/trust.json` 中记录了仓库身份的扩展才会注册工具链或加载插件；`vmake ext update` 保持信任，本地工作树修改也不阻止加载。加载插件时取得的仓库共享锁保留到进程退出，构建期工具链安装读取的仍是同一份已信任工作树。
 
 仓库中的 `toolchain.json` 由 vmake 自身扫描注册，不需要插件参与；只提供编译器的仓库可以不含任何插件代码。
 

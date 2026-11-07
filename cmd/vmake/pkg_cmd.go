@@ -79,8 +79,7 @@ separately; they are read through their parent package.
 
 The pattern matches repository and package names. Use --details to read each
 build.go and also match descriptions, licenses and latest versions; details
-require the repository or package commit to be trusted and are skipped with a
-warning otherwise.
+require the repository to be trusted and are skipped with a warning otherwise.
 
 --for-project adds cached, locked and installed status. Installed status comes
 from the default <project>/install/manifest.json; packages installed with a
@@ -96,8 +95,8 @@ var pkgShowCmd = &cobra.Command{
 
 Registry packages are read from the repository checkout. Native packages must
 already be cached in this project's .vmake_deps. Remote scripts run only when
-their repository or package commit is trusted; otherwise only directory and
-trust status are shown.
+their repository is trusted; otherwise only directory and trust status are
+shown.
 
 Requires lists dependencies discovered without configuration values; options may
 make some of them conditional. Options and targets are resolved only when the

@@ -59,19 +59,20 @@ vmake 在启动时自动发现并用 yaegi 解释执行插件源码，无需编�
 
 ## 信任与执行
 
-扩展代码以完整系统权限运行。vmake 只加载**在确切 commit 上被信任**的扩展：
+扩展代码以完整系统权限运行。vmake 只加载**仓库身份已被信任**的扩展：
 
 - `vmake ext add` 克隆后展示仓库并询问是否信任；非交互环境需要 `-y` 或后续执行 `vmake ext trust <name>`。
-- `vmake ext update` 仅在 HEAD commit 变化时清除信任；必须重新 review 并执行 `vmake ext trust <name>`。更新失败且 HEAD 未变化时保留原信任。
-- 扩展工作树有本地修改、未跟踪文件、被 `.gitignore` 忽略的 `.go` 文件、HEAD 与信任记录不一致、或仓库不是 vmake 可识别的 git 仓库时，插件和 `toolchain.json` 都不会加载。
+- `vmake ext trust <name>` 不需要 commit，也不要求工作树干净；信任一次后，`vmake ext update` 拉取的新 commit 继续被信任。
+- 扩展工作树有本地修改、未跟踪文件或被忽略的 `.go` 文件不会阻止加载；这些内容随仓库信任一起执行。
 - `vmake ext untrust <name>`/`vmake ext remove <name>` 撤销信任。
+- 扩展 origin URL 变化时视为未信任，需要重新 `vmake ext trust <name>`。
 - `VMAKE_TRUST_ALL=1` 仅用于 CI/测试，会跳过包仓库和扩展仓库的信任检查。
 - `plugin.json` 的 `name` 必须是合法命令名；`entry`/`sourceDir` 必须位于插件目录内。`apiVersion` 当前为 `1`，更高版本会被拒绝。
 - `method: "http"` 的工具链必须使用 `https` 且提供 64 位十六进制 `sha256`；下载过程拒绝重定向到非 HTTPS。
 
 `vmake ext add` 和 `vmake ext update` 只获取普通 Git 文件及 LFS 指针，不自动下载 LFS 大文件。构建首次使用某个未安装的工具链时，vmake 才下载该工具链对应当前宿主 OS/架构的压缩包。更新扩展不会主动预取新版本，也不会清理已有 LFS 对象、已安装的工具链目录或其他缓存；但 `vmake ext update` 执行的 `git pull --ff-only` 会按上游变更更新仓库工作树，上游删除的跟踪文件（包括 `assets/toolchains/` 下的归档指针）也会从检出中消失。这项策略仅用于扩展仓库，不改变项目源码依赖的 Git 下载行为。
 
-需要提前安装当前宿主工具链时（例如桌面客户端在安装或更新编译器扩展后预热），执行 `vmake ext provision <repo>`。该命令要求扩展已信任且工作树干净，不执行插件代码；它读取 `toolchain.json`，对每个当前宿主有 `installations` 条目的工具链调用 `toolchain.Install` 完成下载、锁、校验、暂存和原子发布；已安装的工具链直接复用，不会下载其他宿主的归档。`ext add/update` 本身仍然不预取。
+需要提前安装当前宿主工具链时（例如桌面客户端在安装或更新编译器扩展后预热），执行 `vmake ext provision <repo>`。该命令要求扩展已信任，不执行插件代码；它读取 `toolchain.json`，对每个当前宿主有 `installations` 条目的工具链调用 `toolchain.Install` 完成下载、锁、校验、暂存和原子发布；已安装的工具链直接复用，不会下载其他宿主的归档。`ext add/update` 本身仍然不预取。
 
 ## 目录结构
 
@@ -90,7 +91,7 @@ vmake 在启动时自动发现并用 yaegi 解释执行插件源码，无需编�
         └── *.tar.gz
 ```
 
-每个扩展仓库是一个 Git 仓库。仓库根目录下的每个子目录可以是一个插件（含 `plugin.json`）或一个工具链声明（含 `toolchain.json`）。一个仓库可以包含任意数量的插件和工具链；vmake 启动时自动发现并注册**已信任且工作树干净**的仓库中的工具链、加载其插件。只含 `toolchain.json` 的仓库不需要任何插件代码。
+每个扩展仓库是一个 Git 仓库。仓库根目录下的每个子目录可以是一个插件（含 `plugin.json`）或一个工具链声明（含 `toolchain.json`）。一个仓库可以包含任意数量的插件和工具链；vmake 启动时自动发现并注册**已信任**的仓库中的工具链、加载其插件。只含 `toolchain.json` 的仓库不需要任何插件代码。
 
 示例：一个仓库 `embedded-tools` 包含烧录和监控两个插件，以及一个 arm-gcc 工具链声明：
 

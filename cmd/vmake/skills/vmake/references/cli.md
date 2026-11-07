@@ -32,7 +32,7 @@ extension plugin commands appear here too. For plugin details, run
     `vmake ext list` - List extension repositories and plugins
     `vmake ext provision <name>` - Install the current host's toolchains declared by an extension repository
     `vmake ext remove <name>` - Remove an extension repository
-    `vmake ext trust <name>` - Trust an extension repository at its current commit
+    `vmake ext trust <name>` - Trust an extension repository and its future updates
     `vmake ext untrust <name>` - Revoke trust for an extension repository
     `vmake ext update [name]` - Update extension repositories
   `vmake git` - Git version management commands
@@ -57,7 +57,7 @@ extension plugin commands appear here too. For plugin details, run
     `vmake repo add <name> <git-url-or-template> [--native -n]` - Add a package repository
     `vmake repo list` - List all package repositories
     `vmake repo remove <name>` - Remove a package repository
-    `vmake repo trust <name>` - Trust a repository's build.go scripts
+    `vmake repo trust <name>` - Trust a repository and its future updates
     `vmake repo untrust <name>` - Revoke trust for a repository
     `vmake repo update <name>` - Update a package repository
   `vmake skill` - Manage AI coding assistant skills

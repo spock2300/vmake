@@ -3,6 +3,7 @@ package exec
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -102,6 +103,15 @@ func RunInDir(name, dir string, args ...string) ([]byte, error) {
 
 func TrimOutput(output []byte) string {
 	return strings.TrimSpace(string(output))
+}
+
+// ExitCode reports the process exit code wrapped by err, if it has one.
+func ExitCode(err error) (int, bool) {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode(), true
+	}
+	return 0, false
 }
 
 func RunWithOptions(name string, args []string, opts RunOptions) ([]byte, error) {

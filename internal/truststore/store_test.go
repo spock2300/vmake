@@ -1,6 +1,7 @@
 package truststore
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,33 +13,33 @@ func TestTrustVerifyRevoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ok, err := store.Verify("repo", "official", "", "abc")
+	ok, err := store.Verify("repo", "official", "")
 	if err != nil || ok {
 		t.Fatalf("empty store Verify = %v, %v", ok, err)
 	}
-	if err := store.Trust("repo", "official", "https://example.invalid/repo", "abc"); err != nil {
+	if err := store.Trust("repo", "official", "https://example.invalid/repo"); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := store.Verify("repo", "official", "", "abc"); err != nil || !ok {
+	if ok, err := store.Verify("repo", "official", "https://example.invalid/repo"); err != nil || !ok {
 		t.Fatalf("Verify after Trust = %v, %v", ok, err)
 	}
-	if ok, err := store.Verify("repo", "official", "", "def"); err != nil || ok {
-		t.Fatalf("Verify with wrong commit = %v, %v", ok, err)
+	if ok, err := store.Verify("repo", "official", ""); err != nil || !ok {
+		t.Fatalf("Verify without URL = %v, %v", ok, err)
 	}
-	if ok, err := store.Verify("repo", "official", "https://evil.invalid/repo", "abc"); err != nil || ok {
+	if ok, err := store.Verify("repo", "official", "https://evil.invalid/repo"); err != nil || ok {
 		t.Fatalf("Verify with wrong URL = %v, %v", ok, err)
 	}
 	if err := store.Revoke("repo", "official"); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := store.Verify("repo", "official", "", "abc"); err != nil || ok {
+	if ok, err := store.Verify("repo", "official", ""); err != nil || ok {
 		t.Fatalf("Verify after Revoke = %v, %v", ok, err)
 	}
 }
 
 func TestTrustStoreFailsClosedOnCorruption(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "trust.json")
-	if err := os.WriteFile(path, []byte(`{"version":1,"records":`), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(`{"version":2,"records":`), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Open(path); err == nil {
@@ -46,52 +47,98 @@ func TestTrustStoreFailsClosedOnCorruption(t *testing.T) {
 	}
 }
 
-func TestTrustStoreRejectsOldVersion(t *testing.T) {
+func TestTrustStoreIgnoresOldVersion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "trust.json")
-	if err := os.WriteFile(path, []byte(`{"version":0,"records":{}}`), 0644); err != nil {
+	old := `{"version":1,"records":{"repo:official@abc":{"kind":"repo","name":"official","commit":"abc","trustedAt":"2026-10-18T00:00:00Z"}}}`
+	if err := os.WriteFile(path, []byte(old), 0644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := store.Verify("repo", "official", ""); err != nil || ok {
+		t.Fatalf("old trust record was accepted: %v, %v", ok, err)
+	}
+	if err := store.Trust("repo", "official", ""); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Version != Version {
+		t.Fatalf("trust store version = %d, want %d", data.Version, Version)
+	}
+}
+
+func TestTrustStoreTreatsNewerVersionAsEmpty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "trust.json")
+	newer := `{"version":3,"records":{"repo:official":{"kind":"repo","name":"official","url":"https://example.invalid/repo","trustedAt":"2026-10-18T00:00:00Z"}}}`
+	if err := os.WriteFile(path, []byte(newer), 0644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := store.Verify("repo", "official", ""); err != nil || ok {
+		t.Fatalf("newer trust record was accepted: %v, %v", ok, err)
+	}
+	if err := store.Trust("repo", "official", ""); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Version != Version {
+		t.Fatalf("trust store version = %d, want %d", data.Version, Version)
+	}
+}
+
+func TestTrustStoreRejectsOldVersionWithBadJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "trust.json")
+	if err := os.WriteFile(path, []byte(`{"version":1,"records":`), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Open(path); err == nil {
-		t.Fatal("Open accepted an unsupported trust store version")
+		t.Fatal("Open accepted malformed JSON")
 	}
 }
 
-func TestTrustRequiresCommit(t *testing.T) {
+func TestTrustRequiresKindAndName(t *testing.T) {
 	store, err := Open(filepath.Join(t.TempDir(), "trust.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Trust("repo", "official", "", ""); err == nil {
-		t.Fatal("Trust accepted an empty commit")
+	if err := store.Trust("", "official", ""); err == nil {
+		t.Fatal("Trust accepted an empty kind")
 	}
-	for _, commit := range []string{"a:b", "a@b"} {
-		if err := store.Trust("repo", "official", "", commit); err == nil {
-			t.Fatalf("Trust accepted the record separator in commit %q", commit)
-		}
+	if err := store.Trust("repo", "", ""); err == nil {
+		t.Fatal("Trust accepted an empty name")
 	}
 }
 
-func TestTrustRecordsArePerCommit(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "trust.json"))
-	if err != nil {
+func TestTrustStoreRejectsMismatchedRecordKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "trust.json")
+	data := `{"version":2,"records":{"repo:other":{"kind":"repo","name":"official","trustedAt":"2026-10-18T00:00:00Z"}}}`
+	if err := os.WriteFile(path, []byte(data), 0644); err != nil {
 		t.Fatal(err)
 	}
-	for _, commit := range []string{"aaa", "bbb"} {
-		if err := store.Trust("repo", "native", "", commit); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, commit := range []string{"aaa", "bbb"} {
-		if ok, err := store.Verify("repo", "native", "", commit); err != nil || !ok {
-			t.Fatalf("commit %s lost its trust record: %v, %v", commit, ok, err)
-		}
-	}
-	if err := store.Revoke("repo", "native"); err != nil {
-		t.Fatal(err)
-	}
-	for _, commit := range []string{"aaa", "bbb"} {
-		if ok, err := store.Verify("repo", "native", "", commit); err != nil || ok {
-			t.Fatalf("commit %s survived Revoke: %v, %v", commit, ok, err)
-		}
+	if _, err := Open(path); err == nil {
+		t.Fatal("Open accepted a mismatched record key")
 	}
 }

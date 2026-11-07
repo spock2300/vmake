@@ -353,11 +353,11 @@ vmake repo add --native <name> <url>       # Native repo (URL template with {nam
 vmake repo remove <name>
 vmake repo list
 vmake repo update <name>
-vmake repo trust <name>                    # Trust a remote registry repo's buildscripts
+vmake repo trust <name>                    # Trust a repository and its future updates
 vmake repo untrust <name>                  # Revoke trust
 ```
 
-Native repos are trusted per resolved package commit at build time (`vmake build --yes`); `repo trust` rejects them.
+`repo trust` works for registry and native repositories; native trust does not require a resolved package or commit.
 
 ### Package & Dependency Management
 
@@ -385,7 +385,7 @@ vmake ext remove <name>
 vmake ext list
 vmake ext update [name]
 vmake ext provision <name>                  # Install toolchains declared for this host
-vmake ext trust <name>                      # Trust the current clean commit
+vmake ext trust <name>                      # Trust the repository and its future updates
 vmake ext untrust <name>                    # Revoke trust
 ```
 

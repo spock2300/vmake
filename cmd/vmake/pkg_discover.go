@@ -210,7 +210,7 @@ func searchRegistryRepo(mgr *repo.RepoManager, repoName string, opts pkgSearchOp
 			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("%s: %v", repoName, err))
 			} else {
-				trusted, err := repoScriptTrusted(repoName, commit)
+				trusted, err := repoScriptTrusted(repoName)
 				if err != nil {
 					warnings = append(warnings, fmt.Sprintf("%s: %v", repoName, err))
 				} else if trusted {
@@ -295,11 +295,11 @@ func searchNativeRepo(repoName string, opts pkgSearchOptions, statuses *pkgStatu
 			if state == nil || state.Commit == "" {
 				warnings = append(warnings, fmt.Sprintf("%s/%s: materialized state is missing", repoName, name))
 			} else {
-				trusted, err := repoScriptTrusted(repoName, state.Commit)
+				trusted, err := repoScriptTrusted(repoName)
 				if err != nil {
 					warnings = append(warnings, fmt.Sprintf("%s/%s: %v", repoName, name, err))
 				} else if !trusted {
-					warnings = append(warnings, fmt.Sprintf("native package %q at %s is not trusted; details omitted (trust it on first build with 'vmake build --yes')", repoName+"/"+name, repo.ShortCommit(state.Commit)))
+					warnings = append(warnings, fmt.Sprintf("native package %q is not trusted; details omitted (run 'vmake repo trust %s')", repoName+"/"+name, repoName))
 				} else {
 					interpreted, err := loadNativePackage(depsDir, repoName, name, state)
 					if err != nil {
@@ -407,12 +407,12 @@ func loadPackageScript(src buildscript.Source) (*api.Package, error) {
 	defer scriptfs.SetReadOnly(false)
 
 	interpreted, err := buildscript.LoadBuildScriptWithTrust(src, func(loadSrc buildscript.Source) error {
-		trusted, trustErr := repoScriptTrusted(loadSrc.Repo, loadSrc.Commit)
+		trusted, trustErr := repoScriptTrusted(loadSrc.Repo)
 		if trustErr != nil {
 			return trustErr
 		}
 		if !trusted {
-			return fmt.Errorf("repository %q script at %s is not trusted", loadSrc.Repo, repo.ShortCommit(loadSrc.Commit))
+			return fmt.Errorf("repository %q is not trusted; run 'vmake repo trust %s'", loadSrc.Repo, loadSrc.Repo)
 		}
 		return nil
 	})
@@ -529,7 +529,7 @@ func loadPkgShow(repoName, pkgName, version string) (*pkgShowResult, error) {
 	if linked {
 		result.Trusted = true
 	} else {
-		trusted, err := repoScriptTrusted(repoName, commit)
+		trusted, err := repoScriptTrusted(repoName)
 		if err != nil {
 			result.Warning = fmt.Sprintf("cannot verify trust: %v", err)
 		} else {
@@ -578,7 +578,7 @@ func loadPkgShow(repoName, pkgName, version string) (*pkgShowResult, error) {
 		result.Latest = result.Versions[0]
 	}
 	if !result.Trusted && result.Warning == "" {
-		result.Warning = pkgTrustWarning(repoName, result.Source, commit)
+		result.Warning = pkgTrustWarning(repoName, result.Source)
 	}
 
 	if version != "" {
@@ -737,9 +737,9 @@ func splitPkgShowArg(arg string) (string, string, string, error) {
 	return repoName, pkgName, version, nil
 }
 
-func pkgTrustWarning(repoName, source, commit string) string {
+func pkgTrustWarning(repoName, source string) string {
 	if source == "native" {
-		return fmt.Sprintf("native package commit %s is not trusted; trust it on first build with 'vmake build --yes'", repo.ShortCommit(commit))
+		return fmt.Sprintf("native repository %q is not trusted; run 'vmake repo trust %s'", repoName, repoName)
 	}
 	return fmt.Sprintf("build.go is not trusted; run 'vmake repo trust %s'", repoName)
 }

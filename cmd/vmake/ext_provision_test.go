@@ -231,7 +231,7 @@ func TestExtProvisionRequiresTrust(t *testing.T) {
 	}
 }
 
-func TestExtProvisionRejectsDirtyWorktreeWithTrustAll(t *testing.T) {
+func TestExtProvisionAllowsDirtyTrustedWorktree(t *testing.T) {
 	dir := t.TempDir()
 	repo := filepath.Join(dir, "extensions", "fixture")
 	tool := provisionToolName("cross-tool")
@@ -242,14 +242,19 @@ func TestExtProvisionRejectsDirtyWorktreeWithTrustAll(t *testing.T) {
 	})
 	writeProvisionDefinition(t, repo, def)
 	initProvisionGitRepo(t, repo)
+
+	out, err := extensionCommandEnv(t, dir, dir, []string{"VMAKE_TRUST_ALL=0"}, "ext", "trust", "fixture")
+	if err != nil {
+		t.Fatalf("trust extension: %v\n%s", err, out)
+	}
 	writeExtensionFile(t, filepath.Join(repo, "untracked.txt"), "dirty")
 
-	out, err := extensionCommand(t, dir, dir, "ext", "provision", "fixture")
-	if err == nil || !strings.Contains(out, "local changes") {
-		t.Fatalf("dirty extension was provisioned: %v\n%s", err, out)
+	out, err = extensionCommandEnv(t, dir, dir, []string{"VMAKE_TRUST_ALL=0"}, "ext", "provision", "fixture")
+	if err != nil {
+		t.Fatalf("dirty extension was not provisioned: %v\n%s", err, out)
 	}
 	installed := filepath.Join(dir, "toolchains", runtime.GOOS, runtime.GOARCH, def.Name, def.Version)
-	if _, err := os.Stat(installed); !os.IsNotExist(err) {
-		t.Fatalf("dirty extension created %s: %v", installed, err)
+	if _, err := os.Stat(installed); err != nil {
+		t.Fatalf("dirty extension did not create %s: %v", installed, err)
 	}
 }

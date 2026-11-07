@@ -428,9 +428,8 @@ func (r *Resolver) findSource(id string, constraint string) (*buildscript.Source
 			return nil, optsErr
 		}
 		src.Script = scriptOpts
-		// Trust binds to the wrapper checkout's commit when it is available.
-		// A trust checker refuses an empty commit; loading without one is only
-		// used by tests and by callers that deliberately pass no checker.
+		// Trust binds to the repository identity. Record the wrapper commit for
+		// build identity and reporting only.
 		if head, headErr := repo.GetCurrentCommitContext(r.ctx, r.repoMgr.Path(repoName)); headErr == nil {
 			src.Commit = head
 		}
