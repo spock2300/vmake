@@ -329,10 +329,6 @@ func CheckoutDetachContext(ctx context.Context, dir, commit string) error {
 	return gitRunContext(ctx, dir, []string{"checkout", "--force", "--detach", commit}, 0)
 }
 
-func InitSubmodules(dir string) error {
-	return InitSubmodulesContext(context.Background(), dir)
-}
-
 func InitSubmodulesContext(ctx context.Context, dir string) error {
 	args := progressArgs([]string{"submodule", "update", "--init", "--depth", "1", "--recursive"})
 	_, err := runGitCmd(args, networkGitOptions(ctx, dir))
@@ -340,10 +336,6 @@ func InitSubmodulesContext(ctx context.Context, dir string) error {
 		return networkGitError(fmt.Sprintf("git submodule update --init in %s", dir), err)
 	}
 	return nil
-}
-
-func FetchTags(dir string) error {
-	return FetchTagsContext(context.Background(), dir)
 }
 
 func FetchTagsContext(ctx context.Context, dir string) error {
@@ -389,14 +381,6 @@ func GetCurrentCommitContext(ctx context.Context, dir string) (string, error) {
 		return "", err
 	}
 	return exec.TrimOutput(output), nil
-}
-
-// ResolveRemoteCommit resolves a tag (or commit SHA) on a remote URL to its
-// commit SHA via `git ls-remote`, without any local clone. Annotated tags are
-// dereferenced (the ^{} pattern wins); a 40-hex ref that the remote does not
-// know is taken as the commit itself.
-func ResolveRemoteCommit(url, ref string) (string, error) {
-	return ResolveRemoteCommitContext(context.Background(), url, ref)
 }
 
 func ResolveRemoteCommitContext(ctx context.Context, url, ref string) (string, error) {
@@ -445,14 +429,6 @@ func IsDirtyContext(ctx context.Context, dir string) bool {
 	return strings.TrimSpace(string(output)) != ""
 }
 
-// DescribeTag returns the tag exactly pointing at HEAD, or "" when HEAD is
-// not tagged. Local-only; used to rebuild version->tag maps from cached
-// checkouts without touching the network.
-func DescribeTag(dir string) string {
-	tag, _ := DescribeTagContext(context.Background(), dir)
-	return tag
-}
-
 func DescribeTagContext(ctx context.Context, dir string) (string, error) {
 	output, err := runGitCmd([]string{"describe", "--tags", "--exact-match", "HEAD"}, exec.RunOptions{Context: ctx, Dir: dir, Quiet: true})
 	if err != nil {
@@ -472,21 +448,12 @@ func GitRevParse(dir string) string {
 	return commit
 }
 
-func IsPatchApplied(dir, patchFile string) bool {
-	applied, _ := IsPatchAppliedContext(context.Background(), dir, patchFile)
-	return applied
-}
-
 func IsPatchAppliedContext(ctx context.Context, dir, patchFile string) (bool, error) {
 	_, err := runGitCmd([]string{"apply", "--reverse", "--check", patchFile}, exec.RunOptions{Context: ctx, Dir: dir, Quiet: true})
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false, err
 	}
 	return err == nil, nil
-}
-
-func ApplyPatch(dir, patchFile string) error {
-	return ApplyPatchContext(context.Background(), dir, patchFile)
 }
 
 func ApplyPatchContext(ctx context.Context, dir, patchFile string) error {

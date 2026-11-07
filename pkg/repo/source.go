@@ -124,11 +124,6 @@ func (m *SourceManager) treePath(key string) (string, error) {
 	return filepath.Join(m.depDir, clean), nil
 }
 
-// TreeSrc is the working tree path for key inside the dependency directory.
-func (m *SourceManager) TreeSrc(key string) string {
-	return filepath.Join(m.TreeDir(key), "src")
-}
-
 // TreeState records how a package tree was materialized.
 type TreeState struct {
 	URLs       []string `json:"urls"`
@@ -711,12 +706,6 @@ func (m *SourceManager) ClearPatchState(root string) error {
 	}
 	state.PatchHash = ""
 	return jsonio.Save(m.statePath(root), state)
-}
-
-// HasTreeCommit reports whether the package tree for key already sits at
-// commit, allowing fully offline reuse even when the source is unreachable.
-func (m *SourceManager) HasTreeCommit(key, commit string) bool {
-	return m.HasTreeCommitFromURLs(key, commit, nil)
 }
 
 func (m *SourceManager) HasTreeCommitFromURLs(key, commit string, urls []string) bool {
