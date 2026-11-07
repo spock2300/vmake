@@ -96,6 +96,38 @@
 - 限制: link 包声明的 patch 被拒绝（native own-Git 子包的第三方 patch 除外）；link 包声明的 KConfig 被拒绝；link 树的 build hooks 仍会执行并可能修改该工作树；`.vmake_deps` 到 tree root 的 symlink 被拒绝，避免清理/checkout 跟随到用户仓库。
 - 理由: 开发期需要“改源码立即构建”，而发布期需要可复现的 tag+lock；把两者分开，避免为了调试制造临时 tag 或直接改动物化树。
 
+## DD-9: build 与 inspect 共享单一准备 prelude
+
+- 状态: accepted
+- 背景: `RunBuild` 与 `InspectWithOptions` 都需要先执行 FilterDeps、计算 needed、选择 chip、解析 buildConfig、聚合全局 flags；历史上两套路径各自实现，严格性和 tools 解析靠手工对齐。
+- 决策: `pkg/pipeline/prelude.go:prepareBuild` 是 build/inspect 的唯一准备入口，差异只由 `preludeOptions` 的显式策略位（freeze、严格 toolchain、tools 解析）表达；`deps status/fetch` 使用窄版 `resolveNeeded`，不解析 toolchain。
+- 理由: 准备阶段是构建键、inspect 输出与实际 build 的共同输入；两套实现会随时间漂移，而差异应当是可审阅的策略而不是复制代码。
+- 涉及代码: `pkg/pipeline/prelude.go`, `pkg/pipeline/build_phase.go`, `pkg/pipeline/inspect.go`, `pkg/pipeline/stage_config.go`。
+
+## DD-10: CLI 项目生命周期由 openProject 拥有
+
+- 状态: accepted
+- 背景: `build`/`test`/`rebuild`/`inspect`/`deps`/`clean` 各自重复加载输入、设置 lock policy、应用 `--set`、调用 Require/Configure 并手写 `Resolver.Close()`。
+- 决策: `cmd/vmake/project.go:openProject` 是唯一生命周期入口；命令只通过 `projectOptions` 表达意图（execution、lock policy、pins、overrides、softGitignore），需要 best-effort 时走 `openProjectBestEffort`，`closeProject` 统一释放 Resolver。`loadResolveParams` 直接返回 `pipeline.ResolveParams`。
+- 理由: 阶段顺序和资源释放是跨命令的不变量，散落后容易漏关 Resolver 或跳过 Configure；收口后新增命令不需要重新推导生命周期。
+- 涉及代码: `cmd/vmake/project.go`, `cmd/vmake/root.go`, `cmd/vmake/build_cmd.go`, `cmd/vmake/inspect_cmd.go`, `cmd/vmake/deps_cmd.go`。
+
+## DD-11: CMake 引擎位于 internal/cmake
+
+- 状态: accepted
+- 背景: `pkg/api` 是 buildscript/yaegi 的契约包，但曾经包含 CMake 语法解析、configure 参数构建和指纹引擎。
+- 决策: 纯 CMake 逻辑（参数、语言解析、configure stamp/fingerprint/env/executable）放在 `internal/cmake`；`pkg/api` 的 `Package` 方法只做 Settings 适配，命令执行、dry-run 和输出渲染仍留在 `pkg/api`。
+- 理由: 脚本契约包不应承载第三方构建系统的解析器；引擎独立后可单独测试，且 `internal/cmake` 不 import `pkg/api`，避免循环。
+- 涉及代码: `internal/cmake/`, `pkg/api/package_cmake.go`, `pkg/api/package_cmake_incremental.go`。
+
+## DD-12: 配置 TUI 只有单一构造入口
+
+- 状态: accepted
+- 背景: `Run`、`NewModel` 和 `newModel(modelInput)` 三套入口并存，生产走最完整的一套，测试却走缺字段的 `NewModel`。
+- 决策: `pkg/tui.Input` + `NewModel(Input)` 是唯一构造路径，`Run(Input)` 内部调用它；派生 toolchain/chip/mode 的初始状态由纯函数 `resolveInitialState` 计算，测试与生产共用。构造时复制 `Values`/`GlobalValues`，不修改调用方传入的 map。
+- 理由: 测试必须覆盖真实构造路径；隐式派生规则集中在纯函数，便于独立断言。
+- 涉及代码: `pkg/tui/model.go`, `pkg/tui/state.go`, `pkg/tui/app.go`, `cmd/vmake/config.go`。
+
 ## 已知限制 / 待议
 
 以下问题已被识别但尚未决策，修改前需单独讨论：

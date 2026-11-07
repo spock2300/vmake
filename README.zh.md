@@ -167,6 +167,7 @@ vmake/
 ├── internal/
 │   ├── assets/          # 工具链资源下载/解压（HTTP、Git LFS）
 │   ├── buildruntime/    # make/CMake helper 的并行预算
+│   ├── cmake/           # CMake configure/build 引擎
 │   ├── exec/            # 命令执行
 │   ├── flock/           # 文件锁（跨项目同步）
 │   ├── fs/              # 文件系统工具

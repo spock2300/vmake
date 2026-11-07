@@ -185,6 +185,7 @@ vmake/
 ├── internal/
 │   ├── assets/          # Toolchain asset download/extract (HTTP, Git LFS)
 │   ├── buildruntime/    # Jobs budget for make/CMake helpers
+│   ├── cmake/           # CMake configure/build engine
 │   ├── exec/            # Command execution
 │   ├── flock/           # File locking (cross-project sync)
 │   ├── fs/              # Filesystem utilities

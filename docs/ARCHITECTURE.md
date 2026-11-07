@@ -16,10 +16,11 @@ Phase 2: 配置准备 (pipeline.Configure → runConfigPhase)
         → 合并全局选项 (api.MergeGlobalOptions)
     │
 Phase 3: OnBuild (pipeline.RunBuild)
-    ├── resolveBuildConfig — 解析构建配置（模式、工具链）
-    ├── prepareConfig — filterAndCollectNeeded（用已解析的包级配置重新执行 OnRequire，
-    │   Resolver.FilterDeps 替换节点.Deps → UpdateOrder → BFS 收集 needed）
-    │   → 收集包选项与全局 flags
+    ├── prepareBuild — 统一准备 prelude：resolveNeeded（用已解析的包级配置重新执行 OnRequire，
+    │   Resolver.FilterDeps 替换节点.Deps → UpdateOrder → BFS 收集 needed → owner 校验）
+    │   → resolveActiveChip → resolveBuildConfig → 聚合 global flags（raw/effective/hash）
+    │   inspect 复用同一 prelude（严格 toolchain 校验 + tools 解析由策略位开启）
+    ├── prepareConfig — 收集包选项；使用 prelude 的 needed/effective flags（deps 窄路径可为 nil）
     ├── newSourceStage — 解析各包 SourceDir
     ├── prepareAllPackages — 下载远程包源码、克隆本地 Git 源码、设置子包目录（--locked 时先校验 vmake.lock）
     ├── applyPatchesToNeeded — 在各包唯一的工作树上就地应用（git apply --3way，已应用自动跳过）
@@ -46,7 +47,7 @@ Phase 3: OnBuild (pipeline.RunBuild)
     → ArtifactInstaller.InstallAll → 安装目标产物 → 生成 manifest.json
 ```
 
-`RunBuild` 内部按阶段拆分状态：`runContext`（请求与共享会话）、`configStage`（needed/options）、
+`RunBuild` 与 `InspectWithOptions` 共享 `buildPrelude`：needed/chip/config/global flags 只由 `prepareBuild` 推导一次；`deps status/fetch` 走窄版 `resolveNeeded`，不解析 toolchain。`RunBuild` 内部按阶段拆分状态：`runContext`（请求与共享会话）、`configStage`（needed/options）、
 `sourceStage`（源码树、lock、补丁、KConfig）、`declareStage`（OnBuild 绑定与 target）、
 `planStage`（BuildGraph/BuildJob）。各阶段只通过显式字段传递状态；`pkg/api`、`pkg/plugin`、`pkg/toolchain` 导出 API 不变。
 `Scheduler` 内部按 resolve/compile/link/postlink/publish 分文件，执行语义与产物路径不变。
@@ -64,7 +65,7 @@ vmake clean
 └── Directory Cleanup
     └── 删除当前配置的构建产物（本地包 build/<key>/，远程包 <tree>/out/<sha256(member)>/<buildKey>/；member 为子包相对路径，顶层远程包为空）
 
-仅当 `pipeline.Require`（依赖解析）失败时，`resolveToConfigBestEffort` 返回 ok=false，`clean --all` 降级为扫描目录并清理全部构建产物；
+仅当 `pipeline.Require`（依赖解析）失败时，`openProjectBestEffort` 返回 ok=false，`clean --all` 降级为扫描目录并清理全部构建产物；
 配置加载或 `pipeline.Configure` 失败仍直接报错；普通 `clean` 在 Require 失败时报错并提示改用 `--all`/`distclean`（降级路径不执行 OnClean 回调）
 
 `clean`、`distclean` 和 `pkg clean` 同时删除 `build/vmake-build.json` 与 `build/vmake-test.json` 报告（见 `docs/BUILD_RESULT.md`）。
@@ -172,7 +173,7 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 2. `api.MergeGlobalOptions` 合并全局选项定义（内置 `mode` + `toolchain` + 用户定义）；同阶段收集所有已解析包（本地与远程）的 `ChipProfile`，并把 profile 中的芯片名称加入全局 `chip` choice。`ConfigAccessor.MergeGlobals` 将全局定义与值合并进脚本上下文作为回退（不覆盖已有值）
 3. `OnApply` 回调按选项名排序执行；配置值在后续 TUI 或 CLI flag 中加载
 
-源码：`cmd/vmake/root.go`, `pkg/api/accessor.go`
+源码：`cmd/vmake/project.go:openProject`, `pkg/api/accessor.go`
 
 **ConfigContext 方法**（`pkg/api/context.go`）：
 - `GlobalOption(name)` — 获取/声明全局选项定义
@@ -191,9 +192,9 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 
 `RunBuild` 包含多个子步骤：
 
-1. **filterAndCollectNeeded** — 用已解析的包级配置（以及本包声明为全局选项的配置值）重新执行 OnRequire（`Resolver.FilterDeps` 替换节点.Deps）→ `UpdateOrder` → 从根包 BFS 遍历，过滤需要构建的包：恰好一个本地包声明 `SetRoot(true)` 时以它为根，多个报错；未声明时按启发式选择本地根（存在带 `OnRequire` 的本地包时，被其他本地包依赖且无 `OnRequire` 的本地包不作为根），并提示建议声明 `SetRoot(true)`
-2. **resolveActiveChip / resolveBuildConfig** — 从 needed 中的芯片包（本地或远程）选择 `ChipProfile`，得到首选工具链和平台默认值；显式 `--toolchain`/`global.toolchain` 仍优先。随后解析构建模式（debug/release/size）和工具链
-3. **prepareConfig / newSourceStage** — 收集 needed、包选项与全局 flags，并解析各包 SourceDir（BuildDir/InstallDir 随后在 prepareAllPackages 的 `setPackageLayout` 中按构建键生成）
+1. **prepareBuild / resolveNeeded** — 用已解析的包级配置（以及本包声明为全局选项的配置值）重新执行 OnRequire（`Resolver.FilterDeps` 替换节点.Deps）→ `UpdateOrder` → 从根包 BFS 遍历，过滤需要构建的包：恰好一个本地包声明 `SetRoot(true)` 时以它为根，多个报错；未声明时按启发式选择本地根（存在带 `OnRequire` 的本地包时，被其他本地包依赖且无 `OnRequire` 的本地包不作为根），并提示建议声明 `SetRoot(true)`；同时校验 needed 子包的 owner 也 needed
+2. **prepareBuild / resolveActiveChip + resolveBuildConfig** — 从 needed 中的芯片包（本地或远程）选择 `ChipProfile`，得到首选工具链和平台默认值；显式 `--toolchain`/`global.toolchain` 仍优先。随后解析构建模式（debug/release/size）和工具链；inspect 走严格校验与 tools 解析，build 保持现有路径
+3. **prepareConfig / newSourceStage** — 收集包选项，使用 prelude 的 needed/effective flags/hash，并解析各包 SourceDir（BuildDir/InstallDir 随后在 prepareAllPackages 的 `setPackageLayout` 中按构建键生成）
 4. **prepareAllPackages** — 下载远程包源码、克隆本地 Git 源码、设置子包目录（`--locked` 模式下先通过 `verifyLockBeforePrepare` 校验锁文件）
 5. **applyPatchesToNeeded** — 在各包唯一的工作树上就地应用补丁（已应用则跳过；同一 commit 已锁定时，补丁集变化先 `checkout --force --detach` + `clean -fdx` 恢复）
 6. **verifyLocked / writeLockfile** — 补丁验证通过后，校验（`--locked`）或写入 `.vmake/vmake.lock`（锁定解析到的版本与 commit）
@@ -578,6 +579,7 @@ EntryConfig
 | 构建脚本系统 | `pkg/buildscript/` | 扫描、解释、加载构建脚本 |
 | 依赖解析 | `pkg/resolver/` | 依赖图解析、拓扑排序 |
 | 构建系统 | `pkg/build/` | 编译、链接、调度、安装 |
+| 构建准备 prelude | `pkg/pipeline/prelude.go` | build/inspect 共享的 needed/chip/config/global flags 推导；deps 窄路径 `resolveNeeded` |
 | 包管理 | `pkg/repo/` | 仓库管理、源码物化、native 仓库 |
 | 工具链 | `pkg/toolchain/` | GCC/Clang 抽象 |
 | 配置 | `pkg/config/` | 配置文件读写 |
@@ -585,6 +587,7 @@ EntryConfig
 | TUI | `pkg/tui/` | 终端界面 |
 | 版本 | `pkg/version/` | 版本信息 |
 | CLI | `cmd/vmake/` | 命令行入口 |
+| CMake 引擎 | `internal/cmake/` | CMake 参数、语言解析、configure stamp/fingerprint/env（`pkg/api` 只做适配） |
 | JSON I/O | `internal/jsonio/` | JSON 序列化工具 |
 | 命令执行 | `internal/exec/` | OS 命令执行 |
 | 文件匹配 | `internal/glob/` | Glob 模式匹配 |
