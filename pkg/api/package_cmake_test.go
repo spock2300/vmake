@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/spock2300/vmake/internal/buildruntime"
+	cmake "github.com/spock2300/vmake/internal/cmake"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
@@ -334,7 +335,7 @@ func TestCMakeConfigureLanguageAwareCompilerInjection(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			definitions := cmakeDefinitions(args)
+			definitions := cmake.Definitions(args)
 			for _, key := range test.want {
 				if !definitions[key] {
 					t.Errorf("missing %s in configure arguments: %q", key, args)

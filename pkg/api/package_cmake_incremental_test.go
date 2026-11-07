@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	cmake "github.com/spock2300/vmake/internal/cmake"
 	"github.com/spock2300/vmake/internal/jsonio"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
@@ -582,7 +583,7 @@ func TestCMakeConfigureStateReusesFingerprint(t *testing.T) {
 	if err := f.pkg.saveCMakeConfigureStamp(args, fingerprint); err != nil {
 		t.Fatal(err)
 	}
-	var stamp cmakeConfigureStamp
+	var stamp cmake.Stamp
 	if err := jsonio.Load(f.pkg.cmakeConfigureStampPath(), &stamp); err != nil {
 		t.Fatal(err)
 	}
@@ -641,4 +642,24 @@ func TestCMakeConfigureEnvIgnoresOverriddenVariables(t *testing.T) {
 	if env["PKG_CONFIG_PATH"] != "/tmp/pkgconfig" {
 		t.Errorf("PKG_CONFIG_PATH missing from CMake fingerprint: %#v", env)
 	}
+}
+
+func (p *Package) cmakeConfigureFingerprint(args []string) (string, error) {
+	return cmake.Fingerprint(p.cmakeSettings(), args)
+}
+
+func (p *Package) cmakeConfigureInputFiles() ([]cmake.FileDigest, error) {
+	return cmake.InputFiles(p.cmakeSettings())
+}
+
+func (p *Package) cmakeCommandEnvironment() map[string]string {
+	return cmake.Environment(p.cmakeSettings())
+}
+
+func (p *Package) cmakeConfigureEnv() map[string]string {
+	return cmake.ConfigureEnv(p.cmakeSettings())
+}
+
+func cmakeGeneratorMainFile(args []string) string {
+	return cmake.GeneratorMainFile(args)
 }
