@@ -320,7 +320,12 @@ type DepsFetchResult struct {
 	Packages []FetchedPackage `json:"packages"`
 }
 
-func FetchDeps(ctx *RuntimeContext, pkgs []string, all bool, offline bool) (_ *DepsFetchResult, err error) {
+// FetchDeps materializes locked dependency sources into the project tree.
+// onFetched, when non-nil, receives the resolved top-level packages in
+// dependency order after sources are prepared and before patches are applied,
+// so callers can report a parent package before its sub-packages are patched.
+// The returned result lists packages sorted by name for stable JSON output.
+func FetchDeps(ctx *RuntimeContext, pkgs []string, all bool, offline bool, onFetched func([]FetchedPackage)) (_ *DepsFetchResult, err error) {
 	defer scriptcall.Recover(&err)
 	var needed map[string]bool
 	if all {
@@ -369,9 +374,6 @@ func FetchDeps(ctx *RuntimeContext, pkgs []string, all bool, offline bool) (_ *D
 	if err := src.prepareAllPackages(); err != nil {
 		return nil, err
 	}
-	if err := src.applyPatchesToNeeded(); err != nil {
-		return nil, err
-	}
 
 	subParents := ctx.Resolver.SubParents()
 	var fetched []FetchedPackage
@@ -409,6 +411,15 @@ func FetchDeps(ctx *RuntimeContext, pkgs []string, all bool, offline bool) (_ *D
 			SrcDir:  srcDir,
 		})
 	}
+
+	if onFetched != nil {
+		onFetched(fetched)
+	}
+
+	if err := src.applyPatchesToNeeded(); err != nil {
+		return nil, err
+	}
+
 	sort.Slice(fetched, func(i, j int) bool { return fetched[i].Name < fetched[j].Name })
 	if fetched == nil {
 		fetched = []FetchedPackage{}

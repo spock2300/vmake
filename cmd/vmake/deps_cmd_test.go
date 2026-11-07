@@ -237,3 +237,99 @@ func Main(p *api.Package) {
 	}
 	mustRun("build", "--locked", "--offline")
 }
+
+func TestDepsFetchReportsSourcesBeforeApplyingPatches(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	root := t.TempDir()
+	state := filepath.Join(root, "state")
+	cacheDir := filepath.Join(root, "cache")
+	project := filepath.Join(root, "project")
+	writeHealthyDefinition(t, filepath.Join(state, "extensions", "fixture", "healthy", "toolchain.json"), "healthy")
+
+	upstream := filepath.Join(root, "upstreams", "libfoo")
+	createDepsTestGitRepo(t, upstream, map[string]string{
+		"build.go": `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+	p.AddPatches("fix.patch")
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("foo").SetKind(api.TargetVoid)
+	})
+}
+`,
+		"noted.txt": "line\n",
+		"fix.patch": "--- a/noted.txt\n+++ b/noted.txt\n@@ -1 +1,2 @@\n line\n+patched\n",
+	}, "v1.0.0")
+
+	run := func(args ...string) (string, error) {
+		t.Helper()
+		return extensionCommandEnv(t, state, project, []string{
+			"VMAKE_TRUST_ALL=1",
+			"VMAKE_CACHE=" + cacheDir,
+		}, args...)
+	}
+	mustRun := func(args ...string) string {
+		t.Helper()
+		out, err := run(args...)
+		if err != nil {
+			t.Fatalf("%v failed: %v\n%s", args, err, out)
+		}
+		return out
+	}
+	assertReportedBeforePatches := func(step, out string) {
+		t.Helper()
+		fetched := strings.Index(out, "Fetched testnative/libfoo")
+		patched := strings.Index(out, "Applying patches for testnative/libfoo")
+		if fetched < 0 || patched < 0 {
+			t.Fatalf("%s: missing fetch or patch progress lines:\n%s", step, out)
+		}
+		if fetched > patched {
+			t.Fatalf("%s: Fetched line printed after patch application:\n%s", step, out)
+		}
+	}
+
+	if err := os.MkdirAll(project, 0755); err != nil {
+		t.Fatal(err)
+	}
+	mustRun("repo", "add", "--native", "testnative", filepath.ToSlash(filepath.Join(root, "upstreams"))+"/{name}")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.AddRequires("testnative/libfoo")
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetVoid).UseRequires()
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","global":{"toolchain":"healthy","mode":"release"},"entries":{}}`)
+
+	mustRun("deps", "sync")
+	mustRun("distclean", "--purge-sources")
+
+	assertReportedBeforePatches("first fetch", mustRun("deps", "fetch", "--offline"))
+	data, err := os.ReadFile(filepath.Join(project, ".vmake_deps", "testnative", "libfoo", "src", "noted.txt"))
+	if err != nil || !strings.Contains(string(data), "patched") {
+		t.Fatalf("fetch did not apply the package patch: %q, %v", data, err)
+	}
+
+	applied := mustRun("deps", "fetch", "--offline")
+	assertReportedBeforePatches("already applied", applied)
+	if !strings.Contains(applied, "(already applied)") {
+		t.Fatalf("second fetch did not report the applied patch:\n%s", applied)
+	}
+
+	jsonOut := mustRun("deps", "fetch", "--offline", "--json")
+	var env depsFetchEnvelope
+	if err := json.Unmarshal([]byte(jsonOut), &env); err != nil {
+		t.Fatalf("unmarshal fetch JSON: %v\n%s", err, jsonOut)
+	}
+	if len(env.Packages) != 1 || env.Packages[0].Name != "testnative/libfoo" {
+		t.Fatalf("fetch JSON packages = %+v", env.Packages)
+	}
+	if strings.Contains(jsonOut, "Fetched ") {
+		t.Fatalf("--json printed the human-readable fetch report:\n%s", jsonOut)
+	}
+}

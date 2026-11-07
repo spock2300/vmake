@@ -378,7 +378,20 @@ without contacting upstream git remotes.`,
 			if err := validateRequestedPackagesInGraph(ctx, args); err != nil {
 				return err
 			}
-			res, err := pipeline.FetchDeps(ctx, args, fetchAll, offline)
+			var report func([]pipeline.FetchedPackage)
+			if !jsonOut {
+				report = func(packages []pipeline.FetchedPackage) {
+					if len(packages) == 0 {
+						fmt.Fprintln(cmd.OutOrStdout(), "No dependency sources to fetch.")
+						return
+					}
+					for _, p := range packages {
+						ver := lockfile.DisplayVersion(p.Version, p.Commit)
+						fmt.Fprintf(cmd.OutOrStdout(), "Fetched %s %s (%s)\n", p.Name, ver, repo.ShortCommit(p.Commit))
+					}
+				}
+			}
+			res, err := pipeline.FetchDeps(ctx, args, fetchAll, offline, report)
 			if err != nil {
 				return err
 			}
@@ -389,14 +402,6 @@ without contacting upstream git remotes.`,
 					Offline:       offline,
 					Packages:      res.Packages,
 				})
-			}
-			if len(res.Packages) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No dependency sources to fetch.")
-				return nil
-			}
-			for _, p := range res.Packages {
-				ver := lockfile.DisplayVersion(p.Version, p.Commit)
-				fmt.Fprintf(cmd.OutOrStdout(), "Fetched %s %s (%s)\n", p.Name, ver, repo.ShortCommit(p.Commit))
 			}
 			return nil
 		},
