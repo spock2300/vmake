@@ -24,13 +24,13 @@ func chipTestModelWithValues(globalValues map[string]any) Model {
 	if globalValues == nil {
 		globalValues = map[string]any{}
 	}
-	m := newModel(modelInput{
-		packages:         mkSources("app"),
-		values:           map[string]map[string]any{},
-		currentToolchain: "tc-a",
-		globalOptions:    globalOptions,
-		globalValues:     globalValues,
-		chipProfiles:     profiles,
+	m := NewModel(Input{
+		Packages:         mkSources("app"),
+		Values:           map[string]map[string]any{},
+		CurrentToolchain: "tc-a",
+		GlobalOptions:    globalOptions,
+		GlobalValues:     globalValues,
+		ChipProfiles:     profiles,
 	})
 	m.selectedPkg = GlobalPkgName
 	return m

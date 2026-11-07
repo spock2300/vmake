@@ -33,7 +33,7 @@ func TestTreeDoesNotOverflowPanelWidth(t *testing.T) {
 	}
 	for _, w := range []int{60, 80, 100, 120} {
 		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
-			m := NewModel(mkSources(names...), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+			m := testModel(mkSources(names...), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 			m.width = w
 			m.height = 24
 			maxRune := 0
@@ -69,7 +69,7 @@ func TestFirstOptionVisibleWithManyPackages(t *testing.T) {
 	}
 	for _, w := range []int{60, 80, 100} {
 		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
-			m := NewModel(mkSources(names...), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+			m := testModel(mkSources(names...), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 			m.width = w
 			m.height = 24
 			m.selectedPkg = names[0]
@@ -91,7 +91,7 @@ func TestTreeTruncatesOverlongNames(t *testing.T) {
 		"short":  {"a": mkOpt("a", api.OptionBool, false)},
 		longName: {"a": mkOpt("a", api.OptionBool, false), "b": mkOpt("b", api.OptionBool, false)},
 	}
-	m := NewModel(mkSources("short", longName), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("short", longName), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 24
 	treeOut := stripAnsi(m.renderTree())
@@ -115,7 +115,7 @@ func TestFilterSingleMatchJumpsImmediately(t *testing.T) {
 		"app":   {"debug": mkOpt("debug", api.OptionBool, false)},
 		"other": {"x": mkOpt("x", api.OptionBool, false)},
 	}
-	m := NewModel(mkSources("app", "other"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app", "other"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 24
 
@@ -144,7 +144,7 @@ func TestFilterMultipleMatchEntersBrowseMode(t *testing.T) {
 		"lib2": {"y": mkOpt("y", api.OptionBool, false)},
 		"app":  {"z": mkOpt("z", api.OptionBool, false)},
 	}
-	m := NewModel(mkSources("lib1", "lib2", "app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("lib1", "lib2", "app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 24
 
@@ -174,7 +174,7 @@ func TestBrowseEnterJumpsToSelectedMatch(t *testing.T) {
 		"lib2": {"y": mkOpt("y", api.OptionBool, false)},
 		"app":  {"z": mkOpt("z", api.OptionBool, false)},
 	}
-	m := NewModel(mkSources("lib1", "lib2", "app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("lib1", "lib2", "app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 24
 
@@ -202,7 +202,7 @@ func TestBrowseEscClearsFilter(t *testing.T) {
 		"lib1": {"x": mkOpt("x", api.OptionBool, false)},
 		"lib2": {"y": mkOpt("y", api.OptionBool, false)},
 	}
-	m := NewModel(mkSources("lib1", "lib2"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("lib1", "lib2"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 24
 	m.handleKey(keyRunes("/"))
@@ -224,7 +224,7 @@ func TestJumpKeepsFocusOnTree(t *testing.T) {
 		},
 		"lib": {"x": mkOpt("x", api.OptionBool, false)},
 	}
-	m := NewModel(mkSources("app", "lib"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app", "lib"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 24
 
@@ -253,7 +253,7 @@ func TestTreeJKNavReachesLast(t *testing.T) {
 		names = append(names, n)
 		opts[n] = map[string]*api.Option{"a": mkOpt("a", api.OptionBool, false)}
 	}
-	m := NewModel(mkSources(names...), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources(names...), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 8
 	last := names[len(names)-1]
@@ -272,7 +272,7 @@ func TestEditAcceptsMultibyteRunes(t *testing.T) {
 	opts := map[string]map[string]*api.Option{
 		"app": {"name": mkOpt("name", api.OptionString, "")},
 	}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 24
 	m.language = languageEnglish
@@ -302,7 +302,7 @@ func TestEditIntRejectsNonDigit(t *testing.T) {
 	opts := map[string]map[string]*api.Option{
 		"app": {"n": mkOpt("n", api.OptionInt, 0)},
 	}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 24
 	m.selectedPkg = "app"
@@ -331,7 +331,7 @@ func TestBrowseEscResyncsSelectedPkg(t *testing.T) {
 		"lib2": {"y": mkOpt("y", api.OptionBool, false)},
 		"app":  {"z": mkOpt("z", api.OptionBool, false)},
 	}
-	m := NewModel(mkSources("lib1", "lib2", "app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("lib1", "lib2", "app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 24
 	// search "lib" -> 2 matches -> browse mode
@@ -363,7 +363,7 @@ func TestMouseClickTogglesTreeExpansion(t *testing.T) {
 		"lib": {"b": mkOpt("b", api.OptionBool, false)},
 	}
 	deps := map[string][]string{"app": {"lib"}}
-	m := NewModel(mkSources("app", "lib"), deps, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app", "lib"), deps, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 24
 
@@ -423,7 +423,7 @@ func TestMouseClickLeafSelectsOnly(t *testing.T) {
 	opts := map[string]map[string]*api.Option{
 		"app": {"a": mkOpt("a", api.OptionBool, false)},
 	}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 24
 	click := tea.MouseMsg{X: 2, Y: 4, Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
@@ -442,7 +442,7 @@ func TestMouseMappingUsesRenderedHeaderHeight(t *testing.T) {
 		"lib": {"b": mkOpt("b", api.OptionBool, false)},
 	}
 	longDir := "/home/user/projects/very/deeply/nested/firmware/build/working/directory"
-	m := NewModel(mkSources("app", "lib"), map[string][]string{"app": {"lib"}}, opts, map[string]map[string]any{}, longDir, "gcc", nil, nil, nil)
+	m := testModel(mkSources("app", "lib"), map[string][]string{"app": {"lib"}}, opts, map[string]map[string]any{}, longDir, "gcc", nil, nil, nil)
 	m.width = 60
 	m.height = 24
 	m.View()
@@ -473,7 +473,7 @@ func TestContentHeightAccountsForWrappedFooter(t *testing.T) {
 	opts := map[string]map[string]*api.Option{
 		"app": {"a": mkOpt("a", api.OptionBool, false)},
 	}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "gcc", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "gcc", nil, nil, nil)
 	m.width = 50
 	m.height = 24
 	m.View()
@@ -491,7 +491,7 @@ func TestPanelsRenderContextTitles(t *testing.T) {
 	opts := map[string]map[string]*api.Option{
 		"app": {"debug": mkOpt("debug", api.OptionBool, false)},
 	}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 24
 	m.language = languageEnglish

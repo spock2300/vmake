@@ -40,7 +40,7 @@ func TestLargeIntegerRendersWithoutExponent(t *testing.T) {
 	values := map[string]map[string]any{
 		"app": {"count": float64(4294967296)},
 	}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, values, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, values, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 24
 	m.selectedPkg = "app"

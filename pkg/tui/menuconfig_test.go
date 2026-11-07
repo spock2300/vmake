@@ -175,7 +175,7 @@ func TestToolchainDiagnosticsPreserveInvalidSelection(t *testing.T) {
 	mgr.RegisterToolchainError("broken", path, errors.New("legacy field install"))
 	mgr.RegisterToolchainError("", filepath.Join(t.TempDir(), "unknown.json"), errors.New("invalid JSON"))
 	global := map[string]*api.Option{"toolchain": (&api.Option{}).SetType(api.OptionChoice).SetDefault("host").SetValues("host")}
-	m := NewModel(nil, nil, nil, nil, t.TempDir(), "broken", global, nil, nil)
+	m := testModel(nil, nil, nil, nil, t.TempDir(), "broken", global, nil, nil)
 	m.language = languageEnglish
 	if getToolchainValue(m.globalValues) != "broken" {
 		t.Fatalf("selection was replaced: %v", m.globalValues)

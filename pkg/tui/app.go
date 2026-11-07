@@ -14,7 +14,6 @@ import (
 
 	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/pkg/api"
-	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
 )
 
@@ -29,34 +28,8 @@ type ConfigResult struct {
 	PresetValues   map[string]string
 }
 
-func Run(
-	packages []buildscript.Source,
-	deps map[string][]string,
-	options map[string]map[string]*api.Option,
-	values map[string]map[string]any,
-	workDir string,
-	currentToolchain string,
-	globalOptions map[string]*api.Option,
-	globalValues map[string]any,
-	chipProfiles map[string]api.ChipProfile,
-	kconfigs map[string][]*api.KConfigEntry,
-	description string,
-	displayDefaults func(toolchain string) map[string]any,
-) (*ConfigResult, error) {
-	m := newModel(modelInput{
-		packages:         packages,
-		deps:             deps,
-		options:          options,
-		values:           values,
-		workDir:          workDir,
-		currentToolchain: currentToolchain,
-		globalOptions:    globalOptions,
-		globalValues:     globalValues,
-		chipProfiles:     chipProfiles,
-		kconfigs:         kconfigs,
-		description:      description,
-		displayDefaults:  displayDefaults,
-	})
+func Run(in Input) (*ConfigResult, error) {
+	m := NewModel(in)
 	p := tea.NewProgram(&m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		return nil, err

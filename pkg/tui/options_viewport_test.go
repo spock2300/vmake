@@ -17,7 +17,7 @@ func viewportModel() Model {
 			"second": mkOpt("second", api.OptionBool, false),
 		},
 	}
-	m := NewModel(mkSources("app"), nil, opts, map[string]map[string]any{}, "/w", "host", nil, nil, nil)
+	m := testModel(mkSources("app"), nil, opts, map[string]map[string]any{}, "/w", "host", nil, nil, nil)
 	m.language = languageEnglish
 	m.selectedPkg = "app"
 	m.focusArea = 1

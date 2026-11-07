@@ -14,7 +14,7 @@ func descriptionModel() Model {
 	opts := map[string]map[string]*api.Option{
 		"app": {"debug": mkOpt("debug", api.OptionBool, false)},
 	}
-	m := NewModel(mkSources("app"), nil, opts, map[string]map[string]any{}, "/w", "host", nil, nil, nil)
+	m := testModel(mkSources("app"), nil, opts, map[string]map[string]any{}, "/w", "host", nil, nil, nil)
 	m.language = languageEnglish
 	m.width = 100
 	m.height = 20

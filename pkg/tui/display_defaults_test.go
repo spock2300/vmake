@@ -11,7 +11,7 @@ func newGlobalModel(t *testing.T, toolchainName string, configure func(ctx *api.
 	t.Helper()
 	cfg := api.NewConfigContext("root")
 	configure(cfg)
-	model := NewModel(mkSources("app"), nil, nil, map[string]map[string]any{}, "/w", toolchainName, cfg.GetOptions(), nil, nil)
+	model := testModel(mkSources("app"), nil, nil, map[string]map[string]any{}, "/w", toolchainName, cfg.GetOptions(), nil, nil)
 	model.selectedPkg = GlobalPkgName
 	model.buildOptionItems()
 	return &model
@@ -67,7 +67,7 @@ func TestDisplayDefaultsFillUnsetGlobalOptions(t *testing.T) {
 func TestDisplayDefaultsIgnoreStoredEmptyValues(t *testing.T) {
 	cfg := api.NewConfigContext("root")
 	cfg.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString)
-	model := NewModel(mkSources("app"), nil, nil, map[string]map[string]any{}, "/w", "arm-toolchain", cfg.GetOptions(), map[string]any{api.TargetTripleOptionName: ""}, nil)
+	model := testModel(mkSources("app"), nil, nil, map[string]map[string]any{}, "/w", "arm-toolchain", cfg.GetOptions(), map[string]any{api.TargetTripleOptionName: ""}, nil)
 	model.selectedPkg = GlobalPkgName
 	model.buildOptionItems()
 	model.displayDefaults = func(name string) map[string]any {
@@ -117,7 +117,7 @@ func TestDisplayDefaultsResetPackageEmptyDefault(t *testing.T) {
 		"app": {"path": api.NewConfigContext("app").Option("path").SetType(api.OptionString).SetDefault("")},
 	}
 	values := map[string]map[string]any{"app": {"path": "/usr/local"}}
-	model := NewModel(mkSources("app"), nil, opts, values, "/w", "", nil, nil, nil)
+	model := testModel(mkSources("app"), nil, opts, values, "/w", "", nil, nil, nil)
 	model.selectedPkg = "app"
 	model.buildOptionItems()
 	model.resetOptionToDefault("path")

@@ -209,7 +209,7 @@ func TestNewModel_AppliesDefaultsForMissingValues(t *testing.T) {
 		"mode": mkOpt("mode", api.OptionChoice, "release").SetValues("debug", "release"),
 	}
 	sources := mkSources("app")
-	m := NewModel(sources, map[string][]string{}, opts, map[string]map[string]any{}, "/work", "gcc", globalOpts, map[string]any{}, nil)
+	m := testModel(sources, map[string][]string{}, opts, map[string]map[string]any{}, "/work", "gcc", globalOpts, map[string]any{}, nil)
 
 	if m.values["app"]["debug"] != true {
 		t.Errorf("missing package value should default to true, got %v", m.values["app"]["debug"])
@@ -227,7 +227,7 @@ func TestNewModel_KeepsProvidedValuesOverDefault(t *testing.T) {
 		"app": {"debug": mkOpt("debug", api.OptionBool, true)},
 	}
 	values := map[string]map[string]any{"app": {"debug": false}}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, values, "/work", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, values, "/work", "", nil, nil, nil)
 	if m.values["app"]["debug"] != false {
 		t.Errorf("provided value false should win over default, got %v", m.values["app"]["debug"])
 	}
@@ -238,7 +238,7 @@ func TestModelCheckChanges_DetectsModification(t *testing.T) {
 		"app": {"debug": mkOpt("debug", api.OptionBool, false)},
 	}
 	values := map[string]map[string]any{"app": {"debug": false}}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, values, "/work", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, values, "/work", "", nil, nil, nil)
 	m.selectedPkg = "app"
 	m.buildOptionItems()
 	if m.hasChanges {
@@ -263,7 +263,7 @@ func TestVisibleOptions_FiltersByShowIf(t *testing.T) {
 			}),
 		},
 	}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/work", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/work", "", nil, nil, nil)
 	m.selectedPkg = "app"
 	m.buildOptionItems()
 
@@ -353,7 +353,7 @@ func TestModelCollapseExpandAll(t *testing.T) {
 	}
 	sources := mkSources("app", "lib")
 	deps := map[string][]string{"app": {"lib"}}
-	m := NewModel(sources, deps, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(sources, deps, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 
 	m.expandAll()
 	visibleBeforeCollapse := len(m.flat)
@@ -375,7 +375,7 @@ func TestModelHideEmptyPkgs(t *testing.T) {
 		"empty": {},
 	}
 	sources := mkSources("app", "empty")
-	m := NewModel(sources, map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(sources, map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 
 	beforeNames := flatNodeNames(m.flat)
 	if !contains(beforeNames, "empty") {
@@ -397,7 +397,7 @@ func TestModelOptCountFor(t *testing.T) {
 	opts := map[string]map[string]*api.Option{
 		"app": {"debug": mkOpt("debug", api.OptionBool, false)},
 	}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	if m.optCountFor("app") != 1 {
 		t.Errorf("optCountFor(app) = %d, want 1", m.optCountFor("app"))
 	}
@@ -427,7 +427,7 @@ func TestIsOptionModified_DetectsChangeFromOpen(t *testing.T) {
 	opts := map[string]map[string]*api.Option{
 		"app": {"debug": mkOpt("debug", api.OptionBool, false)},
 	}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.selectedPkg = "app"
 	m.buildOptionItems()
 	if m.isOptionModified("debug") {
@@ -444,7 +444,7 @@ func TestIsOptionModifiedPkgTreatsNilOriginalAsUnset(t *testing.T) {
 		"app": {"debug": mkOpt("debug", api.OptionBool, true)},
 	}
 	values := map[string]map[string]any{"app": {"debug": nil}}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, values, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, values, "/w", "", nil, nil, nil)
 	m.selectedPkg = "app"
 	m.buildOptionItems()
 	if !m.isOptionModifiedPkg("app", "debug") {
@@ -461,7 +461,7 @@ func TestResetOption_RestoresOpenValue(t *testing.T) {
 		"app": {"debug": mkOpt("debug", api.OptionBool, false)},
 	}
 	values := map[string]map[string]any{"app": {"debug": true}}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, values, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, values, "/w", "", nil, nil, nil)
 	m.selectedPkg = "app"
 	m.buildOptionItems()
 	m.setValue("debug", false)
@@ -482,7 +482,7 @@ func TestResetOptionToDefault_RestoresDefault(t *testing.T) {
 		"app": {"threads": mkOpt("threads", api.OptionInt, 4)},
 	}
 	values := map[string]map[string]any{"app": {"threads": 8}}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, values, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, values, "/w", "", nil, nil, nil)
 	m.selectedPkg = "app"
 	m.buildOptionItems()
 	m.resetOptionToDefault("threads")
@@ -496,7 +496,7 @@ func TestResetOption_FullCycle(t *testing.T) {
 		"app": {"threads": mkOpt("threads", api.OptionInt, 4)},
 	}
 	values := map[string]map[string]any{"app": {"threads": 4}}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, values, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, values, "/w", "", nil, nil, nil)
 	m.selectedPkg = "app"
 	m.buildOptionItems()
 	m.setValue("threads", 9)
@@ -520,7 +520,7 @@ func TestModifiedCount_AggregatesAcrossPackages(t *testing.T) {
 	globalOpts := map[string]*api.Option{
 		"mode": mkOpt("mode", api.OptionChoice, "release").SetValues("debug", "release"),
 	}
-	m := NewModel(mkSources("app", "lib"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", globalOpts, nil, nil)
+	m := testModel(mkSources("app", "lib"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", globalOpts, nil, nil)
 	m.selectedPkg = "app"
 	m.buildOptionItems()
 	m.setValue("debug", true)
@@ -544,7 +544,7 @@ func TestIsOptionModified_IntVsFloatRoundTrip(t *testing.T) {
 		"app": {"threads": mkOpt("threads", api.OptionInt, 4)},
 	}
 	values := map[string]map[string]any{"app": {"threads": float64(4)}}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, values, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, values, "/w", "", nil, nil, nil)
 	m.selectedPkg = "app"
 	m.buildOptionItems()
 	if m.isOptionModified("threads") {
@@ -557,7 +557,7 @@ func TestOpenChoiceOverlay_PositionsCursorAtCurrent(t *testing.T) {
 		"app": {"level": mkOpt("level", api.OptionChoice, "b").SetValues("a", "b", "c", "d")},
 	}
 	values := map[string]map[string]any{"app": {"level": "c"}}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, values, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, values, "/w", "", nil, nil, nil)
 	m.selectedPkg = "app"
 	m.buildOptionItems()
 	m.openChoiceOverlay("level", opts["app"]["level"].Values())
@@ -585,7 +585,7 @@ func TestRenderOverlay_ChoiceContainsAllValues(t *testing.T) {
 		"app": {"level": mkOpt("level", api.OptionChoice, "a").SetValues("a", "b", "c")},
 	}
 	values := map[string]map[string]any{"app": {"level": "a"}}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, values, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, values, "/w", "", nil, nil, nil)
 	m.selectedPkg = "app"
 	m.buildOptionItems()
 	m.openChoiceOverlay("level", opts["app"]["level"].Values())
@@ -602,7 +602,7 @@ func TestRenderOverlay_DetailShowsDefaultAndCurrent(t *testing.T) {
 		"app": {"threads": mkOpt("threads", api.OptionInt, 4)},
 	}
 	values := map[string]map[string]any{"app": {"threads": 9}}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, values, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, values, "/w", "", nil, nil, nil)
 	m.selectedPkg = "app"
 	m.buildOptionItems()
 	m.openDetailOverlay(OptionItem{Name: "threads", Opt: opts["app"]["threads"]})
@@ -682,7 +682,7 @@ func TestRebuildFlat_SearchPrecedence(t *testing.T) {
 		"app":   {"debug": mkOpt("debug", api.OptionBool, false)},
 		"empty": {},
 	}
-	m := NewModel(mkSources("app", "empty"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app", "empty"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 
 	m.hideEmptyPkgs = true
 	m.filterInput = "debug"
@@ -701,7 +701,7 @@ func TestFindFirstMatch_ByPkgName(t *testing.T) {
 		"app":   {"debug": mkOpt("debug", api.OptionBool, false)},
 		"other": {"x": mkOpt("x", api.OptionBool, false)},
 	}
-	m := NewModel(mkSources("app", "other"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app", "other"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	pkg, opt := m.findFirstMatch("oth")
 	if pkg != "other" {
 		t.Errorf("findFirstMatch pkg = %q, want other", pkg)
@@ -715,7 +715,7 @@ func TestFindFirstMatch_ByOptionName(t *testing.T) {
 	opts := map[string]map[string]*api.Option{
 		"app": {"thread_count": mkOpt("thread_count", api.OptionInt, 4)},
 	}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	pkg, opt := m.findFirstMatch("thread")
 	if pkg != "app" {
 		t.Errorf("findFirstMatch pkg = %q, want app", pkg)
@@ -729,7 +729,7 @@ func TestFindFirstMatch_NoMatch(t *testing.T) {
 	opts := map[string]map[string]*api.Option{
 		"app": {"debug": mkOpt("debug", api.OptionBool, false)},
 	}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	pkg, opt := m.findFirstMatch("zzz")
 	if pkg != "" || opt != "" {
 		t.Errorf("findFirstMatch no-match = %q,%q; want empty", pkg, opt)
@@ -742,7 +742,7 @@ func TestExpandToPkg_ExpandsAncestors(t *testing.T) {
 		"lib": {"x": mkOpt("x", api.OptionBool, false)},
 	}
 	deps := map[string][]string{"app": {"lib"}}
-	m := NewModel(mkSources("app", "lib"), deps, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app", "lib"), deps, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 
 	m.collapseAll()
 	if contains(flatNodeNames(m.flat), "lib") {
@@ -762,7 +762,7 @@ func TestJumpToMatch_PackageOnly(t *testing.T) {
 		"app":   {"debug": mkOpt("debug", api.OptionBool, false)},
 		"other": {"x": mkOpt("x", api.OptionBool, false)},
 	}
-	m := NewModel(mkSources("app", "other"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app", "other"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	ok := m.jumpToMatch("other", "")
 	if !ok {
 		t.Fatal("jumpToMatch should succeed")
@@ -779,7 +779,7 @@ func TestJumpToMatch_OptionPositionsCursorStaysOnTree(t *testing.T) {
 			"thread_count": mkOpt("thread_count", api.OptionInt, 4),
 		},
 	}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.jumpToMatch("app", "thread_count")
 	if m.selectedPkg != "app" {
 		t.Fatalf("selectedPkg = %q, want app", m.selectedPkg)
@@ -806,7 +806,7 @@ func TestFilteredMatchCount_OnlyPackages(t *testing.T) {
 		"lib":  {"x": mkOpt("x", api.OptionBool, false)},
 		"util": {"y": mkOpt("y", api.OptionBool, false)},
 	}
-	m := NewModel(mkSources("app", "lib", "util"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app", "lib", "util"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	// no filter: all packages visible
 	if c := m.filteredMatchCount(); c != 3 {
 		t.Errorf("no-filter count = %d, want 3", c)
@@ -821,7 +821,7 @@ func TestFilteredMatchCount_OnlyPackages(t *testing.T) {
 
 func TestFilteredMatchCount_ExcludesGlobalNode(t *testing.T) {
 	globalOpts := map[string]*api.Option{"mode": mkOpt("mode", api.OptionChoice, "release")}
-	m := NewModel(mkSources(), map[string][]string{}, map[string]map[string]*api.Option{}, map[string]map[string]any{}, "/w", "", globalOpts, nil, nil)
+	m := testModel(mkSources(), map[string][]string{}, map[string]map[string]*api.Option{}, map[string]map[string]any{}, "/w", "", globalOpts, nil, nil)
 	if c := m.filteredMatchCount(); c != 0 {
 		t.Errorf("only-global count = %d, want 0 (global excluded)", c)
 	}
@@ -834,7 +834,7 @@ func TestMatchedOptionIn_FindsByOptionName(t *testing.T) {
 			"thread_count": mkOpt("thread_count", api.OptionInt, 4),
 		},
 	}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	if got := m.matchedOptionIn("app", "thread"); got != "thread_count" {
 		t.Errorf("matchedOptionIn(app,thread) = %q, want thread_count", got)
 	}
@@ -847,7 +847,7 @@ func TestMatchedOptionIn_FindsByDescription(t *testing.T) {
 	opts := map[string]map[string]*api.Option{
 		"app": {"x": mkOpt("x", api.OptionString, "").SetDescription("Enable SSL support")},
 	}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	if got := m.matchedOptionIn("app", "ssl"); got != "x" {
 		t.Errorf("matchedOptionIn by desc = %q, want x", got)
 	}
@@ -867,7 +867,7 @@ func TestTreeScrollReachesLastItem(t *testing.T) {
 	last := names[len(names)-1]
 	for _, h := range []int{8, 10, 15, 24} {
 		t.Run(fmt.Sprintf("h=%d", h), func(t *testing.T) {
-			m := NewModel(mkSources(names...), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+			m := testModel(mkSources(names...), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 			m.width = 80
 			m.height = h
 			m.language = languageEnglish
@@ -891,7 +891,7 @@ func TestTreeScrollReachesFirstItem(t *testing.T) {
 		names = append(names, n)
 		opts[n] = map[string]*api.Option{"a": mkOpt("a", api.OptionBool, false)}
 	}
-	m := NewModel(mkSources(names...), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(mkSources(names...), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 8
 	m.language = languageEnglish
@@ -971,7 +971,7 @@ func TestResetGlobalOptionToDefault_KeepsHasChangesConsistentWithModifiedCount(t
 	globalOpts := map[string]*api.Option{
 		"label": mkOpt("label", api.OptionString, ""),
 	}
-	m := NewModel(mkSources("app"), map[string][]string{}, map[string]map[string]*api.Option{}, map[string]map[string]any{}, "/w", "", globalOpts, map[string]any{}, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, map[string]map[string]*api.Option{}, map[string]map[string]any{}, "/w", "", globalOpts, map[string]any{}, nil)
 	m.selectedPkg = GlobalPkgName
 	m.buildOptionItems()
 	if m.hasChanges || m.modifiedCount() != 0 {
@@ -997,7 +997,7 @@ func TestNewModel_DoesNotCopyOrKeepGlobalOptionsInPackageValues(t *testing.T) {
 	values := map[string]map[string]any{
 		"chip": {"board": "evb1"},
 	}
-	m := NewModel(mkSources("chip"), map[string][]string{}, opts, values, "/w", "", globalOpts, map[string]any{"board": "evb2"}, nil)
+	m := testModel(mkSources("chip"), map[string][]string{}, opts, values, "/w", "", globalOpts, map[string]any{"board": "evb2"}, nil)
 	if _, exists := m.values["chip"]["board"]; exists {
 		t.Fatalf("package values should not retain global option key, got %v", m.values["chip"])
 	}
@@ -1082,7 +1082,7 @@ func TestRemoteGroup_SearchAndJumpExpandsRemoteSubpackage(t *testing.T) {
 		"firmware":                           {"board": mkOpt("board", api.OptionString, "evb")},
 		"hl/hl-mcu-sdk/system/freertos/lvgl": {"demo": mkOpt("demo", api.OptionChoice, "auto_meter").SetValues("widgets", "auto_meter")},
 	}
-	m := NewModel(sources, deps, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(sources, deps, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 100
 	m.height = 24
 	m.language = languageChinese
@@ -1142,7 +1142,7 @@ func TestRenderTree_PreservesCountBadgeWithinContentWidth(t *testing.T) {
 		"hl/hl-mcu-sdk/system/freertos/cherryusb":      cherryOpts,
 		"hl/hl-mcu-sdk/system/freertos/lvgl-resources": {"res": mkOpt("res", api.OptionBool, true)},
 	}
-	m := NewModel(sources, deps, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	m := testModel(sources, deps, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 30
 	m.expandAll()

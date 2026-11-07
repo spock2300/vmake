@@ -22,7 +22,7 @@ func compactLayoutModel() Model {
 			"second":  mkOpt("second", api.OptionBool, false),
 		}
 	}
-	m := NewModel(mkSources(names...), nil, opts, map[string]map[string]any{}, "/w", "host", nil, nil, nil)
+	m := testModel(mkSources(names...), nil, opts, map[string]map[string]any{}, "/w", "host", nil, nil, nil)
 	m.jumpToMatch(names[0], "")
 	m.focusArea = 1
 	return m

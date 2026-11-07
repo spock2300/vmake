@@ -123,149 +123,51 @@ const (
 	overlayLanguage
 )
 
-type modelInput struct {
-	packages         []buildscript.Source
-	deps             map[string][]string
-	options          map[string]map[string]*api.Option
-	values           map[string]map[string]any
-	workDir          string
-	currentToolchain string
-	globalOptions    map[string]*api.Option
-	globalValues     map[string]any
-	chipProfiles     map[string]api.ChipProfile
-	kconfigs         map[string][]*api.KConfigEntry
-	description      string
-	displayDefaults  func(toolchain string) map[string]any
+type Input struct {
+	Packages         []buildscript.Source
+	Deps             map[string][]string
+	Options          map[string]map[string]*api.Option
+	Values           map[string]map[string]any
+	WorkDir          string
+	CurrentToolchain string
+	GlobalOptions    map[string]*api.Option
+	GlobalValues     map[string]any
+	ChipProfiles     map[string]api.ChipProfile
+	KConfigs         map[string][]*api.KConfigEntry
+	Description      string
+	DisplayDefaults  func(toolchain string) map[string]any
 }
 
-func NewModel(
-	packages []buildscript.Source,
-	deps map[string][]string,
-	options map[string]map[string]*api.Option,
-	values map[string]map[string]any,
-	workDir string,
-	currentToolchain string,
-	globalOptions map[string]*api.Option,
-	globalValues map[string]any,
-	kconfigs map[string][]*api.KConfigEntry,
-) Model {
-	return newModel(modelInput{
-		packages:         packages,
-		deps:             deps,
-		options:          options,
-		values:           values,
-		workDir:          workDir,
-		currentToolchain: currentToolchain,
-		globalOptions:    globalOptions,
-		globalValues:     globalValues,
-		kconfigs:         kconfigs,
-	})
-}
-
-func newModel(in modelInput) Model {
-	packages := in.packages
-	deps := in.deps
-	options := in.options
-	values := in.values
-	workDir := in.workDir
-	currentToolchain := in.currentToolchain
-	globalOptions := in.globalOptions
-	globalValues := in.globalValues
-	chipProfiles := in.chipProfiles
+func NewModel(in Input) Model {
+	chipProfiles := in.ChipProfiles
 	if chipProfiles == nil {
 		chipProfiles = make(map[string]api.ChipProfile)
 	}
-	kconfigs := in.kconfigs
-	if globalValues == nil {
-		globalValues = make(map[string]any)
-	}
-	explicitToolchain := false
-	if value, ok := globalValues[api.ToolchainOptionName].(string); ok && value != "" {
-		explicitToolchain = true
-	}
-	chip := ""
-	if value, ok := globalValues[api.ChipOptionName].(string); ok {
-		chip = value
-	}
-	if chip == "" {
-		if opt, ok := globalOptions[api.ChipOptionName]; ok {
-			if value, ok := opt.Default().(string); ok {
-				chip = value
-			}
-		}
-	}
-	profile, hasProfile := chipProfiles[chip]
-	derivedGlobals := make(map[string]bool)
-	if !explicitToolchain {
-		delete(globalValues, api.ToolchainOptionName)
-		toolchainName := currentToolchain
-		if toolchainName == "" && hasProfile {
-			toolchainName = profile.PreferredToolchain
-		}
-		if toolchainName != "" {
-			globalValues[api.ToolchainOptionName] = toolchainName
-		}
-		derivedGlobals[api.ToolchainOptionName] = true
-	}
-	for _, name := range []string{api.TargetOSOptionName, api.TargetTripleOptionName} {
-		if value, ok := globalValues[name].(string); !ok || value == "" {
-			derivedGlobals[name] = true
-		}
-	}
-	if _, ok := globalValues["mode"]; !ok {
-		if opt, ok := globalOptions["mode"]; ok {
-			if d, ok := opt.Default().(string); ok {
-				globalValues["mode"] = d
-			}
-		}
-	}
-	if _, ok := globalValues["mode"]; !ok {
-		globalValues["mode"] = api.ModeRelease
-	}
-
-	fillOptionDefaults(globalValues, globalOptions)
-
-	for pkgName, opts := range options {
-		if values[pkgName] == nil {
-			values[pkgName] = make(map[string]any)
-		}
-		for name, opt := range opts {
-			if opt.IsGlobal() {
-				delete(values[pkgName], name)
-				continue
-			}
-			if _, ok := values[pkgName][name]; !ok {
-				if def := opt.Default(); def != nil {
-					values[pkgName][name] = def
-				}
-			}
-		}
-	}
-
+	state := resolveInitialState(in)
 	m := Model{
-		options:         options,
-		values:          values,
+		options:         in.Options,
+		values:          state.values,
 		treeCursor:      0,
 		optCursor:       0,
 		focusArea:       0,
-		workDir:         workDir,
-		globalOptions:   globalOptions,
-		globalValues:    globalValues,
+		workDir:         in.WorkDir,
+		globalOptions:   in.GlobalOptions,
+		globalValues:    state.globalValues,
 		chipProfiles:    chipProfiles,
-		derivedGlobals:  derivedGlobals,
-		kconfigs:        kconfigs,
-		description:     in.description,
-		origDescription: in.description,
-		displayDefaults: in.displayDefaults,
+		derivedGlobals:  state.derivedGlobals,
+		kconfigs:        in.KConfigs,
+		description:     in.Description,
+		origDescription: in.Description,
+		displayDefaults: in.DisplayDefaults,
 		language:        systemLanguage(),
 		menuconfigRan:   make(map[string]bool),
 		presetValues:    make(map[string]string),
-		optCounts:       computeOptCounts(options, globalOptions),
+		optCounts:       computeOptCounts(in.Options, in.GlobalOptions),
 	}
-	m.origValues = deepCopyValues(values)
-	m.origGlobal = deepCopyGlobal(globalValues)
-	m.origDerived = maps.Clone(derivedGlobals)
-	m.tree = buildDepTree(packages, deps)
+	m.origValues = deepCopyValues(state.values)
+	m.origGlobal = deepCopyGlobal(state.globalValues)
+	m.origDerived = maps.Clone(state.derivedGlobals)
+	m.tree = buildDepTree(in.Packages, in.Deps)
 	m.rebuildFlat()
 
 	if len(m.flat) > 0 {

@@ -16,7 +16,7 @@ func newLanguageTestModel() Model {
 			"name":    mkOpt("name", api.OptionString, "app").SetDescription("App name"),
 		},
 	}
-	m := NewModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/work", "", nil, nil, nil)
+	m := testModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/work", "", nil, nil, nil)
 	m.width = 100
 	m.height = 30
 	m.selectedPkg = "app"

@@ -12,7 +12,7 @@ import (
 )
 
 func mouseTestModel(opts map[string]*api.Option) Model {
-	m := NewModel(mkSources("app"), nil, map[string]map[string]*api.Option{"app": opts}, map[string]map[string]any{}, "/w", "host", nil, nil, nil)
+	m := testModel(mkSources("app"), nil, map[string]map[string]*api.Option{"app": opts}, map[string]map[string]any{}, "/w", "host", nil, nil, nil)
 	m.language = languageEnglish
 	m.width, m.height = 100, 28
 	m.jumpToMatch("app", "")
@@ -382,7 +382,7 @@ func TestMouseTreeWheelMovesSelection(t *testing.T) {
 		names = append(names, name)
 		opts[name] = map[string]*api.Option{"enabled": mkOpt("enabled", api.OptionBool, false)}
 	}
-	m := NewModel(mkSources(names...), nil, opts, map[string]map[string]any{}, "/w", "host", nil, nil, nil)
+	m := testModel(mkSources(names...), nil, opts, map[string]map[string]any{}, "/w", "host", nil, nil, nil)
 	m.language, m.width, m.height, m.focusArea = languageEnglish, 100, 14, 1
 	x, y := mouseTestPosition(t, m.View(), "pkg_00")
 	m.Update(mouseTestWheel(x, y, true))
@@ -424,7 +424,7 @@ func TestMouseTreeExpansionAtRenderedPositions(t *testing.T) {
 		"parent_pkg": {"enabled": mkOpt("enabled", api.OptionBool, false)},
 		"child_pkg":  {"enabled": mkOpt("enabled", api.OptionBool, false)},
 	}
-	m := NewModel(mkSources("parent_pkg", "child_pkg"), map[string][]string{"parent_pkg": {"child_pkg"}}, opts, map[string]map[string]any{}, "/home/用户/项目/very/deeply/nested/working/directory", "host", nil, nil, nil)
+	m := testModel(mkSources("parent_pkg", "child_pkg"), map[string][]string{"parent_pkg": {"child_pkg"}}, opts, map[string]map[string]any{}, "/home/用户/项目/very/deeply/nested/working/directory", "host", nil, nil, nil)
 	m.language, m.width, m.height = languageChinese, 60, 28
 	mouseTestClickText(t, &m, "parent_pkg")
 	if m.selectedPkg != "parent_pkg" || !m.flat[m.treeCursor].Expanded {

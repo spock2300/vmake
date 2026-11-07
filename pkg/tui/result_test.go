@@ -10,13 +10,13 @@ func TestNewModelDescriptionAndDisplayDefaults(t *testing.T) {
 	values := map[string]map[string]any{}
 	globals := map[string]any{api.ToolchainOptionName: "host"}
 	called := ""
-	m := newModel(modelInput{
-		packages:     mkSources("app"),
-		values:       values,
-		globalValues: globals,
-		workDir:      "/w",
-		description:  "desc",
-		displayDefaults: func(name string) map[string]any {
+	m := NewModel(Input{
+		Packages:     mkSources("app"),
+		Values:       values,
+		GlobalValues: globals,
+		WorkDir:      "/w",
+		Description:  "desc",
+		DisplayDefaults: func(name string) map[string]any {
 			called = name
 			return map[string]any{"x": "y"}
 		},
@@ -39,7 +39,7 @@ func TestNewModelDescriptionAndDisplayDefaults(t *testing.T) {
 }
 
 func TestModelResult(t *testing.T) {
-	m := NewModel(mkSources("app"), nil, nil, map[string]map[string]any{}, "/w", "gcc", nil, nil, nil)
+	m := testModel(mkSources("app"), nil, nil, map[string]map[string]any{}, "/w", "gcc", nil, nil, nil)
 	m.saved = true
 	m.description = "desc"
 	m.menuconfigRan["app"] = true
