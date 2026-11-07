@@ -245,7 +245,7 @@ func nativeMemberFixture(t *testing.T, member string, setGit bool) (*buildPhaseS
 	s.ctx.DepGraph.Packages["app"].Deps = []string{owner, name}
 	s.needed = map[string]bool{"app": true, owner: true, name: true}
 	s.cfg = makeBuildConfig(s.ctx, host, "host")
-	applyGlobalFlagsFromNeeded(s.ctx, s.needed)
+	aggregateGlobalFlags(s.ctx, s.needed)
 	s.globalFlagsHash = build.GlobalFlagsHash()
 	s.computeDirsAndOptions()
 	s.remote.trees[owner] = tree

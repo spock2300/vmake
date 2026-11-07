@@ -229,29 +229,6 @@ func packageConfigValuesWithGlobals(ctx *RuntimeContext, name string, globalVals
 	return values
 }
 
-func applyGlobalFlagsFromNeeded(ctx *RuntimeContext, needed map[string]bool) {
-	mgr := toolchain.GetManager()
-	var cflags, cxxflags, ldflags, links []string
-	for _, name := range ctx.Resolver.GetOrder() {
-		if !needed[name] {
-			continue
-		}
-		buf := ctx.BufferedGlobalFlags[name]
-		if buf == nil {
-			continue
-		}
-		cflags = append(cflags, buf.cFlags...)
-		cxxflags = append(cxxflags, buf.cxxFlags...)
-		ldflags = append(ldflags, buf.ldFlags...)
-		links = append(links, buf.links...)
-	}
-	for _, define := range ctx.GlobalMacroDefines {
-		cflags = append(cflags, "-D"+define)
-		cxxflags = append(cxxflags, "-D"+define)
-	}
-	mgr.SetProjectFlags(cflags, cxxflags, ldflags, links)
-}
-
 var globalMacroExcluded = map[string]bool{
 	api.ModeOptionName:         true,
 	api.ToolchainOptionName:    true,

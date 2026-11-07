@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,57 +26,6 @@ type buildConfig struct {
 	Tc           *toolchain.Toolchain
 	Platform     api.Platform
 	GlobalValues map[string]any
-}
-
-type buildPrelude struct {
-	cfg             *buildConfig
-	tools           *build.ResolvedTools
-	needed          map[string]bool
-	globalFlagsHash string
-}
-
-func resolveExistingBuildConfig(ctx *RuntimeContext) (*buildConfig, error) {
-	if _, err := ProjectPlatform(ctx); err != nil {
-		return nil, err
-	}
-	tcName := ResolveToolchainName(ctx.Config, ctx.ToolchainOverride, ctx.PreferredToolchain)
-	tc, err := toolchain.GetManager().GetToolchain(tcName)
-	if err != nil {
-		return nil, fmt.Errorf("%w; run 'vmake build --toolchain %s' first", err, tcName)
-	}
-	if errs := toolchain.ValidateToolchain(tc); len(errs) > 0 {
-		return nil, fmt.Errorf("invalid toolchain %q: %w; run 'vmake build --toolchain %s' first", tcName, errors.Join(errs...), tcName)
-	}
-	return makeBuildConfig(ctx, tc, tcName), nil
-}
-
-func prepareBuildPrelude(ctx *RuntimeContext, strict bool) (*buildPrelude, error) {
-	needed, err := computeReachable(ctx.DepGraph)
-	if err != nil {
-		return nil, err
-	}
-	if strict {
-		if err := resolveActiveChip(ctx, needed); err != nil {
-			return nil, err
-		}
-	} else {
-		ResolveActiveChipForDisplay(ctx)
-	}
-	cfg, err := resolveExistingBuildConfig(ctx)
-	if err != nil {
-		return nil, err
-	}
-	tools, err := build.ResolveTools(cfg.Tc, cfg.Platform)
-	if err != nil {
-		return nil, err
-	}
-	applyGlobalFlagsFromNeeded(ctx, needed)
-	return &buildPrelude{
-		cfg:             cfg,
-		tools:           tools,
-		needed:          needed,
-		globalFlagsHash: build.GlobalFlagsHash(),
-	}, nil
 }
 
 func resolvePackageTools(ctx *RuntimeContext, name string, tc *toolchain.Toolchain, cache map[string]*build.ResolvedTools) (*build.ResolvedTools, error) {

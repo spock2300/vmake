@@ -304,7 +304,7 @@ func TestFilterAndCollectNeededRejectsSubPackageWithoutParent(t *testing.T) {
 	s.ctx.DepGraph.Packages["app"].Pkg.SetRoot(true)
 	s.ctx.DepGraph.Packages["app"].Deps = []string{sub}
 
-	_, err := filterAndCollectNeeded(s.ctx)
+	_, err := resolveNeeded(s.ctx, true, true, true)
 	if err == nil || !strings.Contains(err.Error(), "native parent native/root is not") {
 		t.Fatalf("needed sub-package without parent error = %v", err)
 	}

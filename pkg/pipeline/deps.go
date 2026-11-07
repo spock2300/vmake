@@ -22,7 +22,7 @@ type DepsUpdateResult struct {
 
 func SyncOrUpdateDeps(ctx *RuntimeContext, dryRun bool) (_ *DepsUpdateResult, err error) {
 	defer scriptcall.Recover(&err)
-	needed, err := filterAndCollectNeeded(ctx)
+	needed, err := resolveNeeded(ctx, true, true, true)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +55,7 @@ func SyncOrUpdateDeps(ctx *RuntimeContext, dryRun bool) (_ *DepsUpdateResult, er
 		}
 	}
 	rc := newRunContext(ctx, BuildOptions{}, nil)
-	conf, err := prepareConfig(rc, needed)
+	conf, err := prepareConfig(rc, needed, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ type DepsStatusReport struct {
 
 func InspectDepsStatus(ctx *RuntimeContext) (_ *DepsStatusReport, err error) {
 	defer scriptcall.Recover(&err)
-	needed, err := filterAndCollectNeeded(ctx)
+	needed, err := resolveNeeded(ctx, true, true, true)
 	if err != nil {
 		return nil, err
 	}
@@ -329,7 +329,7 @@ func FetchDeps(ctx *RuntimeContext, pkgs []string, all bool, offline bool) (_ *D
 			needed[name] = true
 		}
 	} else {
-		needed, err = filterAndCollectNeeded(ctx)
+		needed, err = resolveNeeded(ctx, true, true, true)
 		if err != nil {
 			return nil, err
 		}
@@ -359,7 +359,7 @@ func FetchDeps(ctx *RuntimeContext, pkgs []string, all bool, offline bool) (_ *D
 	}
 
 	rc := newRunContext(ctx, BuildOptions{}, nil)
-	conf, err := prepareConfig(rc, needed)
+	conf, err := prepareConfig(rc, needed, nil)
 	if err != nil {
 		return nil, err
 	}

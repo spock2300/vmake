@@ -70,15 +70,14 @@ func Inspect(ctx *RuntimeContext) (*Inspection, error) {
 
 func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection, err error) {
 	defer scriptcall.Recover(&err)
-	if opts.FilterDeps {
-		if err := filterDependencies(ctx, false); err != nil {
-			return nil, err
-		}
-		if opts.FreezeDeps {
-			ctx.DepGraph.Freeze()
-		}
-	}
-	pre, err := prepareBuildPrelude(ctx, opts.FilterDeps)
+	pre, err := prepareBuild(ctx, preludeOptions{
+		filterDeps:        opts.FilterDeps,
+		freezeDeps:        opts.FreezeDeps,
+		resolveChip:       true,
+		resolveConfig:     true,
+		validateToolchain: true,
+		resolveTools:      true,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +86,10 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 			return nil, err
 		}
 	}
-	globalCFlags, globalCxxFlags, globalLdFlags, globalLinks := neededGlobalFlags(ctx, pre.needed)
+	globalCFlags := pre.rawGlobalFlags[0]
+	globalCxxFlags := pre.rawGlobalFlags[1]
+	globalLdFlags := pre.rawGlobalFlags[2]
+	globalLinks := pre.rawGlobalFlags[3]
 
 	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
 	toolCache := make(map[string]*build.ResolvedTools)
@@ -225,21 +227,4 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		PkgDirs:            pkgDirs,
 		PackageToolchains:  packageToolchains,
 	}, nil
-}
-
-func neededGlobalFlags(ctx *RuntimeContext, needed map[string]bool) (cflags, cxxflags, ldflags, links []string) {
-	for _, name := range ctx.Resolver.GetOrder() {
-		if !needed[name] {
-			continue
-		}
-		buf := ctx.BufferedGlobalFlags[name]
-		if buf == nil {
-			continue
-		}
-		cflags = append(cflags, buf.cFlags...)
-		cxxflags = append(cxxflags, buf.cxxFlags...)
-		ldflags = append(ldflags, buf.ldFlags...)
-		links = append(links, buf.links...)
-	}
-	return cflags, cxxflags, ldflags, links
 }

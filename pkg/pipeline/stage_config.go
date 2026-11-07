@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"sort"
@@ -12,13 +13,24 @@ import (
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
-func resolveBuildConfig(ctx *RuntimeContext) (*buildConfig, error) {
+func resolveBuildConfig(ctx *RuntimeContext, validate bool) (*buildConfig, error) {
 	if _, err := ProjectPlatform(ctx); err != nil {
 		return nil, err
 	}
-	tc, tcName, err := GetToolchain(ctx.Config, ctx.ToolchainOverride, ctx.PreferredToolchain)
+	if !validate {
+		tc, tcName, err := GetToolchain(ctx.Config, ctx.ToolchainOverride, ctx.PreferredToolchain)
+		if err != nil {
+			return nil, err
+		}
+		return makeBuildConfig(ctx, tc, tcName), nil
+	}
+	tcName := ResolveToolchainName(ctx.Config, ctx.ToolchainOverride, ctx.PreferredToolchain)
+	tc, err := toolchain.GetManager().GetToolchain(tcName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w; run 'vmake build --toolchain %s' first", err, tcName)
+	}
+	if errs := toolchain.ValidateToolchain(tc); len(errs) > 0 {
+		return nil, fmt.Errorf("invalid toolchain %q: %w; run 'vmake build --toolchain %s' first", tcName, errors.Join(errs...), tcName)
 	}
 	return makeBuildConfig(ctx, tc, tcName), nil
 }
@@ -43,21 +55,27 @@ func makeBuildConfig(ctx *RuntimeContext, tc *toolchain.Toolchain, tcName string
 	}
 }
 
-func filterAndCollectNeeded(ctx *RuntimeContext) (map[string]bool, error) {
-	vlog.Info("")
-	vlog.Info("Filtering dependencies...")
-	if err := filterDependencies(ctx, true); err != nil {
+func resolveNeeded(ctx *RuntimeContext, logFilter, freeze, validate bool) (map[string]bool, error) {
+	if logFilter {
+		vlog.Info("")
+		vlog.Info("Filtering dependencies...")
+	}
+	if err := filterDependencies(ctx, logFilter); err != nil {
 		return nil, err
 	}
 
-	ctx.DepGraph.Freeze()
+	if freeze {
+		ctx.DepGraph.Freeze()
+	}
 
 	needed, err := computeReachable(ctx.DepGraph)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateNeededSubPackageOwners(needed, ctx.Resolver.SubParents()); err != nil {
-		return nil, err
+	if validate {
+		if err := validateNeededSubPackageOwners(needed, ctx.Resolver.SubParents()); err != nil {
+			return nil, err
+		}
 	}
 
 	return needed, nil

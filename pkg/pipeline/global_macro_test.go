@@ -63,7 +63,7 @@ func TestGlobalOptionsExportMacros(t *testing.T) {
 	mgr.SetProjectFlags(nil, nil, nil, nil)
 	defer mgr.SetProjectFlags(nil, nil, nil, nil)
 	emptyHash := build.GlobalFlagsHash()
-	applyGlobalFlagsFromNeeded(ctx, map[string]bool{"chip": true})
+	aggregateGlobalFlags(ctx, map[string]bool{"chip": true})
 	flags := mgr.GetGlobalCFlags()
 	for _, define := range want {
 		if !contains(flags, "-D"+define) {

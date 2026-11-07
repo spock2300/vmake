@@ -12,7 +12,6 @@ import (
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 	vlog "github.com/spock2300/vmake/pkg/log"
-	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 type BuildResult struct {
@@ -89,20 +88,20 @@ func RunBuild(ctx *RuntimeContext, opts BuildOptions) (_ *BuildResult, err error
 		opts.Jobs = runtime.NumCPU()
 	}
 
-	needed, err := filterAndCollectNeeded(ctx)
+	pre, err := prepareBuild(ctx, preludeOptions{
+		filterDeps:     true,
+		freezeDeps:     true,
+		logFilter:      true,
+		validateNeeded: true,
+		resolveChip:    true,
+		resolveConfig:  true,
+	})
 	if err != nil {
 		return nil, err
 	}
-	if err := resolveActiveChip(ctx, needed); err != nil {
-		return nil, err
-	}
-	cfg, err := resolveBuildConfig(ctx)
-	if err != nil {
-		return nil, err
-	}
-	rc := newRunContext(ctx, opts, cfg)
+	rc := newRunContext(ctx, opts, pre.cfg)
 
-	conf, err := prepareConfig(rc, needed)
+	conf, err := prepareConfig(rc, pre.needed, pre)
 	if err != nil {
 		return nil, err
 	}
@@ -140,20 +139,18 @@ func newSourceStage(rc *runContext, cfg *configStage) *sourceStage {
 	}
 }
 
-func prepareConfig(rc *runContext, needed map[string]bool) (*configStage, error) {
+func prepareConfig(rc *runContext, needed map[string]bool, pre *buildPrelude) (*configStage, error) {
 	if err := acquireStorageOwners(rc.ctx, needed); err != nil {
 		return nil, err
 	}
-	applyGlobalFlagsFromNeeded(rc.ctx, needed)
-
-	mgr := toolchain.GetManager()
-	rc.globalFlags = [4][]string{
-		mgr.GetGlobalCFlags(),
-		mgr.GetGlobalCxxFlags(),
-		mgr.GetGlobalLdFlags(),
-		mgr.GetGlobalLinks(),
+	if pre != nil {
+		rc.globalFlags = pre.effectiveFlags
+		rc.globalFlagsHash = pre.globalFlagsHash
+	} else {
+		_, effective, hash := aggregateGlobalFlags(rc.ctx, needed)
+		rc.globalFlags = effective
+		rc.globalFlagsHash = hash
 	}
-	rc.globalFlagsHash = build.GlobalFlagsHash()
 
 	return &configStage{
 		needed:        needed,
