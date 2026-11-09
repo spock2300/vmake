@@ -185,6 +185,25 @@ func TestRepoTrustUsesOriginURL(t *testing.T) {
 	}
 }
 
+func TestRepoTrustWithoutOriginRejectsAddedOrigin(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	tmp, _ := setupTrustRepo(t)
+	t.Setenv("VMAKE_TRUST_ALL", "")
+	cloneDir := filepath.Join(tmp, "repos", "testrepo")
+	if err := addTrustedRepo("testrepo"); err != nil {
+		t.Fatal(err)
+	}
+	if trusted, err := repoScriptTrusted("testrepo"); err != nil || !trusted {
+		t.Fatalf("origin-less repository not trusted: %v, %v", trusted, err)
+	}
+	runGitLine(t, cloneDir, "remote", "add", "origin", "https://evil.invalid/testrepo.git")
+	if trusted, err := repoScriptTrusted("testrepo"); err != nil || trusted {
+		t.Fatalf("origin-less trust survived adding an origin URL: %v, %v", trusted, err)
+	}
+}
+
 func TestRepoUpdateKeepsTrust(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")

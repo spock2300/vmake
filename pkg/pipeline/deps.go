@@ -73,8 +73,10 @@ func SyncOrUpdateDeps(ctx *RuntimeContext, dryRun bool) (_ *DepsUpdateResult, er
 	if err := src.prepareAllPackages(); err != nil {
 		return nil, err
 	}
-	if err := src.applyPatchesToNeeded(); err != nil {
-		return nil, err
+	if !dryRun {
+		if err := src.applyPatchesToNeeded(); err != nil {
+			return nil, err
+		}
 	}
 	updated, err := src.buildLockfile()
 	if err != nil {

@@ -63,7 +63,7 @@ func (s *Store) Verify(kind, name, url string) (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	if url != "" && record.URL != "" && record.URL != url {
+	if url != "" && record.URL != url {
 		return false, nil
 	}
 	return true, nil

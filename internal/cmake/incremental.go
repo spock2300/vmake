@@ -91,7 +91,7 @@ func OutputPresent(s Settings, args []string) bool {
 	if info, err := os.Stat(filepath.Join(s.BuildDir, "CMakeFiles")); err != nil || !info.IsDir() {
 		return false
 	}
-	main := GeneratorMainFile(args)
+	main := generatorMainFileForHost(args, s.HostOS)
 	if main == "" {
 		return true
 	}
@@ -108,6 +108,10 @@ func isRegularFile(path string) bool {
 // (configure presets) or is not one VMake manages. An unknown generator keeps
 // only the CMakeFiles requirement.
 func GeneratorMainFile(args []string) string {
+	return generatorMainFileForHost(args, runtime.GOOS)
+}
+
+func generatorMainFileForHost(args []string, hostOS string) string {
 	if HasOption(args, "--preset") {
 		return ""
 	}
@@ -116,7 +120,10 @@ func GeneratorMainFile(args []string) string {
 		generator = os.Getenv("CMAKE_GENERATOR")
 	}
 	if generator == "" {
-		if runtime.GOOS == "windows" {
+		if hostOS == "" {
+			hostOS = runtime.GOOS
+		}
+		if hostOS == "windows" {
 			// ConfigureArgs requests Ninja on Windows when the caller did not;
 			// Unix hosts keep CMake's own default.
 			generator = "Ninja"

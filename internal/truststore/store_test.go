@@ -29,6 +29,15 @@ func TestTrustVerifyRevoke(t *testing.T) {
 	if ok, err := store.Verify("repo", "official", "https://evil.invalid/repo"); err != nil || ok {
 		t.Fatalf("Verify with wrong URL = %v, %v", ok, err)
 	}
+	if err := store.Trust("repo", "localrepo", ""); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := store.Verify("repo", "localrepo", ""); err != nil || !ok {
+		t.Fatalf("Verify URL-less record with empty URL = %v, %v", ok, err)
+	}
+	if ok, err := store.Verify("repo", "localrepo", "https://evil.invalid/repo"); err != nil || ok {
+		t.Fatalf("Verify URL-less record with non-empty URL = %v, %v", ok, err)
+	}
 	if err := store.Revoke("repo", "official"); err != nil {
 		t.Fatal(err)
 	}

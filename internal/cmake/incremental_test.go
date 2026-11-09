@@ -376,6 +376,52 @@ func TestGeneratorMainFile(t *testing.T) {
 	}
 }
 
+func TestOutputPresentHonorsSettingsHostOS(t *testing.T) {
+	t.Setenv("CMAKE_GENERATOR", "")
+
+	winBuildDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(winBuildDir, "CMakeFiles"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(winBuildDir, "CMakeCache.txt"), []byte("cache\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(winBuildDir, "Makefile"), []byte("all:\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	winSettings := Settings{BuildDir: winBuildDir, HostOS: "windows"}
+	if OutputPresent(winSettings, nil) {
+		t.Fatal("OutputPresent should be false on HostOS=windows when only Makefile exists without build.ninja")
+	}
+	if err := os.WriteFile(filepath.Join(winBuildDir, "build.ninja"), []byte("ninja\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if !OutputPresent(winSettings, nil) {
+		t.Fatal("OutputPresent should be true on HostOS=windows when build.ninja exists")
+	}
+
+	linuxBuildDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(linuxBuildDir, "CMakeFiles"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(linuxBuildDir, "CMakeCache.txt"), []byte("cache\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(linuxBuildDir, "build.ninja"), []byte("ninja\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	linuxSettings := Settings{BuildDir: linuxBuildDir, HostOS: "linux"}
+	if OutputPresent(linuxSettings, nil) {
+		t.Fatal("OutputPresent should be false on HostOS=linux when only build.ninja exists without Makefile")
+	}
+	if err := os.WriteFile(filepath.Join(linuxBuildDir, "Makefile"), []byte("all:\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if !OutputPresent(linuxSettings, nil) {
+		t.Fatal("OutputPresent should be true on HostOS=linux when Makefile exists")
+	}
+}
+
 func TestEnvironmentMergesToolchain(t *testing.T) {
 	t.Setenv("VMAKE_TEST_SENTINEL", "process")
 	s := Settings{Toolchain: &toolchain.Toolchain{}}
