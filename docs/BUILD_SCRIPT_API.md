@@ -236,7 +236,7 @@ p.CMakeBuild()
 p.CMakeInstall()
 ```
 
-`MergedCFlags`／`MergedCxxFlags` 按包级可见性默认值、全局标志、额外标志的顺序返回按空格拼接的字符串；`MergedLdFlags` 合并全局链接标志与额外标志。`CMakeGlobalFlagsArgs()` 同样包含本包可见性，保留给特殊的手动 CMake 调用；使用 `CMakeConfigure` 时无需再次传入。`Make`／`Configure` 不注入 CMake 风格的 flags 变量：相关标志经由 `p.Env()` 的 `CFLAGS`／`CXXFLAGS`／`LDFLAGS` 传入；已有使用 `Merged*Flags` 的脚本会获得本包的策略。
+`MergedCFlags`／`MergedCxxFlags` 按包级可见性默认值、全局标志、额外标志的顺序返回按空格拼接的字符串，并为含空格、引号或特殊字符的单个参数自动加引号以保留参数边界；`MergedLdFlags` 合并全局链接标志与额外标志并同样保留参数边界。`CMakeGlobalFlagsArgs()` 同样包含本包可见性，保留给特殊的手动 CMake 调用；使用 `CMakeConfigure` 时无需再次传入。`Make`／`Configure` 不注入 CMake 风格的 flags 变量：相关标志经由 `p.Env()` 的 `CFLAGS`／`CXXFLAGS`／`LDFLAGS` 传入；已有使用 `Merged*Flags` 的脚本会获得本包的策略。
 
 ### CMake 脚本迁移
 

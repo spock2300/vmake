@@ -98,9 +98,9 @@ The following helpers return **nothing** and raise a script error on failure; th
 | `CMakeGlobalFlagsArgs` | `() []string` | Package visibility and global flag arguments for special manual CMake calls; CMakeConfigure already includes them |
 | `DefaultVisibilityHidden` | `() bool` | Whether this package enables hidden default visibility |
 | `VisibilityFlags` | `() (cflags, cxxflags []string)` | Package visibility defaults for C and C++; empty when not enabled |
-| `MergedCFlags` | `(extra ...string) string` | Merge package visibility defaults + global C flags + extra, space-joined |
-| `MergedCxxFlags` | `(extra ...string) string` | Merge package visibility defaults + global C++ flags + extra, space-joined |
-| `MergedLdFlags` | `(extra ...string) string` | Merge global linker flags + extra, space-joined |
+| `MergedCFlags` | `(extra ...string) string` | Merge package visibility defaults + global C flags + extra, space-joined with shell/CRT quoting for spaced or special arguments |
+| `MergedCxxFlags` | `(extra ...string) string` | Merge package visibility defaults + global C++ flags + extra, space-joined with shell/CRT quoting for spaced or special arguments |
+| `MergedLdFlags` | `(extra ...string) string` | Merge global linker flags + extra, space-joined with shell/CRT quoting for spaced or special arguments |
 | `CMakeBuild` | `(args ...string)` | Build CMakeBuildDir with the default configuration and session jobs budget |
 | `CMakeInstall` | `(args ...string)` | Install CMakeBuildDir using the same default configuration; accepts --component and other install options |
 | `Configure` | `(extraArgs ...string) error` | SrcDir/configure --prefix=... (+ --host when cross) |

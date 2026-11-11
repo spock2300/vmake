@@ -17,17 +17,21 @@ import (
 )
 
 func (p *Package) cmakeSettings() cmake.Settings {
+	return p.cmakeSettingsForHost(runtime.GOOS)
+}
+
+func (p *Package) cmakeSettingsForHost(hostOS string) cmake.Settings {
 	return cmake.Settings{
 		SourceDir:    p.SrcDir(),
 		BuildRoot:    p.dirs.BuildDir,
 		BuildDir:     p.CMakeBuildDir(),
 		InstallDir:   p.CMakeInstallDir(),
 		BuildType:    p.cmakeBuildType(),
-		HostOS:       runtime.GOOS,
+		HostOS:       hostOS,
 		TargetOS:     p.TargetOS(),
 		TargetTriple: p.TargetTriple(),
 		Toolchain:    p.tc,
-		GlobalFlags:  p.CMakeGlobalFlagsArgs(),
+		GlobalFlags:  p.cmakeGlobalFlagsArgs(hostOS),
 		DryRun:       p.dryRun,
 	}
 }
@@ -74,14 +78,18 @@ func (p *Package) CMakeInstallDir() string {
 }
 
 func (p *Package) CMakeGlobalFlagsArgs() []string {
+	return p.cmakeGlobalFlagsArgs(runtime.GOOS)
+}
+
+func (p *Package) cmakeGlobalFlagsArgs(hostOS string) []string {
 	var args []string
-	if cf := p.MergedCFlags(); cf != "" {
+	if cf := p.mergedCFlags(hostOS); cf != "" {
 		args = append(args, "-DCMAKE_C_FLAGS="+cf)
 	}
-	if cxxf := p.MergedCxxFlags(); cxxf != "" {
+	if cxxf := p.mergedCxxFlags(hostOS); cxxf != "" {
 		args = append(args, "-DCMAKE_CXX_FLAGS="+cxxf)
 	}
-	if ldf := p.MergedLdFlags(); ldf != "" {
+	if ldf := p.mergedLdFlags(hostOS); ldf != "" {
 		args = append(args,
 			"-DCMAKE_EXE_LINKER_FLAGS="+ldf,
 			"-DCMAKE_SHARED_LINKER_FLAGS="+ldf,
@@ -325,9 +333,7 @@ func (p *Package) cmakeBuildType() string {
 }
 
 func (p *Package) cmakeConfigureArgs(hostOS string, extraArgs ...string) ([]string, error) {
-	settings := p.cmakeSettings()
-	settings.HostOS = hostOS
-	return cmake.ConfigureArgs(settings, extraArgs...)
+	return cmake.ConfigureArgs(p.cmakeSettingsForHost(hostOS), extraArgs...)
 }
 
 func (p *Package) cmakeBuildArgs(extraArgs ...string) ([]string, error) {

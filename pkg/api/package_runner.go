@@ -5,28 +5,41 @@ import (
 	"runtime"
 	"strings"
 
+	cmake "github.com/spock2300/vmake/internal/cmake"
 	"github.com/spock2300/vmake/internal/exec"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 func (p *Package) MergedCFlags(extra ...string) string {
+	return p.mergedCFlags(runtime.GOOS, extra...)
+}
+
+func (p *Package) mergedCFlags(hostOS string, extra ...string) string {
 	all, _ := p.VisibilityFlags()
 	all = append(all, p.globalCFlags...)
 	all = append(all, extra...)
-	return strings.Join(all, " ")
+	return cmake.JoinFlags(hostOS, all)
 }
 
 func (p *Package) MergedCxxFlags(extra ...string) string {
+	return p.mergedCxxFlags(runtime.GOOS, extra...)
+}
+
+func (p *Package) mergedCxxFlags(hostOS string, extra ...string) string {
 	_, all := p.VisibilityFlags()
 	all = append(all, p.globalCxxFlags...)
 	all = append(all, extra...)
-	return strings.Join(all, " ")
+	return cmake.JoinFlags(hostOS, all)
 }
 
 func (p *Package) MergedLdFlags(extra ...string) string {
+	return p.mergedLdFlags(runtime.GOOS, extra...)
+}
+
+func (p *Package) mergedLdFlags(hostOS string, extra ...string) string {
 	all := append(append([]string{}, p.globalLdFlags...), extra...)
-	return strings.Join(all, " ")
+	return cmake.JoinFlags(hostOS, all)
 }
 
 func (p *Package) Env() map[string]string {

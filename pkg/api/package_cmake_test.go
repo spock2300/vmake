@@ -1287,3 +1287,159 @@ func TestCMakeExecutedHelperStageCount(t *testing.T) {
 		t.Fatalf("dry-run stages = %d, want 0", got)
 	}
 }
+
+func TestCMakeConfigureGlobalFlagsQuotePerHost(t *testing.T) {
+	p := NewPackage().SetToolchain(&toolchain.Toolchain{}).SetGlobalFlags(
+		[]string{`-DPARTITION_PATH=C:\demo space\part.csv`, `-DCONFIG_LABEL="board a"`},
+		[]string{`-DATLAS_PATH=/opt/demo space/atlas`},
+		[]string{`-L/opt/demo space/lib`},
+		nil,
+	)
+	linuxArgs, err := p.cmakeConfigureArgs("linux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`-DCMAKE_C_FLAGS="-DPARTITION_PATH=C:\\demo space\\part.csv" "-DCONFIG_LABEL=\"board a\""`,
+		`-DCMAKE_CXX_FLAGS="-DATLAS_PATH=/opt/demo space/atlas"`,
+		`-DCMAKE_EXE_LINKER_FLAGS="-L/opt/demo space/lib"`,
+	} {
+		if !slices.Contains(linuxArgs, want) {
+			t.Errorf("linux configure args missing %q in %q", want, linuxArgs)
+		}
+	}
+
+	winArgs, err := p.cmakeConfigureArgs("windows")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`-DCMAKE_C_FLAGS="-DPARTITION_PATH=C:\demo space\part.csv" "-DCONFIG_LABEL=\"board a\""`,
+		`-DCMAKE_CXX_FLAGS="-DATLAS_PATH=/opt/demo space/atlas"`,
+		`-DCMAKE_EXE_LINKER_FLAGS="-L/opt/demo space/lib"`,
+	} {
+		if !slices.Contains(winArgs, want) {
+			t.Errorf("windows configure args missing %q in %q", want, winArgs)
+		}
+	}
+}
+
+func TestCMakePreservesSpacedPathMacrosEndToEnd(t *testing.T) {
+	if _, err := exec.LookPath("cmake"); err != nil {
+		t.Skip(err)
+	}
+	tc := toolchain.GetBuiltinHost()
+	for _, tool := range []string{tc.Tools.CC, tc.Tools.CXX, tc.Tools.AR, tc.Tools.RANLIB, tc.Tools.STRIP, tc.Tools.OBJCOPY, tc.Tools.NM} {
+		if tool == "" {
+			continue
+		}
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(err)
+		}
+	}
+
+	var generators []string
+	if _, err := exec.LookPath("ninja"); err == nil {
+		generators = append(generators, "Ninja")
+	}
+	if runtime.GOOS != "windows" {
+		if _, err := exec.LookPath("make"); err == nil {
+			generators = append(generators, "Unix Makefiles")
+		}
+	}
+	if len(generators) == 0 {
+		t.Skip("no supported CMake generator available")
+	}
+
+	for _, generator := range generators {
+		t.Run(generator, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "workspace with space")
+			source := filepath.Join(root, "src")
+			if err := os.MkdirAll(source, 0755); err != nil {
+				t.Fatal(err)
+			}
+			partPath := filepath.ToSlash(filepath.Join(root, "partition table", "partitions.csv"))
+			atlasPath := filepath.ToSlash(filepath.Join(root, "atlas assets", "ui atlas.bin"))
+			labelVal := "demo board v2"
+
+			cmakelists := "cmake_minimum_required(VERSION 3.20)\nproject(spaced_macros LANGUAGES C CXX ASM)\nadd_executable(probe main.c helper.cpp asm_probe.S)\ninstall(TARGETS probe RUNTIME DESTINATION bin)\n"
+			if err := os.WriteFile(filepath.Join(source, "CMakeLists.txt"), []byte(cmakelists), 0644); err != nil {
+				t.Fatal(err)
+			}
+			mainC := `#include <string.h>
+#define STR_(x) #x
+#define STR(x) STR_(x)
+int check_cxx(const char *part, const char *atlas, const char *label);
+int main(void) {
+    if (strcmp(STR(PARTITION_TABLE_PATH), "` + partPath + `") != 0) return 1;
+    if (strcmp(STR(ATLAS_OUTPUT_PATH), "` + atlasPath + `") != 0) return 2;
+    if (strcmp(CONFIG_DEMO_LABEL, "` + labelVal + `") != 0) return 3;
+    return check_cxx(STR(PARTITION_TABLE_PATH), STR(ATLAS_OUTPUT_PATH), CONFIG_DEMO_LABEL);
+}
+`
+			if err := os.WriteFile(filepath.Join(source, "main.c"), []byte(mainC), 0644); err != nil {
+				t.Fatal(err)
+			}
+			helperCPP := `#include <cstring>
+#define STR_(x) #x
+#define STR(x) STR_(x)
+extern "C" int check_cxx(const char *part, const char *atlas, const char *label) {
+    if (std::strcmp(STR(PARTITION_TABLE_PATH), part) != 0) return 4;
+    if (std::strcmp(STR(ATLAS_OUTPUT_PATH), atlas) != 0) return 5;
+    if (std::strcmp(CONFIG_DEMO_LABEL, label) != 0) return 6;
+    return 0;
+}
+`
+			if err := os.WriteFile(filepath.Join(source, "helper.cpp"), []byte(helperCPP), 0644); err != nil {
+				t.Fatal(err)
+			}
+			asmS := `#ifndef PARTITION_TABLE_PATH
+#error missing PARTITION_TABLE_PATH in ASM
+#endif
+#ifndef ATLAS_OUTPUT_PATH
+#error missing ATLAS_OUTPUT_PATH in ASM
+#endif
+#ifndef VMAKE_ASM_EXTRA
+#error missing VMAKE_ASM_EXTRA in ASM
+#endif
+.text
+`
+			if err := os.WriteFile(filepath.Join(source, "asm_probe.S"), []byte(asmS), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			cflags := []string{
+				"-DPARTITION_TABLE_PATH=" + partPath,
+				"-DATLAS_OUTPUT_PATH=" + atlasPath,
+				`-DCONFIG_DEMO_LABEL="` + labelVal + `"`,
+			}
+			p := NewPackage().
+				SetDirs(PkgDirs{SourceDir: source, BuildDir: filepath.Join(root, "build")}).
+				SetToolchain(tc).
+				SetGlobalFlags(cflags, cflags, nil, nil)
+
+			vlog.SetLevel(vlog.Quiet)
+			defer vlog.SetLevel(vlog.Normal)
+			var scriptErr *BuildScriptError
+			out, errOut := captureCMakeStreams(t, func() {
+				scriptErr = captureScriptError(func() {
+					p.CMakeConfigure("-G", generator, "-DCMAKE_ASM_FLAGS="+p.MergedCFlags("-DVMAKE_ASM_EXTRA=1"))
+					p.CMakeBuild()
+					p.CMakeInstall()
+				})
+			})
+			if scriptErr != nil {
+				t.Fatalf("CMake failed (%s): %v\nstdout:\n%s\nstderr:\n%s", generator, scriptErr, out, errOut)
+			}
+
+			binName := "probe"
+			if runtime.GOOS == "windows" {
+				binName += ".exe"
+			}
+			binPath := filepath.Join(p.CMakeInstallDir(), "bin", binName)
+			if cmdOut, err := exec.Command(binPath).CombinedOutput(); err != nil {
+				t.Fatalf("probe executable failed (%v): %s", err, cmdOut)
+			}
+		})
+	}
+}

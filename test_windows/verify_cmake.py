@@ -76,25 +76,47 @@ endif()
 '''
     (project / "CMakeLists.txt").write_text(cmake_lists, encoding="utf-8")
     (source / "value.h").write_text("#define PROBE_VALUE 7\n", encoding="utf-8")
-    (source / "probe.c").write_text('''#include "value.h"
+    part_path = (project / "partition dir/partitions.csv").as_posix()
+    atlas_path = (project / "atlas dir/ui atlas.bin").as_posix()
+    (source / "probe.c").write_text('''#include <string.h>
+#include "value.h"
 #ifndef VMAKE_C_FLAG
 #error missing C flag
 #endif
 #ifdef VMAKE_CXX_FLAG
 #error unexpected CXX flag
 #endif
-int probe_value(void) { return PROBE_VALUE; }
-''', encoding="utf-8")
-    (source / "probe.cpp").write_text('''#ifndef VMAKE_CXX_FLAG
+#define STR_(x) #x
+#define STR(x) STR_(x)
+int probe_value(void) {
+    if (strcmp(STR(VMAKE_PARTITION_PATH), "@PART_PATH@") != 0) return -10;
+    if (strcmp(STR(VMAKE_ATLAS_PATH), "@ATLAS_PATH@") != 0) return -11;
+    return PROBE_VALUE;
+}
+'''.replace("@PART_PATH@", part_path).replace("@ATLAS_PATH@", atlas_path), encoding="utf-8")
+    (source / "probe.cpp").write_text('''#include <cstring>
+#ifndef VMAKE_CXX_FLAG
 #error missing CXX flag
 #endif
 #ifdef VMAKE_C_FLAG
 #error unexpected C flag
 #endif
-extern "C" int probe_cpp(void) { return 2; }
-''', encoding="utf-8")
+#define STR_(x) #x
+#define STR(x) STR_(x)
+extern "C" int probe_cpp(void) {
+    if (std::strcmp(STR(VMAKE_PARTITION_PATH), "@PART_PATH@") != 0) return -10;
+    if (std::strcmp(STR(VMAKE_ATLAS_PATH), "@ATLAS_PATH@") != 0) return -11;
+    return 2;
+}
+'''.replace("@PART_PATH@", part_path).replace("@ATLAS_PATH@", atlas_path), encoding="utf-8")
     (source / "probe.S").write_text('''#ifndef VMAKE_ASM_FLAG
 #error missing ASM flag
+#endif
+#ifndef VMAKE_PARTITION_PATH
+#error missing partition path macro in ASM
+#endif
+#ifndef VMAKE_ATLAS_PATH
+#error missing atlas path macro in ASM
 #endif
 .text
 .globl probe_asm
@@ -103,12 +125,13 @@ probe_asm:
 ''', encoding="utf-8")
     (source / "main.c").write_text('''int probe_value(void);
 int probe_cpp(void);
-int main(void) { return probe_value() + probe_cpp() > 0 ? 0 : 1; }
+int main(void) { return (probe_value() == 7 || probe_value() == 11) && probe_cpp() == 2 ? 0 : 1; }
 ''', encoding="utf-8")
     settings = "" if default_mode else 'p.SetCMakeBuildType("MinSizeRel")'
     if custom:
         settings += '\np.SetCMakeBuildDir("intermediate cmake").SetCMakeInstallDir("stage area")'
     flags = 'ctx.AddGlobalCFlags("-DVMAKE_C_FLAG=1")\nctx.AddGlobalCxxFlags("-DVMAKE_CXX_FLAG=1")'
+    flags += f'\nctx.AddGlobalDefines({json.dumps("VMAKE_PARTITION_PATH=" + part_path)}, {json.dumps("VMAKE_ATLAS_PATH=" + atlas_path)})'
     flags += '\nctx.AddGlobalLdFlags("-Wl,--gc-sections")'
     if default_mode:
         flags += '\nctx.GlobalMode()'

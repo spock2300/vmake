@@ -367,3 +367,68 @@ func TestProjectLanguages(t *testing.T) {
 		t.Fatal("missing CMakeLists.txt reported a language list")
 	}
 }
+
+func TestQuoteAndJoinFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		flags   []string
+		posix   string
+		windows string
+	}{
+		{
+			name:    "plain compiler and linker flags",
+			flags:   []string{"-O2", "-std=c++17", "-mcpu=cortex-m4", "-fvisibility=hidden", "-Wl,--gc-sections", "-DGLOBAL_C=1"},
+			posix:   "-O2 -std=c++17 -mcpu=cortex-m4 -fvisibility=hidden -Wl,--gc-sections -DGLOBAL_C=1",
+			windows: "-O2 -std=c++17 -mcpu=cortex-m4 -fvisibility=hidden -Wl,--gc-sections -DGLOBAL_C=1",
+		},
+		{
+			name:    "empty entries skipped",
+			flags:   []string{"", "-O2", "", "-g", ""},
+			posix:   "-O2 -g",
+			windows: "-O2 -g",
+		},
+		{
+			name:    "unquoted spaced path macros",
+			flags:   []string{"-DPARTITION_PATH=/work/demo space/partitions.csv", "-DATLAS_DIR=/work/demo space/atlas"},
+			posix:   `"-DPARTITION_PATH=/work/demo space/partitions.csv" "-DATLAS_DIR=/work/demo space/atlas"`,
+			windows: `"-DPARTITION_PATH=/work/demo space/partitions.csv" "-DATLAS_DIR=/work/demo space/atlas"`,
+		},
+		{
+			name:    "windows backslash paths and trailing slash",
+			flags:   []string{`-IC:\MinGW\include`, `-DPARTITION_PATH=C:\Users\demo user\part.csv`, `-DATLAS_DIR=C:\Users\demo user\atlas\`},
+			posix:   `"-IC:\\MinGW\\include" "-DPARTITION_PATH=C:\\Users\\demo user\\part.csv" "-DATLAS_DIR=C:\\Users\\demo user\\atlas\\"`,
+			windows: `-IC:\MinGW\include "-DPARTITION_PATH=C:\Users\demo user\part.csv" "-DATLAS_DIR=C:\Users\demo user\atlas\\"`,
+		},
+		{
+			name:    "quoted string macros with and without spaces",
+			flags:   []string{`-DCONFIG_BOARD="evb"`, `-DCONFIG_PARTITION_PATH="/work/demo space/partitions.csv"`},
+			posix:   `"-DCONFIG_BOARD=\"evb\"" "-DCONFIG_PARTITION_PATH=\"/work/demo space/partitions.csv\""`,
+			windows: `"-DCONFIG_BOARD=\"evb\"" "-DCONFIG_PARTITION_PATH=\"/work/demo space/partitions.csv\""`,
+		},
+		{
+			name:    "separate flag and spaced path argument",
+			flags:   []string{"-isystem", "/opt/sdk (x86)/include"},
+			posix:   `-isystem "/opt/sdk (x86)/include"`,
+			windows: `-isystem "/opt/sdk (x86)/include"`,
+		},
+		{
+			name:    "posix dollar and backtick escaping",
+			flags:   []string{"-DFOO=$bar`baz`"},
+			posix:   `"-DFOO=\$bar\` + "`" + `baz\` + "`" + `"`,
+			windows: "-DFOO=$bar`baz`",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := JoinFlags("linux", test.flags); got != test.posix {
+				t.Errorf("JoinFlags(linux) = %q, want %q", got, test.posix)
+			}
+			if got := JoinFlags("darwin", test.flags); got != test.posix {
+				t.Errorf("JoinFlags(darwin) = %q, want %q", got, test.posix)
+			}
+			if got := JoinFlags("windows", test.flags); got != test.windows {
+				t.Errorf("JoinFlags(windows) = %q, want %q", got, test.windows)
+			}
+		})
+	}
+}

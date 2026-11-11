@@ -389,3 +389,73 @@ func DefinitionKey(definition string) string {
 	key, _, _ = strings.Cut(key, ":")
 	return key
 }
+
+const (
+	posixSpecialChars   = " \t\r\n\"'\\$`&|;<>()*?[]#~!"
+	windowsSpecialChars = " \t\r\n\"&|<>()^;%!"
+)
+
+var posixQuoteReplacer = strings.NewReplacer(
+	`\`, `\\`,
+	`"`, `\"`,
+	`$`, `\$`,
+	"`", "\\`",
+)
+
+func JoinFlags(hostOS string, flags []string) string {
+	var parts []string
+	for _, flag := range flags {
+		if flag == "" {
+			continue
+		}
+		parts = append(parts, QuoteFlag(hostOS, flag))
+	}
+	return strings.Join(parts, " ")
+}
+
+func QuoteFlag(hostOS, flag string) string {
+	if hostOS == "windows" {
+		return quoteWindowsFlag(flag)
+	}
+	return quotePOSIXFlag(flag)
+}
+
+func quotePOSIXFlag(flag string) string {
+	if !strings.ContainsAny(flag, posixSpecialChars) {
+		return flag
+	}
+	return `"` + posixQuoteReplacer.Replace(flag) + `"`
+}
+
+func quoteWindowsFlag(flag string) string {
+	if !strings.ContainsAny(flag, windowsSpecialChars) {
+		return flag
+	}
+	var b strings.Builder
+	b.Grow(len(flag) + 2)
+	b.WriteByte('"')
+	slashes := 0
+	for i := 0; i < len(flag); i++ {
+		switch flag[i] {
+		case '\\':
+			slashes++
+		case '"':
+			for range slashes*2 + 1 {
+				b.WriteByte('\\')
+			}
+			b.WriteByte('"')
+			slashes = 0
+		default:
+			for range slashes {
+				b.WriteByte('\\')
+			}
+			b.WriteByte(flag[i])
+			slashes = 0
+		}
+	}
+	for range slashes * 2 {
+		b.WriteByte('\\')
+	}
+	b.WriteByte('"')
+	return b.String()
+}
