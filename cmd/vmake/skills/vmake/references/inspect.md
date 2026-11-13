@@ -3,7 +3,7 @@
 `vmake inspect` prints the resolved project model as one JSON document
 (schemaVersion 1) on stdout. It runs dependency resolution, `OnConfig`, and
 dry-run `OnBuild` target declaration only: it never compiles, links, installs,
-or writes `build/`, `install/`, or `.vmake/config.json` itself. With
+or writes `build/`, `install/`, or `configs/*.json` itself. With
 `--no-targets`, dry-run `OnBuild` target declaration is skipped entirely.
 Resolution may still initialize `.vmake/layout` and extend `.gitignore` with
 `.vmake_deps/`.
@@ -29,7 +29,7 @@ and test report currently exist, and each needed package carries its active
 build directory; they do not verify action or output freshness.
 
 ```
-vmake inspect [--no-targets] [--set [package/]option=value ...] [-C <dir>]
+vmake inspect [-c <profile>] [--no-targets] [--set [package/]option=value ...] [-C <dir>]
 ```
 
 `--no-targets` skips dry-run `OnBuild` target declaration for every package.
@@ -137,7 +137,7 @@ writes on `p.DryRun()`. The guard covers the wrapped symbols only.
 | Field | Meaning |
 |-------|---------|
 | `root` | Absolute project root (the directory containing `.vmake/`) |
-| `configFile`, `configSha256` | Active config file name and SHA-256; hash of empty content when absent |
+| `configFile`, `configSha256` | Active config file path relative to project root (e.g. `configs/default.json`) and SHA-256; hash of empty content when absent |
 | `mode`, `toolchain` | Effective build mode and project toolchain name |
 | `toolchainInfo` | `{name, targetOs?, targetTriple?, installPath?, cc?, cxx?, ar?, ld?}` |
 | `global` | Effective global option values, including `mode` and `toolchain` |
@@ -145,9 +145,9 @@ writes on `p.DryRun()`. The guard covers the wrapped symbols only.
 | `globalCFlags`, `globalCxxFlags`, `globalLdFlags`, `globalLinks` | Global `AddGlobal*` declarations from needed packages in package/declaration order; duplicates preserved; omitted when empty |
 | `globalDefines` | Auto-exported global-option macros as `NAME=value`, sorted, without `-D`; omitted when empty |
 | `overrides` | Typed `--set` values keyed `[package/]option`; omitted when unused |
-| `roots` | Needed local packages that no resolved package depends on, sorted |
+| `roots` | Active configuration `"root"` package when set, else explicit `SetRoot(true)` local package when present, otherwise needed local packages that no needed package depends on, sorted |
 | `packages` | Resolved package entries, sorted by name |
-| `graph` | Package dependency edges `{from, to}`, sorted |
+| `graph` | Package dependency edges `{from, to}`, sorted (merges `OnRequire`, cross-package target `AddDeps`/`UseRequires`, and `BuildSubGraph` edges; `--no-targets` reports `OnRequire` edges only) |
 | `compileDatabase` | `<root>/build/compile_commands.json` (expected path, even before a build) |
 | `compileDatabasePresent` | Whether that file currently exists (presence only) |
 | `buildReport` | `<root>/build/vmake-build.json` (expected path, even before a build) |
@@ -187,11 +187,11 @@ the expected source tree is missing or empty; that package also gets a
 `VMAKE_W_SOURCE_MISSING` warning when it is needed.
 
 Needed packages also carry `buildDir`, the absolute build-key directory from
-the same layout the next build would use; it may not exist yet (before a first
-build or after `clean`). It is omitted when a local `SetGit` or remote package's
-expected source tree is absent, because the layout cannot be computed. Local
-packages also carry `buildKey` when the key is the last path element; remote
-packages omit it because their `buildDir` ends in `build`.
+the same layout the next build would use, and `buildKey`, the resolved layout
+build key (both local and remote packages); `buildDir` may not exist yet (before
+a first build or after `clean`). Both fields are omitted when a local `SetGit`
+or remote package's expected source tree is absent, because the layout cannot be
+computed.
 
 Each `targets` entry has `name`, `kind` (`binary`/`static`/`shared`/`object`/
 `void`), `default`, `test`, declared `files`/`excludedFiles`/`includes`/

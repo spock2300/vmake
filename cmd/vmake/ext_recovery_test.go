@@ -144,7 +144,7 @@ func Main(p *api.Package) {
     p.OnBuild(func(ctx *api.BuildContext) { ctx.Target("ready").SetKind(api.TargetVoid) })
 }
 `)
-	configPath := filepath.Join(project, ".vmake", "config.json")
+	configPath := filepath.Join(project, "configs", "default.json")
 	writeExtensionFile(t, configPath, `{"version":"1","global":{"toolchain":"healthy"},"entries":{}}`)
 	if out, err := extensionCommand(t, dir, project, "build"); err != nil {
 		t.Fatalf("healthy build blocked by unrelated definitions: %v\n%s", err, out)

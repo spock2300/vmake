@@ -90,10 +90,11 @@ int main(void) {
 # Use TUI to configure
 vmake config
 
-# Or set option values non-interactively (format: [pkg/]option=value).
+# Or set / unset option values non-interactively (format: [pkg/]option=value).
 # The package prefix may be a full package name or a unique trailing path segment;
 # it is required for non-global options.
 vmake config --set myproject/debug=true --set myproject/features=full
+vmake config --unset myproject/debug
 
 # Show effective option values and generated -DCONFIG_* defines
 vmake query config myproject
@@ -107,26 +108,17 @@ vmake build --mode size
 ## Switching Configuration Files
 
 ```bash
-vmake config copy config-minimal.json
-vmake config describe "minimal feature set, no SSL"
-vmake config use config-minimal.json
+vmake config copy minimal
+vmake config describe -c minimal "minimal feature set, no SSL"
+vmake config use minimal
 vmake config --set myproject/features=minimal
 vmake build
+vmake build -c default
 vmake config list
+vmake config check --all
 ```
 
-The selection is stored in `.vmake/project.json` as
-`{"config":"config-minimal.json"}` (alongside optional project-wide dependency
-`pins` managed by `vmake deps pin` / `vmake deps unpin`). Each configuration file
-stores global and per-package options and KConfig data, plus an optional
-top-level `description` line shown by `config list` and by completion. `copy`
-leaves the selection unchanged and rejects existing destinations; `describe`
-prints or sets the active description; `use` switches it without running build
-scripts. TUI and `--set` save only the selected file. If there was no saved
-default configuration before copying, use `vmake config copy config.json`
-to create it from the active configuration before switching back, since `use`
-requires an existing file. In the TUI the description is the fixed `Description`
-row at the top of the options panel, edited with `D` or a click.
+Tracked configuration profiles live under `<project>/configs/**/*.json` (`configs/default.json` by default, or `default_config` in `.vmake/project.json` alongside optional project-wide dependency `pins` managed by `vmake deps pin` / `vmake deps unpin`). `vmake config use <profile>` stores the developer's machine-local active selection in `.vmake/local.json` (`{"config": "configs/minimal.json"}`), while `-c` / `--config <profile>` overrides the selection statelessly for a single invocation without touching `.vmake/local.json`. Each configuration file stores sparse explicit global and per-package overrides and KConfig data, plus optional top-level `description` and `root` fields (`root` overrides the entry root package for multi-root workspaces). `copy` leaves the active selection unchanged and rejects existing destinations; `describe` prints or sets the description; `use` switches the local cursor without running build scripts; `check` (`--all`) validates option types/choices, reachability, toolchains, `OnConfigureDeps`, and dry-run target declaration. TUI, `--set`, and `--unset` save only the selected file sparsely (derived `OnConfigureDeps`, `ChipProfile`, and `Option.Default()` values are not pinned unless explicitly overridden). If there was no saved default configuration before copying, use `vmake config copy default` to create `configs/default.json` from the active configuration before switching back, since `use` requires an existing file. In the TUI the description is the fixed `Description` row at the top of the options panel, edited with `D` or a click.
 
 A configuration file in full:
 
@@ -134,6 +126,7 @@ A configuration file in full:
 {
   "version": "1",
   "description": "Board A debug build",
+  "root": "myproject",
   "global": { "toolchain": "host", "mode": "debug" },
   "entries": {
     "myproject": { "options": { "debug": true } }

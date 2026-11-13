@@ -36,6 +36,7 @@ omitted, without modifying the project. Any package whose target declaration
 fails is omitted and warned.`,
 		Run: runQuery,
 	}
+	addPersistentConfigFlag(cmd)
 	cmd.PersistentFlags().StringArrayVarP(&ephemeralSetFlags, "set", "s", nil, "override an option for this run only (format: [pkg/]option=value)")
 	cmd.AddCommand(newQueryTargetsCmd())
 	cmd.AddCommand(newQueryConfigCmd())
@@ -164,7 +165,7 @@ func runQuery(cmd *cobra.Command, args []string) {
 	printed := 0
 	for _, root := range data.Roots {
 		node := graph[root]
-		if node == nil || (len(printer.targetKinds(root)) == 0 && len(node.Deps) == 0) {
+		if node == nil || (len(printer.targetKinds(root)) == 0 && len(printer.packageDeps(root)) == 0) {
 			continue
 		}
 		if printed > 0 {
@@ -205,6 +206,29 @@ func (p *treePrinter) targetKinds(name string) []targetKindInfo {
 	return targetKindsFromInspectTargets(pkg.Targets, name)
 }
 
+func (p *treePrinter) packageDeps(name string) []string {
+	node := p.graph[name]
+	var out []string
+	seen := make(map[string]bool)
+	if node != nil {
+		for _, dep := range node.Deps {
+			if !seen[dep] {
+				seen[dep] = true
+				out = append(out, dep)
+			}
+		}
+	}
+	if pkg := p.packages[name]; pkg != nil {
+		for _, dep := range pkg.Deps {
+			if !seen[dep] {
+				seen[dep] = true
+				out = append(out, dep)
+			}
+		}
+	}
+	return out
+}
+
 func (p *treePrinter) print(name, prefix string, isRoot, isLast bool) {
 	node := p.graph[name]
 	if node == nil {
@@ -230,15 +254,7 @@ func (p *treePrinter) print(name, prefix string, isRoot, isLast bool) {
 
 	fmt.Fprintf(p.w, "%s%s%s\n", prefix, connector, strings.Join(p.parts(name, kinds, node), " "))
 
-	deps := make([]string, 0, len(node.Deps))
-	seen := make(map[string]bool, len(node.Deps))
-	for _, dep := range node.Deps {
-		if seen[dep] {
-			continue
-		}
-		seen[dep] = true
-		deps = append(deps, dep)
-	}
+	deps := p.packageDeps(name)
 	for i, dep := range deps {
 		var childPrefix string
 		if isRoot {

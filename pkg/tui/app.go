@@ -41,9 +41,9 @@ func (m *Model) result() *ConfigResult {
 	return &ConfigResult{
 		Saved:          m.saved,
 		Description:    m.description,
-		Values:         m.values,
+		Values:         m.sparseValues(),
 		Toolchain:      getToolchainValue(m.globalValues),
-		GlobalValues:   m.globalValues,
+		GlobalValues:   m.sparseGlobalValues(),
 		DerivedGlobals: maps.Clone(m.derivedGlobals),
 		MenuconfigRan:  m.menuconfigRan,
 		PresetValues:   m.presetValues,

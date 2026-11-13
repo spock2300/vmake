@@ -11,16 +11,17 @@ import (
 )
 
 type BuildEnv struct {
-	Layouts     map[string]*PackageLayout
-	Packages    map[string]*api.Package
-	Toolchains  map[string]*toolchain.Toolchain
-	Options     map[string]map[string]any
-	GlobalFlags [4][]string
-	Session     *Session
-	RootDir     string
-	Jobs        int
-	KeepGoing   bool
-	SubParents  map[string]string
+	Layouts       map[string]*PackageLayout
+	Packages      map[string]*api.Package
+	WorkspaceDirs map[string]string
+	Toolchains    map[string]*toolchain.Toolchain
+	Options       map[string]map[string]any
+	GlobalFlags   [4][]string
+	Session       *Session
+	RootDir       string
+	Jobs          int
+	KeepGoing     bool
+	SubParents    map[string]string
 }
 
 type BuildJob struct {
@@ -47,22 +48,23 @@ func (j *BuildJob) newSchedulerFor(
 	stats *BuildStats,
 ) *Scheduler {
 	return newScheduler(schedulerConfig{
-		Graph:        j.Graph,
-		Toolchain:    tc,
-		Platform:     platform,
-		Layouts:      env.Layouts,
-		Mode:         j.Mode,
-		Options:      env.Options,
-		Packages:     env.Packages,
-		Tools:        tools,
-		Context:      session.ctx,
-		RootDir:      env.RootDir,
-		IncludeTests: j.IncludeTests,
-		NumWorkers:   env.Jobs,
-		KeepGoing:    env.KeepGoing,
-		Explain:      j.Explain,
-		GlobalFlags:  &env.GlobalFlags,
-		Stats:        stats,
+		Graph:         j.Graph,
+		Toolchain:     tc,
+		Platform:      platform,
+		Layouts:       env.Layouts,
+		Mode:          j.Mode,
+		Options:       env.Options,
+		Packages:      env.Packages,
+		WorkspaceDirs: env.WorkspaceDirs,
+		Tools:         tools,
+		Context:       session.ctx,
+		RootDir:       env.RootDir,
+		IncludeTests:  j.IncludeTests,
+		NumWorkers:    env.Jobs,
+		KeepGoing:     env.KeepGoing,
+		Explain:       j.Explain,
+		GlobalFlags:   &env.GlobalFlags,
+		Stats:         stats,
 	})
 }
 

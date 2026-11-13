@@ -196,6 +196,58 @@ func (ctx *ConfigContext) ToolchainOption() *Option {
 		SetValues(ctx.Toolchains()...)
 }
 
+type DepOptionDefault struct {
+	Dep    string
+	Option string
+	Value  any
+}
+
+type DepConfigContext struct {
+	ConfigAccessor
+	pkgBase
+	sourceDir string
+	defaults  []DepOptionDefault
+}
+
+func NewDepConfigContext(pkgName, sourceDir string, cfgVals map[string]any, options map[string]*Option) *DepConfigContext {
+	ctx := &DepConfigContext{
+		ConfigAccessor: NewConfigAccessor(cfgVals, options),
+		pkgBase:        pkgBase{pkgName: pkgName},
+		sourceDir:      sourceDir,
+	}
+	ctx.setStrictOwner(pkgName)
+	ctx.LockOptionDeclaration()
+	return ctx
+}
+
+func (ctx *DepConfigContext) SourceDir() string {
+	return ctx.sourceDir
+}
+
+func (ctx *DepConfigContext) SetDefault(depPkg, option string, val any) *DepConfigContext {
+	depPkg = strings.TrimSpace(depPkg)
+	option = strings.TrimSpace(option)
+	if depPkg == "" {
+		fatalScript(ctx.PackageName(), "SetDefault", "dependency package name must not be empty")
+	}
+	if option == "" || strings.Contains(option, "/") {
+		fatalScript(ctx.PackageName(), "SetDefault", "invalid dependency option name %q (must not be empty or contain '/')", option)
+	}
+	if val == nil {
+		fatalScript(ctx.PackageName(), "SetDefault", "default value for %s/%s must not be nil", depPkg, option)
+	}
+	ctx.defaults = append(ctx.defaults, DepOptionDefault{
+		Dep:    depPkg,
+		Option: option,
+		Value:  val,
+	})
+	return ctx
+}
+
+func (ctx *DepConfigContext) Defaults() []DepOptionDefault {
+	return append([]DepOptionDefault(nil), ctx.defaults...)
+}
+
 type BuildContext struct {
 	ConfigAccessor
 	*TargetRegistry
@@ -205,9 +257,11 @@ type BuildContext struct {
 	genConfigHeader   bool
 	genConfigDefines  bool
 	importConfigs     []string
+	subGraphs         []string
 	buildSubGraphFunc func(pkgName string) error
 	depOutputFunc     func(depRef string) string
 	depSrcDirFunc     func(depRef string) string
+	depPackageDirFunc func(depRef string) string
 	dryRun            bool
 }
 
@@ -262,7 +316,15 @@ func (ctx *BuildContext) SetDepSrcDirFunc(fn func(string) string) *BuildContext 
 	return ctx
 }
 
+func (ctx *BuildContext) SetDepPackageDirFunc(fn func(string) string) *BuildContext {
+	ctx.depPackageDirFunc = fn
+	return ctx
+}
+
 func (ctx *BuildContext) BuildSubGraph(pkgName string) {
+	if pkgName != "" {
+		ctx.subGraphs = append(ctx.subGraphs, pkgName)
+	}
 	if ctx.dryRun {
 		return
 	}
@@ -307,6 +369,16 @@ func (ctx *BuildContext) DepSrcDir(depRef string) string {
 	return ctx.depSrcDirFunc(depRef)
 }
 
+func (ctx *BuildContext) DepPackageDir(depRef string) string {
+	if ctx.dryRun {
+		return ""
+	}
+	if ctx.depPackageDirFunc == nil {
+		fatalScript(ctx.PackageName(), "DepPackageDir", "not available")
+	}
+	return ctx.depPackageDirFunc(depRef)
+}
+
 func (ctx *BuildContext) GenerateConfigHeader() *BuildContext {
 	ctx.genConfigHeader = true
 	return ctx
@@ -331,6 +403,7 @@ func (ctx *BuildContext) SyncConfigDefines(pkgNames ...string) *BuildContext {
 func (ctx *BuildContext) GenConfigHeader() bool   { return ctx.genConfigHeader }
 func (ctx *BuildContext) GenConfigDefines() bool  { return ctx.genConfigDefines }
 func (ctx *BuildContext) ImportConfigs() []string { return ctx.importConfigs }
+func (ctx *BuildContext) SubGraphs() []string     { return ctx.subGraphs }
 
 func (ctx *BuildContext) Exec(name string, args ...string) {
 	if ctx.dryRun {

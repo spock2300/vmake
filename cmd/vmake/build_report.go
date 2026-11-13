@@ -326,8 +326,15 @@ func fileDigest(path string) (string, int64, error) {
 	return hex.EncodeToString(h.Sum(nil)), n, err
 }
 
+func reportConfigFile(root, configPath string) string {
+	if rel, err := filepath.Rel(root, configPath); err == nil {
+		return filepath.ToSlash(rel)
+	}
+	return filepath.Base(configPath)
+}
+
 func (r *buildReport) bind(ctx *RuntimeContext) error {
-	r.ConfigFile, r.ConfigSHA256 = filepath.Base(ctx.ConfigPath), ctx.ConfigDigest
+	r.ConfigFile, r.ConfigSHA256 = reportConfigFile(r.Root, ctx.ConfigPath), ctx.ConfigDigest
 	r.Toolchain = pipeline.ResolveToolchainName(ctx.Config, ctx.ToolchainOverride, ctx.PreferredToolchain)
 	r.Mode = pipeline.ResolveMode(ctx.Config, ctx.ModeOverride)
 	r.Global = effectiveGlobalValues(ctx)
@@ -426,8 +433,8 @@ func (r *buildReport) setTestResults(tests []testResult) {
 }
 
 func (r *buildReport) complete(ctx *RuntimeContext, result *BuildResult) error {
-	r.ConfigFile, r.ConfigSHA256 = filepath.Base(ctx.ConfigPath), ctx.ConfigDigest
-	_, path, digest, err := config.LoadProjectSnapshot(r.Root)
+	r.ConfigFile, r.ConfigSHA256 = reportConfigFile(r.Root, ctx.ConfigPath), ctx.ConfigDigest
+	_, path, digest, err := config.LoadProjectSnapshotWithOverride(r.Root, configFlag)
 	if err != nil {
 		return err
 	}

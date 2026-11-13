@@ -114,6 +114,7 @@ func (t OptionType) String() string {
 }
 
 type ConfigFunc func(ctx *ConfigContext)
+type ConfigureDepsFunc func(ctx *DepConfigContext)
 type BuildFunc func(ctx *BuildContext)
 type InstallFunc func(ctx *InstallContext)
 type CleanFunc func(ctx *CleanContext)
@@ -165,6 +166,7 @@ type Package struct {
 	baseRequires                  []RequireInfo
 	requireFuncs                  []RequireFunc
 	configFuncs                   []ConfigFunc
+	configureDepsFuncs            []ConfigureDepsFunc
 	buildFuncs                    []BuildFunc
 	installFuncs                  []InstallFunc
 	cleanFuncs                    []CleanFunc
@@ -195,6 +197,10 @@ type Package struct {
 	chipProfile                   ChipProfile
 	providedLinkerScript          string
 	providedLinkerScriptFromBuild bool
+	hasBaseConfigSnapshot         bool
+	baseDefaultVisibilityHidden   bool
+	baseChipProfile               ChipProfile
+	baseProvidedLinkerScript      string
 	buildRuntime                  *buildruntime.Budget
 	buildContext                  context.Context
 	executedHelperStages          int
@@ -237,6 +243,11 @@ func (p *Package) OnRequire(fn RequireFunc) *Package {
 
 func (p *Package) OnConfig(fn ConfigFunc) *Package {
 	p.configFuncs = append(p.configFuncs, fn)
+	return p
+}
+
+func (p *Package) OnConfigureDeps(fn ConfigureDepsFunc) *Package {
+	p.configureDepsFuncs = append(p.configureDepsFuncs, fn)
 	return p
 }
 
@@ -387,6 +398,8 @@ func (p *Package) GetOptions() map[string]*Option { return p.Options }
 func (p *Package) GetRequires() *Requires         { return &p.requires }
 func (p *Package) GetRef(version string) string   { return p.versions[version] }
 func (p *Package) GetRequireFuncs() []RequireFunc { return p.requireFuncs }
+func (p *Package) HasConfigureDepsFuncs() bool    { return len(p.configureDepsFuncs) > 0 }
+func (p *Package) HasBuildFuncs() bool            { return len(p.buildFuncs) > 0 }
 func (p *Package) GetPackageFunc() PackageFunc    { return p.packageFunc }
 
 func normalizeScriptPanic(pkgName string, r any) *BuildScriptError {
@@ -423,6 +436,25 @@ func execFuncs[T any](pkgName, dir string, funcs []T, fn func(T)) {
 
 func (p *Package) ExecConfigFuncs(dir string, fn func(ConfigFunc)) {
 	execFuncs(p.Name, dir, p.configFuncs, fn)
+	p.hasBaseConfigSnapshot = true
+	p.baseDefaultVisibilityHidden = p.defaultVisibilityHidden
+	p.baseChipProfile = p.chipProfile
+	p.baseProvidedLinkerScript = p.providedLinkerScript
+}
+
+func (p *Package) ResetApplyState() {
+	if !p.hasBaseConfigSnapshot {
+		return
+	}
+	p.defaultVisibilityHidden = p.baseDefaultVisibilityHidden
+	p.chipProfile = p.baseChipProfile
+	if !p.providedLinkerScriptFromBuild {
+		p.providedLinkerScript = p.baseProvidedLinkerScript
+	}
+}
+
+func (p *Package) ExecConfigureDepsFuncs(dir string, fn func(ConfigureDepsFunc)) {
+	execFuncs(p.Name, dir, p.configureDepsFuncs, fn)
 }
 
 func (p *Package) ExecBuildFuncs(dir string, fn func(BuildFunc)) {

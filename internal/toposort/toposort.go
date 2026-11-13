@@ -2,6 +2,7 @@ package toposort
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -46,15 +47,78 @@ func TopologicalSort[N any](nodes map[string]N, getDeps func(N) []string) ([]str
 	}
 
 	if len(result) != len(nodes) {
-		remaining := make([]string, 0)
-		for name := range nodes {
+		remaining := make(map[string]N)
+		for name, node := range nodes {
 			if inDegree[name] > 0 {
-				remaining = append(remaining, name)
+				remaining[name] = node
 			}
 		}
-		sort.Strings(remaining)
-		return nil, fmt.Errorf("circular dependency detected involving: %s", strings.Join(remaining, ", "))
+		if cycle := FindCycle(remaining, getDeps); len(cycle) > 0 {
+			return nil, fmt.Errorf("circular dependency detected: %s", strings.Join(cycle, " -> "))
+		}
+		names := make([]string, 0, len(remaining))
+		for name := range remaining {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		return nil, fmt.Errorf("circular dependency detected: %s", strings.Join(names, " -> "))
 	}
 
 	return result, nil
+}
+
+func FindCycle[N any](nodes map[string]N, getDeps func(N) []string) []string {
+	names := make([]string, 0, len(nodes))
+	for name := range nodes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	color := make(map[string]uint8, len(nodes))
+	var stack []string
+
+	var dfs func(u string) []string
+	dfs = func(u string) []string {
+		color[u] = 1
+		stack = append(stack, u)
+
+		rawDeps := getDeps(nodes[u])
+		deps := make([]string, 0, len(rawDeps))
+		seen := make(map[string]bool, len(rawDeps))
+		for _, dep := range rawDeps {
+			if _, ok := nodes[dep]; ok && !seen[dep] {
+				seen[dep] = true
+				deps = append(deps, dep)
+			}
+		}
+		sort.Strings(deps)
+
+		for _, v := range deps {
+			if color[v] == 1 {
+				idx := slices.Index(stack, v)
+				cycle := make([]string, len(stack)-idx+1)
+				copy(cycle, stack[idx:])
+				cycle[len(cycle)-1] = v
+				return cycle
+			}
+			if color[v] == 0 {
+				if cycle := dfs(v); len(cycle) > 0 {
+					return cycle
+				}
+			}
+		}
+
+		stack = stack[:len(stack)-1]
+		color[u] = 2
+		return nil
+	}
+
+	for _, name := range names {
+		if color[name] == 0 {
+			if cycle := dfs(name); len(cycle) > 0 {
+				return cycle
+			}
+		}
+	}
+	return nil
 }

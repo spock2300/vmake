@@ -44,6 +44,7 @@ Import: `github.com/spock2300/vmake/pkg/api`
 |--------|---------------|
 | `OnRequire(fn RequireFunc)` | `func(ctx *RequireContext)` |
 | `OnConfig(fn ConfigFunc)` | `func(ctx *ConfigContext)` |
+| `OnConfigureDeps(fn ConfigureDepsFunc)` | `func(ctx *DepConfigContext)` — downward default option derivation (`ctx.SetDefault(depPkg, option, val)`, `ctx.SourceDir()`) |
 | `OnBuild(fn BuildFunc)` | `func(ctx *BuildContext)` |
 | `OnInstall(fn InstallFunc)` | `func(ctx *InstallContext)` |
 | `OnClean(fn CleanFunc)` | `func(ctx *CleanContext)` |
@@ -417,6 +418,8 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `BuildSubGraph(pkgName)` | Build package as independent sub-graph; no-op in dry-run |
 | `DepOutput(depRef) string` | Get output path of dependency target (`<pkg>` or `<pkg>:<target>`; no same-package shorthand or `<pkg>:*` wildcard); returns `""` in dry-run |
 | `DepBuildDir(depRef) string` | Get build directory of dependency target (same ref rules as `DepOutput`); returns `""` in dry-run or when `DepOutput` is empty |
+| `DepSrcDir(depRef) string` | Get upstream source directory (`SrcDir()`) of dependency package; returns `""` in dry-run |
+| `DepPackageDir(depRef) string` | Get `SourceDir()` of a directly required (`AddRequires`) dependency package (build error if not a direct dependency); returns `""` in dry-run after validating direct dependency |
 | `SetProvidedLinkerScript(path string) *BuildContext` | Forward a linker script to the bound package (`SetProvidedLinkerScript`) |
 | `BuildPath(elem...) string` | Join path elements under `BuildDir()` (or `$builddir` when `BuildDir()` is empty) |
 | `WriteBuildFile(relPath, content) string` | Register a build-dir file write (`string` or `[]byte`) deferred until build execution; returns `BuildPath(relPath)` |
@@ -508,8 +511,9 @@ All setters are fluent (return `*Option`).
 | `SetOnApply` | `(fn func(ctx *ConfigContext, val any))` | Callback after option values resolved, once per build per package, in sorted option-name order. `val` is normalized for `OptionInt` only (JSON `float64`/`int64` converted to `int`); other types are passed through unchanged. The callback's context carries real option values, so reading other options works |
 | `SetGroup` | `(group string)` | Display group; `GroupGlobal` also makes the option global (`IsGlobal()` is `group == GroupGlobal`) |
 | `SetMacroName` | `(name string)` | Override the generated `CONFIG_<NAME>` macro name on both package options (`GenerateConfigDefines`/`GenerateConfigHeader`) and global options (auto-exported); a `%s`/`%v` in the name renders the option value (`PY32F539xx%s` + `M` → `PY32F539xxM=1`) |
+| `SetExportDefine` | `(export bool)` | Enable/disable automatic global `-DCONFIG_<NAME>` export on a `GlobalOption` (`true` by default; `SetExportDefine(false)` keeps the option readable across `OnRequire`/`OnBuild` without broadcasting a global compiler define) |
 
-Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()`, `OnApply()`, `Group()`, `MacroName()`, `IsGlobal()`, `MacroDefines(val any) ([]string, error)`.
+Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()`, `OnApply()`, `Group()`, `MacroName()`, `ExportDefine()`, `ExportDefineSet()`, `IsGlobal()`, `MacroDefines(val any) ([]string, error)`.
 
 Note: without `SetDefault`, the zero value applies (`false` for OptionBool, `""` for OptionString/OptionChoice, `0` for OptionInt). An unset Choice default is not validated against `SetValues`.
 

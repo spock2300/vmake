@@ -33,7 +33,10 @@ func TestSearchNativeRepoWarnsWhenNothingCached(t *testing.T) {
 	previous := projectOverride
 	projectOverride = t.TempDir()
 	t.Cleanup(func() { projectOverride = previous })
-	writePkgTestFile(t, filepath.Join(projectOverride, ".vmake", "config.json"), `{"version":"1"}`)
+	if err := os.MkdirAll(filepath.Join(projectOverride, ".vmake"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writePkgTestFile(t, filepath.Join(projectOverride, "configs", "default.json"), `{"version":"1"}`)
 
 	entries, warnings := searchNativeRepo("test_build", pkgSearchOptions{}, nil)
 	if len(entries) != 0 {

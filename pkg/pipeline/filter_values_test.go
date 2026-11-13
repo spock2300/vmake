@@ -53,6 +53,67 @@ func TestFilterDependenciesSeesPackageGlobalOption(t *testing.T) {
 	}
 }
 
+func TestFilterDependenciesSeesProjectGlobalOptionDeclaredByRoot(t *testing.T) {
+	s := sessionFixture(t)
+	app := s.ctx.DepGraph.Packages["app"]
+	dep := s.ctx.DepGraph.Packages["dep"]
+	leaf := localNode("leaf")
+	leaf.Source.Dir = t.TempDir()
+	s.ctx.DepGraph.Packages["leaf"] = leaf
+	app.Pkg.SetRoot(true)
+	app.Pkg.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.GlobalOption("sdcard").SetDefault(false)
+	})
+	dep.Deps = []string{"leaf"}
+	dep.Pkg.OnRequire(func(ctx *api.RequireContext) {
+		if ctx.When("sdcard", true) {
+			ctx.AddRequires("leaf")
+		}
+	})
+	if err := s.ctx.Resolver.UpdateOrder(); err != nil {
+		t.Fatal(err)
+	}
+	if err := runConfigPhase(s.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := filterDependencies(s.ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if containsString(dep.Deps, "leaf") {
+		t.Fatalf("leaf should be filtered out when sdcard=false, got deps=%v", dep.Deps)
+	}
+
+	s2 := sessionFixture(t)
+	app2 := s2.ctx.DepGraph.Packages["app"]
+	dep2 := s2.ctx.DepGraph.Packages["dep"]
+	leaf2 := localNode("leaf")
+	leaf2.Source.Dir = t.TempDir()
+	s2.ctx.DepGraph.Packages["leaf"] = leaf2
+	app2.Pkg.SetRoot(true)
+	app2.Pkg.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.GlobalOption("sdcard").SetDefault(false)
+	})
+	dep2.Deps = []string{"leaf"}
+	dep2.Pkg.OnRequire(func(ctx *api.RequireContext) {
+		if ctx.When("sdcard", true) {
+			ctx.AddRequires("leaf")
+		}
+	})
+	if err := s2.ctx.Resolver.UpdateOrder(); err != nil {
+		t.Fatal(err)
+	}
+	s2.ctx.Config.Global.Options["sdcard"] = true
+	if err := runConfigPhase(s2.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := filterDependencies(s2.ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(dep2.Deps, "leaf") {
+		t.Fatalf("leaf should be kept when sdcard=true, got deps=%v", dep2.Deps)
+	}
+}
+
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

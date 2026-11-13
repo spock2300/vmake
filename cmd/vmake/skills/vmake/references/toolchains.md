@@ -35,9 +35,10 @@ toolchain override does not.
 project/chip default may differ; `vmake config` shows it. `vmake build`
 auto-installs a registered manifest toolchain on first use, while `inspect` and
 `clean` fail with a hint instead of installing (`deps` commands do not require an
-installed toolchain). `vmake
-doctor` does not execute `OnConfig`, so pass `--toolchain <name>` to diagnose a
-chip-profile default.
+installed toolchain). `vmake doctor` resolves the active chip profile's
+`PreferredToolchain` when `toolchain` is unset and dependencies are available
+offline; pass `--toolchain <name>` to override or diagnose an uncached chip
+toolchain.
 
 The top-level `vmake inspect` `toolchainInfo` and `build/vmake-build.json`
 `toolchain` report the project selection; per-package names appear in

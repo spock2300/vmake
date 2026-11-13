@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-func writeProjectFile(t *testing.T, root, name, content string) {
+func writeConfigFile(t *testing.T, root, rel, content string) {
 	t.Helper()
-	path := filepath.Join(root, ".vmake", name)
+	path := filepath.Join(root, filepath.FromSlash(rel))
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -19,60 +19,72 @@ func writeProjectFile(t *testing.T, root, name, content string) {
 	}
 }
 
-func assertProjectFile(t *testing.T, root, name, want string) {
+func assertConfigFile(t *testing.T, root, rel, want string) {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(root, ".vmake", name))
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 	if err != nil || string(data) != want {
-		t.Fatalf("%s = %q, %v; want %q", name, data, err, want)
+		t.Fatalf("%s = %q, %v; want %q", rel, data, err, want)
 	}
 }
 
-func TestProjectConfigLegacyAndCopy(t *testing.T) {
+func TestProjectConfigDefaultCopyAndUse(t *testing.T) {
 	root := t.TempDir()
 	cfg, path, err := LoadProject(root)
-	if err != nil || path != filepath.Join(root, ".vmake", DefaultFilename) || !reflect.DeepEqual(cfg, newConfigFile()) {
-		t.Fatalf("legacy empty config: %+v, %s, %v", cfg, path, err)
+	if err != nil || path != filepath.Join(root, "configs", "default.json") || !reflect.DeepEqual(cfg, newConfigFile()) {
+		t.Fatalf("empty default config: %+v, %s, %v", cfg, path, err)
 	}
 	infos, err := ListProjectConfigs(root)
-	if err != nil || len(infos) != 1 || !infos[0].Active || !infos[0].Unsaved || infos[0].Error != nil {
+	if err != nil || len(infos) != 1 || infos[0].Name != "configs/default.json" || !infos[0].Active || !infos[0].Unsaved || infos[0].Error != nil {
 		t.Fatalf("unsaved config: %+v, %v", infos, err)
 	}
-	if err := CopyProjectConfig(root, "empty.json"); err != nil {
+	if err := CopyProjectConfig(root, "empty"); err != nil {
 		t.Fatal(err)
 	}
-	copied, err := Load(filepath.Join(root, ".vmake", "empty.json"))
-	if err != nil || !reflect.DeepEqual(copied, cfg) {
+	copied, err := Load(filepath.Join(root, "configs", "empty.json"))
+	if err != nil || copied.Version != ConfigVersion || len(copied.Entries) != 0 {
 		t.Fatalf("empty copy: %+v, %v", copied, err)
 	}
-	for _, name := range []string{ProjectFilename, DefaultFilename} {
-		if _, err := os.Stat(filepath.Join(root, ".vmake", name)); !os.IsNotExist(err) {
-			t.Fatalf("copy created %s: %v", name, err)
+	for _, rel := range []string{".vmake/project.json", ".vmake/local.json", "configs/default.json"} {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel))); !os.IsNotExist(err) {
+			t.Fatalf("copy created %s: %v", rel, err)
 		}
 	}
-	content := "{\n  \"version\": \"1\", \"global\": {\"mode\":\"debug\"},\n  \"entries\": {\"app\": {\"options\":{\"n\":2},\"kconfig\":\"CONFIG_X=y\\n\",\"selected_preset\":\"board\"}},\n  \"extension\": {\"keep\":true}\n}\n"
-	writeProjectFile(t, root, DefaultFilename, content)
-	if err := CopyProjectConfig(root, "board.json"); err != nil {
+
+	content := "{\n  \"version\": \"1\",\n  \"global\": {\"mode\":\"debug\"},\n  \"entries\": {\"app\": {\"options\":{\"n\":2},\"kconfig\":\"CONFIG_X=y\\n\",\"selected_preset\":\"board\"}}\n}\n"
+	writeConfigFile(t, root, "configs/default.json", content)
+	if err := CopyProjectConfig(root, "board"); err != nil {
 		t.Fatal(err)
 	}
-	assertProjectFile(t, root, "board.json", content)
-	if err := CopyProjectConfig(root, "board.json"); err == nil {
+	assertConfigFile(t, root, "configs/board.json", content)
+	if err := CopyProjectConfig(root, "board"); err == nil {
 		t.Fatal("overwrote an existing config")
 	}
-	assertProjectFile(t, root, "board.json", content)
-	if _, err := UseProjectConfig(root, "board.json"); err != nil {
-		t.Fatal(err)
+	assertConfigFile(t, root, "configs/board.json", content)
+
+	sel, err := UseProjectConfig(root, "board")
+	if err != nil || sel != "configs/board.json" {
+		t.Fatalf("UseProjectConfig: %q, %v", sel, err)
+	}
+	local, err := LoadLocal(root)
+	if err != nil || local.Config != "configs/board.json" {
+		t.Fatalf("local selection: %+v, %v", local, err)
 	}
 	cfg, path, err = LoadProject(root)
-	if err != nil || filepath.Base(path) != "board.json" || cfg.Global.Mode != "debug" || cfg.Entries["app"].KConfig != "CONFIG_X=y\n" {
+	if err != nil || path != filepath.Join(root, "configs", "board.json") || cfg.Global.Mode != "debug" || cfg.Entries["app"].KConfig != "CONFIG_X=y\n" {
 		t.Fatalf("selected config: %+v, %s, %v", cfg, path, err)
 	}
-	if err := CopyProjectConfig(root, "board-copy.json"); err != nil {
+	if err := CopyProjectConfig(root, "test/sub"); err != nil {
 		t.Fatal(err)
 	}
-	assertProjectFile(t, root, "board-copy.json", content)
+	assertConfigFile(t, root, "configs/test/sub.json", content)
 	_, path, err = LoadProject(root)
 	if err != nil || filepath.Base(path) != "board.json" {
 		t.Fatalf("copy changed selection: %s, %v", path, err)
+	}
+
+	subCfg, subPath, err := LoadProjectWithOverride(root, "test/sub")
+	if err != nil || subPath != filepath.Join(root, "configs", "test", "sub.json") || subCfg.Global.Mode != "debug" {
+		t.Fatalf("LoadProjectWithOverride: %+v, %s, %v", subCfg, subPath, err)
 	}
 }
 
@@ -81,175 +93,127 @@ func TestProjectSelectionErrors(t *testing.T) {
 		"{",
 		"null",
 		"{}",
-		`{"config":null}`,
-		`{"config":12}`,
-		`{"config":""}`,
-		`{"config":"../outside.json"}`,
-		`{"config":"project.json"}`,
-		`{"config":"config.json","pins":"bad"}`,
-		`{"config":"config.json","pins":{"pkg":""}}`,
-		`{"config":"config.json","pins":{"":"1.0.0"}}`,
-		`{"config":"config.json","pins":{"pkg":123}}`,
+		`{"unknown_field":1}`,
+		`{"default_config":null}`,
+		`{"default_config":12}`,
+		`{"default_config":""}`,
+		`{"default_config":"../outside.json"}`,
+		`{"default_config":"configs/default.json","pins":"bad"}`,
+		`{"default_config":"configs/default.json","pins":{"pkg":""}}`,
+		`{"default_config":"configs/default.json","pins":{"":"1.0.0"}}`,
+		`{"default_config":"configs/default.json","pins":{"pkg":123}}`,
 	} {
 		t.Run(selection, func(t *testing.T) {
 			root := t.TempDir()
-			writeProjectFile(t, root, DefaultFilename, `{"version":"1","entries":{}}`)
-			writeProjectFile(t, root, ProjectFilename, selection)
+			writeConfigFile(t, root, "configs/default.json", `{"version":"1","entries":{}}`)
+			writeConfigFile(t, root, ".vmake/project.json", selection)
 			if _, _, err := LoadProject(root); err == nil || !strings.Contains(err.Error(), ProjectFilename) {
 				t.Fatalf("invalid selection silently accepted: %v", err)
 			}
-			if _, err := UseProjectConfig(root, DefaultFilename); err == nil {
-				t.Fatal("overwrote a damaged project selection")
+			if _, err := UseProjectConfig(root, "default"); err == nil {
+				t.Fatal("accepted damaged project metadata")
 			}
-			if err := CopyProjectConfig(root, "copy.json"); err == nil {
-				t.Fatal("copied with invalid selection")
+			if err := CopyProjectConfig(root, "copy"); err == nil {
+				t.Fatal("copied with invalid project metadata")
 			}
-			assertProjectFile(t, root, ProjectFilename, selection)
+			assertConfigFile(t, root, ".vmake/project.json", selection)
 		})
 	}
 }
 
 func TestProjectConfigMissingInvalidAndRecovery(t *testing.T) {
 	root := t.TempDir()
-	selection := `{"config":"gone.json"}`
-	writeProjectFile(t, root, ProjectFilename, selection)
-	writeProjectFile(t, root, DefaultFilename, `{"version":"1","entries":{}}`)
-	writeProjectFile(t, root, "broken.json", "{")
+	writeConfigFile(t, root, ".vmake/project.json", `{"default_config":"configs/gone.json"}`)
+	writeConfigFile(t, root, "configs/default.json", `{"version":"1","entries":{}}`)
+	writeConfigFile(t, root, "configs/broken.json", "{")
 	if _, _, err := LoadProject(root); err == nil || !strings.Contains(err.Error(), "gone.json") {
-		t.Fatalf("missing config fell back: %v", err)
+		t.Fatalf("missing default_config fell back: %v", err)
 	}
-	if err := CopyProjectConfig(root, "copy.json"); err == nil {
+	if err := CopyProjectConfig(root, "copy"); err == nil {
 		t.Fatal("copied missing explicit config")
 	}
-	for _, target := range []string{"gone.json", "broken.json"} {
+	for _, target := range []string{"gone", "broken"} {
 		if _, err := UseProjectConfig(root, target); err == nil {
 			t.Fatalf("selected invalid config %s", target)
 		}
-		assertProjectFile(t, root, ProjectFilename, selection)
 	}
 	infos, err := ListProjectConfigs(root)
-	if err != nil || len(infos) != 3 || infos[0].Name != "broken.json" || infos[0].Error == nil || infos[2].Name != "gone.json" || !infos[2].Active || infos[2].Error == nil {
+	if err != nil || len(infos) != 3 || infos[0].Name != "configs/broken.json" || infos[0].Error == nil || infos[2].Name != "configs/gone.json" || !infos[2].Active || infos[2].Error == nil {
 		t.Fatalf("invalid file listing: %+v, %v", infos, err)
 	}
-	if _, err := UseProjectConfig(root, DefaultFilename); err != nil {
-		t.Fatalf("cannot recover missing selected file: %v", err)
+	if _, err := UseProjectConfig(root, "default"); err != nil {
+		t.Fatalf("cannot recover missing default_config via local selection: %v", err)
 	}
-	writeProjectFile(t, root, DefaultFilename, "{")
+	writeConfigFile(t, root, "configs/default.json", "{")
 	if _, _, err := LoadProject(root); err == nil {
 		t.Fatal("invalid selected JSON accepted")
 	}
-	if err := os.Remove(filepath.Join(root, ".vmake", DefaultFilename)); err != nil {
+	if err := os.Remove(filepath.Join(root, "configs", "default.json")); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := LoadProject(root); err == nil {
-		t.Fatal("explicit default silently created")
+		t.Fatal("explicit local selection silently created")
 	}
 }
 
-func TestProjectConfigFilenames(t *testing.T) {
-	for _, name := range []string{"", ".json", "config", "config.JSON", "project.json", "PROJECT.json", "../a.json", "sub/a.json", `sub\a.json`, "/tmp/a.json", `C:\a.json`, "C:a.json", "a\x00.json", "a\n.json", "a*.json"} {
-		t.Run(name, func(t *testing.T) {
-			if err := ValidateFilename(name); err == nil {
-				t.Fatalf("accepted %q", name)
+func TestProjectConfigReferences(t *testing.T) {
+	for _, ref := range []string{"", ".json", "../a.json", "configs/../a.json", ".hidden", "configs/.hidden.json", `sub\a.json`, "/tmp/a.json", `C:\a.json`, "C:a.json", "a\x00.json", "a\n.json", "a*.json"} {
+		t.Run(ref, func(t *testing.T) {
+			if _, err := NormalizeConfigReference(ref); err == nil {
+				t.Fatalf("accepted %q", ref)
 			}
 			root := t.TempDir()
-			if _, err := UseProjectConfig(root, name); err == nil {
-				t.Fatal("selected invalid filename")
+			if _, err := UseProjectConfig(root, ref); err == nil {
+				t.Fatal("selected invalid ref")
 			}
-			if err := CopyProjectConfig(root, name); err == nil {
-				t.Fatal("copied to invalid filename")
+			if err := CopyProjectConfig(root, ref); err == nil {
+				t.Fatal("copied to invalid ref")
 			}
 		})
 	}
-	for _, name := range []string{"config.json", "board-debug.json", "板型 A.json"} {
-		if err := ValidateFilename(name); err != nil {
-			t.Fatal(err)
+	for ref, want := range map[string]string{
+		"default":                 "configs/default.json",
+		"evb-widgets":             "configs/evb-widgets.json",
+		"configs/evb-widgets.json": "configs/evb-widgets.json",
+		"test/minimal":            "configs/test/minimal.json",
+		"./configs/板型 A.json":     "configs/板型 A.json",
+	} {
+		got, err := NormalizeConfigReference(ref)
+		if err != nil || got != want {
+			t.Fatalf("NormalizeConfigReference(%q) = %q, %v; want %q", ref, got, err, want)
 		}
 	}
 }
 
 func TestProjectConfigExplicitErrorNamesSelection(t *testing.T) {
 	root := t.TempDir()
-	writeProjectFile(t, root, ProjectFilename, `{"config":"gone.json"}`)
+	writeConfigFile(t, root, ".vmake/project.json", `{"default_config":"gone"}`)
 	_, _, err := LoadProject(root)
 	if err == nil || !strings.Contains(err.Error(), ProjectFilename) || !strings.Contains(err.Error(), "gone.json") {
-		t.Fatalf("missing explicit config error does not name the selection file: %v", err)
+		t.Fatalf("missing default_config error does not name the selection file: %v", err)
 	}
-	writeProjectFile(t, root, "broken.json", "{")
-	writeProjectFile(t, root, ProjectFilename, `{"config":"broken.json"}`)
-	if _, _, err := LoadProject(root); err == nil || !strings.Contains(err.Error(), ProjectFilename) {
-		t.Fatalf("invalid explicit config error does not name the selection file: %v", err)
-	}
-}
-
-func TestProjectConfigVariantNameResolution(t *testing.T) {
-	root := t.TempDir()
-	dir := filepath.Join(root, ".vmake")
-	writeProjectFile(t, root, DefaultFilename, `{"version":"1","entries":{}}`)
-	if err := os.Symlink(filepath.Join(dir, DefaultFilename), filepath.Join(dir, "Config.json")); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
-	if got := matchingConfigName(dir, "Config.json"); got != DefaultFilename {
-		t.Fatalf("matchingConfigName variant spelling = %q, want %q", got, DefaultFilename)
-	}
-	infos, err := ListProjectConfigs(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(infos) != 2 || infos[0].Name != "Config.json" || infos[1].Name != DefaultFilename || !infos[1].Active || infos[0].Active {
-		t.Fatalf("variant spelling listed twice or mislabeled: %+v", infos)
-	}
-	name, err := UseProjectConfig(root, "Config.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name != DefaultFilename {
-		t.Fatalf("UseProjectConfig stored variant spelling %q, want %q", name, DefaultFilename)
-	}
-	_, path, err := LoadProject(root)
-	if err != nil || filepath.Base(path) != DefaultFilename {
-		t.Fatalf("selection stored as %s, %v; want %s", path, err, DefaultFilename)
-	}
-}
-
-func TestProjectConfigDistinctCaseVariantsKeepSelection(t *testing.T) {
-	root := t.TempDir()
-	dir := filepath.Join(root, ".vmake")
-	writeProjectFile(t, root, DefaultFilename, `{"version":"1","entries":{}}`)
-	writeProjectFile(t, root, "Config.json", `{"version":"1","entries":{}}`)
-	first, firstErr := os.Stat(filepath.Join(dir, DefaultFilename))
-	second, secondErr := os.Stat(filepath.Join(dir, "Config.json"))
-	if firstErr != nil || secondErr != nil {
-		t.Fatal(firstErr, secondErr)
-	}
-	if os.SameFile(first, second) {
-		t.Skip("case-insensitive filesystem; spellings cannot be distinct files")
-	}
-	if got := matchingConfigName(dir, DefaultFilename); got != "" {
-		t.Fatalf("matchingConfigName merged distinct files into %q", got)
-	}
-	name, err := UseProjectConfig(root, "Config.json")
-	if err != nil || name != "Config.json" {
-		t.Fatalf("UseProjectConfig = %q, %v; want Config.json", name, err)
-	}
-	_, path, err := LoadProject(root)
-	if err != nil || filepath.Base(path) != "Config.json" {
-		t.Fatalf("selection = %s, %v; want Config.json", path, err)
+	writeConfigFile(t, root, "configs/broken.json", "{")
+	writeConfigFile(t, root, ".vmake/local.json", `{"version":"1","config":"configs/broken.json"}`)
+	if _, _, err := LoadProject(root); err == nil || !strings.Contains(err.Error(), LocalFileName) {
+		t.Fatalf("invalid local config error does not name local.json: %v", err)
 	}
 }
 
 func TestProjectCopyDoesNotFollowDestinationSymlink(t *testing.T) {
 	root := t.TempDir()
-	writeProjectFile(t, root, DefaultFilename, `{"version":"1","entries":{}}`)
+	writeConfigFile(t, root, "configs/default.json", `{"version":"1","entries":{}}`)
 	target := filepath.Join(root, "outside.json")
 	if err := os.WriteFile(target, []byte("preserve"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(target, filepath.Join(root, ".vmake", "link.json")); err != nil {
+	if err := os.Symlink(target, filepath.Join(root, "configs", "link.json")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if err := CopyProjectConfig(root, "link.json"); err == nil {
+	if err := CopyProjectConfig(root, "link"); err == nil {
 		t.Fatal("copied over symlink")
+	}
+	if _, _, err := LoadProjectWithOverride(root, "link"); err == nil {
+		t.Fatal("read symlink escaping configs/")
 	}
 	data, err := os.ReadFile(target)
 	if err != nil || string(data) != "preserve" {
@@ -260,7 +224,7 @@ func TestProjectCopyDoesNotFollowDestinationSymlink(t *testing.T) {
 func TestProjectConfigDescription(t *testing.T) {
 	root := t.TempDir()
 	path, err := SetProjectDescription(root, "  Board A 调试配置  ")
-	if err != nil || path != filepath.Join(root, ".vmake", DefaultFilename) {
+	if err != nil || path != filepath.Join(root, "configs", "default.json") {
 		t.Fatalf("set description: %s, %v", path, err)
 	}
 	cfg, _, err := LoadProject(root)
@@ -275,10 +239,10 @@ func TestProjectConfigDescription(t *testing.T) {
 	if err != nil || !strings.Contains(string(data), `"description": "Board A 调试配置"`) {
 		t.Fatalf("saved description: %q, %v", data, err)
 	}
-	if err := CopyProjectConfig(root, "board.json"); err != nil {
+	if err := CopyProjectConfig(root, "board"); err != nil {
 		t.Fatal(err)
 	}
-	copied, err := Load(filepath.Join(root, ".vmake", "board.json"))
+	copied, err := Load(filepath.Join(root, "configs", "board.json"))
 	if err != nil || copied.Description != "Board A 调试配置" {
 		t.Fatalf("copied description: %+v, %v", copied, err)
 	}
@@ -298,28 +262,26 @@ func TestProjectConfigDescription(t *testing.T) {
 func TestProjectDescriptionValidation(t *testing.T) {
 	root := t.TempDir()
 	original := `{"version":"1","entries":{}}`
-	writeProjectFile(t, root, DefaultFilename, original)
-	writeProjectFile(t, root, ProjectFilename, `{"config":"config.json"}`)
+	writeConfigFile(t, root, "configs/default.json", original)
 	for _, bad := range []string{"tab\there", strings.Repeat("a", MaxDescriptionLength+1)} {
 		if _, err := SetProjectDescription(root, bad); err == nil {
 			t.Fatalf("accepted invalid description %q", bad)
 		}
-		assertProjectFile(t, root, DefaultFilename, original)
+		assertConfigFile(t, root, "configs/default.json", original)
 	}
-	// 换行合法：说明可以多行，首尾空白由 TrimSpace 去掉。
 	if _, err := SetProjectDescription(root, "first line\nsecond line"); err != nil {
 		t.Fatalf("rejected multiline description: %v", err)
 	}
 	if _, err := SetProjectDescription(root, strings.Repeat("a", MaxDescriptionLength)); err != nil {
 		t.Fatalf("rejected max-length description: %v", err)
 	}
-	writeProjectFile(t, root, ProjectFilename, `{"config":"missing.json"}`)
+	writeConfigFile(t, root, ".vmake/project.json", `{"default_config":"missing"}`)
 	if _, err := SetProjectDescription(root, "text"); err == nil || !strings.Contains(err.Error(), ProjectFilename) {
-		t.Fatalf("wrote description for missing explicit selection: %v", err)
+		t.Fatalf("wrote description for missing default_config: %v", err)
 	}
 }
 
-func TestProjectPinsRoundTripAndConfigPreservation(t *testing.T) {
+func TestProjectPinsRoundTripAndDefaultConfigPreservation(t *testing.T) {
 	root := t.TempDir()
 	pins, err := LoadProjectPins(root)
 	if err != nil || len(pins) != 0 {
@@ -333,27 +295,22 @@ func TestProjectPinsRoundTripAndConfigPreservation(t *testing.T) {
 		t.Fatalf("loaded pins: %v, %v", pins, err)
 	}
 	cfg, path, err := LoadProject(root)
-	if err != nil || filepath.Base(path) != DefaultFilename || cfg == nil {
+	if err != nil || filepath.Base(path) != "default.json" || cfg == nil {
 		t.Fatalf("LoadProject with pins only: %+v, %s, %v", cfg, path, err)
 	}
-	writeProjectFile(t, root, "board.json", `{"version":"1","entries":{}}`)
-	if _, err := UseProjectConfig(root, "board.json"); err != nil {
-		t.Fatalf("UseProjectConfig: %v", err)
-	}
-	pins, err = LoadProjectPins(root)
-	if err != nil || !reflect.DeepEqual(pins, map[string]string{"official/zlib": "1.3.1"}) {
-		t.Fatalf("UseProjectConfig lost pins: %v, %v", pins, err)
-	}
+
+	writeConfigFile(t, root, ".vmake/project.json", `{"default_config":"configs/board.json","pins":{"official/zlib":"1.3.1"}}`)
+	writeConfigFile(t, root, "configs/board.json", `{"version":"1","entries":{}}`)
 	if err := SaveProjectPins(root, nil); err != nil {
 		t.Fatalf("SaveProjectPins(nil): %v", err)
 	}
 	_, path, err = LoadProject(root)
 	if err != nil || filepath.Base(path) != "board.json" {
-		t.Fatalf("SaveProjectPins(nil) lost explicit config: %s, %v", path, err)
+		t.Fatalf("SaveProjectPins(nil) lost default_config: %s, %v", path, err)
 	}
 }
 
-func TestProjectPinsRemovesFileWhenImplicitConfig(t *testing.T) {
+func TestProjectPinsRemovesFileWhenNoDefaultConfig(t *testing.T) {
 	root := t.TempDir()
 	if err := SaveProjectPins(root, map[string]string{"pkg": "1.0.0"}); err != nil {
 		t.Fatal(err)
@@ -362,6 +319,6 @@ func TestProjectPinsRemovesFileWhenImplicitConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".vmake", ProjectFilename)); !os.IsNotExist(err) {
-		t.Fatalf("expected project.json removed when pins empty and config implicit, got err=%v", err)
+		t.Fatalf("expected project.json removed when pins empty and no default_config, got err=%v", err)
 	}
 }

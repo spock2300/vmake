@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,11 +9,15 @@ import (
 
 	"github.com/spf13/cobra"
 
+	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/gosrc"
+	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
+	"github.com/spock2300/vmake/pkg/lockfile"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
+	"github.com/spock2300/vmake/pkg/resolver"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -25,9 +30,9 @@ scans build.go files in the current project for patterns that currently work
 but may become errors in future vmake versions:
 
   - [autoWire] Package uses OnRequire/AddRequires but its targets don't call
-    AddDeps. AddRequires only resolves and fetches the package; it does not
-    create target build edges. Add explicit AddDeps("pkg:target") to each
-    target that links the dependency.
+    AddDeps or UseRequires. AddRequires only resolves and fetches the package;
+    it does not create target build edges. Add explicit AddDeps("pkg:target")
+    or UseRequires() to each target that links the dependency.
 
   - [noRoot] No package declares SetRoot(true). vmake currently uses heuristics
     to pick build roots, but these may produce surprising results in projects
@@ -40,7 +45,8 @@ but may become errors in future vmake versions:
 
 func init() {
 	RootCmd.AddCommand(doctorCmd)
-	doctorCmd.Flags().StringVar(&toolchainFlag, "toolchain", "", "toolchain to diagnose (default: active config, or host when unset)")
+	addConfigFlag(doctorCmd)
+	doctorCmd.Flags().StringVar(&toolchainFlag, "toolchain", "", "toolchain to diagnose (default: active config, chip PreferredToolchain, or host)")
 	doctorCmd.RegisterFlagCompletionFunc("toolchain", completeToolchain)
 }
 
@@ -61,22 +67,27 @@ func runDoctor() {
 	if projectDir := findProjectDirSoft(); projectDir != "" {
 		workDir = projectDir
 	}
-	cfg, _, err := config.LoadProject(workDir)
+	cfg, _, err := config.LoadProjectWithOverride(workDir, configFlag)
 	if err != nil {
 		vlog.Fatal("load project config: %v", err)
 	}
-	tcName := pipeline.ResolveToolchainName(cfg, toolchainFlag, "")
+	nested := checkNestedProjectMarker(startDir, workDir)
+	sources, err := buildscript.Scan(workDir)
+	if err != nil {
+		vlog.Fatal("scan: %v", err)
+	}
+	fallbackTC := ""
+	if toolchainFlag == "" && (cfg.Global == nil || cfg.Global.Toolchain == "") && len(nested) == 0 && len(sources) > 0 {
+		fallbackTC = resolveDoctorPreferredToolchain(workDir, cfg)
+	}
+	tcName := pipeline.ResolveToolchainName(cfg, toolchainFlag, fallbackTC)
 	tc, tcErr := toolchain.GetManager().GetToolchain(tcName)
 	findings := checkPlatform(tc)
 	if tcErr != nil {
 		findings = append(findings, doctorFinding{Severity: "error", Category: "toolchain", Message: tcErr.Error()})
 	}
-	findings = append(findings, checkNestedProjectMarker(startDir, workDir)...)
+	findings = append(findings, nested...)
 
-	sources, err := buildscript.Scan(workDir)
-	if err != nil {
-		vlog.Fatal("scan: %v", err)
-	}
 	if len(sources) == 0 {
 		reportDoctorFindings(workDir, findings)
 		vlog.Fatal("no build.go files found")
@@ -163,7 +174,7 @@ func checkAutoWire(src buildscript.Source) []doctorFinding {
 	if !packageSourceContains(src, "AddRequires") {
 		return nil
 	}
-	if packageSourceContains(src, "AddDeps") {
+	if packageSourceContains(src, "AddDeps") || packageSourceContains(src, "UseRequires") {
 		return nil
 	}
 
@@ -171,8 +182,67 @@ func checkAutoWire(src buildscript.Source) []doctorFinding {
 		Severity: "warn",
 		File:     src.Path,
 		Category: "autoWire",
-		Message:  "package uses AddRequires but targets have no AddDeps; AddRequires does not create target build edges",
+		Message:  "package uses AddRequires but targets have no AddDeps or UseRequires; AddRequires does not create target build edges",
 	}}
+}
+
+func resolveDoctorPreferredToolchain(workDir string, cfg *config.ConfigFile) string {
+	pins, err := config.LoadProjectPins(workDir)
+	if err != nil {
+		return ""
+	}
+	local, err := config.LoadLocal(workDir)
+	if err != nil {
+		return ""
+	}
+	lockPath := filepath.Join(workDir, ".vmake", "vmake.lock")
+	lock := lockfile.New()
+	if loaded, err := lockfile.Load(lockPath); err == nil {
+		lock = loaded
+	}
+	paths := &pipeline.Paths{
+		ProjectDir: workDir,
+		DepsDir:    filepath.Join(workDir, ".vmake_deps"),
+		CacheDir:   getCacheDir(),
+		ReposDir:   getReposDir(),
+		LockPath:   lockPath,
+	}
+	prevLevel := vlog.GetLevel()
+	vlog.SetLevel(vlog.Quiet)
+	iexec.SetQuiet(true)
+	scriptfs.SetReadOnly(true)
+	restoreOut := silenceStdout()
+	restoreErr := silenceStderr()
+	defer func() {
+		restoreOut()
+		restoreErr()
+		scriptfs.SetReadOnly(false)
+		vlog.SetLevel(prevLevel)
+		iexec.SetQuiet(vlog.IsQuiet())
+	}()
+
+	ctx := pipeline.NewContext(pipeline.ResolveParams{
+		WorkDir:      workDir,
+		Config:       cfg,
+		Lock:         lock,
+		LockPath:     lockPath,
+		Pins:         pins,
+		SourceLinks:  local.Links,
+		TrustChecker: remoteScriptTrustChecker,
+		Paths:        paths,
+	})
+	ctx.Context = context.Background()
+	ctx.LockPolicy = resolver.LockPolicy{Offline: true, DryRun: true}
+	defer closeProject(ctx)
+
+	if err := pipeline.Require(ctx); err != nil {
+		return ""
+	}
+	if err := pipeline.Configure(ctx); err != nil {
+		return ""
+	}
+	pipeline.ResolveActiveChipForDisplay(ctx)
+	return ctx.PreferredToolchain
 }
 
 func packageSourceContains(src buildscript.Source, needle string) bool {

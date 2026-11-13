@@ -26,7 +26,7 @@ func TestQueryCMakeTargetDirectories(t *testing.T) {
 			writeExtensionLoader(t, repo)
 			writeHealthyDefinition(t, filepath.Join(repo, "healthy", "toolchain.json"), "healthy")
 			project := filepath.Join(dir, "工程 space")
-			writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","global":{"toolchain":"healthy"},"entries":{}}`)
+			writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{"version":"1","global":{"toolchain":"healthy"},"entries":{}}`)
 			writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
@@ -115,7 +115,7 @@ func Main(ctx *plugin.Context) {
 }
 `, "__TOOLS__", test.tools))
 			project := filepath.Join(dir, "project")
-			writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","global":{"toolchain":"pending"},"entries":{}}`)
+			writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{"version":"1","global":{"toolchain":"pending"},"entries":{}}`)
 			writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
@@ -147,7 +147,7 @@ func TestQuerySkipsUnmaterializedLocalGitSources(t *testing.T) {
 	writeExtensionLoader(t, repo)
 	writeHealthyDefinition(t, filepath.Join(repo, "healthy", "toolchain.json"), "healthy")
 	project := filepath.Join(dir, "project")
-	writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","global":{"toolchain":"healthy"},"entries":{}}`)
+	writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{"version":"1","global":{"toolchain":"healthy"},"entries":{}}`)
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
@@ -417,7 +417,7 @@ func TestQueryCompactTreeRendering(t *testing.T) {
 	writeExtensionLoader(t, repo)
 	writeHealthyDefinition(t, filepath.Join(repo, "healthy", "toolchain.json"), "healthy")
 	project := filepath.Join(dir, "project")
-	writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","global":{"toolchain":"healthy"},"entries":{}}`)
+	writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{"version":"1","global":{"toolchain":"healthy"},"entries":{}}`)
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {

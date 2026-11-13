@@ -12,6 +12,7 @@ const ConfigVersion = "1"
 type ConfigFile struct {
 	Version     string                  `json:"version"`
 	Description string                  `json:"description,omitempty"`
+	Root        string                  `json:"root,omitempty"`
 	Global      *GlobalConfig           `json:"global,omitempty"`
 	Entries     map[string]*EntryConfig `json:"entries"`
 }
@@ -40,7 +41,7 @@ func (cfg *ConfigFile) UnmarshalJSON(data []byte) error {
 	type rawConfig struct {
 		Version     string                     `json:"version"`
 		Description string                     `json:"description"`
-		Toolchain   string                     `json:"toolchain"`
+		Root        string                     `json:"root"`
 		Global      *GlobalConfig              `json:"global,omitempty"`
 		Entries     map[string]json.RawMessage `json:"entries"`
 	}
@@ -53,14 +54,13 @@ func (cfg *ConfigFile) UnmarshalJSON(data []byte) error {
 	*cfg = *newConfigFile()
 	cfg.Version = raw.Version
 	cfg.Description = raw.Description
+	cfg.Root = raw.Root
 
 	if raw.Global != nil {
 		cfg.Global = raw.Global
 		if cfg.Global.Options == nil {
 			cfg.Global.Options = make(map[string]any)
 		}
-	} else if raw.Toolchain != "" {
-		cfg.Global.Toolchain = raw.Toolchain
 	}
 
 	for name, rawEntry := range raw.Entries {
@@ -71,6 +71,23 @@ func (cfg *ConfigFile) UnmarshalJSON(data []byte) error {
 	}
 
 	return nil
+}
+
+func PruneEmptyEntries(cfg *ConfigFile) {
+	if cfg == nil {
+		return
+	}
+	for name, entry := range cfg.Entries {
+		if entry == nil || (len(entry.Options) == 0 && entry.KConfig == "" && entry.SelectedPreset == "") {
+			delete(cfg.Entries, name)
+		}
+	}
+	if cfg.Entries == nil {
+		cfg.Entries = make(map[string]*EntryConfig)
+	}
+	if cfg.Global != nil && cfg.Global.Toolchain == "" && cfg.Global.Mode == "" && len(cfg.Global.Options) == 0 {
+		cfg.Global = nil
+	}
 }
 
 func Load(path string) (*ConfigFile, error) {

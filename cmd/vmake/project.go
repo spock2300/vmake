@@ -10,11 +10,13 @@ import (
 )
 
 type projectOptions struct {
-	execution     context.Context
-	policy        *resolver.LockPolicy
-	pins          map[string]string
-	overrides     []inspectOverride
-	softGitignore bool
+	execution      context.Context
+	policy         *resolver.LockPolicy
+	pins           map[string]string
+	overrides      []inspectOverride
+	configOverride string
+	softGitignore  bool
+	skipGitignore  bool
 }
 
 type projectResolveError struct {
@@ -43,7 +45,7 @@ func openProject(opts projectOptions) (*RuntimeContext, error) {
 	}
 	locks := commandStorageLocks()
 	ignoreLock := opts.policy != nil && opts.policy.IgnoreAll
-	params, err := loadResolveParams(ignoreLock, opts.softGitignore)
+	params, err := loadResolveParamsWithOptions(ignoreLock, opts.softGitignore, opts.skipGitignore, opts.configOverride)
 	if err != nil {
 		return nil, err
 	}
@@ -57,14 +59,13 @@ func openProject(opts projectOptions) (*RuntimeContext, error) {
 	}
 	if opts.policy != nil {
 		ctx.LockPolicy = *opts.policy
-	} else {
-		if lockedFlag {
-			ctx.LockPolicy.StrictWrapper = true
-			ctx.LockPolicy.Locked = true
-		}
-		if offlineFlag {
-			ctx.LockPolicy.Offline = true
-		}
+	}
+	if lockedFlag {
+		ctx.LockPolicy.StrictWrapper = true
+		ctx.LockPolicy.Locked = true
+	}
+	if offlineFlag {
+		ctx.LockPolicy.Offline = true
 	}
 	var overrideErr error
 	if len(overrides) > 0 {

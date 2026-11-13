@@ -102,10 +102,17 @@ func (t *Target) AddPublicIncludes(args ...any) *Target {
 			t.includeRules = make(map[string][]string)
 		}
 		for _, d := range dirs {
-			t.includeRules[d] = append(t.includeRules[d], pattern)
+			key := filepath.ToSlash(filepath.Clean(d))
+			t.includeRules[key] = append(t.includeRules[key], pattern)
 		}
 	} else {
 		t.publicIncludes = append(t.publicIncludes, strs...)
+		if t.includeRules != nil {
+			for _, d := range strs {
+				key := filepath.ToSlash(filepath.Clean(d))
+				delete(t.includeRules, key)
+			}
+		}
 	}
 
 	return t
@@ -114,6 +121,10 @@ func (t *Target) AddPublicIncludes(args ...any) *Target {
 func (t *Target) IncludeRule(dir string) []string {
 	if t.includeRules == nil {
 		return nil
+	}
+	key := filepath.ToSlash(filepath.Clean(dir))
+	if rules, ok := t.includeRules[key]; ok {
+		return rules
 	}
 	return t.includeRules[dir]
 }
@@ -459,7 +470,13 @@ func (t *Target) RemoveIncludes(dirs ...any) *Target {
 }
 
 func (t *Target) RemovePublicIncludes(dirs ...any) *Target {
-	t.publicIncludes = removeStrings(t.publicIncludes, flattenAny(dirs)...)
+	rem := flattenAny(dirs)
+	t.publicIncludes = removeStrings(t.publicIncludes, rem...)
+	if t.includeRules != nil {
+		for _, d := range rem {
+			delete(t.includeRules, d)
+		}
+	}
 	return t
 }
 

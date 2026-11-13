@@ -31,6 +31,7 @@ them too.`,
 
 func init() {
 	RootCmd.AddCommand(cleanCmd)
+	addConfigFlag(cleanCmd)
 	cleanCmd.Flags().BoolVar(&cleanAllFlag, "all", false, "clean build outputs for every configuration")
 }
 

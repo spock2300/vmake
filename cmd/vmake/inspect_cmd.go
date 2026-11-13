@@ -17,6 +17,7 @@ import (
 	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
@@ -192,7 +193,7 @@ warned. Reads, stats and globs still work. vmake's own state files are
 unaffected.
 
 --set overrides a configuration option for this run only; nothing is written to
-.vmake/config.json. Values are coerced by the declared option type: bool accepts
+configs/default.json. Values are coerced by the declared option type: bool accepts
 true/false, on/off, and 1/0; int requires an integer; string and choice values
 keep their raw text, so a string can be "42" or "true". Unknown packages, unknown
 options, wrong value types and invalid choice values are rejected.
@@ -206,6 +207,7 @@ On success the envelope has status "ok". On failure it has status "error" with
 diagnostics, vmake exits 1, and stderr carries one human-readable error line.`,
 		Args: cobra.NoArgs,
 	}
+	addConfigFlag(cmd)
 	cmd.Flags().StringArrayVarP(&setFlags, "set", "s", nil, "override an option for this run only (format: [pkg/]option=value)")
 	cmd.Flags().BoolVar(&noTargets, "no-targets", false, "skip dry-run OnBuild target declaration")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
@@ -408,9 +410,13 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 	compileDatabase := filepath.Join(root, "build", "compile_commands.json")
 	buildReport := reportPath(root)
 	testReport := testReportPath(root)
+	configFile := filepath.Base(ctx.ConfigPath)
+	if rel, err := filepath.Rel(root, ctx.ConfigPath); err == nil {
+		configFile = filepath.ToSlash(rel)
+	}
 	data := &inspectData{
 		Root:                   root,
-		ConfigFile:             filepath.Base(ctx.ConfigPath),
+		ConfigFile:             configFile,
 		ConfigSHA256:           ctx.ConfigDigest,
 		Mode:                   inspection.Mode,
 		Toolchain:              inspection.TcName,
@@ -437,6 +443,7 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 	}
 	sources := inspectSourceStates(ctx, inspection)
 	diagnostics := make([]inspectDiagnostic, 0)
+	pkgSubGraphs := make(map[string][]string)
 	for _, name := range inspectPackageNames(ctx) {
 		node := ctx.DepGraph.Packages[name]
 		if node == nil || node.Source == nil {
@@ -470,17 +477,23 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 			diagnostics = append(diagnostics, *source.Diagnostic)
 		}
 		if pkg.Needed {
-			pkg.BuildDir, pkg.BuildKey = inspectBuildDirFields(inspection.PkgDirs[name], node.IsLocal())
+			pkg.BuildDir, pkg.BuildKey = inspectBuildDirFields(inspection.PkgDirs[name], inspection.Layouts[name], node.IsLocal())
 			if includeTargets && source.Present {
-				targets, err := inspectTargets(ctx, inspection, name, node)
+				targets, subs, err := inspectTargets(ctx, inspection, name, node)
 				if err != nil {
 					diagnostics = append(diagnostics, inspectTargetDiagnostic(name, err))
 				} else {
 					pkg.Targets = targets
+					if len(subs) > 0 {
+						pkgSubGraphs[name] = subs
+					}
 				}
 			}
 		}
 		data.Packages = append(data.Packages, pkg)
+	}
+	if includeTargets {
+		mergeInspectTargetEdges(ctx, inspection.Needed, data, pkgSubGraphs)
 	}
 	return data, diagnostics
 }
@@ -490,9 +503,12 @@ func inspectPathExists(path string) bool {
 	return err == nil
 }
 
-func inspectBuildDirFields(dirs *api.PkgDirs, local bool) (string, string) {
+func inspectBuildDirFields(dirs *api.PkgDirs, layout *build.PackageLayout, local bool) (string, string) {
 	if dirs == nil || dirs.BuildDir == "" {
 		return "", ""
+	}
+	if layout != nil && layout.BuildKey != "" {
+		return dirs.BuildDir, layout.BuildKey
 	}
 	if !local || filepath.Base(filepath.Dir(dirs.BuildDir)) != "build" {
 		return dirs.BuildDir, ""
@@ -560,56 +576,11 @@ func inspectSourceStates(ctx *RuntimeContext, inspection *pipeline.Inspection) m
 }
 
 func inspectSourcePresent(ctx *RuntimeContext, name string, node *resolver.PackageNode) bool {
-	return inspectSourceTreePopulated(inspectExpectedSourceDir(ctx, name, node))
+	return pipeline.IsPackageSourcePresent(ctx, name, node)
 }
 
 func inspectExpectedSourceDir(ctx *RuntimeContext, name string, node *resolver.PackageNode) string {
-	if node.Source == nil {
-		return ""
-	}
-	if node.Source.Link != nil {
-		if root := linkedThirdPartyRootForInspect(ctx, name, node); root != "" {
-			return filepath.Join(root, "src")
-		}
-		return node.Source.Link.Path
-	}
-	if node.IsLocal() {
-		if node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 {
-			return filepath.Join(node.Source.Dir, "src")
-		}
-		return node.Source.Dir
-	}
-	owner := name
-	member := ""
-	if parent, ok := ctx.Resolver.SubParents()[name]; ok {
-		owner = parent
-		member = strings.TrimPrefix(name, parent+"/")
-	}
-	dir := filepath.Join(ctx.Paths.DepsDir, filepath.FromSlash(owner), "src", filepath.FromSlash(member))
-	if member != "" && node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 {
-		dir = filepath.Join(dir, "src")
-	}
-	return dir
-}
-
-func linkedThirdPartyRootForInspect(ctx *RuntimeContext, name string, node *resolver.PackageNode) string {
-	if node == nil || node.Source == nil || node.Source.Link == nil || !node.Source.Link.Native {
-		return ""
-	}
-	parent, isSub := ctx.Resolver.SubParents()[name]
-	if !isSub || parent == "" || node.Pkg == nil || len(node.Pkg.GitURLs()) == 0 {
-		return ""
-	}
-	member := strings.TrimPrefix(name, parent+"/")
-	return filepath.Join(ctx.Paths.DepsDir, filepath.FromSlash(parent), "third_party", filepath.FromSlash(member))
-}
-
-func inspectSourceTreePopulated(dir string) bool {
-	if dir == "" {
-		return false
-	}
-	entries, err := os.ReadDir(dir)
-	return err == nil && len(entries) > 0
+	return pipeline.ExpectedPackageSourceDir(ctx, name, node)
 }
 
 func inspectSourceReference(ctx *RuntimeContext, name string, node *resolver.PackageNode) (string, string) {
@@ -708,6 +679,7 @@ func inspectPackageOptions(ctx *RuntimeContext, name string, inspection *pipelin
 		return nil
 	}
 	entry := config.GetEntry(ctx.Config, name)
+	derivedPkg := ctx.DerivedOptions[name]
 	acc := packageConfigAccessor(ctx, name, inspection.GlobalValues)
 	values := make(map[string]any, len(opts))
 	for optName, opt := range opts {
@@ -716,6 +688,9 @@ func inspectPackageOptions(ctx *RuntimeContext, name string, inspection *pipelin
 			raw = inspection.GlobalValues[optName]
 		} else {
 			raw = entry.Options[optName]
+			if raw == nil && derivedPkg != nil {
+				raw = derivedPkg[optName]
+			}
 		}
 		if raw == nil {
 			raw = opt.Default()
@@ -760,6 +735,13 @@ func packageConfigValues(ctx *RuntimeContext, name string, globalValues map[stri
 		}
 		if api.NormalizeOptionValue(opt, value) == api.NormalizeOptionValue(opt, opt.Default()) {
 			delete(values, optName)
+		}
+	}
+	if derivedPkg := ctx.DerivedOptions[name]; derivedPkg != nil {
+		for optName, value := range derivedPkg {
+			if _, exists := values[optName]; !exists && value != nil {
+				values[optName] = value
+			}
 		}
 	}
 	for optName, opt := range opts {
@@ -828,9 +810,9 @@ func inspectTargetDeps(target *api.Target, node *resolver.PackageNode) []string 
 	return out
 }
 
-func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name string, node *resolver.PackageNode) ([]inspectTarget, error) {
+func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name string, node *resolver.PackageNode) ([]inspectTarget, []string, error) {
 	if node == nil || node.Pkg == nil || !inspectSourcePresent(ctx, name, node) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	dirs := inspection.PkgDirs[name]
 	if dirs == nil {
@@ -845,11 +827,12 @@ func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name s
 		}
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	subs := append([]string(nil), buildCtx.SubGraphs()...)
 	registered := buildCtx.GetTargets()
 	if len(registered) == 0 {
-		return nil, nil
+		return nil, subs, nil
 	}
 	targetOS := ""
 	if node.Pkg != nil {
@@ -902,7 +885,7 @@ func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name s
 		targets = append(targets, entry)
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
-	return targets, nil
+	return targets, subs, nil
 }
 
 func inspectTargetDiagnostic(name string, err error) inspectDiagnostic {
@@ -977,13 +960,27 @@ func inspectStringValue(value any) string {
 }
 
 func inspectRoots(ctx *RuntimeContext, needed map[string]bool) []string {
-	dependedOn := make(map[string]bool)
-	for _, node := range ctx.DepGraph.Packages {
-		if node == nil {
-			continue
+	return inspectRootsFromEdges(ctx, needed, inspectGraph(ctx))
+}
+
+func inspectRootsFromEdges(ctx *RuntimeContext, needed map[string]bool, edges []inspectEdge) []string {
+	if ctx.Config != nil {
+		if rootName := strings.TrimSpace(ctx.Config.Root); rootName != "" {
+			if node := ctx.DepGraph.Packages[rootName]; node != nil && needed[rootName] && node.IsLocal() {
+				return []string{rootName}
+			}
 		}
-		for _, dep := range node.Deps {
-			dependedOn[dep] = true
+	}
+	for _, name := range inspectPackageNames(ctx) {
+		node := ctx.DepGraph.Packages[name]
+		if node != nil && needed[name] && node.IsLocal() && node.Pkg != nil && node.Pkg.IsRoot() {
+			return []string{name}
+		}
+	}
+	dependedOn := make(map[string]bool)
+	for _, e := range edges {
+		if needed[e.From] && needed[e.To] {
+			dependedOn[e.To] = true
 		}
 	}
 	roots := make([]string, 0)
@@ -992,6 +989,13 @@ func inspectRoots(ctx *RuntimeContext, needed map[string]bool) []string {
 			continue
 		}
 		roots = append(roots, name)
+	}
+	if len(roots) == 0 {
+		for name, node := range ctx.DepGraph.Packages {
+			if node != nil && needed[name] && node.IsLocal() {
+				roots = append(roots, name)
+			}
+		}
 	}
 	sort.Strings(roots)
 	return roots
@@ -1026,4 +1030,109 @@ func inspectSortedStrings(values []string) []string {
 	out := append([]string{}, values...)
 	slices.Sort(out)
 	return slices.Compact(out)
+}
+
+func mergeInspectTargetEdges(ctx *RuntimeContext, needed map[string]bool, data *inspectData, pkgSubGraphs map[string][]string) {
+	if ctx == nil || ctx.DepGraph == nil || data == nil {
+		return
+	}
+	var subParents map[string]string
+	if ctx.Resolver != nil {
+		subParents = ctx.Resolver.SubParents()
+	}
+	resolvePkg := func(fromPkg, ref string) string {
+		if ref == "" || strings.Contains(ref, "/") {
+			return ref
+		}
+		if needed[fromPkg] {
+			if cand := api.ResolveSubPackageName(fromPkg, ref, subParents, func(c string) bool {
+				return needed[c]
+			}); cand != ref || needed[cand] {
+				return cand
+			}
+		}
+		return api.ResolveSubPackageName(fromPkg, ref, subParents, func(cand string) bool {
+			return ctx.DepGraph.Packages[cand] != nil
+		})
+	}
+
+	ownTargets := make(map[string]map[string]bool, len(data.Packages))
+	for i := range data.Packages {
+		pkg := &data.Packages[i]
+		if len(pkg.Targets) == 0 {
+			continue
+		}
+		m := make(map[string]bool, len(pkg.Targets))
+		for _, t := range pkg.Targets {
+			m[t.Name] = true
+		}
+		ownTargets[pkg.Name] = m
+	}
+
+	seenEdges := make(map[inspectEdge]bool, len(data.Graph))
+	edges := make([]inspectEdge, 0, len(data.Graph))
+	for _, e := range data.Graph {
+		if !seenEdges[e] {
+			seenEdges[e] = true
+			edges = append(edges, e)
+		}
+	}
+	addEdge := func(from, to string) {
+		if from == "" || to == "" || from == to || ctx.DepGraph.Packages[to] == nil {
+			return
+		}
+		e := inspectEdge{From: from, To: to}
+		if !seenEdges[e] {
+			seenEdges[e] = true
+			edges = append(edges, e)
+		}
+	}
+
+	for i := range data.Packages {
+		pkg := &data.Packages[i]
+		deps := append([]string{}, pkg.Deps...)
+		for _, sub := range pkgSubGraphs[pkg.Name] {
+			resolved := resolvePkg(pkg.Name, sub)
+			if resolved != "" && resolved != pkg.Name && ctx.DepGraph.Packages[resolved] != nil {
+				if pkg.Needed && !needed[resolved] {
+					continue
+				}
+				deps = append(deps, resolved)
+				addEdge(pkg.Name, resolved)
+			}
+		}
+		for _, t := range pkg.Targets {
+			for _, rawDep := range t.Deps {
+				var depPkg string
+				switch {
+				case strings.Contains(rawDep, ":"):
+					pkgRef, _, _ := strings.Cut(rawDep, ":")
+					depPkg = resolvePkg(pkg.Name, pkgRef)
+				case strings.Contains(rawDep, "/"):
+					depPkg = rawDep
+				default:
+					if !ownTargets[pkg.Name][rawDep] {
+						depPkg = resolvePkg(pkg.Name, rawDep)
+					}
+				}
+				if depPkg != "" && depPkg != pkg.Name && ctx.DepGraph.Packages[depPkg] != nil {
+					if pkg.Needed && !needed[depPkg] {
+						continue
+					}
+					deps = append(deps, depPkg)
+					addEdge(pkg.Name, depPkg)
+				}
+			}
+		}
+		pkg.Deps = inspectSortedStrings(deps)
+	}
+
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].From != edges[j].From {
+			return edges[i].From < edges[j].From
+		}
+		return edges[i].To < edges[j].To
+	})
+	data.Graph = edges
+	data.Roots = inspectRootsFromEdges(ctx, needed, edges)
 }

@@ -166,7 +166,7 @@ toolchains/<host-os>/<host-arch>/<name>/<version>/
 
 `.vmake_deps/` 为远程包和本地 `SetGit` 包保存每个包唯一的一棵工作树：所有构建配置共享同一份源码，补丁、Kconfig `.config` 和脚本内的源码改动都作用在它上面。普通本地包（未 `SetGit`）不在其中，vmake 既不复制也不重置其源码，补丁直接作用在包目录上。构建产物按构建键分开存放，不复制源码。
 
-`vmake pkg link <repo/name> <path>` 会把 native 父包或 registry 包的上游源码指向一个本地 git 工作树，记录在 `.vmake/local.json`（机器本地，不进入 lock/config）。link 时删除该包已有的 `.vmake_deps/<repo>/<owner>/src` 和 `state.json`，避免旧版本源码继续造成误解；`out/` 与 own-Git 子包的 `third_party/` 保留。link 期间该包不物化到 `.vmake_deps/.../src`，版本、tag 和 `AddRequires` 版本约束都不参与；构建/安装输出仍写在 `.vmake_deps/<repo>/<owner>/out/...`。native 包随 link 树扫描子包；带自身 `SetGit` 源的 native 子包把第三方源码物化到 `.vmake_deps/<owner>/third_party/<member>`，避免写入链接仓库。link 包声明 patch 或 KConfig 时拒绝（native own-Git 子包的第三方 patch 除外）。`vmake pkg unlink <repo/name>` 删除记录，下一次构建使用 lock 中的版本（无 lock 条目时重新解析并写入）。需要更新依赖版本或同步工作树时使用 `vmake deps update` / `vmake deps sync` / `vmake deps pin`。
+`vmake pkg link <repo/name> <path>` 会把 native 父包或 registry 包的上游源码指向一个本地 git 工作树，记录在 `.vmake/local.json` 的 `links` 字段（机器本地，不进入 lock/config；同文件还保存 `vmake config use` 的本地激活配置游标 `config`）。link 时删除该包已有的 `.vmake_deps/<repo>/<owner>/src` 和 `state.json`，避免旧版本源码继续造成误解；`out/` 与 own-Git 子包的 `third_party/` 保留。link 期间该包不物化到 `.vmake_deps/.../src`，版本、tag 和 `AddRequires` 版本约束都不参与；构建/安装输出仍写在 `.vmake_deps/<repo>/<owner>/out/...`。native 包随 link 树扫描子包；带自身 `SetGit` 源的 native 子包把第三方源码物化到 `.vmake_deps/<owner>/third_party/<member>`，避免写入链接仓库。link 包声明 patch 或 KConfig 时拒绝（native own-Git 子包的第三方 patch 除外）。`vmake pkg unlink <repo/name>` 删除记录，下一次构建使用 lock 中的版本（无 lock 条目时重新解析并写入）。需要更新依赖版本或同步工作树时使用 `vmake deps update` / `vmake deps sync` / `vmake deps pin`。
 
 ```
 .vmake_deps/
@@ -188,26 +188,29 @@ toolchains/<host-os>/<host-arch>/<name>/<version>/
 
 `buildKey` 由格式版本、工具链身份（含工具内容）、构建模式、选项组合、有序全局 flags 与 commit 共同生成（`pkg/build/key.go` `BuildKey`）。远程包的键还包含版本号与补丁集哈希；本地包的键不包含版本和补丁集。build.go 文本不进入构建键，命令、include/define、文件列表等实际构建输入由 action 签名捕获，因此只改注释不会切换构建目录。远程包的版本或补丁集变化时会重建或恢复工作树（同一 commit 的补丁变化走 `checkout --force --detach` + `clean -fdx`，不触网）；本地 `SetGit` 包的补丁变化也会重置工作树，但沿用同一构建目录，已有对象是否重编由增量规则决定。切换工具链/选项只更换 `out/<buildKey>`（远程包）或包内 `build/<buildKey>`（本地包）。
 
-本地 SetGit 包保留 `<包目录>/src` 符号链接指向 `.vmake_deps/local/<包名>/src`，因此 `AddFiles("src/...")`、`p.SourceDir()/src/...` 等既有写法不变；链接目标不再随构建键变化。vmake 在项目根把 `.vmake_deps/` 写入 `.gitignore`；`vmake pkg link` 在需要时把 `.vmake/local.json` 也加入，若该文件已被 git 跟踪则拒绝链接。本地 SetGit 包应在自己的 `.gitignore` 中忽略 `src/`（多数包已经如此，否则 `git status` 会显示该链接）。
+本地 SetGit 包保留 `<包目录>/src` 符号链接指向 `.vmake_deps/local/<包名>/src`，因此 `AddFiles("src/...")`、`p.SourceDir()/src/...` 等既有写法不变；链接目标不再随构建键变化。vmake 在项目根把 `.vmake_deps/` 写入 `.gitignore`；`vmake pkg link` 与 `vmake config use` 在需要时把 `.vmake/local.json` 也加入，若该文件已被 git 跟踪则拒绝写入。本地 SetGit 包应在自己的 `.gitignore` 中忽略 `src/`（多数包已经如此，否则 `git status` 会显示该链接）。
 
-`vmake clean` 只删除当前配置的构建键目录，`clean --all` 删除所有配置的产物（包括 `pkg link` 包在 `.vmake_deps` 下的 `out/`），两者都保留 `.vmake_deps/` 源码树和 `.vmake/local.json` 链接；`vmake distclean` 同样保留下载的工作树（下次构建直接复用，不重新下载），只有加 `--purge-sources` 才删除整个 `.vmake_deps/`。`pkg link` 已删除的 `src`/`state.json` 不会由 clean/distclean 恢复；unlink 后下一次构建重新物化。`vmake pkg clean <repo/name>` 删除单个包的构建产物，`-a` 连工作树一并删除但不删除 link 记录；下次构建会重新物化该树，但共享对象缓存已有该 commit 时无需重新下载对象（版本/ref 解析仍可能访问上游）。该命令也会删除 `build/vmake-build.json` 与 `build/vmake-test.json`。
+`vmake clean` 只删除当前配置的构建键目录，`clean --all` 删除所有配置的产物（包括 `pkg link` 包在 `.vmake_deps` 下的 `out/`），两者都保留 `.vmake_deps/` 源码树和 `.vmake/local.json`；`vmake distclean` 同样保留下载的工作树（下次构建直接复用，不重新下载），只有加 `--purge-sources` 才删除整个 `.vmake_deps/`。`pkg link` 已删除的 `src`/`state.json` 不会由 clean/distclean 恢复；unlink 后下一次构建重新物化。`vmake pkg clean <repo/name>` 删除单个包的构建产物，`-a` 连工作树一并删除但不删除 link 记录；下次构建会重新物化该树，但共享对象缓存已有该 commit 时无需重新下载对象（版本/ref 解析仍可能访问上游）。该命令也会删除 `build/vmake-build.json` 与 `build/vmake-test.json`。
 
 源码：`cmd/vmake/paths.go` (`getDepsDir`, `findProjectDir`), `pkg/repo/source.go`, `pkg/repo/storage.go`
 CLI：`vmake pkg list|search|show|clean|link|unlink`、`vmake deps status|sync|update|pin|unpin|fetch`
 
 ## 项目目录
 
-每个项目可在 `.vmake/` 中保存多份配置，由 `.vmake/project.json` 选择当前生效的文件并记录全工程共享的依赖 pin（`pins`）。没有 `project.json` 的旧工程仍使用 `config.json`，不会自动生成选择文件。
+项目在版本控制的 `configs/**/*.json` 目录中保存多份构建配置（默认 `configs/default.json`）。`.vmake/project.json` 仅保存工程级共享的默认配置 `default_config` 与依赖 `pins`；开发者本机切换的当前配置游标保存在机器本地的 `.vmake/local.json`（`config` 字段，已 gitignore，不污染版本库），命令行也可通过无状态 `-c / --config <profile>` 直接按指定配置运行而不改写任何选择文件。
 
 ```
 project/
 ├── build.go                       # 项目构建脚本
+├── configs/                       # 受版本控制的构建配置（稀疏显式意图）
+│   ├── default.json               # 默认配置（或由 .vmake/project.json default_config 指定）
+│   ├── sku-a.json                 # 量产 SKU 配置
+│   └── test/                      # 二级分组配置（例如靶机验证配置）
+│       └── gfx.json
 ├── .vmake/
-│   ├── project.json               # 当前配置选择与项目级依赖 pin（可选）
-│   ├── config.json                # 默认配置
-│   ├── config-debug.json          # 其他配置，格式与默认配置相同
+│   ├── project.json               # 团队共享的 default_config 与项目级依赖 pin（可选，可提交）
 │   ├── vmake.lock                 # 所有配置共享的远程包/本地 SetGit 包版本、commit、来源及 registry wrapper commit 锁
-│   ├── local.json                 # 机器本地的源码 link（vmake pkg link；不提交）
+│   ├── local.json                 # 机器本地的当前配置游标 config 与源码 link（不提交）
 │   ├── layout                     # 存储布局版本标记（当前 "5"）
 │   └── _locks/project.lock        # 工程独占锁（同工程命令串行）
 ├── .vmake_deps/                   # 第三方源码工作树与产物（自动生成，已 gitignore）
@@ -227,35 +230,36 @@ project/
 
 `vmake.lock` 的每条记录包含 `version`、`commit`、`source`（`registry`/`native`/`git`）；registry 包还记录提供 wrapper 的仓库 HEAD `wrapperCommit`，解析时会校验该 commit 未漂移。被 `pkg link` 的包保留旧 lock 条目，但 link 期间不读取、不校验、不重写；`vmake deps` 写操作跳过这些包。
 
-`project.json` 保存配置文件名与全工程共享的依赖 pin（`vmake deps pin|unpin`）：
+`project.json` 保存工程默认配置与全工程共享的依赖 pin（`vmake deps pin|unpin`）：
 
 ```json
 {
-  "config": "config-debug.json",
+  "default_config": "configs/sku-a.json",
   "pins": {
     "official/zlib": "1.3.1"
   }
 }
 ```
 
-文件名必须以 `.json` 结尾，位于 `.vmake/` 内，不接受路径或保留名称 `project.json`。显式选择的文件缺失或 JSON 无法解析时会报错，不退回默认配置；损坏的 `project.json` 需要修正后再执行命令。`vmake config use` 切换配置时会保留 `pins`。
+配置解析优先级为：命令行 `-c / --config`（无状态覆盖）→ `.vmake/local.json` 的 `config` → `.vmake/project.json` 的 `default_config` → `configs/default.json`。配置文件必须位于 `configs/` 下并以 `.json` 结尾；CLI 支持简写（如 `sku-a`、`test/gfx` 自动规范化为 `configs/sku-a.json`、`configs/test/gfx.json`）。显式指定或配置选择指向的文件缺失或 JSON 无法解析时会严格报错，不静默退回默认配置。
 
 ```bash
 vmake config list
-vmake config copy config-debug.json
-vmake config use config-debug.json
+vmake config copy sku-debug
+vmake config use sku-debug
 vmake config
-vmake build
-vmake config use config.json
+vmake config --unset myproject/verbose
+vmake config check --all
+vmake build -c sku-a
 ```
 
-`list` 按文件名排序，用 `*` 标记当前配置，并显示未保存或无法解析的状态，以及读到的 `description` 说明。`describe` 打印当前配置的说明，`describe <文本>` 设置或清空（空字符串）该说明。`copy` 原样复制当前配置，不切换、不覆盖已有文件；默认配置尚未保存时复制的是默认骨架（`version`、空的 `global` 与 `entries`），不是空文件。`use` 验证目标后更新选择，不执行构建脚本或解析依赖，即使原选择的文件丢失也可切换。`use` 支持文件名补全，补全候选会附带说明。
+`list` 按配置路径排序，用 `*` 标记当前配置，并显示未保存或无法解析的状态，以及读到的 `description` 说明。`describe` 打印当前（或 `-c` 指定）配置的说明，`describe <文本>` 设置或清空（空字符串）该说明。`copy` 原样复制当前（或 `-c` 指定）配置到 `configs/` 下的新文件，不切换、不覆盖已有文件。`use` 验证目标后将选择写入 `.vmake/local.json`（并确保 `.gitignore` 忽略它），不执行构建脚本或解析依赖。`check`（及 `check --all`）严格校验配置中的 `root`、全局与包级选项名称/类型/枚举、包可达性以及 dry-run 目标声明。
 
-说明是配置文件顶层的文本（可含换行），最长 200 字符，可为中文；不参与依赖解析，也不进入构建缓存键。TUI 选项面板顶部常驻一行 `Description`，按 `D` 或点击该行编辑，随 `Ctrl+S` 与其他修改一起保存。
+说明是配置文件顶层的文本（可含换行），最长 200 字符，可为中文；不参与依赖解析，也不进入构建缓存键。TUI 选项面板顶部常驻一行 `Description`，按 `D` 或点击该行编辑，随 `Ctrl+S` 与其他修改一起保存。TUI 保存采用稀疏意图模式：只持久化显式覆盖的选项，按 `R` 可恢复默认/派生值并从配置中移除显式项；CLI 可用 `vmake config --unset/-u <[pkg/]option>` 移除显式覆盖。
 
-TUI 和 `vmake config --set` 仅保存当前配置。构建、测试、查询、清理、`doctor` 和 `deps` 均读取当前配置。配置选择相对于现有项目定位规则找到的根目录，构建脚本扫描范围保持不变；子目录被识别为独立项目时使用其自身配置。
+TUI 和 `vmake config --set/--unset` 仅保存当前（或 `-c` 指定）配置。构建、测试、查询、`inspect`、清理、`doctor` 和 `deps` 均读取当前配置并支持 `-c <profile>` 无状态覆盖。
 
-所有配置共享 `.vmake/vmake.lock` 与 `.vmake/project.json` 中的 `pins`，切换配置本身不改写依赖锁。构建缓存键不包含配置文件名，等效配置可以复用产物；`clean` 清理当前配置对应的构建输出，`clean --all` 和 `distclean` 保留所有配置及选择文件。安装仍默认使用 `install/`；同时保留多个安装结果时，可在项目外指定不同的 `--prefix`（项目内只允许默认 `install/` 子树）。
+所有配置共享 `.vmake/vmake.lock` 与 `.vmake/project.json` 中的 `pins`，切换配置本身不改写依赖锁。构建缓存键不包含配置文件名，等效配置可以复用产物；`clean` 清理当前配置对应的构建输出，`clean --all` 和 `distclean` 保留所有配置及选择文件。安装仍默认使用 `install/`；同时保留多个安装结果时，可通过 `--prefix` 指定独立输出目录（例如 `-p install/sku-a`）。
 
 每份项目配置的结构（`pkg/config/store.go`）：
 
@@ -263,6 +267,7 @@ TUI 和 `vmake config --set` 仅保存当前配置。构建、测试、查询、
 {
   "version": "1",
   "description": "Board A 调试配置",
+  "root": "myproject",
   "global": {
     "toolchain": "host",
     "mode": "debug",

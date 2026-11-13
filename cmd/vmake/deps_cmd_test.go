@@ -126,7 +126,7 @@ func Main(p *api.Package) {
 	})
 }
 `)
-	writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","global":{"toolchain":"healthy","mode":"release"},"entries":{}}`)
+	writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{"version":"1","global":{"toolchain":"healthy","mode":"release"},"entries":{}}`)
 
 	if out, err := run("build", "--locked"); err == nil || !strings.Contains(out, "--locked") {
 		t.Fatalf("expected --locked to fail without lockfile, got: %v\n%s", err, out)
@@ -304,7 +304,7 @@ func Main(p *api.Package) {
 	})
 }
 `)
-	writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","global":{"toolchain":"healthy","mode":"release"},"entries":{}}`)
+	writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{"version":"1","global":{"toolchain":"healthy","mode":"release"},"entries":{}}`)
 
 	mustRun("deps", "sync")
 	mustRun("distclean", "--purge-sources")
@@ -391,7 +391,7 @@ func Main(p *api.Package) {
 	})
 }
 `)
-	writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","global":{"toolchain":"healthy","mode":"release"},"entries":{}}`)
+	writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{"version":"1","global":{"toolchain":"healthy","mode":"release"},"entries":{}}`)
 
 	mustRun("deps", "sync")
 	treeFile := filepath.Join(project, ".vmake_deps", "local", "foo", "src", "noted.txt")

@@ -84,7 +84,7 @@ func Main(p *api.Package) {
 
 vmake builds from **local roots**: a package is only built if it is reachable from a root. See `SKILL.md - Build Scope`.
 
-- At most one package may declare an explicit root with `p.SetRoot(true)`. Two declarations fail with `multiple root packages found; only one is allowed`.
+- At most one package may declare an explicit root with `p.SetRoot(true)` (unless overridden per profile via `"root": "<pkg>"` in `configs/*.json`). Two `SetRoot(true)` declarations fail with `multiple root packages found; only one is allowed`.
 - When no package declares a root, vmake falls back to a heuristic and prints a hint. In this example nothing declares `OnRequire`, so every local package (the top-level package, `lib`, and `app`) becomes a root. `vmake doctor` reports the `noRoot` warning when no `SetRoot(true)` exists.
 - BFS follows **package-level** dependencies declared with `AddRequires` only. `AddDeps` target edges do not pull a package into the build set.
 - A top-level `build.go` that only declares options must therefore not be the **sole** root: with `SetRoot(true)` on it and no `AddRequires`, BFS reaches nothing else, no targets are declared, and the build succeeds with zero targets. Either leave the root implicit (as here), mark the real entry package (`app`) as root and list `lib` in its `AddRequires`, or have the options-only root declare the packages it wants built:

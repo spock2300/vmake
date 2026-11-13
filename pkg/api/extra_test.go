@@ -411,3 +411,16 @@ func TestNewInstalledPackageDefaults(t *testing.T) {
 		t.Errorf("Libs = %v", ip.Libs)
 	}
 }
+
+func TestDepPackageDir(t *testing.T) {
+	bctx := NewBuildContext("pkg", nil)
+	bctx.SetDryRun(true)
+	if got := bctx.DepPackageDir("dep"); got != "" {
+		t.Fatalf("dry-run DepPackageDir = %q, want empty", got)
+	}
+	bctx.SetDryRun(false)
+	bctx.SetDepPackageDirFunc(func(ref string) string { return "/ws/" + ref })
+	if got := bctx.DepPackageDir("dep"); got != "/ws/dep" {
+		t.Fatalf("DepPackageDir = %q, want /ws/dep", got)
+	}
+}

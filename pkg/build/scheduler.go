@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/spock2300/vmake/pkg/api"
@@ -31,8 +32,12 @@ type ResolvedTarget struct {
 	OutputPath    string
 	VersionScript string
 	LinkerScript  string
-	ExcludeLibs   []string
-	SymbolBinding string
+	ExcludeLibs                 []string
+	SymbolBinding               string
+	AllowedPublicIncludes       []allowedInclude
+	DirectAllowedPublicIncludes []allowedInclude
+	DeclaredDepPkgs             map[string]bool
+	DirectDepPkgs               map[string]bool
 }
 
 type compileResult struct {
@@ -88,6 +93,7 @@ type Scheduler struct {
 	pkgs          map[string]*PkgInfo
 	ccWriter      *CompileCommandsWriter
 	packages      map[string]*api.Package
+	workspaceDirs map[string]string
 	pkgGenerated  map[string]bool
 	rootDir       string
 	includeTests  bool
@@ -96,6 +102,10 @@ type Scheduler struct {
 	explain       bool
 	hashes        *fileHashCache
 	stats         *BuildStats
+	canonCache    *pathCanonCache
+
+	headerOwnersOnce sync.Once
+	headerOwners     *headerOwnerIndex
 
 	buildTargetFn  func(string) error
 	globalCFlags   []string
@@ -105,22 +115,23 @@ type Scheduler struct {
 }
 
 type schedulerConfig struct {
-	Graph        *BuildGraph
-	Toolchain    *toolchain.Toolchain
-	Platform     api.Platform
-	Layouts      map[string]*PackageLayout
-	Mode         string
-	Options      map[string]map[string]any
-	Packages     map[string]*api.Package
-	Tools        *ResolvedTools
-	Context      context.Context
-	RootDir      string
-	IncludeTests bool
-	NumWorkers   int
-	KeepGoing    bool
-	Explain      bool
-	GlobalFlags  *[4][]string
-	Stats        *BuildStats
+	Graph         *BuildGraph
+	Toolchain     *toolchain.Toolchain
+	Platform      api.Platform
+	Layouts       map[string]*PackageLayout
+	Mode          string
+	Options       map[string]map[string]any
+	Packages      map[string]*api.Package
+	WorkspaceDirs map[string]string
+	Tools         *ResolvedTools
+	Context       context.Context
+	RootDir       string
+	IncludeTests  bool
+	NumWorkers    int
+	KeepGoing     bool
+	Explain       bool
+	GlobalFlags   *[4][]string
+	Stats         *BuildStats
 }
 
 func newScheduler(cfg schedulerConfig) *Scheduler {
@@ -152,6 +163,7 @@ func newScheduler(cfg schedulerConfig) *Scheduler {
 		pkgs:          make(map[string]*PkgInfo),
 		ccWriter:      NewCompileCommandsWriter(cfg.Tools),
 		packages:      packages,
+		workspaceDirs: cfg.WorkspaceDirs,
 		pkgGenerated:  make(map[string]bool),
 		rootDir:       cfg.RootDir,
 		includeTests:  cfg.IncludeTests,
@@ -160,6 +172,7 @@ func newScheduler(cfg schedulerConfig) *Scheduler {
 		explain:       cfg.Explain,
 		hashes:        newFileHashCache(),
 		stats:         cfg.Stats,
+		canonCache:    newPathCanonCache(),
 	}
 	if s.stats == nil {
 		s.stats = NewBuildStats()

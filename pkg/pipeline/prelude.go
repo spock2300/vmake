@@ -31,13 +31,29 @@ func prepareBuild(ctx *RuntimeContext, opts preludeOptions) (*buildPrelude, erro
 	if opts.filterDeps {
 		needed, err = resolveNeeded(ctx, opts.logFilter, opts.freezeDeps, opts.validateNeeded)
 	} else {
-		needed, err = computeReachable(ctx.DepGraph)
+		needed, err = computeReachable(ctx.DepGraph, configRootOverride(ctx))
 	}
 	if err != nil {
 		return nil, err
 	}
 
 	pre := &buildPrelude{needed: needed}
+	if opts.filterDeps {
+		if err := mergeGlobalOptionsFiltered(ctx, needed); err != nil {
+			return nil, err
+		}
+		extendChipChoice(ctx)
+		if err := ValidateConfigValues(ctx, needed); err != nil {
+			return nil, err
+		}
+		if err := resolveDerivedOptions(ctx, needed); err != nil {
+			return nil, err
+		}
+		applyConfigCallbacksForNeeded(ctx, needed, false)
+		if err := updateGlobalMacroDefines(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if opts.resolveChip {
 		if opts.filterDeps {
 			if err := resolveActiveChip(ctx, needed); err != nil {
@@ -74,10 +90,10 @@ func neededGlobalFlags(ctx *RuntimeContext, needed map[string]bool) (cflags, cxx
 		if buf == nil {
 			continue
 		}
-		cflags = append(cflags, buf.cFlags...)
-		cxxflags = append(cxxflags, buf.cxxFlags...)
-		ldflags = append(ldflags, buf.ldFlags...)
-		links = append(links, buf.links...)
+		cflags = append(cflags, buf.allCFlags()...)
+		cxxflags = append(cxxflags, buf.allCxxFlags()...)
+		ldflags = append(ldflags, buf.allLdFlags()...)
+		links = append(links, buf.allLinks()...)
 	}
 	return cflags, cxxflags, ldflags, links
 }

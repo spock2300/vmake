@@ -3,16 +3,18 @@ package api
 const GroupGlobal = "Global"
 
 type Option struct {
-	name        string
-	optType     OptionType
-	typeSet     bool
-	defaultVal  any
-	description string
-	values      []string
-	showIf      func(ctx *ConfigContext) bool
-	group       string
-	onApply     func(ctx *ConfigContext, val any)
-	macroName   string
+	name            string
+	optType         OptionType
+	typeSet         bool
+	defaultVal      any
+	description     string
+	values          []string
+	showIf          func(ctx *ConfigContext) bool
+	group           string
+	onApply         func(ctx *ConfigContext, val any)
+	macroName       string
+	noExportDefine  bool
+	exportDefineSet bool
 }
 
 func (o *Option) SetType(t OptionType) *Option {
@@ -69,6 +71,12 @@ func (o *Option) SetMacroName(name string) *Option {
 	return o
 }
 
+func (o *Option) SetExportDefine(export bool) *Option {
+	o.noExportDefine = !export
+	o.exportDefineSet = true
+	return o
+}
+
 func (o *Option) Name() string                               { return o.name }
 func (o *Option) Type() OptionType                           { return o.optType }
 func (o *Option) Default() any                               { return o.defaultVal }
@@ -78,4 +86,6 @@ func (o *Option) ShowIf() func(ctx *ConfigContext) bool      { return o.showIf }
 func (o *Option) OnApply() func(ctx *ConfigContext, val any) { return o.onApply }
 func (o *Option) Group() string                              { return o.group }
 func (o *Option) MacroName() string                          { return o.macroName }
+func (o *Option) ExportDefine() bool                         { return !o.noExportDefine }
+func (o *Option) ExportDefineSet() bool                      { return o.exportDefineSet }
 func (o *Option) IsGlobal() bool                             { return o.group == GroupGlobal }

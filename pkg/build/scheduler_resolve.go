@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spock2300/vmake/internal/fs"
@@ -190,6 +191,10 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	resolved.AllLinks = append(resolved.AllLinks, node.Target.PublicLinks()...)
 	resolved.AllLinks = append(resolved.AllLinks, deps.links...)
 	resolved.DepArtifacts = deps.artifacts
+	s.populateHeaderBoundaries(node, resolved)
+	if err := s.checkTargetDeclaredPaths(resolved, pkgInfo.SourceDir, buildDir); err != nil {
+		return nil, err
+	}
 
 	s.checkLibDependencies(resolved)
 
@@ -234,18 +239,10 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 			linkerScript = pkgInfo.ResolvePath(linkerScript)
 		}
 		if linkerScript == "" && node.Target.UseDepLinkerScript() {
-			for _, depFullName := range node.Deps {
-				depPkgName, _, _ := strings.Cut(depFullName, ":")
-				depPkg := s.packages[depPkgName]
-				if depPkg != nil && depPkg.ProvidedLinkerScript() != "" {
-					if err := s.ensurePackageGenerated(depPkgName); err != nil {
-						return nil, err
-					}
-					if depInfo := s.pkgs[depPkgName]; depInfo != nil {
-						linkerScript = depInfo.ResolvePath(depPkg.ProvidedLinkerScript())
-					}
-					break
-				}
+			var err error
+			linkerScript, err = s.resolveDependencyLinkerScript(node)
+			if err != nil {
+				return nil, err
 			}
 		}
 		if node.Target.UseDepLinkerScript() && linkerScript == "" {
@@ -271,6 +268,133 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	resolved.SourceFiles = unique(resolved.SourceFiles)
 
 	return resolved, nil
+}
+
+func (s *Scheduler) resolveDependencyLinkerScript(node *BuildNode) (string, error) {
+	resolvePkgScript := func(pkgName string) (string, bool, error) {
+		depPkg := s.packages[pkgName]
+		if depPkg == nil || depPkg.ProvidedLinkerScript() == "" {
+			return "", false, nil
+		}
+		if err := s.ensurePackageGenerated(pkgName); err != nil {
+			return "", false, err
+		}
+		if depInfo := s.pkgs[pkgName]; depInfo != nil {
+			return depInfo.ResolvePath(depPkg.ProvidedLinkerScript()), true, nil
+		}
+		return depPkg.ProvidedLinkerScript(), true, nil
+	}
+
+	if path, ok, err := resolvePkgScript(node.PkgName); err != nil {
+		return "", err
+	} else if ok {
+		return path, nil
+	}
+
+	type levelState struct {
+		targets []string
+		pkgs    []string
+	}
+	seenTargets := map[string]bool{node.FullName: true}
+	seenPkgs := map[string]bool{node.PkgName: true}
+
+	addFromNode := func(n *BuildNode, next *levelState) {
+		hasStructured := len(n.DirectDeps) > 0 || (n.Target != nil && (n.Target.UsesRequires() || len(n.Target.Deps()) > 0))
+		directTargets := n.DirectDeps
+		if !hasStructured {
+			directTargets = n.Deps
+		}
+		for _, tName := range directTargets {
+			if tName == "" {
+				continue
+			}
+			if !seenTargets[tName] {
+				seenTargets[tName] = true
+				next.targets = append(next.targets, tName)
+			}
+			pkgName, _, _ := strings.Cut(tName, ":")
+			if pkgName != "" && !seenPkgs[pkgName] {
+				seenPkgs[pkgName] = true
+				next.pkgs = append(next.pkgs, pkgName)
+			}
+		}
+		if n.Target != nil && s.graph != nil {
+			if n.Target.UsesRequires() {
+				for _, depPkg := range s.graph.PkgMeta[n.PkgName].Deps {
+					if depPkg != "" && !seenPkgs[depPkg] {
+						seenPkgs[depPkg] = true
+						next.pkgs = append(next.pkgs, depPkg)
+					}
+				}
+			}
+			for _, rawDep := range n.Target.Deps() {
+				depPkg, _, hasColon := strings.Cut(rawDep, ":")
+				if !hasColon {
+					depPkg = rawDep
+				}
+				if depPkg != "" && depPkg != n.PkgName {
+					if _, ok := s.graph.PkgMeta[depPkg]; ok && !seenPkgs[depPkg] {
+						seenPkgs[depPkg] = true
+						next.pkgs = append(next.pkgs, depPkg)
+					}
+				}
+			}
+		}
+	}
+
+	var cur levelState
+	addFromNode(node, &cur)
+
+	for depth := 1; len(cur.targets) > 0 || len(cur.pkgs) > 0; depth++ {
+		byPath := make(map[string][]string)
+		var pathOrder []string
+		for _, pkgName := range cur.pkgs {
+			path, ok, err := resolvePkgScript(pkgName)
+			if err != nil {
+				return "", err
+			}
+			if !ok {
+				continue
+			}
+			if _, exists := byPath[path]; !exists {
+				pathOrder = append(pathOrder, path)
+			}
+			byPath[path] = append(byPath[path], pkgName)
+		}
+		if len(pathOrder) > 1 {
+			var providers []string
+			for _, p := range pathOrder {
+				for _, pkgName := range byPath[p] {
+					providers = append(providers, fmt.Sprintf("%s (%s)", pkgName, p))
+				}
+			}
+			sort.Strings(providers)
+			return "", fmt.Errorf("%s: ambiguous ProvidedLinkerScript at dependency depth %d: %s", node.FullName, depth, strings.Join(providers, ", "))
+		}
+		if len(pathOrder) == 1 {
+			return pathOrder[0], nil
+		}
+
+		var next levelState
+		for _, tName := range cur.targets {
+			if depNode, err := s.graph.GetNode(tName); err == nil {
+				addFromNode(depNode, &next)
+			}
+		}
+		for _, pkgName := range cur.pkgs {
+			if s.graph != nil {
+				for _, depPkg := range s.graph.PkgMeta[pkgName].Deps {
+					if depPkg != "" && !seenPkgs[depPkg] {
+						seenPkgs[depPkg] = true
+						next.pkgs = append(next.pkgs, depPkg)
+					}
+				}
+			}
+		}
+		cur = next
+	}
+
+	return "", nil
 }
 
 func targetFilename(kind api.TargetKind, name, targetOS string) string {

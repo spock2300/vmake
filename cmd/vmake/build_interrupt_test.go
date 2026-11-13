@@ -98,7 +98,7 @@ func Main(p *api.Package) {
 				writeExtensionFile(t, filepath.Join(project, "main.c"), "int one(void); int two(void); int main(void) { return one()+two()-3; }\n")
 				writeExtensionFile(t, filepath.Join(project, "one.c"), "int one(void) { return 1; }\n")
 				writeExtensionFile(t, filepath.Join(project, "two.c"), "int two(void) { return 2; }\n")
-				writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","global":{"toolchain":"interrupt"},"entries":{}}`)
+				writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{"version":"1","global":{"toolchain":"interrupt"},"entries":{}}`)
 				args := []string{"-test.run=^TestExtensionBootstrapChild$", "--", "build", "-i", "-k", "-j2"}
 				env := append(os.Environ(), "VMAKE_TEST_EXT_DIR="+home, "VMAKE_CACHE="+filepath.Join(dir, "cache"), "VMAKE_TRUST_ALL=1", "VMAKE_INTERRUPT_PROJECT="+project, "VMAKE_INTERRUPT_STAGE="+stage)
 				cmd := exec.Command(exe, args...)

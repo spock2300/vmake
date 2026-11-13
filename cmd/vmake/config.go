@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/spock2300/vmake/internal/pkgvis"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
@@ -19,29 +20,35 @@ import (
 	"github.com/spock2300/vmake/pkg/tui"
 )
 
-var setFlags []string
+var (
+	setFlags   []string
+	unsetFlags []string
+)
 
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Edit the active build configuration or manage configuration files",
-	Long:  `Open a TUI to edit the active configuration, or use list, use, copy and describe to manage configuration files in .vmake.`,
+	Long:  `Open a TUI to edit the active configuration, or use list, use, copy, describe and check to manage configuration files in configs/.`,
 	Args:  cobra.NoArgs,
 	Run:   runConfig,
 }
 
 func init() {
+	addConfigFlag(configCmd)
 	configCmd.Flags().StringArrayVarP(&setFlags, "set", "s", nil,
 		"Set option value non-interactively (format: [pkg/]option=value)")
+	configCmd.Flags().StringArrayVarP(&unsetFlags, "unset", "u", nil,
+		"Remove explicit option override and revert to default (format: [pkg/]option)")
 	RootCmd.AddCommand(configCmd)
-	configCmd.AddCommand(newConfigListCmd(), newConfigUseCmd(), newConfigCopyCmd(), newConfigDescribeCmd())
+	configCmd.AddCommand(newConfigListCmd(), newConfigUseCmd(), newConfigCopyCmd(), newConfigDescribeCmd(), newConfigCheckCmd())
 }
 
 func runConfig(cmd *cobra.Command, args []string) {
 	ctx := mustOpenProject(projectOptions{})
 	defer closeProject(ctx)
 
-	if len(setFlags) > 0 {
-		runSetConfig(ctx, setFlags)
+	if len(setFlags) > 0 || len(unsetFlags) > 0 {
+		runModifyConfig(ctx, setFlags, unsetFlags)
 		return
 	}
 
@@ -89,6 +96,7 @@ func runConfig(cmd *cobra.Command, args []string) {
 		Deps:             deps,
 		Options:          ctx.AllOptions,
 		Values:           values,
+		DerivedOptions:   ctx.DerivedOptions,
 		WorkDir:          ctx.WorkDir,
 		CurrentToolchain: currentTC,
 		GlobalOptions:    ctx.GlobalOptions,
@@ -113,6 +121,9 @@ func saveConfigResult(ctx *RuntimeContext, result *tui.ConfigResult) error {
 	ctx.Config.Description = result.Description
 
 	configured := make(map[string]bool)
+	for pkgName := range ctx.Config.Entries {
+		configured[pkgName] = true
+	}
 	for pkgName := range result.Values {
 		configured[pkgName] = true
 	}
@@ -122,10 +133,7 @@ func saveConfigResult(ctx *RuntimeContext, result *tui.ConfigResult) error {
 
 	for pkgName := range configured {
 		entry := config.GetEntry(ctx.Config, pkgName)
-
-		if opts, ok := result.Values[pkgName]; ok {
-			entry.Options = opts
-		}
+		entry.Options = result.Values[pkgName]
 
 		if result.PresetValues != nil {
 			if preset, ok := result.PresetValues[pkgName]; ok {
@@ -153,20 +161,16 @@ func saveConfigResult(ctx *RuntimeContext, result *tui.ConfigResult) error {
 		config.SetEntry(ctx.Config, pkgName, entry)
 	}
 
-	if ctx.Config.Global == nil {
-		ctx.Config.Global = &config.GlobalConfig{Options: make(map[string]any)}
-	}
-	if ctx.Config.Global.Options == nil {
-		ctx.Config.Global.Options = make(map[string]any)
-	}
-	if result.DerivedGlobals[api.ToolchainOptionName] {
-		ctx.Config.Global.Toolchain = ""
-	} else {
-		ctx.Config.Global.Toolchain = result.Toolchain
-	}
-	for name := range result.DerivedGlobals {
-		if name == api.TargetOSOptionName || name == api.TargetTripleOptionName {
-			delete(ctx.Config.Global.Options, name)
+	ctx.Config.Global = &config.GlobalConfig{Options: make(map[string]any)}
+	if !result.DerivedGlobals[api.ToolchainOptionName] {
+		if result.GlobalValues != nil {
+			if tc, ok := result.GlobalValues[api.ToolchainOptionName].(string); ok {
+				ctx.Config.Global.Toolchain = tc
+			} else if result.Toolchain != "" {
+				ctx.Config.Global.Toolchain = result.Toolchain
+			}
+		} else if result.Toolchain != "" {
+			ctx.Config.Global.Toolchain = result.Toolchain
 		}
 	}
 
@@ -186,6 +190,7 @@ func saveConfigResult(ctx *RuntimeContext, result *tui.ConfigResult) error {
 		}
 	}
 
+	config.PruneEmptyEntries(ctx.Config)
 	return config.Save(ctx.ConfigPath, ctx.Config)
 }
 
@@ -248,6 +253,13 @@ func coerceValue(raw string, optType api.OptionType) (any, error) {
 	}
 }
 
+func isProjectVisiblePkg(ctx *RuntimeContext, candidate string) bool {
+	if ctx == nil || ctx.Resolver == nil {
+		return true
+	}
+	return pkgvis.CheckInternal("@local", "@local", candidate, ctx.Resolver.VisibilityPath(candidate)) == nil
+}
+
 func resolveSetPackageName(ctx *RuntimeContext, pkgName string) string {
 	if pkgName == "" || strings.Contains(pkgName, "/") || ctx == nil {
 		return pkgName
@@ -261,7 +273,7 @@ func resolveSetPackageName(ctx *RuntimeContext, pkgName string) string {
 	suffix := "/" + pkgName
 	match := ""
 	for candidate := range ctx.AllOptions {
-		if strings.HasSuffix(candidate, suffix) {
+		if strings.HasSuffix(candidate, suffix) && isProjectVisiblePkg(ctx, candidate) {
 			if match != "" && match != candidate {
 				return pkgName
 			}
@@ -273,7 +285,7 @@ func resolveSetPackageName(ctx *RuntimeContext, pkgName string) string {
 	}
 	if ctx.DepGraph != nil {
 		for candidate := range ctx.DepGraph.Packages {
-			if strings.HasSuffix(candidate, suffix) {
+			if strings.HasSuffix(candidate, suffix) && isProjectVisiblePkg(ctx, candidate) {
 				if match != "" && match != candidate {
 					return pkgName
 				}
@@ -298,8 +310,23 @@ func resolveSetPackageOption(pkgName, optName string, ctx *RuntimeContext) (stri
 	}
 
 	resolvedPkg := resolveSetPackageName(ctx, pkgName)
+	if ctx != nil && ctx.Resolver != nil {
+		if err := pkgvis.CheckInternal("@local", "@local", resolvedPkg, ctx.Resolver.VisibilityPath(resolvedPkg)); err != nil {
+			return "", nil, err
+		}
+	}
 	pkgOpts, ok := ctx.AllOptions[resolvedPkg]
 	if !ok {
+		if ctx != nil && ctx.Resolver != nil {
+			suffix := "/" + pkgName
+			for candidate := range ctx.AllOptions {
+				if strings.HasSuffix(candidate, suffix) {
+					if err := pkgvis.CheckInternal("@local", "@local", candidate, ctx.Resolver.VisibilityPath(candidate)); err != nil {
+						return "", nil, err
+					}
+				}
+			}
+		}
 		available := sortedPackageNames(ctx.AllOptions)
 		return "", nil, fmt.Errorf("package %q not found (available: %s)", pkgName, strings.Join(available, ", "))
 	}
@@ -343,19 +370,126 @@ func applySetValue(ctx *RuntimeContext, pkgName, optName string, value any) {
 	config.SetEntry(ctx.Config, pkgName, entry)
 }
 
-func runSetConfig(ctx *RuntimeContext, flags []string) {
-	entries := make([]setEntry, 0, len(flags))
-	for _, f := range flags {
+type unsetEntry struct {
+	pkgName string
+	optName string
+}
+
+func parseUnsetFlag(flag string) (pkgName, optName string, err error) {
+	trimmed := strings.TrimSpace(flag)
+	if trimmed == "" {
+		return "", "", fmt.Errorf("empty option name in --unset flag")
+	}
+	if strings.Contains(trimmed, "=") {
+		return "", "", fmt.Errorf("unexpected '=' in --unset flag: %s (expected [pkg/]option)", flag)
+	}
+	lastSlash := strings.LastIndex(trimmed, "/")
+	if lastSlash < 0 {
+		return "", trimmed, nil
+	}
+	pkgName = trimmed[:lastSlash]
+	optName = trimmed[lastSlash+1:]
+	if pkgName == "" || optName == "" {
+		return "", "", fmt.Errorf("invalid format in --unset flag: %s", flag)
+	}
+	return pkgName, optName, nil
+}
+
+func applyUnsetValue(ctx *RuntimeContext, pkgName, optName string) {
+	if pkgName == "" {
+		if ctx.Config.Global == nil {
+			return
+		}
+		switch optName {
+		case "toolchain":
+			ctx.Config.Global.Toolchain = ""
+		case "mode":
+			ctx.Config.Global.Mode = ""
+		default:
+			if ctx.Config.Global.Options != nil {
+				delete(ctx.Config.Global.Options, optName)
+			}
+		}
+		return
+	}
+	if ctx.Config.Entries == nil {
+		return
+	}
+	entry, ok := ctx.Config.Entries[pkgName]
+	if !ok || entry == nil || entry.Options == nil {
+		return
+	}
+	delete(entry.Options, optName)
+}
+
+func hasExplicitConfigKey(ctx *RuntimeContext, pkgName, optName string) (string, bool) {
+	if ctx == nil || ctx.Config == nil {
+		return pkgName, false
+	}
+	if pkgName == "" {
+		if ctx.Config.Global == nil {
+			return "", false
+		}
+		switch optName {
+		case "toolchain":
+			return "", ctx.Config.Global.Toolchain != ""
+		case "mode":
+			return "", ctx.Config.Global.Mode != ""
+		default:
+			_, ok := ctx.Config.Global.Options[optName]
+			return "", ok
+		}
+	}
+	resolvedPkg := resolveSetPackageName(ctx, pkgName)
+	for _, cand := range []string{resolvedPkg, pkgName} {
+		if entry := ctx.Config.Entries[cand]; entry != nil && entry.Options != nil {
+			if _, ok := entry.Options[optName]; ok {
+				return cand, true
+			}
+		}
+	}
+	return pkgName, false
+}
+
+func runModifyConfig(ctx *RuntimeContext, sets []string, unsets []string) {
+	setEntries := make([]setEntry, 0, len(sets))
+	for _, f := range sets {
 		pkgName, optName, rawVal, err := parseSetFlag(f)
 		if err != nil {
 			vlog.Error("Error: %v", err)
 			os.Exit(1)
 		}
-		entries = append(entries, setEntry{pkgName: pkgName, optName: optName, rawVal: rawVal})
+		setEntries = append(setEntries, setEntry{pkgName: pkgName, optName: optName, rawVal: rawVal})
 	}
 
-	for i := range entries {
-		e := &entries[i]
+	unsetEntries := make([]unsetEntry, 0, len(unsets))
+	for _, f := range unsets {
+		pkgName, optName, err := parseUnsetFlag(f)
+		if err != nil {
+			vlog.Error("Error: %v", err)
+			os.Exit(1)
+		}
+		unsetEntries = append(unsetEntries, unsetEntry{pkgName: pkgName, optName: optName})
+	}
+
+	for i := range unsetEntries {
+		u := &unsetEntries[i]
+		resolvedPkg, _, err := resolveSetPackageOption(u.pkgName, u.optName, ctx)
+		if err != nil {
+			if existingPkg, ok := hasExplicitConfigKey(ctx, u.pkgName, u.optName); ok {
+				u.pkgName = existingPkg
+			} else {
+				vlog.Error("Error: %v", err)
+				os.Exit(1)
+			}
+		} else {
+			u.pkgName = resolvedPkg
+		}
+		applyUnsetValue(ctx, u.pkgName, u.optName)
+	}
+
+	for i := range setEntries {
+		e := &setEntries[i]
 		resolvedPkg, opt, err := resolveSetPackageOption(e.pkgName, e.optName, ctx)
 		if err != nil {
 			vlog.Error("Error: %v", err)
@@ -387,11 +521,19 @@ func runSetConfig(ctx *RuntimeContext, flags []string) {
 		applySetValue(ctx, e.pkgName, e.optName, value)
 	}
 
+	config.PruneEmptyEntries(ctx.Config)
 	if err := config.Save(ctx.ConfigPath, ctx.Config); err != nil {
 		fatalMsg("Failed to save config: %v", err)
 	}
 
-	for _, e := range entries {
+	for _, u := range unsetEntries {
+		if u.pkgName != "" {
+			vlog.Info("  unset %s/%s", u.pkgName, u.optName)
+		} else {
+			vlog.Info("  unset %s", u.optName)
+		}
+	}
+	for _, e := range setEntries {
 		if e.pkgName != "" {
 			vlog.Info("  %s/%s = %s", e.pkgName, e.optName, e.rawVal)
 		} else {

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/config"
 )
 
 func TestCheckAutoWireNoRequires(t *testing.T) {
@@ -36,6 +37,22 @@ func Main(p *api.Package) {
 	findings := checkAutoWire(src)
 	if len(findings) != 0 {
 		t.Errorf("explicit AddDeps → no findings, got %v", findings)
+	}
+}
+
+func TestCheckAutoWireWithUseRequires(t *testing.T) {
+	dir := t.TempDir()
+	src := makeBuildGoInDir(dir, "use-requires", `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetBinary).UseRequires()
+	})
+}`)
+	findings := checkAutoWire(src)
+	if len(findings) != 0 {
+		t.Errorf("UseRequires → no findings, got %v", findings)
 	}
 }
 
@@ -151,5 +168,42 @@ func makeBuildGoInDir(dir, pkgName, content string) buildscript.Source {
 		Name: pkgName,
 		Path: path,
 		Dir:  dir,
+	}
+}
+
+func TestResolveDoctorPreferredToolchainReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	chipDir := filepath.Join(dir, "chip")
+	if err := os.MkdirAll(chipDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	makeBuildGoInDir(dir, "app", `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("chip") })
+	p.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.GlobalOption("chip").SetType(api.OptionChoice).SetValues("demo-chip").SetDefault("demo-chip")
+	})
+}`)
+	makeBuildGoInDir(chipDir, "chip", `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+	p.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.SetChipProfile(api.ChipProfile{
+			Name:               "demo-chip",
+			PreferredToolchain: "arm-none-eabi",
+			TargetOS:           "none",
+			TargetTriple:       "arm-none-eabi",
+		})
+	})
+}`)
+	cfg := &config.ConfigFile{Version: config.ConfigVersion}
+	got := resolveDoctorPreferredToolchain(dir, cfg)
+	if got != "arm-none-eabi" {
+		t.Fatalf("preferred toolchain = %q, want arm-none-eabi", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".vmake")); !os.IsNotExist(err) {
+		t.Fatalf("doctor fallback created .vmake: %v", err)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/resolver"
@@ -274,7 +275,7 @@ func Main(p *api.Package) {
 
 func TestInspectGlobalOptionEntryDefaultUsesGlobalValue(t *testing.T) {
 	project := filepath.Join(t.TempDir(), "proj")
-	writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{
+	writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{
 		"version": "1",
 		"global": {"options": {"board": "custom"}},
 		"entries": {"proj": {"options": {"board": "evb"}}}
@@ -329,7 +330,7 @@ func TestInspectProjectModel(t *testing.T) {
 		t.Fatalf("diagnostics = %#v, want []", envelope.Diagnostics)
 	}
 	data := envelope.Data
-	if data.Root != project || data.ConfigFile != "config.json" || data.Mode != "debug" || data.Toolchain != "host" {
+	if data.Root != project || data.ConfigFile != "configs/default.json" || data.Mode != "debug" || data.Toolchain != "host" {
 		t.Fatalf("data header = %+v", data)
 	}
 	if want := filepath.Join(project, "build", "compile_commands.json"); data.CompileDatabase != want {
@@ -755,25 +756,29 @@ func TestInspectBuildStateAndPackageDirs(t *testing.T) {
 func TestInspectBuildDirFields(t *testing.T) {
 	key := "debug-abc"
 	local := &api.PkgDirs{SourceDir: "/src/lib", BuildDir: filepath.Join("/src/lib", "build", key)}
-	dir, buildKey := inspectBuildDirFields(local, true)
+	dir, buildKey := inspectBuildDirFields(local, nil, true)
 	if dir != local.BuildDir || buildKey != key {
 		t.Fatalf("local fields = %q/%q", dir, buildKey)
 	}
-	if dir, buildKey := inspectBuildDirFields(local, false); dir != local.BuildDir || buildKey != "" {
+	if dir, buildKey := inspectBuildDirFields(local, nil, false); dir != local.BuildDir || buildKey != "" {
 		t.Fatalf("remote-like fields = %q/%q", dir, buildKey)
 	}
 	remote := &api.PkgDirs{SourceDir: "/deps/owner/src", BuildDir: filepath.Join("/deps/owner/out", "member", key, "build")}
-	if dir, buildKey := inspectBuildDirFields(remote, false); dir != remote.BuildDir || buildKey != "" {
-		t.Fatalf("remote fields = %q/%q", dir, buildKey)
+	if dir, buildKey := inspectBuildDirFields(remote, nil, false); dir != remote.BuildDir || buildKey != "" {
+		t.Fatalf("remote fallback fields = %q/%q", dir, buildKey)
+	}
+	remoteLayout := &build.PackageLayout{Dirs: *remote, BuildKey: key, Ready: true}
+	if dir, buildKey := inspectBuildDirFields(remote, remoteLayout, false); dir != remote.BuildDir || buildKey != key {
+		t.Fatalf("remote layout fields = %q/%q, want %q/%q", dir, buildKey, remote.BuildDir, key)
 	}
 	odd := &api.PkgDirs{BuildDir: filepath.Join("/tmp", key)}
-	if _, buildKey := inspectBuildDirFields(odd, true); buildKey != "" {
+	if _, buildKey := inspectBuildDirFields(odd, nil, true); buildKey != "" {
 		t.Fatalf("non-layout build dir got buildKey %q", buildKey)
 	}
-	if dir, buildKey := inspectBuildDirFields(nil, true); dir != "" || buildKey != "" {
+	if dir, buildKey := inspectBuildDirFields(nil, nil, true); dir != "" || buildKey != "" {
 		t.Fatalf("nil dirs = %q/%q", dir, buildKey)
 	}
-	if dir, buildKey := inspectBuildDirFields(&api.PkgDirs{SourceDir: "/src"}, true); dir != "" || buildKey != "" {
+	if dir, buildKey := inspectBuildDirFields(&api.PkgDirs{SourceDir: "/src"}, nil, true); dir != "" || buildKey != "" {
 		t.Fatalf("empty build dir = %q/%q", dir, buildKey)
 	}
 }
@@ -1025,7 +1030,7 @@ func Main(p *api.Package) {
 
 func TestInspectSetOverridesAreHypothetical(t *testing.T) {
 	project := writeInspectProject(t, t.TempDir())
-	configPath := filepath.Join(project, ".vmake", "config.json")
+	configPath := filepath.Join(project, "configs", "default.json")
 
 	stdout, stderr, code := runInspectCommand(t, project, "inspect", "--set", "proj/with_dep=false")
 	if code != 0 || stderr != "" {
@@ -1081,7 +1086,7 @@ func TestInspectSetOverridesAreHypothetical(t *testing.T) {
 
 func TestInspectSetTypedCoercion(t *testing.T) {
 	project := writeInspectProject(t, t.TempDir())
-	configPath := filepath.Join(project, ".vmake", "config.json")
+	configPath := filepath.Join(project, "configs", "default.json")
 
 	for _, raw := range []string{"42", "true", "on", "false", ""} {
 		t.Run("string_"+raw, func(t *testing.T) {
@@ -1157,7 +1162,7 @@ func TestInspectSetTypedCoercion(t *testing.T) {
 
 func TestInspectSetErrors(t *testing.T) {
 	project := writeInspectProject(t, t.TempDir())
-	configPath := filepath.Join(project, ".vmake", "config.json")
+	configPath := filepath.Join(project, "configs", "default.json")
 	for _, test := range []struct {
 		name string
 		args []string
@@ -1747,7 +1752,7 @@ func TestInspectFixtures(t *testing.T) {
 			t.Skipf("fixture %s unavailable", root)
 		}
 		t.Run(filepath.Base(root), func(t *testing.T) {
-			before, err := os.ReadFile(filepath.Join(root, ".vmake", "config.json"))
+			before, err := os.ReadFile(filepath.Join(root, "configs", "default.json"))
 			if err != nil && !os.IsNotExist(err) {
 				t.Fatal(err)
 			}
@@ -1791,12 +1796,12 @@ func TestInspectFixtures(t *testing.T) {
 				t.Fatal("consecutive inspect runs are not byte-identical")
 			}
 			checkInspectWarnings(t, decodeInspectEnvelope(t, again), stderr)
-			after, err := os.ReadFile(filepath.Join(root, ".vmake", "config.json"))
+			after, err := os.ReadFile(filepath.Join(root, "configs", "default.json"))
 			if err != nil && !os.IsNotExist(err) {
 				t.Fatal(err)
 			}
 			if !bytes.Equal(before, after) {
-				t.Fatal("inspect modified .vmake/config.json")
+				t.Fatal("inspect modified configs/default.json")
 			}
 		})
 	}

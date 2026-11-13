@@ -10,6 +10,7 @@ import (
 
 	"github.com/spock2300/vmake/internal/flock"
 	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/pkgvis"
 	"github.com/spock2300/vmake/internal/toposort"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
@@ -89,6 +90,7 @@ type Resolver struct {
 	sources      map[string]*buildscript.Source
 	graph        *Graph
 	repoMgr      *repo.RepoManager
+	projectRoot  string
 	depsDir      string
 	sourceMgr    *repo.SourceManager
 	dryRunDir    string
@@ -124,6 +126,38 @@ func (r *Resolver) SetContext(ctx context.Context) {
 
 func (r *Resolver) SetSourceManager(sm *repo.SourceManager) {
 	r.sourceMgr = sm
+}
+
+func (r *Resolver) SetProjectRoot(dir string) {
+	r.projectRoot = dir
+}
+
+func (r *Resolver) effectiveProjectRoot() string {
+	if r == nil {
+		return ""
+	}
+	if r.projectRoot != "" {
+		return r.projectRoot
+	}
+	if r.depsDir != "" && filepath.Base(filepath.Clean(r.depsDir)) == ".vmake_deps" {
+		return filepath.Dir(filepath.Clean(r.depsDir))
+	}
+	return ""
+}
+
+func (r *Resolver) VisibilityPath(id string) string {
+	if r == nil {
+		return pkgvis.VisibilityPath(false, id, "", "")
+	}
+	if r.graph != nil {
+		if node, ok := r.graph.Packages[id]; ok && node != nil && node.Source != nil {
+			return pkgvis.VisibilityPath(node.IsLocal(), id, r.effectiveProjectRoot(), node.Source.Dir)
+		}
+	}
+	if src, ok := r.sources[id]; ok && src != nil {
+		return pkgvis.VisibilityPath(src.IsLocal(), id, r.effectiveProjectRoot(), src.Dir)
+	}
+	return pkgvis.VisibilityPath(false, id, "", "")
 }
 
 func (r *Resolver) SetLockfile(l *lockfile.Lock, ignore bool) {
@@ -272,6 +306,9 @@ func (r *Resolver) FilterDeps(id string, cfgVals map[string]any, options map[str
 			hint := subPackageHint(id, req.Name, resolved, r.subParents)
 			return fmt.Errorf("dependency %q (required by %s) not found in dependency graph; declare it unconditionally in OnRequire (use ctx.When() for config-conditional requires)%s", req.Name, id, hint)
 		}
+		if err := pkgvis.CheckInternal(id, r.VisibilityPath(id), resolved, r.VisibilityPath(resolved)); err != nil {
+			return err
+		}
 		newDeps = append(newDeps, resolved)
 	}
 	node.Deps = newDeps
@@ -293,7 +330,7 @@ func (r *Resolver) resolveRecursive(id string, constraint string, path []string)
 		return node, nil
 	}
 
-	src, err := r.findSource(id, constraint)
+	src, err := r.findSource(id, constraint, path)
 	if err != nil {
 		return nil, err
 	}
@@ -385,12 +422,15 @@ func (r *Resolver) recurseDeps(node *PackageNode, path []string) error {
 		if err != nil {
 			return err
 		}
+		if err := pkgvis.CheckInternal(node.ID, r.VisibilityPath(node.ID), depNode.ID, r.VisibilityPath(depNode.ID)); err != nil {
+			return err
+		}
 		node.Deps = append(node.Deps, depNode.ID)
 	}
 	return nil
 }
 
-func (r *Resolver) findSource(id string, constraint string) (*buildscript.Source, error) {
+func (r *Resolver) findSource(id string, constraint string, path []string) (*buildscript.Source, error) {
 	if src, ok := r.sources[id]; ok && src.IsLocal() {
 		return src, nil
 	}
@@ -452,7 +492,7 @@ func (r *Resolver) findSource(id string, constraint string) (*buildscript.Source
 		return nil, fmt.Errorf("find %s: %w", id, err)
 	}
 
-	src, nerr := r.findNativeSource(id, repoName, pkgName, constraint)
+	src, nerr := r.findNativeSource(id, repoName, pkgName, constraint, path)
 	if nerr != nil && strings.Contains(pkgName, "/") {
 		if owner := r.resolvedSubPackageOwner(id); owner != "" {
 			return nil, fmt.Errorf("sub-package %q not found under resolved parent package %q: %w", id, owner, nerr)
@@ -476,7 +516,7 @@ func (r *Resolver) resolvedSubPackageOwner(id string) string {
 	return ""
 }
 
-func (r *Resolver) findNativeLink(id, repoName, constraint, linkPath, gitURL string) (*buildscript.Source, error) {
+func (r *Resolver) findNativeLink(id, repoName, constraint, linkPath, gitURL string, path []string) (*buildscript.Source, error) {
 	buildGo := filepath.Join(linkPath, "build.go")
 	if !fs.FileExists(buildGo) {
 		return nil, fmt.Errorf("linked native package %s has no build.go in %s", id, linkPath)
@@ -517,14 +557,14 @@ func (r *Resolver) findNativeLink(id, repoName, constraint, linkPath, gitURL str
 	}
 	r.graph.Packages[id] = node
 
-	if err := r.recurseDeps(node, []string{id}); err != nil {
+	if err := r.recurseDeps(node, path); err != nil {
 		return nil, err
 	}
 	r.scanSubPackages(id, linkPath)
 	return src, nil
 }
 
-func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*buildscript.Source, error) {
+func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string, path []string) (*buildscript.Source, error) {
 	if r.sourceMgr == nil {
 		return nil, fmt.Errorf("resolver for %s has no source manager configured", id)
 	}
@@ -536,7 +576,7 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 	gitURL := repo.ResolveNativeURL(urlTemplate, pkgName)
 
 	if linkPath, ok := r.sourceLink(id); ok {
-		return r.findNativeLink(id, repoName, constraint, linkPath, gitURL)
+		return r.findNativeLink(id, repoName, constraint, linkPath, gitURL, path)
 	}
 	if err := r.checkLockedEntry(id); err != nil {
 		return nil, err
@@ -652,7 +692,7 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string) (*
 	}
 	r.graph.Packages[id] = node
 
-	if err := r.recurseDeps(node, []string{id}); err != nil {
+	if err := r.recurseDeps(node, path); err != nil {
 		return nil, err
 	}
 

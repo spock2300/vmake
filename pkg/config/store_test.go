@@ -49,23 +49,38 @@ func TestLoad_NewFormat(t *testing.T) {
 	}
 }
 
-func TestLoad_OldFormat(t *testing.T) {
+func TestLoad_RootAndPrune(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
 
 	data := `{
 		"version": "1",
-		"toolchain": "gcc"
+		"root": "target-app",
+		"global": {
+			"toolchain": "gcc"
+		},
+		"entries": {
+			"empty_pkg": {},
+			"active_pkg": {"options": {"a": true}}
+		}
 	}`
-	os.WriteFile(path, []byte(data), 0644)
+	if err := os.WriteFile(path, []byte(data), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
-
-	if cfg.Global.Toolchain != "gcc" {
-		t.Errorf("Global.Toolchain = %q, want %q", cfg.Global.Toolchain, "gcc")
+	if cfg.Root != "target-app" {
+		t.Errorf("Root = %q, want %q", cfg.Root, "target-app")
+	}
+	PruneEmptyEntries(cfg)
+	if _, ok := cfg.Entries["empty_pkg"]; ok {
+		t.Errorf("expected empty_pkg pruned")
+	}
+	if _, ok := cfg.Entries["active_pkg"]; !ok {
+		t.Errorf("expected active_pkg kept")
 	}
 }
 

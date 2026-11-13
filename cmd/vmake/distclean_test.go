@@ -13,7 +13,7 @@ func TestDistCleanKeepsSourcesUnlessPurge(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) { p.SetRoot(true) }
 `)
-	writeExtensionFile(t, filepath.Join(root, ".vmake", "config.json"), `{"version":"1","global":{"toolchain":"host"}}`)
+	writeExtensionFile(t, filepath.Join(root, "configs", "default.json"), `{"version":"1","global":{"toolchain":"host"}}`)
 
 	tree := filepath.Join(root, ".vmake_deps", "official", "zlib")
 	source := filepath.Join(tree, "src", "zlib.c")

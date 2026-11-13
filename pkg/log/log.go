@@ -20,6 +20,10 @@ func SetLevel(l Level) {
 	level = l
 }
 
+func GetLevel() Level {
+	return level
+}
+
 // IsQuiet reports whether output is suppressed (-q).
 func IsQuiet() bool {
 	return level <= Quiet

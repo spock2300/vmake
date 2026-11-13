@@ -19,7 +19,7 @@ the installation manifest (`install/manifest.json`). `clean`, `distclean`, and
 | `error` | Concise one-line failure summary (about 300 characters at most); empty on success |
 | `diagnostics` | Always an array. Empty on success; failure entries are parsed errors. Each has `severity`, `code`, `message`, and optional `file`, `line`, `column`, `package`, `target`. Codes: `VMAKE_E_COMPILE`, `VMAKE_E_LINK`, `VMAKE_E_BUILD`, `VMAKE_E_SCRIPT`, `VMAKE_E_TEST` |
 | `summary` | Per-invocation counts (see below); present on success, on a failure whose scheduler produced a partial result, and for a test failure after the build phase. Omitted when the failure happened before any target was scheduled |
-| `configFile`, `configSha256` | Active configuration name and SHA-256 of the exact configuration bytes used |
+| `configFile`, `configSha256` | Active configuration path relative to project root (for example `configs/default.json`) and SHA-256 of the exact configuration bytes used |
 | `global`, `packages` | Effective global values and per-package values for the packages that participated |
 | `toolchain`, `mode` | Effective toolchain and mode |
 | `vmakeVersion`, `vmakeCommit` | Version and abbreviated VCS commit embedded in the running vmake binary (`dev`/`unknown` when unavailable); captured when the report begins and preserved by finish/partial writes |

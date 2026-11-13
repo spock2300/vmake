@@ -31,6 +31,12 @@ func CollectSubGraphPackages(rootPkg string, pkgMeta map[string]PkgBuildMeta, al
 				visit(dep)
 			}
 		}
+		for _, sub := range meta.SubGraphs {
+			sub = resolvePkg(pkgName, sub)
+			if needed[sub] {
+				visit(sub)
+			}
+		}
 
 		targets, ok := allTargets[pkgName]
 		if !ok {

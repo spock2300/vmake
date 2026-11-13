@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spock2300/vmake/internal/pkgvis"
 	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/internal/storage"
 	"github.com/spock2300/vmake/pkg/api"
@@ -39,6 +40,7 @@ type RuntimeContext struct {
 	ChipProfile         api.ChipProfile
 	PreferredToolchain  string
 	GlobalOptions       map[string]*api.Option
+	DerivedOptions      map[string]map[string]any
 	Resolver            *resolver.Resolver
 	BufferedGlobalFlags map[string]*packageGlobalFlags
 	GlobalMacroDefines  []string
@@ -57,10 +59,52 @@ type RuntimeContext struct {
 }
 
 type packageGlobalFlags struct {
-	cFlags   []string
-	cxxFlags []string
-	ldFlags  []string
-	links    []string
+	cFlags        []string
+	cxxFlags      []string
+	ldFlags       []string
+	links         []string
+	applyCFlags   []string
+	applyCxxFlags []string
+	applyLdFlags  []string
+	applyLinks    []string
+}
+
+func (f *packageGlobalFlags) resetApply() {
+	if f == nil {
+		return
+	}
+	f.applyCFlags = nil
+	f.applyCxxFlags = nil
+	f.applyLdFlags = nil
+	f.applyLinks = nil
+}
+
+func (f *packageGlobalFlags) allCFlags() []string {
+	if f == nil {
+		return nil
+	}
+	return append(append([]string(nil), f.cFlags...), f.applyCFlags...)
+}
+
+func (f *packageGlobalFlags) allCxxFlags() []string {
+	if f == nil {
+		return nil
+	}
+	return append(append([]string(nil), f.cxxFlags...), f.applyCxxFlags...)
+}
+
+func (f *packageGlobalFlags) allLdFlags() []string {
+	if f == nil {
+		return nil
+	}
+	return append(append([]string(nil), f.ldFlags...), f.applyLdFlags...)
+}
+
+func (f *packageGlobalFlags) allLinks() []string {
+	if f == nil {
+		return nil
+	}
+	return append(append([]string(nil), f.links...), f.applyLinks...)
 }
 
 type ResolveParams struct {
@@ -157,27 +201,80 @@ func (ctx *RuntimeContext) lockedEntry(name string) (*lockfile.LockedPkg, bool) 
 	return locked, true
 }
 
+func visibleGlobalOptionsFor(node *resolver.PackageNode, pkgOpts, globalOptions map[string]*api.Option) map[string]*api.Option {
+	if len(globalOptions) == 0 {
+		return nil
+	}
+	isLocal := node != nil && node.IsLocal()
+	visible := make(map[string]*api.Option, len(globalOptions))
+	for name, opt := range globalOptions {
+		if opt == nil {
+			continue
+		}
+		if opt.ExportDefine() || isLocal || (pkgOpts[name] != nil && pkgOpts[name].IsGlobal()) {
+			visible[name] = opt
+		}
+	}
+	return visible
+}
+
+func visibleGlobalValuesFor(node *resolver.PackageNode, pkgOpts, globalOptions map[string]*api.Option, globalValues map[string]any) map[string]any {
+	if len(globalValues) == 0 {
+		return nil
+	}
+	isLocal := node != nil && node.IsLocal()
+	visible := make(map[string]any, len(globalValues))
+	for name, val := range globalValues {
+		opt := globalOptions[name]
+		if opt == nil || opt.ExportDefine() || isLocal || (pkgOpts[name] != nil && pkgOpts[name].IsGlobal()) {
+			visible[name] = val
+		}
+	}
+	return visible
+}
+
 func newBuildContext(ctx *RuntimeContext, name string, globalValues map[string]any) (*api.BuildContext, error) {
 	values, err := PackageConfigValues(ctx, name, globalValues)
 	if err != nil {
 		return nil, err
 	}
-	buildCtx := api.NewBuildContext(name, values)
-	if opts, ok := ctx.AllOptions[name]; ok {
-		buildCtx.SetOptions(opts)
+	var node *resolver.PackageNode
+	if ctx.DepGraph != nil {
+		node = ctx.DepGraph.Packages[name]
 	}
-	buildCtx.MergeGlobals(ctx.GlobalOptions, globalValues)
+	buildCtx := api.NewBuildContext(name, values)
+	pkgOpts := ctx.AllOptions[name]
+	if pkgOpts != nil {
+		buildCtx.SetOptions(maps.Clone(pkgOpts))
+	}
+	buildCtx.MergeGlobals(
+		visibleGlobalOptionsFor(node, pkgOpts, ctx.GlobalOptions),
+		visibleGlobalValuesFor(node, pkgOpts, ctx.GlobalOptions, globalValues),
+	)
 	return buildCtx, nil
 }
 
-func newConfigLookup(ctx *RuntimeContext, base map[string]any, bound func(string) (map[string]any, bool)) func(string, string) (any, *api.Option, error) {
+func newConfigLookup(ctx *RuntimeContext, currentPkg string, base map[string]any, bound func(string) (map[string]any, bool)) func(string, string) (any, *api.Option, error) {
 	if base == nil && ctx.Config != nil {
 		base = projectGlobalValues(ctx)
 	}
 	values := make(map[string]map[string]any)
 	return func(pkg, name string) (any, *api.Option, error) {
-		if ctx.DepGraph == nil || ctx.DepGraph.Packages[pkg] == nil {
+		if ctx.DepGraph == nil {
 			return nil, nil, fmt.Errorf("package %q is not in the resolved dependency graph", pkg)
+		}
+		if currentPkg != "" && ctx.Resolver != nil {
+			pkg = api.ResolveSubPackageName(currentPkg, pkg, ctx.Resolver.SubParents(), func(candidate string) bool {
+				return ctx.DepGraph.Packages[candidate] != nil
+			})
+		}
+		if ctx.DepGraph.Packages[pkg] == nil {
+			return nil, nil, fmt.Errorf("package %q is not in the resolved dependency graph", pkg)
+		}
+		if currentPkg != "" && ctx.Resolver != nil {
+			if err := pkgvis.CheckInternal(currentPkg, ctx.Resolver.VisibilityPath(currentPkg), pkg, ctx.Resolver.VisibilityPath(pkg)); err != nil {
+				return nil, nil, err
+			}
 		}
 		node := ctx.DepGraph.Packages[pkg]
 		opts := ctx.AllOptions[pkg]
@@ -186,7 +283,9 @@ func newConfigLookup(ctx *RuntimeContext, base map[string]any, bound func(string
 		}
 		opt := opts[name]
 		if opt == nil {
-			opt = ctx.GlobalOptions[name]
+			if gOpt := ctx.GlobalOptions[name]; gOpt != nil && gOpt.ExportDefine() {
+				opt = gOpt
+			}
 		}
 		if opt == nil {
 			opt = implicitPlatformOption(name)
@@ -196,7 +295,10 @@ func newConfigLookup(ctx *RuntimeContext, base map[string]any, bound func(string
 			for optionName := range opts {
 				names = append(names, optionName)
 			}
-			for optionName := range ctx.GlobalOptions {
+			for optionName, gOpt := range ctx.GlobalOptions {
+				if gOpt != nil && !gOpt.ExportDefine() {
+					continue
+				}
 				if _, exists := opts[optionName]; !exists {
 					names = append(names, optionName)
 				}
@@ -257,9 +359,10 @@ func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, 
 	if allOpts == nil && node != nil && node.Pkg != nil {
 		allOpts = node.Pkg.GetOptions()
 	}
+	visGlobals := visibleGlobalValuesFor(node, allOpts, ctx.GlobalOptions, globalValues)
 	if allOpts != nil {
 		for optName, opt := range allOpts {
-			if _, resolved := globalValues[optName]; resolved && opt.IsGlobal() {
+			if _, resolved := visGlobals[optName]; resolved && opt.IsGlobal() {
 				continue
 			}
 			if opt.Default() != nil {
@@ -267,8 +370,16 @@ func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, 
 			}
 		}
 	}
-	mergePkgOptions(cfgVals, allPkgOptions[name], allOpts, globalValues)
-	for k, v := range globalValues {
+	if ctx != nil && ctx.DerivedOptions != nil {
+		for k, v := range ctx.DerivedOptions[name] {
+			if opt, declared := allOpts[k]; declared && opt.IsGlobal() {
+				continue
+			}
+			cfgVals[k] = v
+		}
+	}
+	mergePkgOptions(cfgVals, allPkgOptions[name], allOpts, visGlobals)
+	for k, v := range visGlobals {
 		if _, exists := cfgVals[k]; !exists {
 			cfgVals[k] = v
 		}
@@ -295,10 +406,16 @@ func applyBuildContextConfig(buildCtx *api.BuildContext, node *resolver.PackageN
 	}
 	var resolvedImports []string
 	for _, depName := range buildCtx.ImportConfigs() {
-		resolvedImports = append(resolvedImports, api.ResolveSubPackageName(currentPkg, depName, subParents, func(candidate string) bool {
+		resolved := api.ResolveSubPackageName(currentPkg, depName, subParents, func(candidate string) bool {
 			depNode := ctx.DepGraph.Packages[candidate]
 			return needed[candidate] && depNode != nil && depNode.Pkg != nil
-		}))
+		})
+		if currentPkg != "" && ctx.Resolver != nil {
+			if err := pkgvis.CheckInternal(currentPkg, ctx.Resolver.VisibilityPath(currentPkg), resolved, ctx.Resolver.VisibilityPath(resolved)); err != nil {
+				panic(&api.BuildScriptError{Package: currentPkg, Op: "ImportConfig", Err: err})
+			}
+		}
+		resolvedImports = append(resolvedImports, resolved)
 	}
 	if buildCtx.GenConfigDefines() && node.Pkg != nil {
 		var importPkgs []*api.Package
@@ -333,12 +450,16 @@ func DeclareTargets(ctx *RuntimeContext, name string, dirs *api.PkgDirs, tc *too
 	if err != nil {
 		return nil, err
 	}
-	buildCtx.SetConfigLookup(newConfigLookup(ctx, globalValues, nil))
+	buildCtx.SetConfigLookup(newConfigLookup(ctx, name, globalValues, nil))
 	platform := platformFromValues(buildCtx.CfgVals)
 	buildCtx.SetDryRun(true)
 	buildCtx.SetBuildSubGraphFunc(func(string) error { return nil })
 	buildCtx.SetDepOutputFunc(func(string) string { return "" })
 	buildCtx.SetDepSrcDirFunc(func(string) string { return "" })
+	buildCtx.SetDepPackageDirFunc(func(depRef string) string {
+		validateDirectDepPackageRef(ctx, name, depRef)
+		return ""
+	})
 
 	if node != nil && node.Pkg != nil {
 		pkg := node.Pkg

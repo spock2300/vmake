@@ -237,7 +237,7 @@ func Main(p *api.Package) {
     p.OnBuild(func(ctx *api.BuildContext) { ctx.Target("ready").SetKind(api.TargetVoid) })
 }
 `)
-	writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","global":{"toolchain":"lazy"},"entries":{}}`)
+	writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{"version":"1","global":{"toolchain":"lazy"},"entries":{}}`)
 	runGit(clone, "config", "lfs.fetchinclude", "assets/unrelated.dat")
 	runGit(clone, "config", "lfs.fetchexclude", "*")
 	runGit(clone, "config", "lfs.fetchrecentalways", "true")

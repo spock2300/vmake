@@ -101,10 +101,10 @@ func parseRequire(dep string) (name, constraint string) {
 }
 
 func CheckCycle(path []string, current string) error {
-	for _, p := range path {
+	for i, p := range path {
 		if p == current {
-			return fmt.Errorf("circular dependency: %s → %s",
-				strings.Join(path, " → "), current)
+			return fmt.Errorf("circular dependency: %s -> %s",
+				strings.Join(path[i:], " -> "), current)
 		}
 	}
 	return nil

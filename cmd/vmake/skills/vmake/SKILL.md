@@ -46,8 +46,11 @@ vmake build -j 8                       # Parallel compilation within each target
 vmake rebuild                          # Clean + build in one step
 vmake test                             # Build & run native test targets (CTest-style)
 vmake config --set pkg/opt=val         # Non-interactive config override (skip TUI)
-vmake config list                      # List configurations under .vmake/
-vmake config use <name>.json           # Select a configuration
+vmake config --unset pkg/opt           # Remove explicit override (revert to default)
+vmake config list                      # List tracked configurations under configs/
+vmake config use <profile>             # Set local active configuration cursor (.vmake/local.json)
+vmake config check --all               # Validate all tracked configurations under configs/
+vmake build -c <profile>               # Build a specific configuration statelessly
 vmake inspect                          # Dry-run JSON project model (may initialize .vmake/ and .gitignore)
 vmake inspect --no-targets             # Package/dependency JSON without running OnBuild
 vmake pkg search tls --details         # Search names, descriptions and licenses in trusted repositories
@@ -55,6 +58,9 @@ vmake pkg show official/zlib           # Package metadata, versions and AddRequi
 vmake pkg link <repo>/<pkg> ../<pkg>   # Compile from a local git tree; removes stale .vmake_deps src
 vmake pkg unlink <repo>/<pkg>          # Next build uses vmake.lock; run deps update for newer versions
 vmake deps status                      # Show dependency versions, pins, working trees and cache state
+vmake deps graph                       # Unified dependency graph (--targets, --format dot, --format mermaid, --json)
+vmake deps why <pkg>                   # Dependency chain from root to <pkg> or <pkg>:<target> (--all, --json)
+vmake deps check                       # Audit DAG cycles, internal/ visibility, and header boundaries
 vmake deps sync                        # Reconcile working trees and vmake.lock without floating locked packages
 vmake deps update [<pkg>[@<ver|commit>]] [--dry-run] [--refresh-repos] # Re-resolve all or selected dependencies in vmake.lock
 vmake deps pin <pkg>@<ver|commit>      # Pin a dependency version/commit in .vmake/project.json and vmake.lock
@@ -74,7 +80,7 @@ vmake toolchain show <name>            # Toolchain details and resolved tool pat
 - **Switching Back from a Link**: `vmake pkg unlink <repo>/<pkg>` removes the link; the next build uses the existing `vmake.lock` entry when present (otherwise it resolves and writes one), and untagged linked HEADs are not selected. Run `vmake deps update <repo>/<pkg>` only if you want to re-resolve newer versions before building (project pins and version constraints still apply).
 - **Build & Test Reports**: `build`/`rebuild` write `build/vmake-build.json` and `test` writes `build/vmake-test.json` (schemaVersion 2: status, duration, concise error, parsed compiler/linker diagnostics, target timings, test results, SHA-256 installed artifacts). `clean`/`distclean`/`pkg clean` remove both. Full schema: [references/build-result.md](references/build-result.md).
 - **Package Discovery**: `pkg search` scans repository directories and matches repository/package names by default; `--details` reads `build.go` only for trusted repositories and also matches description, license and latest version. `--for-project` adds cached/locked/installed status; installed status uses the default `<project>/install/manifest.json`, so custom `--prefix` installs are not detected. `pkg show` prints metadata and an `AddRequires` snippet. Native repositories only expose packages already cached in the current project; native sub-packages are not listed separately and are read through their parent package. Neither command writes an index or cache.
-- **Inspection & Dry-Run Discipline**: `inspect`, `query`, and `query targets` evaluate `OnBuild` in dry-run mode with read-only `scriptfs` (`p.DryRun() == true`); `inspect --no-targets` skips `OnBuild` entirely, and `query config <pkg>` only reads configuration and does not evaluate `OnBuild`. `check-symbols` declares targets in dry-run but does not set `scriptfs` read-only. Prefer declarative `p.WriteBuildFile`, `p.GenerateFile`, `p.Generate`, and `p.BuildPath` in `OnBuild` (they defer writes to scheduler execution and emit `$builddir/...` when `BuildDir()` is empty); guard any procedural `os.WriteFile` on `!p.DryRun()`. Full schema: [references/inspect.md](references/inspect.md).
+- **Inspection & Dry-Run Discipline**: `inspect`, `query`, `query targets`, `deps graph`, `deps why`, and `deps check` evaluate `OnBuild` in dry-run mode with read-only `scriptfs` (`p.DryRun() == true`); `inspect --no-targets` skips `OnBuild` entirely, and `query config <pkg>` only reads configuration and does not evaluate `OnBuild`. `check-symbols` declares targets in dry-run but does not set `scriptfs` read-only. Prefer declarative `p.WriteBuildFile`, `p.GenerateFile`, `p.Generate`, and `p.BuildPath` in `OnBuild` (they defer writes to scheduler execution and emit `$builddir/...` when `BuildDir()` is empty); guard any procedural `os.WriteFile` on `!p.DryRun()`. Full schema: [references/inspect.md](references/inspect.md).
 - **Full CLI Reference**: See [references/cli.md](references/cli.md).
 - **Stale Skill**: If a command here fails with an unknown flag or subcommand, the installed skill may be older than the `vmake` binary. Run `vmake version` and reinstall with `vmake skill install`.
 
@@ -107,7 +113,7 @@ may declare chip profiles; only packages in the filtered build participate in
 selection, and different chip names do not conflict. Duplicate declarations of
 the same chip name must match exactly or configuration fails. The TUI's `chip` choice
 switches the toolchain and target preview, and derived values are not pinned
-into `.vmake/config.json`. Explicit configuration still wins.
+into the active `configs/*.json` file. Explicit configuration still wins.
 
 `FilterDeps` can read the configured values of global options that the package
 declares, so the root's `OnRequire` can use `ctx.When(api.ChipOptionName, ...)`
@@ -174,7 +180,8 @@ func Main(p *api.Package) {
 ```text
 myproject/
 ├── build.go                  # Root build script
-├── .vmake/                   # project.json (active config & dependency pins), config.json, vmake.lock
+├── configs/                  # Tracked configurations (configs/default.json, SKU profiles)
+├── .vmake/                   # project.json (default_config & pins), local.json (local cursor & links), vmake.lock
 ├── .vmake_deps/              # Materialized third-party & local SetGit trees
 ├── build/                    # compile_commands.json, vmake-build/test.json; root-package outputs at build/<buildKey>/
 │                             # subpackages use <pkgDir>/build/<buildKey>/, remote packages use .vmake_deps/.../out/
@@ -189,7 +196,7 @@ The high-level phases are listed below. During script loading, each package runs
 
 1. **`OnPackage`** — git URL (`SetGit`), patches (`AddPatches`), Kconfig metadata.
 2. **`OnRequire` (Discovery pass)** — eager dependency discovery before config values exist (`When`/`WhenNot`/`WhenAny` return `true`).
-3. **`OnConfig` + `SetOnApply`** — declare options, load `.vmake/<active>.json`, run `SetOnApply` callbacks for resolved packages (option names sorted within each package). Buffered global C/CXX/LD flags and links from packages later pruned by `FilterDeps` are filtered out; global-option macros are collected before `FilterDeps` and are not filtered.
+3. **`OnConfig` + `OnConfigureDeps` + `SetOnApply`** — declare options, load `configs/<active>.json`, propagate top-down defaults along the DAG (`OnConfigureDeps`), and run `SetOnApply` callbacks for resolved packages (option names sorted within each package). Buffered global C/CXX/LD flags and links from packages later pruned by `FilterDeps` are filtered out; global-option macros are collected before `FilterDeps` and are not filtered.
 4. **`FilterDeps` (`OnRequire` re-run)** — prune unreachable conditional dependencies using resolved entry option values and the configured values of global options the package declares.
 5. **Source Preparation** — fetch/checkout git sources, apply git patches, write `.vmake/vmake.lock` (or verify it under `--locked`), restore Kconfig `.config` files.
 6. **`OnBuild`** — declare targets; scheduler executes targets serially in topological dependency order with parallel C/C++ compilation within each target.
@@ -280,6 +287,7 @@ p.OnBuild(func(ctx *api.BuildContext) {
 ```
 
 - **Bare Required Names in `AddDeps`**: `t.AddDeps("shell", "wifi")` resolves `"shell"` to a same-package target if one exists, otherwise to `"shell:*"` when `"shell"` is a required/known package. Explicit `"<pkg>:<target>"` and `"<pkg>:*"` remain supported; there is no literal `pkg:` marker.
+- **Enforced Go-Style Architecture Boundaries**: Builds (`build`/`rebuild`/`test`) and `vmake deps check` reject: (1) **package-level and target-level cycles**, including cross-package reverse target edges (`pkgA:t1 -> pkgB:t2` plus `pkgB:t3 -> pkgA:t4`), reporting minimal cycle chains; (2) **`internal/` visibility violations**, where any local package or native remote sub-package path containing an `internal` directory segment is imported outside the subtree rooted at `internal`'s parent; and (3) **cross-package path reaches and private/undeclared `#include`s**, ensuring packages do not reach into sibling/parent package directories via `../`, cross-package headers belong to declared dependencies' `AddPublicIncludes` or `InstallDir/include`, and direct source `#include`s come from direct `AddDeps`/`UseRequires` dependencies (verified via `.d` depfiles when built and static `#include` scanning on cold trees). Use `vmake deps graph`, `vmake deps why <pkg|pkg:target>`, and `vmake deps check` (supporting `--json`, `--locked`, `--offline`, `-s`) to inspect and audit the unified graph.
 
 ### Sub-Packages
 
@@ -315,12 +323,13 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 
 ### Multiple Project Configurations
 
-Manage multiple named configurations (`.vmake/<name>.json`) sharing `.vmake/vmake.lock`:
+Manage multiple tracked configurations (`configs/**/*.json`, default `configs/default.json`) sharing `.vmake/vmake.lock` and `.vmake/project.json` (`default_config` and `pins`):
 
 ```bash
-vmake config copy release_o3.json
-vmake config use release_o3.json
-vmake build
+vmake config copy release_o3
+vmake config use release_o3        # Stores local cursor in .vmake/local.json
+vmake build -c release_o3          # Or build statelessly without changing .vmake/local.json
+vmake config check --all           # Validate all tracked configurations
 ```
 
 ### Generated Defines Always Use the CONFIG_ Prefix
@@ -348,7 +357,7 @@ The built-in global `"mode"` option (`debug`, `release`, `size`) automatically i
 
 ### GlobalOption Cross-Package Consistency
 
-`ctx.GlobalOption(name)` defines a workspace-wide default and exports `-DCONFIG_<UPPER_NAME>` defines by default. A non-default `entries.<pkg>.options.<name>` value can override the effective value for that package, while the exported macro still uses the global value. `mode` and `toolchain` are built-in; `target_os`/`target_triple` are project-declared. All four names are skipped from global macro export unless `SetMacroName` supplies a name. Multiple declarations must agree on `Type` and `Default`; `Values` must agree for non-builtin options. `MacroName` conflicts only when both declarations are non-empty and differ; a later non-empty name is adopted when the earlier one is empty.
+`ctx.GlobalOption(name)` defines a workspace-wide default and exports `-DCONFIG_<UPPER_NAME>` defines by default (`SetExportDefine(false)` disables global `-D` export when an option only drives dependency selection or package-local build logic). A non-default `entries.<pkg>.options.<name>` value can override the effective value for that package, while the exported macro still uses the global value. `mode` and `toolchain` are built-in; `target_os`/`target_triple` are project-declared. All four names are skipped from global macro export unless `SetMacroName` supplies a name. Multiple declarations must agree on `Type`, `Default`, and explicit `SetExportDefine`; `Values` must agree for non-builtin options. `MacroName` conflicts only when both declarations are non-empty and differ; a later non-empty name is adopted when the earlier one is empty.
 
 ### Cross-Package Option Reads
 
@@ -442,13 +451,13 @@ For in-source Makefiles, pass an absolute path with forward slashes: `p.Make("-C
 
 ## Build Scope
 
-- `vmake build` builds all default targets in needed packages, local and remote. Roots are inferred from the local package graph, or from the single package that declares `SetRoot(true)`.
-- There is **no package/target filter flag**. `-p`/`--prefix` is the installation prefix, not a package selector. To narrow a build, declare `SetRoot(true)` on the intended entry package or use a separate project. Use `vmake -C <dir>` to select the project root.
+- `vmake build` builds all default targets in needed packages, local and remote. Roots come from the active configuration's `"root"` package override when set, otherwise the single local package that declares `SetRoot(true)`, or are inferred from the local package graph.
+- There is **no package/target filter flag**. `-p`/`--prefix` is the installation prefix, not a package selector. To narrow a build, set `"root"` in a `configs/*.json` profile, declare `SetRoot(true)` on the intended entry package, or use a separate project. Use `vmake -C <dir>` to select the project root.
 
 ## Clean
 
 - `vmake clean` runs `OnClean`, removes the active configuration's build outputs and `build/compile_commands.json`, and preserves `.vmake_deps/` source trees, `install/`, and other configurations' `BuildDir`s.
-- `vmake clean --all` removes all configurations' build outputs and `build/compile_commands.json`, but keeps `install/`; it also removes `pkg link` packages' `.vmake_deps` outputs. `vmake distclean` also removes `install/` (`--purge-sources` deletes `.vmake_deps/`) but keeps `.vmake/` configuration, lock files, and `.vmake/local.json` links.
+- `vmake clean --all` removes all configurations' build outputs and `build/compile_commands.json`, but keeps `install/`; it also removes `pkg link` packages' `.vmake_deps` outputs. `vmake distclean` also removes `install/` (`--purge-sources` deletes `.vmake_deps/`) but keeps `configs/` profiles and `.vmake/` project, lock, and `local.json` files.
 - `clean`, `distclean`, and `pkg clean` remove both `build/vmake-build.json` and `build/vmake-test.json`. With a missing toolchain, `clean --all`/`distclean` still remove outputs and skip toolchain-dependent `OnClean` with a warning; plain `clean` fails its toolchain check.
 
 ## Repository & Toolchain Commands
@@ -476,7 +485,7 @@ Native repositories are trusted per repository; `repo trust` works without a res
 5. **Procedural file writes in `OnBuild` without dry-run guards**: `vmake inspect` (without `--no-targets`) and `query` run `OnBuild` with read-only `scriptfs`. Use `p.WriteBuildFile`/`p.GenerateFile` or guard with `if !p.DryRun()`.
 6. **Passing relative or backslash paths to `p.Make("-C", ...)`**: Always use `filepath.ToSlash(p.SrcDir())`.
 7. **Tagging or version-bumping a `pkg link`ed package**: A linked package is built from the worktree as-is, including uncommitted edits. Edit files and rerun `vmake build`; no commit, tag, version bump, or `vmake deps update` is required to test. A commit is optional and moves the linked HEAD/build key; a tag points at HEAD and excludes uncommitted edits. Tag and update the lock only for a release after `vmake pkg unlink`.
-8. **Putting `version` inside `.vmake/config.json` entries**: Per-config `entries.<pkg>.version` has been removed and is ignored. Use `vmake deps pin <pkg>@<ver|commit>` to record project-wide pins in `.vmake/project.json` or `vmake deps update <pkg>@<ver|commit>` to update `.vmake/vmake.lock`.
+8. **Putting `version` inside `configs/*.json` entries**: Per-config `entries.<pkg>.version` has been removed and is ignored. Use `vmake deps pin <pkg>@<ver|commit>` to record project-wide pins in `.vmake/project.json` or `vmake deps update <pkg>@<ver|commit>` to update `.vmake/vmake.lock`.
 
 ## Writing New Build Scripts — Checklist
 

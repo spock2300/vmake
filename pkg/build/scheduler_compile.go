@@ -141,6 +141,9 @@ func (s *Scheduler) compileSourceContext(ctx context.Context, resolved *Resolved
 		decision = actionDecision{Reason: "depfile missing or unreadable"}
 	}
 	if decision.UpToDate {
+		if err := s.checkHeaderBoundaries(resolved, src, deps); err != nil {
+			return "", nil, err
+		}
 		if s.stats != nil {
 			s.stats.RecordUpToDate()
 		}
@@ -167,6 +170,9 @@ func (s *Scheduler) compileSourceContext(ctx context.Context, resolved *Resolved
 	}
 	if err := ctx.Err(); err != nil {
 		return "", nil, errors.Join(err, removeCompileFiles(workDir, objRel, objRel+".d"))
+	}
+	if err := s.checkHeaderBoundaries(resolved, src, deps); err != nil {
+		return "", nil, err
 	}
 	if err := saveActionRecord(s.hashes, recordPath, signature, workDir, append([]string{src}, deps...), outputs); err != nil {
 		return "", nil, err

@@ -74,7 +74,7 @@ func Main(p *api.Package) {
  p.OnPackage(func(p *api.Package) { p.SetGit(%q) })
  p.OnBuild(func(ctx *api.BuildContext) { ctx.Target("ready").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error { return os.WriteFile("later", []byte("ran"), 0644) }) })
 }`, upstream))
-			writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","global":{"toolchain":"gcc"},"entries":{}}`)
+			writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{"version":"1","global":{"toolchain":"gcc"},"entries":{}}`)
 			writeExtensionFile(t, filepath.Join(dir, "home", "extensions", "fixture", "native", "toolchain.json"), fmt.Sprintf(`{"name":"gcc","tools":{"cc":%q,"cxx":%q,"ar":%q,"ld":%q}}`, cc, cc, ar, cc))
 			writeExtensionFile(t, filepath.Join(dir, "block"), "block")
 			wrapper := `#!/bin/sh

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/spock2300/vmake/internal/pkgvis"
 	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
@@ -28,8 +29,10 @@ func (s *declareStage) executeOnBuild() error {
 			continue
 		}
 		s.pkgMetaMap[name] = build.PkgBuildMeta{
-			Origin: node.Source.Origin,
-			Deps:   node.Deps,
+			Origin:  node.Source.Origin,
+			Linked:  node.Source.Link != nil,
+			Deps:    node.Deps,
+			VisPath: s.rc.ctx.Resolver.VisibilityPath(name),
 		}
 	}
 
@@ -89,7 +92,7 @@ func (s *declareStage) executeOnePackage(name string, node *resolver.PackageNode
 	if lookupBase == nil {
 		lookupBase = s.rc.cfg.GlobalValues
 	}
-	buildCtx.SetConfigLookup(newConfigLookup(s.rc.ctx, lookupBase, func(pkg string) (map[string]any, bool) {
+	buildCtx.SetConfigLookup(newConfigLookup(s.rc.ctx, name, lookupBase, func(pkg string) (map[string]any, bool) {
 		binding := s.bindings[pkg]
 		if binding == nil {
 			return nil, false
@@ -100,6 +103,7 @@ func (s *declareStage) executeOnePackage(name string, node *resolver.PackageNode
 	buildCtx.SetBuildSubGraphFunc(func(pkgName string) error { return s.buildSubGraph(name, pkgName) })
 	buildCtx.SetDepOutputFunc(func(depRef string) string { return s.computeDepOutput(name, depRef) })
 	buildCtx.SetDepSrcDirFunc(func(depRef string) string { return s.computeDepSrcDir(name, depRef) })
+	buildCtx.SetDepPackageDirFunc(func(depRef string) string { return s.computeDepPackageDir(name, depRef) })
 	flags := api.DefaultBuildFlags(bound.toolchain.Name, platform.OSOrHost())
 	buildCtx.SetDefaultFlags(flags.CFlags, flags.CxxFlags, flags.LdFlags)
 	pkg := node.Pkg
@@ -120,6 +124,19 @@ func (s *declareStage) executeOnePackage(name string, node *resolver.PackageNode
 		targets[targetName] = api.SnapshotTarget(target)
 	}
 	s.allTargets[name] = targets
+	if rawSubs := buildCtx.SubGraphs(); len(rawSubs) > 0 {
+		meta := s.pkgMetaMap[name]
+		for _, sub := range rawSubs {
+			resolvedSub := s.resolveSubPackageName(name, sub, func(candidate string) bool {
+				_, ok := s.pkgMetaMap[candidate]
+				return ok
+			})
+			if !slices.Contains(meta.SubGraphs, resolvedSub) {
+				meta.SubGraphs = append(meta.SubGraphs, resolvedSub)
+			}
+		}
+		s.pkgMetaMap[name] = meta
+	}
 	s.buildCtxs[name] = buildCtx
 	s.declarations[name] = 2
 	return nil
@@ -150,6 +167,16 @@ func (s *declareStage) buildSubGraph(currentPkg, rootPkg string) (err error) {
 	}
 	if !s.conf.needed[rootPkg] {
 		return fmt.Errorf("subgraph package %s not found in required packages", rootPkg)
+	}
+	if currentPkg != "" && s.rc.ctx.Resolver != nil {
+		if err := pkgvis.CheckInternal(
+			currentPkg,
+			s.rc.ctx.Resolver.VisibilityPath(currentPkg),
+			rootPkg,
+			s.rc.ctx.Resolver.VisibilityPath(rootPkg),
+		); err != nil {
+			return err
+		}
 	}
 	previousScope := s.scopeValues
 	base := previousScope
@@ -250,6 +277,78 @@ func (s *declareStage) computeDepSrcDir(currentPkg, depRef string) string {
 		return ""
 	}
 	return node.Pkg.SrcDir()
+}
+
+func (s *declareStage) computeDepPackageDir(currentPkg, depRef string) string {
+	pkgName, _, ok := strings.Cut(depRef, ":")
+	if !ok {
+		pkgName = depRef
+	}
+	pkgName = s.resolveSubPackageName(currentPkg, pkgName, func(candidate string) bool {
+		return s.conf.needed[candidate] && s.source.pkgDirs[candidate] != nil
+	})
+	if pkgName == "" || s.source.pkgDirs[pkgName] == nil {
+		validateDirectDepPackageRef(s.rc.ctx, currentPkg, depRef)
+		return ""
+	}
+	if pkgName != currentPkg && !hasDirectNodeDep(s.rc.ctx, currentPkg, pkgName) {
+		panic(&api.BuildScriptError{
+			Package: currentPkg,
+			Op:      "DepPackageDir",
+			Err:     fmt.Errorf("package %q is not a direct dependency of %q (add AddRequires(%q))", pkgName, currentPkg, pkgName),
+		})
+	}
+	return s.source.pkgDirs[pkgName].SourceDir
+}
+
+func validateDirectDepPackageRef(ctx *RuntimeContext, currentPkg, depRef string) {
+	if ctx == nil || ctx.DepGraph == nil {
+		return
+	}
+	pkgName, _, ok := strings.Cut(depRef, ":")
+	if !ok {
+		pkgName = depRef
+	}
+	if pkgName == "" {
+		return
+	}
+	var subParents map[string]string
+	if ctx.Resolver != nil {
+		subParents = ctx.Resolver.SubParents()
+	}
+	pkgName = api.ResolveSubPackageName(currentPkg, pkgName, subParents, func(candidate string) bool {
+		return ctx.DepGraph.Packages[candidate] != nil
+	})
+	if pkgName != currentPkg && !hasDirectNodeDep(ctx, currentPkg, pkgName) {
+		panic(&api.BuildScriptError{
+			Package: currentPkg,
+			Op:      "DepPackageDir",
+			Err:     fmt.Errorf("package %q is not a direct dependency of %q (add AddRequires(%q))", pkgName, currentPkg, pkgName),
+		})
+	}
+}
+
+func hasDirectNodeDep(ctx *RuntimeContext, fromPkg, toPkg string) bool {
+	if ctx == nil || ctx.DepGraph == nil {
+		return false
+	}
+	node := ctx.DepGraph.Packages[fromPkg]
+	if node == nil {
+		return false
+	}
+	var subParents map[string]string
+	if ctx.Resolver != nil {
+		subParents = ctx.Resolver.SubParents()
+	}
+	for _, dep := range node.Deps {
+		resolved := api.ResolveSubPackageName(fromPkg, dep, subParents, func(candidate string) bool {
+			return ctx.DepGraph.Packages[candidate] != nil
+		})
+		if resolved == toPkg {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *declareStage) computeDepOutput(currentPkg, depRef string) string {

@@ -63,9 +63,10 @@ type Package struct {
 ### 生命周期方法（注册回调）
 
 ```go
-func (p *Package) OnRequire(fn RequireFunc) *Package    // 声明第三方依赖
-func (p *Package) OnConfig(fn ConfigFunc) *Package       // 定义配置选项
-func (p *Package) OnBuild(fn BuildFunc) *Package          // 定义构建目标
+func (p *Package) OnRequire(fn RequireFunc) *Package            // 声明第三方依赖
+func (p *Package) OnConfig(fn ConfigFunc) *Package              // 定义配置选项
+func (p *Package) OnConfigureDeps(fn ConfigureDepsFunc) *Package // 沿 DAG 向下层依赖包设置默认选项（ctx.SetDefault(depPkg, opt, val)）
+func (p *Package) OnBuild(fn BuildFunc) *Package                // 定义构建目标
 func (p *Package) OnInstall(fn InstallFunc) *Package      // 定义安装规则
 func (p *Package) OnClean(fn CleanFunc) *Package          // 定义清理规则（vmake clean 时执行）
 func (p *Package) OnPackage(fn PackageFunc) *Package      // 填充包元数据（插件提取阶段执行；单槽回调，重复注册 fatal）
@@ -436,11 +437,12 @@ func (ctx *BuildContext) Int(name string) int
 func (ctx *BuildContext) AddInstalls(src, dest string) *InstallItemHolder
 func (ctx *BuildContext) SetInstallFilter(filter InstallFilterFunc) *InstallItemHolder
 
-// 子构建
+// 子构建与依赖路径查询
 func (ctx *BuildContext) BuildSubGraph(pkgName string)
 func (ctx *BuildContext) DepOutput(depRef string) string
 func (ctx *BuildContext) DepBuildDir(depRef string) string
 func (ctx *BuildContext) DepSrcDir(depRef string) string
+func (ctx *BuildContext) DepPackageDir(depRef string) string
 
 // 配置生成与导入
 func (ctx *BuildContext) GenerateConfigHeader() *BuildContext
@@ -464,7 +466,7 @@ func (ctx *BuildContext) PackageName() string
 func (ctx *BuildContext) Exec(name string, args ...string)
 ```
 
-`DepOutput`/`DepBuildDir`/`DepSrcDir` 接受 `pkg` 或 `pkg:target`（含子包短名），但不支持 `AddDeps` 的“同包 target 简写”和 `pkg:*` 通配：`DepOutput("utils")` 会把 `utils` 当作包名，`DepOutput("lib:*")` 返回空串。省略 target 时，只有该包恰好一个 target 才返回产物路径，否则返回空串。`DepSrcDir` 返回该依赖包的 `SrcDir()`（SetGit 上游 checkout 根；link 模式下为消费工程的 `third_party/<member>/src`），target 部分仅用于引用解析。dry-run 下三者均返回空串，`BuildSubGraph` 直接返回。
+`DepOutput`/`DepBuildDir`/`DepSrcDir`/`DepPackageDir` 接受 `pkg` 或 `pkg:target`（含子包短名），但不支持 `AddDeps` 的“同包 target 简写”和 `pkg:*` 通配：`DepOutput("utils")` 会把 `utils` 当作包名，`DepOutput("lib:*")` 返回空串。省略 target 时，只有该包恰好一个 target 才返回产物路径，否则返回空串。`DepSrcDir` 返回该依赖包的 `SrcDir()`（SetGit 上游 checkout 根；link 模式下为消费工程的 `third_party/<member>/src`），target 部分仅用于引用解析；`DepPackageDir` 返回已在 `AddRequires` 直接声明的依赖包的 `SourceDir()`（如包装包自有的头文件或配置文件所在目录；引用未直接声明的依赖包会抛出 `BuildScriptError`）。dry-run 下四者均返回空串（`DepPackageDir` 仍校验直接依赖声明），`BuildSubGraph` 直接返回。
 
 ## InstallContext
 
@@ -599,8 +601,8 @@ func (t *Target) RemovePublicIncludes(dirs ...string) *Target
 func (t *Target) RemoveLinks(libs ...string) *Target
 func (t *Target) RemovePublicLinks(libs ...string) *Target
 func (t *Target) RemoveProvidedLibs(libs ...string) *Target
-func (t *Target) RemoveDeps(targets ...string) *Target
-func (t *Target) RemoveInputs(files ...string) *Target
+func (t *Target) RemoveDeps(targets ...any) *Target
+func (t *Target) RemoveInputs(files ...any) *Target
 func (t *Target) RemoveOutputs(files ...string) *Target
 func (t *Target) RemoveFiles(files ...any) *Target   // 从 AddFiles 扩展结果中排除文件（模式匹配）
 
@@ -973,7 +975,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 })
 ```
 
-声明这两个选项用于在 TUI/`vmake config --set` 中可见和可覆盖，值本身可以留空：工具链 `toolchain.json` 中的 `target_os` / `target_triple` 默认值会填补未设置的值。`target_os` 决定产物命名、链接策略和 CMake 的 `CMAKE_SYSTEM_NAME`（`target_os=none` 映射为 `Generic`），空值取运行 vmake 的主机系统；`target_triple` 提供 `Configure` 的 `--host=` 与 `CMAKE_*_COMPILER_TARGET`。用户配置（`.vmake/` 当前生效配置文件的 `global.options` 或包级配置，默认文件为 `.vmake/config.json`）与项目声明的非空默认值均优先于工具链默认值。包内通过 `ctx.Option` 声明的非全局 `target_os`/`target_triple` 默认值优先于全局值（包级配置值仍最优先）；配置中的空字符串视为未设置，会落到下一级默认值，最终落到工具链默认值。当前芯片 profile 的 `TargetOS`/`TargetTriple` 位于项目全局值与工具链默认值之间。
+声明这两个选项用于在 TUI/`vmake config --set` 中可见和可覆盖，值本身可以留空：工具链 `toolchain.json` 中的 `target_os` / `target_triple` 默认值会填补未设置的值。`target_os` 决定产物命名、链接策略和 CMake 的 `CMAKE_SYSTEM_NAME`（`target_os=none` 映射为 `Generic`），空值取运行 vmake 的主机系统；`target_triple` 提供 `Configure` 的 `--host=` 与 `CMAKE_*_COMPILER_TARGET`。用户配置（`configs/` 当前生效配置文件的 `global.options` 或包级配置，默认文件为 `configs/default.json`）与项目声明的非空默认值均优先于工具链默认值。包内通过 `ctx.Option` 声明的非全局 `target_os`/`target_triple` 默认值优先于全局值（包级配置值仍最优先）；配置中的空字符串视为未设置，会落到下一级默认值，最终落到工具链默认值。当前芯片 profile 的 `TargetOS`/`TargetTriple` 位于项目全局值与工具链默认值之间。
 
 ### 芯片平台 profile
 
@@ -1039,7 +1041,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 
 ### 全局选项自动导出 CONFIG_ 宏
 
-通过 `ctx.GlobalOption(...)` 声明的自定义全局选项会自动导出为全局 `-D CONFIG_*` 宏，对构建中的每个包可见，值取当前配置（`.vmake/` 当前生效配置文件的 `global.options`，默认文件为 `.vmake/config.json`；未配置时取默认值）。修改配置后宏随之改变，并因进入全局 flags 哈希而使所有包的 BuildKey 失效，无需在 `SetOnApply` 里手写宏字符串。
+通过 `ctx.GlobalOption(...)` 声明的自定义全局选项会自动导出为全局 `-D CONFIG_*` 宏，对构建中的每个包可见，值取当前配置（`configs/` 当前生效配置文件的 `global.options`，默认文件为 `configs/default.json`；未配置时取默认值）。修改配置后宏随之改变，并因进入全局 flags 哈希而使所有包的 BuildKey 失效，无需在 `SetOnApply` 里手写宏字符串。
 
 | 类型 | 默认宏 | -D 内容 |
 |------|--------|---------|

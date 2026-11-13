@@ -22,12 +22,17 @@ import (
 func newDepsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deps",
-		Short: "Manage project dependencies, pins, working trees and .vmake/vmake.lock",
-		Long: `Manage project dependencies across build.go constraints, .vmake/project.json
-pins, .vmake/vmake.lock, .vmake_deps/ working trees and ~/.vmake/cache/git/.`,
+		Short: "Manage project dependencies, graph, pins, working trees and .vmake/vmake.lock",
+		Long: `Manage and inspect project dependencies across build.go constraints, unified
+package/target dependency graphs, .vmake/project.json pins, .vmake/vmake.lock,
+.vmake_deps/ working trees and ~/.vmake/cache/git/.`,
 	}
+	addPersistentConfigFlag(cmd)
 	cmd.AddCommand(
 		newDepsStatusCmd(),
+		newDepsGraphCmd(),
+		newDepsWhyCmd(),
+		newDepsCheckCmd(),
 		newDepsSyncCmd(),
 		newDepsUpdateCmd(),
 		newDepsPinCmd(),
@@ -88,11 +93,15 @@ availability.`,
 				return err
 			}
 			if jsonOut {
+				configFile := filepath.Base(ctx.ConfigPath)
+				if rel, err := filepath.Rel(ctx.Paths.ProjectDir, ctx.ConfigPath); err == nil {
+					configFile = filepath.ToSlash(rel)
+				}
 				return writeDepsJSON(cmd.OutOrStdout(), &depsStatusEnvelope{
 					SchemaVersion:    1,
 					Command:          "deps status",
 					Project:          ctx.Paths.ProjectDir,
-					ConfigFile:       filepath.Base(ctx.ConfigPath),
+					ConfigFile:       configFile,
 					Lockfile:         report.LockPath,
 					LockExists:       report.LockExists,
 					Packages:         report.Packages,
@@ -227,7 +236,7 @@ func newDepsPinCmd() *cobra.Command {
 		Long: `Record a project-wide dependency pin in .vmake/project.json, materialize the
 selected version or commit in .vmake_deps/ and update .vmake/vmake.lock.
 
-Project pins are shared by all configurations in .vmake/ and prevent bare
+Project pins are shared by all configurations in configs/ and prevent bare
 'vmake deps update' from floating the pinned package.`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeDepsPkgRef,

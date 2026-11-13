@@ -48,7 +48,7 @@ The `ChipProfile` makes the chip package the owner of the compiler and target de
 Only chip packages required by the filtered build participate, so a repository may contain
 multiple chips with the same or different compilers. The TUI uses the project's `chip`
 choice to switch the toolchain and target preview; derived values are not written to
-`.vmake/config.json` unless the user changes them explicitly.
+the active `configs/*.json` file unless the user changes them explicitly.
 
 ## Full HAL package (chip + driver sources)
 

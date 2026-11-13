@@ -320,3 +320,16 @@ func TestTargetSetSymbolBindingValidation(t *testing.T) {
 		t.Errorf("got %q", tgt.SymbolBinding())
 	}
 }
+
+func TestTargetRemovePublicIncludesClearsRules(t *testing.T) {
+	tgt := NewTargetRegistry().Target("t").AddPublicIncludes("include", "@*.h")
+	tgt.RemovePublicIncludes("include")
+	if got := tgt.IncludeRule("include"); len(got) != 0 {
+		t.Fatalf("IncludeRule after RemovePublicIncludes = %v, want empty", got)
+	}
+	tgt.AddPublicIncludes("include", "@a.h")
+	tgt.AddPublicIncludes("include")
+	if got := tgt.IncludeRule("include"); len(got) != 0 {
+		t.Fatalf("IncludeRule after unrestricted AddPublicIncludes = %v, want empty", got)
+	}
+}

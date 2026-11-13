@@ -8,7 +8,12 @@ import (
 
 	"github.com/spf13/cobra"
 
+	iexec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/config"
+	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/pipeline"
+	"github.com/spock2300/vmake/pkg/resolver"
 )
 
 func newConfigListCmd() *cobra.Command {
@@ -44,22 +49,22 @@ func newConfigListCmd() *cobra.Command {
 }
 
 func newConfigDescribeCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "describe [text]",
-		Short: "Print or set the description of the active configuration",
+		Short: "Print or set the description of a configuration",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root := findProjectDir()
 			if len(args) == 1 {
 				commandStorageLocks()
-				path, err := config.SetProjectDescription(root, args[0])
+				path, err := config.SetProjectDescriptionWithOverride(root, configFlag, args[0])
 				if err != nil {
 					return err
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "Description saved to %s\n", path)
 				return nil
 			}
-			cfg, _, err := config.LoadProject(root)
+			cfg, _, err := config.LoadProjectWithOverride(root, configFlag)
 			if err != nil {
 				return err
 			}
@@ -69,42 +74,170 @@ func newConfigDescribeCmd() *cobra.Command {
 			return nil
 		},
 	}
+	addConfigFlag(cmd)
+	return cmd
 }
 
 func newConfigUseCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:               "use <filename.json>",
-		Short:             "Select an existing configuration in .vmake/project.json",
+		Use:               "use <profile>",
+		Short:             "Select an existing configuration in .vmake/local.json",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeConfigFilename,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			commandStorageLocks()
 			root := findProjectDir()
-			name, err := config.UseProjectConfig(root, args[0])
+			sel, err := config.UseProjectConfig(root, args[0])
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Active configuration: %s\n", filepath.Join(root, ".vmake", name))
+			if err := ensureLocalLinkIgnored(root); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Active configuration: %s\n", filepath.Join(root, filepath.FromSlash(sel)))
 			return nil
 		},
 	}
 }
 
 func newConfigCopyCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "copy <filename.json>",
-		Short: "Copy the active configuration to a new file without switching",
+	cmd := &cobra.Command{
+		Use:   "copy <dest>",
+		Short: "Copy a configuration to a new file under configs/ without switching",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			commandStorageLocks()
 			root := findProjectDir()
-			if err := config.CopyProjectConfig(root, args[0]); err != nil {
+			dstPath, err := config.CopyProjectConfigWithOverride(root, configFlag, args[0])
+			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Configuration copied to %s\n", filepath.Join(root, ".vmake", args[0]))
+			fmt.Fprintf(cmd.OutOrStdout(), "Configuration copied to %s\n", dstPath)
 			return nil
 		},
 	}
+	addConfigFlag(cmd)
+	return cmd
+}
+
+func newConfigCheckCmd() *cobra.Command {
+	var checkAll bool
+	cmd := &cobra.Command{
+		Use:   "check",
+		Short: "Validate configuration files against declared package options and build rules",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if checkAll && strings.TrimSpace(configFlag) != "" {
+				return &usageError{err: fmt.Errorf("--all cannot be combined with -c/--config")}
+			}
+			root := findProjectDir()
+			type targetProfile struct {
+				label    string
+				override string
+				loadErr  error
+			}
+			var targets []targetProfile
+			if checkAll {
+				configs, err := config.ListProjectConfigs(root)
+				if err != nil {
+					return err
+				}
+				for _, cfg := range configs {
+					if cfg.Unsaved {
+						continue
+					}
+					targets = append(targets, targetProfile{
+						label:    cfg.Name,
+						override: cfg.Name,
+						loadErr:  cfg.Error,
+					})
+				}
+				if len(targets) == 0 {
+					return fmt.Errorf("no saved configuration files found under %s/", config.ConfigsDirName)
+				}
+			} else {
+				override := strings.TrimSpace(configFlag)
+				label := override
+				if override != "" {
+					if sel, _, err := config.ResolveConfigReference(root, override); err == nil {
+						label = sel
+					}
+				} else {
+					_, path, err := config.LoadProject(root)
+					if err != nil {
+						return err
+					}
+					if rel, relErr := filepath.Rel(root, path); relErr == nil {
+						label = filepath.ToSlash(rel)
+					} else {
+						label = path
+					}
+				}
+				targets = append(targets, targetProfile{label: label, override: override})
+			}
+
+			out := cmd.OutOrStdout()
+			scriptfs.SetReadOnly(true)
+			defer scriptfs.SetReadOnly(false)
+			vlog.SetLevel(vlog.Quiet)
+			iexec.SetQuiet(true)
+
+			failed := 0
+			for _, target := range targets {
+				if target.loadErr != nil {
+					failed++
+					fmt.Fprintf(out, "FAIL %s: %v\n", target.label, target.loadErr)
+					continue
+				}
+				issues, err := checkSingleConfigProfile(cmd, target.override)
+				if err != nil {
+					failed++
+					fmt.Fprintf(out, "FAIL %s: %v\n", target.label, err)
+					continue
+				}
+				if len(issues) > 0 {
+					failed++
+					for _, issue := range issues {
+						fmt.Fprintf(out, "FAIL %s: %s\n", target.label, issue)
+					}
+					continue
+				}
+				fmt.Fprintf(out, "OK   %s\n", target.label)
+			}
+			if failed > 0 {
+				return fmt.Errorf("configuration check failed (%d/%d invalid)", failed, len(targets))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&checkAll, "all", false, "check all configuration files under configs/")
+	addConfigFlag(cmd)
+	return cmd
+}
+
+func checkSingleConfigProfile(cmd *cobra.Command, configOverride string) ([]string, error) {
+	restoreStdout := silenceStdout()
+	defer restoreStdout()
+	restoreStderr := silenceStderr()
+	defer restoreStderr()
+
+	ctx, err := openProject(projectOptions{
+		execution:      cmd.Context(),
+		policy:         &resolver.LockPolicy{DryRun: true},
+		configOverride: configOverride,
+		skipGitignore:  true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer closeProject(ctx)
+
+	issues, err := pipeline.ValidateConfigStrict(ctx)
+	scriptfs.TakeBlockedWrites()
+	if err != nil {
+		return nil, err
+	}
+	return issues, nil
 }
 
 func completeConfigFilename(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {

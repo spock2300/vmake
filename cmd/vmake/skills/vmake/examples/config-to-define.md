@@ -200,7 +200,7 @@ All accessors (`Bool`, `Int`, `String`, `BoolStr`, `When`, `WhenNot`, `WhenAny`,
 
 | Phase | Values visible |
 |---|---|
-| `OnConfig` | Declared `SetDefault` values plus earlier `SetConfigValue` results only. Values saved in the active configuration (`.vmake/config.json` by default) are NOT loaded yet |
+| `OnConfig` | Declared `SetDefault` values plus earlier `SetConfigValue` results only. Values saved in the active configuration (`configs/default.json` by default) are NOT loaded yet |
 | `SetOnApply` | The resolved value for that option (saved config value, else default); `OptionInt` is normalized to `int`, other types are passed through |
 | `OnBuild` / `OnInstall` / `OnClean` | Full resolved values: saved config + defaults + built-in/global options. `OnBuild` additionally accepts `<pkg>/<option>` cross-package reads |
 | `OnRequire` | Pass 1 (discovery): none; only `When`/`WhenNot`/`WhenAny`/`If`/`Select` are allowed. Pass 2 (`FilterDeps`): this package's `entries.<pkg>.options` values (global config values are not merged); direct reads of those values are allowed |

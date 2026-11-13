@@ -44,7 +44,7 @@ func Main(ctx *plugin.Context) {
     }
 }
 `, "__REGISTER__", registration))
-				writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","global":{"toolchain":"pending"},"entries":{"unused":{"options":{"toolchain":"unrelated"}}}}`)
+				writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{"version":"1","global":{"toolchain":"pending"},"entries":{"unused":{"options":{"toolchain":"unrelated"}}}}`)
 				writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) { p.SetRoot(true) }
@@ -99,7 +99,7 @@ func TestCleanHooksWithExistingToolchains(t *testing.T) {
 				if installed {
 					writeHealthyDefinition(t, filepath.Join(stateDir, "extensions", "fixture", "pending", "toolchain.json"), "pending")
 				}
-				writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","global":{"toolchain":"pending"},"entries":{}}`)
+				writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{"version":"1","global":{"toolchain":"pending"},"entries":{}}`)
 				writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import (
     "os"
@@ -174,7 +174,7 @@ func TestCleanHooksUsePackagePlatform(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), string(data))
+				writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), string(data))
 				writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import (
     "fmt"
@@ -221,7 +221,7 @@ func TestCleanHooksRejectInvalidPackagePlatform(t *testing.T) {
 				state := filepath.Join(dir, "state")
 				project := filepath.Join(dir, "project")
 				writeHealthyDefinition(t, filepath.Join(state, "extensions", "fixture", "pending", "toolchain.json"), "pending")
-				writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), fmt.Sprintf(`{"version":"1","global":{"toolchain":"pending"},"entries":{"project":{"options":{%q:true}}}}`, option))
+				writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), fmt.Sprintf(`{"version":"1","global":{"toolchain":"pending"},"entries":{"project":{"options":{%q:true}}}}`, option))
 				writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import (
     "fmt"

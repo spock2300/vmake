@@ -65,20 +65,22 @@ func MergeGlobalOptions(allDefs map[string]map[string]*Option, toolchainList []s
 			if err := validateGlobalOption(name, existing, opt, pkgName); err != nil {
 				return nil, err
 			}
-			if opt.MacroName() == existing.MacroName() {
+			if existing.ExportDefine() != opt.ExportDefine() {
+				return nil, fmt.Errorf("global option '%s' export define mismatch: already defined as %v, but %s defines as %v",
+					name, existing.ExportDefine(), pkgName, opt.ExportDefine())
+			}
+			merged := existing
+			if opt.MacroName() == merged.MacroName() || opt.MacroName() == "" {
 				continue
 			}
-			if opt.MacroName() == "" {
-				continue
-			}
-			if existing.MacroName() == "" {
-				clone := *existing
+			if merged.MacroName() == "" {
+				clone := *merged
 				clone.SetMacroName(opt.MacroName())
 				result[name] = &clone
 				continue
 			}
 			return nil, fmt.Errorf("global option '%s' macro name mismatch: already defined as %q, but %s defines as %q",
-				name, existing.MacroName(), pkgName, opt.MacroName())
+				name, merged.MacroName(), pkgName, opt.MacroName())
 		}
 	}
 

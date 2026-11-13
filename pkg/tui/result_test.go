@@ -59,3 +59,72 @@ func TestModelResult(t *testing.T) {
 		t.Errorf("unexpected kconfig result: %+v", result)
 	}
 }
+
+func TestModelResultSparseExplicitAndDerivedDefaults(t *testing.T) {
+	opts := map[string]map[string]*api.Option{
+		"app": {
+			"demo":  mkOpt("demo", api.OptionChoice, "widgets").SetValues("widgets", "music"),
+			"debug": mkOpt("debug", api.OptionBool, false),
+		},
+		"board": {
+			"graphics": mkOpt("graphics", api.OptionBool, false),
+			"sdcard":   mkOpt("sdcard", api.OptionBool, false),
+		},
+	}
+	globalOpts := map[string]*api.Option{
+		"mode": mkOpt("mode", api.OptionChoice, "release").SetValues("debug", "release"),
+	}
+	m := NewModel(Input{
+		Packages:      mkSources("app", "board"),
+		Deps:          map[string][]string{"app": {"board"}},
+		Options:       opts,
+		Values:        map[string]map[string]any{"app": {"demo": "music"}},
+		DerivedOptions: map[string]map[string]any{"board": {"graphics": true}},
+		GlobalOptions: globalOpts,
+		GlobalValues:  map[string]any{},
+		WorkDir:       "/w",
+	})
+
+	m.selectedPkg = "board"
+	m.buildOptionItems()
+	if got := m.getValue("graphics"); got != true {
+		t.Fatalf("derived graphics display = %v, want true", got)
+	}
+	if got := m.defaultFor("graphics"); got != true {
+		t.Fatalf("derived graphics defaultFor = %v, want true", got)
+	}
+
+	res := m.result()
+	if len(res.Values) != 1 || res.Values["app"]["demo"] != "music" {
+		t.Fatalf("initial sparse result should only contain explicit app/demo, got %v", res.Values)
+	}
+	if _, ok := res.Values["board"]; ok {
+		t.Fatalf("untouched derived/default board options must not be saved, got %v", res.Values)
+	}
+	if len(res.GlobalValues) != 0 {
+		t.Fatalf("untouched global defaults must not be saved, got %v", res.GlobalValues)
+	}
+
+	m.setValue("sdcard", true)
+	res = m.result()
+	if res.Values["board"]["sdcard"] != true {
+		t.Fatalf("edited board/sdcard should become explicit, got %v", res.Values)
+	}
+
+	m.selectedPkg = "app"
+	m.buildOptionItems()
+	m.resetOptionToDefault("demo")
+	if !m.hasChanges || !m.isOptionModified("demo") {
+		t.Fatal("resetting explicit option to default must mark model as modified")
+	}
+	res = m.result()
+	if _, ok := res.Values["app"]; ok {
+		t.Fatalf("reset-to-default should drop explicit app/demo from sparse result, got %v", res.Values)
+	}
+
+	m.resetOption("demo")
+	res = m.result()
+	if res.Values["app"]["demo"] != "music" {
+		t.Fatalf("resetOption should restore explicit app/demo=music, got %v", res.Values)
+	}
+}

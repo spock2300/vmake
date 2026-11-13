@@ -37,7 +37,8 @@ func newTestScheduler(t *testing.T, targets map[string]map[string]*api.Target) (
 func TestBuildAllSerialInterleavedPackages(t *testing.T) {
 	targets := map[string]map[string]*api.Target{
 		"a": {"a0": makeTargetWithDeps("a0").SetKind(api.TargetVoid), "a1": makeTargetWithDeps("a1", "b:b0").SetKind(api.TargetVoid)},
-		"b": {"b0": makeTargetWithDeps("b0").SetKind(api.TargetVoid), "b1": makeTargetWithDeps("b1", "a:a0").SetKind(api.TargetVoid)},
+		"b": {"b0": makeTargetWithDeps("b0", "c:c0").SetKind(api.TargetVoid)},
+		"c": {"c0": makeTargetWithDeps("c0").SetKind(api.TargetVoid)},
 	}
 	s, graph := newTestScheduler(t, targets)
 	var built []string
@@ -136,4 +137,89 @@ func testNeedRelink(t *testing.T, scheduler *Scheduler, resolved *ResolvedTarget
 		return true
 	}
 	return !checkAction(scheduler.hashes, action.recordPath, action.signature, scheduler.pkgs[resolved.Node.PkgName].SourceDir, action.inputs, action.outputs).UpToDate
+}
+
+func TestUseDependencyLinkerScriptPrecedence(t *testing.T) {
+	targets := map[string]map[string]*api.Target{
+		"app":   {"app": makeTargetWithDeps("app", "board:board").SetKind(api.TargetBinary).UseDependencyLinkerScript()},
+		"board": {"board": makeTargetWithDeps("board", "chip:chip").SetKind(api.TargetVoid)},
+		"chip":  {"chip": makeTargetWithDeps("chip").SetKind(api.TargetVoid)},
+	}
+	s, graph := newTestScheduler(t, targets)
+	chipLD := filepath.Join(s.pkgs["chip"].SourceDir, "chip.ld")
+	boardLD := filepath.Join(s.pkgs["board"].SourceDir, "board.ld")
+	for _, ld := range []string{chipLD, boardLD} {
+		if err := os.WriteFile(ld, []byte("SECTIONS {}\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.packages["app"] = api.NewPackage().SetDirs(s.pkgs["app"].PkgDirs)
+	s.packages["chip"] = api.NewPackage().SetDirs(s.pkgs["chip"].PkgDirs).SetProvidedLinkerScript("chip.ld")
+	s.packages["board"] = api.NewPackage().SetDirs(s.pkgs["board"].PkgDirs)
+
+	resolved, err := s.resolveTarget(graph.Nodes["app:app"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.LinkerScript != chipLD {
+		t.Fatalf("transitive fallback linker script = %q, want %q", resolved.LinkerScript, chipLD)
+	}
+
+	s.packages["board"].SetProvidedLinkerScript("board.ld")
+	resolved, err = s.resolveTarget(graph.Nodes["app:app"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.LinkerScript != boardLD {
+		t.Fatalf("direct board linker script = %q, want %q", resolved.LinkerScript, boardLD)
+	}
+
+	meta := map[string]PkgBuildMeta{
+		"app":   {Deps: []string{"board"}},
+		"board": {Deps: []string{"chip"}},
+		"chip":  {},
+	}
+	pkgTargets := map[string]map[string]*api.Target{
+		"app":   {"app": makeTargetWithDeps("app").SetKind(api.TargetBinary).UseRequires().UseDependencyLinkerScript()},
+		"board": {"board": makeTargetWithDeps("board").SetKind(api.TargetVoid).UseRequires()},
+		"chip":  {"chip": makeTargetWithDeps("chip").SetKind(api.TargetVoid)},
+	}
+	pkgGraph, err := NewBuildGraph(pkgTargets, meta, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.graph = pkgGraph
+	resolved, err = s.resolveTarget(pkgGraph.Nodes["app:app"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.LinkerScript != boardLD {
+		t.Fatalf("UseRequires board linker script = %q, want %q", resolved.LinkerScript, boardLD)
+	}
+
+	bspALD := filepath.Join(t.TempDir(), "bsp_a.ld")
+	bspBLD := filepath.Join(t.TempDir(), "bsp_b.ld")
+	for _, ld := range []string{bspALD, bspBLD} {
+		if err := os.WriteFile(ld, []byte("SECTIONS {}\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.pkgs["bsp_a"] = &PkgInfo{PkgDirs: api.PkgDirs{SourceDir: filepath.Dir(bspALD), BuildDir: filepath.Dir(bspALD)}}
+	s.pkgs["bsp_b"] = &PkgInfo{PkgDirs: api.PkgDirs{SourceDir: filepath.Dir(bspBLD), BuildDir: filepath.Dir(bspBLD)}}
+	s.packages["bsp_a"] = api.NewPackage().SetDirs(s.pkgs["bsp_a"].PkgDirs).SetProvidedLinkerScript("bsp_a.ld")
+	s.packages["bsp_b"] = api.NewPackage().SetDirs(s.pkgs["bsp_b"].PkgDirs).SetProvidedLinkerScript("bsp_b.ld")
+	conflictGraph, err := NewBuildGraph(map[string]map[string]*api.Target{
+		"app": {"app": makeTargetWithDeps("app", "bsp_a", "bsp_b").SetKind(api.TargetBinary).UseDependencyLinkerScript()},
+	}, map[string]PkgBuildMeta{
+		"app":   {Deps: []string{"bsp_a", "bsp_b"}},
+		"bsp_a": {},
+		"bsp_b": {},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.graph = conflictGraph
+	if _, err := s.resolveTarget(conflictGraph.Nodes["app:app"]); err == nil {
+		t.Fatal("expected ambiguous ProvidedLinkerScript error for two direct providers")
+	}
 }

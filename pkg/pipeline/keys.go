@@ -81,59 +81,22 @@ func remoteVersionKey(ctx *RuntimeContext, name string, node *resolver.PackageNo
 	return "", "", false
 }
 
-func computeReachable(graph *resolver.Graph) (map[string]bool, error) {
+func configRootOverride(ctx *RuntimeContext) string {
+	if ctx == nil || ctx.Config == nil {
+		return ""
+	}
+	return strings.TrimSpace(ctx.Config.Root)
+}
+
+func computeReachable(graph *resolver.Graph, rootOverrides ...string) (map[string]bool, error) {
 	needed := make(map[string]bool, len(graph.Packages))
-	var queue []string
-
-	var rootID string
-	rootCount := 0
-	for id, node := range graph.Packages {
-		if node.IsLocal() && node.Pkg != nil && node.Pkg.IsRoot() {
-			rootCount++
-			rootID = id
-		}
+	roots, err := computeRootSeeds(graph, firstNonEmpty(rootOverrides...))
+	if err != nil {
+		return nil, err
 	}
-	if rootCount > 1 {
-		return nil, fmt.Errorf("SetRoot(true): multiple root packages found; only one is allowed")
-	}
-
-	if rootCount == 1 {
-		needed[rootID] = true
-		queue = append(queue, rootID)
-	} else {
-		if hint := rootsHint(graph); hint != "" {
-			vlog.Info("%s", hint)
-		}
-		dependedOn := make(map[string]bool)
-		for _, node := range graph.Packages {
-			if !node.IsLocal() {
-				continue
-			}
-			for _, dep := range node.Deps {
-				if depNode, ok := graph.Packages[dep]; ok && depNode.IsLocal() {
-					dependedOn[dep] = true
-				}
-			}
-		}
-
-		hasLocalRequire := false
-		for _, node := range graph.Packages {
-			if node.IsLocal() && node.Pkg != nil && len(node.Pkg.GetRequireFuncs()) > 0 {
-				hasLocalRequire = true
-				break
-			}
-		}
-
-		for id, node := range graph.Packages {
-			if !node.IsLocal() {
-				continue
-			}
-			if hasLocalRequire && node.Pkg != nil && len(node.Pkg.GetRequireFuncs()) == 0 && dependedOn[id] {
-				continue
-			}
-			needed[id] = true
-			queue = append(queue, id)
-		}
+	queue := append([]string(nil), roots...)
+	for _, id := range roots {
+		needed[id] = true
 	}
 
 	for len(queue) > 0 {
@@ -151,6 +114,80 @@ func computeReachable(graph *resolver.Graph) (map[string]bool, error) {
 	return needed, nil
 }
 
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if t := strings.TrimSpace(v); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+func computeRootSeeds(graph *resolver.Graph, rootOverride string) ([]string, error) {
+	if rootOverride != "" {
+		node, ok := graph.Packages[rootOverride]
+		if !ok || node == nil {
+			return nil, fmt.Errorf("config root %q not found in workspace", rootOverride)
+		}
+		if !node.IsLocal() {
+			return nil, fmt.Errorf("config root %q must be a local workspace package", rootOverride)
+		}
+		return []string{rootOverride}, nil
+	}
+
+	var rootID string
+	rootCount := 0
+	for id, node := range graph.Packages {
+		if node.IsLocal() && node.Pkg != nil && node.Pkg.IsRoot() {
+			rootCount++
+			rootID = id
+		}
+	}
+	if rootCount > 1 {
+		return nil, fmt.Errorf("SetRoot(true): multiple root packages found; only one is allowed")
+	}
+
+	if rootCount == 1 {
+		return []string{rootID}, nil
+	}
+
+	if hint := rootsHint(graph); hint != "" {
+		vlog.Info("%s", hint)
+	}
+	dependedOn := make(map[string]bool)
+	for _, node := range graph.Packages {
+		if !node.IsLocal() {
+			continue
+		}
+		for _, dep := range node.Deps {
+			if depNode, ok := graph.Packages[dep]; ok && depNode.IsLocal() {
+				dependedOn[dep] = true
+			}
+		}
+	}
+
+	hasLocalRequire := false
+	for _, node := range graph.Packages {
+		if node.IsLocal() && node.Pkg != nil && len(node.Pkg.GetRequireFuncs()) > 0 {
+			hasLocalRequire = true
+			break
+		}
+	}
+
+	var roots []string
+	for id, node := range graph.Packages {
+		if !node.IsLocal() {
+			continue
+		}
+		if hasLocalRequire && node.Pkg != nil && len(node.Pkg.GetRequireFuncs()) == 0 && dependedOn[id] {
+			continue
+		}
+		roots = append(roots, id)
+	}
+	sort.Strings(roots)
+	return roots, nil
+}
+
 func rootsHint(graph *resolver.Graph) string {
 	candidates := make([]string, 0, len(graph.Packages))
 	for id, node := range graph.Packages {
@@ -166,15 +203,47 @@ func rootsHint(graph *resolver.Graph) string {
 }
 
 func collectAllPkgOptions(ctx *RuntimeContext, needed map[string]bool) map[string]map[string]any {
+	globalVals := config.BuildGlobalValues(ctx.Config)
 	result := make(map[string]map[string]any)
 	for _, name := range ctx.Resolver.GetOrder() {
-		if !needed[name] {
+		if needed != nil && !needed[name] {
 			continue
 		}
 		entry := config.GetEntry(ctx.Config, name)
 		opts := make(map[string]any, len(entry.Options))
 		for k, v := range entry.Options {
 			opts[k] = v
+		}
+		if ctx.DerivedOptions != nil {
+			for optName, val := range ctx.DerivedOptions[name] {
+				if _, exists := opts[optName]; exists {
+					continue
+				}
+				if opt := ctx.AllOptions[name][optName]; opt != nil && api.ValuesEqual(val, opt.Default()) {
+					continue
+				}
+				opts[optName] = val
+			}
+		}
+		var node *resolver.PackageNode
+		if ctx.DepGraph != nil {
+			node = ctx.DepGraph.Packages[name]
+		}
+		for optName, opt := range visibleGlobalOptionsFor(node, ctx.AllOptions[name], ctx.GlobalOptions) {
+			if opt == nil || opt.ExportDefine() {
+				continue
+			}
+			if localOpt := ctx.AllOptions[name][optName]; localOpt != nil && !localOpt.IsGlobal() {
+				continue
+			}
+			if _, exists := opts[optName]; exists {
+				continue
+			}
+			if val, ok := globalVals[optName]; ok && val != nil {
+				opts[optName] = val
+			} else if opt.Default() != nil {
+				opts[optName] = opt.Default()
+			}
 		}
 		result[name] = opts
 	}

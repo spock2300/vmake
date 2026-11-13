@@ -44,7 +44,7 @@ func Main(p *api.Package) {
 func writeBareMetalTestProject(t *testing.T) string {
 	t.Helper()
 	project := writeTestCommandProject(t, passingTestSource)
-	writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","global":{"options":{"target_os":"none","target_triple":"arm-none-eabi"}}}`)
+	writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{"version":"1","global":{"options":{"target_os":"none","target_triple":"arm-none-eabi"}}}`)
 	return project
 }
 

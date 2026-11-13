@@ -50,6 +50,11 @@ func Require(ctx *RuntimeContext) (err error) {
 	vlog.Verbose("  %s", strings.Join(pkgNames, ", "))
 
 	r := resolver.NewResolver(repo.NewRepoManager(ctx.Paths.ReposDir), ctx.Paths.DepsDir)
+	projectRoot := ctx.WorkDir
+	if ctx.Paths != nil && ctx.Paths.ProjectDir != "" {
+		projectRoot = ctx.Paths.ProjectDir
+	}
+	r.SetProjectRoot(projectRoot)
 	r.SetContext(ctx.Context)
 	r.SetSourceManager(repo.NewSourceManager(ctx.Paths.DepsDir, ctx.Paths.CacheDir).WithSession(ctx.Locks).WithContext(ctx.Context))
 	r.SetLockfile(ctx.Lock, ctx.IgnoreLock)
@@ -88,7 +93,7 @@ func Configure(ctx *RuntimeContext) (err error) {
 	return runConfigPhase(ctx)
 }
 
-func bindGlobalFlagCallbacks(cfgCtx *api.ConfigContext, buf *packageGlobalFlags) {
+func bindBaseGlobalFlagCallbacks(cfgCtx *api.ConfigContext, buf *packageGlobalFlags) {
 	cfgCtx.SetGlobalCFlagsFunc(func(flags ...string) {
 		buf.cFlags = append(buf.cFlags, flags...)
 	})
@@ -103,9 +108,24 @@ func bindGlobalFlagCallbacks(cfgCtx *api.ConfigContext, buf *packageGlobalFlags)
 	})
 }
 
+func bindApplyGlobalFlagCallbacks(cfgCtx *api.ConfigContext, buf *packageGlobalFlags) {
+	cfgCtx.SetGlobalCFlagsFunc(func(flags ...string) {
+		buf.applyCFlags = append(buf.applyCFlags, flags...)
+	})
+	cfgCtx.SetGlobalCxxFlagsFunc(func(flags ...string) {
+		buf.applyCxxFlags = append(buf.applyCxxFlags, flags...)
+	})
+	cfgCtx.SetGlobalLdFlagsFunc(func(flags ...string) {
+		buf.applyLdFlags = append(buf.applyLdFlags, flags...)
+	})
+	cfgCtx.SetGlobalLinksFunc(func(links ...string) {
+		buf.applyLinks = append(buf.applyLinks, links...)
+	})
+}
+
 func collectOptions(name, dir string, pkg *api.Package, buf *packageGlobalFlags) map[string]*api.Option {
 	cfgCtx := api.NewConfigContextWithPackage(name, pkg)
-	bindGlobalFlagCallbacks(cfgCtx, buf)
+	bindBaseGlobalFlagCallbacks(cfgCtx, buf)
 	pkg.ExecConfigFuncs(dir, func(fn api.ConfigFunc) { fn(cfgCtx) })
 	return cfgCtx.GetOptions()
 }
@@ -167,14 +187,35 @@ func collectAllOptionsAndKConfigs(ctx *RuntimeContext) error {
 }
 
 func applyAllConfigCallbacks(ctx *RuntimeContext) {
-	vlog.Info("")
-	vlog.Info("Applying configuration...")
+	applyConfigCallbacksForNeeded(ctx, nil, true)
+}
+
+func applyConfigCallbacksForNeeded(ctx *RuntimeContext, needed map[string]bool, logHeader bool) {
+	if logHeader {
+		vlog.Info("")
+		vlog.Info("Applying configuration...")
+	}
+	if ctx.BufferedGlobalFlags == nil {
+		ctx.BufferedGlobalFlags = make(map[string]*packageGlobalFlags)
+	}
 	globalVals := config.BuildGlobalValues(ctx.Config)
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
-		if node.Pkg == nil {
+		if needed != nil {
+			if buf := ctx.BufferedGlobalFlags[name]; buf != nil && !needed[name] {
+				buf.resetApply()
+			}
+			if !needed[name] {
+				if node != nil && node.Pkg != nil {
+					node.Pkg.ResetApplyState()
+				}
+				continue
+			}
+		}
+		if node == nil || node.Pkg == nil {
 			continue
 		}
+		node.Pkg.ResetApplyState()
 		opts := ctx.AllOptions[name]
 		if len(opts) == 0 {
 			continue
@@ -185,12 +226,13 @@ func applyAllConfigCallbacks(ctx *RuntimeContext) {
 			buf = &packageGlobalFlags{}
 			ctx.BufferedGlobalFlags[name] = buf
 		}
+		buf.resetApply()
 
 		applyCtx := api.NewConfigContextWithPackage(name, node.Pkg)
-		applyCtx.SetOptions(opts)
+		applyCtx.SetOptions(mergedPackageAndGlobalOptions(opts, visibleGlobalOptionsFor(node, opts, ctx.GlobalOptions)))
 		applyVals := packageConfigValuesWithGlobals(ctx, name, globalVals)
 		applyCtx.SetCfgVals(applyVals)
-		bindGlobalFlagCallbacks(applyCtx, buf)
+		bindApplyGlobalFlagCallbacks(applyCtx, buf)
 
 		optNames := make([]string, 0, len(opts))
 		for optName := range opts {
@@ -217,15 +259,29 @@ func packageConfigValuesWithGlobals(ctx *RuntimeContext, name string, globalVals
 	if ctx == nil || ctx.Config == nil {
 		return nil
 	}
+	var node *resolver.PackageNode
+	if ctx.DepGraph != nil {
+		node = ctx.DepGraph.Packages[name]
+	}
 	opts := ctx.AllOptions[name]
+	visGlobals := visibleGlobalValuesFor(node, opts, ctx.GlobalOptions, globalVals)
 	entry := config.GetEntry(ctx.Config, name)
-	values := make(map[string]any, len(entry.Options)+len(globalVals))
-	for optName, val := range globalVals {
-		if opt, declared := opts[optName]; declared && opt.IsGlobal() {
-			values[optName] = val
+	values := make(map[string]any, len(entry.Options)+len(visGlobals))
+	for optName, val := range visGlobals {
+		if opt, declared := opts[optName]; declared && !opt.IsGlobal() {
+			continue
+		}
+		values[optName] = val
+	}
+	if ctx.DerivedOptions != nil {
+		for k, v := range ctx.DerivedOptions[name] {
+			if opt, declared := opts[k]; declared && opt.IsGlobal() {
+				continue
+			}
+			values[k] = v
 		}
 	}
-	mergePkgOptions(values, entry.Options, opts, globalVals)
+	mergePkgOptions(values, entry.Options, opts, visGlobals)
 	return values
 }
 
@@ -247,6 +303,9 @@ func collectGlobalMacroDefines(opts map[string]*api.Option, vals map[string]any)
 	owners := make(map[string]string)
 	for _, name := range names {
 		opt := opts[name]
+		if !opt.ExportDefine() {
+			continue
+		}
 		if globalMacroExcluded[name] && opt.MacroName() == "" {
 			continue
 		}
@@ -280,6 +339,10 @@ func collectGlobalMacroDefines(opts map[string]*api.Option, vals map[string]any)
 }
 
 func mergeGlobalOptions(ctx *RuntimeContext) error {
+	return mergeGlobalOptionsFiltered(ctx, nil)
+}
+
+func mergeGlobalOptionsFiltered(ctx *RuntimeContext, needed map[string]bool) error {
 	mgr := toolchain.GetManager()
 	var tcList []string
 	if tcs, err := mgr.ListToolchains(); err == nil {
@@ -289,8 +352,18 @@ func mergeGlobalOptions(ctx *RuntimeContext) error {
 		sort.Strings(tcList)
 	}
 
+	allDefs := ctx.AllOptions
+	if needed != nil {
+		allDefs = make(map[string]map[string]*api.Option, len(needed))
+		for pkgName, opts := range ctx.AllOptions {
+			if needed[pkgName] {
+				allDefs[pkgName] = opts
+			}
+		}
+	}
+
 	var err error
-	ctx.GlobalOptions, err = api.MergeGlobalOptions(ctx.AllOptions, tcList)
+	ctx.GlobalOptions, err = api.MergeGlobalOptions(allDefs, tcList)
 	if err != nil {
 		return fmt.Errorf("global options error: %w", err)
 	}
@@ -328,6 +401,7 @@ func runConfigPhase(ctx *RuntimeContext) error {
 			return err
 		}
 	}
+	resolvePreviewDerivedOptions(ctx)
 	applyAllConfigCallbacks(ctx)
 	return updateGlobalMacroDefines(ctx)
 }

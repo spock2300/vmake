@@ -22,7 +22,7 @@ func TestNewRuntimeContextPreservesParams(t *testing.T) {
 	}
 	params := pipeline.ResolveParams{
 		WorkDir:           "/work",
-		ConfigPath:        "/project/.vmake/config.json",
+		ConfigPath:        "/project/configs/default.json",
 		ConfigDigest:      "digest",
 		Config:            cfg,
 		Lock:              lock,
@@ -34,7 +34,7 @@ func TestNewRuntimeContextPreservesParams(t *testing.T) {
 		TrustChecker:      remoteScriptTrustChecker,
 	}
 	ctx := newRuntimeContext(params, nil)
-	if ctx.WorkDir != "/work" || ctx.ConfigPath != "/project/.vmake/config.json" || ctx.ConfigDigest != "digest" {
+	if ctx.WorkDir != "/work" || ctx.ConfigPath != "/project/configs/default.json" || ctx.ConfigDigest != "digest" {
 		t.Fatalf("unexpected load fields: %+v", ctx)
 	}
 	if ctx.Config != cfg || ctx.Lock != lock || ctx.Paths != paths {
@@ -59,13 +59,25 @@ func resetResolveTestGlobals(t *testing.T) {
 	oldProjectDir := cachedProjectDir
 	oldVmakeDir := vmakeDir
 	oldOverride := projectOverride
+	oldConfigFlag := configFlag
+	oldSetFlags := setFlags
+	oldUnsetFlags := unsetFlags
+	oldEphemeralSetFlags := ephemeralSetFlags
 	cachedProjectDir = ""
 	vmakeDir = t.TempDir()
 	projectOverride = ""
+	configFlag = ""
+	setFlags = nil
+	unsetFlags = nil
+	ephemeralSetFlags = nil
 	t.Cleanup(func() {
 		cachedProjectDir = oldProjectDir
 		vmakeDir = oldVmakeDir
 		projectOverride = oldOverride
+		configFlag = oldConfigFlag
+		setFlags = oldSetFlags
+		unsetFlags = oldUnsetFlags
+		ephemeralSetFlags = oldEphemeralSetFlags
 	})
 	t.Setenv("VMAKE_CACHE", t.TempDir())
 }

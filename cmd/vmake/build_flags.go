@@ -1,6 +1,7 @@
 package main
 
 var (
+	configFlag      string
 	installFlag     bool
 	prefixFlag      string
 	installTypeFlag string

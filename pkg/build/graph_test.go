@@ -442,3 +442,121 @@ func TestBuildGraphMissingConsumerSubPackageDepListsCandidate(t *testing.T) {
 		t.Fatalf("error should mention the unique sub-package candidate, got: %v", err)
 	}
 }
+
+func TestBuildGraphCrossPackageReverseTargetCycleRejected(t *testing.T) {
+	t1 := makeTargetWithDeps("t1", "pkgB:t2")
+	t4 := makeTargetWithDeps("t4")
+	t2 := makeTargetWithDeps("t2")
+	t3 := makeTargetWithDeps("t3", "pkgA:t4")
+	top := makeTargetWithDeps("top", "pkgA:t1")
+
+	targets := map[string]map[string]*api.Target{
+		"root": {"top": top},
+		"pkgA": {"t1": t1, "t4": t4},
+		"pkgB": {"t2": t2, "t3": t3},
+	}
+	pkgMeta := map[string]PkgBuildMeta{
+		"root": {},
+		"pkgA": {},
+		"pkgB": {},
+	}
+
+	_, err := NewBuildGraph(targets, pkgMeta, nil)
+	if err == nil {
+		t.Fatal("expected cross-package reverse target cycle error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "package circular dependency detected: pkgA -> pkgB -> pkgA") {
+		t.Fatalf("unexpected cycle message: %s", msg)
+	}
+	if strings.Contains(msg, "root") {
+		t.Fatalf("upstream bystander root should be excluded from cycle path: %s", msg)
+	}
+	if !strings.Contains(msg, "pkgA:t1 -> pkgB:t2") || !strings.Contains(msg, "pkgB:t3 -> pkgA:t4") {
+		t.Fatalf("expected triggering target edges in message: %s", msg)
+	}
+}
+
+func TestBuildGraphSamePackageTargetCycleExactChain(t *testing.T) {
+	mainT := makeTargetWithDeps("main", "a")
+	a := makeTargetWithDeps("a", "b")
+	b := makeTargetWithDeps("b", "a")
+
+	_, err := NewBuildGraph(makeTargets("p", mainT, a, b), nil, nil)
+	if err == nil {
+		t.Fatal("expected target cycle error")
+	}
+	want := "circular dependency detected: p:a -> p:b -> p:a"
+	if err.Error() != want {
+		t.Fatalf("got %q, want %q", err.Error(), want)
+	}
+}
+
+func TestBuildGraphInternalVisibilityEnforced(t *testing.T) {
+	wire := makeTargetWithDeps("wire")
+	netLib := makeTargetWithDeps("net", "wire:wire")
+	app := makeTargetWithDeps("app", "wire:wire")
+
+	meta := map[string]PkgBuildMeta{
+		"wire": {VisPath: "@local/net/internal/wire"},
+		"net":  {VisPath: "@local/net"},
+		"app":  {VisPath: "@local/app"},
+	}
+
+	okTargets := map[string]map[string]*api.Target{
+		"wire": {"wire": wire},
+		"net":  {"net": netLib},
+	}
+	if _, err := NewBuildGraph(okTargets, map[string]PkgBuildMeta{
+		"wire": meta["wire"],
+		"net":  meta["net"],
+	}, nil); err != nil {
+		t.Fatalf("expected net -> net/internal/wire allowed, got %v", err)
+	}
+
+	badTargets := map[string]map[string]*api.Target{
+		"wire": {"wire": wire},
+		"app":  {"app": app},
+	}
+	_, err := NewBuildGraph(badTargets, map[string]PkgBuildMeta{
+		"wire": meta["wire"],
+		"app":  meta["app"],
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), `use of internal package "wire" not allowed from package "app"`) {
+		t.Fatalf("expected internal visibility error, got %v", err)
+	}
+}
+
+func TestBuildGraphZeroTargetPublicUmbrellaWrappingInternalSubPackage(t *testing.T) {
+	secretCore := makeTargetWithDeps("core")
+	app := makeTargetWithDeps("app", "sdk").UseRequires()
+
+	targets := map[string]map[string]*api.Target{
+		"secret": {"core": secretCore},
+		"app":    {"app": app},
+	}
+	pkgMeta := map[string]PkgBuildMeta{
+		"sdk":    {Deps: []string{"secret"}, VisPath: "@local/sdk"},
+		"secret": {VisPath: "@local/sdk/internal/secret"},
+		"app":    {Deps: []string{"sdk"}, VisPath: "@local/app"},
+	}
+
+	graph, err := NewBuildGraph(targets, pkgMeta, nil)
+	if err != nil {
+		t.Fatalf("0-target public umbrella wrapping internal package must be allowed, got: %v", err)
+	}
+	appNode, err := graph.GetNode("app:app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(appNode.Deps, []string{"secret:core"}) {
+		t.Fatalf("app:app Deps = %v, want [secret:core]", appNode.Deps)
+	}
+
+	_, err = NewBuildGraph(map[string]map[string]*api.Target{"a": {"t": makeTargetWithDeps("t")}}, map[string]PkgBuildMeta{
+		"a": {SubGraphs: []string{"a"}, VisPath: "@local/a"},
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "package circular dependency detected: a -> a") {
+		t.Fatalf("expected self BuildSubGraph cycle error, got %v", err)
+	}
+}

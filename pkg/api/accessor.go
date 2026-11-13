@@ -361,6 +361,38 @@ func (a *ConfigAccessor) matchOptionValues(option, method string, values []any) 
 	return false
 }
 
+func ValuesEqual(a, b any) bool {
+	return valuesEqual(a, b)
+}
+
+func ValidateOptionValue(opt *Option, val any) error {
+	if opt == nil {
+		return nil
+	}
+	if val == nil {
+		return fmt.Errorf("option %q value must not be nil", opt.Name())
+	}
+	switch opt.Type() {
+	case OptionBool:
+		if _, ok := val.(bool); !ok {
+			return fmt.Errorf("option %q is bool, got %T value %v", opt.Name(), val, val)
+		}
+	case OptionInt:
+		if _, ok := exactIntValue(val); !ok {
+			return fmt.Errorf("option %q is int, got %T value %v", opt.Name(), val, val)
+		}
+	case OptionString, OptionChoice:
+		s, ok := val.(string)
+		if !ok {
+			return fmt.Errorf("option %q is %s, got %T value %v", opt.Name(), opt.Type(), val, val)
+		}
+		if opt.Type() == OptionChoice && len(opt.Values()) > 0 && !slices.Contains(opt.Values(), s) {
+			return fmt.Errorf("option %q value %q is not in SetValues(%v)", opt.Name(), s, opt.Values())
+		}
+	}
+	return nil
+}
+
 func valuesEqual(a, b any) bool {
 	if a == b {
 		return true

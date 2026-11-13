@@ -99,7 +99,7 @@ audit; the factcheck tasks keep it repeatable.
 
 These are not covered behaviorally yet:
 
-- Multiple named configurations (`config copy/use`, `.vmake/project.json`) and
+- Multiple tracked configurations (`configs/*.json`, `config copy/use/check`, `-c`, `.vmake/project.json`, `.vmake/local.json`) and
   per-configuration build keys.
 - Multi-module workspace roots, local package dependency graphs, and `SetRoot`.
 - `AddPatches`/`SetPatches` source patching, including the `[]string` spread

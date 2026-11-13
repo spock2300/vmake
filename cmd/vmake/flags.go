@@ -6,6 +6,16 @@ import (
 
 var ephemeralSetFlags []string
 
+func addConfigFlag(cmd *cobra.Command) {
+	cmd.Flags().StringVarP(&configFlag, "config", "c", "", "use configuration profile for this run (e.g. configs/default.json or sku)")
+	cmd.RegisterFlagCompletionFunc("config", completeConfigFilename)
+}
+
+func addPersistentConfigFlag(cmd *cobra.Command) {
+	cmd.PersistentFlags().StringVarP(&configFlag, "config", "c", "", "use configuration profile for this run (e.g. configs/default.json or sku)")
+	cmd.RegisterFlagCompletionFunc("config", completeConfigFilename)
+}
+
 func addInstallFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVarP(&installFlag, "install", "i", false, "install after build")
 	cmd.Flags().StringVarP(&prefixFlag, "prefix", "p", "", "installation prefix (default: <project>/install)")
@@ -14,6 +24,7 @@ func addInstallFlags(cmd *cobra.Command) {
 }
 
 func addCommonBuildFlags(cmd *cobra.Command) {
+	addConfigFlag(cmd)
 	cmd.Flags().StringVar(&toolchainFlag, "toolchain", "", "override toolchain")
 	cmd.Flags().StringVar(&modeFlag, "mode", "", "override build mode")
 	cmd.Flags().StringArrayVarP(&ephemeralSetFlags, "set", "s", nil, "override an option for this run only (format: [pkg/]option=value)")

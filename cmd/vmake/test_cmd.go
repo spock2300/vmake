@@ -85,24 +85,34 @@ func validateTestExecution(platform api.Platform, hostOS string) error {
 }
 
 func validateTestProject(ctx *RuntimeContext) error {
-	var explicitRoots []string
-	dependedOn := make(map[string]bool)
-	for name, node := range ctx.DepGraph.Packages {
-		if node == nil {
-			continue
-		}
-		if node.IsLocal() && node.Pkg != nil && node.Pkg.IsRoot() {
-			explicitRoots = append(explicitRoots, name)
-		}
-		for _, dep := range node.Deps {
-			dependedOn[dep] = true
+	var roots []string
+	if ctx.Config != nil {
+		if rootName := strings.TrimSpace(ctx.Config.Root); rootName != "" {
+			if node := ctx.DepGraph.Packages[rootName]; node != nil && node.IsLocal() {
+				roots = []string{rootName}
+			}
 		}
 	}
-	roots := explicitRoots
 	if len(roots) == 0 {
+		var explicitRoots []string
+		dependedOn := make(map[string]bool)
 		for name, node := range ctx.DepGraph.Packages {
-			if node != nil && node.IsLocal() && !dependedOn[name] {
-				roots = append(roots, name)
+			if node == nil {
+				continue
+			}
+			if node.IsLocal() && node.Pkg != nil && node.Pkg.IsRoot() {
+				explicitRoots = append(explicitRoots, name)
+			}
+			for _, dep := range node.Deps {
+				dependedOn[dep] = true
+			}
+		}
+		roots = explicitRoots
+		if len(roots) == 0 {
+			for name, node := range ctx.DepGraph.Packages {
+				if node != nil && node.IsLocal() && !dependedOn[name] {
+					roots = append(roots, name)
+				}
 			}
 		}
 	}

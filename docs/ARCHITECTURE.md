@@ -200,13 +200,26 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 6. **verifyLocked / writeLockfile** — 补丁验证通过后，校验（`--locked`）或写入 `.vmake/vmake.lock`（锁定解析到的版本与 commit）
 7. **restoreKConfigs** — 从 config.json 恢复 KConfig 配置（详见 KConfig 章节）
 8. **executeOnBuild** — 执行所有 `OnBuild` 回调，生成 `map[string]*Target`
-9. **build.NewBuildGraph** — 构建依赖图，`BuildGraph` 展开包级依赖为 target 级传递闭包
+9. **build.NewBuildGraph** — 构建依赖图，`BuildGraph` 展开包级依赖为 target 级传递闭包，同时强校验双层 DAG（target 级无环 + 合并 `OnRequire`/`AddDeps`/`UseRequires`/`BuildSubGraph` 的包级无环，拦截跨包反向 target 环）与 Go 风格 `internal/` 目录可见性
 10. **build.BuildEnv / BuildJob** — `BuildEnv` 持有共享的包布局、包对象、toolchain、选项、flags 与 session；`BuildJob` 是某个 graph 的瞬时快照
 11. **BuildJob.Run()** → 按 toolchain + platform 分组 → `newScheduler(...)` → `BuildAll()`:
     - `ForEachDefault(includeTests, fn)` 按拓扑顺序构建每个默认 Target
-    - 每个原生 Target: resolveTarget → prepareTarget → compileAll → finalizeTarget（链接/prebuilt、postLink、提交成功记录）→ publishTarget；TargetVoid 在 finalizeTarget 调用 BuildFunc
+    - 每个原生 Target: resolveTarget → prepareTarget → compileAll（含基于 `.d` 依赖文件的跨包头文件边界校验：拦截未声明依赖头文件、传递包含与非 `PublicIncludes` 私有头文件，命中增量缓存时同样校验）→ finalizeTarget（执行链接/prebuilt、postLink、提交成功记录）→ publishTarget；TargetVoid 在 finalizeTarget 调用 BuildFunc
     - 并行编译源文件（`compileAll` 工作池，`--jobs` 控制编译作业数）
 12. **生成 compile_commands.json**（通过 `CompileCommandsWriter`）
+
+### 依赖图管理与 Go 风格工程约束
+
+VMake 将 Go 工程的模块化与有向无环图（DAG）规则落地到 C/C++ 构建全链路（`pkg/pipeline/depgraph.go`、`internal/toposort`、`internal/pkgvis`、`pkg/build/header_check.go`）：
+
+1. **双层严格 DAG（禁止环形依赖）**：`OnRequire`、`OnBuild`（`AddDeps` / `UseRequires`）与 `BuildSubGraph` 统一汇入包级与 Target 级依赖图。无论同包 Target 环还是跨包反向 Target 环（`pkgA:t1 -> pkgB:t2` 且 `pkgB:t3 -> pkgA:t4`）均直接报错，并剥离上游无关节点，精确输出最短闭环链路（`a -> b -> c -> a`）。
+2. **`internal/` 目录包可见性**：路径段包含 `internal` 的本地包（按相对工程根路径计算）或远程 native 子包，仅允许该 `internal` 父目录前缀树内的包引用，越权引用在 `OnRequire`、`AddDeps`、`BuildSubGraph` 均报错。
+3. **包路径自包含与头文件边界（`AddPublicIncludes` + 直接依赖校验）**：禁止跨包 `../` 访问其他包源码/预编译产物/私有目录；编译产生或增量复用的 `.d` 依赖文件（以及未编译冷树上的直接 `#include` 扫描）要求跨包头文件必须来自已声明依赖的 `AddPublicIncludes` 或 `InstallDir/include`，且源文件直接 `#include` 的头文件所属包必须是本 Target 的直接依赖（不蹭传递依赖）。
+
+CLI 子命令（只读 `scriptfs`，不触发编译、不改写 `.gitignore`）：
+- `vmake deps graph [--targets] [--format text|dot|mermaid] [--all] [--json] [--locked] [--offline] [-s ...]` — 输出包级或 Target 级统一依赖图
+- `vmake deps why <pkg|pkg:target> [--all] [--json] [--locked] [--offline] [-s ...]` — 追踪从根包/根 Target 到目标的最短或全部依赖链路及触发边
+- `vmake deps check [--json] [--locked] [--offline] [-s ...]` — 静态审计双层 DAG、`internal/` 可见性、悬空依赖、跨包路径越界及头文件边界违规
 
 **BuildContext 方法**（`pkg/api/context.go`）：
 - `Exec(name, args...)` — 构建阶段执行命令；失败中止脚本，由执行边界回收并返回错误
@@ -223,16 +236,17 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 **BuildEnv / BuildJob**（`pkg/build/job.go`）：
 ```
 BuildEnv
-├── Layouts    map[string]*PackageLayout
-├── Packages   map[string]*api.Package
-├── Toolchains map[string]*toolchain.Toolchain
-├── Options    map[string]map[string]any
-├── GlobalFlags [4][]string
-├── Session    *Session
-├── RootDir    string
-├── Jobs       int
-├── KeepGoing  bool
-└── SubParents map[string]string
+├── Layouts       map[string]*PackageLayout
+├── Packages      map[string]*api.Package
+├── WorkspaceDirs map[string]string
+├── Toolchains    map[string]*toolchain.Toolchain
+├── Options       map[string]map[string]any
+├── GlobalFlags   [4][]string
+├── Session       *Session
+├── RootDir       string
+├── Jobs          int
+├── KeepGoing     bool
+└── SubParents    map[string]string
 
 BuildJob
 ├── Env          *BuildEnv
@@ -315,7 +329,7 @@ AddRequires          1. 检查 registry 仓库（未找到）      LoadBuildScri
 
 ### 本地源码 link (`vmake pkg link`)
 
-`.vmake/local.json` 保存机器本地的 `{"links":{"repo/name":"/abs/path"}}`。link 在解析阶段生效，不写入 `vmake.lock` 或共享配置。link 命令保存记录后删除该包已有的 `.vmake_deps/<repo>/<owner>/src` 和 `state.json`，保留 `out/` 与 own-Git 子包的 `third_party/`；unlink 后下一次构建重新物化：
+`.vmake/local.json` 保存机器本地的 `{"config":"configs/sku-a.json","links":{"repo/name":"/abs/path"}}`。link 在解析阶段生效，不写入 `vmake.lock` 或共享配置。link 命令保存记录后删除该包已有的 `.vmake_deps/<repo>/<owner>/src` 和 `state.json`，保留 `out/` 与 own-Git 子包的 `third_party/`；unlink 后下一次构建重新物化：
 
 1. `Require` 先校验 link：路径必须是 git 工作树、不能在 `.vmake_deps`/项目根/仓库目录内；native 父包必须有 `build.go`，registry 包必须能在已注册仓库中找到 wrapper。
 2. native link：`findNativeSource` 直接使用 link 树加载 build.go 和子包，不调用 `EnsureSource`；`Source.Link.Native=true`，子包继承 link 路径与 commit。
@@ -356,7 +370,7 @@ vmake (RootCmd)
 ├── rebuild        # 完全重新构建
 ├── distclean      # 深度清理（删除构建产物、install/；保留 .vmake_deps/ 工作树，--purge-sources 才删除）
 ├── doctor         # 检测平台前置条件与 build.go 文本级问题（如仅有 AddRequires 而无 AddDeps）
-├── config         # TUI 配置界面（list/use/copy/describe 管理配置文件）
+├── config         # TUI 配置界面（--set/--unset 编辑配置；list/use/copy/describe/check 管理 configs/）
 ├── update [ver]   # 自我更新（go install）
 ├── version        # 版本信息
 ├── toolchain      # 工具链管理
@@ -532,12 +546,13 @@ PkgBuildMeta
 
 ### ConfigFile (`pkg/config/store.go`)
 
-CLI 通过 `pkg/config.LoadProject` 从项目根目录的 `.vmake/project.json` 读取 `config` 文件名，再加载对应配置；缺少选择文件时使用 `.vmake/config.json`，选择文件存在但目标配置缺失或无效时报错而不回退。解析后的路径保存在 `RuntimeContext.ConfigPath`，TUI、`--set` 和 `config describe` 都保存回该路径。`config list|use|copy|describe` 文件管理子命令不进入 Require/Configure（TUI 与 `--set` 需要选项定义，仍经过 Require/Configure）；所有配置继续共享 `.vmake/vmake.lock`，配置文件名和 `description` 说明都不参与 BuildKey。
+CLI 通过 `pkg/config.LoadProjectSnapshotWithOverride` 按 `-c / --config`（无状态覆盖）→ `.vmake/local.json` `config` → `.vmake/project.json` `default_config` → `configs/default.json` 解析配置；显式选择文件缺失或无效时报错而不回退。解析后的路径保存在 `RuntimeContext.ConfigPath`，TUI（仅保存显式覆盖项）、`--set`/`--unset` 和 `config describe` 都保存回该路径。`config list|use|copy|describe` 文件管理子命令不进入 Require/Configure，`config check [--all]` 执行严格选项与 dry-run 目标校验；所有配置继续共享 `.vmake/vmake.lock` 与 `.vmake/project.json` `pins`，配置文件名和 `description` 说明都不参与 BuildKey。
 
 ```
 ConfigFile
 ├── Version     string
 ├── Description string  // 说明（可选，可含换行，最长 200 字符），仅用于展示
+├── Root        string  // 可选本地入口包名（覆盖 SetRoot(true)）
 ├── Global      *GlobalConfig
 └── Entries     map[string]*EntryConfig
 

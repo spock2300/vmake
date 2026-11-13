@@ -37,7 +37,7 @@ func Main(p *api.Package) {
   c.Target("firmware").SetKind(api.TargetBinary).SetPrebuilt("firmware-input").AddPostLinkOutputs("metadata.bin")
   c.Target("bundle").SetKind(api.TargetVoid).AddPostLinkOutputs("payload").SetBuildFunc(func(p *api.Package) error {
    if _, e := os.Stat("fail"); e == nil { return fmt.Errorf("fixture failure") }
-   if _, e := os.Stat("change-config"); e == nil { if e := os.WriteFile(".vmake/config.json", []byte("{}"), 0644); e != nil { return e } }
+   if _, e := os.Stat("change-config"); e == nil { if e := os.WriteFile("configs/default.json", []byte("{}"), 0644); e != nil { return e } }
    return os.WriteFile("payload", []byte("built bytes"), 0644)
   })
   if c.Bool("assets") { c.AddInstalls("resources", "share") }
@@ -45,8 +45,8 @@ func Main(p *api.Package) {
 }
 `)
 	cfg := `{"version":"1","global":{"toolchain":"healthy"},"entries":{"project":{"options":{"assets":true}}}}`
-	writeExtensionFile(t, filepath.Join(root, ".vmake", "config.json"), cfg)
-	writeExtensionFile(t, filepath.Join(root, ".vmake", "plain.json"), strings.Replace(cfg, "true", "false", 1))
+	writeExtensionFile(t, filepath.Join(root, "configs", "default.json"), cfg)
+	writeExtensionFile(t, filepath.Join(root, "configs", "plain.json"), strings.Replace(cfg, "true", "false", 1))
 	writeExtensionFile(t, filepath.Join(root, "resources", "asset.elf"), "asset bytes")
 	writeExtensionFile(t, filepath.Join(root, "bindings-input"), "object bytes")
 	writeExtensionFile(t, filepath.Join(root, "library-input"), "library bytes")
@@ -163,7 +163,7 @@ func Main(p *api.Package) {
 	run(true, "config", "use", "plain.json")
 	run(true, "build", "-i")
 	plain := read()
-	if plain.ConfigFile != "plain.json" || len(plain.Artifacts) != 2 {
+	if plain.ConfigFile != "configs/plain.json" || len(plain.Artifacts) != 2 {
 		t.Fatalf("%+v", plain)
 	}
 	writeExtensionFile(t, filepath.Join(root, "fail"), "")
@@ -175,7 +175,7 @@ func Main(p *api.Package) {
 	if err := os.Remove(filepath.Join(root, "fail")); err != nil {
 		t.Fatal(err)
 	}
-	run(true, "config", "use", "config.json")
+	run(true, "config", "use", "default.json")
 	writeExtensionFile(t, filepath.Join(root, "change-config"), "")
 	run(false, "build")
 	if changed := read(); changed.Status != "failed" || !strings.Contains(changed.Error, "configuration changed") {
@@ -395,7 +395,7 @@ func TestBuildReportV2Success(t *testing.T) {
 
 func TestBuildReportV2CompileFailure(t *testing.T) {
 	project := writeBuildReportProject(t, "int main(void) {\n\tint value = ;\n\treturn value;\n}\n")
-	writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), `{"version":"1","global":{"mode":"release"}}`)
+	writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{"version":"1","global":{"mode":"release"}}`)
 	stdout, stderr, code := runBuildCommand(t, project, "build")
 	if code != 1 {
 		t.Fatalf("build exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
@@ -437,7 +437,7 @@ func TestBuildReportV2CompileFailure(t *testing.T) {
 		report.Global[api.ModeOptionName] != report.Mode || report.Global[api.ToolchainOptionName] != report.Toolchain {
 		t.Fatalf("failure identity = %+v (toolchain %q, mode %q)", report.Global, report.Toolchain, report.Mode)
 	}
-	if report.Mode != api.ModeRelease || report.ConfigFile != "config.json" {
+	if report.Mode != api.ModeRelease || report.ConfigFile != "configs/default.json" {
 		t.Fatalf("failure identity ignored the selected config: mode %q, configFile %q", report.Mode, report.ConfigFile)
 	}
 	wantDatabase := filepath.Join(project, "build", "compile_commands.json")
@@ -1522,7 +1522,7 @@ func Main(p *api.Package) {
 int main(void) { return 0; }
 `)
 	writeExtensionFile(t, filepath.Join(project, "src", "extra.c"), "int extra(void);\nint extra(void) { return 1; }\n")
-	cfgPath := filepath.Join(project, ".vmake", "config.json")
+	cfgPath := filepath.Join(project, "configs", "default.json")
 	origCfg := `{"version":"1","global":{"options":{"chip":"A"}},"entries":{"setproj":{"options":{"greeting":"hello"}}}}`
 	writeExtensionFile(t, cfgPath, origCfg)
 

@@ -601,9 +601,9 @@ func writeShadowedProject(t *testing.T) (string, string) {
 		makePathsTestDir(t, dir)
 	}
 	writePathsTestFile(t, filepath.Join(root, "build.go"), shadowedRootBuildGo)
-	writePathsTestFile(t, filepath.Join(root, ".vmake", "config.json"), "{}\n")
+	writePathsTestFile(t, filepath.Join(root, "configs", "default.json"), "{}\n")
 	writePathsTestFile(t, filepath.Join(root, "firmware", "build.go"), shadowedPackageBuildGo)
-	writePathsTestFile(t, filepath.Join(root, "firmware", ".vmake", "config.json"), "{}\n")
+	writePathsTestFile(t, filepath.Join(root, "firmware", "configs", "default.json"), "{}\n")
 	resolved, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		t.Fatal(err)
@@ -777,7 +777,8 @@ func TestShadowedRootFreshCloneWithoutRootMarker(t *testing.T) {
 	}
 	writePathsTestFile(t, filepath.Join(root, "build.go"), shadowedRootBuildGo)
 	writePathsTestFile(t, filepath.Join(root, "firmware", "build.go"), shadowedPackageBuildGo)
-	writePathsTestFile(t, filepath.Join(root, "firmware", ".vmake", "config.json"), "{}\n")
+	makePathsTestDir(t, filepath.Join(root, "firmware", ".vmake"))
+	writePathsTestFile(t, filepath.Join(root, "firmware", "configs", "default.json"), "{}\n")
 	root, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		t.Fatal(err)

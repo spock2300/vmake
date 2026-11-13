@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
-	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/repo"
 	"github.com/spock2300/vmake/pkg/resolver"
@@ -52,7 +52,57 @@ type Inspection struct {
 	Needed             map[string]bool
 	GlobalFlagsHash    string
 	PkgDirs            map[string]*api.PkgDirs
+	Layouts            map[string]*build.PackageLayout
 	PackageToolchains  map[string]*toolchain.Toolchain
+}
+
+func ExpectedPackageSourceDir(ctx *RuntimeContext, name string, node *resolver.PackageNode) string {
+	if node == nil || node.Source == nil {
+		return ""
+	}
+	var subParents map[string]string
+	if ctx != nil && ctx.Resolver != nil {
+		subParents = ctx.Resolver.SubParents()
+	}
+	var depsDir string
+	if ctx != nil && ctx.Paths != nil {
+		depsDir = ctx.Paths.DepsDir
+	}
+	if node.Source.Link != nil {
+		if node.Source.Link.Native {
+			if parent, isSub := subParents[name]; isSub && parent != "" && node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 {
+				member := strings.TrimPrefix(name, parent+"/")
+				return filepath.Join(depsDir, filepath.FromSlash(parent), "third_party", filepath.FromSlash(member), "src")
+			}
+		}
+		return node.Source.Link.Path
+	}
+	if node.IsLocal() {
+		if node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 {
+			return filepath.Join(node.Source.Dir, "src")
+		}
+		return node.Source.Dir
+	}
+	owner := name
+	member := ""
+	if parent, ok := subParents[name]; ok {
+		owner = parent
+		member = strings.TrimPrefix(name, parent+"/")
+	}
+	dir := filepath.Join(depsDir, filepath.FromSlash(owner), "src", filepath.FromSlash(member))
+	if member != "" && node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 {
+		dir = filepath.Join(dir, "src")
+	}
+	return dir
+}
+
+func IsPackageSourcePresent(ctx *RuntimeContext, name string, node *resolver.PackageNode) bool {
+	dir := ExpectedPackageSourceDir(ctx, name, node)
+	if dir == "" {
+		return false
+	}
+	entries, err := os.ReadDir(dir)
+	return err == nil && len(entries) > 0
 }
 
 type InspectOptions struct {
@@ -92,8 +142,14 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 	globalLinks := pre.rawGlobalFlags[3]
 
 	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
+	layouts := make(map[string]*build.PackageLayout)
 	toolCache := make(map[string]*build.ResolvedTools)
 	packageToolchains := make(map[string]*toolchain.Toolchain)
+	var filterNeeded map[string]bool
+	if opts.FilterDeps {
+		filterNeeded = pre.needed
+	}
+	allPkgOptions := collectAllPkgOptions(ctx, filterNeeded)
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
@@ -133,7 +189,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 			}
 			return nil, err
 		}
-		entry := config.GetEntry(ctx.Config, name)
+		pkgOptions := allPkgOptions[name]
 		flagsHash := packageFlagsHash(pre.globalFlagsHash, node)
 		if node.IsLocal() {
 			if node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 && !DetectExistingSrcDir(node) {
@@ -148,7 +204,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 				SourceDir: node.Source.Dir,
 				CCKey:     tools.CCKey(),
 				Mode:      pre.cfg.Mode,
-				Options:   entry.Options,
+				Options:   pkgOptions,
 				Material:  keyMaterial{commit: commit, flagsHash: flagsHash},
 				Ready:     true,
 			})
@@ -156,6 +212,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 				return nil, err
 			}
 			pkgDirs[name] = &layout.Dirs
+			layouts[name] = &layout
 			continue
 		}
 		owner := remoteOwnerName(ctx, name)
@@ -196,7 +253,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 			Member:         member,
 			CCKey:          tools.CCKey(),
 			Mode:           pre.cfg.Mode,
-			Options:        entry.Options,
+			Options:        pkgOptions,
 			Material:       keyMaterial{version: version, commit: commit, flagsHash: flagsHash, patchHash: patchHash, sourceLink: sourceLink},
 			Ready:          true,
 		})
@@ -204,6 +261,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 			return nil, err
 		}
 		pkgDirs[name] = &layout.Dirs
+		layouts[name] = &layout
 		if thirdPartySrc := linkedThirdPartySrcDir(ctx, name, node); thirdPartySrc != "" {
 			node.Pkg.SetSrcDir(thirdPartySrc)
 		} else if member != "" && node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 {
@@ -225,6 +283,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		Needed:             pre.needed,
 		GlobalFlagsHash:    pre.globalFlagsHash,
 		PkgDirs:            pkgDirs,
+		Layouts:            layouts,
 		PackageToolchains:  packageToolchains,
 	}, nil
 }

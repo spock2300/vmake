@@ -23,7 +23,7 @@ func writePackagePlatformProject(t *testing.T, dir string, global, local map[str
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeExtensionFile(t, filepath.Join(project, ".vmake", "config.json"), string(data))
+	writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), string(data))
 	testSetting := ""
 	if testTarget {
 		testSetting = ".SetTest(true)"

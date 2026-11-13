@@ -54,7 +54,8 @@ def verify(vmake, root, name, toolchain, generator, custom=False, preset=False,
     (project / ".vmake").mkdir()
     arm = toolchain == "arm-none-eabi"
     if not default_mode:
-        (project / ".vmake/config.json").write_text(json.dumps({
+        (project / "configs").mkdir(exist_ok=True)
+        (project / "configs/default.json").write_text(json.dumps({
             "global": {"toolchain": toolchain, "mode": "debug"}
         }), encoding="utf-8")
     cmake_lists = '''cmake_minimum_required(VERSION 3.20)

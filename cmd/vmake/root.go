@@ -35,6 +35,7 @@ func init() {
 	RootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "quiet mode")
 	RootCmd.PersistentFlags().BoolVarP(&yesFlag, "yes", "y", false, "assume yes for interactive prompts (e.g. trusting repositories; trust persists for future updates)")
 	RootCmd.PersistentFlags().StringVarP(&projectOverride, "project", "C", "", "project root directory (default: search upward from the current directory)")
+	addConfigFlag(RootCmd)
 	RootCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		return &usageError{err: err}
 	})
@@ -63,9 +64,9 @@ It uses Go buildscripts for configuration and provides a TUI for option manageme
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		if projectOverride != "" {
 			findProjectDir()
-		} else if cmd.Name() == "inspect" {
-			// inspect silences stdout/stderr while resolving, so report a
-			// shadowed root before it starts.
+		} else if isSilentResolveCmd(cmd) {
+			// inspect and deps graph/why/check silence stdout/stderr while resolving,
+			// so report a shadowed root before they start.
 			rejectShadowedProjectRootFromCWD()
 		}
 		commandStorageExclusive = requiresExclusiveStorage(cmd)
@@ -82,6 +83,22 @@ It uses Go buildscripts for configuration and provides a TUI for option manageme
 			vlog.Debug("git userland on PATH: %v", gitUserlandDirs)
 		}
 	},
+}
+
+func isSilentResolveCmd(cmd *cobra.Command) bool {
+	if cmd == nil {
+		return false
+	}
+	if cmd.Name() == "inspect" {
+		return true
+	}
+	if p := cmd.Parent(); p != nil && p.Name() == "deps" {
+		switch cmd.Name() {
+		case "graph", "why", "check":
+			return true
+		}
+	}
+	return false
 }
 
 // requiresExclusiveStorage reports whether the command may delete or rewrite
@@ -155,8 +172,16 @@ func pipelinePaths() *pipeline.Paths {
 }
 
 func loadResolveParams(ignoreLock bool, softGitignore bool) (pipeline.ResolveParams, error) {
+	return loadResolveParamsWithOptions(ignoreLock, softGitignore, false, "")
+}
+
+func loadResolveParamsWithOptions(ignoreLock bool, softGitignore bool, skipGitignore bool, configOverride string) (pipeline.ResolveParams, error) {
 	workDir := findProjectDir()
-	cfg, configPath, digest, err := config.LoadProjectSnapshot(findProjectDir())
+	selector := configOverride
+	if selector == "" {
+		selector = configFlag
+	}
+	cfg, configPath, digest, err := config.LoadProjectSnapshotWithOverride(workDir, selector)
 	if err != nil {
 		return pipeline.ResolveParams{}, err
 	}
@@ -164,11 +189,13 @@ func loadResolveParams(ignoreLock bool, softGitignore bool) (pipeline.ResolvePar
 	if err != nil {
 		return pipeline.ResolveParams{}, err
 	}
-	if err := ensureGitignore(findProjectDir()); err != nil {
-		if !softGitignore {
-			return pipeline.ResolveParams{}, err
+	if !skipGitignore {
+		if err := ensureGitignore(findProjectDir()); err != nil {
+			if !softGitignore {
+				return pipeline.ResolveParams{}, err
+			}
+			vlog.Error("gitignore: %v", err)
 		}
-		vlog.Error("gitignore: %v", err)
 	}
 	cleanupLegacyStorage()
 	paths := pipelinePaths()

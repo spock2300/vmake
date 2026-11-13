@@ -16,6 +16,7 @@ const (
 // and vmake.lock so source paths are never distributed.
 type LocalConfig struct {
 	Version string            `json:"version"`
+	Config  string            `json:"config,omitempty"`
 	Links   map[string]string `json:"links,omitempty"`
 }
 

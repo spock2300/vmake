@@ -3,7 +3,7 @@
 `vmake inspect` prints the resolved project model as a single JSON document on
 stdout. It is the machine-readable counterpart of `vmake query`: it performs
 resolution and `OnConfig`/`OnBuild` declaration only, so it never compiles,
-links, installs, or writes `build/`, `install/`, or `.vmake/config.json` itself.
+links, installs, or writes `build/`, `install/`, or `configs/*.json` itself.
 With `--no-targets`, dry-run `OnBuild` target declaration is skipped entirely,
 so the package, option, graph, source-presence and directory model is available
 without executing build callbacks.
@@ -30,7 +30,7 @@ predict which targets are up to date. It never writes the compile database or
 either report.
 
 ```
-vmake inspect [--no-targets] [--set [package/]option=value ...] [-C <dir>]
+vmake inspect [-c <profile>] [--no-targets] [--set [package/]option=value ...] [-C <dir>]
 ```
 
 `-C`/`--project` is the global project-root override: it resolves against the
@@ -223,7 +223,7 @@ dependency tree labels those same packages by their primary target.
 | Field | Type | Meaning |
 |-------|------|---------|
 | `root` | string | Absolute project root (the directory containing `.vmake/`) |
-| `configFile` | string | Active configuration file name under `.vmake/` |
+| `configFile` | string | Active configuration file path relative to `root` (for example `configs/default.json`) |
 | `configSha256` | string | SHA-256 of the active configuration file; the hash of empty content when absent |
 | `mode` | string | Effective build mode (`debug`, `release`, `size`) |
 | `toolchain` | string | Effective project toolchain name |
@@ -233,9 +233,9 @@ dependency tree labels those same packages by their primary target.
 | `globalCFlags`, `globalCxxFlags`, `globalLdFlags`, `globalLinks` | array? | Global `AddGlobal*` declarations from needed packages in package resolution then declaration order; duplicates preserved (see [Global flags](#global-flags)) |
 | `globalDefines` | array? | Auto-exported global-option macros as `NAME=value`, sorted, without the `-D` prefix (see [Global flags](#global-flags)) |
 | `overrides` | object | Coerced `--set` values keyed `[package/]option`; omitted when no override was given |
-| `roots` | array | Needed local packages that no resolved package depends on, sorted |
+| `roots` | array | `root` from the active configuration when set, else explicit `SetRoot(true)` local package when present, otherwise needed local packages that no needed package depends on, sorted |
 | `packages` | array | One entry per resolved package, sorted by name |
-| `graph` | array | Package dependency edges `{from, to}`, sorted by `from` then `to` |
+| `graph` | array | Package dependency edges `{from, to}`, sorted by `from` then `to` (merges `OnRequire`, target `AddDeps`/`UseRequires`, and `BuildSubGraph` edges; `--no-targets` reports `OnRequire` edges only) |
 | `compileDatabase` | string | `<root>/build/compile_commands.json` (the expected path, even before a build) |
 | `compileDatabasePresent` | bool | Whether `<root>/build/compile_commands.json` currently exists; presence only, not freshness |
 | `buildReport` | string | `<root>/build/vmake-build.json` (see `docs/BUILD_RESULT.md`) |
@@ -294,13 +294,13 @@ of these files.
 | `linked` | bool? | Present and true when `vmake pkg link` supplies the package source |
 | `linkPath` | string? | Absolute linked source path when `linked` is true |
 | `buildDir` | string? | Absolute active build-key directory from the resolved layout; present for needed packages with a layout, even before the directory exists |
-| `buildKey` | string? | Build key (the last path element) for local packages; omitted for remote packages, whose `buildDir` ends in `build` |
+| `buildKey` | string? | Resolved layout build key for needed packages with a layout (both local and remote); omitted when the layout cannot be computed |
 | `needed` | bool | Whether the package is reachable from the build roots |
 | `description` | string? | `SetDescription` value |
 | `toolchain` | string? | Per-package toolchain, present for needed packages |
 | `options` | object? | Declared options of this package with effective values (global declarations included); omitted when none |
 | `optionDefs` | object? | Declared package options keyed by option name with `{type, default?, description?, values?, group?}`; omitted when none |
-| `deps` | array | Package dependency names, sorted; always present |
+| `deps` | array | Package dependency names, sorted (includes cross-package target and `BuildSubGraph` edges unless `--no-targets` is set); always present |
 | `targets` | array? | Declared targets; present only for needed packages and omitted when the package declares none, its source tree is missing, or inspect runs with `--no-targets` |
 
 ## `targets` entries
