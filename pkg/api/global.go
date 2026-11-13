@@ -70,13 +70,32 @@ func MergeGlobalOptions(allDefs map[string]map[string]*Option, toolchainList []s
 					name, existing.ExportDefine(), pkgName, opt.ExportDefine())
 			}
 			merged := existing
+			cloned := false
+			ensureClone := func() *Option {
+				if !cloned {
+					clone := *merged
+					clone.values = append([]string(nil), merged.values...)
+					merged = &clone
+					result[name] = merged
+					cloned = true
+				}
+				return merged
+			}
+			if name == ChipOptionName {
+				if isUnsetDefault(merged.Default()) && !isUnsetDefault(opt.Default()) {
+					ensureClone().SetDefault(opt.Default())
+				}
+				for _, v := range opt.Values() {
+					if !slices.Contains(merged.Values(), v) {
+						ensureClone().values = append(merged.values, v)
+					}
+				}
+			}
 			if opt.MacroName() == merged.MacroName() || opt.MacroName() == "" {
 				continue
 			}
 			if merged.MacroName() == "" {
-				clone := *merged
-				clone.SetMacroName(opt.MacroName())
-				result[name] = &clone
+				ensureClone().SetMacroName(opt.MacroName())
 				continue
 			}
 			return nil, fmt.Errorf("global option '%s' macro name mismatch: already defined as %q, but %s defines as %q",
@@ -94,18 +113,31 @@ func isBuiltinGlobalOption(name string) bool {
 	return name == ToolchainOptionName
 }
 
+func isUnsetDefault(v any) bool {
+	if v == nil {
+		return true
+	}
+	s, ok := v.(string)
+	return ok && s == ""
+}
+
 func validateGlobalOption(name string, existing, newOpt *Option, fromPkg string) error {
 	if existing.Type() != newOpt.Type() {
 		return fmt.Errorf("global option '%s' type mismatch: already defined as %s, but %s defines as %s",
 			name, existing.Type(), fromPkg, newOpt.Type())
 	}
 
-	if existing.Default() != newOpt.Default() {
+	if name == ChipOptionName {
+		if !isUnsetDefault(existing.Default()) && !isUnsetDefault(newOpt.Default()) && existing.Default() != newOpt.Default() {
+			return fmt.Errorf("global option '%s' default value mismatch: already defined as %v, but %s defines as %v",
+				name, existing.Default(), fromPkg, newOpt.Default())
+		}
+	} else if existing.Default() != newOpt.Default() {
 		return fmt.Errorf("global option '%s' default value mismatch: already defined as %v, but %s defines as %v",
 			name, existing.Default(), fromPkg, newOpt.Default())
 	}
 
-	if !isBuiltinGlobalOption(name) && !slices.Equal(existing.Values(), newOpt.Values()) {
+	if !isBuiltinGlobalOption(name) && name != ChipOptionName && !slices.Equal(existing.Values(), newOpt.Values()) {
 		return fmt.Errorf("global option '%s' values mismatch: already defined as %v, but %s defines as %v",
 			name, existing.Values(), fromPkg, newOpt.Values())
 	}

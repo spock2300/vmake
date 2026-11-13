@@ -65,7 +65,7 @@ type Package struct {
 ```go
 func (p *Package) OnRequire(fn RequireFunc) *Package            // 声明第三方依赖
 func (p *Package) OnConfig(fn ConfigFunc) *Package              // 定义配置选项
-func (p *Package) OnConfigureDeps(fn ConfigureDepsFunc) *Package // 沿 DAG 向下层依赖包设置默认选项（ctx.SetDefault(depPkg, opt, val)）
+func (p *Package) OnConfigureDeps(fn ConfigureDepsFunc) *Package // 沿 DAG 向下层依赖包设置默认选项（ctx.HasOption(depPkg, opt) / ctx.SetDefault(depPkg, opt, val)）
 func (p *Package) OnBuild(fn BuildFunc) *Package                // 定义构建目标
 func (p *Package) OnInstall(fn InstallFunc) *Package      // 定义安装规则
 func (p *Package) OnClean(fn CleanFunc) *Package          // 定义清理规则（vmake clean 时执行）

@@ -42,7 +42,7 @@ func prepareBuild(ctx *RuntimeContext, opts preludeOptions) (*buildPrelude, erro
 		if err := mergeGlobalOptionsFiltered(ctx, needed); err != nil {
 			return nil, err
 		}
-		extendChipChoice(ctx)
+		extendChipChoice(ctx, needed)
 		if err := ValidateConfigValues(ctx, needed); err != nil {
 			return nil, err
 		}

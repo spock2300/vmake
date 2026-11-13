@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -65,10 +66,43 @@ func TestExtendChipChoice(t *testing.T) {
 		"chip-b": {Name: "chip-b"},
 	}
 	ctx.GlobalOptions = map[string]*api.Option{api.ChipOptionName: chipOption("chip-a")}
-	extendChipChoice(ctx)
+	extendChipChoice(ctx, nil)
 	got := ctx.GlobalOptions[api.ChipOptionName].Values()
 	if len(got) != 2 || got[0] != "chip-a" || got[1] != "chip-b" {
 		t.Fatalf("chip values = %v", got)
+	}
+}
+
+func TestExtendChipChoiceDoesNotMutateAllOptionsOrLeakPrunedPackages(t *testing.T) {
+	neededChip := localNode("chip-a")
+	neededChip.Pkg.SetChipProfile(api.ChipProfile{Name: "chip-a"})
+	prunedChip := localNode("chip-pruned")
+	prunedChip.Pkg.SetChipProfile(api.ChipProfile{Name: "chip-pruned"})
+	ctx := chipTestContext(t, neededChip, prunedChip)
+	if err := collectChipProfiles(ctx); err != nil {
+		t.Fatal(err)
+	}
+	pkgOpt := chipOption("chip-a").SetGroup(api.GroupGlobal)
+	prunedOpt := (&api.Option{}).SetType(api.OptionChoice).SetValues("chip-pruned").SetGroup(api.GroupGlobal)
+	ctx.AllOptions = map[string]map[string]*api.Option{
+		"chip-a":      {api.ChipOptionName: pkgOpt},
+		"chip-pruned": {api.ChipOptionName: prunedOpt},
+	}
+	if err := mergeGlobalOptions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	extendChipChoice(ctx, nil)
+	if got := pkgOpt.Values(); len(got) != 1 || got[0] != "chip-a" {
+		t.Fatalf("AllOptions[chip-a] mutated in-place: %v", got)
+	}
+	needed := map[string]bool{"chip-a": true}
+	if err := mergeGlobalOptionsFiltered(ctx, needed); err != nil {
+		t.Fatal(err)
+	}
+	extendChipChoice(ctx, needed)
+	got := ctx.GlobalOptions[api.ChipOptionName].Values()
+	if len(got) != 1 || got[0] != "chip-a" {
+		t.Fatalf("filtered chip values leaked pruned package: %v", got)
 	}
 }
 
@@ -79,7 +113,7 @@ func TestExtendChipChoiceDoesNotCreateOption(t *testing.T) {
 		"chip-b": {Name: "chip-b"},
 	}
 	ctx.GlobalOptions = map[string]*api.Option{}
-	extendChipChoice(ctx)
+	extendChipChoice(ctx, nil)
 	if opt := ctx.GlobalOptions[api.ChipOptionName]; opt != nil {
 		t.Fatalf("chip option should not be created: %+v", opt)
 	}
@@ -312,5 +346,28 @@ func TestCollectChipProfilesRemoteConflict(t *testing.T) {
 	ctx := chipTestContext(t, local, remote)
 	if err := collectChipProfiles(ctx); err == nil || !strings.Contains(err.Error(), "shared-chip") {
 		t.Fatalf("remote conflict error = %v", err)
+	}
+}
+
+func TestSyncOrUpdateDepsAllowsMultipleChipsInSDKRepo(t *testing.T) {
+	first := localNode("chip-a")
+	first.Pkg.SetChipProfile(api.ChipProfile{Name: "chip-a", PreferredToolchain: "tc-a", TargetOS: "none"})
+	second := localNode("chip-b")
+	second.Pkg.SetChipProfile(api.ChipProfile{Name: "chip-b", PreferredToolchain: "tc-b", TargetOS: "none"})
+	ctx := chipTestContext(t, first, second)
+	tmp := t.TempDir()
+	ctx.WorkDir = tmp
+	ctx.LockPath = filepath.Join(tmp, ".vmake", "vmake.lock")
+	ctx.Paths = &Paths{
+		ProjectDir: tmp,
+		DepsDir:    filepath.Join(tmp, ".vmake_deps"),
+		CacheDir:   filepath.Join(tmp, "cache"),
+		LockPath:   ctx.LockPath,
+	}
+	if err := collectChipProfiles(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SyncOrUpdateDeps(ctx, true); err != nil {
+		t.Fatalf("SyncOrUpdateDeps dry-run failed in multi-chip SDK workspace: %v", err)
 	}
 }

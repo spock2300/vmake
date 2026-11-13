@@ -395,7 +395,7 @@ func runConfigPhase(ctx *RuntimeContext) error {
 	if err := mergeGlobalOptions(ctx); err != nil {
 		return err
 	}
-	extendChipChoice(ctx)
+	extendChipChoice(ctx, nil)
 	if ctx.OnOptionsCollected != nil {
 		if err := ctx.OnOptionsCollected(ctx); err != nil {
 			return err

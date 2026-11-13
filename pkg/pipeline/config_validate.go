@@ -122,7 +122,7 @@ func ValidateConfigStrict(ctx *RuntimeContext) ([]string, error) {
 	if err := mergeGlobalOptionsFiltered(ctx, needed); err != nil {
 		return nil, err
 	}
-	extendChipChoice(ctx)
+	extendChipChoice(ctx, needed)
 
 	var issues []string
 	if valErr := validateConfigValuesInternal(ctx, needed, true); valErr != nil {

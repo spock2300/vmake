@@ -42,30 +42,43 @@ func collectChipProfiles(ctx *RuntimeContext) error {
 	return nil
 }
 
-func extendChipChoice(ctx *RuntimeContext) {
-	if ctx == nil || len(ctx.ChipProfiles) == 0 {
+func extendChipChoice(ctx *RuntimeContext, needed map[string]bool) {
+	if ctx == nil || ctx.GlobalOptions == nil {
 		return
 	}
-	extend := func(opts map[string]*api.Option) {
-		if opts == nil {
-			return
+	gOpt := ctx.GlobalOptions[api.ChipOptionName]
+	if gOpt == nil || gOpt.Type() != api.OptionChoice {
+		return
+	}
+	values := append([]string(nil), gOpt.Values()...)
+	var profileCount int
+	if needed != nil && ctx.DepGraph != nil && len(ctx.DepGraph.Packages) > 0 {
+		for pkgName, node := range ctx.DepGraph.Packages {
+			if !needed[pkgName] || node == nil || node.Pkg == nil {
+				continue
+			}
+			if profile, ok := node.Pkg.ChipProfile(); ok {
+				profileCount++
+				if !slices.Contains(values, profile.Name) {
+					values = append(values, profile.Name)
+				}
+			}
 		}
-		opt := opts[api.ChipOptionName]
-		if opt == nil || opt.Type() != api.OptionChoice {
-			return
-		}
-		values := append([]string(nil), opt.Values()...)
+	} else {
+		profileCount = len(ctx.ChipProfiles)
 		for chip := range ctx.ChipProfiles {
 			if !slices.Contains(values, chip) {
 				values = append(values, chip)
 			}
 		}
-		sort.Strings(values)
-		opt.SetValues(values...)
 	}
-	extend(ctx.GlobalOptions)
-	for _, opts := range ctx.AllOptions {
-		extend(opts)
+	if profileCount > 0 {
+		sort.Strings(values)
+	}
+	if len(values) > 0 && !slices.Equal(values, gOpt.Values()) {
+		clone := *gOpt
+		clone.SetValues(values...)
+		ctx.GlobalOptions[api.ChipOptionName] = &clone
 	}
 }
 

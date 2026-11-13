@@ -26,9 +26,6 @@ func SyncOrUpdateDeps(ctx *RuntimeContext, dryRun bool) (_ *DepsUpdateResult, er
 	if err != nil {
 		return nil, err
 	}
-	if err := resolveActiveChip(ctx, needed); err != nil {
-		return nil, err
-	}
 	subParents := ctx.Resolver.SubParents()
 	for name := range ctx.DepGraph.Packages {
 		_, explicitTarget := ctx.LockPolicy.Targets[name]

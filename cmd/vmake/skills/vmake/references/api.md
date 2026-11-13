@@ -44,7 +44,7 @@ Import: `github.com/spock2300/vmake/pkg/api`
 |--------|---------------|
 | `OnRequire(fn RequireFunc)` | `func(ctx *RequireContext)` |
 | `OnConfig(fn ConfigFunc)` | `func(ctx *ConfigContext)` |
-| `OnConfigureDeps(fn ConfigureDepsFunc)` | `func(ctx *DepConfigContext)` — downward default option derivation (`ctx.SetDefault(depPkg, option, val)`, `ctx.SourceDir()`) |
+| `OnConfigureDeps(fn ConfigureDepsFunc)` | `func(ctx *DepConfigContext)` — downward default option derivation (`ctx.HasOption(depPkg, option)`, `ctx.SetDefault(depPkg, option, val)`, `ctx.SourceDir()`) |
 | `OnBuild(fn BuildFunc)` | `func(ctx *BuildContext)` |
 | `OnInstall(fn InstallFunc)` | `func(ctx *InstallContext)` |
 | `OnClean(fn CleanFunc)` | `func(ctx *CleanContext)` |

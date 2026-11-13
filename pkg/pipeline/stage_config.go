@@ -261,29 +261,44 @@ func applyNodeConfigureDeps(
 	pkgOpts := ctx.AllOptions[name]
 	opts := mergedPackageAndGlobalOptions(pkgOpts, visibleGlobalOptionsFor(node, pkgOpts, ctx.GlobalOptions))
 	srcDir := pkgDirs[name].SourceDir
-	depCtx := api.NewDepConfigContext(name, srcDir, vals, opts)
-	depCtx.SetConfigLookup(newConfigLookup(ctx, name, globalValues, nil))
-	node.Pkg.ExecConfigureDepsFuncs(srcDir, func(fn api.ConfigureDepsFunc) {
-		fn(depCtx)
-	})
-	for _, def := range depCtx.Defaults() {
-		targetPkg := api.ResolveSubPackageName(name, def.Dep, subParents, func(candidate string) bool {
+	resolveTarget := func(dep string) (string, map[string]*api.Option, error) {
+		targetPkg := api.ResolveSubPackageName(name, dep, subParents, func(candidate string) bool {
 			return (needed == nil || needed[candidate]) && ctx.DepGraph.Packages[candidate] != nil
 		})
 		if ctx.DepGraph.Packages[targetPkg] == nil || (needed != nil && !needed[targetPkg]) {
-			return fmt.Errorf("%s: OnConfigureDeps target package %q is not an active dependency", name, def.Dep)
+			return "", nil, fmt.Errorf("%s: OnConfigureDeps target package %q is not an active dependency", name, dep)
 		}
 		if targetPkg == name || !canReachDependency(ctx.DepGraph, name, targetPkg) {
-			return fmt.Errorf("%s: OnConfigureDeps cannot configure %q because %s does not depend on it", name, targetPkg, name)
+			return "", nil, fmt.Errorf("%s: OnConfigureDeps cannot configure %q because %s does not depend on it", name, targetPkg, name)
 		}
 		if err := pkgvis.CheckInternal(name, ctx.Resolver.VisibilityPath(name), targetPkg, ctx.Resolver.VisibilityPath(targetPkg)); err != nil {
-			return err
+			return "", nil, err
 		}
 		targetOpts := ctx.AllOptions[targetPkg]
 		if targetOpts == nil {
 			if tNode := ctx.DepGraph.Packages[targetPkg]; tNode != nil && tNode.Pkg != nil {
 				targetOpts = tNode.Pkg.GetOptions()
 			}
+		}
+		return targetPkg, targetOpts, nil
+	}
+	depCtx := api.NewDepConfigContext(name, srcDir, vals, opts)
+	depCtx.SetConfigLookup(newConfigLookup(ctx, name, globalValues, nil))
+	depCtx.SetOptionExists(func(depPkg, option string) (bool, error) {
+		_, targetOpts, err := resolveTarget(depPkg)
+		if err != nil {
+			return false, err
+		}
+		opt := targetOpts[option]
+		return opt != nil && !opt.IsGlobal(), nil
+	})
+	node.Pkg.ExecConfigureDepsFuncs(srcDir, func(fn api.ConfigureDepsFunc) {
+		fn(depCtx)
+	})
+	for _, def := range depCtx.Defaults() {
+		targetPkg, targetOpts, err := resolveTarget(def.Dep)
+		if err != nil {
+			return err
 		}
 		opt := targetOpts[def.Option]
 		if opt == nil {
@@ -318,7 +333,14 @@ func mergedPackageAndGlobalOptions(pkgOpts, globalOpts map[string]*api.Option) m
 	}
 	merged := make(map[string]*api.Option, len(globalOpts)+len(pkgOpts))
 	maps.Copy(merged, globalOpts)
-	maps.Copy(merged, pkgOpts)
+	for k, opt := range pkgOpts {
+		if opt != nil && opt.IsGlobal() {
+			if _, ok := globalOpts[k]; ok {
+				continue
+			}
+		}
+		merged[k] = opt
+	}
 	return merged
 }
 

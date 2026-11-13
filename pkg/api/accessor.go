@@ -470,7 +470,11 @@ func (a *ConfigAccessor) MergeGlobals(globalOptions map[string]*Option, globalVa
 	if a.CfgVals == nil {
 		a.CfgVals = make(map[string]any)
 	}
-	mergeMapNoOverwrite(a.Options, globalOptions)
+	for k, gOpt := range globalOptions {
+		if existing, exists := a.Options[k]; !exists || (existing != nil && existing.IsGlobal()) {
+			a.Options[k] = gOpt
+		}
+	}
 	mergeMapNoOverwrite(a.CfgVals, globalVals)
 }
 

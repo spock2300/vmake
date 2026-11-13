@@ -379,3 +379,61 @@ func TestConvergeFilterDepsSeesParentDerivedOptionsAndRootOverride(t *testing.T)
 		t.Fatalf("expected >=2 strict issues, got %v", issues)
 	}
 }
+
+func TestOnConfigureDepsHasOptionHeterogeneousBoard(t *testing.T) {
+	s := sessionFixture(t)
+	rctx := s.ctx
+	makeNode := func(name string, kind api.SourceOrigin, deps ...string) *resolver.PackageNode {
+		dir := t.TempDir()
+		return &resolver.PackageNode{
+			ID:     name,
+			Source: buildscript.NewSource(name, filepath.Join(dir, "build.go"), dir, kind),
+			Pkg:    api.NewPackage().SetName(name),
+			Deps:   deps,
+		}
+	}
+	board := makeNode("leaf", api.SourceLocal)
+	board.Pkg.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.Option("uart").SetDefault(false)
+		ctx.GlobalOption("chip").SetType(api.OptionChoice).SetDefault("c1").SetValues("c1")
+	})
+
+	app := makeNode("app", api.SourceLocal, "leaf")
+	app.Pkg.SetRoot(true)
+	var hasUart, hasRadio, hasGlobalChip bool
+	app.Pkg.OnConfigureDeps(func(ctx *api.DepConfigContext) {
+		hasUart = ctx.HasOption("leaf", "uart")
+		hasRadio = ctx.HasOption("leaf", "radio")
+		hasGlobalChip = ctx.HasOption("leaf", "chip")
+		if hasUart {
+			ctx.SetDefault("leaf", "uart", true)
+		}
+		if hasRadio {
+			ctx.SetDefault("leaf", "radio", true)
+		}
+	})
+
+	rctx.DepGraph.Packages = map[string]*resolver.PackageNode{
+		"leaf": board,
+		"app":  app,
+	}
+	rctx.DepGraph.Order = []string{"leaf", "app"}
+
+	if err := runConfigPhase(rctx); err != nil {
+		t.Fatal(err)
+	}
+	needed := map[string]bool{"leaf": true, "app": true}
+	if err := resolveDerivedOptions(rctx, needed); err != nil {
+		t.Fatalf("resolveDerivedOptions: %v", err)
+	}
+	if !hasUart || hasRadio || hasGlobalChip {
+		t.Fatalf("HasOption results: uart=%v radio=%v chip=%v, want true/false/false", hasUart, hasRadio, hasGlobalChip)
+	}
+	vals, err := PackageConfigValues(rctx, "leaf", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vals["uart"] != true {
+		t.Fatalf("leaf/uart = %v, want true", vals["uart"])
+	}
+}

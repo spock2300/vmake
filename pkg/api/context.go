@@ -205,8 +205,9 @@ type DepOptionDefault struct {
 type DepConfigContext struct {
 	ConfigAccessor
 	pkgBase
-	sourceDir string
-	defaults  []DepOptionDefault
+	sourceDir    string
+	defaults     []DepOptionDefault
+	optionExists func(depPkg, option string) (bool, error)
 }
 
 func NewDepConfigContext(pkgName, sourceDir string, cfgVals map[string]any, options map[string]*Option) *DepConfigContext {
@@ -220,8 +221,32 @@ func NewDepConfigContext(pkgName, sourceDir string, cfgVals map[string]any, opti
 	return ctx
 }
 
+func (ctx *DepConfigContext) SetOptionExists(fn func(depPkg, option string) (bool, error)) *DepConfigContext {
+	ctx.optionExists = fn
+	return ctx
+}
+
 func (ctx *DepConfigContext) SourceDir() string {
 	return ctx.sourceDir
+}
+
+func (ctx *DepConfigContext) HasOption(depPkg, option string) bool {
+	depPkg = strings.TrimSpace(depPkg)
+	option = strings.TrimSpace(option)
+	if depPkg == "" {
+		fatalScript(ctx.PackageName(), "HasOption", "dependency package name must not be empty")
+	}
+	if option == "" || strings.Contains(option, "/") {
+		fatalScript(ctx.PackageName(), "HasOption", "invalid dependency option name %q (must not be empty or contain '/')", option)
+	}
+	if ctx.optionExists == nil {
+		fatalScript(ctx.PackageName(), "HasOption", "dependency option lookup is not configured")
+	}
+	exists, err := ctx.optionExists(depPkg, option)
+	if err != nil {
+		fatalScript(ctx.PackageName(), "HasOption", "%v", err)
+	}
+	return exists
 }
 
 func (ctx *DepConfigContext) SetDefault(depPkg, option string, val any) *DepConfigContext {

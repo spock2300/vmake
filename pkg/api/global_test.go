@@ -194,6 +194,42 @@ func TestMergeGlobalOptionsValuesMismatch(t *testing.T) {
 	}
 }
 
+func TestMergeGlobalOptionsChipUnionsValuesAndAdoptsDefault(t *testing.T) {
+	board := (&Option{}).SetType(OptionChoice).SetValues("chip-a", "chip-b").SetGroup(GroupGlobal)
+	root := (&Option{}).SetType(OptionChoice).SetDefault("chip-a").SetValues("chip-a", "chip-c").SetGroup(GroupGlobal)
+	all := map[string]map[string]*Option{
+		"board":    {ChipOptionName: board},
+		"firmware": {ChipOptionName: root},
+	}
+	got, err := MergeGlobalOptions(all, nil)
+	if err != nil {
+		t.Fatalf("MergeGlobalOptions: %v", err)
+	}
+	chipOpt := got[ChipOptionName]
+	if chipOpt.Default() != "chip-a" {
+		t.Fatalf("default = %v, want chip-a", chipOpt.Default())
+	}
+	wantVals := []string{"chip-a", "chip-b", "chip-c"}
+	if !reflect.DeepEqual(chipOpt.Values(), wantVals) {
+		t.Fatalf("values = %v, want %v", chipOpt.Values(), wantVals)
+	}
+	if len(board.Values()) != 2 {
+		t.Fatalf("caller option mutated: %v", board.Values())
+	}
+}
+
+func TestMergeGlobalOptionsChipConflictingDefaultsFail(t *testing.T) {
+	a := (&Option{}).SetType(OptionChoice).SetDefault("chip-a").SetValues("chip-a").SetGroup(GroupGlobal)
+	b := (&Option{}).SetType(OptionChoice).SetDefault("chip-b").SetValues("chip-b").SetGroup(GroupGlobal)
+	all := map[string]map[string]*Option{
+		"pkg-a": {ChipOptionName: a},
+		"pkg-b": {ChipOptionName: b},
+	}
+	if _, err := MergeGlobalOptions(all, nil); err == nil {
+		t.Fatal("conflicting non-empty chip defaults should fail")
+	}
+}
+
 func TestGetModeFlags(t *testing.T) {
 	tests := []struct {
 		mode        string

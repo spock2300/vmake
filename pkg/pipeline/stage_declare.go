@@ -112,7 +112,7 @@ func (s *declareStage) executeOnePackage(name string, node *resolver.PackageNode
 		allOpts = pkg.GetOptions()
 	}
 	pkg.SetDirs(*s.source.pkgDirs[name])
-	pkg.SetOptions(allOpts)
+	pkg.SetOptions(mergedPackageAndGlobalOptions(allOpts, visibleGlobalOptionsFor(node, allOpts, s.rc.ctx.GlobalOptions)))
 	pkg.SetCfgVals(maps.Clone(buildCtx.CfgVals))
 	pkg.SetToolchain(bound.toolchain)
 	pkg.SetPlatform(platform)

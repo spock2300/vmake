@@ -468,7 +468,7 @@ func DeclareTargets(ctx *RuntimeContext, name string, dirs *api.PkgDirs, tc *too
 			allOpts = pkg.GetOptions()
 		}
 		pkg.SetDirs(*dirs)
-		pkg.SetOptions(allOpts)
+		pkg.SetOptions(mergedPackageAndGlobalOptions(allOpts, visibleGlobalOptionsFor(node, allOpts, ctx.GlobalOptions)))
 		pkg.SetCfgVals(maps.Clone(buildCtx.CfgVals))
 		if tc != nil {
 			name := resolvePkgToolchain(ctx.Config, name, tc.Name)
