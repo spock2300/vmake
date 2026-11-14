@@ -202,6 +202,9 @@ func (j *BuildJob) Run() (*Scheduler, error) {
 		root = "."
 	}
 	for _, scheduler := range additional {
+		for name, placement := range scheduler.Placements() {
+			base.recordPlacement(name, placement)
+		}
 		err = errors.Join(err, scheduler.ccWriter.Save(filepath.Join(root, "build", "compile_commands.json")))
 	}
 	return base, err

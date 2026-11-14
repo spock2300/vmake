@@ -60,23 +60,22 @@ func remoteVersionKey(ctx *RuntimeContext, name string, node *resolver.PackageNo
 	if node != nil && node.Source != nil && node.Source.Link != nil {
 		return resolver.LocalLinkVersion, node.Source.Link.Commit, true
 	}
-	if target, _, hasPin := ctx.packagePin(name); hasPin {
-		if repo.IsCommitID(target) {
-			return "", target, true
-		}
-		commit := ""
-		if locked, ok := ctx.lockedEntry(name); ok && locked.Version == target {
-			commit = locked.Commit
-		} else if node != nil && node.Native != nil && node.Native.Selected == target {
+	nativeSelected, nativeCommit := "", ""
+	if node != nil && node.Native != nil {
+		nativeSelected, nativeCommit = node.Native.Selected, node.Native.Commit
+	}
+	decision := ctx.lockQuery().Decide(name, nativeSelected, nativeCommit)
+	switch decision.Provenance {
+	case resolver.ProvenanceTargetCommit:
+		return "", decision.Commit, true
+	case resolver.ProvenanceTargetVersion, resolver.ProvenanceConfigPin:
+		commit := decision.Commit
+		if commit == "" && node != nil && node.Native != nil && node.Native.Selected == decision.Version {
 			commit = node.Native.Commit
 		}
-		return target, commit, true
-	}
-	if locked, ok := ctx.lockedEntry(name); ok {
-		return locked.Version, locked.Commit, true
-	}
-	if node != nil && node.Native != nil && (node.Native.Selected != "" || node.Native.Commit != "") {
-		return node.Native.Selected, node.Native.Commit, true
+		return decision.Version, commit, true
+	case resolver.ProvenanceLock, resolver.ProvenanceNative:
+		return decision.Version, decision.Commit, true
 	}
 	return "", "", false
 }
@@ -89,29 +88,11 @@ func configRootOverride(ctx *RuntimeContext) string {
 }
 
 func computeReachable(graph *resolver.Graph, rootOverrides ...string) (map[string]bool, error) {
-	needed := make(map[string]bool, len(graph.Packages))
-	roots, err := computeRootSeeds(graph, firstNonEmpty(rootOverrides...))
+	needed, err := computeNeededGraph(graph, firstNonEmpty(rootOverrides...))
 	if err != nil {
 		return nil, err
 	}
-	queue := append([]string(nil), roots...)
-	for _, id := range roots {
-		needed[id] = true
-	}
-
-	for len(queue) > 0 {
-		name := queue[0]
-		queue = queue[1:]
-		if node, ok := graph.Packages[name]; ok {
-			for _, dep := range node.Deps {
-				if !needed[dep] {
-					needed[dep] = true
-					queue = append(queue, dep)
-				}
-			}
-		}
-	}
-	return needed, nil
+	return needed.Set, nil
 }
 
 func firstNonEmpty(vals ...string) string {

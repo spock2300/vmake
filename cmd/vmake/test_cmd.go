@@ -56,7 +56,7 @@ func runTest(cmd *cobra.Command, args []string) error {
 			if err := validateTestProject(ctx); err != nil {
 				return err
 			}
-			result, err := runBuildPhase(ctx, BuildOptions{IncludeTests: true, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag, Locked: lockedFlag, Offline: offlineFlag})
+			result, err := runBuildPhase(ctx, BuildOptions{IncludeTests: true, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag})
 			if err != nil {
 				if result != nil {
 					report.partial(ctx, result, err)
@@ -85,37 +85,11 @@ func validateTestExecution(platform api.Platform, hostOS string) error {
 }
 
 func validateTestProject(ctx *RuntimeContext) error {
-	var roots []string
-	if ctx.Config != nil {
-		if rootName := strings.TrimSpace(ctx.Config.Root); rootName != "" {
-			if node := ctx.DepGraph.Packages[rootName]; node != nil && node.IsLocal() {
-				roots = []string{rootName}
-			}
-		}
+	needed, err := pipeline.ComputeNeeded(ctx)
+	if err != nil {
+		return err
 	}
-	if len(roots) == 0 {
-		var explicitRoots []string
-		dependedOn := make(map[string]bool)
-		for name, node := range ctx.DepGraph.Packages {
-			if node == nil {
-				continue
-			}
-			if node.IsLocal() && node.Pkg != nil && node.Pkg.IsRoot() {
-				explicitRoots = append(explicitRoots, name)
-			}
-			for _, dep := range node.Deps {
-				dependedOn[dep] = true
-			}
-		}
-		roots = explicitRoots
-		if len(roots) == 0 {
-			for name, node := range ctx.DepGraph.Packages {
-				if node != nil && node.IsLocal() && !dependedOn[name] {
-					roots = append(roots, name)
-				}
-			}
-		}
-	}
+	roots := needed.Roots
 	sort.Strings(roots)
 	if len(roots) == 0 {
 		platform, err := pipeline.ProjectPlatform(ctx)

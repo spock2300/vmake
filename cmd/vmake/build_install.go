@@ -256,6 +256,12 @@ func installOnePackage(ctx *RuntimeContext, name string, node *resolver.PackageN
 		prefix, prefixSet = "", false
 	}
 
+	placements := make(map[string]build.ArtifactPlacement)
+	for targetName := range result.AllTargets[name] {
+		if placement, ok := result.TargetPlacements[name+":"+targetName]; ok {
+			placements[targetName] = placement
+		}
+	}
 	installer.SetPackageInfo(name, &build.PkgInstallInfo{
 		Prefix:        prefix,
 		PrefixSet:     prefixSet,
@@ -266,6 +272,7 @@ func installOnePackage(ctx *RuntimeContext, name string, node *resolver.PackageN
 		TcName:        result.TcName,
 		TargetOS:      node.Pkg.TargetOS(),
 		BuildKey:      result.PkgBuildKeys[name],
+		Placements:    placements,
 		InstallFilter: installFilter,
 	})
 	return nil

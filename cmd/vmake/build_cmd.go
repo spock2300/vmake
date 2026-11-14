@@ -35,7 +35,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	return withBuildReport(func(report *buildReport) error {
 		execution := &RuntimeContext{}
 		return withResolvedProject(execution, func(ctx *RuntimeContext) error {
-			_, err := runReportedBuild(ctx, report, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag, Locked: lockedFlag, Offline: offlineFlag})
+			_, err := runReportedBuild(ctx, report, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag})
 			return err
 		})
 	})

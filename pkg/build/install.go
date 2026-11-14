@@ -21,6 +21,7 @@ type PkgInstallInfo struct {
 	TcName        string
 	TargetOS      string
 	BuildKey      string
+	Placements    map[string]ArtifactPlacement
 	InstallFilter api.InstallFilterFunc
 }
 
@@ -64,8 +65,7 @@ func copyArtifact(src, dest string, record func(string, string)) error {
 	return nil
 }
 
-func copyImportLibrary(artifactPath, destDir, targetOS string, kind api.TargetKind, record func(string, string)) error {
-	implib := importLibraryPath(artifactPath, targetOS, kind)
+func copyImportLibrary(implib, destDir string, record func(string, string)) error {
 	if implib == "" {
 		return nil
 	}
@@ -154,6 +154,10 @@ func (i *ArtifactInstaller) installTarget(node *BuildNode) error {
 	if !ok {
 		return nil
 	}
+	placement, hasPlacement := pkgInfo.Placements[target.Name()]
+	if hasPlacement && (placement.NoInstall || placement.IsTest) {
+		return nil
+	}
 	pkgDirs, err := i.packageDirs(pkgName)
 	if err != nil {
 		return err
@@ -190,13 +194,21 @@ func (i *ArtifactInstaller) installTarget(node *BuildNode) error {
 	if err := copyArtifact(outputPath, destPath, record); err != nil {
 		return fmt.Errorf("install library failed: %w", err)
 	}
-	if err := copyImportLibrary(outputPath, filepath.Dir(destPath), pkgInfo.TargetOS, kind, record); err != nil {
+	implib := importLibraryPath(outputPath, pkgInfo.TargetOS, kind)
+	if hasPlacement {
+		implib = placement.ImportLib
+	}
+	if err := copyImportLibrary(implib, filepath.Dir(destPath), record); err != nil {
 		return fmt.Errorf("install import library failed: %w", err)
 	}
 
 	i.installed[outputPath] = true
 
-	for _, outFile := range postLinkOutputPaths(target, pkgDirs.SourceDir, outputPath) {
+	postOutputs := postLinkOutputPaths(target, pkgDirs.SourceDir, outputPath)
+	if hasPlacement {
+		postOutputs = placement.PostLinkOutputs
+	}
+	for _, outFile := range postOutputs {
 		if err := i.ctx.Err(); err != nil {
 			return err
 		}
@@ -356,6 +368,9 @@ func (i *ArtifactInstaller) installExtraItems(node *BuildNode) error {
 }
 
 func (i *ArtifactInstaller) getOutputPath(pkgName string, pkgInfo *PkgInstallInfo, node *BuildNode) string {
+	if placement, ok := pkgInfo.Placements[node.Target.Name()]; ok && placement.OutputPath != "" {
+		return resolveWorkPath(i.pkgDirs[pkgName].SourceDir, placement.OutputPath)
+	}
 	name := targetFilename(node.Target.Kind(), node.Target.Name(), pkgInfo.TargetOS)
 	if pkgInfo.BuildDir != "" {
 		return filepath.Join(pkgInfo.BuildDir, name)
@@ -364,13 +379,14 @@ func (i *ArtifactInstaller) getOutputPath(pkgName string, pkgInfo *PkgInstallInf
 }
 
 func (i *ArtifactInstaller) getInstallPath(prefix string, pkgInfo *PkgInstallInfo, target *api.Target) string {
+	if placement, ok := pkgInfo.Placements[target.Name()]; ok {
+		return filepath.Join(prefix, placement.InstallSubdir, placement.InstallName)
+	}
 	installDir := target.InstallDir()
 	basename := targetFilename(target.Kind(), target.Name(), pkgInfo.TargetOS)
-
 	if installDir != "" {
 		return filepath.Join(prefix, installDir, basename)
 	}
-
 	if dir := target.Kind().InstallDir(); dir != "" {
 		return filepath.Join(prefix, dir, basename)
 	}

@@ -1,6 +1,7 @@
 package build
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -30,9 +31,14 @@ func (s *Scheduler) postLink(resolved *ResolvedTarget) error {
 	if err != nil {
 		return err
 	}
+	return s.runPostLinkCommands(s.ctx, commands, resolved)
+}
+
+func (s *Scheduler) runPostLinkCommands(ctx context.Context, commands []commandSpec, resolved *ResolvedTarget) error {
+	workDir := s.pkgs[resolved.Node.PkgName].SourceDir
 	for _, command := range commands {
 		vlog.Info("  %s %s", filepath.Base(command.Program), strings.Join(command.Args, " "))
-		out, err := iexec.RunWithOptions(command.Program, command.Args, iexec.RunOptions{Dir: workDir, Env: s.toolchain.CommandEnv(), Context: s.ctx, CaptureStderr: true})
+		out, err := iexec.RunWithOptions(command.Program, command.Args, iexec.RunOptions{Dir: workDir, Env: s.toolchain.CommandEnv(), Context: ctx, CaptureStderr: true})
 		if err != nil {
 			return err
 		}

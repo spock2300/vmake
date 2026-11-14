@@ -18,13 +18,11 @@ import (
 )
 
 var (
-	verbose                 bool
-	veryVerbose             bool
-	quiet                   bool
-	yesFlag                 bool
-	vmakeDir                string
-	commandStorage          *storage.Session
-	commandStorageExclusive bool
+	verbose     bool
+	veryVerbose bool
+	quiet       bool
+	yesFlag     bool
+	vmakeDir    string
 )
 
 func init() {
@@ -69,7 +67,8 @@ It uses Go buildscripts for configuration and provides a TUI for option manageme
 			// so report a shadowed root before they start.
 			rejectShadowedProjectRootFromCWD()
 		}
-		commandStorageExclusive = requiresExclusiveStorage(cmd)
+		activeCommandSession = newCommandSession()
+		activeCommandSession.exclusive = requiresExclusiveStorage(cmd)
 		switch {
 		case veryVerbose:
 			vlog.SetLevel(vlog.VeryVerbose)
@@ -119,9 +118,8 @@ func Execute() {
 	wrapCommandArgs(RootCmd)
 	err := RootCmd.Execute()
 	releaseExtensionRepoLocks()
-	if commandStorage != nil {
-		closeErr := commandStorage.Close()
-		commandStorage = nil
+	if activeCommandSession != nil {
+		closeErr := activeCommandSession.close()
 		if err == nil {
 			err = closeErr
 		}
@@ -151,16 +149,6 @@ func wrapCommandArgs(cmd *cobra.Command) {
 	}
 }
 
-func commandStorageLocks() *storage.Session {
-	if commandStorage != nil {
-		return commandStorage
-	}
-	var err error
-	commandStorage, err = storage.Acquire(findProjectDir(), getCacheDir(), commandStorageExclusive)
-	fatalErr(err)
-	return commandStorage
-}
-
 func pipelinePaths() *pipeline.Paths {
 	return &pipeline.Paths{
 		ProjectDir: findProjectDir(),
@@ -177,11 +165,7 @@ func loadResolveParams(ignoreLock bool, softGitignore bool) (pipeline.ResolvePar
 
 func loadResolveParamsWithOptions(ignoreLock bool, softGitignore bool, skipGitignore bool, configOverride string) (pipeline.ResolveParams, error) {
 	workDir := findProjectDir()
-	selector := configOverride
-	if selector == "" {
-		selector = configFlag
-	}
-	cfg, configPath, digest, err := config.LoadProjectSnapshotWithOverride(workDir, selector)
+	cfg, configPath, digest, err := config.LoadProjectSnapshotWithOverride(workDir, configOverride)
 	if err != nil {
 		return pipeline.ResolveParams{}, err
 	}

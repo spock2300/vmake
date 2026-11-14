@@ -1,6 +1,7 @@
 package build
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,38 +39,31 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 	if err != nil {
 		return err
 	}
-	decision := checkAction(s.hashes, action.recordPath, action.signature, pkgInfo.SourceDir, action.inputs, action.outputs)
-	if !decision.UpToDate {
+	s.recordPlacement(resolved.Node.FullName, s.placementFor(resolved, pkgInfo))
+	_, _, err = s.runPlannedAction(s.ctx, action, func(ctx context.Context) ([]string, error) {
 		if s.stats != nil {
 			s.stats.RecordLink(resolved.Node.FullName)
 		}
-		if s.explain {
-			vlog.Info("  EXPLAIN %s: %s", resolved.Node.FullName, decision.Reason)
-		}
-		if err := invalidateActionRecord(action.recordPath); err != nil {
-			return err
-		}
 		if resolved.Node.Target.Prebuilt() != "" {
 			if err := s.realizePrebuilt(resolved); err != nil {
-				return err
+				return nil, err
 			}
 		} else {
 			vlog.Info("  LINK %s", filepath.Base(resolved.OutputPath))
-			if err := s.linker.execute(action.command, resolved.OutputPath, pkgInfo.SourceDir, resolved.Node.Target.Kind() == api.TargetStatic); err != nil {
-				return err
+			if err := s.linker.execute(action.Commands[0], resolved.OutputPath, pkgInfo.SourceDir, resolved.Node.Target.Kind() == api.TargetStatic); err != nil {
+				return nil, err
 			}
 		}
-		if err := s.postLink(resolved); err != nil {
-			return err
+		if err := s.runPostLinkCommands(ctx, action.Commands[1:], resolved); err != nil {
+			return nil, err
 		}
-		if err := s.ctx.Err(); err != nil {
-			return err
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		if err := saveActionRecord(s.hashes, action.recordPath, action.signature, pkgInfo.SourceDir, action.inputs, action.outputs); err != nil {
-			return err
-		}
-	} else if s.stats != nil {
-		s.stats.RecordUpToDate()
+		return nil, nil
+	})
+	if err != nil {
+		return err
 	}
 	if err := s.ctx.Err(); err != nil {
 		return err
@@ -125,47 +119,35 @@ func (s *Scheduler) finalizeIncrementalVoid(resolved *ResolvedTarget, pkgInfo *P
 	if err != nil {
 		return err
 	}
-	recordPath := resolveWorkPath(pkgInfo.SourceDir, pkgInfo.OutputPath(filepath.Join("state", pathKey(target.Name())+".void.json")))
-	signature, err := digestValue(struct {
-		Version     int
-		Target      string
-		Kind        api.TargetKind
-		WorkDir     string
-		Tools       string
-		Environment string
-		Commands    []commandSpec
-		Inputs      []string
-		Outputs     []string
-	}{actionRecordVersion, resolved.Node.FullName, target.Kind(), pkgInfo.SourceDir, s.toolIdentity(), env, postCommands, inputs, outputs})
-	if err != nil {
-		return err
+	action := &plannedAction{
+		Kind:            "void",
+		Target:          resolved.Node.FullName,
+		WorkDir:         pkgInfo.SourceDir,
+		TargetOS:        s.targetOS(resolved.Node.PkgName),
+		Tools:           s.toolIdentity(),
+		Environment:     env,
+		Commands:        postCommands,
+		Inputs:          inputs,
+		SignatureInputs: append([]string{}, inputs...),
+		Outputs:         outputs,
+		RecordPath:      resolveWorkPath(pkgInfo.SourceDir, pkgInfo.OutputPath(filepath.Join("state", pathKey(target.Name())+".void.json"))),
 	}
-	decision := checkAction(s.hashes, recordPath, signature, pkgInfo.SourceDir, inputs, outputs)
-	if decision.UpToDate {
-		if s.stats != nil {
-			s.stats.RecordUpToDate()
+	_, _, err = s.runPlannedAction(s.ctx, action, func(ctx context.Context) ([]string, error) {
+		if err := s.buildVoidTarget(resolved); err != nil {
+			return nil, err
 		}
-		return nil
-	}
-	if s.explain {
-		vlog.Info("  EXPLAIN %s: %s", resolved.Node.FullName, decision.Reason)
-	}
-	if err := invalidateActionRecord(recordPath); err != nil {
-		return err
-	}
-	if err := s.buildVoidTarget(resolved); err != nil {
-		return err
-	}
-	if err := s.postLink(resolved); err != nil {
-		return err
-	}
-	if err := s.ctx.Err(); err != nil {
-		return err
-	}
-	if err := verifyPostLinkOutputs(target, pkgInfo, resolved.OutputPath); err != nil {
-		return err
-	}
-	return saveActionRecord(s.hashes, recordPath, signature, pkgInfo.SourceDir, inputs, outputs)
+		if err := s.runPostLinkCommands(ctx, postCommands, resolved); err != nil {
+			return nil, err
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := verifyPostLinkOutputs(target, pkgInfo, resolved.OutputPath); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	})
+	return err
 }
 
 func (s *Scheduler) realizePrebuilt(resolved *ResolvedTarget) error {

@@ -191,8 +191,8 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	resolved.AllLinks = append(resolved.AllLinks, node.Target.PublicLinks()...)
 	resolved.AllLinks = append(resolved.AllLinks, deps.links...)
 	resolved.DepArtifacts = deps.artifacts
-	s.populateHeaderBoundaries(node, resolved)
-	if err := s.checkTargetDeclaredPaths(resolved, pkgInfo.SourceDir, buildDir); err != nil {
+	s.auditorFor().populateHeaderBoundaries(node, resolved)
+	if err := s.auditorFor().checkTargetDeclaredPaths(resolved, pkgInfo.SourceDir, buildDir); err != nil {
 		return nil, err
 	}
 
@@ -312,7 +312,7 @@ func (s *Scheduler) resolveDependencyLinkerScript(node *BuildNode) (string, erro
 				seenTargets[tName] = true
 				next.targets = append(next.targets, tName)
 			}
-			pkgName, _, _ := strings.Cut(tName, ":")
+			pkgName := parseDependencyRef(tName).Package
 			if pkgName != "" && !seenPkgs[pkgName] {
 				seenPkgs[pkgName] = true
 				next.pkgs = append(next.pkgs, pkgName)
@@ -328,10 +328,7 @@ func (s *Scheduler) resolveDependencyLinkerScript(node *BuildNode) (string, erro
 				}
 			}
 			for _, rawDep := range n.Target.Deps() {
-				depPkg, _, hasColon := strings.Cut(rawDep, ":")
-				if !hasColon {
-					depPkg = rawDep
-				}
+				depPkg := parseDependencyRef(rawDep).Package
 				if depPkg != "" && depPkg != n.PkgName {
 					if _, ok := s.graph.PkgMeta[depPkg]; ok && !seenPkgs[depPkg] {
 						seenPkgs[depPkg] = true

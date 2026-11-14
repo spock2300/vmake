@@ -106,8 +106,8 @@ func TestPlanLinkBinaryArgv(t *testing.T) {
 		"-pthread",
 		"-Wl,-Bsymbolic",
 	}
-	if !slices.Equal(action.command.Args, want) {
-		t.Fatalf("planLink args = %#v\nwant          %#v", action.command.Args, want)
+	if !slices.Equal(action.Commands[0].Args, want) {
+		t.Fatalf("planLink args = %#v\nwant          %#v", action.Commands[0].Args, want)
 	}
 }
 

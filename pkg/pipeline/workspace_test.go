@@ -246,7 +246,7 @@ func nativeMemberFixture(t *testing.T, member string, setGit bool) (*buildPhaseS
 	s.needed = map[string]bool{"app": true, owner: true, name: true}
 	s.cfg = makeBuildConfig(s.ctx, host, "host")
 	aggregateGlobalFlags(s.ctx, s.needed)
-	s.globalFlagsHash = build.GlobalFlagsHash()
+	s.globalFlagsHash = build.HashGlobalFlags([4][]string{})
 	s.computeDirsAndOptions()
 	s.remote.trees[owner] = tree
 	s.remote.commits[owner] = parent.Native.Commit

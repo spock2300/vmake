@@ -196,6 +196,7 @@ func ResolveActiveChipForDisplay(ctx *RuntimeContext) {
 	if ctx == nil || ctx.Resolver == nil || ctx.DepGraph == nil {
 		return
 	}
+	defer ctx.snapshotConfiguration()
 	ctx.ChipProfile = api.ChipProfile{}
 	ctx.PreferredToolchain = ""
 	if profile, ok := selectedChipProfile(ctx); ok {

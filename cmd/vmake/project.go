@@ -35,17 +35,22 @@ func (e *optionOverrideError) Error() string { return e.err.Error() }
 func (e *optionOverrideError) Unwrap() error { return e.err }
 
 func openProject(opts projectOptions) (*RuntimeContext, error) {
+	sess := currentCommandSession()
 	overrides := opts.overrides
 	if overrides == nil {
 		var err error
-		overrides, err = parseInspectOverrides(ephemeralSetFlags)
+		overrides, err = parseInspectOverrides(sess.setFlags)
 		if err != nil {
 			return nil, err
 		}
 	}
-	locks := commandStorageLocks()
+	locks := sess.storageLocks()
 	ignoreLock := opts.policy != nil && opts.policy.IgnoreAll
-	params, err := loadResolveParamsWithOptions(ignoreLock, opts.softGitignore, opts.skipGitignore, opts.configOverride)
+	selector := opts.configOverride
+	if selector == "" {
+		selector = sess.configSelector
+	}
+	params, err := loadResolveParamsWithOptions(ignoreLock, opts.softGitignore, opts.skipGitignore, selector)
 	if err != nil {
 		return nil, err
 	}
@@ -60,11 +65,14 @@ func openProject(opts projectOptions) (*RuntimeContext, error) {
 	if opts.policy != nil {
 		ctx.LockPolicy = *opts.policy
 	}
-	if lockedFlag {
+	if ignoreLock {
+		ctx.LockPolicy.IgnoreAll = true
+	}
+	if sess.locked {
 		ctx.LockPolicy.StrictWrapper = true
 		ctx.LockPolicy.Locked = true
 	}
-	if offlineFlag {
+	if sess.offline {
 		ctx.LockPolicy.Offline = true
 	}
 	var overrideErr error

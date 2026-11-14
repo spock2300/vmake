@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 
@@ -162,97 +161,19 @@ func (s *sourceStage) verifyLockBeforePrepare() error {
 }
 
 func (s *sourceStage) buildLockfile() (*lockfile.Lock, error) {
-	updated := lockfile.New()
-	if s.rc.ctx.Lock != nil {
-		for name := range s.rc.ctx.SourceLinks {
-			if old, ok := s.rc.ctx.Lock.Get(name); ok {
-				updated.Set(name, old)
-			}
-		}
+	decisions, err := s.lockDecisions()
+	if err != nil {
+		return nil, err
 	}
-	subParents := s.rc.ctx.Resolver.SubParents()
-	for _, name := range s.rc.ctx.Resolver.GetOrder() {
-		node := s.rc.ctx.DepGraph.Packages[name]
-		if node.Source != nil && node.Source.Link != nil {
-			continue
-		}
-		if _, isSub := subParents[name]; isSub {
-			continue
-		}
-		if node.IsLocal() {
-			if version := s.sourceVersions[name]; version != "" || s.sourceCommits[name] != "" {
-				updated.Set(name, &lockfile.LockedPkg{Version: version, Commit: s.sourceCommits[name], Source: "git"})
-			} else if node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 && s.rc.ctx.Lock != nil && !s.rc.ctx.isLockIgnoredFor(name) {
-				if old, ok := s.rc.ctx.Lock.Get(name); ok && old.Source == "git" {
-					updated.Set(name, old)
-				}
-			}
-			continue
-		}
-		version := s.sourceVersions[name]
-		commit := ""
-		if s.remote != nil {
-			if version == "" {
-				version = s.remote.versions[name]
-			}
-			commit = s.remote.commits[name]
-		}
-		if version == "" && commit == "" {
-			if s.rc.ctx.Lock != nil && !s.rc.ctx.isLockIgnoredFor(name) {
-				if old, ok := s.rc.ctx.Lock.Get(name); ok {
-					updated.Set(name, old)
-					continue
-				}
-			}
-			if node.Native != nil && (node.Native.Selected != "" || node.Native.Commit != "") {
-				version = node.Native.Selected
-				commit = node.Native.Commit
-			}
-		}
-		if version == "" && commit == "" {
-			continue
-		}
-		source := "registry"
-		if node.Native != nil {
-			source = "native"
-		}
-		locked := &lockfile.LockedPkg{
-			Version: version,
-			Commit:  commit,
-			Source:  source,
-		}
-		if source == "registry" {
-			wrapperCommit, err := s.registryWrapperCommit(name)
-			if err != nil {
-				return nil, fmt.Errorf("pin wrapper commit for %s: %w", name, err)
-			}
-			locked.WrapperCommit = wrapperCommit
-		}
-		updated.Set(name, locked)
-	}
-	return updated, nil
+	return projectLock(decisions, s.rc.ctx.Lock), nil
 }
 
 func (s *sourceStage) verifyLocked() error {
-	updated, err := s.buildLockfile()
+	decisions, err := s.lockDecisions()
 	if err != nil {
 		return err
 	}
-	if len(updated.Packages) == 0 && (s.rc.ctx.Lock == nil || len(s.rc.ctx.Lock.Packages) == 0) {
-		return nil
-	}
-	if s.rc.ctx.Lock == nil || !s.rc.ctx.Lock.Equal(updated) {
-		changes := lockfile.Diff(s.rc.ctx.Lock, updated)
-		if len(changes) > 0 {
-			var names []string
-			for _, ch := range changes {
-				names = append(names, fmt.Sprintf("%s (%s)", ch.Name, ch.Kind))
-			}
-			return fmt.Errorf("--locked: vmake.lock is out of date (%s); run 'vmake deps sync' or 'vmake deps update'", strings.Join(names, ", "))
-		}
-		return fmt.Errorf("--locked: vmake.lock is out of date or missing; run 'vmake deps sync' or 'vmake deps update'")
-	}
-	return nil
+	return validateLockedProjection(decisions, s.rc.ctx.Lock)
 }
 
 func (s *sourceStage) writeLockfile() error {
@@ -322,15 +243,19 @@ func (s *sourceStage) downloadRemoteSources(remote *remoteVersionState, depsDir 
 			}
 			continue
 		}
-		target, fromTarget, hasPin := s.rc.ctx.packagePin(name)
-		version := ""
-		pinnedCommit := ""
-		if hasPin {
-			if repo.IsCommitID(target) {
-				pinnedCommit = target
-			} else {
-				version = target
-			}
+		nativeSelected, nativeCommit := "", ""
+		if node.Native != nil {
+			nativeSelected, nativeCommit = node.Native.Selected, node.Native.Commit
+		}
+		decision := s.rc.ctx.lockQuery().Decide(name, nativeSelected, nativeCommit)
+		pinned := decision.Provenance == resolver.ProvenanceTargetCommit ||
+			decision.Provenance == resolver.ProvenanceTargetVersion ||
+			decision.Provenance == resolver.ProvenanceConfigPin
+		fromTarget := decision.FromTarget
+		version := decision.Version
+		pinnedCommit := decision.Commit
+		if decision.Provenance == resolver.ProvenanceTargetCommit {
+			version = ""
 		}
 		repoName, pkgName, ok := api.SplitPackageRef(name)
 		if !ok {
@@ -338,12 +263,6 @@ func (s *sourceStage) downloadRemoteSources(remote *remoteVersionState, depsDir 
 		}
 		pkg := api.NewPackage().SetRepo(repoName).SetName(pkgName)
 		if node.IsNative() {
-			if !hasPin && version == "" {
-				version = node.Native.Selected
-			}
-			if pinnedCommit == "" && node.Native.Commit != "" && (version == node.Native.Selected || version == "") {
-				pinnedCommit = node.Native.Commit
-			}
 			pkg.SetGit(node.Native.GitURL)
 			pkg.SetVersions(node.Native.Versions)
 			if node.Pkg != nil {
@@ -362,15 +281,7 @@ func (s *sourceStage) downloadRemoteSources(remote *remoteVersionState, depsDir 
 			pkg.SetGit(interpreted.GitURLs()...)
 		}
 
-		if !hasPin && version == "" && pinnedCommit == "" {
-			if locked, isLocked := s.rc.ctx.lockedEntry(name); isLocked {
-				version = locked.Version
-				if version == "" {
-					pinnedCommit = locked.Commit
-				}
-			}
-		}
-		if hasPin && version != "" {
+		if pinned && version != "" {
 			if len(pkg.Versions()) > 0 {
 				if _, exists := pkg.Versions()[version]; !exists {
 					if fromTarget {
@@ -495,30 +406,7 @@ func (s *sourceStage) treePatchHash(owner string) (string, error) {
 // phase banner is printed before the tree is fetched or recreated.
 func (s *sourceStage) sourceRequestReady(req repo.SourceRequest) bool {
 	manager := repo.NewSourceManager(s.rc.ctx.Paths.DepsDir, s.rc.ctx.Paths.CacheDir).WithSession(s.rc.ctx.Locks).WithContext(s.rc.ctx.Context)
-	root := req.Root
-	if root == "" {
-		root = manager.TreeDir(req.Key)
-	}
-	state, err := manager.ReadState(root)
-	if err != nil || state == nil || state.Commit == "" {
-		return false
-	}
-	if len(req.URLs) > 0 && !slices.Equal(state.URLs, req.URLs) {
-		return false
-	}
-	if manager.CommitAt(root) != state.Commit {
-		return false
-	}
-	if state.PatchHash != req.PatchHash || state.Submodules != req.Submodules {
-		return false
-	}
-	if req.Commit != "" {
-		return state.Commit == req.Commit
-	}
-	if req.Refresh {
-		return false
-	}
-	return state.Ref == req.Ref && state.Version == req.Version
+	return !manager.WouldMaterialize(req)
 }
 
 // localSourceNeedsMaterialization predicts whether finalizing a local SetGit
@@ -717,23 +605,7 @@ func (s *sourceStage) clearPatchState(name string) {
 
 // treeRootFor maps a package to the tree root that owns its state file.
 func (s *sourceStage) treeRootFor(name string) string {
-	node := s.rc.ctx.DepGraph.Packages[name]
-	if node == nil || node.Pkg == nil {
-		return ""
-	}
-	if node.IsLocal() {
-		return filepath.Join(s.rc.ctx.Paths.DepsDir, "local", name)
-	}
-	if _, isSub := s.rc.ctx.Resolver.SubParents()[name]; isSub {
-		if root := linkedThirdPartyRoot(s.rc.ctx, name, node); root != "" {
-			return root
-		}
-		if len(node.Pkg.GitURLs()) > 0 && s.pkgDirs[name] != nil {
-			return s.pkgDirs[name].SourceDir
-		}
-		return remoteTreeDir(s.rc.ctx, remoteOwnerName(s.rc.ctx, name))
-	}
-	return remoteTreeDir(s.rc.ctx, name)
+	return packageTreeRoot(s.rc.ctx, name, s.rc.ctx.DepGraph.Packages[name])
 }
 
 func (s *sourceStage) restoreKConfigs() error {

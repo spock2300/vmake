@@ -105,7 +105,7 @@ func runDoctor() {
 		findings = append(findings, doctorFinding{
 			Severity: "warn",
 			Category: "noRoot",
-			Message:  "no package declares SetRoot(true); build roots are inferred heuristically (see AGENTS.md 'computeReachable')",
+			Message:  "no package declares SetRoot(true); build roots are inferred heuristically (see AGENTS.md 'ComputeNeeded')",
 		})
 	}
 	if rootCount > 1 {

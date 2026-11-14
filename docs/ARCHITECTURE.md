@@ -51,6 +51,18 @@ Phase 3: OnBuild (pipeline.RunBuild)
 `sourceStage`（源码树、lock、补丁、KConfig）、`declareStage`（OnBuild 绑定与 target）、
 `planStage`（BuildGraph/BuildJob）。各阶段只通过显式字段传递状态；`pkg/api`、`pkg/plugin`、`pkg/toolchain` 导出 API 不变。
 `Scheduler` 内部按 resolve/compile/link/postlink/publish 分文件，执行语义与产物路径不变。
+### 单一职责模块（架构收敛）
+
+- 解析决策：`pkg/resolver.LockQuery`（`PinFor`/`IgnoredFor`/`LockEntry`/`Decide`）是 target/float/pin/lock/native 优先级的唯一实现；`pkg/pipeline.lockDecisions`/`projectLock` 是锁文件投影与 `--locked` 比较的唯一入口。
+- 增量动作：`pkg/build.plannedAction` + `runPlannedAction` 统一 compile/link/void 的签名、执行与记录；`Compiler.planCompile` 是编译命令的唯一推导，`compile_commands.json` 使用同一计划的 display 命令。
+- 包激活：`pkg/pipeline.ActivatePackage` 是 build/declarative 的唯一激活路径；`DeclareTargets` 是 declarative 包装，`executeOnePackage` 使用 build 模式。
+- 根/needed：`pkg/pipeline.ComputeNeeded` 是构建 needed 的唯一计算；`RootsFromEdges` 是 deps/inspect 报告图的唯一根计算。
+- 全局 flags：`toolchain.Manager.ToolchainGlobalFlags` 只保存 toolchain/extension globals；项目 flags 由 `pipeline.aggregateGlobalFlags` 显式合并，`build.HashGlobalFlags` 哈希显式值。
+- 源物化：`repo.SourceManager.WouldMaterialize` 与 `SourceResult.Materialized` 和 `EnsureSource` 共用同一复用判定。
+- 包位置与制品：`pipeline.packageLocation` 统一 `OwnerTreeRoot`/`PackageRoot`/`SourceTree`/`ThirdPartyRoot`/`TreeRoot`；`build.ArtifactPlacement` 统一产物、PE import library、暂存与安装路径。
+- 依赖字符串：`build.parseDependencyRef` 是 `target`/`pkg:target`/`pkg/sub:target`/`pkg:*` 的唯一解析；遍历策略仍按消费者保留。
+- 阶段写模型：`Resolution`/`Configuration`/`Preparation` 分别由 `Require`/`Configure`/`prepareBuild` 一次提交；`Configure` 在上下文副本上执行、成功才提交配置结果。
+
 
 ### Clean Pipeline
 

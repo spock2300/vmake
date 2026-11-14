@@ -38,7 +38,7 @@ func TestInspectMatchesPackageToolchainBuildDirectories(t *testing.T) {
 	s.ctx.DepGraph.Packages["app"].Pkg.SetRoot(true)
 	s.ctx.DepGraph.Packages["app"].Deps = []string{"dep"}
 	s.cfg = makeBuildConfig(s.ctx, host, "host")
-	s.globalFlagsHash = build.GlobalFlagsHash()
+	s.globalFlagsHash = build.HashGlobalFlags([4][]string{})
 	s.computeDirsAndOptions()
 	if err := s.prepareAllPackages(); err != nil {
 		t.Fatal(err)
@@ -125,7 +125,7 @@ func TestInspectRemoteTreeDirs(t *testing.T) {
 	s.ctx.Resolver.SubParents()[name] = owner
 	s.ctx.DepGraph.Packages["app"].Pkg.SetRoot(true)
 	s.ctx.DepGraph.Packages["app"].Deps = []string{owner, name}
-	s.globalFlagsHash = build.GlobalFlagsHash()
+	s.globalFlagsHash = build.HashGlobalFlags([4][]string{})
 
 	inspection, err := Inspect(s.ctx)
 	if err != nil {

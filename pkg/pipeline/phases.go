@@ -57,12 +57,17 @@ func Require(ctx *RuntimeContext) (err error) {
 	r.SetProjectRoot(projectRoot)
 	r.SetContext(ctx.Context)
 	r.SetSourceManager(repo.NewSourceManager(ctx.Paths.DepsDir, ctx.Paths.CacheDir).WithSession(ctx.Locks).WithContext(ctx.Context))
-	r.SetLockfile(ctx.Lock, ctx.IgnoreLock)
+	r.SetLockfile(ctx.Lock, ctx.effectiveLockPolicy().IgnoreAll)
 	r.SetLockPolicy(ctx.effectiveLockPolicy())
 	r.SetTrustChecker(ctx.TrustChecker)
 	r.SetConfigPins(ctx.Pins)
 	r.SetSourceLinks(ctx.SourceLinks)
-	ctx.Resolver = r
+	committed := false
+	defer func() {
+		if !committed {
+			r.Close()
+		}
+	}()
 
 	vlog.Info("")
 	vlog.Info("Resolving dependencies...")
@@ -71,10 +76,12 @@ func Require(ctx *RuntimeContext) (err error) {
 		return err
 	}
 
-	ctx.DepGraph = r.Graph()
+	graph := r.Graph()
+	ctx.applyResolution(Resolution{Resolver: r, DepGraph: graph})
+	committed = true
 
-	for _, name := range ctx.DepGraph.Order {
-		node := ctx.DepGraph.Packages[name]
+	for _, name := range graph.Order {
+		node := graph.Packages[name]
 		if node.IsLocal() {
 			vlog.Verbose("  %s (local)", name)
 		} else {
@@ -90,7 +97,14 @@ func Configure(ctx *RuntimeContext) (err error) {
 	if err := ctx.Resolver.UpdateOrder(); err != nil {
 		return err
 	}
-	return runConfigPhase(ctx)
+	work := *ctx
+	work.Config = ctx.Config.Clone()
+	if err := runConfigPhase(&work); err != nil {
+		return err
+	}
+	ctx.applyConfiguration(work.currentConfiguration())
+	ctx.Config = work.Config
+	return nil
 }
 
 func bindBaseGlobalFlagCallbacks(cfgCtx *api.ConfigContext, buf *packageGlobalFlags) {

@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/api"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
@@ -30,6 +31,7 @@ packages using 'nm -D' and report issues automatically — no per-target
 declaration required.
 
 Detection categories:
+  blocked-write            Read-only inspection rejected an interpreted-script write
   duplicate-export         Same symbol exported by multiple targets (runtime conflict risk)
   mangled-leak             C++ mangled symbol (_Z*) leaked into a C library or binary
   reserved-prefix          glibc/runtime internal symbol leaked (__libc_*, _IO_*, _Jv_*, ...)
@@ -71,6 +73,8 @@ type finding struct {
 
 func runCheckSymbols(strict bool) {
 	vlog.SetLevel(vlog.Quiet)
+	scriptfs.SetReadOnly(true)
+	defer scriptfs.SetReadOnly(false)
 
 	ctx := mustOpenProject(projectOptions{})
 	defer closeProject(ctx)
@@ -81,12 +85,28 @@ func runCheckSymbols(strict bool) {
 
 	artifacts, err := discoverArtifacts(ctx, insp.PkgDirs, insp.PackageToolchains, insp.Needed, insp.GlobalValues)
 	fatalErr(err)
+	blockedWrites := scriptfs.TakeBlockedWrites()
+	var findings []finding
+	for _, message := range blockedWrites {
+		findings = append(findings, finding{
+			category: "blocked-write",
+			severity: "error",
+			subject:  "project",
+			detail:   message,
+		})
+	}
 	if len(artifacts) == 0 {
-		fmt.Println("No built Shared/Binary targets found. Run 'vmake build' first.")
+		if len(findings) == 0 {
+			fmt.Println("No built Shared/Binary targets found. Run 'vmake build' first.")
+			return
+		}
+		reportFindings(findings, 0)
+		if strict && hasStrictFindings(findings) {
+			os.Exit(1)
+		}
 		return
 	}
 
-	var findings []finding
 	var scanned []scanArtifact
 
 	for i := range artifacts {
@@ -512,6 +532,7 @@ func reportFindings(findings []finding, artifactCount int) {
 	fmt.Printf("Symbol audit: %d finding(s) across %d artifacts\n", len(findings), artifactCount)
 
 	categoryOrder := []string{
+		"blocked-write",
 		"not-applicable",
 		"missing-artifact",
 		"tool-error",

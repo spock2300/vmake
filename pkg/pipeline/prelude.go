@@ -78,6 +78,13 @@ func prepareBuild(ctx *RuntimeContext, opts preludeOptions) (*buildPrelude, erro
 		}
 	}
 	pre.rawGlobalFlags, pre.effectiveFlags, pre.globalFlagsHash = aggregateGlobalFlags(ctx, needed)
+	ctx.applyConfiguration(ctx.currentConfiguration())
+	ctx.applyPreparation(Preparation{
+		Needed:          needed,
+		RawFlags:        pre.rawGlobalFlags,
+		EffectiveFlags:  pre.effectiveFlags,
+		GlobalFlagsHash: pre.globalFlagsHash,
+	})
 	return pre, nil
 }
 
@@ -113,13 +120,12 @@ func aggregateGlobalFlags(ctx *RuntimeContext, needed map[string]bool) (raw, eff
 		effective[1] = append(effective[1], "-D"+define)
 	}
 
-	mgr := toolchain.GetManager()
-	mgr.SetProjectFlags(effective[0], effective[1], effective[2], effective[3])
-	effective = [4][]string{
-		mgr.GetGlobalCFlags(),
-		mgr.GetGlobalCxxFlags(),
-		mgr.GetGlobalLdFlags(),
-		mgr.GetGlobalLinks(),
+	toolchainFlags := toolchain.GetManager().ToolchainGlobalFlags()
+	for i := range effective {
+		merged := make([]string, 0, len(toolchainFlags[i])+len(effective[i]))
+		merged = append(merged, toolchainFlags[i]...)
+		merged = append(merged, effective[i]...)
+		effective[i] = merged
 	}
-	return raw, effective, build.GlobalFlagsHash()
+	return raw, effective, build.HashGlobalFlags(effective)
 }

@@ -9,51 +9,6 @@ import (
 	"os"
 )
 
-func (c *Compiler) compileClangAssembly(src, objPath string, opts *CompileOptions, flags []string, workDir string) (deps []string, err error) {
-	depPath := objPath + ".d"
-	asmDep := depPath + ".as"
-	ppDep := depPath + ".pp"
-	intermediate := ""
-	defer func() {
-		err = errors.Join(err, removeCompileFiles(workDir, asmDep, ppDep))
-		if err != nil {
-			err = errors.Join(err, removeCompileFiles(workDir, objPath, depPath, intermediate))
-		}
-	}()
-
-	asmSource := src
-	depFiles := []string{asmDep}
-	asmDepPath := asmDep
-	if c.targetOS == "darwin" {
-		depFiles = nil
-		asmDepPath = ""
-	}
-	if opts.Language == "asm-cpp" {
-		intermediate = objPath + ".s"
-		ppOpts := *opts
-		ppOpts.Includes = commandPaths(workDir, opts.Includes)
-		args := []string{"-E", "-x", "assembler-with-cpp", "-MMD", "-MP", "-MF", commandPath(workDir, ppDep), "-MT", commandPath(workDir, objPath), "-o", commandPath(workDir, intermediate)}
-		args = appendCompileOptions(args, &ppOpts, commandFlags(workDir, flags))
-		args = append(args, commandPath(workDir, src))
-		if _, err := c.run(c.ccPath, workDir, args...); err != nil {
-			return nil, err
-		}
-		asmSource = intermediate
-		depFiles = append([]string{ppDep}, depFiles...)
-	}
-
-	asmOpts := *opts
-	asmOpts.Language = "asm"
-	args := compileArgs(&asmOpts, objPath, asmSource, flags, asmDepPath, workDir)
-	if _, err := c.run(c.ccPath, workDir, args...); err != nil {
-		return nil, err
-	}
-	if err := validateAssemblyObject(resolveWorkPath(workDir, objPath), c.targetOS); err != nil {
-		return nil, fmt.Errorf("Clang external assembler output: %w; check the toolchain --target and -B flags", err)
-	}
-	return mergeAssemblyDeps(src, objPath, depPath, workDir, intermediate, depFiles...)
-}
-
 func validateAssemblyObject(path, targetOS string) error {
 	switch targetOS {
 	case "windows":

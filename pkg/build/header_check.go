@@ -162,14 +162,14 @@ type headerOwnerIndex struct {
 	entries []pkgDirEntry
 }
 
-func (s *Scheduler) getHeaderOwners() *headerOwnerIndex {
-	s.headerOwnersOnce.Do(func() {
-		s.headerOwners = s.buildHeaderOwnerIndex()
+func (a *headerAuditor) getHeaderOwners() *headerOwnerIndex {
+	a.headerOwnersOnce.Do(func() {
+		a.headerOwners = a.buildHeaderOwnerIndex()
 	})
-	return s.headerOwners
+	return a.headerOwners
 }
 
-func (s *Scheduler) buildHeaderOwnerIndex() *headerOwnerIndex {
+func (a *headerAuditor) buildHeaderOwnerIndex() *headerOwnerIndex {
 	type dirPkg struct {
 		dir     string
 		pkgName string
@@ -184,14 +184,14 @@ func (s *Scheduler) buildHeaderOwnerIndex() *headerOwnerIndex {
 		if abs == "" {
 			return
 		}
-		if s.canonCache != nil {
-			abs = s.canonCache.canonPath(abs)
+		if a.canonCache != nil {
+			abs = a.canonCache.canonPath(abs)
 		}
 		seen[dirPkg{dir: abs, pkgName: pkgName}] = true
 		hasPkgAtDir[abs] = true
 		if real := evalCleanNearestAncestor(abs); real != "" {
-			if s.canonCache != nil {
-				real = s.canonCache.canonPath(real)
+			if a.canonCache != nil {
+				real = a.canonCache.canonPath(real)
 			}
 			if real != abs {
 				seen[dirPkg{dir: real, pkgName: pkgName}] = true
@@ -200,21 +200,21 @@ func (s *Scheduler) buildHeaderOwnerIndex() *headerOwnerIndex {
 		}
 	}
 
-	pkgNames := make([]string, 0, len(s.pkgs)+len(s.packages)+len(s.workspaceDirs))
+	pkgNames := make([]string, 0, len(a.pkgs)+len(a.packages)+len(a.workspaceDirs))
 	pkgNameSet := make(map[string]bool)
-	for name := range s.workspaceDirs {
+	for name := range a.workspaceDirs {
 		if !pkgNameSet[name] {
 			pkgNameSet[name] = true
 			pkgNames = append(pkgNames, name)
 		}
 	}
-	for name := range s.pkgs {
+	for name := range a.pkgs {
 		if !pkgNameSet[name] {
 			pkgNameSet[name] = true
 			pkgNames = append(pkgNames, name)
 		}
 	}
-	for name := range s.packages {
+	for name := range a.packages {
 		if !pkgNameSet[name] {
 			pkgNameSet[name] = true
 			pkgNames = append(pkgNames, name)
@@ -223,10 +223,10 @@ func (s *Scheduler) buildHeaderOwnerIndex() *headerOwnerIndex {
 	sort.Strings(pkgNames)
 
 	for _, name := range pkgNames {
-		if wsDir := s.workspaceDirs[name]; wsDir != "" {
+		if wsDir := a.workspaceDirs[name]; wsDir != "" {
 			addDir(name, wsDir)
 		}
-		if info := s.pkgs[name]; info != nil {
+		if info := a.pkgs[name]; info != nil {
 			addDir(name, info.SourceDir)
 			if info.BuildDir != "" || info.BuildKey != "" {
 				addDir(name, resolveWorkPath(info.SourceDir, info.EffectiveBuildDir()))
@@ -235,7 +235,7 @@ func (s *Scheduler) buildHeaderOwnerIndex() *headerOwnerIndex {
 				addDir(name, resolveWorkPath(info.SourceDir, info.InstallDir))
 			}
 		}
-		if pkg := s.packages[name]; pkg != nil {
+		if pkg := a.packages[name]; pkg != nil {
 			addDir(name, pkg.SourceDir())
 			addDir(name, pkg.SrcDir())
 			addDir(name, pkg.BuildDir())
@@ -251,27 +251,27 @@ func (s *Scheduler) buildHeaderOwnerIndex() *headerOwnerIndex {
 		if abs == "" {
 			return
 		}
-		if s.canonCache != nil {
-			abs = s.canonCache.canonPath(abs)
+		if a.canonCache != nil {
+			abs = a.canonCache.canonPath(abs)
 		}
 		if !hasPkgAtDir[abs] {
 			seen[dirPkg{dir: abs, pkgName: ownerName}] = true
 		}
 		if real := evalCleanNearestAncestor(abs); real != "" {
-			if s.canonCache != nil {
-				real = s.canonCache.canonPath(real)
+			if a.canonCache != nil {
+				real = a.canonCache.canonPath(real)
 			}
 			if !hasPkgAtDir[real] {
 				seen[dirPkg{dir: real, pkgName: ownerName}] = true
 			}
 		}
 	}
-	if s.rootDir != "" {
+	if a.rootDir != "" {
 		for _, sub := range []string{".vmake_deps", ".vmake", "install", "build"} {
-			addManagedBoundary(filepath.Join(s.rootDir, sub), "")
+			addManagedBoundary(filepath.Join(a.rootDir, sub), "")
 		}
 	}
-	for _, wsDir := range s.workspaceDirs {
+	for _, wsDir := range a.workspaceDirs {
 		if wsDir == "" {
 			continue
 		}
@@ -333,41 +333,41 @@ func isGroupingUmbrellaTarget(t *api.Target) bool {
 		len(t.PublicIncludes()) == 0
 }
 
-func (s *Scheduler) isFirstPartyPkg(pkgName string) bool {
-	if s.graph != nil && s.graph.PkgMeta != nil {
-		if meta, ok := s.graph.PkgMeta[pkgName]; ok {
+func (a *headerAuditor) isFirstPartyPkg(pkgName string) bool {
+	if a.graph != nil && a.graph.PkgMeta != nil {
+		if meta, ok := a.graph.PkgMeta[pkgName]; ok {
 			return meta.IsFirstParty()
 		}
 	}
 	return true
 }
 
-func (s *Scheduler) populateHeaderBoundaries(node *BuildNode, resolved *ResolvedTarget) {
+func (a *headerAuditor) populateHeaderBoundaries(node *BuildNode, resolved *ResolvedTarget) {
 	resolved.DeclaredDepPkgs = make(map[string]bool)
 	resolved.DirectDepPkgs = make(map[string]bool)
-	if s.graph == nil || node == nil {
+	if a.graph == nil || node == nil {
 		return
 	}
 
 	appendAllowed := func(raw string, rules []string) {
-		if inc, ok := newAllowedInclude(raw, rules, s.canonCache); ok {
+		if inc, ok := newAllowedInclude(raw, rules, a.canonCache); ok {
 			resolved.AllowedPublicIncludes = append(resolved.AllowedPublicIncludes, inc)
 		}
 	}
 	appendDirectAllowed := func(raw string, rules []string) {
-		if inc, ok := newAllowedInclude(raw, rules, s.canonCache); ok {
+		if inc, ok := newAllowedInclude(raw, rules, a.canonCache); ok {
 			resolved.DirectAllowedPublicIncludes = append(resolved.DirectAllowedPublicIncludes, inc)
 		}
 	}
 
 	resolveDepNodeInclude := func(depPkgName, pubInc string) string {
-		if depPkg := s.pkgs[depPkgName]; depPkg != nil {
+		if depPkg := a.pkgs[depPkgName]; depPkg != nil {
 			if strings.HasPrefix(pubInc, api.BuildDirToken) && depPkg.BuildDir == "" && depPkg.BuildKey == "" {
 				return ""
 			}
 			return depPkg.ResolvePath(pubInc)
 		}
-		if srcDir := s.pkgSourceDir(depPkgName); srcDir != "" && !strings.HasPrefix(pubInc, api.BuildDirToken) {
+		if srcDir := a.pkgSourceDir(depPkgName); srcDir != "" && !strings.HasPrefix(pubInc, api.BuildDirToken) {
 			return resolvePkgPath(srcDir, "", pubInc)
 		}
 		return ""
@@ -376,7 +376,7 @@ func (s *Scheduler) populateHeaderBoundaries(node *BuildNode, resolved *Resolved
 	for _, depPkgName := range node.DeclaredDepPkgs {
 		if depPkgName != "" && depPkgName != node.PkgName {
 			resolved.DeclaredDepPkgs[depPkgName] = true
-			if depPkg := s.pkgs[depPkgName]; depPkg != nil && depPkg.InstallDir != "" {
+			if depPkg := a.pkgs[depPkgName]; depPkg != nil && depPkg.InstallDir != "" {
 				appendAllowed(filepath.Join(depPkg.InstallDir, "include"), nil)
 			}
 		}
@@ -395,7 +395,7 @@ func (s *Scheduler) populateHeaderBoundaries(node *BuildNode, resolved *Resolved
 			if resolvedInc != "" {
 				emit(resolvedInc, rules)
 			}
-			if pkg := s.packages[depNode.PkgName]; pkg != nil && pkg.SrcDirRaw() != "" {
+			if pkg := a.packages[depNode.PkgName]; pkg != nil && pkg.SrcDirRaw() != "" {
 				if !filepath.IsAbs(pubInc) && !strings.HasPrefix(pubInc, api.BuildDirToken) {
 					srcAlt := filepath.Join(pkg.SrcDir(), pubInc)
 					if cleanAbs(srcAlt) != cleanAbs(resolvedInc) {
@@ -404,7 +404,7 @@ func (s *Scheduler) populateHeaderBoundaries(node *BuildNode, resolved *Resolved
 				}
 			}
 		}
-		if depPkg := s.pkgs[depNode.PkgName]; depPkg != nil && depPkg.InstallDir != "" {
+		if depPkg := a.pkgs[depNode.PkgName]; depPkg != nil && depPkg.InstallDir != "" {
 			emit(filepath.Join(depPkg.InstallDir, "include"), nil)
 		}
 	}
@@ -418,7 +418,7 @@ func (s *Scheduler) populateHeaderBoundaries(node *BuildNode, resolved *Resolved
 			continue
 		}
 		visitedNodes[depName] = true
-		depNode := s.graph.Nodes[depName]
+		depNode := a.graph.Nodes[depName]
 		if depNode == nil {
 			continue
 		}
@@ -437,7 +437,7 @@ func (s *Scheduler) populateHeaderBoundaries(node *BuildNode, resolved *Resolved
 			continue
 		}
 		visitedDirect[depName] = true
-		depNode := s.graph.Nodes[depName]
+		depNode := a.graph.Nodes[depName]
 		if depNode == nil {
 			continue
 		}
@@ -450,20 +450,20 @@ func (s *Scheduler) populateHeaderBoundaries(node *BuildNode, resolved *Resolved
 		}
 	}
 
-	if meta, ok := s.graph.PkgMeta[node.PkgName]; ok && len(meta.SubGraphs) > 0 {
-		subPkgs := s.collectReachableSubGraphPkgs(meta.SubGraphs)
+	if meta, ok := a.graph.PkgMeta[node.PkgName]; ok && len(meta.SubGraphs) > 0 {
+		subPkgs := a.collectReachableSubGraphPkgs(meta.SubGraphs)
 		for subPkg := range subPkgs {
 			if subPkg != node.PkgName {
 				resolved.DeclaredDepPkgs[subPkg] = true
 				resolved.DirectDepPkgs[subPkg] = true
-				if depPkg := s.pkgs[subPkg]; depPkg != nil && depPkg.InstallDir != "" {
+				if depPkg := a.pkgs[subPkg]; depPkg != nil && depPkg.InstallDir != "" {
 					incDir := filepath.Join(depPkg.InstallDir, "include")
 					appendAllowed(incDir, nil)
 					appendDirectAllowed(incDir, nil)
 				}
 			}
 		}
-		for _, cand := range s.graph.Nodes {
+		for _, cand := range a.graph.Nodes {
 			if subPkgs[cand.PkgName] {
 				if !visitedNodes[cand.FullName] {
 					visitedNodes[cand.FullName] = true
@@ -478,7 +478,7 @@ func (s *Scheduler) populateHeaderBoundaries(node *BuildNode, resolved *Resolved
 	}
 }
 
-func (s *Scheduler) collectReachableSubGraphPkgs(roots []string) map[string]bool {
+func (a *headerAuditor) collectReachableSubGraphPkgs(roots []string) map[string]bool {
 	visited := make(map[string]bool)
 	var visit func(pkg string)
 	visit = func(pkg string) {
@@ -486,7 +486,7 @@ func (s *Scheduler) collectReachableSubGraphPkgs(roots []string) map[string]bool
 			return
 		}
 		visited[pkg] = true
-		if meta, ok := s.graph.PkgMeta[pkg]; ok {
+		if meta, ok := a.graph.PkgMeta[pkg]; ok {
 			for _, d := range meta.Deps {
 				visit(d)
 			}
@@ -494,12 +494,12 @@ func (s *Scheduler) collectReachableSubGraphPkgs(roots []string) map[string]bool
 				visit(sub)
 			}
 		}
-		for _, n := range s.graph.Nodes {
+		for _, n := range a.graph.Nodes {
 			if n.PkgName != pkg {
 				continue
 			}
 			for _, depFull := range n.Deps {
-				if depNode := s.graph.Nodes[depFull]; depNode != nil {
+				if depNode := a.graph.Nodes[depFull]; depNode != nil {
 					visit(depNode.PkgName)
 				}
 			}
@@ -550,24 +550,24 @@ func (r *ResolvedTarget) allowsIncludeDir(absDir string) bool {
 	return false
 }
 
-func (s *Scheduler) crossPkgOwner(owners *headerOwnerIndex, currentPkg, absPath string) string {
+func (a *headerAuditor) crossPkgOwner(owners *headerOwnerIndex, currentPkg, absPath string) string {
 	if absPath == "" {
 		return ""
 	}
-	if s.canonCache != nil {
-		absPath = s.canonCache.canonPath(absPath)
+	if a.canonCache != nil {
+		absPath = a.canonCache.canonPath(absPath)
 	}
 	owner := owners.ownerOfFor(absPath, currentPkg)
-	if owner != "" && owner != currentPkg && !s.isTargetlessAncestor(owner, currentPkg) {
+	if owner != "" && owner != currentPkg && !a.isTargetlessAncestor(owner, currentPkg) {
 		return owner
 	}
 	if real := evalCleanNearestAncestor(absPath); real != "" {
-		if s.canonCache != nil {
-			real = s.canonCache.canonPath(real)
+		if a.canonCache != nil {
+			real = a.canonCache.canonPath(real)
 		}
 		if real != absPath {
 			realOwner := owners.ownerOfFor(real, currentPkg)
-			if realOwner != "" && realOwner != currentPkg && !s.isTargetlessAncestor(realOwner, currentPkg) {
+			if realOwner != "" && realOwner != currentPkg && !a.isTargetlessAncestor(realOwner, currentPkg) {
 				return realOwner
 			}
 		}
@@ -598,15 +598,15 @@ func isParentRelative(raw string) bool {
 	return slash == ".." || strings.HasPrefix(slash, "../")
 }
 
-func (s *Scheduler) checkTargetDeclaredPaths(resolved *ResolvedTarget, sourceDir, buildDir string) error {
+func (a *headerAuditor) checkTargetDeclaredPaths(resolved *ResolvedTarget, sourceDir, buildDir string) error {
 	if resolved == nil || resolved.Node == nil || resolved.Node.Target == nil || sourceDir == "" {
 		return nil
 	}
 	node := resolved.Node
-	if !s.isFirstPartyPkg(node.PkgName) {
+	if !a.isFirstPartyPkg(node.PkgName) {
 		return nil
 	}
-	owners := s.getHeaderOwners()
+	owners := a.getHeaderOwners()
 	t := node.Target
 
 	for _, raw := range t.Files() {
@@ -615,7 +615,7 @@ func (s *Scheduler) checkTargetDeclaredPaths(resolved *ResolvedTarget, sourceDir
 		}
 		base := stripGlobBase(raw)
 		abs := cleanAbs(resolvePkgPath(sourceDir, buildDir, base))
-		if owner := s.crossPkgOwner(owners, node.PkgName, abs); owner != "" {
+		if owner := a.crossPkgOwner(owners, node.PkgName, abs); owner != "" {
 			return fmt.Errorf(
 				"cross-package source path: target %s AddFiles(%q) points into package %q",
 				node.FullName, raw, owner,
@@ -625,7 +625,7 @@ func (s *Scheduler) checkTargetDeclaredPaths(resolved *ResolvedTarget, sourceDir
 
 	if prebuilt := t.Prebuilt(); strings.TrimSpace(prebuilt) != "" && !strings.HasPrefix(prebuilt, api.BuildDirToken) {
 		abs := cleanAbs(resolvePkgPath(sourceDir, buildDir, prebuilt))
-		if owner := s.crossPkgOwner(owners, node.PkgName, abs); owner != "" {
+		if owner := a.crossPkgOwner(owners, node.PkgName, abs); owner != "" {
 			return fmt.Errorf(
 				"cross-package prebuilt path: target %s SetPrebuilt(%q) points into package %q",
 				node.FullName, prebuilt, owner,
@@ -638,7 +638,7 @@ func (s *Scheduler) checkTargetDeclaredPaths(resolved *ResolvedTarget, sourceDir
 			continue
 		}
 		abs := cleanAbs(resolvePkgPath(sourceDir, buildDir, raw))
-		if owner := s.crossPkgOwner(owners, node.PkgName, abs); owner != "" {
+		if owner := a.crossPkgOwner(owners, node.PkgName, abs); owner != "" {
 			return fmt.Errorf(
 				"cross-package public include: target %s AddPublicIncludes(%q) points into package %q",
 				node.FullName, raw, owner,
@@ -651,10 +651,10 @@ func (s *Scheduler) checkTargetDeclaredPaths(resolved *ResolvedTarget, sourceDir
 			continue
 		}
 		abs := cleanAbs(resolvePkgPath(sourceDir, buildDir, raw))
-		if s.canonCache != nil && abs != "" {
-			abs = s.canonCache.canonPath(abs)
+		if a.canonCache != nil && abs != "" {
+			abs = a.canonCache.canonPath(abs)
 		}
-		owner := s.crossPkgOwner(owners, node.PkgName, abs)
+		owner := a.crossPkgOwner(owners, node.PkgName, abs)
 		if owner == "" {
 			continue
 		}
@@ -665,8 +665,8 @@ func (s *Scheduler) checkTargetDeclaredPaths(resolved *ResolvedTarget, sourceDir
 			)
 		}
 		real := evalCleanNearestAncestor(abs)
-		if s.canonCache != nil && real != "" {
-			real = s.canonCache.canonPath(real)
+		if a.canonCache != nil && real != "" {
+			real = a.canonCache.canonPath(real)
 		}
 		if !resolved.allowsIncludeDir(abs) && (real == "" || !resolved.allowsIncludeDir(real)) {
 			return fmt.Errorf(
@@ -690,7 +690,7 @@ func (s *Scheduler) checkTargetDeclaredPaths(resolved *ResolvedTarget, sourceDir
 			continue
 		}
 		abs := cleanAbs(resolvePkgPath(sourceDir, buildDir, raw))
-		if owner := s.crossPkgOwner(owners, node.PkgName, abs); owner != "" {
+		if owner := a.crossPkgOwner(owners, node.PkgName, abs); owner != "" {
 			return fmt.Errorf(
 				"cross-package relative input: target %s AddInputs(%q) escapes into package %q (use DepOutput, DepSrcDir, or DepPackageDir instead of ../)",
 				node.FullName, raw, owner,
@@ -840,36 +840,36 @@ func parseDirectIncludes(absSrc string) []directInclude {
 	return out
 }
 
-func (s *Scheduler) isUpstreamGitSource(pkgName, absSrc string) bool {
-	pkg := s.packages[pkgName]
+func (a *headerAuditor) isUpstreamGitSource(pkgName, absSrc string) bool {
+	pkg := a.packages[pkgName]
 	if pkg == nil || pkg.SrcDirRaw() == "" {
 		return false
 	}
 	upstream := cleanAbs(pkg.SrcDir())
-	srcDir := cleanAbs(s.pkgSourceDir(pkgName))
+	srcDir := cleanAbs(a.pkgSourceDir(pkgName))
 	if upstream == "" || upstream == srcDir {
 		return false
 	}
-	if s.canonCache != nil {
-		upstream = s.canonCache.canonPath(upstream)
+	if a.canonCache != nil {
+		upstream = a.canonCache.canonPath(upstream)
 	}
 	return hasPathPrefix(absSrc, upstream)
 }
 
-func (s *Scheduler) checkHeaderBoundaries(resolved *ResolvedTarget, src string, deps []string) error {
+func (a *headerAuditor) checkHeaderBoundaries(resolved *ResolvedTarget, src string, deps []string) error {
 	if len(deps) == 0 || resolved == nil || resolved.Node == nil {
 		return nil
 	}
-	pkgInfo := s.pkgs[resolved.Node.PkgName]
+	pkgInfo := a.pkgs[resolved.Node.PkgName]
 	if pkgInfo == nil {
 		return nil
 	}
 	workDir := pkgInfo.SourceDir
 	absSrc := cleanAbs(resolveWorkPath(workDir, src))
-	if s.canonCache != nil && absSrc != "" {
-		absSrc = s.canonCache.canonPath(absSrc)
+	if a.canonCache != nil && absSrc != "" {
+		absSrc = a.canonCache.canonPath(absSrc)
 	}
-	owners := s.getHeaderOwners()
+	owners := a.getHeaderOwners()
 
 	type resolvedDepHeader struct {
 		absH  string
@@ -887,17 +887,17 @@ func (s *Scheduler) checkHeaderBoundaries(resolved *ResolvedTarget, src string, 
 		if absH == "" {
 			continue
 		}
-		if s.canonCache != nil {
-			absH = s.canonCache.canonPath(absH)
+		if a.canonCache != nil {
+			absH = a.canonCache.canonPath(absH)
 		}
 		if absH == absSrc {
 			continue
 		}
 		realH := evalCleanNearestAncestor(absH)
-		if s.canonCache != nil && realH != "" {
-			realH = s.canonCache.canonPath(realH)
+		if a.canonCache != nil && realH != "" {
+			realH = a.canonCache.canonPath(realH)
 		}
-		owner := s.crossPkgOwner(owners, resolved.Node.PkgName, absH)
+		owner := a.crossPkgOwner(owners, resolved.Node.PkgName, absH)
 		resolvedDeps = append(resolvedDeps, resolvedDepHeader{
 			absH:  absH,
 			realH: realH,
@@ -912,7 +912,7 @@ func (s *Scheduler) checkHeaderBoundaries(resolved *ResolvedTarget, src string, 
 			continue
 		}
 
-		displayH := s.displayHeaderPath(absH, dep)
+		displayH := a.displayHeaderPath(absH, dep)
 		if !resolved.DeclaredDepPkgs[owner] {
 			return fmt.Errorf(
 				"undeclared header dependency: target %s (%s) includes %q owned by package %q, which is not a declared dependency (add AddDeps(%q))",
@@ -925,7 +925,7 @@ func (s *Scheduler) checkHeaderBoundaries(resolved *ResolvedTarget, src string, 
 		)
 	}
 
-	if !s.isFirstPartyPkg(resolved.Node.PkgName) || s.isUpstreamGitSource(resolved.Node.PkgName, absSrc) {
+	if !a.isFirstPartyPkg(resolved.Node.PkgName) || a.isUpstreamGitSource(resolved.Node.PkgName, absSrc) {
 		return nil
 	}
 
@@ -943,8 +943,8 @@ func (s *Scheduler) checkHeaderBoundaries(resolved *ResolvedTarget, src string, 
 		var candLocal string
 		if inc.quoted && absSrc != "" {
 			candLocal = cleanAbs(filepath.Join(filepath.Dir(absSrc), inc.spec))
-			if s.canonCache != nil && candLocal != "" {
-				candLocal = s.canonCache.canonPath(candLocal)
+			if a.canonCache != nil && candLocal != "" {
+				candLocal = a.canonCache.canonPath(candLocal)
 			}
 		}
 		suffix := "/" + cleanSpec
@@ -983,23 +983,23 @@ func (s *Scheduler) checkHeaderBoundaries(resolved *ResolvedTarget, src string, 
 	return nil
 }
 
-func (s *Scheduler) checkStaticSourceIncludes(resolved *ResolvedTarget, src, sourceDir string) error {
+func (a *headerAuditor) checkStaticSourceIncludes(resolved *ResolvedTarget, src, sourceDir string) error {
 	if resolved == nil || resolved.Node == nil || sourceDir == "" {
 		return nil
 	}
 	node := resolved.Node
-	if !s.isFirstPartyPkg(node.PkgName) {
+	if !a.isFirstPartyPkg(node.PkgName) {
 		return nil
 	}
 	absSrc := cleanAbs(resolveWorkPath(sourceDir, src))
-	if s.canonCache != nil && absSrc != "" {
-		absSrc = s.canonCache.canonPath(absSrc)
+	if a.canonCache != nil && absSrc != "" {
+		absSrc = a.canonCache.canonPath(absSrc)
 	}
-	if absSrc == "" || s.isUpstreamGitSource(node.PkgName, absSrc) {
+	if absSrc == "" || a.isUpstreamGitSource(node.PkgName, absSrc) {
 		return nil
 	}
-	owners := s.getHeaderOwners()
-	pkg := s.packages[node.PkgName]
+	owners := a.getHeaderOwners()
+	pkg := a.packages[node.PkgName]
 	hasGenerated := len(node.Target.GenRules()) > 0 || (pkg != nil && (pkg.GenConfigHeader() || pkg.HasGenerators()))
 
 	var ownDirs []string
@@ -1036,19 +1036,19 @@ func (s *Scheduler) checkStaticSourceIncludes(resolved *ResolvedTarget, src, sou
 		if inc.quoted {
 			relCand := cleanAbs(filepath.Join(filepath.Dir(absSrc), inc.spec))
 			if fs.FileExists(relCand) {
-				if s.canonCache != nil {
-					relCand = s.canonCache.canonPath(relCand)
+				if a.canonCache != nil {
+					relCand = a.canonCache.canonPath(relCand)
 				}
-				owner := s.crossPkgOwner(owners, node.PkgName, relCand)
+				owner := a.crossPkgOwner(owners, node.PkgName, relCand)
 				if owner == "" {
 					continue
 				}
 				real := evalCleanNearestAncestor(relCand)
-				if s.canonCache != nil && real != "" {
-					real = s.canonCache.canonPath(real)
+				if a.canonCache != nil && real != "" {
+					real = a.canonCache.canonPath(real)
 				}
 				if !resolved.allowsHeader(relCand) && (real == "" || !resolved.allowsHeader(real)) {
-					displayH := s.displayHeaderPath(relCand, inc.spec)
+					displayH := a.displayHeaderPath(relCand, inc.spec)
 					if !resolved.DeclaredDepPkgs[owner] {
 						return fmt.Errorf(
 							"undeclared header dependency: target %s (%s) includes %q owned by package %q, which is not a declared dependency (add AddDeps(%q))",
@@ -1084,7 +1084,7 @@ func (s *Scheduler) checkStaticSourceIncludes(resolved *ResolvedTarget, src, sou
 			continue
 		}
 		if transHit := matchAllowedSpec(resolved.AllowedPublicIncludes, inc.spec); transHit != "" {
-			if owner := s.crossPkgOwner(owners, node.PkgName, transHit); owner != "" {
+			if owner := a.crossPkgOwner(owners, node.PkgName, transHit); owner != "" {
 				return fmt.Errorf(
 					"transitive header inclusion: target %s (%s) directly includes %q of package %q, which is only transitively reachable (add direct AddDeps(%q))",
 					node.FullName, src, inc.spec, owner, owner,
@@ -1095,56 +1095,56 @@ func (s *Scheduler) checkStaticSourceIncludes(resolved *ResolvedTarget, src, sou
 	return nil
 }
 
-func (s *Scheduler) pkgSourceDir(pkgName string) string {
-	if info := s.pkgs[pkgName]; info != nil && info.SourceDir != "" {
+func (a *headerAuditor) pkgSourceDir(pkgName string) string {
+	if info := a.pkgs[pkgName]; info != nil && info.SourceDir != "" {
 		return info.SourceDir
 	}
-	if dir := s.workspaceDirs[pkgName]; dir != "" {
+	if dir := a.workspaceDirs[pkgName]; dir != "" {
 		return dir
 	}
-	if pkg := s.packages[pkgName]; pkg != nil && pkg.SourceDir() != "" {
+	if pkg := a.packages[pkgName]; pkg != nil && pkg.SourceDir() != "" {
 		return pkg.SourceDir()
 	}
 	return ""
 }
 
-func (s *Scheduler) isTargetlessAncestor(ownerPkg, childPkg string) bool {
+func (a *headerAuditor) isTargetlessAncestor(ownerPkg, childPkg string) bool {
 	if ownerPkg == "" || childPkg == "" || ownerPkg == childPkg {
 		return false
 	}
 	inMeta := false
-	if s.graph != nil {
-		for _, n := range s.graph.Nodes {
+	if a.graph != nil {
+		for _, n := range a.graph.Nodes {
 			if n.PkgName == ownerPkg {
 				return false
 			}
 		}
-		if s.graph.PkgMeta != nil {
-			_, inMeta = s.graph.PkgMeta[ownerPkg]
+		if a.graph.PkgMeta != nil {
+			_, inMeta = a.graph.PkgMeta[ownerPkg]
 		}
 	}
 	if !inMeta {
-		if pkg := s.packages[ownerPkg]; pkg != nil && pkg.HasBuildFuncs() {
+		if pkg := a.packages[ownerPkg]; pkg != nil && pkg.HasBuildFuncs() {
 			return false
 		}
 	}
-	ownerDir := cleanAbs(s.pkgSourceDir(ownerPkg))
-	childDir := cleanAbs(s.pkgSourceDir(childPkg))
+	ownerDir := cleanAbs(a.pkgSourceDir(ownerPkg))
+	childDir := cleanAbs(a.pkgSourceDir(childPkg))
 	if ownerDir == "" || childDir == "" {
 		return false
 	}
-	if s.canonCache != nil {
-		ownerDir = s.canonCache.canonPath(ownerDir)
-		childDir = s.canonCache.canonPath(childDir)
+	if a.canonCache != nil {
+		ownerDir = a.canonCache.canonPath(ownerDir)
+		childDir = a.canonCache.canonPath(childDir)
 	}
 	return hasPathPrefix(childDir, ownerDir)
 }
 
-func (s *Scheduler) displayHeaderPath(absPath, fallback string) string {
-	if s.rootDir != "" {
-		rootAbs := cleanAbs(s.rootDir)
-		if s.canonCache != nil {
-			rootAbs = s.canonCache.canonPath(rootAbs)
+func (a *headerAuditor) displayHeaderPath(absPath, fallback string) string {
+	if a.rootDir != "" {
+		rootAbs := cleanAbs(a.rootDir)
+		if a.canonCache != nil {
+			rootAbs = a.canonCache.canonPath(rootAbs)
 		}
 		if rel, err := filepath.Rel(rootAbs, absPath); err == nil {
 			slash := filepath.ToSlash(rel)
@@ -1230,15 +1230,7 @@ func CheckExistingBuildBoundaries(
 	if packages == nil {
 		packages = make(map[string]*api.Package)
 	}
-	s := &Scheduler{
-		graph:         graph,
-		mode:          mode,
-		pkgs:          make(map[string]*PkgInfo, len(layouts)+len(workspaceDirs)),
-		packages:      packages,
-		workspaceDirs: workspaceDirs,
-		rootDir:       rootDir,
-		canonCache:    newPathCanonCache(),
-	}
+	pkgs := make(map[string]*PkgInfo, len(layouts)+len(workspaceDirs))
 	for name, layout := range layouts {
 		if layout == nil || layout.Dirs.SourceDir == "" {
 			continue
@@ -1249,25 +1241,34 @@ func CheckExistingBuildBoundaries(
 			buildKey = ""
 			dirs.BuildDir = ""
 		}
-		s.pkgs[name] = &PkgInfo{
+		pkgs[name] = &PkgInfo{
 			PkgDirs:  dirs,
 			BuildKey: buildKey,
 		}
 	}
 	for name, dir := range workspaceDirs {
-		if dir != "" && s.pkgs[name] == nil {
-			s.pkgs[name] = &PkgInfo{
+		if dir != "" && pkgs[name] == nil {
+			pkgs[name] = &PkgInfo{
 				PkgDirs: api.PkgDirs{SourceDir: dir},
 			}
 		}
 	}
 	for name, pkg := range packages {
-		if pkg != nil && pkg.SourceDir() != "" && s.pkgs[name] == nil {
-			s.pkgs[name] = &PkgInfo{
+		if pkg != nil && pkg.SourceDir() != "" && pkgs[name] == nil {
+			pkgs[name] = &PkgInfo{
 				PkgDirs: api.PkgDirs{SourceDir: pkg.SourceDir()},
 			}
 		}
 	}
+
+	a := newHeaderAuditor(auditEnv{
+		graph:         graph,
+		pkgs:          pkgs,
+		packages:      packages,
+		workspaceDirs: workspaceDirs,
+		rootDir:       rootDir,
+		canonCache:    newPathCanonCache(),
+	})
 
 	var violations []BoundaryViolation
 	seenMsg := make(map[string]bool)
@@ -1293,7 +1294,7 @@ func CheckExistingBuildBoundaries(
 		if node == nil || node.Target == nil {
 			continue
 		}
-		pkgInfo := s.pkgs[node.PkgName]
+		pkgInfo := a.pkgs[node.PkgName]
 		if pkgInfo == nil || pkgInfo.SourceDir == "" {
 			continue
 		}
@@ -1311,9 +1312,9 @@ func CheckExistingBuildBoundaries(
 		resolved := &ResolvedTarget{
 			Node: node,
 		}
-		s.populateHeaderBoundaries(node, resolved)
+		a.populateHeaderBoundaries(node, resolved)
 
-		if perr := s.checkTargetDeclaredPaths(resolved, pkgInfo.SourceDir, effBuildDir); perr != nil {
+		if perr := a.checkTargetDeclaredPaths(resolved, pkgInfo.SourceDir, effBuildDir); perr != nil {
 			record("path-boundary", node, perr)
 			continue
 		}
@@ -1347,14 +1348,14 @@ func CheckExistingBuildBoundaries(
 					absDep := resolveWorkPath(pkgInfo.SourceDir, objRel+".d")
 					if deps, err := ParseDepFile(absDep); err == nil {
 						checkedDepFile = true
-						if herr := s.checkHeaderBoundaries(resolved, src, deps); herr != nil {
+						if herr := a.checkHeaderBoundaries(resolved, src, deps); herr != nil {
 							record("header-boundary", node, herr)
 						}
 					}
 				}
 			}
 			if !checkedDepFile {
-				if herr := s.checkStaticSourceIncludes(resolved, src, pkgInfo.SourceDir); herr != nil {
+				if herr := a.checkStaticSourceIncludes(resolved, src, pkgInfo.SourceDir); herr != nil {
 					record("header-boundary", node, herr)
 				}
 			}

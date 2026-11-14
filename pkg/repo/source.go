@@ -228,14 +228,63 @@ type SourceRequest struct {
 }
 
 type SourceResult struct {
-	Root   string
-	SrcDir string
-	URL    string
-	Commit string
+	Root         string
+	SrcDir       string
+	URL          string
+	Commit       string
+	Materialized bool
 }
 
-func (m *SourceManager) result(root, srcDir, url, commit string) *SourceResult {
-	return &SourceResult{Root: root, SrcDir: srcDir, URL: url, Commit: commit}
+func (m *SourceManager) result(root, srcDir, url, commit string, materialized bool) *SourceResult {
+	return &SourceResult{Root: root, SrcDir: srcDir, URL: url, Commit: commit, Materialized: materialized}
+}
+
+// reusableState reports whether the on-disk tree matches the request identity
+// closely enough for EnsureSource to reuse it without materializing. It is the
+// single reuse rule shared by EnsureSource and WouldMaterialize.
+func (m *SourceManager) reusableState(req SourceRequest, state *TreeState, srcDir string) bool {
+	if state == nil || (len(req.URLs) > 0 && !sameURLs(state.URLs, req.URLs)) {
+		return false
+	}
+	if !fs.FileExists(filepath.Join(srcDir, ".git")) {
+		return false
+	}
+	if m.treeHead(srcDir) != state.Commit {
+		return false
+	}
+	if req.ResolveOnly {
+		return true
+	}
+	return state.PatchHash == req.PatchHash && state.Submodules == req.Submodules
+}
+
+// WouldMaterialize reports whether EnsureSource would fetch or recreate the
+// tree for req. A false result means EnsureSource is expected to return an
+// existing reusable tree without touching the network.
+func (m *SourceManager) WouldMaterialize(req SourceRequest) bool {
+	root := req.Root
+	if root == "" {
+		var err error
+		root, err = m.treePath(req.Key)
+		if err != nil {
+			return true
+		}
+	}
+	srcDir := filepath.Join(root, "src")
+	state, err := m.ReadState(root)
+	if err != nil || !m.reusableState(req, state, srcDir) {
+		return true
+	}
+	if req.Commit != "" {
+		return state.Commit != req.Commit
+	}
+	if req.Refresh {
+		return true
+	}
+	if req.Ref != "" {
+		return !(state.Ref == req.Ref && state.Version == req.Version)
+	}
+	return false
 }
 
 // EnsureSource materializes the package tree at the requested commit (or ref)
@@ -274,30 +323,15 @@ func (m *SourceManager) EnsureSource(req SourceRequest) (*SourceResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	reusable := func(st *TreeState) bool {
-		if st == nil || (len(req.URLs) > 0 && !sameURLs(st.URLs, req.URLs)) {
-			return false
-		}
-		if !fs.FileExists(filepath.Join(srcDir, ".git")) {
-			return false
-		}
-		if m.treeHead(srcDir) != st.Commit {
-			return false
-		}
-		if req.ResolveOnly {
-			return true
-		}
-		return st.PatchHash == req.PatchHash && st.Submodules == req.Submodules
-	}
-	if reusable(state) {
+	if m.reusableState(req, state, srcDir) {
 		if req.Commit != "" && state.Commit == req.Commit {
-			return m.result(root, srcDir, firstURL(state.URLs, req.URLs), state.Commit), nil
+			return m.result(root, srcDir, firstURL(state.URLs, req.URLs), state.Commit, false), nil
 		}
 		if req.Commit == "" && req.Ref != "" && state.Ref == req.Ref && state.Version == req.Version && !req.Refresh {
-			return m.result(root, srcDir, firstURL(state.URLs, req.URLs), state.Commit), nil
+			return m.result(root, srcDir, firstURL(state.URLs, req.URLs), state.Commit, false), nil
 		}
 		if req.Commit == "" && req.Ref == "" && !req.Refresh {
-			return m.result(root, srcDir, firstURL(state.URLs, req.URLs), state.Commit), nil
+			return m.result(root, srcDir, firstURL(state.URLs, req.URLs), state.Commit, false), nil
 		}
 	}
 	if len(req.URLs) == 0 {
@@ -346,8 +380,8 @@ func (m *SourceManager) EnsureSource(req SourceRequest) (*SourceResult, error) {
 		}
 	}
 
-	if reusable(state) && state.Commit == commit {
-		return m.result(root, srcDir, firstURL(state.URLs, req.URLs), commit), nil
+	if m.reusableState(req, state, srcDir) && state.Commit == commit {
+		return m.result(root, srcDir, firstURL(state.URLs, req.URLs), commit, false), nil
 	}
 
 	url, actual, err := m.materialize(req, root, srcDir, state, commit, localRef)
@@ -372,7 +406,7 @@ func (m *SourceManager) EnsureSource(req SourceRequest) (*SourceResult, error) {
 	if err := jsonio.Save(m.statePath(root), state); err != nil {
 		return nil, fmt.Errorf("record tree state for %s: %w", req.Key, err)
 	}
-	return m.result(root, srcDir, url, commit), nil
+	return m.result(root, srcDir, url, commit, true), nil
 }
 
 func firstURL(stateURLs, fallback []string) string {

@@ -964,41 +964,11 @@ func inspectRoots(ctx *RuntimeContext, needed map[string]bool) []string {
 }
 
 func inspectRootsFromEdges(ctx *RuntimeContext, needed map[string]bool, edges []inspectEdge) []string {
-	if ctx.Config != nil {
-		if rootName := strings.TrimSpace(ctx.Config.Root); rootName != "" {
-			if node := ctx.DepGraph.Packages[rootName]; node != nil && needed[rootName] && node.IsLocal() {
-				return []string{rootName}
-			}
-		}
+	pkgEdges := make([]pipeline.PackageEdge, 0, len(edges))
+	for _, edge := range edges {
+		pkgEdges = append(pkgEdges, pipeline.PackageEdge{From: edge.From, To: edge.To})
 	}
-	for _, name := range inspectPackageNames(ctx) {
-		node := ctx.DepGraph.Packages[name]
-		if node != nil && needed[name] && node.IsLocal() && node.Pkg != nil && node.Pkg.IsRoot() {
-			return []string{name}
-		}
-	}
-	dependedOn := make(map[string]bool)
-	for _, e := range edges {
-		if needed[e.From] && needed[e.To] {
-			dependedOn[e.To] = true
-		}
-	}
-	roots := make([]string, 0)
-	for name, node := range ctx.DepGraph.Packages {
-		if node == nil || !needed[name] || !node.IsLocal() || dependedOn[name] {
-			continue
-		}
-		roots = append(roots, name)
-	}
-	if len(roots) == 0 {
-		for name, node := range ctx.DepGraph.Packages {
-			if node != nil && needed[name] && node.IsLocal() {
-				roots = append(roots, name)
-			}
-		}
-	}
-	sort.Strings(roots)
-	return roots
+	return pipeline.RootsFromEdges(ctx, inspectPackageNames(ctx), pkgEdges, needed)
 }
 
 func inspectGraph(ctx *RuntimeContext) []inspectEdge {

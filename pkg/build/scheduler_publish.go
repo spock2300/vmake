@@ -11,22 +11,22 @@ import (
 
 func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) error {
 	t := resolved.Node.Target
-	kind := t.Kind()
-	targetOS := s.targetOS(resolved.Node.PkgName)
+	placement := s.placementFor(resolved, pkgInfo)
+	kind := placement.Kind
 
-	if kind == api.TargetVoid || kind == api.TargetObject || t.IsTest() {
+	if kind == api.TargetVoid || kind == api.TargetObject || placement.IsTest {
 		return nil
 	}
 
-	libDir := filepath.Join(pkgInfo.InstallDir, "lib")
-	includeDir := filepath.Join(pkgInfo.InstallDir, "include")
+	libDir := placement.StageLibDir
+	includeDir := placement.StageIncludeDir
 	published := false
 
-	if resolved.OutputPath != "" {
-		srcPath := resolveWorkPath(pkgInfo.SourceDir, resolved.OutputPath)
-		dest := filepath.Join(libDir, filepath.Base(resolved.OutputPath))
+	if placement.OutputPath != "" {
+		srcPath := resolveWorkPath(pkgInfo.SourceDir, placement.OutputPath)
+		dest := filepath.Join(libDir, filepath.Base(placement.OutputPath))
 		if info, err := os.Stat(dest); err == nil && info.Mode().IsRegular() &&
-			sameFileContent(srcPath, dest) && !implibMissing(srcPath, libDir, targetOS, kind) {
+			sameFileContent(srcPath, dest) && !implibMissingAt(placement.ImportLib, libDir) {
 			vlog.Info("  SKIP (already published)")
 			published = true
 		}
@@ -36,14 +36,14 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 		return fmt.Errorf("create lib dir: %w", err)
 	}
 
-	if resolved.OutputPath != "" && !published {
-		srcPath := resolveWorkPath(pkgInfo.SourceDir, resolved.OutputPath)
+	if placement.OutputPath != "" && !published {
+		srcPath := resolveWorkPath(pkgInfo.SourceDir, placement.OutputPath)
 		if _, err := os.Stat(srcPath); err == nil {
-			if err := copyArtifact(srcPath, filepath.Join(libDir, filepath.Base(resolved.OutputPath)), nil); err != nil {
+			if err := copyArtifact(srcPath, filepath.Join(libDir, filepath.Base(placement.OutputPath)), nil); err != nil {
 				return fmt.Errorf("install library failed: %w", err)
 			}
 		}
-		if err := copyImportLibrary(srcPath, libDir, targetOS, kind, nil); err != nil {
+		if err := copyImportLibrary(placement.ImportLib, libDir, nil); err != nil {
 			return fmt.Errorf("install import library failed: %w", err)
 		}
 	}
@@ -57,12 +57,10 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) er
 	return copyPublicIncludes(t, srcDir, buildDir, includeDir, nil)
 }
 
-// implibMissing reports whether a PE shared target's import library still needs
-// publishing: LinkShared emitted one next to the artifact, but the destination
-// directory does not have it. Guards the "already published" fast path, which
-// otherwise compares only the DLL and never repairs a deleted implib.
-func implibMissing(srcPath, destDir, targetOS string, kind api.TargetKind) bool {
-	implib := importLibraryPath(srcPath, targetOS, kind)
+// implibMissingAt reports whether a PE shared target's import library still
+// needs publishing: LinkShared emitted one next to the artifact, but the
+// destination directory does not have it.
+func implibMissingAt(implib, destDir string) bool {
 	if implib == "" {
 		return false
 	}

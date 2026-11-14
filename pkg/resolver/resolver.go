@@ -734,66 +734,60 @@ func (r *Resolver) ensureNativeSource(key string, req repo.SourceRequest) (*repo
 	return r.dryRunMgr.EnsureSource(req)
 }
 
+func (r *Resolver) lockQuery() LockQuery {
+	return LockQuery{Policy: r.lockPolicy, Pins: r.configPins, Lock: r.lockfile}
+}
+
 func (r *Resolver) targetOrPin(id string) (target string, fromTarget bool, ok bool) {
-	if r.lockPolicy.Targets != nil {
-		if t := strings.TrimSpace(r.lockPolicy.Targets[id]); t != "" {
-			return t, true, true
-		}
-	}
-	if r.lockPolicy.Float != nil && r.lockPolicy.Float[id] {
-		return "", false, false
-	}
-	if r.configPins != nil {
-		if p := strings.TrimSpace(r.configPins[id]); p != "" {
-			return p, false, true
-		}
-	}
-	return "", false, false
+	return r.lockQuery().PinFor(id)
 }
 
 func (r *Resolver) selectNativeVersion(id string, versions map[string]string, constraint string) (string, string, error) {
-	if target, fromTarget, ok := r.targetOrPin(id); ok {
-		ref, exists := versions[target]
+	decision := r.lockQuery().Decide(id, "", "")
+	switch decision.Provenance {
+	case ProvenanceTargetCommit, ProvenanceTargetVersion, ProvenanceConfigPin:
+		ref, exists := versions[decision.Version]
 		if !exists {
-			if fromTarget {
-				return "", "", fmt.Errorf("requested version %s for %s not found in upstream tags", target, id)
+			if decision.FromTarget {
+				return "", "", fmt.Errorf("requested version %s for %s not found in upstream tags", decision.Version, id)
 			}
-			return "", "", fmt.Errorf("config-pinned version %s for %s not found in upstream tags", target, id)
+			return "", "", fmt.Errorf("config-pinned version %s for %s not found in upstream tags", decision.Version, id)
 		}
-		if err := r.checkConstraint(id, target, constraint); err != nil {
+		if err := r.checkConstraint(id, decision.Version, constraint); err != nil {
 			return "", "", err
 		}
-		return target, ref, nil
-	}
-	if locked, ok := r.lockfileEntry(id); ok && locked.Version != "" {
-		ref, exists := versions[locked.Version]
+		return decision.Version, ref, nil
+	case ProvenanceLock:
+		if decision.Version == "" {
+			break
+		}
+		ref, exists := versions[decision.Version]
 		if !exists {
-			return "", "", fmt.Errorf("locked version %s for %s not found in upstream tags; run 'vmake deps update %s' to re-resolve", locked.Version, id, id)
+			return "", "", fmt.Errorf("locked version %s for %s not found in upstream tags; run 'vmake deps update %s' to re-resolve", decision.Version, id, id)
 		}
-		if err := r.checkConstraint(id, locked.Version, constraint); err != nil {
+		if err := r.checkConstraint(id, decision.Version, constraint); err != nil {
 			return "", "", err
 		}
-		return locked.Version, ref, nil
+		return decision.Version, ref, nil
 	}
 	return repo.SelectNativeVersion(versions, constraint)
 }
 
 func (r *Resolver) pinnedVersion(id string) (version, commit string, ok bool) {
-	if target, fromTarget, hasTarget := r.targetOrPin(id); hasTarget {
-		if repo.IsCommitID(target) {
-			return "", target, true
-		}
-		if !fromTarget && r.lockfile != nil {
-			if locked, lok := r.lockfile.Get(id); lok && locked.Version == target && locked.Commit != "" {
-				return target, locked.Commit, true
-			}
-		}
-		return target, "", true
-	}
-	if locked, ok := r.lockfileEntry(id); ok {
-		return locked.Version, locked.Commit, true
+	decision := r.lockQuery().Decide(id, "", "")
+	switch decision.Provenance {
+	case ProvenanceTargetCommit:
+		return "", decision.Commit, true
+	case ProvenanceTargetVersion:
+		return decision.Version, "", true
+	case ProvenanceConfigPin, ProvenanceLock:
+		return decision.Version, decision.Commit, true
 	}
 	return "", "", false
+}
+
+func (r *Resolver) lockfileEntry(id string) (*lockfile.LockedPkg, bool) {
+	return r.lockQuery().LockEntry(id)
 }
 
 func (r *Resolver) checkConstraint(id, version, constraint string) error {
@@ -809,23 +803,6 @@ func (r *Resolver) checkConstraint(id, version, constraint string) error {
 		return fmt.Errorf("version %s for %s violates constraint %q; run 'vmake deps update' to re-resolve", version, id, constraint)
 	}
 	return nil
-}
-
-func (r *Resolver) lockfileEntry(id string) (*lockfile.LockedPkg, bool) {
-	if r.lockfile == nil || r.lockPolicy.IgnoreAll {
-		return nil, false
-	}
-	if r.lockPolicy.Float != nil && r.lockPolicy.Float[id] {
-		return nil, false
-	}
-	if r.lockPolicy.Targets != nil && strings.TrimSpace(r.lockPolicy.Targets[id]) != "" {
-		return nil, false
-	}
-	locked, ok := r.lockfile.Get(id)
-	if !ok || (locked.Version == "" && locked.Commit == "") {
-		return nil, false
-	}
-	return locked, true
 }
 
 func (r *Resolver) scanSubPackages(parentID, checkoutDir string) {

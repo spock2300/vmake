@@ -51,7 +51,7 @@ func TestPackageVisibilityConfigCallbacks(t *testing.T) {
 				config.SetEntry(cfg, "app", &config.EntryConfig{Options: map[string]any{"hidden": test.value}})
 			}
 			ctx := &RuntimeContext{Resolver: r, DepGraph: r.Graph(), Config: cfg}
-			globalHash := build.GlobalFlagsHash()
+			_, _, globalHash := aggregateGlobalFlags(ctx, map[string]bool{"app": true})
 			if err := runConfigPhase(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -66,7 +66,7 @@ func TestPackageVisibilityConfigCallbacks(t *testing.T) {
 					t.Errorf("%s leaked visibility into global flags: %+v", name, flags)
 				}
 			}
-			if got := build.GlobalFlagsHash(); got != globalHash {
+			if _, _, got := aggregateGlobalFlags(ctx, map[string]bool{"app": true}); got != globalHash {
 				t.Errorf("configuration changed global flags hash: %s -> %s", globalHash, got)
 			}
 		})
@@ -181,7 +181,7 @@ func TestPackageVisibilityBuildAndInspectKeys(t *testing.T) {
 	s := newBuildPhaseState(ctx, BuildOptions{})
 	s.cfg = makeBuildConfig(ctx, tc, "host")
 	s.needed = map[string]bool{"app": true, "dependency": true}
-	s.globalFlagsHash = build.GlobalFlagsHash()
+	s.globalFlagsHash = build.HashGlobalFlags([4][]string{})
 	s.computeDirsAndOptions()
 	if err := s.prepareAllPackages(); err != nil {
 		t.Fatal(err)

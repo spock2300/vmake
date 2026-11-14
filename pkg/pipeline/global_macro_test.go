@@ -11,7 +11,6 @@ import (
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/resolver"
-	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 func singleChipGraph(t *testing.T) (*resolver.Resolver, *api.Package) {
@@ -59,24 +58,21 @@ func TestGlobalOptionsExportMacros(t *testing.T) {
 		t.Fatalf("defines = %v, want %v", ctx.GlobalMacroDefines, want)
 	}
 
-	mgr := toolchain.GetManager()
-	mgr.SetProjectFlags(nil, nil, nil, nil)
-	defer mgr.SetProjectFlags(nil, nil, nil, nil)
-	emptyHash := build.GlobalFlagsHash()
-	aggregateGlobalFlags(ctx, map[string]bool{"chip": true})
-	flags := mgr.GetGlobalCFlags()
+	emptyHash := build.HashGlobalFlags([4][]string{})
+	_, effective, hash := aggregateGlobalFlags(ctx, map[string]bool{"chip": true})
+	flags := effective[0]
 	for _, define := range want {
 		if !contains(flags, "-D"+define) {
 			t.Errorf("global C flags missing -D%s: %v", define, flags)
 		}
 	}
-	cxxFlags := mgr.GetGlobalCxxFlags()
+	cxxFlags := effective[1]
 	for _, define := range want {
 		if !contains(cxxFlags, "-D"+define) {
 			t.Errorf("global C++ flags missing -D%s: %v", define, cxxFlags)
 		}
 	}
-	if build.GlobalFlagsHash() == emptyHash {
+	if hash == emptyHash {
 		t.Error("exported defines must change the global flags hash")
 	}
 }

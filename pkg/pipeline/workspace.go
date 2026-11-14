@@ -154,29 +154,31 @@ func (s *sourceStage) selectPackageSourceRoot(name, sourceRoot string) error {
 
 func (s *sourceStage) resolvePackageSourceVersion(name string, node *resolver.PackageNode) (string, string, string, error) {
 	_, isSub := s.rc.ctx.Resolver.SubParents()[name]
-	pin, _, hasPin := s.rc.ctx.packagePin(name)
-	if hasPin && repo.IsCommitID(pin) {
-		return "", pin, pin, nil
+	decision := s.rc.ctx.lockQuery().Decide(name, "", "")
+	if decision.Provenance == resolver.ProvenanceTargetCommit {
+		return "", decision.Commit, decision.Commit, nil
 	}
 	if !node.IsLocal() && !isSub {
 		return "", "", "", nil
 	}
 	if len(node.Pkg.Versions()) == 0 {
-		if hasPin && pin != "" {
-			return "", "", "", fmt.Errorf("package %s declares no versions; specify a 40-character commit SHA instead of %q", name, pin)
+		if decision.Provenance == resolver.ProvenanceTargetVersion || decision.Provenance == resolver.ProvenanceConfigPin {
+			return "", "", "", fmt.Errorf("package %s declares no versions; specify a 40-character commit SHA instead of %q", name, decision.Version)
 		}
-		if locked, ok := s.rc.ctx.lockedEntry(name); ok && locked.Version == "" && locked.Commit != "" {
-			return "", locked.Commit, locked.Commit, nil
+		if decision.Provenance == resolver.ProvenanceLock && decision.Version == "" && decision.Commit != "" {
+			return "", decision.Commit, decision.Commit, nil
 		}
 		return "", "", "", nil
 	}
-	if !hasPin {
-		if locked, ok := s.rc.ctx.lockedEntry(name); ok {
-			if locked.Version != "" {
-				pin = locked.Version
-			} else if locked.Commit != "" {
-				return "", locked.Commit, locked.Commit, nil
-			}
+	pin := ""
+	switch decision.Provenance {
+	case resolver.ProvenanceTargetVersion, resolver.ProvenanceConfigPin:
+		pin = decision.Version
+	case resolver.ProvenanceLock:
+		if decision.Version != "" {
+			pin = decision.Version
+		} else if decision.Commit != "" {
+			return "", decision.Commit, decision.Commit, nil
 		}
 	}
 	constraints := append([]string{}, node.Constraints...)
@@ -192,8 +194,8 @@ func (s *sourceStage) resolvePackageSourceVersion(name string, node *resolver.Pa
 		return "", "", "", fmt.Errorf("source version %s for %s has no git ref", version, name)
 	}
 	expected := ""
-	if locked, ok := s.rc.ctx.lockedEntry(name); ok && locked.Version == version {
-		expected = locked.Commit
+	if decision.Commit != "" && decision.Version == version {
+		expected = decision.Commit
 	}
 	return version, ref, expected, nil
 }

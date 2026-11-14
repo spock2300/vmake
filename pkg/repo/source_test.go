@@ -418,3 +418,47 @@ func TestEnsureSourceRepairsMismatchedHead(t *testing.T) {
 		t.Fatalf("stale HEAD was not repaired: %q", data)
 	}
 }
+
+func TestWouldMaterializeMatchesEnsureSource(t *testing.T) {
+	requireGit(t)
+	src := writePatchableSource(t)
+	runGit(t, src, "tag", "v1.0.0")
+
+	m := NewSourceManager(t.TempDir(), t.TempDir())
+	req := SourceRequest{Key: "native/materialize", URLs: []string{src}, Version: "1.0.0", Ref: "v1.0.0"}
+	if !m.WouldMaterialize(req) {
+		t.Fatal("empty cache should require materialization")
+	}
+	first, err := m.EnsureSource(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Materialized {
+		t.Fatal("first EnsureSource did not report materialization")
+	}
+	if m.WouldMaterialize(req) {
+		t.Fatal("reusable tree should not require materialization")
+	}
+	second, err := m.EnsureSource(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Materialized {
+		t.Fatal("reused tree reported materialization")
+	}
+	changed := req
+	changed.PatchHash = "different"
+	if !m.WouldMaterialize(changed) {
+		t.Fatal("changed patch hash should require materialization")
+	}
+	refreshed := req
+	refreshed.Refresh = true
+	if !m.WouldMaterialize(refreshed) {
+		t.Fatal("refresh should require materialization")
+	}
+	staleCommit := req
+	staleCommit.Commit = strings.Repeat("a", 40)
+	if !m.WouldMaterialize(staleCommit) {
+		t.Fatal("stale commit should require materialization")
+	}
+}

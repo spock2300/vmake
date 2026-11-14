@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 
 	"github.com/spock2300/vmake/pkg/api"
-	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 // PackageLayout is the single source of truth for a package's build and
@@ -59,18 +58,12 @@ func BuildKeyE(toolchain, mode string, options map[string]any, extra string) (st
 	return hex.EncodeToString(h[:]), nil
 }
 
-// GlobalFlagsHash summarizes the current global flags/links registered in the
-// toolchain manager, so that flag changes invalidate build directories.
-func GlobalFlagsHash() string {
-	mgr := toolchain.GetManager()
-	parts := [][]string{
-		mgr.GetGlobalCFlags(),
-		mgr.GetGlobalCxxFlags(),
-		mgr.GetGlobalLdFlags(),
-		mgr.GetGlobalLinks(),
-	}
+// HashGlobalFlags summarizes explicitly supplied global flags/links for the
+// build key. Callers pass the effective flags; the process-global toolchain
+// manager is not consulted.
+func HashGlobalFlags(flags [4][]string) string {
 	h := sha256.New()
-	for _, group := range parts {
+	for _, group := range flags {
 		for _, s := range group {
 			fmt.Fprintf(h, "%s\x00", s)
 		}

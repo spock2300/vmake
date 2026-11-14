@@ -43,8 +43,8 @@ func TestNewRuntimeContextPreservesParams(t *testing.T) {
 	if ctx.LockPath != paths.LockPath {
 		t.Errorf("LockPath = %q, want %q", ctx.LockPath, paths.LockPath)
 	}
-	if !ctx.IgnoreLock {
-		t.Error("IgnoreLock = false, want true")
+	if !ctx.LockPolicy.IgnoreAll {
+		t.Error("LockPolicy.IgnoreAll = false, want true")
 	}
 	if ctx.ModeOverride != "release" || ctx.ToolchainOverride != "gcc" {
 		t.Errorf("overrides = %q/%q", ctx.ModeOverride, ctx.ToolchainOverride)

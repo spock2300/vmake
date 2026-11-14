@@ -20,7 +20,7 @@ import (
 
 // actionRecordVersion versions the on-disk action record and the signatures
 // embedded in it. It is independent of layoutFormatVersion.
-const actionRecordVersion = 2
+const actionRecordVersion = 3
 
 type fileState struct {
 	Path string `json:"path"`

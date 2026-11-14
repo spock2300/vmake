@@ -128,6 +128,110 @@
 - 理由: 测试必须覆盖真实构造路径；隐式派生规则集中在纯函数，便于独立断言。
 - 涉及代码: `pkg/tui/model.go`, `pkg/tui/state.go`, `pkg/tui/app.go`, `cmd/vmake/config.go`。
 
+## DD-13: 增量动作由单一 plannedAction 描述
+
+- 状态: accepted
+- 背景: compile/link/incremental-void 各自内联匿名签名结构，并手工重复 check→explain→invalidate→run→save；compile 的签名命令与 `compile_commands.json`、实际执行命令由三处分别推导。clang 汇编路径执行两条命令，但签名只哈希一条普通编译命令，修改预处理参数不会轮换记录。
+- 决策: `pkg/build/action_plan.go` 的 `plannedAction` 是增量动作的唯一描述：签名包含 Kind/Target/WorkDir/TargetOS/Tools/Environment/Commands/声明输入/输出；`runPlannedAction` 统一执行检查、失效、运行与记录。compile/link/void 只负责生产该值；compile 的命令由 `Compiler.planCompile` 一次推导，`compile_commands.json` 使用同一计划的 Display 命令；link 的 post-link 命令在计划中只解析一次。compile 的 `RecordInputs` 只含源文件，run 后发现的头文件依赖再写入记录；check 仍使用上一次 depfile 的依赖，因此删除头文件不会把旧路径带入新记录。`actionRecordVersion` 提升为 3。
+- 理由: 让"被哈希的输入"与"实际执行的命令"由同一个值产生，消除签名漂移；匿名 schema 有三份时，新增输入必然漏一处。
+- 涉及代码: `pkg/build/action_plan.go`, `pkg/build/compile_action.go`, `pkg/build/link_action.go`, `pkg/build/scheduler_compile.go`, `pkg/build/scheduler_link.go`, `pkg/build/scheduler_postlink.go`, `pkg/build/signature.go`。
+
+## DD-14: 版本/commit/lock 优先级由单一 LockQuery 决定
+
+- 状态: accepted
+- 背景: "target > float > config pin > lock > native selected" 的顺序、`IgnoreAll`/`Float`/`Targets` 的抑制规则和错误文案曾在 `Resolver`、`pipeline` 的 `packagePin`/`lockedEntry`/`remoteVersionKey`/`resolvePackageSourceVersion`、`inspect` 与 `downloadRemoteSources` 中各写一遍；锁文件"应该是什么"也只在 `sourceStage.buildLockfile` 内联。
+- 决策: `pkg/resolver/decision.go` 的 `LockQuery`（`PinFor`/`IgnoredFor`/`LockEntry`/`Decide`）是优先级的唯一实现；`Resolver` 与 `pipeline` 的辅助函数只做委托。`pkg/pipeline/lock_projection.go` 的 `lockDecision`/`projectLock`/`validateLockedProjection` 是锁文件的唯一投影与 `--locked` 比较入口，`buildLockfile`/`verifyLocked` 只收集决策。native/registry 的下载版本选择也消费 `Decide`（lock 优先于 native selected），native 版本表的选择仍由 resolver 完成。`--ignore-lock`/deps update 的 `IgnoreAll` 同时抑制 config pin 复用 lock commit，保持“完全忽略锁”的语义（resolver 测试固定）。
+- 理由: 优先级与锁投影是构建、inspect、query、deps、`--locked` 的共同输入；两份实现会让命令之间静默不一致。native 的版本表选择仍由调用方完成（`repo.SelectNativeVersion` / `Pkg.SelectVersionMulti`），策略模块不接管版本表 I/O。
+- 涉及代码: `pkg/resolver/decision.go`, `pkg/resolver/resolver.go`, `pkg/pipeline/pipeline.go`, `pkg/pipeline/keys.go`, `pkg/pipeline/workspace.go`, `pkg/pipeline/lock_projection.go`, `pkg/pipeline/stage_source.go`。
+
+## DD-15: 全局 flags/links 显式传入，build key 不再读进程单例
+
+- 状态: accepted
+- 背景: `pipeline.aggregateGlobalFlags` 曾把项目 flags 写入 `toolchain.Manager` 的 project 字段，再立刻读回由 manager 合并后的 global+project 值；`build.GlobalFlagsHash()` 也读同一进程单例。构建键依赖隐式时序（插件注册、`SetProjectFlags`、哈希调用）且测试之间会泄漏状态。
+- 决策: `toolchain.Manager` 只保留 extension/toolchain 注册的全局 flags，新增 `ToolchainGlobalFlags()`；项目 flags 由 `pipeline.aggregateGlobalFlags` 显式合并为 `effective`，`build.HashGlobalFlags([4][]string)` 只哈希显式值，摘要算法与旧 `GlobalFlagsHash()` 逐字节一致（测试常量锁定）。`SetProjectFlags` 与读单例的旧函数删除。
+- 理由: 构建键的输入必须出现在调用链上，而不是藏在进程状态里；保持摘要兼容可避免已有 build 目录整体轮换。
+- 涉及代码: `pkg/toolchain/manager.go`, `pkg/build/key.go`, `pkg/pipeline/prelude.go`。
+
+## DD-16: 源物化结果由 SourceManager 回答
+
+- 状态: accepted
+- 背景: `sourceStage` 用 `sourceRequestReady` 重新实现 `EnsureSource` 的复用规则，仅为了决定 "Downloading package sources..." 横幅；规则漂移会让横幅说谎。
+- 决策: `SourceManager.reusableState` 是唯一复用判定；`EnsureSource` 与新增 `WouldMaterialize` 共用它。`SourceResult.Materialized` 报告本次是否真正物化/重建；`sourceRequestReady` 只调用 `WouldMaterialize`。
+- 理由: 预测与真实行为共享同一实现，新增 SourceRequest 字段不会漏掉第二份谓词。
+- 涉及代码: `pkg/repo/source.go`, `pkg/pipeline/stage_source.go`。
+
+## DD-17: 根与 needed 由单一 ComputeNeeded 计算
+
+- 状态: accepted
+- 背景: `computeReachable`/`computeRootSeeds`、`computeUnifiedRoots`、`inspectRootsFromEdges`、`test_cmd.validateTestProject` 各自实现根选择；多 `SetRoot`、`OnRequire` 启发式、config root local-only 与 `dependedOn` 范围在不同命令中不一致。
+- 决策: `pkg/pipeline/needed.go` 的 `computeNeededGraph`/`ComputeNeeded` 是构建 needed 的唯一实现；`prelude`、`convergeFilterAndDerivedOptions`、`config check`、`test` preflight 共享。报告用的 deps/inspect 根（包含 target 级 `AddDeps`/`UseRequires` 边）由 `RootsFromEdges` 统一；`inspectRoots` 只做视图转换。
+- 理由: 构建、inspect、query、test 对 "根" 的判断必须一致；报告图与 needed 图是两种视图，但各自只能有一份算法。
+- 涉及代码: `pkg/pipeline/needed.go`, `pkg/pipeline/keys.go`, `pkg/pipeline/stage_config.go`, `pkg/pipeline/depgraph.go`, `cmd/vmake/inspect_cmd.go`, `cmd/vmake/test_cmd.go`。
+
+## DD-18: 包激活只有一条路径
+
+- 状态: accepted
+- 背景: `DeclareTargets`（dry-run）与 `stage_declare.executeOnePackage`（真实构建）各自重复 `newBuildContext` → config lookup → platform → stubs → default flags → SetDirs/SetOptions/SetCfgVals/SetToolchain/SetPlatform/SetPackage → ExecBuildFuncs，差异（dry-run、stubs、config defines）靠隐式约定维持。
+- 决策: `pkg/pipeline/activation.go` 的 `ActivatePackage` 是唯一激活入口，`ActivationMode` 显式区分 build/declarative，`Configure` 回调安装各路径的 config lookup 与依赖回调；`DeclareTargets` 是 declarative 包装，`executeOnePackage` 使用 build 模式并仍负责 `applyBuildContextConfig`。`check-symbols` 在只读 `scriptfs` 作用域内声明 target，并把 blocked writes 作为 error finding 报告。
+- 理由: 新增 BuildContext setter 只需加在一处；dry-run 与真实构建的差异成为可审阅的 mode，而不是两份复制代码。
+- 涉及代码: `pkg/pipeline/activation.go`, `pkg/pipeline/pipeline.go`, `pkg/pipeline/stage_declare.go`, `cmd/vmake/check_symbols_cmd.go`。
+
+## DD-19: 包位置由单一 packageLocation 推导
+
+- 状态: accepted
+- 背景: 同一个包存在四套路径公式：`ExpectedPackageSourceDir`（实际源码树）、`effectiveSourceDir`（build.go/头文件基址）、`layoutFor` 的 `PkgRoot/src/member`、`preparePackageWorkspace`；再加上 `remoteTreeDir`/`PackageTreeKey`/`treeRootFor` 三种 tree 约定，inspect 与 build 可能给出不同答案。
+- 决策: `pkg/pipeline/location.go` 的 `packageLocation` 是唯一推导：`OwnerTreeRoot`（远程树容器）、`PackageRoot`（build.go/头文件基址）、`SourceTree`（实际源码树）、`ThirdPartyRoot`（linked native own-Git 成员）、`TreeRoot`（state/patch 树）。`ExpectedPackageSourceDir`、`effectiveSourceDir`、`treeRootFor`、`linkedThirdPartyRoot` 与 inspect 的远程分支都委托它。`SourceDir()` 与 `SrcDir()` 的差异（包根 vs 实际源码树）保持显式。
+- 理由: inspect、query、clean、build 共享一套路径语义；新增 own-Git/link 组合只改一处。
+- 涉及代码: `pkg/pipeline/location.go`, `pkg/pipeline/inspect.go`, `pkg/pipeline/source_link.go`, `pkg/pipeline/stage_source.go`, `pkg/pipeline/workspace.go`。
+
+## DD-20: 边界审计不再构造半个 Scheduler
+
+- 状态: accepted
+- 背景: `CheckExistingBuildBoundaries` 手工构造 `&Scheduler{graph,pkgs,packages,workspaceDirs,rootDir,canonCache}` 并调用 header 检查方法，依赖"这些方法只碰这几个字段"的未声明契约；新增字段会静默 nil panic，测试还要手工拼 15 个 Scheduler。
+- 决策: `pkg/build/audit.go` 的 `auditEnv`/`headerAuditor` 是边界审计的显式环境；`populateHeaderBoundaries`/`checkHeaderBoundaries`/`checkStaticSourceIncludes`/`checkTargetDeclaredPaths` 等方法挂在 `*headerAuditor` 上。`Scheduler` 持有 `auditor`（`auditorFor` 惰性构造以兼容直接构造的测试），`CheckExistingBuildBoundaries` 直接构造 auditor。
+- 理由: 审计需要的输入成为类型的一部分，不再随 Scheduler 字段增长而失效；cold/warm 审计路径仍由现有 boundary 测试覆盖。
+- 涉及代码: `pkg/build/audit.go`, `pkg/build/header_check.go`, `pkg/build/scheduler.go`, `pkg/build/scheduler_compile.go`, `pkg/build/scheduler_resolve.go`。
+
+## DD-21: 制品放置由单一 ArtifactPlacement 描述
+
+- 状态: accepted
+- 背景: 同一个产物路径在 `PkgInfo.OutputPath`、`ArtifactInstaller.getOutputPath`、`getTargetOutputPath` 以及 CLI 对 `PkgInstallInfo` 的重建中各算一次；安装子目录/文件名/PE import library 也分别从 `Target`、`TargetKind` 与 targetOS 推导。
+- 决策: `pkg/build/artifact.go` 的 `ArtifactPlacement` 是产物放置的唯一值：`OutputPath`、`ImportLib`、`StageLibDir`/`StageIncludeDir`、`InstallSubdir`/`InstallName`、`PostLinkOutputs`、`Kind`/`NoInstall`/`IsTest`。`Scheduler.placementFor` 生成它，`publishTarget` 直接消费；`Scheduler.placements` 经 `BuildJob.Run` 合并 additional scheduler 后，由 `BuildResult.TargetPlacements` 传给 CLI，`PkgInstallInfo.Placements` 供 `ArtifactInstaller` 消费 OutputPath/ImportLib/InstallSubdir/InstallName/PostLinkOutputs/NoInstall/IsTest。直接构造 `PkgInstallInfo` 的旧测试、同步 subgraph 与缺少 placement 的 target 仍走 fallback 路径。
+- 理由: 发布（per-package staging）与安装（prefix/filter）必须对"源产物、暂存位置、最终位置、import library"达成一致；三处推导会让 Windows import library 或自定义 InstallDir 漂移。
+- 涉及代码: `pkg/build/artifact.go`, `pkg/build/scheduler_publish.go`, `pkg/build/scheduler_link.go`, `pkg/build/install.go`, `pkg/pipeline/build_phase.go`, `cmd/vmake/build_install.go`。
+
+## DD-22: 依赖字符串只有一种解析
+
+- 状态: accepted
+- 背景: target 依赖字符串（裸 target、`pkg:target`、`pkg/sub:target`、`pkg:*`）在 graph 的 `resolveDep`/`resolveDirectDep`/`resolveDeclaredPkgs`/`resolveRawCrossPkg`、`subgraph.CollectSubGraphPackages` 和 `resolveDependencyLinkerScript` 中各写一遍，`strings.Cut`/`Contains("/")` 的判断已经出现轻微差异。
+- 决策: `pkg/build/depref.go:parseDependencyRef` 是唯一解析，返回 `Package`/`Target`/`HasTarget` 与 `packagePath()`；上述所有消费方改用它。遍历策略仍由各消费者保留（public attrs 闭包、linker-script 依赖、subgraph 可达性），但不再各自解释字符串。
+- 理由: 依赖语法的扩展（新的 target 形式、子包限定）只需要改一个解析器；遍历差异是业务差异，不应与语法解析混在一起。
+- 涉及代码: `pkg/build/depref.go`, `pkg/build/graph.go`, `pkg/build/subgraph.go`, `pkg/build/scheduler_resolve.go`。
+
+## DD-23: 命令会话拥有环境意图，锁策略只有一个来源
+
+- 状态: accepted
+- 背景: `openProject` 直接读包级全局 `ephemeralSetFlags`/`lockedFlag`/`offlineFlag`/`configFlag` 与 `commandStorageLocks`；每个命令各自拼 `LockPolicy` 字面量，`BuildOptions.Locked/Offline` 与 `ctx.LockPolicy` 两套载体在 `prepareSources`/`newSourceStage`/`deps fetch` 中各有分支。
+- 决策: `cmd/vmake/session.go` 的 `commandSession` 在 `PersistentPreRun` 捕获 `--set`/`--locked`/`--offline`/`--config` 与 storage 生命周期；`openProject` 只消费会话，不再直接读这些全局。`openProject` 在 `Require` 前把会话 flag 与调用方 policy 写入 `ctx.LockPolicy`，`RunBuild` 只消费 policy，不再做字段归一；`newSourceStage`/`prepareSources` 以 stage 的 `locked/offline`（由 policy 派生）为准，`prepareSources` 不再单独看 `opts.Locked`。
+- 理由: 环境意图与锁策略是跨命令不变量，散落在命令与全局变量里会漏掉某个入口；会话对象让新增命令只需要一个入口。
+- 涉及代码: `cmd/vmake/session.go`, `cmd/vmake/root.go`, `cmd/vmake/project.go`, `pkg/pipeline/build_phase.go`。
+
+## DD-24: 锁策略只有 LockPolicy 一个载体
+
+- 状态: accepted
+- 背景: `RuntimeContext.IgnoreLock` 与 `LockPolicy.IgnoreAll` 表达同一件事；`BuildOptions.Locked/Offline` 与 `LockPolicy.Locked/Offline` 又是两套载体，`prepareSources` 单独看 `opts.Locked`，`newSourceStage` 做 OR，`deps fetch` 直接写 `src.locked`。
+- 决策: 对外输入 `ResolveParams.IgnoreLock` 保留兼容，但只在 `NewContext` 翻译为 `LockPolicy.IgnoreAll`；`RuntimeContext` 不再有 `IgnoreLock`。`BuildOptions` 删除 `Locked/Offline`；`RunBuild` 不再做字段归一。`newSourceStage` 的 `locked/offline` 只从 `effectiveLockPolicy()` 派生，`prepareSources` 以 `src.locked` 为准。`openProject` 在覆盖调用方 policy 后重新应用 `IgnoreAll`。
+- 理由: 锁策略是构建/`--locked`/`--offline`/deps 的共同输入；多一个载体就多一个优先级分支。
+- 涉及代码: `pkg/pipeline/pipeline.go`, `pkg/pipeline/phases.go`, `pkg/pipeline/build_phase.go`, `cmd/vmake/project.go`, `cmd/vmake/build_cmd.go`, `cmd/vmake/rebuild.go`, `cmd/vmake/test_cmd.go`。
+
+## DD-25: 阶段结果类型与单次提交
+
+- 状态: accepted
+- 背景: `Require`/`Configure`/`prepareBuild` 直接写 `RuntimeContext` 的解析/配置/准备字段，阶段之间共享可变 map，调用方无法区分"第几代"的 `DerivedOptions`/`AllOptions`，配置阶段中途失败还会留下半写完的状态。
+- 决策: `pkg/pipeline/state_types.go` 定义 `Invocation`（alias）、`Resolution`、`Configuration`、`Preparation`。`Require` 在结尾通过 `applyResolution` 一次提交解析结果；`Configure` 在 `RuntimeContext` 浅拷贝（`Config` 另做容器副本）上执行 `runConfigPhase`，成功后用 `applyConfiguration` 提交配置结果并写回 `Config`，失败不覆盖调用方字段；package 对象仍是共享状态，失败后由调用方丢弃上下文。`prepareBuild` 在结尾通过 `applyPreparation` 记录 needed/effective flags。`RuntimeContext.Resolution()` 返回活的 resolver/graph（调用方只读）；`Configuration()`/`Preparation()` 复制容器 map、slice 与 buffered flag slice，但 `*api.Option`/`*api.KConfigEntry` 定义对象仍按共享只读值处理，调用方不得修改。`prepareBuild` 的 derived-option 再计算显式视为 Configuration 的第二代，并在结束时刷新快照。
+- 理由: 阶段边界可审阅，读模型不可被调用方篡改；配置阶段具备事务性边界。完整替换 `RuntimeContext` 字段为嵌套值对象会破坏大量 cmd/测试复合字面量，因此保留字段作为兼容门面，由结果类型承担不变量。
+- 涉及代码: `pkg/pipeline/state_types.go`, `pkg/pipeline/phases.go`, `pkg/pipeline/prelude.go`, `pkg/pipeline/pipeline.go`, `pkg/pipeline/run_build_e2e_test.go`。
+
 ## 已知限制 / 待议
 
 以下问题已被识别但尚未决策，修改前需单独讨论：

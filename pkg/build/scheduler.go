@@ -20,18 +20,18 @@ const (
 )
 
 type ResolvedTarget struct {
-	Node          *BuildNode
-	SourceFiles   []string
-	AllIncludes   []string
-	AllDefines    []string
-	AllCFlags     []string
-	AllCxxFlags   []string
-	AllLdFlags    []string
-	AllLinks      []string
-	DepArtifacts  []string
-	OutputPath    string
-	VersionScript string
-	LinkerScript  string
+	Node                        *BuildNode
+	SourceFiles                 []string
+	AllIncludes                 []string
+	AllDefines                  []string
+	AllCFlags                   []string
+	AllCxxFlags                 []string
+	AllLdFlags                  []string
+	AllLinks                    []string
+	DepArtifacts                []string
+	OutputPath                  string
+	VersionScript               string
+	LinkerScript                string
 	ExcludeLibs                 []string
 	SymbolBinding               string
 	AllowedPublicIncludes       []allowedInclude
@@ -104,8 +104,9 @@ type Scheduler struct {
 	stats         *BuildStats
 	canonCache    *pathCanonCache
 
-	headerOwnersOnce sync.Once
-	headerOwners     *headerOwnerIndex
+	auditor    *headerAuditor
+	auditorMu  sync.Mutex
+	placements map[string]ArtifactPlacement
 
 	buildTargetFn  func(string) error
 	globalCFlags   []string
@@ -144,7 +145,6 @@ func newScheduler(cfg schedulerConfig) *Scheduler {
 	compiler := NewCompiler(cfg.Tools)
 	linker := NewLinker(cfg.Tools)
 	linker.run = gnuRunnerContext(cfg.Context, cfg.Tools.env)
-	manager := toolchain.GetManager()
 	packages := cfg.Packages
 	if packages == nil {
 		packages = make(map[string]*api.Package)
@@ -173,20 +173,17 @@ func newScheduler(cfg schedulerConfig) *Scheduler {
 		hashes:        newFileHashCache(),
 		stats:         cfg.Stats,
 		canonCache:    newPathCanonCache(),
+		placements:    make(map[string]ArtifactPlacement),
 	}
 	if s.stats == nil {
 		s.stats = NewBuildStats()
 	}
+	s.auditorFor()
 	if cfg.GlobalFlags != nil {
 		s.globalCFlags = append([]string{}, cfg.GlobalFlags[0]...)
 		s.globalCxxFlags = append([]string{}, cfg.GlobalFlags[1]...)
 		s.globalLdFlags = append([]string{}, cfg.GlobalFlags[2]...)
 		s.globalLinks = append([]string{}, cfg.GlobalFlags[3]...)
-	} else {
-		s.globalCFlags = append([]string{}, manager.GetGlobalCFlags()...)
-		s.globalCxxFlags = append([]string{}, manager.GetGlobalCxxFlags()...)
-		s.globalLdFlags = append([]string{}, manager.GetGlobalLdFlags()...)
-		s.globalLinks = append([]string{}, manager.GetGlobalLinks()...)
 	}
 
 	for pkgName, layout := range cfg.Layouts {
@@ -200,6 +197,30 @@ func newScheduler(cfg schedulerConfig) *Scheduler {
 	}
 
 	return s
+}
+
+func (s *Scheduler) recordPlacement(name string, placement ArtifactPlacement) {
+	if s.placements == nil {
+		s.placements = make(map[string]ArtifactPlacement)
+	}
+	s.placements[name] = placement
+}
+
+func (s *Scheduler) auditorFor() *headerAuditor {
+	s.auditorMu.Lock()
+	defer s.auditorMu.Unlock()
+	env := auditEnv{
+		graph:         s.graph,
+		pkgs:          s.pkgs,
+		packages:      s.packages,
+		workspaceDirs: s.workspaceDirs,
+		rootDir:       s.rootDir,
+		canonCache:    s.canonCache,
+	}
+	if s.auditor == nil || s.auditor.graph != env.graph || s.auditor.rootDir != env.rootDir {
+		s.auditor = newHeaderAuditor(env)
+	}
+	return s.auditor
 }
 
 func (s *Scheduler) Stats() *BuildStats {

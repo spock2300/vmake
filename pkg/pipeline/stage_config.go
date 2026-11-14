@@ -74,10 +74,11 @@ func resolveNeeded(ctx *RuntimeContext, logFilter, freeze, validate bool) (map[s
 		ctx.DepGraph.Freeze()
 	}
 
-	needed, err := computeReachable(ctx.DepGraph, rootOverride)
+	neededSet, err := computeNeededGraph(ctx.DepGraph, rootOverride)
 	if err != nil {
 		return nil, err
 	}
+	needed := neededSet.Set
 	if validate {
 		if err := validateNeededSubPackageOwners(needed, ctx.Resolver.SubParents()); err != nil {
 			return nil, err
@@ -130,31 +131,14 @@ func convergeFilterAndDerivedOptions(ctx *RuntimeContext, rootOverride string, l
 	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
 	subParents := ctx.Resolver.SubParents()
 
-	roots, err := computeRootSeeds(ctx.DepGraph, rootOverride)
+	initial, err := computeNeededGraph(ctx.DepGraph, rootOverride)
 	if err != nil {
 		return err
 	}
-	if len(roots) == 0 {
+	if len(initial.Roots) == 0 {
 		return ctx.Resolver.UpdateOrder()
 	}
-
-	reachable := make(map[string]bool, len(ctx.DepGraph.Packages))
-	queue := append([]string(nil), roots...)
-	for _, r := range roots {
-		reachable[r] = true
-	}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		if node := ctx.DepGraph.Packages[cur]; node != nil {
-			for _, dep := range node.Deps {
-				if !reachable[dep] {
-					reachable[dep] = true
-					queue = append(queue, dep)
-				}
-			}
-		}
-	}
+	reachable := initial.Set
 
 	inDegree := make(map[string]int, len(reachable))
 	for name := range reachable {
@@ -212,10 +196,11 @@ func convergeFilterAndDerivedOptions(ctx *RuntimeContext, rootOverride string, l
 				}
 			}
 
-			stillReachable, err := computeReachable(ctx.DepGraph, rootOverride)
+			still, err := computeNeededGraph(ctx.DepGraph, rootOverride)
 			if err != nil {
 				return err
 			}
+			stillReachable := still.Set
 			for cand := range reachable {
 				if !stillReachable[cand] && !processed[cand] {
 					delete(reachable, cand)

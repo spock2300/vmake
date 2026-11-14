@@ -2,13 +2,10 @@ package build
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/spock2300/vmake/internal/fs"
 )
 
 type cmdRunner func(name, dir string, args ...string) ([]byte, error)
@@ -60,48 +57,20 @@ func (c *Compiler) CompileContext(ctx context.Context, src, objPath string, opts
 	return compiler.compile(src, objPath, opts, workDir)
 }
 
+func (c *Compiler) ExecutePlanContext(ctx context.Context, plan compilePlan, src, objPath, workDir string) ([]string, error) {
+	compiler := *c
+	if compiler.run == nil {
+		compiler.run = gnuRunnerContext(ctx, c.env)
+	}
+	return compiler.executeCompilePlan(plan, src, objPath, workDir)
+}
+
 func (c *Compiler) compile(src, objPath string, opts *CompileOptions, workDir string) (deps []string, err error) {
-	if err := fs.EnsureDir(filepath.Dir(resolveWorkPath(workDir, objPath))); err != nil {
-		return nil, err
-	}
-
-	depPath := objPath + ".d"
-	defer func() {
-		if err != nil {
-			err = errors.Join(err, removeCompileFiles(workDir, objPath, depPath, depPath+".as", strings.TrimSuffix(objPath, filepath.Ext(objPath))+".s"))
-		}
-	}()
-
-	compiler, flags := selectCompilerAndFlags(c.ccPath, c.cxxPath, opts.CFlags, opts.CxxFlags, opts)
-	commandOpts := *opts
-	commandOpts.clang = c.clangCC
-	if commandOpts.clang && (opts.Language == "asm" || opts.Language == "asm-cpp") {
-		return c.compileClangAssembly(src, objPath, &commandOpts, flags, workDir)
-	}
-
-	args := compileArgs(&commandOpts, objPath, src, flags, depPath, workDir)
-
-	_, err = c.run(compiler, workDir, args...)
+	plan, err := c.planCompile(src, objPath, opts, workDir)
 	if err != nil {
 		return nil, err
 	}
-
-	if opts.Language == "asm" || opts.Language == "asm-cpp" {
-		depFiles := []string{depPath}
-		intermediate := ""
-		if opts.Language == "asm-cpp" {
-			depFiles = append(depFiles, depPath+".as")
-			intermediate = strings.TrimSuffix(objPath, filepath.Ext(objPath)) + ".s"
-		}
-		return mergeAssemblyDeps(src, objPath, depPath, workDir, intermediate, depFiles...)
-	}
-
-	deps, err = ParseDepFile(resolveWorkPath(workDir, depPath))
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse dep file: %w", err)
-	}
-
-	return deps, nil
+	return c.executeCompilePlan(plan, src, objPath, workDir)
 }
 
 // ParseDepFile parses a gcc/clang -MD style depfile: a "target: deps..."

@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 
 	"github.com/spock2300/vmake/internal/jsonio"
@@ -27,6 +28,31 @@ type EntryConfig struct {
 	Options        map[string]any `json:"options,omitempty"`
 	KConfig        string         `json:"kconfig,omitempty"`
 	SelectedPreset string         `json:"selected_preset,omitempty"`
+}
+
+// Clone copies the configuration containers so a phase can mutate option
+// values without changing the caller's snapshot until it commits.
+func (c *ConfigFile) Clone() *ConfigFile {
+	if c == nil {
+		return nil
+	}
+	out := *c
+	if c.Global != nil {
+		global := *c.Global
+		global.Options = maps.Clone(c.Global.Options)
+		out.Global = &global
+	}
+	out.Entries = make(map[string]*EntryConfig, len(c.Entries))
+	for name, entry := range c.Entries {
+		if entry == nil {
+			out.Entries[name] = nil
+			continue
+		}
+		cloned := *entry
+		cloned.Options = maps.Clone(entry.Options)
+		out.Entries[name] = &cloned
+	}
+	return &out
 }
 
 func newConfigFile() *ConfigFile {

@@ -114,68 +114,60 @@ func (s *Scheduler) compileSourceContext(ctx context.Context, resolved *Resolved
 		Language: sourceLanguage(src),
 		clang:    s.compiler.clangCC,
 	}
-	s.ccWriter.AddCommand(workDir, src, objRel, opts)
-	compilerPath, flags := selectCompilerAndFlags(s.compiler.ccPath, s.compiler.cxxPath, opts.CFlags, opts.CxxFlags, opts)
+	planner := *s.compiler
+	planner.targetOS = s.targetOS(resolved.Node.PkgName)
+	plan, err := planner.planCompile(src, objRel, opts, workDir)
+	if err != nil {
+		return "", nil, err
+	}
+	s.ccWriter.AddSpec(workDir, src, plan.Display)
+
 	env, err := environmentSignature(s.compiler.env)
 	if err != nil {
 		return "", nil, err
 	}
-	signature, err := digestValue(struct {
-		Version     int
-		Target      string
-		WorkDir     string
-		TargetOS    string
-		Tools       string
-		Environment string
-		Command     commandSpec
-	}{actionRecordVersion, resolved.Node.FullName, workDir, s.targetOS(resolved.Node.PkgName), s.toolIdentity(), env, commandSpec{Program: compilerPath, Args: compileArgs(opts, objRel, src, flags, objRel+".d", workDir)}})
-	if err != nil {
-		return "", nil, err
+	deps, depErr := ParseDepFile(resolveWorkPath(workDir, plan.DepPath))
+	action := &plannedAction{
+		Kind:         "compile",
+		Subject:      src,
+		Target:       resolved.Node.FullName,
+		WorkDir:      workDir,
+		TargetOS:     s.targetOS(resolved.Node.PkgName),
+		Tools:        s.toolIdentity(),
+		Environment:  env,
+		Commands:     plan.Commands,
+		Inputs:       append([]string{src}, deps...),
+		RecordInputs: []string{src},
+		Outputs:      plan.Outputs,
+		RecordPath:   resolveWorkPath(workDir, objRel+".vmake.json"),
+		Force:        depErr != nil,
+		ForceReason:  "depfile missing or unreadable",
 	}
-	recordPath := resolveWorkPath(workDir, objRel+".vmake.json")
-	deps, depErr := ParseDepFile(resolveWorkPath(workDir, objRel+".d"))
-	inputs := append([]string{src}, deps...)
-	outputs := []string{objRel, objRel + ".d"}
-	decision := checkAction(s.hashes, recordPath, signature, workDir, inputs, outputs)
-	if depErr != nil && decision.UpToDate {
-		decision = actionDecision{Reason: "depfile missing or unreadable"}
-	}
-	if decision.UpToDate {
-		if err := s.checkHeaderBoundaries(resolved, src, deps); err != nil {
-			return "", nil, err
-		}
+	upToDate, postInputs, err := s.runPlannedAction(ctx, action, func(ctx context.Context) ([]string, error) {
 		if s.stats != nil {
-			s.stats.RecordUpToDate()
+			s.stats.RecordCompile(resolved.Node.FullName, src)
 		}
-		return objRel, deps, nil
-	}
-	if s.explain {
-		vlog.Info("  EXPLAIN %s: %s", src, decision.Reason)
-	}
-	if err := invalidateActionRecord(recordPath); err != nil {
-		return "", nil, err
-	}
-	if err := ctx.Err(); err != nil {
-		return "", nil, err
-	}
-	if s.stats != nil {
-		s.stats.RecordCompile(resolved.Node.FullName, src)
-	}
-	vlog.Info("  CC %s", src)
-	compiler := *s.compiler
-	compiler.targetOS = s.targetOS(resolved.Node.PkgName)
-	deps, err = compiler.CompileContext(ctx, src, objRel, opts, workDir)
+		vlog.Info("  CC %s", src)
+		compiler := *s.compiler
+		compiler.targetOS = s.targetOS(resolved.Node.PkgName)
+		deps, err := compiler.ExecutePlanContext(ctx, plan, src, objRel, workDir)
+		if err != nil {
+			return nil, err
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, errors.Join(err, removeCompileFiles(workDir, objRel, objRel+".d"))
+		}
+		return deps, nil
+	})
 	if err != nil {
 		return "", nil, err
 	}
-	if err := ctx.Err(); err != nil {
-		return "", nil, errors.Join(err, removeCompileFiles(workDir, objRel, objRel+".d"))
+	checkDeps := postInputs
+	if upToDate {
+		checkDeps = deps
 	}
-	if err := s.checkHeaderBoundaries(resolved, src, deps); err != nil {
+	if err := s.auditorFor().checkHeaderBoundaries(resolved, src, checkDeps); err != nil {
 		return "", nil, err
 	}
-	if err := saveActionRecord(s.hashes, recordPath, signature, workDir, append([]string{src}, deps...), outputs); err != nil {
-		return "", nil, err
-	}
-	return objRel, deps, nil
+	return objRel, checkDeps, nil
 }

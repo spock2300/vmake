@@ -237,8 +237,8 @@ func validatePackageGraph(
 			depPkg := resolver.resolveRawCrossPkg(node.PkgName, rawDep)
 			if depPkg != "" && depPkg != node.PkgName {
 				reasonTarget := depPkg
-				if _, targetSpec, hasColon := strings.Cut(rawDep, ":"); hasColon && targetSpec != "" && targetSpec != "*" {
-					reasonTarget = depPkg + ":" + targetSpec
+				if ref := parseDependencyRef(rawDep); ref.HasTarget && ref.Target != "" && ref.Target != "*" {
+					reasonTarget = depPkg + ":" + ref.Target
 				}
 				if err := addEdge(node.PkgName, depPkg, fmt.Sprintf("%s -> %s", node.FullName, reasonTarget)); err != nil {
 					return err
@@ -278,8 +278,8 @@ type depResolver struct {
 func newDepResolver(nodes map[string]*BuildNode, pkgMeta map[string]PkgBuildMeta, subParents map[string]string) *depResolver {
 	pkgTargets := make(map[string][]string)
 	for fullName := range nodes {
-		if pkg, _, ok := strings.Cut(fullName, ":"); ok {
-			pkgTargets[pkg] = append(pkgTargets[pkg], fullName)
+		if ref := parseDependencyRef(fullName); ref.HasTarget {
+			pkgTargets[ref.Package] = append(pkgTargets[ref.Package], fullName)
 		}
 	}
 	for _, names := range pkgTargets {
@@ -318,10 +318,10 @@ func (d *depResolver) resolveDeclaredPkgs(deps []string, currentPkg string) []st
 		}
 	}
 	for _, dep := range deps {
-		if strings.Contains(dep, ":") {
-			pkgRef, targetSpec, _ := strings.Cut(dep, ":")
-			resolvedPkg := d.resolveDepPkgName(currentPkg, pkgRef)
-			if targetSpec == "*" {
+		ref := parseDependencyRef(dep)
+		if ref.HasTarget {
+			resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package)
+			if ref.Target == "*" {
 				addTransitive(resolvedPkg)
 			} else if resolvedPkg != "" && resolvedPkg != currentPkg && !seen[resolvedPkg] {
 				seen[resolvedPkg] = true
@@ -329,14 +329,14 @@ func (d *depResolver) resolveDeclaredPkgs(deps []string, currentPkg string) []st
 			}
 			continue
 		}
-		if strings.Contains(dep, "/") {
-			addTransitive(dep)
+		if ref.packagePath() {
+			addTransitive(ref.Package)
 			continue
 		}
-		if _, exists := d.nodes[currentPkg+":"+dep]; exists {
+		if _, exists := d.nodes[currentPkg+":"+ref.Package]; exists {
 			continue
 		}
-		if resolvedPkg := d.resolveDepPkgName(currentPkg, dep); resolvedPkg != currentPkg && d.hasPkg(resolvedPkg) {
+		if resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package); resolvedPkg != currentPkg && d.hasPkg(resolvedPkg) {
 			addTransitive(resolvedPkg)
 		}
 	}
@@ -344,17 +344,17 @@ func (d *depResolver) resolveDeclaredPkgs(deps []string, currentPkg string) []st
 }
 
 func (d *depResolver) resolveRawCrossPkg(currentPkg, dep string) string {
-	if strings.Contains(dep, ":") {
-		pkgRef, _, _ := strings.Cut(dep, ":")
-		return d.resolveDepPkgName(currentPkg, pkgRef)
+	ref := parseDependencyRef(dep)
+	if ref.HasTarget {
+		return d.resolveDepPkgName(currentPkg, ref.Package)
 	}
-	if strings.Contains(dep, "/") {
-		return dep
+	if ref.packagePath() {
+		return ref.Package
 	}
-	if _, exists := d.nodes[currentPkg+":"+dep]; exists {
+	if _, exists := d.nodes[currentPkg+":"+ref.Package]; exists {
 		return ""
 	}
-	if resolvedPkg := d.resolveDepPkgName(currentPkg, dep); resolvedPkg != currentPkg {
+	if resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package); resolvedPkg != currentPkg {
 		if d.hasPkg(resolvedPkg) {
 			return resolvedPkg
 		}
@@ -401,29 +401,29 @@ func (d *depResolver) resolveDirectDeps(deps []string, currentPkg string, path [
 }
 
 func (d *depResolver) resolveDep(dep string, currentPkg string, path []string) ([]string, error) {
-	if strings.Contains(dep, ":") {
-		pkgRef, targetSpec, _ := strings.Cut(dep, ":")
-		resolvedPkg := d.resolveDepPkgName(currentPkg, pkgRef)
-		if targetSpec == "*" {
+	ref := parseDependencyRef(dep)
+	if ref.HasTarget {
+		resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package)
+		if ref.Target == "*" {
 			return d.resolvePackageRef(resolvedPkg, path)
 		}
-		fullDep := resolvedPkg + ":" + targetSpec
+		fullDep := resolvedPkg + ":" + ref.Target
 		if _, exists := d.nodes[fullDep]; !exists {
-			hint := subPackageHint(currentPkg, pkgRef, resolvedPkg, d.subParents)
+			hint := subPackageHint(currentPkg, ref.Package, resolvedPkg, d.subParents)
 			return nil, fmt.Errorf("dependency not found: %s (resolved: %s)%s", dep, fullDep, hint)
 		}
 		return []string{fullDep}, nil
 	}
 
-	if strings.Contains(dep, "/") {
-		return d.resolvePackageRef(dep, path)
+	if ref.packagePath() {
+		return d.resolvePackageRef(ref.Package, path)
 	}
 
-	qualified := currentPkg + ":" + dep
+	qualified := currentPkg + ":" + ref.Package
 	if _, exists := d.nodes[qualified]; exists {
 		return []string{qualified}, nil
 	}
-	if resolvedPkg := d.resolveDepPkgName(currentPkg, dep); resolvedPkg != currentPkg {
+	if resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package); resolvedPkg != currentPkg {
 		if d.hasPkg(resolvedPkg) {
 			return d.resolvePackageRef(resolvedPkg, path)
 		}
@@ -432,24 +432,24 @@ func (d *depResolver) resolveDep(dep string, currentPkg string, path []string) (
 }
 
 func (d *depResolver) resolveDirectDep(dep string, currentPkg string, path []string) ([]string, error) {
-	if strings.Contains(dep, ":") {
-		pkgRef, targetSpec, _ := strings.Cut(dep, ":")
-		resolvedPkg := d.resolveDepPkgName(currentPkg, pkgRef)
-		if targetSpec == "*" {
+	ref := parseDependencyRef(dep)
+	if ref.HasTarget {
+		resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package)
+		if ref.Target == "*" {
 			return d.resolveDirectPackageRef(resolvedPkg, path)
 		}
-		return []string{resolvedPkg + ":" + targetSpec}, nil
+		return []string{resolvedPkg + ":" + ref.Target}, nil
 	}
 
-	if strings.Contains(dep, "/") {
-		return d.resolveDirectPackageRef(dep, path)
+	if ref.packagePath() {
+		return d.resolveDirectPackageRef(ref.Package, path)
 	}
 
-	qualified := currentPkg + ":" + dep
+	qualified := currentPkg + ":" + ref.Package
 	if _, exists := d.nodes[qualified]; exists {
 		return []string{qualified}, nil
 	}
-	if resolvedPkg := d.resolveDepPkgName(currentPkg, dep); resolvedPkg != currentPkg {
+	if resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package); resolvedPkg != currentPkg {
 		if d.hasPkg(resolvedPkg) {
 			return d.resolveDirectPackageRef(resolvedPkg, path)
 		}

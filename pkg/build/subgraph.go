@@ -2,7 +2,6 @@ package build
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/spock2300/vmake/pkg/api"
 	vlog "github.com/spock2300/vmake/pkg/log"
@@ -44,9 +43,10 @@ func CollectSubGraphPackages(rootPkg string, pkgMeta map[string]PkgBuildMeta, al
 		}
 		for _, t := range targets {
 			for _, dep := range t.Deps() {
-				depPkg, _, qualified := strings.Cut(dep, ":")
-				if !qualified {
-					if !strings.Contains(depPkg, "/") {
+				ref := parseDependencyRef(dep)
+				depPkg := ref.Package
+				if !ref.HasTarget {
+					if !ref.packagePath() {
 						if targets[depPkg] != nil {
 							continue
 						}

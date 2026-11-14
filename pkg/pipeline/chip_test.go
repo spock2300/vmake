@@ -281,6 +281,9 @@ func TestResolveActiveChipForDisplayUsesSelectedProfile(t *testing.T) {
 	if ctx.PreferredToolchain != tc || ctx.ChipProfile.Name != "chip-a" {
 		t.Fatalf("display profile = %+v / %q", ctx.ChipProfile, ctx.PreferredToolchain)
 	}
+	if got := ctx.Configuration().ChipProfile.Name; got != "chip-a" {
+		t.Fatalf("display profile was not committed to the configuration snapshot: %q", got)
+	}
 }
 
 func TestProjectPlatformUsesChipProfileDefaults(t *testing.T) {

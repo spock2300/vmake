@@ -20,10 +20,6 @@ type Manager struct {
 	globalCxxFlags   []string
 	globalLdFlags    []string
 	globalLinks      []string
-	projectCFlags    []string
-	projectCxxFlags  []string
-	projectLdFlags   []string
-	projectLinks     []string
 	mu               sync.RWMutex
 }
 
@@ -190,19 +186,19 @@ func (m *Manager) AddGlobalLdFlags(flags ...string) {
 func (m *Manager) GetGlobalCFlags() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return append(append([]string{}, m.globalCFlags...), m.projectCFlags...)
+	return append([]string{}, m.globalCFlags...)
 }
 
 func (m *Manager) GetGlobalCxxFlags() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return append(append([]string{}, m.globalCxxFlags...), m.projectCxxFlags...)
+	return append([]string{}, m.globalCxxFlags...)
 }
 
 func (m *Manager) GetGlobalLdFlags() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return append(append([]string{}, m.globalLdFlags...), m.projectLdFlags...)
+	return append([]string{}, m.globalLdFlags...)
 }
 
 func (m *Manager) AddGlobalLinks(links ...string) {
@@ -218,16 +214,21 @@ func (m *Manager) AddGlobalLinks(links ...string) {
 func (m *Manager) GetGlobalLinks() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return append(append([]string{}, m.globalLinks...), m.projectLinks...)
+	return append([]string{}, m.globalLinks...)
 }
 
-func (m *Manager) SetProjectFlags(cflags, cxxflags, ldflags, links []string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.projectCFlags = append([]string{}, cflags...)
-	m.projectCxxFlags = append([]string{}, cxxflags...)
-	m.projectLdFlags = append([]string{}, ldflags...)
-	m.projectLinks = append([]string{}, links...)
+// ToolchainGlobalFlags returns the flags and links contributed by registered
+// toolchains/extensions, grouped as C, C++, linker flags and links. Project
+// flags are not stored on the manager and must be combined by the caller.
+func (m *Manager) ToolchainGlobalFlags() [4][]string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return [4][]string{
+		append([]string{}, m.globalCFlags...),
+		append([]string{}, m.globalCxxFlags...),
+		append([]string{}, m.globalLdFlags...),
+		append([]string{}, m.globalLinks...),
+	}
 }
 
 func (m *Manager) ResolveToolPath(tc *Toolchain, tool string) (string, error) {

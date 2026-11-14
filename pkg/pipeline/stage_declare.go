@@ -84,40 +84,29 @@ func (s *declareStage) executeOnePackage(name string, node *resolver.PackageNode
 	if err != nil {
 		return err
 	}
-	buildCtx, err := newBuildContext(s.rc.ctx, name, bound.values)
-	if err != nil {
-		return err
-	}
 	lookupBase := s.scopeValues
 	if lookupBase == nil {
 		lookupBase = s.rc.cfg.GlobalValues
 	}
-	buildCtx.SetConfigLookup(newConfigLookup(s.rc.ctx, name, lookupBase, func(pkg string) (map[string]any, bool) {
-		binding := s.bindings[pkg]
-		if binding == nil {
-			return nil, false
-		}
-		return binding.values, true
-	}))
-	platform := platformFromValues(buildCtx.CfgVals)
-	buildCtx.SetBuildSubGraphFunc(func(pkgName string) error { return s.buildSubGraph(name, pkgName) })
-	buildCtx.SetDepOutputFunc(func(depRef string) string { return s.computeDepOutput(name, depRef) })
-	buildCtx.SetDepSrcDirFunc(func(depRef string) string { return s.computeDepSrcDir(name, depRef) })
-	buildCtx.SetDepPackageDirFunc(func(depRef string) string { return s.computeDepPackageDir(name, depRef) })
-	flags := api.DefaultBuildFlags(bound.toolchain.Name, platform.OSOrHost())
-	buildCtx.SetDefaultFlags(flags.CFlags, flags.CxxFlags, flags.LdFlags)
-	pkg := node.Pkg
-	allOpts := s.rc.ctx.AllOptions[name]
-	if allOpts == nil {
-		allOpts = pkg.GetOptions()
+	buildCtx, err := ActivatePackage(s.rc.ctx, name, *s.source.pkgDirs[name], bound.toolchain, bound.values, ActivationOptions{
+		Mode: ActivationBuild,
+		Configure: func(buildCtx *api.BuildContext) {
+			buildCtx.SetConfigLookup(newConfigLookup(s.rc.ctx, name, lookupBase, func(pkg string) (map[string]any, bool) {
+				binding := s.bindings[pkg]
+				if binding == nil {
+					return nil, false
+				}
+				return binding.values, true
+			}))
+			buildCtx.SetBuildSubGraphFunc(func(pkgName string) error { return s.buildSubGraph(name, pkgName) })
+			buildCtx.SetDepOutputFunc(func(depRef string) string { return s.computeDepOutput(name, depRef) })
+			buildCtx.SetDepSrcDirFunc(func(depRef string) string { return s.computeDepSrcDir(name, depRef) })
+			buildCtx.SetDepPackageDirFunc(func(depRef string) string { return s.computeDepPackageDir(name, depRef) })
+		},
+	})
+	if err != nil {
+		return err
 	}
-	pkg.SetDirs(*s.source.pkgDirs[name])
-	pkg.SetOptions(mergedPackageAndGlobalOptions(allOpts, visibleGlobalOptionsFor(node, allOpts, s.rc.ctx.GlobalOptions)))
-	pkg.SetCfgVals(maps.Clone(buildCtx.CfgVals))
-	pkg.SetToolchain(bound.toolchain)
-	pkg.SetPlatform(platform)
-	buildCtx.SetPackage(pkg)
-	pkg.ExecBuildFuncs(s.source.pkgDirs[name].SourceDir, func(fn api.BuildFunc) { fn(buildCtx) })
 	applyBuildContextConfig(buildCtx, node, s.rc.ctx, name, s.conf.needed)
 	targets := make(map[string]*api.Target)
 	for targetName, target := range buildCtx.GetTargets() {

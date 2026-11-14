@@ -46,7 +46,6 @@ type RuntimeContext struct {
 	GlobalMacroDefines  []string
 	Lock                *lockfile.Lock
 	LockPath            string
-	IgnoreLock          bool
 	LockPolicy          resolver.LockPolicy
 	Pins                map[string]string
 	SourceLinks         map[string]string
@@ -56,6 +55,10 @@ type RuntimeContext struct {
 	ModeOverride       string
 	ToolchainOverride  string
 	OnOptionsCollected func(*RuntimeContext) error
+
+	resolution    Resolution
+	configuration Configuration
+	preparation   Preparation
 }
 
 type packageGlobalFlags struct {
@@ -125,14 +128,13 @@ type ResolveParams struct {
 }
 
 func NewContext(p ResolveParams) *RuntimeContext {
-	return &RuntimeContext{
+	ctx := &RuntimeContext{
 		WorkDir:           p.WorkDir,
 		ConfigPath:        p.ConfigPath,
 		ConfigDigest:      p.ConfigDigest,
 		Config:            p.Config,
 		Lock:              p.Lock,
 		LockPath:          p.LockPath,
-		IgnoreLock:        p.IgnoreLock,
 		LockPolicy:        p.LockPolicy,
 		Pins:              p.Pins,
 		SourceLinks:       p.SourceLinks,
@@ -141,64 +143,36 @@ func NewContext(p ResolveParams) *RuntimeContext {
 		ModeOverride:      p.ModeOverride,
 		ToolchainOverride: p.ToolchainOverride,
 	}
+	if p.IgnoreLock {
+		ctx.LockPolicy.IgnoreAll = true
+	}
+	return ctx
 }
 
 func (ctx *RuntimeContext) effectiveLockPolicy() resolver.LockPolicy {
 	if ctx == nil {
 		return resolver.LockPolicy{}
 	}
-	p := ctx.LockPolicy
-	if ctx.IgnoreLock {
-		p.IgnoreAll = true
+	return ctx.LockPolicy
+}
+
+func (ctx *RuntimeContext) lockQuery() resolver.LockQuery {
+	if ctx == nil {
+		return resolver.LockQuery{}
 	}
-	return p
+	return resolver.LockQuery{Policy: ctx.effectiveLockPolicy(), Pins: ctx.Pins, Lock: ctx.Lock}
 }
 
 func (ctx *RuntimeContext) packagePin(name string) (target string, fromTarget bool, ok bool) {
-	if ctx == nil {
-		return "", false, false
-	}
-	if ctx.LockPolicy.Targets != nil {
-		if t := strings.TrimSpace(ctx.LockPolicy.Targets[name]); t != "" {
-			return t, true, true
-		}
-	}
-	if ctx.LockPolicy.Float != nil && ctx.LockPolicy.Float[name] {
-		return "", false, false
-	}
-	if ctx.Pins != nil {
-		if p := strings.TrimSpace(ctx.Pins[name]); p != "" {
-			return p, false, true
-		}
-	}
-	return "", false, false
+	return ctx.lockQuery().PinFor(name)
 }
 
 func (ctx *RuntimeContext) isLockIgnoredFor(name string) bool {
-	if ctx == nil {
-		return false
-	}
-	if ctx.IgnoreLock || ctx.LockPolicy.IgnoreAll {
-		return true
-	}
-	if ctx.LockPolicy.Float != nil && ctx.LockPolicy.Float[name] {
-		return true
-	}
-	if ctx.LockPolicy.Targets != nil && strings.TrimSpace(ctx.LockPolicy.Targets[name]) != "" {
-		return true
-	}
-	return false
+	return ctx.lockQuery().IgnoredFor(name)
 }
 
 func (ctx *RuntimeContext) lockedEntry(name string) (*lockfile.LockedPkg, bool) {
-	if ctx == nil || ctx.Lock == nil || ctx.isLockIgnoredFor(name) {
-		return nil, false
-	}
-	locked, ok := ctx.Lock.Get(name)
-	if !ok || (locked.Version == "" && locked.Commit == "") {
-		return nil, false
-	}
-	return locked, true
+	return ctx.lockQuery().LockEntry(name)
 }
 
 func visibleGlobalOptionsFor(node *resolver.PackageNode, pkgOpts, globalOptions map[string]*api.Option) map[string]*api.Option {
@@ -445,53 +419,13 @@ func applyBuildContextConfig(buildCtx *api.BuildContext, node *resolver.PackageN
 
 func DeclareTargets(ctx *RuntimeContext, name string, dirs *api.PkgDirs, tc *toolchain.Toolchain, globalValues map[string]any) (_ *api.BuildContext, err error) {
 	defer scriptcall.Recover(&err)
-	node := ctx.DepGraph.Packages[name]
-	buildCtx, err := newBuildContext(ctx, name, globalValues)
-	if err != nil {
-		return nil, err
+	if dirs == nil {
+		return nil, fmt.Errorf("package %s has no build directories", name)
 	}
-	buildCtx.SetConfigLookup(newConfigLookup(ctx, name, globalValues, nil))
-	platform := platformFromValues(buildCtx.CfgVals)
-	buildCtx.SetDryRun(true)
-	buildCtx.SetBuildSubGraphFunc(func(string) error { return nil })
-	buildCtx.SetDepOutputFunc(func(string) string { return "" })
-	buildCtx.SetDepSrcDirFunc(func(string) string { return "" })
-	buildCtx.SetDepPackageDirFunc(func(depRef string) string {
-		validateDirectDepPackageRef(ctx, name, depRef)
-		return ""
+	return ActivatePackage(ctx, name, *dirs, tc, globalValues, ActivationOptions{
+		Mode: ActivationDeclarative,
+		Configure: func(buildCtx *api.BuildContext) {
+			buildCtx.SetConfigLookup(newConfigLookup(ctx, name, globalValues, nil))
+		},
 	})
-
-	if node != nil && node.Pkg != nil {
-		pkg := node.Pkg
-		allOpts := ctx.AllOptions[name]
-		if allOpts == nil {
-			allOpts = pkg.GetOptions()
-		}
-		pkg.SetDirs(*dirs)
-		pkg.SetOptions(mergedPackageAndGlobalOptions(allOpts, visibleGlobalOptionsFor(node, allOpts, ctx.GlobalOptions)))
-		pkg.SetCfgVals(maps.Clone(buildCtx.CfgVals))
-		if tc != nil {
-			name := resolvePkgToolchain(ctx.Config, name, tc.Name)
-			if name != tc.Name {
-				tc, err = toolchain.GetManager().GetToolchain(name)
-				if err != nil {
-					return nil, err
-				}
-			}
-			pkg.SetToolchain(tc)
-			pkg.SetPlatform(platform)
-			flags := api.DefaultBuildFlags(tc.Name, pkg.TargetOS())
-			buildCtx.SetDefaultFlags(flags.CFlags, flags.CxxFlags, flags.LdFlags)
-		}
-		buildCtx.SetPackage(pkg)
-
-		pkg.SetDryRun(true)
-		defer pkg.SetDryRun(false)
-		pkg.ExecBuildFuncs(dirs.SourceDir, func(fn api.BuildFunc) {
-			fn(buildCtx)
-		})
-		pkg.SetDryRun(false)
-	}
-
-	return buildCtx, nil
 }

@@ -41,3 +41,36 @@ func Main(p *api.Package) {
 		t.Fatalf("check-symbols: %v\n%s", err, out)
 	}
 }
+
+func TestCheckSymbolsReportsBlockedWritesWithoutArtifacts(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("requires a native ELF toolchain")
+	}
+	for _, tool := range []string{"gcc", "g++", "ar", "ld", "strip", "ranlib", "objcopy", "size", "objdump", "nm"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(err)
+		}
+	}
+	dir := t.TempDir()
+	project := filepath.Join(dir, "project")
+	state := filepath.Join(dir, "state")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+import (
+    "os"
+    "github.com/spock2300/vmake/pkg/api"
+)
+func Main(p *api.Package) {
+    p.SetRoot(true)
+    p.OnBuild(func(ctx *api.BuildContext) {
+        _ = os.WriteFile("blocked.txt", []byte("x"), 0644)
+    })
+}
+`)
+	out, err := extensionCommand(t, state, project, "check-symbols", "--strict")
+	if err == nil {
+		t.Fatalf("check-symbols succeeded despite a blocked write:\n%s", out)
+	}
+	if !strings.Contains(out, "blocked-write") || !strings.Contains(out, "read-only inspection") {
+		t.Fatalf("blocked write missing from report: %v\n%s", err, out)
+	}
+}

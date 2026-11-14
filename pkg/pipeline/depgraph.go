@@ -601,7 +601,7 @@ func BuildUnifiedGraph(ctx *RuntimeContext, inspection *Inspection, includeAll b
 		})
 	}
 
-	g.Roots = computeUnifiedRoots(ctx, g.Packages, g.PackageEdges, inspection.Needed)
+	g.Roots = RootsFromEdges(ctx, g.Packages, g.PackageEdges, inspection.Needed)
 
 	for _, pe := range g.PackageEdges {
 		recordInternalVisibility(pe.From, pe.To, "")
@@ -645,44 +645,6 @@ func BuildUnifiedGraph(ctx *RuntimeContext, inspection *Inspection, includeAll b
 	}
 
 	return g, nil
-}
-
-func computeUnifiedRoots(ctx *RuntimeContext, pkgs []string, edges []PackageEdge, needed map[string]bool) []string {
-	if rootOverride := configRootOverride(ctx); rootOverride != "" {
-		if ctx.DepGraph.Packages[rootOverride] != nil {
-			return []string{rootOverride}
-		}
-	}
-	for _, name := range pkgs {
-		node := ctx.DepGraph.Packages[name]
-		if node != nil && node.IsLocal() && node.Pkg != nil && node.Pkg.IsRoot() {
-			return []string{name}
-		}
-	}
-	dependedOn := make(map[string]bool)
-	for _, e := range edges {
-		if needed[e.From] && needed[e.To] {
-			dependedOn[e.To] = true
-		}
-	}
-	var roots []string
-	for _, name := range pkgs {
-		node := ctx.DepGraph.Packages[name]
-		if node == nil || !needed[name] || !node.IsLocal() || dependedOn[name] {
-			continue
-		}
-		roots = append(roots, name)
-	}
-	if len(roots) == 0 {
-		for _, name := range pkgs {
-			node := ctx.DepGraph.Packages[name]
-			if node != nil && needed[name] && node.IsLocal() {
-				roots = append(roots, name)
-			}
-		}
-	}
-	sort.Strings(roots)
-	return roots
 }
 
 func WhyQuery(ctx *RuntimeContext, g *UnifiedGraph, query string, allPaths bool) *WhyResult {

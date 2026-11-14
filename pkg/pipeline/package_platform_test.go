@@ -164,7 +164,7 @@ func TestPackagePlatformBuildAndInspectKeys(t *testing.T) {
 		s := newBuildPhaseState(ctx, BuildOptions{})
 		s.cfg = makeBuildConfig(ctx, tc, tc.Name)
 		s.needed = map[string]bool{"app": true}
-		s.globalFlagsHash = build.GlobalFlagsHash()
+		s.globalFlagsHash = build.HashGlobalFlags([4][]string{})
 		s.computeDirsAndOptions()
 		if err := s.prepareAllPackages(); err != nil {
 			t.Fatal(err)

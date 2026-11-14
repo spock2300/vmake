@@ -15,21 +15,22 @@ import (
 )
 
 type BuildResult struct {
-	Targets       []build.TargetResult
-	Stats         build.StatsSnapshot
-	InstallFiles  []build.InstalledFile
-	SubGraphRoots map[string]bool
-	AllTargets    map[string]map[string]*api.Target
-	Graph         *build.BuildGraph
-	PkgDirs       map[string]*api.PkgDirs
-	PkgBuildKeys  map[string]string
-	PkgPlatforms  map[string]api.Platform
-	GlobalValues  map[string]any
-	TcName        string
-	TargetOS      string
-	Mode          string
-	InstalledPkgs map[string]*api.InstalledPackage
-	BuildCtxs     map[string]*api.BuildContext
+	Targets          []build.TargetResult
+	Stats            build.StatsSnapshot
+	InstallFiles     []build.InstalledFile
+	SubGraphRoots    map[string]bool
+	AllTargets       map[string]map[string]*api.Target
+	Graph            *build.BuildGraph
+	PkgDirs          map[string]*api.PkgDirs
+	PkgBuildKeys     map[string]string
+	PkgPlatforms     map[string]api.Platform
+	GlobalValues     map[string]any
+	TcName           string
+	TargetOS         string
+	Mode             string
+	InstalledPkgs    map[string]*api.InstalledPackage
+	BuildCtxs        map[string]*api.BuildContext
+	TargetPlacements map[string]build.ArtifactPlacement
 }
 
 func (r *BuildResult) ExternalStages() int {
@@ -58,8 +59,6 @@ type BuildOptions struct {
 	Jobs         int
 	KeepGoing    bool
 	Explain      bool
-	Locked       bool
-	Offline      bool
 }
 
 func newRunContext(ctx *RuntimeContext, opts BuildOptions, cfg *buildConfig) *runContext {
@@ -87,7 +86,6 @@ func RunBuild(ctx *RuntimeContext, opts BuildOptions) (_ *BuildResult, err error
 	if opts.Jobs == 0 {
 		opts.Jobs = runtime.NumCPU()
 	}
-
 	pre, err := prepareBuild(ctx, preludeOptions{
 		filterDeps:     true,
 		freezeDeps:     true,
@@ -134,8 +132,8 @@ func newSourceStage(rc *runContext, cfg *configStage) *sourceStage {
 		sourceSeeds:    make(map[string]string),
 		sourceCommits:  make(map[string]string),
 		sourceVersions: make(map[string]string),
-		offline:        rc.opts.Offline || rc.ctx.LockPolicy.Offline,
-		locked:         rc.opts.Locked || rc.ctx.LockPolicy.Locked,
+		offline:        rc.ctx.effectiveLockPolicy().Offline,
+		locked:         rc.ctx.effectiveLockPolicy().Locked,
 	}
 }
 
@@ -174,7 +172,7 @@ func prepareSources(rc *runContext, cfg *configStage) (*sourceStage, error) {
 	if err := src.applyPatchesToNeeded(); err != nil {
 		return nil, err
 	}
-	if rc.opts.Locked {
+	if src.locked {
 		if err := src.verifyLocked(); err != nil {
 			return nil, err
 		}
@@ -264,19 +262,20 @@ func executePlan(rc *runContext, cfg *configStage, src *sourceStage, decl *decla
 	}
 
 	return &BuildResult{
-		Targets:       rc.session.TargetResults(),
-		Stats:         stats,
-		SubGraphRoots: maps.Clone(decl.subGraphBuilt),
-		AllTargets:    decl.allTargets,
-		Graph:         plan.graph,
-		PkgDirs:       src.pkgDirs,
-		PkgBuildKeys:  pkgBuildKeys,
-		PkgPlatforms:  pkgPlatforms,
-		GlobalValues:  maps.Clone(rc.cfg.GlobalValues),
-		TcName:        rc.cfg.TcName,
-		TargetOS:      rc.cfg.Platform.OSOrHost(),
-		Mode:          rc.cfg.Mode,
-		InstalledPkgs: src.remote.installedPkgs(src.pkgDirs),
-		BuildCtxs:     decl.buildCtxs,
+		Targets:          rc.session.TargetResults(),
+		Stats:            stats,
+		SubGraphRoots:    maps.Clone(decl.subGraphBuilt),
+		AllTargets:       decl.allTargets,
+		Graph:            plan.graph,
+		PkgDirs:          src.pkgDirs,
+		PkgBuildKeys:     pkgBuildKeys,
+		PkgPlatforms:     pkgPlatforms,
+		GlobalValues:     maps.Clone(rc.cfg.GlobalValues),
+		TcName:           rc.cfg.TcName,
+		TargetOS:         rc.cfg.Platform.OSOrHost(),
+		Mode:             rc.cfg.Mode,
+		InstalledPkgs:    src.remote.installedPkgs(src.pkgDirs),
+		BuildCtxs:        decl.buildCtxs,
+		TargetPlacements: scheduler.Placements(),
 	}, err
 }

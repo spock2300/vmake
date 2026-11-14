@@ -39,3 +39,24 @@ func TestCompileCommandsMergePreservesTargetOutputs(t *testing.T) {
 		}
 	}
 }
+
+func TestCompileCommandsAddSpecUsesPlannedCommand(t *testing.T) {
+	dir := t.TempDir()
+	output := filepath.Join(dir, "compile_commands.json")
+	writer := NewCompileCommandsWriter(&ResolvedTools{CC: "cc", CXX: "c++"})
+	writer.AddSpec(dir, "start.S", commandSpec{Program: "clang", Args: []string{"-c", "-x", "assembler-with-cpp", "-o", "obj/start.o", "start.S"}})
+	if err := writer.Save(output); err != nil {
+		t.Fatal(err)
+	}
+	var commands []CompileCommand
+	if err := jsonio.Load(output, &commands); err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 1 {
+		t.Fatalf("commands = %d, want 1", len(commands))
+	}
+	got := strings.Join(commands[0].Arguments, " ")
+	if !strings.HasPrefix(got, "clang -c -x assembler-with-cpp -o obj/start.o") {
+		t.Fatalf("arguments = %q", got)
+	}
+}

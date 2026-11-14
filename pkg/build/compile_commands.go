@@ -41,13 +41,20 @@ func (w *CompileCommandsWriter) AddCommand(dir, src, objPath string, opts *Compi
 	commandOpts := *opts
 	commandOpts.clang = w.clangCC
 	args := compileArgs(&commandOpts, objPath, src, flags, "", dir)
-	cmdStr := iexec.FormatCommandLine(compiler, args)
+	w.AddSpec(dir, src, commandSpec{Program: compiler, Args: args})
+}
+
+// AddSpec records one already-derived compile command. The scheduler uses the
+// same command value for the action record, so compile_commands.json and the
+// incremental signature cannot describe different compilers or flags.
+func (w *CompileCommandsWriter) AddSpec(dir, src string, spec commandSpec) {
+	cmdStr := iexec.FormatCommandLine(spec.Program, spec.Args)
 
 	w.mu.Lock()
 	w.commands = append(w.commands, CompileCommand{
 		Directory: dir,
 		Command:   cmdStr,
-		Arguments: append([]string{compiler}, args...),
+		Arguments: append([]string{spec.Program}, spec.Args...),
 		File:      resolveWorkPath(dir, src),
 	})
 	w.mu.Unlock()
