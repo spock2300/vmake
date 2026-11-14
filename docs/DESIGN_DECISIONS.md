@@ -195,10 +195,10 @@
 ## DD-21: 制品放置由单一 ArtifactPlacement 描述
 
 - 状态: accepted
-- 背景: 同一个产物路径在 `PkgInfo.OutputPath`、`ArtifactInstaller.getOutputPath`、`getTargetOutputPath` 以及 CLI 对 `PkgInstallInfo` 的重建中各算一次；安装子目录/文件名/PE import library 也分别从 `Target`、`TargetKind` 与 targetOS 推导。
-- 决策: `pkg/build/artifact.go` 的 `ArtifactPlacement` 是产物放置的唯一值：`OutputPath`、`ImportLib`、`StageLibDir`/`StageIncludeDir`、`InstallSubdir`/`InstallName`、`PostLinkOutputs`、`Kind`/`NoInstall`/`IsTest`。`Scheduler.placementFor` 生成它，`publishTarget` 直接消费；`Scheduler.placements` 经 `BuildJob.Run` 合并 additional scheduler 后，由 `BuildResult.TargetPlacements` 传给 CLI，`PkgInstallInfo.Placements` 供 `ArtifactInstaller` 消费 OutputPath/ImportLib/InstallSubdir/InstallName/PostLinkOutputs/NoInstall/IsTest。直接构造 `PkgInstallInfo` 的旧测试、同步 subgraph 与缺少 placement 的 target 仍走 fallback 路径。
-- 理由: 发布（per-package staging）与安装（prefix/filter）必须对"源产物、暂存位置、最终位置、import library"达成一致；三处推导会让 Windows import library 或自定义 InstallDir 漂移。
-- 涉及代码: `pkg/build/artifact.go`, `pkg/build/scheduler_publish.go`, `pkg/build/scheduler_link.go`, `pkg/build/install.go`, `pkg/pipeline/build_phase.go`, `cmd/vmake/build_install.go`。
+- 背景: 同一个产物路径在 `PkgInfo.OutputPath`、`ArtifactInstaller.getOutputPath`、`getTargetOutputPath` 以及 CLI 对 `PkgInstallInfo` 的重建中各算一次；安装子目录/文件名/PE import library 也分别从 `Target`、`TargetKind` 与 targetOS 推导。target 的构建结果还同时散落在 `Session.outputs`、`Scheduler.placements` 和 `BuildStats`，`BuildJob.Run` 需要重新推导输出、状态和 post-link 路径。
+- 决策: `pkg/build/artifact.go` 的 `ArtifactPlacement` 是产物放置的唯一值：`OutputPath`、`ImportLib`、`StageLibDir`/`StageIncludeDir`、`InstallSubdir`/`InstallName`、`PostLinkOutputs`、`Kind`/`NoInstall`/`IsTest`。target 成功结束时由 `Scheduler.Build` 生成一个 `targetOutcome`，包含 `TargetResult`（status/outputs/duration/size）与 placement；`Session` 按 fullName 首次记录 outcome，失败 target 不记录。`BuildResult.Targets`/`TargetPlacements` 直接读 session（按完整 target 名、仅成功 target；placement 只暴露非 void target），`BuildJob.Run` 不再自行拼 target result 或合并 additional scheduler 的 placement；同步 subgraph 与主构建共享 session，因此 subgraph placement 不再丢失。`publishTarget` 和 `ArtifactInstaller`（经 `PkgInstallInfo.Placements`）消费 placement；直接构造 `PkgInstallInfo` 的旧测试仍走 fallback。
+- 理由: 发布（per-package staging）与安装（prefix/filter）必须对"源产物、暂存位置、最终位置、import library"达成一致；target result 也必须和 placement 来自同一完成点，否则 subgraph、多 toolchain 和 no-op/install 路径会各自漂移。
+- 涉及代码: `pkg/build/artifact.go`, `pkg/build/session.go`, `pkg/build/scheduler.go`, `pkg/build/scheduler_link.go`, `pkg/build/job.go`, `pkg/build/scheduler_publish.go`, `pkg/build/install.go`, `pkg/pipeline/build_phase.go`, `cmd/vmake/build_install.go`。
 
 ## DD-22: 依赖字符串只有一种解析
 

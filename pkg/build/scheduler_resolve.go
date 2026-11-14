@@ -266,6 +266,7 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 
 	resolved.AllIncludes = unique(resolved.AllIncludes)
 	resolved.SourceFiles = unique(resolved.SourceFiles)
+	resolved.Placement = s.placementFor(resolved, pkgInfo)
 
 	return resolved, nil
 }

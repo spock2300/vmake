@@ -38,12 +38,14 @@ type ResolvedTarget struct {
 	DirectAllowedPublicIncludes []allowedInclude
 	DeclaredDepPkgs             map[string]bool
 	DirectDepPkgs               map[string]bool
+	Placement                   ArtifactPlacement
 }
 
 type compileResult struct {
 	src     string
 	objPath string
 	deps    []string
+	changed bool
 	err     error
 }
 
@@ -102,11 +104,11 @@ type Scheduler struct {
 	explain       bool
 	hashes        *fileHashCache
 	stats         *BuildStats
+	session       *Session
 	canonCache    *pathCanonCache
 
-	auditor    *headerAuditor
-	auditorMu  sync.Mutex
-	placements map[string]ArtifactPlacement
+	auditor   *headerAuditor
+	auditorMu sync.Mutex
 
 	buildTargetFn  func(string) error
 	globalCFlags   []string
@@ -133,6 +135,7 @@ type schedulerConfig struct {
 	Explain       bool
 	GlobalFlags   *[4][]string
 	Stats         *BuildStats
+	Session       *Session
 }
 
 func newScheduler(cfg schedulerConfig) *Scheduler {
@@ -172,8 +175,8 @@ func newScheduler(cfg schedulerConfig) *Scheduler {
 		explain:       cfg.Explain,
 		hashes:        newFileHashCache(),
 		stats:         cfg.Stats,
+		session:       cfg.Session,
 		canonCache:    newPathCanonCache(),
-		placements:    make(map[string]ArtifactPlacement),
 	}
 	if s.stats == nil {
 		s.stats = NewBuildStats()
@@ -199,11 +202,31 @@ func newScheduler(cfg schedulerConfig) *Scheduler {
 	return s
 }
 
-func (s *Scheduler) recordPlacement(name string, placement ArtifactPlacement) {
-	if s.placements == nil {
-		s.placements = make(map[string]ArtifactPlacement)
+func (s *Scheduler) targetOutcomeFor(node *BuildNode, pkgInfo *PkgInfo, resolved *ResolvedTarget, actionRan bool) *targetOutcome {
+	target := node.Target
+	status := TargetStatusUpToDate
+	if actionRan {
+		status = TargetStatusBuilt
 	}
-	s.placements[name] = placement
+	outcome := &targetOutcome{
+		FullName: node.FullName,
+		Result: TargetResult{
+			Package: node.PkgName,
+			Target:  target.Name(),
+			Kind:    string(target.Kind()),
+			Status:  status,
+		},
+	}
+	placement := resolved.Placement
+	if placement.Kind == "" {
+		placement = s.placementFor(resolved, pkgInfo)
+	}
+	outcome.Placement = placement
+	outcome.Result.Outputs = append([]string{}, placement.PostLinkOutputs...)
+	if target.Kind() != api.TargetVoid && target.Kind() != api.TargetObject {
+		outcome.Result.Outputs = append([]string{resolveWorkPath(pkgInfo.SourceDir, placement.OutputPath)}, outcome.Result.Outputs...)
+	}
+	return outcome
 }
 
 func (s *Scheduler) auditorFor() *headerAuditor {
@@ -225,13 +248,6 @@ func (s *Scheduler) auditorFor() *headerAuditor {
 
 func (s *Scheduler) Stats() *BuildStats {
 	return s.stats
-}
-
-func (s *Scheduler) TargetDuration(fullName string) int64 {
-	if s.stats == nil {
-		return 0
-	}
-	return s.stats.TargetDuration(fullName)
 }
 
 func (s *Scheduler) GetPkgInfo(pkgName string) (*PkgInfo, bool) {
@@ -306,62 +322,80 @@ func (s *Scheduler) depsFailed(node *BuildNode, failedTargets map[string]bool) b
 
 func (s *Scheduler) Build(fullName string) error {
 	start := time.Now()
-	defer func() {
-		if s.stats != nil {
-			s.stats.RecordTargetDuration(fullName, time.Since(start))
-		}
-	}()
-	if err := s.ctx.Err(); err != nil {
+	outcome, err := s.buildTargetOutcome(fullName)
+	if err != nil || outcome == nil {
 		return err
+	}
+	outcome.Result.DurationMs = time.Since(start).Milliseconds()
+	if s.stats != nil {
+		outcome.Result.Size = s.stats.TargetSize(fullName)
+	}
+	if s.session != nil {
+		s.session.recordTarget(*outcome)
+	}
+	return nil
+}
+
+func (s *Scheduler) buildTargetOutcome(fullName string) (*targetOutcome, error) {
+	if err := s.ctx.Err(); err != nil {
+		return nil, err
 	}
 	node, err := s.graph.GetNode(fullName)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if !node.Target.IsDefault() {
-		return nil
+		return nil, nil
 	}
 	if node.Target.IsTest() && !s.includeTests {
-		return nil
+		return nil, nil
 	}
 
 	pkgInfo, err := s.pkgInfoOf(node.PkgName)
 	if err != nil {
-		return wrapTargetError(fullName, "prepare", err)
+		return nil, wrapTargetError(fullName, "prepare", err)
 	}
 	workDir := pkgInfo.SourceDir
 
 	vlog.Verbose("[%s]", fullName)
 
 	if err := s.ensurePackageGenerated(node.PkgName); err != nil {
-		return wrapTargetError(fullName, "prepare", err)
+		return nil, wrapTargetError(fullName, "prepare", err)
 	}
 
 	resolved, err := s.resolveTarget(node)
 	if err != nil {
-		return wrapTargetError(fullName, "prepare", err)
+		return nil, wrapTargetError(fullName, "prepare", err)
 	}
 
 	if err := s.prepareTarget(resolved, pkgInfo, workDir); err != nil {
-		return wrapTargetError(fullName, "prepare", err)
+		return nil, wrapTargetError(fullName, "prepare", err)
 	}
 
 	stage := "link"
 	if node.Target.Kind() == api.TargetVoid {
 		stage = "build"
 	}
+	actionRan := false
 	numFiles := len(resolved.SourceFiles)
 	if numFiles == 0 || node.Target.Prebuilt() != "" {
-		return wrapTargetError(fullName, stage, s.finalizeTarget(resolved, pkgInfo, nil))
+		actionRan, err = s.finalizeTarget(resolved, pkgInfo, nil)
+	} else {
+		var objs []string
+		var compiled bool
+		objs, compiled, err = s.compileAll(resolved, pkgInfo)
+		if err != nil {
+			return nil, wrapTargetError(fullName, "compile", err)
+		}
+		var linked bool
+		linked, err = s.finalizeTarget(resolved, pkgInfo, objs)
+		actionRan = compiled || linked
 	}
-
-	objs, err := s.compileAll(resolved, pkgInfo)
 	if err != nil {
-		return wrapTargetError(fullName, "compile", err)
+		return nil, wrapTargetError(fullName, stage, err)
 	}
-
-	return wrapTargetError(fullName, stage, s.finalizeTarget(resolved, pkgInfo, objs))
+	return s.targetOutcomeFor(node, pkgInfo, resolved, actionRan), nil
 }
 
 func (s *Scheduler) ensurePackageGenerated(pkgName string) error {

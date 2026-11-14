@@ -9,9 +9,8 @@ import (
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
-func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo) error {
+func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, placement ArtifactPlacement) error {
 	t := resolved.Node.Target
-	placement := s.placementFor(resolved, pkgInfo)
 	kind := placement.Kind
 
 	if kind == api.TargetVoid || kind == api.TargetObject || placement.IsTest {

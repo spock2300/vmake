@@ -65,6 +65,7 @@ func (j *BuildJob) newSchedulerFor(
 		Explain:       j.Explain,
 		GlobalFlags:   &env.GlobalFlags,
 		Stats:         stats,
+		Session:       session,
 	})
 }
 
@@ -159,42 +160,9 @@ func (j *BuildJob) Run() (*Scheduler, error) {
 		if runner == nil {
 			runner = base
 		}
-		run := func() error {
-			if err := runner.Build(name); err != nil {
-				return err
-			}
-			if !node.Target.IsDefault() || (node.Target.IsTest() && !j.IncludeTests) {
-				return nil
-			}
-			output := runner.getTargetOutputPath(node)
-			info := runner.pkgs[node.PkgName]
-			if info == nil {
-				return fmt.Errorf("package %s has no build layout", node.PkgName)
-			}
-			source := info.SourceDir
-			paths := append([]string{}, postLinkOutputPaths(node.Target, source, output)...)
-			if node.Target.Kind() != api.TargetVoid && node.Target.Kind() != api.TargetObject {
-				paths = append([]string{resolveWorkPath(source, output)}, paths...)
-			}
-			if session.outputs == nil {
-				session.outputs = make(map[string]TargetResult)
-			}
-			status := TargetStatusUpToDate
-			if runner.Stats().ChangedTarget(name) || node.Target.Kind() == api.TargetVoid {
-				status = TargetStatusBuilt
-			}
-			session.outputs[name] = TargetResult{
-				Package:    node.PkgName,
-				Target:     node.Target.Name(),
-				Kind:       string(node.Target.Kind()),
-				Outputs:    paths,
-				Status:     status,
-				DurationMs: runner.TargetDuration(name),
-				Size:       runner.Stats().TargetSize(name),
-			}
-			return nil
-		}
-		return session.Execute(name, run)
+		return session.Execute(name, func() error {
+			return runner.Build(name)
+		})
 	}
 	err = base.BuildAll()
 	root := env.RootDir
@@ -202,9 +170,6 @@ func (j *BuildJob) Run() (*Scheduler, error) {
 		root = "."
 	}
 	for _, scheduler := range additional {
-		for name, placement := range scheduler.Placements() {
-			base.recordPlacement(name, placement)
-		}
 		err = errors.Join(err, scheduler.ccWriter.Save(filepath.Join(root, "build", "compile_commands.json")))
 	}
 	return base, err

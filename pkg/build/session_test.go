@@ -49,6 +49,20 @@ func TestPipelineUsesPackageToolchainAndCanonicalDependencyPaths(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			for _, fullName := range []string{"p:library", "q:app"} {
+				if _, ok := env.Session.TargetPlacements()[fullName]; !ok {
+					t.Fatalf("cross-toolchain target %s has no placement", fullName)
+				}
+			}
+			statuses := make(map[string]string)
+			for _, result := range env.Session.TargetResults() {
+				statuses[result.Package+":"+result.Target] = result.Status
+			}
+			for _, fullName := range []string{"p:library", "q:app"} {
+				if statuses[fullName] != TargetStatusBuilt {
+					t.Fatalf("cross-toolchain status for %s = %+v", fullName, statuses)
+				}
+			}
 			output := resolveWorkPath(dir, scheduler.getTargetOutputPath(graph.Nodes["q:app"]))
 			result, err := exec.Command(output).CombinedOutput()
 			if err != nil || strings.TrimSpace(string(result)) != "42" {

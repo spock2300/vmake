@@ -9,7 +9,7 @@ import (
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
-func (s *Scheduler) compileAll(resolved *ResolvedTarget, pkgInfo *PkgInfo) ([]string, error) {
+func (s *Scheduler) compileAll(resolved *ResolvedTarget, pkgInfo *PkgInfo) ([]string, bool, error) {
 	numFiles := len(resolved.SourceFiles)
 
 	numWorkers := s.numWorkers
@@ -46,8 +46,8 @@ func (s *Scheduler) compileAll(resolved *ResolvedTarget, pkgInfo *PkgInfo) ([]st
 						return
 					}
 					src := resolved.SourceFiles[idx]
-					objPath, deps, err := s.compileSourceContext(ctx, resolved, src)
-					results[idx] = compileResult{src: src, objPath: objPath, deps: deps, err: err}
+					objPath, deps, changed, err := s.compileSourceChanged(ctx, resolved, src)
+					results[idx] = compileResult{src: src, objPath: objPath, deps: deps, changed: changed, err: err}
 					if err != nil {
 						firstError.Do(func() {
 							firstErr = err
@@ -71,16 +71,18 @@ feed:
 	wg.Wait()
 
 	if firstErr != nil {
-		return nil, firstErr
+		return nil, false, firstErr
 	}
 
 	objs := make([]string, 0, numFiles)
+	changed := false
 	for _, r := range results {
 		if r.objPath != "" {
 			objs = append(objs, r.objPath)
 		}
+		changed = changed || r.changed
 	}
-	return objs, nil
+	return objs, changed, nil
 }
 
 type depResolveResult struct {
@@ -95,15 +97,16 @@ type depResolveResult struct {
 }
 
 func (s *Scheduler) compileSource(resolved *ResolvedTarget, src string) (string, []string, error) {
-	return s.compileSourceContext(context.Background(), resolved, src)
+	objPath, deps, _, err := s.compileSourceChanged(context.Background(), resolved, src)
+	return objPath, deps, err
 }
 
-func (s *Scheduler) compileSourceContext(ctx context.Context, resolved *ResolvedTarget, src string) (string, []string, error) {
+func (s *Scheduler) compileSourceChanged(ctx context.Context, resolved *ResolvedTarget, src string) (string, []string, bool, error) {
 	pkgInfo := s.pkgs[resolved.Node.PkgName]
 	workDir := pkgInfo.SourceDir
 	object, err := objectPath(resolved.Node.FullName, src, workDir)
 	if err != nil {
-		return "", nil, err
+		return "", nil, false, err
 	}
 	objRel := pkgInfo.OutputPath(object)
 	opts := &CompileOptions{
@@ -118,13 +121,13 @@ func (s *Scheduler) compileSourceContext(ctx context.Context, resolved *Resolved
 	planner.targetOS = s.targetOS(resolved.Node.PkgName)
 	plan, err := planner.planCompile(src, objRel, opts, workDir)
 	if err != nil {
-		return "", nil, err
+		return "", nil, false, err
 	}
 	s.ccWriter.AddSpec(workDir, src, plan.Display)
 
 	env, err := environmentSignature(s.compiler.env)
 	if err != nil {
-		return "", nil, err
+		return "", nil, false, err
 	}
 	deps, depErr := ParseDepFile(resolveWorkPath(workDir, plan.DepPath))
 	action := &plannedAction{
@@ -160,14 +163,14 @@ func (s *Scheduler) compileSourceContext(ctx context.Context, resolved *Resolved
 		return deps, nil
 	})
 	if err != nil {
-		return "", nil, err
+		return "", nil, false, err
 	}
 	checkDeps := postInputs
 	if upToDate {
 		checkDeps = deps
 	}
 	if err := s.auditorFor().checkHeaderBoundaries(resolved, src, checkDeps); err != nil {
-		return "", nil, err
+		return "", nil, false, err
 	}
-	return objRel, checkDeps, nil
+	return objRel, checkDeps, !upToDate, nil
 }

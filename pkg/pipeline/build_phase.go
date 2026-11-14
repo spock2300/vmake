@@ -276,6 +276,6 @@ func executePlan(rc *runContext, cfg *configStage, src *sourceStage, decl *decla
 		Mode:             rc.cfg.Mode,
 		InstalledPkgs:    src.remote.installedPkgs(src.pkgDirs),
 		BuildCtxs:        decl.buildCtxs,
-		TargetPlacements: scheduler.Placements(),
+		TargetPlacements: rc.session.TargetPlacements(),
 	}, err
 }

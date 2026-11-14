@@ -5,7 +5,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 )
 
 type TargetSize struct {
@@ -16,30 +15,25 @@ type TargetSize struct {
 }
 
 type BuildStats struct {
-	mu             sync.Mutex
-	compiled       int
-	linked         int
-	upToDate       int
-	compiledFiles  map[string]bool
-	changedTargets map[string]bool
-	targetDuration map[string]int64
-	targetSize     map[string]*TargetSize
+	mu            sync.Mutex
+	compiled      int
+	linked        int
+	upToDate      int
+	compiledFiles map[string]bool
+	targetSize    map[string]*TargetSize
 }
 
 type StatsSnapshot struct {
-	Compiled       int
-	Linked         int
-	UpToDate       int
-	CompiledFiles  []string
-	ChangedTargets []string
+	Compiled      int
+	Linked        int
+	UpToDate      int
+	CompiledFiles []string
 }
 
 func NewBuildStats() *BuildStats {
 	return &BuildStats{
-		compiledFiles:  make(map[string]bool),
-		changedTargets: make(map[string]bool),
-		targetDuration: make(map[string]int64),
-		targetSize:     make(map[string]*TargetSize),
+		compiledFiles: make(map[string]bool),
+		targetSize:    make(map[string]*TargetSize),
 	}
 }
 
@@ -48,7 +42,6 @@ func (s *BuildStats) RecordCompile(target, source string) {
 	defer s.mu.Unlock()
 	s.compiled++
 	s.compiledFiles[qualifiedChangedFile(target, source)] = true
-	s.changedTargets[target] = true
 }
 
 func qualifiedChangedFile(target, source string) string {
@@ -67,31 +60,12 @@ func (s *BuildStats) RecordLink(target string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.linked++
-	s.changedTargets[target] = true
 }
 
 func (s *BuildStats) RecordUpToDate() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.upToDate++
-}
-
-func (s *BuildStats) ChangedTarget(target string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.changedTargets[target]
-}
-
-func (s *BuildStats) RecordTargetDuration(target string, duration time.Duration) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.targetDuration[target] = duration.Milliseconds()
-}
-
-func (s *BuildStats) TargetDuration(target string) int64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.targetDuration[target]
 }
 
 func (s *BuildStats) RecordTargetSize(target string, size *TargetSize) {
@@ -110,11 +84,10 @@ func (s *BuildStats) Snapshot() StatsSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return StatsSnapshot{
-		Compiled:       s.compiled,
-		Linked:         s.linked,
-		UpToDate:       s.upToDate,
-		CompiledFiles:  sortedKeys(s.compiledFiles),
-		ChangedTargets: sortedKeys(s.changedTargets),
+		Compiled:      s.compiled,
+		Linked:        s.linked,
+		UpToDate:      s.upToDate,
+		CompiledFiles: sortedKeys(s.compiledFiles),
 	}
 }
 

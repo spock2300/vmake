@@ -12,35 +12,37 @@ import (
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
-func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, objs []string) error {
+func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, objs []string) (actionRan bool, err error) {
 	if err := s.ctx.Err(); err != nil {
-		return err
+		return false, err
 	}
 	target := resolved.Node.Target
 	if len(target.PostLinkDeps()) > 0 && len(target.PostLinkSteps()) == 0 {
-		return fmt.Errorf("target %s: AddPostLinkDeps requires at least one post-link step (use AddInputs/AddOutputs for TargetVoid incremental tracking)", resolved.Node.FullName)
+		return false, fmt.Errorf("target %s: AddPostLinkDeps requires at least one post-link step (use AddInputs/AddOutputs for TargetVoid incremental tracking)", resolved.Node.FullName)
 	}
 	if target.Kind() == api.TargetVoid {
 		if len(target.Inputs()) > 0 || len(target.Outputs()) > 0 {
-			return s.finalizeIncrementalVoid(resolved, pkgInfo)
+			return true, s.finalizeIncrementalVoid(resolved, pkgInfo)
 		}
 		if err := s.buildVoidTarget(resolved); err != nil {
-			return err
+			return false, err
 		}
 		if err := s.postLink(resolved); err != nil {
-			return err
+			return false, err
 		}
 		if err := s.ctx.Err(); err != nil {
-			return err
+			return false, err
 		}
-		return verifyPostLinkOutputs(target, pkgInfo, resolved.OutputPath)
+		if err := verifyPostLinkOutputs(target, pkgInfo, resolved.OutputPath); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 	action, err := s.planLink(resolved, objs)
 	if err != nil {
-		return err
+		return false, err
 	}
-	s.recordPlacement(resolved.Node.FullName, s.placementFor(resolved, pkgInfo))
-	_, _, err = s.runPlannedAction(s.ctx, action, func(ctx context.Context) ([]string, error) {
+	upToDate, _, err := s.runPlannedAction(s.ctx, action, func(ctx context.Context) ([]string, error) {
 		if s.stats != nil {
 			s.stats.RecordLink(resolved.Node.FullName)
 		}
@@ -63,15 +65,21 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 		return nil, nil
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := s.ctx.Err(); err != nil {
-		return err
+		return false, err
 	}
 	if pkgInfo.InstallDir != "" {
-		return s.publishTarget(resolved, pkgInfo)
+		placement := resolved.Placement
+		if placement.Kind == "" {
+			placement = s.placementFor(resolved, pkgInfo)
+		}
+		if err := s.publishTarget(resolved, pkgInfo, placement); err != nil {
+			return false, err
+		}
 	}
-	return nil
+	return !upToDate, nil
 }
 
 func verifyPostLinkOutputs(target *api.Target, pkgInfo *PkgInfo, outputPath string) error {

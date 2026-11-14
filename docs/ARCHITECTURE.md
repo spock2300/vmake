@@ -269,7 +269,7 @@ BuildJob
 └── IncludeTests bool
 ```
 
-`BuildJob.Run()` 按 `(toolchain, platform)` 分组调度；所有 scheduler 共享同一份 `BuildEnv` 布局，`BuildJob.Run` 只初始化缺失的容器并复用共享 `Session`。BuildSubGraph 复用 `BuildEnv`，只替换过滤后的 graph。
+`BuildJob.Run()` 按 `(toolchain, platform)` 分组调度；所有 scheduler 共享同一份 `BuildEnv` 布局，`BuildJob.Run` 只初始化缺失的容器并复用共享 `Session`。持有 `Session` 的 target 首次成功结束时，`Scheduler.Build` 向共享 `Session` 写入一个 `targetOutcome`（`TargetResult` + `ArtifactPlacement`）；`BuildResult.Targets`/`TargetPlacements` 按完整 target 名读取该记录，只包含成功 target，placement 只暴露非 void target，因此 additional scheduler 与同步 subgraph 不需要再单独合并 placement。BuildSubGraph 复用 `BuildEnv`，只替换过滤后的 graph。
 
 源码：`pkg/build/scheduler.go`（及 `scheduler_*.go`）, `pkg/build/graph.go`, `pkg/build/job.go`, `pkg/build/layout.go`, `pkg/build/signature.go`, `pkg/build/session.go`
 

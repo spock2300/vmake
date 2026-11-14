@@ -48,12 +48,3 @@ func (s *Scheduler) placementFor(resolved *ResolvedTarget, pkgInfo *PkgInfo) Art
 	}
 	return placement
 }
-
-// Placements returns a copy of the placements recorded by the last build.
-func (s *Scheduler) Placements() map[string]ArtifactPlacement {
-	out := make(map[string]ArtifactPlacement, len(s.placements))
-	for name, placement := range s.placements {
-		out[name] = placement
-	}
-	return out
-}

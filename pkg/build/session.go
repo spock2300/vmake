@@ -16,12 +16,18 @@ type targetResult struct {
 }
 
 type Session struct {
-	ctx     context.Context
-	results map[string]targetResult
-	tools   map[string]*ResolvedTools
-	active  string
-	outputs map[string]TargetResult
-	stats   *BuildStats
+	ctx      context.Context
+	results  map[string]targetResult
+	tools    map[string]*ResolvedTools
+	active   string
+	outcomes map[string]targetOutcome
+	stats    *BuildStats
+}
+
+type targetOutcome struct {
+	FullName  string
+	Result    TargetResult
+	Placement ArtifactPlacement
 }
 
 const (
@@ -40,16 +46,54 @@ type TargetResult struct {
 }
 
 func (s *Session) TargetResults() []TargetResult {
-	keys := make([]string, 0, len(s.outputs))
-	for key := range s.outputs {
+	if s == nil {
+		return []TargetResult{}
+	}
+	keys := make([]string, 0, len(s.outcomes))
+	for key := range s.outcomes {
 		keys = append(keys, key)
 	}
 	slices.Sort(keys)
 	result := make([]TargetResult, 0, len(keys))
 	for _, key := range keys {
-		result = append(result, s.outputs[key])
+		target := s.outcomes[key].Result
+		target.Outputs = append([]string{}, target.Outputs...)
+		if target.Size != nil {
+			size := *target.Size
+			target.Size = &size
+		}
+		result = append(result, target)
 	}
 	return result
+}
+
+func (s *Session) TargetPlacements() map[string]ArtifactPlacement {
+	out := make(map[string]ArtifactPlacement)
+	if s == nil {
+		return out
+	}
+	for name, outcome := range s.outcomes {
+		if outcome.Placement.Kind == api.TargetVoid {
+			continue
+		}
+		placement := outcome.Placement
+		placement.PostLinkOutputs = append([]string(nil), placement.PostLinkOutputs...)
+		out[name] = placement
+	}
+	return out
+}
+
+func (s *Session) recordTarget(outcome targetOutcome) {
+	if s == nil || outcome.FullName == "" {
+		return
+	}
+	if _, exists := s.outcomes[outcome.FullName]; exists {
+		return
+	}
+	if s.outcomes == nil {
+		s.outcomes = make(map[string]targetOutcome)
+	}
+	s.outcomes[outcome.FullName] = outcome
 }
 
 func (s *Session) Stats() *BuildStats {
@@ -63,7 +107,12 @@ func NewSession(ctx context.Context) *Session {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return &Session{ctx: ctx, results: make(map[string]targetResult), stats: NewBuildStats()}
+	return &Session{
+		ctx:      ctx,
+		results:  make(map[string]targetResult),
+		outcomes: make(map[string]targetOutcome),
+		stats:    NewBuildStats(),
+	}
 }
 
 func (s *Session) ResolveTools(tc *toolchain.Toolchain, platform api.Platform) (*ResolvedTools, error) {

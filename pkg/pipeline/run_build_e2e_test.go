@@ -61,6 +61,10 @@ func Main(p *api.Package) {
 	if _, err := os.Stat(result.Targets[0].Outputs[0]); err != nil {
 		t.Fatalf("target output missing: %v", err)
 	}
+	fullName := result.Targets[0].Package + ":" + result.Targets[0].Target
+	if placement, ok := result.TargetPlacements[fullName]; !ok || placement.OutputPath == "" {
+		t.Fatalf("target placement = %+v, ok = %v", placement, ok)
+	}
 	if len(ctx.Preparation().Needed) == 0 {
 		t.Fatal("Preparation result is empty")
 	}

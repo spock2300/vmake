@@ -19,6 +19,11 @@ import (
 
 func nativeTestScheduler(t *testing.T, dir string, targets ...*api.Target) *Scheduler {
 	t.Helper()
+	return nativeTestSchedulerWithSession(t, dir, nil, targets...)
+}
+
+func nativeTestSchedulerWithSession(t *testing.T, dir string, session *Session, targets ...*api.Target) *Scheduler {
+	t.Helper()
 	tools := toolchain.Tools{}
 	for name, destination := range map[string]*string{"gcc": &tools.CC, "g++": &tools.CXX, "ar": &tools.AR} {
 		path, err := exec.LookPath(name)
@@ -45,6 +50,7 @@ func nativeTestScheduler(t *testing.T, dir string, targets ...*api.Target) *Sche
 		Mode:      api.ModeDebug,
 		Tools:     resolvedTools,
 		RootDir:   dir,
+		Session:   session,
 	})
 }
 
@@ -441,7 +447,7 @@ func TestCompileFailureCancelsWorkersAndRemovesPartialOutputs(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, _, err := s.compileSourceContext(ctx, &ResolvedTarget{Node: s.graph.Nodes["p:app"]}, "slow.c"); !errors.Is(err, context.Canceled) {
+	if _, _, _, err := s.compileSourceChanged(ctx, &ResolvedTarget{Node: s.graph.Nodes["p:app"]}, "slow.c"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled compile = %v", err)
 	}
 }
