@@ -2,7 +2,7 @@
 
 > [中文文档 🇨🇳](README.zh.md)
 
-VMake is a modern C/C++ project build tool developed in Go. It provides a concise and powerful API for configuring and building multi-module C/C++ projects.
+VMake is an agent-first C/C++ build system written in Go. Builds are declared with fluent Go scripts, and the resolved model is inspectable before anything compiles. A bundled skill lets an AI coding agent build, test, and install projects without PATH or toolchain exports.
 
 ## Features
 
