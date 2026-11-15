@@ -42,7 +42,7 @@ func writeSubPackageRepo(t *testing.T, files map[string]string) string {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
 	}
-	work := filepath.Join(t.TempDir(), "mother")
+	work := filepath.Join(canonicalTempDir(t), "mother")
 	for name, content := range files {
 		path := filepath.Join(work, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -58,14 +58,14 @@ func writeSubPackageRepo(t *testing.T, files map[string]string) string {
 	gitCmd(t, work, "add", "-A")
 	gitCmd(t, work, "commit", "-q", "-m", "v1")
 	gitCmd(t, work, "tag", "v1.0.0")
-	bare := filepath.Join(t.TempDir(), "mother.git")
+	bare := filepath.Join(canonicalTempDir(t), "mother.git")
 	gitCmd(t, work, "clone", "-q", "--bare", ".", bare)
 	return bare
 }
 
 func writeBareBuildRepo(t *testing.T, dest string) {
 	t.Helper()
-	work := filepath.Join(t.TempDir(), "work")
+	work := filepath.Join(canonicalTempDir(t), "work")
 	if err := os.MkdirAll(work, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func writeBareBuildRepo(t *testing.T, dest string) {
 
 func newSubPackageTestResolver(t *testing.T, bare string) *Resolver {
 	t.Helper()
-	reposDir, depsDir, cacheDir := t.TempDir(), t.TempDir(), t.TempDir()
+	reposDir, depsDir, cacheDir := canonicalTempDir(t), canonicalTempDir(t), canonicalTempDir(t)
 	mgr := repo.NewRepoManager(reposDir)
 	template := strings.TrimSuffix(bare, "mother.git") + "{name}.git"
 	if err := mgr.AddNative("testnative", template); err != nil {
@@ -99,7 +99,7 @@ func newSubPackageTestResolver(t *testing.T, bare string) *Resolver {
 
 func localRequiringSources(t *testing.T, name string, reqs ...string) *buildscript.Source {
 	t.Helper()
-	dir := t.TempDir()
+	dir := canonicalTempDir(t)
 	quoted := make([]string, len(reqs))
 	for i, req := range reqs {
 		quoted[i] = fmt.Sprintf("%q", req)
@@ -255,7 +255,7 @@ func TestResolveSeparateNestedNativePackage(t *testing.T) {
 }
 
 func TestResolveRegistryPackageHasNoSubPackages(t *testing.T) {
-	reposDir, depsDir, cacheDir := t.TempDir(), t.TempDir(), t.TempDir()
+	reposDir, depsDir, cacheDir := canonicalTempDir(t), canonicalTempDir(t), canonicalTempDir(t)
 	pkgDir := filepath.Join(reposDir, "testreg", "packages", "m", "module")
 	for name, content := range map[string]string{
 		"build.go":     subPackageMain,
@@ -286,7 +286,7 @@ func TestResolveRegistryPackageHasNoSubPackages(t *testing.T) {
 }
 
 func TestScanSubPackagesFollowsSymlinkedCheckout(t *testing.T) {
-	realDir := t.TempDir()
+	realDir := canonicalTempDir(t)
 	for name, content := range map[string]string{
 		"build.go":        subPackageMain,
 		"nested/build.go": subPackageMain,
@@ -299,12 +299,12 @@ func TestScanSubPackagesFollowsSymlinkedCheckout(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	link := filepath.Join(t.TempDir(), "checkout")
+	link := filepath.Join(canonicalTempDir(t), "checkout")
 	if err := os.Symlink(realDir, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	r := NewResolver(nil, t.TempDir())
+	r := NewResolver(nil, canonicalTempDir(t))
 	r.scanSubPackages("testnative/mother", link)
 	src := r.sources["testnative/mother/nested"]
 	if src == nil {
