@@ -237,7 +237,7 @@ func Main(p *api.Package) {
 }
 
 func TestConfigConsumersRejectMissingSelectionFromSubdirectory(t *testing.T) {
-	dir := t.TempDir()
+	dir := canonicalTempDir(t)
 	state := filepath.Join(dir, "state")
 	project := filepath.Join(dir, "project")
 	child := filepath.Join(project, "child")

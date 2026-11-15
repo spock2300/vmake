@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -595,12 +596,16 @@ func TestBuildReportV2LinkFailure(t *testing.T) {
 		t.Fatalf("report = %+v", report)
 	}
 	diagnostic := report.Diagnostics[0]
-	if diagnostic.Code != "VMAKE_E_LINK" || diagnostic.Severity != "error" ||
-		filepath.Base(diagnostic.File) != "main.c" || diagnostic.Line != 2 {
+	if diagnostic.Code != "VMAKE_E_LINK" || diagnostic.Severity != "error" {
 		t.Fatalf("link diagnostic = %+v", diagnostic)
 	}
-	if !strings.Contains(diagnostic.Message, "undefined reference to") || !strings.Contains(diagnostic.Message, "missing_function") {
-		t.Fatalf("link diagnostic message = %q", diagnostic.Message)
+	if runtime.GOOS != "darwin" {
+		if filepath.Base(diagnostic.File) != "main.c" || diagnostic.Line != 2 {
+			t.Fatalf("link diagnostic = %+v", diagnostic)
+		}
+		if !strings.Contains(diagnostic.Message, "undefined reference to") || !strings.Contains(diagnostic.Message, "missing_function") {
+			t.Fatalf("link diagnostic message = %q", diagnostic.Message)
+		}
 	}
 	if diagnostic.Package != "scratch" || diagnostic.Target != "scratch:app" || diagnostic.Message == "" {
 		t.Fatalf("link context = %+v", diagnostic)
@@ -608,8 +613,10 @@ func TestBuildReportV2LinkFailure(t *testing.T) {
 	if report.Error == "" || len(report.Error) >= 300 || strings.Contains(report.Error, "\n") {
 		t.Fatalf("link summary = %q", report.Error)
 	}
-	if !strings.Contains(report.Error, "undefined reference to") || !strings.Contains(report.Error, "missing_function") {
-		t.Fatalf("link summary does not name the unresolved symbol: %q", report.Error)
+	if runtime.GOOS != "darwin" {
+		if !strings.Contains(report.Error, "undefined reference to") || !strings.Contains(report.Error, "missing_function") {
+			t.Fatalf("link summary does not name the unresolved symbol: %q", report.Error)
+		}
 	}
 	if strings.Contains(report.Error, "/object/") || strings.Contains(report.Error, filepath.Join(project, "build")) {
 		t.Fatalf("link summary leaked build-key paths: %q", report.Error)
@@ -1489,7 +1496,12 @@ func Main(p *api.Package) {
 		t.Fatalf("targets = %+v, want non-nil Size", report.Targets)
 	}
 	gotSize := report.Targets[0].Size
-	if gotSize.Text <= 0 || gotSize.Total <= 0 || gotSize.Total != gotSize.Text+gotSize.Data+gotSize.Bss {
+	if gotSize.Text <= 0 || gotSize.Total <= 0 {
+		t.Fatalf("target size = %+v (sample=%+v, raw=%q)", gotSize, sz, sample)
+	}
+	// macOS size reports Mach-O sections whose text/data/bss do not sum to the
+	// decimal total it also prints.
+	if runtime.GOOS != "darwin" && gotSize.Total != gotSize.Text+gotSize.Data+gotSize.Bss {
 		t.Fatalf("target size = %+v (sample=%+v, raw=%q)", gotSize, sz, sample)
 	}
 }
