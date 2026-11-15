@@ -17,7 +17,7 @@ const failingTestSource = "int main(void) { return 1; }\n"
 
 func writeTestCommandProject(t *testing.T, testSource string) string {
 	t.Helper()
-	project := filepath.Join(t.TempDir(), "tests-project")
+	project := filepath.Join(canonicalTempDir(t), "tests-project")
 	targets := `		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c")`
 	if testSource != "" {
 		targets += `

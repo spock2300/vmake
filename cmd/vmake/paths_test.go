@@ -14,7 +14,7 @@ import (
 func setPathsTestVmakeDir(t *testing.T) {
 	t.Helper()
 	previous := vmakeDir
-	vmakeDir = t.TempDir()
+	vmakeDir = canonicalTempDir(t)
 	t.Cleanup(func() { vmakeDir = previous })
 }
 
@@ -37,7 +37,7 @@ func makePathsTestDir(t *testing.T, dir string) {
 
 func TestSearchProjectDirFromPackageSubdir(t *testing.T) {
 	setPathsTestVmakeDir(t)
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	makePathsTestDir(t, filepath.Join(root, ".vmake"))
 	writePathsTestFile(t, filepath.Join(root, "build.go"), "package main\n")
 	writePathsTestFile(t, filepath.Join(root, "firmware", "build.go"), "package main\n")
@@ -50,7 +50,7 @@ func TestSearchProjectDirFromPackageSubdir(t *testing.T) {
 
 func TestSearchProjectDirFromProjectRoot(t *testing.T) {
 	setPathsTestVmakeDir(t)
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	makePathsTestDir(t, filepath.Join(root, ".vmake"))
 	writePathsTestFile(t, filepath.Join(root, "build.go"), "package main\n")
 
@@ -62,7 +62,7 @@ func TestSearchProjectDirFromProjectRoot(t *testing.T) {
 
 func TestSearchProjectDirNestedProjectWins(t *testing.T) {
 	setPathsTestVmakeDir(t)
-	outer := t.TempDir()
+	outer := canonicalTempDir(t)
 	makePathsTestDir(t, filepath.Join(outer, ".vmake"))
 	writePathsTestFile(t, filepath.Join(outer, "build.go"), "package main\n")
 	nested := filepath.Join(outer, "nested")
@@ -80,7 +80,7 @@ func TestSearchProjectDirNestedProjectWins(t *testing.T) {
 
 func TestSearchProjectDirStandaloneBuildGo(t *testing.T) {
 	setPathsTestVmakeDir(t)
-	dir := t.TempDir()
+	dir := canonicalTempDir(t)
 	writePathsTestFile(t, filepath.Join(dir, "build.go"), "package main\n")
 
 	got, ok := searchProjectDir(dir)
@@ -91,7 +91,7 @@ func TestSearchProjectDirStandaloneBuildGo(t *testing.T) {
 
 func TestSearchProjectDirNearestBuildGoWins(t *testing.T) {
 	setPathsTestVmakeDir(t)
-	dir := t.TempDir()
+	dir := canonicalTempDir(t)
 	writePathsTestFile(t, filepath.Join(dir, "build.go"), "package main\n")
 	pkg := filepath.Join(dir, "pkg")
 	writePathsTestFile(t, filepath.Join(pkg, "build.go"), "package main\n")
@@ -104,7 +104,7 @@ func TestSearchProjectDirNearestBuildGoWins(t *testing.T) {
 
 func TestSearchProjectDirChildBuildGoFallback(t *testing.T) {
 	setPathsTestVmakeDir(t)
-	dir := t.TempDir()
+	dir := canonicalTempDir(t)
 	writePathsTestFile(t, filepath.Join(dir, "system", "build.go"), "package main\n")
 
 	got, ok := searchProjectDir(dir)
@@ -117,7 +117,7 @@ func TestSearchProjectDirIgnoresContainerVmake(t *testing.T) {
 	setPathsTestVmakeDir(t)
 
 	t.Run("without_build_go", func(t *testing.T) {
-		container := t.TempDir()
+		container := canonicalTempDir(t)
 		makePathsTestDir(t, filepath.Join(container, ".vmake"))
 		fixture := filepath.Join(container, "fixture")
 		writePathsTestFile(t, filepath.Join(fixture, "build.go"), "package main\n")
@@ -129,7 +129,7 @@ func TestSearchProjectDirIgnoresContainerVmake(t *testing.T) {
 	})
 
 	t.Run("with_only_child_build_go", func(t *testing.T) {
-		container := t.TempDir()
+		container := canonicalTempDir(t)
 		makePathsTestDir(t, filepath.Join(container, ".vmake"))
 		fixture := filepath.Join(container, "fixture")
 		writePathsTestFile(t, filepath.Join(fixture, "build.go"), "package main\n")
@@ -143,7 +143,7 @@ func TestSearchProjectDirIgnoresContainerVmake(t *testing.T) {
 }
 
 func TestSearchProjectDirIgnoresGlobalVmakeDir(t *testing.T) {
-	home := t.TempDir()
+	home := canonicalTempDir(t)
 	previous := vmakeDir
 	vmakeDir = filepath.Join(home, ".vmake")
 	t.Cleanup(func() { vmakeDir = previous })
@@ -156,7 +156,7 @@ func TestSearchProjectDirIgnoresGlobalVmakeDir(t *testing.T) {
 
 func TestSearchProjectDirNone(t *testing.T) {
 	setPathsTestVmakeDir(t)
-	if got, ok := searchProjectDir(t.TempDir()); ok {
+	if got, ok := searchProjectDir(canonicalTempDir(t)); ok {
 		t.Fatalf("searchProjectDir(empty dir) = %q, true; want false", got)
 	}
 }
@@ -165,7 +165,7 @@ func TestFindEnclosingProjectRoot(t *testing.T) {
 	setPathsTestVmakeDir(t)
 
 	t.Run("skips_start_marker", func(t *testing.T) {
-		root := t.TempDir()
+		root := canonicalTempDir(t)
 		makePathsTestDir(t, filepath.Join(root, ".git"))
 		makePathsTestDir(t, filepath.Join(root, ".vmake"))
 		writePathsTestFile(t, filepath.Join(root, "build.go"), "package main\n")
@@ -180,7 +180,7 @@ func TestFindEnclosingProjectRoot(t *testing.T) {
 	})
 
 	t.Run("build_go_fallback_without_git", func(t *testing.T) {
-		root := t.TempDir()
+		root := canonicalTempDir(t)
 		makePathsTestDir(t, filepath.Join(root, ".vmake"))
 		writePathsTestFile(t, filepath.Join(root, "build.go"), "package main\n")
 		pkg := filepath.Join(root, "firmware")
@@ -194,7 +194,7 @@ func TestFindEnclosingProjectRoot(t *testing.T) {
 	})
 
 	t.Run("none_from_project_root", func(t *testing.T) {
-		root := t.TempDir()
+		root := canonicalTempDir(t)
 		makePathsTestDir(t, filepath.Join(root, ".vmake"))
 		writePathsTestFile(t, filepath.Join(root, "build.go"), "package main\n")
 
@@ -204,7 +204,7 @@ func TestFindEnclosingProjectRoot(t *testing.T) {
 	})
 
 	t.Run("child_build_go_alone_is_not_enclosing", func(t *testing.T) {
-		base := t.TempDir()
+		base := canonicalTempDir(t)
 		root := filepath.Join(base, "project")
 		makePathsTestDir(t, filepath.Join(root, ".vmake"))
 		writePathsTestFile(t, filepath.Join(root, "build.go"), "package main\n")
@@ -218,7 +218,7 @@ func TestFindEnclosingProjectRoot(t *testing.T) {
 
 func TestLoadResolveParamsUsesProjectRootFromPackageSubdir(t *testing.T) {
 	resetResolveTestGlobals(t)
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	makePathsTestDir(t, filepath.Join(root, ".vmake"))
 	writePathsTestFile(t, filepath.Join(root, "build.go"), "package main\n")
 	sub := filepath.Join(root, "firmware")
@@ -241,7 +241,7 @@ func TestLoadResolveParamsUsesProjectRootFromPackageSubdir(t *testing.T) {
 }
 
 func TestInspectFromPackageSubdirUsesProjectRoot(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "project")
+	project := filepath.Join(canonicalTempDir(t), "project")
 	makePathsTestDir(t, filepath.Join(project, ".vmake"))
 	writePathsTestFile(t, filepath.Join(project, "build.go"), `package main
 
@@ -308,7 +308,7 @@ func Main(p *api.Package) {
 
 func TestSearchProjectDirGitRootFallback(t *testing.T) {
 	setPathsTestVmakeDir(t)
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	makePathsTestDir(t, filepath.Join(root, ".git"))
 	writePathsTestFile(t, filepath.Join(root, "build.go"), "package main\n")
 	writePathsTestFile(t, filepath.Join(root, "firmware", "build.go"), "package main\n")
@@ -321,7 +321,7 @@ func TestSearchProjectDirGitRootFallback(t *testing.T) {
 
 func TestSearchProjectDirGitFileFallback(t *testing.T) {
 	setPathsTestVmakeDir(t)
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	writePathsTestFile(t, filepath.Join(root, ".git"), "gitdir: elsewhere\n")
 	writePathsTestFile(t, filepath.Join(root, "build.go"), "package main\n")
 	writePathsTestFile(t, filepath.Join(root, "pkg", "build.go"), "package main\n")
@@ -334,7 +334,7 @@ func TestSearchProjectDirGitFileFallback(t *testing.T) {
 
 func TestSearchProjectDirGitRootWithoutBuildGoIgnored(t *testing.T) {
 	setPathsTestVmakeDir(t)
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	makePathsTestDir(t, filepath.Join(root, ".git"))
 	fixture := filepath.Join(root, "test_data", "fixture")
 	writePathsTestFile(t, filepath.Join(fixture, "build.go"), "package main\n")
@@ -347,7 +347,7 @@ func TestSearchProjectDirGitRootWithoutBuildGoIgnored(t *testing.T) {
 
 func TestSearchProjectDirNestedVmakeBeatsGitRoot(t *testing.T) {
 	setPathsTestVmakeDir(t)
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	makePathsTestDir(t, filepath.Join(root, ".git"))
 	writePathsTestFile(t, filepath.Join(root, "build.go"), "package main\n")
 	nested := filepath.Join(root, "nested")
@@ -363,10 +363,10 @@ func TestSearchProjectDirNestedVmakeBeatsGitRoot(t *testing.T) {
 
 func TestLoadResolveParamsUsesProjectOverride(t *testing.T) {
 	resetResolveTestGlobals(t)
-	project := t.TempDir()
+	project := canonicalTempDir(t)
 	makePathsTestDir(t, filepath.Join(project, ".vmake"))
 	writePathsTestFile(t, filepath.Join(project, "build.go"), "package main\n")
-	outside := t.TempDir()
+	outside := canonicalTempDir(t)
 	t.Chdir(outside)
 	projectOverride = project
 
@@ -390,7 +390,7 @@ func TestLoadResolveParamsUsesProjectOverride(t *testing.T) {
 
 func TestFindProjectDirOverrideRelative(t *testing.T) {
 	resetResolveTestGlobals(t)
-	parent := t.TempDir()
+	parent := canonicalTempDir(t)
 	project := filepath.Join(parent, "工程 space")
 	makePathsTestDir(t, filepath.Join(project, ".vmake"))
 	writePathsTestFile(t, filepath.Join(project, "build.go"), "package main\n")
@@ -419,7 +419,7 @@ func TestProjectFlagRegistration(t *testing.T) {
 }
 
 func TestInspectProjectOverrideFromOutside(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
+	project := filepath.Join(canonicalTempDir(t), "proj")
 	writePathsTestFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
@@ -431,7 +431,7 @@ func Main(p *api.Package) {
 	})
 }
 `)
-	outside := t.TempDir()
+	outside := canonicalTempDir(t)
 	stdout, stderr, code := runInspectCommand(t, outside, "inspect", "--project", project)
 	if code != 0 {
 		t.Fatalf("inspect --project exit = %d, stderr = %q", code, stderr)
@@ -449,7 +449,7 @@ func Main(p *api.Package) {
 }
 
 func TestInspectProjectOverrideRelative(t *testing.T) {
-	parent := t.TempDir()
+	parent := canonicalTempDir(t)
 	project := filepath.Join(parent, "工程 space")
 	writePathsTestFile(t, filepath.Join(project, "build.go"), `package main
 
@@ -473,8 +473,8 @@ func Main(p *api.Package) {
 }
 
 func TestInspectProjectOverrideInvalid(t *testing.T) {
-	outside := t.TempDir()
-	empty := t.TempDir()
+	outside := canonicalTempDir(t)
+	empty := canonicalTempDir(t)
 	file := filepath.Join(outside, "build.go.txt")
 	writePathsTestFile(t, file, "not a directory\n")
 
@@ -500,7 +500,7 @@ func TestInspectProjectOverrideInvalid(t *testing.T) {
 }
 
 func TestInspectFromPackageSubdirUsesGitRoot(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "project")
+	project := filepath.Join(canonicalTempDir(t), "project")
 	makePathsTestDir(t, filepath.Join(project, ".git"))
 	writePathsTestFile(t, filepath.Join(project, "build.go"), `package main
 
@@ -592,7 +592,7 @@ func Main(p *api.Package) {
 
 func writeShadowedProject(t *testing.T) (string, string) {
 	t.Helper()
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	for _, dir := range []string{
 		filepath.Join(root, ".git"),
 		filepath.Join(root, ".vmake"),
@@ -660,8 +660,8 @@ func runShadowedRootCommand(t *testing.T, workDir string, args ...string) (strin
 	cmd := exec.Command(exe, commandArgs...)
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(),
-		"VMAKE_TEST_SHADOW_DIR="+t.TempDir(),
-		"VMAKE_CACHE="+t.TempDir(),
+		"VMAKE_TEST_SHADOW_DIR="+canonicalTempDir(t),
+		"VMAKE_CACHE="+canonicalTempDir(t),
 		"VMAKE_TRUST_ALL=1",
 	)
 	var stdout, stderr bytes.Buffer
@@ -771,7 +771,7 @@ func TestShadowedRootExplicitNestedOverride(t *testing.T) {
 }
 
 func TestShadowedRootFreshCloneWithoutRootMarker(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	if err := os.MkdirAll(filepath.Join(root, ".git"), 0755); err != nil {
 		t.Fatal(err)
 	}
