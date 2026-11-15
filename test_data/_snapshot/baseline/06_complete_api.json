@@ -19,15 +19,15 @@
     {
       "path": "bin/myapp",
       "size": 20090,
-      "hash": "6d852e32f238c0028f72e3aea1c6dccb3e784418d0ee20857888a35f5ca8e82b"
+      "hash": "ae61e66dba144dacc36970044f8063575781e491c1725c941514951d1de8511d"
     }
   ],
   "build_files": [
     {
       "path": "compile_commands.json",
       "size": 6263,
-      "hash": "55ef65e9fc3fe43088a12941f8ffdf4a70c94b41b21c2fea266b24da3acfb2af"
+      "hash": "fb36c8d53ef1f0360b343fafe368191813daebf2efc977ac2f86d13eefc9d3dd"
     }
   ],
-  "install_tree_hash": "d671eedb00659ac84d061e18b9616dc3e1c02933009bb6a31385201bd8219f87"
+  "install_tree_hash": "8820158f3e9d587ed8a4698c9cecf9036ca13ca5d66e95400a76eaa79360fb61"
 }

@@ -62,3 +62,12 @@ This means a build artifact differs from the baseline. Investigate:
    before committing.
 3. Compile flag drift shows up as `compile_commands.json` change — inspect
    the actual flag difference with `diff` against the baseline content.
+
+## Baseline Refresh History
+
+- 2026-11-15: all `baseline/*.json` hashes/sizes refreshed. The committed
+  baselines dated from 2026-10-18 and already drifted at clean `HEAD`
+  (`f953b71`); a clean-HEAD binary and the candidate binary produced identical
+  got-hashes for all 21 affected projects, so this was stale baseline data, not
+  a behavior change. Only `hash`, `size` and `install_tree_hash` values changed;
+  no file lists or manifests differ.

@@ -19,20 +19,20 @@
     {
       "path": "lib/libbar.so",
       "size": 16449,
-      "hash": "52ee9e85c54173715b481f4b1ebeccdc6359c561af22631d776883ba969279dd"
+      "hash": "d80497fdb83044b56f0f615cdbabf647f12b34b0eceff7e3d09ce8acda772a60"
     },
     {
       "path": "lib/libfoo.so",
       "size": 16569,
-      "hash": "3510d38d07377423c1b3779a879a5611fa467e4d51f4c06c39e9bd7bbe6e6fc7"
+      "hash": "e45a019e8503e5f9e506d9dd0c582cef66dafb9afa665eea3c885a030481aacb"
     }
   ],
   "build_files": [
     {
       "path": "compile_commands.json",
       "size": 4452,
-      "hash": "6a11bf288bbcdd8fa1738fc9624f11f0fa57c5063023b48346125da5961b0bf9"
+      "hash": "35e457291205a51317a263167ec23d6a70316cd236618831910f87eee10c0deb"
     }
   ],
-  "install_tree_hash": "93d873f73d23756e85d84961a5aa3b6fa584ca73987da473d0bd89d89f2aa985"
+  "install_tree_hash": "1c1595bc0152c1474d7c7896ecc83f8a16cf49914eb264459822203fb1d113fa"
 }
