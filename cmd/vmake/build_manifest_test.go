@@ -108,7 +108,7 @@ func TestCheckoutManifestLocalsSkipsManagedGitSources(t *testing.T) {
 }
 
 func TestResolveManifestEntryPathUsesProjectRoot(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	project := filepath.Join(root, "project")
 	if err := os.MkdirAll(project, 0755); err != nil {
 		t.Fatal(err)

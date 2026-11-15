@@ -22,7 +22,7 @@ import (
 )
 
 func TestBuildReportActualInstallsAndInvalidation(t *testing.T) {
-	dir := t.TempDir()
+	dir := canonicalTempDir(t)
 	state, root := filepath.Join(dir, "state"), filepath.Join(dir, "project")
 	writeHealthyDefinition(t, filepath.Join(state, "extensions", "fixture", "healthy", "toolchain.json"), "healthy")
 	writeExtensionFile(t, filepath.Join(root, "build.go"), `package main
@@ -189,7 +189,7 @@ func Main(p *api.Package) {
 
 func TestBuildReportNeverSucceedsBeforeCompletion(t *testing.T) {
 	for _, failure := range []error{context.Canceled, errors.New("failed"), nil} {
-		r := &buildReport{Root: t.TempDir(), Status: "running"}
+		r := &buildReport{Root: canonicalTempDir(t), Status: "running"}
 		result := failure
 		r.finish(&result)
 		if result == nil || r.Status == "succeeded" {
@@ -213,7 +213,7 @@ func TestBuildReportNeverSucceedsBeforeCompletion(t *testing.T) {
 }
 
 func TestBuildReportPanicCannotPublishSuccess(t *testing.T) {
-	r := &buildReport{Root: t.TempDir(), completed: true}
+	r := &buildReport{Root: canonicalTempDir(t), completed: true}
 	func() {
 		defer func() {
 			if recover() == nil {
@@ -281,8 +281,8 @@ func runBuildCommandEnv(t *testing.T, projectDir string, extraEnv []string, args
 	cmd := exec.Command(exe, commandArgs...)
 	cmd.Dir = projectDir
 	cmd.Env = append(os.Environ(),
-		"VMAKE_TEST_BUILD_DIR="+t.TempDir(),
-		"VMAKE_CACHE="+t.TempDir(),
+		"VMAKE_TEST_BUILD_DIR="+canonicalTempDir(t),
+		"VMAKE_CACHE="+canonicalTempDir(t),
 	)
 	cmd.Env = append(cmd.Env, extraEnv...)
 	var stdout, stderr bytes.Buffer
@@ -302,7 +302,7 @@ func runBuildCommandEnv(t *testing.T, projectDir string, extraEnv []string, args
 
 func writeBuildReportProject(t *testing.T, source string) string {
 	t.Helper()
-	project := filepath.Join(t.TempDir(), "scratch")
+	project := filepath.Join(canonicalTempDir(t), "scratch")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
@@ -462,7 +462,7 @@ func TestBuildReportV2CompileFailure(t *testing.T) {
 
 func writeTwoTargetBuildReportProject(t *testing.T, firstSource, secondSource string) string {
 	t.Helper()
-	project := filepath.Join(t.TempDir(), "partial-failure")
+	project := filepath.Join(canonicalTempDir(t), "partial-failure")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
@@ -617,7 +617,7 @@ func TestBuildReportV2LinkFailure(t *testing.T) {
 }
 
 func TestBuildReportV2ScriptError(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "scratch")
+	project := filepath.Join(canonicalTempDir(t), "scratch")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
@@ -803,7 +803,7 @@ func TestBuildFailureDetailsLinkerDiagnostic(t *testing.T) {
 }
 
 func TestBuildReportFinishV2(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	report := &buildReport{
 		SchemaVersion: 2,
 		Root:          root,
@@ -840,7 +840,7 @@ func TestBuildReportFinishV2(t *testing.T) {
 }
 
 func TestBuildReportPartialFailureNeverNoOp(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	report := &buildReport{
 		SchemaVersion: 2,
 		Root:          root,
@@ -883,7 +883,7 @@ func TestBuildReportPartialFailureNeverNoOp(t *testing.T) {
 }
 
 func TestBuildReportFinishFailedSummaryNeverNoOp(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	report := &buildReport{
 		SchemaVersion: 2,
 		Root:          root,
@@ -913,7 +913,7 @@ func TestBuildReportFinishFailedSummaryNeverNoOp(t *testing.T) {
 }
 
 func TestBuildReportFailedTargetNeverNoOp(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "target-failure")
+	project := filepath.Join(canonicalTempDir(t), "target-failure")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import (
@@ -954,7 +954,7 @@ func TestBuildReportCMakeConfigureFailureNeverNoOp(t *testing.T) {
 			t.Skipf("%s is not available: %v", tool, err)
 		}
 	}
-	project := filepath.Join(t.TempDir(), "cmake-fail")
+	project := filepath.Join(canonicalTempDir(t), "cmake-fail")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
@@ -998,7 +998,7 @@ func TestBuildReportCMakeOnlyExternalStages(t *testing.T) {
 			t.Skipf("%s is not available: %v", tool, err)
 		}
 	}
-	project := filepath.Join(t.TempDir(), "cmake-only")
+	project := filepath.Join(canonicalTempDir(t), "cmake-only")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
@@ -1050,7 +1050,7 @@ func TestBuildSummaryErrorPreservesCause(t *testing.T) {
 
 func writeBuildSummaryProject(t *testing.T, source string) string {
 	t.Helper()
-	project := filepath.Join(t.TempDir(), "summary")
+	project := filepath.Join(canonicalTempDir(t), "summary")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import (
@@ -1221,7 +1221,7 @@ func TestBuildQuietSummaryAndReportCounts(t *testing.T) {
 }
 
 func TestBuildReportVoidTargetStatus(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "tasks")
+	project := filepath.Join(canonicalTempDir(t), "tasks")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
@@ -1444,7 +1444,7 @@ func TestExitCodeMatrix(t *testing.T) {
 		t.Fatalf("compile failure stdout = %q", stdout)
 	}
 
-	outside := t.TempDir()
+	outside := canonicalTempDir(t)
 	stdout, stderr, code = runBuildCommand(t, outside, "build")
 	if code != 2 {
 		t.Fatalf("outside project exit = %d, want 2 (stdout %q, stderr %q)", code, stdout, stderr)
@@ -1467,7 +1467,7 @@ func TestExitCodeMatrix(t *testing.T) {
 func TestParseBerkeleySizeAndBuildReportSize(t *testing.T) {
 	sample := "   text\t   data\t    bss\t    dec\t    hex\tfilename\n  12345\t    678\t    901\t  13924\t   3664\tbuild/app.elf\n"
 	sz := build.TargetSize{Text: 12345, Data: 678, Bss: 901, Total: 13924}
-	project := filepath.Join(t.TempDir(), "sizeproj")
+	project := filepath.Join(canonicalTempDir(t), "sizeproj")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
@@ -1495,7 +1495,7 @@ func Main(p *api.Package) {
 }
 
 func TestEphemeralSetFlagAndQueryConfigGlobalDefines(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "setproj")
+	project := filepath.Join(canonicalTempDir(t), "setproj")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
