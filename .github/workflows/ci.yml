@@ -43,9 +43,11 @@ jobs:
       - name: Report unit test failures
         if: steps.unit.outcome == 'failure'
         run: |
-          grep -E '^(--- FAIL|FAIL|# |panic:|internal compiler error)' "$RUNNER_TEMP/go-test.log" | head -40 | while IFS= read -r line; do
-            echo "::error::${line}"
-          done
+          awk '
+            /^--- FAIL/ { show = 4 }
+            show > 0 { print "::error::" $0; show--; next }
+            /^(FAIL|panic:|internal compiler error)/ { print "::error::" $0 }
+          ' "$RUNNER_TEMP/go-test.log" | head -100
           exit 1
 
       - name: Integration (simple C build)
