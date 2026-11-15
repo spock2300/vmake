@@ -83,6 +83,10 @@ func (f *stageFixture) PrepareSources() (*sourceStage, error) {
 	return src, nil
 }
 
+func (f *stageFixture) Plan() (*planStage, error) {
+	return planBuild(f.rc, f.conf, f.src, f.decl)
+}
+
 func (f *stageFixture) DeclareTargets() (*declareStage, error) {
 	decl, err := declareTargets(f.rc, f.conf, f.src)
 	if err != nil {
@@ -160,5 +164,19 @@ func TestStagesDeclareTargets(t *testing.T) {
 	}
 	if _, ok := decl.pkgMetaMap["app"]; !ok {
 		t.Fatalf("pkgMetaMap = %+v, want an entry for app", decl.pkgMetaMap)
+	}
+
+	plan, err := f.Plan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan == nil || plan.graph == nil || plan.job == nil {
+		t.Fatalf("plan = %+v, want a graph and a build job", plan)
+	}
+	if _, err := plan.graph.GetNode("app:app"); err != nil {
+		t.Fatalf("plan graph does not contain app:app: %v", err)
+	}
+	if plan.job.Env == nil || plan.job.Env.Layouts["app"] == nil {
+		t.Fatalf("plan environment lost the prepared layouts: %+v", plan.job.Env)
 	}
 }

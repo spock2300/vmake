@@ -47,7 +47,7 @@ def configure_count(build):
 
 
 def verify(vmake, root, name, toolchain, generator, custom=False, preset=False,
-           default_mode=False):
+           default_mode=False, no_generator=False):
     project = root / name
     source = project / "source"
     source.mkdir(parents=True)
@@ -140,7 +140,12 @@ int main(void) { return (probe_value() == 7 || probe_value() == 11) && probe_cpp
         flags += '\nctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString)'
         flags += '\nctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString)'
         flags += '\nctx.AddGlobalCFlags("-mcpu=cortex-m4", "-mthumb")\nctx.AddGlobalCxxFlags("-mcpu=cortex-m4", "-mthumb")'
-    configure = ["--preset=probe"] if preset else ["-G", generator]
+    if preset:
+        configure = ["--preset=probe"]
+    elif no_generator:
+        configure = []
+    else:
+        configure = ["-G", generator]
     if generator == "Ninja Multi-Config":
         configure += ["-DCMAKE_CONFIGURATION_TYPES=Debug;Release;MinSizeRel"]
     if arm:
@@ -150,7 +155,7 @@ int main(void) { return (probe_value() == 7 || probe_value() == 11) && probe_cpp
             "version": 3,
             "configurePresets": [{"name": "probe", "generator": generator}]
         }), encoding="utf-8")
-    configure_go = ", ".join(json.dumps(arg) for arg in configure)
+    configure_go = "".join(json.dumps(arg) + ", " for arg in configure)
     (project / "build.go").write_text('''package main
 import (
     "encoding/json"
@@ -163,8 +168,7 @@ func Main(p *api.Package) {
     p.OnBuild(func(ctx *api.BuildContext) {
         @SETTINGS@
         ctx.Target("external").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
-            pkg.CMakeConfigure(@CONFIGURE@,
-                "-DCMAKE_ASM_FLAGS=" + pkg.MergedCFlags("-DVMAKE_ASM_FLAG=1"))
+            pkg.CMakeConfigure(@CONFIGURE@"-DCMAKE_ASM_FLAGS=" + pkg.MergedCFlags("-DVMAKE_ASM_FLAG=1"))
             pkg.CMakeBuild()
             pkg.CMakeInstall()
             data, err := json.Marshal(map[string]string{
@@ -204,6 +208,9 @@ func Main(p *api.Package) {
     expected_type = "Debug" if default_mode else "MinSizeRel"
     assert (f"CMAKE_BUILD_TYPE:STRING={expected_type}" in cache_text
             or f"CMAKE_BUILD_TYPE:UNINITIALIZED={expected_type}" in cache_text), expected_type
+    if no_generator:
+        expected_generator = "Ninja" if os.name == "nt" else "Unix Makefiles"
+        assert f"CMAKE_GENERATOR:INTERNAL={expected_generator}" in cache_text, expected_generator
     assert "CMAKE_LINKER:UNINITIALIZED=" not in cache_text
     assert "CMAKE_MODULE_LINKER_FLAGS:STRING=-Wl,--gc-sections" in cache_text
     commands = json.loads((build / "compile_commands.json").read_text(encoding="utf-8"))
@@ -249,6 +256,7 @@ def main():
     verify(vmake, root, "multi config", "host", "Ninja Multi-Config", custom=True)
     verify(vmake, root, "preset", "host", "Ninja", preset=True)
     verify(vmake, root, "default debug", "host", "Ninja", default_mode=True)
+    verify(vmake, root, "default generator", "host", "Ninja", no_generator=True)
     if args.arm:
         verify(vmake, root, "ARM", "arm-none-eabi", "Ninja")
     print(f"All CMake checks passed: {root}")

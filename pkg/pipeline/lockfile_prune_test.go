@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -62,5 +63,20 @@ func TestWriteLockfilePrunesStaleEntries(t *testing.T) {
 	}
 	if kept.WrapperCommit != "" {
 		t.Errorf("native entry should not carry WrapperCommit, got %q", kept.WrapperCommit)
+	}
+
+	first, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.writeLockfile(); err != nil {
+		t.Fatalf("second writeLockfile: %v", err)
+	}
+	second, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("writeLockfile is not idempotent:\nfirst:\n%s\nsecond:\n%s", first, second)
 	}
 }
