@@ -64,6 +64,12 @@ Score tuple: `(passes, -violations, -words)`.
 - All tasks passing with zero violations stops the loop.
 - A candidate that does not improve the tuple is reverted.
 
+## Results
+
+Recorded runs and their score tuple live in [RESULTS.md](RESULTS.md). Append a
+section after each measured run; the M0 baseline and its environment are the
+first entry.
+
 ## Usage
 
 ```bash
