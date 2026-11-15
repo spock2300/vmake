@@ -224,7 +224,7 @@ vmake test
 - Language is auto-detected from file extension (`.c` → C, `.cpp`/`.cc`/`.cxx` → C++) — no manual setting needed
 - Flags are ordered private target → mode → global → public target/propagated public, so per-target private `-O*` flags lose to the mode's `-O2`/`-O0`, and public flags can override the global flag — select the mode instead (`vmake build --mode debug`); see `SKILL.md - Global Flags & Mode Flags`
 - The builtin `host` toolchain already injects `-Wall -Wextra` and `-fPIC` when compiling and `-Wl,--as-needed` when linking (ELF targets), so the targets don't repeat them; see `SKILL.md - Default Build Flags`
-- Global options may be declared by multiple packages, but each declaration must use the same `Type` and `Default` (and, for non-builtin options, the same `SetValues`); non-empty `SetMacroName` values must agree. Merging is deterministic — sorted package names, first definition wins. Only global options are cross-validated; see `SKILL.md - GlobalOption Cross-Package Consistency`
+- Global options may be declared by multiple packages, but each declaration must use the same `Type` and `SetExportDefine`; `Default`s must match, except `chip` may leave one unset (the other fills it) and unions declared values; for other non-builtin options `SetValues` must match. Non-empty `SetMacroName` values must agree; merging is deterministic — sorted package names, first definition wins. Only global options are cross-validated; see `SKILL.md - GlobalOption Cross-Package Consistency`
 - `benchmark` uses `SetTest(true)`, so `vmake test` builds and runs it; `debug_info` keeps `SetDefault(false)` and is never built automatically (listed as `[disabled]`)
 
 ## See Also

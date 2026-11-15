@@ -202,15 +202,15 @@ All accessors (`Bool`, `Int`, `String`, `BoolStr`, `When`, `WhenNot`, `WhenAny`,
 |---|---|
 | `OnConfig` | Declared `SetDefault` values plus earlier `SetConfigValue` results only. Values saved in the active configuration (`configs/default.json` by default) are NOT loaded yet |
 | `SetOnApply` | The resolved value for that option (saved config value, else default); `OptionInt` is normalized to `int`, other types are passed through |
-| `OnBuild` / `OnInstall` / `OnClean` | Full resolved values: saved config + defaults + built-in/global options. `OnBuild` additionally accepts `<pkg>/<option>` cross-package reads |
-| `OnRequire` | Pass 1 (discovery): none; only `When`/`WhenNot`/`WhenAny`/`If`/`Select` are allowed. Pass 2 (`FilterDeps`): this package's `entries.<pkg>.options` values (global config values are not merged); direct reads of those values are allowed |
+| `OnBuild` / `OnInstall` / `OnClean` | Full resolved values: saved config + defaults + built-in/global options. `OnBuild` and `OnConfigureDeps` additionally accept `<pkg>/<option>` cross-package reads |
+| `OnRequire` | Pass 1 (discovery): none; only `When`/`WhenNot`/`WhenAny`/`If`/`Select` are allowed. Pass 2 (`FilterDeps`): this package's `entries.<pkg>.options` values plus resolved global option values; direct reads of those values are allowed |
 
 ```go
 ctx.Bool("debug")           // bool → bool (OptionBool only — accessor must match type)
 ctx.Int("tick_hz")          // int → int (OptionInt only)
 ctx.String("platform")      // string → string (OptionString/OptionChoice only)
 ctx.BoolStr("debug")        // bool → "ON" / "OFF"
-ctx.Bool("firmware/graphics_accel") // OnBuild only: another package's resolved package-local option
+ctx.Bool("firmware/graphics_accel") // OnBuild/OnConfigureDeps: another package's resolved package-local option
 ctx.When("x", "val")        // true iff option "x" == "val" (works in OnRequire too)
 ctx.WhenNot("x", "val")     // true iff option "x" != "val" (works in OnRequire too)
 ctx.WhenAny("x", "a", "b")  // true iff option "x" is "a" or "b" (works in OnRequire too)

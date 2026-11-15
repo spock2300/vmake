@@ -200,7 +200,7 @@ file is not found.
 ```bash
 vmake build
 # Expected: PREBUILT libdrv.a (symlink when the target has no post-link steps)
-ls -l drv/build/*/libdrv.a   # -> drv/lib/libdrv.a
+ls -l drv/build/*/libdrv.a   # -> /abs/path/drv/lib/libdrv.a (absolute symlink target)
 vmake build                  # second run prints no PREBUILT line (record matches)
 ```
 

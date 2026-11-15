@@ -42,7 +42,7 @@ func Main(p *api.Package) {
 }
 ```
 
-The root `build.go` defines options shared across all sub-packages via `GlobalOption`. A plain `ctx.Option` is **package-local**: a sub-package cannot read it by bare name, but it can read it explicitly as `root/<option>` in `OnBuild` (only `OnBuild` supports cross-package reads). It has no `OnBuild` — all targets are in sub-packages. It also declares no `SetRoot`, so this example relies on the default root heuristic (see Root Selection below). If you don't need shared options, the root `build.go` can be empty (`func Main(p *api.Package) {}`).
+The root `build.go` defines options shared across all sub-packages via `GlobalOption`. A plain `ctx.Option` is **package-local**: a sub-package cannot read it by bare name, but it can read it explicitly as `root/<option>` in `OnBuild` or `OnConfigureDeps` (those are the cross-package read phases). It has no `OnBuild` — all targets are in sub-packages. It also declares no `SetRoot`, so this example relies on the default root heuristic (see Root Selection below). If you don't need shared options, the root `build.go` can be empty (`func Main(p *api.Package) {}`).
 
 ## lib/build.go
 
@@ -107,7 +107,7 @@ p.OnRequire(func(ctx *api.RequireContext) {
 
 - Every `build.go` found while scanning the project becomes a local package named after its directory **basename**: `lib/detail/build.go` → package `detail`, not `lib/detail`.
 - The scan skips `build/`, `vendor/`, `vmake_deps/`, `.vmake_deps/`, `node_modules/`, `.git/`, `.vmake/`, and any other hidden directory.
-- Duplicate names are silently dropped — only the first package with a given basename is loaded, later directories with the same name are ignored. Keep directory names unique.
+- Duplicate names are an error: the scan fails with `duplicate local package name "<name>": <path1> and <path2>`. Keep directory names unique.
 
 ## Local vs Remote Dependencies
 
@@ -149,11 +149,11 @@ Each dependency is a separate local package in its own directory. The `<pkg>:<ta
 
 ## GlobalOption
 
-One declaring package is enough. Multiple packages may declare the same `GlobalOption` only if `Type` and `Default` are identical (and, for non-builtin options, `SetValues` is identical) — otherwise `MergeGlobalOptions` fails the build with a mismatch. Merging is deterministic: packages are processed in sorted name order and the first definition wins, so a later `SetDescription` does not replace an earlier one; a later non-empty `SetMacroName` is adopted only when the earlier definition left it empty. Prefer a single declaring package for shared metadata.
+One declaring package is enough. Multiple packages may declare the same `GlobalOption` only if `Type` and `SetExportDefine` match and `Default` matches, except that `chip` may leave one default unset (another fills it) and unions `SetValues`; `SetValues` must also match for the other non-builtin options — otherwise `MergeGlobalOptions` fails the build with a mismatch. Merging is deterministic: packages are processed in sorted name order and the first definition wins, so a later `SetDescription` does not replace an earlier one; a later non-empty `SetMacroName` is adopted only when the earlier definition left it empty. Prefer a single declaring package for shared metadata.
 
 ## OnConfig Caveats
 
-`ctx.Bool/String/Int` are strict, per-package reads. In `OnConfig`, a package only sees the options it declared itself: reading another package's option (including its `GlobalOption`) fails with `unknown option` unless this package declares the same `GlobalOption` with identical `Type`/`Default` (and `SetValues` for non-builtin options). Bare-name global reads — all packages' global options plus configured values — work in `OnBuild`/`OnInstall`/`OnClean` contexts. In `OnBuild` you can also read another package's option explicitly as `<pkg>/<option>`; the value is that owner's effective configuration, and cross-package reads are unavailable in `OnConfig`, `OnRequire`, `OnInstall`, and `OnClean`. In `OnRequire`, use the discovery-aware `ctx.When`/`ctx.If`/`ctx.Select`.
+`ctx.Bool/String/Int` are strict, per-package reads. In `OnConfig`, a package only sees the options it declared itself: reading another package's option (including its `GlobalOption`) fails with `unknown option` unless this package declares the same `GlobalOption` with identical `Type`/`Default` (and `SetValues` for non-builtin options). Bare-name global reads — all packages' global options plus configured values — work in `OnBuild`/`OnInstall`/`OnClean` contexts. In `OnBuild` and `OnConfigureDeps` you can also read another package's option explicitly as `<pkg>/<option>`; the value is that owner's effective configuration, and cross-package reads are unavailable in `OnConfig`, `OnRequire`, `OnInstall`, and `OnClean`. In `OnRequire`, use the discovery-aware `ctx.When`/`ctx.If`/`ctx.Select`.
 
 ## Running / Verifying
 
@@ -161,18 +161,18 @@ One declaring package is enough. Multiple packages may declare the same `GlobalO
 vmake build                    # "Build succeeded: ..."; lib:utils builds before app:app
 vmake config --set debug=true  # non-interactive write to the active configuration
 vmake doctor                   # toolchain/platform findings + "[warn] ... (noRoot)" because this example declares no root
-vmake query                    # dependency tree with targets, versions and package dirs
+vmake query                    # dependency tree with targets and package dirs (native packages also show versions)
 ```
 
 Expected: `vmake build -v` prints a `Build order:` list containing `lib:utils` before `app:app`; plain `vmake build` ends with a `Build succeeded: ...` summary. `vmake doctor` prints the `noRoot` warning for this example; once a root is declared the warning disappears and the summary reports `OK: no issues` (or only unrelated platform findings).
 
 ## Key Points
 
-- Package name = directory basename (e.g., `lib/` → package name `"lib"`); skipped directories and duplicate basenames are ignored
+- Package name = directory basename (e.g., `lib/` → package name `"lib"`); skipped directories are ignored and duplicate basenames are an error
 - Cross-package deps use `:` separator: `"lib:utils"` means target `"utils"` from package `"lib"`
 - Local deps need only a target edge (`AddDeps` or `UseRequires`; all local `build.go` files are loaded); remote deps need `AddRequires` plus `AddDeps`/`UseRequires`
 - Same-package deps use just the target name: `AddDeps("utils")`
-- Options that every package should read by bare name must be declared with `ctx.GlobalOption` (identical `Type` and `Default`, plus identical `SetValues` for non-builtin options, from every declaring package); plain `ctx.Option` is package-local but can be read explicitly as `<pkg>/<option>` in `OnBuild`
+- Options that every package should read by bare name must be declared with `ctx.GlobalOption` (matching `Type`, `SetExportDefine`, and `Default` — with the `chip` default/values exceptions — plus matching `SetValues` for other non-builtin options, from every declaring package); plain `ctx.Option` is package-local but can be read explicitly as `<pkg>/<option>` in `OnBuild` or `OnConfigureDeps`
 - With an explicit `SetRoot(true)`, BFS starts only from that package — list every package you still want built in `AddRequires`
 
 ## See Also

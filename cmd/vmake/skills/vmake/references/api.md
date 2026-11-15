@@ -206,8 +206,8 @@ own build tree and publish the staged archive through the getter.
 | `CC()` | `string` | Configured C compiler name (may be relative; use `p.Env()["CC"]` for the absolute path) |
 | `CXX()` | `string` | Configured C++ compiler name (use `p.Env()["CXX"]` for the absolute path) |
 | `AR()` | `string` | Configured archiver name (use `p.Env()["AR"]` for the absolute path) |
-| `TargetTriple()` | `string` | Resolved target triple (package entry value → package-local non-global default → project global config/default → toolchain `target_triple` default), e.g. `arm-none-eabi` |
-| `TargetOS()` | `string` | Resolved target OS (same resolution order); `none` for bare metal, host OS when unset |
+| `TargetTriple()` | `string` | Resolved target triple (package entry value → package-local non-global default → project global config/default → active chip profile → toolchain `target_triple` default), e.g. `arm-none-eabi` |
+| `TargetOS()` | `string` | Resolved target OS (same resolution order, including the active chip profile); `none` for bare metal, host OS when unset |
 | `Prefix()` | `string` | Raw configured toolchain prefix, including the trailing `-`, e.g. `arm-none-eabi-`; does not add the installation path |
 | `CFlags()` / `CXXFlags()` / `LDFlags()` | `string` | Default compiler/linker flags (builtin `host` toolchain only) |
 | `ObjCopy()` | `string` | objcopy tool path |
@@ -419,7 +419,7 @@ All context types embed `ConfigAccessor` for option value access (see below).
 | `DepOutput(depRef) string` | Get output path of dependency target (`<pkg>` or `<pkg>:<target>`; no same-package shorthand or `<pkg>:*` wildcard); returns `""` in dry-run |
 | `DepBuildDir(depRef) string` | Get build directory of dependency target (same ref rules as `DepOutput`); returns `""` in dry-run or when `DepOutput` is empty |
 | `DepSrcDir(depRef) string` | Get upstream source directory (`SrcDir()`) of dependency package; returns `""` in dry-run |
-| `DepPackageDir(depRef) string` | Get `SourceDir()` of a directly required (`AddRequires`) dependency package (build error if not a direct dependency); returns `""` in dry-run after validating direct dependency |
+| `DepPackageDir(depRef) string` | Get `SourceDir()` of a directly required (`AddRequires`) dependency package (build error if not a direct dependency); returns `""` in dry-run without validating the dependency |
 | `SetProvidedLinkerScript(path string) *BuildContext` | Forward a linker script to the bound package (`SetProvidedLinkerScript`) |
 | `BuildPath(elem...) string` | Join path elements under `BuildDir()` (or `$builddir` when `BuildDir()` is empty) |
 | `WriteBuildFile(relPath, content) string` | Register a build-dir file write (`string` or `[]byte`) deferred until build execution; returns `BuildPath(relPath)` |
@@ -465,7 +465,7 @@ All context types embed `ConfigAccessor` for option value access (see below).
 
 ### RequireContext
 
-Unconditional package dependencies can be declared directly via `p.AddRequires(deps...)` in `Main(p)`. `OnRequire` callbacks execute twice: first during graph discovery with nil config values (Phase 1), then again during FilterDeps with this package's `entries.<pkg>.options` values (Phase 3). Global configuration values are not merged into this second pass; unset reads fall back to declared defaults. This enables option-conditional dependencies. During discovery, direct value reads (`ctx.Bool/String/Int`) are build errors — use `ctx.When`/`ctx.WhenNot`/`ctx.WhenAny`/`ctx.If`/`ctx.Select`. Pass-2 requires **replace** this package's dependency edges: a dep whose guard is false in pass 2 is dropped. Adding a dep in pass 2 is accepted only when that package is already in the resolved graph; otherwise `FilterDeps` fails with `dependency ... not found in dependency graph`. Declare each dependency where pass 1 can see it — either unconditionally or behind a discovery-aware guard (`ctx.When`/`ctx.WhenNot`/`ctx.WhenAny`/`ctx.If`/`ctx.Select`); pass 1 evaluates `When`/`WhenNot`/`WhenAny` as true, `If` as its then-values, and `Select` as all mapped values, so guarded deps are still discovered.
+Unconditional package dependencies can be declared directly via `p.AddRequires(deps...)` in `Main(p)`. `OnRequire` callbacks execute twice: first during graph discovery with nil config values (Phase 1), then again during FilterDeps with this package's `entries.<pkg>.options` values (Phase 3). Configured global option values are merged into this pass as well (every global value for local packages; exported or own-declared globals for remote packages), and unset reads fall back to declared defaults. This enables option-conditional dependencies. During discovery, direct value reads (`ctx.Bool/String/Int`) are build errors — use `ctx.When`/`ctx.WhenNot`/`ctx.WhenAny`/`ctx.If`/`ctx.Select`. Pass-2 requires **replace** this package's dependency edges: a dep whose guard is false in pass 2 is dropped. Adding a dep in pass 2 is accepted only when that package is already in the resolved graph; otherwise `FilterDeps` fails with `dependency ... not found in dependency graph`. Declare each dependency where pass 1 can see it — either unconditionally or behind a discovery-aware guard (`ctx.When`/`ctx.WhenNot`/`ctx.WhenAny`/`ctx.If`/`ctx.Select`); pass 1 evaluates `When`/`WhenNot`/`WhenAny` as true, `If` as its then-values, and `Select` as all mapped values, so guarded deps are still discovered.
 
 | Method | Description |
 |--------|-------------|
@@ -477,7 +477,7 @@ Unconditional package dependencies can be declared directly via `p.AddRequires(d
 
 Strict in script contexts (`OnConfig`/`OnBuild`/`OnInstall`/`OnClean`/`OnRequire`): reading an unknown option name, or using an accessor that mismatches the option's `SetType`, is a **build error** (not a silent zero value). During `OnRequire` discovery, direct reads (`Bool`/`String`/`Int`) are also build errors — use the discovery-aware `If`/`Select`/`When`/`WhenNot`/`WhenAny`. TUI/CLI read paths stay lenient.
 
-In `OnBuild` (including `Target.SetBuildFunc` closures that capture the `BuildContext`), the value accessors also accept `<pkg>/<option>`: the package is the full package ID and the option is the segment after the last `/`. The value is the owner package's resolved configuration (entry override, then declared default, then global fallback), not a value derived in the owner's `SetOnApply`/`OnBuild`; a package-qualified global option therefore includes that package's `entries` override and can differ from the bare-name read in the reader. `target_os`/`target_triple` resolve even when no package declares them. Cross-package reads are not available in `OnConfig`, `OnRequire`, `OnInstall`, or `OnClean`. Unknown packages/options, type mismatches, and malformed references are build errors. `Option` is declaration-only and rejects names containing `/`.
+In `OnBuild` (including `Target.SetBuildFunc` closures that capture the `BuildContext`), the value accessors also accept `<pkg>/<option>`: the package is the full package ID and the option is the segment after the last `/`. The value is the owner package's resolved configuration (entry override, then declared default, then global fallback), not a value derived in the owner's `SetOnApply`/`OnBuild`; a package-qualified global option therefore includes that package's `entries` override and can differ from the bare-name read in the reader. `target_os`/`target_triple` resolve even when no package declares them. The same accessors resolve package-qualified values in `OnConfigureDeps`; cross-package reads are not available in `OnConfig`, `OnRequire`, `OnInstall`, or `OnClean`. Unknown packages/options, type mismatches, and malformed references are build errors. `Option` is declaration-only and rejects names containing `/`.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -508,7 +508,7 @@ All setters are fluent (return `*Option`).
 | `SetDescription` | `(desc string)` | Description |
 | `SetValues` | `(vals ...string)` | Choice values; auto-infers `OptionChoice` when `SetType` was not explicitly set; defaults must be among them |
 | `SetShowIf` | `(fn func(ctx *ConfigContext) bool)` | Conditional visibility |
-| `SetOnApply` | `(fn func(ctx *ConfigContext, val any))` | Callback after option values resolved, once per build per package, in sorted option-name order. `val` is normalized for `OptionInt` only (JSON `float64`/`int64` converted to `int`); other types are passed through unchanged. The callback's context carries real option values, so reading other options works |
+| `SetOnApply` | `(fn func(ctx *ConfigContext, val any))` | Callback after option values resolved, in sorted option-name order. It runs during the config phase for every package with declared options and again for needed packages after `FilterDeps` resolves derived options, so a callback can execute twice per invocation — keep it idempotent. `val` is normalized for `OptionInt` only (JSON `float64`/`int64` converted to `int`); other types are passed through unchanged. The callback's context carries real option values, so reading other options works |
 | `SetGroup` | `(group string)` | Display group; `GroupGlobal` also makes the option global (`IsGlobal()` is `group == GroupGlobal`) |
 | `SetMacroName` | `(name string)` | Override the generated `CONFIG_<NAME>` macro name on both package options (`GenerateConfigDefines`/`GenerateConfigHeader`) and global options (auto-exported); a `%s`/`%v` in the name renders the option value (`PY32F539xx%s` + `M` → `PY32F539xxM=1`) |
 | `SetExportDefine` | `(export bool)` | Enable/disable automatic global `-DCONFIG_<NAME>` export on a `GlobalOption` (`true` by default; `SetExportDefine(false)` keeps the option readable across `OnRequire`/`OnBuild` without broadcasting a global compiler define) |
@@ -610,7 +610,7 @@ ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString)
 	func (r *Requires) Get() []RequireInfo
 	func (r *Requires) Reset()
 
-	type PackageMeta struct { Repo string; Name string }
+	type PackageMeta struct { ... }
 	func (m *PackageMeta) FullName() string
 
 	type InstalledPackage struct {

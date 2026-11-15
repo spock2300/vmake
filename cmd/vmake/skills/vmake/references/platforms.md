@@ -15,7 +15,7 @@ for resolution order and [dirs.md](dirs.md) for storage paths.
 
 - The built-in `host` toolchain uses `cc`/`c++`/`ar`/`ld`, `strip`, `ranlib`,
   `nm`, and `size`, and leaves `objcopy`/`objdump` unset. Post-link helpers that
-  need `objcopy` (`AddPostLinkHex`, `AddPostLinkBin`, `SetSymbolPrefix`) require
+  need `objcopy` (`AddPostLinkHex`, `AddPostLinkBin`, `SetSymbolPrefix`, `SetKeepGlobalSymbols`) require
   a selected toolchain that declares it.
 - Kconfig, Linux kernel, and U-Boot builds need GNU Make 3.82+; select a
   toolchain whose `make` is `gmake`. `vmake doctor` prints the resolved make
@@ -30,18 +30,20 @@ for resolution order and [dirs.md](dirs.md) for storage paths.
 - Git for Windows supplies neither a C compiler nor make. Use MinGW-w64 for
   native Windows binaries and the ARM GNU Toolchain for bare-metal firmware;
   an ARM build does not need a native MinGW C compiler. MSVC is out of scope.
-- On Windows, the CMake helpers default to Ninja when no generator is passed and
-  `CMAKE_GENERATOR` is unset. `p.Make()`, Kconfig preset generation, and the
+- On Windows, the CMake helpers default to Ninja when no generator is passed,
+  `CMAKE_GENERATOR` is unset, and the arguments do not contain `--preset` (a
+  preset carries its own generator). `p.Make()`, Kconfig preset generation, and the
   default `menuconfig` use the selected toolchain's make program; an explicitly
   configured `make` is validated.
 
 ## Checking the host
 
 `vmake doctor` checks symbolic-link support, the Git for Windows userland on
-Windows, make, and the selected toolchain's configured tools. It does not check
-CMake or Ninja. `vmake doctor --toolchain <name>` diagnoses a specific
-toolchain, and `vmake toolchain show <name>` prints each configured tool and its
-resolved absolute path.
+Windows, make, the selected toolchain's configured tools, and whether the
+installed AI skill (`~/.agents/skills/vmake`) matches the running binary. It
+does not check CMake or Ninja. `vmake doctor --toolchain <name>` diagnoses a
+specific toolchain, and `vmake toolchain show <name>` prints each configured
+tool and its resolved absolute path.
 
 ## Cross-platform notes
 

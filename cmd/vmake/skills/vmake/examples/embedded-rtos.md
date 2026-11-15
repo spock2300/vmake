@@ -128,10 +128,14 @@ func Main(p *api.Package) {
 }
 ```
 
-`UseDependencyLinkerScript()` is evaluated only on `TargetBinary`: the scheduler takes the
-first dependency whose package declares `ProvidedLinkerScript` and passes it as `-T`. If no
-dependency provides one, the build fails with `no dependency provides a linker script`, so
-`chip` must actually be in `AddDeps`.
+`UseDependencyLinkerScript()` is evaluated only on `TargetBinary`: the target's own
+package's `ProvidedLinkerScript` wins; otherwise the scheduler walks dependency
+levels and uses the first level with exactly one declared script, passing it as
+`-T`. Two different scripts at the same depth fail with
+`ambiguous ProvidedLinkerScript at dependency depth N`; if no package provides
+one, the build fails with `no dependency provides a linker script`. A provider
+can arrive through the target's own package, a direct `AddDeps` target edge, or
+`UseRequires()` package edges.
 
 ## Project Structure
 
@@ -185,7 +189,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 })
 ```
 
-- `target_os="none"` marks bare metal and drives artifact naming and link policy; `target_triple` feeds `Configure --host` and CMake's compiler target. Resolution order: package entry value → package-local non-global option default → project global config/default → toolchain default (`toolchain.json` or a plugin-registered `Toolchain.TargetOS`/`TargetTriple`) → host OS. `target_os=host` also selects the host OS.
+- `target_os="none"` marks bare metal and drives artifact naming and link policy; `target_triple` feeds `Configure --host` and CMake's compiler target. Resolution order: package entry value → package-local non-global option default → project global config/default → active chip profile → toolchain default (`toolchain.json` or a plugin-registered `Toolchain.TargetOS`/`TargetTriple`) → host OS. `target_os=host` also selects the host OS.
 - Select the compiler with `vmake build --toolchain arm-none-eabi` (or the `toolchain` option in the active configuration). Toolchains contributed by extensions may carry `target_os`/`target_triple` defaults but never CPU flags, so declare `-mcpu`/`-mthumb`/`--specs` yourself. Validate with `vmake doctor --toolchain arm-none-eabi`. See `SKILL.md - Cross-Compiling`.
 - `-nostartfiles` skips the **target** crt0/startup files provided by the compiler driver's spec; it does **not** unlink libc, so it is not bare-metal linking. A hosted libc stays linked. For bare metal use `-nostdlib` plus explicit libgcc/libc links (see the next section) or `--specs=nosys.specs` (hosted newlib, syscall stubs).
 - Cross/bare-metal test binaries cannot execute on the host: `vmake test` refuses non-host targets with a clear error. Use `vmake build --tests` to compile them.

@@ -50,7 +50,7 @@ vmake repo trust official
 
 1. **Phase 1 (OnRequire)**: `AddRequires` registers `"official/zlib >=1.2"` for graph discovery. Top-level packages (registry and native) are resolved eagerly; native sub-packages load only when depended on.
 2. **Phase 2 (OnConfig)**: Build options are defined and resolved via `OnConfig` callbacks.
-3. **Phase 3 (FilterDeps)**: After config is resolved, `OnRequire` runs **again** with this package's `entries.<pkg>.options` values (global configuration values are not merged), recomputing the dependency list. This enables option-conditional dependencies.
+3. **Phase 3 (FilterDeps)**: After config is resolved, `OnRequire` runs **again** with this package's `entries.<pkg>.options` values plus resolved global option values, recomputing the dependency list. This enables option-conditional dependencies.
 4. **Phase 4 (OnBuild)**: Targets create the build-graph edge with `AddDeps("official/zlib")` or `UseRequires()`; `AddRequires` alone does not create the target edge. The scheduler links the library and propagates public includes automatically.
 
 ## Version Constraint Syntax
@@ -184,7 +184,7 @@ Keep `OnRequire` and target dependencies consistent.
 - Package refs use `/`: `repo/name`
 - Version constraints use semver syntax (`>=`/`>` are major-locked when major > 0); one operator plus one version, no compound ranges
 - `AddDeps("official/zlib")` auto-links; no need for manual `-lz`
-- `OnRequire` runs twice: first with nil config (Phase 1), then with this package's entry option values (Phase 3 `FilterDeps`); global configuration values are not merged
+- `OnRequire` runs twice: first with nil config (Phase 1), then with this package's entry option values plus resolved global option values (Phase 3 `FilterDeps`)
 - Option-conditional deps work because FilterDeps has resolved package entry values
 - `AddDeps` uses the final dependency list from `FilterDeps`; a pruned package referenced by `AddDeps` fails at build-graph time
 - Remote packages are resolved from `.vmake/vmake.lock` pins (run `vmake deps update` to re-resolve)
@@ -193,7 +193,7 @@ Keep `OnRequire` and target dependencies consistent.
 ## Running / Verifying
 
 ```bash
-vmake repo list    # "Repositories:" with "official (registry)" after the bootstrap above
+vmake repo list    # "Repositories:" with "official (registry, N packages)" after the bootstrap above
 vmake build        # resolves + downloads + builds; ends with "Build succeeded: ..." and writes .vmake/vmake.lock
 vmake query        # dependency tree including official/zlib (with version for native packages)
 vmake deps status  # shows official/zlib version, commit, pin, working tree and cache state

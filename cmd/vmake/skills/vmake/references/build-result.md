@@ -14,23 +14,25 @@ the installation manifest (`install/manifest.json`). `clean`, `distclean`, and
 |-------|---------|
 | `schemaVersion`, `buildId`, `root` | Report schema (2), unique invocation ID, absolute project root |
 | `command` | `build` for a build, `rebuild` for `vmake rebuild`, `test` for `vmake test` (the test report lives in `build/vmake-test.json`) |
-| `status` | `running`, `succeeded`, `failed`, or `cancelled`; for test, `succeeded` when every executed test passed or when no test target was declared |
+| `status` | `running`, `succeeded`, `failed`, or `cancelled`; for test, `succeeded` when every executed test passed or when no runnable test target exists (none declared, or none is a default binary test target) |
 | `started`, `finished`, `durationMs` | UTC timestamps and wall-clock duration; `durationMs` is 0 while running |
 | `error` | Concise one-line failure summary (about 300 characters at most); empty on success |
 | `diagnostics` | Always an array. Empty on success; failure entries are parsed errors. Each has `severity`, `code`, `message`, and optional `file`, `line`, `column`, `package`, `target`. Codes: `VMAKE_E_COMPILE`, `VMAKE_E_LINK`, `VMAKE_E_BUILD`, `VMAKE_E_SCRIPT`, `VMAKE_E_TEST` |
-| `summary` | Per-invocation counts (see below); present on success, on a failure whose scheduler produced a partial result, and for a test failure after the build phase. Omitted when the failure happened before any target was scheduled |
+| `summary` | Per-invocation counts (see below); present on success, on a failure whose scheduler produced a partial result, and for a test failure after the build phase. Omitted whenever `complete`/`partial` did not run: before the scheduler produced results, or when a later step after a successful build (installation, report finalization) fails |
 | `configFile`, `configSha256` | Active configuration path relative to project root (for example `configs/default.json`) and SHA-256 of the exact configuration bytes used |
 | `global`, `packages` | Effective global values and per-package values for the packages that participated |
 | `toolchain`, `mode` | Effective toolchain and mode |
 | `vmakeVersion`, `vmakeCommit` | Version and abbreviated VCS commit embedded in the running vmake binary (`dev`/`unknown` when unavailable); captured when the report begins and preserved by finish/partial writes |
 | `compileDatabase` | Absolute path to the compilation database, or empty |
-| `targets` | Executed default targets: `package`, `target`, `kind`, `outputs`, `status`, `durationMs`, optional `size` (`text`/`data`/`bss`/`total` from `AddPostLinkSize`). On failure the failing/partial target is omitted; with `--keep-going`, later independent targets that completed may still be listed. A failure outside target execution (for example a package-level `OnBuild` CMake configure failure) has no target attribution: `diagnostics[].target` stays empty and `targets[]` may stay empty |
-| `tests` | Always an array. For `vmake test`, one entry per test target: `name`, `package`, `target`, `passed`, `elapsedMs`, `exitCode`, optional `signal` (set when a signal terminated the process), `output`, and on interruption `notRun`/`skipReason` (for example `skipReason: "interrupted"`) |
+| `targets` | Executed default targets: `package`, `target`, `kind`, `outputs`, `status`, `durationMs`, optional `size` (`text`/`data`/`bss`/`total` from `AddPostLinkSize`). On failure the failing/partial target is omitted; with `--keep-going`, later independent targets that completed may still be listed. A failure outside target execution (for example a package-level `OnBuild` CMake configure failure) has no target attribution: `diagnostics[].target` stays empty and `targets[]` may stay empty. A failure after the build phase (for example installing) returns before the report is completed, so the file can have no `summary` and empty `targets`/`packages` even though targets were built |
+| `tests` | Always an array. For `vmake test`, one entry per test target that passed validation and started; targets not reached (for example after an interruption) are omitted: `name`, `package`, `target`, `passed`, `elapsedMs`, `exitCode`, optional `signal` (set when a signal terminated the process), `output`, and on interruption `notRun`/`skipReason` (for example `skipReason: "interrupted"`) |
 | `artifacts` | Files installed by this invocation only: `package`, `target`, `buildPath`, `installPath`, `size`, `sha256` |
 
 A target's `status` is `built` when it compiled or linked something in this
-invocation, or when it is a `void` target (its build callback always runs);
-otherwise it is `up-to-date`. `durationMs` is nonnegative and 0 when too fast to
+invocation, or when it is a `void` target (a plain void target always runs its
+callback; an incremental void target with `AddInputs`/`AddOutputs` is still
+`built` when its action is up to date and the callback was skipped); otherwise
+it is `up-to-date`. `durationMs` is nonnegative and 0 when too fast to
 measure. Non-default targets are never executed or recorded. Test targets appear
 for `vmake build --tests`, `vmake rebuild --tests`, and `vmake test`.
 
@@ -39,9 +41,14 @@ for `vmake build --tests`, `vmake rebuild --tests`, and `vmake test`.
 `summary` repeats `durationMs` and carries `targetsTotal`, `targetsBuilt`,
 `targetsUpToDate`, `targetsFailed`, `testsFound`, `testsPassed`, `testsFailed`,
 `filesCompiled`, `filesLinked`, `actionsUpToDate`, `artifactsInstalled`, and
-`changedFiles`, plus `callbacks` (executed `built` void targets), `externalStages` (executed CMake/Make helper stages) and `noOp`.
+`changedFiles`, plus `callbacks` (built void targets; an incremental void target
+counts even when its callback was skipped as up to date), `externalStages`
+(executed CMake/Make helper stages) and `noOp`.
 
-`targetsBuilt` counts target records with status `built`, including `void` targets whose callbacks always run; `noOp` can be true while `targetsBuilt` is nonzero (for example eight callback targets) but requires `externalStages == 0`; CMake/Make helper work makes it false.
+`targetsBuilt` counts target records with status `built`, including `void`
+targets (an incremental void target counts even when up to date); `noOp` can be
+true while `targetsBuilt` is nonzero (for example eight callback targets) but
+requires `externalStages == 0`; CMake/Make helper work makes it false.
 
 On a failed build or build phase, `summary` describes the work attempted before
 the failure: `targetsFailed` counts distinct failed target names from the
@@ -53,9 +60,7 @@ failed `void` callback or CMake configure error before any compilation),
 known. A failure before any target is scheduled (for example a buildscript
 error) omits `summary` entirely, so it makes no no-op claim either.
 
-Test counts are 0 for build/rebuild. `testsFound` counts discovered test
-targets, while `testsPassed` and `testsFailed` count
-executed tests. Compile/link counts cover
+Test counts are 0 for build/rebuild. `testsFound` counts `tests[]` entries (validated and started targets), not every discovered test target, while `testsPassed` and `testsFailed` count executed tests. Compile/link counts cover
 compile and link actions only, not post-link steps, void callbacks, or
 installation. A no-op
 build therefore has `filesCompiled: 0`, `filesLinked: 0`, `changedFiles: []`,
@@ -129,8 +134,10 @@ outcome.
 - Test binaries execute with their working directory set to the package's
   `BuildDir()` (the directory containing the test executable), so relative paths
   in a test program resolve there.
-- The report is the only overall test summary line; there is no separate
-  `N/M test(s) passed` stdout line. Per-test `PASS`/`FAIL` lines remain.
+- `vmake test` also prints one overall stdout line: `Tests succeeded: N/M
+  passed in <duration> (buildId=...)`, `Tests succeeded: no test targets
+  (buildId=...)`, or `Tests failed: <error>`. The legacy `N/M test(s) passed`
+  wording is not used. Per-test `PASS`/`FAIL` lines remain.
 - A failing test makes `status` `failed` with `error: "N test(s) failed"` and a
   non-zero exit; the report keeps `summary` test counts because the build phase
   completed. A test-stage failure with no build diagnostic (failed test or

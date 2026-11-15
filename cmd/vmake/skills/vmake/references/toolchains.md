@@ -6,7 +6,10 @@ project selection. Do not add compiler directories to `PATH`, and do not set
 `CC`/`CXX`/`AR`/`LD` in the shell or in `build.go`. Non-host toolchains with an
 `InstallPath` resolve without PATH; manifests without `installations` or with an
 uninstalled archive can still resolve relative names from PATH. The built-in
-`host`, `git`, `make`, and `cmake` use PATH.
+`host` toolchain uses PATH. `git` is taken from the process PATH (vmake's git
+invocations do not use the toolchain PATH); `cmake` is resolved by name from the
+toolchain-augmented PATH and is not a `toolchain.json` field; `make` resolves
+through the selected toolchain and falls back to PATH when unconfigured.
 Hand-run tools and host test scripts are different: they may need the toolchain
 on PATH, so use the absolute paths from `p.Env()` or prepend it only for that
 command.
@@ -34,11 +37,14 @@ toolchain override does not.
 `vmake toolchain list` marks `host` as the built-in fallback. The active
 project/chip default may differ; `vmake config` shows it. `vmake build`
 auto-installs a registered manifest toolchain on first use, while `inspect` and
-`clean` fail with a hint instead of installing (`deps` commands do not require an
-installed toolchain). `vmake doctor` resolves the active chip profile's
-`PreferredToolchain` when `toolchain` is unset and dependencies are available
-offline; pass `--toolchain <name>` to override or diagnose an uncached chip
-toolchain.
+`clean` never install: they resolve installed tools (PATH fallback for relative
+names) and also probe each tool's version and file hash, failing when either
+step fails; `clean --all` bypasses inspection and toolchain resolution entirely.
+`deps update` does not resolve the toolchain; `deps graph`, `deps why`, and
+`deps check` resolve it like `inspect`. `vmake doctor`
+resolves the active chip profile's `PreferredToolchain` when `toolchain` is
+unset and dependencies are available offline; pass `--toolchain <name>` to
+override or diagnose an uncached chip toolchain.
 
 The top-level `vmake inspect` `toolchainInfo` and `build/vmake-build.json`
 `toolchain` report the project selection; per-package names appear in

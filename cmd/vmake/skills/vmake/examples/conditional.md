@@ -125,7 +125,7 @@ p.OnRequire(func(ctx *api.RequireContext) {
 })
 ```
 
-`OnRequire` runs twice. In pass 1 (discovery, nil config) the condition is unknown: `When` returns `true` and `Select` returns all mapped values, so packages are resolved eagerly. In pass 2 (`FilterDeps`, this package's `entries.<pkg>.options` values; global configuration values are not merged) the returned list replaces this package's dependency edges: a false condition or unselected choice drops the edge, while adding a package is accepted only if it is already in the resolved graph (otherwise `FilterDeps` fails with `dependency ... not found in dependency graph`). Declare each dependency where pass 1 can see it — unconditionally or behind a discovery-aware guard. See `SKILL.md - OnRequire Two-Phase Execution`.
+`OnRequire` runs twice. In pass 1 (discovery, nil config) the condition is unknown: `When` returns `true` and `Select` returns all mapped values, so packages are resolved eagerly. In pass 2 (`FilterDeps`, this package's `entries.<pkg>.options` values plus resolved global option values) the returned list replaces this package's dependency edges: a false condition or unselected choice drops the edge, while adding a package is accepted only if it is already in the resolved graph (otherwise `FilterDeps` fails with `dependency ... not found in dependency graph`). Declare each dependency where pass 1 can see it — unconditionally or behind a discovery-aware guard. See `SKILL.md - OnRequire Two-Phase Execution`.
 
 ## Key Points
 

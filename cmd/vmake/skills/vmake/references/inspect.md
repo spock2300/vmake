@@ -44,8 +44,10 @@ invalid selection exits 2.
 
 Buildscript stdout is discarded while the model is resolved, so stdout always
 contains exactly one JSON document even when `build.go` prints. On success
-stderr is empty except for one `Warning: ...` line per warning diagnostic; on
-failure it carries one `Error: ...` line.
+stderr normally carries only one `Warning: ...` line per warning diagnostic, but
+a dry-run `OnBuild` callback writing to `os.Stderr` directly is not wrapped, so
+its output can appear too; on failure stderr carries one `Error: ...` line plus
+any such script output.
 
 ## Envelope
 
@@ -94,19 +96,25 @@ Failure (no `data`, exit 1):
   declaration failure.
 - `VMAKE_W_SOURCE_MISSING` — warning: a needed package's expected source tree
   is missing or empty. `message` names the package and the URL/version to fetch
-  when known; `package` carries the package name. `status` stays `"ok"` and exit
+  when known (a native member with its own repository currently reports the
+  parent source); `package` carries the package name. `status` stays `"ok"` and exit
   is 0. Inspect checks the tree without fetching, linking, or writing
-  `.vmake_deps`: local `SetGit` packages use `<package>/src`, remote packages
-  `.vmake_deps/<repo>/<owner>/src[/<member>]`, and plain local packages their
-  package directory. `vmake query` and `vmake query targets` print the same
-  `Warning: ...` lines to stderr for missing needed packages while their tree
-  or target list stays unchanged on stdout and they exit 0. Query also leaves
-  such packages untargeted without running their dry-run `OnBuild`; a
-  target-declaration failure in a package whose source is present prints one
-  `Warning: cannot declare targets for <package>: <error>` and does not stop the
-  command. `vmake query targets` lists every needed package with a materialized
-  source tree, including local and remote packages; the tree labels those same
-  packages by their primary target.
+  `.vmake_deps`, though native remote resolution during `Require` may still
+  materialize a tree. Local `SetGit` packages use `<package>/src`, remote
+  packages `.vmake_deps/<repo>/<owner>/src[/<member>]` (or
+  `.vmake_deps/<repo>/<owner>/src/<member>/src` when a native member has its own
+  repository); linked packages use their link path, and a native member with its
+  own repository under a linked parent uses
+  `.vmake_deps/<owner>/third_party/<member>/src`. Plain local packages use their
+  package directory. `vmake query` and `vmake query targets`
+  print the same `Warning: ...` lines to stderr for missing needed packages
+  while their tree or target list stays unchanged on stdout and they exit 0.
+  Query also leaves such packages untargeted without running their dry-run
+  `OnBuild`; a target-declaration failure in a package whose source is present
+  prints one `Warning: cannot declare targets for <package>: <error>` and does
+  not stop the command. `vmake query targets` lists every needed package with a
+  materialized source tree, including local and remote packages; the tree
+  labels those same packages by their primary target.
 
 ## Read-only dry-run
 
@@ -170,10 +178,11 @@ de-duplicated, so a flag declared twice appears twice. Packages pruned by
 
 `globalDefines` lists the macros auto-exported from global options
 (`CONFIG_<NAME>...` or a `SetMacroName` replacement) as `NAME=value` without the
-`-D` prefix. It is sorted, de-duplicated by macro name, and project-wide: every
-global option declaration contributes regardless of which package declared it.
-The build appends each entry as `-D<entry>` to both the C and C++ project flags
-after the package-declared globals; a `false` boolean emits no define.
+`-D` prefix. It is sorted, de-duplicated by macro name, and project-wide for the
+needed packages: declarations from packages pruned by `FilterDeps` contribute
+nothing. The build appends each entry as `-D<entry>` to both the C and C++
+project flags after the package-declared globals; a `false` boolean emits no
+define.
 
 Each `packages` entry has `name`, `kind` (`local`/`native`/`registry`),
 `needed`, `sourcePresent`, `deps`, optional remote
@@ -189,9 +198,13 @@ the expected source tree is missing or empty; that package also gets a
 Needed packages also carry `buildDir`, the absolute build-key directory from
 the same layout the next build would use, and `buildKey`, the resolved layout
 build key (both local and remote packages); `buildDir` may not exist yet (before
-a first build or after `clean`). Both fields are omitted when a local `SetGit`
-or remote package's expected source tree is absent, because the layout cannot be
-computed.
+a first build or after `clean`). Both fields are omitted when the layout cannot be computed: a local `SetGit` or
+remote package's expected source tree is absent, or a remote package's
+version/commit cannot be resolved (no lock/pin/native decision, or an empty
+commit) even though `sourcePresent` is true. A native member with its own
+repository is the exception: readiness checks the member directory, so both
+fields can be present while `sourcePresent` is false because the nested `src` is
+missing.
 
 Each `targets` entry has `name`, `kind` (`binary`/`static`/`shared`/`object`/
 `void`), `default`, `test`, declared `files`/`excludedFiles`/`includes`/
