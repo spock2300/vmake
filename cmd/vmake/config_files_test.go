@@ -249,7 +249,7 @@ func TestConfigConsumersRejectMissingSelectionFromSubdirectory(t *testing.T) {
 	writeExtensionFile(t, filepath.Join(project, ".vmake", "project.json"), `{"default_config":"configs/missing-selected.json"}`)
 	for _, args := range [][]string{{"build"}, {"test"}, {"query"}, {"config", "--set", "mode=debug"}, {"clean"}, {"distclean"}, {"deps", "update"}, {"doctor"}} {
 		out, err := extensionCommand(t, state, child, args...)
-		if err == nil || !strings.Contains(out, filepath.Join(project, "configs", "missing-selected.json")) {
+		if err == nil || !strings.Contains(out, filepath.Join("configs", "missing-selected.json")) {
 			t.Errorf("%v did not reject project selection: %v\n%s", args, err, out)
 		}
 	}

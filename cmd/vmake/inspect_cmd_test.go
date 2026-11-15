@@ -36,7 +36,7 @@ func TestInspectBootstrapChild(t *testing.T) {
 
 func runInspectCommand(t *testing.T, projectDir string, args ...string) (string, string, int) {
 	t.Helper()
-	return runInspectCommandWithState(t, projectDir, t.TempDir(), args...)
+	return runInspectCommandWithState(t, projectDir, canonicalTempDir(t), args...)
 }
 
 func runInspectCommandWithState(t *testing.T, projectDir, vmakeDir string, args ...string) (string, string, int) {
@@ -50,7 +50,7 @@ func runInspectCommandWithState(t *testing.T, projectDir, vmakeDir string, args 
 	cmd.Dir = projectDir
 	cmd.Env = append(os.Environ(),
 		"VMAKE_TEST_INSPECT_DIR="+vmakeDir,
-		"VMAKE_CACHE="+t.TempDir(),
+		"VMAKE_CACHE="+canonicalTempDir(t),
 		"VMAKE_TRUST_ALL=1",
 	)
 	var stdout, stderr bytes.Buffer
@@ -166,7 +166,7 @@ func Main(p *api.Package) {
 }
 
 func TestInspectNoTargetsSkipsDeclaration(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
+	project := filepath.Join(canonicalTempDir(t), "proj")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
@@ -228,7 +228,7 @@ func TestInspectNoTargetsReportsMissingSources(t *testing.T) {
 }
 
 func TestInspectLocalOptionShadowsGlobalName(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
+	project := filepath.Join(canonicalTempDir(t), "proj")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
@@ -273,7 +273,7 @@ func Main(p *api.Package) {
 }
 
 func TestInspectGlobalOptionEntryDefaultUsesGlobalValue(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
+	project := filepath.Join(canonicalTempDir(t), "proj")
 	writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{
 		"version": "1",
 		"global": {"options": {"board": "custom"}},
@@ -309,7 +309,7 @@ func Main(p *api.Package) {
 }
 
 func TestInspectProjectModel(t *testing.T) {
-	project := writeInspectProject(t, t.TempDir())
+	project := writeInspectProject(t, canonicalTempDir(t))
 
 	stdout, stderr, code := runInspectCommand(t, project, "inspect")
 	if code != 0 {
@@ -434,7 +434,7 @@ func TestInspectProjectModel(t *testing.T) {
 }
 
 func TestInspectTargetFlags(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
+	project := filepath.Join(canonicalTempDir(t), "proj")
 	writeProject := func(extraCFlag string) {
 		t.Helper()
 		writeExtensionFile(t, filepath.Join(project, "build.go"), fmt.Sprintf(`package main
@@ -529,7 +529,7 @@ func Main(p *api.Package) {
 }
 
 func TestInspectGlobalFlags(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
+	project := filepath.Join(canonicalTempDir(t), "proj")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
@@ -655,7 +655,7 @@ func Main(p *api.Package) {
 }
 
 func TestInspectBuildStateAndPackageDirs(t *testing.T) {
-	project := writeInspectProject(t, t.TempDir())
+	project := writeInspectProject(t, canonicalTempDir(t))
 
 	checkAbsent := func(t *testing.T) *inspectData {
 		t.Helper()
@@ -808,7 +808,7 @@ func TestInspectTargetFlagsFirmwareSample(t *testing.T) {
 
 func writeInspectStdoutProject(t *testing.T) string {
 	t.Helper()
-	project := filepath.Join(t.TempDir(), "proj")
+	project := filepath.Join(canonicalTempDir(t), "proj")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import (
@@ -837,7 +837,7 @@ func Main(p *api.Package) {
 }
 
 func TestInspectInstallPlan(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
+	project := filepath.Join(canonicalTempDir(t), "proj")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
@@ -965,7 +965,7 @@ func TestInspectSuppressesBuildscriptStdout(t *testing.T) {
 	}
 
 	t.Run("configure_failure", func(t *testing.T) {
-		broken := filepath.Join(t.TempDir(), "broken")
+		broken := filepath.Join(canonicalTempDir(t), "broken")
 		writeExtensionFile(t, filepath.Join(broken, "build.go"), `package main
 
 import (
@@ -1002,7 +1002,7 @@ func Main(p *api.Package) {
 }
 
 func TestInspectSetOverridesAreHypothetical(t *testing.T) {
-	project := writeInspectProject(t, t.TempDir())
+	project := writeInspectProject(t, canonicalTempDir(t))
 	configPath := filepath.Join(project, "configs", "default.json")
 
 	stdout, stderr, code := runInspectCommand(t, project, "inspect", "--set", "proj/with_dep=false")
@@ -1058,7 +1058,7 @@ func TestInspectSetOverridesAreHypothetical(t *testing.T) {
 }
 
 func TestInspectSetTypedCoercion(t *testing.T) {
-	project := writeInspectProject(t, t.TempDir())
+	project := writeInspectProject(t, canonicalTempDir(t))
 	configPath := filepath.Join(project, "configs", "default.json")
 
 	for _, raw := range []string{"42", "true", "on", "false", ""} {
@@ -1134,7 +1134,7 @@ func TestInspectSetTypedCoercion(t *testing.T) {
 }
 
 func TestInspectSetErrors(t *testing.T) {
-	project := writeInspectProject(t, t.TempDir())
+	project := writeInspectProject(t, canonicalTempDir(t))
 	configPath := filepath.Join(project, "configs", "default.json")
 	for _, test := range []struct {
 		name string
@@ -1175,7 +1175,7 @@ func TestInspectSetErrors(t *testing.T) {
 }
 
 func TestInspectSetInvalidBoolValue(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
+	project := filepath.Join(canonicalTempDir(t), "proj")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
@@ -1232,7 +1232,7 @@ func Main(p *api.Package) {
 `},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			project := filepath.Join(t.TempDir(), "broken")
+			project := filepath.Join(canonicalTempDir(t), "broken")
 			writeExtensionFile(t, filepath.Join(project, "build.go"), test.script)
 			stdout, stderr, code := runInspectCommand(t, project, "inspect")
 			if code != 1 {
@@ -1254,7 +1254,7 @@ func Main(p *api.Package) {
 }
 
 func TestInspectTargetDeclarationWarning(t *testing.T) {
-	dir := t.TempDir()
+	dir := canonicalTempDir(t)
 	project := filepath.Join(dir, "proj")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
@@ -1302,7 +1302,7 @@ func Main(p *api.Package) {
 }
 
 func TestInspectReadOnlyDryRun(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "ro")
+	project := filepath.Join(canonicalTempDir(t), "ro")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import (
@@ -1373,7 +1373,7 @@ func Main(p *api.Package) {
 }
 
 func TestInspectReadOnlyBlocksIgnoredWrite(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "ignored")
+	project := filepath.Join(canonicalTempDir(t), "ignored")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import (
@@ -1423,7 +1423,7 @@ func Main(p *api.Package) {
 }
 
 func TestInspectReadOnlyAllowsReads(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "reads")
+	project := filepath.Join(canonicalTempDir(t), "reads")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import (
@@ -1466,7 +1466,7 @@ func Main(p *api.Package) {
 }
 
 func TestInspectSourceMissingWarning(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
+	project := filepath.Join(canonicalTempDir(t), "proj")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
@@ -1552,7 +1552,7 @@ func TestInspectSourceMissingWarningRemoteRegistry(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
 	}
-	state := t.TempDir()
+	state := canonicalTempDir(t)
 	repoDir := filepath.Join(state, "repos", "official")
 	writeExtensionFile(t, filepath.Join(repoDir, "packages", "d", "demo", "build.go"), `package main
 
@@ -1571,7 +1571,7 @@ func Main(p *api.Package) {
 	runGitLine(t, repoDir, "add", "-A")
 	runGitLine(t, repoDir, "commit", "-q", "-m", "registry")
 
-	project := filepath.Join(t.TempDir(), "proj")
+	project := filepath.Join(canonicalTempDir(t), "proj")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
@@ -1617,7 +1617,7 @@ func Main(p *api.Package) {
 }
 
 func TestInspectExpectedSourceDirectories(t *testing.T) {
-	deps := t.TempDir()
+	deps := canonicalTempDir(t)
 	res := resolver.NewResolver(nil, deps)
 	ctx := &RuntimeContext{Paths: &pipeline.Paths{DepsDir: deps}, Resolver: res}
 	remoteNode := func(name, dir string) *resolver.PackageNode {
@@ -1661,7 +1661,7 @@ func TestInspectExpectedSourceDirectories(t *testing.T) {
 		t.Fatal("own-git native member tree reported present before materialization")
 	}
 
-	localDir := filepath.Join(t.TempDir(), "lib")
+	localDir := filepath.Join(canonicalTempDir(t), "lib")
 	if err := os.MkdirAll(localDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -1674,7 +1674,7 @@ func TestInspectExpectedSourceDirectories(t *testing.T) {
 		t.Fatal("absent local SetGit tree reported present")
 	}
 
-	plainDir := filepath.Join(t.TempDir(), "plain")
+	plainDir := filepath.Join(canonicalTempDir(t), "plain")
 	writeExtensionFile(t, filepath.Join(plainDir, "build.go"), "package main\n")
 	plain := resolver.NewPackageNode("plain", buildscript.NewSource("plain", filepath.Join(plainDir, "build.go"), plainDir, api.SourceLocal), api.NewPackage())
 	if got := inspectExpectedSourceDir(ctx, "plain", plain); got != plainDir {
@@ -1798,7 +1798,7 @@ func TestInspectCommandRegistration(t *testing.T) {
 }
 
 func TestInspectSkipsTargetDeclarationForMissingSource(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
+	project := filepath.Join(canonicalTempDir(t), "proj")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
@@ -1894,7 +1894,7 @@ func TestInspectReportsBuildAndTestStateSeparately(t *testing.T) {
 }
 
 func TestInspectTargetFieldsUseRequiresAndOptionDefs(t *testing.T) {
-	project := filepath.Join(t.TempDir(), "proj")
+	project := filepath.Join(canonicalTempDir(t), "proj")
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
