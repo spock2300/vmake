@@ -26,7 +26,7 @@ CGO_ENABLED=0 go test ./cmd/vmake/... ./pkg/... ./internal/...
 `cmd/vmake/skills/vmake/` is shipped documentation and must match the live CLI.
 
 - `TestSkillCLIExamples` validates fenced `vmake` commands against the Cobra tree; the other `TestSkill*` tests check cross-references, API symbols, Go blocks, and removed CLI flags. Run them after any CLI or skill edit.
-- After changing the embedded skill, rebuild `vmake` and run `vmake skill install` before testing an agent; editing the repository alone leaves the installed copy stale.
+- After changing the embedded skill, rebuild `vmake` and run `vmake skill install` before testing an agent; editing the repository alone leaves the installed copy stale, and `vmake doctor` reports a stale or unversioned install (DD-35).
 - Treat a fresh solver as the reward signal: give it a temporary project and only the installed skill, then check task success, `export PATH/CC/...` violations, and whether it can name the resolved compiler path. Fix the smallest doc cluster, rerun the same task plus a regression task, and revert changes that do not improve the result.
 - `scripts/skill-loop/run.sh` automates this loop with solver, judge, author, and factcheck sessions; see `scripts/skill-loop/README.md` and `COVERAGE.md` before changing its tasks or reward. The `factcheck-*` tasks audit Markdown against code/CLI and are the detail-level regression signal.
 - Skill content is limited to vmake behavior, its own requirements, and vmake-specific workflows. Do not add general OS/toolchain installation tutorials (Xcode/Homebrew/Ninja setup, distribution package advice); extra external knowledge is a burden for the agent.
@@ -124,9 +124,10 @@ CGO_ENABLED=0 go build -o vmake ./cmd/vmake
 - Imports are grouped stdlib → external → local. Logging uses `vlog "github.com/spock2300/vmake/pkg/log"`; available methods are Debug/Info/Error/Fatal, not Warn.
 - `cmd/vmake/skills/vmake/` is embedded, test-checked user documentation. After CLI changes regenerate `references/cli.md` with `CGO_ENABLED=0 go test ./cmd/vmake -run '^TestSkillCLISnapshot$' -update-skill-ref`; keep the API/storage references in sync with code.
 - API misuse raises `*BuildScriptError` through `fatalScript` (`pkg/api/errors.go`), recovered by script execution boundaries. New API validation must use that path rather than exiting with `vlog.Fatal`. Ordinary library errors are returned to callers.
-- Preserve strict contracts: fix invalid callers rather than adding fallback chains or silent defaults. IDE integrations, distributed builds, and MSVC support are outside the current scope.
+- Preserve strict contracts: fix invalid callers rather than adding fallback chains or silent defaults. IDE plugins, GUI, and distributed builds are permanent non-goals; MSVC is deferred. See `docs/GOALS.md`.
+- Within 1.x, do not remove script-facing API symbols, documented methods, or CLI flags, and do not change their semantics; add new ones instead. Removals happen only at 2.0. This is an internal rule (DD-34), not a public compatibility promise.
 
-Detailed references: `docs/ARCHITECTURE.md` for execution flow, `docs/BUILD_SCRIPT_API.md` for script contracts, `docs/BUILD_RESULT.md` for build/test reports, `docs/INSPECT.md` for the `vmake inspect` JSON schema, `docs/VMAKE_HOME.md` for storage layout, `docs/EXTENSION_PLUGIN.md` for plugins/toolchains, and `docs/DESIGN_DECISIONS.md` for intentional resolver limitations.
+Detailed references: `docs/GOALS.md` for the long-term goal, acceptance definition, milestones, and non-goals; `docs/ARCHITECTURE.md` for execution flow, `docs/BUILD_SCRIPT_API.md` for script contracts, `docs/BUILD_RESULT.md` for build/test reports, `docs/INSPECT.md` for the `vmake inspect` JSON schema, `docs/VMAKE_HOME.md` for storage layout, `docs/EXTENSION_PLUGIN.md` for plugins/toolchains, and `docs/DESIGN_DECISIONS.md` for intentional resolver limitations.
 
 ## Coding Guidelines
 

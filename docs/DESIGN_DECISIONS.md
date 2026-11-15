@@ -293,12 +293,35 @@
 - 理由: 若校验也走 `IgnoredFor`，`--locked` 会静默接受"锁定值与将要构建的值不同"的包；若 sync 跳过 float，锁会长期滞后于实际解析结果。两条语义都写在 `decision.go` 的注释里，并由 `TestLockQueryPinLockMismatch`/`TestLockQueryNeedsSync`/`TestVerifyLockBeforePreparePinMismatch` 钉住。
 - 涉及代码: `pkg/resolver/decision.go`, `pkg/resolver/decision_test.go`, `pkg/pipeline/stage_source.go`, `pkg/resolver/resolver.go`, `pkg/pipeline/deps.go`。
 
+## DD-33: 本地包重名是硬错误
+
+- 状态: accepted
+- 背景: 本地项目没有子包语义，`Scan` 把任意深度的嵌套 `build.go` 收为顶层包，包名取目录 basename。两个不同目录名相同时（例如 `app/net/build.go` 与 `lib/net/build.go`），旧实现保留先遇到的、静默丢弃另一个。
+- 决策: 重名返回错误，错误信息给出两个冲突的 `build.go` 路径；`ScanSubPackages` 的远程子包全名不受影响。
+- 理由: 静默丢弃会产生无声的错误构建：操作者会报告成功，而某个包从未被编译，这违反 agent-first 的验收前提（见 `docs/GOALS.md`）。真正的本地子包语义仍是破坏性变更，未实施。
+- 涉及代码: `pkg/buildscript/scanner.go` `Scan`, `pkg/buildscript/scanner_test.go`。
+
+## DD-34: 1.x 内脚本 API 与 CLI 只增不改
+
+- 状态: accepted
+- 背景: 一次 API 重塑（`fd7aa64`）删除了 `SetConfigFiles`，并把 `AddGlobalCFlags`/`AddGlobalCxxFlags` 从 `...string` 改为 `...any`。真实固件工程 hk-mcu-sdk（`4e7862a`）没有改动任何脚本，升级后依次在 py32f539 报 `undefined selector: SetConfigFiles`、在 lvgl 报 `reflect: CallSlice using []string as type []interface {}`，lwip 还有同类的旧展开。三次失败信息都指向库内部，而不是"这个 API 已删除/已改签名"。
+- 决策: 1.x 内脚本 API 与 CLI 只增不改：不删除、不改现有语义；需要变更时先新增，旧的保留并标注弃用；移除只发生在 2.0。这是内部规则，公开兼容承诺等第一个外部采用者出现后再升格（见 `docs/GOALS.md`）。
+- 理由: 采用者的构建脚本会比二进制活得久；没有弃用期的修改会把"一次成功"的失败归因变成噪声——操作者会先去修错误的层。内部约束的成本接近零：脚本面已是显式 allowlist，并由测试锁死。
+- 涉及代码: `pkg/api/yaegi_symbols.go`, `pkg/api/script_methods.go`, `AGENTS.md`, `docs/GOALS.md`。
+
+## DD-35: 技能安装记录版本与内容摘要
+
+- 状态: accepted
+- 背景: 技能文档是嵌入二进制的副本，`vmake skill install` 把它写到 `~/.agents/skills/vmake/`。升级二进制后若没重装，agent 会继续按旧文档工作；M0 排查时本机就同时存在旧二进制和旧技能副本，而两者都不会主动报错。
+- 决策: `vmake skill install` 在安装目录写 `.vmake-skill.json`（`schemaVersion` 1，含 `version`/`commit`/`buildDate`/`skillDigest`/`installedAt`）；`skillDigest` 是嵌入技能 `.md` 内容的 sha256，排除安装时生成的 `references/cli.md`。`vmake doctor` 仅在 `SKILL.md` 存在时检查：记录缺失/无效或摘要不符报 error 并提示重跑 `vmake skill install`；摘要一致时输出一条 ok；技能未安装不报告。
+- 理由: agent 的行为由已安装文档定义，陈旧副本会静默改变结果，因此必须能被命令发现（见 `docs/GOALS.md` 的接口约束）。比较内容摘要而不只是版本，能覆盖同一版本/commit 下重建出的不同技能文本（dirty worktree），这正是技能循环的日常场景；未安装技能是合法状态，不能报 error。
+- 涉及代码: `cmd/vmake/skill_cmd.go`, `cmd/vmake/doctor_cmd.go`, `cmd/vmake/skill_cmd_test.go`, `cmd/vmake/skills/vmake/SKILL.md`, `cmd/vmake/skills/vmake/references/platforms.md`, `docs/AI_INSTALL_GUIDE.md`。
+
 ## 已知限制 / 待议
 
 以下问题已被识别但尚未决策，修改前需单独讨论：
 
-1. **本地项目无子包概念**：本地嵌套 build.go 被 `Scan` 收为顶层裸名包（目录 basename），
-   且 basename 冲突时静默丢弃（`pkg/buildscript/scanner.go` 的 `namesSeen` 去重）。
+1. **本地项目无子包概念**：本地嵌套 build.go 被 `Scan` 收为顶层裸名包（目录 basename）；重名现在报错（DD-33）。
    本地子包化是破坏性变更（现有本地多包项目的裸名引用需迁移），暂不实施。
 4. **命名歧义（低概率）**：子包全名 `repo/pkg/sub` 经 `SplitPackageRef` 拆分后 pkg 部分
    含 `/`，若 registry 恰好存在名为 `pkg/sub` 的包会被误匹配（`findSource` 先查 registry）。
