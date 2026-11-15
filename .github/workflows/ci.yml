@@ -34,7 +34,19 @@ jobs:
         run: go vet ./cmd/vmake/... ./pkg/... ./internal/...
 
       - name: Unit tests
-        run: go test ./cmd/vmake/... ./pkg/... ./internal/...
+        id: unit
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          go test ./cmd/vmake/... ./pkg/... ./internal/... 2>&1 | tee "$RUNNER_TEMP/go-test.log"
+
+      - name: Report unit test failures
+        if: steps.unit.outcome == 'failure'
+        run: |
+          grep -E '^(--- FAIL|FAIL|# |panic:|internal compiler error)' "$RUNNER_TEMP/go-test.log" | head -40 | while IFS= read -r line; do
+            echo "::error::${line}"
+          done
+          exit 1
 
       - name: Integration (simple C build)
         working-directory: test_data/01_simple_c
