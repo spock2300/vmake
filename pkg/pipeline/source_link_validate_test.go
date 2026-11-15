@@ -16,7 +16,7 @@ func linkTestGitRepo(t *testing.T, files map[string]string) string {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
 	}
-	dir := t.TempDir()
+	dir := canonicalTempDir(t)
 	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = resolved
 	}
@@ -46,9 +46,9 @@ func gitRun(t *testing.T, dir string, args ...string) {
 }
 
 func TestValidateSourceLinkNative(t *testing.T) {
-	project, deps, repos := t.TempDir(), t.TempDir(), t.TempDir()
+	project, deps, repos := canonicalTempDir(t), canonicalTempDir(t), canonicalTempDir(t)
 	mgr := repo.NewRepoManager(repos)
-	if err := mgr.AddNative("testnative", filepath.Join(t.TempDir(), "{name}")); err != nil {
+	if err := mgr.AddNative("testnative", filepath.Join(canonicalTempDir(t), "{name}")); err != nil {
 		t.Fatal(err)
 	}
 	link := linkTestGitRepo(t, map[string]string{
@@ -64,8 +64,8 @@ func TestValidateSourceLinkNative(t *testing.T) {
 }
 
 func TestValidateSourceLinkRegistry(t *testing.T) {
-	project, deps, repos := t.TempDir(), t.TempDir(), t.TempDir()
-	reg := t.TempDir()
+	project, deps, repos := canonicalTempDir(t), canonicalTempDir(t), canonicalTempDir(t)
+	reg := canonicalTempDir(t)
 	path := filepath.Join(reg, "packages", "z", "zlib", "build.go")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
@@ -94,9 +94,9 @@ func TestValidateSourceLinkRegistry(t *testing.T) {
 }
 
 func TestValidateSourceLinkRejectsInsideProject(t *testing.T) {
-	project, deps, repos := t.TempDir(), t.TempDir(), t.TempDir()
+	project, deps, repos := canonicalTempDir(t), canonicalTempDir(t), canonicalTempDir(t)
 	mgr := repo.NewRepoManager(repos)
-	if err := mgr.AddNative("testnative", filepath.Join(t.TempDir(), "{name}")); err != nil {
+	if err := mgr.AddNative("testnative", filepath.Join(canonicalTempDir(t), "{name}")); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(project, "sdk")
@@ -113,7 +113,7 @@ func TestValidateSourceLinkRejectsInsideProject(t *testing.T) {
 }
 
 func TestValidateSourceLinkRejectsSubPackage(t *testing.T) {
-	if _, err := ValidateSourceLink(context.Background(), t.TempDir(), t.TempDir(), t.TempDir(), "testnative/sdk/sub", "/tmp"); err == nil {
+	if _, err := ValidateSourceLink(context.Background(), canonicalTempDir(t), canonicalTempDir(t), canonicalTempDir(t), "testnative/sdk/sub", "/tmp"); err == nil {
 		t.Fatal("sub-package link should fail")
 	}
 }

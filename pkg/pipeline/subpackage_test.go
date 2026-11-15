@@ -29,16 +29,16 @@ func TestComputeDepOutputResolvesSubPackageShortName(t *testing.T) {
 	s := sessionFixture(t)
 	s.allTargets = make(map[string]map[string]*api.Target)
 	owner, tool, lib := "native/root", "native/root/tool", "native/root/lib"
-	toolDir := filepath.Join(t.TempDir(), "tool")
-	libDir := filepath.Join(t.TempDir(), "lib")
-	addSubPackageNode(s, owner, "", filepath.Join(t.TempDir(), "root"))
+	toolDir := filepath.Join(canonicalTempDir(t), "tool")
+	libDir := filepath.Join(canonicalTempDir(t), "lib")
+	addSubPackageNode(s, owner, "", filepath.Join(canonicalTempDir(t), "root"))
 	addSubPackageNode(s, tool, owner, toolDir)
 	addSubPackageNode(s, lib, owner, libDir)
 	s.needed[owner] = true
 	s.needed[tool] = true
 	s.needed[lib] = true
-	s.pkgDirs[tool] = &api.PkgDirs{SourceDir: toolDir, BuildDir: filepath.Join(t.TempDir(), "tool-out")}
-	s.pkgDirs[lib] = &api.PkgDirs{SourceDir: libDir, BuildDir: filepath.Join(t.TempDir(), "lib-out")}
+	s.pkgDirs[tool] = &api.PkgDirs{SourceDir: toolDir, BuildDir: filepath.Join(canonicalTempDir(t), "tool-out")}
+	s.pkgDirs[lib] = &api.PkgDirs{SourceDir: libDir, BuildDir: filepath.Join(canonicalTempDir(t), "lib-out")}
 	target := api.NewTargetRegistry().Target("utils").SetKind(api.TargetStatic)
 	s.allTargets[lib] = map[string]*api.Target{"utils": target}
 
@@ -64,17 +64,17 @@ func TestComputeDepOutputResolvesSubPackageShortName(t *testing.T) {
 func TestComputeDepSrcDirResolvesPackageSource(t *testing.T) {
 	s := sessionFixture(t)
 	owner, tool, lib := "native/root", "native/root/tool", "native/root/lib"
-	toolDir := filepath.Join(t.TempDir(), "tool")
-	libDir := filepath.Join(t.TempDir(), "lib")
-	addSubPackageNode(s, owner, "", filepath.Join(t.TempDir(), "root"))
+	toolDir := filepath.Join(canonicalTempDir(t), "tool")
+	libDir := filepath.Join(canonicalTempDir(t), "lib")
+	addSubPackageNode(s, owner, "", filepath.Join(canonicalTempDir(t), "root"))
 	addSubPackageNode(s, tool, owner, toolDir)
 	libNode := addSubPackageNode(s, lib, owner, libDir)
 	for _, name := range []string{owner, tool, lib} {
 		s.needed[name] = true
 	}
-	s.pkgDirs[tool] = &api.PkgDirs{SourceDir: toolDir, BuildDir: t.TempDir()}
-	s.pkgDirs[lib] = &api.PkgDirs{SourceDir: libDir, BuildDir: t.TempDir()}
-	upstream := filepath.Join(t.TempDir(), "third_party", "lib", "src")
+	s.pkgDirs[tool] = &api.PkgDirs{SourceDir: toolDir, BuildDir: canonicalTempDir(t)}
+	s.pkgDirs[lib] = &api.PkgDirs{SourceDir: libDir, BuildDir: canonicalTempDir(t)}
+	upstream := filepath.Join(canonicalTempDir(t), "third_party", "lib", "src")
 	libNode.Pkg.SetSrcDir(upstream)
 
 	if got := s.computeDepSrcDir(tool, "lib"); got != upstream {
@@ -92,16 +92,16 @@ func TestComputeDepOutputPrefersNearestSubPackage(t *testing.T) {
 	s := sessionFixture(t)
 	s.allTargets = make(map[string]map[string]*api.Target)
 	owner, tool, near, far := "native/root", "native/root/tool", "native/root/lib", "lib"
-	addSubPackageNode(s, owner, "", filepath.Join(t.TempDir(), "root"))
-	addSubPackageNode(s, tool, owner, filepath.Join(t.TempDir(), "tool"))
-	addSubPackageNode(s, near, owner, filepath.Join(t.TempDir(), "near"))
-	addSubPackageNode(s, far, "", filepath.Join(t.TempDir(), "far"))
+	addSubPackageNode(s, owner, "", filepath.Join(canonicalTempDir(t), "root"))
+	addSubPackageNode(s, tool, owner, filepath.Join(canonicalTempDir(t), "tool"))
+	addSubPackageNode(s, near, owner, filepath.Join(canonicalTempDir(t), "near"))
+	addSubPackageNode(s, far, "", filepath.Join(canonicalTempDir(t), "far"))
 	for _, name := range []string{owner, tool, near, far} {
 		s.needed[name] = true
 	}
-	s.pkgDirs[tool] = &api.PkgDirs{SourceDir: t.TempDir(), BuildDir: t.TempDir()}
-	s.pkgDirs[near] = &api.PkgDirs{SourceDir: t.TempDir(), BuildDir: t.TempDir()}
-	s.pkgDirs[far] = &api.PkgDirs{SourceDir: t.TempDir(), BuildDir: t.TempDir()}
+	s.pkgDirs[tool] = &api.PkgDirs{SourceDir: canonicalTempDir(t), BuildDir: canonicalTempDir(t)}
+	s.pkgDirs[near] = &api.PkgDirs{SourceDir: canonicalTempDir(t), BuildDir: canonicalTempDir(t)}
+	s.pkgDirs[far] = &api.PkgDirs{SourceDir: canonicalTempDir(t), BuildDir: canonicalTempDir(t)}
 	target := api.NewTargetRegistry().Target("utils").SetKind(api.TargetStatic)
 	s.allTargets[near] = map[string]*api.Target{"utils": target}
 	s.allTargets[far] = map[string]*api.Target{"utils": target}
@@ -117,15 +117,15 @@ func TestComputeDepOutputPrefersNearestSubPackage(t *testing.T) {
 func TestApplyBuildContextConfigResolvesSubPackageImports(t *testing.T) {
 	s := sessionFixture(t)
 	owner, tool, lib := "native/root", "native/root/tool", "native/root/lib"
-	addSubPackageNode(s, owner, "", filepath.Join(t.TempDir(), "root"))
-	toolNode := addSubPackageNode(s, tool, owner, filepath.Join(t.TempDir(), "tool"))
+	addSubPackageNode(s, owner, "", filepath.Join(canonicalTempDir(t), "root"))
+	toolNode := addSubPackageNode(s, tool, owner, filepath.Join(canonicalTempDir(t), "tool"))
 	libPkg := api.NewPackage().SetName(lib)
 	cfgCtx := api.NewConfigContext(lib)
 	cfgCtx.Option("feature").SetType(api.OptionBool).SetDefault(true)
 	api.BindSetOptions(&libPkg.ConfigAccessor, cfgCtx.GetOptions())
 	api.BindSetCfgVals(&libPkg.ConfigAccessor, map[string]any{"feature": true})
 	s.ctx.DepGraph.Packages[lib] = resolver.NewPackageNode(lib,
-		buildscript.NewSource(lib, "build.go", t.TempDir(), api.SourceRemote), libPkg)
+		buildscript.NewSource(lib, "build.go", canonicalTempDir(t), api.SourceRemote), libPkg)
 	s.ctx.Resolver.SubParents()[lib] = owner
 	near := tool + "/lib"
 	nearPkg := api.NewPackage().SetName(near)
@@ -134,7 +134,7 @@ func TestApplyBuildContextConfigResolvesSubPackageImports(t *testing.T) {
 	api.BindSetOptions(&nearPkg.ConfigAccessor, nearCfg.GetOptions())
 	api.BindSetCfgVals(&nearPkg.ConfigAccessor, map[string]any{"feature": false})
 	s.ctx.DepGraph.Packages[near] = resolver.NewPackageNode(near,
-		buildscript.NewSource(near, "build.go", t.TempDir(), api.SourceRemote), nearPkg)
+		buildscript.NewSource(near, "build.go", canonicalTempDir(t), api.SourceRemote), nearPkg)
 	s.ctx.Resolver.SubParents()[near] = owner
 	needed := map[string]bool{owner: true, tool: true, lib: true}
 
@@ -172,18 +172,18 @@ func TestWriteLockfileSkipsSubPackages(t *testing.T) {
 	s := sessionFixture(t)
 	owner, sub := "native/root", "native/root/member"
 	parent := resolver.NewPackageNode(owner,
-		buildscript.NewSource(owner, "build.go", t.TempDir(), api.SourceRemote),
+		buildscript.NewSource(owner, "build.go", canonicalTempDir(t), api.SourceRemote),
 		api.NewPackage().SetName(owner))
 	parent.WithNative("https://example.invalid/root.git", map[string]string{"1.0.0": "v1.0.0"}, "1.0.0")
 	subNode := resolver.NewPackageNode(sub,
-		buildscript.NewSource(sub, "build.go", t.TempDir(), api.SourceRemote),
+		buildscript.NewSource(sub, "build.go", canonicalTempDir(t), api.SourceRemote),
 		api.NewPackage().SetName(sub))
 	s.ctx.DepGraph.Packages[owner], s.ctx.DepGraph.Packages[sub] = parent, subNode
 	s.ctx.DepGraph.Order = []string{owner, sub}
 	s.ctx.Resolver.SubParents()[sub] = owner
 	s.remote.setVersion(owner, "1.0.0")
 	s.remote.commits[owner] = "abc123"
-	s.ctx.LockPath = filepath.Join(t.TempDir(), "vmake.lock")
+	s.ctx.LockPath = filepath.Join(canonicalTempDir(t), "vmake.lock")
 	s.ctx.Lock = lockfile.New()
 	s.ctx.Lock.Set(sub, &lockfile.LockedPkg{Version: "1.0.0", Commit: "stale", Source: "native"})
 
@@ -276,7 +276,7 @@ func TestSetupSubPackageDirsRequiresParentVersion(t *testing.T) {
 }
 
 func TestRemoteOwnerAndMemberPathNested(t *testing.T) {
-	r := resolver.NewResolver(nil, t.TempDir())
+	r := resolver.NewResolver(nil, canonicalTempDir(t))
 	r.SubParents()["native/root/a/b"] = "native/root"
 	ctx := &RuntimeContext{Resolver: r}
 	if got := remoteOwnerName(ctx, "native/root/a/b"); got != "native/root" {
@@ -294,10 +294,10 @@ func TestFilterAndCollectNeededRejectsSubPackageWithoutParent(t *testing.T) {
 	s := sessionFixture(t)
 	owner, sub := "native/root", "native/root/member"
 	parent := resolver.NewPackageNode(owner,
-		buildscript.NewSource(owner, "build.go", t.TempDir(), api.SourceRemote),
+		buildscript.NewSource(owner, "build.go", canonicalTempDir(t), api.SourceRemote),
 		api.NewPackage().SetName(owner))
 	subNode := resolver.NewPackageNode(sub,
-		buildscript.NewSource(sub, "build.go", t.TempDir(), api.SourceRemote),
+		buildscript.NewSource(sub, "build.go", canonicalTempDir(t), api.SourceRemote),
 		api.NewPackage().SetName(sub))
 	s.ctx.DepGraph.Packages[owner], s.ctx.DepGraph.Packages[sub] = parent, subNode
 	s.ctx.Resolver.SubParents()[sub] = owner
@@ -413,9 +413,9 @@ func TestSessionBuildRequestSkipsFilteredOutCandidate(t *testing.T) {
 func TestSessionMissingBuildPackageFails(t *testing.T) {
 	s := sessionFixture(t)
 	owner, tool, lib := "native/root", "native/root/tool", "native/root/lib"
-	addSubPackageNode(s, owner, "", filepath.Join(t.TempDir(), "root"))
-	addSubPackageNode(s, tool, owner, filepath.Join(t.TempDir(), "tool"))
-	addSubPackageNode(s, lib, owner, filepath.Join(t.TempDir(), "lib"))
+	addSubPackageNode(s, owner, "", filepath.Join(canonicalTempDir(t), "root"))
+	addSubPackageNode(s, tool, owner, filepath.Join(canonicalTempDir(t), "tool"))
+	addSubPackageNode(s, lib, owner, filepath.Join(canonicalTempDir(t), "lib"))
 	s.needed[owner] = true
 	s.needed[tool] = true
 
