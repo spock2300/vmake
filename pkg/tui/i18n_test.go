@@ -128,8 +128,6 @@ func TestLanguageTogglePreservesInteractionState(t *testing.T) {
 			m.openLanguageSelector()
 			m.handleOverlayKey(tea.KeyMsg{Type: tea.KeyDown})
 			m.handleOverlayKey(tea.KeyMsg{Type: tea.KeyEnter})
-			model := tea.Model(&m)
-			m = *model.(*Model)
 			if m.language != languageChinese {
 				t.Fatal("language selector should switch model back to Chinese")
 			}
