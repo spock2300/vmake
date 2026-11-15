@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -33,6 +34,9 @@ func TestBuildRuntimeBindingCopiesBudget(t *testing.T) {
 func TestMakeExecutesWithBoundBudget(t *testing.T) {
 	if _, err := exec.LookPath("make"); err != nil {
 		t.Skip(err)
+	}
+	if runtime.GOOS == "darwin" {
+		t.Skip("Apple GNU make 3.81 reports jobserver MAKEFLAGS without the job count")
 	}
 	for _, key := range []string{"MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS"} {
 		t.Setenv(key, "")

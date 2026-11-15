@@ -17,6 +17,9 @@ func linkTestGitRepo(t *testing.T, files map[string]string) string {
 		t.Skip("git not on PATH")
 	}
 	dir := t.TempDir()
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	for name, content := range files {
 		path := filepath.Join(dir, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
