@@ -94,7 +94,7 @@ func ConfigureArgs(s Settings, extra ...string) ([]string, error) {
 			args = append(args, "-DCMAKE_ASM_COMPILER_TARGET="+s.TargetTriple)
 		}
 	}
-	if generator, pinned := generatorDefault(s.HostOS); pinned && !hasGenerator(extra) && os.Getenv("CMAKE_GENERATOR") == "" {
+	if generator, pinned := generatorDefault(s.HostOS); pinned && !hasGenerator(extra) && !HasOption(extra, "--preset") && os.Getenv("CMAKE_GENERATOR") == "" {
 		args = append(args, "-G", generator)
 	}
 	definitions := Definitions(extra)

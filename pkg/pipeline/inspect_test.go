@@ -17,7 +17,7 @@ import (
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
-func TestInspectMatchesPackageToolchainBuildDirectories(t *testing.T) {
+func TestInspectMatchesBuildStageToolchainDirsAndLayout(t *testing.T) {
 	mgr := toolchain.GetManager()
 	host, err := mgr.GetToolchain("host")
 	if err != nil {
@@ -50,6 +50,14 @@ func TestInspectMatchesPackageToolchainBuildDirectories(t *testing.T) {
 	for _, pkg := range []string{"app", "dep"} {
 		if !reflect.DeepEqual(inspection.pkgDirs[pkg], s.pkgDirs[pkg]) {
 			t.Errorf("%s inspection/build directories differ: %+v / %+v", pkg, inspection.pkgDirs[pkg], s.pkgDirs[pkg])
+		}
+		built, inspected := s.layouts[pkg], inspection.layouts[pkg]
+		if built == nil || inspected == nil {
+			t.Fatalf("%s layout missing: build=%+v inspect=%+v", pkg, built, inspected)
+		}
+		if inspected.BuildKey != built.BuildKey || inspected.Dirs != built.Dirs ||
+			inspected.Ready != built.Ready || inspected.Platform != built.Platform {
+			t.Errorf("%s inspection layout differs from the build stage:\ninspect %+v\nbuild   %+v", pkg, inspected, built)
 		}
 	}
 	if inspection.packageToolchains["dep"] != tc || inspection.packageToolchains["app"] != host {
