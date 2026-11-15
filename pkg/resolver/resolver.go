@@ -291,12 +291,12 @@ func (r *Resolver) FilterDeps(id string, cfgVals map[string]any, options map[str
 	}
 
 	pkg := node.Pkg
-	requireFuncs := pkg.GetRequireFuncs()
+	requireFuncs := api.BindPackageGetRequireFuncs(pkg)
 	if len(requireFuncs) == 0 {
 		return nil
 	}
 
-	pkg.UpdateRequireContext(cfgVals, options)
+	api.BindPackageUpdateRequireContext(pkg, cfgVals, options)
 
 	deps := pkg.GetRequires().Get()
 	newDeps := make([]string, 0, len(deps))
@@ -583,8 +583,7 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string, pa
 	}
 
 	pkgStub := api.NewPackage()
-	pkgStub.Repo = repoName
-	pkgStub.Name = pkgName
+	pkgStub.SetRepo(repoName).SetName(pkgName)
 	pkgStub.SetGit(gitURL)
 
 	pinVersion, pinCommit, hasPin := r.pinnedVersion(id)

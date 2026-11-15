@@ -122,8 +122,8 @@ func TestApplyBuildContextConfigResolvesSubPackageImports(t *testing.T) {
 	libPkg := api.NewPackage().SetName(lib)
 	cfgCtx := api.NewConfigContext(lib)
 	cfgCtx.Option("feature").SetType(api.OptionBool).SetDefault(true)
-	libPkg.Options = cfgCtx.GetOptions()
-	libPkg.CfgVals = map[string]any{"feature": true}
+	api.BindSetOptions(&libPkg.ConfigAccessor, cfgCtx.GetOptions())
+	api.BindSetCfgVals(&libPkg.ConfigAccessor, map[string]any{"feature": true})
 	s.ctx.DepGraph.Packages[lib] = resolver.NewPackageNode(lib,
 		buildscript.NewSource(lib, "build.go", t.TempDir(), api.SourceRemote), libPkg)
 	s.ctx.Resolver.SubParents()[lib] = owner
@@ -131,8 +131,8 @@ func TestApplyBuildContextConfigResolvesSubPackageImports(t *testing.T) {
 	nearPkg := api.NewPackage().SetName(near)
 	nearCfg := api.NewConfigContext(near)
 	nearCfg.Option("feature").SetType(api.OptionBool).SetDefault(false)
-	nearPkg.Options = nearCfg.GetOptions()
-	nearPkg.CfgVals = map[string]any{"feature": false}
+	api.BindSetOptions(&nearPkg.ConfigAccessor, nearCfg.GetOptions())
+	api.BindSetCfgVals(&nearPkg.ConfigAccessor, map[string]any{"feature": false})
 	s.ctx.DepGraph.Packages[near] = resolver.NewPackageNode(near,
 		buildscript.NewSource(near, "build.go", t.TempDir(), api.SourceRemote), nearPkg)
 	s.ctx.Resolver.SubParents()[near] = owner
@@ -142,7 +142,7 @@ func TestApplyBuildContextConfigResolvesSubPackageImports(t *testing.T) {
 		t.Run(map[bool]string{false: "header-only", true: "defines"}[defines], func(t *testing.T) {
 			node := resolver.NewPackageNode(tool, toolNode.Source, api.NewPackage().SetName(tool))
 			buildCtx := api.NewBuildContext(tool, nil)
-			buildCtx.SetPackage(node.Pkg)
+			api.BindSetPackage(buildCtx, node.Pkg)
 			target := buildCtx.Target("app").SetKind(api.TargetStatic)
 			buildCtx.GenerateConfigHeader()
 			if defines {

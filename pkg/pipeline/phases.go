@@ -108,31 +108,31 @@ func Configure(ctx *RuntimeContext) (err error) {
 }
 
 func bindBaseGlobalFlagCallbacks(cfgCtx *api.ConfigContext, buf *packageGlobalFlags) {
-	cfgCtx.SetGlobalCFlagsFunc(func(flags ...string) {
+	api.BindSetGlobalCFlagsFunc(cfgCtx, func(flags ...string) {
 		buf.cFlags = append(buf.cFlags, flags...)
 	})
-	cfgCtx.SetGlobalCxxFlagsFunc(func(flags ...string) {
+	api.BindSetGlobalCxxFlagsFunc(cfgCtx, func(flags ...string) {
 		buf.cxxFlags = append(buf.cxxFlags, flags...)
 	})
-	cfgCtx.SetGlobalLdFlagsFunc(func(flags ...string) {
+	api.BindSetGlobalLdFlagsFunc(cfgCtx, func(flags ...string) {
 		buf.ldFlags = append(buf.ldFlags, flags...)
 	})
-	cfgCtx.SetGlobalLinksFunc(func(links ...string) {
+	api.BindSetGlobalLinksFunc(cfgCtx, func(links ...string) {
 		buf.links = append(buf.links, links...)
 	})
 }
 
 func bindApplyGlobalFlagCallbacks(cfgCtx *api.ConfigContext, buf *packageGlobalFlags) {
-	cfgCtx.SetGlobalCFlagsFunc(func(flags ...string) {
+	api.BindSetGlobalCFlagsFunc(cfgCtx, func(flags ...string) {
 		buf.applyCFlags = append(buf.applyCFlags, flags...)
 	})
-	cfgCtx.SetGlobalCxxFlagsFunc(func(flags ...string) {
+	api.BindSetGlobalCxxFlagsFunc(cfgCtx, func(flags ...string) {
 		buf.applyCxxFlags = append(buf.applyCxxFlags, flags...)
 	})
-	cfgCtx.SetGlobalLdFlagsFunc(func(flags ...string) {
+	api.BindSetGlobalLdFlagsFunc(cfgCtx, func(flags ...string) {
 		buf.applyLdFlags = append(buf.applyLdFlags, flags...)
 	})
-	cfgCtx.SetGlobalLinksFunc(func(links ...string) {
+	api.BindSetGlobalLinksFunc(cfgCtx, func(links ...string) {
 		buf.applyLinks = append(buf.applyLinks, links...)
 	})
 }
@@ -140,7 +140,7 @@ func bindApplyGlobalFlagCallbacks(cfgCtx *api.ConfigContext, buf *packageGlobalF
 func collectOptions(name, dir string, pkg *api.Package, buf *packageGlobalFlags) map[string]*api.Option {
 	cfgCtx := api.NewConfigContextWithPackage(name, pkg)
 	bindBaseGlobalFlagCallbacks(cfgCtx, buf)
-	pkg.ExecConfigFuncs(dir, func(fn api.ConfigFunc) { fn(cfgCtx) })
+	api.BindPackageExecConfigFuncs(pkg, dir, func(fn api.ConfigFunc) { fn(cfgCtx) })
 	return cfgCtx.GetOptions()
 }
 
@@ -212,7 +212,7 @@ func applyConfigCallbacksForNeeded(ctx *RuntimeContext, needed map[string]bool, 
 	if ctx.BufferedGlobalFlags == nil {
 		ctx.BufferedGlobalFlags = make(map[string]*packageGlobalFlags)
 	}
-	globalVals := config.BuildGlobalValues(ctx.Config)
+	globalVals := applyGlobalValues(ctx, needed)
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if needed != nil {
@@ -221,7 +221,7 @@ func applyConfigCallbacksForNeeded(ctx *RuntimeContext, needed map[string]bool, 
 			}
 			if !needed[name] {
 				if node != nil && node.Pkg != nil {
-					node.Pkg.ResetApplyState()
+					api.BindPackageResetApplyState(node.Pkg)
 				}
 				continue
 			}
@@ -229,7 +229,7 @@ func applyConfigCallbacksForNeeded(ctx *RuntimeContext, needed map[string]bool, 
 		if node == nil || node.Pkg == nil {
 			continue
 		}
-		node.Pkg.ResetApplyState()
+		api.BindPackageResetApplyState(node.Pkg)
 		opts := ctx.AllOptions[name]
 		if len(opts) == 0 {
 			continue
@@ -244,7 +244,7 @@ func applyConfigCallbacksForNeeded(ctx *RuntimeContext, needed map[string]bool, 
 
 		applyCtx := api.NewConfigContextWithPackage(name, node.Pkg)
 		applyCtx.SetOptions(mergedPackageAndGlobalOptions(opts, visibleGlobalOptionsFor(node, opts, ctx.GlobalOptions)))
-		applyVals := packageConfigValuesWithGlobals(ctx, name, globalVals)
+		applyVals := mergeCfgVals(name, node, ctx, globalVals, config.GetEntry(ctx.Config, name).Options)
 		applyCtx.SetCfgVals(applyVals)
 		bindApplyGlobalFlagCallbacks(applyCtx, buf)
 
@@ -267,36 +267,6 @@ func applyConfigCallbacksForNeeded(ctx *RuntimeContext, needed map[string]bool, 
 			api.RunScriptSafe(name, func() { opt.OnApply()(applyCtx, val) })
 		}
 	}
-}
-
-func packageConfigValuesWithGlobals(ctx *RuntimeContext, name string, globalVals map[string]any) map[string]any {
-	if ctx == nil || ctx.Config == nil {
-		return nil
-	}
-	var node *resolver.PackageNode
-	if ctx.DepGraph != nil {
-		node = ctx.DepGraph.Packages[name]
-	}
-	opts := ctx.AllOptions[name]
-	visGlobals := visibleGlobalValuesFor(node, opts, ctx.GlobalOptions, globalVals)
-	entry := config.GetEntry(ctx.Config, name)
-	values := make(map[string]any, len(entry.Options)+len(visGlobals))
-	for optName, val := range visGlobals {
-		if opt, declared := opts[optName]; declared && !opt.IsGlobal() {
-			continue
-		}
-		values[optName] = val
-	}
-	if ctx.DerivedOptions != nil {
-		for k, v := range ctx.DerivedOptions[name] {
-			if opt, declared := opts[k]; declared && opt.IsGlobal() {
-				continue
-			}
-			values[k] = v
-		}
-	}
-	mergePkgOptions(values, entry.Options, opts, visGlobals)
-	return values
 }
 
 var globalMacroExcluded = map[string]bool{

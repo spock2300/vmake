@@ -251,7 +251,7 @@ func executeCleanHooks(ctx *RuntimeContext, localOnly, skipUnresolved, filterDep
 			continue
 		}
 		hasHooks := false
-		node.Pkg.ExecCleanFuncs(node.Source.Dir, func(api.CleanFunc) { hasHooks = true })
+		api.BindPackageExecCleanFuncs(node.Pkg, node.Source.Dir, func(api.CleanFunc) { hasHooks = true })
 		if !hasHooks {
 			continue
 		}
@@ -289,11 +289,11 @@ func executeCleanHooks(ctx *RuntimeContext, localOnly, skipUnresolved, filterDep
 			cleanCtx.SetOptions(maps.Clone(opts))
 		}
 		cleanCtx.MergeGlobals(ctx.GlobalOptions, insp.GlobalValues)
-		cleanCtx.SetPackage(node.Pkg)
-		node.Pkg.SetOptions(cleanCtx.Options)
-		node.Pkg.SetCfgVals(cleanCtx.CfgVals)
+		api.BindSetCleanPackage(cleanCtx, node.Pkg)
+		node.Pkg.SetOptions(api.BindOptions(&cleanCtx.ConfigAccessor))
+		node.Pkg.SetCfgVals(api.BindCfgVals(&cleanCtx.ConfigAccessor))
 
-		node.Pkg.ExecCleanFuncs(dirs.SourceDir, func(fn api.CleanFunc) {
+		api.BindPackageExecCleanFuncs(node.Pkg, dirs.SourceDir, func(fn api.CleanFunc) {
 			fn(cleanCtx)
 		})
 	}

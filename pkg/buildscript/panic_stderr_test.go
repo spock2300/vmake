@@ -57,7 +57,7 @@ func runScratchScript(t *testing.T, script string, run func(*api.Package, string
 }
 
 func execBuildCallback(pkg *api.Package, dir string) {
-	pkg.ExecBuildFuncs(dir, func(fn api.BuildFunc) {
+	api.BindPackageExecBuildFuncs(pkg, dir, func(fn api.BuildFunc) {
 		fn(api.NewBuildContext("panicky", nil))
 	})
 }
@@ -87,7 +87,7 @@ import "github.com/spock2300/vmake/pkg/api"
 }
 `,
 			run: func(pkg *api.Package, dir string) {
-				pkg.ExecConfigFuncs(dir, func(fn api.ConfigFunc) {
+				api.BindPackageExecConfigFuncs(pkg, dir, func(fn api.ConfigFunc) {
 					fn(api.NewConfigContext("panicky"))
 				})
 			},

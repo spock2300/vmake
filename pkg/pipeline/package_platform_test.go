@@ -103,7 +103,7 @@ func TestPackagePlatformRawValuesAndInputIsolation(t *testing.T) {
 		ctx := &RuntimeContext{Config: emptyConfig()}
 		ctx.Config.Global.Options = map[string]any{api.TargetOSOptionName: rawOS, api.TargetTripleOptionName: ""}
 		config.SetEntry(ctx.Config, "app", &config.EntryConfig{Options: map[string]any{"enabled": true}})
-		values, err := PackageConfigValues(ctx, "app", projectGlobalValues(ctx))
+		values, err := PackageConfigValues(ctx, "app", ProjectGlobalValues(ctx))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -9,7 +9,7 @@ import (
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
-func projectGlobalValues(ctx *RuntimeContext) map[string]any {
+func ProjectGlobalValues(ctx *RuntimeContext) map[string]any {
 	values := make(map[string]any)
 	for name, opt := range ctx.GlobalOptions {
 		values[name] = opt.Default()
@@ -23,6 +23,13 @@ func projectGlobalValues(ctx *RuntimeContext) map[string]any {
 		}
 		values[name] = value
 	}
+	return values
+}
+
+func ReportGlobalValues(ctx *RuntimeContext) map[string]any {
+	values := ProjectGlobalValues(ctx)
+	values[api.ModeOptionName] = ResolveMode(ctx.Config, ctx.ModeOverride)
+	values[api.ToolchainOptionName] = ResolveToolchainName(ctx.Config, ctx.ToolchainOverride, ctx.PreferredToolchain)
 	return values
 }
 
@@ -78,7 +85,7 @@ func fillTargetDefaults(values map[string]any, os, triple string) {
 }
 
 func ProjectPlatform(ctx *RuntimeContext) (api.Platform, error) {
-	values := projectGlobalValues(ctx)
+	values := ProjectGlobalValues(ctx)
 	tcName := ResolveToolchainName(ctx.Config, ctx.ToolchainOverride, ctx.PreferredToolchain)
 	if ctx.ChipProfile.Name != "" && chipTargetsApply(ctx.ChipProfile, tcName) {
 		fillTargetDefaults(values, ctx.ChipProfile.TargetOS, ctx.ChipProfile.TargetTriple)
@@ -100,7 +107,7 @@ func checkedPlatform(values map[string]any, owner string) (api.Platform, error) 
 }
 
 func PackagePlatform(ctx *RuntimeContext, name string) (api.Platform, error) {
-	values := projectGlobalValues(ctx)
+	values := ProjectGlobalValues(ctx)
 	values[api.ToolchainOptionName] = ResolveToolchainName(ctx.Config, ctx.ToolchainOverride, ctx.PreferredToolchain)
 	if _, err := checkedPlatform(values, "project"); err != nil {
 		return api.Platform{}, err

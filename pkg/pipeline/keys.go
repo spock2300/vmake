@@ -149,7 +149,7 @@ func computeRootSeeds(graph *resolver.Graph, rootOverride string) ([]string, err
 
 	hasLocalRequire := false
 	for _, node := range graph.Packages {
-		if node.IsLocal() && node.Pkg != nil && len(node.Pkg.GetRequireFuncs()) > 0 {
+		if node.IsLocal() && node.Pkg != nil && len(api.BindPackageGetRequireFuncs(node.Pkg)) > 0 {
 			hasLocalRequire = true
 			break
 		}
@@ -160,7 +160,7 @@ func computeRootSeeds(graph *resolver.Graph, rootOverride string) ([]string, err
 		if !node.IsLocal() {
 			continue
 		}
-		if hasLocalRequire && node.Pkg != nil && len(node.Pkg.GetRequireFuncs()) == 0 && dependedOn[id] {
+		if hasLocalRequire && node.Pkg != nil && len(api.BindPackageGetRequireFuncs(node.Pkg)) == 0 && dependedOn[id] {
 			continue
 		}
 		roots = append(roots, id)

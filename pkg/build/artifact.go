@@ -22,29 +22,34 @@ type ArtifactPlacement struct {
 	IsTest          bool
 }
 
-func (s *Scheduler) placementFor(resolved *ResolvedTarget, pkgInfo *PkgInfo) ArtifactPlacement {
-	target := resolved.Node.Target
+func NewPkgInfo(dirs api.PkgDirs, buildKey string) *PkgInfo {
+	return &PkgInfo{PkgDirs: dirs, BuildKey: buildKey}
+}
+
+func PlacementFor(target *api.Target, pkgInfo *PkgInfo, targetOS string) ArtifactPlacement {
 	kind := target.Kind()
-	targetOS := s.targetOS(resolved.Node.PkgName)
 	placement := ArtifactPlacement{
-		OutputPath:      resolved.OutputPath,
-		InstallName:     targetFilename(kind, target.Name(), targetOS),
-		PostLinkOutputs: postLinkOutputPaths(target, pkgInfo.SourceDir, resolved.OutputPath),
-		Kind:            kind,
-		NoInstall:       target.NoInstall(),
-		IsTest:          target.IsTest(),
+		Kind:        kind,
+		NoInstall:   target.NoInstall(),
+		IsTest:      target.IsTest(),
+		InstallName: targetFilename(kind, target.Name(), targetOS),
 	}
-	if resolved.OutputPath != "" {
-		placement.ImportLib = importLibraryPath(pkgInfo.ResolvePath(resolved.OutputPath), targetOS, kind)
+	placement.OutputPath = pkgInfo.OutputPath(placement.InstallName)
+	placement.PostLinkOutputs = postLinkOutputPaths(target, pkgInfo.SourceDir, placement.OutputPath)
+	if placement.OutputPath != "" {
+		placement.ImportLib = importLibraryPath(pkgInfo.ResolvePath(placement.OutputPath), targetOS, kind)
 	}
 	if pkgInfo.InstallDir != "" {
 		placement.StageLibDir = filepath.Join(pkgInfo.InstallDir, "lib")
 		placement.StageIncludeDir = filepath.Join(pkgInfo.InstallDir, "include")
 	}
-	if dir := target.InstallDir(); dir != "" {
-		placement.InstallSubdir = dir
-	} else {
+	placement.InstallSubdir = target.InstallDir()
+	if placement.InstallSubdir == "" {
 		placement.InstallSubdir = kind.InstallDir()
 	}
 	return placement
+}
+
+func (s *Scheduler) placementFor(resolved *ResolvedTarget, pkgInfo *PkgInfo) ArtifactPlacement {
+	return PlacementFor(resolved.Node.Target, pkgInfo, s.targetOS(resolved.Node.PkgName))
 }

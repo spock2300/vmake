@@ -29,8 +29,8 @@ func TestPackageDeclarativeGeneratorsDeferDuringOnBuild(t *testing.T) {
 		})
 	})
 
-	ctx := NewBuildContext("demo", nil).SetPackage(p)
-	p.ExecBuildFuncs(srcDir, func(fn BuildFunc) { fn(ctx) })
+	ctx := BindSetPackage(NewBuildContext("demo", nil), p)
+	BindPackageExecBuildFuncs(p, srcDir, func(fn BuildFunc) { fn(ctx) })
 
 	if genCalls != 0 {
 		t.Fatalf("OnBuild executed %d generator callbacks during declaration, want 0", genCalls)
@@ -44,12 +44,12 @@ func TestPackageDeclarativeGeneratorsDeferDuringOnBuild(t *testing.T) {
 	if want := filepath.Join(buildDir, "generated", "gen.c"); srcPath != want {
 		t.Fatalf("srcPath = %q, want %q", srcPath, want)
 	}
-	if !p.HasGenerators() {
+	if !BindPackageHasGenerators(p) {
 		t.Fatal("HasGenerators() = false, want true")
 	}
 
 	written := 0
-	if err := p.RunGenerators(srcDir, buildDir, func(string) { written++ }); err != nil {
+	if err := BindPackageRunGenerators(p, srcDir, buildDir, func(string) { written++ }); err != nil {
 		t.Fatalf("RunGenerators: %v", err)
 	}
 	if genCalls != 2 {
@@ -64,7 +64,7 @@ func TestPackageDeclarativeGeneratorsDeferDuringOnBuild(t *testing.T) {
 	}
 
 	written = 0
-	if err := p.RunGenerators(srcDir, buildDir, func(string) { written++ }); err != nil {
+	if err := BindPackageRunGenerators(p, srcDir, buildDir, func(string) { written++ }); err != nil {
 		t.Fatalf("second RunGenerators: %v", err)
 	}
 	if written != 0 {

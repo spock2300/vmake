@@ -9,7 +9,7 @@ import (
 func crossOptionAccessor(t *testing.T) *ConfigAccessor {
 	t.Helper()
 	a := newStrictAccessor()
-	a.SetConfigLookup(func(pkg, name string) (any, *Option, error) {
+	a.setConfigLookup(func(pkg, name string) (any, *Option, error) {
 		if pkg != "firmware" {
 			return nil, nil, errors.New("unknown package " + pkg)
 		}
@@ -66,7 +66,7 @@ func TestCrossPackageReads(t *testing.T) {
 
 func TestCrossPackageRemotePackageName(t *testing.T) {
 	a := newStrictAccessor()
-	a.SetConfigLookup(func(pkg, name string) (any, *Option, error) {
+	a.setConfigLookup(func(pkg, name string) (any, *Option, error) {
 		if pkg != "official/firmware" || name != "graphics_accel" {
 			return nil, nil, nil
 		}
@@ -80,7 +80,7 @@ func TestCrossPackageRemotePackageName(t *testing.T) {
 func TestCrossPackageReadErrors(t *testing.T) {
 	t.Run("lookup error", func(t *testing.T) {
 		a := newStrictAccessor()
-		a.SetConfigLookup(func(string, string) (any, *Option, error) {
+		a.setConfigLookup(func(string, string) (any, *Option, error) {
 			return nil, nil, errors.New("boom")
 		})
 		expectBuildScriptError(t, func() { a.Bool("firmware/x") }, "Bool")
@@ -88,7 +88,7 @@ func TestCrossPackageReadErrors(t *testing.T) {
 
 	t.Run("unknown option", func(t *testing.T) {
 		a := newStrictAccessor()
-		a.SetConfigLookup(func(string, string) (any, *Option, error) {
+		a.setConfigLookup(func(string, string) (any, *Option, error) {
 			return nil, nil, nil
 		})
 		expectBuildScriptError(t, func() { a.Bool("firmware/x") }, "Bool")
@@ -111,7 +111,7 @@ func TestCrossPackageReadErrors(t *testing.T) {
 }
 
 func TestCrossPackageDiscoveryRejected(t *testing.T) {
-	a := ConfigAccessor{Options: map[string]*Option{}}
+	a := ConfigAccessor{options: map[string]*Option{}}
 	a.setStrictOwner("strictpkg")
 	a.discover = true
 
@@ -121,7 +121,7 @@ func TestCrossPackageDiscoveryRejected(t *testing.T) {
 }
 
 func TestCrossPackageLenientContext(t *testing.T) {
-	ctx := NewConfigContext("strictpkg").SetLenient()
+	ctx := NewConfigContext("strictpkg").setLenient()
 	if ctx.Bool("firmware/graphics_accel") {
 		t.Error("lenient cross Bool = true, want false")
 	}

@@ -40,7 +40,7 @@ func resolveBuildConfig(ctx *RuntimeContext, validate bool) (*buildConfig, error
 
 func makeBuildConfig(ctx *RuntimeContext, tc *toolchain.Toolchain, tcName string) *buildConfig {
 	mode := ResolveMode(ctx.Config, ctx.ModeOverride)
-	globalValues := projectGlobalValues(ctx)
+	globalValues := ProjectGlobalValues(ctx)
 	globalValues[api.ModeOptionName] = mode
 	globalValues[api.ToolchainOptionName] = tcName
 	platformValues := maps.Clone(globalValues)
@@ -92,7 +92,7 @@ func filterDependencies(ctx *RuntimeContext, log bool) error {
 	if ctx == nil || ctx.DepGraph == nil || ctx.Resolver == nil || ctx.DepGraph.IsFrozen() {
 		return nil
 	}
-	globalValues := projectGlobalValues(ctx)
+	globalValues := ProjectGlobalValues(ctx)
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if node == nil || node.Pkg == nil {
@@ -102,9 +102,7 @@ func filterDependencies(ctx *RuntimeContext, log bool) error {
 		if ctx.Config != nil {
 			entryOpts = config.GetEntry(ctx.Config, name).Options
 		}
-		options := mergeCfgVals(name, node, ctx, globalValues, map[string]map[string]any{
-			name: entryOpts,
-		})
+		options := mergeCfgVals(name, node, ctx, globalValues, entryOpts)
 		pkgOpts := ctx.AllOptions[name]
 		opts := mergedPackageAndGlobalOptions(pkgOpts, visibleGlobalOptionsFor(node, pkgOpts, ctx.GlobalOptions))
 		if err := ctx.Resolver.FilterDeps(name, options, opts); err != nil {
@@ -127,7 +125,7 @@ func convergeFilterAndDerivedOptions(ctx *RuntimeContext, rootOverride string, l
 	}
 	ctx.DerivedOptions = make(map[string]map[string]any)
 	derivedOwners := make(map[string]map[string]string)
-	globalValues := projectGlobalValues(ctx)
+	globalValues := ProjectGlobalValues(ctx)
 	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
 	subParents := ctx.Resolver.SubParents()
 
@@ -177,9 +175,7 @@ func convergeFilterAndDerivedOptions(ctx *RuntimeContext, rootOverride string, l
 				if ctx.Config != nil {
 					entryOpts = config.GetEntry(ctx.Config, name).Options
 				}
-				options := mergeCfgVals(name, node, ctx, globalValues, map[string]map[string]any{
-					name: entryOpts,
-				})
+				options := mergeCfgVals(name, node, ctx, globalValues, entryOpts)
 				pkgOpts := ctx.AllOptions[name]
 				opts := mergedPackageAndGlobalOptions(pkgOpts, visibleGlobalOptionsFor(node, pkgOpts, ctx.GlobalOptions))
 				if err := ctx.Resolver.FilterDeps(name, options, opts); err != nil {
@@ -215,7 +211,7 @@ func convergeFilterAndDerivedOptions(ctx *RuntimeContext, rootOverride string, l
 				}
 			}
 
-			if node != nil && node.Pkg != nil && node.Pkg.HasConfigureDepsFuncs() {
+			if node != nil && node.Pkg != nil && api.BindPackageHasConfigureDepsFuncs(node.Pkg) {
 				if err := applyNodeConfigureDeps(ctx, name, node, globalValues, pkgDirs, subParents, stillReachable, derivedOwners); err != nil {
 					return err
 				}
@@ -268,8 +264,8 @@ func applyNodeConfigureDeps(
 		return targetPkg, targetOpts, nil
 	}
 	depCtx := api.NewDepConfigContext(name, srcDir, vals, opts)
-	depCtx.SetConfigLookup(newConfigLookup(ctx, name, globalValues, nil))
-	depCtx.SetOptionExists(func(depPkg, option string) (bool, error) {
+	api.BindSetConfigLookup(&depCtx.ConfigAccessor, newConfigLookup(ctx, name, globalValues, nil))
+	api.BindSetOptionExists(depCtx, func(depPkg, option string) (bool, error) {
 		_, targetOpts, err := resolveTarget(depPkg)
 		if err != nil {
 			return false, err
@@ -277,7 +273,7 @@ func applyNodeConfigureDeps(
 		opt := targetOpts[option]
 		return opt != nil && !opt.IsGlobal(), nil
 	})
-	node.Pkg.ExecConfigureDepsFuncs(srcDir, func(fn api.ConfigureDepsFunc) {
+	api.BindPackageExecConfigureDepsFuncs(node.Pkg, srcDir, func(fn api.ConfigureDepsFunc) {
 		fn(depCtx)
 	})
 	for _, def := range depCtx.Defaults() {
@@ -397,7 +393,7 @@ func resolveDerivedOptions(ctx *RuntimeContext, needed map[string]bool) (err err
 	}
 	ctx.DerivedOptions = make(map[string]map[string]any)
 	derivedOwners := make(map[string]map[string]string)
-	globalValues := projectGlobalValues(ctx)
+	globalValues := ProjectGlobalValues(ctx)
 	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
 	subParents := ctx.Resolver.SubParents()
 
@@ -408,7 +404,7 @@ func resolveDerivedOptions(ctx *RuntimeContext, needed map[string]bool) (err err
 			continue
 		}
 		node := ctx.DepGraph.Packages[name]
-		if node == nil || node.Pkg == nil || !node.Pkg.HasConfigureDepsFuncs() {
+		if node == nil || node.Pkg == nil || !api.BindPackageHasConfigureDepsFuncs(node.Pkg) {
 			continue
 		}
 		if err := applyNodeConfigureDeps(ctx, name, node, globalValues, pkgDirs, subParents, needed, derivedOwners); err != nil {

@@ -230,7 +230,7 @@ func newBuildContext(ctx *RuntimeContext, name string, globalValues map[string]a
 
 func newConfigLookup(ctx *RuntimeContext, currentPkg string, base map[string]any, bound func(string) (map[string]any, bool)) func(string, string) (any, *api.Option, error) {
 	if base == nil && ctx.Config != nil {
-		base = projectGlobalValues(ctx)
+		base = ProjectGlobalValues(ctx)
 	}
 	values := make(map[string]map[string]any)
 	return func(pkg, name string) (any, *api.Option, error) {
@@ -322,12 +322,10 @@ func PackageConfigValues(ctx *RuntimeContext, name string, globalValues map[stri
 	if ctx.DepGraph != nil {
 		node = ctx.DepGraph.Packages[name]
 	}
-	return mergeCfgVals(name, node, ctx, globalValues, map[string]map[string]any{
-		name: config.GetEntry(ctx.Config, name).Options,
-	}), nil
+	return mergeCfgVals(name, node, ctx, globalValues, config.GetEntry(ctx.Config, name).Options), nil
 }
 
-func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, globalValues map[string]any, allPkgOptions map[string]map[string]any) map[string]any {
+func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, globalValues map[string]any, pkgOptions map[string]any) map[string]any {
 	cfgVals := make(map[string]any)
 	allOpts := ctx.AllOptions[name]
 	if allOpts == nil && node != nil && node.Pkg != nil {
@@ -352,7 +350,7 @@ func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, 
 			cfgVals[k] = v
 		}
 	}
-	mergePkgOptions(cfgVals, allPkgOptions[name], allOpts, visGlobals)
+	mergePkgOptions(cfgVals, pkgOptions, allOpts, visGlobals)
 	for k, v := range visGlobals {
 		if _, exists := cfgVals[k]; !exists {
 			cfgVals[k] = v
@@ -399,7 +397,7 @@ func applyBuildContextConfig(buildCtx *api.BuildContext, node *resolver.PackageN
 				importPkgs = append(importPkgs, depNode.Pkg)
 			}
 		}
-		mergedOpts, mergedVals := api.MergeImportedOptions(node.Pkg.Options, node.Pkg.CfgVals, importPkgs)
+		mergedOpts, mergedVals := api.MergeImportedOptions(api.BindOptions(&node.Pkg.ConfigAccessor), api.BindCfgVals(&node.Pkg.ConfigAccessor), importPkgs)
 		defines := api.ConfigToDefines(mergedOpts, mergedVals)
 		args := make([]any, len(defines))
 		for i, d := range defines {
@@ -425,7 +423,7 @@ func DeclareTargets(ctx *RuntimeContext, name string, dirs *api.PkgDirs, tc *too
 	return ActivatePackage(ctx, name, *dirs, tc, globalValues, ActivationOptions{
 		Mode: ActivationDeclarative,
 		Configure: func(buildCtx *api.BuildContext) {
-			buildCtx.SetConfigLookup(newConfigLookup(ctx, name, globalValues, nil))
+			api.BindSetConfigLookup(&buildCtx.ConfigAccessor, newConfigLookup(ctx, name, globalValues, nil))
 		},
 	})
 }

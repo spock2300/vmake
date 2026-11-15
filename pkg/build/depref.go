@@ -2,26 +2,19 @@ package build
 
 import "strings"
 
-// dependencyRef is the single parse of a target dependency string:
-//
-//	target          -> Package=target, HasTarget=false
-//	pkg:target      -> Package=pkg, Target=target, HasTarget=true
-//	pkg/sub:target  -> Package=pkg/sub
-//	pkg/sub         -> Package=pkg/sub, HasTarget=false
-//	pkg:*           -> Package=pkg, Target="*"
-type dependencyRef struct {
+type DependencyRef struct {
 	Package   string
 	Target    string
 	HasTarget bool
 }
 
-func parseDependencyRef(dep string) dependencyRef {
+func ParseDependencyRef(dep string) DependencyRef {
 	if pkg, target, ok := strings.Cut(dep, ":"); ok {
-		return dependencyRef{Package: pkg, Target: target, HasTarget: true}
+		return DependencyRef{Package: pkg, Target: target, HasTarget: true}
 	}
-	return dependencyRef{Package: dep}
+	return DependencyRef{Package: dep}
 }
 
-func (r dependencyRef) packagePath() bool {
+func (r DependencyRef) IsPackagePath() bool {
 	return strings.Contains(r.Package, "/")
 }

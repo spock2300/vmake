@@ -12,6 +12,7 @@ type commandSession struct {
 	configSelector string
 	exclusive      bool
 	storage        *storage.Session
+	storageRoot    string
 }
 
 var activeCommandSession *commandSession
@@ -33,12 +34,23 @@ func currentCommandSession() *commandSession {
 }
 
 func (s *commandSession) storageLocks() *storage.Session {
+	return s.storageLocksAt(findProjectDir())
+}
+
+func (s *commandSession) storageLocksAt(root string) *storage.Session {
 	if s.storage != nil {
-		return s.storage
+		if s.storageRoot == root {
+			return s.storage
+		}
+		if err := s.storage.Close(); err != nil {
+			fatalErr(err)
+		}
+		s.storage = nil
 	}
-	session, err := storage.Acquire(findProjectDir(), getCacheDir(), s.exclusive)
+	session, err := storage.Acquire(root, getCacheDir(), s.exclusive)
 	fatalErr(err)
 	s.storage = session
+	s.storageRoot = root
 	return s.storage
 }
 

@@ -560,3 +560,17 @@ func TestBuildGraphZeroTargetPublicUmbrellaWrappingInternalSubPackage(t *testing
 		t.Fatalf("expected self BuildSubGraph cycle error, got %v", err)
 	}
 }
+
+func TestDependencyResolversKeepPerConsumerTargetValidation(t *testing.T) {
+	nodes := map[string]*BuildNode{
+		"p:app": {FullName: "p:app", PkgName: "p", Target: makeTargetWithDeps("app")},
+	}
+	d := newDepResolver(nodes, map[string]PkgBuildMeta{"p": {}, "q": {}}, nil)
+	if _, err := d.resolveDep("q:ghost", "p", []string{"p:app"}); err == nil {
+		t.Fatal("resolveDep accepted an unknown target")
+	}
+	got, err := d.resolveDirectDep("q:ghost", "p", []string{"p:app"})
+	if err != nil || len(got) != 1 || got[0] != "q:ghost" {
+		t.Fatalf("resolveDirectDep = %v, %v", got, err)
+	}
+}

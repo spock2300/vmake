@@ -178,15 +178,15 @@ func runAllTests(ctx context.Context, result *BuildResult) ([]testResult, error)
 			continue
 		}
 
-		pkgDirs, ok := result.PkgDirs[node.PkgName]
-		if !ok {
-			continue
-		}
 		platform, ok := result.PkgPlatforms[node.PkgName]
 		if !ok {
 			return nil, fmt.Errorf("test target %s has no resolved package platform", fullName)
 		}
-		outputPath := filepath.Join(pkgDirs.BuildDir, api.TargetFilename(node.Target.Kind(), node.Target.Name(), platform.OSOrHost()))
+		placement, ok := result.TargetPlacements[fullName]
+		if !ok || placement.OutputPath == "" {
+			return nil, fmt.Errorf("test target %s has no build placement", fullName)
+		}
+		outputPath := placement.OutputPath
 		if err := validateTestExecution(platform, runtime.GOOS); err != nil {
 			return nil, err
 		}

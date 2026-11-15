@@ -51,7 +51,7 @@ func NewRequireContextForConfig(pkgName string, cfgVals map[string]any, options 
 	if options == nil {
 		options = make(map[string]*Option)
 	}
-	accessor := ConfigAccessor{CfgVals: cfgVals, Options: options}
+	accessor := ConfigAccessor{cfgVals: cfgVals, options: options}
 	if pkgName != "" {
 		accessor.setStrictOwner(pkgName)
 		accessor.discover = cfgVals == nil
@@ -75,7 +75,7 @@ func (ctx *RequireContext) ResetRequires() {
 	ctx.Requires.Reset()
 }
 
-func (ctx *RequireContext) GetRequireFuncs() []RequireFunc {
+func (ctx *RequireContext) getRequireFuncs() []RequireFunc {
 	return ctx.requireFuncs
 }
 

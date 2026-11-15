@@ -84,7 +84,7 @@ func TestFilterDepsReplacesNodeDeps(t *testing.T) {
 		called++
 		ctx.AddRequires("real-dep-1", "real-dep-2")
 	})
-	pkg.UpdateRequireContext(nil, nil)
+	api.BindPackageUpdateRequireContext(pkg, nil, nil)
 
 	r.graph.Packages["foo"] = &PackageNode{ID: "foo", Pkg: pkg, Deps: []string{"old-dep"}}
 	r.graph.Packages["real-dep-1"] = &PackageNode{ID: "real-dep-1"}
@@ -118,7 +118,7 @@ func TestFilterDepsSubPackageMissingDepListsCandidates(t *testing.T) {
 	pkg.OnRequire(func(ctx *api.RequireContext) {
 		ctx.AddRequires("ghost")
 	})
-	pkg.UpdateRequireContext(nil, nil)
+	api.BindPackageUpdateRequireContext(pkg, nil, nil)
 	r.graph.Packages[current] = &PackageNode{ID: current, Pkg: pkg, Deps: []string{}}
 
 	err := r.FilterDeps(current, nil, nil)
@@ -138,7 +138,7 @@ func TestFilterDepsUnknownDepErrors(t *testing.T) {
 	pkg.OnRequire(func(ctx *api.RequireContext) {
 		ctx.AddRequires("ghost-dep")
 	})
-	pkg.UpdateRequireContext(nil, nil)
+	api.BindPackageUpdateRequireContext(pkg, nil, nil)
 
 	r.graph.Packages["foo"] = &PackageNode{ID: "foo", Pkg: pkg, Deps: []string{}}
 

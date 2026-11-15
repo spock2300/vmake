@@ -56,8 +56,8 @@ func runBuildCallbackFromForeignCwd(t *testing.T, dir string) bool {
 		return false
 	}
 	buildCtx := api.NewBuildContext("p", nil)
-	buildCtx.SetPackage(pkg)
-	pkg.ExecBuildFuncs("", func(fn api.BuildFunc) { fn(buildCtx) })
+	api.BindSetPackage(buildCtx, pkg)
+	api.BindPackageExecBuildFuncs(pkg, "", func(fn api.BuildFunc) { fn(buildCtx) })
 	return true
 }
 
@@ -163,7 +163,7 @@ func Main(p *api.Package) {
 		t.Fatalf("LoadBuildScript: %v", err)
 	}
 	buildCtx := api.NewBuildContext("p", nil)
-	pkg.ExecBuildFuncs("", func(fn api.BuildFunc) { fn(buildCtx) })
+	api.BindPackageExecBuildFuncs(pkg, "", func(fn api.BuildFunc) { fn(buildCtx) })
 	if _, err := os.Stat(filepath.Join(dir, "chdir-ok")); err == nil {
 		t.Error("os.Chdir must be rejected in interpreted scripts")
 	}

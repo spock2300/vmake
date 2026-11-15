@@ -232,7 +232,7 @@ func installOnePackage(ctx *RuntimeContext, name string, node *resolver.PackageN
 	installCtx.SetOptions(maps.Clone(ctx.AllOptions[name]))
 	installCtx.MergeGlobals(ctx.GlobalOptions, globalValues)
 
-	node.Pkg.ExecInstallFuncs(result.PkgDirs[name].SourceDir, func(fn api.InstallFunc) {
+	api.BindPackageExecInstallFuncs(node.Pkg, result.PkgDirs[name].SourceDir, func(fn api.InstallFunc) {
 		fn(installCtx)
 	})
 

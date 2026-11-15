@@ -173,7 +173,7 @@ func BuildUnifiedGraph(ctx *RuntimeContext, inspection *Inspection, includeAll b
 				if len(targets) > 0 {
 					g.declaredTargets[name] = targets
 				}
-				for _, sub := range buildCtx.SubGraphs() {
+				for _, sub := range api.BindSubGraphs(buildCtx) {
 					resolvedSub := resolvePkg(name, sub)
 					if resolvedSub != "" && !slices.Contains(meta.SubGraphs, resolvedSub) {
 						meta.SubGraphs = append(meta.SubGraphs, resolvedSub)
@@ -426,8 +426,9 @@ func BuildUnifiedGraph(ctx *RuntimeContext, inspection *Inspection, includeAll b
 			}
 
 			for _, dep := range rawDeps {
-				if strings.Contains(dep, ":") {
-					pkgRef, targetSpec, _ := strings.Cut(dep, ":")
+				ref := build.ParseDependencyRef(dep)
+				if ref.HasTarget {
+					pkgRef, targetSpec := ref.Package, ref.Target
 					resolvedPkg := resolvePkg(pkgName, pkgRef)
 					if targetSpec == "*" {
 						if _, ok := ctx.DepGraph.Packages[resolvedPkg]; !ok {
@@ -482,7 +483,7 @@ func BuildUnifiedGraph(ctx *RuntimeContext, inspection *Inspection, includeAll b
 					continue
 				}
 
-				if strings.Contains(dep, "/") {
+				if ref.IsPackagePath() {
 					if _, ok := ctx.DepGraph.Packages[dep]; !ok {
 						g.Issues = append(g.Issues, GraphIssue{
 							Severity: "error",
@@ -508,12 +509,12 @@ func BuildUnifiedGraph(ctx *RuntimeContext, inspection *Inspection, includeAll b
 					continue
 				}
 
-				samePkgTarget := pkgName + ":" + dep
+				samePkgTarget := pkgName + ":" + ref.Package
 				if targetExists[samePkgTarget] {
 					addTargetEdge(fullName, samePkgTarget)
 					continue
 				}
-				resolvedPkg := resolvePkg(pkgName, dep)
+				resolvedPkg := resolvePkg(pkgName, ref.Package)
 				if resolvedPkg != pkgName {
 					if _, ok := ctx.DepGraph.Packages[resolvedPkg]; ok {
 						if !validateCrossPkgOnBuild(pkgName, resolvedPkg, fullName, dep) {
@@ -998,7 +999,8 @@ func CheckProjectDeps(ctx *RuntimeContext, inspection *Inspection) (*DepsCheckRe
 			for pkgName, tMap := range g.declaredTargets {
 				for _, t := range tMap {
 					for _, dep := range t.Deps() {
-						pkgRef, targetSpec, ok := strings.Cut(dep, ":")
+						ref := build.ParseDependencyRef(dep)
+						pkgRef, targetSpec, ok := ref.Package, ref.Target, ref.HasTarget
 						if !ok || targetSpec == "" || targetSpec == "*" {
 							continue
 						}

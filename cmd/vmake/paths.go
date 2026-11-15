@@ -1,10 +1,13 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/spock2300/vmake/pkg/lockfile"
+	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
 var (
@@ -38,7 +41,11 @@ func findProjectDir() string {
 
 func findProjectDirSoft() string {
 	if projectOverride != "" {
-		return validateProjectDir(projectOverride)
+		dir, err := validateProjectDirErr(projectOverride)
+		if err != nil {
+			fatalUsage("%v", err)
+		}
+		return dir
 	}
 	dir, err := os.Getwd()
 	if err != nil {
@@ -48,6 +55,30 @@ func findProjectDirSoft() string {
 	return found
 }
 
+var errNotInProject = errors.New("not inside a vmake project (no .vmake/, build.go or */build.go found in the current directory or any parent directory)")
+
+func resolveProjectRoot() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return resolveProjectRootFrom(cwd, projectOverride)
+}
+
+func resolveProjectRootFrom(start, override string) (string, error) {
+	if override != "" {
+		return validateProjectDirErr(override)
+	}
+	found, ok := searchProjectDir(start)
+	if !ok {
+		return "", errNotInProject
+	}
+	if err := shadowedProjectRootErr(found, override); err != nil {
+		return "", err
+	}
+	return found, nil
+}
+
 // rejectShadowedProjectRoot fails when the resolved project root is a nested
 // .vmake marker while an enclosing project also exists. Such a package-local
 // marker silently hides the real project, so require an explicit -C/--project
@@ -55,15 +86,22 @@ func findProjectDirSoft() string {
 // from a descendant still reports the selected nested root. findProjectDirSoft
 // and doctor deliberately skip this check to keep diagnosing the nested root.
 func rejectShadowedProjectRoot(root string) {
-	if projectOverride != "" || !hasProjectConfig(root) {
-		return
+	if err := shadowedProjectRootErr(root, projectOverride); err != nil {
+		vlog.Error("%v", err)
+		exitWithError(err)
+	}
+}
+
+func shadowedProjectRootErr(root, override string) error {
+	if override != "" || !hasProjectConfig(root) {
+		return nil
 	}
 	enclosing, ok := findEnclosingProjectRoot(root)
 	if !ok || filepath.Clean(enclosing) == filepath.Clean(root) {
-		return
+		return nil
 	}
 	marker := filepath.Join(root, ".vmake")
-	fatalUsage("project root %s has a .vmake marker shadowing the enclosing project %s; run vmake -C %s ... or remove %s", root, enclosing, enclosing, marker)
+	return &usageError{fmt.Errorf("project root %s has a .vmake marker shadowing the enclosing project %s; run vmake -C %s ... or remove %s", root, enclosing, enclosing, marker)}
 }
 
 // rejectShadowedProjectRootFromCWD applies the shadowed-root check before a
@@ -85,26 +123,35 @@ func rejectShadowedProjectRootFromCWD() {
 // validateProjectDir resolves and checks an explicit --project directory. The
 // path is relative to the process cwd; it must exist and look like a project.
 func validateProjectDir(override string) string {
+	dir, err := validateProjectDirErr(override)
+	if err != nil {
+		vlog.Error("%v", err)
+		exitWithError(err)
+	}
+	return dir
+}
+
+func validateProjectDirErr(override string) (string, error) {
 	dir, err := filepath.Abs(override)
 	if err != nil {
-		fatalUsage("invalid --project directory %q: %v", override, err)
+		return "", &usageError{fmt.Errorf("invalid --project directory %q: %v", override, err)}
 	}
 	info, err := os.Stat(dir)
 	if err != nil {
-		fatalUsage("--project directory %q does not exist", dir)
+		return "", &usageError{fmt.Errorf("--project directory %q does not exist", dir)}
 	}
 	if !info.IsDir() {
-		fatalUsage("--project path %q is not a directory", dir)
+		return "", &usageError{fmt.Errorf("--project path %q is not a directory", dir)}
 	}
 	if !hasProjectConfig(dir) && !hasBuildGo(dir) && !hasChildBuildGo(dir) {
-		fatalUsage("--project %q is not a vmake project (no .vmake/, build.go or */build.go found)", dir)
+		return "", &usageError{fmt.Errorf("--project %q is not a vmake project (no .vmake/, build.go or */build.go found)", dir)}
 	}
 	if !hasProjectConfig(dir) {
 		if enclosing, ok := findEnclosingProjectRoot(dir); ok && filepath.Clean(enclosing) != filepath.Clean(dir) {
-			fatalUsage("--project %q is a package inside project %q; use --project %q or create a .vmake marker in %q for an intentional nested project", dir, enclosing, enclosing, dir)
+			return "", &usageError{fmt.Errorf("--project %q is a package inside project %q; use --project %q or create a .vmake marker in %q for an intentional nested project", dir, enclosing, enclosing, dir)}
 		}
 	}
-	return dir
+	return dir, nil
 }
 
 // searchProjectDir locates the enclosing project root. A start directory that
@@ -213,7 +260,11 @@ func hasChildBuildGo(dir string) bool {
 // getDepsDir is the project-local single-source directory. Each package owns
 // exactly one working tree under it (<repo>/<pkg>/src or local/<pkg>/src).
 func getDepsDir() string {
-	return filepath.Join(findProjectDir(), ".vmake_deps")
+	return getDepsDirAt(findProjectDir())
+}
+
+func getDepsDirAt(root string) string {
+	return filepath.Join(root, ".vmake_deps")
 }
 
 func getReposDir() string      { return filepath.Join(vmakeDir, "repos") }
@@ -230,5 +281,9 @@ func getCacheDir() string {
 }
 
 func getLockfilePath() string {
-	return filepath.Join(findProjectDir(), ".vmake", lockfile.LockfileName)
+	return getLockfilePathAt(findProjectDir())
+}
+
+func getLockfilePathAt(root string) string {
+	return filepath.Join(root, ".vmake", lockfile.LockfileName)
 }

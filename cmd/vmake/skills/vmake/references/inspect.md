@@ -179,7 +179,7 @@ Each `packages` entry has `name`, `kind` (`local`/`native`/`registry`),
 `needed`, `sourcePresent`, `deps`, optional remote
 `repo`/`version`/`commit`/`url`, local `path` and absolute `sourceDir`,
 optional `linked`/`linkPath` for `pkg link` packages (version is then
-`0.0.0-local` and commit is the linked tree HEAD), `description`, `toolchain`, `options` (effective values), `optionDefs`
+`0.0.0-local` and commit is the linked tree HEAD), `description`, `toolchain`, `platform` (`{targetOs, targetTriple}` resolved for that package; `targetOs` is the host OS when unset), `options` (effective values), `optionDefs`
 (object keyed by option name with the same `{type, default?, description?,
 values?, group?}` schema), and `targets` (needed packages that declare targets;
 omitted for every package with `--no-targets`). `sourcePresent` is false when

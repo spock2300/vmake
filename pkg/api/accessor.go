@@ -9,8 +9,8 @@ import (
 )
 
 type ConfigAccessor struct {
-	CfgVals  map[string]any
-	Options  map[string]*Option
+	cfgVals  map[string]any
+	options  map[string]*Option
 	owner    string
 	strict   bool
 	discover bool
@@ -27,7 +27,7 @@ func NewConfigAccessor(cfgVals map[string]any, options map[string]*Option) Confi
 	if options == nil {
 		options = make(map[string]*Option)
 	}
-	return ConfigAccessor{CfgVals: cfgVals, Options: options}
+	return ConfigAccessor{cfgVals: cfgVals, options: options}
 }
 
 func (a *ConfigAccessor) setStrictOwner(owner string) {
@@ -36,11 +36,11 @@ func (a *ConfigAccessor) setStrictOwner(owner string) {
 }
 
 func (a *ConfigAccessor) SetCfgVals(vals map[string]any) *ConfigAccessor {
-	a.CfgVals = vals
+	a.cfgVals = vals
 	return a
 }
 
-func (a *ConfigAccessor) SetConfigLookup(fn func(pkg, name string) (any, *Option, error)) *ConfigAccessor {
+func (a *ConfigAccessor) setConfigLookup(fn func(pkg, name string) (any, *Option, error)) *ConfigAccessor {
 	a.lookup = fn
 	return a
 }
@@ -103,19 +103,19 @@ func (a *ConfigAccessor) resolvedValue(name, op string, checkAccessor bool) (any
 	if checkAccessor {
 		a.valueRead(name, op)
 	} else if a.strict && a.owner != "" {
-		if _, hasVal := a.CfgVals[name]; !hasVal {
-			if _, hasOpt := a.Options[name]; !hasOpt {
+		if _, hasVal := a.cfgVals[name]; !hasVal {
+			if _, hasOpt := a.options[name]; !hasOpt {
 				fatalScript(a.owner, op, "unknown option %q (fix the name or declare it via ctx.Option first)", name)
 			}
 		}
-		if opt := a.Options[name]; opt != nil {
-			if val := a.CfgVals[name]; val != nil {
+		if opt := a.options[name]; opt != nil {
+			if val := a.cfgVals[name]; val != nil {
 				a.checkValueType(opt, val, name, op)
 			}
 		}
 	}
-	val, hasVal := a.CfgVals[name]
-	return val, a.Options[name], hasVal
+	val, hasVal := a.cfgVals[name]
+	return val, a.options[name], hasVal
 }
 
 func (a *ConfigAccessor) valueRead(name, op string) {
@@ -125,8 +125,8 @@ func (a *ConfigAccessor) valueRead(name, op string) {
 	if a.discover {
 		fatalScript(a.owner, op, "option values are unavailable during dependency discovery; use ctx.When(%q, v) or ctx.If(%q, ...) for discover-aware reads", name, name)
 	}
-	val, hasVal := a.CfgVals[name]
-	opt, hasOpt := a.Options[name]
+	val, hasVal := a.cfgVals[name]
+	opt, hasOpt := a.options[name]
 	if !hasVal && !hasOpt {
 		fatalScript(a.owner, op, "unknown option %q (fix the name or declare it via ctx.Option first)", name)
 	}
@@ -252,12 +252,12 @@ func (a *ConfigAccessor) BoolStr(name string) string {
 }
 
 func (a *ConfigAccessor) boolQuiet(name string) bool {
-	val, hasVal := a.CfgVals[name]
-	return getTypedValueResolved(val, a.Options[name], hasVal, boolDefault, false, nil)
+	val, hasVal := a.cfgVals[name]
+	return getTypedValueResolved(val, a.options[name], hasVal, boolDefault, false, nil)
 }
 
 func (a *ConfigAccessor) ifCond(cond bool, then ...string) []string {
-	if a.CfgVals == nil {
+	if a.cfgVals == nil {
 		return then
 	}
 	if cond {
@@ -282,7 +282,7 @@ func (a *ConfigAccessor) Select(option string, mapping map[string]string) []stri
 			a.crossUnavailable("Select", option)
 		}
 	}
-	if a.CfgVals == nil {
+	if a.cfgVals == nil {
 		seen := make(map[string]bool, len(mapping))
 		vals := make([]string, 0, len(mapping))
 		for _, v := range mapping {
@@ -320,7 +320,7 @@ func (a *ConfigAccessor) WhenNot(option string, values ...any) bool {
 	if _, _, cross, _ := configRef(option); cross {
 		return !matched
 	}
-	if a.CfgVals == nil {
+	if a.cfgVals == nil {
 		return true
 	}
 	return !matched
@@ -341,7 +341,7 @@ func (a *ConfigAccessor) matchOptionValues(option, method string, values []any) 
 		}
 		return true
 	}
-	if !cross && a.CfgVals == nil {
+	if !cross && a.cfgVals == nil {
 		return true
 	}
 	val, opt, hasVal := a.resolvedValue(option, method, false)
@@ -443,39 +443,36 @@ func (a *ConfigAccessor) Option(name string) *Option {
 	if a.optionsLocked {
 		fatalScript(a.owner, "Option", "option %q declared after the config phase; declare options in OnConfig", name)
 	}
-	if opt, ok := a.Options[name]; ok {
+	if opt, ok := a.options[name]; ok {
 		return opt
 	}
 	opt := &Option{name: name}
-	a.Options[name] = opt
+	a.options[name] = opt
 	return opt
 }
 
-// LockOptionDeclaration marks the config phase as finished. Option() calls
-// after this point fatal: late-declared options never reach option
-// resolution and would be silently ignored.
-func (a *ConfigAccessor) LockOptionDeclaration() {
+func (a *ConfigAccessor) lockOptionDeclaration() {
 	a.optionsLocked = true
 }
 
 func (a *ConfigAccessor) SetOptions(options map[string]*Option) *ConfigAccessor {
-	a.Options = options
+	a.options = options
 	return a
 }
 
 func (a *ConfigAccessor) MergeGlobals(globalOptions map[string]*Option, globalVals map[string]any) {
-	if a.Options == nil {
-		a.Options = make(map[string]*Option)
+	if a.options == nil {
+		a.options = make(map[string]*Option)
 	}
-	if a.CfgVals == nil {
-		a.CfgVals = make(map[string]any)
+	if a.cfgVals == nil {
+		a.cfgVals = make(map[string]any)
 	}
 	for k, gOpt := range globalOptions {
-		if existing, exists := a.Options[k]; !exists || (existing != nil && existing.IsGlobal()) {
-			a.Options[k] = gOpt
+		if existing, exists := a.options[k]; !exists || (existing != nil && existing.IsGlobal()) {
+			a.options[k] = gOpt
 		}
 	}
-	mergeMapNoOverwrite(a.CfgVals, globalVals)
+	mergeMapNoOverwrite(a.cfgVals, globalVals)
 }
 
 func NormalizeOptionValue(opt *Option, val any) any {

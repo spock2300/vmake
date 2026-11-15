@@ -127,7 +127,7 @@ func Execute() {
 	if err != nil {
 		var interrupted *buildInterrupted
 		if errors.As(err, &interrupted) {
-			os.Exit(interrupted.code)
+			exitWithCode(interrupted.code)
 		}
 		exitWithError(err)
 	}
@@ -149,13 +149,13 @@ func wrapCommandArgs(cmd *cobra.Command) {
 	}
 }
 
-func pipelinePaths() *pipeline.Paths {
+func pipelinePathsAt(workDir string) *pipeline.Paths {
 	return &pipeline.Paths{
-		ProjectDir: findProjectDir(),
-		DepsDir:    getDepsDir(),
+		ProjectDir: workDir,
+		DepsDir:    getDepsDirAt(workDir),
 		CacheDir:   getCacheDir(),
 		ReposDir:   getReposDir(),
-		LockPath:   getLockfilePath(),
+		LockPath:   getLockfilePathAt(workDir),
 	}
 }
 
@@ -164,7 +164,10 @@ func loadResolveParams(ignoreLock bool, softGitignore bool) (pipeline.ResolvePar
 }
 
 func loadResolveParamsWithOptions(ignoreLock bool, softGitignore bool, skipGitignore bool, configOverride string) (pipeline.ResolveParams, error) {
-	workDir := findProjectDir()
+	return loadResolveParamsAt(findProjectDir(), ignoreLock, softGitignore, skipGitignore, configOverride)
+}
+
+func loadResolveParamsAt(workDir string, ignoreLock bool, softGitignore bool, skipGitignore bool, configOverride string) (pipeline.ResolveParams, error) {
 	cfg, configPath, digest, err := config.LoadProjectSnapshotWithOverride(workDir, configOverride)
 	if err != nil {
 		return pipeline.ResolveParams{}, err
@@ -174,7 +177,7 @@ func loadResolveParamsWithOptions(ignoreLock bool, softGitignore bool, skipGitig
 		return pipeline.ResolveParams{}, err
 	}
 	if !skipGitignore {
-		if err := ensureGitignore(findProjectDir()); err != nil {
+		if err := ensureGitignore(workDir); err != nil {
 			if !softGitignore {
 				return pipeline.ResolveParams{}, err
 			}
@@ -182,7 +185,7 @@ func loadResolveParamsWithOptions(ignoreLock bool, softGitignore bool, skipGitig
 		}
 	}
 	cleanupLegacyStorage()
-	paths := pipelinePaths()
+	paths := pipelinePathsAt(workDir)
 	lock, err := lockfile.LoadOrCreate(paths.LockPath)
 	if err != nil {
 		return pipeline.ResolveParams{}, err

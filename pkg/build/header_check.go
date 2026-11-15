@@ -1000,7 +1000,7 @@ func (a *headerAuditor) checkStaticSourceIncludes(resolved *ResolvedTarget, src,
 	}
 	owners := a.getHeaderOwners()
 	pkg := a.packages[node.PkgName]
-	hasGenerated := len(node.Target.GenRules()) > 0 || (pkg != nil && (pkg.GenConfigHeader() || pkg.HasGenerators()))
+	hasGenerated := len(node.Target.GenRules()) > 0 || (pkg != nil && (pkg.GenConfigHeader() || api.BindPackageHasGenerators(pkg)))
 
 	var ownDirs []string
 	for _, raw := range append(append([]string{}, node.Target.Includes()...), node.Target.PublicIncludes()...) {
@@ -1124,7 +1124,7 @@ func (a *headerAuditor) isTargetlessAncestor(ownerPkg, childPkg string) bool {
 		}
 	}
 	if !inMeta {
-		if pkg := a.packages[ownerPkg]; pkg != nil && pkg.HasBuildFuncs() {
+		if pkg := a.packages[ownerPkg]; pkg != nil && api.BindPackageHasBuildFuncs(pkg) {
 			return false
 		}
 	}

@@ -43,10 +43,10 @@ func CollectSubGraphPackages(rootPkg string, pkgMeta map[string]PkgBuildMeta, al
 		}
 		for _, t := range targets {
 			for _, dep := range t.Deps() {
-				ref := parseDependencyRef(dep)
+				ref := ParseDependencyRef(dep)
 				depPkg := ref.Package
 				if !ref.HasTarget {
-					if !ref.packagePath() {
+					if !ref.IsPackagePath() {
 						if targets[depPkg] != nil {
 							continue
 						}

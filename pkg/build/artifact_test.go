@@ -10,12 +10,12 @@ import (
 func TestArtifactPlacementForSharedTarget(t *testing.T) {
 	target := api.NewTargetRegistry().Target("app").SetKind(api.TargetShared).SetInstallDir("custom")
 	pkg := api.NewPackage().SetName("app").SetPlatform(api.Platform{OS: "windows"})
-	info := &PkgInfo{PkgDirs: api.PkgDirs{SourceDir: "/src", InstallDir: "/stage"}, BuildKey: "key"}
+	info := &PkgInfo{PkgDirs: api.PkgDirs{SourceDir: "/src", InstallDir: "/stage"}}
 	s := &Scheduler{packages: map[string]*api.Package{"app": pkg}, pkgs: map[string]*PkgInfo{"app": info}}
 	resolved := &ResolvedTarget{Node: &BuildNode{PkgName: "app", FullName: "app:app", Target: target}, OutputPath: "build/app.dll"}
 	placement := s.placementFor(resolved, info)
-	if placement.OutputPath != "build/app.dll" {
-		t.Fatalf("output = %q", placement.OutputPath)
+	if want := filepath.Join("build", "libapp.dll"); placement.OutputPath != want {
+		t.Fatalf("output = %q, want %q", placement.OutputPath, want)
 	}
 	if placement.StageLibDir != filepath.Join("/stage", "lib") || placement.StageIncludeDir != filepath.Join("/stage", "include") {
 		t.Fatalf("stage dirs = %q %q", placement.StageLibDir, placement.StageIncludeDir)
@@ -23,8 +23,8 @@ func TestArtifactPlacementForSharedTarget(t *testing.T) {
 	if placement.InstallSubdir != "custom" || placement.InstallName != "libapp.dll" {
 		t.Fatalf("install = %q/%q", placement.InstallSubdir, placement.InstallName)
 	}
-	if placement.ImportLib != filepath.Join("/src", "build/app.dll.a") {
-		t.Fatalf("import lib = %q", placement.ImportLib)
+	if want := filepath.Join("/src", "build", "libapp.dll.a"); placement.ImportLib != want {
+		t.Fatalf("import lib = %q, want %q", placement.ImportLib, want)
 	}
 	if placement.Kind != api.TargetShared || placement.IsTest {
 		t.Fatalf("placement = %+v", placement)

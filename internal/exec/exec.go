@@ -47,6 +47,10 @@ func SetQuiet(enabled bool) {
 	quiet = enabled
 }
 
+func IsQuiet() bool {
+	return quiet
+}
+
 const DefaultProgressInterval = 10 * time.Second
 
 type RunOptions struct {

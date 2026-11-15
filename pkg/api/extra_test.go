@@ -419,7 +419,7 @@ func TestDepPackageDir(t *testing.T) {
 		t.Fatalf("dry-run DepPackageDir = %q, want empty", got)
 	}
 	bctx.SetDryRun(false)
-	bctx.SetDepPackageDirFunc(func(ref string) string { return "/ws/" + ref })
+	BindSetDepPackageDirFunc(bctx, func(ref string) string { return "/ws/" + ref })
 	if got := bctx.DepPackageDir("dep"); got != "/ws/dep" {
 		t.Fatalf("DepPackageDir = %q, want /ws/dep", got)
 	}

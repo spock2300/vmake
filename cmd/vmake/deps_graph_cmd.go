@@ -10,8 +10,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	iexec "github.com/spock2300/vmake/internal/exec"
-	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/resolver"
 )
@@ -88,14 +86,13 @@ dot|mermaid to render Graphviz DOT or Mermaid flowcharts.`,
 			if err != nil {
 				return &usageError{err: err}
 			}
-			if findProjectDirSoft() == "" {
-				return errors.New("not inside a vmake project (no .vmake/, build.go or */build.go found in the current directory or any parent directory)")
+			root, err := resolveProjectRoot()
+			if err != nil {
+				if errors.Is(err, errNotInProject) {
+					return errNotInProject
+				}
+				return err
 			}
-			if jsonOut || (!verbose && !veryVerbose) {
-				vlog.SetLevel(vlog.Quiet)
-				iexec.SetQuiet(true)
-			}
-			defer queryReadOnly()()
 
 			restoreStdout := silenceStdout()
 			defer restoreStdout()
@@ -111,21 +108,14 @@ dot|mermaid to render Graphviz DOT or Mermaid flowcharts.`,
 				StrictWrapper: locked,
 				Offline:       offline,
 			}
-			ctx, err := openProject(projectOptions{execution: cmd.Context(), policy: &policy, overrides: overrides, skipGitignore: true})
+			session, err := openInspection(inspectionRequest{execution: cmd.Context(), root: root, policy: &policy, overrides: overrides, skipGitignore: true, quiet: jsonOut || (!verbose && !veryVerbose), execQuiet: jsonOut || (!verbose && !veryVerbose)})
 			if err != nil {
 				restoreStdout()
 				restoreStderr()
 				return unwrapDepsOpenErr(err)
 			}
-			defer closeProject(ctx)
-
-			inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
-			if err != nil {
-				restoreStdout()
-				restoreStderr()
-				return err
-			}
-			g, err := pipeline.BuildUnifiedGraph(ctx, inspection, includeAll)
+			defer session.Close()
+			g, err := pipeline.BuildUnifiedGraph(session.ctx, session.inspection, includeAll)
 			restoreStdout()
 			restoreStderr()
 			if err != nil {
@@ -186,14 +176,13 @@ OnBuild target edge that introduced each hop.`,
 			if err != nil {
 				return &usageError{err: err}
 			}
-			if findProjectDirSoft() == "" {
-				return errors.New("not inside a vmake project (no .vmake/, build.go or */build.go found in the current directory or any parent directory)")
+			root, err := resolveProjectRoot()
+			if err != nil {
+				if errors.Is(err, errNotInProject) {
+					return errNotInProject
+				}
+				return err
 			}
-			if jsonOut || (!verbose && !veryVerbose) {
-				vlog.SetLevel(vlog.Quiet)
-				iexec.SetQuiet(true)
-			}
-			defer queryReadOnly()()
 
 			restoreStdout := silenceStdout()
 			defer restoreStdout()
@@ -209,27 +198,20 @@ OnBuild target edge that introduced each hop.`,
 				StrictWrapper: locked,
 				Offline:       offline,
 			}
-			ctx, err := openProject(projectOptions{execution: cmd.Context(), policy: &policy, overrides: overrides, skipGitignore: true})
+			session, err := openInspection(inspectionRequest{execution: cmd.Context(), root: root, policy: &policy, overrides: overrides, skipGitignore: true, quiet: jsonOut || (!verbose && !veryVerbose), execQuiet: jsonOut || (!verbose && !veryVerbose)})
 			if err != nil {
 				restoreStdout()
 				restoreStderr()
 				return unwrapDepsOpenErr(err)
 			}
-			defer closeProject(ctx)
-
-			inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
+			defer session.Close()
+			g, err := pipeline.BuildUnifiedGraph(session.ctx, session.inspection, false)
 			if err != nil {
 				restoreStdout()
 				restoreStderr()
 				return err
 			}
-			g, err := pipeline.BuildUnifiedGraph(ctx, inspection, false)
-			if err != nil {
-				restoreStdout()
-				restoreStderr()
-				return err
-			}
-			res := pipeline.WhyQuery(ctx, g, query, allPaths)
+			res := pipeline.WhyQuery(session.ctx, g, query, allPaths)
 			restoreStdout()
 			restoreStderr()
 
@@ -294,20 +276,18 @@ Exits 0 when clean and 1 when any violation is detected.`,
 			if err != nil {
 				return &usageError{err: err}
 			}
-			if findProjectDirSoft() == "" {
-				noProjErr := errors.New("not inside a vmake project (no .vmake/, build.go or */build.go found in the current directory or any parent directory)")
+			root, rootErr := resolveProjectRoot()
+			if rootErr != nil {
+				if !errors.Is(rootErr, errNotInProject) {
+					return rootErr
+				}
 				if jsonOut {
 					return finishDepsCheck(cmd.OutOrStdout(), true, &pipeline.DepsCheckReport{
-						Issues: []pipeline.GraphIssue{classifyResolveIssue(noProjErr)},
+						Issues: []pipeline.GraphIssue{classifyResolveIssue(errNotInProject)},
 					})
 				}
-				return noProjErr
+				return errNotInProject
 			}
-			if jsonOut || (!verbose && !veryVerbose) {
-				vlog.SetLevel(vlog.Quiet)
-				iexec.SetQuiet(true)
-			}
-			defer queryReadOnly()()
 
 			restoreStdout := silenceStdout()
 			defer restoreStdout()
@@ -323,7 +303,7 @@ Exits 0 when clean and 1 when any violation is detected.`,
 				StrictWrapper: locked,
 				Offline:       offline,
 			}
-			ctx, err := openProject(projectOptions{execution: cmd.Context(), policy: &policy, overrides: overrides, skipGitignore: true})
+			session, err := openInspection(inspectionRequest{execution: cmd.Context(), root: root, policy: &policy, overrides: overrides, skipGitignore: true, quiet: jsonOut || (!verbose && !veryVerbose), execQuiet: jsonOut || (!verbose && !veryVerbose)})
 			if err != nil {
 				restoreStdout()
 				restoreStderr()
@@ -336,18 +316,8 @@ Exits 0 when clean and 1 when any violation is detected.`,
 					Issues: []pipeline.GraphIssue{issue},
 				})
 			}
-			defer closeProject(ctx)
-
-			inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
-			if err != nil {
-				restoreStdout()
-				restoreStderr()
-				issue := classifyResolveIssue(err)
-				return finishDepsCheck(cmd.OutOrStdout(), jsonOut, &pipeline.DepsCheckReport{
-					Issues: []pipeline.GraphIssue{issue},
-				})
-			}
-			report, err := pipeline.CheckProjectDeps(ctx, inspection)
+			defer session.Close()
+			report, err := pipeline.CheckProjectDeps(session.ctx, session.inspection)
 			restoreStdout()
 			restoreStderr()
 			if err != nil {
@@ -554,14 +524,12 @@ func completeDepsWhyArg(cmd *cobra.Command, args []string, toComplete string) ([
 		add(s)
 	}
 
-	if findProjectDirSoft() != "" {
+	if root, rootErr := resolveProjectRoot(); rootErr == nil {
 		restoreOut := silenceStdout()
 		restoreErr := silenceStderr()
-		vlog.SetLevel(vlog.Quiet)
-		iexec.SetQuiet(true)
-		restoreRO := queryReadOnly()
+		restoreScope := inspectionScope(true, true)
 		policy := resolver.LockPolicy{DryRun: true, Offline: true}
-		ctx, err := openProject(projectOptions{execution: cmd.Context(), policy: &policy, skipGitignore: true})
+		ctx, err := openProject(projectOptions{root: root, execution: cmd.Context(), policy: &policy, skipGitignore: true})
 		if err == nil {
 			for name := range ctx.DepGraph.Packages {
 				add(name)
@@ -577,7 +545,7 @@ func completeDepsWhyArg(cmd *cobra.Command, args []string, toComplete string) ([
 			}
 			closeProject(ctx)
 		}
-		restoreRO()
+		restoreScope()
 		restoreErr()
 		restoreOut()
 	}

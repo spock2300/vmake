@@ -81,7 +81,7 @@ func TestProjectGlobalValuesPreserveExplicitValues(t *testing.T) {
 	ctx := &RuntimeContext{Config: emptyConfig(), GlobalOptions: options.GetOptions()}
 	ctx.Config.Global.Options = map[string]any{"text": "", "enabled": false, "count": 0, "unset": nil}
 	want := map[string]any{"text": "", "enabled": false, "count": 0, "unset": "default"}
-	if got := projectGlobalValues(ctx); !reflect.DeepEqual(got, want) {
+	if got := ProjectGlobalValues(ctx); !reflect.DeepEqual(got, want) {
 		t.Fatalf("global values = %#v, want %#v", got, want)
 	}
 }
@@ -148,7 +148,7 @@ func TestResolvedGlobalValuesPreservePackageOverrides(t *testing.T) {
 	options.GlobalOption("global").SetType(api.OptionString).SetDefault("default")
 	options.Option("local").SetType(api.OptionString).SetDefault("local default")
 	ctx := &RuntimeContext{Config: emptyConfig(), AllOptions: map[string]map[string]*api.Option{"app": options.GetOptions()}}
-	values := mergeCfgVals("app", node, ctx, map[string]any{"global": "resolved", "local": "global default"}, map[string]map[string]any{"app": {"global": "package override"}})
+	values := mergeCfgVals("app", node, ctx, map[string]any{"global": "resolved", "local": "global default"}, map[string]any{"global": "package override"})
 	if got := values["global"]; got != "package override" {
 		t.Errorf("explicit package value = %v, want package override", got)
 	}

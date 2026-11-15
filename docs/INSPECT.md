@@ -298,6 +298,7 @@ of these files.
 | `needed` | bool | Whether the package is reachable from the build roots |
 | `description` | string? | `SetDescription` value |
 | `toolchain` | string? | Per-package toolchain, present for needed packages |
+| `platform` | object | Per-package resolved target platform `{targetOs, targetTriple}`; both keys are always present and `targetOs` is the host OS when no target OS is configured |
 | `options` | object? | Declared options of this package with effective values (global declarations included); omitted when none |
 | `optionDefs` | object? | Declared package options keyed by option name with `{type, default?, description?, values?, group?}`; omitted when none |
 | `deps` | array | Package dependency names, sorted (includes cross-package target and `BuildSubGraph` edges unless `--no-targets` is set); always present |

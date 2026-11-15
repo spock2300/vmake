@@ -153,8 +153,8 @@ func TestResolveNativeSubPackagesLazily(t *testing.T) {
 	if !strings.HasPrefix(subA.Source.Dir, owner.Source.Dir+string(filepath.Separator)) {
 		t.Fatalf("sub_a source does not live under owner: %s vs %s", subA.Source.Dir, owner.Source.Dir)
 	}
-	if subA.Pkg.Name != "testnative/mother/sub_a" {
-		t.Fatalf("sub-package name = %q, want qualified name", subA.Pkg.Name)
+	if api.BindPackageName(subA.Pkg) != "testnative/mother/sub_a" {
+		t.Fatalf("sub-package name = %q, want qualified name", api.BindPackageName(subA.Pkg))
 	}
 	if len(subA.Deps) != 1 || subA.Deps[0] != "testnative/mother/sub_b" {
 		t.Fatalf("sub_a deps = %v, want [testnative/mother/sub_b]", subA.Deps)

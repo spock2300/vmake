@@ -60,8 +60,8 @@ func loadTargetFlags(t *testing.T, src Source) []string {
 		t.Fatal(err)
 	}
 	ctx := api.NewBuildContext(src.Name, nil)
-	ctx.SetPackage(pkg)
-	pkg.ExecBuildFuncs(src.Dir, func(fn api.BuildFunc) {
+	api.BindSetPackage(ctx, pkg)
+	api.BindPackageExecBuildFuncs(pkg, src.Dir, func(fn api.BuildFunc) {
 		fn(ctx)
 	})
 	target := ctx.GetTargets()["app"]

@@ -313,7 +313,7 @@ func (s *Scheduler) resolveDependencyLinkerScript(node *BuildNode) (string, erro
 				seenTargets[tName] = true
 				next.targets = append(next.targets, tName)
 			}
-			pkgName := parseDependencyRef(tName).Package
+			pkgName := ParseDependencyRef(tName).Package
 			if pkgName != "" && !seenPkgs[pkgName] {
 				seenPkgs[pkgName] = true
 				next.pkgs = append(next.pkgs, pkgName)
@@ -329,7 +329,7 @@ func (s *Scheduler) resolveDependencyLinkerScript(node *BuildNode) (string, erro
 				}
 			}
 			for _, rawDep := range n.Target.Deps() {
-				depPkg := parseDependencyRef(rawDep).Package
+				depPkg := ParseDependencyRef(rawDep).Package
 				if depPkg != "" && depPkg != n.PkgName {
 					if _, ok := s.graph.PkgMeta[depPkg]; ok && !seenPkgs[depPkg] {
 						seenPkgs[depPkg] = true
@@ -452,7 +452,7 @@ func (s *Scheduler) generateConfigHeader(pkg *api.Package, generatedDir string) 
 			importPkgs = append(importPkgs, depPkg)
 		}
 	}
-	mergedOpts, mergedVals := api.MergeImportedOptions(pkg.Options, pkg.CfgVals, importPkgs)
+	mergedOpts, mergedVals := api.MergeImportedOptions(api.BindOptions(&pkg.ConfigAccessor), api.BindCfgVals(&pkg.ConfigAccessor), importPkgs)
 	content := api.ConfigToHeader(mergedOpts, mergedVals)
 	return api.WriteConfigHeader(generatedDir, content)
 }

@@ -14,12 +14,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
-	"github.com/spock2300/vmake/pkg/config"
-	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/resolver"
 )
@@ -111,10 +108,16 @@ type inspectPackage struct {
 	Needed        bool                        `json:"needed"`
 	Description   string                      `json:"description,omitempty"`
 	Toolchain     string                      `json:"toolchain,omitempty"`
+	Platform      *inspectPlatform            `json:"platform,omitempty"`
 	Options       map[string]any              `json:"options,omitempty"`
 	OptionDefs    map[string]inspectOptionDef `json:"optionDefs,omitempty"`
 	Deps          []string                    `json:"deps"`
 	Targets       []inspectTarget             `json:"targets,omitempty"`
+}
+
+type inspectPlatform struct {
+	TargetOS     string `json:"targetOs"`
+	TargetTriple string `json:"targetTriple"`
 }
 
 type inspectTarget struct {
@@ -217,18 +220,18 @@ diagnostics, vmake exits 1, and stderr carries one human-readable error line.`,
 }
 
 func runInspect(execution context.Context, setFlags []string, includeTargets bool) error {
-	scriptfs.SetReadOnly(true)
-	defer scriptfs.SetReadOnly(false)
-	vlog.SetLevel(vlog.Quiet)
-	iexec.SetQuiet(true)
 	envelope := &inspectEnvelope{SchemaVersion: inspectSchemaVersion, Command: "inspect", Status: "ok", Diagnostics: []inspectDiagnostic{}}
 
 	overrides, err := parseInspectOverrides(setFlags)
 	if err != nil {
 		return failInspect(envelope, "VMAKE_E_OPTION", err)
 	}
-	if findProjectDirSoft() == "" {
-		return failInspect(envelope, "VMAKE_E_INSPECT", errors.New("not inside a vmake project (no .vmake/, build.go or */build.go found in the current directory or any parent directory)"))
+	root, err := resolveProjectRoot()
+	if err != nil {
+		if !errors.Is(err, errNotInProject) {
+			fatalUsage("%v", err)
+		}
+		return failInspect(envelope, "VMAKE_E_INSPECT", err)
 	}
 	restoreStdout := silenceStdout()
 	defer restoreStdout()
@@ -240,7 +243,7 @@ func runInspect(execution context.Context, setFlags []string, includeTargets boo
 		return failInspect(envelope, code, err)
 	}
 
-	ctx, err := openProject(projectOptions{execution: execution, overrides: overrides})
+	session, err := openInspection(inspectionRequest{execution: execution, root: root, overrides: overrides, quiet: true, execQuiet: true})
 	if err != nil {
 		var overrideErr *optionOverrideError
 		if errors.As(err, &overrideErr) {
@@ -248,14 +251,9 @@ func runInspect(execution context.Context, setFlags []string, includeTargets boo
 		}
 		return fail("VMAKE_E_INSPECT", err)
 	}
-	defer closeProject(ctx)
+	defer session.Close()
 	restoreStderr()
-	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
-	if err != nil {
-		return fail("VMAKE_E_INSPECT", err)
-	}
-	scriptfs.TakeBlockedWrites()
-	data, diagnostics := buildInspectData(ctx, inspection, inspectOverrideValues(overrides), includeTargets)
+	data, diagnostics := buildInspectData(session.ctx, session.inspection, inspectOverrideValues(overrides), includeTargets)
 	envelope.Data = data
 	envelope.Diagnostics = diagnostics
 	restoreStdout()
@@ -471,7 +469,10 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 		if tc := inspection.PackageToolchains[name]; tc != nil {
 			pkg.Toolchain = tc.Name
 		}
-		pkg.Options = inspectPackageOptions(ctx, name, inspection)
+		pkg.Options = inspectPackageOptions(ctx, name, inspection.PackageValues[name])
+		if platform, ok := inspection.PackagePlatforms[name]; ok {
+			pkg.Platform = &inspectPlatform{TargetOS: platform.OS, TargetTriple: platform.Triple}
+		}
 		pkg.OptionDefs = inspectOptionDefs(ctx.AllOptions[name])
 		if source.Diagnostic != nil {
 			diagnostics = append(diagnostics, *source.Diagnostic)
@@ -673,91 +674,37 @@ func inspectRemoteMetadata(ctx *RuntimeContext, name string, node *resolver.Pack
 	}
 }
 
-func inspectPackageOptions(ctx *RuntimeContext, name string, inspection *pipeline.Inspection) map[string]any {
+func inspectPackageOptions(ctx *RuntimeContext, name string, values map[string]any) map[string]any {
 	opts := ctx.AllOptions[name]
-	if len(opts) == 0 {
+	if len(opts) == 0 || len(values) == 0 {
 		return nil
 	}
-	entry := config.GetEntry(ctx.Config, name)
-	derivedPkg := ctx.DerivedOptions[name]
-	acc := packageConfigAccessor(ctx, name, inspection.GlobalValues)
-	values := make(map[string]any, len(opts))
+	acc := api.NewConfigAccessor(values, maps.Clone(opts))
+	out := make(map[string]any, len(opts))
 	for optName, opt := range opts {
-		var raw any
-		if opt.IsGlobal() {
-			raw = inspection.GlobalValues[optName]
-		} else {
-			raw = entry.Options[optName]
-			if raw == nil && derivedPkg != nil {
-				raw = derivedPkg[optName]
-			}
-		}
-		if raw == nil {
-			raw = opt.Default()
-		}
-		if raw == nil {
+		raw, exists := values[optName]
+		if !exists || raw == nil {
 			continue
 		}
 		switch opt.Type() {
 		case api.OptionBool:
-			values[optName] = acc.Bool(optName)
+			out[optName] = acc.Bool(optName)
 		case api.OptionInt:
-			values[optName] = acc.Int(optName)
+			out[optName] = acc.Int(optName)
 		default:
-			values[optName] = acc.String(optName)
+			out[optName] = acc.String(optName)
 		}
 	}
-	if len(values) == 0 {
+	if len(out) == 0 {
 		return nil
 	}
-	return values
+	return out
 }
 
 func packageConfigAccessor(ctx *RuntimeContext, name string, globalValues map[string]any) api.ConfigAccessor {
-	acc := api.NewConfigAccessor(packageConfigValues(ctx, name, globalValues), maps.Clone(ctx.AllOptions[name]))
+	acc := api.NewConfigAccessor(pipeline.DisplayPackageValues(ctx, name, globalValues), maps.Clone(ctx.AllOptions[name]))
 	acc.MergeGlobals(ctx.GlobalOptions, globalValues)
 	return acc
-}
-
-func packageConfigValues(ctx *RuntimeContext, name string, globalValues map[string]any) map[string]any {
-	opts := ctx.AllOptions[name]
-	values := maps.Clone(config.GetEntry(ctx.Config, name).Options)
-	if values == nil {
-		values = make(map[string]any)
-	}
-	for optName, value := range values {
-		opt, declared := opts[optName]
-		if !declared || !opt.IsGlobal() {
-			continue
-		}
-		if _, resolved := globalValues[optName]; !resolved {
-			continue
-		}
-		if api.NormalizeOptionValue(opt, value) == api.NormalizeOptionValue(opt, opt.Default()) {
-			delete(values, optName)
-		}
-	}
-	if derivedPkg := ctx.DerivedOptions[name]; derivedPkg != nil {
-		for optName, value := range derivedPkg {
-			if _, exists := values[optName]; !exists && value != nil {
-				values[optName] = value
-			}
-		}
-	}
-	for optName, opt := range opts {
-		if _, resolved := globalValues[optName]; resolved && opt.IsGlobal() {
-			continue
-		}
-		if _, exists := values[optName]; !exists && opt.Default() != nil {
-			values[optName] = opt.Default()
-		}
-	}
-	for optName, value := range globalValues {
-		if _, exists := values[optName]; !exists {
-			values[optName] = value
-		}
-	}
-	return values
 }
 
 func inspectOptionDefs(opts map[string]*api.Option) map[string]inspectOptionDef {
@@ -829,7 +776,7 @@ func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name s
 	if err != nil {
 		return nil, nil, err
 	}
-	subs := append([]string(nil), buildCtx.SubGraphs()...)
+	subs := append([]string(nil), api.BindSubGraphs(buildCtx)...)
 	registered := buildCtx.GetTargets()
 	if len(registered) == 0 {
 		return nil, subs, nil
@@ -877,7 +824,7 @@ func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name s
 			InstallDir:        target.InstallDir(),
 			NoInstall:         target.NoInstall(),
 			Installs:          installs,
-			InstallPath:       inspectTargetInstallPath(target, targetOS),
+			InstallPath:       inspectTargetInstallPath(target, targetOS, inspectPkgInfo(dirs, inspection, name)),
 		}
 		if target.Kind() != api.TargetVoid {
 			entry.Output = api.TargetFilename(target.Kind(), target.Name(), targetOS)
@@ -910,20 +857,24 @@ func inspectDeclaredFlags(flags, seeded []string) []string {
 	return append([]string{}, flags...)
 }
 
-func inspectTargetInstallPath(target *api.Target, targetOS string) string {
-	kind := target.Kind()
-	if target.NoInstall() || target.IsTest() || kind == api.TargetVoid || kind == api.TargetObject {
+func inspectPkgInfo(dirs *api.PkgDirs, inspection *pipeline.Inspection, name string) *build.PkgInfo {
+	buildKey := ""
+	if layout := inspection.Layouts[name]; layout != nil {
+		buildKey = layout.BuildKey
+	}
+	if dirs == nil {
+		return build.NewPkgInfo(api.PkgDirs{}, buildKey)
+	}
+	return build.NewPkgInfo(*dirs, buildKey)
+}
+
+func inspectTargetInstallPath(target *api.Target, targetOS string, pkgInfo *build.PkgInfo) string {
+	placement := build.PlacementFor(target, pkgInfo, targetOS)
+	if placement.InstallName == "" || placement.NoInstall || placement.IsTest ||
+		placement.Kind == api.TargetVoid || placement.Kind == api.TargetObject {
 		return ""
 	}
-	output := api.TargetFilename(kind, target.Name(), targetOS)
-	if output == "" {
-		return ""
-	}
-	dir := target.InstallDir()
-	if dir == "" {
-		dir = kind.InstallDir()
-	}
-	return filepath.ToSlash(filepath.Join(".", dir, output))
+	return filepath.ToSlash(filepath.Join(".", placement.InstallSubdir, placement.InstallName))
 }
 
 func inspectToolchainInfo(inspection *pipeline.Inspection) *inspectToolchain {
@@ -1073,16 +1024,16 @@ func mergeInspectTargetEdges(ctx *RuntimeContext, needed map[string]bool, data *
 		}
 		for _, t := range pkg.Targets {
 			for _, rawDep := range t.Deps {
+				ref := build.ParseDependencyRef(rawDep)
 				var depPkg string
 				switch {
-				case strings.Contains(rawDep, ":"):
-					pkgRef, _, _ := strings.Cut(rawDep, ":")
-					depPkg = resolvePkg(pkg.Name, pkgRef)
-				case strings.Contains(rawDep, "/"):
-					depPkg = rawDep
+				case ref.HasTarget:
+					depPkg = resolvePkg(pkg.Name, ref.Package)
+				case ref.IsPackagePath():
+					depPkg = ref.Package
 				default:
 					if !ownTargets[pkg.Name][rawDep] {
-						depPkg = resolvePkg(pkg.Name, rawDep)
+						depPkg = resolvePkg(pkg.Name, ref.Package)
 					}
 				}
 				if depPkg != "" && depPkg != pkg.Name && ctx.DepGraph.Packages[depPkg] != nil {

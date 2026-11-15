@@ -44,7 +44,7 @@ func TestStrictAccessorUnknownOptionString(t *testing.T) {
 func TestStrictAccessorTypeMismatchOnValue(t *testing.T) {
 	a := newStrictAccessor()
 	a.Option("shared_lib").SetType(OptionBool).SetDefault(false)
-	a.CfgVals["shared_lib"] = true
+	a.cfgVals["shared_lib"] = true
 	expectBuildScriptError(t, func() { a.String("shared_lib") }, "String")
 }
 
@@ -57,28 +57,28 @@ func TestStrictAccessorTypeMismatchEvenWithoutValue(t *testing.T) {
 func TestStrictAccessorValueTypeMismatch(t *testing.T) {
 	a := newStrictAccessor()
 	a.Option("name").SetType(OptionString).SetDefault("x")
-	a.CfgVals["name"] = 42
+	a.cfgVals["name"] = 42
 	expectBuildScriptError(t, func() { a.String("name") }, "String")
 }
 
 func TestStrictAccessorIntAcceptsFloat64(t *testing.T) {
 	a := newStrictAccessor()
 	a.Option("n").SetType(OptionInt).SetDefault(4)
-	a.CfgVals["n"] = float64(7)
+	a.cfgVals["n"] = float64(7)
 	if got := a.Int("n"); got != 7 {
 		t.Errorf("Int = %d, want 7", got)
 	}
 }
 
 func TestStrictAccessorDiscoverModeDirectReadFatals(t *testing.T) {
-	a := ConfigAccessor{Options: map[string]*Option{}}
+	a := ConfigAccessor{options: map[string]*Option{}}
 	a.setStrictOwner("strictpkg")
 	a.discover = true
 	expectBuildScriptError(t, func() { a.Bool("anything") }, "Bool")
 }
 
 func TestStrictAccessorDiscoverModeWhenAllowed(t *testing.T) {
-	a := ConfigAccessor{Options: map[string]*Option{}}
+	a := ConfigAccessor{options: map[string]*Option{}}
 	a.setStrictOwner("strictpkg")
 	a.discover = true
 	if !a.When("opt", "x") {
@@ -88,14 +88,14 @@ func TestStrictAccessorDiscoverModeWhenAllowed(t *testing.T) {
 
 func TestStrictAccessorWhenUnknownOption(t *testing.T) {
 	a := newStrictAccessor()
-	a.CfgVals["known"] = "v"
+	a.cfgVals["known"] = "v"
 	expectBuildScriptError(t, func() { a.When("typo", "v") }, "When")
 }
 
 func TestStrictAccessorWhenNumericCoercion(t *testing.T) {
 	a := newStrictAccessor()
 	a.Option("count").SetType(OptionInt).SetDefault(4)
-	a.CfgVals["count"] = float64(4)
+	a.cfgVals["count"] = float64(4)
 	if !a.When("count", 4) {
 		t.Error("When(float64 4, int 4) should be true after numeric normalization")
 	}
@@ -173,7 +173,7 @@ func TestOptionTypeInference(t *testing.T) {
 }
 
 func TestAccessorWhenNotAndWhenAny(t *testing.T) {
-	disc := ConfigAccessor{Options: map[string]*Option{}}
+	disc := ConfigAccessor{options: map[string]*Option{}}
 	disc.setStrictOwner("strictpkg")
 	disc.discover = true
 	if !disc.WhenNot("mode", "size", "debug") {
@@ -185,7 +185,7 @@ func TestAccessorWhenNotAndWhenAny(t *testing.T) {
 
 	a := newStrictAccessor()
 	a.Option("chip").SetValues("a", "b", "c").SetDefault("b")
-	a.CfgVals["chip"] = "b"
+	a.cfgVals["chip"] = "b"
 	if !a.When("chip", "a", "b") {
 		t.Error("When(chip=b, a, b) should be true")
 	}
@@ -240,7 +240,7 @@ func TestAccessorSelectDiscoveryAndResolved(t *testing.T) {
 		"none":    "",
 	}
 
-	disc := ConfigAccessor{Options: map[string]*Option{}}
+	disc := ConfigAccessor{options: map[string]*Option{}}
 	disc.setStrictOwner("strictpkg")
 	disc.discover = true
 	gotDisc := disc.Select("ssl", mapping)
@@ -262,11 +262,11 @@ func TestAccessorSelectDiscoveryAndResolved(t *testing.T) {
 
 	a := newStrictAccessor()
 	a.Option("ssl").SetDefault("mbedtls").SetValues("mbedtls", "openssl", "wolfssl", "none")
-	a.CfgVals["ssl"] = "wolfssl"
+	a.cfgVals["ssl"] = "wolfssl"
 	if got := a.Select("ssl", mapping); !reflect.DeepEqual(got, []string{"official/wolfssl"}) {
 		t.Errorf("Select(wolfssl) = %v, want [official/wolfssl]", got)
 	}
-	a.CfgVals["ssl"] = "none"
+	a.cfgVals["ssl"] = "none"
 	if got := a.Select("ssl", mapping); got != nil {
 		t.Errorf("Select(none) = %v, want nil", got)
 	}
@@ -275,4 +275,3 @@ func TestAccessorSelectDiscoveryAndResolved(t *testing.T) {
 		a.Select("ssl", map[string]string{"boringssl": "official/boringssl"})
 	}, "Select")
 }
-

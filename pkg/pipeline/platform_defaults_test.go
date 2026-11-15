@@ -93,7 +93,7 @@ func TestPackagePlatformUsesPackageToolchainTargetDefaults(t *testing.T) {
 	if packagePlatform != (api.Platform{OS: "windows", Triple: "x86_64-w64-mingw32"}) {
 		t.Errorf("package platform = %+v", packagePlatform)
 	}
-	if _, ok := projectGlobalValues(ctx)[api.TargetOSOptionName]; ok {
+	if _, ok := ProjectGlobalValues(ctx)[api.TargetOSOptionName]; ok {
 		t.Error("project global values were mutated with toolchain defaults")
 	}
 }

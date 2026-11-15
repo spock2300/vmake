@@ -1,0 +1,38 @@
+package api
+
+var scriptMethodAllowlist = map[string][]string{
+	"BuildContext":      {"AddInstalls", "Bool", "BoolStr", "BuildPath", "BuildSubGraph", "DepBuildDir", "DepOutput", "DepPackageDir", "DepSrcDir", "Exec", "GenConfigDefines", "GenConfigHeader", "Generate", "GenerateConfigDefines", "GenerateConfigHeader", "GenerateFile", "GetInstallFilter", "GetInstallItems", "GetTargets", "If", "ImportConfig", "ImportConfigs", "Int", "MergeGlobals", "Option", "PackageName", "Select", "SetCfgVals", "SetDefaultFlags", "SetDryRun", "SetInstallFilter", "SetOptions", "SetProvidedLinkerScript", "String", "SyncConfigDefines", "Target", "When", "WhenAny", "WhenNot", "WriteBuildFile"},
+	"BuildScriptError":  {"Error", "Unwrap"},
+	"CleanContext":      {"Bool", "BoolStr", "BuildDir", "If", "Int", "Make", "MergeGlobals", "Option", "PackageName", "Run", "RunEnv", "RunIn", "Select", "SetCfgVals", "SetOptions", "SourceDir", "SrcDir", "String", "When", "WhenAny", "WhenNot"},
+	"ConfigAccessor":    {"Bool", "BoolStr", "If", "Int", "MergeGlobals", "Option", "Select", "SetCfgVals", "SetOptions", "String", "When", "WhenAny", "WhenNot"},
+	"ConfigContext":     {"AddGlobalCFlags", "AddGlobalCxxFlags", "AddGlobalDefines", "AddGlobalLdFlags", "AddGlobalLinks", "Bool", "BoolStr", "GetOptions", "GlobalMode", "GlobalOption", "If", "Int", "KConfig", "MergeGlobals", "Option", "PackageName", "Select", "SetCfgVals", "SetChipProfile", "SetConfigValue", "SetDefaultVisibilityHidden", "SetOptions", "SetProvidedLinkerScript", "String", "ToolchainOption", "Toolchains", "When", "WhenAny", "WhenNot"},
+	"Constraint":        {"Match"},
+	"DepConfigContext":  {"Bool", "BoolStr", "Defaults", "HasOption", "If", "Int", "MergeGlobals", "Option", "PackageName", "Select", "SetCfgVals", "SetDefault", "SetOptions", "SourceDir", "String", "When", "WhenAny", "WhenNot"},
+	"GenRule":           {"Input", "Kind", "OutputStem"},
+	"InstallContext":    {"AddInstalls", "Bool", "BoolStr", "GetInstallFilter", "GetInstallItems", "If", "Int", "MergeGlobals", "Option", "PackageName", "Prefix", "PrefixSet", "Select", "SetCfgVals", "SetInstallFilter", "SetOptions", "SetPrefix", "String", "When", "WhenAny", "WhenNot"},
+	"InstallItemHolder": {"AddInstalls", "GetInstallFilter", "GetInstallItems", "SetInstallFilter"},
+	"InstalledPackage":  {"UpdateLibDir"},
+	"KConfigEntry":      {"AddPreset", "ConfigPath", "DefaultPreset", "Description", "MenuconfigArgs", "MenuconfigCmd", "Name", "Patches", "Presets", "SelectPreset", "SelectedPreset", "SetConfigPath", "SetDefaultPreset", "SetDescription", "SetKConfigPatches", "SetMenuconfigCmd", "SetSrcDir", "SrcDir"},
+	"Option":            {"Default", "Description", "ExportDefine", "ExportDefineSet", "Group", "IsGlobal", "MacroDefines", "MacroName", "Name", "OnApply", "SetDefault", "SetDescription", "SetExportDefine", "SetGroup", "SetMacroName", "SetOnApply", "SetShowIf", "SetType", "SetValues", "ShowIf", "Type", "Values"},
+	"OptionBool":        {"String"},
+	"OptionChoice":      {"String"},
+	"OptionInt":         {"String"},
+	"OptionString":      {"String"},
+	"OptionType":        {"String"},
+	"Package":           {"AR", "AddKConfig", "AddPatches", "AddRequires", "AddVersion", "Bool", "BoolStr", "BuildDir", "BuildPath", "CC", "CFlags", "CMakeBuild", "CMakeBuildDir", "CMakeConfigure", "CMakeGlobalFlagsArgs", "CMakeInstall", "CMakeInstallDir", "CXX", "CXXFlags", "ChipProfile", "Configure", "DefaultVisibilityHidden", "Deps", "Description", "DryRun", "EnsureConfig", "Env", "FullName", "GenConfigHeader", "Generate", "GenerateFile", "GetOptions", "GetPatches", "GetRef", "GetRequires", "GetVersions", "GitURLs", "GlobalCFlags", "GlobalCxxFlags", "GlobalLdFlags", "GlobalLinks", "Homepage", "If", "ImportConfigs", "InstallDir", "Int", "IsRoot", "KConfigEntries", "LDFlags", "License", "Make", "MergeGlobals", "MergedCFlags", "MergedCxxFlags", "MergedLdFlags", "NM", "ObjCopy", "ObjDump", "OnBuild", "OnClean", "OnConfig", "OnConfigureDeps", "OnInstall", "OnPackage", "OnRequire", "Option", "Prefix", "ProvidedLinkerScript", "Run", "RunEnv", "RunIn", "ScriptDir", "Select", "SelectVersion", "SelectVersionMulti", "SelectedPreset", "SetCMakeBuildDir", "SetCMakeBuildType", "SetCMakeInstallDir", "SetCfgVals", "SetChipProfile", "SetDep", "SetDeps", "SetDescription", "SetDirs", "SetDryRun", "SetGenConfigHeader", "SetGit", "SetGlobalFlags", "SetHomepage", "SetImportConfigs", "SetLicense", "SetName", "SetOptions", "SetPatches", "SetPlatform", "SetProvidedLinkerScript", "SetRepo", "SetRoot", "SetScriptDir", "SetSrcDir", "SetSubmodules", "SetToolchain", "SetVersions", "Size", "SourceDir", "SrcDir", "SrcDirRaw", "String", "Submodules", "TargetOS", "TargetTriple", "Versions", "VisibilityFlags", "When", "WhenAny", "WhenNot", "WriteBuildFile"},
+	"PackageMeta":       {"FullName"},
+	"Platform":          {"OSOrHost"},
+	"RequireContext":    {"Add", "AddInfos", "AddRequires", "Bool", "BoolStr", "Get", "GetRequires", "If", "Int", "MergeGlobals", "Option", "Reset", "ResetRequires", "RunFuncs", "Select", "SetCfgVals", "SetOptions", "String", "When", "WhenAny", "WhenNot"},
+	"Requires":          {"Add", "AddInfos", "Get", "Reset"},
+	"Target":            {"AddBinHeader", "AddCFlags", "AddCxxFlags", "AddDefines", "AddDeps", "AddExcludeLibs", "AddFiles", "AddIncludes", "AddInputs", "AddLdFlags", "AddLinks", "AddOutputs", "AddPostLink", "AddPostLinkBin", "AddPostLinkDeps", "AddPostLinkHex", "AddPostLinkOutputs", "AddPostLinkSize", "AddPostLinkStrip", "AddProvidedLibs", "AddPublicCFlags", "AddPublicCxxFlags", "AddPublicDefines", "AddPublicIncludes", "AddPublicLdFlags", "AddPublicLinks", "BuildFunc", "CFlags", "CxxFlags", "Defines", "Deps", "ExcludeLibs", "ExcludedFiles", "Files", "GenRules", "HasDep", "IncludeRule", "Includes", "Inputs", "InstallDir", "IsDefault", "IsLinkable", "IsTest", "KeepGlobalSymbols", "Kind", "LdFlags", "LinkerScript", "Links", "Name", "NoInstall", "Outputs", "PostLinkDeps", "PostLinkOutputs", "PostLinkSteps", "Prebuilt", "ProvidedLibs", "PublicCFlags", "PublicCxxFlags", "PublicDefines", "PublicIncludes", "PublicLdFlags", "PublicLinks", "RemoveCFlags", "RemoveCxxFlags", "RemoveDefines", "RemoveDeps", "RemoveFiles", "RemoveIncludes", "RemoveInputs", "RemoveLdFlags", "RemoveLinks", "RemoveOutputs", "RemoveProvidedLibs", "RemovePublicCFlags", "RemovePublicCxxFlags", "RemovePublicDefines", "RemovePublicIncludes", "RemovePublicLdFlags", "RemovePublicLinks", "SetBuildFunc", "SetDefault", "SetInstall", "SetInstallDir", "SetKeepGlobalSymbols", "SetKind", "SetLinkable", "SetLinkerScript", "SetPrebuilt", "SetSymbolBinding", "SetSymbolPrefix", "SetTest", "SetVersionScript", "SymbolBinding", "SymbolPrefix", "UseDepLinkerScript", "UseDependencyLinkerScript", "UseRequires", "UsesRequires", "VersionScript"},
+	"TargetBinary":      {"Ext", "ExtFor", "InstallDir", "Prefix", "PrefixFor"},
+	"TargetKind":        {"Ext", "ExtFor", "InstallDir", "Prefix", "PrefixFor"},
+	"TargetObject":      {"Ext", "ExtFor", "InstallDir", "Prefix", "PrefixFor"},
+	"TargetRegistry":    {"GetTargets", "SetDefaultFlags", "Target"},
+	"TargetShared":      {"Ext", "ExtFor", "InstallDir", "Prefix", "PrefixFor"},
+	"TargetStatic":      {"Ext", "ExtFor", "InstallDir", "Prefix", "PrefixFor"},
+	"TargetVoid":        {"Ext", "ExtFor", "InstallDir", "Prefix", "PrefixFor"},
+	"Version":           {"Compare", "String"},
+}
+
+var scriptMethodPending = map[string][]string{}

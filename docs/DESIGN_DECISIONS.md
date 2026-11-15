@@ -232,6 +232,22 @@
 - 理由: 阶段边界可审阅，读模型不可被调用方篡改；配置阶段具备事务性边界。完整替换 `RuntimeContext` 字段为嵌套值对象会破坏大量 cmd/测试复合字面量，因此保留字段作为兼容门面，由结果类型承担不变量。
 - 涉及代码: `pkg/pipeline/state_types.go`, `pkg/pipeline/phases.go`, `pkg/pipeline/prelude.go`, `pkg/pipeline/pipeline.go`, `pkg/pipeline/run_build_e2e_test.go`。
 
+## DD-26: 有效配置值只有一个实现，按用途暴露投影
+
+- 状态: accepted
+- 背景: “包看到的有效值”曾被多处分别推导：`PackageConfigValues`（构建上下文）、`packageConfigValuesWithGlobals`（OnApply，使用 raw config、无默认值与 platform）、`collectAllPkgOptions`（构建键材料）、cmd 的 `packageConfigValues`/`inspectPackageOptions`（inspect/query）以及 `build_report.effectiveGlobalValues`（report 复制 projectGlobalValues）。规则不同导致 OnApply 读到未解析的 `mode`/`toolchain` 且 `target_os`/`target_triple` 直接 fatal；inspect 需要手工对齐 build，历史上已有 8145d19、b0d92da 两次修补。
+- 决策: `pkg/pipeline` 是有效配置值的唯一实现，并按用途暴露显式投影：`PackageConfigValues`（构建值：默认值 + 派生 + entry + 可见全局 + 包级 platform）、`DisplayPackageValues`（展示值：仅已声明选项，不合成 platform 键）、`collectAllPkgOptions`（构建键材料：entry + 非默认派生 + 可见全局，输出逐字节保持旧行为）、`applyGlobalValues`（OnApply 值：解析后的 mode/toolchain 与 target 默认值）、`ProjectGlobalValues`（项目全局值）。`Inspection` 携带 `PackageValues` 与 `PackagePlatforms`；cmd 的 inspect/query/report 只消费投影，不再自行推导。inspect `packages[]` 只新增附加字段 `platform {targetOs, targetTriple}`，`options` 仍只含已声明选项。
+- 理由: 四个消费者的规则必须一致但投影不同；把规则收进一个模块后，配置相关改动只改一处，inspect 不再需要手工对齐 build。构建键材料保持逐字节一致，避免已有 build 目录旋转。
+- 涉及代码: `pkg/pipeline/config_values.go`, `pkg/pipeline/pipeline.go`, `pkg/pipeline/inspect.go`, `pkg/pipeline/phases.go`, `pkg/pipeline/keys.go`, `cmd/vmake/inspect_cmd.go`, `cmd/vmake/query_cmd.go`, `cmd/vmake/build_report.go`。
+
+## DD-27: 脚本方法面由显式清单收口，分阶段隐藏宿主接线
+
+- 状态: accepted（阶段 1、2、3 已落地）
+- 背景: yaegi 注册类型即暴露其全部导出方法（含嵌入提升的方法与字段），`pkg/api/yaegi_symbols.go` 的包级 allowlist 只能约束包级名字。`pkg/api` 当前有 488 个类型-方法对，其中大量是宿主接线或未文档化方法，脚本可以误用，且新增导出方法不会被任何测试发现。
+- 决策: 阶段 1 在 `pkg/api/script_methods.go` 建立两份清单：`scriptMethodAllowlist`（文档化或验收语料在用）与 `scriptMethodPending`（可见但未文档化/仅宿主使用）。`TestScriptMethodManifestMatchesVisibleSurface` 反射所有已注册类型（含提升方法），要求可见方法集合恰好等于两份清单的并集；新增/删除导出方法必须显式分类。阶段 2 把 pending 中的宿主接线移到不注册进 yaegi 的导出 binding 函数（`api.Bind*`，由 `TestYaegiSymbolsComplete` 的前缀规则排除），保持 `*api.Package` 与回调签名不变；当前 allowlist 442 对、pending 0 对。阶段 3 重整嵌入：`ConfigAccessor` 的 `CfgVals`/`Options` 与 `PackageMeta` 的 `Repo`/`Name` 已改为非导出字段，宿主通过 `BindCfgVals`/`BindOptions`/`BindSetCfgVals`/`BindSetOptions`/`BindPackageName`/`BindPackageRepo` 访问；`TargetRegistry`/`InstallItemHolder` 的字段本就非导出，只剩 allowlist 中的方法被提升。验收语料 = vmake `test_data/**`、`official_repo/**`、docs/skill Go 块 + hl-demo / hl-mcu-sdk 的 `build.go`；语料在用或文档化的方法保留。阶段 1 不改变运行时行为。
+- 理由: 方法级契约不能靠包级 allowlist 或文档自觉；先建立可失败的清单，再分阶段迁移，避免一次性重写脚本契约。pending 清单就是阶段 2/3 的工作队列。
+- 涉及代码: `pkg/api/script_methods.go`, `pkg/api/script_methods_test.go`, `pkg/api/yaegi_symbols.go`, `pkg/api/accessor.go`, `pkg/api/package.go`, `pkg/api/context.go`, `pkg/api/target.go`。
+
 ## 已知限制 / 待议
 
 以下问题已被识别但尚未决策，修改前需单独讨论：

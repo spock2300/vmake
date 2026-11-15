@@ -351,6 +351,10 @@ func TestInspectProjectModel(t *testing.T) {
 	if data.ToolchainInfo == nil || data.ToolchainInfo.Name != "host" || data.ToolchainInfo.CC == "" {
 		t.Errorf("toolchainInfo = %+v", data.ToolchainInfo)
 	}
+	projectPkg := inspectPackageNamed(t, data, "proj")
+	if projectPkg.Platform == nil || projectPkg.Platform.TargetOS != runtime.GOOS || projectPkg.Platform.TargetTriple != "" {
+		t.Errorf("proj platform = %+v, want os=%q triple=\"\"", projectPkg.Platform, runtime.GOOS)
+	}
 	if data.Global["mode"] != "debug" || data.Global["toolchain"] != "host" {
 		t.Errorf("global = %v", data.Global)
 	}

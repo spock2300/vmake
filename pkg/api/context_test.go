@@ -48,7 +48,7 @@ func TestBuildContextSyncConfigDefinesCombined(t *testing.T) {
 func TestBuildContextBuildSubGraphDryRun(t *testing.T) {
 	ctx := NewBuildContext("app", nil).SetDryRun(true)
 	called := false
-	ctx.SetBuildSubGraphFunc(func(name string) error {
+	BindSetBuildSubGraphFunc(ctx, func(name string) error {
 		called = true
 		return nil
 	})
@@ -60,7 +60,7 @@ func TestBuildContextBuildSubGraphDryRun(t *testing.T) {
 
 func TestBuildContextDepOutputDryRun(t *testing.T) {
 	ctx := NewBuildContext("app", nil).SetDryRun(true)
-	ctx.SetDepOutputFunc(func(ref string) string {
+	BindSetDepOutputFunc(ctx, func(ref string) string {
 		return "should-not-call"
 	})
 	if got := ctx.DepOutput("any:thing"); got != "" {
@@ -73,7 +73,7 @@ func TestBuildContextDepOutputDryRun(t *testing.T) {
 
 func TestBuildContextDepBuildDir(t *testing.T) {
 	ctx := NewBuildContext("app", nil)
-	ctx.SetDepOutputFunc(func(ref string) string {
+	BindSetDepOutputFunc(ctx, func(ref string) string {
 		return "/build/dir/libfoo.a"
 	})
 	got := ctx.DepBuildDir("foo:bar")
@@ -84,7 +84,7 @@ func TestBuildContextDepBuildDir(t *testing.T) {
 
 func TestBuildContextSetProvidedLinkerScriptDelegates(t *testing.T) {
 	pkg := NewPackage()
-	ctx := NewBuildContext("chip", nil).SetPackage(pkg)
+	ctx := BindSetPackage(NewBuildContext("chip", nil), pkg)
 	ctx.SetProvidedLinkerScript("linker/flash.ld")
 	if pkg.ProvidedLinkerScript() != "linker/flash.ld" {
 		t.Errorf("ProvidedLinkerScript = %q, want linker/flash.ld", pkg.ProvidedLinkerScript())
@@ -94,10 +94,10 @@ func TestBuildContextSetProvidedLinkerScriptDelegates(t *testing.T) {
 func TestConfigContextGlobalFlagsBuffered(t *testing.T) {
 	var collected, collectedCxx []string
 	ctx := NewConfigContext("app")
-	ctx.SetGlobalCFlagsFunc(func(flags ...string) {
+	BindSetGlobalCFlagsFunc(ctx, func(flags ...string) {
 		collected = append(collected, flags...)
 	})
-	ctx.SetGlobalCxxFlagsFunc(func(flags ...string) {
+	BindSetGlobalCxxFlagsFunc(ctx, func(flags ...string) {
 		collectedCxx = append(collectedCxx, flags...)
 	})
 
@@ -116,8 +116,8 @@ func TestConfigContextSetDefaultVisibilityHidden(t *testing.T) {
 	pkg := NewPackage()
 	dep := NewPackage()
 	ctx := NewConfigContextWithPackage("app", pkg)
-	ctx.SetGlobalCFlagsFunc(func(f ...string) { cflags = append(cflags, f...) })
-	ctx.SetGlobalCxxFlagsFunc(func(f ...string) { cxxflags = append(cxxflags, f...) })
+	BindSetGlobalCFlagsFunc(ctx, func(f ...string) { cflags = append(cflags, f...) })
+	BindSetGlobalCxxFlagsFunc(ctx, func(f ...string) { cxxflags = append(cxxflags, f...) })
 
 	if ctx.SetDefaultVisibilityHidden().SetDefaultVisibilityHidden() != ctx {
 		t.Fatal("visibility setter did not return the context")

@@ -91,17 +91,17 @@ func (s *declareStage) executeOnePackage(name string, node *resolver.PackageNode
 	buildCtx, err := ActivatePackage(s.rc.ctx, name, *s.source.pkgDirs[name], bound.toolchain, bound.values, ActivationOptions{
 		Mode: ActivationBuild,
 		Configure: func(buildCtx *api.BuildContext) {
-			buildCtx.SetConfigLookup(newConfigLookup(s.rc.ctx, name, lookupBase, func(pkg string) (map[string]any, bool) {
+			api.BindSetConfigLookup(&buildCtx.ConfigAccessor, newConfigLookup(s.rc.ctx, name, lookupBase, func(pkg string) (map[string]any, bool) {
 				binding := s.bindings[pkg]
 				if binding == nil {
 					return nil, false
 				}
 				return binding.values, true
 			}))
-			buildCtx.SetBuildSubGraphFunc(func(pkgName string) error { return s.buildSubGraph(name, pkgName) })
-			buildCtx.SetDepOutputFunc(func(depRef string) string { return s.computeDepOutput(name, depRef) })
-			buildCtx.SetDepSrcDirFunc(func(depRef string) string { return s.computeDepSrcDir(name, depRef) })
-			buildCtx.SetDepPackageDirFunc(func(depRef string) string { return s.computeDepPackageDir(name, depRef) })
+			api.BindSetBuildSubGraphFunc(buildCtx, func(pkgName string) error { return s.buildSubGraph(name, pkgName) })
+			api.BindSetDepOutputFunc(buildCtx, func(depRef string) string { return s.computeDepOutput(name, depRef) })
+			api.BindSetDepSrcDirFunc(buildCtx, func(depRef string) string { return s.computeDepSrcDir(name, depRef) })
+			api.BindSetDepPackageDirFunc(buildCtx, func(depRef string) string { return s.computeDepPackageDir(name, depRef) })
 		},
 	})
 	if err != nil {
@@ -113,7 +113,7 @@ func (s *declareStage) executeOnePackage(name string, node *resolver.PackageNode
 		targets[targetName] = api.SnapshotTarget(target)
 	}
 	s.allTargets[name] = targets
-	if rawSubs := buildCtx.SubGraphs(); len(rawSubs) > 0 {
+	if rawSubs := api.BindSubGraphs(buildCtx); len(rawSubs) > 0 {
 		meta := s.pkgMetaMap[name]
 		for _, sub := range rawSubs {
 			resolvedSub := s.resolveSubPackageName(name, sub, func(candidate string) bool {
@@ -251,10 +251,7 @@ func (s *declareStage) resolveDepTargets() map[string]map[string]*api.Target {
 // source root. Target names are accepted for symmetry with computeDepOutput but
 // do not affect the result.
 func (s *declareStage) computeDepSrcDir(currentPkg, depRef string) string {
-	pkgName, _, ok := strings.Cut(depRef, ":")
-	if !ok {
-		pkgName = depRef
-	}
+	pkgName := build.ParseDependencyRef(depRef).Package
 	pkgName = s.resolveSubPackageName(currentPkg, pkgName, func(candidate string) bool {
 		return s.conf.needed[candidate] && s.source.pkgDirs[candidate] != nil
 	})
@@ -269,10 +266,7 @@ func (s *declareStage) computeDepSrcDir(currentPkg, depRef string) string {
 }
 
 func (s *declareStage) computeDepPackageDir(currentPkg, depRef string) string {
-	pkgName, _, ok := strings.Cut(depRef, ":")
-	if !ok {
-		pkgName = depRef
-	}
+	pkgName := build.ParseDependencyRef(depRef).Package
 	pkgName = s.resolveSubPackageName(currentPkg, pkgName, func(candidate string) bool {
 		return s.conf.needed[candidate] && s.source.pkgDirs[candidate] != nil
 	})
@@ -294,10 +288,7 @@ func validateDirectDepPackageRef(ctx *RuntimeContext, currentPkg, depRef string)
 	if ctx == nil || ctx.DepGraph == nil {
 		return
 	}
-	pkgName, _, ok := strings.Cut(depRef, ":")
-	if !ok {
-		pkgName = depRef
-	}
+	pkgName := build.ParseDependencyRef(depRef).Package
 	if pkgName == "" {
 		return
 	}
@@ -341,11 +332,8 @@ func hasDirectNodeDep(ctx *RuntimeContext, fromPkg, toPkg string) bool {
 }
 
 func (s *declareStage) computeDepOutput(currentPkg, depRef string) string {
-	pkgName, targetName, ok := strings.Cut(depRef, ":")
-	if !ok {
-		pkgName = depRef
-		targetName = ""
-	}
+	ref := build.ParseDependencyRef(depRef)
+	pkgName, targetName := ref.Package, ref.Target
 	pkgName = s.resolveSubPackageName(currentPkg, pkgName, func(candidate string) bool {
 		return s.conf.needed[candidate] && s.source.pkgDirs[candidate] != nil
 	})

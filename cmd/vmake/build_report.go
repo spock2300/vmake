@@ -337,9 +337,7 @@ func (r *buildReport) bind(ctx *RuntimeContext) error {
 	r.ConfigFile, r.ConfigSHA256 = reportConfigFile(r.Root, ctx.ConfigPath), ctx.ConfigDigest
 	r.Toolchain = pipeline.ResolveToolchainName(ctx.Config, ctx.ToolchainOverride, ctx.PreferredToolchain)
 	r.Mode = pipeline.ResolveMode(ctx.Config, ctx.ModeOverride)
-	r.Global = effectiveGlobalValues(ctx)
-	r.Global[api.ModeOptionName] = r.Mode
-	r.Global[api.ToolchainOptionName] = r.Toolchain
+	r.Global = pipeline.ReportGlobalValues(ctx)
 	return jsonio.Save(r.reportPath(), r)
 }
 
@@ -349,13 +347,11 @@ func (r *buildReport) partial(ctx *RuntimeContext, result *BuildResult, err erro
 	r.Global, r.Targets = result.GlobalValues, result.Targets
 	r.Toolchain, r.Mode = result.TcName, result.Mode
 	if r.Global == nil {
-		r.Global = effectiveGlobalValues(ctx)
-		r.Global[api.ModeOptionName] = r.Mode
-		r.Global[api.ToolchainOptionName] = r.Toolchain
+		r.Global = pipeline.ReportGlobalValues(ctx)
 	}
 	r.setCompileDatabase()
 	for name, buildContext := range result.BuildCtxs {
-		r.Packages[name] = maps.Clone(buildContext.CfgVals)
+		r.Packages[name] = maps.Clone(api.BindCfgVals(&buildContext.ConfigAccessor))
 	}
 	r.Summary = newBuildSummary(result, 0)
 	r.Summary.TargetsFailed = failedTargetCount(err)
@@ -378,26 +374,6 @@ func failedTargetCount(err error) int {
 		return 1
 	}
 	return 0
-}
-
-// effectiveGlobalValues mirrors the pipeline's project-wide value resolution so
-// a report published before (or without) a successful build still carries the
-// configuration identity.
-func effectiveGlobalValues(ctx *RuntimeContext) map[string]any {
-	values := make(map[string]any)
-	for name, option := range ctx.GlobalOptions {
-		values[name] = option.Default()
-	}
-	for name, value := range config.BuildGlobalValues(ctx.Config) {
-		if value == nil {
-			continue
-		}
-		if value == "" && (name == api.TargetOSOptionName || name == api.TargetTripleOptionName) {
-			continue
-		}
-		values[name] = value
-	}
-	return values
 }
 
 func (r *buildReport) setTestResults(tests []testResult) {
@@ -450,7 +426,7 @@ func (r *buildReport) complete(ctx *RuntimeContext, result *BuildResult) error {
 		return err
 	}
 	for name, buildContext := range result.BuildCtxs {
-		r.Packages[name] = maps.Clone(buildContext.CfgVals)
+		r.Packages[name] = maps.Clone(api.BindCfgVals(&buildContext.ConfigAccessor))
 	}
 
 	seen := map[string]bool{}

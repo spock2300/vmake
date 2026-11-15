@@ -244,7 +244,7 @@ func TestOnConfigureDepsDerivationPrecedenceAndConflicts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	vals, err := PackageConfigValues(rctx, "sdk/leaf", projectGlobalValues(rctx))
+	vals, err := PackageConfigValues(rctx, "sdk/leaf", ProjectGlobalValues(rctx))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestOnConfigureDepsDerivationPrecedenceAndConflicts(t *testing.T) {
 	}
 
 	rctx.Config.Entries["sdk/leaf"] = &config.EntryConfig{Options: map[string]any{"mode": "device"}}
-	vals, err = PackageConfigValues(rctx, "sdk/leaf", projectGlobalValues(rctx))
+	vals, err = PackageConfigValues(rctx, "sdk/leaf", ProjectGlobalValues(rctx))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -32,8 +32,8 @@ func Main(p *api.Package) {
 		t.Fatal(err)
 	}
 	ctx := api.NewBuildContext("postlink-test", nil)
-	ctx.SetPackage(pkg)
-	pkg.ExecBuildFuncs(dir, func(fn api.BuildFunc) { fn(ctx) })
+	api.BindSetPackage(ctx, pkg)
+	api.BindPackageExecBuildFuncs(pkg, dir, func(fn api.BuildFunc) { fn(ctx) })
 	got := ctx.GetTargets()["app"].PostLinkOutputs()
 	want := []string{"{output}.debug", "{output}.hex"}
 	if !reflect.DeepEqual(got, want) {

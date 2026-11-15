@@ -223,8 +223,8 @@ func MergeImportedOptions(localOpts map[string]*Option, localVals map[string]any
 		mergedVals[k] = v
 	}
 	for _, dep := range pkgs {
-		mergeMapNoOverwrite(mergedOpts, dep.Options)
-		mergeMapNoOverwrite(mergedVals, dep.CfgVals)
+		mergeMapNoOverwrite(mergedOpts, dep.options)
+		mergeMapNoOverwrite(mergedVals, dep.cfgVals)
 	}
 	return mergedOpts, mergedVals
 }

@@ -25,7 +25,7 @@ func TestYaegiSymbolsComplete(t *testing.T) {
 
 	var missing []string
 	for _, name := range sc.Names() {
-		if name == "BindBuildRuntime" || name == "SnapshotTarget" {
+		if name == "BindBuildRuntime" || name == "SnapshotTarget" || strings.HasPrefix(name, "Bind") {
 			continue
 		}
 		o := sc.Lookup(name)

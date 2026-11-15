@@ -23,12 +23,12 @@ func TestParseDependencyRef(t *testing.T) {
 		{in: " pkg:target ", pkg: " pkg", target: "target ", hasTarget: true},
 	}
 	for _, tc := range tests {
-		got := parseDependencyRef(tc.in)
+		got := ParseDependencyRef(tc.in)
 		if got.Package != tc.pkg || got.Target != tc.target || got.HasTarget != tc.hasTarget {
 			t.Errorf("parseDependencyRef(%q) = %+v", tc.in, got)
 		}
-		if got.packagePath() != tc.path {
-			t.Errorf("parseDependencyRef(%q).packagePath = %v, want %v", tc.in, got.packagePath(), tc.path)
+		if got.IsPackagePath() != tc.path {
+			t.Errorf("parseDependencyRef(%q).packagePath = %v, want %v", tc.in, got.IsPackagePath(), tc.path)
 		}
 	}
 }

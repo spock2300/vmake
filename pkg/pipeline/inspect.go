@@ -53,6 +53,8 @@ type Inspection struct {
 	PkgDirs            map[string]*api.PkgDirs
 	Layouts            map[string]*build.PackageLayout
 	PackageToolchains  map[string]*toolchain.Toolchain
+	PackageValues      map[string]map[string]any
+	PackagePlatforms   map[string]api.Platform
 }
 
 func ExpectedPackageSourceDir(ctx *RuntimeContext, name string, node *resolver.PackageNode) string {
@@ -111,6 +113,8 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 	layouts := make(map[string]*build.PackageLayout)
 	toolCache := make(map[string]*build.ResolvedTools)
 	packageToolchains := make(map[string]*toolchain.Toolchain)
+	packageValues := make(map[string]map[string]any)
+	packagePlatforms := make(map[string]api.Platform)
 	var filterNeeded map[string]bool
 	if opts.FilterDeps {
 		filterNeeded = pre.needed
@@ -122,6 +126,10 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		if node == nil || node.Source == nil {
 			continue
 		}
+		if len(ctx.AllOptions[name]) > 0 {
+			packageValues[name] = DisplayPackageValues(ctx, name, pre.cfg.GlobalValues)
+		}
+		packagePlatforms[name] = platformFromValues(packagePlatformValues(ctx, name, pre.cfg.GlobalValues))
 		if opts.FilterDeps && !pre.needed[name] {
 			delete(pkgDirs, name)
 			continue
@@ -248,5 +256,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		PkgDirs:            pkgDirs,
 		Layouts:            layouts,
 		PackageToolchains:  packageToolchains,
+		PackageValues:      packageValues,
+		PackagePlatforms:   packagePlatforms,
 	}, nil
 }

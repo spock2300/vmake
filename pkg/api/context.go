@@ -47,29 +47,29 @@ func NewConfigContextWithPackage(pkgName string, pkg *Package) *ConfigContext {
 	return ctx
 }
 
-func (ctx *ConfigContext) SetLenient() *ConfigContext {
+func (ctx *ConfigContext) setLenient() *ConfigContext {
 	ctx.strict = false
 	ctx.owner = ""
 	ctx.lenientCross = true
 	return ctx
 }
 
-func (ctx *ConfigContext) SetGlobalCFlagsFunc(fn func(...string)) *ConfigContext {
+func (ctx *ConfigContext) setGlobalCFlagsFunc(fn func(...string)) *ConfigContext {
 	ctx.addGlobalCFlags = fn
 	return ctx
 }
 
-func (ctx *ConfigContext) SetGlobalCxxFlagsFunc(fn func(...string)) *ConfigContext {
+func (ctx *ConfigContext) setGlobalCxxFlagsFunc(fn func(...string)) *ConfigContext {
 	ctx.addGlobalCxxFlags = fn
 	return ctx
 }
 
-func (ctx *ConfigContext) SetGlobalLdFlagsFunc(fn func(...string)) *ConfigContext {
+func (ctx *ConfigContext) setGlobalLdFlagsFunc(fn func(...string)) *ConfigContext {
 	ctx.addGlobalLdFlags = fn
 	return ctx
 }
 
-func (ctx *ConfigContext) SetGlobalLinksFunc(fn func(...string)) *ConfigContext {
+func (ctx *ConfigContext) setGlobalLinksFunc(fn func(...string)) *ConfigContext {
 	ctx.addGlobalLinks = fn
 	return ctx
 }
@@ -150,12 +150,12 @@ func (ctx *ConfigContext) SetConfigValue(name string, val any) *ConfigContext {
 	if strings.Contains(name, "/") {
 		fatalScript(ctx.PackageName(), "SetConfigValue", "config key %q must not contain '/'; cross-package writes are not supported", name)
 	}
-	ctx.CfgVals[name] = val
+	ctx.cfgVals[name] = val
 	return ctx
 }
 
 func (ctx *ConfigContext) GetOptions() map[string]*Option {
-	return ctx.Options
+	return ctx.options
 }
 
 func (ctx *ConfigContext) Toolchains() []string {
@@ -217,11 +217,11 @@ func NewDepConfigContext(pkgName, sourceDir string, cfgVals map[string]any, opti
 		sourceDir:      sourceDir,
 	}
 	ctx.setStrictOwner(pkgName)
-	ctx.LockOptionDeclaration()
+	ctx.lockOptionDeclaration()
 	return ctx
 }
 
-func (ctx *DepConfigContext) SetOptionExists(fn func(depPkg, option string) (bool, error)) *DepConfigContext {
+func (ctx *DepConfigContext) setOptionExists(fn func(depPkg, option string) (bool, error)) *DepConfigContext {
 	ctx.optionExists = fn
 	return ctx
 }
@@ -298,7 +298,7 @@ func NewBuildContext(pkgName string, cfgVals map[string]any) *BuildContext {
 		pkgBase:           pkgBase{pkgName: pkgName},
 	}
 	ctx.setStrictOwner(pkgName)
-	ctx.ConfigAccessor.LockOptionDeclaration()
+	ctx.ConfigAccessor.lockOptionDeclaration()
 	return ctx
 }
 
@@ -307,7 +307,7 @@ func (ctx *BuildContext) SetDryRun(v bool) *BuildContext {
 	return ctx
 }
 
-func (ctx *BuildContext) SetPackage(pkg *Package) *BuildContext {
+func (ctx *BuildContext) setPackage(pkg *Package) *BuildContext {
 	ctx.pkg = pkg
 	return ctx
 }
@@ -319,29 +319,29 @@ func (ctx *BuildContext) SetProvidedLinkerScript(path string) *BuildContext {
 	return ctx
 }
 
-func (ctx *BuildContext) ExecutedHelperStages() int {
+func (ctx *BuildContext) hostExecutedHelperStages() int {
 	if ctx.pkg == nil {
 		return 0
 	}
-	return ctx.pkg.ExecutedHelperStages()
+	return ctx.pkg.hostExecutedHelperStages()
 }
 
-func (ctx *BuildContext) SetBuildSubGraphFunc(fn func(string) error) *BuildContext {
+func (ctx *BuildContext) setBuildSubGraphFunc(fn func(string) error) *BuildContext {
 	ctx.buildSubGraphFunc = fn
 	return ctx
 }
 
-func (ctx *BuildContext) SetDepOutputFunc(fn func(string) string) *BuildContext {
+func (ctx *BuildContext) setDepOutputFunc(fn func(string) string) *BuildContext {
 	ctx.depOutputFunc = fn
 	return ctx
 }
 
-func (ctx *BuildContext) SetDepSrcDirFunc(fn func(string) string) *BuildContext {
+func (ctx *BuildContext) setDepSrcDirFunc(fn func(string) string) *BuildContext {
 	ctx.depSrcDirFunc = fn
 	return ctx
 }
 
-func (ctx *BuildContext) SetDepPackageDirFunc(fn func(string) string) *BuildContext {
+func (ctx *BuildContext) setDepPackageDirFunc(fn func(string) string) *BuildContext {
 	ctx.depPackageDirFunc = fn
 	return ctx
 }
@@ -428,7 +428,7 @@ func (ctx *BuildContext) SyncConfigDefines(pkgNames ...string) *BuildContext {
 func (ctx *BuildContext) GenConfigHeader() bool   { return ctx.genConfigHeader }
 func (ctx *BuildContext) GenConfigDefines() bool  { return ctx.genConfigDefines }
 func (ctx *BuildContext) ImportConfigs() []string { return ctx.importConfigs }
-func (ctx *BuildContext) SubGraphs() []string     { return ctx.subGraphs }
+func (ctx *BuildContext) hostSubGraphs() []string { return ctx.subGraphs }
 
 func (ctx *BuildContext) Exec(name string, args ...string) {
 	if ctx.dryRun {
@@ -496,7 +496,7 @@ func NewInstallContext(pkgName string, cfgVals map[string]any) *InstallContext {
 		pkgBase:           pkgBase{pkgName: pkgName},
 	}
 	ctx.setStrictOwner(pkgName)
-	ctx.ConfigAccessor.LockOptionDeclaration()
+	ctx.ConfigAccessor.lockOptionDeclaration()
 	return ctx
 }
 
@@ -521,11 +521,11 @@ func NewCleanContext(pkgName string, cfgVals map[string]any) *CleanContext {
 		pkgBase:        pkgBase{pkgName: pkgName},
 	}
 	ctx.setStrictOwner(pkgName)
-	ctx.ConfigAccessor.LockOptionDeclaration()
+	ctx.ConfigAccessor.lockOptionDeclaration()
 	return ctx
 }
 
-func (ctx *CleanContext) SetPackage(pkg *Package) *CleanContext {
+func (ctx *CleanContext) setPackage(pkg *Package) *CleanContext {
 	ctx.pkg = pkg
 	return ctx
 }

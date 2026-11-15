@@ -783,7 +783,8 @@ func groupAndSortOptions(opts map[string]*api.Option) []OptionItem {
 }
 
 func buildShowIfContext(pkgName string, values map[string]any, options map[string]*api.Option) *api.ConfigContext {
-	cfgCtx := api.NewConfigContext(pkgName).SetLenient()
+	cfgCtx := api.NewConfigContext(pkgName)
+	api.BindSetLenient(cfgCtx)
 	for name, val := range values {
 		cfgCtx.SetConfigValue(name, val)
 	}

@@ -128,8 +128,8 @@ func TestMergeImportedOptionsLocalWins(t *testing.T) {
 	localVals := map[string]any{"shared": "local-value", "only-local": "L"}
 
 	dep := NewPackage()
-	dep.Options = map[string]*Option{"shared": importedOpt, "only-imported": onlyImported}
-	dep.CfgVals = map[string]any{"shared": "imported-value", "only-imported": "I"}
+	dep.options = map[string]*Option{"shared": importedOpt, "only-imported": onlyImported}
+	dep.cfgVals = map[string]any{"shared": "imported-value", "only-imported": "I"}
 
 	mergedOpts, mergedVals := MergeImportedOptions(localOpts, localVals, []*Package{dep})
 

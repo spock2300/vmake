@@ -75,14 +75,14 @@ func TestModelResultSparseExplicitAndDerivedDefaults(t *testing.T) {
 		"mode": mkOpt("mode", api.OptionChoice, "release").SetValues("debug", "release"),
 	}
 	m := NewModel(Input{
-		Packages:      mkSources("app", "board"),
-		Deps:          map[string][]string{"app": {"board"}},
-		Options:       opts,
-		Values:        map[string]map[string]any{"app": {"demo": "music"}},
+		Packages:       mkSources("app", "board"),
+		Deps:           map[string][]string{"app": {"board"}},
+		Options:        opts,
+		Values:         map[string]map[string]any{"app": {"demo": "music"}},
 		DerivedOptions: map[string]map[string]any{"board": {"graphics": true}},
-		GlobalOptions: globalOpts,
-		GlobalValues:  map[string]any{},
-		WorkDir:       "/w",
+		GlobalOptions:  globalOpts,
+		GlobalValues:   map[string]any{},
+		WorkDir:        "/w",
 	})
 
 	m.selectedPkg = "board"

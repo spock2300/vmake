@@ -193,10 +193,7 @@ func newScheduler(cfg schedulerConfig) *Scheduler {
 		if layout == nil {
 			continue
 		}
-		s.pkgs[pkgName] = &PkgInfo{
-			PkgDirs:  layout.Dirs,
-			BuildKey: layout.BuildKey,
-		}
+		s.pkgs[pkgName] = NewPkgInfo(layout.Dirs, layout.BuildKey)
 	}
 
 	return s
@@ -407,7 +404,7 @@ func (s *Scheduler) ensurePackageGenerated(pkgName string) error {
 	}
 	s.pkgGenerated[pkgName] = true
 	pkg := s.packages[pkgName]
-	if pkg == nil || !pkg.HasGenerators() {
+	if pkg == nil || !api.BindPackageHasGenerators(pkg) {
 		return nil
 	}
 	pkgInfo := s.pkgs[pkgName]
@@ -415,7 +412,7 @@ func (s *Scheduler) ensurePackageGenerated(pkgName string) error {
 		return nil
 	}
 	buildDir := resolveWorkPath(pkgInfo.SourceDir, pkgInfo.EffectiveBuildDir())
-	return pkg.RunGenerators(pkgInfo.SourceDir, buildDir, func(outPath string) {
+	return api.BindPackageRunGenerators(pkg, pkgInfo.SourceDir, buildDir, func(outPath string) {
 		if s.hashes != nil {
 			s.hashes.evict(pkgInfo.SourceDir, []string{outPath})
 		}

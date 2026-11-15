@@ -113,15 +113,15 @@ func loadBuildScript(src Source) (_ *api.Package, err error) {
 		mainFunc(pkg)
 	})
 
-	if fn := pkg.GetPackageFunc(); fn != nil {
+	if fn := api.BindPackageGetPackageFunc(pkg); fn != nil {
 		api.RunScriptSafe(src.Name, func() {
 			fn(pkg)
 		})
 	}
 
-	if len(pkg.GetRequireFuncs()) > 0 {
-		ctx := api.NewRequireContextForConfig(src.Name, nil, pkg.Options, pkg.GetRequireFuncs())
-		for _, fn := range pkg.GetRequireFuncs() {
+	if len(api.BindPackageGetRequireFuncs(pkg)) > 0 {
+		ctx := api.NewRequireContextForConfig(src.Name, nil, api.BindOptions(&pkg.ConfigAccessor), api.BindPackageGetRequireFuncs(pkg))
+		for _, fn := range api.BindPackageGetRequireFuncs(pkg) {
 			api.RunScriptSafe(src.Name, func() {
 				fn(ctx)
 			})

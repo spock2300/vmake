@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"debug/elf"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/build"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/toolchain"
@@ -40,7 +42,7 @@ Detection categories:
 
 Requires a successful build first; scans existing build/ outputs.`,
 		Run: func(cmd *cobra.Command, args []string) {
-			runCheckSymbols(strict)
+			runCheckSymbols(cmd.Context(), strict)
 		},
 	}
 	cmd.Flags().BoolVar(&strict, "strict", false, "exit non-zero on any non-info finding")
@@ -71,21 +73,27 @@ type finding struct {
 	detail   string
 }
 
-func runCheckSymbols(strict bool) {
-	vlog.SetLevel(vlog.Quiet)
-	scriptfs.SetReadOnly(true)
-	defer scriptfs.SetReadOnly(false)
-
-	ctx := mustOpenProject(projectOptions{})
-	defer closeProject(ctx)
-	insp, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
+func runCheckSymbols(execution context.Context, strict bool) {
+	root, err := resolveProjectRoot()
 	if err != nil {
-		vlog.Fatal("inspect: %v", err)
+		fatalResolveRoot(err)
 	}
+	session, err := openInspection(inspectionRequest{execution: execution, root: root, quiet: true})
+	if err != nil {
+		var inspectErr *inspectionStageError
+		if errors.As(err, &inspectErr) {
+			vlog.Error("inspect: %v", inspectErr.err)
+			exitWithCode(1)
+		}
+		fatalErr(err)
+	}
+	defer session.Close()
+	ctx := session.ctx
+	insp := session.inspection
 
-	artifacts, err := discoverArtifacts(ctx, insp.PkgDirs, insp.PackageToolchains, insp.Needed, insp.GlobalValues)
+	artifacts, err := discoverArtifacts(ctx, insp.PkgDirs, insp.Layouts, insp.PackageToolchains, insp.Needed, insp.GlobalValues)
 	fatalErr(err)
-	blockedWrites := scriptfs.TakeBlockedWrites()
+	blockedWrites := append(append([]string{}, session.blocked...), scriptfs.TakeBlockedWrites()...)
 	var findings []finding
 	for _, message := range blockedWrites {
 		findings = append(findings, finding{
@@ -102,7 +110,7 @@ func runCheckSymbols(strict bool) {
 		}
 		reportFindings(findings, 0)
 		if strict && hasStrictFindings(findings) {
-			os.Exit(1)
+			exitWithCode(1)
 		}
 		return
 	}
@@ -161,18 +169,11 @@ func runCheckSymbols(strict bool) {
 	reportFindings(findings, len(artifacts))
 
 	if strict && hasStrictFindings(findings) {
-		os.Exit(1)
+		exitWithCode(1)
 	}
 }
 
-func findBuiltOutput(buildDir, filename string) string {
-	if buildDir == "" {
-		return ""
-	}
-	return filepath.Join(buildDir, filename)
-}
-
-func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, tcs map[string]*toolchain.Toolchain, needed map[string]bool, globalValues map[string]any) ([]scanArtifact, error) {
+func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, layouts map[string]*build.PackageLayout, tcs map[string]*toolchain.Toolchain, needed map[string]bool, globalValues map[string]any) ([]scanArtifact, error) {
 	var out []scanArtifact
 	for name, node := range ctx.DepGraph.Packages {
 		if node == nil || node.Pkg == nil || !node.IsLocal() {
@@ -194,6 +195,11 @@ func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, tcs
 			return nil, err
 		}
 
+		buildKey := ""
+		if layout := layouts[name]; layout != nil {
+			buildKey = layout.BuildKey
+		}
+		pkgInfo := build.NewPkgInfo(*dirs, buildKey)
 		for _, t := range buildCtx.GetTargets() {
 			kind := t.Kind()
 			if kind != api.TargetShared && kind != api.TargetBinary {
@@ -202,8 +208,10 @@ func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, tcs
 			if !t.IsDefault() {
 				continue
 			}
-			filename := api.TargetFilename(kind, t.Name(), node.Pkg.TargetOS())
-			outputPath := findBuiltOutput(dirs.BuildDir, filename)
+			outputPath := ""
+			if dirs.BuildDir != "" {
+				outputPath = build.PlacementFor(t, pkgInfo, node.Pkg.TargetOS()).OutputPath
+			}
 			out = append(out, scanArtifact{
 				pkgName:       name,
 				targetName:    t.Name(),

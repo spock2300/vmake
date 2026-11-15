@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"os"
@@ -10,10 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/api"
-	"github.com/spock2300/vmake/pkg/config"
-	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/resolver"
 )
@@ -34,7 +32,9 @@ Dry-run target declaration runs with interpreted-script writes disabled; a
 callback that writes reports a warning on stderr and that package's targets are
 omitted, without modifying the project. Any package whose target declaration
 fails is omitted and warned.`,
-		Run: runQuery,
+		Run: func(cmd *cobra.Command, args []string) {
+			fatalErr(runQuery(cmd, args))
+		},
 	}
 	addPersistentConfigFlag(cmd)
 	cmd.PersistentFlags().StringArrayVarP(&ephemeralSetFlags, "set", "s", nil, "override an option for this run only (format: [pkg/]option=value)")
@@ -56,14 +56,9 @@ expected source tree is missing keeps its warning; a package whose OnBuild
 fails to declare targets prints one warning on stderr and the command
 continues.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runQueryTargets()
+			return runQueryTargets(cmd.Context())
 		},
 	}
-}
-
-func queryReadOnly() func() {
-	scriptfs.SetReadOnly(true)
-	return func() { scriptfs.SetReadOnly(false) }
 }
 
 func newQueryConfigCmd() *cobra.Command {
@@ -75,20 +70,22 @@ func newQueryConfigCmd() *cobra.Command {
 	}
 }
 
-func runQueryTargets() error {
-	vlog.SetLevel(vlog.Quiet)
-	defer queryReadOnly()()
-
-	ctx := mustOpenProject(projectOptions{})
-	defer closeProject(ctx)
-	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
-	fatalErr(err)
-	scriptfs.TakeBlockedWrites()
-	data, diagnostics := buildInspectData(ctx, inspection, nil, true)
+func runQueryTargets(execution context.Context) error {
+	root, err := resolveProjectRoot()
+	if err != nil {
+		fatalResolveRoot(err)
+		return nil
+	}
+	session, err := openInspection(inspectionRequest{execution: execution, root: root, quiet: true})
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	data, diagnostics := buildInspectData(session.ctx, session.inspection, nil, true)
 	printInspectDiagnostics(diagnostics)
 	packages := inspectPackageIndex(data)
 
-	for _, name := range ctx.Resolver.GetOrder() {
+	for _, name := range session.ctx.Resolver.GetOrder() {
 		pkg := packages[name]
 		if pkg == nil || !pkg.Needed {
 			continue
@@ -101,8 +98,8 @@ func runQueryTargets() error {
 }
 
 func runQueryConfig(cmd *cobra.Command, args []string) {
-	vlog.SetLevel(vlog.Quiet)
-	defer queryReadOnly()()
+	restoreScope := inspectionScope(true, false)
+	defer restoreScope()
 
 	name := args[0]
 	ctx := mustOpenProject(projectOptions{})
@@ -124,8 +121,8 @@ func runQueryConfig(cmd *cobra.Command, args []string) {
 	}
 	maps.Copy(opts, ctx.AllOptions[name])
 
-	globalValues := config.BuildGlobalValues(ctx.Config)
-	vals := packageConfigValues(ctx, name, globalValues)
+	globalValues := pipeline.ProjectGlobalValues(ctx)
+	vals := pipeline.DisplayPackageValues(ctx, name, globalValues)
 
 	if s := formatOptions(ctx, name, globalValues); s != "" {
 		fmt.Println(s)
@@ -138,17 +135,20 @@ func runQueryConfig(cmd *cobra.Command, args []string) {
 	}
 }
 
-func runQuery(cmd *cobra.Command, args []string) {
-	vlog.SetLevel(vlog.Quiet)
-	defer queryReadOnly()()
-
-	ctx := mustOpenProject(projectOptions{})
-	defer closeProject(ctx)
-
-	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
-	fatalErr(err)
-	scriptfs.TakeBlockedWrites()
-	data, diagnostics := buildInspectData(ctx, inspection, nil, true)
+func runQuery(cmd *cobra.Command, args []string) error {
+	root, err := resolveProjectRoot()
+	if err != nil {
+		fatalResolveRoot(err)
+		return nil
+	}
+	session, err := openInspection(inspectionRequest{execution: cmd.Context(), root: root, quiet: true})
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	ctx := session.ctx
+	inspection := session.inspection
+	data, diagnostics := buildInspectData(session.ctx, session.inspection, nil, true)
 	printInspectDiagnostics(diagnostics)
 	workDir := ctx.WorkDir
 
@@ -174,6 +174,7 @@ func runQuery(cmd *cobra.Command, args []string) {
 		printer.print(root, "", true, true)
 		printed++
 	}
+	return nil
 }
 
 func formatPkgDir(pkgDir, workDir string) string {

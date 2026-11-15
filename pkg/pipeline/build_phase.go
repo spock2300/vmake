@@ -36,7 +36,7 @@ type BuildResult struct {
 func (r *BuildResult) ExternalStages() int {
 	total := 0
 	for _, buildCtx := range r.BuildCtxs {
-		total += buildCtx.ExecutedHelperStages()
+		total += api.BindBuildContextExecutedHelperStages(buildCtx)
 	}
 	return total
 }

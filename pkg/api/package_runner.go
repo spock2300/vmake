@@ -50,7 +50,7 @@ func (p *Package) Env() map[string]string {
 		}
 		path, err := toolchain.ResolveToolPath(*tool.Value, tc.InstallPath)
 		if err != nil {
-			fatalScript(p.Name, "Env", "resolve %s %q: %v", tool.Name, *tool.Value, err)
+			fatalScript(p.name, "Env", "resolve %s %q: %v", tool.Name, *tool.Value, err)
 		}
 		*tool.Value = filepath.ToSlash(path)
 	}
@@ -82,7 +82,7 @@ func (p *Package) makeTool() string {
 	}
 	path, err := toolchain.ResolveToolPath(p.tc.Tools.MAKE, p.tc.InstallPath)
 	if err != nil {
-		fatalScript(p.Name, "Make", "resolve %q: %v", p.tc.Tools.MAKE, err)
+		fatalScript(p.name, "Make", "resolve %q: %v", p.tc.Tools.MAKE, err)
 	}
 	return path
 }
@@ -155,7 +155,7 @@ func (p *Package) Run(name string, args ...string) {
 		return
 	}
 	if err := p.runIn(p.dirs.BuildDir, nil, name, args...); err != nil {
-		fatalScript(p.Name, "Run", "%v", err)
+		fatalScript(p.name, "Run", "%v", err)
 	}
 }
 
@@ -165,7 +165,7 @@ func (p *Package) RunIn(dir, name string, args ...string) {
 		return
 	}
 	if err := p.runIn(dir, nil, name, args...); err != nil {
-		fatalScript(p.Name, "RunIn", "%v", err)
+		fatalScript(p.name, "RunIn", "%v", err)
 	}
 }
 

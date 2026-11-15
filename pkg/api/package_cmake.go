@@ -38,7 +38,7 @@ func (p *Package) cmakeSettingsForHost(hostOS string) cmake.Settings {
 
 func (p *Package) SetCMakeBuildDir(dir string) *Package {
 	if dir == "" {
-		fatalScript(p.Name, "SetCMakeBuildDir", "directory must not be empty")
+		fatalScript(p.name, "SetCMakeBuildDir", "directory must not be empty")
 	}
 	p.cmakeBuildDir = dir
 	return p
@@ -46,7 +46,7 @@ func (p *Package) SetCMakeBuildDir(dir string) *Package {
 
 func (p *Package) SetCMakeInstallDir(dir string) *Package {
 	if dir == "" {
-		fatalScript(p.Name, "SetCMakeInstallDir", "directory must not be empty")
+		fatalScript(p.name, "SetCMakeInstallDir", "directory must not be empty")
 	}
 	p.cmakeInstallDir = dir
 	return p
@@ -54,7 +54,7 @@ func (p *Package) SetCMakeInstallDir(dir string) *Package {
 
 func (p *Package) SetCMakeBuildType(config string) *Package {
 	if strings.TrimSpace(config) == "" {
-		fatalScript(p.Name, "SetCMakeBuildType", "build type must not be empty")
+		fatalScript(p.name, "SetCMakeBuildType", "build type must not be empty")
 	}
 	p.cmakeConfig = config
 	return p
@@ -102,7 +102,7 @@ func (p *Package) cmakeGlobalFlagsArgs(hostOS string) []string {
 func (p *Package) CMakeConfigure(extraArgs ...string) {
 	args, err := p.cmakeConfigureArgs(runtime.GOOS, extraArgs...)
 	if err != nil {
-		fatalScript(p.Name, "CMakeConfigure", "%v", err)
+		fatalScript(p.name, "CMakeConfigure", "%v", err)
 	}
 	fingerprint, cached := p.cmakeConfigureState(args)
 	if cached {
@@ -140,7 +140,7 @@ func (p *Package) runCMakeConfigure(args, extraArgs []string) {
 func (p *Package) CMakeBuild(extraArgs ...string) {
 	args, err := p.cmakeBuildArgs(extraArgs...)
 	if err != nil {
-		fatalScript(p.Name, "CMakeBuild", "%v", err)
+		fatalScript(p.name, "CMakeBuild", "%v", err)
 	}
 	p.runCapturedCMake("CMakeBuild", "build", p.dirs.BuildDir, args)
 }
@@ -148,7 +148,7 @@ func (p *Package) CMakeBuild(extraArgs ...string) {
 func (p *Package) CMakeInstall(extraArgs ...string) {
 	args, err := p.cmakeInstallArgs(extraArgs...)
 	if err != nil {
-		fatalScript(p.Name, "CMakeInstall", "%v", err)
+		fatalScript(p.name, "CMakeInstall", "%v", err)
 	}
 	p.runCapturedCMake("CMakeInstall", "install", p.dirs.BuildDir, args)
 }
@@ -166,7 +166,7 @@ func (p *Package) runCapturedCMake(op, phase, dir string, args []string) {
 	}
 	p.executedHelperStages++
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		fatalScript(p.Name, op, "create cmake %s directory %q: %v", phase, dir, err)
+		fatalScript(p.name, op, "create cmake %s directory %q: %v", phase, dir, err)
 	}
 	output, err := p.runCMakeCaptured(phase, dir, args)
 	summary, detail := renderCMakeOutput(phase, output)
@@ -175,7 +175,7 @@ func (p *Package) runCapturedCMake(op, phase, dir string, args []string) {
 		for _, line := range splitCMakeLines(output) {
 			vlog.Verbose("%s", line)
 		}
-		fatalScript(p.Name, op, "%v", err)
+		fatalScript(p.name, op, "%v", err)
 	}
 	vlog.Info("%s", summary)
 	printCMakeDetail(detail, false)
@@ -321,7 +321,7 @@ func (p *Package) cmakeBuildType() string {
 	if p.cmakeConfig != "" {
 		return p.cmakeConfig
 	}
-	m, _ := p.CfgVals[ModeOptionName].(string)
+	m, _ := p.cfgVals[ModeOptionName].(string)
 	switch m {
 	case ModeDebug:
 		return "Debug"

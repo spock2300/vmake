@@ -10,6 +10,7 @@ import (
 )
 
 type projectOptions struct {
+	root           string
 	execution      context.Context
 	policy         *resolver.LockPolicy
 	pins           map[string]string
@@ -44,13 +45,17 @@ func openProject(opts projectOptions) (*RuntimeContext, error) {
 			return nil, err
 		}
 	}
-	locks := sess.storageLocks()
+	root := opts.root
+	if root == "" {
+		root = findProjectDir()
+	}
+	locks := sess.storageLocksAt(root)
 	ignoreLock := opts.policy != nil && opts.policy.IgnoreAll
 	selector := opts.configOverride
 	if selector == "" {
 		selector = sess.configSelector
 	}
-	params, err := loadResolveParamsWithOptions(ignoreLock, opts.softGitignore, opts.skipGitignore, selector)
+	params, err := loadResolveParamsAt(root, ignoreLock, opts.softGitignore, opts.skipGitignore, selector)
 	if err != nil {
 		return nil, err
 	}

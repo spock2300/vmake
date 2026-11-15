@@ -56,12 +56,15 @@ Phase 3: OnBuild (pipeline.RunBuild)
 - 解析决策：`pkg/resolver.LockQuery`（`PinFor`/`IgnoredFor`/`LockEntry`/`Decide`）是 target/float/pin/lock/native 优先级的唯一实现；`pkg/pipeline.lockDecisions`/`projectLock` 是锁文件投影与 `--locked` 比较的唯一入口。
 - 增量动作：`pkg/build.plannedAction` + `runPlannedAction` 统一 compile/link/void 的签名、执行与记录；`Compiler.planCompile` 是编译命令的唯一推导，`compile_commands.json` 使用同一计划的 display 命令。
 - 包激活：`pkg/pipeline.ActivatePackage` 是 build/declarative 的唯一激活路径；`DeclareTargets` 是 declarative 包装，`executeOnePackage` 使用 build 模式。
+- 脚本方法面：`pkg/api/script_methods.go` 的 allowlist/pending 清单 + `TestScriptMethodManifestMatchesVisibleSurface` 反射注册类型（含提升方法），新增/删除导出方法必须显式分类；DD-27 阶段 2 已把宿主接线移到 `pkg/api/bind.go` 的 `api.Bind*`（`Bind` 前缀不注册进 yaegi），pending 已清空；阶段 3 已落地：`ConfigAccessor`/`PackageMeta` 的导出字段改为非导出并通过 `Bind*` 访问，`TargetRegistry`/`InstallItemHolder` 只提升 allowlist 方法。
 - 根/needed：`pkg/pipeline.ComputeNeeded` 是构建 needed 的唯一计算；`RootsFromEdges` 是 deps/inspect 报告图的唯一根计算。
 - 全局 flags：`toolchain.Manager.ToolchainGlobalFlags` 只保存 toolchain/extension globals；项目 flags 由 `pipeline.aggregateGlobalFlags` 显式合并，`build.HashGlobalFlags` 哈希显式值。
-- 源物化：`repo.SourceManager.WouldMaterialize` 与 `SourceResult.Materialized` 和 `EnsureSource` 共用同一复用判定。
-- 包位置与制品：`pipeline.packageLocation` 统一 `OwnerTreeRoot`/`PackageRoot`/`SourceTree`/`ThirdPartyRoot`/`TreeRoot`；`build.ArtifactPlacement` 统一产物、PE import library、暂存与安装路径。
-- 依赖字符串：`build.parseDependencyRef` 是 `target`/`pkg:target`/`pkg/sub:target`/`pkg:*` 的唯一解析；遍历策略仍按消费者保留。
+- 有效配置值：`pkg/pipeline` 是唯一实现，并按用途暴露显式投影——`PackageConfigValues`（构建值）、`DisplayPackageValues`（inspect/query 的声明选项投影，经 `Inspection.PackageValues`/`PackagePlatforms` 携带）、`collectAllPkgOptions`（构建键材料）、`applyGlobalValues`（OnApply 值，含解析后的 mode/toolchain/target 默认值）、`ProjectGlobalValues`（项目全局值）。cmd 渲染层只消费，不再推导。
+- 源物化：`repo.SourceManager.WouldMaterialize` 与 `SourceResult.Materialized` 和 `EnsureSource` 共用同一复用判定；请求值本身由 `pipeline.sourceRequestFor` 为 local SetGit / own-Git member 一次投影（横幅与 `EnsureSource` 消费同一值），远端循环也只构造一份 `SourceRequest` 供横幅与 fetch 共用。resolver 探测与 manifest restore 保留显式简化请求（`ResolveOnly`、仅 ref）。
+- 包位置与制品：`pipeline.packageLocation` 统一 `OwnerTreeRoot`/`PackageRoot`/`SourceTree`/`ThirdPartyRoot`/`TreeRoot`；`build.PlacementFor`（`Scheduler.placementFor` 委托）统一产物、PE import library、暂存与安装路径，`inspect`/`check-symbols`/`test` 复用同一构造器。
+- 依赖字符串：`build.ParseDependencyRef`（`parseDependencyRef` 的导出形式）是 `target`/`pkg:target`/`pkg/sub:target`/`pkg:*` 的唯一解析，graph/subgraph/`pkg/pipeline` 边投影/命令层共用；遍历与校验策略仍按消费者保留（DD-22），`resolveDep`/`resolveDirectDep` 的校验分歧由测试钉住并作为后续单独项。
 - 阶段写模型：`Resolution`/`Configuration`/`Preparation` 分别由 `Require`/`Configure`/`prepareBuild` 一次提交；`Configure` 在上下文副本上执行、成功才提交配置结果。
+- 检查命令会话：`cmd/vmake/inspect_session.go:openInspection` 统一根解析（`resolveProjectRoot`，无进程缓存）、只读作用域、`openProject`、`InspectWithOptions(FilterDeps)`、blocked-write 收集与 resolver 关闭；`inspectionScope` 统一 quiet/只读状态并恢复。inspect/query/query targets/check-symbols/deps graph|why|check 只保留输出 schema、诊断文案与错误映射。
 
 
 ### Clean Pipeline

@@ -237,7 +237,7 @@ func validatePackageGraph(
 			depPkg := resolver.resolveRawCrossPkg(node.PkgName, rawDep)
 			if depPkg != "" && depPkg != node.PkgName {
 				reasonTarget := depPkg
-				if ref := parseDependencyRef(rawDep); ref.HasTarget && ref.Target != "" && ref.Target != "*" {
+				if ref := ParseDependencyRef(rawDep); ref.HasTarget && ref.Target != "" && ref.Target != "*" {
 					reasonTarget = depPkg + ":" + ref.Target
 				}
 				if err := addEdge(node.PkgName, depPkg, fmt.Sprintf("%s -> %s", node.FullName, reasonTarget)); err != nil {
@@ -278,7 +278,7 @@ type depResolver struct {
 func newDepResolver(nodes map[string]*BuildNode, pkgMeta map[string]PkgBuildMeta, subParents map[string]string) *depResolver {
 	pkgTargets := make(map[string][]string)
 	for fullName := range nodes {
-		if ref := parseDependencyRef(fullName); ref.HasTarget {
+		if ref := ParseDependencyRef(fullName); ref.HasTarget {
 			pkgTargets[ref.Package] = append(pkgTargets[ref.Package], fullName)
 		}
 	}
@@ -318,7 +318,7 @@ func (d *depResolver) resolveDeclaredPkgs(deps []string, currentPkg string) []st
 		}
 	}
 	for _, dep := range deps {
-		ref := parseDependencyRef(dep)
+		ref := ParseDependencyRef(dep)
 		if ref.HasTarget {
 			resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package)
 			if ref.Target == "*" {
@@ -329,7 +329,7 @@ func (d *depResolver) resolveDeclaredPkgs(deps []string, currentPkg string) []st
 			}
 			continue
 		}
-		if ref.packagePath() {
+		if ref.IsPackagePath() {
 			addTransitive(ref.Package)
 			continue
 		}
@@ -344,11 +344,11 @@ func (d *depResolver) resolveDeclaredPkgs(deps []string, currentPkg string) []st
 }
 
 func (d *depResolver) resolveRawCrossPkg(currentPkg, dep string) string {
-	ref := parseDependencyRef(dep)
+	ref := ParseDependencyRef(dep)
 	if ref.HasTarget {
 		return d.resolveDepPkgName(currentPkg, ref.Package)
 	}
-	if ref.packagePath() {
+	if ref.IsPackagePath() {
 		return ref.Package
 	}
 	if _, exists := d.nodes[currentPkg+":"+ref.Package]; exists {
@@ -401,7 +401,7 @@ func (d *depResolver) resolveDirectDeps(deps []string, currentPkg string, path [
 }
 
 func (d *depResolver) resolveDep(dep string, currentPkg string, path []string) ([]string, error) {
-	ref := parseDependencyRef(dep)
+	ref := ParseDependencyRef(dep)
 	if ref.HasTarget {
 		resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package)
 		if ref.Target == "*" {
@@ -415,7 +415,7 @@ func (d *depResolver) resolveDep(dep string, currentPkg string, path []string) (
 		return []string{fullDep}, nil
 	}
 
-	if ref.packagePath() {
+	if ref.IsPackagePath() {
 		return d.resolvePackageRef(ref.Package, path)
 	}
 
@@ -432,7 +432,7 @@ func (d *depResolver) resolveDep(dep string, currentPkg string, path []string) (
 }
 
 func (d *depResolver) resolveDirectDep(dep string, currentPkg string, path []string) ([]string, error) {
-	ref := parseDependencyRef(dep)
+	ref := ParseDependencyRef(dep)
 	if ref.HasTarget {
 		resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package)
 		if ref.Target == "*" {
@@ -441,7 +441,7 @@ func (d *depResolver) resolveDirectDep(dep string, currentPkg string, path []str
 		return []string{resolvedPkg + ":" + ref.Target}, nil
 	}
 
-	if ref.packagePath() {
+	if ref.IsPackagePath() {
 		return d.resolveDirectPackageRef(ref.Package, path)
 	}
 

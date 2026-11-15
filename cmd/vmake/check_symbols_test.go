@@ -269,23 +269,6 @@ func TestMangledReBasic(t *testing.T) {
 	}
 }
 
-func TestFindBuiltOutputDirect(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "libfoo.so")
-	_ = os.WriteFile(path, []byte("dummy"), 0644)
-	got := findBuiltOutput(dir, "libfoo.so")
-	if got != path {
-		t.Errorf("findBuiltOutput = %q, want %q", got, path)
-	}
-}
-
-func TestFindBuiltOutputMissing(t *testing.T) {
-	got := findBuiltOutput("/nonexistent/dir", "libfoo.so")
-	if got == "" {
-		t.Error("should return non-empty default path")
-	}
-}
-
 func TestSortFindingsStableForReporting(t *testing.T) {
 	findings := []finding{
 		{category: "duplicate-export", symbol: "z_sym", detail: "a, b"},

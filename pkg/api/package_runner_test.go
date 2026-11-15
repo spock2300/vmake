@@ -249,7 +249,7 @@ func TestMakeAndConfigurePreserveSpacedToolPaths(t *testing.T) {
 	if err := p.Make(); err != nil {
 		t.Fatal(err)
 	}
-	if err := NewCleanContext("firmware", nil).SetPackage(p).Make("clean"); err != nil {
+	if err := BindSetCleanPackage(NewCleanContext("firmware", nil), p).Make("clean"); err != nil {
 		t.Fatal(err)
 	}
 	if !p.EnsureConfig(dir) {
@@ -283,20 +283,20 @@ func TestMakeExecutedHelperStageCount(t *testing.T) {
 	if err := p.Make(); err != nil {
 		t.Fatal(err)
 	}
-	if got := p.ExecutedHelperStages(); got != 1 {
+	if got := BindPackageExecutedHelperStages(p); got != 1 {
 		t.Fatalf("make stages = %d, want 1", got)
 	}
 	if err := p.Make(); err != nil {
 		t.Fatal(err)
 	}
-	if got := p.ExecutedHelperStages(); got != 2 {
+	if got := BindPackageExecutedHelperStages(p); got != 2 {
 		t.Fatalf("make stages = %d, want 2", got)
 	}
 	p.SetDryRun(true)
 	if err := p.Make(); err != nil {
 		t.Fatal(err)
 	}
-	if got := p.ExecutedHelperStages(); got != 2 {
+	if got := BindPackageExecutedHelperStages(p); got != 2 {
 		t.Fatalf("dry-run make stages = %d, want 2", got)
 	}
 }

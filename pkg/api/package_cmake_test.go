@@ -115,7 +115,7 @@ func TestCMakeDirectoriesAndConfiguration(t *testing.T) {
 				t.Fatalf("install directory = %q, want %q", got, wantInstall)
 			}
 			for _, mode := range []string{ModeDebug, ModeRelease, ModeSize} {
-				p.CfgVals = map[string]any{ModeOptionName: mode}
+				p.cfgVals = map[string]any{ModeOptionName: mode}
 				config := "Release"
 				switch mode {
 				case ModeDebug:
@@ -653,7 +653,7 @@ func TestCMakeSettersAndCommandsReportScriptErrors(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			defer func() {
 				err, ok := recover().(*BuildScriptError)
-				if !ok || err.Package != p.Name || err.Op != name {
+				if !ok || err.Package != p.name || err.Op != name {
 					t.Fatalf("expected %s script error, got %v", name, err)
 				}
 			}()
@@ -1031,8 +1031,8 @@ func TestCMakeConfigureFailureKeepsCapturedOutput(t *testing.T) {
 	out, errOut := captureCMakeStreams(t, func() {
 		scriptErr = captureScriptError(func() { p.CMakeConfigure("-G", "Ninja") })
 	})
-	if scriptErr == nil || scriptErr.Package != p.Name || scriptErr.Op != "CMakeConfigure" {
-		t.Fatalf("script error = %+v, want package %q op CMakeConfigure", scriptErr, p.Name)
+	if scriptErr == nil || scriptErr.Package != p.name || scriptErr.Op != "CMakeConfigure" {
+		t.Fatalf("script error = %+v, want package %q op CMakeConfigure", scriptErr, p.name)
 	}
 	for _, want := range []string{"CMake Error at CMakeLists.txt:3 (message):", "  compiler does not work"} {
 		if !strings.Contains(errOut, want) {
@@ -1119,8 +1119,8 @@ func TestCMakeFailureKeepsFullCapturedOutput(t *testing.T) {
 			if stage == "install" {
 				wantOp = "CMakeInstall"
 			}
-			if scriptErr.Package != p.Name || scriptErr.Op != wantOp {
-				t.Fatalf("script error = %+v, want package %q op %q", scriptErr, p.Name, wantOp)
+			if scriptErr.Package != p.name || scriptErr.Op != wantOp {
+				t.Fatalf("script error = %+v, want package %q op %q", scriptErr, p.name, wantOp)
 			}
 			for _, want := range []string{"[1/1] Building C object a.c.o", "FAILED: a.c.o", "compiler exploded"} {
 				if !strings.Contains(scriptErr.Error(), want) {
@@ -1252,7 +1252,7 @@ func TestCMakeExecutedHelperStageCount(t *testing.T) {
 	}
 	p := fakeCMakePackage(t, fakeDir)
 	captureCMakeStreams(t, func() { p.CMakeConfigure("-G", "Ninja") })
-	if got := p.ExecutedHelperStages(); got != 1 {
+	if got := BindPackageExecutedHelperStages(p); got != 1 {
 		t.Fatalf("configure stages = %d, want 1", got)
 	}
 	buildDir := p.CMakeBuildDir()
@@ -1265,14 +1265,14 @@ func TestCMakeExecutedHelperStageCount(t *testing.T) {
 		}
 	}
 	captureCMakeStreams(t, func() { p.CMakeConfigure("-G", "Ninja") })
-	if got := p.ExecutedHelperStages(); got != 1 {
+	if got := BindPackageExecutedHelperStages(p); got != 1 {
 		t.Fatalf("cached configure stages = %d, want 1", got)
 	}
 	captureCMakeStreams(t, func() {
 		p.CMakeBuild()
 		p.CMakeInstall()
 	})
-	if got := p.ExecutedHelperStages(); got != 3 {
+	if got := BindPackageExecutedHelperStages(p); got != 3 {
 		t.Fatalf("build/install stages = %d, want 3", got)
 	}
 
@@ -1283,7 +1283,7 @@ func TestCMakeExecutedHelperStageCount(t *testing.T) {
 		dryRun.CMakeBuild()
 		dryRun.CMakeInstall()
 	})
-	if got := dryRun.ExecutedHelperStages(); got != 0 {
+	if got := BindPackageExecutedHelperStages(dryRun); got != 0 {
 		t.Fatalf("dry-run stages = %d, want 0", got)
 	}
 }

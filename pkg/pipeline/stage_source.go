@@ -415,21 +415,9 @@ func (s *sourceStage) localSourceNeedsMaterialization(name string, node *resolve
 	if node.Pkg == nil || len(node.Pkg.GitURLs()) == 0 {
 		return false
 	}
-	version, ref, expected, err := s.resolvePackageSourceVersion(name, node)
+	req, err := s.sourceRequestFor(name, node, "")
 	if err != nil {
 		return true
-	}
-	req := repo.SourceRequest{
-		Key:        repo.PackageTreeKey("", name),
-		URLs:       node.Pkg.GitURLs(),
-		Version:    version,
-		Ref:        ref,
-		Commit:     expected,
-		PatchHash:  s.patchHashes[name],
-		Submodules: node.Pkg.Submodules(),
-	}
-	if version == "" {
-		req.Ref = ""
 	}
 	return !s.sourceRequestReady(req)
 }
@@ -440,22 +428,9 @@ func (s *sourceStage) ownGitSourceNeedsMaterialization(name, sourceRoot string, 
 	if node.Pkg == nil || len(node.Pkg.GitURLs()) == 0 {
 		return false
 	}
-	version, ref, expected, err := s.resolvePackageSourceVersion(name, node)
+	req, err := s.sourceRequestFor(name, node, sourceRoot)
 	if err != nil {
 		return true
-	}
-	req := repo.SourceRequest{
-		Key:        name,
-		Root:       sourceRoot,
-		URLs:       node.Pkg.GitURLs(),
-		Version:    version,
-		Ref:        ref,
-		Commit:     expected,
-		PatchHash:  s.patchHashes[name],
-		Submodules: node.Pkg.Submodules(),
-	}
-	if version == "" {
-		req.Ref = ""
 	}
 	return !s.sourceRequestReady(req)
 }

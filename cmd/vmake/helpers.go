@@ -32,6 +32,18 @@ func fatalMsg(format string, args ...any) {
 	exitWithError(fmt.Errorf(format, args...))
 }
 
+func fatalResolveRoot(err error) {
+	if errors.Is(err, errNotInProject) {
+		cwd, _ := os.Getwd()
+		fatalUsage("not inside a vmake project (no .vmake/, build.go or */build.go found in %s or any parent directory)", cwd)
+	}
+	var usage *usageError
+	if errors.As(err, &usage) {
+		fatalUsage("%v", usage.err)
+	}
+	fatalErr(err)
+}
+
 func fatalUsage(format string, args ...any) {
 	err := &usageError{err: fmt.Errorf(format, args...)}
 	vlog.Error("%v", err)
@@ -41,9 +53,13 @@ func fatalUsage(format string, args ...any) {
 func exitWithError(err error) {
 	var usage *usageError
 	if errors.As(err, &usage) {
-		os.Exit(2)
+		exitWithCode(2)
 	}
-	os.Exit(1)
+	exitWithCode(1)
+}
+
+func exitWithCode(code int) {
+	os.Exit(code)
 }
 
 func getRepoManager() *repo.RepoManager {

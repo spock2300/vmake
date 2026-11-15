@@ -30,8 +30,8 @@ func Main(p *api.Package) { p.SetName(hostName()) }
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pkg.Name != "host" {
-		t.Fatalf("loaded name = %s", pkg.Name)
+	if api.BindPackageName(pkg) != "host" {
+		t.Fatalf("loaded name = %s", api.BindPackageName(pkg))
 	}
 	files, err := ListGoFiles(dir)
 	if err != nil {

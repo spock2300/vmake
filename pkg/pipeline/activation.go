@@ -36,13 +36,13 @@ func ActivatePackage(ctx *RuntimeContext, name string, dirs api.PkgDirs, tc *too
 	if err != nil {
 		return nil, err
 	}
-	platform := platformFromValues(buildCtx.CfgVals)
+	platform := platformFromValues(api.BindCfgVals(&buildCtx.ConfigAccessor))
 	if opts.Mode == ActivationDeclarative {
 		buildCtx.SetDryRun(true)
-		buildCtx.SetBuildSubGraphFunc(func(string) error { return nil })
-		buildCtx.SetDepOutputFunc(func(string) string { return "" })
-		buildCtx.SetDepSrcDirFunc(func(string) string { return "" })
-		buildCtx.SetDepPackageDirFunc(func(depRef string) string {
+		api.BindSetBuildSubGraphFunc(buildCtx, func(string) error { return nil })
+		api.BindSetDepOutputFunc(buildCtx, func(string) string { return "" })
+		api.BindSetDepSrcDirFunc(buildCtx, func(string) string { return "" })
+		api.BindSetDepPackageDirFunc(buildCtx, func(depRef string) string {
 			validateDirectDepPackageRef(ctx, name, depRef)
 			return ""
 		})
@@ -57,7 +57,7 @@ func ActivatePackage(ctx *RuntimeContext, name string, dirs api.PkgDirs, tc *too
 		}
 		pkg.SetDirs(dirs)
 		pkg.SetOptions(mergedPackageAndGlobalOptions(allOpts, visibleGlobalOptionsFor(node, allOpts, ctx.GlobalOptions)))
-		pkg.SetCfgVals(maps.Clone(buildCtx.CfgVals))
+		pkg.SetCfgVals(maps.Clone(api.BindCfgVals(&buildCtx.ConfigAccessor)))
 		if tc != nil {
 			tcName := resolvePkgToolchain(ctx.Config, name, tc.Name)
 			if tcName != tc.Name {
@@ -71,7 +71,7 @@ func ActivatePackage(ctx *RuntimeContext, name string, dirs api.PkgDirs, tc *too
 			flags := api.DefaultBuildFlags(tc.Name, pkg.TargetOS())
 			buildCtx.SetDefaultFlags(flags.CFlags, flags.CxxFlags, flags.LdFlags)
 		}
-		buildCtx.SetPackage(pkg)
+		api.BindSetPackage(buildCtx, pkg)
 		if opts.Mode == ActivationDeclarative {
 			pkg.SetDryRun(true)
 			defer pkg.SetDryRun(false)
@@ -79,7 +79,7 @@ func ActivatePackage(ctx *RuntimeContext, name string, dirs api.PkgDirs, tc *too
 		if opts.Configure != nil {
 			opts.Configure(buildCtx)
 		}
-		pkg.ExecBuildFuncs(dirs.SourceDir, func(fn api.BuildFunc) {
+		api.BindPackageExecBuildFuncs(pkg, dirs.SourceDir, func(fn api.BuildFunc) {
 			fn(buildCtx)
 		})
 		if opts.Mode == ActivationDeclarative {

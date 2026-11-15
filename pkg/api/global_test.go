@@ -256,18 +256,18 @@ func TestAccessorSetOptions(t *testing.T) {
 	a := NewConfigAccessor(nil, nil)
 	opts := map[string]*Option{"x": {name: "x"}}
 	a.SetOptions(opts)
-	if a.Options["x"] == nil {
+	if a.options["x"] == nil {
 		t.Error("SetOptions did not replace")
 	}
 }
 
 func TestConfigContextAllGlobalFlagsFuncs(t *testing.T) {
 	var c, cxx, ld, links []string
-	ctx := NewConfigContext("app").
-		SetGlobalCFlagsFunc(func(f ...string) { c = append(c, f...) }).
-		SetGlobalCxxFlagsFunc(func(f ...string) { cxx = append(cxx, f...) }).
-		SetGlobalLdFlagsFunc(func(f ...string) { ld = append(ld, f...) }).
-		SetGlobalLinksFunc(func(f ...string) { links = append(links, f...) })
+	ctx := NewConfigContext("app")
+	BindSetGlobalCFlagsFunc(ctx, func(f ...string) { c = append(c, f...) })
+	BindSetGlobalCxxFlagsFunc(ctx, func(f ...string) { cxx = append(cxx, f...) })
+	BindSetGlobalLdFlagsFunc(ctx, func(f ...string) { ld = append(ld, f...) })
+	BindSetGlobalLinksFunc(ctx, func(f ...string) { links = append(links, f...) })
 
 	ctx.AddGlobalCFlags("-c")
 	ctx.AddGlobalCxxFlags("-cxx")
@@ -300,14 +300,14 @@ func TestConfigContextGetOptions(t *testing.T) {
 func TestBuildContextSetPackage(t *testing.T) {
 	ctx := NewBuildContext("app", nil)
 	pkg := NewPackage()
-	ctx.SetPackage(pkg)
+	BindSetPackage(ctx, pkg)
 }
 
 func TestCleanContextPackageDelegation(t *testing.T) {
 	pkg := NewPackage()
 	pkg.SetDirs(PkgDirs{SourceDir: "/src", BuildDir: "/build"})
 	pkg.SetSrcDir("/src/actual")
-	ctx := NewCleanContext("app", nil).SetPackage(pkg)
+	ctx := BindSetCleanPackage(NewCleanContext("app", nil), pkg)
 
 	if got := ctx.SourceDir(); got != "/src" {
 		t.Errorf("SourceDir = %q", got)

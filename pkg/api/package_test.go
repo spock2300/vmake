@@ -15,7 +15,7 @@ func TestPackageMetaFullName(t *testing.T) {
 		{"official", "zlib", "official/zlib"},
 	}
 	for _, tt := range tests {
-		m := PackageMeta{Repo: tt.repo, Name: tt.name}
+		m := PackageMeta{repo: tt.repo, name: tt.name}
 		if got := m.FullName(); got != tt.want {
 			t.Errorf("FullName() = %q, want %q", got, tt.want)
 		}
@@ -47,10 +47,10 @@ func TestPackageCallbackRegistration(t *testing.T) {
 		OnClean(func(ctx *CleanContext) {}).
 		OnPackage(func(p *Package) {})
 
-	if len(p.GetRequireFuncs()) != 1 {
-		t.Errorf("requireFuncs = %d", len(p.GetRequireFuncs()))
+	if len(BindPackageGetRequireFuncs(p)) != 1 {
+		t.Errorf("requireFuncs = %d", len(BindPackageGetRequireFuncs(p)))
 	}
-	if p.GetPackageFunc() == nil {
+	if BindPackageGetPackageFunc(p) == nil {
 		t.Error("packageFunc should be set")
 	}
 }
@@ -78,7 +78,7 @@ func TestPackageOnPackageSingle(t *testing.T) {
 	p := NewPackage()
 	first := func(p *Package) {}
 	p.OnPackage(first)
-	gotPtr := reflect.ValueOf(p.GetPackageFunc()).Pointer()
+	gotPtr := reflect.ValueOf(BindPackageGetPackageFunc(p)).Pointer()
 	wantPtr := reflect.ValueOf(first).Pointer()
 	if gotPtr != wantPtr {
 		t.Error("OnPackage should store the callback")
@@ -92,7 +92,7 @@ func TestPackageExecConfigFuncsInOrder(t *testing.T) {
 	p.OnConfig(func(ctx *ConfigContext) { order = append(order, "second") })
 	p.OnConfig(func(ctx *ConfigContext) { order = append(order, "third") })
 
-	p.ExecConfigFuncs(".", func(fn ConfigFunc) { fn(nil) })
+	BindPackageExecConfigFuncs(p, ".", func(fn ConfigFunc) { fn(nil) })
 
 	want := []string{"first", "second", "third"}
 	if !reflect.DeepEqual(order, want) {
@@ -106,7 +106,7 @@ func TestPackageExecBuildFuncsInOrder(t *testing.T) {
 	p.OnBuild(func(ctx *BuildContext) { order = append(order, "b1") })
 	p.OnBuild(func(ctx *BuildContext) { order = append(order, "b2") })
 
-	p.ExecBuildFuncs(".", func(fn BuildFunc) { fn(nil) })
+	BindPackageExecBuildFuncs(p, ".", func(fn BuildFunc) { fn(nil) })
 
 	if !reflect.DeepEqual(order, []string{"b1", "b2"}) {
 		t.Errorf("build order = %v", order)
@@ -122,7 +122,7 @@ func TestPackageExecFuncsChdir(t *testing.T) {
 	})
 
 	tmpDir := t.TempDir()
-	p.ExecConfigFuncs(tmpDir, func(fn ConfigFunc) { fn(nil) })
+	BindPackageExecConfigFuncs(p, tmpDir, func(fn ConfigFunc) { fn(nil) })
 
 	select {
 	case f := <-observed:
@@ -440,7 +440,7 @@ func TestPackageAddRequiresAndUpdateRequireContext(t *testing.T) {
 		}
 	})
 
-	p.UpdateRequireContext(map[string]any{"extra": false}, map[string]*Option{
+	BindPackageUpdateRequireContext(p, map[string]any{"extra": false}, map[string]*Option{
 		"extra": (&Option{name: "extra"}).SetDefault(false),
 	})
 	got := p.GetRequires().Get()
@@ -456,23 +456,23 @@ func TestPackageExecBuildFuncsResetsBuildProvidedLinkerScript(t *testing.T) {
 		ctx.SetProvidedLinkerScript("config.ld")
 	})
 	p.OnBuild(func(ctx *BuildContext) {})
-	p.ExecConfigFuncs(".", func(fn ConfigFunc) {
+	BindPackageExecConfigFuncs(p, ".", func(fn ConfigFunc) {
 		fn(NewConfigContextWithPackage("chip", p))
 	})
-	p.ExecBuildFuncs(".", func(fn BuildFunc) {})
+	BindPackageExecBuildFuncs(p, ".", func(fn BuildFunc) {})
 	if p.ProvidedLinkerScript() != "config.ld" {
 		t.Fatalf("config linker script was cleared: %q", p.ProvidedLinkerScript())
 	}
 
 	p2 := NewPackage().SetName("chip")
 	p2.OnBuild(func(ctx *BuildContext) {})
-	p2.ExecBuildFuncs(".", func(fn BuildFunc) {
+	BindPackageExecBuildFuncs(p2, ".", func(fn BuildFunc) {
 		p2.SetProvidedLinkerScript("build.ld")
 	})
 	if p2.ProvidedLinkerScript() != "build.ld" {
 		t.Fatalf("build linker script = %q, want build.ld", p2.ProvidedLinkerScript())
 	}
-	p2.ExecBuildFuncs(".", func(fn BuildFunc) {})
+	BindPackageExecBuildFuncs(p2, ".", func(fn BuildFunc) {})
 	if p2.ProvidedLinkerScript() != "" {
 		t.Fatalf("stale build linker script was not reset: %q", p2.ProvidedLinkerScript())
 	}

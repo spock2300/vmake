@@ -26,14 +26,14 @@ func TestLoadBuildScript_Simple(t *testing.T) {
 		t.Fatal("LoadBuildScript returned nil package")
 	}
 
-	t.Logf("package name: %s", pkg.Name)
-	t.Logf("options: %d", len(pkg.Options))
-	t.Logf("requireFuncs: %d", len(pkg.GetRequireFuncs()))
+	t.Logf("package name: %s", api.BindPackageName(pkg))
+	t.Logf("options: %d", len(api.BindOptions(&pkg.ConfigAccessor)))
+	t.Logf("requireFuncs: %d", len(api.BindPackageGetRequireFuncs(pkg)))
 
 	buildCtx := api.NewBuildContext("01_simple_c", nil)
-	buildCtx.SetPackage(pkg)
+	api.BindSetPackage(buildCtx, pkg)
 
-	pkg.ExecBuildFuncs(dir, func(fn api.BuildFunc) {
+	api.BindPackageExecBuildFuncs(pkg, dir, func(fn api.BuildFunc) {
 		fn(buildCtx)
 	})
 
@@ -77,7 +77,7 @@ func Main(p *api.Package) {
 		t.Fatal(err)
 	}
 	cfgCtx := api.NewConfigContextWithPackage("chip", pkg)
-	pkg.ExecConfigFuncs(dir, func(fn api.ConfigFunc) { fn(cfgCtx) })
+	api.BindPackageExecConfigFuncs(pkg, dir, func(fn api.ConfigFunc) { fn(cfgCtx) })
 	profile, ok := pkg.ChipProfile()
 	if !ok {
 		t.Fatal("chip profile not recorded")
@@ -114,7 +114,7 @@ func Main(p *api.Package) {
 		t.Fatal(err)
 	}
 	pkg.SetDirs(api.PkgDirs{SourceDir: workspace})
-	pkg.ExecBuildFuncs(workspace, func(fn api.BuildFunc) { fn(api.NewBuildContext("native/sample", nil)) })
+	api.BindPackageExecBuildFuncs(pkg, workspace, func(fn api.BuildFunc) { fn(api.NewBuildContext("native/sample", nil)) })
 	if _, err := os.Stat(filepath.Join(seed, "generated.txt")); !os.IsNotExist(err) {
 		t.Fatalf("runtime write reached source seed: %v", err)
 	}
@@ -168,8 +168,8 @@ func getFlags() []string {
 	}
 
 	buildCtx := api.NewBuildContext("multifile_test", nil)
-	buildCtx.SetPackage(pkg)
-	pkg.ExecBuildFuncs(dir, func(fn api.BuildFunc) {
+	api.BindSetPackage(buildCtx, pkg)
+	api.BindPackageExecBuildFuncs(pkg, dir, func(fn api.BuildFunc) {
 		fn(buildCtx)
 	})
 
@@ -208,7 +208,7 @@ func TestLoadBuildScript_CompleteAPI(t *testing.T) {
 	}
 
 	cfgCtx := api.NewConfigContextWithPackage("06_complete_api", pkg)
-	pkg.ExecConfigFuncs(dir, func(fn api.ConfigFunc) {
+	api.BindPackageExecConfigFuncs(pkg, dir, func(fn api.ConfigFunc) {
 		fn(cfgCtx)
 	})
 
@@ -218,10 +218,10 @@ func TestLoadBuildScript_CompleteAPI(t *testing.T) {
 	}
 
 	buildCtx := api.NewBuildContext("06_complete_api", nil)
-	buildCtx.Options = opts
-	buildCtx.SetPackage(pkg)
+	api.BindSetOptions(&buildCtx.ConfigAccessor, opts)
+	api.BindSetPackage(buildCtx, pkg)
 	buildCtx.SetOptions(opts)
-	pkg.ExecBuildFuncs(dir, func(fn api.BuildFunc) {
+	api.BindPackageExecBuildFuncs(pkg, dir, func(fn api.BuildFunc) {
 		fn(buildCtx)
 	})
 

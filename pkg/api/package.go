@@ -128,15 +128,15 @@ const (
 )
 
 type PackageMeta struct {
-	Repo string
-	Name string
+	repo string
+	name string
 }
 
 func (m *PackageMeta) FullName() string {
-	if m.Repo == "" {
-		return m.Name
+	if m.repo == "" {
+		return m.name
 	}
-	return m.Repo + "/" + m.Name
+	return m.repo + "/" + m.name
 }
 
 type PkgDirs struct {
@@ -268,7 +268,7 @@ func (p *Package) OnClean(fn CleanFunc) *Package {
 
 func (p *Package) OnPackage(fn PackageFunc) *Package {
 	if p.packageFunc != nil {
-		fatalScript(p.Name, "OnPackage", "already registered (single-slot callback); merge the implementations into one")
+		fatalScript(p.name, "OnPackage", "already registered (single-slot callback); merge the implementations into one")
 	}
 	p.packageFunc = fn
 	return p
@@ -310,12 +310,12 @@ func (p *Package) SetSubmodules(v bool) *Package {
 }
 
 func (p *Package) SetRepo(repo string) *Package {
-	p.Repo = repo
+	p.repo = repo
 	return p
 }
 
 func (p *Package) SetName(name string) *Package {
-	p.Name = name
+	p.name = name
 	return p
 }
 
@@ -388,19 +388,19 @@ func matchesAll(v Version, constraints []Constraint) bool {
 	return true
 }
 
-func (p *Package) GitURLs() []string              { return p.gitURLs }
-func (p *Package) Homepage() string               { return p.homepage }
-func (p *Package) Description() string            { return p.description }
-func (p *Package) License() string                { return p.license }
-func (p *Package) Versions() map[string]string    { return p.versions }
-func (p *Package) Submodules() bool               { return p.submodules }
-func (p *Package) GetOptions() map[string]*Option { return p.Options }
-func (p *Package) GetRequires() *Requires         { return &p.requires }
-func (p *Package) GetRef(version string) string   { return p.versions[version] }
-func (p *Package) GetRequireFuncs() []RequireFunc { return p.requireFuncs }
-func (p *Package) HasConfigureDepsFuncs() bool    { return len(p.configureDepsFuncs) > 0 }
-func (p *Package) HasBuildFuncs() bool            { return len(p.buildFuncs) > 0 }
-func (p *Package) GetPackageFunc() PackageFunc    { return p.packageFunc }
+func (p *Package) GitURLs() []string                  { return p.gitURLs }
+func (p *Package) Homepage() string                   { return p.homepage }
+func (p *Package) Description() string                { return p.description }
+func (p *Package) License() string                    { return p.license }
+func (p *Package) Versions() map[string]string        { return p.versions }
+func (p *Package) Submodules() bool                   { return p.submodules }
+func (p *Package) GetOptions() map[string]*Option     { return p.options }
+func (p *Package) GetRequires() *Requires             { return &p.requires }
+func (p *Package) GetRef(version string) string       { return p.versions[version] }
+func (p *Package) hostGetRequireFuncs() []RequireFunc { return p.requireFuncs }
+func (p *Package) hostHasConfigureDepsFuncs() bool    { return len(p.configureDepsFuncs) > 0 }
+func (p *Package) hostHasBuildFuncs() bool            { return len(p.buildFuncs) > 0 }
+func (p *Package) hostGetPackageFunc() PackageFunc    { return p.packageFunc }
 
 func normalizeScriptPanic(pkgName string, r any) *BuildScriptError {
 	if existing, ok := r.(*BuildScriptError); ok {
@@ -434,15 +434,15 @@ func execFuncs[T any](pkgName, dir string, funcs []T, fn func(T)) {
 	})
 }
 
-func (p *Package) ExecConfigFuncs(dir string, fn func(ConfigFunc)) {
-	execFuncs(p.Name, dir, p.configFuncs, fn)
+func (p *Package) hostExecConfigFuncs(dir string, fn func(ConfigFunc)) {
+	execFuncs(p.name, dir, p.configFuncs, fn)
 	p.hasBaseConfigSnapshot = true
 	p.baseDefaultVisibilityHidden = p.defaultVisibilityHidden
 	p.baseChipProfile = p.chipProfile
 	p.baseProvidedLinkerScript = p.providedLinkerScript
 }
 
-func (p *Package) ResetApplyState() {
+func (p *Package) hostResetApplyState() {
 	if !p.hasBaseConfigSnapshot {
 		return
 	}
@@ -453,11 +453,11 @@ func (p *Package) ResetApplyState() {
 	}
 }
 
-func (p *Package) ExecConfigureDepsFuncs(dir string, fn func(ConfigureDepsFunc)) {
-	execFuncs(p.Name, dir, p.configureDepsFuncs, fn)
+func (p *Package) hostExecConfigureDepsFuncs(dir string, fn func(ConfigureDepsFunc)) {
+	execFuncs(p.name, dir, p.configureDepsFuncs, fn)
 }
 
-func (p *Package) ExecBuildFuncs(dir string, fn func(BuildFunc)) {
+func (p *Package) hostExecBuildFuncs(dir string, fn func(BuildFunc)) {
 	p.generators = nil
 	if p.providedLinkerScriptFromBuild {
 		p.providedLinkerScript = ""
@@ -465,24 +465,24 @@ func (p *Package) ExecBuildFuncs(dir string, fn func(BuildFunc)) {
 	}
 	p.declaringBuild = true
 	defer func() { p.declaringBuild = false }()
-	execFuncs(p.Name, dir, p.buildFuncs, fn)
+	execFuncs(p.name, dir, p.buildFuncs, fn)
 }
 
-func (p *Package) ExecInstallFuncs(dir string, fn func(InstallFunc)) {
-	execFuncs(p.Name, dir, p.installFuncs, fn)
+func (p *Package) hostExecInstallFuncs(dir string, fn func(InstallFunc)) {
+	execFuncs(p.name, dir, p.installFuncs, fn)
 }
 
-func (p *Package) ExecCleanFuncs(dir string, fn func(CleanFunc)) {
-	execFuncs(p.Name, dir, p.cleanFuncs, fn)
+func (p *Package) hostExecCleanFuncs(dir string, fn func(CleanFunc)) {
+	execFuncs(p.name, dir, p.cleanFuncs, fn)
 }
 
-func (p *Package) UpdateRequireContext(cfgVals map[string]any, options map[string]*Option) {
+func (p *Package) hostUpdateRequireContext(cfgVals map[string]any, options map[string]*Option) {
 	if len(p.requireFuncs) == 0 && len(p.baseRequires) == 0 {
 		return
 	}
-	ctx := NewRequireContextForConfig(p.Name, cfgVals, options, nil)
+	ctx := NewRequireContextForConfig(p.name, cfgVals, options, nil)
 	ctx.Requires.AddInfos(p.baseRequires...)
-	RunScriptSafe(p.Name, func() {
+	RunScriptSafe(p.name, func() {
 		for _, fn := range p.requireFuncs {
 			fn(ctx)
 		}
@@ -533,7 +533,7 @@ func (p *Package) SetPatches(paths ...string) *Package {
 }
 
 func (p *Package) SetCfgVals(vals map[string]any) *Package {
-	p.CfgVals = vals
+	p.cfgVals = vals
 	return p
 }
 
@@ -584,7 +584,7 @@ func (p *Package) SetDryRun(v bool) *Package {
 
 func (p *Package) DryRun() bool { return p.dryRun }
 
-func (p *Package) ExecutedHelperStages() int { return p.executedHelperStages }
+func (p *Package) hostExecutedHelperStages() int { return p.executedHelperStages }
 
 func (p *Package) SetRoot(v bool) *Package {
 	p.isRoot = v
@@ -712,11 +712,11 @@ func (p *Package) Generate(fn func() error) *Package {
 	return p
 }
 
-func (p *Package) HasGenerators() bool {
+func (p *Package) hostHasGenerators() bool {
 	return len(p.generators) > 0
 }
 
-func (p *Package) GeneratedFiles() []string {
+func (p *Package) hostGeneratedFiles() []string {
 	var files []string
 	for _, g := range p.generators {
 		if g.relPath != "" {
@@ -726,7 +726,7 @@ func (p *Package) GeneratedFiles() []string {
 	return files
 }
 
-func (p *Package) RunGenerators(sourceDir, buildDir string, onWrite func(string)) (err error) {
+func (p *Package) hostRunGenerators(sourceDir, buildDir string, onWrite func(string)) (err error) {
 	if len(p.generators) == 0 || p.dryRun {
 		return nil
 	}
@@ -747,7 +747,7 @@ func (p *Package) RunGenerators(sourceDir, buildDir string, onWrite func(string)
 		p.dirs.BuildDir = prevBuildDir
 		p.onGenWrite = prevOnWrite
 		if r := recover(); r != nil {
-			err = normalizeScriptPanic(p.Name, r)
+			err = normalizeScriptPanic(p.name, r)
 		}
 	}()
 	execInDir(sourceDir, func() {
@@ -856,7 +856,7 @@ func SplitPackageRef(ref string) (repo, name string, ok bool) {
 
 func (p *Package) AddKConfig(name string) *KConfigEntry {
 	if len(p.kconfigEntries) > 0 {
-		fatalScript(p.Name, "AddKConfig", "only one kconfig entry per package is supported (existing: %q)", p.kconfigEntries[0].name)
+		fatalScript(p.name, "AddKConfig", "only one kconfig entry per package is supported (existing: %q)", p.kconfigEntries[0].name)
 	}
 	k := &KConfigEntry{name: name}
 	p.kconfigEntries = append(p.kconfigEntries, k)
@@ -891,18 +891,18 @@ func (p *Package) EnsureConfig(srcDir string) bool {
 	}
 	preset := p.SelectedPreset()
 	if preset == "" {
-		fatalScript(p.Name, "EnsureConfig", "no kconfig preset selected; configure one via AddKConfig().SetDefaultPreset(...) or vmake config")
+		fatalScript(p.name, "EnsureConfig", "no kconfig preset selected; configure one via AddKConfig().SetDefaultPreset(...) or vmake config")
 	}
 	var extraEnv map[string]string
 	if configName != ".config" {
 		extraEnv = map[string]string{"KCONFIG_CONFIG": filepath.ToSlash(configPath)}
 	}
 	if err := p.runMakeInEnv(srcDir, extraEnv, preset); err != nil {
-		fatalScript(p.Name, "EnsureConfig", "%v", err)
+		fatalScript(p.name, "EnsureConfig", "%v", err)
 	}
 	if len(p.kconfigEntries) > 0 {
 		if err := ApplyKConfigPatches(configPath, p.kconfigEntries[0].Patches()); err != nil {
-			fatalScript(p.Name, "EnsureConfig", "apply kconfig patches: %v", err)
+			fatalScript(p.name, "EnsureConfig", "apply kconfig patches: %v", err)
 		}
 	}
 	return true
