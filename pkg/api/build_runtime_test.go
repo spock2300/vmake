@@ -38,7 +38,7 @@ func TestMakeExecutesWithBoundBudget(t *testing.T) {
 		t.Setenv(key, "")
 	}
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte("all:\n\t$(file >parallel.txt,$(MAKEFLAGS))\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte("all:\n\t@echo \"$(MAKEFLAGS)\" > parallel.txt\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	p := NewPackage().SetDirs(PkgDirs{BuildDir: dir})

@@ -219,12 +219,21 @@ func TestNativeLinkSignatureTracksSourceRemovalAndFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	archive := s.getTargetOutputPath(s.graph.Nodes["p:library"])
-	members, err := exec.Command(s.resolvedTools.AR, "t", archive).CombinedOutput()
+	out, err := exec.Command(s.resolvedTools.AR, "t", archive).CombinedOutput()
 	if err != nil {
-		t.Fatalf("archive members: %s: %v", members, err)
+		t.Fatalf("archive members: %s: %v", out, err)
 	}
-	if len(strings.Fields(string(members))) != 1 {
-		t.Fatalf("removed source retained archive member: %s", members)
+	var members []string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		// macOS ar adds a __.SYMDEF index member that is not a source object.
+		if line == "" || strings.HasPrefix(line, "__.SYMDEF") {
+			continue
+		}
+		members = append(members, line)
+	}
+	if len(members) != 1 {
+		t.Fatalf("removed source retained archive member: %s", out)
 	}
 	writeAssemblyFixture(t, dir, "main.c", "int main(void) { return 0; }\n")
 	app := makeTargetWithDeps("app").SetKind(api.TargetBinary).AddFiles("main.c")
