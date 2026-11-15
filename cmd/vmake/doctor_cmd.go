@@ -19,6 +19,7 @@ import (
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/resolver"
 	"github.com/spock2300/vmake/pkg/toolchain"
+	"github.com/spock2300/vmake/pkg/version"
 )
 
 var doctorCmd = &cobra.Command{
@@ -86,6 +87,7 @@ func runDoctor() {
 	if tcErr != nil {
 		findings = append(findings, doctorFinding{Severity: "error", Category: "toolchain", Message: tcErr.Error()})
 	}
+	findings = append(findings, checkInstalledSkill(getSkillPath())...)
 	findings = append(findings, nested...)
 
 	if len(sources) == 0 {
@@ -143,7 +145,7 @@ func reportDoctorFindings(workDir string, findings []doctorFinding) {
 		prefix := ""
 		if f.File != "" {
 			rel, err := filepath.Rel(workDir, f.File)
-			if err == nil {
+			if err == nil && !strings.HasPrefix(rel, "..") {
 				prefix = rel + ": "
 			} else {
 				prefix = f.File + ": "
@@ -168,6 +170,55 @@ func reportDoctorFindings(workDir string, findings []doctorFinding) {
 	if errors > 0 {
 		os.Exit(1)
 	}
+}
+
+func checkInstalledSkill(dir string) []doctorFinding {
+	if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); err != nil {
+		return nil
+	}
+	m, err := readSkillManifest(dir)
+	if err != nil {
+		message := "installed vmake skill has no version record; run vmake skill install"
+		if !os.IsNotExist(err) {
+			message = fmt.Sprintf("cannot read the installed vmake skill version: %v; run vmake skill install", err)
+		}
+		return []doctorFinding{{Severity: "error", Category: "skill", File: dir, Message: message}}
+	}
+	if m.SchemaVersion != 1 || m.SkillDigest == "" {
+		return []doctorFinding{{
+			Severity: "error",
+			Category: "skill",
+			File:     dir,
+			Message:  "installed vmake skill has an invalid version record; run vmake skill install",
+		}}
+	}
+	digest, err := embeddedSkillDigest()
+	if err != nil {
+		return []doctorFinding{{
+			Severity: "error",
+			Category: "skill",
+			File:     dir,
+			Message:  fmt.Sprintf("cannot compute the embedded skill digest: %v", err),
+		}}
+	}
+	if m.SkillDigest != digest {
+		message := fmt.Sprintf("installed vmake skill does not match this vmake binary (installed by %s %s, running %s %s); run vmake skill install",
+			m.Version, m.Commit, version.Version, version.GitCommit)
+		if m.Version == version.Version && m.Commit == version.GitCommit {
+			message = "installed vmake skill content does not match this vmake binary; run vmake skill install"
+		}
+		return []doctorFinding{{
+			Severity: "error",
+			Category: "skill",
+			File:     dir,
+			Message:  message,
+		}}
+	}
+	return []doctorFinding{{
+		Severity: "ok",
+		Category: "skill",
+		Message:  "installed vmake skill matches " + version.Version,
+	}}
 }
 
 func checkAutoWire(src buildscript.Source) []doctorFinding {

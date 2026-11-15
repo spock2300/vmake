@@ -1,23 +1,39 @@
 package main
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	stdfs "io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
 	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/pkg/version"
 )
 
 //go:embed skills/vmake/SKILL.md
 //go:embed skills/vmake/references
 //go:embed skills/vmake/examples
 var skillFS embed.FS
+
+const skillManifestName = ".vmake-skill.json"
+
+type skillManifest struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	Version       string `json:"version"`
+	Commit        string `json:"commit"`
+	BuildDate     string `json:"buildDate,omitempty"`
+	SkillDigest   string `json:"skillDigest"`
+	InstalledAt   string `json:"installedAt"`
+}
 
 var skillCmd = &cobra.Command{
 	Use:   "skill",
@@ -33,7 +49,9 @@ so that AI coding assistants (Claude Code, OpenCode, Cursor, etc.) can assist
 with VMake build configuration.
 
 Use --project <dir> to also install to <dir>/.agents/skills/vmake/. The path is
-used verbatim; it does not search upward for a project root.`,
+used verbatim; it does not search upward for a project root. The install
+records the running vmake version and a digest of the skill content, so
+vmake doctor can report a copy left behind by an older binary.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		installSkill(cmd.Flag("project").Value.String())
 	},
@@ -77,20 +95,8 @@ func installSkill(projectPath string) {
 
 	wasInstalled := isAlreadyInstalled(targets)
 
-	err := copyEmbedToTargets(targets)
-	if err != nil {
+	if err := installSkillTargets(targets); err != nil {
 		fatalMsg("Failed to install skill: %v", err)
-	}
-
-	cliRef := generateCLIRef(RootCmd)
-	for _, target := range targets {
-		cliPath := filepath.Join(target, "references", "cli.md")
-		if err := os.MkdirAll(filepath.Dir(cliPath), 0755); err != nil {
-			fatalMsg("Failed to create references dir: %v", err)
-		}
-		if err := os.WriteFile(cliPath, []byte(cliRef), 0644); err != nil {
-			fatalMsg("Failed to write cli.md: %v", err)
-		}
 	}
 
 	action := "installed"
@@ -101,6 +107,85 @@ func installSkill(projectPath string) {
 	for _, target := range targets {
 		fmt.Printf("  %s\n", target)
 	}
+}
+
+func installSkillTargets(targets []string) error {
+	if err := copyEmbedToTargets(targets); err != nil {
+		return err
+	}
+
+	cliRef := generateCLIRef(RootCmd)
+	for _, target := range targets {
+		cliPath := filepath.Join(target, "references", "cli.md")
+		if err := os.MkdirAll(filepath.Dir(cliPath), 0755); err != nil {
+			return fmt.Errorf("create references dir: %w", err)
+		}
+		if err := os.WriteFile(cliPath, []byte(cliRef), 0644); err != nil {
+			return fmt.Errorf("write cli.md: %w", err)
+		}
+		if err := writeSkillManifest(target); err != nil {
+			return fmt.Errorf("write manifest: %w", err)
+		}
+	}
+	return nil
+}
+
+func embeddedSkillDigest() (string, error) {
+	h := sha256.New()
+	err := stdfs.WalkDir(skillFS, "skills/vmake", func(path string, d stdfs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".md") {
+			return nil
+		}
+		rel := strings.TrimPrefix(path, "skills/vmake/")
+		if rel == "references/cli.md" {
+			return nil
+		}
+		content, err := skillFS.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(h, "%s\x00%s\x00", rel, content)
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func writeSkillManifest(dir string) error {
+	digest, err := embeddedSkillDigest()
+	if err != nil {
+		return err
+	}
+	m := skillManifest{
+		SchemaVersion: 1,
+		Version:       version.Version,
+		Commit:        version.GitCommit,
+		BuildDate:     version.BuildDate,
+		SkillDigest:   digest,
+		InstalledAt:   time.Now().UTC().Format(time.RFC3339),
+	}
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, skillManifestName), append(data, '\n'), 0644)
+}
+
+func readSkillManifest(dir string) (skillManifest, error) {
+	data, err := os.ReadFile(filepath.Join(dir, skillManifestName))
+	if err != nil {
+		return skillManifest{}, err
+	}
+	var m skillManifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return skillManifest{}, err
+	}
+	return m, nil
 }
 
 func uninstallSkill() {

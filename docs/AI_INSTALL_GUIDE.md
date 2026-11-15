@@ -75,6 +75,9 @@ vmake skill install --project .
 - `references/dirs.md` — 目录与路径解析规则
 - `references/gotchas.md` — 高级陷阱与修复模式
 - `examples/` — 各场景 build.go 示例
+- `.vmake-skill.json` — 安装时的 vmake 版本、commit 与技能内容摘要
+
+升级 vmake 后重新执行 `vmake skill install`。安装副本与当前二进制不一致时，`vmake doctor` 会报错并提示重装。
 
 ### 4. 验证
 
