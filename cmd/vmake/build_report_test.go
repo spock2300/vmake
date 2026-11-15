@@ -1553,4 +1553,3 @@ int main(void) { return 0; }
 		t.Fatalf("expected invalid choice failure, got code=%d stderr=%q", badCode, badErr)
 	}
 }
-

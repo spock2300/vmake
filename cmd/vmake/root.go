@@ -159,14 +159,6 @@ func pipelinePathsAt(workDir string) *pipeline.Paths {
 	}
 }
 
-func loadResolveParams(ignoreLock bool, softGitignore bool) (pipeline.ResolveParams, error) {
-	return loadResolveParamsWithOptions(ignoreLock, softGitignore, false, "")
-}
-
-func loadResolveParamsWithOptions(ignoreLock bool, softGitignore bool, skipGitignore bool, configOverride string) (pipeline.ResolveParams, error) {
-	return loadResolveParamsAt(findProjectDir(), ignoreLock, softGitignore, skipGitignore, configOverride)
-}
-
 func loadResolveParamsAt(workDir string, ignoreLock bool, softGitignore bool, skipGitignore bool, configOverride string) (pipeline.ResolveParams, error) {
 	cfg, configPath, digest, err := config.LoadProjectSnapshotWithOverride(workDir, configOverride)
 	if err != nil {

@@ -20,7 +20,8 @@ type layoutInput struct {
 	CCKey          string
 	Mode           string
 	Options        map[string]any
-	Material       keyMaterial
+	Facts          LayoutFacts
+	Platform       api.Platform
 	Ready          bool
 }
 
@@ -36,15 +37,16 @@ func layoutFor(in layoutInput) (build.PackageLayout, error) {
 	}
 	if !in.Ready {
 		return build.PackageLayout{
-			Dirs:  api.PkgDirs{SourceDir: sourceDir},
-			Ready: false,
+			Dirs:     api.PkgDirs{SourceDir: sourceDir},
+			Platform: in.Platform,
+			Ready:    false,
 		}, nil
 	}
 	var key pkgKey
 	if in.Local {
-		key = newLocalPkgKey(in.CCKey, in.Mode, in.Options, in.Material)
+		key = newLocalPkgKey(in.CCKey, in.Mode, in.Options, in.Facts)
 	} else {
-		key = newRemotePkgKey(in.CCKey, in.Mode, in.Options, in.Material)
+		key = newRemotePkgKey(in.CCKey, in.Mode, in.Options, in.Facts)
 	}
 	buildKey, err := key.buildKeyE()
 	if err != nil {
@@ -57,6 +59,7 @@ func layoutFor(in layoutInput) (build.PackageLayout, error) {
 				BuildDir:  filepath.Join(sourceDir, "build", buildKey),
 			},
 			BuildKey: buildKey,
+			Platform: in.Platform,
 			Ready:    true,
 		}, nil
 	}
@@ -68,6 +71,7 @@ func layoutFor(in layoutInput) (build.PackageLayout, error) {
 			InstallDir: filepath.Join(output, "install"),
 		},
 		BuildKey: buildKey,
+		Platform: in.Platform,
 		Ready:    true,
 	}, nil
 }
@@ -125,13 +129,15 @@ func (s *sourceStage) rebindLayout(name string, layout build.PackageLayout) erro
 	return restoreKConfigFiles(s.rc.ctx, s.pkgDirs, map[string]bool{name: true})
 }
 
-func (s *sourceStage) keyMaterialFor(name string) (keyMaterial, error) {
+// layoutFactsFor derives the layout facts from live source state; the
+// inspection derives the same value from the lock.
+func (s *sourceStage) layoutFactsFor(name string) (LayoutFacts, error) {
 	node := s.rc.ctx.DepGraph.Packages[name]
 	flagsHash := packageFlagsHash(s.rc.globalFlagsHash, node)
 	if node == nil || node.IsLocal() {
-		return keyMaterial{
-			commit:    s.sourceCommits[name],
-			flagsHash: flagsHash,
+		return LayoutFacts{
+			Commit:    s.sourceCommits[name],
+			FlagsHash: flagsHash,
 		}, nil
 	}
 	owner := remoteOwnerName(s.rc.ctx, name)
@@ -156,12 +162,12 @@ func (s *sourceStage) keyMaterialFor(name string) (keyMaterial, error) {
 	if node.Source != nil && node.Source.Link != nil {
 		sourceLink = node.Source.Link.Path
 	}
-	return keyMaterial{
-		version:    version,
-		commit:     s.packageCommitKey(name, commit),
-		flagsHash:  flagsHash,
-		patchHash:  s.patchHashes[name],
-		sourceLink: sourceLink,
+	return LayoutFacts{
+		Version:    version,
+		Commit:     s.packageCommitKey(name, commit),
+		FlagsHash:  flagsHash,
+		PatchHash:  s.patchHashes[name],
+		SourceLink: sourceLink,
 	}, nil
 }
 
@@ -170,13 +176,17 @@ func (s *sourceStage) makeLayout(name string, tools *build.ResolvedTools) (build
 	if node == nil || node.Source == nil {
 		return build.PackageLayout{}, fmt.Errorf("package %s has no source", name)
 	}
+	platform, err := PackagePlatform(s.rc.ctx, name)
+	if err != nil {
+		return build.PackageLayout{}, fmt.Errorf("package %s platform: %w", name, err)
+	}
 	ready := tools != nil && s.rc.cfg != nil
 	ccKey := ""
 	mode := ""
-	var material keyMaterial
+	var material LayoutFacts
 	if ready {
 		var err error
-		material, err = s.keyMaterialFor(name)
+		material, err = s.layoutFactsFor(name)
 		if err != nil {
 			return build.PackageLayout{}, err
 		}
@@ -190,34 +200,35 @@ func (s *sourceStage) makeLayout(name string, tools *build.ResolvedTools) (build
 			CCKey:     ccKey,
 			Mode:      mode,
 			Options:   s.conf.allPkgOptions[name],
-			Material:  material,
+			Facts:     material,
+			Platform:  platform,
 			Ready:     ready,
 		})
 	}
-	owner := remoteOwnerName(s.rc.ctx, name)
-	member := remoteMemberPath(s.rc.ctx, name)
+	loc := s.rc.ctx.packageLocation(name, node)
 	tree := ""
 	if s.remote != nil {
 		tree = s.remote.trees[name]
 		if tree == "" {
-			tree = s.remote.trees[owner]
+			tree = s.remote.trees[loc.Owner]
 		}
 	}
 	if tree == "" {
-		tree = remoteTreeDir(s.rc.ctx, owner)
+		tree = loc.OwnerTreeRoot
 	}
 	sourceOverride := ""
-	if node.Source != nil && node.Source.Link != nil {
-		sourceOverride = node.Source.Link.Path
+	if loc.Linked {
+		sourceOverride = loc.PackageRoot
 	}
 	return layoutFor(layoutInput{
 		PkgRoot:        tree,
 		SourceOverride: sourceOverride,
-		Member:         member,
+		Member:         loc.Member,
 		CCKey:          ccKey,
 		Mode:           mode,
 		Options:        s.conf.allPkgOptions[name],
-		Material:       material,
+		Facts:          material,
+		Platform:       platform,
 		Ready:          ready,
 	})
 }

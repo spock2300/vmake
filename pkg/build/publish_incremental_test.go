@@ -54,7 +54,7 @@ func TestPublishedHeadersPreserveMakeIncremental(t *testing.T) {
 					if route == "installer" {
 						installer := NewArtifactInstaller(s.graph, map[string]*api.PkgDirs{"p": &s.pkgs["p"].PkgDirs}, staging)
 						installer.SetInstallType("sdk")
-						installer.SetPackageInfo("p", &PkgInstallInfo{BuildDir: s.pkgs["p"].BuildDir, TargetOS: runtime.GOOS})
+						installer.SetPackageInfo("p", installInfoFor("p", s.graph, &s.pkgs["p"].PkgDirs, s.pkgs["p"].BuildKey, runtime.GOOS))
 						if err := installer.InstallAll(context.Background()); err != nil {
 							t.Fatal(err)
 						}

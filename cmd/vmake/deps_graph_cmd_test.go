@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -8,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/spock2300/vmake/pkg/pipeline"
 )
 
 func hasHostCC() bool {
@@ -236,9 +239,9 @@ func TestDepsGraphFormatsAndUnifiedInspectQuery(t *testing.T) {
 	if !slices.Equal(insp.Data.Roots, []string{"app"}) {
 		t.Fatalf("inspect roots = %v, want [app]", insp.Data.Roots)
 	}
-	wantInspectGraph := []inspectEdge{{From: "app", To: "mid"}, {From: "mid", To: "leaf"}}
-	if !slices.Equal(insp.Data.Graph, wantInspectGraph) {
-		t.Fatalf("inspect graph = %v, want %v", insp.Data.Graph, wantInspectGraph)
+	wantInspectGraph := [][2]string{{"app", "mid"}, {"mid", "leaf"}}
+	if got := inspectEdgePairs(insp.Data.Graph); !slices.Equal(got, wantInspectGraph) {
+		t.Fatalf("inspect graph = %v, want %v", got, wantInspectGraph)
 	}
 	appPkg := inspectPackageNamed(t, insp.Data, "app")
 	if !slices.Equal(appPkg.Deps, []string{"mid"}) {
@@ -744,4 +747,38 @@ func Main(p *api.Package) {
 			t.Fatalf("expected reachable path to leaf:leaf via UseRequires, got err=%v env=%+v", err, env)
 		}
 	})
+}
+
+// inspectEdgePairs projects edges to their endpoints so tests can compare them
+// without depending on the optional kinds/via fields.
+func inspectEdgePairs(edges []inspectEdge) [][2]string {
+	out := make([][2]string, 0, len(edges))
+	for _, edge := range edges {
+		out = append(out, [2]string{edge.From, edge.To})
+	}
+	return out
+}
+
+// Declaring every package with --all is not a reason to report a package that
+// rejects the current configuration; only the active set is the caller's build.
+func TestWarnTargetDeclareIssuesFollowsActiveSet(t *testing.T) {
+	facts := pipeline.GraphFacts{
+		Needed: pipeline.NeededSet{"app": true},
+		Issues: []pipeline.GraphIssue{
+			{Kind: "target-declare", Package: "app", Message: "boom-needed"},
+			{Kind: "target-declare", Package: "extra", Message: "boom-unneeded"},
+			{Kind: "missing-dependency", Package: "app", Message: "other-kind"},
+		},
+	}
+	var buf bytes.Buffer
+	warnTargetDeclareIssues(&buf, facts)
+	got := buf.String()
+	if !strings.Contains(got, "boom-needed") {
+		t.Fatalf("needed package failure not reported: %q", got)
+	}
+	for _, unwanted := range []string{"boom-unneeded", "other-kind"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("unexpected warning %q in %q", unwanted, got)
+		}
+	}
 }

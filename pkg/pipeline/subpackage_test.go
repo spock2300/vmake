@@ -344,7 +344,7 @@ func TestSessionBuildRequestResolvesSubPackageShortName(t *testing.T) {
 	s.ctx.Resolver.SubParents()[memberB] = owner
 	s.needed[memberB] = true
 	s.remote.commits[memberB] = s.remote.commits[owner]
-	s.computeDirsAndOptions()
+	s.computeDirsAndOptions(t)
 
 	builds := 0
 	nodeB.Pkg.OnBuild(func(ctx *api.BuildContext) {
@@ -382,7 +382,7 @@ func TestSessionBuildRequestSkipsFilteredOutCandidate(t *testing.T) {
 	addSubPackageNode(s, far, owner, farDir)
 	s.needed[far] = true
 	s.remote.commits[far] = s.remote.commits[owner]
-	s.computeDirsAndOptions()
+	s.computeDirsAndOptions(t)
 
 	nearBuilds, farBuilds := 0, 0
 	s.ctx.DepGraph.Packages[near].Pkg.OnBuild(func(ctx *api.BuildContext) {

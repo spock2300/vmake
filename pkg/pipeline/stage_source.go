@@ -138,15 +138,14 @@ func (s *sourceStage) verifyLockBeforePrepare() error {
 		if s.rc.ctx.Lock == nil || len(s.rc.ctx.Lock.Packages) == 0 {
 			return fmt.Errorf("--locked: vmake.lock is out of date or missing; run 'vmake deps sync' or 'vmake deps update'")
 		}
-		locked, ok := s.rc.ctx.Lock.Get(name)
-		if !ok || locked.Commit == "" {
-			return fmt.Errorf("--locked: package %s is not locked in vmake.lock; run 'vmake deps sync' or 'vmake deps update'", name)
+		query := s.rc.ctx.lockQuery()
+		if problem, bad := query.LockEntryProblem(name, true); bad {
+			return problem.Error(name)
 		}
-		if pin, _, hasPin := s.rc.ctx.packagePin(name); hasPin {
-			if (repo.IsCommitID(pin) && locked.Commit != pin) || (!repo.IsCommitID(pin) && locked.Version != pin) {
-				return fmt.Errorf("--locked: package %s is pinned to %s in .vmake/project.json, but vmake.lock has %s; run 'vmake deps sync'", name, pin, lockfile.DisplayVersion(locked.Version, locked.Commit))
-			}
+		if problem, mismatch := query.PinLockMismatch(name); mismatch {
+			return problem.Error(name)
 		}
+		locked, _ := s.rc.ctx.Lock.Get(name)
 		if !node.IsLocal() && node.Native == nil && locked.WrapperCommit != "" {
 			wrapperCommit, err := s.registryWrapperCommit(name)
 			if err != nil {
@@ -602,7 +601,7 @@ func (r *remoteVersionState) installedPkgs(pkgDirs map[string]*api.PkgDirs) map[
 	return result
 }
 
-func acquireStorageOwners(ctx *RuntimeContext, needed map[string]bool) error {
+func acquireStorageOwners(ctx *RuntimeContext, needed NeededSet) error {
 	if ctx.Locks == nil {
 		return nil
 	}

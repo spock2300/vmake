@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-
 	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/scriptfs"
 	vlog "github.com/spock2300/vmake/pkg/log"
@@ -10,14 +8,13 @@ import (
 	"github.com/spock2300/vmake/pkg/resolver"
 )
 
+// inspectionRequest is the project the command inspects plus how quiet the
+// preamble should be. Project fields live in projectOptions so the request can
+// express everything openProject accepts.
 type inspectionRequest struct {
-	execution     context.Context
-	root          string
-	overrides     []inspectOverride
-	policy        *resolver.LockPolicy
-	skipGitignore bool
-	quiet         bool
-	execQuiet     bool
+	project   projectOptions
+	quiet     bool
+	execQuiet bool
 }
 
 type inspectionSession struct {
@@ -36,13 +33,7 @@ func (e *inspectionStageError) Unwrap() error { return e.err }
 
 func openInspection(req inspectionRequest) (*inspectionSession, error) {
 	restore := inspectionScope(req.quiet, req.execQuiet)
-	ctx, err := openProject(projectOptions{
-		root:          req.root,
-		execution:     req.execution,
-		overrides:     req.overrides,
-		policy:        req.policy,
-		skipGitignore: req.skipGitignore,
-	})
+	ctx, err := openProject(req.project)
 	if err != nil {
 		restore()
 		return nil, err
@@ -64,6 +55,12 @@ func (s *inspectionSession) Close() {
 			s.restore()
 		}
 	}
+}
+
+// lockPolicyFor is the single construction of a command's lock policy: a
+// locked build is also a strict-wrapper build.
+func lockPolicyFor(dryRun, locked, offline bool) resolver.LockPolicy {
+	return resolver.LockPolicy{DryRun: dryRun, Locked: locked, StrictWrapper: locked, Offline: offline}
 }
 
 func inspectionScope(quiet, execQuiet bool) func() {

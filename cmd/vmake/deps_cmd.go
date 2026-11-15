@@ -82,7 +82,7 @@ availability.`,
 			if jsonOut {
 				vlog.SetLevel(vlog.Quiet)
 			}
-			policy := resolver.LockPolicy{DryRun: true}
+			policy := lockPolicyFor(true, false, false)
 			ctx, err := openProject(projectOptions{execution: cmd.Context(), policy: &policy})
 			if err != nil {
 				return err
@@ -376,11 +376,7 @@ without contacting upstream git remotes.`,
 			if fetchAll && len(args) > 0 {
 				return &usageError{err: fmt.Errorf("cannot combine package arguments with --all")}
 			}
-			policy := resolver.LockPolicy{
-				Locked:        true,
-				StrictWrapper: true,
-				Offline:       offline,
-			}
+			policy := lockPolicyFor(false, true, offline)
 			ctx, err := openProject(projectOptions{execution: cmd.Context(), policy: &policy})
 			if err != nil {
 				return err

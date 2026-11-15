@@ -183,11 +183,11 @@ func rootsHint(graph *resolver.Graph) string {
 	return fmt.Sprintf("[hint] no package declares SetRoot(true); consider adding 'p.SetRoot(true)' to one of: %s", strings.Join(candidates, ", "))
 }
 
-func collectAllPkgOptions(ctx *RuntimeContext, needed map[string]bool) map[string]map[string]any {
+func collectAllPkgOptions(ctx *RuntimeContext, needed NeededSet) map[string]map[string]any {
 	globalVals := config.BuildGlobalValues(ctx.Config)
 	result := make(map[string]map[string]any)
 	for _, name := range ctx.Resolver.GetOrder() {
-		if needed != nil && !needed[name] {
+		if needed != nil && !needed.Has(name) {
 			continue
 		}
 		entry := config.GetEntry(ctx.Config, name)
@@ -195,8 +195,8 @@ func collectAllPkgOptions(ctx *RuntimeContext, needed map[string]bool) map[strin
 		for k, v := range entry.Options {
 			opts[k] = v
 		}
-		if ctx.DerivedOptions != nil {
-			for optName, val := range ctx.DerivedOptions[name] {
+		if ctx.derivedOptions != nil {
+			for optName, val := range ctx.derivedOptions[name] {
 				if _, exists := opts[optName]; exists {
 					continue
 				}
@@ -210,7 +210,7 @@ func collectAllPkgOptions(ctx *RuntimeContext, needed map[string]bool) map[strin
 		if ctx.DepGraph != nil {
 			node = ctx.DepGraph.Packages[name]
 		}
-		for optName, opt := range visibleGlobalOptionsFor(node, ctx.AllOptions[name], ctx.GlobalOptions) {
+		for optName, opt := range visibleGlobalOptionsFor(node, ctx.AllOptions[name], ctx.globalOptions) {
 			if opt == nil || opt.ExportDefine() {
 				continue
 			}
@@ -239,28 +239,31 @@ func packageFlagsHash(globalFlagsHash string, node *resolver.PackageNode) string
 	return hex.EncodeToString(hash[:])[:16]
 }
 
-type keyMaterial struct {
-	version    string
-	commit     string
-	flagsHash  string
-	patchHash  string
-	sourceLink string
+// LayoutFacts is the key material for a package layout. The build stage derives
+// it from live source state and the inspection from the lock; for the same
+// package both adapters must produce this same value.
+type LayoutFacts struct {
+	Version    string
+	Commit     string
+	PatchHash  string
+	SourceLink string
+	FlagsHash  string
 }
 
-func (m keyMaterial) localExtra() string {
+func (m LayoutFacts) localExtra() string {
 	// Buildscript text is intentionally not part of the build-directory key:
 	// a comment-only build.go edit must not discard every action record. The
 	// commands, includes, defines and file lists produced by the script are
 	// captured by each action signature instead.
-	return build.JoinKeyExtra("", m.commit, m.flagsHash, "")
+	return build.JoinKeyExtra("", m.Commit, m.FlagsHash, "")
 }
 
-func (m keyMaterial) remoteExtra() string {
+func (m LayoutFacts) remoteExtra() string {
 	// Patch and source identity affect the materialized tree, so they stay in
 	// the remote build-directory key. Buildscript text is action-level.
-	extra := build.JoinKeyExtra(m.version, m.commit, m.flagsHash, m.patchHash)
-	if m.sourceLink != "" {
-		extra += m.sourceLink + "\x00"
+	extra := build.JoinKeyExtra(m.Version, m.Commit, m.FlagsHash, m.PatchHash)
+	if m.SourceLink != "" {
+		extra += m.SourceLink + "\x00"
 	}
 	return extra
 }
@@ -272,7 +275,7 @@ type pkgKey struct {
 	extra   string
 }
 
-func newLocalPkgKey(ccKey, mode string, opts map[string]any, material keyMaterial) pkgKey {
+func newLocalPkgKey(ccKey, mode string, opts map[string]any, material LayoutFacts) pkgKey {
 	return pkgKey{
 		ccKey:   ccKey,
 		mode:    mode,
@@ -281,7 +284,7 @@ func newLocalPkgKey(ccKey, mode string, opts map[string]any, material keyMateria
 	}
 }
 
-func newRemotePkgKey(ccKey, mode string, opts map[string]any, material keyMaterial) pkgKey {
+func newRemotePkgKey(ccKey, mode string, opts map[string]any, material LayoutFacts) pkgKey {
 	return pkgKey{
 		ccKey:   ccKey,
 		mode:    mode,
@@ -344,7 +347,7 @@ func rebaseKConfigSourceDirs(ctx *RuntimeContext, name, oldRoot, newRoot string)
 			seedRoot = node.Source.Dir
 		}
 	}
-	for _, k := range ctx.AllKConfigs[name] {
+	for _, k := range ctx.allKConfigs[name] {
 		if srcDir := k.SrcDir(); srcDir != "" {
 			rebased, err := rebaseSourcePath(srcDir, oldRoot, newRoot, member, seedRoot)
 			if err != nil {
@@ -356,12 +359,12 @@ func rebaseKConfigSourceDirs(ctx *RuntimeContext, name, oldRoot, newRoot string)
 	return nil
 }
 
-func restoreKConfigFiles(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, needed map[string]bool) error {
+func restoreKConfigFiles(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, needed NeededSet) error {
 	for _, name := range ctx.Resolver.GetOrder() {
 		if !needed[name] {
 			continue
 		}
-		kconfigs := ctx.AllKConfigs[name]
+		kconfigs := ctx.allKConfigs[name]
 		if len(kconfigs) == 0 {
 			continue
 		}

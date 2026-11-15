@@ -234,3 +234,24 @@ func TestHashGlobalFlagsMatchesLegacyDigest(t *testing.T) {
 		t.Fatal("empty and non-empty global flags share a hash")
 	}
 }
+
+func TestPackageLayoutPkgInfoDropsUnreadyBuildState(t *testing.T) {
+	ready := PackageLayout{
+		Dirs:     api.PkgDirs{SourceDir: "/src/app", BuildDir: "/src/app/build/key", InstallDir: "/stage"},
+		BuildKey: "key",
+		Ready:    true,
+	}
+	info := ready.PkgInfo()
+	if info.BuildKey != "key" || info.BuildDir != "/src/app/build/key" {
+		t.Fatalf("ready PkgInfo = %+v", info)
+	}
+	unready := ready
+	unready.Ready = false
+	info = unready.PkgInfo()
+	if info.BuildKey != "" || info.BuildDir != "" {
+		t.Fatalf("unready PkgInfo = %+v, want no build directory or key", info)
+	}
+	if info.SourceDir != "/src/app" {
+		t.Fatalf("unready PkgInfo lost the source dir: %+v", info)
+	}
+}

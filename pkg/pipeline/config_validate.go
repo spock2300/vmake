@@ -9,11 +9,11 @@ import (
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
-func ValidateConfigValues(ctx *RuntimeContext, needed map[string]bool) error {
+func ValidateConfigValues(ctx *RuntimeContext, needed NeededSet) error {
 	return validateConfigValuesInternal(ctx, needed, false)
 }
 
-func validateConfigValuesInternal(ctx *RuntimeContext, needed map[string]bool, checkToolchain bool) error {
+func validateConfigValuesInternal(ctx *RuntimeContext, needed NeededSet, checkToolchain bool) error {
 	if ctx == nil || ctx.Config == nil {
 		return nil
 	}
@@ -24,7 +24,7 @@ func validateConfigValuesInternal(ctx *RuntimeContext, needed map[string]bool, c
 	}
 	if ctx.Config.Global != nil {
 		if ctx.Config.Global.Mode != "" {
-			if modeOpt := ctx.GlobalOptions[api.ModeOptionName]; modeOpt != nil {
+			if modeOpt := ctx.globalOptions[api.ModeOptionName]; modeOpt != nil {
 				if err := api.ValidateOptionValue(modeOpt, ctx.Config.Global.Mode); err != nil {
 					return fmt.Errorf("global.mode: %w", err)
 				}
@@ -50,7 +50,7 @@ func validateConfigValuesInternal(ctx *RuntimeContext, needed map[string]bool, c
 				}
 				continue
 			}
-			if opt := ctx.GlobalOptions[k]; opt != nil {
+			if opt := ctx.globalOptions[k]; opt != nil {
 				norm := api.NormalizeOptionValue(opt, val)
 				if err := api.ValidateOptionValue(opt, norm); err != nil {
 					return fmt.Errorf("global.options.%s: %w", k, err)
@@ -65,7 +65,7 @@ func validateConfigValuesInternal(ctx *RuntimeContext, needed map[string]bool, c
 	}
 	sort.Strings(pkgNames)
 	for _, pkgName := range pkgNames {
-		if needed != nil && !needed[pkgName] {
+		if needed != nil && !needed.Has(pkgName) {
 			continue
 		}
 		entry := ctx.Config.Entries[pkgName]
@@ -143,8 +143,8 @@ func ValidateConfigStrict(ctx *RuntimeContext) ([]string, error) {
 				issues = append(issues, fmt.Sprintf("global.options.%s: set global.%s at the global object level rather than inside global.options", k, k))
 				continue
 			}
-			if ctx.GlobalOptions[k] == nil {
-				avail := sortedOptMapKeys(ctx.GlobalOptions)
+			if ctx.globalOptions[k] == nil {
+				avail := sortedOptMapKeys(ctx.globalOptions)
 				issues = append(issues, fmt.Sprintf("global.options.%s: unknown global option (available: %s)", k, strings.Join(avail, ", ")))
 			}
 		}
@@ -180,7 +180,7 @@ func ValidateConfigStrict(ctx *RuntimeContext) ([]string, error) {
 			}
 			opt := pkgOpts[k]
 			if opt == nil {
-				if gOpt := ctx.GlobalOptions[k]; gOpt != nil {
+				if gOpt := ctx.globalOptions[k]; gOpt != nil {
 					issues = append(issues, fmt.Sprintf("entries.%s.options.%s: option is global; set it under global instead", pkgName, k))
 					continue
 				}
@@ -196,7 +196,7 @@ func ValidateConfigStrict(ctx *RuntimeContext) ([]string, error) {
 				issues = append(issues, fmt.Errorf("entries.%s.options.%s: option is global; set it under global instead", pkgName, k).Error())
 			}
 		}
-		if (entry.KConfig != "" || entry.SelectedPreset != "") && len(ctx.AllKConfigs[pkgName]) == 0 {
+		if (entry.KConfig != "" || entry.SelectedPreset != "") && len(ctx.allKConfigs[pkgName]) == 0 {
 			issues = append(issues, fmt.Sprintf("entries.%s: kconfig/selected_preset configured, but package declares no KConfig", pkgName))
 		}
 	}
@@ -213,7 +213,7 @@ func ValidateConfigStrict(ctx *RuntimeContext) ([]string, error) {
 			} else if cfg, cfgErr := resolveBuildConfig(ctx, true); cfgErr != nil {
 				issues = append(issues, cfgErr.Error())
 			} else {
-				pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
+				pkgDirs := packageSourceDirs(ctx)
 				for _, name := range ctx.Resolver.GetOrder() {
 					if !needed[name] {
 						continue

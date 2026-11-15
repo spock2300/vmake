@@ -52,7 +52,7 @@ func TestLocalPkgDirsExactKey(t *testing.T) {
 			CCKey:     "cc",
 			Mode:      "debug",
 			Options:   opts,
-			Material:  keyMaterial{commit: commit, flagsHash: "flags"},
+			Facts:     LayoutFacts{Commit: commit, FlagsHash: "flags"},
 			Ready:     true,
 		})
 		if err != nil {
@@ -73,17 +73,17 @@ func TestLocalPkgDirsExactKey(t *testing.T) {
 
 func TestRemotePkgDirsExactKey(t *testing.T) {
 	opts := map[string]any{"x": 1}
-	material := keyMaterial{version: "1.0.0", commit: "commit", flagsHash: "flags", patchHash: "patch"}
+	material := LayoutFacts{Version: "1.0.0", Commit: "commit", FlagsHash: "flags", PatchHash: "patch"}
 	wantKey := build.BuildKey("cc", "release", opts, build.JoinKeyExtra("1.0.0", "commit", "flags", "patch"))
 	for _, member := range []string{"", "nested/member"} {
 		layout, err := layoutFor(layoutInput{
-			PkgRoot:  "/vd",
-			Member:   member,
-			CCKey:    "cc",
-			Mode:     "release",
-			Options:  opts,
-			Material: material,
-			Ready:    true,
+			PkgRoot: "/vd",
+			Member:  member,
+			CCKey:   "cc",
+			Mode:    "release",
+			Options: opts,
+			Facts:   material,
+			Ready:   true,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -102,12 +102,12 @@ func TestRemotePkgDirsExactKey(t *testing.T) {
 }
 
 func TestRemotePkgDirsMemberNotInBuildKey(t *testing.T) {
-	material := keyMaterial{version: "1.0.0", commit: "commit", flagsHash: "flags", patchHash: "patch"}
-	root, err := layoutFor(layoutInput{PkgRoot: "/vd", CCKey: "cc", Mode: "release", Material: material, Ready: true})
+	material := LayoutFacts{Version: "1.0.0", Commit: "commit", FlagsHash: "flags", PatchHash: "patch"}
+	root, err := layoutFor(layoutInput{PkgRoot: "/vd", CCKey: "cc", Mode: "release", Facts: material, Ready: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	member, err := layoutFor(layoutInput{PkgRoot: "/vd", Member: "nested/member", CCKey: "cc", Mode: "release", Material: material, Ready: true})
+	member, err := layoutFor(layoutInput{PkgRoot: "/vd", Member: "nested/member", CCKey: "cc", Mode: "release", Facts: material, Ready: true})
 	if err != nil {
 		t.Fatal(err)
 	}

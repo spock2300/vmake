@@ -77,7 +77,7 @@ func Require(ctx *RuntimeContext) (err error) {
 	}
 
 	graph := r.Graph()
-	ctx.applyResolution(Resolution{Resolver: r, DepGraph: graph})
+	ctx.Resolver, ctx.DepGraph = r, graph
 	committed = true
 
 	for _, name := range graph.Order {
@@ -146,9 +146,9 @@ func collectOptions(name, dir string, pkg *api.Package, buf *packageGlobalFlags)
 
 func collectAllOptionsAndKConfigs(ctx *RuntimeContext) error {
 	ctx.AllOptions = make(map[string]map[string]*api.Option)
-	ctx.AllKConfigs = make(map[string][]*api.KConfigEntry)
-	ctx.BufferedGlobalFlags = make(map[string]*packageGlobalFlags)
-	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
+	ctx.allKConfigs = make(map[string][]*api.KConfigEntry)
+	ctx.bufferedGlobalFlags = make(map[string]*packageGlobalFlags)
+	pkgDirs := packageSourceDirs(ctx)
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
@@ -156,7 +156,7 @@ func collectAllOptionsAndKConfigs(ctx *RuntimeContext) error {
 		var opts map[string]*api.Option
 		if node.Pkg != nil {
 			buf := &packageGlobalFlags{}
-			ctx.BufferedGlobalFlags[name] = buf
+			ctx.bufferedGlobalFlags[name] = buf
 			opts = collectOptions(name, pkgDirs[name].SourceDir, node.Pkg, buf)
 		}
 
@@ -192,7 +192,7 @@ func collectAllOptionsAndKConfigs(ctx *RuntimeContext) error {
 						e.SelectPreset(e.DefaultPreset())
 					}
 				}
-				ctx.AllKConfigs[name] = entries
+				ctx.allKConfigs[name] = entries
 				vlog.Verbose("  %s: %d kconfig(s)", name, len(entries))
 			}
 		}
@@ -204,19 +204,19 @@ func applyAllConfigCallbacks(ctx *RuntimeContext) {
 	applyConfigCallbacksForNeeded(ctx, nil, true)
 }
 
-func applyConfigCallbacksForNeeded(ctx *RuntimeContext, needed map[string]bool, logHeader bool) {
+func applyConfigCallbacksForNeeded(ctx *RuntimeContext, needed NeededSet, logHeader bool) {
 	if logHeader {
 		vlog.Info("")
 		vlog.Info("Applying configuration...")
 	}
-	if ctx.BufferedGlobalFlags == nil {
-		ctx.BufferedGlobalFlags = make(map[string]*packageGlobalFlags)
+	if ctx.bufferedGlobalFlags == nil {
+		ctx.bufferedGlobalFlags = make(map[string]*packageGlobalFlags)
 	}
 	globalVals := applyGlobalValues(ctx, needed)
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
 		if needed != nil {
-			if buf := ctx.BufferedGlobalFlags[name]; buf != nil && !needed[name] {
+			if buf := ctx.bufferedGlobalFlags[name]; buf != nil && !needed[name] {
 				buf.resetApply()
 			}
 			if !needed[name] {
@@ -235,15 +235,15 @@ func applyConfigCallbacksForNeeded(ctx *RuntimeContext, needed map[string]bool, 
 			continue
 		}
 
-		buf := ctx.BufferedGlobalFlags[name]
+		buf := ctx.bufferedGlobalFlags[name]
 		if buf == nil {
 			buf = &packageGlobalFlags{}
-			ctx.BufferedGlobalFlags[name] = buf
+			ctx.bufferedGlobalFlags[name] = buf
 		}
 		buf.resetApply()
 
 		applyCtx := api.NewConfigContextWithPackage(name, node.Pkg)
-		applyCtx.SetOptions(mergedPackageAndGlobalOptions(opts, visibleGlobalOptionsFor(node, opts, ctx.GlobalOptions)))
+		applyCtx.SetOptions(mergedPackageAndGlobalOptions(opts, visibleGlobalOptionsFor(node, opts, ctx.globalOptions)))
 		applyVals := mergeCfgVals(name, node, ctx, globalVals, config.GetEntry(ctx.Config, name).Options)
 		applyCtx.SetCfgVals(applyVals)
 		bindApplyGlobalFlagCallbacks(applyCtx, buf)
@@ -326,7 +326,7 @@ func mergeGlobalOptions(ctx *RuntimeContext) error {
 	return mergeGlobalOptionsFiltered(ctx, nil)
 }
 
-func mergeGlobalOptionsFiltered(ctx *RuntimeContext, needed map[string]bool) error {
+func mergeGlobalOptionsFiltered(ctx *RuntimeContext, needed NeededSet) error {
 	mgr := toolchain.GetManager()
 	var tcList []string
 	if tcs, err := mgr.ListToolchains(); err == nil {
@@ -347,7 +347,7 @@ func mergeGlobalOptionsFiltered(ctx *RuntimeContext, needed map[string]bool) err
 	}
 
 	var err error
-	ctx.GlobalOptions, err = api.MergeGlobalOptions(allDefs, tcList)
+	ctx.globalOptions, err = api.MergeGlobalOptions(allDefs, tcList)
 	if err != nil {
 		return fmt.Errorf("global options error: %w", err)
 	}
@@ -358,11 +358,11 @@ func updateGlobalMacroDefines(ctx *RuntimeContext) error {
 	values := config.BuildGlobalValues(ctx.Config)
 	values[api.ModeOptionName] = ResolveMode(ctx.Config, ctx.ModeOverride)
 	values[api.ToolchainOptionName] = ResolveToolchainName(ctx.Config, ctx.ToolchainOverride, ctx.PreferredToolchain)
-	defines, err := collectGlobalMacroDefines(ctx.GlobalOptions, values)
+	defines, err := collectGlobalMacroDefines(ctx.globalOptions, values)
 	if err != nil {
 		return fmt.Errorf("global option macro export: %w", err)
 	}
-	ctx.GlobalMacroDefines = defines
+	ctx.globalMacroDefines = defines
 	return nil
 }
 
@@ -435,15 +435,4 @@ func GetToolchain(cfg *config.ConfigFile, toolchainFlag, fallback string) (*tool
 		return nil, tcName, err
 	}
 	return tc, tcName, nil
-}
-
-func ResolveAllPackageDirs(graph *resolver.Graph) map[string]*api.PkgDirs {
-	dirs := make(map[string]*api.PkgDirs)
-	for name, node := range graph.Packages {
-		if node.Source == nil {
-			continue
-		}
-		dirs[name] = &api.PkgDirs{SourceDir: node.Source.Dir}
-	}
-	return dirs
 }

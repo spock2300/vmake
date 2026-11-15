@@ -225,7 +225,7 @@ func TestLoadResolveParamsUsesProjectRootFromPackageSubdir(t *testing.T) {
 	writePathsTestFile(t, filepath.Join(sub, "build.go"), "package main\n")
 	t.Chdir(sub)
 
-	params, err := loadResolveParams(false, false)
+	params, err := loadResolveParamsAt(findProjectDir(), false, false, false, "")
 	if err != nil {
 		t.Fatalf("loadResolveParams: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestLoadResolveParamsUsesProjectOverride(t *testing.T) {
 	t.Chdir(outside)
 	projectOverride = project
 
-	params, err := loadResolveParams(false, false)
+	params, err := loadResolveParamsAt(findProjectDir(), false, false, false, "")
 	if err != nil {
 		t.Fatalf("loadResolveParams: %v", err)
 	}

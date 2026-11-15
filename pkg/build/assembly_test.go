@@ -223,10 +223,11 @@ func TestClangAssemblyObjectFormats(t *testing.T) {
 
 func TestClangAssemblyCompileCommand(t *testing.T) {
 	tools := &ResolvedTools{CC: "renamed-compiler", CCVersion: "vendor clang version 17.0.6", targetOS: "linux"}
-	writer := NewCompileCommandsWriter(tools)
 	opts := &CompileOptions{Language: "asm-cpp", CFlags: []string{"--target=x86_64-linux-gnu", "-B/toolchain/bin", "-fintegrated-as"}}
-	writer.AddCommand(t.TempDir(), "source.S", "objects/source.S.o", opts)
-	args := writer.commands[0].Arguments
+	compiler, flags := selectCompilerAndFlags(tools.CC, tools.CXX, opts.CFlags, opts.CxxFlags, opts)
+	commandOpts := *opts
+	commandOpts.clang = tools.isClangCC()
+	args := append([]string{compiler}, compileArgs(&commandOpts, "objects/source.S.o", "source.S", flags, "", t.TempDir())...)
 	for _, want := range []string{"--target=x86_64-linux-gnu", "-B/toolchain/bin", "-fno-integrated-as", "source.S"} {
 		if !slices.Contains(args, want) {
 			t.Fatalf("missing %q in %v", want, args)

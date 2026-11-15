@@ -193,6 +193,12 @@ func Main(p *api.Package) {
     assert published.is_symlink() and published.resolve() == archive.resolve(), published
     assert (install / "include/value.h").is_file()
     assert (project / "install/lib/libprobe.a").is_file()
+    stamp_data = json.loads((build / ".vmake_configure.json").read_text(encoding="utf-8"))
+    recorded = stamp_data.get("cmakePath", "")
+    assert recorded and Path(recorded).is_file(), f"configure stamp lacks the executed cmake path: {recorded!r}"
+    resolved_cmake = shutil.which("cmake")
+    if resolved_cmake:
+        assert Path(recorded).resolve() == Path(resolved_cmake).resolve(), (recorded, resolved_cmake)
     cache = build / "CMakeCache.txt"
     cache_text = cache.read_text(encoding="utf-8")
     expected_type = "Debug" if default_mode else "MinSizeRel"

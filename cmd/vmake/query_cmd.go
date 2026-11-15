@@ -76,7 +76,7 @@ func runQueryTargets(execution context.Context) error {
 		fatalResolveRoot(err)
 		return nil
 	}
-	session, err := openInspection(inspectionRequest{execution: execution, root: root, quiet: true})
+	session, err := openInspection(inspectionRequest{project: projectOptions{execution: execution, root: root}, quiet: true, execQuiet: true})
 	if err != nil {
 		return err
 	}
@@ -115,7 +115,7 @@ func runQueryConfig(cmd *cobra.Command, args []string) {
 		fmt.Printf("%s@%s\n", name, node.Native.Selected)
 	}
 
-	opts := maps.Clone(ctx.GlobalOptions)
+	opts := maps.Clone(ctx.GlobalOptions())
 	if opts == nil {
 		opts = make(map[string]*api.Option)
 	}
@@ -127,7 +127,7 @@ func runQueryConfig(cmd *cobra.Command, args []string) {
 	if s := formatOptions(ctx, name, globalValues); s != "" {
 		fmt.Println(s)
 	}
-	for _, d := range ctx.GlobalMacroDefines {
+	for _, d := range ctx.GlobalDefines() {
 		fmt.Printf("-D%s\n", d)
 	}
 	for _, d := range api.ConfigToDefines(opts, vals) {
@@ -141,7 +141,7 @@ func runQuery(cmd *cobra.Command, args []string) error {
 		fatalResolveRoot(err)
 		return nil
 	}
-	session, err := openInspection(inspectionRequest{execution: cmd.Context(), root: root, quiet: true})
+	session, err := openInspection(inspectionRequest{project: projectOptions{execution: cmd.Context(), root: root}, quiet: true, execQuiet: true})
 	if err != nil {
 		return err
 	}
@@ -295,8 +295,8 @@ func (p *treePrinter) parts(name string, kinds []targetKindInfo, node *resolver.
 		}
 	}
 	var pkgDir string
-	if node.IsLocal() && p.inspection.PkgDirs[name] != nil {
-		pkgDir = p.inspection.PkgDirs[name].SourceDir
+	if view, ok := p.inspection.Package(name); ok && !view.Skipped && node.IsLocal() {
+		pkgDir = view.Dirs.SourceDir
 	}
 	if dir := formatPkgDir(pkgDir, p.workDir); dir != "" {
 		parts = append(parts, dir)

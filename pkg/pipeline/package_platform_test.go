@@ -56,7 +56,7 @@ func TestPackagePlatformBeforeTargetDeclaration(t *testing.T) {
 				for key, value := range test.local {
 					locals.Option(key).SetType(api.OptionString).SetDefault(value)
 				}
-				ctx := &RuntimeContext{Config: emptyConfig(), Resolver: r, DepGraph: r.Graph(), GlobalOptions: globals.GetOptions(), AllOptions: map[string]map[string]*api.Option{"app": locals.GetOptions()}}
+				ctx := &RuntimeContext{Config: emptyConfig(), Resolver: r, DepGraph: r.Graph(), globalOptions: globals.GetOptions(), AllOptions: map[string]map[string]*api.Option{"app": locals.GetOptions()}}
 				ctx.Paths = &Paths{ProjectDir: root, DepsDir: filepath.Join(root, ".vmake_deps"), CacheDir: filepath.Join(root, "cache")}
 				ctx.Config.Global.Options = test.global
 				config.SetEntry(ctx.Config, "app", &config.EntryConfig{Options: test.explicit})
@@ -165,7 +165,7 @@ func TestPackagePlatformBuildAndInspectKeys(t *testing.T) {
 		s.cfg = makeBuildConfig(ctx, tc, tc.Name)
 		s.needed = map[string]bool{"app": true}
 		s.globalFlagsHash = build.HashGlobalFlags([4][]string{})
-		s.computeDirsAndOptions()
+		s.computeDirsAndOptions(t)
 		if err := s.prepareAllPackages(); err != nil {
 			t.Fatal(err)
 		}
@@ -173,8 +173,8 @@ func TestPackagePlatformBuildAndInspectKeys(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !reflect.DeepEqual(inspection.PkgDirs["app"], s.pkgDirs["app"]) {
-			t.Errorf("%s inspection/build dirs differ: %+v, %+v", targetOS, inspection.PkgDirs["app"], s.pkgDirs["app"])
+		if !reflect.DeepEqual(inspection.pkgDirs["app"], s.pkgDirs["app"]) {
+			t.Errorf("%s inspection/build dirs differ: %+v, %+v", targetOS, inspection.pkgDirs["app"], s.pkgDirs["app"])
 		}
 		if s.pkgDirs["app"].BuildDir == previousDir {
 			t.Error("package platform change reused its previous build directory")
@@ -218,12 +218,12 @@ func TestInspectUsesUnreachablePackagePlatform(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inspection.Needed["unused"] {
+	if inspection.needed["unused"] {
 		t.Fatal("unused package unexpectedly reachable from app")
 	}
 	node := r.Graph().Packages["unused"]
 	want := makeLocalPkgDirs(node.Source.Dir, localPkgKeyFromParts(tools.CCKey(), inspection.Mode, config.GetEntry(ctx.Config, "unused").Options, inspection.GlobalFlagsHash, ""))
-	if got := inspection.PkgDirs["unused"]; !reflect.DeepEqual(got, want) {
+	if got := inspection.pkgDirs["unused"]; !reflect.DeepEqual(got, want) {
 		t.Errorf("unreachable package directories = %+v, want its platform directories %+v", got, want)
 	}
 }

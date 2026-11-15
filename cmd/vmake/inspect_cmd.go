@@ -14,7 +14,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/pipeline"
@@ -158,8 +157,10 @@ type inspectInstall struct {
 }
 
 type inspectEdge struct {
-	From string `json:"from"`
-	To   string `json:"to"`
+	From  string   `json:"from"`
+	To    string   `json:"to"`
+	Kinds []string `json:"kinds,omitempty"`
+	Via   []string `json:"via,omitempty"`
 }
 
 type inspectOverride struct {
@@ -243,7 +244,7 @@ func runInspect(execution context.Context, setFlags []string, includeTargets boo
 		return failInspect(envelope, code, err)
 	}
 
-	session, err := openInspection(inspectionRequest{execution: execution, root: root, overrides: overrides, quiet: true, execQuiet: true})
+	session, err := openInspection(inspectionRequest{project: projectOptions{execution: execution, root: root, overrides: overrides}, quiet: true, execQuiet: true})
 	if err != nil {
 		var overrideErr *optionOverrideError
 		if errors.As(err, &overrideErr) {
@@ -366,9 +367,9 @@ func validateInspectOverride(ctx *RuntimeContext, override inspectOverride) erro
 
 func inspectOverrideOption(ctx *RuntimeContext, pkgName, optName string) (*api.Option, error) {
 	if pkgName == "" {
-		opt, ok := ctx.GlobalOptions[optName]
+		opt, ok := ctx.GlobalOptions()[optName]
 		if !ok {
-			return nil, fmt.Errorf("global option %q not found (available: %s)", optName, strings.Join(sortedOptionNames(ctx.GlobalOptions), ", "))
+			return nil, fmt.Errorf("global option %q not found (available: %s)", optName, strings.Join(sortedOptionNames(ctx.GlobalOptions()), ", "))
 		}
 		return opt, nil
 	}
@@ -412,6 +413,21 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 	if rel, err := filepath.Rel(root, ctx.ConfigPath); err == nil {
 		configFile = filepath.ToSlash(rel)
 	}
+	graph, graphErr := pipeline.BuildUnifiedGraph(ctx, inspection, pipeline.GraphOptions{
+		IncludeAll:     true,
+		DeclareTargets: includeTargets,
+	})
+	if graphErr != nil {
+		return nil, []inspectDiagnostic{{
+			Severity: "error",
+			Code:     "VMAKE_E_INSPECT",
+			Message:  graphErr.Error(),
+		}}
+	}
+	facts := graph.Facts()
+	roots := facts.Roots
+	edges := inspectEdgesFromGraph(facts)
+
 	data := &inspectData{
 		Root:                   root,
 		ConfigFile:             configFile,
@@ -420,16 +436,16 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 		Toolchain:              inspection.TcName,
 		ToolchainInfo:          inspectToolchainInfo(inspection),
 		Global:                 global,
-		GlobalOptionDefs:       inspectOptionDefs(ctx.GlobalOptions),
+		GlobalOptionDefs:       inspectOptionDefs(ctx.GlobalOptions()),
 		GlobalCFlags:           inspection.GlobalCFlags,
 		GlobalCxxFlags:         inspection.GlobalCxxFlags,
 		GlobalLdFlags:          inspection.GlobalLdFlags,
 		GlobalLinks:            inspection.GlobalLinks,
 		GlobalDefines:          inspection.GlobalMacroDefines,
 		Overrides:              overrides,
-		Roots:                  inspectRoots(ctx, inspection.Needed),
+		Roots:                  roots,
 		Packages:               make([]inspectPackage, 0, len(ctx.DepGraph.Packages)),
-		Graph:                  inspectGraph(ctx),
+		Graph:                  edges,
 		CompileDatabase:        compileDatabase,
 		CompileDatabasePresent: inspectPathExists(compileDatabase),
 		BuildReport:            buildReport,
@@ -441,19 +457,19 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 	}
 	sources := inspectSourceStates(ctx, inspection)
 	diagnostics := make([]inspectDiagnostic, 0)
-	pkgSubGraphs := make(map[string][]string)
 	for _, name := range inspectPackageNames(ctx) {
 		node := ctx.DepGraph.Packages[name]
 		if node == nil || node.Source == nil {
 			continue
 		}
 		source := sources[name]
+		view, viewOK := inspection.Package(name)
 		pkg := inspectPackage{
 			Name:          name,
 			Kind:          inspectPackageKind(node),
 			SourceDir:     inspectSourceDir(inspection, name, node),
 			SourcePresent: source.Present,
-			Needed:        inspection.Needed[name],
+			Needed:        view.Needed,
 			Deps:          inspectSortedStrings(node.Deps),
 		}
 		if node.IsLocal() && node.Source.Dir != "" {
@@ -466,35 +482,44 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 		if node.Pkg != nil {
 			pkg.Description = node.Pkg.Description()
 		}
-		if tc := inspection.PackageToolchains[name]; tc != nil {
-			pkg.Toolchain = tc.Name
+		if view.Toolchain != nil {
+			pkg.Toolchain = view.Toolchain.Name
 		}
-		pkg.Options = inspectPackageOptions(ctx, name, inspection.PackageValues[name])
-		if platform, ok := inspection.PackagePlatforms[name]; ok {
-			pkg.Platform = &inspectPlatform{TargetOS: platform.OS, TargetTriple: platform.Triple}
+		pkg.Options = inspectPackageOptions(ctx, name, view.Values)
+		if view.Platform != nil {
+			pkg.Platform = &inspectPlatform{TargetOS: view.Platform.OS, TargetTriple: view.Platform.Triple}
 		}
 		pkg.OptionDefs = inspectOptionDefs(ctx.AllOptions[name])
 		if source.Diagnostic != nil {
 			diagnostics = append(diagnostics, *source.Diagnostic)
 		}
 		if pkg.Needed {
-			pkg.BuildDir, pkg.BuildKey = inspectBuildDirFields(inspection.PkgDirs[name], inspection.Layouts[name], node.IsLocal())
+			if viewOK && !view.Skipped && view.Dirs.BuildDir != "" {
+				pkg.BuildDir = view.Dirs.BuildDir
+				if view.Layout != nil {
+					pkg.BuildKey = view.Layout.BuildKey
+				}
+			}
 			if includeTargets && source.Present {
-				targets, subs, err := inspectTargets(ctx, inspection, name, node)
-				if err != nil {
-					diagnostics = append(diagnostics, inspectTargetDiagnostic(name, err))
-				} else {
-					pkg.Targets = targets
-					if len(subs) > 0 {
-						pkgSubGraphs[name] = subs
-					}
+				if buildCtx, ok := graph.BuildContext(name); ok {
+					pkg.Targets = renderInspectTargets(name, node, view, buildCtx)
 				}
 			}
 		}
 		data.Packages = append(data.Packages, pkg)
 	}
+	for _, issue := range facts.Issues {
+		// Packages outside the active roots are declared only to report their
+		// targets in inspect; a rejection of the current configuration there is
+		// not a diagnostic for this invocation.
+		if issue.Kind == "target-declare" && facts.Needed.Has(issue.Package) {
+			diagnostics = append(diagnostics, inspectGraphDiagnostic(issue))
+		}
+	}
 	if includeTargets {
-		mergeInspectTargetEdges(ctx, inspection.Needed, data, pkgSubGraphs)
+		for i := range data.Packages {
+			data.Packages[i].Deps = inspectSortedStrings(facts.PackageDeps[data.Packages[i].Name])
+		}
 	}
 	return data, diagnostics
 }
@@ -502,19 +527,6 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 func inspectPathExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
-}
-
-func inspectBuildDirFields(dirs *api.PkgDirs, layout *build.PackageLayout, local bool) (string, string) {
-	if dirs == nil || dirs.BuildDir == "" {
-		return "", ""
-	}
-	if layout != nil && layout.BuildKey != "" {
-		return dirs.BuildDir, layout.BuildKey
-	}
-	if !local || filepath.Base(filepath.Dir(dirs.BuildDir)) != "build" {
-		return dirs.BuildDir, ""
-	}
-	return dirs.BuildDir, filepath.Base(dirs.BuildDir)
 }
 
 func inspectPackageNames(ctx *RuntimeContext) []string {
@@ -537,8 +549,8 @@ func inspectPackageKind(node *resolver.PackageNode) string {
 }
 
 func inspectSourceDir(inspection *pipeline.Inspection, name string, node *resolver.PackageNode) string {
-	if dirs := inspection.PkgDirs[name]; dirs != nil && dirs.SourceDir != "" {
-		return dirs.SourceDir
+	if view, ok := inspection.Package(name); ok && !view.Skipped && view.Dirs.SourceDir != "" {
+		return view.Dirs.SourceDir
 	}
 	if node.Source != nil && node.Source.Link != nil {
 		return node.Source.Link.Path
@@ -561,8 +573,9 @@ func inspectSourceStates(ctx *RuntimeContext, inspection *pipeline.Inspection) m
 		if node == nil || node.Source == nil {
 			continue
 		}
+		view, _ := inspection.Package(name)
 		state := inspectSourceState{Present: inspectSourcePresent(ctx, name, node)}
-		if inspection.Needed[name] && !state.Present {
+		if view.Needed && !state.Present {
 			url, version := inspectSourceReference(ctx, name, node)
 			state.Diagnostic = &inspectDiagnostic{
 				Severity: "warning",
@@ -703,7 +716,7 @@ func inspectPackageOptions(ctx *RuntimeContext, name string, values map[string]a
 
 func packageConfigAccessor(ctx *RuntimeContext, name string, globalValues map[string]any) api.ConfigAccessor {
 	acc := api.NewConfigAccessor(pipeline.DisplayPackageValues(ctx, name, globalValues), maps.Clone(ctx.AllOptions[name]))
-	acc.MergeGlobals(ctx.GlobalOptions, globalValues)
+	acc.MergeGlobals(ctx.GlobalOptions(), globalValues)
 	return acc
 }
 
@@ -757,37 +770,21 @@ func inspectTargetDeps(target *api.Target, node *resolver.PackageNode) []string 
 	return out
 }
 
-func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name string, node *resolver.PackageNode) ([]inspectTarget, []string, error) {
-	if node == nil || node.Pkg == nil || !inspectSourcePresent(ctx, name, node) {
-		return nil, nil, nil
-	}
-	dirs := inspection.PkgDirs[name]
-	if dirs == nil {
-		dirs = &api.PkgDirs{SourceDir: inspectSourceDir(inspection, name, node)}
-	}
-	buildCtx, err := pipeline.DeclareTargets(ctx, name, dirs, inspection.PackageToolchains[name], inspection.GlobalValues)
-	if blocked := scriptfs.TakeBlockedWrites(); len(blocked) > 0 && err == nil {
-		if len(blocked) == 1 {
-			err = errors.New(blocked[0])
-		} else {
-			err = fmt.Errorf("%s (and %d more blocked write attempts)", blocked[0], len(blocked)-1)
-		}
-	}
-	if err != nil {
-		return nil, nil, err
-	}
-	subs := append([]string(nil), api.BindSubGraphs(buildCtx)...)
+// renderInspectTargets projects an already-declared build context into the
+// inspect schema. The declaration itself belongs to the unified graph, so
+// OnBuild runs exactly once per package.
+func renderInspectTargets(name string, node *resolver.PackageNode, view pipeline.PackageView, buildCtx *api.BuildContext) []inspectTarget {
 	registered := buildCtx.GetTargets()
 	if len(registered) == 0 {
-		return nil, subs, nil
+		return nil
 	}
 	targetOS := ""
 	if node.Pkg != nil {
 		targetOS = node.Pkg.TargetOS()
 	}
 	defaults := api.DefaultFlags{}
-	if tc := inspection.PackageToolchains[name]; tc != nil {
-		defaults = api.DefaultBuildFlags(tc.Name, targetOS)
+	if view.Toolchain != nil {
+		defaults = api.DefaultBuildFlags(view.Toolchain.Name, targetOS)
 	}
 	installItems := buildCtx.GetInstallItems()
 	installs := make([]inspectInstall, 0, len(installItems))
@@ -824,7 +821,7 @@ func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name s
 			InstallDir:        target.InstallDir(),
 			NoInstall:         target.NoInstall(),
 			Installs:          installs,
-			InstallPath:       inspectTargetInstallPath(target, targetOS, inspectPkgInfo(dirs, inspection, name)),
+			InstallPath:       inspectTargetInstallPath(target, targetOS, inspectPkgInfo(view)),
 		}
 		if target.Kind() != api.TargetVoid {
 			entry.Output = api.TargetFilename(target.Kind(), target.Name(), targetOS)
@@ -832,11 +829,27 @@ func inspectTargets(ctx *RuntimeContext, inspection *pipeline.Inspection, name s
 		targets = append(targets, entry)
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
-	return targets, subs, nil
+	return targets
 }
 
-func inspectTargetDiagnostic(name string, err error) inspectDiagnostic {
-	message := fmt.Sprintf("cannot declare targets for %s: %v", name, err)
+// inspectEdgesFromGraph projects the unified graph's package edges into the
+// inspect schema.
+func inspectEdgesFromGraph(facts pipeline.GraphFacts) []inspectEdge {
+	edges := make([]inspectEdge, 0, len(facts.PackageEdges))
+	for _, pe := range facts.PackageEdges {
+		edges = append(edges, inspectEdge{From: pe.From, To: pe.To, Kinds: pe.Kinds, Via: pe.Via})
+	}
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].From != edges[j].From {
+			return edges[i].From < edges[j].From
+		}
+		return edges[i].To < edges[j].To
+	})
+	return edges
+}
+
+func inspectGraphDiagnostic(issue pipeline.GraphIssue) inspectDiagnostic {
+	message := issue.Message
 	fix := "Fix the package OnBuild callback, then rerun vmake inspect."
 	if strings.Contains(message, "read-only inspection:") {
 		message = strings.ReplaceAll(message, "panic: ", "")
@@ -847,6 +860,7 @@ func inspectTargetDiagnostic(name string, err error) inspectDiagnostic {
 		Code:     "VMAKE_W_TARGET_DECLARE",
 		Message:  message,
 		Fix:      fix,
+		Package:  issue.Package,
 	}
 }
 
@@ -857,15 +871,8 @@ func inspectDeclaredFlags(flags, seeded []string) []string {
 	return append([]string{}, flags...)
 }
 
-func inspectPkgInfo(dirs *api.PkgDirs, inspection *pipeline.Inspection, name string) *build.PkgInfo {
-	buildKey := ""
-	if layout := inspection.Layouts[name]; layout != nil {
-		buildKey = layout.BuildKey
-	}
-	if dirs == nil {
-		return build.NewPkgInfo(api.PkgDirs{}, buildKey)
-	}
-	return build.NewPkgInfo(*dirs, buildKey)
+func inspectPkgInfo(view pipeline.PackageView) *build.PkgInfo {
+	return view.PkgInfo()
 }
 
 func inspectTargetInstallPath(target *api.Target, targetOS string, pkgInfo *build.PkgInfo) string {
@@ -910,150 +917,8 @@ func inspectStringValue(value any) string {
 	return text
 }
 
-func inspectRoots(ctx *RuntimeContext, needed map[string]bool) []string {
-	return inspectRootsFromEdges(ctx, needed, inspectGraph(ctx))
-}
-
-func inspectRootsFromEdges(ctx *RuntimeContext, needed map[string]bool, edges []inspectEdge) []string {
-	pkgEdges := make([]pipeline.PackageEdge, 0, len(edges))
-	for _, edge := range edges {
-		pkgEdges = append(pkgEdges, pipeline.PackageEdge{From: edge.From, To: edge.To})
-	}
-	return pipeline.RootsFromEdges(ctx, inspectPackageNames(ctx), pkgEdges, needed)
-}
-
-func inspectGraph(ctx *RuntimeContext) []inspectEdge {
-	edges := make([]inspectEdge, 0)
-	seen := make(map[inspectEdge]bool)
-	for name, node := range ctx.DepGraph.Packages {
-		if node == nil {
-			continue
-		}
-		for _, dep := range node.Deps {
-			edge := inspectEdge{From: name, To: dep}
-			if seen[edge] {
-				continue
-			}
-			seen[edge] = true
-			edges = append(edges, edge)
-		}
-	}
-	sort.Slice(edges, func(i, j int) bool {
-		if edges[i].From != edges[j].From {
-			return edges[i].From < edges[j].From
-		}
-		return edges[i].To < edges[j].To
-	})
-	return edges
-}
-
 func inspectSortedStrings(values []string) []string {
 	out := append([]string{}, values...)
 	slices.Sort(out)
 	return slices.Compact(out)
-}
-
-func mergeInspectTargetEdges(ctx *RuntimeContext, needed map[string]bool, data *inspectData, pkgSubGraphs map[string][]string) {
-	if ctx == nil || ctx.DepGraph == nil || data == nil {
-		return
-	}
-	var subParents map[string]string
-	if ctx.Resolver != nil {
-		subParents = ctx.Resolver.SubParents()
-	}
-	resolvePkg := func(fromPkg, ref string) string {
-		if ref == "" || strings.Contains(ref, "/") {
-			return ref
-		}
-		if needed[fromPkg] {
-			if cand := api.ResolveSubPackageName(fromPkg, ref, subParents, func(c string) bool {
-				return needed[c]
-			}); cand != ref || needed[cand] {
-				return cand
-			}
-		}
-		return api.ResolveSubPackageName(fromPkg, ref, subParents, func(cand string) bool {
-			return ctx.DepGraph.Packages[cand] != nil
-		})
-	}
-
-	ownTargets := make(map[string]map[string]bool, len(data.Packages))
-	for i := range data.Packages {
-		pkg := &data.Packages[i]
-		if len(pkg.Targets) == 0 {
-			continue
-		}
-		m := make(map[string]bool, len(pkg.Targets))
-		for _, t := range pkg.Targets {
-			m[t.Name] = true
-		}
-		ownTargets[pkg.Name] = m
-	}
-
-	seenEdges := make(map[inspectEdge]bool, len(data.Graph))
-	edges := make([]inspectEdge, 0, len(data.Graph))
-	for _, e := range data.Graph {
-		if !seenEdges[e] {
-			seenEdges[e] = true
-			edges = append(edges, e)
-		}
-	}
-	addEdge := func(from, to string) {
-		if from == "" || to == "" || from == to || ctx.DepGraph.Packages[to] == nil {
-			return
-		}
-		e := inspectEdge{From: from, To: to}
-		if !seenEdges[e] {
-			seenEdges[e] = true
-			edges = append(edges, e)
-		}
-	}
-
-	for i := range data.Packages {
-		pkg := &data.Packages[i]
-		deps := append([]string{}, pkg.Deps...)
-		for _, sub := range pkgSubGraphs[pkg.Name] {
-			resolved := resolvePkg(pkg.Name, sub)
-			if resolved != "" && resolved != pkg.Name && ctx.DepGraph.Packages[resolved] != nil {
-				if pkg.Needed && !needed[resolved] {
-					continue
-				}
-				deps = append(deps, resolved)
-				addEdge(pkg.Name, resolved)
-			}
-		}
-		for _, t := range pkg.Targets {
-			for _, rawDep := range t.Deps {
-				ref := build.ParseDependencyRef(rawDep)
-				var depPkg string
-				switch {
-				case ref.HasTarget:
-					depPkg = resolvePkg(pkg.Name, ref.Package)
-				case ref.IsPackagePath():
-					depPkg = ref.Package
-				default:
-					if !ownTargets[pkg.Name][rawDep] {
-						depPkg = resolvePkg(pkg.Name, ref.Package)
-					}
-				}
-				if depPkg != "" && depPkg != pkg.Name && ctx.DepGraph.Packages[depPkg] != nil {
-					if pkg.Needed && !needed[depPkg] {
-						continue
-					}
-					deps = append(deps, depPkg)
-					addEdge(pkg.Name, depPkg)
-				}
-			}
-		}
-		pkg.Deps = inspectSortedStrings(deps)
-	}
-
-	sort.Slice(edges, func(i, j int) bool {
-		if edges[i].From != edges[j].From {
-			return edges[i].From < edges[j].From
-		}
-		return edges[i].To < edges[j].To
-	})
-	data.Graph = edges
-	data.Roots = inspectRootsFromEdges(ctx, needed, edges)
 }

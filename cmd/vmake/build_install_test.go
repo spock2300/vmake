@@ -33,11 +33,11 @@ func TestInstallReusesBuildDeclaration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := &RuntimeContext{Config: &config.ConfigFile{}, AllOptions: map[string]map[string]*api.Option{}}
+	ctx := &RuntimeContext{Config: &config.ConfigFile{}}
 	dirs := map[string]*api.PkgDirs{"app": {SourceDir: root, BuildDir: filepath.Join(root, "build")}}
 	result := &BuildResult{AllTargets: targets, Graph: graph, PkgDirs: dirs, BuildCtxs: map[string]*api.BuildContext{"app": declared}}
 	installer := build.NewArtifactInstaller(graph, dirs, filepath.Join(root, "install"))
-	if err := installOnePackage(ctx, "app", &resolver.PackageNode{Pkg: pkg}, result, installer, nil); err != nil {
+	if err := installOnePackage(ctx, "app", &resolver.PackageNode{Pkg: pkg}, result, installer, nil, map[string]*api.Option{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := installer.InstallAll(nil); err != nil {
@@ -209,11 +209,18 @@ func TestInstallPrefixPriority(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ctx := &RuntimeContext{Config: &config.ConfigFile{}, AllOptions: map[string]map[string]*api.Option{}}
+			ctx := &RuntimeContext{Config: &config.ConfigFile{}}
 			dirs := map[string]*api.PkgDirs{"app": {SourceDir: root, BuildDir: buildDir}}
-			result := &BuildResult{AllTargets: targets, Graph: graph, PkgDirs: dirs, BuildCtxs: map[string]*api.BuildContext{"app": declared}}
+			layouts := map[string]*build.PackageLayout{"app": {Dirs: *dirs["app"], BuildKey: "test-key", Ready: true}}
+			placements := map[string]build.ArtifactPlacement{"app:app": {
+				OutputPath:    filepath.Join(buildDir, appName),
+				InstallSubdir: "bin",
+				InstallName:   appName,
+				Kind:          api.TargetBinary,
+			}}
+			result := &BuildResult{AllTargets: targets, Graph: graph, PkgDirs: dirs, Layouts: layouts, TargetPlacements: placements, BuildCtxs: map[string]*api.BuildContext{"app": declared}}
 			installer := build.NewArtifactInstaller(graph, dirs, installerPrefix)
-			if err := installOnePackage(ctx, "app", &resolver.PackageNode{Pkg: pkg}, result, installer, nil); err != nil {
+			if err := installOnePackage(ctx, "app", &resolver.PackageNode{Pkg: pkg}, result, installer, nil, map[string]*api.Option{}); err != nil {
 				t.Fatal(err)
 			}
 			if err := installer.InstallAll(nil); err != nil {

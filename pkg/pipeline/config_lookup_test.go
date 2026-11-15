@@ -105,7 +105,7 @@ func TestConfigLookupGlobalOption(t *testing.T) {
 			"reader": reader,
 		}},
 		AllOptions:    map[string]map[string]*api.Option{},
-		GlobalOptions: map[string]*api.Option{"chip": globalOpt},
+		globalOptions: map[string]*api.Option{"chip": globalOpt},
 	}
 	lookup := newConfigLookup(ctx, "reader", map[string]any{"chip": "py32f537"}, nil)
 	value, opt, err := lookup("reader", "chip")
@@ -129,7 +129,7 @@ func TestConfigLookupGlobalOptionUsesPackageOverride(t *testing.T) {
 			"reader": reader,
 		}},
 		AllOptions:    map[string]map[string]*api.Option{},
-		GlobalOptions: map[string]*api.Option{"chip": globalOpt},
+		globalOptions: map[string]*api.Option{"chip": globalOpt},
 	}
 	lookup := newConfigLookup(ctx, "reader", map[string]any{"chip": "py32f539"}, nil)
 	value, opt, err := lookup("reader", "chip")
@@ -149,7 +149,7 @@ func TestConfigLookupImplicitPlatformOption(t *testing.T) {
 			"reader": reader,
 		}},
 		AllOptions:    map[string]map[string]*api.Option{},
-		GlobalOptions: map[string]*api.Option{},
+		globalOptions: map[string]*api.Option{},
 	}
 	lookup := newConfigLookup(ctx, "reader", map[string]any{}, nil)
 	value, opt, err := lookup("reader", api.TargetOSOptionName)
@@ -194,8 +194,8 @@ func TestGlobalOptionSetExportDefineFalseSuppressesGlobalMacro(t *testing.T) {
 	if err := runConfigPhase(rctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(rctx.GlobalMacroDefines) != 1 || rctx.GlobalMacroDefines[0] != "CONFIG_ABI_CAP=64" {
-		t.Fatalf("GlobalMacroDefines = %v, want [CONFIG_ABI_CAP=64]", rctx.GlobalMacroDefines)
+	if len(rctx.globalMacroDefines) != 1 || rctx.globalMacroDefines[0] != "CONFIG_ABI_CAP=64" {
+		t.Fatalf("GlobalMacroDefines = %v, want [CONFIG_ABI_CAP=64]", rctx.globalMacroDefines)
 	}
 }
 

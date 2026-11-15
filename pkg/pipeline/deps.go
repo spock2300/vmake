@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/pkg/api"
@@ -27,24 +26,9 @@ func SyncOrUpdateDeps(ctx *RuntimeContext, dryRun bool) (_ *DepsUpdateResult, er
 		return nil, err
 	}
 	subParents := ctx.Resolver.SubParents()
+	query := ctx.lockQuery()
 	for name := range ctx.DepGraph.Packages {
-		_, explicitTarget := ctx.LockPolicy.Targets[name]
-		explicitFloat := ctx.LockPolicy.Float != nil && ctx.LockPolicy.Float[name]
-		pin := ""
-		if ctx.Pins != nil {
-			pin = strings.TrimSpace(ctx.Pins[name])
-		}
-		pinNeedsSync := false
-		if pin != "" {
-			if ctx.Lock == nil {
-				pinNeedsSync = true
-			} else if locked, ok := ctx.Lock.Get(name); !ok ||
-				(repo.IsCommitID(pin) && locked.Commit != pin) ||
-				(!repo.IsCommitID(pin) && locked.Version != pin) {
-				pinNeedsSync = true
-			}
-		}
-		if explicitTarget || explicitFloat || pinNeedsSync {
+		if query.NeedsSync(name) {
 			needed[name] = true
 			if parent := subParents[name]; parent != "" {
 				needed[parent] = true
@@ -191,36 +175,29 @@ func InspectDepsStatus(ctx *RuntimeContext) (_ *DepsStatusReport, err error) {
 			locked, hasLock = ctx.Lock.Get(name)
 		}
 
-		version := ""
-		commit := ""
-		if hasLock {
-			version = locked.Version
-			commit = locked.Commit
+		selected, nativeCommit := "", ""
+		if node.Native != nil {
+			selected, nativeCommit = node.Native.Selected, node.Native.Commit
+		} else if node.Pkg != nil && len(node.Pkg.Versions()) > 0 {
+			if len(node.Constraints) > 0 {
+				selected, _ = node.Pkg.SelectVersionMulti(node.Constraints)
+			} else {
+				selected, _ = node.Pkg.SelectVersion("")
+			}
+		}
+		// Status reports the recorded lock overlaid with the project's pins,
+		// ignoring the command's float/target/ignore policy: it answers "what is
+		// locked", not "what would this invocation resolve".
+		query := resolver.LockQuery{Pins: ctx.Pins, Lock: ctx.Lock}
+		decision := query.Decide(name, selected, nativeCommit)
+		version, commit := decision.Version, decision.Commit
+		if decision.Provenance == resolver.ProvenanceTargetCommit {
+			// A commit pin is reported as a commit without a version.
+			version = ""
 		}
 		pinMismatch := false
-		if pinned != "" {
-			if repo.IsCommitID(pinned) {
-				pinMismatch = !hasLock || locked.Commit != pinned
-				version = ""
-				commit = pinned
-			} else {
-				pinMismatch = !hasLock || locked.Version != pinned
-				version = pinned
-				if pinMismatch {
-					commit = ""
-				}
-			}
-		} else if !hasLock {
-			if node.Native != nil {
-				version = node.Native.Selected
-				commit = node.Native.Commit
-			} else if node.Pkg != nil && len(node.Pkg.Versions()) > 0 {
-				if len(node.Constraints) > 0 {
-					version, _ = node.Pkg.SelectVersionMulti(node.Constraints)
-				} else {
-					version, _ = node.Pkg.SelectVersion("")
-				}
-			}
+		if problem, ok := query.PinLockMismatch(name); ok {
+			pinMismatch = problem.Pin != ""
 		}
 
 		var root string
@@ -326,7 +303,7 @@ type DepsFetchResult struct {
 // The returned result lists packages sorted by name for stable JSON output.
 func FetchDeps(ctx *RuntimeContext, pkgs []string, all bool, offline bool, onFetched func([]FetchedPackage)) (_ *DepsFetchResult, err error) {
 	defer scriptcall.Recover(&err)
-	var needed map[string]bool
+	var needed NeededSet
 	if all {
 		needed = make(map[string]bool, len(ctx.DepGraph.Packages))
 		for name := range ctx.DepGraph.Packages {

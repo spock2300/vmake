@@ -32,7 +32,7 @@ func TestInspectionSessionRootsAreIndependent(t *testing.T) {
 		if root != dir {
 			t.Fatalf("%s: root = %q, want %q", name, root, dir)
 		}
-		session, err := openInspection(inspectionRequest{root: root})
+		session, err := openInspection(inspectionRequest{project: projectOptions{root: root}})
 		if err != nil {
 			t.Fatalf("%s: openInspection: %v", name, err)
 		}

@@ -42,7 +42,11 @@ func TestCleanPackagesRemovesOnlyActiveBuildDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	active := insp.PkgDirs["app"].BuildDir
+	view, ok := insp.Package("app")
+	if !ok || view.Skipped {
+		t.Fatal("inspection does not report app")
+	}
+	active := view.Dirs.BuildDir
 	decoy := filepath.Join(root, "build", "other-configuration")
 	for _, dir := range []string{active, decoy} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -140,7 +144,11 @@ func TestCleanPackagesSkipsUnresolvedPackageToolchain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	active := insp.PkgDirs["app"].BuildDir
+	view, ok := insp.Package("app")
+	if !ok || view.Skipped {
+		t.Fatal("inspection does not report app")
+	}
+	active := view.Dirs.BuildDir
 	otherDecoy := filepath.Join(otherDir, "build", "other-configuration")
 	for _, dir := range []string{active, otherDecoy} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -390,11 +398,8 @@ func TestRemainingBuildDirectoriesCountsOtherConfigurations(t *testing.T) {
 	r.Graph().Packages["extra"] = newLocalNode(extraDir, "extra")
 	r.Graph().Order = []string{"app", "extra"}
 	ctx := &RuntimeContext{Resolver: r, DepGraph: r.Graph()}
-	insp := &pipeline.Inspection{
-		Needed: map[string]bool{"app": true},
-		PkgDirs: map[string]*api.PkgDirs{
-			"app": {SourceDir: appDir, BuildDir: filepath.Join(appDir, "build", "active")},
-		},
+	dirs := map[string]*api.PkgDirs{
+		"app": {SourceDir: appDir, BuildDir: filepath.Join(appDir, "build", "active")},
 	}
 	for _, dir := range []string{
 		filepath.Join(appDir, "build", "active"),
@@ -405,7 +410,7 @@ func TestRemainingBuildDirectoriesCountsOtherConfigurations(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := remainingBuildDirectories(ctx, insp); got != 2 {
+	if got := remainingBuildDirectories(ctx, func(name string) *api.PkgDirs { return dirs[name] }); got != 2 {
 		t.Fatalf("remaining build directories = %d, want 2", got)
 	}
 }

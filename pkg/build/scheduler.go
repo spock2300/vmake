@@ -193,7 +193,7 @@ func newScheduler(cfg schedulerConfig) *Scheduler {
 		if layout == nil {
 			continue
 		}
-		s.pkgs[pkgName] = NewPkgInfo(layout.Dirs, layout.BuildKey)
+		s.pkgs[pkgName] = layout.PkgInfo()
 	}
 
 	return s
@@ -215,9 +215,6 @@ func (s *Scheduler) targetOutcomeFor(node *BuildNode, pkgInfo *PkgInfo, resolved
 		},
 	}
 	placement := resolved.Placement
-	if placement.Kind == "" {
-		placement = s.placementFor(resolved, pkgInfo)
-	}
 	outcome.Placement = placement
 	outcome.Result.Outputs = append([]string{}, placement.PostLinkOutputs...)
 	if target.Kind() != api.TargetVoid && target.Kind() != api.TargetObject {

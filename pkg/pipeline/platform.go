@@ -11,7 +11,7 @@ import (
 
 func ProjectGlobalValues(ctx *RuntimeContext) map[string]any {
 	values := make(map[string]any)
-	for name, opt := range ctx.GlobalOptions {
+	for name, opt := range ctx.globalOptions {
 		values[name] = opt.Default()
 	}
 	for name, value := range config.BuildGlobalValues(ctx.Config) {
@@ -87,8 +87,8 @@ func fillTargetDefaults(values map[string]any, os, triple string) {
 func ProjectPlatform(ctx *RuntimeContext) (api.Platform, error) {
 	values := ProjectGlobalValues(ctx)
 	tcName := ResolveToolchainName(ctx.Config, ctx.ToolchainOverride, ctx.PreferredToolchain)
-	if ctx.ChipProfile.Name != "" && chipTargetsApply(ctx.ChipProfile, tcName) {
-		fillTargetDefaults(values, ctx.ChipProfile.TargetOS, ctx.ChipProfile.TargetTriple)
+	if ctx.chipProfile.Name != "" && chipTargetsApply(ctx.chipProfile, tcName) {
+		fillTargetDefaults(values, ctx.chipProfile.TargetOS, ctx.chipProfile.TargetTriple)
 	}
 	targetOS, triple := toolchainTargetDefaults(tcName)
 	fillTargetDefaults(values, targetOS, triple)
@@ -141,8 +141,8 @@ func packagePlatformValues(ctx *RuntimeContext, name string, base map[string]any
 		defaultTC = tc
 	}
 	packageTC := resolvePkgToolchain(ctx.Config, name, defaultTC)
-	if ctx.ChipProfile.Name != "" && chipTargetsApply(ctx.ChipProfile, packageTC) {
-		fillTargetDefaults(values, ctx.ChipProfile.TargetOS, ctx.ChipProfile.TargetTriple)
+	if ctx.chipProfile.Name != "" && chipTargetsApply(ctx.chipProfile, packageTC) {
+		fillTargetDefaults(values, ctx.chipProfile.TargetOS, ctx.chipProfile.TargetTriple)
 	}
 	targetOS, triple := toolchainTargetDefaults(packageTC)
 	fillTargetDefaults(values, targetOS, triple)

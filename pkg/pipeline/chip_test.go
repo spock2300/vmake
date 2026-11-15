@@ -40,10 +40,10 @@ func TestCollectChipProfiles(t *testing.T) {
 	if err := collectChipProfiles(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(ctx.ChipProfiles) != 2 {
-		t.Fatalf("profiles = %+v", ctx.ChipProfiles)
+	if len(ctx.chipProfiles) != 2 {
+		t.Fatalf("profiles = %+v", ctx.chipProfiles)
 	}
-	if got := ctx.ChipProfiles["chip-a"].PreferredToolchain; got != "tc-a" {
+	if got := ctx.chipProfiles["chip-a"].PreferredToolchain; got != "tc-a" {
 		t.Errorf("chip-a toolchain = %q", got)
 	}
 }
@@ -61,13 +61,13 @@ func TestCollectChipProfilesConflict(t *testing.T) {
 
 func TestExtendChipChoice(t *testing.T) {
 	ctx := chipTestContext(t)
-	ctx.ChipProfiles = map[string]api.ChipProfile{
+	ctx.chipProfiles = map[string]api.ChipProfile{
 		"chip-a": {Name: "chip-a"},
 		"chip-b": {Name: "chip-b"},
 	}
-	ctx.GlobalOptions = map[string]*api.Option{api.ChipOptionName: chipOption("chip-a")}
+	ctx.globalOptions = map[string]*api.Option{api.ChipOptionName: chipOption("chip-a")}
 	extendChipChoice(ctx, nil)
-	got := ctx.GlobalOptions[api.ChipOptionName].Values()
+	got := ctx.globalOptions[api.ChipOptionName].Values()
 	if len(got) != 2 || got[0] != "chip-a" || got[1] != "chip-b" {
 		t.Fatalf("chip values = %v", got)
 	}
@@ -100,7 +100,7 @@ func TestExtendChipChoiceDoesNotMutateAllOptionsOrLeakPrunedPackages(t *testing.
 		t.Fatal(err)
 	}
 	extendChipChoice(ctx, needed)
-	got := ctx.GlobalOptions[api.ChipOptionName].Values()
+	got := ctx.globalOptions[api.ChipOptionName].Values()
 	if len(got) != 1 || got[0] != "chip-a" {
 		t.Fatalf("filtered chip values leaked pruned package: %v", got)
 	}
@@ -108,13 +108,13 @@ func TestExtendChipChoiceDoesNotMutateAllOptionsOrLeakPrunedPackages(t *testing.
 
 func TestExtendChipChoiceDoesNotCreateOption(t *testing.T) {
 	ctx := chipTestContext(t)
-	ctx.ChipProfiles = map[string]api.ChipProfile{
+	ctx.chipProfiles = map[string]api.ChipProfile{
 		"chip-a": {Name: "chip-a"},
 		"chip-b": {Name: "chip-b"},
 	}
-	ctx.GlobalOptions = map[string]*api.Option{}
+	ctx.globalOptions = map[string]*api.Option{}
 	extendChipChoice(ctx, nil)
-	if opt := ctx.GlobalOptions[api.ChipOptionName]; opt != nil {
+	if opt := ctx.globalOptions[api.ChipOptionName]; opt != nil {
 		t.Fatalf("chip option should not be created: %+v", opt)
 	}
 }
@@ -133,7 +133,7 @@ func TestResolveActiveChipUsesNeededProfile(t *testing.T) {
 	if err := collectChipProfiles(ctx); err != nil {
 		t.Fatal(err)
 	}
-	ctx.GlobalOptions = map[string]*api.Option{api.ChipOptionName: chipOption("chip-a", "chip-b")}
+	ctx.globalOptions = map[string]*api.Option{api.ChipOptionName: chipOption("chip-a", "chip-b")}
 	needed := map[string]bool{"chip-a": true, "chip-b": false}
 	if err := resolveActiveChip(ctx, needed); err != nil {
 		t.Fatal(err)
@@ -141,8 +141,8 @@ func TestResolveActiveChipUsesNeededProfile(t *testing.T) {
 	if ctx.PreferredToolchain != tc {
 		t.Errorf("preferred toolchain = %q, want %q", ctx.PreferredToolchain, tc)
 	}
-	if ctx.ChipProfile.TargetOS != "none" || ctx.ChipProfile.TargetTriple != "arm-none-eabi" {
-		t.Errorf("chip profile = %+v", ctx.ChipProfile)
+	if ctx.chipProfile.TargetOS != "none" || ctx.chipProfile.TargetTriple != "arm-none-eabi" {
+		t.Errorf("chip profile = %+v", ctx.chipProfile)
 	}
 }
 
@@ -155,19 +155,19 @@ func TestResolveActiveChipIgnoresUnconfiguredDefault(t *testing.T) {
 	if err := collectChipProfiles(ctx); err != nil {
 		t.Fatal(err)
 	}
-	ctx.GlobalOptions = map[string]*api.Option{api.ChipOptionName: chipOption("chip-a", "chip-b")}
+	ctx.globalOptions = map[string]*api.Option{api.ChipOptionName: chipOption("chip-a", "chip-b")}
 	if err := resolveActiveChip(ctx, map[string]bool{"chip-b": true}); err != nil {
 		t.Fatalf("needed chip must win over the option default: %v", err)
 	}
-	if ctx.ChipProfile.Name != "chip-b" {
-		t.Fatalf("active profile = %q, want chip-b", ctx.ChipProfile.Name)
+	if ctx.chipProfile.Name != "chip-b" {
+		t.Fatalf("active profile = %q, want chip-b", ctx.chipProfile.Name)
 	}
 }
 
 func TestResolveActiveChipIgnoresOptionWithoutProfiles(t *testing.T) {
 	app := localNode("app")
 	ctx := chipTestContext(t, app)
-	ctx.GlobalOptions = map[string]*api.Option{api.ChipOptionName: chipOption("board-x")}
+	ctx.globalOptions = map[string]*api.Option{api.ChipOptionName: chipOption("board-x")}
 	if err := resolveActiveChip(ctx, map[string]bool{"app": true}); err != nil {
 		t.Fatalf("existing chip option without profiles must not fail: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestResolveActiveChipMissingToolchain(t *testing.T) {
 	if err := collectChipProfiles(ctx); err != nil {
 		t.Fatal(err)
 	}
-	ctx.GlobalOptions = map[string]*api.Option{api.ChipOptionName: chipOption("chip-a")}
+	ctx.globalOptions = map[string]*api.Option{api.ChipOptionName: chipOption("chip-a")}
 	if err := resolveActiveChip(ctx, map[string]bool{"chip-a": true}); err == nil ||
 		!strings.Contains(err.Error(), "missing-chip-toolchain") {
 		t.Fatalf("missing toolchain error = %v", err)
@@ -255,8 +255,8 @@ func TestResolveActiveChipExplicitToolchainKeepsNeededProfile(t *testing.T) {
 	if err := resolveActiveChip(ctx, map[string]bool{"chip-a": true}); err != nil {
 		t.Fatal(err)
 	}
-	if ctx.ChipProfile.Name != "chip-a" || ctx.PreferredToolchain != tc {
-		t.Fatalf("profile = %+v / %q", ctx.ChipProfile, ctx.PreferredToolchain)
+	if ctx.chipProfile.Name != "chip-a" || ctx.PreferredToolchain != tc {
+		t.Fatalf("profile = %+v / %q", ctx.chipProfile, ctx.PreferredToolchain)
 	}
 }
 
@@ -276,19 +276,19 @@ func TestResolveActiveChipForDisplayUsesSelectedProfile(t *testing.T) {
 		Name: "chip-a", PreferredToolchain: tc, TargetOS: "none", TargetTriple: "arm-none-eabi",
 	})
 	ctx := chipTestContext(t, active)
-	ctx.GlobalOptions = map[string]*api.Option{api.ChipOptionName: chipOption("chip-a")}
+	ctx.globalOptions = map[string]*api.Option{api.ChipOptionName: chipOption("chip-a")}
 	ResolveActiveChipForDisplay(ctx)
-	if ctx.PreferredToolchain != tc || ctx.ChipProfile.Name != "chip-a" {
-		t.Fatalf("display profile = %+v / %q", ctx.ChipProfile, ctx.PreferredToolchain)
+	if ctx.PreferredToolchain != tc || ctx.chipProfile.Name != "chip-a" {
+		t.Fatalf("display profile = %+v / %q", ctx.chipProfile, ctx.PreferredToolchain)
 	}
 	if got := ctx.Configuration().ChipProfile.Name; got != "chip-a" {
-		t.Fatalf("display profile was not committed to the configuration snapshot: %q", got)
+		t.Fatalf("Configuration() does not expose the display profile: %q", got)
 	}
 }
 
 func TestProjectPlatformUsesChipProfileDefaults(t *testing.T) {
 	ctx := chipTestContext(t)
-	ctx.ChipProfile = api.ChipProfile{Name: "chip-a", TargetOS: "none", TargetTriple: "arm-none-eabi"}
+	ctx.chipProfile = api.ChipProfile{Name: "chip-a", TargetOS: "none", TargetTriple: "arm-none-eabi"}
 	platform, err := ProjectPlatform(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -335,7 +335,7 @@ func TestCollectChipProfilesIncludesRemotePackages(t *testing.T) {
 	if err := collectChipProfiles(ctx); err != nil {
 		t.Fatal(err)
 	}
-	profile, ok := ctx.ChipProfiles["remote-chip"]
+	profile, ok := ctx.chipProfiles["remote-chip"]
 	if !ok || profile.PreferredToolchain != "arm" || profile.TargetOS != "none" {
 		t.Fatalf("remote chip profile = %+v, ok=%v", profile, ok)
 	}

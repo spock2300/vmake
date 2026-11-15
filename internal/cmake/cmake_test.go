@@ -277,10 +277,10 @@ func TestConfigureArgsMissingConfiguredTool(t *testing.T) {
 
 func TestConfigureDir(t *testing.T) {
 	s := testSettings(t)
-	if got := ConfigureDir(s, nil); got != s.BuildRoot {
+	if got := configureDir(s, nil); got != s.BuildRoot {
 		t.Fatalf("configure directory = %q, want build root %q", got, s.BuildRoot)
 	}
-	if got := ConfigureDir(s, []string{"--preset=release"}); got != s.SourceDir {
+	if got := configureDir(s, []string{"--preset=release"}); got != s.SourceDir {
 		t.Fatalf("preset configure directory = %q, want source %q", got, s.SourceDir)
 	}
 }
@@ -303,21 +303,21 @@ func TestValidateArgs(t *testing.T) {
 		{[]string{"-DCMAKE_BUILD_TYPE=Release"}, "SetCMakeBuildType"},
 		{[]string{"-D", "CMAKE_BUILD_TYPE:STRING=Release"}, "SetCMakeBuildType"},
 	} {
-		err := ValidateArgs(test.args)
+		err := validateArgs(test.args)
 		if err == nil || !strings.Contains(err.Error(), test.want) {
 			t.Errorf("args %q: error = %v, want %s", test.args, err, test.want)
 		}
 	}
 	backend := []string{"--", "-B", "--prefix=backend-value", "-DCMAKE_BUILD_TYPE=backend-value"}
-	if err := ValidateArgs(backend); err != nil {
+	if err := validateArgs(backend); err != nil {
 		t.Fatalf("backend arguments rejected: %v", err)
 	}
 }
 
 func TestHasOptionAndDefinitions(t *testing.T) {
 	args := []string{"-G", "Ninja", "-D", "CMAKE_C_FLAGS:STRING=-DPROJECT", "-DCMAKE_BUILD_TYPE=Release", "--", "-B", "backend"}
-	if !HasGenerator(args) {
-		t.Error("HasGenerator = false")
+	if !hasGenerator(args) {
+		t.Error("hasGenerator = false")
 	}
 	if !HasOption(args, "-G") {
 		t.Error("HasOption missed -G")
@@ -329,8 +329,8 @@ func TestHasOptionAndDefinitions(t *testing.T) {
 	if !definitions["CMAKE_C_FLAGS"] || !definitions["CMAKE_BUILD_TYPE"] || definitions["B"] {
 		t.Fatalf("definitions = %#v", definitions)
 	}
-	if got := DefinitionKey("CMAKE_C_FLAGS:STRING=-DPROJECT"); got != "CMAKE_C_FLAGS" {
-		t.Fatalf("DefinitionKey = %q", got)
+	if got := definitionKey("CMAKE_C_FLAGS:STRING=-DPROJECT"); got != "CMAKE_C_FLAGS" {
+		t.Fatalf("definitionKey = %q", got)
 	}
 }
 
@@ -352,7 +352,7 @@ func TestProjectLanguages(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
 			writeCMakeLists(t, dir, test.cmakelists)
-			languages, ok := ProjectLanguages(dir)
+			languages, ok := projectLanguages(dir)
 			if ok != test.ok {
 				t.Fatalf("ok = %v, want %v (languages %#v)", ok, test.ok, languages)
 			}
@@ -363,7 +363,7 @@ func TestProjectLanguages(t *testing.T) {
 			}
 		})
 	}
-	if _, ok := ProjectLanguages(filepath.Join(t.TempDir(), "missing")); ok {
+	if _, ok := projectLanguages(filepath.Join(t.TempDir(), "missing")); ok {
 		t.Fatal("missing CMakeLists.txt reported a language list")
 	}
 }

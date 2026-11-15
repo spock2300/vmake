@@ -178,10 +178,11 @@ func runAllTests(ctx context.Context, result *BuildResult) ([]testResult, error)
 			continue
 		}
 
-		platform, ok := result.PkgPlatforms[node.PkgName]
-		if !ok {
-			return nil, fmt.Errorf("test target %s has no resolved package platform", fullName)
+		layout, ok := result.Layouts[node.PkgName]
+		if !ok || layout == nil {
+			return nil, fmt.Errorf("test target %s has no resolved package layout", fullName)
 		}
+		platform := layout.Platform
 		placement, ok := result.TargetPlacements[fullName]
 		if !ok || placement.OutputPath == "" {
 			return nil, fmt.Errorf("test target %s has no build placement", fullName)

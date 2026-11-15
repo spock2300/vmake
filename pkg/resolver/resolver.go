@@ -863,16 +863,12 @@ func (r *Resolver) checkLockedEntry(id string) error {
 	if r.lockfile == nil || len(r.lockfile.Packages) == 0 {
 		return fmt.Errorf("--locked: vmake.lock is out of date or missing; run 'vmake deps sync' or 'vmake deps update'")
 	}
-	locked, ok := r.lockfile.Get(id)
-	if !ok || locked.Commit == "" {
-		return fmt.Errorf("--locked: package %s is not locked in vmake.lock; run 'vmake deps sync' or 'vmake deps update'", id)
+	query := r.lockQuery()
+	if problem, bad := query.LockEntryProblem(id, true); bad {
+		return problem.Error(id)
 	}
-	if r.configPins != nil {
-		if pin := strings.TrimSpace(r.configPins[id]); pin != "" {
-			if (repo.IsCommitID(pin) && locked.Commit != pin) || (!repo.IsCommitID(pin) && locked.Version != pin) {
-				return fmt.Errorf("--locked: package %s is pinned to %s in .vmake/project.json, but vmake.lock has %s; run 'vmake deps sync'", id, pin, lockfile.DisplayVersion(locked.Version, locked.Commit))
-			}
-		}
+	if problem, mismatch := query.PinLockMismatch(id); mismatch {
+		return problem.Error(id)
 	}
 	return nil
 }

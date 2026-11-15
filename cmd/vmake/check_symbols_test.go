@@ -1,10 +1,11 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
-	"sort"
+	"strings"
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
@@ -244,10 +245,20 @@ func TestHasStrictFindings(t *testing.T) {
 	}
 }
 
-func TestReadExportsFiltersCRT(t *testing.T) {
-	got := crtSymbols["_init"]
-	if !got {
-		t.Error("_init should be in CRT filter set")
+func TestReadExportsFiltersCRTAndDuplicates(t *testing.T) {
+	dir := t.TempDir()
+	nm := filepath.Join(dir, "nm")
+	script := "#!/bin/sh\ncat <<'OUT'\n0000 T _init\n0000 T real_sym\n0000 T real_sym\n0000 T _Z5hellov@GLIBC_2.2.5\n0000 A absolute_sym\n0000 T \nOUT\n"
+	if err := os.WriteFile(nm, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	syms, err := readExports(nm, "artifact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"real_sym", "_Z5hellov"}
+	if !reflect.DeepEqual(syms, want) {
+		t.Fatalf("readExports = %v, want %v", syms, want)
 	}
 }
 
@@ -269,16 +280,44 @@ func TestMangledReBasic(t *testing.T) {
 	}
 }
 
-func TestSortFindingsStableForReporting(t *testing.T) {
+func TestReportFindingsGroupsInCategoryOrder(t *testing.T) {
 	findings := []finding{
-		{category: "duplicate-export", symbol: "z_sym", detail: "a, b"},
-		{category: "duplicate-export", symbol: "a_sym", detail: "c, d"},
-		{category: "mangled-leak", symbol: "_Z5hellov"},
+		{category: "mangled-leak", subject: "app:app", symbol: "_Z5hellov", detail: "mangled"},
+		{category: "blocked-write", subject: "app:app", detail: "blocked"},
+		{category: "duplicate-export", subject: "app:app", symbol: "dup", detail: "a, b"},
 	}
-	sort.Slice(findings, func(i, j int) bool {
-		return findings[i].category < findings[j].category
-	})
-	if findings[0].category != "duplicate-export" && findings[0].category != "mangled-leak" {
-		t.Error("sort should group categories")
+	output := captureStdout(t, func() { reportFindings(findings, 1) })
+
+	blocked := strings.Index(output, "[blocked-write]")
+	duplicate := strings.Index(output, "[duplicate-export]")
+	mangled := strings.Index(output, "[mangled-leak]")
+	if blocked < 0 || duplicate < 0 || mangled < 0 {
+		t.Fatalf("report is missing a category group:\n%s", output)
 	}
+	if !(blocked < duplicate && duplicate < mangled) {
+		t.Fatalf("groups are out of order (blocked=%d duplicate=%d mangled=%d):\n%s", blocked, duplicate, mangled, output)
+	}
+	if !strings.Contains(output, "3 finding(s) across 1 artifacts") {
+		t.Fatalf("summary missing:\n%s", output)
+	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = writer
+	fn()
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = old
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }

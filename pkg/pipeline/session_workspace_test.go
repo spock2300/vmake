@@ -76,7 +76,7 @@ func workspaceBindingFixture(t *testing.T, remote bool) (*buildPhaseState, *api.
 		configRoot = filepath.Join(node.Source.Dir, "src", "nested")
 	}
 	k := (&api.KConfigEntry{}).SetSrcDir(configRoot).SetConfigPath(".config")
-	s.ctx.AllKConfigs = map[string][]*api.KConfigEntry{"app": {k}}
+	s.ctx.allKConfigs = map[string][]*api.KConfigEntry{"app": {k}}
 	config.SetEntry(s.ctx.Config, "app", &config.EntryConfig{KConfig: "CONFIG_READY=y\n"})
 	if err := s.preparePackageWorkspace("app"); err != nil {
 		t.Fatal(err)
@@ -291,7 +291,7 @@ func nativeSiblingBindingFixture(t *testing.T, configSource string) (*buildPhase
 		configRoot = t.TempDir()
 	}
 	k := (&api.KConfigEntry{}).SetSrcDir(configRoot).SetConfigPath(".config")
-	s.ctx.AllKConfigs = map[string][]*api.KConfigEntry{name: {k}}
+	s.ctx.allKConfigs = map[string][]*api.KConfigEntry{name: {k}}
 	config.SetEntry(s.ctx.Config, name, &config.EntryConfig{KConfig: "CONFIG_READY=y\n"})
 	if err := s.preparePackageWorkspace(name); err != nil {
 		t.Fatal(err)

@@ -49,7 +49,7 @@ func runFakeCMake(fakeDir string) {
 		os.Exit(2)
 	}
 	stage := strings.TrimPrefix(os.Args[1], "--")
-	if hasCMakeOption(os.Args[1:], "-S") {
+	if cmake.HasOption(os.Args[1:], "-S") {
 		stage = "configure"
 	}
 	if cwd, err := os.Getwd(); err == nil {
@@ -146,7 +146,7 @@ func TestCMakeDirectoriesAndConfiguration(t *testing.T) {
 
 func assertCMakePhases(t *testing.T, p *Package, config string) {
 	t.Helper()
-	configure, err := p.cmakeConfigureArgs(runtime.GOOS)
+	configure, err := cmakeConfigureArgsForHost(p, runtime.GOOS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func assertCMakePhases(t *testing.T, p *Package, config string) {
 	for _, phase := range []struct {
 		name string
 		args func(...string) ([]string, error)
-	}{{"--build", p.cmakeBuildArgs}, {"--install", p.cmakeInstallArgs}} {
+	}{{"--build", func(extra ...string) ([]string, error) { return cmakeBuildPlanArgs(p, extra...) }}, {"--install", func(extra ...string) ([]string, error) { return cmakeInstallPlanArgs(p, extra...) }}} {
 		args, err := phase.args()
 		if err != nil {
 			t.Fatal(err)
@@ -199,9 +199,9 @@ func TestCMakeRejectsConflictingManagedArguments(t *testing.T) {
 	} {
 		t.Run(strings.Join(test.args, " "), func(t *testing.T) {
 			for _, phase := range []func(...string) ([]string, error){
-				func(args ...string) ([]string, error) { return p.cmakeConfigureArgs(runtime.GOOS, args...) },
-				p.cmakeBuildArgs,
-				p.cmakeInstallArgs,
+				func(args ...string) ([]string, error) { return cmakeConfigureArgsForHost(p, runtime.GOOS, args...) },
+				func(extra ...string) ([]string, error) { return cmakeBuildPlanArgs(p, extra...) },
+				func(extra ...string) ([]string, error) { return cmakeInstallPlanArgs(p, extra...) },
 			} {
 				_, err := phase(test.args...)
 				if err == nil || !strings.Contains(err.Error(), test.want) {
@@ -211,7 +211,7 @@ func TestCMakeRejectsConflictingManagedArguments(t *testing.T) {
 		})
 	}
 	backend := []string{"--", "-B", "--prefix=backend-value", "-DCMAKE_BUILD_TYPE=backend-value"}
-	args, err := p.cmakeBuildArgs(backend...)
+	args, err := cmakeBuildPlanArgs(p, backend...)
 	if err != nil || !slices.Equal(args[len(args)-len(backend):], backend) {
 		t.Fatalf("backend arguments changed: %q, %v", args, err)
 	}
@@ -331,7 +331,7 @@ func TestCMakeConfigureLanguageAwareCompilerInjection(t *testing.T) {
 				SetDirs(PkgDirs{SourceDir: source, BuildDir: t.TempDir()}).
 				SetPlatform(Platform{OS: "linux", Triple: "arm-none-eabi"}).
 				SetToolchain(toolchainStub(t))
-			args, err := p.cmakeConfigureArgs(runtime.GOOS)
+			args, err := cmakeConfigureArgsForHost(p, runtime.GOOS)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -491,7 +491,7 @@ func TestCMakeBuildAndInstallOverrides(t *testing.T) {
 	if err := BindBuildRuntime(p, &buildruntime.Budget{Jobs: 4}, nil); err != nil {
 		t.Fatal(err)
 	}
-	args, err := p.cmakeBuildArgs()
+	args, err := cmakeBuildPlanArgs(p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -500,23 +500,23 @@ func TestCMakeBuildAndInstallOverrides(t *testing.T) {
 	}
 	for _, parallel := range [][]string{{"-j", "2"}, {"-j2"}, {"--parallel", "2"}, {"--parallel=2"}} {
 		extra := append([]string{"--config", "Debug"}, parallel...)
-		args, err := p.cmakeBuildArgs(extra...)
+		args, err := cmakeBuildPlanArgs(p, extra...)
 		want := append([]string{"--build", filepath.ToSlash(p.CMakeBuildDir())}, extra...)
 		if err != nil || !slices.Equal(args, want) {
 			t.Fatalf("explicit arguments = %q, want %q, error %v", args, want, err)
 		}
 	}
-	args, err = p.cmakeBuildArgs("--", "--parallel=1", "--config", "backend-value")
+	args, err = cmakeBuildPlanArgs(p, "--", "--parallel=1", "--config", "backend-value")
 	if err != nil || !slices.Contains(args, "--parallel") || !slices.Contains(args, "MinSizeRel") {
 		t.Fatalf("backend args suppressed CMake defaults: %q, %v", args, err)
 	}
 	t.Setenv("CMAKE_BUILD_PARALLEL_LEVEL", "2")
-	args, err = p.cmakeBuildArgs()
+	args, err = cmakeBuildPlanArgs(p)
 	wantEnv := []string{"--build", filepath.ToSlash(p.CMakeBuildDir()), "--config", "MinSizeRel"}
 	if err != nil || !slices.Equal(args, wantEnv) {
 		t.Fatalf("CMAKE_BUILD_PARALLEL_LEVEL should suppress default --parallel: %q, %v", args, err)
 	}
-	args, err = p.cmakeInstallArgs("--config=Debug", "--component", "Development")
+	args, err = cmakeInstallPlanArgs(p, "--config=Debug", "--component", "Development")
 	want := []string{"--install", filepath.ToSlash(p.CMakeBuildDir()), "--prefix", filepath.ToSlash(p.CMakeInstallDir()), "--config=Debug", "--component", "Development"}
 	if err != nil || !slices.Equal(args, want) {
 		t.Fatalf("install arguments = %q, want %q, error %v", args, want, err)
@@ -526,13 +526,13 @@ func TestCMakeBuildAndInstallOverrides(t *testing.T) {
 func TestCMakeBuildRejectsPresetsThatOverrideManagedDirectory(t *testing.T) {
 	p := NewPackage().SetDirs(PkgDirs{BuildDir: t.TempDir()})
 	for _, extra := range [][]string{{"--preset", "other"}, {"--preset=other"}} {
-		_, err := p.cmakeBuildArgs(extra...)
+		_, err := cmakeBuildPlanArgs(p, extra...)
 		if err == nil || !strings.Contains(err.Error(), "CMakeConfigure") || !strings.Contains(err.Error(), "--target or --config") {
 			t.Errorf("build preset %q error = %v", extra, err)
 		}
 	}
 	backend := []string{"--", "--preset", "backend-value"}
-	args, err := p.cmakeBuildArgs(backend...)
+	args, err := cmakeBuildPlanArgs(p, backend...)
 	if err != nil || !slices.Equal(args[len(args)-len(backend):], backend) {
 		t.Fatalf("backend arguments changed: %q, %v", args, err)
 	}
@@ -540,7 +540,7 @@ func TestCMakeBuildRejectsPresetsThatOverrideManagedDirectory(t *testing.T) {
 
 func TestCMakeInheritsOnlyGlobalFlagsAndAllowsOverrides(t *testing.T) {
 	p := NewPackage().SetToolchain(toolchain.GetBuiltinHost()).SetGlobalFlags([]string{"-DGLOBAL_C", "-mcpu=cortex-m4"}, []string{"-DGLOBAL_CXX"}, []string{"-Wl,--gc-sections"}, nil)
-	args, err := p.cmakeConfigureArgs(runtime.GOOS)
+	args, err := cmakeConfigureArgsForHost(p, runtime.GOOS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -555,7 +555,7 @@ func TestCMakeInheritsOnlyGlobalFlagsAndAllowsOverrides(t *testing.T) {
 		}
 	}
 	extra := []string{"-D", "CMAKE_C_FLAGS:STRING=-DPROJECT_C", "-DCMAKE_SHARED_LINKER_FLAGS=", "-D", "CMAKE_MODULE_LINKER_FLAGS:STRING=-lproject", "-DCMAKE_ASM_FLAGS=-mthumb"}
-	args, err = p.cmakeConfigureArgs(runtime.GOOS, extra...)
+	args, err = cmakeConfigureArgsForHost(p, runtime.GOOS, extra...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -587,7 +587,7 @@ func TestCMakePackageVisibilityAndOverrides(t *testing.T) {
 		{"dep", dep, "-DGLOBAL_C", "-DGLOBAL_CXX"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			args, err := test.pkg.cmakeConfigureArgs(runtime.GOOS)
+			args, err := cmakeConfigureArgsForHost(test.pkg, runtime.GOOS)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -607,7 +607,7 @@ func TestCMakePackageVisibilityAndOverrides(t *testing.T) {
 			}
 		})
 	}
-	args, err := app.cmakeConfigureArgs(runtime.GOOS, "-DCMAKE_C_FLAGS=-fvisibility=default", "-D", "CMAKE_CXX_FLAGS:STRING=")
+	args, err := cmakeConfigureArgsForHost(app, runtime.GOOS, "-DCMAKE_C_FLAGS=-fvisibility=default", "-D", "CMAKE_CXX_FLAGS:STRING=")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -632,7 +632,7 @@ func TestCMakeMissingConfiguredBinutilsFails(t *testing.T) {
 		{"CMAKE_CXX_COMPILER", toolchain.Tools{CXX: "missing-cxx"}},
 	} {
 		p := NewPackage().SetToolchain(&toolchain.Toolchain{InstallPath: root, Tools: test.tools})
-		_, err := p.cmakeConfigureArgs(runtime.GOOS)
+		_, err := cmakeConfigureArgsForHost(p, runtime.GOOS)
 		var lookupErr *exec.Error
 		if err == nil || !strings.Contains(err.Error(), test.key) || !errors.As(err, &lookupErr) || !strings.HasPrefix(lookupErr.Name, filepath.Join(root, "bin")+string(filepath.Separator)) {
 			t.Errorf("%s missing tool error = %v", test.key, err)
@@ -1295,7 +1295,7 @@ func TestCMakeConfigureGlobalFlagsQuotePerHost(t *testing.T) {
 		[]string{`-L/opt/demo space/lib`},
 		nil,
 	)
-	linuxArgs, err := p.cmakeConfigureArgs("linux")
+	linuxArgs, err := cmakeConfigureArgsForHost(p, "linux")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1309,7 +1309,7 @@ func TestCMakeConfigureGlobalFlagsQuotePerHost(t *testing.T) {
 		}
 	}
 
-	winArgs, err := p.cmakeConfigureArgs("windows")
+	winArgs, err := cmakeConfigureArgsForHost(p, "windows")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1442,4 +1442,36 @@ extern "C" int check_cxx(const char *part, const char *atlas, const char *label)
 			}
 		})
 	}
+}
+
+// cmakeConfigureArgsForHost builds the configure arguments for a modelled host,
+// so Windows argument policies stay testable on Unix.
+func cmakeConfigureArgsForHost(p *Package, hostOS string, extra ...string) ([]string, error) {
+	return cmake.ConfigureArgs(p.cmakeSettingsForHost(hostOS), extra...)
+}
+
+// cmakeBuildPlanArgs and cmakeInstallPlanArgs exercise the production path:
+// budget merge, then the engine plan that pkg/api would execute.
+func cmakeBuildPlanArgs(p *Package, extra ...string) ([]string, error) {
+	merged, err := p.executionBudget().CMakeBuildArgs(extra, parallelEnvironment())
+	if err != nil {
+		return nil, err
+	}
+	plan, err := cmake.NewEngine(p.cmakeSettings()).PlanBuild(merged)
+	if err != nil {
+		return nil, err
+	}
+	return plan.Args, nil
+}
+
+func cmakeInstallPlanArgs(p *Package, extra ...string) ([]string, error) {
+	merged, err := p.executionBudget().CMakeInstallArgs(extra, parallelEnvironment())
+	if err != nil {
+		return nil, err
+	}
+	plan, err := cmake.NewEngine(p.cmakeSettings()).PlanInstall(merged)
+	if err != nil {
+		return nil, err
+	}
+	return plan.Args, nil
 }

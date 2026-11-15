@@ -9,15 +9,15 @@ import (
 )
 
 func localPkgKeyFromParts(ccKey, mode string, opts map[string]any, globalFlagsHash, commit string) pkgKey {
-	return newLocalPkgKey(ccKey, mode, opts, keyMaterial{commit: commit, flagsHash: globalFlagsHash})
+	return newLocalPkgKey(ccKey, mode, opts, LayoutFacts{Commit: commit, FlagsHash: globalFlagsHash})
 }
 
 func remotePkgKeyFromParts(ccKey, mode string, opts map[string]any, version, commit, globalFlagsHash, patchHash string) pkgKey {
-	return newRemotePkgKey(ccKey, mode, opts, keyMaterial{
-		version:   version,
-		commit:    commit,
-		flagsHash: globalFlagsHash,
-		patchHash: patchHash,
+	return newRemotePkgKey(ccKey, mode, opts, LayoutFacts{
+		Version:   version,
+		Commit:    commit,
+		FlagsHash: globalFlagsHash,
+		PatchHash: patchHash,
 	})
 }
 

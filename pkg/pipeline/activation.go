@@ -56,7 +56,7 @@ func ActivatePackage(ctx *RuntimeContext, name string, dirs api.PkgDirs, tc *too
 			allOpts = pkg.GetOptions()
 		}
 		pkg.SetDirs(dirs)
-		pkg.SetOptions(mergedPackageAndGlobalOptions(allOpts, visibleGlobalOptionsFor(node, allOpts, ctx.GlobalOptions)))
+		pkg.SetOptions(mergedPackageAndGlobalOptions(allOpts, visibleGlobalOptionsFor(node, allOpts, ctx.globalOptions)))
 		pkg.SetCfgVals(maps.Clone(api.BindCfgVals(&buildCtx.ConfigAccessor)))
 		if tc != nil {
 			tcName := resolvePkgToolchain(ctx.Config, name, tc.Name)

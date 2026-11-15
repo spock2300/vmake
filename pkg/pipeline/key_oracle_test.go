@@ -4,7 +4,7 @@ func buildPkgKeyExtra(rc *runContext, cfg *configStage, src *sourceStage) (map[s
 	extra := make(map[string]string)
 	for name := range cfg.needed {
 		node := rc.ctx.DepGraph.Packages[name]
-		material, err := src.keyMaterialFor(name)
+		material, err := src.layoutFactsFor(name)
 		if err != nil {
 			return nil, err
 		}

@@ -235,7 +235,7 @@ dependency tree labels those same packages by their primary target.
 | `overrides` | object | Coerced `--set` values keyed `[package/]option`; omitted when no override was given |
 | `roots` | array | `root` from the active configuration when set, else explicit `SetRoot(true)` local package when present, otherwise needed local packages that no needed package depends on, sorted |
 | `packages` | array | One entry per resolved package, sorted by name |
-| `graph` | array | Package dependency edges `{from, to}`, sorted by `from` then `to` (merges `OnRequire`, target `AddDeps`/`UseRequires`, and `BuildSubGraph` edges; `--no-targets` reports `OnRequire` edges only) |
+| `graph` | array | Package dependency edges `{from, to}`, sorted by `from` then `to` (merges `OnRequire`, target `AddDeps`/`UseRequires`, and `BuildSubGraph` edges; `--no-targets` reports `OnRequire` edges only). Each edge also carries optional `kinds` (`require`, `subgraph`, `target`) and `via` (the declaring call sites), the same attribution `vmake deps graph --json` reports |
 | `compileDatabase` | string | `<root>/build/compile_commands.json` (the expected path, even before a build) |
 | `compileDatabasePresent` | bool | Whether `<root>/build/compile_commands.json` currently exists; presence only, not freshness |
 | `buildReport` | string | `<root>/build/vmake-build.json` (see `docs/BUILD_RESULT.md`) |

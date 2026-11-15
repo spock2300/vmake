@@ -17,7 +17,7 @@ type runContext struct {
 }
 
 type configStage struct {
-	needed        map[string]bool
+	needed        NeededSet
 	allPkgOptions map[string]map[string]any
 }
 

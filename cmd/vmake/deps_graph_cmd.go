@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,7 +12,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spock2300/vmake/pkg/pipeline"
-	"github.com/spock2300/vmake/pkg/resolver"
 )
 
 type depsGraphEnvelope struct {
@@ -51,6 +51,59 @@ type depsCheckEnvelope struct {
 	Issues           []pipeline.GraphIssue `json:"issues"`
 }
 
+// openDepsInspection opens a deps inspection command's project with the shared
+// quiet and lock conventions: it silences the process streams while the project
+// is opened and returns the session with the function that restores them.
+// Callers restore before writing their output; project-root errors stay with
+// the caller, which owns their per-command reporting.
+func openDepsInspection(execution context.Context, root string, overrides []inspectOverride, jsonOut, locked, offline bool) (*inspectionSession, func(), error) {
+	restoreStdout := silenceStdout()
+	restoreStderr := func() {}
+	if jsonOut {
+		restoreStderr = silenceStderr()
+	}
+	policy := lockPolicyFor(true, locked, offline)
+	quiet := jsonOut || (!verbose && !veryVerbose)
+	session, err := openInspection(inspectionRequest{
+		project:   projectOptions{execution: execution, root: root, policy: &policy, overrides: overrides, skipGitignore: true},
+		quiet:     quiet,
+		execQuiet: quiet,
+	})
+	if err != nil {
+		restoreStdout()
+		restoreStderr()
+		return nil, nil, err
+	}
+	restore := func() {
+		restoreStdout()
+		restoreStderr()
+	}
+	return session, restore, nil
+}
+
+// runDepsInspection opens the shared preamble and hands the built graph to
+// render with the process streams restored.
+func runDepsInspection(execution context.Context, overrides []inspectOverride, includeAll, jsonOut, locked, offline bool, render func(*RuntimeContext, *pipeline.UnifiedGraph) error) error {
+	root, err := resolveProjectRoot()
+	if err != nil {
+		if errors.Is(err, errNotInProject) {
+			return errNotInProject
+		}
+		return err
+	}
+	session, restore, err := openDepsInspection(execution, root, overrides, jsonOut, locked, offline)
+	if err != nil {
+		return unwrapDepsOpenErr(err)
+	}
+	defer session.Close()
+	g, err := pipeline.BuildUnifiedGraph(session.ctx, session.inspection, pipeline.GraphOptions{IncludeAll: includeAll, DeclareTargets: true})
+	restore()
+	if err != nil {
+		return err
+	}
+	return render(session.ctx, g)
+}
+
 func newDepsGraphCmd() *cobra.Command {
 	var targetLevel bool
 	var format string
@@ -86,57 +139,24 @@ dot|mermaid to render Graphviz DOT or Mermaid flowcharts.`,
 			if err != nil {
 				return &usageError{err: err}
 			}
-			root, err := resolveProjectRoot()
-			if err != nil {
-				if errors.Is(err, errNotInProject) {
-					return errNotInProject
+			return runDepsInspection(cmd.Context(), overrides, includeAll, jsonOut, locked, offline, func(_ *RuntimeContext, g *pipeline.UnifiedGraph) error {
+				facts := g.Facts()
+				if jsonOut {
+					return writeDepsJSON(cmd.OutOrStdout(), &depsGraphEnvelope{
+						SchemaVersion: 1,
+						Command:       "deps graph",
+						Roots:         nonNilStrings(facts.Roots),
+						Packages:      nonNilStrings(facts.Packages),
+						PackageEdges:  nonNilPackageEdges(facts.PackageEdges),
+						Targets:       nonNilStrings(facts.Targets),
+						TargetEdges:   nonNilTargetEdges(facts.TargetEdges),
+						Issues:        facts.Issues,
+					})
 				}
-				return err
-			}
-
-			restoreStdout := silenceStdout()
-			defer restoreStdout()
-			restoreStderr := func() {}
-			if jsonOut {
-				restoreStderr = silenceStderr()
-				defer restoreStderr()
-			}
-
-			policy := resolver.LockPolicy{
-				DryRun:        true,
-				Locked:        locked,
-				StrictWrapper: locked,
-				Offline:       offline,
-			}
-			session, err := openInspection(inspectionRequest{execution: cmd.Context(), root: root, policy: &policy, overrides: overrides, skipGitignore: true, quiet: jsonOut || (!verbose && !veryVerbose), execQuiet: jsonOut || (!verbose && !veryVerbose)})
-			if err != nil {
-				restoreStdout()
-				restoreStderr()
-				return unwrapDepsOpenErr(err)
-			}
-			defer session.Close()
-			g, err := pipeline.BuildUnifiedGraph(session.ctx, session.inspection, includeAll)
-			restoreStdout()
-			restoreStderr()
-			if err != nil {
-				return err
-			}
-
-			if jsonOut {
-				return writeDepsJSON(cmd.OutOrStdout(), &depsGraphEnvelope{
-					SchemaVersion: 1,
-					Command:       "deps graph",
-					Roots:         nonNilStrings(g.Roots),
-					Packages:      nonNilStrings(g.Packages),
-					PackageEdges:  nonNilPackageEdges(g.PackageEdges),
-					Targets:       nonNilStrings(g.Targets),
-					TargetEdges:   nonNilTargetEdges(g.TargetEdges),
-					Issues:        g.Issues,
-				})
-			}
-			warnTargetDeclareIssues(cmd.ErrOrStderr(), g.Issues)
-			renderDepsGraph(cmd.OutOrStdout(), g, targetLevel, format)
-			return nil
+				warnTargetDeclareIssues(cmd.ErrOrStderr(), facts)
+				renderDepsGraph(cmd.OutOrStdout(), facts, targetLevel, format)
+				return nil
+			})
 		},
 	}
 	cmd.Flags().BoolVar(&targetLevel, "targets", false, "print target-level (<pkg>:<target>) dependency edges")
@@ -176,72 +196,37 @@ OnBuild target edge that introduced each hop.`,
 			if err != nil {
 				return &usageError{err: err}
 			}
-			root, err := resolveProjectRoot()
-			if err != nil {
-				if errors.Is(err, errNotInProject) {
-					return errNotInProject
+			return runDepsInspection(cmd.Context(), overrides, false, jsonOut, locked, offline, func(ctx *RuntimeContext, g *pipeline.UnifiedGraph) error {
+				res := pipeline.WhyQuery(ctx, g, query, allPaths)
+				facts := g.Facts()
+				if jsonOut {
+					if err := writeDepsJSON(cmd.OutOrStdout(), &depsWhyEnvelope{
+						SchemaVersion: 1,
+						Command:       "deps why",
+						Query:         res.Query,
+						Kind:          res.Kind,
+						Exists:        res.Exists,
+						Needed:        res.Needed,
+						IsRoot:        res.IsRoot,
+						Paths:         res.Paths,
+						Steps:         res.Steps,
+						Reason:        res.Reason,
+						Issues:        facts.Issues,
+					}); err != nil {
+						return err
+					}
+					if !res.Exists {
+						return errors.New(res.Reason)
+					}
+					return nil
 				}
-				return err
-			}
-
-			restoreStdout := silenceStdout()
-			defer restoreStdout()
-			restoreStderr := func() {}
-			if jsonOut {
-				restoreStderr = silenceStderr()
-				defer restoreStderr()
-			}
-
-			policy := resolver.LockPolicy{
-				DryRun:        true,
-				Locked:        locked,
-				StrictWrapper: locked,
-				Offline:       offline,
-			}
-			session, err := openInspection(inspectionRequest{execution: cmd.Context(), root: root, policy: &policy, overrides: overrides, skipGitignore: true, quiet: jsonOut || (!verbose && !veryVerbose), execQuiet: jsonOut || (!verbose && !veryVerbose)})
-			if err != nil {
-				restoreStdout()
-				restoreStderr()
-				return unwrapDepsOpenErr(err)
-			}
-			defer session.Close()
-			g, err := pipeline.BuildUnifiedGraph(session.ctx, session.inspection, false)
-			if err != nil {
-				restoreStdout()
-				restoreStderr()
-				return err
-			}
-			res := pipeline.WhyQuery(session.ctx, g, query, allPaths)
-			restoreStdout()
-			restoreStderr()
-
-			if jsonOut {
-				if err := writeDepsJSON(cmd.OutOrStdout(), &depsWhyEnvelope{
-					SchemaVersion: 1,
-					Command:       "deps why",
-					Query:         res.Query,
-					Kind:          res.Kind,
-					Exists:        res.Exists,
-					Needed:        res.Needed,
-					IsRoot:        res.IsRoot,
-					Paths:         res.Paths,
-					Steps:         res.Steps,
-					Reason:        res.Reason,
-					Issues:        g.Issues,
-				}); err != nil {
-					return err
-				}
+				warnTargetDeclareIssues(cmd.ErrOrStderr(), facts)
 				if !res.Exists {
 					return errors.New(res.Reason)
 				}
+				renderDepsWhy(cmd.OutOrStdout(), res)
 				return nil
-			}
-			warnTargetDeclareIssues(cmd.ErrOrStderr(), g.Issues)
-			if !res.Exists {
-				return errors.New(res.Reason)
-			}
-			renderDepsWhy(cmd.OutOrStdout(), res)
-			return nil
+			})
 		},
 	}
 	cmd.Flags().BoolVar(&allPaths, "all", false, "show multiple dependency paths instead of only the shortest path")
@@ -289,24 +274,8 @@ Exits 0 when clean and 1 when any violation is detected.`,
 				return errNotInProject
 			}
 
-			restoreStdout := silenceStdout()
-			defer restoreStdout()
-			restoreStderr := func() {}
-			if jsonOut {
-				restoreStderr = silenceStderr()
-				defer restoreStderr()
-			}
-
-			policy := resolver.LockPolicy{
-				DryRun:        true,
-				Locked:        locked,
-				StrictWrapper: locked,
-				Offline:       offline,
-			}
-			session, err := openInspection(inspectionRequest{execution: cmd.Context(), root: root, policy: &policy, overrides: overrides, skipGitignore: true, quiet: jsonOut || (!verbose && !veryVerbose), execQuiet: jsonOut || (!verbose && !veryVerbose)})
+			session, restore, err := openDepsInspection(cmd.Context(), root, overrides, jsonOut, locked, offline)
 			if err != nil {
-				restoreStdout()
-				restoreStderr()
 				var overrideErr *optionOverrideError
 				if errors.As(err, &overrideErr) {
 					return &usageError{err: overrideErr.err}
@@ -318,8 +287,7 @@ Exits 0 when clean and 1 when any violation is detected.`,
 			}
 			defer session.Close()
 			report, err := pipeline.CheckProjectDeps(session.ctx, session.inspection)
-			restoreStdout()
-			restoreStderr()
+			restore()
 			if err != nil {
 				issue := classifyResolveIssue(err)
 				return finishDepsCheck(cmd.OutOrStdout(), jsonOut, &pipeline.DepsCheckReport{
@@ -344,11 +312,18 @@ func unwrapDepsOpenErr(err error) error {
 	return err
 }
 
-func warnTargetDeclareIssues(w io.Writer, issues []pipeline.GraphIssue) {
-	for _, iss := range issues {
-		if iss.Kind == "target-declare" {
-			fmt.Fprintf(w, "Warning: %s\n", iss.Message)
+// warnTargetDeclareIssues reports declaration failures for the active package
+// set. --all declares every resolved package, and a package outside the active
+// roots is allowed to reject the current configuration.
+func warnTargetDeclareIssues(w io.Writer, facts pipeline.GraphFacts) {
+	for _, iss := range facts.Issues {
+		if iss.Kind != "target-declare" {
+			continue
 		}
+		if !facts.Needed.Has(iss.Package) {
+			continue
+		}
+		fmt.Fprintf(w, "Warning: %s\n", iss.Message)
 	}
 }
 
@@ -409,19 +384,19 @@ func finishDepsCheck(w io.Writer, jsonOut bool, report *pipeline.DepsCheckReport
 	return fmt.Errorf("found %d dependency architecture issue(s)", len(issues))
 }
 
-func renderDepsGraph(w io.Writer, g *pipeline.UnifiedGraph, targetLevel bool, format string) {
+func renderDepsGraph(w io.Writer, facts pipeline.GraphFacts, targetLevel bool, format string) {
 	var nodes []string
 	var edges [][2]string
 	if targetLevel {
-		nodes = g.Targets
-		edges = make([][2]string, 0, len(g.TargetEdges))
-		for _, te := range g.TargetEdges {
+		nodes = facts.Targets
+		edges = make([][2]string, 0, len(facts.TargetEdges))
+		for _, te := range facts.TargetEdges {
 			edges = append(edges, [2]string{te.From, te.To})
 		}
 	} else {
-		nodes = g.Packages
-		edges = make([][2]string, 0, len(g.PackageEdges))
-		for _, pe := range g.PackageEdges {
+		nodes = facts.Packages
+		edges = make([][2]string, 0, len(facts.PackageEdges))
+		for _, pe := range facts.PackageEdges {
 			edges = append(edges, [2]string{pe.From, pe.To})
 		}
 	}
@@ -528,7 +503,7 @@ func completeDepsWhyArg(cmd *cobra.Command, args []string, toComplete string) ([
 		restoreOut := silenceStdout()
 		restoreErr := silenceStderr()
 		restoreScope := inspectionScope(true, true)
-		policy := resolver.LockPolicy{DryRun: true, Offline: true}
+		policy := lockPolicyFor(true, false, true)
 		ctx, err := openProject(projectOptions{root: root, execution: cmd.Context(), policy: &policy, skipGitignore: true})
 		if err == nil {
 			for name := range ctx.DepGraph.Packages {
@@ -536,8 +511,8 @@ func completeDepsWhyArg(cmd *cobra.Command, args []string, toComplete string) ([
 			}
 			if strings.Contains(toComplete, ":") {
 				if inspection, inspErr := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true}); inspErr == nil {
-					if g, gErr := pipeline.BuildUnifiedGraph(ctx, inspection, true); gErr == nil {
-						for _, t := range g.Targets {
+					if g, gErr := pipeline.BuildUnifiedGraph(ctx, inspection, pipeline.GraphOptions{IncludeAll: true, DeclareTargets: true}); gErr == nil {
+						for _, t := range g.Facts().Targets {
 							add(t)
 						}
 					}

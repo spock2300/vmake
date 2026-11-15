@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
@@ -99,4 +100,21 @@ func TestComputeNeededRootSelection(t *testing.T) {
 			t.Fatalf("roots = %v, want [app lib]", needed.Roots)
 		}
 	})
+}
+
+func TestNeededSetQueries(t *testing.T) {
+	set := NeededSet{"lib": true, "app": true}
+	if !set.Has("app") || set.Has("missing") {
+		t.Fatalf("Has = %v/%v", set.Has("app"), set.Has("missing"))
+	}
+	if set.Len() != 2 {
+		t.Fatalf("Len = %d, want 2", set.Len())
+	}
+	if got := set.Names(); !reflect.DeepEqual(got, []string{"app", "lib"}) {
+		t.Fatalf("Names = %v, want sorted names", got)
+	}
+	var nilSet NeededSet
+	if nilSet.Has("app") || nilSet.Len() != 0 || len(nilSet.Names()) != 0 {
+		t.Fatal("nil NeededSet must behave as an empty set")
+	}
 }

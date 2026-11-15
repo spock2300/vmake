@@ -23,7 +23,7 @@ const (
 	StampName    = ".vmake_configure.json"
 )
 
-type Stamp struct {
+type stamp struct {
 	Version     int    `json:"version"`
 	Fingerprint string `json:"fingerprint"`
 	CMakePath   string `json:"cmakePath,omitempty"`
@@ -37,38 +37,38 @@ type fingerprint struct {
 	CMakePath   string            `json:"cmakePath"`
 	CMakeDigest string            `json:"cmakeDigest"`
 	Env         map[string]string `json:"env"`
-	Files       []FileDigest      `json:"files"`
+	Files       []fileDigest      `json:"files"`
 }
 
-type FileDigest struct {
+type fileDigest struct {
 	Rel  string `json:"rel"`
 	Hash string `json:"hash"`
 }
 
-func StampPath(s Settings) string {
+func stampPath(s Settings) string {
 	return filepath.Join(s.BuildDir, StampName)
 }
 
-// State reports whether the recorded configure output can be reused and
+// stampState reports whether the recorded configure output can be reused and
 // returns the fingerprint computed for the current tree. A required
-// reconfigure can pass the returned fingerprint to SaveStamp instead of
+// reconfigure can pass the returned fingerprint to writeStamp instead of
 // walking the source tree a second time; it is empty when it was not
 // computed (dry run, unusable stamp, missing configure output, hashing error).
-func State(s Settings, args []string) (string, bool) {
+func stampState(s Settings, args []string) (string, bool) {
 	if s.DryRun {
 		return "", false
 	}
-	var stamp Stamp
-	if err := jsonio.Load(StampPath(s), &stamp); err != nil {
+	var stamp stamp
+	if err := jsonio.Load(stampPath(s), &stamp); err != nil {
 		return "", false
 	}
 	if stamp.Version != StampVersion || stamp.Fingerprint == "" {
 		return "", false
 	}
-	if !OutputPresent(s, args) {
+	if !outputPresent(s, args) {
 		return "", false
 	}
-	fingerprint, err := Fingerprint(s, args)
+	fingerprint, err := computeFingerprint(s, args)
 	if err != nil {
 		vlog.Debug("  cmake configure: fingerprint unavailable: %v", err)
 		return "", false
@@ -80,11 +80,11 @@ func State(s Settings, args []string) (string, bool) {
 	return fingerprint, true
 }
 
-// OutputPresent reports whether the configured build tree still holds what
+// outputPresent reports whether the configured build tree still holds what
 // `cmake --build` needs: the cache, the generator's CMakeFiles bookkeeping
 // and, when the generator is known, its top-level build file. A hand-deleted
 // build.ninja or Makefile must force configure rather than fail a later build.
-func OutputPresent(s Settings, args []string) bool {
+func outputPresent(s Settings, args []string) bool {
 	if !isRegularFile(filepath.Join(s.BuildDir, "CMakeCache.txt")) {
 		return false
 	}
@@ -103,11 +103,11 @@ func isRegularFile(path string) bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
-// GeneratorMainFile returns the top-level build file the configured generator
+// generatorMainFile returns the top-level build file the configured generator
 // writes next to CMakeCache.txt, or "" when the generator cannot be determined
 // (configure presets) or is not one VMake manages. An unknown generator keeps
 // only the CMakeFiles requirement.
-func GeneratorMainFile(args []string) string {
+func generatorMainFile(args []string) string {
 	return generatorMainFileForHost(args, runtime.GOOS)
 }
 
@@ -115,21 +115,12 @@ func generatorMainFileForHost(args []string, hostOS string) string {
 	if HasOption(args, "--preset") {
 		return ""
 	}
-	generator := GeneratorFromArgs(args)
+	generator := generatorFromArgs(args)
 	if generator == "" {
 		generator = os.Getenv("CMAKE_GENERATOR")
 	}
 	if generator == "" {
-		if hostOS == "" {
-			hostOS = runtime.GOOS
-		}
-		if hostOS == "windows" {
-			// ConfigureArgs requests Ninja on Windows when the caller did not;
-			// Unix hosts keep CMake's own default.
-			generator = "Ninja"
-		} else {
-			generator = "Unix Makefiles"
-		}
+		generator, _ = generatorDefault(hostOS)
 	}
 	lower := strings.ToLower(generator)
 	switch {
@@ -142,7 +133,7 @@ func generatorMainFileForHost(args []string, hostOS string) string {
 	}
 }
 
-func GeneratorFromArgs(args []string) string {
+func generatorFromArgs(args []string) string {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
@@ -161,16 +152,16 @@ func GeneratorFromArgs(args []string) string {
 	return ""
 }
 
-func SaveStamp(s Settings, args []string, fingerprint string) error {
+func writeStamp(s Settings, args []string, fingerprint string) error {
 	if fingerprint == "" {
 		var err error
-		fingerprint, err = Fingerprint(s, args)
+		fingerprint, err = computeFingerprint(s, args)
 		if err != nil {
 			return err
 		}
 	}
 	cmakePath, _ := ResolveExecutable(s)
-	return jsonio.Save(StampPath(s), Stamp{
+	return jsonio.Save(stampPath(s), stamp{
 		Version:     StampVersion,
 		Fingerprint: fingerprint,
 		CMakePath:   cmakePath,
@@ -178,33 +169,33 @@ func SaveStamp(s Settings, args []string, fingerprint string) error {
 	})
 }
 
-func Fingerprint(s Settings, args []string) (string, error) {
+func computeFingerprint(s Settings, args []string) (string, error) {
 	cmakePath, cmakeDigest := ResolveExecutable(s)
 	if cmakePath == "" {
 		return "", fmt.Errorf("cmake executable not found")
 	}
-	files, err := InputFiles(s)
+	files, err := inputFiles(s)
 	if err != nil {
 		return "", err
 	}
-	return DigestValue(fingerprint{
+	return digestValue(fingerprint{
 		Version:     StampVersion,
 		HostOS:      s.HostOS,
 		Args:        args,
 		CMakePath:   cmakePath,
 		CMakeDigest: cmakeDigest,
-		Env:         ConfigureEnv(s),
+		Env:         configureEnv(s),
 		Files:       files,
 	})
 }
 
-func InputFiles(s Settings) ([]FileDigest, error) {
+func inputFiles(s Settings) ([]fileDigest, error) {
 	if s.SourceDir == "" {
-		return []FileDigest{}, nil
+		return []fileDigest{}, nil
 	}
 	// SourceDir can be a symlink (local SetGit packages); WalkDir does not
 	// descend into a symlinked root, so scan the resolved tree.
-	scanRoot := ResolveSymlinks(s.SourceDir)
+	scanRoot := resolveSymlinks(s.SourceDir)
 	// Exclude the invocation's build root instead of assuming <SourceDir>/build:
 	// a remote package's SourceDir is its upstream checkout while its build root
 	// is <pkgRoot>/out/<owner>/<key>. The parent of BuildRoot covers the sibling
@@ -219,11 +210,11 @@ func InputFiles(s Settings) ([]FileDigest, error) {
 		if dir == "" {
 			continue
 		}
-		if clean, ok := NestedPath(scanRoot, ResolveSymlinks(dir)); ok {
+		if clean, ok := nestedPath(scanRoot, resolveSymlinks(dir)); ok {
 			excluded[clean] = true
 		}
 	}
-	files := []FileDigest{}
+	files := []fileDigest{}
 	err := filepath.WalkDir(scanRoot, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -238,7 +229,7 @@ func InputFiles(s Settings) ([]FileDigest, error) {
 			}
 			return nil
 		}
-		if entry.Name() == "cmake_install.cmake" || !IsInputFile(entry.Name()) {
+		if entry.Name() == "cmake_install.cmake" || !isInputFile(entry.Name()) {
 			return nil
 		}
 		data, err := os.ReadFile(path)
@@ -249,7 +240,7 @@ func InputFiles(s Settings) ([]FileDigest, error) {
 		if err != nil {
 			return nil
 		}
-		files = append(files, FileDigest{Rel: filepath.ToSlash(rel), Hash: HashBytes(data)})
+		files = append(files, fileDigest{Rel: filepath.ToSlash(rel), Hash: hashBytes(data)})
 		return nil
 	})
 	if err != nil {
@@ -259,7 +250,7 @@ func InputFiles(s Settings) ([]FileDigest, error) {
 	return files, nil
 }
 
-func ResolveSymlinks(path string) string {
+func resolveSymlinks(path string) string {
 	if path == "" {
 		return ""
 	}
@@ -269,7 +260,7 @@ func ResolveSymlinks(path string) string {
 	return filepath.Clean(path)
 }
 
-func IsInputFile(name string) bool {
+func isInputFile(name string) bool {
 	switch name {
 	case "CMakeLists.txt", "CMakePresets.json", "CMakeUserPresets.json":
 		return true
@@ -277,7 +268,7 @@ func IsInputFile(name string) bool {
 	return strings.HasSuffix(name, ".cmake") || strings.HasSuffix(name, ".cmake.in")
 }
 
-func NestedPath(root, dir string) (string, bool) {
+func nestedPath(root, dir string) (string, bool) {
 	if dir == "" {
 		return "", false
 	}
@@ -293,7 +284,7 @@ func NestedPath(root, dir string) (string, bool) {
 }
 
 func ResolveExecutable(s Settings) (string, string) {
-	path, err := exec.LookPathInEnvPath("cmake", CommandPath(s))
+	path, err := exec.LookPathInEnvPath("cmake", commandPath(s))
 	if err != nil || path == "" {
 		return "", ""
 	}
@@ -301,28 +292,36 @@ func ResolveExecutable(s Settings) (string, string) {
 	if err != nil {
 		return path, ""
 	}
-	return path, HashBytes(data)
+	return path, hashBytes(data)
 }
 
-// Environment returns the environment the runner applies to cmake: the
+// hostOS is the host Settings.HostOS names, defaulting to the running host.
+func (s Settings) hostOS() string {
+	if s.HostOS != "" {
+		return s.HostOS
+	}
+	return runtime.GOOS
+}
+
+// environment returns the environment the runner applies to cmake: the
 // inherited process environment overlaid with the toolchain's additions.
 // On Windows PATHEXT is read from here, so a toolchain-provided value wins over
 // the process one exactly as it would for the executed command.
-func Environment(s Settings) map[string]string {
+func environment(s Settings) map[string]string {
 	env := make(map[string]string)
 	for _, item := range os.Environ() {
 		key, value, ok := strings.Cut(item, "=")
 		if !ok {
 			continue
 		}
-		if runtime.GOOS == "windows" {
+		if s.hostOS() == "windows" {
 			key = strings.ToUpper(key)
 		}
 		env[key] = value
 	}
 	if s.Toolchain != nil {
 		for key, value := range s.Toolchain.CommandEnv() {
-			if runtime.GOOS == "windows" {
+			if s.hostOS() == "windows" {
 				key = strings.ToUpper(key)
 			}
 			env[key] = value
@@ -331,10 +330,24 @@ func Environment(s Settings) map[string]string {
 	return env
 }
 
-// CommandPath returns the PATH the runner uses to resolve cmake: the
+// generatorDefault is the one declaration of the generator vmake assumes when
+// neither the caller nor CMAKE_GENERATOR picks one. pinned reports whether
+// ConfigureArgs must pass it explicitly: CMake would pick a Visual Studio
+// generator on Windows, while on Unix its own default already applies.
+func generatorDefault(hostOS string) (generator string, pinned bool) {
+	if hostOS == "" {
+		hostOS = runtime.GOOS
+	}
+	if hostOS == "windows" {
+		return "Ninja", true
+	}
+	return "Unix Makefiles", false
+}
+
+// commandPath returns the PATH the runner uses to resolve cmake: the
 // toolchain-augmented PATH when the toolchain contributes one, otherwise the
 // inherited process PATH.
-func CommandPath(s Settings) string {
+func commandPath(s Settings) string {
 	if s.Toolchain != nil {
 		if path := s.Toolchain.CommandEnv()["PATH"]; path != "" {
 			return path
@@ -343,18 +356,18 @@ func CommandPath(s Settings) string {
 	return os.Getenv("PATH")
 }
 
-func ConfigureEnv(s Settings) map[string]string {
+func configureEnv(s Settings) map[string]string {
 	// Fingerprint the environment the command actually receives, including the
 	// toolchain-augmented PATH, but not unrelated session variables.
-	inherited := Environment(s)
+	inherited := environment(s)
 	env := make(map[string]string)
 	for key, value := range inherited {
 		upper := strings.ToUpper(key)
-		if EnvOverridden(upper) {
+		if envOverridden(upper) {
 			continue
 		}
 		if upper == "PATH" || strings.HasPrefix(upper, "CMAKE_") || envsig.Allowed(upper) {
-			if runtime.GOOS == "windows" {
+			if s.hostOS() == "windows" {
 				key = upper
 			}
 			env[key] = value
@@ -363,10 +376,10 @@ func ConfigureEnv(s Settings) map[string]string {
 	return env
 }
 
-// EnvOverridden lists variables vmake sets explicitly with -D or that
+// envOverridden lists variables vmake sets explicitly with -D or that
 // CMake only reads while seeding a fresh cache. Hashing them would trigger
 // reconfigures that cannot change the configure result.
-func EnvOverridden(key string) bool {
+func envOverridden(key string) bool {
 	switch key {
 	case "CC", "CXX", "AR", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS":
 		return true
@@ -374,15 +387,15 @@ func EnvOverridden(key string) bool {
 	return false
 }
 
-func DigestValue(value any) (string, error) {
+func digestValue(value any) (string, error) {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return "", err
 	}
-	return HashBytes(data), nil
+	return hashBytes(data), nil
 }
 
-func HashBytes(data []byte) string {
+func hashBytes(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }

@@ -22,8 +22,7 @@ type BuildResult struct {
 	AllTargets       map[string]map[string]*api.Target
 	Graph            *build.BuildGraph
 	PkgDirs          map[string]*api.PkgDirs
-	PkgBuildKeys     map[string]string
-	PkgPlatforms     map[string]api.Platform
+	Layouts          map[string]*build.PackageLayout
 	GlobalValues     map[string]any
 	TcName           string
 	TargetOS         string
@@ -98,7 +97,12 @@ func RunBuild(ctx *RuntimeContext, opts BuildOptions) (_ *BuildResult, err error
 		return nil, err
 	}
 	rc := newRunContext(ctx, opts, pre.cfg)
+	return runStages(rc, pre)
+}
 
+// runStages is the single composition of the build's stages; RunBuild and
+// tests enter it instead of re-assembling the chain.
+func runStages(rc *runContext, pre *buildPrelude) (*BuildResult, error) {
 	conf, err := prepareConfig(rc, pre.needed, pre)
 	if err != nil {
 		return nil, err
@@ -126,7 +130,7 @@ func newSourceStage(rc *runContext, cfg *configStage) *sourceStage {
 	return &sourceStage{
 		rc:             rc,
 		conf:           cfg,
-		pkgDirs:        ResolveAllPackageDirs(rc.ctx.DepGraph),
+		pkgDirs:        packageSourceDirs(rc.ctx),
 		layouts:        make(map[string]*build.PackageLayout),
 		patchHashes:    make(map[string]string),
 		sourceSeeds:    make(map[string]string),
@@ -137,7 +141,7 @@ func newSourceStage(rc *runContext, cfg *configStage) *sourceStage {
 	}
 }
 
-func prepareConfig(rc *runContext, needed map[string]bool, pre *buildPrelude) (*configStage, error) {
+func prepareConfig(rc *runContext, needed NeededSet, pre *buildPrelude) (*configStage, error) {
 	if err := acquireStorageOwners(rc.ctx, needed); err != nil {
 		return nil, err
 	}
@@ -247,20 +251,6 @@ func executePlan(rc *runContext, cfg *configStage, src *sourceStage, decl *decla
 	}
 	stats := scheduler.Stats().Snapshot()
 
-	pkgBuildKeys := make(map[string]string)
-	pkgPlatforms := make(map[string]api.Platform)
-	for _, name := range rc.ctx.Resolver.GetOrder() {
-		node := rc.ctx.DepGraph.Packages[name]
-		if node != nil && cfg.needed[name] {
-			if node.Pkg != nil {
-				pkgPlatforms[name] = api.Platform{OS: node.Pkg.TargetOS(), Triple: node.Pkg.TargetTriple()}
-			}
-			if info, ok := scheduler.GetPkgInfo(name); ok {
-				pkgBuildKeys[name] = info.BuildKey
-			}
-		}
-	}
-
 	return &BuildResult{
 		Targets:          rc.session.TargetResults(),
 		Stats:            stats,
@@ -268,8 +258,7 @@ func executePlan(rc *runContext, cfg *configStage, src *sourceStage, decl *decla
 		AllTargets:       decl.allTargets,
 		Graph:            plan.graph,
 		PkgDirs:          src.pkgDirs,
-		PkgBuildKeys:     pkgBuildKeys,
-		PkgPlatforms:     pkgPlatforms,
+		Layouts:          src.layouts,
 		GlobalValues:     maps.Clone(rc.cfg.GlobalValues),
 		TcName:           rc.cfg.TcName,
 		TargetOS:         rc.cfg.Platform.OSOrHost(),

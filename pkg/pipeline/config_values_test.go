@@ -33,8 +33,8 @@ func TestDisplayPackageValuesProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx.GlobalOptions = globalOptions
-	ctx.DerivedOptions = map[string]map[string]any{"app": {"derived": "yes"}}
+	ctx.globalOptions = globalOptions
+	ctx.derivedOptions = map[string]map[string]any{"app": {"derived": "yes"}}
 
 	values := DisplayPackageValues(ctx, "app", ProjectGlobalValues(ctx))
 	for name, want := range map[string]any{
@@ -56,7 +56,7 @@ func TestDisplayPackageValuesProjection(t *testing.T) {
 func TestApplyGlobalValuesUsesChipTargetDefaults(t *testing.T) {
 	ctx := &RuntimeContext{
 		Config:      emptyConfig(),
-		ChipProfile: api.ChipProfile{Name: "chip", TargetOS: "none", TargetTriple: "arm-none-eabi"},
+		chipProfile: api.ChipProfile{Name: "chip", TargetOS: "none", TargetTriple: "arm-none-eabi"},
 	}
 	values := applyGlobalValues(ctx, nil)
 	if got := values[api.ModeOptionName]; got != api.ModeDebug {
@@ -95,7 +95,7 @@ func TestOnApplySeesResolvedValues(t *testing.T) {
 		Resolver:    r,
 		DepGraph:    r.Graph(),
 		Config:      cfg,
-		ChipProfile: api.ChipProfile{Name: "chip", TargetOS: "none", TargetTriple: "arm-none-eabi"},
+		chipProfile: api.ChipProfile{Name: "chip", TargetOS: "none", TargetTriple: "arm-none-eabi"},
 	}
 	if err := runConfigPhase(ctx); err != nil {
 		t.Fatal(err)

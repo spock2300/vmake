@@ -55,7 +55,7 @@ func TestPostLinkPrefixedWindowsOutput(t *testing.T) {
 	}
 	prefix := filepath.Join(dir, "install")
 	installer := NewArtifactInstaller(graph, map[string]*api.PkgDirs{"p": dirs}, prefix)
-	installer.SetPackageInfo("p", &PkgInstallInfo{BuildDir: buildDir, TargetOS: "none"})
+	installer.SetPackageInfo("p", installInfoFor("p", graph, dirs, "", "none"))
 	if err := installer.InstallAll(nil); err != nil {
 		t.Fatal(err)
 	}

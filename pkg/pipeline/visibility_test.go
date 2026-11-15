@@ -61,7 +61,7 @@ func TestPackageVisibilityConfigCallbacks(t *testing.T) {
 			if r.Graph().Packages["dependency"].Pkg.DefaultVisibilityHidden() {
 				t.Error("application policy changed dependency visibility")
 			}
-			for name, flags := range ctx.BufferedGlobalFlags {
+			for name, flags := range ctx.bufferedGlobalFlags {
 				if !reflect.DeepEqual(flags, &packageGlobalFlags{}) {
 					t.Errorf("%s leaked visibility into global flags: %+v", name, flags)
 				}
@@ -182,7 +182,7 @@ func TestPackageVisibilityBuildAndInspectKeys(t *testing.T) {
 	s.cfg = makeBuildConfig(ctx, tc, "host")
 	s.needed = map[string]bool{"app": true, "dependency": true}
 	s.globalFlagsHash = build.HashGlobalFlags([4][]string{})
-	s.computeDirsAndOptions()
+	s.computeDirsAndOptions(t)
 	if err := s.prepareAllPackages(); err != nil {
 		t.Fatal(err)
 	}
@@ -195,8 +195,8 @@ func TestPackageVisibilityBuildAndInspectKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name := range s.needed {
-		if !reflect.DeepEqual(insp.PkgDirs[name], s.pkgDirs[name]) {
-			t.Errorf("%s inspection directories differ from build: %+v, %+v", name, insp.PkgDirs[name], s.pkgDirs[name])
+		if !reflect.DeepEqual(insp.pkgDirs[name], s.pkgDirs[name]) {
+			t.Errorf("%s inspection directories differ from build: %+v, %+v", name, insp.pkgDirs[name], s.pkgDirs[name])
 		}
 		want := build.BuildKey(tools.CCKey(), s.cfg.Mode, s.allPkgOptions[name], extra[name])
 		if got := filepath.Base(s.pkgDirs[name].BuildDir); got != want {

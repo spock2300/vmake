@@ -71,11 +71,7 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 		return false, err
 	}
 	if pkgInfo.InstallDir != "" {
-		placement := resolved.Placement
-		if placement.Kind == "" {
-			placement = s.placementFor(resolved, pkgInfo)
-		}
-		if err := s.publishTarget(resolved, pkgInfo, placement); err != nil {
+		if err := s.publishTarget(resolved, pkgInfo, resolved.Placement); err != nil {
 			return false, err
 		}
 	}
@@ -193,7 +189,10 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) (err error) {
 		return nil
 	}
 
-	pkg := s.ensurePackageForVoid(resolved.Node)
+	pkg, ok := s.packages[resolved.Node.PkgName]
+	if !ok || pkg == nil {
+		return fmt.Errorf("package %s is not activated", resolved.Node.PkgName)
+	}
 	s.populateDepsFromGraph(pkg, resolved.Node)
 
 	pkg.SetGlobalFlags(s.globalCFlags, s.globalCxxFlags, s.globalLdFlags, s.globalLinks)
@@ -208,36 +207,6 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) (err error) {
 
 	s.updateVoidLibDirs(resolved, pkg)
 	return nil
-}
-
-func (s *Scheduler) ensurePackageForVoid(node *BuildNode) *api.Package {
-	pkg := s.packages[node.PkgName]
-	if pkg != nil {
-		return pkg
-	}
-
-	pkgInfo := s.pkgs[node.PkgName]
-	pkg = api.NewPackage()
-	buildDir := pkgInfo.BuildDir
-	if buildDir == "" {
-		buildDir = BuildPath(pkgInfo.SourceDir, pkgInfo.BuildKey, "")
-	}
-	pkg.SetDirs(api.PkgDirs{
-		SourceDir: pkgInfo.SourceDir,
-		BuildDir:  buildDir,
-	})
-	pkg.SetToolchain(s.toolchain)
-	pkg.SetPlatform(s.platform)
-	pkg.SetSrcDir(pkgInfo.SourceDir)
-	cfgVals := map[string]any{api.ModeOptionName: s.mode}
-	if opts, ok := s.pkgOptions[node.PkgName]; ok {
-		for k, v := range opts {
-			cfgVals[k] = v
-		}
-	}
-	pkg.SetCfgVals(cfgVals)
-	s.packages[node.PkgName] = pkg
-	return pkg
 }
 
 func (s *Scheduler) updateVoidLibDirs(resolved *ResolvedTarget, pkg *api.Package) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/pkg/api"
@@ -48,13 +49,16 @@ type Inspection struct {
 	GlobalLinks        []string
 	GlobalMacroDefines []string
 	Tools              *build.ResolvedTools
-	Needed             map[string]bool
+	needed             NeededSet
 	GlobalFlagsHash    string
-	PkgDirs            map[string]*api.PkgDirs
-	Layouts            map[string]*build.PackageLayout
-	PackageToolchains  map[string]*toolchain.Toolchain
-	PackageValues      map[string]map[string]any
-	PackagePlatforms   map[string]api.Platform
+	pkgDirs            map[string]*api.PkgDirs
+	layouts            map[string]*build.PackageLayout
+	packageToolchains  map[string]*toolchain.Toolchain
+	packageValues      map[string]map[string]any
+	packagePlatforms   map[string]api.Platform
+
+	names   []string
+	nameSet map[string]bool
 }
 
 func ExpectedPackageSourceDir(ctx *RuntimeContext, name string, node *resolver.PackageNode) string {
@@ -109,13 +113,15 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 	globalLdFlags := pre.rawGlobalFlags[2]
 	globalLinks := pre.rawGlobalFlags[3]
 
-	pkgDirs := ResolveAllPackageDirs(ctx.DepGraph)
+	pkgDirs := packageSourceDirs(ctx)
+	names := make([]string, 0, len(ctx.DepGraph.Packages))
+	nameSet := make(map[string]bool, len(ctx.DepGraph.Packages))
 	layouts := make(map[string]*build.PackageLayout)
 	toolCache := make(map[string]*build.ResolvedTools)
 	packageToolchains := make(map[string]*toolchain.Toolchain)
 	packageValues := make(map[string]map[string]any)
 	packagePlatforms := make(map[string]api.Platform)
-	var filterNeeded map[string]bool
+	var filterNeeded NeededSet
 	if opts.FilterDeps {
 		filterNeeded = pre.needed
 	}
@@ -126,6 +132,8 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		if node == nil || node.Source == nil {
 			continue
 		}
+		names = append(names, name)
+		nameSet[name] = true
 		if len(ctx.AllOptions[name]) > 0 {
 			packageValues[name] = DisplayPackageValues(ctx, name, pre.cfg.GlobalValues)
 		}
@@ -165,8 +173,21 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		}
 		pkgOptions := allPkgOptions[name]
 		flagsHash := packageFlagsHash(pre.globalFlagsHash, node)
+		// markNotReady records the package's layout as "exists but is not
+		// materialized yet", which is the only state that can express an
+		// unknown build key without inventing one.
+		markNotReady := func() {
+			sourceDir := ""
+			if dirs := pkgDirs[name]; dirs != nil {
+				sourceDir = dirs.SourceDir
+			}
+			layout := build.PackageLayout{Dirs: api.PkgDirs{SourceDir: sourceDir}, Platform: packagePlatforms[name], Ready: false}
+			pkgDirs[name] = &layout.Dirs
+			layouts[name] = &layout
+		}
 		if node.IsLocal() {
 			if node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 && !DetectExistingSrcDir(node) {
+				markNotReady()
 				continue
 			}
 			commit, err := existingLocalSourceCommit(node)
@@ -179,7 +200,8 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 				CCKey:     tools.CCKey(),
 				Mode:      pre.cfg.Mode,
 				Options:   pkgOptions,
-				Material:  keyMaterial{commit: commit, flagsHash: flagsHash},
+				Facts:     LayoutFacts{Commit: commit, FlagsHash: flagsHash},
+				Platform:  packagePlatforms[name],
 				Ready:     true,
 			})
 			if err != nil {
@@ -191,10 +213,12 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		}
 		loc := ctx.packageLocation(name, node)
 		if info, err := os.Stat(loc.PackageRoot); err != nil || !info.IsDir() {
+			markNotReady()
 			continue
 		}
 		version, commit, ok := remoteVersionKey(ctx, loc.Owner, ctx.DepGraph.Packages[loc.Owner])
 		if !ok {
+			markNotReady()
 			continue
 		}
 		patchHash, err := patchHashForNode(name, node)
@@ -216,6 +240,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 			}
 		}
 		if commit == "" {
+			markNotReady()
 			continue
 		}
 		layout, err := layoutFor(layoutInput{
@@ -225,7 +250,8 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 			CCKey:          tools.CCKey(),
 			Mode:           pre.cfg.Mode,
 			Options:        pkgOptions,
-			Material:       keyMaterial{version: version, commit: commit, flagsHash: flagsHash, patchHash: patchHash, sourceLink: sourceLink},
+			Facts:          LayoutFacts{Version: version, Commit: commit, FlagsHash: flagsHash, PatchHash: patchHash, SourceLink: sourceLink},
+			Platform:       packagePlatforms[name],
 			Ready:          true,
 		})
 		if err != nil {
@@ -249,14 +275,137 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		GlobalCxxFlags:     globalCxxFlags,
 		GlobalLdFlags:      globalLdFlags,
 		GlobalLinks:        globalLinks,
-		GlobalMacroDefines: append([]string(nil), ctx.GlobalMacroDefines...),
+		GlobalMacroDefines: append([]string(nil), ctx.globalMacroDefines...),
 		Tools:              pre.tools,
-		Needed:             pre.needed,
+		needed:             pre.needed,
 		GlobalFlagsHash:    pre.globalFlagsHash,
-		PkgDirs:            pkgDirs,
-		Layouts:            layouts,
-		PackageToolchains:  packageToolchains,
-		PackageValues:      packageValues,
-		PackagePlatforms:   packagePlatforms,
+		pkgDirs:            pkgDirs,
+		layouts:            layouts,
+		packageToolchains:  packageToolchains,
+		packageValues:      packageValues,
+		packagePlatforms:   packagePlatforms,
+		names:              names,
+		nameSet:            nameSet,
 	}, nil
+}
+
+// PackageView is the per-package projection of an Inspection: everything a
+// consumer needs about one package, joined once instead of per caller.
+type PackageView struct {
+	Name      string
+	Dirs      *api.PkgDirs
+	Layout    *build.PackageLayout
+	Toolchain *toolchain.Toolchain
+	Values    map[string]any
+	Platform  *api.Platform
+	Needed    bool
+	Skipped   bool
+}
+
+// Packages returns the inspected package names in resolver order. An
+// Inspection built by hand (tests, external callers) has no recorded order, so
+// its package names are derived from the maps and sorted.
+func (in *Inspection) Packages() []string {
+	if in == nil {
+		return nil
+	}
+	if in.names != nil {
+		return append([]string(nil), in.names...)
+	}
+	seen := make(map[string]bool)
+	for _, name := range in.derivedNames() {
+		seen[name] = true
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func (in *Inspection) derivedNames() []string {
+	if in == nil {
+		return nil
+	}
+	names := make([]string, 0, len(in.pkgDirs)+len(in.needed))
+	for name := range in.pkgDirs {
+		names = append(names, name)
+	}
+	for name := range in.layouts {
+		names = append(names, name)
+	}
+	for name := range in.packageToolchains {
+		names = append(names, name)
+	}
+	for name := range in.packageValues {
+		names = append(names, name)
+	}
+	for name := range in.packagePlatforms {
+		names = append(names, name)
+	}
+	for name := range in.needed {
+		names = append(names, name)
+	}
+	return names
+}
+
+// knowsPackage reports whether the inspection has a record for name. A
+// hand-built Inspection carries no index, so membership is derived from its
+// maps instead.
+func (in *Inspection) knowsPackage(name string) bool {
+	if in.nameSet != nil {
+		return in.nameSet[name]
+	}
+	for _, candidate := range in.derivedNames() {
+		if candidate == name {
+			return true
+		}
+	}
+	return false
+}
+
+// Needed returns the inspected package set. A nil set means the inspection ran
+// without a filter and every resolved package is reported.
+func (in *Inspection) Needed() NeededSet {
+	if in == nil {
+		return nil
+	}
+	return in.needed
+}
+
+// PkgInfo projects the view into the build package's value: the layout
+// conversion when the inspection resolved one, else a directory-only entry.
+func (v PackageView) PkgInfo() *build.PkgInfo {
+	if v.Layout != nil {
+		return v.Layout.PkgInfo()
+	}
+	dirs := api.PkgDirs{}
+	if v.Dirs != nil {
+		dirs = *v.Dirs
+	}
+	return build.NewPkgInfo(dirs, "")
+}
+
+// Package returns the view for a package the inspection knows about. ok is
+// false for an unknown name; view.Skipped reports that the package was skipped
+// (it has no directories), which keeps "skipped" distinct from "absent".
+func (in *Inspection) Package(name string) (PackageView, bool) {
+	if in == nil || !in.knowsPackage(name) {
+		return PackageView{}, false
+	}
+	dirs := in.pkgDirs[name]
+	view := PackageView{
+		Name:      name,
+		Dirs:      dirs,
+		Layout:    in.layouts[name],
+		Toolchain: in.packageToolchains[name],
+		Values:    in.packageValues[name],
+		Needed:    in.needed[name],
+		Skipped:   dirs == nil,
+	}
+	if platform, ok := in.packagePlatforms[name]; ok {
+		view.Platform = &platform
+	}
+	return view, true
 }

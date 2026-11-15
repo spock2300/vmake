@@ -8,14 +8,14 @@ import (
 )
 
 func TestLayoutForLocalExactPaths(t *testing.T) {
-	material := keyMaterial{commit: "abc", flagsHash: "flags"}
+	material := LayoutFacts{Commit: "abc", FlagsHash: "flags"}
 	layout, err := layoutFor(layoutInput{
 		Local:     true,
 		SourceDir: "/src/pkg",
 		CCKey:     "/usr/bin/cc@1",
 		Mode:      "debug",
 		Options:   map[string]any{"x": 1},
-		Material:  material,
+		Facts:     material,
 		Ready:     true,
 	})
 	if err != nil {
@@ -37,15 +37,15 @@ func TestLayoutForLocalExactPaths(t *testing.T) {
 }
 
 func TestLayoutForRemoteMemberExactPaths(t *testing.T) {
-	material := keyMaterial{version: "1.0.0", commit: "commit", flagsHash: "flags", patchHash: "patch"}
+	material := LayoutFacts{Version: "1.0.0", Commit: "commit", FlagsHash: "flags", PatchHash: "patch"}
 	layout, err := layoutFor(layoutInput{
-		PkgRoot:  "/deps/native/root",
-		Member:   "nested/member",
-		CCKey:    "/usr/bin/cc@1",
-		Mode:     "release",
-		Options:  map[string]any{"x": 1},
-		Material: material,
-		Ready:    true,
+		PkgRoot: "/deps/native/root",
+		Member:  "nested/member",
+		CCKey:   "/usr/bin/cc@1",
+		Mode:    "release",
+		Options: map[string]any{"x": 1},
+		Facts:   material,
+		Ready:   true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func TestLayoutForPropagatesBuildKeyError(t *testing.T) {
 		CCKey:     "cc",
 		Mode:      "debug",
 		Options:   map[string]any{"bad": make(chan int)},
-		Material:  keyMaterial{},
+		Facts:     LayoutFacts{},
 		Ready:     true,
 	}); err == nil {
 		t.Fatal("layoutFor accepted a non-JSON option value")
@@ -83,7 +83,7 @@ func TestLayoutForUnknownLayoutKeepsSourceOnly(t *testing.T) {
 		SourceDir: "/src/pkg",
 		CCKey:     "cc",
 		Mode:      "debug",
-		Material:  keyMaterial{},
+		Facts:     LayoutFacts{},
 		Ready:     false,
 	})
 	if err != nil {
@@ -94,5 +94,63 @@ func TestLayoutForUnknownLayoutKeepsSourceOnly(t *testing.T) {
 	}
 	if layout.Dirs.SourceDir != "/src/pkg" {
 		t.Errorf("SourceDir = %q", layout.Dirs.SourceDir)
+	}
+}
+
+func layoutKeyFor(t *testing.T, in layoutInput) string {
+	t.Helper()
+	layout, err := layoutFor(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return layout.BuildKey
+}
+
+// LayoutFacts is the whole key material: every field a package kind uses must
+// change its build key, so neither adapter can drop one silently.
+func TestLayoutFactsCarryAllKeyMaterial(t *testing.T) {
+	local := layoutInput{
+		Local:     true,
+		SourceDir: "/src/app",
+		CCKey:     "cc",
+		Mode:      "debug",
+		Facts:     LayoutFacts{Commit: "c1", FlagsHash: "f1"},
+		Ready:     true,
+	}
+	base := layoutKeyFor(t, local)
+	for name, mutate := range map[string]func(*LayoutFacts){
+		"commit": func(f *LayoutFacts) { f.Commit = "c2" },
+		"flags":  func(f *LayoutFacts) { f.FlagsHash = "f2" },
+	} {
+		in := local
+		mutate(&in.Facts)
+		if got := layoutKeyFor(t, in); got == base {
+			t.Fatalf("local %s did not change the build key", name)
+		}
+	}
+
+	remote := layoutInput{
+		PkgRoot: "/deps/owner",
+		Member:  "member",
+		CCKey:   "cc",
+		Mode:    "debug",
+		Facts: LayoutFacts{
+			Version: "1.0.0", Commit: "c1", FlagsHash: "f1", PatchHash: "p1", SourceLink: "/link",
+		},
+		Ready: true,
+	}
+	base = layoutKeyFor(t, remote)
+	for name, mutate := range map[string]func(*LayoutFacts){
+		"version": func(f *LayoutFacts) { f.Version = "2.0.0" },
+		"commit":  func(f *LayoutFacts) { f.Commit = "c2" },
+		"flags":   func(f *LayoutFacts) { f.FlagsHash = "f2" },
+		"patch":   func(f *LayoutFacts) { f.PatchHash = "p2" },
+		"link":    func(f *LayoutFacts) { f.SourceLink = "/other" },
+	} {
+		in := remote
+		mutate(&in.Facts)
+		if got := layoutKeyFor(t, in); got == base {
+			t.Fatalf("remote %s did not change the build key", name)
+		}
 	}
 }

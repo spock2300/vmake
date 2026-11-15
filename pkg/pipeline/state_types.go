@@ -4,19 +4,11 @@ import (
 	"maps"
 
 	"github.com/spock2300/vmake/pkg/api"
-	"github.com/spock2300/vmake/pkg/resolver"
 )
 
 // Invocation is the immutable command/project input. It is currently the same
-// shape as ResolveParams; the alias keeps callers stable while the phase result
-// types below make ownership explicit.
+// shape as ResolveParams; the alias keeps callers stable.
 type Invocation = ResolveParams
-
-// Resolution is the output of Require: the resolver and its final graph.
-type Resolution struct {
-	Resolver *resolver.Resolver
-	DepGraph *resolver.Graph
-}
 
 // Configuration is the output of Configure (and the derived-option refresh in
 // the build prelude). It owns every field the configuration phase produces.
@@ -31,77 +23,91 @@ type Configuration struct {
 	GlobalMacroDefines  []string
 }
 
-// Preparation is the output of prepareBuild: the needed set and the effective
-// global flags that the build/inspect paths share.
-type Preparation struct {
-	Needed          map[string]bool
-	RawFlags        [4][]string
-	EffectiveFlags  [4][]string
-	GlobalFlagsHash string
-}
-
-func (ctx *RuntimeContext) applyResolution(result Resolution) {
-	ctx.resolution = result
-	ctx.Resolver = result.Resolver
-	ctx.DepGraph = result.DepGraph
-}
-
 func (ctx *RuntimeContext) currentConfiguration() Configuration {
 	return Configuration{
 		AllOptions:          ctx.AllOptions,
-		AllKConfigs:         ctx.AllKConfigs,
-		ChipProfiles:        ctx.ChipProfiles,
-		ChipProfile:         ctx.ChipProfile,
-		GlobalOptions:       ctx.GlobalOptions,
-		DerivedOptions:      ctx.DerivedOptions,
-		BufferedGlobalFlags: ctx.BufferedGlobalFlags,
-		GlobalMacroDefines:  ctx.GlobalMacroDefines,
+		AllKConfigs:         ctx.allKConfigs,
+		ChipProfiles:        ctx.chipProfiles,
+		ChipProfile:         ctx.chipProfile,
+		GlobalOptions:       ctx.globalOptions,
+		DerivedOptions:      ctx.derivedOptions,
+		BufferedGlobalFlags: ctx.bufferedGlobalFlags,
+		GlobalMacroDefines:  ctx.globalMacroDefines,
 	}
 }
 
 func (ctx *RuntimeContext) applyConfiguration(result Configuration) {
-	ctx.configuration = cloneConfiguration(result)
 	ctx.AllOptions = result.AllOptions
-	ctx.AllKConfigs = result.AllKConfigs
-	ctx.ChipProfiles = result.ChipProfiles
-	ctx.ChipProfile = result.ChipProfile
-	ctx.GlobalOptions = result.GlobalOptions
-	ctx.DerivedOptions = result.DerivedOptions
-	ctx.BufferedGlobalFlags = result.BufferedGlobalFlags
-	ctx.GlobalMacroDefines = result.GlobalMacroDefines
+	ctx.allKConfigs = result.AllKConfigs
+	ctx.chipProfiles = result.ChipProfiles
+	ctx.chipProfile = result.ChipProfile
+	ctx.globalOptions = result.GlobalOptions
+	ctx.derivedOptions = result.DerivedOptions
+	ctx.bufferedGlobalFlags = result.BufferedGlobalFlags
+	ctx.globalMacroDefines = result.GlobalMacroDefines
 }
 
-func (ctx *RuntimeContext) applyPreparation(result Preparation) {
-	ctx.preparation = clonePreparation(result)
-}
-
-func (ctx *RuntimeContext) snapshotConfiguration() {
-	ctx.configuration = cloneConfiguration(ctx.currentConfiguration())
-}
-
-// Resolution returns a shallow copy of the last Require result.
-func (ctx *RuntimeContext) Resolution() Resolution {
+// GlobalDefines returns the configuration's macro defines.
+func (ctx *RuntimeContext) GlobalDefines() []string {
 	if ctx == nil {
-		return Resolution{}
+		return nil
 	}
-	return ctx.resolution
+	return append([]string(nil), ctx.globalMacroDefines...)
 }
 
-// Configuration returns a copy of the last Configure result so callers cannot
-// mutate the facade's owned state through the accessor.
+// GlobalOptions returns the project's global option definitions. Option
+// values are shared read-only; the map itself is a copy.
+func (ctx *RuntimeContext) GlobalOptions() map[string]*api.Option {
+	if ctx == nil || ctx.globalOptions == nil {
+		return nil
+	}
+	return maps.Clone(ctx.globalOptions)
+}
+
+// DerivedOptions returns the option values derived by OnApply callbacks.
+func (ctx *RuntimeContext) DerivedOptions() map[string]map[string]any {
+	if ctx == nil || ctx.derivedOptions == nil {
+		return nil
+	}
+	out := make(map[string]map[string]any, len(ctx.derivedOptions))
+	for name, values := range ctx.derivedOptions {
+		out[name] = maps.Clone(values)
+	}
+	return out
+}
+
+// ChipProfiles returns the discovered chip profiles.
+func (ctx *RuntimeContext) ChipProfiles() map[string]api.ChipProfile {
+	if ctx == nil || ctx.chipProfiles == nil {
+		return nil
+	}
+	out := make(map[string]api.ChipProfile, len(ctx.chipProfiles))
+	for name, profile := range ctx.chipProfiles {
+		out[name] = profile
+	}
+	return out
+}
+
+// KConfigs returns the configuration's per-package Kconfig entries.
+func (ctx *RuntimeContext) KConfigs() map[string][]*api.KConfigEntry {
+	if ctx == nil || ctx.allKConfigs == nil {
+		return nil
+	}
+	out := make(map[string][]*api.KConfigEntry, len(ctx.allKConfigs))
+	for name, entries := range ctx.allKConfigs {
+		out[name] = append([]*api.KConfigEntry(nil), entries...)
+	}
+	return out
+}
+
+// Configuration returns a defensive copy of the configuration the context
+// currently holds. It is derived on read, so no second copy has to be refreshed
+// after a phase mutates a field.
 func (ctx *RuntimeContext) Configuration() Configuration {
 	if ctx == nil {
 		return Configuration{}
 	}
-	return cloneConfiguration(ctx.configuration)
-}
-
-// Preparation returns a copy of the last prepareBuild result.
-func (ctx *RuntimeContext) Preparation() Preparation {
-	if ctx == nil {
-		return Preparation{}
-	}
-	return clonePreparation(ctx.preparation)
+	return cloneConfiguration(ctx.currentConfiguration())
 }
 
 func cloneConfiguration(in Configuration) Configuration {
@@ -158,16 +164,6 @@ func cloneBufferedFlags(in map[string]*packageGlobalFlags) map[string]*packageGl
 		copy.applyLdFlags = append([]string(nil), v.applyLdFlags...)
 		copy.applyLinks = append([]string(nil), v.applyLinks...)
 		out[k] = &copy
-	}
-	return out
-}
-
-func clonePreparation(in Preparation) Preparation {
-	out := in
-	out.Needed = maps.Clone(in.Needed)
-	for i := range out.RawFlags {
-		out.RawFlags[i] = append([]string(nil), in.RawFlags[i]...)
-		out.EffectiveFlags[i] = append([]string(nil), in.EffectiveFlags[i]...)
 	}
 	return out
 }

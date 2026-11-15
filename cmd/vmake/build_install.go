@@ -98,7 +98,7 @@ func executeInstall(ctx *RuntimeContext, result *BuildResult) (err error) {
 		if node.Pkg == nil || result.BuildCtxs[name] == nil || result.SubGraphRoots[name] {
 			continue
 		}
-		if err := installOnePackage(ctx, name, node, result, installer, globalValues); err != nil {
+		if err := installOnePackage(ctx, name, node, result, installer, globalValues, ctx.AllOptions[name]); err != nil {
 			return err
 		}
 	}
@@ -222,15 +222,15 @@ func installPathAncestor(parent, child string) bool {
 	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-func installOnePackage(ctx *RuntimeContext, name string, node *resolver.PackageNode, result *BuildResult, installer *build.ArtifactInstaller, globalValues map[string]any) error {
+func installOnePackage(ctx *RuntimeContext, name string, node *resolver.PackageNode, result *BuildResult, installer *build.ArtifactInstaller, globalValues map[string]any, options map[string]*api.Option) error {
 	values, err := pipeline.PackageConfigValues(ctx, name, globalValues)
 	if err != nil {
 		return err
 	}
 
 	installCtx := api.NewInstallContext(name, values)
-	installCtx.SetOptions(maps.Clone(ctx.AllOptions[name]))
-	installCtx.MergeGlobals(ctx.GlobalOptions, globalValues)
+	installCtx.SetOptions(maps.Clone(options))
+	installCtx.MergeGlobals(ctx.GlobalOptions(), globalValues)
 
 	api.BindPackageExecInstallFuncs(node.Pkg, result.PkgDirs[name].SourceDir, func(fn api.InstallFunc) {
 		fn(installCtx)
@@ -262,16 +262,19 @@ func installOnePackage(ctx *RuntimeContext, name string, node *resolver.PackageN
 			placements[targetName] = placement
 		}
 	}
+	buildDir := ""
+	if layout := result.Layouts[name]; layout != nil {
+		buildDir = layout.Dirs.BuildDir
+	}
 	installer.SetPackageInfo(name, &build.PkgInstallInfo{
 		Prefix:        prefix,
 		PrefixSet:     prefixSet,
 		Targets:       result.AllTargets[name],
 		InstallItems:  installItems,
-		BuildDir:      result.PkgDirs[name].BuildDir,
+		BuildDir:      buildDir,
 		Mode:          result.Mode,
 		TcName:        result.TcName,
 		TargetOS:      node.Pkg.TargetOS(),
-		BuildKey:      result.PkgBuildKeys[name],
 		Placements:    placements,
 		InstallFilter: installFilter,
 	})

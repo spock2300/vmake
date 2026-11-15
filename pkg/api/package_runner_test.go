@@ -81,7 +81,7 @@ func TestCMakeBareMetalUsesConfiguredTools(t *testing.T) {
 		InstallPath: root, Prefix: "arm-none-eabi-",
 		Tools: toolchain.Tools{CC: tool, CXX: tool, AR: tool, LD: tool, RANLIB: tool, MAKE: tool},
 	}).SetDirs(PkgDirs{SourceDir: root, BuildDir: filepath.Join(root, "build"), InstallDir: filepath.Join(root, "install")})
-	args, err := p.cmakeConfigureArgs("windows")
+	args, err := cmakeConfigureArgsForHost(p, "windows")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestCMakeTargetSystemAndGenerator(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			p := NewPackage().SetPlatform(Platform{OS: test.targetOS}).SetToolchain(&toolchain.Toolchain{})
-			args, err := p.cmakeConfigureArgs(test.hostOS, test.extra...)
+			args, err := cmakeConfigureArgsForHost(p, test.hostOS, test.extra...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -159,7 +159,7 @@ func TestCMakeTargetSystemAndGenerator(t *testing.T) {
 	}
 	t.Setenv("CMAKE_GENERATOR", "Unix Makefiles")
 	p := NewPackage().SetPlatform(Platform{OS: "none"}).SetToolchain(&toolchain.Toolchain{})
-	args, err := p.cmakeConfigureArgs("windows")
+	args, err := cmakeConfigureArgsForHost(p, "windows")
 	if err != nil || slices.Contains(args, "Ninja") {
 		t.Fatalf("environment generator overridden: %q, %v", args, err)
 	}
@@ -167,7 +167,7 @@ func TestCMakeTargetSystemAndGenerator(t *testing.T) {
 
 func TestCMakeMissingConfiguredCompilerFails(t *testing.T) {
 	p := NewPackage().SetPlatform(Platform{OS: "none"}).SetToolchain(&toolchain.Toolchain{Tools: toolchain.Tools{CC: filepath.Join(t.TempDir(), "missing compiler")}})
-	_, err := p.cmakeConfigureArgs("windows")
+	_, err := cmakeConfigureArgsForHost(p, "windows")
 	if err == nil || !strings.Contains(err.Error(), "missing compiler") || !strings.Contains(err.Error(), "CMAKE_C_COMPILER") {
 		t.Fatalf("missing compiler error = %v", err)
 	}

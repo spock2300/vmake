@@ -199,6 +199,7 @@
 - 决策: `pkg/build/artifact.go` 的 `ArtifactPlacement` 是产物放置的唯一值：`OutputPath`、`ImportLib`、`StageLibDir`/`StageIncludeDir`、`InstallSubdir`/`InstallName`、`PostLinkOutputs`、`Kind`/`NoInstall`/`IsTest`。target 成功结束时由 `Scheduler.Build` 生成一个 `targetOutcome`，包含 `TargetResult`（status/outputs/duration/size）与 placement；`Session` 按 fullName 首次记录 outcome，失败 target 不记录。`BuildResult.Targets`/`TargetPlacements` 直接读 session（按完整 target 名、仅成功 target；placement 只暴露非 void target），`BuildJob.Run` 不再自行拼 target result 或合并 additional scheduler 的 placement；同步 subgraph 与主构建共享 session，因此 subgraph placement 不再丢失。`publishTarget` 和 `ArtifactInstaller`（经 `PkgInstallInfo.Placements`）消费 placement；直接构造 `PkgInstallInfo` 的旧测试仍走 fallback。
 - 理由: 发布（per-package staging）与安装（prefix/filter）必须对"源产物、暂存位置、最终位置、import library"达成一致；target result 也必须和 placement 来自同一完成点，否则 subgraph、多 toolchain 和 no-op/install 路径会各自漂移。
 - 涉及代码: `pkg/build/artifact.go`, `pkg/build/session.go`, `pkg/build/scheduler.go`, `pkg/build/scheduler_link.go`, `pkg/build/job.go`, `pkg/build/scheduler_publish.go`, `pkg/build/install.go`, `pkg/pipeline/build_phase.go`, `cmd/vmake/build_install.go`。
+- 修订（2026-11-15）: 安装器的 fallback 已删除。`ArtifactInstaller` 只安装带 placement 的 target（没有 placement 表示本次构建没有产出），void target 显式跳过；直接构造 `PkgInstallInfo` 的调用方必须先用 `PlacementFor` 生成 placement（测试已改为如此）。
 
 ## DD-22: 依赖字符串只有一种解析
 
@@ -228,7 +229,8 @@
 
 - 状态: accepted
 - 背景: `Require`/`Configure`/`prepareBuild` 直接写 `RuntimeContext` 的解析/配置/准备字段，阶段之间共享可变 map，调用方无法区分"第几代"的 `DerivedOptions`/`AllOptions`，配置阶段中途失败还会留下半写完的状态。
-- 决策: `pkg/pipeline/state_types.go` 定义 `Invocation`（alias）、`Resolution`、`Configuration`、`Preparation`。`Require` 在结尾通过 `applyResolution` 一次提交解析结果；`Configure` 在 `RuntimeContext` 浅拷贝（`Config` 另做容器副本）上执行 `runConfigPhase`，成功后用 `applyConfiguration` 提交配置结果并写回 `Config`，失败不覆盖调用方字段；package 对象仍是共享状态，失败后由调用方丢弃上下文。`prepareBuild` 在结尾通过 `applyPreparation` 记录 needed/effective flags。`RuntimeContext.Resolution()` 返回活的 resolver/graph（调用方只读）；`Configuration()`/`Preparation()` 复制容器 map、slice 与 buffered flag slice，但 `*api.Option`/`*api.KConfigEntry` 定义对象仍按共享只读值处理，调用方不得修改。`prepareBuild` 的 derived-option 再计算显式视为 Configuration 的第二代，并在结束时刷新快照。
+- 决策: `pkg/pipeline/state_types.go` 保留 `Invocation`（alias）与 `Configuration`。`Require` 在结尾直接设置 `ctx.Resolver`/`ctx.DepGraph`（不维护镜像字段）；`Configure` 在 `RuntimeContext` 浅拷贝（`Config` 另做容器副本）上执行 `runConfigPhase`，成功后用 `applyConfiguration` 提交配置结果并写回 `Config`，失败不覆盖调用方字段；package 对象仍是共享状态，失败后由调用方丢弃上下文。`prepareBuild` 通过返回的 `buildPrelude` 传递 needed/raw/effective flags 与 hash，不再写 `ctx.preparation`。`RuntimeContext.Configuration()` 复制容器 map、slice 与 buffered flag slice，但 `*api.Option`/`*api.KConfigEntry` 定义对象仍按共享只读值处理，调用方不得修改。`prepareBuild` 的 derived-option 再计算显式视为 Configuration 的第二代，并在结束时刷新快照。
+- 修订（2026-11-15）: `Resolution`/`Preparation`、`applyResolution`/`applyPreparation` 与两个 accessor 已删除——生产代码从未读取它们（仅测试引用），镜像与实际字段必然漂移；`prelude.go` 的自我 clone 一并删除。`Configuration` 保留为**读取时派生**的视图：`ctx.configuration` 快照字段、`snapshotConfiguration` 与 `applyConfiguration` 的 clone 均已删除，`Configuration()` 每次从当前字段克隆，因此芯片派生（`displayChipProfile`）不再需要“改字段后重新快照”。后续只剩字段私有化（155 处只读站点）。
 - 理由: 阶段边界可审阅，读模型不可被调用方篡改；配置阶段具备事务性边界。完整替换 `RuntimeContext` 字段为嵌套值对象会破坏大量 cmd/测试复合字面量，因此保留字段作为兼容门面，由结果类型承担不变量。
 - 涉及代码: `pkg/pipeline/state_types.go`, `pkg/pipeline/phases.go`, `pkg/pipeline/prelude.go`, `pkg/pipeline/pipeline.go`, `pkg/pipeline/run_build_e2e_test.go`。
 
@@ -236,9 +238,10 @@
 
 - 状态: accepted
 - 背景: “包看到的有效值”曾被多处分别推导：`PackageConfigValues`（构建上下文）、`packageConfigValuesWithGlobals`（OnApply，使用 raw config、无默认值与 platform）、`collectAllPkgOptions`（构建键材料）、cmd 的 `packageConfigValues`/`inspectPackageOptions`（inspect/query）以及 `build_report.effectiveGlobalValues`（report 复制 projectGlobalValues）。规则不同导致 OnApply 读到未解析的 `mode`/`toolchain` 且 `target_os`/`target_triple` 直接 fatal；inspect 需要手工对齐 build，历史上已有 8145d19、b0d92da 两次修补。
-- 决策: `pkg/pipeline` 是有效配置值的唯一实现，并按用途暴露显式投影：`PackageConfigValues`（构建值：默认值 + 派生 + entry + 可见全局 + 包级 platform）、`DisplayPackageValues`（展示值：仅已声明选项，不合成 platform 键）、`collectAllPkgOptions`（构建键材料：entry + 非默认派生 + 可见全局，输出逐字节保持旧行为）、`applyGlobalValues`（OnApply 值：解析后的 mode/toolchain 与 target 默认值）、`ProjectGlobalValues`（项目全局值）。`Inspection` 携带 `PackageValues` 与 `PackagePlatforms`；cmd 的 inspect/query/report 只消费投影，不再自行推导。inspect `packages[]` 只新增附加字段 `platform {targetOs, targetTriple}`，`options` 仍只含已声明选项。
+- 决策: `pkg/pipeline` 是有效配置值的唯一实现，并按用途暴露显式投影：`PackageConfigValues`（构建值：默认值 + 派生 + entry + 可见全局 + 包级 platform）、`DisplayPackageValues`（展示值：仅已声明选项，不合成 platform 键）、`collectAllPkgOptions`（构建键材料：entry + 非默认派生 + 可见全局，输出逐字节保持旧行为）、`applyGlobalValues`（OnApply 值：解析后的 mode/toolchain 与 target 默认值）、`ProjectGlobalValues`（项目全局值）。`Inspection` 携带展示投影（现经 `Inspection.Package(name)` 的 `PackageView.Values`/`PackageView.Platform` 暴露，见修订）；cmd 的 inspect/query/report 只消费投影，不再自行推导。inspect `packages[]` 只新增附加字段 `platform {targetOs, targetTriple}`，`options` 仍只含已声明选项。
 - 理由: 四个消费者的规则必须一致但投影不同；把规则收进一个模块后，配置相关改动只改一处，inspect 不再需要手工对齐 build。构建键材料保持逐字节一致，避免已有 build 目录旋转。
 - 涉及代码: `pkg/pipeline/config_values.go`, `pkg/pipeline/pipeline.go`, `pkg/pipeline/inspect.go`, `pkg/pipeline/phases.go`, `pkg/pipeline/keys.go`, `cmd/vmake/inspect_cmd.go`, `cmd/vmake/query_cmd.go`, `cmd/vmake/build_report.go`。
+- 修订（2026-11-15）: `Inspection` 的六个 per-package map 已私有化（DD-31），展示投影改由 `PackageView` 携带；渲染层不再直接读取 map。
 
 ## DD-27: 脚本方法面由显式清单收口，分阶段隐藏宿主接线
 
@@ -247,6 +250,48 @@
 - 决策: 阶段 1 在 `pkg/api/script_methods.go` 建立两份清单：`scriptMethodAllowlist`（文档化或验收语料在用）与 `scriptMethodPending`（可见但未文档化/仅宿主使用）。`TestScriptMethodManifestMatchesVisibleSurface` 反射所有已注册类型（含提升方法），要求可见方法集合恰好等于两份清单的并集；新增/删除导出方法必须显式分类。阶段 2 把 pending 中的宿主接线移到不注册进 yaegi 的导出 binding 函数（`api.Bind*`，由 `TestYaegiSymbolsComplete` 的前缀规则排除），保持 `*api.Package` 与回调签名不变；当前 allowlist 442 对、pending 0 对。阶段 3 重整嵌入：`ConfigAccessor` 的 `CfgVals`/`Options` 与 `PackageMeta` 的 `Repo`/`Name` 已改为非导出字段，宿主通过 `BindCfgVals`/`BindOptions`/`BindSetCfgVals`/`BindSetOptions`/`BindPackageName`/`BindPackageRepo` 访问；`TargetRegistry`/`InstallItemHolder` 的字段本就非导出，只剩 allowlist 中的方法被提升。验收语料 = vmake `test_data/**`、`official_repo/**`、docs/skill Go 块 + hl-demo / hl-mcu-sdk 的 `build.go`；语料在用或文档化的方法保留。阶段 1 不改变运行时行为。
 - 理由: 方法级契约不能靠包级 allowlist 或文档自觉；先建立可失败的清单，再分阶段迁移，避免一次性重写脚本契约。pending 清单就是阶段 2/3 的工作队列。
 - 涉及代码: `pkg/api/script_methods.go`, `pkg/api/script_methods_test.go`, `pkg/api/yaegi_symbols.go`, `pkg/api/accessor.go`, `pkg/api/package.go`, `pkg/api/context.go`, `pkg/api/target.go`。
+
+## DD-28: 测试缝与巡检前导的边界
+
+- 状态: accepted
+- 背景: 架构复盘的 8 个候选方向里有两条收尾项没有可以零风险落地的形态。(1) 测试侧：`pkg/pipeline` 的 `newBuildPhaseState` 曾手工拼装 `configStage`/`declareStage` 并只跑 `collectAllPkgOptions`，复刻了 `prepareConfig` 的一半；现在它改为调用真实 `prepareConfig`，剩余部分只是"在构造后往图里加包再刷新目录"的脚手架。把 8 个测试文件全部迁到 `stageFixture` 的收益是风格统一，代价是大幅改写既有断言。(2) 巡检侧：`inspectionRequest` 的 `onError` 回调（把 `*inspectionStageError` 的映射收进前导）会把前导与退出码耦合，`config_files.go` 的 `silenceStdout/silenceStderr` 与 `inspectionScope` 的"日志级静音"语义不同，补全路径又受 tty 下 `Fscanln` 阻塞约束。
+- 决策: 保留 `newBuildPhaseState` 作为测试专用适配器(它已调用真实 `prepareConfig`，不再复刻规则)；不为巡检前导增加 `onError`，`config check` 不并入 `openInspection`，补全路径不并入前导。作为交换，新增 `cmd/vmake/inspect_preamble_test.go` 钉住这块策略：`inspect` stdout 必须是纯 JSON、`query` 保留进程内打印但静音子进程、blocked write 在 `inspect` 诊断与 `check-symbols` findings 中的呈现、以及 `OnConfig` panic 在 `inspect`/`query targets`/`check-symbols`/`deps graph` 的退出码与信封。
+- 理由: 把差异搬进共享前导只减少几行重复，却让前导承担退出码语义并改变 `config check` 的可观察输出；测试脚手架不是生产规则，保留它比大规模改写既有断言更稳。行为由测试而不是由结构保证。
+- 涉及代码: `pkg/pipeline/state_test_helpers_test.go`, `cmd/vmake/inspect_session.go`, `cmd/vmake/config_files.go`, `cmd/vmake/inspect_preamble_test.go`。
+
+## DD-29: 依赖图只有一个答案面
+
+- 状态: accepted
+- 背景: `inspect` 与 `deps graph` 曾各自推导包边：`inspect` 用 `inspectGraph` + `mergeInspectTargetEdges`（共约 128 行）合并 require/子图/target 边，`deps graph` 用 `BuildUnifiedGraph`；两条命令对同一个项目给出不同边集。图构造还承担了 target 声明，导致 `deps why` 对非 needed 包用 nil toolchain 再声明一次并丢弃 blocked write。
+- 决策: `BuildUnifiedGraph` 是唯一构造器，`GraphOptions{IncludeAll, DeclareTargets}` 选择范围与是否执行 OnBuild(声明结果缓存在图里，`DeclaredTargets`/`BuildContext` 读取)；`GraphFacts` 是稳定答案面(包/目标/边/roots/包依赖/issues 的副本)，`inspect`/`deps graph`/`deps why`/命令补全只消费 `GraphFacts`。inspect 的诊断与 `deps graph` 的 warning 只对 `facts.Needed` 内的包报告；`deps status` 的版本投影改用 `LockQuery.Decide` 并保留"commit pin 只显示 commit"这一展示规则。
+- 理由: 同一个问题只有一个实现，两个命令的边集在 hl-demo 上逐字节一致(221 条)；target 声明跟随图构造，`deps why` 不再重复声明；答案面与构造状态分离后，渲染器无法依赖内部 map。
+- 涉及代码: `pkg/pipeline/graph_types.go`, `pkg/pipeline/graph_build.go`, `pkg/pipeline/graph_query.go`, `pkg/pipeline/graph_check.go`, `pkg/pipeline/deps.go`, `cmd/vmake/deps_graph_cmd.go`, `cmd/vmake/inspect_cmd.go`。
+- 修订（2026-11-15）: `deps why` 对**不在活跃根集合**内的包仍会自行调用 `DeclareTargets` 探测目标（图只声明 needed 包）；此时 inspection 对过滤掉的包不解析 toolchain，探测可能带 nil toolchain。这是答案面之外的唯一探测点，注释与本节保持一致，不再声称"复用真实 toolchain"。
+
+## DD-30: 一个包布局，事实与目录各有一个推导
+
+- 状态: accepted
+- 背景: 包布局的构建键材料曾被构建阶段(fetch 状态、远端 commit)和 inspect(lock、native 版本)各自推导；`ResolveAllPackageDirs`(包根目录)与 `workspacePackageDirs`(链接/落盘树)也是两条独立遍历；`PackageLayout`→`PkgInfo` 在 scheduler、header 审计、inspect、check-symbols 各有一份转换。
+- 决策: `pipeline.LayoutFacts`(`Version`/`Commit`/`PatchHash`/`SourceLink`/`FlagsHash`)是全部构建键材料，构建阶段与 inspect 各自适配来源但必须产出同一值；`PackageLayout.PkgInfo()` 是唯一 layout→PkgInfo 转换(not-ready 布局产出无 BuildDir/BuildKey 的条目)；`SourceTree`/`packageSourceTrees` 是包源位置的唯一推导，`packageSourceDirs`(包根)与 `workspacePackageDirs`(链接/落盘树)是它的投影。键格式未改，`layoutFormatVersion` 未 bump。
+- 理由: 事实与目录各自只有一个推导，任何适配器漏字段都会被测试(`TestLayoutFactsCarryAllKeyMaterial`、`TestSourceTreeProjections`)抓住；不轮转 build key 意味着已有构建目录继续有效。
+- 涉及代码: `pkg/pipeline/keys.go`, `pkg/pipeline/layout.go`, `pkg/pipeline/inspect.go`, `pkg/pipeline/build_job.go`, `pkg/build/key.go`, `pkg/build/scheduler.go`, `pkg/build/header_check.go`。
+- 修订（2026-11-15）: 构建阶段的远端布局改用 `packageLocation` 取 `Owner`/`Member`/`PackageRoot`（link 覆盖），只保留"本次 fetch 实际创建的树根"（`remote.trees`）作为 `PkgRoot` 的覆盖，回退到 `loc.OwnerTreeRoot`；这样两个适配器共享同一套成员/链接推导，同时不改变已物化树的输出目录。`compile_commands.AddCommand`（第二套编译命令推导）已删除，写入口只剩 `AddSpec`。
+
+## DD-31: 配置状态收口，`AllOptions` 是唯一例外
+
+- 状态: accepted
+- 背景: `RuntimeContext` 上的 8 个配置字段（`AllOptions`/`AllKConfigs`/`ChipProfiles`/`ChipProfile`/`GlobalOptions`/`DerivedOptions`/`BufferedGlobalFlags`/`GlobalMacroDefines`）都可被任意包读写，"已提交、只读"只是约定。阶段写模型要求把它们收进访问器，使不可写成为类型事实。
+- 决策: 7 个字段私有化（`allKConfigs`/`chipProfiles`/`chipProfile`/`globalOptions`/`derivedOptions`/`bufferedGlobalFlags`/`globalMacroDefines`），跨包读取走返回副本的访问器（`KConfigs()`/`ChipProfiles()`/`GlobalOptions()`/`DerivedOptions()`/`GlobalDefines()`）；`applyConfiguration` 仍是唯一写入口。`AllOptions` 保持导出：`resolveSetPackageName`/`resolveSetPackageOption`/`applyEphemeralOverrides` 这类命令级查找助手以整个上下文为输入，其单元测试直接构造 `RuntimeContext`，私有化会把这三组测试逼成子进程集成测试。反射守卫 `TestRuntimeContextHidesConfigurationState` 覆盖已迁移的 7 个字段，并在注释里记录这个例外。
+- 理由: 收口的目标是阻止跨包写入，而 `AllOptions` 的外部读取方都是只读查找；为它重写三个助手的输入模型（外加两处 `maps.Clone` 语义）换来的隔离收益，小于让这些查找逻辑失去单元测试的代价。 `Configuration` 本身仍是导出字段的值类型：它只在 `pkg/pipeline` 内构造（`currentConfiguration`/`applyConfiguration`），外部消费者拿到的都是 `RuntimeContext` 访问器返回的副本，因此不需要再包装一层。
+- 涉及代码: `pkg/pipeline/pipeline.go`, `pkg/pipeline/state_types.go`, `pkg/pipeline/state_guard_test.go`, `pkg/pipeline/chip.go`, `cmd/vmake/config.go`, `cmd/vmake/query_cmd.go`, `cmd/vmake/build_install.go`, `cmd/vmake/clean.go`, `cmd/vmake/inspect_cmd.go`。
+
+## DD-32: `--locked` 读原始 lock 条目，float 参与 sync
+
+- 状态: accepted
+- 背景: `--locked` 的校验与 `deps sync/update` 的"要触碰哪些包"曾被当作版本解析问题，试图直接复用 `LockQuery.LockEntry`（它按 `IgnoredFor` 隐藏被 float/target 覆盖的条目）。但两者问的是不同问题：解析问"该用哪个版本"，校验问"锁是否仍反映这次构建"。
+- 决策: `PinLockMismatch`/`LockEntryProblem` 读 `rawLockEntry`（绕过 `IgnoredFor`），因此 target pin、float、`--ignore-lock` 的包仍会与 lock 比较；`--locked` 下 target pin 与锁不一致会报错。`NeedsSync` 对 float 包返回 true：float 的版本故意不可复现，lock 必须跟随它更新；target pin 同样始终触碰。版本解析仍走 `LockEntry`（`IgnoredFor` 优先），两条路径共享同一个 `LockQuery` 与 `LockProblem` 文案。
+- 理由: 若校验也走 `IgnoredFor`，`--locked` 会静默接受"锁定值与将要构建的值不同"的包；若 sync 跳过 float，锁会长期滞后于实际解析结果。两条语义都写在 `decision.go` 的注释里，并由 `TestLockQueryPinLockMismatch`/`TestLockQueryNeedsSync`/`TestVerifyLockBeforePreparePinMismatch` 钉住。
+- 涉及代码: `pkg/resolver/decision.go`, `pkg/resolver/decision_test.go`, `pkg/pipeline/stage_source.go`, `pkg/resolver/resolver.go`, `pkg/pipeline/deps.go`。
 
 ## 已知限制 / 待议
 

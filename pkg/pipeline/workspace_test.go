@@ -247,7 +247,7 @@ func nativeMemberFixture(t *testing.T, member string, setGit bool) (*buildPhaseS
 	s.cfg = makeBuildConfig(s.ctx, host, "host")
 	aggregateGlobalFlags(s.ctx, s.needed)
 	s.globalFlagsHash = build.HashGlobalFlags([4][]string{})
-	s.computeDirsAndOptions()
+	s.computeDirsAndOptions(t)
 	s.remote.trees[owner] = tree
 	s.remote.commits[owner] = parent.Native.Commit
 	return s, tree, name
@@ -293,7 +293,7 @@ func TestNativeMemberSingleTreeAndOwnGit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got, want := insp.PkgDirs[name].BuildDir, dirs.BuildDir; got != want {
+			if got, want := insp.pkgDirs[name].BuildDir, dirs.BuildDir; got != want {
 				t.Fatalf("inspect BuildDir = %q, want build %q", got, want)
 			}
 			if setGit {

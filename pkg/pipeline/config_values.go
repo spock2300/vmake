@@ -25,8 +25,8 @@ func DisplayPackageValues(ctx *RuntimeContext, name string, globalValues map[str
 			delete(values, optName)
 		}
 	}
-	if ctx.DerivedOptions != nil {
-		for optName, value := range ctx.DerivedOptions[name] {
+	if ctx.derivedOptions != nil {
+		for optName, value := range ctx.derivedOptions[name] {
 			if _, exists := values[optName]; !exists && value != nil {
 				values[optName] = value
 			}
@@ -53,11 +53,11 @@ func DisplayPackageValues(ctx *RuntimeContext, name string, globalValues map[str
 	return values
 }
 
-func applyGlobalValues(ctx *RuntimeContext, needed map[string]bool) map[string]any {
+func applyGlobalValues(ctx *RuntimeContext, needed NeededSet) map[string]any {
 	values := ProjectGlobalValues(ctx)
 	values[api.ModeOptionName] = ResolveMode(ctx.Config, ctx.ModeOverride)
 
-	profile := ctx.ChipProfile
+	profile := ctx.chipProfile
 	if profile.Name == "" {
 		resolved := false
 		if needed != nil {

@@ -95,7 +95,7 @@ func TestLoadResolveParams(t *testing.T) {
 		modeFlag, toolchainFlag = oldMode, oldToolchain
 	})
 
-	params, err := loadResolveParams(true, false)
+	params, err := loadResolveParamsAt(findProjectDir(), true, false, false, "")
 	if err != nil {
 		t.Fatalf("loadResolveParams: %v", err)
 	}
@@ -137,10 +137,10 @@ func TestLoadResolveParamsSoftGitignore(t *testing.T) {
 	}
 	t.Chdir(dir)
 
-	if _, err := loadResolveParams(false, false); err == nil {
+	if _, err := loadResolveParamsAt(findProjectDir(), false, false, false, ""); err == nil {
 		t.Fatal("strict gitignore failure should return an error")
 	}
-	if _, err := loadResolveParams(false, true); err != nil {
+	if _, err := loadResolveParamsAt(findProjectDir(), false, true, false, ""); err != nil {
 		t.Fatalf("soft gitignore failure should continue: %v", err)
 	}
 }

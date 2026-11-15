@@ -13,7 +13,6 @@ import (
 	cmake "github.com/spock2300/vmake/internal/cmake"
 	"github.com/spock2300/vmake/internal/exec"
 	vlog "github.com/spock2300/vmake/pkg/log"
-	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
 func (p *Package) cmakeSettings() cmake.Settings {
@@ -100,57 +99,58 @@ func (p *Package) cmakeGlobalFlagsArgs(hostOS string) []string {
 }
 
 func (p *Package) CMakeConfigure(extraArgs ...string) {
-	args, err := p.cmakeConfigureArgs(runtime.GOOS, extraArgs...)
+	engine := cmake.NewEngine(p.cmakeSettings())
+	plan, err := engine.PlanConfigure(extraArgs)
 	if err != nil {
 		fatalScript(p.name, "CMakeConfigure", "%v", err)
 	}
-	fingerprint, cached := p.cmakeConfigureState(args)
-	if cached {
+	if plan.Reuse {
 		vlog.Info("  cmake configure (cached): %s", filepath.ToSlash(p.CMakeBuildDir()))
 		return
 	}
 	if p.DryRun() {
-		p.runCMakeConfigure(args, extraArgs)
+		p.runCMakeConfigure(plan)
 		return
 	}
-	// A failed or interrupted configure may have mutated CMakeCache.txt and
-	// CMakeFiles. Drop the previous stamp before running so a later invocation
-	// cannot reuse a tree that no longer matches it.
-	if err := os.Remove(p.cmakeConfigureStampPath()); err != nil && !os.IsNotExist(err) {
+	if err := engine.Invalidate(); err != nil {
 		vlog.Debug("  cmake configure: remove stale stamp: %v", err)
 	}
-	p.runCapturedCMake("CMakeConfigure", "configure", p.cmakeConfigureDir(extraArgs), args)
-	if err := p.saveCMakeConfigureStamp(args, fingerprint); err != nil {
+	p.runCapturedCMake("CMakeConfigure", "configure", plan)
+	if err := engine.Commit(plan); err != nil {
 		vlog.Debug("  cmake configure: record fingerprint: %v", err)
 	}
 }
 
-func (p *Package) cmakeConfigureDir(extraArgs []string) string {
-	return cmake.ConfigureDir(p.cmakeSettings(), extraArgs)
-}
-
-func (p *Package) runCMakeConfigure(args, extraArgs []string) {
-	if hasCMakeOption(extraArgs, "--preset") {
-		p.RunIn(p.SrcDir(), "cmake", args...)
-	} else {
-		p.Run("cmake", args...)
+func (p *Package) runCMakeConfigure(plan cmake.Plan) {
+	if plan.Preset {
+		p.RunIn(plan.Dir, plan.Executable, plan.Args...)
+		return
 	}
+	p.Run(plan.Executable, plan.Args...)
 }
 
 func (p *Package) CMakeBuild(extraArgs ...string) {
-	args, err := p.cmakeBuildArgs(extraArgs...)
+	extra, err := p.executionBudget().CMakeBuildArgs(extraArgs, parallelEnvironment())
 	if err != nil {
 		fatalScript(p.name, "CMakeBuild", "%v", err)
 	}
-	p.runCapturedCMake("CMakeBuild", "build", p.dirs.BuildDir, args)
+	plan, err := cmake.NewEngine(p.cmakeSettings()).PlanBuild(extra)
+	if err != nil {
+		fatalScript(p.name, "CMakeBuild", "%v", err)
+	}
+	p.runCapturedCMake("CMakeBuild", "build", plan)
 }
 
 func (p *Package) CMakeInstall(extraArgs ...string) {
-	args, err := p.cmakeInstallArgs(extraArgs...)
+	extra, err := p.executionBudget().CMakeInstallArgs(extraArgs, parallelEnvironment())
 	if err != nil {
 		fatalScript(p.name, "CMakeInstall", "%v", err)
 	}
-	p.runCapturedCMake("CMakeInstall", "install", p.dirs.BuildDir, args)
+	plan, err := cmake.NewEngine(p.cmakeSettings()).PlanInstall(extra)
+	if err != nil {
+		fatalScript(p.name, "CMakeInstall", "%v", err)
+	}
+	p.runCapturedCMake("CMakeInstall", "install", plan)
 }
 
 // runCapturedCMake runs one cmake stage with captured output. Success prints a
@@ -159,16 +159,16 @@ func (p *Package) CMakeInstall(extraArgs ...string) {
 // Warning and error lines always stream to stderr so the invocation's warning
 // capture can turn them into diagnostics. A long stage also prints a periodic
 // stderr heartbeat, including under -q.
-func (p *Package) runCapturedCMake(op, phase, dir string, args []string) {
+func (p *Package) runCapturedCMake(op, phase string, plan cmake.Plan) {
 	if p.DryRun() {
-		p.logAndDryRun("cmake", args)
+		p.logAndDryRun(plan.Executable, plan.Args)
 		return
 	}
 	p.executedHelperStages++
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		fatalScript(p.name, op, "create cmake %s directory %q: %v", phase, dir, err)
+	if err := os.MkdirAll(plan.Dir, 0755); err != nil {
+		fatalScript(p.name, op, "create cmake %s directory %q: %v", phase, plan.Dir, err)
 	}
-	output, err := p.runCMakeCaptured(phase, dir, args)
+	output, err := p.runCMakeCaptured(phase, plan.Dir, plan.Executable, plan.Args)
 	summary, detail := renderCMakeOutput(phase, output)
 	if err != nil {
 		printCMakeDetail(detail, vlog.IsQuiet())
@@ -215,23 +215,9 @@ func printCMakeDetail(lines []string, allErrors bool) {
 
 var cmakeHeartbeatInterval = exec.DefaultProgressInterval
 
-func (p *Package) runCMakeCaptured(phase, dir string, args []string) (string, error) {
-	name := "cmake"
+func (p *Package) runCMakeCaptured(phase, dir, executable string, args []string) (string, error) {
 	env := p.tc.CommandEnv()
-	if p.tc != nil {
-		for _, tool := range p.tc.Tools.Entries() {
-			configured := *tool.Value
-			if configured != "" && name == configured {
-				path, err := toolchain.ResolveToolPath(configured, p.tc.InstallPath)
-				if err != nil {
-					return "", err
-				}
-				name = path
-				break
-			}
-		}
-	}
-	output, err := exec.RunWithOptions(name, args, exec.RunOptions{
+	output, err := exec.RunWithOptions(executable, args, exec.RunOptions{
 		Dir:              dir,
 		Env:              env,
 		Context:          p.executionContext(),
@@ -330,49 +316,4 @@ func (p *Package) cmakeBuildType() string {
 	default:
 		return "Release"
 	}
-}
-
-func (p *Package) cmakeConfigureArgs(hostOS string, extraArgs ...string) ([]string, error) {
-	return cmake.ConfigureArgs(p.cmakeSettingsForHost(hostOS), extraArgs...)
-}
-
-func (p *Package) cmakeBuildArgs(extraArgs ...string) ([]string, error) {
-	if err := validateCMakeArgs(extraArgs); err != nil {
-		return nil, err
-	}
-	if hasCMakeOption(extraArgs, "--preset") {
-		return nil, fmt.Errorf("CMake build presets override the managed build directory; pass configure presets to CMakeConfigure and use --target or --config with CMakeBuild")
-	}
-	args := []string{"--build", filepath.ToSlash(p.CMakeBuildDir())}
-	if !hasCMakeOption(extraArgs, "--config") {
-		args = append(args, "--config", p.cmakeBuildType())
-	}
-	parallelArgs, err := p.executionBudget().CMakeBuildArgs(extraArgs, parallelEnvironment())
-	if err != nil {
-		return nil, err
-	}
-	return append(args, parallelArgs...), nil
-}
-
-func (p *Package) cmakeInstallArgs(extraArgs ...string) ([]string, error) {
-	if err := validateCMakeArgs(extraArgs); err != nil {
-		return nil, err
-	}
-	args := []string{"--install", filepath.ToSlash(p.CMakeBuildDir()), "--prefix", filepath.ToSlash(p.CMakeInstallDir())}
-	if !hasCMakeOption(extraArgs, "--config") {
-		args = append(args, "--config", p.cmakeBuildType())
-	}
-	parallelArgs, err := p.executionBudget().CMakeInstallArgs(extraArgs, parallelEnvironment())
-	if err != nil {
-		return nil, err
-	}
-	return append(args, parallelArgs...), nil
-}
-
-func validateCMakeArgs(args []string) error {
-	return cmake.ValidateArgs(args)
-}
-
-func hasCMakeOption(args []string, options ...string) bool {
-	return cmake.HasOption(args, options...)
 }

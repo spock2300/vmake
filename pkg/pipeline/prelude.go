@@ -19,14 +19,14 @@ type preludeOptions struct {
 type buildPrelude struct {
 	cfg             *buildConfig
 	tools           *build.ResolvedTools
-	needed          map[string]bool
+	needed          NeededSet
 	rawGlobalFlags  [4][]string
 	effectiveFlags  [4][]string
 	globalFlagsHash string
 }
 
 func prepareBuild(ctx *RuntimeContext, opts preludeOptions) (*buildPrelude, error) {
-	var needed map[string]bool
+	var needed NeededSet
 	var err error
 	if opts.filterDeps {
 		needed, err = resolveNeeded(ctx, opts.logFilter, opts.freezeDeps, opts.validateNeeded)
@@ -78,22 +78,15 @@ func prepareBuild(ctx *RuntimeContext, opts preludeOptions) (*buildPrelude, erro
 		}
 	}
 	pre.rawGlobalFlags, pre.effectiveFlags, pre.globalFlagsHash = aggregateGlobalFlags(ctx, needed)
-	ctx.applyConfiguration(ctx.currentConfiguration())
-	ctx.applyPreparation(Preparation{
-		Needed:          needed,
-		RawFlags:        pre.rawGlobalFlags,
-		EffectiveFlags:  pre.effectiveFlags,
-		GlobalFlagsHash: pre.globalFlagsHash,
-	})
 	return pre, nil
 }
 
-func neededGlobalFlags(ctx *RuntimeContext, needed map[string]bool) (cflags, cxxflags, ldflags, links []string) {
+func neededGlobalFlags(ctx *RuntimeContext, needed NeededSet) (cflags, cxxflags, ldflags, links []string) {
 	for _, name := range ctx.Resolver.GetOrder() {
 		if !needed[name] {
 			continue
 		}
-		buf := ctx.BufferedGlobalFlags[name]
+		buf := ctx.bufferedGlobalFlags[name]
 		if buf == nil {
 			continue
 		}
@@ -105,7 +98,7 @@ func neededGlobalFlags(ctx *RuntimeContext, needed map[string]bool) (cflags, cxx
 	return cflags, cxxflags, ldflags, links
 }
 
-func aggregateGlobalFlags(ctx *RuntimeContext, needed map[string]bool) (raw, effective [4][]string, hash string) {
+func aggregateGlobalFlags(ctx *RuntimeContext, needed NeededSet) (raw, effective [4][]string, hash string) {
 	raw = [4][]string{}
 	raw[0], raw[1], raw[2], raw[3] = neededGlobalFlags(ctx, needed)
 
@@ -115,7 +108,7 @@ func aggregateGlobalFlags(ctx *RuntimeContext, needed map[string]bool) (raw, eff
 		append([]string(nil), raw[2]...),
 		append([]string(nil), raw[3]...),
 	}
-	for _, define := range ctx.GlobalMacroDefines {
+	for _, define := range ctx.globalMacroDefines {
 		effective[0] = append(effective[0], "-D"+define)
 		effective[1] = append(effective[1], "-D"+define)
 	}

@@ -61,13 +61,14 @@ func cleanPackagesInspection(entries []pkgCleanEntry, ctx *RuntimeContext, clean
 
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
-		if node == nil || node.Source == nil || (insp.Needed != nil && !insp.Needed[name]) {
+		if node == nil || node.Source == nil {
 			continue
 		}
-		dirs := insp.PkgDirs[name]
-		if dirs == nil || dirs.BuildDir == "" {
+		view, ok := insp.Package(name)
+		if !ok || view.Skipped || (insp.Needed() != nil && !view.Needed) || view.Dirs.BuildDir == "" {
 			continue
 		}
+		dirs := view.Dirs
 		if node.IsLocal() {
 			cleanDir(dirs.BuildDir, name, filepath.Base(dirs.BuildDir))
 			continue
@@ -81,10 +82,23 @@ func cleanPackagesInspection(entries []pkgCleanEntry, ctx *RuntimeContext, clean
 	return insp, nil
 }
 
+// packageDirsOf adapts an inspection to the per-package directory lookup.
+func packageDirsOf(insp *pipeline.Inspection) func(name string) *api.PkgDirs {
+	return func(name string) *api.PkgDirs {
+		if insp == nil {
+			return nil
+		}
+		if view, ok := insp.Package(name); ok && !view.Skipped {
+			return view.Dirs
+		}
+		return nil
+	}
+}
+
 // remainingBuildDirectories counts build-key directories other than the active
 // configuration that clean left in place. Local packages keep their keys under
 // <package>/build/, remote packages under <tree>/out/<owner>/.
-func remainingBuildDirectories(ctx *RuntimeContext, insp *pipeline.Inspection) int {
+func remainingBuildDirectories(ctx *RuntimeContext, dirsFor func(name string) *api.PkgDirs) int {
 	active := make(map[string]map[string]bool)
 	mark := func(parent, key string) {
 		if active[parent] == nil {
@@ -100,8 +114,8 @@ func remainingBuildDirectories(ctx *RuntimeContext, insp *pipeline.Inspection) i
 			continue
 		}
 		var dirs *api.PkgDirs
-		if insp != nil {
-			dirs = insp.PkgDirs[name]
+		if dirsFor != nil {
+			dirs = dirsFor(name)
 		}
 		if node.IsLocal() {
 			key := ""
@@ -222,7 +236,7 @@ func runClean(cmd *cobra.Command, args []string) {
 	fatalErr(err)
 	removeStaleCompileDatabase(ctx)
 	if !cleanAllFlag {
-		if remaining := remainingBuildDirectories(ctx, insp); remaining > 0 {
+		if remaining := remainingBuildDirectories(ctx, packageDirsOf(insp)); remaining > 0 {
 			vlog.Info("Note: %d build director(ies) for other configurations remain; use 'vmake clean --all' or 'vmake distclean' to remove them.", remaining)
 		}
 	}
@@ -262,13 +276,11 @@ func executeCleanHooks(ctx *RuntimeContext, localOnly, skipUnresolved, filterDep
 				return fmt.Errorf("OnClean: %w", err)
 			}
 		}
-		if filterDeps && insp.Needed != nil && !insp.Needed[name] {
+		view, ok := insp.Package(name)
+		if !ok || view.Skipped || (filterDeps && insp.Needed() != nil && !view.Needed) || view.Dirs.BuildDir == "" {
 			continue
 		}
-		dirs := insp.PkgDirs[name]
-		if dirs == nil || dirs.BuildDir == "" {
-			continue
-		}
+		dirs := view.Dirs
 
 		platform, err := pipeline.PackagePlatform(ctx, name)
 		if err != nil {
@@ -281,14 +293,14 @@ func executeCleanHooks(ctx *RuntimeContext, localOnly, skipUnresolved, filterDep
 		pipeline.DetectExistingSrcDir(node)
 
 		node.Pkg.SetDirs(*dirs)
-		node.Pkg.SetToolchain(insp.PackageToolchains[name])
+		node.Pkg.SetToolchain(view.Toolchain)
 		node.Pkg.SetPlatform(platform)
 
 		cleanCtx := api.NewCleanContext(name, values)
 		if opts, ok := ctx.AllOptions[name]; ok {
 			cleanCtx.SetOptions(maps.Clone(opts))
 		}
-		cleanCtx.MergeGlobals(ctx.GlobalOptions, insp.GlobalValues)
+		cleanCtx.MergeGlobals(ctx.GlobalOptions(), insp.GlobalValues)
 		api.BindSetCleanPackage(cleanCtx, node.Pkg)
 		node.Pkg.SetOptions(api.BindOptions(&cleanCtx.ConfigAccessor))
 		node.Pkg.SetCfgVals(api.BindCfgVals(&cleanCtx.ConfigAccessor))

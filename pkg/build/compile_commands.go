@@ -35,15 +35,6 @@ func NewCompileCommandsWriter(tools *ResolvedTools) *CompileCommandsWriter {
 	}
 }
 
-func (w *CompileCommandsWriter) AddCommand(dir, src, objPath string, opts *CompileOptions) {
-	compiler, flags := selectCompilerAndFlags(w.ccPath, w.cxxPath, opts.CFlags, opts.CxxFlags, opts)
-
-	commandOpts := *opts
-	commandOpts.clang = w.clangCC
-	args := compileArgs(&commandOpts, objPath, src, flags, "", dir)
-	w.AddSpec(dir, src, commandSpec{Program: compiler, Args: args})
-}
-
 // AddSpec records one already-derived compile command. The scheduler uses the
 // same command value for the action record, so compile_commands.json and the
 // incremental signature cannot describe different compilers or flags.

@@ -31,30 +31,11 @@ func TestApplyConfigurationOwnsSnapshots(t *testing.T) {
 	if ctx.AllOptions["app"]["opt"] == nil {
 		t.Fatal("accessor mutation changed AllOptions")
 	}
-	if ctx.GlobalMacroDefines[0] != "A=1" {
+	if ctx.globalMacroDefines[0] != "A=1" {
 		t.Fatal("accessor mutation changed GlobalMacroDefines")
 	}
-	if ctx.BufferedGlobalFlags["app"].cFlags[0] != "-DX" {
+	if ctx.bufferedGlobalFlags["app"].cFlags[0] != "-DX" {
 		t.Fatal("accessor mutation changed BufferedGlobalFlags")
-	}
-}
-
-func TestApplyPreparationOwnsSnapshots(t *testing.T) {
-	ctx := &RuntimeContext{}
-	prep := Preparation{
-		Needed:         map[string]bool{"app": true},
-		RawFlags:       [4][]string{{"-DRaw"}},
-		EffectiveFlags: [4][]string{{"-DEff"}},
-	}
-	ctx.applyPreparation(prep)
-	got := ctx.Preparation()
-	got.Needed["app"] = false
-	got.EffectiveFlags[0][0] = "-DMutated"
-	if !ctx.Preparation().Needed["app"] {
-		t.Fatal("accessor mutation changed Needed")
-	}
-	if ctx.Preparation().EffectiveFlags[0][0] != "-DEff" {
-		t.Fatal("accessor mutation changed EffectiveFlags")
 	}
 }
 
@@ -81,12 +62,28 @@ func Main(p *api.Package) {}
 	if err := Require(ctx); err != nil {
 		t.Fatal(err)
 	}
-	resolution := ctx.Resolution()
-	if resolution.Resolver == nil || resolution.DepGraph == nil {
-		t.Fatalf("resolution = %+v", resolution)
+	if ctx.Resolver == nil || ctx.DepGraph == nil {
+		t.Fatalf("resolution missing: resolver=%v graph=%v", ctx.Resolver, ctx.DepGraph)
 	}
-	if ctx.Resolver != resolution.Resolver || ctx.DepGraph != resolution.DepGraph {
-		t.Fatal("facade fields do not match the Resolution result")
+}
+
+// Configuration() is derived on read, so a field change is visible without any
+// snapshot refresh and the returned copy still cannot mutate the context.
+func TestConfigurationViewIsDerivedOnRead(t *testing.T) {
+	ctx := &RuntimeContext{}
+	ctx.chipProfile = api.ChipProfile{Name: "chip-a"}
+
+	if got := ctx.Configuration().ChipProfile.Name; got != "chip-a" {
+		t.Fatalf("Configuration() = %q, want the live field", got)
+	}
+	view := ctx.Configuration()
+	view.ChipProfile = api.ChipProfile{Name: "mutated"}
+	view.GlobalMacroDefines = append(view.GlobalMacroDefines, "B=2")
+	if got := ctx.Configuration().ChipProfile.Name; got != "chip-a" {
+		t.Fatal("mutating the view changed the context")
+	}
+	if len(ctx.globalMacroDefines) != 0 {
+		t.Fatal("mutating the view appended to the context")
 	}
 }
 

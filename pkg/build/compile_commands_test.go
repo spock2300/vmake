@@ -13,16 +13,16 @@ func TestCompileCommandsMergePreservesTargetOutputs(t *testing.T) {
 	output := filepath.Join(dir, "compile_commands.json")
 	tools := &ResolvedTools{CC: "cc", CXX: "c++"}
 	first := NewCompileCommandsWriter(tools)
-	first.AddCommand(dir, "shared.c", "one.o", &CompileOptions{CFlags: []string{"-DFIRST=1"}})
+	first.AddSpec(dir, "shared.c", plannedCCSpec("one.o", "shared.c", "-DFIRST=1"))
 	if err := first.Save(output); err != nil {
 		t.Fatal(err)
 	}
 	second := NewCompileCommandsWriter(tools)
-	second.AddCommand(dir, "shared.c", "two.o", &CompileOptions{})
+	second.AddSpec(dir, "shared.c", plannedCCSpec("two.o", "shared.c"))
 	if err := second.Save(output); err != nil {
 		t.Fatal(err)
 	}
-	first.AddCommand(dir, "shared.c", "one.o", &CompileOptions{CFlags: []string{"-DFIRST=2"}})
+	first.AddSpec(dir, "shared.c", plannedCCSpec("one.o", "shared.c", "-DFIRST=2"))
 	if err := first.Save(output); err != nil {
 		t.Fatal(err)
 	}
@@ -38,6 +38,15 @@ func TestCompileCommandsMergePreservesTargetOutputs(t *testing.T) {
 			t.Fatalf("stale command survived: %s", command.Command)
 		}
 	}
+}
+
+// plannedCCSpec is a compile command in the shape planCompile produces; these
+// tests exercise the writer, not command derivation.
+func plannedCCSpec(objPath, src string, extra ...string) commandSpec {
+	args := []string{"-c", "-o", objPath}
+	args = append(args, extra...)
+	args = append(args, src)
+	return commandSpec{Program: "cc", Args: args}
 }
 
 func TestCompileCommandsAddSpecUsesPlannedCommand(t *testing.T) {

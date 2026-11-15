@@ -15,7 +15,7 @@ func TestLayoutForLinkedSourceOverride(t *testing.T) {
 		Member:         "system/freertos/lwip",
 		CCKey:          "cc",
 		Mode:           "debug",
-		Material:       keyMaterial{version: "1.0.0", commit: "c"},
+		Facts:          LayoutFacts{Version: "1.0.0", Commit: "c"},
 		Ready:          true,
 	})
 	if err != nil {
@@ -38,7 +38,7 @@ func TestLayoutForLinkedSourceOverrideMemberIsFullPath(t *testing.T) {
 		Member:         "member",
 		CCKey:          "cc",
 		Mode:           "debug",
-		Material:       keyMaterial{version: "1.0.0", commit: "c"},
+		Facts:          LayoutFacts{Version: "1.0.0", Commit: "c"},
 		Ready:          true,
 	})
 	if err != nil {

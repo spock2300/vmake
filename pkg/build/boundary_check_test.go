@@ -262,11 +262,11 @@ func TestHeaderBoundaryTargetlessUmbrellaAncestorVsTargetAncestor(t *testing.T) 
 func TestHeaderBoundaryEmptyPublicIncludeAndUnneededWorkspacePkg(t *testing.T) {
 	root := t.TempDir()
 	writeTestFiles(t, root, map[string]string{
-		"dep/dep.c":                   "int dep_fn(void) { return 1; }\n",
-		"dep/priv.h":                  "#define DEP_PRIV 1\n",
-		"sdk/internal/secret/priv.h":  "#define SECRET_PRIV 2\n",
-		"app_empty/main.c":            "#include \"../dep/priv.h\"\nint main(void) { return DEP_PRIV; }\n",
-		"app_ws/main.c":               "#include \"../sdk/internal/secret/priv.h\"\nint main(void) { return SECRET_PRIV; }\n",
+		"dep/dep.c":                  "int dep_fn(void) { return 1; }\n",
+		"dep/priv.h":                 "#define DEP_PRIV 1\n",
+		"sdk/internal/secret/priv.h": "#define SECRET_PRIV 2\n",
+		"app_empty/main.c":           "#include \"../dep/priv.h\"\nint main(void) { return DEP_PRIV; }\n",
+		"app_ws/main.c":              "#include \"../sdk/internal/secret/priv.h\"\nint main(void) { return SECRET_PRIV; }\n",
 	})
 
 	tc, tools := hostTestTools(t)
@@ -332,13 +332,13 @@ func TestHeaderBoundaryEmptyPublicIncludeAndUnneededWorkspacePkg(t *testing.T) {
 func TestTargetDeclaredPathsAndColdBoundaryCheck(t *testing.T) {
 	root := t.TempDir()
 	writeTestFiles(t, root, map[string]string{
-		"parent/include/pub.h":        "#define PUB 1\n",
-		"parent/vendor/priv.h":        "#define PRIV 2\n",
-		"parent/lib/libblob.a":        "stub",
-		"parent/parent.c":             "int parent_fn(void) { return 1; }\n",
-		"parent/child/child.c":        "#include \"pub.h\"\nint child_fn(void) { return PUB; }\n",
-		"sibling/conf.h":              "#define CONF 1\n",
-		"consumer/build.go":           "package main\n",
+		"parent/include/pub.h": "#define PUB 1\n",
+		"parent/vendor/priv.h": "#define PRIV 2\n",
+		"parent/lib/libblob.a": "stub",
+		"parent/parent.c":      "int parent_fn(void) { return 1; }\n",
+		"parent/child/child.c": "#include \"pub.h\"\nint child_fn(void) { return PUB; }\n",
+		"sibling/conf.h":       "#define CONF 1\n",
+		"consumer/build.go":    "package main\n",
 	})
 
 	pkgDirs := map[string]string{

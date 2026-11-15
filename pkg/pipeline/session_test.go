@@ -38,7 +38,7 @@ func sessionFixture(t *testing.T) *buildPhaseState {
 	s := newBuildPhaseState(ctx, BuildOptions{Jobs: 2})
 	s.cfg = makeBuildConfig(ctx, tc, tc.Name)
 	s.needed = map[string]bool{"app": true, "dep": true}
-	s.computeDirsAndOptions()
+	s.computeDirsAndOptions(t)
 	s.remote = &remoteVersionState{versions: map[string]string{}, commits: map[string]string{}, trees: map[string]string{}}
 	return s
 }
@@ -298,7 +298,7 @@ func TestSessionNestedCachedSubgraphToolchainScopes(t *testing.T) {
 				config.SetEntry(s.ctx.Config, outer.name, &config.EntryConfig{Options: map[string]any{api.ToolchainOptionName: outer.tc.Name}})
 			}
 			s.ctx.DepGraph.Order = []string{"app", "first", "second", "dep"}
-			s.computeDirsAndOptions()
+			s.computeDirsAndOptions(t)
 			declarations, builds := 0, 0
 			s.ctx.DepGraph.Packages["dep"].Pkg.OnBuild(func(ctx *api.BuildContext) {
 				declarations++

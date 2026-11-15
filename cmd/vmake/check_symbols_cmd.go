@@ -78,7 +78,7 @@ func runCheckSymbols(execution context.Context, strict bool) {
 	if err != nil {
 		fatalResolveRoot(err)
 	}
-	session, err := openInspection(inspectionRequest{execution: execution, root: root, quiet: true})
+	session, err := openInspection(inspectionRequest{project: projectOptions{execution: execution, root: root}, quiet: true, execQuiet: true})
 	if err != nil {
 		var inspectErr *inspectionStageError
 		if errors.As(err, &inspectErr) {
@@ -91,7 +91,7 @@ func runCheckSymbols(execution context.Context, strict bool) {
 	ctx := session.ctx
 	insp := session.inspection
 
-	artifacts, err := discoverArtifacts(ctx, insp.PkgDirs, insp.Layouts, insp.PackageToolchains, insp.Needed, insp.GlobalValues)
+	artifacts, err := discoverArtifacts(ctx, insp)
 	fatalErr(err)
 	blockedWrites := append(append([]string{}, session.blocked...), scriptfs.TakeBlockedWrites()...)
 	var findings []finding
@@ -136,7 +136,8 @@ func runCheckSymbols(execution context.Context, strict bool) {
 			findings = append(findings, finding{category: category, severity: severity, subject: a.pkgName + ":" + a.targetName, detail: err.Error()})
 			continue
 		}
-		tc := insp.PackageToolchains[a.pkgName]
+		view, _ := insp.Package(a.pkgName)
+		tc := view.Toolchain
 		if tc == nil {
 			findings = append(findings, finding{category: "tool-error", severity: "error", subject: a.pkgName + ":" + a.targetName, detail: "package has no resolved toolchain"})
 			continue
@@ -173,33 +174,23 @@ func runCheckSymbols(execution context.Context, strict bool) {
 	}
 }
 
-func discoverArtifacts(ctx *RuntimeContext, pkgDirs map[string]*api.PkgDirs, layouts map[string]*build.PackageLayout, tcs map[string]*toolchain.Toolchain, needed map[string]bool, globalValues map[string]any) ([]scanArtifact, error) {
+func discoverArtifacts(ctx *RuntimeContext, inspection *pipeline.Inspection) ([]scanArtifact, error) {
 	var out []scanArtifact
 	for name, node := range ctx.DepGraph.Packages {
 		if node == nil || node.Pkg == nil || !node.IsLocal() {
 			continue
 		}
-		if needed != nil && !needed[name] {
+		view, ok := inspection.Package(name)
+		if !ok || view.Skipped || !view.Needed || view.Toolchain == nil {
 			continue
 		}
-		dirs := pkgDirs[name]
-		if dirs == nil {
-			continue
-		}
-		tc := tcs[name]
-		if tc == nil {
-			continue
-		}
-		buildCtx, err := pipeline.DeclareTargets(ctx, name, dirs, tc, globalValues)
+		dirs := view.Dirs
+		buildCtx, err := pipeline.DeclareTargets(ctx, name, dirs, view.Toolchain, inspection.GlobalValues)
 		if err != nil {
 			return nil, err
 		}
 
-		buildKey := ""
-		if layout := layouts[name]; layout != nil {
-			buildKey = layout.BuildKey
-		}
-		pkgInfo := build.NewPkgInfo(*dirs, buildKey)
+		pkgInfo := view.PkgInfo()
 		for _, t := range buildCtx.GetTargets() {
 			kind := t.Kind()
 			if kind != api.TargetShared && kind != api.TargetBinary {

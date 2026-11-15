@@ -1,5 +1,7 @@
 package pipeline
 
+import "testing"
+
 type buildPhaseState struct {
 	*runContext
 	*configStage
@@ -31,9 +33,16 @@ func newBuildPhaseState(ctx *RuntimeContext, opts BuildOptions) *buildPhaseState
 	}
 }
 
-func (s *buildPhaseState) computeDirsAndOptions() {
-	s.allPkgOptions = collectAllPkgOptions(s.ctx, s.needed)
-	s.pkgDirs = ResolveAllPackageDirs(s.ctx.DepGraph)
+func (s *buildPhaseState) computeDirsAndOptions(t *testing.T) {
+	t.Helper()
+	conf, err := prepareConfig(s.runContext, s.needed, nil)
+	if err != nil {
+		t.Fatalf("prepareConfig: %v", err)
+	}
+	*s.configStage = *conf
+	// Tests may add packages to the graph after construction; refresh the
+	// directory map so the bindings see them.
+	s.pkgDirs = packageSourceDirs(s.ctx)
 }
 
 func (s *buildPhaseState) buildPkgKeyExtra() (map[string]string, error) {

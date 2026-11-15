@@ -24,7 +24,7 @@ type Settings struct {
 }
 
 func ConfigureArgs(s Settings, extra ...string) ([]string, error) {
-	if err := ValidateArgs(extra); err != nil {
+	if err := validateArgs(extra); err != nil {
 		return nil, err
 	}
 	if s.Toolchain == nil {
@@ -35,7 +35,7 @@ func ConfigureArgs(s Settings, extra ...string) ([]string, error) {
 		"-B", filepath.ToSlash(s.BuildDir),
 		"-DCMAKE_INSTALL_PREFIX=" + filepath.ToSlash(s.InstallDir),
 	}
-	languages, languageList := ProjectLanguages(s.SourceDir)
+	languages, languageList := projectLanguages(s.SourceDir)
 	// Compiler and compiler-target arguments follow the project's declared
 	// languages so CMake does not report vmake-provided variables it never
 	// consumes; binutils stay unconditional. Without a parseable language list
@@ -94,8 +94,8 @@ func ConfigureArgs(s Settings, extra ...string) ([]string, error) {
 			args = append(args, "-DCMAKE_ASM_COMPILER_TARGET="+s.TargetTriple)
 		}
 	}
-	if s.HostOS == "windows" && !HasGenerator(extra) && os.Getenv("CMAKE_GENERATOR") == "" {
-		args = append(args, "-G", "Ninja")
+	if generator, pinned := generatorDefault(s.HostOS); pinned && !hasGenerator(extra) && os.Getenv("CMAKE_GENERATOR") == "" {
+		args = append(args, "-G", generator)
 	}
 	definitions := Definitions(extra)
 	for _, arg := range s.GlobalFlags {
@@ -107,7 +107,7 @@ func ConfigureArgs(s Settings, extra ...string) ([]string, error) {
 				continue
 			}
 		}
-		if !definitions[DefinitionKey(strings.TrimPrefix(arg, "-D"))] {
+		if !definitions[definitionKey(strings.TrimPrefix(arg, "-D"))] {
 			args = append(args, arg)
 		}
 	}
@@ -115,19 +115,19 @@ func ConfigureArgs(s Settings, extra ...string) ([]string, error) {
 	return args, nil
 }
 
-func ConfigureDir(s Settings, extra []string) string {
+func configureDir(s Settings, extra []string) string {
 	if HasOption(extra, "--preset") {
 		return s.SourceDir
 	}
 	return s.BuildRoot
 }
 
-// ProjectLanguages returns the languages declared by the source tree's
+// projectLanguages returns the languages declared by the source tree's
 // project() command, parsing both the LANGUAGES form and the legacy
 // project(<name> <language>...) form. ok is false when CMakeLists.txt is
 // missing, has no project() call, or no language list is parseable; callers
 // then keep the unconditional compiler injection.
-func ProjectLanguages(srcDir string) (map[string]bool, bool) {
+func projectLanguages(srcDir string) (map[string]bool, bool) {
 	data, err := os.ReadFile(filepath.Join(srcDir, "CMakeLists.txt"))
 	if err != nil {
 		return nil, false
@@ -311,7 +311,7 @@ func cmakeArgumentSpace(c byte) bool {
 	return c == ' ' || c == '\t' || c == '\r' || c == '\n'
 }
 
-func ValidateArgs(args []string) error {
+func validateArgs(args []string) error {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
@@ -323,7 +323,7 @@ func ValidateArgs(args []string) error {
 				i++
 				definition = args[i]
 			}
-			switch DefinitionKey(definition) {
+			switch definitionKey(definition) {
 			case "CMAKE_INSTALL_PREFIX":
 				return fmt.Errorf("CMAKE_INSTALL_PREFIX is managed by VMake; use SetCMakeInstallDir")
 			case "CMAKE_BUILD_TYPE":
@@ -341,7 +341,7 @@ func ValidateArgs(args []string) error {
 	return nil
 }
 
-func HasGenerator(args []string) bool {
+func hasGenerator(args []string) bool {
 	return HasOption(args, "-G", "--preset")
 }
 
@@ -379,12 +379,12 @@ func Definitions(args []string) map[string]bool {
 			i++
 			definition = args[i]
 		}
-		definitions[DefinitionKey(definition)] = true
+		definitions[definitionKey(definition)] = true
 	}
 	return definitions
 }
 
-func DefinitionKey(definition string) string {
+func definitionKey(definition string) string {
 	key, _, _ := strings.Cut(definition, "=")
 	key, _, _ = strings.Cut(key, ":")
 	return key
@@ -408,12 +408,12 @@ func JoinFlags(hostOS string, flags []string) string {
 		if flag == "" {
 			continue
 		}
-		parts = append(parts, QuoteFlag(hostOS, flag))
+		parts = append(parts, quoteFlag(hostOS, flag))
 	}
 	return strings.Join(parts, " ")
 }
 
-func QuoteFlag(hostOS, flag string) string {
+func quoteFlag(hostOS, flag string) string {
 	if hostOS == "windows" {
 		return quoteWindowsFlag(flag)
 	}

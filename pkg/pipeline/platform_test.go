@@ -44,7 +44,7 @@ func TestBuildConfigEffectiveModeAndToolchain(t *testing.T) {
 			ctx.Config.Global.Mode = test.configuredMode
 			ctx.Config.Global.Toolchain = test.configuredTC
 			var err error
-			ctx.GlobalOptions, err = api.MergeGlobalOptions(ctx.AllOptions, []string{"first", "host", "configured", "selected"})
+			ctx.globalOptions, err = api.MergeGlobalOptions(ctx.AllOptions, []string{"first", "host", "configured", "selected"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -78,7 +78,7 @@ func TestProjectGlobalValuesPreserveExplicitValues(t *testing.T) {
 	options.GlobalOption("enabled").SetType(api.OptionBool).SetDefault(true)
 	options.GlobalOption("count").SetType(api.OptionInt).SetDefault(7)
 	options.GlobalOption("unset").SetType(api.OptionString).SetDefault("default")
-	ctx := &RuntimeContext{Config: emptyConfig(), GlobalOptions: options.GetOptions()}
+	ctx := &RuntimeContext{Config: emptyConfig(), globalOptions: options.GetOptions()}
 	ctx.Config.Global.Options = map[string]any{"text": "", "enabled": false, "count": 0, "unset": nil}
 	want := map[string]any{"text": "", "enabled": false, "count": 0, "unset": "default"}
 	if got := ProjectGlobalValues(ctx); !reflect.DeepEqual(got, want) {
@@ -107,7 +107,7 @@ func TestProjectPlatformDefaultsAndOverrides(t *testing.T) {
 				Config:        emptyConfig(),
 				DepGraph:      &resolver.Graph{Packages: map[string]*resolver.PackageNode{"app": node}},
 				AllOptions:    map[string]map[string]*api.Option{"app": options.GetOptions()},
-				GlobalOptions: options.GetOptions(),
+				globalOptions: options.GetOptions(),
 			}
 			ctx.Config.Global.Options = test.values
 			platform, err := ProjectPlatform(ctx)

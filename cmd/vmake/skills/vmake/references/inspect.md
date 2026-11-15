@@ -147,7 +147,7 @@ writes on `p.DryRun()`. The guard covers the wrapped symbols only.
 | `overrides` | Typed `--set` values keyed `[package/]option`; omitted when unused |
 | `roots` | Active configuration `"root"` package when set, else explicit `SetRoot(true)` local package when present, otherwise needed local packages that no needed package depends on, sorted |
 | `packages` | Resolved package entries, sorted by name |
-| `graph` | Package dependency edges `{from, to}`, sorted (merges `OnRequire`, cross-package target `AddDeps`/`UseRequires`, and `BuildSubGraph` edges; `--no-targets` reports `OnRequire` edges only) |
+| `graph` | Package dependency edges `{from, to}`, sorted (merges `OnRequire`, cross-package target `AddDeps`/`UseRequires`, and `BuildSubGraph` edges; `--no-targets` reports `OnRequire` edges only). Edges may also carry `kinds` and `via`, matching `vmake deps graph` |
 | `compileDatabase` | `<root>/build/compile_commands.json` (expected path, even before a build) |
 | `compileDatabasePresent` | Whether that file currently exists (presence only) |
 | `buildReport` | `<root>/build/vmake-build.json` (expected path, even before a build) |

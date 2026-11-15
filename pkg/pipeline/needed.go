@@ -7,10 +7,39 @@ import (
 	"github.com/spock2300/vmake/pkg/resolver"
 )
 
+// NeededSet is the set of packages reachable from the active roots. It is a
+// named map so every signature that carries it says what the map means.
+type NeededSet map[string]bool
+
+// Clone returns an independent copy of the set.
+func (s NeededSet) Clone() NeededSet {
+	if s == nil {
+		return nil
+	}
+	out := make(NeededSet, len(s))
+	for name := range s {
+		out[name] = true
+	}
+	return out
+}
+
+func (s NeededSet) Has(name string) bool { return s[name] }
+func (s NeededSet) Len() int             { return len(s) }
+
+// Names returns the set members in sorted order.
+func (s NeededSet) Names() []string {
+	names := make([]string, 0, len(s))
+	for name := range s {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // Needed is the single reachable-package computation used by build, inspect,
 // query, deps and test preflight.
 type Needed struct {
-	Set       map[string]bool
+	Set       NeededSet
 	Roots     []string
 	Rationale string
 }
@@ -53,7 +82,7 @@ func ComputeNeeded(ctx *RuntimeContext) (Needed, error) {
 // reachability uses computeNeededGraph (AddRequires/Deps); this helper serves
 // the reported deps/inspect graph, whose edges also include target-level
 // AddDeps/UseRequires. Both consumers share it instead of sorting edges twice.
-func RootsFromEdges(ctx *RuntimeContext, pkgs []string, edges []PackageEdge, needed map[string]bool) []string {
+func RootsFromEdges(ctx *RuntimeContext, pkgs []string, edges []PackageEdge, needed NeededSet) []string {
 	if ctx == nil || ctx.DepGraph == nil {
 		return nil
 	}

@@ -12,7 +12,7 @@ func TestNeededGlobalFlags(t *testing.T) {
 	r.Graph().Order = []string{"dep", "extra", "root"}
 	ctx := &RuntimeContext{
 		Resolver: r,
-		BufferedGlobalFlags: map[string]*packageGlobalFlags{
+		bufferedGlobalFlags: map[string]*packageGlobalFlags{
 			"dep": {
 				cFlags:  []string{"-DDEP"},
 				ldFlags: []string{"-ldep"},

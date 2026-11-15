@@ -301,7 +301,7 @@ func TestPackagePinAndLockIgnoreMatrix(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := resolutionContext(t)
 			applyResolutionState(ctx, nil, tc.pins, tc.policy)
-			gotPin, gotFromTarget, gotHasPin := ctx.packagePin("pkg")
+			gotPin, gotFromTarget, gotHasPin := ctx.lockQuery().PinFor("pkg")
 			if gotPin != tc.wantPin || gotFromTarget != tc.wantFromTar || gotHasPin != tc.wantHasPin {
 				t.Fatalf("packagePin = (%q, %v, %v), want (%q, %v, %v)", gotPin, gotFromTarget, gotHasPin, tc.wantPin, tc.wantFromTar, tc.wantHasPin)
 			}
@@ -316,4 +316,74 @@ func lockWith(name, version, commit, source string) *lockfile.Lock {
 	l := lockfile.New()
 	l.Set(name, &lockfile.LockedPkg{Version: version, Commit: commit, Source: source})
 	return l
+}
+
+func TestVerifyLockBeforePreparePinMismatch(t *testing.T) {
+	tests := []struct {
+		name    string
+		pins    map[string]string
+		policy  resolver.LockPolicy
+		lock    *lockfile.Lock
+		wantErr string
+	}{
+		{
+			name:    "config pin matches the lock",
+			lock:    lockWith("repo/pkg", "1.0.0", "c1", "native"),
+			pins:    map[string]string{"repo/pkg": "1.0.0"},
+			policy:  resolver.LockPolicy{Locked: true},
+			wantErr: "",
+		},
+		{
+			name:    "config pin differs from the lock",
+			lock:    lockWith("repo/pkg", "1.0.0", "c1", "native"),
+			pins:    map[string]string{"repo/pkg": "2.0.0"},
+			policy:  resolver.LockPolicy{Locked: true},
+			wantErr: "pinned to 2.0.0 in .vmake/project.json, but vmake.lock has 1.0.0",
+		},
+		{
+			name:    "target pin differs from the lock",
+			lock:    lockWith("repo/pkg", "1.0.0", "c1", "native"),
+			policy:  resolver.LockPolicy{Locked: true, Targets: map[string]string{"repo/pkg": "3.0.0"}},
+			wantErr: "pinned to 3.0.0 in .vmake/project.json, but vmake.lock has 1.0.0",
+		},
+		{
+			name:    "float suppresses the pin comparison",
+			lock:    lockWith("repo/pkg", "1.0.0", "c1", "native"),
+			pins:    map[string]string{"repo/pkg": "2.0.0"},
+			policy:  resolver.LockPolicy{Locked: true, Float: map[string]bool{"repo/pkg": true}},
+			wantErr: "",
+		},
+		{
+			name:    "empty lock is a phase-level failure",
+			lock:    lockfile.New(),
+			pins:    map[string]string{"repo/pkg": "2.0.0"},
+			policy:  resolver.LockPolicy{Locked: true},
+			wantErr: "vmake.lock is out of date or missing",
+		},
+		{
+			name:    "missing entry is reported before the pin",
+			lock:    lockWith("other/pkg", "1.0.0", "c1", "native"),
+			pins:    map[string]string{"repo/pkg": "2.0.0"},
+			policy:  resolver.LockPolicy{Locked: true},
+			wantErr: "is not locked in vmake.lock",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := resolutionContext(t, resolutionNode("repo/pkg", false, nil))
+			applyResolutionState(ctx, tc.lock, tc.pins, tc.policy)
+			rc := newRunContext(ctx, BuildOptions{}, nil)
+			src := newSourceStage(rc, &configStage{needed: NeededSet{"repo/pkg": true}})
+			err := src.verifyLockBeforePrepare()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("verifyLockBeforePrepare: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
 }

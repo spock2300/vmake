@@ -17,7 +17,20 @@ import (
 type PackageLayout struct {
 	Dirs     api.PkgDirs
 	BuildKey string
+	Platform api.Platform
 	Ready    bool
+}
+
+// PkgInfo is the only layout→PkgInfo conversion. A not-ready layout carries no
+// build directory or key, so consumers see a directory-only entry.
+func (l PackageLayout) PkgInfo() *PkgInfo {
+	dirs := l.Dirs
+	buildKey := l.BuildKey
+	if !l.Ready {
+		dirs.BuildDir = ""
+		buildKey = ""
+	}
+	return NewPkgInfo(dirs, buildKey)
 }
 
 func BuildPath(baseDir, buildKey, subdir string) string {

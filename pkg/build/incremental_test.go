@@ -42,11 +42,16 @@ func nativeTestSchedulerWithSession(t *testing.T, dir string, session *Session, 
 	if err != nil {
 		t.Fatal(err)
 	}
+	dirs := api.PkgDirs{SourceDir: dir, BuildDir: filepath.Join(dir, "build")}
+	pkg := api.NewPackage().SetName("p").SetDirs(dirs).SetSrcDir(dir)
+	pkg.SetToolchain(tc)
+	pkg.SetPlatform(platform)
 	return newScheduler(schedulerConfig{
 		Graph:     graph,
 		Toolchain: tc,
 		Platform:  platform,
-		Layouts:   map[string]*PackageLayout{"p": {Dirs: api.PkgDirs{SourceDir: dir, BuildDir: filepath.Join(dir, "build")}, BuildKey: "k", Ready: true}},
+		Layouts:   map[string]*PackageLayout{"p": {Dirs: dirs, BuildKey: "k", Ready: true}},
+		Packages:  map[string]*api.Package{"p": pkg},
 		Mode:      api.ModeDebug,
 		Tools:     resolvedTools,
 		RootDir:   dir,

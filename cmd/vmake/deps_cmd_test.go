@@ -10,6 +10,7 @@ import (
 
 	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/lockfile"
+	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/repo"
 )
 
@@ -170,6 +171,16 @@ func Main(p *api.Package) {
 	}
 	if statusEnv.Command != "deps status" || !statusEnv.LockExists || len(statusEnv.Packages) != 2 {
 		t.Fatalf("unexpected status envelope: %+v", statusEnv)
+	}
+	byName := make(map[string]pipeline.DepPackageStatus, len(statusEnv.Packages))
+	for _, pkg := range statusEnv.Packages {
+		byName[pkg.Name] = pkg
+	}
+	if got := byName["testnative/libfoo"]; got.Version != "1.0.0" || got.Commit != commitV1 || got.Pinned != "1.0.0" {
+		t.Fatalf("pinned status = %+v, want version 1.0.0/%s pinned 1.0.0", got, commitV1)
+	}
+	if got := byName["blob"]; got.Version != "" || got.Commit != blobCommit1 || got.Pinned != "" {
+		t.Fatalf("untagged status = %+v, want commit %s and no version", got, blobCommit1)
 	}
 
 	mustRun("deps", "unpin", "testnative/libfoo")

@@ -35,15 +35,15 @@ type RuntimeContext struct {
 	Config              *config.ConfigFile
 	DepGraph            *resolver.Graph
 	AllOptions          map[string]map[string]*api.Option
-	AllKConfigs         map[string][]*api.KConfigEntry
-	ChipProfiles        map[string]api.ChipProfile
-	ChipProfile         api.ChipProfile
+	allKConfigs         map[string][]*api.KConfigEntry
+	chipProfiles        map[string]api.ChipProfile
+	chipProfile         api.ChipProfile
 	PreferredToolchain  string
-	GlobalOptions       map[string]*api.Option
-	DerivedOptions      map[string]map[string]any
+	globalOptions       map[string]*api.Option
+	derivedOptions      map[string]map[string]any
 	Resolver            *resolver.Resolver
-	BufferedGlobalFlags map[string]*packageGlobalFlags
-	GlobalMacroDefines  []string
+	bufferedGlobalFlags map[string]*packageGlobalFlags
+	globalMacroDefines  []string
 	Lock                *lockfile.Lock
 	LockPath            string
 	LockPolicy          resolver.LockPolicy
@@ -55,10 +55,6 @@ type RuntimeContext struct {
 	ModeOverride       string
 	ToolchainOverride  string
 	OnOptionsCollected func(*RuntimeContext) error
-
-	resolution    Resolution
-	configuration Configuration
-	preparation   Preparation
 }
 
 type packageGlobalFlags struct {
@@ -163,10 +159,6 @@ func (ctx *RuntimeContext) lockQuery() resolver.LockQuery {
 	return resolver.LockQuery{Policy: ctx.effectiveLockPolicy(), Pins: ctx.Pins, Lock: ctx.Lock}
 }
 
-func (ctx *RuntimeContext) packagePin(name string) (target string, fromTarget bool, ok bool) {
-	return ctx.lockQuery().PinFor(name)
-}
-
 func (ctx *RuntimeContext) isLockIgnoredFor(name string) bool {
 	return ctx.lockQuery().IgnoredFor(name)
 }
@@ -222,8 +214,8 @@ func newBuildContext(ctx *RuntimeContext, name string, globalValues map[string]a
 		buildCtx.SetOptions(maps.Clone(pkgOpts))
 	}
 	buildCtx.MergeGlobals(
-		visibleGlobalOptionsFor(node, pkgOpts, ctx.GlobalOptions),
-		visibleGlobalValuesFor(node, pkgOpts, ctx.GlobalOptions, globalValues),
+		visibleGlobalOptionsFor(node, pkgOpts, ctx.globalOptions),
+		visibleGlobalValuesFor(node, pkgOpts, ctx.globalOptions, globalValues),
 	)
 	return buildCtx, nil
 }
@@ -257,7 +249,7 @@ func newConfigLookup(ctx *RuntimeContext, currentPkg string, base map[string]any
 		}
 		opt := opts[name]
 		if opt == nil {
-			if gOpt := ctx.GlobalOptions[name]; gOpt != nil && gOpt.ExportDefine() {
+			if gOpt := ctx.globalOptions[name]; gOpt != nil && gOpt.ExportDefine() {
 				opt = gOpt
 			}
 		}
@@ -265,11 +257,11 @@ func newConfigLookup(ctx *RuntimeContext, currentPkg string, base map[string]any
 			opt = implicitPlatformOption(name)
 		}
 		if opt == nil {
-			names := make([]string, 0, len(opts)+len(ctx.GlobalOptions))
+			names := make([]string, 0, len(opts)+len(ctx.globalOptions))
 			for optionName := range opts {
 				names = append(names, optionName)
 			}
-			for optionName, gOpt := range ctx.GlobalOptions {
+			for optionName, gOpt := range ctx.globalOptions {
 				if gOpt != nil && !gOpt.ExportDefine() {
 					continue
 				}
@@ -331,7 +323,7 @@ func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, 
 	if allOpts == nil && node != nil && node.Pkg != nil {
 		allOpts = node.Pkg.GetOptions()
 	}
-	visGlobals := visibleGlobalValuesFor(node, allOpts, ctx.GlobalOptions, globalValues)
+	visGlobals := visibleGlobalValuesFor(node, allOpts, ctx.globalOptions, globalValues)
 	if allOpts != nil {
 		for optName, opt := range allOpts {
 			if _, resolved := visGlobals[optName]; resolved && opt.IsGlobal() {
@@ -342,8 +334,8 @@ func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, 
 			}
 		}
 	}
-	if ctx != nil && ctx.DerivedOptions != nil {
-		for k, v := range ctx.DerivedOptions[name] {
+	if ctx != nil && ctx.derivedOptions != nil {
+		for k, v := range ctx.derivedOptions[name] {
 			if opt, declared := allOpts[k]; declared && opt.IsGlobal() {
 				continue
 			}
@@ -371,7 +363,7 @@ func mergePkgOptions(dst, pkgOpts map[string]any, allOpts map[string]*api.Option
 	}
 }
 
-func applyBuildContextConfig(buildCtx *api.BuildContext, node *resolver.PackageNode, ctx *RuntimeContext, currentPkg string, needed map[string]bool) {
+func applyBuildContextConfig(buildCtx *api.BuildContext, node *resolver.PackageNode, ctx *RuntimeContext, currentPkg string, needed NeededSet) {
 	var subParents map[string]string
 	if ctx.Resolver != nil {
 		subParents = ctx.Resolver.SubParents()

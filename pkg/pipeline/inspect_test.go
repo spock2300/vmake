@@ -39,7 +39,7 @@ func TestInspectMatchesPackageToolchainBuildDirectories(t *testing.T) {
 	s.ctx.DepGraph.Packages["app"].Deps = []string{"dep"}
 	s.cfg = makeBuildConfig(s.ctx, host, "host")
 	s.globalFlagsHash = build.HashGlobalFlags([4][]string{})
-	s.computeDirsAndOptions()
+	s.computeDirsAndOptions(t)
 	if err := s.prepareAllPackages(); err != nil {
 		t.Fatal(err)
 	}
@@ -48,11 +48,11 @@ func TestInspectMatchesPackageToolchainBuildDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, pkg := range []string{"app", "dep"} {
-		if !reflect.DeepEqual(inspection.PkgDirs[pkg], s.pkgDirs[pkg]) {
-			t.Errorf("%s inspection/build directories differ: %+v / %+v", pkg, inspection.PkgDirs[pkg], s.pkgDirs[pkg])
+		if !reflect.DeepEqual(inspection.pkgDirs[pkg], s.pkgDirs[pkg]) {
+			t.Errorf("%s inspection/build directories differ: %+v / %+v", pkg, inspection.pkgDirs[pkg], s.pkgDirs[pkg])
 		}
 	}
-	if inspection.PackageToolchains["dep"] != tc || inspection.PackageToolchains["app"] != host {
+	if inspection.packageToolchains["dep"] != tc || inspection.packageToolchains["app"] != host {
 		t.Fatal("inspection lost per-package toolchain selection")
 	}
 	missing := name + "-missing"
@@ -87,10 +87,10 @@ func TestInspectWithOptionsSkipsUnresolvedPackages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inspection.PkgDirs["dep"] != nil || inspection.PackageToolchains["dep"] != nil {
-		t.Fatalf("unresolved package was not skipped: %+v", inspection.PkgDirs["dep"])
+	if inspection.pkgDirs["dep"] != nil || inspection.packageToolchains["dep"] != nil {
+		t.Fatalf("unresolved package was not skipped: %+v", inspection.pkgDirs["dep"])
 	}
-	if inspection.PkgDirs["app"] == nil || inspection.PackageToolchains["app"] != host {
+	if inspection.pkgDirs["app"] == nil || inspection.packageToolchains["app"] != host {
 		t.Fatal("skipping an unresolved package dropped resolved packages")
 	}
 }
@@ -131,7 +131,7 @@ func TestInspectRemoteTreeDirs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dirs := inspection.PkgDirs[name]
+	dirs := inspection.pkgDirs[name]
 	if dirs == nil {
 		t.Fatal("member directories were not inspected")
 	}
@@ -166,7 +166,7 @@ func TestInspectLocalGitWithoutMaterializedTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dirs := inspection.PkgDirs["dep"]
+	dirs := inspection.pkgDirs["dep"]
 	if dirs == nil {
 		t.Fatal("unmaterialized local git package lost its directory entry")
 	}
@@ -178,6 +178,20 @@ func TestInspectLocalGitWithoutMaterializedTree(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dep.Source.Dir, "src")); !os.IsNotExist(err) {
 		t.Fatalf("inspection touched the source tree: %v", err)
+	}
+	layout := inspection.layouts["dep"]
+	if layout == nil {
+		t.Fatal("unmaterialized local git package lost its layout")
+	}
+	if layout.Ready {
+		t.Fatalf("layout = %+v, want Ready=false until the tree exists", layout)
+	}
+	if layout.BuildKey != "" {
+		t.Fatalf("not-ready layout invented build key %q", layout.BuildKey)
+	}
+	view, ok := inspection.Package("dep")
+	if !ok || view.Dirs != dirs || view.Layout != layout {
+		t.Fatalf("Package(dep) = %+v / %v, want the not-ready layout", view, ok)
 	}
 }
 
@@ -206,7 +220,7 @@ func TestInspectLocalGitWithMaterializedTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dirs := inspection.PkgDirs["dep"]
+	dirs := inspection.pkgDirs["dep"]
 	if dirs == nil || dirs.BuildDir == "" {
 		t.Fatalf("materialized local git directories = %+v, want a computed build key", dirs)
 	}
@@ -243,7 +257,7 @@ func TestInspectFilterDepsMatchesConditionalBuildGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !enabled.Needed["dep"] {
+	if !enabled.needed["dep"] {
 		t.Fatal("enabled conditional dependency was filtered out")
 	}
 
@@ -252,7 +266,7 @@ func TestInspectFilterDepsMatchesConditionalBuildGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if disabled.Needed["dep"] {
+	if disabled.needed["dep"] {
 		t.Fatal("disabled conditional dependency remained in the inspected graph")
 	}
 }
@@ -294,10 +308,10 @@ func TestInspectFilterDepsSkipsUnneededToolchain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("filtered inspection resolved an unneeded package: %v", err)
 	}
-	if inspection.PackageToolchains["dep"] != nil || inspection.PkgDirs["dep"] != nil {
-		t.Fatalf("unneeded package was resolved: %+v", inspection.PkgDirs["dep"])
+	if inspection.packageToolchains["dep"] != nil || inspection.pkgDirs["dep"] != nil {
+		t.Fatalf("unneeded package was resolved: %+v", inspection.pkgDirs["dep"])
 	}
-	if inspection.PackageToolchains["app"] != host {
+	if inspection.packageToolchains["app"] != host {
 		t.Fatal("needed package used the wrong toolchain")
 	}
 }
@@ -322,5 +336,51 @@ func TestInspectFreezeDepsPreventsRepeatedOnRequire(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("OnRequire ran %d times, want 1 after FreezeDeps", calls)
+	}
+}
+
+func TestInspectionPackageView(t *testing.T) {
+	dirs := &api.PkgDirs{SourceDir: "/src/app", BuildDir: "/src/app/build/key"}
+	layout := &build.PackageLayout{Dirs: *dirs, BuildKey: "key", Ready: true}
+	tc := &toolchain.Toolchain{Name: "host"}
+	inspection := &Inspection{
+		needed:            map[string]bool{"app": true},
+		pkgDirs:           map[string]*api.PkgDirs{"app": dirs},
+		layouts:           map[string]*build.PackageLayout{"app": layout},
+		packageToolchains: map[string]*toolchain.Toolchain{"app": tc, "skipped": tc},
+		packageValues:     map[string]map[string]any{"app": {"opt": 1}},
+		packagePlatforms:  map[string]api.Platform{"app": {OS: "none"}, "skipped": {OS: "none"}},
+		names:             []string{"app", "skipped"},
+		nameSet:           map[string]bool{"app": true, "skipped": true},
+	}
+
+	view, ok := inspection.Package("app")
+	if !ok || view.Skipped {
+		t.Fatal("Package(app) reported the package as skipped")
+	}
+	if view.Name != "app" || view.Dirs != dirs || view.Layout != layout || view.Toolchain != tc || !view.Needed {
+		t.Fatalf("view = %+v", view)
+	}
+	if view.Values["opt"] != 1 || view.Platform == nil || view.Platform.OS != "none" {
+		t.Fatalf("view values/platform = %+v / %+v", view.Values, view.Platform)
+	}
+
+	skipped, ok := inspection.Package("skipped")
+	if !ok || !skipped.Skipped || skipped.Dirs != nil {
+		t.Fatalf("skipped view = %+v / %v, want ok=true Skipped=true", skipped, ok)
+	}
+	if _, ok := inspection.Package("absent"); ok {
+		t.Fatal("Package(absent) reported ok")
+	}
+	if _, ok := (*Inspection)(nil).Package("app"); ok {
+		t.Fatal("Package on a nil Inspection reported ok")
+	}
+	if got := inspection.Packages(); !reflect.DeepEqual(got, []string{"app", "skipped"}) {
+		t.Fatalf("Packages() = %v", got)
+	}
+	got := inspection.Packages()
+	got[0] = "mutated"
+	if inspection.Packages()[0] != "app" {
+		t.Fatal("Packages() returned a shared slice")
 	}
 }

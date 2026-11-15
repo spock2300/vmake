@@ -54,8 +54,8 @@ func TestGlobalOptionsExportMacros(t *testing.T) {
 		"CONFIG_MCU_PY32F539=1",
 		"PY32F539xxL=1",
 	}
-	if !reflect.DeepEqual(ctx.GlobalMacroDefines, want) {
-		t.Fatalf("defines = %v, want %v", ctx.GlobalMacroDefines, want)
+	if !reflect.DeepEqual(ctx.globalMacroDefines, want) {
+		t.Fatalf("defines = %v, want %v", ctx.globalMacroDefines, want)
 	}
 
 	emptyHash := build.HashGlobalFlags([4][]string{})
@@ -176,8 +176,8 @@ func TestGlobalMacroUsesGlobalValueDespiteEntryOverride(t *testing.T) {
 	if err := runConfigPhase(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(ctx.GlobalMacroDefines, []string{"CONFIG_CLOCK=200"}) {
-		t.Fatalf("defines = %v, want the global value 200", ctx.GlobalMacroDefines)
+	if !reflect.DeepEqual(ctx.globalMacroDefines, []string{"CONFIG_CLOCK=200"}) {
+		t.Fatalf("defines = %v, want the global value 200", ctx.globalMacroDefines)
 	}
 	values, err := PackageConfigValues(ctx, "chip", map[string]any{"clock": 200})
 	if err != nil {

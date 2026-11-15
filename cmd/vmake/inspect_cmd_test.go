@@ -14,7 +14,6 @@ import (
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
-	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/resolver"
@@ -371,8 +370,8 @@ func TestInspectProjectModel(t *testing.T) {
 			t.Errorf("inspect emitted %q for a project without global flags", key)
 		}
 	}
-	if !slices.Equal(data.Graph, []inspectEdge{{From: "proj", To: "dep"}}) {
-		t.Errorf("graph = %v", data.Graph)
+	if got := inspectEdgePairs(data.Graph); !slices.Equal(got, [][2]string{{"proj", "dep"}}) {
+		t.Errorf("graph = %v", got)
 	}
 
 	proj := inspectPackageNamed(t, data, "proj")
@@ -754,36 +753,6 @@ func TestInspectBuildStateAndPackageDirs(t *testing.T) {
 		if _, err := os.Stat(pkg.BuildDir); !os.IsNotExist(err) {
 			t.Fatalf("%s build dir survived clean: %q", name, pkg.BuildDir)
 		}
-	}
-}
-
-func TestInspectBuildDirFields(t *testing.T) {
-	key := "debug-abc"
-	local := &api.PkgDirs{SourceDir: "/src/lib", BuildDir: filepath.Join("/src/lib", "build", key)}
-	dir, buildKey := inspectBuildDirFields(local, nil, true)
-	if dir != local.BuildDir || buildKey != key {
-		t.Fatalf("local fields = %q/%q", dir, buildKey)
-	}
-	if dir, buildKey := inspectBuildDirFields(local, nil, false); dir != local.BuildDir || buildKey != "" {
-		t.Fatalf("remote-like fields = %q/%q", dir, buildKey)
-	}
-	remote := &api.PkgDirs{SourceDir: "/deps/owner/src", BuildDir: filepath.Join("/deps/owner/out", "member", key, "build")}
-	if dir, buildKey := inspectBuildDirFields(remote, nil, false); dir != remote.BuildDir || buildKey != "" {
-		t.Fatalf("remote fallback fields = %q/%q", dir, buildKey)
-	}
-	remoteLayout := &build.PackageLayout{Dirs: *remote, BuildKey: key, Ready: true}
-	if dir, buildKey := inspectBuildDirFields(remote, remoteLayout, false); dir != remote.BuildDir || buildKey != key {
-		t.Fatalf("remote layout fields = %q/%q, want %q/%q", dir, buildKey, remote.BuildDir, key)
-	}
-	odd := &api.PkgDirs{BuildDir: filepath.Join("/tmp", key)}
-	if _, buildKey := inspectBuildDirFields(odd, nil, true); buildKey != "" {
-		t.Fatalf("non-layout build dir got buildKey %q", buildKey)
-	}
-	if dir, buildKey := inspectBuildDirFields(nil, nil, true); dir != "" || buildKey != "" {
-		t.Fatalf("nil dirs = %q/%q", dir, buildKey)
-	}
-	if dir, buildKey := inspectBuildDirFields(&api.PkgDirs{SourceDir: "/src"}, nil, true); dir != "" || buildKey != "" {
-		t.Fatalf("empty build dir = %q/%q", dir, buildKey)
 	}
 }
 

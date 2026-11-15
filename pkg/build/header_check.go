@@ -1235,16 +1235,7 @@ func CheckExistingBuildBoundaries(
 		if layout == nil || layout.Dirs.SourceDir == "" {
 			continue
 		}
-		buildKey := layout.BuildKey
-		dirs := layout.Dirs
-		if !layout.Ready {
-			buildKey = ""
-			dirs.BuildDir = ""
-		}
-		pkgs[name] = &PkgInfo{
-			PkgDirs:  dirs,
-			BuildKey: buildKey,
-		}
+		pkgs[name] = layout.PkgInfo()
 	}
 	for name, dir := range workspaceDirs {
 		if dir != "" && pkgs[name] == nil {

@@ -65,10 +65,10 @@ func Main(p *api.Package) {
 	if placement, ok := result.TargetPlacements[fullName]; !ok || placement.OutputPath == "" {
 		t.Fatalf("target placement = %+v, ok = %v", placement, ok)
 	}
-	if len(ctx.Preparation().Needed) == 0 {
-		t.Fatal("Preparation result is empty")
+	if len(result.PkgDirs) == 0 {
+		t.Fatal("build result carries no package dirs")
 	}
-	if ctx.Resolution().Resolver == nil || ctx.Configuration().AllOptions == nil {
-		t.Fatalf("phase results missing: resolution=%+v configuration=%+v", ctx.Resolution(), ctx.Configuration())
+	if ctx.Resolver == nil || ctx.Configuration().AllOptions == nil {
+		t.Fatalf("phase results missing: resolver=%v configuration=%+v", ctx.Resolver, ctx.Configuration())
 	}
 }

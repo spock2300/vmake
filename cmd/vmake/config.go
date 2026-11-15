@@ -53,7 +53,7 @@ func runConfig(cmd *cobra.Command, args []string) {
 	}
 
 	hasOptions := len(ctx.AllOptions) > 0
-	if !hasOptions && len(ctx.GlobalOptions) == 0 {
+	if !hasOptions && len(ctx.GlobalOptions()) == 0 {
 		vlog.Info("No configuration options found")
 		return
 	}
@@ -96,13 +96,13 @@ func runConfig(cmd *cobra.Command, args []string) {
 		Deps:             deps,
 		Options:          ctx.AllOptions,
 		Values:           values,
-		DerivedOptions:   ctx.DerivedOptions,
+		DerivedOptions:   ctx.DerivedOptions(),
 		WorkDir:          ctx.WorkDir,
 		CurrentToolchain: currentTC,
-		GlobalOptions:    ctx.GlobalOptions,
+		GlobalOptions:    ctx.GlobalOptions(),
 		GlobalValues:     globalValues,
-		ChipProfiles:     ctx.ChipProfiles,
-		KConfigs:         ctx.AllKConfigs,
+		ChipProfiles:     ctx.ChipProfiles(),
+		KConfigs:         ctx.KConfigs(),
 		Description:      ctx.Config.Description,
 		DisplayDefaults:  pipeline.ToolchainTargetDefaults,
 	})
@@ -127,7 +127,7 @@ func saveConfigResult(ctx *RuntimeContext, result *tui.ConfigResult) error {
 	for pkgName := range result.Values {
 		configured[pkgName] = true
 	}
-	for pkgName := range ctx.AllKConfigs {
+	for pkgName := range ctx.KConfigs() {
 		configured[pkgName] = true
 	}
 
@@ -142,7 +142,7 @@ func saveConfigResult(ctx *RuntimeContext, result *tui.ConfigResult) error {
 		}
 
 		if result.MenuconfigRan[pkgName] {
-			if kconfigs, ok := ctx.AllKConfigs[pkgName]; ok && len(kconfigs) > 0 {
+			if kconfigs, ok := ctx.KConfigs()[pkgName]; ok && len(kconfigs) > 0 {
 				k := kconfigs[0]
 				configPath := filepath.Join(k.SrcDir(), k.ConfigPath())
 				data, err := os.ReadFile(configPath)
@@ -301,9 +301,9 @@ func resolveSetPackageName(ctx *RuntimeContext, pkgName string) string {
 
 func resolveSetPackageOption(pkgName, optName string, ctx *RuntimeContext) (string, *api.Option, error) {
 	if pkgName == "" {
-		opt, ok := ctx.GlobalOptions[optName]
+		opt, ok := ctx.GlobalOptions()[optName]
 		if !ok {
-			available := sortedOptionNames(ctx.GlobalOptions)
+			available := sortedOptionNames(ctx.GlobalOptions())
 			return "", nil, fmt.Errorf("global option %q not found (available: %s)", optName, strings.Join(available, ", "))
 		}
 		return "", opt, nil

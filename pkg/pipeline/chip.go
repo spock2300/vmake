@@ -14,7 +14,7 @@ func collectChipProfiles(ctx *RuntimeContext) error {
 	profiles := make(map[string]api.ChipProfile)
 	if ctx == nil || ctx.Resolver == nil || ctx.DepGraph == nil {
 		if ctx != nil {
-			ctx.ChipProfiles = profiles
+			ctx.chipProfiles = profiles
 		}
 		return nil
 	}
@@ -38,15 +38,15 @@ func collectChipProfiles(ctx *RuntimeContext) error {
 		profiles[profile.Name] = profile
 		owners[profile.Name] = name
 	}
-	ctx.ChipProfiles = profiles
+	ctx.chipProfiles = profiles
 	return nil
 }
 
-func extendChipChoice(ctx *RuntimeContext, needed map[string]bool) {
-	if ctx == nil || ctx.GlobalOptions == nil {
+func extendChipChoice(ctx *RuntimeContext, needed NeededSet) {
+	if ctx == nil || ctx.globalOptions == nil {
 		return
 	}
-	gOpt := ctx.GlobalOptions[api.ChipOptionName]
+	gOpt := ctx.globalOptions[api.ChipOptionName]
 	if gOpt == nil || gOpt.Type() != api.OptionChoice {
 		return
 	}
@@ -65,8 +65,8 @@ func extendChipChoice(ctx *RuntimeContext, needed map[string]bool) {
 			}
 		}
 	} else {
-		profileCount = len(ctx.ChipProfiles)
-		for chip := range ctx.ChipProfiles {
+		profileCount = len(ctx.chipProfiles)
+		for chip := range ctx.chipProfiles {
 			if !slices.Contains(values, chip) {
 				values = append(values, chip)
 			}
@@ -78,7 +78,7 @@ func extendChipChoice(ctx *RuntimeContext, needed map[string]bool) {
 	if len(values) > 0 && !slices.Equal(values, gOpt.Values()) {
 		clone := *gOpt
 		clone.SetValues(values...)
-		ctx.GlobalOptions[api.ChipOptionName] = &clone
+		ctx.globalOptions[api.ChipOptionName] = &clone
 	}
 }
 
@@ -94,8 +94,8 @@ func displayChip(ctx *RuntimeContext) string {
 	if value := configuredChip(ctx); value != "" {
 		return value
 	}
-	if ctx != nil && ctx.GlobalOptions != nil {
-		if opt := ctx.GlobalOptions[api.ChipOptionName]; opt != nil {
+	if ctx != nil && ctx.globalOptions != nil {
+		if opt := ctx.globalOptions[api.ChipOptionName]; opt != nil {
 			if value, ok := opt.Default().(string); ok {
 				return value
 			}
@@ -109,7 +109,7 @@ func selectedChipProfile(ctx *RuntimeContext) (api.ChipProfile, bool) {
 	if chip == "" {
 		return api.ChipProfile{}, false
 	}
-	profile, ok := ctx.ChipProfiles[chip]
+	profile, ok := ctx.chipProfiles[chip]
 	return profile, ok
 }
 
@@ -120,11 +120,11 @@ func explicitToolchain(ctx *RuntimeContext) bool {
 	return ctx.Config != nil && ctx.Config.Global != nil && ctx.Config.Global.Toolchain != ""
 }
 
-func neededChipProfile(ctx *RuntimeContext, needed map[string]bool) (api.ChipProfile, string, error) {
+func neededChipProfile(ctx *RuntimeContext, needed NeededSet) (api.ChipProfile, string, error) {
 	var profile api.ChipProfile
 	var owner string
 	for _, name := range ctx.Resolver.GetOrder() {
-		if needed != nil && !needed[name] {
+		if needed != nil && !needed.Has(name) {
 			continue
 		}
 		node := ctx.DepGraph.Packages[name]
@@ -147,10 +147,10 @@ func neededChipProfile(ctx *RuntimeContext, needed map[string]bool) (api.ChipPro
 	return profile, owner, nil
 }
 
-func resolveActiveChip(ctx *RuntimeContext, needed map[string]bool) error {
-	ctx.ChipProfile = api.ChipProfile{}
+func resolveActiveChip(ctx *RuntimeContext, needed NeededSet) error {
+	ctx.chipProfile = api.ChipProfile{}
 	ctx.PreferredToolchain = ""
-	if ctx == nil || ctx.Resolver == nil || ctx.DepGraph == nil || len(ctx.ChipProfiles) == 0 {
+	if ctx == nil || ctx.Resolver == nil || ctx.DepGraph == nil || len(ctx.chipProfiles) == 0 {
 		return nil
 	}
 	explicit := explicitToolchain(ctx)
@@ -166,21 +166,21 @@ func resolveActiveChip(ctx *RuntimeContext, needed map[string]bool) error {
 		if configured == "" {
 			return nil
 		}
-		if _, known := ctx.ChipProfiles[configured]; known {
+		if _, known := ctx.chipProfiles[configured]; known {
 			return fmt.Errorf("chip option selects %q, but the active build does not use that chip", configured)
 		}
 		return fmt.Errorf("chip option selects %q, but no active package declares that chip profile", configured)
 	}
 	if configured != "" && configured != profile.Name {
 		if explicit {
-			ctx.ChipProfile = profile
+			ctx.chipProfile = profile
 			ctx.PreferredToolchain = profile.PreferredToolchain
 			return nil
 		}
 		return fmt.Errorf("chip option selects %q, but the active build uses chip profile %q from %s",
 			configured, profile.Name, owner)
 	}
-	ctx.ChipProfile = profile
+	ctx.chipProfile = profile
 	ctx.PreferredToolchain = profile.PreferredToolchain
 	if ctx.PreferredToolchain == "" || explicit {
 		return nil
@@ -192,17 +192,15 @@ func resolveActiveChip(ctx *RuntimeContext, needed map[string]bool) error {
 	return nil
 }
 
-func ResolveActiveChipForDisplay(ctx *RuntimeContext) {
+// displayChipProfile derives the chip profile shown for the active build: the
+// configured profile when it is known, otherwise the single profile declared by
+// the reachable packages. It does not mutate the context.
+func displayChipProfile(ctx *RuntimeContext) (api.ChipProfile, string) {
 	if ctx == nil || ctx.Resolver == nil || ctx.DepGraph == nil {
-		return
+		return api.ChipProfile{}, ""
 	}
-	defer ctx.snapshotConfiguration()
-	ctx.ChipProfile = api.ChipProfile{}
-	ctx.PreferredToolchain = ""
 	if profile, ok := selectedChipProfile(ctx); ok {
-		ctx.ChipProfile = profile
-		ctx.PreferredToolchain = profile.PreferredToolchain
-		return
+		return profile, profile.PreferredToolchain
 	}
 	unique := make(map[api.ChipProfile]bool)
 	for _, name := range ctx.Resolver.GetOrder() {
@@ -215,12 +213,21 @@ func ResolveActiveChipForDisplay(ctx *RuntimeContext) {
 		}
 	}
 	if len(unique) != 1 {
-		return
+		return api.ChipProfile{}, ""
 	}
 	for profile := range unique {
-		ctx.ChipProfile = profile
-		ctx.PreferredToolchain = profile.PreferredToolchain
+		return profile, profile.PreferredToolchain
 	}
+	return api.ChipProfile{}, ""
+}
+
+func ResolveActiveChipForDisplay(ctx *RuntimeContext) {
+	profile, tc := displayChipProfile(ctx)
+	if ctx == nil {
+		return
+	}
+	ctx.chipProfile = profile
+	ctx.PreferredToolchain = tc
 }
 
 func chipTargetsApply(profile api.ChipProfile, tcName string) bool {

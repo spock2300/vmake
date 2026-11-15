@@ -173,7 +173,7 @@ func setupKConfigTest(t *testing.T, dir string) (*RuntimeContext, map[string]*ap
 	ctx := &RuntimeContext{
 		Resolver:    r,
 		Config:      emptyConfig(),
-		AllKConfigs: map[string][]*api.KConfigEntry{},
+		allKConfigs: map[string][]*api.KConfigEntry{},
 	}
 	pkgDirs := map[string]*api.PkgDirs{"p": {SourceDir: dir}}
 	needed := map[string]bool{"p": true}
@@ -186,7 +186,7 @@ func TestRestoreKConfigFilesNoEntrySkips(t *testing.T) {
 	_ = os.WriteFile(configPath, []byte("preexisting"), 0644)
 
 	ctx, pkgDirs, needed := setupKConfigTest(t, dir)
-	ctx.AllKConfigs["p"] = []*api.KConfigEntry{
+	ctx.allKConfigs["p"] = []*api.KConfigEntry{
 		(&api.KConfigEntry{}).SetConfigPath(".config").SetSrcDir(dir),
 	}
 
@@ -209,7 +209,7 @@ func TestRestoreKConfigFilesEmptyKConfigDeletes(t *testing.T) {
 	_ = os.WriteFile(configPath, []byte("preexisting"), 0644)
 
 	ctx, pkgDirs, needed := setupKConfigTest(t, dir)
-	ctx.AllKConfigs["p"] = []*api.KConfigEntry{
+	ctx.allKConfigs["p"] = []*api.KConfigEntry{
 		(&api.KConfigEntry{}).SetConfigPath(".config").SetSrcDir(dir),
 	}
 	config.SetEntry(ctx.Config, "p", &config.EntryConfig{KConfig: ""})
@@ -228,7 +228,7 @@ func TestRestoreKConfigFilesWritesWhenChanged(t *testing.T) {
 	configPath := filepath.Join(dir, ".config")
 
 	ctx, pkgDirs, needed := setupKConfigTest(t, dir)
-	ctx.AllKConfigs["p"] = []*api.KConfigEntry{
+	ctx.allKConfigs["p"] = []*api.KConfigEntry{
 		(&api.KConfigEntry{}).SetConfigPath(".config").SetSrcDir(dir),
 	}
 	config.SetEntry(ctx.Config, "p", &config.EntryConfig{KConfig: "CONFIG_NEW=y\n"})
@@ -251,7 +251,7 @@ func TestRestoreKConfigFilesSkipsWhenContentMatches(t *testing.T) {
 	origMtime := info.ModTime()
 
 	ctx, pkgDirs, needed := setupKConfigTest(t, dir)
-	ctx.AllKConfigs["p"] = []*api.KConfigEntry{
+	ctx.allKConfigs["p"] = []*api.KConfigEntry{
 		(&api.KConfigEntry{}).SetConfigPath(".config").SetSrcDir(dir),
 	}
 	config.SetEntry(ctx.Config, "p", &config.EntryConfig{KConfig: "CONFIG_SAME=y\n"})
@@ -271,7 +271,7 @@ func TestRestoreKConfigFilesAppliesPatches(t *testing.T) {
 	configPath := filepath.Join(dir, ".config")
 
 	ctx, pkgDirs, needed := setupKConfigTest(t, dir)
-	ctx.AllKConfigs["p"] = []*api.KConfigEntry{
+	ctx.allKConfigs["p"] = []*api.KConfigEntry{
 		(&api.KConfigEntry{}).
 			SetConfigPath(".config").
 			SetSrcDir(dir).
@@ -359,7 +359,7 @@ func TestMakeLocalPkgDirsLayout(t *testing.T) {
 		CCKey:     "/usr/bin/gcc@13",
 		Mode:      "debug",
 		Options:   map[string]any{"x": 1},
-		Material:  keyMaterial{flagsHash: "gh"},
+		Facts:     LayoutFacts{FlagsHash: "gh"},
 		Ready:     true,
 	})
 	if err != nil {
@@ -378,14 +378,14 @@ func TestMakeLocalPkgDirsLayout(t *testing.T) {
 }
 
 func TestMakeRemotePkgDirsLayout(t *testing.T) {
-	material := keyMaterial{version: "1.0.0", commit: "c0ffee", flagsHash: "gh"}
+	material := LayoutFacts{Version: "1.0.0", Commit: "c0ffee", FlagsHash: "gh"}
 	layout, err := layoutFor(layoutInput{
-		PkgRoot:  "/vd",
-		CCKey:    "/usr/bin/gcc@13",
-		Mode:     "release",
-		Options:  map[string]any{"x": 1},
-		Material: material,
-		Ready:    true,
+		PkgRoot: "/vd",
+		CCKey:   "/usr/bin/gcc@13",
+		Mode:    "release",
+		Options: map[string]any{"x": 1},
+		Facts:   material,
+		Ready:   true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -404,13 +404,13 @@ func TestMakeRemotePkgDirsLayout(t *testing.T) {
 		t.Error("remote pkg should have InstallDir")
 	}
 	member, err := layoutFor(layoutInput{
-		PkgRoot:  "/vd",
-		Member:   "nested/member",
-		CCKey:    "/usr/bin/gcc@13",
-		Mode:     "release",
-		Options:  map[string]any{"x": 1},
-		Material: material,
-		Ready:    true,
+		PkgRoot: "/vd",
+		Member:  "nested/member",
+		CCKey:   "/usr/bin/gcc@13",
+		Mode:    "release",
+		Options: map[string]any{"x": 1},
+		Facts:   material,
+		Ready:   true,
 	})
 	if err != nil {
 		t.Fatal(err)
