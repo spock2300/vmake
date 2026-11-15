@@ -1,6 +1,7 @@
 package buildscript
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +23,7 @@ var skipDirs = map[string]bool{
 func Scan(rootDir string) ([]Source, error) {
 	var sources []Source
 	seen := make(map[string]bool)
-	namesSeen := make(map[string]bool)
+	namesSeen := make(map[string]string)
 
 	err := filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -41,11 +42,14 @@ func Scan(rootDir string) ([]Source, error) {
 			dir := filepath.Dir(path)
 			pkgName := filepath.Base(dir)
 
-			if seen[dir] || namesSeen[pkgName] {
+			if seen[dir] {
 				return nil
 			}
+			if prev, ok := namesSeen[pkgName]; ok {
+				return fmt.Errorf("duplicate local package name %q: %s and %s", pkgName, prev, path)
+			}
 			seen[dir] = true
-			namesSeen[pkgName] = true
+			namesSeen[pkgName] = path
 
 			opts, err := DetectScriptOptions(dir, rootDir)
 			if err != nil {

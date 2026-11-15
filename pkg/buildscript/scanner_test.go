@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
@@ -116,7 +117,7 @@ func TestScanLocalNestedScriptsAreTopLevel(t *testing.T) {
 	writeScannerFile(t, root, "pkg/build.go", "package main\n")
 	writeScannerFile(t, root, "pkg/sub/build.go", "package main\n")
 	writeScannerFile(t, root, "other/build.go", "package main\n")
-	writeScannerFile(t, root, "other/sub/build.go", "package main\n")
+	writeScannerFile(t, root, "other/nested/build.go", "package main\n")
 
 	sources, err := Scan(root)
 	if err != nil {
@@ -127,13 +128,29 @@ func TestScanLocalNestedScriptsAreTopLevel(t *testing.T) {
 		names = append(names, src.Name)
 	}
 	sort.Strings(names)
-	want := []string{"other", "pkg", "sub"}
+	want := []string{"nested", "other", "pkg", "sub"}
 	if len(names) != len(want) {
 		t.Fatalf("local scan names = %v, want %v", names, want)
 	}
 	for i := range want {
 		if names[i] != want[i] {
 			t.Fatalf("local scan names = %v, want %v", names, want)
+		}
+	}
+}
+
+func TestScanDuplicateLocalPackageName(t *testing.T) {
+	root := t.TempDir()
+	writeScannerFile(t, root, "alpha/net/build.go", "package main\n")
+	writeScannerFile(t, root, "beta/net/build.go", "package main\n")
+
+	_, err := Scan(root)
+	if err == nil {
+		t.Fatal("duplicate local package name should return an error")
+	}
+	for _, want := range []string{"net", "alpha", "beta"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %v, want it to mention %q", err, want)
 		}
 	}
 }
