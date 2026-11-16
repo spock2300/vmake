@@ -64,6 +64,25 @@ const (
 	textDescription        textID = "description"
 	textDescriptionNotSet  textID = "description_not_set"
 	textDescriptionEdit    textID = "description_edit"
+	textDependencies       textID = "dependencies"
+	textUpstream           textID = "upstream"
+	textCurrentPkg         textID = "current_pkg"
+	textDownstream         textID = "downstream"
+	textInactiveGroup      textID = "inactive_group"
+	textInactiveOnlyGroup  textID = "inactive_only_group"
+	textInactiveBadge      textID = "inactive_badge"
+	textRootEntry          textID = "root_entry"
+	textNoUpstream         textID = "no_upstream"
+	textNoDownstream       textID = "no_downstream"
+	textGlobalScope        textID = "global_scope"
+	textDerivedFrom        textID = "derived_from"
+	textDerivedBadge       textID = "derived_badge"
+	textExplicitBadge      textID = "explicit_badge"
+	textExplicitSource     textID = "explicit_source"
+	textSource             textID = "source"
+	textStepDeps           textID = "step_deps"
+	textCycleEdges         textID = "cycle_edges"
+	textMoreItems          textID = "more_items"
 )
 
 func (m *Model) text(id textID) string {
@@ -100,6 +119,11 @@ func (m *Model) packageLabel(name string) string {
 		return m.text(textGlobal)
 	case RemoteGroupPkgName:
 		return m.text(textRemote)
+	case InactiveGroupPkgName:
+		if m.hideEmptyPkgs {
+			return m.text(textInactiveOnlyGroup)
+		}
+		return m.text(textInactiveGroup)
 	}
 	return name
 }

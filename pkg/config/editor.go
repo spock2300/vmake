@@ -345,7 +345,7 @@ func (e *Editor) Set(pkg, name string, val any) {
 		e.Values[pkg] = make(map[string]any)
 	}
 	e.Values[pkg][name] = val
-	if e.OrigExplicitValues[pkg][name] || !SameValue(e.Get(pkg, name), e.Orig(pkg, name)) {
+	if e.OrigExplicitValues[pkg][name] || !SameValue(e.Get(pkg, name), e.DeclaredDefault(pkg, name)) {
 		if e.ExplicitValues == nil {
 			e.ExplicitValues = make(map[string]map[string]bool)
 		}
@@ -394,8 +394,8 @@ func (e *Editor) Reset(pkg, name string) {
 	if e.Values[pkg] == nil {
 		e.Values[pkg] = make(map[string]any)
 	}
-	e.Values[pkg][name] = e.Orig(pkg, name)
 	if e.OrigExplicitValues[pkg][name] {
+		e.Values[pkg][name] = e.Orig(pkg, name)
 		if e.ExplicitValues == nil {
 			e.ExplicitValues = make(map[string]map[string]bool)
 		}
@@ -403,8 +403,15 @@ func (e *Editor) Reset(pkg, name string) {
 			e.ExplicitValues[pkg] = make(map[string]bool)
 		}
 		e.ExplicitValues[pkg][name] = true
-	} else if e.ExplicitValues[pkg] != nil {
-		delete(e.ExplicitValues[pkg], name)
+	} else {
+		if e.ExplicitValues[pkg] != nil {
+			delete(e.ExplicitValues[pkg], name)
+		}
+		if def := e.DeclaredDefault(pkg, name); def != nil {
+			e.Values[pkg][name] = def
+		} else {
+			delete(e.Values[pkg], name)
+		}
 	}
 	e.CheckChanges()
 }
@@ -558,23 +565,78 @@ func (e *Editor) IsOptionModifiedGlobal(name string) bool {
 	return e.ExplicitGlobals[name] != e.OrigExplicitGlobal[name]
 }
 
-func (e *Editor) IsOptionModifiedPkg(pkgName, name string) bool {
-	cur := e.Values[pkgName][name]
-	orig := e.OrigValues[pkgName][name]
-	if orig == nil {
-		if derivedPkg := e.DerivedOptions[pkgName]; derivedPkg != nil {
-			orig = derivedPkg[name]
-		}
-		if orig == nil {
-			if opt, ok := e.Options[pkgName][name]; ok {
-				orig = opt.Default()
+func (e *Editor) IsExplicit(pkg, name string) bool {
+	if isGlobalScope(pkg) {
+		return e.ExplicitGlobals[name]
+	}
+	return e.ExplicitValues[pkg][name]
+}
+
+func (e *Editor) HasDerivedDefault(pkg, name string) bool {
+	if isGlobalScope(pkg) || e.ExplicitValues[pkg][name] {
+		return false
+	}
+	derivedPkg := e.DerivedOptions[pkg]
+	if derivedPkg == nil {
+		return false
+	}
+	dv, ok := derivedPkg[name]
+	return ok && dv != nil
+}
+
+func (e *Editor) PkgHasModified(pkgName string) bool {
+	if isGlobalScope(pkgName) {
+		for name := range e.GlobalOptions {
+			if e.IsOptionModifiedGlobal(name) {
+				return true
 			}
 		}
+		return false
 	}
-	if !SameValue(cur, orig) {
+	for name, opt := range e.Options[pkgName] {
+		if opt != nil && !opt.IsGlobal() && e.IsOptionModifiedPkg(pkgName, name) {
+			return true
+		}
+	}
+	if entries := e.KConfigs[pkgName]; len(entries) > 0 {
+		if preset, ok := e.PresetValues[pkgName]; ok && preset != entries[0].SelectedPreset() {
+			return true
+		}
+	}
+	return e.MenuconfigRan[pkgName]
+}
+
+func (e *Editor) PkgModifiedCount(pkgName string) int {
+	n := 0
+	if isGlobalScope(pkgName) {
+		for name := range e.GlobalOptions {
+			if e.IsOptionModifiedGlobal(name) {
+				n++
+			}
+		}
+		return n
+	}
+	for name, opt := range e.Options[pkgName] {
+		if opt != nil && !opt.IsGlobal() && e.IsOptionModifiedPkg(pkgName, name) {
+			n++
+		}
+	}
+	return n
+}
+
+func (e *Editor) IsOptionModifiedPkg(pkgName, name string) bool {
+	if e.ExplicitValues[pkgName][name] != e.OrigExplicitValues[pkgName][name] {
 		return true
 	}
-	return e.ExplicitValues[pkgName][name] != e.OrigExplicitValues[pkgName][name]
+	cur := e.Values[pkgName][name]
+	if !e.ExplicitValues[pkgName][name] {
+		return !SameValue(cur, e.DeclaredDefault(pkgName, name))
+	}
+	orig := e.OrigValues[pkgName][name]
+	if orig == nil {
+		orig = e.DeclaredDefault(pkgName, name)
+	}
+	return !SameValue(cur, orig)
 }
 
 func (e *Editor) CheckChanges() {
@@ -613,15 +675,32 @@ func (e *Editor) ModifiedCount() int {
 }
 
 func (e *Editor) pkgValuesChanged() bool {
-	if !valuesEqual(e.Values, e.OrigValues) {
-		return true
-	}
 	for pkgName, opts := range e.Options {
 		for name, opt := range opts {
-			if opt.IsGlobal() {
+			if opt == nil || opt.IsGlobal() {
 				continue
 			}
-			if e.ExplicitValues[pkgName][name] != e.OrigExplicitValues[pkgName][name] {
+			if e.IsOptionModifiedPkg(pkgName, name) {
+				return true
+			}
+		}
+	}
+	for pkgName, pkgVals := range e.Values {
+		for name, v := range pkgVals {
+			if opt := e.Options[pkgName][name]; opt != nil && !opt.IsGlobal() {
+				continue
+			}
+			if !SameValue(v, e.OrigValues[pkgName][name]) {
+				return true
+			}
+		}
+	}
+	for pkgName, origVals := range e.OrigValues {
+		for name, v := range origVals {
+			if opt := e.Options[pkgName][name]; opt != nil && !opt.IsGlobal() {
+				continue
+			}
+			if !SameValue(e.Values[pkgName][name], v) {
 				return true
 			}
 		}
@@ -926,4 +1005,39 @@ func toFloat(v any) (float64, bool) {
 		return n, true
 	}
 	return 0, false
+}
+
+func (e *Editor) ApplyDerivedOptions(derived map[string]map[string]any) {
+	if e == nil {
+		return
+	}
+	e.DerivedOptions = deepCopyValues(derived)
+	for pkgName, opts := range e.Options {
+		if e.Values[pkgName] == nil {
+			e.Values[pkgName] = make(map[string]any)
+		}
+		for optName, opt := range opts {
+			if opt == nil || opt.IsGlobal() {
+				continue
+			}
+			if e.ExplicitValues[pkgName][optName] {
+				continue
+			}
+			var next any
+			if derivedPkg := e.DerivedOptions[pkgName]; derivedPkg != nil {
+				if dv, ok := derivedPkg[optName]; ok && dv != nil {
+					next = dv
+				}
+			}
+			if next == nil {
+				next = opt.Default()
+			}
+			if next != nil {
+				e.Values[pkgName][optName] = next
+			} else {
+				delete(e.Values[pkgName], optName)
+			}
+		}
+	}
+	e.CheckChanges()
 }

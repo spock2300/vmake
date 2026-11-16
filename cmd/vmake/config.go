@@ -82,13 +82,38 @@ func runConfig(cmd *cobra.Command, args []string) {
 		deps[name] = node.Deps
 	}
 
+	previewer := pipeline.NewConfigPreviewer(ctx)
 	closeProject(ctx)
+
+	var (
+		focusActive bool
+		initPreview tui.PreviewState
+		tuiPreview  func(*config.ConfigFile) (tui.PreviewState, bool)
+	)
+	if previewer != nil {
+		if initPrev, ok := previewer(ctx.Config); ok {
+			focusActive = true
+			initPreview = toTUIPreview(initPrev)
+		}
+		tuiPreview = func(draft *config.ConfigFile) (tui.PreviewState, bool) {
+			p, ok := previewer(draft)
+			if !ok {
+				return tui.PreviewState{}, false
+			}
+			return toTUIPreview(p), true
+		}
+	}
+
 	result, err := tui.Run(tui.Input{
 		Packages:         sources,
 		Deps:             deps,
 		Options:          allOpts,
 		Values:           values,
 		DerivedOptions:   ctx.DerivedOptions(),
+		FocusActive:      focusActive,
+		InitialPreview:   initPreview,
+		BaseConfig:       ctx.Config.Clone(),
+		Preview:          tuiPreview,
 		WorkDir:          ctx.WorkDir,
 		CurrentToolchain: currentTC,
 		GlobalOptions:    ctx.GlobalOptions(),
@@ -107,6 +132,16 @@ func runConfig(cmd *cobra.Command, args []string) {
 
 	fatalErr(saveConfigResult(ctx, result))
 	vlog.Info("Configuration saved to %s", ctx.ConfigPath)
+}
+
+func toTUIPreview(p pipeline.ConfigPreview) tui.PreviewState {
+	return tui.PreviewState{
+		Roots:          p.Roots,
+		ActivePackages: p.ActivePackages,
+		ActiveDeps:     p.ActiveDeps,
+		DerivedOptions: p.DerivedOptions,
+		DerivedOwners:  p.DerivedOwners,
+	}
 }
 
 func saveConfigResult(ctx *RuntimeContext, result *tui.ConfigResult) error {

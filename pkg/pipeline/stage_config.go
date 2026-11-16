@@ -119,9 +119,14 @@ func filterDependencies(ctx *RuntimeContext, log bool) error {
 }
 
 func convergeFilterAndDerivedOptions(ctx *RuntimeContext, rootOverride string, log bool) (err error) {
+	_, err = convergeFilterAndDerivedOptionsWithOwners(ctx, rootOverride, log)
+	return err
+}
+
+func convergeFilterAndDerivedOptionsWithOwners(ctx *RuntimeContext, rootOverride string, log bool) (_ map[string]map[string]string, err error) {
 	defer scriptcall.Recover(&err)
 	if ctx == nil || ctx.DepGraph == nil || ctx.Resolver == nil {
-		return nil
+		return nil, nil
 	}
 	ctx.derivedOptions = make(map[string]map[string]any)
 	derivedOwners := make(map[string]map[string]string)
@@ -131,10 +136,10 @@ func convergeFilterAndDerivedOptions(ctx *RuntimeContext, rootOverride string, l
 
 	initial, err := computeNeededGraph(ctx.DepGraph, rootOverride)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(initial.Roots) == 0 {
-		return ctx.Resolver.UpdateOrder()
+		return derivedOwners, ctx.Resolver.UpdateOrder()
 	}
 	reachable := initial.Set
 
@@ -179,7 +184,7 @@ func convergeFilterAndDerivedOptions(ctx *RuntimeContext, rootOverride string, l
 				pkgOpts := ctx.allOptions[name]
 				opts := mergedPackageAndGlobalOptions(pkgOpts, visibleGlobalOptionsFor(node, pkgOpts, ctx.globalOptions))
 				if err := ctx.Resolver.FilterDeps(name, options, opts); err != nil {
-					return fmt.Errorf("%s: filter deps: %w", name, err)
+					return nil, fmt.Errorf("%s: filter deps: %w", name, err)
 				}
 				if log && len(node.Deps) > 0 {
 					vlog.Verbose("  %s: deps=%v", name, node.Deps)
@@ -194,7 +199,7 @@ func convergeFilterAndDerivedOptions(ctx *RuntimeContext, rootOverride string, l
 
 			still, err := computeNeededGraph(ctx.DepGraph, rootOverride)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			stillReachable := still.Set
 			for cand := range reachable {
@@ -213,16 +218,16 @@ func convergeFilterAndDerivedOptions(ctx *RuntimeContext, rootOverride string, l
 
 			if node != nil && node.Pkg != nil && api.BindPackageHasConfigureDepsFuncs(node.Pkg) {
 				if err := applyNodeConfigureDeps(ctx, name, node, globalValues, pkgDirs, subParents, stillReachable, derivedOwners); err != nil {
-					return err
+					return nil, err
 				}
 			}
 		}
 	}
 
 	if err := ctx.Resolver.UpdateOrder(); err != nil {
-		return fmt.Errorf("dependency cycle: %w", err)
+		return nil, fmt.Errorf("dependency cycle: %w", err)
 	}
-	return nil
+	return derivedOwners, nil
 }
 
 func applyNodeConfigureDeps(

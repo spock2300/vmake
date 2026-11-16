@@ -61,7 +61,7 @@ func TestBuildDepTree_GlobalNodeFirst(t *testing.T) {
 	deps := map[string][]string{
 		"app": {"lib"},
 	}
-	tree := buildDepTree(sources, deps)
+	tree := buildDepGraph(sources, deps)
 	if len(tree) == 0 || tree[0].PkgName != GlobalPkgName {
 		t.Fatal("first node must be Global")
 	}
@@ -70,19 +70,16 @@ func TestBuildDepTree_GlobalNodeFirst(t *testing.T) {
 func TestBuildDepTree_RootsFromNonDeps(t *testing.T) {
 	sources := mkSources("app", "lib", "util")
 	deps := map[string][]string{
-		"app": {"lib", "util"},
-		"lib": {},
+		"app":  {"lib", "util"},
+		"lib":  {"util"},
+		"util": {},
 	}
-	tree := buildDepTree(sources, deps)
-	if len(tree) != 2 {
-		t.Fatalf("expected Global + 1 root (app), got %d top nodes", len(tree))
+	tree := buildDepGraph(sources, deps)
+	if len(tree) != 4 {
+		t.Fatalf("expected Global + 3 unique DAG nodes (app, lib, util), got %d top nodes", len(tree))
 	}
-	appNode := tree[1]
-	if appNode.Name != "app" {
-		t.Fatalf("expected root app, got %s", appNode.Name)
-	}
-	if len(appNode.Children) != 2 {
-		t.Fatalf("expected app to have 2 children, got %d", len(appNode.Children))
+	if tree[1].Name != "app" || tree[2].Name != "lib" || tree[3].Name != "util" {
+		t.Fatalf("expected topological order [app, lib, util], got [%s, %s, %s]", tree[1].Name, tree[2].Name, tree[3].Name)
 	}
 }
 
@@ -285,11 +282,11 @@ func TestFlattenTreeFiltered_HidesEmptyLeaves(t *testing.T) {
 
 func TestModelCollapseExpandAll(t *testing.T) {
 	opts := map[string]map[string]*api.Option{
-		"app": {"debug": mkOpt("debug", api.OptionBool, false)},
-		"lib": {"x": mkOpt("x", api.OptionBool, false)},
+		"app":        {"debug": mkOpt("debug", api.OptionBool, false)},
+		"remote/lib": {"x": mkOpt("x", api.OptionBool, false)},
 	}
-	sources := mkSources("app", "lib")
-	deps := map[string][]string{"app": {"lib"}}
+	sources := mkSources("app")
+	deps := map[string][]string{"app": {"remote/lib"}, "remote/lib": {}}
 	m := testModel(sources, deps, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 
 	m.expandAll()
@@ -675,22 +672,22 @@ func TestFindFirstMatch_NoMatch(t *testing.T) {
 
 func TestExpandToPkg_ExpandsAncestors(t *testing.T) {
 	opts := map[string]map[string]*api.Option{
-		"app": {"debug": mkOpt("debug", api.OptionBool, false)},
-		"lib": {"x": mkOpt("x", api.OptionBool, false)},
+		"app":        {"debug": mkOpt("debug", api.OptionBool, false)},
+		"remote/lib": {"x": mkOpt("x", api.OptionBool, false)},
 	}
-	deps := map[string][]string{"app": {"lib"}}
-	m := testModel(mkSources("app", "lib"), deps, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	deps := map[string][]string{"app": {"remote/lib"}, "remote/lib": {}}
+	m := testModel(mkSources("app"), deps, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 
 	m.collapseAll()
-	if contains(flatNodeNames(m.flat), "lib") {
-		t.Fatal("lib should be hidden after collapseAll")
+	if contains(flatNodeNames(m.flat), "remote/lib") {
+		t.Fatal("remote/lib should be hidden after collapseAll")
 	}
-	if !m.expandToPkg("lib") {
-		t.Fatal("expandToPkg(lib) should return true")
+	if !m.expandToPkg("remote/lib") {
+		t.Fatal("expandToPkg(remote/lib) should return true")
 	}
 	m.rebuildFlat()
-	if !contains(flatNodeNames(m.flat), "lib") {
-		t.Error("lib should be visible after expandToPkg")
+	if !contains(flatNodeNames(m.flat), "remote/lib") {
+		t.Error("remote/lib should be visible after expandToPkg")
 	}
 }
 
@@ -966,20 +963,15 @@ func TestBuildDepTree_SeparatesRemotePackagesIntoGroup(t *testing.T) {
 		"hl/hl-mcu-sdk/system/freertos/lvgl":      {},
 	}
 
-	tree := buildDepTree(sources, deps)
-	if len(tree) != 4 {
-		t.Fatalf("expected Global + hl-demo + firmware + Remote (4 top nodes), got %d", len(tree))
+	tree := buildDepGraph(sources, deps)
+	if len(tree) != 6 {
+		t.Fatalf("expected Global + firmware + board-evb + lvgl-demos + hl-demo + Remote (6 top nodes), got %d", len(tree))
 	}
-	if tree[0].PkgName != GlobalPkgName || tree[1].PkgName != "hl-demo" || tree[2].PkgName != "firmware" || tree[3].PkgName != RemoteGroupPkgName {
-		t.Fatalf("unexpected top node PkgNames: %q, %q, %q, %q", tree[0].PkgName, tree[1].PkgName, tree[2].PkgName, tree[3].PkgName)
-	}
-
-	fwNode := tree[2]
-	if len(fwNode.Children) != 2 || fwNode.Children[0].PkgName != "board-evb" || fwNode.Children[1].PkgName != "lvgl-demos" {
-		t.Fatalf("firmware should only keep local children [board-evb, lvgl-demos], got %v", flatNodeNames(fwNode.Children))
+	if tree[0].PkgName != GlobalPkgName || tree[1].PkgName != "firmware" || tree[2].PkgName != "board-evb" || tree[3].PkgName != "lvgl-demos" || tree[4].PkgName != "hl-demo" || tree[5].PkgName != RemoteGroupPkgName {
+		t.Fatalf("unexpected top node PkgNames: %v", flatNodeNames(tree))
 	}
 
-	remoteNode := tree[3]
+	remoteNode := tree[5]
 	if remoteNode.Expanded {
 		t.Fatal("Remote group should start collapsed by default")
 	}
@@ -1091,13 +1083,11 @@ func TestRenderTree_PreservesCountBadgeWithinContentWidth(t *testing.T) {
 		}
 	}
 
-	m.width = 60
+	m.width = 50
 	narrowOut := stripAnsi(m.renderTree())
 	for _, want := range []string{"… (15)", "… (1)"} {
 		if !strings.Contains(narrowOut, want) {
-			t.Errorf("width=60: expected %q to preserve badge without clipping:\n%s", want, narrowOut)
+			t.Errorf("width=50: expected %q to preserve badge without clipping:\n%s", want, narrowOut)
 		}
 	}
 }
-
-

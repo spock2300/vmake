@@ -73,6 +73,7 @@ func TestFirstOptionVisibleWithManyPackages(t *testing.T) {
 			m.width = w
 			m.height = 24
 			m.selectedPkg = names[0]
+			m.focusArea = 1
 			m.buildOptionItems()
 			visible := m.visibleOptions()
 			view := stripAnsi(m.View())
@@ -355,66 +356,59 @@ func TestBrowseEscResyncsSelectedPkg(t *testing.T) {
 	}
 }
 
-// Mouse click on a tree node with children toggles its expansion (like Enter),
-// so users can explore the dependency tree with the mouse.
 func TestMouseClickTogglesTreeExpansion(t *testing.T) {
 	opts := map[string]map[string]*api.Option{
-		"app": {"a": mkOpt("a", api.OptionBool, false)},
-		"lib": {"b": mkOpt("b", api.OptionBool, false)},
+		"app":        {"a": mkOpt("a", api.OptionBool, false)},
+		"remote/lib": {"b": mkOpt("b", api.OptionBool, false)},
 	}
-	deps := map[string][]string{"app": {"lib"}}
-	m := testModel(mkSources("app", "lib"), deps, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
+	deps := map[string][]string{"app": {"remote/lib"}, "remote/lib": {}}
+	m := testModel(mkSources("app"), deps, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 24
 
-	// app starts collapsed: flat = [Global(0), app(1)]
-	appIdx := -1
+	remoteIdx := -1
 	for i, n := range m.flat {
-		if n.PkgName == "app" {
-			appIdx = i
+		if n.PkgName == RemoteGroupPkgName {
+			remoteIdx = i
 		}
 	}
-	if appIdx == -1 {
-		t.Fatal("app not in flat tree")
+	if remoteIdx == -1 {
+		t.Fatal("Remote group not in flat tree")
 	}
-	if m.flat[appIdx].Expanded {
-		t.Fatal("app should start collapsed")
+	if m.flat[remoteIdx].Expanded {
+		t.Fatal("Remote group should start collapsed")
 	}
 
-	// click on app row: Y = headerH(2) + panel title row + appIdx
-	click := func(y int) tea.MouseMsg {
-		return tea.MouseMsg{X: 2, Y: y, Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
-	}
-	m.handleMouse(click(2 + 1 + appIdx))
+	x, y := mouseTestPosition(t, m.View(), m.packageLabel(RemoteGroupPkgName))
+	m.handleMouse(tea.MouseMsg{X: x, Y: y, Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 
-	appNode := (*TreeNode)(nil)
+	remoteNode := (*TreeNode)(nil)
 	for _, n := range m.flat {
-		if n.PkgName == "app" {
-			appNode = n
+		if n.PkgName == RemoteGroupPkgName {
+			remoteNode = n
 		}
 	}
-	if appNode == nil || !appNode.Expanded {
-		t.Error("click should expand app")
+	if remoteNode == nil || !remoteNode.Expanded {
+		t.Error("click should expand Remote group")
 	}
-	// after expand, lib should now be visible
 	visible := map[string]bool{}
 	for _, n := range m.flat {
 		visible[n.PkgName] = true
 	}
-	if !visible["lib"] {
-		t.Error("lib should be visible after expanding app")
+	if !visible["remote/lib"] {
+		t.Error("remote/lib should be visible after expanding Remote group")
 	}
 
-	// click app again → collapse
-	m.handleMouse(click(2 + 1 + appIdx))
-	appNode = nil
+	x, y = mouseTestPosition(t, m.View(), m.packageLabel(RemoteGroupPkgName))
+	m.handleMouse(tea.MouseMsg{X: x, Y: y, Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	remoteNode = nil
 	for _, n := range m.flat {
-		if n.PkgName == "app" {
-			appNode = n
+		if n.PkgName == RemoteGroupPkgName {
+			remoteNode = n
 		}
 	}
-	if appNode != nil && appNode.Expanded {
-		t.Error("second click should collapse app")
+	if remoteNode != nil && remoteNode.Expanded {
+		t.Error("second click should collapse Remote group")
 	}
 }
 
@@ -426,16 +420,14 @@ func TestMouseClickLeafSelectsOnly(t *testing.T) {
 	m := testModel(mkSources("app"), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 24
-	click := tea.MouseMsg{X: 2, Y: 4, Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
+	x, y := mouseTestPosition(t, m.View(), "app")
+	click := tea.MouseMsg{X: x, Y: y, Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
 	m.handleMouse(click)
 	if m.selectedPkg != "app" {
 		t.Errorf("click should select app, got %q", m.selectedPkg)
 	}
 }
 
-// Mouse Y mapping must use the ACTUAL rendered header height, not a hardcoded
-// value. With a long workDir the header wraps to 4 rows; the old hardcoded 2
-// made clicks land above their target ("click the 2nd row to hit the 1st pkg").
 func TestMouseMappingUsesRenderedHeaderHeight(t *testing.T) {
 	opts := map[string]map[string]*api.Option{
 		"app": {"a": mkOpt("a", api.OptionBool, false)},
@@ -443,28 +435,29 @@ func TestMouseMappingUsesRenderedHeaderHeight(t *testing.T) {
 	}
 	longDir := "/home/user/projects/very/deeply/nested/firmware/build/working/directory"
 	m := testModel(mkSources("app", "lib"), map[string][]string{"app": {"lib"}}, opts, map[string]map[string]any{}, longDir, "gcc", nil, nil, nil)
-	m.width = 60
+	m.width = 80
 	m.height = 24
-	m.View()
+	view := m.View()
 
 	hh := m.headerHeight()
 	if hh <= 2 {
 		t.Fatalf("expected wrapped header >2 rows for long workDir, got %d", hh)
 	}
 
-	// The panel title sits at Y=hh; Global at Y=hh+1; app at Y=hh+2.
-	click := func(y int) tea.MouseMsg {
-		return tea.MouseMsg{X: 2, Y: y, Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
+	clickAt := func(x, y int) tea.MouseMsg {
+		return tea.MouseMsg{X: x, Y: y, Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
 	}
 	mm := m
-	mm.handleMouse(click(hh + 1))
+	gx, gy := mouseTestPosition(t, view, mm.packageLabel(GlobalPkgName))
+	mm.handleMouse(clickAt(gx, gy))
 	if mm.selectedPkg != GlobalPkgName && mm.flat[mm.treeCursor].Name != "Global" {
-		t.Errorf("click at headerH should hit Global, got %q", mm.selectedPkg)
+		t.Errorf("click on Global node should hit Global, got %q", mm.selectedPkg)
 	}
 	mm = m
-	mm.handleMouse(click(hh + 2))
+	ax, ay := mouseTestPosition(t, view, "app")
+	mm.handleMouse(clickAt(ax, ay))
 	if mm.selectedPkg != "app" {
-		t.Errorf("click at headerH+1 should hit first package app, got %q", mm.selectedPkg)
+		t.Errorf("click on app node should hit app, got %q", mm.selectedPkg)
 	}
 }
 

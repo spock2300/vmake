@@ -137,3 +137,46 @@ func TestValuesEqualAndDeepCopyHelpers(t *testing.T) {
 		t.Fatal("deepCopyGlobal should isolate original from mutations")
 	}
 }
+
+func TestApplyDerivedOptionsPreservesOrigBaselineAcrossCascadeAndRevert(t *testing.T) {
+	pkgOpts := map[string]map[string]*api.Option{
+		"firmware": {"graphics_accel": mkOpt("graphics_accel", api.OptionBool, true)},
+		"board":    {"gpu": mkOpt("gpu", api.OptionBool, false)},
+	}
+	e := NewEditor(EditorInput{
+		Options:        pkgOpts,
+		Values:         map[string]map[string]any{},
+		DerivedOptions: map[string]map[string]any{"board": {"gpu": true}},
+	})
+	if e.HasChanges() || e.IsModified("board", "gpu") || !e.HasDerivedDefault("board", "gpu") {
+		t.Fatal("initial derived option should not be modified")
+	}
+
+	e.Set("firmware", "graphics_accel", false)
+	e.ApplyDerivedOptions(nil)
+	if got := e.Get("board", "gpu"); got != false {
+		t.Fatalf("cascaded board/gpu = %v, want false", got)
+	}
+	if e.IsModified("board", "gpu") {
+		t.Fatal("cascaded non-explicit board/gpu must not be marked modified")
+	}
+
+	e.Set("board", "gpu", true)
+	if !e.IsModified("board", "gpu") || !e.IsExplicit("board", "gpu") {
+		t.Fatal("manual edit on board/gpu after cascade must be explicit and modified")
+	}
+
+	e.Reset("firmware", "graphics_accel")
+	e.ApplyDerivedOptions(map[string]map[string]any{"board": {"gpu": true}})
+	if got := e.Orig("board", "gpu"); got != true {
+		t.Fatalf("Orig(board/gpu) corrupted to %v, want true", got)
+	}
+	if !e.IsModified("board", "gpu") {
+		t.Fatal("explicit board/gpu override should still report modified until reset")
+	}
+
+	e.Reset("board", "gpu")
+	if e.IsModified("board", "gpu") || e.HasChanges() || !e.HasDerivedDefault("board", "gpu") {
+		t.Fatalf("after resetting board/gpu, editor should be clean and derived again (modified=%v changes=%v)", e.IsModified("board", "gpu"), e.HasChanges())
+	}
+}

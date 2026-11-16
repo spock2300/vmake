@@ -21,6 +21,7 @@ type TreeNode struct {
 	IsGroup    bool
 	Depth      int
 	Prefix     string
+	GutterRole gutterRole
 }
 
 type OptionItem struct {
@@ -30,9 +31,18 @@ type OptionItem struct {
 }
 
 const (
-	GlobalPkgName      = "__global__"
-	RemoteGroupPkgName = "__remote__"
+	GlobalPkgName        = "__global__"
+	RemoteGroupPkgName   = "__remote__"
+	InactiveGroupPkgName = "__inactive__"
 )
+
+type PreviewState struct {
+	Roots          []string
+	ActivePackages map[string]bool
+	ActiveDeps     map[string][]string
+	DerivedOptions map[string]map[string]any
+	DerivedOwners  map[string]map[string]string
+}
 
 type Model struct {
 	editor *config.Editor
@@ -94,6 +104,20 @@ type Model struct {
 
 	renderedHeaderH int
 	renderedFooterH int
+
+	deps           map[string][]string
+	preview        PreviewState
+	focusActive    bool
+	baseConfig     *config.ConfigFile
+	previewFn      func(cfg *config.ConfigFile) (PreviewState, bool)
+	localPkgOrder  []string
+	localPkgSet    map[string]bool
+	navHistory     []string
+	upEdgeIdx      int
+	downEdgeIdx    int
+	upEdgeSelected bool
+	egoNodeBoxes   []egoNodeHitbox
+	renderedGraphH int
 }
 
 type overlayKind int
@@ -111,6 +135,10 @@ type Input struct {
 	Options          map[string]map[string]*api.Option
 	Values           map[string]map[string]any
 	DerivedOptions   map[string]map[string]any
+	FocusActive      bool
+	InitialPreview   PreviewState
+	BaseConfig       *config.ConfigFile
+	Preview          func(cfg *config.ConfigFile) (PreviewState, bool)
 	WorkDir          string
 	CurrentToolchain string
 	GlobalOptions    map[string]*api.Option
@@ -122,21 +150,37 @@ type Input struct {
 }
 
 func NewModel(in Input) Model {
-	ed := resolveInitialState(in)
-	m := Model{
-		editor:     ed,
-		treeCursor: 0,
-		optCursor:  0,
-		focusArea:  0,
-		workDir:    in.WorkDir,
-		language:   systemLanguage(),
-		optCounts:  computeOptCounts(in.Options, in.GlobalOptions),
+	if in.InitialPreview.DerivedOptions != nil {
+		in.DerivedOptions = in.InitialPreview.DerivedOptions
 	}
-	m.tree = buildDepTree(in.Packages, in.Deps)
+	ed := resolveInitialState(in)
+	localOrder, localSet := extractLocalPackages(in.Packages)
+	m := Model{
+		editor:        ed,
+		treeCursor:    0,
+		optCursor:     0,
+		focusArea:     0,
+		workDir:       in.WorkDir,
+		language:      systemLanguage(),
+		optCounts:     computeOptCounts(in.Options, in.GlobalOptions),
+		deps:          normalizeGraphDeps(in.Packages, in.Deps),
+		preview:       in.InitialPreview,
+		focusActive:   in.FocusActive,
+		baseConfig:    in.BaseConfig,
+		previewFn:     in.Preview,
+		localPkgOrder: localOrder,
+		localPkgSet:   localSet,
+	}
+	if m.focusActive {
+		m.tree = m.buildWorkbenchTree()
+	} else {
+		m.tree = buildDepGraph(in.Packages, in.Deps)
+	}
 	m.rebuildFlat()
 
 	if len(m.flat) > 0 {
 		m.selectFirstPkg()
+		m.updateGraphTracks()
 	}
 	return m
 }
@@ -144,13 +188,13 @@ func NewModel(in Input) Model {
 func (m *Model) ed() *config.Editor {
 	if m.editor == nil {
 		m.editor = &config.Editor{
-			Values:         make(map[string]map[string]any),
-			ExplicitValues: make(map[string]map[string]bool),
+			Values:          make(map[string]map[string]any),
+			ExplicitValues:  make(map[string]map[string]bool),
 			ExplicitGlobals: make(map[string]bool),
-			GlobalValues:   make(map[string]any),
-			DerivedGlobals: make(map[string]bool),
-			MenuconfigRan:  make(map[string]bool),
-			PresetValues:   make(map[string]string),
+			GlobalValues:    make(map[string]any),
+			DerivedGlobals:  make(map[string]bool),
+			MenuconfigRan:   make(map[string]bool),
+			PresetValues:    make(map[string]string),
 		}
 	}
 	return m.editor
@@ -202,14 +246,18 @@ func computeOptCounts(options map[string]map[string]*api.Option, globalOptions m
 
 func (m *Model) rebuildFlat() {
 	ed := m.ed()
+	if m.focusActive && m.filterInput == "" {
+		m.tree = m.buildWorkbenchTree()
+	}
 	switch {
 	case m.filterInput != "":
 		m.flat = flattenTreeSearch(m.tree, m.filterInput, ed.Options, ed.GlobalOptions)
-	case m.hideEmptyPkgs:
+	case m.hideEmptyPkgs && !m.focusActive:
 		m.flat = flattenTreeFiltered(m.tree, m.optCounts, ed.KConfigs)
 	default:
 		m.flat = flattenTree(m.tree)
 	}
+	m.updateGraphTracks()
 	m.treeWidth = calcTreeWidth(m.flat, m.optCounts)
 }
 
@@ -228,7 +276,7 @@ func flattenTreeSearch(nodes []*TreeNode, q string, options map[string]map[strin
 }
 
 func nodeDirectMatch(n *TreeNode, q string, options map[string]map[string]*api.Option, globalOptions map[string]*api.Option) bool {
-	if n == nil || n.IsGroup || n.PkgName == "" || n.PkgName == RemoteGroupPkgName {
+	if n == nil || n.IsGroup || n.PkgName == "" || isSyntheticGroupPkg(n.PkgName) {
 		return false
 	}
 	q = strings.ToLower(q)
@@ -279,7 +327,7 @@ func (m *Model) findFirstMatch(query string) (pkgName, optName string) {
 }
 
 func searchNodeMatch(n *TreeNode, q string, options map[string]map[string]*api.Option, globalOptions map[string]*api.Option) (pkgName, optName string) {
-	if !n.IsGroup && n.PkgName != "" && n.PkgName != RemoteGroupPkgName {
+	if !n.IsGroup && n.PkgName != "" && !isSyntheticGroupPkg(n.PkgName) {
 		if strings.Contains(strings.ToLower(n.Name), q) || (n.PkgName != GlobalPkgName && strings.Contains(strings.ToLower(n.PkgName), q)) {
 			return n.PkgName, ""
 		}
@@ -314,7 +362,7 @@ func (m *Model) expandToPkg(target string) bool {
 
 func expandToPkgRec(n *TreeNode, target string) bool {
 	if n.PkgName == target {
-		if target == RemoteGroupPkgName {
+		if isSyntheticGroupPkg(target) {
 			n.Expanded = true
 		}
 		return true
@@ -332,15 +380,27 @@ func (m *Model) jumpToMatch(pkgName, optName string) bool {
 	if pkgName == "" {
 		return false
 	}
-	m.expandToPkg(pkgName)
-	m.rebuildFlat()
-	for i, n := range m.flat {
-		if n.PkgName == pkgName {
-			m.treeCursor = i
-			m.selectCurrentNode()
-			break
+	locate := func() int {
+		m.expandToPkg(pkgName)
+		m.rebuildFlat()
+		for i, n := range m.flat {
+			if !n.IsGroup && n.PkgName == pkgName {
+				return i
+			}
 		}
+		return -1
 	}
+	idx := locate()
+	if idx < 0 && m.hideEmptyPkgs {
+		m.hideEmptyPkgs = false
+		m.rebuildFlat()
+		idx = locate()
+	}
+	if idx < 0 {
+		return false
+	}
+	m.treeCursor = idx
+	m.selectCurrentNode()
 	if optName != "" {
 		visible := m.visibleOptions()
 		for i, item := range visible {
@@ -358,13 +418,18 @@ func (m *Model) jumpToMatch(pkgName, optName string) bool {
 func (m *Model) filteredMatchCount() int {
 	ed := m.ed()
 	n := 0
+	seen := make(map[string]bool)
 	for _, node := range m.flat {
-		if node.IsGroup || node.PkgName == "" || node.PkgName == GlobalPkgName || node.PkgName == RemoteGroupPkgName {
+		if node.IsGroup || !isRealPackage(node.PkgName) {
+			continue
+		}
+		if seen[node.PkgName] {
 			continue
 		}
 		if m.filterInput != "" && !nodeDirectMatch(node, m.filterInput, ed.Options, ed.GlobalOptions) {
 			continue
 		}
+		seen[node.PkgName] = true
 		n++
 	}
 	return n
@@ -445,7 +510,7 @@ func setExpandedAll(nodes []*TreeNode, expanded, keepGlobal bool) {
 func calcTreeWidth(flat []*TreeNode, optCounts map[string]int) int {
 	maxW := 0
 	for _, node := range flat {
-		w := node.Depth*2 + utf8.RuneCountInString(node.Prefix) + 2 + utf8.RuneCountInString(node.Name)
+		w := nodeFixedPrefixRunes(node) + utf8.RuneCountInString(node.Name)
 		if node.PkgName != "" {
 			if c := optCounts[node.PkgName]; c > 0 {
 				w += utf8.RuneCountInString(fmt.Sprintf(" (%d)", c))
@@ -456,82 +521,6 @@ func calcTreeWidth(flat []*TreeNode, optCounts map[string]int) int {
 		}
 	}
 	return clamp(maxW+4, 20, 40)
-}
-
-func buildDepTree(packages []buildscript.Source, deps map[string][]string) []*TreeNode {
-	globalNode := &TreeNode{
-		Name:     "Global",
-		PkgName:  GlobalPkgName,
-		Expanded: true,
-		Depth:    0,
-	}
-
-	localSet := make(map[string]bool)
-	for _, pkg := range packages {
-		if pkg.Origin != api.SourceRemote {
-			localSet[pkg.Name] = true
-		}
-	}
-
-	depSet := make(map[string]bool)
-	for from, depList := range deps {
-		if !localSet[from] {
-			continue
-		}
-		for _, d := range depList {
-			if localSet[d] {
-				depSet[d] = true
-			}
-		}
-	}
-
-	var roots []string
-	for _, pkg := range packages {
-		if localSet[pkg.Name] && !depSet[pkg.Name] {
-			roots = append(roots, pkg.Name)
-		}
-	}
-
-	var topNodes []*TreeNode
-	for _, name := range roots {
-		topNodes = append(topNodes, buildDepSubtree(name, localSet, deps, 1, make(map[string]bool)))
-	}
-
-	if remoteNode := buildRemoteGroupNode(packages, localSet, deps); remoteNode != nil {
-		topNodes = append(topNodes, remoteNode)
-	}
-
-	setChildPrefixes(topNodes)
-
-	result := []*TreeNode{globalNode}
-	result = append(result, topNodes...)
-	return result
-}
-
-func buildDepSubtree(name string, localSet map[string]bool, deps map[string][]string, depth int, visited map[string]bool) *TreeNode {
-	if visited[name] {
-		return nil
-	}
-	visited[name] = true
-
-	node := &TreeNode{
-		Name:    name,
-		PkgName: name,
-		Depth:   depth,
-	}
-
-	for _, depName := range deps[name] {
-		if !localSet[depName] {
-			continue
-		}
-		child := buildDepSubtree(depName, localSet, deps, depth+1, visited)
-		if child != nil {
-			node.Children = append(node.Children, child)
-		}
-	}
-
-	setChildPrefixes(node.Children)
-	return node
 }
 
 func buildRemoteGroupNode(packages []buildscript.Source, localSet map[string]bool, deps map[string][]string) *TreeNode {
@@ -551,6 +540,10 @@ func buildRemoteGroupNode(packages []buildscript.Source, localSet map[string]boo
 			}
 		}
 	}
+	return buildRemoteGroupFromSet(remoteSet, false)
+}
+
+func buildRemoteGroupFromSet(remoteSet map[string]bool, expanded bool) *TreeNode {
 	if len(remoteSet) == 0 {
 		return nil
 	}
@@ -578,7 +571,7 @@ func buildRemoteGroupNode(packages []buildscript.Source, localSet map[string]boo
 	remoteNode := &TreeNode{
 		Name:     "Remote",
 		PkgName:  RemoteGroupPkgName,
-		Expanded: false,
+		Expanded: expanded,
 		IsGroup:  true,
 		Depth:    1,
 	}
@@ -773,6 +766,50 @@ func (m *Model) lookupPkgOptionValue(values map[string]map[string]any, pkgName, 
 
 func (m *Model) setValue(name string, val any) {
 	m.ed().Set(m.selectedPkg, name, val)
+	m.refreshPreview()
+}
+
+func (m *Model) refreshPreview() {
+	if m.previewFn == nil {
+		return
+	}
+	snap, err := m.result().Commit(m.baseConfig, m.ed().KConfigs, nil)
+	if err != nil {
+		return
+	}
+	prev, ok := m.previewFn(snap)
+	if !ok {
+		return
+	}
+	m.preview = prev
+	m.ed().ApplyDerivedOptions(prev.DerivedOptions)
+	if m.focusActive && m.filterInput == "" {
+		curPkg := m.selectedPkg
+		m.rebuildFlat()
+		if curPkg != "" {
+			found := false
+			for i, n := range m.flat {
+				if n.PkgName == curPkg {
+					m.treeCursor = i
+					found = true
+					break
+				}
+			}
+			if !found {
+				m.expandToPkg(curPkg)
+				m.rebuildFlat()
+				for i, n := range m.flat {
+					if n.PkgName == curPkg {
+						m.treeCursor = i
+						break
+					}
+				}
+			}
+		}
+		m.ensureTreeCursorVisible()
+	} else {
+		m.updateGraphTracks()
+	}
 }
 
 func (m *Model) chipFor(values map[string]any) string {
@@ -827,6 +864,7 @@ func (m *Model) currentPreset() string {
 
 func (m *Model) selectPreset(name string) {
 	m.ed().SelectPreset(m.selectedPkg, name)
+	m.refreshPreview()
 }
 
 func (m *Model) modifiedPresetCount() int {
@@ -906,8 +944,16 @@ func (m *Model) treeItemRows() int {
 	return h
 }
 
+func (m *Model) optionsContentHeight() int {
+	h := m.contentHeight() - m.egoGraphOuterHeight()
+	if h < 1 {
+		return 1
+	}
+	return h
+}
+
 func (m *Model) optItemRows() int {
-	h := m.contentHeight() - 1 - m.descRowOffset
+	h := m.optionsContentHeight() - 1 - m.descRowOffset
 	if h < 1 {
 		h = 1
 	}
@@ -934,10 +980,12 @@ func (m *Model) isOptionModified(name string) bool {
 
 func (m *Model) resetOption(name string) {
 	m.ed().Reset(m.selectedPkg, name)
+	m.refreshPreview()
 }
 
 func (m *Model) resetOptionToDefault(name string) {
 	m.ed().ResetToDefault(m.selectedPkg, name)
+	m.refreshPreview()
 }
 
 func (m *Model) clearGlobalValue(name string) {

@@ -5,6 +5,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/spock2300/vmake/pkg/api"
 )
 
 type panelRowTarget struct {
@@ -28,6 +30,10 @@ func (m *Model) treePanelWidth() int {
 
 func (m *Model) optionsPanelWidth() int {
 	return max(1, m.width-m.treePanelWidth()-5)
+}
+
+func (m *Model) optionsTopY() int {
+	return m.headerHeight() + m.renderedGraphH
 }
 
 func (m *Model) optionsContentWidth() int {
@@ -83,7 +89,7 @@ func (m *Model) descriptionRowAt(x, y int) bool {
 	if x < left || x >= left+style.GetWidth() {
 		return false
 	}
-	return y-m.headerHeight() == 1
+	return y-m.optionsTopY() == 1
 }
 
 func (m *Model) optionRows() ([]optionRow, int, int) {
@@ -93,12 +99,20 @@ func (m *Model) optionRows() ([]optionRow, int, int) {
 		if w := lipgloss.Width(item.Name); w > nameWidth {
 			nameWidth = w
 		}
-		if w := lipgloss.Width(formatValue(m.getValue(item.Name))); w > valWidth {
-			valWidth = w
+		vw := lipgloss.Width(formatValue(m.getValue(item.Name)))
+		if item.Opt.Type() == api.OptionChoice {
+			vw += 4
+		}
+		if vw > valWidth {
+			valWidth = vw
 		}
 	}
 	nameWidth = min(nameWidth, 20)
-	valWidth = min(valWidth, 16)
+	maxValW := 16
+	if m.optionsContentWidth() >= 64 {
+		maxValW = 24
+	}
+	valWidth = min(valWidth, maxValW)
 
 	rows := make([]optionRow, 0, len(visible)+2)
 	navIdx := 0
@@ -129,7 +143,7 @@ func (m *Model) optionRowAt(x, y int) (int, bool) {
 		return 0, false
 	}
 	for _, target := range m.optionMouseRows {
-		if y-m.headerHeight() >= target.y && y-m.headerHeight() < target.y+target.height {
+		if y-m.optionsTopY() >= target.y && y-m.optionsTopY() < target.y+target.height {
 			return target.index, target.index >= 0
 		}
 	}

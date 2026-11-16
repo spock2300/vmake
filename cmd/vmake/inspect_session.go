@@ -1,9 +1,7 @@
 package main
 
 import (
-	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/scriptfs"
-	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/resolver"
 )
@@ -64,18 +62,5 @@ func lockPolicyFor(dryRun, locked, offline bool) resolver.LockPolicy {
 }
 
 func inspectionScope(quiet, execQuiet bool) func() {
-	scriptfs.SetReadOnly(true)
-	previousLevel := vlog.GetLevel()
-	previousQuiet := iexec.IsQuiet()
-	if quiet {
-		vlog.SetLevel(vlog.Quiet)
-	}
-	if execQuiet {
-		iexec.SetQuiet(true)
-	}
-	return func() {
-		scriptfs.SetReadOnly(false)
-		vlog.SetLevel(previousLevel)
-		iexec.SetQuiet(previousQuiet)
-	}
+	return pipeline.EnterQuietReadOnlyScope(quiet, execQuiet)
 }

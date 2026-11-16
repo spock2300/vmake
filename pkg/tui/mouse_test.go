@@ -16,6 +16,7 @@ func mouseTestModel(opts map[string]*api.Option) Model {
 	m.language = languageEnglish
 	m.width, m.height = 100, 28
 	m.jumpToMatch("app", "")
+	m.focusArea = 1
 	return m
 }
 
@@ -288,7 +289,7 @@ func TestMouseIgnoresReleaseMotionAndOtherButtons(t *testing.T) {
 			m := mouseTestModel(map[string]*api.Option{"enabled": mkOpt("enabled", api.OptionBool, false)})
 			event.X, event.Y = mouseTestPosition(t, m.View(), "enabled")
 			m.Update(event)
-			if m.getValue("enabled") != false || m.ed().HasChanges() || m.focusArea != 0 {
+			if m.getValue("enabled") != false || m.ed().HasChanges() {
 				t.Fatal("non-click mouse event activated the option row")
 			}
 		})
@@ -421,23 +422,23 @@ func TestMouseTreeWheelMovesSelection(t *testing.T) {
 
 func TestMouseTreeExpansionAtRenderedPositions(t *testing.T) {
 	opts := map[string]map[string]*api.Option{
-		"parent_pkg": {"enabled": mkOpt("enabled", api.OptionBool, false)},
-		"child_pkg":  {"enabled": mkOpt("enabled", api.OptionBool, false)},
+		"parent_pkg":       {"enabled": mkOpt("enabled", api.OptionBool, false)},
+		"remote/child_pkg": {"enabled": mkOpt("enabled", api.OptionBool, false)},
 	}
-	m := testModel(mkSources("parent_pkg", "child_pkg"), map[string][]string{"parent_pkg": {"child_pkg"}}, opts, map[string]map[string]any{}, "/home/用户/项目/very/deeply/nested/working/directory", "host", nil, nil, nil)
+	m := testModel(mkSources("parent_pkg"), map[string][]string{"parent_pkg": {"remote/child_pkg"}, "remote/child_pkg": {}}, opts, map[string]map[string]any{}, "/home/用户/项目/very/deeply/nested/working/directory", "host", nil, nil, nil)
 	m.language, m.width, m.height = languageChinese, 60, 28
-	mouseTestClickText(t, &m, "parent_pkg")
-	if m.selectedPkg != "parent_pkg" || !m.flat[m.treeCursor].Expanded {
-		t.Fatal("parent click did not select and expand")
+	mouseTestClickText(t, &m, "远程")
+	if !m.flat[m.treeCursor].Expanded {
+		t.Fatal("parent group click did not select and expand")
 	}
 	mouseTestClickText(t, &m, "child_pkg")
-	if m.selectedPkg != "child_pkg" || m.flat[m.treeCursor].Expanded {
+	if m.selectedPkg != "remote/child_pkg" || m.flat[m.treeCursor].Expanded {
 		t.Fatal("leaf click should select without expansion")
 	}
-	x, y := mouseTestPosition(t, m.View(), "parent_pkg")
+	x, y := mouseTestPosition(t, m.View(), "远程")
 	m.Update(mouseTestClick(x, y))
-	if m.selectedPkg != "parent_pkg" || m.flat[m.treeCursor].Expanded {
-		t.Fatal("second parent click did not collapse")
+	if m.flat[m.treeCursor].Expanded {
+		t.Fatal("second parent group click did not collapse")
 	}
 }
 

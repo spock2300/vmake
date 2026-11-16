@@ -108,12 +108,44 @@ var (
 				Foreground(colorWarning).
 				Bold(true)
 
+	derivedMarkStyle = lipgloss.NewStyle().
+				Foreground(colorDropdown).
+				Bold(true)
+
+	derivedFromStyle = lipgloss.NewStyle().
+				Foreground(colorDropdown)
+
+	explicitMarkStyle = lipgloss.NewStyle().
+				Foreground(colorAccent).
+				Bold(true)
+
+	egoSubheaderStyle = lipgloss.NewStyle().
+				Foreground(colorMuted)
+
 	filterBoxActiveStyle = lipgloss.NewStyle().
 				Foreground(colorAccent).
 				Bold(true)
 
 	filterBoxAppliedStyle = lipgloss.NewStyle().
 				Foreground(colorMuted)
+
+	trackFocalStyle = lipgloss.NewStyle().
+			Foreground(colorAccent).
+			Bold(true)
+
+	trackUpstreamActiveStyle = lipgloss.NewStyle().
+					Foreground(colorDropdown).
+					Bold(true)
+
+	trackDownstreamStyle = lipgloss.NewStyle().
+				Foreground(colorSuccess)
+
+	trackPassStyle = lipgloss.NewStyle().
+			Foreground(colorMuted)
+
+	canvasFocalHexStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#9D65FF")).
+				Bold(true)
 )
 
 func treePanelStyle(focused bool, width int) lipgloss.Style {
@@ -124,6 +156,18 @@ func treePanelStyle(focused bool, width int) lipgloss.Style {
 	return lipgloss.NewStyle().
 		Width(width).
 		Padding(0, 1).
+		BorderForeground(borderColor)
+}
+
+func egoGraphPanelStyle(focused bool, width int) lipgloss.Style {
+	borderColor := colorDimBorder
+	if focused {
+		borderColor = colorAccent
+	}
+	return lipgloss.NewStyle().
+		Width(width).
+		Padding(0, 1).
+		Border(lipgloss.NormalBorder(), false, false, true, true).
 		BorderForeground(borderColor)
 }
 

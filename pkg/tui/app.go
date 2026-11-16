@@ -358,6 +358,7 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	inTree := mx < m.renderedTreeW
+	inGraph := !inTree && m.renderedGraphH > 0 && my < headerH+m.renderedGraphH
 
 	switch {
 	case mouseLeftPress(msg):
@@ -377,6 +378,19 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				m.ensureTreeCursorVisible()
 				break
 			}
+		} else if inGraph {
+			if hit, ok := m.egoHitAt(mx, my); ok {
+				if hit.isMore {
+					if hit.isDep {
+						m.downEdgeIdx++
+					} else {
+						m.upEdgeSelected = true
+						m.upEdgeIdx++
+					}
+				} else if hit.pkgName != "" {
+					m.jumpToGraphNeighbor(hit.pkgName, true)
+				}
+			}
 		} else {
 			m.focusArea = 1
 			return m.handleMouseOptionClick(msg)
@@ -385,6 +399,15 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if inTree {
 			m.focusArea = 0
 			m.moveTreeCursor(mouseWheel(msg))
+		} else if inGraph {
+			delta := mouseWheel(msg)
+			midX := m.renderedTreeW + m.optionsPanelWidth()/2
+			if mx < midX {
+				m.upEdgeSelected = true
+				m.upEdgeIdx += delta
+			} else {
+				m.downEdgeIdx += delta
+			}
 		} else {
 			m.focusArea = 1
 			m.moveOptionCursor(mouseWheel(msg))
@@ -401,6 +424,10 @@ func (m *Model) moveTreeCursor(delta int) {
 	if next == m.treeCursor {
 		return
 	}
+	m.navHistory = nil
+	m.upEdgeIdx = 0
+	m.downEdgeIdx = 0
+	m.upEdgeSelected = false
 	m.treeCursor = next
 	m.selectCurrentNode()
 	m.ensureTreeCursorVisible()
@@ -524,22 +551,37 @@ func (m *Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.moveTreeCursor(1)
 	case "left", "h":
-		if m.treeCursor < len(m.flat) && m.flat[m.treeCursor].Expanded {
+		if m.treeCursor < len(m.flat) && len(m.flat[m.treeCursor].Children) > 0 && m.flat[m.treeCursor].Expanded {
 			m.flat[m.treeCursor].Expanded = false
 			m.rebuildFlat()
 			m.ensureTreeCursorVisible()
+		} else {
+			m.stepUpstream()
 		}
 	case "right", "l":
-		if m.treeCursor < len(m.flat) && len(m.flat[m.treeCursor].Children) > 0 {
+		if m.treeCursor < len(m.flat) && len(m.flat[m.treeCursor].Children) > 0 && !m.flat[m.treeCursor].Expanded {
 			m.flat[m.treeCursor].Expanded = true
 			m.rebuildFlat()
 			m.ensureTreeCursorVisible()
+		} else if len(m.visibleOptions()) > 0 || m.hasKConfig() {
+			m.focusArea = 1
 		}
-	case "enter":
+	case "[":
+		m.stepUpstream()
+	case "]":
+		m.stepDownstream()
+	case "{":
+		m.upEdgeSelected = true
+		m.upEdgeIdx++
+	case "}":
+		m.downEdgeIdx++
+	case "enter", " ":
 		if m.treeCursor < len(m.flat) && len(m.flat[m.treeCursor].Children) > 0 {
 			m.flat[m.treeCursor].Expanded = !m.flat[m.treeCursor].Expanded
 			m.rebuildFlat()
 			m.ensureTreeCursorVisible()
+		} else {
+			m.focusArea = 1
 		}
 	case "z":
 		m.collapseAll()
@@ -558,12 +600,13 @@ func (m *Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) selectCurrentNode() {
-	if m.treeCursor < len(m.flat) && m.flat[m.treeCursor].PkgName != "" {
+	if m.treeCursor < len(m.flat) && m.flat[m.treeCursor].PkgName != "" && !m.flat[m.treeCursor].IsGroup {
 		m.selectedPkg = m.flat[m.treeCursor].PkgName
 		m.buildOptionItems()
 		m.optCursor = 0
 		m.optOff = 0
 	}
+	m.updateGraphTracks()
 }
 
 func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -619,6 +662,15 @@ func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.handleOptionAction(visible, presetIdx, false, msg.String())
 	case "left", "h":
 		m.handleOptionAction(visible, presetIdx, true, msg.String())
+	case "[":
+		m.stepUpstream()
+	case "]":
+		m.stepDownstream()
+	case "{":
+		m.upEdgeSelected = true
+		m.upEdgeIdx++
+	case "}":
+		m.downEdgeIdx++
 	}
 	return m, nil
 }
@@ -942,12 +994,25 @@ func (m *Model) View() string {
 
 	treePanel := treeStyle.MaxHeight(m.contentHeight()).Render(m.renderTree())
 	m.renderedTreeW = lipgloss.Width(treePanel)
-	optPanel := optionStyle.MaxHeight(m.contentHeight()).Render(m.renderOptions())
+
+	var rightCol string
+	if egoInner := m.egoGraphInnerHeight(); egoInner > 0 {
+		graphStyle := egoGraphPanelStyle(m.focusArea == 0, m.optionsPanelWidth())
+		graphPanel := graphStyle.MaxHeight(egoInner + 1).Render(m.renderEgoGraph())
+		m.renderedGraphH = lipgloss.Height(graphPanel)
+		optMaxH := max(1, m.contentHeight()-m.renderedGraphH)
+		optPanel := optionStyle.MaxHeight(optMaxH).Render(m.renderOptions())
+		rightCol = lipgloss.JoinVertical(lipgloss.Left, graphPanel, optPanel)
+	} else {
+		m.renderedGraphH = 0
+		m.egoNodeBoxes = nil
+		rightCol = optionStyle.MaxHeight(m.contentHeight()).Render(m.renderOptions())
+	}
 
 	main := lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		treePanel,
-		optPanel,
+		rightCol,
 	)
 	m.renderedMainH = lipgloss.Height(main)
 
@@ -1034,11 +1099,19 @@ func (m *Model) renderTree() string {
 	b.WriteString(topBar)
 	rowY := 1 + strings.Count(topBar, "\n")
 
+	m.updateGraphTracks()
+
 	for i := start; i < end; i++ {
 		node := m.flat[i]
-		prefix := strings.Repeat("  ", node.Depth)
+		indent := ""
+		if node.Depth > 0 {
+			indent = strings.Repeat("  ", node.Depth-1)
+		}
 
-		icon := " "
+		isSelected := i == m.treeCursor
+		isFocused := m.focusArea == 0
+
+		icon := "●"
 		if node.PkgName == GlobalPkgName {
 			icon = "◈"
 		} else if len(node.Children) > 0 {
@@ -1047,44 +1120,83 @@ func (m *Model) renderTree() string {
 			} else {
 				icon = "▸"
 			}
-		} else if !node.IsExternal {
-			icon = "●"
-		} else {
+		} else if node.GutterRole == gutterFocal || isSelected {
+			icon = "◆"
+		} else if node.GutterRole == gutterUpstream {
+			icon = "◀"
+		} else if node.GutterRole == gutterDownstream {
+			icon = "▶"
+		} else if !m.isActivePkg(node.PkgName) || (!m.hasPkgConfig(node.PkgName) && !node.IsGroup) {
+			icon = "◌"
+		} else if node.IsExternal {
 			icon = "○"
 		}
 
 		name := node.Name
-		if node.PkgName == GlobalPkgName || node.PkgName == RemoteGroupPkgName {
+		if node.PkgName == GlobalPkgName || isSyntheticGroupPkg(node.PkgName) {
 			name = m.packageLabel(node.PkgName)
 		}
+
 		count := 0
-		if node.PkgName != "" {
+		if isSyntheticGroupPkg(node.PkgName) {
+			if m.focusActive {
+				count = subtreePackageCount(node)
+			}
+		} else if node.PkgName != "" {
 			count = m.optCountFor(node.PkgName)
 		}
-		fixed := node.Depth*2 + utf8.RuneCountInString(node.Prefix) + 2
+		hasMod := !node.IsGroup && node.PkgName != "" && m.pkgHasModified(node.PkgName)
+
+		fixed := nodeFixedPrefixRunes(node)
 		badgeLen := 0
 		if count > 0 {
 			badgeLen = utf8.RuneCountInString(fmt.Sprintf(" (%d)", count))
 		}
-		avail := contentWidth - fixed - badgeLen
+		modLen := 0
+		if hasMod {
+			modLen = 2
+		}
+		avail := contentWidth - fixed - badgeLen - modLen
 		if avail < 1 {
 			avail = 1
 		}
 		if utf8.RuneCountInString(name) > avail {
 			name = truncateRunes(name, avail)
 		}
-		if node.IsExternal {
-			name = externalPkgStyle.Render(name)
+
+		if !isSelected || !isFocused {
+			if node.PkgName == InactiveGroupPkgName || (!node.IsGroup && !m.isActivePkg(node.PkgName)) {
+				name = externalPkgStyle.Render(name)
+			} else if node.IsExternal {
+				name = externalPkgStyle.Render(name)
+			}
 		}
 
 		if count > 0 {
-			name += countBadgeStyle.Render(fmt.Sprintf(" (%d)", count))
+			if node.PkgName == InactiveGroupPkgName {
+				name += externalPkgStyle.Render(fmt.Sprintf(" (%d)", count))
+			} else {
+				name += countBadgeStyle.Render(fmt.Sprintf(" (%d)", count))
+			}
+		}
+		if hasMod {
+			name += modifiedMarkStyle.Render(" *")
 		}
 
-		line := prefix + node.Prefix + icon + " " + name
+		if !(isSelected && isFocused) {
+			switch node.GutterRole {
+			case gutterFocal:
+				icon = trackFocalStyle.Render(icon)
+			case gutterUpstream:
+				icon = trackUpstreamActiveStyle.Render(icon)
+			case gutterDownstream:
+				icon = trackDownstreamStyle.Render(icon)
+			case gutterUpstreamInactive, gutterDownstreamInactive:
+				icon = trackPassStyle.Render(icon)
+			}
+		}
 
-		isSelected := i == m.treeCursor
-		isFocused := m.focusArea == 0
+		line := indent + node.Prefix + icon + " " + name
 
 		if isSelected && isFocused {
 			line = selectedRowStyle.Render(line)
@@ -1106,15 +1218,38 @@ func (m *Model) renderTree() string {
 
 func (m *Model) renderOptions() string {
 	m.optionMouseRows = nil
+	contentW := m.optionsContentWidth()
 	title := m.text(textOptions)
 	if m.selectedPkg != "" {
 		title += " · " + m.packageLabel(m.selectedPkg)
 	}
+	titleLine := panelTitleStyle.Render(title)
+	if m.selectedPkg != "" && !isSyntheticGroupPkg(m.selectedPkg) {
+		var badges []string
+		if !m.isActivePkg(m.selectedPkg) {
+			badges = append(badges, externalPkgStyle.Render("◌ "+m.text(textInactiveBadge)))
+		}
+		if mc := m.pkgModifiedCount(m.selectedPkg); mc > 0 {
+			badges = append(badges, modifiedMarkStyle.Render(fmt.Sprintf("* %d", mc)))
+		}
+		if ec := m.pkgExplicitUnmodifiedCount(m.selectedPkg); ec > 0 {
+			badges = append(badges, explicitMarkStyle.Render(m.textf(textExplicitBadge, ec)))
+		}
+		if dc := m.pkgDerivedCount(m.selectedPkg); dc > 0 {
+			badges = append(badges, derivedFromStyle.Render(m.textf(textDerivedBadge, dc)))
+		}
+		if len(badges) > 0 {
+			rightStr := strings.Join(badges, "  ")
+			if lipgloss.Width(titleLine)+2+lipgloss.Width(rightStr) <= contentW {
+				titleLine += lipgloss.PlaceHorizontal(contentW-lipgloss.Width(titleLine), lipgloss.Right, rightStr)
+			}
+		}
+	}
 	var b strings.Builder
-	b.WriteString(panelTitleStyle.MaxWidth(m.optionsContentWidth()).Render(title) + "\n")
+	b.WriteString(lipgloss.NewStyle().MaxWidth(contentW).Render(titleLine) + "\n")
 
 	m.descRowOffset = 0
-	if m.contentHeight() >= 3 {
+	if m.optionsContentHeight() >= 3 {
 		b.WriteString(m.renderDescriptionRow())
 		m.descRowOffset = 1
 	}
@@ -1150,7 +1285,7 @@ func (m *Model) renderOptions() string {
 		}
 	}
 
-	panelH := m.contentHeight() - 1 - m.descRowOffset
+	panelH := m.optionsContentHeight() - 1 - m.descRowOffset
 	if panelH < 1 {
 		panelH = 1
 	}
@@ -1236,61 +1371,118 @@ type optionRow struct {
 func (m *Model) renderOptionAligned(item OptionItem, selected bool, nameW, valW int) string {
 	name := item.Name
 	desc := item.Opt.Description()
+	bg := func(s lipgloss.Style) lipgloss.Style {
+		if selected {
+			return s.Background(colorHighlight)
+		}
+		return s
+	}
+	space := func(n int) string {
+		if n <= 0 {
+			return ""
+		}
+		s := strings.Repeat(" ", n)
+		if selected {
+			return selectedRowStyle.Render(s)
+		}
+		return s
+	}
 
-	marker := " "
+	derivedOwner, isDerived := m.optionDerivedBy(m.selectedPkg, item.Name)
+	marker := space(1)
 	if m.isOptionModified(item.Name) {
-		marker = modifiedMarkStyle.Render("*")
+		marker = bg(modifiedMarkStyle).Render("*")
+	} else if m.ed().IsExplicit(m.selectedPkg, item.Name) {
+		marker = bg(explicitMarkStyle).Render("•")
+	} else if isDerived {
+		marker = bg(derivedMarkStyle).Render("←")
 	}
 
 	var val string
+	valPlainCols := 0
 	if m.editing && selected {
 		switch item.Opt.Type() {
 		case api.OptionString, api.OptionInt:
-			val = inputStyle.Render(renderEditField(m.editInput, m.editCursor))
+			ef := renderEditField(m.editInput, m.editCursor)
+			valPlainCols = lipgloss.Width(ef)
+			val = bg(inputStyle).Render(ef)
 		}
 	} else {
 		switch item.Opt.Type() {
 		case api.OptionBool:
+			valPlainCols = 1
 			v := m.getValue(item.Name)
 			if b, ok := v.(bool); ok && b {
-				val = checkboxStyle.Render("●")
+				val = bg(checkboxStyle).Render("●")
 			} else {
-				val = checkboxEmptyStyle.Render("○")
+				val = bg(checkboxEmptyStyle).Render("○")
 			}
 		case api.OptionString, api.OptionInt:
-			val = inputStyle.Render(formatValue(m.getValue(item.Name)))
+			fv := formatValue(m.getValue(item.Name))
+			valPlainCols = lipgloss.Width(fv)
+			val = bg(inputStyle).Render(fv)
 		case api.OptionChoice:
-			val = dropdownStyle.Render(fmt.Sprintf("◀ %s ▶", formatValue(m.getValue(item.Name))))
+			fv := fmt.Sprintf("◀ %s ▶", formatValue(m.getValue(item.Name)))
+			valPlainCols = lipgloss.Width(fv)
+			val = bg(dropdownStyle).Render(fv)
 		}
 	}
 
 	namePad := fmt.Sprintf("%-*s", nameW, name)
-	valRaw := formatValue(m.getValue(item.Name))
-	valPad := valW - utf8.RuneCountInString(valRaw)
-	if valPad < 0 {
-		valPad = 0
-	}
+	valPadCols := max(0, valW-valPlainCols)
+	valRendered := val + space(valPadCols)
+
+	prefixCols := 2 + lipgloss.Width(namePad) + 2 + max(valW, valPlainCols) + 2
+	availDesc := m.optionsContentWidth() - prefixCols
 
 	shownDesc := desc
+	var descRendered string
+	descCols := 0
 	if m.editing && selected {
 		if def := m.defaultFor(item.Name); def != nil {
 			shownDesc = fmt.Sprintf("(default: %s)", formatValue(def))
 		}
-	}
-
-	var line string
-	if selected {
-		nameRendered := selectedOptStyle.Render(namePad)
-		valRendered := val + strings.Repeat(" ", valPad)
-		descRendered := optionDescStyle.Render(shownDesc)
-		line = fmt.Sprintf("%s %s  %s  %s", marker, nameRendered, valRendered, descRendered)
-		line = selectedRowStyle.Render(line)
+		if availDesc >= 12 {
+			shownDesc = truncateDisplay(shownDesc, availDesc)
+		}
+		descCols = lipgloss.Width(shownDesc)
+		descRendered = bg(optionDescStyle).Render(shownDesc)
+	} else if isDerived && derivedOwner != "" {
+		tagPlain := "[← " + shortPkgDisplayName(derivedOwner, m.localPkgSet) + "]"
+		ownerTag := bg(derivedFromStyle).Render(tagPlain)
+		if shownDesc != "" {
+			rem := availDesc - lipgloss.Width(tagPlain) - 1
+			if availDesc >= 14 && rem >= 4 {
+				shownDesc = truncateDisplay(shownDesc, rem)
+			}
+			descCols = lipgloss.Width(tagPlain) + 1 + lipgloss.Width(shownDesc)
+			descRendered = ownerTag + space(1) + bg(optionDescStyle).Render(shownDesc)
+		} else {
+			descCols = lipgloss.Width(tagPlain)
+			descRendered = ownerTag
+		}
 	} else {
-		nameRendered := optionNameStyle.Render(namePad)
-		descRendered := optionDescStyle.Render(desc)
-		line = fmt.Sprintf("%s %s  %s  %s", marker, nameRendered, val, descRendered)
+		if availDesc >= 12 {
+			shownDesc = truncateDisplay(shownDesc, availDesc)
+		}
+		descCols = lipgloss.Width(shownDesc)
+		descRendered = bg(optionDescStyle).Render(shownDesc)
 	}
 
+	var nameRendered string
+	if selected {
+		nameRendered = bg(selectedOptStyle).Render(namePad)
+	} else {
+		nameRendered = optionNameStyle.Render(namePad)
+	}
+
+	line := marker + space(1) + nameRendered + space(2) + valRendered + space(2) + descRendered
+	if selected {
+		tail := m.optionsContentWidth() - (prefixCols + descCols)
+		if tail > 0 {
+			line += space(tail)
+		}
+	}
 	return line
 }
 
@@ -1310,6 +1502,9 @@ func truncateDisplay(s string, max int) string {
 	}
 	if lipgloss.Width(s) <= max {
 		return s
+	}
+	if max == 1 {
+		return "…"
 	}
 	var out strings.Builder
 	width := 0
@@ -1419,6 +1614,11 @@ func (m *Model) renderDetailOverlay() string {
 		status = modifiedMarkStyle.Render(m.text(textYes))
 	}
 	rows = append(rows, kv{m.text(textModifiedLabel), status})
+	if m.ed().IsExplicit(m.selectedPkg, m.choiceOpt) {
+		rows = append(rows, kv{m.text(textSource), explicitMarkStyle.Render(m.text(textExplicitSource))})
+	} else if owner, ok := m.optionDerivedBy(m.selectedPkg, m.choiceOpt); ok && owner != "" {
+		rows = append(rows, kv{m.text(textDerivedFrom), derivedFromStyle.Render(owner)})
+	}
 
 	keyW := 0
 	for _, r := range rows {
@@ -1462,14 +1662,15 @@ func (m *Model) renderFooterWithin(maxHeight int) string {
 		})
 	} else if m.focusArea == 0 {
 		helpText = renderHelpEntries([]helpEntry{
-			{"↑↓", m.text(textNavigate)}, {"←→", m.text(textCollapseExpand)}, {"/", m.text(textSearch)},
-			{"z/Z", m.text(textCollapseExpandAll)}, {"H", m.text(textHideEmpty)},
+			{"↑↓", m.text(textNavigate)}, {"[]", m.text(textStepDeps)}, {"{}", m.text(textCycleEdges)}, {"←→", m.text(textCollapseExpand)},
+			{"/", m.text(textSearch)}, {"z/Z", m.text(textCollapseExpandAll)}, {"H", m.text(textHideEmpty)},
 			{"Tab", m.text(textOptions)}, {"Ctrl+S", m.text(textSave)}, {"Esc", m.text(textCancel)},
 		})
 	} else {
 		helpText = renderHelpEntries([]helpEntry{
 			{"↑↓", m.text(textNavigate)}, {"←→", m.text(textCycleValue)}, {"Space/Enter", m.text(textEdit)},
-			{"r", m.text(textReset)}, {"R", m.text(textDefault)}, {"?", m.text(textDetail)}, {"D", m.text(textDescriptionEdit)},
+			{"[]", m.text(textStepDeps)}, {"{}", m.text(textCycleEdges)}, {"r", m.text(textReset)}, {"R", m.text(textDefault)},
+			{"?", m.text(textDetail)}, {"D", m.text(textDescriptionEdit)},
 			{"Tab", m.text(textPackages)}, {"Ctrl+S", m.text(textSave)}, {"Esc", m.text(textBack)},
 		})
 	}
