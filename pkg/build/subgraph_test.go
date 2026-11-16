@@ -129,3 +129,22 @@ func TestCollectBuildPackagesPrefersNearestShortDependency(t *testing.T) {
 		CollectSubGraphPackages("parent/tool", pkgMeta, targets, needed, subParents),
 		"parent/lib", "parent/tool")
 }
+
+func TestCollectBuildPackagesResolvesShortRequireDependency(t *testing.T) {
+	app := makeTargetWithDeps("app")
+	lib := makeTargetWithDeps("lib")
+	targets := map[string]map[string]*api.Target{
+		"parent/tool": {"app": app},
+		"parent/lib":  {"lib": lib},
+	}
+	pkgMeta := map[string]PkgBuildMeta{
+		"parent/tool": {Deps: []string{"lib"}},
+		"parent/lib":  {},
+	}
+	needed := map[string]bool{"parent/tool": true, "parent/lib": true}
+	subParents := map[string]string{"parent/tool": "parent", "parent/lib": "parent"}
+
+	assertCollected(t,
+		CollectSubGraphPackages("parent/tool", pkgMeta, targets, needed, subParents),
+		"parent/lib", "parent/tool")
+}

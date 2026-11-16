@@ -145,7 +145,7 @@ func collectOptions(name, dir string, pkg *api.Package, buf *packageGlobalFlags)
 }
 
 func collectAllOptionsAndKConfigs(ctx *RuntimeContext) error {
-	ctx.AllOptions = make(map[string]map[string]*api.Option)
+	ctx.allOptions = make(map[string]map[string]*api.Option)
 	ctx.allKConfigs = make(map[string][]*api.KConfigEntry)
 	ctx.bufferedGlobalFlags = make(map[string]*packageGlobalFlags)
 	pkgDirs := packageSourceDirs(ctx)
@@ -166,7 +166,7 @@ func collectAllOptionsAndKConfigs(ctx *RuntimeContext) error {
 					return fmt.Errorf("package %s: %w", name, err)
 				}
 			}
-			ctx.AllOptions[name] = opts
+			ctx.allOptions[name] = opts
 			vlog.Verbose("  %s: %d option(s)", name, len(opts))
 		}
 
@@ -230,7 +230,7 @@ func applyConfigCallbacksForNeeded(ctx *RuntimeContext, needed NeededSet, logHea
 			continue
 		}
 		api.BindPackageResetApplyState(node.Pkg)
-		opts := ctx.AllOptions[name]
+		opts := ctx.allOptions[name]
 		if len(opts) == 0 {
 			continue
 		}
@@ -336,10 +336,10 @@ func mergeGlobalOptionsFiltered(ctx *RuntimeContext, needed NeededSet) error {
 		sort.Strings(tcList)
 	}
 
-	allDefs := ctx.AllOptions
+	allDefs := ctx.allOptions
 	if needed != nil {
 		allDefs = make(map[string]map[string]*api.Option, len(needed))
-		for pkgName, opts := range ctx.AllOptions {
+		for pkgName, opts := range ctx.allOptions {
 			if needed[pkgName] {
 				allDefs[pkgName] = opts
 			}

@@ -62,7 +62,7 @@ Phase 3: OnBuild (pipeline.RunBuild)
 - 有效配置值：`pkg/pipeline` 是唯一实现，并按用途暴露显式投影——`PackageConfigValues`（构建值）、`DisplayPackageValues`（inspect/query 的声明选项投影，经 `Inspection` 的包视图 `PackageView.Values`/`PackageView.Platform` 携带）、`collectAllPkgOptions`（构建键材料）、`applyGlobalValues`（OnApply 值，含解析后的 mode/toolchain/target 默认值）、`ProjectGlobalValues`（项目全局值）。cmd 渲染层只消费，不再推导。
 - 源物化：`repo.SourceManager.WouldMaterialize` 与 `SourceResult.Materialized` 和 `EnsureSource` 共用同一复用判定；请求值本身由 `pipeline.sourceRequestFor` 为 local SetGit / own-Git member 一次投影（横幅与 `EnsureSource` 消费同一值），远端循环也只构造一份 `SourceRequest` 供横幅与 fetch 共用。resolver 探测与 manifest restore 保留显式简化请求（`ResolveOnly`、仅 ref）。
 - 包位置与制品：`pipeline.packageLocation` 统一 `OwnerTreeRoot`/`PackageRoot`/`SourceTree`/`ThirdPartyRoot`/`TreeRoot`；`build.PlacementFor`（`Scheduler.placementFor` 委托）统一产物、PE import library、暂存与安装路径，`inspect`/`check-symbols`/`test` 复用同一构造器。
-- 依赖字符串：`build.ParseDependencyRef`（`parseDependencyRef` 的导出形式）是 `target`/`pkg:target`/`pkg/sub:target`/`pkg:*` 的唯一解析，graph/subgraph/`pkg/pipeline` 边投影/命令层共用；遍历与校验策略仍按消费者保留（DD-22），`resolveDep`/`resolveDirectDep` 的校验分歧由测试钉住并作为后续单独项。
+- 依赖字符串：`build.ParseDependencyRef`（`parseDependencyRef` 的导出形式）是 `target`/`pkg:target`/`pkg/sub:target`/`pkg:*` 的唯一解析，graph/subgraph/`pkg/pipeline` 边投影/命令层共用；`build.NewBuildGraph`（严格模式）与 `build.AuditBuildGraph`（无错审计模式，供 `pipeline.BuildUnifiedGraph` 与 `CheckProjectDeps` 共用）共享 `pkg/build/graph.go` 的单遍展开引擎 `resolveDepSpec`，统一目标存在性校验、`Unmaterialized` 容忍、`internal/` 可见性与环诊断（DD-22、DD-36）。
 - 阶段写模型：`Require` 直接设置 `Resolver`/`DepGraph`，`prepareBuild` 用返回值传递 needed/effective flags，`applyConfiguration` 把 `Configure` 结果字段拷回上下文；`RuntimeContext.Configuration()` 是读取时派生的视图（每次调用克隆容器 map/slice），不再维护快照，`Resolution`/`Preparation` 两个零生产读者的镜像类型已删除。`Configure` 在上下文浅拷贝上执行、成功才提交配置结果。
 - 检查命令会话：`cmd/vmake/inspect_session.go:openInspection` 统一根解析（`resolveProjectRoot`，无进程缓存）、只读作用域、`openProject`、`InspectWithOptions(FilterDeps)`、blocked-write 收集与 resolver 关闭；`inspectionScope` 统一 quiet/只读状态并恢复。inspect/query/query targets/check-symbols/deps graph|why|check 只保留输出 schema、诊断文案与错误映射。
 
@@ -555,8 +555,9 @@ BuildNode
 
 ```
 PkgBuildMeta
-├── Origin api.SourceOrigin    // 包来源（本地/远程）
-└── Deps   []string            // 包级依赖列表
+├── Origin         api.SourceOrigin // 包来源（本地/远程）
+├── Deps           []string         // 包级依赖列表
+└── Unmaterialized bool             // 源码未物化标记（审计模式保留包级边并跳过目标缺失报错）
 ```
 
 ### ConfigFile (`pkg/config/store.go`)
@@ -608,11 +609,13 @@ EntryConfig
 | 插件系统 | `pkg/plugin/` | 扩展插件管理、解释、加载 |
 | 构建脚本系统 | `pkg/buildscript/` | 扫描、解释、加载构建脚本 |
 | 依赖解析 | `pkg/resolver/` | 依赖图解析、拓扑排序 |
-| 构建系统 | `pkg/build/` | 编译、链接、调度、安装 |
+| 构建系统 | `pkg/build/` | 编译、链接、调度、安装、统一图展开（`NewBuildGraph`/`AuditBuildGraph`） |
+| 构建报告 | `pkg/buildreport/` | `vmake-build.json`/`vmake-test.json`（schemaVersion 2）与 GNU/脚本诊断提取 |
+| 包目录发现 | `pkg/catalog/` | 只读包目录检索与详情展示（`pkg search`/`pkg show`） |
 | 构建准备 prelude | `pkg/pipeline/prelude.go` | build/inspect 共享的 needed/chip/config/global flags 推导；deps 窄路径 `resolveNeeded` |
 | 包管理 | `pkg/repo/` | 仓库管理、源码物化、native 仓库 |
 | 工具链 | `pkg/toolchain/` | GCC/Clang 抽象 |
-| 配置 | `pkg/config/` | 配置文件读写 |
+| 配置 | `pkg/config/` | 配置文件读写、无头配置编辑器（`*config.Editor`）与稀疏变更提交 |
 | 日志 | `pkg/log/` | 日志输出 |
 | TUI | `pkg/tui/` | 终端界面 |
 | 版本 | `pkg/version/` | 版本信息 |

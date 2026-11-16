@@ -26,6 +26,7 @@ func CollectSubGraphPackages(rootPkg string, pkgMeta map[string]PkgBuildMeta, al
 			return
 		}
 		for _, dep := range meta.Deps {
+			dep = resolvePkg(pkgName, dep)
 			if needed[dep] {
 				visit(dep)
 			}

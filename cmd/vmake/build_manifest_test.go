@@ -185,3 +185,46 @@ func TestCheckoutManifestLocalsRejectsPathNotMatchingPackage(t *testing.T) {
 		t.Fatal("manifest path not matching the package source was accepted")
 	}
 }
+
+func TestCheckoutLocalSkipsManagedGitSourceInsteadOfCheckingOutProjectRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	project := t.TempDir()
+	runGitLine(t, project, "init", "-q", "-b", "master")
+	runGitLine(t, project, "config", "user.email", "test@example.com")
+	runGitLine(t, project, "config", "user.name", "test")
+	buildGo := `package main
+
+import "github.com/spock2300/vmake/pkg/api"
+
+func Main(p *api.Package) {
+	p.SetGit("https://example.invalid/upstream.git")
+}
+`
+	if err := os.WriteFile(filepath.Join(project, "build.go"), []byte(buildGo), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGitLine(t, project, "add", "-A")
+	runGitLine(t, project, "commit", "-q", "-m", "v1")
+	head, err := repoPkg.GetCurrentCommit(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entry := installManifestEntry{Name: "managed", Source: "local", Ref: strings.Repeat("0", 40), Path: "."}
+	if err := checkoutLocal(project, entry); err != nil {
+		t.Fatalf("checkoutLocal failed on managed SetGit local package: %v", err)
+	}
+	after, err := repoPkg.GetCurrentCommit(project)
+	if err != nil || after != head {
+		t.Fatalf("project repo commit = %q (err=%v), want %q", after, err, head)
+	}
+
+	if err := os.WriteFile(filepath.Join(project, "build.go"), []byte("package main\nfunc Main(\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkoutLocal(project, entry); err == nil || !strings.Contains(err.Error(), "load build.go") {
+		t.Fatalf("expected load build.go error, got %v", err)
+	}
+}

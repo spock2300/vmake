@@ -103,7 +103,7 @@ func filterDependencies(ctx *RuntimeContext, log bool) error {
 			entryOpts = config.GetEntry(ctx.Config, name).Options
 		}
 		options := mergeCfgVals(name, node, ctx, globalValues, entryOpts)
-		pkgOpts := ctx.AllOptions[name]
+		pkgOpts := ctx.allOptions[name]
 		opts := mergedPackageAndGlobalOptions(pkgOpts, visibleGlobalOptionsFor(node, pkgOpts, ctx.globalOptions))
 		if err := ctx.Resolver.FilterDeps(name, options, opts); err != nil {
 			return fmt.Errorf("%s: filter deps: %w", name, err)
@@ -176,7 +176,7 @@ func convergeFilterAndDerivedOptions(ctx *RuntimeContext, rootOverride string, l
 					entryOpts = config.GetEntry(ctx.Config, name).Options
 				}
 				options := mergeCfgVals(name, node, ctx, globalValues, entryOpts)
-				pkgOpts := ctx.AllOptions[name]
+				pkgOpts := ctx.allOptions[name]
 				opts := mergedPackageAndGlobalOptions(pkgOpts, visibleGlobalOptionsFor(node, pkgOpts, ctx.globalOptions))
 				if err := ctx.Resolver.FilterDeps(name, options, opts); err != nil {
 					return fmt.Errorf("%s: filter deps: %w", name, err)
@@ -239,7 +239,7 @@ func applyNodeConfigureDeps(
 	if valErr != nil {
 		return valErr
 	}
-	pkgOpts := ctx.AllOptions[name]
+	pkgOpts := ctx.allOptions[name]
 	opts := mergedPackageAndGlobalOptions(pkgOpts, visibleGlobalOptionsFor(node, pkgOpts, ctx.globalOptions))
 	srcDir := pkgDirs[name].SourceDir
 	resolveTarget := func(dep string) (string, map[string]*api.Option, error) {
@@ -255,7 +255,7 @@ func applyNodeConfigureDeps(
 		if err := pkgvis.CheckInternal(name, ctx.Resolver.VisibilityPath(name), targetPkg, ctx.Resolver.VisibilityPath(targetPkg)); err != nil {
 			return "", nil, err
 		}
-		targetOpts := ctx.AllOptions[targetPkg]
+		targetOpts := ctx.allOptions[targetPkg]
 		if targetOpts == nil {
 			if tNode := ctx.DepGraph.Packages[targetPkg]; tNode != nil && tNode.Pkg != nil {
 				targetOpts = tNode.Pkg.GetOptions()

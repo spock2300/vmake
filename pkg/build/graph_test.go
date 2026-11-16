@@ -561,7 +561,7 @@ func TestBuildGraphZeroTargetPublicUmbrellaWrappingInternalSubPackage(t *testing
 	}
 }
 
-func TestDependencyResolversKeepPerConsumerTargetValidation(t *testing.T) {
+func TestDependencyResolversValidateTargetExistenceUniformly(t *testing.T) {
 	nodes := map[string]*BuildNode{
 		"p:app": {FullName: "p:app", PkgName: "p", Target: makeTargetWithDeps("app")},
 	}
@@ -569,8 +569,65 @@ func TestDependencyResolversKeepPerConsumerTargetValidation(t *testing.T) {
 	if _, err := d.resolveDep("q:ghost", "p", []string{"p:app"}); err == nil {
 		t.Fatal("resolveDep accepted an unknown target")
 	}
-	got, err := d.resolveDirectDep("q:ghost", "p", []string{"p:app"})
-	if err != nil || len(got) != 1 || got[0] != "q:ghost" {
-		t.Fatalf("resolveDirectDep = %v, %v", got, err)
+	if _, err := d.resolveDirectDep("q:ghost", "p", []string{"p:app"}); err == nil {
+		t.Fatal("resolveDirectDep accepted an unknown target")
+	}
+}
+
+func TestAuditBuildGraphReportsMissingDependencyForUndeclaredOnBuildCrossPkg(t *testing.T) {
+	app := makeTargetWithDeps("app", "dep:lib")
+	lib := makeTargetWithDeps("lib")
+	g := AuditBuildGraph(
+		map[string]map[string]*api.Target{
+			"app": {"app": app},
+			"dep": {"lib": lib},
+		},
+		map[string]PkgBuildMeta{
+			"app": {VisPath: "apps/app"},
+			"dep": {VisPath: "hl/sdk/internal/core"},
+		},
+		GraphAuditOptions{
+			Needed:   map[string]bool{"app": true},
+			Included: map[string]bool{"app": true},
+		},
+	)
+	var internalCount, missingCount int
+	for _, issue := range g.Issues {
+		switch issue.Kind {
+		case "internal-visibility":
+			internalCount++
+		case "missing-dependency":
+			missingCount++
+			if !strings.Contains(issue.Message, `AddRequires("dep")`) {
+				t.Fatalf("message = %q, want AddRequires remediation", issue.Message)
+			}
+		}
+	}
+	if internalCount != 1 || missingCount != 1 {
+		t.Fatalf("issues = %+v, want 1 internal-visibility and 1 missing-dependency", g.Issues)
+	}
+}
+
+func TestAuditBuildGraphToleratesUnmaterializedPackageTargets(t *testing.T) {
+	app := makeTargetWithDeps("app", "remote:lib")
+	g := AuditBuildGraph(
+		map[string]map[string]*api.Target{
+			"app": {"app": app},
+		},
+		map[string]PkgBuildMeta{
+			"app":    {Deps: []string{"remote"}},
+			"remote": {Origin: api.SourceRemote, Unmaterialized: true},
+		},
+		GraphAuditOptions{
+			Needed:   map[string]bool{"app": true, "remote": true},
+			Included: map[string]bool{"app": true, "remote": true},
+		},
+	)
+	if len(g.Issues) != 0 {
+		t.Fatalf("unexpected issues for unmaterialized dependency: %+v", g.Issues)
+	}
+	node := g.Nodes["app:app"]
+	if node == nil || !reflect.DeepEqual(node.DeclaredDepPkgs, []string{"remote"}) {
+		t.Fatalf("DeclaredDepPkgs = %v, want [remote]", node.DeclaredDepPkgs)
 	}
 }

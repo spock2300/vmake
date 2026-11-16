@@ -255,10 +255,10 @@ func TestInspectFilterDepsMatchesConditionalBuildGraph(t *testing.T) {
 	})
 	options := api.NewConfigContext("app")
 	options.Option("use_dep").SetType(api.OptionBool).SetDefault(false)
-	if s.ctx.AllOptions == nil {
-		s.ctx.AllOptions = map[string]map[string]*api.Option{}
+	if s.ctx.allOptions == nil {
+		s.ctx.allOptions = map[string]map[string]*api.Option{}
 	}
-	s.ctx.AllOptions["app"] = options.GetOptions()
+	s.ctx.allOptions["app"] = options.GetOptions()
 
 	config.SetEntry(s.ctx.Config, "app", &config.EntryConfig{Options: map[string]any{"use_dep": true}})
 	enabled, err := InspectWithOptions(s.ctx, InspectOptions{FilterDeps: true})

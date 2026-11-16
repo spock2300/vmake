@@ -84,7 +84,7 @@ func TestExtendChipChoiceDoesNotMutateAllOptionsOrLeakPrunedPackages(t *testing.
 	}
 	pkgOpt := chipOption("chip-a").SetGroup(api.GroupGlobal)
 	prunedOpt := (&api.Option{}).SetType(api.OptionChoice).SetValues("chip-pruned").SetGroup(api.GroupGlobal)
-	ctx.AllOptions = map[string]map[string]*api.Option{
+	ctx.allOptions = map[string]map[string]*api.Option{
 		"chip-a":      {api.ChipOptionName: pkgOpt},
 		"chip-pruned": {api.ChipOptionName: prunedOpt},
 	}

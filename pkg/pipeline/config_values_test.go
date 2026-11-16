@@ -27,7 +27,7 @@ func TestDisplayPackageValuesProjection(t *testing.T) {
 	ctx := &RuntimeContext{
 		Config:     cfg,
 		DepGraph:   &resolver.Graph{Packages: map[string]*resolver.PackageNode{"app": node}},
-		AllOptions: allOptions,
+		allOptions: allOptions,
 	}
 	globalOptions, err := api.MergeGlobalOptions(allOptions, nil)
 	if err != nil {

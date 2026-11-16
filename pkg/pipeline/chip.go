@@ -231,15 +231,8 @@ func ResolveActiveChipForDisplay(ctx *RuntimeContext) {
 }
 
 func chipTargetsApply(profile api.ChipProfile, tcName string) bool {
-	if profile.Name == "" {
-		return false
-	}
-	if profile.PreferredToolchain == "" || tcName == profile.PreferredToolchain {
-		return true
-	}
-	if tcName == "" || tcName == "host" {
-		return false
-	}
-	_, triple := toolchainTargetDefaults(tcName)
-	return triple == "" || triple == profile.TargetTriple
+	return api.BindChipTargetsApply(profile, tcName, func(name string) string {
+		_, triple := toolchainTargetDefaults(name)
+		return triple
+	})
 }

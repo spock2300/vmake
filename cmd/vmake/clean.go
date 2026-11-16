@@ -1,19 +1,9 @@
 package main
 
 import (
-	"fmt"
-	"maps"
-	"os"
-	"path/filepath"
-	"strings"
-
 	"github.com/spf13/cobra"
 
-	"github.com/spock2300/vmake/internal/fs"
-	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/pkg/api"
-	"github.com/spock2300/vmake/pkg/buildscript"
-	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
 )
 
@@ -35,336 +25,46 @@ func init() {
 	cleanCmd.Flags().BoolVar(&cleanAllFlag, "all", false, "clean build outputs for every configuration")
 }
 
-type pkgCleanEntry struct {
-	Dir, Name string
-}
+type pkgCleanEntry = pipeline.PkgCleanEntry
 
 func cleanPackages(entries []pkgCleanEntry, ctx *RuntimeContext, cleanAll bool) error {
-	_, err := cleanPackagesInspection(entries, ctx, cleanAll)
-	return err
+	return pipeline.CleanPackages(entries, ctx, cleanAll)
 }
 
-func cleanPackagesInspection(entries []pkgCleanEntry, ctx *RuntimeContext, cleanAll bool) (*pipeline.Inspection, error) {
-	if cleanAll {
-		for _, pkg := range entries {
-			cleanAllBuildDirs(pkg.Dir, pkg.Name)
-		}
-		cleanAllRemoteOutputs(ctx.Paths.DepsDir, ctx.SourceLinks)
-		vlog.Info("Clean completed!")
-		return nil, nil
-	}
-
-	insp, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{SkipUnresolvedPackages: true, FilterDeps: true, FreezeDeps: true})
-	if err != nil {
-		return nil, err
-	}
-
-	for _, name := range ctx.Resolver.GetOrder() {
-		node := ctx.DepGraph.Packages[name]
-		if node == nil || node.Source == nil {
-			continue
-		}
-		view, ok := insp.Package(name)
-		if !ok || view.Skipped || (insp.Needed() != nil && !view.Needed) || view.Dirs.BuildDir == "" {
-			continue
-		}
-		dirs := view.Dirs
-		if node.IsLocal() {
-			cleanDir(dirs.BuildDir, name, filepath.Base(dirs.BuildDir))
-			continue
-		}
-		// Remote outputs live in <tree>/out/<sha256(member)>/<buildKey>/{build,install}.
-		output := filepath.Dir(dirs.BuildDir)
-		cleanDir(output, name, filepath.Base(output))
-	}
-
-	vlog.Info("Clean completed!")
-	return insp, nil
-}
-
-// packageDirsOf adapts an inspection to the per-package directory lookup.
-func packageDirsOf(insp *pipeline.Inspection) func(name string) *api.PkgDirs {
-	return func(name string) *api.PkgDirs {
-		if insp == nil {
-			return nil
-		}
-		if view, ok := insp.Package(name); ok && !view.Skipped {
-			return view.Dirs
-		}
-		return nil
-	}
-}
-
-// remainingBuildDirectories counts build-key directories other than the active
-// configuration that clean left in place. Local packages keep their keys under
-// <package>/build/, remote packages under <tree>/out/<owner>/.
 func remainingBuildDirectories(ctx *RuntimeContext, dirsFor func(name string) *api.PkgDirs) int {
-	active := make(map[string]map[string]bool)
-	mark := func(parent, key string) {
-		if active[parent] == nil {
-			active[parent] = make(map[string]bool)
-		}
-		if key != "" {
-			active[parent][key] = true
-		}
-	}
-	for _, name := range ctx.Resolver.GetOrder() {
-		node := ctx.DepGraph.Packages[name]
-		if node == nil || node.Source == nil {
-			continue
-		}
-		var dirs *api.PkgDirs
-		if dirsFor != nil {
-			dirs = dirsFor(name)
-		}
-		if node.IsLocal() {
-			key := ""
-			if dirs != nil && dirs.BuildDir != "" {
-				key = filepath.Base(dirs.BuildDir)
-			}
-			mark(filepath.Join(node.Source.Dir, "build"), key)
-			continue
-		}
-		if dirs == nil || dirs.BuildDir == "" {
-			continue
-		}
-		keyDir := filepath.Dir(dirs.BuildDir)
-		mark(filepath.Dir(keyDir), filepath.Base(keyDir))
-	}
-
-	total := 0
-	for parent, current := range active {
-		entries, err := os.ReadDir(parent)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") && !current[entry.Name()] {
-				total++
-			}
-		}
-	}
-	return total
+	return pipeline.RemainingBuildDirectories(ctx, dirsFor)
 }
 
-func removeStaleCompileDatabase(ctx *RuntimeContext) {
-	if ctx == nil || ctx.Paths == nil || ctx.Paths.ProjectDir == "" {
-		return
-	}
-	removeIfExists(filepath.Join(ctx.Paths.ProjectDir, "build", "compile_commands.json"), "", "build/compile_commands.json", false)
-}
-
-// cleanAllRemoteOutputs removes every per-build output directory below the
-// package trees' out/ directories, for all configurations. Tree roots are
-// located by their state.json so arbitrary nesting (native members) is
-// covered.
 func cleanAllRemoteOutputs(depDir string, links map[string]string) {
-	_ = filepath.WalkDir(depDir, func(path string, entry os.DirEntry, err error) error {
-		if err != nil || entry.IsDir() || entry.Name() != "state.json" {
-			return nil
-		}
-		root := filepath.Dir(path)
-		cleanOutputDirs(filepath.Join(root, "out"), filepath.Base(root))
-		return nil
-	})
-	for name := range links {
-		cleanOutputDirs(filepath.Join(depDir, filepath.FromSlash(name), "out"), name)
-	}
-}
-
-func cleanOutputDirs(outDir, pkgName string) {
-	owners, err := os.ReadDir(outDir)
-	if err != nil {
-		return
-	}
-	for _, owner := range owners {
-		if !owner.IsDir() || strings.HasPrefix(owner.Name(), ".") {
-			continue
-		}
-		ownerDir := filepath.Join(outDir, owner.Name())
-		builds, err := os.ReadDir(ownerDir)
-		if err != nil {
-			continue
-		}
-		for _, build := range builds {
-			if !build.IsDir() || strings.HasPrefix(build.Name(), ".") {
-				continue
-			}
-			cleanDir(filepath.Join(ownerDir, build.Name()), pkgName, build.Name())
-		}
-	}
+	pipeline.CleanAllRemoteOutputs(depDir, links)
 }
 
 func scanPackages(workDir string) []pkgCleanEntry {
-	packages, err := buildscript.Scan(workDir)
+	entries, err := pipeline.ScanPackages(workDir)
 	fatalErr(err)
-
-	entries := make([]pkgCleanEntry, len(packages))
-	for i, pkg := range packages {
-		entries[i] = pkgCleanEntry{Dir: pkg.Dir, Name: pkg.Name}
-	}
 	return entries
 }
 
 func runClean(cmd *cobra.Command, args []string) {
 	commandStorageLocks()
 	ctx, ok := openProjectBestEffort(projectOptions{softGitignore: true})
-	if !ok {
-		if !cleanAllFlag {
-			fatalErr(fmt.Errorf("project configuration is unavailable; run 'vmake clean --all' or 'vmake distclean' to remove every build directory"))
-		}
+	if ok {
+		defer closeProject(ctx)
+	}
+	if ok || cleanAllFlag {
 		fatalErr(invalidateBuildReport())
-		entries := scanPackages(ctx.WorkDir)
-		fatalErr(cleanPackages(entries, ctx, true))
-		removeStaleCompileDatabase(ctx)
-		return
 	}
-	defer closeProject(ctx)
-	fatalErr(invalidateBuildReport())
-
-	vlog.Info("")
-	vlog.Info("Executing OnClean...")
-	if err := executeCleanHooks(ctx, false, true, !cleanAllFlag); err != nil {
-		if !cleanAllFlag {
-			fatalErr(err)
-		}
-		vlog.Error("Skipping OnClean: %v", err)
-	}
-
-	entries := collectCleanEntries(ctx)
-	insp, err := cleanPackagesInspection(entries, ctx, cleanAllFlag)
-	fatalErr(err)
-	removeStaleCompileDatabase(ctx)
-	if !cleanAllFlag {
-		if remaining := remainingBuildDirectories(ctx, packageDirsOf(insp)); remaining > 0 {
-			vlog.Info("Note: %d build director(ies) for other configurations remain; use 'vmake clean --all' or 'vmake distclean' to remove them.", remaining)
-		}
-	}
+	fatalErr(pipeline.RunClean(ctx, ok, cleanAllFlag))
 }
 
 func collectCleanEntries(ctx *RuntimeContext) []pkgCleanEntry {
-	var entries []pkgCleanEntry
-	for _, name := range ctx.Resolver.GetOrder() {
-		node := ctx.DepGraph.Packages[name]
-		if node.Source != nil && node.IsLocal() {
-			entries = append(entries, pkgCleanEntry{Dir: node.Source.Dir, Name: name})
-		}
-	}
-	return entries
+	return pipeline.CollectCleanEntries(ctx)
 }
 
-func executeCleanHooks(ctx *RuntimeContext, localOnly, skipUnresolved, filterDeps bool) (err error) {
-	defer scriptcall.Recover(&err)
-	var insp *pipeline.Inspection
-	for _, name := range ctx.Resolver.GetOrder() {
-		node := ctx.DepGraph.Packages[name]
-		if node.Pkg == nil || node.Source == nil {
-			continue
-		}
-		if localOnly && !node.IsLocal() {
-			continue
-		}
-		hasHooks := false
-		api.BindPackageExecCleanFuncs(node.Pkg, node.Source.Dir, func(api.CleanFunc) { hasHooks = true })
-		if !hasHooks {
-			continue
-		}
-		if insp == nil {
-			var err error
-			insp, err = pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{SkipUnresolvedPackages: skipUnresolved, FilterDeps: filterDeps, FreezeDeps: filterDeps})
-			if err != nil {
-				return fmt.Errorf("OnClean: %w", err)
-			}
-		}
-		view, ok := insp.Package(name)
-		if !ok || view.Skipped || (filterDeps && insp.Needed() != nil && !view.Needed) || view.Dirs.BuildDir == "" {
-			continue
-		}
-		dirs := view.Dirs
-
-		platform, err := pipeline.PackagePlatform(ctx, name)
-		if err != nil {
-			return fmt.Errorf("OnClean: %w", err)
-		}
-		values, err := pipeline.PackageConfigValues(ctx, name, insp.GlobalValues)
-		if err != nil {
-			return fmt.Errorf("OnClean: %w", err)
-		}
-		pipeline.DetectExistingSrcDir(node)
-
-		node.Pkg.SetDirs(*dirs)
-		node.Pkg.SetToolchain(view.Toolchain)
-		node.Pkg.SetPlatform(platform)
-
-		cleanCtx := api.NewCleanContext(name, values)
-		if opts, ok := ctx.AllOptions[name]; ok {
-			cleanCtx.SetOptions(maps.Clone(opts))
-		}
-		cleanCtx.MergeGlobals(ctx.GlobalOptions(), insp.GlobalValues)
-		api.BindSetCleanPackage(cleanCtx, node.Pkg)
-		node.Pkg.SetOptions(api.BindOptions(&cleanCtx.ConfigAccessor))
-		node.Pkg.SetCfgVals(api.BindCfgVals(&cleanCtx.ConfigAccessor))
-
-		api.BindPackageExecCleanFuncs(node.Pkg, dirs.SourceDir, func(fn api.CleanFunc) {
-			fn(cleanCtx)
-		})
-	}
-	return nil
-}
-
-func cleanDir(path, pkgName, label string) bool {
-	if !fs.FileExists(path) {
-		return false
-	}
-	if err := fs.RemoveAll(path); err != nil {
-		vlog.Error("Failed to clean %s/%s: %v", pkgName, label, err)
-		return false
-	}
-	vlog.Info("Cleaned %s/%s/", pkgName, label)
-	return true
+func executeCleanHooks(ctx *RuntimeContext, localOnly, skipUnresolved, filterDeps bool) error {
+	return pipeline.ExecuteCleanHooks(ctx, localOnly, skipUnresolved, filterDeps)
 }
 
 func removeIfExists(path, pkgName, label string, isDir bool) {
-	if !fs.FileExists(path) {
-		return
-	}
-	var err error
-	if isDir {
-		err = fs.RemoveAll(path)
-	} else {
-		err = os.Remove(path)
-	}
-	if err != nil {
-		if pkgName != "" {
-			vlog.Error("Failed to clean %s/%s: %v", pkgName, label, err)
-		} else {
-			vlog.Error("Failed to clean %s: %v", label, err)
-		}
-		return
-	}
-	if pkgName != "" {
-		vlog.Info("Cleaned %s/%s", pkgName, label)
-	} else {
-		vlog.Info("Cleaned %s", label)
-	}
-}
-
-func cleanAllBuildDirs(dir, pkgName string) {
-	buildBase := filepath.Join(dir, "build")
-	entries, err := os.ReadDir(buildBase)
-	if err != nil {
-		return
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if strings.HasPrefix(name, ".") {
-			continue
-		}
-
-		cleanDir(filepath.Join(buildBase, name), pkgName, name)
-	}
+	pipeline.RemoveIfExists(path, pkgName, label, isDir)
 }

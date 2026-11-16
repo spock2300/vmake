@@ -38,13 +38,13 @@ func TestBuildConfigEffectiveModeAndToolchain(t *testing.T) {
 			ctx := &RuntimeContext{
 				Config:       emptyConfig(),
 				DepGraph:     &resolver.Graph{Packages: map[string]*resolver.PackageNode{"app": node}},
-				AllOptions:   map[string]map[string]*api.Option{"app": options.GetOptions()},
+				allOptions:   map[string]map[string]*api.Option{"app": options.GetOptions()},
 				ModeOverride: test.modeOverride,
 			}
 			ctx.Config.Global.Mode = test.configuredMode
 			ctx.Config.Global.Toolchain = test.configuredTC
 			var err error
-			ctx.globalOptions, err = api.MergeGlobalOptions(ctx.AllOptions, []string{"first", "host", "configured", "selected"})
+			ctx.globalOptions, err = api.MergeGlobalOptions(ctx.allOptions, []string{"first", "host", "configured", "selected"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -106,7 +106,7 @@ func TestProjectPlatformDefaultsAndOverrides(t *testing.T) {
 			ctx := &RuntimeContext{
 				Config:        emptyConfig(),
 				DepGraph:      &resolver.Graph{Packages: map[string]*resolver.PackageNode{"app": node}},
-				AllOptions:    map[string]map[string]*api.Option{"app": options.GetOptions()},
+				allOptions:    map[string]map[string]*api.Option{"app": options.GetOptions()},
 				globalOptions: options.GetOptions(),
 			}
 			ctx.Config.Global.Options = test.values
@@ -147,7 +147,7 @@ func TestResolvedGlobalValuesPreservePackageOverrides(t *testing.T) {
 	options := api.NewConfigContext("app")
 	options.GlobalOption("global").SetType(api.OptionString).SetDefault("default")
 	options.Option("local").SetType(api.OptionString).SetDefault("local default")
-	ctx := &RuntimeContext{Config: emptyConfig(), AllOptions: map[string]map[string]*api.Option{"app": options.GetOptions()}}
+	ctx := &RuntimeContext{Config: emptyConfig(), allOptions: map[string]map[string]*api.Option{"app": options.GetOptions()}}
 	values := mergeCfgVals("app", node, ctx, map[string]any{"global": "resolved", "local": "global default"}, map[string]any{"global": "package override"})
 	if got := values["global"]; got != "package override" {
 		t.Errorf("explicit package value = %v, want package override", got)

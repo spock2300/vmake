@@ -208,6 +208,7 @@
 - 决策: `pkg/build/depref.go:parseDependencyRef` 是唯一解析，返回 `Package`/`Target`/`HasTarget` 与 `packagePath()`；上述所有消费方改用它。遍历策略仍由各消费者保留（public attrs 闭包、linker-script 依赖、subgraph 可达性），但不再各自解释字符串。
 - 理由: 依赖语法的扩展（新的 target 形式、子包限定）只需要改一个解析器；遍历差异是业务差异，不应与语法解析混在一起。
 - 涉及代码: `pkg/build/depref.go`, `pkg/build/graph.go`, `pkg/build/subgraph.go`, `pkg/build/scheduler_resolve.go`。
+- 修订（2026-11-16）: `resolveDep` 与 `resolveDirectDep` 合并为单遍 `resolveDepSpec`，统一校验 `pkg:target` 存在性；`build.AuditBuildGraph` 将原本在 `pkg/pipeline/graph_build.go` 与 `graph_rules.go` 中复刻的 0-target 透传展开、子包最短路径解析、`internal/` 可见性去重与环路检测统一收进 `pkg/build/graph.go`，并通过 `PkgBuildMeta.Unmaterialized` 直接供 `CheckExistingBuildBoundaries` 消费，删除 `CheckProjectDeps` 中伪造虚拟 `TargetVoid` 节点的二次构图（见 DD-36）。
 
 ## DD-23: 命令会话拥有环境意图，锁策略只有一个来源
 
@@ -277,13 +278,13 @@
 - 涉及代码: `pkg/pipeline/keys.go`, `pkg/pipeline/layout.go`, `pkg/pipeline/inspect.go`, `pkg/pipeline/build_job.go`, `pkg/build/key.go`, `pkg/build/scheduler.go`, `pkg/build/header_check.go`。
 - 修订（2026-11-15）: 构建阶段的远端布局改用 `packageLocation` 取 `Owner`/`Member`/`PackageRoot`（link 覆盖），只保留"本次 fetch 实际创建的树根"（`remote.trees`）作为 `PkgRoot` 的覆盖，回退到 `loc.OwnerTreeRoot`；这样两个适配器共享同一套成员/链接推导，同时不改变已物化树的输出目录。`compile_commands.AddCommand`（第二套编译命令推导）已删除，写入口只剩 `AddSpec`。
 
-## DD-31: 配置状态收口，`AllOptions` 是唯一例外
+## DD-31: 配置状态全面收口
 
 - 状态: accepted
-- 背景: `RuntimeContext` 上的 8 个配置字段（`AllOptions`/`AllKConfigs`/`ChipProfiles`/`ChipProfile`/`GlobalOptions`/`DerivedOptions`/`BufferedGlobalFlags`/`GlobalMacroDefines`）都可被任意包读写，"已提交、只读"只是约定。阶段写模型要求把它们收进访问器，使不可写成为类型事实。
-- 决策: 7 个字段私有化（`allKConfigs`/`chipProfiles`/`chipProfile`/`globalOptions`/`derivedOptions`/`bufferedGlobalFlags`/`globalMacroDefines`），跨包读取走返回副本的访问器（`KConfigs()`/`ChipProfiles()`/`GlobalOptions()`/`DerivedOptions()`/`GlobalDefines()`）；`applyConfiguration` 仍是唯一写入口。`AllOptions` 保持导出：`resolveSetPackageName`/`resolveSetPackageOption`/`applyEphemeralOverrides` 这类命令级查找助手以整个上下文为输入，其单元测试直接构造 `RuntimeContext`，私有化会把这三组测试逼成子进程集成测试。反射守卫 `TestRuntimeContextHidesConfigurationState` 覆盖已迁移的 7 个字段，并在注释里记录这个例外。
-- 理由: 收口的目标是阻止跨包写入，而 `AllOptions` 的外部读取方都是只读查找；为它重写三个助手的输入模型（外加两处 `maps.Clone` 语义）换来的隔离收益，小于让这些查找逻辑失去单元测试的代价。 `Configuration` 本身仍是导出字段的值类型：它只在 `pkg/pipeline` 内构造（`currentConfiguration`/`applyConfiguration`），外部消费者拿到的都是 `RuntimeContext` 访问器返回的副本，因此不需要再包装一层。
-- 涉及代码: `pkg/pipeline/pipeline.go`, `pkg/pipeline/state_types.go`, `pkg/pipeline/state_guard_test.go`, `pkg/pipeline/chip.go`, `cmd/vmake/config.go`, `cmd/vmake/query_cmd.go`, `cmd/vmake/build_install.go`, `cmd/vmake/clean.go`, `cmd/vmake/inspect_cmd.go`。
+- 背景: `RuntimeContext` 上的 8 个配置字段（`AllOptions`/`AllKConfigs`/`ChipProfiles`/`ChipProfile`/`GlobalOptions`/`DerivedOptions`/`BufferedGlobalFlags`/`GlobalMacroDefines`）曾可被任意包读写，"已提交、只读"只是约定。阶段写模型要求把它们收进访问器，使不可写成为类型事实。
+- 决策: 全部 8 个字段私有化（`allOptions`/`allKConfigs`/`chipProfiles`/`chipProfile`/`globalOptions`/`derivedOptions`/`bufferedGlobalFlags`/`globalMacroDefines`），跨包读取走返回副本的访问器（`AllOptions()`/`PackageOptions(pkg)`/`KConfigs()`/`ChipProfiles()`/`GlobalOptions()`/`DerivedOptions()`/`GlobalDefines()`）；`applyConfiguration` 仍是唯一写入口。反射守卫 `TestRuntimeContextHidesConfigurationState` 覆盖全部 8 个字段。
+- 修订（2026-11-16）: 随着命令级选项解析与变更收进 `pkg/pipeline/config_mutate.go`（`ResolveSetPackageName`/`ResolveSetPackageOption`/`MutateConfig`），`AllOptions` 的历史例外被正式消除并私有化为 `allOptions`。
+- 涉及代码: `pkg/pipeline/pipeline.go`, `pkg/pipeline/state_types.go`, `pkg/pipeline/state_guard_test.go`, `pkg/pipeline/config_mutate.go`, `pkg/pipeline/chip.go`, `cmd/vmake/config.go`, `cmd/vmake/query_cmd.go`, `cmd/vmake/build_install.go`, `cmd/vmake/clean.go`, `cmd/vmake/inspect_cmd.go`。
 
 ## DD-32: `--locked` 读原始 lock 条目，float 参与 sync
 
@@ -316,6 +317,18 @@
 - 决策: `vmake skill install` 在安装目录写 `.vmake-skill.json`（`schemaVersion` 1，含 `version`/`commit`/`buildDate`/`skillDigest`/`installedAt`）；`skillDigest` 是嵌入技能 `.md` 内容的 sha256，排除安装时生成的 `references/cli.md`。`vmake doctor` 仅在 `SKILL.md` 存在时检查：记录缺失/无效或摘要不符报 error 并提示重跑 `vmake skill install`；摘要一致时输出一条 ok；技能未安装不报告。
 - 理由: agent 的行为由已安装文档定义，陈旧副本会静默改变结果，因此必须能被命令发现（见 `docs/GOALS.md` 的接口约束）。比较内容摘要而不只是版本，能覆盖同一版本/commit 下重建出的不同技能文本（dirty worktree），这正是技能循环的日常场景；未安装技能是合法状态，不能报 error。
 - 涉及代码: `cmd/vmake/skill_cmd.go`, `cmd/vmake/doctor_cmd.go`, `cmd/vmake/skill_cmd_test.go`, `cmd/vmake/skills/vmake/SKILL.md`, `cmd/vmake/skills/vmake/references/platforms.md`, `docs/AI_INSTALL_GUIDE.md`。
+
+## DD-36: 深化模块边界——统一图展开、无头配置编辑器、构建后生命周期与独立报告/包目录
+
+- 状态: accepted
+- 背景: `cmd/vmake/` 曾聚集了大量领域编排与状态转换逻辑：(1) `pkg/build.NewBuildGraph` 与 `pkg/pipeline.BuildUnifiedGraph` 各自实现了一套目标/包边展开，且 `CheckProjectDeps` 为绕过未物化包在内存中伪造 `TargetVoid` 再二次构图；(2) `pkg/tui.Model`、`cmd/vmake/config.go`、`cmd/vmake/project.go` 与 `pkg/pipeline` 各自维护选项默认值/芯片联动/稀疏持久化与 `-s` 覆盖校验（且临时 `-s` 漏检了 `@local` 的 `internal/` 可见性）；(3) `OnInstall`/`OnClean`/安装清单（`install/manifest.json`）/测试执行（`vmake test`）散落在 `cmd/vmake/`，其中 `OnInstall`/`OnClean` 未经过 `visibleGlobalOptionsFor` 过滤，`vmake manifest checkout` 对本地 `SetGit` 包直接对宿主工程仓库执行 `git checkout`；(4) 构建报告（`vmake-build.json`/`vmake-test.json`）与包目录（`pkg search`/`pkg show`）绑在 `package main` 内，`loadPkgShow` 对未链接缓存的 native 包误传了 `mgr.Path(repoName)`。
+- 决策:
+  1. **统一图展开引擎（`pkg/build/graph.go`）**：保留严格模式的 `NewBuildGraph` 并新增审计模式的 `AuditBuildGraph(targets, pkgMeta, opts ...GraphAuditOptions)`，通过 `PkgBuildMeta.Unmaterialized` 容忍未物化包并填充 `DeclaredDepPkgs`，`CheckProjectDeps` 直接将 `g.buildGraph` 传给 `CheckExistingBuildBoundaries`；修复 `CollectSubGraphPackages` 中 `meta.Deps` 的子包短名解析。
+  2. **无头配置编辑器与统一变更入口（`pkg/config` + `pkg/pipeline` + `pkg/api`）**：`pkg/config` 提供无 BubbleTea 依赖的 `*config.Editor`、`CommitSnapshot`、`SetOption`/`UnsetOption`/`ParseSetFlag`/`ParseUnsetFlag`/`CoerceOptionValue`；`pkg/tui.Model` 委托给 `*config.Editor`；`pkg/api` 提供宿主专用的 `BindEnsureKConfigPreset` 与 `BindChipTargetsApply`；`pkg/pipeline.MutateConfig` 统一持久与临时 `-s`/`-u` 变更并一致执行 `@local` `internal/` 可见性检查。
+  3. **构建后生命周期下沉（`pkg/pipeline`）**：`RunInstall`/`ValidateInstallPrefix`、`LoadInstallManifest`/`WriteManifest`/`PinManifestRemotes`/`ImportManifestIntoLock`/`CheckoutManifest`/`CheckoutManifestLocals`/`CheckoutManifestLocalEntry`/`CheckoutManifestRemoteEntry`（只读加载本地 `build.go` 识别 `SetGit` 并物化托管源树）、`RunClean`/`CleanPackagesInspection`/`ExecuteCleanHooks`（统一使用 `visibleGlobalOptionsFor`）与 `ValidateTestProject`/`RunAllTests` 全部收归 `pkg/pipeline`。
+  4. **独立构建报告（`pkg/buildreport`）与包目录（`pkg/catalog`）**：`pkg/buildreport` 承接 schemaVersion 2 的 `vmake-build.json`/`vmake-test.json` 与 GNU/脚本诊断提取（显式传入 `configSelector`）；`pkg/catalog` 承接只读包目录检索与展示，通过 `BuildPackageSource` 统一 registry/native 脚本源构造并修复缓存 native 包的根目录；`doctor` 的首选工具链探测改走 `openProject` + `inspectionScope`。
+  5. **Git 传输内缝（`pkg/repo`）**：在 `SourceManager` 内部引入未导出的 `gitTransport` 函数回调结构体（默认 CLI 回调 + 故障注入测试回调），将版本/缓存解析（`resolveTargetRevision`）与工作树检出（`materialize`）解耦，保持 `SourceManager` 导出 API 不变。
+- 涉及代码: `pkg/build/graph.go`, `pkg/build/subgraph.go`, `pkg/config/editor.go`, `pkg/config/store.go`, `pkg/tui/model.go`, `pkg/tui/app.go`, `pkg/api/bind.go`, `pkg/pipeline/config_mutate.go`, `pkg/pipeline/install.go`, `pkg/pipeline/manifest.go`, `pkg/pipeline/clean.go`, `pkg/pipeline/test_runner.go`, `pkg/buildreport/`, `pkg/catalog/`, `pkg/repo/source.go`, `cmd/vmake/`。
 
 ## 已知限制 / 待议
 

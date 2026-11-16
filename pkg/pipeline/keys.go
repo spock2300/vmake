@@ -200,7 +200,7 @@ func collectAllPkgOptions(ctx *RuntimeContext, needed NeededSet) map[string]map[
 				if _, exists := opts[optName]; exists {
 					continue
 				}
-				if opt := ctx.AllOptions[name][optName]; opt != nil && api.ValuesEqual(val, opt.Default()) {
+				if opt := ctx.allOptions[name][optName]; opt != nil && api.ValuesEqual(val, opt.Default()) {
 					continue
 				}
 				opts[optName] = val
@@ -210,11 +210,11 @@ func collectAllPkgOptions(ctx *RuntimeContext, needed NeededSet) map[string]map[
 		if ctx.DepGraph != nil {
 			node = ctx.DepGraph.Packages[name]
 		}
-		for optName, opt := range visibleGlobalOptionsFor(node, ctx.AllOptions[name], ctx.globalOptions) {
+		for optName, opt := range visibleGlobalOptionsFor(node, ctx.allOptions[name], ctx.globalOptions) {
 			if opt == nil || opt.ExportDefine() {
 				continue
 			}
-			if localOpt := ctx.AllOptions[name][optName]; localOpt != nil && !localOpt.IsGlobal() {
+			if localOpt := ctx.allOptions[name][optName]; localOpt != nil && !localOpt.IsGlobal() {
 				continue
 			}
 			if _, exists := opts[optName]; exists {

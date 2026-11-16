@@ -36,7 +36,7 @@ func TestDeclareTargetsCrossPackageConfig(t *testing.T) {
 			"owner":  owner,
 			"reader": reader,
 		}},
-		AllOptions: map[string]map[string]*api.Option{"owner": ownerOpts},
+		allOptions: map[string]map[string]*api.Option{"owner": ownerOpts},
 	}
 	srcDir := t.TempDir()
 	dirs := &api.PkgDirs{SourceDir: srcDir, BuildDir: filepath.Join(srcDir, "build", "key")}
@@ -72,7 +72,7 @@ func TestConfigLookupUsesBoundValuesAndReportsMissing(t *testing.T) {
 		DepGraph: &resolver.Graph{Packages: map[string]*resolver.PackageNode{
 			"owner": owner,
 		}},
-		AllOptions: map[string]map[string]*api.Option{"owner": ownerOpts},
+		allOptions: map[string]map[string]*api.Option{"owner": ownerOpts},
 	}
 	lookup := newConfigLookup(ctx, "", nil, func(pkg string) (map[string]any, bool) {
 		if pkg != "owner" {
@@ -104,7 +104,7 @@ func TestConfigLookupGlobalOption(t *testing.T) {
 		DepGraph: &resolver.Graph{Packages: map[string]*resolver.PackageNode{
 			"reader": reader,
 		}},
-		AllOptions:    map[string]map[string]*api.Option{},
+		allOptions:    map[string]map[string]*api.Option{},
 		globalOptions: map[string]*api.Option{"chip": globalOpt},
 	}
 	lookup := newConfigLookup(ctx, "reader", map[string]any{"chip": "py32f537"}, nil)
@@ -128,7 +128,7 @@ func TestConfigLookupGlobalOptionUsesPackageOverride(t *testing.T) {
 		DepGraph: &resolver.Graph{Packages: map[string]*resolver.PackageNode{
 			"reader": reader,
 		}},
-		AllOptions:    map[string]map[string]*api.Option{},
+		allOptions:    map[string]map[string]*api.Option{},
 		globalOptions: map[string]*api.Option{"chip": globalOpt},
 	}
 	lookup := newConfigLookup(ctx, "reader", map[string]any{"chip": "py32f539"}, nil)
@@ -148,7 +148,7 @@ func TestConfigLookupImplicitPlatformOption(t *testing.T) {
 		DepGraph: &resolver.Graph{Packages: map[string]*resolver.PackageNode{
 			"reader": reader,
 		}},
-		AllOptions:    map[string]map[string]*api.Option{},
+		allOptions:    map[string]map[string]*api.Option{},
 		globalOptions: map[string]*api.Option{},
 	}
 	lookup := newConfigLookup(ctx, "reader", map[string]any{}, nil)

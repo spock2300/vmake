@@ -2,10 +2,14 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/spock2300/vmake/internal/jsonio"
+	"github.com/spock2300/vmake/pkg/api"
 )
 
 const ConfigVersion = "1"
@@ -176,4 +180,205 @@ func BuildGlobalValues(cfg *ConfigFile) map[string]any {
 
 func newEntryConfig() *EntryConfig {
 	return &EntryConfig{Options: make(map[string]any)}
+}
+
+func (c *ConfigFile) SetOption(pkg, name string, val any) {
+	if c == nil {
+		return
+	}
+	if pkg == "" {
+		if c.Global == nil {
+			c.Global = &GlobalConfig{Options: make(map[string]any)}
+		}
+		switch name {
+		case api.ToolchainOptionName:
+			if s, ok := val.(string); ok {
+				c.Global.Toolchain = s
+			}
+		case api.ModeOptionName:
+			if s, ok := val.(string); ok {
+				c.Global.Mode = s
+			}
+		default:
+			if c.Global.Options == nil {
+				c.Global.Options = make(map[string]any)
+			}
+			c.Global.Options[name] = val
+		}
+		return
+	}
+	entry := GetEntry(c, pkg)
+	entry.Options[name] = val
+	SetEntry(c, pkg, entry)
+}
+
+func (c *ConfigFile) UnsetOption(pkg, name string) bool {
+	if c == nil {
+		return false
+	}
+	if pkg == "" {
+		if c.Global == nil {
+			return false
+		}
+		switch name {
+		case api.ToolchainOptionName:
+			had := c.Global.Toolchain != ""
+			c.Global.Toolchain = ""
+			return had
+		case api.ModeOptionName:
+			had := c.Global.Mode != ""
+			c.Global.Mode = ""
+			return had
+		default:
+			if c.Global.Options == nil {
+				return false
+			}
+			_, had := c.Global.Options[name]
+			delete(c.Global.Options, name)
+			return had
+		}
+	}
+	if c.Entries == nil {
+		return false
+	}
+	entry, ok := c.Entries[pkg]
+	if !ok || entry == nil || entry.Options == nil {
+		return false
+	}
+	_, had := entry.Options[name]
+	delete(entry.Options, name)
+	return had
+}
+
+func (c *ConfigFile) HasExplicitOption(pkg, name string) bool {
+	if c == nil {
+		return false
+	}
+	if pkg == "" {
+		if c.Global == nil {
+			return false
+		}
+		switch name {
+		case api.ToolchainOptionName:
+			return c.Global.Toolchain != ""
+		case api.ModeOptionName:
+			return c.Global.Mode != ""
+		default:
+			_, ok := c.Global.Options[name]
+			return ok
+		}
+	}
+	if c.Entries == nil {
+		return false
+	}
+	entry := c.Entries[pkg]
+	if entry == nil || entry.Options == nil {
+		return false
+	}
+	_, ok := entry.Options[name]
+	return ok
+}
+
+func ParseSetFlag(flag string) (pkgName, optName, rawVal string, err error) {
+	eqIdx := strings.Index(flag, "=")
+	if eqIdx < 0 {
+		return "", "", "", fmt.Errorf("missing '=' in --set flag: %s", flag)
+	}
+	keyPart := flag[:eqIdx]
+	rawVal = flag[eqIdx+1:]
+	if keyPart == "" {
+		return "", "", "", fmt.Errorf("empty option name in --set flag: %s", flag)
+	}
+	lastSlash := strings.LastIndex(keyPart, "/")
+	if lastSlash < 0 {
+		return "", keyPart, rawVal, nil
+	}
+	pkgName = keyPart[:lastSlash]
+	optName = keyPart[lastSlash+1:]
+	if pkgName == "" || optName == "" {
+		return "", "", "", fmt.Errorf("invalid format in --set flag: %s", flag)
+	}
+	return pkgName, optName, rawVal, nil
+}
+
+func ParseUnsetFlag(flag string) (pkgName, optName string, err error) {
+	trimmed := strings.TrimSpace(flag)
+	if trimmed == "" {
+		return "", "", fmt.Errorf("empty option name in --unset flag")
+	}
+	if strings.Contains(trimmed, "=") {
+		return "", "", fmt.Errorf("unexpected '=' in --unset flag: %s (expected [pkg/]option)", flag)
+	}
+	lastSlash := strings.LastIndex(trimmed, "/")
+	if lastSlash < 0 {
+		return "", trimmed, nil
+	}
+	pkgName = trimmed[:lastSlash]
+	optName = trimmed[lastSlash+1:]
+	if pkgName == "" || optName == "" {
+		return "", "", fmt.Errorf("invalid format in --unset flag: %s", flag)
+	}
+	return pkgName, optName, nil
+}
+
+func CoerceOptionValue(opt *api.Option, raw, keyLabel string) (any, error) {
+	if opt == nil {
+		return nil, fmt.Errorf("nil option definition for %s", keyLabel)
+	}
+	val, err := CoerceValue(raw, opt.Type())
+	if err != nil {
+		if keyLabel != "" {
+			return nil, fmt.Errorf("%s: %w", keyLabel, err)
+		}
+		return nil, err
+	}
+	if opt.Type() == api.OptionChoice {
+		s, _ := val.(string)
+		if !IsValidChoice(s, opt.Values()) {
+			if keyLabel != "" {
+				return nil, fmt.Errorf("%s: invalid choice %q (available: %s)", keyLabel, s, strings.Join(opt.Values(), ", "))
+			}
+			return nil, fmt.Errorf("invalid choice %q (available: %s)", s, strings.Join(opt.Values(), ", "))
+		}
+	}
+	return val, nil
+}
+
+func CoerceValue(raw string, optType api.OptionType) (any, error) {
+	switch optType {
+	case api.OptionBool:
+		switch strings.ToLower(raw) {
+		case "true", "on", "1":
+			return true, nil
+		case "false", "off", "0":
+			return false, nil
+		default:
+			return nil, fmt.Errorf("invalid bool value: %q (use true/false, on/off, or 1/0)", raw)
+		}
+	case api.OptionInt:
+		f, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid int value: %q", raw)
+		}
+		if f != float64(int(f)) {
+			return nil, fmt.Errorf("invalid int value: %q (must be an integer)", raw)
+		}
+		return f, nil
+	case api.OptionString, api.OptionChoice:
+		return raw, nil
+	default:
+		return nil, fmt.Errorf("unknown option type: %d", optType)
+	}
+}
+
+func IsValidChoice(val string, choices []string) bool {
+	if len(choices) == 0 {
+		return true
+	}
+	for _, c := range choices {
+		if c == val {
+			return true
+		}
+	}
+	return false
 }

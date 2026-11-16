@@ -7,25 +7,11 @@ import (
 	"github.com/spock2300/vmake/pkg/build"
 )
 
-type PackageEdge struct {
-	From  string   `json:"from"`
-	To    string   `json:"to"`
-	Kinds []string `json:"kinds"`
-	Via   []string `json:"via,omitempty"`
-}
+type PackageEdge = build.PackageEdge
 
-type TargetEdge struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-}
+type TargetEdge = build.TargetEdge
 
-type GraphIssue struct {
-	Severity string `json:"severity"`
-	Kind     string `json:"kind"`
-	Package  string `json:"package,omitempty"`
-	Target   string `json:"target,omitempty"`
-	Message  string `json:"message"`
-}
+type GraphIssue = build.GraphIssue
 
 type UnifiedGraph struct {
 	Roots        []string            `json:"roots"`
@@ -42,6 +28,7 @@ type UnifiedGraph struct {
 	declaredCtxs    map[string]*api.BuildContext
 	pkgMeta         map[string]build.PkgBuildMeta
 	unmaterialized  map[string]bool
+	buildGraph      *build.BuildGraph
 	inspection      *Inspection
 }
 

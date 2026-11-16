@@ -20,15 +20,15 @@ func TestResolveInitialStateDerivesChipToolchainAndDefaults(t *testing.T) {
 			"chip-a": {Name: "chip-a", PreferredToolchain: "tc-a", TargetOS: "none", TargetTriple: "arm"},
 		},
 	})
-	if got := state.globalValues[api.ToolchainOptionName]; got != "tc-a" {
+	if got := state.GlobalValues[api.ToolchainOptionName]; got != "tc-a" {
 		t.Fatalf("derived toolchain = %v, want tc-a", got)
 	}
-	if !state.derivedGlobals[api.ToolchainOptionName] ||
-		!state.derivedGlobals[api.TargetOSOptionName] ||
-		!state.derivedGlobals[api.TargetTripleOptionName] {
-		t.Fatalf("derived flags = %v", state.derivedGlobals)
+	if !state.DerivedGlobals[api.ToolchainOptionName] ||
+		!state.DerivedGlobals[api.TargetOSOptionName] ||
+		!state.DerivedGlobals[api.TargetTripleOptionName] {
+		t.Fatalf("derived flags = %v", state.DerivedGlobals)
 	}
-	if got := state.globalValues["mode"]; got != "debug" {
+	if got := state.GlobalValues["mode"]; got != "debug" {
 		t.Fatalf("mode = %v, want debug", got)
 	}
 }
@@ -52,19 +52,19 @@ func TestResolveInitialStatePreservesExplicitToolchainAndInputMaps(t *testing.T)
 		GlobalValues:  globalValues,
 		Values:        values,
 	})
-	if got := state.globalValues[api.ToolchainOptionName]; got != "explicit" {
+	if got := state.GlobalValues[api.ToolchainOptionName]; got != "explicit" {
 		t.Fatalf("explicit toolchain = %v, want explicit", got)
 	}
-	if state.derivedGlobals[api.ToolchainOptionName] {
+	if state.DerivedGlobals[api.ToolchainOptionName] {
 		t.Fatal("explicit toolchain must not be marked derived")
 	}
-	if got := state.globalValues["mode"]; got != api.ModeDebug {
+	if got := state.GlobalValues["mode"]; got != api.ModeDebug {
 		t.Fatalf("mode = %v, want %s", got, api.ModeDebug)
 	}
-	if _, ok := state.values["app"][api.ToolchainOptionName]; ok {
+	if _, ok := state.Values["app"][api.ToolchainOptionName]; ok {
 		t.Fatal("global option value must be removed from package values")
 	}
-	if got := state.values["app"]["local"]; got != true {
+	if got := state.Values["app"]["local"]; got != true {
 		t.Fatalf("local default = %v, want true", got)
 	}
 

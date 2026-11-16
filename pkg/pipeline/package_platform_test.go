@@ -56,7 +56,7 @@ func TestPackagePlatformBeforeTargetDeclaration(t *testing.T) {
 				for key, value := range test.local {
 					locals.Option(key).SetType(api.OptionString).SetDefault(value)
 				}
-				ctx := &RuntimeContext{Config: emptyConfig(), Resolver: r, DepGraph: r.Graph(), globalOptions: globals.GetOptions(), AllOptions: map[string]map[string]*api.Option{"app": locals.GetOptions()}}
+				ctx := &RuntimeContext{Config: emptyConfig(), Resolver: r, DepGraph: r.Graph(), globalOptions: globals.GetOptions(), allOptions: map[string]map[string]*api.Option{"app": locals.GetOptions()}}
 				ctx.Paths = &Paths{ProjectDir: root, DepsDir: filepath.Join(root, ".vmake_deps"), CacheDir: filepath.Join(root, "cache")}
 				ctx.Config.Global.Options = test.global
 				config.SetEntry(ctx.Config, "app", &config.EntryConfig{Options: test.explicit})
@@ -155,7 +155,7 @@ func TestPackagePlatformBuildAndInspectKeys(t *testing.T) {
 	localOS := options.Option(api.TargetOSOptionName).SetType(api.OptionString).SetDefault("none")
 	ctx := &RuntimeContext{
 		Resolver: r, DepGraph: r.Graph(), Config: emptyConfig(),
-		AllOptions: map[string]map[string]*api.Option{"app": options.GetOptions()},
+		allOptions: map[string]map[string]*api.Option{"app": options.GetOptions()},
 		Paths:      &Paths{DepsDir: filepath.Join(root, "deps"), CacheDir: filepath.Join(root, "cache")},
 	}
 	var previousDir string
@@ -212,7 +212,7 @@ func TestInspectUsesUnreachablePackagePlatform(t *testing.T) {
 	options.Option(api.TargetOSOptionName).SetType(api.OptionString).SetDefault("none")
 	options.Option(api.TargetTripleOptionName).SetType(api.OptionString).SetDefault("arm-none-eabi")
 	ctx := &RuntimeContext{Resolver: r, DepGraph: r.Graph(), Config: emptyConfig(),
-		AllOptions: map[string]map[string]*api.Option{"unused": options.GetOptions()},
+		allOptions: map[string]map[string]*api.Option{"unused": options.GetOptions()},
 	}
 	inspection, err := Inspect(ctx)
 	if err != nil {

@@ -22,7 +22,7 @@ func TestDisplayDefaultsFillUnsetGlobalOptions(t *testing.T) {
 		cfg.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString)
 		cfg.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString)
 	})
-	m.displayDefaults = func(name string) map[string]any {
+	m.ed().DisplayDefaults = func(name string) map[string]any {
 		if name != "arm-toolchain" {
 			return nil
 		}
@@ -38,7 +38,7 @@ func TestDisplayDefaultsFillUnsetGlobalOptions(t *testing.T) {
 	if m.isOptionModified(api.TargetTripleOptionName) {
 		t.Error("toolchain-provided default must not count as modified")
 	}
-	if _, ok := m.globalValues[api.TargetTripleOptionName]; ok {
+	if _, ok := m.ed().GlobalValues[api.TargetTripleOptionName]; ok {
 		t.Error("toolchain-provided default must not be stored as an explicit value")
 	}
 
@@ -70,7 +70,7 @@ func TestDisplayDefaultsIgnoreStoredEmptyValues(t *testing.T) {
 	model := testModel(mkSources("app"), nil, nil, map[string]map[string]any{}, "/w", "arm-toolchain", cfg.GetOptions(), map[string]any{api.TargetTripleOptionName: ""}, nil)
 	model.selectedPkg = GlobalPkgName
 	model.buildOptionItems()
-	model.displayDefaults = func(name string) map[string]any {
+	model.ed().DisplayDefaults = func(name string) map[string]any {
 		if name != "arm-toolchain" {
 			return nil
 		}
@@ -88,7 +88,7 @@ func TestDisplayDefaultsUnchangedEditIsNoOp(t *testing.T) {
 	m := newGlobalModel(t, "arm-toolchain", func(cfg *api.ConfigContext) {
 		cfg.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString)
 	})
-	m.displayDefaults = func(name string) map[string]any {
+	m.ed().DisplayDefaults = func(name string) map[string]any {
 		if name != "arm-toolchain" {
 			return nil
 		}
@@ -99,7 +99,7 @@ func TestDisplayDefaultsUnchangedEditIsNoOp(t *testing.T) {
 	m.editInput = "arm-none-eabi"
 	m.editCursor = len(m.editInput)
 	m.handleEditKey(tea.KeyMsg{Type: tea.KeyEnter})
-	if _, ok := m.globalValues[api.TargetTripleOptionName]; ok {
+	if _, ok := m.ed().GlobalValues[api.TargetTripleOptionName]; ok {
 		t.Error("confirming an unchanged placeholder must not store it")
 	}
 
@@ -107,7 +107,7 @@ func TestDisplayDefaultsUnchangedEditIsNoOp(t *testing.T) {
 	m.editInput = "aarch64-none-elf"
 	m.editCursor = len(m.editInput)
 	m.handleEditKey(tea.KeyMsg{Type: tea.KeyEnter})
-	if got := m.globalValues[api.TargetTripleOptionName]; got != "aarch64-none-elf" {
+	if got := m.ed().GlobalValues[api.TargetTripleOptionName]; got != "aarch64-none-elf" {
 		t.Errorf("changed edit value = %v", got)
 	}
 }
@@ -130,7 +130,7 @@ func TestDisplayDefaultsRespectDeclaredDefaults(t *testing.T) {
 	m := newGlobalModel(t, "arm-toolchain", func(cfg *api.ConfigContext) {
 		cfg.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString).SetDefault("riscv64-unknown-elf")
 	})
-	m.displayDefaults = func(string) map[string]any {
+	m.ed().DisplayDefaults = func(string) map[string]any {
 		return map[string]any{api.TargetTripleOptionName: "arm-none-eabi"}
 	}
 	if got := m.getValue(api.TargetTripleOptionName); got != "riscv64-unknown-elf" {
@@ -147,7 +147,7 @@ func TestDisplayDefaultsResetDoesNotPersistPlaceholder(t *testing.T) {
 	m := newGlobalModel(t, "arm-toolchain", func(cfg *api.ConfigContext) {
 		cfg.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString)
 	})
-	m.displayDefaults = func(name string) map[string]any {
+	m.ed().DisplayDefaults = func(name string) map[string]any {
 		if name != "arm-toolchain" {
 			return nil
 		}
@@ -155,16 +155,16 @@ func TestDisplayDefaultsResetDoesNotPersistPlaceholder(t *testing.T) {
 	}
 
 	m.resetOption(api.TargetTripleOptionName)
-	if _, ok := m.globalValues[api.TargetTripleOptionName]; ok {
+	if _, ok := m.ed().GlobalValues[api.TargetTripleOptionName]; ok {
 		t.Error("resetOption must not store the display fallback")
 	}
-	if m.hasChanges {
+	if m.ed().HasChanges() {
 		t.Error("resetOption on an untouched option must not mark changes")
 	}
 
 	m.setValue(api.TargetTripleOptionName, "aarch64-none-elf")
 	m.resetOptionToDefault(api.TargetTripleOptionName)
-	if _, ok := m.globalValues[api.TargetTripleOptionName]; ok {
+	if _, ok := m.ed().GlobalValues[api.TargetTripleOptionName]; ok {
 		t.Error("resetOptionToDefault must not store the display fallback")
 	}
 	if m.isOptionModified(api.TargetTripleOptionName) {

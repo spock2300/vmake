@@ -133,9 +133,9 @@ func TestCustomMenuconfigStartsWithoutMake(t *testing.T) {
 	entry := (&api.KConfigEntry{}).SetSrcDir(dir).SetConfigPath(".config").SelectPreset("selected_defconfig").SetMenuconfigCmd(exe, "-test.run=^$")
 	m := Model{
 		workDir: dir, selectedPkg: "firmware",
-		globalValues: map[string]any{"toolchain": "unused-missing-toolchain"},
-		kconfigs:     map[string][]*api.KConfigEntry{"firmware": {entry}},
 	}
+	m.ed().GlobalValues = map[string]any{"toolchain": "unused-missing-toolchain"}
+	m.ed().KConfigs = map[string][]*api.KConfigEntry{"firmware": {entry}}
 	_, ensure := m.handleOptionsKey(tea.KeyMsg{Type: tea.KeyEnter})
 	if ensure == nil || !m.runningMenuconfig || m.menuconfigErr != nil {
 		t.Fatalf("menuconfig did not start: %v", m.menuconfigErr)
@@ -177,8 +177,8 @@ func TestToolchainDiagnosticsPreserveInvalidSelection(t *testing.T) {
 	global := map[string]*api.Option{"toolchain": (&api.Option{}).SetType(api.OptionChoice).SetDefault("host").SetValues("host")}
 	m := testModel(nil, nil, nil, nil, t.TempDir(), "broken", global, nil, nil)
 	m.language = languageEnglish
-	if getToolchainValue(m.globalValues) != "broken" {
-		t.Fatalf("selection was replaced: %v", m.globalValues)
+	if getToolchainValue(m.ed().GlobalValues) != "broken" {
+		t.Fatalf("selection was replaced: %v", m.ed().GlobalValues)
 	}
 	m.width = 120
 	footer := m.renderFooter()
@@ -187,7 +187,7 @@ func TestToolchainDiagnosticsPreserveInvalidSelection(t *testing.T) {
 			t.Fatalf("footer missing %q: %s", want, footer)
 		}
 	}
-	m.globalValues["toolchain"] = "host"
+	m.ed().GlobalValues["toolchain"] = "host"
 	if strings.Contains(m.toolchainDiagnostics(), "Selected toolchain") {
 		t.Fatal("healthy selection still reports a selection error")
 	}

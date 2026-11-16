@@ -51,7 +51,7 @@ func ActivatePackage(ctx *RuntimeContext, name string, dirs api.PkgDirs, tc *too
 	var node = ctx.DepGraph.Packages[name]
 	if node != nil && node.Pkg != nil {
 		pkg := node.Pkg
-		allOpts := ctx.AllOptions[name]
+		allOpts := ctx.allOptions[name]
 		if allOpts == nil {
 			allOpts = pkg.GetOptions()
 		}

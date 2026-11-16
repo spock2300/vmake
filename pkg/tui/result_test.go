@@ -21,10 +21,10 @@ func TestNewModelDescriptionAndDisplayDefaults(t *testing.T) {
 			return map[string]any{"x": "y"}
 		},
 	})
-	if m.description != "desc" || m.origDescription != "desc" {
-		t.Fatalf("description = %q / %q, want desc/desc", m.description, m.origDescription)
+	if m.ed().Desc != "desc" || m.ed().OrigDesc != "desc" {
+		t.Fatalf("description = %q / %q, want desc/desc", m.ed().Desc, m.ed().OrigDesc)
 	}
-	if m.hasChanges {
+	if m.ed().HasChanges() {
 		t.Error("construction should not report changes")
 	}
 	if got := m.result().Description; got != "desc" {
@@ -41,9 +41,9 @@ func TestNewModelDescriptionAndDisplayDefaults(t *testing.T) {
 func TestModelResult(t *testing.T) {
 	m := testModel(mkSources("app"), nil, nil, map[string]map[string]any{}, "/w", "gcc", nil, nil, nil)
 	m.saved = true
-	m.description = "desc"
-	m.menuconfigRan["app"] = true
-	m.presetValues["app"] = "default"
+	m.ed().Desc = "desc"
+	m.ed().MenuconfigRan["app"] = true
+	m.ed().PresetValues["app"] = "default"
 
 	result := m.result()
 	if !result.Saved || result.Description != "desc" {
@@ -114,7 +114,7 @@ func TestModelResultSparseExplicitAndDerivedDefaults(t *testing.T) {
 	m.selectedPkg = "app"
 	m.buildOptionItems()
 	m.resetOptionToDefault("demo")
-	if !m.hasChanges || !m.isOptionModified("demo") {
+	if !m.ed().HasChanges() || !m.isOptionModified("demo") {
 		t.Fatal("resetting explicit option to default must mark model as modified")
 	}
 	res = m.result()

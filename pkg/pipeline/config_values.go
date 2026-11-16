@@ -8,7 +8,7 @@ import (
 )
 
 func DisplayPackageValues(ctx *RuntimeContext, name string, globalValues map[string]any) map[string]any {
-	opts := ctx.AllOptions[name]
+	opts := ctx.allOptions[name]
 	values := maps.Clone(config.GetEntry(ctx.Config, name).Options)
 	if values == nil {
 		values = make(map[string]any)

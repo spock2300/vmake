@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
+	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/resolver"
 )
@@ -318,7 +318,7 @@ func inspectOneLine(message string) string {
 func parseInspectOverrides(flags []string) ([]inspectOverride, error) {
 	overrides := make([]inspectOverride, 0, len(flags))
 	for _, flag := range flags {
-		pkgName, optName, raw, err := parseSetFlag(flag)
+		pkgName, optName, raw, err := config.ParseSetFlag(flag)
 		if err != nil {
 			return nil, err
 		}
@@ -332,60 +332,6 @@ func (o inspectOverride) key() string {
 		return o.optName
 	}
 	return o.pkgName + "/" + o.optName
-}
-
-func validateInspectOverride(ctx *RuntimeContext, override inspectOverride) error {
-	opt, err := inspectOverrideOption(ctx, override.pkgName, override.optName)
-	if err != nil {
-		return err
-	}
-	key := override.key()
-	switch opt.Type() {
-	case api.OptionBool:
-		if _, ok := override.value.(bool); !ok {
-			return fmt.Errorf("%s: expected bool, got %v", key, override.value)
-		}
-	case api.OptionInt:
-		if _, ok := override.value.(float64); !ok {
-			return fmt.Errorf("%s: expected int, got %v", key, override.value)
-		}
-	case api.OptionString:
-		if _, ok := override.value.(string); !ok {
-			return fmt.Errorf("%s: expected string, got %v", key, override.value)
-		}
-	case api.OptionChoice:
-		value, ok := override.value.(string)
-		if !ok {
-			return fmt.Errorf("%s: expected choice, got %v", key, override.value)
-		}
-		if !isValidChoice(value, opt.Values()) {
-			return fmt.Errorf("%s: invalid choice %q (available: %s)", key, value, strings.Join(opt.Values(), ", "))
-		}
-	}
-	return nil
-}
-
-func inspectOverrideOption(ctx *RuntimeContext, pkgName, optName string) (*api.Option, error) {
-	if pkgName == "" {
-		opt, ok := ctx.GlobalOptions()[optName]
-		if !ok {
-			return nil, fmt.Errorf("global option %q not found (available: %s)", optName, strings.Join(sortedOptionNames(ctx.GlobalOptions()), ", "))
-		}
-		return opt, nil
-	}
-	pkgName = resolveSetPackageName(ctx, pkgName)
-	if ctx.DepGraph == nil || ctx.DepGraph.Packages[pkgName] == nil {
-		return nil, fmt.Errorf("package %q not found", pkgName)
-	}
-	opts := ctx.AllOptions[pkgName]
-	opt, ok := opts[optName]
-	if !ok {
-		return nil, fmt.Errorf("option %q not found in package %q (available: %s)", optName, pkgName, strings.Join(sortedOptionNames(opts), ", "))
-	}
-	if opt.IsGlobal() {
-		return nil, fmt.Errorf("option %q in package %q is global; set it without a package prefix: %s=...", optName, pkgName, optName)
-	}
-	return opt, nil
 }
 
 func inspectOverrideValues(overrides []inspectOverride) map[string]any {
@@ -489,7 +435,7 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 		if view.Platform != nil {
 			pkg.Platform = &inspectPlatform{TargetOS: view.Platform.OS, TargetTriple: view.Platform.Triple}
 		}
-		pkg.OptionDefs = inspectOptionDefs(ctx.AllOptions[name])
+		pkg.OptionDefs = inspectOptionDefs(ctx.PackageOptions(name))
 		if source.Diagnostic != nil {
 			diagnostics = append(diagnostics, *source.Diagnostic)
 		}
@@ -688,11 +634,11 @@ func inspectRemoteMetadata(ctx *RuntimeContext, name string, node *resolver.Pack
 }
 
 func inspectPackageOptions(ctx *RuntimeContext, name string, values map[string]any) map[string]any {
-	opts := ctx.AllOptions[name]
+	opts := ctx.PackageOptions(name)
 	if len(opts) == 0 || len(values) == 0 {
 		return nil
 	}
-	acc := api.NewConfigAccessor(values, maps.Clone(opts))
+	acc := api.NewConfigAccessor(values, opts)
 	out := make(map[string]any, len(opts))
 	for optName, opt := range opts {
 		raw, exists := values[optName]
@@ -715,7 +661,7 @@ func inspectPackageOptions(ctx *RuntimeContext, name string, values map[string]a
 }
 
 func packageConfigAccessor(ctx *RuntimeContext, name string, globalValues map[string]any) api.ConfigAccessor {
-	acc := api.NewConfigAccessor(pipeline.DisplayPackageValues(ctx, name, globalValues), maps.Clone(ctx.AllOptions[name]))
+	acc := api.NewConfigAccessor(pipeline.DisplayPackageValues(ctx, name, globalValues), ctx.PackageOptions(name))
 	acc.MergeGlobals(ctx.GlobalOptions(), globalValues)
 	return acc
 }

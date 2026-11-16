@@ -17,7 +17,7 @@ func detailScrollModel(lang language, width, height int) Model {
 	def := strings.Repeat("默认路径/default/", 12) + "\nDEFAULT_END"
 	current := strings.Repeat("当前路径/current/", 12) + "\nCURRENT_END"
 	desc := strings.Repeat("中文说明 wrapped description ", 16) + "\nDESCRIPTION_END"
-	m.options["app"]["level"] = mkOpt("level", api.OptionChoice, def).
+	m.ed().Options["app"]["level"] = mkOpt("level", api.OptionChoice, def).
 		SetValues(def, current, strings.Repeat("候选值/choice/", 12)+"\nCHOICES_END").
 		SetDescription(desc)
 	m.setValue("level", current)
@@ -76,7 +76,7 @@ func TestDetailScrollReachesCompleteContent(t *testing.T) {
 				if !strings.Contains(strings.Join(strings.Fields(seen.String()), " "), status) {
 					t.Fatalf("scrolling never revealed modification status %q", status)
 				}
-				if m.overlay != overlayDetail || m.getValue("level") != current || !m.hasChanges {
+				if m.overlay != overlayDetail || m.getValue("level") != current || !m.ed().HasChanges() {
 					t.Fatal("scrolling changed the option or closed its details")
 				}
 			})
@@ -173,7 +173,7 @@ func TestDetailScrollMouseAndReset(t *testing.T) {
 			if m.detailOff != 0 {
 				t.Fatal("reopening details retained the old offset")
 			}
-			if !strings.Contains(detailScrollView(t, &m), "level") || m.getValue("level") != current || !m.hasChanges {
+			if !strings.Contains(detailScrollView(t, &m), "level") || m.getValue("level") != current || !m.ed().HasChanges() {
 				t.Fatal("mouse navigation changed the value or failed to reopen at the beginning")
 			}
 		})

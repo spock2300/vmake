@@ -134,7 +134,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		}
 		names = append(names, name)
 		nameSet[name] = true
-		if len(ctx.AllOptions[name]) > 0 {
+		if len(ctx.allOptions[name]) > 0 {
 			packageValues[name] = DisplayPackageValues(ctx, name, pre.cfg.GlobalValues)
 		}
 		packagePlatforms[name] = platformFromValues(packagePlatformValues(ctx, name, pre.cfg.GlobalValues))

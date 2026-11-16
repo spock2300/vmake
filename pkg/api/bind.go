@@ -1,5 +1,11 @@
 package api
 
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
 func BindSetConfigLookup(accessor *ConfigAccessor, fn func(pkg, name string) (any, *Option, error)) {
 	accessor.setConfigLookup(fn)
 }
@@ -132,4 +138,71 @@ func BindPackageName(p *Package) string {
 
 func BindPackageRepo(p *Package) string {
 	return p.repo
+}
+
+func BindEnsureKConfigPreset(
+	entry *KConfigEntry,
+	fallbackSrcDir string,
+	requirePreset bool,
+	runMake func(dir string, extraEnv map[string]string, args ...string) error,
+) (bool, error) {
+	srcDir := fallbackSrcDir
+	if srcDir == "" && entry != nil {
+		srcDir = entry.SrcDir()
+	}
+	if srcDir == "" {
+		return false, nil
+	}
+	configName := ".config"
+	if entry != nil && entry.ConfigPath() != "" {
+		configName = entry.ConfigPath()
+	}
+	configPath := filepath.Join(srcDir, configName)
+	if info, err := os.Stat(configPath); err == nil && info.Size() > 0 {
+		return false, nil
+	}
+	preset := ""
+	if entry != nil {
+		if entry.SelectedPreset() != "" {
+			preset = entry.SelectedPreset()
+		} else {
+			preset = entry.DefaultPreset()
+		}
+	}
+	if preset == "" {
+		if requirePreset {
+			return false, fmt.Errorf("no kconfig preset selected; configure one via AddKConfig().SetDefaultPreset(...) or vmake config")
+		}
+		return false, nil
+	}
+	var extraEnv map[string]string
+	if configName != ".config" {
+		extraEnv = map[string]string{"KCONFIG_CONFIG": filepath.ToSlash(configPath)}
+	}
+	if err := runMake(srcDir, extraEnv, preset); err != nil {
+		return false, err
+	}
+	if entry != nil {
+		if err := ApplyKConfigPatches(configPath, entry.Patches()); err != nil {
+			return false, fmt.Errorf("apply kconfig patches: %w", err)
+		}
+	}
+	return true, nil
+}
+
+func BindChipTargetsApply(profile ChipProfile, toolchainName string, lookupTriple func(string) string) bool {
+	if profile.Name == "" {
+		return false
+	}
+	if profile.PreferredToolchain == "" || toolchainName == profile.PreferredToolchain {
+		return true
+	}
+	if toolchainName == "" || toolchainName == "host" {
+		return false
+	}
+	if lookupTriple == nil {
+		return true
+	}
+	triple := lookupTriple(toolchainName)
+	return triple == "" || triple == profile.TargetTriple
 }

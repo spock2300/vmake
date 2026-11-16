@@ -93,14 +93,14 @@ func TestPkgStatusReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	status := reader.forPackage("official", "zlib")
+	status := reader.ForPackage("official", "zlib")
 	if status == nil {
 		t.Fatal("missing package status")
 	}
 	if status.Cached != "1.3.1" || status.Locked != "1.3.1" || !status.Installed {
 		t.Fatalf("status = %+v", status)
 	}
-	if got := reader.forPackage("official", "unknown"); got != nil {
+	if got := reader.ForPackage("official", "unknown"); got != nil {
 		t.Fatalf("unknown package status = %+v", got)
 	}
 }

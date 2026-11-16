@@ -119,7 +119,7 @@ func runQueryConfig(cmd *cobra.Command, args []string) {
 	if opts == nil {
 		opts = make(map[string]*api.Option)
 	}
-	maps.Copy(opts, ctx.AllOptions[name])
+	maps.Copy(opts, ctx.PackageOptions(name))
 
 	globalValues := pipeline.ProjectGlobalValues(ctx)
 	vals := pipeline.DisplayPackageValues(ctx, name, globalValues)
@@ -361,8 +361,8 @@ func printInspectDiagnostics(diagnostics []inspectDiagnostic) {
 }
 
 func formatOptions(ctx *RuntimeContext, name string, globalValues map[string]any) string {
-	opts, ok := ctx.AllOptions[name]
-	if !ok {
+	opts := ctx.PackageOptions(name)
+	if len(opts) == 0 {
 		return ""
 	}
 

@@ -3,26 +3,36 @@ package pipeline
 import (
 	"strings"
 	"testing"
+
+	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/build"
 )
 
-func newTestGraphValidator(needed map[string]bool, visPath map[string]string) (*graphValidator, *[]GraphIssue) {
-	issues := &[]GraphIssue{}
-	lookup := func(pkg string) string { return visPath[pkg] }
-	return newGraphValidator(needed, lookup, func(issue GraphIssue) {
-		*issues = append(*issues, issue)
-	}), issues
+func makeAuditTarget(name string, deps ...string) *api.Target {
+	tr := api.NewTargetRegistry()
+	t := tr.Target(name)
+	t.AddDeps(deps)
+	return t
 }
 
-func TestGraphValidatorCrossPkgOnBuildReportsMissingDependency(t *testing.T) {
-	validator, issues := newTestGraphValidator(map[string]bool{"app": true}, nil)
-
-	if validator.crossPkgOnBuild("app", "dep", "app:app", "dep") {
-		t.Fatal("crossPkgOnBuild allowed a reference to an unneeded package")
+func TestAuditBuildGraphCrossPkgOnBuildReportsMissingDependency(t *testing.T) {
+	bg := build.AuditBuildGraph(
+		map[string]map[string]*api.Target{
+			"app": {"app": makeAuditTarget("app", "dep")},
+		},
+		map[string]build.PkgBuildMeta{
+			"app": {},
+			"dep": {},
+		},
+		build.GraphAuditOptions{
+			Needed:   map[string]bool{"app": true},
+			Included: map[string]bool{"app": true},
+		},
+	)
+	if len(bg.Issues) != 1 {
+		t.Fatalf("issues = %+v, want exactly one", bg.Issues)
 	}
-	if len(*issues) != 1 {
-		t.Fatalf("issues = %+v, want exactly one", *issues)
-	}
-	issue := (*issues)[0]
+	issue := bg.Issues[0]
 	if issue.Kind != "missing-dependency" || issue.Severity != "error" || issue.Package != "app" || issue.Target != "app:app" {
 		t.Fatalf("issue = %+v", issue)
 	}
@@ -31,47 +41,46 @@ func TestGraphValidatorCrossPkgOnBuildReportsMissingDependency(t *testing.T) {
 	}
 }
 
-func TestGraphValidatorCrossPkgOnBuildAllowsDeclaredSelfAndEmpty(t *testing.T) {
-	validator, issues := newTestGraphValidator(map[string]bool{"app": true, "dep": true}, nil)
-
-	for _, tc := range []struct {
-		name                string
-		from, to, ref, ref2 string
-	}{
-		{"declared", "app", "dep", "app:app", "dep"},
-		{"self", "app", "app", "app:app", "app"},
-		{"empty target", "", "dep", "app:app", "dep"},
-		{"empty source", "app", "", "app:app", "dep"},
-	} {
-		if !validator.crossPkgOnBuild(tc.from, tc.to, tc.ref, tc.ref2) {
-			t.Fatalf("%s: reference rejected", tc.name)
-		}
-	}
-	if len(*issues) != 0 {
-		t.Fatalf("issues = %+v, want none", *issues)
-	}
-
-	unneeded := map[string]bool{"dep": true}
-	validator, issues = newTestGraphValidator(unneeded, nil)
-	if !validator.crossPkgOnBuild("app", "dep", "app:app", "dep") {
-		t.Fatal("reference from an unneeded package was rejected")
-	}
-	if len(*issues) != 0 {
-		t.Fatalf("issues = %+v, want none", *issues)
+func TestAuditBuildGraphCrossPkgOnBuildAllowsDeclaredAndSelf(t *testing.T) {
+	bg := build.AuditBuildGraph(
+		map[string]map[string]*api.Target{
+			"app": {"app": makeAuditTarget("app", "dep:lib"), "self": makeAuditTarget("self", "app")},
+			"dep": {"lib": makeAuditTarget("lib")},
+		},
+		map[string]build.PkgBuildMeta{
+			"app": {Deps: []string{"dep"}},
+			"dep": {},
+		},
+		build.GraphAuditOptions{
+			Needed:   map[string]bool{"app": true, "dep": true},
+			Included: map[string]bool{"app": true, "dep": true},
+		},
+	)
+	if len(bg.Issues) != 0 {
+		t.Fatalf("issues = %+v, want none", bg.Issues)
 	}
 }
 
-func TestGraphValidatorInternalVisibilityDedupesPerPair(t *testing.T) {
-	validator, issues := newTestGraphValidator(
-		map[string]bool{"app": true},
-		map[string]string{"app": "apps/app", "dep": "hl/sdk/internal/core"},
+func TestAuditBuildGraphInternalVisibilityDedupesPerPair(t *testing.T) {
+	bg := build.AuditBuildGraph(
+		map[string]map[string]*api.Target{
+			"app": {
+				"app":   makeAuditTarget("app", "dep"),
+				"other": makeAuditTarget("other", "dep"),
+			},
+		},
+		map[string]build.PkgBuildMeta{
+			"app": {VisPath: "apps/app"},
+			"dep": {VisPath: "hl/sdk/internal/core"},
+		},
+		build.GraphAuditOptions{
+			Needed:   map[string]bool{"app": true},
+			Included: map[string]bool{"app": true},
+		},
 	)
 
-	validator.crossPkgOnBuild("app", "dep", "app:app", "dep")
-	validator.crossPkgOnBuild("app", "dep", "app:other", "dep")
-
 	var internal, missing int
-	for _, issue := range *issues {
+	for _, issue := range bg.Issues {
 		switch issue.Kind {
 		case "internal-visibility":
 			internal++
@@ -94,64 +103,33 @@ func TestGraphValidatorInternalVisibilityDedupesPerPair(t *testing.T) {
 	}
 }
 
-func TestGraphValidatorInternalVisibilityIgnoresExportedPackages(t *testing.T) {
-	validator, issues := newTestGraphValidator(
-		map[string]bool{"app": true},
-		map[string]string{"app": "apps/app", "dep": "hl/sdk/core"},
+func TestAuditBuildGraphReportsPackageAndTargetCycles(t *testing.T) {
+	bg := build.AuditBuildGraph(
+		map[string]map[string]*api.Target{
+			"a": {"x": makeAuditTarget("x", "y"), "y": makeAuditTarget("y", "x")},
+			"b": {},
+		},
+		map[string]build.PkgBuildMeta{
+			"a": {Deps: []string{"b"}},
+			"b": {Deps: []string{"a"}},
+		},
 	)
-
-	validator.internalVisibility("app", "dep", "app:app")
-	if len(*issues) != 0 {
-		t.Fatalf("issues = %+v, want none for an exported package", *issues)
+	var pkgCycles, targetCycles int
+	for _, issue := range bg.Issues {
+		switch issue.Kind {
+		case "package-cycle":
+			pkgCycles++
+			if !strings.Contains(issue.Message, "package circular dependency detected:") || !strings.Contains(issue.Message, "(OnRequire") {
+				t.Fatalf("message = %q", issue.Message)
+			}
+		case "target-cycle":
+			targetCycles++
+			if issue.Package != "a" || !strings.HasPrefix(issue.Target, "a:") || !strings.Contains(issue.Message, "target circular dependency detected:") {
+				t.Fatalf("issue = %+v", issue)
+			}
+		}
 	}
-}
-
-func TestCheckGraphCyclesReportsPackageCycle(t *testing.T) {
-	g := &UnifiedGraph{
-		PackageDeps: map[string][]string{"a": {"b"}, "b": {"a"}},
-		TargetDeps:  map[string][]string{},
-	}
-	issues := checkGraphCycles(g, func(from, to string) []string {
-		return []string{from + " -> " + to}
-	})
-	if len(issues) != 1 {
-		t.Fatalf("issues = %+v, want one package cycle", issues)
-	}
-	if issues[0].Kind != "package-cycle" || issues[0].Severity != "error" {
-		t.Fatalf("issue = %+v", issues[0])
-	}
-	if !strings.Contains(issues[0].Message, "package circular dependency detected:") {
-		t.Fatalf("message = %q", issues[0].Message)
-	}
-	if !strings.Contains(issues[0].Message, "(") {
-		t.Fatalf("message = %q, want the edge details", issues[0].Message)
-	}
-}
-
-func TestCheckGraphCyclesReportsTargetCycle(t *testing.T) {
-	g := &UnifiedGraph{
-		PackageDeps: map[string][]string{"p": nil},
-		TargetDeps:  map[string][]string{"p:a": {"p:b"}, "p:b": {"p:a"}},
-	}
-	issues := checkGraphCycles(g, nil)
-	if len(issues) != 1 {
-		t.Fatalf("issues = %+v, want one target cycle", issues)
-	}
-	issue := issues[0]
-	if issue.Kind != "target-cycle" || issue.Package != "p" || !strings.HasPrefix(issue.Target, "p:") {
-		t.Fatalf("issue = %+v", issue)
-	}
-	if !strings.Contains(issue.Message, "target circular dependency detected:") {
-		t.Fatalf("message = %q", issue.Message)
-	}
-}
-
-func TestCheckGraphCyclesAcceptsAcyclicGraph(t *testing.T) {
-	g := &UnifiedGraph{
-		PackageDeps: map[string][]string{"app": {"lib"}, "lib": nil},
-		TargetDeps:  map[string][]string{"app:app": {"lib:lib"}, "lib:lib": nil},
-	}
-	if issues := checkGraphCycles(g, nil); len(issues) != 0 {
-		t.Fatalf("issues = %+v, want none", issues)
+	if pkgCycles != 1 || targetCycles != 1 {
+		t.Fatalf("issues = %+v, want 1 package-cycle and 1 target-cycle", bg.Issues)
 	}
 }

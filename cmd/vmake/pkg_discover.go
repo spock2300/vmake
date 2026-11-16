@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -12,12 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/spock2300/vmake/internal/fs"
-	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
-	"github.com/spock2300/vmake/pkg/config"
-	"github.com/spock2300/vmake/pkg/lockfile"
+	"github.com/spock2300/vmake/pkg/catalog"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/repo"
 )
@@ -29,57 +25,13 @@ type pkgSearchOptions struct {
 	forProject bool
 }
 
-type pkgStatus struct {
-	Cached    string `json:"cached,omitempty"`
-	Locked    string `json:"locked,omitempty"`
-	Installed bool   `json:"installed,omitempty"`
-}
-
-type pkgSearchEntry struct {
-	Repo        string     `json:"repo"`
-	Name        string     `json:"name"`
-	Source      string     `json:"source"`
-	Cached      bool       `json:"cached,omitempty"`
-	Latest      string     `json:"latest,omitempty"`
-	License     string     `json:"license,omitempty"`
-	Description string     `json:"description,omitempty"`
-	Status      *pkgStatus `json:"status,omitempty"`
-}
-
-type pkgSearchResult struct {
-	SchemaVersion int              `json:"schemaVersion"`
-	Packages      []pkgSearchEntry `json:"packages"`
-	Warnings      []string         `json:"warnings"`
-}
-
-type pkgShowResult struct {
-	SchemaVersion int        `json:"schemaVersion"`
-	Repo          string     `json:"repo"`
-	Name          string     `json:"name"`
-	Source        string     `json:"source"`
-	Path          string     `json:"path,omitempty"`
-	Linked        bool       `json:"linked,omitempty"`
-	LinkPath      string     `json:"linkPath,omitempty"`
-	Trusted       bool       `json:"trusted"`
-	Version       string     `json:"version,omitempty"`
-	Ref           string     `json:"ref,omitempty"`
-	Latest        string     `json:"latest,omitempty"`
-	Versions      []string   `json:"versions,omitempty"`
-	Description   string     `json:"description,omitempty"`
-	License       string     `json:"license,omitempty"`
-	Homepage      string     `json:"homepage,omitempty"`
-	Git           []string   `json:"git,omitempty"`
-	Requires      []string   `json:"requires,omitempty"`
-	Status        *pkgStatus `json:"status,omitempty"`
-	Add           string     `json:"add,omitempty"`
-	Warning       string     `json:"warning,omitempty"`
-}
-
-type pkgStatusReader struct {
-	lock      *lockfile.Lock
-	installed map[string]bool
-	sources   *repo.SourceManager
-}
+type (
+	pkgStatus       = catalog.Status
+	pkgSearchEntry  = catalog.SearchEntry
+	pkgSearchResult = catalog.SearchResult
+	pkgShowResult   = catalog.ShowResult
+	pkgStatusReader = catalog.StatusReader
+)
 
 func runPkgSearch(cmd *cobra.Command, args []string) error {
 	opts := pkgSearchOptions{
@@ -117,7 +69,7 @@ func runPkgShow(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if statuses != nil {
-		result.Status = statuses.forPackage(repoName, pkgName)
+		result.Status = statuses.ForPackage(repoName, pkgName)
 	}
 	if pkgShowJSON {
 		return writePkgJSON(cmd.OutOrStdout(), result)
@@ -169,7 +121,12 @@ func searchPackages(opts pkgSearchOptions) (*pkgSearchResult, error) {
 		if info.Native {
 			entries, warnings = searchNativeRepo(info.Name, opts, statuses)
 		} else {
-			entries, warnings = searchRegistryRepo(mgr, info.Name, opts, statuses)
+			entries, warnings = catalog.SearchRegistryRepo(catalogEnv(mgr), info.Name, catalog.SearchOptions{
+				Pattern:    opts.pattern,
+				Repo:       opts.repo,
+				Details:    opts.details,
+				ForProject: opts.forProject,
+			}, statuses, quietScriptScope)
 		}
 		result.Packages = append(result.Packages, entries...)
 		result.Warnings = append(result.Warnings, warnings...)
@@ -191,414 +148,50 @@ func searchPackages(opts pkgSearchOptions) (*pkgSearchResult, error) {
 	return result, nil
 }
 
-func searchRegistryRepo(mgr *repo.RepoManager, repoName string, opts pkgSearchOptions, statuses *pkgStatusReader) ([]pkgSearchEntry, []string) {
-	names, err := mgr.ListPackages(repoName)
-	if err != nil {
-		return nil, []string{fmt.Sprintf("%s: %v", repoName, err)}
+func catalogEnv(mgr *repo.RepoManager) catalog.Env {
+	return catalog.Env{
+		RepoManager: mgr,
+		ProjectDir:  findProjectDirSoft(),
+		CacheDir:    getCacheDir(),
+		RepoTrusted: repoScriptTrusted,
 	}
+}
 
-	var warnings []string
-	details := false
-	commit := ""
-	if opts.details {
-		lock, err := mgr.Lock(repoName, false)
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s: %v", repoName, err))
-		} else {
-			defer lock.Release()
-			commit, err = repo.GetCurrentCommit(mgr.Path(repoName))
-			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("%s: %v", repoName, err))
-			} else {
-				trusted, err := repoScriptTrusted(repoName)
-				if err != nil {
-					warnings = append(warnings, fmt.Sprintf("%s: %v", repoName, err))
-				} else if trusted {
-					details = true
-				} else {
-					warnings = append(warnings, fmt.Sprintf("repository %q is not trusted; package details omitted (run 'vmake repo trust %s')", repoName, repoName))
-				}
-			}
-		}
+func quietScriptScope() func() {
+	restoreStdout := silenceStdout()
+	restoreStderr := silenceStderr()
+	return func() {
+		restoreStderr()
+		restoreStdout()
 	}
-
-	entries := make([]pkgSearchEntry, 0, len(names))
-	for _, name := range names {
-		entry := pkgSearchEntry{Repo: repoName, Name: name, Source: "registry"}
-		if opts.details && details {
-			interpreted, err := loadRegistryPackage(mgr, repoName, name, commit)
-			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("%s/%s: %v", repoName, name, err))
-			} else {
-				applySearchMetadata(&entry, interpreted, nil)
-			}
-		}
-		if statuses != nil {
-			entry.Status = statuses.forPackage(repoName, name)
-		}
-		entries = append(entries, entry)
-	}
-	return entries, warnings
 }
 
 func searchNativeRepo(repoName string, opts pkgSearchOptions, statuses *pkgStatusReader) ([]pkgSearchEntry, []string) {
-	projectDir := findProjectDirSoft()
-	if projectDir == "" {
-		return nil, []string{fmt.Sprintf("native repository %q has no global catalog; run inside a project to see cached packages", repoName)}
-	}
-	depsDir := filepath.Join(projectDir, ".vmake_deps")
-	names, err := listNativePackagesAt(depsDir, repoName)
-	if err != nil {
-		return nil, []string{fmt.Sprintf("%s: %v", repoName, err)}
-	}
-	links := make(map[string]string)
-	if local, loadErr := config.LoadLocal(projectDir); loadErr == nil {
-		for ref, path := range local.Links {
-			linkRepo, linkName, ok := api.SplitPackageRef(ref)
-			if ok && linkRepo == repoName && !strings.Contains(linkName, "/") {
-				links[linkName] = path
-				if !containsString(names, linkName) {
-					names = append(names, linkName)
-				}
-			}
-		}
-		sort.Strings(names)
-	}
-
-	var warnings []string
-	if len(names) == 0 {
-		warnings = append(warnings, fmt.Sprintf("native repository %q has no packages cached in this project; only cached native packages can be listed", repoName))
-	}
-	sources := repo.NewSourceManager(depsDir, getCacheDir())
-	entries := make([]pkgSearchEntry, 0, len(names))
-	for _, name := range names {
-		linkPath := links[name]
-		entry := pkgSearchEntry{Repo: repoName, Name: name, Source: "native", Cached: linkPath == ""}
-		if linkPath != "" {
-			if opts.details {
-				interpreted, err := loadLinkedNativePackage(repoName, name, linkPath)
-				if err != nil {
-					warnings = append(warnings, fmt.Sprintf("%s/%s: %v", repoName, name, err))
-				} else {
-					applySearchMetadata(&entry, interpreted, nil)
-				}
-			}
-			if statuses != nil {
-				entry.Status = statuses.forPackage(repoName, name)
-			}
-			entries = append(entries, entry)
-			continue
-		}
-		root := sources.TreeDir(repo.PackageTreeKey(repoName, name))
-		state, _ := sources.ReadState(root)
-		if opts.details {
-			if state == nil || state.Commit == "" {
-				warnings = append(warnings, fmt.Sprintf("%s/%s: materialized state is missing", repoName, name))
-			} else {
-				trusted, err := repoScriptTrusted(repoName)
-				if err != nil {
-					warnings = append(warnings, fmt.Sprintf("%s/%s: %v", repoName, name, err))
-				} else if !trusted {
-					warnings = append(warnings, fmt.Sprintf("native package %q is not trusted; details omitted (run 'vmake repo trust %s')", repoName+"/"+name, repoName))
-				} else {
-					interpreted, err := loadNativePackage(depsDir, repoName, name, state)
-					if err != nil {
-						warnings = append(warnings, fmt.Sprintf("%s/%s: %v", repoName, name, err))
-					} else {
-						applySearchMetadata(&entry, interpreted, state)
-					}
-				}
-			}
-		}
-		if statuses != nil {
-			entry.Status = statuses.forPackage(repoName, name)
-		}
-		entries = append(entries, entry)
-	}
-	return entries, warnings
-}
-
-func applySearchMetadata(entry *pkgSearchEntry, interpreted *api.Package, state *repo.TreeState) {
-	versions := sortedPackageVersions(interpreted)
-	if len(versions) == 0 && state != nil && state.Version != "" {
-		versions = []string{state.Version}
-	}
-	if len(versions) > 0 {
-		entry.Latest = versions[0]
-	}
-	entry.License = interpreted.License()
-	entry.Description = interpreted.Description()
-}
-
-func loadRegistryPackage(mgr *repo.RepoManager, repoName, pkgName, commit string) (*api.Package, error) {
-	if commit == "" {
-		return nil, fmt.Errorf("repository commit is unavailable")
-	}
-	buildGo, err := mgr.FindPackageGo(repoName, pkgName)
-	if err != nil {
-		return nil, err
-	}
-	src := buildscript.Source{
-		Name:   repoName + "/" + pkgName,
-		Path:   buildGo,
-		Dir:    filepath.Dir(buildGo),
-		Origin: api.SourceRemote,
-		Repo:   repoName,
-		Commit: commit,
-	}
-	src.Script, err = buildscript.DetectScriptOptions(src.Dir, mgr.Path(repoName))
-	if err != nil {
-		return nil, err
-	}
-	return loadPackageScript(src)
-}
-
-func loadNativePackage(depsDir, repoName, pkgName string, state *repo.TreeState) (*api.Package, error) {
-	root := filepath.Join(depsDir, repoName, pkgName)
-	srcDir := filepath.Join(root, "src")
-	src := buildscript.Source{
-		Name:   repoName + "/" + pkgName,
-		Path:   filepath.Join(srcDir, "build.go"),
-		Dir:    srcDir,
-		Origin: api.SourceRemote,
-		Repo:   repoName,
-		Commit: state.Commit,
-	}
-	opts, err := buildscript.DetectScriptOptions(srcDir, srcDir)
-	if err != nil {
-		return nil, err
-	}
-	src.Script = opts
-	return loadPackageScript(src)
-}
-
-func loadLinkedNativePackage(repoName, pkgName, linkPath string) (*api.Package, error) {
-	commit, err := repo.GetCurrentCommit(linkPath)
-	if err != nil {
-		return nil, err
-	}
-	src := buildscript.Source{
-		Name:   repoName + "/" + pkgName,
-		Path:   filepath.Join(linkPath, "build.go"),
-		Dir:    linkPath,
-		Origin: api.SourceRemote,
-		Repo:   repoName,
-		Commit: commit,
-		Link: &buildscript.SourceLink{
-			Path:        linkPath,
-			Commit:      commit,
-			Native:      true,
-			LocalSource: true,
-		},
-	}
-	src.Script, err = buildscript.DetectScriptOptions(linkPath, linkPath)
-	if err != nil {
-		return nil, err
-	}
-	return loadPackageScript(src)
+	return catalog.SearchNativeRepo(catalogEnv(getRepoManager()), repoName, catalog.SearchOptions{
+		Pattern:    opts.pattern,
+		Repo:       opts.repo,
+		Details:    opts.details,
+		ForProject: opts.forProject,
+	}, statuses, quietScriptScope)
 }
 
 func loadPackageScript(src buildscript.Source) (*api.Package, error) {
-	restoreStdout := silenceStdout()
-	restoreStderr := silenceStderr()
-	defer restoreStderr()
-	defer restoreStdout()
-	scriptfs.SetReadOnly(true)
-	defer scriptfs.SetReadOnly(false)
-
-	interpreted, err := buildscript.LoadBuildScriptWithTrust(src, func(loadSrc buildscript.Source) error {
-		trusted, trustErr := repoScriptTrusted(loadSrc.Repo)
-		if trustErr != nil {
-			return trustErr
-		}
-		if !trusted {
-			return fmt.Errorf("repository %q is not trusted; run 'vmake repo trust %s'", loadSrc.Repo, loadSrc.Repo)
-		}
-		return nil
-	})
-	blocked := scriptfs.TakeBlockedWrites()
-	if err != nil {
-		return nil, err
-	}
-	if len(blocked) > 0 {
-		if len(blocked) > 1 {
-			return nil, fmt.Errorf("%s (and %d more blocked writes)", blocked[0], len(blocked)-1)
-		}
-		return nil, fmt.Errorf("%s", blocked[0])
-	}
-	return interpreted, nil
+	return catalog.LoadPackageScript(src, repoScriptTrusted, quietScriptScope)
 }
 
 func listNativePackagesAt(depsDir, repoName string) ([]string, error) {
-	root := filepath.Join(depsDir, repoName)
-	entries, err := fs.ListDirEntries(root)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if fs.FileExists(filepath.Join(root, entry.Name(), "src", "build.go")) {
-			names = append(names, entry.Name())
-		}
-	}
-	sort.Strings(names)
-	return names, nil
+	return catalog.ListNativePackagesAt(depsDir, repoName)
 }
 
 func loadPkgShow(repoName, pkgName, version string) (*pkgShowResult, error) {
-	mgr := getRepoManager()
-	if !mgr.Exists(repoName) {
-		return nil, &usageError{err: fmt.Errorf("repository %q not found; run 'vmake repo list'", repoName)}
+	res, isUsage, err := catalog.ShowPackage(catalogEnv(getRepoManager()), repoName, pkgName, version, quietScriptScope)
+	if err != nil {
+		if isUsage {
+			return nil, &usageError{err: err}
+		}
+		return nil, err
 	}
-
-	result := &pkgShowResult{
-		SchemaVersion: 1,
-		Repo:          repoName,
-		Name:          pkgName,
-	}
-	if projectDir := findProjectDirSoft(); projectDir != "" {
-		if local, loadErr := config.LoadLocal(projectDir); loadErr == nil {
-			if link, ok := local.Links[repoName+"/"+pkgName]; ok {
-				result.Linked = true
-				result.LinkPath = link
-			}
-		}
-	}
-	var buildGo string
-	var commit string
-	var err error
-	var state *repo.TreeState
-	var interpreted *api.Package
-	versionsKnown := false
-	linked := false
-	native := mgr.IsNative(repoName)
-	if native {
-		result.Source = "native"
-		projectDir := findProjectDirSoft()
-		if projectDir == "" {
-			return nil, &usageError{err: fmt.Errorf("native package %q is project-local; run inside a vmake project", repoName+"/"+pkgName)}
-		}
-		if local, loadErr := config.LoadLocal(projectDir); loadErr == nil {
-			if link, ok := local.Links[repoName+"/"+pkgName]; ok {
-				linked = true
-				buildGo = filepath.Join(link, "build.go")
-				if !fs.FileExists(buildGo) {
-					return nil, fmt.Errorf("linked native package '%s/%s' has no build.go in %s", repoName, pkgName, link)
-				}
-				commit, loadErr = repo.GetCurrentCommit(link)
-				if loadErr != nil {
-					return nil, loadErr
-				}
-			}
-		}
-		if !linked {
-			depsDir := filepath.Join(projectDir, ".vmake_deps")
-			sources := repo.NewSourceManager(depsDir, getCacheDir())
-			root := sources.TreeDir(repo.PackageTreeKey(repoName, pkgName))
-			state, _ = sources.ReadState(root)
-			if state == nil || state.Commit == "" {
-				return nil, fmt.Errorf("package '%s/%s' is not cached in this project; run 'vmake deps fetch %s/%s' or 'vmake build' first", repoName, pkgName, repoName, pkgName)
-			}
-			buildGo = filepath.Join(root, "src", "build.go")
-			if !fs.FileExists(buildGo) {
-				return nil, fmt.Errorf("package '%s/%s' has no cached build.go; run 'vmake deps fetch %s/%s' or 'vmake build' first", repoName, pkgName, repoName, pkgName)
-			}
-			commit = state.Commit
-		}
-	} else {
-		result.Source = "registry"
-		lock, err := mgr.Lock(repoName, false)
-		if err != nil {
-			return nil, err
-		}
-		defer lock.Release()
-		buildGo, err = mgr.FindPackageGo(repoName, pkgName)
-		if err != nil {
-			return nil, err
-		}
-		commit, err = repo.GetCurrentCommit(mgr.Path(repoName))
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	result.Path = buildGo
-	if linked {
-		result.Trusted = true
-	} else {
-		trusted, err := repoScriptTrusted(repoName)
-		if err != nil {
-			result.Warning = fmt.Sprintf("cannot verify trust: %v", err)
-		} else {
-			result.Trusted = trusted
-		}
-	}
-	if result.Trusted {
-		src := buildscript.Source{
-			Name:   repoName + "/" + pkgName,
-			Path:   buildGo,
-			Dir:    filepath.Dir(buildGo),
-			Origin: api.SourceRemote,
-			Repo:   repoName,
-			Commit: commit,
-		}
-		if linked {
-			src.Link = &buildscript.SourceLink{
-				Path:        filepath.Dir(buildGo),
-				Commit:      commit,
-				Native:      true,
-				LocalSource: true,
-			}
-			src.Script, err = buildscript.DetectScriptOptions(src.Dir, src.Dir)
-		} else {
-			src.Script, err = buildscript.DetectScriptOptions(src.Dir, mgr.Path(repoName))
-		}
-		if err != nil {
-			return nil, fmt.Errorf("script options for %s: %w", src.Dir, err)
-		}
-		interpreted, err = loadPackageScript(src)
-		if err != nil {
-			return nil, fmt.Errorf("read metadata from %s: %w", buildGo, err)
-		}
-		result.Description = interpreted.Description()
-		result.License = interpreted.License()
-		result.Homepage = interpreted.Homepage()
-		result.Git = interpreted.GitURLs()
-		result.Requires = formatPackageRequires(interpreted)
-		result.Versions = sortedPackageVersions(interpreted)
-		versionsKnown = len(result.Versions) > 0
-	}
-	if len(result.Versions) == 0 && state != nil && state.Version != "" {
-		result.Versions = []string{state.Version}
-	}
-	if len(result.Versions) > 0 {
-		result.Latest = result.Versions[0]
-	}
-	if !result.Trusted && result.Warning == "" {
-		result.Warning = pkgTrustWarning(repoName, result.Source)
-	}
-
-	if version != "" {
-		if versionsKnown && !containsString(result.Versions, version) {
-			return nil, &usageError{err: fmt.Errorf("version %q of %s is not available; versions: %s", version, repoName+"/"+pkgName, strings.Join(result.Versions, ", "))}
-		}
-		result.Version = version
-		result.Ref = version
-		if interpreted != nil {
-			if ref := interpreted.GetRef(version); ref != "" {
-				result.Ref = ref
-			}
-		}
-	}
-	chosenVersion := result.Latest
-	if result.Version != "" {
-		chosenVersion = result.Version
-	}
-	result.Add = addRequiresSnippet(repoName, pkgName, chosenVersion)
-	return result, nil
+	return res, nil
 }
 
 func newPkgStatusReader() (*pkgStatusReader, error) {
@@ -610,112 +203,19 @@ func newPkgStatusReader() (*pkgStatusReader, error) {
 }
 
 func newPkgStatusReaderAt(projectDir, depsDir, cacheDir string) (*pkgStatusReader, error) {
-	lock, err := lockfile.Load(filepath.Join(projectDir, ".vmake", lockfile.LockfileName))
-	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("load lockfile: %w", err)
-	}
-	installed := make(map[string]bool)
-	manifest, err := loadInstallManifest(filepath.Join(projectDir, "install", "manifest.json"))
-	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("load install manifest: %w", err)
-	}
-	if manifest != nil {
-		for _, entry := range manifest.Packages {
-			installed[entry.Name] = true
-		}
-	}
-	return &pkgStatusReader{
-		lock:      lock,
-		installed: installed,
-		sources:   repo.NewSourceManager(depsDir, cacheDir),
-	}, nil
-}
-
-func (r *pkgStatusReader) forPackage(repoName, pkgName string) *pkgStatus {
-	if r == nil {
-		return nil
-	}
-	fullName := repoName + "/" + pkgName
-	status := &pkgStatus{}
-	if r.sources != nil {
-		root := r.sources.TreeDir(repo.PackageTreeKey(repoName, pkgName))
-		if state, _ := r.sources.ReadState(root); state != nil {
-			status.Cached = state.Version
-			if status.Cached == "" {
-				status.Cached = repo.ShortCommit(state.Commit)
-			}
-		}
-	}
-	if r.lock != nil {
-		if locked, ok := r.lock.Get(fullName); ok {
-			status.Locked = locked.Version
-			if status.Locked == "" {
-				status.Locked = repo.ShortCommit(locked.Commit)
-			}
-		}
-	}
-	status.Installed = r.installed[fullName]
-	if status.Cached == "" && status.Locked == "" && !status.Installed {
-		return nil
-	}
-	return status
+	return catalog.NewStatusReaderAt(projectDir, depsDir, cacheDir)
 }
 
 func pkgEntryMatches(entry pkgSearchEntry, pattern string) bool {
-	pattern = strings.ToLower(strings.TrimSpace(pattern))
-	if pattern == "" {
-		return true
-	}
-	for _, value := range []string{entry.Repo + "/" + entry.Name, entry.Description, entry.License, entry.Latest} {
-		if strings.Contains(strings.ToLower(value), pattern) {
-			return true
-		}
-	}
-	return false
+	return catalog.EntryMatches(entry, pattern)
 }
 
 func sortedPackageVersions(pkg *api.Package) []string {
-	versions := pkg.GetVersions()
-	sort.SliceStable(versions, func(i, j int) bool {
-		left, leftOK := api.ParseVersion(versions[i])
-		right, rightOK := api.ParseVersion(versions[j])
-		if leftOK && rightOK {
-			return left.Compare(right) > 0
-		}
-		if leftOK != rightOK {
-			return leftOK
-		}
-		return versions[i] > versions[j]
-	})
-	return versions
-}
-
-func formatPackageRequires(pkg *api.Package) []string {
-	seen := make(map[string]bool)
-	var result []string
-	for _, require := range pkg.GetRequires().Get() {
-		value := require.Name
-		if require.Constraint != "" {
-			value += " " + require.Constraint
-		}
-		if seen[value] {
-			continue
-		}
-		seen[value] = true
-		result = append(result, value)
-	}
-	return result
+	return catalog.SortedPackageVersions(pkg)
 }
 
 func addRequiresSnippet(repoName, pkgName, version string) string {
-	ref := repoName + "/" + pkgName
-	constraint := ""
-	if version != "" {
-		if parsed, ok := api.ParseVersion(version); ok {
-			constraint = fmt.Sprintf(" >= %d.%d", parsed.Major, parsed.Minor)
-		}
-	}
-	return fmt.Sprintf("p.AddRequires(%q)", ref+constraint)
+	return catalog.AddRequiresSnippet(repoName, pkgName, version)
 }
 
 func splitPkgShowArg(arg string) (string, string, string, error) {
@@ -737,47 +237,11 @@ func splitPkgShowArg(arg string) (string, string, string, error) {
 	return repoName, pkgName, version, nil
 }
 
-func pkgTrustWarning(repoName, source string) string {
-	if source == "native" {
-		return fmt.Sprintf("native repository %q is not trusted; run 'vmake repo trust %s'", repoName, repoName)
-	}
-	return fmt.Sprintf("build.go is not trusted; run 'vmake repo trust %s'", repoName)
-}
-
-func containsString(values []string, value string) bool {
-	for _, candidate := range values {
-		if candidate == value {
-			return true
-		}
-	}
-	return false
-}
-
 func pkgSearchSource(entry pkgSearchEntry) string {
 	if entry.Cached {
 		return entry.Source + " (cached)"
 	}
 	return entry.Source
-}
-
-func pkgStatusText(status *pkgStatus) string {
-	if status == nil {
-		return "-"
-	}
-	var parts []string
-	if status.Cached != "" {
-		parts = append(parts, "cached "+status.Cached)
-	}
-	if status.Locked != "" {
-		parts = append(parts, "locked "+status.Locked)
-	}
-	if status.Installed {
-		parts = append(parts, "installed")
-	}
-	if len(parts) == 0 {
-		return "-"
-	}
-	return strings.Join(parts, ", ")
 }
 
 func writePkgJSON(w io.Writer, value any) error {
@@ -815,7 +279,7 @@ func writePkgSearchTable(w io.Writer, result *pkgSearchResult, opts pkgSearchOpt
 			row = append(row, valueOrDash(inspectOneLine(entry.Latest)), valueOrDash(inspectOneLine(entry.License)), valueOrDash(inspectOneLine(entry.Description)))
 		}
 		if opts.forProject {
-			row = append(row, pkgStatusText(entry.Status))
+			row = append(row, catalog.StatusText(entry.Status))
 		}
 		fmt.Fprintln(tw, strings.Join(row, "\t"))
 	}
@@ -865,7 +329,7 @@ func writePkgShowTable(w io.Writer, result *pkgShowResult) error {
 		}
 	}
 	if result.Status != nil {
-		fmt.Fprintf(tw, "  Project\t%s\n", pkgStatusText(result.Status))
+		fmt.Fprintf(tw, "  Project\t%s\n", catalog.StatusText(result.Status))
 	}
 	if result.Add != "" {
 		fmt.Fprintf(tw, "  Add\t%s\n", result.Add)

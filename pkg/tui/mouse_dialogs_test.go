@@ -32,7 +32,7 @@ func TestDialogMouseChoiceViewport(t *testing.T) {
 			t.Run(fmt.Sprintf("language_%d_%dx%d", lang, size[0], size[1]), func(t *testing.T) {
 				m := newLanguageTestModel()
 				m.language, m.width, m.height = lang, size[0], size[1]
-				m.options["app"]["level"].SetDescription(strings.Repeat("很长的中文说明 and wrapped description ", 6))
+				m.ed().Options["app"]["level"].SetDescription(strings.Repeat("很长的中文说明 and wrapped description ", 6))
 				values := make([]string, 20)
 				for i := range values {
 					values[i] = fmt.Sprintf("candidate-%02d", i)
@@ -150,8 +150,8 @@ func TestDialogMouseBlankAndOutsideClicks(t *testing.T) {
 				t.Fatal("clicking dialog title performed an action")
 			}
 			m.handleMouse(dialogMousePress(0, 0))
-			if m.confirmQuit || m.overlay != overlayNone || !m.hasChanges || m.getValue("enabled") != true {
-				t.Fatalf("outside click did not cancel while preserving changes: confirm=%v overlay=%d modified=%v", m.confirmQuit, m.overlay, m.hasChanges)
+			if m.confirmQuit || m.overlay != overlayNone || !m.ed().HasChanges() || m.getValue("enabled") != true {
+				t.Fatalf("outside click did not cancel while preserving changes: confirm=%v overlay=%d modified=%v", m.confirmQuit, m.overlay, m.ed().HasChanges())
 			}
 		})
 	}
@@ -163,7 +163,7 @@ func TestDialogMouseDetailFitsViewport(t *testing.T) {
 			t.Run(fmt.Sprintf("language_%d_%dx%d", lang, size[0], size[1]), func(t *testing.T) {
 				m := newLanguageTestModel()
 				m.language, m.width, m.height = lang, size[0], size[1]
-				m.options["app"]["name"] = mkOpt("name", api.OptionString, strings.Repeat("默认中文值", 30)).
+				m.ed().Options["app"]["name"] = mkOpt("name", api.OptionString, strings.Repeat("默认中文值", 30)).
 					SetDescription(strings.Repeat("很长的中文说明和 long description ", 40))
 				value := strings.Repeat("修改后的超长中文值", 30)
 				m.setValue("name", value)
@@ -182,7 +182,7 @@ func TestDialogMouseDetailFitsViewport(t *testing.T) {
 					t.Fatal("click inside detail changed state")
 				}
 				m.handleMouse(dialogMousePress(0, m.height/2))
-				if m.overlay != overlayNone || !m.hasChanges || m.getValue("name") != value {
+				if m.overlay != overlayNone || !m.ed().HasChanges() || m.getValue("name") != value {
 					t.Fatal("click outside detail did not close while preserving value")
 				}
 			})

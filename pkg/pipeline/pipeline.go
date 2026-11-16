@@ -34,7 +34,7 @@ type RuntimeContext struct {
 	ConfigDigest        string
 	Config              *config.ConfigFile
 	DepGraph            *resolver.Graph
-	AllOptions          map[string]map[string]*api.Option
+	allOptions          map[string]map[string]*api.Option
 	allKConfigs         map[string][]*api.KConfigEntry
 	chipProfiles        map[string]api.ChipProfile
 	chipProfile         api.ChipProfile
@@ -209,7 +209,7 @@ func newBuildContext(ctx *RuntimeContext, name string, globalValues map[string]a
 		node = ctx.DepGraph.Packages[name]
 	}
 	buildCtx := api.NewBuildContext(name, values)
-	pkgOpts := ctx.AllOptions[name]
+	pkgOpts := ctx.allOptions[name]
 	if pkgOpts != nil {
 		buildCtx.SetOptions(maps.Clone(pkgOpts))
 	}
@@ -243,7 +243,7 @@ func newConfigLookup(ctx *RuntimeContext, currentPkg string, base map[string]any
 			}
 		}
 		node := ctx.DepGraph.Packages[pkg]
-		opts := ctx.AllOptions[pkg]
+		opts := ctx.allOptions[pkg]
 		if opts == nil && node.Pkg != nil {
 			opts = node.Pkg.GetOptions()
 		}
@@ -319,7 +319,7 @@ func PackageConfigValues(ctx *RuntimeContext, name string, globalValues map[stri
 
 func mergeCfgVals(name string, node *resolver.PackageNode, ctx *RuntimeContext, globalValues map[string]any, pkgOptions map[string]any) map[string]any {
 	cfgVals := make(map[string]any)
-	allOpts := ctx.AllOptions[name]
+	allOpts := ctx.allOptions[name]
 	if allOpts == nil && node != nil && node.Pkg != nil {
 		allOpts = node.Pkg.GetOptions()
 	}

@@ -4,13 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
-	"github.com/spock2300/vmake/internal/fs"
-	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/repo"
 )
 
@@ -80,88 +78,12 @@ var manifestCheckoutCmd = &cobra.Command{
 			WithSession(commandStorageLocks()).
 			WithContext(context.Background())
 
-		found := false
-		for _, entry := range mf.Packages {
-			if filterName != "" && entry.Name != filterName {
-				continue
-			}
-			found = true
-			if entry.Linked {
-				fmt.Printf("  SKIP %s (linked to %s; run 'vmake pkg unlink %s' first)\n", entry.Name, entry.LinkPath, entry.Name)
-				continue
-			}
-
-			switch entry.Source {
-			case "local":
-				fatalErr(checkoutLocal(base, entry))
-			case "native", "registry":
-				checkoutRemote(sourceMgr, entry)
-			default:
-				fmt.Printf("  SKIP %s (unknown source: %s)\n", entry.Name, entry.Source)
-			}
-		}
-
-		if filterName != "" && !found {
-			fatalMsg("Package '%s' not found in manifest", filterName)
-		}
+		fatalErr(pipeline.CheckoutManifest(base, sourceMgr, newPkgRef, mf, filterName))
 	},
 }
 
 func checkoutLocal(projectDir string, entry installManifestEntry) error {
-	if entry.Ref == "" || entry.Ref == "unknown" {
-		fmt.Printf("  SKIP %s (no ref recorded)\n", entry.Name)
-		return nil
-	}
-	sourceDir, err := resolveManifestEntryPath(projectDir, entry.Path)
-	if err != nil {
-		return fmt.Errorf("checkout %s: %w", entry.Name, err)
-	}
-	if !fs.FileExists(sourceDir) {
-		fmt.Printf("  SKIP %s (path not found: %s)\n", entry.Name, entry.Path)
-		return nil
-	}
-	if !fs.FileExists(filepath.Join(sourceDir, "build.go")) {
-		return fmt.Errorf("checkout %s: %s is not a package directory (build.go not found)", entry.Name, entry.Path)
-	}
-
-	ref := repo.ShortCommit(entry.Ref)
-	if ref != entry.Ref {
-		ref += "..."
-	}
-	if err := repo.Checkout(sourceDir, entry.Ref); err != nil {
-		return fmt.Errorf("checkout %s at %s: %w", entry.Name, ref, err)
-	}
-	fmt.Printf("  OK   %s -> %s\n", entry.Name, ref)
-	return nil
-}
-
-func checkoutRemote(sourceMgr *repo.SourceManager, entry installManifestEntry) {
-	if entry.Ref == "" {
-		fmt.Printf("  SKIP %s (no ref recorded)\n", entry.Name)
-		return
-	}
-
-	repoName, pkgName, ok := api.SplitPackageRef(entry.Name)
-	if !ok {
-		fmt.Printf("  SKIP %s (invalid package reference)\n", entry.Name)
-		return
-	}
-
-	pkg := newPkgRef(repoName, pkgName)
-	if entry.URL != "" {
-		pkg.SetGit(entry.URL)
-	}
-
-	if _, err := sourceMgr.EnsureSource(repo.SourceRequest{
-		Key:  repo.PackageTreeKey(repoName, pkgName),
-		URLs: pkg.GitURLs(),
-		Ref:  entry.Ref,
-	}); err != nil {
-		fmt.Printf("  FAIL %s (%v)\n", entry.Name, err)
-		return
-	}
-
-	fmt.Printf("  OK   %s -> %s\n", entry.Name, entry.Ref)
+	return pipeline.CheckoutManifestLocalEntry(projectDir, nil, entry)
 }
 
 func init() {

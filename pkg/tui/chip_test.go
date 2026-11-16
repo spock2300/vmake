@@ -41,7 +41,7 @@ func TestChipSwitchUpdatesToolchainAndTargets(t *testing.T) {
 	if got := m.getValue(api.ToolchainOptionName); got != "tc-a" {
 		t.Fatalf("initial toolchain = %v, want tc-a", got)
 	}
-	if !m.derivedGlobals[api.ToolchainOptionName] {
+	if !m.ed().DerivedGlobals[api.ToolchainOptionName] {
 		t.Fatal("initial toolchain should be derived")
 	}
 	if got := m.displayFallback(api.TargetTripleOptionName); got != "triple-a" {
@@ -52,7 +52,7 @@ func TestChipSwitchUpdatesToolchainAndTargets(t *testing.T) {
 	if got := m.getValue(api.ToolchainOptionName); got != "tc-b" {
 		t.Fatalf("switched toolchain = %v, want tc-b", got)
 	}
-	if !m.derivedGlobals[api.ToolchainOptionName] {
+	if !m.ed().DerivedGlobals[api.ToolchainOptionName] {
 		t.Fatal("switched toolchain should be derived")
 	}
 	if got := m.displayFallback(api.TargetTripleOptionName); got != "triple-b" {
@@ -63,7 +63,7 @@ func TestChipSwitchUpdatesToolchainAndTargets(t *testing.T) {
 func TestChipSwitchPreservesExplicitTarget(t *testing.T) {
 	m := chipTestModel()
 	m.setValue(api.TargetTripleOptionName, "custom-triple")
-	if m.derivedGlobals[api.TargetTripleOptionName] {
+	if m.ed().DerivedGlobals[api.TargetTripleOptionName] {
 		t.Fatal("explicit target should not be derived")
 	}
 	m.setValue(api.ChipOptionName, "chip-b")
@@ -75,7 +75,7 @@ func TestChipSwitchPreservesExplicitTarget(t *testing.T) {
 func TestManualToolchainIsExplicit(t *testing.T) {
 	m := chipTestModel()
 	m.setValue(api.ToolchainOptionName, "tc-b")
-	if m.derivedGlobals[api.ToolchainOptionName] {
+	if m.ed().DerivedGlobals[api.ToolchainOptionName] {
 		t.Fatal("manual toolchain should be explicit")
 	}
 	if got := m.result().Toolchain; got != "tc-b" {
@@ -90,14 +90,14 @@ func TestResetToolchainUsesChipProfile(t *testing.T) {
 	m := chipTestModel()
 	m.setValue(api.ChipOptionName, "chip-b")
 	m.setValue(api.ToolchainOptionName, "tc-a")
-	if m.derivedGlobals[api.ToolchainOptionName] {
+	if m.ed().DerivedGlobals[api.ToolchainOptionName] {
 		t.Fatal("manual toolchain should be explicit")
 	}
 	m.resetOptionToDefault(api.ToolchainOptionName)
 	if got := m.getValue(api.ToolchainOptionName); got != "tc-b" {
 		t.Fatalf("reset toolchain = %v, want tc-b", got)
 	}
-	if !m.derivedGlobals[api.ToolchainOptionName] {
+	if !m.ed().DerivedGlobals[api.ToolchainOptionName] {
 		t.Fatal("reset toolchain should be derived")
 	}
 }
@@ -106,14 +106,14 @@ func TestExplicitToolchainSurvivesChipSwitch(t *testing.T) {
 	m := chipTestModelWithValues(map[string]any{
 		api.ToolchainOptionName: "tc-custom",
 	})
-	if m.derivedGlobals[api.ToolchainOptionName] {
+	if m.ed().DerivedGlobals[api.ToolchainOptionName] {
 		t.Fatal("configured toolchain should be explicit")
 	}
 	m.setValue(api.ChipOptionName, "chip-b")
 	if got := m.getValue(api.ToolchainOptionName); got != "tc-custom" {
 		t.Fatalf("explicit toolchain = %v, want tc-custom", got)
 	}
-	if m.derivedGlobals[api.ToolchainOptionName] {
+	if m.ed().DerivedGlobals[api.ToolchainOptionName] {
 		t.Fatal("explicit toolchain became derived")
 	}
 }
@@ -123,7 +123,7 @@ func TestConfiguredTargetsStayExplicit(t *testing.T) {
 		api.TargetOSOptionName:     "none",
 		api.TargetTripleOptionName: "triple-a",
 	})
-	if m.derivedGlobals[api.TargetTripleOptionName] {
+	if m.ed().DerivedGlobals[api.TargetTripleOptionName] {
 		t.Fatal("configured target triple should stay explicit")
 	}
 	m.setValue(api.ChipOptionName, "chip-b")
@@ -136,7 +136,7 @@ func TestResetDerivedTargetAfterChipSwitch(t *testing.T) {
 	m := chipTestModel()
 	m.setValue(api.ChipOptionName, "chip-b")
 	m.resetOption(api.TargetTripleOptionName)
-	if _, ok := m.globalValues[api.TargetTripleOptionName]; ok {
+	if _, ok := m.ed().GlobalValues[api.TargetTripleOptionName]; ok {
 		t.Fatal("derived target triple was stored")
 	}
 	if got := m.displayFallback(api.TargetTripleOptionName); got != "triple-b" {
@@ -148,7 +148,7 @@ func TestChipTargetDefaultsFollowToolchainTarget(t *testing.T) {
 	m := chipTestModelWithValues(map[string]any{
 		api.ToolchainOptionName: "tc-other",
 	})
-	m.displayDefaults = func(name string) map[string]any {
+	m.ed().DisplayDefaults = func(name string) map[string]any {
 		if name != "tc-other" {
 			return nil
 		}

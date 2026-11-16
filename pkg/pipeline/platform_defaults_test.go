@@ -47,7 +47,7 @@ func TestProjectPlatformUsesToolchainTargetDefaults(t *testing.T) {
 			ctx := &RuntimeContext{
 				Config:        emptyConfig(),
 				DepGraph:      &resolver.Graph{Packages: map[string]*resolver.PackageNode{"app": node}},
-				AllOptions:    map[string]map[string]*api.Option{"app": options.GetOptions()},
+				allOptions:    map[string]map[string]*api.Option{"app": options.GetOptions()},
 				globalOptions: options.GetOptions(),
 			}
 			ctx.Config.Global.Toolchain = tcName
@@ -73,7 +73,7 @@ func TestPackagePlatformUsesPackageToolchainTargetDefaults(t *testing.T) {
 	ctx := &RuntimeContext{
 		Config:        emptyConfig(),
 		DepGraph:      &resolver.Graph{Packages: map[string]*resolver.PackageNode{"app": node}},
-		AllOptions:    map[string]map[string]*api.Option{"app": options.GetOptions()},
+		allOptions:    map[string]map[string]*api.Option{"app": options.GetOptions()},
 		globalOptions: options.GetOptions(),
 	}
 	ctx.Config.Global.Toolchain = projectTC
@@ -107,10 +107,10 @@ func TestPackagePlatformUsesEffectiveToolchainSelection(t *testing.T) {
 	ctx := &RuntimeContext{
 		Config:     emptyConfig(),
 		DepGraph:   &resolver.Graph{Packages: map[string]*resolver.PackageNode{"app": node}},
-		AllOptions: map[string]map[string]*api.Option{"app": options.GetOptions()},
+		allOptions: map[string]map[string]*api.Option{"app": options.GetOptions()},
 	}
 	var err error
-	ctx.globalOptions, err = api.MergeGlobalOptions(ctx.AllOptions, []string{first, "host", second})
+	ctx.globalOptions, err = api.MergeGlobalOptions(ctx.allOptions, []string{first, "host", second})
 	if err != nil {
 		t.Fatal(err)
 	}

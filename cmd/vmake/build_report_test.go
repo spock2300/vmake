@@ -192,7 +192,7 @@ func TestBuildReportNeverSucceedsBeforeCompletion(t *testing.T) {
 	for _, failure := range []error{context.Canceled, errors.New("failed"), nil} {
 		r := &buildReport{Root: canonicalTempDir(t), Status: "running"}
 		result := failure
-		r.finish(&result)
+		r.Finish(&result)
 		if result == nil || r.Status == "succeeded" {
 			t.Fatalf("%+v / %v", r, result)
 		}
@@ -214,7 +214,7 @@ func TestBuildReportNeverSucceedsBeforeCompletion(t *testing.T) {
 }
 
 func TestBuildReportPanicCannotPublishSuccess(t *testing.T) {
-	r := &buildReport{Root: canonicalTempDir(t), completed: true}
+	r := &buildReport{Root: canonicalTempDir(t), Completed: true}
 	func() {
 		defer func() {
 			if recover() == nil {
@@ -222,7 +222,7 @@ func TestBuildReportPanicCannotPublishSuccess(t *testing.T) {
 			}
 		}()
 		var err error
-		defer r.finish(&err)
+		defer r.Finish(&err)
 		panic("unexpected interruption")
 	}()
 	var saved buildReport
@@ -823,7 +823,7 @@ func TestBuildReportFinishV2(t *testing.T) {
 		Stage:  "compile",
 		Err:    &iexec.CommandError{Command: "gcc", Output: "src/main.c:4:2: error: boom\n", Err: errors.New("exit status 1")},
 	}
-	report.finish(&result)
+	report.Finish(&result)
 	if report.Status != "failed" || report.Error != "src/main.c:4:2: boom" || len(report.Diagnostics) != 1 || report.DurationMs <= 0 {
 		t.Fatalf("report = %+v", report)
 	}
@@ -865,7 +865,7 @@ func TestBuildReportPartialFailureNeverNoOp(t *testing.T) {
 		Stage:  "link",
 		Err:    &api.BuildScriptError{Package: "cmake-cfail", Op: "CMakeConfigure", Err: errors.New("configure exploded: missing foo dependency")},
 	}
-	report.partial(&RuntimeContext{}, result, failure)
+	report.Partial(&RuntimeContext{}, result, failure)
 	if report.Summary == nil {
 		t.Fatal("partial failure lost its summary")
 	}
@@ -876,7 +876,7 @@ func TestBuildReportPartialFailureNeverNoOp(t *testing.T) {
 		t.Fatalf("partial failure targetsFailed = %d, want 1", report.Summary.TargetsFailed)
 	}
 	var finishErr error = failure
-	report.finish(&finishErr)
+	report.Finish(&finishErr)
 	if report.Status != "failed" || report.Summary == nil || report.Summary.NoOp {
 		t.Fatalf("finished report = %+v (summary %+v)", report, report.Summary)
 	}
@@ -899,7 +899,7 @@ func TestBuildReportFinishFailedSummaryNeverNoOp(t *testing.T) {
 		Summary:       &buildSummary{TargetsTotal: 1, TargetsUpToDate: 1, NoOp: true},
 	}
 	var result error = errors.New("failure after results were collected")
-	report.finish(&result)
+	report.Finish(&result)
 	if report.Status != "failed" || report.Summary == nil || report.Summary.NoOp {
 		t.Fatalf("finished report = %+v (summary %+v)", report, report.Summary)
 	}
@@ -1042,7 +1042,7 @@ add_custom_target(work ALL COMMAND ${CMAKE_COMMAND} -E touch "${CMAKE_BINARY_DIR
 }
 
 func TestBuildSummaryErrorPreservesCause(t *testing.T) {
-	err := &buildSummaryError{summary: "build cancelled", err: &buildInterrupted{code: 130}}
+	err := &buildSummaryError{Summary: "build cancelled", Err: &buildInterrupted{code: 130}}
 	if err.Error() != "build cancelled" {
 		t.Fatalf("Error() = %q", err.Error())
 	}

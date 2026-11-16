@@ -3,18 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/spock2300/vmake/internal/jsonio"
-	"github.com/spock2300/vmake/pkg/config"
-	"github.com/spock2300/vmake/pkg/lockfile"
-	vlog "github.com/spock2300/vmake/pkg/log"
-	"github.com/spock2300/vmake/pkg/repo"
-	"github.com/spock2300/vmake/pkg/resolver"
+	"github.com/spock2300/vmake/pkg/pipeline"
 )
 
 var buildCmd = &cobra.Command{
@@ -72,7 +65,7 @@ func withResolvedProject(execution *RuntimeContext, run func(*RuntimeContext) er
 }
 
 func runReportedBuild(ctx *RuntimeContext, report *buildReport, opts BuildOptions) (*BuildResult, error) {
-	if err := report.bind(ctx); err != nil {
+	if err := report.Bind(ctx); err != nil {
 		return nil, err
 	}
 	if installFlag {
@@ -91,7 +84,7 @@ func runReportedBuild(ctx *RuntimeContext, report *buildReport, opts BuildOption
 	result, err := runBuildPhase(ctx, opts)
 	if err != nil {
 		if result != nil {
-			report.partial(ctx, result, err)
+			report.Partial(ctx, result, err)
 		}
 		return nil, err
 	}
@@ -100,174 +93,28 @@ func runReportedBuild(ctx *RuntimeContext, report *buildReport, opts BuildOption
 			return nil, err
 		}
 	}
-	if err := report.complete(ctx, result); err != nil {
+	if err := report.Complete(ctx, result); err != nil {
 		return nil, err
 	}
 	return result, nil
 }
 
 func loadInstallManifest(path string) (*installManifest, error) {
-	var mf installManifest
-	if err := jsonio.Load(path, &mf); err != nil {
-		return nil, err
-	}
-	return &mf, nil
+	return pipeline.LoadInstallManifest(path)
 }
 
-// importManifestIntoLock pins remote package versions from an install manifest
-// into vmake.lock BEFORE dependency resolution, so the graph is built from the
-// pinned versions (not from latest-matching tags).
 func importManifestIntoLock(ctx context.Context, mf *installManifest) error {
-	lockPath := getLockfilePath()
-	l, err := lockfile.LoadOrCreate(lockPath)
-	if err != nil {
-		return err
-	}
-	local, err := config.LoadLocal(findProjectDir())
-	if err != nil {
-		return err
-	}
-	changed := false
-	for _, entry := range mf.Packages {
-		switch entry.Source {
-		case "native", "registry":
-			if _, linked := local.Links[entry.Name]; linked {
-				vlog.Info("  skip manifest entry %s (linked)", entry.Name)
-				continue
-			}
-			ref := entry.Ref
-			if ref == "" {
-				ref = entry.Version
-			}
-			if ref == "" {
-				vlog.Info("  skip manifest entry %s (empty ref)", entry.Name)
-				continue
-			}
-			version := entry.Version
-			if version == "" && !repo.IsCommitID(ref) {
-				version = ref
-			}
-			if entry.URL == "" {
-				return fmt.Errorf("manifest entry %s has no URL; cannot resolve commit for %s", entry.Name, ref)
-			}
-			vlog.Info("  %s: resolving %s from %s", entry.Name, ref, entry.URL)
-			commit, err := repo.ResolveRemoteCommitContext(ctx, entry.URL, ref)
-			if err != nil {
-				return fmt.Errorf("resolve commit for %s@%s: %w", entry.Name, ref, err)
-			}
-			l.Set(entry.Name, &lockfile.LockedPkg{
-				Version: version,
-				Commit:  commit,
-				Source:  entry.Source,
-			})
-			vlog.Info("  pin %s -> %s (%s, commit %s)", entry.Name, lockfile.DisplayVersion(version, commit), entry.Source, repo.ShortCommit(commit))
-			changed = true
-		}
-	}
-	if changed {
-		return l.Save(lockPath)
-	}
-	return nil
+	return pipeline.ImportManifestIntoLock(ctx, findProjectDir(), getLockfilePath(), mf)
 }
 
-// checkoutManifestLocals checks out local packages to the refs recorded in an
-// install manifest. Local packages with a managed git source are skipped: the
-// manifest ref belongs to the upstream clone, while the checkout would run
-// against the project repository, and the build materializes the recorded
-// source version on its own.
 func checkoutManifestLocals(ctx *RuntimeContext, mf *installManifest) error {
-	base, err := manifestProjectDir(ctx)
-	if err != nil {
-		return err
-	}
-
-	for _, entry := range mf.Packages {
-		if entry.Source != "local" {
-			continue
-		}
-		if entry.Ref == "" || entry.Ref == "unknown" || entry.Path == "" {
-			continue
-		}
-		target, err := resolveManifestEntryPath(base, entry.Path)
-		if err != nil {
-			return err
-		}
-		node := localManifestNode(ctx, entry.Name)
-		if node == nil {
-			return fmt.Errorf("manifest local package %q not found in the project graph", entry.Name)
-		}
-		if !node.IsLocal() {
-			return fmt.Errorf("manifest package %q is not a local package", entry.Name)
-		}
-		if len(node.Pkg.GitURLs()) > 0 {
-			vlog.Info("  skip checkout %s (managed git source)", entry.Name)
-			continue
-		}
-		if node.Source == nil {
-			return fmt.Errorf("manifest local package %q has no source directory", entry.Name)
-		}
-		sourceDir, err := filepath.Abs(node.Source.Dir)
-		if err != nil {
-			return fmt.Errorf("resolve manifest source for %s: %w", entry.Name, err)
-		}
-		if target != canonicalInstallPath(sourceDir) {
-			return fmt.Errorf("manifest path %q does not match local package %q source directory", entry.Path, entry.Name)
-		}
-		if err := repo.CheckoutContext(ctx.Context, target, entry.Ref); err != nil {
-			return err
-		}
-		shortRef := repo.ShortCommit(entry.Ref)
-		if shortRef != entry.Ref {
-			shortRef += "..."
-		}
-		vlog.Info("  checkout %s -> %s", entry.Name, shortRef)
-	}
-	return nil
+	return pipeline.CheckoutManifestLocals(ctx, mf)
 }
 
 func manifestProjectDir(ctx *RuntimeContext) (string, error) {
-	if ctx != nil && ctx.Paths != nil && ctx.Paths.ProjectDir != "" {
-		return ctx.Paths.ProjectDir, nil
-	}
-	if ctx != nil && ctx.WorkDir != "" {
-		return ctx.WorkDir, nil
-	}
-	return os.Getwd()
+	return pipeline.ManifestProjectDir(ctx)
 }
 
-// resolveManifestEntryPath resolves a manifest path against the project root
-// and rejects paths that escape it. A path may contain ".." as long as the
-// resolved location remains inside the project.
 func resolveManifestEntryPath(projectDir, entryPath string) (string, error) {
-	if strings.TrimSpace(entryPath) == "" {
-		return "", fmt.Errorf("manifest path is empty")
-	}
-	if filepath.IsAbs(entryPath) {
-		return "", fmt.Errorf("manifest path %q must be relative to the project root", entryPath)
-	}
-	if filepath.VolumeName(entryPath) != "" {
-		return "", fmt.Errorf("manifest path %q must not contain a volume", entryPath)
-	}
-	absolute, err := filepath.Abs(projectDir)
-	if err != nil {
-		return "", fmt.Errorf("resolve project root %q: %w", projectDir, err)
-	}
-	base := canonicalInstallPath(absolute)
-	target := canonicalInstallPath(filepath.Join(absolute, entryPath))
-	rel, err := filepath.Rel(base, target)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("manifest path %q escapes the project root", entryPath)
-	}
-	return target, nil
-}
-
-func localManifestNode(ctx *RuntimeContext, name string) *resolver.PackageNode {
-	if ctx == nil || ctx.DepGraph == nil {
-		return nil
-	}
-	node := ctx.DepGraph.Packages[name]
-	if node == nil || node.Pkg == nil {
-		return nil
-	}
-	return node
+	return pipeline.ResolveManifestEntryPath(projectDir, entryPath)
 }

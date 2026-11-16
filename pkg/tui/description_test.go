@@ -21,8 +21,8 @@ func descriptionModel() Model {
 	m.focusArea = 1
 	m.selectedPkg = "app"
 	m.buildOptionItems()
-	m.description = "old"
-	m.origDescription = "old"
+	m.ed().Desc = "old"
+	m.ed().OrigDesc = "old"
 	return m
 }
 
@@ -44,8 +44,8 @@ func TestDescriptionDisplayAndEdit(t *testing.T) {
 		t.Fatalf("input = %q, want %q", m.descInput, "old new")
 	}
 	m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	if m.descEditing || m.description != "old new" || !m.hasChanges || m.modifiedCount() != 1 {
-		t.Fatalf("after edit: editing=%t description=%q changes=%t count=%d", m.descEditing, m.description, m.hasChanges, m.modifiedCount())
+	if m.descEditing || m.ed().Desc != "old new" || !m.ed().HasChanges() || m.modifiedCount() != 1 {
+		t.Fatalf("after edit: editing=%t description=%q changes=%t count=%d", m.descEditing, m.ed().Desc, m.ed().HasChanges(), m.modifiedCount())
 	}
 	if view := stripAnsi(m.renderOptions()); !strings.Contains(view, "Description: old new") {
 		t.Fatalf("edited description not rendered:\n%s", view)
@@ -58,14 +58,14 @@ func TestDescriptionEditCancelAndClear(t *testing.T) {
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
 	m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
-	if m.descEditing || m.description != "old" || m.hasChanges {
-		t.Fatalf("esc: editing=%t description=%q changes=%t", m.descEditing, m.description, m.hasChanges)
+	if m.descEditing || m.ed().Desc != "old" || m.ed().HasChanges() {
+		t.Fatalf("esc: editing=%t description=%q changes=%t", m.descEditing, m.ed().Desc, m.ed().HasChanges())
 	}
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
 	m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlU})
 	m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	if m.descEditing || m.description != "" || !m.hasChanges || m.modifiedCount() != 1 {
-		t.Fatalf("clear: editing=%t description=%q changes=%t count=%d", m.descEditing, m.description, m.hasChanges, m.modifiedCount())
+	if m.descEditing || m.ed().Desc != "" || !m.ed().HasChanges() || m.modifiedCount() != 1 {
+		t.Fatalf("clear: editing=%t description=%q changes=%t count=%d", m.descEditing, m.ed().Desc, m.ed().HasChanges(), m.modifiedCount())
 	}
 }
 
@@ -111,8 +111,8 @@ func TestDescriptionRowClickStartsEditing(t *testing.T) {
 
 func TestDescriptionLoadedMultilineIsSanitized(t *testing.T) {
 	m := descriptionModel()
-	m.description = "short\nsecond"
-	m.origDescription = m.description
+	m.ed().Desc = "short\nsecond"
+	m.ed().OrigDesc = m.ed().Desc
 	view := stripAnsi(m.renderOptions())
 	if !strings.Contains(view, "Description: short second") {
 		t.Fatalf("multiline description not collapsed for display:\n%s", view)
@@ -126,15 +126,15 @@ func TestDescriptionLoadedMultilineIsSanitized(t *testing.T) {
 	}
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" x")})
 	m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	if m.description != "short second x" || !m.hasChanges {
-		t.Fatalf("edit lost: description=%q changes=%t", m.description, m.hasChanges)
+	if m.ed().Desc != "short second x" || !m.ed().HasChanges() {
+		t.Fatalf("edit lost: description=%q changes=%t", m.ed().Desc, m.ed().HasChanges())
 	}
 }
 
 func TestDescriptionNoopEditKeepsLoadedLineBreaks(t *testing.T) {
 	m := descriptionModel()
-	m.description = "first\nsecond"
-	m.origDescription = m.description
+	m.ed().Desc = "first\nsecond"
+	m.ed().OrigDesc = m.ed().Desc
 	m.renderOptions()
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
 	if m.descInput != "first second" {
@@ -142,22 +142,22 @@ func TestDescriptionNoopEditKeepsLoadedLineBreaks(t *testing.T) {
 	}
 	// 打开编辑后直接回车（没改内容）：不能把多行原文覆盖成单行。
 	m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	if m.description != "first\nsecond" || m.hasChanges {
-		t.Fatalf("no-op edit flattened: description=%q changes=%t", m.description, m.hasChanges)
+	if m.ed().Desc != "first\nsecond" || m.ed().HasChanges() {
+		t.Fatalf("no-op edit flattened: description=%q changes=%t", m.ed().Desc, m.ed().HasChanges())
 	}
 }
 
 func TestDescriptionLoadedOverlongIsTruncated(t *testing.T) {
 	m := descriptionModel()
-	m.description = strings.Repeat("x", int(config.MaxDescriptionLength)+50)
-	m.origDescription = m.description
+	m.ed().Desc = strings.Repeat("x", int(config.MaxDescriptionLength)+50)
+	m.ed().OrigDesc = m.ed().Desc
 	m.renderOptions()
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
 	if got := len([]rune(m.descInput)); got != int(config.MaxDescriptionLength) {
 		t.Fatalf("edit seed length = %d, want %d", got, config.MaxDescriptionLength)
 	}
 	m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	if got := len([]rune(m.description)); got != int(config.MaxDescriptionLength) {
+	if got := len([]rune(m.ed().Desc)); got != int(config.MaxDescriptionLength) {
 		t.Fatalf("saved length = %d, want %d", got, config.MaxDescriptionLength)
 	}
 }

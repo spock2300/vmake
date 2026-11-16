@@ -2,13 +2,13 @@ package tui
 
 import (
 	"fmt"
-	"maps"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
@@ -35,26 +35,9 @@ const (
 )
 
 type Model struct {
-	tree           []*TreeNode
-	flat           []*TreeNode
-	options        map[string]map[string]*api.Option
-	values         map[string]map[string]any
-	derivedOptions map[string]map[string]any
-
-	explicitValues     map[string]map[string]bool
-	origExplicitValues map[string]map[string]bool
-	explicitGlobals    map[string]bool
-	origExplicitGlobal map[string]bool
-
-	globalOptions  map[string]*api.Option
-	globalValues   map[string]any
-	chipProfiles   map[string]api.ChipProfile
-	derivedGlobals map[string]bool
-	origDerived    map[string]bool
-
-	displayDefaults func(toolchain string) map[string]any
-
-	kconfigs map[string][]*api.KConfigEntry
+	editor *config.Editor
+	tree   []*TreeNode
+	flat   []*TreeNode
 
 	selectedPkg string
 	focusArea   int
@@ -70,28 +53,21 @@ type Model struct {
 	width             int
 	height            int
 	saved             bool
-	hasChanges        bool
 	confirmQuit       bool
 	confirmBtn        int
-	origValues        map[string]map[string]any
-	origGlobal        map[string]any
 	workDir           string
 	language          language
 	languageSelectorX int
 	languageSelectorY int
 	languageSelectorW int
 
-	description     string
-	origDescription string
-	descEditing     bool
-	descInput       string
-	descCursor      int
-	descRowOffset   int
+	descEditing   bool
+	descInput     string
+	descCursor    int
+	descRowOffset int
 
 	runningMenuconfig bool
 	menuconfigErr     error
-	menuconfigRan     map[string]bool
-	presetValues      map[string]string
 
 	treeWidth       int
 	treeOff         int
@@ -146,39 +122,16 @@ type Input struct {
 }
 
 func NewModel(in Input) Model {
-	chipProfiles := in.ChipProfiles
-	if chipProfiles == nil {
-		chipProfiles = make(map[string]api.ChipProfile)
-	}
-	state := resolveInitialState(in)
+	ed := resolveInitialState(in)
 	m := Model{
-		options:            in.Options,
-		values:             state.values,
-		derivedOptions:     deepCopyValues(in.DerivedOptions),
-		explicitValues:     deepCopyBoolValues(state.explicitValues),
-		origExplicitValues: deepCopyBoolValues(state.explicitValues),
-		explicitGlobals:    maps.Clone(state.explicitGlobals),
-		origExplicitGlobal: maps.Clone(state.explicitGlobals),
-		treeCursor:         0,
-		optCursor:          0,
-		focusArea:          0,
-		workDir:            in.WorkDir,
-		globalOptions:      in.GlobalOptions,
-		globalValues:       state.globalValues,
-		chipProfiles:       chipProfiles,
-		derivedGlobals:     state.derivedGlobals,
-		kconfigs:           in.KConfigs,
-		description:        in.Description,
-		origDescription:    in.Description,
-		displayDefaults:    in.DisplayDefaults,
-		language:           systemLanguage(),
-		menuconfigRan:      make(map[string]bool),
-		presetValues:       make(map[string]string),
-		optCounts:          computeOptCounts(in.Options, in.GlobalOptions),
+		editor:     ed,
+		treeCursor: 0,
+		optCursor:  0,
+		focusArea:  0,
+		workDir:    in.WorkDir,
+		language:   systemLanguage(),
+		optCounts:  computeOptCounts(in.Options, in.GlobalOptions),
 	}
-	m.origValues = deepCopyValues(state.values)
-	m.origGlobal = deepCopyGlobal(state.globalValues)
-	m.origDerived = maps.Clone(state.derivedGlobals)
 	m.tree = buildDepTree(in.Packages, in.Deps)
 	m.rebuildFlat()
 
@@ -186,6 +139,21 @@ func NewModel(in Input) Model {
 		m.selectFirstPkg()
 	}
 	return m
+}
+
+func (m *Model) ed() *config.Editor {
+	if m.editor == nil {
+		m.editor = &config.Editor{
+			Values:         make(map[string]map[string]any),
+			ExplicitValues: make(map[string]map[string]bool),
+			ExplicitGlobals: make(map[string]bool),
+			GlobalValues:   make(map[string]any),
+			DerivedGlobals: make(map[string]bool),
+			MenuconfigRan:  make(map[string]bool),
+			PresetValues:   make(map[string]string),
+		}
+	}
+	return m.editor
 }
 
 func resolveMakeTool(name string) (string, error) {
@@ -200,7 +168,7 @@ func resolveMakeTool(name string) (string, error) {
 }
 
 func (m *Model) resolveMake() makeResolver {
-	name := getToolchainValue(m.globalValues)
+	name := getToolchainValue(m.ed().GlobalValues)
 	return func() (string, error) { return resolveMakeTool(name) }
 }
 
@@ -210,7 +178,7 @@ func (m *Model) toolchainDiagnostics() string {
 	if errs := mgr.ToolchainErrors(); len(errs) > 0 {
 		messages = append(messages, m.textf(textToolchainErrors, len(errs)))
 	}
-	name := getToolchainValue(m.globalValues)
+	name := getToolchainValue(m.ed().GlobalValues)
 	if _, err := mgr.GetToolchain(name); err != nil {
 		messages = append(messages, m.textf(textSelectedToolchain, name, err))
 	}
@@ -233,11 +201,12 @@ func computeOptCounts(options map[string]map[string]*api.Option, globalOptions m
 }
 
 func (m *Model) rebuildFlat() {
+	ed := m.ed()
 	switch {
 	case m.filterInput != "":
-		m.flat = flattenTreeSearch(m.tree, m.filterInput, m.options, m.globalOptions)
+		m.flat = flattenTreeSearch(m.tree, m.filterInput, ed.Options, ed.GlobalOptions)
 	case m.hideEmptyPkgs:
-		m.flat = flattenTreeFiltered(m.tree, m.optCounts, m.kconfigs)
+		m.flat = flattenTreeFiltered(m.tree, m.optCounts, ed.KConfigs)
 	default:
 		m.flat = flattenTree(m.tree)
 	}
@@ -299,9 +268,10 @@ func searchVisible(n *TreeNode, q string, options map[string]map[string]*api.Opt
 }
 
 func (m *Model) findFirstMatch(query string) (pkgName, optName string) {
+	ed := m.ed()
 	q := strings.ToLower(query)
 	for _, node := range m.tree {
-		if p, o := searchNodeMatch(node, q, m.options, m.globalOptions); p != "" {
+		if p, o := searchNodeMatch(node, q, ed.Options, ed.GlobalOptions); p != "" {
 			return p, o
 		}
 	}
@@ -386,12 +356,13 @@ func (m *Model) jumpToMatch(pkgName, optName string) bool {
 }
 
 func (m *Model) filteredMatchCount() int {
+	ed := m.ed()
 	n := 0
 	for _, node := range m.flat {
 		if node.IsGroup || node.PkgName == "" || node.PkgName == GlobalPkgName || node.PkgName == RemoteGroupPkgName {
 			continue
 		}
-		if m.filterInput != "" && !nodeDirectMatch(node, m.filterInput, m.options, m.globalOptions) {
+		if m.filterInput != "" && !nodeDirectMatch(node, m.filterInput, ed.Options, ed.GlobalOptions) {
 			continue
 		}
 		n++
@@ -400,12 +371,13 @@ func (m *Model) filteredMatchCount() int {
 }
 
 func (m *Model) matchedOptionIn(pkg, query string) string {
+	ed := m.ed()
 	q := strings.ToLower(query)
 	var opts map[string]*api.Option
 	if pkg == GlobalPkgName {
-		opts = m.globalOptions
+		opts = ed.GlobalOptions
 	} else {
-		opts = m.options[pkg]
+		opts = ed.Options[pkg]
 	}
 	for name, opt := range opts {
 		if strings.Contains(strings.ToLower(name), q) || strings.Contains(strings.ToLower(opt.Description()), q) {
@@ -468,33 +440,6 @@ func setExpandedAll(nodes []*TreeNode, expanded, keepGlobal bool) {
 		n.Expanded = expanded
 		setExpandedAll(n.Children, expanded, keepGlobal)
 	}
-}
-
-func deepCopyGlobal(src map[string]any) map[string]any {
-	dst := make(map[string]any)
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
-
-func deepCopyValues(src map[string]map[string]any) map[string]map[string]any {
-	dst := make(map[string]map[string]any)
-	for pkg, opts := range src {
-		dst[pkg] = make(map[string]any)
-		for k, v := range opts {
-			dst[pkg][k] = v
-		}
-	}
-	return dst
-}
-
-func deepCopyBoolValues(src map[string]map[string]bool) map[string]map[string]bool {
-	dst := make(map[string]map[string]bool)
-	for pkg, opts := range src {
-		dst[pkg] = maps.Clone(opts)
-	}
-	return dst
 }
 
 func calcTreeWidth(flat []*TreeNode, optCounts map[string]int) int {
@@ -782,27 +727,16 @@ func groupAndSortOptions(opts map[string]*api.Option) []OptionItem {
 	return items
 }
 
-func buildShowIfContext(pkgName string, values map[string]any, options map[string]*api.Option) *api.ConfigContext {
-	cfgCtx := api.NewConfigContext(pkgName)
-	api.BindSetLenient(cfgCtx)
-	for name, val := range values {
-		cfgCtx.SetConfigValue(name, val)
-	}
-	for name, o := range options {
-		cfgCtx.Option(name).SetType(o.Type()).SetDefault(o.Default())
-	}
-	return cfgCtx
-}
-
 func (m *Model) buildOptionItems() {
+	ed := m.ed()
 	m.optItems = nil
 
 	if m.selectedPkg == GlobalPkgName {
-		m.optItems = groupAndSortOptions(m.globalOptions)
+		m.optItems = groupAndSortOptions(ed.GlobalOptions)
 		return
 	}
 
-	opts, ok := m.options[m.selectedPkg]
+	opts, ok := ed.Options[m.selectedPkg]
 	if !ok {
 		return
 	}
@@ -818,253 +752,43 @@ func (m *Model) buildOptionItems() {
 }
 
 func (m *Model) effectiveGlobalValue(values map[string]any, name string) any {
-	if v, ok := values[name]; ok && v != "" {
-		return v
-	}
-	if opt, ok := m.globalOptions[name]; ok {
-		if def := opt.Default(); def != nil && def != "" {
-			return def
-		}
-		if def := m.displayFallbackFor(values, name); def != nil {
-			return def
-		}
-		if v, ok := values[name]; ok {
-			return v
-		}
-		return opt.Default()
-	}
-	return nil
+	return m.ed().EffectiveGlobalValue(values, name)
 }
 
 func (m *Model) selectedOptions() map[string]*api.Option {
+	ed := m.ed()
 	if m.selectedPkg == GlobalPkgName {
-		return m.globalOptions
+		return ed.GlobalOptions
 	}
-	return m.options[m.selectedPkg]
-}
-
-func lookupOptionValue(values map[string]any, opts map[string]*api.Option, name string) any {
-	if v, ok := values[name]; ok {
-		return v
-	}
-	if opt, ok := opts[name]; ok {
-		return opt.Default()
-	}
-	return nil
-}
-
-func fillOptionDefaults(values map[string]any, opts map[string]*api.Option) {
-	for name, opt := range opts {
-		if _, ok := values[name]; !ok {
-			if def := opt.Default(); def != nil {
-				values[name] = def
-			}
-		}
-	}
+	return ed.Options[m.selectedPkg]
 }
 
 func (m *Model) getValue(name string) any {
-	if m.selectedPkg == GlobalPkgName {
-		return m.effectiveGlobalValue(m.globalValues, name)
-	}
-	return m.lookupPkgOptionValue(m.values, m.selectedPkg, name)
+	return m.ed().Get(m.selectedPkg, name)
 }
 
 func (m *Model) lookupPkgOptionValue(values map[string]map[string]any, pkgName, name string) any {
-	if pkgVals := values[pkgName]; pkgVals != nil {
-		if v, ok := pkgVals[name]; ok && v != nil {
-			return v
-		}
-	}
-	if derivedPkg := m.derivedOptions[pkgName]; derivedPkg != nil {
-		if dv, ok := derivedPkg[name]; ok && dv != nil {
-			return dv
-		}
-	}
-	if opts := m.options[pkgName]; opts != nil {
-		if opt, ok := opts[name]; ok {
-			return opt.Default()
-		}
-	}
-	return nil
+	return m.ed().LookupPkgOptionValue(values, pkgName, name)
 }
 
 func (m *Model) setValue(name string, val any) {
-	if m.selectedPkg == GlobalPkgName {
-		m.globalValues[name] = val
-		if m.origExplicitGlobal[name] || !sameValue(m.effectiveGlobalValue(m.globalValues, name), m.effectiveGlobalValue(m.origGlobal, name)) || (isChipGlobal(name) && m.origDerived[name]) {
-			if m.explicitGlobals == nil {
-				m.explicitGlobals = make(map[string]bool)
-			}
-			m.explicitGlobals[name] = true
-		} else {
-			delete(m.explicitGlobals, name)
-		}
-		switch name {
-		case api.ToolchainOptionName, api.TargetOSOptionName, api.TargetTripleOptionName:
-			m.derivedGlobals[name] = false
-		case api.ChipOptionName:
-			if value, ok := val.(string); ok {
-				m.applyChipProfile(value)
-			}
-		}
-		m.checkChanges()
-		return
-	}
-
-	if m.values[m.selectedPkg] == nil {
-		m.values[m.selectedPkg] = make(map[string]any)
-	}
-	m.values[m.selectedPkg][name] = val
-	if m.origExplicitValues[m.selectedPkg][name] || !sameValue(m.getValue(name), m.origValue(name)) {
-		if m.explicitValues == nil {
-			m.explicitValues = make(map[string]map[string]bool)
-		}
-		if m.explicitValues[m.selectedPkg] == nil {
-			m.explicitValues[m.selectedPkg] = make(map[string]bool)
-		}
-		m.explicitValues[m.selectedPkg][name] = true
-	} else if m.explicitValues[m.selectedPkg] != nil {
-		delete(m.explicitValues[m.selectedPkg], name)
-	}
-	m.checkChanges()
+	m.ed().Set(m.selectedPkg, name, val)
 }
 
 func (m *Model) chipFor(values map[string]any) string {
-	if value, ok := values[api.ChipOptionName].(string); ok && value != "" {
-		return value
-	}
-	if opt, ok := m.globalOptions[api.ChipOptionName]; ok {
-		if value, ok := opt.Default().(string); ok {
-			return value
-		}
-	}
-	return ""
+	return m.ed().ChipFor(values)
 }
 
 func (m *Model) currentChipProfile() (api.ChipProfile, bool) {
-	chip := m.chipFor(m.globalValues)
-	if chip == "" {
-		return api.ChipProfile{}, false
-	}
-	profile, ok := m.chipProfiles[chip]
-	return profile, ok
+	return m.ed().CurrentChipProfile()
 }
 
 func (m *Model) applyChipProfile(chip string) {
-	profile, ok := m.chipProfiles[chip]
-	if !ok {
-		if m.derivedGlobals[api.ToolchainOptionName] {
-			delete(m.globalValues, api.ToolchainOptionName)
-		}
-		for _, name := range []string{api.TargetOSOptionName, api.TargetTripleOptionName} {
-			if m.derivedGlobals[name] {
-				delete(m.globalValues, name)
-			}
-		}
-		m.checkChanges()
-		return
-	}
-	if m.derivedGlobals[api.ToolchainOptionName] {
-		if profile.PreferredToolchain != "" {
-			m.globalValues[api.ToolchainOptionName] = profile.PreferredToolchain
-		} else {
-			delete(m.globalValues, api.ToolchainOptionName)
-		}
-	}
-	for _, name := range []string{api.TargetOSOptionName, api.TargetTripleOptionName} {
-		if m.derivedGlobals[name] {
-			delete(m.globalValues, name)
-		}
-	}
-	m.checkChanges()
+	m.ed().ApplyChipProfile(chip)
 }
 
 func (m *Model) checkChanges() {
-	m.hasChanges = m.pkgValuesChanged() || m.globalValuesChanged() || m.modifiedPresetCount() > 0 || m.description != m.origDescription
-}
-
-func (m *Model) pkgValuesChanged() bool {
-	if !valuesEqual(m.values, m.origValues) {
-		return true
-	}
-	for pkgName, opts := range m.options {
-		for name, opt := range opts {
-			if opt.IsGlobal() {
-				continue
-			}
-			if m.explicitValues[pkgName][name] != m.origExplicitValues[pkgName][name] {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (m *Model) globalValuesChanged() bool {
-	seen := make(map[string]bool)
-	for name := range m.globalOptions {
-		seen[name] = true
-		if m.isOptionModifiedGlobal(name) {
-			return true
-		}
-	}
-	for name, v := range m.globalValues {
-		if seen[name] {
-			continue
-		}
-		seen[name] = true
-		if !sameValue(v, m.origGlobal[name]) {
-			return true
-		}
-	}
-	for name, v := range m.origGlobal {
-		if seen[name] {
-			continue
-		}
-		if !sameValue(m.globalValues[name], v) {
-			return true
-		}
-	}
-	return false
-}
-
-func globalValuesEqual(a, b map[string]any) bool {
-	return maps.EqualFunc(a, b, sameValue)
-}
-
-func valuesEqual(a, b map[string]map[string]any) bool {
-	return maps.EqualFunc(a, b, func(x, y map[string]any) bool {
-		return maps.EqualFunc(x, y, sameValue)
-	})
-}
-
-func sameValue(a, b any) bool {
-	if a == b {
-		return true
-	}
-	if af, ok := toFloat(a); ok {
-		if bf, ok2 := toFloat(b); ok2 {
-			return af == bf
-		}
-	}
-	return false
-}
-
-func toFloat(v any) (float64, bool) {
-	switch n := v.(type) {
-	case int:
-		return float64(n), true
-	case int32:
-		return float64(n), true
-	case int64:
-		return float64(n), true
-	case float32:
-		return float64(n), true
-	case float64:
-		return n, true
-	}
-	return 0, false
+	m.ed().CheckChanges()
 }
 
 func (m *Model) visibleOptions() []OptionItem {
@@ -1078,25 +802,14 @@ func (m *Model) visibleOptions() []OptionItem {
 }
 
 func (m *Model) shouldShow(opt *api.Option) bool {
-	showIf := opt.ShowIf()
-	if showIf == nil {
-		return true
-	}
-
-	if m.selectedPkg == GlobalPkgName {
-		return showIf(buildShowIfContext(GlobalPkgName, m.globalValues, m.globalOptions))
-	}
-
-	vals, _ := m.values[m.selectedPkg]
-	opts, _ := m.options[m.selectedPkg]
-	return showIf(buildShowIfContext(m.selectedPkg, vals, opts))
+	return m.ed().Visible(m.selectedPkg, opt)
 }
 
 func (m *Model) hasKConfig() bool {
 	if m.selectedPkg == "" || m.selectedPkg == GlobalPkgName {
 		return false
 	}
-	entries, ok := m.kconfigs[m.selectedPkg]
+	entries, ok := m.ed().KConfigs[m.selectedPkg]
 	return ok && len(entries) > 0
 }
 
@@ -1104,44 +817,24 @@ func (m *Model) hasPresets() bool {
 	if !m.hasKConfig() {
 		return false
 	}
-	entries := m.kconfigs[m.selectedPkg]
+	entries := m.ed().KConfigs[m.selectedPkg]
 	return len(entries[0].Presets()) > 0
 }
 
 func (m *Model) currentPreset() string {
-	entries, ok := m.kconfigs[m.selectedPkg]
-	if !ok || len(entries) == 0 {
-		return ""
-	}
-	if v, ok := m.presetValues[m.selectedPkg]; ok {
-		return v
-	}
-	return entries[0].SelectedPreset()
+	return m.ed().CurrentPreset(m.selectedPkg)
 }
 
 func (m *Model) selectPreset(name string) {
-	if m.presetValues == nil {
-		m.presetValues = make(map[string]string)
-	}
-	m.presetValues[m.selectedPkg] = name
-	if entries := m.kconfigs[m.selectedPkg]; len(entries) > 0 && name == entries[0].SelectedPreset() {
-		delete(m.presetValues, m.selectedPkg)
-	}
-	m.checkChanges()
+	m.ed().SelectPreset(m.selectedPkg, name)
 }
 
 func (m *Model) modifiedPresetCount() int {
-	n := 0
-	for pkgName, preset := range m.presetValues {
-		if entries := m.kconfigs[pkgName]; len(entries) > 0 && preset != entries[0].SelectedPreset() {
-			n++
-		}
-	}
-	return n
+	return m.ed().ModifiedPresetCount()
 }
 
 func (m *Model) presetOptions() []string {
-	entries, ok := m.kconfigs[m.selectedPkg]
+	entries, ok := m.ed().KConfigs[m.selectedPkg]
 	if !ok || len(entries) == 0 {
 		return nil
 	}
@@ -1232,323 +925,63 @@ func (m *Model) optCountFor(pkgName string) int {
 }
 
 func (m *Model) origValue(name string) any {
-	if m.selectedPkg == GlobalPkgName {
-		return m.effectiveGlobalValue(m.origGlobal, name)
-	}
-	return m.lookupPkgOptionValue(m.origValues, m.selectedPkg, name)
+	return m.ed().Orig(m.selectedPkg, name)
 }
 
 func (m *Model) isOptionModified(name string) bool {
-	if m.selectedPkg == GlobalPkgName {
-		return m.isOptionModifiedGlobal(name)
-	}
-	return m.isOptionModifiedPkg(m.selectedPkg, name)
+	return m.ed().IsModified(m.selectedPkg, name)
 }
 
 func (m *Model) resetOption(name string) {
-	if m.selectedPkg == GlobalPkgName {
-		wasExplicit := m.origExplicitGlobal[name]
-		if isChipGlobal(name) && m.origDerived[name] {
-			m.clearGlobalValue(name)
-			return
-		}
-		if value, ok := m.origGlobal[name]; ok {
-			m.globalValues[name] = value
-			if wasExplicit {
-				if m.explicitGlobals == nil {
-					m.explicitGlobals = make(map[string]bool)
-				}
-				m.explicitGlobals[name] = true
-			} else {
-				delete(m.explicitGlobals, name)
-			}
-			if isChipGlobal(name) {
-				m.derivedGlobals[name] = m.origDerived[name]
-			}
-			if name == api.ChipOptionName {
-				if chipVal, ok := value.(string); ok {
-					m.applyChipProfile(chipVal)
-					return
-				}
-			}
-			m.checkChanges()
-			return
-		}
-		m.clearGlobalValue(name)
-		return
-	}
-	if m.values[m.selectedPkg] == nil {
-		m.values[m.selectedPkg] = make(map[string]any)
-	}
-	m.values[m.selectedPkg][name] = m.origValue(name)
-	if m.origExplicitValues[m.selectedPkg][name] {
-		if m.explicitValues == nil {
-			m.explicitValues = make(map[string]map[string]bool)
-		}
-		if m.explicitValues[m.selectedPkg] == nil {
-			m.explicitValues[m.selectedPkg] = make(map[string]bool)
-		}
-		m.explicitValues[m.selectedPkg][name] = true
-	} else if m.explicitValues[m.selectedPkg] != nil {
-		delete(m.explicitValues[m.selectedPkg], name)
-	}
-	m.checkChanges()
+	m.ed().Reset(m.selectedPkg, name)
 }
 
 func (m *Model) resetOptionToDefault(name string) {
-	def := m.declaredDefault(name)
-	if m.selectedPkg != GlobalPkgName {
-		if m.values[m.selectedPkg] == nil {
-			m.values[m.selectedPkg] = make(map[string]any)
-		}
-		if def != nil {
-			m.values[m.selectedPkg][name] = def
-		} else {
-			delete(m.values[m.selectedPkg], name)
-		}
-		if m.explicitValues[m.selectedPkg] != nil {
-			delete(m.explicitValues[m.selectedPkg], name)
-		}
-		m.checkChanges()
-		return
-	}
-	delete(m.explicitGlobals, name)
-	if def != nil && def != "" {
-		m.globalValues[name] = def
-		if isChipGlobal(name) {
-			m.derivedGlobals[name] = true
-		}
-		if name == api.ChipOptionName {
-			if chipVal, ok := def.(string); ok {
-				m.applyChipProfile(chipVal)
-				return
-			}
-		}
-		m.checkChanges()
-		return
-	}
-	m.clearGlobalValue(name)
-}
-
-func isChipGlobal(name string) bool {
-	return name == api.ToolchainOptionName ||
-		name == api.TargetOSOptionName ||
-		name == api.TargetTripleOptionName
+	m.ed().ResetToDefault(m.selectedPkg, name)
 }
 
 func (m *Model) clearGlobalValue(name string) {
-	delete(m.explicitGlobals, name)
-	switch name {
-	case api.ToolchainOptionName:
-		if profile, ok := m.currentChipProfile(); ok && profile.PreferredToolchain != "" {
-			m.globalValues[name] = profile.PreferredToolchain
-		} else {
-			delete(m.globalValues, name)
-		}
-		m.derivedGlobals[name] = true
-	case api.TargetOSOptionName, api.TargetTripleOptionName:
-		delete(m.globalValues, name)
-		m.derivedGlobals[name] = true
-	case api.ChipOptionName:
-		delete(m.globalValues, name)
-		m.applyChipProfile(m.chipFor(m.globalValues))
-	default:
-		delete(m.globalValues, name)
-	}
-	m.checkChanges()
+	m.ed().ClearGlobalValue(name)
 }
 
 func (m *Model) declaredDefault(name string) any {
-	if m.selectedPkg != GlobalPkgName {
-		if derivedPkg := m.derivedOptions[m.selectedPkg]; derivedPkg != nil {
-			if dv, ok := derivedPkg[name]; ok && dv != nil {
-				return dv
-			}
-		}
-		if opt, ok := m.selectedOptions()[name]; ok {
-			return opt.Default()
-		}
-		return nil
-	}
-	if profile, ok := m.currentChipProfile(); ok {
-		switch name {
-		case api.ToolchainOptionName:
-			if profile.PreferredToolchain != "" {
-				return profile.PreferredToolchain
-			}
-		case api.TargetOSOptionName, api.TargetTripleOptionName:
-			toolchainName, _ := m.effectiveGlobalValue(m.globalValues, api.ToolchainOptionName).(string)
-			if m.chipTargetsApply(profile, toolchainName) {
-				if name == api.TargetOSOptionName && profile.TargetOS != "" {
-					return profile.TargetOS
-				}
-				if name == api.TargetTripleOptionName && profile.TargetTriple != "" {
-					return profile.TargetTriple
-				}
-			}
-		}
-	}
-	if opt, ok := m.selectedOptions()[name]; ok {
-		return opt.Default()
-	}
-	return nil
+	return m.ed().DeclaredDefault(m.selectedPkg, name)
 }
 
 func (m *Model) chipTargetsApply(profile api.ChipProfile, toolchainName string) bool {
-	if profile.Name == "" {
-		return false
-	}
-	if profile.PreferredToolchain == "" || toolchainName == profile.PreferredToolchain {
-		return true
-	}
-	if toolchainName == "" || toolchainName == "host" {
-		return false
-	}
-	if m.displayDefaults == nil {
-		return true
-	}
-	triple, _ := m.displayDefaults(toolchainName)[api.TargetTripleOptionName].(string)
-	return triple == "" || triple == profile.TargetTriple
+	return m.ed().ChipTargetsApply(profile, toolchainName)
 }
 
 func (m *Model) displayFallback(name string) any {
-	return m.displayFallbackFor(m.globalValues, name)
+	return m.ed().DisplayFallback(name)
 }
 
 func (m *Model) displayFallbackFor(values map[string]any, name string) any {
-	if name != api.TargetOSOptionName && name != api.TargetTripleOptionName {
-		return m.toolchainDisplayFallback(values, name)
-	}
-	if profile, ok := m.chipProfiles[m.chipFor(values)]; ok {
-		toolchainName, _ := m.effectiveGlobalValue(values, api.ToolchainOptionName).(string)
-		if m.chipTargetsApply(profile, toolchainName) {
-			switch name {
-			case api.TargetOSOptionName:
-				if profile.TargetOS != "" {
-					return profile.TargetOS
-				}
-			case api.TargetTripleOptionName:
-				if profile.TargetTriple != "" {
-					return profile.TargetTriple
-				}
-			}
-		}
-	}
-	return m.toolchainDisplayFallback(values, name)
-}
-
-func (m *Model) toolchainDisplayFallback(values map[string]any, name string) any {
-	if m.displayDefaults == nil {
-		return nil
-	}
-	toolchainName, _ := values[api.ToolchainOptionName].(string)
-	if toolchainName == "" {
-		toolchainName = "host"
-	}
-	defaults := m.displayDefaults(toolchainName)
-	if defaults == nil {
-		return nil
-	}
-	return defaults[name]
+	return m.ed().DisplayFallbackFor(values, name)
 }
 
 func (m *Model) defaultFor(name string) any {
-	if def := m.declaredDefault(name); def != nil && def != "" {
-		return def
-	}
-	if m.selectedPkg == GlobalPkgName {
-		if def := m.displayFallback(name); def != nil {
-			return def
-		}
-	}
-	return m.declaredDefault(name)
+	return m.ed().Default(m.selectedPkg, name)
 }
 
 func (m *Model) modifiedCount() int {
-	n := m.modifiedPresetCount()
-	if m.description != m.origDescription {
-		n++
-	}
-	for name := range m.globalOptions {
-		if m.isOptionModifiedGlobal(name) {
-			n++
-		}
-	}
-	for pkgName, opts := range m.options {
-		for name, opt := range opts {
-			if opt.IsGlobal() {
-				continue
-			}
-			if m.isOptionModifiedPkg(pkgName, name) {
-				n++
-			}
-		}
-	}
-	return n
+	return m.ed().ModifiedCount()
 }
 
 func (m *Model) isOptionModifiedGlobal(name string) bool {
-	if !sameValue(m.effectiveGlobalValue(m.globalValues, name), m.effectiveGlobalValue(m.origGlobal, name)) {
-		return true
-	}
-	return m.explicitGlobals[name] != m.origExplicitGlobal[name]
+	return m.ed().IsOptionModifiedGlobal(name)
 }
 
 func (m *Model) isOptionModifiedPkg(pkgName, name string) bool {
-	cur := m.values[pkgName][name]
-	orig := m.origValues[pkgName][name]
-	if orig == nil {
-		if derivedPkg := m.derivedOptions[pkgName]; derivedPkg != nil {
-			orig = derivedPkg[name]
-		}
-		if orig == nil {
-			if opt, ok := m.options[pkgName][name]; ok {
-				orig = opt.Default()
-			}
-		}
-	}
-	if !sameValue(cur, orig) {
-		return true
-	}
-	return m.explicitValues[pkgName][name] != m.origExplicitValues[pkgName][name]
+	return m.ed().IsOptionModifiedPkg(pkgName, name)
 }
 
 func (m *Model) sparseValues() map[string]map[string]any {
-	out := make(map[string]map[string]any)
-	for pkgName, expMap := range m.explicitValues {
-		for name, isExplicit := range expMap {
-			if !isExplicit {
-				continue
-			}
-			val, ok := m.values[pkgName][name]
-			if !ok || val == nil {
-				continue
-			}
-			if out[pkgName] == nil {
-				out[pkgName] = make(map[string]any)
-			}
-			out[pkgName][name] = val
-		}
-	}
-	return out
+	return m.ed().SparseValues()
 }
 
 func (m *Model) sparseGlobalValues() map[string]any {
-	out := make(map[string]any)
-	for name, isExplicit := range m.explicitGlobals {
-		if !isExplicit {
-			continue
-		}
-		if m.derivedGlobals[name] {
-			continue
-		}
-		val, ok := m.globalValues[name]
-		if !ok || val == nil {
-			continue
-		}
-		out[name] = val
-	}
-	return out
+	return m.ed().SparseGlobalValues()
 }
 
 func (m *Model) openChoiceOverlay(name string, choices []string) {
@@ -1586,10 +1019,11 @@ func (m *Model) openDetailOverlay(item OptionItem) {
 }
 
 func (m *Model) detailOption() *api.Option {
+	ed := m.ed()
 	if m.selectedPkg == GlobalPkgName {
-		return m.globalOptions[m.choiceOpt]
+		return ed.GlobalOptions[m.choiceOpt]
 	}
-	if opts, ok := m.options[m.selectedPkg]; ok {
+	if opts, ok := ed.Options[m.selectedPkg]; ok {
 		return opts[m.choiceOpt]
 	}
 	return nil

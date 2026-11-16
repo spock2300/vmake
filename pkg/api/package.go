@@ -884,28 +884,17 @@ func (p *Package) kconfigConfigName() string {
 }
 
 func (p *Package) EnsureConfig(srcDir string) bool {
-	configName := p.kconfigConfigName()
-	configPath := filepath.Join(srcDir, configName)
-	if info, err := os.Stat(configPath); err == nil && info.Size() > 0 {
-		return false
+	var entry *KConfigEntry
+	if len(p.kconfigEntries) > 0 {
+		entry = p.kconfigEntries[0]
 	}
-	preset := p.SelectedPreset()
-	if preset == "" {
-		fatalScript(p.name, "EnsureConfig", "no kconfig preset selected; configure one via AddKConfig().SetDefaultPreset(...) or vmake config")
-	}
-	var extraEnv map[string]string
-	if configName != ".config" {
-		extraEnv = map[string]string{"KCONFIG_CONFIG": filepath.ToSlash(configPath)}
-	}
-	if err := p.runMakeInEnv(srcDir, extraEnv, preset); err != nil {
+	generated, err := BindEnsureKConfigPreset(entry, srcDir, true, func(dir string, extraEnv map[string]string, args ...string) error {
+		return p.runMakeInEnv(dir, extraEnv, args...)
+	})
+	if err != nil {
 		fatalScript(p.name, "EnsureConfig", "%v", err)
 	}
-	if len(p.kconfigEntries) > 0 {
-		if err := ApplyKConfigPatches(configPath, p.kconfigEntries[0].Patches()); err != nil {
-			fatalScript(p.name, "EnsureConfig", "apply kconfig patches: %v", err)
-		}
-	}
-	return true
+	return generated
 }
 
 func ApplyKConfigPatches(configPath string, patches map[string]string) error {

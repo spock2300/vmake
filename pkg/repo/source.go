@@ -33,6 +33,28 @@ import (
 //	<cacheDir>/git/<urlhash>.git       shared object cache (one per upstream URL)
 //	<cacheDir>/_locks/tree_*.lock      per-tree materialization locks
 //	<cacheDir>/_locks/cache_*.lock     per-cache-repo locks
+type gitTransport struct {
+	ResolveRemoteRef    func(ctx context.Context, urls []string, ref string) (commit, localRef string, err error)
+	ResolveRemoteRefOne func(ctx context.Context, url, ref string) (commit, localRef string, err error)
+	FetchShallowCommit  func(ctx context.Context, url, dir, commit string) error
+	FetchShallowRef     func(ctx context.Context, url, dir, localRef, commit string) (string, error)
+	CloneShallow        func(ctx context.Context, url, dir string) error
+	CloneFull           func(ctx context.Context, url, dir string) error
+	InitSubmodules      func(ctx context.Context, dir string) error
+}
+
+func defaultGitTransport() gitTransport {
+	return gitTransport{
+		ResolveRemoteRef:    ResolveRemoteRefContext,
+		ResolveRemoteRefOne: resolveRemoteRefOne,
+		FetchShallowCommit:  FetchShallowCommitContext,
+		FetchShallowRef:     FetchShallowRefContext,
+		CloneShallow:        CloneShallowContext,
+		CloneFull:           CloneContext,
+		InitSubmodules:      InitSubmodulesContext,
+	}
+}
+
 type SourceManager struct {
 	ctx       context.Context
 	depDir    string
@@ -40,16 +62,26 @@ type SourceManager struct {
 	locksDir  string
 	session   *storage.Session
 	cache     *ObjectCache
+	transport *gitTransport
 }
 
 func NewSourceManager(depDir, cacheDir string) *SourceManager {
+	t := defaultGitTransport()
 	return &SourceManager{
 		ctx:       context.Background(),
 		depDir:    depDir,
 		cacheRoot: cacheDir,
 		locksDir:  filepath.Join(cacheDir, "_locks"),
 		cache:     NewObjectCache(cacheDir),
+		transport: &t,
 	}
+}
+
+func (m *SourceManager) git() gitTransport {
+	if m.transport != nil {
+		return *m.transport
+	}
+	return defaultGitTransport()
 }
 
 func (m *SourceManager) WithContext(ctx context.Context) *SourceManager {
@@ -338,46 +370,9 @@ func (m *SourceManager) EnsureSource(req SourceRequest) (*SourceResult, error) {
 		return nil, fmt.Errorf("package %s has no git URL and no reusable tree", req.Key)
 	}
 
-	commit := req.Commit
-	localRef := ""
-	if commit == "" {
-		if validCommitID(req.Ref) {
-			commit = req.Ref
-		} else if req.Offline {
-			if cached, cachedRef, ok := cachedRefCommit(m.cache, req.URLs, req.Ref); ok {
-				commit = cached
-				localRef = cachedRef
-			} else if state != nil && state.Commit != "" && m.treeHead(srcDir) == state.Commit && offlineRefMatch(state, req) {
-				commit = state.Commit
-			} else {
-				return nil, fmt.Errorf("offline mode: cannot resolve %s for %s without network", req.Ref, req.Key)
-			}
-		} else {
-			refLabel := req.Ref
-			if refLabel == "" {
-				refLabel = "HEAD"
-			}
-			vlog.Info("  %s: resolving %s from %s", req.Key, refLabel, strings.Join(req.URLs, ", "))
-			resolved, refName, err := ResolveRemoteRefContext(m.context(), req.URLs, req.Ref)
-			if err != nil {
-				if cached, cachedRef, ok := cachedRefCommit(m.cache, req.URLs, req.Ref); ok {
-					// The upstream is unreachable but the cache already recorded
-					// this ref, so rebuild from the cached objects instead of
-					// failing a build that ran successfully before.
-					vlog.Info("  %s: cannot reach %s (%v); using cached %s at %s", req.Key, strings.Join(req.URLs, ", "), err, req.Ref, ShortCommit(cached))
-					commit = cached
-					localRef = cachedRef
-				} else if state != nil && state.Commit != "" && m.treeHead(srcDir) == state.Commit && offlineRefMatch(state, req) {
-					vlog.Info("  %s: cannot reach %s (%v); keeping existing tree at %s", req.Key, strings.Join(req.URLs, ", "), err, ShortCommit(state.Commit))
-					commit = state.Commit
-				} else {
-					return nil, fmt.Errorf("resolve source for %s: %w", req.Key, err)
-				}
-			} else {
-				commit = resolved
-				localRef = refName
-			}
-		}
+	commit, localRef, err := m.resolveTargetRevision(req, state, srcDir)
+	if err != nil {
+		return nil, err
 	}
 
 	if m.reusableState(req, state, srcDir) && state.Commit == commit {
@@ -407,6 +402,43 @@ func (m *SourceManager) EnsureSource(req SourceRequest) (*SourceResult, error) {
 		return nil, fmt.Errorf("record tree state for %s: %w", req.Key, err)
 	}
 	return m.result(root, srcDir, url, commit, true), nil
+}
+
+func (m *SourceManager) resolveTargetRevision(req SourceRequest, state *TreeState, srcDir string) (string, string, error) {
+	if req.Commit != "" {
+		return req.Commit, "", nil
+	}
+	if validCommitID(req.Ref) {
+		return req.Ref, "", nil
+	}
+	if req.Offline {
+		if cached, cachedRef, ok := cachedRefCommit(m.cache, req.URLs, req.Ref); ok {
+			return cached, cachedRef, nil
+		}
+		if state != nil && state.Commit != "" && m.treeHead(srcDir) == state.Commit && offlineRefMatch(state, req) {
+			return state.Commit, "", nil
+		}
+		return "", "", fmt.Errorf("offline mode: cannot resolve %s for %s without network", req.Ref, req.Key)
+	}
+
+	refLabel := req.Ref
+	if refLabel == "" {
+		refLabel = "HEAD"
+	}
+	vlog.Info("  %s: resolving %s from %s", req.Key, refLabel, strings.Join(req.URLs, ", "))
+	resolved, refName, err := m.git().ResolveRemoteRef(m.context(), req.URLs, req.Ref)
+	if err == nil {
+		return resolved, refName, nil
+	}
+	if cached, cachedRef, ok := cachedRefCommit(m.cache, req.URLs, req.Ref); ok {
+		vlog.Info("  %s: cannot reach %s (%v); using cached %s at %s", req.Key, strings.Join(req.URLs, ", "), err, req.Ref, ShortCommit(cached))
+		return cached, cachedRef, nil
+	}
+	if state != nil && state.Commit != "" && m.treeHead(srcDir) == state.Commit && offlineRefMatch(state, req) {
+		vlog.Info("  %s: cannot reach %s (%v); keeping existing tree at %s", req.Key, strings.Join(req.URLs, ", "), err, ShortCommit(state.Commit))
+		return state.Commit, "", nil
+	}
+	return "", "", fmt.Errorf("resolve source for %s: %w", req.Key, err)
 }
 
 func firstURL(stateURLs, fallback []string) string {
@@ -491,7 +523,7 @@ func (m *SourceManager) materialize(req SourceRequest, root, srcDir string, stat
 			continue
 		}
 		if req.Submodules {
-			if err := InitSubmodulesContext(m.context(), tmp); err != nil {
+			if err := m.git().InitSubmodules(m.context(), tmp); err != nil {
 				if ctxErr := m.context().Err(); ctxErr != nil {
 					return "", "", ctxErr
 				}
@@ -562,12 +594,12 @@ func (m *SourceManager) cloneCommitTree(url, dir, commit string, offline bool) (
 			vlog.Debug("  git object cache: %s not cached for %s: %v", ShortCommit(commit), url, err)
 		}
 	}
-	if err := FetchShallowCommitContext(m.context(), url, dir, commit); err != nil {
+	if err := m.git().FetchShallowCommit(m.context(), url, dir, commit); err != nil {
 		if ctxErr := m.context().Err(); ctxErr != nil {
 			return "", ctxErr
 		}
 		fs.RemoveIfExists(dir)
-		if err := cloneRepo(m.context(), url, dir, nil); err != nil {
+		if err := m.git().CloneFull(m.context(), url, dir); err != nil {
 			return "", err
 		}
 	}
@@ -581,7 +613,7 @@ func (m *SourceManager) cloneCommitTree(url, dir, commit string, offline bool) (
 // discovery is always a network operation, but the resolved commit is recorded
 // in the shared cache so later lock-pinned builds can reuse it offline.
 func (m *SourceManager) cloneHeadTree(url, dir string) (string, error) {
-	if err := CloneShallowContext(m.context(), url, dir); err != nil {
+	if err := m.git().CloneShallow(m.context(), url, dir); err != nil {
 		return "", err
 	}
 	actual := m.treeHead(dir)
@@ -617,7 +649,7 @@ func (m *SourceManager) cloneRefTree(url, dir string, req SourceRequest, commit,
 		if cached, ok := m.cache.CachedRef(url, req.Ref, commit); ok {
 			localRef = cached
 		} else if !m.cache.Has(url, commit) {
-			if _, detected, err := resolveRemoteRefOne(m.context(), url, req.Ref); err == nil {
+			if _, detected, err := m.git().ResolveRemoteRefOne(m.context(), url, req.Ref); err == nil {
 				localRef = detected
 			} else if ctxErr := m.context().Err(); ctxErr != nil {
 				return "", ctxErr
@@ -658,7 +690,7 @@ func (m *SourceManager) cloneRefTree(url, dir string, req SourceRequest, commit,
 			vlog.Debug("  git object cache: %s not cached for %s: %v", localRef, url, err)
 		}
 	}
-	rev, err := FetchShallowRefContext(m.context(), url, dir, localRef, commit)
+	rev, err := m.git().FetchShallowRef(m.context(), url, dir, localRef, commit)
 	if err != nil {
 		return "", err
 	}
@@ -716,7 +748,7 @@ func (m *SourceManager) restoreTree(req SourceRequest, srcDir, commit string) er
 	}
 	if req.Submodules {
 		vlog.Info("  %s: updating submodules in %s", req.Key, srcDir)
-		if err := InitSubmodulesContext(m.context(), srcDir); err != nil {
+		if err := m.git().InitSubmodules(m.context(), srcDir); err != nil {
 			return fmt.Errorf("init submodules for %s: %w", req.Key, err)
 		}
 	}

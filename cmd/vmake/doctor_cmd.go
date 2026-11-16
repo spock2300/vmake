@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,12 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/gosrc"
-	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
-	"github.com/spock2300/vmake/pkg/lockfile"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/resolver"
@@ -237,62 +233,26 @@ func checkAutoWire(src buildscript.Source) []doctorFinding {
 	}}
 }
 
-func resolveDoctorPreferredToolchain(workDir string, cfg *config.ConfigFile) string {
-	pins, err := config.LoadProjectPins(workDir)
-	if err != nil {
-		return ""
-	}
-	local, err := config.LoadLocal(workDir)
-	if err != nil {
-		return ""
-	}
-	lockPath := filepath.Join(workDir, ".vmake", "vmake.lock")
-	lock := lockfile.New()
-	if loaded, err := lockfile.Load(lockPath); err == nil {
-		lock = loaded
-	}
-	paths := &pipeline.Paths{
-		ProjectDir: workDir,
-		DepsDir:    filepath.Join(workDir, ".vmake_deps"),
-		CacheDir:   getCacheDir(),
-		ReposDir:   getReposDir(),
-		LockPath:   lockPath,
-	}
-	prevLevel := vlog.GetLevel()
-	vlog.SetLevel(vlog.Quiet)
-	iexec.SetQuiet(true)
-	scriptfs.SetReadOnly(true)
+func resolveDoctorPreferredToolchain(workDir string, _ *config.ConfigFile) string {
+	restoreScope := inspectionScope(true, true)
 	restoreOut := silenceStdout()
 	restoreErr := silenceStderr()
 	defer func() {
 		restoreOut()
 		restoreErr()
-		scriptfs.SetReadOnly(false)
-		vlog.SetLevel(prevLevel)
-		iexec.SetQuiet(vlog.IsQuiet())
+		restoreScope()
 	}()
 
-	ctx := pipeline.NewContext(pipeline.ResolveParams{
-		WorkDir:      workDir,
-		Config:       cfg,
-		Lock:         lock,
-		LockPath:     lockPath,
-		Pins:         pins,
-		SourceLinks:  local.Links,
-		TrustChecker: remoteScriptTrustChecker,
-		Paths:        paths,
+	ctx, err := openProject(projectOptions{
+		root:           workDir,
+		policy:         &resolver.LockPolicy{Offline: true, DryRun: true},
+		skipGitignore:  true,
+		noStorageLocks: true,
 	})
-	ctx.Context = context.Background()
-	ctx.LockPolicy = resolver.LockPolicy{Offline: true, DryRun: true}
+	if err != nil {
+		return ""
+	}
 	defer closeProject(ctx)
-
-	if err := pipeline.Require(ctx); err != nil {
-		return ""
-	}
-	if err := pipeline.Configure(ctx); err != nil {
-		return ""
-	}
-	pipeline.ResolveActiveChipForDisplay(ctx)
 	return ctx.PreferredToolchain
 }
 

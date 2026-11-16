@@ -138,69 +138,6 @@ func TestCalcTreeWidth_IncludesBadge(t *testing.T) {
 	}
 }
 
-func TestValuesEqual_IntVsFloatAfterJSONRoundTrip(t *testing.T) {
-	// BUG: valuesEqual used != on `any`; int(4) != float64(4) is true (types differ),
-	// causing false "modified" after config.json round-trip decodes all numbers as float64.
-	a := map[string]map[string]any{
-		"app": {"thread_count": 4},
-	}
-	b := map[string]map[string]any{
-		"app": {"thread_count": float64(4)},
-	}
-	if !valuesEqual(a, b) {
-		t.Error("valuesEqual should treat int(4) and float64(4) as equal (JSON round-trip)")
-	}
-}
-
-func TestGlobalValuesEqual_IntVsFloat(t *testing.T) {
-	a := map[string]any{"count": 4}
-	b := map[string]any{"count": float64(4)}
-	if !globalValuesEqual(a, b) {
-		t.Error("globalValuesEqual should treat int(4) and float64(4) as equal")
-	}
-}
-
-func TestValuesEqual_BoolAndString(t *testing.T) {
-	if !valuesEqual(
-		map[string]map[string]any{"p": {"b": true, "s": "hi"}},
-		map[string]map[string]any{"p": {"b": true, "s": "hi"}},
-	) {
-		t.Error("equal bool/string maps should be equal")
-	}
-	if valuesEqual(
-		map[string]map[string]any{"p": {"b": true}},
-		map[string]map[string]any{"p": {"b": false}},
-	) {
-		t.Error("differing bools should not be equal")
-	}
-}
-
-func TestValuesEqual_DifferentKeys(t *testing.T) {
-	a := map[string]map[string]any{"p": {"x": 1}}
-	b := map[string]map[string]any{"p": {"y": 1}}
-	if valuesEqual(a, b) {
-		t.Error("different option keys should not be equal")
-	}
-}
-
-func TestDeepCopyValues_IsolatesOriginal(t *testing.T) {
-	src := map[string]map[string]any{"p": {"x": 1}}
-	dst := deepCopyValues(src)
-	dst["p"]["x"] = 99
-	if src["p"]["x"] == 99 {
-		t.Error("deep copy should isolate original from mutations")
-	}
-}
-
-func TestDeepCopyGlobal_IsolatesOriginal(t *testing.T) {
-	src := map[string]any{"x": 1}
-	dst := deepCopyGlobal(src)
-	dst["x"] = 99
-	if src["x"] == 99 {
-		t.Error("deep copy should isolate original from mutations")
-	}
-}
-
 func TestNewModel_AppliesDefaultsForMissingValues(t *testing.T) {
 	opts := map[string]map[string]*api.Option{
 		"app": {"debug": mkOpt("debug", api.OptionBool, true)},
@@ -211,14 +148,14 @@ func TestNewModel_AppliesDefaultsForMissingValues(t *testing.T) {
 	sources := mkSources("app")
 	m := testModel(sources, map[string][]string{}, opts, map[string]map[string]any{}, "/work", "gcc", globalOpts, map[string]any{}, nil)
 
-	if m.values["app"]["debug"] != true {
-		t.Errorf("missing package value should default to true, got %v", m.values["app"]["debug"])
+	if m.ed().Values["app"]["debug"] != true {
+		t.Errorf("missing package value should default to true, got %v", m.ed().Values["app"]["debug"])
 	}
-	if m.globalValues["mode"] != "release" {
-		t.Errorf("missing global mode should default to release, got %v", m.globalValues["mode"])
+	if m.ed().GlobalValues["mode"] != "release" {
+		t.Errorf("missing global mode should default to release, got %v", m.ed().GlobalValues["mode"])
 	}
-	if m.globalValues["toolchain"] != "gcc" {
-		t.Errorf("toolchain should be set from currentToolchain, got %v", m.globalValues["toolchain"])
+	if m.ed().GlobalValues["toolchain"] != "gcc" {
+		t.Errorf("toolchain should be set from currentToolchain, got %v", m.ed().GlobalValues["toolchain"])
 	}
 }
 
@@ -228,8 +165,8 @@ func TestNewModel_KeepsProvidedValuesOverDefault(t *testing.T) {
 	}
 	values := map[string]map[string]any{"app": {"debug": false}}
 	m := testModel(mkSources("app"), map[string][]string{}, opts, values, "/work", "", nil, nil, nil)
-	if m.values["app"]["debug"] != false {
-		t.Errorf("provided value false should win over default, got %v", m.values["app"]["debug"])
+	if m.ed().Values["app"]["debug"] != false {
+		t.Errorf("provided value false should win over default, got %v", m.ed().Values["app"]["debug"])
 	}
 }
 
@@ -241,15 +178,15 @@ func TestModelCheckChanges_DetectsModification(t *testing.T) {
 	m := testModel(mkSources("app"), map[string][]string{}, opts, values, "/work", "", nil, nil, nil)
 	m.selectedPkg = "app"
 	m.buildOptionItems()
-	if m.hasChanges {
+	if m.ed().HasChanges() {
 		t.Error("fresh model should have no changes")
 	}
 	m.setValue("debug", true)
-	if !m.hasChanges {
+	if !m.ed().HasChanges() {
 		t.Error("flipping a bool should set hasChanges")
 	}
 	m.setValue("debug", false)
-	if m.hasChanges {
+	if m.ed().HasChanges() {
 		t.Error("reverting back should clear hasChanges")
 	}
 }
@@ -974,14 +911,14 @@ func TestResetGlobalOptionToDefault_KeepsHasChangesConsistentWithModifiedCount(t
 	m := testModel(mkSources("app"), map[string][]string{}, map[string]map[string]*api.Option{}, map[string]map[string]any{}, "/w", "", globalOpts, map[string]any{}, nil)
 	m.selectedPkg = GlobalPkgName
 	m.buildOptionItems()
-	if m.hasChanges || m.modifiedCount() != 0 {
-		t.Fatalf("initial hasChanges=%v, modifiedCount=%d", m.hasChanges, m.modifiedCount())
+	if m.ed().HasChanges() || m.modifiedCount() != 0 {
+		t.Fatalf("initial hasChanges=%v, modifiedCount=%d", m.ed().HasChanges(), m.modifiedCount())
 	}
 	m.resetOptionToDefault("label")
-	if m.hasChanges != (m.modifiedCount() > 0) {
-		t.Fatalf("after resetOptionToDefault on unset empty-default global option: hasChanges=%v, modifiedCount=%d", m.hasChanges, m.modifiedCount())
+	if m.ed().HasChanges() != (m.modifiedCount() > 0) {
+		t.Fatalf("after resetOptionToDefault on unset empty-default global option: hasChanges=%v, modifiedCount=%d", m.ed().HasChanges(), m.modifiedCount())
 	}
-	if m.hasChanges {
+	if m.ed().HasChanges() {
 		t.Fatal("resetting unset global option to its default should not mark model as changed")
 	}
 }
@@ -998,11 +935,11 @@ func TestNewModel_DoesNotCopyOrKeepGlobalOptionsInPackageValues(t *testing.T) {
 		"chip": {"board": "evb1"},
 	}
 	m := testModel(mkSources("chip"), map[string][]string{}, opts, values, "/w", "", globalOpts, map[string]any{"board": "evb2"}, nil)
-	if _, exists := m.values["chip"]["board"]; exists {
-		t.Fatalf("package values should not retain global option key, got %v", m.values["chip"])
+	if _, exists := m.ed().Values["chip"]["board"]; exists {
+		t.Fatalf("package values should not retain global option key, got %v", m.ed().Values["chip"])
 	}
-	if m.values["chip"]["debug"] != false {
-		t.Fatalf("package option default should still be populated, got %v", m.values["chip"])
+	if m.ed().Values["chip"]["debug"] != false {
+		t.Fatalf("package option default should still be populated, got %v", m.ed().Values["chip"])
 	}
 }
 

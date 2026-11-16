@@ -72,7 +72,7 @@ func validateConfigValuesInternal(ctx *RuntimeContext, needed NeededSet, checkTo
 		if entry == nil {
 			continue
 		}
-		pkgOpts := ctx.AllOptions[pkgName]
+		pkgOpts := ctx.allOptions[pkgName]
 		optNames := make([]string, 0, len(entry.Options))
 		for k := range entry.Options {
 			optNames = append(optNames, k)
@@ -168,7 +168,7 @@ func ValidateConfigStrict(ctx *RuntimeContext) ([]string, error) {
 			issues = append(issues, fmt.Sprintf("entries.%s: package is not reachable from active root", pkgName))
 			continue
 		}
-		pkgOpts := ctx.AllOptions[pkgName]
+		pkgOpts := ctx.allOptions[pkgName]
 		optNames := make([]string, 0, len(entry.Options))
 		for k := range entry.Options {
 			optNames = append(optNames, k)

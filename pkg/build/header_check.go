@@ -376,8 +376,16 @@ func (a *headerAuditor) populateHeaderBoundaries(node *BuildNode, resolved *Reso
 	for _, depPkgName := range node.DeclaredDepPkgs {
 		if depPkgName != "" && depPkgName != node.PkgName {
 			resolved.DeclaredDepPkgs[depPkgName] = true
+			unmaterialized := a.graph.PkgMeta[depPkgName].Unmaterialized
+			if unmaterialized {
+				resolved.DirectDepPkgs[depPkgName] = true
+			}
 			if depPkg := a.pkgs[depPkgName]; depPkg != nil && depPkg.InstallDir != "" {
-				appendAllowed(filepath.Join(depPkg.InstallDir, "include"), nil)
+				incDir := filepath.Join(depPkg.InstallDir, "include")
+				appendAllowed(incDir, nil)
+				if unmaterialized {
+					appendDirectAllowed(incDir, nil)
+				}
 			}
 		}
 	}

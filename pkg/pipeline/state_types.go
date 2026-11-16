@@ -25,7 +25,7 @@ type Configuration struct {
 
 func (ctx *RuntimeContext) currentConfiguration() Configuration {
 	return Configuration{
-		AllOptions:          ctx.AllOptions,
+		AllOptions:          ctx.allOptions,
 		AllKConfigs:         ctx.allKConfigs,
 		ChipProfiles:        ctx.chipProfiles,
 		ChipProfile:         ctx.chipProfile,
@@ -37,7 +37,7 @@ func (ctx *RuntimeContext) currentConfiguration() Configuration {
 }
 
 func (ctx *RuntimeContext) applyConfiguration(result Configuration) {
-	ctx.AllOptions = result.AllOptions
+	ctx.allOptions = result.AllOptions
 	ctx.allKConfigs = result.AllKConfigs
 	ctx.chipProfiles = result.ChipProfiles
 	ctx.chipProfile = result.ChipProfile
@@ -45,6 +45,24 @@ func (ctx *RuntimeContext) applyConfiguration(result Configuration) {
 	ctx.derivedOptions = result.DerivedOptions
 	ctx.bufferedGlobalFlags = result.BufferedGlobalFlags
 	ctx.globalMacroDefines = result.GlobalMacroDefines
+}
+
+func (ctx *RuntimeContext) AllOptions() map[string]map[string]*api.Option {
+	if ctx == nil || ctx.allOptions == nil {
+		return nil
+	}
+	return cloneOptionMap(ctx.allOptions)
+}
+
+func (ctx *RuntimeContext) PackageOptions(pkg string) map[string]*api.Option {
+	if ctx == nil || ctx.allOptions == nil {
+		return nil
+	}
+	opts := ctx.allOptions[pkg]
+	if opts == nil {
+		return nil
+	}
+	return maps.Clone(opts)
 }
 
 // GlobalDefines returns the configuration's macro defines.

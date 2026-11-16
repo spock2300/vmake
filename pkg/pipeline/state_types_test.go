@@ -28,7 +28,7 @@ func TestApplyConfigurationOwnsSnapshots(t *testing.T) {
 	got.AllOptions["app"]["opt"] = nil
 	got.GlobalMacroDefines[0] = "B=2"
 	got.BufferedGlobalFlags["app"].cFlags[0] = "-DY"
-	if ctx.AllOptions["app"]["opt"] == nil {
+	if ctx.allOptions["app"]["opt"] == nil {
 		t.Fatal("accessor mutation changed AllOptions")
 	}
 	if ctx.globalMacroDefines[0] != "A=1" {

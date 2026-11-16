@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 
+	"github.com/spock2300/vmake/internal/storage"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/resolver"
 )
@@ -18,6 +18,7 @@ type projectOptions struct {
 	configOverride string
 	softGitignore  bool
 	skipGitignore  bool
+	noStorageLocks bool
 }
 
 type projectResolveError struct {
@@ -49,7 +50,10 @@ func openProject(opts projectOptions) (*RuntimeContext, error) {
 	if root == "" {
 		root = findProjectDir()
 	}
-	locks := sess.storageLocksAt(root)
+	var locks *storage.Session
+	if !opts.noStorageLocks {
+		locks = sess.storageLocksAt(root)
+	}
 	ignoreLock := opts.policy != nil && opts.policy.IgnoreAll
 	selector := opts.configOverride
 	if selector == "" {
@@ -128,22 +132,17 @@ func closeProject(ctx *RuntimeContext) {
 }
 
 func applyEphemeralOverrides(ctx *RuntimeContext, overrides []inspectOverride) error {
+	sets := make([]pipeline.SetItem, len(overrides))
+	for i, o := range overrides {
+		sets[i] = pipeline.SetItem{Pkg: o.pkgName, Opt: o.optName, Raw: o.raw}
+	}
+	changes, err := pipeline.MutateConfig(ctx, pipeline.ConfigMutation{Sets: sets})
+	if err != nil {
+		return err
+	}
 	for i := range overrides {
-		override := &overrides[i]
-		override.pkgName = resolveSetPackageName(ctx, override.pkgName)
-		opt, err := inspectOverrideOption(ctx, override.pkgName, override.optName)
-		if err != nil {
-			return err
-		}
-		value, err := coerceValue(override.raw, opt.Type())
-		if err != nil {
-			return fmt.Errorf("%s: %w", override.key(), err)
-		}
-		override.value = value
-		if err := validateInspectOverride(ctx, *override); err != nil {
-			return err
-		}
-		applySetValue(ctx, override.pkgName, override.optName, value)
+		overrides[i].pkgName = changes[i].Pkg
+		overrides[i].value = changes[i].Value
 	}
 	return nil
 }

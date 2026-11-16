@@ -117,7 +117,7 @@ func PackagePlatform(ctx *RuntimeContext, name string) (api.Platform, error) {
 
 func packagePlatformValues(ctx *RuntimeContext, name string, base map[string]any) map[string]any {
 	values := map[string]any{api.TargetOSOptionName: "", api.TargetTripleOptionName: ""}
-	opts := ctx.AllOptions[name]
+	opts := ctx.allOptions[name]
 	if opts == nil && ctx.DepGraph != nil {
 		if node := ctx.DepGraph.Packages[name]; node != nil && node.Pkg != nil {
 			opts = node.Pkg.GetOptions()

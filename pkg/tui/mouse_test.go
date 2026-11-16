@@ -79,7 +79,7 @@ func TestMouseOptionActions(t *testing.T) {
 			}
 			switch typ {
 			case api.OptionBool:
-				if m.getValue("target_option") != true || !m.hasChanges {
+				if m.getValue("target_option") != true || !m.ed().HasChanges() {
 					t.Fatal("bool click did not toggle and mark changes")
 				}
 			case api.OptionChoice:
@@ -116,8 +116,8 @@ func TestMouseOptionWholeRowAndGroupMapping(t *testing.T) {
 		"second_bool": mkOpt("second_bool", api.OptionBool, false).SetGroup("B group").SetDescription("click description"),
 	})
 	mouseTestClickText(t, &m, "B group")
-	if m.focusArea != 1 || m.hasChanges || m.optCursor != 0 {
-		t.Fatalf("group click must only focus options: focus=%d changed=%t cursor=%d", m.focusArea, m.hasChanges, m.optCursor)
+	if m.focusArea != 1 || m.ed().HasChanges() || m.optCursor != 0 {
+		t.Fatalf("group click must only focus options: focus=%d changed=%t cursor=%d", m.focusArea, m.ed().HasChanges(), m.optCursor)
 	}
 	mouseTestClickText(t, &m, "click description")
 	if m.optCursor != 1 || m.getValue("second_bool") != true || m.getValue("first_bool") != false {
@@ -167,10 +167,10 @@ func TestMousePresetAndMenuconfigActions(t *testing.T) {
 			}
 			m := mouseTestModel(opts)
 			entry := (&api.KConfigEntry{}).AddPreset("first_defconfig").AddPreset("second_defconfig").SelectPreset("first_defconfig")
-			m.kconfigs = map[string][]*api.KConfigEntry{"app": {entry}}
+			m.ed().KConfigs = map[string][]*api.KConfigEntry{"app": {entry}}
 			mouseTestClickText(t, &m, "first_defconfig")
-			if m.currentPreset() != "second_defconfig" || m.presetValues["app"] != "second_defconfig" || m.focusArea != 1 || !m.hasChanges {
-				t.Fatalf("preset click did not cycle and mark changes: preset=%q focus=%d changes=%t", m.currentPreset(), m.focusArea, m.hasChanges)
+			if m.currentPreset() != "second_defconfig" || m.ed().PresetValues["app"] != "second_defconfig" || m.focusArea != 1 || !m.ed().HasChanges() {
+				t.Fatalf("preset click did not cycle and mark changes: preset=%q focus=%d changes=%t", m.currentPreset(), m.focusArea, m.ed().HasChanges())
 			}
 			cmd := mouseTestClickText(t, &m, "menuconfig")
 			if cmd == nil || !m.runningMenuconfig {
@@ -180,7 +180,7 @@ func TestMousePresetAndMenuconfigActions(t *testing.T) {
 	}
 	t.Run("menuconfig_without_presets", func(t *testing.T) {
 		m := mouseTestModel(nil)
-		m.kconfigs = map[string][]*api.KConfigEntry{"app": {&api.KConfigEntry{}}}
+		m.ed().KConfigs = map[string][]*api.KConfigEntry{"app": {&api.KConfigEntry{}}}
 		if cmd := mouseTestClickText(t, &m, "menuconfig"); cmd == nil || !m.runningMenuconfig {
 			t.Fatal("menuconfig-only row is not clickable")
 		}
@@ -190,18 +190,18 @@ func TestMousePresetAndMenuconfigActions(t *testing.T) {
 func TestMousePresetChangesSurviveOptionResetAndClearOnRevert(t *testing.T) {
 	m := mouseTestModel(map[string]*api.Option{"enabled": mkOpt("enabled", api.OptionBool, false)})
 	entry := (&api.KConfigEntry{}).AddPreset("first_defconfig").AddPreset("second_defconfig").SelectPreset("first_defconfig")
-	m.kconfigs = map[string][]*api.KConfigEntry{"app": {entry}}
+	m.ed().KConfigs = map[string][]*api.KConfigEntry{"app": {entry}}
 	mouseTestClickText(t, &m, "first_defconfig")
-	if !m.hasChanges {
+	if !m.ed().HasChanges() {
 		t.Fatal("changing the preset did not mark unsaved changes")
 	}
 	mouseTestClickText(t, &m, "enabled")
 	m.handleKey(keyRunes("r"))
-	if m.getValue("enabled") != false || m.currentPreset() != "second_defconfig" || !m.hasChanges {
+	if m.getValue("enabled") != false || m.currentPreset() != "second_defconfig" || !m.ed().HasChanges() {
 		t.Fatal("resetting an option cleared the pending preset change")
 	}
 	mouseTestClickText(t, &m, "second_defconfig")
-	if m.currentPreset() != "first_defconfig" || m.hasChanges {
+	if m.currentPreset() != "first_defconfig" || m.ed().HasChanges() {
 		t.Fatal("cycling back to the original preset did not clear unsaved changes")
 	}
 }
@@ -230,7 +230,7 @@ func TestMouseEditingClickAndWheelBehavior(t *testing.T) {
 			case "footer":
 				m.Update(mouseTestClick(0, m.height-1))
 			}
-			if m.editing || m.getValue("edit_option") != "initial" || m.getValue("other_option") != false || m.hasChanges {
+			if m.editing || m.getValue("edit_option") != "initial" || m.getValue("other_option") != false || m.ed().HasChanges() {
 				t.Fatal("outside click must cancel input without applying another action")
 			}
 		})
@@ -261,7 +261,7 @@ func TestMouseEditingCursorVisibleInSmallTerminal(t *testing.T) {
 						if !m.editing || m.editInput != input || m.editCursor != cursor {
 							t.Fatal("clicking the visible edit continuation cancelled or changed the input")
 						}
-						if m.getValue("long_option_string") != initial || m.hasChanges {
+						if m.getValue("long_option_string") != initial || m.ed().HasChanges() {
 							t.Fatal("cursor movement or continuation click committed an edit")
 						}
 					}
@@ -288,7 +288,7 @@ func TestMouseIgnoresReleaseMotionAndOtherButtons(t *testing.T) {
 			m := mouseTestModel(map[string]*api.Option{"enabled": mkOpt("enabled", api.OptionBool, false)})
 			event.X, event.Y = mouseTestPosition(t, m.View(), "enabled")
 			m.Update(event)
-			if m.getValue("enabled") != false || m.hasChanges || m.focusArea != 0 {
+			if m.getValue("enabled") != false || m.ed().HasChanges() || m.focusArea != 0 {
 				t.Fatal("non-click mouse event activated the option row")
 			}
 		})
@@ -334,7 +334,7 @@ func TestMouseOptionsWheelMovesSelection(t *testing.T) {
 	x, y := mouseTestPosition(t, m.View(), "option_00")
 	m.Update(mouseTestWheel(x, y, true))
 	m.View()
-	if m.optCursor != 1 || m.focusArea != 1 || m.treeOff != 0 || m.hasChanges {
+	if m.optCursor != 1 || m.focusArea != 1 || m.treeOff != 0 || m.ed().HasChanges() {
 		t.Fatalf("option wheel did not move selection: cursor=%d focus=%d treeOff=%d", m.optCursor, m.focusArea, m.treeOff)
 	}
 	for range 100 {
@@ -355,7 +355,7 @@ func TestMouseOptionsWheelMovesSelection(t *testing.T) {
 		if i := strings.Index(line, "/18 "); i >= 0 {
 			cursor := m.optCursor
 			m.Update(mouseTestClick(lipgloss.Width(line[:i]), row))
-			if m.hasChanges || m.optCursor != cursor {
+			if m.ed().HasChanges() || m.optCursor != cursor {
 				t.Fatal("scroll indicator click activated an option")
 			}
 			break
@@ -507,7 +507,7 @@ func TestMouseOverlayOutsideAndInteriorClicks(t *testing.T) {
 					t.Fatal("clicking dialog title closed or activated the dialog")
 				}
 				m.Update(mouseTestClick(0, 0))
-				if m.overlay != overlayNone || m.getValue("selection") != "first-value" || m.language != lang || m.hasChanges {
+				if m.overlay != overlayNone || m.getValue("selection") != "first-value" || m.language != lang || m.ed().HasChanges() {
 					t.Fatal("outside click did not cancel without changing values")
 				}
 			})
@@ -552,7 +552,7 @@ func TestMouseConfirmButtonsAndOutside(t *testing.T) {
 				t.Fatal("dialog interior should not choose a button")
 			}
 			_, cmd := m.Update(mouseTestClick(0, 0))
-			if cmd != nil || m.confirmQuit || !m.hasChanges || m.getValue("enabled") != true {
+			if cmd != nil || m.confirmQuit || !m.ed().HasChanges() || m.getValue("enabled") != true {
 				t.Fatal("outside confirmation click must cancel the dialog and preserve edits")
 			}
 		})

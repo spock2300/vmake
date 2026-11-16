@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"maps"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -26,6 +25,23 @@ type ConfigResult struct {
 	DerivedGlobals map[string]bool
 	MenuconfigRan  map[string]bool
 	PresetValues   map[string]string
+	Editor         *config.Editor
+}
+
+func (r *ConfigResult) Commit(base *config.ConfigFile, kconfigs map[string][]*api.KConfigEntry, readKConfig func(pkg string, entry *api.KConfigEntry) (string, error)) (*config.ConfigFile, error) {
+	if r == nil {
+		return base.Clone(), nil
+	}
+	return config.CommitSnapshot(base, config.CommitSnapshotInput{
+		Description:    r.Description,
+		Values:         r.Values,
+		Toolchain:      r.Toolchain,
+		GlobalValues:   r.GlobalValues,
+		DerivedGlobals: r.DerivedGlobals,
+		MenuconfigRan:  r.MenuconfigRan,
+		PresetValues:   r.PresetValues,
+		KConfigs:       kconfigs,
+	}, readKConfig)
 }
 
 func Run(in Input) (*ConfigResult, error) {
@@ -38,15 +54,17 @@ func Run(in Input) (*ConfigResult, error) {
 }
 
 func (m *Model) result() *ConfigResult {
+	ed := m.ed()
 	return &ConfigResult{
 		Saved:          m.saved,
-		Description:    m.description,
+		Description:    ed.Desc,
 		Values:         m.sparseValues(),
-		Toolchain:      getToolchainValue(m.globalValues),
+		Toolchain:      getToolchainValue(ed.GlobalValues),
 		GlobalValues:   m.sparseGlobalValues(),
-		DerivedGlobals: maps.Clone(m.derivedGlobals),
-		MenuconfigRan:  m.menuconfigRan,
-		PresetValues:   m.presetValues,
+		DerivedGlobals: maps.Clone(ed.DerivedGlobals),
+		MenuconfigRan:  ed.MenuconfigRan,
+		PresetValues:   ed.PresetValues,
+		Editor:         ed,
 	}
 }
 
@@ -75,34 +93,15 @@ func ensureConfigCmd(pkgName string, entries []*api.KConfigEntry, workDir string
 		if srcDir == "" {
 			srcDir = workDir
 		}
-		configName := e.ConfigPath()
-		if configName == "" {
-			configName = ".config"
-		}
-		configPath := filepath.Join(srcDir, configName)
-		if info, err := os.Stat(configPath); err == nil && info.Size() > 0 {
-			return menuconfigDone{pkgName: pkgName, ensured: true}
-		}
-		presetName := e.SelectedPreset()
-		if presetName == "" {
-			presetName = e.DefaultPreset()
-		}
-		if presetName == "" {
-			return menuconfigDone{pkgName: pkgName, ensured: true}
-		}
-		makeTool, err := resolveMake()
-		if err != nil {
-			return menuconfigDone{pkgName: pkgName, ensured: true, err: fmt.Errorf("generate preset %s: %w", presetName, err)}
-		}
-		args := []string{"-C", filepath.ToSlash(srcDir), presetName}
-		opts := iexec.RunOptions{Quiet: true}
-		if configName != ".config" {
-			opts.Env = map[string]string{"KCONFIG_CONFIG": filepath.ToSlash(configPath)}
-		}
-		_, err = iexec.RunWithOptions(makeTool, args, opts)
-		if err == nil {
-			err = api.ApplyKConfigPatches(configPath, e.Patches())
-		}
+		_, err := api.BindEnsureKConfigPreset(e, srcDir, false, func(dir string, extraEnv map[string]string, args ...string) error {
+			makeTool, err := resolveMake()
+			if err != nil {
+				return fmt.Errorf("generate preset %s: %w", strings.Join(args, " "), err)
+			}
+			makeArgs := append([]string{"-C", filepath.ToSlash(dir)}, args...)
+			_, err = iexec.RunWithOptions(makeTool, makeArgs, iexec.RunOptions{Quiet: true, Env: extraEnv})
+			return err
+		})
 		return menuconfigDone{pkgName: pkgName, ensured: true, err: err}
 	}
 }
@@ -153,22 +152,22 @@ func (m *Model) Init() tea.Cmd {
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case menuconfigDone:
+		ed := m.ed()
 		m.menuconfigErr = msg.err
 		if msg.ensured {
 			if msg.err != nil {
 				m.runningMenuconfig = false
-				m.hasChanges = true
+				ed.SetHasChanges(true)
 				return m, nil
 			}
-			entries := m.kconfigs[msg.pkgName]
+			entries := ed.KConfigs[msg.pkgName]
 			return m, runMenuconfigCmd(msg.pkgName, entries, m.workDir, m.resolveMake())
 		}
 		m.runningMenuconfig = false
 		if msg.err != nil {
-			m.hasChanges = true
+			ed.SetHasChanges(true)
 		} else {
-			m.menuconfigRan[msg.pkgName] = true
-			m.hasChanges = true
+			ed.MarkMenuconfigRan(msg.pkgName)
 		}
 		return m, nil
 	case tea.KeyMsg:
@@ -214,7 +213,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "ctrl+c":
-		if m.hasChanges {
+		if m.ed().HasChanges() {
 			m.confirmQuit = true
 			m.confirmBtn = 0
 			return m, nil
@@ -242,7 +241,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.focusArea == 0 {
-			if m.hasChanges {
+			if m.ed().HasChanges() {
 				m.confirmQuit = true
 				m.confirmBtn = 0
 				return m, nil
@@ -292,9 +291,10 @@ func (m *Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filterActive = false
 			m.focusArea = 0
 			if len(m.flat) > 0 {
+				ed := m.ed()
 				m.treeCursor = 0
 				for i, n := range m.flat {
-					if nodeDirectMatch(n, query, m.options, m.globalOptions) {
+					if nodeDirectMatch(n, query, ed.Options, ed.GlobalOptions) {
 						m.treeCursor = i
 						break
 					}
@@ -579,7 +579,7 @@ func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if menuconfigIdx >= 0 && m.optCursor == menuconfigIdx && msg.String() == "enter" {
-		entries := m.kconfigs[m.selectedPkg]
+		entries := m.ed().KConfigs[m.selectedPkg]
 		m.menuconfigErr = nil
 		m.runningMenuconfig = true
 		m.saved = false
@@ -784,7 +784,7 @@ func (m *Model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *Model) startDescriptionEdit() {
 	m.descEditing = true
-	m.descInput = sanitizeDescription(m.description)
+	m.descInput = sanitizeDescription(m.ed().Desc)
 	m.descCursor = len(m.descInput)
 }
 
@@ -798,7 +798,7 @@ func (m *Model) handleDescEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.descEditing = false
 		// 编辑框是单行、显示时折行；没改内容就不要用折行版本覆盖原文（原文可以含换行）。
 		// 非法原文（例如旧版本写下的超长文本）仍要借这次编辑归一化。
-		if _, err := config.ValidateDescription(m.description); err != nil || m.descInput != sanitizeDescription(m.description) {
+		if _, err := config.ValidateDescription(m.ed().Desc); err != nil || m.descInput != sanitizeDescription(m.ed().Desc) {
 			m.setDescription(m.descInput)
 		}
 		return m, nil
@@ -887,8 +887,7 @@ func (m *Model) setDescription(text string) {
 	if err != nil {
 		return
 	}
-	m.description = text
-	m.checkChanges()
+	m.ed().SetDescription(text)
 }
 
 func parseIntInput(s string) (int, bool) {
@@ -971,7 +970,7 @@ func (m *Model) renderHeaderWithin(maxHeight int) string {
 	if m.workDir != "" {
 		rightParts = append(rightParts, titlePathStyle.Render(m.workDir))
 	}
-	if m.hasChanges {
+	if m.ed().HasChanges() {
 		n := m.modifiedCount()
 		rightParts = append(rightParts, modifiedBadgeStyle.Render(m.textf(textModified, n)))
 	}
@@ -1209,8 +1208,8 @@ func (m *Model) renderDescriptionRow() string {
 	switch {
 	case m.descEditing:
 		value = inputStyle.Render(truncateDisplay(renderEditField(m.descInput, m.descCursor), valueWidth))
-	case m.description != "":
-		value = optionDescStyle.Render(truncateDisplay(sanitizeDescription(m.description), valueWidth))
+	case m.ed().Desc != "":
+		value = optionDescStyle.Render(truncateDisplay(sanitizeDescription(m.ed().Desc), valueWidth))
 	default:
 		value = optionDescStyle.Render(m.text(textDescriptionNotSet))
 	}
@@ -1475,7 +1474,7 @@ func (m *Model) renderFooterWithin(maxHeight int) string {
 		})
 	}
 
-	if m.hasChanges {
+	if m.ed().HasChanges() {
 		n := m.modifiedCount()
 		badge := m.textf(textModified, n)
 		helpText += "  " + modifiedBadgeStyle.Render(badge)

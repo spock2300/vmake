@@ -12,11 +12,12 @@ import (
 )
 
 type PkgBuildMeta struct {
-	Origin    api.SourceOrigin
-	Linked    bool
-	Deps      []string
-	SubGraphs []string
-	VisPath   string
+	Origin         api.SourceOrigin
+	Linked         bool
+	Deps           []string
+	SubGraphs      []string
+	VisPath        string
+	Unmaterialized bool
 }
 
 func (m PkgBuildMeta) IsRemote() bool {
@@ -27,10 +28,43 @@ func (m PkgBuildMeta) IsFirstParty() bool {
 	return !m.IsRemote() || m.Linked
 }
 
+type PackageEdge struct {
+	From  string   `json:"from"`
+	To    string   `json:"to"`
+	Kinds []string `json:"kinds"`
+	Via   []string `json:"via,omitempty"`
+}
+
+type TargetEdge struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+type GraphIssue struct {
+	Severity string `json:"severity"`
+	Kind     string `json:"kind"`
+	Package  string `json:"package,omitempty"`
+	Target   string `json:"target,omitempty"`
+	Message  string `json:"message"`
+}
+
+type GraphAuditOptions struct {
+	SubParents map[string]string
+	Needed     map[string]bool
+	Included   map[string]bool
+}
+
 type BuildGraph struct {
-	Nodes   map[string]*BuildNode
-	Order   []string
-	PkgMeta map[string]PkgBuildMeta
+	Nodes        map[string]*BuildNode
+	Order        []string
+	PkgMeta      map[string]PkgBuildMeta
+	Packages     []string
+	PackageDeps  map[string][]string
+	PackageEdges []PackageEdge
+	Targets      []string
+	TargetDeps   map[string][]string
+	TargetEdges  []TargetEdge
+	Issues       []GraphIssue
 }
 
 func (g *BuildGraph) GetNode(name string) (*BuildNode, error) {
@@ -123,11 +157,7 @@ func NewBuildGraph(
 					deps = append(reqDeps, deps...)
 				}
 			}
-			resolved, err := resolver.resolveDeps(deps, pkgName, nil)
-			if err != nil {
-				return nil, err
-			}
-			direct, err := resolver.resolveDirectDeps(deps, pkgName, nil)
+			resolved, direct, err := resolver.resolveTargetDeps(deps, pkgName, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -148,6 +178,452 @@ func NewBuildGraph(
 	graph.Order = order
 
 	return graph, nil
+}
+
+func AuditBuildGraph(
+	targets map[string]map[string]*api.Target,
+	pkgMeta map[string]PkgBuildMeta,
+	opts ...GraphAuditOptions,
+) *BuildGraph {
+	var opt GraphAuditOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+
+	g := &BuildGraph{
+		Nodes:       make(map[string]*BuildNode),
+		PkgMeta:     pkgMeta,
+		PackageDeps: make(map[string][]string),
+		TargetDeps:  make(map[string][]string),
+	}
+
+	included := make(map[string]bool)
+	if opt.Included != nil {
+		for name, ok := range opt.Included {
+			if ok {
+				included[name] = true
+				g.Packages = append(g.Packages, name)
+			}
+		}
+	} else {
+		for name := range pkgMeta {
+			included[name] = true
+			g.Packages = append(g.Packages, name)
+		}
+		for name := range targets {
+			if !included[name] {
+				included[name] = true
+				g.Packages = append(g.Packages, name)
+			}
+		}
+	}
+	sort.Strings(g.Packages)
+
+	for _, pkgName := range g.Packages {
+		tMap := targets[pkgName]
+		for tName, t := range tMap {
+			full := pkgName + ":" + tName
+			g.Targets = append(g.Targets, full)
+			g.Nodes[full] = &BuildNode{
+				FullName:   full,
+				PkgName:    pkgName,
+				Target:     t,
+				Deps:       make([]string, 0),
+				DirectDeps: make([]string, 0),
+			}
+		}
+	}
+	sort.Strings(g.Targets)
+	for _, full := range g.Targets {
+		g.TargetDeps[full] = nil
+	}
+
+	resolver := newDepResolver(g.Nodes, pkgMeta, opt.SubParents)
+	resolver.resolvePkgOverride = func(fromPkg, ref string) string {
+		if ref == "" || strings.Contains(ref, "/") {
+			return ref
+		}
+		if opt.Needed != nil && opt.Needed[fromPkg] {
+			if cand := api.ResolveSubPackageName(fromPkg, ref, opt.SubParents, func(c string) bool {
+				return opt.Needed[c]
+			}); cand != ref || opt.Needed[cand] {
+				return cand
+			}
+		}
+		return api.ResolveSubPackageName(fromPkg, ref, opt.SubParents, resolver.hasPkg)
+	}
+
+	type edgeAcc struct {
+		kinds []string
+		via   []string
+	}
+	pkgEdgeMap := make(map[[2]string]*edgeAcc)
+	addPkgEdge := func(from, to, kind, via string) {
+		if from == "" || to == "" || from == to {
+			return
+		}
+		if !included[from] || !included[to] {
+			return
+		}
+		key := [2]string{from, to}
+		acc := pkgEdgeMap[key]
+		if acc == nil {
+			acc = &edgeAcc{}
+			pkgEdgeMap[key] = acc
+		}
+		if kind != "" && !slices.Contains(acc.kinds, kind) {
+			acc.kinds = append(acc.kinds, kind)
+		}
+		if via != "" && !slices.Contains(acc.via, via) {
+			acc.via = append(acc.via, via)
+		}
+		if !slices.Contains(g.PackageDeps[from], to) {
+			g.PackageDeps[from] = append(g.PackageDeps[from], to)
+		}
+	}
+
+	visPathOf := func(pkg string) string {
+		if m, ok := pkgMeta[pkg]; ok && m.VisPath != "" {
+			return m.VisPath
+		}
+		return pkgvis.VisibilityPath(!strings.Contains(pkg, "/"), pkg, "", "")
+	}
+
+	seenVis := make(map[[2]string]bool)
+	checkInternalVis := func(fromPkg, toPkg, targetFull string) {
+		if fromPkg == "" || toPkg == "" || fromPkg == toPkg {
+			return
+		}
+		pair := [2]string{fromPkg, toPkg}
+		if seenVis[pair] {
+			return
+		}
+		if err := pkgvis.CheckInternal(fromPkg, visPathOf(fromPkg), toPkg, visPathOf(toPkg)); err != nil {
+			seenVis[pair] = true
+			g.Issues = append(g.Issues, GraphIssue{
+				Severity: "error",
+				Kind:     "internal-visibility",
+				Package:  fromPkg,
+				Target:   targetFull,
+				Message:  err.Error(),
+			})
+		}
+	}
+
+	crossPkgOnBuild := func(fromPkg, toPkg, targetFull, refDesc string) bool {
+		if fromPkg == "" || toPkg == "" || fromPkg == toPkg {
+			return true
+		}
+		if opt.Needed == nil || !opt.Needed[fromPkg] || opt.Needed[toPkg] {
+			return true
+		}
+		checkInternalVis(fromPkg, toPkg, targetFull)
+		g.Issues = append(g.Issues, GraphIssue{
+			Severity: "error",
+			Kind:     "missing-dependency",
+			Package:  fromPkg,
+			Target:   targetFull,
+			Message: fmt.Sprintf("package %s references %q (%s) in OnBuild without declaring AddRequires(%q) in OnRequire",
+				fromPkg, toPkg, refDesc, toPkg),
+		})
+		return false
+	}
+
+	for _, name := range g.Packages {
+		g.PackageDeps[name] = nil
+	}
+	for _, name := range g.Packages {
+		meta := pkgMeta[name]
+		for _, dep := range meta.Deps {
+			resolved := resolver.resolveDepPkgName(name, dep)
+			if !resolver.hasPkg(resolved) {
+				g.Issues = append(g.Issues, GraphIssue{
+					Severity: "error",
+					Kind:     "missing-dependency",
+					Package:  name,
+					Message:  fmt.Sprintf("package %s requires unknown package %q", name, dep),
+				})
+				continue
+			}
+			addPkgEdge(name, resolved, "require", "OnRequire")
+		}
+		for _, rawSub := range meta.SubGraphs {
+			sub := resolver.resolveDepPkgName(name, rawSub)
+			if sub == name {
+				g.Issues = append(g.Issues, GraphIssue{
+					Severity: "error",
+					Kind:     "package-cycle",
+					Package:  name,
+					Message:  fmt.Sprintf("package circular dependency detected: %s -> %s (BuildSubGraph(%s))", name, name, name),
+				})
+				continue
+			}
+			if !resolver.hasPkg(sub) {
+				g.Issues = append(g.Issues, GraphIssue{
+					Severity: "error",
+					Kind:     "missing-dependency",
+					Package:  name,
+					Target:   "",
+					Message:  fmt.Sprintf("package %s BuildSubGraph references unknown package %q", name, sub),
+				})
+				continue
+			}
+			via := fmt.Sprintf("BuildSubGraph(%s)", sub)
+			_ = crossPkgOnBuild(name, sub, "", via)
+			addPkgEdge(name, sub, "subgraph", via)
+		}
+	}
+
+	seenTargetEdge := make(map[TargetEdge]bool)
+	addTargetEdge := func(fromFull, toFull string) {
+		if fromFull == "" || toFull == "" {
+			return
+		}
+		te := TargetEdge{From: fromFull, To: toFull}
+		if !seenTargetEdge[te] {
+			seenTargetEdge[te] = true
+			g.TargetEdges = append(g.TargetEdges, te)
+		}
+		if !slices.Contains(g.TargetDeps[fromFull], toFull) {
+			g.TargetDeps[fromFull] = append(g.TargetDeps[fromFull], toFull)
+		}
+	}
+
+	appendUnique := func(dst []string, items ...string) []string {
+		for _, item := range items {
+			if item != "" && !slices.Contains(dst, item) {
+				dst = append(dst, item)
+			}
+		}
+		return dst
+	}
+
+	pkgViaLabel := func(fromFull, depPkg, fallbackSuffix string, expanded []string) string {
+		if direct := resolver.pkgTargets[depPkg]; len(direct) == 1 {
+			return fromFull + " -> " + direct[0]
+		}
+		if len(expanded) == 1 {
+			return fromFull + " -> " + expanded[0]
+		}
+		return fromFull + " -> " + depPkg + fallbackSuffix
+	}
+
+	var pkgRefTargetPairs [][2]string
+	seenPkgRefPair := make(map[[2]string]bool)
+	recordPkgRefPair := func(fromFull, depPkg string) {
+		pair := [2]string{fromFull, depPkg}
+		if !seenPkgRefPair[pair] {
+			seenPkgRefPair[pair] = true
+			pkgRefTargetPairs = append(pkgRefTargetPairs, pair)
+		}
+	}
+
+	for _, pkgName := range g.Packages {
+		tMap := targets[pkgName]
+		tNames := make([]string, 0, len(tMap))
+		for tName := range tMap {
+			tNames = append(tNames, tName)
+		}
+		sort.Strings(tNames)
+
+		for _, tName := range tNames {
+			target := tMap[tName]
+			fullName := pkgName + ":" + tName
+			node := g.Nodes[fullName]
+			rawDeps := append([]string(nil), target.Deps()...)
+			if target.UsesRequires() {
+				reqDeps := make([]string, 0, len(pkgMeta[pkgName].Deps)+len(rawDeps))
+				for _, depPkg := range pkgMeta[pkgName].Deps {
+					reqDeps = append(reqDeps, depPkg+":*")
+				}
+				rawDeps = append(reqDeps, rawDeps...)
+			}
+			node.DeclaredDepPkgs = resolver.resolveDeclaredPkgs(rawDeps, pkgName)
+
+			for _, dep := range rawDeps {
+				c := resolver.classifyDep(pkgName, dep)
+				switch c.kind {
+				case depKindSamePkgTarget:
+					addTargetEdge(fullName, c.targetFull)
+					node.DirectDeps = appendUnique(node.DirectDeps, c.targetFull)
+					node.Deps = appendUnique(node.Deps, c.targetFull)
+
+				case depKindCrossTarget:
+					pkgKnown := resolver.hasPkg(c.pkg)
+					if pkgKnown && !crossPkgOnBuild(pkgName, c.pkg, fullName, dep) {
+						if c.pkg != pkgName {
+							addPkgEdge(pkgName, c.pkg, "target", fullName+" -> "+c.targetFull)
+						}
+						continue
+					}
+					if c.pkg != pkgName {
+						addPkgEdge(pkgName, c.pkg, "target", fullName+" -> "+c.targetFull)
+					}
+					sourceMaterialized := pkgKnown && !pkgMeta[c.pkg].Unmaterialized
+					if _, exists := g.Nodes[c.targetFull]; !exists {
+						if !pkgKnown || sourceMaterialized {
+							g.Issues = append(g.Issues, GraphIssue{
+								Severity: "error",
+								Kind:     "missing-dependency",
+								Package:  pkgName,
+								Target:   fullName,
+								Message:  fmt.Sprintf("dependency not found: %s (resolved: %s)", dep, c.targetFull),
+							})
+						}
+						continue
+					}
+					addTargetEdge(fullName, c.targetFull)
+					node.DirectDeps = appendUnique(node.DirectDeps, c.targetFull)
+					node.Deps = appendUnique(node.Deps, c.targetFull)
+
+				case depKindPackageRef:
+					suffix := ""
+					if c.wildcard {
+						suffix = ":*"
+					}
+					if !resolver.hasPkg(c.pkg) {
+						g.Issues = append(g.Issues, GraphIssue{
+							Severity: "error",
+							Kind:     "missing-dependency",
+							Package:  pkgName,
+							Target:   fullName,
+							Message:  fmt.Sprintf("dependency not found: %s (from %s)", dep, fullName),
+						})
+						continue
+					}
+					if !crossPkgOnBuild(pkgName, c.pkg, fullName, dep) {
+						addPkgEdge(pkgName, c.pkg, "target", fullName+" -> "+c.pkg+suffix)
+						continue
+					}
+					expanded := resolver.expandDirectPkgTargets(c.pkg)
+					if c.pkg != pkgName {
+						addPkgEdge(pkgName, c.pkg, "target", pkgViaLabel(fullName, c.pkg, suffix, expanded))
+					}
+					for _, depFull := range expanded {
+						addTargetEdge(fullName, depFull)
+					}
+					node.DirectDeps = appendUnique(node.DirectDeps, expanded...)
+					node.Deps = appendUnique(node.Deps, resolver.expandAllPkgTargets(c.pkg)...)
+					recordPkgRefPair(fullName, c.pkg)
+
+				default:
+					g.Issues = append(g.Issues, GraphIssue{
+						Severity: "error",
+						Kind:     "missing-dependency",
+						Package:  pkgName,
+						Target:   fullName,
+						Message:  fmt.Sprintf("dependency not found: %s (from %s)", dep, fullName),
+					})
+				}
+			}
+		}
+	}
+
+	for _, pair := range pkgRefTargetPairs {
+		fromFull, depPkg := pair[0], pair[1]
+		allTransTargets := resolver.expandAllPkgTargets(depPkg)
+		if len(allTransTargets) == 0 {
+			continue
+		}
+		reachable := make(map[string]bool)
+		queue := append([]string(nil), g.TargetDeps[fromFull]...)
+		for _, q := range queue {
+			reachable[q] = true
+		}
+		for len(queue) > 0 {
+			cur := queue[0]
+			queue = queue[1:]
+			for _, nxt := range g.TargetDeps[cur] {
+				if !reachable[nxt] {
+					reachable[nxt] = true
+					queue = append(queue, nxt)
+				}
+			}
+		}
+		for _, tFull := range allTransTargets {
+			if !reachable[tFull] {
+				addTargetEdge(fromFull, tFull)
+			}
+		}
+	}
+
+	for _, name := range g.Packages {
+		sort.Strings(g.PackageDeps[name])
+	}
+	for _, full := range g.Targets {
+		sort.Strings(g.TargetDeps[full])
+	}
+	sort.Slice(g.TargetEdges, func(i, j int) bool {
+		if g.TargetEdges[i].From != g.TargetEdges[j].From {
+			return g.TargetEdges[i].From < g.TargetEdges[j].From
+		}
+		return g.TargetEdges[i].To < g.TargetEdges[j].To
+	})
+
+	edgeKeys := make([][2]string, 0, len(pkgEdgeMap))
+	for k := range pkgEdgeMap {
+		edgeKeys = append(edgeKeys, k)
+	}
+	sort.Slice(edgeKeys, func(i, j int) bool {
+		if edgeKeys[i][0] != edgeKeys[j][0] {
+			return edgeKeys[i][0] < edgeKeys[j][0]
+		}
+		return edgeKeys[i][1] < edgeKeys[j][1]
+	})
+	for _, k := range edgeKeys {
+		acc := pkgEdgeMap[k]
+		g.PackageEdges = append(g.PackageEdges, PackageEdge{
+			From:  k[0],
+			To:    k[1],
+			Kinds: acc.kinds,
+			Via:   acc.via,
+		})
+	}
+
+	for _, pe := range g.PackageEdges {
+		checkInternalVis(pe.From, pe.To, "")
+	}
+
+	identity := func(deps []string) []string { return deps }
+	if _, err := toposort.TopologicalSort(g.PackageDeps, identity); err != nil {
+		cycle := toposort.FindCycle(g.PackageDeps, identity)
+		if len(cycle) > 0 {
+			var details []string
+			for i := 0; i+1 < len(cycle); i++ {
+				if acc := pkgEdgeMap[[2]string{cycle[i], cycle[i+1]}]; acc != nil && len(acc.via) > 0 {
+					details = append(details, acc.via[0])
+				}
+			}
+			msg := fmt.Sprintf("package circular dependency detected: %s", strings.Join(cycle, " -> "))
+			if len(details) > 0 {
+				msg = fmt.Sprintf("%s (%s)", msg, strings.Join(details, ", "))
+			}
+			g.Issues = append(g.Issues, GraphIssue{
+				Severity: "error",
+				Kind:     "package-cycle",
+				Package:  cycle[0],
+				Message:  msg,
+			})
+		}
+	}
+
+	if order, err := toposort.TopologicalSort(g.TargetDeps, identity); err != nil {
+		cycle := toposort.FindCycle(g.TargetDeps, identity)
+		if len(cycle) > 0 {
+			ownerPkg, _, _ := strings.Cut(cycle[0], ":")
+			g.Issues = append(g.Issues, GraphIssue{
+				Severity: "error",
+				Kind:     "target-cycle",
+				Package:  ownerPkg,
+				Target:   cycle[0],
+				Message:  fmt.Sprintf("target circular dependency detected: %s", strings.Join(cycle, " -> ")),
+			})
+		}
+	} else {
+		g.Order = order
+	}
+
+	return g
 }
 
 func validatePackageGraph(
@@ -268,11 +744,12 @@ func validatePackageGraph(
 }
 
 type depResolver struct {
-	nodes      map[string]*BuildNode
-	pkgMeta    map[string]PkgBuildMeta
-	subParents map[string]string
-	pkgTargets map[string][]string
-	memo       map[string][]string
+	nodes              map[string]*BuildNode
+	pkgMeta            map[string]PkgBuildMeta
+	subParents         map[string]string
+	pkgTargets         map[string][]string
+	memo               map[string][]string
+	resolvePkgOverride func(fromPkg, ref string) string
 }
 
 func newDepResolver(nodes map[string]*BuildNode, pkgMeta map[string]PkgBuildMeta, subParents map[string]string) *depResolver {
@@ -301,6 +778,97 @@ func (d *depResolver) hasPkg(name string) bool {
 	return len(d.pkgTargets[name]) > 0
 }
 
+type depKind int
+
+const (
+	depKindUnknown depKind = iota
+	depKindSamePkgTarget
+	depKindCrossTarget
+	depKindPackageRef
+)
+
+type classifiedDep struct {
+	kind       depKind
+	rawPkg     string
+	pkg        string
+	targetFull string
+	wildcard   bool
+}
+
+func (d *depResolver) classifyDep(currentPkg, dep string) classifiedDep {
+	ref := ParseDependencyRef(dep)
+	if ref.HasTarget {
+		resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package)
+		if ref.Target == "*" {
+			return classifiedDep{kind: depKindPackageRef, rawPkg: ref.Package, pkg: resolvedPkg, wildcard: true}
+		}
+		return classifiedDep{
+			kind:       depKindCrossTarget,
+			rawPkg:     ref.Package,
+			pkg:        resolvedPkg,
+			targetFull: resolvedPkg + ":" + ref.Target,
+		}
+	}
+	if ref.IsPackagePath() {
+		return classifiedDep{kind: depKindPackageRef, rawPkg: ref.Package, pkg: ref.Package}
+	}
+	qualified := currentPkg + ":" + ref.Package
+	if _, exists := d.nodes[qualified]; exists {
+		return classifiedDep{kind: depKindSamePkgTarget, rawPkg: ref.Package, pkg: currentPkg, targetFull: qualified}
+	}
+	if resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package); resolvedPkg != currentPkg && d.hasPkg(resolvedPkg) {
+		return classifiedDep{kind: depKindPackageRef, rawPkg: ref.Package, pkg: resolvedPkg}
+	}
+	return classifiedDep{kind: depKindUnknown, rawPkg: ref.Package}
+}
+
+func (d *depResolver) expandDirectPkgTargets(depPkg string) []string {
+	visited := make(map[string]bool)
+	var out []string
+	var walk func(p string)
+	walk = func(p string) {
+		if p == "" || visited[p] {
+			return
+		}
+		visited[p] = true
+		if ts := d.pkgTargets[p]; len(ts) > 0 {
+			for _, full := range ts {
+				if !slices.Contains(out, full) {
+					out = append(out, full)
+				}
+			}
+			return
+		}
+		for _, trans := range d.pkgMeta[p].Deps {
+			walk(d.resolveDepPkgName(p, trans))
+		}
+	}
+	walk(depPkg)
+	return out
+}
+
+func (d *depResolver) expandAllPkgTargets(depPkg string) []string {
+	visited := make(map[string]bool)
+	var out []string
+	var walk func(p string)
+	walk = func(p string) {
+		if p == "" || visited[p] {
+			return
+		}
+		visited[p] = true
+		for _, trans := range d.pkgMeta[p].Deps {
+			walk(d.resolveDepPkgName(p, trans))
+		}
+		for _, full := range d.pkgTargets[p] {
+			if !slices.Contains(out, full) {
+				out = append(out, full)
+			}
+		}
+	}
+	walk(depPkg)
+	return out
+}
+
 func (d *depResolver) resolveDeclaredPkgs(deps []string, currentPkg string) []string {
 	seen := make(map[string]bool)
 	var out []string
@@ -318,143 +886,91 @@ func (d *depResolver) resolveDeclaredPkgs(deps []string, currentPkg string) []st
 		}
 	}
 	for _, dep := range deps {
-		ref := ParseDependencyRef(dep)
-		if ref.HasTarget {
-			resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package)
-			if ref.Target == "*" {
-				addTransitive(resolvedPkg)
-			} else if resolvedPkg != "" && resolvedPkg != currentPkg && !seen[resolvedPkg] {
-				seen[resolvedPkg] = true
-				out = append(out, resolvedPkg)
+		c := d.classifyDep(currentPkg, dep)
+		switch c.kind {
+		case depKindPackageRef:
+			addTransitive(c.pkg)
+		case depKindCrossTarget:
+			if c.pkg != "" && c.pkg != currentPkg && !seen[c.pkg] {
+				seen[c.pkg] = true
+				out = append(out, c.pkg)
 			}
-			continue
-		}
-		if ref.IsPackagePath() {
-			addTransitive(ref.Package)
-			continue
-		}
-		if _, exists := d.nodes[currentPkg+":"+ref.Package]; exists {
-			continue
-		}
-		if resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package); resolvedPkg != currentPkg && d.hasPkg(resolvedPkg) {
-			addTransitive(resolvedPkg)
 		}
 	}
 	return out
 }
 
 func (d *depResolver) resolveRawCrossPkg(currentPkg, dep string) string {
-	ref := ParseDependencyRef(dep)
-	if ref.HasTarget {
-		return d.resolveDepPkgName(currentPkg, ref.Package)
-	}
-	if ref.IsPackagePath() {
-		return ref.Package
-	}
-	if _, exists := d.nodes[currentPkg+":"+ref.Package]; exists {
+	c := d.classifyDep(currentPkg, dep)
+	switch c.kind {
+	case depKindCrossTarget, depKindPackageRef:
+		return c.pkg
+	default:
 		return ""
 	}
-	if resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package); resolvedPkg != currentPkg {
-		if d.hasPkg(resolvedPkg) {
-			return resolvedPkg
-		}
-	}
-	return ""
 }
 
-func (d *depResolver) resolveDeps(deps []string, currentPkg string, path []string) ([]string, error) {
-	var result []string
-	seen := make(map[string]bool)
+func (d *depResolver) resolveTargetDeps(deps []string, currentPkg string, path []string) ([]string, []string, error) {
+	var allResult []string
+	var directResult []string
+	seenAll := make(map[string]bool)
+	seenDirect := make(map[string]bool)
 
 	for _, dep := range deps {
-		expanded, err := d.resolveDep(dep, currentPkg, path)
+		expandedAll, expandedDirect, err := d.resolveDepSpec(dep, currentPkg, path)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		for _, x := range expanded {
-			if !seen[x] {
-				seen[x] = true
-				result = append(result, x)
+		for _, x := range expandedAll {
+			if !seenAll[x] {
+				seenAll[x] = true
+				allResult = append(allResult, x)
+			}
+		}
+		for _, x := range expandedDirect {
+			if !seenDirect[x] {
+				seenDirect[x] = true
+				directResult = append(directResult, x)
 			}
 		}
 	}
-	return result, nil
-}
-
-func (d *depResolver) resolveDirectDeps(deps []string, currentPkg string, path []string) ([]string, error) {
-	var result []string
-	seen := make(map[string]bool)
-
-	for _, dep := range deps {
-		expanded, err := d.resolveDirectDep(dep, currentPkg, path)
-		if err != nil {
-			return nil, err
-		}
-		for _, x := range expanded {
-			if !seen[x] {
-				seen[x] = true
-				result = append(result, x)
-			}
-		}
-	}
-	return result, nil
+	return allResult, directResult, nil
 }
 
 func (d *depResolver) resolveDep(dep string, currentPkg string, path []string) ([]string, error) {
-	ref := ParseDependencyRef(dep)
-	if ref.HasTarget {
-		resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package)
-		if ref.Target == "*" {
-			return d.resolvePackageRef(resolvedPkg, path)
-		}
-		fullDep := resolvedPkg + ":" + ref.Target
-		if _, exists := d.nodes[fullDep]; !exists {
-			hint := subPackageHint(currentPkg, ref.Package, resolvedPkg, d.subParents)
-			return nil, fmt.Errorf("dependency not found: %s (resolved: %s)%s", dep, fullDep, hint)
-		}
-		return []string{fullDep}, nil
-	}
-
-	if ref.IsPackagePath() {
-		return d.resolvePackageRef(ref.Package, path)
-	}
-
-	qualified := currentPkg + ":" + ref.Package
-	if _, exists := d.nodes[qualified]; exists {
-		return []string{qualified}, nil
-	}
-	if resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package); resolvedPkg != currentPkg {
-		if d.hasPkg(resolvedPkg) {
-			return d.resolvePackageRef(resolvedPkg, path)
-		}
-	}
-	return nil, fmt.Errorf("dependency not found: %s", dep)
+	all, _, err := d.resolveDepSpec(dep, currentPkg, path)
+	return all, err
 }
 
 func (d *depResolver) resolveDirectDep(dep string, currentPkg string, path []string) ([]string, error) {
-	ref := ParseDependencyRef(dep)
-	if ref.HasTarget {
-		resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package)
-		if ref.Target == "*" {
-			return d.resolveDirectPackageRef(resolvedPkg, path)
-		}
-		return []string{resolvedPkg + ":" + ref.Target}, nil
-	}
+	_, direct, err := d.resolveDepSpec(dep, currentPkg, path)
+	return direct, err
+}
 
-	if ref.IsPackagePath() {
-		return d.resolveDirectPackageRef(ref.Package, path)
-	}
-
-	qualified := currentPkg + ":" + ref.Package
-	if _, exists := d.nodes[qualified]; exists {
-		return []string{qualified}, nil
-	}
-	if resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package); resolvedPkg != currentPkg {
-		if d.hasPkg(resolvedPkg) {
-			return d.resolveDirectPackageRef(resolvedPkg, path)
+func (d *depResolver) resolveDepSpec(dep string, currentPkg string, path []string) ([]string, []string, error) {
+	c := d.classifyDep(currentPkg, dep)
+	switch c.kind {
+	case depKindSamePkgTarget:
+		return []string{c.targetFull}, []string{c.targetFull}, nil
+	case depKindCrossTarget:
+		if _, exists := d.nodes[c.targetFull]; !exists {
+			hint := subPackageHint(currentPkg, c.rawPkg, c.pkg, d.subParents)
+			return nil, nil, fmt.Errorf("dependency not found: %s (resolved: %s)%s", dep, c.targetFull, hint)
 		}
+		return []string{c.targetFull}, []string{c.targetFull}, nil
+	case depKindPackageRef:
+		all, err := d.resolvePackageRef(c.pkg, path)
+		if err != nil {
+			return nil, nil, err
+		}
+		direct, err := d.resolveDirectPackageRef(c.pkg, path)
+		if err != nil {
+			return nil, nil, err
+		}
+		return all, direct, nil
+	default:
+		return nil, nil, fmt.Errorf("dependency not found: %s", dep)
 	}
-	return nil, fmt.Errorf("dependency not found: %s", dep)
 }
 
 func (d *depResolver) resolveDirectPackageRef(pkgRef string, path []string) ([]string, error) {
@@ -481,6 +997,9 @@ func (d *depResolver) resolveDirectPackageRef(pkgRef string, path []string) ([]s
 }
 
 func (d *depResolver) resolveDepPkgName(currentPkg, depName string) string {
+	if d.resolvePkgOverride != nil {
+		return d.resolvePkgOverride(currentPkg, depName)
+	}
 	return api.ResolveSubPackageName(currentPkg, depName, d.subParents, func(candidate string) bool {
 		return d.hasPkg(candidate)
 	})

@@ -32,7 +32,7 @@ func TestOptionsSingleRowViewportKeepsSelectedRowVisible(t *testing.T) {
 			m.language = lang
 			m.width = 60
 			m.height = m.headerHeight() + m.footerHeight() + 2
-			m.kconfigs = map[string][]*api.KConfigEntry{
+			m.ed().KConfigs = map[string][]*api.KConfigEntry{
 				"app": {(&api.KConfigEntry{}).AddPreset("default_config").SelectPreset("default_config")},
 			}
 			if rows := m.optItemRows(); rows != 1 {
