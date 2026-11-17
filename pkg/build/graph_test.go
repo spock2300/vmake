@@ -393,10 +393,14 @@ func TestBuildGraphDiamondCycleError(t *testing.T) {
 }
 
 func TestBuildPath(t *testing.T) {
-	got := BuildPath("/base", "abc123", "objects")
-	want := filepath.Join("/base", "build", "abc123", "objects")
-	if got != want {
+	if got, want := BuildPath("/base", "abc123", "objects"), filepath.Join("/base", "build", "abc123", "objects"); got != want {
 		t.Errorf("BuildPath = %q, want %q", got, want)
+	}
+	full := "761fa64b39dfa1018158230bb18f2784f5503d08d8b81918e33fb2614d1fb386"
+	got := BuildPath("/base", full, "staging/include")
+	want := filepath.Join("/base", "build", "761fa64b39dfa101", "staging/include")
+	if got != want {
+		t.Errorf("BuildPath with a full key = %q, want %q", got, want)
 	}
 }
 

@@ -199,7 +199,7 @@ func TestPackageVisibilityBuildAndInspectKeys(t *testing.T) {
 			t.Errorf("%s inspection directories differ from build: %+v, %+v", name, insp.pkgDirs[name], s.pkgDirs[name])
 		}
 		want := build.BuildKey(tools.CCKey(), s.cfg.Mode, s.allPkgOptions[name], extra[name])
-		if got := filepath.Base(s.pkgDirs[name].BuildDir); got != want {
+		if got := filepath.Base(s.pkgDirs[name].BuildDir); got != build.KeyDir(want) {
 			t.Errorf("%s directory key = %s, scheduler key = %s", name, got, want)
 		}
 	}

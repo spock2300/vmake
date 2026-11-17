@@ -35,8 +35,8 @@
   "build_files": [
     {
       "path": "compile_commands.json",
-      "size": 2981,
-      "hash": "ba3f68a5a89fba24082f6c3ab7990bc5e0760b18cde20820a6fd98b4c6903a59"
+      "size": 2597,
+      "hash": "606df2effc41eb81d90757ec0d83e8be32a0b0229164bf8aa1d099486f367577"
     }
   ],
   "install_tree_hash": "6ba7c53859ba6ce5f03747c1e4448ffd7641a437490885225505358f300e6e80"

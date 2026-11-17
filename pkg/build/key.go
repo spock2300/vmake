@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 
 	"github.com/spock2300/vmake/pkg/api"
 )
@@ -31,10 +30,6 @@ func (l PackageLayout) PkgInfo() *PkgInfo {
 		buildKey = ""
 	}
 	return NewPkgInfo(dirs, buildKey)
-}
-
-func BuildPath(baseDir, buildKey, subdir string) string {
-	return filepath.Join(baseDir, "build", buildKey, subdir)
 }
 
 // layoutFormatVersion versions the per-package build-directory key. It is

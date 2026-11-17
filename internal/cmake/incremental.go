@@ -198,7 +198,7 @@ func inputFiles(s Settings) ([]fileDigest, error) {
 	scanRoot := resolveSymlinks(s.SourceDir)
 	// Exclude the invocation's build root instead of assuming <SourceDir>/build:
 	// a remote package's SourceDir is its upstream checkout while its build root
-	// is <pkgRoot>/out/<owner>/<key>. The parent of BuildRoot covers the sibling
+	// is <pkgRoot>/out/<memberDir>/<keyDir>. The parent of BuildRoot covers the sibling
 	// build keys of the same project; an unrelated upstream build/ directory must
 	// stay in the fingerprint.
 	roots := []string{s.BuildRoot, s.BuildDir}

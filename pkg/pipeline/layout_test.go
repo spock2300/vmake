@@ -2,9 +2,10 @@ package pipeline
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/spock2300/vmake/internal/storage"
+	"github.com/spock2300/vmake/pkg/build"
 )
 
 func TestLayoutForLocalExactPaths(t *testing.T) {
@@ -28,7 +29,7 @@ func TestLayoutForLocalExactPaths(t *testing.T) {
 	if layout.Dirs.SourceDir != "/src/pkg" {
 		t.Errorf("SourceDir = %q", layout.Dirs.SourceDir)
 	}
-	if want := filepath.Join("/src/pkg", "build", wantKey); layout.Dirs.BuildDir != want {
+	if want := filepath.Join("/src/pkg", "build", wantKey[:16]); layout.Dirs.BuildDir != want {
 		t.Errorf("BuildDir = %q, want %q", layout.Dirs.BuildDir, want)
 	}
 	if layout.Dirs.InstallDir != "" {
@@ -51,7 +52,7 @@ func TestLayoutForRemoteMemberExactPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantKey := "e05b58c4383404ec6def9f94704703cd6f00ca74b62ce10c16e42aaafd040fbb"
-	output := filepath.Join("/deps/native/root", "out", storage.OwnerKey("nested/member"), wantKey)
+	output := filepath.Join("/deps/native/root", "out", build.MemberDir("nested/member"), wantKey[:16])
 	if want := filepath.Join("/deps/native/root", "src", "nested", "member"); layout.Dirs.SourceDir != want {
 		t.Errorf("SourceDir = %q, want %q", layout.Dirs.SourceDir, want)
 	}
@@ -152,5 +153,34 @@ func TestLayoutFactsCarryAllKeyMaterial(t *testing.T) {
 		if got := layoutKeyFor(t, in); got == base {
 			t.Fatalf("remote %s did not change the build key", name)
 		}
+	}
+}
+
+func TestRemoteLayoutFitsWindowsPathBudget(t *testing.T) {
+	const windowsPathBudget = 250
+	project := "C:/" + strings.Repeat("p", 60)
+	layout, err := layoutFor(layoutInput{
+		PkgRoot: project + "/.vmake_deps/vendor/sdk",
+		Member:  "nested/member",
+		CCKey:   "cc",
+		Mode:    "release",
+		Options: map[string]any{"x": 1},
+		Facts:   LayoutFacts{Version: "1.0.0", Commit: "commit", FlagsHash: "flags", PatchHash: "patch"},
+		Ready:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(layout.BuildKey) != 64 {
+		t.Errorf("BuildKey = %q, want the full 64-character identity", layout.BuildKey)
+	}
+	if got := filepath.Base(filepath.Dir(layout.Dirs.BuildDir)); len(got) != 16 {
+		t.Errorf("key directory = %q, want 16 characters", got)
+	}
+	deepest := filepath.Join(layout.Dirs.BuildDir,
+		"cmake", "CMakeFiles", "CMakeScratch", "TryCompile-1234abcd",
+		"CMakeFiles", "CMakeTmp", "CMakeLists.txt")
+	if len(deepest) >= windowsPathBudget {
+		t.Fatalf("deepest CMake path is %d characters, want under %d: %s", len(deepest), windowsPathBudget, deepest)
 	}
 }

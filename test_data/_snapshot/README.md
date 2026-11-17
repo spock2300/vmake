@@ -34,7 +34,7 @@ Per project (`build --install`):
 
 ## What is NOT Snapshotted
 
-- `build/<hash>/objects/*.o` and `*.o.d` — redundant with `compile_commands.json`.
+- `build/<keyDir>/object/<objDir>/*.o` and `*.o.d` — redundant with `compile_commands.json`.
 - `manifest.json` itself is captured via the redacted field, not as a file.
 
 ## Excluded Projects

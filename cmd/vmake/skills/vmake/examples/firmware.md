@@ -426,7 +426,7 @@ vmake build
 Expected result:
 
 - `vmake build` logs `Executing OnBuild...`, runs each KBuild package once, prints the firmware partition table (`[uboot] offset=0x... size=...`), and finishes with `firmware.img: total=... bytes`.
-- Artifacts land under each package's `build/<buildKey>/`: `firmware/build/<buildKey>/firmware.img`, `rootfs/build/<buildKey>/rootfs.sqsh`, `busybox/build/<buildKey>/_install/`, `linux/build/<buildKey>/zImage`.
+- Artifacts land under each package's `build/<keyDir>/`: `firmware/build/<keyDir>/firmware.img`, `rootfs/build/<keyDir>/rootfs.sqsh`, `busybox/build/<keyDir>/_install/`, `linux/build/<keyDir>/zImage`.
 - KConfig `.config` files are restored from the active configuration before `OnBuild`; switching a preset clears the stored config and regenerates it on the next build.
 
 ## What This Demonstrates

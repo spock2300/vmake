@@ -15,15 +15,17 @@
 
 ## BuildKey — Build Directory Naming
 
-The `build/` directory is named by a **SHA-256 hex hash**, not a readable name — so multiple build variants coexist under `build/` without clobbering each other:
+The `build/` directory is named by the **first 16 hex characters of the SHA-256 build key** (`build.KeyDir`), not a readable name — so multiple build variants coexist under `build/` without clobbering each other, and the generated paths stay inside the Windows `MAX_PATH` budget:
 
 ```
-build/a1b2c3d4e5f6789012345678abcdef0123456789abcdef0123456789abcdef01/
+build/69970c4f511b8711/
 ```
+
+The full 64-character build key remains the identity reported by `vmake inspect`; only the directory name is shortened. Remote output roots use `<memberDir>` for the member (`root` for the owner package itself, otherwise the member path with separators replaced and a 16-hex suffix) and `<keyDir>` for the same 16-hex projection.
 
 BuildDir path by package origin:
-- **Local packages**: `<SourceDir>/build/<buildKey>/`
-- **Remote packages**: `.vmake_deps/<repo>/<owner>/out/<sha256(member)>/<buildKey>/build/` — the sibling `install/` holds published headers/libs. The package's single working tree lives at `.vmake_deps/<repo>/<owner>/src`; native subpackages use `src/<member>`, and switching configurations only changes the `out/<sha256(member)>/<buildKey>` directory
+- **Local packages**: `<SourceDir>/build/<keyDir>/`
+- **Remote packages**: `.vmake_deps/<repo>/<owner>/out/<memberDir>/<keyDir>/build/` — the sibling `install/` holds published headers/libs. The package's single working tree lives at `.vmake_deps/<repo>/<owner>/src`; native subpackages use `src/<member>`, and switching configurations only changes the `out/<memberDir>/<keyDir>` directory
 
 The BuildKey hashes the format version and `(toolchain identity, build_mode, options)` plus extra material: the **global-flags hash** for every package, extended with a `default-visibility=hidden` marker when `SetDefaultVisibilityHidden()` is active; local `SetGit` packages additionally contribute the resolved **source commit**; remote packages contribute **source version, commit, patch-set hash, and the linked source path while `pkg link` is active**. Buildscript text is action-level: commands, includes/defines and file lists are captured by action signatures, so a comment-only build.go edit does not rotate `BuildDir`. `AddBinHeader` rules additionally record the declared input in the generated header's first line so switching the input regenerates the header even without a key rotation. Artifacts written into `BuildDir()` by the script outside declared actions are not tracked. Version switches, global flag changes and remote patch edits produce a fresh key instead of silently reusing stale artifacts. A local `SetGit` patch-only change is restored into the existing tree but does not rotate its `BuildDir`. The BuildKey is deterministic — same inputs always produce the same hash. `compile_commands.json` is rebuilt for the current session and merged across schedulers by `(source file, object output)` at `<project root>/build/compile_commands.json`. `AddBinHeader` output goes to `BuildDir()/generated/`.
 
@@ -31,7 +33,7 @@ The BuildKey hashes the format version and `(toolchain identity, build_mode, opt
 
 For local `SetGit`, `SourceDir()` stays at the package root. `SourceDir()/src` is a managed symlink to the package's single working tree at `.vmake_deps/local/<pkg>/src`; the link target no longer changes with the build key. Use `SrcDir()` for this actual source tree.
 
-Remote registry and native packages build directly in their working tree at `.vmake_deps/<repo>/<owner>/src`; native subpackages use their relative path inside it (`src/<member>`), and a member carrying its own repository gets a nested tree at the member directory. `SourceDir()` points there before OnBuild runs; patches apply to `SrcDir()` in place (a changed patch set resets the tree to its pinned commit first). `ScriptDir()` identifies the loaded buildscript's directory and may differ. Build outputs live in `out/<sha256(member)>/<buildKey>/{build,install}` beside `src`; do not treat the tree as immutable — it is the shared writable source for every configuration of the project.
+Remote registry and native packages build directly in their working tree at `.vmake_deps/<repo>/<owner>/src`; native subpackages use their relative path inside it (`src/<member>`), and a member carrying its own repository gets a nested tree at the member directory. `SourceDir()` points there before OnBuild runs; patches apply to `SrcDir()` in place (a changed patch set resets the tree to its pinned commit first). `ScriptDir()` identifies the loaded buildscript's directory and may differ. Build outputs live in `out/<memberDir>/<keyDir>/{build,install}` beside `src`; do not treat the tree as immutable — it is the shared writable source for every configuration of the project.
 
 A `pkg link` package is the exception: `SourceDir()` is the linked git tree (native parent) or its member directory, while `BuildDir()`/`InstallDir()` stay under `.vmake_deps/<owner>/out/...`. Native sub-packages with their own `SetGit` source keep `SourceDir()` in the linked tree but `SrcDir()` points at `.vmake_deps/<owner>/third_party/<member>/src`. Link packages build the linked worktree directly: lock/project-pin versions, tags and constraints are ignored for the linked package, and no commit, tag, version bump or `deps update` is required while linked. Linking removes any existing materialized `src` and `state.json` for the package while keeping `out/` and own-Git `third_party/`; `pkg unlink` removes the record and the next build uses the existing lock entry when present. Run `vmake deps update` to re-resolve versions.
 

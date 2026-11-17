@@ -4,7 +4,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/spock2300/vmake/internal/storage"
 	"github.com/spock2300/vmake/pkg/build"
 )
 
@@ -65,7 +64,7 @@ func TestLocalPkgDirsExactKey(t *testing.T) {
 		if layout.Dirs.InstallDir != "" {
 			t.Errorf("commit %q: local InstallDir = %q, want empty", commit, layout.Dirs.InstallDir)
 		}
-		if want := filepath.Join("/script", "build", wantKey); layout.Dirs.BuildDir != want {
+		if want := filepath.Join("/script", "build", build.KeyDir(wantKey)); layout.Dirs.BuildDir != want {
 			t.Errorf("commit %q: BuildDir = %q, want %q", commit, layout.Dirs.BuildDir, want)
 		}
 	}
@@ -88,7 +87,7 @@ func TestRemotePkgDirsExactKey(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		output := filepath.Join("/vd", "out", storage.OwnerKey(filepath.ToSlash(member)), wantKey)
+		output := filepath.Join("/vd", "out", build.MemberDir(filepath.ToSlash(member)), build.KeyDir(wantKey))
 		if want := filepath.Join("/vd", "src", filepath.FromSlash(member)); layout.Dirs.SourceDir != want {
 			t.Errorf("member %q: SourceDir = %q, want %q", member, layout.Dirs.SourceDir, want)
 		}
@@ -113,7 +112,7 @@ func TestRemotePkgDirsMemberNotInBuildKey(t *testing.T) {
 	}
 	rootKey := filepath.Base(filepath.Dir(root.Dirs.BuildDir))
 	memberKey := filepath.Base(filepath.Dir(member.Dirs.BuildDir))
-	if rootKey != root.BuildKey || memberKey != member.BuildKey || root.BuildKey != member.BuildKey {
+	if rootKey != build.KeyDir(root.BuildKey) || memberKey != build.KeyDir(member.BuildKey) || root.BuildKey != member.BuildKey {
 		t.Errorf("member changed build key: root=%q member=%q want=%q", rootKey, memberKey, root.BuildKey)
 	}
 }

@@ -176,7 +176,7 @@ toolchains/<host-os>/<host-arch>/<name>/<version>/
 │   │       ├── src/
 │   │       └── state.json
 │   ├── state.json                 # urls/version/ref/commit/patchHash/submodules 物化状态
-│   └── out/<sha256(member)>/<buildKey>/
+│   └── out/<memberDir>/<keyDir>/
 │       ├── build/                 # 对象、库、可执行文件
 │       └── install/               # 该包对外安装的 include/lib
 └── local/<pkg>/
@@ -184,9 +184,9 @@ toolchains/<host-os>/<host-arch>/<name>/<version>/
     └── state.json
 ```
 
-`owner` 对普通包就是包名，对 native 子包是其根父包；`member` 是子包相对父包的路径，普通包为空字符串（`sha256("")` 仍形成一级目录）。
+`owner` 对普通包就是包名，对 native 子包是其根父包；`member` 是子包相对父包的路径，普通包为空字符串。输出目录名是两个身份的投影而不是身份本身：`<memberDir>` 是 member 的可移植目录名（空 member 为 `root`，其余把路径分隔符和 Windows 非法字符换成 `-` 并追加 `sha256(member)` 的前 16 位），`<keyDir>` 取完整 `buildKey` 的前 16 位（64 bit），构建目录内的 `object/<objDir>`（隔离 target 与源码路径）和 `state/<name>.link.json` 的文件名同样只取摘要前 16 位。完整构建键仍是 `PackageLayout.BuildKey` 并在 `vmake inspect` 中输出；目录名只需在同一 `out/` 下唯一，因此不再用两个 64 位哈希挤占 Windows 的 `MAX_PATH` 预算。升级后旧的 `out/<sha256(member)>/<buildKey>` 与 `build/<buildKey>` 目录不再使用，运行一次 `vmake clean --all` 即可回收。
 
-`buildKey` 由格式版本、工具链身份（含工具内容）、构建模式、选项组合、有序全局 flags 与 commit 共同生成（`pkg/build/key.go` `BuildKey`）。远程包的键还包含版本号与补丁集哈希；本地包的键不包含版本和补丁集。build.go 文本不进入构建键，命令、include/define、文件列表等实际构建输入由 action 签名捕获，因此只改注释不会切换构建目录。远程包的版本或补丁集变化时会重建或恢复工作树（同一 commit 的补丁变化走 `checkout --force --detach` + `clean -fdx`，不触网）；本地 `SetGit` 包的补丁变化也会重置工作树，但沿用同一构建目录，已有对象是否重编由增量规则决定。切换工具链/选项只更换 `out/<buildKey>`（远程包）或包内 `build/<buildKey>`（本地包）。
+`buildKey` 由格式版本、工具链身份（含工具内容）、构建模式、选项组合、有序全局 flags 与 commit 共同生成（`pkg/build/key.go` `BuildKey`）。远程包的键还包含版本号与补丁集哈希；本地包的键不包含版本和补丁集。build.go 文本不进入构建键，命令、include/define、文件列表等实际构建输入由 action 签名捕获，因此只改注释不会切换构建目录。远程包的版本或补丁集变化时会重建或恢复工作树（同一 commit 的补丁变化走 `checkout --force --detach` + `clean -fdx`，不触网）；本地 `SetGit` 包的补丁变化也会重置工作树，但沿用同一构建目录，已有对象是否重编由增量规则决定。切换工具链/选项只更换 `out/<memberDir>/<keyDir>`（远程包）或包内 `build/<keyDir>`（本地包）。
 
 本地 SetGit 包保留 `<包目录>/src` 符号链接指向 `.vmake_deps/local/<包名>/src`，因此 `AddFiles("src/...")`、`p.SourceDir()/src/...` 等既有写法不变；链接目标不再随构建键变化。vmake 在项目根把 `.vmake_deps/` 写入 `.gitignore`；`vmake pkg link` 与 `vmake config use` 在需要时把 `.vmake/local.json` 也加入，若该文件已被 git 跟踪则拒绝写入。本地 SetGit 包应在自己的 `.gitignore` 中忽略 `src/`（多数包已经如此，否则 `git status` 会显示该链接）。
 
@@ -217,14 +217,14 @@ project/
 │   └── <repo>/<owner>/
 │       ├── src/                   # 唯一工作树
 │       ├── third_party/<member>/  # pkg link 下 native own-Git 子包的第三方源码
-│       └── out/<sha256(member)>/<buildKey>/
+│       └── out/<memberDir>/<keyDir>/
 ├── install/                       # 安装输出（--prefix 默认 ./install）
 └── build/                         # 构建输出与结果
     ├── compile_commands.json      # LSP 编译数据库
     ├── vmake-build.json           # 结构化构建结果（build/rebuild 发布，clean/distclean/pkg clean 删除）
     ├── vmake-test.json            # 结构化测试结果（test 发布，clean/distclean/pkg clean 删除；不覆盖 build）
-    └── <buildKey>/                # 64 位十六进制哈希目录
-        ├── object/<hash>/foo.o    # hash 隔离 target 与源码路径，保留源码文件名
+    └── <keyDir>/                  # buildKey 前 16 位十六进制
+        ├── object/<objDir>/foo.o  # objDir 取摘要前 16 位，隔离 target 与源码路径
         └── <target>               # 最终产物
 ```
 

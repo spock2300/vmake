@@ -95,10 +95,10 @@ Phase 1-3: Main build.go
     │
     ├── BuildSubGraph("tools")
     │       └── runs tools' OnBuild and builds its targets synchronously
-    │       └── builds tools/build/<buildKey>/codegen with tools' toolchain
+    │       └── builds tools/build/<keyDir>/codegen with tools' toolchain
     │
     ├── DepOutput("tools:codegen")
-    │       └── Returns path: tools/build/<buildKey>/codegen
+    │       └── Returns path: tools/build/<keyDir>/codegen
     │
     ├── Exec(path, "output/generated.h")
     │       └── Runs codegen with cwd = the current package's SourceDir

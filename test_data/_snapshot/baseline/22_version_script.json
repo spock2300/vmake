@@ -19,7 +19,7 @@
     {
       "path": "bin/app",
       "size": 17371,
-      "hash": "227438fadb34d41643b84917dea77b0f3da4167d9c1d55408792d0a49aea6af6"
+      "hash": "87e080303edb19bd7dae301c6b3f80a3a4e7a4df72d49c8bfc5119ed65bd5ba6"
     },
     {
       "path": "lib/liblibfoo.so",
@@ -30,9 +30,9 @@
   "build_files": [
     {
       "path": "compile_commands.json",
-      "size": 4639,
-      "hash": "2f291e1d55f8d0a4cc286437c3e94866990df11122a314f7689c88fb3c149cf3"
+      "size": 4063,
+      "hash": "81d8d2ee911e0be424c63639333ace2ff7e6cc285355b1ba5f7ec6c4f5f0f189"
     }
   ],
-  "install_tree_hash": "e46528335420d28c95190806a9a5c63cbb3956ddca945c40904e4effed1fa616"
+  "install_tree_hash": "6aff1548216af4822140b2854c390bbaaa76bb87dcc79b47f2229f61472d5168"
 }

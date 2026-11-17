@@ -207,7 +207,7 @@ func TestObjectPathIdentityAndReadableName(t *testing.T) {
 			t.Fatal(err)
 		}
 		parts := strings.Split(filepath.ToSlash(got), "/")
-		if len(parts) != 3 || parts[0] != "object" || len(parts[1]) != 64 || parts[2] != "foo.o" {
+		if len(parts) != 3 || parts[0] != "object" || len(parts[1]) != 16 || parts[2] != "foo.o" {
 			t.Fatalf("unexpected object layout: %s", got)
 		}
 		if seen[got] {
@@ -219,6 +219,28 @@ func TestObjectPathIdentityAndReadableName(t *testing.T) {
 			if err != nil || other != got {
 				t.Fatalf("source alias %s changed object path: %s, %v", equivalent, other, err)
 			}
+		}
+	}
+}
+
+func TestObjectPathFitsWindowsPathBudget(t *testing.T) {
+	const key = "832b0c71e43b7dbd" + "000000000000000000000000000000000000000000000000"
+	buildDir := "C:/01_work/04_HL-~1/.vmake_deps/hl/hl-mcu-sdk/out/" +
+		MemberDir("system/freertos/kernel") + "/" + KeyDir(key) + "/build"
+	obj, err := objectPath("hl-mcu-sdk:system-freertos-kernel", buildDir+"/system/freertos/libc/src/aux_heap2.c", buildDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if objDir := strings.SplitN(filepath.ToSlash(obj), "/", 3)[1]; len(objDir) != keyDirLen {
+		t.Fatalf("object directory %q must stay a %d-hex projection", objDir, keyDirLen)
+	}
+	for _, path := range []string{
+		filepath.Join(buildDir, obj),
+		buildDir + "/staging/include/poll.h",
+		buildDir + "/cmake/CMakeFiles/CMakeScratch/TryCompile-abc123/CMakeFiles/cmTC_abc123.dir/objects1.rsp",
+	} {
+		if len(path) >= 250 {
+			t.Errorf("path is %d characters, want under 250: %s", len(path), path)
 		}
 	}
 }

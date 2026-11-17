@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/resolver"
@@ -686,7 +687,7 @@ func TestInspectBuildStateAndPackageDirs(t *testing.T) {
 			if !strings.HasPrefix(pkg.BuildDir, filepath.Join(want.base, "build")+string(filepath.Separator)) {
 				t.Fatalf("%s buildDir = %q, want a path under %s", want.pkg, pkg.BuildDir, filepath.Join(want.base, "build"))
 			}
-			if pkg.BuildKey == "" || pkg.BuildKey != filepath.Base(pkg.BuildDir) {
+			if pkg.BuildKey == "" || build.KeyDir(pkg.BuildKey) != filepath.Base(pkg.BuildDir) {
 				t.Fatalf("%s buildKey = %q, buildDir = %q", want.pkg, pkg.BuildKey, pkg.BuildDir)
 			}
 			if _, err := os.Stat(pkg.BuildDir); !os.IsNotExist(err) {

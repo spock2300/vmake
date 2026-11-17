@@ -330,6 +330,14 @@
   5. **Git 传输内缝（`pkg/repo`）**：在 `SourceManager` 内部引入未导出的 `gitTransport` 函数回调结构体（默认 CLI 回调 + 故障注入测试回调），将版本/缓存解析（`resolveTargetRevision`）与工作树检出（`materialize`）解耦，保持 `SourceManager` 导出 API 不变。
 - 涉及代码: `pkg/build/graph.go`, `pkg/build/subgraph.go`, `pkg/config/editor.go`, `pkg/config/store.go`, `pkg/tui/model.go`, `pkg/tui/app.go`, `pkg/api/bind.go`, `pkg/pipeline/config_mutate.go`, `pkg/pipeline/install.go`, `pkg/pipeline/manifest.go`, `pkg/pipeline/clean.go`, `pkg/pipeline/test_runner.go`, `pkg/buildreport/`, `pkg/catalog/`, `pkg/repo/source.go`, `cmd/vmake/`。
 
+## DD-37: 构建目录名是身份摘要的短投影
+
+- 状态: accepted
+- 背景: 远程包输出目录曾为 `out/<sha256(member)>/<buildKey>`，两级各 64 位十六进制、共 129 字符。CMake 在构建目录内还会生成 60–90 字符的 try_compile/install 子路径，Windows 的 250/260 字符上限会被突破，而且失败发生在最深的叶子文件上，离决定目录的地方很远。
+- 决策: 目录名与身份分离。完整 `BuildKey` 仍是身份（`PackageLayout.BuildKey`、`vmake inspect`），目录名只取前 16 位十六进制（`build.KeyDir`，64 bit）；member 目录改为可移植短名（`build.MemberDir`：空 member 为 `root`，其余清洗路径分隔符与 Windows 非法字符、截断 24 字符并追加 `sha256(member)[:16]` 保证唯一）。`pkg/pipeline.layoutFor` 对本地包用 `build.BuildPath`、对远程包用 `build.MemberDir`/`build.KeyDir` 生成目录，`build.PkgInfo.EffectiveBuildDir`/`OutputPath` 复用同一组投影，`PackageLayout` 仍是目录的唯一来源。构建目录内部同样是投影：`build/object/<objDir>`（`sha256(target, 源码相对路径)`）和 `state/<name>.link.json` 的文件名取摘要前 16 位（`build.digestDir`），对象文件名仍保留源码 basename。不 bump `layoutFormatVersion`（身份未变），旧目录由 `vmake clean --all` 回收；Windows 路径预算由 `TestRemoteLayoutFitsWindowsPathBudget` 钉住。
+- 理由: 构建目录名只需要在同一个 `out/` 下唯一，不需要可校验；把 129 字符的身份编码从路径里拿掉，CMake、链接器和 install 步骤都重新拿到足够余量，而所有调用方无需改动。保留完整键作为身份，避免轮换目录的同时破坏 inspect/lock 的推导。
+- 涉及代码: `pkg/build/paths.go`, `pkg/build/key.go`, `pkg/build/scheduler_resolve.go`, `pkg/build/signature.go`, `pkg/pipeline/layout.go`, `pkg/build/paths_test.go`, `pkg/build/scheduler_test.go`, `pkg/pipeline/layout_test.go`, `docs/VMAKE_HOME.md`。
+
 ## 已知限制 / 待议
 
 以下问题已被识别但尚未决策，修改前需单独讨论：

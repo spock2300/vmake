@@ -317,7 +317,7 @@ Native 仓库依赖，通过 git tag 进行版本管理。
 
 ```bash
 cd test_data/01_simple_c
-../../vmake build     # 应编译生成 hello 可执行文件（位于 build/<hash>/hello）
+../../vmake build     # 应编译生成 hello 可执行文件（位于 build/<keyDir>/hello）
 ```
 
 单独验证 zlib 示例（从仓库根目录开始）：

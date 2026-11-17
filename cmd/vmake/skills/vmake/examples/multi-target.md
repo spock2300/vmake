@@ -56,7 +56,7 @@ myproject/
 
 ```
 build/
-└── <buildKey>/
+└── <keyDir>/
     ├── libmylib.a    # Static library
     ├── myapp         # Main executable
     └── tests         # Test executable (not built by default)
@@ -87,8 +87,8 @@ The install prefix defaults to `./install/` (`--prefix`/`-p` overrides it). `Tar
 ## Running / Verifying
 
 ```bash
-vmake build                                # "Build succeeded: ..."; build/<buildKey>/libmylib.a + myapp; no tests binary
-vmake build --tests                        # also builds build/<buildKey>/tests
+vmake build                                # "Build succeeded: ..."; build/<keyDir>/libmylib.a + myapp; no tests binary
+vmake build --tests                        # also builds build/<keyDir>/tests
 vmake test                                 # builds all defaults and runs the test binary; expected "Tests succeeded: 1/1 passed in ... (buildId=...)"
 vmake build --install                      # install/bin/myapp only
 vmake build --install --install-type sdk   # adds install/lib/libmylib.a + install/include/mylib.h

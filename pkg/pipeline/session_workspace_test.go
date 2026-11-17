@@ -130,7 +130,7 @@ func TestPkgKeyMatchesExplicitMaterial(t *testing.T) {
 			if remote {
 				got = filepath.Base(filepath.Dir(s.pkgDirs["app"].BuildDir))
 			}
-			if got != want {
+			if got != build.KeyDir(want) {
 				t.Fatalf("BuildDir key = %q, want %q", got, want)
 			}
 		})

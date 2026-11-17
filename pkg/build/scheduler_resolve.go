@@ -417,7 +417,7 @@ func objectPath(target, src, workDir string) (string, error) {
 	}
 	hash := sha256.Sum256([]byte(target + "\x00" + filepath.ToSlash(rel)))
 	name := strings.TrimSuffix(filepath.Base(rel), filepath.Ext(rel)) + ".o"
-	return filepath.Join(subdirObjects, hex.EncodeToString(hash[:]), name), nil
+	return filepath.Join(subdirObjects, digestDir(hex.EncodeToString(hash[:])), name), nil
 }
 
 func (s *Scheduler) checkLibDependencies(resolved *ResolvedTarget) {

@@ -271,7 +271,7 @@ AddBinHeader([]string{"assets/a.bin", "assets/b.bin"})
 ```
 
 - Input files can be strings or `[]string`
-- Output: `build/<buildKey>/generated/<stem>.h` (e.g., `logo.h`) — a **comma-separated hex fragment**, not a complete declaration. Wrap it in your own array and size it with `sizeof`:
+- Output: `build/<keyDir>/generated/<stem>.h` (e.g., `logo.h`) — a **comma-separated hex fragment**, not a complete declaration. Wrap it in your own array and size it with `sizeof`:
 
 ```c
 static const unsigned char logo[] = {
@@ -295,14 +295,14 @@ vmake build --toolchain arm-none-eabi --tests
 Expected result:
 
 - `vmake doctor --toolchain arm-none-eabi` resolves the toolchain without PATH fallback.
-- The build prints the link command plus a `size` report, and writes `firmware`, `firmware.hex`, and `firmware.bin` under `build/<buildKey>/`; `--tests` also compiles the `test_runner` binary without executing it.
+- The build prints the link command plus a `size` report, and writes `firmware`, `firmware.hex`, and `firmware.bin` under `build/<keyDir>/`; `--tests` also compiles the `test_runner` binary without executing it.
 
 ```bash
 # host-simulated fixture (uses the host toolchain)
 cd test_data/12_rtos_simulate && ../../vmake build
 ```
 
-Expected: exits 0 and writes `firmware.hex`/`firmware.bin` under `build/<buildKey>/`.
+Expected: exits 0 and writes `firmware.hex`/`firmware.bin` under `build/<keyDir>/`.
 
 ## Key Points
 

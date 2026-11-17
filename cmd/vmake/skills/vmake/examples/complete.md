@@ -180,10 +180,10 @@ myproject/
 vmake config --set myproject/shared_lib=true
 
 vmake build
-# -> build/<buildKey>/myapp
-# -> build/<buildKey>/libmylib.a       (default)
-# -> build/<buildKey>/libmylib.so      (shared_lib=true; libmylib.dylib on macOS, libmylib.dll on Windows)
-# Windows binary: build\<buildKey>\myapp.exe
+# -> build/<keyDir>/myapp
+# -> build/<keyDir>/libmylib.a       (default)
+# -> build/<keyDir>/libmylib.so      (shared_lib=true; libmylib.dylib on macOS, libmylib.dll on Windows)
+# Windows binary: build\<keyDir>\myapp.exe
 
 vmake test
 # builds and runs the benchmark test target (SetTest(true))

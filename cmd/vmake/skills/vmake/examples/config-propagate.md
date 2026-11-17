@@ -128,7 +128,7 @@ func Main(p *api.Package) {
 }
 ```
 
-`GenerateConfigHeader` creates `generated/autoconf.h` under the package's build directory (`build/<buildKey>/generated/`), and that directory is added to the include path of this package's targets only — it is not propagated to dependents. The file contains `#define CONFIG_MCU "stm32f405"`, `#define CONFIG_USE_DMA 1` etc. (a choice option additionally emits `#define CONFIG_MCU_STM32F405 1`; a disabled bool appears as `/* #undef CONFIG_XXX */`; an option with no configured value and no `SetDefault` is skipped entirely). Source files in this package can `#include "autoconf.h"`.
+`GenerateConfigHeader` creates `generated/autoconf.h` under the package's build directory (`build/<keyDir>/generated/`), and that directory is added to the include path of this package's targets only — it is not propagated to dependents. The file contains `#define CONFIG_MCU "stm32f405"`, `#define CONFIG_USE_DMA 1` etc. (a choice option additionally emits `#define CONFIG_MCU_STM32F405 1`; a disabled bool appears as `/* #undef CONFIG_XXX */`; an option with no configured value and no `SetDefault` is skipped entirely). Source files in this package can `#include "autoconf.h"`.
 
 ## Running / Verifying
 

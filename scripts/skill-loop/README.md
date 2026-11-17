@@ -34,7 +34,7 @@ Tasks:
    `installations`, `method`, `file`, `root_dir`, `url`, `sha256`).
 6. `onrequire` - two-phase `OnRequire` discovery and `ctx.When`/`If`/`Select`.
 7. `public` - `AddPublic*` propagation versus global flags and BuildKey rotation.
-8. `buildkey` - what rotates `build/<pkg>/<buildKey>/`, including action signatures.
+8. `buildkey` - what rotates `build/<keyDir>/`, including action signatures.
 9. `dryrun` - declarative writes in `OnBuild` and `p.DryRun()` guards.
 10. `targets` - `TargetVoid/Object/Static/Shared/Binary`, `SetTest`, `SetLinkable(false)`.
 11. `options` - choice options, `CONFIG_*`, `autoconf.h`, `ImportConfig`/`SyncConfigDefines`.

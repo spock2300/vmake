@@ -185,8 +185,8 @@ myproject/
 ├── configs/                  # Tracked configurations (configs/default.json, SKU profiles)
 ├── .vmake/                   # project.json (default_config & pins), local.json (local cursor & links), vmake.lock
 ├── .vmake_deps/              # Materialized third-party & local SetGit trees
-├── build/                    # compile_commands.json, vmake-build/test.json; root-package outputs at build/<buildKey>/
-│                             # subpackages use <pkgDir>/build/<buildKey>/, remote packages use .vmake_deps/.../out/
+├── build/                    # compile_commands.json, vmake-build/test.json; root-package outputs at build/<keyDir>/
+│                             # subpackages use <pkgDir>/build/<keyDir>/, remote packages use .vmake_deps/.../out/
 └── install/                  # Staging: bin/, lib/, include/, manifest.json
 ```
 

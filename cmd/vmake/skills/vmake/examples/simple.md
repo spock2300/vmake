@@ -57,9 +57,9 @@ int main(void) {
 vmake doctor               # verify the host C toolchain once
 vmake toolchain show host  # show resolved compiler paths
 vmake build
-./build/*/hello            # <buildKey> is the 64-hex SHA-256 build directory key
+./build/*/hello            # <keyDir> is the first 16 hex of the SHA-256 build key
 ls build/                  # list variants if the glob is ambiguous
-# Windows: .\build\<buildKey>\hello.exe
+# Windows: .\build\<keyDir>\hello.exe
 ```
 
 ## Key Points
@@ -68,8 +68,8 @@ ls build/                  # list variants if the glob is ambiguous
 - No `OnRequire` needed if no third-party dependencies
 - Glob patterns (`src/*.c`) match multiple files and resolve against `SourceDir()` (the `build.go` directory), not the current working directory
 - A glob that matches nothing is not an error: a binary target fails later at link time with no inputs, while a static target produces an empty archive
-- For local packages the output binary goes to `build/<buildKey>/<target>`; remote packages build under `.vmake_deps/<repo>/<pkg>/out/<sha256(member)>/<buildKey>/build/`
-- `<buildKey>` hashes the build format version, toolchain, mode, options, and the global-flags hash (plus a `default-visibility=hidden` marker when active); local `SetGit` packages add their source commit, remote packages add version/commit/patch hash
+- For local packages the output binary goes to `build/<keyDir>/<target>`; remote packages build under `.vmake_deps/<repo>/<pkg>/out/<memberDir>/<keyDir>/build/`
+- The full build key hashes the build format version, toolchain, mode, options, and the global-flags hash (plus a `default-visibility=hidden` marker when active); local `SetGit` packages add their source commit, remote packages add version/commit/patch hash
 
 ## See Also
 

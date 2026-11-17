@@ -58,7 +58,7 @@ The default macro name is `CONFIG_<OPTION_NAME>` (uppercased, `-` → `_`); `Set
 
 ## GenerateConfigHeader: generated/autoconf.h
 
-`ctx.GenerateConfigHeader()` in `OnBuild` writes `generated/autoconf.h` under the package's build directory (`build/<buildKey>/generated/` for local packages) and adds that directory to the include path of **this package's targets only** — dependents do not see it, and it is not installed. Include it from the package's own C sources as `#include "autoconf.h"`.
+`ctx.GenerateConfigHeader()` in `OnBuild` writes `generated/autoconf.h` under the package's build directory (`build/<keyDir>/generated/` for local packages) and adds that directory to the include path of **this package's targets only** — dependents do not see it, and it is not installed. Include it from the package's own C sources as `#include "autoconf.h"`.
 
 Content rules (same option collection as `GenerateConfigDefines`, driven by `ConfigToHeader`):
 

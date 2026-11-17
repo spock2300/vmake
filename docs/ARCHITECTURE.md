@@ -78,7 +78,7 @@ vmake clean
 │   └── 对声明了 OnClean 的包执行回调（自定义清理逻辑，如 make clean）
 │
 └── Directory Cleanup
-    └── 删除当前配置的构建产物（本地包 build/<key>/，远程包 <tree>/out/<sha256(member)>/<buildKey>/；member 为子包相对路径，顶层远程包为空）
+    └── 删除当前配置的构建产物（本地包 build/<keyDir>/，远程包 <tree>/out/<memberDir>/<keyDir>/；member 为子包相对路径，顶层远程包为空）
 
 仅当 `pipeline.Require`（依赖解析）失败时，`openProjectBestEffort` 返回 ok=false，`clean --all` 降级为扫描目录并清理全部构建产物；
 配置加载或 `pipeline.Configure` 失败仍直接报错；普通 `clean` 在 Require 失败时报错并提示改用 `--all`/`distclean`（降级路径不执行 OnClean 回调）
@@ -292,7 +292,7 @@ AddRequires      Graph                git ls-remote        TargetVoid.BuildFunc(
 
 1. `OnRequire` 回调调用 `AddRequires("official/zlib >=1.2")`
 2. `Resolver` 在 `repos/` 中查找包定义，递归解析依赖；未复用已锁定工作树时，native 包的 tag 列表来自一次 `git ls-remote`（不下载对象）
-3. `SourceManager.EnsureSource` 优先从共享内容寻址缓存 `<cacheDir>/git/<urlhash>.git` 取出所选 commit 的对象（锚定 `refs/vmake/<commit>`）；已锁定 commit 命中缓存且 checkout 成功时不访问上游。ref 解析（`ls-remote`）、HEAD 物化、缓存未命中，以及服务端拒绝按 SHA 抓取时的回退仍会访问上游。对象就绪后从缓存 `git fetch --depth 1 file://...` 物化出该包在项目内唯一的工作树 `.vmake_deps/<repo>/<owner>/src[/<member>]`（`<owner>` 为普通包名或 native 子包的根父包名）；commit 变化时整树重建，同一 commit 的补丁变化就地恢复，产物写在该树的 `out/<sha256(member)>/<buildKey>/{build,install}`
+3. `SourceManager.EnsureSource` 优先从共享内容寻址缓存 `<cacheDir>/git/<urlhash>.git` 取出所选 commit 的对象（锚定 `refs/vmake/<commit>`）；已锁定 commit 命中缓存且 checkout 成功时不访问上游。ref 解析（`ls-remote`）、HEAD 物化、缓存未命中，以及服务端拒绝按 SHA 抓取时的回退仍会访问上游。对象就绪后从缓存 `git fetch --depth 1 file://...` 物化出该包在项目内唯一的工作树 `.vmake_deps/<repo>/<owner>/src[/<member>]`（`<owner>` 为普通包名或 native 子包的根父包名）；commit 变化时整树重建，同一 commit 的补丁变化就地恢复，产物写在该树的 `out/<memberDir>/<keyDir>/{build,install}`
 4. 构建、测试、查询、清理、更新等解析工程的命令持有独占工程锁（`.vmake/_locks/project.lock`），同工程构建串行；每棵树用独立的 `tree_<hash>.lock` 串行物化，每个缓存 bare 仓库用 `cache_<urlhash 前16位>.lock` 串行写入与 checkout
 5. `Scheduler` 按拓扑顺序串行构建所有目标，包括 `TargetVoid` 目标
 

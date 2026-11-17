@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/spock2300/vmake/internal/storage"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 )
@@ -56,14 +55,14 @@ func layoutFor(in layoutInput) (build.PackageLayout, error) {
 		return build.PackageLayout{
 			Dirs: api.PkgDirs{
 				SourceDir: sourceDir,
-				BuildDir:  filepath.Join(sourceDir, "build", buildKey),
+				BuildDir:  build.BuildPath(sourceDir, buildKey, ""),
 			},
 			BuildKey: buildKey,
 			Platform: in.Platform,
 			Ready:    true,
 		}, nil
 	}
-	output := filepath.Join(in.PkgRoot, "out", storage.OwnerKey(member), buildKey)
+	output := filepath.Join(in.PkgRoot, "out", build.MemberDir(member), build.KeyDir(buildKey))
 	return build.PackageLayout{
 		Dirs: api.PkgDirs{
 			SourceDir:  sourceDir,

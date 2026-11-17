@@ -286,7 +286,7 @@ func TestNativeMemberSingleTreeAndOwnGit(t *testing.T) {
 				s.patchHashes[name],
 			)
 			wantKey := build.BuildKey(tools.CCKey(), s.cfg.Mode, s.allPkgOptions[name], wantExtra)
-			if got := filepath.Base(filepath.Dir(dirs.BuildDir)); got != wantKey {
+			if got := filepath.Base(filepath.Dir(dirs.BuildDir)); got != build.KeyDir(wantKey) {
 				t.Fatalf("member BuildDir key = %q, want %q", got, wantKey)
 			}
 			insp, err := Inspect(s.ctx)
@@ -361,7 +361,7 @@ func TestSetupSubPackageDirsKeepsResolvedParentCommit(t *testing.T) {
 		s.patchHashes[name],
 	)
 	want := build.BuildKey(tools.CCKey(), s.cfg.Mode, s.allPkgOptions[name], wantExtra)
-	if got := filepath.Base(filepath.Dir(s.pkgDirs[name].BuildDir)); got != want {
+	if got := filepath.Base(filepath.Dir(s.pkgDirs[name].BuildDir)); got != build.KeyDir(want) {
 		t.Fatalf("member BuildDir key = %q, want %q", got, want)
 	}
 }

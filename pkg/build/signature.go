@@ -51,7 +51,7 @@ func digestValue(value any) (string, error) {
 
 func pathKey(path string) string {
 	hash := sha256.Sum256([]byte(filepath.ToSlash(filepath.Clean(path))))
-	return hex.EncodeToString(hash[:])
+	return digestDir(hex.EncodeToString(hash[:]))
 }
 
 func environmentSignature(overrides map[string]string) (string, error) {

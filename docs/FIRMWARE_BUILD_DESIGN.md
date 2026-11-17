@@ -353,10 +353,10 @@ vmake 的 `Package` 有三个目录：`SourceDir`（源码目录）、`BuildDir`
 
 | 包类型 | BuildDir | 原因 |
 |--------|----------|------|
-| 本地包 | `<SourceDir>/build/<key>/` | 与源码分离；key 含工具链+模式+选项+全局 flags/commit |
-| 远程包 | `<项目>/.vmake_deps/<repo>/<owner>/out/<sha256(member)>/<key>/build/` | 项目内工作树；`owner` 是根父包，`member` 为 native 子包相对路径（普通包为空）。InstallDir 为同级 `install/` |
+| 本地包 | `<SourceDir>/build/<keyDir>/` | 与源码分离；key 含工具链+模式+选项+全局 flags/commit |
+| 远程包 | `<项目>/.vmake_deps/<repo>/<owner>/out/<memberDir>/<keyDir>/build/` | 项目内工作树；`owner` 是根父包，`member` 为 native 子包相对路径（普通包为空）。InstallDir 为同级 `install/` |
 
-其中 `key` 由 `build.BuildKeyE(toolchain, mode, options, extra)` 生成。远程包的 `extra` 包含版本、commit、全局 flags 哈希和补丁哈希；本地包的 `extra` 只包含已物化源码 commit 和全局 flags 哈希，版本与补丁哈希不进入本地键（`pkg/pipeline/keys.go`）。构建脚本文本不进入 `BuildKey`（编译/链接命令、include/define 与文件列表由动作签名捕获，仅修改注释不会轮换 `BuildDir`）。因此远程包在不同工具链/模式/选项/版本/补丁下隔离；本地 `SetGit` 包的版本变化会通过 commit 改变键，补丁变化只重置工作树并复用同一构建目录；普通本地包没有版本/工作树物化，补丁直接作用在包目录。
+其中 `keyDir` 是完整构建键的前 16 位（`build.KeyDir`），键本身由 `build.BuildKeyE(toolchain, mode, options, extra)` 生成。远程包的 `extra` 包含版本、commit、全局 flags 哈希和补丁哈希；本地包的 `extra` 只包含已物化源码 commit 和全局 flags 哈希，版本与补丁哈希不进入本地键（`pkg/pipeline/keys.go`）。构建脚本文本不进入 `BuildKey`（编译/链接命令、include/define 与文件列表由动作签名捕获，仅修改注释不会轮换 `BuildDir`）。因此远程包在不同工具链/模式/选项/版本/补丁下隔离；本地 `SetGit` 包的版本变化会通过 commit 改变键，补丁变化只重置工作树并复用同一构建目录；普通本地包没有版本/工作树物化，补丁直接作用在包目录。
 
 ### 5.2 交叉编译环境变量
 
@@ -680,14 +680,14 @@ busyboxBuildDir := ctx.DepBuildDir("busybox:busybox")
 路径关系：
 
 ```
-DepBuildDir("busybox:busybox")  = <SourceDir>/build/<key>/       (本地包；SetGit 时源码位于 <SourceDir>/src/)
+DepBuildDir("busybox:busybox")  = <SourceDir>/build/<keyDir>/       (本地包；SetGit 时源码位于 <SourceDir>/src/)
                                     └── _install/     (make install 产物)
 
-DepBuildDir("rootfs:rootfs")    = <SourceDir>/build/<key>/
+DepBuildDir("rootfs:rootfs")    = <SourceDir>/build/<keyDir>/
                                     ├── staging/      (中间目录)
                                     └── rootfs.sqsh   (分区镜像)
 
-远程包 BuildDir                 = <项目>/.vmake_deps/<repo>/<owner>/out/<sha256(member)>/<key>/build/
+远程包 BuildDir                 = <项目>/.vmake_deps/<repo>/<owner>/out/<memberDir>/<keyDir>/build/
                                     (owner 为根父包；普通包 member 为空字符串)
 ```
 
@@ -818,7 +818,7 @@ my-firmware/
 | 配置生成 | EnsureConfig | 检查 .config 存在性，自动 `make <preset>` + SetKConfigPatches |
 | 配置恢复 | restoreKConfigFiles skip rules | 无条目跳过、空 kconfig 删除、有内容仅变化时写入（避免 mtime 失效） |
 | 交叉编译 | Make() 自动传递 Env() | 不改变 BuildFunc 使用方式，`pkg.Make()` 自动携带 CROSS_COMPILE |
-| BuildDir | 与 SourceDir 分离 | 本地包 `<SourceDir>/build/<key>/`，远程包 `<项目>/.vmake_deps/<repo>/<owner>/out/<sha256(member)>/<key>/build/`；`pkg link` 只改变 SourceDir，产物仍在 `.vmake_deps` |
+| BuildDir | 与 SourceDir 分离 | 本地包 `<SourceDir>/build/<keyDir>/`，远程包 `<项目>/.vmake_deps/<repo>/<owner>/out/<memberDir>/<keyDir>/build/`；`pkg link` 只改变 SourceDir，产物仍在 `.vmake_deps` |
 | 本地源码 link | `pkg link` | 使用本地 git 工作树，忽略版本/tag/约束；link 时删除该包物化 `src`/`state.json`，保留输出与 native 子包第三方源码；unlink 后下一次构建重新物化 |
 | 外部增量构建 | TargetVoid + Make/CMake | 每会话进入一次回调，由外部工具检查配置、依赖和产物 |
 | 分区 | 普通包 | BuildFunc 做 overlay + collect + 外部工具生成分区镜像，不新增 API |
