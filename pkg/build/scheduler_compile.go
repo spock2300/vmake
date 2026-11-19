@@ -116,6 +116,7 @@ func (s *Scheduler) compileSourceChanged(ctx context.Context, resolved *Resolved
 		CxxFlags: resolved.AllCxxFlags,
 		Language: sourceLanguage(src),
 		clang:    s.compiler.clangCC,
+		rspDir:   resolveWorkPath(workDir, pkgInfo.RspDir()),
 	}
 	planner := *s.compiler
 	planner.targetOS = s.targetOS(resolved.Node.PkgName)

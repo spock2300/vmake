@@ -323,6 +323,9 @@ func (l *Linker) execute(command commandSpec, outputPath, workDir string, archiv
 			return err
 		}
 	}
+	if err := ensureResponseFile(command.response); err != nil {
+		return err
+	}
 	_, err := l.run(command.Program, workDir, command.Args...)
 	return err
 }

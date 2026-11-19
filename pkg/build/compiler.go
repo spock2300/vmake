@@ -26,6 +26,7 @@ type CompileOptions struct {
 	CxxFlags []string
 	Language string
 	clang    bool
+	rspDir   string
 }
 
 func NewCompiler(tools *ResolvedTools) *Compiler {

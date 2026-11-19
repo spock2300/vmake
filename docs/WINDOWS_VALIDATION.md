@@ -20,7 +20,7 @@ Windows 资产为 `arm-gnu-toolchain-15.3.rel1-mingw-w64-x86_64-arm-none-eabi.zi
 - Linux 作用域单元测试和 vet；Linux ARM 构建、安装与增量回归。
 - Wine 下实际选择并安装 Windows ZIP，编译 C、C++、`.s`、`.S`、静态库，使用链接脚本生成 ELF、HEX、BIN。
 - 验证无修改时跳过、头文件和汇编包含文件修改后重编译、链接脚本修改后重新链接、删除 HEX/BIN 后恢复、rebuild 和 distclean。
-- 中文、空格工程目录和超过 260 字符的产物路径；vmake 在 Windows 上执行的 GNU 编译/链接/归档命令始终通过 response file 执行（不是只在参数超长时），测试用 2400 个独立宏定义令编译参数超过 32 KB。
+- 中文、空格工程目录和超过 260 字符的产物路径；vmake 在 Windows 上把每个 target 共享的 include/define/flags 与每条链接/归档命令的完整参数写入内容寻址的 `state/rsp/rsp-<hash>.rsp`，同一 options 集合（同语言、同 flags）的 TU 与后续构建复用同一文件（C/C++ flags 不同时按集合各一份），命令行只保留随命令变化的路径；测试用 2400 个独立宏定义验证长参数（超过 32 KB）仍只产生一份共享 response file。
 - Windows 文件/目录链接、错误链接类型修复、循环检测、目录复制、平台脚本筛选、脚本哈希、深层包名和跨进程文件锁回归。
 - Windows Git 冷克隆、Git 跟踪的符号链接、离线共享缓存、固定提交校验、源码刷新和不可变补丁副本测试，均无跳过。Wine 中 MSYS shell 无法正常运行，此项使用临时目录里的官方 BusyBox MinGit 完成，生产代码未增加绕过。
 - Linux 快照全量比较通过；预期变化来自编译数据库新增 `arguments`、工具链指纹变化和已迁移的构建脚本，基线已同步。
@@ -103,8 +103,18 @@ Windows 上 `vmake build` 的固定开销明显高于 Linux/macOS，CMake 第三
 2. 增量检查原先对所有产物按内容哈希，链接动作还会把该 target 的全部 object 与依赖产物/prebuilt 库当输入再哈希一次。现在产物与构建链输入（object、`DepArtifacts`、prebuilt 源）按 size/mtime/mode 校验；用户输入（源文件、头文件、脚本、`AddPostLinkDeps`）仍按内容哈希。`actionRecordVersion` 升到 4，升级后第一次构建是一次全量重建。
 3. 每个 TU 的每个依赖头原先都重新 `filepath.EvalSymlinks`。现在按构建缓存，每个唯一路径只解析一次。Windows 的 `filepath.EvalSymlinks` 在 `toNorm` 中为每个路径组件调用一次 `FindFirstFile`，重复解析的代价明显高于 Linux 的 lstat。
 
-Windows 上的放大因子（未在真机复测，供解读 Linux 数字）：`CreateProcess` 与 MinGW 工具启动、Defender 实时扫描、NTFS 元数据；同样的 I/O 在 Windows 上按经验通常是 Linux 的 3–10 倍。剩余且本轮未消除的固定成本：每次构建的 2 次 `<cc> --version` 与 8 个工具二进制的哈希（构建键需要）、`CMakeConfigure` 每次仍遍历 `SrcDir()` 收集指纹输入、Windows 上每次编译/链接/归档各写一个 response file，以及真实编译/链接本身。
+Windows 上的放大因子（未在真机复测，供解读 Linux 数字）：`CreateProcess` 与 MinGW 工具启动、Defender 实时扫描、NTFS 元数据；同样的 I/O 在 Windows 上按经验通常是 Linux 的 3–10 倍。剩余且本轮未消除的固定成本：每次构建的 2 次 `<cc> --version` 与 8 个工具二进制的哈希（构建键需要）、`CMakeConfigure` 每次仍遍历 `SrcDir()` 收集指纹输入、Windows 上首次构建每 target（或每条链接/归档命令）写一次 response file（之后命中缓存，不再写删临时文件），以及真实编译/链接本身。
+
+Windows GNU 参数落盘的现状：编译把同一 target 中 flags 相同的 TU 共享的 `-I`/`-D`/flags 写入 `<buildDir>/state/rsp/rsp-<sha256[:16]>.rsp`，链接与归档把整条 argv 写入同一目录；命令行用 `@` 引用并按 `commandPath` 相对化，内容不变时不再重写（也不再创建临时文件），`clean`/`distclean` 随构建目录删除。改动后真机耗时用 `test_windows/bench_build.py` 复测并补充到本节。
 
 排查建议：`vmake build -v` 中的 `cmake configure (cached): ...` 表示只剩本轮修复的固定开销；出现 `cmake configure: fingerprint changed for ...` 则是一次完整重配置，通常由 `PATH`/`CMAKE_*` 环境变化或新增 `.cmake` 输入引起，代价远高于哈希。Windows 真机上可用 `test_windows/bench_build.py` 对比修复前后，并把 JSON 附到本文。
 
 `python3 test_windows/verify_cmake.py ./vmake` 在 Linux 上全量通过（含 configure 计数 oracle）；`test_data/_snapshot` 的单 fixture 对比也保持一致。
+
+## Response file 缓存验证（2026-11-19，Wine）
+
+`deepin-wine11-stable`（wine-11.0）下用 `test_windows/verify_arm.py deepin-wine11-stable vmake.exe` 跑通 ARM 固件全流程（构建、安装、无修改跳过、依赖/链接脚本增量、HEX/BIN 恢复、rebuild、distclean），工程根分别验证了普通路径与 `中文 space/固件项目`。Windows 侧使用本机已有的 `vmake-tools` ARM 定义：把 `arm-gnu-toolchain-15.3.rel1-mingw-w64-x86_64-arm-none-eabi.zip` 放进 Wine profile 的 `~/.vmake/extensions/ci-arm`，`vmake ext trust ci-arm` 后由 vmake 安装到 `%USERPROFILE%\.vmake\toolchains\windows\amd64\arm-none-eabi\15.3.rel1`；不需要重新下载。
+
+构建目录只产生 4 个内容寻址 rsp：firmware 的三个 TU 共享一份 91 B 的 `-Iinclude -O0 -g -mcpu...`，support 的 2400 个宏一份 73 KB，链接一份 434 B，`ar` 一份 103 B；没有 `vmake-*.rsp`，无修改构建与增量构建都不重写这些文件。`compile_commands.json` 仍是展开参数，产物哈希匹配 `arm_expected.json`。`verify_arm.py` 原先把工程配置写到 `.vmake/config.json`（当前 CLI 不读取该文件，ARM 工具链不会被选中），已改为 `configs/default.json`。
+
+Wine 未覆盖宿主 MinGW 工具链的 `01_simple_c` 与 CMake 路径；原生 Windows CI 仍是最终验收，`bench_build.py` 的 Windows 数字也需在真机复测。

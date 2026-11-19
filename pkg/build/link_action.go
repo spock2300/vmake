@@ -3,6 +3,7 @@ package build
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 
 	"github.com/spock2300/vmake/pkg/api"
 )
@@ -85,6 +86,7 @@ func (s *Scheduler) planLink(resolved *ResolvedTarget, objs []string) (*plannedA
 		if err != nil {
 			return nil, err
 		}
+		linkCommand = linkCommandForHost(runtime.GOOS, workDir, resolveWorkPath(workDir, info.RspDir()), linkCommand)
 		if importLibrary := importLibraryPath(resolved.OutputPath, policy.TargetOS, target.Kind()); importLibrary != "" {
 			action.Outputs = append(action.Outputs, importLibrary)
 		}
@@ -106,6 +108,15 @@ func (s *Scheduler) planLink(resolved *ResolvedTarget, objs []string) (*plannedA
 	}
 	action.Environment = env
 	return action, nil
+}
+
+func linkCommandForHost(hostOS, workDir, rspDir string, command commandSpec) commandSpec {
+	dir := responseFileDir(hostOS, rspDir)
+	if dir == "" || len(command.Args) == 0 {
+		return command
+	}
+	file := responseFileFor(dir, command.Args)
+	return commandSpec{Program: command.Program, Args: []string{responseFileArg(hostOS, workDir, file)}, response: file}
 }
 
 // buildProductPath reports whether path was produced by the package's build.

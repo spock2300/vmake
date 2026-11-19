@@ -82,6 +82,10 @@ func (pi *PkgInfo) GeneratedDir() string {
 	return BuildPath(".", pi.BuildKey, subdirGenerated)
 }
 
+func (pi *PkgInfo) RspDir() string {
+	return pi.OutputPath(filepath.Join("state", "rsp"))
+}
+
 type Scheduler struct {
 	ctx           context.Context
 	graph         *BuildGraph

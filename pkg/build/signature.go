@@ -48,8 +48,9 @@ type actionFiles struct {
 }
 
 type commandSpec struct {
-	Program string
-	Args    []string
+	Program  string
+	Args     []string
+	response *responseFile
 }
 
 func digestValue(value any) (string, error) {

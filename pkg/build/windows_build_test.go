@@ -10,33 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/pkg/api"
 )
-
-func TestGNUResponseArguments(t *testing.T) {
-	cc, err := exec.LookPath("gcc")
-	if err != nil {
-		t.Skip("gcc unavailable")
-	}
-	dir := filepath.Join(t.TempDir(), "source space")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "source.c"), []byte("const char *value = TEXT;\nint n = NUMBER;\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	args := []string{"-c", "source.c", "-o", "output space.o", `-DTEXT="space and \\ slash"`}
-	for i := 0; i < 6000; i++ {
-		args = append(args, "-DNUMBER=42")
-	}
-	if _, err := runGNUResponse(cc, dir, args, iexec.RunInDir); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "output space.o")); err != nil {
-		t.Fatal(err)
-	}
-}
 
 func TestAssemblyIncludesInvalidateObjects(t *testing.T) {
 	if runtime.GOOS == "darwin" {

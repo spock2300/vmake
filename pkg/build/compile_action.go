@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/spock2300/vmake/internal/fs"
@@ -24,6 +25,10 @@ type compilePlan struct {
 }
 
 func (c *Compiler) planCompile(src, objPath string, opts *CompileOptions, workDir string) (compilePlan, error) {
+	return c.planCompileHost(runtime.GOOS, src, objPath, opts, workDir)
+}
+
+func (c *Compiler) planCompileHost(hostOS, src, objPath string, opts *CompileOptions, workDir string) (compilePlan, error) {
 	commandOpts := *opts
 	commandOpts.clang = c.clangCC
 	plan := compilePlan{
@@ -39,11 +44,13 @@ func (c *Compiler) planCompile(src, objPath string, opts *CompileOptions, workDi
 			intermediate := objPath + ".s"
 			ppDep := plan.DepPath + ".pp"
 			ppOpts := commandOpts
-			ppOpts.Includes = commandPaths(workDir, opts.Includes)
-			args := []string{"-E", "-x", "assembler-with-cpp", "-MMD", "-MP", "-MF", commandPath(workDir, ppDep), "-MT", commandPath(workDir, objPath), "-o", commandPath(workDir, intermediate)}
-			args = appendCompileOptions(args, &ppOpts, commandFlags(workDir, flags))
-			args = append(args, commandPath(workDir, src))
-			plan.Commands = append(plan.Commands, commandSpec{Program: c.ccPath, Args: args})
+			ppOpts.Includes = commandPathsFor(hostOS, workDir, opts.Includes)
+			parts := compileArgParts{
+				prefix:  []string{"-E", "-x", "assembler-with-cpp", "-MMD", "-MP", "-MF", commandPathFor(hostOS, workDir, ppDep), "-MT", commandPathFor(hostOS, workDir, objPath), "-o", commandPathFor(hostOS, workDir, intermediate)},
+				options: appendCompileOptions(nil, &ppOpts, commandFlagsFor(hostOS, workDir, flags)),
+				suffix:  []string{commandPathFor(hostOS, workDir, src)},
+			}
+			plan.Commands = append(plan.Commands, compileCommandForHost(hostOS, c.ccPath, parts, workDir, opts.rspDir))
 			plan.DepFiles = []string{ppDep}
 			plan.Intermediate = intermediate
 			asmSource = intermediate
@@ -60,15 +67,15 @@ func (c *Compiler) planCompile(src, objPath string, opts *CompileOptions, workDi
 		if asmDep != "" {
 			plan.DepFiles = append(plan.DepFiles, asmDep)
 		}
-		plan.Commands = append(plan.Commands, commandSpec{Program: c.ccPath, Args: compileArgs(&asmOpts, objPath, asmSource, flags, asmDepPath, workDir)})
+		plan.Commands = append(plan.Commands, compileCommandForHost(hostOS, c.ccPath, compileArgPartsFor(hostOS, &asmOpts, objPath, asmSource, flags, asmDepPath, workDir), workDir, opts.rspDir))
 		plan.ValidateObject = true
 
-		plan.Display = commandSpec{Program: c.ccPath, Args: compileArgs(&commandOpts, objPath, src, flags, "", workDir)}
+		plan.Display = commandSpec{Program: c.ccPath, Args: compileArgPartsFor(hostOS, &commandOpts, objPath, src, flags, "", workDir).args()}
 		return plan, nil
 	}
 
-	plan.Commands = []commandSpec{{Program: compiler, Args: compileArgs(&commandOpts, objPath, src, flags, plan.DepPath, workDir)}}
-	plan.Display = commandSpec{Program: compiler, Args: compileArgs(&commandOpts, objPath, src, flags, "", workDir)}
+	plan.Commands = []commandSpec{compileCommandForHost(hostOS, compiler, compileArgPartsFor(hostOS, &commandOpts, objPath, src, flags, plan.DepPath, workDir), workDir, opts.rspDir)}
+	plan.Display = commandSpec{Program: compiler, Args: compileArgPartsFor(hostOS, &commandOpts, objPath, src, flags, "", workDir).args()}
 
 	if plan.Asm {
 		plan.DepFiles = []string{plan.DepPath}
@@ -94,6 +101,9 @@ func (c *Compiler) executeCompilePlan(plan compilePlan, src, objPath, workDir st
 	}()
 
 	for _, command := range plan.Commands {
+		if err := ensureResponseFile(command.response); err != nil {
+			return nil, err
+		}
 		if _, runErr := c.run(command.Program, workDir, command.Args...); runErr != nil {
 			return nil, runErr
 		}
@@ -112,4 +122,29 @@ func (c *Compiler) executeCompilePlan(plan compilePlan, src, objPath, workDir st
 		return nil, fmt.Errorf("failed to parse dep file: %w", err)
 	}
 	return deps, nil
+}
+
+func compileArgPartsFor(hostOS string, opts *CompileOptions, objPath, src string, flags []string, depPath, dir string) compileArgParts {
+	commandOpts := *opts
+	commandOpts.Includes = commandPathsFor(hostOS, dir, opts.Includes)
+	return buildCompileArgParts(&commandOpts, commandPathFor(hostOS, dir, objPath), commandPathFor(hostOS, dir, src), commandFlagsFor(hostOS, dir, flags), commandPathFor(hostOS, dir, depPath))
+}
+
+func compileCommandForHost(hostOS, program string, parts compileArgParts, workDir, rspDir string) commandSpec {
+	spec := commandSpec{Program: program, Args: parts.args()}
+	dir := responseFileDir(hostOS, rspDir)
+	if dir == "" {
+		return spec
+	}
+	if len(parts.options) > 0 {
+		file := responseFileFor(dir, parts.options)
+		spec.Args = append(append(append([]string{}, parts.prefix...), responseFileArg(hostOS, workDir, file)), parts.suffix...)
+		spec.response = file
+	}
+	if commandLineUnits(program, spec.Args) > safeInlineCommandUnits {
+		file := responseFileFor(dir, parts.args())
+		spec.Args = []string{responseFileArg(hostOS, workDir, file)}
+		spec.response = file
+	}
+	return spec
 }

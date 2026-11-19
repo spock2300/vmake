@@ -21,34 +21,51 @@ func sourceLanguage(src string) string {
 	return "c"
 }
 
+type compileArgParts struct {
+	prefix  []string
+	options []string
+	suffix  []string
+}
+
+func (p compileArgParts) args() []string {
+	args := append([]string{}, p.prefix...)
+	args = append(args, p.options...)
+	return append(args, p.suffix...)
+}
+
 func BuildCompileArgs(opts *CompileOptions, objPath, src string, flags []string, depPath string) []string {
-	args := []string{"-c"}
+	return buildCompileArgParts(opts, objPath, src, flags, depPath).args()
+}
+
+func buildCompileArgParts(opts *CompileOptions, objPath, src string, flags []string, depPath string) compileArgParts {
+	prefix := []string{"-c"}
 	if opts.Language == "asm" {
-		args = append(args, "-x", "assembler")
+		prefix = append(prefix, "-x", "assembler")
 	} else if opts.Language == "asm-cpp" {
-		args = append(args, "-x", "assembler-with-cpp")
+		prefix = append(prefix, "-x", "assembler-with-cpp")
 		if !opts.clang {
-			args = append(args, "-save-temps=obj")
+			prefix = append(prefix, "-save-temps=obj")
 		}
 	}
 
 	if depPath != "" {
 		if opts.Language == "asm" {
-			args = append(args, "-Xassembler", "--MD", "-Xassembler", depPath)
+			prefix = append(prefix, "-Xassembler", "--MD", "-Xassembler", depPath)
 		} else {
-			args = append(args, "\u002dMMD", "-MP", "-MF", depPath)
+			prefix = append(prefix, "\u002dMMD", "-MP", "-MF", depPath)
 			if opts.Language == "asm-cpp" {
-				args = append(args, "-Xassembler", "--MD", "-Xassembler", depPath+".as")
+				prefix = append(prefix, "-Xassembler", "--MD", "-Xassembler", depPath+".as")
 			}
 		}
 	}
 
-	args = append(args, "-o", objPath)
-	args = appendCompileOptions(args, opts, flags)
+	prefix = append(prefix, "-o", objPath)
+	suffix := []string{}
 	if opts.clang && (opts.Language == "asm" || opts.Language == "asm-cpp") {
-		args = append(args, "-fno-integrated-as")
+		suffix = append(suffix, "-fno-integrated-as")
 	}
-	return append(args, src)
+	suffix = append(suffix, src)
+	return compileArgParts{prefix: prefix, options: appendCompileOptions(nil, opts, flags), suffix: suffix}
 }
 
 func appendCompileOptions(args []string, opts *CompileOptions, flags []string) []string {

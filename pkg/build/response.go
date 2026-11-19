@@ -2,67 +2,118 @@ package build
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
 )
+
+const safeInlineCommandUnits = 8192
+
+type responseFile struct {
+	path    string
+	content string
+}
 
 func gnuRunner(env map[string]string) cmdRunner {
 	return gnuRunnerContext(context.Background(), env)
 }
 
 func gnuRunnerContext(ctx context.Context, env map[string]string) cmdRunner {
-	run := func(name, dir string, args ...string) ([]byte, error) {
-		return iexec.RunWithOptions(name, args, iexec.RunOptions{Dir: dir, Env: env, Context: ctx, CaptureStderr: true})
-	}
 	return func(name, dir string, args ...string) ([]byte, error) {
-		if runtime.GOOS == "windows" {
-			return runGNUResponse(name, dir, args, run)
-		}
-		return run(name, dir, args...)
+		return iexec.RunWithOptions(name, args, iexec.RunOptions{Dir: dir, Env: env, Context: ctx, CaptureStderr: true})
 	}
 }
 
-func runGNUResponse(name, dir string, args []string, run cmdRunner) ([]byte, error) {
-	output := ""
-	for i := 0; i+1 < len(args); i++ {
-		if args[i] == "-o" {
-			output = args[i+1]
-			break
-		}
+func responseFileDir(hostOS, rspDir string) string {
+	if hostOS != "windows" {
+		return ""
 	}
-	if len(args) >= 2 && args[0] == "rcs" {
-		output = args[1]
+	if rspDir != "" {
+		return rspDir
 	}
-	if output == "" {
-		return nil, fmt.Errorf("%s: no output path for GNU response file", name)
-	}
-	f, err := os.CreateTemp(filepath.Dir(resolveWorkPath(dir, output)), "vmake-*.rsp")
-	if err != nil {
-		return nil, fmt.Errorf("create response file: %w", err)
-	}
-	defer os.Remove(f.Name())
+	return filepath.Join(os.TempDir(), "vmake-rsp")
+}
+
+func formatResponseArgs(args []string) string {
 	var data strings.Builder
 	for _, arg := range args {
 		data.WriteByte('"')
 		data.WriteString(strings.NewReplacer("\\", "\\\\", "\"", "\\\"").Replace(arg))
 		data.WriteString("\"\n")
 	}
-	_, writeErr := f.WriteString(data.String())
-	closeErr := f.Close()
+	return data.String()
+}
+
+func responseFileFor(dir string, args []string) *responseFile {
+	content := formatResponseArgs(args)
+	sum := sha256.Sum256([]byte(content))
+	return &responseFile{
+		path:    filepath.Join(dir, "rsp-"+digestDir(hex.EncodeToString(sum[:]))+".rsp"),
+		content: content,
+	}
+}
+
+func responseFileArg(hostOS, workDir string, file *responseFile) string {
+	return "@" + commandPathFor(hostOS, workDir, file.path)
+}
+
+func ensureResponseFile(file *responseFile) error {
+	if file == nil || file.path == "" {
+		return nil
+	}
+	if info, err := os.Stat(file.path); err == nil && info.Size() == int64(len(file.content)) {
+		return nil
+	}
+	dir := filepath.Dir(file.path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create response file directory: %w", err)
+	}
+	temp, err := os.CreateTemp(dir, ".rsp-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create response file: %w", err)
+	}
+	tempName := temp.Name()
+	_, writeErr := temp.WriteString(file.content)
+	closeErr := temp.Close()
 	if writeErr != nil {
-		return nil, fmt.Errorf("write response file: %w", writeErr)
+		os.Remove(tempName)
+		return fmt.Errorf("write response file: %w", writeErr)
 	}
 	if closeErr != nil {
-		return nil, fmt.Errorf("close response file: %w", closeErr)
+		os.Remove(tempName)
+		return fmt.Errorf("close response file: %w", closeErr)
 	}
-	out, err := run(name, dir, "@"+commandPath(dir, f.Name()))
-	if err != nil {
-		return out, fmt.Errorf("%s: %w", iexec.FormatCommandLine(name, args), err)
+	if err := os.Rename(tempName, file.path); err != nil {
+		os.Remove(tempName)
+		if info, statErr := os.Stat(file.path); statErr == nil && info.Size() == int64(len(file.content)) {
+			return nil
+		}
+		return fmt.Errorf("publish response file: %w", err)
 	}
-	return out, nil
+	return nil
+}
+
+func commandLineUnits(program string, args []string) int {
+	units := utf16Units(program)
+	for _, arg := range args {
+		units += 1 + 2 + utf16Units(arg)
+	}
+	return units
+}
+
+func utf16Units(value string) int {
+	units := 0
+	for _, r := range value {
+		if r > 0xFFFF {
+			units += 2
+		} else {
+			units++
+		}
+	}
+	return units
 }

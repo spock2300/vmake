@@ -227,7 +227,7 @@ func TestClangAssemblyCompileCommand(t *testing.T) {
 	compiler, flags := selectCompilerAndFlags(tools.CC, tools.CXX, opts.CFlags, opts.CxxFlags, opts)
 	commandOpts := *opts
 	commandOpts.clang = tools.isClangCC()
-	args := append([]string{compiler}, compileArgs(&commandOpts, "objects/source.S.o", "source.S", flags, "", t.TempDir())...)
+	args := append([]string{compiler}, compileArgPartsFor(runtime.GOOS, &commandOpts, "objects/source.S.o", "source.S", flags, "", t.TempDir()).args()...)
 	for _, want := range []string{"--target=x86_64-linux-gnu", "-B/toolchain/bin", "-fno-integrated-as", "source.S"} {
 		if !slices.Contains(args, want) {
 			t.Fatalf("missing %q in %v", want, args)
