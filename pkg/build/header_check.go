@@ -22,13 +22,33 @@ type pathCanonCache struct {
 	mu    sync.Mutex
 	dirs  map[string]*dirListing
 	canon map[string]string
+	real  map[string]string
 }
 
 func newPathCanonCache() *pathCanonCache {
 	return &pathCanonCache{
 		dirs:  make(map[string]*dirListing),
 		canon: make(map[string]string),
+		real:  make(map[string]string),
 	}
+}
+
+// realPath memoizes evalCleanNearestAncestor for one build.
+func (c *pathCanonCache) realPath(abs string) string {
+	if c == nil {
+		return evalCleanNearestAncestor(abs)
+	}
+	c.mu.Lock()
+	hit, ok := c.real[abs]
+	c.mu.Unlock()
+	if ok {
+		return hit
+	}
+	real := evalCleanNearestAncestor(abs)
+	c.mu.Lock()
+	c.real[abs] = real
+	c.mu.Unlock()
+	return real
 }
 
 func (c *pathCanonCache) canonPath(abs string) string {
@@ -118,7 +138,7 @@ func newAllowedInclude(rawPath string, rules []string, canon *pathCanonCache) (a
 	if canon != nil {
 		abs = canon.canonPath(abs)
 	}
-	real := evalCleanNearestAncestor(abs)
+	real := canon.realPath(abs)
 	if canon != nil && real != "" {
 		real = canon.canonPath(real)
 	}
@@ -189,7 +209,7 @@ func (a *headerAuditor) buildHeaderOwnerIndex() *headerOwnerIndex {
 		}
 		seen[dirPkg{dir: abs, pkgName: pkgName}] = true
 		hasPkgAtDir[abs] = true
-		if real := evalCleanNearestAncestor(abs); real != "" {
+		if real := a.canonCache.realPath(abs); real != "" {
 			if a.canonCache != nil {
 				real = a.canonCache.canonPath(real)
 			}
@@ -257,7 +277,7 @@ func (a *headerAuditor) buildHeaderOwnerIndex() *headerOwnerIndex {
 		if !hasPkgAtDir[abs] {
 			seen[dirPkg{dir: abs, pkgName: ownerName}] = true
 		}
-		if real := evalCleanNearestAncestor(abs); real != "" {
+		if real := a.canonCache.realPath(abs); real != "" {
 			if a.canonCache != nil {
 				real = a.canonCache.canonPath(real)
 			}
@@ -569,7 +589,7 @@ func (a *headerAuditor) crossPkgOwner(owners *headerOwnerIndex, currentPkg, absP
 	if owner != "" && owner != currentPkg && !a.isTargetlessAncestor(owner, currentPkg) {
 		return owner
 	}
-	if real := evalCleanNearestAncestor(absPath); real != "" {
+	if real := a.canonCache.realPath(absPath); real != "" {
 		if a.canonCache != nil {
 			real = a.canonCache.canonPath(real)
 		}
@@ -672,7 +692,7 @@ func (a *headerAuditor) checkTargetDeclaredPaths(resolved *ResolvedTarget, sourc
 				node.FullName, raw, owner, owner,
 			)
 		}
-		real := evalCleanNearestAncestor(abs)
+		real := a.canonCache.realPath(abs)
 		if a.canonCache != nil && real != "" {
 			real = a.canonCache.canonPath(real)
 		}
@@ -901,7 +921,7 @@ func (a *headerAuditor) checkHeaderBoundaries(resolved *ResolvedTarget, src stri
 		if absH == absSrc {
 			continue
 		}
-		realH := evalCleanNearestAncestor(absH)
+		realH := a.canonCache.realPath(absH)
 		if a.canonCache != nil && realH != "" {
 			realH = a.canonCache.canonPath(realH)
 		}
@@ -1051,7 +1071,7 @@ func (a *headerAuditor) checkStaticSourceIncludes(resolved *ResolvedTarget, src,
 				if owner == "" {
 					continue
 				}
-				real := evalCleanNearestAncestor(relCand)
+				real := a.canonCache.realPath(relCand)
 				if a.canonCache != nil && real != "" {
 					real = a.canonCache.canonPath(real)
 				}

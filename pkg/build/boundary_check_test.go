@@ -658,3 +658,31 @@ func TestInactiveIfdefIncludeDoesNotTriggerFalseTransitiveError(t *testing.T) {
 		t.Fatalf("inactive #if 0 include triggered false transitive error: %v", err)
 	}
 }
+
+func TestPathCanonCacheRealPathMemoizes(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "real")
+	link := filepath.Join(root, "link")
+	writeTestFiles(t, root, map[string]string{"real/header.h": ""})
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	header := filepath.Join(link, "header.h")
+	want, err := filepath.EvalSymlinks(header)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%q): %v", header, err)
+	}
+	cache := newPathCanonCache()
+	if got := cache.realPath(header); got != want {
+		t.Fatalf("realPath(%q) = %q, want %q", header, got, want)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if got := cache.realPath(header); got != want {
+		t.Fatalf("realPath(%q) after removing the link = %q, want cached %q", header, got, want)
+	}
+	if got := (*pathCanonCache)(nil).realPath(header); got == want {
+		t.Fatalf("nil cache returned the memoized %q", got)
+	}
+}

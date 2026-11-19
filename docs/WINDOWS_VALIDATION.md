@@ -79,3 +79,32 @@ Windows EXE 使用 `CGO_ENABLED=0` 交叉编译。Wine 下复跑 ARM 固件、�
 `.github/workflows/windows.yml` 使用固定版本及 SHA256 的官方 ARM 资产，安装所需 MinGW/MSYS 工具，关闭 CGO，运行单元测试和 ARM 验证，并排除子图测试。本轮没有触发远程 CI；Wine 结果不等同于 Windows 真机验收。
 
 Windows 仍需要开发者模式或软链接权限。长路径验收覆盖产物路径；启动外部进程的工作目录需保持在 Windows `MAX_PATH` 范围内，Wine 对超过该范围的工作目录也会启动失败。本轮验证了中文工程根目录，未扩展为任意 Unicode 源文件名或任意第三方工具的编码保证。
+
+## 构建性能（2026-11-18）
+
+Windows 上 `vmake build` 的固定开销明显高于 Linux/macOS，CMake 第三方包最明显。本轮在 Linux 上对同一代码路径做了分阶段实测并修复三处重复 I/O；Windows 真机数字需用下方基准脚本确认（本轮没有 Windows 主机）。
+
+测量方法：`python3 test_windows/bench_build.py ./vmake --json`（临时工程，3 次取最小；CMake 的 4 个阶段变体用于归因；`--tus 50 --object-mb 1` 测大产物）。修复前后（Linux，修复前为 7cf5d4c 的干净构建）：
+
+| 指标 | 修复前 | 修复后 |
+|---|---:|---:|
+| 空 void target（启动+工具解析） | 15.3ms | 16.2ms |
+| `CMakeConfigure`（已缓存） | 44.3ms | 30.7ms |
+| + `CMakeBuild` | 114.0ms | 90.3ms |
+| + `CMakeInstall` | 133.2ms | 99.3ms |
+| bare `cmake --build`（同树） | 57.9ms | 57.7ms |
+| 100 TU 原生 target no-op | 35.1ms | 27.0ms |
+| 50 TU × 1MB object no-op | 90.6ms | 22.9ms |
+| 首次 CMake 构建 | 395.7ms | 339.7ms |
+
+修复内容：
+
+1. `CMakeConfigure`/`CMakeBuild`/`CMakeInstall` 原先每次都读取并 SHA-256 整个 cmake 二进制（约 12MB），Build/Install 的摘要算完即丢。现在 Build/Install 只解析路径，configure 的摘要按 stat 身份在进程内缓存，同一构建的多个 CMake 包共享一次读取；重配置写 stamp 时也不再重复读取。
+2. 增量检查原先对所有产物按内容哈希，链接动作还会把该 target 的全部 object 与依赖产物/prebuilt 库当输入再哈希一次。现在产物与构建链输入（object、`DepArtifacts`、prebuilt 源）按 size/mtime/mode 校验；用户输入（源文件、头文件、脚本、`AddPostLinkDeps`）仍按内容哈希。`actionRecordVersion` 升到 4，升级后第一次构建是一次全量重建。
+3. 每个 TU 的每个依赖头原先都重新 `filepath.EvalSymlinks`。现在按构建缓存，每个唯一路径只解析一次。Windows 的 `filepath.EvalSymlinks` 在 `toNorm` 中为每个路径组件调用一次 `FindFirstFile`，重复解析的代价明显高于 Linux 的 lstat。
+
+Windows 上的放大因子（未在真机复测，供解读 Linux 数字）：`CreateProcess` 与 MinGW 工具启动、Defender 实时扫描、NTFS 元数据；同样的 I/O 在 Windows 上按经验通常是 Linux 的 3–10 倍。剩余且本轮未消除的固定成本：每次构建的 2 次 `<cc> --version` 与 8 个工具二进制的哈希（构建键需要）、`CMakeConfigure` 每次仍遍历 `SrcDir()` 收集指纹输入、Windows 上每次编译/链接/归档各写一个 response file，以及真实编译/链接本身。
+
+排查建议：`vmake build -v` 中的 `cmake configure (cached): ...` 表示只剩本轮修复的固定开销；出现 `cmake configure: fingerprint changed for ...` 则是一次完整重配置，通常由 `PATH`/`CMAKE_*` 环境变化或新增 `.cmake` 输入引起，代价远高于哈希。Windows 真机上可用 `test_windows/bench_build.py` 对比修复前后，并把 JSON 附到本文。
+
+`python3 test_windows/verify_cmake.py ./vmake` 在 Linux 上全量通过（含 configure 计数 oracle）；`test_data/_snapshot` 的单 fixture 对比也保持一致。

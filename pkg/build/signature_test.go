@@ -15,10 +15,10 @@ func TestActionRecordRejectsOldCorruptAndIncompleteOutputs(t *testing.T) {
 	writeAssemblyFixture(t, dir, "output", "output")
 	recordPath := filepath.Join(dir, "action.json")
 	inputs, outputs := []string{"input"}, []string{"output"}
-	if err := saveActionRecord(nil, recordPath, "signature", dir, inputs, outputs); err != nil {
+	if err := saveActionRecord(nil, recordPath, "signature", dir, actionFiles{Inputs: inputs, Outputs: outputs}); err != nil {
 		t.Fatal(err)
 	}
-	if !checkAction(nil, recordPath, "signature", dir, inputs, outputs).UpToDate {
+	if !checkAction(nil, recordPath, "signature", dir, actionFiles{Inputs: inputs, Outputs: outputs}).UpToDate {
 		t.Fatal("successful action rejected")
 	}
 	var record actionRecord
@@ -29,22 +29,22 @@ func TestActionRecordRejectsOldCorruptAndIncompleteOutputs(t *testing.T) {
 	if err := jsonio.Save(recordPath, record); err != nil {
 		t.Fatal(err)
 	}
-	if checkAction(nil, recordPath, "signature", dir, inputs, outputs).UpToDate {
+	if checkAction(nil, recordPath, "signature", dir, actionFiles{Inputs: inputs, Outputs: outputs}).UpToDate {
 		t.Fatal("old action record reused")
 	}
 	if err := os.WriteFile(recordPath, []byte("{incomplete"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if checkAction(nil, recordPath, "signature", dir, inputs, outputs).UpToDate {
+	if checkAction(nil, recordPath, "signature", dir, actionFiles{Inputs: inputs, Outputs: outputs}).UpToDate {
 		t.Fatal("corrupt action record reused")
 	}
-	if err := saveActionRecord(nil, recordPath, "signature", dir, inputs, outputs); err != nil {
+	if err := saveActionRecord(nil, recordPath, "signature", dir, actionFiles{Inputs: inputs, Outputs: outputs}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(filepath.Join(dir, "output")); err != nil {
 		t.Fatal(err)
 	}
-	if checkAction(nil, recordPath, "signature", dir, inputs, outputs).UpToDate {
+	if checkAction(nil, recordPath, "signature", dir, actionFiles{Inputs: inputs, Outputs: outputs}).UpToDate {
 		t.Fatal("missing output reused")
 	}
 }
@@ -56,22 +56,22 @@ func TestActionDecisionReasons(t *testing.T) {
 	recordPath := filepath.Join(dir, "action.json")
 	inputs, outputs := []string{"input"}, []string{"output"}
 
-	if got := checkAction(nil, recordPath, "sig", dir, inputs, outputs); got.UpToDate || got.Reason != "no action record" {
+	if got := checkAction(nil, recordPath, "sig", dir, actionFiles{Inputs: inputs, Outputs: outputs}); got.UpToDate || got.Reason != "no action record" {
 		t.Fatalf("missing record decision = %+v", got)
 	}
-	if err := saveActionRecord(nil, recordPath, "sig", dir, inputs, outputs); err != nil {
+	if err := saveActionRecord(nil, recordPath, "sig", dir, actionFiles{Inputs: inputs, Outputs: outputs}); err != nil {
 		t.Fatal(err)
 	}
-	if got := checkAction(nil, recordPath, "other", dir, inputs, outputs); got.UpToDate || got.Reason != "command, tool or environment changed" {
+	if got := checkAction(nil, recordPath, "other", dir, actionFiles{Inputs: inputs, Outputs: outputs}); got.UpToDate || got.Reason != "command, tool or environment changed" {
 		t.Fatalf("signature decision = %+v", got)
 	}
-	if got := checkAction(nil, recordPath, "sig", dir, inputs, []string{"missing"}); got.UpToDate || got.Reason != "output missing or unreadable" {
+	if got := checkAction(nil, recordPath, "sig", dir, actionFiles{Inputs: inputs, Outputs: []string{"missing"}}); got.UpToDate || got.Reason != "output missing or unreadable" {
 		t.Fatalf("missing output decision = %+v", got)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "input"), []byte("changed"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if got := checkAction(nil, recordPath, "sig", dir, inputs, outputs); got.UpToDate || got.Reason != "inputs changed" {
+	if got := checkAction(nil, recordPath, "sig", dir, actionFiles{Inputs: inputs, Outputs: outputs}); got.UpToDate || got.Reason != "inputs changed" {
 		t.Fatalf("changed input decision = %+v", got)
 	}
 }
@@ -83,10 +83,10 @@ func TestCachedActionDetectsRewrittenInput(t *testing.T) {
 	recordPath := filepath.Join(dir, "action.json")
 	inputs, outputs := []string{"input"}, []string{"output"}
 	cache := newFileHashCache()
-	if err := saveActionRecord(cache, recordPath, "sig", dir, inputs, outputs); err != nil {
+	if err := saveActionRecord(cache, recordPath, "sig", dir, actionFiles{Inputs: inputs, Outputs: outputs}); err != nil {
 		t.Fatal(err)
 	}
-	if !checkAction(cache, recordPath, "sig", dir, inputs, outputs).UpToDate {
+	if !checkAction(cache, recordPath, "sig", dir, actionFiles{Inputs: inputs, Outputs: outputs}).UpToDate {
 		t.Fatal("unchanged action rejected through cache")
 	}
 	if err := os.WriteFile(filepath.Join(dir, "input"), []byte("other"), 0644); err != nil {
@@ -96,7 +96,58 @@ func TestCachedActionDetectsRewrittenInput(t *testing.T) {
 	if err := os.Chtimes(filepath.Join(dir, "input"), stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
-	if got := checkAction(cache, recordPath, "sig", dir, inputs, outputs); got.UpToDate || got.Reason != "inputs changed" {
+	if got := checkAction(cache, recordPath, "sig", dir, actionFiles{Inputs: inputs, Outputs: outputs}); got.UpToDate || got.Reason != "inputs changed" {
 		t.Fatalf("rewritten input decision through cache = %+v", got)
+	}
+}
+
+func TestActionOutputUsesStatIdentity(t *testing.T) {
+	dir := t.TempDir()
+	writeAssemblyFixture(t, dir, "input", "input")
+	writeAssemblyFixture(t, dir, "output", "output")
+	recordPath := filepath.Join(dir, "action.json")
+	inputs, outputs := []string{"input"}, []string{"output"}
+	if err := saveActionRecord(nil, recordPath, "sig", dir, actionFiles{Inputs: inputs, Outputs: outputs}); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(dir, "output")
+	info, err := os.Stat(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(output, []byte("output"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	stamp := info.ModTime().Add(time.Minute)
+	if err := os.Chtimes(output, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if got := checkAction(nil, recordPath, "sig", dir, actionFiles{Inputs: inputs, Outputs: outputs}); got.UpToDate || got.Reason != "outputs changed" {
+		t.Fatalf("rewritten output decision = %+v", got)
+	}
+}
+
+func TestActionInputStaysContentAddressed(t *testing.T) {
+	dir := t.TempDir()
+	writeAssemblyFixture(t, dir, "input", "input")
+	writeAssemblyFixture(t, dir, "output", "output")
+	recordPath := filepath.Join(dir, "action.json")
+	inputs, outputs := []string{"input"}, []string{"output"}
+	if err := saveActionRecord(nil, recordPath, "sig", dir, actionFiles{Inputs: inputs, Outputs: outputs}); err != nil {
+		t.Fatal(err)
+	}
+	input := filepath.Join(dir, "input")
+	info, err := os.Stat(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(input, []byte("other"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(input, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if got := checkAction(nil, recordPath, "sig", dir, actionFiles{Inputs: inputs, Outputs: outputs}); got.UpToDate || got.Reason != "inputs changed" {
+		t.Fatalf("same-stat input rewrite decision = %+v", got)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
@@ -77,7 +78,7 @@ func saveStamp(t *testing.T, s Settings, extra ...string) []string {
 		t.Fatal(err)
 	}
 	writeConfigureOutput(t, s, args)
-	if err := writeStamp(s, args, ""); err != nil {
+	if err := writeStamp(s, args, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	return args
@@ -98,7 +99,7 @@ func TestStampRoundTripAndSourceInputs(t *testing.T) {
 	s := newIncrementalSettings(t)
 	writeCMakeLists(t, s.SourceDir, "cmake_minimum_required(VERSION 3.20)\n")
 	args := saveStamp(t, s, "-G", "Ninja")
-	if _, ok := stampState(s, args); !ok {
+	if _, ok := stampState(s, args, ""); !ok {
 		t.Fatal("freshly saved configure stamp is not up to date")
 	}
 	if data, err := os.ReadFile(stampPath(s)); err != nil || len(data) == 0 {
@@ -106,23 +107,23 @@ func TestStampRoundTripAndSourceInputs(t *testing.T) {
 	}
 	writeFile(t, s.SourceDir, "probe.c", "int probe(void) { return 1; }\n")
 	writeFile(t, s.SourceDir, "probe.h", "#define PROBE 1\n")
-	if _, ok := stampState(s, args); !ok {
+	if _, ok := stampState(s, args, ""); !ok {
 		t.Fatal("compiled source change invalidated the configure stamp")
 	}
 	writeCMakeLists(t, s.SourceDir, "cmake_minimum_required(VERSION 3.21)\n")
-	if _, ok := stampState(s, args); ok {
+	if _, ok := stampState(s, args, ""); ok {
 		t.Fatal("changed CMakeLists.txt did not invalidate the configure stamp")
 	}
 	writeCMakeLists(t, s.SourceDir, "cmake_minimum_required(VERSION 3.20)\n")
-	if _, ok := stampState(s, args); !ok {
+	if _, ok := stampState(s, args, ""); !ok {
 		t.Fatal("restored CMakeLists.txt did not restore the fingerprint")
 	}
 	writeFile(t, s.SourceDir, "extra.cmake", "set(EXTRA 1)\n")
-	if _, ok := stampState(s, args); ok {
+	if _, ok := stampState(s, args, ""); ok {
 		t.Fatal("new .cmake file did not invalidate the configure stamp")
 	}
 	writeFile(t, s.SourceDir, "CMakePresets.json", "{\"version\": 3}\n")
-	if _, ok := stampState(s, args); ok {
+	if _, ok := stampState(s, args, ""); ok {
 		t.Fatal("new CMakePresets.json did not invalidate the configure stamp")
 	}
 }
@@ -138,7 +139,7 @@ func TestFingerprintExcludesBuildDirectories(t *testing.T) {
 	writeFile(t, filepath.Join(s.SourceDir, ".vmake_deps", "dep"), "dep.cmake", "set(DEP 1)\n")
 	writeFile(t, filepath.Join(s.SourceDir, "CMakeFiles"), "generated.cmake", "set(GENERATED 1)\n")
 	writeFile(t, s.SourceDir, "cmake_install.cmake", "set(INSTALL 1)\n")
-	if _, ok := stampState(s, args); !ok {
+	if _, ok := stampState(s, args, ""); !ok {
 		t.Fatal("build directories or generated CMake files invalidated the configure stamp")
 	}
 }
@@ -153,11 +154,11 @@ func TestFingerprintScansUpstreamBuildDir(t *testing.T) {
 	}
 	writeCMakeLists(t, s.SourceDir, "cmake_minimum_required(VERSION 3.20)\n")
 	args := saveStamp(t, s, "-G", "Ninja")
-	if _, ok := stampState(s, args); !ok {
+	if _, ok := stampState(s, args, ""); !ok {
 		t.Fatal("saved configure stamp is not up to date")
 	}
 	writeFile(t, filepath.Join(s.SourceDir, "build"), "upstream.cmake", "set(UPSTREAM 1)\n")
-	if _, ok := stampState(s, args); ok {
+	if _, ok := stampState(s, args, ""); ok {
 		t.Fatal("an upstream build/ directory was excluded from the fingerprint")
 	}
 }
@@ -167,7 +168,7 @@ func TestFingerprintTracksArgumentsAndSettings(t *testing.T) {
 	writeCMakeLists(t, s.SourceDir, "cmake_minimum_required(VERSION 3.20)\n")
 	args := saveStamp(t, s, "-G", "Ninja")
 	changed := append(append([]string{}, args...), "-DEXTRA=1")
-	if _, ok := stampState(s, changed); ok {
+	if _, ok := stampState(s, changed, ""); ok {
 		t.Fatal("argument change did not invalidate the configure stamp")
 	}
 	other := s
@@ -176,7 +177,7 @@ func TestFingerprintTracksArgumentsAndSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := stampState(s, otherArgs); ok {
+	if _, ok := stampState(s, otherArgs, ""); ok {
 		t.Fatal("install prefix change did not invalidate the configure stamp")
 	}
 	other = s
@@ -185,7 +186,7 @@ func TestFingerprintTracksArgumentsAndSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := stampState(s, otherArgs); ok {
+	if _, ok := stampState(s, otherArgs, ""); ok {
 		t.Fatal("global flag change did not invalidate the configure stamp")
 	}
 }
@@ -197,7 +198,7 @@ func TestFingerprintTracksEnvironment(t *testing.T) {
 		t.Setenv("CMAKE_GENERATOR", "")
 		args := saveStamp(t, s, "-G", "Ninja")
 		t.Setenv("CMAKE_GENERATOR", "Ninja")
-		if _, ok := stampState(s, args); ok {
+		if _, ok := stampState(s, args, ""); ok {
 			t.Fatal("CMAKE_GENERATOR change did not invalidate the configure stamp")
 		}
 	})
@@ -207,7 +208,7 @@ func TestFingerprintTracksEnvironment(t *testing.T) {
 		t.Setenv("CMAKE_PREFIX_PATH", "")
 		args := saveStamp(t, s, "-G", "Ninja")
 		t.Setenv("CMAKE_PREFIX_PATH", filepath.Join(t.TempDir(), "prefix"))
-		if _, ok := stampState(s, args); ok {
+		if _, ok := stampState(s, args, ""); ok {
 			t.Fatal("CMAKE_PREFIX_PATH change did not invalidate the configure stamp")
 		}
 	})
@@ -216,7 +217,7 @@ func TestFingerprintTracksEnvironment(t *testing.T) {
 		writeCMakeLists(t, s.SourceDir, "cmake_minimum_required(VERSION 3.20)\n")
 		args := saveStamp(t, s, "-G", "Ninja")
 		t.Setenv("PATH", os.Getenv("PATH")+string(os.PathListSeparator)+"unused")
-		if _, ok := stampState(s, args); ok {
+		if _, ok := stampState(s, args, ""); ok {
 			t.Fatal("PATH change did not invalidate the configure stamp")
 		}
 	})
@@ -234,7 +235,7 @@ func TestStampInvalidation(t *testing.T) {
 		if err := os.Remove(stampPath(s)); err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := stampState(s, args); ok {
+		if _, ok := stampState(s, args, ""); ok {
 			t.Fatal("missing stamp reported up to date")
 		}
 	})
@@ -243,7 +244,7 @@ func TestStampInvalidation(t *testing.T) {
 		if err := os.WriteFile(stampPath(s), []byte("not json"), 0644); err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := stampState(s, args); ok {
+		if _, ok := stampState(s, args, ""); ok {
 			t.Fatal("garbage stamp reported up to date")
 		}
 	})
@@ -252,19 +253,19 @@ func TestStampInvalidation(t *testing.T) {
 		if err := os.WriteFile(stampPath(s), []byte(`{"version":999,"fingerprint":"stale"}`), 0644); err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := stampState(s, args); ok {
+		if _, ok := stampState(s, args, ""); ok {
 			t.Fatal("stamp with an unknown version reported up to date")
 		}
 	})
 	t.Run("missing cmake cache", func(t *testing.T) {
 		s, args := newFixture(t)
-		if _, ok := stampState(s, args); !ok {
+		if _, ok := stampState(s, args, ""); !ok {
 			t.Fatal("saved configure stamp is not up to date")
 		}
 		if err := os.Remove(filepath.Join(s.BuildDir, "CMakeCache.txt")); err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := stampState(s, args); ok {
+		if _, ok := stampState(s, args, ""); ok {
 			t.Fatal("missing CMakeCache.txt reported up to date")
 		}
 	})
@@ -273,7 +274,7 @@ func TestStampInvalidation(t *testing.T) {
 		if err := os.Remove(filepath.Join(s.BuildDir, "build.ninja")); err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := stampState(s, args); ok {
+		if _, ok := stampState(s, args, ""); ok {
 			t.Fatal("missing build.ninja reported up to date")
 		}
 	})
@@ -282,14 +283,14 @@ func TestStampInvalidation(t *testing.T) {
 		if err := os.RemoveAll(filepath.Join(s.BuildDir, "CMakeFiles")); err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := stampState(s, args); ok {
+		if _, ok := stampState(s, args, ""); ok {
 			t.Fatal("missing CMakeFiles reported up to date")
 		}
 	})
 	t.Run("dry run", func(t *testing.T) {
 		s, args := newFixture(t)
 		s.DryRun = true
-		if _, ok := stampState(s, args); ok {
+		if _, ok := stampState(s, args, ""); ok {
 			t.Fatal("dry-run reported configure up to date")
 		}
 	})
@@ -301,16 +302,16 @@ func TestStampInvalidation(t *testing.T) {
 			t.Fatal(err)
 		}
 		writeConfigureOutput(t, s, args)
-		if err := writeStamp(s, args, ""); err != nil {
+		if err := writeStamp(s, args, "", ""); err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := stampState(s, args); !ok {
+		if _, ok := stampState(s, args, ""); !ok {
 			t.Fatal("preset configure stamp is not up to date")
 		}
 		if err := os.RemoveAll(filepath.Join(s.BuildDir, "CMakeFiles")); err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := stampState(s, args); ok {
+		if _, ok := stampState(s, args, ""); ok {
 			t.Fatal("preset configure without CMakeFiles reported up to date")
 		}
 	})
@@ -321,21 +322,21 @@ func TestStateReusesFingerprint(t *testing.T) {
 	writeCMakeLists(t, s.SourceDir, "cmake_minimum_required(VERSION 3.20)\n")
 	args := saveStamp(t, s, "-G", "Ninja")
 	writeCMakeLists(t, s.SourceDir, "cmake_minimum_required(VERSION 3.21)\n")
-	fingerprint, ok := stampState(s, args)
+	fingerprint, ok := stampState(s, args, "")
 	if ok || fingerprint == "" {
 		t.Fatalf("fingerprint miss did not return the current fingerprint: %q, %v", fingerprint, ok)
 	}
-	if err := writeStamp(s, args, fingerprint); err != nil {
+	if err := writeStamp(s, args, "", fingerprint); err != nil {
 		t.Fatal(err)
 	}
-	want, err := computeFingerprint(s, args)
+	want, err := computeFingerprint(s, args, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if fingerprint != want {
 		t.Fatalf("reused fingerprint %q != recomputed %q", fingerprint, want)
 	}
-	if _, ok := stampState(s, args); !ok {
+	if _, ok := stampState(s, args, ""); !ok {
 		t.Fatal("reused fingerprint is not up to date")
 	}
 }
@@ -477,9 +478,47 @@ func TestResolveExecutableUsesCommandPath(t *testing.T) {
 		t.Fatalf("ResolveExecutable = %q, %q, want %q", path, digest, toolPath)
 	}
 	writeFakeCMake(t, installBin, "toolchain cmake two\n")
+	stamp := time.Now().Add(time.Minute)
+	if err := os.Chtimes(toolPath, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
 	if _, changed := ResolveExecutable(s); changed == digest {
 		t.Fatal("toolchain cmake change did not change its digest")
 	}
+}
+
+func TestExecutableDigestFollowsStatIdentity(t *testing.T) {
+	s := newIncrementalSettings(t)
+	path, digest := ResolveExecutable(s)
+	if path == "" || digest == "" {
+		t.Fatalf("ResolveExecutable = %q, %q", path, digest)
+	}
+
+	t.Run("unchanged stat reuses the memoized digest", func(t *testing.T) {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("cmake executable two\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+			t.Fatal(err)
+		}
+		if _, cached := ResolveExecutable(s); cached != digest {
+			t.Fatalf("unchanged stat digest = %q, want the memoized %q", cached, digest)
+		}
+	})
+
+	t.Run("new stat rehashes", func(t *testing.T) {
+		stamp := time.Now().Add(2 * time.Minute)
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+		if _, changed := ResolveExecutable(s); changed == digest {
+			t.Fatal("new mtime did not invalidate the memoized digest")
+		}
+	})
 }
 
 func TestHelpers(t *testing.T) {
@@ -658,7 +697,7 @@ func TestFingerprintTracksTheResolvedCMakeExecutable(t *testing.T) {
 	s := newIncrementalSettings(t)
 	writeCMakeLists(t, s.SourceDir, "cmake_minimum_required(VERSION 3.20)\n")
 	args := saveStamp(t, s, "-G", "Ninja")
-	if _, ok := stampState(s, args); !ok {
+	if _, ok := stampState(s, args, ""); !ok {
 		t.Fatal("saved configure stamp is not up to date")
 	}
 	path, _ := ResolveExecutable(s)
@@ -668,7 +707,7 @@ func TestFingerprintTracksTheResolvedCMakeExecutable(t *testing.T) {
 	if err := os.WriteFile(path, []byte("cmake executable two\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := stampState(s, args); ok {
+	if _, ok := stampState(s, args, ""); ok {
 		t.Fatal("replaced cmake executable did not invalidate the configure stamp")
 	}
 }
@@ -692,7 +731,7 @@ func TestInputFilesSkipUnreadableEntries(t *testing.T) {
 		}
 	}
 	args := saveStamp(t, s, "-G", "Ninja")
-	if _, ok := stampState(s, args); !ok {
+	if _, ok := stampState(s, args, ""); !ok {
 		t.Fatal("unreadable input file invalidated the configure stamp")
 	}
 }

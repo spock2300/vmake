@@ -22,6 +22,7 @@ type plannedAction struct {
 	Environment     string
 	Commands        []commandSpec
 	Inputs          []string
+	StatInputs      []string
 	RecordInputs    []string
 	SignatureInputs []string
 	Outputs         []string
@@ -61,7 +62,11 @@ func (s *Scheduler) runPlannedAction(ctx context.Context, action *plannedAction,
 	if err != nil {
 		return false, nil, err
 	}
-	decision := checkAction(s.hashes, action.RecordPath, signature, action.WorkDir, action.Inputs, action.Outputs)
+	decision := checkAction(s.hashes, action.RecordPath, signature, action.WorkDir, actionFiles{
+		Inputs:     action.Inputs,
+		StatInputs: action.StatInputs,
+		Outputs:    action.Outputs,
+	})
 	if action.Force && decision.UpToDate {
 		decision = actionDecision{Reason: action.ForceReason}
 	}
@@ -93,7 +98,11 @@ func (s *Scheduler) runPlannedAction(ctx context.Context, action *plannedAction,
 		recordInputs = action.Inputs
 	}
 	inputs := append(append([]string{}, recordInputs...), discovered...)
-	if err := saveActionRecord(s.hashes, action.RecordPath, signature, action.WorkDir, inputs, action.Outputs); err != nil {
+	if err := saveActionRecord(s.hashes, action.RecordPath, signature, action.WorkDir, actionFiles{
+		Inputs:     inputs,
+		StatInputs: action.StatInputs,
+		Outputs:    action.Outputs,
+	}); err != nil {
 		return false, nil, err
 	}
 	return false, discovered, nil

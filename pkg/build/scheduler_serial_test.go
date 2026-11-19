@@ -129,7 +129,7 @@ func saveTestLinkRecord(t *testing.T, scheduler *Scheduler, resolved *ResolvedTa
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := saveActionRecord(nil, action.RecordPath, signature, scheduler.pkgs[resolved.Node.PkgName].SourceDir, action.Inputs, action.Outputs); err != nil {
+	if err := saveActionRecord(nil, action.RecordPath, signature, scheduler.pkgs[resolved.Node.PkgName].SourceDir, actionFiles{Inputs: action.Inputs, StatInputs: action.StatInputs, Outputs: action.Outputs}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -144,7 +144,7 @@ func testNeedRelink(t *testing.T, scheduler *Scheduler, resolved *ResolvedTarget
 	if err != nil {
 		return true
 	}
-	return !checkAction(scheduler.hashes, action.RecordPath, signature, scheduler.pkgs[resolved.Node.PkgName].SourceDir, action.Inputs, action.Outputs).UpToDate
+	return !checkAction(scheduler.hashes, action.RecordPath, signature, scheduler.pkgs[resolved.Node.PkgName].SourceDir, actionFiles{Inputs: action.Inputs, StatInputs: action.StatInputs, Outputs: action.Outputs}).UpToDate
 }
 
 func TestUseDependencyLinkerScriptPrecedence(t *testing.T) {

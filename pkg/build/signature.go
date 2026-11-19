@@ -15,17 +15,21 @@ import (
 	"time"
 
 	"github.com/spock2300/vmake/internal/envsig"
+	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/jsonio"
 )
 
 // actionRecordVersion versions the on-disk action record and the signatures
 // embedded in it. It is independent of layoutFormatVersion.
-const actionRecordVersion = 3
+const actionRecordVersion = 4
 
+// fileState records a file's content hash or stat identity.
 type fileState struct {
-	Path string `json:"path"`
-	Hash string `json:"hash"`
-	Mode uint32 `json:"mode"`
+	Path    string `json:"path"`
+	Hash    string `json:"hash,omitempty"`
+	Size    int64  `json:"size,omitempty"`
+	ModTime int64  `json:"mtime,omitempty"`
+	Mode    uint32 `json:"mode"`
 }
 
 type actionRecord struct {
@@ -33,6 +37,14 @@ type actionRecord struct {
 	Signature string      `json:"signature"`
 	Inputs    []fileState `json:"inputs"`
 	Outputs   []fileState `json:"outputs"`
+}
+
+// actionFiles are the paths one incremental action checks. StatInputs is the
+// build-product subset of Inputs and is compared by stat identity.
+type actionFiles struct {
+	Inputs     []string
+	StatInputs []string
+	Outputs    []string
 }
 
 type commandSpec struct {
@@ -115,7 +127,7 @@ func (c *fileHashCache) hash(path string, info os.FileInfo) (string, error) {
 }
 
 func sameFileIdentity(entry fileHashEntry, path string, info os.FileInfo) bool {
-	if entry.info.Size() != info.Size() || entry.info.Mode() != info.Mode() || !entry.info.ModTime().Equal(info.ModTime()) || !os.SameFile(entry.info, info) {
+	if entry.info.Mode() != info.Mode() || !fs.SameStat(entry.info, info) {
 		return false
 	}
 	if !entry.hasTime {
@@ -125,7 +137,65 @@ func sameFileIdentity(entry fileHashEntry, path string, info os.FileInfo) bool {
 	return hasTime && entry.changed.Equal(changed)
 }
 
-func fingerprintFiles(cache *fileHashCache, workDir string, paths []string) ([]fileState, error) {
+func fingerprintInputs(cache *fileHashCache, workDir string, files actionFiles) ([]fileState, error) {
+	statSet := make(map[string]bool, len(files.StatInputs))
+	for _, path := range files.StatInputs {
+		if path == "" {
+			continue
+		}
+		absolute, err := filepath.Abs(resolveWorkPath(workDir, path))
+		if err != nil {
+			continue
+		}
+		statSet[filepath.Clean(absolute)] = true
+	}
+	resolved, err := resolveFingerprintPaths(workDir, files.Inputs)
+	if err != nil {
+		return nil, err
+	}
+	states := make([]fileState, 0, len(resolved))
+	for _, path := range resolved {
+		info, err := statRegularFile(path)
+		if err != nil {
+			return nil, err
+		}
+		state := fileState{Path: path, Mode: uint32(info.Mode())}
+		if statSet[path] {
+			state.Size = info.Size()
+			state.ModTime = info.ModTime().UnixNano()
+		} else {
+			state.Hash, err = cache.hash(path, info)
+			if err != nil {
+				return nil, err
+			}
+		}
+		states = append(states, state)
+	}
+	return states, nil
+}
+
+func fingerprintOutputs(workDir string, outputs []string) ([]fileState, error) {
+	resolved, err := resolveFingerprintPaths(workDir, outputs)
+	if err != nil {
+		return nil, err
+	}
+	states := make([]fileState, 0, len(resolved))
+	for _, path := range resolved {
+		info, err := statRegularFile(path)
+		if err != nil {
+			return nil, err
+		}
+		states = append(states, fileState{
+			Path:    path,
+			Size:    info.Size(),
+			ModTime: info.ModTime().UnixNano(),
+			Mode:    uint32(info.Mode()),
+		})
+	}
+	return states, nil
+}
+
+func resolveFingerprintPaths(workDir string, paths []string) ([]string, error) {
 	resolved := make([]string, 0, len(paths))
 	for _, path := range paths {
 		if path == "" {
@@ -139,22 +209,18 @@ func fingerprintFiles(cache *fileHashCache, workDir string, paths []string) ([]f
 	}
 	resolved = unique(resolved)
 	sort.Strings(resolved)
-	states := make([]fileState, 0, len(resolved))
-	for _, path := range resolved {
-		info, err := os.Stat(path)
-		if err != nil {
-			return nil, err
-		}
-		if !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("action input or output is not a regular file: %s", path)
-		}
-		hash, err := cache.hash(path, info)
-		if err != nil {
-			return nil, err
-		}
-		states = append(states, fileState{Path: path, Hash: hash, Mode: uint32(info.Mode())})
+	return resolved, nil
+}
+
+func statRegularFile(path string) (os.FileInfo, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
 	}
-	return states, nil
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("action input or output is not a regular file: %s", path)
+	}
+	return info, nil
 }
 
 type actionDecision struct {
@@ -162,7 +228,7 @@ type actionDecision struct {
 	Reason   string
 }
 
-func checkAction(cache *fileHashCache, recordPath, signature, workDir string, inputs, outputs []string) actionDecision {
+func checkAction(cache *fileHashCache, recordPath, signature, workDir string, files actionFiles) actionDecision {
 	var record actionRecord
 	if err := jsonio.Load(recordPath, &record); err != nil {
 		if os.IsNotExist(err) {
@@ -176,14 +242,14 @@ func checkAction(cache *fileHashCache, recordPath, signature, workDir string, in
 	if record.Signature != signature {
 		return actionDecision{Reason: "command, tool or environment changed"}
 	}
-	currentInputs, err := fingerprintFiles(cache, workDir, inputs)
+	currentInputs, err := fingerprintInputs(cache, workDir, files)
 	if err != nil {
 		return actionDecision{Reason: "input missing or unreadable"}
 	}
 	if !equalFileStates(record.Inputs, currentInputs) {
 		return actionDecision{Reason: "inputs changed"}
 	}
-	currentOutputs, err := fingerprintFiles(cache, workDir, outputs)
+	currentOutputs, err := fingerprintOutputs(workDir, files.Outputs)
 	if err != nil {
 		return actionDecision{Reason: "output missing or unreadable"}
 	}
@@ -213,13 +279,13 @@ func (c *fileHashCache) evict(workDir string, paths []string) {
 	}
 }
 
-func saveActionRecord(cache *fileHashCache, recordPath, signature, workDir string, inputs, outputs []string) error {
-	inputStates, err := fingerprintFiles(cache, workDir, inputs)
+func saveActionRecord(cache *fileHashCache, recordPath, signature, workDir string, files actionFiles) error {
+	inputStates, err := fingerprintInputs(cache, workDir, files)
 	if err != nil {
 		return fmt.Errorf("record action inputs: %w", err)
 	}
-	cache.evict(workDir, outputs)
-	outputStates, err := fingerprintFiles(cache, workDir, outputs)
+	cache.evict(workDir, files.Outputs)
+	outputStates, err := fingerprintOutputs(workDir, files.Outputs)
 	if err != nil {
 		return fmt.Errorf("record action outputs: %w", err)
 	}

@@ -9,7 +9,7 @@ import (
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
-func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, placement ArtifactPlacement) error {
+func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, placement ArtifactPlacement, rebuilt bool) error {
 	t := resolved.Node.Target
 	kind := placement.Kind
 
@@ -24,8 +24,9 @@ func (s *Scheduler) publishTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, pl
 	if placement.OutputPath != "" {
 		srcPath := resolveWorkPath(pkgInfo.SourceDir, placement.OutputPath)
 		dest := filepath.Join(libDir, filepath.Base(placement.OutputPath))
+		// An up-to-date action leaves an existing staged copy current without hashing.
 		if info, err := os.Stat(dest); err == nil && info.Mode().IsRegular() &&
-			sameFileContent(srcPath, dest) && !implibMissingAt(placement.ImportLib, libDir) {
+			(!rebuilt || sameFileContent(srcPath, dest)) && !implibMissingAt(placement.ImportLib, libDir) {
 			vlog.Info("  SKIP (already published)")
 			published = true
 		}

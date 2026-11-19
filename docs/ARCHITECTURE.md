@@ -54,7 +54,7 @@ Phase 3: OnBuild (pipeline.RunBuild)
 ### 单一职责模块（架构收敛）
 
 - 解析决策：`pkg/resolver.LockQuery`（`PinFor`/`IgnoredFor`/`LockEntry`/`Decide`）是 target/float/pin/lock/native 优先级的唯一实现；`pkg/pipeline.lockDecisions`/`projectLock` 是锁文件投影与 `--locked` 比较的唯一入口。
-- 增量动作：`pkg/build.plannedAction` + `runPlannedAction` 统一 compile/link/void 的签名、执行与记录；`Compiler.planCompile` 是编译命令的唯一推导，`compile_commands.json` 使用同一计划的 display 命令。
+- 增量动作：`pkg/build.plannedAction` + `runPlannedAction` 统一 compile/link/void 的签名、执行与记录；输入按内容哈希，构建链产物（link 的 object、依赖产物、prebuilt 源，`plannedAction.StatInputs`）与输出按 size/mtime/mode 校验；`Compiler.planCompile` 是编译命令的唯一推导，`compile_commands.json` 使用同一计划的 display 命令。
 - 包激活：`pkg/pipeline.ActivatePackage` 是 build/declarative 的唯一激活路径；`DeclareTargets` 是 declarative 包装，`executeOnePackage` 使用 build 模式。
 - 脚本方法面：`pkg/api/script_methods.go` 的 allowlist/pending 清单 + `TestScriptMethodManifestMatchesVisibleSurface` 反射注册类型（含提升方法），新增/删除导出方法必须显式分类；DD-27 阶段 2 已把宿主接线移到 `pkg/api/bind.go` 的 `api.Bind*`（`Bind` 前缀不注册进 yaegi），pending 已清空；阶段 3 已落地：`ConfigAccessor`/`PackageMeta` 的导出字段改为非导出并通过 `Bind*` 访问，`TargetRegistry`/`InstallItemHolder` 只提升 allowlist 方法。
 - 根/needed：`pkg/pipeline.ComputeNeeded` 是构建 needed 的唯一计算；`RootsFromEdges` 是 deps/inspect 报告图的唯一根计算。
@@ -694,7 +694,7 @@ type KConfigEntry struct {
 
 ### 动作成功记录与 TargetVoid
 
-原生编译和链接使用带格式版本的动作成功记录。编译签名覆盖有序参数、工具身份、有效环境和目标；记录校验源文件、depfile 依赖及对象文件的内容。链接记录覆盖对象列表、依赖产物、链接脚本、post-link 输入、主产物和显式 post-link 输出。任一步骤失败都不会提交成功记录，下次构建重新执行未完成动作。
+原生编译和链接使用带格式版本的动作成功记录。编译签名覆盖有序参数、工具身份、有效环境和目标；记录校验源文件与 depfile 依赖的内容、对象文件的 stat 身份（size/mtime/mode）。链接记录覆盖对象列表、依赖产物、链接脚本、post-link 输入、主产物和显式 post-link 输出。任一步骤失败都不会提交成功记录，下次构建重新执行未完成动作。
 
 对象路径包含 target 名称和源路径各自的完整哈希，避免多个 target 编译同一源文件或不同源路径被压平后互相覆盖。编译失败会取消并回收同 target 的其他编译进程，之后才允许继续执行无关 target。
 
@@ -749,7 +749,7 @@ type PostLinkStep struct {
 2. 执行每个步骤的工具命令
 3. `Target.PostLinkOutputs()` 声明的输出产物由 `installTarget`（`ArtifactInstaller`，`vmake build --install`）随主产物一起安装；不从 `PostLinkStep.Args` 推断输出。安装前会先检查主产物路径：主产物不存在时该 target 整体跳过，因此 `TargetVoid` 等没有主产物文件的 target 声明的 post-link 输出不会被安装。
 
-原生 target 的 post-link 与链接作为一个完整动作提交成功记录。输入、命令或工具变化，输出缺失或内容被修改，都会重新链接并运行全部步骤；后处理失败后不复用半完成产物。`AddPostLinkDeps` 声明的文件按内容校验，不依赖 mtime。
+原生 target 的 post-link 与链接作为一个完整动作提交成功记录。输入、命令或工具变化，产物缺失或 size/mtime 变化，都会重新链接并运行全部步骤；后处理失败后不复用半完成产物。产物按 stat 身份校验；链接的 object、依赖产物与本包 build/install 目录内的 prebuilt 源同样按 stat 身份，`AddPostLinkDeps` 等用户文件仍按内容校验、不依赖 mtime。`publishTarget` 在目标动作 up-to-date 且暂存副本存在时不再对比内容。
 
 ```go
 ctx.Target("firmware").SetKind(api.TargetBinary).AddFiles("src/*.c")

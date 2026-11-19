@@ -13,6 +13,13 @@ func EnsureDir(path string) error {
 	return nil
 }
 
+// SameStat reports whether a and b describe the same unchanged file.
+func SameStat(previous, current os.FileInfo) bool {
+	return previous.Size() == current.Size() &&
+		previous.ModTime().Equal(current.ModTime()) &&
+		os.SameFile(previous, current)
+}
+
 func EnsureParentDir(filePath string) error {
 	return EnsureDir(filepath.Dir(filePath))
 }

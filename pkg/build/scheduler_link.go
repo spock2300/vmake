@@ -71,7 +71,7 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 		return false, err
 	}
 	if pkgInfo.InstallDir != "" {
-		if err := s.publishTarget(resolved, pkgInfo, resolved.Placement); err != nil {
+		if err := s.publishTarget(resolved, pkgInfo, resolved.Placement, !upToDate); err != nil {
 			return false, err
 		}
 	}

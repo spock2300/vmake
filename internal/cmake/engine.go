@@ -13,6 +13,7 @@ type Plan struct {
 	Args        []string
 	Dir         string
 	Executable  string
+	cmakePath   string
 	fingerprint string
 	Reuse       bool
 	Preset      bool
@@ -34,11 +35,17 @@ func (e Engine) PlanConfigure(extra []string) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	fingerprint, reuse := stampState(e.settings, args)
+	cmakePath, _ := resolvePath(e.settings)
+	executable := cmakePath
+	if executable == "" {
+		executable = "cmake"
+	}
+	fingerprint, reuse := stampState(e.settings, args, cmakePath)
 	return Plan{
 		Args:        args,
 		Dir:         configureDir(e.settings, extra),
-		Executable:  e.executable(),
+		Executable:  executable,
+		cmakePath:   cmakePath,
 		fingerprint: fingerprint,
 		Reuse:       reuse,
 		Preset:      HasOption(extra, "--preset"),
@@ -86,7 +93,7 @@ func (e Engine) appendManagedConfig(args, extra []string) []string {
 
 // executable is the one resolution of the cmake program, shared by every stage.
 func (e Engine) executable() string {
-	path, _ := ResolveExecutable(e.settings)
+	path, _ := resolvePath(e.settings)
 	if path == "" {
 		return "cmake"
 	}
@@ -105,5 +112,5 @@ func (e Engine) Invalidate() error {
 
 // Commit records the fingerprint of a configure that just succeeded.
 func (e Engine) Commit(p Plan) error {
-	return writeStamp(e.settings, p.Args, p.fingerprint)
+	return writeStamp(e.settings, p.Args, p.cmakePath, p.fingerprint)
 }

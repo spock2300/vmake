@@ -338,6 +338,15 @@
 - 理由: 构建目录名只需要在同一个 `out/` 下唯一，不需要可校验；把 129 字符的身份编码从路径里拿掉，CMake、链接器和 install 步骤都重新拿到足够余量，而所有调用方无需改动。保留完整键作为身份，避免轮换目录的同时破坏 inspect/lock 的推导。
 - 涉及代码: `pkg/build/paths.go`, `pkg/build/key.go`, `pkg/build/scheduler_resolve.go`, `pkg/build/signature.go`, `pkg/pipeline/layout.go`, `pkg/build/paths_test.go`, `pkg/build/scheduler_test.go`, `pkg/pipeline/layout_test.go`, `docs/VMAKE_HOME.md`。
 
+## DD-38: 增量动作的产物与构建链输入按 stat 身份校验
+
+- 状态: accepted
+- 背景: 每个 up-to-date 检查都会把动作记录里的所有输入和产物整份重读做 SHA-256：100 TU、每 TU 1MB object 的原生 target，no-op 构建 90.6ms 中有约 70ms 花在重读 object 与归档；100MB 产物在 Linux 上约 133ms（Go SHA-NI 约 1.5GB/s），Windows 叠加 Defender 扫描后按倍数放大。链接动作还会把该 target 的全部 object 当输入再哈希一次；CMake wrapper 的 prebuilt 库同理。这是“Windows 增量构建慢，CMake 第三方包尤其明显”的主要 vmake 侧来源。
+- 决策: `fileState` 增加 `Size`/`ModTime`；`plannedAction` 增加 `StatInputs`（链接动作的 object、`DepArtifacts`，以及位于本包 build/install 目录内的 prebuilt 源）。动作记录中用户输入（源文件、头文件、脚本、`AddPostLinkDeps`、仓库内 vendored prebuilt）继续按内容哈希；`plannedAction.StatInputs` 与动作输出（object、`.d`、归档/ELF、post-link 产物）只比较 size/mtime/mode，不再读取内容。`publishTarget` 在目标动作 up-to-date 且暂存副本已存在时跳过内容对比；动作记录保存后的 output 缓存失效保留。`actionRecordVersion` 提升为 4，旧记录一次性失效重建。同一构建内重复出现的路径只解析一次：`pathCanonCache.realPath` 缓存 header 的真实路径，`internal/cmake` 的 cmake 可执行文件摘要按 stat 身份缓存，`CMakeBuild`/`CMakeInstall` 只解析路径，configure 写 stamp 复用同一路径不再读取二进制。
+- 理由: 产物由 vmake 自己产生，外部改写必然改变 size 或 mtime；用 stat 身份判断缺失/改写足以保持正确性，校验成本从“与产物总大小成正比”降为每文件一次 stat。用户文件保留内容哈希，仍能发现同尺寸同 mtime 的内容替换。
+- 取舍: 产物与构建链输入若被同尺寸且同 mtime 地替换不会被发现（与现有 `fileHashCache` 在单次构建内的跳过同级别）；`touch` 产物会保守触发重建；v4 升级后的第一次构建是全量重建。实测 no-op（Linux）：50×1MB object 90.6ms → 22.9ms，100 TU 原生 target 35.1ms → 27.0ms，缓存 CMake configure 44.3ms → 30.7ms。
+- 涉及代码: `pkg/build/signature.go`, `pkg/build/action_plan.go`, `pkg/build/link_action.go`, `pkg/build/header_check.go`, `internal/cmake/incremental.go`, `internal/cmake/engine.go`, `AGENTS.md`, `docs/ARCHITECTURE.md`, `docs/WINDOWS_VALIDATION.md`, `test_windows/bench_build.py`。
+
 ## 已知限制 / 待议
 
 以下问题已被识别但尚未决策，修改前需单独讨论：

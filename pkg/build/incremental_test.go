@@ -465,3 +465,26 @@ func TestCompileFailureCancelsWorkersAndRemovesPartialOutputs(t *testing.T) {
 		t.Fatalf("cancelled compile = %v", err)
 	}
 }
+
+func TestBuildProductPath(t *testing.T) {
+	root := t.TempDir()
+	info := &PkgInfo{PkgDirs: api.PkgDirs{
+		SourceDir:  root,
+		BuildDir:   filepath.Join(root, "build", "key"),
+		InstallDir: filepath.Join(root, "out", "install"),
+	}}
+	for _, path := range []string{
+		filepath.Join(root, "build", "key", "staging", "lib", "libx.a"),
+		filepath.Join(root, "out", "install", "lib", "libx.a"),
+	} {
+		if !buildProductPath(info, root, path) {
+			t.Errorf("buildProductPath(%q) = false, want true", path)
+		}
+	}
+	if buildProductPath(info, root, filepath.Join(root, "vendor", "libx.a")) {
+		t.Errorf("buildProductPath reported a user file as a build product")
+	}
+	if buildProductPath(nil, root, filepath.Join(root, "out", "install", "lib", "libx.a")) {
+		t.Errorf("buildProductPath accepted a nil package")
+	}
+}

@@ -24,6 +24,7 @@ func (s *Scheduler) planLink(resolved *ResolvedTarget, objs []string) (*plannedA
 		ExcludeLibs:   resolved.ExcludeLibs,
 		SymbolBinding: resolved.SymbolBinding,
 	}
+	buildInputs := append(append([]string{}, objs...), resolved.DepArtifacts...)
 	action := &plannedAction{
 		Kind:       "link",
 		Target:     resolved.Node.FullName,
@@ -31,7 +32,8 @@ func (s *Scheduler) planLink(resolved *ResolvedTarget, objs []string) (*plannedA
 		TargetOS:   policy.TargetOS,
 		Tools:      s.toolIdentity(),
 		RecordPath: resolveWorkPath(workDir, info.OutputPath(filepath.Join("state", pathKey(target.Name())+".link.json"))),
-		Inputs:     append(append([]string{}, objs...), resolved.DepArtifacts...),
+		Inputs:     append([]string{}, buildInputs...),
+		StatInputs: buildInputs,
 		Outputs:    []string{resolved.OutputPath},
 	}
 	var linkCommand commandSpec
@@ -39,6 +41,9 @@ func (s *Scheduler) planLink(resolved *ResolvedTarget, objs []string) (*plannedA
 	if target.Prebuilt() != "" {
 		source := info.ResolvePath(target.Prebuilt())
 		action.Inputs = append(action.Inputs, source)
+		if buildProductPath(info, workDir, source) {
+			action.StatInputs = append(action.StatInputs, source)
+		}
 		operation := "copy"
 		if len(target.PostLinkSteps()) == 0 {
 			operation = "symlink"
@@ -101,4 +106,21 @@ func (s *Scheduler) planLink(resolved *ResolvedTarget, objs []string) (*plannedA
 	}
 	action.Environment = env
 	return action, nil
+}
+
+// buildProductPath reports whether path was produced by the package's build.
+func buildProductPath(info *PkgInfo, workDir, path string) bool {
+	if info == nil || path == "" {
+		return false
+	}
+	clean := filepath.Clean(path)
+	for _, dir := range []string{info.EffectiveBuildDir(), info.InstallDir} {
+		if dir == "" {
+			continue
+		}
+		if hasPathPrefix(clean, filepath.Clean(resolveWorkPath(workDir, dir))) {
+			return true
+		}
+	}
+	return false
 }

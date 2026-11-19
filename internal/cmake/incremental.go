@@ -10,10 +10,12 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spock2300/vmake/internal/envsig"
 	"github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/jsonio"
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
@@ -54,7 +56,7 @@ func stampPath(s Settings) string {
 // reconfigure can pass the returned fingerprint to writeStamp instead of
 // walking the source tree a second time; it is empty when it was not
 // computed (dry run, unusable stamp, missing configure output, hashing error).
-func stampState(s Settings, args []string) (string, bool) {
+func stampState(s Settings, args []string, cmakePath string) (string, bool) {
 	if s.DryRun {
 		return "", false
 	}
@@ -68,7 +70,7 @@ func stampState(s Settings, args []string) (string, bool) {
 	if !outputPresent(s, args) {
 		return "", false
 	}
-	fingerprint, err := computeFingerprint(s, args)
+	fingerprint, err := computeFingerprint(s, args, cmakePath)
 	if err != nil {
 		vlog.Debug("  cmake configure: fingerprint unavailable: %v", err)
 		return "", false
@@ -152,15 +154,17 @@ func generatorFromArgs(args []string) string {
 	return ""
 }
 
-func writeStamp(s Settings, args []string, fingerprint string) error {
+func writeStamp(s Settings, args []string, cmakePath, fingerprint string) error {
+	if cmakePath == "" {
+		cmakePath, _ = resolvePath(s)
+	}
 	if fingerprint == "" {
 		var err error
-		fingerprint, err = computeFingerprint(s, args)
+		fingerprint, err = computeFingerprint(s, args, cmakePath)
 		if err != nil {
 			return err
 		}
 	}
-	cmakePath, _ := ResolveExecutable(s)
 	return jsonio.Save(stampPath(s), stamp{
 		Version:     StampVersion,
 		Fingerprint: fingerprint,
@@ -169,10 +173,13 @@ func writeStamp(s Settings, args []string, fingerprint string) error {
 	})
 }
 
-func computeFingerprint(s Settings, args []string) (string, error) {
-	cmakePath, cmakeDigest := ResolveExecutable(s)
+func computeFingerprint(s Settings, args []string, cmakePath string) (string, error) {
 	if cmakePath == "" {
-		return "", fmt.Errorf("cmake executable not found")
+		path, err := resolvePath(s)
+		if err != nil || path == "" {
+			return "", fmt.Errorf("cmake executable not found")
+		}
+		cmakePath = path
 	}
 	files, err := inputFiles(s)
 	if err != nil {
@@ -183,7 +190,7 @@ func computeFingerprint(s Settings, args []string) (string, error) {
 		HostOS:      s.HostOS,
 		Args:        args,
 		CMakePath:   cmakePath,
-		CMakeDigest: cmakeDigest,
+		CMakeDigest: executableDigest(cmakePath),
 		Env:         configureEnv(s),
 		Files:       files,
 	})
@@ -283,16 +290,53 @@ func nestedPath(root, dir string) (string, bool) {
 	return cleanDir, true
 }
 
-func ResolveExecutable(s Settings) (string, string) {
-	path, err := exec.LookPathInEnvPath("cmake", commandPath(s))
-	if err != nil || path == "" {
-		return "", ""
+// executableDigestEntry caches one cmake binary digest by stat identity.
+type executableDigestEntry struct {
+	info   os.FileInfo
+	digest string
+}
+
+var executableDigests = struct {
+	sync.Mutex
+	entries map[string]executableDigestEntry
+}{entries: make(map[string]executableDigestEntry)}
+
+// resolvePath returns the cmake program without reading it.
+func resolvePath(s Settings) (string, error) {
+	return exec.LookPathInEnvPath("cmake", commandPath(s))
+}
+
+func executableDigest(path string) string {
+	if path == "" {
+		return ""
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	executableDigests.Lock()
+	entry, ok := executableDigests.entries[path]
+	executableDigests.Unlock()
+	if ok && fs.SameStat(entry.info, info) {
+		return entry.digest
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return path, ""
+		return ""
 	}
-	return path, hashBytes(data)
+	digest := hashBytes(data)
+	executableDigests.Lock()
+	executableDigests.entries[path] = executableDigestEntry{info: info, digest: digest}
+	executableDigests.Unlock()
+	return digest
+}
+
+func ResolveExecutable(s Settings) (string, string) {
+	path, err := resolvePath(s)
+	if err != nil || path == "" {
+		return "", ""
+	}
+	return path, executableDigest(path)
 }
 
 // hostOS is the host Settings.HostOS names, defaulting to the running host.
