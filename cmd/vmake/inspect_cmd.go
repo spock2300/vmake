@@ -339,12 +339,19 @@ func inspectOverrideValues(overrides []inspectOverride) map[string]any {
 	return values
 }
 
-func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, includeTargets bool) (*inspectData, []inspectDiagnostic) {
+// attachInspectionGraph builds the unified graph and records it on the model.
+// Commands that render model facts call it directly; inspect additionally
+// encodes the model through encodeInspect.
+func attachInspectionGraph(ctx *RuntimeContext, inspection *pipeline.Inspection, includeTargets bool) {
 	graph, graphErr := pipeline.BuildUnifiedGraph(ctx, inspection, pipeline.GraphOptions{
 		IncludeAll:     true,
 		DeclareTargets: includeTargets,
 	})
 	inspection.AttachGraph(ctx, graph, graphErr)
+}
+
+func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, includeTargets bool) (*inspectData, []inspectDiagnostic) {
+	attachInspectionGraph(ctx, inspection, includeTargets)
 	return encodeInspect(inspection, includeTargets)
 }
 
@@ -407,7 +414,7 @@ func encodeInspect(inspection *pipeline.Inspection, includeTargets bool) (*inspe
 			LinkPath:      facts.LinkPath,
 			Needed:        view.Needed,
 			Description:   facts.Description,
-			Deps:          facts.Deps,
+			Deps:          inspectSortedStrings(facts.Deps),
 		}
 		if view.Toolchain != nil {
 			pkg.Toolchain = view.Toolchain.Name

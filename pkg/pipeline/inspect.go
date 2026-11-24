@@ -175,8 +175,9 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		if opts.Facts {
 			facts := PackageFacts{
 				Kind:          packageKind(node),
+				NativeVersion: nativeSelected(node),
 				SourcePresent: IsPackageSourcePresent(ctx, name, node),
-				Deps:          sortedStrings(node.Deps),
+				Deps:          dedupeStrings(node.Deps),
 			}
 			if node.IsLocal() && node.Source.Dir != "" {
 				if rel, err := filepath.Rel(root, node.Source.Dir); err == nil {

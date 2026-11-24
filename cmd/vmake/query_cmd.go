@@ -80,16 +80,15 @@ func runQueryTargets(execution context.Context) error {
 		return err
 	}
 	defer session.Close()
-	data, diagnostics := buildInspectData(session.ctx, session.inspection, true)
-	printInspectDiagnostics(diagnostics)
-	packages := inspectPackageIndex(data)
+	attachInspectionGraph(session.ctx, session.inspection, true)
+	printInspectionDiagnostics(session.inspection)
 
 	for _, name := range session.inspection.Order() {
-		pkg := packages[name]
-		if pkg == nil || !pkg.Needed {
+		view, ok := session.inspection.Package(name)
+		if !ok || !view.Needed {
 			continue
 		}
-		for _, k := range targetKindsFromInspectTargets(pkg.Targets, name) {
+		for _, k := range targetKindsOf(session.inspection.Targets(name), name) {
 			fmt.Printf("%s:%s (%s)\n", name, k.name, k.kind)
 		}
 	}
@@ -145,31 +144,25 @@ func runQuery(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer session.Close()
-	ctx := session.ctx
+	attachInspectionGraph(session.ctx, session.inspection, true)
 	inspection := session.inspection
-	data, diagnostics := buildInspectData(session.ctx, session.inspection, true)
-	printInspectDiagnostics(diagnostics)
-	workDir := ctx.WorkDir
+	printInspectionDiagnostics(inspection)
 
-	graph := ctx.DepGraph.Packages
 	printer := &treePrinter{
 		w:          os.Stdout,
 		inspection: inspection,
-		graph:      graph,
-		packages:   inspectPackageIndex(data),
-		workDir:    workDir,
+		workDir:    session.ctx.WorkDir,
 		visited:    make(map[string]bool),
 	}
 	printed := 0
-	for _, root := range data.Roots {
-		node := graph[root]
-		if node == nil || (len(printer.targetKinds(root)) == 0 && len(printer.packageDeps(root)) == 0) {
+	for _, rootPkg := range inspection.GraphRoots() {
+		if len(printer.targetKinds(rootPkg)) == 0 && len(printer.packageDeps(rootPkg)) == 0 {
 			continue
 		}
 		if printed > 0 {
 			fmt.Fprintln(os.Stdout)
 		}
-		printer.print(root, "", true, true)
+		printer.print(rootPkg, "", true, true)
 		printed++
 	}
 	return nil
@@ -189,47 +182,37 @@ func formatPkgDir(pkgDir, workDir string) string {
 type treePrinter struct {
 	w          *os.File
 	inspection *pipeline.Inspection
-	graph      map[string]*resolver.PackageNode
-	packages   map[string]*inspectPackage
 	workDir    string
 
 	visited map[string]bool
 }
 
 func (p *treePrinter) targetKinds(name string) []targetKindInfo {
-	pkg := p.packages[name]
-	if pkg == nil {
-		return nil
-	}
-	return targetKindsFromInspectTargets(pkg.Targets, name)
+	return targetKindsOf(p.inspection.Targets(name), name)
 }
 
 func (p *treePrinter) packageDeps(name string) []string {
-	node := p.graph[name]
 	var out []string
 	seen := make(map[string]bool)
-	if node != nil {
-		for _, dep := range node.Deps {
+	if facts, ok := p.inspection.Facts(name); ok {
+		for _, dep := range facts.Deps {
 			if !seen[dep] {
 				seen[dep] = true
 				out = append(out, dep)
 			}
 		}
 	}
-	if pkg := p.packages[name]; pkg != nil {
-		for _, dep := range pkg.Deps {
-			if !seen[dep] {
-				seen[dep] = true
-				out = append(out, dep)
-			}
+	for _, dep := range inspectSortedStrings(p.inspection.PackageDeps(name)) {
+		if !seen[dep] {
+			seen[dep] = true
+			out = append(out, dep)
 		}
 	}
 	return out
 }
 
 func (p *treePrinter) print(name, prefix string, isRoot, isLast bool) {
-	node := p.graph[name]
-	if node == nil {
+	if _, ok := p.inspection.Package(name); !ok {
 		return
 	}
 
@@ -250,7 +233,7 @@ func (p *treePrinter) print(name, prefix string, isRoot, isLast bool) {
 	}
 	p.visited[name] = true
 
-	fmt.Fprintf(p.w, "%s%s%s\n", prefix, connector, strings.Join(p.parts(name, kinds, node), " "))
+	fmt.Fprintf(p.w, "%s%s%s\n", prefix, connector, strings.Join(p.parts(name, kinds), " "))
 
 	deps := p.packageDeps(name)
 	for i, dep := range deps {
@@ -277,22 +260,24 @@ func (p *treePrinter) label(name string, kinds []targetKindInfo) string {
 	return fmt.Sprintf("%s (%s)", primary, kinds[0].kind)
 }
 
-func (p *treePrinter) parts(name string, kinds []targetKindInfo, node *resolver.PackageNode) []string {
+func (p *treePrinter) parts(name string, kinds []targetKindInfo) []string {
 	var parts []string
 	parts = append(parts, p.label(name, kinds))
 	if len(kinds) > 1 {
 		parts = append(parts, formatExtraTargets(kinds[1:]))
 	}
-	if node.IsNative() {
-		parts = append(parts, fmt.Sprintf("@%s", node.Native.Selected))
+	facts, ok := p.inspection.Facts(name)
+	if !ok {
+		return parts
 	}
-	if node.Pkg != nil {
-		if desc := node.Pkg.Description(); desc != "" {
-			parts = append(parts, fmt.Sprintf("- %q", desc))
-		}
+	if facts.NativeVersion != "" {
+		parts = append(parts, fmt.Sprintf("@%s", facts.NativeVersion))
+	}
+	if facts.Description != "" {
+		parts = append(parts, fmt.Sprintf("- %q", facts.Description))
 	}
 	var pkgDir string
-	if view, ok := p.inspection.Package(name); ok && !view.Skipped && node.IsLocal() {
+	if view, ok := p.inspection.Package(name); ok && !view.Skipped && facts.Kind == "local" && view.Dirs != nil {
 		pkgDir = view.Dirs.SourceDir
 	}
 	if dir := formatPkgDir(pkgDir, p.workDir); dir != "" {
@@ -322,13 +307,14 @@ type targetKindInfo struct {
 	kind string
 }
 
-func targetKindsFromInspectTargets(targets []inspectTarget, name string) []targetKindInfo {
-	if len(targets) == 0 {
+func targetKindsOf(facts []pipeline.TargetFacts, name string) []targetKindInfo {
+	if len(facts) == 0 {
 		return nil
 	}
-	result := make([]targetKindInfo, 0, len(targets))
-	for _, t := range targets {
-		result = append(result, targetKindInfo{name: t.Name, kind: t.Kind})
+	result := make([]targetKindInfo, 0, len(facts))
+	for _, fact := range facts {
+		target := fact.Target
+		result = append(result, targetKindInfo{name: target.Name(), kind: string(target.Kind())})
 	}
 	for i, k := range result {
 		if k.name == name {
@@ -341,16 +327,12 @@ func targetKindsFromInspectTargets(targets []inspectTarget, name string) []targe
 	return result
 }
 
-func inspectPackageIndex(data *inspectData) map[string]*inspectPackage {
-	packages := make(map[string]*inspectPackage, len(data.Packages))
-	for i := range data.Packages {
-		packages[data.Packages[i].Name] = &data.Packages[i]
+func printInspectionDiagnostics(inspection *pipeline.Inspection) {
+	if err := inspection.GraphError(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", err.Error())
+		return
 	}
-	return packages
-}
-
-func printInspectDiagnostics(diagnostics []inspectDiagnostic) {
-	for _, diagnostic := range diagnostics {
+	for _, diagnostic := range inspection.Diagnostics() {
 		message := diagnostic.Message
 		if diagnostic.Code == "VMAKE_W_TARGET_DECLARE" && strings.Contains(message, "read-only inspection:") {
 			message += " (guard generated-file work with p.DryRun())"

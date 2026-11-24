@@ -29,6 +29,7 @@ type PackageFacts struct {
 	Kind          string
 	Repo          string
 	Version       string
+	NativeVersion string
 	Commit        string
 	URL           string
 	Path          string
@@ -342,8 +343,15 @@ func configFileFor(root, configPath string) string {
 	return name
 }
 
-func sortedStrings(values []string) []string {
-	out := append([]string{}, values...)
-	slices.Sort(out)
-	return slices.Compact(out)
+func dedupeStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
+		if seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
