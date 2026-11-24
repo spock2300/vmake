@@ -14,7 +14,7 @@ vmake_deps/
 /vmake-extensions/
 .opencode/
 
-test_data/*/.gitignore
+test_data/**/.gitignore
 test_data/*/go.mod
 test_data/*/go.sum
 test_data/07_subbuild_codegen/output/
