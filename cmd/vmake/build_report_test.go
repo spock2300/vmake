@@ -19,6 +19,7 @@ import (
 	"github.com/spock2300/vmake/internal/jsonio"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
+	"github.com/spock2300/vmake/pkg/buildreport"
 	"github.com/spock2300/vmake/pkg/version"
 )
 
@@ -65,10 +66,10 @@ func Main(p *api.Package) {
 			t.Fatalf("%v: %v\n%s", args, err, out)
 		}
 	}
-	read := func() buildReport {
+	read := func() buildreport.Report {
 		t.Helper()
-		var report buildReport
-		if err := jsonio.Load(reportPath(root), &report); err != nil {
+		var report buildreport.Report
+		if err := jsonio.Load(buildreport.ReportPath(root), &report); err != nil {
 			t.Fatal(err)
 		}
 		return report
@@ -93,7 +94,7 @@ func Main(p *api.Package) {
 	if !objectFound {
 		t.Fatal("object target was not executed")
 	}
-	rawReport, err := os.ReadFile(reportPath(root))
+	rawReport, err := os.ReadFile(buildreport.ReportPath(root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +117,7 @@ func Main(p *api.Package) {
 		if strings.Contains(item.BuildPath, "stale") || item.SHA256 == "" || item.InstallPath == "" || strings.HasSuffix(item.BuildPath, ".a") || filepath.Base(item.BuildPath) == "payload" {
 			t.Fatalf("%+v", item)
 		}
-		hash, size, err := fileDigest(item.InstallPath)
+		hash, size, err := buildreport.FileDigest(item.InstallPath)
 		if err != nil || hash != item.SHA256 || size != item.Size {
 			t.Fatalf("installed file identity: %+v, %v", item, err)
 		}
@@ -183,14 +184,14 @@ func Main(p *api.Package) {
 		t.Fatalf("%+v", changed)
 	}
 	run(true, "distclean")
-	if _, err := os.Stat(reportPath(root)); !os.IsNotExist(err) {
+	if _, err := os.Stat(buildreport.ReportPath(root)); !os.IsNotExist(err) {
 		t.Fatalf("report survived clean: %v", err)
 	}
 }
 
 func TestBuildReportNeverSucceedsBeforeCompletion(t *testing.T) {
 	for _, failure := range []error{context.Canceled, errors.New("failed"), nil} {
-		r := &buildReport{Root: canonicalTempDir(t), Status: "running"}
+		r := &buildreport.Report{Root: canonicalTempDir(t), Status: "running"}
 		result := failure
 		r.Finish(&result)
 		if result == nil || r.Status == "succeeded" {
@@ -199,11 +200,11 @@ func TestBuildReportNeverSucceedsBeforeCompletion(t *testing.T) {
 		if errors.Is(failure, context.Canceled) && (r.Status != "cancelled" || r.Error != "build cancelled") {
 			t.Fatalf("cancelled report = %+v", r)
 		}
-		data, err := os.ReadFile(reportPath(r.Root))
+		data, err := os.ReadFile(buildreport.ReportPath(r.Root))
 		if err != nil {
 			t.Fatal(err)
 		}
-		var saved buildReport
+		var saved buildreport.Report
 		if err := json.Unmarshal(data, &saved); err != nil {
 			t.Fatal(err)
 		}
@@ -214,7 +215,7 @@ func TestBuildReportNeverSucceedsBeforeCompletion(t *testing.T) {
 }
 
 func TestBuildReportPanicCannotPublishSuccess(t *testing.T) {
-	r := &buildReport{Root: canonicalTempDir(t), Completed: true}
+	r := &buildreport.Report{Root: canonicalTempDir(t), Completed: true}
 	func() {
 		defer func() {
 			if recover() == nil {
@@ -225,8 +226,8 @@ func TestBuildReportPanicCannotPublishSuccess(t *testing.T) {
 		defer r.Finish(&err)
 		panic("unexpected interruption")
 	}()
-	var saved buildReport
-	if err := jsonio.Load(reportPath(r.Root), &saved); err != nil {
+	var saved buildreport.Report
+	if err := jsonio.Load(buildreport.ReportPath(r.Root), &saved); err != nil {
 		t.Fatal(err)
 	}
 	if saved.Status != "failed" || len(saved.Artifacts) != 0 {
@@ -319,10 +320,10 @@ func Main(p *api.Package) {
 	return project
 }
 
-func loadBuildReport(t *testing.T, project string) buildReport {
+func loadBuildReport(t *testing.T, project string) buildreport.Report {
 	t.Helper()
-	var report buildReport
-	if err := jsonio.Load(reportPath(project), &report); err != nil {
+	var report buildreport.Report
+	if err := jsonio.Load(buildreport.ReportPath(project), &report); err != nil {
 		t.Fatal(err)
 	}
 	return report
@@ -353,8 +354,8 @@ func TestBuildReportV2Success(t *testing.T) {
 	if report.BuildID == "" || report.Root != project || report.Mode == "" || report.Toolchain == "" || len(report.Targets) == 0 {
 		t.Fatalf("v1 fields lost: %+v", report)
 	}
-	if report.Command != reportCommandBuild {
-		t.Fatalf("command = %q, want %q", report.Command, reportCommandBuild)
+	if report.Command != buildreport.CommandBuild {
+		t.Fatalf("command = %q, want %q", report.Command, buildreport.CommandBuild)
 	}
 	if len(report.Global) == 0 || report.Global["mode"] != report.Mode || report.Global["toolchain"] != report.Toolchain {
 		t.Fatalf("global identity = %+v (mode %q, toolchain %q)", report.Global, report.Mode, report.Toolchain)
@@ -385,7 +386,7 @@ func TestBuildReportV2Success(t *testing.T) {
 		!strings.Contains(stdout, "(buildId="+report.BuildID+")") {
 		t.Fatalf("success summary line missing or wrong:\n%s", stdout)
 	}
-	raw, err := os.ReadFile(reportPath(project))
+	raw, err := os.ReadFile(buildreport.ReportPath(project))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -660,12 +661,12 @@ func Main(p *api.Package) {
 	if len(report.Targets) != 0 || len(report.Artifacts) != 0 || report.Summary != nil {
 		t.Fatalf("script failure invented results: %+v", report)
 	}
-	raw, err := os.ReadFile(reportPath(project))
+	raw, err := os.ReadFile(buildreport.ReportPath(project))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var rawDocument struct {
-		Summary *buildSummary `json:"summary"`
+		Summary *buildreport.Summary `json:"summary"`
 	}
 	if err := json.Unmarshal(raw, &rawDocument); err != nil {
 		t.Fatal(err)
@@ -686,7 +687,7 @@ func TestBuildFailureDetails(t *testing.T) {
 		Err:     errors.New("exit status 1"),
 	}
 	targetErr := &build.TargetError{Target: "firmware:firmware", Stage: "compile", Err: commandErr}
-	diagnostics, summary := buildFailureDetails(targetErr)
+	diagnostics, summary := buildreport.FailureDetails(targetErr)
 	if len(diagnostics) != 2 {
 		t.Fatalf("diagnostics = %+v", diagnostics)
 	}
@@ -703,7 +704,7 @@ func TestBuildFailureDetails(t *testing.T) {
 	}
 
 	fallback := &build.TargetError{Target: "app", Stage: "link", Err: &iexec.CommandError{Command: "ld", Output: "collect2: fatal: cannot find ld\n", Err: errors.New("exit status 1")}}
-	diagnostics, summary = buildFailureDetails(fallback)
+	diagnostics, summary = buildreport.FailureDetails(fallback)
 	if len(diagnostics) != 1 || diagnostics[0].Code != "VMAKE_E_LINK" || diagnostics[0].Severity != "error" ||
 		diagnostics[0].Message != "collect2: fatal: cannot find ld" || diagnostics[0].Package != "app" || diagnostics[0].Target != "app" {
 		t.Fatalf("fallback = %+v", diagnostics)
@@ -713,7 +714,7 @@ func TestBuildFailureDetails(t *testing.T) {
 	}
 
 	scriptErr := &api.BuildScriptError{Package: "firmware", Op: "Bool", Err: errors.New(`unknown option "nope"`)}
-	diagnostics, summary = buildFailureDetails(scriptErr)
+	diagnostics, summary = buildreport.FailureDetails(scriptErr)
 	if len(diagnostics) != 1 || diagnostics[0].Code != "VMAKE_E_SCRIPT" || diagnostics[0].Package != "firmware" {
 		t.Fatalf("script = %+v", diagnostics)
 	}
@@ -721,13 +722,13 @@ func TestBuildFailureDetails(t *testing.T) {
 		t.Fatalf("script summary = %q", summary)
 	}
 
-	diagnostics, summary = buildFailureDetails(context.Canceled)
+	diagnostics, summary = buildreport.FailureDetails(context.Canceled)
 	if len(diagnostics) != 0 || summary != "build cancelled" {
 		t.Fatalf("cancellation = %+v / %q", diagnostics, summary)
 	}
 
 	long := strings.Repeat("x", 500)
-	diagnostics, summary = buildFailureDetails(errors.New(long + "\nsecond line"))
+	diagnostics, summary = buildreport.FailureDetails(errors.New(long + "\nsecond line"))
 	if len(diagnostics) != 0 || len(summary) >= 300 || strings.HasSuffix(summary, "second line") {
 		t.Fatalf("long summary = %q", summary)
 	}
@@ -738,7 +739,7 @@ func TestBuildFailureDetails(t *testing.T) {
 		Output:  longPath + ": in function `call':\n/usr/bin/ld: main.o: undefined reference to `wanted_symbol'\ncollect2: error: ld returned 1 exit status\n",
 		Err:     errors.New("exit status 1"),
 	}}
-	diagnostics, summary = buildFailureDetails(symbolFallback)
+	diagnostics, summary = buildreport.FailureDetails(symbolFallback)
 	if len(diagnostics) != 1 || diagnostics[0].Code != "VMAKE_E_LINK" || diagnostics[0].File != "" ||
 		!strings.Contains(diagnostics[0].Message, "undefined reference to `wanted_symbol'") {
 		t.Fatalf("symbol fallback = %+v", diagnostics)
@@ -752,7 +753,7 @@ func TestBuildFailureDetails(t *testing.T) {
 		Output:  longPath + ": cannot open\ncollect2: error: ld returned 1 exit status\n",
 		Err:     errors.New("exit status 1"),
 	}}
-	diagnostics, summary = buildFailureDetails(errorFallback)
+	diagnostics, summary = buildreport.FailureDetails(errorFallback)
 	if len(diagnostics) != 1 || summary != "collect2: error: ld returned 1 exit status" {
 		t.Fatalf("error fallback = %+v / %q", diagnostics, summary)
 	}
@@ -766,7 +767,7 @@ func TestGNUDiagnosticsParsesLinkerSymbols(t *testing.T) {
 		"src/duplicate.c:7: multiple definition of `duplicate_symbol'",
 		"collect2: error: ld returned 1 exit status",
 	}, "\n")
-	diagnostics := parseGNUDiagnostics(output)
+	diagnostics := buildreport.ParseGNUDiagnostics(output)
 	if len(diagnostics) != 3 {
 		t.Fatalf("diagnostics = %+v", diagnostics)
 	}
@@ -793,7 +794,7 @@ func TestBuildFailureDetailsLinkerDiagnostic(t *testing.T) {
 		"collect2: error: ld returned 1 exit status",
 	}, "\n")
 	targetErr := &build.TargetError{Target: "firmware:app", Stage: "link", Err: &iexec.CommandError{Command: "gcc", Output: output, Err: errors.New("exit status 1")}}
-	diagnostics, summary := buildFailureDetails(targetErr)
+	diagnostics, summary := buildreport.FailureDetails(targetErr)
 	if len(diagnostics) != 1 {
 		t.Fatalf("diagnostics = %+v", diagnostics)
 	}
@@ -811,12 +812,12 @@ func TestBuildFailureDetailsLinkerDiagnostic(t *testing.T) {
 
 func TestBuildReportFinishV2(t *testing.T) {
 	root := canonicalTempDir(t)
-	report := &buildReport{
+	report := &buildreport.Report{
 		SchemaVersion: 2,
 		Root:          root,
 		Status:        "running",
 		Started:       time.Now().Add(-25 * time.Millisecond).UTC().Format(time.RFC3339Nano),
-		Artifacts:     []buildArtifact{{Package: "stale"}},
+		Artifacts:     []buildreport.Artifact{{Package: "stale"}},
 	}
 	var result error = &build.TargetError{
 		Target: "firmware:firmware",
@@ -834,8 +835,8 @@ func TestBuildReportFinishV2(t *testing.T) {
 	if !errors.As(result, &targetErr) {
 		t.Fatalf("finish dropped the error tree: %v", result)
 	}
-	var saved buildReport
-	if err := jsonio.Load(reportPath(root), &saved); err != nil {
+	var saved buildreport.Report
+	if err := jsonio.Load(buildreport.ReportPath(root), &saved); err != nil {
 		t.Fatal(err)
 	}
 	if saved.SchemaVersion != 2 || saved.Status != "failed" || saved.Error != report.Error || len(saved.Diagnostics) != 1 {
@@ -848,7 +849,7 @@ func TestBuildReportFinishV2(t *testing.T) {
 
 func TestBuildReportPartialFailureNeverNoOp(t *testing.T) {
 	root := canonicalTempDir(t)
-	report := &buildReport{
+	report := &buildreport.Report{
 		SchemaVersion: 2,
 		Root:          root,
 		Status:        "running",
@@ -880,8 +881,8 @@ func TestBuildReportPartialFailureNeverNoOp(t *testing.T) {
 	if report.Status != "failed" || report.Summary == nil || report.Summary.NoOp {
 		t.Fatalf("finished report = %+v (summary %+v)", report, report.Summary)
 	}
-	var saved buildReport
-	if err := jsonio.Load(reportPath(root), &saved); err != nil {
+	var saved buildreport.Report
+	if err := jsonio.Load(buildreport.ReportPath(root), &saved); err != nil {
 		t.Fatal(err)
 	}
 	if saved.Summary == nil || saved.Summary.NoOp || saved.Summary.TargetsFailed != 1 {
@@ -891,25 +892,25 @@ func TestBuildReportPartialFailureNeverNoOp(t *testing.T) {
 
 func TestBuildReportFinishFailedSummaryNeverNoOp(t *testing.T) {
 	root := canonicalTempDir(t)
-	report := &buildReport{
+	report := &buildreport.Report{
 		SchemaVersion: 2,
 		Root:          root,
 		Status:        "running",
 		Started:       time.Now().Add(-25 * time.Millisecond).UTC().Format(time.RFC3339Nano),
-		Summary:       &buildSummary{TargetsTotal: 1, TargetsUpToDate: 1, NoOp: true},
+		Summary:       &buildreport.Summary{TargetsTotal: 1, TargetsUpToDate: 1, NoOp: true},
 	}
 	var result error = errors.New("failure after results were collected")
 	report.Finish(&result)
 	if report.Status != "failed" || report.Summary == nil || report.Summary.NoOp {
 		t.Fatalf("finished report = %+v (summary %+v)", report, report.Summary)
 	}
-	raw, err := os.ReadFile(reportPath(root))
+	raw, err := os.ReadFile(buildreport.ReportPath(root))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var document struct {
-		Status  string        `json:"status"`
-		Summary *buildSummary `json:"summary"`
+		Status  string               `json:"status"`
+		Summary *buildreport.Summary `json:"summary"`
 	}
 	if err := json.Unmarshal(raw, &document); err != nil {
 		t.Fatal(err)
@@ -1042,7 +1043,7 @@ add_custom_target(work ALL COMMAND ${CMAKE_COMMAND} -E touch "${CMAKE_BINARY_DIR
 }
 
 func TestBuildSummaryErrorPreservesCause(t *testing.T) {
-	err := &buildSummaryError{Summary: "build cancelled", Err: &buildInterrupted{code: 130}}
+	err := &buildreport.SummaryError{Summary: "build cancelled", Err: &buildInterrupted{code: 130}}
 	if err.Error() != "build cancelled" {
 		t.Fatalf("Error() = %q", err.Error())
 	}
@@ -1382,7 +1383,7 @@ int main(void) {
 	if !strings.HasPrefix(output, buildTestOutputMarker) {
 		t.Fatalf("test output has no truncation marker: %q", output[:min(len(output), 64)])
 	}
-	raw, err := os.ReadFile(testReportPath(project))
+	raw, err := os.ReadFile(buildreport.TestReportPath(project))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1401,7 +1402,7 @@ func TestTestBuildFailureKeepsCompletedTargets(t *testing.T) {
 		t.Fatalf("build-phase failure summary missing:\n%s", stdout)
 	}
 	report := loadTestReport(t, project)
-	if report.Status != "failed" || report.Command != reportCommandTest {
+	if report.Status != "failed" || report.Command != buildreport.CommandTest {
 		t.Fatalf("build-phase failure report = %+v", report)
 	}
 	if len(report.Targets) != 1 || report.Targets[0].Target != "app" || report.Targets[0].Status != build.TargetStatusBuilt {

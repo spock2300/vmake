@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/spock2300/vmake/pkg/buildreport"
 	"github.com/spock2300/vmake/pkg/pipeline"
 )
 
@@ -25,7 +26,7 @@ func init() {
 
 func runBuild(cmd *cobra.Command, args []string) error {
 	commandStorageLocks()
-	return withBuildReport(func(report *buildReport) error {
+	return withBuildReport(func(report *buildreport.Report) error {
 		execution := &RuntimeContext{}
 		return withResolvedProject(execution, func(ctx *RuntimeContext) error {
 			_, err := runReportedBuild(ctx, report, BuildOptions{IncludeTests: testsFlag, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag})
@@ -64,7 +65,7 @@ func withResolvedProject(execution *RuntimeContext, run func(*RuntimeContext) er
 	})
 }
 
-func runReportedBuild(ctx *RuntimeContext, report *buildReport, opts BuildOptions) (*BuildResult, error) {
+func runReportedBuild(ctx *RuntimeContext, report *buildreport.Report, opts BuildOptions) (*BuildResult, error) {
 	if err := report.Bind(ctx); err != nil {
 		return nil, err
 	}

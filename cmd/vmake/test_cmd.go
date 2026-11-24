@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/buildreport"
 	"github.com/spock2300/vmake/pkg/pipeline"
 )
 
@@ -35,7 +36,7 @@ func init() {
 
 func runTest(cmd *cobra.Command, args []string) error {
 	commandStorageLocks()
-	return withReport(reportCommandTest, func(report *buildReport) error {
+	return withReport(buildreport.CommandTest, func(report *buildreport.Report) error {
 		execution := &RuntimeContext{}
 		return withResolvedProject(execution, func(ctx *RuntimeContext) error {
 			if err := report.Bind(ctx); err != nil {

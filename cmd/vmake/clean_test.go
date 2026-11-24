@@ -9,6 +9,7 @@ import (
 
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
+	"github.com/spock2300/vmake/pkg/buildreport"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/pipeline"
@@ -363,7 +364,7 @@ func TestCleanReportsRemainingConfigurationsAndRemovesCompileDatabase(t *testing
 	if _, err := os.Stat(database); !os.IsNotExist(err) {
 		t.Fatalf("stale compile database survived clean: %v", err)
 	}
-	if _, err := os.Stat(reportPath(project)); !os.IsNotExist(err) {
+	if _, err := os.Stat(buildreport.ReportPath(project)); !os.IsNotExist(err) {
 		t.Fatalf("build report survived clean: %v", err)
 	}
 
@@ -423,15 +424,15 @@ func TestCleanRemovesBuildAndTestReports(t *testing.T) {
 			if stdout, stderr, code := runBuildCommand(t, project, "test"); code != 0 {
 				t.Fatalf("test exit = %d, stderr = %q\n%s", code, stderr, stdout)
 			}
-			if _, err := os.Stat(testReportPath(project)); err != nil {
+			if _, err := os.Stat(buildreport.TestReportPath(project)); err != nil {
 				t.Fatalf("test report missing before clean: %v", err)
 			}
-			assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
+			assertReportUnchanged(t, buildreport.ReportPath(project), buildReportSnapshot)
 			stdout, stderr, code := runBuildCommand(t, project, command)
 			if code != 0 {
 				t.Fatalf("%s exit = %d, stderr = %q\n%s", command, code, stderr, stdout)
 			}
-			for _, path := range []string{reportPath(project), testReportPath(project)} {
+			for _, path := range []string{buildreport.ReportPath(project), buildreport.TestReportPath(project)} {
 				if _, err := os.Stat(path); !os.IsNotExist(err) {
 					t.Fatalf("%s survived %s: %v", path, command, err)
 				}

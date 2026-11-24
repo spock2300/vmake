@@ -15,6 +15,7 @@ import (
 
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
+	"github.com/spock2300/vmake/pkg/buildreport"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/resolver"
@@ -1874,7 +1875,7 @@ func TestInspectReportsBuildAndTestStateSeparately(t *testing.T) {
 	if !data.BuildReportPresent {
 		t.Fatal("buildReportPresent = false")
 	}
-	if data.TestReport != testReportPath(project) || !data.TestReportPresent {
+	if data.TestReport != buildreport.TestReportPath(project) || !data.TestReportPresent {
 		t.Fatalf("test report missing: path=%q present=%v", data.TestReport, data.TestReportPresent)
 	}
 

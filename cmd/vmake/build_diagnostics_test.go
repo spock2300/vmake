@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/spock2300/vmake/pkg/buildreport"
 )
 
 func TestParseGNUDiagnosticsCompilerAndLinkerLines(t *testing.T) {
@@ -12,7 +14,7 @@ func TestParseGNUDiagnosticsCompilerAndLinkerLines(t *testing.T) {
 		"src/other.c:12: undefined reference to `foo'",
 		"include/api.h:3:1: note: declared here",
 	}, "\n")
-	diagnostics := parseGNUDiagnostics(output)
+	diagnostics := buildreport.ParseGNUDiagnostics(output)
 	if len(diagnostics) != 4 {
 		t.Fatalf("diagnostics = %+v", diagnostics)
 	}

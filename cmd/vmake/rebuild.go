@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/spock2300/vmake/pkg/buildreport"
 	vlog "github.com/spock2300/vmake/pkg/log"
 
 	"github.com/spf13/cobra"
@@ -21,8 +22,8 @@ func init() {
 
 func runRebuild(cmd *cobra.Command, args []string) error {
 	commandStorageLocks()
-	return withBuildReport(func(report *buildReport) error {
-		report.Command = reportCommandRebuild
+	return withBuildReport(func(report *buildreport.Report) error {
+		report.Command = buildreport.CommandRebuild
 		execution := &RuntimeContext{}
 		return withResolvedProject(execution, func(ctx *RuntimeContext) error {
 			executeCleanLocal(ctx)

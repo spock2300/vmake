@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/spock2300/vmake/internal/scriptfs"
+	"github.com/spock2300/vmake/pkg/buildreport"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/resolver"
 )
@@ -44,8 +45,8 @@ func openInspection(req inspectionRequest) (*inspectionSession, error) {
 	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{
 		FilterDeps:  true,
 		Facts:       req.facts,
-		BuildReport: reportPath(root),
-		TestReport:  testReportPath(root),
+		BuildReport: buildreport.ReportPath(root),
+		TestReport:  buildreport.TestReportPath(root),
 		Overrides:   inspectOverrideValues(req.project.overrides),
 	})
 	if err != nil {

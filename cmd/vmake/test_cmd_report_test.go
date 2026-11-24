@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/spock2300/vmake/internal/jsonio"
+	"github.com/spock2300/vmake/pkg/buildreport"
 )
 
 const passingTestSource = "int main(void) { return 0; }\n"
@@ -48,10 +49,10 @@ func writeBareMetalTestProject(t *testing.T) string {
 	return project
 }
 
-func loadTestReport(t *testing.T, project string) buildReport {
+func loadTestReport(t *testing.T, project string) buildreport.Report {
 	t.Helper()
-	var report buildReport
-	if err := jsonio.Load(testReportPath(project), &report); err != nil {
+	var report buildreport.Report
+	if err := jsonio.Load(buildreport.TestReportPath(project), &report); err != nil {
 		t.Fatal(err)
 	}
 	return report
@@ -91,7 +92,7 @@ func buildAndSnapshotBuildReport(t *testing.T, project string) reportSnapshot {
 	if stdout, stderr, code := runBuildCommand(t, project, "build"); code != 0 {
 		t.Fatalf("setup build exit = %d, stderr = %q\n%s", code, stderr, stdout)
 	}
-	return snapshotReport(t, reportPath(project))
+	return snapshotReport(t, buildreport.ReportPath(project))
 }
 
 func TestTestCommandPublishesSucceededTestReport(t *testing.T) {
@@ -104,9 +105,9 @@ func TestTestCommandPublishesSucceededTestReport(t *testing.T) {
 	if !strings.Contains(stdout, "Tests succeeded: 1/1 passed in ") {
 		t.Fatalf("test summary missing:\n%s", stdout)
 	}
-	assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
+	assertReportUnchanged(t, buildreport.ReportPath(project), buildReportSnapshot)
 	report := loadTestReport(t, project)
-	if report.SchemaVersion != 2 || report.Status != "succeeded" || report.Command != reportCommandTest || report.Error != "" {
+	if report.SchemaVersion != 2 || report.Status != "succeeded" || report.Command != buildreport.CommandTest || report.Error != "" {
 		t.Fatalf("test report = %+v", report)
 	}
 	if report.BuildID == "" || report.Root != project || report.DurationMs <= 0 {
@@ -145,9 +146,9 @@ func TestTestCommandFailurePreservesBuildReport(t *testing.T) {
 	if !strings.Contains(stderr, "Error: 1 test(s) failed") {
 		t.Fatalf("failure error missing:\n%s", stderr)
 	}
-	assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
+	assertReportUnchanged(t, buildreport.ReportPath(project), buildReportSnapshot)
 	report := loadTestReport(t, project)
-	if report.Status != "failed" || report.Command != reportCommandTest || report.BuildID == "" {
+	if report.Status != "failed" || report.Command != buildreport.CommandTest || report.BuildID == "" {
 		t.Fatalf("failed test report = %+v", report)
 	}
 	if len(report.Tests) != 1 || report.Tests[0].Passed || report.Tests[0].Name != "tests-project:tests" {
@@ -178,9 +179,9 @@ func TestTestCommandNoTargetsSucceeds(t *testing.T) {
 	if stderr != "" {
 		t.Fatalf("no-tests stderr = %q", stderr)
 	}
-	assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
+	assertReportUnchanged(t, buildreport.ReportPath(project), buildReportSnapshot)
 	report := loadTestReport(t, project)
-	if report.Status != "succeeded" || report.Command != reportCommandTest || report.Error != "" {
+	if report.Status != "succeeded" || report.Command != buildreport.CommandTest || report.Error != "" {
 		t.Fatalf("no-tests report = %+v", report)
 	}
 	if report.Tests == nil || len(report.Tests) != 0 {
@@ -193,8 +194,8 @@ func TestTestCommandNoTargetsSucceeds(t *testing.T) {
 
 func TestTestCommandBareMetalPreflight(t *testing.T) {
 	project := writeBareMetalTestProject(t)
-	writeExtensionFile(t, reportPath(project), `{"schemaVersion":2,"buildId":"previous-build","status":"succeeded","command":"build"}`)
-	buildReportSnapshot := snapshotReport(t, reportPath(project))
+	writeExtensionFile(t, buildreport.ReportPath(project), `{"schemaVersion":2,"buildId":"previous-build","status":"succeeded","command":"build"}`)
+	buildReportSnapshot := snapshotReport(t, buildreport.ReportPath(project))
 	stdout, stderr, code := runBuildCommand(t, project, "test")
 	if code != 1 {
 		t.Fatalf("bare-metal test exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
@@ -214,9 +215,9 @@ func TestTestCommandBareMetalPreflight(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(project, "build", "compile_commands.json")); !os.IsNotExist(err) {
 		t.Fatalf("preflight created the compile database: %v", err)
 	}
-	assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
+	assertReportUnchanged(t, buildreport.ReportPath(project), buildReportSnapshot)
 	report := loadTestReport(t, project)
-	if report.Status != "failed" || report.Command != reportCommandTest {
+	if report.Status != "failed" || report.Command != buildreport.CommandTest {
 		t.Fatalf("preflight report = %+v", report)
 	}
 	if !strings.Contains(report.Error, "use 'vmake build --tests'") || report.Summary != nil {
@@ -242,9 +243,9 @@ func TestTestCommandBuildFailurePreservesBuildReport(t *testing.T) {
 	if !strings.Contains(stdout, "Tests failed: tests/test_app.c:2:") {
 		t.Fatalf("build-failure summary missing:\n%s", stdout)
 	}
-	assertReportUnchanged(t, reportPath(project), buildReportSnapshot)
+	assertReportUnchanged(t, buildreport.ReportPath(project), buildReportSnapshot)
 	report := loadTestReport(t, project)
-	if report.Status != "failed" || report.Command != reportCommandTest || report.BuildID == "" {
+	if report.Status != "failed" || report.Command != buildreport.CommandTest || report.BuildID == "" {
 		t.Fatalf("build-failure report = %+v", report)
 	}
 	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Code != "VMAKE_E_COMPILE" {
@@ -337,7 +338,7 @@ int main(void) {
 			t.Fatalf("%v ran tests after build failure:\n%s", args, stdout)
 		}
 		report := loadTestReport(t, project)
-		if report.Status != "failed" || report.Command != reportCommandTest || !strings.Contains(report.Error, "tests/bad.c:2:") {
+		if report.Status != "failed" || report.Command != buildreport.CommandTest || !strings.Contains(report.Error, "tests/bad.c:2:") {
 			t.Fatalf("%v report = %+v", args, report)
 		}
 		if len(report.Tests) != 0 {
