@@ -17,7 +17,6 @@ import (
 	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/api"
-	"github.com/spock2300/vmake/pkg/build"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/toolchain"
@@ -78,7 +77,7 @@ func runCheckSymbols(execution context.Context, strict bool) {
 	if err != nil {
 		fatalResolveRoot(err)
 	}
-	session, err := openInspection(inspectionRequest{project: projectOptions{execution: execution, root: root}, quiet: true, execQuiet: true})
+	session, err := openInspection(inspectionRequest{project: projectOptions{execution: execution, root: root}, quiet: true, execQuiet: true, facts: true})
 	if err != nil {
 		var inspectErr *inspectionStageError
 		if errors.As(err, &inspectErr) {
@@ -88,11 +87,10 @@ func runCheckSymbols(execution context.Context, strict bool) {
 		fatalErr(err)
 	}
 	defer session.Close()
-	ctx := session.ctx
 	insp := session.inspection
+	attachInspectionGraph(session.ctx, insp, true)
 
-	artifacts, err := discoverArtifacts(ctx, insp)
-	fatalErr(err)
+	artifacts := discoverArtifacts(insp)
 	blockedWrites := append(append([]string{}, session.blocked...), scriptfs.TakeBlockedWrites()...)
 	var findings []finding
 	for _, message := range blockedWrites {
@@ -101,6 +99,20 @@ func runCheckSymbols(execution context.Context, strict bool) {
 			severity: "error",
 			subject:  "project",
 			detail:   message,
+		})
+	}
+	for _, diagnostic := range insp.Diagnostics() {
+		if diagnostic.Code != "VMAKE_W_TARGET_DECLARE" {
+			continue
+		}
+		if !strings.Contains(diagnostic.Message, "read-only inspection:") {
+			fatalErr(errors.New(diagnostic.Message))
+		}
+		findings = append(findings, finding{
+			category: "blocked-write",
+			severity: "error",
+			subject:  "project",
+			detail:   diagnostic.Message,
 		})
 	}
 	if len(artifacts) == 0 {
@@ -174,42 +186,41 @@ func runCheckSymbols(execution context.Context, strict bool) {
 	}
 }
 
-func discoverArtifacts(ctx *RuntimeContext, inspection *pipeline.Inspection) ([]scanArtifact, error) {
+func discoverArtifacts(inspection *pipeline.Inspection) []scanArtifact {
 	var out []scanArtifact
-	for name, node := range ctx.DepGraph.Packages {
-		if node == nil || node.Pkg == nil || !node.IsLocal() {
+	for _, name := range inspection.Order() {
+		facts, ok := inspection.Facts(name)
+		if !ok || facts.Kind != "local" {
 			continue
 		}
 		view, ok := inspection.Package(name)
 		if !ok || view.Skipped || !view.Needed || view.Toolchain == nil {
 			continue
 		}
-		dirs := view.Dirs
-		buildCtx, err := pipeline.DeclareTargets(ctx, name, dirs, view.Toolchain, inspection.GlobalValues)
-		if err != nil {
-			return nil, err
+		sourceDir, buildDir := "", ""
+		if view.Dirs != nil {
+			sourceDir, buildDir = view.Dirs.SourceDir, view.Dirs.BuildDir
 		}
-
-		pkgInfo := view.PkgInfo()
-		for _, t := range buildCtx.GetTargets() {
-			kind := t.Kind()
+		for _, fact := range inspection.Targets(name) {
+			target := fact.Target
+			kind := target.Kind()
 			if kind != api.TargetShared && kind != api.TargetBinary {
 				continue
 			}
-			if !t.IsDefault() {
+			if !target.IsDefault() {
 				continue
 			}
 			outputPath := ""
-			if dirs.BuildDir != "" {
-				outputPath = build.PlacementFor(t, pkgInfo, node.Pkg.TargetOS()).OutputPath
+			if buildDir != "" {
+				outputPath = fact.OutputPath
 			}
 			out = append(out, scanArtifact{
 				pkgName:       name,
-				targetName:    t.Name(),
-				sourceDir:     dirs.SourceDir,
+				targetName:    target.Name(),
+				sourceDir:     sourceDir,
 				outputPath:    outputPath,
 				kind:          kind,
-				versionScript: t.VersionScript(),
+				versionScript: target.VersionScript(),
 			})
 		}
 	}
@@ -219,7 +230,7 @@ func discoverArtifacts(ctx *RuntimeContext, inspection *pipeline.Inspection) ([]
 		}
 		return out[i].targetName < out[j].targetName
 	})
-	return out, nil
+	return out
 }
 
 var (

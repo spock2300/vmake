@@ -44,6 +44,7 @@ type PackageFacts struct {
 type TargetFacts struct {
 	Target      *api.Target
 	Output      string
+	OutputPath  string
 	InstallPath string
 	Deps        []string
 	CFlags      []string
@@ -169,15 +170,18 @@ func targetFactsOf(ctx *RuntimeContext, name string, view PackageView, buildCtx 
 	if view.Toolchain != nil {
 		defaults = api.DefaultBuildFlags(view.Toolchain.Name, targetOS)
 	}
+	pkgInfo := view.PkgInfo()
 	out := make([]TargetFacts, 0, len(registered))
 	for _, target := range registered {
+		placement := build.PlacementFor(target, pkgInfo, targetOS)
 		facts := TargetFacts{
 			Target:      target,
+			OutputPath:  placement.OutputPath,
 			Deps:        targetDepsOf(target, node),
 			CFlags:      declaredFlags(target.CFlags(), defaults.CFlags),
 			CxxFlags:    declaredFlags(target.CxxFlags(), defaults.CxxFlags),
 			LdFlags:     declaredFlags(target.LdFlags(), defaults.LdFlags),
-			InstallPath: targetInstallPath(target, targetOS, view.PkgInfo()),
+			InstallPath: installPathOf(placement),
 		}
 		if target.Kind() != api.TargetVoid {
 			facts.Output = api.TargetFilename(target.Kind(), target.Name(), targetOS)
@@ -218,8 +222,7 @@ func declaredFlags(flags, seeded []string) []string {
 	return append([]string{}, flags...)
 }
 
-func targetInstallPath(target *api.Target, targetOS string, pkgInfo *build.PkgInfo) string {
-	placement := build.PlacementFor(target, pkgInfo, targetOS)
+func installPathOf(placement build.ArtifactPlacement) string {
 	if placement.InstallName == "" || placement.NoInstall || placement.IsTest ||
 		placement.Kind == api.TargetVoid || placement.Kind == api.TargetObject {
 		return ""
