@@ -1627,38 +1627,38 @@ func TestInspectExpectedSourceDirectories(t *testing.T) {
 
 	registry := remoteNode("official/demo", filepath.Join(deps, "wrapper"))
 	registryDir := filepath.Join(deps, "official", "demo", "src")
-	if got := inspectExpectedSourceDir(ctx, "official/demo", registry); got != registryDir {
+	if got := pipeline.ExpectedPackageSourceDir(ctx, "official/demo", registry); got != registryDir {
 		t.Fatalf("registry source dir = %q, want %q", got, registryDir)
 	}
-	if inspectSourcePresent(ctx, "official/demo", registry) {
+	if pipeline.IsPackageSourcePresent(ctx, "official/demo", registry) {
 		t.Fatal("absent registry tree reported present")
 	}
 	if err := os.MkdirAll(registryDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if inspectSourcePresent(ctx, "official/demo", registry) {
+	if pipeline.IsPackageSourcePresent(ctx, "official/demo", registry) {
 		t.Fatal("empty registry tree reported present")
 	}
 	writeExtensionFile(t, filepath.Join(registryDir, "payload.c"), "int demo(void) { return 0; }\n")
-	if !inspectSourcePresent(ctx, "official/demo", registry) {
+	if !pipeline.IsPackageSourcePresent(ctx, "official/demo", registry) {
 		t.Fatal("populated registry tree reported absent")
 	}
 
 	res.SubParents()["native/root/member"] = "native/root"
 	member := remoteNode("native/root/member", filepath.Join(deps, "native", "root", "src", "member"))
 	memberDir := filepath.Join(deps, "native", "root", "src", "member")
-	if got := inspectExpectedSourceDir(ctx, "native/root/member", member); got != memberDir {
+	if got := pipeline.ExpectedPackageSourceDir(ctx, "native/root/member", member); got != memberDir {
 		t.Fatalf("shared native member dir = %q, want %q", got, memberDir)
 	}
 	writeExtensionFile(t, filepath.Join(memberDir, "build.go"), "package main\n")
-	if !inspectSourcePresent(ctx, "native/root/member", member) {
+	if !pipeline.IsPackageSourcePresent(ctx, "native/root/member", member) {
 		t.Fatal("shared native member tree reported absent")
 	}
 	member.Pkg.SetGit("https://example.invalid/member.git")
-	if got, want := inspectExpectedSourceDir(ctx, "native/root/member", member), filepath.Join(memberDir, "src"); got != want {
+	if got, want := pipeline.ExpectedPackageSourceDir(ctx, "native/root/member", member), filepath.Join(memberDir, "src"); got != want {
 		t.Fatalf("own-git native member dir = %q, want %q", got, want)
 	}
-	if inspectSourcePresent(ctx, "native/root/member", member) {
+	if pipeline.IsPackageSourcePresent(ctx, "native/root/member", member) {
 		t.Fatal("own-git native member tree reported present before materialization")
 	}
 
@@ -1668,20 +1668,20 @@ func TestInspectExpectedSourceDirectories(t *testing.T) {
 	}
 	local := resolver.NewPackageNode("lib", buildscript.NewSource("lib", filepath.Join(localDir, "build.go"), localDir, api.SourceLocal), api.NewPackage())
 	local.Pkg.SetGit("https://example.invalid/lib.git")
-	if got, want := inspectExpectedSourceDir(ctx, "lib", local), filepath.Join(localDir, "src"); got != want {
+	if got, want := pipeline.ExpectedPackageSourceDir(ctx, "lib", local), filepath.Join(localDir, "src"); got != want {
 		t.Fatalf("local SetGit source dir = %q, want %q", got, want)
 	}
-	if inspectSourcePresent(ctx, "lib", local) {
+	if pipeline.IsPackageSourcePresent(ctx, "lib", local) {
 		t.Fatal("absent local SetGit tree reported present")
 	}
 
 	plainDir := filepath.Join(canonicalTempDir(t), "plain")
 	writeExtensionFile(t, filepath.Join(plainDir, "build.go"), "package main\n")
 	plain := resolver.NewPackageNode("plain", buildscript.NewSource("plain", filepath.Join(plainDir, "build.go"), plainDir, api.SourceLocal), api.NewPackage())
-	if got := inspectExpectedSourceDir(ctx, "plain", plain); got != plainDir {
+	if got := pipeline.ExpectedPackageSourceDir(ctx, "plain", plain); got != plainDir {
 		t.Fatalf("plain local source dir = %q, want %q", got, plainDir)
 	}
-	if !inspectSourcePresent(ctx, "plain", plain) {
+	if !pipeline.IsPackageSourcePresent(ctx, "plain", plain) {
 		t.Fatal("plain local package dir reported absent")
 	}
 }

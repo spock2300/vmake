@@ -229,7 +229,7 @@ dependency tree labels those same packages by their primary target.
 | `toolchain` | string | Effective project toolchain name |
 | `toolchainInfo` | object | `{name, targetOs?, targetTriple?, installPath?, cc?, cxx?, ar?, ld?}`; optional fields are omitted when empty |
 | `global` | object | Effective global option values, including `mode` and `toolchain` |
-| `globalOptionDefs` | array? | Declared global options `{name, type, default?, description?, values?, effective?}`, sorted by name; omitted when none |
+| `globalOptionDefs` | object? | Declared global options keyed by option name, each `{type, default?, description?, values?, group?}`; omitted when none. Effective values are in `global` |
 | `globalCFlags`, `globalCxxFlags`, `globalLdFlags`, `globalLinks` | array? | Global `AddGlobal*` declarations from needed packages in package resolution then declaration order; duplicates preserved (see [Global flags](#global-flags)) |
 | `globalDefines` | array? | Auto-exported global-option macros as `NAME=value`, sorted, without the `-D` prefix (see [Global flags](#global-flags)) |
 | `overrides` | object | Coerced `--set` values keyed `[package/]option`; omitted when no override was given |
@@ -317,7 +317,7 @@ flag arrays keep the order the buildscript declared.
 | `cFlags`, `cxxFlags`, `ldFlags`, `publicCFlags`, `publicCxxFlags`, `publicLdFlags` | array? | Declared target compiler and linker flags and public exported flags, raw strings in declaration order; omitted when empty |
 | `links`, `publicLinks` | array? | Declared link libraries (`-l`) and public exported link libraries |
 | `linkerScript` | string? | Declared linker script path (`SetLinkerScript`); omitted when empty |
-| `keepGlobalSymbols` | array? | Symbols preserved by `AddKeepGlobalSymbols`; omitted when empty |
+| `keepGlobalSymbols` | string? | Symbols preserved by `AddKeepGlobalSymbols`; omitted when empty |
 | `deps` | array? | Declared target dependencies (`pkg:target` or `:target`) |
 | `inputs`, `outputs` | array? | Declared action inputs and outputs |
 | `postLinkOutputs` | array? | Declared post-link output patterns |

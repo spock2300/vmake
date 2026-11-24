@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -14,16 +13,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spock2300/vmake/pkg/api"
-	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/pipeline"
-	"github.com/spock2300/vmake/pkg/resolver"
 )
 
-const (
-	inspectSchemaVersion      = 1
-	readOnlyTargetsWarningFix = "Guard generated-file work with p.DryRun()."
-)
+const inspectSchemaVersion = 1
 
 type inspectEnvelope struct {
 	SchemaVersion int                 `json:"schemaVersion"`
@@ -244,7 +238,7 @@ func runInspect(execution context.Context, setFlags []string, includeTargets boo
 		return failInspect(envelope, code, err)
 	}
 
-	session, err := openInspection(inspectionRequest{project: projectOptions{execution: execution, root: root, overrides: overrides}, quiet: true, execQuiet: true})
+	session, err := openInspection(inspectionRequest{project: projectOptions{execution: execution, root: root, overrides: overrides}, quiet: true, execQuiet: true, facts: true})
 	if err != nil {
 		var overrideErr *optionOverrideError
 		if errors.As(err, &overrideErr) {
@@ -254,7 +248,7 @@ func runInspect(execution context.Context, setFlags []string, includeTargets boo
 	}
 	defer session.Close()
 	restoreStderr()
-	data, diagnostics := buildInspectData(session.ctx, session.inspection, inspectOverrideValues(overrides), includeTargets)
+	data, diagnostics := buildInspectData(session.ctx, session.inspection, includeTargets)
 	envelope.Data = data
 	envelope.Diagnostics = diagnostics
 	restoreStdout()
@@ -345,100 +339,84 @@ func inspectOverrideValues(overrides []inspectOverride) map[string]any {
 	return values
 }
 
-func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, overrides map[string]any, includeTargets bool) (*inspectData, []inspectDiagnostic) {
-	root := ctx.Paths.ProjectDir
-	installRoot := filepath.Join(root, "install")
-	global := inspection.GlobalValues
-	if global == nil {
-		global = make(map[string]any)
-	}
-	compileDatabase := filepath.Join(root, "build", "compile_commands.json")
-	buildReport := reportPath(root)
-	testReport := testReportPath(root)
-	configFile := filepath.Base(ctx.ConfigPath)
-	if rel, err := filepath.Rel(root, ctx.ConfigPath); err == nil {
-		configFile = filepath.ToSlash(rel)
-	}
+func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, includeTargets bool) (*inspectData, []inspectDiagnostic) {
 	graph, graphErr := pipeline.BuildUnifiedGraph(ctx, inspection, pipeline.GraphOptions{
 		IncludeAll:     true,
 		DeclareTargets: includeTargets,
 	})
-	if graphErr != nil {
+	inspection.AttachGraph(ctx, graph, graphErr)
+	return encodeInspect(inspection, includeTargets)
+}
+
+func encodeInspect(inspection *pipeline.Inspection, includeTargets bool) (*inspectData, []inspectDiagnostic) {
+	if err := inspection.GraphError(); err != nil {
 		return nil, []inspectDiagnostic{{
 			Severity: "error",
 			Code:     "VMAKE_E_INSPECT",
-			Message:  graphErr.Error(),
+			Message:  err.Error(),
 		}}
 	}
-	facts := graph.Facts()
-	roots := facts.Roots
-	edges := inspectEdgesFromGraph(facts)
-
+	global := inspection.GlobalValues
+	if global == nil {
+		global = make(map[string]any)
+	}
 	data := &inspectData{
-		Root:                   root,
-		ConfigFile:             configFile,
-		ConfigSHA256:           ctx.ConfigDigest,
+		Root:                   inspection.Root,
+		ConfigFile:             inspection.ConfigFile,
+		ConfigSHA256:           inspection.ConfigSHA256,
 		Mode:                   inspection.Mode,
 		Toolchain:              inspection.TcName,
 		ToolchainInfo:          inspectToolchainInfo(inspection),
 		Global:                 global,
-		GlobalOptionDefs:       inspectOptionDefs(ctx.GlobalOptions()),
+		GlobalOptionDefs:       inspectOptionDefs(inspection.GlobalOptionDefs()),
 		GlobalCFlags:           inspection.GlobalCFlags,
 		GlobalCxxFlags:         inspection.GlobalCxxFlags,
 		GlobalLdFlags:          inspection.GlobalLdFlags,
 		GlobalLinks:            inspection.GlobalLinks,
 		GlobalDefines:          inspection.GlobalMacroDefines,
-		Overrides:              overrides,
-		Roots:                  roots,
-		Packages:               make([]inspectPackage, 0, len(ctx.DepGraph.Packages)),
-		Graph:                  edges,
-		CompileDatabase:        compileDatabase,
-		CompileDatabasePresent: inspectPathExists(compileDatabase),
-		BuildReport:            buildReport,
-		BuildReportPresent:     inspectPathExists(buildReport),
-		TestReport:             testReport,
-		TestReportPresent:      inspectPathExists(testReport),
-		InstallPrefix:          installRoot,
-		InstallManifest:        filepath.Join(installRoot, "manifest.json"),
+		Overrides:              inspection.Overrides,
+		Roots:                  inspection.GraphRoots(),
+		Packages:               make([]inspectPackage, 0, len(inspection.Packages())),
+		Graph:                  encodeEdges(inspection.GraphEdges()),
+		CompileDatabase:        inspection.CompileDatabase,
+		CompileDatabasePresent: inspection.CompileDatabasePresent,
+		BuildReport:            inspection.BuildReport,
+		BuildReportPresent:     inspection.BuildReportPresent,
+		TestReport:             inspection.TestReport,
+		TestReportPresent:      inspection.TestReportPresent,
+		InstallPrefix:          inspection.InstallPrefix,
+		InstallManifest:        inspection.InstallManifest,
 	}
-	sources := inspectSourceStates(ctx, inspection)
-	diagnostics := make([]inspectDiagnostic, 0)
-	for _, name := range inspectPackageNames(ctx) {
-		node := ctx.DepGraph.Packages[name]
-		if node == nil || node.Source == nil {
+	for _, name := range inspection.Packages() {
+		facts, ok := inspection.Facts(name)
+		if !ok {
 			continue
 		}
-		source := sources[name]
 		view, viewOK := inspection.Package(name)
 		pkg := inspectPackage{
 			Name:          name,
-			Kind:          inspectPackageKind(node),
-			SourceDir:     inspectSourceDir(inspection, name, node),
-			SourcePresent: source.Present,
+			Kind:          facts.Kind,
+			Repo:          facts.Repo,
+			Version:       facts.Version,
+			Commit:        facts.Commit,
+			URL:           facts.URL,
+			Path:          facts.Path,
+			SourceDir:     view.SourceDir(),
+			SourcePresent: facts.SourcePresent,
+			Linked:        facts.Linked,
+			LinkPath:      facts.LinkPath,
 			Needed:        view.Needed,
-			Deps:          inspectSortedStrings(node.Deps),
-		}
-		if node.IsLocal() && node.Source.Dir != "" {
-			if rel, err := filepath.Rel(root, node.Source.Dir); err == nil {
-				pkg.Path = filepath.ToSlash(rel)
-			}
-		} else {
-			inspectRemoteMetadata(ctx, name, node, &pkg)
-		}
-		if node.Pkg != nil {
-			pkg.Description = node.Pkg.Description()
+			Description:   facts.Description,
+			Deps:          facts.Deps,
 		}
 		if view.Toolchain != nil {
 			pkg.Toolchain = view.Toolchain.Name
 		}
-		pkg.Options = inspectPackageOptions(ctx, name, view.Values)
+		pkg.Options = inspectPackageOptions(view)
 		if view.Platform != nil {
 			pkg.Platform = &inspectPlatform{TargetOS: view.Platform.OS, TargetTriple: view.Platform.Triple}
 		}
-		pkg.OptionDefs = inspectOptionDefs(ctx.PackageOptions(name))
-		if source.Diagnostic != nil {
-			diagnostics = append(diagnostics, *source.Diagnostic)
-		}
+		pkg.OptionDefs = inspectOptionDefs(view.OptionDefs())
 		if pkg.Needed {
 			if viewOK && !view.Skipped && view.Dirs.BuildDir != "" {
 				pkg.BuildDir = view.Dirs.BuildDir
@@ -446,224 +424,102 @@ func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, over
 					pkg.BuildKey = view.Layout.BuildKey
 				}
 			}
-			if includeTargets && source.Present {
-				if buildCtx, ok := graph.BuildContext(name); ok {
-					pkg.Targets = renderInspectTargets(name, node, view, buildCtx)
-				}
+			if includeTargets && facts.SourcePresent {
+				pkg.Targets = encodeTargets(inspection.Targets(name), inspection.Installs(name))
 			}
 		}
 		data.Packages = append(data.Packages, pkg)
 	}
-	for _, issue := range facts.Issues {
-		// Packages outside the active roots are declared only to report their
-		// targets in inspect; a rejection of the current configuration there is
-		// not a diagnostic for this invocation.
-		if issue.Kind == "target-declare" && facts.Needed.Has(issue.Package) {
-			diagnostics = append(diagnostics, inspectGraphDiagnostic(issue))
-		}
-	}
 	if includeTargets {
 		for i := range data.Packages {
-			data.Packages[i].Deps = inspectSortedStrings(facts.PackageDeps[data.Packages[i].Name])
+			data.Packages[i].Deps = inspectSortedStrings(inspection.PackageDeps(data.Packages[i].Name))
 		}
+	}
+	diagnostics := make([]inspectDiagnostic, 0, len(inspection.Diagnostics()))
+	for _, diagnostic := range inspection.Diagnostics() {
+		diagnostics = append(diagnostics, inspectDiagnostic{
+			Severity: diagnostic.Severity,
+			Code:     diagnostic.Code,
+			Message:  diagnostic.Message,
+			Fix:      diagnostic.Fix,
+			Package:  diagnostic.Package,
+		})
 	}
 	return data, diagnostics
 }
 
-func inspectPathExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
-func inspectPackageNames(ctx *RuntimeContext) []string {
-	names := make([]string, 0, len(ctx.DepGraph.Packages))
-	for name := range ctx.DepGraph.Packages {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
-func inspectPackageKind(node *resolver.PackageNode) string {
-	if node.IsLocal() {
-		return "local"
-	}
-	if node.IsNative() {
-		return "native"
-	}
-	return "registry"
-}
-
-func inspectSourceDir(inspection *pipeline.Inspection, name string, node *resolver.PackageNode) string {
-	if view, ok := inspection.Package(name); ok && !view.Skipped && view.Dirs.SourceDir != "" {
-		return view.Dirs.SourceDir
-	}
-	if node.Source != nil && node.Source.Link != nil {
-		return node.Source.Link.Path
-	}
-	if node.Source != nil {
-		return node.Source.Dir
-	}
-	return ""
-}
-
-type inspectSourceState struct {
-	Present    bool
-	Diagnostic *inspectDiagnostic
-}
-
-func inspectSourceStates(ctx *RuntimeContext, inspection *pipeline.Inspection) map[string]inspectSourceState {
-	states := make(map[string]inspectSourceState, len(ctx.DepGraph.Packages))
-	for _, name := range inspectPackageNames(ctx) {
-		node := ctx.DepGraph.Packages[name]
-		if node == nil || node.Source == nil {
-			continue
-		}
-		view, _ := inspection.Package(name)
-		state := inspectSourceState{Present: inspectSourcePresent(ctx, name, node)}
-		if view.Needed && !state.Present {
-			url, version := inspectSourceReference(ctx, name, node)
-			state.Diagnostic = &inspectDiagnostic{
-				Severity: "warning",
-				Code:     "VMAKE_W_SOURCE_MISSING",
-				Message:  inspectSourceMissingMessage(name, url, version),
-				Package:  name,
-			}
-		}
-		states[name] = state
-	}
-	return states
-}
-
-func inspectSourcePresent(ctx *RuntimeContext, name string, node *resolver.PackageNode) bool {
-	return pipeline.IsPackageSourcePresent(ctx, name, node)
-}
-
-func inspectExpectedSourceDir(ctx *RuntimeContext, name string, node *resolver.PackageNode) string {
-	return pipeline.ExpectedPackageSourceDir(ctx, name, node)
-}
-
-func inspectSourceReference(ctx *RuntimeContext, name string, node *resolver.PackageNode) (string, string) {
-	pkg := inspectPackage{}
-	if node.Source != nil && !node.IsLocal() {
-		inspectRemoteMetadata(ctx, name, node, &pkg)
-	}
-	url, version := pkg.URL, pkg.Version
-	if node.Pkg == nil {
-		return url, version
-	}
-	if urls := node.Pkg.GitURLs(); url == "" && len(urls) > 0 {
-		url = urls[0]
-	}
-	if version != "" {
-		return url, version
-	}
-	if ctx.Pins != nil {
-		version = ctx.Pins[name]
-	}
-	if version == "" && ctx.Lock != nil {
-		if locked, ok := ctx.Lock.Get(name); ok {
-			version = locked.Version
-		}
-	}
-	if version != "" {
-		return url, version
-	}
-	if node.IsLocal() || len(node.Constraints) > 0 {
-		if selected, err := node.Pkg.SelectVersionMulti(node.Constraints); err == nil {
-			version = selected
-		}
-		return url, version
-	}
-	if selected, err := node.Pkg.SelectVersion(""); err == nil {
-		version = selected
-	}
-	return url, version
-}
-
-func inspectSourceMissingMessage(name, url, version string) string {
-	message := fmt.Sprintf("package %s source is not materialized; the next build will fetch", name)
-	switch {
-	case url != "" && version != "":
-		return fmt.Sprintf("%s %s (version %s)", message, url, version)
-	case url != "":
-		return message + " " + url
-	case version != "":
-		return message + " version " + version
-	default:
-		return message + " it"
-	}
-}
-
-func inspectRemoteMetadata(ctx *RuntimeContext, name string, node *resolver.PackageNode, pkg *inspectPackage) {
-	pkg.Repo = node.Source.Repo
-	pkg.Commit = node.Source.Commit
-	pkg.URL = node.Source.URL
-	if node.Source.Link != nil {
-		pkg.Linked = true
-		pkg.LinkPath = node.Source.Link.Path
-		pkg.Commit = node.Source.Link.Commit
-		pkg.Version = resolver.LocalLinkVersion
-	}
-	if node.Source.Link == nil {
-		if ctx.Pins != nil && ctx.Pins[name] != "" {
-			pkg.Version = ctx.Pins[name]
-		}
-		if ctx.Lock != nil {
-			if locked, ok := ctx.Lock.Get(name); ok {
-				if pkg.Version == "" {
-					pkg.Version = locked.Version
-				}
-				if pkg.Commit == "" {
-					pkg.Commit = locked.Commit
-				}
-			}
-		}
-		if node.Native != nil {
-			if pkg.Version == "" {
-				pkg.Version = node.Native.Selected
-			}
-			if pkg.Commit == "" {
-				pkg.Commit = node.Native.Commit
-			}
-		}
-	}
-	if node.Native != nil && pkg.URL == "" {
-		pkg.URL = node.Native.GitURL
-	}
-}
-
-func inspectPackageOptions(ctx *RuntimeContext, name string, values map[string]any) map[string]any {
-	opts := ctx.PackageOptions(name)
-	if len(opts) == 0 || len(values) == 0 {
+func encodeTargets(facts []pipeline.TargetFacts, installItems []api.InstallItem) []inspectTarget {
+	if len(facts) == 0 {
 		return nil
 	}
-	acc := api.NewConfigAccessor(values, opts)
-	out := make(map[string]any, len(opts))
-	for optName, opt := range opts {
-		raw, exists := values[optName]
-		if !exists || raw == nil {
-			continue
+	installs := make([]inspectInstall, 0, len(installItems))
+	for _, item := range installItems {
+		installs = append(installs, inspectInstall{Source: item.Src, Dest: item.Dest})
+	}
+	targets := make([]inspectTarget, 0, len(facts))
+	for _, fact := range facts {
+		target := fact.Target
+		targets = append(targets, inspectTarget{
+			Name:              target.Name(),
+			Kind:              string(target.Kind()),
+			Default:           target.IsDefault(),
+			Test:              target.IsTest(),
+			Files:             append([]string{}, target.Files()...),
+			ExcludedFiles:     append([]string{}, target.ExcludedFiles()...),
+			Includes:          append([]string{}, target.Includes()...),
+			PublicIncludes:    append([]string{}, target.PublicIncludes()...),
+			Defines:           append([]string{}, target.Defines()...),
+			PublicDefines:     append([]string{}, target.PublicDefines()...),
+			CFlags:            fact.CFlags,
+			PublicCFlags:      append([]string{}, target.PublicCFlags()...),
+			CxxFlags:          fact.CxxFlags,
+			PublicCxxFlags:    append([]string{}, target.PublicCxxFlags()...),
+			LdFlags:           fact.LdFlags,
+			PublicLdFlags:     append([]string{}, target.PublicLdFlags()...),
+			Links:             append([]string{}, target.Links()...),
+			PublicLinks:       append([]string{}, target.PublicLinks()...),
+			LinkerScript:      target.LinkerScript(),
+			KeepGlobalSymbols: target.KeepGlobalSymbols(),
+			Deps:              fact.Deps,
+			Inputs:            append([]string{}, target.Inputs()...),
+			Outputs:           append([]string{}, target.Outputs()...),
+			PostLinkOutputs:   append([]string{}, target.PostLinkOutputs()...),
+			InstallDir:        target.InstallDir(),
+			NoInstall:         target.NoInstall(),
+			Installs:          installs,
+			InstallPath:       fact.InstallPath,
+			Output:            fact.Output,
+		})
+	}
+	return targets
+}
+
+func encodeEdges(edges []pipeline.PackageEdge) []inspectEdge {
+	out := make([]inspectEdge, 0, len(edges))
+	for _, pe := range edges {
+		out = append(out, inspectEdge{From: pe.From, To: pe.To, Kinds: pe.Kinds, Via: pe.Via})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].From != out[j].From {
+			return out[i].From < out[j].From
 		}
-		switch opt.Type() {
-		case api.OptionBool:
-			out[optName] = acc.Bool(optName)
-		case api.OptionInt:
-			out[optName] = acc.Int(optName)
-		default:
-			out[optName] = acc.String(optName)
+		return out[i].To < out[j].To
+	})
+	return out
+}
+
+func inspectPackageOptions(view pipeline.PackageView) map[string]any {
+	projected := view.OptionValues(pipeline.OptionProfileInspect)
+	out := make(map[string]any, len(projected))
+	for _, option := range projected {
+		if option.Resolved {
+			out[option.Name] = option.Value
 		}
 	}
 	if len(out) == 0 {
 		return nil
 	}
 	return out
-}
-
-func packageConfigAccessor(ctx *RuntimeContext, name string, globalValues map[string]any) api.ConfigAccessor {
-	acc := api.NewConfigAccessor(pipeline.DisplayPackageValues(ctx, name, globalValues), ctx.PackageOptions(name))
-	acc.MergeGlobals(ctx.GlobalOptions(), globalValues)
-	return acc
 }
 
 func inspectOptionDefs(opts map[string]*api.Option) map[string]inspectOptionDef {
@@ -691,143 +547,6 @@ func inspectOptionDefs(opts map[string]*api.Option) map[string]inspectOptionDef 
 		return nil
 	}
 	return defs
-}
-
-func inspectTargetDeps(target *api.Target, node *resolver.PackageNode) []string {
-	deps := target.Deps()
-	if !target.UsesRequires() || node == nil || len(node.Deps) == 0 {
-		return append([]string{}, deps...)
-	}
-	seen := make(map[string]bool, len(node.Deps)+len(deps))
-	out := make([]string, 0, len(node.Deps)+len(deps))
-	for _, depPkg := range node.Deps {
-		item := depPkg + ":*"
-		if !seen[item] {
-			seen[item] = true
-			out = append(out, item)
-		}
-	}
-	for _, dep := range deps {
-		if !seen[dep] {
-			seen[dep] = true
-			out = append(out, dep)
-		}
-	}
-	return out
-}
-
-// renderInspectTargets projects an already-declared build context into the
-// inspect schema. The declaration itself belongs to the unified graph, so
-// OnBuild runs exactly once per package.
-func renderInspectTargets(name string, node *resolver.PackageNode, view pipeline.PackageView, buildCtx *api.BuildContext) []inspectTarget {
-	registered := buildCtx.GetTargets()
-	if len(registered) == 0 {
-		return nil
-	}
-	targetOS := ""
-	if node.Pkg != nil {
-		targetOS = node.Pkg.TargetOS()
-	}
-	defaults := api.DefaultFlags{}
-	if view.Toolchain != nil {
-		defaults = api.DefaultBuildFlags(view.Toolchain.Name, targetOS)
-	}
-	installItems := buildCtx.GetInstallItems()
-	installs := make([]inspectInstall, 0, len(installItems))
-	for _, item := range installItems {
-		installs = append(installs, inspectInstall{Source: item.Src, Dest: item.Dest})
-	}
-	targets := make([]inspectTarget, 0, len(registered))
-	for _, target := range registered {
-		entry := inspectTarget{
-			Name:              target.Name(),
-			Kind:              string(target.Kind()),
-			Default:           target.IsDefault(),
-			Test:              target.IsTest(),
-			Files:             append([]string{}, target.Files()...),
-			ExcludedFiles:     append([]string{}, target.ExcludedFiles()...),
-			Includes:          append([]string{}, target.Includes()...),
-			PublicIncludes:    append([]string{}, target.PublicIncludes()...),
-			Defines:           append([]string{}, target.Defines()...),
-			PublicDefines:     append([]string{}, target.PublicDefines()...),
-			CFlags:            inspectDeclaredFlags(target.CFlags(), defaults.CFlags),
-			PublicCFlags:      append([]string{}, target.PublicCFlags()...),
-			CxxFlags:          inspectDeclaredFlags(target.CxxFlags(), defaults.CxxFlags),
-			PublicCxxFlags:    append([]string{}, target.PublicCxxFlags()...),
-			LdFlags:           inspectDeclaredFlags(target.LdFlags(), defaults.LdFlags),
-			PublicLdFlags:     append([]string{}, target.PublicLdFlags()...),
-			Links:             append([]string{}, target.Links()...),
-			PublicLinks:       append([]string{}, target.PublicLinks()...),
-			LinkerScript:      target.LinkerScript(),
-			KeepGlobalSymbols: target.KeepGlobalSymbols(),
-			Deps:              inspectTargetDeps(target, node),
-			Inputs:            append([]string{}, target.Inputs()...),
-			Outputs:           append([]string{}, target.Outputs()...),
-			PostLinkOutputs:   append([]string{}, target.PostLinkOutputs()...),
-			InstallDir:        target.InstallDir(),
-			NoInstall:         target.NoInstall(),
-			Installs:          installs,
-			InstallPath:       inspectTargetInstallPath(target, targetOS, inspectPkgInfo(view)),
-		}
-		if target.Kind() != api.TargetVoid {
-			entry.Output = api.TargetFilename(target.Kind(), target.Name(), targetOS)
-		}
-		targets = append(targets, entry)
-	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
-	return targets
-}
-
-// inspectEdgesFromGraph projects the unified graph's package edges into the
-// inspect schema.
-func inspectEdgesFromGraph(facts pipeline.GraphFacts) []inspectEdge {
-	edges := make([]inspectEdge, 0, len(facts.PackageEdges))
-	for _, pe := range facts.PackageEdges {
-		edges = append(edges, inspectEdge{From: pe.From, To: pe.To, Kinds: pe.Kinds, Via: pe.Via})
-	}
-	sort.Slice(edges, func(i, j int) bool {
-		if edges[i].From != edges[j].From {
-			return edges[i].From < edges[j].From
-		}
-		return edges[i].To < edges[j].To
-	})
-	return edges
-}
-
-func inspectGraphDiagnostic(issue pipeline.GraphIssue) inspectDiagnostic {
-	message := issue.Message
-	fix := "Fix the package OnBuild callback, then rerun vmake inspect."
-	if strings.Contains(message, "read-only inspection:") {
-		message = strings.ReplaceAll(message, "panic: ", "")
-		fix = readOnlyTargetsWarningFix
-	}
-	return inspectDiagnostic{
-		Severity: "warning",
-		Code:     "VMAKE_W_TARGET_DECLARE",
-		Message:  message,
-		Fix:      fix,
-		Package:  issue.Package,
-	}
-}
-
-func inspectDeclaredFlags(flags, seeded []string) []string {
-	if len(seeded) > 0 && len(flags) >= len(seeded) && slices.Equal(flags[:len(seeded)], seeded) {
-		flags = flags[len(seeded):]
-	}
-	return append([]string{}, flags...)
-}
-
-func inspectPkgInfo(view pipeline.PackageView) *build.PkgInfo {
-	return view.PkgInfo()
-}
-
-func inspectTargetInstallPath(target *api.Target, targetOS string, pkgInfo *build.PkgInfo) string {
-	placement := build.PlacementFor(target, pkgInfo, targetOS)
-	if placement.InstallName == "" || placement.NoInstall || placement.IsTest ||
-		placement.Kind == api.TargetVoid || placement.Kind == api.TargetObject {
-		return ""
-	}
-	return filepath.ToSlash(filepath.Join(".", placement.InstallSubdir, placement.InstallName))
 }
 
 func inspectToolchainInfo(inspection *pipeline.Inspection) *inspectToolchain {

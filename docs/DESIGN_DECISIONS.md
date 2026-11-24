@@ -347,6 +347,20 @@
 - 取舍: 产物与构建链输入若被同尺寸且同 mtime 地替换不会被发现（与现有 `fileHashCache` 在单次构建内的跳过同级别）；`touch` 产物会保守触发重建；v4 升级后的第一次构建是全量重建。实测 no-op（Linux）：50×1MB object 90.6ms → 22.9ms，100 TU 原生 target 35.1ms → 27.0ms，缓存 CMake configure 44.3ms → 30.7ms。
 - 涉及代码: `pkg/build/signature.go`, `pkg/build/action_plan.go`, `pkg/build/link_action.go`, `pkg/build/header_check.go`, `internal/cmake/incremental.go`, `internal/cmake/engine.go`, `AGENTS.md`, `docs/ARCHITECTURE.md`, `docs/WINDOWS_VALIDATION.md`, `test_windows/bench_build.py`。
 
+## DD-39: 项目模型只有一个载体，`inspect`/`query` 只做编码
+
+- 状态: accepted
+- 背景: `cmd/vmake` 把 `inspect` 的 JSON 文档当内部模型用：`buildInspectData` 用 124 行造出 75 个字段，而 `query`/`query targets` 只读其中 4 个；源码目录回退、包类型、远端版本/commit、选项类型投影、目标事实（output/installPath/deps/installs）、诊断文案在 `cmd` 与 `pkg/pipeline` 之间各写一遍，`inspectSourceReference` 还重编码了 `resolver.LockQuery` 的优先级；DD-26/DD-31 留下的 `PackageView` 投影只有一个消费者。结果是理解"项目模型里有什么"必须同时在两个包里读。
+- 决策:
+  1. `pkg/pipeline.Inspection` 是项目模型的唯一载体，事实在构造时一次算好：信封事实（`Root`/`ConfigFile`/`ConfigSHA256`/`CompileDatabase`/`BuildReport`/`TestReport`/`InstallPrefix`/`InstallManifest` 及三个 `*Present`、`Overrides`）、每包 `PackageFacts`、`Diagnostics`、`PackageTargets`、`PackageInstalls`。新增 `Packages()`（按名排序，`docs/INSPECT.md` 的契约）、`Order()`（resolver 顺序，树渲染用）、`Facts`/`Diagnostics`/`Targets`/`Installs`/`GraphRoots`/`GraphEdges`/`PackageDeps`/`GraphError`/`GlobalOptionDefs`，以及 `PackageView.OptionValues(profile)`/`OptionDefs()`/`SourceDir()`。每包事实与诊断只在 `InspectOptions.Facts` 置位时计算：只有 `inspect`/`query`/`query targets` 通过巡检前导打开该位，`clean`、`deps *`、`check-symbols` 保持原有开销。
+  2. 统一图仍由命令层构图，`AttachGraph(ctx, graph, err)` 用 `graph.Facts()` 快照答案面（DD-29）并据 `BuildContext` 算出目标事实后，模型只保留 `GraphFacts`，不保留 `*UnifiedGraph`。`BuildUnifiedGraph` 没有自带 `scriptcall.Recover`，把它挪进 `InspectWithOptions` 的 recover 作用域会把 panic 从"命令层诊断"变成 `inspectionStageError`，改变 `status` 与退出码；构图失败仍按原位映射为 `VMAKE_E_INSPECT` 诊断。
+  3. `cmd/vmake` 只保留编码器：`buildInspectData` = 构图 + `AttachGraph` + `encodeInspect`，`encodeInspect` 只读模型、不再接触 `RuntimeContext`；字段名与 `omitempty` 仍归 `cmd`（`docs/INSPECT.md` 是它要满足的契约）。
+  4. 选项值投影只有一处实现：`pkg/pipeline.OptionProjection.Project(profile)`，两档 `OptionProfileInspect`/`OptionProfileQuery` 逐条固化既有差异（缺值跳过、全局项过滤、`MergeGlobals`、默认值填充、排序、保留类型 vs 拍平文本）。Query 档先克隆值/定义两张 map，因为 `api.ConfigAccessor.MergeGlobals` 会就地改写它们。
+- 理由: 同一概念只有一个载体，渲染器不再重算事实；新增一个模型字段只改编码器；`inspect` 输出逐字节不变——`01_simple_c`、`02_with_config`、`03_multi_target`、`05_conditional`、`15_subgraph_siblings`、`18_config_header`、`19_config_defines`、`20_config_propagate`、`21_root_package` 共 9 个 fixture 实测 stdout、stderr、退出码一致。
+  5. 版本/commit 的**优先级**改由 `resolver.LockQuery`（`Decide`/`LockEntry`）承担，展示映射（`0.0.0-local`、pin 只显示版本）留在 `pkg/pipeline`；实测输出逐字节不变。
+- 非目标: `packages[].version`/`commit` 的取值与缺失源码告警里的版本预测保持原样到 2.0。`docs/INSPECT.md:288` 把它定义为 "project pin, lockfile, or native selection"，`inspectRemoteMetadata` 正是这个规则；改用 `LockQuery.Decide` 会改变已文档化字段的取值，DD-34 在 1.x 内禁止改语义。缺失源码告警里的版本预测（`sourceReference`）同理不动，其文案被三处测试钉住。
+- 涉及代码: `pkg/pipeline/inspect.go`, `pkg/pipeline/inspect_model.go`, `pkg/pipeline/option_values.go`, `cmd/vmake/inspect_cmd.go`, `cmd/vmake/inspect_session.go`, `cmd/vmake/query_cmd.go`, `cmd/vmake/inspect_cmd_test.go`, `docs/INSPECT.md`, `GLOSSARY.md`。
+
 ## 已知限制 / 待议
 
 以下问题已被识别但尚未决策，修改前需单独讨论：

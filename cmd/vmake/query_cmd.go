@@ -6,7 +6,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -76,16 +75,16 @@ func runQueryTargets(execution context.Context) error {
 		fatalResolveRoot(err)
 		return nil
 	}
-	session, err := openInspection(inspectionRequest{project: projectOptions{execution: execution, root: root}, quiet: true, execQuiet: true})
+	session, err := openInspection(inspectionRequest{project: projectOptions{execution: execution, root: root}, quiet: true, execQuiet: true, facts: true})
 	if err != nil {
 		return err
 	}
 	defer session.Close()
-	data, diagnostics := buildInspectData(session.ctx, session.inspection, nil, true)
+	data, diagnostics := buildInspectData(session.ctx, session.inspection, true)
 	printInspectDiagnostics(diagnostics)
 	packages := inspectPackageIndex(data)
 
-	for _, name := range session.ctx.Resolver.GetOrder() {
+	for _, name := range session.inspection.Order() {
 		pkg := packages[name]
 		if pkg == nil || !pkg.Needed {
 			continue
@@ -141,21 +140,20 @@ func runQuery(cmd *cobra.Command, args []string) error {
 		fatalResolveRoot(err)
 		return nil
 	}
-	session, err := openInspection(inspectionRequest{project: projectOptions{execution: cmd.Context(), root: root}, quiet: true, execQuiet: true})
+	session, err := openInspection(inspectionRequest{project: projectOptions{execution: cmd.Context(), root: root}, quiet: true, execQuiet: true, facts: true})
 	if err != nil {
 		return err
 	}
 	defer session.Close()
 	ctx := session.ctx
 	inspection := session.inspection
-	data, diagnostics := buildInspectData(session.ctx, session.inspection, nil, true)
+	data, diagnostics := buildInspectData(session.ctx, session.inspection, true)
 	printInspectDiagnostics(diagnostics)
 	workDir := ctx.WorkDir
 
 	graph := ctx.DepGraph.Packages
 	printer := &treePrinter{
 		w:          os.Stdout,
-		ctx:        ctx,
 		inspection: inspection,
 		graph:      graph,
 		packages:   inspectPackageIndex(data),
@@ -190,7 +188,6 @@ func formatPkgDir(pkgDir, workDir string) string {
 
 type treePrinter struct {
 	w          *os.File
-	ctx        *RuntimeContext
 	inspection *pipeline.Inspection
 	graph      map[string]*resolver.PackageNode
 	packages   map[string]*inspectPackage
@@ -301,8 +298,10 @@ func (p *treePrinter) parts(name string, kinds []targetKindInfo, node *resolver.
 	if dir := formatPkgDir(pkgDir, p.workDir); dir != "" {
 		parts = append(parts, dir)
 	}
-	if opts := formatOptions(p.ctx, name, p.inspection.GlobalValues); opts != "" {
-		parts = append(parts, opts)
+	if view, ok := p.inspection.Package(name); ok {
+		if opts := formatOptionValues(view.OptionValues(pipeline.OptionProfileQuery)); opts != "" {
+			parts = append(parts, opts)
+		}
 	}
 	return parts
 }
@@ -361,29 +360,22 @@ func printInspectDiagnostics(diagnostics []inspectDiagnostic) {
 }
 
 func formatOptions(ctx *RuntimeContext, name string, globalValues map[string]any) string {
-	opts := ctx.PackageOptions(name)
-	if len(opts) == 0 {
+	return formatOptionValues(pipeline.OptionProjection{
+		Values:       pipeline.DisplayPackageValues(ctx, name, globalValues),
+		Defs:         ctx.PackageOptions(name),
+		GlobalDefs:   ctx.GlobalOptions(),
+		GlobalValues: globalValues,
+	}.Project(pipeline.OptionProfileQuery))
+}
+
+func formatOptionValues(projected []pipeline.OptionValue) string {
+	if len(projected) == 0 {
 		return ""
 	}
 
-	acc := packageConfigAccessor(ctx, name, globalValues)
-
-	var parts []string
-	for _, oname := range slices.Sorted(maps.Keys(opts)) {
-		o := opts[oname]
-		if o.IsGlobal() {
-			continue
-		}
-		var val any
-		switch o.Type() {
-		case api.OptionBool:
-			val = acc.Bool(oname)
-		case api.OptionInt:
-			val = acc.Int(oname)
-		default:
-			val = acc.String(oname)
-		}
-		parts = append(parts, fmt.Sprintf("%s=%v", oname, val))
+	parts := make([]string, 0, len(projected))
+	for _, option := range projected {
+		parts = append(parts, fmt.Sprintf("%s=%v", option.Name, option.Value))
 	}
 
 	return strings.Join(parts, ", ")

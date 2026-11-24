@@ -3,6 +3,7 @@ package pipeline
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -56,6 +57,28 @@ type Inspection struct {
 	packageToolchains  map[string]*toolchain.Toolchain
 	packageValues      map[string]map[string]any
 	packagePlatforms   map[string]api.Platform
+	packageOptionDefs  map[string]map[string]*api.Option
+	packageSourceDirs  map[string]string
+	globalOptions      map[string]*api.Option
+	packageFacts       map[string]PackageFacts
+	packageTargets     map[string][]TargetFacts
+	packageInstalls    map[string][]api.InstallItem
+	diagnostics        []Diagnostic
+	graphFacts         GraphFacts
+	graphErr           error
+
+	Root                   string
+	ConfigFile             string
+	ConfigSHA256           string
+	CompileDatabase        string
+	BuildReport            string
+	TestReport             string
+	InstallPrefix          string
+	InstallManifest        string
+	CompileDatabasePresent bool
+	BuildReportPresent     bool
+	TestReportPresent      bool
+	Overrides              map[string]any
 
 	names   []string
 	nameSet map[string]bool
@@ -83,7 +106,12 @@ type InspectOptions struct {
 	// FreezeDeps seals the filtered graph for the rest of this invocation.
 	// Commands that inspect before cleaning/building should set it so repeated
 	// inspection does not execute OnRequire again or observe a different set.
-	FreezeDeps bool
+	FreezeDeps  bool
+	Facts       bool
+	BuildReport string
+	TestReport  string
+	// Overrides echoes the effective --set values in the model.
+	Overrides map[string]any
 }
 
 func Inspect(ctx *RuntimeContext) (*Inspection, error) {
@@ -113,6 +141,11 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 	globalLdFlags := pre.rawGlobalFlags[2]
 	globalLinks := pre.rawGlobalFlags[3]
 
+	root := ""
+	if ctx.Paths != nil {
+		root = ctx.Paths.ProjectDir
+	}
+	installPrefix := filepath.Join(root, "install")
 	pkgDirs := packageSourceDirs(ctx)
 	names := make([]string, 0, len(ctx.DepGraph.Packages))
 	nameSet := make(map[string]bool, len(ctx.DepGraph.Packages))
@@ -121,6 +154,10 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 	packageToolchains := make(map[string]*toolchain.Toolchain)
 	packageValues := make(map[string]map[string]any)
 	packagePlatforms := make(map[string]api.Platform)
+	packageOptionDefs := make(map[string]map[string]*api.Option)
+	packageSourceDirs := make(map[string]string)
+	packageFacts := make(map[string]PackageFacts)
+	sourceDiagnostics := make(map[string]Diagnostic)
 	var filterNeeded NeededSet
 	if opts.FilterDeps {
 		filterNeeded = pre.needed
@@ -134,6 +171,34 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		}
 		names = append(names, name)
 		nameSet[name] = true
+		packageOptionDefs[name] = ctx.PackageOptions(name)
+		if opts.Facts {
+			facts := PackageFacts{
+				Kind:          packageKind(node),
+				SourcePresent: IsPackageSourcePresent(ctx, name, node),
+				Deps:          sortedStrings(node.Deps),
+			}
+			if node.IsLocal() && node.Source.Dir != "" {
+				if rel, err := filepath.Rel(root, node.Source.Dir); err == nil {
+					facts.Path = filepath.ToSlash(rel)
+				}
+			} else {
+				remoteMetadata(ctx, name, node, &facts)
+			}
+			if node.Pkg != nil {
+				facts.Description = node.Pkg.Description()
+			}
+			packageFacts[name] = facts
+			if pre.needed[name] && !facts.SourcePresent {
+				url, version := sourceReference(ctx, name, node, facts)
+				sourceDiagnostics[name] = Diagnostic{
+					Severity: "warning",
+					Code:     "VMAKE_W_SOURCE_MISSING",
+					Message:  sourceMissingMessage(name, url, version),
+					Package:  name,
+				}
+			}
+		}
 		if len(ctx.allOptions[name]) > 0 {
 			packageValues[name] = DisplayPackageValues(ctx, name, pre.cfg.GlobalValues)
 		}
@@ -266,7 +331,38 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		}
 	}
 
-	return &Inspection{
+	for name := range nameSet {
+		node := ctx.DepGraph.Packages[name]
+		if dirs := pkgDirs[name]; dirs != nil && dirs.SourceDir != "" {
+			packageSourceDirs[name] = dirs.SourceDir
+		} else if node != nil && node.Source != nil {
+			if node.Source.Link != nil {
+				packageSourceDirs[name] = node.Source.Link.Path
+			} else {
+				packageSourceDirs[name] = node.Source.Dir
+			}
+		}
+	}
+	diagnostics := make([]Diagnostic, 0, len(sourceDiagnostics))
+	sortedNames := append([]string(nil), names...)
+	sort.Strings(sortedNames)
+	for _, name := range sortedNames {
+		if diagnostic, ok := sourceDiagnostics[name]; ok {
+			diagnostics = append(diagnostics, diagnostic)
+		}
+	}
+	inspection := &Inspection{
+		Root:               root,
+		ConfigFile:         configFileFor(root, ctx.ConfigPath),
+		ConfigSHA256:       ctx.ConfigDigest,
+		CompileDatabase:    filepath.Join(root, "build", "compile_commands.json"),
+		BuildReport:        opts.BuildReport,
+		TestReport:         opts.TestReport,
+		InstallPrefix:      installPrefix,
+		InstallManifest:    filepath.Join(installPrefix, "manifest.json"),
+		Overrides:          maps.Clone(opts.Overrides),
+		diagnostics:        diagnostics,
+		packageFacts:       packageFacts,
 		Mode:               pre.cfg.Mode,
 		TcName:             pre.cfg.TcName,
 		Tc:                 pre.cfg.Tc,
@@ -284,9 +380,16 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		packageToolchains:  packageToolchains,
 		packageValues:      packageValues,
 		packagePlatforms:   packagePlatforms,
+		packageOptionDefs:  packageOptionDefs,
+		packageSourceDirs:  packageSourceDirs,
+		globalOptions:      ctx.GlobalOptions(),
 		names:              names,
 		nameSet:            nameSet,
-	}, nil
+	}
+	inspection.CompileDatabasePresent = pathExists(inspection.CompileDatabase)
+	inspection.BuildReportPresent = pathExists(inspection.BuildReport)
+	inspection.TestReportPresent = pathExists(inspection.TestReport)
+	return inspection, nil
 }
 
 // PackageView is the per-package projection of an Inspection: everything a
@@ -300,12 +403,44 @@ type PackageView struct {
 	Platform  *api.Platform
 	Needed    bool
 	Skipped   bool
+
+	optionDefs    map[string]*api.Option
+	globalOptions map[string]*api.Option
+	globalValues  map[string]any
+	sourceDir     string
 }
 
-// Packages returns the inspected package names in resolver order. An
-// Inspection built by hand (tests, external callers) has no recorded order, so
-// its package names are derived from the maps and sorted.
+// OptionDefs returns the options this package declares.
+func (v PackageView) OptionDefs() map[string]*api.Option {
+	return maps.Clone(v.optionDefs)
+}
+
+// OptionValues projects the package's option values under the requested
+// profile. The two profiles differ by design; see OptionProfile.
+func (v PackageView) OptionValues(profile OptionProfile) []OptionValue {
+	return OptionProjection{
+		Values:       v.Values,
+		Defs:         v.optionDefs,
+		GlobalDefs:   v.globalOptions,
+		GlobalValues: v.globalValues,
+	}.Project(profile)
+}
+
+// SourceDir is the package's source directory, falling back to the linked tree
+// or the resolved source for a package whose layout is not ready.
+func (v PackageView) SourceDir() string { return v.sourceDir }
+
+// Packages returns the inspected package names sorted by name, which is the
+// order the documented project model reports.
 func (in *Inspection) Packages() []string {
+	names := in.Order()
+	sort.Strings(names)
+	return names
+}
+
+// Order returns the inspected package names in resolution order. Renderers
+// that print a tree keep the resolver's order.
+func (in *Inspection) Order() []string {
 	if in == nil {
 		return nil
 	}
@@ -322,6 +457,14 @@ func (in *Inspection) Packages() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// GlobalOptionDefs returns the project's global option definitions.
+func (in *Inspection) GlobalOptionDefs() map[string]*api.Option {
+	if in == nil {
+		return nil
+	}
+	return maps.Clone(in.globalOptions)
 }
 
 func (in *Inspection) derivedNames() []string {
@@ -396,13 +539,17 @@ func (in *Inspection) Package(name string) (PackageView, bool) {
 	}
 	dirs := in.pkgDirs[name]
 	view := PackageView{
-		Name:      name,
-		Dirs:      dirs,
-		Layout:    in.layouts[name],
-		Toolchain: in.packageToolchains[name],
-		Values:    in.packageValues[name],
-		Needed:    in.needed[name],
-		Skipped:   dirs == nil,
+		Name:          name,
+		Dirs:          dirs,
+		Layout:        in.layouts[name],
+		Toolchain:     in.packageToolchains[name],
+		Values:        in.packageValues[name],
+		Needed:        in.needed[name],
+		Skipped:       dirs == nil,
+		optionDefs:    in.packageOptionDefs[name],
+		globalOptions: in.globalOptions,
+		globalValues:  in.GlobalValues,
+		sourceDir:     in.packageSourceDirs[name],
 	}
 	if platform, ok := in.packagePlatforms[name]; ok {
 		view.Platform = &platform

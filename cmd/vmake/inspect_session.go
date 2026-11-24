@@ -13,6 +13,7 @@ type inspectionRequest struct {
 	project   projectOptions
 	quiet     bool
 	execQuiet bool
+	facts     bool
 }
 
 type inspectionSession struct {
@@ -36,7 +37,17 @@ func openInspection(req inspectionRequest) (*inspectionSession, error) {
 		restore()
 		return nil, err
 	}
-	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true})
+	root := ""
+	if ctx.Paths != nil {
+		root = ctx.Paths.ProjectDir
+	}
+	inspection, err := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{
+		FilterDeps:  true,
+		Facts:       req.facts,
+		BuildReport: reportPath(root),
+		TestReport:  testReportPath(root),
+		Overrides:   inspectOverrideValues(req.project.overrides),
+	})
 	if err != nil {
 		scriptfs.TakeBlockedWrites()
 		closeProject(ctx)
