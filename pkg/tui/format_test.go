@@ -64,7 +64,7 @@ func TestLargeIntegerRendersWithoutExponent(t *testing.T) {
 	}
 
 	m.openDetailOverlay(OptionItem{Name: "count"})
-	detail := stripAnsi(m.renderDetailOverlay())
+	detail := stripAnsi(detailOverlayViewForTest(&m))
 	if !strings.Contains(detail, "4294967296") || strings.Contains(detail, "e+") {
 		t.Fatalf("detail view uses scientific notation:\n%s", detail)
 	}

@@ -7,12 +7,6 @@ import (
 	"github.com/spock2300/vmake/pkg/api"
 )
 
-// TestStrictAndAuditAgreeOnNodes pins the part of the two graph constructors
-// that is shared: for well-formed target sets they must resolve the same
-// targets, the same dependencies and the same order. Strict and audit keep
-// separate error contracts (strict returns the first resolution error, audit
-// reports issues), so this test is the guard for any future attempt to merge
-// their traversals.
 func TestStrictAndAuditAgreeOnNodes(t *testing.T) {
 	target := func(name string, kind api.TargetKind, deps ...string) *api.Target {
 		target := api.NewTargetRegistry().Target(name)

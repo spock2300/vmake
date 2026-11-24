@@ -68,7 +68,6 @@ type BuildGraph struct {
 	Issues       []GraphIssue
 }
 
-// visibilityPathFor is the internal-visibility path recorded for a package.
 func visibilityPathFor(pkgMeta map[string]PkgBuildMeta, pkg string) string {
 	if m, ok := pkgMeta[pkg]; ok && m.VisPath != "" {
 		return m.VisPath
@@ -76,8 +75,6 @@ func visibilityPathFor(pkgMeta map[string]PkgBuildMeta, pkg string) string {
 	return pkgvis.VisibilityPath(!strings.Contains(pkg, "/"), pkg, "", "")
 }
 
-// declaredTargetDeps expands a target's declared dependencies, including the
-// UseRequires shorthand for every package requirement.
 func declaredTargetDeps(target *api.Target, meta PkgBuildMeta) []string {
 	deps := target.Deps()
 	if !target.UsesRequires() || len(meta.Deps) == 0 {
@@ -90,8 +87,6 @@ func declaredTargetDeps(target *api.Target, meta PkgBuildMeta) []string {
 	return append(reqDeps, deps...)
 }
 
-// checkInternalVisibility rejects an edge that crosses an internal/ package
-// boundary.
 func checkInternalVisibility(pkgMeta map[string]PkgBuildMeta, fromPkg, toPkg string) error {
 	if fromPkg == "" || toPkg == "" || fromPkg == toPkg {
 		return nil
@@ -99,8 +94,6 @@ func checkInternalVisibility(pkgMeta map[string]PkgBuildMeta, fromPkg, toPkg str
 	return pkgvis.CheckInternal(fromPkg, visibilityPathFor(pkgMeta, fromPkg), toPkg, visibilityPathFor(pkgMeta, toPkg))
 }
 
-// packageCycleError formats a package cycle with the first recorded reason per
-// hop.
 func packageCycleError(cycle []string, reasons map[[2]string][]string) error {
 	msg := fmt.Sprintf("package circular dependency detected: %s", strings.Join(cycle, " -> "))
 	details := make([]string, 0, len(cycle))

@@ -23,7 +23,7 @@ func TestDetailOverlayModifiedStatusTranslations(t *testing.T) {
 			m.setValue("enabled", tt.modified)
 			m.openDetailOverlay(OptionItem{Name: "enabled"})
 
-			view := stripAnsi(m.renderDetailOverlay())
+			view := stripAnsi(detailOverlayViewForTest(&m))
 			if strings.Contains(view, "%d") {
 				t.Fatalf("detail overlay contains an unformatted count template:\n%s", view)
 			}

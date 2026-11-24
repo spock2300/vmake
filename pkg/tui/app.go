@@ -323,7 +323,7 @@ func (m *Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.width < 50 || m.height < 8 || msg.X < 0 || msg.Y < 0 || msg.X >= m.width || msg.Y >= m.height {
+	if tooSmallSize(m.width, m.height) || msg.X < 0 || msg.Y < 0 || msg.X >= m.width || msg.Y >= m.height {
 		return m, nil
 	}
 	if !mouseLeftPress(msg) && mouseWheel(msg) == 0 {
@@ -589,7 +589,6 @@ func (m *Model) selectCurrentNode() {
 		m.optCursor = 0
 		m.optOff = 0
 	}
-	m.updateGraphTracks()
 }
 
 func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1218,23 +1217,6 @@ func (m *Model) renderMenuconfigRow(selected bool, nameW int) string {
 		line = fmt.Sprintf("  %s  %s", nameRendered, desc)
 	}
 	return line
-}
-
-func (m *Model) renderOverlay() string {
-	switch m.overlay {
-	case overlayChoice, overlayLanguage:
-		layout, _ := m.choiceDialogLayout()
-		return layout.view
-	case overlayDetail:
-		layout, _, _, _ := m.detailDialogLayout()
-		return layout.view
-	}
-	return ""
-}
-
-func (m *Model) renderDetailOverlay() string {
-	layout, _, _, _ := m.detailDialogLayout()
-	return layout.view
 }
 
 func (m *Model) renderFooter() string {

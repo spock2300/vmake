@@ -31,3 +31,20 @@ func testModel(
 		},
 	})
 }
+
+func overlayViewForTest(m *Model) string {
+	switch m.overlay {
+	case overlayChoice, overlayLanguage:
+		layout, _ := m.choiceDialogLayout()
+		return layout.view
+	case overlayDetail:
+		layout, _, _, _ := m.detailDialogLayout()
+		return layout.view
+	}
+	return ""
+}
+
+func detailOverlayViewForTest(m *Model) string {
+	layout, _, _, _ := m.detailDialogLayout()
+	return layout.view
+}

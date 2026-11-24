@@ -5,9 +5,6 @@ import (
 	"github.com/spock2300/vmake/pkg/config"
 )
 
-// NewConfigWorkbench projects the resolved project into the value the
-// configuration TUI edits. The preview closure captures the project context, so
-// callers may close the resolver after building the workbench.
 func NewConfigWorkbench(ctx *RuntimeContext) *config.Workbench {
 	if ctx == nil || ctx.Resolver == nil || ctx.DepGraph == nil || ctx.Config == nil {
 		return nil

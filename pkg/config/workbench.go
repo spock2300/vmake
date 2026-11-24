@@ -5,8 +5,6 @@ import (
 	"github.com/spock2300/vmake/pkg/buildscript"
 )
 
-// Preview is a draft configuration's effect on the project graph and the
-// option values derived from it.
 type Preview struct {
 	Roots          []string
 	ActivePackages map[string]bool
@@ -15,9 +13,6 @@ type Preview struct {
 	DerivedOwners  map[string]map[string]string
 }
 
-// Workbench is everything the configuration TUI needs about a project: the
-// resolved packages, the options and values to edit, and the previewer that
-// evaluates a draft configuration.
 type Workbench struct {
 	Packages         []buildscript.Source
 	Deps             map[string][]string

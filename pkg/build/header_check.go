@@ -626,8 +626,6 @@ func isParentRelative(raw string) bool {
 	return slash == ".." || strings.HasPrefix(slash, "../")
 }
 
-// headerInclusionError is the single rule for a cross-package header a target
-// includes without permission.
 func headerInclusionError(resolved *ResolvedTarget, src, displayH, owner string) error {
 	if !resolved.DeclaredDepPkgs[owner] {
 		return fmt.Errorf(
@@ -641,8 +639,6 @@ func headerInclusionError(resolved *ResolvedTarget, src, displayH, owner string)
 	)
 }
 
-// transitiveInclusionError is the single rule for a header that is reachable
-// only through a transitive dependency.
 func transitiveInclusionError(resolved *ResolvedTarget, src, spec, owner string) error {
 	return fmt.Errorf(
 		"transitive header inclusion: target %s (%s) directly includes %q of package %q, which is only transitively reachable (add direct AddDeps(%q))",

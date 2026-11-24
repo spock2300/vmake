@@ -193,7 +193,7 @@ func TestDetailScrollResizeAndUnboundedHeight(t *testing.T) {
 		}
 	}
 	m.height = 0
-	view := stripAnsi(m.renderDetailOverlay())
+	view := stripAnsi(detailOverlayViewForTest(&m))
 	for _, want := range []string{"DEFAULT_END", "CURRENT_END", "DESCRIPTION_END", "CHOICES_END", m.text(textCloseDetails)} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("unbounded details omitted %q", want)

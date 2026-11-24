@@ -21,7 +21,6 @@ type TreeNode struct {
 	IsGroup    bool
 	Depth      int
 	Prefix     string
-	GutterRole gutterRole
 }
 
 type OptionItem struct {
@@ -113,9 +112,6 @@ type Input struct {
 
 func NewModel(in Input) Model {
 	wb := in.Workbench
-	if wb == nil {
-		return Model{}
-	}
 	ed := resolveInitialState(wb)
 	localOrder, localSet := extractLocalPackages(wb.Packages)
 	m := Model{
@@ -143,7 +139,6 @@ func NewModel(in Input) Model {
 
 	if len(m.flat) > 0 {
 		m.selectFirstPkg()
-		m.updateGraphTracks()
 	}
 	return m
 }
@@ -220,7 +215,6 @@ func (m *Model) rebuildFlat() {
 	default:
 		m.flat = flattenTree(m.tree)
 	}
-	m.updateGraphTracks()
 	m.treeWidth = calcTreeWidth(m.flat, m.optCounts)
 }
 
@@ -771,7 +765,6 @@ func (m *Model) refreshPreview() {
 		}
 		m.ensureTreeCursorVisible()
 	} else {
-		m.updateGraphTracks()
 	}
 }
 

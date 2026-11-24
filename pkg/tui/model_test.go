@@ -523,7 +523,7 @@ func TestRenderOverlay_ChoiceContainsAllValues(t *testing.T) {
 	m.selectedPkg = "app"
 	m.buildOptionItems()
 	m.openChoiceOverlay("level", opts["app"]["level"].Values())
-	out := m.renderOverlay()
+	out := overlayViewForTest(&m)
 	for _, v := range []string{"a", "b", "c"} {
 		if !strings.Contains(out, v) {
 			t.Errorf("choice overlay should contain %q", v)
@@ -540,7 +540,7 @@ func TestRenderOverlay_DetailShowsDefaultAndCurrent(t *testing.T) {
 	m.selectedPkg = "app"
 	m.buildOptionItems()
 	m.openDetailOverlay(OptionItem{Name: "threads", Opt: opts["app"]["threads"]})
-	out := m.renderOverlay()
+	out := overlayViewForTest(&m)
 	if !strings.Contains(out, "4") {
 		t.Error("detail overlay should show default 4")
 	}

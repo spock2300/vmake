@@ -60,12 +60,16 @@ type optionLayout struct {
 	viewport      bool
 }
 
+func tooSmallSize(width, height int) bool {
+	return width < 50 || height < 8
+}
+
 func (m *Model) layout() screen {
 	var s screen
 	if m.width == 0 || m.height == 0 {
 		return s
 	}
-	s.tooSmall = m.width < 50 || m.height < 8
+	s.tooSmall = tooSmallSize(m.width, m.height)
 	if s.tooSmall && m.width < 50 {
 		s.view = m.tooSmallView()
 		return s
@@ -224,9 +228,8 @@ func detailScrollOffset(anchor, rows, total int) int {
 	return clamp(anchor, 0, max(0, total-rows))
 }
 
-// syncScroll writes back the clamped viewport anchors so layout stays pure.
 func (m *Model) syncScroll() {
-	if m.width == 0 || m.height == 0 || m.width < 50 || m.height < 8 {
+	if m.width == 0 || m.height == 0 || tooSmallSize(m.width, m.height) {
 		return
 	}
 	s := m.layout()

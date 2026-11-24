@@ -799,13 +799,6 @@ func (m *Model) egoGraphData() egoGraphView {
 	}
 }
 
-func (m *Model) updateGraphTracks() {
-	roles := m.gutterRoles()
-	for i, n := range m.flat {
-		n.GutterRole = roles[i]
-	}
-}
-
 func (m *Model) jumpToGraphNeighbor(targetPkg string, pushHistory bool) bool {
 	if targetPkg == "" {
 		return false
