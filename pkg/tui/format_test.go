@@ -47,7 +47,7 @@ func TestLargeIntegerRendersWithoutExponent(t *testing.T) {
 	m.buildOptionItems()
 	m.focusArea = 1
 
-	out := stripAnsi(m.renderOptions())
+	out := stripAnsi(m.layout().optionContent)
 	if !strings.Contains(out, "4294967296") {
 		t.Fatalf("options view lacks plain value:\n%s", out)
 	}

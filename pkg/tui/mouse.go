@@ -32,10 +32,6 @@ func (m *Model) optionsPanelWidth() int {
 	return max(1, m.width-m.treePanelWidth()-5)
 }
 
-func (m *Model) optionsTopY() int {
-	return m.headerHeight() + m.renderedGraphH
-}
-
 func (m *Model) optionsContentWidth() int {
 	style := optionsPanelStyle(m.focusArea == 1, m.optionsPanelWidth())
 	return max(1, style.GetWidth()-style.GetPaddingLeft()-style.GetPaddingRight())
@@ -59,37 +55,25 @@ func mouseWheel(msg tea.MouseMsg) int {
 	}
 }
 
-func (m *Model) handleEditingMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleEditingMouse(msg tea.MouseMsg, s screen) (tea.Model, tea.Cmd) {
 	if !mouseLeftPress(msg) {
 		return m, nil
 	}
-	index, ok := m.optionRowAt(msg.X, msg.Y)
+	index, ok := s.optionRowAt(msg.X, msg.Y)
 	if !ok || index != m.optCursor {
 		return m.handleEditKey(tea.KeyMsg{Type: tea.KeyEsc})
 	}
 	return m, nil
 }
 
-func (m *Model) handleDescriptionMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleDescriptionMouse(msg tea.MouseMsg, s screen) (tea.Model, tea.Cmd) {
 	if !mouseLeftPress(msg) {
 		return m, nil
 	}
-	if !m.descriptionRowAt(msg.X, msg.Y) {
+	if !s.descriptionRowAt(msg.X, msg.Y) {
 		m.descEditing = false
 	}
 	return m, nil
-}
-
-func (m *Model) descriptionRowAt(x, y int) bool {
-	if m.descRowOffset == 0 {
-		return false
-	}
-	style := optionsPanelStyle(m.focusArea == 1, m.optionsPanelWidth())
-	left := m.renderedTreeW + style.GetBorderLeftSize()
-	if x < left || x >= left+style.GetWidth() {
-		return false
-	}
-	return y-m.optionsTopY() == 1
 }
 
 func (m *Model) optionRows() ([]optionRow, int, int) {
@@ -136,26 +120,12 @@ func (m *Model) optionRows() ([]optionRow, int, int) {
 	return rows, nameWidth, valWidth
 }
 
-func (m *Model) optionRowAt(x, y int) (int, bool) {
-	style := optionsPanelStyle(m.focusArea == 1, m.optionsPanelWidth())
-	left := m.renderedTreeW + style.GetBorderLeftSize()
-	if x < left || x >= left+style.GetWidth() {
-		return 0, false
-	}
-	for _, target := range m.optionMouseRows {
-		if y-m.optionsTopY() >= target.y && y-m.optionsTopY() < target.y+target.height {
-			return target.index, target.index >= 0
-		}
-	}
-	return 0, false
-}
-
-func (m *Model) handleMouseOptionClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.descriptionRowAt(msg.X, msg.Y) {
+func (m *Model) handleMouseOptionClick(msg tea.MouseMsg, s screen) (tea.Model, tea.Cmd) {
+	if s.descriptionRowAt(msg.X, msg.Y) {
 		m.startDescriptionEdit()
 		return m, nil
 	}
-	index, ok := m.optionRowAt(msg.X, msg.Y)
+	index, ok := s.optionRowAt(msg.X, msg.Y)
 	if !ok {
 		return m, nil
 	}

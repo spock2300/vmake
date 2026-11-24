@@ -58,11 +58,11 @@ func TestCompactLayoutFitsTerminal(t *testing.T) {
 								}
 								selector := "[" + m.text(textLanguage) + ": " + m.languageLabel() + " ▼]"
 								x, y := mouseTestPosition(t, view, selector)
-								if x != m.languageSelectorX || y != m.languageSelectorY {
-									t.Fatalf("selector rendered at (%d,%d), hitbox starts at (%d,%d)", x, y, m.languageSelectorX, m.languageSelectorY)
+								if x != m.layout().languageSelector.x || y != m.layout().languageSelector.y {
+									t.Fatalf("selector rendered at (%d,%d), hitbox starts at (%d,%d)", x, y, m.layout().languageSelector.x, m.layout().languageSelector.y)
 								}
 								x, y = mouseTestPosition(t, view, "enabled")
-								if idx, ok := m.optionRowAt(x, y); !ok || idx != 0 {
+								if idx, ok := m.layout().optionRowAt(x, y); !ok || idx != 0 {
 									t.Fatalf("visible option does not match its mouse target: index=%d ok=%t", idx, ok)
 								}
 								if !strings.Contains(stripAnsi(view), m.text(textPackages)) || !strings.Contains(stripAnsi(view), m.text(textOptions)) {

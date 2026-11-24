@@ -209,7 +209,7 @@ func TestWorkbench_ThreeZonesTraversalAndLivePreview(t *testing.T) {
 	m.width = 116
 	m.height = 30
 
-	treeTxt := stripAnsi(m.renderTree())
+	treeTxt := stripAnsi(m.layout().treeContent)
 	for _, want := range []string{"全局 (8)", "firmware (12)", "board-py32f539-evb (16)", "lvgl-demos (2)", "远程 (1)", "py32f539 (3)", "未启用 / 无选项"} {
 		if !strings.Contains(treeTxt, want) {
 			t.Fatalf("expected %q in active workbench tree:\n%s", want, treeTxt)
@@ -253,13 +253,13 @@ func TestWorkbench_ThreeZonesTraversalAndLivePreview(t *testing.T) {
 		t.Fatalf("pressing [ should return to firmware, got %q", m.selectedPkg)
 	}
 	m.setValue("usb", true)
-	afterToggleTree := stripAnsi(m.renderTree())
+	afterToggleTree := stripAnsi(m.layout().treeContent)
 	if !strings.Contains(afterToggleTree, "远程 (2)") {
 		t.Fatalf("enabling usb should promote cherryusb into active 远程 (2):\n%s", afterToggleTree)
 	}
 
 	m.handleKey(keyRunes("H"))
-	hiddenEmptyTree := stripAnsi(m.renderTree())
+	hiddenEmptyTree := stripAnsi(m.layout().treeContent)
 	if strings.Contains(hiddenEmptyTree, "未启用 / 无选项") || !strings.Contains(hiddenEmptyTree, "未启用") {
 		t.Fatalf("pressing H should rename group to 未启用 when 0-option packages are hidden:\n%s", hiddenEmptyTree)
 	}
@@ -294,11 +294,11 @@ func TestWorkbench_ThreeZonesTraversalAndLivePreview(t *testing.T) {
 	m.jumpToMatch("firmware", "")
 	m.View()
 	clicked := false
-	for _, box := range m.egoNodeBoxes {
+	for _, box := range m.layout().egoBoxes {
 		if box.pkgName == "lvgl-demos" {
 			style := egoGraphPanelStyle(m.focusArea == 0, m.optionsPanelWidth())
-			mx := m.renderedTreeW + style.GetBorderLeftSize() + style.GetPaddingLeft() + box.x + 1
-			my := m.headerHeight() + box.y
+			mx := m.layout().treeW + style.GetBorderLeftSize() + style.GetPaddingLeft() + box.x + 1
+			my := m.layout().headerH + box.y
 			m.handleMouse(tea.MouseMsg{X: mx, Y: my, Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 			clicked = true
 			break

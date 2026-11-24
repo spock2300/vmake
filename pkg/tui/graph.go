@@ -800,53 +800,9 @@ func (m *Model) egoGraphData() egoGraphView {
 }
 
 func (m *Model) updateGraphTracks() {
-	for _, n := range m.flat {
-		n.GutterRole = gutterNone
-	}
-	if len(m.flat) == 0 {
-		return
-	}
-	focal := m.selectedPkg
-	if !isRealPackage(focal) {
-		return
-	}
-
-	for _, node := range m.flat {
-		if !node.IsGroup && node.PkgName == focal {
-			node.GutterRole = gutterFocal
-			continue
-		}
-		rowPkgs := rowRepresentedPackages(node)
-		if len(rowPkgs) == 0 {
-			continue
-		}
-		activeCaller, anyCaller := false, false
-		activeDep, anyDep := false, false
-		for rp := range rowPkgs {
-			if rp == focal {
-				continue
-			}
-			if m.isEdgeActive(rp, focal) {
-				activeCaller = true
-			} else if m.hasEagerEdge(rp, focal) {
-				anyCaller = true
-			}
-			if m.isEdgeActive(focal, rp) {
-				activeDep = true
-			} else if m.hasEagerEdge(focal, rp) {
-				anyDep = true
-			}
-		}
-		switch {
-		case activeCaller:
-			node.GutterRole = gutterUpstream
-		case activeDep:
-			node.GutterRole = gutterDownstream
-		case anyCaller:
-			node.GutterRole = gutterUpstreamInactive
-		case anyDep:
-			node.GutterRole = gutterDownstreamInactive
-		}
+	roles := m.gutterRoles()
+	for i, n := range m.flat {
+		n.GutterRole = roles[i]
 	}
 }
 

@@ -50,7 +50,7 @@ func TestLanguageSelectorHitboxMatchesRenderedControl(t *testing.T) {
 							t.Fatalf("width=%d: selector moved from top row to %d", width, y)
 						}
 						lines := strings.Split(stripAnsi(view), "\n")
-						for row := 0; row < m.headerHeight(); row++ {
+						for row := 0; row < m.layout().headerH; row++ {
 							if got := lipgloss.Width(lines[row]); got > width {
 								t.Fatalf("header row width=%d exceeds terminal width=%d", got, width)
 							}
@@ -58,7 +58,7 @@ func TestLanguageSelectorHitboxMatchesRenderedControl(t *testing.T) {
 								m.handleMouse(tea.MouseMsg{X: col, Y: row, Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 								wantOpen := row == y && col >= x && col < x+w
 								if gotOpen := m.overlay == overlayLanguage; gotOpen != wantOpen {
-									t.Fatalf("width=%d: click (%d,%d) opened=%t, want %t; rendered=(%d,%d,%d), model=(%d,%d,%d)", width, col, row, gotOpen, wantOpen, x, y, w, m.languageSelectorX, m.languageSelectorY, m.languageSelectorW)
+									t.Fatalf("width=%d: click (%d,%d) opened=%t, want %t; rendered=(%d,%d,%d), model=(%d,%d,%d)", width, col, row, gotOpen, wantOpen, x, y, w, m.layout().languageSelector.x, m.layout().languageSelector.y, m.layout().languageSelector.width)
 								}
 								m.closeOverlay()
 							}

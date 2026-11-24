@@ -808,7 +808,7 @@ func TestTreeScrollReachesLastItem(t *testing.T) {
 			m.treeCursor = len(m.flat) - 1
 			m.selectCurrentNode()
 			m.ensureTreeCursorVisible()
-			out := ansiRe.ReplaceAllString(m.renderTree(), "")
+			out := ansiRe.ReplaceAllString(m.layout().treeContent, "")
 			if !strings.Contains(out, last) {
 				t.Errorf("h=%d: last pkg %q not rendered after scroll to bottom\n%s", h, last, out)
 			}
@@ -832,7 +832,7 @@ func TestTreeScrollReachesFirstItem(t *testing.T) {
 	m.treeOff = 20
 	m.treeCursor = 0
 	m.ensureTreeCursorVisible()
-	out := ansiRe.ReplaceAllString(m.renderTree(), "")
+	out := ansiRe.ReplaceAllString(m.layout().treeContent, "")
 	if !strings.Contains(out, "Global") {
 		t.Errorf("first node (Global) not rendered after scroll to top\n%s", out)
 	}
@@ -1016,7 +1016,7 @@ func TestRemoteGroup_SearchAndJumpExpandsRemoteSubpackage(t *testing.T) {
 	m.height = 24
 	m.language = languageChinese
 
-	treeBefore := stripAnsi(m.renderTree())
+	treeBefore := stripAnsi(m.layout().treeContent)
 	if !strings.Contains(treeBefore, "远程") {
 		t.Fatalf("collapsed Chinese tree should display 远程 group:\n%s", treeBefore)
 	}
@@ -1040,13 +1040,13 @@ func TestRemoteGroup_SearchAndJumpExpandsRemoteSubpackage(t *testing.T) {
 	if m.selectedPkg != "hl/hl-mcu-sdk/system/freertos/lvgl" {
 		t.Fatalf("selectedPkg = %q, want hl/hl-mcu-sdk/system/freertos/lvgl", m.selectedPkg)
 	}
-	treeAfter := stripAnsi(m.renderTree())
+	treeAfter := stripAnsi(m.layout().treeContent)
 	for _, seg := range []string{"hl/hl-mcu-sdk", "system", "freertos", "lvgl (1)"} {
 		if !strings.Contains(treeAfter, seg) {
 			t.Fatalf("expanded Remote group should display %q:\n%s", seg, treeAfter)
 		}
 	}
-	optionsOut := stripAnsi(m.renderOptions())
+	optionsOut := stripAnsi(m.layout().optionContent)
 	if !strings.Contains(optionsOut, "选项 · hl/hl-mcu-sdk/system/freertos/lvgl") {
 		t.Fatalf("options header should show full remote package name:\n%s", optionsOut)
 	}
@@ -1076,7 +1076,7 @@ func TestRenderTree_PreservesCountBadgeWithinContentWidth(t *testing.T) {
 	m.height = 30
 	m.expandAll()
 
-	treeOut := stripAnsi(m.renderTree())
+	treeOut := stripAnsi(m.layout().treeContent)
 	for _, want := range []string{"cherryusb (15)", "lvgl-resources (1)", "lvgl-resources-files"} {
 		if !strings.Contains(treeOut, want) {
 			t.Errorf("width=80: expected %q to render completely without clipping:\n%s", want, treeOut)
@@ -1084,7 +1084,7 @@ func TestRenderTree_PreservesCountBadgeWithinContentWidth(t *testing.T) {
 	}
 
 	m.width = 50
-	narrowOut := stripAnsi(m.renderTree())
+	narrowOut := stripAnsi(m.layout().treeContent)
 	for _, want := range []string{"… (15)", "… (1)"} {
 		if !strings.Contains(narrowOut, want) {
 			t.Errorf("width=50: expected %q to preserve badge without clipping:\n%s", want, narrowOut)

@@ -31,8 +31,8 @@ func detailScrollView(t *testing.T, m *Model) string {
 	if lipgloss.Width(view) > m.width || lipgloss.Height(view) > m.height {
 		t.Fatalf("detail exceeds terminal %dx%d: %dx%d\n%s", m.width, m.height, lipgloss.Width(view), lipgloss.Height(view), stripAnsi(view))
 	}
-	if m.detailRows < 1 || m.detailOff < 0 || m.detailOff > max(0, m.detailTotal-m.detailRows) {
-		t.Fatalf("invalid detail viewport: offset=%d rows=%d total=%d", m.detailOff, m.detailRows, m.detailTotal)
+	if m.layout().detailRows < 1 || m.detailOff < 0 || m.detailOff > max(0, m.layout().detailTotal-m.layout().detailRows) {
+		t.Fatalf("invalid detail viewport: offset=%d rows=%d total=%d", m.detailOff, m.layout().detailRows, m.layout().detailTotal)
 	}
 	dialogTextPosition(t, view, m.text(textCloseDetails))
 	return stripAnsi(view)
@@ -108,8 +108,8 @@ func TestDetailScrollKeyboardNavigation(t *testing.T) {
 		}
 	}
 	m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
-	if m.detailOff != m.detailRows {
-		t.Fatalf("page down offset=%d, want %d", m.detailOff, m.detailRows)
+	if m.detailOff != m.layout().detailRows {
+		t.Fatalf("page down offset=%d, want %d", m.detailOff, m.layout().detailRows)
 	}
 	m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
 	if m.detailOff != 0 {
@@ -118,7 +118,7 @@ func TestDetailScrollKeyboardNavigation(t *testing.T) {
 	for _, end := range []tea.KeyMsg{{Type: tea.KeyEnd}, keyRunes("G")} {
 		m.Update(end)
 		view := detailScrollView(t, &m)
-		if !strings.Contains(view, "CHOICES_END") || m.detailOff != m.detailTotal-m.detailRows {
+		if !strings.Contains(view, "CHOICES_END") || m.detailOff != m.layout().detailTotal-m.layout().detailRows {
 			t.Fatalf("%q did not reveal the end:\n%s", end.String(), view)
 		}
 		for _, key := range []tea.KeyMsg{{Type: tea.KeyDown}, keyRunes("j"), {Type: tea.KeyPgDown}} {
@@ -166,7 +166,7 @@ func TestDetailScrollMouseAndReset(t *testing.T) {
 			}
 			m.Update(tea.KeyMsg{Type: tea.KeyEnd})
 			m.Update(mouseTestClick(0, m.height/2))
-			if m.overlay != overlayNone || m.detailOff != 0 || m.detailRows != 0 || m.detailTotal != 0 {
+			if m.overlay != overlayNone || m.detailOff != 0 {
 				t.Fatal("closing details did not reset their viewport")
 			}
 			m.openDetailOverlay(OptionItem{Name: "level"})

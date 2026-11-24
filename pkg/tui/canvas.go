@@ -125,23 +125,22 @@ func (m *Model) hasAnyDependencyEdges() bool {
 	return false
 }
 
-func (m *Model) egoGraphInnerHeight() int {
-	ch := m.contentHeight()
-	if ch < 14 || m.optionsContentWidth() < 46 || !m.hasAnyDependencyEdges() {
+func (m *Model) egoGraphInnerHeight(contentH int) int {
+	if contentH < 14 || m.optionsContentWidth() < 46 || !m.hasAnyDependencyEdges() {
 		return 0
 	}
 	switch {
-	case ch < 20:
+	case contentH < 20:
 		return 6
-	case ch < 28:
+	case contentH < 28:
 		return 8
 	default:
 		return 9
 	}
 }
 
-func (m *Model) egoGraphOuterHeight() int {
-	inner := m.egoGraphInnerHeight()
+func (m *Model) egoGraphOuterHeight(contentH int) int {
+	inner := m.egoGraphInnerHeight(contentH)
 	if inner <= 0 {
 		return 0
 	}
@@ -169,17 +168,16 @@ func visibleWindow(total, capacity, focusIdx int) (start, end int, hidden int) {
 	return start, end, hidden
 }
 
-func (m *Model) renderEgoGraph() string {
-	m.egoNodeBoxes = nil
-	innerH := m.egoGraphInnerHeight()
+func (m *Model) egoGraphBody(contentH int) (string, []egoNodeHitbox) {
+	innerH := m.egoGraphInnerHeight(contentH)
 	width := m.optionsContentWidth()
 	if innerH <= 0 || width <= 0 {
-		return ""
+		return "", nil
 	}
 
+	var boxes []egoNodeHitbox
 	ego := m.egoGraphData()
 	var out strings.Builder
-
 	leftTitle := m.text(textDependencies)
 	if !ego.IsGlobal && ego.FocalPkg != "" {
 		leftTitle += " · " + m.packageLabel(ego.FocalPkg)
@@ -269,7 +267,7 @@ func (m *Model) renderEgoGraph() string {
 			cv.stampCenteredNote(col0X, focalMidY, col0W, m.text(textNoUpstream), &optionDescStyle)
 		}
 	default:
-		ports := m.stampSideColumn(cv, col0X, col0W, bodyTopRow, focalMidY, ego.Callers, ego.ActiveCaller, false)
+		ports := m.stampSideColumn(cv, col0X, col0W, bodyTopRow, focalMidY, ego.Callers, ego.ActiveCaller, false, &boxes)
 		cv.drawChannelBus(col0X+col0W, gapW, ports, focalMidY, true, &egoWireUpstreamStyle, &egoWireInactiveStyle)
 	}
 
@@ -277,13 +275,13 @@ func (m *Model) renderEgoGraph() string {
 	case ego.IsGroup || len(ego.Deps) == 0:
 		cv.stampCenteredNote(col2X, focalMidY, col2W, m.text(textNoDownstream), &optionDescStyle)
 	default:
-		ports := m.stampSideColumn(cv, col2X, col2W, bodyTopRow, focalMidY, ego.Deps, ego.ActiveDep, true)
+		ports := m.stampSideColumn(cv, col2X, col2W, bodyTopRow, focalMidY, ego.Deps, ego.ActiveDep, true, &boxes)
 		cv.drawChannelBus(col1X+col1W, gapW, ports, focalMidY, false, &egoWireDownstreamStyle, &egoWireInactiveStyle)
 	}
 
 	cv.materializeWires()
 	out.WriteString(cv.render())
-	return out.String()
+	return out.String(), boxes
 }
 
 func (m *Model) renderEgoSummaryBadge(ego egoGraphView) string {
@@ -347,13 +345,14 @@ func (m *Model) stampSideColumn(
 	items []egoNeighbor,
 	activeIdx int,
 	isDep bool,
+	boxes *[]egoNodeHitbox,
 ) []busPort {
 	if len(items) == 1 && cv.h >= 3 {
 		topY := clamp(focalMidY-1, 0, cv.h-3)
 		midY := topY + 1
 		it := items[0]
 		cv.stampRoundedSideCard(colX, topY, colW, it, activeIdx == 0, isDep)
-		m.egoNodeBoxes = append(m.egoNodeBoxes, egoNodeHitbox{
+		*boxes = append(*boxes, egoNodeHitbox{
 			pkgName: it.PkgName,
 			x:       colX,
 			y:       bodyTopRow + topY,
@@ -372,7 +371,7 @@ func (m *Model) stampSideColumn(
 		for i, it := range items {
 			ty := topYs[i]
 			cv.stampRoundedSideCard(colX, ty, colW, it, activeIdx == i, isDep)
-			m.egoNodeBoxes = append(m.egoNodeBoxes, egoNodeHitbox{
+			*boxes = append(*boxes, egoNodeHitbox{
 				pkgName: it.PkgName,
 				x:       colX,
 				y:       bodyTopRow + ty,
@@ -402,7 +401,7 @@ func (m *Model) stampSideColumn(
 		it := items[idx]
 		icon, bdrStyle := sideNeighborGlyph(it.Active, idx == activeIdx, isDep)
 		cv.stampPillNode(colX, y, colW, icon, it.Label, it.OptCount, it.Modified, it.Active, idx == activeIdx, bdrStyle)
-		m.egoNodeBoxes = append(m.egoNodeBoxes, egoNodeHitbox{
+		*boxes = append(*boxes, egoNodeHitbox{
 			pkgName: it.PkgName,
 			x:       colX,
 			y:       bodyTopRow + y,
@@ -417,7 +416,7 @@ func (m *Model) stampSideColumn(
 		moreY := startY + shown
 		if moreY < cv.h {
 			cv.stampCenteredNote(colX, moreY, colW, m.textf(textMoreItems, hidden), &scrollIndicatorStyle)
-			m.egoNodeBoxes = append(m.egoNodeBoxes, egoNodeHitbox{
+			*boxes = append(*boxes, egoNodeHitbox{
 				x:      colX,
 				y:      bodyTopRow + moreY,
 				w:      colW,
@@ -762,24 +761,4 @@ func padDisplayRight(s string, targetCols int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", targetCols-w)
-}
-
-func (m *Model) egoHitAt(mx, my int) (egoNodeHitbox, bool) {
-	if m.renderedGraphH <= 0 {
-		return egoNodeHitbox{}, false
-	}
-	style := egoGraphPanelStyle(m.focusArea == 0, m.optionsPanelWidth())
-	left := m.renderedTreeW + style.GetBorderLeftSize() + style.GetPaddingLeft()
-	top := m.headerHeight()
-	if mx < left || mx >= left+m.optionsContentWidth() || my < top || my >= top+m.renderedGraphH-1 {
-		return egoNodeHitbox{}, false
-	}
-	rx := mx - left
-	ry := my - top
-	for _, b := range m.egoNodeBoxes {
-		if rx >= b.x && rx < b.x+b.w && ry >= b.y && ry < b.y+b.h {
-			return b, true
-		}
-	}
-	return egoNodeHitbox{}, false
 }

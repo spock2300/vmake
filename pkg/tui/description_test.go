@@ -28,15 +28,15 @@ func descriptionModel() Model {
 
 func TestDescriptionDisplayAndEdit(t *testing.T) {
 	m := descriptionModel()
-	view := stripAnsi(m.renderOptions())
-	if !strings.Contains(view, "Description: old") || m.descRowOffset != 1 {
-		t.Fatalf("description row missing (offset=%d):\n%s", m.descRowOffset, view)
+	view := stripAnsi(m.layout().optionContent)
+	if !strings.Contains(view, "Description: old") || m.layout().descRowOffset != 1 {
+		t.Fatalf("description row missing (offset=%d):\n%s", m.layout().descRowOffset, view)
 	}
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
 	if !m.descEditing {
 		t.Fatal("D did not start description editing")
 	}
-	if view := stripAnsi(m.renderOptions()); !strings.Contains(view, "old▎") {
+	if view := stripAnsi(m.layout().optionContent); !strings.Contains(view, "old▎") {
 		t.Fatalf("edit field missing:\n%s", view)
 	}
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" new")})
@@ -47,14 +47,13 @@ func TestDescriptionDisplayAndEdit(t *testing.T) {
 	if m.descEditing || m.ed().Desc != "old new" || !m.ed().HasChanges() || m.modifiedCount() != 1 {
 		t.Fatalf("after edit: editing=%t description=%q changes=%t count=%d", m.descEditing, m.ed().Desc, m.ed().HasChanges(), m.modifiedCount())
 	}
-	if view := stripAnsi(m.renderOptions()); !strings.Contains(view, "Description: old new") {
+	if view := stripAnsi(m.layout().optionContent); !strings.Contains(view, "Description: old new") {
 		t.Fatalf("edited description not rendered:\n%s", view)
 	}
 }
 
 func TestDescriptionEditCancelAndClear(t *testing.T) {
 	m := descriptionModel()
-	m.renderOptions()
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
 	m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
@@ -71,7 +70,6 @@ func TestDescriptionEditCancelAndClear(t *testing.T) {
 
 func TestDescriptionInputFiltersControlRunes(t *testing.T) {
 	m := descriptionModel()
-	m.renderOptions()
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a\nb\tc")})
 	if m.descInput != "oldabc" {
@@ -88,21 +86,20 @@ func TestDescriptionInputFiltersControlRunes(t *testing.T) {
 
 func TestDescriptionRowHiddenOnTinyLayout(t *testing.T) {
 	m := descriptionModel()
-	m.height = m.headerHeight() + m.footerHeight() + 2
-	m.renderOptions()
-	if m.descRowOffset != 0 {
-		t.Fatalf("description row offset = %d, want 0", m.descRowOffset)
+	m.height = m.layout().headerH + m.layout().footerH + 2
+	if m.layout().descRowOffset != 0 {
+		t.Fatalf("description row offset = %d, want 0", m.layout().descRowOffset)
 	}
 }
 
 func TestDescriptionRowClickStartsEditing(t *testing.T) {
 	m := descriptionModel()
 	m.View()
-	if m.descRowOffset != 1 {
-		t.Fatalf("description row offset = %d, want 1", m.descRowOffset)
+	if m.layout().descRowOffset != 1 {
+		t.Fatalf("description row offset = %d, want 1", m.layout().descRowOffset)
 	}
-	x := m.renderedTreeW + 3
-	y := m.headerHeight() + 1
+	x := m.layout().treeW + 3
+	y := m.layout().headerH + 1
 	m.Update(tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 	if !m.descEditing {
 		t.Fatal("click did not start description editing")
@@ -113,7 +110,7 @@ func TestDescriptionLoadedMultilineIsSanitized(t *testing.T) {
 	m := descriptionModel()
 	m.ed().Desc = "short\nsecond"
 	m.ed().OrigDesc = m.ed().Desc
-	view := stripAnsi(m.renderOptions())
+	view := stripAnsi(m.layout().optionContent)
 	if !strings.Contains(view, "Description: short second") {
 		t.Fatalf("multiline description not collapsed for display:\n%s", view)
 	}
@@ -135,7 +132,6 @@ func TestDescriptionNoopEditKeepsLoadedLineBreaks(t *testing.T) {
 	m := descriptionModel()
 	m.ed().Desc = "first\nsecond"
 	m.ed().OrigDesc = m.ed().Desc
-	m.renderOptions()
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
 	if m.descInput != "first second" {
 		t.Fatalf("edit seed = %q, want %q", m.descInput, "first second")
@@ -151,7 +147,6 @@ func TestDescriptionLoadedOverlongIsTruncated(t *testing.T) {
 	m := descriptionModel()
 	m.ed().Desc = strings.Repeat("x", int(config.MaxDescriptionLength)+50)
 	m.ed().OrigDesc = m.ed().Desc
-	m.renderOptions()
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
 	if got := len([]rune(m.descInput)); got != int(config.MaxDescriptionLength) {
 		t.Fatalf("edit seed length = %d, want %d", got, config.MaxDescriptionLength)

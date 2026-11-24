@@ -150,6 +150,7 @@ func (m *Model) Init() tea.Cmd {
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	defer m.syncScroll()
 	switch msg := msg.(type) {
 	case menuconfigDone:
 		ed := m.ed()
@@ -178,9 +179,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.ensureTreeCursorVisible()
-		if m.optOff < 0 {
-			m.optOff = 0
-		}
 		return m, nil
 	}
 	return m, nil
@@ -331,41 +329,40 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if !mouseLeftPress(msg) && mouseWheel(msg) == 0 {
 		return m, nil
 	}
-	m.View()
+	s := m.layout()
 	if m.confirmQuit {
-		return m.handleConfirmMouse(msg)
+		return m.handleConfirmMouse(msg, s)
 	}
 	if m.overlay != overlayNone {
-		return m.handleOverlayMouse(msg)
+		return m.handleOverlayMouse(msg, s)
 	}
 	if m.editing {
-		return m.handleEditingMouse(msg)
+		return m.handleEditingMouse(msg, s)
 	}
 	if m.descEditing {
-		return m.handleDescriptionMouse(msg)
+		return m.handleDescriptionMouse(msg, s)
 	}
 	if m.filterActive || m.runningMenuconfig {
 		return m, nil
 	}
 
 	mx, my := msg.X, msg.Y
-	headerH := m.headerHeight()
-	if mouseLeftPress(msg) && my == m.languageSelectorY && mx >= m.languageSelectorX && mx < m.languageSelectorX+m.languageSelectorW {
+	if mouseLeftPress(msg) && s.languageSelector.contains(mx, my) {
 		m.openLanguageSelector()
 		return m, nil
 	}
-	if my < headerH || my >= headerH+m.renderedMainH {
+	if my < s.headerH || my >= s.headerH+s.mainH {
 		return m, nil
 	}
-	inTree := mx < m.renderedTreeW
-	inGraph := !inTree && m.renderedGraphH > 0 && my < headerH+m.renderedGraphH
+	inTree := mx < s.treeW
+	inGraph := !inTree && s.graphH > 0 && my < s.headerH+s.graphH
 
 	switch {
 	case mouseLeftPress(msg):
 		if inTree {
 			m.focusArea = 0
-			for _, target := range m.treeMouseRows {
-				if my-headerH < target.y || my-headerH >= target.y+target.height {
+			for _, target := range s.treeRows {
+				if my < target.y || my >= target.y+target.height {
 					continue
 				}
 				idx := target.index
@@ -379,7 +376,7 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				break
 			}
 		} else if inGraph {
-			if hit, ok := m.egoHitAt(mx, my); ok {
+			if hit, ok := s.egoHitAt(mx, my); ok {
 				if hit.isMore {
 					if hit.isDep {
 						m.downEdgeIdx++
@@ -393,7 +390,7 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			}
 		} else {
 			m.focusArea = 1
-			return m.handleMouseOptionClick(msg)
+			return m.handleMouseOptionClick(msg, s)
 		}
 	case mouseWheel(msg) != 0:
 		if inTree {
@@ -401,7 +398,7 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			m.moveTreeCursor(mouseWheel(msg))
 		} else if inGraph {
 			delta := mouseWheel(msg)
-			midX := m.renderedTreeW + m.optionsPanelWidth()/2
+			midX := s.treeW + s.optionsW/2
 			if mx < midX {
 				m.upEdgeSelected = true
 				m.upEdgeIdx += delta
@@ -435,20 +432,6 @@ func (m *Model) moveTreeCursor(delta int) {
 
 func (m *Model) moveOptionCursor(delta int) {
 	m.optCursor = clamp(m.optCursor+delta, 0, max(0, m.totalOptRows()-1))
-}
-
-func (m *Model) headerHeight() int {
-	if m.renderedHeaderH > 0 {
-		return m.renderedHeaderH
-	}
-	return 2
-}
-
-func (m *Model) footerHeight() int {
-	if m.renderedFooterH > 0 {
-		return m.renderedFooterH
-	}
-	return 2
 }
 
 func (m *Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -655,7 +638,7 @@ func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.openDetailOverlay(visible[m.optCursor])
 		}
 	case "D":
-		if m.descRowOffset == 1 {
+		if m.layout().descRowOffset == 1 {
 			m.startDescriptionEdit()
 		}
 	case " ", "enter", "right", "l":
@@ -955,73 +938,7 @@ func parseIntInput(s string) (int, bool) {
 }
 
 func (m *Model) View() string {
-	if m.width == 0 || m.height == 0 {
-		return ""
-	}
-
-	if m.width < 50 || m.height < 8 {
-		return lipgloss.NewStyle().Width(m.width).Height(m.height).Render(
-			m.text(textTerminalTooSmall),
-		)
-	}
-
-	if m.confirmQuit {
-		dialog := m.renderConfirmDialog()
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialog)
-	}
-
-	if m.overlay != overlayNone {
-		dialog := m.renderOverlay()
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialog)
-	}
-
-	header := m.renderHeader()
-	footer := m.renderFooter()
-	treeStyle := treePanelStyle(m.focusArea == 0, m.treePanelWidth())
-	optionStyle := optionsPanelStyle(m.focusArea == 1, m.optionsPanelWidth())
-	minTreeHeight := 2 + treeStyle.GetVerticalFrameSize()
-	if m.filterActive || m.filterInput != "" {
-		minTreeHeight++
-	}
-	minMainHeight := max(minTreeHeight, 2+optionStyle.GetVerticalFrameSize())
-	if lipgloss.Height(header)+lipgloss.Height(footer)+minMainHeight > m.height {
-		minFooterHeight := 1 + footerBorderStyle().GetVerticalFrameSize()
-		header = m.renderHeaderWithin(m.height - minMainHeight - minFooterHeight)
-		footer = m.renderFooterWithin(m.height - minMainHeight - lipgloss.Height(header))
-	}
-	m.renderedHeaderH = lipgloss.Height(header)
-	m.renderedFooterH = lipgloss.Height(footer)
-
-	treePanel := treeStyle.MaxHeight(m.contentHeight()).Render(m.renderTree())
-	m.renderedTreeW = lipgloss.Width(treePanel)
-
-	var rightCol string
-	if egoInner := m.egoGraphInnerHeight(); egoInner > 0 {
-		graphStyle := egoGraphPanelStyle(m.focusArea == 0, m.optionsPanelWidth())
-		graphPanel := graphStyle.MaxHeight(egoInner + 1).Render(m.renderEgoGraph())
-		m.renderedGraphH = lipgloss.Height(graphPanel)
-		optMaxH := max(1, m.contentHeight()-m.renderedGraphH)
-		optPanel := optionStyle.MaxHeight(optMaxH).Render(m.renderOptions())
-		rightCol = lipgloss.JoinVertical(lipgloss.Left, graphPanel, optPanel)
-	} else {
-		m.renderedGraphH = 0
-		m.egoNodeBoxes = nil
-		rightCol = optionStyle.MaxHeight(m.contentHeight()).Render(m.renderOptions())
-	}
-
-	main := lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		treePanel,
-		rightCol,
-	)
-	m.renderedMainH = lipgloss.Height(main)
-
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		header,
-		main,
-		footer,
-	)
+	return m.layout().view
 }
 
 func (m *Model) renderHeader() string {
@@ -1039,13 +956,7 @@ func (m *Model) renderHeaderWithin(maxHeight int) string {
 		n := m.modifiedCount()
 		rightParts = append(rightParts, modifiedBadgeStyle.Render(m.textf(textModified, n)))
 	}
-	languageSelector := languageSelectorStyle.Render("[" + m.text(textLanguage) + ": " + m.languageLabel() + " ▼]")
-	headerStyle := headerBorderStyle(true).Width(m.width - 4)
-	headerWidth := headerStyle.GetWidth() - headerStyle.GetHorizontalFrameSize()
-	m.languageSelectorW = lipgloss.Width(languageSelector)
-	leftWidth := max(1, headerWidth-m.languageSelectorW-2)
-	m.languageSelectorX = headerStyle.GetBorderLeftSize() + headerStyle.GetPaddingLeft() + leftWidth + 2
-	m.languageSelectorY = headerStyle.GetBorderTopSize() + headerStyle.GetPaddingTop()
+	languageSelector, headerStyle, leftWidth := m.headerSelector()
 	rightPart := strings.Join(rightParts, "  ")
 
 	leftContent := title
@@ -1064,272 +975,6 @@ func (m *Model) renderHeaderWithin(maxHeight int) string {
 	headerContent := lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", languageSelector)
 
 	return headerStyle.Render(headerContent)
-}
-
-func (m *Model) renderTree() string {
-	m.treeMouseRows = nil
-	contentWidth := max(1, m.treePanelWidth()-2)
-	var b strings.Builder
-	b.WriteString(panelTitleStyle.MaxWidth(contentWidth).Render(m.text(textPackages)) + "\n")
-
-	var topBar string
-	if m.filterActive {
-		topBar = filterBoxActiveStyle.Render("/"+m.filterInput+"▎") + "\n"
-	} else if m.filterInput != "" {
-		n := m.filteredMatchCount()
-		topBar = filterBoxAppliedStyle.Render(m.textf(textFilter, m.filterInput, n)) + "\n"
-	}
-
-	panelH := m.treePanelHeight()
-
-	if len(m.flat) == 0 {
-		b.WriteString(topBar)
-		b.WriteString(filterBoxAppliedStyle.Render("  " + m.text(textNoMatches)))
-		return b.String()
-	}
-
-	total := len(m.flat)
-	start := m.treeOff
-	drawH := m.treeItemRows()
-	end := min(start+drawH, total)
-
-	if topBar != "" {
-		topBar = lipgloss.NewStyle().MaxWidth(contentWidth).Render(strings.TrimSuffix(topBar, "\n")) + "\n"
-	}
-	b.WriteString(topBar)
-	rowY := 1 + strings.Count(topBar, "\n")
-
-	m.updateGraphTracks()
-
-	for i := start; i < end; i++ {
-		node := m.flat[i]
-		indent := ""
-		if node.Depth > 0 {
-			indent = strings.Repeat("  ", node.Depth-1)
-		}
-
-		isSelected := i == m.treeCursor
-		isFocused := m.focusArea == 0
-
-		icon := "●"
-		if node.PkgName == GlobalPkgName {
-			icon = "◈"
-		} else if len(node.Children) > 0 {
-			if node.Expanded {
-				icon = "▾"
-			} else {
-				icon = "▸"
-			}
-		} else if node.GutterRole == gutterFocal || isSelected {
-			icon = "◆"
-		} else if node.GutterRole == gutterUpstream {
-			icon = "◀"
-		} else if node.GutterRole == gutterDownstream {
-			icon = "▶"
-		} else if !m.isActivePkg(node.PkgName) || (!m.hasPkgConfig(node.PkgName) && !node.IsGroup) {
-			icon = "◌"
-		} else if node.IsExternal {
-			icon = "○"
-		}
-
-		name := node.Name
-		if node.PkgName == GlobalPkgName || isSyntheticGroupPkg(node.PkgName) {
-			name = m.packageLabel(node.PkgName)
-		}
-
-		count := 0
-		if isSyntheticGroupPkg(node.PkgName) {
-			if m.focusActive {
-				count = subtreePackageCount(node)
-			}
-		} else if node.PkgName != "" {
-			count = m.optCountFor(node.PkgName)
-		}
-		hasMod := !node.IsGroup && node.PkgName != "" && m.pkgHasModified(node.PkgName)
-
-		fixed := nodeFixedPrefixRunes(node)
-		badgeLen := 0
-		if count > 0 {
-			badgeLen = utf8.RuneCountInString(fmt.Sprintf(" (%d)", count))
-		}
-		modLen := 0
-		if hasMod {
-			modLen = 2
-		}
-		avail := contentWidth - fixed - badgeLen - modLen
-		if avail < 1 {
-			avail = 1
-		}
-		if utf8.RuneCountInString(name) > avail {
-			name = truncateRunes(name, avail)
-		}
-
-		if !isSelected || !isFocused {
-			if node.PkgName == InactiveGroupPkgName || (!node.IsGroup && !m.isActivePkg(node.PkgName)) {
-				name = externalPkgStyle.Render(name)
-			} else if node.IsExternal {
-				name = externalPkgStyle.Render(name)
-			}
-		}
-
-		if count > 0 {
-			if node.PkgName == InactiveGroupPkgName {
-				name += externalPkgStyle.Render(fmt.Sprintf(" (%d)", count))
-			} else {
-				name += countBadgeStyle.Render(fmt.Sprintf(" (%d)", count))
-			}
-		}
-		if hasMod {
-			name += modifiedMarkStyle.Render(" *")
-		}
-
-		if !(isSelected && isFocused) {
-			switch node.GutterRole {
-			case gutterFocal:
-				icon = trackFocalStyle.Render(icon)
-			case gutterUpstream:
-				icon = trackUpstreamActiveStyle.Render(icon)
-			case gutterDownstream:
-				icon = trackDownstreamStyle.Render(icon)
-			case gutterUpstreamInactive, gutterDownstreamInactive:
-				icon = trackPassStyle.Render(icon)
-			}
-		}
-
-		line := indent + node.Prefix + icon + " " + name
-
-		if isSelected && isFocused {
-			line = selectedRowStyle.Render(line)
-		}
-		line = lipgloss.NewStyle().MaxWidth(contentWidth).Render(line)
-		m.treeMouseRows = append(m.treeMouseRows, panelRowTarget{y: rowY, height: 1, index: i})
-		b.WriteString(line + "\n")
-		rowY++
-	}
-
-	if total > panelH && panelH > 1 {
-		pct := float64(m.treeOff+drawH) / float64(total) * 100
-		indicator := scrollIndicatorStyle.Render(fmt.Sprintf("  %d/%d  %.0f%%", min(m.treeCursor+1, total), total, pct))
-		b.WriteString(indicator)
-	}
-
-	return strings.TrimSuffix(b.String(), "\n")
-}
-
-func (m *Model) renderOptions() string {
-	m.optionMouseRows = nil
-	contentW := m.optionsContentWidth()
-	title := m.text(textOptions)
-	if m.selectedPkg != "" {
-		title += " · " + m.packageLabel(m.selectedPkg)
-	}
-	titleLine := panelTitleStyle.Render(title)
-	if m.selectedPkg != "" && !isSyntheticGroupPkg(m.selectedPkg) {
-		var badges []string
-		if !m.isActivePkg(m.selectedPkg) {
-			badges = append(badges, externalPkgStyle.Render("◌ "+m.text(textInactiveBadge)))
-		}
-		if mc := m.pkgModifiedCount(m.selectedPkg); mc > 0 {
-			badges = append(badges, modifiedMarkStyle.Render(fmt.Sprintf("* %d", mc)))
-		}
-		if ec := m.pkgExplicitUnmodifiedCount(m.selectedPkg); ec > 0 {
-			badges = append(badges, explicitMarkStyle.Render(m.textf(textExplicitBadge, ec)))
-		}
-		if dc := m.pkgDerivedCount(m.selectedPkg); dc > 0 {
-			badges = append(badges, derivedFromStyle.Render(m.textf(textDerivedBadge, dc)))
-		}
-		if len(badges) > 0 {
-			rightStr := strings.Join(badges, "  ")
-			if lipgloss.Width(titleLine)+2+lipgloss.Width(rightStr) <= contentW {
-				titleLine += lipgloss.PlaceHorizontal(contentW-lipgloss.Width(titleLine), lipgloss.Right, rightStr)
-			}
-		}
-	}
-	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().MaxWidth(contentW).Render(titleLine) + "\n")
-
-	m.descRowOffset = 0
-	if m.optionsContentHeight() >= 3 {
-		b.WriteString(m.renderDescriptionRow())
-		m.descRowOffset = 1
-	}
-
-	if m.selectedPkg == "" {
-		b.WriteString(lipgloss.PlaceHorizontal(m.width-m.treeWidth-6, lipgloss.Center, m.text(textSelectPackage)))
-		return b.String()
-	}
-
-	if m.runningMenuconfig {
-		b.WriteString("\n  " + m.textf(textRunningMenuconfig, m.packageLabel(m.selectedPkg)) + "\n")
-		return b.String()
-	}
-
-	visible := m.visibleOptions()
-	hasKConfig := m.hasKConfig()
-
-	if len(visible) == 0 && !hasKConfig {
-		b.WriteString(m.text(textNoOptions))
-		return b.String()
-	}
-
-	allRows := m.optionLines()
-
-	cursorRowIdx := -1
-	for ri, r := range allRows {
-		if r.row.navIdx == m.optCursor && cursorRowIdx < 0 {
-			cursorRowIdx = ri
-		}
-		if r.editCursor {
-			cursorRowIdx = ri
-			break
-		}
-	}
-
-	panelH := m.optionsContentHeight() - 1 - m.descRowOffset
-	if panelH < 1 {
-		panelH = 1
-	}
-	total := len(allRows)
-	drawH := panelH
-	if total > panelH {
-		drawH = max(1, panelH-1)
-	}
-	if cursorRowIdx >= 0 {
-		if cursorRowIdx < m.optOff {
-			m.optOff = cursorRowIdx
-		}
-		if cursorRowIdx >= m.optOff+drawH {
-			m.optOff = cursorRowIdx - drawH + 1
-		}
-	}
-	maxOff := total - drawH
-	if maxOff < 0 {
-		maxOff = 0
-	}
-	if m.optOff > maxOff {
-		m.optOff = maxOff
-	}
-	if m.optOff < 0 {
-		m.optOff = 0
-	}
-
-	start := m.optOff
-	end := min(start+drawH, total)
-
-	for i := start; i < end; i++ {
-		line := allRows[i]
-		m.optionMouseRows = append(m.optionMouseRows, panelRowTarget{y: i - start + 1 + m.descRowOffset, height: 1, index: line.row.navIdx})
-		b.WriteString(line.text + "\n")
-	}
-
-	totalRows := len(allRows)
-	if totalRows > panelH && panelH > 1 {
-		pct := float64(m.optOff+drawH) / float64(totalRows) * 100
-		indicator := scrollIndicatorStyle.Render(fmt.Sprintf("  %d/%d  %.0f%%", min(m.optCursor+1, m.totalOptRows()), m.totalOptRows(), pct))
-		b.WriteString(indicator)
-	}
-
-	return strings.TrimSuffix(b.String(), "\n")
 }
 
 func (m *Model) renderDescriptionRow() string {
@@ -1575,70 +1220,21 @@ func (m *Model) renderMenuconfigRow(selected bool, nameW int) string {
 	return line
 }
 
-func (m *Model) renderConfirmDialog() string {
-	return m.confirmDialogLayout().view
-}
-
 func (m *Model) renderOverlay() string {
 	switch m.overlay {
 	case overlayChoice, overlayLanguage:
-		return m.renderChoiceOverlay()
+		layout, _ := m.choiceDialogLayout()
+		return layout.view
 	case overlayDetail:
-		return m.renderDetailOverlay()
+		layout, _, _, _ := m.detailDialogLayout()
+		return layout.view
 	}
 	return ""
 }
 
-func (m *Model) renderChoiceOverlay() string {
-	return m.choiceDialogLayout().view
-}
-
 func (m *Model) renderDetailOverlay() string {
-	opt := m.detailOption()
-	if opt == nil {
-		return m.renderDetailDialog(confirmMsgStyle.Render(m.text(textNoDetails)))
-	}
-	cur := m.getValue(m.choiceOpt)
-	def := m.defaultFor(m.choiceOpt)
-
-	type kv struct{ k, v string }
-	rows := []kv{
-		{m.text(textName), m.choiceOpt},
-		{m.text(textType), opt.Type().String()},
-		{m.text(textDefault), formatValue(def)},
-		{m.text(textCurrent), formatValue(cur)},
-	}
-	modified := m.isOptionModified(m.choiceOpt)
-	status := m.text(textNo)
-	if modified {
-		status = modifiedMarkStyle.Render(m.text(textYes))
-	}
-	rows = append(rows, kv{m.text(textModifiedLabel), status})
-	if m.ed().IsExplicit(m.selectedPkg, m.choiceOpt) {
-		rows = append(rows, kv{m.text(textSource), explicitMarkStyle.Render(m.text(textExplicitSource))})
-	} else if owner, ok := m.optionDerivedBy(m.selectedPkg, m.choiceOpt); ok && owner != "" {
-		rows = append(rows, kv{m.text(textDerivedFrom), derivedFromStyle.Render(owner)})
-	}
-
-	keyW := 0
-	for _, r := range rows {
-		if len(r.k) > keyW {
-			keyW = len(r.k)
-		}
-	}
-
-	var b strings.Builder
-	b.WriteString(confirmTitleStyle.Render(m.choiceOpt) + "\n\n")
-	for _, r := range rows {
-		b.WriteString(fmt.Sprintf("  %-*s : %s\n", keyW, r.k, r.v))
-	}
-	if desc := opt.Description(); desc != "" {
-		b.WriteString("\n  " + optionDescStyle.Render(desc) + "\n")
-	}
-	if opt.Type() == api.OptionChoice && len(opt.Values()) > 0 {
-		b.WriteString("\n  " + confirmMsgStyle.Render(m.text(textChoices)+strings.Join(opt.Values(), ", ")) + "\n")
-	}
-	return m.renderDetailDialog(b.String())
+	layout, _, _, _ := m.detailDialogLayout()
+	return layout.view
 }
 
 func (m *Model) renderFooter() string {

@@ -60,32 +60,24 @@ type Model struct {
 	editInput  string
 	editCursor int
 
-	width             int
-	height            int
-	saved             bool
-	confirmQuit       bool
-	confirmBtn        int
-	workDir           string
-	language          language
-	languageSelectorX int
-	languageSelectorY int
-	languageSelectorW int
+	width       int
+	height      int
+	saved       bool
+	confirmQuit bool
+	confirmBtn  int
+	workDir     string
+	language    language
 
-	descEditing   bool
-	descInput     string
-	descCursor    int
-	descRowOffset int
+	descEditing bool
+	descInput   string
+	descCursor  int
 
 	runningMenuconfig bool
 	menuconfigErr     error
 
-	treeWidth       int
-	treeOff         int
-	optOff          int
-	treeMouseRows   []panelRowTarget
-	optionMouseRows []panelRowTarget
-	renderedTreeW   int
-	renderedMainH   int
+	treeWidth int
+	treeOff   int
+	optOff    int
 
 	hideEmptyPkgs bool
 	optCounts     map[string]int
@@ -96,14 +88,9 @@ type Model struct {
 	choiceOpt    string
 	choiceValues []string
 	detailOff    int
-	detailRows   int
-	detailTotal  int
 
 	filterActive bool
 	filterInput  string
-
-	renderedHeaderH int
-	renderedFooterH int
 
 	deps           map[string][]string
 	preview        PreviewState
@@ -116,8 +103,6 @@ type Model struct {
 	upEdgeIdx      int
 	downEdgeIdx    int
 	upEdgeSelected bool
-	egoNodeBoxes   []egoNodeHitbox
-	renderedGraphH int
 }
 
 type overlayKind int
@@ -893,7 +878,8 @@ func (m *Model) totalOptRows() int {
 }
 
 func (m *Model) ensureTreeCursorVisible() {
-	drawH := m.treeItemRows()
+	_, _, _, _, contentH := m.chrome()
+	drawH := treeItemRows(contentH, m.filterActive || m.filterInput != "", len(m.flat))
 	total := len(m.flat)
 	if total == 0 {
 		return
@@ -915,52 +901,6 @@ func (m *Model) ensureTreeCursorVisible() {
 	if m.treeOff < 0 {
 		m.treeOff = 0
 	}
-}
-
-func (m *Model) contentHeight() int {
-	h := m.height - m.headerHeight() - m.footerHeight()
-	if h < 1 {
-		return 1
-	}
-	return h
-}
-
-func (m *Model) treePanelHeight() int {
-	h := m.contentHeight() - 1
-	if m.filterActive || m.filterInput != "" {
-		h--
-	}
-	if h < 1 {
-		h = 1
-	}
-	return h
-}
-
-func (m *Model) treeItemRows() int {
-	h := m.treePanelHeight()
-	if len(m.flat) > h {
-		return max(1, h-1)
-	}
-	return h
-}
-
-func (m *Model) optionsContentHeight() int {
-	h := m.contentHeight() - m.egoGraphOuterHeight()
-	if h < 1 {
-		return 1
-	}
-	return h
-}
-
-func (m *Model) optItemRows() int {
-	h := m.optionsContentHeight() - 1 - m.descRowOffset
-	if h < 1 {
-		h = 1
-	}
-	if len(m.optionLines()) > h {
-		return max(1, h-1)
-	}
-	return h
 }
 
 func (m *Model) optCountFor(pkgName string) int {
@@ -1054,16 +994,12 @@ func (m *Model) closeOverlay() {
 	m.choiceCursor = 0
 	m.choiceOff = 0
 	m.detailOff = 0
-	m.detailRows = 0
-	m.detailTotal = 0
 }
 
 func (m *Model) openDetailOverlay(item OptionItem) {
 	m.overlay = overlayDetail
 	m.choiceOpt = item.Name
 	m.detailOff = 0
-	m.detailRows = 0
-	m.detailTotal = 0
 }
 
 func (m *Model) detailOption() *api.Option {

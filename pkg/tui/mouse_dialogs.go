@@ -1,11 +1,14 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/spock2300/vmake/pkg/api"
 )
 
 type dialogRect struct {
@@ -61,7 +64,7 @@ func centerDialogLines(lines []string, width int) string {
 	return strings.Join(centered, "\n")
 }
 
-func (m *Model) choiceDialogLayout() dialogLayout {
+func (m *Model) choiceDialogLayout() (dialogLayout, int) {
 	titleText := m.choiceOpt
 	current := formatValue(m.getValue(m.choiceOpt))
 	description := ""
@@ -110,12 +113,7 @@ func (m *Model) choiceDialogLayout() dialogLayout {
 	}
 	visible := max(1, available-len(prefix)-len(suffix))
 	visible = min(visible, max(1, len(m.choiceValues)))
-	m.choiceOff = clamp(m.choiceOff, 0, max(0, len(m.choiceValues)-visible))
-	if m.choiceCursor < m.choiceOff {
-		m.choiceOff = m.choiceCursor
-	} else if m.choiceCursor >= m.choiceOff+visible {
-		m.choiceOff = m.choiceCursor - visible + 1
-	}
+	off := choiceScrollOffset(m.choiceOff, m.choiceCursor, len(m.choiceValues), visible)
 	listWidth := 1
 	for _, value := range m.choiceValues {
 		listWidth = max(listWidth, min(width, lipgloss.Width("    "+value)))
@@ -123,7 +121,7 @@ func (m *Model) choiceDialogLayout() dialogLayout {
 	listX := (width - listWidth) / 2
 	lines := append([]string(nil), prefix...)
 	targets := make([]dialogTarget, 0, visible)
-	for i := m.choiceOff; i < min(len(m.choiceValues), m.choiceOff+visible); i++ {
+	for i := off; i < min(len(m.choiceValues), off+visible); i++ {
 		marker := "  "
 		if m.choiceValues[i] == current {
 			marker = checkboxStyle.Render("● ")
@@ -137,7 +135,7 @@ func (m *Model) choiceDialogLayout() dialogLayout {
 		lines = append(lines, line)
 	}
 	lines = append(lines, suffix...)
-	return m.frameDialog(style, centerDialogLines(lines, width), targets)
+	return m.frameDialog(style, centerDialogLines(lines, width), targets), off
 }
 
 func (m *Model) confirmDialogLayout() dialogLayout {
@@ -187,11 +185,60 @@ func (m *Model) confirmDialogLayout() dialogLayout {
 	return m.frameDialog(style, centerDialogLines(lines, width), targets)
 }
 
-func (m *Model) renderDetailDialog(content string) string {
+func (m *Model) detailDialogContent() string {
+	opt := m.detailOption()
+	if opt == nil {
+		return confirmMsgStyle.Render(m.text(textNoDetails))
+	}
+	cur := m.getValue(m.choiceOpt)
+	def := m.defaultFor(m.choiceOpt)
+
+	type kv struct{ k, v string }
+	rows := []kv{
+		{m.text(textName), m.choiceOpt},
+		{m.text(textType), opt.Type().String()},
+		{m.text(textDefault), formatValue(def)},
+		{m.text(textCurrent), formatValue(cur)},
+	}
+	modified := m.isOptionModified(m.choiceOpt)
+	status := m.text(textNo)
+	if modified {
+		status = modifiedMarkStyle.Render(m.text(textYes))
+	}
+	rows = append(rows, kv{m.text(textModifiedLabel), status})
+	if m.ed().IsExplicit(m.selectedPkg, m.choiceOpt) {
+		rows = append(rows, kv{m.text(textSource), explicitMarkStyle.Render(m.text(textExplicitSource))})
+	} else if owner, ok := m.optionDerivedBy(m.selectedPkg, m.choiceOpt); ok && owner != "" {
+		rows = append(rows, kv{m.text(textDerivedFrom), derivedFromStyle.Render(owner)})
+	}
+
+	keyW := 0
+	for _, r := range rows {
+		if len(r.k) > keyW {
+			keyW = len(r.k)
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString(confirmTitleStyle.Render(m.choiceOpt) + "\n\n")
+	for _, r := range rows {
+		b.WriteString(fmt.Sprintf("  %-*s : %s\n", keyW, r.k, r.v))
+	}
+	if desc := opt.Description(); desc != "" {
+		b.WriteString("\n  " + optionDescStyle.Render(desc) + "\n")
+	}
+	if opt.Type() == api.OptionChoice && len(opt.Values()) > 0 {
+		b.WriteString("\n  " + confirmMsgStyle.Render(m.text(textChoices)+strings.Join(opt.Values(), ", ")) + "\n")
+	}
+	return b.String()
+}
+
+func (m *Model) detailDialogLayout() (dialogLayout, int, int, int) {
 	style := overlayStyle
 	if m.height > 0 && m.height < 12 {
 		style = style.Padding(0, 2)
 	}
+	content := m.detailDialogContent()
 	closeHint := confirmMsgStyle.Render(m.text(textCloseDetails))
 	width := m.dialogContentWidth(style, content, closeHint)
 	lines := dialogLines(strings.TrimRight(content, "\n"), width)
@@ -214,37 +261,37 @@ func (m *Model) renderDetailDialog(content string) string {
 			suffix = append(dialogLines(confirmMsgStyle.Render(m.text(textDetailScrollHint)), width), hint...)
 		}
 	}
-	m.detailTotal = len(lines)
-	m.detailRows = min(len(lines), max(1, available-len(suffix)))
-	m.detailOff = clamp(m.detailOff, 0, max(0, m.detailTotal-m.detailRows))
-	visible := append([]string(nil), lines[m.detailOff:m.detailOff+m.detailRows]...)
+	total := len(lines)
+	rows := min(len(lines), max(1, available-len(suffix)))
+	off := detailScrollOffset(m.detailOff, rows, total)
+	visible := append([]string(nil), lines[off:off+rows]...)
 	visible = append(visible, suffix...)
 	for i, line := range visible {
 		visible[i] = lipgloss.PlaceHorizontal(width, lipgloss.Left, line)
 	}
-	return style.Render(strings.Join(visible, "\n"))
+	return m.frameDialog(style, strings.Join(visible, "\n"), nil), rows, total, off
 }
 
 func (m *Model) scrollDetail(key string) {
-	m.renderDetailOverlay()
+	_, rows, total, off := m.detailDialogLayout()
 	switch key {
 	case "up", "k":
-		m.detailOff--
+		off--
 	case "down", "j":
-		m.detailOff++
+		off++
 	case "pgup":
-		m.detailOff -= m.detailRows
+		off -= rows
 	case "pgdown":
-		m.detailOff += m.detailRows
+		off += rows
 	case "home", "g":
-		m.detailOff = 0
+		off = 0
 	case "end", "G":
-		m.detailOff = m.detailTotal - m.detailRows
+		off = total - rows
 	}
-	m.detailOff = clamp(m.detailOff, 0, max(0, m.detailTotal-m.detailRows))
+	m.detailOff = detailScrollOffset(off, rows, total)
 }
 
-func (m *Model) handleOverlayMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleOverlayMouse(msg tea.MouseMsg, s screen) (tea.Model, tea.Cmd) {
 	delta := mouseWheel(msg)
 	if delta != 0 {
 		key := tea.KeyDown
@@ -256,18 +303,10 @@ func (m *Model) handleOverlayMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if !mouseLeftPress(msg) {
 		return m, nil
 	}
-	var layout dialogLayout
-	if m.overlay == overlayChoice || m.overlay == overlayLanguage {
-		layout = m.choiceDialogLayout()
-	} else {
-		view := m.renderDetailOverlay()
-		width, height := lipgloss.Width(view), lipgloss.Height(view)
-		layout.bounds = dialogRect{max(0, (m.width-width)/2), max(0, (m.height-height)/2), width, height}
-	}
-	if !layout.bounds.contains(msg.X, msg.Y) {
+	if !s.overlay.bounds.contains(msg.X, msg.Y) {
 		return m.handleOverlayKey(tea.KeyMsg{Type: tea.KeyEsc})
 	}
-	for _, target := range layout.targets {
+	for _, target := range s.overlay.targets {
 		if target.bounds.contains(msg.X, msg.Y) {
 			m.choiceCursor = target.index
 			return m.handleOverlayKey(tea.KeyMsg{Type: tea.KeyEnter})
@@ -276,15 +315,14 @@ func (m *Model) handleOverlayMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) handleConfirmMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleConfirmMouse(msg tea.MouseMsg, s screen) (tea.Model, tea.Cmd) {
 	if !mouseLeftPress(msg) {
 		return m, nil
 	}
-	layout := m.confirmDialogLayout()
-	if !layout.bounds.contains(msg.X, msg.Y) {
+	if !s.confirm.bounds.contains(msg.X, msg.Y) {
 		return m.handleConfirmKey(tea.KeyMsg{Type: tea.KeyEsc})
 	}
-	for _, target := range layout.targets {
+	for _, target := range s.confirm.targets {
 		if target.bounds.contains(msg.X, msg.Y) {
 			m.confirmBtn = target.index
 			return m.handleConfirmKey(tea.KeyMsg{Type: tea.KeyEnter})

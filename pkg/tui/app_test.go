@@ -39,7 +39,7 @@ func TestTreeDoesNotOverflowPanelWidth(t *testing.T) {
 			maxRune := 0
 			for off := 0; off < len(m.flat); off++ {
 				m.treeOff = off
-				for _, line := range strings.Split(stripAnsi(m.renderTree()), "\n") {
+				for _, line := range strings.Split(stripAnsi(m.layout().treeContent), "\n") {
 					if rc := utf8.RuneCountInString(line); rc > maxRune {
 						maxRune = rc
 					}
@@ -95,7 +95,7 @@ func TestTreeTruncatesOverlongNames(t *testing.T) {
 	m := testModel(mkSources("short", longName), map[string][]string{}, opts, map[string]map[string]any{}, "/w", "", nil, nil, nil)
 	m.width = 80
 	m.height = 24
-	treeOut := stripAnsi(m.renderTree())
+	treeOut := stripAnsi(m.layout().treeContent)
 	if !strings.Contains(treeOut, "…") {
 		t.Errorf("expected overlong name to be truncated with …\n%s", treeOut)
 	}
@@ -439,7 +439,7 @@ func TestMouseMappingUsesRenderedHeaderHeight(t *testing.T) {
 	m.height = 24
 	view := m.View()
 
-	hh := m.headerHeight()
+	hh := m.layout().headerH
 	if hh <= 2 {
 		t.Fatalf("expected wrapped header >2 rows for long workDir, got %d", hh)
 	}
@@ -470,13 +470,16 @@ func TestContentHeightAccountsForWrappedFooter(t *testing.T) {
 	m.width = 50
 	m.height = 24
 	m.View()
-	if m.footerHeight() <= 2 {
-		t.Fatalf("expected wrapped footer >2 rows at width 50, got %d", m.footerHeight())
+	s := m.layout()
+	if s.footerH <= 2 {
+		t.Fatalf("expected wrapped footer >2 rows at width 50, got %d", s.footerH)
 	}
 	// contentHeight must subtract the real footer, not a hardcoded 2.
-	realContent := m.height - m.headerHeight() - m.footerHeight()
-	if m.contentHeight() != realContent {
-		t.Errorf("contentHeight=%d, want %d (height - header - footer)", m.contentHeight(), realContent)
+	if realContent := m.height - s.headerH - s.footerH; s.contentH != realContent {
+		t.Errorf("contentHeight=%d, want %d (height - header - footer)", s.contentH, realContent)
+	}
+	if s.contentH >= m.height-s.headerH-2 {
+		t.Errorf("contentHeight=%d ignored the wrapped footer of %d rows", s.contentH, s.footerH)
 	}
 }
 
@@ -491,11 +494,11 @@ func TestPanelsRenderContextTitles(t *testing.T) {
 	m.selectedPkg = "app"
 	m.buildOptionItems()
 
-	tree := stripAnsi(m.renderTree())
+	tree := stripAnsi(m.layout().treeContent)
 	if !strings.HasPrefix(tree, "Packages\n") {
 		t.Fatalf("tree should start with a Packages title, got %q", tree)
 	}
-	options := stripAnsi(m.renderOptions())
+	options := stripAnsi(m.layout().optionContent)
 	if !strings.HasPrefix(options, "Options · app\n") {
 		t.Fatalf("options should identify selected package, got %q", options)
 	}

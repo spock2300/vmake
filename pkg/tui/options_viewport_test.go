@@ -31,17 +31,17 @@ func TestOptionsSingleRowViewportKeepsSelectedRowVisible(t *testing.T) {
 			m := viewportModel()
 			m.language = lang
 			m.width = 60
-			m.height = m.headerHeight() + m.footerHeight() + 2
+			m.height = m.layout().headerH + m.layout().footerH + 2
 			m.ed().KConfigs = map[string][]*api.KConfigEntry{
 				"app": {(&api.KConfigEntry{}).AddPreset("default_config").SelectPreset("default_config")},
 			}
-			if rows := m.optItemRows(); rows != 1 {
+			if rows := len(m.layout().optionRows); rows != 1 {
 				t.Fatalf("option row budget = %d, want 1", rows)
 			}
 			wantRows := []string{"first", "second", "default_config", "menuconfig"}
 			check := func(cursor int) {
 				t.Helper()
-				view := stripAnsi(m.renderOptions())
+				view := stripAnsi(m.layout().optionContent)
 				lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
 				if len(lines) != 2 || !strings.Contains(lines[1], wantRows[cursor]) {
 					t.Fatalf("cursor %d should show only its selected row below the title:\n%s", cursor, view)
