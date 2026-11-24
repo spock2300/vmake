@@ -139,3 +139,17 @@ Detailed references: `docs/GOALS.md` for the long-term goal, acceptance definiti
 **Surgical changes.** Touch only what the task requires. Match existing style. Remove imports/variables made unused by your changes — don't touch pre-existing dead code.
 
 **Goal-driven execution.** Convert tasks into verifiable outcomes: "Add validation" → "write tests, then make them pass". For multi-step tasks, state a plan with verify checks.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs are tracked as local markdown files under `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Uses the five default canonical triage labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout (`GLOSSARY.md` and `docs/adr/` at the repo root). See `docs/agents/domain.md`.
