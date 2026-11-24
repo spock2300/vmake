@@ -74,8 +74,13 @@ func BuildUnifiedGraph(ctx *RuntimeContext, inspection *Inspection, opts GraphOp
 			}
 			scriptfs.TakeBlockedWrites()
 			buildCtx, declErr := DeclareTargets(ctx, name, dirs, inspection.packageToolchains[name], inspection.GlobalValues)
-			if blocked := scriptfs.TakeBlockedWrites(); len(blocked) > 0 && declErr == nil {
-				declErr = fmt.Errorf("%s", blocked[0])
+			if blocked := scriptfs.TakeBlockedWrites(); len(blocked) > 0 {
+				if opts.OnBlockedWrite != nil {
+					opts.OnBlockedWrite(name, blocked)
+				}
+				if declErr == nil {
+					declErr = fmt.Errorf("%s", blocked[0])
+				}
 			}
 			if declErr != nil {
 				g.Issues = append(g.Issues, GraphIssue{

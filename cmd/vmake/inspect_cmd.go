@@ -339,14 +339,16 @@ func inspectOverrideValues(overrides []inspectOverride) map[string]any {
 	return values
 }
 
-// attachInspectionGraph builds the unified graph and records it on the model.
-// Commands that render model facts call it directly; inspect additionally
-// encodes the model through encodeInspect.
 func attachInspectionGraph(ctx *RuntimeContext, inspection *pipeline.Inspection, includeTargets bool) {
-	graph, graphErr := pipeline.BuildUnifiedGraph(ctx, inspection, pipeline.GraphOptions{
+	attachInspectionGraphOptions(ctx, inspection, pipeline.GraphOptions{
 		IncludeAll:     true,
 		DeclareTargets: includeTargets,
-	})
+	}, nil)
+}
+
+func attachInspectionGraphOptions(ctx *RuntimeContext, inspection *pipeline.Inspection, opts pipeline.GraphOptions, onBlockedWrite func(pkg string, messages []string)) {
+	opts.OnBlockedWrite = onBlockedWrite
+	graph, graphErr := pipeline.BuildUnifiedGraph(ctx, inspection, opts)
 	inspection.AttachGraph(ctx, graph, graphErr)
 }
 

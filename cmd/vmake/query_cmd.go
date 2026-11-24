@@ -334,7 +334,7 @@ func printInspectionDiagnostics(inspection *pipeline.Inspection) {
 	}
 	for _, diagnostic := range inspection.Diagnostics() {
 		message := diagnostic.Message
-		if diagnostic.Code == "VMAKE_W_TARGET_DECLARE" && strings.Contains(message, "read-only inspection:") {
+		if diagnostic.IsBlockedWrite() {
 			message += " (guard generated-file work with p.DryRun())"
 		}
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", message)

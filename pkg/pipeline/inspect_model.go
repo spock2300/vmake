@@ -24,6 +24,14 @@ type Diagnostic struct {
 	Package  string
 }
 
+func blockedWriteMessage(message string) bool {
+	return strings.Contains(message, "read-only inspection:")
+}
+
+func (d Diagnostic) IsBlockedWrite() bool {
+	return d.Code == "VMAKE_W_TARGET_DECLARE" && blockedWriteMessage(d.Message)
+}
+
 // PackageFacts is the per-package identity and source state of the model.
 type PackageFacts struct {
 	Kind          string
@@ -233,7 +241,7 @@ func installPathOf(placement build.ArtifactPlacement) string {
 func graphDiagnostic(issue GraphIssue) Diagnostic {
 	message := issue.Message
 	fix := "Fix the package OnBuild callback, then rerun vmake inspect."
-	if strings.Contains(message, "read-only inspection:") {
+	if blockedWriteMessage(message) {
 		message = strings.ReplaceAll(message, "panic: ", "")
 		fix = readOnlyTargetsFix
 	}

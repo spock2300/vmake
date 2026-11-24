@@ -63,6 +63,7 @@ func Main(p *api.Package) {
     p.SetRoot(true)
     p.OnBuild(func(ctx *api.BuildContext) {
         _ = os.WriteFile("blocked.txt", []byte("x"), 0644)
+        _ = os.WriteFile("blocked2.txt", []byte("y"), 0644)
     })
 }
 `)
@@ -72,5 +73,13 @@ func Main(p *api.Package) {
 	}
 	if !strings.Contains(out, "blocked-write") || !strings.Contains(out, "read-only inspection") {
 		t.Fatalf("blocked write missing from report: %v\n%s", err, out)
+	}
+	for _, name := range []string{"blocked.txt", "blocked2.txt"} {
+		if !strings.Contains(out, name) {
+			t.Fatalf("blocked write %s missing from report: %v\n%s", name, err, out)
+		}
+	}
+	if strings.Contains(out, "cannot declare targets for") {
+		t.Fatalf("blocked writes should be reported raw, not as a declare diagnostic: %v\n%s", err, out)
 	}
 }

@@ -88,10 +88,14 @@ func runCheckSymbols(execution context.Context, strict bool) {
 	}
 	defer session.Close()
 	insp := session.inspection
-	attachInspectionGraph(session.ctx, insp, true)
+	var declaredBlocked []string
+	attachInspectionGraphOptions(session.ctx, insp, pipeline.GraphOptions{DeclareTargets: true}, func(_ string, messages []string) {
+		declaredBlocked = append(declaredBlocked, messages...)
+	})
 
 	artifacts := discoverArtifacts(insp)
-	blockedWrites := append(append([]string{}, session.blocked...), scriptfs.TakeBlockedWrites()...)
+	blockedWrites := append(append([]string{}, session.blocked...), declaredBlocked...)
+	blockedWrites = append(blockedWrites, scriptfs.TakeBlockedWrites()...)
 	var findings []finding
 	for _, message := range blockedWrites {
 		findings = append(findings, finding{
@@ -102,18 +106,10 @@ func runCheckSymbols(execution context.Context, strict bool) {
 		})
 	}
 	for _, diagnostic := range insp.Diagnostics() {
-		if diagnostic.Code != "VMAKE_W_TARGET_DECLARE" {
+		if diagnostic.Code != "VMAKE_W_TARGET_DECLARE" || diagnostic.IsBlockedWrite() {
 			continue
 		}
-		if !strings.Contains(diagnostic.Message, "read-only inspection:") {
-			fatalErr(errors.New(diagnostic.Message))
-		}
-		findings = append(findings, finding{
-			category: "blocked-write",
-			severity: "error",
-			subject:  "project",
-			detail:   diagnostic.Message,
-		})
+		fatalErr(errors.New(diagnostic.Message))
 	}
 	if len(artifacts) == 0 {
 		if len(findings) == 0 {

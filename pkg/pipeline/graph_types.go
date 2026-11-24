@@ -147,4 +147,5 @@ func ResolvePackageRef(ctx *RuntimeContext, needed NeededSet, fromPkg, ref strin
 type GraphOptions struct {
 	IncludeAll     bool
 	DeclareTargets bool
+	OnBlockedWrite func(pkg string, messages []string)
 }
