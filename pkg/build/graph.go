@@ -1,6 +1,7 @@
 package build
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -65,6 +66,53 @@ type BuildGraph struct {
 	TargetDeps   map[string][]string
 	TargetEdges  []TargetEdge
 	Issues       []GraphIssue
+}
+
+// visibilityPathFor is the internal-visibility path recorded for a package.
+func visibilityPathFor(pkgMeta map[string]PkgBuildMeta, pkg string) string {
+	if m, ok := pkgMeta[pkg]; ok && m.VisPath != "" {
+		return m.VisPath
+	}
+	return pkgvis.VisibilityPath(!strings.Contains(pkg, "/"), pkg, "", "")
+}
+
+// declaredTargetDeps expands a target's declared dependencies, including the
+// UseRequires shorthand for every package requirement.
+func declaredTargetDeps(target *api.Target, meta PkgBuildMeta) []string {
+	deps := target.Deps()
+	if !target.UsesRequires() || len(meta.Deps) == 0 {
+		return deps
+	}
+	reqDeps := make([]string, 0, len(meta.Deps)+len(deps))
+	for _, depPkg := range meta.Deps {
+		reqDeps = append(reqDeps, depPkg+":*")
+	}
+	return append(reqDeps, deps...)
+}
+
+// checkInternalVisibility rejects an edge that crosses an internal/ package
+// boundary.
+func checkInternalVisibility(pkgMeta map[string]PkgBuildMeta, fromPkg, toPkg string) error {
+	if fromPkg == "" || toPkg == "" || fromPkg == toPkg {
+		return nil
+	}
+	return pkgvis.CheckInternal(fromPkg, visibilityPathFor(pkgMeta, fromPkg), toPkg, visibilityPathFor(pkgMeta, toPkg))
+}
+
+// packageCycleError formats a package cycle with the first recorded reason per
+// hop.
+func packageCycleError(cycle []string, reasons map[[2]string][]string) error {
+	msg := fmt.Sprintf("package circular dependency detected: %s", strings.Join(cycle, " -> "))
+	details := make([]string, 0, len(cycle))
+	for i := 0; i+1 < len(cycle); i++ {
+		if rs := reasons[[2]string{cycle[i], cycle[i+1]}]; len(rs) > 0 {
+			details = append(details, rs[0])
+		}
+	}
+	if len(details) > 0 {
+		msg = fmt.Sprintf("%s (%s)", msg, strings.Join(details, ", "))
+	}
+	return errors.New(msg)
 }
 
 func (g *BuildGraph) GetNode(name string) (*BuildNode, error) {
@@ -147,16 +195,7 @@ func NewBuildGraph(
 			fullName := fmt.Sprintf("%s:%s", pkgName, targetName)
 			node := graph.Nodes[fullName]
 
-			deps := target.Deps()
-			if target.UsesRequires() {
-				if meta, ok := pkgMeta[pkgName]; ok && len(meta.Deps) > 0 {
-					reqDeps := make([]string, 0, len(meta.Deps)+len(deps))
-					for _, depPkg := range meta.Deps {
-						reqDeps = append(reqDeps, depPkg+":*")
-					}
-					deps = append(reqDeps, deps...)
-				}
-			}
+			deps := declaredTargetDeps(target, pkgMeta[pkgName])
 			resolved, direct, err := resolver.resolveTargetDeps(deps, pkgName, nil)
 			if err != nil {
 				return nil, err
@@ -282,13 +321,6 @@ func AuditBuildGraph(
 		}
 	}
 
-	visPathOf := func(pkg string) string {
-		if m, ok := pkgMeta[pkg]; ok && m.VisPath != "" {
-			return m.VisPath
-		}
-		return pkgvis.VisibilityPath(!strings.Contains(pkg, "/"), pkg, "", "")
-	}
-
 	seenVis := make(map[[2]string]bool)
 	checkInternalVis := func(fromPkg, toPkg, targetFull string) {
 		if fromPkg == "" || toPkg == "" || fromPkg == toPkg {
@@ -298,7 +330,7 @@ func AuditBuildGraph(
 		if seenVis[pair] {
 			return
 		}
-		if err := pkgvis.CheckInternal(fromPkg, visPathOf(fromPkg), toPkg, visPathOf(toPkg)); err != nil {
+		if err := checkInternalVisibility(pkgMeta, fromPkg, toPkg); err != nil {
 			seenVis[pair] = true
 			g.Issues = append(g.Issues, GraphIssue{
 				Severity: "error",
@@ -430,14 +462,7 @@ func AuditBuildGraph(
 			target := tMap[tName]
 			fullName := pkgName + ":" + tName
 			node := g.Nodes[fullName]
-			rawDeps := append([]string(nil), target.Deps()...)
-			if target.UsesRequires() {
-				reqDeps := make([]string, 0, len(pkgMeta[pkgName].Deps)+len(rawDeps))
-				for _, depPkg := range pkgMeta[pkgName].Deps {
-					reqDeps = append(reqDeps, depPkg+":*")
-				}
-				rawDeps = append(reqDeps, rawDeps...)
-			}
+			rawDeps := append([]string(nil), declaredTargetDeps(target, pkgMeta[pkgName])...)
 			node.DeclaredDepPkgs = resolver.resolveDeclaredPkgs(rawDeps, pkgName)
 
 			for _, dep := range rawDeps {
@@ -588,21 +613,15 @@ func AuditBuildGraph(
 	if _, err := toposort.TopologicalSort(g.PackageDeps, identity); err != nil {
 		cycle := toposort.FindCycle(g.PackageDeps, identity)
 		if len(cycle) > 0 {
-			var details []string
-			for i := 0; i+1 < len(cycle); i++ {
-				if acc := pkgEdgeMap[[2]string{cycle[i], cycle[i+1]}]; acc != nil && len(acc.via) > 0 {
-					details = append(details, acc.via[0])
-				}
-			}
-			msg := fmt.Sprintf("package circular dependency detected: %s", strings.Join(cycle, " -> "))
-			if len(details) > 0 {
-				msg = fmt.Sprintf("%s (%s)", msg, strings.Join(details, ", "))
+			reasons := make(map[[2]string][]string, len(pkgEdgeMap))
+			for key, acc := range pkgEdgeMap {
+				reasons[key] = acc.via
 			}
 			g.Issues = append(g.Issues, GraphIssue{
 				Severity: "error",
 				Kind:     "package-cycle",
 				Package:  cycle[0],
-				Message:  msg,
+				Message:  packageCycleError(cycle, reasons).Error(),
 			})
 		}
 	}
@@ -650,18 +669,11 @@ func validatePackageGraph(
 		ensurePkg(p)
 	}
 
-	visPath := func(pkg string) string {
-		if m, ok := pkgMeta[pkg]; ok && m.VisPath != "" {
-			return m.VisPath
-		}
-		return pkgvis.VisibilityPath(!strings.Contains(pkg, "/"), pkg, "", "")
-	}
-
 	addEdge := func(fromPkg, toPkg, reason string) error {
 		if fromPkg == "" || toPkg == "" || fromPkg == toPkg {
 			return nil
 		}
-		if err := pkgvis.CheckInternal(fromPkg, visPath(fromPkg), toPkg, visPath(toPkg)); err != nil {
+		if err := checkInternalVisibility(pkgMeta, fromPkg, toPkg); err != nil {
 			return err
 		}
 		ensurePkg(fromPkg)
@@ -728,17 +740,7 @@ func validatePackageGraph(
 		if len(cycle) == 0 {
 			return err
 		}
-		var details []string
-		for i := 0; i+1 < len(cycle); i++ {
-			reasons := edgeReasons[[2]string{cycle[i], cycle[i+1]}]
-			if len(reasons) > 0 {
-				details = append(details, reasons[0])
-			}
-		}
-		if len(details) > 0 {
-			return fmt.Errorf("package circular dependency detected: %s (%s)", strings.Join(cycle, " -> "), strings.Join(details, ", "))
-		}
-		return fmt.Errorf("package circular dependency detected: %s", strings.Join(cycle, " -> "))
+		return packageCycleError(cycle, edgeReasons)
 	}
 	return nil
 }
