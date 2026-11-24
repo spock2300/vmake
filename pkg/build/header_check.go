@@ -626,6 +626,30 @@ func isParentRelative(raw string) bool {
 	return slash == ".." || strings.HasPrefix(slash, "../")
 }
 
+// headerInclusionError is the single rule for a cross-package header a target
+// includes without permission.
+func headerInclusionError(resolved *ResolvedTarget, src, displayH, owner string) error {
+	if !resolved.DeclaredDepPkgs[owner] {
+		return fmt.Errorf(
+			"undeclared header dependency: target %s (%s) includes %q owned by package %q, which is not a declared dependency (add AddDeps(%q))",
+			resolved.Node.FullName, src, displayH, owner, owner,
+		)
+	}
+	return fmt.Errorf(
+		"private header inclusion: target %s (%s) includes private header %q of package %q (not exposed via AddPublicIncludes)",
+		resolved.Node.FullName, src, displayH, owner,
+	)
+}
+
+// transitiveInclusionError is the single rule for a header that is reachable
+// only through a transitive dependency.
+func transitiveInclusionError(resolved *ResolvedTarget, src, spec, owner string) error {
+	return fmt.Errorf(
+		"transitive header inclusion: target %s (%s) directly includes %q of package %q, which is only transitively reachable (add direct AddDeps(%q))",
+		resolved.Node.FullName, src, spec, owner, owner,
+	)
+}
+
 func (a *headerAuditor) checkTargetDeclaredPaths(resolved *ResolvedTarget, sourceDir, buildDir string) error {
 	if resolved == nil || resolved.Node == nil || resolved.Node.Target == nil || sourceDir == "" {
 		return nil
@@ -941,16 +965,7 @@ func (a *headerAuditor) checkHeaderBoundaries(resolved *ResolvedTarget, src stri
 		}
 
 		displayH := a.displayHeaderPath(absH, dep)
-		if !resolved.DeclaredDepPkgs[owner] {
-			return fmt.Errorf(
-				"undeclared header dependency: target %s (%s) includes %q owned by package %q, which is not a declared dependency (add AddDeps(%q))",
-				resolved.Node.FullName, src, displayH, owner, owner,
-			)
-		}
-		return fmt.Errorf(
-			"private header inclusion: target %s (%s) includes private header %q of package %q (not exposed via AddPublicIncludes)",
-			resolved.Node.FullName, src, displayH, owner,
-		)
+		return headerInclusionError(resolved, src, displayH, owner)
 	}
 
 	if !a.isFirstPartyPkg(resolved.Node.PkgName) || a.isUpstreamGitSource(resolved.Node.PkgName, absSrc) {
@@ -1001,10 +1016,7 @@ func (a *headerAuditor) checkHeaderBoundaries(resolved *ResolvedTarget, src stri
 			}
 		}
 		if !allowedDirect && firstCrossOwner != "" {
-			return fmt.Errorf(
-				"transitive header inclusion: target %s (%s) directly includes %q of package %q, which is only transitively reachable (add direct AddDeps(%q))",
-				resolved.Node.FullName, src, inc.spec, firstCrossOwner, firstCrossOwner,
-			)
+			return transitiveInclusionError(resolved, src, inc.spec, firstCrossOwner)
 		}
 	}
 
@@ -1076,23 +1088,10 @@ func (a *headerAuditor) checkStaticSourceIncludes(resolved *ResolvedTarget, src,
 					real = a.canonCache.canonPath(real)
 				}
 				if !resolved.allowsHeader(relCand) && (real == "" || !resolved.allowsHeader(real)) {
-					displayH := a.displayHeaderPath(relCand, inc.spec)
-					if !resolved.DeclaredDepPkgs[owner] {
-						return fmt.Errorf(
-							"undeclared header dependency: target %s (%s) includes %q owned by package %q, which is not a declared dependency (add AddDeps(%q))",
-							node.FullName, src, displayH, owner, owner,
-						)
-					}
-					return fmt.Errorf(
-						"private header inclusion: target %s (%s) includes private header %q of package %q (not exposed via AddPublicIncludes)",
-						node.FullName, src, displayH, owner,
-					)
+					return headerInclusionError(resolved, src, a.displayHeaderPath(relCand, inc.spec), owner)
 				}
 				if !resolved.allowsDirectHeader(relCand) && (real == "" || !resolved.allowsDirectHeader(real)) {
-					return fmt.Errorf(
-						"transitive header inclusion: target %s (%s) directly includes %q of package %q, which is only transitively reachable (add direct AddDeps(%q))",
-						node.FullName, src, inc.spec, owner, owner,
-					)
+					return transitiveInclusionError(resolved, src, inc.spec, owner)
 				}
 				continue
 			}
@@ -1113,10 +1112,7 @@ func (a *headerAuditor) checkStaticSourceIncludes(resolved *ResolvedTarget, src,
 		}
 		if transHit := matchAllowedSpec(resolved.AllowedPublicIncludes, inc.spec); transHit != "" {
 			if owner := a.crossPkgOwner(owners, node.PkgName, transHit); owner != "" {
-				return fmt.Errorf(
-					"transitive header inclusion: target %s (%s) directly includes %q of package %q, which is only transitively reachable (add direct AddDeps(%q))",
-					node.FullName, src, inc.spec, owner, owner,
-				)
+				return transitiveInclusionError(resolved, src, inc.spec, owner)
 			}
 		}
 	}
