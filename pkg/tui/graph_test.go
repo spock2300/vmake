@@ -139,7 +139,7 @@ func TestGraph_UniqueNodesAndTopologicalOrder(t *testing.T) {
 func TestWorkbench_ThreeZonesTraversalAndLivePreview(t *testing.T) {
 	base := buildHLDemoCleanTestModel()
 
-	evalPreview := func(cfg *config.ConfigFile) (PreviewState, bool) {
+	evalPreview := func(cfg *config.ConfigFile) (config.Preview, bool) {
 		usbOn := false
 		if cfg != nil && cfg.Entries != nil {
 			if fw, ok := cfg.Entries["firmware"]; ok {
@@ -182,7 +182,7 @@ func TestWorkbench_ThreeZonesTraversalAndLivePreview(t *testing.T) {
 		owners := map[string]map[string]string{
 			"board-py32f539-evb": {"graphics": "firmware"},
 		}
-		return PreviewState{
+		return config.Preview{
 			Roots:          []string{"firmware", "hl-demo-clean"},
 			ActivePackages: active,
 			ActiveDeps:     activeDeps,
@@ -193,17 +193,19 @@ func TestWorkbench_ThreeZonesTraversalAndLivePreview(t *testing.T) {
 
 	initPrev, _ := evalPreview(nil)
 	m := NewModel(Input{
-		Packages:         mkSources("hl-demo-clean", "firmware", "target-app", "board", "board-py32f539-evb", "lvgl-demos", "common"),
-		Deps:             base.deps,
-		Options:          base.ed().Options,
-		Values:           map[string]map[string]any{"lvgl-demos": {"opt": false}},
-		FocusActive:      true,
-		InitialPreview:   initPrev,
-		Preview:          evalPreview,
-		WorkDir:          "/home/spock/git/hl-demo-clean",
-		CurrentToolchain: "arm-none-eabi",
-		GlobalOptions:    base.ed().GlobalOptions,
-		GlobalValues:     map[string]any{},
+		WorkDir: "/home/spock/git/hl-demo-clean",
+		Workbench: &config.Workbench{
+			Packages:         mkSources("hl-demo-clean", "firmware", "target-app", "board", "board-py32f539-evb", "lvgl-demos", "common"),
+			Deps:             base.deps,
+			Options:          base.ed().Options,
+			Values:           map[string]map[string]any{"lvgl-demos": {"opt": false}},
+			FocusActive:      true,
+			InitialPreview:   initPrev,
+			Preview:          evalPreview,
+			CurrentToolchain: "arm-none-eabi",
+			GlobalOptions:    base.ed().GlobalOptions,
+			GlobalValues:     map[string]any{},
+		},
 	})
 	m.language = languageChinese
 	m.width = 116

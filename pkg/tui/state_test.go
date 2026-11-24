@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/config"
 )
 
 func TestResolveInitialStateDerivesChipToolchainAndDefaults(t *testing.T) {
@@ -12,7 +13,7 @@ func TestResolveInitialStateDerivesChipToolchainAndDefaults(t *testing.T) {
 		api.ChipOptionName:      mkOpt(api.ChipOptionName, api.OptionChoice, "chip-a").SetValues("chip-a"),
 		api.ToolchainOptionName: mkOpt(api.ToolchainOptionName, api.OptionChoice, "tc-a").SetValues("tc-a"),
 	}
-	state := resolveInitialState(Input{
+	state := resolveInitialState(&config.Workbench{
 		Options:       map[string]map[string]*api.Option{"app": options},
 		GlobalOptions: options,
 		GlobalValues:  map[string]any{},
@@ -46,7 +47,7 @@ func TestResolveInitialStatePreservesExplicitToolchainAndInputMaps(t *testing.T)
 	}
 	globalValues := map[string]any{api.ToolchainOptionName: "explicit"}
 	values := map[string]map[string]any{"app": {api.ToolchainOptionName: "stale"}}
-	state := resolveInitialState(Input{
+	state := resolveInitialState(&config.Workbench{
 		Options:       packageOptions,
 		GlobalOptions: globalOptions,
 		GlobalValues:  globalValues,

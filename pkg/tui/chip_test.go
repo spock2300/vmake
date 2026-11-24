@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/config"
 )
 
 func chipTestModel() Model {
@@ -24,14 +25,14 @@ func chipTestModelWithValues(globalValues map[string]any) Model {
 	if globalValues == nil {
 		globalValues = map[string]any{}
 	}
-	m := NewModel(Input{
+	m := NewModel(Input{Workbench: &config.Workbench{
 		Packages:         mkSources("app"),
 		Values:           map[string]map[string]any{},
 		CurrentToolchain: "tc-a",
 		GlobalOptions:    globalOptions,
 		GlobalValues:     globalValues,
 		ChipProfiles:     profiles,
-	})
+	}})
 	m.selectedPkg = GlobalPkgName
 	return m
 }

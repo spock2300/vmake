@@ -3,6 +3,7 @@ package tui
 import (
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/config"
 )
 
 func testModel(
@@ -17,14 +18,16 @@ func testModel(
 	kconfigs map[string][]*api.KConfigEntry,
 ) Model {
 	return NewModel(Input{
-		Packages:         packages,
-		Deps:             deps,
-		Options:          options,
-		Values:           values,
-		WorkDir:          workDir,
-		CurrentToolchain: currentToolchain,
-		GlobalOptions:    globalOptions,
-		GlobalValues:     globalValues,
-		KConfigs:         kconfigs,
+		WorkDir: workDir,
+		Workbench: &config.Workbench{
+			Packages:         packages,
+			Deps:             deps,
+			Options:          options,
+			Values:           values,
+			CurrentToolchain: currentToolchain,
+			GlobalOptions:    globalOptions,
+			GlobalValues:     globalValues,
+			KConfigs:         kconfigs,
+		},
 	})
 }

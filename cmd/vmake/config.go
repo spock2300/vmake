@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spock2300/vmake/pkg/api"
-	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
@@ -46,83 +45,15 @@ func runConfig(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	allOpts := ctx.AllOptions()
-	hasOptions := len(allOpts) > 0
-	if !hasOptions && len(ctx.GlobalOptions()) == 0 {
+	workbench := pipeline.NewConfigWorkbench(ctx)
+	if workbench == nil || (len(workbench.Options) == 0 && len(workbench.GlobalOptions) == 0) {
 		vlog.Info("No configuration options found")
 		return
 	}
-
-	values := make(map[string]map[string]any)
-	for pkgName := range allOpts {
-		entry := config.GetEntry(ctx.Config, pkgName)
-		values[pkgName] = entry.Options
-	}
-
-	globalValues := config.BuildGlobalValues(ctx.Config)
-	currentTC := pipeline.ResolveToolchainName(ctx.Config, "", ctx.PreferredToolchain)
-
-	var sources []buildscript.Source
-	for _, name := range ctx.Resolver.GetOrder() {
-		node := ctx.DepGraph.Packages[name]
-		if node.IsLocal() && node.Source != nil {
-			sources = append(sources, buildscript.Source{
-				Name:   node.Source.Name,
-				Path:   node.Source.Path,
-				Dir:    node.Source.Dir,
-				Origin: node.Source.Origin,
-				Script: node.Source.Script,
-			})
-		}
-	}
-
-	deps := make(map[string][]string)
-	for _, name := range ctx.Resolver.GetOrder() {
-		node := ctx.DepGraph.Packages[name]
-		deps[name] = node.Deps
-	}
-
-	previewer := pipeline.NewConfigPreviewer(ctx)
+	workDir := ctx.WorkDir
 	closeProject(ctx)
 
-	var (
-		focusActive bool
-		initPreview tui.PreviewState
-		tuiPreview  func(*config.ConfigFile) (tui.PreviewState, bool)
-	)
-	if previewer != nil {
-		if initPrev, ok := previewer(ctx.Config); ok {
-			focusActive = true
-			initPreview = toTUIPreview(initPrev)
-		}
-		tuiPreview = func(draft *config.ConfigFile) (tui.PreviewState, bool) {
-			p, ok := previewer(draft)
-			if !ok {
-				return tui.PreviewState{}, false
-			}
-			return toTUIPreview(p), true
-		}
-	}
-
-	result, err := tui.Run(tui.Input{
-		Packages:         sources,
-		Deps:             deps,
-		Options:          allOpts,
-		Values:           values,
-		DerivedOptions:   ctx.DerivedOptions(),
-		FocusActive:      focusActive,
-		InitialPreview:   initPreview,
-		BaseConfig:       ctx.Config.Clone(),
-		Preview:          tuiPreview,
-		WorkDir:          ctx.WorkDir,
-		CurrentToolchain: currentTC,
-		GlobalOptions:    ctx.GlobalOptions(),
-		GlobalValues:     globalValues,
-		ChipProfiles:     ctx.ChipProfiles(),
-		KConfigs:         ctx.KConfigs(),
-		Description:      ctx.Config.Description,
-		DisplayDefaults:  pipeline.ToolchainTargetDefaults,
-	})
+	result, err := tui.Run(tui.Input{Workbench: workbench, WorkDir: workDir})
 	fatalErr(err)
 
 	if !result.Saved {
@@ -132,16 +63,6 @@ func runConfig(cmd *cobra.Command, args []string) {
 
 	fatalErr(saveConfigResult(ctx, result))
 	vlog.Info("Configuration saved to %s", ctx.ConfigPath)
-}
-
-func toTUIPreview(p pipeline.ConfigPreview) tui.PreviewState {
-	return tui.PreviewState{
-		Roots:          p.Roots,
-		ActivePackages: p.ActivePackages,
-		ActiveDeps:     p.ActiveDeps,
-		DerivedOptions: p.DerivedOptions,
-		DerivedOwners:  p.DerivedOwners,
-	}
 }
 
 func saveConfigResult(ctx *RuntimeContext, result *tui.ConfigResult) error {

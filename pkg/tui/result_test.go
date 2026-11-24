@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/config"
 )
 
 func TestNewModelDescriptionAndDisplayDefaults(t *testing.T) {
@@ -11,14 +12,16 @@ func TestNewModelDescriptionAndDisplayDefaults(t *testing.T) {
 	globals := map[string]any{api.ToolchainOptionName: "host"}
 	called := ""
 	m := NewModel(Input{
-		Packages:     mkSources("app"),
-		Values:       values,
-		GlobalValues: globals,
-		WorkDir:      "/w",
-		Description:  "desc",
-		DisplayDefaults: func(name string) map[string]any {
-			called = name
-			return map[string]any{"x": "y"}
+		WorkDir: "/w",
+		Workbench: &config.Workbench{
+			Packages:     mkSources("app"),
+			Values:       values,
+			GlobalValues: globals,
+			Description:  "desc",
+			DisplayDefaults: func(name string) map[string]any {
+				called = name
+				return map[string]any{"x": "y"}
+			},
 		},
 	})
 	if m.ed().Desc != "desc" || m.ed().OrigDesc != "desc" {
@@ -75,14 +78,16 @@ func TestModelResultSparseExplicitAndDerivedDefaults(t *testing.T) {
 		"mode": mkOpt("mode", api.OptionChoice, "release").SetValues("debug", "release"),
 	}
 	m := NewModel(Input{
-		Packages:       mkSources("app", "board"),
-		Deps:           map[string][]string{"app": {"board"}},
-		Options:        opts,
-		Values:         map[string]map[string]any{"app": {"demo": "music"}},
-		DerivedOptions: map[string]map[string]any{"board": {"graphics": true}},
-		GlobalOptions:  globalOpts,
-		GlobalValues:   map[string]any{},
-		WorkDir:        "/w",
+		WorkDir: "/w",
+		Workbench: &config.Workbench{
+			Packages:       mkSources("app", "board"),
+			Deps:           map[string][]string{"app": {"board"}},
+			Options:        opts,
+			Values:         map[string]map[string]any{"app": {"demo": "music"}},
+			DerivedOptions: map[string]map[string]any{"board": {"graphics": true}},
+			GlobalOptions:  globalOpts,
+			GlobalValues:   map[string]any{},
+		},
 	})
 
 	m.selectedPkg = "board"

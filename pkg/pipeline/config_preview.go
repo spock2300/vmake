@@ -11,14 +11,6 @@ import (
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
-type ConfigPreview struct {
-	Roots          []string
-	ActivePackages map[string]bool
-	ActiveDeps     map[string][]string
-	DerivedOptions map[string]map[string]any
-	DerivedOwners  map[string]map[string]string
-}
-
 func EnterQuietReadOnlyScope(quiet, execQuiet bool) func() {
 	scriptfs.SetReadOnly(true)
 	previousLevel := vlog.GetLevel()
@@ -36,7 +28,7 @@ func EnterQuietReadOnlyScope(quiet, execQuiet bool) func() {
 	}
 }
 
-func NewConfigPreviewer(ctx *RuntimeContext) func(*config.ConfigFile) (ConfigPreview, bool) {
+func NewConfigPreviewer(ctx *RuntimeContext) func(*config.ConfigFile) (config.Preview, bool) {
 	if ctx == nil || ctx.DepGraph == nil || ctx.Resolver == nil {
 		return nil
 	}
@@ -57,7 +49,7 @@ func NewConfigPreviewer(ctx *RuntimeContext) func(*config.ConfigFile) (ConfigPre
 		_ = base.Resolver.UpdateOrder()
 	}
 
-	return func(draft *config.ConfigFile) (_ ConfigPreview, ok bool) {
+	return func(draft *config.ConfigFile) (_ config.Preview, ok bool) {
 		var recErr error
 		defer func() {
 			restoreEager()
@@ -86,11 +78,11 @@ func NewConfigPreviewer(ctx *RuntimeContext) func(*config.ConfigFile) (ConfigPre
 		rootOverride := configRootOverride(&work)
 		owners, err := convergeFilterAndDerivedOptionsWithOwners(&work, rootOverride, false)
 		if err != nil {
-			return ConfigPreview{}, false
+			return config.Preview{}, false
 		}
 		needed, err := computeNeededGraph(work.DepGraph, rootOverride)
 		if err != nil {
-			return ConfigPreview{}, false
+			return config.Preview{}, false
 		}
 
 		activeDeps := make(map[string][]string, len(work.DepGraph.Packages))
@@ -108,7 +100,7 @@ func NewConfigPreviewer(ctx *RuntimeContext) func(*config.ConfigFile) (ConfigPre
 			derivedOwners[pkg] = maps.Clone(m)
 		}
 
-		return ConfigPreview{
+		return config.Preview{
 			Roots:          slices.Clone(needed.Roots),
 			ActivePackages: needed.Set.Clone(),
 			ActiveDeps:     activeDeps,

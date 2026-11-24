@@ -36,14 +36,6 @@ const (
 	InactiveGroupPkgName = "__inactive__"
 )
 
-type PreviewState struct {
-	Roots          []string
-	ActivePackages map[string]bool
-	ActiveDeps     map[string][]string
-	DerivedOptions map[string]map[string]any
-	DerivedOwners  map[string]map[string]string
-}
-
 type Model struct {
 	editor *config.Editor
 	tree   []*TreeNode
@@ -93,10 +85,10 @@ type Model struct {
 	filterInput  string
 
 	deps           map[string][]string
-	preview        PreviewState
+	preview        config.Preview
 	focusActive    bool
 	baseConfig     *config.ConfigFile
-	previewFn      func(cfg *config.ConfigFile) (PreviewState, bool)
+	previewFn      func(cfg *config.ConfigFile) (config.Preview, bool)
 	localPkgOrder  []string
 	localPkgSet    map[string]bool
 	navHistory     []string
@@ -115,31 +107,17 @@ const (
 )
 
 type Input struct {
-	Packages         []buildscript.Source
-	Deps             map[string][]string
-	Options          map[string]map[string]*api.Option
-	Values           map[string]map[string]any
-	DerivedOptions   map[string]map[string]any
-	FocusActive      bool
-	InitialPreview   PreviewState
-	BaseConfig       *config.ConfigFile
-	Preview          func(cfg *config.ConfigFile) (PreviewState, bool)
-	WorkDir          string
-	CurrentToolchain string
-	GlobalOptions    map[string]*api.Option
-	GlobalValues     map[string]any
-	ChipProfiles     map[string]api.ChipProfile
-	KConfigs         map[string][]*api.KConfigEntry
-	Description      string
-	DisplayDefaults  func(toolchain string) map[string]any
+	Workbench *config.Workbench
+	WorkDir   string
 }
 
 func NewModel(in Input) Model {
-	if in.InitialPreview.DerivedOptions != nil {
-		in.DerivedOptions = in.InitialPreview.DerivedOptions
+	wb := in.Workbench
+	if wb == nil {
+		return Model{}
 	}
-	ed := resolveInitialState(in)
-	localOrder, localSet := extractLocalPackages(in.Packages)
+	ed := resolveInitialState(wb)
+	localOrder, localSet := extractLocalPackages(wb.Packages)
 	m := Model{
 		editor:        ed,
 		treeCursor:    0,
@@ -147,19 +125,19 @@ func NewModel(in Input) Model {
 		focusArea:     0,
 		workDir:       in.WorkDir,
 		language:      systemLanguage(),
-		optCounts:     computeOptCounts(in.Options, in.GlobalOptions),
-		deps:          normalizeGraphDeps(in.Packages, in.Deps),
-		preview:       in.InitialPreview,
-		focusActive:   in.FocusActive,
-		baseConfig:    in.BaseConfig,
-		previewFn:     in.Preview,
+		optCounts:     computeOptCounts(wb.Options, wb.GlobalOptions),
+		deps:          normalizeGraphDeps(wb.Packages, wb.Deps),
+		preview:       wb.InitialPreview,
+		focusActive:   wb.FocusActive,
+		baseConfig:    wb.BaseConfig,
+		previewFn:     wb.Preview,
 		localPkgOrder: localOrder,
 		localPkgSet:   localSet,
 	}
 	if m.focusActive {
 		m.tree = m.buildWorkbenchTree()
 	} else {
-		m.tree = buildDepGraph(in.Packages, in.Deps)
+		m.tree = buildDepGraph(wb.Packages, wb.Deps)
 	}
 	m.rebuildFlat()
 
