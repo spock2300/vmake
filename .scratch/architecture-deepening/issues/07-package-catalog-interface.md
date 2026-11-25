@@ -77,3 +77,18 @@
 **已定决策**：接受 6 方法接口（AGENTS.md "回调优先" 的显式例外，记入 DD-40）；`Env.Commit` 用函数字段（先例 `Env.LoadScript`）；`Env.Installed` 是死字段，保留不动；`Search` 内部**不做** pattern/repo 过滤（过滤在 cmd，重复过滤会改输出）。
 
 **不在本卡**：把 `NewStatusReaderAt` 移出 catalog（DD-40 措辞问题）；linked-native `Show` 测试；快照基线更新。
+
+## 步骤 4 完成：假 `RepoAccess` 驱动的 Search/Show 测试
+
+`pkg/catalog/catalog_test.go` 现在有 9 个测试（原 1 个），全部不需要 yaegi、git、网络或真实 `~/.vmake`：
+
+- `TestSearchRegistryRepoReportsAMetadataEntry` — 元数据经注入的 `LoadScript` 读到；
+- `TestSearchRegistryRepoReportsNothingForAMissingRepository`；
+- `TestSearchNativeRepoNeedsAProject` — 无项目时的告警文案；
+- `TestShowRegistryPackage`、`TestShowFailuresAreUsageErrors`（unknown repo / unknown package）；
+- 既有 `TestBuildPackageSource…`、`TestEnvLoadScript…`、`TestCatalogScript…`、`TestShowRejectsAnEnvironment…`。
+
+实测得到的两个约束（planner 预警的两条都成立，另加一条）：
+1. `flock.FileLock` 字段不可导出、`Release` 对 nil 会 panic → 假 `Lock` 必须在 `t.TempDir()` 里拿真锁；
+2. `build.go` 必须落在**仓库根之下**，否则 `DetectScriptOptions` 报 "script dir … is outside module root"；
+3. 假实现下 `Show` 对未知版本并不报错（版本校验走真实仓库元数据），所以没把该断言留下——不写测不准的断言。
