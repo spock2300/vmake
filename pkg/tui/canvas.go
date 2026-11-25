@@ -261,7 +261,7 @@ func (m *Model) egoGraphBody(contentH int) (string, []egoNodeHitbox) {
 		cv.stampCenteredNote(col0X, focalMidY, col0W, m.text(textNoUpstream), &optionDescStyle)
 	default:
 		ports := m.stampSideColumn(cv, col0X, col0W, bodyTopRow, focalMidY, ego.Deps, ego.ActiveDep, true, &boxes)
-		cv.drawChannelBus(col0X+col0W, gapW, ports, focalMidY, true, &egoWireUpstreamStyle, &egoWireInactiveStyle)
+		cv.drawChannelBus(col0X+col0W, gapW, ports, focalMidY, false, &egoWireUpstreamStyle, &egoWireInactiveStyle)
 	}
 
 	switch {
@@ -270,13 +270,12 @@ func (m *Model) egoGraphBody(contentH int) (string, []egoNodeHitbox) {
 	case len(ego.Callers) == 0:
 		if ego.FocalIsRoot {
 			cv.stampCenteredNote(col2X, focalMidY, col2W, "★ "+m.text(textRootEntry), &countBadgeStyle)
-			cv.drawChannelBus(col1X+col1W, gapW, []busPort{{y: focalMidY, active: true}}, focalMidY, false, &egoWireDownstreamStyle, &egoWireInactiveStyle)
 		} else {
 			cv.stampCenteredNote(col2X, focalMidY, col2W, m.text(textNoDownstream), &optionDescStyle)
 		}
 	default:
 		ports := m.stampSideColumn(cv, col2X, col2W, bodyTopRow, focalMidY, ego.Callers, ego.ActiveCaller, false, &boxes)
-		cv.drawChannelBus(col1X+col1W, gapW, ports, focalMidY, false, &egoWireDownstreamStyle, &egoWireInactiveStyle)
+		cv.drawChannelBus(col1X+col1W, gapW, ports, focalMidY, true, &egoWireDownstreamStyle, &egoWireInactiveStyle)
 	}
 
 	cv.materializeWires()
@@ -467,7 +466,7 @@ func (cv *egoCanvas) stampFocalCard(x0, y0, w int, ego egoGraphView) {
 	if len(ego.Deps) > 0 {
 		leftMid = '╟'
 	}
-	if len(ego.Callers) > 0 || ego.FocalIsRoot {
+	if len(ego.Callers) > 0 {
 		rightMid = '╢'
 	}
 	cv.put(x0, y0+1, leftMid, bdr)
@@ -584,11 +583,12 @@ func (cv *egoCanvas) stampCenteredNote(colX, y, colW int, text string, style *li
 	}
 }
 
-func (cv *egoCanvas) drawChannelBus(gapX, gapW int, ports []busPort, focalY int, intoFocal bool, activeStyle, inactiveStyle *lipgloss.Style) {
+func (cv *egoCanvas) drawChannelBus(gapX, gapW int, ports []busPort, focalY int, arrowAtFocal bool, activeStyle, inactiveStyle *lipgloss.Style) {
 	if len(ports) == 0 || gapW < 2 {
 		return
 	}
 	trunkX := gapX + gapW/2
+	farX := gapX + gapW - 1
 
 	for pass := 0; pass < 2; pass++ {
 		wantActive := pass == 1
@@ -603,52 +603,35 @@ func (cv *egoCanvas) drawChannelBus(gapX, gapW int, ports []busPort, focalY int,
 			if p.active != wantActive {
 				continue
 			}
-			if intoFocal {
-				for x := gapX; x < trunkX; x++ {
-					cv.addWire(x, p.y, dirLeft|dirRight, prio, st)
+			nearY, farY := p.y, focalY
+			if arrowAtFocal {
+				nearY, farY = focalY, p.y
+			}
+			cv.putArrow(gapX, nearY, '◄', prio, st)
+			if nearY == farY {
+				for x := gapX + 1; x <= farX; x++ {
+					cv.addWire(x, nearY, dirLeft|dirRight, prio, st)
 				}
-				if p.y == focalY {
-					cv.addWire(trunkX, p.y, dirLeft|dirRight, prio, st)
-				} else if p.y < focalY {
-					cv.addWire(trunkX, p.y, dirLeft|dirDown, prio, st)
-					for y := p.y + 1; y < focalY; y++ {
-						cv.addWire(trunkX, y, dirUp|dirDown, prio, st)
-					}
-					cv.addWire(trunkX, focalY, dirUp|dirRight, prio, st)
-				} else {
-					cv.addWire(trunkX, p.y, dirLeft|dirUp, prio, st)
-					for y := focalY + 1; y < p.y; y++ {
-						cv.addWire(trunkX, y, dirUp|dirDown, prio, st)
-					}
-					cv.addWire(trunkX, focalY, dirDown|dirRight, prio, st)
+				continue
+			}
+			for x := gapX + 1; x < trunkX; x++ {
+				cv.addWire(x, nearY, dirLeft|dirRight, prio, st)
+			}
+			if nearY < farY {
+				cv.addWire(trunkX, nearY, dirLeft|dirDown, prio, st)
+				for y := nearY + 1; y < farY; y++ {
+					cv.addWire(trunkX, y, dirUp|dirDown, prio, st)
 				}
-				for x := trunkX + 1; x < gapX+gapW-1; x++ {
-					cv.addWire(x, focalY, dirLeft|dirRight, prio, st)
-				}
-				cv.putArrow(gapX+gapW-1, focalY, '►', prio, st)
+				cv.addWire(trunkX, farY, dirUp|dirRight, prio, st)
 			} else {
-				for x := gapX; x < trunkX; x++ {
-					cv.addWire(x, focalY, dirLeft|dirRight, prio, st)
+				cv.addWire(trunkX, nearY, dirLeft|dirUp, prio, st)
+				for y := farY + 1; y < nearY; y++ {
+					cv.addWire(trunkX, y, dirUp|dirDown, prio, st)
 				}
-				if focalY == p.y {
-					cv.addWire(trunkX, focalY, dirLeft|dirRight, prio, st)
-				} else if focalY < p.y {
-					cv.addWire(trunkX, focalY, dirLeft|dirDown, prio, st)
-					for y := focalY + 1; y < p.y; y++ {
-						cv.addWire(trunkX, y, dirUp|dirDown, prio, st)
-					}
-					cv.addWire(trunkX, p.y, dirUp|dirRight, prio, st)
-				} else {
-					cv.addWire(trunkX, focalY, dirLeft|dirUp, prio, st)
-					for y := p.y + 1; y < focalY; y++ {
-						cv.addWire(trunkX, y, dirUp|dirDown, prio, st)
-					}
-					cv.addWire(trunkX, p.y, dirDown|dirRight, prio, st)
-				}
-				for x := trunkX + 1; x < gapX+gapW-1; x++ {
-					cv.addWire(x, p.y, dirLeft|dirRight, prio, st)
-				}
-				cv.putArrow(gapX+gapW-1, p.y, '►', prio, st)
+				cv.addWire(trunkX, farY, dirDown|dirRight, prio, st)
+			}
+			for x := trunkX + 1; x <= farX; x++ {
+				cv.addWire(x, farY, dirLeft|dirRight, prio, st)
 			}
 		}
 	}

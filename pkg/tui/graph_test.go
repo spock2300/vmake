@@ -233,7 +233,7 @@ func TestWorkbench_ThreeZonesTraversalAndLivePreview(t *testing.T) {
 
 	m.jumpToMatch("firmware", "")
 	fullView := stripAnsi(m.View())
-	for _, want := range []string{"依赖关系 · firmware", "上游 (直接依赖)", "当前选中包", "下游 (被谁依赖)", "选项 · firmware", "usb", "{}"} {
+	for _, want := range []string{"依赖关系 · firmware", "上游 (本包依赖)", "当前选中包", "下游 (依赖本包)", "选项 · firmware", "usb", "{}"} {
 		if !strings.Contains(fullView, want) {
 			t.Fatalf("expected %q simultaneously visible in workbench View():\n%s", want, fullView)
 		}
@@ -336,8 +336,12 @@ func TestEgoGraph_UpstreamIsDependenciesDownstreamIsDependents(t *testing.T) {
 			t.Fatalf("dependent %q rendered in the upstream column", box.pkgName)
 		}
 	}
-	if view := stripAnsi(m.View()); !strings.Contains(view, "（无上游依赖）") {
+	view := stripAnsi(m.View())
+	if !strings.Contains(view, "（无上游依赖）") {
 		t.Fatalf("expected an empty upstream column for a package without dependencies:\n%s", view)
+	}
+	if !strings.Contains(view, "╢◄") || strings.Contains(view, "]◄") {
+		t.Fatalf("expected the wires from the dependents to point at hl/hl-mcu-sdk:\n%s", view)
 	}
 
 	m.jumpToMatch("firmware", "")
@@ -357,7 +361,11 @@ func TestEgoGraph_UpstreamIsDependenciesDownstreamIsDependents(t *testing.T) {
 			t.Fatalf("dependency %q rendered in the downstream column", box.pkgName)
 		}
 	}
-	if view := stripAnsi(m.View()); !strings.Contains(view, "（无下游依赖）") {
+	view = stripAnsi(m.View())
+	if !strings.Contains(view, "（无下游依赖）") {
 		t.Fatalf("expected an empty downstream column for a package nothing depends on:\n%s", view)
+	}
+	if !strings.Contains(view, "]◄") || strings.Contains(view, "╢◄") {
+		t.Fatalf("expected the wires to firmware to point at its dependencies:\n%s", view)
 	}
 }
