@@ -213,14 +213,14 @@ func TestWorkbench_ThreeZonesTraversalAndLivePreview(t *testing.T) {
 	m.height = 30
 
 	treeTxt := stripAnsi(m.layout().treeContent)
-	for _, want := range []string{"全局 (8)", "firmware (12)", "board-py32f539-evb (16)", "lvgl-demos (2)", "远程 (1)", "py32f539 (3)", "未启用 / 无选项"} {
+	for _, want := range []string{"全局 (8)", "本地 (5)", "firmware (12)", "board-py32f539-evb (16)", "lvgl-demos (2)", "hl/hl-mcu-sdk (4)", "py32f539 (3)", "未启用 (3)"} {
 		if !strings.Contains(treeTxt, want) {
 			t.Fatalf("expected %q in active workbench tree:\n%s", want, treeTxt)
 		}
 	}
-	for _, hidden := range []string{"hl-demo-clean", "target-app", "common", "cherryusb"} {
+	for _, hidden := range []string{"target-app", "common", "cherryusb"} {
 		if strings.Contains(treeTxt, hidden) {
-			t.Fatalf("inactive/0-option package %q should be folded initially:\n%s", hidden, treeTxt)
+			t.Fatalf("inactive package %q should be folded initially:\n%s", hidden, treeTxt)
 		}
 	}
 
@@ -257,14 +257,14 @@ func TestWorkbench_ThreeZonesTraversalAndLivePreview(t *testing.T) {
 	}
 	m.setValue("usb", true)
 	afterToggleTree := stripAnsi(m.layout().treeContent)
-	if !strings.Contains(afterToggleTree, "远程 (2)") {
-		t.Fatalf("enabling usb should promote cherryusb into active 远程 (2):\n%s", afterToggleTree)
+	if !strings.Contains(afterToggleTree, "hl/hl-mcu-sdk (5)") {
+		t.Fatalf("enabling usb should promote cherryusb into active hl/hl-mcu-sdk (5):\n%s", afterToggleTree)
 	}
 
 	m.handleKey(keyRunes("H"))
 	hiddenEmptyTree := stripAnsi(m.layout().treeContent)
-	if strings.Contains(hiddenEmptyTree, "未启用 / 无选项") || !strings.Contains(hiddenEmptyTree, "未启用") {
-		t.Fatalf("pressing H should rename group to 未启用 when 0-option packages are hidden:\n%s", hiddenEmptyTree)
+	if strings.Contains(hiddenEmptyTree, "board\n") || !strings.Contains(hiddenEmptyTree, "hl/hl-mcu-sdk (2)") {
+		t.Fatalf("pressing H should hide active 0-option packages inside containers:\n%s", hiddenEmptyTree)
 	}
 	if m.jumpToMatch("does-not-exist", "") {
 		t.Fatal("jumpToMatch on missing package must return false")
@@ -278,16 +278,25 @@ func TestWorkbench_ThreeZonesTraversalAndLivePreview(t *testing.T) {
 	}
 
 	m.handleKey(keyRunes("z"))
+	sdkGroup := containerGroupPkgName("hl/hl-mcu-sdk")
 	for i, n := range m.flat {
-		if n.PkgName == RemoteGroupPkgName {
+		if n.PkgName == sdkGroup {
 			m.treeCursor = i
 			break
 		}
 	}
 	m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
-	if m.treeCursor >= len(m.flat) || !m.flat[m.treeCursor].IsGroup {
-		t.Fatalf("down arrow after expanding Remote must land on collapsed intermediate subgroup, got cursor=%d", m.treeCursor)
+	// Advance past root leaf to the collapsed intermediate directory "system".
+	foundSubgroup := false
+	for i := m.treeCursor + 1; i < len(m.flat); i++ {
+		if m.flat[i].IsGroup && m.flat[i].ContainerID == "" && !m.flat[i].Expanded {
+			m.treeCursor = i
+			foundSubgroup = true
+			break
+		}
+	}
+	if !foundSubgroup {
+		t.Fatalf("expected collapsed intermediate subgroup under %s after z+Enter", sdkGroup)
 	}
 	m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	if !m.flat[m.treeCursor].Expanded {
@@ -585,8 +594,8 @@ func TestTreeLayout_DistinguishesActiveNoOptAndInactiveEdges(t *testing.T) {
 		m.jumpToMatch("hl/hl-mcu-sdk", "")
 		m.focusArea = 1
 		tree := stripAnsi(m.layout().treeContent)
-		if !strings.Contains(tree, "◆ hl/hl-mcu-sdk") {
-			t.Fatalf("selected hl/hl-mcu-sdk should show ◆:\n%s", tree)
+		if !strings.Contains(tree, "◆ hl-mcu-sdk") {
+			t.Fatalf("selected hl/hl-mcu-sdk leaf should show ◆:\n%s", tree)
 		}
 		if !strings.Contains(tree, "▶ board") {
 			t.Fatalf("active 0-option downstream board should show ▶:\n%s", tree)
@@ -603,7 +612,7 @@ func TestTreeLayout_DistinguishesActiveNoOptAndInactiveEdges(t *testing.T) {
 		m.jumpToMatch(GlobalPkgName, "")
 		m.focusArea = 1
 		tree := stripAnsi(m.layout().treeContent)
-		if !strings.Contains(tree, "○ hl/hl-mcu-sdk") {
+		if !strings.Contains(tree, "○ hl-mcu-sdk") {
 			t.Fatalf("active 0-option package hl/hl-mcu-sdk should use ○ (not ◌):\n%s", tree)
 		}
 		if !strings.Contains(tree, "○ board") {
@@ -613,4 +622,113 @@ func TestTreeLayout_DistinguishesActiveNoOptAndInactiveEdges(t *testing.T) {
 			t.Fatalf("inactive package target-app should use ◌:\n%s", tree)
 		}
 	})
+}
+
+func TestWorkbench_ContainerGroupingSummaryAndNoFakeRoot(t *testing.T) {
+	// Container hl/hl-mcu-sdk has NO root build.go — only real member packages.
+	sources := mkSources("//firmware", "//board")
+	deps := map[string][]string{
+		"//firmware": {"//board", "hl/hl-mcu-sdk/system/chip/puya/py32f539"},
+		"//board":    {"hl/hl-mcu-sdk/system/uniface"},
+	}
+	opts := map[string]map[string]*api.Option{
+		"//firmware": {"wifi": mkOpt("wifi", api.OptionBool, true)},
+		"//board":    {},
+		"hl/hl-mcu-sdk/system/chip/puya/py32f539": {"clock": mkOpt("clock", api.OptionInt, 48)},
+		"hl/hl-mcu-sdk/system/uniface":            {},
+	}
+	wb := &config.Workbench{
+		Packages: sources,
+		Deps:     deps,
+		Containers: map[string]config.WorkbenchContainer{
+			"//":            {ID: "//", Kind: "local"},
+			"hl/hl-mcu-sdk": {ID: "hl/hl-mcu-sdk", Kind: "native", Version: "1.2.0", Commit: "0123456789abcdef"},
+		},
+		PackageContainer: map[string]string{
+			"//firmware":                              "//",
+			"//board":                                 "//",
+			"hl/hl-mcu-sdk/system/chip/puya/py32f539": "hl/hl-mcu-sdk",
+			"hl/hl-mcu-sdk/system/uniface":            "hl/hl-mcu-sdk",
+		},
+		Options:     opts,
+		FocusActive: true,
+		InitialPreview: config.Preview{
+			Roots: []string{"//firmware"},
+			ActivePackages: map[string]bool{
+				"//firmware":                              true,
+				"//board":                                 true,
+				"hl/hl-mcu-sdk/system/chip/puya/py32f539": true,
+				"hl/hl-mcu-sdk/system/uniface":            true,
+			},
+			ActiveDeps: deps,
+		},
+		GlobalOptions: map[string]*api.Option{"mode": mkOpt("mode", api.OptionChoice, "debug").SetValues("debug", "release")},
+	}
+	m := NewModel(Input{Workbench: wb, WorkDir: "/project"})
+	m.language = languageChinese
+	m.width = 120
+	m.height = 30
+
+	treeTxt := stripAnsi(m.layout().treeContent)
+	for _, want := range []string{"本地 (2)", "firmware (1)", "○ board", "hl/hl-mcu-sdk (2)", "py32f539 (1)", "○ uniface"} {
+		if !strings.Contains(treeTxt, want) {
+			t.Fatalf("expected %q in 2.0 workbench tree:\n%s", want, treeTxt)
+		}
+	}
+	if strings.Contains(treeTxt, "hl/hl-mcu-sdk/system") {
+		t.Fatalf("container header must not absorb child directory segment:\n%s", treeTxt)
+	}
+	if strings.Contains(treeTxt, "未启用") {
+		t.Fatalf("active 0-option packages must not create an Inactive group:\n%s", treeTxt)
+	}
+
+	// First select a real package, then move cursor to the container header.
+	m.jumpToMatch("//firmware", "")
+	if m.selectedPkg != "//firmware" {
+		t.Fatalf("selectedPkg = %q, want //firmware", m.selectedPkg)
+	}
+	sdkIdx := -1
+	for i, n := range m.flat {
+		if n.ContainerID == "hl/hl-mcu-sdk" {
+			sdkIdx = i
+			break
+		}
+	}
+	if sdkIdx < 0 {
+		t.Fatalf("container node hl/hl-mcu-sdk not found in flat tree")
+	}
+	m.moveTreeCursor(sdkIdx - m.treeCursor)
+	if m.selectedPkg != "" {
+		t.Fatalf("moving cursor to container header left stale selectedPkg = %q", m.selectedPkg)
+	}
+	summaryView := stripAnsi(m.View())
+	for _, want := range []string{"模块容器 · hl/hl-mcu-sdk", "native", "1.2.0 (0123456789ab)", "2 个生效 / 共 2 个（1 个可配置）"} {
+		if !strings.Contains(summaryView, want) {
+			t.Fatalf("expected %q in container summary view:\n%s", want, summaryView)
+		}
+	}
+	if ego := m.egoGraphData(); !ego.IsGroup || len(ego.Upstream) != 0 || len(ego.Downstream) != 0 {
+		t.Fatalf("container header ego-graph should be empty group view, got %+v", ego)
+	}
+
+	// Pressing → / [ / ] on a container header must NOT focus stale options or step stale edges.
+	m.handleKey(tea.KeyMsg{Type: tea.KeyRight})
+	if m.focusArea != 0 {
+		t.Fatalf("pressing Right on expanded container header focused options panel (focusArea=%d)", m.focusArea)
+	}
+	m.handleKey(keyRunes("["))
+	m.handleKey(keyRunes("]"))
+	if m.selectedPkg != "" || m.treeCursor != sdkIdx {
+		t.Fatalf("pressing [ or ] on container header jumped to stale package: selectedPkg=%q cursor=%d", m.selectedPkg, m.treeCursor)
+	}
+
+	// Pressing H hides active 0-option packages (board, uniface) cleanly.
+	m.handleKey(keyRunes("H"))
+	hiddenTree := stripAnsi(m.layout().treeContent)
+	if strings.Contains(hiddenTree, "board") || strings.Contains(hiddenTree, "uniface") {
+		t.Fatalf("H should hide active 0-option packages:\n%s", hiddenTree)
+	}
+	if !strings.Contains(hiddenTree, "本地 (1)") || !strings.Contains(hiddenTree, "hl/hl-mcu-sdk (1)") {
+		t.Fatalf("H should update container counts to configurable active packages:\n%s", hiddenTree)
+	}
 }

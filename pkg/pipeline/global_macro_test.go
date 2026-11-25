@@ -22,7 +22,7 @@ func singleChipGraph(t *testing.T) (*resolver.Resolver, *api.Package) {
 	}
 	r := resolver.NewResolver(nil, root)
 	r.Graph().Order = []string{"chip"}
-	r.Graph().Packages["chip"] = resolver.NewPackageNode("chip",
+	r.Graph().Packages["chip"] = resolver.NewPackageNode("chip", "//", "chip", resolver.SourceKindLocal,
 		buildscript.NewSource("chip", filepath.Join(dir, "build.go"), dir, api.SourceLocal),
 		api.NewPackage().SetName("chip"))
 	return r, r.Graph().Packages["chip"].Pkg
@@ -141,7 +141,7 @@ func TestGlobalOptionDoesNotFeedPackagedOption(t *testing.T) {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			t.Fatal(err)
 		}
-		r.Graph().Packages[name] = resolver.NewPackageNode(name,
+		r.Graph().Packages[name] = resolver.NewPackageNode(name, "//", name, resolver.SourceKindLocal,
 			buildscript.NewSource(name, filepath.Join(dir, "build.go"), dir, api.SourceLocal),
 			api.NewPackage().SetName(name))
 	}

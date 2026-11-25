@@ -29,8 +29,7 @@ func writeCrossConfigProject(t *testing.T) string {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.AddRequires("dep")
+	p.AddRequires("//dep")
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.GlobalOption("chip").SetDefault("scratch")
 		ctx.Option("feature").SetDefault(true)
@@ -38,7 +37,7 @@ func Main(p *api.Package) {
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("app").SetKind(api.TargetBinary).
 			AddFiles("main.c").
-			AddDeps("dep:*")
+			AddDeps("//dep:*")
 	})
 }
 `)
@@ -49,7 +48,7 @@ import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
 	p.OnBuild(func(ctx *api.BuildContext) {
-		if !ctx.Bool("scratch/feature") || ctx.String("scratch/chip") != "scratch" {
+		if !ctx.Bool("//:feature") || ctx.String("//:chip") != "scratch" {
 			ctx.Target("dep").SetKind(api.TargetVoid)
 			return
 		}
@@ -78,11 +77,10 @@ func writeBoundOwnerCrossProject(t *testing.T) string {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.AddRequires("dep")
+	p.AddRequires("//dep")
 	p.OnBuild(func(ctx *api.BuildContext) {
 		kind := api.TargetVoid
-		if ctx.Bool("dep/feature") {
+		if ctx.Bool("//dep:feature") {
 			kind = api.TargetBinary
 		}
 		target := ctx.Target("app").SetKind(kind)
@@ -148,11 +146,11 @@ func TestCrossPackageOptionReadsBoundOwner(t *testing.T) {
 		{"false", "void"},
 		{"true", "binary"},
 	} {
-		stdout, stderr, code := runBuildCommand(t, project, "build", "--set", "dep/feature="+tc.feature)
+		stdout, stderr, code := runBuildCommand(t, project, "build", "--set", "//dep:feature="+tc.feature)
 		if code != 0 {
 			t.Fatalf("feature %s build exit = %d\nstdout:\n%s\nstderr:\n%s", tc.feature, code, stdout, stderr)
 		}
-		if got := buildTargetKind(t, project, "bound", "app"); got != tc.want {
+		if got := buildTargetKind(t, project, "//", "app"); got != tc.want {
 			t.Fatalf("feature %s app kind = %q, want %q", tc.feature, got, tc.want)
 		}
 	}
@@ -161,22 +159,22 @@ func TestCrossPackageOptionReadsBoundOwner(t *testing.T) {
 func TestCrossPackageOptionGatesTarget(t *testing.T) {
 	project := writeCrossConfigProject(t)
 
-	stdout, stderr, code := runBuildCommand(t, project, "build", "--set", "scratch/feature=false")
+	stdout, stderr, code := runBuildCommand(t, project, "build", "--set", "//:feature=false")
 	if code != 0 {
 		t.Fatalf("feature off build exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
-	if got := buildTargetKind(t, project, "dep", "dep"); got != "void" {
+	if got := buildTargetKind(t, project, "//dep", "dep"); got != "void" {
 		t.Fatalf("feature off dep kind = %q, want void", got)
 	}
 	if compileDatabaseHas(t, project, "dep.c") {
 		t.Fatal("feature off compiled dep.c")
 	}
 
-	stdout, stderr, code = runBuildCommand(t, project, "build", "--set", "scratch/feature=true")
+	stdout, stderr, code = runBuildCommand(t, project, "build", "--set", "//:feature=true")
 	if code != 0 {
 		t.Fatalf("feature on build exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
-	if got := buildTargetKind(t, project, "dep", "dep"); got != "static" {
+	if got := buildTargetKind(t, project, "//dep", "dep"); got != "static" {
 		t.Fatalf("feature on dep kind = %q, want static", got)
 	}
 	if !compileDatabaseHas(t, project, "dep.c") {

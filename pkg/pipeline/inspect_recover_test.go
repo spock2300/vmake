@@ -10,8 +10,8 @@ import (
 
 func TestInspectFilterDepsRecoversOnRequirePanic(t *testing.T) {
 	s := sessionFixture(t)
-	config.SetEntry(s.ctx.Config, "app", &config.EntryConfig{Options: map[string]any{}})
-	s.ctx.DepGraph.Packages["app"].Pkg.OnRequire(func(ctx *api.RequireContext) {
+	config.SetEntry(s.ctx.Config, "//app", &config.EntryConfig{Options: map[string]any{}})
+	s.ctx.DepGraph.Packages["//app"].Pkg.OnRequire(func(ctx *api.RequireContext) {
 		ctx.When("nonexistent_option", true)
 	})
 

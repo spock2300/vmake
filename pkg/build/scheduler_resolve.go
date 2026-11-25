@@ -324,7 +324,11 @@ func (s *Scheduler) resolveDependencyLinkerScript(node *BuildNode) (string, erro
 				}
 			}
 			for _, rawDep := range n.Target.Deps() {
-				depPkg := ParseDependencyRef(rawDep).Package
+				ref := ParseDependencyRef(rawDep)
+				if !ref.HasTarget && !ref.IsPackagePath() {
+					continue
+				}
+				depPkg := api.CanonicalizePackageRef(s.graph.PkgMeta[n.PkgName].Container, ref.Package)
 				if depPkg != "" && depPkg != n.PkgName {
 					if _, ok := s.graph.PkgMeta[depPkg]; ok && !seenPkgs[depPkg] {
 						seenPkgs[depPkg] = true

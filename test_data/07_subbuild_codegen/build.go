@@ -7,13 +7,15 @@ import (
 )
 
 func Main(p *api.Package) {
+	p.AddRequires("//tools")
+
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.BuildSubGraph("tools")
+		ctx.BuildSubGraph("//tools")
 
 		if !p.DryRun() {
 			os.MkdirAll("output", 0755)
 		}
-		ctx.Exec(ctx.DepOutput("tools:codegen"), "output/generated.h")
+		ctx.Exec(ctx.DepOutput("//tools:codegen"), "output/generated.h")
 
 		ctx.Target("app").
 			SetKind(api.TargetBinary).

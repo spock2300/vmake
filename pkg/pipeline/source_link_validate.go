@@ -8,23 +8,21 @@ import (
 	"strings"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
-	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/gitcmd"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/repo"
 )
 
 // ValidateSourceLink canonicalizes and validates one local source link.
+// Links may target a native container (<repo>/<module>), a registry package
+// (<repo>/<pkg>), a native SetGit member (<repo>/<module>/<path>), or a local
+// SetGit package (// or //<path>).
 func ValidateSourceLink(ctx context.Context, projectDir, depsDir, reposDir, name, path string) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	repoName, pkgName, ok := api.SplitPackageRef(name)
-	if !ok || repoName == "" || pkgName == "" {
-		return "", fmt.Errorf("invalid package reference %q", name)
-	}
-	if strings.Contains(pkgName, "/") {
-		return "", fmt.Errorf("source links apply to parent packages only: %s", name)
+	if err := api.ValidatePackageRef(name); err != nil {
+		return "", fmt.Errorf("invalid link target %q: %w", name, err)
 	}
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(projectDir, path)
@@ -51,10 +49,6 @@ func ValidateSourceLink(ctx context.Context, projectDir, depsDir, reposDir, name
 			return "", fmt.Errorf("linked source %s must be outside %s", abs, root)
 		}
 	}
-	mgr := repo.NewRepoManager(reposDir)
-	if !mgr.Exists(repoName) {
-		return "", fmt.Errorf("repository %q not found; run 'vmake repo list'", repoName)
-	}
 	if _, err := repo.GetCurrentCommitContext(ctx, abs); err != nil {
 		return "", fmt.Errorf("linked source %s must be a git work tree: %w", abs, err)
 	}
@@ -63,12 +57,21 @@ func ValidateSourceLink(ctx context.Context, projectDir, depsDir, reposDir, name
 	if err != nil || strings.TrimSpace(string(workTree)) != "true" {
 		return "", fmt.Errorf("linked source %s must be a git work tree", abs)
 	}
-	if mgr.IsNative(repoName) {
-		if !fs.FileExists(filepath.Join(abs, "build.go")) {
-			return "", fmt.Errorf("linked native package %s has no build.go in %s", name, abs)
+	if api.IsLocalPackageID(name) {
+		return abs, nil
+	}
+	repoName, pkgName, ok := api.SplitPackageRef(name)
+	if !ok || repoName == "" || pkgName == "" {
+		return "", fmt.Errorf("invalid package reference %q", name)
+	}
+	mgr := repo.NewRepoManager(reposDir)
+	if !mgr.Exists(repoName) {
+		return "", fmt.Errorf("repository %q not found; run 'vmake repo list'", repoName)
+	}
+	if !mgr.IsNative(repoName) {
+		if _, err := mgr.FindPackageGo(repoName, pkgName); err != nil {
+			return "", fmt.Errorf("registry package %s: %w", name, err)
 		}
-	} else if _, err := mgr.FindPackageGo(repoName, pkgName); err != nil {
-		return "", fmt.Errorf("registry package %s: %w", name, err)
 	}
 	return abs, nil
 }

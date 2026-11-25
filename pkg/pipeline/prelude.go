@@ -9,7 +9,6 @@ type preludeOptions struct {
 	filterDeps        bool
 	freezeDeps        bool
 	logFilter         bool
-	validateNeeded    bool
 	resolveChip       bool
 	resolveConfig     bool
 	validateToolchain bool
@@ -29,9 +28,9 @@ func prepareBuild(ctx *RuntimeContext, opts preludeOptions) (*buildPrelude, erro
 	var needed NeededSet
 	var err error
 	if opts.filterDeps {
-		needed, err = resolveNeeded(ctx, opts.logFilter, opts.freezeDeps, opts.validateNeeded)
+		needed, err = resolveNeeded(ctx, opts.logFilter, opts.freezeDeps)
 	} else {
-		needed, err = computeReachable(ctx.DepGraph, configRootOverride(ctx))
+		needed, err = computeReachable(ctx.DepGraph, configRootOverrides(ctx)...)
 	}
 	if err != nil {
 		return nil, err

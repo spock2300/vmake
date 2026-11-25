@@ -74,17 +74,14 @@ func loadTargetFlags(t *testing.T, src Source) []string {
 func TestLocalImportInBuildScript(t *testing.T) {
 	root := t.TempDir()
 	writeLocalImportProject(t, root, "local")
-	sources, err := Scan(root)
+	src, err := LoadPackageSource(root, api.LocalContainerID, "", api.SourceLocal)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sources) != 1 {
-		t.Fatalf("sources = %d", len(sources))
+	if src.Script.ModulePath != "example.com/app" {
+		t.Fatalf("script options = %+v", src.Script)
 	}
-	if sources[0].Script.ModulePath != "example.com/app" {
-		t.Fatalf("script options = %+v", sources[0].Script)
-	}
-	flags := loadTargetFlags(t, sources[0])
+	flags := loadTargetFlags(t, *src)
 	if len(flags) != 1 || flags[0] != "-DHELPER=local" {
 		t.Fatalf("flags = %v", flags)
 	}

@@ -15,18 +15,18 @@ import (
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/repo"
+	"github.com/spock2300/vmake/pkg/resolver"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
-func workspaceBindingFixture(t *testing.T, remote bool) (*buildPhaseState, *api.KConfigEntry, string) {
+func workspaceBindingFixture(t *testing.T, remote bool) (*buildPhaseState, *api.KConfigEntry, string, string) {
 	t.Helper()
 	if !fs.SymlinksSupported() {
 		t.Skip(fs.SymlinkHint)
 	}
 	s := sessionFixture(t)
-	s.ctx.DepGraph.Order = []string{"app"}
-	s.needed = map[string]bool{"app": true}
-	node := s.ctx.DepGraph.Packages["app"]
+	pkgID := "//app"
+	node := s.ctx.DepGraph.Packages["//app"]
 	upstream := initGitRepo(t, map[string]string{
 		"build.go":       "package main\n",
 		"nested/input.c": "int value = 1;\n",
@@ -41,44 +41,72 @@ func workspaceBindingFixture(t *testing.T, remote bool) (*buildPhaseState, *api.
 	if err != nil {
 		t.Fatal(err)
 	}
-	tools, err := s.toolsForPackage("app")
-	if err != nil {
-		t.Fatal(err)
-	}
-	flagsHash := packageFlagsHash(s.globalFlagsHash, node)
 	var configRoot string
 	if remote {
-		node.Source = buildscript.NewSource("app", filepath.Join(upstream, "build.go"), upstream, api.SourceRemote)
+		pkgID = "native/app"
+		delete(s.ctx.DepGraph.Packages, "//app")
+		delete(s.ctx.DepGraph.Packages, "//dep")
+		node.ID = pkgID
+		node.Container = pkgID
+		node.RelPath = ""
+		node.Kind = resolver.SourceKindNative
+		node.Source = buildscript.NewSource(pkgID, filepath.Join(upstream, "build.go"), upstream, api.SourceRemote)
+		node.Source.Container = pkgID
+		node.Pkg.SetName(pkgID)
+		s.ctx.DepGraph.Packages[pkgID] = node
+		s.ctx.DepGraph.Order = []string{pkgID}
+		s.needed = map[string]bool{pkgID: true}
 		commit, err := repo.GetCurrentCommit(upstream)
 		if err != nil {
 			t.Fatal(err)
 		}
-		s.remote.setVersion("app", "1.0.0")
+		s.ctx.DepGraph.Containers[pkgID] = &resolver.ContainerNode{
+			ID:      pkgID,
+			Repo:    "native",
+			Kind:    resolver.SourceKindNative,
+			Dir:     upstream,
+			URL:     upstream,
+			Version: "1.0.0",
+			Commit:  commit,
+		}
+		tools, err := s.toolsForPackage(pkgID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		flagsHash := packageFlagsHash(s.globalFlagsHash, node)
+		s.containerVersions[pkgID] = "1.0.0"
 		manager := repo.NewSourceManager(s.ctx.Paths.DepsDir, s.ctx.Paths.CacheDir).WithSession(s.ctx.Locks).WithContext(s.ctx.Context)
 		res, err := manager.EnsureSource(repo.SourceRequest{
-			Key: "app", URLs: []string{upstream}, Version: "1.0.0", Commit: commit, PatchHash: patchHash,
+			Key: pkgID, URLs: []string{upstream}, Version: "1.0.0", Commit: commit, PatchHash: patchHash,
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		s.remote.trees["app"] = res.Root
-		s.remote.commits["app"] = res.Commit
-		s.patchHashes["app"] = patchHash
-		s.pkgDirs["app"] = makeRemotePkgDirs(res.Root, "", remotePkgKeyFromParts(tools.CCKey(), s.cfg.Mode, s.allPkgOptions["app"], "1.0.0", res.Commit, flagsHash, patchHash))
+		s.containerTrees[pkgID] = res.Root
+		s.containerCommits[pkgID] = res.Commit
+		s.patchHashes[pkgID] = patchHash
+		s.pkgDirs[pkgID] = makeRemotePkgDirs(res.Root, "", remotePkgKeyFromParts(tools.CCKey(), s.cfg.Mode, s.allPkgOptions[pkgID], "1.0.0", res.Commit, flagsHash, patchHash))
 		configRoot = filepath.Join(res.Root, "src", "nested")
 	} else {
-		node.Pkg.SetGit(upstream)
-		s.patchHashes["app"] = patchHash
-		if err := s.selectPackageSource("app"); err != nil {
+		s.ctx.DepGraph.Order = []string{pkgID}
+		s.needed = map[string]bool{pkgID: true}
+		tools, err := s.toolsForPackage(pkgID)
+		if err != nil {
 			t.Fatal(err)
 		}
-		s.pkgDirs["app"] = makeLocalPkgDirs(node.Source.Dir, localPkgKeyFromParts(tools.CCKey(), s.cfg.Mode, s.allPkgOptions["app"], flagsHash, s.sourceCommits["app"]))
+		flagsHash := packageFlagsHash(s.globalFlagsHash, node)
+		node.Pkg.SetGit(upstream)
+		s.patchHashes[pkgID] = patchHash
+		if err := s.selectPackageSource(pkgID); err != nil {
+			t.Fatal(err)
+		}
+		s.pkgDirs[pkgID] = makeLocalPkgDirs(node.Source.Dir, localPkgKeyFromParts(tools.CCKey(), s.cfg.Mode, s.allPkgOptions[pkgID], flagsHash, s.sourceCommits[pkgID]))
 		configRoot = filepath.Join(node.Source.Dir, "src", "nested")
 	}
 	k := (&api.KConfigEntry{}).SetSrcDir(configRoot).SetConfigPath(".config")
-	s.ctx.allKConfigs = map[string][]*api.KConfigEntry{"app": {k}}
-	config.SetEntry(s.ctx.Config, "app", &config.EntryConfig{KConfig: "CONFIG_READY=y\n"})
-	if err := s.preparePackageWorkspace("app"); err != nil {
+	s.ctx.allKConfigs = map[string][]*api.KConfigEntry{pkgID: {k}}
+	config.SetEntry(s.ctx.Config, pkgID, &config.EntryConfig{KConfig: "CONFIG_READY=y\n"})
+	if err := s.preparePackageWorkspace(pkgID); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.applyPatchesToNeeded(); err != nil {
@@ -87,7 +115,7 @@ func workspaceBindingFixture(t *testing.T, remote bool) (*buildPhaseState, *api.
 	if err := s.restoreKConfigs(); err != nil {
 		t.Fatal(err)
 	}
-	return s, k, upstream
+	return s, k, upstream, pkgID
 }
 
 func switchWorkspaceToolchain(t *testing.T, s *buildPhaseState) {
@@ -108,27 +136,27 @@ func TestPkgKeyMatchesExplicitMaterial(t *testing.T) {
 			name = "remote"
 		}
 		t.Run(name, func(t *testing.T) {
-			s, _, _ := workspaceBindingFixture(t, remote)
-			tools, err := s.toolsForPackage("app")
+			s, _, _, pkgID := workspaceBindingFixture(t, remote)
+			tools, err := s.toolsForPackage(pkgID)
 			if err != nil {
 				t.Fatal(err)
 			}
-			node := s.ctx.DepGraph.Packages["app"]
+			node := s.ctx.DepGraph.Packages[pkgID]
 			var extra string
 			if remote {
 				extra = build.JoinKeyExtra(
 					"1.0.0",
-					sourceCommitKey(s.remote.commits["app"], s.sourceCommits["app"]),
+					sourceCommitKey(s.containerCommits[pkgID], s.sourceCommits[pkgID]),
 					packageFlagsHash(s.globalFlagsHash, node),
-					s.patchHashes["app"],
+					s.patchHashes[pkgID],
 				)
 			} else {
-				extra = build.JoinKeyExtra("", s.sourceCommits["app"], packageFlagsHash(s.globalFlagsHash, node), "")
+				extra = build.JoinKeyExtra("", s.sourceCommits[pkgID], packageFlagsHash(s.globalFlagsHash, node), "")
 			}
-			want := build.BuildKey(tools.CCKey(), s.cfg.Mode, s.allPkgOptions["app"], extra)
-			got := filepath.Base(s.pkgDirs["app"].BuildDir)
+			want := build.BuildKey(tools.CCKey(), s.cfg.Mode, s.allPkgOptions[pkgID], extra)
+			got := filepath.Base(s.pkgDirs[pkgID].BuildDir)
 			if remote {
-				got = filepath.Base(filepath.Dir(s.pkgDirs["app"].BuildDir))
+				got = filepath.Base(filepath.Dir(s.pkgDirs[pkgID].BuildDir))
 			}
 			if got != build.KeyDir(want) {
 				t.Fatalf("BuildDir key = %q, want %q", got, want)
@@ -144,9 +172,9 @@ func TestSessionWorkspaceRebindKeepsSingleTree(t *testing.T) {
 			name = "remote"
 		}
 		t.Run(name, func(t *testing.T) {
-			s, k, seed := workspaceBindingFixture(t, remote)
-			node := s.ctx.DepGraph.Packages["app"]
-			oldDirs := *s.pkgDirs["app"]
+			s, k, seed, pkgID := workspaceBindingFixture(t, remote)
+			node := s.ctx.DepGraph.Packages[pkgID]
+			oldDirs := *s.pkgDirs[pkgID]
 			configPath := filepath.Join(k.SrcDir(), k.ConfigPath())
 			mtime := time.Unix(1700000000, 0)
 			if err := os.Chtimes(configPath, mtime, mtime); err != nil {
@@ -173,11 +201,11 @@ func TestSessionWorkspaceRebindKeepsSingleTree(t *testing.T) {
 			if !called {
 				t.Fatal("OnBuild was not called")
 			}
-			if s.pkgDirs["app"].BuildDir == oldDirs.BuildDir {
+			if s.pkgDirs[pkgID].BuildDir == oldDirs.BuildDir {
 				t.Fatal("toolchain change did not move the build directory")
 			}
-			if s.pkgDirs["app"].SourceDir != oldDirs.SourceDir {
-				t.Fatalf("single tree moved: %s -> %s", oldDirs.SourceDir, s.pkgDirs["app"].SourceDir)
+			if s.pkgDirs[pkgID].SourceDir != oldDirs.SourceDir {
+				t.Fatalf("single tree moved: %s -> %s", oldDirs.SourceDir, s.pkgDirs[pkgID].SourceDir)
 			}
 			if data, err := os.ReadFile(filepath.Join(seed, "nested", "input.c")); err != nil || string(data) != "int value = 1;\n" {
 				t.Fatalf("source seed changed: %q, %v", data, err)
@@ -199,17 +227,17 @@ func TestSessionUnchangedWorkspacePreservesConfigMtime(t *testing.T) {
 			name = "remote"
 		}
 		t.Run(name, func(t *testing.T) {
-			s, k, _ := workspaceBindingFixture(t, remote)
+			s, k, _, pkgID := workspaceBindingFixture(t, remote)
 			configPath := filepath.Join(k.SrcDir(), k.ConfigPath())
 			mtime := time.Unix(1700000000, 0)
 			if err := os.Chtimes(configPath, mtime, mtime); err != nil {
 				t.Fatal(err)
 			}
-			oldDirs := *s.pkgDirs["app"]
-			if _, err := s.bindPackage("app"); err != nil {
+			oldDirs := *s.pkgDirs[pkgID]
+			if _, err := s.bindPackage(pkgID); err != nil {
 				t.Fatal(err)
 			}
-			if *s.pkgDirs["app"] != oldDirs {
+			if *s.pkgDirs[pkgID] != oldDirs {
 				t.Fatal("unchanged toolchain moved the workspace")
 			}
 			if info, err := os.Stat(configPath); err != nil || !info.ModTime().Equal(mtime) {
@@ -222,11 +250,11 @@ func TestSessionUnchangedWorkspacePreservesConfigMtime(t *testing.T) {
 func TestSessionWorkspaceRebindFailureStopsOnBuild(t *testing.T) {
 	for _, failure := range []string{"patch", "kconfig"} {
 		t.Run(failure, func(t *testing.T) {
-			s, k, _ := workspaceBindingFixture(t, true)
-			node := s.ctx.DepGraph.Packages["app"]
-			want := "restore kconfig app"
+			s, k, _, pkgID := workspaceBindingFixture(t, true)
+			node := s.ctx.DepGraph.Packages[pkgID]
+			want := "restore kconfig " + pkgID
 			if failure == "patch" {
-				want = "apply patches for app"
+				want = "apply patches for " + pkgID
 				path := filepath.Join(node.Pkg.ScriptDir(), "change.patch")
 				if err := os.WriteFile(path, []byte("invalid patch\n"), 0644); err != nil {
 					t.Fatal(err)
@@ -254,11 +282,11 @@ func nativeSiblingBindingFixture(t *testing.T, configSource string) (*buildPhase
 	}
 	s := sessionFixture(t)
 	name, owner, member := "native/root/member", "native/root", "member"
-	node := s.ctx.DepGraph.Packages["app"]
-	delete(s.ctx.DepGraph.Packages, "app")
+	node := s.ctx.DepGraph.Packages["//app"]
+	delete(s.ctx.DepGraph.Packages, "//app")
+	delete(s.ctx.DepGraph.Packages, "//dep")
 	s.ctx.DepGraph.Packages[name] = node
 	s.ctx.DepGraph.Order = []string{name}
-	s.ctx.Resolver.SubParents()[name] = owner
 	s.needed = map[string]bool{name: true}
 	s.allPkgOptions[name] = nil
 	tree := remoteTreeDir(s.ctx, owner)
@@ -273,12 +301,25 @@ func nativeSiblingBindingFixture(t *testing.T, configSource string) (*buildPhase
 		}
 	}
 	packageRoot := filepath.Join(tree, "src", member)
+	s.ctx.DepGraph.Containers[owner] = &resolver.ContainerNode{
+		ID:      owner,
+		Repo:    "native",
+		Kind:    resolver.SourceKindNative,
+		Dir:     filepath.Join(tree, "src"),
+		Version: "1.0.0",
+		Commit:  "commit",
+	}
 	node.ID = name
+	node.Container = owner
+	node.RelPath = member
+	node.Kind = resolver.SourceKindNative
 	node.Source = buildscript.NewSource(name, filepath.Join(packageRoot, "build.go"), packageRoot, api.SourceRemote)
+	node.Source.Container = owner
+	node.Source.RelPath = member
 	node.Pkg.SetRepo("native").SetName("root/member").SetScriptDir(packageRoot).SetSrcDir("../shared")
-	s.remote.setVersion(owner, "1.0.0")
-	s.remote.trees[owner], s.remote.trees[name] = tree, tree
-	s.remote.commits[owner] = "commit"
+	s.containerVersions[owner] = "1.0.0"
+	s.containerTrees[owner] = tree
+	s.containerCommits[owner] = "commit"
 	tools, err := s.toolsForPackage(name)
 	if err != nil {
 		t.Fatal(err)

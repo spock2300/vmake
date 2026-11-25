@@ -32,9 +32,23 @@ func (d Diagnostic) IsBlockedWrite() bool {
 	return d.Code == "VMAKE_W_TARGET_DECLARE" && blockedWriteMessage(d.Message)
 }
 
+// ContainerFacts describes one resolved module container.
+type ContainerFacts struct {
+	ID       string
+	Kind     string
+	Repo     string
+	Version  string
+	Commit   string
+	URL      string
+	Dir      string
+	Linked   bool
+	LinkPath string
+}
+
 // PackageFacts is the per-package identity and source state of the model.
 type PackageFacts struct {
 	Kind          string
+	Container     string
 	Repo          string
 	Version       string
 	NativeVersion string
@@ -66,6 +80,13 @@ func (in *Inspection) Facts(name string) (PackageFacts, bool) {
 	}
 	facts, ok := in.packageFacts[name]
 	return facts, ok
+}
+
+func (in *Inspection) Containers() []ContainerFacts {
+	if in == nil {
+		return nil
+	}
+	return append([]ContainerFacts(nil), in.containers...)
 }
 
 func (in *Inspection) Diagnostics() []Diagnostic {
@@ -203,7 +224,7 @@ func targetFactsOf(ctx *RuntimeContext, name string, view PackageView, buildCtx 
 		facts := TargetFacts{
 			Target:      target,
 			OutputPath:  placement.OutputPath,
-			Deps:        targetDepsOf(target, node),
+			Deps:        targetDepsOf(ctx, name, target, node),
 			CFlags:      declaredFlags(target.CFlags(), defaults.CFlags),
 			CxxFlags:    declaredFlags(target.CxxFlags(), defaults.CxxFlags),
 			LdFlags:     declaredFlags(target.LdFlags(), defaults.LdFlags),
@@ -218,10 +239,26 @@ func targetFactsOf(ctx *RuntimeContext, name string, view PackageView, buildCtx 
 	return out
 }
 
-func targetDepsOf(target *api.Target, node *resolver.PackageNode) []string {
-	deps := target.Deps()
+func canonicalDepRef(ctx *RuntimeContext, fromPkg, raw string) string {
+	ref := build.ParseDependencyRef(raw)
+	if ref.HasTarget {
+		pkg := canonicalPkgRef(ctx, fromPkg, ref.Package)
+		return pkg + ":" + ref.Target
+	}
+	if ref.IsPackagePath() {
+		return canonicalPkgRef(ctx, fromPkg, ref.Package)
+	}
+	return raw
+}
+
+func targetDepsOf(ctx *RuntimeContext, fromPkg string, target *api.Target, node *resolver.PackageNode) []string {
+	rawDeps := target.Deps()
+	deps := make([]string, len(rawDeps))
+	for i, dep := range rawDeps {
+		deps[i] = canonicalDepRef(ctx, fromPkg, dep)
+	}
 	if !target.UsesRequires() || node == nil || len(node.Deps) == 0 {
-		return append([]string{}, deps...)
+		return deps
 	}
 	seen := make(map[string]bool, len(node.Deps)+len(deps))
 	out := make([]string, 0, len(node.Deps)+len(deps))
@@ -272,44 +309,117 @@ func graphDiagnostic(issue GraphIssue) Diagnostic {
 	}
 }
 
-func nativeSelected(node *resolver.PackageNode) string {
-	if node.Native != nil {
-		return node.Native.Selected
+func collectContainerFacts(ctx *RuntimeContext) []ContainerFacts {
+	if ctx == nil || ctx.DepGraph == nil || len(ctx.DepGraph.Containers) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(ctx.DepGraph.Containers))
+	for id := range ctx.DepGraph.Containers {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := make([]ContainerFacts, 0, len(ids))
+	for _, id := range ids {
+		c := ctx.DepGraph.Containers[id]
+		if c == nil {
+			continue
+		}
+		cf := ContainerFacts{
+			ID:      c.ID,
+			Kind:    c.Kind.String(),
+			Repo:    c.Repo,
+			Version: c.Version,
+			Commit:  c.Commit,
+			URL:     c.URL,
+			Dir:     c.Dir,
+		}
+		if c.IsLinked() {
+			cf.Linked = true
+			cf.LinkPath = c.Link.Path
+			cf.Commit = c.Link.Commit
+			cf.Version = resolver.LocalLinkVersion
+		}
+		out = append(out, cf)
+	}
+	return out
+}
+
+func nativeSelected(ctx *RuntimeContext, node *resolver.PackageNode) string {
+	if node == nil || !node.IsNative() || ctx == nil || ctx.DepGraph == nil {
+		return ""
+	}
+	if c := ctx.DepGraph.Containers[node.Container]; c != nil {
+		return c.Version
 	}
 	return ""
 }
 
-func nativeCommit(node *resolver.PackageNode) string {
-	if node.Native != nil {
-		return node.Native.Commit
+func nativeCommit(ctx *RuntimeContext, node *resolver.PackageNode) string {
+	if node == nil || !node.IsNative() || ctx == nil || ctx.DepGraph == nil {
+		return ""
+	}
+	if c := ctx.DepGraph.Containers[node.Container]; c != nil {
+		return c.Commit
 	}
 	return ""
+}
+
+func applyOwnGitMetadata(ctx *RuntimeContext, name string, node *resolver.PackageNode, facts *PackageFacts, overwriteEmptyCommit bool) {
+	if node.Pkg != nil {
+		if urls := node.Pkg.GitURLs(); len(urls) > 0 {
+			facts.URL = urls[0]
+		}
+	}
+	if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {
+		facts.Linked = true
+		facts.LinkPath = node.Source.Link.Path
+		facts.Commit = node.Source.Link.Commit
+		facts.Version = resolver.LocalLinkVersion
+		return
+	}
+	query := resolver.LockQuery{Pins: ctx.Pins, Lock: ctx.Lock, Section: resolver.LockSectionSource}
+	decision := query.Decide(name, "", "")
+	facts.Version = decision.Version
+	if overwriteEmptyCommit || decision.Commit != "" {
+		facts.Commit = decision.Commit
+	}
+}
+
+func localGitMetadata(ctx *RuntimeContext, name string, node *resolver.PackageNode, facts *PackageFacts) {
+	applyOwnGitMetadata(ctx, name, node, facts, true)
 }
 
 func remoteMetadata(ctx *RuntimeContext, name string, node *resolver.PackageNode, facts *PackageFacts) {
 	facts.Repo = node.Source.Repo
 	facts.Commit = node.Source.Commit
 	facts.URL = node.Source.URL
-	if node.Source.Link != nil {
-		facts.Linked = true
-		facts.LinkPath = node.Source.Link.Path
-		facts.Commit = node.Source.Link.Commit
-		facts.Version = resolver.LocalLinkVersion
-	} else {
-		query := resolver.LockQuery{Pins: ctx.Pins, Lock: ctx.Lock}
-		facts.Version = query.Decide(name, nativeSelected(node), nativeCommit(node)).Version
+
+	if node.IsNative() {
+		c := ctx.DepGraph.Containers[node.Container]
+		if c != nil && facts.URL == "" {
+			facts.URL = c.URL
+		}
+		if node.HasOwnGit() {
+			applyOwnGitMetadata(ctx, name, node, facts, false)
+			return
+		}
+		if node.Source.Link != nil {
+			facts.Linked = true
+			facts.LinkPath = node.Source.Link.Path
+			facts.Commit = node.Source.Link.Commit
+			facts.Version = resolver.LocalLinkVersion
+			return
+		}
+		query := resolver.LockQuery{Pins: ctx.Pins, Lock: ctx.Lock, Section: resolver.LockSectionContainer}
+		decision := query.Decide(node.Container, nativeSelected(ctx, node), nativeCommit(ctx, node))
+		facts.Version = decision.Version
 		if facts.Commit == "" {
-			if locked, ok := query.LockEntry(name); ok {
-				facts.Commit = locked.Commit
-			}
+			facts.Commit = decision.Commit
 		}
-		if facts.Commit == "" && node.Native != nil {
-			facts.Commit = node.Native.Commit
-		}
+		return
 	}
-	if node.Native != nil && facts.URL == "" {
-		facts.URL = node.Native.GitURL
-	}
+
+	applyOwnGitMetadata(ctx, name, node, facts, false)
 }
 
 func sourceReference(ctx *RuntimeContext, name string, node *resolver.PackageNode, facts PackageFacts) (string, string) {

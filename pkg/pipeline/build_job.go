@@ -81,6 +81,5 @@ func buildEnvironment(rc *runContext, cfg *configStage, src *sourceStage, decl *
 		RootDir:       rc.ctx.Paths.ProjectDir,
 		Jobs:          rc.opts.Jobs,
 		KeepGoing:     rc.opts.KeepGoing,
-		SubParents:    rc.ctx.Resolver.SubParents(),
 	}
 }

@@ -61,12 +61,12 @@ func NewConfigPreviewer(ctx *RuntimeContext) func(*config.ConfigFile) (config.Pr
 			work.Config = &config.ConfigFile{}
 		}
 
-		rootOverride := configRootOverride(&work)
-		owners, err := convergeFilterAndDerivedOptionsWithOwners(&work, rootOverride, false)
+		rootOverrides := configRootOverrides(&work)
+		owners, err := convergeFilterAndDerivedOptionsWithOwners(&work, rootOverrides, false)
 		if err != nil {
 			return config.Preview{}, false
 		}
-		needed, err := computeNeededGraph(work.DepGraph, rootOverride)
+		needed, err := computeNeededGraph(work.DepGraph, rootOverrides)
 		if err != nil {
 			return config.Preview{}, false
 		}

@@ -179,7 +179,9 @@ func (m *Model) egoGraphBody(contentH int) (string, []egoNodeHitbox) {
 	ego := m.egoGraphData()
 	var out strings.Builder
 	leftTitle := m.text(textDependencies)
-	if !ego.IsGlobal && ego.FocalPkg != "" {
+	if ego.IsGroup && ego.FocalLabel != "" {
+		leftTitle += " · " + ego.FocalLabel
+	} else if !ego.IsGlobal && ego.FocalPkg != "" {
 		leftTitle += " · " + m.packageLabel(ego.FocalPkg)
 	}
 	leftRendered := panelTitleStyle.Render(leftTitle)

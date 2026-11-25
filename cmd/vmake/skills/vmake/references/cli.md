@@ -48,11 +48,11 @@ extension plugin commands appear here too. For plugin details, run
     `vmake manifest show <path>` - Show manifest contents
   `vmake pkg` - Discover packages and manage project sources
     `vmake pkg clean <repo/name> [--all -a]` - Clean package build outputs
-    `vmake pkg link <repo/name> <path>` - Build a package from a local working tree
+    `vmake pkg link <container|pkg> <path>` - Build a container or SetGit package from a local working tree
     `vmake pkg list` - List packages materialized in this project
     `vmake pkg search [pattern] [--details --for-project --json --repo <value>]` - Search registered repositories for packages
     `vmake pkg show <repo/pkg>[@version] [--for-project --json]` - Show package metadata
-    `vmake pkg unlink <repo/name>` - Remove a local source link
+    `vmake pkg unlink <container|pkg>` - Remove a local source link
   `vmake query [--config <value> -c --set <value> -s]` - Show dependency tree
     `vmake query config <pkg>` - Show effective option values and generated defines
     `vmake query targets` - List build targets without building

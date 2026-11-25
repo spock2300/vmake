@@ -21,7 +21,7 @@ reported once at the top level in `globalCFlags`/`globalCxxFlags`/
 packages whose source tree is not on disk; the missing-source check itself does
 not fetch or materialize it, but native remote resolution may materialize a
 tree. `DeclareTargets` does not populate `p.GlobalCFlags()`/`p.GlobalCxxFlags()`
-during dry-run, but cross-package option reads (`ctx.Bool("pkg/option")`) do
+during dry-run, but cross-package option reads (`ctx.Bool("//pkg:option")`) do
 resolve from the config stage; target kinds and files therefore reflect the
 configured options. It reports the install plan declared by `OnBuild` without
 reading or creating `install/`. Presence fields report whether the compile database, build report
@@ -29,7 +29,7 @@ and test report currently exist, and each needed package carries its active
 build directory; they do not verify action or output freshness.
 
 ```
-vmake inspect [-c <profile>] [--no-targets] [--set [package/]option=value ...] [-C <dir>]
+vmake inspect [-c <profile>] [--no-targets] [--set [package:]option=value ...] [-C <dir>]
 ```
 
 `--no-targets` skips dry-run `OnBuild` target declaration for every package.
@@ -38,9 +38,9 @@ diagnostics are produced; package, option, graph, source-presence and directory
 data are still reported.
 
 `-C`/`--project` is the global project-root override. It is resolved against
-the process cwd, must be an existing project directory (`.vmake/`, `build.go`,
-or an immediate child with `build.go`), and does not change the process cwd. An
-invalid selection exits 2.
+the process cwd, must be an existing project directory (`vmake.json`, `.vmake/`,
+`build.go`, or an immediate child with `build.go`), and does not change the
+process cwd. An invalid selection exits 2.
 
 Buildscript stdout is discarded while the model is resolved, so stdout always
 contains exactly one JSON document even when `build.go` prints. On success
@@ -74,7 +74,7 @@ Failure (no `data`, exit 1):
     {
       "severity": "error",
       "code": "VMAKE_E_OPTION",
-      "message": "proj/flag: invalid bool value: \"maybe\" (use true/false, on/off, or 1/0)"
+      "message": "//:flag: invalid bool value: \"maybe\" (use true/false, on/off, or 1/0)"
     }
   ]
 }
@@ -152,9 +152,10 @@ writes on `p.DryRun()`. The guard covers the wrapped symbols only.
 | `globalOptionDefs` | Object keyed by option name; each value is `{type, default?, description?, values?, group?}`; omitted when none. Effective values are in `global` |
 | `globalCFlags`, `globalCxxFlags`, `globalLdFlags`, `globalLinks` | Global `AddGlobal*` declarations from needed packages in package/declaration order; duplicates preserved; omitted when empty |
 | `globalDefines` | Auto-exported global-option macros as `NAME=value`, sorted, without `-D`; omitted when empty |
-| `overrides` | Typed `--set` values keyed `[package/]option`; omitted when unused |
-| `roots` | Active configuration `"root"` package when set, else explicit `SetRoot(true)` local package when present, otherwise needed local packages that no needed package depends on, sorted |
-| `packages` | Resolved package entries, sorted by name |
+| `overrides` | Typed `--set` values keyed `[package:]option`; omitted when unused |
+| `roots` | Active configuration `"root"`/`"roots"` when set, else `vmake.json` `"roots"` (or `"//"` when root `build.go` exists), otherwise needed local packages that no needed package depends on, sorted |
+| `containers` | Resolved module containers (`{id, kind, repo?, version?, commit?, url?, dir?, linked?, linkPath?}`), sorted by ID |
+| `packages` | Resolved package entries, sorted by name (each carries `container` identifying its owning container) |
 | `graph` | Package dependency edges `{from, to}`, sorted (merges `OnRequire`, cross-package target `AddDeps`/`UseRequires`, and `BuildSubGraph` edges; `--no-targets` reports `OnRequire` edges only). Edges may also carry `kinds` and `via`, matching `vmake deps graph` |
 | `compileDatabase` | `<root>/build/compile_commands.json` (expected path, even before a build) |
 | `compileDatabasePresent` | Whether that file currently exists (presence only) |
@@ -240,15 +241,15 @@ exists.
 only; nothing is persisted. Unknown packages/options, wrong types, and invalid
 choices exit 1 with `VMAKE_E_OPTION`.
 
-`[package]` may be a full package name or a trailing path segment that is
-unique among resolved packages (for example `kernel/debug` for
-`vendor/sdk/kernel`). The same rule applies to `vmake config --set` and every
-other command that accepts `--set`; an ambiguous segment is rejected as an
-unknown package.
+`[package]` may be a canonical package ID (`//`, `//app`, `vendor/sdk/kernel`)
+or a trailing path segment that is unique among resolved packages (for example
+`kernel:debug` for `vendor/sdk/kernel`). The same rule applies to
+`vmake config --set` and every other command that accepts `--set`; an ambiguous
+segment is rejected as an unknown package.
 
 The value is coerced with the option's declared type during the single
 resolution pass once `OnConfig` declarations are collected, matching
-`vmake config --set <pkg>/<option>=<value>`:
+`vmake config --set <pkg>:<option>=<value>`:
 
 - bool: `true`/`false`, `on`/`off`, `1`/`0` (case-insensitive)
 - int: numeric text with an integral value (`42`, `42.0`, `1e3`); `quick` and
@@ -261,10 +262,10 @@ Examples:
 ```sh
 vmake inspect
 vmake inspect --no-targets                 # package/dependency model only
-vmake inspect --set mode=release --set proj/retries=5
-vmake inspect --set proj/label=42          # string option keeps "42"
-vmake inspect --set proj/with_dep=on       # bool alias becomes true
-vmake inspect --set dep/dep_mode=slow      # choice validated
+vmake inspect --set mode=release --set //:retries=5
+vmake inspect --set //:label=42            # string option keeps "42"
+vmake inspect --set //:with_dep=on         # bool alias becomes true
+vmake inspect --set //dep:dep_mode=slow    # choice validated
 ```
 
 ## Exit status and determinism

@@ -134,36 +134,51 @@ func (s *sourceStage) layoutFactsFor(name string) (LayoutFacts, error) {
 	node := s.rc.ctx.DepGraph.Packages[name]
 	flagsHash := packageFlagsHash(s.rc.globalFlagsHash, node)
 	if node == nil || node.IsLocal() {
+		sourceLink := ""
+		if node != nil && node.Source != nil && node.Source.Link != nil {
+			sourceLink = node.Source.Link.Path
+		}
 		return LayoutFacts{
-			Commit:    s.sourceCommits[name],
-			FlagsHash: flagsHash,
+			Commit:     s.sourceCommits[name],
+			SourceLink: sourceLink,
+			FlagsHash:  flagsHash,
 		}, nil
-	}
-	owner := remoteOwnerName(s.rc.ctx, name)
-	version := s.sourceVersions[name]
-	commit := ""
-	if s.remote != nil {
-		commit = s.remote.commits[owner]
-		if version == "" {
-			version = s.sourceVersions[owner]
-		}
-		if version == "" {
-			version = s.remote.versions[owner]
-		}
-	}
-	if version == "" && node.Native != nil {
-		version = node.Native.Selected
-	}
-	if commit == "" && node.Native != nil {
-		commit = node.Native.Commit
 	}
 	sourceLink := ""
 	if node.Source != nil && node.Source.Link != nil {
 		sourceLink = node.Source.Link.Path
 	}
+	if node.IsNative() {
+		cID := node.Container
+		c := s.rc.ctx.DepGraph.Containers[cID]
+		version := s.containerVersions[cID]
+		commit := s.containerCommits[cID]
+		if version == "" && c != nil {
+			version = c.Version
+		}
+		if commit == "" && c != nil {
+			commit = c.Commit
+		}
+		if node.HasOwnGit() && s.sourceVersions[name] != "" {
+			if version != "" {
+				version = version + "+" + s.sourceVersions[name]
+			} else {
+				version = s.sourceVersions[name]
+			}
+		}
+		return LayoutFacts{
+			Version:    version,
+			Commit:     s.packageCommitKey(name, commit),
+			FlagsHash:  flagsHash,
+			PatchHash:  s.patchHashes[name],
+			SourceLink: sourceLink,
+		}, nil
+	}
+	version := s.sourceVersions[name]
+	commit := s.sourceCommits[name]
 	return LayoutFacts{
 		Version:    version,
-		Commit:     s.packageCommitKey(name, commit),
+		Commit:     commit,
 		FlagsHash:  flagsHash,
 		PatchHash:  s.patchHashes[name],
 		SourceLink: sourceLink,
@@ -206,17 +221,16 @@ func (s *sourceStage) makeLayout(name string, tools *build.ResolvedTools) (build
 	}
 	loc := s.rc.ctx.packageLocation(name, node)
 	tree := ""
-	if s.remote != nil {
-		tree = s.remote.trees[name]
-		if tree == "" {
-			tree = s.remote.trees[loc.Owner]
-		}
+	if node.IsNative() {
+		tree = s.containerTrees[node.Container]
+	} else if !loc.Linked && s.sourceSeeds[name] != "" {
+		tree = filepath.Dir(s.sourceSeeds[name])
 	}
 	if tree == "" {
 		tree = loc.OwnerTreeRoot
 	}
 	sourceOverride := ""
-	if loc.Linked {
+	if loc.ContainerLinked || (node.IsRegistry() && loc.Linked) {
 		sourceOverride = loc.PackageRoot
 	}
 	return layoutFor(layoutInput{

@@ -1,0 +1,6 @@
+{
+  "modules": {
+    "test_build/mathlib": ">=1.0",
+    "test_build/greeter": "*"
+  }
+}

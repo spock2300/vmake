@@ -9,20 +9,20 @@ import (
 
 func Main(p *api.Package) {
 	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("libcore", "libnet", "webapp", "sensordaemon", "controlpanel")
+		ctx.AddRequires("//libs/libcore", "//libs/libnet", "//apps/webapp", "//apps/sensordaemon", "//apps/controlpanel")
 	})
 
 	p.OnBuild(func(ctx *api.BuildContext) {
-		webappOut := ctx.DepOutput("webapp:webapp")
-		sensorOut := ctx.DepOutput("sensordaemon:sensordaemon")
-		panelOut := ctx.DepOutput("controlpanel:controlpanel")
-		libcoreSo := ctx.DepOutput("libcore:core")
-		libnetSo := ctx.DepOutput("libnet:net")
+		webappOut := ctx.DepOutput("//apps/webapp:webapp")
+		sensorOut := ctx.DepOutput("//apps/sensordaemon:sensordaemon")
+		panelOut := ctx.DepOutput("//apps/controlpanel:controlpanel")
+		libcoreSo := ctx.DepOutput("//libs/libcore:core")
+		libnetSo := ctx.DepOutput("//libs/libnet:net")
 
 		ctx.Target("app_partition").SetKind(api.TargetVoid).
 			AddDeps(
-				"libcore:core", "libnet:net",
-				"webapp:webapp", "sensordaemon:sensordaemon", "controlpanel:controlpanel",
+				"//libs/libcore:core", "//libs/libnet:net",
+				"//apps/webapp:webapp", "//apps/sensordaemon:sensordaemon", "//apps/controlpanel:controlpanel",
 			).
 			SetBuildFunc(func(pkg *api.Package) error {
 				staging := filepath.Join(pkg.BuildDir(), "staging")

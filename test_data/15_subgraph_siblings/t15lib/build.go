@@ -7,13 +7,15 @@ import (
 )
 
 func Main(p *api.Package) {
+	p.AddRequires("//t15gen")
+
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.BuildSubGraph("t15gen")
+		ctx.BuildSubGraph("//t15gen")
 
 		if !p.DryRun() {
 			os.MkdirAll("include", 0755)
 		}
-		ctx.Exec(ctx.DepOutput("t15gen:gen"), "include/subgen.h")
+		ctx.Exec(ctx.DepOutput("//t15gen:gen"), "include/subgen.h")
 
 		ctx.Target("sublib").
 			SetKind(api.TargetStatic).

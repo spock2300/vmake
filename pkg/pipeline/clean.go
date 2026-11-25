@@ -10,7 +10,6 @@ import (
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/pkg/api"
-	"github.com/spock2300/vmake/pkg/buildscript"
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
@@ -178,7 +177,16 @@ func CleanAllRemoteOutputs(depDir string, links map[string]string) {
 		return nil
 	})
 	for name := range links {
-		CleanOutputDirs(filepath.Join(depDir, filepath.FromSlash(name), "out"), name)
+		if api.IsLocalPackageID(name) {
+			continue
+		}
+		owner := name
+		if repoName, rest, ok := api.SplitPackageRef(name); ok {
+			if mod, _, hasMember := strings.Cut(rest, "/"); hasMember {
+				owner = repoName + "/" + mod
+			}
+		}
+		CleanOutputDirs(filepath.Join(depDir, filepath.FromSlash(owner), "out"), owner)
 	}
 }
 
@@ -205,14 +213,44 @@ func CleanOutputDirs(outDir, pkgName string) {
 	}
 }
 
+var cleanScanSkipDirs = map[string]bool{
+	".git": true, ".vmake": true, ".vmake_deps": true,
+	"build": true, "install": true, "out": true, "node_modules": true,
+}
+
 func ScanPackages(workDir string) ([]PkgCleanEntry, error) {
-	packages, err := buildscript.Scan(workDir)
+	root, err := filepath.Abs(workDir)
 	if err != nil {
 		return nil, err
 	}
-	entries := make([]PkgCleanEntry, len(packages))
-	for i, pkg := range packages {
-		entries[i] = PkgCleanEntry{Dir: pkg.Dir, Name: pkg.Name}
+	var entries []PkgCleanEntry
+	err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			if path != root && cleanScanSkipDirs[d.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Name() != "build.go" {
+			return nil
+		}
+		dir := filepath.Dir(path)
+		rel, relErr := filepath.Rel(root, dir)
+		if relErr != nil {
+			return relErr
+		}
+		name := api.LocalContainerID
+		if rel != "." {
+			name = api.LocalContainerID + filepath.ToSlash(rel)
+		}
+		entries = append(entries, PkgCleanEntry{Dir: dir, Name: name})
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return entries, nil
 }

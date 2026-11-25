@@ -46,7 +46,11 @@ type egoGraphView struct {
 }
 
 func isSyntheticGroupPkg(pkgName string) bool {
-	return pkgName == RemoteGroupPkgName || pkgName == InactiveGroupPkgName
+	return pkgName == LocalGroupPkgName ||
+		pkgName == RemoteGroupPkgName ||
+		pkgName == InactiveGroupPkgName ||
+		strings.HasPrefix(pkgName, containerGroupPrefix) ||
+		strings.HasPrefix(pkgName, dirGroupPrefix)
 }
 
 func isRealPackage(pkgName string) bool {
@@ -340,8 +344,53 @@ func (m *Model) pkgDerivedCount(pkgName string) int {
 	return n
 }
 
+func localPkgDisplayName(pkgName string) string {
+	if pkgName == api.LocalContainerID {
+		return api.LocalContainerID
+	}
+	if strings.HasPrefix(pkgName, api.LocalContainerID) {
+		return strings.TrimPrefix(pkgName, api.LocalContainerID)
+	}
+	return pkgName
+}
+
+func (m *Model) containerOf(pkgName string) string {
+	if m.pkgContainer != nil {
+		if c := m.pkgContainer[pkgName]; c != "" {
+			return c
+		}
+	}
+	if m.localPkgSet[pkgName] || api.IsLocalPackageID(pkgName) {
+		return api.LocalContainerID
+	}
+	root, _ := remoteRootAndRel(pkgName)
+	return root
+}
+
+func (m *Model) relPathInContainer(pkgName, containerID string) string {
+	if containerID == api.LocalContainerID {
+		if pkgName == api.LocalContainerID {
+			return ""
+		}
+		if strings.HasPrefix(pkgName, api.LocalContainerID) {
+			return strings.TrimPrefix(pkgName, api.LocalContainerID)
+		}
+		return pkgName
+	}
+	if pkgName == containerID {
+		return ""
+	}
+	if strings.HasPrefix(pkgName, containerID+"/") {
+		return strings.TrimPrefix(pkgName, containerID+"/")
+	}
+	return pkgName
+}
+
 func shortPkgDisplayName(pkgName string, localSet map[string]bool) string {
-	if localSet[pkgName] || !strings.Contains(pkgName, "/") {
+	if localSet[pkgName] || api.IsLocalPackageID(pkgName) {
+		return localPkgDisplayName(pkgName)
+	}
+	if !strings.Contains(pkgName, "/") {
 		return pkgName
 	}
 	_, rel := remoteRootAndRel(pkgName)
@@ -362,7 +411,7 @@ func disambiguatedPkgNames(pkgs []string, localSet map[string]bool) map[string]s
 	out := make(map[string]string, len(pkgs))
 	for _, p := range pkgs {
 		b := bases[p]
-		if baseCounts[b] <= 1 || localSet[p] {
+		if baseCounts[b] <= 1 || localSet[p] || api.IsLocalPackageID(p) {
 			out[p] = b
 			continue
 		}
@@ -412,6 +461,102 @@ func compactRemoteGroupChains(nodes []*TreeNode, depth int) []*TreeNode {
 	return nodes
 }
 
+func buildContainerTreeNodes(t *remoteTrieNode, containerID string, pkgSet map[string]bool, depth int) []*TreeNode {
+	if len(t.children) == 0 {
+		return nil
+	}
+	sort.Slice(t.children, func(i, j int) bool {
+		return t.children[i].name < t.children[j].name
+	})
+	var nodes []*TreeNode
+	for _, c := range t.children {
+		isReal := pkgSet[c.fullPath]
+		pkgName := c.fullPath
+		if !isReal {
+			rel := strings.TrimPrefix(c.fullPath, containerID+"/")
+			pkgName = dirGroupPkgName(containerID, rel)
+		}
+		node := &TreeNode{
+			Name:       c.name,
+			PkgName:    pkgName,
+			IsExternal: true,
+			IsGroup:    !isReal,
+			Depth:      depth,
+		}
+		node.Children = buildContainerTreeNodes(c, containerID, pkgSet, depth+1)
+		if len(node.Children) > 0 {
+			node.Expanded = true
+		}
+		nodes = append(nodes, node)
+	}
+	setChildPrefixes(nodes)
+	return nodes
+}
+
+func (m *Model) buildContainerNode(containerID string, pkgs []string, remoteLayer map[string]int) *TreeNode {
+	pkgSet := make(map[string]bool, len(pkgs))
+	hasRootPkg := false
+	trieRoot := &remoteTrieNode{
+		name:     containerID,
+		fullPath: containerID,
+		byName:   make(map[string]*remoteTrieNode),
+	}
+	for _, full := range pkgs {
+		pkgSet[full] = true
+		rel := m.relPathInContainer(full, containerID)
+		if rel == "" {
+			hasRootPkg = true
+			continue
+		}
+		cur := trieRoot
+		curPath := containerID
+		for _, seg := range strings.Split(rel, "/") {
+			if seg == "" {
+				continue
+			}
+			curPath += "/" + seg
+			next, ok := cur.byName[seg]
+			if !ok {
+				next = &remoteTrieNode{
+					name:     seg,
+					fullPath: curPath,
+					byName:   make(map[string]*remoteTrieNode),
+				}
+				cur.children = append(cur.children, next)
+				cur.byName[seg] = next
+			}
+			cur = next
+		}
+	}
+
+	var children []*TreeNode
+	if hasRootPkg {
+		children = append(children, &TreeNode{
+			Name:       path.Base(containerID),
+			PkgName:    containerID,
+			IsExternal: true,
+			IsGroup:    false,
+			Depth:      1,
+		})
+	}
+	subChildren := buildContainerTreeNodes(trieRoot, containerID, pkgSet, 1)
+	adjustRemoteDepths(subChildren, 1, remoteLayer)
+	subChildren = compactRemoteGroupChains(subChildren, 1)
+	children = append(children, subChildren...)
+	setChildPrefixes(children)
+
+	return &TreeNode{
+		Name:        containerID,
+		PkgName:     containerGroupPkgName(containerID),
+		ContainerID: containerID,
+		IsExternal:  true,
+		IsGroup:     true,
+		Expanded:    true,
+		Depth:       0,
+		Children:    children,
+	}
+}
+
 func (m *Model) buildWorkbenchTree() []*TreeNode {
 	if !m.focusActive {
 		var sources []buildscript.Source
@@ -443,71 +588,87 @@ func (m *Model) buildWorkbenchTree() []*TreeNode {
 		Depth:    0,
 	})
 
-	var inactiveOrEmpty []string
+	var inactivePkgs []string
 	seenInactive := make(map[string]bool)
-	markOther := func(name string) {
+	markInactive := func(name string) {
 		if name == "" || seenInactive[name] {
 			return
 		}
 		seenInactive[name] = true
-		inactiveOrEmpty = append(inactiveOrEmpty, name)
+		inactivePkgs = append(inactivePkgs, name)
 	}
 
+	var localChildren []*TreeNode
 	for _, name := range sortedLocals {
-		if m.isActivePkg(name) && m.hasPkgConfig(name) {
-			result = append(result, &TreeNode{
-				Name:    name,
-				PkgName: name,
-				Depth:   0,
-			})
-		} else {
-			markOther(name)
+		if !m.isActivePkg(name) {
+			markInactive(name)
+			continue
 		}
+		if m.hideEmptyPkgs && !m.hasPkgConfig(name) {
+			continue
+		}
+		localChildren = append(localChildren, &TreeNode{
+			Name:    localPkgDisplayName(name),
+			PkgName: name,
+			Depth:   1,
+		})
+	}
+	if len(localChildren) > 0 {
+		setChildPrefixes(localChildren)
+		result = append(result, &TreeNode{
+			Name:        "Local",
+			PkgName:     LocalGroupPkgName,
+			ContainerID: api.LocalContainerID,
+			Expanded:    true,
+			IsGroup:     true,
+			Depth:       0,
+			Children:    localChildren,
+		})
 	}
 
 	allPkgs := m.allKnownPackages()
-	activeRemoteSet := make(map[string]bool)
+	activeByContainer := make(map[string][]string)
 	for _, name := range allPkgs {
 		if m.localPkgSet[name] {
 			continue
 		}
-		if m.isActivePkg(name) && m.hasPkgConfig(name) {
-			activeRemoteSet[name] = true
-		} else {
-			markOther(name)
+		if !m.isActivePkg(name) {
+			markInactive(name)
+			continue
 		}
-	}
-
-	if len(activeRemoteSet) > 0 {
-		remoteNode := buildRemoteGroupFromSet(activeRemoteSet, true)
-		if remoteNode != nil {
-			remoteNode.Depth = 0
-			remoteNode.Prefix = ""
-			remoteLayer := computeAllPkgLayers(effectiveDeps)
-			adjustRemoteDepths(remoteNode.Children, 1, remoteLayer)
-			remoteNode.Children = compactRemoteGroupChains(remoteNode.Children, 1)
-			result = append(result, remoteNode)
-		}
-	}
-
-	var otherFiltered []string
-	for _, name := range inactiveOrEmpty {
 		if m.hideEmptyPkgs && !m.hasPkgConfig(name) {
 			continue
 		}
-		otherFiltered = append(otherFiltered, name)
+		cID := m.containerOf(name)
+		activeByContainer[cID] = append(activeByContainer[cID], name)
 	}
-	if len(otherFiltered) > 0 {
+
+	if len(activeByContainer) > 0 {
+		containerIDs := make([]string, 0, len(activeByContainer))
+		for cID := range activeByContainer {
+			containerIDs = append(containerIDs, cID)
+		}
+		sort.Strings(containerIDs)
+		remoteLayer := computeAllPkgLayers(effectiveDeps)
+		for _, cID := range containerIDs {
+			result = append(result, m.buildContainerNode(cID, activeByContainer[cID], remoteLayer))
+		}
+	}
+
+	var inactiveFiltered []string
+	for _, name := range inactivePkgs {
+		if m.hideEmptyPkgs && !m.hasPkgConfig(name) {
+			continue
+		}
+		inactiveFiltered = append(inactiveFiltered, name)
+	}
+	if len(inactiveFiltered) > 0 {
 		shortNames := disambiguatedPkgNames(allPkgs, m.localPkgSet)
-		sort.SliceStable(otherFiltered, func(i, j int) bool {
-			a, b := otherFiltered[i], otherFiltered[j]
+		sort.SliceStable(inactiveFiltered, func(i, j int) bool {
+			a, b := inactiveFiltered[i], inactiveFiltered[j]
 			cfgA, cfgB := m.hasPkgConfig(a), m.hasPkgConfig(b)
 			if cfgA != cfgB {
 				return cfgA
-			}
-			actA, actB := m.isActivePkg(a), m.isActivePkg(b)
-			if actA != actB {
-				return actA
 			}
 			locA, locB := m.localPkgSet[a], m.localPkgSet[b]
 			if locA != locB {
@@ -526,7 +687,7 @@ func (m *Model) buildWorkbenchTree() []*TreeNode {
 			IsGroup:  true,
 			Depth:    0,
 		}
-		for _, name := range otherFiltered {
+		for _, name := range inactiveFiltered {
 			lbl := shortNames[name]
 			if lbl == "" {
 				lbl = name
@@ -535,7 +696,7 @@ func (m *Model) buildWorkbenchTree() []*TreeNode {
 				Name:       lbl,
 				PkgName:    name,
 				IsExternal: !m.localPkgSet[name],
-				Depth:      2,
+				Depth:      1,
 			})
 		}
 		setChildPrefixes(inactiveGroup.Children)
@@ -645,6 +806,16 @@ func (m *Model) isEdgeActive(fromPkg, toPkg string) bool {
 }
 
 func (m *Model) egoGraphData() egoGraphView {
+	if cur := m.currentTreeNode(); cur != nil && cur.IsGroup {
+		return egoGraphView{
+			FocalPkg:         cur.PkgName,
+			FocalLabel:       m.treeNodeLabel(cur),
+			FocalActive:      cur.PkgName != InactiveGroupPkgName,
+			IsGroup:          true,
+			ActiveUpstream:   -1,
+			ActiveDownstream: -1,
+		}
+	}
 	focal := m.selectedPkg
 	if focal == "" && m.treeCursor >= 0 && m.treeCursor < len(m.flat) {
 		focal = m.flat[m.treeCursor].PkgName

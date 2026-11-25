@@ -35,7 +35,7 @@ func TestPostLinkPrefixedWindowsOutput(t *testing.T) {
 	if paths := postLinkOutputPaths(target, dir, output); !reflect.DeepEqual(paths, []string{derived}) {
 		t.Fatalf("declared outputs=%v, want [%s]", paths, derived)
 	}
-	graph, err := NewBuildGraph(map[string]map[string]*api.Target{"p": {"firmware": target}}, nil, nil)
+	graph, err := NewBuildGraph(map[string]map[string]*api.Target{"p": {"firmware": target}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

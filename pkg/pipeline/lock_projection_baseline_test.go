@@ -9,28 +9,24 @@ import (
 	"github.com/spock2300/vmake/pkg/resolver"
 )
 
-func lockProjectionNode(name string, local bool, git bool) *resolver.PackageNode {
-	origin := api.SourceRemote
-	if local {
-		origin = api.SourceLocal
-	}
-	src := buildscript.NewSource(name, "/src/"+name+"/build.go", "/src/"+name, origin)
-	pkg := api.NewPackage().SetName(name)
-	if git {
-		pkg.SetGit("https://example.invalid/" + name + ".git")
-	}
-	return resolver.NewPackageNode(name, src, pkg)
+func lockWithContainer(name, version, commit, source string) *lockfile.Lock {
+	l := lockfile.New()
+	l.SetContainer(name, &lockfile.LockedContainer{Version: version, Commit: commit, Source: source})
+	return l
 }
 
-func nativeLockProjectionNode(name string) *resolver.PackageNode {
-	node := lockProjectionNode(name, false, false)
-	node.Native = &resolver.NativePackageInfo{GitURL: "https://example.invalid/" + name + ".git"}
-	return node
+func lockWithSource(name, version, commit, url string) *lockfile.Lock {
+	l := lockfile.New()
+	l.SetSource(name, &lockfile.LockedSource{Version: version, Commit: commit, URL: url})
+	return l
 }
 
-func lockProjectionStage(t *testing.T, nodes []*resolver.PackageNode, old *lockfile.Lock, policy resolver.LockPolicy, links map[string]string) *sourceStage {
+func lockProjectionStage(t *testing.T, containers []*resolver.ContainerNode, nodes []*resolver.PackageNode, old *lockfile.Lock, policy resolver.LockPolicy, links map[string]string) *sourceStage {
 	t.Helper()
 	r := resolver.NewResolver(nil, t.TempDir())
+	for _, c := range containers {
+		r.Graph().Containers[c.ID] = c
+	}
 	needed := make(map[string]bool)
 	for _, node := range nodes {
 		r.Graph().Packages[node.ID] = node
@@ -48,127 +44,103 @@ func lockProjectionStage(t *testing.T, nodes []*resolver.PackageNode, old *lockf
 		Paths:       &Paths{DepsDir: t.TempDir(), ReposDir: t.TempDir()},
 	}
 	s := newSourceStage(&runContext{ctx: ctx, opts: BuildOptions{}}, &configStage{needed: needed})
-	s.remote = &remoteVersionState{versions: map[string]string{}, commits: map[string]string{}}
 	return s
 }
 
 func TestBuildLockfileProjectionMatrix(t *testing.T) {
-	tests := []struct {
-		name       string
-		nodes      []*resolver.PackageNode
-		old        *lockfile.Lock
-		policy     resolver.LockPolicy
-		links      map[string]string
-		versions   map[string]string
-		commits    map[string]string
-		wantName   string
-		wantLocked *lockfile.LockedPkg
-		wantAbsent bool
-	}{
-		{
-			name:       "native remote uses materialized state",
-			nodes:      []*resolver.PackageNode{nativeLockProjectionNode("repo/native")},
-			versions:   map[string]string{"repo/native": "1.2.3"},
-			commits:    map[string]string{"repo/native": "commit-native"},
-			wantName:   "repo/native",
-			wantLocked: &lockfile.LockedPkg{Version: "1.2.3", Commit: "commit-native", Source: "native"},
-		},
-		{
-			name:       "registry remote uses materialized state",
-			nodes:      []*resolver.PackageNode{lockProjectionNode("official/foo", false, false)},
-			versions:   map[string]string{"official/foo": "2.0.0"},
-			commits:    map[string]string{"official/foo": "commit-registry"},
-			wantName:   "official/foo",
-			wantLocked: &lockfile.LockedPkg{Version: "2.0.0", Commit: "commit-registry", Source: "registry"},
-		},
-		{
-			name:       "local SetGit uses source version and commit",
-			nodes:      []*resolver.PackageNode{lockProjectionNode("local/pkg", true, true)},
-			versions:   map[string]string{"local/pkg": "0.1.0"},
-			commits:    map[string]string{"local/pkg": "commit-local"},
-			wantName:   "local/pkg",
-			wantLocked: &lockfile.LockedPkg{Version: "0.1.0", Commit: "commit-local", Source: "git"},
-		},
-		{
-			name:       "linked package keeps old entry",
-			nodes:      []*resolver.PackageNode{lockProjectionNode("link/pkg", false, false)},
-			old:        lockWith("link/pkg", "1.0.0", "link-commit", "native"),
-			links:      map[string]string{"link/pkg": "/work/link"},
-			wantName:   "link/pkg",
-			wantLocked: &lockfile.LockedPkg{Version: "1.0.0", Commit: "link-commit", Source: "native"},
-		},
-		{
-			name:       "local SetGit without new state keeps git lock",
-			nodes:      []*resolver.PackageNode{lockProjectionNode("local/pkg", true, true)},
-			old:        lockWith("local/pkg", "0.1.0", "old-commit", "git"),
-			wantName:   "local/pkg",
-			wantLocked: &lockfile.LockedPkg{Version: "0.1.0", Commit: "old-commit", Source: "git"},
-		},
-		{
-			name:       "remote without new state keeps lock",
-			nodes:      []*resolver.PackageNode{nativeLockProjectionNode("repo/native")},
-			old:        lockWith("repo/native", "1.0.0", "old-commit", "native"),
-			wantName:   "repo/native",
-			wantLocked: &lockfile.LockedPkg{Version: "1.0.0", Commit: "old-commit", Source: "native"},
-		},
-		{
-			name:       "float drops stale remote entry",
-			nodes:      []*resolver.PackageNode{nativeLockProjectionNode("repo/native")},
-			old:        lockWith("repo/native", "1.0.0", "old-commit", "native"),
-			policy:     resolver.LockPolicy{Float: map[string]bool{"repo/native": true}},
-			wantName:   "repo/native",
-			wantAbsent: true,
-		},
-		{
-			name: "stale entry is pruned",
-			nodes: []*resolver.PackageNode{
-				nativeLockProjectionNode("repo/native"),
-			},
-			old:        lockfile.New(),
-			versions:   map[string]string{"repo/native": "1.0.0"},
-			commits:    map[string]string{"repo/native": "commit-native"},
-			wantName:   "gone/pkg",
-			wantAbsent: true,
-		},
+	localGitNode := func(id string) *resolver.PackageNode {
+		src := buildscript.NewSource(id, "/src/build.go", "/src", api.SourceLocal)
+		pkg := api.NewPackage().SetName(id)
+		pkg.SetGit("https://example.invalid/local.git")
+		return resolver.NewPackageNode(id, "//", "pkg", resolver.SourceKindLocal, src, pkg)
+	}
+	nativeOwnGitNode := func(id, container string) *resolver.PackageNode {
+		src := buildscript.NewSource(id, "/sdk/lvgl/build.go", "/sdk/lvgl", api.SourceRemote)
+		pkg := api.NewPackage().SetName(id)
+		pkg.SetGit("https://example.invalid/lvgl.git")
+		return resolver.NewPackageNode(id, container, "lvgl", resolver.SourceKindNative, src, pkg)
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			old := tc.old
-			if old == nil {
-				old = lockfile.New()
-			}
-			old.Set("gone/pkg", &lockfile.LockedPkg{Version: "9.9.9", Commit: "deadbeef", Source: "native"})
-			s := lockProjectionStage(t, tc.nodes, old, tc.policy, tc.links)
-			for name, version := range tc.versions {
-				s.sourceVersions[name] = version
-				s.remote.versions[name] = version
-			}
-			for name, commit := range tc.commits {
-				s.sourceCommits[name] = commit
-				s.remote.commits[name] = commit
-			}
-			updated, err := s.buildLockfile()
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, ok := updated.Get(tc.wantName)
-			if tc.wantAbsent {
-				if ok {
-					t.Fatalf("%s should be absent, got %+v", tc.wantName, got)
-				}
-				return
-			}
-			if !ok {
-				t.Fatalf("%s missing from projected lock", tc.wantName)
-			}
-			if got.Version != tc.wantLocked.Version || got.Commit != tc.wantLocked.Commit ||
-				got.Source != tc.wantLocked.Source || got.WrapperCommit != tc.wantLocked.WrapperCommit {
-				t.Fatalf("projected %s = %+v, want %+v", tc.wantName, got, tc.wantLocked)
-			}
-			if _, stale := updated.Get("gone/pkg"); stale {
-				t.Fatal("stale gone/pkg entry should be pruned")
-			}
-		})
-	}
+	t.Run("native container uses materialized state", func(t *testing.T) {
+		old := lockfile.New()
+		old.SetContainer("gone/mod", &lockfile.LockedContainer{Version: "9.9.9", Commit: "deadbeef", Source: "native"})
+		s := lockProjectionStage(t, []*resolver.ContainerNode{
+			{ID: "repo/native", Repo: "repo", Kind: resolver.SourceKindNative},
+		}, nil, old, resolver.LockPolicy{}, nil)
+		s.containerVersions["repo/native"] = "1.2.3"
+		s.containerCommits["repo/native"] = "commit-native"
+		got, err := s.buildLockfile()
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, ok := got.GetContainer("repo/native")
+		if !ok || c.Version != "1.2.3" || c.Commit != "commit-native" || c.Source != "native" {
+			t.Fatalf("container = %+v, %v", c, ok)
+		}
+		if _, stale := got.GetContainer("gone/mod"); stale {
+			t.Fatal("stale container should be pruned")
+		}
+	})
+
+	t.Run("native member with own SetGit writes source entry orthogonally", func(t *testing.T) {
+		s := lockProjectionStage(t, []*resolver.ContainerNode{
+			{ID: "hl/sdk", Repo: "hl", Kind: resolver.SourceKindNative, Version: "0.3.0", Commit: "sdk-commit"},
+		}, []*resolver.PackageNode{
+			nativeOwnGitNode("hl/sdk/lvgl", "hl/sdk"),
+		}, lockfile.New(), resolver.LockPolicy{}, nil)
+		s.containerVersions["hl/sdk"] = "0.3.0"
+		s.containerCommits["hl/sdk"] = "sdk-commit"
+		s.sourceVersions["hl/sdk/lvgl"] = "9.2.2"
+		s.sourceCommits["hl/sdk/lvgl"] = "lvgl-commit"
+		got, err := s.buildLockfile()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c, ok := got.GetContainer("hl/sdk"); !ok || c.Commit != "sdk-commit" {
+			t.Fatalf("container = %+v, %v", c, ok)
+		}
+		if src, ok := got.GetSource("hl/sdk/lvgl"); !ok || src.Version != "9.2.2" || src.Commit != "lvgl-commit" {
+			t.Fatalf("own-Git source = %+v, %v", src, ok)
+		}
+	})
+
+	t.Run("local SetGit writes source entry and retains on unchanged", func(t *testing.T) {
+		s := lockProjectionStage(t, nil, []*resolver.PackageNode{localGitNode("//pkg")},
+			lockWithSource("//pkg", "0.1.0", "old-commit", "https://example.invalid/local.git"),
+			resolver.LockPolicy{}, nil)
+		got, err := s.buildLockfile()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if src, ok := got.GetSource("//pkg"); !ok || src.Commit != "old-commit" {
+			t.Fatalf("retained local SetGit source = %+v, %v", src, ok)
+		}
+	})
+
+	t.Run("linked container keeps old container entry", func(t *testing.T) {
+		s := lockProjectionStage(t, []*resolver.ContainerNode{
+			{ID: "link/sdk", Repo: "link", Kind: resolver.SourceKindNative, Link: &buildscript.SourceLink{Path: "/work/sdk", Native: true, LocalSource: true}},
+		}, nil, lockWithContainer("link/sdk", "1.0.0", "link-commit", "native"), resolver.LockPolicy{}, map[string]string{"link/sdk": "/work/sdk"})
+		got, err := s.buildLockfile()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c, ok := got.GetContainer("link/sdk"); !ok || c.Commit != "link-commit" {
+			t.Fatalf("linked container entry = %+v, %v", c, ok)
+		}
+	})
+
+	t.Run("float drops stale container entry", func(t *testing.T) {
+		s := lockProjectionStage(t, []*resolver.ContainerNode{
+			{ID: "repo/native", Repo: "repo", Kind: resolver.SourceKindNative},
+		}, nil, lockWithContainer("repo/native", "1.0.0", "old-commit", "native"),
+			resolver.LockPolicy{Float: map[string]bool{"repo/native": true}}, nil)
+		got, err := s.buildLockfile()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := got.GetContainer("repo/native"); ok {
+			t.Fatal("floated container without new resolution should be absent")
+		}
+	})
 }

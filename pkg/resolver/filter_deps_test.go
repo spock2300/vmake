@@ -1,63 +1,28 @@
 package resolver
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
-	"github.com/spock2300/vmake/pkg/buildscript"
 )
-
-func TestResolveDepNameBareWithNoSubParents(t *testing.T) {
-	r := NewResolver(nil, t.TempDir())
-	r.sources["foo"] = buildscript.NewSource("foo", "/p/build.go", "/p", api.SourceLocal)
-
-	got := r.resolveDepName("callingPkg", "foo")
-	if got != "foo" {
-		t.Errorf("resolveDepName = %q, want foo", got)
-	}
-}
-
-func TestResolveDepNamePassesThroughAbsolute(t *testing.T) {
-	r := NewResolver(nil, t.TempDir())
-	r.sources["parent/child"] = buildscript.NewSource("parent/child", "/p/build.go", "/p", api.SourceLocal)
-	r.subParents["parent/child"] = "parent"
-
-	got := r.resolveDepName("parent/child", "parent/child")
-	if got != "parent/child" {
-		t.Errorf("absolute name should pass through, got %q", got)
-	}
-}
-
-func TestResolveDepNameSubPackageResolution(t *testing.T) {
-	r := NewResolver(nil, t.TempDir())
-	r.sources["parent/sub"] = buildscript.NewSource("parent/sub", "/p/build.go", "/p", api.SourceLocal)
-	r.sources["parent/dep"] = buildscript.NewSource("parent/dep", "/p2/build.go", "/p2", api.SourceLocal)
-	r.subParents["parent/sub"] = "parent"
-
-	got := r.resolveDepName("parent/sub", "dep")
-	if got != "parent/dep" {
-		t.Errorf("sub-package resolution = %q, want parent/dep", got)
-	}
-}
 
 func TestFilterDepsNoPackage(t *testing.T) {
 	r := NewResolver(nil, t.TempDir())
-	r.graph.Packages["foo"] = &PackageNode{ID: "foo", Deps: []string{"old"}}
+	r.graph.Packages["//foo"] = &PackageNode{ID: "//foo", Container: "//", Deps: []string{"//old"}}
 
-	err := r.FilterDeps("foo", nil, nil)
+	err := r.FilterDeps("//foo", nil, nil)
 	if err != nil {
 		t.Errorf("FilterDeps on nil Pkg should be no-op, got %v", err)
 	}
-	if _, exists := r.graph.Packages["foo"]; !exists {
+	if _, exists := r.graph.Packages["//foo"]; !exists {
 		t.Error("node should still exist")
 	}
 }
 
 func TestFilterDepsMissingNode(t *testing.T) {
 	r := NewResolver(nil, t.TempDir())
-	err := r.FilterDeps("nonexistent", nil, nil)
+	err := r.FilterDeps("//nonexistent", nil, nil)
 	if err == nil {
 		t.Error("FilterDeps on missing node should error")
 	}
@@ -66,13 +31,13 @@ func TestFilterDepsMissingNode(t *testing.T) {
 func TestFilterDepsNoRequireFuncs(t *testing.T) {
 	r := NewResolver(nil, t.TempDir())
 	pkg := api.NewPackage()
-	r.graph.Packages["foo"] = &PackageNode{ID: "foo", Pkg: pkg, Deps: []string{"old-dep"}}
+	r.graph.Packages["//foo"] = &PackageNode{ID: "//foo", Container: "//", Pkg: pkg, Deps: []string{"//old-dep"}}
 
-	if err := r.FilterDeps("foo", nil, nil); err != nil {
+	if err := r.FilterDeps("//foo", nil, nil); err != nil {
 		t.Errorf("FilterDeps with no requireFuncs should be no-op: %v", err)
 	}
-	if len(r.graph.Packages["foo"].Deps) != 1 || r.graph.Packages["foo"].Deps[0] != "old-dep" {
-		t.Errorf("Deps should be unchanged, got %v", r.graph.Packages["foo"].Deps)
+	if len(r.graph.Packages["//foo"].Deps) != 1 || r.graph.Packages["//foo"].Deps[0] != "//old-dep" {
+		t.Errorf("Deps should be unchanged, got %v", r.graph.Packages["//foo"].Deps)
 	}
 }
 
@@ -82,53 +47,47 @@ func TestFilterDepsReplacesNodeDeps(t *testing.T) {
 	called := 0
 	pkg.OnRequire(func(ctx *api.RequireContext) {
 		called++
-		ctx.AddRequires("real-dep-1", "real-dep-2")
+		ctx.AddRequires("//real-dep-1", "//real-dep-2")
 	})
 	api.BindPackageUpdateRequireContext(pkg, nil, nil)
 
-	r.graph.Packages["foo"] = &PackageNode{ID: "foo", Pkg: pkg, Deps: []string{"old-dep"}}
-	r.graph.Packages["real-dep-1"] = &PackageNode{ID: "real-dep-1"}
-	r.graph.Packages["real-dep-2"] = &PackageNode{ID: "real-dep-2"}
-	r.sources["real-dep-1"] = buildscript.NewSource("real-dep-1", "/p1/build.go", "/p1", api.SourceLocal)
-	r.sources["real-dep-2"] = buildscript.NewSource("real-dep-2", "/p2/build.go", "/p2", api.SourceLocal)
+	r.graph.Packages["//foo"] = &PackageNode{ID: "//foo", Container: "//", Kind: SourceKindLocal, Pkg: pkg, Deps: []string{"//old-dep"}}
+	r.graph.Packages["//real-dep-1"] = &PackageNode{ID: "//real-dep-1", Container: "//", Kind: SourceKindLocal}
+	r.graph.Packages["//real-dep-2"] = &PackageNode{ID: "//real-dep-2", Container: "//", Kind: SourceKindLocal}
 
-	if err := r.FilterDeps("foo", nil, nil); err != nil {
+	if err := r.FilterDeps("//foo", nil, nil); err != nil {
 		t.Fatalf("FilterDeps: %v", err)
 	}
 	if called == 0 {
 		t.Error("FilterDeps should re-run OnRequire via UpdateRequireContext")
 	}
 
-	deps := r.graph.Packages["foo"].Deps
+	deps := r.graph.Packages["//foo"].Deps
 	if len(deps) != 2 {
 		t.Fatalf("Deps = %v, want 2 entries", deps)
 	}
-	if deps[0] != "real-dep-1" || deps[1] != "real-dep-2" {
-		t.Errorf("Deps = %v, want [real-dep-1 real-dep-2]", deps)
+	if deps[0] != "//real-dep-1" || deps[1] != "//real-dep-2" {
+		t.Errorf("Deps = %v, want [//real-dep-1 //real-dep-2]", deps)
 	}
 }
 
-func TestFilterDepsSubPackageMissingDepListsCandidates(t *testing.T) {
+func TestFilterDepsCanonicalizesContainerRelativeRef(t *testing.T) {
 	r := NewResolver(nil, t.TempDir())
-	current := "parent/tool"
-	r.subParents[current] = "parent"
-	r.sources[current] = buildscript.NewSource(current, "/p/build.go", "/p", api.SourceRemote)
-
 	pkg := api.NewPackage()
 	pkg.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("ghost")
+		ctx.AddRequires("//sub_b")
 	})
 	api.BindPackageUpdateRequireContext(pkg, nil, nil)
-	r.graph.Packages[current] = &PackageNode{ID: current, Pkg: pkg, Deps: []string{}}
 
-	err := r.FilterDeps(current, nil, nil)
-	if err == nil {
-		t.Fatal("missing sibling dependency should fail")
+	r.graph.Packages["hl/sdk/sub_a"] = &PackageNode{ID: "hl/sdk/sub_a", Container: "hl/sdk", Kind: SourceKindNative, Pkg: pkg}
+	r.graph.Packages["hl/sdk/sub_b"] = &PackageNode{ID: "hl/sdk/sub_b", Container: "hl/sdk", Kind: SourceKindNative}
+
+	if err := r.FilterDeps("hl/sdk/sub_a", nil, nil); err != nil {
+		t.Fatalf("FilterDeps: %v", err)
 	}
-	for _, want := range []string{"tried sub-package candidates", "parent/tool/ghost", "parent/ghost"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error should mention %q, got: %v", want, err)
-		}
+	deps := r.graph.Packages["hl/sdk/sub_a"].Deps
+	if len(deps) != 1 || deps[0] != "hl/sdk/sub_b" {
+		t.Fatalf("Deps = %v, want [hl/sdk/sub_b]", deps)
 	}
 }
 
@@ -136,108 +95,58 @@ func TestFilterDepsUnknownDepErrors(t *testing.T) {
 	r := NewResolver(nil, t.TempDir())
 	pkg := api.NewPackage()
 	pkg.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("ghost-dep")
+		ctx.AddRequires("//ghost-dep")
 	})
 	api.BindPackageUpdateRequireContext(pkg, nil, nil)
 
-	r.graph.Packages["foo"] = &PackageNode{ID: "foo", Pkg: pkg, Deps: []string{}}
+	r.graph.Packages["//foo"] = &PackageNode{ID: "//foo", Container: "//", Kind: SourceKindLocal, Pkg: pkg, Deps: []string{}}
 
-	err := r.FilterDeps("foo", nil, nil)
+	err := r.FilterDeps("//foo", nil, nil)
 	if err == nil {
 		t.Fatal("FilterDeps with unknown dep name should error")
 	}
-	if !strings.Contains(err.Error(), "ghost-dep") {
+	if !strings.Contains(err.Error(), "//ghost-dep") {
 		t.Errorf("error should mention the unknown dep, got: %v", err)
 	}
 }
 
-func TestValidateNodeConstraintsEmptyIncoming(t *testing.T) {
-	node := &PackageNode{ID: "x", Constraints: []string{">=1.0"}}
-	if err := validateNodeConstraints(node, "", []string{"a"}); err != nil {
-		t.Errorf("empty incoming should pass: %v", err)
-	}
-}
-
-func TestValidateNodeConstraintsNativeCompatible(t *testing.T) {
-	node := &PackageNode{
-		ID:          "x",
-		Constraints: []string{">=1.0"},
-		Native:      &NativePackageInfo{Selected: "1.5.0"},
-	}
-	if err := validateNodeConstraints(node, ">=1.2", []string{"a"}); err != nil {
-		t.Errorf("compatible constraint should pass: %v", err)
-	}
-	if !slices.Contains(node.Constraints, ">=1.2") {
-		t.Errorf("constraint should be appended, got %v", node.Constraints)
-	}
-}
-
-func TestValidateNodeConstraintsNativeConflictFatal(t *testing.T) {
-	node := &PackageNode{
-		ID:          "x",
-		Constraints: []string{">=1.2"},
-		Native:      &NativePackageInfo{Selected: "1.9.0"},
-	}
-	err := validateNodeConstraints(node, "<1.5", []string{"a"})
-	if err == nil {
-		t.Fatal("conflicting constraint against selected version should fail")
-	}
-	for _, want := range []string{"1.9.0", "<1.5", ">=1.2"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error should mention %q, got: %v", want, err)
-		}
-	}
-}
-
-func TestValidateNodeConstraintsRegistryConflictFatal(t *testing.T) {
+func TestValidateSourceNodeConstraintsConflictFatal(t *testing.T) {
 	pkg := api.NewPackage().SetRepo("official").SetName("zlib")
+	pkg.SetGit("https://example.invalid/zlib.git")
 	pkg.SetVersions(map[string]string{
 		"1.2.0": "v1.2.0",
 		"1.5.0": "v1.5.0",
 		"1.9.0": "v1.9.0",
 	})
+	r := NewResolver(nil, t.TempDir())
 	node := &PackageNode{
 		ID:          "official/zlib",
-		Constraints: []string{">=1.2"},
+		Container:   "official",
+		Kind:        SourceKindRegistry,
+		Constraints: []string{">=1.2", ">=1.5"},
 		Pkg:         pkg,
 	}
-	if err := validateNodeConstraints(node, ">=1.5", []string{"a"}); err != nil {
-		t.Errorf("compatible constraint should pass: %v", err)
+	if err := r.validateSourceNodeConstraints(node); err != nil {
+		t.Errorf("compatible constraints should pass: %v", err)
 	}
-	err := validateNodeConstraints(node, "<1.5", []string{"b"})
+	node.Constraints = append(node.Constraints, "<1.5")
+	err := r.validateSourceNodeConstraints(node)
 	if err == nil {
-		t.Fatal("conflicting constraint with no common version should fail")
+		t.Fatal("conflicting constraints with no common version should fail")
 	}
 	if !strings.Contains(err.Error(), "official/zlib") {
 		t.Errorf("error should mention package, got: %v", err)
 	}
 }
 
-func TestValidateNodeConstraintsUnversionedIgnored(t *testing.T) {
-	node := &PackageNode{ID: "local-thing"}
-	if err := validateNodeConstraints(node, ">=2.0", []string{"a"}); err != nil {
-		t.Errorf("unversioned node should ignore constraints: %v", err)
-	}
-}
-
-func TestResolveAllLocalEmpty(t *testing.T) {
-	r := NewResolver(nil, t.TempDir())
-	if err := r.ResolveAll(nil); err != nil {
-		t.Errorf("ResolveAll with no sources should succeed: %v", err)
-	}
-	if len(r.graph.Order) != 0 {
-		t.Errorf("Order = %v, want empty", r.graph.Order)
-	}
-}
-
 func TestGraphOrderingDeterministic(t *testing.T) {
 	r := NewResolver(nil, t.TempDir())
 	packages := map[string]*PackageNode{
-		"c": {ID: "c", Deps: []string{}},
-		"b": {ID: "b", Deps: []string{"c"}},
-		"a": {ID: "a", Deps: []string{"b", "c"}},
-		"d": {ID: "d", Deps: []string{}},
-		"e": {ID: "e", Deps: []string{"a", "d"}},
+		"//c": {ID: "//c", Deps: []string{}},
+		"//b": {ID: "//b", Deps: []string{"//c"}},
+		"//a": {ID: "//a", Deps: []string{"//b", "//c"}},
+		"//d": {ID: "//d", Deps: []string{}},
+		"//e": {ID: "//e", Deps: []string{"//a", "//d"}},
 	}
 	r.graph.Packages = packages
 
@@ -266,13 +175,13 @@ func TestGraphOrderingDeterministic(t *testing.T) {
 	for i, id := range r.graph.Order {
 		pos[id] = i
 	}
-	if pos["c"] >= pos["b"] {
-		t.Errorf("c should precede b (c=%d b=%d)", pos["c"], pos["b"])
+	if pos["//c"] >= pos["//b"] {
+		t.Errorf("//c should precede //b (c=%d b=%d)", pos["//c"], pos["//b"])
 	}
-	if pos["b"] >= pos["a"] {
-		t.Errorf("b should precede a")
+	if pos["//b"] >= pos["//a"] {
+		t.Errorf("//b should precede //a")
 	}
-	if pos["a"] >= pos["e"] {
-		t.Errorf("a should precede e")
+	if pos["//a"] >= pos["//e"] {
+		t.Errorf("//a should precede //e")
 	}
 }

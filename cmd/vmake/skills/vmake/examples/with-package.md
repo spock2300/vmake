@@ -2,6 +2,19 @@
 
 Demonstrates depending on and consuming remote packages - the core package management workflow.
 
+## vmake.json
+
+```json
+{
+  "modules": {
+    "official": "*"
+  },
+  "sources": {
+    "official/zlib": ">=1.2"
+  }
+}
+```
+
 ## build.go
 
 ```go
@@ -11,7 +24,7 @@ import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
 	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("official/zlib >=1.2")
+		ctx.AddRequires("official/zlib")
 	})
 
 	p.OnBuild(func(ctx *api.BuildContext) {
@@ -25,10 +38,10 @@ func Main(p *api.Package) {
 
 ## What This Demonstrates
 
+- **`vmake.json` `modules` & `sources`** - Declare external containers and version constraints
 - **`p.OnRequire`** - Require phase hook (Phase 1 and Phase 3 FilterDeps)
-- **`ctx.AddRequires("repo/name >=version")`** - Declare dependency
+- **`ctx.AddRequires("repo/name")`** - Declare pure package ID dependency (no inline version string)
 - **`ctx.Target(...).AddDeps("repo/name")`** - Link against package in target
-- **Version constraints** - semver syntax
 
 ## Prerequisites
 
@@ -125,15 +138,15 @@ func Main(p *api.Package) {
 }
 ```
 
-## Sub-Packages
+## Module Container Members
 
-A nested `build.go` inside a **native** remote package's checkout becomes a sub-package named `parent/sub`, with its own options, targets, and build directories. Reference it from outside by full name (listing the parent before its sub-packages in the same `AddRequires`), or by a trailing segment that is unique among discovered sub-packages:
+A nested `build.go` inside a **native** module container (`<repo>/<module>`) is a build package named `<repo>/<module>/<rel/path>`, with its own options, targets, and build directories. Declare the container constraint in `vmake.json` (`"modules": {"subtest/mother": ">=1.0.0"}`) and require any member package directly — a native container does **not** need a root `build.go`:
 
 ```go
-ctx.AddRequires("subtest/mother >=1.0.0", "subtest/mother/sub_a")
+ctx.AddRequires("subtest/mother", "subtest/mother/sub_a")
 ```
 
-Sub-packages are lazy: their `build.go` is interpreted only when depended on (top-level packages are resolved eagerly). Registry (wrapper) packages have no sub-packages — by design. Inside a sub-package, siblings can use short names in `AddRequires`/`AddDeps`, `DepOutput`/`DepBuildDir`, `BuildSubGraph`, and `ImportConfig`; a needed sub-package also requires its parent to be needed. A working example lives in `test_data/25_subpackage`. See `SKILL.md - Sub-Packages`.
+Container members load lazily: their `build.go` is interpreted only when depended on. Inside a native container, member scripts reference sibling packages with `"//<rel/path>"` (`ctx.AddRequires("//sub_b")`, `AddDeps("//sub_b:utils_b")`), which resolves within that same container. A working example lives in `test_data/25_subpackage`. See `SKILL.md - Module Containers & vmake.json`.
 
 ## Conditional Dependencies
 
@@ -145,10 +158,10 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 })
 
 p.OnRequire(func(ctx *api.RequireContext) {
-    ctx.AddRequires("test_build/mathlib >=1.0") // always needed
+    ctx.AddRequires("test_build/mathlib") // always needed (constraint in vmake.json)
 
     if ctx.When("use_ssl", true) {
-        ctx.AddRequires("official/openssl")       // only when use_ssl=true
+        ctx.AddRequires("official/openssl") // only when use_ssl=true
     }
 })
 
@@ -203,7 +216,6 @@ vmake deps status  # shows official/zlib version, commit, pin, working tree and 
 
 - references/api.md - RequireContext, Package metadata
 - SKILL.md - Dependencies
-- SKILL.md - Version Constraints
+- SKILL.md - Module Containers & vmake.json
 - SKILL.md - OnRequire Two-Phase Execution
-- SKILL.md - Sub-Packages
 - examples/third-party-wrapper.md - Authoring a package that others depend on

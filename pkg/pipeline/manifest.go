@@ -16,6 +16,7 @@ import (
 	"github.com/spock2300/vmake/internal/quiet"
 	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/lockfile"
@@ -59,13 +60,19 @@ func WriteManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 	}
 	var packages []InstallManifestEntry
 	gitCache := make(map[string]gitProvenance)
+	recordedContainers := make(map[string]bool)
+
 	for _, name := range ctx.DepGraph.Order {
 		node := ctx.DepGraph.Packages[name]
-		if _, isSub := ctx.Resolver.SubParents()[name]; isSub {
+		if node == nil {
 			continue
 		}
 		if node.IsLocal() {
-			sourceDir := result.PkgDirs[name].SourceDir
+			dirs := result.PkgDirs[name]
+			if dirs == nil {
+				continue
+			}
+			sourceDir := dirs.SourceDir
 			relPath, err := filepath.Rel(base, sourceDir)
 			if err != nil {
 				return fmt.Errorf("manifest path for %s: %w", name, err)
@@ -74,15 +81,91 @@ func WriteManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 				return fmt.Errorf("local package %s source %q is outside project root %q", name, sourceDir, base)
 			}
 			prov := resolveGitProvenance(node.Pkg.SrcDir(), gitCache)
-			packages = append(packages, InstallManifestEntry{
+			entry := InstallManifestEntry{
 				Name:    name,
 				Version: prov.version,
 				Source:  resolver.SourceKindLocal.String(),
 				Ref:     prov.ref,
-				Path:    relPath,
-			})
+				Path:    filepath.ToSlash(relPath),
+			}
+			if node.HasOwnGit() {
+				if urls := node.Pkg.GitURLs(); len(urls) > 0 {
+					entry.URL = urls[0]
+				}
+				if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {
+					entry.Linked = true
+					entry.LinkPath = node.Source.Link.Path
+					entry.Version = resolver.LocalLinkVersion
+					entry.Ref = node.Source.Link.Commit
+				}
+			}
+			packages = append(packages, entry)
 			continue
 		}
+
+		// Record native container once when any of its packages participated in the build.
+		if node.IsNative() {
+			if result.PkgDirs[name] == nil && result.InstalledPkgs[name] == nil {
+				continue
+			}
+			cID := node.Container
+			if cID != "" && !recordedContainers[cID] {
+				recordedContainers[cID] = true
+				if c := ctx.DepGraph.Containers[cID]; c != nil {
+					entry := InstallManifestEntry{
+						Name:    cID,
+						Version: c.Version,
+						Source:  resolver.SourceKindNative.String(),
+						URL:     c.URL,
+					}
+					if c.IsLinked() {
+						entry.Version = resolver.LocalLinkVersion
+						entry.Linked = true
+						entry.LinkPath = c.Link.Path
+						entry.Ref = c.Link.Commit
+					} else {
+						if ref, ok := c.Versions[c.Version]; ok && ref != "" {
+							entry.Ref = ref
+						} else if c.Commit != "" {
+							entry.Ref = c.Commit
+						}
+					}
+					packages = append(packages, entry)
+				}
+			}
+			// If this native member also has its own SetGit source, record it orthogonally.
+			if node.HasOwnGit() {
+				entry := InstallManifestEntry{
+					Name:   name,
+					Source: "git",
+				}
+				if urls := node.Pkg.GitURLs(); len(urls) > 0 {
+					entry.URL = urls[0]
+				}
+				if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {
+					entry.Version = resolver.LocalLinkVersion
+					entry.Linked = true
+					entry.LinkPath = node.Source.Link.Path
+					entry.Ref = node.Source.Link.Commit
+				} else {
+					if locked, ok := ctx.Lock.GetSource(name); ok && locked != nil {
+						entry.Version = locked.Version
+						entry.Ref = locked.Commit
+						if ref, ok := node.Pkg.Versions()[locked.Version]; ok && ref != "" {
+							entry.Ref = ref
+						}
+					} else if node.Pkg != nil && node.Pkg.SrcDir() != "" {
+						prov := resolveGitProvenance(node.Pkg.SrcDir(), gitCache)
+						entry.Version = prov.version
+						entry.Ref = prov.ref
+					}
+				}
+				packages = append(packages, entry)
+			}
+			continue
+		}
+
+		// Registry package.
 		ip, ok := result.InstalledPkgs[name]
 		if !ok {
 			continue
@@ -92,33 +175,19 @@ func WriteManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 			Version: ip.Version,
 			Source:  resolver.SourceKindRegistry.String(),
 		}
-		if node.Source != nil && node.Source.Link != nil {
-			entry.Source = resolver.SourceKindRegistry.String()
-			if node.IsNative() {
-				entry.Source = resolver.SourceKindNative.String()
-				entry.URL = node.Native.GitURL
-			} else if node.Pkg != nil {
-				if urls := node.Pkg.GitURLs(); len(urls) > 0 {
-					entry.URL = urls[0]
-				}
+		if node.Pkg != nil {
+			if urls := node.Pkg.GitURLs(); len(urls) > 0 {
+				entry.URL = urls[0]
 			}
+		}
+		if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {
 			entry.Linked = true
 			entry.LinkPath = node.Source.Link.Path
 			entry.Ref = node.Source.Link.Commit
 			packages = append(packages, entry)
 			continue
 		}
-		if node.IsNative() {
-			entry.Source = resolver.SourceKindNative.String()
-			entry.URL = node.Native.GitURL
-			if ref, ok := node.Native.Versions[ip.Version]; ok {
-				entry.Ref = ref
-			}
-		} else if node.Pkg != nil {
-			urls := node.Pkg.GitURLs()
-			if len(urls) > 0 {
-				entry.URL = urls[0]
-			}
+		if node.Pkg != nil {
 			if ref, ok := node.Pkg.Versions()[ip.Version]; ok {
 				entry.Ref = ref
 			}
@@ -136,9 +205,9 @@ func WriteManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 	return jsonio.Save(path, mf)
 }
 
-// ImportManifestIntoLock pins remote package versions from an install manifest
-// into vmake.lock BEFORE dependency resolution, so the graph is built from the
-// pinned versions (not from latest-matching tags).
+// ImportManifestIntoLock pins remote container and SetGit source versions from
+// an install manifest into vmake.lock v2 BEFORE dependency resolution, so the
+// graph is built from the pinned versions (not from latest-matching tags).
 func ImportManifestIntoLock(ctx context.Context, projectDir, lockPath string, mf *InstallManifest) error {
 	l, err := lockfile.LoadOrCreate(lockPath)
 	if err != nil {
@@ -151,7 +220,10 @@ func ImportManifestIntoLock(ctx context.Context, projectDir, lockPath string, mf
 	changed := false
 	for _, entry := range mf.Packages {
 		switch entry.Source {
-		case "native", "registry":
+		case "native", "registry", "git", "local":
+			if entry.Source == "local" && entry.URL == "" {
+				continue
+			}
 			if _, linked := local.Links[entry.Name]; linked {
 				vlog.Info("  skip manifest entry %s (linked)", entry.Name)
 				continue
@@ -176,11 +248,19 @@ func ImportManifestIntoLock(ctx context.Context, projectDir, lockPath string, mf
 			if err != nil {
 				return fmt.Errorf("resolve commit for %s@%s: %w", entry.Name, ref, err)
 			}
-			l.Set(entry.Name, &lockfile.LockedPkg{
-				Version: ver,
-				Commit:  commit,
-				Source:  entry.Source,
-			})
+			if entry.Source == "native" {
+				l.SetContainer(entry.Name, &lockfile.LockedContainer{
+					Version: ver,
+					Commit:  commit,
+					Source:  "native",
+				})
+			} else {
+				l.SetSource(entry.Name, &lockfile.LockedSource{
+					Version: ver,
+					Commit:  commit,
+					URL:     entry.URL,
+				})
+			}
 			vlog.Info("  pin %s -> %s (%s, commit %s)", entry.Name, lockfile.DisplayVersion(ver, commit), entry.Source, repo.ShortCommit(commit))
 			changed = true
 		}
@@ -269,7 +349,7 @@ func CheckoutManifest(
 			if err := CheckoutManifestLocalEntry(projectDir, sourceMgr, entry); err != nil {
 				return err
 			}
-		case "native", "registry":
+		case "native", "registry", "git":
 			CheckoutManifestRemoteEntry(sourceMgr, newPkgRef, entry)
 		default:
 			fmt.Printf("  SKIP %s (unknown source: %s)\n", entry.Name, entry.Source)
@@ -305,11 +385,18 @@ func CheckoutManifestRemoteEntry(
 	} else if entry.URL != "" {
 		urls = []string{entry.URL}
 	}
-	if _, err := sourceMgr.EnsureSource(repo.SourceRequest{
+	req := repo.SourceRequest{
 		Key:  repo.PackageTreeKey(repoName, pkgName),
 		URLs: urls,
 		Ref:  entry.Ref,
-	}); err != nil {
+	}
+	if entry.Source == "git" {
+		if thirdPartyRoot, ok := managedThirdPartyRoot(sourceMgr, entry.Name); ok {
+			req.Key = entry.Name
+			req.Root = thirdPartyRoot
+		}
+	}
+	if _, err := sourceMgr.EnsureSource(req); err != nil {
 		fmt.Printf("  FAIL %s (%v)\n", entry.Name, err)
 		return
 	}
@@ -352,8 +439,9 @@ func CheckoutManifestLocalEntry(projectDir string, sourceMgr *repo.SourceManager
 			return fmt.Errorf("checkout %s at %s: %s already exists as a real directory; remove or move it so vmake can link the git source",
 				entry.Name, ref, filepath.Join(sourceDir, "src"))
 		}
+		rel, _ := api.LocalRelPath(entry.Name)
 		res, err := sourceMgr.EnsureSource(repo.SourceRequest{
-			Key:        repo.PackageTreeKey("", entry.Name),
+			Key:        repo.PackageTreeKey("", build.MemberDir(rel)),
 			URLs:       urls,
 			Ref:        entry.Ref,
 			Submodules: submodules,

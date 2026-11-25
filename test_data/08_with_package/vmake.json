@@ -1,0 +1,8 @@
+{
+  "modules": {
+    "official": "*"
+  },
+  "sources": {
+    "official/zlib": ">=1.2"
+  }
+}

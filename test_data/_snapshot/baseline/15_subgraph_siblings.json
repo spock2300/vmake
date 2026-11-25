@@ -9,19 +9,19 @@
     "mode": "debug",
     "packages": [
       {
-        "name": "15_subgraph_siblings",
-        "source": "local",
-        "path": "."
-      },
-      {
-        "name": "t15gen",
+        "name": "//t15gen",
         "source": "local",
         "path": "t15gen"
       },
       {
-        "name": "t15lib",
+        "name": "//t15lib",
         "source": "local",
         "path": "t15lib"
+      },
+      {
+        "name": "//",
+        "source": "local",
+        "path": "."
       }
     ]
   },
@@ -36,7 +36,7 @@
     {
       "path": "compile_commands.json",
       "size": 3865,
-      "hash": "aec0e3dee886ca2f563c6807de8852789e17e64fbfb0eb698df19433e9175acd"
+      "hash": "4aff098720a6fdfb109a2de6d2fab0f0239868a409f5f6a69929bbe49bfdc023"
     }
   ],
   "install_tree_hash": "d52fdcc147a07aeec57f0521af4061ae22895eb7d1e2b652965f2c1c0f052805"

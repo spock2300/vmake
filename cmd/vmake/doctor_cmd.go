@@ -10,6 +10,7 @@ import (
 
 	"github.com/spock2300/vmake/internal/gosrc"
 	quietpkg "github.com/spock2300/vmake/internal/quiet"
+	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
@@ -32,10 +33,9 @@ but may become errors in future vmake versions:
     it does not create target build edges. Add explicit AddDeps("pkg:target")
     or UseRequires() to each target that links the dependency.
 
-  - [noRoot] No package declares SetRoot(true). vmake currently uses heuristics
-    to pick build roots, but these may produce surprising results in projects
-    with mixed apps/libraries. Adding SetRoot(true) to the entry-point package
-    makes the build intent explicit.`,
+  - [noRoot] Multi-package workspace has neither "roots" in vmake.json nor a
+    root build.go. Declare "roots": ["//<entry>"] in vmake.json to make the
+    build entry points explicit.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		runDoctor()
 	},
@@ -63,9 +63,13 @@ func runDoctor() {
 		fatalMsg("load project config: %v", err)
 	}
 	nested := checkNestedProjectMarker(startDir, workDir)
-	sources, err := buildscript.Scan(workDir)
+	entries, err := pipeline.ScanPackages(workDir)
 	if err != nil {
 		fatalMsg("scan: %v", err)
+	}
+	sources := make([]buildscript.Source, 0, len(entries))
+	for _, entry := range entries {
+		sources = append(sources, *buildscript.NewSource(entry.Name, filepath.Join(entry.Dir, "build.go"), entry.Dir, api.SourceLocal))
 	}
 	fallbackTC := ""
 	if toolchainFlag == "" && (cfg.Global == nil || cfg.Global.Toolchain == "") && len(nested) == 0 && len(sources) > 0 {
@@ -80,31 +84,44 @@ func runDoctor() {
 	findings = append(findings, checkInstalledSkill(getSkillPath())...)
 	findings = append(findings, nested...)
 
+	manifest, _, manifestErr := buildscript.LoadManifest(workDir)
+	if manifestErr != nil {
+		findings = append(findings, doctorFinding{
+			Severity: "error",
+			File:     filepath.Join(workDir, buildscript.ManifestFileName),
+			Category: "manifest",
+			Message:  manifestErr.Error(),
+		})
+	}
+
 	if len(sources) == 0 {
 		reportDoctorFindings(workDir, findings)
 		fatalMsg("no build.go files found")
 	}
 
-	rootCount := 0
+	hasRootBuildGo := false
 	for _, src := range sources {
+		if src.Name == api.LocalContainerID || filepath.Clean(src.Dir) == filepath.Clean(workDir) {
+			hasRootBuildGo = true
+		}
 		findings = append(findings, checkAutoWire(src)...)
 		if hasSetRoot(src) {
-			rootCount++
+			findings = append(findings, doctorFinding{
+				Severity: "error",
+				File:     src.Path,
+				Category: "deprecated",
+				Message:  `SetRoot() was removed in VMake 2.0; declare "roots" in vmake.json instead`,
+			})
 		}
 	}
 
-	if rootCount == 0 {
+	explicitRoots := manifest != nil && len(manifest.Roots) > 0
+	cfgRoots := cfg != nil && (cfg.Root != "" || len(cfg.Roots) > 0)
+	if !explicitRoots && !cfgRoots && !hasRootBuildGo && len(sources) > 1 {
 		findings = append(findings, doctorFinding{
 			Severity: "warn",
 			Category: "noRoot",
-			Message:  "no package declares SetRoot(true); build roots are inferred heuristically (see AGENTS.md 'ComputeNeeded')",
-		})
-	}
-	if rootCount > 1 {
-		findings = append(findings, doctorFinding{
-			Severity: "error",
-			Category: "noRoot",
-			Message:  fmt.Sprintf("%d packages declare SetRoot(true); only one is allowed", rootCount),
+			Message:  `multi-package workspace has no "roots" in vmake.json and no root build.go; declare "roots" in vmake.json to make entry points explicit`,
 		})
 	}
 
@@ -264,5 +281,5 @@ func fileContains(path, needle string) bool {
 }
 
 func hasSetRoot(src buildscript.Source) bool {
-	return packageSourceContains(src, "SetRoot(true)")
+	return packageSourceContains(src, "SetRoot(")
 }

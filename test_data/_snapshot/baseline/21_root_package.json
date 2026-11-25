@@ -9,19 +9,14 @@
     "mode": "debug",
     "packages": [
       {
-        "name": "lib_a",
+        "name": "//lib_a",
         "source": "local",
         "path": "lib_a"
       },
       {
-        "name": "app",
+        "name": "//app",
         "source": "local",
         "path": "app"
-      },
-      {
-        "name": "lib_b",
-        "source": "local",
-        "path": "lib_b"
       }
     ]
   },
@@ -36,7 +31,7 @@
     {
       "path": "compile_commands.json",
       "size": 2499,
-      "hash": "7f8fc8f8f28fa3fbf404edcf68ad7de5969420fd771b58301d5d789cd4791980"
+      "hash": "c655f8c3df9e3a02b15c429d49db0c82d8c49ee39860e3fbb2da5b1a3aaa962e"
     }
   ],
   "install_tree_hash": "86fa6baae48e9e48ccfe7c8f9fa87ffd9dc92e5e028a4fc4337c40c15c31483f"

@@ -189,12 +189,12 @@ func TestTargetRemoveFlags(t *testing.T) {
 		AddCFlags("-Wall", "-O2", "-g").
 		AddDefines("A", "B", "C").
 		AddLinks("m", "z", "pthread").
-		AddDeps("x:a", "y:b", "z:c")
+		AddDeps("//x:a", "//y:b", "//z:c")
 
 	tgt.RemoveCFlags("-g").
 		RemoveDefines("B").
 		RemoveLinks("z").
-		RemoveDeps("y:b")
+		RemoveDeps("//y:b")
 
 	if !reflect.DeepEqual(tgt.CFlags(), []string{"-Wall", "-O2"}) {
 		t.Errorf("CFlags = %v", tgt.CFlags())
@@ -205,27 +205,27 @@ func TestTargetRemoveFlags(t *testing.T) {
 	if !reflect.DeepEqual(tgt.Links(), []string{"m", "pthread"}) {
 		t.Errorf("Links = %v", tgt.Links())
 	}
-	if !reflect.DeepEqual(tgt.Deps(), []string{"x:a", "z:c"}) {
+	if !reflect.DeepEqual(tgt.Deps(), []string{"//x:a", "//z:c"}) {
 		t.Errorf("Deps = %v", tgt.Deps())
 	}
 }
 
 func TestTargetAddDepsIgnoresEmpty(t *testing.T) {
 	tr := NewTargetRegistry()
-	tgt := tr.Target("t").AddDeps("a:b", "", "c:d", "")
-	if !reflect.DeepEqual(tgt.Deps(), []string{"a:b", "c:d"}) {
-		t.Errorf("Deps = %v, want [a:b c:d]", tgt.Deps())
+	tgt := tr.Target("t").AddDeps("//a:b", "", "//c:d", "")
+	if !reflect.DeepEqual(tgt.Deps(), []string{"//a:b", "//c:d"}) {
+		t.Errorf("Deps = %v, want [//a:b //c:d]", tgt.Deps())
 	}
 }
 
 func TestTargetHasDep(t *testing.T) {
 	tr := NewTargetRegistry()
-	tgt := tr.Target("t").AddDeps("a:b", "c:d")
-	if !tgt.HasDep("a:b") {
-		t.Error("HasDep(a:b) should be true")
+	tgt := tr.Target("t").AddDeps("//a:b", "//c:d")
+	if !tgt.HasDep("//a:b") {
+		t.Error("HasDep(//a:b) should be true")
 	}
-	if tgt.HasDep("x:y") {
-		t.Error("HasDep(x:y) should be false")
+	if tgt.HasDep("//x:y") {
+		t.Error("HasDep(//x:y) should be false")
 	}
 }
 

@@ -23,7 +23,7 @@ example builds without downloading a kernel. BusyBox is a real `SetGit` checkout
 
 ```
 my-firmware/
-├── build.go              # Root: empty (all work in sub-packages)
+├── vmake.json            # Declares "roots": ["//firmware"]
 ├── packages/
 │   ├── uboot/
 │   │   └── build.go
@@ -43,16 +43,13 @@ my-firmware/
     └── build.go
 ```
 
-The root `build.go` is empty — the project is composed entirely of sub-packages. Each sub-package is an independent unit managed by vmake's dependency system. The `firmware` package calls `p.SetRoot(true)` (see below) so vmake knows where to start the build; without a declared root, vmake falls back to heuristics and prints a hint. See `SKILL.md - Build Scope`.
+`vmake.json` sets `"roots": ["//firmware"]` so vmake starts dependency resolution from `//firmware` without scanning unrelated directories (a root `build.go` is not required). Each package is identified strictly by its workspace-relative path (`//packages/uboot`, `//partitions/rootfs`, `//firmware`). See `SKILL.md - Build Scope`.
 
-## Root build.go
+## Root vmake.json
 
-```go
-package main
-
-import "github.com/spock2300/vmake/pkg/api"
-
-func Main(p *api.Package) {
+```json
+{
+  "roots": ["//firmware"]
 }
 ```
 
@@ -203,15 +200,15 @@ import (
 
 func Main(p *api.Package) {
     p.OnRequire(func(ctx *api.RequireContext) {
-        ctx.AddRequires("busybox", "myapp")
+        ctx.AddRequires("//packages/busybox", "//packages/myapp")
     })
 
     p.OnBuild(func(ctx *api.BuildContext) {
-        appOutput := ctx.DepOutput("myapp:myapp")
-        busyboxBuildDir := ctx.DepBuildDir("busybox:busybox")
+        appOutput := ctx.DepOutput("//packages/myapp:myapp")
+        busyboxBuildDir := ctx.DepBuildDir("//packages/busybox:busybox")
 
         ctx.Target("rootfs").SetKind(api.TargetVoid).
-            AddDeps("busybox:busybox", "myapp:myapp").
+            AddDeps("//packages/busybox:busybox", "//packages/myapp:myapp").
             SetBuildFunc(func(pkg *api.Package) error {
                 staging := filepath.Join(pkg.BuildDir(), "staging")
                 os.RemoveAll(staging)
@@ -256,7 +253,7 @@ func Main(p *api.Package) {
 
 `CopyDirIfExists` already stats its source and returns `nil` when the directory does not exist (for example an absent `_install/usr`); it only fails on a real copy error. Check its returned error instead of guarding with `os.Stat`.
 
-## Firmware (Final Assembly, SetRoot)
+## Firmware (Final Assembly)
 
 ```go
 package main
@@ -287,19 +284,17 @@ type partition struct {
 }
 
 func Main(p *api.Package) {
-    p.SetRoot(true)
-
     p.OnRequire(func(ctx *api.RequireContext) {
-        ctx.AddRequires("uboot", "linux", "rootfs")
+        ctx.AddRequires("//packages/uboot", "//packages/linux", "//partitions/rootfs")
     })
 
     p.OnBuild(func(ctx *api.BuildContext) {
-        ubootDir := ctx.DepBuildDir("uboot:uboot")
-        linuxDir := ctx.DepBuildDir("linux:linux")
-        rootfsDir := ctx.DepBuildDir("rootfs:rootfs")
+        ubootDir := ctx.DepBuildDir("//packages/uboot:uboot")
+        linuxDir := ctx.DepBuildDir("//packages/linux:linux")
+        rootfsDir := ctx.DepBuildDir("//partitions/rootfs:rootfs")
 
         ctx.Target("firmware").SetKind(api.TargetVoid).
-            AddDeps("uboot:uboot", "linux:linux", "rootfs:rootfs").
+            AddDeps("//packages/uboot:uboot", "//packages/linux:linux", "//partitions/rootfs:rootfs").
             SetBuildFunc(func(pkg *api.Package) error {
                 layout := []partition{
                     {"uboot", filepath.Join(ubootDir, "u-boot.bin"), partUboot, partUbootSize},
@@ -371,7 +366,7 @@ func padWith(f *os.File, offset, size int64, padding []byte) error {
 }
 ```
 
-`p.SetRoot(true)` marks the entry-point package; at most one local package may declare it, and vmake traverses the build graph from that root. `packImage` validates every source first, creates `firmware.img` truncated to the fixed total size, writes each payload at its partition offset, and pads the remaining partition space with `0xFF` (the flash erase value). The fixture's `packImage` also supports directory sources (`writeDirFlat` in `test_linux/17_firmware/firmware/build.go`) for a plain-file config partition.
+`vmake.json` `"roots": ["//firmware"]` anchors the build graph at `//firmware` and traverses dependencies lazily along `AddRequires`. `packImage` validates every source first, creates `firmware.img` truncated to the fixed total size, writes each payload at its partition offset, and pads the remaining partition space with `0xFF` (the flash erase value). The fixture's `packImage` also supports directory sources (`writeDirFlat` in `test_linux/17_firmware/firmware/build.go`) for a plain-file config partition.
 
 `firmware.img` is a raw disk image laid out at fixed offsets; vmake never touches the device. Flash it with vendor tooling (write the image to SD/eMMC, or use a vendor download tool), or wrap your flashing tool in an extension plugin that registers a `vmake <plugin> flash` subcommand (the extension authoring guide is in the vmake repository and is not shipped with this skill).
 
@@ -436,13 +431,13 @@ Expected result:
 - **SetKConfigPatches** — Override specific config values after defconfig generation
 - **SetGit** — Local packages download source to `SourceDir()/src`; `SrcDir()` returns that tree
 - **KConfig SetSrcDir** — Locates the KConfig `.config` for the config TUI and restore logic; it does not set the package source dir
-- **SetRoot** — One package declares `p.SetRoot(true)` to anchor the build graph
+- **`vmake.json` `roots`** — Anchors the build graph at `//firmware` without scanning unrelated directories
 - **External incrementality** — Void callbacks run once per build session by default (or skip when `AddInputs` and `AddOutputs` are both declared and unchanged); Make checks configuration, sources, dependencies, and outputs
-- **DepBuildDir** — `ctx.DepBuildDir("busybox:busybox")` returns the dependency's build directory
-- **DepOutput** — `ctx.DepOutput("myapp:myapp")` returns the dependency's output binary path
+- **DepBuildDir** — `ctx.DepBuildDir("//packages/busybox:busybox")` returns the dependency's build directory
+- **DepOutput** — `ctx.DepOutput("//packages/myapp:myapp")` returns the dependency's output binary path
 - **api.CopyFile/CopyDir/CopyDirIfExists** — File copy utilities from the `api` package; `CopyDirIfExists` is a no-op for a missing source
 - **Explicit AddDeps or UseRequires** — Targets must create build-graph edges with `AddDeps` or `UseRequires`; `AddRequires` alone only handles package inclusion/resolution
-- **Empty root build.go** — All work happens in sub-packages; the firmware package provides the root
+- **Manifest-anchored workspace** — No root `build.go` is needed when `vmake.json` declares `roots`
 
 ## Key Points
 

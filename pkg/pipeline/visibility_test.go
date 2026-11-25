@@ -27,13 +27,13 @@ func TestPackageVisibilityConfigCallbacks(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			r := resolver.NewResolver(nil, root)
-			r.Graph().Order = []string{"dependency", "app"}
+			r.Graph().Order = []string{"//dependency", "//app"}
 			for _, name := range r.Graph().Order {
-				r.Graph().Packages[name] = resolver.NewPackageNode(name,
+				r.Graph().Packages[name] = resolver.NewPackageNode(name, "//", name[2:], resolver.SourceKindLocal,
 					buildscript.NewSource(name, filepath.Join(root, "build.go"), root, api.SourceLocal),
 					api.NewPackage().SetName(name))
 			}
-			app := r.Graph().Packages["app"].Pkg
+			app := r.Graph().Packages["//app"].Pkg
 			app.OnConfig(func(ctx *api.ConfigContext) {
 				if test.onApply {
 					ctx.Option("hidden").SetType(api.OptionBool).SetDefault(false).
@@ -48,17 +48,17 @@ func TestPackageVisibilityConfigCallbacks(t *testing.T) {
 			})
 			cfg := emptyConfig()
 			if test.onApply {
-				config.SetEntry(cfg, "app", &config.EntryConfig{Options: map[string]any{"hidden": test.value}})
+				config.SetEntry(cfg, "//app", &config.EntryConfig{Options: map[string]any{"hidden": test.value}})
 			}
 			ctx := &RuntimeContext{Resolver: r, DepGraph: r.Graph(), Config: cfg}
-			_, _, globalHash := aggregateGlobalFlags(ctx, map[string]bool{"app": true})
+			_, _, globalHash := aggregateGlobalFlags(ctx, map[string]bool{"//app": true})
 			if err := runConfigPhase(ctx); err != nil {
 				t.Fatal(err)
 			}
 			if app.DefaultVisibilityHidden() != test.value {
 				t.Errorf("application hidden = %v, want %v", app.DefaultVisibilityHidden(), test.value)
 			}
-			if r.Graph().Packages["dependency"].Pkg.DefaultVisibilityHidden() {
+			if r.Graph().Packages["//dependency"].Pkg.DefaultVisibilityHidden() {
 				t.Error("application policy changed dependency visibility")
 			}
 			for name, flags := range ctx.bufferedGlobalFlags {
@@ -66,7 +66,7 @@ func TestPackageVisibilityConfigCallbacks(t *testing.T) {
 					t.Errorf("%s leaked visibility into global flags: %+v", name, flags)
 				}
 			}
-			if _, _, got := aggregateGlobalFlags(ctx, map[string]bool{"app": true}); got != globalHash {
+			if _, _, got := aggregateGlobalFlags(ctx, map[string]bool{"//app": true}); got != globalHash {
 				t.Errorf("configuration changed global flags hash: %s -> %s", globalHash, got)
 			}
 		})
@@ -76,60 +76,76 @@ func TestPackageVisibilityConfigCallbacks(t *testing.T) {
 func TestPackageVisibilityCacheIsolation(t *testing.T) {
 	for _, test := range []struct {
 		name   string
-		origin api.SourceOrigin
+		kind   resolver.SourceKind
 		git    bool
-		native bool
 	}{
-		{name: "local", origin: api.SourceLocal},
-		{name: "local SetGit", origin: api.SourceLocal, git: true},
-		{name: "registry", origin: api.SourceRemote},
-		{name: "native", origin: api.SourceRemote, native: true},
+		{name: "local", kind: resolver.SourceKindLocal},
+		{name: "local SetGit", kind: resolver.SourceKindLocal, git: true},
+		{name: "registry", kind: resolver.SourceKindRegistry, git: true},
+		{name: "native", kind: resolver.SourceKindNative},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
-			app := localNode("app", "dependency")
-			dependency := resolver.NewPackageNode("dependency",
-				buildscript.NewSource("dependency", filepath.Join(root, "build.go"), root, test.origin),
-				api.NewPackage().SetName("dependency"))
+			app := localNode("//app", "//dependency")
+			origin := api.SourceRemote
+			container := "repo/dependency"
+			depID := "repo/dependency"
+			if test.kind == resolver.SourceKindLocal {
+				origin = api.SourceLocal
+				container = "//"
+				depID = "//dependency"
+			} else if test.kind == resolver.SourceKindRegistry {
+				container = "repo"
+			}
+			dependency := resolver.NewPackageNode(depID, container, "", test.kind,
+				buildscript.NewSource(depID, filepath.Join(root, "build.go"), root, origin),
+				api.NewPackage().SetName(depID))
 			if test.git {
 				dependency.Pkg.SetGit("https://example.invalid/dependency.git")
 			}
-			if test.native {
-				dependency.WithNative("https://example.invalid/dependency.git", nil, "1.0")
-			}
 			r := resolver.NewResolver(nil, root)
-			r.Graph().Packages = map[string]*resolver.PackageNode{"app": app, "dependency": dependency}
-			s := newBuildPhaseState(&RuntimeContext{Resolver: r, DepGraph: r.Graph()}, BuildOptions{})
-			s.needed = map[string]bool{"app": true, "dependency": true}
-			s.globalFlagsHash = "global-flags"
-			s.remote = &remoteVersionState{
-				versions: map[string]string{"dependency": "1.0"},
-				commits:  map[string]string{"dependency": "commit"},
+			if test.kind == resolver.SourceKindNative {
+				r.Graph().Containers[container] = &resolver.ContainerNode{
+					ID:      container,
+					Repo:    "repo",
+					Kind:    resolver.SourceKindNative,
+					URL:     "https://example.invalid/dependency.git",
+					Version: "1.0",
+					Commit:  "commit",
+				}
 			}
+			r.Graph().Packages = map[string]*resolver.PackageNode{"//app": app, depID: dependency}
+			s := newBuildPhaseState(&RuntimeContext{Resolver: r, DepGraph: r.Graph()}, BuildOptions{})
+			s.needed = map[string]bool{"//app": true, depID: true}
+			s.globalFlagsHash = "global-flags"
+			s.containerVersions[container] = "1.0"
+			s.containerCommits[container] = "commit"
+			s.sourceVersions[depID] = "1.0"
+			s.sourceCommits[depID] = "commit"
 			before, err := s.buildPkgKeyExtra()
 			if err != nil {
 				t.Fatal(err)
 			}
-			api.NewConfigContextWithPackage("app", app.Pkg).SetDefaultVisibilityHidden()
+			api.NewConfigContextWithPackage("//app", app.Pkg).SetDefaultVisibilityHidden()
 			after, err := s.buildPkgKeyExtra()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if before["app"] == after["app"] {
+			if before["//app"] == after["//app"] {
 				t.Error("application visibility change reused its cache identity")
 			}
-			if before["dependency"] != after["dependency"] {
+			if before[depID] != after[depID] {
 				t.Error("application visibility change invalidated dependency cache")
 			}
 			if got := packageFlagsHash(s.globalFlagsHash, dependency); got != s.globalFlagsHash {
 				t.Errorf("package without hidden changed existing flags hash: %q", got)
 			}
-			api.NewConfigContextWithPackage("dependency", dependency.Pkg).SetDefaultVisibilityHidden()
+			api.NewConfigContextWithPackage(depID, dependency.Pkg).SetDefaultVisibilityHidden()
 			ownPolicy, err := s.buildPkgKeyExtra()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if ownPolicy["dependency"] == after["dependency"] || ownPolicy["app"] != after["app"] {
+			if ownPolicy[depID] == after[depID] || ownPolicy["//app"] != after["//app"] {
 				t.Error("dependency policy must invalidate only its own cache")
 			}
 			s.globalFlagsHash = "changed-global-flags"
@@ -157,9 +173,11 @@ func TestPackageVisibilityBuildAndInspectKeys(t *testing.T) {
 	}
 	root := t.TempDir()
 	r := resolver.NewResolver(nil, filepath.Join(root, "deps"))
-	r.Graph().Order = []string{"dependency", "app"}
+	r.Graph().Order = []string{"//dependency", "//app"}
+	r.Graph().Roots = []string{"//app"}
 	for _, name := range r.Graph().Order {
-		dir := filepath.Join(root, name)
+		rel := name[2:]
+		dir := filepath.Join(root, rel)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -167,20 +185,19 @@ func TestPackageVisibilityBuildAndInspectKeys(t *testing.T) {
 		if err := os.WriteFile(path, []byte("package main\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
-		r.Graph().Packages[name] = resolver.NewPackageNode(name,
+		r.Graph().Packages[name] = resolver.NewPackageNode(name, "//", rel, resolver.SourceKindLocal,
 			buildscript.NewSource(name, path, dir, api.SourceLocal), api.NewPackage().SetName(name))
 	}
-	app := r.Graph().Packages["app"]
-	app.Pkg.SetRoot(true)
-	app.Deps = []string{"dependency"}
-	api.NewConfigContextWithPackage("app", app.Pkg).SetDefaultVisibilityHidden()
+	app := r.Graph().Packages["//app"]
+	app.Deps = []string{"//dependency"}
+	api.NewConfigContextWithPackage("//app", app.Pkg).SetDefaultVisibilityHidden()
 	ctx := &RuntimeContext{
 		Resolver: r, DepGraph: r.Graph(), Config: emptyConfig(),
 		Paths: &Paths{DepsDir: filepath.Join(root, "deps"), CacheDir: filepath.Join(root, "cache")},
 	}
 	s := newBuildPhaseState(ctx, BuildOptions{})
 	s.cfg = makeBuildConfig(ctx, tc, "host")
-	s.needed = map[string]bool{"app": true, "dependency": true}
+	s.needed = map[string]bool{"//app": true, "//dependency": true}
 	s.globalFlagsHash = build.HashGlobalFlags([4][]string{})
 	s.computeDirsAndOptions(t)
 	if err := s.prepareAllPackages(); err != nil {

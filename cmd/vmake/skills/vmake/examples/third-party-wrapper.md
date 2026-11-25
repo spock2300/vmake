@@ -309,11 +309,11 @@ SetBuildFunc(func(p *api.Package) error {
 
 ## Consuming This Package
 
-Other projects use it via `OnRequire` + `AddDeps` (see `examples/with-package.md`):
+Other projects declare the container in `vmake.json` (`"modules": {"myrepo": "*"}`, `"sources": {"myrepo/somelib": ">=1.0"}`) and use it via `OnRequire` + `AddDeps` (see `examples/with-package.md`):
 
 ```go
 p.OnRequire(func(ctx *api.RequireContext) {
-    ctx.AddRequires("myrepo/somelib >=1.0")
+    ctx.AddRequires("myrepo/somelib")
 })
 p.OnBuild(func(ctx *api.BuildContext) {
     ctx.Target("app").AddDeps("myrepo/somelib")
@@ -334,6 +334,6 @@ p.OnBuild(func(ctx *api.BuildContext) {
 - examples/with-package.md - Consuming third-party packages
 - references/gotchas.md — source patching and static-library linking
 - examples/firmware.md — full multi-package KBuild flow (U-Boot, linux, rootfs)
-- local vs registry vs native packages — `SKILL.md - Package Types`
+- local vs registry vs native packages — `SKILL.md - Module Containers & Package Types`
 - target kinds and helpers — `SKILL.md - Target API at a Glance`
 - AddRequires/AddDeps wiring — `SKILL.md - Dependencies`

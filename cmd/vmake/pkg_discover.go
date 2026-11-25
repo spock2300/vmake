@@ -204,7 +204,7 @@ func splitPkgShowArg(arg string) (string, string, string, error) {
 		}
 	}
 	if strings.Count(arg, "/") > 1 {
-		return "", "", "", fmt.Errorf("native sub-packages are read through their parent package: %s", arg)
+		return "", "", "", fmt.Errorf("native container members are inspected via 'vmake inspect' or their module container: %s", arg)
 	}
 	repoName, pkgName, ok := api.SplitPackageRef(arg)
 	if !ok || !validPkgRefComponent(repoName) || !validPkgRefComponent(pkgName) {

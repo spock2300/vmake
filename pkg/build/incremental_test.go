@@ -32,7 +32,7 @@ func nativeTestSchedulerWithSession(t *testing.T, dir string, session *Session, 
 		}
 		*destination = path
 	}
-	graph, err := NewBuildGraph(makeTargets("p", targets...), nil, nil)
+	graph, err := NewBuildGraph(makeTargets("p", targets...), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

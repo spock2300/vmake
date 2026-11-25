@@ -32,7 +32,7 @@ ctx.Option("mcu").SetType(api.OptionChoice).SetDefault("stm32f405").
 
 Global flags registered via `AddGlobalCFlags/CxxFlags/LdFlags/Links/Defines` are **buffered per package**; only needed packages' buffers are aggregated into the invocation's global flags and applied by the scheduler via `SetGlobalFlags`, so flags from pruned packages never leak. The toolchain manager holds only toolchain/extension globals. Global flag changes also change the BuildKey (via the global-flags hash), so every package's `BuildDir` rotates when global flags change. When only consumers of a specific target need defines, flags, or links, prefer `AddPublicDefines` / `AddPublicCFlags` / `AddPublicCxxFlags` / `AddPublicLdFlags` / `AddPublicLinks` on that target instead of global flags.
 
-`p.GlobalCFlags()` and generated `-D` flags are compiler inputs, not an option API. Do not scan them to infer another package's option; in `OnBuild` read the owner's resolved value directly with `ctx.Bool("owner/option")` / `ctx.String` / `ctx.Int` / `ctx.When` / `ctx.If` / `ctx.Select`. Cross-package reads are available only in `OnBuild` and `OnConfigureDeps` (`OnConfig`, `OnRequire`, `OnInstall`, and `OnClean` reject them), require full package IDs, and a package-qualified global option resolves the owner's effective value including its `entries` override. They are also not part of a `TargetVoid` incremental signature: if a `SetBuildFunc` reads a cross-package option, declare the decision in `AddInputs`/`AddOutputs` or expect the callback to be skipped when only that option changes.
+`p.GlobalCFlags()` and generated `-D` flags are compiler inputs, not an option API. Do not scan them to infer another package's option; in `OnBuild` read the owner's resolved value directly with `ctx.Bool("//owner:option")` / `ctx.String` / `ctx.Int` / `ctx.When` / `ctx.If` / `ctx.Select`. Cross-package reads are available only in `OnBuild` and `OnConfigureDeps` (`OnConfig`, `OnRequire`, `OnInstall`, and `OnClean` reject them), require canonical package IDs (`<pkg>:<option>`), and a package-qualified global option resolves the owner's effective value including its `entries` override. They are also not part of a `TargetVoid` incremental signature: if a `SetBuildFunc` reads a cross-package option, declare the decision in `AddInputs`/`AddOutputs` or expect the callback to be skipped when only that option changes.
 
 Two discovery-era rules still matter:
 
@@ -101,13 +101,13 @@ Parameters typed `...string` (`AddPostLinkDeps`, `AddPostLinkOutputs`, `AddPatch
 flags := []string{"-O2", "-Wall"}
 target.AddCFlags(flags)    // correct: ...any flattens the slice
 target.AddCFlags(flags...) // does not compile: []string is not []any
-deps := []string{"utils", "official/zlib"}
+deps := []string{"//utils", "official/zlib"}
 target.AddDeps(deps)       // correct: AddDeps also takes ...any and flattens []string
 ```
 
 ## AddRequires vs AddDeps
 
-`AddRequires` (in `Main(p)` via `p.AddRequires(...)` or in `OnRequire` via `ctx.AddRequires(...)`) resolves/fetches a package and adds it to the package graph, so its default targets can be built; it does not create the target edge used for ordering, linking, and public propagation. `AddDeps` (or `t.UseRequires()`) in `OnBuild` creates that target edge. Third-party packages normally need both; a package not reachable from a local root through package/target deps is not built. Prefer `t.UseRequires()` on the main target when it should depend on all active package requires, or pass bare required package names to `t.AddDeps("shell", "wifi")` (auto-resolved to `<pkg>:*` when no local target matches).
+`AddRequires` (in `Main(p)` via `p.AddRequires(...)` or in `OnRequire` via `ctx.AddRequires(...)`) resolves/fetches a package (taking pure package IDs only — constraints live in `vmake.json`) and adds it to the package graph, so its default targets can be built; it does not create the target edge used for ordering, linking, and public propagation. `AddDeps` (or `t.UseRequires()`) in `OnBuild` creates that target edge. Every cross-package dependency (local or external) needs `AddRequires` to enter the lazily loaded graph and `AddDeps`/`UseRequires()` for the target edge. Prefer `t.UseRequires()` on the main target when it should depend on all active package requires, or pass canonical package IDs to `t.AddDeps("//shell", "//wifi")` (auto-expanded to `<pkg>:*`).
 
 ## Options After the Config Phase
 

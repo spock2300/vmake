@@ -22,25 +22,25 @@ func makeAuditTarget(name string, deps ...string) *api.Target {
 func TestAuditBuildGraphCrossPkgOnBuildReportsMissingDependency(t *testing.T) {
 	bg := build.AuditBuildGraph(
 		map[string]map[string]*api.Target{
-			"app": {"app": makeAuditTarget("app", "dep")},
+			"//app": {"app": makeAuditTarget("app", "//dep")},
 		},
 		map[string]build.PkgBuildMeta{
-			"app": {},
-			"dep": {},
+			"//app": {Container: "//"},
+			"//dep": {Container: "//"},
 		},
 		build.GraphAuditOptions{
-			Needed:   map[string]bool{"app": true},
-			Included: map[string]bool{"app": true},
+			Needed:   map[string]bool{"//app": true},
+			Included: map[string]bool{"//app": true},
 		},
 	)
 	if len(bg.Issues) != 1 {
 		t.Fatalf("issues = %+v, want exactly one", bg.Issues)
 	}
 	issue := bg.Issues[0]
-	if issue.Kind != "missing-dependency" || issue.Severity != "error" || issue.Package != "app" || issue.Target != "app:app" {
+	if issue.Kind != "missing-dependency" || issue.Severity != "error" || issue.Package != "//app" || issue.Target != "//app:app" {
 		t.Fatalf("issue = %+v", issue)
 	}
-	if !strings.Contains(issue.Message, `AddRequires("dep")`) {
+	if !strings.Contains(issue.Message, `AddRequires("//dep")`) {
 		t.Fatalf("message = %q, want the AddRequires remediation", issue.Message)
 	}
 }
@@ -48,16 +48,16 @@ func TestAuditBuildGraphCrossPkgOnBuildReportsMissingDependency(t *testing.T) {
 func TestAuditBuildGraphCrossPkgOnBuildAllowsDeclaredAndSelf(t *testing.T) {
 	bg := build.AuditBuildGraph(
 		map[string]map[string]*api.Target{
-			"app": {"app": makeAuditTarget("app", "dep:lib"), "self": makeAuditTarget("self", "app")},
-			"dep": {"lib": makeAuditTarget("lib")},
+			"//app": {"app": makeAuditTarget("app", "//dep:lib"), "self": makeAuditTarget("self", "app")},
+			"//dep": {"lib": makeAuditTarget("lib")},
 		},
 		map[string]build.PkgBuildMeta{
-			"app": {Deps: []string{"dep"}},
-			"dep": {},
+			"//app": {Container: "//", Deps: []string{"//dep"}},
+			"//dep": {Container: "//"},
 		},
 		build.GraphAuditOptions{
-			Needed:   map[string]bool{"app": true, "dep": true},
-			Included: map[string]bool{"app": true, "dep": true},
+			Needed:   map[string]bool{"//app": true, "//dep": true},
+			Included: map[string]bool{"//app": true, "//dep": true},
 		},
 	)
 	if len(bg.Issues) != 0 {
@@ -68,18 +68,18 @@ func TestAuditBuildGraphCrossPkgOnBuildAllowsDeclaredAndSelf(t *testing.T) {
 func TestAuditBuildGraphInternalVisibilityDedupesPerPair(t *testing.T) {
 	bg := build.AuditBuildGraph(
 		map[string]map[string]*api.Target{
-			"app": {
-				"app":   makeAuditTarget("app", "dep"),
-				"other": makeAuditTarget("other", "dep"),
+			"//app": {
+				"app":   makeAuditTarget("app", "hl/sdk/internal/core"),
+				"other": makeAuditTarget("other", "hl/sdk/internal/core"),
 			},
 		},
 		map[string]build.PkgBuildMeta{
-			"app": {VisPath: "apps/app"},
-			"dep": {VisPath: "hl/sdk/internal/core"},
+			"//app":                {Container: "//", VisPath: "@local/apps/app"},
+			"hl/sdk/internal/core": {Container: "hl/sdk", VisPath: "hl/sdk/internal/core"},
 		},
 		build.GraphAuditOptions{
-			Needed:   map[string]bool{"app": true},
-			Included: map[string]bool{"app": true},
+			Needed:   map[string]bool{"//app": true},
+			Included: map[string]bool{"//app": true},
 		},
 	)
 
@@ -88,11 +88,11 @@ func TestAuditBuildGraphInternalVisibilityDedupesPerPair(t *testing.T) {
 		switch issue.Kind {
 		case "internal-visibility":
 			internal++
-			want := `use of internal package "dep" not allowed from package "app"`
+			want := `use of internal package "hl/sdk/internal/core" not allowed from package "//app"`
 			if issue.Message != want {
 				t.Fatalf("message = %q, want %q", issue.Message, want)
 			}
-			if issue.Target != "app:app" {
+			if issue.Target != "//app:app" {
 				t.Fatalf("target = %q, want the first target that reached the pair", issue.Target)
 			}
 		case "missing-dependency":
@@ -110,12 +110,12 @@ func TestAuditBuildGraphInternalVisibilityDedupesPerPair(t *testing.T) {
 func TestAuditBuildGraphReportsPackageAndTargetCycles(t *testing.T) {
 	bg := build.AuditBuildGraph(
 		map[string]map[string]*api.Target{
-			"a": {"x": makeAuditTarget("x", "y"), "y": makeAuditTarget("y", "x")},
-			"b": {},
+			"//a": {"x": makeAuditTarget("x", "y"), "y": makeAuditTarget("y", "x")},
+			"//b": {},
 		},
 		map[string]build.PkgBuildMeta{
-			"a": {Deps: []string{"b"}},
-			"b": {Deps: []string{"a"}},
+			"//a": {Container: "//", Deps: []string{"//b"}},
+			"//b": {Container: "//", Deps: []string{"//a"}},
 		},
 	)
 	var pkgCycles, targetCycles int
@@ -128,7 +128,7 @@ func TestAuditBuildGraphReportsPackageAndTargetCycles(t *testing.T) {
 			}
 		case "target-cycle":
 			targetCycles++
-			if issue.Package != "a" || !strings.HasPrefix(issue.Target, "a:") || !strings.Contains(issue.Message, "target circular dependency detected:") {
+			if issue.Package != "//a" || !strings.HasPrefix(issue.Target, "//a:") || !strings.Contains(issue.Message, "target circular dependency detected:") {
 				t.Fatalf("issue = %+v", issue)
 			}
 		}
@@ -148,7 +148,7 @@ func TestIssueForReadsTypedKindsNotMessages(t *testing.T) {
 		{"package cycle", &build.ResolveError{Kind: build.IssueKindPackageCycle, Err: errors.New("whatever")}, "package-cycle"},
 		{"target cycle", &build.ResolveError{Kind: build.IssueKindTargetCycle, Err: errors.New("whatever")}, "target-cycle"},
 		{"internal visibility", &build.ResolveError{Kind: build.IssueKindInternalVisibility, Err: errors.New("whatever")}, "internal-visibility"},
-		{"internal visibility raised by pkgvis alone", &pkgvis.InternalUseError{From: "app", To: "sdk/internal/driver"}, "internal-visibility"},
+		{"internal visibility raised by pkgvis alone", &pkgvis.InternalUseError{From: "//app", To: "sdk/internal/driver"}, "internal-visibility"},
 		{"require cycle", fmt.Errorf("%w: a -> b", issue.ErrCircularDependency), "package-cycle"},
 		{"untyped", errors.New("circular dependency detected by nobody"), "resolve"},
 	}

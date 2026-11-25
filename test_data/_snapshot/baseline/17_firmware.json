@@ -9,72 +9,68 @@
     "mode": "debug",
     "packages": [
       {
-        "name": "17_firmware",
+        "name": "//busybox",
         "source": "local",
-        "path": "."
+        "path": "busybox",
+        "url": "https://git.busybox.net/busybox"
       },
       {
-        "name": "busybox",
-        "source": "local",
-        "path": "busybox"
-      },
-      {
-        "name": "configs",
+        "name": "//configs",
         "source": "local",
         "path": "configs"
       },
       {
-        "name": "libcore",
+        "name": "//libs/libcore",
         "source": "local",
         "path": "libs/libcore"
       },
       {
-        "name": "libnet",
-        "source": "local",
-        "path": "libs/libnet"
-      },
-      {
-        "name": "controlpanel",
-        "source": "local",
-        "path": "apps/controlpanel"
-      },
-      {
-        "name": "linux",
-        "source": "local",
-        "path": "linux"
-      },
-      {
-        "name": "sensordaemon",
+        "name": "//apps/sensordaemon",
         "source": "local",
         "path": "apps/sensordaemon"
       },
       {
-        "name": "recovery_rootfs",
+        "name": "//images/recovery_rootfs",
         "source": "local",
         "path": "images/recovery_rootfs"
       },
       {
-        "name": "uboot",
+        "name": "//libs/libnet",
         "source": "local",
-        "path": "uboot"
+        "path": "libs/libnet"
       },
       {
-        "name": "webapp",
+        "name": "//apps/controlpanel",
+        "source": "local",
+        "path": "apps/controlpanel"
+      },
+      {
+        "name": "//apps/webapp",
         "source": "local",
         "path": "apps/webapp"
       },
       {
-        "name": "app_partition",
+        "name": "//images/app_partition",
         "source": "local",
         "path": "images/app_partition"
       },
       {
-        "name": "main_rootfs",
+        "name": "//images/main_rootfs",
         "source": "local",
         "path": "images/main_rootfs"
       },
       {
-        "name": "firmware",
+        "name": "//linux",
+        "source": "local",
+        "path": "linux"
+      },
+      {
+        "name": "//uboot",
+        "source": "local",
+        "path": "uboot"
+      },
+      {
+        "name": "//firmware",
         "source": "local",
         "path": "firmware"
       }
@@ -111,7 +107,7 @@
     {
       "path": "compile_commands.json",
       "size": 7145,
-      "hash": "88029eab8afe887ab0316256302ce8db50de62f1126664aeded93e2d7d8fefc5"
+      "hash": "2c6c0d093bd52287fbe190f522dadd43fc12c54456136bd2ad917122ec7c01a1"
     }
   ],
   "install_tree_hash": "f909a007186796b8b8f02e7d4e648a4b6c26f2fac84fa8a3b3b88da05f5e61d2"

@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/spock2300/vmake/internal/flock"
-	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/pkgvis"
 	"github.com/spock2300/vmake/internal/toposort"
 	"github.com/spock2300/vmake/pkg/api"
@@ -18,44 +18,6 @@ import (
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/repo"
 )
-
-type NativePackageInfo struct {
-	GitURL   string
-	Versions map[string]string
-	Selected string
-	Commit   string
-}
-
-type PackageNode struct {
-	ID          string
-	Source      *buildscript.Source
-	Pkg         *api.Package
-	Deps        []string
-	Native      *NativePackageInfo
-	Constraints []string
-}
-
-func NewPackageNode(id string, src *buildscript.Source, pkg *api.Package) *PackageNode {
-	return &PackageNode{
-		ID:     id,
-		Source: src,
-		Pkg:    pkg,
-		Deps:   []string{},
-	}
-}
-
-func (n *PackageNode) WithNative(gitURL string, versions map[string]string, selected string) *PackageNode {
-	n.Native = &NativePackageInfo{GitURL: gitURL, Versions: versions, Selected: selected}
-	return n
-}
-
-func (n *PackageNode) IsLocal() bool {
-	return n.Source != nil && n.Source.IsLocal()
-}
-
-func (n *PackageNode) IsNative() bool {
-	return n.Native != nil
-}
 
 type SourceKind string
 
@@ -67,27 +29,102 @@ const (
 
 func (k SourceKind) String() string { return string(k) }
 
-func (k SourceKind) GitCompatName() string {
-	if k == SourceKindLocal {
-		return "git"
+// LocalLinkVersion identifies a linked container or source whose version
+// selection is fully local and ignores lock/config pins, tags and constraints.
+const LocalLinkVersion = "0.0.0-local"
+
+// ContainerNode represents a resolved module container: the local project
+// ("//"), a versioned native Git repository ("<repo>/<module>"), or a registry
+// wrapper repository ("<repo>").
+type ContainerNode struct {
+	ID          string
+	Repo        string
+	Kind        SourceKind
+	Dir         string
+	URL         string
+	Version     string
+	Commit      string
+	Versions    map[string]string
+	Link        *buildscript.SourceLink
+	Manifest    *buildscript.Manifest
+	Constraints []string
+}
+
+func (c *ContainerNode) IsLocal() bool    { return c != nil && c.Kind == SourceKindLocal }
+func (c *ContainerNode) IsNative() bool   { return c != nil && c.Kind == SourceKindNative }
+func (c *ContainerNode) IsRegistry() bool { return c != nil && c.Kind == SourceKindRegistry }
+func (c *ContainerNode) IsLinked() bool   { return c != nil && c.Link != nil && c.Link.Path != "" }
+
+type PackageNode struct {
+	ID          string
+	Container   string
+	RelPath     string
+	Kind        SourceKind
+	Source      *buildscript.Source
+	Pkg         *api.Package
+	Deps        []string
+	Constraints []string
+}
+
+func NewPackageNode(id, container, relPath string, kind SourceKind, src *buildscript.Source, pkg *api.Package) *PackageNode {
+	return &PackageNode{
+		ID:        id,
+		Container: container,
+		RelPath:   relPath,
+		Kind:      kind,
+		Source:    src,
+		Pkg:       pkg,
+		Deps:      []string{},
 	}
-	return string(k)
+}
+
+func (n *PackageNode) IsLocal() bool {
+	if n == nil {
+		return false
+	}
+	if n.Kind != "" {
+		return n.Kind == SourceKindLocal
+	}
+	return n.Source != nil && n.Source.IsLocal()
+}
+
+func (n *PackageNode) IsNative() bool {
+	return n != nil && n.Kind == SourceKindNative
+}
+
+func (n *PackageNode) IsRegistry() bool {
+	return n != nil && n.Kind == SourceKindRegistry
 }
 
 func (n *PackageNode) SourceKind() SourceKind {
+	if n != nil && n.Kind != "" {
+		return n.Kind
+	}
 	if n.IsLocal() {
 		return SourceKindLocal
-	}
-	if n.IsNative() {
-		return SourceKindNative
 	}
 	return SourceKindRegistry
 }
 
+func (n *PackageNode) HasOwnGit() bool {
+	return n != nil && n.Pkg != nil && len(n.Pkg.GitURLs()) > 0
+}
+
 type Graph struct {
-	Packages map[string]*PackageNode
-	Order    []string
-	frozen   bool
+	Containers        map[string]*ContainerNode
+	Packages          map[string]*PackageNode
+	Roots             []string
+	Order             []string
+	SourceConstraints map[string][]string
+	frozen            bool
+}
+
+func NewGraph() *Graph {
+	return &Graph{
+		Containers:        make(map[string]*ContainerNode),
+		Packages:          make(map[string]*PackageNode),
+		SourceConstraints: make(map[string][]string),
+	}
 }
 
 func (g *Graph) Freeze() {
@@ -98,9 +135,16 @@ func (g *Graph) IsFrozen() bool {
 	return g.frozen
 }
 
-// LocalLinkVersion identifies a package whose source and version selection are
-// fully local. Linked packages ignore lock/config pins, tags and constraints.
-const LocalLinkVersion = "0.0.0-local"
+func (g *Graph) ContainerOf(pkgID string) *ContainerNode {
+	if g == nil {
+		return nil
+	}
+	node := g.Packages[pkgID]
+	if node == nil {
+		return nil
+	}
+	return g.Containers[node.Container]
+}
 
 type LockPolicy struct {
 	IgnoreAll     bool
@@ -113,32 +157,31 @@ type LockPolicy struct {
 }
 
 type Resolver struct {
-	ctx          context.Context
-	sources      map[string]*buildscript.Source
-	graph        *Graph
-	repoMgr      *repo.RepoManager
-	projectRoot  string
-	depsDir      string
-	sourceMgr    *repo.SourceManager
-	dryRunDir    string
-	dryRunMgr    *repo.SourceManager
-	subParents   map[string]string
-	lockfile     *lockfile.Lock
-	lockPolicy   LockPolicy
-	configPins   map[string]string
-	sourceLinks  map[string]string
-	trustChecker buildscript.ScriptTrustChecker
-	repoLocks    map[string]*flock.FileLock
+	ctx                context.Context
+	sources            map[string]*buildscript.Source
+	graph              *Graph
+	repoMgr            *repo.RepoManager
+	projectRoot        string
+	depsDir            string
+	sourceMgr          *repo.SourceManager
+	dryRunDir          string
+	dryRunMgr          *repo.SourceManager
+	lockfile           *lockfile.Lock
+	lockPolicy         LockPolicy
+	configPins         map[string]string
+	sourceLinks        map[string]string
+	trustChecker       buildscript.ScriptTrustChecker
+	repoLocks          map[string]*flock.FileLock
+	rootExactOverrides map[string]string
 }
 
 func NewResolver(repoMgr *repo.RepoManager, depsDir string) *Resolver {
 	return &Resolver{
 		ctx:         context.Background(),
 		sources:     make(map[string]*buildscript.Source),
-		graph:       &Graph{Packages: make(map[string]*PackageNode)},
+		graph:       NewGraph(),
 		repoMgr:     repoMgr,
 		depsDir:     depsDir,
-		subParents:  make(map[string]string),
 		sourceLinks: make(map[string]string),
 		repoLocks:   make(map[string]*flock.FileLock),
 	}
@@ -173,8 +216,9 @@ func (r *Resolver) effectiveProjectRoot() string {
 }
 
 func (r *Resolver) VisibilityPath(id string) string {
+	isLocal := api.IsLocalPackageID(id)
 	if r == nil {
-		return pkgvis.VisibilityPath(false, id, "", "")
+		return pkgvis.VisibilityPath(isLocal, id, "", "")
 	}
 	if r.graph != nil {
 		if node, ok := r.graph.Packages[id]; ok && node != nil && node.Source != nil {
@@ -184,7 +228,7 @@ func (r *Resolver) VisibilityPath(id string) string {
 	if src, ok := r.sources[id]; ok && src != nil {
 		return pkgvis.VisibilityPath(src.IsLocal(), id, r.effectiveProjectRoot(), src.Dir)
 	}
-	return pkgvis.VisibilityPath(false, id, "", "")
+	return pkgvis.VisibilityPath(isLocal, id, "", "")
 }
 
 func (r *Resolver) SetLockfile(l *lockfile.Lock, ignore bool) {
@@ -223,10 +267,9 @@ func (r *Resolver) SetConfigPins(pins map[string]string) {
 	r.configPins = pins
 }
 
-// SetSourceLinks maps package IDs to local working trees. A linked native
-// package loads build.go and sub-packages from the tree; a linked registry
-// package keeps its registry wrapper build.go and replaces only the source
-// tree.
+// SetSourceLinks maps container IDs or SetGit package IDs to local working
+// trees. A linked native container loads its packages from the tree; a linked
+// SetGit package replaces only its upstream source tree.
 func (r *Resolver) SetSourceLinks(links map[string]string) {
 	r.sourceLinks = links
 	if r.sourceLinks == nil {
@@ -237,28 +280,6 @@ func (r *Resolver) SetSourceLinks(links map[string]string) {
 func (r *Resolver) sourceLink(id string) (string, bool) {
 	path, ok := r.sourceLinks[id]
 	return path, ok && path != ""
-}
-
-func (r *Resolver) SubParents() map[string]string {
-	return r.subParents
-}
-
-func (r *Resolver) resolveDepName(fromPkg, depName string) string {
-	return api.ResolveSubPackageName(fromPkg, depName, r.subParents, func(candidate string) bool {
-		_, exists := r.sources[candidate]
-		return exists
-	})
-}
-
-func subPackageHint(fromPkg, depName, resolved string, subParents map[string]string) string {
-	if resolved != depName {
-		return ""
-	}
-	candidates := api.SubPackageCandidates(fromPkg, depName, subParents)
-	if len(candidates) == 0 {
-		return ""
-	}
-	return fmt.Sprintf(" (tried sub-package candidates: %s)", strings.Join(candidates, ", "))
 }
 
 func (r *Resolver) Graph() *Graph {
@@ -281,28 +302,112 @@ func (r *Resolver) UpdateOrder() error {
 	return nil
 }
 
-func (r *Resolver) ResolveAll(localSources []buildscript.Source) error {
-	for _, src := range localSources {
-		s := src
-		s.Origin = api.SourceLocal
-		r.sources[s.Name] = &s
+type constraintRestart struct {
+	containerID string
+	constraints []string
+}
+
+func (r *Resolver) resetGraph() {
+	r.sources = make(map[string]*buildscript.Source)
+	r.graph = NewGraph()
+}
+
+func resolveEffectiveRoots(projectDir string, manifest *buildscript.Manifest, overrides []string) ([]string, error) {
+	if len(overrides) == 0 {
+		return manifest.EffectiveRoots(projectDir)
+	}
+	seen := make(map[string]bool, len(overrides))
+	roots := make([]string, 0, len(overrides))
+	for _, raw := range overrides {
+		root := strings.TrimSpace(raw)
+		if err := api.ValidatePackageRef(root); err != nil {
+			return nil, fmt.Errorf("config root %q: %w", raw, err)
+		}
+		if !api.IsLocalPackageID(root) {
+			return nil, fmt.Errorf("config root %q must be a local package starting with '//'", raw)
+		}
+		if !seen[root] {
+			seen[root] = true
+			roots = append(roots, root)
+		}
+	}
+	return roots, nil
+}
+
+func (r *Resolver) ResolveProject(projectDir string, rootOverrides []string) error {
+	projectDir = filepath.Clean(projectDir)
+	if resolved, err := filepath.EvalSymlinks(projectDir); err == nil {
+		projectDir = resolved
+	}
+	r.projectRoot = projectDir
+
+	manifest, _, err := buildscript.LoadManifest(projectDir)
+	if err != nil {
+		return err
 	}
 
-	for _, src := range localSources {
-		if _, exists := r.graph.Packages[src.Name]; exists {
-			continue
+	roots, err := resolveEffectiveRoots(projectDir, manifest, rootOverrides)
+	if err != nil {
+		return err
+	}
+
+	knownConstraints := make(map[string][]string)
+	r.rootExactOverrides = make(map[string]string)
+	for mod, raw := range manifest.Modules {
+		if c := normalizeConstraint(raw); c != "" {
+			knownConstraints[mod] = appendUnique(knownConstraints[mod], c)
+			if isExactConstraint(c) {
+				r.rootExactOverrides[mod] = c
+			}
 		}
-		if _, err := r.resolveRecursive(src.Name, "", nil); err != nil {
+	}
+
+	const maxPasses = 8
+	for pass := 0; pass < maxPasses; pass++ {
+		r.resetGraph()
+		localContainer := &ContainerNode{
+			ID:       api.LocalContainerID,
+			Kind:     SourceKindLocal,
+			Dir:      projectDir,
+			Manifest: manifest,
+		}
+		r.graph.Containers[api.LocalContainerID] = localContainer
+		r.graph.Roots = slices.Clone(roots)
+		r.mergeSourceConstraints(localContainer)
+
+		restart, err := r.resolveRootsPass(localContainer, roots, knownConstraints)
+		if err != nil {
 			r.Close()
 			return err
 		}
+		if restart != nil {
+			knownConstraints[restart.containerID] = restart.constraints
+			continue
+		}
+		if err := r.validateAllSourceNodes(); err != nil {
+			r.Close()
+			return err
+		}
+		if err := r.UpdateOrder(); err != nil {
+			r.Close()
+			return err
+		}
+		return nil
 	}
 
-	if err := r.UpdateOrder(); err != nil {
-		r.Close()
-		return err
+	r.Close()
+	return fmt.Errorf("dependency resolution did not converge after %d constraint intersection passes", maxPasses)
+}
+
+func (r *Resolver) resolveRootsPass(localContainer *ContainerNode, roots []string, knownConstraints map[string][]string) (*constraintRestart, error) {
+	for _, rootID := range roots {
+		relPath, _ := api.LocalRelPath(rootID)
+		_, restart, err := r.resolvePackage(rootID, localContainer, relPath, nil, knownConstraints)
+		if err != nil || restart != nil {
+			return restart, err
+		}
 	}
-	return nil
+	return nil, nil
 }
 
 func (r *Resolver) FilterDeps(id string, cfgVals map[string]any, options map[string]*api.Option) error {
@@ -328,10 +433,9 @@ func (r *Resolver) FilterDeps(id string, cfgVals map[string]any, options map[str
 	deps := pkg.GetRequires().Get()
 	newDeps := make([]string, 0, len(deps))
 	for _, req := range deps {
-		resolved := r.resolveDepName(id, req.Name)
+		resolved := api.CanonicalizePackageRef(node.Container, req.Name)
 		if _, ok := r.graph.Packages[resolved]; !ok {
-			hint := subPackageHint(id, req.Name, resolved, r.subParents)
-			return fmt.Errorf("dependency %q (required by %s) not found in dependency graph; declare it unconditionally in OnRequire (use ctx.When() for config-conditional requires)%s", req.Name, id, hint)
+			return fmt.Errorf("dependency %q (required by %s) not found in dependency graph; declare it unconditionally in OnRequire (use ctx.When() for config-conditional requires)", req.Name, id)
 		}
 		if err := pkgvis.CheckInternal(id, r.VisibilityPath(id), resolved, r.VisibilityPath(resolved)); err != nil {
 			return err
@@ -342,74 +446,56 @@ func (r *Resolver) FilterDeps(id string, cfgVals map[string]any, options map[str
 	return nil
 }
 
-func (r *Resolver) resolveRecursive(id string, constraint string, path []string) (*PackageNode, error) {
-	if err := api.CheckCycle(path, id); err != nil {
-		return nil, err
+func (r *Resolver) resolvePackage(pkgID string, container *ContainerNode, relPath string, path []string, knownConstraints map[string][]string) (*PackageNode, *constraintRestart, error) {
+	if err := api.CheckCycle(path, pkgID); err != nil {
+		return nil, nil, err
+	}
+	if node, exists := r.graph.Packages[pkgID]; exists {
+		return node, nil, nil
 	}
 
-	if node, exists := r.graph.Packages[id]; exists {
-		if err := validateNodeConstraints(node, constraint, path); err != nil {
-			return nil, err
-		}
-		if err := r.validatePinnedNodeConstraints(node); err != nil {
-			return nil, err
-		}
-		return node, nil
-	}
-
-	src, err := r.findSource(id, constraint, path)
+	src, err := r.loadPackageSource(container, pkgID, relPath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	// Post-lookup: findNativeSource may have registered a deferred node for native packages
-	// (native repos must be cloned before build.go can be read for OnRequire).
-	if node, exists := r.graph.Packages[id]; exists {
-		if err := validateNodeConstraints(node, constraint, path); err != nil {
-			return nil, err
-		}
-		if err := r.validatePinnedNodeConstraints(node); err != nil {
-			return nil, err
-		}
-		return node, nil
-	}
-
-	node, err := r.resolveOne(id, src, path)
-	if err != nil {
-		return nil, err
-	}
-	if constraint != "" {
-		node.Constraints = append(node.Constraints, constraint)
-	}
-
-	if err := r.validatePinnedNodeConstraints(node); err != nil {
-		return nil, err
-	}
-	if len(node.Constraints) > 0 && node.Pkg != nil && len(node.Pkg.Versions()) > 0 &&
-		!(node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource) {
-		if _, err := node.Pkg.SelectVersionMulti(node.Constraints); err != nil {
-			return nil, fmt.Errorf("package %s: %w", id, err)
-		}
-	}
-
-	return node, nil
-}
-
-func (r *Resolver) resolveOne(id string, src *buildscript.Source, path []string) (*PackageNode, error) {
 	pkg, err := r.PreparePackage(src)
 	if err != nil {
-		return nil, fmt.Errorf("load %s: %w", id, err)
-	}
-	if src.Link != nil && src.Link.Native {
-		if _, isSub := r.subParents[id]; isSub && len(pkg.GitURLs()) > 0 {
-			src.Link.LocalSource = false
-		}
-	}
-	if err := r.validateLinkedPatches(id, src, pkg); err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("load %s: %w", pkgID, err)
 	}
 
-	return r.resolveFromCache(id, pkg, src, path)
+	if err := r.finalizePackageLink(container, pkgID, src, pkg); err != nil {
+		return nil, nil, err
+	}
+	if err := r.validateLinkedPatches(pkgID, src, pkg); err != nil {
+		return nil, nil, err
+	}
+
+	r.sources[pkgID] = src
+	node := NewPackageNode(pkgID, container.ID, relPath, container.Kind, src, pkg)
+	r.graph.Packages[pkgID] = node
+
+	if restart, err := r.recurseDeps(node, container, path, knownConstraints); err != nil || restart != nil {
+		return nil, restart, err
+	}
+
+	return node, nil, nil
+}
+
+func (r *Resolver) loadPackageSource(container *ContainerNode, pkgID, relPath string) (*buildscript.Source, error) {
+	adapter := adapterForKind(container.Kind)
+	if adapter == nil {
+		return nil, fmt.Errorf("unsupported container kind %q for %s", container.Kind, container.ID)
+	}
+	return adapter.loadPackageSource(r, container, pkgID, relPath)
+}
+
+func (r *Resolver) finalizePackageLink(container *ContainerNode, pkgID string, src *buildscript.Source, pkg *api.Package) error {
+	adapter := adapterForKind(container.Kind)
+	if adapter == nil {
+		return nil
+	}
+	return adapter.finalizePackageLink(r, container, pkgID, src, pkg)
 }
 
 func (r *Resolver) PreparePackage(src *buildscript.Source) (*api.Package, error) {
@@ -417,214 +503,188 @@ func (r *Resolver) PreparePackage(src *buildscript.Source) (*api.Package, error)
 }
 
 func (r *Resolver) validateLinkedPatches(id string, src *buildscript.Source, pkg *api.Package) error {
-	if src == nil || src.Link == nil || pkg == nil || len(pkg.GetPatches()) == 0 {
+	if src == nil || src.Link == nil || !src.Link.LocalSource || pkg == nil || len(pkg.GetPatches()) == 0 {
 		return nil
 	}
-	if src.Link.Native {
-		if _, isSub := r.subParents[id]; isSub && len(pkg.GitURLs()) > 0 {
-			return nil
+	return fmt.Errorf("linked package %s declares patches; patches cannot be applied to a locally linked source tree", id)
+}
+
+func (r *Resolver) recurseDeps(node *PackageNode, container *ContainerNode, path []string, knownConstraints map[string][]string) (*constraintRestart, error) {
+	if node.Pkg == nil {
+		return nil, nil
+	}
+	nextPath := append(path, node.ID)
+	for _, req := range node.Pkg.GetRequires().Get() {
+		depContainer, depID, depRel, restart, err := r.resolveDepTarget(node.ID, container, req.Name, knownConstraints)
+		if err != nil || restart != nil {
+			return restart, err
 		}
-	}
-	return fmt.Errorf("linked package %s declares patches; patches are only supported for native sub-packages with their own git source", id)
-}
-
-func (r *Resolver) resolveFromCache(id string, pkg *api.Package, src *buildscript.Source, path []string) (*PackageNode, error) {
-	node := NewPackageNode(id, src, pkg)
-	r.graph.Packages[id] = node
-
-	if err := r.recurseDeps(node, path); err != nil {
-		return nil, err
-	}
-	return node, nil
-}
-
-func (r *Resolver) recurseDeps(node *PackageNode, path []string) error {
-	pkg := node.Pkg
-	if pkg == nil {
-		return nil
-	}
-	for _, req := range pkg.GetRequires().Get() {
-		depName := r.resolveDepName(node.ID, req.Name)
-		depNode, err := r.resolveRecursive(depName, req.Constraint, append(path, node.ID))
-		if err != nil {
-			return err
+		depNode, restart, err := r.resolvePackage(depID, depContainer, depRel, nextPath, knownConstraints)
+		if err != nil || restart != nil {
+			return restart, err
 		}
 		if err := pkgvis.CheckInternal(node.ID, r.VisibilityPath(node.ID), depNode.ID, r.VisibilityPath(depNode.ID)); err != nil {
-			return err
+			return nil, err
 		}
 		node.Deps = append(node.Deps, depNode.ID)
 	}
+	return nil, nil
+}
+
+func (r *Resolver) resolveDepTarget(callerID string, callerContainer *ContainerNode, rawRef string, knownConstraints map[string][]string) (*ContainerNode, string, string, *constraintRestart, error) {
+	if err := api.ValidatePackageRef(rawRef); err != nil {
+		return nil, "", "", nil, fmt.Errorf("package %s: %w", callerID, err)
+	}
+	if api.IsLocalPackageID(rawRef) {
+		relPath, _ := api.LocalRelPath(rawRef)
+		depID := api.CanonicalizePackageRef(callerContainer.ID, rawRef)
+		return callerContainer, depID, relPath, nil, nil
+	}
+	if callerContainer.Kind == SourceKindRegistry && strings.HasPrefix(rawRef, callerContainer.ID+"/") {
+		return callerContainer, rawRef, strings.TrimPrefix(rawRef, callerContainer.ID+"/"), nil, nil
+	}
+	targetContainerID, relPath, rawConstraint, ok := callerContainer.Manifest.MatchModule(rawRef)
+	if !ok {
+		manifestHint := filepath.Join(callerContainer.Dir, buildscript.ManifestFileName)
+		return nil, "", "", nil, fmt.Errorf("package %s requires %q, which does not match any module declared in %s; add the container to \"modules\" in vmake.json", callerID, rawRef, manifestHint)
+	}
+	depContainer, restart, err := r.ensureContainer(targetContainerID, normalizeConstraint(rawConstraint), callerID, knownConstraints)
+	if err != nil || restart != nil {
+		return nil, "", "", restart, err
+	}
+	return depContainer, rawRef, relPath, nil, nil
+}
+
+func (r *Resolver) ensureContainer(containerID, incomingConstraint, requirer string, knownConstraints map[string][]string) (*ContainerNode, *constraintRestart, error) {
+	if c, exists := r.graph.Containers[containerID]; exists {
+		restart, err := r.applyContainerConstraint(c, incomingConstraint, requirer)
+		if err != nil || restart != nil {
+			return nil, restart, err
+		}
+		return c, nil, nil
+	}
+
+	if r.repoMgr == nil {
+		return nil, nil, fmt.Errorf("resolve container %s: no repository manager configured", containerID)
+	}
+
+	constraints := slices.Clone(knownConstraints[containerID])
+	if incomingConstraint != "" {
+		constraints = appendUnique(constraints, incomingConstraint)
+	}
+
+	c, err := externalAdapterForID(containerID).resolveContainer(r, containerID, constraints)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	r.graph.Containers[containerID] = c
+	r.mergeSourceConstraints(c)
+	return c, nil, nil
+}
+
+func (r *Resolver) lockRepo(repoName string) error {
+	if r.repoMgr == nil || repoName == "" {
+		return nil
+	}
+	if _, ok := r.repoLocks[repoName]; ok {
+		return nil
+	}
+	lock, err := r.repoMgr.Lock(repoName, false)
+	if err != nil {
+		return err
+	}
+	r.repoLocks[repoName] = lock
 	return nil
 }
 
-func (r *Resolver) findSource(id string, constraint string, path []string) (*buildscript.Source, error) {
-	if src, ok := r.sources[id]; ok && src.IsLocal() {
-		return src, nil
-	}
-	if r.repoMgr != nil {
-		repoName, _, _ := api.SplitPackageRef(id)
-		if repoName != "" {
-			if _, ok := r.repoLocks[repoName]; !ok {
-				lock, err := r.repoMgr.Lock(repoName, false)
-				if err != nil {
-					return nil, err
-				}
-				r.repoLocks[repoName] = lock
-			}
-		}
-	}
-	if src, ok := r.sources[id]; ok {
-		return src, nil
-	}
-
-	repoName, pkgName, _ := api.SplitPackageRef(id)
-
-	buildGo, err := r.repoMgr.FindPackageGo(repoName, pkgName)
-	if err == nil {
-		linkPath, linked := r.sourceLink(id)
-		if !linked {
-			if werr := r.checkWrapperCommit(id, repoName); werr != nil {
-				return nil, werr
-			}
-		}
-		src := buildscript.NewSource(id, buildGo, filepath.Dir(buildGo), api.SourceRemote)
-		src.Repo = repoName
-		scriptOpts, optsErr := buildscript.DetectScriptOptions(filepath.Dir(buildGo),
-			r.repoMgr.Path(repoName))
-		if optsErr != nil {
-			return nil, optsErr
-		}
-		src.Script = scriptOpts
-		// Trust binds to the repository identity. Record the wrapper commit for
-		// build identity and reporting only.
-		if head, headErr := repo.GetCurrentCommitContext(r.ctx, r.repoMgr.Path(repoName)); headErr == nil {
-			src.Commit = head
-		}
-		if linked {
-			linkCommit, headErr := repo.GetCurrentCommitContext(r.ctx, linkPath)
-			if headErr != nil {
-				return nil, fmt.Errorf("read linked source %s: %w", linkPath, headErr)
-			}
-			src.Link = &buildscript.SourceLink{
-				Path:        linkPath,
-				Commit:      linkCommit,
-				LocalSource: true,
-			}
-		}
-		r.sources[id] = src
-		return src, nil
-	}
-
-	if !r.repoMgr.IsNative(repoName) {
-		return nil, fmt.Errorf("find %s: %w", id, err)
-	}
-
-	src, nerr := r.findNativeSource(id, repoName, pkgName, constraint, path)
-	if nerr != nil && strings.Contains(pkgName, "/") {
-		if owner := r.resolvedSubPackageOwner(id); owner != "" {
-			return nil, fmt.Errorf("sub-package %q not found under resolved parent package %q: %w", id, owner, nerr)
-		}
-		return nil, fmt.Errorf("%w (if %q is a native sub-package, its parent must be resolved first: list the parent before the sub-package in AddRequires)", nerr, id)
-	}
-	return src, nerr
-}
-
-func (r *Resolver) resolvedSubPackageOwner(id string) string {
-	parts := strings.Split(id, "/")
-	for i := len(parts) - 1; i >= 2; i-- {
-		parent := strings.Join(parts[:i], "/")
-		if _, ok := r.sources[parent]; ok {
-			return parent
-		}
-		if _, ok := r.graph.Packages[parent]; ok {
-			return parent
-		}
-	}
-	return ""
-}
-
-func (r *Resolver) findNativeLink(id, repoName, constraint, linkPath, gitURL string, path []string) (*buildscript.Source, error) {
-	buildGo := filepath.Join(linkPath, "build.go")
-	if !fs.FileExists(buildGo) {
-		return nil, fmt.Errorf("linked native package %s has no build.go in %s", id, linkPath)
-	}
-	commit, err := repo.GetCurrentCommitContext(r.ctx, linkPath)
-	if err != nil {
-		return nil, fmt.Errorf("read linked native package %s at %s: %w", id, linkPath, err)
-	}
-	src := buildscript.NewSource(id, buildGo, linkPath, api.SourceRemote)
-	src.Repo = repoName
-	src.URL = gitURL
-	src.Commit = commit
-	src.Link = &buildscript.SourceLink{
-		Path:        linkPath,
-		Commit:      commit,
-		Native:      true,
-		LocalSource: true,
-	}
-	scriptOpts, optsErr := buildscript.DetectScriptOptions(linkPath, linkPath)
-	if optsErr != nil {
-		return nil, optsErr
-	}
-	src.Script = scriptOpts
-	r.sources[id] = src
-
-	pkg, err := r.PreparePackage(src)
-	if err != nil {
-		return nil, fmt.Errorf("load %s: %w", id, err)
-	}
-	if err := r.validateLinkedPatches(id, src, pkg); err != nil {
+func (r *Resolver) resolveRegistryContainer(repoName string) (*ContainerNode, error) {
+	if err := r.lockRepo(repoName); err != nil {
 		return nil, err
 	}
-
-	node := NewPackageNode(id, src, pkg).WithNative(gitURL, nil, LocalLinkVersion)
-	node.Native.Commit = commit
-	if constraint != "" {
-		node.Constraints = append(node.Constraints, constraint)
+	if !r.repoMgr.Exists(repoName) {
+		return nil, fmt.Errorf("repository '%s' not found", repoName)
 	}
-	r.graph.Packages[id] = node
-
-	if err := r.recurseDeps(node, path); err != nil {
+	if r.repoMgr.IsNative(repoName) {
+		return nil, fmt.Errorf("native repository %q requires '<repo>/<module>' in vmake.json \"modules\"", repoName)
+	}
+	repoPath := r.repoMgr.Path(repoName)
+	head, headErr := repo.GetCurrentCommitContext(r.ctx, repoPath)
+	if headErr != nil {
+		head = ""
+	}
+	if err := r.checkRegistryLock(repoName, head); err != nil {
 		return nil, err
 	}
-	r.scanSubPackages(id, linkPath)
-	return src, nil
+	url, _ := r.repoMgr.URL(repoName)
+	manifest, _, err := buildscript.LoadManifest(repoPath)
+	if err != nil {
+		return nil, err
+	}
+	return &ContainerNode{
+		ID:       repoName,
+		Repo:     repoName,
+		Kind:     SourceKindRegistry,
+		Dir:      repoPath,
+		URL:      url,
+		Commit:   head,
+		Manifest: manifest,
+	}, nil
 }
 
-func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string, path []string) (*buildscript.Source, error) {
-	if r.sourceMgr == nil {
-		return nil, fmt.Errorf("resolver for %s has no source manager configured", id)
-	}
+func (r *Resolver) resolveNativeContainer(containerID, repoName, modName string, constraints []string) (*ContainerNode, error) {
 	urlTemplate, err := r.repoMgr.GetNativeURL(repoName)
 	if err != nil {
 		return nil, err
 	}
+	gitURL := repo.ResolveNativeURL(urlTemplate, modName)
 
-	gitURL := repo.ResolveNativeURL(urlTemplate, pkgName)
-
-	if linkPath, ok := r.sourceLink(id); ok {
-		return r.findNativeLink(id, repoName, constraint, linkPath, gitURL, path)
+	if linkPath, ok := r.sourceLink(containerID); ok {
+		return r.resolveLinkedNativeContainer(containerID, repoName, linkPath, gitURL, constraints)
 	}
-	if err := r.checkLockedEntry(id); err != nil {
+	if r.sourceMgr == nil {
+		return nil, fmt.Errorf("resolver for %s has no source manager configured", containerID)
+	}
+	if err := r.checkLockedContainer(containerID); err != nil {
 		return nil, err
 	}
 
-	pkgStub := api.NewPackage()
-	pkgStub.SetRepo(repoName).SetName(pkgName)
-	pkgStub.SetGit(gitURL)
+	_, _, hasExplicitPin := r.lockQuery().Containers().PinFor(containerID)
+	effectiveConstraints := constraints
+	if rootExact := r.rootExactOverrides[containerID]; rootExact != "" && !hasExplicitPin {
+		effectiveConstraints = []string{rootExact}
+	}
 
-	pinVersion, pinCommit, hasPin := r.pinnedVersion(id)
+	var (
+		commitConstraint  string
+		semverConstraints []string
+	)
+	if !hasExplicitPin {
+		commitConstraint, semverConstraints, err = SplitConstraints(containerID, effectiveConstraints)
+		if err != nil {
+			return nil, err
+		}
+	}
 
-	var versions map[string]string
-	var selectedVersion string
-	var res *repo.SourceResult
-	key := repo.PackageTreeKey(repoName, pkgName)
+	pinVersion, pinCommit, hasPin := r.pinnedContainerVersion(containerID)
+
+	var (
+		versions        map[string]string
+		selectedVersion string
+		res             *repo.SourceResult
+	)
+	key := repo.PackageTreeKey(repoName, modName)
 	urls := []string{gitURL}
 
 	if hasPin && pinCommit != "" && (r.sourceMgr.HasTreeCommitFromURLs(key, pinCommit, urls) || r.sourceMgr.HasCachedCommit(urls, pinCommit) || r.lockPolicy.Offline) {
-		if pinVersion != "" {
-			if err := r.checkConstraint(id, pinVersion, constraint); err != nil {
-				return nil, err
+		if !hasExplicitPin {
+			if pinVersion != "" {
+				if err := r.checkConstraints(containerID, pinVersion, semverConstraints); err != nil {
+					return nil, err
+				}
+			}
+			if commitConstraint != "" && pinCommit != commitConstraint {
+				return nil, fmt.Errorf("locked/pinned commit %s for container %s violates commit constraint %s; run 'vmake deps update' to re-resolve", repo.ShortCommit(pinCommit), containerID, repo.ShortCommit(commitConstraint))
 			}
 		}
 		res, err = r.ensureNativeSource(key, repo.SourceRequest{Key: key, URLs: urls, Version: pinVersion, Commit: pinCommit, ResolveOnly: true})
@@ -641,42 +701,41 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string, pa
 			}
 			versions = map[string]string{pinVersion: tag}
 			selectedVersion = pinVersion
-			vlog.Verbose("  %s@%s (pinned, cached)", id, selectedVersion)
+			vlog.Verbose("  %s@%s (pinned, cached)", containerID, selectedVersion)
 		} else {
-			selectedVersion = ""
-			vlog.Verbose("  %s@%s (commit-pinned, cached)", id, repo.ShortCommit(pinCommit))
+			vlog.Verbose("  %s@%s (commit-pinned, cached)", containerID, repo.ShortCommit(pinCommit))
 		}
-	} else if hasPin && pinVersion == "" && pinCommit != "" {
+	} else if (hasPin && pinVersion == "" && pinCommit != "") || (!hasPin && commitConstraint != "") {
+		targetCommit := pinCommit
+		if targetCommit == "" {
+			targetCommit = commitConstraint
+		}
 		res, err = r.ensureNativeSource(key, repo.SourceRequest{
-			Key: key, URLs: urls, Commit: pinCommit, ResolveOnly: true,
+			Key: key, URLs: urls, Commit: targetCommit, ResolveOnly: true,
 		})
 		if err != nil {
 			return nil, err
 		}
-		selectedVersion = ""
-		vlog.Verbose("  %s@%s", id, repo.ShortCommit(res.Commit))
+		vlog.Verbose("  %s@%s", containerID, repo.ShortCommit(res.Commit))
 	} else {
 		if r.lockPolicy.Offline {
-			return nil, fmt.Errorf("offline mode: cannot list tags for %s without network", id)
+			return nil, fmt.Errorf("offline mode: cannot list tags for %s without network", containerID)
 		}
-		vlog.Verbose("  %s: listing versions from %s", id, strings.Join(urls, ", "))
+		vlog.Verbose("  %s: listing versions from %s", containerID, strings.Join(urls, ", "))
 		tags, err := repo.ListRemoteTagsContext(r.ctx, urls)
 		if err != nil {
-			return nil, fmt.Errorf("list tags for %s: %w", id, err)
+			return nil, fmt.Errorf("list tags for %s: %w", containerID, err)
 		}
 		versions = repo.FilterValidVersions(tags)
 		if len(versions) == 0 {
-			return nil, fmt.Errorf("no valid versions found for %s", id)
+			return nil, fmt.Errorf("no valid versions found for %s", containerID)
 		}
-		pkgStub.SetVersions(versions)
-
-		selected, ref, err := r.selectNativeVersion(id, versions, constraint)
+		selected, ref, err := r.selectNativeContainerVersion(containerID, versions, semverConstraints)
 		if err != nil {
 			return nil, err
 		}
 		selectedVersion = selected
-
-		vlog.Verbose("  %s@%s", id, selectedVersion)
+		vlog.Verbose("  %s@%s", containerID, selectedVersion)
 
 		expectedCommit := ""
 		if selectedVersion == pinVersion {
@@ -690,48 +749,104 @@ func (r *Resolver) findNativeSource(id, repoName, pkgName, constraint string, pa
 		}
 	}
 
-	buildGo := filepath.Join(res.SrcDir, "build.go")
-	if !fs.FileExists(buildGo) {
-		return nil, fmt.Errorf("build.go not found in %s", res.SrcDir)
-	}
-	src := buildscript.NewSource(id, buildGo, res.SrcDir, api.SourceRemote)
-	src.Repo = repoName
-	src.URL = gitURL
-	src.Commit = res.Commit
-	scriptOpts, optsErr := buildscript.DetectScriptOptions(res.SrcDir, res.SrcDir)
-	if optsErr != nil {
-		return nil, optsErr
-	}
-	src.Script = scriptOpts
-
-	r.sources[id] = src
-
-	pkg, err := r.PreparePackage(src)
+	manifest, _, err := buildscript.LoadManifest(res.SrcDir)
 	if err != nil {
-		return nil, fmt.Errorf("load %s: %w", id, err)
-	}
-
-	node := NewPackageNode(id, src, pkg).WithNative(gitURL, versions, selectedVersion)
-	node.Native.Commit = res.Commit
-	if constraint != "" {
-		node.Constraints = append(node.Constraints, constraint)
-	}
-	r.graph.Packages[id] = node
-
-	if err := r.recurseDeps(node, path); err != nil {
 		return nil, err
 	}
+	return &ContainerNode{
+		ID:          containerID,
+		Repo:        repoName,
+		Kind:        SourceKindNative,
+		Dir:         res.SrcDir,
+		URL:         gitURL,
+		Version:     selectedVersion,
+		Commit:      res.Commit,
+		Versions:    versions,
+		Manifest:    manifest,
+		Constraints: slices.Clone(constraints),
+	}, nil
+}
 
-	if len(node.Constraints) > 0 && len(pkg.Versions()) > 0 &&
-		!(src.Link != nil && src.Link.LocalSource) {
-		if _, err := pkg.SelectVersionMulti(node.Constraints); err != nil {
-			return nil, fmt.Errorf("package %s: %w", id, err)
+func (r *Resolver) resolveLinkedNativeContainer(containerID, repoName, linkPath, gitURL string, constraints []string) (*ContainerNode, error) {
+	commit, err := repo.GetCurrentCommitContext(r.ctx, linkPath)
+	if err != nil {
+		return nil, fmt.Errorf("read linked native container %s at %s: %w", containerID, linkPath, err)
+	}
+	manifest, _, err := buildscript.LoadManifest(linkPath)
+	if err != nil {
+		return nil, err
+	}
+	return &ContainerNode{
+		ID:      containerID,
+		Repo:    repoName,
+		Kind:    SourceKindNative,
+		Dir:     linkPath,
+		URL:     gitURL,
+		Version: LocalLinkVersion,
+		Commit:  commit,
+		Link: &buildscript.SourceLink{
+			Path:        linkPath,
+			Commit:      commit,
+			Native:      true,
+			LocalSource: true,
+		},
+		Manifest:    manifest,
+		Constraints: slices.Clone(constraints),
+	}, nil
+}
+
+func (r *Resolver) hasContainerOverride(containerID string) bool {
+	if _, _, explicit := r.lockQuery().Containers().PinFor(containerID); explicit {
+		return true
+	}
+	return r.rootExactOverrides[containerID] != ""
+}
+
+func isExactConstraint(c string) bool {
+	return strings.HasPrefix(c, "=") || repo.IsCommitID(c)
+}
+
+func (r *Resolver) applyContainerConstraint(c *ContainerNode, incoming, requirer string) (*constraintRestart, error) {
+	if incoming == "" {
+		return nil, nil
+	}
+	if !slices.Contains(c.Constraints, incoming) {
+		c.Constraints = append(c.Constraints, incoming)
+	}
+	if c.Kind != SourceKindNative || c.IsLinked() || r.hasContainerOverride(c.ID) {
+		return nil, nil
+	}
+	commitConstraint, semverConstraints, err := SplitConstraints(c.ID, c.Constraints)
+	if err != nil {
+		return nil, fmt.Errorf("conflicting version constraints for container %s (required by %s): %w", c.ID, requirer, err)
+	}
+	if commitConstraint != "" {
+		if c.Commit == commitConstraint {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("conflicting version constraints for container %s: already selected commit %s (constraints: [%s]), but %s requires %q",
+			c.ID, repo.ShortCommit(c.Commit), strings.Join(c.Constraints, ", "), requirer, incoming)
+	}
+	if c.Version == "" {
+		return nil, nil
+	}
+	if err := checkSingleConstraint(c.ID, c.Version, incoming); err == nil {
+		return nil, nil
+	}
+	if _, _, hasPin := r.pinnedContainerVersion(c.ID); hasPin {
+		return nil, fmt.Errorf("version %s for container %s violates constraint %q (required by %s); run 'vmake deps update' to re-resolve",
+			c.Version, c.ID, incoming, requirer)
+	}
+	if len(c.Versions) > 0 {
+		if _, _, err := repo.SelectNativeVersionMulti(c.Versions, semverConstraints); err == nil {
+			return &constraintRestart{
+				containerID: c.ID,
+				constraints: slices.Clone(c.Constraints),
+			}, nil
 		}
 	}
-
-	r.scanSubPackages(id, res.SrcDir)
-
-	return src, nil
+	return nil, fmt.Errorf("conflicting version constraints for container %s: already selected %s (constraints: [%s]), but %s requires %q",
+		c.ID, c.Version, strings.Join(c.Constraints, ", "), requirer, incoming)
 }
 
 func (r *Resolver) ensureNativeSource(key string, req repo.SourceRequest) (*repo.SourceResult, error) {
@@ -764,23 +879,16 @@ func (r *Resolver) lockQuery() LockQuery {
 	return LockQuery{Policy: r.lockPolicy, Pins: r.configPins, Lock: r.lockfile}
 }
 
-func (r *Resolver) targetOrPin(id string) (target string, fromTarget bool, ok bool) {
-	return r.lockQuery().PinFor(id)
-}
-
-func (r *Resolver) selectNativeVersion(id string, versions map[string]string, constraint string) (string, string, error) {
-	decision := r.lockQuery().Decide(id, "", "")
+func (r *Resolver) selectNativeContainerVersion(containerID string, versions map[string]string, constraints []string) (string, string, error) {
+	decision := r.lockQuery().Containers().Decide(containerID, "", "")
 	switch decision.Provenance {
 	case ProvenanceTargetCommit, ProvenanceTargetVersion, ProvenanceConfigPin:
 		ref, exists := versions[decision.Version]
 		if !exists {
 			if decision.FromTarget {
-				return "", "", fmt.Errorf("requested version %s for %s not found in upstream tags", decision.Version, id)
+				return "", "", fmt.Errorf("requested version %s for %s not found in upstream tags", decision.Version, containerID)
 			}
-			return "", "", fmt.Errorf("config-pinned version %s for %s not found in upstream tags", decision.Version, id)
-		}
-		if err := r.checkConstraint(id, decision.Version, constraint); err != nil {
-			return "", "", err
+			return "", "", fmt.Errorf("config-pinned version %s for %s not found in upstream tags", decision.Version, containerID)
 		}
 		return decision.Version, ref, nil
 	case ProvenanceLock:
@@ -789,18 +897,22 @@ func (r *Resolver) selectNativeVersion(id string, versions map[string]string, co
 		}
 		ref, exists := versions[decision.Version]
 		if !exists {
-			return "", "", fmt.Errorf("locked version %s for %s not found in upstream tags; run 'vmake deps update %s' to re-resolve", decision.Version, id, id)
+			return "", "", fmt.Errorf("locked version %s for %s not found in upstream tags; run 'vmake deps update %s' to re-resolve", decision.Version, containerID, containerID)
 		}
-		if err := r.checkConstraint(id, decision.Version, constraint); err != nil {
+		if err := r.checkConstraints(containerID, decision.Version, constraints); err != nil {
 			return "", "", err
 		}
 		return decision.Version, ref, nil
 	}
-	return repo.SelectNativeVersion(versions, constraint)
+	selected, ref, err := repo.SelectNativeVersionMulti(versions, constraints)
+	if err != nil {
+		return "", "", fmt.Errorf("conflicting version constraints for container %s: %w", containerID, err)
+	}
+	return selected, ref, nil
 }
 
-func (r *Resolver) pinnedVersion(id string) (version, commit string, ok bool) {
-	decision := r.lockQuery().Decide(id, "", "")
+func (r *Resolver) pinnedContainerVersion(id string) (version, commit string, ok bool) {
+	decision := r.lockQuery().Containers().Decide(id, "", "")
 	switch decision.Provenance {
 	case ProvenanceTargetCommit:
 		return "", decision.Commit, true
@@ -812,11 +924,159 @@ func (r *Resolver) pinnedVersion(id string) (version, commit string, ok bool) {
 	return "", "", false
 }
 
-func (r *Resolver) lockfileEntry(id string) (*lockfile.LockedPkg, bool) {
-	return r.lockQuery().LockEntry(id)
+func (r *Resolver) checkLockedContainer(id string) error {
+	if !r.lockPolicy.Locked {
+		return nil
+	}
+	if r.lockfile == nil || r.lockfile.IsEmpty() {
+		return fmt.Errorf("--locked: vmake.lock is out of date or missing; run 'vmake deps sync' or 'vmake deps update'")
+	}
+	query := r.lockQuery().Containers()
+	if problem, bad := query.LockEntryProblem(id, true); bad {
+		return problem.Error(id)
+	}
+	if problem, mismatch := query.PinLockMismatch(id); mismatch {
+		return problem.Error(id)
+	}
+	return nil
 }
 
-func (r *Resolver) checkConstraint(id, version, constraint string) error {
+func (r *Resolver) checkRegistryLock(repoName, head string) error {
+	if r.lockPolicy.Locked {
+		if r.lockfile == nil || r.lockfile.IsEmpty() {
+			return fmt.Errorf("--locked: vmake.lock is out of date or missing; run 'vmake deps sync' or 'vmake deps update'")
+		}
+		query := r.lockQuery().Containers()
+		if problem, bad := query.LockEntryProblem(repoName, true); bad {
+			return problem.Error(repoName)
+		}
+		locked, _ := query.rawLockEntry(repoName)
+		if head != "" && locked != nil && locked.Commit != head {
+			return fmt.Errorf("--locked: registry '%s' content changed since lock (commit %s expected, now %s); run 'vmake deps update' to re-resolve",
+				repoName, repo.ShortCommit(locked.Commit), repo.ShortCommit(head))
+		}
+		return nil
+	}
+	if !r.lockPolicy.StrictWrapper || head == "" {
+		return nil
+	}
+	locked, ok := r.lockQuery().Containers().LockEntry(repoName)
+	if !ok || locked.Commit == "" {
+		return nil
+	}
+	if head != locked.Commit {
+		return fmt.Errorf("registry '%s' content changed since lock (commit %s expected, now %s); run 'vmake deps update' to re-resolve",
+			repoName, repo.ShortCommit(locked.Commit), repo.ShortCommit(head))
+	}
+	return nil
+}
+
+func (r *Resolver) mergeSourceConstraints(c *ContainerNode) {
+	if c == nil || c.Manifest == nil || len(c.Manifest.Sources) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(c.Manifest.Sources))
+	for k := range c.Manifest.Sources {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, rawKey := range keys {
+		pkgID := api.CanonicalizePackageRef(c.ID, rawKey)
+		norm := normalizeConstraint(c.Manifest.Sources[rawKey])
+		if norm == "" {
+			continue
+		}
+		r.graph.SourceConstraints[pkgID] = appendUnique(r.graph.SourceConstraints[pkgID], norm)
+	}
+}
+
+func (r *Resolver) validateAllSourceNodes() error {
+	ids := make([]string, 0, len(r.graph.Packages))
+	for id := range r.graph.Packages {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		node := r.graph.Packages[id]
+		if node == nil {
+			continue
+		}
+		if cs := r.graph.SourceConstraints[id]; len(cs) > 0 {
+			node.Constraints = slices.Clone(cs)
+		}
+		if err := r.validateSourceNodeConstraints(node); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Resolver) validateSourceNodeConstraints(node *PackageNode) error {
+	if node == nil || node.Pkg == nil || !node.HasOwnGit() {
+		return nil
+	}
+	if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {
+		return nil
+	}
+
+	commitConstraint, semverConstraints, err := SplitConstraints(node.ID, node.Constraints)
+	if err != nil {
+		return fmt.Errorf("conflicting version constraints for source %s: %w", node.ID, err)
+	}
+
+	query := r.lockQuery().Sources()
+	if target, fromTarget, hasTarget := query.PinFor(node.ID); hasTarget {
+		if repo.IsCommitID(target) {
+			return nil
+		}
+		if len(node.Pkg.Versions()) > 0 {
+			if _, exists := node.Pkg.Versions()[target]; !exists {
+				if fromTarget {
+					return fmt.Errorf("requested version %s for %s not found in declared versions", target, node.ID)
+				}
+				return fmt.Errorf("config-pinned version %s for %s not found in declared versions", target, node.ID)
+			}
+		} else {
+			return fmt.Errorf("package %s declares no versions; specify a 40-character commit SHA instead of %q", node.ID, target)
+		}
+		return r.checkConstraints(node.ID, target, semverConstraints)
+	}
+
+	if locked, lok := query.LockEntry(node.ID); lok {
+		if locked.Version != "" {
+			if len(node.Pkg.Versions()) > 0 {
+				if _, exists := node.Pkg.Versions()[locked.Version]; !exists {
+					return fmt.Errorf("locked version %s for %s not found in declared versions; run 'vmake deps update %s' to re-resolve", locked.Version, node.ID, node.ID)
+				}
+			}
+			if err := r.checkConstraints(node.ID, locked.Version, semverConstraints); err != nil {
+				return err
+			}
+		}
+		if commitConstraint != "" && locked.Commit != "" && locked.Commit != commitConstraint {
+			return fmt.Errorf("locked commit %s for %s violates commit constraint %s; run 'vmake deps update' to re-resolve", repo.ShortCommit(locked.Commit), node.ID, repo.ShortCommit(commitConstraint))
+		}
+	}
+
+	if len(semverConstraints) > 0 && len(node.Pkg.Versions()) > 0 {
+		if _, err := node.Pkg.SelectVersionMulti(semverConstraints); err != nil {
+			return fmt.Errorf("conflicting version constraints for %s (constraints: [%s]): %w", node.ID, strings.Join(semverConstraints, ", "), err)
+		}
+	}
+	return nil
+}
+
+func (r *Resolver) checkConstraints(id, version string, constraints []string) error {
+	for _, c := range constraints {
+		if err := checkSingleConstraint(id, version, c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkSingleConstraint(id, version, constraint string) error {
+	constraint = normalizeConstraint(constraint)
 	if constraint == "" {
 		return nil
 	}
@@ -831,179 +1091,40 @@ func (r *Resolver) checkConstraint(id, version, constraint string) error {
 	return nil
 }
 
-func (r *Resolver) scanSubPackages(parentID, checkoutDir string) {
-	if resolved, err := filepath.EvalSymlinks(checkoutDir); err != nil {
-		vlog.Error("scan sub-packages for %s: resolve %s: %v", parentID, checkoutDir, err)
-	} else {
-		checkoutDir = resolved
-	}
-	subs, err := buildscript.ScanSubPackages(checkoutDir, parentID)
-	if err != nil {
-		vlog.Error("scan sub-packages for %s: %v", parentID, err)
-		return
-	}
-	if len(subs) == 0 {
-		return
-	}
-	repoName, _, _ := api.SplitPackageRef(parentID)
-	var parentCommit, parentURL string
-	var parentLink *buildscript.SourceLink
-	if node := r.graph.Packages[parentID]; node != nil {
-		if node.Native != nil {
-			parentCommit = node.Native.Commit
-			parentURL = node.Native.GitURL
+func SplitConstraints(id string, constraints []string) (commit string, semver []string, err error) {
+	for _, raw := range constraints {
+		c := normalizeConstraint(raw)
+		if c == "" {
+			continue
 		}
-		if node.Source != nil && node.Source.Link != nil && node.Source.Link.Native {
-			parentLink = node.Source.Link
-		}
-	}
-	for i := range subs {
-		ss := &subs[i]
-		ss.Repo = repoName
-		ss.Commit = parentCommit
-		ss.URL = parentURL
-		if parentLink != nil {
-			rel, relErr := filepath.Rel(checkoutDir, ss.Dir)
-			if relErr == nil {
-				linkDir := filepath.Join(parentLink.Path, rel)
-				ss.Dir = linkDir
-				ss.Path = filepath.Join(linkDir, "build.go")
-				ss.Link = &buildscript.SourceLink{
-					Path:        linkDir,
-					Commit:      parentLink.Commit,
-					Native:      true,
-					LocalSource: true,
-				}
-				ss.Commit = parentLink.Commit
+		if repo.IsCommitID(c) {
+			if commit != "" && commit != c {
+				return "", nil, fmt.Errorf("conflicting commit constraints %s and %s for %s", repo.ShortCommit(commit), repo.ShortCommit(c), id)
 			}
+			commit = c
+			continue
 		}
-		r.sources[ss.Name] = ss
-		r.subParents[ss.Name] = parentID
+		semver = appendUnique(semver, c)
 	}
-	vlog.Verbose("  %s: found %d sub-package(s)", parentID, len(subs))
+	if commit != "" && len(semver) > 0 {
+		return "", nil, fmt.Errorf("conflicting commit constraint %s and version constraint [%s] for %s", repo.ShortCommit(commit), strings.Join(semver, ", "), id)
+	}
+	return commit, semver, nil
 }
 
-func (r *Resolver) checkLockedEntry(id string) error {
-	if !r.lockPolicy.Locked {
-		return nil
+func normalizeConstraint(raw string) string {
+	c := strings.TrimSpace(raw)
+	if c == "*" {
+		return ""
 	}
-	if r.lockfile == nil || len(r.lockfile.Packages) == 0 {
-		return fmt.Errorf("--locked: vmake.lock is out of date or missing; run 'vmake deps sync' or 'vmake deps update'")
-	}
-	query := r.lockQuery()
-	if problem, bad := query.LockEntryProblem(id, true); bad {
-		return problem.Error(id)
-	}
-	if problem, mismatch := query.PinLockMismatch(id); mismatch {
-		return problem.Error(id)
-	}
-	return nil
+	return c
 }
 
-func (r *Resolver) checkWrapperCommit(id, repoName string) error {
-	if !r.lockPolicy.StrictWrapper {
-		return nil
+func appendUnique(list []string, item string) []string {
+	if item == "" || slices.Contains(list, item) {
+		return list
 	}
-	locked, ok := r.lockfileEntry(id)
-	if !ok || locked.WrapperCommit == "" {
-		return nil
-	}
-	head, err := repo.GetCurrentCommitContext(r.ctx, r.repoMgr.Path(repoName))
-	if err != nil {
-		return fmt.Errorf("read HEAD of registry '%s': %w", repoName, err)
-	}
-	if head != locked.WrapperCommit {
-		return fmt.Errorf("registry '%s' content changed since lock (wrapper commit %s expected, now %s); run 'vmake deps update' to re-resolve",
-			repoName, repo.ShortCommit(locked.WrapperCommit), repo.ShortCommit(head))
-	}
-	return nil
-}
-
-func (r *Resolver) validatePinnedNodeConstraints(node *PackageNode) error {
-	if node == nil || node.Native != nil || node.Pkg == nil {
-		return nil
-	}
-	if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {
-		return nil
-	}
-	if target, fromTarget, hasTarget := r.targetOrPin(node.ID); hasTarget {
-		if repo.IsCommitID(target) {
-			return nil
-		}
-		if len(node.Pkg.Versions()) > 0 {
-			if _, exists := node.Pkg.Versions()[target]; !exists {
-				if fromTarget {
-					return fmt.Errorf("requested version %s for %s not found in declared versions", target, node.ID)
-				}
-				return fmt.Errorf("config-pinned version %s for %s not found in declared versions", target, node.ID)
-			}
-		} else if len(node.Pkg.GitURLs()) > 0 {
-			return fmt.Errorf("package %s declares no versions; specify a 40-character commit SHA instead of %q", node.ID, target)
-		}
-		for _, c := range node.Constraints {
-			if err := r.checkConstraint(node.ID, target, c); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if locked, lok := r.lockfileEntry(node.ID); lok && locked.Version != "" {
-		if len(node.Pkg.Versions()) > 0 {
-			if _, exists := node.Pkg.Versions()[locked.Version]; !exists {
-				return fmt.Errorf("locked version %s for %s not found in declared versions; run 'vmake deps update %s' to re-resolve", locked.Version, node.ID, node.ID)
-			}
-		}
-		for _, c := range node.Constraints {
-			if err := r.checkConstraint(node.ID, locked.Version, c); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func requirerName(path []string) string {
-	if len(path) == 0 {
-		return "?"
-	}
-	return path[len(path)-1]
-}
-
-func validateNodeConstraints(node *PackageNode, constraint string, path []string) error {
-	if constraint == "" {
-		return nil
-	}
-	if !slices.Contains(node.Constraints, constraint) {
-		node.Constraints = append(node.Constraints, constraint)
-	}
-	if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {
-		return nil
-	}
-	requirer := requirerName(path)
-
-	if node.Native != nil && node.Native.Selected != "" {
-		v, ok := api.ParseVersion(node.Native.Selected)
-		if !ok {
-			return nil
-		}
-		c, ok := api.ParseConstraint(constraint)
-		if !ok {
-			return fmt.Errorf("invalid constraint %q for %s (required by %s)", constraint, node.ID, requirer)
-		}
-		if !c.Match(v) {
-			return fmt.Errorf("conflicting version constraints for %s: already selected %s (constraints: [%s]), but %s requires %q",
-				node.ID, node.Native.Selected, strings.Join(node.Constraints, ", "), requirer, constraint)
-		}
-		return nil
-	}
-
-	if node.Pkg != nil && len(node.Pkg.Versions()) > 0 {
-		if _, err := node.Pkg.SelectVersionMulti(node.Constraints); err != nil {
-			return fmt.Errorf("conflicting version constraints for %s (constraints: [%s], required by %s): %w",
-				node.ID, strings.Join(node.Constraints, ", "), requirer, err)
-		}
-	}
-	return nil
+	return append(list, item)
 }
 
 func topologicalSort(packages map[string]*PackageNode) ([]string, error) {

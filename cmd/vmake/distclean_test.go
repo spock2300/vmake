@@ -11,7 +11,7 @@ func TestDistCleanKeepsSourcesUnlessPurge(t *testing.T) {
 	state, root := filepath.Join(dir, "state"), filepath.Join(dir, "project")
 	writeExtensionFile(t, filepath.Join(root, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
-func Main(p *api.Package) { p.SetRoot(true) }
+func Main(p *api.Package) {}
 `)
 	writeExtensionFile(t, filepath.Join(root, "configs", "default.json"), `{"version":"1","global":{"toolchain":"host"}}`)
 

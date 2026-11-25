@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spock2300/vmake/pkg/buildscript"
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
@@ -43,10 +42,10 @@ func TestResolveNativeLogsVersionListing(t *testing.T) {
 	defer vlog.SetLevel(vlog.Normal)
 	url := writeNativeRepoWithVersions(t)
 	r := newNativeTestResolver(t, url)
-	a := localRequiringSource(t, "a", "testnative/conflictpkg >=1.2")
+	project := writeLocalProject(t, map[string]string{"testnative/conflictpkg": ">=1.2"}, nil, "testnative/conflictpkg")
 
 	out := captureResolverStdout(t, func() {
-		if err := r.ResolveAll([]buildscript.Source{*a}); err != nil {
+		if err := r.ResolveProject(project, nil); err != nil {
 			t.Fatal(err)
 		}
 	})

@@ -18,7 +18,7 @@ func writePackagePlatformProject(t *testing.T, dir string, global, local map[str
 	data, err := json.Marshal(map[string]any{
 		"version": "1",
 		"global":  map[string]any{"toolchain": "fixture", "options": global},
-		"entries": map[string]any{"project": map[string]any{"options": local}},
+		"entries": map[string]any{"//": map[string]any{"options": local}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +35,6 @@ import (
     "github.com/spock2300/vmake/pkg/api"
 )
 func Main(p *api.Package) {
-    p.SetRoot(true)
     p.OnConfig(func(ctx *api.ConfigContext) {
         ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString)
         ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString)

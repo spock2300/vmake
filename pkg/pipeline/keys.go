@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -56,22 +57,22 @@ func patchHashForNode(name string, node *resolver.PackageNode) (string, error) {
 	return h, nil
 }
 
-func remoteVersionKey(ctx *RuntimeContext, name string, node *resolver.PackageNode) (string, string, bool) {
-	if node != nil && node.Source != nil && node.Source.Link != nil {
-		return resolver.LocalLinkVersion, node.Source.Link.Commit, true
+func containerVersionKey(ctx *RuntimeContext, containerID string, c *resolver.ContainerNode) (string, string, bool) {
+	if c != nil && c.IsLinked() {
+		return resolver.LocalLinkVersion, c.Link.Commit, true
 	}
 	nativeSelected, nativeCommit := "", ""
-	if node != nil && node.Native != nil {
-		nativeSelected, nativeCommit = node.Native.Selected, node.Native.Commit
+	if c != nil {
+		nativeSelected, nativeCommit = c.Version, c.Commit
 	}
-	decision := ctx.lockQuery().Decide(name, nativeSelected, nativeCommit)
+	decision := ctx.lockQuery().Containers().Decide(containerID, nativeSelected, nativeCommit)
 	switch decision.Provenance {
 	case resolver.ProvenanceTargetCommit:
 		return "", decision.Commit, true
 	case resolver.ProvenanceTargetVersion, resolver.ProvenanceConfigPin:
 		commit := decision.Commit
-		if commit == "" && node != nil && node.Native != nil && node.Native.Selected == decision.Version {
-			commit = node.Native.Commit
+		if commit == "" && c != nil && c.Version == decision.Version {
+			commit = c.Commit
 		}
 		return decision.Version, commit, true
 	case resolver.ProvenanceLock, resolver.ProvenanceNative:
@@ -80,61 +81,78 @@ func remoteVersionKey(ctx *RuntimeContext, name string, node *resolver.PackageNo
 	return "", "", false
 }
 
-func configRootOverride(ctx *RuntimeContext) string {
-	if ctx == nil || ctx.Config == nil {
-		return ""
+func sourceVersionKey(ctx *RuntimeContext, name string, node *resolver.PackageNode) (string, string, bool) {
+	if node != nil && node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {
+		return resolver.LocalLinkVersion, node.Source.Link.Commit, true
 	}
-	return strings.TrimSpace(ctx.Config.Root)
+	decision := ctx.lockQuery().Sources().Decide(name, "", "")
+	switch decision.Provenance {
+	case resolver.ProvenanceTargetCommit:
+		return "", decision.Commit, true
+	case resolver.ProvenanceTargetVersion, resolver.ProvenanceConfigPin, resolver.ProvenanceLock:
+		return decision.Version, decision.Commit, true
+	}
+	return "", "", false
+}
+
+func configRootOverrides(ctx *RuntimeContext) []string {
+	if ctx == nil || ctx.Config == nil {
+		return nil
+	}
+	var out []string
+	if r := strings.TrimSpace(ctx.Config.Root); r != "" {
+		out = append(out, r)
+	}
+	for _, raw := range ctx.Config.Roots {
+		if r := strings.TrimSpace(raw); r != "" && !slices.Contains(out, r) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func computeReachable(graph *resolver.Graph, rootOverrides ...string) (map[string]bool, error) {
-	needed, err := computeNeededGraph(graph, firstNonEmpty(rootOverrides...))
+	var clean []string
+	for _, r := range rootOverrides {
+		if t := strings.TrimSpace(r); t != "" {
+			clean = append(clean, t)
+		}
+	}
+	needed, err := computeNeededGraph(graph, clean)
 	if err != nil {
 		return nil, err
 	}
 	return needed.Set, nil
 }
 
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if t := strings.TrimSpace(v); t != "" {
-			return t
+func computeRootSeeds(graph *resolver.Graph, rootOverrides []string) ([]string, error) {
+	if len(rootOverrides) > 0 {
+		roots := make([]string, 0, len(rootOverrides))
+		for _, rootOverride := range rootOverrides {
+			node, ok := graph.Packages[rootOverride]
+			if !ok || node == nil {
+				return nil, fmt.Errorf("config root %q not found in workspace", rootOverride)
+			}
+			if !node.IsLocal() {
+				return nil, fmt.Errorf("config root %q must be a local workspace package", rootOverride)
+			}
+			roots = append(roots, rootOverride)
 		}
-	}
-	return ""
-}
-
-func computeRootSeeds(graph *resolver.Graph, rootOverride string) ([]string, error) {
-	if rootOverride != "" {
-		node, ok := graph.Packages[rootOverride]
-		if !ok || node == nil {
-			return nil, fmt.Errorf("config root %q not found in workspace", rootOverride)
-		}
-		if !node.IsLocal() {
-			return nil, fmt.Errorf("config root %q must be a local workspace package", rootOverride)
-		}
-		return []string{rootOverride}, nil
+		return roots, nil
 	}
 
-	var rootID string
-	rootCount := 0
-	for id, node := range graph.Packages {
-		if node.IsLocal() && node.Pkg != nil && node.Pkg.IsRoot() {
-			rootCount++
-			rootID = id
+	if len(graph.Roots) > 0 {
+		roots := make([]string, 0, len(graph.Roots))
+		for _, root := range graph.Roots {
+			if node := graph.Packages[root]; node != nil && node.IsLocal() {
+				roots = append(roots, root)
+			}
+		}
+		if len(roots) > 0 {
+			return roots, nil
 		}
 	}
-	if rootCount > 1 {
-		return nil, fmt.Errorf("SetRoot(true): multiple root packages found; only one is allowed")
-	}
 
-	if rootCount == 1 {
-		return []string{rootID}, nil
-	}
-
-	if hint := rootsHint(graph); hint != "" {
-		vlog.Info("%s", hint)
-	}
 	dependedOn := make(map[string]bool)
 	for _, node := range graph.Packages {
 		if !node.IsLocal() {
@@ -147,40 +165,22 @@ func computeRootSeeds(graph *resolver.Graph, rootOverride string) ([]string, err
 		}
 	}
 
-	hasLocalRequire := false
-	for _, node := range graph.Packages {
-		if node.IsLocal() && node.Pkg != nil && len(api.BindPackageGetRequireFuncs(node.Pkg)) > 0 {
-			hasLocalRequire = true
-			break
-		}
-	}
-
 	var roots []string
 	for id, node := range graph.Packages {
-		if !node.IsLocal() {
-			continue
-		}
-		if hasLocalRequire && node.Pkg != nil && len(api.BindPackageGetRequireFuncs(node.Pkg)) == 0 && dependedOn[id] {
+		if !node.IsLocal() || dependedOn[id] {
 			continue
 		}
 		roots = append(roots, id)
 	}
-	sort.Strings(roots)
-	return roots, nil
-}
-
-func rootsHint(graph *resolver.Graph) string {
-	candidates := make([]string, 0, len(graph.Packages))
-	for id, node := range graph.Packages {
-		if node.IsLocal() && node.Pkg != nil {
-			candidates = append(candidates, id)
+	if len(roots) == 0 {
+		for id, node := range graph.Packages {
+			if node.IsLocal() {
+				roots = append(roots, id)
+			}
 		}
 	}
-	if len(candidates) == 0 {
-		return ""
-	}
-	sort.Strings(candidates)
-	return fmt.Sprintf("[hint] no package declares SetRoot(true); consider adding 'p.SetRoot(true)' to one of: %s", strings.Join(candidates, ", "))
+	sort.Strings(roots)
+	return roots, nil
 }
 
 func collectAllPkgOptions(ctx *RuntimeContext, needed NeededSet) map[string]map[string]any {
@@ -255,7 +255,11 @@ func (m LayoutFacts) localExtra() string {
 	// a comment-only build.go edit must not discard every action record. The
 	// commands, includes, defines and file lists produced by the script are
 	// captured by each action signature instead.
-	return build.JoinKeyExtra("", m.Commit, m.FlagsHash, "")
+	extra := build.JoinKeyExtra("", m.Commit, m.FlagsHash, "")
+	if m.SourceLink != "" {
+		extra += m.SourceLink + "\x00"
+	}
+	return extra
 }
 
 func (m LayoutFacts) remoteExtra() string {
@@ -298,15 +302,19 @@ func (k pkgKey) buildKeyE() (string, error) {
 }
 
 func remoteMemberPath(ctx *RuntimeContext, name string) string {
-	if parent, ok := ctx.Resolver.SubParents()[name]; ok {
-		return strings.TrimPrefix(name, parent+"/")
+	if ctx != nil && ctx.DepGraph != nil {
+		if node := ctx.DepGraph.Packages[name]; node != nil && node.IsNative() {
+			return node.RelPath
+		}
 	}
 	return ""
 }
 
 func remoteOwnerName(ctx *RuntimeContext, name string) string {
-	if parent, ok := ctx.Resolver.SubParents()[name]; ok {
-		return parent
+	if ctx != nil && ctx.DepGraph != nil {
+		if node := ctx.DepGraph.Packages[name]; node != nil && node.IsNative() && node.Container != "" {
+			return node.Container
+		}
 	}
 	return name
 }

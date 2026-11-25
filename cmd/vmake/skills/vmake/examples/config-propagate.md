@@ -69,22 +69,19 @@ import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
     p.OnRequire(func(ctx *api.RequireContext) {
-        // Remote package? It must be reachable from a local root before it
-        // can be imported; AddRequires is how it enters the dependency graph.
-        // Local packages are scanned and loaded up front.
-        ctx.AddRequires("chip")
+        ctx.AddRequires("//chip")
     })
 
     p.OnBuild(func(ctx *api.BuildContext) {
-        // Shorthand for GenerateConfigDefines() + ImportConfig("chip"):
+        // Shorthand for GenerateConfigDefines() + ImportConfig("//chip"):
         // emit -DCONFIG_* defines for THIS package's targets from local +
         // imported options. Local options win on name collision.
-        ctx.SyncConfigDefines("chip")
+        ctx.SyncConfigDefines("//chip")
 
         ctx.Target("rtos").SetKind(api.TargetStatic).
             AddFiles("src/*.c").
             AddPublicIncludes("include").
-            AddDeps("chip:*")
+            AddDeps("//chip:*")
     })
 }
 ```
@@ -98,7 +95,7 @@ func Main(p *api.Package) {
 - Name resolution: import names are resolved against the needed packages in the build graph (local `build.go` packages are loaded up front; a remote package enters the graph only when reachable via `AddRequires` from a local root; a package pruned by `FilterDeps` does not qualify). `AddDeps` on targets that link or include it supplies the build edge. Unresolvable names are silently skipped (no error).
 - Ordering is not a concern: every package's `OnConfig` option collection and resolution completes before any `OnBuild` runs, so the merge sees final definitions and values regardless of graph order. It is graph membership, not a per-package require edge, that makes a package importable.
 - **Warning:** imported and local options with the same name are NOT validated for type or default consistency. The local definition and its value/default win, so the imported value is never used directly; if the local option has no default, the imported value is still coerced by the local type — a string under a local bool silently becomes `/* #undef */`/no define, and a string under a local int renders as `%!d(...)` in the macro. Keep shared option names, types and defaults aligned.
-- Imported (non-global) options are not merged into bare-name `ctx.Bool/String/Int` reads. In `OnBuild` and `OnConfigureDeps` you can read an imported package's option explicitly as `<pkg>/<option>`; `OnConfig`, `OnRequire`, `OnInstall`, and `OnClean` reject cross-package reads. For C code, consume imported config through the generated defines or `autoconf.h`.
+- Imported (non-global) options are not merged into bare-name `ctx.Bool/String/Int` reads. In `OnBuild` and `OnConfigureDeps` you can read an imported package's option explicitly as `<pkg>:<option>` (e.g. `"//chip:mcu"`); `OnConfig`, `OnRequire`, `OnInstall`, and `OnClean` reject cross-package reads. For C code, consume imported config through the generated defines or `autoconf.h`.
 - Global options (`ctx.GlobalOption`, every option in `Group("Global")`, including `mode`/`toolchain`) are excluded from generated defines and `autoconf.h`. Read them directly with the accessors instead.
 
 ## firmware/build.go (Import + Generate autoconf.h)
@@ -110,20 +107,20 @@ import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
     p.OnRequire(func(ctx *api.RequireContext) {
-        ctx.AddRequires("chip", "rtos")
+        ctx.AddRequires("//chip", "//rtos")
     })
 
     p.OnBuild(func(ctx *api.BuildContext) {
         // Import chip's options (merged with local options when the
         // header is generated).
-        ctx.ImportConfig("chip")
+        ctx.ImportConfig("//chip")
 
         // Generate autoconf.h from local + imported options.
         ctx.GenerateConfigHeader()
 
         ctx.Target("firmware").SetKind(api.TargetBinary).
             AddFiles("src/*.c").
-            AddDeps("chip:*", "rtos:*")
+            AddDeps("//chip:*", "//rtos:*")
     })
 }
 ```
@@ -177,7 +174,7 @@ The chip-only compile of `chip/src/chip.c` shows just `-DCONFIG_CHIP_FEATURE_A=1
 - `GenerateConfigHeader` merges the same import list separately when writing `autoconf.h`; header generation works even if the package never calls `GenerateConfigDefines`
 - The imported package should be present in the needed build graph — use `AddRequires` in `OnRequire` for remote packages (local packages are scanned up front); the merge collects needed packages, and unresolvable import names are silently skipped
 - Same-name options have no cross-package type/default validation — local declaration wins, mismatches can drop or corrupt imported values
-- Imported values are NOT readable by bare name via `ctx.Bool/String/Int` — only the package's own and global options are. In `OnBuild` or `OnConfigureDeps`, read an imported package explicitly as `<pkg>/<option>`; for C code consume imported config as compiler defines or via `GenerateConfigHeader`
+- Imported values are NOT readable by bare name via `ctx.Bool/String/Int` — only the package's own and global options are. In `OnBuild` or `OnConfigureDeps`, read an imported package explicitly as `<pkg>:<option>`; for C code consume imported config as compiler defines or via `GenerateConfigHeader`
 - Global options are filtered out of both generated defines and `autoconf.h`
 - `autoconf.h` is package-local: `GenerateConfigHeader` in firmware does NOT produce an autoconf.h visible to chip
 - Public headers must NOT `#include "autoconf.h"` — it only exists in the package that generated it

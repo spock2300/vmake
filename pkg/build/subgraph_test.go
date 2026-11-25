@@ -30,43 +30,41 @@ func assertCollected(t *testing.T, got map[string]bool, want ...string) {
 	}
 }
 
-func TestCollectBuildPackagesResolvesShortTargetDependency(t *testing.T) {
-	app := makeTargetWithDeps("app", "lib:build")
+func TestCollectBuildPackagesResolvesIntraContainerTargetDependency(t *testing.T) {
+	app := makeTargetWithDeps("app", "//lib:build")
 	utils := makeTargetWithDeps("build")
 	targets := map[string]map[string]*api.Target{
-		"parent/tool": {"app": app},
-		"parent/lib":  {"build": utils},
+		"repo/parent/tool": {"app": app},
+		"repo/parent/lib":  {"build": utils},
 	}
 	pkgMeta := map[string]PkgBuildMeta{
-		"parent/tool": {},
-		"parent/lib":  {},
+		"repo/parent/tool": {Container: "repo/parent"},
+		"repo/parent/lib":  {Container: "repo/parent"},
 	}
-	needed := map[string]bool{"parent/tool": true, "parent/lib": true}
-	subParents := map[string]string{"parent/tool": "parent", "parent/lib": "parent"}
+	needed := map[string]bool{"repo/parent/tool": true, "repo/parent/lib": true}
 
 	assertCollected(t,
-		CollectSubGraphPackages("parent/tool", pkgMeta, targets, needed, subParents),
-		"parent/lib", "parent/tool")
+		CollectSubGraphPackages("repo/parent/tool", pkgMeta, targets, needed),
+		"repo/parent/lib", "repo/parent/tool")
 }
 
-func TestCollectBuildPackagesResolvesShortWildcardDependency(t *testing.T) {
-	app := makeTargetWithDeps("app", "lib:*")
+func TestCollectBuildPackagesResolvesIntraContainerWildcardDependency(t *testing.T) {
+	app := makeTargetWithDeps("app", "//lib:*")
 	lib := makeTargetWithDeps("lib")
 	extra := makeTargetWithDeps("extra")
 	targets := map[string]map[string]*api.Target{
-		"parent/tool": {"app": app},
-		"parent/lib":  {"lib": lib, "extra": extra},
+		"repo/parent/tool": {"app": app},
+		"repo/parent/lib":  {"lib": lib, "extra": extra},
 	}
 	pkgMeta := map[string]PkgBuildMeta{
-		"parent/tool": {},
-		"parent/lib":  {},
+		"repo/parent/tool": {Container: "repo/parent"},
+		"repo/parent/lib":  {Container: "repo/parent"},
 	}
-	needed := map[string]bool{"parent/tool": true, "parent/lib": true}
-	subParents := map[string]string{"parent/tool": "parent", "parent/lib": "parent"}
+	needed := map[string]bool{"repo/parent/tool": true, "repo/parent/lib": true}
 
 	assertCollected(t,
-		CollectSubGraphPackages("parent/tool", pkgMeta, targets, needed, subParents),
-		"parent/lib", "parent/tool")
+		CollectSubGraphPackages("repo/parent/tool", pkgMeta, targets, needed),
+		"repo/parent/lib", "repo/parent/tool")
 }
 
 func TestCollectBuildPackagesIgnoresBareTargetDependency(t *testing.T) {
@@ -74,77 +72,52 @@ func TestCollectBuildPackagesIgnoresBareTargetDependency(t *testing.T) {
 	own := makeTargetWithDeps("utils")
 	other := makeTargetWithDeps("utils")
 	targets := map[string]map[string]*api.Target{
-		"parent/tool": {"app": app, "utils": own},
-		"utils":       {"utils": other},
+		"repo/parent/tool": {"app": app, "utils": own},
+		"//utils":          {"utils": other},
 	}
 	pkgMeta := map[string]PkgBuildMeta{
-		"parent/tool": {},
-		"utils":       {},
+		"repo/parent/tool": {Container: "repo/parent"},
+		"//utils":          {Container: "//"},
 	}
-	needed := map[string]bool{"parent/tool": true, "utils": true}
-	subParents := map[string]string{"parent/tool": "parent"}
+	needed := map[string]bool{"repo/parent/tool": true, "//utils": true}
 
 	assertCollected(t,
-		CollectSubGraphPackages("parent/tool", pkgMeta, targets, needed, subParents),
-		"parent/tool")
+		CollectSubGraphPackages("repo/parent/tool", pkgMeta, targets, needed),
+		"repo/parent/tool")
 }
 
-func TestCollectBuildPackagesExpandsAbsolutePackagePath(t *testing.T) {
-	app := makeTargetWithDeps("app", "parent/lib")
+func TestCollectBuildPackagesExpandsCanonicalPackagePath(t *testing.T) {
+	app := makeTargetWithDeps("app", "repo/parent/lib")
 	lib := makeTargetWithDeps("lib")
 	targets := map[string]map[string]*api.Target{
-		"parent/tool": {"app": app},
-		"parent/lib":  {"lib": lib},
+		"repo/parent/tool": {"app": app},
+		"repo/parent/lib":  {"lib": lib},
 	}
 	pkgMeta := map[string]PkgBuildMeta{
-		"parent/tool": {},
-		"parent/lib":  {},
+		"repo/parent/tool": {Container: "repo/parent"},
+		"repo/parent/lib":  {Container: "repo/parent"},
 	}
-	needed := map[string]bool{"parent/tool": true, "parent/lib": true}
-	subParents := map[string]string{"parent/tool": "parent", "parent/lib": "parent"}
+	needed := map[string]bool{"repo/parent/tool": true, "repo/parent/lib": true}
 
 	assertCollected(t,
-		CollectSubGraphPackages("parent/tool", pkgMeta, targets, needed, subParents),
-		"parent/lib", "parent/tool")
+		CollectSubGraphPackages("repo/parent/tool", pkgMeta, targets, needed),
+		"repo/parent/lib", "repo/parent/tool")
 }
 
-func TestCollectBuildPackagesPrefersNearestShortDependency(t *testing.T) {
-	app := makeTargetWithDeps("app", "lib:build")
-	near := makeTargetWithDeps("build")
-	far := makeTargetWithDeps("build")
-	targets := map[string]map[string]*api.Target{
-		"parent/tool": {"app": app},
-		"parent/lib":  {"build": near},
-		"lib":         {"build": far},
-	}
-	pkgMeta := map[string]PkgBuildMeta{
-		"parent/tool": {},
-		"parent/lib":  {},
-		"lib":         {},
-	}
-	needed := map[string]bool{"parent/tool": true, "parent/lib": true, "lib": true}
-	subParents := map[string]string{"parent/tool": "parent", "parent/lib": "parent"}
-
-	assertCollected(t,
-		CollectSubGraphPackages("parent/tool", pkgMeta, targets, needed, subParents),
-		"parent/lib", "parent/tool")
-}
-
-func TestCollectBuildPackagesResolvesShortRequireDependency(t *testing.T) {
+func TestCollectBuildPackagesResolvesIntraContainerRequireDependency(t *testing.T) {
 	app := makeTargetWithDeps("app")
 	lib := makeTargetWithDeps("lib")
 	targets := map[string]map[string]*api.Target{
-		"parent/tool": {"app": app},
-		"parent/lib":  {"lib": lib},
+		"repo/parent/tool": {"app": app},
+		"repo/parent/lib":  {"lib": lib},
 	}
 	pkgMeta := map[string]PkgBuildMeta{
-		"parent/tool": {Deps: []string{"lib"}},
-		"parent/lib":  {},
+		"repo/parent/tool": {Container: "repo/parent", Deps: []string{"//lib"}},
+		"repo/parent/lib":  {Container: "repo/parent"},
 	}
-	needed := map[string]bool{"parent/tool": true, "parent/lib": true}
-	subParents := map[string]string{"parent/tool": "parent", "parent/lib": "parent"}
+	needed := map[string]bool{"repo/parent/tool": true, "repo/parent/lib": true}
 
 	assertCollected(t,
-		CollectSubGraphPackages("parent/tool", pkgMeta, targets, needed, subParents),
-		"parent/lib", "parent/tool")
+		CollectSubGraphPackages("repo/parent/tool", pkgMeta, targets, needed),
+		"repo/parent/lib", "repo/parent/tool")
 }

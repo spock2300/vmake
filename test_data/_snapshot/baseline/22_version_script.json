@@ -9,7 +9,7 @@
     "mode": "debug",
     "packages": [
       {
-        "name": "22_version_script",
+        "name": "//",
         "source": "local",
         "path": "."
       }
@@ -31,7 +31,7 @@
     {
       "path": "compile_commands.json",
       "size": 4063,
-      "hash": "81d8d2ee911e0be424c63639333ace2ff7e6cc285355b1ba5f7ec6c4f5f0f189"
+      "hash": "975ccbe1bf8f85e35cd10681e3fec597937dfad3b64ea0a7172604f02852e764"
     }
   ],
   "install_tree_hash": "6aff1548216af4822140b2854c390bbaaa76bb87dcc79b47f2229f61472d5168"

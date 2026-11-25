@@ -21,7 +21,6 @@ type BuildEnv struct {
 	RootDir       string
 	Jobs          int
 	KeepGoing     bool
-	SubParents    map[string]string
 }
 
 type BuildJob struct {

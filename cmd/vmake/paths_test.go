@@ -240,6 +240,7 @@ func TestLoadResolveParamsUsesProjectRootFromPackageSubdir(t *testing.T) {
 func TestInspectFromPackageSubdirUsesProjectRoot(t *testing.T) {
 	project := filepath.Join(canonicalTempDir(t), "project")
 	makePathsTestDir(t, filepath.Join(project, ".vmake"))
+	writePathsTestFile(t, filepath.Join(project, "vmake.json"), `{"roots":["//firmware"]}`)
 	writePathsTestFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
@@ -253,12 +254,11 @@ func Main(p *api.Package) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("system")
+		ctx.AddRequires("//system")
 	})
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetBinary).AddDeps("system:system").AddFiles("src/*.c")
+		ctx.Target("app").SetKind(api.TargetBinary).AddDeps("//system:system").AddFiles("src/*.c")
 	})
 }
 `)
@@ -284,14 +284,14 @@ func Main(p *api.Package) {
 	if envelope.Data.Root != project {
 		t.Fatalf("inspect root = %q, want %q", envelope.Data.Root, project)
 	}
-	if !slices.Contains(envelope.Data.Roots, "firmware") {
-		t.Errorf("roots = %v, want the firmware package", envelope.Data.Roots)
+	if !slices.Contains(envelope.Data.Roots, "//firmware") {
+		t.Errorf("roots = %v, want //firmware", envelope.Data.Roots)
 	}
-	if !inspectPackageNamed(t, envelope.Data, "system").Needed {
-		t.Error("sibling package system was not resolved from the project root")
+	if !inspectPackageNamed(t, envelope.Data, "//system").Needed {
+		t.Error("sibling package //system was not resolved from the project root")
 	}
-	if !inspectPackageNamed(t, envelope.Data, "firmware").Needed {
-		t.Error("firmware package is not needed")
+	if !inspectPackageNamed(t, envelope.Data, "//firmware").Needed {
+		t.Error("//firmware package is not needed")
 	}
 	for _, name := range []string{".vmake", ".gitignore"} {
 		if _, err := os.Stat(filepath.Join(packageDir, name)); !os.IsNotExist(err) {
@@ -422,7 +422,6 @@ func TestInspectProjectOverrideFromOutside(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("app").SetKind(api.TargetBinary)
 	})
@@ -453,7 +452,6 @@ func TestInspectProjectOverrideRelative(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("app").SetKind(api.TargetBinary)
 	})
@@ -499,6 +497,7 @@ func TestInspectProjectOverrideInvalid(t *testing.T) {
 func TestInspectFromPackageSubdirUsesGitRoot(t *testing.T) {
 	project := filepath.Join(canonicalTempDir(t), "project")
 	makePathsTestDir(t, filepath.Join(project, ".git"))
+	writePathsTestFile(t, filepath.Join(project, "vmake.json"), `{"roots":["//firmware"]}`)
 	writePathsTestFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
@@ -512,12 +511,11 @@ func Main(p *api.Package) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("system")
+		ctx.AddRequires("//system")
 	})
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetBinary).AddDeps("system:system")
+		ctx.Target("app").SetKind(api.TargetBinary).AddDeps("//system:system")
 	})
 }
 `)
@@ -545,11 +543,11 @@ func Main(p *api.Package) {
 		if envelope.Data.Root != project {
 			t.Fatalf("inspect root = %q, want git root %q", envelope.Data.Root, project)
 		}
-		if !slices.Contains(envelope.Data.Roots, "firmware") {
-			t.Errorf("roots = %v, want the firmware package", envelope.Data.Roots)
+		if !slices.Contains(envelope.Data.Roots, "//firmware") {
+			t.Errorf("roots = %v, want //firmware", envelope.Data.Roots)
 		}
-		if !inspectPackageNamed(t, envelope.Data, "system").Needed {
-			t.Error("sibling package system was not resolved from the git root")
+		if !inspectPackageNamed(t, envelope.Data, "//system").Needed {
+			t.Error("sibling package //system was not resolved from the git root")
 		}
 		for _, name := range []string{".vmake", ".gitignore"} {
 			if _, err := os.Stat(filepath.Join(packageDir, name)); !os.IsNotExist(err) {
@@ -583,7 +581,6 @@ const shadowedPackageBuildGo = `package main
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 }
 `
 

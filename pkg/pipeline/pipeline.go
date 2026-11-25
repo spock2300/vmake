@@ -163,8 +163,17 @@ func (ctx *RuntimeContext) isLockIgnoredFor(name string) bool {
 	return ctx.lockQuery().IgnoredFor(name)
 }
 
-func (ctx *RuntimeContext) lockedEntry(name string) (*lockfile.LockedPkg, bool) {
-	return ctx.lockQuery().LockEntry(name)
+func canonicalPkgRef(ctx *RuntimeContext, fromPkg, rawRef string) string {
+	if rawRef == "" {
+		return ""
+	}
+	container := api.LocalContainerID
+	if ctx != nil && ctx.DepGraph != nil {
+		if node := ctx.DepGraph.Packages[fromPkg]; node != nil && node.Container != "" {
+			container = node.Container
+		}
+	}
+	return api.CanonicalizePackageRef(container, rawRef)
 }
 
 func visibleGlobalOptionsFor(node *resolver.PackageNode, pkgOpts, globalOptions map[string]*api.Option) map[string]*api.Option {
@@ -229,10 +238,8 @@ func newConfigLookup(ctx *RuntimeContext, currentPkg string, base map[string]any
 		if ctx.DepGraph == nil {
 			return nil, nil, fmt.Errorf("package %q is not in the resolved dependency graph", pkg)
 		}
-		if currentPkg != "" && ctx.Resolver != nil {
-			pkg = api.ResolveSubPackageName(currentPkg, pkg, ctx.Resolver.SubParents(), func(candidate string) bool {
-				return ctx.DepGraph.Packages[candidate] != nil
-			})
+		if currentPkg != "" {
+			pkg = canonicalPkgRef(ctx, currentPkg, pkg)
 		}
 		if ctx.DepGraph.Packages[pkg] == nil {
 			return nil, nil, fmt.Errorf("package %q is not in the resolved dependency graph", pkg)
@@ -364,16 +371,9 @@ func mergePkgOptions(dst, pkgOpts map[string]any, allOpts map[string]*api.Option
 }
 
 func applyBuildContextConfig(buildCtx *api.BuildContext, node *resolver.PackageNode, ctx *RuntimeContext, currentPkg string, needed NeededSet) {
-	var subParents map[string]string
-	if ctx.Resolver != nil {
-		subParents = ctx.Resolver.SubParents()
-	}
 	var resolvedImports []string
 	for _, depName := range buildCtx.ImportConfigs() {
-		resolved := api.ResolveSubPackageName(currentPkg, depName, subParents, func(candidate string) bool {
-			depNode := ctx.DepGraph.Packages[candidate]
-			return needed[candidate] && depNode != nil && depNode.Pkg != nil
-		})
+		resolved := canonicalPkgRef(ctx, currentPkg, depName)
 		if currentPkg != "" && ctx.Resolver != nil {
 			if err := pkgvis.CheckInternal(currentPkg, ctx.Resolver.VisibilityPath(currentPkg), resolved, ctx.Resolver.VisibilityPath(resolved)); err != nil {
 				panic(&api.BuildScriptError{Package: currentPkg, Op: "ImportConfig", Err: err})

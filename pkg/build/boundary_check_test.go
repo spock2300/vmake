@@ -64,7 +64,7 @@ func makeTestSchedulerForRoot(
 ) *Scheduler {
 	t.Helper()
 	tc, tools := hostTestTools(t)
-	graph, err := NewBuildGraph(targets, pkgMeta, nil)
+	graph, err := NewBuildGraph(targets, pkgMeta)
 	if err != nil {
 		t.Fatalf("NewBuildGraph: %v", err)
 	}
@@ -104,14 +104,14 @@ func TestHeaderBoundaryUndeclaredAndPrivateHeaders(t *testing.T) {
 	})
 
 	pkgDirs := map[string]string{
-		"root": root,
-		"lib":  filepath.Join(root, "lib"),
-		"app":  filepath.Join(root, "app"),
+		"//":    root,
+		"//lib": filepath.Join(root, "lib"),
+		"//app": filepath.Join(root, "app"),
 	}
 	pkgMeta := map[string]PkgBuildMeta{
-		"root": {VisPath: "@local"},
-		"lib":  {VisPath: "@local/lib"},
-		"app":  {VisPath: "@local/app"},
+		"//":    {Container: "//", VisPath: "@local"},
+		"//lib": {Container: "//", VisPath: "@local/lib"},
+		"//app": {Container: "//", VisPath: "@local/app"},
 	}
 
 	makeLibTarget := func() *api.Target {
@@ -125,8 +125,8 @@ func TestHeaderBoundaryUndeclaredAndPrivateHeaders(t *testing.T) {
 		SetKind(api.TargetBinary).
 		AddFiles("src/undecl.c")
 	s1 := makeTestSchedulerForRoot(t, root, map[string]map[string]*api.Target{
-		"lib": {"lib": makeLibTarget()},
-		"app": {"app": undeclApp},
+		"//lib": {"lib": makeLibTarget()},
+		"//app": {"app": undeclApp},
 	}, pkgMeta, pkgDirs)
 	err := s1.BuildAll()
 	if err == nil || !strings.Contains(err.Error(), "undeclared header dependency") {
@@ -139,10 +139,10 @@ func TestHeaderBoundaryUndeclaredAndPrivateHeaders(t *testing.T) {
 	privApp := api.NewTargetRegistry().Target("app").
 		SetKind(api.TargetBinary).
 		AddFiles("src/priv_inc.c").
-		AddDeps("lib:lib")
+		AddDeps("//lib:lib")
 	s2 := makeTestSchedulerForRoot(t, root, map[string]map[string]*api.Target{
-		"lib": {"lib": makeLibTarget()},
-		"app": {"app": privApp},
+		"//lib": {"lib": makeLibTarget()},
+		"//app": {"app": privApp},
 	}, pkgMeta, pkgDirs)
 	err = s2.BuildAll()
 	if err == nil || !strings.Contains(err.Error(), "private header inclusion") {
@@ -152,10 +152,10 @@ func TestHeaderBoundaryUndeclaredAndPrivateHeaders(t *testing.T) {
 	validApp := api.NewTargetRegistry().Target("app").
 		SetKind(api.TargetBinary).
 		AddFiles("src/valid.c").
-		AddDeps("lib:lib")
+		AddDeps("//lib:lib")
 	s3 := makeTestSchedulerForRoot(t, root, map[string]map[string]*api.Target{
-		"lib": {"lib": makeLibTarget()},
-		"app": {"app": validApp},
+		"//lib": {"lib": makeLibTarget()},
+		"//app": {"app": validApp},
 	}, pkgMeta, pkgDirs)
 	if err := s3.BuildAll(); err != nil {
 		t.Fatalf("expected valid public + shared header build to succeed, got %v", err)
@@ -172,12 +172,12 @@ func TestHeaderBoundaryUpToDateCacheCatchesRemovedDep(t *testing.T) {
 	})
 
 	pkgDirs := map[string]string{
-		"lib": filepath.Join(root, "lib"),
-		"app": filepath.Join(root, "app"),
+		"//lib": filepath.Join(root, "lib"),
+		"//app": filepath.Join(root, "app"),
 	}
 	pkgMeta := map[string]PkgBuildMeta{
-		"lib": {VisPath: "@local/lib"},
-		"app": {VisPath: "@local/app"},
+		"//lib": {Container: "//", VisPath: "@local/lib"},
+		"//app": {Container: "//", VisPath: "@local/app"},
 	}
 
 	makeTargetsWithDep := func(withDep bool) map[string]map[string]*api.Target {
@@ -190,11 +190,11 @@ func TestHeaderBoundaryUpToDateCacheCatchesRemovedDep(t *testing.T) {
 			AddFiles("src/main.c").
 			AddIncludes(libInc)
 		if withDep {
-			appT.AddDeps("lib:lib")
+			appT.AddDeps("//lib:lib")
 		}
 		return map[string]map[string]*api.Target{
-			"lib": {"lib": libT},
-			"app": {"app": appT},
+			"//lib": {"lib": libT},
+			"//app": {"app": appT},
 		}
 	}
 
@@ -221,16 +221,16 @@ func TestHeaderBoundaryTargetlessUmbrellaAncestorVsTargetAncestor(t *testing.T) 
 	})
 
 	pkgDirs := map[string]string{
-		"ws":  root,
-		"lib": filepath.Join(root, "lib"),
+		"//":    root,
+		"//lib": filepath.Join(root, "lib"),
 	}
 	pkgMeta := map[string]PkgBuildMeta{
-		"ws":  {VisPath: "@local"},
-		"lib": {VisPath: "@local/lib"},
+		"//":    {Container: "//", VisPath: "@local"},
+		"//lib": {Container: "//", VisPath: "@local/lib"},
 	}
 
 	sTargetless := makeTestSchedulerForRoot(t, root, map[string]map[string]*api.Target{
-		"lib": {
+		"//lib": {
 			"utils": api.NewTargetRegistry().Target("utils").
 				SetKind(api.TargetStatic).
 				AddFiles("ok.c").
@@ -242,13 +242,13 @@ func TestHeaderBoundaryTargetlessUmbrellaAncestorVsTargetAncestor(t *testing.T) 
 	}
 
 	sWithRootTarget := makeTestSchedulerForRoot(t, root, map[string]map[string]*api.Target{
-		"ws": {
+		"//": {
 			"app": api.NewTargetRegistry().Target("app").
 				SetKind(api.TargetBinary).
 				AddFiles("main.c").
-				AddDeps("lib:utils"),
+				AddDeps("//lib:utils"),
 		},
-		"lib": {
+		"//lib": {
 			"utils": api.NewTargetRegistry().Target("utils").
 				SetKind(api.TargetStatic).
 				AddFiles("bad.c"),
@@ -273,14 +273,14 @@ func TestHeaderBoundaryEmptyPublicIncludeAndUnneededWorkspacePkg(t *testing.T) {
 
 	depT := api.NewTargetRegistry().Target("dep").SetKind(api.TargetStatic).AddFiles("dep.c")
 	depT.AddPublicIncludes("")
-	appEmptyT := api.NewTargetRegistry().Target("app").SetKind(api.TargetBinary).AddFiles("main.c").AddDeps("dep:dep")
+	appEmptyT := api.NewTargetRegistry().Target("app").SetKind(api.TargetBinary).AddFiles("main.c").AddDeps("//dep:dep")
 	g1, err := NewBuildGraph(map[string]map[string]*api.Target{
-		"dep":       {"dep": depT},
-		"app_empty": {"app": appEmptyT},
+		"//dep":       {"dep": depT},
+		"//app_empty": {"app": appEmptyT},
 	}, map[string]PkgBuildMeta{
-		"dep":       {VisPath: "@local/dep"},
-		"app_empty": {VisPath: "@local/app_empty"},
-	}, nil)
+		"//dep":       {Container: "//", VisPath: "@local/dep"},
+		"//app_empty": {Container: "//", VisPath: "@local/app_empty"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,8 +289,8 @@ func TestHeaderBoundaryEmptyPublicIncludeAndUnneededWorkspacePkg(t *testing.T) {
 		Toolchain: tc,
 		Platform:  api.Platform{OS: runtime.GOOS},
 		Layouts: map[string]*PackageLayout{
-			"dep":       {BuildKey: "k1", Ready: true, Dirs: api.PkgDirs{SourceDir: filepath.Join(root, "dep"), BuildDir: filepath.Join(root, "dep", "build")}},
-			"app_empty": {BuildKey: "k1", Ready: true, Dirs: api.PkgDirs{SourceDir: filepath.Join(root, "app_empty"), BuildDir: filepath.Join(root, "app_empty", "build")}},
+			"//dep":       {BuildKey: "k1", Ready: true, Dirs: api.PkgDirs{SourceDir: filepath.Join(root, "dep"), BuildDir: filepath.Join(root, "dep", "build")}},
+			"//app_empty": {BuildKey: "k1", Ready: true, Dirs: api.PkgDirs{SourceDir: filepath.Join(root, "app_empty"), BuildDir: filepath.Join(root, "app_empty", "build")}},
 		},
 		Tools:      tools,
 		RootDir:    root,
@@ -305,7 +305,7 @@ func TestHeaderBoundaryEmptyPublicIncludeAndUnneededWorkspacePkg(t *testing.T) {
 		"app_ws": {"app": appWsT},
 	}, map[string]PkgBuildMeta{
 		"app_ws": {VisPath: "@local/app_ws"},
-	}, nil)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,16 +342,16 @@ func TestTargetDeclaredPathsAndColdBoundaryCheck(t *testing.T) {
 	})
 
 	pkgDirs := map[string]string{
-		"parent":       filepath.Join(root, "parent"),
-		"parent/child": filepath.Join(root, "parent", "child"),
-		"sibling":      filepath.Join(root, "sibling"),
-		"consumer":     filepath.Join(root, "consumer"),
+		"//parent":       filepath.Join(root, "parent"),
+		"//parent/child": filepath.Join(root, "parent", "child"),
+		"//sibling":      filepath.Join(root, "sibling"),
+		"//consumer":     filepath.Join(root, "consumer"),
 	}
 	pkgMeta := map[string]PkgBuildMeta{
-		"parent":       {VisPath: "@local/parent"},
-		"parent/child": {VisPath: "@local/parent/child"},
-		"sibling":      {VisPath: "@local/sibling"},
-		"consumer":     {VisPath: "@local/consumer"},
+		"//parent":       {Container: "//", VisPath: "@local/parent"},
+		"//parent/child": {Container: "//", VisPath: "@local/parent/child"},
+		"//sibling":      {Container: "//", VisPath: "@local/sibling"},
+		"//consumer":     {Container: "//", VisPath: "@local/consumer"},
 	}
 
 	parentT := func() *api.Target {
@@ -369,36 +369,36 @@ func TestTargetDeclaredPathsAndColdBoundaryCheck(t *testing.T) {
 	}{
 		{
 			name: "cross-package-prebuilt",
-			pkg:  "parent/child",
+			pkg:  "//parent/child",
 			target: api.NewTargetRegistry().Target("child").
 				SetKind(api.TargetStatic).
 				SetPrebuilt("../lib/libblob.a").
-				AddDeps("parent:parent"),
+				AddDeps("//parent:parent"),
 			wantSub: "cross-package prebuilt path",
 		},
 		{
 			name: "private-dir-include",
-			pkg:  "parent/child",
+			pkg:  "//parent/child",
 			target: api.NewTargetRegistry().Target("child").
 				SetKind(api.TargetStatic).
 				AddFiles("child.c").
 				AddIncludes("../vendor").
-				AddDeps("parent:parent"),
+				AddDeps("//parent:parent"),
 			wantSub: "private header inclusion",
 		},
 		{
 			name: "relative-parent-public-include",
-			pkg:  "parent/child",
+			pkg:  "//parent/child",
 			target: api.NewTargetRegistry().Target("child").
 				SetKind(api.TargetStatic).
 				AddFiles("child.c").
 				AddIncludes("../include").
-				AddDeps("parent:parent"),
+				AddDeps("//parent:parent"),
 			wantSub: "cross-package relative include",
 		},
 		{
 			name: "cross-package-relative-input",
-			pkg:  "consumer",
+			pkg:  "//consumer",
 			target: api.NewTargetRegistry().Target("gen").
 				SetKind(api.TargetVoid).
 				AddInputs("../sibling/conf.h").
@@ -410,11 +410,11 @@ func TestTargetDeclaredPathsAndColdBoundaryCheck(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			tMap := map[string]map[string]*api.Target{
-				"parent":  {"parent": parentT()},
-				"sibling": {"sibling": api.NewTargetRegistry().Target("sibling").SetKind(api.TargetVoid)},
-				tc.pkg:    {tc.target.Name(): tc.target},
+				"//parent":  {"parent": parentT()},
+				"//sibling": {"sibling": api.NewTargetRegistry().Target("sibling").SetKind(api.TargetVoid)},
+				tc.pkg:      {tc.target.Name(): tc.target},
 			}
-			graph, err := NewBuildGraph(tMap, pkgMeta, nil)
+			graph, err := NewBuildGraph(tMap, pkgMeta)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -484,46 +484,46 @@ func TestDirectIncludeTransitivePiggybackAndUmbrella(t *testing.T) {
 	})
 
 	pkgDirs := map[string]string{
-		"leaf":     filepath.Join(root, "leaf"),
-		"mid":      filepath.Join(root, "mid"),
-		"libc_pkg": filepath.Join(root, "libc_pkg"),
-		"umbrella": filepath.Join(root, "umbrella"),
-		"app_ok":   filepath.Join(root, "app_ok"),
-		"app_bad":  filepath.Join(root, "app_bad"),
-		"app_umb":  filepath.Join(root, "app_umb"),
+		"//leaf":     filepath.Join(root, "leaf"),
+		"//mid":      filepath.Join(root, "mid"),
+		"//libc_pkg": filepath.Join(root, "libc_pkg"),
+		"//umbrella": filepath.Join(root, "umbrella"),
+		"//app_ok":   filepath.Join(root, "app_ok"),
+		"//app_bad":  filepath.Join(root, "app_bad"),
+		"//app_umb":  filepath.Join(root, "app_umb"),
 	}
 	pkgMeta := map[string]PkgBuildMeta{
-		"leaf":     {VisPath: "@local/leaf"},
-		"mid":      {VisPath: "@local/mid", Deps: []string{"leaf", "libc_pkg"}},
-		"libc_pkg": {VisPath: "@local/libc_pkg"},
-		"umbrella": {VisPath: "@local/umbrella", Deps: []string{"leaf"}},
-		"app_ok":   {VisPath: "@local/app_ok", Deps: []string{"mid"}},
-		"app_bad":  {VisPath: "@local/app_bad", Deps: []string{"mid"}},
-		"app_umb":  {VisPath: "@local/app_umb", Deps: []string{"umbrella"}},
+		"//leaf":     {Container: "//", VisPath: "@local/leaf"},
+		"//mid":      {Container: "//", VisPath: "@local/mid", Deps: []string{"//leaf", "//libc_pkg"}},
+		"//libc_pkg": {Container: "//", VisPath: "@local/libc_pkg"},
+		"//umbrella": {Container: "//", VisPath: "@local/umbrella", Deps: []string{"//leaf"}},
+		"//app_ok":   {Container: "//", VisPath: "@local/app_ok", Deps: []string{"//mid"}},
+		"//app_bad":  {Container: "//", VisPath: "@local/app_bad", Deps: []string{"//mid"}},
+		"//app_umb":  {Container: "//", VisPath: "@local/app_umb", Deps: []string{"//umbrella"}},
 	}
 
 	makeBase := func() map[string]map[string]*api.Target {
 		return map[string]map[string]*api.Target{
-			"leaf": {
+			"//leaf": {
 				"leaf": api.NewTargetRegistry().Target("leaf").
 					SetKind(api.TargetStatic).
 					AddFiles("leaf.c").
 					AddPublicIncludes("include"),
 			},
-			"libc_pkg": {
+			"//libc_pkg": {
 				"c": api.NewTargetRegistry().Target("c").
 					SetKind(api.TargetStatic).
 					AddFiles("libc.c").
 					AddPublicIncludes("include"),
 			},
-			"mid": {
+			"//mid": {
 				"mid": api.NewTargetRegistry().Target("mid").
 					SetKind(api.TargetStatic).
 					AddFiles("mid.c").
 					AddPublicIncludes("include").
-					AddDeps("leaf:leaf", "libc_pkg:c"),
+					AddDeps("//leaf:leaf", "//libc_pkg:c"),
 			},
-			"umbrella": {
+			"//umbrella": {
 				"umbrella": api.NewTargetRegistry().Target("umbrella").
 					SetKind(api.TargetVoid).
 					UseRequires(),
@@ -532,31 +532,31 @@ func TestDirectIncludeTransitivePiggybackAndUmbrella(t *testing.T) {
 	}
 
 	tOk := makeBase()
-	tOk["app_ok"] = map[string]*api.Target{
+	tOk["//app_ok"] = map[string]*api.Target{
 		"app": api.NewTargetRegistry().Target("app").
 			SetKind(api.TargetBinary).
 			AddFiles("main.c").
-			AddDeps("mid:mid"),
+			AddDeps("//mid:mid"),
 	}
 	if err := makeTestSchedulerForRoot(t, root, tOk, pkgMeta, pkgDirs).BuildAll(); err != nil {
 		t.Fatalf("expected nested header via direct dep + angle-bracket std header to pass, got %v", err)
 	}
 
 	tBad := makeBase()
-	tBad["app_bad"] = map[string]*api.Target{
+	tBad["//app_bad"] = map[string]*api.Target{
 		"app": api.NewTargetRegistry().Target("app").
 			SetKind(api.TargetBinary).
 			AddFiles("main.c").
-			AddDeps("mid:mid"),
+			AddDeps("//mid:mid"),
 	}
-	coldGraph, err := NewBuildGraph(tBad, pkgMeta, nil)
+	coldGraph, err := NewBuildGraph(tBad, pkgMeta)
 	if err != nil {
 		t.Fatal(err)
 	}
 	coldViolations := CheckExistingBuildBoundaries(coldGraph, nil, nil, pkgDirs, root, api.ModeDebug)
 	foundCold := false
 	for _, v := range coldViolations {
-		if strings.Contains(v.Message, "transitive header inclusion") && strings.Contains(v.Message, `"leaf"`) {
+		if strings.Contains(v.Message, "transitive header inclusion") && strings.Contains(v.Message, `"//leaf"`) {
 			foundCold = true
 		}
 	}
@@ -569,11 +569,11 @@ func TestDirectIncludeTransitivePiggybackAndUmbrella(t *testing.T) {
 	}
 
 	tUmb := makeBase()
-	tUmb["app_umb"] = map[string]*api.Target{
+	tUmb["//app_umb"] = map[string]*api.Target{
 		"app": api.NewTargetRegistry().Target("app").
 			SetKind(api.TargetBinary).
 			AddFiles("main.c").
-			AddDeps("umbrella:*"),
+			AddDeps("//umbrella:*"),
 	}
 	if err := makeTestSchedulerForRoot(t, root, tUmb, pkgMeta, pkgDirs).BuildAll(); err != nil {
 		t.Fatalf("expected grouping TargetVoid umbrella to expose member direct includes, got %v", err)
@@ -640,19 +640,19 @@ func TestInactiveIfdefIncludeDoesNotTriggerFalseTransitiveError(t *testing.T) {
 		"app/main.c":           "#if 0\n#include \"types.h\"\n#endif\n#include \"mid.h\"\nint main(void) { return mid_v() - 7; }\n",
 	})
 	pkgDirs := map[string]string{
-		"leaf": filepath.Join(root, "leaf"),
-		"mid":  filepath.Join(root, "mid"),
-		"app":  filepath.Join(root, "app"),
+		"//leaf": filepath.Join(root, "leaf"),
+		"//mid":  filepath.Join(root, "mid"),
+		"//app":  filepath.Join(root, "app"),
 	}
 	pkgMeta := map[string]PkgBuildMeta{
-		"leaf": {VisPath: "@local/leaf"},
-		"mid":  {Deps: []string{"leaf"}, VisPath: "@local/mid"},
-		"app":  {Deps: []string{"mid"}, VisPath: "@local/app"},
+		"//leaf": {Container: "//", VisPath: "@local/leaf"},
+		"//mid":  {Container: "//", Deps: []string{"//leaf"}, VisPath: "@local/mid"},
+		"//app":  {Container: "//", Deps: []string{"//mid"}, VisPath: "@local/app"},
 	}
 	s := makeTestSchedulerForRoot(t, root, map[string]map[string]*api.Target{
-		"leaf": {"leaf": api.NewTargetRegistry().Target("leaf").SetKind(api.TargetStatic).AddFiles("leaf.c").AddPublicIncludes("include")},
-		"mid":  {"mid": api.NewTargetRegistry().Target("mid").SetKind(api.TargetStatic).AddFiles("mid.c").AddPublicIncludes("include").AddDeps("leaf:leaf")},
-		"app":  {"app": api.NewTargetRegistry().Target("app").SetKind(api.TargetBinary).AddFiles("main.c").AddDeps("mid:mid")},
+		"//leaf": {"leaf": api.NewTargetRegistry().Target("leaf").SetKind(api.TargetStatic).AddFiles("leaf.c").AddPublicIncludes("include")},
+		"//mid":  {"mid": api.NewTargetRegistry().Target("mid").SetKind(api.TargetStatic).AddFiles("mid.c").AddPublicIncludes("include").AddDeps("//leaf:leaf")},
+		"//app":  {"app": api.NewTargetRegistry().Target("app").SetKind(api.TargetBinary).AddFiles("main.c").AddDeps("//mid:mid")},
 	}, pkgMeta, pkgDirs)
 	if err := s.BuildAll(); err != nil {
 		t.Fatalf("inactive #if 0 include triggered false transitive error: %v", err)

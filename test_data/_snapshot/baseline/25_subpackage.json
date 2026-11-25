@@ -16,7 +16,7 @@
         "ref": "v1.0.0"
       },
       {
-        "name": "25_subpackage",
+        "name": "//",
         "source": "local",
         "path": "."
       }
@@ -33,7 +33,7 @@
     {
       "path": "compile_commands.json",
       "size": 6137,
-      "hash": "839cfced1f8377ce3a683d2c4b9b5806be64652e7442383597d75cfd0138042a"
+      "hash": "746529db698eedab98dcb037868f49fef7aded0979f5587e3022840568345a8f"
     }
   ],
   "install_tree_hash": "0205c65ab8e64d1b82465f11ffda9b391c7ba2c5ea5b0265623e263ddcafde16"

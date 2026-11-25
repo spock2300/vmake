@@ -10,8 +10,7 @@ import (
 type RequireFunc func(ctx *RequireContext)
 
 type RequireInfo struct {
-	Name       string
-	Constraint string
+	Name string
 }
 
 type Requires struct {
@@ -23,11 +22,19 @@ func (r *Requires) Add(deps ...any) {
 		if dep == "" {
 			continue
 		}
-		name, constraint := parseRequire(dep)
-		r.requires = append(r.requires, RequireInfo{
-			Name:       name,
-			Constraint: constraint,
-		})
+		r.requires = append(r.requires, RequireInfo{Name: dep})
+	}
+}
+
+func (r *Requires) addStrict(owner, op string, deps ...any) {
+	for _, dep := range flattenAny(deps) {
+		if dep == "" {
+			continue
+		}
+		if err := ValidatePackageRef(dep); err != nil {
+			fatalScript(owner, op, "%v", err)
+		}
+		r.requires = append(r.requires, RequireInfo{Name: dep})
 	}
 }
 
@@ -65,7 +72,7 @@ func NewRequireContextForConfig(pkgName string, cfgVals map[string]any, options 
 }
 
 func (ctx *RequireContext) AddRequires(deps ...any) *RequireContext {
-	ctx.Requires.Add(deps...)
+	ctx.Requires.addStrict(ctx.owner, "AddRequires", deps...)
 	return ctx
 }
 
@@ -85,21 +92,6 @@ func (ctx *RequireContext) RunFuncs() {
 	for _, fn := range ctx.requireFuncs {
 		fn(ctx)
 	}
-}
-
-func parseRequire(dep string) (name, constraint string) {
-	for i := 0; i < len(dep); i++ {
-		c := dep[i]
-		if c == '>' || c == '<' || c == '=' || c == '~' || c == ' ' || c == '@' {
-			name = dep[:i]
-			constraint = dep[i:]
-			for len(constraint) > 0 && constraint[0] == ' ' {
-				constraint = constraint[1:]
-			}
-			return
-		}
-	}
-	return dep, ""
 }
 
 func CheckCycle(path []string, current string) error {

@@ -3,7 +3,7 @@ package main
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.AddRequires("chip")
+	p.AddRequires("//chip")
 
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.Option("app_verbose").
@@ -12,7 +12,7 @@ func Main(p *api.Package) {
 	})
 
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.SyncConfigDefines("chip")
+		ctx.SyncConfigDefines("//chip")
 
 		ctx.Target("app").SetKind(api.TargetBinary).SetDefault(true).
 			AddFiles("src/*.c").

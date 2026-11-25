@@ -3,10 +3,11 @@ package main
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
+	p.AddRequires("//lib")
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("app").
 			SetKind(api.TargetBinary).
 			AddFiles("*.c").
-			AddDeps("lib")
+			AddDeps("//lib")
 	})
 }

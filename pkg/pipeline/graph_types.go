@@ -2,7 +2,6 @@ package pipeline
 
 import (
 	"errors"
-	"strings"
 
 	"github.com/spock2300/vmake/internal/issue"
 	"github.com/spock2300/vmake/internal/pkgvis"
@@ -131,33 +130,9 @@ func (g *UnifiedGraph) Facts() GraphFacts {
 	}
 }
 
-// ResolvePackageRef resolves a package reference made from fromPkg. Bare names
-// are matched against known sub-packages first (gated by needed) and then
-// against the resolved graph; references containing "/" are returned as-is.
-// It is the single implementation behind the graph, why and inspect edge
-// builders.
-func ResolvePackageRef(ctx *RuntimeContext, needed NeededSet, fromPkg, ref string) string {
-	if ref == "" || strings.Contains(ref, "/") {
-		return ref
-	}
-	var subParents map[string]string
-	if ctx != nil && ctx.Resolver != nil {
-		subParents = ctx.Resolver.SubParents()
-	}
-	if needed.Has(fromPkg) {
-		if cand := api.ResolveSubPackageName(fromPkg, ref, subParents, func(c string) bool {
-			return needed.Has(c)
-		}); cand != ref || needed.Has(cand) {
-			return cand
-		}
-	}
-	return api.ResolveSubPackageName(fromPkg, ref, subParents, func(cand string) bool {
-		if ctx == nil || ctx.DepGraph == nil {
-			return false
-		}
-		_, ok := ctx.DepGraph.Packages[cand]
-		return ok
-	})
+// ResolvePackageRef canonicalizes a package reference made from fromPkg.
+func ResolvePackageRef(ctx *RuntimeContext, _ NeededSet, fromPkg, ref string) string {
+	return canonicalPkgRef(ctx, fromPkg, ref)
 }
 
 // GraphOptions selects what the unified graph computes. DeclareTargets runs the

@@ -1,6 +1,10 @@
 package build
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/spock2300/vmake/pkg/api"
+)
 
 type DependencyRef struct {
 	Package   string
@@ -16,5 +20,5 @@ func ParseDependencyRef(dep string) DependencyRef {
 }
 
 func (r DependencyRef) IsPackagePath() bool {
-	return strings.Contains(r.Package, "/")
+	return api.IsLocalPackageID(r.Package) || strings.Contains(r.Package, "/")
 }

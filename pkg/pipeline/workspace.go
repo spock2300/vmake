@@ -12,22 +12,17 @@ import (
 	"github.com/spock2300/vmake/pkg/resolver"
 )
 
-// preparePackageWorkspace points a package at its single project-local working
-// tree, materializing it when necessary.
+// preparePackageWorkspace points a package at its project-local working tree,
+// materializing it when necessary.
 func (s *sourceStage) preparePackageWorkspace(name string) error {
 	node := s.rc.ctx.DepGraph.Packages[name]
 	dirs := s.pkgDirs[name]
 	if node == nil || node.Pkg == nil || dirs == nil {
 		return nil
 	}
-	_, isSub := s.rc.ctx.Resolver.SubParents()[name]
-	if !node.IsLocal() && !isSub {
-		oldSourceDir := node.Pkg.SourceDir()
-		node.Pkg.SetDirs(*dirs)
-		return rebindRemoteSrcDir(s.rc.ctx, node, dirs, oldSourceDir, name)
-	}
-	urls := node.Pkg.GitURLs()
-	if len(urls) == 0 {
+	loc := s.rc.ctx.packageLocation(name, node)
+
+	if !node.HasOwnGit() {
 		oldSourceDir := node.Pkg.SourceDir()
 		node.Pkg.SetDirs(*dirs)
 		if !node.IsLocal() {
@@ -35,17 +30,21 @@ func (s *sourceStage) preparePackageWorkspace(name string) error {
 		}
 		return nil
 	}
-	sourceRoot := dirs.SourceDir
-	thirdPartyRoot := linkedThirdPartyRoot(s.rc.ctx, name, node)
-	if thirdPartyRoot != "" {
-		sourceRoot = thirdPartyRoot
+
+	if !loc.Linked {
+		if err := s.selectPackageSourceRoot(name, loc.ThirdPartyRoot); err != nil {
+			return err
+		}
 	}
-	if err := s.selectPackageSourceRoot(name, sourceRoot); err != nil {
-		return err
-	}
+
 	oldSourceDir := node.Pkg.SourceDir()
 	node.Pkg.SetDirs(*dirs)
+
 	if node.IsLocal() {
+		if loc.Linked {
+			node.Pkg.SetSrcDir(loc.SourceTree)
+			return nil
+		}
 		treeSrc := s.sourceSeeds[name]
 		if treeSrc == "" {
 			return fmt.Errorf("package %s has no materialized source tree", name)
@@ -61,20 +60,24 @@ func (s *sourceStage) preparePackageWorkspace(name string) error {
 		node.Pkg.SetSrcDir(link)
 		return nil
 	}
+
+	if node.IsRegistry() {
+		return rebindRemoteSrcDir(s.rc.ctx, node, dirs, oldSourceDir, name)
+	}
+
+	// Native container member with its own SetGit source.
 	if err := rebindRemoteSrcDir(s.rc.ctx, node, dirs, oldSourceDir, name); err != nil {
 		return err
+	}
+	if loc.Linked {
+		node.Pkg.SetSrcDir(loc.SourceTree)
+		return nil
 	}
 	if s.dryRun && s.sourceSeeds[name] != "" {
 		node.Pkg.SetSrcDir(s.sourceSeeds[name])
 		return nil
 	}
-	if thirdPartyRoot != "" {
-		node.Pkg.SetSrcDir(filepath.Join(thirdPartyRoot, "src"))
-		return nil
-	}
-	if node.Pkg.SrcDirRaw() == "" {
-		node.Pkg.SetSrcDir(filepath.Join(dirs.SourceDir, "src"))
-	}
+	node.Pkg.SetSrcDir(loc.SourceTree)
 	return nil
 }
 
@@ -99,12 +102,11 @@ func rebindRemoteSrcDir(ctx *RuntimeContext, node *resolver.PackageNode, dirs *a
 	return nil
 }
 
-// selectPackageSourceRoot materializes the package's own repository (local
-// SetGit packages and native members with their own git URL) into the given
-// source root.
+// selectPackageSourceRoot materializes the package's own SetGit repository
+// (local, registry, or native member) into the given source root.
 func (s *sourceStage) selectPackageSourceRoot(name, sourceRoot string) error {
 	node := s.rc.ctx.DepGraph.Packages[name]
-	if node == nil || node.Pkg == nil || len(node.Pkg.GitURLs()) == 0 {
+	if node == nil || !node.HasOwnGit() {
 		return nil
 	}
 	if s.sourceCommits[name] != "" {
@@ -123,21 +125,24 @@ func (s *sourceStage) selectPackageSourceRoot(name, sourceRoot string) error {
 	}
 	s.sourceSeeds[name] = res.SrcDir
 	s.sourceCommits[name] = res.Commit
-	if node.IsLocal() {
-		s.sourceVersions[name] = req.Version
-	}
+	s.sourceVersions[name] = req.Version
 	return nil
 }
 
 func (s *sourceStage) resolvePackageSourceVersion(name string, node *resolver.PackageNode) (string, string, string, error) {
-	_, isSub := s.rc.ctx.Resolver.SubParents()[name]
-	decision := s.rc.ctx.lockQuery().Decide(name, "", "")
+	if node == nil || !node.HasOwnGit() {
+		return "", "", "", nil
+	}
+	decision := s.rc.ctx.lockQuery().Sources().Decide(name, "", "")
 	if decision.Provenance == resolver.ProvenanceTargetCommit {
 		return "", decision.Commit, decision.Commit, nil
 	}
-	if !node.IsLocal() && !isSub {
-		return "", "", "", nil
+
+	commitConstraint, semverConstraints, err := resolver.SplitConstraints(name, node.Constraints)
+	if err != nil {
+		return "", "", "", err
 	}
+
 	if len(node.Pkg.Versions()) == 0 {
 		if decision.Provenance == resolver.ProvenanceTargetVersion || decision.Provenance == resolver.ProvenanceConfigPin {
 			return "", "", "", fmt.Errorf("package %s declares no versions; specify a 40-character commit SHA instead of %q", name, decision.Version)
@@ -145,11 +150,21 @@ func (s *sourceStage) resolvePackageSourceVersion(name string, node *resolver.Pa
 		if decision.Provenance == resolver.ProvenanceLock && decision.Version == "" && decision.Commit != "" {
 			return "", decision.Commit, decision.Commit, nil
 		}
+		if commitConstraint != "" {
+			return "", commitConstraint, commitConstraint, nil
+		}
 		return "", "", "", nil
 	}
+
 	pin := ""
 	switch decision.Provenance {
 	case resolver.ProvenanceTargetVersion, resolver.ProvenanceConfigPin:
+		if _, exists := node.Pkg.Versions()[decision.Version]; !exists {
+			if decision.FromTarget {
+				return "", "", "", fmt.Errorf("requested version %s for %s not found in declared versions", decision.Version, name)
+			}
+			return "", "", "", fmt.Errorf("config-pinned version %s for %s not found in declared versions", decision.Version, name)
+		}
 		pin = decision.Version
 	case resolver.ProvenanceLock:
 		if decision.Version != "" {
@@ -158,7 +173,12 @@ func (s *sourceStage) resolvePackageSourceVersion(name string, node *resolver.Pa
 			return "", decision.Commit, decision.Commit, nil
 		}
 	}
-	constraints := append([]string{}, node.Constraints...)
+
+	if pin == "" && commitConstraint != "" {
+		return "", commitConstraint, commitConstraint, nil
+	}
+
+	constraints := append([]string{}, semverConstraints...)
 	if pin != "" {
 		constraints = append(constraints, "="+pin)
 	}
@@ -178,7 +198,13 @@ func (s *sourceStage) resolvePackageSourceVersion(name string, node *resolver.Pa
 }
 
 func existingLocalSourceCommit(node *resolver.PackageNode) (string, error) {
-	if node.Pkg == nil || len(node.Pkg.GitURLs()) == 0 || !DetectExistingSrcDir(node) {
+	if !node.HasOwnGit() {
+		return "", nil
+	}
+	if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {
+		return node.Source.Link.Commit, nil
+	}
+	if !DetectExistingSrcDir(node) {
 		return "", nil
 	}
 	return repo.GetCurrentCommit(node.Pkg.SrcDir())
@@ -189,7 +215,10 @@ func (s *sourceStage) packageCommitKey(name, ownerCommit string) string {
 }
 
 func sourceCommitKey(ownerCommit, sourceCommit string) string {
-	if sourceCommit != "" {
+	if sourceCommit != "" && sourceCommit != ownerCommit {
+		if ownerCommit == "" {
+			return sourceCommit
+		}
 		return ownerCommit + "\x00" + sourceCommit
 	}
 	return ownerCommit

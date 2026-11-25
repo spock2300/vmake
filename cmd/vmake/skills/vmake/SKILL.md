@@ -45,8 +45,8 @@ vmake                                  # Build all targets (default command)
 vmake build -j 8                       # Parallel compilation within each target (-j0 = CPU count)
 vmake rebuild                          # Clean + build in one step
 vmake test                             # Build & run native test targets (CTest-style)
-vmake config --set pkg/opt=val         # Non-interactive config override (skip TUI)
-vmake config --unset pkg/opt           # Remove explicit override (revert to default)
+vmake config --set //:opt=val          # Non-interactive config override (format: [pkg:]opt=val)
+vmake config --unset //:opt            # Remove explicit override (revert to default)
 vmake config list                      # List tracked configurations under configs/
 vmake config use <profile>             # Set local active configuration cursor (.vmake/local.json)
 vmake config check --all               # Validate all tracked configurations under configs/
@@ -76,8 +76,8 @@ vmake toolchain list                   # List toolchains
 vmake toolchain show <name>            # Toolchain details and resolved tool paths
 ```
 
-- **Local Source Development**: `vmake pkg link <repo>/<pkg> <path>` (run in the consuming project) builds that package from the local git worktree and removes any existing `.vmake_deps/.../src` and `state.json` for it; per-build outputs and own-Git `third_party/` sources stay. Check `vmake pkg list` (the package appears under `Source links:`), `vmake deps status`, and optionally `vmake inspect --no-targets` (`linked: true`, version `0.0.0-local`). A native link supplies build.go, sub-packages, OnConfig options and the flags/defines they produce; a registry link keeps the wrapper build.go and replaces only upstream source. No commit, tag, version bump, or `vmake deps update` is required to test; uncommitted edits are compiled. A commit is optional and may rotate the linked package's build directory; a tag is not needed.
-- **Switching Back from a Link**: `vmake pkg unlink <repo>/<pkg>` removes the link; the next build uses the existing `vmake.lock` entry when present (otherwise it resolves and writes one), and untagged linked HEADs are not selected. Run `vmake deps update <repo>/<pkg>` only if you want to re-resolve newer versions before building (project pins and version constraints still apply).
+- **Local Source Development**: `vmake pkg link <target> <path>` (run in the consuming project) builds that container or `SetGit` source from a local git worktree and removes any existing `.vmake_deps/.../src` and `state.json` for it; per-build outputs and own-Git `third_party/` sources stay. Supported targets are native containers (`<repo>/<module>`), registry packages (`<repo>/<pkg>`), native `SetGit` members (`<repo>/<module>/<path>`), and local `SetGit` packages (`//<path>`). Check `vmake pkg list` (appears under `Source links:`), `vmake deps status`, and optionally `vmake inspect --no-targets` (`linked: true`, version `0.0.0-local`). A native container link supplies `vmake.json`, `build.go` members, `OnConfig` options, and flags/defines; a registry or `SetGit` source link keeps the wrapper `build.go` and replaces only upstream source. No commit, tag, version bump, or `vmake deps update` is required to test; uncommitted edits are compiled.
+- **Switching Back from a Link**: `vmake pkg unlink <target>` removes the link; the next build uses the existing `vmake.lock` entry when present (otherwise it resolves and writes one), and untagged linked HEADs are not selected. Run `vmake deps update <target>` only if you want to re-resolve newer versions before building (project pins and `vmake.json` constraints still apply).
 - **Build & Test Reports**: `build`/`rebuild` write `build/vmake-build.json` and `test` writes `build/vmake-test.json` (schemaVersion 2: status, duration, concise error, parsed compiler/linker diagnostics, target timings, test results, SHA-256 installed artifacts). `clean`/`distclean`/`pkg clean` remove both. Full schema: [references/build-result.md](references/build-result.md).
 - **Package Discovery**: `pkg search` scans repository directories and matches repository/package names by default; `--details` reads `build.go` only for trusted repositories and also matches description, license and latest version. `--for-project` adds cached/locked/installed status; installed status uses the default `<project>/install/manifest.json`, so custom `--prefix` installs are not detected. `pkg show` prints metadata and an `AddRequires` snippet. Native repositories only expose packages already cached in the current project; native sub-packages are not listed separately and are read through their parent package. Neither command writes an index or cache.
 - **Inspection & Dry-Run Discipline**: `inspect`, `query`, `query targets`, `deps graph`, `deps why`, `deps check`, and `check-symbols` evaluate `OnBuild` in dry-run mode with read-only `scriptfs` (`p.DryRun() == true`); `inspect --no-targets` skips `OnBuild` entirely, and `query config <pkg>` prints effective option values and generated defines without evaluating `OnBuild`. `check-symbols` keeps the read-only guard enabled for the whole open/inspect/declare sequence and reports rejected writes as `blocked-write` error findings; a rejected write that propagates as a script error aborts the command before the audit. Prefer declarative `p.WriteBuildFile`, `p.GenerateFile`, `p.Generate`, and `p.BuildPath` in `OnBuild` (they defer writes to scheduler execution and emit `$builddir/...` when `BuildDir()` is empty); guard any procedural `os.WriteFile` on `!p.DryRun()`. Inspecting a missing source tree does not fetch it, but native remote resolution may still materialize one. Full schema: [references/inspect.md](references/inspect.md).
@@ -159,7 +159,7 @@ package main
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-    p.AddRequires("utils", "official/zlib >= 1.2") // Static requires directly on Package
+    p.AddRequires("//utils", "official/zlib") // Pure package IDs (constraints live in vmake.json)
     p.OnConfig(func(ctx *api.ConfigContext) {
         ctx.Option("enable_tls").SetDefault(false).SetDescription("Enable TLS")
     })
@@ -181,12 +181,13 @@ func Main(p *api.Package) {
 
 ```text
 myproject/
-├── build.go                  # Root build script
+├── vmake.json                # Module container manifest: roots, modules, sources (optional for single root build.go)
+├── build.go                  # Optional root package (canonical ID "//")
 ├── configs/                  # Tracked configurations (configs/default.json, SKU profiles)
-├── .vmake/                   # project.json (default_config & pins), local.json (local cursor & links), vmake.lock
-├── .vmake_deps/              # Materialized third-party & local SetGit trees
+├── .vmake/                   # project.json (default_config & pins), local.json (local cursor & links), vmake.lock (v2)
+├── .vmake_deps/              # Materialized external containers & SetGit trees
 ├── build/                    # compile_commands.json, vmake-build/test.json; root-package outputs at build/<keyDir>/
-│                             # subpackages use <pkgDir>/build/<keyDir>/, remote packages use .vmake_deps/.../out/
+│                             # nested local packages use <pkgDir>/build/<keyDir>/, external packages use .vmake_deps/.../out/
 └── install/                  # Staging: bin/, lib/, include/, manifest.json
 ```
 
@@ -204,16 +205,18 @@ The high-level phases are listed below. During script loading, each package runs
 6. **`OnBuild`** — declare targets; scheduler executes targets serially in topological dependency order with parallel C/C++ compilation within each target.
 7. **`OnInstall`** — only with `--install`: register extra install entries/filters/prefix (declaration only; no copying). After the callbacks, the installer copies target outputs and registered items into `install/` and writes `install/manifest.json`, reusing `BuildContext`s without replaying `OnBuild`.
 
-## Package Types
+## Module Containers & Package Types
 
-| Type | Location | Characteristics |
+VMake 2.0 separates **module containers** (distribution, versioning, and git checkouts declared in `vmake.json`) from **build packages** (any directory with a `build.go`, identified strictly by its container + relative path, loaded lazily on demand — no directory scanning).
+
+| Type | Canonical ID / Manifest | Characteristics |
 | --- | --- | --- |
-| **Root Package** | Project root `build.go` | Entry point (`p.SetRoot(true)` when root is a sub-package); owns top-level targets and global options |
-| **Local Sub-package** | Subdirectory with `build.go` | Referenced by directory basename (`"math"`, `"spi"`); nested paths are not package names, and duplicate basenames are an error |
-| **Local SetGit Package** | Subdirectory `build.go` + `p.SetGit(...)` | Cloned into `.vmake_deps/local/<pkg>/src`, symlinked at `<pkgDir>/src`; `SrcDir()` points to `src`; `AddPatches`/`SetPatches` can patch this tree |
-| **Registry Package** | `~/.vmake/repos/<repo>/packages/<first-char>/<pkg>/build.go` | Referenced as `"repo/pkg"`; `p.SetGit(...)` downloads upstream source into `.vmake_deps/` |
-| **Native VMake Repo** | Git repo with root `build.go` | Registered via `vmake repo add --native`; trusted per repository, no commit required; sub-packages lazily inherit parent version. `repo trust` applies to native repos; `repo update` does not |
-| **Local Source Link** | `.vmake/local.json` | `vmake pkg link <repo/name> <git-tree>`; native links load build.go, sub-packages, options and their flags/defines locally, registry links replace only the upstream source. Linking removes the materialized `src`/`state.json` and keeps outputs plus own-Git third-party sources. The linked package itself ignores versions, tags and constraints, and no tag or version bump is needed while linked; edit and rebuild directly. Outputs stay under `.vmake_deps`; `pkg unlink` makes the next build use the lock |
+| **Root Manifest** | `vmake.json` | Declares `roots` (entry packages, default `["//"]` if root `build.go` exists), `modules` (container version constraints, e.g. `"official": "*"`, `"myrepo/sdk": ">=1.0.0"`), and `sources` (constraints for `SetGit` packages) |
+| **Local Package** | `"//"` (root) or `"//<rel/path>"` | Identified strictly by path relative to the workspace root (e.g. `"//libs/math"`, `"//apps/cli"`). Loaded lazily from `roots` and `AddRequires` |
+| **Native Module Container** | `<repo>/<module>` (members `<repo>/<module>[/<rel/path>]`) | Git repo registered via `vmake repo add --native`; no root `build.go` is required. Members load lazily by path; intra-container references use `"//<rel/path>"` which resolves inside the same container |
+| **Registry Package** | `<repo>/<pkg>` (container `<repo>`) | Wrapper `build.go` under `~/.vmake/repos/<repo>/packages/<first-char>/<pkg>/`; declare `"<repo>": "*"` in `vmake.json` `modules`, and optional source constraint in `sources` |
+| **Independent Upstream Source (`SetGit`)** | Any local or native package calling `p.SetGit(...)` | Orthogonal to container identity: local `SetGit` clones to `.vmake_deps/local/<pkg>/src` (symlinked at `<pkgDir>/src`); native `SetGit` members clone to `.vmake_deps/<repo>/<module>/third_party/<member>/src`; versions/commits lock in `vmake.lock` `sources` |
+| **Local Source Link** | `.vmake/local.json` | `vmake pkg link <target> <git-tree>`; supports native containers, registry packages, native `SetGit` members, and local `SetGit` packages (`//...`). Ignores version/lock/constraints while linked; `pkg unlink` restores lock resolution |
 
 ## Target API at a Glance
 
@@ -230,7 +233,7 @@ t := ctx.Target("mylib").
     AddCxxFlags("-std=c++17").                  // Private C++ flags (also AddPublicCxxFlags)
     AddLdFlags("-Wl,--gc-sections").            // Private linker flags (also AddPublicLdFlags)
     AddLinks("m", "pthread").                   // Private -l libs (also AddPublicLinks)
-    AddDeps("math", "official/zlib")            // Target & package dependencies
+    AddDeps("//math", "official/zlib")          // Target & package dependencies
 ```
 
 - **Target-level Public Propagation (`AddPublic*`)**: `AddPublicIncludes`, `AddPublicDefines`, `AddPublicCFlags`, `AddPublicCxxFlags`, `AddPublicLdFlags`, and `AddPublicLinks` (plus `RemovePublic*` / `Public*`) propagate transitively along `AddDeps` edges to downstream targets. Prefer `AddPublic*` over `AddGlobal*` whenever flags/defines belong to a library's consumers rather than every package in the workspace (global flag changes rotate every package's `BuildDir`).
@@ -277,27 +280,44 @@ ctx.Target("math_test").SetKind(api.TargetBinary).SetTest(true).
 
 ## Dependencies
 
-Declare package dependencies on `Package` (`p.AddRequires(...)`) or conditionally in `OnRequire` (`ctx.AddRequires(...)`), and wire target build edges in `OnBuild`:
+Declare package dependencies on `Package` (`p.AddRequires(...)`) or conditionally in `OnRequire` (`ctx.AddRequires(...)`), and wire target build edges in `OnBuild`. `AddRequires` takes **pure package IDs only** (no inline version constraints — put container constraints in `vmake.json` `modules` and `SetGit` constraints in `vmake.json` `sources`):
 
 ```go
-p.AddRequires("shell", "wifi", "official/cjson") // Single-entry static package requires
+p.AddRequires("//shell", "//wifi", "official/cjson") // Single-entry static package requires
 p.OnBuild(func(ctx *api.BuildContext) {
     ctx.Target("firmware").SetKind(api.TargetBinary).
         AddFiles("src/*.c").
-        UseRequires() // Equivalent to AddDeps("shell:*", "wifi:*", "official/cjson:*") for all active requires
+        UseRequires() // Equivalent to AddDeps("//shell:*", "//wifi:*", "official/cjson:*") for all active requires
 })
 ```
 
-- **Bare Required Names in `AddDeps`**: `t.AddDeps("shell", "wifi")` resolves `"shell"` to a same-package target if one exists, otherwise to `"shell:*"` when `"shell"` is a required/known package. Explicit `"<pkg>:<target>"` and `"<pkg>:*"` remain supported; there is no literal `pkg:` marker.
-- **Enforced Go-Style Architecture Boundaries**: Builds (`build`/`rebuild`/`test`) and `vmake deps check` reject: (1) **package-level and target-level cycles**, including cross-package reverse target edges (`pkgA:t1 -> pkgB:t2` plus `pkgB:t3 -> pkgA:t4`), reporting minimal cycle chains; (2) **`internal/` visibility violations**, where any local package or native remote sub-package path containing an `internal` directory segment is imported outside the subtree rooted at `internal`'s parent; and (3) **cross-package path reaches and private/undeclared `#include`s**, ensuring packages do not reach into sibling/parent package directories via `../`, cross-package headers belong to declared dependencies' `AddPublicIncludes` or `InstallDir/include`, and direct source `#include`s come from direct `AddDeps`/`UseRequires` dependencies (verified via `.d` depfiles when built and static `#include` scanning on cold trees). Use `vmake deps graph`, `vmake deps why <pkg|pkg:target>`, and `vmake deps check` (supporting `--json`, `--locked`, `--offline`, `-s`) to inspect and audit the unified graph.
+- **Canonical Package IDs & Target References**: Every local package ID is `"//"` (root) or `"//<rel/path>"` (e.g. `"//libs/shell"`, `"//drivers/wifi"`). External packages are `"<repo>/<module>"` or `"<repo>/<module>/<rel/path>"` (native containers) and `"<repo>/<pkg>"` (registry). Inside a native container, `"//<rel/path>"` resolves to a sibling package inside that same container (`<repo>/<module>/<rel/path>`). In `AddDeps`, a bare name (`"helper"`) always means a same-package target; cross-package references always use a canonical package path (`"//shell"`, `"//shell:lib"`, `"official/cjson"`, `"official/cjson:*"`).
+- **Enforced Go-Style Architecture Boundaries**: Builds (`build`/`rebuild`/`test`) and `vmake deps check` reject: (1) **package-level and target-level cycles**, including cross-package reverse target edges (`pkgA:t1 -> pkgB:t2` plus `pkgB:t3 -> pkgA:t4`), reporting minimal cycle chains; (2) **`internal/` visibility violations**, where any local package or native container member path containing an `internal` directory segment is imported outside the subtree rooted at `internal`'s parent; and (3) **cross-package path reaches and private/undeclared `#include`s**, ensuring packages do not reach into sibling/parent package directories via `../`, cross-package headers belong to declared dependencies' `AddPublicIncludes` or `InstallDir/include`, and direct source `#include`s come from direct `AddDeps`/`UseRequires` dependencies (verified via `.d` depfiles when built and static `#include` scanning on cold trees). Use `vmake deps graph`, `vmake deps why <pkg|pkg:target>`, and `vmake deps check` (supporting `--json`, `--locked`, `--offline`, `-s`) to inspect and audit the unified graph.
 
-### Sub-Packages
+### Module Containers & vmake.json
 
-Local subdirectories containing `build.go` use their directory basename (`"spi"`, not `"drivers/spi"`); duplicate basenames are an error. Native remote repos with sub-packages inherit the parent repo's version; require the parent repo before its sub-packages (`"myrepo/sdk"`, then `"myrepo/sdk/hal"`).
+Multi-package workspaces and projects with external dependencies declare a root `vmake.json`:
 
-### Version Constraints
+```json
+{
+  "roots": ["//apps/firmware"],
+  "modules": {
+    "official": "*",
+    "myrepo/sdk": ">=1.2.0"
+  },
+  "sources": {
+    "official/zlib": ">=1.2.11"
+  }
+}
+```
 
-`AddRequires` supports one operator plus one version (`>=`, `>`, `<=`, `<`, `=`, `~`; for example `"official/zlib >= 1.2.11"` or `"official/cjson ~1.7"`). `>=`/`>` are major-locked when the major is > 0; `<=`/`<` are not. Prereleases match only when the constraint pins a prerelease of the same `major.minor.patch`. A bare version is `>=`, and exact selection requires `=`; `AddVersion` keys are candidate versions, not exact matches. An empty constraint is `>=0.0.0`; if the package declares `AddVersion` keys, the highest stable match is selected. Registry packages (and local `SetGit` packages) without declared versions use the default branch and record its resolved `HEAD` commit in `.vmake/vmake.lock` with `version: ""`; native packages select from upstream Git tags, failing with `no valid versions found` when no tag parses as a version and `no version matching '<constraint>' in <available>` when the constraint excludes every tag. `^` ranges are not supported. Explicitly selected versions/commits are pinned in `.vmake/vmake.lock`; project-wide pins are managed via `vmake deps pin <pkg>@<ver|commit>` (`pins` in `.vmake/project.json`). The linked package itself bypasses version selection and reports `0.0.0-local`; native sub-packages that declare their own `SetGit` source still select that upstream source. Never tag or bump a linked package to make a consumer build see local changes. While linked, the preserved lock entry is ignored and `vmake deps update` keeps it; after `pkg unlink`, run `vmake deps update` to re-resolve versions (project pins and constraints still apply).
+- `roots`: entry package IDs (`"//"` or `"//<rel/path>"`). Optional when a root `build.go` exists (defaults to `["//"]`).
+- `modules`: external containers required by this module and their version constraints (`"*"` for registry repositories, semver constraints for native containers). A native container does **not** need a root `build.go`; consumers can require `"myrepo/sdk/hal"` directly as long as `"myrepo/sdk"` is declared in `modules`.
+- `sources`: optional version constraints for independent `SetGit` upstream sources (registry packages, local `SetGit` packages, or native `SetGit` members).
+
+### Version Constraints & `vmake.lock` (v2)
+
+Constraints in `vmake.json` (`modules` and `sources`) support one operator plus one version (`>=`, `>`, `<=`, `<`, `=`, `~`; `"*"` means any stable version). `>=`/`>` are major-locked when the major is > 0; `<=`/`<` are not. Prereleases match only when the constraint pins a prerelease of the same `major.minor.patch`. A bare version is `>=`, and exact selection requires `=`. When multiple modules constrain the same container, VMake intersects all constraints across the diamond and selects the highest satisfying tag (or fails on conflict). Registry packages (and local/native `SetGit` packages) without declared versions track the default branch and lock its resolved `HEAD` commit with `version: ""`. `.vmake/vmake.lock` uses schema `version: 2` with separate `containers` (native/registry container versions & commits) and `sources` (independent `SetGit` packages). Project-wide pins are managed via `vmake deps pin <target>@<ver|commit>` (`pins` in `.vmake/project.json`). While linked via `pkg link`, the preserved lock entry is ignored and `vmake deps update` keeps it; after `pkg unlink`, run `vmake deps update` to re-resolve versions.
 
 ### OnRequire Two-Phase Execution
 
@@ -338,7 +358,7 @@ vmake config check --all           # Validate all tracked configurations
 
 - **Package options** become C macros only when `ctx.GenerateConfigDefines()` (`-D` flags) or `ctx.GenerateConfigHeader()` (`generated/autoconf.h`) is called in `OnBuild`. By default, option `"enable_dma"` emits `CONFIG_ENABLE_DMA=1` (bool `false` is omitted in `-D` and `/* #undef */` in headers).
 - **`SetMacroName(name)`** overrides the emitted macro name on **both** package `Option` and `GlobalOption` (supports `%s`/`%v` value formatting such as `SetMacroName("PY32F539xx%s")`).
-- **Cross-package config propagation**: `ctx.ImportConfig("chip")` + `ctx.GenerateConfigDefines()` merges `"chip"`'s options into the current package's generated `-D` defines; use `GenerateConfigHeader()` as well for `autoconf.h`. `ctx.SyncConfigDefines("chip")` is the defines-only shorthand and does not set the header. No export declaration is needed in `"chip"`.
+- **Cross-package config propagation**: `ctx.ImportConfig("//chip")` + `ctx.GenerateConfigDefines()` merges `"//chip"`'s options into the current package's generated `-D` defines; use `GenerateConfigHeader()` as well for `autoconf.h`. `ctx.SyncConfigDefines("//chip")` is the defines-only shorthand and does not set the header. No export declaration is needed in `"//chip"`.
 
 ### OptionChoice Generates Dual Macros
 
@@ -363,12 +383,12 @@ The built-in global `"mode"` option (`debug`, `release`, `size`) automatically i
 
 ### Cross-Package Option Reads
 
-In `OnBuild`, `ctx.Bool/String/Int`, `ctx.If`, `ctx.Select`, and `ctx.When*` also accept a `<pkg>/<option>` reference. The package is the full package ID; the option is the segment after the last `/` (remote IDs such as `official/zlib` therefore work). The value is the owner's resolved configuration — entry override, then declared default, then global fallback — not a value derived in the owner's `SetOnApply`/`OnBuild`.
+In `OnBuild`, `ctx.Bool/String/Int`, `ctx.If`, `ctx.Select`, and `ctx.When*` also accept a `<pkg>:<option>` reference (for example `"//:debug"`, `"//chip:baud"`, or `"official/zlib:shared"`). The package is the canonical package ID before `:`; the option is the name after `:`. The value is the owner's resolved configuration — entry override, then declared default, then global fallback — not a value derived in the owner's `SetOnApply`/`OnBuild`.
 
 - Cross-package reads are available in `OnBuild` (including `Target.SetBuildFunc` closures that capture the `BuildContext`) and in `OnConfigureDeps`, but not in `OnConfig`, `OnRequire`, `OnInstall`, or `OnClean`.
-- A package-qualified read of a global option (for example `firmware/chip`) resolves the owner's effective value, including its `entries.<pkg>.options` override; it can therefore differ from the bare-name read in the reading package. `target_os`/`target_triple` resolve even when no package declares them.
+- A package-qualified read of a global option (for example `"//firmware:chip"`) resolves the owner's effective value, including its `entries.<pkg>.options` override; it can therefore differ from the bare-name read in the reading package. `target_os`/`target_triple` resolve even when no package declares them.
 - Unknown packages/options, type mismatches, and malformed references are build errors.
-- A composite condition is not a single option. Read every participating option, or publish a derived value from the owner; do not assume `ctx.Bool("owner/switch")` equals the owner's `-D` capability macro.
+- A composite condition is not a single option. Read every participating option, or publish a derived value from the owner; do not assume `ctx.Bool("//owner:switch")` equals the owner's `-D` capability macro.
 - Do not infer options from `p.GlobalCFlags()` or generated `-D` flags; those are compiler flags, not the option model.
 
 ### Default Build Flags
@@ -409,7 +429,7 @@ t.SetLinkerScript("stm32f4.ld").                // Or UseDependencyLinkerScript(
 ```
 
 - **Declarative Code Generation**: Use `p.WriteBuildFile(rel, content)`, `p.GenerateFile(rel, fn)`, or `p.Generate(fn)` inside `OnBuild` (or `t.AddBinHeader("fw.bin")`) to generate headers/sources into `BuildDir()` with dry-run safety.
-- **Synchronous Subgraph**: Use `ctx.BuildSubGraph("pkgA")` in `OnBuild` when an external image step needs specific VMake packages built and linked first, then query `ctx.DepOutput("pkgA:target")` / `ctx.DepBuildDir("pkgA:target")`.
+- **Synchronous Subgraph**: Use `ctx.BuildSubGraph("//pkgA")` in `OnBuild` when an external image step needs specific VMake packages built and linked first, then query `ctx.DepOutput("//pkgA:target")` / `ctx.DepBuildDir("//pkgA:target")`.
 
 ### KConfig Preset Management (Firmware)
 
@@ -453,8 +473,8 @@ For in-source Makefiles, pass an absolute path with forward slashes: `p.Make("-C
 
 ## Build Scope
 
-- `vmake build` builds all default targets in needed packages, local and remote. Roots come from the active configuration's `"root"` package override when set, otherwise the single local package that declares `SetRoot(true)`, or are inferred from the local package graph.
-- There is **no package/target filter flag**. `-p`/`--prefix` is the installation prefix, not a package selector. To narrow a build, set `"root"` in a `configs/*.json` profile, declare `SetRoot(true)` on the intended entry package, or use a separate project. Use `vmake -C <dir>` to select the project root.
+- `vmake build` builds all default targets in needed packages, local and remote. Roots come from the active configuration's `"root"`/`"roots"` override when set, otherwise `vmake.json` `"roots"`, otherwise `"//"` when a root `build.go` exists.
+- There is **no package/target filter flag**. `-p`/`--prefix` is the installation prefix, not a package selector. To narrow a build, set `"root"`/`"roots"` in a `configs/*.json` profile, adjust `"roots"` in `vmake.json`, or use a separate project. Use `vmake -C <dir>` to select the project root.
 
 ## Clean
 

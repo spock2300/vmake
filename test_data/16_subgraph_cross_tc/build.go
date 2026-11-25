@@ -5,10 +5,12 @@ import (
 )
 
 func Main(p *api.Package) {
-	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.BuildSubGraph("t16lib")
+	p.AddRequires("//t16lib")
 
-		sublibPath := ctx.DepOutput("t16lib:sublib")
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.BuildSubGraph("//t16lib")
+
+		sublibPath := ctx.DepOutput("//t16lib:sublib")
 		ctx.Target("app").
 			SetKind(api.TargetBinary).
 			AddFiles("src/*.c").

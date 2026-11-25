@@ -112,8 +112,35 @@ func TestValidateSourceLinkRejectsInsideProject(t *testing.T) {
 	}
 }
 
-func TestValidateSourceLinkRejectsSubPackage(t *testing.T) {
-	if _, err := ValidateSourceLink(context.Background(), canonicalTempDir(t), canonicalTempDir(t), canonicalTempDir(t), "testnative/sdk/sub", "/tmp"); err == nil {
-		t.Fatal("sub-package link should fail")
+func TestValidateSourceLinkNativeWithoutRootBuildGo(t *testing.T) {
+	project, deps, repos := canonicalTempDir(t), canonicalTempDir(t), canonicalTempDir(t)
+	mgr := repo.NewRepoManager(repos)
+	if err := mgr.AddNative("testnative", filepath.Join(canonicalTempDir(t), "{name}")); err != nil {
+		t.Fatal(err)
+	}
+	link := linkTestGitRepo(t, map[string]string{
+		"sub/build.go": "package main\n\nfunc Main(p *interface{}) {}\n",
+	})
+	abs, err := ValidateSourceLink(context.Background(), project, deps, repos, "testnative/sdk", link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if abs != link {
+		t.Fatalf("validated path = %q, want %q", abs, link)
+	}
+}
+
+func TestValidateSourceLinkAllowsNativeMemberAndLocalSetGit(t *testing.T) {
+	project, deps, repos := canonicalTempDir(t), canonicalTempDir(t), canonicalTempDir(t)
+	mgr := repo.NewRepoManager(repos)
+	if err := mgr.AddNative("testnative", filepath.Join(canonicalTempDir(t), "{name}")); err != nil {
+		t.Fatal(err)
+	}
+	link := linkTestGitRepo(t, map[string]string{"src.c": "int x = 1;\n"})
+	if abs, err := ValidateSourceLink(context.Background(), project, deps, repos, "testnative/sdk/sub", link); err != nil || abs != link {
+		t.Fatalf("native member SetGit link = %q, %v", abs, err)
+	}
+	if abs, err := ValidateSourceLink(context.Background(), project, deps, repos, "//mylib", link); err != nil || abs != link {
+		t.Fatalf("local SetGit link = %q, %v", abs, err)
 	}
 }

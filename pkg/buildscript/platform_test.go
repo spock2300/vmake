@@ -53,7 +53,7 @@ func Main(p *api.Package) { p.SetName(hostName()) }
 	}
 }
 
-func TestScanSubPackagesLogicalNames(t *testing.T) {
+func TestLoadPackageSourceLogicalNames(t *testing.T) {
 	dir := t.TempDir()
 	nested := filepath.Join(dir, "nested", "child")
 	if err := os.MkdirAll(nested, 0755); err != nil {
@@ -62,11 +62,11 @@ func TestScanSubPackagesLogicalNames(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(nested, "build.go"), []byte("package main\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	sources, err := ScanSubPackages(dir, "repo/parent")
+	src, err := LoadPackageSource(dir, "repo/parent", "nested/child", api.SourceRemote)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sources) != 1 || sources[0].Name != "repo/parent/nested/child" || sources[0].Dir != nested {
-		t.Fatalf("sources = %#v", sources)
+	if src.Name != "repo/parent/nested/child" || src.Dir != nested {
+		t.Fatalf("source = %#v", src)
 	}
 }

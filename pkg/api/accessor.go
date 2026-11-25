@@ -46,14 +46,17 @@ func (a *ConfigAccessor) setConfigLookup(fn func(pkg, name string) (any, *Option
 }
 
 func configRef(name string) (pkg, opt string, cross bool, err error) {
-	index := strings.LastIndex(name, "/")
-	if index < 0 {
+	pkg, opt, hasColon := strings.Cut(name, ":")
+	if !hasColon {
 		return "", "", false, nil
 	}
-	if index == 0 || index == len(name)-1 {
+	if pkg == "" || opt == "" || strings.Contains(opt, ":") {
 		return "", "", true, fmt.Errorf("invalid cross-package option reference %q", name)
 	}
-	return name[:index], name[index+1:], true, nil
+	if err := ValidatePackageRef(pkg); err != nil {
+		return "", "", true, fmt.Errorf("invalid cross-package option reference %q: %w", name, err)
+	}
+	return pkg, opt, true, nil
 }
 
 func (a *ConfigAccessor) crossUnavailable(op, name string) {
@@ -437,8 +440,8 @@ func numericValue(v any) (float64, bool) {
 }
 
 func (a *ConfigAccessor) Option(name string) *Option {
-	if strings.Contains(name, "/") {
-		fatalScript(a.owner, "Option", "option name %q must not contain '/'; cross-package reads are read-only, use ctx.Bool(%q)", name, "pkg/option")
+	if strings.ContainsAny(name, "/:") {
+		fatalScript(a.owner, "Option", "option name %q must not contain '/' or ':'; cross-package reads are read-only, use ctx.Bool(%q)", name, "//pkg:option")
 	}
 	if a.optionsLocked {
 		fatalScript(a.owner, "Option", "option %q declared after the config phase; declare options in OnConfig", name)
@@ -495,8 +498,8 @@ func ValidateOption(o *Option) error {
 	if o == nil {
 		return nil
 	}
-	if strings.Contains(o.name, "/") {
-		return fmt.Errorf("option name %q must not contain '/'", o.name)
+	if strings.ContainsAny(o.name, "/:") {
+		return fmt.Errorf("option name %q must not contain '/' or ':'", o.name)
 	}
 	if o.macroName != "" {
 		if strings.Contains(o.macroName, "%") {

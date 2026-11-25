@@ -9,7 +9,7 @@
     "mode": "debug",
     "packages": [
       {
-        "name": "23_link_strategy",
+        "name": "//",
         "source": "local",
         "path": "."
       }
@@ -31,7 +31,7 @@
     {
       "path": "compile_commands.json",
       "size": 3876,
-      "hash": "eaaff545cd6923fdeec7b049fa351942f565a3f0de1f3db22a50dbc0036f243a"
+      "hash": "643af4af9933c7c4d72a8a4cde3fcdcfa79bf83e61d3dcce8290d26059edde61"
     }
   ],
   "install_tree_hash": "1c1595bc0152c1474d7c7896ecc83f8a16cf49914eb264459822203fb1d113fa"

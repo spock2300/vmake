@@ -73,11 +73,11 @@ func TestApplyGlobalValuesUsesChipTargetDefaults(t *testing.T) {
 func TestOnApplySeesResolvedValues(t *testing.T) {
 	root := t.TempDir()
 	r := resolver.NewResolver(nil, root)
-	r.Graph().Order = []string{"app"}
-	node := resolver.NewPackageNode("app",
-		buildscript.NewSource("app", filepath.Join(root, "build.go"), root, api.SourceLocal),
-		api.NewPackage().SetName("app"))
-	r.Graph().Packages["app"] = node
+	r.Graph().Order = []string{"//app"}
+	node := resolver.NewPackageNode("//app", "//", "app", resolver.SourceKindLocal,
+		buildscript.NewSource("//app", filepath.Join(root, "build.go"), root, api.SourceLocal),
+		api.NewPackage().SetName("//app"))
+	r.Graph().Packages["//app"] = node
 
 	var seenMode, seenToolchain, seenOS, seenTriple string
 	node.Pkg.OnConfig(func(ctx *api.ConfigContext) {

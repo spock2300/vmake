@@ -9,16 +9,16 @@ import (
 
 func Main(p *api.Package) {
 	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("busybox", "libcore", "sensordaemon")
+		ctx.AddRequires("//busybox", "//libs/libcore", "//apps/sensordaemon")
 	})
 
 	p.OnBuild(func(ctx *api.BuildContext) {
-		busyboxBuildDir := ctx.DepBuildDir("busybox:busybox")
-		sensorOut := ctx.DepOutput("sensordaemon:sensordaemon")
-		libcoreSo := ctx.DepOutput("libcore:core")
+		busyboxBuildDir := ctx.DepBuildDir("//busybox:busybox")
+		sensorOut := ctx.DepOutput("//apps/sensordaemon:sensordaemon")
+		libcoreSo := ctx.DepOutput("//libs/libcore:core")
 
 		ctx.Target("recovery_rootfs").SetKind(api.TargetVoid).
-			AddDeps("busybox:busybox", "libcore:core", "sensordaemon:sensordaemon").
+			AddDeps("//busybox:busybox", "//libs/libcore:core", "//apps/sensordaemon:sensordaemon").
 			SetBuildFunc(func(pkg *api.Package) error {
 				staging := filepath.Join(pkg.BuildDir(), "staging")
 				imageFile := filepath.Join(pkg.BuildDir(), "recovery_rootfs.sqsh")

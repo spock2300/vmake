@@ -178,25 +178,25 @@ var pkgCleanCmd = &cobra.Command{
 }
 
 var pkgLinkCmd = &cobra.Command{
-	Use:   "link <repo/name> <path>",
-	Short: "Build a package from a local working tree",
-	Long: `Link a native or registry package to a local git working tree.
+	Use:   "link <container|pkg> <path>",
+	Short: "Build a container or SetGit package from a local working tree",
+	Long: `Link a native module container (<repo>/<module>), registry package (<repo>/<pkg>),
+native SetGit member (<repo>/<module>/<path>), or local SetGit package (//<path>)
+to a local git working tree.
 
-A linked native package loads build.go, sub-packages, OnConfig options and the
-flags/defines they produce from the linked tree. A linked registry package keeps
-its registry wrapper build.go and replaces only the upstream source tree. Links
-are machine-local, stored in .vmake/local.json, and ignore package versions,
-tags and version constraints.
+A linked native container loads its vmake.json, member build.go scripts, OnConfig
+options and flags/defines from the linked tree. A linked registry package or SetGit
+member keeps its wrapper build.go and replaces only the upstream source tree. Links
+are machine-local, stored in .vmake/local.json, and ignore versions, tags and version
+constraints.
 
 While linked, edit the worktree and rerun the build; uncommitted edits are
 compiled, and no commit, tag, version bump or 'vmake deps update' is required.
 The existing lock entry is kept unchanged until you unlink.
 
-Linking removes any existing materialized src/state for the package under
+Linking removes any existing materialized src/state for the target under
 .vmake_deps. Per-build outputs and own-Git third-party source trees are kept.
-Path validation does not interpret the linked buildscript; a link later rejected
-for KConfig or patches has already removed the old tree. After unlink, the next
-build uses the existing lock entry when present.`,
+After unlink, the next build uses the existing lock entry when present.`,
 	Args: cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		commandStorageLocks()
@@ -212,19 +212,18 @@ build uses the existing lock entry when present.`,
 		local.Links[name] = abs
 		fatalErr(config.SaveLocal(projectDir, local))
 
-		repoName, pkgName := mustSplitPkgRef(name)
 		sourceMgr := repo.NewSourceManager(getDepsDir(), getCacheDir()).WithSession(commandStorageLocks())
-		if err := sourceMgr.CleanMaterializedSource(repoName, pkgName); err != nil {
+		if err := pipeline.CleanLinkedMaterializedSource(sourceMgr, projectDir, name); err != nil {
 			fatalErr(fmt.Errorf("link saved for %s, but removing materialized source failed: %w", name, err))
 		}
 		fmt.Printf("Linked %s -> %s\n", name, abs)
-		fmt.Println("Removed the materialized src/state for this package; build outputs and third-party sources are kept.")
-		fmt.Println("The linked tree supplies the package while linked; its vmake.lock entry is ignored until 'vmake pkg unlink'.")
+		fmt.Println("Removed the materialized src/state for this target; build outputs and third-party sources are kept.")
+		fmt.Println("The linked tree supplies the source while linked; its vmake.lock entry is ignored until 'vmake pkg unlink'.")
 	},
 }
 
 var pkgUnlinkCmd = &cobra.Command{
-	Use:   "unlink <repo/name>",
+	Use:   "unlink <container|pkg>",
 	Short: "Remove a local source link",
 	Long: `Remove the local source link. The next build uses the package's vmake.lock
 entry when present; otherwise it resolves and writes one. Untagged working-tree

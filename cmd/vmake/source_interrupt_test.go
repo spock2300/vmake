@@ -66,7 +66,6 @@ func TestBuildSourceInterruptReapsGitAndRetries(t *testing.T) {
 			writeExtensionFile(t, filepath.Join(project, "build.go"), fmt.Sprintf(`package main
 import ("os"; "github.com/spock2300/vmake/pkg/api")
 func Main(p *api.Package) {
- p.SetRoot(true)
  p.OnPackage(func(p *api.Package) { p.SetGit(%q) })
  p.OnBuild(func(ctx *api.BuildContext) { ctx.Target("ready").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error { return os.WriteFile("later", []byte("ran"), 0644) }) })
 }`, upstream))

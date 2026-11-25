@@ -180,3 +180,36 @@ func TestSaveAndLoad(t *testing.T) {
 		t.Errorf("Mode = %q, want %q", loaded.Global.Mode, "release")
 	}
 }
+
+func TestParseSetAndUnsetFlags(t *testing.T) {
+	cases := []struct {
+		raw     string
+		wantPkg string
+		wantOpt string
+		wantVal string
+	}{
+		{"mode=debug", "", "mode", "debug"},
+		{"//:debug=true", "//", "debug", "true"},
+		{"//firmware:wifi=true", "//firmware", "wifi", "true"},
+		{"hl/hl-mcu-sdk/system/freertos/lvgl:perf_monitor=true", "hl/hl-mcu-sdk/system/freertos/lvgl", "perf_monitor", "true"},
+	}
+	for _, tc := range cases {
+		pkg, opt, val, err := ParseSetFlag(tc.raw)
+		if err != nil || pkg != tc.wantPkg || opt != tc.wantOpt || val != tc.wantVal {
+			t.Errorf("ParseSetFlag(%q) = (%q, %q, %q, %v), want (%q, %q, %q, nil)",
+				tc.raw, pkg, opt, val, err, tc.wantPkg, tc.wantOpt, tc.wantVal)
+		}
+		unsetRaw := tc.raw[:len(tc.raw)-len(tc.wantVal)-1]
+		uPkg, uOpt, err := ParseUnsetFlag(unsetRaw)
+		if err != nil || uPkg != tc.wantPkg || uOpt != tc.wantOpt {
+			t.Errorf("ParseUnsetFlag(%q) = (%q, %q, %v), want (%q, %q, nil)",
+				unsetRaw, uPkg, uOpt, err, tc.wantPkg, tc.wantOpt)
+		}
+	}
+
+	for _, bad := range []string{"firmware/wifi=true", "bare:wifi=true", "//firmware:=true", ":wifi=true", "//firmware:a:b=1"} {
+		if _, _, _, err := ParseSetFlag(bad); err == nil {
+			t.Errorf("ParseSetFlag(%q) = nil error, want error", bad)
+		}
+	}
+}

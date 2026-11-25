@@ -127,7 +127,12 @@ func (r *StatusReader) ForPackage(repoName, pkgName string) *Status {
 		}
 	}
 	if r.lock != nil {
-		if locked, ok := r.lock.Get(fullName); ok {
+		if locked, ok := r.lock.GetContainer(fullName); ok {
+			status.Locked = locked.Version
+			if status.Locked == "" {
+				status.Locked = repo.ShortCommit(locked.Commit)
+			}
+		} else if locked, ok := r.lock.GetSource(fullName); ok {
 			status.Locked = locked.Version
 			if status.Locked == "" {
 				status.Locked = repo.ShortCommit(locked.Commit)
@@ -246,7 +251,8 @@ func ListNativePackagesAt(depsDir, repoName string) ([]string, error) {
 	}
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if fs.FileExists(filepath.Join(root, entry.Name(), "src", "build.go")) {
+		srcDir := filepath.Join(root, entry.Name(), "src")
+		if fs.FileExists(filepath.Join(srcDir, "build.go")) || fs.FileExists(filepath.Join(srcDir, buildscript.ManifestFileName)) {
 			names = append(names, entry.Name())
 		}
 	}
@@ -438,9 +444,6 @@ func FormatPackageRequires(pkg *api.Package) []string {
 	var result []string
 	for _, require := range pkg.GetRequires().Get() {
 		value := require.Name
-		if require.Constraint != "" {
-			value += " " + require.Constraint
-		}
 		if seen[value] {
 			continue
 		}
@@ -452,13 +455,7 @@ func FormatPackageRequires(pkg *api.Package) []string {
 
 func AddRequiresSnippet(repoName, pkgName, version string) string {
 	ref := repoName + "/" + pkgName
-	constraint := ""
-	if version != "" {
-		if parsed, ok := api.ParseVersion(version); ok {
-			constraint = fmt.Sprintf(" >= %d.%d", parsed.Major, parsed.Minor)
-		}
-	}
-	return fmt.Sprintf("p.AddRequires(%q)", ref+constraint)
+	return fmt.Sprintf("p.AddRequires(%q)", ref)
 }
 
 func TrustWarning(repoName, source string) string {

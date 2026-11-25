@@ -28,6 +28,7 @@ func writePureAddDepsMultiModuleProject(t *testing.T, root string) string {
 	t.Helper()
 	proj := filepath.Join(root, "pure_adddeps")
 
+	writeExtensionFile(t, filepath.Join(proj, "vmake.json"), `{"roots":["//app","//mid","//leaf"]}`)
 	writeExtensionFile(t, filepath.Join(proj, "app", "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
@@ -37,7 +38,7 @@ func Main(p *api.Package) {
 		ctx.Target("app").
 			SetKind(api.TargetBinary).
 			AddFiles("main.c").
-			AddDeps("mid:core")
+			AddDeps("//mid:core")
 	})
 }
 `)
@@ -55,7 +56,7 @@ func Main(p *api.Package) {
 			SetKind(api.TargetStatic).
 			AddFiles("mid.c").
 			AddPublicIncludes("include").
-			AddDeps("leaf:util")
+			AddDeps("//leaf:util")
 	})
 }
 `)
@@ -90,28 +91,28 @@ func writeRootedGraphProject(t *testing.T, root string) string {
 	t.Helper()
 	proj := filepath.Join(root, "ws")
 
+	writeExtensionFile(t, filepath.Join(proj, "vmake.json"), `{"roots":["//app"]}`)
 	writeExtensionFile(t, filepath.Join(proj, "app", "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.Option("use_fast").SetType(api.OptionBool).SetDefault(false)
 	})
 	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("mid")
+		ctx.AddRequires("//mid")
 		if ctx.When("use_fast", true) {
-			ctx.AddRequires("fast")
+			ctx.AddRequires("//fast")
 		}
 	})
 	p.OnBuild(func(ctx *api.BuildContext) {
 		t := ctx.Target("app").
 			SetKind(api.TargetBinary).
 			AddFiles("main.c").
-			AddDeps("mid")
+			AddDeps("//mid")
 		if ctx.When("use_fast", true) {
-			t.AddDeps("fast")
+			t.AddDeps("//fast")
 		}
 	})
 }
@@ -126,14 +127,14 @@ import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
 	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("leaf")
+		ctx.AddRequires("//leaf")
 	})
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("core").
 			SetKind(api.TargetStatic).
 			AddFiles("mid.c").
 			AddPublicIncludes("include").
-			AddDeps("leaf:util")
+			AddDeps("//leaf:util")
 	})
 }
 `)
@@ -149,13 +150,13 @@ import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
 	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("leaf")
+		ctx.AddRequires("//leaf")
 	})
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("accel").
 			SetKind(api.TargetStatic).
 			AddFiles("fast.c").
-			AddDeps("leaf:util")
+			AddDeps("//leaf:util")
 	})
 }
 `)
@@ -181,18 +182,6 @@ func Main(p *api.Package) {
 int leaf_val(void) { return 0; }
 `)
 
-	writeExtensionFile(t, filepath.Join(proj, "unused", "build.go"), `package main
-
-import "github.com/spock2300/vmake/pkg/api"
-
-func Main(p *api.Package) {
-	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("unused").SetKind(api.TargetStatic).AddFiles("u.c")
-	})
-}
-`)
-	writeExtensionFile(t, filepath.Join(proj, "unused", "u.c"), "int u(void) { return 1; }\n")
-
 	return proj
 }
 
@@ -203,7 +192,7 @@ func TestDepsGraphFormatsAndUnifiedInspectQuery(t *testing.T) {
 	if code != 0 || stderr != "" {
 		t.Fatalf("deps graph exit=%d stderr=%q stdout=%q", code, stderr, stdout)
 	}
-	wantText := "app mid\nmid leaf\n"
+	wantText := "//app //mid\n//mid //leaf\n"
 	if stdout != wantText {
 		t.Fatalf("deps graph =\n%s\nwant:\n%s", stdout, wantText)
 	}
@@ -212,7 +201,7 @@ func TestDepsGraphFormatsAndUnifiedInspectQuery(t *testing.T) {
 	if code != 0 || stderr != "" {
 		t.Fatalf("deps graph --targets exit=%d stderr=%q", code, stderr)
 	}
-	wantTargetText := "app:app mid:core\nmid:core leaf:util\n"
+	wantTargetText := "//app:app //mid:core\n//mid:core //leaf:util\n"
 	if stdout != wantTargetText {
 		t.Fatalf("deps graph --targets =\n%s\nwant:\n%s", stdout, wantTargetText)
 	}
@@ -221,7 +210,7 @@ func TestDepsGraphFormatsAndUnifiedInspectQuery(t *testing.T) {
 	if code != 0 || stderr != "" {
 		t.Fatalf("deps graph --format dot exit=%d stderr=%q", code, stderr)
 	}
-	if !strings.Contains(stdout, "digraph vmake_deps {") || !strings.Contains(stdout, `"app" -> "mid";`) || !strings.Contains(stdout, `"mid" -> "leaf";`) {
+	if !strings.Contains(stdout, "digraph vmake_deps {") || !strings.Contains(stdout, `"//app" -> "//mid";`) || !strings.Contains(stdout, `"//mid" -> "//leaf";`) {
 		t.Fatalf("unexpected dot output:\n%s", stdout)
 	}
 
@@ -229,7 +218,7 @@ func TestDepsGraphFormatsAndUnifiedInspectQuery(t *testing.T) {
 	if code != 0 || stderr != "" {
 		t.Fatalf("deps graph --format mermaid exit=%d stderr=%q", code, stderr)
 	}
-	if !strings.Contains(stdout, "flowchart TD") || !strings.Contains(stdout, `["app"]`) || !strings.Contains(stdout, "-->") {
+	if !strings.Contains(stdout, "flowchart TD") || !strings.Contains(stdout, `["//app"]`) || !strings.Contains(stdout, "-->") {
 		t.Fatalf("unexpected mermaid output:\n%s", stdout)
 	}
 
@@ -238,16 +227,16 @@ func TestDepsGraphFormatsAndUnifiedInspectQuery(t *testing.T) {
 		t.Fatalf("inspect exit=%d stderr=%q", code, stderr)
 	}
 	insp := decodeInspectEnvelope(t, stdout)
-	if !slices.Equal(insp.Data.Roots, []string{"app"}) {
-		t.Fatalf("inspect roots = %v, want [app]", insp.Data.Roots)
+	if !slices.Equal(insp.Data.Roots, []string{"//app", "//mid", "//leaf"}) {
+		t.Fatalf("inspect roots = %v, want [//app //mid //leaf]", insp.Data.Roots)
 	}
-	wantInspectGraph := [][2]string{{"app", "mid"}, {"mid", "leaf"}}
+	wantInspectGraph := [][2]string{{"//app", "//mid"}, {"//mid", "//leaf"}}
 	if got := inspectEdgePairs(insp.Data.Graph); !slices.Equal(got, wantInspectGraph) {
 		t.Fatalf("inspect graph = %v, want %v", got, wantInspectGraph)
 	}
-	appPkg := inspectPackageNamed(t, insp.Data, "app")
-	if !slices.Equal(appPkg.Deps, []string{"mid"}) {
-		t.Fatalf("inspect app.Deps = %v, want [mid]", appPkg.Deps)
+	appPkg := inspectPackageNamed(t, insp.Data, "//app")
+	if !slices.Equal(appPkg.Deps, []string{"//mid"}) {
+		t.Fatalf("inspect //app.Deps = %v, want [//mid]", appPkg.Deps)
 	}
 
 	stdout, stderr, code = runInspectCommand(t, pureProj, "inspect", "--no-targets")
@@ -263,7 +252,7 @@ func TestDepsGraphFormatsAndUnifiedInspectQuery(t *testing.T) {
 	if code != 0 || stderr != "" {
 		t.Fatalf("query exit=%d stderr=%q", code, stderr)
 	}
-	if !strings.Contains(stdout, "app (binary)") || !strings.Contains(stdout, "└── mid:core (static)") || !strings.Contains(stdout, "    └── leaf:util (static)") {
+	if !strings.Contains(stdout, "//app:app (binary)") || !strings.Contains(stdout, "└── //mid:core (static)") || !strings.Contains(stdout, "    └── //leaf:util (static)") {
 		t.Fatalf("query did not render nested AddDeps tree:\n%s", stdout)
 	}
 
@@ -276,26 +265,26 @@ func TestDepsGraphFormatsAndUnifiedInspectQuery(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
 		t.Fatalf("decode deps graph json: %v\n%s", err, stdout)
 	}
-	if !slices.Contains(env.Packages, "unused") || !slices.Contains(env.Packages, "fast") {
-		t.Fatalf("expected --all packages to include unused and fast, got %v", env.Packages)
+	if !slices.Contains(env.Packages, "//fast") {
+		t.Fatalf("expected --all packages to include conditional //fast, got %v", env.Packages)
 	}
-	if !slices.Equal(env.Roots, []string{"app"}) {
-		t.Fatalf("expected roots=[app], got %v", env.Roots)
+	if !slices.Equal(env.Roots, []string{"//app"}) {
+		t.Fatalf("expected roots=[//app], got %v", env.Roots)
 	}
 }
 
 func TestDepsWhyPackageAndTarget(t *testing.T) {
 	proj := writeRootedGraphProject(t, t.TempDir())
 
-	stdout, stderr, code := runInspectCommand(t, proj, "deps", "why", "leaf")
+	stdout, stderr, code := runInspectCommand(t, proj, "deps", "why", "//leaf")
 	if code != 0 || stderr != "" {
-		t.Fatalf("deps why leaf exit=%d stderr=%q", code, stderr)
+		t.Fatalf("deps why //leaf exit=%d stderr=%q", code, stderr)
 	}
-	if !strings.Contains(stdout, "# leaf\n") || !strings.Contains(stdout, "app\n") || !strings.Contains(stdout, "mid (OnRequire, app:app -> mid:core)") || !strings.Contains(stdout, "leaf (OnRequire, mid:core -> leaf:util)") {
-		t.Fatalf("unexpected deps why leaf output:\n%s", stdout)
+	if !strings.Contains(stdout, "# //leaf\n") || !strings.Contains(stdout, "//app\n") || !strings.Contains(stdout, "//mid (OnRequire, //app:app -> //mid:core)") || !strings.Contains(stdout, "//leaf (OnRequire, //mid:core -> //leaf:util)") {
+		t.Fatalf("unexpected deps why //leaf output:\n%s", stdout)
 	}
 
-	stdout, stderr, code = runInspectCommand(t, proj, "deps", "why", "leaf", "--all", "--json", "-s", "app/use_fast=true")
+	stdout, stderr, code = runInspectCommand(t, proj, "deps", "why", "//leaf", "--all", "--json", "-s", "//app:use_fast=true")
 	if code != 0 || stderr != "" {
 		t.Fatalf("deps why --all --json exit=%d stderr=%q", code, stderr)
 	}
@@ -304,30 +293,30 @@ func TestDepsWhyPackageAndTarget(t *testing.T) {
 		t.Fatalf("decode deps why json: %v\n%s", err, stdout)
 	}
 	if !whyEnv.Exists || !whyEnv.Needed || len(whyEnv.Paths) != 2 {
-		t.Fatalf("expected 2 paths to leaf when use_fast=true, got %+v", whyEnv)
+		t.Fatalf("expected 2 paths to //leaf when use_fast=true, got %+v", whyEnv)
 	}
 
-	stdout, stderr, code = runInspectCommand(t, proj, "deps", "why", "leaf:util")
+	stdout, stderr, code = runInspectCommand(t, proj, "deps", "why", "//leaf:util")
 	if code != 0 || stderr != "" {
-		t.Fatalf("deps why leaf:util exit=%d stderr=%q", code, stderr)
+		t.Fatalf("deps why //leaf:util exit=%d stderr=%q", code, stderr)
 	}
-	if !strings.Contains(stdout, "# leaf:util\n") || !strings.Contains(stdout, "app:app\n") || !strings.Contains(stdout, "mid:core") || !strings.Contains(stdout, "leaf:util") {
-		t.Fatalf("unexpected deps why leaf:util output:\n%s", stdout)
-	}
-
-	stdout, stderr, code = runInspectCommand(t, proj, "deps", "why", "app")
-	if code != 0 || !strings.Contains(stdout, "app (root)") {
-		t.Fatalf("deps why app exit=%d stdout=%q", code, stdout)
+	if !strings.Contains(stdout, "# //leaf:util\n") || !strings.Contains(stdout, "//app:app\n") || !strings.Contains(stdout, "//mid:core") || !strings.Contains(stdout, "//leaf:util") {
+		t.Fatalf("unexpected deps why //leaf:util output:\n%s", stdout)
 	}
 
-	stdout, stderr, code = runInspectCommand(t, proj, "deps", "why", "unused")
+	stdout, stderr, code = runInspectCommand(t, proj, "deps", "why", "//app")
+	if code != 0 || !strings.Contains(stdout, "//app (root)") {
+		t.Fatalf("deps why //app exit=%d stdout=%q", code, stdout)
+	}
+
+	stdout, stderr, code = runInspectCommand(t, proj, "deps", "why", "//fast")
 	if code != 0 || !strings.Contains(stdout, "not reachable") {
-		t.Fatalf("deps why unused exit=%d stdout=%q", code, stdout)
+		t.Fatalf("deps why //fast exit=%d stdout=%q", code, stdout)
 	}
 
-	stdout, _, code = runInspectCommand(t, proj, "deps", "why", "missing_pkg", "--json")
+	stdout, _, code = runInspectCommand(t, proj, "deps", "why", "//missing_pkg", "--json")
 	if code == 0 {
-		t.Fatalf("expected non-zero exit for missing_pkg, stdout=%q", stdout)
+		t.Fatalf("expected non-zero exit for //missing_pkg, stdout=%q", stdout)
 	}
 	var missingEnv depsWhyEnvelope
 	if err := json.Unmarshal([]byte(stdout), &missingEnv); err != nil || missingEnv.Exists {
@@ -360,23 +349,23 @@ func TestDepsCheckAndBuildEnforceGoRules(t *testing.T) {
 
 	t.Run("onrequire_cycle", func(t *testing.T) {
 		proj := filepath.Join(t.TempDir(), "cycle")
+		writeExtensionFile(t, filepath.Join(proj, "vmake.json"), `{"roots":["//root"]}`)
 		writeExtensionFile(t, filepath.Join(proj, "root", "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("a") })
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("//a") })
 }
 `)
 		writeExtensionFile(t, filepath.Join(proj, "a", "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("b") })
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("//b") })
 }
 `)
 		writeExtensionFile(t, filepath.Join(proj, "b", "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("a") })
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("//a") })
 }
 `)
 		stdout, _, code := runInspectCommand(t, proj, "deps", "check", "--json")
@@ -387,18 +376,19 @@ func Main(p *api.Package) {
 		if err := json.Unmarshal([]byte(stdout), &env); err != nil {
 			t.Fatalf("decode check json: %v\n%s", err, stdout)
 		}
-		if env.Status != "error" || len(env.Issues) != 1 || env.Issues[0].Kind != "package-cycle" || !strings.Contains(env.Issues[0].Message, "a -> b -> a") || strings.Contains(env.Issues[0].Message, "root -> a") {
-			t.Fatalf("expected minimal cycle a -> b -> a, got %+v", env)
+		if env.Status != "error" || len(env.Issues) != 1 || env.Issues[0].Kind != "package-cycle" || !strings.Contains(env.Issues[0].Message, "//a -> //b -> //a") || strings.Contains(env.Issues[0].Message, "//root -> //a") {
+			t.Fatalf("expected minimal cycle //a -> //b -> //a, got %+v", env)
 		}
 	})
 
 	t.Run("cross_package_reverse_target_cycle", func(t *testing.T) {
 		proj := filepath.Join(t.TempDir(), "revcycle")
+		writeExtensionFile(t, filepath.Join(proj, "vmake.json"), `{"roots":["//a","//b"]}`)
 		writeExtensionFile(t, filepath.Join(proj, "a", "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("a1").SetKind(api.TargetStatic).AddFiles("a1.c").AddDeps("b:b1")
+		ctx.Target("a1").SetKind(api.TargetStatic).AddFiles("a1.c").AddDeps("//b:b1")
 		ctx.Target("a2").SetKind(api.TargetStatic).AddFiles("a2.c")
 	})
 }
@@ -410,7 +400,7 @@ import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("b1").SetKind(api.TargetStatic).AddFiles("b1.c")
-		ctx.Target("b2").SetKind(api.TargetStatic).AddFiles("b2.c").AddDeps("a:a2")
+		ctx.Target("b2").SetKind(api.TargetStatic).AddFiles("b2.c").AddDeps("//a:a2")
 	})
 }
 `)
@@ -418,18 +408,19 @@ func Main(p *api.Package) {
 		writeExtensionFile(t, filepath.Join(proj, "b", "b2.c"), "int b2(void){return 2;}\n")
 
 		stdout, _, code := runInspectCommand(t, proj, "deps", "check")
-		if code == 0 || !strings.Contains(stdout, "[package-cycle]") || !strings.Contains(stdout, "a -> b -> a") {
+		if code == 0 || !strings.Contains(stdout, "[package-cycle]") || !strings.Contains(stdout, "//a -> //b -> //a") {
 			t.Fatalf("expected cross-package reverse target cycle error, code=%d stdout=%q", code, stdout)
 		}
 	})
 
 	t.Run("internal_visibility_violation", func(t *testing.T) {
 		proj := filepath.Join(t.TempDir(), "intvis")
+		writeExtensionFile(t, filepath.Join(proj, "vmake.json"), `{"roots":["//app","//sdk/internal/secret"]}`)
 		writeExtensionFile(t, filepath.Join(proj, "app", "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("main.c").AddDeps("secret")
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("main.c").AddDeps("//sdk/internal/secret")
 	})
 }
 `)
@@ -456,11 +447,12 @@ func Main(p *api.Package) {
 		}
 
 		hdrProj := filepath.Join(t.TempDir(), "hdr")
+		writeExtensionFile(t, filepath.Join(hdrProj, "vmake.json"), `{"roots":["//app","//lib"]}`)
 		writeExtensionFile(t, filepath.Join(hdrProj, "app", "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("main.c").AddDeps("lib")
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("main.c").AddDeps("//lib")
 	})
 }
 `)
@@ -489,6 +481,7 @@ func Main(p *api.Package) {
 func TestDepsSubagentReviewRegressions(t *testing.T) {
 	t.Run("noisy_stdout_and_no_gitignore_mutation", func(t *testing.T) {
 		proj := filepath.Join(t.TempDir(), "noisy")
+		writeExtensionFile(t, filepath.Join(proj, "vmake.json"), `{"roots":["//app"]}`)
 		writeExtensionFile(t, filepath.Join(proj, "app", "build.go"), `package main
 
 import (
@@ -498,14 +491,13 @@ import (
 
 func Main(p *api.Package) {
 	fmt.Println("NOISY_MAIN")
-	p.SetRoot(true)
 	p.OnRequire(func(ctx *api.RequireContext) {
 		fmt.Println("NOISY_REQUIRE")
-		ctx.AddRequires("mid")
+		ctx.AddRequires("//mid")
 	})
 	p.OnBuild(func(ctx *api.BuildContext) {
 		fmt.Println("NOISY_BUILD")
-		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("main.c").AddDeps("mid")
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("main.c").AddDeps("//mid")
 	})
 }
 `)
@@ -531,7 +523,7 @@ func Main(p *api.Package) {
 			t.Fatalf("noisy build.go broke deps graph --json: %v\n%s", err, stdout)
 		}
 
-		stdout, stderr, code = runInspectCommand(t, proj, "deps", "why", "mid", "--json")
+		stdout, stderr, code = runInspectCommand(t, proj, "deps", "why", "//mid", "--json")
 		if code != 0 || stderr != "" {
 			t.Fatalf("deps why --json exit=%d stderr=%q stdout=%q", code, stderr, stdout)
 		}
@@ -556,17 +548,17 @@ func Main(p *api.Package) {
 
 	t.Run("zero_target_public_umbrella_wrapping_internal", func(t *testing.T) {
 		proj := filepath.Join(t.TempDir(), "umbrella")
+		writeExtensionFile(t, filepath.Join(proj, "vmake.json"), `{"roots":["//app"]}`)
 		writeExtensionFile(t, filepath.Join(proj, "app", "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("sdk")
+		ctx.AddRequires("//sdk")
 	})
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("main.c").AddDeps("sdk")
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("main.c").AddDeps("//sdk")
 	})
 }
 `)
@@ -577,7 +569,7 @@ import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
 	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("secret")
+		ctx.AddRequires("//sdk/internal/secret")
 	})
 }
 `)
@@ -607,17 +599,17 @@ func Main(p *api.Package) {
 
 	t.Run("unmaterialized_explicit_target_and_missing_addrequires", func(t *testing.T) {
 		proj := filepath.Join(t.TempDir(), "unmat")
+		writeExtensionFile(t, filepath.Join(proj, "vmake.json"), `{"roots":["//app"]}`)
 		writeExtensionFile(t, filepath.Join(proj, "app", "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("ext")
+		ctx.AddRequires("//ext")
 	})
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("main.c").AddDeps("ext:extlib")
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("main.c").AddDeps("//ext:extlib")
 	})
 }
 `)
@@ -639,20 +631,20 @@ func Main(p *api.Package) {
 		if code != 0 || stderr != "" {
 			t.Fatalf("deps check failed on unmaterialized SetGit explicit target: code=%d stderr=%q stdout=%q", code, stderr, stdout)
 		}
-		stdout, _, code = runInspectCommand(t, proj, "deps", "why", "ext:extlib", "--json")
+		stdout, _, code = runInspectCommand(t, proj, "deps", "why", "//ext:extlib", "--json")
 		if code == 0 || !strings.Contains(stdout, "not materialized") {
-			t.Fatalf("expected unmaterialized reason for ext:extlib, code=%d stdout=%q", code, stdout)
+			t.Fatalf("expected unmaterialized reason for //ext:extlib, code=%d stdout=%q", code, stdout)
 		}
 
 		missingReq := filepath.Join(t.TempDir(), "missing_req")
+		writeExtensionFile(t, filepath.Join(missingReq, "vmake.json"), `{"roots":["//app"]}`)
 		writeExtensionFile(t, filepath.Join(missingReq, "app", "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("main.c").AddDeps("secret")
+		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("main.c").AddDeps("//sdk/internal/secret")
 	})
 }
 `)
@@ -682,7 +674,7 @@ func Main(p *api.Package) {
 			{"deps", "graph", "--json", "--targets"},
 			{"deps", "graph", "--json", "--format", "dot"},
 			{"deps", "graph", "-s", "unknown_opt=1"},
-			{"deps", "why", "app", "-s", "unknown_opt=1"},
+			{"deps", "why", "//app", "-s", "unknown_opt=1"},
 			{"deps", "check", "-s", "unknown_opt=1"},
 		} {
 			_, _, code := runInspectCommand(t, proj, args...)
@@ -691,22 +683,22 @@ func Main(p *api.Package) {
 			}
 		}
 
-		stdout, _, code := runInspectCommand(t, proj, "deps", "why", "app:", "--json")
+		stdout, _, code := runInspectCommand(t, proj, "deps", "why", "//app:", "--json")
 		if code == 0 || !strings.Contains(stdout, "invalid target reference") {
-			t.Fatalf("expected invalid target reference for 'app:', code=%d stdout=%q", code, stdout)
+			t.Fatalf("expected invalid target reference for '//app:', code=%d stdout=%q", code, stdout)
 		}
 	})
 
 	t.Run("unwired_intermediate_userequires_diamond", func(t *testing.T) {
 		proj := filepath.Join(t.TempDir(), "diamond")
+		writeExtensionFile(t, filepath.Join(proj, "vmake.json"), `{"roots":["//app"]}`)
 		writeExtensionFile(t, filepath.Join(proj, "app", "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("mid")
+		ctx.AddRequires("//mid")
 	})
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("main.c").UseRequires()
@@ -720,7 +712,7 @@ import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
 	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("leaf")
+		ctx.AddRequires("//leaf")
 	})
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("mid").SetKind(api.TargetStatic).AddFiles("mid.c")
@@ -740,13 +732,13 @@ func Main(p *api.Package) {
 `)
 		writeExtensionFile(t, filepath.Join(proj, "leaf", "leaf.c"), "int leaf(void){return 0;}\n")
 
-		stdout, stderr, code := runInspectCommand(t, proj, "deps", "why", "leaf:leaf", "--json")
+		stdout, stderr, code := runInspectCommand(t, proj, "deps", "why", "//leaf:leaf", "--json")
 		if code != 0 || stderr != "" {
-			t.Fatalf("deps why leaf:leaf exit=%d stderr=%q stdout=%q", code, stderr, stdout)
+			t.Fatalf("deps why //leaf:leaf exit=%d stderr=%q stdout=%q", code, stderr, stdout)
 		}
 		var env depsWhyEnvelope
 		if err := json.Unmarshal([]byte(stdout), &env); err != nil || len(env.Steps) == 0 {
-			t.Fatalf("expected reachable path to leaf:leaf via UseRequires, got err=%v env=%+v", err, env)
+			t.Fatalf("expected reachable path to //leaf:leaf via UseRequires, got err=%v env=%+v", err, env)
 		}
 	})
 }
@@ -765,11 +757,11 @@ func inspectEdgePairs(edges []inspectEdge) [][2]string {
 // rejects the current configuration; only the active set is the caller's build.
 func TestWarnTargetDeclareIssuesFollowsActiveSet(t *testing.T) {
 	facts := pipeline.GraphFacts{
-		Needed: pipeline.NeededSet{"app": true},
+		Needed: pipeline.NeededSet{"//app": true},
 		Issues: []pipeline.GraphIssue{
-			{Kind: "target-declare", Package: "app", Message: "boom-needed"},
-			{Kind: "target-declare", Package: "extra", Message: "boom-unneeded"},
-			{Kind: "missing-dependency", Package: "app", Message: "other-kind"},
+			{Kind: "target-declare", Package: "//app", Message: "boom-needed"},
+			{Kind: "target-declare", Package: "//extra", Message: "boom-unneeded"},
+			{Kind: "missing-dependency", Package: "//app", Message: "other-kind"},
 		},
 	}
 	var buf bytes.Buffer
@@ -807,7 +799,7 @@ func TestDepsWhyCompletionUsesSharedPreamble(t *testing.T) {
 	if directive != cobra.ShellCompDirectiveNoFileComp || len(packages) == 0 {
 		t.Fatalf("package completion = %v / %v", packages, directive)
 	}
-	targets, _ := completeDepsWhyArg(cmd, nil, "app:")
+	targets, _ := completeDepsWhyArg(cmd, nil, "//app:")
 	found := false
 	for _, candidate := range targets {
 		if strings.Contains(candidate, ":") {
@@ -832,7 +824,6 @@ import (
 )
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
 		_ = os.WriteFile("blocked.txt", []byte("x"), 0644)
 	})

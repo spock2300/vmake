@@ -43,9 +43,7 @@ func makeRemotePkgDirs(pkgRoot, member string, key pkgKey) *api.PkgDirs {
 }
 
 func (s *sourceStage) selectPackageSource(name string) error {
-	root := ""
-	if dirs := s.pkgDirs[name]; dirs != nil {
-		root = dirs.SourceDir
-	}
-	return s.selectPackageSourceRoot(name, root)
+	node := s.rc.ctx.DepGraph.Packages[name]
+	loc := s.rc.ctx.packageLocation(name, node)
+	return s.selectPackageSourceRoot(name, loc.ThirdPartyRoot)
 }

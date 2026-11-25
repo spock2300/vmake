@@ -17,7 +17,7 @@ func TestCollectDepArtifactsMissingNonVoidArtifact(t *testing.T) {
 	lib.SetTest(true)
 	app := makeTargetWithDeps("app", "lib")
 
-	graph, err := NewBuildGraph(makeTargets("p", app, lib), nil, nil)
+	graph, err := NewBuildGraph(makeTargets("p", app, lib), nil)
 	if err != nil {
 		t.Fatalf("NewBuildGraph: %v", err)
 	}
@@ -47,19 +47,19 @@ func TestCollectDepArtifactsPublicAttributesAndLinkable(t *testing.T) {
 		AddPublicCxxFlags("-std=c++20").
 		AddPublicLdFlags("-Wl,--leaf").
 		AddPublicLinks("m")
-	mid := makeTargetWithDeps("mid", "leaf:leaf").
+	mid := makeTargetWithDeps("mid", "//leaf:leaf").
 		SetKind(api.TargetStatic).
 		AddPublicDefines("MID_DEF=1")
-	app := makeTargetWithDeps("app", "mid:mid", "leaf:leaf").
+	app := makeTargetWithDeps("app", "//mid:mid", "//leaf:leaf").
 		SetKind(api.TargetBinary).
 		AddPublicDefines("APP_PUBLIC=1")
 
 	targets := map[string]map[string]*api.Target{
-		"app":  {"app": app},
-		"mid":  {"mid": mid},
-		"leaf": {"leaf": leaf},
+		"//app":  {"app": app},
+		"//mid":  {"mid": mid},
+		"//leaf": {"leaf": leaf},
 	}
-	graph, err := NewBuildGraph(targets, nil, nil)
+	graph, err := NewBuildGraph(targets, nil)
 	if err != nil {
 		t.Fatalf("NewBuildGraph: %v", err)
 	}
@@ -72,21 +72,21 @@ func TestCollectDepArtifactsPublicAttributesAndLinkable(t *testing.T) {
 		Toolchain: &toolchain.Toolchain{},
 		Tools:     &ResolvedTools{},
 		Layouts: map[string]*PackageLayout{
-			"leaf": {Dirs: api.PkgDirs{SourceDir: leafDir, BuildDir: leafDir}, BuildKey: "k", Ready: true},
-			"mid":  {Dirs: api.PkgDirs{SourceDir: midDir, BuildDir: midDir}, BuildKey: "k", Ready: true},
-			"app":  {Dirs: api.PkgDirs{SourceDir: appDir, BuildDir: appDir}, BuildKey: "k", Ready: true},
+			"//leaf": {Dirs: api.PkgDirs{SourceDir: leafDir, BuildDir: leafDir}, BuildKey: "k", Ready: true},
+			"//mid":  {Dirs: api.PkgDirs{SourceDir: midDir, BuildDir: midDir}, BuildKey: "k", Ready: true},
+			"//app":  {Dirs: api.PkgDirs{SourceDir: appDir, BuildDir: appDir}, BuildKey: "k", Ready: true},
 		},
 		GlobalFlags: &[4][]string{},
 	})
 
-	wantMid := PlacementFor(mid, s.pkgs["mid"], s.targetOS("mid")).OutputPath
+	wantMid := PlacementFor(mid, s.pkgs["//mid"], s.targetOS("//mid")).OutputPath
 	if err := os.MkdirAll(filepath.Dir(wantMid), 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(wantMid, []byte("arch"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	wantLeaf := PlacementFor(leaf, s.pkgs["leaf"], s.targetOS("leaf")).OutputPath
+	wantLeaf := PlacementFor(leaf, s.pkgs["//leaf"], s.targetOS("//leaf")).OutputPath
 	if err := os.MkdirAll(filepath.Dir(wantLeaf), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestCollectDepArtifactsPublicAttributesAndLinkable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	appNode, err := graph.GetNode("app:app")
+	appNode, err := graph.GetNode("//app:app")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestTargetVoidIncrementalInputsOutputs(t *testing.T) {
 			return os.WriteFile(outPath, data, 0644)
 		})
 
-	graph, err := NewBuildGraph(makeTargets("p", gen), nil, nil)
+	graph, err := NewBuildGraph(makeTargets("p", gen), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,13 +249,13 @@ func TestCollectDepArtifactsVoidTargetWithoutProvidedLibs(t *testing.T) {
 	vendor := makeTargetWithDeps("vendor").SetKind(api.TargetVoid)
 	wrapped := makeTargetWithDeps("wrapped").SetKind(api.TargetVoid).AddProvidedLibs("wrapped")
 	app := makeTargetWithDeps("app")
-	app.AddDeps("dep:vendor", "wrapper:wrapped")
+	app.AddDeps("//dep:vendor", "//wrapper:wrapped")
 
 	graph, err := NewBuildGraph(map[string]map[string]*api.Target{
-		"app":     {"app": app},
-		"dep":     {"vendor": vendor},
-		"wrapper": {"wrapped": wrapped},
-	}, nil, nil)
+		"//app":     {"app": app},
+		"//dep":     {"vendor": vendor},
+		"//wrapper": {"wrapped": wrapped},
+	}, nil)
 	if err != nil {
 		t.Fatalf("NewBuildGraph: %v", err)
 	}
@@ -266,11 +266,11 @@ func TestCollectDepArtifactsVoidTargetWithoutProvidedLibs(t *testing.T) {
 		ctx:   context.Background(),
 		graph: graph,
 		pkgs: map[string]*PkgInfo{
-			"dep":     {PkgDirs: api.PkgDirs{InstallDir: installDir}},
-			"wrapper": {PkgDirs: api.PkgDirs{InstallDir: wrapperDir}},
+			"//dep":     {PkgDirs: api.PkgDirs{InstallDir: installDir}},
+			"//wrapper": {PkgDirs: api.PkgDirs{InstallDir: wrapperDir}},
 		},
 	}
-	appNode, err := graph.GetNode("app:app")
+	appNode, err := graph.GetNode("//app:app")
 	if err != nil {
 		t.Fatal(err)
 	}

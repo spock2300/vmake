@@ -399,7 +399,7 @@ func TestMouseClickTogglesTreeExpansion(t *testing.T) {
 		t.Error("remote/lib should be visible after expanding Remote group")
 	}
 
-	x, y = mouseTestPosition(t, m.View(), m.packageLabel(RemoteGroupPkgName))
+	x, y = mouseTestPosition(t, m.View(), "▾ "+m.packageLabel(RemoteGroupPkgName))
 	m.handleMouse(tea.MouseMsg{X: x, Y: y, Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 	remoteNode = nil
 	for _, n := range m.flat {

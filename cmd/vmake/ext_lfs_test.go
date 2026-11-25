@@ -233,7 +233,6 @@ func TestExtensionLFSDownloadsOnFirstBuild(t *testing.T) {
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-    p.SetRoot(true)
     p.OnBuild(func(ctx *api.BuildContext) { ctx.Target("ready").SetKind(api.TargetVoid) })
 }
 `)

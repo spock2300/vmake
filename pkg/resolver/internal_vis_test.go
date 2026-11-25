@@ -5,52 +5,47 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/spock2300/vmake/pkg/buildscript"
 )
 
-func writeLocalScript(t *testing.T, root, relDir, body string) buildscript.Source {
+func writeProjectFiles(t *testing.T, root string, files map[string]string) {
 	t.Helper()
-	dir := filepath.Join(root, filepath.FromSlash(relDir))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	file := filepath.Join(dir, "build.go")
-	if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return buildscript.Source{
-		Name: filepath.Base(dir),
-		Dir:  dir,
-		Path: file,
+	for name, content := range files {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
 func TestResolverInternalVisibilityLocalSubtree(t *testing.T) {
-	root := t.TempDir()
-	wireSrc := writeLocalScript(t, root, "net/internal/wire", `package main
+	root := canonicalTempDir(t)
+	writeProjectFiles(t, root, map[string]string{
+		"vmake.json": `{"roots": ["//net/http"]}`,
+		"net/internal/wire/build.go": `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {}
-`)
-	httpSrc := writeLocalScript(t, root, "net/http", `package main
+`,
+		"net/http/build.go": `package main
 import "github.com/spock2300/vmake/pkg/api"
-func Main(p *api.Package) { p.AddRequires("wire") }
-`)
-	appSrc := writeLocalScript(t, root, "app", `package main
+func Main(p *api.Package) { p.AddRequires("//net/internal/wire") }
+`,
+		"app/build.go": `package main
 import "github.com/spock2300/vmake/pkg/api"
-func Main(p *api.Package) { p.AddRequires("wire") }
-`)
+func Main(p *api.Package) { p.AddRequires("//net/internal/wire") }
+`,
+	})
 
 	rOK := NewResolver(nil, filepath.Join(root, ".vmake_deps"))
-	rOK.SetProjectRoot(root)
-	if err := rOK.ResolveAll([]buildscript.Source{wireSrc, httpSrc}); err != nil {
-		t.Fatalf("expected net/http -> net/internal/wire allowed, got %v", err)
+	if err := rOK.ResolveProject(root, nil); err != nil {
+		t.Fatalf("expected //net/http -> //net/internal/wire allowed, got %v", err)
 	}
 
 	rBad := NewResolver(nil, filepath.Join(root, ".vmake_deps"))
-	rBad.SetProjectRoot(root)
-	err := rBad.ResolveAll([]buildscript.Source{wireSrc, appSrc})
-	if err == nil || !strings.Contains(err.Error(), `use of internal package "wire" not allowed from package "app"`) {
+	err := rBad.ResolveProject(root, []string{"//app"})
+	if err == nil || !strings.Contains(err.Error(), `use of internal package "//net/internal/wire" not allowed from package "//app"`) {
 		t.Fatalf("expected internal visibility error, got %v", err)
 	}
 

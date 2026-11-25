@@ -13,14 +13,15 @@ import (
 )
 
 type TreeNode struct {
-	Name       string
-	PkgName    string
-	Children   []*TreeNode
-	Expanded   bool
-	IsExternal bool
-	IsGroup    bool
-	Depth      int
-	Prefix     string
+	Name        string
+	PkgName     string
+	ContainerID string
+	Children    []*TreeNode
+	Expanded    bool
+	IsExternal  bool
+	IsGroup     bool
+	Depth       int
+	Prefix      string
 }
 
 type OptionItem struct {
@@ -31,9 +32,20 @@ type OptionItem struct {
 
 const (
 	GlobalPkgName        = "__global__"
+	LocalGroupPkgName    = "__local__"
 	RemoteGroupPkgName   = "__remote__"
 	InactiveGroupPkgName = "__inactive__"
+	containerGroupPrefix = "__container__:"
+	dirGroupPrefix       = "__dir__:"
 )
+
+func containerGroupPkgName(id string) string { return containerGroupPrefix + id }
+func dirGroupPkgName(containerID, rel string) string {
+	if containerID == "" {
+		return dirGroupPrefix + rel
+	}
+	return dirGroupPrefix + containerID + "/" + rel
+}
 
 type Model struct {
 	editor *config.Editor
@@ -85,6 +97,8 @@ type Model struct {
 	filterInput  string
 
 	deps             map[string][]string
+	containers       map[string]config.WorkbenchContainer
+	pkgContainer     map[string]string
 	preview          config.Preview
 	focusActive      bool
 	baseConfig       *config.ConfigFile
@@ -125,6 +139,8 @@ func NewModel(in Input) Model {
 		language:      systemLanguage(),
 		optCounts:     computeOptCounts(wb.Options, wb.GlobalOptions),
 		deps:          normalizeGraphDeps(wb.Packages, wb.Deps),
+		containers:    wb.Containers,
+		pkgContainer:  wb.PackageContainer,
 		preview:       wb.InitialPreview,
 		focusActive:   wb.FocusActive,
 		baseConfig:    wb.BaseConfig,
@@ -320,10 +336,12 @@ func (m *Model) expandToPkg(target string) bool {
 }
 
 func expandToPkgRec(n *TreeNode, target string) bool {
-	if n.PkgName == target {
-		if isSyntheticGroupPkg(target) {
+	if isSyntheticGroupPkg(target) {
+		if n.PkgName == target {
 			n.Expanded = true
+			return true
 		}
+	} else if !n.IsGroup && n.PkgName == target {
 		return true
 	}
 	for _, c := range n.Children {
@@ -466,11 +484,19 @@ func setExpandedAll(nodes []*TreeNode, expanded, keepGlobal bool) {
 	}
 }
 
+func isGroupBadgeNode(node *TreeNode) bool {
+	return node != nil && node.IsGroup && (node.ContainerID != "" || node.PkgName == LocalGroupPkgName || node.PkgName == RemoteGroupPkgName || node.PkgName == InactiveGroupPkgName)
+}
+
 func calcTreeWidth(flat []*TreeNode, optCounts map[string]int) int {
 	maxW := 0
 	for _, node := range flat {
 		w := nodeFixedPrefixRunes(node) + utf8.RuneCountInString(node.Name)
-		if node.PkgName != "" {
+		if isGroupBadgeNode(node) {
+			if c := subtreePackageCount(node); c > 0 {
+				w += utf8.RuneCountInString(fmt.Sprintf(" (%d)", c))
+			}
+		} else if !node.IsGroup && node.PkgName != "" {
 			if c := optCounts[node.PkgName]; c > 0 {
 				w += utf8.RuneCountInString(fmt.Sprintf(" (%d)", c))
 			}
@@ -642,13 +668,14 @@ func flattenTree(nodes []*TreeNode) []*TreeNode {
 }
 
 func (m *Model) selectFirstPkg() {
-	if len(m.flat) > 0 && m.flat[0].PkgName == GlobalPkgName {
+	if len(m.flat) > 0 && !m.flat[0].IsGroup && m.flat[0].PkgName == GlobalPkgName {
 		m.selectedPkg = GlobalPkgName
 		m.buildOptionItems()
 		return
 	}
-	for _, node := range m.flat {
-		if node.PkgName != "" {
+	for i, node := range m.flat {
+		if !node.IsGroup && node.PkgName != "" {
+			m.treeCursor = i
 			m.selectedPkg = node.PkgName
 			m.buildOptionItems()
 			return
@@ -744,11 +771,17 @@ func (m *Model) refreshPreview() {
 	m.ed().ApplyDerivedOptions(prev.DerivedOptions)
 	if m.focusActive && m.filterInput == "" {
 		curPkg := m.selectedPkg
+		curGroup := ""
+		if curPkg == "" {
+			if cur := m.currentTreeNode(); cur != nil && cur.IsGroup {
+				curGroup = cur.PkgName
+			}
+		}
 		m.rebuildFlat()
 		if curPkg != "" {
 			found := false
 			for i, n := range m.flat {
-				if n.PkgName == curPkg {
+				if !n.IsGroup && n.PkgName == curPkg {
 					m.treeCursor = i
 					found = true
 					break
@@ -758,15 +791,24 @@ func (m *Model) refreshPreview() {
 				m.expandToPkg(curPkg)
 				m.rebuildFlat()
 				for i, n := range m.flat {
-					if n.PkgName == curPkg {
+					if !n.IsGroup && n.PkgName == curPkg {
 						m.treeCursor = i
 						break
 					}
 				}
 			}
+		} else if curGroup != "" {
+			for i, n := range m.flat {
+				if n.IsGroup && n.PkgName == curGroup {
+					m.treeCursor = i
+					break
+				}
+			}
+		}
+		if len(m.flat) > 0 && m.treeCursor >= len(m.flat) {
+			m.treeCursor = len(m.flat) - 1
 		}
 		m.ensureTreeCursorVisible()
-	} else {
 	}
 }
 

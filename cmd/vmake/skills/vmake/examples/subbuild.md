@@ -4,8 +4,8 @@ Demonstrates building a separate host tool as an independent sub-graph, then exe
 
 ## Prerequisites
 
-- The sub-graph package must be reachable in the dependency graph. Without `SetRoot(true)`, VMake treats every local package as a root except local packages that have no `OnRequire` callback and are depended on by another local package, and only when at least one local package uses `OnRequire`; excluded packages still build when reachable from a root. The fallback logs a hint recommending `SetRoot(true)`. With an explicit root, declare `tools` with `ctx.AddRequires("tools")` in `OnRequire`.
-- The sub-graph package's own dependencies must resolve and build (fixture `test_data/07_subbuild_codegen` adds `official/tinyexpr` to the codegen binary).
+- The sub-graph package must be in the needed/required set: declare `p.AddRequires("//tools")` (or `ctx.AddRequires("//tools")` in `OnRequire`) so the lazy loader loads `tools/build.go`.
+- The sub-graph package's own dependencies must resolve and build (fixture `test_data/07_subbuild_codegen` adds `official/tinyexpr` to the codegen binary via `vmake.json` `modules`/`sources`).
 - A working toolchain for the tool package — typically `host` selected via `ctx.ToolchainOption()`/`vmake config` while the main package cross-compiles. The sub-graph builds with the tool package's own toolchain.
 
 ## build.go
@@ -20,13 +20,15 @@ import (
 )
 
 func Main(p *api.Package) {
+    p.AddRequires("//tools")
+
     p.OnBuild(func(ctx *api.BuildContext) {
-        ctx.BuildSubGraph("tools")
+        ctx.BuildSubGraph("//tools")
 
         if !p.DryRun() {
             os.MkdirAll("output", 0755)
         }
-        ctx.Exec(ctx.DepOutput("tools:codegen"), "output/generated.h")
+        ctx.Exec(ctx.DepOutput("//tools:codegen"), "output/generated.h")
 
         ctx.Target("app").
             SetKind(api.TargetBinary).
@@ -110,7 +112,7 @@ Phase 1-3: Main build.go
 ## Key Points
 
 - `BuildSubGraph` runs synchronously and in-process, sharing the parent invocation's session and already-completed targets: a target built by the sub-graph is not rebuilt when the main graph reaches it. In dry-run (`inspect`/`query`/`check-symbols`), `BuildSubGraph` is a no-op and `DepOutput`/`DepBuildDir` return empty strings.
-- The sub-graph package must be in the needed/required set. Without `SetRoot(true)` the fallback root heuristic includes `tools` here (see Prerequisites), so this example works as written. Under an explicit `p.SetRoot(true)` the root must declare `ctx.AddRequires("tools")` in `OnRequire`; local nested `build.go` files are registered under their **directory basename** (`tools/` → package `tools`). Requesting a package outside the needed set fails with "not found in required packages".
+- The sub-graph package must be in the needed/required set: declare `p.AddRequires("//tools")` (or `ctx.AddRequires("//tools")` in `OnRequire`). Requesting a package outside the needed set fails with "not found in required packages".
 - Call `BuildSubGraph` from `OnBuild` only. It runs before the next statement and is rejected while a target callback (`SetBuildFunc`) is executing ("not allowed while target ... is running"); a recursive request for a sub-graph that is still being built is rejected too.
 - Toolchain is read from the package's config entry (or global default). A later request for the same sub-graph package with an incompatible toolchain/option scope fails with an "incompatible build configuration" error (the exact text depends on whether the package binding or the request signature changed).
 - `DepOutput("tools:codegen")` returns the deterministic output path; `DepBuildDir("tools:codegen")` returns the directory containing that output (useful for locating generated headers or other build artifacts).

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
@@ -25,14 +26,22 @@ type stageFixture struct {
 func newStageFixture(t *testing.T, names ...string) *stageFixture {
 	t.Helper()
 	if len(names) == 0 {
-		names = []string{"app", "dep"}
+		names = []string{"//app", "//dep"}
 	}
 	root := t.TempDir()
 	r := resolver.NewResolver(nil, filepath.Join(root, ".vmake_deps"))
 	r.Graph().Order = append([]string(nil), names...)
+	r.Graph().Roots = []string{names[0]}
+	r.Graph().Containers[api.LocalContainerID] = &resolver.ContainerNode{
+		ID:       api.LocalContainerID,
+		Kind:     resolver.SourceKindLocal,
+		Dir:      root,
+		Manifest: &buildscript.Manifest{},
+	}
 	needed := make(NeededSet, len(names))
 	for _, name := range names {
-		dir := filepath.Join(root, name)
+		rel := strings.TrimPrefix(name, "//")
+		dir := filepath.Join(root, filepath.FromSlash(rel))
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -40,7 +49,9 @@ func newStageFixture(t *testing.T, names ...string) *stageFixture {
 			t.Fatal(err)
 		}
 		src := buildscript.NewSource(name, filepath.Join(dir, "build.go"), dir, api.SourceLocal)
-		r.Graph().Packages[name] = resolver.NewPackageNode(name, src, api.NewPackage().SetName(name))
+		src.Container = api.LocalContainerID
+		src.RelPath = rel
+		r.Graph().Packages[name] = resolver.NewPackageNode(name, api.LocalContainerID, rel, resolver.SourceKindLocal, src, api.NewPackage().SetName(name))
 		needed[name] = true
 	}
 	ctx := &RuntimeContext{
@@ -96,9 +107,6 @@ func (f *stageFixture) DeclareTargets() (*declareStage, error) {
 	return decl, nil
 }
 
-// TestStagesHandoff exercises the prepareConfig -> prepareSources handoff
-// through the real stages: the configuration stage owns the flag aggregation
-// and the source stage receives a ready layout for every needed package.
 func TestStagesHandoff(t *testing.T) {
 	skipWithoutHostTools(t)
 	f := newStageFixture(t)
@@ -136,13 +144,11 @@ func TestStagesHandoff(t *testing.T) {
 	}
 }
 
-// TestStagesDeclareTargets drives the declare stage through the fixture: the
-// OnBuild callback runs once and its targets reach the plan stage's input.
 func TestStagesDeclareTargets(t *testing.T) {
 	skipWithoutHostTools(t)
-	f := newStageFixture(t, "app")
+	f := newStageFixture(t, "//app")
 	declarations := 0
-	f.ctx.DepGraph.Packages["app"].Pkg.SetRoot(true).OnBuild(func(ctx *api.BuildContext) {
+	f.ctx.DepGraph.Packages["//app"].Pkg.OnBuild(func(ctx *api.BuildContext) {
 		declarations++
 		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c")
 	})
@@ -159,11 +165,11 @@ func TestStagesDeclareTargets(t *testing.T) {
 	if declarations != 1 {
 		t.Fatalf("OnBuild ran %d times, want 1", declarations)
 	}
-	if decl.allTargets["app"]["app"] == nil {
-		t.Fatalf("allTargets = %+v, want app:app", decl.allTargets)
+	if decl.allTargets["//app"]["app"] == nil {
+		t.Fatalf("allTargets = %+v, want //app:app", decl.allTargets)
 	}
-	if _, ok := decl.pkgMetaMap["app"]; !ok {
-		t.Fatalf("pkgMetaMap = %+v, want an entry for app", decl.pkgMetaMap)
+	if _, ok := decl.pkgMetaMap["//app"]; !ok {
+		t.Fatalf("pkgMetaMap = %+v, want an entry for //app", decl.pkgMetaMap)
 	}
 
 	plan, err := f.Plan()
@@ -173,10 +179,10 @@ func TestStagesDeclareTargets(t *testing.T) {
 	if plan == nil || plan.graph == nil || plan.job == nil {
 		t.Fatalf("plan = %+v, want a graph and a build job", plan)
 	}
-	if _, err := plan.graph.GetNode("app:app"); err != nil {
-		t.Fatalf("plan graph does not contain app:app: %v", err)
+	if _, err := plan.graph.GetNode("//app:app"); err != nil {
+		t.Fatalf("plan graph does not contain //app:app: %v", err)
 	}
-	if plan.job.Env == nil || plan.job.Env.Layouts["app"] == nil {
+	if plan.job.Env == nil || plan.job.Env.Layouts["//app"] == nil {
 		t.Fatalf("plan environment lost the prepared layouts: %+v", plan.job.Env)
 	}
 }

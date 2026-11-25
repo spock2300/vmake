@@ -51,7 +51,7 @@ func prepareAllPackagesWithOutput(t *testing.T, s *sourceStage) string {
 
 func TestPrepareAllPackagesOmitsDownloadHeadingWithoutSourceWork(t *testing.T) {
 	s := sessionFixture(t)
-	s.ctx.DepGraph.Packages["app"].Deps = []string{"dep"}
+	s.ctx.DepGraph.Packages["//app"].Deps = []string{"//dep"}
 	vlog.SetLevel(vlog.Normal)
 	defer vlog.SetLevel(vlog.Normal)
 	if out := prepareAllPackagesWithOutput(t, s.sourceStage); strings.Contains(out, sourceDownloadHeading) {
@@ -63,7 +63,7 @@ func TestPrepareAllPackagesOmitsDownloadHeadingWithoutSourceWork(t *testing.T) {
 	// A materialized source tree is reused without source work.
 	upstream := initGitRepo(t, map[string]string{"build.go": "package main\n"})
 	testGit(t, upstream, "tag", "v1.0.0")
-	node := s.ctx.DepGraph.Packages["app"]
+	node := s.ctx.DepGraph.Packages["//app"]
 	node.Pkg.SetGit(upstream).AddVersion("1.0.0", "v1.0.0")
 	node.Constraints = []string{"=1.0.0"}
 	if out := prepareAllPackagesWithOutput(t, s.sourceStage); !strings.HasPrefix(out, "\n"+sourceDownloadHeading+"\n") {
@@ -84,14 +84,21 @@ func TestPrepareAllPackagesPrintsDownloadHeadingForRemoteSource(t *testing.T) {
 	})
 	testGit(t, upstream, "tag", "v1.0.0")
 	s := sessionFixture(t)
-	delete(s.ctx.DepGraph.Packages, "app")
-	delete(s.ctx.DepGraph.Packages, "dep")
+	delete(s.ctx.DepGraph.Packages, "//app")
+	delete(s.ctx.DepGraph.Packages, "//dep")
 	s.ctx.DepGraph.Order = []string{"native/sample"}
 	s.needed = map[string]bool{"native/sample": true}
-	node := resolver.NewPackageNode("native/sample",
+	s.ctx.DepGraph.Containers["native/sample"] = &resolver.ContainerNode{
+		ID:       "native/sample",
+		Repo:     "native",
+		Kind:     resolver.SourceKindNative,
+		URL:      upstream,
+		Version:  "1.0.0",
+		Versions: map[string]string{"1.0.0": "v1.0.0"},
+	}
+	node := resolver.NewPackageNode("native/sample", "native/sample", "", resolver.SourceKindNative,
 		buildscript.NewSource("native/sample", filepath.Join(upstream, "build.go"), upstream, api.SourceRemote),
 		api.NewPackage().SetRepo("native").SetName("sample"))
-	node.Pkg.SetGit(upstream).AddVersion("1.0.0", "v1.0.0")
 	s.ctx.DepGraph.Packages["native/sample"] = node
 	s.ctx.Pins = map[string]string{"native/sample": "1.0.0"}
 
@@ -100,12 +107,12 @@ func TestPrepareAllPackagesPrintsDownloadHeadingForRemoteSource(t *testing.T) {
 	if out := prepareAllPackagesWithOutput(t, s.sourceStage); !strings.HasPrefix(out, "\n"+sourceDownloadHeading+"\n") {
 		t.Fatalf("missing remote source build omitted the download heading:\n%s", out)
 	}
-	commit := s.remote.commits["native/sample"]
+	commit := s.containerCommits["native/sample"]
 	if commit == "" {
 		t.Fatal("first remote build did not record a commit")
 	}
 	lock := lockfile.New()
-	lock.Set("native/sample", &lockfile.LockedPkg{Version: "1.0.0", Commit: commit, Source: "native"})
+	lock.SetContainer("native/sample", &lockfile.LockedContainer{Version: "1.0.0", Commit: commit, Source: "native"})
 	s.ctx.Lock = lock
 	fresh := newSourceStage(s.runContext, s.configStage)
 	if out := prepareAllPackagesWithOutput(t, fresh); strings.Contains(out, sourceDownloadHeading) {
@@ -119,7 +126,7 @@ func TestPrepareAllPackagesQuietKeepsDownloadHeadingHidden(t *testing.T) {
 	upstream := initGitRepo(t, map[string]string{"build.go": "package main\n"})
 	testGit(t, upstream, "tag", "v1.0.0")
 	s := sessionFixture(t)
-	node := s.ctx.DepGraph.Packages["app"]
+	node := s.ctx.DepGraph.Packages["//app"]
 	node.Pkg.SetGit(upstream).AddVersion("1.0.0", "v1.0.0")
 	node.Constraints = []string{"=1.0.0"}
 

@@ -7,12 +7,10 @@ import (
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
-func CollectSubGraphPackages(rootPkg string, pkgMeta map[string]PkgBuildMeta, allTargets map[string]map[string]*api.Target, needed map[string]bool, subParents map[string]string) map[string]bool {
+func CollectSubGraphPackages(rootPkg string, pkgMeta map[string]PkgBuildMeta, allTargets map[string]map[string]*api.Target, needed map[string]bool) map[string]bool {
 	visited := make(map[string]bool)
 	resolvePkg := func(currentPkg, depPkg string) string {
-		return api.ResolveSubPackageName(currentPkg, depPkg, subParents, func(candidate string) bool {
-			return needed[candidate]
-		})
+		return api.CanonicalizePackageRef(pkgMeta[currentPkg].Container, depPkg)
 	}
 	var visit func(pkgName string)
 	visit = func(pkgName string) {
@@ -45,17 +43,10 @@ func CollectSubGraphPackages(rootPkg string, pkgMeta map[string]PkgBuildMeta, al
 		for _, t := range targets {
 			for _, dep := range t.Deps() {
 				ref := ParseDependencyRef(dep)
-				depPkg := ref.Package
-				if !ref.HasTarget {
-					if !ref.IsPackagePath() {
-						if targets[depPkg] != nil {
-							continue
-						}
-						depPkg = resolvePkg(pkgName, depPkg)
-					}
-				} else {
-					depPkg = resolvePkg(pkgName, depPkg)
+				if !ref.HasTarget && !ref.IsPackagePath() {
+					continue
 				}
+				depPkg := resolvePkg(pkgName, ref.Package)
 				if needed[depPkg] {
 					visit(depPkg)
 				}
@@ -91,7 +82,7 @@ func BuildSubGraph(base *BuildJob, req SubGraphRequest) error {
 	if base.Toolchain == nil {
 		return fmt.Errorf("subgraph has no toolchain")
 	}
-	subPkgs := CollectSubGraphPackages(req.RootPkg, req.PkgMeta, req.Targets, req.Needed, base.Env.SubParents)
+	subPkgs := CollectSubGraphPackages(req.RootPkg, req.PkgMeta, req.Targets, req.Needed)
 	if len(subPkgs) == 0 {
 		return fmt.Errorf("package %s not found", req.RootPkg)
 	}
@@ -106,7 +97,7 @@ func BuildSubGraph(base *BuildJob, req SubGraphRequest) error {
 		}
 		vlog.Info("  [subgraph] %s%s", pkgName, defaultMark)
 	}
-	graph, err := NewBuildGraph(targets, pkgMeta, base.Env.SubParents)
+	graph, err := NewBuildGraph(targets, pkgMeta)
 	if err != nil {
 		return fmt.Errorf("subgraph build graph: %w", err)
 	}

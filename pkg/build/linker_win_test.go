@@ -115,7 +115,7 @@ func TestNeedRelinkMissingImportLibrary(t *testing.T) {
 
 	target := makeTargetWithDeps("foo")
 	target.SetKind(api.TargetShared)
-	graph, err := NewBuildGraph(makeTargets("p", target), nil, nil)
+	graph, err := NewBuildGraph(makeTargets("p", target), nil)
 	if err != nil {
 		t.Fatalf("NewBuildGraph: %v", err)
 	}

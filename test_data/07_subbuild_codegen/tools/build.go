@@ -7,7 +7,7 @@ import (
 )
 
 func Main(p *api.Package) {
-	p.AddRequires("official/tinyexpr >=1.0.0")
+	p.AddRequires("official/tinyexpr")
 
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.ToolchainOption()

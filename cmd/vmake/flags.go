@@ -27,7 +27,7 @@ func addCommonBuildFlags(cmd *cobra.Command) {
 	addConfigFlag(cmd)
 	cmd.Flags().StringVar(&toolchainFlag, "toolchain", "", "override toolchain")
 	cmd.Flags().StringVar(&modeFlag, "mode", "", "override build mode")
-	cmd.Flags().StringArrayVarP(&ephemeralSetFlags, "set", "s", nil, "override an option for this run only (format: [pkg/]option=value)")
+	cmd.Flags().StringArrayVarP(&ephemeralSetFlags, "set", "s", nil, "override an option for this run only (format: [pkg:]option=value)")
 	cmd.Flags().StringVar(&manifestFlag, "manifest", "", "pin versions from manifest file")
 	cmd.Flags().IntVarP(&jobsFlag, "jobs", "j", 0, "compile jobs within the active target and Make/CMake ceiling; targets run serially (0 = number of CPUs, 1 = sequential)")
 	cmd.Flags().BoolVarP(&keepGoingFlag, "keep-going", "k", false, "keep building independent targets after a failure")

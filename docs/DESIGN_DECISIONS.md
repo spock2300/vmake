@@ -18,7 +18,7 @@
 
 ## DD-1: Registry 包装包不支持子包
 
-- 状态: accepted
+- 状态: superseded by [ADR-0001](adr/0001-separate-module-containers-from-packages.md)（VMake 2.0 取消“子包”概念，统一为模块容器 + 按路径懒加载的构建包）
 - 背景: 远程包有两类来源——native 仓库（vmake 原生组织，build.go 位于仓库根）和 registry
   包装仓库（封装第三方 C/C++ 库，build.go 是 wrapper，源码由 wrapper 下载）。
 - 决策: 子包扫描（checkout 内嵌套 build.go 被识别为 `父包/相对路径` 独立包）**仅对 native
@@ -32,7 +32,7 @@
 
 ## DD-2: 子包版本完全跟随父包
 
-- 状态: accepted
+- 状态: superseded by [ADR-0001](adr/0001-separate-module-containers-from-packages.md)（VMake 2.0 按模块容器锁定版本于 `vmake.lock` `containers`，独立上游 `SetGit` 锁定于 `sources`）
 - 背景: 子包共享父包（native 仓库）的版本 checkout，没有独立的版本解析。
 - 决策: 子包**不单独出现在 `.vmake/vmake.lock` 和 `manifest.json` 中**，也不接受版本约束；
   锁定/检出父包版本即锁定了其全部子包。对子包施加约束没有意义，也不被解析。
@@ -43,7 +43,7 @@
 
 ## DD-3: 子包懒加载
 
-- 状态: accepted
+- 状态: superseded by [ADR-0001](adr/0001-separate-module-containers-from-packages.md)（VMake 2.0 本地与外部容器的全部构建包均按规范路径 O(1) 懒加载，不再全目录扫描）
 - 背景: 父包 checkout 完成后即能发现其中全部子包，但不是每个子包都会被依赖。
 - 决策: 发现阶段（`scanSubPackages`）只把子包注册进 `r.sources` 与 `subParents`，
   **不解释其 build.go**；只有当某个包的依赖（OnRequire 或 `AddDeps`）解析到该子包时，
@@ -82,7 +82,7 @@
 
 ## DD-7: 子包 required 时 native owner 必须 needed
 
-- 状态: accepted
+- 状态: superseded by [ADR-0001](adr/0001-separate-module-containers-from-packages.md)（VMake 2.0 模块容器可无根 `build.go`，容器由 `vmake.json` `modules` 声明并物化，无需伪根包 needed）
 - 背景: 子包与父包共享同一 checkout，但依赖图里子包并没有指向父包的隐式边。若子包因某个非 root 本地包解析父包而进入 needed、父包本身却不在 needed 集合，父包补丁不会应用、父包版本也可能没有 lock 条目。
 - 决策: 配置阶段校验：任何 needed 子包的所有者（`Resolver.SubParents()` 的值）也必须 needed；否则报错并提示把父包加入 `AddRequires`。
 - 理由: 相比把父包隐式标记为 needed（会额外构建/安装父包 target），显式报错让依赖声明保持真实，并避免静默使用未打补丁或未锁定的源码树。
@@ -296,7 +296,7 @@
 
 ## DD-33: 本地包重名是硬错误
 
-- 状态: accepted
+- 状态: superseded by [ADR-0001](adr/0001-separate-module-containers-from-packages.md)（VMake 2.0 本地包路径即身份 `//<rel/path>`，彻底消除裸名重名与目录扫描）
 - 背景: 本地项目没有子包语义，`Scan` 把任意深度的嵌套 `build.go` 收为顶层包，包名取目录 basename。两个不同目录名相同时（例如 `app/net/build.go` 与 `lib/net/build.go`），旧实现保留先遇到的、静默丢弃另一个。
 - 决策: 重名返回错误，错误信息给出两个冲突的 `build.go` 路径；`ScanSubPackages` 的远程子包全名不受影响。
 - 理由: 静默丢弃会产生无声的错误构建：操作者会报告成功，而某个包从未被编译，这违反 agent-first 的验收前提（见 `docs/GOALS.md`）。真正的本地子包语义仍是破坏性变更，未实施。
@@ -304,7 +304,7 @@
 
 ## DD-34: 1.x 内脚本 API 与 CLI 只增不改
 
-- 状态: accepted
+- 状态: accepted（2.0 架构切换见 [ADR-0001](adr/0001-separate-module-containers-from-packages.md)）
 - 背景: 一次 API 重塑（`fd7aa64`）删除了 `SetConfigFiles`，并把 `AddGlobalCFlags`/`AddGlobalCxxFlags` 从 `...string` 改为 `...any`。真实固件工程 hk-mcu-sdk（`4e7862a`）没有改动任何脚本，升级后依次在 py32f539 报 `undefined selector: SetConfigFiles`、在 lvgl 报 `reflect: CallSlice using []string as type []interface {}`，lwip 还有同类的旧展开。三次失败信息都指向库内部，而不是"这个 API 已删除/已改签名"。
 - 决策: 1.x 内脚本 API 与 CLI 只增不改：不删除、不改现有语义；需要变更时先新增，旧的保留并标注弃用；移除只发生在 2.0。这是内部规则，公开兼容承诺等第一个外部采用者出现后再升格（见 `docs/GOALS.md`）。
 - 理由: 采用者的构建脚本会比二进制活得久；没有弃用期的修改会把"一次成功"的失败归因变成噪声——操作者会先去修错误的层。内部约束的成本接近零：脚本面已是显式 allowlist，并由测试锁死。
@@ -383,17 +383,4 @@
 
 ## 已知限制 / 待议
 
-以下问题已被识别但尚未决策，修改前需单独讨论：
-
-1. **本地项目无子包概念**：本地嵌套 build.go 被 `Scan` 收为顶层裸名包（目录 basename）；重名现在报错（DD-33）。
-   本地子包化是破坏性变更（现有本地多包项目的裸名引用需迁移），暂不实施。
-4. **命名歧义（低概率）**：子包全名 `repo/pkg/sub` 经 `SplitPackageRef` 拆分后 pkg 部分
-   含 `/`，若 registry 恰好存在名为 `pkg/sub` 的包会被误匹配（`findSource` 先查 registry）。
-5. **父包不能在自己的 OnRequire 中引用其子包**：`findNativeSource` 中 `recurseDeps`
-   （执行 OnRequire 依赖解析）先于 `scanSubPackages`（注册子包 source）运行，父包
-   OnRequire 中的 `父包/子包` 引用会解析失败。外部包可以按全名引用子包，但同一
-   `AddRequires` 列表中父包必须列在子包之前；未解析父包时的错误信息会提示这一点。
-6. **子包扫描复用保留目录列表**：`ScanSubPackages` 与本地 `Scan` 共用 `skipDirs`，
-   名为 `build`、`vendor`、`node_modules` 等的目录不会被当作子包。若 native 仓库
-   合法地使用这些目录名声明子包，目前会被静默跳过；修改前需评估第三方源码树的
-   误发现成本。
+> 历史限制 1（本地无子包/裸名扫描）、4（子包路径歧义）、5（父包无法引用子包）、6（`skipDirs` 子包扫描误跳过）已由 [ADR-0001](adr/0001-separate-module-containers-from-packages.md)（VMake 2.0 模块容器与构建包解耦 + O(1) 路径懒加载）彻底消除。

@@ -13,17 +13,25 @@ func TestWriteLockfilePrunesStaleEntries(t *testing.T) {
 	tmp := t.TempDir()
 
 	r := resolver.NewResolver(nil, tmp)
-	node := &resolver.PackageNode{
-		ID:     "testnative/foo",
-		Deps:   []string{},
-		Native: &resolver.NativePackageInfo{Selected: "1.9.0"},
+	r.Graph().Containers["testnative/foo"] = &resolver.ContainerNode{
+		ID:      "testnative/foo",
+		Repo:    "testnative",
+		Kind:    resolver.SourceKindNative,
+		Version: "1.9.0",
+		Commit:  "bbbb",
 	}
-	r.Graph().Packages["testnative/foo"] = node
+	r.Graph().Packages["testnative/foo"] = &resolver.PackageNode{
+		ID:        "testnative/foo",
+		Container: "testnative/foo",
+		Kind:      resolver.SourceKindNative,
+		Deps:      []string{},
+	}
 	r.Graph().Order = []string{"testnative/foo"}
 
 	old := lockfile.New()
-	old.Set("gone/pkg", &lockfile.LockedPkg{Version: "0.1.0", Commit: "deadbeef", Source: "native"})
-	old.Set("testnative/foo", &lockfile.LockedPkg{Version: "1.2.0", Commit: "aaaa", Source: "native"})
+	old.SetContainer("gone/pkg", &lockfile.LockedContainer{Version: "0.1.0", Commit: "deadbeef", Source: "native"})
+	old.SetContainer("testnative/foo", &lockfile.LockedContainer{Version: "1.2.0", Commit: "aaaa", Source: "native"})
+	old.SetSource("gone/src", &lockfile.LockedSource{Version: "1.0.0", Commit: "cccc"})
 
 	lockPath := filepath.Join(tmp, "vmake.lock")
 	if err := old.Save(lockPath); err != nil {
@@ -38,10 +46,8 @@ func TestWriteLockfilePrunesStaleEntries(t *testing.T) {
 		Paths:    &Paths{ReposDir: tmp},
 	}
 	s := newBuildPhaseState(ctx, BuildOptions{})
-	s.remote = &remoteVersionState{
-		versions: map[string]string{"testnative/foo": "1.9.0"},
-		commits:  map[string]string{"testnative/foo": "bbbb"},
-	}
+	s.containerVersions["testnative/foo"] = "1.9.0"
+	s.containerCommits["testnative/foo"] = "bbbb"
 
 	if err := s.writeLockfile(); err != nil {
 		t.Fatalf("writeLockfile: %v", err)
@@ -51,18 +57,18 @@ func TestWriteLockfilePrunesStaleEntries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := got.Get("gone/pkg"); ok {
-		t.Error("stale entry gone/pkg should be pruned from lock")
+	if _, ok := got.GetContainer("gone/pkg"); ok {
+		t.Error("stale container gone/pkg should be pruned from lock")
 	}
-	kept, ok := got.Get("testnative/foo")
+	if _, ok := got.GetSource("gone/src"); ok {
+		t.Error("stale source gone/src should be pruned from lock")
+	}
+	kept, ok := got.GetContainer("testnative/foo")
 	if !ok {
-		t.Fatal("active entry testnative/foo should be kept")
+		t.Fatal("active container testnative/foo should be kept")
 	}
 	if kept.Version != "1.9.0" || kept.Commit != "bbbb" || kept.Source != "native" {
 		t.Errorf("kept entry = %+v, want version 1.9.0 commit bbbb source native", kept)
-	}
-	if kept.WrapperCommit != "" {
-		t.Errorf("native entry should not carry WrapperCommit, got %q", kept.WrapperCommit)
 	}
 
 	first, err := os.ReadFile(lockPath)

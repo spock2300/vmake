@@ -195,9 +195,9 @@ func installCommands() {
 func installConfigCommand() {
 	addConfigFlag(configCmd)
 	configCmd.Flags().StringArrayVarP(&setFlags, "set", "s", nil,
-		"Set option value non-interactively (format: [pkg/]option=value)")
+		"Set option value non-interactively (format: [pkg:]option=value)")
 	configCmd.Flags().StringArrayVarP(&unsetFlags, "unset", "u", nil,
-		"Remove explicit option override and revert to default (format: [pkg/]option)")
+		"Remove explicit option override and revert to default (format: [pkg:]option)")
 	configCmd.AddCommand(newConfigListCmd(), newConfigUseCmd(), newConfigCopyCmd(), newConfigDescribeCmd(), newConfigCheckCmd())
 	RootCmd.AddCommand(configCmd)
 }

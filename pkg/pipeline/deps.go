@@ -7,7 +7,6 @@ import (
 	"sort"
 
 	"github.com/spock2300/vmake/internal/scriptcall"
-	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/lockfile"
 	"github.com/spock2300/vmake/pkg/repo"
 	"github.com/spock2300/vmake/pkg/resolver"
@@ -21,18 +20,24 @@ type DepsUpdateResult struct {
 
 func SyncOrUpdateDeps(ctx *RuntimeContext, dryRun bool) (_ *DepsUpdateResult, err error) {
 	defer scriptcall.Recover(&err)
-	needed, err := resolveNeeded(ctx, true, true, true)
+	needed, err := resolveNeeded(ctx, true, true)
 	if err != nil {
 		return nil, err
 	}
-	subParents := ctx.Resolver.SubParents()
-	query := ctx.lockQuery()
-	for name := range ctx.DepGraph.Packages {
-		if query.NeedsSync(name) {
-			needed[name] = true
-			if parent := subParents[name]; parent != "" {
-				needed[parent] = true
+	containerQuery := ctx.lockQuery().Containers()
+	sourceQuery := ctx.lockQuery().Sources()
+	for cID := range ctx.DepGraph.Containers {
+		if containerQuery.NeedsSync(cID) {
+			for pkgName, node := range ctx.DepGraph.Packages {
+				if node != nil && node.Container == cID {
+					needed[pkgName] = true
+				}
 			}
+		}
+	}
+	for name := range ctx.DepGraph.Packages {
+		if sourceQuery.NeedsSync(name) {
+			needed[name] = true
 		}
 	}
 	rc := newRunContext(ctx, BuildOptions{}, nil)
@@ -80,6 +85,7 @@ func SyncOrUpdateDeps(ctx *RuntimeContext, dryRun bool) (_ *DepsUpdateResult, er
 }
 
 type DepPackageStatus struct {
+	Section      string   `json:"section,omitempty"`
 	Name         string   `json:"name"`
 	Source       string   `json:"source"`
 	Version      string   `json:"version"`
@@ -102,55 +108,55 @@ type DepsStatusReport struct {
 
 func InspectDepsStatus(ctx *RuntimeContext) (_ *DepsStatusReport, err error) {
 	defer scriptcall.Recover(&err)
-	needed, err := resolveNeeded(ctx, true, true, true)
+	needed, err := resolveNeeded(ctx, true, true)
 	if err != nil {
 		return nil, err
 	}
 	_, statErr := os.Stat(ctx.LockPath)
 	lockExists := statErr == nil
 	sourceMgr := repo.NewSourceManager(ctx.Paths.DepsDir, ctx.Paths.CacheDir).WithSession(ctx.Locks).WithContext(ctx.Context)
-	subParents := ctx.Resolver.SubParents()
+	neededContainers := NeededContainers(ctx.DepGraph, needed)
 
-	seenInGraph := make(map[string]bool)
+	seenContainers := make(map[string]bool)
+	seenSources := make(map[string]bool)
 	var packages []DepPackageStatus
-	for _, name := range ctx.Resolver.GetOrder() {
-		node := ctx.DepGraph.Packages[name]
-		if node == nil {
-			continue
-		}
-		if _, isSub := subParents[name]; isSub {
-			continue
-		}
-		if node.IsLocal() && (node.Pkg == nil || len(node.Pkg.GitURLs()) == 0) {
-			continue
-		}
-		seenInGraph[name] = true
-		if !needed[name] {
-			continue
-		}
 
-		sourceKind := node.SourceKind()
-
-		constraints := make([]string, 0, len(node.Constraints))
-		constraints = append(constraints, node.Constraints...)
-
+	// 1. External containers (native & registry).
+	containerIDs := make([]string, 0, len(ctx.DepGraph.Containers))
+	for id := range ctx.DepGraph.Containers {
+		containerIDs = append(containerIDs, id)
+	}
+	sort.Strings(containerIDs)
+	for _, id := range containerIDs {
+		c := ctx.DepGraph.Containers[id]
+		if c == nil || c.IsLocal() {
+			continue
+		}
+		seenContainers[id] = true
+		if !neededContainers[id] {
+			continue
+		}
+		constraints := append([]string(nil), c.Constraints...)
+		if constraints == nil {
+			constraints = []string{}
+		}
 		pinned := ""
 		if ctx.Pins != nil {
-			pinned = ctx.Pins[name]
+			pinned = ctx.Pins[id]
 		}
 		linked := ""
 		if ctx.SourceLinks != nil {
-			linked = ctx.SourceLinks[name]
+			linked = ctx.SourceLinks[id]
 		}
-
 		if linked != "" {
-			commit := ""
-			if node.Source != nil && node.Source.Link != nil {
-				commit = node.Source.Link.Commit
+			commit := c.Commit
+			if c.Link != nil && c.Link.Commit != "" {
+				commit = c.Link.Commit
 			}
 			packages = append(packages, DepPackageStatus{
-				Name:         name,
-				Source:       sourceKind.GitCompatName(),
+				Section:      string(resolver.LockSectionContainer),
+				Name:         id,
+				Source:       c.Kind.String(),
 				Version:      resolver.LocalLinkVersion,
 				Commit:       commit,
 				Constraints:  constraints,
@@ -164,43 +170,58 @@ func InspectDepsStatus(ctx *RuntimeContext) (_ *DepsStatusReport, err error) {
 			continue
 		}
 
-		var locked *lockfile.LockedPkg
+		var locked *lockfile.LockedContainer
 		hasLock := false
 		if ctx.Lock != nil {
-			locked, hasLock = ctx.Lock.Get(name)
+			locked, hasLock = ctx.Lock.GetContainer(id)
 		}
 
-		selected, nativeCommit := "", ""
-		if node.Native != nil {
-			selected, nativeCommit = node.Native.Selected, node.Native.Commit
-		} else if node.Pkg != nil && len(node.Pkg.Versions()) > 0 {
-			if len(node.Constraints) > 0 {
-				selected, _ = node.Pkg.SelectVersionMulti(node.Constraints)
-			} else {
-				selected, _ = node.Pkg.SelectVersion("")
+		if c.IsRegistry() {
+			head := c.Commit
+			if head == "" && ctx.Paths != nil && ctx.Paths.ReposDir != "" {
+				mgr := repo.NewRepoManager(ctx.Paths.ReposDir)
+				if mgr.Exists(c.Repo) {
+					head, _ = repo.GetCurrentCommitContext(ctx.Context, mgr.Path(c.Repo))
+				}
 			}
+			commit := head
+			if hasLock && locked.Commit != "" {
+				commit = locked.Commit
+			}
+			wrapperOutdated := hasLock && locked.Commit != "" && head != "" && head != locked.Commit
+			state := "locked"
+			if !hasLock {
+				state = "unlocked"
+			} else if wrapperOutdated {
+				state = "wrapper_outdated"
+			}
+			packages = append(packages, DepPackageStatus{
+				Section:      string(resolver.LockSectionContainer),
+				Name:         id,
+				Source:       c.Kind.String(),
+				Version:      "",
+				Commit:       commit,
+				Constraints:  constraints,
+				Materialized: true,
+				Cached:       false,
+				State:        state,
+			})
+			continue
 		}
-		// Status reports the recorded lock overlaid with the project's pins,
-		// ignoring the command's float/target/ignore policy: it answers "what is
-		// locked", not "what would this invocation resolve".
-		query := resolver.LockQuery{Pins: ctx.Pins, Lock: ctx.Lock}
-		decision := query.Decide(name, selected, nativeCommit)
+
+		// Native container.
+		query := resolver.LockQuery{Pins: ctx.Pins, Lock: ctx.Lock, Section: resolver.LockSectionContainer}
+		decision := query.Decide(id, c.Version, c.Commit)
 		version, commit := decision.Version, decision.Commit
 		if decision.Provenance == resolver.ProvenanceTargetCommit {
-			// A commit pin is reported as a commit without a version.
 			version = ""
 		}
 		pinMismatch := false
-		if problem, ok := query.PinLockMismatch(name); ok {
+		if problem, ok := query.PinLockMismatch(id); ok {
 			pinMismatch = problem.Pin != ""
 		}
 
-		var root string
-		if node.IsLocal() {
-			root = sourceMgr.TreeDir(repo.PackageTreeKey("", name))
-		} else {
-			root = sourceMgr.TreeDir(name)
-		}
+		root := sourceMgr.TreeDir(id)
 		treeCommit := sourceMgr.CommitAt(root)
 		materialized := false
 		if commit != "" {
@@ -210,34 +231,116 @@ func InspectDepsStatus(ctx *RuntimeContext) (_ *DepsStatusReport, err error) {
 			materialized = true
 		}
 		dirty := materialized && repo.IsDirtyContext(ctx.Context, filepath.Join(root, "src"))
-
 		var urls []string
-		if node.Native != nil && node.Native.GitURL != "" {
-			urls = []string{node.Native.GitURL}
-		} else if node.Pkg != nil {
-			urls = node.Pkg.GitURLs()
+		if c.URL != "" {
+			urls = []string{c.URL}
 		}
 		cached := sourceMgr.HasCachedCommit(urls, commit)
-
-		wrapperOutdated := false
-		if sourceKind == resolver.SourceKindRegistry && hasLock && locked.WrapperCommit != "" && ctx.Paths != nil && ctx.Paths.ReposDir != "" {
-			if repoName, _, ok := api.SplitPackageRef(name); ok {
-				mgr := repo.NewRepoManager(ctx.Paths.ReposDir)
-				if mgr.Exists(repoName) {
-					if head, err := repo.GetCurrentCommitContext(ctx.Context, mgr.Path(repoName)); err == nil && head != "" && head != locked.WrapperCommit {
-						wrapperOutdated = true
-					}
-				}
-			}
-		}
 
 		state := "locked"
 		if !hasLock {
 			state = "unlocked"
 		} else if pinMismatch {
 			state = "pin_mismatch"
-		} else if wrapperOutdated {
-			state = "wrapper_outdated"
+		} else if !materialized {
+			state = "missing"
+		} else if pinned != "" {
+			state = "pinned"
+		}
+		packages = append(packages, DepPackageStatus{
+			Section:      string(resolver.LockSectionContainer),
+			Name:         id,
+			Source:       c.Kind.String(),
+			Version:      version,
+			Commit:       commit,
+			Constraints:  constraints,
+			Pinned:       pinned,
+			Dirty:        dirty,
+			Materialized: materialized,
+			Cached:       cached,
+			State:        state,
+		})
+	}
+
+	// 2. Independent SetGit sources (local, registry, native members).
+	for _, name := range ctx.Resolver.GetOrder() {
+		node := ctx.DepGraph.Packages[name]
+		if node == nil || !node.HasOwnGit() {
+			continue
+		}
+		seenSources[name] = true
+		if !needed[name] {
+			continue
+		}
+
+		constraints := append([]string(nil), node.Constraints...)
+		if constraints == nil {
+			constraints = []string{}
+		}
+		pinned := ""
+		if ctx.Pins != nil {
+			pinned = ctx.Pins[name]
+		}
+		loc := ctx.packageLocation(name, node)
+		if loc.Linked && node.Source != nil && node.Source.Link != nil {
+			linked := node.Source.Link.Path
+			packages = append(packages, DepPackageStatus{
+				Section:      string(resolver.LockSectionSource),
+				Name:         name,
+				Source:       "git",
+				Version:      resolver.LocalLinkVersion,
+				Commit:       node.Source.Link.Commit,
+				Constraints:  constraints,
+				Pinned:       pinned,
+				Linked:       linked,
+				Dirty:        repo.IsDirtyContext(ctx.Context, linked),
+				Materialized: true,
+				Cached:       false,
+				State:        "linked",
+			})
+			continue
+		}
+
+		hasLock := false
+		if ctx.Lock != nil {
+			_, hasLock = ctx.Lock.GetSource(name)
+		}
+		selected := ""
+		if len(node.Pkg.Versions()) > 0 {
+			_, semver, _ := resolver.SplitConstraints(name, node.Constraints)
+			if len(semver) > 0 {
+				selected, _ = node.Pkg.SelectVersionMulti(semver)
+			} else {
+				selected, _ = node.Pkg.SelectVersion("")
+			}
+		}
+		query := resolver.LockQuery{Pins: ctx.Pins, Lock: ctx.Lock, Section: resolver.LockSectionSource}
+		decision := query.Decide(name, selected, "")
+		version, commit := decision.Version, decision.Commit
+		if decision.Provenance == resolver.ProvenanceTargetCommit {
+			version = ""
+		}
+		pinMismatch := false
+		if problem, ok := query.PinLockMismatch(name); ok {
+			pinMismatch = problem.Pin != ""
+		}
+
+		treeCommit := sourceMgr.CommitAt(loc.TreeRoot)
+		materialized := false
+		if commit != "" {
+			materialized = treeCommit != "" && treeCommit == commit
+		} else if !pinMismatch && treeCommit != "" && version == "" {
+			commit = treeCommit
+			materialized = true
+		}
+		dirty := materialized && repo.IsDirtyContext(ctx.Context, filepath.Join(loc.TreeRoot, "src"))
+		cached := sourceMgr.HasCachedCommit(node.Pkg.GitURLs(), commit)
+
+		state := "locked"
+		if !hasLock {
+			state = "unlocked"
+		} else if pinMismatch {
+			state = "pin_mismatch"
 		} else if !materialized {
 			state = "missing"
 		} else if pinned != "" {
@@ -245,8 +348,9 @@ func InspectDepsStatus(ctx *RuntimeContext) (_ *DepsStatusReport, err error) {
 		}
 
 		packages = append(packages, DepPackageStatus{
+			Section:      string(resolver.LockSectionSource),
 			Name:         name,
-			Source:       sourceKind.GitCompatName(),
+			Source:       "git",
 			Version:      version,
 			Commit:       commit,
 			Constraints:  constraints,
@@ -260,8 +364,16 @@ func InspectDepsStatus(ctx *RuntimeContext) (_ *DepsStatusReport, err error) {
 
 	var stale []string
 	if ctx.Lock != nil {
-		for _, name := range ctx.Lock.SortedNames() {
-			if !seenInGraph[name] {
+		for _, name := range ctx.Lock.SortedContainerNames() {
+			if !seenContainers[name] {
+				if ctx.SourceLinks != nil && ctx.SourceLinks[name] != "" {
+					continue
+				}
+				stale = append(stale, name)
+			}
+		}
+		for _, name := range ctx.Lock.SortedSourceNames() {
+			if !seenSources[name] {
 				if ctx.SourceLinks != nil && ctx.SourceLinks[name] != "" {
 					continue
 				}
@@ -281,6 +393,7 @@ func InspectDepsStatus(ctx *RuntimeContext) (_ *DepsStatusReport, err error) {
 }
 
 type FetchedPackage struct {
+	Section string `json:"section,omitempty"`
 	Name    string `json:"name"`
 	Version string `json:"version"`
 	Commit  string `json:"commit"`
@@ -291,11 +404,8 @@ type DepsFetchResult struct {
 	Packages []FetchedPackage `json:"packages"`
 }
 
-// FetchDeps materializes locked dependency sources into the project tree.
-// onFetched, when non-nil, receives the resolved top-level packages in
-// dependency order after sources are prepared and before patches are applied,
-// so callers can report a parent package before its sub-packages are patched.
-// The returned result lists packages sorted by name for stable JSON output.
+// FetchDeps materializes locked dependency containers and SetGit sources into
+// the project tree.
 func FetchDeps(ctx *RuntimeContext, pkgs []string, all bool, offline bool, onFetched func([]FetchedPackage)) (_ *DepsFetchResult, err error) {
 	defer scriptcall.Recover(&err)
 	var needed NeededSet
@@ -305,31 +415,39 @@ func FetchDeps(ctx *RuntimeContext, pkgs []string, all bool, offline bool, onFet
 			needed[name] = true
 		}
 	} else {
-		needed, err = resolveNeeded(ctx, true, true, true)
+		needed, err = resolveNeeded(ctx, true, true)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if len(pkgs) > 0 {
-		subParents := ctx.Resolver.SubParents()
 		selected := make(map[string]bool)
 		for _, want := range pkgs {
-			node := ctx.DepGraph.Packages[want]
-			if node == nil {
-				return nil, fmt.Errorf("package %q is not in the dependency graph", want)
+			if node := ctx.DepGraph.Packages[want]; node != nil {
+				selected[want] = true
+				continue
 			}
-			selected[want] = true
-			if parent := subParents[want]; parent != "" {
-				selected[parent] = true
-			}
-			for name, parent := range subParents {
-				if parent == want {
-					subNode := ctx.DepGraph.Packages[name]
-					if needed[name] || (subNode != nil && (subNode.Pkg == nil || len(subNode.Pkg.GitURLs()) == 0)) {
+			if c := ctx.DepGraph.Containers[want]; c != nil {
+				matched := false
+				for name, node := range ctx.DepGraph.Packages {
+					if node != nil && node.Container == want && needed[name] {
 						selected[name] = true
+						matched = true
 					}
 				}
+				if !matched {
+					for name, node := range ctx.DepGraph.Packages {
+						if node != nil && node.Container == want {
+							selected[name] = true
+							matched = true
+						}
+					}
+				}
+				if matched {
+					continue
+				}
 			}
+			return nil, fmt.Errorf("package or container %q is not in the dependency graph", want)
 		}
 		needed = selected
 	}
@@ -346,39 +464,51 @@ func FetchDeps(ctx *RuntimeContext, pkgs []string, all bool, offline bool, onFet
 		return nil, err
 	}
 
-	subParents := ctx.Resolver.SubParents()
 	var fetched []FetchedPackage
+	neededContainers := NeededContainers(ctx.DepGraph, needed)
+	containerIDs := make([]string, 0, len(neededContainers))
+	for id := range neededContainers {
+		containerIDs = append(containerIDs, id)
+	}
+	sort.Strings(containerIDs)
+	for _, id := range containerIDs {
+		c := ctx.DepGraph.Containers[id]
+		if c == nil || !c.IsNative() || c.IsLinked() {
+			continue
+		}
+		tree := src.containerTrees[id]
+		srcDir := ""
+		if tree != "" {
+			srcDir = filepath.Join(tree, "src")
+		}
+		fetched = append(fetched, FetchedPackage{
+			Section: string(resolver.LockSectionContainer),
+			Name:    id,
+			Version: src.containerVersions[id],
+			Commit:  src.containerCommits[id],
+			SrcDir:  srcDir,
+		})
+	}
 	for _, name := range ctx.Resolver.GetOrder() {
 		if !needed[name] {
 			continue
 		}
 		node := ctx.DepGraph.Packages[name]
-		if node == nil {
+		if node == nil || !node.HasOwnGit() {
 			continue
 		}
-		if node.Source != nil && node.Source.Link != nil {
+		if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {
 			continue
 		}
-		if _, isSub := subParents[name]; isSub {
-			continue
-		}
-		if node.IsLocal() && (node.Pkg == nil || len(node.Pkg.GitURLs()) == 0) {
-			continue
-		}
-		commit := src.sourceCommits[name]
-		if commit == "" && src.remote != nil {
-			commit = src.remote.commits[name]
-		}
-		srcDir := ""
-		if node.Pkg != nil && node.Pkg.SrcDir() != "" {
+		srcDir := src.sourceSeeds[name]
+		if srcDir == "" && node.Pkg != nil {
 			srcDir = node.Pkg.SrcDir()
-		} else if dirs := src.pkgDirs[name]; dirs != nil {
-			srcDir = dirs.SourceDir
 		}
 		fetched = append(fetched, FetchedPackage{
+			Section: string(resolver.LockSectionSource),
 			Name:    name,
 			Version: src.sourceVersions[name],
-			Commit:  commit,
+			Commit:  src.sourceCommits[name],
 			SrcDir:  srcDir,
 		})
 	}
@@ -391,7 +521,12 @@ func FetchDeps(ctx *RuntimeContext, pkgs []string, all bool, offline bool, onFet
 		return nil, err
 	}
 
-	sort.Slice(fetched, func(i, j int) bool { return fetched[i].Name < fetched[j].Name })
+	sort.Slice(fetched, func(i, j int) bool {
+		if fetched[i].Section != fetched[j].Section {
+			return fetched[i].Section < fetched[j].Section
+		}
+		return fetched[i].Name < fetched[j].Name
+	})
 	if fetched == nil {
 		fetched = []FetchedPackage{}
 	}

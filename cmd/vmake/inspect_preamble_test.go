@@ -24,7 +24,6 @@ import (
 )
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
 `+onBuild+`
 		ctx.Target("app").SetKind(api.TargetVoid)
@@ -143,7 +142,6 @@ func TestInspectionStageFailureExitCodes(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		panic("config exploded")
 	})

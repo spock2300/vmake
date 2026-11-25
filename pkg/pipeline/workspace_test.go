@@ -58,19 +58,19 @@ func TestLocalSetGitSingleTreeStableLink(t *testing.T) {
 	testGit(t, upstream, "tag", "v1.0.0")
 
 	s := sessionFixture(t)
-	node := s.ctx.DepGraph.Packages["app"]
+	node := s.ctx.DepGraph.Packages["//app"]
 	node.Pkg.SetGit(upstream).AddVersion("1.0.0", "v1.0.0")
 	node.Constraints = []string{"=1.0.0"}
-	if err := s.selectPackageSource("app"); err != nil {
+	if err := s.selectPackageSource("//app"); err != nil {
 		t.Fatal(err)
 	}
-	s.pkgDirs["app"] = makeLocalPkgDirs(node.Source.Dir, localPkgKeyFromParts("cc-key", s.cfg.Mode, nil, "", s.sourceCommits["app"]))
-	if err := s.preparePackageWorkspace("app"); err != nil {
+	s.pkgDirs["//app"] = makeLocalPkgDirs(node.Source.Dir, localPkgKeyFromParts("cc-key", s.cfg.Mode, nil, "", s.sourceCommits["//app"]))
+	if err := s.preparePackageWorkspace("//app"); err != nil {
 		t.Fatal(err)
 	}
 
 	link := filepath.Join(node.Source.Dir, "src")
-	want := filepath.Join(s.ctx.Paths.DepsDir, "local", "app", "src")
+	want := filepath.Join(s.ctx.Paths.DepsDir, "local", build.MemberDir("app"), "src")
 	target, err := os.Readlink(link)
 	if err != nil || target != want {
 		t.Fatalf("src link = %q, %v; want %q", target, err, want)
@@ -87,8 +87,8 @@ func TestLocalSetGitSingleTreeStableLink(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(link, "input.c"), []byte("private\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	s.pkgDirs["app"].BuildDir = filepath.Join(node.Source.Dir, "build", "other-key")
-	if err := s.preparePackageWorkspace("app"); err != nil {
+	s.pkgDirs["//app"].BuildDir = filepath.Join(node.Source.Dir, "build", "other-key")
+	if err := s.preparePackageWorkspace("//app"); err != nil {
 		t.Fatal(err)
 	}
 	if data, err := os.ReadFile(filepath.Join(link, "input.c")); err != nil || string(data) != "private\n" {
@@ -115,15 +115,15 @@ func TestLocalSetGitRefSelectionAndLock(t *testing.T) {
 	testGit(t, upstream, "commit", "-qam", "two")
 
 	s := sessionFixture(t)
-	node := s.ctx.DepGraph.Packages["app"]
+	node := s.ctx.DepGraph.Packages["//app"]
 	node.Pkg.SetGit(upstream).AddVersion("1.0.0", "v1.0.0").AddVersion("2.0.0", "main")
 	node.Constraints = []string{"=1.0.0"}
 	s.ctx.LockPath = filepath.Join(s.ctx.Paths.ProjectDir, "vmake.lock")
-	if err := s.selectPackageSource("app"); err != nil {
+	if err := s.selectPackageSource("//app"); err != nil {
 		t.Fatal(err)
 	}
-	if s.sourceVersions["app"] != "1.0.0" || s.sourceCommits["app"] != first {
-		t.Fatalf("source selection = %s/%s", s.sourceVersions["app"], s.sourceCommits["app"])
+	if s.sourceVersions["//app"] != "1.0.0" || s.sourceCommits["//app"] != first {
+		t.Fatalf("source selection = %s/%s", s.sourceVersions["//app"], s.sourceCommits["//app"])
 	}
 	if err := s.writeLockfile(); err != nil {
 		t.Fatal(err)
@@ -132,49 +132,49 @@ func TestLocalSetGitRefSelectionAndLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry, ok := locked.Get("app")
-	if !ok || entry.Version != "1.0.0" || entry.Commit != first || entry.Source != "git" {
+	entry, ok := locked.GetSource("//app")
+	if !ok || entry.Version != "1.0.0" || entry.Commit != first {
 		t.Fatalf("local git lock = %+v", entry)
 	}
 	s.ctx.Lock = locked
 	node.Constraints = nil
-	s.ctx.LockPolicy = resolver.LockPolicy{Float: map[string]bool{"app": true}}
+	s.ctx.LockPolicy = resolver.LockPolicy{Float: map[string]bool{"//app": true}}
 	updated := newBuildPhaseState(s.ctx, BuildOptions{})
-	if err := updated.selectPackageSource("app"); err != nil {
+	if err := updated.selectPackageSource("//app"); err != nil {
 		t.Fatal(err)
 	}
-	if updated.sourceVersions["app"] != "2.0.0" || updated.sourceCommits["app"] == first {
-		t.Fatalf("deps update retained previous selection: %s/%s", updated.sourceVersions["app"], updated.sourceCommits["app"])
+	if updated.sourceVersions["//app"] != "2.0.0" || updated.sourceCommits["//app"] == first {
+		t.Fatalf("deps update retained previous selection: %s/%s", updated.sourceVersions["//app"], updated.sourceCommits["//app"])
 	}
 	s.ctx.LockPolicy = resolver.LockPolicy{}
 	// Bring the tree back to the locked version while the source is still
 	// reachable; a locked build must then reuse it without the network.
 	back := newBuildPhaseState(s.ctx, BuildOptions{})
-	if err := back.selectPackageSource("app"); err != nil {
+	if err := back.selectPackageSource("//app"); err != nil {
 		t.Fatal(err)
 	}
-	if back.sourceCommits["app"] != first || back.sourceVersions["app"] != "1.0.0" {
-		t.Fatalf("online lock selected %s/%s", back.sourceVersions["app"], back.sourceCommits["app"])
+	if back.sourceCommits["//app"] != first || back.sourceVersions["//app"] != "1.0.0" {
+		t.Fatalf("online lock selected %s/%s", back.sourceVersions["//app"], back.sourceCommits["//app"])
 	}
 	if err := os.Rename(upstream, filepath.Join(t.TempDir(), "offline")); err != nil {
 		t.Fatal(err)
 	}
 	next := newBuildPhaseState(s.ctx, BuildOptions{})
-	if err := next.selectPackageSource("app"); err != nil {
+	if err := next.selectPackageSource("//app"); err != nil {
 		t.Fatal(err)
 	}
-	if next.sourceCommits["app"] != first || next.sourceVersions["app"] != "1.0.0" {
-		t.Fatalf("offline lock selected %s/%s", next.sourceVersions["app"], next.sourceCommits["app"])
+	if next.sourceCommits["//app"] != first || next.sourceVersions["//app"] != "1.0.0" {
+		t.Fatalf("offline lock selected %s/%s", next.sourceVersions["//app"], next.sourceCommits["//app"])
 	}
 	node.Constraints = []string{"=2.0.0"}
-	if err := newBuildPhaseState(s.ctx, BuildOptions{}).selectPackageSource("app"); err == nil {
+	if err := newBuildPhaseState(s.ctx, BuildOptions{}).selectPackageSource("//app"); err == nil {
 		t.Fatal("incompatible source constraint bypassed lock")
 	}
 }
 
 func TestLocalSetGitPreservesUnmanagedSourceDirectory(t *testing.T) {
 	s := sessionFixture(t)
-	node := s.ctx.DepGraph.Packages["app"]
+	node := s.ctx.DepGraph.Packages["//app"]
 	node.Pkg.SetGit("unavailable-upstream")
 	dir := filepath.Join(node.Source.Dir, "src")
 	if err := os.Mkdir(dir, 0755); err != nil {
@@ -184,7 +184,7 @@ func TestLocalSetGitPreservesUnmanagedSourceDirectory(t *testing.T) {
 	if err := os.WriteFile(path, []byte("private source"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.preparePackageWorkspace("app"); err == nil || !strings.Contains(err.Error(), "real directory") {
+	if err := s.preparePackageWorkspace("//app"); err == nil || !strings.Contains(err.Error(), "real directory") {
 		t.Fatalf("unmanaged source directory was accepted: %v", err)
 	}
 	if data, err := os.ReadFile(path); err != nil || string(data) != "private source" {
@@ -205,10 +205,10 @@ func nativeMemberFixture(t *testing.T, member string, setGit bool) (*buildPhaseS
 		t.Skipf("host tools unavailable: %v", err)
 	}
 	s := sessionFixture(t)
-	owner := "native/root"
-	tree := remoteTreeDir(s.ctx, owner)
+	containerID := "native/root"
+	tree := remoteTreeDir(s.ctx, containerID)
 	for name, content := range map[string]string{
-		"build.go":                           "package main\n",
+		"vmake.json":                         "{}\n",
 		filepath.Join(member, "build.go"):    "package main\n",
 		filepath.Join(member, "payload.txt"): "original",
 	} {
@@ -220,36 +220,38 @@ func nativeMemberFixture(t *testing.T, member string, setGit bool) (*buildPhaseS
 			t.Fatal(err)
 		}
 	}
-	sources, err := buildscript.ScanSubPackages(filepath.Join(tree, "src"), owner)
-	if err != nil || len(sources) != 1 {
-		t.Fatalf("native member discovery = %+v, %v", sources, err)
+	name := containerID + "/" + member
+	memberDir := filepath.Join(tree, "src", filepath.FromSlash(member))
+	source := buildscript.NewSource(name, filepath.Join(memberDir, "build.go"), memberDir, api.SourceRemote)
+	source.Container = containerID
+	source.RelPath = member
+	s.ctx.DepGraph.Containers[containerID] = &resolver.ContainerNode{
+		ID:      containerID,
+		Repo:    "native",
+		Kind:    resolver.SourceKindNative,
+		Dir:     filepath.Join(tree, "src"),
+		URL:     "unused",
+		Version: "1.0.0",
+		Commit:  "owner-commit",
 	}
-	source := &sources[0]
-	name := owner + "/" + member
-	if source.Name != name {
-		t.Fatalf("discovered member = %s, want %s", source.Name, name)
-	}
-	parent := resolver.NewPackageNode(owner, buildscript.NewSource(owner, filepath.Join(tree, "src", "build.go"), filepath.Join(tree, "src"), api.SourceRemote), api.NewPackage())
-	parent.WithNative("unused", nil, "1.0.0")
-	parent.Native.Commit = "owner-commit"
-	node := resolver.NewPackageNode(name, source, api.NewPackage())
+	node := resolver.NewPackageNode(name, containerID, member, resolver.SourceKindNative, source, api.NewPackage().SetName(name))
 	if setGit {
 		upstream := initGitRepo(t, map[string]string{"payload.txt": "original"})
 		node.Pkg.SetGit(upstream)
 	}
-	s.ctx.DepGraph.Packages[owner], s.ctx.DepGraph.Packages[name] = parent, node
-	delete(s.ctx.DepGraph.Packages, "dep")
-	s.ctx.DepGraph.Order = []string{owner, name, "app"}
-	s.ctx.Resolver.SubParents()[name] = owner
-	s.ctx.DepGraph.Packages["app"].Pkg.SetRoot(true)
-	s.ctx.DepGraph.Packages["app"].Deps = []string{owner, name}
-	s.needed = map[string]bool{"app": true, owner: true, name: true}
+	s.ctx.DepGraph.Packages[name] = node
+	delete(s.ctx.DepGraph.Packages, "//dep")
+	s.ctx.DepGraph.Order = []string{name, "//app"}
+	s.ctx.DepGraph.Roots = []string{"//app"}
+	s.ctx.DepGraph.Packages["//app"].Deps = []string{name}
+	s.needed = map[string]bool{"//app": true, name: true}
 	s.cfg = makeBuildConfig(s.ctx, host, "host")
 	aggregateGlobalFlags(s.ctx, s.needed)
 	s.globalFlagsHash = build.HashGlobalFlags([4][]string{})
 	s.computeDirsAndOptions(t)
-	s.remote.trees[owner] = tree
-	s.remote.commits[owner] = parent.Native.Commit
+	s.containerTrees[containerID] = tree
+	s.containerCommits[containerID] = "owner-commit"
+	s.containerVersions[containerID] = "1.0.0"
 	return s, tree, name
 }
 
@@ -261,10 +263,7 @@ func TestNativeMemberSingleTreeAndOwnGit(t *testing.T) {
 		}
 		t.Run(label, func(t *testing.T) {
 			s, tree, name := nativeMemberFixture(t, "member", setGit)
-			if err := s.setupSubPackageDirs(&sourceDownloadLog{}); err != nil {
-				t.Fatal(err)
-			}
-			if err := s.cloneSubPackageGitSources(); err != nil {
+			if err := s.preparePackages(&sourceDownloadLog{}); err != nil {
 				t.Fatal(err)
 			}
 			dirs := s.pkgDirs[name]
@@ -281,7 +280,7 @@ func TestNativeMemberSingleTreeAndOwnGit(t *testing.T) {
 			}
 			wantExtra := build.JoinKeyExtra(
 				"1.0.0",
-				sourceCommitKey(s.remote.commits["native/root"], s.sourceCommits[name]),
+				sourceCommitKey(s.containerCommits["native/root"], s.sourceCommits[name]),
 				packageFlagsHash(s.globalFlagsHash, node),
 				s.patchHashes[name],
 			)
@@ -297,25 +296,30 @@ func TestNativeMemberSingleTreeAndOwnGit(t *testing.T) {
 				t.Fatalf("inspect BuildDir = %q, want build %q", got, want)
 			}
 			if setGit {
-				if got := s.ctx.DepGraph.Packages[name].Pkg.SrcDir(); got != filepath.Join(dirs.SourceDir, "src") {
-					t.Fatalf("member SrcDir = %s, want %s", got, filepath.Join(dirs.SourceDir, "src"))
+				wantSrc := filepath.Join(tree, "third_party", build.MemberDir("member"), "src")
+				if got := s.ctx.DepGraph.Packages[name].Pkg.SrcDir(); got != wantSrc {
+					t.Fatalf("member SrcDir = %s, want %s", got, wantSrc)
 				}
-				if data, err := os.ReadFile(filepath.Join(dirs.SourceDir, "src", "payload.txt")); err != nil || string(data) != "original" {
+				if data, err := os.ReadFile(filepath.Join(wantSrc, "payload.txt")); err != nil || string(data) != "original" {
 					t.Fatalf("own-git member content = %q, %v", data, err)
 				}
+				// Container src/ tree must NOT get polluted with a src symlink.
+				if _, err := os.Lstat(filepath.Join(dirs.SourceDir, "src")); !os.IsNotExist(err) {
+					t.Fatalf("own-git member created symlink inside container tree: %v", err)
+				}
 			}
-			// Sibling paths in the parent repository stay reachable.
-			if data, err := os.ReadFile(filepath.Join(dirs.SourceDir, "..", "build.go")); err != nil || string(data) != "package main\n" {
-				t.Fatalf("parent source unavailable: %q, %v", data, err)
+			// Sibling paths in the container repository stay reachable.
+			if data, err := os.ReadFile(filepath.Join(dirs.SourceDir, "..", "vmake.json")); err != nil || string(data) != "{}\n" {
+				t.Fatalf("container root unavailable: %q, %v", data, err)
 			}
 		})
 	}
 }
 
-func TestSetupSubPackageDirsKeepsResolvedParentCommit(t *testing.T) {
+func TestPreparePackagesKeepsResolvedContainerCommit(t *testing.T) {
 	s := sessionFixture(t)
-	owner, name, member := "native/root", "native/root/member", "member"
-	tree := remoteTreeDir(s.ctx, owner)
+	containerID, name, member := "native/root", "native/root/member", "member"
+	tree := remoteTreeDir(s.ctx, containerID)
 	packageRoot := filepath.Join(tree, "src", member)
 	if err := os.MkdirAll(packageRoot, 0755); err != nil {
 		t.Fatal(err)
@@ -323,32 +327,33 @@ func TestSetupSubPackageDirsKeepsResolvedParentCommit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(packageRoot, "build.go"), []byte("package main\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	node := s.ctx.DepGraph.Packages["app"]
-	delete(s.ctx.DepGraph.Packages, "app")
-	delete(s.needed, "app")
-	node.ID = name
-	node.Source = buildscript.NewSource(name, filepath.Join(packageRoot, "build.go"), packageRoot, api.SourceRemote)
-	s.ctx.DepGraph.Packages[name] = node
-	s.ctx.DepGraph.Packages[owner] = resolver.NewPackageNode(owner,
-		buildscript.NewSource(owner, filepath.Join(tree, "src", "build.go"), filepath.Join(tree, "src"), api.SourceRemote), api.NewPackage())
-	s.ctx.DepGraph.Order = []string{owner, name}
-	s.needed[name] = true
-	s.needed[owner] = true
+	delete(s.ctx.DepGraph.Packages, "//app")
+	delete(s.ctx.DepGraph.Packages, "//dep")
+	s.ctx.DepGraph.Order = nil
+	s.ctx.DepGraph.Containers[containerID] = &resolver.ContainerNode{
+		ID:      containerID,
+		Repo:    "native",
+		Kind:    resolver.SourceKindNative,
+		Dir:     filepath.Join(tree, "src"),
+		Version: "1.0.0",
+		Commit:  "resolved-commit",
+	}
+	addNativeMemberNode(s, containerID, member, packageRoot)
+	s.needed = map[string]bool{name: true}
 	s.allPkgOptions[name] = nil
-	s.ctx.Resolver.SubParents()[name] = owner
-	s.remote.setVersion(owner, "1.0.0")
-	s.remote.trees[owner] = tree
-	s.remote.commits[owner] = "resolved-commit"
-	s.ctx.Pins = map[string]string{owner: "1.0.0"}
+	s.containerVersions[containerID] = "1.0.0"
+	s.containerTrees[containerID] = tree
+	s.containerCommits[containerID] = "resolved-commit"
+	s.ctx.Pins = map[string]string{containerID: "1.0.0"}
 
-	if err := s.setupSubPackageDirs(&sourceDownloadLog{}); err != nil {
+	if err := s.preparePackages(&sourceDownloadLog{}); err != nil {
 		t.Fatal(err)
 	}
-	if s.remote.commits[owner] != "resolved-commit" || s.remote.commits[name] != "resolved-commit" {
-		t.Fatalf("commits = %q/%q, want the resolved commit for both", s.remote.commits[owner], s.remote.commits[name])
+	if s.containerCommits[containerID] != "resolved-commit" {
+		t.Fatalf("container commit = %q, want resolved-commit", s.containerCommits[containerID])
 	}
-	if s.remote.trees[name] != tree {
-		t.Fatalf("member tree = %q, want %q", s.remote.trees[name], tree)
+	if s.containerTrees[containerID] != tree {
+		t.Fatalf("container tree = %q, want %q", s.containerTrees[containerID], tree)
 	}
 	tools, err := s.toolsForPackage(name)
 	if err != nil {
@@ -356,7 +361,7 @@ func TestSetupSubPackageDirsKeepsResolvedParentCommit(t *testing.T) {
 	}
 	wantExtra := build.JoinKeyExtra(
 		"1.0.0",
-		sourceCommitKey(s.remote.commits[owner], s.sourceCommits[name]),
+		sourceCommitKey(s.containerCommits[containerID], s.sourceCommits[name]),
 		packageFlagsHash(s.globalFlagsHash, s.ctx.DepGraph.Packages[name]),
 		s.patchHashes[name],
 	)
@@ -387,7 +392,7 @@ func TestRebaseRelativeSourcePathOutsideRepository(t *testing.T) {
 	}
 }
 
-func TestDownloadRemoteSourcesBindsDirsBeforePatchApply(t *testing.T) {
+func TestPrepareAllPackagesBindsDirsBeforePatchApply(t *testing.T) {
 	upstream := initGitRepo(t, map[string]string{
 		"build.go": "package main\n",
 		"input.c":  "int value = 1;\n",
@@ -399,24 +404,30 @@ func TestDownloadRemoteSourcesBindsDirsBeforePatchApply(t *testing.T) {
 	}
 
 	s := sessionFixture(t)
-	delete(s.ctx.DepGraph.Packages, "app")
-	delete(s.ctx.DepGraph.Packages, "dep")
-	s.ctx.DepGraph.Order = []string{"native/sample"}
-	s.needed = map[string]bool{"native/sample": true}
-	node := resolver.NewPackageNode("native/sample",
-		buildscript.NewSource("native/sample", filepath.Join(upstream, "build.go"), upstream, api.SourceRemote),
-		api.NewPackage().SetRepo("native").SetName("sample"))
+	delete(s.ctx.DepGraph.Packages, "//app")
+	delete(s.ctx.DepGraph.Packages, "//dep")
+	s.ctx.DepGraph.Order = []string{"official/sample"}
+	s.needed = map[string]bool{"official/sample": true}
+	s.ctx.DepGraph.Containers["official"] = &resolver.ContainerNode{
+		ID:   "official",
+		Repo: "official",
+		Kind: resolver.SourceKindRegistry,
+	}
+	src := buildscript.NewSource("official/sample", filepath.Join(scriptDir, "build.go"), scriptDir, api.SourceRemote)
+	src.Container = "official"
+	src.RelPath = "sample"
+	node := resolver.NewPackageNode("official/sample", "official", "sample", resolver.SourceKindRegistry, src,
+		api.NewPackage().SetRepo("official").SetName("sample"))
 	node.Pkg.SetScriptDir(scriptDir).AddPatches("change.patch").SetGit(upstream)
-	s.ctx.DepGraph.Packages["native/sample"] = node
-	s.remote.setVersion("native/sample", "")
+	s.ctx.DepGraph.Packages["official/sample"] = node
 
-	if err := s.downloadRemoteSources(s.remote, s.ctx.Paths.DepsDir, &sourceDownloadLog{}); err != nil {
+	if err := s.prepareAllPackages(); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.applyPatchesToNeeded(); err != nil {
 		t.Fatal(err)
 	}
-	dirs := s.pkgDirs["native/sample"]
+	dirs := s.pkgDirs["official/sample"]
 	if node.Pkg.SourceDir() != dirs.SourceDir {
 		t.Fatalf("source dir = %q, want %q", node.Pkg.SourceDir(), dirs.SourceDir)
 	}
@@ -426,9 +437,9 @@ func TestDownloadRemoteSourcesBindsDirsBeforePatchApply(t *testing.T) {
 	}
 }
 
-func TestTreePatchHashIncludesSharedMemberPatches(t *testing.T) {
+func TestContainerTreeIdentityIncludesSharedMemberPatches(t *testing.T) {
 	s := sessionFixture(t)
-	owner, member := "native/root", "native/root/member"
+	containerID, member := "native/root", "native/root/member"
 	scriptDir := t.TempDir()
 	patchPath := filepath.Join(scriptDir, "change.patch")
 	writePatch := func(body string) {
@@ -439,18 +450,12 @@ func TestTreePatchHashIncludesSharedMemberPatches(t *testing.T) {
 	}
 	writePatch("first\n")
 
-	memberNode := resolver.NewPackageNode(member,
-		buildscript.NewSource(member, filepath.Join(scriptDir, "build.go"), scriptDir, api.SourceRemote),
-		api.NewPackage().SetName(member))
+	parent := addNativeMemberNode(s, containerID, "", scriptDir)
+	memberNode := addNativeMemberNode(s, containerID, "member", scriptDir)
 	memberNode.Pkg.SetScriptDir(scriptDir).AddPatches("change.patch")
-	parent := resolver.NewPackageNode(owner,
-		buildscript.NewSource(owner, filepath.Join(scriptDir, "build.go"), scriptDir, api.SourceRemote),
-		api.NewPackage().SetName(owner))
-	s.ctx.DepGraph.Packages[owner], s.ctx.DepGraph.Packages[member] = parent, memberNode
-	s.ctx.Resolver.SubParents()[member] = owner
-	s.needed = map[string]bool{owner: true, member: true}
+	s.needed = map[string]bool{containerID: true, member: true}
 
-	first, err := s.treePatchHash(owner)
+	first, _, err := s.containerTreeIdentity(containerID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +464,7 @@ func TestTreePatchHashIncludesSharedMemberPatches(t *testing.T) {
 	}
 
 	writePatch("second\n")
-	second, err := s.treePatchHash(owner)
+	second, _, err := s.containerTreeIdentity(containerID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -468,29 +473,29 @@ func TestTreePatchHashIncludesSharedMemberPatches(t *testing.T) {
 	}
 
 	// A member with its own repository owns a separate tree; its patches must
-	// not change the parent tree identity.
+	// not change the container tree identity.
 	memberNode.Pkg.SetGit("file:///nonexistent")
-	if ownGit, err := s.treePatchHash(owner); err != nil || ownGit != "" {
-		t.Fatalf("own-git member changed the parent tree identity: %q, %v", ownGit, err)
+	if ownGit, _, err := s.containerTreeIdentity(containerID); err != nil || ownGit != "" {
+		t.Fatalf("own-git member changed the container tree identity: %q, %v", ownGit, err)
 	}
 	memberNode.Pkg.SetGit()
 	memberNode.Pkg.SetPatches()
 
 	parent.Pkg.SetScriptDir(scriptDir).AddPatches("change.patch")
-	own, err := s.treePatchHash(owner)
-	if err != nil || own == "" || own != s.patchHashes[owner] {
-		t.Fatalf("parent-only patch identity = %q, %v", own, err)
+	own, _, err := s.containerTreeIdentity(containerID)
+	if err != nil || own == "" {
+		t.Fatalf("root-only patch identity = %q, %v", own, err)
 	}
 	memberNode.Pkg.AddPatches("change.patch")
-	combined, err := s.treePatchHash(owner)
+	combined, _, err := s.containerTreeIdentity(containerID)
 	if err != nil || combined == own {
-		t.Fatalf("shared patch did not extend the parent identity: %q vs %q, %v", combined, own, err)
+		t.Fatalf("shared patch did not extend the container identity: %q vs %q, %v", combined, own, err)
 	}
 }
 
-func TestDownloadRemoteSourcesUsesSharedTreePatchIdentity(t *testing.T) {
+func TestPrepareContainersUsesSharedTreePatchIdentity(t *testing.T) {
 	upstream := initGitRepo(t, map[string]string{
-		"build.go":        "package main\n",
+		"vmake.json":      "{}\n",
 		"member/build.go": "package main\n",
 		"member/input.c":  "int value = 1;\n",
 	})
@@ -502,46 +507,43 @@ func TestDownloadRemoteSourcesUsesSharedTreePatchIdentity(t *testing.T) {
 	}
 
 	s := sessionFixture(t)
-	delete(s.ctx.DepGraph.Packages, "app")
-	delete(s.ctx.DepGraph.Packages, "dep")
-	owner, member := "native/root", "native/root/member"
-	parent := resolver.NewPackageNode(owner,
-		buildscript.NewSource(owner, filepath.Join(upstream, "build.go"), upstream, api.SourceRemote),
-		api.NewPackage().SetRepo("native").SetName("root"))
-	parent.WithNative(upstream, map[string]string{"1.0.0": "v1.0.0"}, "1.0.0")
-	memberNode := resolver.NewPackageNode(member,
-		buildscript.NewSource(member, filepath.Join(upstream, "member", "build.go"), filepath.Join(upstream, "member"), api.SourceRemote),
-		api.NewPackage().SetRepo("native").SetName("root/member"))
+	delete(s.ctx.DepGraph.Packages, "//app")
+	delete(s.ctx.DepGraph.Packages, "//dep")
+	s.ctx.DepGraph.Order = nil
+	containerID, member := "native/root", "native/root/member"
+	s.ctx.DepGraph.Containers[containerID] = &resolver.ContainerNode{
+		ID:       containerID,
+		Repo:     "native",
+		Kind:     resolver.SourceKindNative,
+		Dir:      upstream,
+		URL:      upstream,
+		Versions: map[string]string{"1.0.0": "v1.0.0"},
+		Version:  "1.0.0",
+	}
+	memberNode := addNativeMemberNode(s, containerID, "member", filepath.Join(upstream, "member"))
 	memberNode.Pkg.SetScriptDir(scriptDir).AddPatches("change.patch")
-	s.ctx.DepGraph.Packages[owner], s.ctx.DepGraph.Packages[member] = parent, memberNode
-	s.ctx.DepGraph.Order = []string{owner, member}
-	s.ctx.Resolver.SubParents()[member] = owner
-	s.needed = map[string]bool{owner: true, member: true}
-	s.remote.setVersion(owner, "1.0.0")
+	s.needed = map[string]bool{member: true}
 
-	if err := s.downloadRemoteSources(s.remote, s.ctx.Paths.DepsDir, &sourceDownloadLog{}); err != nil {
+	if err := s.prepareAllPackages(); err != nil {
 		t.Fatal(err)
 	}
-	want, err := s.treePatchHash(owner)
+	want, _, err := s.containerTreeIdentity(containerID)
 	if err != nil || want == "" {
-		t.Fatalf("tree patch identity = %q, %v", want, err)
+		t.Fatalf("container tree patch identity = %q, %v", want, err)
 	}
 	manager := repo.NewSourceManager(s.ctx.Paths.DepsDir, s.ctx.Paths.CacheDir)
-	state, err := manager.ReadState(s.remote.trees[owner])
+	state, err := manager.ReadState(s.containerTrees[containerID])
 	if err != nil || state == nil || state.PatchHash != want {
 		t.Fatalf("recorded tree patch hash = %#v, %v; want %q", state, err, want)
 	}
 }
 
-func TestResolvePackageSourceVersionForSubPackage(t *testing.T) {
+func TestResolvePackageSourceVersionForOwnGitMember(t *testing.T) {
 	s := sessionFixture(t)
 	dir := t.TempDir()
 	name := "native/root/member"
-	node := resolver.NewPackageNode(name,
-		buildscript.NewSource(name, filepath.Join(dir, "build.go"), dir, api.SourceRemote),
-		api.NewPackage().SetName(name))
-	node.Pkg.AddVersion("1.2.0", "v1.2.0").AddVersion("2.0.0", "v2.0.0")
-	s.ctx.Resolver.SubParents()[name] = "native/root"
+	node := addNativeMemberNode(s, "native/root", "member", dir)
+	node.Pkg.SetGit("https://example.invalid/third.git").AddVersion("1.2.0", "v1.2.0").AddVersion("2.0.0", "v2.0.0")
 	s.ctx.Pins = map[string]string{name: "1.2.0"}
 
 	version, ref, commit, err := s.resolvePackageSourceVersion(name, node)
@@ -549,18 +551,16 @@ func TestResolvePackageSourceVersionForSubPackage(t *testing.T) {
 		t.Fatal(err)
 	}
 	if version != "1.2.0" || ref != "v1.2.0" || commit != "" {
-		t.Fatalf("sub-package version = %q/%q/%q, want 1.2.0/v1.2.0/empty", version, ref, commit)
+		t.Fatalf("own-git member version = %q/%q/%q, want 1.2.0/v1.2.0/empty", version, ref, commit)
 	}
 
-	remote := resolver.NewPackageNode("vendor/pkg",
-		buildscript.NewSource("vendor/pkg", filepath.Join(dir, "remote.go"), dir, api.SourceRemote),
-		api.NewPackage().SetName("vendor/pkg"))
-	remote.Pkg.AddVersion("3.0.0", "v3.0.0")
-	version, ref, commit, err = s.resolvePackageSourceVersion("vendor/pkg", remote)
+	nonGit := addNativeMemberNode(s, "native/root", "plain", dir)
+	nonGit.Pkg.AddVersion("3.0.0", "v3.0.0")
+	version, ref, commit, err = s.resolvePackageSourceVersion("native/root/plain", nonGit)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if version != "" || ref != "" || commit != "" {
-		t.Fatalf("remote package version = %q/%q/%q, want empty", version, ref, commit)
+		t.Fatalf("non-SetGit member version = %q/%q/%q, want empty", version, ref, commit)
 	}
 }

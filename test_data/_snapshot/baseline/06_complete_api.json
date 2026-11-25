@@ -9,7 +9,7 @@
     "mode": "debug",
     "packages": [
       {
-        "name": "06_complete_api",
+        "name": "//",
         "source": "local",
         "path": "."
       }
@@ -26,7 +26,7 @@
     {
       "path": "compile_commands.json",
       "size": 5495,
-      "hash": "b1933b0ab5272200a03c980431d193d875408ae6c4d89da145cf8ef0a942f154"
+      "hash": "93916ede14e93c5ebc504c45d8b739829f69e4d1413bc2829c6f4809fc492028"
     }
   ],
   "install_tree_hash": "8820158f3e9d587ed8a4698c9cecf9036ca13ca5d66e95400a76eaa79360fb61"

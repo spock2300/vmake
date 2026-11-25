@@ -80,11 +80,11 @@ func TestHeadlessEditorSparseCommitAndChipCascade(t *testing.T) {
 }
 
 func TestConfigFileSetUnsetAndParseFlags(t *testing.T) {
-	pkg, opt, val, err := ParseSetFlag("vendor/pkg/opt=true")
+	pkg, opt, val, err := ParseSetFlag("vendor/pkg:opt=true")
 	if err != nil || pkg != "vendor/pkg" || opt != "opt" || val != "true" {
 		t.Fatalf("ParseSetFlag = (%q, %q, %q, %v)", pkg, opt, val, err)
 	}
-	uPkg, uOpt, err := ParseUnsetFlag("vendor/pkg/opt")
+	uPkg, uOpt, err := ParseUnsetFlag("vendor/pkg:opt")
 	if err != nil || uPkg != "vendor/pkg" || uOpt != "opt" {
 		t.Fatalf("ParseUnsetFlag = (%q, %q, %v)", uPkg, uOpt, err)
 	}

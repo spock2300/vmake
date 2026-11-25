@@ -466,7 +466,7 @@ func (ctx *BuildContext) PackageName() string
 func (ctx *BuildContext) Exec(name string, args ...string)
 ```
 
-`DepOutput`/`DepBuildDir`/`DepSrcDir`/`DepPackageDir` 接受 `pkg` 或 `pkg:target`（含子包短名），但不支持 `AddDeps` 的“同包 target 简写”和 `pkg:*` 通配：`DepOutput("utils")` 会把 `utils` 当作包名，`DepOutput("lib:*")` 返回空串。省略 target 时，只有该包恰好一个 target 才返回产物路径，否则返回空串。`DepSrcDir` 返回该依赖包的 `SrcDir()`（SetGit 上游 checkout 根；link 模式下为消费工程的 `third_party/<member>/src`），target 部分仅用于引用解析；`DepPackageDir` 返回已在 `AddRequires` 直接声明的依赖包的 `SourceDir()`（如包装包自有的头文件或配置文件所在目录；引用未直接声明的依赖包会抛出 `BuildScriptError`）。dry-run 下四者均返回空串（`DepPackageDir` 仍校验直接依赖声明），`BuildSubGraph` 直接返回。
+`DepOutput`/`DepBuildDir`/`DepSrcDir`/`DepPackageDir` 接受规范包路径 `pkg` 或 `pkg:target`（如 `//lib`、`//lib:utils`、`myorg/sdk/hal:hal`；在外部模块容器内 `//...` 锚定到当前容器根），但不支持 `AddDeps` 的“同包 target 简写”和 `pkg:*` 通配：`DepOutput("utils")` 会把 `utils` 当作无效包名，`DepOutput("//lib:*")` 返回空串。省略 target 时，只有该包恰好一个 target 才返回产物路径，否则返回空串。`DepSrcDir` 返回该依赖包的 `SrcDir()`（SetGit 独立上游源码工作树根；原生容器内为 `.vmake_deps/<repo>/<module>/third_party/<memberDir>/src`），target 部分仅用于引用解析；`DepPackageDir` 返回已在 `AddRequires` 直接声明的依赖包的 `SourceDir()`（如包装包自有的头文件或配置文件所在目录；引用未直接声明的依赖包会抛出 `BuildScriptError`）。dry-run 下四者均返回空串（`DepPackageDir` 仍校验直接依赖声明），`BuildSubGraph` 直接返回。
 
 ## InstallContext
 
@@ -682,32 +682,29 @@ ctx.Target("mylib").AddPublicIncludes("include", "src", "@foo*.h")
 | 格式 | 示例 | 含义 |
 |------|------|------|
 | 同包 target（不含 `:` 和 `/`） | `AddDeps("utils")` | 声明包自己的 `utils` target |
-| 跨包 target | `AddDeps("lib:utils")` | `lib` 包的 `utils` target（构建顺序 + 链接 + PublicIncludes 传播） |
-| 通配依赖 | `AddDeps("lib:*")`、`AddDeps("official/zlib:*")` | 该包所有 target + 传递依赖 |
-| 包路径（含 `/` 不含 `:`） | `AddDeps("official/zlib")` | 该包所有 target + 传递依赖闭包 |
+| 跨包 target | `AddDeps("//lib:utils")`、`AddDeps("official/zlib:z")` | 指定包的指定 target（构建顺序 + 链接 + PublicIncludes 传播） |
+| 通配依赖 | `AddDeps("//lib:*")`、`AddDeps("official/zlib:*")` | 该包所有 target + 传递依赖 |
+| 规范包路径（以 `//` 开头或含 `/` 且不含 `:`） | `AddDeps("//lib")`、`AddDeps("official/zlib")` | 该包所有 target + 传递依赖闭包 |
 
 规则：
 
-- **声明时校验**（fatal `*BuildScriptError`）：含空白字符、多个 `:`、`:` 前后任一段为空，以及不含 `:` 时首/尾 `/` 或 `//` 的畸形包路径。含 `:` 的引用不会在声明时校验包路径形态，畸形路径会在图构建时表现为 `dependency not found` 或 `package not found in build graph`。空字符串参数被 `AddDeps` 静默跳过，重复引用在图构建时去重。
-- **子包短名**：`pkg:target` 的 pkg 部分不含 `/` 时先按当前包位置解析（`ResolveSubPackageName`）。子包沿祖先链相对解析，兄弟子包之间可写 `AddDeps("mylib:utils")` 而不必写全路径；非子包（含顶层包）按末段在全部已发现子包中做唯一匹配（如 `AddDeps("kernel:*")` 命中唯一的 `.../kernel`），存在多个同末段子包时不做替换。顶层短名只能命中父 native 包已解析后发现的子包：`AddRequires` 中应把父包列在子包之前，`OnBuild` 阶段则使用完整依赖图。
-- **图构建时报错**：target 不存在 → `dependency not found`；包不在构建图中 → `package not found in build graph`；循环依赖 → 错误（包引用递归由 `api.CheckCycle` 报告，target 级环由拓扑排序报告）。子包短名解析失败时错误信息附带已尝试的候选路径（`tried sub-package candidates: ...`）。
+- **声明时校验**（fatal `*BuildScriptError`）：含空白字符、多个 `:`、`:` 前后任一段为空，以及畸形包路径。空字符串参数被 `AddDeps` 静默跳过，重复引用在图构建时去重。
+- **容器内 `//` 相对路径**：在 native 模块容器（如 `subtest/mother`）内部，`"//sub_b"` / `"//sub_b:utils_b"` 自动解析为同容器内的 `subtest/mother/sub_b`；在本地工作区内部，`"//"` 表示根包，`"//lib"` 表示 `<workDir>/lib`。跨包引用一律使用规范包 ID，不再有裸名或短名猜测。
+- **图构建时报错**：target 不存在 → `dependency not found`；包不在构建图中 → `package not found in build graph`；循环依赖 → 错误（包引用递归由 `api.CheckCycle` 报告，target 级环由拓扑排序报告）。
 - 依赖边同时决定：链接输入（依赖 target 的产物路径）、PublicIncludes 传播、拓扑排序顺序。`TargetStatic`/`TargetObject` 不会把依赖的库合并进产物（`TargetStatic` 仍会归档依赖的可重定位 `.o`，`TargetObject` 不合并依赖），库依赖只提供排序和包含路径传播，构建时会打印相应 NOTE。
 
 `api.ParseDepRef(ref string) (*api.DepRef, error)` 可单独解析引用，返回的 `api.DepRef` 含 `Raw`、`Pkg`、`Target`、`Wildcard`、`Qualified`；格式非法时返回 `error`，`AddDeps` 会把它转成 `*BuildScriptError`。
 
-## 子包（Sub-Package）
+## 模块容器与构建包（VMake 2.0）
 
-native 远程包 checkout 内嵌套的 `build.go` 会被识别为**子包**：独立加载的包，
-全名为 `父包全名/相对路径`（如 `official/mylib/sub_a`），拥有独立的 options/targets/build 目录，
-但**版本完全跟随父包**（不单独进 lockfile/manifest）。完整设计见 `docs/DESIGN_DECISIONS.md`（DD-1~DD-3）。
+VMake 2.0 将**模块容器**（git 仓库/分发与版本单元，由 `vmake.json` 的 `modules` 声明）与**构建包**（任意含 `build.go` 的目录，路径即身份）彻底解耦。完整设计见 `docs/adr/0001-separate-module-containers-from-packages.md` 与 `GLOSSARY.md`。
 
 要点：
 
-- **发现**：父包（native 仓库）checkout 后自动扫描其中嵌套的 build.go（`Resolver.scanSubPackages`）；registry 包装包**没有**子包概念（DD-1，设计决策）。子包懒加载（DD-3）：只有被依赖时其 build.go 才被解释。
-- **引用子包**：外部包推荐用全名，如 `ctx.AddRequires("subtest/mother/sub_a")`、`AddDeps("subtest/mother/sub_a:*", "subtest/mother:base")`；同一 `AddRequires` 列表中父包必须写在子包之前。末段在全部已发现子包中唯一时也可用短名（见上文"子包短名"）。
-- **子包互引短名**：子包内部引用兄弟子包时 pkg 部分可写短名（沿祖先链解析，见上文"子包短名"）。除 `AddDeps`/`AddRequires` 外，`DepOutput`/`DepBuildDir`/`DepSrcDir`、`BuildSubGraph` 和 `ImportConfig` 也接受同类短名。`api.SubPackageCandidates(currentPkg, depName, subParents)` 返回由近到远的候选全名：子包会追加同一 native 根下的唯一同末段子包，非子包调用方返回全局唯一同末段子包；`api.ResolveSubPackageName` 按 `exists` 回调选择第一个存在的候选，非子包调用方优先保留已存在的裸包名。
-- **父包必须 needed**：若子包进入构建集合，其 native owner 也必须在 needed 集合中；否则 `RunBuild` 过滤依赖时（`Configure` 之后）报错提示补充父包依赖。这样父包补丁、版本锁定和源码树身份才能保持一致。
-- **限制**：父包不能在自己的 `OnRequire` 中引用其子包（发现晚于依赖解析，见 DESIGN_DECISIONS.md 已知限制 5）；本地项目无子包概念（嵌套 build.go 是顶层裸名包，已知限制 1）。
+- **路径即身份、O(1) 懒加载**：本地构建包规范 ID 为 `"//"` 或 `"//<rel/path>"`；native 容器成员规范 ID 为 `<repo>/<module>` 或 `<repo>/<module>/<rel/path>`；registry 包为 `<repo>/<pkg>`（归属容器 `<repo>`）。构建包只在被 `vmake.json` `roots` 或 `AddRequires` 引用时按路径直接加载，不做全目录扫描。
+- **纯 ID `AddRequires` 与 `vmake.json` 约束**：`AddRequires` 只接受纯规范包 ID（不再接受内联版本约束）；外部容器约束声明在 `vmake.json` 的 `modules` 字段，独立上游 `SetGit` 包的约束声明在 `sources` 字段。native 容器不要求根目录必须存在 `build.go`。
+- **容器内 `//` 互引**：native 容器成员内部通过 `"//<rel/path>"` 引用同容器的兄弟构建包（在 `AddRequires`/`AddDeps`/`DepOutput`/`DepBuildDir`/`DepSrcDir`/`BuildSubGraph`/`ImportConfig` 中一致适用）。
+- **版本锁与正交 `SetGit`**：`.vmake/vmake.lock` 采用 schema v2：`containers` 锁定外部容器的版本与 commit，`sources` 锁定所有声明 `SetGit` 的独立上游源码（registry 包、本地 `SetGit` 包、native `SetGit` 成员）。
 
 示例见 `test_data/25_subpackage`（含本地 fixture native 仓）。
 
@@ -715,7 +712,7 @@ native 远程包 checkout 内嵌套的 `build.go` 会被识别为**子包**：�
 
 ScriptFS 包装的相对路径在 `pkg.SourceDir()` 已设置时以它为基准，否则以 **build.go 所在目录** 为基准（加载/发现阶段，以及本地 SetGit 源码尚未绑定到 `SourceDir` 时）。`OnBuild`/`OnInstall`/`OnClean` 回调执行期间，进程 cwd 是绑定后的 `SourceDir()`；`OnConfig` 在源码绑定前运行，cwd 是加载的 build.go 目录（registry 包为 wrapper checkout，native/local 通常与 `SourceDir()` 相同）。`TargetVoid` 的 `SetBuildFunc` 由调度器稍后调用，不经过这层 cwd 切换。远程包绑定到项目内该包唯一的工作树（`.vmake_deps/`），所有配置共享；补丁与配置会就地修改这棵树，不会写回上游。
 
-`vmake pkg link <repo/name> <path>` 是例外：`SourceDir()` 指向本地 git 工作树，`BuildDir()`/`InstallDir()` 仍在 `.vmake_deps/<repo>/<owner>/out/...`；link 包不读取版本/tag/lock 约束。native link 的子包来自同一棵树；带自身 `SetGit` 的 native 子包把第三方源码放在 `.vmake_deps/<owner>/third_party/<member>`，`SrcDir()` 指向那里。link 会删除该包已有的物化 `src` 和 `state.json`，保留输出与 own-Git 第三方源码；`vmake pkg unlink` 后下一次构建重新物化。
+`vmake pkg link <target> <path>` 是例外：`SourceDir()` 指向本地 git 工作树，`BuildDir()`/`InstallDir()` 仍在 `.vmake_deps/<repo>/<owner>/out/...`；被 link 的目标不读取版本/tag/lock 约束。link 原生模块容器时，容器内构建包按路径从同一棵 link 树加载；其中带 `SetGit` 独立上游源码的构建包把第三方源码放在 `.vmake_deps/<repo>/<owner>/third_party/<memberDir>/src`，`SrcDir()` 指向那里。link 会删除目标已有的物化工作树和 `state.json`，保留输出与其他包的 `third_party/`；`vmake pkg unlink` 后下一次构建重新物化。
 
 ```go
 data, err := os.ReadFile("configs/app.conf")
@@ -1342,12 +1339,12 @@ printf("size=%d\n", CONFIG_BUFFER_SIZE);
 
 | API | 调用者 | 作用 |
 |-----|--------|------|
-| `ImportConfig(names...)` | 依赖方 | 向 `importConfigs` 追加包名；实际的配置合并和 `-D` 注入在 `GenerateConfigDefines` 的处理块中完成 |
-| `SyncConfigDefines(names...)` | 父包（编排者） | 等价于 `GenerateConfigDefines` + `ImportConfig`，一次性同步多个子包 |
+| `ImportConfig(names...)` | 依赖方 | 向 `importConfigs` 追加规范包 ID；实际的配置合并和 `-D` 注入在 `GenerateConfigDefines` 的处理块中完成 |
+| `SyncConfigDefines(names...)` | 入口/编排包 | 等价于 `GenerateConfigDefines` + `ImportConfig`，一次性同步多个依赖构建包 |
 
-`ImportConfig` 按名称直接合并被导入包的选项（无需被依赖方做任何导出声明）；只有 `GenerateConfigDefines`（或 `SyncConfigDefines`）才会注入 `-D`。同时调用 `GenerateConfigHeader` 时，导入的选项也会合并进本包视角的 `autoconf.h`。
+`ImportConfig` 按规范包 ID 直接合并被导入包的选项（无需被依赖方做任何导出声明）；只有 `GenerateConfigDefines`（或 `SyncConfigDefines`）才会注入 `-D`。同时调用 `GenerateConfigHeader` 时，导入的选项也会合并进本包视角的 `autoconf.h`。
 
-示例——芯片包定义配置，驱动包导入，根包统一同步：
+示例——芯片包定义配置，驱动包导入，固件入口包统一同步：
 
 ```go
 // chip/build.go — 芯片包（被依赖方）
@@ -1358,18 +1355,18 @@ p.OnBuild(func(ctx *api.BuildContext) {
         AddFiles("src/*.c")
 })
 
-// driver/build.go — 驱动包（依赖 chip，导入其配置）
+// driver/build.go — 驱动包（依赖 //chip，导入其配置）
 p.OnBuild(func(ctx *api.BuildContext) {
     ctx.GenerateConfigDefines()
-    ctx.ImportConfig("chip")
+    ctx.ImportConfig("//chip")
 
     ctx.Target("driver").SetKind(api.TargetStatic).
         AddFiles("src/*.c")
 })
 
-// firmware/build.go — 根包（编排者，一次性同步所有子包）
+// firmware/build.go — 入口构建包（编排者，一次性同步所有依赖包）
 p.OnBuild(func(ctx *api.BuildContext) {
-    ctx.SyncConfigDefines("chip", "driver", "rtos")
+    ctx.SyncConfigDefines("//chip", "//driver", "//rtos")
 
     ctx.Target("firmware").SetKind(api.TargetBinary).
         AddFiles("src/*.c")

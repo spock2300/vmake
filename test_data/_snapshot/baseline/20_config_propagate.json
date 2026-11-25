@@ -9,12 +9,12 @@
     "mode": "debug",
     "packages": [
       {
-        "name": "chip",
+        "name": "//chip",
         "source": "local",
         "path": "chip"
       },
       {
-        "name": "20_config_propagate",
+        "name": "//",
         "source": "local",
         "path": "."
       }
@@ -31,7 +31,7 @@
     {
       "path": "compile_commands.json",
       "size": 3122,
-      "hash": "83bd2be25ca8b3036dff99871c80a1c30d6c76d8944a9ef49e32ff3884c86a4e"
+      "hash": "f3003ffb8081da47a5b01d3916b55d0a3f323f784f1239639bc37f832ba0cf62"
     }
   ],
   "install_tree_hash": "f025cf8339cd5bb0f26a38fd8a60ab4dec08bc738b3ff3fa8dc9d9c3de4247b0"

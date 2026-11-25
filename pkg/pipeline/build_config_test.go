@@ -3,6 +3,7 @@ package pipeline
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
@@ -12,25 +13,39 @@ import (
 )
 
 func localSource(name string) *buildscript.Source {
-	return buildscript.NewSource(name, "/p/"+name+"/build.go", "/p/"+name, api.SourceLocal)
+	rel := strings.TrimPrefix(name, "//")
+	src := buildscript.NewSource(name, "/p/"+rel+"/build.go", "/p/"+rel, api.SourceLocal)
+	src.Container = api.LocalContainerID
+	src.RelPath = rel
+	return src
 }
 
 func localNode(name string, deps ...string) *resolver.PackageNode {
+	rel := strings.TrimPrefix(name, "//")
 	return &resolver.PackageNode{
-		ID:     name,
-		Source: localSource(name),
-		Pkg:    api.NewPackage(),
-		Deps:   deps,
+		ID:        name,
+		Container: api.LocalContainerID,
+		RelPath:   rel,
+		Kind:      resolver.SourceKindLocal,
+		Source:    localSource(name),
+		Pkg:       api.NewPackage(),
+		Deps:      deps,
 	}
 }
 
 func remoteNode(name string, deps ...string) *resolver.PackageNode {
 	src := buildscript.NewSource(name, "/p/"+name+"/build.go", "/p/"+name, api.SourceRemote)
+	container := name
+	if repoName, _, ok := api.SplitPackageRef(name); ok {
+		container = repoName
+	}
 	return &resolver.PackageNode{
-		ID:     name,
-		Source: src,
-		Pkg:    api.NewPackage(),
-		Deps:   deps,
+		ID:        name,
+		Container: container,
+		Kind:      resolver.SourceKindRegistry,
+		Source:    src,
+		Pkg:       api.NewPackage(),
+		Deps:      deps,
 	}
 }
 
@@ -46,13 +61,13 @@ func TestCollectNeededEmptyGraph(t *testing.T) {
 }
 
 func TestCollectNeededSingleRootExplicit(t *testing.T) {
-	root := localNode("app")
-	root.Pkg.SetRoot(true)
-	lib := localNode("lib")
+	root := localNode("//app")
+	lib := localNode("//lib")
 	graph := &resolver.Graph{
+		Roots: []string{"//app"},
 		Packages: map[string]*resolver.PackageNode{
-			"app": root,
-			"lib": lib,
+			"//app": root,
+			"//lib": lib,
 		},
 	}
 	needed, err := computeReachable(graph)
@@ -62,97 +77,92 @@ func TestCollectNeededSingleRootExplicit(t *testing.T) {
 	if len(needed) != 1 {
 		t.Fatalf("with explicit root, only root should be seed: got %v", needed)
 	}
-	if !needed["app"] {
-		t.Error("app should be the seed")
+	if !needed["//app"] {
+		t.Error("//app should be the seed")
 	}
 }
 
 func TestCollectNeededBFSFromRoot(t *testing.T) {
-	root := localNode("app", "lib")
-	root.Pkg.SetRoot(true)
-	lib := localNode("lib", "remote-pkg")
-	remote := remoteNode("remote-pkg")
+	root := localNode("//app", "//lib")
+	lib := localNode("//lib", "official/remote-pkg")
+	remote := remoteNode("official/remote-pkg")
 	graph := &resolver.Graph{
+		Roots: []string{"//app"},
 		Packages: map[string]*resolver.PackageNode{
-			"app":        root,
-			"lib":        lib,
-			"remote-pkg": remote,
+			"//app":               root,
+			"//lib":               lib,
+			"official/remote-pkg": remote,
 		},
 	}
 	needed, err := computeReachable(graph)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !needed["app"] || !needed["lib"] || !needed["remote-pkg"] {
+	if !needed["//app"] || !needed["//lib"] || !needed["official/remote-pkg"] {
 		t.Errorf("BFS should reach all deps: got %v", needed)
 	}
 }
 
 func TestCollectNeededExcludesUnreachable(t *testing.T) {
-	root := localNode("app")
-	root.Pkg.SetRoot(true)
-	orphan := localNode("orphan")
+	root := localNode("//app")
+	orphan := localNode("//orphan")
 	graph := &resolver.Graph{
+		Roots: []string{"//app"},
 		Packages: map[string]*resolver.PackageNode{
-			"app":    root,
-			"orphan": orphan,
+			"//app":    root,
+			"//orphan": orphan,
 		},
 	}
 	needed, err := computeReachable(graph)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if needed["orphan"] {
+	if needed["//orphan"] {
 		t.Error("orphan (no one depends on it) should not be needed")
 	}
-	if !needed["app"] {
+	if !needed["//app"] {
 		t.Error("root should be needed")
 	}
 }
 
 func TestCollectNeededLibraryOnlyStillPulledInViaBFS(t *testing.T) {
-	// Per computeReachable logic (keys.go), library-only packages
-	// (no OnRequire + depended-on by local) are excluded from SEEDS, but they
-	// are still pulled into the needed set via BFS from the consumer that
-	// depends on them. The exclusion only affects which packages start the BFS.
-	consumer := localNode("app", "lib")
+	consumer := localNode("//app", "//lib")
 	consumer.Pkg.OnRequire(func(ctx *api.RequireContext) {})
-	libraryOnly := localNode("lib")
+	libraryOnly := localNode("//lib")
 	graph := &resolver.Graph{
 		Packages: map[string]*resolver.PackageNode{
-			"app": consumer,
-			"lib": libraryOnly,
+			"//app": consumer,
+			"//lib": libraryOnly,
 		},
 	}
 	needed, err := computeReachable(graph)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !needed["app"] {
+	if !needed["//app"] {
 		t.Error("consumer with requires should be needed")
 	}
-	if !needed["lib"] {
+	if !needed["//lib"] {
 		t.Error("library-only package reachable via BFS should still be needed")
 	}
 }
 
-func TestCollectNeededMultipleRootsFails(t *testing.T) {
-	r1 := localNode("app1")
-	r1.Pkg.SetRoot(true)
-	r2 := localNode("app2")
-	r2.Pkg.SetRoot(true)
+func TestCollectNeededMultipleManifestRoots(t *testing.T) {
+	r1 := localNode("//app1")
+	r2 := localNode("//app2")
 	graph := &resolver.Graph{
+		Roots: []string{"//app1", "//app2"},
 		Packages: map[string]*resolver.PackageNode{
-			"app1": r1,
-			"app2": r2,
+			"//app1": r1,
+			"//app2": r2,
 		},
 	}
-	_, err := computeReachable(graph)
-	if err == nil {
-		t.Fatal("multiple SetRoot(true) packages should fail")
+	needed, err := computeReachable(graph)
+	if err != nil {
+		t.Fatalf("multiple manifest roots should succeed: %v", err)
 	}
-	if !stringsContains(err.Error(), "multiple root packages") {
-		t.Errorf("error should mention multiple root packages, got: %v", err)
+	if !needed["//app1"] || !needed["//app2"] {
+		t.Fatalf("needed = %v, want both //app1 and //app2", needed)
 	}
 }
 

@@ -32,16 +32,15 @@ type partition struct {
 }
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.AddRequires("uboot", "linux", "main_rootfs", "recovery_rootfs", "app_partition", "configs")
+	p.AddRequires("//uboot", "//linux", "//images/main_rootfs", "//images/recovery_rootfs", "//images/app_partition", "//configs")
 
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ubootBuildDir := ctx.DepBuildDir("uboot:uboot")
-		linuxBuildDir := ctx.DepBuildDir("linux:linux")
-		mainRootfsDir := ctx.DepBuildDir("main_rootfs:main_rootfs")
-		recoveryDir := ctx.DepBuildDir("recovery_rootfs:recovery_rootfs")
-		appDir := ctx.DepBuildDir("app_partition:app_partition")
-		configsDir := ctx.DepBuildDir("configs:configs")
+		ubootBuildDir := ctx.DepBuildDir("//uboot:uboot")
+		linuxBuildDir := ctx.DepBuildDir("//linux:linux")
+		mainRootfsDir := ctx.DepBuildDir("//images/main_rootfs:main_rootfs")
+		recoveryDir := ctx.DepBuildDir("//images/recovery_rootfs:recovery_rootfs")
+		appDir := ctx.DepBuildDir("//images/app_partition:app_partition")
+		configsDir := ctx.DepBuildDir("//configs:configs")
 
 		ctx.Target("firmware").SetKind(api.TargetVoid).
 			UseRequires().

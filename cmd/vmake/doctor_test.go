@@ -177,11 +177,10 @@ func TestResolveDoctorPreferredToolchainReadOnly(t *testing.T) {
 	if err := os.MkdirAll(chipDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	makeBuildGoInDir(dir, "app", `package main
+	makeBuildGoInDir(dir, "//", `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("chip") })
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("//chip") })
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.GlobalOption("chip").SetType(api.OptionChoice).SetValues("demo-chip").SetDefault("demo-chip")
 	})

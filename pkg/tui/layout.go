@@ -322,17 +322,14 @@ func (m *Model) treeLayout(contentH int, roles []gutterRole) treeLayout {
 
 		icon, iconStyle := treeRowIconAndStyle(node, role, isSelected, isInactive, isActiveNoOpt)
 
-		name := node.Name
-		if node.PkgName == GlobalPkgName || isSyntheticGroupPkg(node.PkgName) {
-			name = m.packageLabel(node.PkgName)
-		}
+		name := m.treeNodeLabel(node)
 
 		count := 0
-		if isSyntheticGroupPkg(node.PkgName) {
-			if m.focusActive {
+		if isGroupBadgeNode(node) {
+			if m.focusActive || node.ContainerID != "" {
 				count = subtreePackageCount(node)
 			}
-		} else if node.PkgName != "" {
+		} else if !node.IsGroup && node.PkgName != "" {
 			count = m.optCountFor(node.PkgName)
 		}
 		hasMod := !node.IsGroup && node.PkgName != "" && m.pkgHasModified(node.PkgName)
@@ -440,6 +437,9 @@ func (m *Model) optionLayout(contentH int) optionLayout {
 	b.WriteString(lipgloss.NewStyle().MaxWidth(contentW).Render(titleLine) + "\n")
 
 	if m.selectedPkg == "" {
+		if cur := m.currentTreeNode(); cur != nil && cur.IsGroup {
+			return m.groupSummaryLayout(cur, contentW)
+		}
 		b.WriteString(lipgloss.PlaceHorizontal(m.width-m.treeWidth-6, lipgloss.Center, m.text(textSelectPackage)))
 		out.content = b.String()
 		return out
@@ -503,6 +503,86 @@ func (m *Model) optionLayout(contentH int) optionLayout {
 
 	out.content = strings.TrimSuffix(b.String(), "\n")
 	return out
+}
+
+func (m *Model) groupSummaryLayout(node *TreeNode, contentW int) optionLayout {
+	var title string
+	switch {
+	case node.ContainerID != "":
+		title = m.text(textModuleContainer) + " · " + m.treeNodeLabel(node)
+	case node.PkgName == RemoteGroupPkgName || node.PkgName == InactiveGroupPkgName:
+		title = m.text(textPackageGroup) + " · " + m.treeNodeLabel(node)
+	default:
+		title = m.text(textDirectory) + " · " + m.treeNodeLabel(node)
+	}
+
+	var b strings.Builder
+	b.WriteString(lipgloss.NewStyle().MaxWidth(contentW).Render(panelTitleStyle.Render(title)) + "\n\n")
+
+	if node.ContainerID != "" {
+		info := m.containers[node.ContainerID]
+		kind := info.Kind
+		if kind == "" {
+			if node.ContainerID == "//" {
+				kind = "local"
+			} else {
+				kind = "external"
+			}
+		}
+		b.WriteString(fmt.Sprintf("  %s: %s\n", optionDescStyle.Render(m.text(textContainerID)), node.ContainerID))
+		b.WriteString(fmt.Sprintf("  %s: %s\n", optionDescStyle.Render(m.text(textContainerKind)), kind))
+		if info.LinkPath != "" {
+			linkVal := info.LinkPath
+			if info.Commit != "" {
+				short := info.Commit
+				if len(short) > 12 {
+					short = short[:12]
+				}
+				linkVal += " (" + short + ")"
+			}
+			b.WriteString(fmt.Sprintf("  %s: %s\n", optionDescStyle.Render(m.text(textContainerLink)), linkVal))
+		} else if info.Version != "" || info.Commit != "" {
+			ver := info.Version
+			if info.Commit != "" {
+				short := info.Commit
+				if len(short) > 12 {
+					short = short[:12]
+				}
+				if ver != "" {
+					ver += " (" + short + ")"
+				} else {
+					ver = short
+				}
+			}
+			b.WriteString(fmt.Sprintf("  %s: %s\n", optionDescStyle.Render(m.text(textContainerVersion)), ver))
+		}
+	}
+
+	var pkgs map[string]bool
+	if node.ContainerID != "" {
+		pkgs = make(map[string]bool)
+		for _, p := range m.allKnownPackages() {
+			if m.containerOf(p) == node.ContainerID {
+				pkgs[p] = true
+			}
+		}
+	} else {
+		pkgs = make(map[string]bool)
+		collectSubtreePackages(node, pkgs)
+	}
+	activeCount, configCount := 0, 0
+	for p := range pkgs {
+		if m.isActivePkg(p) {
+			activeCount++
+		}
+		if m.hasPkgConfig(p) {
+			configCount++
+		}
+	}
+	b.WriteString(fmt.Sprintf("  %s: %s\n", optionDescStyle.Render(m.text(textGroupPackages)), m.textf(textGroupSummaryCount, activeCount, len(pkgs), configCount)))
+	b.WriteString("\n  " + optionDescStyle.Render(m.text(textGroupHint)))
+
+	return optionLayout{content: b.String()}
 }
 
 func (m *Model) gutterRoles() []gutterRole {

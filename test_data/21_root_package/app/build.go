@@ -5,14 +5,13 @@ import (
 )
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.AddRequires("lib_a")
+	p.AddRequires("//lib_a")
 
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("root_app").
 			SetKind(api.TargetBinary).
 			AddFiles("src/*.c").
 			UseRequires().
-			AddLdFlags(ctx.DepOutput("lib_a:lib_a"))
+			AddLdFlags(ctx.DepOutput("//lib_a:lib_a"))
 	})
 }

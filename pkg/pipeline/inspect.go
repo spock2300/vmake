@@ -61,6 +61,7 @@ type Inspection struct {
 	packageSourceDirs  map[string]string
 	globalOptions      map[string]*api.Option
 	packageFacts       map[string]PackageFacts
+	containers         []ContainerFacts
 	packageTargets     map[string][]TargetFacts
 	packageInstalls    map[string][]api.InstallItem
 	diagnostics        []Diagnostic
@@ -131,11 +132,6 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 	if err != nil {
 		return nil, err
 	}
-	if opts.FilterDeps {
-		if err := validateNeededSubPackageOwners(pre.needed, ctx.Resolver.SubParents()); err != nil {
-			return nil, err
-		}
-	}
 	globalCFlags := pre.rawGlobalFlags[0]
 	globalCxxFlags := pre.rawGlobalFlags[1]
 	globalLdFlags := pre.rawGlobalFlags[2]
@@ -175,13 +171,17 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		if opts.Facts {
 			facts := PackageFacts{
 				Kind:          node.SourceKind().String(),
-				NativeVersion: nativeSelected(node),
+				Container:     node.Container,
+				NativeVersion: nativeSelected(ctx, node),
 				SourcePresent: IsPackageSourcePresent(ctx, name, node),
 				Deps:          dedupeStrings(node.Deps),
 			}
 			if node.IsLocal() && node.Source.Dir != "" {
 				if rel, err := filepath.Rel(root, node.Source.Dir); err == nil {
 					facts.Path = filepath.ToSlash(rel)
+				}
+				if node.HasOwnGit() {
+					localGitMetadata(ctx, name, node, &facts)
 				}
 			} else {
 				remoteMetadata(ctx, name, node, &facts)
@@ -251,10 +251,17 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 			pkgDirs[name] = &layout.Dirs
 			layouts[name] = &layout
 		}
+		loc := ctx.packageLocation(name, node)
 		if node.IsLocal() {
-			if node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 && !DetectExistingSrcDir(node) {
-				markNotReady()
-				continue
+			sourceLink := ""
+			if node.HasOwnGit() {
+				if loc.Linked {
+					sourceLink = node.Source.Link.Path
+					node.Pkg.SetSrcDir(loc.SourceTree)
+				} else if !DetectExistingSrcDir(node) {
+					markNotReady()
+					continue
+				}
 			}
 			commit, err := existingLocalSourceCommit(node)
 			if err != nil {
@@ -266,7 +273,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 				CCKey:     tools.CCKey(),
 				Mode:      pre.cfg.Mode,
 				Options:   pkgOptions,
-				Facts:     LayoutFacts{Commit: commit, FlagsHash: flagsHash},
+				Facts:     LayoutFacts{Commit: commit, SourceLink: sourceLink, FlagsHash: flagsHash},
 				Platform:  packagePlatforms[name],
 				Ready:     true,
 			})
@@ -277,41 +284,74 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 			layouts[name] = &layout
 			continue
 		}
-		loc := ctx.packageLocation(name, node)
 		if info, err := os.Stat(loc.PackageRoot); err != nil || !info.IsDir() {
 			markNotReady()
 			continue
 		}
-		version, commit, ok := remoteVersionKey(ctx, loc.Owner, ctx.DepGraph.Packages[loc.Owner])
-		if !ok {
-			markNotReady()
-			continue
+		var (
+			version string
+			commit  string
+			ok      bool
+		)
+		if node.IsNative() {
+			version, commit, ok = containerVersionKey(ctx, node.Container, ctx.DepGraph.Containers[node.Container])
+			if !ok || commit == "" {
+				markNotReady()
+				continue
+			}
+			if node.HasOwnGit() {
+				if loc.Linked {
+					srcVer := resolver.LocalLinkVersion
+					if version != "" {
+						version = version + "+" + srcVer
+					} else {
+						version = srcVer
+					}
+					commit = sourceCommitKey(commit, node.Source.Link.Commit)
+				} else {
+					if info, err := os.Stat(loc.SourceTree); err != nil || !info.IsDir() {
+						markNotReady()
+						continue
+					}
+					sourceMgr := repo.NewSourceManager(ctx.Paths.DepsDir, ctx.Paths.CacheDir).WithSession(ctx.Locks).WithContext(ctx.Context)
+					sourceCommit := sourceMgr.CommitAt(loc.TreeRoot)
+					if sourceCommit == "" {
+						markNotReady()
+						continue
+					}
+					srcVer, _, _ := sourceVersionKey(ctx, name, node)
+					if srcVer != "" {
+						if version != "" {
+							version = version + "+" + srcVer
+						} else {
+							version = srcVer
+						}
+					}
+					commit = sourceCommitKey(commit, sourceCommit)
+				}
+			}
+		} else {
+			version, commit, ok = sourceVersionKey(ctx, name, node)
+			if !ok || commit == "" {
+				markNotReady()
+				continue
+			}
 		}
 		patchHash, err := patchHashForNode(name, node)
 		if err != nil {
 			return nil, err
 		}
 		sourceLink := ""
-		if loc.Linked {
-			sourceLink = loc.PackageRoot
+		if node.Source.Link != nil {
+			sourceLink = node.Source.Link.Path
 		}
-		commitRoot := loc.PackageRoot
-		if loc.ThirdPartyRoot != "" {
-			commitRoot = loc.ThirdPartyRoot
-		}
-		if commit != "" && loc.Member != "" && node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 {
-			sourceMgr := repo.NewSourceManager(ctx.Paths.DepsDir, ctx.Paths.CacheDir).WithSession(ctx.Locks).WithContext(ctx.Context)
-			if sourceCommit := sourceMgr.CommitAt(commitRoot); sourceCommit != "" {
-				commit = sourceCommitKey(commit, sourceCommit)
-			}
-		}
-		if commit == "" {
-			markNotReady()
-			continue
+		sourceOverride := ""
+		if loc.ContainerLinked || (node.IsRegistry() && loc.Linked) {
+			sourceOverride = loc.PackageRoot
 		}
 		layout, err := layoutFor(layoutInput{
 			PkgRoot:        loc.OwnerTreeRoot,
-			SourceOverride: sourceLink,
+			SourceOverride: sourceOverride,
 			Member:         loc.Member,
 			CCKey:          tools.CCKey(),
 			Mode:           pre.cfg.Mode,
@@ -325,10 +365,8 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		}
 		pkgDirs[name] = &layout.Dirs
 		layouts[name] = &layout
-		if loc.ThirdPartyRoot != "" {
+		if node.IsNative() && node.HasOwnGit() && node.Pkg != nil {
 			node.Pkg.SetSrcDir(loc.SourceTree)
-		} else if loc.Member != "" && node.Pkg != nil && len(node.Pkg.GitURLs()) > 0 {
-			node.Pkg.SetSrcDir(filepath.Join(layout.Dirs.SourceDir, "src"))
 		}
 	}
 
@@ -364,6 +402,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		Overrides:          maps.Clone(opts.Overrides),
 		diagnostics:        diagnostics,
 		packageFacts:       packageFacts,
+		containers:         collectContainerFacts(ctx),
 		Mode:               pre.cfg.Mode,
 		TcName:             pre.cfg.TcName,
 		Tc:                 pre.cfg.Tc,

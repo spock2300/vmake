@@ -15,7 +15,6 @@ func writeSessionProject(t *testing.T, dir string, withMarker bool) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 }
 `)
 }

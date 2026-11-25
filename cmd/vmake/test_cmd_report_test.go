@@ -29,7 +29,6 @@ func writeTestCommandProject(t *testing.T, testSource string) string {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
 `+targets+`
 	})
@@ -117,7 +116,7 @@ func TestTestCommandPublishesSucceededTestReport(t *testing.T) {
 		t.Fatalf("tests = %+v", report.Tests)
 	}
 	test := report.Tests[0]
-	if test.Name != "tests-project:tests" || test.Package != "tests-project" || test.Target != "tests" ||
+	if test.Name != "//:tests" || test.Package != "//" || test.Target != "tests" ||
 		!test.Passed || test.ElapsedMs < 0 || test.ExitCode != 0 {
 		t.Fatalf("test entry = %+v", test)
 	}
@@ -151,7 +150,7 @@ func TestTestCommandFailurePreservesBuildReport(t *testing.T) {
 	if report.Status != "failed" || report.Command != buildreport.CommandTest || report.BuildID == "" {
 		t.Fatalf("failed test report = %+v", report)
 	}
-	if len(report.Tests) != 1 || report.Tests[0].Passed || report.Tests[0].Name != "tests-project:tests" {
+	if len(report.Tests) != 1 || report.Tests[0].Passed || report.Tests[0].Name != "//:tests" {
 		t.Fatalf("failed test entries = %+v", report.Tests)
 	}
 	if report.Summary == nil || report.Summary.TestsFound != 1 || report.Summary.TestsPassed != 0 || report.Summary.TestsFailed != 1 {
@@ -280,7 +279,7 @@ int main(void) {
 	if code != 1 {
 		t.Fatalf("test exit = %d, want 1 (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	if !strings.Contains(stderr, "FAIL tests-project:tests") {
+	if !strings.Contains(stderr, "FAIL //:tests") {
 		t.Fatalf("FAIL line missing from stderr:\n%s", stderr)
 	}
 	report := loadTestReport(t, project)
@@ -307,7 +306,6 @@ func writePartialTestProject(t *testing.T, goodTestSource string) string {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c")
 		ctx.Target("checkgood").SetKind(api.TargetBinary).SetTest(true).AddFiles("tests/good.c")
@@ -334,7 +332,7 @@ int main(void) {
 		if code != 1 {
 			t.Fatalf("%v exit = %d, want 1 (stdout %q, stderr %q)", args, code, stdout, stderr)
 		}
-		if strings.Contains(stdout, "fail-fast test ran") || strings.Contains(stdout, "PASS tests-project:checkgood") {
+		if strings.Contains(stdout, "fail-fast test ran") || strings.Contains(stdout, "PASS //:checkgood") {
 			t.Fatalf("%v ran tests after build failure:\n%s", args, stdout)
 		}
 		report := loadTestReport(t, project)

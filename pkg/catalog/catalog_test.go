@@ -225,17 +225,9 @@ func TestSortedPackageVersions(t *testing.T) {
 }
 
 func TestAddRequiresSnippet(t *testing.T) {
-	for _, test := range []struct {
-		version string
-		want    string
-	}{
-		{"1.3.1", `p.AddRequires("official/zlib >= 1.3")`},
-		{"v2.0.0", `p.AddRequires("official/zlib >= 2.0")`},
-		{"latest", `p.AddRequires("official/zlib")`},
-		{"", `p.AddRequires("official/zlib")`},
-	} {
-		if got := AddRequiresSnippet("official", "zlib", test.version); got != test.want {
-			t.Errorf("version %q: %q, want %q", test.version, got, test.want)
+	for _, version := range []string{"1.3.1", "v2.0.0", "latest", ""} {
+		if got := AddRequiresSnippet("official", "zlib", version); got != `p.AddRequires("official/zlib")` {
+			t.Errorf("version %q: %q, want %q", version, got, `p.AddRequires("official/zlib")`)
 		}
 	}
 }

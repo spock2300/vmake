@@ -58,14 +58,14 @@ func makeBuildConfig(ctx *RuntimeContext, tc *toolchain.Toolchain, tcName string
 	}
 }
 
-func resolveNeeded(ctx *RuntimeContext, logFilter, freeze, validate bool) (map[string]bool, error) {
+func resolveNeeded(ctx *RuntimeContext, logFilter, freeze bool) (map[string]bool, error) {
 	if logFilter {
 		vlog.Info("")
 		vlog.Info("Filtering dependencies...")
 	}
-	rootOverride := configRootOverride(ctx)
+	rootOverrides := configRootOverrides(ctx)
 	if ctx != nil && ctx.DepGraph != nil && ctx.Resolver != nil && !ctx.DepGraph.IsFrozen() {
-		if err := convergeFilterAndDerivedOptions(ctx, rootOverride, logFilter); err != nil {
+		if err := convergeFilterAndDerivedOptions(ctx, rootOverrides, logFilter); err != nil {
 			return nil, err
 		}
 	}
@@ -74,18 +74,11 @@ func resolveNeeded(ctx *RuntimeContext, logFilter, freeze, validate bool) (map[s
 		ctx.DepGraph.Freeze()
 	}
 
-	neededSet, err := computeNeededGraph(ctx.DepGraph, rootOverride)
+	neededSet, err := computeNeededGraph(ctx.DepGraph, rootOverrides)
 	if err != nil {
 		return nil, err
 	}
-	needed := neededSet.Set
-	if validate {
-		if err := validateNeededSubPackageOwners(needed, ctx.Resolver.SubParents()); err != nil {
-			return nil, err
-		}
-	}
-
-	return needed, nil
+	return neededSet.Set, nil
 }
 
 func filterDependencies(ctx *RuntimeContext, log bool) error {
@@ -118,12 +111,12 @@ func filterDependencies(ctx *RuntimeContext, log bool) error {
 	return nil
 }
 
-func convergeFilterAndDerivedOptions(ctx *RuntimeContext, rootOverride string, log bool) (err error) {
-	_, err = convergeFilterAndDerivedOptionsWithOwners(ctx, rootOverride, log)
+func convergeFilterAndDerivedOptions(ctx *RuntimeContext, rootOverrides []string, log bool) (err error) {
+	_, err = convergeFilterAndDerivedOptionsWithOwners(ctx, rootOverrides, log)
 	return err
 }
 
-func convergeFilterAndDerivedOptionsWithOwners(ctx *RuntimeContext, rootOverride string, log bool) (_ map[string]map[string]string, err error) {
+func convergeFilterAndDerivedOptionsWithOwners(ctx *RuntimeContext, rootOverrides []string, log bool) (_ map[string]map[string]string, err error) {
 	defer scriptcall.Recover(&err)
 	if ctx == nil || ctx.DepGraph == nil || ctx.Resolver == nil {
 		return nil, nil
@@ -132,9 +125,8 @@ func convergeFilterAndDerivedOptionsWithOwners(ctx *RuntimeContext, rootOverride
 	derivedOwners := make(map[string]map[string]string)
 	globalValues := ProjectGlobalValues(ctx)
 	pkgDirs := packageSourceDirs(ctx)
-	subParents := ctx.Resolver.SubParents()
 
-	initial, err := computeNeededGraph(ctx.DepGraph, rootOverride)
+	initial, err := computeNeededGraph(ctx.DepGraph, rootOverrides)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +189,7 @@ func convergeFilterAndDerivedOptionsWithOwners(ctx *RuntimeContext, rootOverride
 				}
 			}
 
-			still, err := computeNeededGraph(ctx.DepGraph, rootOverride)
+			still, err := computeNeededGraph(ctx.DepGraph, rootOverrides)
 			if err != nil {
 				return nil, err
 			}
@@ -217,7 +209,7 @@ func convergeFilterAndDerivedOptionsWithOwners(ctx *RuntimeContext, rootOverride
 			}
 
 			if node != nil && node.Pkg != nil && api.BindPackageHasConfigureDepsFuncs(node.Pkg) {
-				if err := applyNodeConfigureDeps(ctx, name, node, globalValues, pkgDirs, subParents, stillReachable, derivedOwners); err != nil {
+				if err := applyNodeConfigureDeps(ctx, name, node, globalValues, pkgDirs, stillReachable, derivedOwners); err != nil {
 					return nil, err
 				}
 			}
@@ -236,7 +228,6 @@ func applyNodeConfigureDeps(
 	node *resolver.PackageNode,
 	globalValues map[string]any,
 	pkgDirs map[string]*api.PkgDirs,
-	subParents map[string]string,
 	needed NeededSet,
 	derivedOwners map[string]map[string]string,
 ) error {
@@ -248,9 +239,7 @@ func applyNodeConfigureDeps(
 	opts := mergedPackageAndGlobalOptions(pkgOpts, visibleGlobalOptionsFor(node, pkgOpts, ctx.globalOptions))
 	srcDir := pkgDirs[name].SourceDir
 	resolveTarget := func(dep string) (string, map[string]*api.Option, error) {
-		targetPkg := api.ResolveSubPackageName(name, dep, subParents, func(candidate string) bool {
-			return (needed == nil || needed[candidate]) && ctx.DepGraph.Packages[candidate] != nil
-		})
+		targetPkg := canonicalPkgRef(ctx, name, dep)
 		if ctx.DepGraph.Packages[targetPkg] == nil || (needed != nil && !needed[targetPkg]) {
 			return "", nil, fmt.Errorf("%s: OnConfigureDeps target package %q is not an active dependency", name, dep)
 		}
@@ -295,12 +284,12 @@ func applyNodeConfigureDeps(
 		}
 		normVal := api.NormalizeOptionValue(opt, def.Value)
 		if err := api.ValidateOptionValue(opt, normVal); err != nil {
-			return fmt.Errorf("%s: OnConfigureDeps %s/%s: %w", name, targetPkg, def.Option, err)
+			return fmt.Errorf("%s: OnConfigureDeps %s:%s: %w", name, targetPkg, def.Option, err)
 		}
 		if prevPkg, hasPrev := derivedOwners[targetPkg][def.Option]; hasPrev && prevPkg != name {
 			prevVal := ctx.derivedOptions[targetPkg][def.Option]
 			if !api.ValuesEqual(prevVal, normVal) {
-				return fmt.Errorf("conflicting OnConfigureDeps default for %s/%s: %s sets %v, %s sets %v", targetPkg, def.Option, prevPkg, prevVal, name, normVal)
+				return fmt.Errorf("conflicting OnConfigureDeps default for %s:%s: %s sets %v, %s sets %v", targetPkg, def.Option, prevPkg, prevVal, name, normVal)
 			}
 		}
 		if ctx.derivedOptions[targetPkg] == nil {
@@ -328,21 +317,6 @@ func mergedPackageAndGlobalOptions(pkgOpts, globalOpts map[string]*api.Option) m
 		merged[k] = opt
 	}
 	return merged
-}
-
-func validateNeededSubPackageOwners(needed NeededSet, subParents map[string]string) error {
-	names := make([]string, 0, len(needed))
-	for name := range needed {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		parent := subParents[name]
-		if parent != "" && !needed[parent] {
-			return fmt.Errorf("sub-package %s is required but its native parent %s is not; list %s before %s in AddRequires", name, parent, parent, name)
-		}
-	}
-	return nil
 }
 
 func (r *runContext) toolsForPackage(name string) (*build.ResolvedTools, error) {
@@ -400,7 +374,6 @@ func resolveDerivedOptions(ctx *RuntimeContext, needed NeededSet) (err error) {
 	derivedOwners := make(map[string]map[string]string)
 	globalValues := ProjectGlobalValues(ctx)
 	pkgDirs := packageSourceDirs(ctx)
-	subParents := ctx.Resolver.SubParents()
 
 	order := ctx.Resolver.GetOrder()
 	for i := len(order) - 1; i >= 0; i-- {
@@ -412,7 +385,7 @@ func resolveDerivedOptions(ctx *RuntimeContext, needed NeededSet) (err error) {
 		if node == nil || node.Pkg == nil || !api.BindPackageHasConfigureDepsFuncs(node.Pkg) {
 			continue
 		}
-		if err := applyNodeConfigureDeps(ctx, name, node, globalValues, pkgDirs, subParents, needed, derivedOwners); err != nil {
+		if err := applyNodeConfigureDeps(ctx, name, node, globalValues, pkgDirs, needed, derivedOwners); err != nil {
 			return err
 		}
 	}
@@ -423,7 +396,7 @@ func resolvePreviewDerivedOptions(ctx *RuntimeContext) {
 	if ctx == nil || ctx.DepGraph == nil || ctx.Resolver == nil {
 		return
 	}
-	needed, err := computeReachable(ctx.DepGraph, configRootOverride(ctx))
+	needed, err := computeReachable(ctx.DepGraph, configRootOverrides(ctx)...)
 	if err != nil {
 		return
 	}

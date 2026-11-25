@@ -83,7 +83,6 @@ fi
 				script := fmt.Sprintf(`package main
 import ("os"; "github.com/spock2300/vmake/pkg/api")
 func Main(p *api.Package) {
- p.SetRoot(true)
  p.OnBuild(func(ctx *api.BuildContext) {
   %s
   %s

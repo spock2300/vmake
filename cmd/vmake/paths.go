@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/lockfile"
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
@@ -35,7 +36,7 @@ func findProjectDir() string {
 		cachedProjectDir = found
 		return found
 	}
-	fatalUsage("not inside a vmake project (no .vmake/, build.go or */build.go found in %s or any parent directory)", dir)
+	fatalUsage("not inside a vmake project (no vmake.json, .vmake/, build.go or */build.go found in %s or any parent directory)", dir)
 	return ""
 }
 
@@ -55,7 +56,7 @@ func findProjectDirSoft() string {
 	return found
 }
 
-var errNotInProject = errors.New("not inside a vmake project (no .vmake/, build.go or */build.go found in the current directory or any parent directory)")
+var errNotInProject = errors.New("not inside a vmake project (no vmake.json, .vmake/, build.go or */build.go found in the current directory or any parent directory)")
 
 func resolveProjectRoot() (string, error) {
 	cwd, err := os.Getwd()
@@ -143,10 +144,10 @@ func validateProjectDirErr(override string) (string, error) {
 	if !info.IsDir() {
 		return "", &usageError{fmt.Errorf("--project path %q is not a directory", dir)}
 	}
-	if !hasProjectConfig(dir) && !hasBuildGo(dir) && !hasChildBuildGo(dir) {
-		return "", &usageError{fmt.Errorf("--project %q is not a vmake project (no .vmake/, build.go or */build.go found)", dir)}
+	if !hasProjectConfig(dir) && !hasManifest(dir) && !hasBuildGo(dir) && !hasChildBuildGo(dir) {
+		return "", &usageError{fmt.Errorf("--project %q is not a vmake project (no vmake.json, .vmake/, build.go or */build.go found)", dir)}
 	}
-	if !hasProjectConfig(dir) {
+	if !hasProjectConfig(dir) && !hasManifest(dir) {
 		if enclosing, ok := findEnclosingProjectRoot(dir); ok && filepath.Clean(enclosing) != filepath.Clean(dir) {
 			return "", &usageError{fmt.Errorf("--project %q is a package inside project %q; use --project %q or create a .vmake marker in %q for an intentional nested project", dir, enclosing, enclosing, dir)}
 		}
@@ -175,7 +176,17 @@ func searchProjectDir(dir string) (string, bool) {
 func searchProjectDirFrom(start string, enclosing bool) (string, bool) {
 	for current := start; ; {
 		startIsProject := current == start && !enclosing
-		if hasProjectConfig(current) && (startIsProject || hasBuildGo(current)) {
+		if hasProjectConfig(current) && (startIsProject || hasProjectRootMarker(current)) {
+			return current, true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	for current := start; ; {
+		if hasManifest(current) {
 			return current, true
 		}
 		parent := filepath.Dir(current)
@@ -237,6 +248,15 @@ func hasProjectConfig(dir string) bool {
 	}
 	_, err := os.Stat(marker)
 	return err == nil
+}
+
+func hasManifest(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, buildscript.ManifestFileName))
+	return err == nil
+}
+
+func hasProjectRootMarker(dir string) bool {
+	return hasManifest(dir) || hasBuildGo(dir)
 }
 
 func hasBuildGo(dir string) bool {

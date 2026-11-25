@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/resolver"
 )
 
@@ -44,8 +45,8 @@ type Needed struct {
 	Rationale string
 }
 
-func computeNeededGraph(graph *resolver.Graph, rootOverride string) (Needed, error) {
-	roots, err := computeRootSeeds(graph, rootOverride)
+func computeNeededGraph(graph *resolver.Graph, rootOverrides []string) (Needed, error) {
+	roots, err := computeRootSeeds(graph, rootOverrides)
 	if err != nil {
 		return Needed{}, err
 	}
@@ -69,13 +70,30 @@ func computeNeededGraph(graph *resolver.Graph, rootOverride string) (Needed, err
 	return Needed{Set: set, Roots: roots}, nil
 }
 
+// NeededContainers returns the external container IDs referenced by any package
+// in needed.
+func NeededContainers(graph *resolver.Graph, needed NeededSet) map[string]bool {
+	out := make(map[string]bool)
+	if graph == nil {
+		return out
+	}
+	for pkgID := range needed {
+		node := graph.Packages[pkgID]
+		if node == nil || node.Container == "" || node.Container == api.LocalContainerID {
+			continue
+		}
+		out[node.Container] = true
+	}
+	return out
+}
+
 // ComputeNeeded is the exported entry point for commands that need the same
 // package set as RunBuild.
 func ComputeNeeded(ctx *RuntimeContext) (Needed, error) {
 	if ctx == nil || ctx.DepGraph == nil {
 		return Needed{}, fmt.Errorf("project dependency graph is not initialized")
 	}
-	return computeNeededGraph(ctx.DepGraph, configRootOverride(ctx))
+	return computeNeededGraph(ctx.DepGraph, configRootOverrides(ctx))
 }
 
 // RootsFromEdges reports the graph roots for a package/edge view. Build
@@ -86,15 +104,26 @@ func RootsFromEdges(ctx *RuntimeContext, pkgs []string, edges []PackageEdge, nee
 	if ctx == nil || ctx.DepGraph == nil {
 		return nil
 	}
-	if rootOverride := configRootOverride(ctx); rootOverride != "" {
-		if node := ctx.DepGraph.Packages[rootOverride]; node != nil && needed[rootOverride] && node.IsLocal() {
-			return []string{rootOverride}
+	if overrides := configRootOverrides(ctx); len(overrides) > 0 {
+		var roots []string
+		for _, root := range overrides {
+			if node := ctx.DepGraph.Packages[root]; node != nil && needed[root] && node.IsLocal() {
+				roots = append(roots, root)
+			}
+		}
+		if len(roots) > 0 {
+			return roots
 		}
 	}
-	for _, name := range pkgs {
-		node := ctx.DepGraph.Packages[name]
-		if node != nil && needed[name] && node.IsLocal() && node.Pkg != nil && node.Pkg.IsRoot() {
-			return []string{name}
+	if len(ctx.DepGraph.Roots) > 0 {
+		var roots []string
+		for _, root := range ctx.DepGraph.Roots {
+			if node := ctx.DepGraph.Packages[root]; node != nil && needed[root] && node.IsLocal() {
+				roots = append(roots, root)
+			}
+		}
+		if len(roots) > 0 {
+			return roots
 		}
 	}
 	dependedOn := make(map[string]bool)

@@ -72,9 +72,10 @@ func TestPkgStatusReader(t *testing.T) {
 	depsDir := filepath.Join(projectDir, ".vmake_deps")
 	cacheDir := filepath.Join(projectDir, ".vmake", "cache")
 	writePkgTestFile(t, filepath.Join(projectDir, ".vmake", "vmake.lock"), `{
-  "lockfileVersion": 1,
-  "packages": {
-    "official/zlib": {"version": "1.3.1", "commit": "abcdef1234567890", "source": "git"}
+  "lockfileVersion": 2,
+  "containers": {},
+  "sources": {
+    "official/zlib": {"version": "1.3.1", "commit": "abcdef1234567890"}
   }
 }`)
 	writePkgTestFile(t, filepath.Join(depsDir, "official", "zlib", "state.json"), `{
@@ -137,8 +138,8 @@ func TestSplitPkgShowArg(t *testing.T) {
 	if _, _, _, err := splitPkgShowArg("official/zlib@"); err == nil {
 		t.Fatal("empty version did not fail")
 	}
-	if _, _, _, err := splitPkgShowArg("subtest/mother/sub_a"); err == nil || !strings.Contains(err.Error(), "parent package") {
-		t.Fatalf("sub-package error = %v", err)
+	if _, _, _, err := splitPkgShowArg("subtest/mother/sub_a"); err == nil || !strings.Contains(err.Error(), "module container") {
+		t.Fatalf("container member error = %v", err)
 	}
 }
 

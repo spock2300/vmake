@@ -18,6 +18,7 @@ type ConfigFile struct {
 	Version     string                  `json:"version"`
 	Description string                  `json:"description,omitempty"`
 	Root        string                  `json:"root,omitempty"`
+	Roots       []string                `json:"roots,omitempty"`
 	Global      *GlobalConfig           `json:"global,omitempty"`
 	Entries     map[string]*EntryConfig `json:"entries"`
 }
@@ -41,6 +42,9 @@ func (c *ConfigFile) Clone() *ConfigFile {
 		return nil
 	}
 	out := *c
+	if c.Roots != nil {
+		out.Roots = append([]string(nil), c.Roots...)
+	}
 	if c.Global != nil {
 		global := *c.Global
 		global.Options = maps.Clone(c.Global.Options)
@@ -72,6 +76,7 @@ func (cfg *ConfigFile) UnmarshalJSON(data []byte) error {
 		Version     string                     `json:"version"`
 		Description string                     `json:"description"`
 		Root        string                     `json:"root"`
+		Roots       []string                   `json:"roots"`
 		Global      *GlobalConfig              `json:"global,omitempty"`
 		Entries     map[string]json.RawMessage `json:"entries"`
 	}
@@ -85,6 +90,7 @@ func (cfg *ConfigFile) UnmarshalJSON(data []byte) error {
 	cfg.Version = raw.Version
 	cfg.Description = raw.Description
 	cfg.Root = raw.Root
+	cfg.Roots = raw.Roots
 
 	if raw.Global != nil {
 		cfg.Global = raw.Global
@@ -289,14 +295,18 @@ func ParseSetFlag(flag string) (pkgName, optName, rawVal string, err error) {
 	if keyPart == "" {
 		return "", "", "", fmt.Errorf("empty option name in --set flag: %s", flag)
 	}
-	lastSlash := strings.LastIndex(keyPart, "/")
-	if lastSlash < 0 {
+	pkgName, optName, hasColon := strings.Cut(keyPart, ":")
+	if !hasColon {
+		if strings.Contains(keyPart, "/") {
+			return "", "", "", fmt.Errorf("invalid format in --set flag: %s (use '<pkg>:<option>=<value>')", flag)
+		}
 		return "", keyPart, rawVal, nil
 	}
-	pkgName = keyPart[:lastSlash]
-	optName = keyPart[lastSlash+1:]
-	if pkgName == "" || optName == "" {
-		return "", "", "", fmt.Errorf("invalid format in --set flag: %s", flag)
+	if pkgName == "" || optName == "" || strings.Contains(optName, ":") {
+		return "", "", "", fmt.Errorf("invalid format in --set flag: %s (expected <pkg>:<option>=<value>)", flag)
+	}
+	if err := api.ValidatePackageRef(pkgName); err != nil {
+		return "", "", "", fmt.Errorf("invalid package in --set flag %q: %w", flag, err)
 	}
 	return pkgName, optName, rawVal, nil
 }
@@ -307,16 +317,20 @@ func ParseUnsetFlag(flag string) (pkgName, optName string, err error) {
 		return "", "", fmt.Errorf("empty option name in --unset flag")
 	}
 	if strings.Contains(trimmed, "=") {
-		return "", "", fmt.Errorf("unexpected '=' in --unset flag: %s (expected [pkg/]option)", flag)
+		return "", "", fmt.Errorf("unexpected '=' in --unset flag: %s (expected [pkg:]option)", flag)
 	}
-	lastSlash := strings.LastIndex(trimmed, "/")
-	if lastSlash < 0 {
+	pkgName, optName, hasColon := strings.Cut(trimmed, ":")
+	if !hasColon {
+		if strings.Contains(trimmed, "/") {
+			return "", "", fmt.Errorf("invalid format in --unset flag: %s (use '<pkg>:<option>')", flag)
+		}
 		return "", trimmed, nil
 	}
-	pkgName = trimmed[:lastSlash]
-	optName = trimmed[lastSlash+1:]
-	if pkgName == "" || optName == "" {
-		return "", "", fmt.Errorf("invalid format in --unset flag: %s", flag)
+	if pkgName == "" || optName == "" || strings.Contains(optName, ":") {
+		return "", "", fmt.Errorf("invalid format in --unset flag: %s (expected <pkg>:<option>)", flag)
+	}
+	if err := api.ValidatePackageRef(pkgName); err != nil {
+		return "", "", fmt.Errorf("invalid package in --unset flag %q: %w", flag, err)
 	}
 	return pkgName, optName, nil
 }

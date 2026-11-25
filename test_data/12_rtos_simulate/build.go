@@ -3,7 +3,7 @@ package main
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.AddRequires("chip_sim")
+	p.AddRequires("//chip_sim")
 
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.Option("debug").

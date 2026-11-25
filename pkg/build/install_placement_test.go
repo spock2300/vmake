@@ -59,7 +59,7 @@ func TestArtifactInstallerSkipsTargetsWithoutPlacement(t *testing.T) {
 	}
 	target := api.NewTargetRegistry().Target("app").SetKind(api.TargetBinary).SetDefault(true)
 	targets := map[string]map[string]*api.Target{"p": {"app": target}}
-	graph, err := NewBuildGraph(targets, nil, nil)
+	graph, err := NewBuildGraph(targets, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestArtifactInstallerSkipsVoidTargets(t *testing.T) {
 	}
 	target := api.NewTargetRegistry().Target("gen").SetKind(api.TargetVoid).SetDefault(true)
 	targets := map[string]map[string]*api.Target{"p": {"gen": target}}
-	graph, err := NewBuildGraph(targets, nil, nil)
+	graph, err := NewBuildGraph(targets, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

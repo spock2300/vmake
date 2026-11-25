@@ -40,19 +40,6 @@ func (r *BuildResult) ExternalStages() int {
 	return total
 }
 
-type remoteVersionState struct {
-	commits  map[string]string
-	trees    map[string]string
-	versions map[string]string
-}
-
-func (r *remoteVersionState) setVersion(name, version string) {
-	if r.versions == nil {
-		r.versions = make(map[string]string)
-	}
-	r.versions[name] = version
-}
-
 type BuildOptions struct {
 	IncludeTests bool
 	Jobs         int
@@ -86,12 +73,11 @@ func RunBuild(ctx *RuntimeContext, opts BuildOptions) (_ *BuildResult, err error
 		opts.Jobs = runtime.NumCPU()
 	}
 	pre, err := prepareBuild(ctx, preludeOptions{
-		filterDeps:     true,
-		freezeDeps:     true,
-		logFilter:      true,
-		validateNeeded: true,
-		resolveChip:    true,
-		resolveConfig:  true,
+		filterDeps:    true,
+		freezeDeps:    true,
+		logFilter:     true,
+		resolveChip:   true,
+		resolveConfig: true,
 	})
 	if err != nil {
 		return nil, err
@@ -128,16 +114,19 @@ func runStages(rc *runContext, pre *buildPrelude) (*BuildResult, error) {
 
 func newSourceStage(rc *runContext, cfg *configStage) *sourceStage {
 	return &sourceStage{
-		rc:             rc,
-		conf:           cfg,
-		pkgDirs:        packageSourceDirs(rc.ctx),
-		layouts:        make(map[string]*build.PackageLayout),
-		patchHashes:    make(map[string]string),
-		sourceSeeds:    make(map[string]string),
-		sourceCommits:  make(map[string]string),
-		sourceVersions: make(map[string]string),
-		offline:        rc.ctx.effectiveLockPolicy().Offline,
-		locked:         rc.ctx.effectiveLockPolicy().Locked,
+		rc:                rc,
+		conf:              cfg,
+		pkgDirs:           packageSourceDirs(rc.ctx),
+		layouts:           make(map[string]*build.PackageLayout),
+		patchHashes:       make(map[string]string),
+		sourceSeeds:       make(map[string]string),
+		sourceCommits:     make(map[string]string),
+		sourceVersions:    make(map[string]string),
+		containerCommits:  make(map[string]string),
+		containerVersions: make(map[string]string),
+		containerTrees:    make(map[string]string),
+		offline:           rc.ctx.effectiveLockPolicy().Offline,
+		locked:            rc.ctx.effectiveLockPolicy().Locked,
 	}
 }
 
@@ -213,7 +202,7 @@ func declareTargets(rc *runContext, cfg *configStage, src *sourceStage) (*declar
 }
 
 func planBuild(rc *runContext, cfg *configStage, src *sourceStage, decl *declareStage) (*planStage, error) {
-	graph, err := build.NewBuildGraph(decl.allTargets, decl.pkgMetaMap, rc.ctx.Resolver.SubParents())
+	graph, err := build.NewBuildGraph(decl.allTargets, decl.pkgMetaMap)
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +252,7 @@ func executePlan(rc *runContext, cfg *configStage, src *sourceStage, decl *decla
 		TcName:           rc.cfg.TcName,
 		TargetOS:         rc.cfg.Platform.OSOrHost(),
 		Mode:             rc.cfg.Mode,
-		InstalledPkgs:    src.remote.installedPkgs(src.pkgDirs),
+		InstalledPkgs:    src.installedPkgs(),
 		BuildCtxs:        decl.buildCtxs,
 		TargetPlacements: rc.session.TargetPlacements(),
 	}, err

@@ -30,9 +30,8 @@ func TestQueryCMakeTargetDirectories(t *testing.T) {
 			writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-    p.SetRoot(true)
-    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("libc") })
-    p.OnBuild(func(ctx *api.BuildContext) { ctx.Target("app").SetKind(api.TargetBinary).AddDeps("libc:libc") })
+    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("//libc") })
+    p.OnBuild(func(ctx *api.BuildContext) { ctx.Target("app").SetKind(api.TargetBinary).AddDeps("//libc:libc") })
 }
 `)
 			writeExtensionFile(t, filepath.Join(project, "libc", "build.go"), strings.ReplaceAll(`package main
@@ -119,7 +118,6 @@ func Main(ctx *plugin.Context) {
 			writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-    p.SetRoot(true)
     p.OnBuild(func(ctx *api.BuildContext) { ctx.Target("ready").SetKind(api.TargetVoid) })
 }
 `)
@@ -151,10 +149,9 @@ func TestQuerySkipsUnmaterializedLocalGitSources(t *testing.T) {
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-    p.SetRoot(true)
-    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
+    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("//lib") })
     p.OnBuild(func(ctx *api.BuildContext) {
-        ctx.Target("app").SetKind(api.TargetBinary).AddDeps("lib:lib")
+        ctx.Target("app").SetKind(api.TargetBinary).AddDeps("//lib:lib")
     })
 }
 `)
@@ -221,12 +218,12 @@ func Main(p *api.Package) {
 	runGitLine(t, repoDir, "commit", "-q", "-m", "registry")
 
 	project := filepath.Join(t.TempDir(), "proj")
+	writeExtensionFile(t, filepath.Join(project, "vmake.json"), `{"modules":{"official":"*"}}`)
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("official/demo") })
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("app").SetKind(api.TargetBinary).AddDeps("official/demo:*")
@@ -309,20 +306,20 @@ func TestQueryWarnsAboutMissingNeededSources(t *testing.T) {
 		{
 			name:               "tree",
 			args:               []string{"query"},
-			missingStdout:      []string{"app (binary) [.]", "└── lib [lib]"},
-			materializedStdout: []string{"app (binary) [.]", "└── lib (static) [lib]"},
+			missingStdout:      []string{"//:app (binary) [.]", "└── //lib [lib]"},
+			materializedStdout: []string{"//:app (binary) [.]", "└── //lib:lib (static) [lib]"},
 		},
 		{
 			name:               "targets",
 			args:               []string{"query", "targets"},
-			missingStdout:      []string{"proj:app (binary)"},
-			materializedStdout: []string{"proj:app (binary)", "lib:lib (static)"},
+			missingStdout:      []string{"//:app (binary)"},
+			materializedStdout: []string{"//:app (binary)", "//lib:lib (static)"},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			project := writeQueryMissingSourceProject(t)
 			state := t.TempDir()
-			warning := "Warning: package lib source is not materialized; the next build will fetch https://example.invalid/lib.git (version 1.0.0)\n"
+			warning := "Warning: package //lib source is not materialized; the next build will fetch https://example.invalid/lib.git (version 1.0.0)\n"
 
 			stdout, stderr, code := runInspectCommandWithState(t, project, state, test.args...)
 			if code != 0 {
@@ -378,10 +375,9 @@ func writeQueryMissingSourceProject(t *testing.T) string {
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-    p.SetRoot(true)
-    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
+    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("//lib") })
     p.OnBuild(func(ctx *api.BuildContext) {
-        ctx.Target("app").SetKind(api.TargetBinary).AddDeps("lib:lib")
+        ctx.Target("app").SetKind(api.TargetBinary).AddDeps("//lib:lib")
     })
 }
 `)
@@ -421,10 +417,9 @@ func TestQueryCompactTreeRendering(t *testing.T) {
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-    p.SetRoot(true)
     p.OnRequire(func(ctx *api.RequireContext) {
-        ctx.AddRequires("kernel", "lib", "multi")
-        ctx.AddRequires("kernel")
+        ctx.AddRequires("//kernel", "//lib", "//multi")
+        ctx.AddRequires("//kernel")
     })
     p.OnBuild(func(ctx *api.BuildContext) {
         ctx.Target("app").SetKind(api.TargetBinary)
@@ -442,7 +437,7 @@ func Main(p *api.Package) {
 	writeExtensionFile(t, filepath.Join(project, "lib", "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("kernel", "crypto") })
+    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("//kernel", "//crypto") })
     p.OnBuild(func(ctx *api.BuildContext) {
         ctx.Target("helper").SetKind(api.TargetVoid)
         ctx.Target("lib").SetKind(api.TargetStatic)
@@ -452,7 +447,7 @@ func Main(p *api.Package) {
 	writeExtensionFile(t, filepath.Join(project, "multi", "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("kernel", "crypto") })
+    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("//kernel", "//crypto") })
     p.OnBuild(func(ctx *api.BuildContext) {
         ctx.Target("multi").SetKind(api.TargetVoid)
     })
@@ -477,14 +472,14 @@ func Main(p *api.Package) {
 		t.Fatalf("query: %v\n%s", err, out)
 	}
 	want := strings.Join([]string{
-		"app (binary) [.]",
-		"├── kernel (object) [kernel]",
-		"├── lib (static) +helper (void) [lib]",
-		"│   ├── kernel (object) (*)",
-		"│   └── crypto:libcrypto (static) [crypto]",
-		"└── multi (void) [multi]",
-		"    ├── kernel (object) (*)",
-		"    └── crypto:libcrypto (static) (*)",
+		"//:app (binary) [.]",
+		"├── //kernel:kernel (object) [kernel]",
+		"├── //lib:lib (static) +helper (void) [lib]",
+		"│   ├── //kernel:kernel (object) (*)",
+		"│   └── //crypto:libcrypto (static) [crypto]",
+		"└── //multi:multi (void) [multi]",
+		"    ├── //kernel:kernel (object) (*)",
+		"    └── //crypto:libcrypto (static) (*)",
 	}, "\n")
 	if !strings.Contains(out, want) {
 		t.Errorf("compact tree missing expected block:\n%s\ngot:\n%s", want, out)
@@ -492,10 +487,10 @@ func Main(p *api.Package) {
 	if strings.Contains(out, "empty") {
 		t.Errorf("empty root package was printed:\n%s", out)
 	}
-	if got := strings.Count(out, "kernel (object) [kernel]"); got != 1 {
+	if got := strings.Count(out, "//kernel:kernel (object) [kernel]"); got != 1 {
 		t.Errorf("kernel expanded %d times, want once:\n%s", got, out)
 	}
-	if got := strings.Count(out, "crypto:libcrypto (static) [crypto]"); got != 1 {
+	if got := strings.Count(out, "//crypto:libcrypto (static) [crypto]"); got != 1 {
 		t.Errorf("crypto expanded %d times, want once:\n%s", got, out)
 	}
 }
@@ -508,7 +503,7 @@ func TestQueryToleratesMissingSourceTargetPanic(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("%v exit = %d, want 0 (stderr %q)", args, code, stderr)
 		}
-		if !strings.Contains(stdout, "app (binary)") && !strings.Contains(stdout, "proj:app (binary)") {
+		if !strings.Contains(stdout, "//:app (binary)") {
 			t.Errorf("%v stdout is missing the declared root target:\n%s", args, stdout)
 		}
 		if strings.Contains(stdout, "lib (static)") {
@@ -517,7 +512,7 @@ func TestQueryToleratesMissingSourceTargetPanic(t *testing.T) {
 		if strings.Contains(stderr, "panic") || strings.Contains(stderr, "cannot declare targets") {
 			t.Errorf("%v ran OnBuild for a package whose source is missing:\n%s", args, stderr)
 		}
-		if !strings.Contains(stderr, "Warning: package lib source is not materialized") {
+		if !strings.Contains(stderr, "Warning: package //lib source is not materialized") {
 			t.Errorf("%v stderr is missing the source warning:\n%s", args, stderr)
 		}
 		if _, err := os.Stat(filepath.Join(project, ".vmake_deps")); !os.IsNotExist(err) {
@@ -534,10 +529,10 @@ func TestQueryToleratesTargetDeclarationFailure(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("%v exit = %d, want 0 (stderr %q)", args, code, stderr)
 		}
-		if !strings.Contains(stdout, "app (binary)") && !strings.Contains(stdout, "proj:app (binary)") {
+		if !strings.Contains(stdout, "//:app (binary)") {
 			t.Errorf("%v stdout is missing the declared root target:\n%s", args, stdout)
 		}
-		warning := "Warning: cannot declare targets for lib:"
+		warning := "Warning: cannot declare targets for //lib:"
 		if !strings.Contains(stderr, warning) {
 			t.Fatalf("%v stderr is missing %q:\n%s", args, warning, stderr)
 		}
@@ -559,14 +554,11 @@ func TestQueryReadOnlyWarnings(t *testing.T) {
 			t.Fatalf("%v exit = %d, want 0 (stderr %q)", args, code, stderr)
 		}
 		for _, name := range []string{"lib", "tool"} {
-			if !strings.Contains(stderr, "Warning: cannot declare targets for "+name+":") {
+			if !strings.Contains(stderr, "Warning: cannot declare targets for //"+name+":") {
 				t.Fatalf("%v stderr is missing the %s per-package warning:\n%s", args, name, stderr)
 			}
 		}
-		if args[0] == "query" && !strings.Contains(stdout, "app (binary)") {
-			t.Fatalf("%v is missing the declared root target:\n%s", args, stdout)
-		}
-		if len(args) > 1 && !strings.Contains(stdout, "proj:app (binary)") {
+		if !strings.Contains(stdout, "//:app (binary)") {
 			t.Fatalf("%v is missing the declared root target:\n%s", args, stdout)
 		}
 		if strings.Contains(stdout, "lib (static)") || strings.Contains(stdout, "tool (static)") {
@@ -586,10 +578,9 @@ func writeQueryReadOnlyTargetsProject(t *testing.T) string {
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-    p.SetRoot(true)
-    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib", "tool") })
+    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("//lib", "//tool") })
     p.OnBuild(func(ctx *api.BuildContext) {
-        ctx.Target("app").SetKind(api.TargetBinary).AddDeps("lib:lib", "tool:tool")
+        ctx.Target("app").SetKind(api.TargetBinary).AddDeps("//lib:lib", "//tool:tool")
     })
 }
 `)
@@ -618,7 +609,6 @@ import (
     "github.com/spock2300/vmake/pkg/api"
 )
 func Main(p *api.Package) {
-    p.SetRoot(true)
     p.OnConfig(func(ctx *api.ConfigContext) {
         _ = os.WriteFile("config-generated.txt", []byte("config"), 0644)
     })
@@ -650,10 +640,9 @@ func writeQueryPanickingSourceProject(t *testing.T, materialize bool) string {
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-    p.SetRoot(true)
-    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
+    p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("//lib") })
     p.OnBuild(func(ctx *api.BuildContext) {
-        ctx.Target("app").SetKind(api.TargetBinary).AddDeps("lib:lib")
+        ctx.Target("app").SetKind(api.TargetBinary).AddDeps("//lib:lib")
     })
 }
 `)

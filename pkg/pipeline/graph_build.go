@@ -59,6 +59,7 @@ func BuildUnifiedGraph(ctx *RuntimeContext, inspection *Inspection, opts GraphOp
 		present := IsPackageSourcePresent(ctx, name, node)
 		meta := build.PkgBuildMeta{
 			Origin:         node.Source.Origin,
+			Container:      node.Container,
 			Linked:         node.Source.Link != nil,
 			Deps:           append([]string(nil), node.Deps...),
 			VisPath:        visPath,
@@ -109,15 +110,9 @@ func BuildUnifiedGraph(ctx *RuntimeContext, inspection *Inspection, opts GraphOp
 		g.pkgMeta[name] = meta
 	}
 
-	var subParents map[string]string
-	if ctx.Resolver != nil {
-		subParents = ctx.Resolver.SubParents()
-	}
-
 	bg := build.AuditBuildGraph(g.declaredTargets, g.pkgMeta, build.GraphAuditOptions{
-		SubParents: subParents,
-		Needed:     inspection.needed,
-		Included:   included,
+		Needed:   inspection.needed,
+		Included: included,
 	})
 	g.buildGraph = bg
 	g.Packages = bg.Packages

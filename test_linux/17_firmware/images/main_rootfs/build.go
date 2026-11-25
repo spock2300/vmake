@@ -9,24 +9,24 @@ import (
 
 func Main(p *api.Package) {
 	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("busybox", "libcore", "libnet", "webapp", "sensordaemon", "controlpanel", "configs")
+		ctx.AddRequires("//busybox", "//libs/libcore", "//libs/libnet", "//apps/webapp", "//apps/sensordaemon", "//apps/controlpanel", "//configs")
 	})
 
 	p.OnBuild(func(ctx *api.BuildContext) {
-		busyboxBuildDir := ctx.DepBuildDir("busybox:busybox")
-		webappOut := ctx.DepOutput("webapp:webapp")
-		sensorOut := ctx.DepOutput("sensordaemon:sensordaemon")
-		panelOut := ctx.DepOutput("controlpanel:controlpanel")
-		libcoreSo := ctx.DepOutput("libcore:core")
-		libnetSo := ctx.DepOutput("libnet:net")
-		configsBuildDir := ctx.DepBuildDir("configs:configs")
+		busyboxBuildDir := ctx.DepBuildDir("//busybox:busybox")
+		webappOut := ctx.DepOutput("//apps/webapp:webapp")
+		sensorOut := ctx.DepOutput("//apps/sensordaemon:sensordaemon")
+		panelOut := ctx.DepOutput("//apps/controlpanel:controlpanel")
+		libcoreSo := ctx.DepOutput("//libs/libcore:core")
+		libnetSo := ctx.DepOutput("//libs/libnet:net")
+		configsBuildDir := ctx.DepBuildDir("//configs:configs")
 
 		ctx.Target("main_rootfs").SetKind(api.TargetVoid).
 			AddDeps(
-				"busybox:busybox",
-				"libcore:core", "libnet:net",
-				"webapp:webapp", "sensordaemon:sensordaemon", "controlpanel:controlpanel",
-				"configs:configs",
+				"//busybox:busybox",
+				"//libs/libcore:core", "//libs/libnet:net",
+				"//apps/webapp:webapp", "//apps/sensordaemon:sensordaemon", "//apps/controlpanel:controlpanel",
+				"//configs:configs",
 			).
 			SetBuildFunc(func(pkg *api.Package) error {
 				return buildSquashfs(

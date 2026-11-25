@@ -39,53 +39,7 @@ func (c AppliedChange) Key() string {
 	if c.Pkg == "" {
 		return c.Opt
 	}
-	return c.Pkg + "/" + c.Opt
-}
-
-func isProjectVisiblePkg(ctx *RuntimeContext, candidate string) bool {
-	if ctx == nil || ctx.Resolver == nil {
-		return true
-	}
-	return pkgvis.CheckInternal("@local", "@local", candidate, ctx.Resolver.VisibilityPath(candidate)) == nil
-}
-
-func ResolveSetPackageName(ctx *RuntimeContext, pkgName string) string {
-	if pkgName == "" || strings.Contains(pkgName, "/") || ctx == nil {
-		return pkgName
-	}
-	if _, ok := ctx.allOptions[pkgName]; ok {
-		return pkgName
-	}
-	if ctx.DepGraph != nil && ctx.DepGraph.Packages[pkgName] != nil {
-		return pkgName
-	}
-	suffix := "/" + pkgName
-	match := ""
-	for candidate := range ctx.allOptions {
-		if strings.HasSuffix(candidate, suffix) && isProjectVisiblePkg(ctx, candidate) {
-			if match != "" && match != candidate {
-				return pkgName
-			}
-			match = candidate
-		}
-	}
-	if match != "" {
-		return match
-	}
-	if ctx.DepGraph != nil {
-		for candidate := range ctx.DepGraph.Packages {
-			if strings.HasSuffix(candidate, suffix) && isProjectVisiblePkg(ctx, candidate) {
-				if match != "" && match != candidate {
-					return pkgName
-				}
-				match = candidate
-			}
-		}
-	}
-	if match != "" {
-		return match
-	}
-	return pkgName
+	return c.Pkg + ":" + c.Opt
 }
 
 func ResolveSetPackageOption(ctx *RuntimeContext, pkgName, optName string) (string, *api.Option, error) {
@@ -102,7 +56,7 @@ func ResolveSetPackageOption(ctx *RuntimeContext, pkgName, optName string) (stri
 		return "", opt, nil
 	}
 
-	resolvedPkg := ResolveSetPackageName(ctx, pkgName)
+	resolvedPkg := pkgName
 	if ctx != nil && ctx.Resolver != nil {
 		if err := pkgvis.CheckInternal("@local", "@local", resolvedPkg, ctx.Resolver.VisibilityPath(resolvedPkg)); err != nil {
 			return "", nil, err
@@ -121,25 +75,6 @@ func ResolveSetPackageOption(ctx *RuntimeContext, pkgName, optName string) (stri
 		}
 	}
 	if !hasOpts && !inGraph {
-		if ctx != nil && ctx.Resolver != nil {
-			suffix := "/" + pkgName
-			for candidate := range ctx.allOptions {
-				if strings.HasSuffix(candidate, suffix) {
-					if err := pkgvis.CheckInternal("@local", "@local", candidate, ctx.Resolver.VisibilityPath(candidate)); err != nil {
-						return "", nil, err
-					}
-				}
-			}
-			if ctx.DepGraph != nil {
-				for candidate := range ctx.DepGraph.Packages {
-					if strings.HasSuffix(candidate, suffix) {
-						if err := pkgvis.CheckInternal("@local", "@local", candidate, ctx.Resolver.VisibilityPath(candidate)); err != nil {
-							return "", nil, err
-						}
-					}
-				}
-			}
-		}
 		var allOpts map[string]map[string]*api.Option
 		if ctx != nil {
 			allOpts = ctx.allOptions
@@ -169,11 +104,8 @@ func hasExplicitConfigKey(ctx *RuntimeContext, pkgName, optName string) (string,
 	if pkgName == "" {
 		return "", ctx.Config.HasExplicitOption("", optName)
 	}
-	resolvedPkg := ResolveSetPackageName(ctx, pkgName)
-	for _, cand := range []string{resolvedPkg, pkgName} {
-		if ctx.Config.HasExplicitOption(cand, optName) {
-			return cand, true
-		}
+	if ctx.Config.HasExplicitOption(pkgName, optName) {
+		return pkgName, true
 	}
 	return pkgName, false
 }
@@ -208,7 +140,7 @@ func MutateConfig(ctx *RuntimeContext, req ConfigMutation) ([]AppliedChange, err
 		}
 		prefix := s.Opt
 		if resolvedPkg != "" {
-			prefix = resolvedPkg + "/" + s.Opt
+			prefix = resolvedPkg + ":" + s.Opt
 		}
 		value, err := config.CoerceOptionValue(opt, s.Raw, prefix)
 		if err != nil {

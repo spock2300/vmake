@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/lockfile"
 	"github.com/spock2300/vmake/pkg/pipeline"
@@ -117,11 +118,16 @@ func Main(p *api.Package) {
 	})
 }
 `)
+	writeExtensionFile(t, filepath.Join(project, "vmake.json"), `{
+  "roots": ["//"],
+  "modules": {
+    "testnative/libfoo": ">= 1.0.0"
+  }
+}`)
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.AddRequires("testnative/libfoo >= 1.0.0", "blob")
+	p.AddRequires("testnative/libfoo", "//blob")
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("app").SetKind(api.TargetVoid).UseRequires()
 	})
@@ -138,7 +144,7 @@ func Main(p *api.Package) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := lock.Get("testnative/libfoo"); !ok || got.Version != "1.1.0" || got.Commit != commitV2 {
+	if got, ok := lock.GetContainer("testnative/libfoo"); !ok || got.Version != "1.1.0" || got.Commit != commitV2 {
 		t.Fatalf("deps sync libfoo = %+v, want 1.1.0/%s", got, commitV2)
 	}
 
@@ -155,11 +161,11 @@ func Main(p *api.Package) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := lock.Get("testnative/libfoo"); !ok || got.Version != "1.0.0" || got.Commit != commitV1 {
+	if got, ok := lock.GetContainer("testnative/libfoo"); !ok || got.Version != "1.0.0" || got.Commit != commitV1 {
 		t.Fatalf("locked libfoo = %+v", got)
 	}
-	if got, ok := lock.Get("blob"); !ok || got.Version != "" || got.Commit != blobCommit1 || got.Source != "git" {
-		t.Fatalf("locked untagged blob = %+v, want empty version and commit %s", got, blobCommit1)
+	if got, ok := lock.GetSource("//blob"); !ok || got.Version != "" || got.Commit != blobCommit1 {
+		t.Fatalf("locked untagged //blob = %+v, want empty version and commit %s", got, blobCommit1)
 	}
 
 	mustRun("build", "--locked")
@@ -179,11 +185,11 @@ func Main(p *api.Package) {
 	if got := byName["testnative/libfoo"]; got.Version != "1.0.0" || got.Commit != commitV1 || got.Pinned != "1.0.0" {
 		t.Fatalf("pinned status = %+v, want version 1.0.0/%s pinned 1.0.0", got, commitV1)
 	}
-	if got := byName["blob"]; got.Version != "" || got.Commit != blobCommit1 || got.Pinned != "" {
+	if got := byName["//blob"]; got.Version != "" || got.Commit != blobCommit1 || got.Pinned != "" {
 		t.Fatalf("untagged status = %+v, want commit %s and no version", got, blobCommit1)
 	}
-	if got := byName["blob"]; got.Source != "git" {
-		t.Fatalf("local package source = %q, want the 1.x spelling git", got.Source)
+	if got := byName["//blob"]; got.Source != "git" {
+		t.Fatalf("local package source = %q, want git", got.Source)
 	}
 
 	mustRun("deps", "unpin", "testnative/libfoo")
@@ -195,7 +201,7 @@ func Main(p *api.Package) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := lock.Get("testnative/libfoo"); got == nil || got.Version != "1.0.0" {
+	if got, _ := lock.GetContainer("testnative/libfoo"); got == nil || got.Version != "1.0.0" {
 		t.Fatalf("unpin should keep locked version 1.0.0, got %+v", got)
 	}
 
@@ -215,7 +221,7 @@ func Main(p *api.Package) {
 		t.Fatalf("unexpected dry-run result: %+v", dryEnv)
 	}
 	lock, _ = lockfile.Load(filepath.Join(project, ".vmake", "vmake.lock"))
-	if got, _ := lock.Get("testnative/libfoo"); got == nil || got.Version != "1.0.0" {
+	if got, _ := lock.GetContainer("testnative/libfoo"); got == nil || got.Version != "1.0.0" {
 		t.Fatalf("dry-run mutated vmake.lock: %+v", got)
 	}
 	if data, err := os.ReadFile(filepath.Join(project, ".vmake_deps", "testnative", "libfoo", "src", "foo.h")); err != nil || !strings.Contains(string(data), "FOO_VER 1") {
@@ -224,7 +230,7 @@ func Main(p *api.Package) {
 
 	mustRun("deps", "update", "testnative/libfoo")
 	lock, _ = lockfile.Load(filepath.Join(project, ".vmake", "vmake.lock"))
-	if got, _ := lock.Get("testnative/libfoo"); got == nil || got.Version != "1.1.0" || got.Commit != commitV2 {
+	if got, _ := lock.GetContainer("testnative/libfoo"); got == nil || got.Version != "1.1.0" || got.Commit != commitV2 {
 		t.Fatalf("deps update libfoo = %+v", got)
 	}
 
@@ -240,7 +246,7 @@ func Main(p *api.Package) {
 
 	mustRun("deps", "pin", "testnative/libfoo@"+commitV1)
 	lock, _ = lockfile.Load(filepath.Join(project, ".vmake", "vmake.lock"))
-	if got, _ := lock.Get("testnative/libfoo"); got == nil || got.Version != "" || got.Commit != commitV1 {
+	if got, _ := lock.GetContainer("testnative/libfoo"); got == nil || got.Version != "" || got.Commit != commitV1 {
 		t.Fatalf("commit pin lock = %+v, want empty version and commit %s", got, commitV1)
 	}
 
@@ -308,10 +314,15 @@ func Main(p *api.Package) {
 		t.Fatal(err)
 	}
 	mustRun("repo", "add", "--native", "testnative", filepath.ToSlash(filepath.Join(root, "upstreams"))+"/{name}")
+	writeExtensionFile(t, filepath.Join(project, "vmake.json"), `{
+  "roots": ["//"],
+  "modules": {
+    "testnative/libfoo": "*"
+  }
+}`)
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.AddRequires("testnative/libfoo")
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("app").SetKind(api.TargetVoid).UseRequires()
@@ -398,8 +409,7 @@ func Main(p *api.Package) {
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.AddRequires("foo")
+	p.AddRequires("//foo")
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("app").SetKind(api.TargetVoid).UseRequires()
 	})
@@ -408,7 +418,7 @@ func Main(p *api.Package) {
 	writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{"version":"1","global":{"toolchain":"healthy","mode":"release"},"entries":{}}`)
 
 	mustRun("deps", "sync")
-	treeFile := filepath.Join(project, ".vmake_deps", "local", "foo", "src", "noted.txt")
+	treeFile := filepath.Join(project, ".vmake_deps", "local", build.MemberDir("foo"), "src", "noted.txt")
 	if data, err := os.ReadFile(treeFile); err != nil || !strings.Contains(string(data), "patched-v1") {
 		t.Fatalf("initial sync did not apply patched-v1: %q, %v", data, err)
 	}

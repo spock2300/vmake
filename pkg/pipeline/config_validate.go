@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -17,8 +19,8 @@ func validateConfigValuesInternal(ctx *RuntimeContext, needed NeededSet, checkTo
 	if ctx == nil || ctx.Config == nil {
 		return nil
 	}
-	if rootOverride := configRootOverride(ctx); rootOverride != "" && ctx.DepGraph != nil {
-		if _, err := computeRootSeeds(ctx.DepGraph, rootOverride); err != nil {
+	if rootOverrides := configRootOverrides(ctx); len(rootOverrides) > 0 && ctx.DepGraph != nil {
+		if _, err := computeRootSeeds(ctx.DepGraph, rootOverrides); err != nil {
 			return err
 		}
 	}
@@ -115,7 +117,7 @@ func ValidateConfigStrict(ctx *RuntimeContext) ([]string, error) {
 	if ctx == nil || ctx.Config == nil || ctx.DepGraph == nil {
 		return nil, fmt.Errorf("project context is not initialized")
 	}
-	needed, err := resolveNeeded(ctx, false, false, true)
+	needed, err := resolveNeeded(ctx, false, false)
 	if err != nil {
 		return nil, err
 	}
@@ -161,6 +163,16 @@ func ValidateConfigStrict(ctx *RuntimeContext) ([]string, error) {
 			continue
 		}
 		if ctx.DepGraph.Packages[pkgName] == nil {
+			if rel, ok := api.LocalRelPath(pkgName); ok && ctx.WorkDir != "" {
+				dir := ctx.WorkDir
+				if rel != "" {
+					dir = filepath.Join(ctx.WorkDir, filepath.FromSlash(rel))
+				}
+				if _, err := os.Stat(filepath.Join(dir, "build.go")); err == nil {
+					issues = append(issues, fmt.Sprintf("entries.%s: package is not reachable from active root", pkgName))
+					continue
+				}
+			}
 			issues = append(issues, fmt.Sprintf("entries.%s: package not found in workspace", pkgName))
 			continue
 		}

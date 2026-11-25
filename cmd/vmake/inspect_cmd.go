@@ -54,6 +54,7 @@ type inspectData struct {
 	GlobalDefines          []string                    `json:"globalDefines,omitempty"`
 	Overrides              map[string]any              `json:"overrides,omitempty"`
 	Roots                  []string                    `json:"roots"`
+	Containers             []inspectContainer          `json:"containers,omitempty"`
 	Packages               []inspectPackage            `json:"packages"`
 	Graph                  []inspectEdge               `json:"graph"`
 	CompileDatabase        string                      `json:"compileDatabase"`
@@ -85,9 +86,22 @@ type inspectOptionDef struct {
 	Group       string   `json:"group,omitempty"`
 }
 
+type inspectContainer struct {
+	ID       string `json:"id"`
+	Kind     string `json:"kind"`
+	Repo     string `json:"repo,omitempty"`
+	Version  string `json:"version,omitempty"`
+	Commit   string `json:"commit,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Dir      string `json:"dir,omitempty"`
+	Linked   bool   `json:"linked,omitempty"`
+	LinkPath string `json:"linkPath,omitempty"`
+}
+
 type inspectPackage struct {
 	Name          string                      `json:"name"`
 	Kind          string                      `json:"kind"`
+	Container     string                      `json:"container,omitempty"`
 	Repo          string                      `json:"repo,omitempty"`
 	Version       string                      `json:"version,omitempty"`
 	Commit        string                      `json:"commit,omitempty"`
@@ -207,7 +221,7 @@ diagnostics, vmake exits 1, and stderr carries one human-readable error line.`,
 		Args: cobra.NoArgs,
 	}
 	addConfigFlag(cmd)
-	cmd.Flags().StringArrayVarP(&setFlags, "set", "s", nil, "override an option for this run only (format: [pkg/]option=value)")
+	cmd.Flags().StringArrayVarP(&setFlags, "set", "s", nil, "override an option for this run only (format: [pkg:]option=value)")
 	cmd.Flags().BoolVar(&noTargets, "no-targets", false, "skip dry-run OnBuild target declaration")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return runInspect(cmd.Context(), setFlags, !noTargets)
@@ -300,7 +314,7 @@ func (o inspectOverride) key() string {
 	if o.pkgName == "" {
 		return o.optName
 	}
-	return o.pkgName + "/" + o.optName
+	return o.pkgName + ":" + o.optName
 }
 
 func inspectOverrideValues(overrides []inspectOverride) map[string]any {
@@ -372,6 +386,23 @@ func encodeInspect(inspection *pipeline.Inspection, includeTargets bool) (*inspe
 		InstallPrefix:          inspection.InstallPrefix,
 		InstallManifest:        inspection.InstallManifest,
 	}
+	containers := inspection.Containers()
+	if len(containers) > 0 {
+		data.Containers = make([]inspectContainer, 0, len(containers))
+		for _, c := range containers {
+			data.Containers = append(data.Containers, inspectContainer{
+				ID:       c.ID,
+				Kind:     c.Kind,
+				Repo:     c.Repo,
+				Version:  c.Version,
+				Commit:   c.Commit,
+				URL:      c.URL,
+				Dir:      c.Dir,
+				Linked:   c.Linked,
+				LinkPath: c.LinkPath,
+			})
+		}
+	}
 	for _, name := range inspection.Packages() {
 		facts, ok := inspection.Facts(name)
 		if !ok {
@@ -381,6 +412,7 @@ func encodeInspect(inspection *pipeline.Inspection, includeTargets bool) (*inspe
 		pkg := inspectPackage{
 			Name:          name,
 			Kind:          facts.Kind,
+			Container:     facts.Container,
 			Repo:          facts.Repo,
 			Version:       facts.Version,
 			Commit:        facts.Commit,

@@ -13,28 +13,40 @@ import (
 	"github.com/spock2300/vmake/pkg/resolver"
 )
 
-func addSubPackageNode(s *buildPhaseState, name, owner, dir string) *resolver.PackageNode {
-	node := resolver.NewPackageNode(name,
-		buildscript.NewSource(name, filepath.Join(dir, "build.go"), dir, api.SourceRemote),
-		api.NewPackage().SetName(name))
+func addNativeMemberNode(s *buildPhaseState, containerID, rel, dir string) *resolver.PackageNode {
+	name := containerID
+	if rel != "" {
+		name = containerID + "/" + rel
+	}
+	if s.ctx.DepGraph.Containers[containerID] == nil {
+		s.ctx.DepGraph.Containers[containerID] = &resolver.ContainerNode{
+			ID:      containerID,
+			Repo:    strings.SplitN(containerID, "/", 2)[0],
+			Kind:    resolver.SourceKindNative,
+			Dir:     dir,
+			Version: "1.0.0",
+			Commit:  "resolved-commit",
+		}
+	}
+	src := buildscript.NewSource(name, filepath.Join(dir, "build.go"), dir, api.SourceRemote)
+	src.Container = containerID
+	src.RelPath = rel
+	node := resolver.NewPackageNode(name, containerID, rel, resolver.SourceKindNative, src, api.NewPackage().SetName(name))
 	s.ctx.DepGraph.Packages[name] = node
 	s.ctx.DepGraph.Order = append(s.ctx.DepGraph.Order, name)
-	if owner != "" {
-		s.ctx.Resolver.SubParents()[name] = owner
-	}
 	return node
 }
 
-func TestComputeDepOutputResolvesSubPackageShortName(t *testing.T) {
+func TestComputeDepOutputResolvesIntraContainerRef(t *testing.T) {
 	s := sessionFixture(t)
 	s.allTargets = make(map[string]map[string]*api.Target)
-	owner, tool, lib := "native/root", "native/root/tool", "native/root/lib"
+	containerID := "native/root"
+	tool := "native/root/tool"
+	lib := "native/root/lib"
 	toolDir := filepath.Join(canonicalTempDir(t), "tool")
 	libDir := filepath.Join(canonicalTempDir(t), "lib")
-	addSubPackageNode(s, owner, "", filepath.Join(canonicalTempDir(t), "root"))
-	addSubPackageNode(s, tool, owner, toolDir)
-	addSubPackageNode(s, lib, owner, libDir)
-	s.needed[owner] = true
+	addNativeMemberNode(s, containerID, "tool", toolDir)
+	addNativeMemberNode(s, containerID, "lib", libDir)
 	s.needed[tool] = true
 	s.needed[lib] = true
 	s.pkgDirs[tool] = &api.PkgDirs{SourceDir: toolDir, BuildDir: filepath.Join(canonicalTempDir(t), "tool-out")}
@@ -44,103 +56,70 @@ func TestComputeDepOutputResolvesSubPackageShortName(t *testing.T) {
 
 	want := filepath.Join(s.pkgDirs[lib].BuildDir,
 		api.TargetFilename(api.TargetStatic, "utils", s.cfg.Platform.OSOrHost()))
-	if got := s.computeDepOutput(tool, "lib:utils"); got != want {
-		t.Fatalf("short target ref = %q, want %q", got, want)
+	if got := s.computeDepOutput(tool, "//lib:utils"); got != want {
+		t.Fatalf("intra-container target ref = %q, want %q", got, want)
 	}
 	if got := s.computeDepOutput(tool, lib+":utils"); got != want {
 		t.Fatalf("full target ref = %q, want %q", got, want)
 	}
-	if got := s.computeDepOutput(tool, "lib"); got != want {
-		t.Fatalf("short bare ref = %q, want %q", got, want)
+	if got := s.computeDepOutput(tool, "//lib"); got != want {
+		t.Fatalf("intra-container bare ref = %q, want %q", got, want)
 	}
-	if got := s.computeDepOutput(tool, "missing:utils"); got != "" {
+	if got := s.computeDepOutput(tool, "//missing:utils"); got != "" {
 		t.Fatalf("missing package = %q, want empty", got)
 	}
-	if got := s.computeDepOutput(tool, "lib:missing"); got != "" {
+	if got := s.computeDepOutput(tool, "//lib:missing"); got != "" {
 		t.Fatalf("missing target = %q, want empty", got)
 	}
 }
 
 func TestComputeDepSrcDirResolvesPackageSource(t *testing.T) {
 	s := sessionFixture(t)
-	owner, tool, lib := "native/root", "native/root/tool", "native/root/lib"
+	containerID := "native/root"
+	tool := "native/root/tool"
+	lib := "native/root/lib"
 	toolDir := filepath.Join(canonicalTempDir(t), "tool")
 	libDir := filepath.Join(canonicalTempDir(t), "lib")
-	addSubPackageNode(s, owner, "", filepath.Join(canonicalTempDir(t), "root"))
-	addSubPackageNode(s, tool, owner, toolDir)
-	libNode := addSubPackageNode(s, lib, owner, libDir)
-	for _, name := range []string{owner, tool, lib} {
-		s.needed[name] = true
-	}
+	addNativeMemberNode(s, containerID, "tool", toolDir)
+	libNode := addNativeMemberNode(s, containerID, "lib", libDir)
+	s.needed[tool] = true
+	s.needed[lib] = true
 	s.pkgDirs[tool] = &api.PkgDirs{SourceDir: toolDir, BuildDir: canonicalTempDir(t)}
 	s.pkgDirs[lib] = &api.PkgDirs{SourceDir: libDir, BuildDir: canonicalTempDir(t)}
 	upstream := filepath.Join(canonicalTempDir(t), "third_party", "lib", "src")
 	libNode.Pkg.SetSrcDir(upstream)
 
-	if got := s.computeDepSrcDir(tool, "lib"); got != upstream {
-		t.Fatalf("short package ref = %q, want %q", got, upstream)
+	if got := s.computeDepSrcDir(tool, "//lib"); got != upstream {
+		t.Fatalf("intra-container package ref = %q, want %q", got, upstream)
 	}
 	if got := s.computeDepSrcDir(tool, lib+":utils"); got != upstream {
 		t.Fatalf("full package ref = %q, want %q", got, upstream)
 	}
-	if got := s.computeDepSrcDir(tool, "missing"); got != "" {
+	if got := s.computeDepSrcDir(tool, "//missing"); got != "" {
 		t.Fatalf("missing package = %q, want empty", got)
 	}
 }
 
-func TestComputeDepOutputPrefersNearestSubPackage(t *testing.T) {
+func TestApplyBuildContextConfigResolvesIntraContainerImports(t *testing.T) {
 	s := sessionFixture(t)
-	s.allTargets = make(map[string]map[string]*api.Target)
-	owner, tool, near, far := "native/root", "native/root/tool", "native/root/lib", "lib"
-	addSubPackageNode(s, owner, "", filepath.Join(canonicalTempDir(t), "root"))
-	addSubPackageNode(s, tool, owner, filepath.Join(canonicalTempDir(t), "tool"))
-	addSubPackageNode(s, near, owner, filepath.Join(canonicalTempDir(t), "near"))
-	addSubPackageNode(s, far, "", filepath.Join(canonicalTempDir(t), "far"))
-	for _, name := range []string{owner, tool, near, far} {
-		s.needed[name] = true
-	}
-	s.pkgDirs[tool] = &api.PkgDirs{SourceDir: canonicalTempDir(t), BuildDir: canonicalTempDir(t)}
-	s.pkgDirs[near] = &api.PkgDirs{SourceDir: canonicalTempDir(t), BuildDir: canonicalTempDir(t)}
-	s.pkgDirs[far] = &api.PkgDirs{SourceDir: canonicalTempDir(t), BuildDir: canonicalTempDir(t)}
-	target := api.NewTargetRegistry().Target("utils").SetKind(api.TargetStatic)
-	s.allTargets[near] = map[string]*api.Target{"utils": target}
-	s.allTargets[far] = map[string]*api.Target{"utils": target}
-
-	got := s.computeDepOutput(tool, "lib:utils")
-	want := filepath.Join(s.pkgDirs[near].BuildDir,
-		api.TargetFilename(api.TargetStatic, "utils", s.cfg.Platform.OSOrHost()))
-	if got != want {
-		t.Fatalf("nearest ref = %q, want %q", got, want)
-	}
-}
-
-func TestApplyBuildContextConfigResolvesSubPackageImports(t *testing.T) {
-	s := sessionFixture(t)
-	owner, tool, lib := "native/root", "native/root/tool", "native/root/lib"
-	addSubPackageNode(s, owner, "", filepath.Join(canonicalTempDir(t), "root"))
-	toolNode := addSubPackageNode(s, tool, owner, filepath.Join(canonicalTempDir(t), "tool"))
+	containerID := "native/root"
+	tool := "native/root/tool"
+	lib := "native/root/lib"
+	toolNode := addNativeMemberNode(s, containerID, "tool", filepath.Join(canonicalTempDir(t), "tool"))
 	libPkg := api.NewPackage().SetName(lib)
 	cfgCtx := api.NewConfigContext(lib)
 	cfgCtx.Option("feature").SetType(api.OptionBool).SetDefault(true)
 	api.BindSetOptions(&libPkg.ConfigAccessor, cfgCtx.GetOptions())
 	api.BindSetCfgVals(&libPkg.ConfigAccessor, map[string]any{"feature": true})
-	s.ctx.DepGraph.Packages[lib] = resolver.NewPackageNode(lib,
-		buildscript.NewSource(lib, "build.go", canonicalTempDir(t), api.SourceRemote), libPkg)
-	s.ctx.Resolver.SubParents()[lib] = owner
-	near := tool + "/lib"
-	nearPkg := api.NewPackage().SetName(near)
-	nearCfg := api.NewConfigContext(near)
-	nearCfg.Option("feature").SetType(api.OptionBool).SetDefault(false)
-	api.BindSetOptions(&nearPkg.ConfigAccessor, nearCfg.GetOptions())
-	api.BindSetCfgVals(&nearPkg.ConfigAccessor, map[string]any{"feature": false})
-	s.ctx.DepGraph.Packages[near] = resolver.NewPackageNode(near,
-		buildscript.NewSource(near, "build.go", canonicalTempDir(t), api.SourceRemote), nearPkg)
-	s.ctx.Resolver.SubParents()[near] = owner
-	needed := map[string]bool{owner: true, tool: true, lib: true}
+	libSrc := buildscript.NewSource(lib, "build.go", canonicalTempDir(t), api.SourceRemote)
+	libSrc.Container = containerID
+	libSrc.RelPath = "lib"
+	s.ctx.DepGraph.Packages[lib] = resolver.NewPackageNode(lib, containerID, "lib", resolver.SourceKindNative, libSrc, libPkg)
+	needed := map[string]bool{tool: true, lib: true}
 
 	for _, defines := range []bool{false, true} {
 		t.Run(map[bool]string{false: "header-only", true: "defines"}[defines], func(t *testing.T) {
-			node := resolver.NewPackageNode(tool, toolNode.Source, api.NewPackage().SetName(tool))
+			node := resolver.NewPackageNode(tool, containerID, "tool", resolver.SourceKindNative, toolNode.Source, api.NewPackage().SetName(tool))
 			buildCtx := api.NewBuildContext(tool, nil)
 			api.BindSetPackage(buildCtx, node.Pkg)
 			target := buildCtx.Target("app").SetKind(api.TargetStatic)
@@ -148,7 +127,7 @@ func TestApplyBuildContextConfigResolvesSubPackageImports(t *testing.T) {
 			if defines {
 				buildCtx.GenerateConfigDefines()
 			}
-			buildCtx.ImportConfig("lib")
+			buildCtx.ImportConfig("//lib")
 			applyBuildContextConfig(buildCtx, node, s.ctx, tool, needed)
 
 			if got := node.Pkg.ImportConfigs(); !reflect.DeepEqual(got, []string{lib}) {
@@ -168,24 +147,28 @@ func TestApplyBuildContextConfigResolvesSubPackageImports(t *testing.T) {
 	}
 }
 
-func TestWriteLockfileSkipsSubPackages(t *testing.T) {
+func TestWriteLockfileLocksContainerNotNonGitMember(t *testing.T) {
 	s := sessionFixture(t)
-	owner, sub := "native/root", "native/root/member"
-	parent := resolver.NewPackageNode(owner,
-		buildscript.NewSource(owner, "build.go", canonicalTempDir(t), api.SourceRemote),
-		api.NewPackage().SetName(owner))
-	parent.WithNative("https://example.invalid/root.git", map[string]string{"1.0.0": "v1.0.0"}, "1.0.0")
-	subNode := resolver.NewPackageNode(sub,
-		buildscript.NewSource(sub, "build.go", canonicalTempDir(t), api.SourceRemote),
-		api.NewPackage().SetName(sub))
-	s.ctx.DepGraph.Packages[owner], s.ctx.DepGraph.Packages[sub] = parent, subNode
-	s.ctx.DepGraph.Order = []string{owner, sub}
-	s.ctx.Resolver.SubParents()[sub] = owner
-	s.remote.setVersion(owner, "1.0.0")
-	s.remote.commits[owner] = "abc123"
+	containerID, memberID := "native/root", "native/root/member"
+	delete(s.ctx.DepGraph.Packages, "//app")
+	delete(s.ctx.DepGraph.Packages, "//dep")
+	s.ctx.DepGraph.Order = nil
+	s.ctx.DepGraph.Containers[containerID] = &resolver.ContainerNode{
+		ID:       containerID,
+		Repo:     "native",
+		Kind:     resolver.SourceKindNative,
+		URL:      "https://example.invalid/root.git",
+		Versions: map[string]string{"1.0.0": "v1.0.0"},
+		Version:  "1.0.0",
+		Commit:   "abc123",
+	}
+	addNativeMemberNode(s, containerID, "member", canonicalTempDir(t))
+	s.needed = map[string]bool{memberID: true}
+	s.containerVersions[containerID] = "1.0.0"
+	s.containerCommits[containerID] = "abc123"
 	s.ctx.LockPath = filepath.Join(canonicalTempDir(t), "vmake.lock")
 	s.ctx.Lock = lockfile.New()
-	s.ctx.Lock.Set(sub, &lockfile.LockedPkg{Version: "1.0.0", Commit: "stale", Source: "native"})
+	s.ctx.Lock.SetSource(memberID, &lockfile.LockedSource{Version: "1.0.0", Commit: "stale"})
 
 	if err := s.writeLockfile(); err != nil {
 		t.Fatal(err)
@@ -194,91 +177,73 @@ func TestWriteLockfileSkipsSubPackages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry, ok := locked.Get(owner)
+	entry, ok := locked.GetContainer(containerID)
 	if !ok || entry.Version != "1.0.0" || entry.Commit != "abc123" || entry.Source != "native" {
-		t.Fatalf("parent lock = %+v", entry)
+		t.Fatalf("container lock = %+v", entry)
 	}
-	if _, ok := locked.Get(sub); ok {
-		t.Fatal("sub-package must not be locked separately")
+	if _, ok := locked.GetSource(memberID); ok {
+		t.Fatal("non-SetGit container member must not be locked in sources")
 	}
 }
 
-func TestSetupSubPackageDirsNestedMember(t *testing.T) {
+func TestPreparePackagesNestedNativeMember(t *testing.T) {
 	s := sessionFixture(t)
-	owner, sub, member := "native/root", "native/root/a/b", "a/b"
-	tree := remoteTreeDir(s.ctx, owner)
+	containerID, memberID, member := "native/root", "native/root/a/b", "a/b"
+	tree := remoteTreeDir(s.ctx, containerID)
 	packageRoot := filepath.Join(tree, "src", filepath.FromSlash(member))
 	if err := writePipelineFile(packageRoot, "build.go"); err != nil {
 		t.Fatal(err)
 	}
-	parent := resolver.NewPackageNode(owner,
-		buildscript.NewSource(owner, filepath.Join(tree, "src", "build.go"), filepath.Join(tree, "src"), api.SourceRemote),
-		api.NewPackage().SetName(owner))
-	parent.WithNative("unused", map[string]string{"1.0.0": "v1.0.0"}, "1.0.0")
-	node := resolver.NewPackageNode(sub,
-		buildscript.NewSource(sub, filepath.Join(packageRoot, "build.go"), packageRoot, api.SourceRemote),
-		api.NewPackage().SetName(sub))
-	s.ctx.DepGraph.Packages[owner], s.ctx.DepGraph.Packages[sub] = parent, node
-	s.ctx.Pins = map[string]string{owner: "1.0.0"}
-	s.ctx.DepGraph.Order = []string{owner, sub}
-	s.ctx.Resolver.SubParents()[sub] = owner
-	s.needed[owner], s.needed[sub] = true, true
-	s.allPkgOptions[sub] = nil
-	s.remote.setVersion(owner, "1.0.0")
-	s.remote.commits[owner] = "resolved-commit"
-	s.remote.trees[owner] = tree
+	delete(s.ctx.DepGraph.Packages, "//app")
+	delete(s.ctx.DepGraph.Packages, "//dep")
+	s.ctx.DepGraph.Order = nil
+	s.ctx.DepGraph.Containers[containerID] = &resolver.ContainerNode{
+		ID:       containerID,
+		Repo:     "native",
+		Kind:     resolver.SourceKindNative,
+		Dir:      filepath.Join(tree, "src"),
+		URL:      "unused",
+		Versions: map[string]string{"1.0.0": "v1.0.0"},
+		Version:  "1.0.0",
+		Commit:   "resolved-commit",
+	}
+	addNativeMemberNode(s, containerID, member, packageRoot)
+	s.ctx.Pins = map[string]string{containerID: "1.0.0"}
+	s.needed = map[string]bool{memberID: true}
+	s.allPkgOptions[memberID] = nil
+	s.containerVersions[containerID] = "1.0.0"
+	s.containerCommits[containerID] = "resolved-commit"
+	s.containerTrees[containerID] = tree
 
-	if err := s.setupSubPackageDirs(&sourceDownloadLog{}); err != nil {
+	if err := s.preparePackages(&sourceDownloadLog{}); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.sourceVersions[sub]; got != "1.0.0" {
-		t.Fatalf("sub version = %q, want 1.0.0", got)
+	if got := s.containerCommits[containerID]; got != "resolved-commit" {
+		t.Fatalf("container commit = %q, want resolved-commit", got)
 	}
-	if got := s.remote.commits[sub]; got != "resolved-commit" {
-		t.Fatalf("sub commit = %q, want resolved-commit", got)
+	if got := s.containerTrees[containerID]; got != tree {
+		t.Fatalf("container tree = %q, want %q", got, tree)
 	}
-	if got := s.remote.trees[sub]; got != tree {
-		t.Fatalf("sub tree = %q, want %q", got, tree)
-	}
-	dirs := s.pkgDirs[sub]
+	dirs := s.pkgDirs[memberID]
 	if dirs == nil || dirs.SourceDir != packageRoot {
-		t.Fatalf("sub dirs = %+v, want source %s", dirs, packageRoot)
+		t.Fatalf("member dirs = %+v, want source %s", dirs, packageRoot)
 	}
 	if !strings.HasPrefix(dirs.BuildDir, filepath.Join(tree, "out")+string(filepath.Separator)) {
-		t.Fatalf("sub BuildDir = %s, want under %s", dirs.BuildDir, filepath.Join(tree, "out"))
-	}
-}
-
-func TestSetupSubPackageDirsRequiresParentVersion(t *testing.T) {
-	s := sessionFixture(t)
-	owner, sub := "native/root", "native/root/member"
-	tree := remoteTreeDir(s.ctx, owner)
-	packageRoot := filepath.Join(tree, "src", "member")
-	if err := writePipelineFile(packageRoot, "build.go"); err != nil {
-		t.Fatal(err)
-	}
-	parent := resolver.NewPackageNode(owner,
-		buildscript.NewSource(owner, filepath.Join(tree, "src", "build.go"), filepath.Join(tree, "src"), api.SourceRemote),
-		api.NewPackage().SetName(owner))
-	node := resolver.NewPackageNode(sub,
-		buildscript.NewSource(sub, filepath.Join(packageRoot, "build.go"), packageRoot, api.SourceRemote),
-		api.NewPackage().SetName(sub))
-	s.ctx.DepGraph.Packages[owner], s.ctx.DepGraph.Packages[sub] = parent, node
-	s.ctx.DepGraph.Order = []string{owner, sub}
-	s.ctx.Resolver.SubParents()[sub] = owner
-	s.needed[owner], s.needed[sub] = true, true
-	s.allPkgOptions[sub] = nil
-
-	err := s.setupSubPackageDirs(&sourceDownloadLog{})
-	if err == nil || !strings.Contains(err.Error(), "has no resolved version") {
-		t.Fatalf("setup error = %v, want missing parent version", err)
+		t.Fatalf("member BuildDir = %s, want under %s", dirs.BuildDir, filepath.Join(tree, "out"))
 	}
 }
 
 func TestRemoteOwnerAndMemberPathNested(t *testing.T) {
 	r := resolver.NewResolver(nil, canonicalTempDir(t))
-	r.SubParents()["native/root/a/b"] = "native/root"
-	ctx := &RuntimeContext{Resolver: r}
+	src := buildscript.NewSource("native/root/a/b", "build.go", canonicalTempDir(t), api.SourceRemote)
+	src.Container = "native/root"
+	src.RelPath = "a/b"
+	r.Graph().Packages["native/root/a/b"] = resolver.NewPackageNode("native/root/a/b", "native/root", "a/b", resolver.SourceKindNative, src, api.NewPackage())
+	rootSrc := buildscript.NewSource("native/root", "build.go", canonicalTempDir(t), api.SourceRemote)
+	rootSrc.Container = "native/root"
+	r.Graph().Packages["native/root"] = resolver.NewPackageNode("native/root", "native/root", "", resolver.SourceKindNative, rootSrc, api.NewPackage())
+	ctx := &RuntimeContext{Resolver: r, DepGraph: r.Graph()}
+
 	if got := remoteOwnerName(ctx, "native/root/a/b"); got != "native/root" {
 		t.Fatalf("owner = %q, want native/root", got)
 	}
@@ -290,60 +255,37 @@ func TestRemoteOwnerAndMemberPathNested(t *testing.T) {
 	}
 }
 
-func TestFilterAndCollectNeededRejectsSubPackageWithoutParent(t *testing.T) {
+func TestNeededContainersCollectsContainerWithoutRootPackage(t *testing.T) {
 	s := sessionFixture(t)
-	owner, sub := "native/root", "native/root/member"
-	parent := resolver.NewPackageNode(owner,
-		buildscript.NewSource(owner, "build.go", canonicalTempDir(t), api.SourceRemote),
-		api.NewPackage().SetName(owner))
-	subNode := resolver.NewPackageNode(sub,
-		buildscript.NewSource(sub, "build.go", canonicalTempDir(t), api.SourceRemote),
-		api.NewPackage().SetName(sub))
-	s.ctx.DepGraph.Packages[owner], s.ctx.DepGraph.Packages[sub] = parent, subNode
-	s.ctx.Resolver.SubParents()[sub] = owner
-	s.ctx.DepGraph.Packages["app"].Pkg.SetRoot(true)
-	s.ctx.DepGraph.Packages["app"].Deps = []string{sub}
+	containerID, memberID := "native/root", "native/root/member"
+	addNativeMemberNode(s, containerID, "member", canonicalTempDir(t))
+	s.ctx.DepGraph.Roots = []string{"//app"}
+	s.ctx.DepGraph.Packages["//app"].Deps = []string{memberID}
 
-	_, err := resolveNeeded(s.ctx, true, true, true)
-	if err == nil || !strings.Contains(err.Error(), "native parent native/root is not") {
-		t.Fatalf("needed sub-package without parent error = %v", err)
+	needed, err := resolveNeeded(s.ctx, true, true)
+	if err != nil {
+		t.Fatalf("resolveNeeded failed for member without root package: %v", err)
+	}
+	if !needed[memberID] {
+		t.Fatal("member was not marked needed")
+	}
+	containers := NeededContainers(s.ctx.DepGraph, needed)
+	if !containers[containerID] || containers[api.LocalContainerID] {
+		t.Fatalf("NeededContainers = %+v, want only external container %s", containers, containerID)
 	}
 }
 
-func TestNeededSubPackagesRequireNeededParent(t *testing.T) {
-	subParents := map[string]string{
-		"native/root/a":   "native/root",
-		"native/root/b":   "native/root",
-		"native/root/c/d": "native/root/c",
-	}
-	if err := validateNeededSubPackageOwners(map[string]bool{"native/root/a": true}, subParents); err == nil ||
-		!strings.Contains(err.Error(), "native/root/a") || !strings.Contains(err.Error(), "native/root") {
-		t.Fatalf("missing parent validation error = %v", err)
-	}
-	if err := validateNeededSubPackageOwners(map[string]bool{"native/root/a": true, "native/root": true}, subParents); err != nil {
-		t.Fatalf("needed parent rejected: %v", err)
-	}
-	if err := validateNeededSubPackageOwners(map[string]bool{"native/root/c/d": true, "native/root/c": true}, subParents); err != nil {
-		t.Fatalf("needed nested parent rejected: %v", err)
-	}
-}
-
-func TestSessionBuildRequestResolvesSubPackageShortName(t *testing.T) {
+func TestSessionBuildRequestResolvesIntraContainerRef(t *testing.T) {
 	s, tree, memberA := nativeMemberFixture(t, "member_a", false)
-	owner := "native/root"
-	memberB := owner + "/member_b"
+	containerID := "native/root"
+	memberB := containerID + "/member_b"
 	dirB := filepath.Join(tree, "src", "member_b")
 	if err := writePipelineFile(dirB, "build.go"); err != nil {
 		t.Fatal(err)
 	}
-	nodeB := resolver.NewPackageNode(memberB,
-		buildscript.NewSource(memberB, filepath.Join(dirB, "build.go"), dirB, api.SourceRemote),
-		api.NewPackage().SetName(memberB))
-	s.ctx.DepGraph.Packages[memberB] = nodeB
-	s.ctx.DepGraph.Order = []string{owner, memberA, memberB, "app"}
-	s.ctx.Resolver.SubParents()[memberB] = owner
+	nodeB := addNativeMemberNode(s, containerID, "member_b", dirB)
+	s.ctx.DepGraph.Order = []string{memberA, memberB, "//app"}
 	s.needed[memberB] = true
-	s.remote.commits[memberB] = s.remote.commits[owner]
 	s.computeDirsAndOptions(t)
 
 	builds := 0
@@ -354,7 +296,7 @@ func TestSessionBuildRequestResolvesSubPackageShortName(t *testing.T) {
 		})
 	})
 	s.ctx.DepGraph.Packages[memberA].Pkg.OnBuild(func(ctx *api.BuildContext) {
-		ctx.BuildSubGraph("member_b")
+		ctx.BuildSubGraph("//member_b")
 		ctx.Target("a").SetKind(api.TargetVoid)
 	})
 
@@ -366,62 +308,16 @@ func TestSessionBuildRequestResolvesSubPackageShortName(t *testing.T) {
 	}
 }
 
-func TestSessionBuildRequestSkipsFilteredOutCandidate(t *testing.T) {
-	s, tree, current := nativeMemberFixture(t, "member_a", false)
-	owner := "native/root"
-	near := current + "/lib"
-	far := owner + "/lib"
-	nearDir := filepath.Join(tree, "src", "member_a", "lib")
-	farDir := filepath.Join(tree, "src", "lib")
-	for _, dir := range []string{nearDir, farDir} {
-		if err := writePipelineFile(dir, "build.go"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	addSubPackageNode(s, near, owner, nearDir)
-	addSubPackageNode(s, far, owner, farDir)
-	s.needed[far] = true
-	s.remote.commits[far] = s.remote.commits[owner]
-	s.computeDirsAndOptions(t)
-
-	nearBuilds, farBuilds := 0, 0
-	s.ctx.DepGraph.Packages[near].Pkg.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("lib").SetKind(api.TargetVoid).SetBuildFunc(func(*api.Package) error {
-			nearBuilds++
-			return nil
-		})
-	})
-	s.ctx.DepGraph.Packages[far].Pkg.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("lib").SetKind(api.TargetVoid).SetBuildFunc(func(*api.Package) error {
-			farBuilds++
-			return nil
-		})
-	})
-	s.ctx.DepGraph.Packages[current].Pkg.OnBuild(func(ctx *api.BuildContext) {
-		ctx.BuildSubGraph("lib")
-		ctx.Target("a").SetKind(api.TargetVoid)
-	})
-
-	if err := s.executeOnBuild(); err != nil {
-		t.Fatal(err)
-	}
-	if farBuilds != 1 || nearBuilds != 0 {
-		t.Fatalf("near builds=%d, far builds=%d, want 0/1", nearBuilds, farBuilds)
-	}
-}
-
 func TestSessionMissingBuildPackageFails(t *testing.T) {
 	s := sessionFixture(t)
-	owner, tool, lib := "native/root", "native/root/tool", "native/root/lib"
-	addSubPackageNode(s, owner, "", filepath.Join(canonicalTempDir(t), "root"))
-	addSubPackageNode(s, tool, owner, filepath.Join(canonicalTempDir(t), "tool"))
-	addSubPackageNode(s, lib, owner, filepath.Join(canonicalTempDir(t), "lib"))
-	s.needed[owner] = true
+	containerID, tool := "native/root", "native/root/tool"
+	addNativeMemberNode(s, containerID, "tool", filepath.Join(canonicalTempDir(t), "tool"))
+	addNativeMemberNode(s, containerID, "lib", filepath.Join(canonicalTempDir(t), "lib"))
 	s.needed[tool] = true
 
-	err := s.buildSubGraph(tool, "lib")
-	if err == nil || !strings.Contains(err.Error(), "subgraph package lib not found in required packages") {
-		t.Fatalf("short-name build request error = %v, want missing short name", err)
+	err := s.buildSubGraph(tool, "//lib")
+	if err == nil || !strings.Contains(err.Error(), "not found in required packages") {
+		t.Fatalf("missing subgraph error = %v, want not found in required packages", err)
 	}
 }
 

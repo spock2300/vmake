@@ -35,3 +35,15 @@ _Avoid_: 巡检, 快照, 检查结果, 构建计划
 **包来源类型** (package source kind):
 一个包源码的三分法——`local`（工程内）、`native`（原生仓库包）、`registry`（registry 仓库包）。
 _Avoid_: 源类型字符串, origin, source type
+
+**模块容器** (module container):
+承载版本解析、信任校验、检出与容器级源码链接的仓库单元（本地工程根、远程 `native` 仓库或 `registry` 包装仓库）；本身不作为依赖图节点。
+_Avoid_: 父包, 主包, 根仓, 依赖仓
+
+**构建包** (package):
+模块容器内由一份 `build.go` 定义的构建与依赖单元，以相对容器根的路径为规范身份（本地 `//<path>`、远程 `<repo>/<module>[/<path>]`）。
+_Avoid_: 子包, 成员包, 模块
+
+**独立上游源码** (independent upstream source):
+构建包通过 `SetGit` 声明的独立第三方上游 Git 源码，与脚本所在模块容器正交地参与锁文件、安装清单与单包源码链接。
+_Avoid_: 自带 git 子包, own-Git 子包, 第三方子包

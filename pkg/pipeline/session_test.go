@@ -22,24 +22,34 @@ func sessionFixture(t *testing.T) *buildPhaseState {
 	t.Helper()
 	root := t.TempDir()
 	r := resolver.NewResolver(nil, filepath.Join(root, ".vmake_deps"))
-	r.Graph().Order = []string{"app", "dep"}
+	r.Graph().Order = []string{"//app", "//dep"}
+	r.Graph().Roots = []string{"//app"}
+	r.Graph().Containers[api.LocalContainerID] = &resolver.ContainerNode{
+		ID:       api.LocalContainerID,
+		Kind:     resolver.SourceKindLocal,
+		Dir:      root,
+		Manifest: &buildscript.Manifest{},
+	}
 	for _, name := range r.Graph().Order {
-		dir := filepath.Join(root, name)
+		rel := strings.TrimPrefix(name, "//")
+		dir := filepath.Join(root, rel)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(dir, "build.go"), []byte("package main\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
-		r.Graph().Packages[name] = resolver.NewPackageNode(name, buildscript.NewSource(name, filepath.Join(dir, "build.go"), dir, api.SourceLocal), api.NewPackage().SetName(name))
+		src := buildscript.NewSource(name, filepath.Join(dir, "build.go"), dir, api.SourceLocal)
+		src.Container = api.LocalContainerID
+		src.RelPath = rel
+		r.Graph().Packages[name] = resolver.NewPackageNode(name, api.LocalContainerID, rel, resolver.SourceKindLocal, src, api.NewPackage().SetName(name))
 	}
 	ctx := &RuntimeContext{Config: emptyConfig(), Resolver: r, DepGraph: r.Graph(), Paths: &Paths{ProjectDir: root, DepsDir: filepath.Join(root, ".vmake_deps"), CacheDir: filepath.Join(root, "cache")}}
 	tc := testToolchain()
 	s := newBuildPhaseState(ctx, BuildOptions{Jobs: 2})
 	s.cfg = makeBuildConfig(ctx, tc, tc.Name)
-	s.needed = map[string]bool{"app": true, "dep": true}
+	s.needed = map[string]bool{"//app": true, "//dep": true}
 	s.computeDirsAndOptions(t)
-	s.remote = &remoteVersionState{versions: map[string]string{}, commits: map[string]string{}, trees: map[string]string{}}
 	return s
 }
 
@@ -47,16 +57,16 @@ func TestSessionSubgraphAndMainExecuteOnce(t *testing.T) {
 	s := sessionFixture(t)
 	var depDeclarations, depBuilds, appBuilds int
 	var declared *api.Target
-	s.ctx.DepGraph.Packages["dep"].Pkg.OnBuild(func(ctx *api.BuildContext) {
+	s.ctx.DepGraph.Packages["//dep"].Pkg.OnBuild(func(ctx *api.BuildContext) {
 		depDeclarations++
 		declared = ctx.Target("generate").SetKind(api.TargetVoid).AddDefines("ORIGINAL").SetBuildFunc(func(*api.Package) error { depBuilds++; return nil })
 	})
-	s.ctx.DepGraph.Packages["app"].Pkg.OnBuild(func(ctx *api.BuildContext) {
-		ctx.BuildSubGraph("dep")
-		ctx.BuildSubGraph("dep")
+	s.ctx.DepGraph.Packages["//app"].Pkg.OnBuild(func(ctx *api.BuildContext) {
+		ctx.BuildSubGraph("//dep")
+		ctx.BuildSubGraph("//dep")
 		declared.Defines()[0] = "MUTATED"
 		declared.SetKind(api.TargetBinary)
-		ctx.Target("app").SetKind(api.TargetVoid).AddDeps("dep:generate").SetBuildFunc(func(*api.Package) error { appBuilds++; return nil })
+		ctx.Target("app").SetKind(api.TargetVoid).AddDeps("//dep:generate").SetBuildFunc(func(*api.Package) error { appBuilds++; return nil })
 	})
 	if err := s.executeOnBuild(); err != nil {
 		t.Fatal(err)
@@ -68,7 +78,7 @@ func TestSessionSubgraphAndMainExecuteOnce(t *testing.T) {
 	if depDeclarations != 1 || depBuilds != 1 || appBuilds != 1 {
 		t.Fatalf("declarations=%d dep builds=%d app builds=%d", depDeclarations, depBuilds, appBuilds)
 	}
-	frozen := result.AllTargets["dep"]["generate"]
+	frozen := result.AllTargets["//dep"]["generate"]
 	if frozen.Kind() != api.TargetVoid || frozen.Defines()[0] != "ORIGINAL" {
 		t.Fatalf("target declaration was mutated: %s %v", frozen.Kind(), frozen.Defines())
 	}
@@ -89,12 +99,12 @@ func TestSessionSharesToolProbesAcrossBuildPhases(t *testing.T) {
 		}
 		*tool = path
 	}
-	s.ctx.DepGraph.Packages["dep"].Pkg.OnBuild(func(ctx *api.BuildContext) {
+	s.ctx.DepGraph.Packages["//dep"].Pkg.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("generate").SetKind(api.TargetVoid)
 	})
-	s.ctx.DepGraph.Packages["app"].Pkg.OnBuild(func(ctx *api.BuildContext) {
-		ctx.BuildSubGraph("dep")
-		ctx.Target("app").SetKind(api.TargetVoid).AddDeps("dep:generate")
+	s.ctx.DepGraph.Packages["//app"].Pkg.OnBuild(func(ctx *api.BuildContext) {
+		ctx.BuildSubGraph("//dep")
+		ctx.Target("app").SetKind(api.TargetVoid).AddDeps("//dep:generate")
 	})
 	if err := s.prepareAllPackages(); err != nil {
 		t.Fatal(err)
@@ -118,23 +128,23 @@ func TestSessionSharesToolProbesAcrossBuildPhases(t *testing.T) {
 
 func TestSessionRejectsSubgraphInsideTarget(t *testing.T) {
 	s := sessionFixture(t)
-	s.ctx.DepGraph.Packages["dep"].Pkg.OnBuild(func(ctx *api.BuildContext) { ctx.Target("dep").SetKind(api.TargetVoid) })
-	s.ctx.DepGraph.Packages["app"].Pkg.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetVoid).SetBuildFunc(func(*api.Package) error { ctx.BuildSubGraph("dep"); return nil })
+	s.ctx.DepGraph.Packages["//dep"].Pkg.OnBuild(func(ctx *api.BuildContext) { ctx.Target("dep").SetKind(api.TargetVoid) })
+	s.ctx.DepGraph.Packages["//app"].Pkg.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetVoid).SetBuildFunc(func(*api.Package) error { ctx.BuildSubGraph("//dep"); return nil })
 	})
 	if err := s.executeOnBuild(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.buildAndRunPipeline(); err == nil || !strings.Contains(err.Error(), "while target app:app is running") {
+	if _, err := s.buildAndRunPipeline(); err == nil || !strings.Contains(err.Error(), "while target //app:app is running") {
 		t.Fatalf("nested target execution: %v", err)
 	}
 }
 
 func TestSessionRejectsDeclarationCycle(t *testing.T) {
 	s := sessionFixture(t)
-	s.ctx.DepGraph.Packages["app"].Pkg.OnBuild(func(ctx *api.BuildContext) { ctx.BuildSubGraph("dep") })
-	s.ctx.DepGraph.Packages["dep"].Pkg.OnBuild(func(ctx *api.BuildContext) { ctx.BuildSubGraph("app") })
-	if err := s.executeOnBuild(); err == nil || !strings.Contains(err.Error(), "app -> dep -> app") {
+	s.ctx.DepGraph.Packages["//app"].Pkg.OnBuild(func(ctx *api.BuildContext) { ctx.BuildSubGraph("//dep") })
+	s.ctx.DepGraph.Packages["//dep"].Pkg.OnBuild(func(ctx *api.BuildContext) { ctx.BuildSubGraph("//app") })
+	if err := s.executeOnBuild(); err == nil || !strings.Contains(err.Error(), "//app -> //dep -> //app") {
 		t.Fatalf("declaration cycle: %v", err)
 	}
 }
@@ -143,14 +153,14 @@ func TestSessionSubgraphFailureIsNotRetried(t *testing.T) {
 	s := sessionFixture(t)
 	failure := errors.New("generation failed")
 	var runs int
-	s.ctx.DepGraph.Packages["dep"].Pkg.OnBuild(func(ctx *api.BuildContext) {
+	s.ctx.DepGraph.Packages["//dep"].Pkg.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("dep").SetKind(api.TargetVoid).SetBuildFunc(func(*api.Package) error { runs++; return failure })
 	})
 	if err := s.executeOnBuild(); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := s.buildSubGraph("", "dep"); !errors.Is(err, failure) {
+		if err := s.buildSubGraph("", "//dep"); !errors.Is(err, failure) {
 			t.Fatalf("build result: %v", err)
 		}
 	}
@@ -166,7 +176,7 @@ func TestSessionRejectsIncompatiblePackageBinding(t *testing.T) {
 	}
 	s.scopeValues = maps.Clone(s.cfg.GlobalValues)
 	s.scopeValues[api.ModeOptionName] = api.ModeRelease
-	if _, err := s.bindPackage("dep"); err == nil || !strings.Contains(err.Error(), "incompatible build configuration") {
+	if _, err := s.bindPackage("//dep"); err == nil || !strings.Contains(err.Error(), "incompatible build configuration") {
 		t.Fatalf("configuration binding: %v", err)
 	}
 }
@@ -195,7 +205,7 @@ func TestSessionCachedSubgraphValidatesConfiguration(t *testing.T) {
 				failure = errors.New("generation failed")
 			}
 			declarations, builds := 0, 0
-			s.ctx.DepGraph.Packages["dep"].Pkg.OnBuild(func(ctx *api.BuildContext) {
+			s.ctx.DepGraph.Packages["//dep"].Pkg.OnBuild(func(ctx *api.BuildContext) {
 				declarations++
 				ctx.Target("generate").SetKind(api.TargetVoid).SetBuildFunc(func(*api.Package) error {
 					builds++
@@ -205,21 +215,21 @@ func TestSessionCachedSubgraphValidatesConfiguration(t *testing.T) {
 			if err := s.executeOnBuild(); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.buildSubGraph("", "dep"); !errors.Is(err, failure) {
+			if err := s.buildSubGraph("", "//dep"); !errors.Is(err, failure) {
 				t.Fatalf("initial result: %v", err)
 			}
-			cached := s.subGraphErrors["dep"]
+			cached := s.subGraphErrors["//dep"]
 			s.scopeValues = maps.Clone(s.cfg.GlobalValues)
 			s.scopeValues[api.ToolchainOptionName] = "uninstalled-conflicting-toolchain"
 			scope := maps.Clone(s.scopeValues)
-			if err := s.buildSubGraph("", "dep"); err == nil || !strings.Contains(err.Error(), "package dep was already bound to an incompatible build configuration") {
+			if err := s.buildSubGraph("", "//dep"); err == nil || !strings.Contains(err.Error(), "package //dep was already bound to an incompatible build configuration") {
 				t.Fatalf("cached configuration mismatch: %v", err)
 			}
-			if !reflect.DeepEqual(s.scopeValues, scope) || s.subGraphErrors["dep"] != cached {
+			if !reflect.DeepEqual(s.scopeValues, scope) || s.subGraphErrors["//dep"] != cached {
 				t.Fatal("rejected request mutated scope or cached result")
 			}
 			s.scopeValues = nil
-			if err := s.buildSubGraph("", "dep"); err != cached {
+			if err := s.buildSubGraph("", "//dep"); err != cached {
 				t.Fatalf("matching request did not reuse original result: %v, want %v", err, cached)
 			}
 			if declarations != 1 || builds != 1 {
@@ -234,31 +244,31 @@ func TestSessionCachedSubgraphValidatesDependencyBindings(t *testing.T) {
 		t.Run(dependency, func(t *testing.T) {
 			s := sessionFixture(t)
 			if dependency == "require" {
-				s.ctx.DepGraph.Packages["app"].Deps = []string{"dep"}
+				s.ctx.DepGraph.Packages["//app"].Deps = []string{"//dep"}
 			}
 			builds := 0
-			s.ctx.DepGraph.Packages["dep"].Pkg.OnBuild(func(ctx *api.BuildContext) {
+			s.ctx.DepGraph.Packages["//dep"].Pkg.OnBuild(func(ctx *api.BuildContext) {
 				ctx.Target("generate").SetKind(api.TargetVoid).SetBuildFunc(func(*api.Package) error { builds++; return nil })
 			})
-			s.ctx.DepGraph.Packages["app"].Pkg.OnBuild(func(ctx *api.BuildContext) {
+			s.ctx.DepGraph.Packages["//app"].Pkg.OnBuild(func(ctx *api.BuildContext) {
 				target := ctx.Target("app").SetKind(api.TargetVoid)
 				if dependency == "target" {
-					target.AddDeps("dep:generate")
+					target.AddDeps("//dep:generate")
 				}
 			})
 			if err := s.executeOnBuild(); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.buildSubGraph("", "app"); err != nil {
+			if err := s.buildSubGraph("", "//app"); err != nil {
 				t.Fatal(err)
 			}
-			dirs := *s.pkgDirs["dep"]
-			bound := s.bindings["dep"]
-			config.SetEntry(s.ctx.Config, "dep", &config.EntryConfig{Options: map[string]any{"enabled": true}})
-			if err := s.buildSubGraph("", "app"); err == nil || !strings.Contains(err.Error(), "package dep was already bound to an incompatible build configuration") {
+			dirs := *s.pkgDirs["//dep"]
+			bound := s.bindings["//dep"]
+			config.SetEntry(s.ctx.Config, "//dep", &config.EntryConfig{Options: map[string]any{"enabled": true}})
+			if err := s.buildSubGraph("", "//app"); err == nil || !strings.Contains(err.Error(), "package //dep was already bound to an incompatible build configuration") {
 				t.Fatalf("cached dependency configuration mismatch: %v", err)
 			}
-			if builds != 1 || s.bindings["dep"] != bound || *s.pkgDirs["dep"] != dirs {
+			if builds != 1 || s.bindings["//dep"] != bound || *s.pkgDirs["//dep"] != dirs {
 				t.Fatal("configuration validation repeated work or mutated dependency binding")
 			}
 		})
@@ -275,13 +285,14 @@ func TestSessionNestedCachedSubgraphToolchainScopes(t *testing.T) {
 			s := sessionFixture(t)
 			first, second := registerSessionToolchain(t, s), registerSessionToolchain(t, s)
 			if override {
-				config.SetEntry(s.ctx.Config, "dep", &config.EntryConfig{Options: map[string]any{api.ToolchainOptionName: first.Name}})
+				config.SetEntry(s.ctx.Config, "//dep", &config.EntryConfig{Options: map[string]any{api.ToolchainOptionName: first.Name}})
 			}
 			for _, outer := range []struct {
 				name string
 				tc   *toolchain.Toolchain
-			}{{"first", first}, {"second", second}} {
-				dir := filepath.Join(s.ctx.Paths.ProjectDir, outer.name)
+			}{{"//first", first}, {"//second", second}} {
+				rel := strings.TrimPrefix(outer.name, "//")
+				dir := filepath.Join(s.ctx.Paths.ProjectDir, rel)
 				if err := os.MkdirAll(dir, 0755); err != nil {
 					t.Fatal(err)
 				}
@@ -290,23 +301,26 @@ func TestSessionNestedCachedSubgraphToolchainScopes(t *testing.T) {
 				}
 				pkg := api.NewPackage().SetName(outer.name)
 				pkg.OnBuild(func(ctx *api.BuildContext) {
-					ctx.BuildSubGraph("dep")
-					ctx.Target(outer.name).SetKind(api.TargetVoid)
+					ctx.BuildSubGraph("//dep")
+					ctx.Target(rel).SetKind(api.TargetVoid)
 				})
-				s.ctx.DepGraph.Packages[outer.name] = resolver.NewPackageNode(outer.name, buildscript.NewSource(outer.name, filepath.Join(dir, "build.go"), dir, api.SourceLocal), pkg)
+				src := buildscript.NewSource(outer.name, filepath.Join(dir, "build.go"), dir, api.SourceLocal)
+				src.Container = api.LocalContainerID
+				src.RelPath = rel
+				s.ctx.DepGraph.Packages[outer.name] = resolver.NewPackageNode(outer.name, api.LocalContainerID, rel, resolver.SourceKindLocal, src, pkg)
 				s.needed[outer.name] = true
 				config.SetEntry(s.ctx.Config, outer.name, &config.EntryConfig{Options: map[string]any{api.ToolchainOptionName: outer.tc.Name}})
 			}
-			s.ctx.DepGraph.Order = []string{"app", "first", "second", "dep"}
+			s.ctx.DepGraph.Order = []string{"//app", "//first", "//second", "//dep"}
 			s.computeDirsAndOptions(t)
 			declarations, builds := 0, 0
-			s.ctx.DepGraph.Packages["dep"].Pkg.OnBuild(func(ctx *api.BuildContext) {
+			s.ctx.DepGraph.Packages["//dep"].Pkg.OnBuild(func(ctx *api.BuildContext) {
 				declarations++
 				ctx.Target("generate").SetKind(api.TargetVoid).SetBuildFunc(func(*api.Package) error { builds++; return nil })
 			})
-			s.ctx.DepGraph.Packages["app"].Pkg.OnBuild(func(ctx *api.BuildContext) {
-				ctx.BuildSubGraph("first")
-				ctx.BuildSubGraph("second")
+			s.ctx.DepGraph.Packages["//app"].Pkg.OnBuild(func(ctx *api.BuildContext) {
+				ctx.BuildSubGraph("//first")
+				ctx.BuildSubGraph("//second")
 			})
 			err := s.executeOnBuild()
 			if override {
@@ -316,11 +330,11 @@ func TestSessionNestedCachedSubgraphToolchainScopes(t *testing.T) {
 				if _, err := s.buildAndRunPipeline(); err != nil {
 					t.Fatal(err)
 				}
-			} else if err == nil || !strings.Contains(err.Error(), "package dep was already bound to an incompatible build configuration") {
+			} else if err == nil || !strings.Contains(err.Error(), "package //dep was already bound to an incompatible build configuration") {
 				t.Fatalf("nested inherited toolchain mismatch: %v", err)
 			}
-			if declarations != 1 || builds != 1 || s.scopeValues != nil || s.bindings["dep"].toolchain.Name != first.Name {
-				t.Fatalf("declarations=%d builds=%d scope=%v dependency toolchain=%s", declarations, builds, s.scopeValues, s.bindings["dep"].toolchain.Name)
+			if declarations != 1 || builds != 1 || s.scopeValues != nil || s.bindings["//dep"].toolchain.Name != first.Name {
+				t.Fatalf("declarations=%d builds=%d scope=%v dependency toolchain=%s", declarations, builds, s.scopeValues, s.bindings["//dep"].toolchain.Name)
 			}
 		})
 	}
@@ -334,15 +348,15 @@ func TestSessionCachedSubgraphDoesNotRepeatToolchainInstallation(t *testing.T) {
 		installs++
 		return tc, nil
 	})
-	config.SetEntry(s.ctx.Config, "dep", &config.EntryConfig{Options: map[string]any{api.ToolchainOptionName: tc.Name}})
-	s.ctx.DepGraph.Packages["dep"].Pkg.OnBuild(func(ctx *api.BuildContext) {
+	config.SetEntry(s.ctx.Config, "//dep", &config.EntryConfig{Options: map[string]any{api.ToolchainOptionName: tc.Name}})
+	s.ctx.DepGraph.Packages["//dep"].Pkg.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("generate").SetKind(api.TargetVoid).SetBuildFunc(func(*api.Package) error { builds++; return nil })
 	})
 	if err := s.executeOnBuild(); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := s.buildSubGraph("", "dep"); err != nil {
+		if err := s.buildSubGraph("", "//dep"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -353,27 +367,27 @@ func TestSessionCachedSubgraphDoesNotRepeatToolchainInstallation(t *testing.T) {
 
 func TestSessionFailedSubgraphValidatesUnboundRoot(t *testing.T) {
 	s := sessionFixture(t)
-	s.ctx.DepGraph.Order = []string{"dep", "app"}
-	s.pkgMetaMap = map[string]build.PkgBuildMeta{"app": {Deps: []string{"dep"}}, "dep": {}}
+	s.ctx.DepGraph.Order = []string{"//dep", "//app"}
+	s.pkgMetaMap = map[string]build.PkgBuildMeta{"//app": {Container: "//", Deps: []string{"//dep"}}, "//dep": {Container: "//"}}
 	s.allTargets = make(map[string]map[string]*api.Target)
 	s.buildCtxs = make(map[string]*api.BuildContext)
-	config.SetEntry(s.ctx.Config, "dep", &config.EntryConfig{Options: map[string]any{api.ToolchainOptionName: s.cfg.TcName}})
+	config.SetEntry(s.ctx.Config, "//dep", &config.EntryConfig{Options: map[string]any{api.ToolchainOptionName: s.cfg.TcName}})
 	declarations := 0
-	s.ctx.DepGraph.Packages["dep"].Pkg.OnBuild(func(*api.BuildContext) {
+	s.ctx.DepGraph.Packages["//dep"].Pkg.OnBuild(func(*api.BuildContext) {
 		declarations++
 		panic("dependency declaration failed")
 	})
-	cached := s.buildSubGraph("", "app")
-	if cached == nil || !strings.Contains(cached.Error(), "dependency declaration failed") || s.bindings["app"] != nil {
-		t.Fatalf("initial failure=%v, root binding=%v", cached, s.bindings["app"])
+	cached := s.buildSubGraph("", "//app")
+	if cached == nil || !strings.Contains(cached.Error(), "dependency declaration failed") || s.bindings["//app"] != nil {
+		t.Fatalf("initial failure=%v, root binding=%v", cached, s.bindings["//app"])
 	}
 	s.scopeValues = maps.Clone(s.cfg.GlobalValues)
 	s.scopeValues[api.ToolchainOptionName] = "other-uninstalled-toolchain"
-	if err := s.buildSubGraph("", "app"); err == nil || !strings.Contains(err.Error(), "subgraph package app was already requested with an incompatible build configuration") {
+	if err := s.buildSubGraph("", "//app"); err == nil || !strings.Contains(err.Error(), "subgraph package //app was already requested with an incompatible build configuration") {
 		t.Fatalf("unbound root configuration mismatch: %v", err)
 	}
 	s.scopeValues = nil
-	if err := s.buildSubGraph("", "app"); err != cached || declarations != 1 {
+	if err := s.buildSubGraph("", "//app"); err != cached || declarations != 1 {
 		t.Fatalf("matching request retried failed declaration: error=%v, declarations=%d", err, declarations)
 	}
 }
@@ -381,10 +395,10 @@ func TestSessionFailedSubgraphValidatesUnboundRoot(t *testing.T) {
 func TestSessionPackageBindingValuesDoNotMutateConfiguration(t *testing.T) {
 	s := sessionFixture(t)
 	entry := &config.EntryConfig{}
-	config.SetEntry(s.ctx.Config, "dep", entry)
+	config.SetEntry(s.ctx.Config, "//dep", entry)
 	base := maps.Clone(s.cfg.GlobalValues)
 	before := maps.Clone(base)
-	values, err := s.packageBindingValues("dep", base)
+	values, err := s.packageBindingValues("//dep", base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,9 +413,9 @@ func TestSessionPackageBindingValuesDoNotMutateConfiguration(t *testing.T) {
 
 func TestSessionRejectsRecursiveSubgraphRequest(t *testing.T) {
 	s := sessionFixture(t)
-	s.ctx.DepGraph.Packages["app"].Pkg.OnBuild(func(ctx *api.BuildContext) { ctx.BuildSubGraph("dep") })
-	s.ctx.DepGraph.Packages["dep"].Pkg.OnBuild(func(ctx *api.BuildContext) { ctx.BuildSubGraph("dep") })
-	if err := s.executeOnBuild(); err == nil || !strings.Contains(err.Error(), "recursive BuildSubGraph(dep)") {
+	s.ctx.DepGraph.Packages["//app"].Pkg.OnBuild(func(ctx *api.BuildContext) { ctx.BuildSubGraph("//dep") })
+	s.ctx.DepGraph.Packages["//dep"].Pkg.OnBuild(func(ctx *api.BuildContext) { ctx.BuildSubGraph("//dep") })
+	if err := s.executeOnBuild(); err == nil || !strings.Contains(err.Error(), "recursive BuildSubGraph(//dep)") {
 		t.Fatalf("recursive subgraph: %v", err)
 	}
 	if s.scopeValues != nil {
@@ -411,13 +425,13 @@ func TestSessionRejectsRecursiveSubgraphRequest(t *testing.T) {
 
 func TestDeclareTargetsReturnsScriptErrorAndRestoresState(t *testing.T) {
 	s := sessionFixture(t)
-	pkg := s.ctx.DepGraph.Packages["app"].Pkg
+	pkg := s.ctx.DepGraph.Packages["//app"].Pkg
 	pkg.OnBuild(func(ctx *api.BuildContext) { ctx.Target("app").AddDeps("invalid:") })
 	before, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = DeclareTargets(s.ctx, "app", s.pkgDirs["app"], s.cfg.Tc, s.cfg.GlobalValues)
+	_, err = DeclareTargets(s.ctx, "//app", s.pkgDirs["//app"], s.cfg.Tc, s.cfg.GlobalValues)
 	var scriptError *api.BuildScriptError
 	if !errors.As(err, &scriptError) {
 		t.Fatalf("script error was not returned: %v", err)

@@ -29,7 +29,6 @@ func TestBuildReportActualInstallsAndInvalidation(t *testing.T) {
 	writeExtensionFile(t, filepath.Join(root, "build.go"), `package main
 import ("os"; "fmt"; "github.com/spock2300/vmake/pkg/api")
 func Main(p *api.Package) {
- p.SetRoot(true)
  p.OnInstall(func(c *api.InstallContext) { prefix, err := os.ReadFile("install-prefix"); if err != nil { panic(err) }; c.SetPrefix(string(prefix)) })
  p.OnConfig(func(c *api.ConfigContext) { c.Option("assets").SetType(api.OptionBool).SetDefault(true) })
  p.OnBuild(func(c *api.BuildContext) {
@@ -45,7 +44,7 @@ func Main(p *api.Package) {
  })
 }
 `)
-	cfg := `{"version":"1","global":{"toolchain":"healthy"},"entries":{"project":{"options":{"assets":true}}}}`
+	cfg := `{"version":"1","global":{"toolchain":"healthy"},"entries":{"//":{"options":{"assets":true}}}}`
 	writeExtensionFile(t, filepath.Join(root, "configs", "default.json"), cfg)
 	writeExtensionFile(t, filepath.Join(root, "configs", "plain.json"), strings.Replace(cfg, "true", "false", 1))
 	writeExtensionFile(t, filepath.Join(root, "resources", "asset.elf"), "asset bytes")
@@ -253,7 +252,6 @@ func writeBuildReportProject(t *testing.T, source string) string {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c")
 	})
@@ -313,7 +311,7 @@ func TestBuildReportV2Success(t *testing.T) {
 	if summary.TargetsTotal != 1 || summary.TargetsBuilt != 1 || summary.TargetsUpToDate != 0 || summary.TargetsFailed != 0 ||
 		summary.TestsFound != 0 || summary.TestsPassed != 0 || summary.TestsFailed != 0 ||
 		summary.FilesCompiled != 1 || summary.FilesLinked != 1 || summary.ArtifactsInstalled != 0 ||
-		!slices.Equal(summary.ChangedFiles, []string{"scratch:src/main.c"}) {
+		!slices.Equal(summary.ChangedFiles, []string{"//:src/main.c"}) {
 		t.Fatalf("summary = %+v", summary)
 	}
 	if summary.Callbacks != 0 || summary.NoOp {
@@ -363,7 +361,7 @@ func TestBuildReportV2CompileFailure(t *testing.T) {
 		diagnostic.File != "src/main.c" || diagnostic.Line != 2 || diagnostic.Column == 0 {
 		t.Fatalf("diagnostic = %+v", diagnostic)
 	}
-	if diagnostic.Package != "scratch" || diagnostic.Target != "scratch:app" || diagnostic.Message == "" {
+	if diagnostic.Package != "//" || diagnostic.Target != "//:app" || diagnostic.Message == "" {
 		t.Fatalf("diagnostic context = %+v", diagnostic)
 	}
 	if strings.Count(stderr, "error: expected expression") != 1 {
@@ -413,7 +411,6 @@ func writeTwoTargetBuildReportProject(t *testing.T, firstSource, secondSource st
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("first").SetKind(api.TargetBinary).AddFiles("src/first.c")
 		ctx.Target("second").SetKind(api.TargetBinary).AddFiles("src/second.c")
@@ -442,7 +439,7 @@ func TestBuildReportPartialFailureKeepsCompletedTargets(t *testing.T) {
 	}
 	diagnostic := report.Diagnostics[0]
 	if diagnostic.Code != "VMAKE_E_COMPILE" || diagnostic.File != "src/second.c" ||
-		diagnostic.Line != 2 || diagnostic.Target != "partial-failure:second" {
+		diagnostic.Line != 2 || diagnostic.Target != "//:second" {
 		t.Fatalf("diagnostic = %+v", diagnostic)
 	}
 	if len(report.Targets) != 1 || report.Targets[0].Target != "first" || report.Targets[0].Status != build.TargetStatusBuilt {
@@ -457,13 +454,13 @@ func TestBuildReportPartialFailureKeepsCompletedTargets(t *testing.T) {
 		summary.FilesCompiled < 1 || summary.FilesLinked != 1 || summary.ArtifactsInstalled != 0 {
 		t.Fatalf("partial summary = %+v", summary)
 	}
-	if !slices.Contains(summary.ChangedFiles, "partial-failure:src/first.c") {
+	if !slices.Contains(summary.ChangedFiles, "//:src/first.c") {
 		t.Fatalf("partial changed files = %v", summary.ChangedFiles)
 	}
 	if report.Toolchain == "" || report.Mode == "" || len(report.Global) == 0 ||
 		report.Global[api.ModeOptionName] != report.Mode ||
 		report.Global[api.ToolchainOptionName] != report.Toolchain ||
-		len(report.Packages) == 0 || report.Packages["partial-failure"] == nil {
+		len(report.Packages) == 0 || report.Packages["//"] == nil {
 		t.Fatalf("partial identity = %+v (toolchain %q, mode %q)", report.Global, report.Toolchain, report.Mode)
 	}
 	wantDatabase := filepath.Join(project, "build", "compile_commands.json")
@@ -497,7 +494,7 @@ func TestBuildReportKeepGoingKeepsBothDiagnostics(t *testing.T) {
 		}
 		failedTargets[diagnostic.Target] = true
 	}
-	if !failedTargets["partial-failure:first"] || !failedTargets["partial-failure:second"] {
+	if !failedTargets["//:first"] || !failedTargets["//:second"] {
 		t.Fatalf("keep-going targets = %v", failedTargets)
 	}
 	if len(report.Targets) != 0 || len(report.Artifacts) != 0 {
@@ -517,7 +514,7 @@ func TestBuildReportKeepGoingKeepsLaterSuccess(t *testing.T) {
 		t.Fatalf("build -k exit = %d, want 1", code)
 	}
 	report := loadBuildReport(t, project)
-	if report.Status != "failed" || len(report.Diagnostics) != 1 || report.Diagnostics[0].Target != "partial-failure:first" {
+	if report.Status != "failed" || len(report.Diagnostics) != 1 || report.Diagnostics[0].Target != "//:first" {
 		t.Fatalf("keep-going report = %+v", report)
 	}
 	if len(report.Targets) != 1 || report.Targets[0].Target != "second" || report.Targets[0].Status != build.TargetStatusBuilt {
@@ -551,7 +548,7 @@ func TestBuildReportV2LinkFailure(t *testing.T) {
 			t.Fatalf("link diagnostic message = %q", diagnostic.Message)
 		}
 	}
-	if diagnostic.Package != "scratch" || diagnostic.Target != "scratch:app" || diagnostic.Message == "" {
+	if diagnostic.Package != "//" || diagnostic.Target != "//:app" || diagnostic.Message == "" {
 		t.Fatalf("link context = %+v", diagnostic)
 	}
 	if report.Error == "" || len(report.Error) >= 300 || strings.Contains(report.Error, "\n") {
@@ -574,7 +571,6 @@ func TestBuildReportV2ScriptError(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Bool("definitely_not_an_option")
 	})
@@ -589,7 +585,7 @@ func Main(p *api.Package) {
 		t.Fatalf("report = %+v", report)
 	}
 	diagnostic := report.Diagnostics[0]
-	if diagnostic.Code != "VMAKE_E_SCRIPT" || diagnostic.Severity != "error" || diagnostic.Package != "scratch" {
+	if diagnostic.Code != "VMAKE_E_SCRIPT" || diagnostic.Severity != "error" || diagnostic.Package != "//" {
 		t.Fatalf("script diagnostic = %+v", diagnostic)
 	}
 	if !strings.Contains(diagnostic.Message, "unknown option") || report.Error != diagnostic.Message {
@@ -874,7 +870,6 @@ import (
 )
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("task").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
 			return fmt.Errorf("target callback exploded")
@@ -911,7 +906,6 @@ func TestBuildReportCMakeConfigureFailureNeverNoOp(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("cmake_build").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error {
 			pkg.CMakeConfigure("-G", "Ninja")
@@ -955,7 +949,6 @@ func TestBuildReportCMakeOnlyExternalStages(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
 		p.CMakeConfigure("-G", "Ninja")
 		p.CMakeBuild()
@@ -1011,7 +1004,6 @@ import (
 )
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
 		fmt.Println("SCRIPT NOISE")
 		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c")
@@ -1085,7 +1077,7 @@ func TestBuildQuietSummaryAndReportCounts(t *testing.T) {
 		report.Summary.FilesCompiled != 1 || report.Summary.FilesLinked != 1 || report.Summary.ArtifactsInstalled != 1 {
 		t.Fatalf("cold summary report = %+v", report.Summary)
 	}
-	if !slices.Equal(report.Summary.ChangedFiles, []string{"summary:src/main.c"}) {
+	if !slices.Equal(report.Summary.ChangedFiles, []string{"//:src/main.c"}) {
 		t.Fatalf("cold changed files = %v", report.Summary.ChangedFiles)
 	}
 	if report.Summary.Callbacks != 0 || report.Summary.NoOp || report.Summary.ExternalStages != 0 {
@@ -1124,7 +1116,7 @@ func TestBuildQuietSummaryAndReportCounts(t *testing.T) {
 	}
 	report = loadBuildReport(t, project)
 	if report.Summary == nil || report.Summary.TargetsBuilt != 1 || report.Summary.FilesCompiled != 1 ||
-		report.Summary.FilesLinked != 1 || !slices.Equal(report.Summary.ChangedFiles, []string{"summary:src/main.c"}) {
+		report.Summary.FilesLinked != 1 || !slices.Equal(report.Summary.ChangedFiles, []string{"//:src/main.c"}) {
 		t.Fatalf("incremental summary report = %+v", report.Summary)
 	}
 	if report.Summary.NoOp || report.Summary.Callbacks != 0 {
@@ -1178,7 +1170,6 @@ func TestBuildReportVoidTargetStatus(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c")
 		ctx.Target("task").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error { return nil })
@@ -1197,7 +1188,7 @@ func Main(p *api.Package) {
 	report := loadBuildReport(t, project)
 	if report.Summary == nil || report.Summary.TargetsBuilt != 2 || report.Summary.TargetsUpToDate != 0 ||
 		report.Summary.FilesCompiled != 1 || report.Summary.FilesLinked != 1 || report.Summary.Callbacks != 1 ||
-		report.Summary.NoOp || !slices.Equal(report.Summary.ChangedFiles, []string{"tasks:src/main.c"}) {
+		report.Summary.NoOp || !slices.Equal(report.Summary.ChangedFiles, []string{"//:src/main.c"}) {
 		t.Fatalf("void summary report = %+v", report.Summary)
 	}
 	if len(report.Targets) != 2 {
@@ -1266,7 +1257,7 @@ int main(void) {
 	if !test.Passed || test.ExitCode != 0 || !strings.Contains(test.Output, "captured pass output") {
 		t.Fatalf("passing test entry = %+v", test)
 	}
-	if strings.Contains(test.Output, "PASS tests-project:tests") {
+	if strings.Contains(test.Output, "PASS //:tests") {
 		t.Fatalf("test output captured vmake progress: %q", test.Output)
 	}
 }
@@ -1286,7 +1277,7 @@ int main(void) {
 	if !strings.Contains(stdout, "failing stdout marker") || !strings.Contains(stderr, "failing stderr marker") {
 		t.Fatalf("test output was not streamed (stdout %q, stderr %q)", stdout, stderr)
 	}
-	if !strings.Contains(stderr, "FAIL tests-project:tests") {
+	if !strings.Contains(stderr, "FAIL //:tests") {
 		t.Fatalf("FAIL line missing from stderr:\n%s", stderr)
 	}
 	report := loadTestReport(t, project)
@@ -1424,7 +1415,6 @@ func TestParseBerkeleySizeAndBuildReportSize(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("app").SetKind(api.TargetBinary).AddFiles("src/main.c").AddPostLinkSize()
 	})
@@ -1457,7 +1447,6 @@ func TestEphemeralSetFlagAndQueryConfigGlobalDefines(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.GlobalOption("chip").SetValues("A", "B").SetDefault("A")
 		ctx.Option("greeting").SetType(api.OptionString).SetDefault("hello")
@@ -1479,10 +1468,10 @@ int main(void) { return 0; }
 `)
 	writeExtensionFile(t, filepath.Join(project, "src", "extra.c"), "int extra(void);\nint extra(void) { return 1; }\n")
 	cfgPath := filepath.Join(project, "configs", "default.json")
-	origCfg := `{"version":"1","global":{"options":{"chip":"A"}},"entries":{"setproj":{"options":{"greeting":"hello"}}}}`
+	origCfg := `{"version":"1","global":{"options":{"chip":"A"}},"entries":{"//":{"options":{"greeting":"hello"}}}}`
 	writeExtensionFile(t, cfgPath, origCfg)
 
-	qOut, qErr, code := runBuildCommand(t, project, "query", "config", "setproj", "-s", "chip=B", "-s", "setproj/greeting=override")
+	qOut, qErr, code := runBuildCommand(t, project, "query", "config", "//", "-s", "chip=B", "-s", "//:greeting=override")
 	if code != 0 {
 		t.Fatalf("query config exit = %d, stderr = %q\n%s", code, qErr, qOut)
 	}
@@ -1490,12 +1479,12 @@ int main(void) { return 0; }
 		t.Fatalf("query config output missing expected defines:\n%s", qOut)
 	}
 
-	qtOut, qtErr, code := runBuildCommand(t, project, "query", "targets", "-s", "setproj/greeting=override")
-	if code != 0 || !strings.Contains(qtOut, "setproj:extra (static)") {
+	qtOut, qtErr, code := runBuildCommand(t, project, "query", "targets", "-s", "//:greeting=override")
+	if code != 0 || !strings.Contains(qtOut, "//:extra (static)") {
 		t.Fatalf("query targets exit = %d, stderr = %q, stdout = %q", code, qtErr, qtOut)
 	}
 
-	bOut, bErr, code := runBuildCommand(t, project, "build", "-s", "chip=B", "-s", "setproj/greeting=override")
+	bOut, bErr, code := runBuildCommand(t, project, "build", "-s", "chip=B", "-s", "//:greeting=override")
 	if code != 0 {
 		t.Fatalf("build -s exit = %d, stderr = %q\n%s", code, bErr, bOut)
 	}

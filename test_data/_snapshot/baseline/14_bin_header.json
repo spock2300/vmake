@@ -9,7 +9,7 @@
     "mode": "debug",
     "packages": [
       {
-        "name": "14_bin_header",
+        "name": "//",
         "source": "local",
         "path": "."
       }
@@ -26,7 +26,7 @@
     {
       "path": "compile_commands.json",
       "size": 1361,
-      "hash": "82e7c1851a773197d4b8b46a7b443f9b1c103500d8e48252deb869c4313d5308"
+      "hash": "4b869af7aca8317e10532a93d0e4259b554adca8c4ab49b2320b980c916573ac"
     }
   ],
   "install_tree_hash": "b3ea5df74403c09fe8f7dab2eaf5d6f05555158052d9ac4655adb0d32c3f8ae8"

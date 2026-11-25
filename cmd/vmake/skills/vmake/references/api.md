@@ -73,7 +73,6 @@ Import: `github.com/spock2300/vmake/pkg/api`
 | `SetGenConfigHeader` | `(v bool)` | Enable generated config header |
 | `SetImportConfigs` | `(names []string)` | Set imported config package names |
 | `SetDryRun` | `(v bool)` | Dry run mode |
-| `SetRoot` | `(v bool)` | Mark as root package |
 | `SetChipProfile` | `(profile ChipProfile) *Package` | Declare the chip name, preferred toolchain, and target defaults |
 | `SetGlobalFlags` | `(cflags, cxxflags, ldflags, links []string)` | Set global compiler/linker flags |
 | `SetCMakeBuildDir` | `(dir string) *Package` | Set CMake build directory; relative to BuildDir unless absolute |
@@ -702,7 +701,6 @@ Available as `api.CopyFile`, `api.CopyDir`, etc. — useful in `SetBuildFunc` fo
 
 	func SplitPackageRef(ref string) (repo, name string, ok bool)
 	func MatchPatterns(patterns []string, name string) bool
-	func ResolveSubPackageName(currentPkg, depName string, subParents map[string]string, exists func(string) bool) string
 	func CheckCycle(path []string, current string) error
 
 ### Build Mode and Defaults
@@ -715,7 +713,6 @@ Available as `api.CopyFile`, `api.CopyDir`, etc. — useful in `SetBuildFunc` fo
 	func NormalizeOptionValue(opt *Option, val any) any
 	func ValidateOption(o *Option) error
 	func ParseDepRef(ref string) (*DepRef, error)
-	func SubPackageCandidates(currentPkg, depName string, subParents map[string]string) []string
 
 ### Config Export & Merge
 

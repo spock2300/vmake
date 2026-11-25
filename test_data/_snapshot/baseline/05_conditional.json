@@ -9,7 +9,7 @@
     "mode": "debug",
     "packages": [
       {
-        "name": "05_conditional",
+        "name": "//",
         "source": "local",
         "path": "."
       }
@@ -26,7 +26,7 @@
     {
       "path": "compile_commands.json",
       "size": 1358,
-      "hash": "7ffca6eb4d57a8f44acdc629dbfb0cd1671e6ac22ac84ba13d2346e5ec4e17ba"
+      "hash": "bdefbf9041b7ca552841afc916eee63ddf8684ec527994c8633ddfc2fb783a2d"
     }
   ],
   "install_tree_hash": "62e4a6da53d2cd8e725265ebf4aff2a5f08a9931ff6b9d075c42fbb1a0c19ac9"

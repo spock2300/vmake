@@ -15,6 +15,10 @@ var translations = map[language]map[textID]string{
 		textNoUpstream: "(no dependencies)", textNoDownstream: "(no callers)", textGlobalScope: "Applies to %d active packages",
 		textDerivedFrom: "derived from", textDerivedBadge: "← %d derived", textExplicitBadge: "• %d explicit", textExplicitSource: "explicit override", textSource: "source",
 		textStepDeps: "up/down", textCycleEdges: "pick edge", textMoreItems: "+%d more",
+		textLocal: "Local", textModuleContainer: "Module Container", textPackageGroup: "Package Group", textDirectory: "Directory",
+		textContainerID: "container", textContainerKind: "kind", textContainerVersion: "version", textContainerLink: "linked",
+		textGroupPackages: "packages", textGroupSummaryCount: "%d active / %d total (%d configurable)",
+		textGroupHint: "Enter/→ expand or collapse · ↓ select package",
 	},
 	languageChinese: {
 		textDetailScrollHint:   "↑↓/滚轮滚动",
@@ -30,5 +34,9 @@ var translations = map[language]map[textID]string{
 		textNoUpstream: "（无上游依赖）", textNoDownstream: "（无下游依赖）", textGlobalScope: "作用于 %d 个生效包",
 		textDerivedFrom: "派生来源", textDerivedBadge: "← 派生 %d 项", textExplicitBadge: "• 显式 %d 项", textExplicitSource: "配置文件显式设置", textSource: "值来源",
 		textStepDeps: "跳上下游", textCycleEdges: "切换邻边", textMoreItems: "+%d 项",
+		textLocal: "本地", textModuleContainer: "模块容器", textPackageGroup: "软件包组", textDirectory: "目录",
+		textContainerID: "容器", textContainerKind: "类型", textContainerVersion: "版本", textContainerLink: "本地链接",
+		textGroupPackages: "包含包", textGroupSummaryCount: "%d 个生效 / 共 %d 个（%d 个可配置）",
+		textGroupHint: "Enter/→ 展开或折叠 · ↓ 选择软件包",
 	},
 }

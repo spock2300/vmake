@@ -9,12 +9,12 @@
     "mode": "debug",
     "packages": [
       {
-        "name": "chip_sim",
+        "name": "//chip_sim",
         "source": "local",
         "path": "chip_sim"
       },
       {
-        "name": "12_rtos_simulate",
+        "name": "//",
         "source": "local",
         "path": "."
       }
@@ -41,7 +41,7 @@
     {
       "path": "compile_commands.json",
       "size": 3029,
-      "hash": "20afd0c285d589d111fbb31dfb78d77c460cd2a59ee2b4583710f2ef85c2496b"
+      "hash": "aa3492c9c495a60b132cf4170c5e48a03b277fc44c4b14c39beb45c7e6c1f915"
     }
   ],
   "install_tree_hash": "a91f662ac57d845ffc7ebec70777d9ecfde8081f60a92fd5d21bf02b92850b97"

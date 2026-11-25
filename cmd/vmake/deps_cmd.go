@@ -54,11 +54,12 @@ type depsStatusEnvelope struct {
 }
 
 type depsUpdateEnvelope struct {
-	SchemaVersion int                            `json:"schemaVersion"`
-	Command       string                         `json:"command"`
-	DryRun        bool                           `json:"dryRun"`
-	Changes       []lockfile.Change              `json:"changes"`
-	Packages      map[string]*lockfile.LockedPkg `json:"packages"`
+	SchemaVersion int                                  `json:"schemaVersion"`
+	Command       string                               `json:"command"`
+	DryRun        bool                                 `json:"dryRun"`
+	Changes       []lockfile.Change                    `json:"changes"`
+	Containers    map[string]*lockfile.LockedContainer `json:"containers"`
+	Sources       map[string]*lockfile.LockedSource    `json:"sources"`
 }
 
 type depsFetchEnvelope struct {
@@ -482,16 +483,21 @@ func validateRequestedPackagesInGraph(ctx *RuntimeContext, requested []string) e
 	if len(requested) == 0 || ctx == nil || ctx.DepGraph == nil {
 		return nil
 	}
-	subParents := ctx.Resolver.SubParents()
 	for _, name := range requested {
+		if c := ctx.DepGraph.Containers[name]; c != nil && !c.IsLocal() {
+			continue
+		}
 		node := ctx.DepGraph.Packages[name]
 		if node == nil {
-			return fmt.Errorf("package %q is not in the project dependency graph", name)
+			return fmt.Errorf("container or package %q is not in the project dependency graph", name)
 		}
-		if parent := subParents[name]; parent != "" {
-			return fmt.Errorf("sub-package %s inherits its parent %s; update or pin %s instead", name, parent, parent)
+		if node.HasOwnGit() {
+			continue
 		}
-		if node.IsLocal() && (node.Pkg == nil || len(node.Pkg.GitURLs()) == 0) {
+		if node.IsNative() && node.Container != "" {
+			return fmt.Errorf("package %s shares container %s; update or pin %s instead", name, node.Container, node.Container)
+		}
+		if node.IsLocal() {
 			return fmt.Errorf("local package %q has no SetGit source", name)
 		}
 	}
@@ -535,8 +541,12 @@ func printDepsStatusTable(w io.Writer, report *pipeline.DepsStatusReport) error 
 		return nil
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "PACKAGE\tSOURCE\tVERSION\tCOMMIT\tPINNED\tTREE\tSTATE")
+	fmt.Fprintln(tw, "SECTION\tNAME\tSOURCE\tVERSION\tCOMMIT\tPINNED\tTREE\tSTATE")
 	for _, e := range report.Packages {
+		sec := e.Section
+		if sec == "" {
+			sec = "-"
+		}
 		ver := "-"
 		if e.Version != "" {
 			ver = e.Version
@@ -563,7 +573,7 @@ func printDepsStatusTable(w io.Writer, report *pipeline.DepsStatusReport) error 
 		} else if e.Cached {
 			tree = "cached"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", e.Name, e.Source, ver, commit, pinned, tree, e.State)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sec, e.Name, e.Source, ver, commit, pinned, tree, e.State)
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -608,20 +618,27 @@ func printDepsChanges(w io.Writer, changes []lockfile.Change) {
 }
 
 func writeDepsUpdateJSON(w io.Writer, command string, res *pipeline.DepsUpdateResult) error {
-	pkgs := map[string]*lockfile.LockedPkg{}
-	if res.Lock != nil && res.Lock.Packages != nil {
-		pkgs = res.Lock.Packages
+	containers := map[string]*lockfile.LockedContainer{}
+	sources := map[string]*lockfile.LockedSource{}
+	if res.Lock != nil {
+		if res.Lock.Containers != nil {
+			containers = res.Lock.Containers
+		}
+		if res.Lock.Sources != nil {
+			sources = res.Lock.Sources
+		}
 	}
 	changes := res.Changes
 	if changes == nil {
 		changes = []lockfile.Change{}
 	}
 	return writeDepsJSON(w, &depsUpdateEnvelope{
-		SchemaVersion: 1,
+		SchemaVersion: 2,
 		Command:       command,
 		DryRun:        res.DryRun,
 		Changes:       changes,
-		Packages:      pkgs,
+		Containers:    containers,
+		Sources:       sources,
 	})
 }
 
@@ -636,9 +653,17 @@ func completeDepsPkgRef(cmd *cobra.Command, args []string, toComplete string) ([
 	seen := make(map[string]bool)
 	var refs []string
 	if l, err := lockfile.Load(getLockfilePath()); err == nil {
-		for _, name := range l.SortedNames() {
-			seen[name] = true
-			refs = append(refs, name)
+		for _, name := range l.SortedContainerNames() {
+			if !seen[name] {
+				seen[name] = true
+				refs = append(refs, name)
+			}
+		}
+		for _, name := range l.SortedSourceNames() {
+			if !seen[name] {
+				seen[name] = true
+				refs = append(refs, name)
+			}
 		}
 	}
 	if pins, err := config.LoadProjectPins(findProjectDirSoft()); err == nil {

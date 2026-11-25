@@ -34,7 +34,15 @@ func evalNearestAncestor(path string) string {
 }
 
 func VisibilityPath(isLocal bool, pkgID, projectRoot, pkgDir string) string {
-	trimmedID := strings.Trim(filepath.ToSlash(pkgID), "/")
+	slashedID := filepath.ToSlash(pkgID)
+	if isLocal && (slashedID == "//" || strings.HasPrefix(slashedID, "//")) {
+		rel := strings.Trim(strings.TrimPrefix(slashedID, "//"), "/")
+		if rel == "" {
+			return localRootPrefix
+		}
+		return localRootPrefix + "/" + rel
+	}
+	trimmedID := strings.Trim(slashedID, "/")
 	if !isLocal {
 		return trimmedID
 	}

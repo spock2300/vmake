@@ -1,6 +1,9 @@
 package tui
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type textID string
 
@@ -83,6 +86,17 @@ const (
 	textStepDeps           textID = "step_deps"
 	textCycleEdges         textID = "cycle_edges"
 	textMoreItems          textID = "more_items"
+	textLocal              textID = "local"
+	textModuleContainer    textID = "module_container"
+	textPackageGroup       textID = "package_group"
+	textDirectory          textID = "directory"
+	textContainerID        textID = "container_id"
+	textContainerKind      textID = "container_kind"
+	textContainerVersion   textID = "container_version"
+	textContainerLink      textID = "container_link"
+	textGroupPackages      textID = "group_packages"
+	textGroupSummaryCount  textID = "group_summary_count"
+	textGroupHint          textID = "group_hint"
 )
 
 func (m *Model) text(id textID) string {
@@ -117,15 +131,33 @@ func (m *Model) packageLabel(name string) string {
 	switch name {
 	case GlobalPkgName:
 		return m.text(textGlobal)
+	case LocalGroupPkgName:
+		return m.text(textLocal)
 	case RemoteGroupPkgName:
 		return m.text(textRemote)
 	case InactiveGroupPkgName:
-		if m.hideEmptyPkgs {
-			return m.text(textInactiveOnlyGroup)
-		}
-		return m.text(textInactiveGroup)
+		return m.text(textInactiveOnlyGroup)
+	}
+	if strings.HasPrefix(name, containerGroupPrefix) {
+		return strings.TrimPrefix(name, containerGroupPrefix)
+	}
+	if strings.HasPrefix(name, dirGroupPrefix) {
+		return strings.TrimPrefix(name, dirGroupPrefix)
 	}
 	return name
+}
+
+func (m *Model) treeNodeLabel(node *TreeNode) string {
+	if node == nil {
+		return ""
+	}
+	if node.PkgName == GlobalPkgName || node.PkgName == LocalGroupPkgName || node.PkgName == RemoteGroupPkgName || node.PkgName == InactiveGroupPkgName {
+		return m.packageLabel(node.PkgName)
+	}
+	if node.Name != "" {
+		return node.Name
+	}
+	return m.packageLabel(node.PkgName)
 }
 
 func (m *Model) openLanguageSelector() {

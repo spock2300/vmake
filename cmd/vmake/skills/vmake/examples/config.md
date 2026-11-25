@@ -90,14 +90,14 @@ int main(void) {
 # Use TUI to configure
 vmake config
 
-# Or set / unset option values non-interactively (format: [pkg/]option=value).
-# The package prefix may be a full package name or a unique trailing path segment;
-# it is required for non-global options.
-vmake config --set myproject/debug=true --set myproject/features=full
-vmake config --unset myproject/debug
+# Or set / unset option values non-interactively (format: [pkg:]option=value).
+# The package prefix may be a canonical package ID ("//", "//app") or a unique
+# trailing path segment; it is required for non-global options.
+vmake config --set //:debug=true --set //:features=full
+vmake config --unset //:debug
 
 # Show effective option values and generated -DCONFIG_* defines
-vmake query config myproject
+vmake query config //
 
 # The global build mode (debug/release/size) can also be overridden per build
 vmake build
@@ -111,7 +111,7 @@ vmake build --mode size
 vmake config copy minimal
 vmake config describe -c minimal "minimal feature set, no SSL"
 vmake config use minimal
-vmake config --set myproject/features=minimal
+vmake config --set //:features=minimal
 vmake build
 vmake build -c default
 vmake config list

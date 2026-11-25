@@ -9,7 +9,7 @@
     "mode": "debug",
     "packages": [
       {
-        "name": "01_simple_c",
+        "name": "//",
         "source": "local",
         "path": "."
       }
@@ -26,7 +26,7 @@
     {
       "path": "compile_commands.json",
       "size": 1212,
-      "hash": "7047b90a8364b85fb559dc941771dbedfe2e487538384af71df30754c11f782c"
+      "hash": "3580d0a05353bb3c87901bdc3364ca164354495dbb29b20799d4cacd6455ff5f"
     }
   ],
   "install_tree_hash": "441c68c062e3c7d7aeec712fbbc493a558cf1f82b79cf479f1d21cbe05db0e08"

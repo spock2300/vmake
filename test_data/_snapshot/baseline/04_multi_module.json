@@ -9,19 +9,19 @@
     "mode": "debug",
     "packages": [
       {
-        "name": "04_multi_module",
+        "name": "//",
         "source": "local",
         "path": "."
       },
       {
-        "name": "app",
-        "source": "local",
-        "path": "app"
-      },
-      {
-        "name": "lib",
+        "name": "//lib",
         "source": "local",
         "path": "lib"
+      },
+      {
+        "name": "//app",
+        "source": "local",
+        "path": "app"
       }
     ]
   },
@@ -36,7 +36,7 @@
     {
       "path": "compile_commands.json",
       "size": 2597,
-      "hash": "606df2effc41eb81d90757ec0d83e8be32a0b0229164bf8aa1d099486f367577"
+      "hash": "1aa3e909d4748102d63244df9b00a45c21f954f929b8f882b34eb1e6d4fe296b"
     }
   ],
   "install_tree_hash": "6ba7c53859ba6ce5f03747c1e4448ffd7641a437490885225505358f300e6e80"

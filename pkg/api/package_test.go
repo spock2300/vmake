@@ -279,17 +279,6 @@ func TestPackageChipProfile(t *testing.T) {
 	}
 }
 
-func TestPackageRoot(t *testing.T) {
-	p := NewPackage()
-	if p.IsRoot() {
-		t.Error("new package should not be root")
-	}
-	p.SetRoot(true)
-	if !p.IsRoot() {
-		t.Error("should be root after SetRoot(true)")
-	}
-}
-
 func TestPackageSetDepsAndAppend(t *testing.T) {
 	p := NewPackage()
 	pkgA := NewInstalledPackage("a", "1.0", "/a", nil)
@@ -432,11 +421,11 @@ func TestPackageConfigPropagationFlags(t *testing.T) {
 }
 
 func TestPackageAddRequiresAndUpdateRequireContext(t *testing.T) {
-	p := NewPackage().SetName("app")
-	p.AddRequires("chip", "board ~1.0")
+	p := NewPackage().SetName("strictpkg")
+	p.AddRequires("//chip", "//board")
 	p.OnRequire(func(ctx *RequireContext) {
 		if ctx.When("extra", true) {
-			ctx.AddRequires("rtos")
+			ctx.AddRequires("//rtos")
 		}
 	})
 
@@ -444,10 +433,13 @@ func TestPackageAddRequiresAndUpdateRequireContext(t *testing.T) {
 		"extra": (&Option{name: "extra"}).SetDefault(false),
 	})
 	got := p.GetRequires().Get()
-	want := []RequireInfo{{Name: "chip"}, {Name: "board", Constraint: "~1.0"}}
+	want := []RequireInfo{{Name: "//chip"}, {Name: "//board"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("filtered requires = %v, want %v", got, want)
 	}
+
+	expectBuildScriptError(t, func() { p.AddRequires("official/zlib >=1.0") }, "AddRequires")
+	expectBuildScriptError(t, func() { p.AddRequires("bare") }, "AddRequires")
 }
 
 func TestPackageExecBuildFuncsResetsBuildProvidedLinkerScript(t *testing.T) {

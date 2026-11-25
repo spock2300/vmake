@@ -22,19 +22,21 @@ type configStage struct {
 }
 
 type sourceStage struct {
-	rc             *runContext
-	conf           *configStage
-	pkgDirs        map[string]*api.PkgDirs
-	layouts        map[string]*build.PackageLayout
-	remote         *remoteVersionState
-	patchHashes    map[string]string
-	sourceSeeds    map[string]string
-	sourceCommits  map[string]string
-	sourceVersions map[string]string
-	offline        bool
-	locked         bool
-	dryRun         bool
-	dryRunDepsDir  string
+	rc                *runContext
+	conf              *configStage
+	pkgDirs           map[string]*api.PkgDirs
+	layouts           map[string]*build.PackageLayout
+	patchHashes       map[string]string
+	sourceSeeds       map[string]string
+	sourceCommits     map[string]string
+	sourceVersions    map[string]string
+	containerCommits  map[string]string
+	containerVersions map[string]string
+	containerTrees    map[string]string
+	offline           bool
+	locked            bool
+	dryRun            bool
+	dryRunDepsDir     string
 }
 
 type declareStage struct {

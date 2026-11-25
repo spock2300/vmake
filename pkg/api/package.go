@@ -193,7 +193,6 @@ type Package struct {
 	declaringBuild                bool
 	generators                    []buildGenerator
 	onGenWrite                    func(string)
-	isRoot                        bool
 	chipProfile                   ChipProfile
 	providedLinkerScript          string
 	providedLinkerScriptFromBuild bool
@@ -217,7 +216,7 @@ func NewPackage() *Package {
 
 func (p *Package) AddRequires(deps ...any) *Package {
 	var added Requires
-	added.Add(deps...)
+	added.addStrict(p.FullName(), "AddRequires", deps...)
 	p.requires.AddInfos(added.Get()...)
 	p.baseRequires = append(p.baseRequires, added.Get()...)
 	return p
@@ -340,16 +339,19 @@ func (p *Package) SelectVersion(constraint string) (string, error) {
 }
 
 func (p *Package) SelectVersionMulti(constraints []string) (string, error) {
-	versions := p.GetVersions()
+	return BindSelectVersion(p.FullName(), p.GetVersions(), constraints)
+}
+
+func BindSelectVersion(name string, versions, constraints []string) (string, error) {
 	if len(versions) == 0 {
-		return "", fmt.Errorf("no versions available for %s", p.FullName())
+		return "", fmt.Errorf("no versions available for %s", name)
 	}
 
 	parsedConstraints := make([]Constraint, 0, len(constraints))
 	for _, c := range constraints {
 		pc, ok := ParseConstraint(c)
 		if !ok {
-			return "", fmt.Errorf("invalid constraint '%s' for %s", c, p.FullName())
+			return "", fmt.Errorf("invalid constraint '%s' for %s", c, name)
 		}
 		parsedConstraints = append(parsedConstraints, pc)
 	}
@@ -372,7 +374,7 @@ func (p *Package) SelectVersionMulti(constraints []string) (string, error) {
 
 	if len(candidates) == 0 {
 		return "", fmt.Errorf("no version matching [%s] for %s (available: %v)",
-			strings.Join(constraints, ", "), p.FullName(), versions)
+			strings.Join(constraints, ", "), name, versions)
 	}
 
 	selected, _ := pickHighest(candidates)
@@ -585,13 +587,6 @@ func (p *Package) SetDryRun(v bool) *Package {
 func (p *Package) DryRun() bool { return p.dryRun }
 
 func (p *Package) hostExecutedHelperStages() int { return p.executedHelperStages }
-
-func (p *Package) SetRoot(v bool) *Package {
-	p.isRoot = v
-	return p
-}
-
-func (p *Package) IsRoot() bool { return p.isRoot }
 
 func (p *Package) SetChipProfile(profile ChipProfile) *Package {
 	profile.Name = strings.TrimSpace(profile.Name)
@@ -844,14 +839,6 @@ func NewInstalledPackage(name, version, installDir string, libs []string) *Insta
 		BinDir:     filepath.Join(installDir, "bin"),
 		Libs:       libs,
 	}
-}
-
-func SplitPackageRef(ref string) (repo, name string, ok bool) {
-	idx := strings.Index(ref, "/")
-	if idx < 0 {
-		return "", ref, false
-	}
-	return ref[:idx], ref[idx+1:], true
 }
 
 func (p *Package) AddKConfig(name string) *KConfigEntry {

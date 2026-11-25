@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spock2300/vmake/pkg/api"
 )
 
 func TestDetectScriptOptionsVmakeJSON(t *testing.T) {
@@ -59,16 +61,13 @@ func TestScanSubPackagesAttachesScriptOptions(t *testing.T) {
 		[]byte("package main\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	sources, err := ScanSubPackages(root, "parent")
+	src, err := LoadPackageSource(root, "repo/parent", "sub", api.SourceRemote)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sources) != 1 {
-		t.Fatalf("sources = %d", len(sources))
-	}
-	if sources[0].Script.ModulePath != "example.com/app" ||
-		sources[0].Script.ModuleRoot != root {
-		t.Fatalf("script options = %+v", sources[0].Script)
+	if src.Script.ModulePath != "example.com/app" ||
+		src.Script.ModuleRoot != root {
+		t.Fatalf("script options = %+v", src.Script)
 	}
 }
 

@@ -29,10 +29,11 @@ func (s *declareStage) executeOnBuild() error {
 			continue
 		}
 		s.pkgMetaMap[name] = build.PkgBuildMeta{
-			Origin:  node.Source.Origin,
-			Linked:  node.Source.Link != nil,
-			Deps:    node.Deps,
-			VisPath: s.rc.ctx.Resolver.VisibilityPath(name),
+			Origin:    node.Source.Origin,
+			Container: node.Container,
+			Linked:    node.Source.Link != nil,
+			Deps:      node.Deps,
+			VisPath:   s.rc.ctx.Resolver.VisibilityPath(name),
 		}
 	}
 
@@ -116,10 +117,7 @@ func (s *declareStage) executeOnePackage(name string, node *resolver.PackageNode
 	if rawSubs := api.BindSubGraphs(buildCtx); len(rawSubs) > 0 {
 		meta := s.pkgMetaMap[name]
 		for _, sub := range rawSubs {
-			resolvedSub := s.resolveSubPackageName(name, sub, func(candidate string) bool {
-				_, ok := s.pkgMetaMap[candidate]
-				return ok
-			})
+			resolvedSub := canonicalPkgRef(s.rc.ctx, name, sub)
 			if !slices.Contains(meta.SubGraphs, resolvedSub) {
 				meta.SubGraphs = append(meta.SubGraphs, resolvedSub)
 			}
@@ -131,22 +129,8 @@ func (s *declareStage) executeOnePackage(name string, node *resolver.PackageNode
 	return nil
 }
 
-func (s *declareStage) resolveSubPackageName(currentPkg, name string, exists func(string) bool) string {
-	if name == "" || strings.Contains(name, "/") {
-		return name
-	}
-	var subParents map[string]string
-	if s.rc.ctx.Resolver != nil {
-		subParents = s.rc.ctx.Resolver.SubParents()
-	}
-	return api.ResolveSubPackageName(currentPkg, name, subParents, exists)
-}
-
 func (s *declareStage) buildSubGraph(currentPkg, rootPkg string) (err error) {
-	rootPkg = s.resolveSubPackageName(currentPkg, rootPkg, func(candidate string) bool {
-		_, ok := s.pkgMetaMap[candidate]
-		return ok
-	})
+	rootPkg = canonicalPkgRef(s.rc.ctx, currentPkg, rootPkg)
 	if active := s.rc.session.ActiveTarget(); active != "" {
 		return fmt.Errorf("BuildSubGraph(%s) is not allowed while target %s is running", rootPkg, active)
 	}
@@ -184,7 +168,7 @@ func (s *declareStage) buildSubGraph(currentPkg, rootPkg string) (err error) {
 	if err != nil {
 		return err
 	}
-	subPkgs := build.CollectSubGraphPackages(rootPkg, s.pkgMetaMap, s.allTargets, s.conf.needed, s.rc.ctx.Resolver.SubParents())
+	subPkgs := build.CollectSubGraphPackages(rootPkg, s.pkgMetaMap, s.allTargets, s.conf.needed)
 	for _, name := range s.rc.ctx.Resolver.GetOrder() {
 		if !subPkgs[name] || s.bindings[name] == nil {
 			continue
@@ -216,7 +200,7 @@ func (s *declareStage) buildSubGraph(currentPkg, rootPkg string) (err error) {
 		if err := s.executeMainPackages(subPkgs); err != nil {
 			return err
 		}
-		expanded := build.CollectSubGraphPackages(rootPkg, s.pkgMetaMap, s.allTargets, s.conf.needed, s.rc.ctx.Resolver.SubParents())
+		expanded := build.CollectSubGraphPackages(rootPkg, s.pkgMetaMap, s.allTargets, s.conf.needed)
 		if len(expanded) == len(subPkgs) {
 			break
 		}
@@ -251,12 +235,14 @@ func (s *declareStage) resolveDepTargets() map[string]map[string]*api.Target {
 // source root. Target names are accepted for symmetry with computeDepOutput but
 // do not affect the result.
 func (s *declareStage) computeDepSrcDir(currentPkg, depRef string) string {
-	pkgName := build.ParseDependencyRef(depRef).Package
-	pkgName = s.resolveSubPackageName(currentPkg, pkgName, func(candidate string) bool {
-		return s.conf.needed[candidate] && s.source.pkgDirs[candidate] != nil
-	})
+	pkgName := canonicalPkgRef(s.rc.ctx, currentPkg, build.ParseDependencyRef(depRef).Package)
 	if pkgName == "" || s.source.pkgDirs[pkgName] == nil {
 		return ""
+	}
+	if currentPkg != "" && s.rc.ctx.Resolver != nil {
+		if err := pkgvis.CheckInternal(currentPkg, s.rc.ctx.Resolver.VisibilityPath(currentPkg), pkgName, s.rc.ctx.Resolver.VisibilityPath(pkgName)); err != nil {
+			panic(&api.BuildScriptError{Package: currentPkg, Op: "DepSrcDir", Err: err})
+		}
 	}
 	node := s.rc.ctx.DepGraph.Packages[pkgName]
 	if node == nil || node.Pkg == nil {
@@ -266,10 +252,7 @@ func (s *declareStage) computeDepSrcDir(currentPkg, depRef string) string {
 }
 
 func (s *declareStage) computeDepPackageDir(currentPkg, depRef string) string {
-	pkgName := build.ParseDependencyRef(depRef).Package
-	pkgName = s.resolveSubPackageName(currentPkg, pkgName, func(candidate string) bool {
-		return s.conf.needed[candidate] && s.source.pkgDirs[candidate] != nil
-	})
+	pkgName := canonicalPkgRef(s.rc.ctx, currentPkg, build.ParseDependencyRef(depRef).Package)
 	if pkgName == "" || s.source.pkgDirs[pkgName] == nil {
 		validateDirectDepPackageRef(s.rc.ctx, currentPkg, depRef)
 		return ""
@@ -288,17 +271,10 @@ func validateDirectDepPackageRef(ctx *RuntimeContext, currentPkg, depRef string)
 	if ctx == nil || ctx.DepGraph == nil {
 		return
 	}
-	pkgName := build.ParseDependencyRef(depRef).Package
+	pkgName := canonicalPkgRef(ctx, currentPkg, build.ParseDependencyRef(depRef).Package)
 	if pkgName == "" {
 		return
 	}
-	var subParents map[string]string
-	if ctx.Resolver != nil {
-		subParents = ctx.Resolver.SubParents()
-	}
-	pkgName = api.ResolveSubPackageName(currentPkg, pkgName, subParents, func(candidate string) bool {
-		return ctx.DepGraph.Packages[candidate] != nil
-	})
 	if pkgName != currentPkg && !hasDirectNodeDep(ctx, currentPkg, pkgName) {
 		panic(&api.BuildScriptError{
 			Package: currentPkg,
@@ -316,15 +292,8 @@ func hasDirectNodeDep(ctx *RuntimeContext, fromPkg, toPkg string) bool {
 	if node == nil {
 		return false
 	}
-	var subParents map[string]string
-	if ctx.Resolver != nil {
-		subParents = ctx.Resolver.SubParents()
-	}
 	for _, dep := range node.Deps {
-		resolved := api.ResolveSubPackageName(fromPkg, dep, subParents, func(candidate string) bool {
-			return ctx.DepGraph.Packages[candidate] != nil
-		})
-		if resolved == toPkg {
+		if canonicalPkgRef(ctx, fromPkg, dep) == toPkg {
 			return true
 		}
 	}
@@ -333,13 +302,15 @@ func hasDirectNodeDep(ctx *RuntimeContext, fromPkg, toPkg string) bool {
 
 func (s *declareStage) computeDepOutput(currentPkg, depRef string) string {
 	ref := build.ParseDependencyRef(depRef)
-	pkgName, targetName := ref.Package, ref.Target
-	pkgName = s.resolveSubPackageName(currentPkg, pkgName, func(candidate string) bool {
-		return s.conf.needed[candidate] && s.source.pkgDirs[candidate] != nil
-	})
+	pkgName, targetName := canonicalPkgRef(s.rc.ctx, currentPkg, ref.Package), ref.Target
 	pd := s.source.pkgDirs[pkgName]
 	if pd == nil {
 		return ""
+	}
+	if currentPkg != "" && s.rc.ctx.Resolver != nil {
+		if err := pkgvis.CheckInternal(currentPkg, s.rc.ctx.Resolver.VisibilityPath(currentPkg), pkgName, s.rc.ctx.Resolver.VisibilityPath(pkgName)); err != nil {
+			panic(&api.BuildScriptError{Package: currentPkg, Op: "DepOutput", Err: err})
+		}
 	}
 	targets := s.resolveDepTargets()
 	if targetName == "" {

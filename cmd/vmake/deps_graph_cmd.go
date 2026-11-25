@@ -166,7 +166,7 @@ dot|mermaid to render Graphviz DOT or Mermaid flowcharts.`,
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "print machine-readable JSON")
 	cmd.Flags().BoolVar(&locked, "locked", false, "require .vmake/vmake.lock to be up-to-date")
 	cmd.Flags().BoolVar(&offline, "offline", false, "resolve strictly from local cache without network access")
-	cmd.Flags().StringArrayVarP(&setFlags, "set", "s", nil, "override an option for this run only (format: [pkg/]option=value)")
+	cmd.Flags().StringArrayVarP(&setFlags, "set", "s", nil, "override an option for this run only (format: [pkg:]option=value)")
 	cmd.RegisterFlagCompletionFunc("format", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return []string{"text", "dot", "mermaid"}, cobra.ShellCompDirectiveNoFileComp
 	})
@@ -234,7 +234,7 @@ OnBuild target edge that introduced each hop.`,
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "print machine-readable JSON")
 	cmd.Flags().BoolVar(&locked, "locked", false, "require .vmake/vmake.lock to be up-to-date")
 	cmd.Flags().BoolVar(&offline, "offline", false, "resolve strictly from local cache without network access")
-	cmd.Flags().StringArrayVarP(&setFlags, "set", "s", nil, "override an option for this run only (format: [pkg/]option=value)")
+	cmd.Flags().StringArrayVarP(&setFlags, "set", "s", nil, "override an option for this run only (format: [pkg:]option=value)")
 	return cmd
 }
 
@@ -301,7 +301,7 @@ Exits 0 when clean and 1 when any violation is detected.`,
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "print machine-readable JSON")
 	cmd.Flags().BoolVar(&locked, "locked", false, "require .vmake/vmake.lock to be up-to-date")
 	cmd.Flags().BoolVar(&offline, "offline", false, "resolve strictly from local cache without network access")
-	cmd.Flags().StringArrayVarP(&setFlags, "set", "s", nil, "override an option for this run only (format: [pkg/]option=value)")
+	cmd.Flags().StringArrayVarP(&setFlags, "set", "s", nil, "override an option for this run only (format: [pkg:]option=value)")
 	return cmd
 }
 

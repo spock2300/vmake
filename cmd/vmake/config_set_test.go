@@ -8,7 +8,7 @@ import (
 	"github.com/spock2300/vmake/pkg/resolver"
 )
 
-func TestApplyEphemeralOverrideShortPackageName(t *testing.T) {
+func TestApplyEphemeralOverrideRequiresCanonicalPackageID(t *testing.T) {
 	name := "vendor/sdk/kernel"
 	pkg := api.NewPackage()
 	pkg.SetName(name)
@@ -22,11 +22,13 @@ func TestApplyEphemeralOverrideShortPackageName(t *testing.T) {
 			name: {ID: name, Pkg: pkg},
 		}},
 	}
-	overrides := []inspectOverride{{pkgName: "kernel", optName: "debug", raw: "true"}}
-	if err := applyEphemeralOverrides(ctx, overrides); err != nil {
+	if err := applyEphemeralOverrides(ctx, []inspectOverride{{pkgName: "kernel", optName: "debug", raw: "true"}}); err == nil {
+		t.Fatal("short package name override unexpectedly succeeded")
+	}
+	if err := applyEphemeralOverrides(ctx, []inspectOverride{{pkgName: name, optName: "debug", raw: "true"}}); err != nil {
 		t.Fatal(err)
 	}
 	if got := config.GetEntry(ctx.Config, name).Options["debug"]; got != true {
-		t.Fatalf("%s/debug = %v, want true", name, got)
+		t.Fatalf("%s:debug = %v, want true", name, got)
 	}
 }

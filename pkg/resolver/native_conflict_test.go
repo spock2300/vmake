@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/lockfile"
 	"github.com/spock2300/vmake/pkg/repo"
@@ -30,7 +30,7 @@ func gitCmd(t *testing.T, dir string, args ...string) {
 
 func writeNativeRepoWithVersions(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	pkgDir := filepath.Join(root, "conflictpkg.git")
 	if err := os.MkdirAll(pkgDir, 0755); err != nil {
 		t.Fatal(err)
@@ -67,30 +67,61 @@ func Main(p *api.Package) {
 	return pkgDir
 }
 
-func localRequiringSource(t *testing.T, name, require string) *buildscript.Source {
+func writeTaggedNativeModule(t *testing.T, bareDest string, files map[string]string, tag string) {
 	t.Helper()
-	dir := t.TempDir()
-	script := fmt.Sprintf(`package main
+	work := canonicalTempDir(t)
+	writeProjectFiles(t, work, files)
+	gitCmd(t, work, "init", "-q", "-b", "master")
+	gitCmd(t, work, "config", "user.email", "test@example.com")
+	gitCmd(t, work, "config", "user.name", "test")
+	gitCmd(t, work, "add", "-A")
+	gitCmd(t, work, "commit", "-q", "-m", tag)
+	gitCmd(t, work, "tag", tag)
+	if err := os.MkdirAll(filepath.Dir(bareDest), 0755); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, work, "clone", "-q", "--bare", ".", bareDest)
+}
+
+func writeLocalProject(t *testing.T, modules, sources map[string]string, reqs ...string) string {
+	t.Helper()
+	dir := canonicalTempDir(t)
+	manifest := buildscript.Manifest{
+		Modules: modules,
+		Sources: sources,
+	}
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "vmake.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	quoted := make([]string, len(reqs))
+	for i, req := range reqs {
+		quoted[i] = fmt.Sprintf("%q", req)
+	}
+	body := `package main
 
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires(%q)
-	})
-}
-`, require)
-	if err := os.WriteFile(filepath.Join(dir, "build.go"), []byte(script), 0644); err != nil {
+`
+	if len(quoted) > 0 {
+		body += fmt.Sprintf("\tp.OnRequire(func(ctx *api.RequireContext) {\n\t\tctx.AddRequires(%s)\n\t})\n", strings.Join(quoted, ", "))
+	}
+	body += "}\n"
+	if err := os.WriteFile(filepath.Join(dir, "build.go"), []byte(body), 0644); err != nil {
 		t.Fatal(err)
 	}
-	return buildscript.NewSource(name, filepath.Join(dir, "build.go"), dir, api.SourceLocal)
+	return dir
 }
 
 func newNativeTestResolver(t *testing.T, pkgGitURL string) *Resolver {
 	t.Helper()
-	reposDir := t.TempDir()
-	depsDir := t.TempDir()
-	cacheDir := t.TempDir()
+	reposDir := canonicalTempDir(t)
+	depsDir := canonicalTempDir(t)
+	cacheDir := canonicalTempDir(t)
 
 	repoMgr := repo.NewRepoManager(reposDir)
 	template := strings.TrimSuffix(pkgGitURL, "conflictpkg.git") + "{name}.git"
@@ -100,52 +131,71 @@ func newNativeTestResolver(t *testing.T, pkgGitURL string) *Resolver {
 
 	r := newTrustedTestResolver(repoMgr, depsDir)
 	r.SetSourceManager(repo.NewSourceManager(depsDir, cacheDir))
+	t.Cleanup(r.Close)
 	return r
 }
 
-func TestResolveNativeConstraintConflictFails(t *testing.T) {
+func TestResolveNativeDiamondIntersectionSelectsCommonVersion(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
 	}
 
 	url := writeNativeRepoWithVersions(t)
+	baseDir := filepath.Dir(url)
+	writeTaggedNativeModule(t, filepath.Join(baseDir, "mod_a.git"), map[string]string{
+		"vmake.json": `{"modules": {"testnative/conflictpkg": ">=1.2"}}`,
+		"build.go":   requirePackageMain("testnative/conflictpkg"),
+	}, "v1.0.0")
+	writeTaggedNativeModule(t, filepath.Join(baseDir, "mod_b.git"), map[string]string{
+		"vmake.json": `{"modules": {"testnative/conflictpkg": "<1.5"}}`,
+		"build.go":   requirePackageMain("testnative/conflictpkg"),
+	}, "v1.0.0")
+
 	r := newNativeTestResolver(t, url)
+	project := writeLocalProject(t, map[string]string{
+		"testnative/mod_a": ">=1.0.0",
+		"testnative/mod_b": ">=1.0.0",
+	}, nil, "testnative/mod_a", "testnative/mod_b")
 
-	a := localRequiringSource(t, "a", "testnative/conflictpkg >=1.2")
-	b := localRequiringSource(t, "b", "testnative/conflictpkg <1.5")
-
-	err := r.ResolveAll([]buildscript.Source{*a, *b})
-	if err == nil {
-		t.Fatal("conflicting native constraints should fail resolution")
+	if err := r.ResolveProject(project, nil); err != nil {
+		t.Fatalf("intersectable diamond should resolve 1.2.0: %v", err)
 	}
-	for _, want := range []string{"conflicting version constraints", "1.9.0", "<1.5", "b"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error should mention %q, got: %v", want, err)
-		}
+	c := r.Graph().Containers["testnative/conflictpkg"]
+	if c == nil || c.Version != "1.2.0" {
+		t.Fatalf("container = %+v, want version 1.2.0", c)
 	}
 }
 
-func TestResolveNativeConstraintAgreementSucceeds(t *testing.T) {
+func TestResolveNativeDiamondDisjointConflictFails(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
 	}
 
 	url := writeNativeRepoWithVersions(t)
+	baseDir := filepath.Dir(url)
+	writeTaggedNativeModule(t, filepath.Join(baseDir, "mod_a.git"), map[string]string{
+		"vmake.json": `{"modules": {"testnative/conflictpkg": ">=1.6"}}`,
+		"build.go":   requirePackageMain("testnative/conflictpkg"),
+	}, "v1.0.0")
+	writeTaggedNativeModule(t, filepath.Join(baseDir, "mod_b.git"), map[string]string{
+		"vmake.json": `{"modules": {"testnative/conflictpkg": "<1.5"}}`,
+		"build.go":   requirePackageMain("testnative/conflictpkg"),
+	}, "v1.0.0")
+
 	r := newNativeTestResolver(t, url)
+	project := writeLocalProject(t, map[string]string{
+		"testnative/mod_a": ">=1.0.0",
+		"testnative/mod_b": ">=1.0.0",
+	}, nil, "testnative/mod_a", "testnative/mod_b")
 
-	a := localRequiringSource(t, "a", "testnative/conflictpkg >=1.2")
-	b := localRequiringSource(t, "b", "testnative/conflictpkg >=1.4")
-
-	if err := r.ResolveAll([]buildscript.Source{*a, *b}); err != nil {
-		t.Fatalf("compatible constraints should resolve: %v", err)
+	err := r.ResolveProject(project, nil)
+	if err == nil {
+		t.Fatal("disjoint diamond constraints should fail resolution")
 	}
-
-	node := r.Graph().Packages["testnative/conflictpkg"]
-	if node == nil || node.Native == nil {
-		t.Fatal("native node missing after resolution")
-	}
-	if node.Native.Selected != "1.9.0" {
-		t.Errorf("Selected = %q, want 1.9.0", node.Native.Selected)
+	for _, want := range []string{"conflicting version constraints", "testnative/conflictpkg", "<1.5"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q, got: %v", want, err)
+		}
 	}
 }
 
@@ -154,21 +204,23 @@ func TestResolveNativeConfigPinReusesTreeOffline(t *testing.T) {
 		t.Skip("git not on PATH")
 	}
 	url := writeNativeRepoWithVersions(t)
-	depsDir, cacheDir := t.TempDir(), t.TempDir()
-	repoMgr := repo.NewRepoManager(t.TempDir())
+	depsDir, cacheDir := canonicalTempDir(t), canonicalTempDir(t)
+	repoMgr := repo.NewRepoManager(canonicalTempDir(t))
 	template := strings.TrimSuffix(url, "conflictpkg.git") + "{name}.git"
 	if err := repoMgr.AddNative("testnative", template); err != nil {
 		t.Fatal(err)
 	}
 
+	project := writeLocalProject(t, map[string]string{"testnative/conflictpkg": ">=1.2"}, nil, "testnative/conflictpkg")
+
 	r := newTrustedTestResolver(repoMgr, depsDir)
 	r.SetSourceManager(repo.NewSourceManager(depsDir, cacheDir))
-	if err := r.ResolveAll([]buildscript.Source{*localRequiringSource(t, "a", "testnative/conflictpkg >=1.2")}); err != nil {
+	if err := r.ResolveProject(project, nil); err != nil {
 		t.Fatal(err)
 	}
-	node := r.Graph().Packages["testnative/conflictpkg"]
-	if node == nil || node.Native == nil || node.Native.Commit == "" {
-		t.Fatalf("native node incomplete: %+v", node)
+	c := r.Graph().Containers["testnative/conflictpkg"]
+	if c == nil || c.Commit == "" {
+		t.Fatalf("native container incomplete: %+v", c)
 	}
 
 	// A config pin with a matching lock must reuse the materialized tree even
@@ -179,14 +231,68 @@ func TestResolveNativeConfigPinReusesTreeOffline(t *testing.T) {
 	pinned := newTrustedTestResolver(repoMgr, depsDir)
 	pinned.SetSourceManager(repo.NewSourceManager(depsDir, cacheDir))
 	lock := lockfile.New()
-	lock.Set("testnative/conflictpkg", &lockfile.LockedPkg{Version: "1.9.0", Commit: node.Native.Commit, Source: "native"})
+	lock.SetContainer("testnative/conflictpkg", &lockfile.LockedContainer{Version: "1.9.0", Commit: c.Commit, Source: "native"})
 	pinned.SetLockfile(lock, false)
 	pinned.SetConfigPins(map[string]string{"testnative/conflictpkg": "1.9.0"})
-	if err := pinned.ResolveAll([]buildscript.Source{*localRequiringSource(t, "a", "testnative/conflictpkg >=1.2")}); err != nil {
+	if err := pinned.ResolveProject(project, nil); err != nil {
 		t.Fatalf("offline config pin: %v", err)
 	}
-	pinnedNode := pinned.Graph().Packages["testnative/conflictpkg"]
-	if pinnedNode == nil || pinnedNode.Native == nil || pinnedNode.Native.Selected != "1.9.0" {
-		t.Fatalf("pinned resolution = %+v", pinnedNode)
+	pinnedC := pinned.Graph().Containers["testnative/conflictpkg"]
+	if pinnedC == nil || pinnedC.Version != "1.9.0" {
+		t.Fatalf("pinned resolution = %+v", pinnedC)
 	}
+}
+
+func TestResolveNativeDiamondResolvedByPinAndRootExactOverride(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+
+	url := writeNativeRepoWithVersions(t)
+	baseDir := filepath.Dir(url)
+	writeTaggedNativeModule(t, filepath.Join(baseDir, "mod_a.git"), map[string]string{
+		"vmake.json": `{"modules": {"testnative/conflictpkg": ">=1.6"}}`,
+		"build.go":   requirePackageMain("testnative/conflictpkg"),
+	}, "v1.0.0")
+	writeTaggedNativeModule(t, filepath.Join(baseDir, "mod_b.git"), map[string]string{
+		"vmake.json": `{"modules": {"testnative/conflictpkg": "<1.5"}}`,
+		"build.go":   requirePackageMain("testnative/conflictpkg"),
+	}, "v1.0.0")
+
+	t.Run("deps_pin_resolves_disjoint_diamond", func(t *testing.T) {
+		r := newNativeTestResolver(t, url)
+		r.SetConfigPins(map[string]string{"testnative/conflictpkg": "1.2.0"})
+		project := writeLocalProject(t, map[string]string{
+			"testnative/mod_a": ">=1.0.0",
+			"testnative/mod_b": ">=1.0.0",
+		}, nil, "testnative/mod_a", "testnative/mod_b")
+		if err := r.ResolveProject(project, nil); err != nil {
+			t.Fatalf("deps pin should resolve disjoint diamond: %v", err)
+		}
+		if c := r.Graph().Containers["testnative/conflictpkg"]; c == nil || c.Version != "1.2.0" {
+			t.Fatalf("container = %+v, want 1.2.0", c)
+		}
+	})
+
+	t.Run("root_exact_override_resolves_disjoint_diamond", func(t *testing.T) {
+		r := newNativeTestResolver(t, url)
+		project := writeLocalProject(t, map[string]string{
+			"testnative/mod_a":       ">=1.0.0",
+			"testnative/mod_b":       ">=1.0.0",
+			"testnative/conflictpkg": "=1.2.0",
+		}, nil, "testnative/mod_a", "testnative/mod_b")
+		if err := r.ResolveProject(project, nil); err != nil {
+			t.Fatalf("root exact override should resolve disjoint diamond: %v", err)
+		}
+		if c := r.Graph().Containers["testnative/conflictpkg"]; c == nil || c.Version != "1.2.0" {
+			t.Fatalf("container = %+v, want 1.2.0", c)
+		}
+	})
+
+	t.Run("mixed_commit_and_semver_fails", func(t *testing.T) {
+		const sha = "0123456789abcdef0123456789abcdef01234567"
+		if _, _, err := SplitConstraints("testnative/conflictpkg", []string{sha, ">=1.6"}); err == nil || !strings.Contains(err.Error(), "conflicting commit constraint") {
+			t.Fatalf("expected conflict error for mixed commit+semver, got %v", err)
+		}
+	})
 }

@@ -18,7 +18,6 @@ func newStageTestContext(t *testing.T) *RuntimeContext {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.Option("option").SetType(api.OptionString).SetDefault("default")
 	})

@@ -57,7 +57,7 @@ func TestPostLinkDebuglinkIncrementalAndInstall(t *testing.T) {
 		AddPostLink("size", "{output}.input").
 		AddPostLinkHex().AddPostLinkBin().AddPostLinkStrip()
 	targets := map[string]map[string]*api.Target{"p": {"app": target}}
-	graph, err := NewBuildGraph(targets, nil, nil)
+	graph, err := NewBuildGraph(targets, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

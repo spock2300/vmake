@@ -111,3 +111,18 @@ func TestVisibilityPathPreservesInternalAcrossSymlinkedRoot(t *testing.T) {
 		t.Fatalf("VisibilityPath across symlinked root = %q, want @local/net/internal/wire", got)
 	}
 }
+
+func TestVisibilityPathLocalCanonicalIDs(t *testing.T) {
+	if got := VisibilityPath(true, "//", "", ""); got != "@local" {
+		t.Fatalf("VisibilityPath(//) = %q, want @local", got)
+	}
+	if got := VisibilityPath(true, "//net/internal/wire", "", ""); got != "@local/net/internal/wire" {
+		t.Fatalf("VisibilityPath(//net/internal/wire) = %q", got)
+	}
+	if err := CheckInternal("//net/http", VisibilityPath(true, "//net/http", "", ""), "//net/internal/wire", VisibilityPath(true, "//net/internal/wire", "", "")); err != nil {
+		t.Fatalf("//net/http -> //net/internal/wire: %v", err)
+	}
+	if err := CheckInternal("//app", VisibilityPath(true, "//app", "", ""), "//net/internal/wire", VisibilityPath(true, "//net/internal/wire", "", "")); err == nil {
+		t.Fatal("//app must not access //net/internal/wire")
+	}
+}

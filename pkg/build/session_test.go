@@ -26,7 +26,7 @@ func TestPipelineUsesPackageToolchainAndCanonicalDependencyPaths(t *testing.T) {
 			writeAssemblyFixture(t, dir, "lib.c", "int base(void) { return 1; }\n")
 			writeAssemblyFixture(t, dir, "main.c", "#include <stdio.h>\nint base(void); int main(void) { printf(\"%d\\n\", base() + VALUE); return 0; }\n")
 			library := makeTargetWithDeps("library").SetKind(api.TargetStatic).AddFiles("lib.c")
-			app := makeTargetWithDeps("app", "p:library").SetKind(api.TargetBinary).AddFiles("main.c")
+			app := makeTargetWithDeps("app", "//p:library").SetKind(api.TargetBinary).AddFiles("main.c")
 			native := nativeTestScheduler(t, dir, library)
 			alternate := *native.toolchain
 			if !sameName {
@@ -38,18 +38,18 @@ func TestPipelineUsesPackageToolchainAndCanonicalDependencyPaths(t *testing.T) {
 				t.Fatal(err)
 			}
 			alternate.Tools.CC = wrapper
-			graph, err := NewBuildGraph(map[string]map[string]*api.Target{"p": {"library": library}, "q": {"app": app}}, nil, nil)
+			graph, err := NewBuildGraph(map[string]map[string]*api.Target{"//p": {"library": library}, "//q": {"app": app}}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			dirs := map[string]*api.PkgDirs{"p": {SourceDir: dir}, "q": {SourceDir: dir}}
-			env := testBuildEnv(dirs, testBuildPackages(dirs), map[string]*toolchain.Toolchain{"p": native.toolchain, "q": &alternate}, NewSession(nil), dir)
+			dirs := map[string]*api.PkgDirs{"//p": {SourceDir: dir}, "//q": {SourceDir: dir}}
+			env := testBuildEnv(dirs, testBuildPackages(dirs), map[string]*toolchain.Toolchain{"//p": native.toolchain, "//q": &alternate}, NewSession(nil), dir)
 			job := testBuildJob(graph, native.toolchain, env, api.ModeDebug, api.Platform{OS: runtime.GOOS}, false)
 			scheduler, err := job.Run()
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, fullName := range []string{"p:library", "q:app"} {
+			for _, fullName := range []string{"//p:library", "//q:app"} {
 				if _, ok := env.Session.TargetPlacements()[fullName]; !ok {
 					t.Fatalf("cross-toolchain target %s has no placement", fullName)
 				}
@@ -58,12 +58,12 @@ func TestPipelineUsesPackageToolchainAndCanonicalDependencyPaths(t *testing.T) {
 			for _, result := range env.Session.TargetResults() {
 				statuses[result.Package+":"+result.Target] = result.Status
 			}
-			for _, fullName := range []string{"p:library", "q:app"} {
+			for _, fullName := range []string{"//p:library", "//q:app"} {
 				if statuses[fullName] != TargetStatusBuilt {
 					t.Fatalf("cross-toolchain status for %s = %+v", fullName, statuses)
 				}
 			}
-			output := resolveWorkPath(dir, PlacementFor(graph.Nodes["q:app"].Target, scheduler.pkgs[graph.Nodes["q:app"].PkgName], scheduler.targetOS(graph.Nodes["q:app"].PkgName)).OutputPath)
+			output := resolveWorkPath(dir, PlacementFor(graph.Nodes["//q:app"].Target, scheduler.pkgs[graph.Nodes["//q:app"].PkgName], scheduler.targetOS(graph.Nodes["//q:app"].PkgName)).OutputPath)
 			result, err := exec.Command(output).CombinedOutput()
 			if err != nil || strings.TrimSpace(string(result)) != "42" {
 				t.Fatalf("package compiler result %q: %v", result, err)
@@ -88,20 +88,20 @@ func TestSubGraphAndMainPipelineShareTargetSession(t *testing.T) {
 			return nil
 		})
 	}
-	first, second := makeVoid("first"), makeVoid("second", "p:first")
+	first, second := makeVoid("first"), makeVoid("second", "//p:first")
 	native := nativeTestScheduler(t, dir, first)
-	targets := map[string]map[string]*api.Target{"p": {"first": first}, "q": {"second": second}}
+	targets := map[string]map[string]*api.Target{"//p": {"first": first}, "//q": {"second": second}}
 	dirs := map[string]*api.PkgDirs{
-		"p": {SourceDir: dir, BuildDir: filepath.Join(dir, "p-build")},
-		"q": {SourceDir: dir, BuildDir: filepath.Join(dir, "q-build")},
+		"//p": {SourceDir: dir, BuildDir: filepath.Join(dir, "p-build")},
+		"//q": {SourceDir: dir, BuildDir: filepath.Join(dir, "q-build")},
 	}
-	packages := map[string]*api.Package{"p": api.NewPackage().SetDirs(*dirs["p"]), "q": api.NewPackage().SetDirs(*dirs["q"])}
-	meta := map[string]PkgBuildMeta{"p": {}, "q": {Deps: []string{"p"}}}
+	packages := map[string]*api.Package{"//p": api.NewPackage().SetDirs(*dirs["//p"]), "//q": api.NewPackage().SetDirs(*dirs["//q"])}
+	meta := map[string]PkgBuildMeta{"//p": {Container: "//"}, "//q": {Container: "//", Deps: []string{"//p"}}}
 	session := NewSession(nil)
 	env := testBuildEnv(dirs, packages, map[string]*toolchain.Toolchain{
-		"p": native.toolchain,
-		"q": native.toolchain,
-		"unrelated": {
+		"//p": native.toolchain,
+		"//q": native.toolchain,
+		"//unrelated": {
 			Name:  "missing-toolchain",
 			Tools: toolchain.Tools{CC: filepath.Join(dir, "missing-cc")},
 		},
@@ -109,15 +109,15 @@ func TestSubGraphAndMainPipelineShareTargetSession(t *testing.T) {
 	base := testBuildJob(nil, native.toolchain, env, api.ModeDebug, api.Platform{OS: runtime.GOOS}, false)
 	req := SubGraphRequest{
 		Targets: targets, PkgMeta: meta,
-		Needed: map[string]bool{"p": true, "q": true},
+		Needed: map[string]bool{"//p": true, "//q": true},
 	}
-	for _, root := range []string{"p", "q"} {
+	for _, root := range []string{"//p", "//q"} {
 		req.RootPkg = root
 		if err := BuildSubGraph(base, req); err != nil {
 			t.Fatal(err)
 		}
 	}
-	graph, err := NewBuildGraph(targets, meta, nil)
+	graph, err := NewBuildGraph(targets, meta)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -23,9 +23,20 @@ func TestYaegiSymbolsComplete(t *testing.T) {
 	syms := YaegiSymbols()
 	sc := pkg.Scope()
 
+	hostOnly := map[string]bool{
+		"BindBuildRuntime":       true,
+		"SnapshotTarget":         true,
+		"LocalContainerID":       true,
+		"IsLocalPackageID":       true,
+		"LocalRelPath":           true,
+		"CanonicalizePackageRef": true,
+		"ValidatePackageRef":     true,
+		"ValidateContainerID":    true,
+	}
+
 	var missing []string
 	for _, name := range sc.Names() {
-		if name == "BindBuildRuntime" || name == "SnapshotTarget" || strings.HasPrefix(name, "Bind") {
+		if hostOnly[name] || strings.HasPrefix(name, "Bind") {
 			continue
 		}
 		o := sc.Lookup(name)
@@ -67,7 +78,11 @@ func TestYaegiSymbolsComplete(t *testing.T) {
 
 func TestYaegiSymbolsNotNil(t *testing.T) {
 	syms := YaegiSymbols()
-	for _, name := range []string{"BindBuildRuntime", "SnapshotTarget"} {
+	for _, name := range []string{
+		"BindBuildRuntime", "SnapshotTarget", "BindSelectVersion",
+		"LocalContainerID", "IsLocalPackageID", "LocalRelPath",
+		"CanonicalizePackageRef", "ValidatePackageRef", "ValidateContainerID",
+	} {
 		if _, exists := syms[name]; exists {
 			t.Fatalf("native function %s is exposed to scripts", name)
 		}

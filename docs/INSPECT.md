@@ -232,9 +232,10 @@ dependency tree labels those same packages by their primary target.
 | `globalOptionDefs` | object? | Declared global options keyed by option name, each `{type, default?, description?, values?, group?}`; omitted when none. Effective values are in `global` |
 | `globalCFlags`, `globalCxxFlags`, `globalLdFlags`, `globalLinks` | array? | Global `AddGlobal*` declarations from needed packages in package resolution then declaration order; duplicates preserved (see [Global flags](#global-flags)) |
 | `globalDefines` | array? | Auto-exported global-option macros as `NAME=value`, sorted, without the `-D` prefix (see [Global flags](#global-flags)) |
-| `overrides` | object | Coerced `--set` values keyed `[package/]option`; omitted when no override was given |
-| `roots` | array | `root` from the active configuration when set, else explicit `SetRoot(true)` local package when present, otherwise needed local packages that no needed package depends on, sorted |
-| `packages` | array | One entry per resolved package, sorted by name |
+| `overrides` | object | Coerced `--set` values keyed `[package:]option`; omitted when no override was given |
+| `roots` | array | `root`/`roots` from the active configuration when set, else `vmake.json` `roots` (or `["//"]` when root `build.go` exists), otherwise needed local packages that no needed package depends on, sorted |
+| `containers` | array? | Resolved module containers (`{id, kind, repo?, version?, commit?, url?, dir?, linked?, linkPath?}`), sorted by ID |
+| `packages` | array | One entry per resolved package, sorted by name (each entry carries `container` identifying its owning container) |
 | `graph` | array | Package dependency edges `{from, to}`, sorted by `from` then `to` (merges `OnRequire`, target `AddDeps`/`UseRequires`, and `BuildSubGraph` edges; `--no-targets` reports `OnRequire` edges only). Each edge also carries optional `kinds` (`require`, `subgraph`, `target`) and `via` (the declaring call sites), the same attribution `vmake deps graph --json` reports |
 | `compileDatabase` | string | `<root>/build/compile_commands.json` (the expected path, even before a build) |
 | `compileDatabasePresent` | bool | Whether `<root>/build/compile_commands.json` currently exists; presence only, not freshness |

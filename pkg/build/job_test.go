@@ -36,7 +36,7 @@ func TestBuildJobResolvesDistinctPlatformGroups(t *testing.T) {
 		"p": {"p": makeTargetWithDeps("p").SetKind(api.TargetVoid)},
 		"q": {"q": makeTargetWithDeps("q").SetKind(api.TargetVoid)},
 	}
-	graph, err := NewBuildGraph(targets, nil, nil)
+	graph, err := NewBuildGraph(targets, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

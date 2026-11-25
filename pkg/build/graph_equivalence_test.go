@@ -14,23 +14,23 @@ func TestStrictAndAuditAgreeOnNodes(t *testing.T) {
 		target.AddDeps(deps)
 		return target
 	}
-	voids := target("voids", api.TargetVoid, "c:lib")
+	voids := target("voids", api.TargetVoid, "//c:lib")
 	voids.UseRequires()
 	targets := map[string]map[string]*api.Target{
-		"a": {
+		"//a": {
 			"lib":   target("lib", api.TargetStatic, "voids"),
-			"app":   target("app", api.TargetBinary, "b:lib", "c:*"),
+			"app":   target("app", api.TargetBinary, "//b:lib", "//c:*"),
 			"voids": voids,
 		},
-		"b": {"lib": target("lib", api.TargetStatic)},
-		"c": {"lib": target("lib", api.TargetStatic)},
+		"//b": {"lib": target("lib", api.TargetStatic)},
+		"//c": {"lib": target("lib", api.TargetStatic)},
 	}
 	meta := map[string]PkgBuildMeta{
-		"a": {Deps: []string{"b"}},
-		"b": {},
-		"c": {},
+		"//a": {Container: "//", Deps: []string{"//b"}},
+		"//b": {Container: "//"},
+		"//c": {Container: "//"},
 	}
-	strict, err := NewBuildGraph(targets, meta, nil)
+	strict, err := NewBuildGraph(targets, meta)
 	if err != nil {
 		t.Fatalf("NewBuildGraph: %v", err)
 	}

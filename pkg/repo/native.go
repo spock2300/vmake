@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spock2300/vmake/internal/jsonio"
@@ -49,13 +50,24 @@ func FilterValidVersions(tags []string) map[string]string {
 }
 
 func SelectNativeVersion(versions map[string]string, constraint string) (string, string, error) {
-	available := make([]string, 0, len(versions))
-	for v := range versions {
-		available = append(available, v)
+	if constraint == "" {
+		return SelectNativeVersionMulti(versions, nil)
 	}
-	selected, ok := api.MatchVersion(available, constraint)
-	if !ok {
-		return "", "", fmt.Errorf("no version matching '%s' in %v", constraint, available)
+	return SelectNativeVersionMulti(versions, []string{constraint})
+}
+
+func SelectNativeVersionMulti(versions map[string]string, constraints []string) (string, string, error) {
+	if len(versions) == 0 {
+		return "", "", fmt.Errorf("no versions available")
+	}
+	keys := make([]string, 0, len(versions))
+	for k := range versions {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	selected, err := api.BindSelectVersion("native", keys, constraints)
+	if err != nil {
+		return "", "", err
 	}
 	return selected, versions[selected], nil
 }

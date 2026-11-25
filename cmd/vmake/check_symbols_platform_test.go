@@ -23,7 +23,6 @@ func TestCheckSymbolsUsesProjectPlatformDefaults(t *testing.T) {
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-    p.SetRoot(true)
     p.OnConfig(func(ctx *api.ConfigContext) {
         ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString).SetDefault("none")
     })
@@ -60,7 +59,6 @@ import (
     "github.com/spock2300/vmake/pkg/api"
 )
 func Main(p *api.Package) {
-    p.SetRoot(true)
     p.OnBuild(func(ctx *api.BuildContext) {
         _ = os.WriteFile("blocked.txt", []byte("x"), 0644)
         _ = os.WriteFile("blocked2.txt", []byte("y"), 0644)

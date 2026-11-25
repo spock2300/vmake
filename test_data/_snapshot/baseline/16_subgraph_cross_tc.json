@@ -9,14 +9,14 @@
     "mode": "debug",
     "packages": [
       {
-        "name": "16_subgraph_cross_tc",
-        "source": "local",
-        "path": "."
-      },
-      {
-        "name": "t16lib",
+        "name": "//t16lib",
         "source": "local",
         "path": "t16lib"
+      },
+      {
+        "name": "//",
+        "source": "local",
+        "path": "."
       }
     ]
   },
@@ -31,7 +31,7 @@
     {
       "path": "compile_commands.json",
       "size": 2577,
-      "hash": "9ec9d62ad59cba0943098029faa74e83255ff86acb74f49387f8a32bdd6fb5fc"
+      "hash": "e670668330a3ff6444957eac57dffd7d98577978505a4ceeeebc64f109705582"
     }
   ],
   "install_tree_hash": "44b8fd36e3bc68f0d823f832af9203aa38c392dc15087d6893681e776a056062"

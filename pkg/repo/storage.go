@@ -55,6 +55,10 @@ func (m *SourceManager) CleanMaterializedSource(repoName, name string) error {
 	if err != nil {
 		return err
 	}
+	return m.CleanMaterializedSourceAt(root)
+}
+
+func (m *SourceManager) CleanMaterializedSourceAt(root string) error {
 	if err := m.validateManagedPath(root); err != nil {
 		return err
 	}

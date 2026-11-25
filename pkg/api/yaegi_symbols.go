@@ -79,8 +79,6 @@ func YaegiSymbols() map[string]reflect.Value {
 		"WriteConfigHeader":           reflect.ValueOf(WriteConfigHeader),
 		"ApplyKConfigPatches":         reflect.ValueOf(ApplyKConfigPatches),
 		"CheckCycle":                  reflect.ValueOf(CheckCycle),
-		"ResolveSubPackageName":       reflect.ValueOf(ResolveSubPackageName),
-		"SubPackageCandidates":        reflect.ValueOf(SubPackageCandidates),
 		"SplitPackageRef":             reflect.ValueOf(SplitPackageRef),
 		"NormalizeOptionValue":        reflect.ValueOf(NormalizeOptionValue),
 		"ValidateOption":              reflect.ValueOf(ValidateOption),

@@ -23,7 +23,7 @@
         "ref": "v1.0.0"
       },
       {
-        "name": "13_with_prefix_repo",
+        "name": "//",
         "source": "local",
         "path": "."
       }
@@ -40,7 +40,7 @@
     {
       "path": "compile_commands.json",
       "size": 4462,
-      "hash": "f13360b8cc92f41f8e9c8f58aba05999741fed06d341211597d302a62f7dccca"
+      "hash": "19dca27002c42f7ecd73d7c42773b4477502d4b0cf429609c82224bba0e6bcbd"
     }
   ],
   "install_tree_hash": "8373d601b26d74da460b0ae35d12379a74568d2c692a2e658c67bfdd3792fa47"

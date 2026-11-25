@@ -22,10 +22,12 @@ type SourceLink struct {
 }
 
 type Source struct {
-	Path   string
-	Name   string
-	Dir    string
-	Origin api.SourceOrigin
+	Path      string
+	Name      string
+	Dir       string
+	Origin    api.SourceOrigin
+	Container string
+	RelPath   string
 	// Repo is the remote repository name the script originates from
 	// ("official", "mynative"). Empty for local project scripts.
 	Repo string

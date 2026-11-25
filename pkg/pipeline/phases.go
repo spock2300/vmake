@@ -8,7 +8,6 @@ import (
 
 	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/pkg/api"
-	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/repo"
@@ -18,7 +17,7 @@ import (
 
 func Require(ctx *RuntimeContext) (err error) {
 	defer scriptcall.Recover(&err)
-	vlog.Info("Scanning %s...", ctx.WorkDir)
+	vlog.Info("Resolving %s...", ctx.WorkDir)
 
 	links, err := ValidateSourceLinks(ctx)
 	if err != nil {
@@ -32,22 +31,6 @@ func Require(ctx *RuntimeContext) (err error) {
 		}
 		ctx.Pins = pins
 	}
-
-	packages, err := buildscript.Scan(ctx.WorkDir)
-	if err != nil {
-		return err
-	}
-
-	if len(packages) == 0 {
-		return fmt.Errorf("no build.go files found")
-	}
-
-	var pkgNames []string
-	for _, pkg := range packages {
-		pkgNames = append(pkgNames, pkg.Name)
-	}
-	vlog.Info("Found %d package(s)", len(packages))
-	vlog.Verbose("  %s", strings.Join(pkgNames, ", "))
 
 	r := resolver.NewResolver(repo.NewRepoManager(ctx.Paths.ReposDir), ctx.Paths.DepsDir)
 	projectRoot := ctx.WorkDir
@@ -72,7 +55,7 @@ func Require(ctx *RuntimeContext) (err error) {
 	vlog.Info("")
 	vlog.Info("Resolving dependencies...")
 
-	if err := r.ResolveAll(packages); err != nil {
+	if err := r.ResolveProject(projectRoot, configRootOverrides(ctx)); err != nil {
 		return err
 	}
 
@@ -172,7 +155,7 @@ func collectAllOptionsAndKConfigs(ctx *RuntimeContext) error {
 
 		if node.Pkg != nil {
 			entries := node.Pkg.KConfigEntries()
-			if len(entries) > 0 && node.Source != nil && node.Source.Link != nil {
+			if len(entries) > 0 && node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {
 				return fmt.Errorf("linked package %s declares KConfig; linked sources do not support KConfig", name)
 			}
 			if len(entries) > 0 {

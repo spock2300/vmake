@@ -5,6 +5,14 @@ import (
 	"github.com/spock2300/vmake/pkg/buildscript"
 )
 
+type WorkbenchContainer struct {
+	ID       string
+	Kind     string
+	Version  string
+	Commit   string
+	LinkPath string
+}
+
 type Preview struct {
 	Roots          []string
 	ActivePackages map[string]bool
@@ -15,6 +23,8 @@ type Preview struct {
 
 type Workbench struct {
 	Packages         []buildscript.Source
+	Containers       map[string]WorkbenchContainer
+	PackageContainer map[string]string
 	Deps             map[string][]string
 	Options          map[string]map[string]*api.Option
 	Values           map[string]map[string]any

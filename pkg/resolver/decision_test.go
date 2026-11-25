@@ -7,10 +7,10 @@ import (
 	"github.com/spock2300/vmake/pkg/lockfile"
 )
 
-func decisionLock(entries map[string]*lockfile.LockedPkg) *lockfile.Lock {
+func decisionLock(entries map[string]*lockfile.LockedSource) *lockfile.Lock {
 	l := lockfile.New()
 	for name, entry := range entries {
-		l.Set(name, entry)
+		l.SetSource(name, entry)
 	}
 	return l
 }
@@ -67,11 +67,12 @@ func TestLockQueryPinPrecedence(t *testing.T) {
 }
 
 func TestLockQueryLockEntry(t *testing.T) {
-	lock := decisionLock(map[string]*lockfile.LockedPkg{
+	lock := decisionLock(map[string]*lockfile.LockedSource{
 		"versioned":   {Version: "1.0.0", Commit: "c1"},
 		"commit-only": {Commit: "c2"},
 		"empty":       {},
 	})
+	lock.SetContainer("hl/sdk", &lockfile.LockedContainer{Version: "0.3.0", Commit: "sdk1", Source: "native"})
 	tests := []struct {
 		name  string
 		query LockQuery
@@ -94,10 +95,16 @@ func TestLockQueryLockEntry(t *testing.T) {
 			}
 		})
 	}
+	if entry, ok := (LockQuery{Lock: lock}).Containers().LockEntry("hl/sdk"); !ok || entry.Version != "0.3.0" || entry.Commit != "sdk1" {
+		t.Fatalf("Containers().LockEntry = (%+v, %v), want 0.3.0/sdk1", entry, ok)
+	}
+	if _, ok := (LockQuery{Lock: lock}).Sources().LockEntry("hl/sdk"); ok {
+		t.Fatal("Sources() must not read container section")
+	}
 }
 
 func TestDecidePrecedence(t *testing.T) {
-	lock := decisionLock(map[string]*lockfile.LockedPkg{
+	lock := decisionLock(map[string]*lockfile.LockedSource{
 		"pkg":        {Version: "1.0.0", Commit: "lock-commit"},
 		"commitonly": {Commit: "commit-only"},
 	})
@@ -212,7 +219,7 @@ const pinnedCommitID = "0123456789abcdef0123456789abcdef01234567"
 func TestLockQueryPinLockMismatch(t *testing.T) {
 	const shaA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	const shaB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	lock := decisionLock(map[string]*lockfile.LockedPkg{
+	lock := decisionLock(map[string]*lockfile.LockedSource{
 		"pinned":   {Version: "1.0.0", Commit: shaA},
 		"commit":   {Commit: shaA},
 		"unpinned": {Version: "2.0.0", Commit: shaB},
@@ -249,7 +256,7 @@ func TestLockQueryPinLockMismatch(t *testing.T) {
 }
 
 func TestLockQueryLockEntryProblem(t *testing.T) {
-	lock := decisionLock(map[string]*lockfile.LockedPkg{
+	lock := decisionLock(map[string]*lockfile.LockedSource{
 		"versioned":    {Version: "1.0.0", Commit: "c1"},
 		"version-only": {Version: "1.0.0"},
 	})
@@ -275,12 +282,12 @@ func TestLockQueryLockEntryProblem(t *testing.T) {
 }
 
 func TestLockProblemError(t *testing.T) {
-	missing := LockProblem{Missing: true}
-	if got := missing.Error("pkg"); got == nil || !strings.Contains(got.Error(), "pkg is not locked in vmake.lock") {
+	missing := LockProblem{Section: LockSectionContainer, Missing: true}
+	if got := missing.Error("hl/sdk"); got == nil || !strings.Contains(got.Error(), "container hl/sdk is not locked in vmake.lock") {
 		t.Fatalf("missing error = %v", got)
 	}
-	mismatch := LockProblem{Pin: "2.0.0", Locked: &lockfile.LockedPkg{Version: "1.0.0", Commit: "c1"}}
-	got := mismatch.Error("pkg")
+	mismatch := LockProblem{Section: LockSectionSource, Pin: "2.0.0", Locked: &LockedEntry{Version: "1.0.0", Commit: "c1"}}
+	got := mismatch.Error("official/pkg")
 	if got == nil || !strings.Contains(got.Error(), "pinned to 2.0.0") || !strings.Contains(got.Error(), "vmake deps sync") {
 		t.Fatalf("mismatch error = %v", got)
 	}
@@ -291,7 +298,7 @@ func TestLockProblemError(t *testing.T) {
 
 func TestLockQueryNeedsSync(t *testing.T) {
 	const shaA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	lock := decisionLock(map[string]*lockfile.LockedPkg{
+	lock := decisionLock(map[string]*lockfile.LockedSource{
 		"pinned":   {Version: "1.0.0", Commit: shaA},
 		"commit":   {Commit: shaA},
 		"unlocked": {Version: "9.0.0", Commit: shaA},

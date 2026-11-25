@@ -4,20 +4,21 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/repo"
 )
 
 func TestSourceRequestProjectionLocalSetGitUsesLocalURLRefresh(t *testing.T) {
 	s := sessionFixture(t)
-	node := s.ctx.DepGraph.Packages["app"]
+	node := s.ctx.DepGraph.Packages["//app"]
 	upstream := initGitRepo(t, map[string]string{"build.go": "package main\n"})
 	node.Pkg.SetGit(upstream)
 
-	req, err := s.sourceStage.sourceRequestFor("app", node, "")
+	req, err := s.sourceStage.sourceRequestFor("//app", node, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := repo.PackageTreeKey("", "app"); req.Key != want {
+	if want := repo.PackageTreeKey("", build.MemberDir("app")); req.Key != want {
 		t.Errorf("key = %q, want %q", req.Key, want)
 	}
 	if req.Root != "" {
@@ -33,13 +34,13 @@ func TestSourceRequestProjectionLocalSetGitUsesLocalURLRefresh(t *testing.T) {
 
 func TestSourceRequestProjectionKeepsTargetCommitRef(t *testing.T) {
 	s := sessionFixture(t)
-	node := s.ctx.DepGraph.Packages["app"]
+	node := s.ctx.DepGraph.Packages["//app"]
 	upstream := initGitRepo(t, map[string]string{"build.go": "package main\n"})
 	node.Pkg.SetGit(upstream)
 	commit := strings.Repeat("a", 40)
-	s.ctx.LockPolicy.Targets = map[string]string{"app": commit}
+	s.ctx.LockPolicy.Targets = map[string]string{"//app": commit}
 
-	req, err := s.sourceStage.sourceRequestFor("app", node, "")
+	req, err := s.sourceStage.sourceRequestFor("//app", node, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,12 +54,12 @@ func TestSourceRequestProjectionKeepsTargetCommitRef(t *testing.T) {
 
 func TestSourceRequestProjectionPinnedVersion(t *testing.T) {
 	s := sessionFixture(t)
-	node := s.ctx.DepGraph.Packages["app"]
+	node := s.ctx.DepGraph.Packages["//app"]
 	upstream := initGitRepo(t, map[string]string{"build.go": "package main\n"})
 	node.Pkg.SetGit(upstream).AddVersion("1.0.0", "v1.0.0")
 	node.Constraints = []string{"=1.0.0"}
 
-	req, err := s.sourceStage.sourceRequestFor("app", node, "")
+	req, err := s.sourceStage.sourceRequestFor("//app", node, "")
 	if err != nil {
 		t.Fatal(err)
 	}

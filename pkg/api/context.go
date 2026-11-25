@@ -147,8 +147,8 @@ func (ctx *ConfigContext) KConfig(name string) *KConfigEntry {
 }
 
 func (ctx *ConfigContext) SetConfigValue(name string, val any) *ConfigContext {
-	if strings.Contains(name, "/") {
-		fatalScript(ctx.PackageName(), "SetConfigValue", "config key %q must not contain '/'; cross-package writes are not supported", name)
+	if strings.ContainsAny(name, "/:") {
+		fatalScript(ctx.PackageName(), "SetConfigValue", "config key %q must not contain '/' or ':'; cross-package writes are not supported", name)
 	}
 	ctx.cfgVals[name] = val
 	return ctx

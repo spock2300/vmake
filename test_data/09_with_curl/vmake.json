@@ -1,0 +1,8 @@
+{
+  "modules": {
+    "official": "*"
+  },
+  "sources": {
+    "official/curl": ">=8.5"
+  }
+}

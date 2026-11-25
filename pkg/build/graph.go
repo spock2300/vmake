@@ -14,6 +14,7 @@ import (
 
 type PkgBuildMeta struct {
 	Origin         api.SourceOrigin
+	Container      string
 	Linked         bool
 	Deps           []string
 	SubGraphs      []string
@@ -50,9 +51,8 @@ type GraphIssue struct {
 }
 
 type GraphAuditOptions struct {
-	SubParents map[string]string
-	Needed     map[string]bool
-	Included   map[string]bool
+	Needed   map[string]bool
+	Included map[string]bool
 }
 
 type BuildGraph struct {
@@ -72,7 +72,7 @@ func visibilityPathFor(pkgMeta map[string]PkgBuildMeta, pkg string) string {
 	if m, ok := pkgMeta[pkg]; ok && m.VisPath != "" {
 		return m.VisPath
 	}
-	return pkgvis.VisibilityPath(!strings.Contains(pkg, "/"), pkg, "", "")
+	return pkgvis.VisibilityPath(api.IsLocalPackageID(pkg), pkg, "", "")
 }
 
 func declaredTargetDeps(target *api.Target, meta PkgBuildMeta) []string {
@@ -150,7 +150,6 @@ type BuildNode struct {
 func NewBuildGraph(
 	targets map[string]map[string]*api.Target,
 	pkgMeta map[string]PkgBuildMeta,
-	subParents map[string]string,
 ) (*BuildGraph, error) {
 	graph := &BuildGraph{
 		Nodes:   make(map[string]*BuildNode),
@@ -170,7 +169,7 @@ func NewBuildGraph(
 		}
 	}
 
-	resolver := newDepResolver(graph.Nodes, pkgMeta, subParents)
+	resolver := newDepResolver(graph.Nodes, pkgMeta)
 
 	pkgNames := make([]string, 0, len(targets))
 	for pkgName := range targets {
@@ -273,20 +272,7 @@ func AuditBuildGraph(
 		g.TargetDeps[full] = nil
 	}
 
-	resolver := newDepResolver(g.Nodes, pkgMeta, opt.SubParents)
-	resolver.resolvePkgOverride = func(fromPkg, ref string) string {
-		if ref == "" || strings.Contains(ref, "/") {
-			return ref
-		}
-		if opt.Needed != nil && opt.Needed[fromPkg] {
-			if cand := api.ResolveSubPackageName(fromPkg, ref, opt.SubParents, func(c string) bool {
-				return opt.Needed[c]
-			}); cand != ref || opt.Needed[cand] {
-				return cand
-			}
-		}
-		return api.ResolveSubPackageName(fromPkg, ref, opt.SubParents, resolver.hasPkg)
-	}
+	resolver := newDepResolver(g.Nodes, pkgMeta)
 
 	type edgeAcc struct {
 		kinds []string
@@ -365,6 +351,7 @@ func AuditBuildGraph(
 		for _, dep := range meta.Deps {
 			resolved := resolver.resolveDepPkgName(name, dep)
 			if !resolver.hasPkg(resolved) {
+				checkInternalVis(name, resolved, "")
 				g.Issues = append(g.Issues, GraphIssue{
 					Severity: "error",
 					Kind:     "missing-dependency",
@@ -387,6 +374,7 @@ func AuditBuildGraph(
 				continue
 			}
 			if !resolver.hasPkg(sub) {
+				checkInternalVis(name, sub, "")
 				g.Issues = append(g.Issues, GraphIssue{
 					Severity: "error",
 					Kind:     "missing-dependency",
@@ -471,6 +459,9 @@ func AuditBuildGraph(
 
 				case depKindCrossTarget:
 					pkgKnown := resolver.hasPkg(c.pkg)
+					if !pkgKnown {
+						checkInternalVis(pkgName, c.pkg, fullName)
+					}
 					if pkgKnown && !crossPkgOnBuild(pkgName, c.pkg, fullName, dep) {
 						if c.pkg != pkgName {
 							addPkgEdge(pkgName, c.pkg, "target", fullName+" -> "+c.targetFull)
@@ -503,6 +494,7 @@ func AuditBuildGraph(
 						suffix = ":*"
 					}
 					if !resolver.hasPkg(c.pkg) {
+						checkInternalVis(pkgName, c.pkg, fullName)
 						g.Issues = append(g.Issues, GraphIssue{
 							Severity: "error",
 							Kind:     "missing-dependency",
@@ -742,15 +734,13 @@ func validatePackageGraph(
 }
 
 type depResolver struct {
-	nodes              map[string]*BuildNode
-	pkgMeta            map[string]PkgBuildMeta
-	subParents         map[string]string
-	pkgTargets         map[string][]string
-	memo               map[string][]string
-	resolvePkgOverride func(fromPkg, ref string) string
+	nodes      map[string]*BuildNode
+	pkgMeta    map[string]PkgBuildMeta
+	pkgTargets map[string][]string
+	memo       map[string][]string
 }
 
-func newDepResolver(nodes map[string]*BuildNode, pkgMeta map[string]PkgBuildMeta, subParents map[string]string) *depResolver {
+func newDepResolver(nodes map[string]*BuildNode, pkgMeta map[string]PkgBuildMeta) *depResolver {
 	pkgTargets := make(map[string][]string)
 	for fullName := range nodes {
 		if ref := ParseDependencyRef(fullName); ref.HasTarget {
@@ -763,7 +753,6 @@ func newDepResolver(nodes map[string]*BuildNode, pkgMeta map[string]PkgBuildMeta
 	return &depResolver{
 		nodes:      nodes,
 		pkgMeta:    pkgMeta,
-		subParents: subParents,
 		pkgTargets: pkgTargets,
 		memo:       make(map[string][]string),
 	}
@@ -808,14 +797,12 @@ func (d *depResolver) classifyDep(currentPkg, dep string) classifiedDep {
 		}
 	}
 	if ref.IsPackagePath() {
-		return classifiedDep{kind: depKindPackageRef, rawPkg: ref.Package, pkg: ref.Package}
+		resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package)
+		return classifiedDep{kind: depKindPackageRef, rawPkg: ref.Package, pkg: resolvedPkg}
 	}
 	qualified := currentPkg + ":" + ref.Package
 	if _, exists := d.nodes[qualified]; exists {
 		return classifiedDep{kind: depKindSamePkgTarget, rawPkg: ref.Package, pkg: currentPkg, targetFull: qualified}
-	}
-	if resolvedPkg := d.resolveDepPkgName(currentPkg, ref.Package); resolvedPkg != currentPkg && d.hasPkg(resolvedPkg) {
-		return classifiedDep{kind: depKindPackageRef, rawPkg: ref.Package, pkg: resolvedPkg}
 	}
 	return classifiedDep{kind: depKindUnknown, rawPkg: ref.Package}
 }
@@ -952,8 +939,7 @@ func (d *depResolver) resolveDepSpec(dep string, currentPkg string, path []strin
 		return []string{c.targetFull}, []string{c.targetFull}, nil
 	case depKindCrossTarget:
 		if _, exists := d.nodes[c.targetFull]; !exists {
-			hint := subPackageHint(currentPkg, c.rawPkg, c.pkg, d.subParents)
-			return nil, nil, &ResolveError{Kind: IssueKindMissingDependency, Err: fmt.Errorf("dependency not found: %s (resolved: %s)%s", dep, c.targetFull, hint)}
+			return nil, nil, &ResolveError{Kind: IssueKindMissingDependency, Err: fmt.Errorf("dependency not found: %s (resolved: %s)", dep, c.targetFull)}
 		}
 		return []string{c.targetFull}, []string{c.targetFull}, nil
 	case depKindPackageRef:
@@ -995,23 +981,7 @@ func (d *depResolver) resolveDirectPackageRef(pkgRef string, path []string) ([]s
 }
 
 func (d *depResolver) resolveDepPkgName(currentPkg, depName string) string {
-	if d.resolvePkgOverride != nil {
-		return d.resolvePkgOverride(currentPkg, depName)
-	}
-	return api.ResolveSubPackageName(currentPkg, depName, d.subParents, func(candidate string) bool {
-		return d.hasPkg(candidate)
-	})
-}
-
-func subPackageHint(currentPkg, depName, resolvedPkg string, subParents map[string]string) string {
-	if resolvedPkg != depName {
-		return ""
-	}
-	candidates := api.SubPackageCandidates(currentPkg, depName, subParents)
-	if len(candidates) == 0 {
-		return ""
-	}
-	return fmt.Sprintf(" (tried sub-package candidates: %s)", strings.Join(candidates, ", "))
+	return api.CanonicalizePackageRef(d.pkgMeta[currentPkg].Container, depName)
 }
 
 func (d *depResolver) resolvePackageRef(pkgRef string, path []string) ([]string, error) {

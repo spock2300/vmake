@@ -98,7 +98,7 @@ func (v Version) String() string {
 
 func ParseConstraint(s string) (Constraint, bool) {
 	s = strings.TrimSpace(s)
-	if s == "" {
+	if s == "" || s == "*" {
 		return Constraint{Op: ">=", Version: Version{0, 0, 0, ""}}, true
 	}
 

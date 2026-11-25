@@ -5,10 +5,10 @@
 vmake build 执行三个阶段：
 
 ```
-[--manifest: importManifestIntoLock 将清单版本锁定写入 vmake.lock]
+[--manifest: ImportManifestIntoLock 将清单版本锁定写入 vmake.lock v2]
     │
 Phase 1: OnRequire
-    扫描 build.go → 解释构建脚本 → 加载构建脚本 → 收集依赖
+    加载模块清单 vmake.json → 从根构建包（roots / "//"）按路径懒加载 build.go → 收集依赖
     │
 Phase 2: 配置准备 (pipeline.Configure → runConfigPhase)
     ├── UpdateOrder — 更新拓扑排序
@@ -17,14 +17,14 @@ Phase 2: 配置准备 (pipeline.Configure → runConfigPhase)
     │
 Phase 3: OnBuild (pipeline.RunBuild)
     ├── prepareBuild — 统一准备 prelude：resolveNeeded（用已解析的包级配置重新执行 OnRequire，
-    │   Resolver.FilterDeps 替换节点.Deps → UpdateOrder → BFS 收集 needed → owner 校验）
+    │   Resolver.FilterDeps 替换节点.Deps → UpdateOrder → 从入口根 BFS 收集 needed）
     │   → resolveActiveChip → resolveBuildConfig → 聚合 global flags（raw/effective/hash）
     │   inspect 复用同一 prelude（严格 toolchain 校验 + tools 解析由策略位开启）
     ├── prepareConfig — 收集包选项；使用 prelude 的 needed/effective flags（deps 窄路径可为 nil）
     ├── newSourceStage — 解析各包 SourceDir
-    ├── prepareAllPackages — 下载远程包源码、克隆本地 Git 源码、设置子包目录（--locked 时先校验 vmake.lock）
-    ├── applyPatchesToNeeded — 在各包唯一的工作树上就地应用（git apply --3way，已应用自动跳过）
-    ├── verifyLocked / writeLockfile — 校验或写入 .vmake/vmake.lock
+    ├── prepareAllPackages — 物化外部模块容器与 SetGit 独立上游源码（--locked 时先校验 vmake.lock v2）
+    ├── applyPatchesToNeeded — 在各容器/源码唯一的工作树上就地应用（git apply --3way，已应用自动跳过）
+    ├── verifyLocked / writeLockfile — 校验或写入 .vmake/vmake.lock（v2：containers + sources）
     ├── restoreKConfigs — 恢复 KConfig 配置
     ├── executeOnBuild — 执行 OnBuild 回调 → 生成 Target
     ├── NewBuildGraph — 构建依赖图 → 拓扑排序
@@ -78,7 +78,7 @@ vmake clean
 │   └── 对声明了 OnClean 的包执行回调（自定义清理逻辑，如 make clean）
 │
 └── Directory Cleanup
-    └── 删除当前配置的构建产物（本地包 build/<keyDir>/，远程包 <tree>/out/<memberDir>/<keyDir>/；member 为子包相对路径，顶层远程包为空）
+    └── 删除当前配置的构建产物（本地包 build/<keyDir>/，外部模块容器 <tree>/out/<memberDir>/<keyDir>/；member 为容器内构建包相对路径，根包为空）
 
 仅当 `pipeline.Require`（依赖解析）失败时，`openProjectBestEffort` 返回 ok=false，`clean --all` 降级为扫描目录并清理全部构建产物；
 配置加载或 `pipeline.Configure` 失败仍直接报错；普通 `clean` 在 Require 失败时报错并提示改用 `--all`/`distclean`（降级路径不执行 OnClean 回调）
@@ -156,27 +156,27 @@ vmake clean
 
 CLI: `vmake manifest show <path>` / `vmake manifest checkout <path> [name]`
 
-### Phase 1: 构建脚本扫描与依赖解析
+### Phase 1: 构建脚本加载与依赖解析
 
 ```
-Scan(root)            LoadBuildScript              Resolve
-递归扫描 build.go     yaegi 解释执行构建脚本        解析依赖树
-    │                       │                        │
-    ▼                       ▼                        ▼
-[]Source              *api.Package              Graph
-                      ├─ Options                 ├─ Order []
-                      ├─ requires                └─ Packages map
-                      └─ buildFuncs                       └─ *PackageNode
+vmake.json (roots/modules/sources)  LoadBuildScript          Resolve
+按入口根与依赖路径懒加载 build.go      yaegi 解释执行构建脚本    解析容器与构建包图
+     │                                    │                       │
+     ▼                                    ▼                       ▼
+[]Source                             *api.Package            Graph
+                                     ├─ Options              ├─ Containers map (模块容器)
+                                     ├─ requires             ├─ Order []
+                                     └─ buildFuncs           └─ Packages map (*PackageNode)
 ```
 
-1. `buildscript.Scan(root)` 递归扫描 `build.go`，返回 `[]buildscript.Source`
-2. `buildscript.LoadBuildScript(src)` 用 yaegi 解释器加载所有 `.go` 文件（`MergeGoSources` 源码合并 → `Eval` → 查找 `Main` → 调用 `Main(*api.Package)`)
-3. `resolver.Resolver` 递归解析依赖，生成 `Graph`（拓扑排序）
-4. `Resolver.ResolveAll` 在 Phase 1 内完成全部依赖解析（本地 + 远程注册包 + native）；registry 包源码的下载物化延迟到 Phase 3 `prepareAllPackages`（`EnsureSource`），native 包在 Phase 1 解析版本时已用 `EnsureSource`（ResolveOnly）物化浅工作树，Phase 3 在同一棵树上恢复并应用补丁
+1. 解析根模块清单 `vmake.json`（可选；有根 `build.go` 且无 `vmake.json` 时默认 `roots: ["//"]`），按需通过 `containerAdapter`（`local` / `native` / `registry`）按路径加载构建包 `build.go`，不再递归扫描未引用目录
+2. `buildscript.LoadBuildScript(src)` 用 yaegi 解释器加载包目录内的 `.go` 文件（`MergeGoSources` 源码合并 → `Eval` → 查找 `Main` → 调用 `Main(*api.Package)`)
+3. `resolver.Resolver` 递归解析 `OnRequire` 声明的纯包 ID（无内联版本约束；版本约束集中声明在各模块的 `vmake.json` `modules` / `sources`），生成双层 `Graph`（`Containers` 模块容器表 + `Packages` 构建包图与拓扑排序）
+4. `Resolver.ResolveAll` 在 Phase 1 内完成全部容器与构建包解析：原生模块容器（`<repo>/<module>`）在 Phase 1 选定版本并通过 `EnsureSource`（ResolveOnly）物化浅工作树以按路径加载其 `build.go`；registry 包与 `SetGit` 独立上游源码的下载物化延迟到 Phase 3 `prepareAllPackages`（`EnsureSource`）
 
-源码准备后、OnBuild 前自动应用补丁：补丁就地应用到该包唯一的工作树（远程包 `.vmake_deps/<repo>/<owner>/src[/<member>]`，本地 SetGit 包 `.vmake_deps/local/<pkg>/src`）；同一 commit 已锁定时，补丁集变化先 `checkout --force --detach` + `clean -fdx` 恢复，不重新抓取对象。补丁内容按声明顺序进入远程构建键与工作树身份；本地 SetGit 包的工作树身份也包含补丁集，但本地 `BuildDir` 不随补丁集变化轮换。
+源码准备后、OnBuild 前自动应用补丁：补丁就地应用到对应工作树（原生模块容器 `.vmake_deps/<repo>/<module>/src`、容器内 `SetGit` 独立上游源码 `.vmake_deps/<repo>/<module>/third_party/<memberDir>/src`、本地 `SetGit` 源码 `.vmake_deps/local/<memberDir>/src`）；同一 commit 已锁定时，补丁集变化先 `checkout --force --detach` + `clean -fdx` 恢复，不重新抓取对象。补丁内容按声明顺序进入远程构建键与工作树身份；本地 `SetGit` 构建包的工作树身份也包含补丁集，但本地 `BuildDir` 不随补丁集变化轮换。
 
-源码：`pkg/buildscript/scanner.go`, `yaegi_loader.go`, `pkg/resolver/resolver.go`
+源码：`pkg/manifest/`, `pkg/buildscript/`, `pkg/resolver/resolver.go`, `pkg/resolver/container_adapter.go`
 
 ### Phase 2: 配置收集
 
@@ -207,12 +207,12 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 
 `RunBuild` 包含多个子步骤：
 
-1. **prepareBuild / resolveNeeded** — 用已解析的包级配置（以及本包声明为全局选项的配置值）重新执行 OnRequire（`Resolver.FilterDeps` 替换节点.Deps）→ `UpdateOrder` → 从根包 BFS 遍历，过滤需要构建的包：恰好一个本地包声明 `SetRoot(true)` 时以它为根，多个报错；未声明时按启发式选择本地根（存在带 `OnRequire` 的本地包时，被其他本地包依赖且无 `OnRequire` 的本地包不作为根），并提示建议声明 `SetRoot(true)`；同时校验 needed 子包的 owner 也 needed
+1. **prepareBuild / resolveNeeded** — 用已解析的包级配置（以及本包声明为全局选项的配置值）重新执行 OnRequire（`Resolver.FilterDeps` 替换节点.Deps）→ `UpdateOrder` → 从入口根 BFS 遍历收集 `needed`：优先使用当前配置文件的 `Root`/`Roots`，否则使用 `vmake.json` 的 `roots`（若无 `vmake.json` 且存在根 `build.go`，则默认 `["//"]`）；构建包仅从可达入口懒加载，不再隐式扫描未引用目录
 2. **prepareBuild / resolveActiveChip + resolveBuildConfig** — 从 needed 中的芯片包（本地或远程）选择 `ChipProfile`，得到首选工具链和平台默认值；显式 `--toolchain`/`global.toolchain` 仍优先。随后解析构建模式（debug/release/size）和工具链；inspect 走严格校验与 tools 解析，build 保持现有路径
 3. **prepareConfig / newSourceStage** — 收集包选项，使用 prelude 的 needed/effective flags/hash，并解析各包 SourceDir（BuildDir/InstallDir 随后在 prepareAllPackages 的 `setPackageLayout` 中按构建键生成）
-4. **prepareAllPackages** — 下载远程包源码、克隆本地 Git 源码、设置子包目录（`--locked` 模式下先通过 `verifyLockBeforePrepare` 校验锁文件）
-5. **applyPatchesToNeeded** — 在各包唯一的工作树上就地应用补丁（已应用则跳过；同一 commit 已锁定时，补丁集变化先 `checkout --force --detach` + `clean -fdx` 恢复）
-6. **verifyLocked / writeLockfile** — 补丁验证通过后，校验（`--locked`）或写入 `.vmake/vmake.lock`（锁定解析到的版本与 commit）
+4. **prepareAllPackages** — 物化外部模块容器与 `SetGit` 独立上游源码工作树（`--locked` 模式下先通过 `verifyLockBeforePrepare` 校验锁文件）
+5. **applyPatchesToNeeded** — 在各容器/源码唯一的工作树上就地应用补丁（已应用则跳过；同一 commit 已锁定时，补丁集变化先 `checkout --force --detach` + `clean -fdx` 恢复）
+6. **verifyLocked / writeLockfile** — 补丁验证通过后，校验（`--locked`）或写入 `.vmake/vmake.lock` v2（分别锁定 `containers` 与 `sources` 的版本与 commit）
 7. **restoreKConfigs** — 从 config.json 恢复 KConfig 配置（详见 KConfig 章节）
 8. **executeOnBuild** — 执行所有 `OnBuild` 回调，生成 `map[string]*Target`
 9. **build.NewBuildGraph** — 构建依赖图，`BuildGraph` 展开包级依赖为 target 级传递闭包，同时强校验双层 DAG（target 级无环 + 合并 `OnRequire`/`AddDeps`/`UseRequires`/`BuildSubGraph` 的包级无环，拦截跨包反向 target 环）与 Go 风格 `internal/` 目录可见性
@@ -228,7 +228,7 @@ OnConfig 回调 ──▶ 收集 Option 定义 ──▶ 合并全局选项
 VMake 将 Go 工程的模块化与有向无环图（DAG）规则落地到 C/C++ 构建全链路（`pkg/pipeline/depgraph.go`、`internal/toposort`、`internal/pkgvis`、`pkg/build/header_check.go`）：
 
 1. **双层严格 DAG（禁止环形依赖）**：`OnRequire`、`OnBuild`（`AddDeps` / `UseRequires`）与 `BuildSubGraph` 统一汇入包级与 Target 级依赖图。无论同包 Target 环还是跨包反向 Target 环（`pkgA:t1 -> pkgB:t2` 且 `pkgB:t3 -> pkgA:t4`）均直接报错，并剥离上游无关节点，精确输出最短闭环链路（`a -> b -> c -> a`）。
-2. **`internal/` 目录包可见性**：路径段包含 `internal` 的本地包（按相对工程根路径计算）或远程 native 子包，仅允许该 `internal` 父目录前缀树内的包引用，越权引用在 `OnRequire`、`AddDeps`、`BuildSubGraph` 均报错。
+2. **`internal/` 目录包可见性**：路径段包含 `internal` 的构建包（本地 `//...` 或原生模块容器内 `<repo>/<module>/...`），仅允许同一模块容器内该 `internal` 父目录前缀树下的包引用，越权引用在 `OnRequire`、`AddDeps`、`BuildSubGraph` 均报错。
 3. **包路径自包含与头文件边界（`AddPublicIncludes` + 直接依赖校验）**：禁止跨包 `../` 访问其他包源码/预编译产物/私有目录；编译产生或增量复用的 `.d` 依赖文件（以及未编译冷树上的直接 `#include` 扫描）要求跨包头文件必须来自已声明依赖的 `AddPublicIncludes` 或 `InstallDir/include`，且源文件直接 `#include` 的头文件所属包必须是本 Target 的直接依赖（不蹭传递依赖）。
 
 CLI 子命令（只读 `scriptfs`，不触发编译、不改写 `.gitignore`）：
@@ -260,8 +260,7 @@ BuildEnv
 ├── Session       *Session
 ├── RootDir       string
 ├── Jobs          int
-├── KeepGoing     bool
-└── SubParents    map[string]string
+└── KeepGoing     bool
 
 BuildJob
 ├── Env          *BuildEnv
@@ -290,9 +289,9 @@ AddRequires      Graph                git ls-remote        TargetVoid.BuildFunc(
                                       .vmake_deps/<repo>/<owner>/src[/<member>]
 ```
 
-1. `OnRequire` 回调调用 `AddRequires("official/zlib >=1.2")`
-2. `Resolver` 在 `repos/` 中查找包定义，递归解析依赖；未复用已锁定工作树时，native 包的 tag 列表来自一次 `git ls-remote`（不下载对象）
-3. `SourceManager.EnsureSource` 优先从共享内容寻址缓存 `<cacheDir>/git/<urlhash>.git` 取出所选 commit 的对象（锚定 `refs/vmake/<commit>`）；已锁定 commit 命中缓存且 checkout 成功时不访问上游。ref 解析（`ls-remote`）、HEAD 物化、缓存未命中，以及服务端拒绝按 SHA 抓取时的回退仍会访问上游。对象就绪后从缓存 `git fetch --depth 1 file://...` 物化出该包在项目内唯一的工作树 `.vmake_deps/<repo>/<owner>/src[/<member>]`（`<owner>` 为普通包名或 native 子包的根父包名）；commit 变化时整树重建，同一 commit 的补丁变化就地恢复，产物写在该树的 `out/<memberDir>/<keyDir>/{build,install}`
+1. `OnRequire` 回调调用 `AddRequires("official/zlib")`（纯包 ID；版本约束声明在模块清单 `vmake.json` 的 `sources` / `modules` 中）
+2. `Resolver` 通过容器适配器（`registryContainerAdapter` / `nativeContainerAdapter`）解析依赖容器与构建包；未复用已锁定工作树时，原生模块容器的 tag 列表来自一次 `git ls-remote`（不下载对象）
+3. `SourceManager.EnsureSource` 优先从共享内容寻址缓存 `<cacheDir>/git/<urlhash>.git` 取出所选 commit 的对象（锚定 `refs/vmake/<commit>`）；已锁定 commit 命中缓存且 checkout 成功时不访问上游。ref 解析（`ls-remote`）、HEAD 物化、缓存未命中，以及服务端拒绝按 SHA 抓取时的回退仍会访问上游。对象就绪后从缓存 `git fetch --depth 1 file://...` 物化出工作树（原生容器/registry 包位于 `.vmake_deps/<repo>/<owner>/src`，容器内 `SetGit` 独立上游源码位于 `.vmake_deps/<repo>/<owner>/third_party/<memberDir>/src`，本地 `SetGit` 源码位于 `.vmake_deps/local/<memberDir>/src`）；commit 变化时整树重建，同一 commit 的补丁变化就地恢复，产物写在该容器的 `out/<memberDir>/<keyDir>/{build,install}`
 4. 构建、测试、查询、清理、更新等解析工程的命令持有独占工程锁（`.vmake/_locks/project.lock`），同工程构建串行；每棵树用独立的 `tree_<hash>.lock` 串行物化，每个缓存 bare 仓库用 `cache_<urlhash 前16位>.lock` 串行写入与 checkout
 5. `Scheduler` 按拓扑顺序串行构建所有目标，包括 `TargetVoid` 目标
 
@@ -300,81 +299,91 @@ AddRequires      Graph                git ls-remote        TargetVoid.BuildFunc(
 
 源码：`pkg/resolver/resolver.go`, `pkg/repo/source.go`, `pkg/repo/objectcache.go`, `pkg/build/scheduler.go`
 
-## Native 仓库流程
+## 原生模块仓库（Native）流程
 
-Native 仓库是 VMake 原生的包生态系统，用于跨项目共享包。每个包是一个独立的 Git 仓库，`build.go` 位于仓库根目录。
+Native 仓库是 VMake 原生的模块容器生态系统，用于跨项目共享构建包集合。每个模块容器（`<repo>/<module>`）是一个独立的 Git 仓库，根目录下可包含可选的 `vmake.json` 与任意路径下的 `build.go`（根 `build.go` 可选，不再要求所有容器必有根构建包）。
 
 ```
-OnRequire            Resolver.findNativeSource          Phase 1               Scheduler
-声明依赖             解析 native 源                      yaegi 加载 build.go   构建
+OnRequire            nativeContainerAdapter           Phase 1               Scheduler
+声明纯包 ID          解析原生模块容器                  按路径加载 build.go   构建
     │                      │                                  │                  │
     ▼                      ▼                                  ▼                  ▼
-AddRequires          1. 检查 registry 仓库（未找到）      LoadBuildScript      同本地包
-"myorg/lib >=1.0"    2. 识别 native 仓库                   解释执行
-                       3. 解析 URL 模板 → ls-remote        发现依赖
+AddRequires          1. 解析模块容器 ID (<repo>/<module>)   LoadBuildScript      同本地包
+"myorg/sdk/hal"      2. 合并 vmake.json modules 约束         解释执行
+                       3. 解析 URL 模板 → ls-remote          发现依赖
                        4. git tag → filter semver
-                       5. 选择版本 → depth=1 物化
-                       6. 注册 PackageNode（含 native 字段）
+                       5. 选择版本 → depth=1 物化容器树
+                       6. 注册 ContainerNode + PackageNode
 ```
 
 ### 两种仓库类型对比
 
 | | Registry 仓库 | Native 仓库 |
 |--|--|--|
-| **用途** | 包装第三方 C/C++ 库（zlib、curl） | VMake 原生包，跨项目共享 |
-| **build.go** | 包装器（调用 CMake 等） | 真正的构建描述（与本地项目相同） |
-| **源码位置** | build.go 在 registry 仓库中，源码在别处 | build.go 在包的 git 仓库根目录 |
+| **用途** | 包装第三方 C/C++ 库（zlib、curl） | VMake 原生模块容器，跨项目共享构建包 |
+| **build.go** | 包装器（调用 CMake 等） | 真正的构建描述（与本地项目相同，按路径懒加载） |
+| **源码位置** | build.go 在 registry 仓库中，上游源码由 `SetGit` 声明 | build.go 在模块容器的 git 仓库内（可含 `SetGit` 独立上游源码） |
 | **版本来源** | `AddVersion()` 手动映射 | git tag（自动过滤有效 semver） |
-| **版本选择时机** | Phase 3（源码下载时按约束 `SelectVersionMulti`；Phase 1 仅校验约束） | Phase 1（build.go 加载前 — 需先物化浅工作树） |
+| **版本约束位置** | `vmake.json` `sources` | `vmake.json` `modules` |
+| **版本选择时机** | Phase 3（源码下载时按 `sources` 约束选择；Phase 1 校验约束） | Phase 1（按路径加载 `build.go` 前 — 需先物化容器浅工作树） |
 | **添加命令** | `vmake repo add name url` | `vmake repo add --native name "https://..../{name}.git"` |
-| **更新** | `vmake repo update name` + `vmake deps update` | `vmake deps update repo/name` |
+| **更新** | `vmake repo update name` + `vmake deps update` | `vmake deps update repo/module` |
 | **搜索** | 列出仓库中所有包 | 仅显示已缓存的包 |
 
-### Native 源码解析流程 (`findNativeSource`)
+### 原生模块容器解析流程 (`nativeContainerAdapter`)
 
-1. `findSource` 先检查 registry 仓库（`FindPackageGo`），未找到再检查 native
-2. 解析 URL 模板（`{name}` → 包名，`repo.ResolveNativeURL`）
+1. 按规范 ID 拆分容器 ID（`<repo>/<module>`）与包相对路径（`relPath`），先判断仓库属于 registry 还是 native
+2. 解析 URL 模板（`{name}` → `<module>`，`repo.ResolveNativeURL`）
 3. 有锁定 commit 且工作树已检出该 commit 时直接 `EnsureSource`（ResolveOnly）复用，并用 `DescribeTagContext` 重建版本映射；否则 `repo.ListRemoteTagsContext` 用一次 `git ls-remote` 列出上游 tag（不下载对象）
 4. `repo.FilterValidVersions` 过滤有效 semver
-5. `selectNativeVersion`（`.vmake/project.json` `pins` → `vmake.lock` → `repo.SelectNativeVersion` 按约束选择最高匹配版本）
-6. `sourceMgr.EnsureSource`（ResolveOnly）把选中 ref/commit 的浅工作树物化到项目内唯一工作树 `.vmake_deps/<repo>/<owner>/src[/<member>]`：对象优先来自共享内容寻址缓存，缓存未命中或 ref 解析仍访问上游；Phase 3 在同一棵树上恢复并应用补丁
-7. 在工作树 `src` 根查找 `build.go`
-8. 创建 `PackageNode`，注册到 `graph.Packages`（`WithNative` 写入 `Native *NativePackageInfo`）
-9. 仍在 Phase 1：`PreparePackage` 用 yaegi 加载 build.go，随后 `recurseDeps` 继续解析依赖
+5. `selectNativeContainerVersion`（`vmake deps pin` / 根 `vmake.json` 精确覆盖 `=ver` 或 40 位 SHA → `vmake.lock` → `repo.SelectNativeVersionMulti` 求全部约束交集并选最高匹配版本；交集为空且无覆盖则报冲突）
+6. `sourceMgr.EnsureSource`（ResolveOnly）把选中 ref/commit 的浅工作树物化到 `.vmake_deps/<repo>/<module>/src`：对象优先来自共享内容寻址缓存，缓存未命中或 ref 解析仍访问上游；Phase 3 在同一棵树上恢复并应用补丁
+7. 加载容器根 `vmake.json`（可选）收集传递 `modules`/`sources` 约束，并在 `<tree>/src/<relPath>` 按路径加载目标构建包的 `build.go`
+8. 注册 `ContainerNode` 到 `graph.Containers` 并注册 `PackageNode` 到 `graph.Packages`
+9. 仍在 Phase 1：`PreparePackage` 用 yaegi 加载 `build.go`，随后 `recurseDeps` 继续按路径懒加载依赖
 
 ### 本地源码 link (`vmake pkg link`)
 
-`.vmake/local.json` 保存机器本地的 `{"config":"configs/sku-a.json","links":{"repo/name":"/abs/path"}}`。link 在解析阶段生效，不写入 `vmake.lock` 或共享配置。link 命令保存记录后删除该包已有的 `.vmake_deps/<repo>/<owner>/src` 和 `state.json`，保留 `out/` 与 own-Git 子包的 `third_party/`；unlink 后下一次构建重新物化：
+`.vmake/local.json` 保存机器本地的 `{"config":"configs/sku-a.json","links":{"repo/module":"/abs/path"}}`。link 在解析阶段生效，不写入 `vmake.lock` 或共享配置。link 命令保存记录后删除目标已有的物化工作树与 `state.json`，保留 `out/` 与容器内其他包的 `third_party/`；unlink 后下一次构建重新物化：
 
-1. `Require` 先校验 link：路径必须是 git 工作树、不能在 `.vmake_deps`/项目根/仓库目录内；native 父包必须有 `build.go`，registry 包必须能在已注册仓库中找到 wrapper。
-2. native link：`findNativeSource` 直接使用 link 树加载 build.go 和子包，不调用 `EnsureSource`；`Source.Link.Native=true`，子包继承 link 路径与 commit。
-3. registry link：registry wrapper build.go 仍从仓库读取，`Source.Dir` 保持 wrapper 目录；`Source.Link.Path` 是上游源码树，`Source.Link.Native=false`。wrapper 的版本元数据不参与选择或校验。
-4. link 包忽略 lock/config 版本、tag 和 `AddRequires` 版本约束；版本标识为 `0.0.0-local`，commit 为 link 树的 HEAD。只有 native 子包自己的 `SetGit` 第三方源码仍按原逻辑选择其 upstream 版本。
-5. 源码阶段跳过 link 包的 `EnsureSource`：`remote.trees` 仍是 `.vmake_deps/<owner>` 输出根，`layoutFor` 的 `SourceOverride` 指向 link 树。带自身 `SetGit` 的 native 子包物化到 `.vmake_deps/<owner>/third_party/<member>`。
-6. link 包声明 patch 时拒绝（native own-Git 子包的第三方 patch 除外）。`writeLockfile` 保留旧条目但不更新；`clean --all`/`distclean` 通过 link 记录清理 `.vmake_deps` 输出，保留 link 记录。
+1. `Require` 先校验 link：路径必须是 git 工作树、不能在 `.vmake_deps`/项目根/仓库目录内；支持 link 原生模块容器（`<repo>/<module>`）、registry 包（`<repo>/<pkg>`）或任何带 `SetGit` 独立上游源码的构建包（`<repo>/<module>/<subpkg>`、`//<pkg>`）。
+2. 原生容器 link：`nativeContainerAdapter` 直接使用 link 树按路径加载容器内构建包，不调用 `EnsureSource`；`Source.Link.Native=true`，容器内所有普通构建包共享该 link 树与 commit。
+3. registry / `SetGit` 源码 link：wrapper 或构建包的 `build.go` 仍从原目录读取，`Source.Link.Path` 指向本地上游源码树，`Source.Link.Native=false`，版本元数据不参与选择或校验。
+4. 被 link 的目标忽略 lock/config 版本、tag 和 `vmake.json` 约束；版本标识为 `0.0.0-local`，commit 为 link 树的 HEAD。被 link 原生容器内未 link 的 `SetGit` 独立上游源码仍按正常流程解析与物化。
+5. 源码阶段跳过被 link 目标的 `EnsureSource`：容器输出根仍是 `.vmake_deps/<repo>/<module>`，`layoutFor` 的 `SourceOverride` 指向 link 树；原生容器内 `SetGit` 独立上游源码统一物化到 `.vmake_deps/<repo>/<module>/third_party/<memberDir>/src`。
+6. 被 link 的目标声明 patch 时拒绝（被 link 容器内未 link 的独立上游源码补丁除外）。`writeLockfile` 保留旧条目但不更新；`clean --all`/`distclean` 通过 link 记录清理 `.vmake_deps` 输出，保留 link 记录。
 7. `.vmake_deps` 到 tree root 的每一级都拒绝 symlink，避免 `checkout`/`clean` 跟随到用户工作树。
 
-### PackageNode Native 字段
+### ContainerNode 与 PackageNode
 
 ```go
-type PackageNode struct {
-    ID          string
-    Source      *buildscript.Source
-    Pkg         *api.Package
-    Deps        []string
-    Native      *NativePackageInfo
+type ContainerNode struct {
+    ID          string                // "//" | "<repo>/<module>" | "<repo>"
+    Repo        string
+    Kind        SourceKind            // SourceKindLocal | SourceKindNative | SourceKindRegistry
+    Dir         string
+    URL         string
+    Version     string
+    Commit      string
+    Versions    map[string]string     // version_string → git_tag
+    Link        *buildscript.SourceLink
+    Manifest    *buildscript.Manifest // 容器根 vmake.json（可选）
     Constraints []string
 }
 
-type NativePackageInfo struct {
-    GitURL   string            // 解析后的 git URL
-    Versions map[string]string // version_string → git_tag
-    Selected string            // 选中的版本号
-    Commit   string            // 选中版本对应的 commit
+type PackageNode struct {
+    ID          string                // 规范包 ID："//" | "//<path>" | "<repo>/<module>[/<path>]" | "<repo>/<pkg>"
+    Container   string                // 所属容器 ID
+    RelPath     string                // 容器内相对路径（根包为空）
+    Kind        SourceKind
+    Source      *buildscript.Source
+    Pkg         *api.Package
+    Deps        []string              // 规范化后的依赖包 ID
+    Constraints []string
 }
 ```
 
-源码：`pkg/resolver/resolver.go`, `pkg/repo/native.go`, `pkg/repo/manager.go`
+源码：`pkg/resolver/resolver.go`, `pkg/resolver/container_adapter.go`, `pkg/repo/native.go`, `pkg/repo/manager.go`
 
 ## CLI 命令树
 
@@ -455,11 +464,11 @@ VMake 使用 `AddDeps` 统一管理所有依赖类型：
 | 类型 | 示例 | 识别规则 |
 |------|------|---------|
 | 同包 target | `AddDeps("utils")` | 不含 `:` 和 `/` |
-| 跨包 target | `AddDeps("lib:utils")` | 含 `:`，指定具体 target |
-| 通配依赖 | `AddDeps("lib:*")` 或 `AddDeps("official/zlib:*")` | `:*` 结尾，展开为该包所有 target + 传递依赖 |
-| 第三方包 | `AddDeps("official/zlib")` | 含 `/`，展开为该包所有 target + 传递依赖 |
+| 跨包 target | `AddDeps("//lib:utils")` 或 `AddDeps("myorg/sdk/hal:hal")` | 含 `:`，指定具体 target |
+| 通配依赖 | `AddDeps("//lib:*")` 或 `AddDeps("official/zlib:*")` | `:*` 结尾，展开为该包所有 target + 传递依赖 |
+| 整个构建包 | `AddDeps("//lib")` 或 `AddDeps("official/zlib")` | 含 `/`，展开为该包所有 target + 传递依赖 |
 
-`pkg:target` 中不含 `/` 的 pkg 部分会先按当前（子）包路径相对解析（`ResolveSubPackageName`），兄弟子包之间可用短名；当前包不是子包时，按末段在所有已发现子包中做唯一匹配（多个同末段子包则不解析）。`DepOutput`/`DepBuildDir`/`DepSrcDir`、`BuildSubGraph` 和 `ImportConfig` 使用同一短名规则。子包进入 needed 集合时，其 native owner 必须同时 needed（否则构建准备阶段报错），以保证父包补丁与版本锁定生效。`AddDeps` 会静默跳过空字符串；其余声明时即 fatal（`ParseDepRef`）的引用包括：含空白、多个 `:`、`:` 前后段为空，以及不含 `:` 时包路径首/尾 `/` 或 `//`；含 `:` 的引用不会在声明时校验包路径形态，畸形路径会在图构建时表现为 `dependency not found` 或 `package not found in build graph`。target/包不存在或循环依赖在构建图时报错。
+VMake 2.0 统一使用规范包路径引用（`//`、`//<path>`、`<repo>/<module>[/<path>]`、`<repo>/<pkg>`），不再支持无前缀短名模糊匹配；在外部原生模块容器 `<repo>/<module>` 内，以 `//` 开头的引用自动锚定到当前容器根（`//sub` → `<repo>/<module>/sub`）。`DepOutput`/`DepBuildDir`/`DepSrcDir`、`BuildSubGraph` 和 `ImportConfig` 使用同一规范解析规则。`AddDeps` 会静默跳过空字符串；其余声明时即 fatal（`ParseDepRef`）的引用包括：含空白、多个 `:`、`:` 前后段为空、非规范包路径形态；target/包不存在或循环依赖在构建图时报错。
 
 ### 解析流程
 
@@ -500,22 +509,32 @@ Target.AddDeps("official/zlib")        Target.AddDeps("official/curl:*")
 
 ```
 Graph
-├── Order    []string                        // 拓扑排序后的包名列表
-└── Packages map[string]*PackageNode
+├── Containers map[string]*ContainerNode       // 模块容器表（"//" / "<repo>/<module>" / "<repo>"）
+├── Order      []string                        // 拓扑排序后的规范包 ID 列表
+└── Packages   map[string]*PackageNode
+
+ContainerNode
+├── ID          string
+├── Repo        string
+├── Kind        SourceKind                     // local / native / registry
+├── Dir         string
+├── URL         string
+├── Version     string
+├── Commit      string
+├── Versions    map[string]string
+├── Link        *buildscript.SourceLink
+├── Manifest    *buildscript.Manifest
+└── Constraints []string
 
 PackageNode
-├── ID          string
+├── ID          string                         // 规范构建包 ID
+├── Container   string                         // 所属容器 ID
+├── RelPath     string                         // 容器内相对路径
+├── Kind        SourceKind
 ├── Source      *buildscript.Source
 ├── Pkg         *api.Package
 ├── Deps        []string
-├── Native      *NativePackageInfo
-└── Constraints []string          // 版本约束列表（如 [">=1.2", "<2.0"]）
-
-NativePackageInfo
-├── GitURL   string            // native 仓库：解析后的 git URL
-├── Versions map[string]string // native 仓库：version_string → git_tag
-├── Selected string            // native 仓库：选中的版本号
-└── Commit   string            // native 仓库：选中版本对应的 commit
+└── Constraints []string
 ```
 
 ### buildscript.Source (`pkg/buildscript/source.go`)
@@ -567,8 +586,9 @@ CLI 通过 `pkg/config.LoadProjectSnapshotWithOverride` 按 `-c / --config`（�
 ```
 ConfigFile
 ├── Version     string
-├── Description string  // 说明（可选，可含换行，最长 200 字符），仅用于展示
-├── Root        string  // 可选本地入口包名（覆盖 SetRoot(true)）
+├── Description string   // 说明（可选，可含换行，最长 200 字符），仅用于展示
+├── Root        string   // 可选单个本地入口包 ID（覆盖 vmake.json roots）
+├── Roots       []string // 可选多个本地入口包 ID（覆盖 vmake.json roots）
 ├── Global      *GlobalConfig
 └── Entries     map[string]*EntryConfig
 
@@ -587,7 +607,6 @@ EntryConfig
 
 `Package` 提供的额外方法（用于构建脚本）：
 
-- `SetRoot(true)` — 声明构建根包（本地根只允许一个；未声明时使用启发式根）
 - `AddPatches(paths...)` — 添加 git patch 文件（相对于构建脚本目录 ScriptDir），构建前自动应用
 - `SetPatches(paths...)` — 设置 git patch 文件（覆盖）
 - `SetGenConfigHeader(v bool)` — 启用或禁用配置头文件自动生成

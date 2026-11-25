@@ -527,8 +527,8 @@ func (m *Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if browsing && msg.String() == "enter" {
 		pkg := ""
-		if m.treeCursor < len(m.flat) {
-			pkg = m.flat[m.treeCursor].PkgName
+		if cur := m.currentTreeNode(); cur != nil && !cur.IsGroup {
+			pkg = cur.PkgName
 		}
 		query := m.filterInput
 		m.filterInput = ""
@@ -546,36 +546,44 @@ func (m *Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.moveTreeCursor(1)
 	case "left", "h":
-		if m.treeCursor < len(m.flat) && len(m.flat[m.treeCursor].Children) > 0 && m.flat[m.treeCursor].Expanded {
-			m.flat[m.treeCursor].Expanded = false
+		if cur := m.currentTreeNode(); cur != nil && len(cur.Children) > 0 && cur.Expanded {
+			cur.Expanded = false
 			m.rebuildFlat()
 			m.ensureTreeCursorVisible()
-		} else {
+		} else if !m.isGroupSelected() {
 			m.stepUpstream()
 		}
 	case "right", "l":
-		if m.treeCursor < len(m.flat) && len(m.flat[m.treeCursor].Children) > 0 && !m.flat[m.treeCursor].Expanded {
-			m.flat[m.treeCursor].Expanded = true
+		if cur := m.currentTreeNode(); cur != nil && len(cur.Children) > 0 && !cur.Expanded {
+			cur.Expanded = true
 			m.rebuildFlat()
 			m.ensureTreeCursorVisible()
-		} else if len(m.visibleOptions()) > 0 || m.hasKConfig() {
+		} else if !m.isGroupSelected() && (len(m.visibleOptions()) > 0 || m.hasKConfig()) {
 			m.focusArea = 1
 		}
 	case "[":
-		m.stepUpstream()
+		if !m.isGroupSelected() {
+			m.stepUpstream()
+		}
 	case "]":
-		m.stepDownstream()
+		if !m.isGroupSelected() {
+			m.stepDownstream()
+		}
 	case "{":
-		m.upEdgeIdx++
+		if !m.isGroupSelected() {
+			m.upEdgeIdx++
+		}
 	case "}":
-		m.downEdgeSelected = true
-		m.downEdgeIdx++
+		if !m.isGroupSelected() {
+			m.downEdgeSelected = true
+			m.downEdgeIdx++
+		}
 	case "enter", " ":
-		if m.treeCursor < len(m.flat) && len(m.flat[m.treeCursor].Children) > 0 {
-			m.flat[m.treeCursor].Expanded = !m.flat[m.treeCursor].Expanded
+		if cur := m.currentTreeNode(); cur != nil && len(cur.Children) > 0 {
+			cur.Expanded = !cur.Expanded
 			m.rebuildFlat()
 			m.ensureTreeCursorVisible()
-		} else {
+		} else if !m.isGroupSelected() {
 			m.focusArea = 1
 		}
 	case "z":
@@ -594,13 +602,31 @@ func (m *Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) currentTreeNode() *TreeNode {
+	if m.treeCursor >= 0 && m.treeCursor < len(m.flat) {
+		return m.flat[m.treeCursor]
+	}
+	return nil
+}
+
+func (m *Model) isGroupSelected() bool {
+	cur := m.currentTreeNode()
+	return cur != nil && cur.IsGroup
+}
+
 func (m *Model) selectCurrentNode() {
-	if m.treeCursor < len(m.flat) && m.flat[m.treeCursor].PkgName != "" && !m.flat[m.treeCursor].IsGroup {
-		m.selectedPkg = m.flat[m.treeCursor].PkgName
+	cur := m.currentTreeNode()
+	if cur != nil && cur.PkgName != "" && !cur.IsGroup {
+		m.selectedPkg = cur.PkgName
 		m.buildOptionItems()
 		m.optCursor = 0
 		m.optOff = 0
+		return
 	}
+	m.selectedPkg = ""
+	m.optItems = nil
+	m.optCursor = 0
+	m.optOff = 0
 }
 
 func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

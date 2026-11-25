@@ -23,10 +23,9 @@ func newQueryCmd() *cobra.Command {
 		Long: `Show the resolved dependency tree.
 
 Each package is expanded once; later occurrences are printed as "<label> (*)".
-A package is labelled by its primary target as "<pkg> (<kind>)", or
-"<pkg>:<target> (<kind>)" when that target is named differently. Extra targets
-are appended to the line as "+<target> (<kind>)". Targets are shown for every
-needed package with a materialized source tree, including remote packages.
+A package is labelled by its primary target as "<pkg>:<target> (<kind>)". Extra
+targets are appended to the line as "+<target> (<kind>)". Targets are shown for
+every needed package with a materialized source tree, including remote packages.
 
 Dry-run target declaration runs with interpreted-script writes disabled; a
 callback that writes reports a warning on stderr and that package's targets are
@@ -37,7 +36,7 @@ fails is omitted and warned.`,
 		},
 	}
 	addPersistentConfigFlag(cmd)
-	cmd.PersistentFlags().StringArrayVarP(&ephemeralSetFlags, "set", "s", nil, "override an option for this run only (format: [pkg/]option=value)")
+	cmd.PersistentFlags().StringArrayVarP(&ephemeralSetFlags, "set", "s", nil, "override an option for this run only (format: [pkg:]option=value)")
 	cmd.AddCommand(newQueryTargetsCmd())
 	cmd.AddCommand(newQueryConfigCmd())
 	return cmd
@@ -111,7 +110,9 @@ func runQueryConfig(cmd *cobra.Command, args []string) {
 	if node.Source != nil && node.Source.Link != nil {
 		fmt.Printf("%s@%s (linked %s)\n", name, resolver.LocalLinkVersion, node.Source.Link.Path)
 	} else if node.IsNative() {
-		fmt.Printf("%s@%s\n", name, node.Native.Selected)
+		if c := ctx.DepGraph.Containers[node.Container]; c != nil && c.Version != "" {
+			fmt.Printf("%s@%s\n", name, c.Version)
+		}
 	}
 
 	opts := maps.Clone(ctx.GlobalOptions())
@@ -317,8 +318,16 @@ func targetKindsOf(facts []pipeline.TargetFacts, name string) []targetKindInfo {
 		target := fact.Target
 		result = append(result, targetKindInfo{name: target.Name(), kind: string(target.Kind())})
 	}
+	primaryName := ""
+	if name != api.LocalContainerID {
+		if idx := strings.LastIndex(name, "/"); idx >= 0 && idx+1 < len(name) {
+			primaryName = name[idx+1:]
+		} else {
+			primaryName = name
+		}
+	}
 	for i, k := range result {
-		if k.name == name {
+		if k.name == name || (primaryName != "" && k.name == primaryName) {
 			primary := result[i]
 			copy(result[1:i+1], result[0:i])
 			result[0] = primary

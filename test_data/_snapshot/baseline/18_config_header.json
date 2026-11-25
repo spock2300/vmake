@@ -9,7 +9,7 @@
     "mode": "debug",
     "packages": [
       {
-        "name": "18_config_header",
+        "name": "//",
         "source": "local",
         "path": "."
       }
@@ -26,7 +26,7 @@
     {
       "path": "compile_commands.json",
       "size": 1379,
-      "hash": "1101474b17a4c813f9b7d6061d14aa342ca4ec5367616786b43ced3e146eb3fe"
+      "hash": "e0358f6ab455b317e7f192dcdd2e338c8bb90886850f713997ab716a2b184935"
     }
   ],
   "install_tree_hash": "414d8c4f3d0f4560ca4c0bb7617945153b49600e9372c7fa83c23bfb4b3a76d3"

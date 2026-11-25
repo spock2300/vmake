@@ -210,30 +210,34 @@ func TestBuildSubGraphPreservesPackagePlatforms(t *testing.T) {
 	targets := map[string]map[string]*api.Target{}
 	dirs := map[string]*api.PkgDirs{}
 	packages := map[string]*api.Package{}
-	needed := map[string]bool{"root": true, "dep": true}
-	meta := map[string]PkgBuildMeta{"root": {}, "dep": {}}
+	needed := map[string]bool{"//root": true, "//dep": true}
+	meta := map[string]PkgBuildMeta{
+		"//root": {Container: api.LocalContainerID},
+		"//dep":  {Container: api.LocalContainerID},
+	}
 	for name, platform := range map[string]api.Platform{
-		"root": {OS: "windows", Triple: "windows-triple"},
-		"dep":  {OS: "linux", Triple: "linux-triple"},
+		"//root": {OS: "windows", Triple: "windows-triple"},
+		"//dep":  {OS: "linux", Triple: "linux-triple"},
 	} {
-		pkgDirs := api.PkgDirs{SourceDir: filepath.Join(rootDir, name), BuildDir: filepath.Join(rootDir, name, "build")}
+		rel := strings.TrimPrefix(name, "//")
+		pkgDirs := api.PkgDirs{SourceDir: filepath.Join(rootDir, rel), BuildDir: filepath.Join(rootDir, rel, "build")}
 		pkg := api.NewPackage().SetPlatform(platform).SetDirs(pkgDirs)
 		packages[name] = pkg
 		dirs[name] = &pkgDirs
-		target := makeTargetWithDeps(name).SetKind(api.TargetVoid).SetDefault(true).SetBuildFunc(func(p *api.Package) error {
+		target := makeTargetWithDeps(rel).SetKind(api.TargetVoid).SetDefault(true).SetBuildFunc(func(p *api.Package) error {
 			if p.TargetOS() != platform.OS || p.TargetTriple() != platform.Triple {
 				return fmt.Errorf("%s platform = %s/%s, want %s/%s", name, p.TargetOS(), p.TargetTriple(), platform.OS, platform.Triple)
 			}
 			return nil
 		})
-		if name == "root" {
-			target.AddDeps("dep:dep")
+		if name == "//root" {
+			target.AddDeps("//dep:dep")
 		}
-		targets[name] = map[string]*api.Target{name: target}
+		targets[name] = map[string]*api.Target{rel: target}
 	}
-	env := testBuildEnv(dirs, packages, map[string]*toolchain.Toolchain{"root": tc, "dep": tc}, NewSession(nil), rootDir)
+	env := testBuildEnv(dirs, packages, map[string]*toolchain.Toolchain{"//root": tc, "//dep": tc}, NewSession(nil), rootDir)
 	job := testBuildJob(nil, tc, env, api.ModeDebug, api.Platform{OS: "none", Triple: "root-triple"}, false)
-	if err := BuildSubGraph(job, SubGraphRequest{RootPkg: "root", Targets: targets, PkgMeta: meta, Needed: needed}); err != nil {
+	if err := BuildSubGraph(job, SubGraphRequest{RootPkg: "//root", Targets: targets, PkgMeta: meta, Needed: needed}); err != nil {
 		t.Fatal(err)
 	}
 }

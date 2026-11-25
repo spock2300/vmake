@@ -9,7 +9,7 @@
     "mode": "debug",
     "packages": [
       {
-        "name": "24_symbol_prefix",
+        "name": "//",
         "source": "local",
         "path": "."
       }
@@ -20,7 +20,7 @@
     {
       "path": "compile_commands.json",
       "size": 1257,
-      "hash": "9376ba9d1371b30290ac0d1e342b73a02187ff1c934efb7735726e8d1f4232e8"
+      "hash": "650b69639835a2a17c4d885fed26e0b0a1668f6a76689660a81a17b57c8ce062"
     }
   ],
   "install_tree_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"

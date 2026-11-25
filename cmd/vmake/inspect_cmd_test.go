@@ -72,7 +72,6 @@ func writeInspectProject(t *testing.T, dir string) string {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.Option("with_dep").
 			SetType(api.OptionBool).
@@ -87,7 +86,7 @@ func Main(p *api.Package) {
 	})
 	p.OnRequire(func(ctx *api.RequireContext) {
 		if ctx.When("with_dep", true) {
-			ctx.AddRequires("dep")
+			ctx.AddRequires("//dep")
 		}
 	})
 	p.OnBuild(func(ctx *api.BuildContext) {
@@ -98,7 +97,7 @@ func Main(p *api.Package) {
 			AddPublicIncludes("include").
 			AddDefines("APP_DEFINE=1")
 		if ctx.When("with_dep", true) {
-			target.AddDeps("dep:deplib")
+			target.AddDeps("//dep:deplib")
 		}
 		ctx.Target("docs").SetKind(api.TargetVoid).SetBuildFunc(func(pkg *api.Package) error { return nil })
 	})
@@ -137,7 +136,6 @@ func TestInspectNoTargetsSkipsDeclaration(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
 		panic("OnBuild must not run with --no-targets")
 	})
@@ -158,7 +156,7 @@ func Main(p *api.Package) {
 	if len(envelope.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %+v, want none", envelope.Diagnostics)
 	}
-	root := inspectPackageNamed(t, envelope.Data, "proj")
+	root := inspectPackageNamed(t, envelope.Data, "//")
 	if len(root.Targets) != 0 {
 		t.Fatalf("targets = %+v, want none", root.Targets)
 	}
@@ -176,18 +174,18 @@ func TestInspectNoTargetsReportsMissingSources(t *testing.T) {
 	}
 	found := false
 	for _, diagnostic := range envelope.Diagnostics {
-		if diagnostic.Code == "VMAKE_W_SOURCE_MISSING" && diagnostic.Package == "lib" {
+		if diagnostic.Code == "VMAKE_W_SOURCE_MISSING" && diagnostic.Package == "//lib" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("diagnostics = %+v, want VMAKE_W_SOURCE_MISSING for lib", envelope.Diagnostics)
+		t.Fatalf("diagnostics = %+v, want VMAKE_W_SOURCE_MISSING for //lib", envelope.Diagnostics)
 	}
-	lib := inspectPackageNamed(t, envelope.Data, "lib")
+	lib := inspectPackageNamed(t, envelope.Data, "//lib")
 	if len(lib.Targets) != 0 {
 		t.Fatalf("targets = %+v, want none", lib.Targets)
 	}
-	if !strings.Contains(stderr, "Warning: package lib source is not materialized") {
+	if !strings.Contains(stderr, "Warning: package //lib source is not materialized") {
 		t.Fatalf("stderr = %q, want source-missing warning", stderr)
 	}
 }
@@ -199,10 +197,9 @@ func TestInspectLocalOptionShadowsGlobalName(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("//lib") })
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetBinary).AddDeps("lib:lib")
+		ctx.Target("app").SetKind(api.TargetBinary).AddDeps("//lib:lib")
 	})
 }
 `)
@@ -228,7 +225,7 @@ func Main(p *api.Package) {
 	if envelope.Status != "ok" || envelope.Data == nil {
 		t.Fatalf("envelope = %+v", envelope)
 	}
-	lib := inspectPackageNamed(t, envelope.Data, "lib")
+	lib := inspectPackageNamed(t, envelope.Data, "//lib")
 	if got := lib.Options["mode"]; got != "a" {
 		t.Fatalf("lib option mode = %v, want local default a", got)
 	}
@@ -242,14 +239,13 @@ func TestInspectGlobalOptionEntryDefaultUsesGlobalValue(t *testing.T) {
 	writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{
 		"version": "1",
 		"global": {"options": {"board": "custom"}},
-		"entries": {"proj": {"options": {"board": "evb"}}}
+		"entries": {"//": {"options": {"board": "evb"}}}
 	}`)
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.GlobalOption("board").SetDefault("evb").SetValues("evb", "custom")
 	})
@@ -267,7 +263,7 @@ func Main(p *api.Package) {
 	if envelope.Status != "ok" || envelope.Data == nil {
 		t.Fatalf("envelope = %+v", envelope)
 	}
-	app := inspectPackageNamed(t, envelope.Data, "proj")
+	app := inspectPackageNamed(t, envelope.Data, "//")
 	if got := app.Options["board"]; got != "custom" {
 		t.Fatalf("board = %v, want global value custom", got)
 	}
@@ -309,13 +305,16 @@ func TestInspectProjectModel(t *testing.T) {
 	if want := filepath.Join(project, "install", "manifest.json"); data.InstallManifest != want {
 		t.Errorf("installManifest = %q, want %q", data.InstallManifest, want)
 	}
-	if !slices.Equal(data.Roots, []string{"proj"}) {
+	if !slices.Equal(data.Roots, []string{"//"}) {
 		t.Errorf("roots = %v", data.Roots)
+	}
+	if len(data.Containers) != 1 || data.Containers[0].ID != "//" || data.Containers[0].Kind != "local" {
+		t.Errorf("containers = %+v", data.Containers)
 	}
 	if data.ToolchainInfo == nil || data.ToolchainInfo.Name != "host" || data.ToolchainInfo.CC == "" {
 		t.Errorf("toolchainInfo = %+v", data.ToolchainInfo)
 	}
-	projectPkg := inspectPackageNamed(t, data, "proj")
+	projectPkg := inspectPackageNamed(t, data, "//")
 	if projectPkg.Platform == nil || projectPkg.Platform.TargetOS != runtime.GOOS || projectPkg.Platform.TargetTriple != "" {
 		t.Errorf("proj platform = %+v, want os=%q triple=\"\"", projectPkg.Platform, runtime.GOOS)
 	}
@@ -335,15 +334,15 @@ func TestInspectProjectModel(t *testing.T) {
 			t.Errorf("inspect emitted %q for a project without global flags", key)
 		}
 	}
-	if got := inspectEdgePairs(data.Graph); !slices.Equal(got, [][2]string{{"proj", "dep"}}) {
+	if got := inspectEdgePairs(data.Graph); !slices.Equal(got, [][2]string{{"//", "//dep"}}) {
 		t.Errorf("graph = %v", got)
 	}
 
-	proj := inspectPackageNamed(t, data, "proj")
-	if !proj.Needed || proj.Kind != "local" || proj.Path != "." || proj.Toolchain != "host" {
+	proj := inspectPackageNamed(t, data, "//")
+	if !proj.Needed || proj.Kind != "local" || proj.Container != "//" || proj.Path != "." || proj.Toolchain != "host" {
 		t.Errorf("root package = %+v", proj)
 	}
-	if !slices.Equal(proj.Deps, []string{"dep"}) {
+	if !slices.Equal(proj.Deps, []string{"//dep"}) {
 		t.Errorf("root deps = %v", proj.Deps)
 	}
 	if proj.Options["with_dep"] != true || proj.Options["retries"] != float64(3) || proj.Options["label"] != "default" {
@@ -361,7 +360,7 @@ func TestInspectProjectModel(t *testing.T) {
 	}
 	if !slices.Equal(app.Files, []string{"src/*.c"}) || !slices.Equal(app.Includes, []string{"include"}) ||
 		!slices.Equal(app.PublicIncludes, []string{"include"}) || !slices.Equal(app.Defines, []string{"APP_DEFINE=1"}) ||
-		!slices.Equal(app.Deps, []string{"dep:deplib"}) {
+		!slices.Equal(app.Deps, []string{"//dep:deplib"}) {
 		t.Errorf("app target fields = %+v", app)
 	}
 	docs := inspectTargetNamed(t, proj, "docs")
@@ -369,8 +368,8 @@ func TestInspectProjectModel(t *testing.T) {
 		t.Errorf("docs target = %+v", docs)
 	}
 
-	dep := inspectPackageNamed(t, data, "dep")
-	if !dep.Needed || dep.Kind != "local" || dep.Path != "dep" || dep.Toolchain != "host" {
+	dep := inspectPackageNamed(t, data, "//dep")
+	if !dep.Needed || dep.Kind != "local" || dep.Container != "//" || dep.Path != "dep" || dep.Toolchain != "host" {
 		t.Errorf("dep package = %+v", dep)
 	}
 	if dep.Options["dep_mode"] != "fast" {
@@ -407,7 +406,6 @@ func TestInspectTargetFlags(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.Option("turbo").SetType(api.OptionBool).SetDefault(true).
 			SetOnApply(func(ctx *api.ConfigContext, val any) {
@@ -441,7 +439,7 @@ func Main(p *api.Package) {
 	if envelope.Status != "ok" || envelope.Data == nil {
 		t.Fatalf("envelope = %+v", envelope)
 	}
-	proj := inspectPackageNamed(t, envelope.Data, "proj")
+	proj := inspectPackageNamed(t, envelope.Data, "//")
 	app := inspectTargetNamed(t, proj, "app")
 	if want := []string{"-Wall", "-Wextra", "-Werror"}; !slices.Equal(app.CFlags, want) {
 		t.Errorf("app cFlags = %v, want %v", app.CFlags, want)
@@ -487,7 +485,7 @@ func Main(p *api.Package) {
 	if changed == stdout {
 		t.Fatal("an AddCFlags edit did not change the inspect document")
 	}
-	app = inspectTargetNamed(t, inspectPackageNamed(t, decodeInspectEnvelope(t, changed).Data, "proj"), "app")
+	app = inspectTargetNamed(t, inspectPackageNamed(t, decodeInspectEnvelope(t, changed).Data, "//"), "app")
 	if want := []string{"-Wall", "-Wextra", "-Wpedantic"}; !slices.Equal(app.CFlags, want) {
 		t.Fatalf("app cFlags after edit = %v, want %v", app.CFlags, want)
 	}
@@ -500,7 +498,6 @@ func TestInspectGlobalFlags(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.Option("with_extra").SetType(api.OptionBool).SetDefault(false)
 		ctx.Option("turbo").SetType(api.OptionBool).SetDefault(true).
@@ -515,15 +512,15 @@ func Main(p *api.Package) {
 		ctx.AddGlobalLinks("-lm")
 	})
 	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("dep")
+		ctx.AddRequires("//dep")
 		if ctx.When("with_extra", true) {
-			ctx.AddRequires("extra")
+			ctx.AddRequires("//extra")
 		}
 	})
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("app").SetKind(api.TargetBinary).
 			AddFiles("src/main.c").
-			AddDeps("dep:deplib")
+			AddDeps("//dep:deplib")
 	})
 }
 `)
@@ -597,12 +594,12 @@ func Main(p *api.Package) {
 			}
 		}
 	}
-	extra := inspectPackageNamed(t, data, "extra")
+	extra := inspectPackageNamed(t, data, "//extra")
 	if extra.Needed {
-		t.Errorf("package extra is needed despite with_extra=false")
+		t.Errorf("package //extra is needed despite with_extra=false")
 	}
 	if extra.Targets != nil {
-		t.Errorf("unneeded package extra declared targets: %+v", extra.Targets)
+		t.Errorf("unneeded package //extra declared targets: %+v", extra.Targets)
 	}
 	if strings.Contains(stdout, `"globalCFlags": []`) || strings.Contains(stdout, `"globalCxxFlags": []`) ||
 		strings.Contains(stdout, `"globalLdFlags": []`) || strings.Contains(stdout, `"globalLinks": []`) ||
@@ -643,7 +640,7 @@ func TestInspectBuildStateAndPackageDirs(t *testing.T) {
 		for _, want := range []struct {
 			pkg  string
 			base string
-		}{{"proj", project}, {"dep", filepath.Join(project, "dep")}} {
+		}{{"//", project}, {"//dep", filepath.Join(project, "dep")}} {
 			pkg := inspectPackageNamed(t, data, want.pkg)
 			if !pkg.Needed || pkg.BuildDir == "" || !filepath.IsAbs(pkg.BuildDir) {
 				t.Fatalf("%s buildDir = %q (needed %v)", want.pkg, pkg.BuildDir, pkg.Needed)
@@ -681,7 +678,7 @@ func TestInspectBuildStateAndPackageDirs(t *testing.T) {
 	if !data.CompileDatabasePresent || !data.BuildReportPresent {
 		t.Fatalf("presence after build: db=%v report=%v", data.CompileDatabasePresent, data.BuildReportPresent)
 	}
-	for _, name := range []string{"proj", "dep"} {
+	for _, name := range []string{"//", "//dep"} {
 		pkg := inspectPackageNamed(t, data, name)
 		if pkg.BuildDir == "" || pkg.BuildKey == "" {
 			t.Fatalf("%s buildDir/buildKey missing after build: %+v", name, pkg)
@@ -700,12 +697,12 @@ func TestInspectBuildStateAndPackageDirs(t *testing.T) {
 		t.Fatal("consecutive inspect runs after a build are not byte-identical")
 	}
 
-	stdout, stderr, code = runInspectCommand(t, project, "inspect", "--set", "proj/with_dep=false")
+	stdout, stderr, code = runInspectCommand(t, project, "inspect", "--set", "//:with_dep=false")
 	if code != 0 || stderr != "" {
 		t.Fatalf("hypothetical inspect exit = %d, stderr = %q", code, stderr)
 	}
 	data = decodeInspectEnvelope(t, stdout).Data
-	if dep := inspectPackageNamed(t, data, "dep"); dep.Needed || dep.BuildDir != "" || dep.BuildKey != "" {
+	if dep := inspectPackageNamed(t, data, "//dep"); dep.Needed || dep.BuildDir != "" || dep.BuildKey != "" {
 		t.Fatalf("pruned package kept build fields: %+v", dep)
 	}
 
@@ -713,7 +710,7 @@ func TestInspectBuildStateAndPackageDirs(t *testing.T) {
 		t.Fatalf("clean exit = %d, stderr = %q\n%s", code, stderr, stdout)
 	}
 	data = checkAbsent(t)
-	for _, name := range []string{"proj", "dep"} {
+	for _, name := range []string{"//", "//dep"} {
 		pkg := inspectPackageNamed(t, data, name)
 		if _, err := os.Stat(pkg.BuildDir); !os.IsNotExist(err) {
 			t.Fatalf("%s build dir survived clean: %q", name, pkg.BuildDir)
@@ -783,7 +780,6 @@ import (
 )
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		fmt.Println("INSPECT_ONCONFIG_STDOUT")
 		ctx.Option("gate").SetType(api.OptionBool).SetDefault(true)
@@ -808,7 +804,6 @@ func TestInspectInstallPlan(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnInstall(func(ctx *api.InstallContext) {
 		ctx.AddInstalls("oninstall.conf", "etc/oninstall.conf")
 		panic("OnInstall must not run during inspect")
@@ -846,7 +841,7 @@ func Main(p *api.Package) {
 	if want := filepath.Join(project, "install", "manifest.json"); data.InstallManifest != want {
 		t.Errorf("installManifest = %q, want %q", data.InstallManifest, want)
 	}
-	proj := inspectPackageNamed(t, data, "proj")
+	proj := inspectPackageNamed(t, data, "//")
 	wantInstalls := []inspectInstall{
 		{Source: "config/app.conf", Dest: "etc/app.conf"},
 		{Source: "docs/readme.txt", Dest: "share/doc/readme.txt"},
@@ -907,11 +902,11 @@ func TestInspectSuppressesBuildscriptStdout(t *testing.T) {
 	if envelope.Status != "ok" || envelope.Data == nil {
 		t.Fatalf("envelope = %+v", envelope)
 	}
-	if len(envelope.Data.Roots) != 1 || envelope.Data.Roots[0] != "proj" {
+	if len(envelope.Data.Roots) != 1 || envelope.Data.Roots[0] != "//" {
 		t.Fatalf("roots = %v", envelope.Data.Roots)
 	}
 
-	stdout, stderr, code = runInspectCommand(t, project, "inspect", "--set", "proj/gate=maybe")
+	stdout, stderr, code = runInspectCommand(t, project, "inspect", "--set", "//:gate=maybe")
 	if code != 1 {
 		t.Fatalf("invalid --set exit = %d, want 1 (stderr %q)", code, stderr)
 	}
@@ -970,7 +965,7 @@ func TestInspectSetOverridesAreHypothetical(t *testing.T) {
 	project := writeInspectProject(t, canonicalTempDir(t))
 	configPath := filepath.Join(project, "configs", "default.json")
 
-	stdout, stderr, code := runInspectCommand(t, project, "inspect", "--set", "proj/with_dep=false")
+	stdout, stderr, code := runInspectCommand(t, project, "inspect", "--set", "//:with_dep=false")
 	if code != 0 || stderr != "" {
 		t.Fatalf("override inspect exit = %d, stderr = %q", code, stderr)
 	}
@@ -979,14 +974,14 @@ func TestInspectSetOverridesAreHypothetical(t *testing.T) {
 		t.Fatalf("override envelope = %+v", envelope)
 	}
 	data := envelope.Data
-	if data.Overrides["proj/with_dep"] != false {
+	if data.Overrides["//:with_dep"] != false {
 		t.Errorf("overrides = %v", data.Overrides)
 	}
-	proj := inspectPackageNamed(t, data, "proj")
+	proj := inspectPackageNamed(t, data, "//")
 	if proj.Options["with_dep"] != false {
 		t.Errorf("effective with_dep = %v", proj.Options["with_dep"])
 	}
-	dep := inspectPackageNamed(t, data, "dep")
+	dep := inspectPackageNamed(t, data, "//dep")
 	if dep.Needed || dep.Targets != nil {
 		t.Errorf("dep should not be needed: %+v", dep)
 	}
@@ -997,15 +992,15 @@ func TestInspectSetOverridesAreHypothetical(t *testing.T) {
 		t.Fatalf("%s was written by inspect --set: %v", configPath, err)
 	}
 
-	stdout, stderr, code = runInspectCommand(t, project, "inspect", "--set", "dep/dep_mode=slow")
+	stdout, stderr, code = runInspectCommand(t, project, "inspect", "--set", "//dep:dep_mode=slow")
 	if code != 0 || stderr != "" {
 		t.Fatalf("choice override exit = %d, stderr = %q", code, stderr)
 	}
 	data = decodeInspectEnvelope(t, stdout).Data
-	if data.Overrides["dep/dep_mode"] != "slow" {
+	if data.Overrides["//dep:dep_mode"] != "slow" {
 		t.Errorf("overrides = %v", data.Overrides)
 	}
-	if got := inspectPackageNamed(t, data, "dep").Options["dep_mode"]; got != "slow" {
+	if got := inspectPackageNamed(t, data, "//dep").Options["dep_mode"]; got != "slow" {
 		t.Errorf("effective dep_mode = %v", got)
 	}
 
@@ -1028,15 +1023,15 @@ func TestInspectSetTypedCoercion(t *testing.T) {
 
 	for _, raw := range []string{"42", "true", "on", "false", ""} {
 		t.Run("string_"+raw, func(t *testing.T) {
-			stdout, stderr, code := runInspectCommand(t, project, "inspect", "--set", "proj/label="+raw)
+			stdout, stderr, code := runInspectCommand(t, project, "inspect", "--set", "//:label="+raw)
 			if code != 0 || stderr != "" {
 				t.Fatalf("exit = %d, stderr = %q", code, stderr)
 			}
 			data := decodeInspectEnvelope(t, stdout).Data
-			if data.Overrides["proj/label"] != raw {
+			if data.Overrides["//:label"] != raw {
 				t.Errorf("overrides = %#v, want string %q", data.Overrides, raw)
 			}
-			if got := inspectPackageNamed(t, data, "proj").Options["label"]; got != raw {
+			if got := inspectPackageNamed(t, data, "//").Options["label"]; got != raw {
 				t.Errorf("effective label = %#v, want string %q", got, raw)
 			}
 		})
@@ -1051,37 +1046,37 @@ func TestInspectSetTypedCoercion(t *testing.T) {
 		{"1", true}, {"0", false},
 	} {
 		t.Run("bool_"+test.raw, func(t *testing.T) {
-			stdout, stderr, code := runInspectCommand(t, project, "inspect", "--set", "proj/with_dep="+test.raw)
+			stdout, stderr, code := runInspectCommand(t, project, "inspect", "--set", "//:with_dep="+test.raw)
 			if code != 0 || stderr != "" {
 				t.Fatalf("exit = %d, stderr = %q", code, stderr)
 			}
 			data := decodeInspectEnvelope(t, stdout).Data
-			if data.Overrides["proj/with_dep"] != test.want {
+			if data.Overrides["//:with_dep"] != test.want {
 				t.Errorf("overrides = %#v, want bool %v", data.Overrides, test.want)
 			}
-			if got := inspectPackageNamed(t, data, "proj").Options["with_dep"]; got != test.want {
+			if got := inspectPackageNamed(t, data, "//").Options["with_dep"]; got != test.want {
 				t.Errorf("effective with_dep = %#v, want bool %v", got, test.want)
 			}
 		})
 	}
 
-	stdout, stderr, code := runInspectCommand(t, project, "inspect", "--set", "proj/retries=42")
+	stdout, stderr, code := runInspectCommand(t, project, "inspect", "--set", "//:retries=42")
 	if code != 0 || stderr != "" {
 		t.Fatalf("int override exit = %d, stderr = %q", code, stderr)
 	}
 	data := decodeInspectEnvelope(t, stdout).Data
-	if data.Overrides["proj/retries"] != float64(42) {
+	if data.Overrides["//:retries"] != float64(42) {
 		t.Errorf("overrides = %#v, want number 42", data.Overrides)
 	}
-	if got := inspectPackageNamed(t, data, "proj").Options["retries"]; got != float64(42) {
+	if got := inspectPackageNamed(t, data, "//").Options["retries"]; got != float64(42) {
 		t.Errorf("effective retries = %#v, want number 42", got)
 	}
 
-	first, stderr, code := runInspectCommand(t, project, "inspect", "--set", "proj/label=42")
+	first, stderr, code := runInspectCommand(t, project, "inspect", "--set", "//:label=42")
 	if code != 0 || stderr != "" {
 		t.Fatalf("first typed run exit = %d, stderr = %q", code, stderr)
 	}
-	again, stderr, code := runInspectCommand(t, project, "inspect", "--set", "proj/label=42")
+	again, stderr, code := runInspectCommand(t, project, "inspect", "--set", "//:label=42")
 	if code != 0 || stderr != "" {
 		t.Fatalf("second typed run exit = %d, stderr = %q", code, stderr)
 	}
@@ -1105,13 +1100,13 @@ func TestInspectSetErrors(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"syntax", []string{"--set", "proj/with_dep"}},
-		{"unknown_package", []string{"--set", "nope/x=1"}},
-		{"unknown_option", []string{"--set", "proj/nope=1"}},
+		{"syntax", []string{"--set", "//:with_dep"}},
+		{"unknown_package", []string{"--set", "//nope:x=1"}},
+		{"unknown_option", []string{"--set", "//:nope=1"}},
 		{"unknown_global", []string{"--set", "nope=1"}},
-		{"wrong_type", []string{"--set", "proj/with_dep=maybe"}},
-		{"wrong_type_string", []string{"--set", "proj/retries=quick"}},
-		{"invalid_choice", []string{"--set", "dep/dep_mode=warp"}},
+		{"wrong_type", []string{"--set", "//:with_dep=maybe"}},
+		{"wrong_type_string", []string{"--set", "//:retries=quick"}},
+		{"invalid_choice", []string{"--set", "//dep:dep_mode=warp"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			stdout, stderr, code := runInspectCommand(t, project, append([]string{"inspect"}, test.args...)...)
@@ -1146,7 +1141,6 @@ func TestInspectSetInvalidBoolValue(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.Option("gate").
 			SetType(api.OptionBool).
@@ -1162,7 +1156,7 @@ func Main(p *api.Package) {
 	})
 }
 `)
-	stdout, stderr, code := runInspectCommand(t, project, "inspect", "--set", "proj/gate=maybe")
+	stdout, stderr, code := runInspectCommand(t, project, "inspect", "--set", "//:gate=maybe")
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1 (stderr %q)", code, stderr)
 	}
@@ -1226,10 +1220,9 @@ func TestInspectTargetDeclarationWarning(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("broken") })
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("//broken") })
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetVoid).AddDeps("broken:*")
+		ctx.Target("app").SetKind(api.TargetVoid).AddDeps("//broken:*")
 	})
 }
 `)
@@ -1254,10 +1247,10 @@ func Main(p *api.Package) {
 	}
 	diagnostic := envelope.Diagnostics[0]
 	if diagnostic.Severity != "warning" || diagnostic.Code != "VMAKE_W_TARGET_DECLARE" ||
-		!strings.Contains(diagnostic.Message, "broken") || diagnostic.Fix == "" {
+		!strings.Contains(diagnostic.Message, "//broken") || diagnostic.Fix == "" {
 		t.Fatalf("diagnostic = %+v", diagnostic)
 	}
-	broken := inspectPackageNamed(t, envelope.Data, "broken")
+	broken := inspectPackageNamed(t, envelope.Data, "//broken")
 	if !broken.Needed || broken.Targets != nil {
 		t.Fatalf("broken package = %+v", broken)
 	}
@@ -1277,7 +1270,6 @@ import (
 )
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
 		if err := os.WriteFile("generated.txt", []byte("generated"), 0644); err != nil {
 			panic(err)
@@ -1310,7 +1302,7 @@ func Main(p *api.Package) {
 	if stderr != "Warning: "+diagnostic.Message+"\n" {
 		t.Fatalf("stderr = %q, want declaration warning line", stderr)
 	}
-	if proj := inspectPackageNamed(t, envelope.Data, "ro"); proj.Targets != nil {
+	if proj := inspectPackageNamed(t, envelope.Data, "//"); proj.Targets != nil {
 		t.Fatalf("ro targets = %+v, want omitted after read-only declaration failure", proj.Targets)
 	}
 	if _, err := os.Stat(generated); !os.IsNotExist(err) {
@@ -1348,7 +1340,6 @@ import (
 )
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
 		_ = os.WriteFile("ignored.txt", []byte("ignored"), 0644)
 		_ = os.RemoveAll("kept")
@@ -1376,7 +1367,7 @@ func Main(p *api.Package) {
 	if diagnostic.Code != "VMAKE_W_TARGET_DECLARE" || !strings.Contains(diagnostic.Message, wantReadOnly) {
 		t.Fatalf("diagnostic = %+v, want read-only declaration warning", diagnostic)
 	}
-	if proj := inspectPackageNamed(t, envelope.Data, "ignored"); proj.Targets != nil {
+	if proj := inspectPackageNamed(t, envelope.Data, "//"); proj.Targets != nil {
 		t.Fatalf("ignored targets = %+v, want omitted after blocked write", proj.Targets)
 	}
 	if _, err := os.Stat(filepath.Join(project, "ignored.txt")); !os.IsNotExist(err) {
@@ -1399,7 +1390,6 @@ import (
 )
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnBuild(func(ctx *api.BuildContext) {
 		if _, err := os.ReadFile("src/main.c"); err != nil {
 			panic(err)
@@ -1424,7 +1414,7 @@ func Main(p *api.Package) {
 	if envelope.Status != "ok" || len(envelope.Diagnostics) != 0 || envelope.Data == nil {
 		t.Fatalf("envelope = %+v", envelope)
 	}
-	app := inspectTargetNamed(t, inspectPackageNamed(t, envelope.Data, "reads"), "app")
+	app := inspectTargetNamed(t, inspectPackageNamed(t, envelope.Data, "//"), "app")
 	if !slices.Equal(app.Files, []string{"src/*.c"}) {
 		t.Fatalf("app files = %v, want [src/*.c]", app.Files)
 	}
@@ -1437,8 +1427,7 @@ func TestInspectSourceMissingWarning(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("//lib") })
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("app").SetKind(api.TargetBinary)
 	})
@@ -1470,10 +1459,10 @@ func Main(p *api.Package) {
 			t.Fatalf("diagnostics = %+v", envelope.Diagnostics)
 		}
 		diagnostic := envelope.Diagnostics[0]
-		if diagnostic.Severity != "warning" || diagnostic.Code != "VMAKE_W_SOURCE_MISSING" || diagnostic.Package != "lib" {
+		if diagnostic.Severity != "warning" || diagnostic.Code != "VMAKE_W_SOURCE_MISSING" || diagnostic.Package != "//lib" {
 			t.Fatalf("diagnostic = %+v", diagnostic)
 		}
-		for _, want := range []string{"package lib", "https://example.invalid/lib.git", "version 1.0.0"} {
+		for _, want := range []string{"package //lib", "https://example.invalid/lib.git", "version 1.0.0"} {
 			if !strings.Contains(diagnostic.Message, want) {
 				t.Errorf("diagnostic message %q missing %q", diagnostic.Message, want)
 			}
@@ -1481,11 +1470,11 @@ func Main(p *api.Package) {
 		if stderr != "Warning: "+diagnostic.Message+"\n" {
 			t.Fatalf("stderr = %q, want one warning line", stderr)
 		}
-		lib := inspectPackageNamed(t, envelope.Data, "lib")
+		lib := inspectPackageNamed(t, envelope.Data, "//lib")
 		if !lib.Needed || lib.SourcePresent {
 			t.Fatalf("lib package = %+v", lib)
 		}
-		if proj := inspectPackageNamed(t, envelope.Data, "proj"); !proj.SourcePresent {
+		if proj := inspectPackageNamed(t, envelope.Data, "//"); !proj.SourcePresent {
 			t.Fatalf("plain local package sourcePresent = false")
 		}
 	}
@@ -1505,7 +1494,7 @@ func Main(p *api.Package) {
 	if len(envelope.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %+v, want none", envelope.Diagnostics)
 	}
-	if lib := inspectPackageNamed(t, envelope.Data, "lib"); !lib.SourcePresent {
+	if lib := inspectPackageNamed(t, envelope.Data, "//lib"); !lib.SourcePresent {
 		t.Fatalf("populated lib source reported as absent")
 	}
 	if _, err := os.Stat(filepath.Join(project, ".vmake_deps")); !os.IsNotExist(err) {
@@ -1537,12 +1526,12 @@ func Main(p *api.Package) {
 	runGitLine(t, repoDir, "commit", "-q", "-m", "registry")
 
 	project := filepath.Join(canonicalTempDir(t), "proj")
+	writeExtensionFile(t, filepath.Join(project, "vmake.json"), `{"modules":{"official":"*"}}`)
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("official/demo") })
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("app").SetKind(api.TargetBinary).AddDeps("official/demo:*")
@@ -1573,7 +1562,7 @@ func Main(p *api.Package) {
 		t.Fatalf("stderr = %q, want one warning line", stderr)
 	}
 	demo := inspectPackageNamed(t, envelope.Data, "official/demo")
-	if !demo.Needed || demo.SourcePresent {
+	if !demo.Needed || demo.SourcePresent || demo.Container != "official" {
 		t.Fatalf("remote package = %+v", demo)
 	}
 	if _, err := os.Stat(filepath.Join(project, ".vmake_deps")); !os.IsNotExist(err) {
@@ -1584,12 +1573,15 @@ func Main(p *api.Package) {
 func TestInspectExpectedSourceDirectories(t *testing.T) {
 	deps := canonicalTempDir(t)
 	res := resolver.NewResolver(nil, deps)
-	ctx := &RuntimeContext{Paths: &pipeline.Paths{DepsDir: deps}, Resolver: res}
-	remoteNode := func(name, dir string) *resolver.PackageNode {
-		return resolver.NewPackageNode(name, buildscript.NewSource(name, filepath.Join(dir, "build.go"), dir, api.SourceRemote), api.NewPackage())
+	ctx := &RuntimeContext{Paths: &pipeline.Paths{DepsDir: deps}, Resolver: res, DepGraph: res.Graph()}
+	remoteNode := func(name, container, rel string, kind resolver.SourceKind, dir string) *resolver.PackageNode {
+		src := buildscript.NewSource(name, filepath.Join(dir, "build.go"), dir, api.SourceRemote)
+		src.Container = container
+		src.RelPath = rel
+		return resolver.NewPackageNode(name, container, rel, kind, src, api.NewPackage())
 	}
 
-	registry := remoteNode("official/demo", filepath.Join(deps, "wrapper"))
+	registry := remoteNode("official/demo", "official", "demo", resolver.SourceKindRegistry, filepath.Join(deps, "wrapper"))
 	registryDir := filepath.Join(deps, "official", "demo", "src")
 	if got := pipeline.ExpectedPackageSourceDir(ctx, "official/demo", registry); got != registryDir {
 		t.Fatalf("registry source dir = %q, want %q", got, registryDir)
@@ -1608,9 +1600,8 @@ func TestInspectExpectedSourceDirectories(t *testing.T) {
 		t.Fatal("populated registry tree reported absent")
 	}
 
-	res.SubParents()["native/root/member"] = "native/root"
-	member := remoteNode("native/root/member", filepath.Join(deps, "native", "root", "src", "member"))
 	memberDir := filepath.Join(deps, "native", "root", "src", "member")
+	member := remoteNode("native/root/member", "native/root", "member", resolver.SourceKindNative, memberDir)
 	if got := pipeline.ExpectedPackageSourceDir(ctx, "native/root/member", member); got != memberDir {
 		t.Fatalf("shared native member dir = %q, want %q", got, memberDir)
 	}
@@ -1619,8 +1610,9 @@ func TestInspectExpectedSourceDirectories(t *testing.T) {
 		t.Fatal("shared native member tree reported absent")
 	}
 	member.Pkg.SetGit("https://example.invalid/member.git")
-	if got, want := pipeline.ExpectedPackageSourceDir(ctx, "native/root/member", member), filepath.Join(memberDir, "src"); got != want {
-		t.Fatalf("own-git native member dir = %q, want %q", got, want)
+	wantThirdParty := filepath.Join(deps, "native", "root", "third_party", build.MemberDir("member"), "src")
+	if got := pipeline.ExpectedPackageSourceDir(ctx, "native/root/member", member); got != wantThirdParty {
+		t.Fatalf("own-git native member dir = %q, want %q", got, wantThirdParty)
 	}
 	if pipeline.IsPackageSourcePresent(ctx, "native/root/member", member) {
 		t.Fatal("own-git native member tree reported present before materialization")
@@ -1630,22 +1622,28 @@ func TestInspectExpectedSourceDirectories(t *testing.T) {
 	if err := os.MkdirAll(localDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	local := resolver.NewPackageNode("lib", buildscript.NewSource("lib", filepath.Join(localDir, "build.go"), localDir, api.SourceLocal), api.NewPackage())
+	localSrc := buildscript.NewSource("//lib", filepath.Join(localDir, "build.go"), localDir, api.SourceLocal)
+	localSrc.Container = api.LocalContainerID
+	localSrc.RelPath = "lib"
+	local := resolver.NewPackageNode("//lib", api.LocalContainerID, "lib", resolver.SourceKindLocal, localSrc, api.NewPackage())
 	local.Pkg.SetGit("https://example.invalid/lib.git")
-	if got, want := pipeline.ExpectedPackageSourceDir(ctx, "lib", local), filepath.Join(localDir, "src"); got != want {
+	if got, want := pipeline.ExpectedPackageSourceDir(ctx, "//lib", local), filepath.Join(localDir, "src"); got != want {
 		t.Fatalf("local SetGit source dir = %q, want %q", got, want)
 	}
-	if pipeline.IsPackageSourcePresent(ctx, "lib", local) {
+	if pipeline.IsPackageSourcePresent(ctx, "//lib", local) {
 		t.Fatal("absent local SetGit tree reported present")
 	}
 
 	plainDir := filepath.Join(canonicalTempDir(t), "plain")
 	writeExtensionFile(t, filepath.Join(plainDir, "build.go"), "package main\n")
-	plain := resolver.NewPackageNode("plain", buildscript.NewSource("plain", filepath.Join(plainDir, "build.go"), plainDir, api.SourceLocal), api.NewPackage())
-	if got := pipeline.ExpectedPackageSourceDir(ctx, "plain", plain); got != plainDir {
+	plainSrc := buildscript.NewSource("//plain", filepath.Join(plainDir, "build.go"), plainDir, api.SourceLocal)
+	plainSrc.Container = api.LocalContainerID
+	plainSrc.RelPath = "plain"
+	plain := resolver.NewPackageNode("//plain", api.LocalContainerID, "plain", resolver.SourceKindLocal, plainSrc, api.NewPackage())
+	if got := pipeline.ExpectedPackageSourceDir(ctx, "//plain", plain); got != plainDir {
 		t.Fatalf("plain local source dir = %q, want %q", got, plainDir)
 	}
-	if !pipeline.IsPackageSourcePresent(ctx, "plain", plain) {
+	if !pipeline.IsPackageSourcePresent(ctx, "//plain", plain) {
 		t.Fatal("plain local package dir reported absent")
 	}
 }
@@ -1769,10 +1767,9 @@ func TestInspectSkipsTargetDeclarationForMissingSource(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("lib") })
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("//lib") })
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("app").SetKind(api.TargetBinary).AddDeps("lib:lib")
+		ctx.Target("app").SetKind(api.TargetBinary).AddDeps("//lib:lib")
 	})
 }
 `)
@@ -1802,7 +1799,7 @@ func Main(p *api.Package) {
 	if len(envelope.Diagnostics) != 1 || envelope.Diagnostics[0].Code != "VMAKE_W_SOURCE_MISSING" {
 		t.Fatalf("diagnostics = %+v, want only the source-missing warning", envelope.Diagnostics)
 	}
-	lib := inspectPackageNamed(t, envelope.Data, "lib")
+	lib := inspectPackageNamed(t, envelope.Data, "//lib")
 	if !lib.Needed || lib.SourcePresent || lib.Targets != nil {
 		t.Fatalf("lib package = %+v, want needed missing source without targets", lib)
 	}
@@ -1812,7 +1809,7 @@ func Main(p *api.Package) {
 	if stderr != "Warning: "+envelope.Diagnostics[0].Message+"\n" {
 		t.Fatalf("stderr = %q, want one warning line", stderr)
 	}
-	proj := inspectPackageNamed(t, envelope.Data, "proj")
+	proj := inspectPackageNamed(t, envelope.Data, "//")
 	if targets := proj.Targets; len(targets) != 1 || targets[0].Name != "app" {
 		t.Fatalf("proj targets = %+v, want app declared for its present source", targets)
 	}
@@ -1865,9 +1862,8 @@ func TestInspectTargetFieldsUseRequiresAndOptionDefs(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 
 func Main(p *api.Package) {
-	p.SetRoot(true)
 	p.OnRequire(func(ctx *api.RequireContext) {
-		ctx.AddRequires("dep_a", "dep_b")
+		ctx.AddRequires("//dep_a", "//dep_b")
 	})
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.GlobalOption("board").SetValues("evb", "mini").SetDefault("evb").SetDescription("Target board")
@@ -1925,7 +1921,7 @@ func Main(p *api.Package) {
 		!slices.Equal(boardDef.Values, []string{"evb", "mini"}) || boardDef.Group != api.GroupGlobal {
 		t.Fatalf("globalOptionDefs[board] = %+v", boardDef)
 	}
-	pkg := inspectPackageNamed(t, data, "proj")
+	pkg := inspectPackageNamed(t, data, "//")
 	baudDef, ok := pkg.OptionDefs["baud"]
 	if !ok || baudDef.Type != "int" || baudDef.Default != float64(115200) || baudDef.Description != "UART baudrate" || baudDef.Group != "UART" {
 		t.Fatalf("pkg.OptionDefs[baud] = %+v", baudDef)
@@ -1940,8 +1936,8 @@ func Main(p *api.Package) {
 		app.KeepGlobalSymbols != "keep.syms" {
 		t.Fatalf("app target fields = %+v", app)
 	}
-	if !slices.Equal(app.Deps, []string{"dep_a:*", "dep_b:*", "gen"}) {
-		t.Fatalf("app.Deps = %v, want [dep_a:* dep_b:* gen]", app.Deps)
+	if !slices.Equal(app.Deps, []string{"//dep_a:*", "//dep_b:*", "gen"}) {
+		t.Fatalf("app.Deps = %v, want [//dep_a:* //dep_b:* gen]", app.Deps)
 	}
 	gen := inspectTargetNamed(t, pkg, "gen")
 	if !slices.Equal(gen.Inputs, []string{"schema.idl"}) || !slices.Equal(gen.Outputs, []string{"gen.h"}) {

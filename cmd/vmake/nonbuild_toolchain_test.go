@@ -44,10 +44,10 @@ func Main(ctx *plugin.Context) {
     }
 }
 `, "__REGISTER__", registration))
-				writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{"version":"1","global":{"toolchain":"pending"},"entries":{"unused":{"options":{"toolchain":"unrelated"}}}}`)
+				writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{"version":"1","global":{"toolchain":"pending"},"entries":{"//unused":{"options":{"toolchain":"unrelated"}}}}`)
 				writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
-func Main(p *api.Package) { p.SetRoot(true) }
+func Main(p *api.Package) {}
 `)
 				artifact := filepath.Join(project, "build", "old", "artifact")
 				writeExtensionFile(t, artifact, "artifact")
@@ -106,7 +106,6 @@ import (
     "github.com/spock2300/vmake/pkg/api"
 )
 func Main(p *api.Package) {
-    p.SetRoot(true)
     p.OnClean(func(ctx *api.CleanContext) {
         if err := os.WriteFile("clean-hook", []byte(p.CC()), 0644); err != nil { panic(err) }
     })
@@ -168,7 +167,7 @@ func TestCleanHooksUsePackagePlatform(t *testing.T) {
 				writeHealthyDefinition(t, filepath.Join(state, "extensions", "fixture", "pending", "toolchain.json"), "pending")
 				cfg := map[string]any{
 					"version": "1", "global": map[string]any{"toolchain": "pending"},
-					"entries": map[string]any{"project": map[string]any{"options": test.overrides}},
+					"entries": map[string]any{"//": map[string]any{"options": test.overrides}},
 				}
 				data, err := json.Marshal(cfg)
 				if err != nil {
@@ -181,7 +180,6 @@ import (
     "github.com/spock2300/vmake/pkg/api"
 )
 func Main(p *api.Package) {
-    p.SetRoot(true)
     p.OnConfig(func(ctx *api.ConfigContext) {
         ctx.GlobalOption(api.TargetOSOptionName).SetType(api.OptionString).SetDefault("none")
         ctx.GlobalOption(api.TargetTripleOptionName).SetType(api.OptionString).SetDefault("arm-none-eabi")
@@ -221,14 +219,13 @@ func TestCleanHooksRejectInvalidPackagePlatform(t *testing.T) {
 				state := filepath.Join(dir, "state")
 				project := filepath.Join(dir, "project")
 				writeHealthyDefinition(t, filepath.Join(state, "extensions", "fixture", "pending", "toolchain.json"), "pending")
-				writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), fmt.Sprintf(`{"version":"1","global":{"toolchain":"pending"},"entries":{"project":{"options":{%q:true}}}}`, option))
+				writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), fmt.Sprintf(`{"version":"1","global":{"toolchain":"pending"},"entries":{"//":{"options":{%q:true}}}}`, option))
 				writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import (
     "fmt"
     "github.com/spock2300/vmake/pkg/api"
 )
 func Main(p *api.Package) {
-    p.SetRoot(true)
     p.OnClean(func(ctx *api.CleanContext) { fmt.Println("CLEAN-HOOK-RAN") })
 }
 `)
@@ -239,7 +236,7 @@ func Main(p *api.Package) {
 				if (err == nil) != all {
 					t.Fatalf("%v: %v\n%s", command, err, out)
 				}
-				if !strings.Contains(out, "OnClean") || !strings.Contains(out, "project") || !strings.Contains(out, option) || !strings.Contains(out, "must be a string") || strings.Contains(out, "CLEAN-HOOK-RAN") {
+				if !strings.Contains(out, "OnClean") || !strings.Contains(out, "//") || !strings.Contains(out, option) || !strings.Contains(out, "must be a string") || strings.Contains(out, "CLEAN-HOOK-RAN") {
 					t.Fatalf("invalid platform was not rejected before OnClean:\n%s", out)
 				}
 				_, err = os.Stat(artifact)

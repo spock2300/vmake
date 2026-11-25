@@ -23,7 +23,7 @@ func TestConfigFileCommandsWithoutBuildScripts(t *testing.T) {
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) { panic("BUILD_SCRIPT_EXECUTED") }
 `)
-	lock := `{"lockfileVersion":1,"packages":{}}`
+	lock := `{"lockfileVersion":2,"containers":{},"sources":{}}`
 	writeExtensionFile(t, filepath.Join(project, ".vmake", "vmake.lock"), lock)
 	run := func(cwd string, args ...string) string {
 		t.Helper()
@@ -114,7 +114,6 @@ import (
     "github.com/spock2300/vmake/pkg/api"
 )
 func Main(p *api.Package) {
-    p.SetRoot(true)
     p.OnConfig(func(ctx *api.ConfigContext) {
         ctx.Option("label").SetType(api.OptionString).SetDefault("default")
         ctx.Option("extra").SetType(api.OptionBool).SetDefault(false)
@@ -128,11 +127,11 @@ func Main(p *api.Package) {
     })
 }
 `)
-	a := `{"version":"1","global":{"toolchain":"healthy","mode":"debug"},"entries":{"project":{"options":{"label":"A"},"kconfig":"CONFIG_A=y\n","selected_preset":"a"}}}`
+	a := `{"version":"1","global":{"toolchain":"healthy","mode":"debug"},"entries":{"//":{"options":{"label":"A"},"kconfig":"CONFIG_A=y\n","selected_preset":"a"}}}`
 	b := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(a, "debug", "release"), `"A"`, `"B"`), "CONFIG_A", "CONFIG_B")
 	writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), a)
 	writeExtensionFile(t, filepath.Join(project, "configs", "board-b.json"), b)
-	writeExtensionFile(t, filepath.Join(project, ".vmake", "vmake.lock"), `{"lockfileVersion":1,"packages":{}}`)
+	writeExtensionFile(t, filepath.Join(project, ".vmake", "vmake.lock"), `{"lockfileVersion":2,"containers":{},"sources":{}}`)
 	run := func(args ...string) string {
 		t.Helper()
 		out, err := extensionCommand(t, state, project, args...)
@@ -174,31 +173,31 @@ func Main(p *api.Package) {
 	if _, err := os.Stat(filepath.Join(project, ".vmake", "local.json")); !os.IsNotExist(err) {
 		t.Fatalf("stateless -c build created local.json: %v", err)
 	}
-	queryStateless := run("query", "config", "project", "-c", "board-b")
+	queryStateless := run("query", "config", "//", "-c", "board-b")
 	if !strings.Contains(queryStateless, "label=B") {
 		t.Fatal(queryStateless)
 	}
 
 	run("config", "use", "board-b")
-	query := run("query", "config", "project")
+	query := run("query", "config", "//")
 	if !strings.Contains(query, "label=B") || !strings.Contains(query, `CONFIG_LABEL="B"`) {
 		t.Fatal(query)
 	}
-	if out := run("config", "--set", "project/label=B-edited", "--set", "project/extra=true"); !strings.Contains(out, "board-b.json") {
+	if out := run("config", "--set", "//:label=B-edited", "--set", "//:extra=true"); !strings.Contains(out, "board-b.json") {
 		t.Fatal(out)
 	}
 	if got := read(filepath.Join(project, "configs", "default.json")); got != a {
 		t.Fatal("--set changed inactive config")
 	}
-	if out := run("config", "--unset", "project/extra"); !strings.Contains(out, "unset project/extra") {
+	if out := run("config", "--unset", "//:extra"); !strings.Contains(out, "unset //:extra") {
 		t.Fatal(out)
 	}
 	cfg, _, err := config.LoadProject(project)
-	if err != nil || cfg.Entries["project"].KConfig != "CONFIG_B=y\n" {
+	if err != nil || cfg.Entries["//"].KConfig != "CONFIG_B=y\n" {
 		t.Fatalf("--set/--unset lost KConfig: %+v, %v", cfg, err)
 	}
-	if _, exists := cfg.Entries["project"].Options["extra"]; exists {
-		t.Fatalf("--unset did not remove project/extra: %+v", cfg.Entries["project"].Options)
+	if _, exists := cfg.Entries["//"].Options["extra"]; exists {
+		t.Fatalf("--unset did not remove //:extra: %+v", cfg.Entries["//"].Options)
 	}
 	bDir := build("B-edited")
 	if aDir == bDir {
@@ -321,6 +320,7 @@ func TestConfigCheckAndMultiRootWorkspace(t *testing.T) {
 	project := filepath.Join(dir, "project")
 	writeHealthyDefinition(t, filepath.Join(state, "extensions", "fixture", "healthy", "toolchain.json"), "healthy")
 
+	writeExtensionFile(t, filepath.Join(project, "vmake.json"), `{"roots":["//firmware"]}`)
 	writeExtensionFile(t, filepath.Join(project, "firmware", "build.go"), `package main
 import (
 	"os"
@@ -328,19 +328,18 @@ import (
 	"github.com/spock2300/vmake/pkg/api"
 )
 func Main(p *api.Package) {
-	p.SetRoot(true)
-	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("board") })
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("//board") })
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.Option("ui").SetType(api.OptionChoice).SetValues("widgets", "cafe").SetDefault("widgets")
 	})
 	p.OnConfigureDeps(func(ctx *api.DepConfigContext) {
 		if ctx.String("ui") == "cafe" {
-			ctx.SetDefault("board", "accel", true)
+			ctx.SetDefault("//board", "accel", true)
 		}
 	})
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ui := ctx.String("ui")
-		ctx.Target("fw").SetKind(api.TargetVoid).AddDeps("board:board").SetBuildFunc(func(pkg *api.Package) error {
+		ctx.Target("fw").SetKind(api.TargetVoid).AddDeps("//board:board").SetBuildFunc(func(pkg *api.Package) error {
 			return os.WriteFile(filepath.Join(pkg.SourceDir(), "..", "built-entry"), []byte("firmware:"+ui), 0644)
 		})
 	})
@@ -364,14 +363,13 @@ import (
 	"github.com/spock2300/vmake/pkg/api"
 )
 func Main(p *api.Package) {
-	p.SetName("target-app")
-	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("board") })
+	p.OnRequire(func(ctx *api.RequireContext) { ctx.AddRequires("//board") })
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.Option("suite").SetType(api.OptionChoice).SetValues("gfx", "sd").SetDefault("gfx")
 	})
 	p.OnBuild(func(ctx *api.BuildContext) {
 		suite := ctx.String("suite")
-		ctx.Target("fw").SetKind(api.TargetVoid).AddDeps("board:board").SetBuildFunc(func(pkg *api.Package) error {
+		ctx.Target("fw").SetKind(api.TargetVoid).AddDeps("//board:board").SetBuildFunc(func(pkg *api.Package) error {
 			return os.WriteFile(filepath.Join(pkg.SourceDir(), "..", "..", "built-entry"), []byte("target-app:"+suite), 0644)
 		})
 	})
@@ -382,14 +380,14 @@ func Main(p *api.Package) {
   "version": "1",
   "description": "Cafe SKU",
   "global": {"toolchain": "healthy"},
-  "entries": {"firmware": {"options": {"ui": "cafe"}}}
+  "entries": {"//firmware": {"options": {"ui": "cafe"}}}
 }`)
 	writeExtensionFile(t, filepath.Join(project, "configs", "test", "gfx.json"), `{
   "version": "1",
   "description": "Graphics target test",
-  "root": "target-app",
+  "root": "//tests/target-app",
   "global": {"toolchain": "healthy"},
-  "entries": {"target-app": {"options": {"suite": "sd"}}}
+  "entries": {"//tests/target-app": {"options": {"suite": "sd"}}}
 }`)
 
 	out, err := extensionCommand(t, state, project, "config", "check", "--all")
@@ -414,7 +412,7 @@ func Main(p *api.Package) {
 	writeExtensionFile(t, filepath.Join(project, "configs", "bad-stale.json"), `{
   "version": "1",
   "global": {"toolchain": "healthy"},
-  "entries": {"firmware": {"options": {"nonexistent_opt": true}}, "target-app": {"options": {"suite": "gfx"}}}
+  "entries": {"//firmware": {"options": {"nonexistent_opt": true}}, "//tests/target-app": {"options": {"suite": "gfx"}}}
 }`)
 	badOut, badErr := extensionCommand(t, state, project, "config", "check", "--all")
 	if badErr == nil || !strings.Contains(badOut, "FAIL configs/bad-stale.json") || !strings.Contains(badOut, "nonexistent_opt") || !strings.Contains(badOut, "not reachable") {

@@ -30,10 +30,11 @@ func TestCleanPackagesRemovesOnlyActiveBuildDirectory(t *testing.T) {
 	if _, err := build.ResolveTools(host, api.Platform{}); err != nil {
 		t.Skipf("host tools unavailable: %v", err)
 	}
-	pkg := api.NewPackage().SetName("app").SetRoot(true)
+	pkg := api.NewPackage().SetName("//")
 	r := resolver.NewResolver(nil, filepath.Join(root, ".vmake_deps"))
-	r.Graph().Packages["app"] = resolver.NewPackageNode("app", buildscript.NewSource("app", path, root, api.SourceLocal), pkg)
-	r.Graph().Order = []string{"app"}
+	r.Graph().Packages["//"] = resolver.NewPackageNode("//", api.LocalContainerID, "", resolver.SourceKindLocal, buildscript.NewSource("//", path, root, api.SourceLocal), pkg)
+	r.Graph().Order = []string{"//"}
+	r.Graph().Roots = []string{"//"}
 	ctx := &RuntimeContext{
 		Resolver: r, DepGraph: r.Graph(),
 		Config: &config.ConfigFile{Global: &config.GlobalConfig{Toolchain: "host"}},
@@ -43,9 +44,9 @@ func TestCleanPackagesRemovesOnlyActiveBuildDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, ok := insp.Package("app")
+	view, ok := insp.Package("//")
 	if !ok || view.Skipped {
-		t.Fatal("inspection does not report app")
+		t.Fatal("inspection does not report //")
 	}
 	active := view.Dirs.BuildDir
 	decoy := filepath.Join(root, "build", "other-configuration")
@@ -57,7 +58,7 @@ func TestCleanPackagesRemovesOnlyActiveBuildDirectory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := pipeline.CleanPackages([]pkgCleanEntry{{Dir: root, Name: "app"}}, ctx, false); err != nil {
+	if err := pipeline.CleanPackages([]pkgCleanEntry{{Dir: root, Name: "//"}}, ctx, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(active); !os.IsNotExist(err) {
@@ -81,10 +82,11 @@ func TestCleanPackagesKeepsOtherConfigurationsWhenActiveMissing(t *testing.T) {
 	if _, err := build.ResolveTools(host, api.Platform{}); err != nil {
 		t.Skipf("host tools unavailable: %v", err)
 	}
-	pkg := api.NewPackage().SetName("app").SetRoot(true)
+	pkg := api.NewPackage().SetName("//")
 	r := resolver.NewResolver(nil, filepath.Join(root, ".vmake_deps"))
-	r.Graph().Packages["app"] = resolver.NewPackageNode("app", buildscript.NewSource("app", path, root, api.SourceLocal), pkg)
-	r.Graph().Order = []string{"app"}
+	r.Graph().Packages["//"] = resolver.NewPackageNode("//", api.LocalContainerID, "", resolver.SourceKindLocal, buildscript.NewSource("//", path, root, api.SourceLocal), pkg)
+	r.Graph().Order = []string{"//"}
+	r.Graph().Roots = []string{"//"}
 	ctx := &RuntimeContext{
 		Resolver: r, DepGraph: r.Graph(),
 		Config: &config.ConfigFile{Global: &config.GlobalConfig{Toolchain: "host"}},
@@ -97,7 +99,7 @@ func TestCleanPackagesKeepsOtherConfigurationsWhenActiveMissing(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(decoy, "artifact.o"), []byte("data"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := pipeline.CleanPackages([]pkgCleanEntry{{Dir: root, Name: "app"}}, ctx, false); err != nil {
+	if err := pipeline.CleanPackages([]pkgCleanEntry{{Dir: root, Name: "//"}}, ctx, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(decoy); err != nil {
@@ -126,18 +128,19 @@ func TestCleanPackagesSkipsUnresolvedPackageToolchain(t *testing.T) {
 	if err := os.WriteFile(otherPath, []byte("package main\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	app := api.NewPackage().SetName("app").SetRoot(true)
-	other := api.NewPackage().SetName("other")
+	app := api.NewPackage().SetName("//")
+	other := api.NewPackage().SetName("//other")
 	r := resolver.NewResolver(nil, filepath.Join(root, ".vmake_deps"))
-	r.Graph().Packages["app"] = resolver.NewPackageNode("app", buildscript.NewSource("app", path, root, api.SourceLocal), app)
-	r.Graph().Packages["other"] = resolver.NewPackageNode("other", buildscript.NewSource("other", otherPath, otherDir, api.SourceLocal), other)
-	r.Graph().Order = []string{"app", "other"}
+	r.Graph().Packages["//"] = resolver.NewPackageNode("//", api.LocalContainerID, "", resolver.SourceKindLocal, buildscript.NewSource("//", path, root, api.SourceLocal), app)
+	r.Graph().Packages["//other"] = resolver.NewPackageNode("//other", api.LocalContainerID, "other", resolver.SourceKindLocal, buildscript.NewSource("//other", otherPath, otherDir, api.SourceLocal), other)
+	r.Graph().Order = []string{"//", "//other"}
+	r.Graph().Roots = []string{"//"}
 	ctx := &RuntimeContext{
 		Resolver: r, DepGraph: r.Graph(),
 		Config: &config.ConfigFile{Global: &config.GlobalConfig{Toolchain: "host"}},
 		Paths:  &pipeline.Paths{ProjectDir: root, DepsDir: filepath.Join(root, ".vmake_deps"), CacheDir: filepath.Join(root, "cache")},
 	}
-	config.SetEntry(ctx.Config, "other", &config.EntryConfig{Options: map[string]any{api.ToolchainOptionName: "clean-missing-toolchain"}})
+	config.SetEntry(ctx.Config, "//other", &config.EntryConfig{Options: map[string]any{api.ToolchainOptionName: "clean-missing-toolchain"}})
 	if _, err := pipeline.Inspect(ctx); err == nil {
 		t.Fatal("strict inspection accepted an unresolved package toolchain")
 	}
@@ -145,9 +148,9 @@ func TestCleanPackagesSkipsUnresolvedPackageToolchain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, ok := insp.Package("app")
+	view, ok := insp.Package("//")
 	if !ok || view.Skipped {
-		t.Fatal("inspection does not report app")
+		t.Fatal("inspection does not report //")
 	}
 	active := view.Dirs.BuildDir
 	otherDecoy := filepath.Join(otherDir, "build", "other-configuration")
@@ -159,7 +162,7 @@ func TestCleanPackagesSkipsUnresolvedPackageToolchain(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := pipeline.CleanPackages([]pkgCleanEntry{{Dir: root, Name: "app"}, {Dir: otherDir, Name: "other"}}, ctx, false); err != nil {
+	if err := pipeline.CleanPackages([]pkgCleanEntry{{Dir: root, Name: "//"}, {Dir: otherDir, Name: "//other"}}, ctx, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(active); !os.IsNotExist(err) {
@@ -190,11 +193,12 @@ func TestCleanHooksRecoverScriptError(t *testing.T) {
 	if err := toolchain.GetManager().RegisterToolchain(tcName, tc); err != nil {
 		t.Fatal(err)
 	}
-	pkg := api.NewPackage().SetName("app").SetRoot(true)
+	pkg := api.NewPackage().SetName("//")
 	pkg.OnClean(func(ctx *api.CleanContext) { ctx.String("undeclared") })
 	r := resolver.NewResolver(nil, root)
-	r.Graph().Packages["app"] = resolver.NewPackageNode("app", buildscript.NewSource("app", path, root, api.SourceLocal), pkg)
-	r.Graph().Order = []string{"app"}
+	r.Graph().Packages["//"] = resolver.NewPackageNode("//", api.LocalContainerID, "", resolver.SourceKindLocal, buildscript.NewSource("//", path, root, api.SourceLocal), pkg)
+	r.Graph().Order = []string{"//"}
+	r.Graph().Roots = []string{"//"}
 	ctx := &RuntimeContext{Resolver: r, DepGraph: r.Graph(), Config: &config.ConfigFile{Global: &config.GlobalConfig{Toolchain: tcName}}, Paths: &pipeline.Paths{ProjectDir: root}}
 	err = pipeline.ExecuteCleanHooks(ctx, false, true, true)
 	var scriptErr *api.BuildScriptError
@@ -291,15 +295,16 @@ func TestCleanHooksWithoutFilterRunForUnneededPackages(t *testing.T) {
 		t.Skipf("host tools unavailable: %v", err)
 	}
 	marker := filepath.Join(root, "unneeded-cleaned")
-	app := api.NewPackage().SetName("app").SetRoot(true)
-	unneeded := api.NewPackage().SetName("unneeded")
+	app := api.NewPackage().SetName("//")
+	unneeded := api.NewPackage().SetName("//unneeded")
 	unneeded.OnClean(func(*api.CleanContext) {
 		_ = os.WriteFile(marker, []byte("cleaned"), 0644)
 	})
 	r := resolver.NewResolver(nil, filepath.Join(root, ".vmake_deps"))
-	r.Graph().Packages["app"] = resolver.NewPackageNode("app", buildscript.NewSource("app", path, root, api.SourceLocal), app)
-	r.Graph().Packages["unneeded"] = resolver.NewPackageNode("unneeded", buildscript.NewSource("unneeded", path, root, api.SourceLocal), unneeded)
-	r.Graph().Order = []string{"app", "unneeded"}
+	r.Graph().Packages["//"] = resolver.NewPackageNode("//", api.LocalContainerID, "", resolver.SourceKindLocal, buildscript.NewSource("//", path, root, api.SourceLocal), app)
+	r.Graph().Packages["//unneeded"] = resolver.NewPackageNode("//unneeded", api.LocalContainerID, "unneeded", resolver.SourceKindLocal, buildscript.NewSource("//unneeded", path, root, api.SourceLocal), unneeded)
+	r.Graph().Order = []string{"//", "//unneeded"}
+	r.Graph().Roots = []string{"//"}
 	ctx := &RuntimeContext{
 		Resolver: r, DepGraph: r.Graph(),
 		Config: &config.ConfigFile{Global: &config.GlobalConfig{Toolchain: "host"}},
@@ -391,16 +396,16 @@ func TestRemainingBuildDirectoriesCountsOtherConfigurations(t *testing.T) {
 		if err := os.WriteFile(path, []byte("package main\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
-		return resolver.NewPackageNode(name, buildscript.NewSource(name, path, dir, api.SourceLocal), api.NewPackage().SetName(name))
+		return resolver.NewPackageNode(name, api.LocalContainerID, strings.TrimPrefix(name, "//"), resolver.SourceKindLocal, buildscript.NewSource(name, path, dir, api.SourceLocal), api.NewPackage().SetName(name))
 	}
 	appDir, extraDir := filepath.Join(root, "app"), filepath.Join(root, "extra")
 	r := resolver.NewResolver(nil, filepath.Join(root, ".vmake_deps"))
-	r.Graph().Packages["app"] = newLocalNode(appDir, "app")
-	r.Graph().Packages["extra"] = newLocalNode(extraDir, "extra")
-	r.Graph().Order = []string{"app", "extra"}
+	r.Graph().Packages["//app"] = newLocalNode(appDir, "//app")
+	r.Graph().Packages["//extra"] = newLocalNode(extraDir, "//extra")
+	r.Graph().Order = []string{"//app", "//extra"}
 	ctx := &RuntimeContext{Resolver: r, DepGraph: r.Graph()}
 	dirs := map[string]*api.PkgDirs{
-		"app": {SourceDir: appDir, BuildDir: filepath.Join(appDir, "build", "active")},
+		"//app": {SourceDir: appDir, BuildDir: filepath.Join(appDir, "build", "active")},
 	}
 	for _, dir := range []string{
 		filepath.Join(appDir, "build", "active"),

@@ -127,17 +127,17 @@ Use the `<pkg>:<target>` format to depend on targets from other packages:
 p.OnBuild(func(ctx *api.BuildContext) {
     ctx.Target("myapp").
         AddFiles("src/main.c").
-        AddDeps("lib:utils")
+        AddDeps("//lib:utils")
 })
 ```
 
-`lib:utils` means the `utils` target from the `lib` package. vmake ensures `lib:utils` builds first, links its output, and propagates its public includes.
+`//lib:utils` means the `utils` target from the `//lib` package. vmake ensures `//lib:utils` builds first, links its output, and propagates its public includes.
 
-For a package in the same local workspace, `AddDeps` alone is enough — every local `build.go` is scanned and loaded (see `examples/multi-module.md`). A **remote** package additionally needs `AddRequires` in `OnRequire`; `AddDeps` alone neither resolves nor downloads it:
+Every cross-package dependency (local or external) must be declared in `AddRequires` so the lazy loader loads its `build.go`, and external containers must be declared in `vmake.json` `modules` (with optional source version constraints in `sources`):
 
 ```go
 p.OnRequire(func(ctx *api.RequireContext) {
-    ctx.AddRequires("official/zlib >=1.2")
+    ctx.AddRequires("official/zlib")
 })
 
 p.OnBuild(func(ctx *api.BuildContext) {

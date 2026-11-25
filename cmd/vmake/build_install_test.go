@@ -30,7 +30,7 @@ func TestInstallReusesBuildDeclaration(t *testing.T) {
 	declared := api.NewBuildContext("app", nil)
 	api.BindPackageExecBuildFuncs(pkg, root, func(fn api.BuildFunc) { fn(declared) })
 	targets := map[string]map[string]*api.Target{"app": declared.GetTargets()}
-	graph, err := build.NewBuildGraph(targets, nil, nil)
+	graph, err := build.NewBuildGraph(targets, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestInstallPrefixPriority(t *testing.T) {
 			declared := api.NewBuildContext("app", nil)
 			api.BindPackageExecBuildFuncs(pkg, root, func(fn api.BuildFunc) { fn(declared) })
 			targets := map[string]map[string]*api.Target{"app": declared.GetTargets()}
-			graph, err := build.NewBuildGraph(targets, nil, nil)
+			graph, err := build.NewBuildGraph(targets, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
