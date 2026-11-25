@@ -64,3 +64,11 @@ S1–S5 与 07 **无关**，可先落；只有 S6 依赖 07 的 cmd 迁移（同
 - 单行转发计数：**28 → 23**（AST 口径）。
 - 验证：`go build`/`go vet` 干净，`TestClean*`/`TestDistclean`/`TestPkgClean*`/`TestBuildReport*` 全绿，`./cmd/vmake ./pkg/... ./internal/...` 无失败。
 - 剩余按计划：S1（10 个零生产转发 + 4 个新测试文件 + 删 2 个测试文件）、S2（9 个 pipeline 转发内联 16 处）、S4（`getRepoManager`/`getPluginManager` 24 处）、S6（catalog 5 个，依赖 07 已就绪）。
+
+## 进展（S6 部分：3 个有生产调用点的 catalog 转发）
+
+- 内联 `searchNativeRepo`（`pkg_discover.go` 1 处）、`listNativePackagesAt`（`completion.go` 1 处，补 `catalog` import）、`pkgEntryMatches`（`pkg_discover.go` 1 处）。
+- 测试同步改到真实目标：`pkg_discover_test.go` 的 `catalog.ListNativePackagesAt` / `catalog.EntryMatches` / `catalog.SearchNativeRepo(...)`（后者需要 `catalog.SearchOptions{}` 而不是 `pkgSearchOptions{}`——类型不同，编译器抓到了）。
+- 单行转发计数：**23 → 21**。
+- 剩余：S1（10 个零生产 + 4 个新测试文件 + 删 2 个测试文件，最大一块）、S2（9 个 pipeline 转发、16 处）、S4（`getRepoManager`/`getPluginManager`、24 处）、S6 余下（`sortedPackageVersions`/`addRequiresSnippet`，只被测试调用，需随测试搬去 `pkg/catalog`）。
+- 验证：build/vet 干净，`TestPkg*`/`TestSearch*`/`TestShow*`/`TestCompletion*`/`TestNative*` 全绿，全量套件无失败。

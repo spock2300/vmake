@@ -11,6 +11,7 @@ import (
 
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/catalog"
 	"github.com/spock2300/vmake/pkg/plugin"
 	"github.com/spock2300/vmake/pkg/repo"
 	"github.com/spock2300/vmake/pkg/toolchain"
@@ -222,7 +223,7 @@ func completeCatalogPkgRef(cmd *cobra.Command, args []string, toComplete string)
 			if depsDir == "" {
 				continue
 			}
-			names, _ := listNativePackagesAt(depsDir, info.Name)
+			names, _ := catalog.ListNativePackagesAt(depsDir, info.Name)
 			for _, name := range names {
 				refs = append(refs, info.Name+"/"+name)
 			}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/catalog"
 	"github.com/spock2300/vmake/pkg/repo"
 )
 
@@ -20,7 +21,7 @@ func TestListNativePackagesAt(t *testing.T) {
 	writePkgTestFile(t, filepath.Join(depsDir, "native", "libbar", "src", "README.md"), "no build")
 	writePkgTestFile(t, filepath.Join(depsDir, "native", "nosrc", "build.go"), "package main")
 
-	names, err := listNativePackagesAt(depsDir, "native")
+	names, err := catalog.ListNativePackagesAt(depsDir, "native")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +39,7 @@ func TestSearchNativeRepoWarnsWhenNothingCached(t *testing.T) {
 	}
 	writePkgTestFile(t, filepath.Join(projectOverride, "configs", "default.json"), `{"version":"1"}`)
 
-	entries, warnings := searchNativeRepo("test_build", pkgSearchOptions{}, nil)
+	entries, warnings := catalog.SearchNativeRepo(catalogEnv(getRepoManager()), "test_build", catalog.SearchOptions{}, nil)
 	if len(entries) != 0 {
 		t.Fatalf("entries = %+v", entries)
 	}
@@ -113,11 +114,11 @@ func TestPkgEntryMatches(t *testing.T) {
 		License:     "Apache-2.0",
 	}
 	for _, pattern := range []string{"", "mbed", "official/mbedtls", "tls", "apache", "2.0"} {
-		if !pkgEntryMatches(entry, pattern) {
+		if !catalog.EntryMatches(entry, pattern) {
 			t.Errorf("pattern %q did not match", pattern)
 		}
 	}
-	if pkgEntryMatches(entry, "zlib") {
+	if catalog.EntryMatches(entry, "zlib") {
 		t.Error("unrelated pattern matched")
 	}
 }

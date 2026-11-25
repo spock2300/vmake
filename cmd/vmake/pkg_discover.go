@@ -122,7 +122,12 @@ func searchPackages(opts pkgSearchOptions) (*pkgSearchResult, error) {
 		var entries []pkgSearchEntry
 		var warnings []string
 		if info.Native {
-			entries, warnings = searchNativeRepo(info.Name, opts, statuses)
+			entries, warnings = catalog.SearchNativeRepo(catalogEnv(getRepoManager()), info.Name, catalog.SearchOptions{
+				Pattern:    opts.pattern,
+				Repo:       opts.repo,
+				Details:    opts.details,
+				ForProject: opts.forProject,
+			}, statuses)
 		} else {
 			entries, warnings = catalog.Open(catalogEnv(mgr)).Search(info.Name, catalog.SearchOptions{
 				Pattern:    opts.pattern,
@@ -137,7 +142,7 @@ func searchPackages(opts pkgSearchOptions) (*pkgSearchResult, error) {
 
 	filtered := make([]pkgSearchEntry, 0, len(result.Packages))
 	for _, entry := range result.Packages {
-		if pkgEntryMatches(entry, opts.pattern) {
+		if catalog.EntryMatches(entry, opts.pattern) {
 			filtered = append(filtered, entry)
 		}
 	}
@@ -161,23 +166,10 @@ func catalogEnv(mgr *repo.RepoManager) catalog.Env {
 	}
 }
 
-func searchNativeRepo(repoName string, opts pkgSearchOptions, statuses *pkgStatusReader) ([]pkgSearchEntry, []string) {
-	return catalog.SearchNativeRepo(catalogEnv(getRepoManager()), repoName, catalog.SearchOptions{
-		Pattern:    opts.pattern,
-		Repo:       opts.repo,
-		Details:    opts.details,
-		ForProject: opts.forProject,
-	}, statuses)
-}
-
 func loadPackageScript(src buildscript.Source) (*api.Package, error) {
 	restore := quietpkg.Enter(quietpkg.Script)
 	defer restore()
 	return catalog.LoadPackageScript(src, repoScriptTrusted)
-}
-
-func listNativePackagesAt(depsDir, repoName string) ([]string, error) {
-	return catalog.ListNativePackagesAt(depsDir, repoName)
 }
 
 func loadPkgShow(repoName, pkgName, version string) (*pkgShowResult, error) {
@@ -211,10 +203,6 @@ func newPkgStatusReaderAt(projectDir, depsDir, cacheDir string) (*pkgStatusReade
 		}
 	}
 	return catalog.NewStatusReaderAt(projectDir, depsDir, cacheDir, installed)
-}
-
-func pkgEntryMatches(entry pkgSearchEntry, pattern string) bool {
-	return catalog.EntryMatches(entry, pattern)
 }
 
 func sortedPackageVersions(pkg *api.Package) []string {
