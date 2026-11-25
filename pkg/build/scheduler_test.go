@@ -79,14 +79,14 @@ func TestCollectDepArtifactsPublicAttributesAndLinkable(t *testing.T) {
 		GlobalFlags: &[4][]string{},
 	})
 
-	wantMid := s.getTargetOutputPath(&BuildNode{PkgName: "mid", Target: mid})
+	wantMid := PlacementFor(mid, s.pkgs["mid"], s.targetOS("mid")).OutputPath
 	if err := os.MkdirAll(filepath.Dir(wantMid), 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(wantMid, []byte("arch"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	wantLeaf := s.getTargetOutputPath(&BuildNode{PkgName: "leaf", Target: leaf})
+	wantLeaf := PlacementFor(leaf, s.pkgs["leaf"], s.targetOS("leaf")).OutputPath
 	if err := os.MkdirAll(filepath.Dir(wantLeaf), 0755); err != nil {
 		t.Fatal(err)
 	}

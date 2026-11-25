@@ -61,7 +61,7 @@ func nativeTestSchedulerWithSession(t *testing.T, dir string, session *Session, 
 
 func readNativeValue(t *testing.T, scheduler *Scheduler, target string) string {
 	t.Helper()
-	output := scheduler.getTargetOutputPath(scheduler.graph.Nodes["p:"+target])
+	output := PlacementFor(scheduler.graph.Nodes["p:"+target].Target, scheduler.pkgs[scheduler.graph.Nodes["p:"+target].PkgName], scheduler.targetOS(scheduler.graph.Nodes["p:"+target].PkgName)).OutputPath
 	data, err := exec.Command(output).CombinedOutput()
 	if err != nil {
 		t.Fatalf("run %s: %s: %v", output, data, err)
@@ -218,7 +218,7 @@ func TestNativeLinkSignatureTracksSourceRemovalAndFlags(t *testing.T) {
 	if err := s.Build("p:library"); err != nil {
 		t.Fatal(err)
 	}
-	archive := s.getTargetOutputPath(s.graph.Nodes["p:library"])
+	archive := PlacementFor(s.graph.Nodes["p:library"].Target, s.pkgs[s.graph.Nodes["p:library"].PkgName], s.targetOS(s.graph.Nodes["p:library"].PkgName)).OutputPath
 	out, err := exec.Command(s.resolvedTools.AR, "t", archive).CombinedOutput()
 	if err != nil {
 		t.Fatalf("archive members: %s: %v", out, err)
@@ -352,7 +352,7 @@ func TestPrebuiltPostLinkFailurePreservesInputAndRetries(t *testing.T) {
 	if err != nil || string(original) != "original" {
 		t.Fatalf("prebuilt source mutated: %q: %v", original, err)
 	}
-	output := s.getTargetOutputPath(s.graph.Nodes["p:app"])
+	output := PlacementFor(s.graph.Nodes["p:app"].Target, s.pkgs[s.graph.Nodes["p:app"].PkgName], s.targetOS(s.graph.Nodes["p:app"].PkgName)).OutputPath
 	data, err := os.ReadFile(output)
 	if err != nil || string(data) != "original:changed" {
 		t.Fatalf("post-link retry reused partial output: %q: %v", data, err)
@@ -374,7 +374,7 @@ func TestPrebuiltWithoutPostLinkRetainsSymlink(t *testing.T) {
 	if err := s.Build("p:prebuilt"); err != nil {
 		t.Fatal(err)
 	}
-	output := s.getTargetOutputPath(s.graph.Nodes["p:prebuilt"])
+	output := PlacementFor(s.graph.Nodes["p:prebuilt"].Target, s.pkgs[s.graph.Nodes["p:prebuilt"].PkgName], s.targetOS(s.graph.Nodes["p:prebuilt"].PkgName)).OutputPath
 	info, err := os.Lstat(output)
 	if err != nil || info.Mode()&os.ModeSymlink == 0 {
 		t.Fatalf("prebuilt output is not a symlink: %v", err)
@@ -394,7 +394,7 @@ func TestPublishedHeadersRefreshWhenLibraryIsUnchanged(t *testing.T) {
 	if err := s.Build("p:library"); err != nil {
 		t.Fatal(err)
 	}
-	output := s.getTargetOutputPath(s.graph.Nodes["p:library"])
+	output := PlacementFor(s.graph.Nodes["p:library"].Target, s.pkgs[s.graph.Nodes["p:library"].PkgName], s.targetOS(s.graph.Nodes["p:library"].PkgName)).OutputPath
 	before, err := FileHash(output)
 	if err != nil {
 		t.Fatal(err)

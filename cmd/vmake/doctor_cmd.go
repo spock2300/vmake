@@ -228,14 +228,7 @@ func checkAutoWire(src buildscript.Source) []doctorFinding {
 }
 
 func resolveDoctorPreferredToolchain(workDir string, _ *config.ConfigFile) string {
-	restoreScope := quietpkg.ProbeScope(true, true)
-	restoreOut := quietpkg.SilenceStdout()
-	restoreErr := quietpkg.SilenceStderr()
-	defer func() {
-		restoreOut()
-		restoreErr()
-		restoreScope()
-	}()
+	defer quietpkg.Enter(quietpkg.ProbeSilent)()
 
 	ctx, err := openProject(projectOptions{
 		root:           workDir,

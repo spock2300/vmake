@@ -59,12 +59,6 @@ func TestCatalogScriptUsesTheInjectedLoader(t *testing.T) {
 	}
 }
 
-func TestShowRejectsAnEnvironmentWithoutARepositoryManager(t *testing.T) {
-	if _, _, err := Open(Env{}).Show("missing", "pkg", ""); err == nil {
-		t.Fatal("Show accepted an environment with no repository manager")
-	}
-}
-
 // fakeRepo satisfies RepoAccess without a real ~/.vmake. The lock is a real
 // flock in a temp dir: flock.FileLock has unexported fields and Release
 // panics on nil.

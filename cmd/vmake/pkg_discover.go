@@ -119,23 +119,12 @@ func searchPackages(opts pkgSearchOptions) (*pkgSearchResult, error) {
 		if opts.repo != "" && info.Name != opts.repo {
 			continue
 		}
-		var entries []pkgSearchEntry
-		var warnings []string
-		if info.Native {
-			entries, warnings = catalog.SearchNativeRepo(catalogEnv(repo.NewRepoManager(getReposDir())), info.Name, catalog.SearchOptions{
-				Pattern:    opts.pattern,
-				Repo:       opts.repo,
-				Details:    opts.details,
-				ForProject: opts.forProject,
-			}, statuses)
-		} else {
-			entries, warnings = catalog.Open(catalogEnv(mgr)).Search(info.Name, catalog.SearchOptions{
-				Pattern:    opts.pattern,
-				Repo:       opts.repo,
-				Details:    opts.details,
-				ForProject: opts.forProject,
-			}, statuses)
-		}
+		entries, warnings := catalog.Open(catalogEnv(mgr)).Search(info.Name, catalog.SearchOptions{
+			Pattern:    opts.pattern,
+			Repo:       opts.repo,
+			Details:    opts.details,
+			ForProject: opts.forProject,
+		}, statuses)
 		result.Packages = append(result.Packages, entries...)
 		result.Warnings = append(result.Warnings, warnings...)
 	}

@@ -57,7 +57,6 @@ func (n *PackageNode) IsNative() bool {
 	return n.Native != nil
 }
 
-// SourceKind names where a package's source comes from.
 type SourceKind string
 
 const (
@@ -68,8 +67,6 @@ const (
 
 func (k SourceKind) String() string { return string(k) }
 
-// GitCompatName is the 1.x spelling: the lockfile and `vmake deps status`
-// call a local package "git". Renaming it is a 2.0 change (DD-34).
 func (k SourceKind) GitCompatName() string {
 	if k == SourceKindLocal {
 		return "git"
@@ -77,7 +74,6 @@ func (k SourceKind) GitCompatName() string {
 	return string(k)
 }
 
-// SourceKind derives the kind from the node's source and native metadata.
 func (n *PackageNode) SourceKind() SourceKind {
 	if n.IsLocal() {
 		return SourceKindLocal

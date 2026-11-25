@@ -15,12 +15,10 @@ import (
 )
 
 type runEnv struct {
-	VmakeDir string
-	// LoadPlugins is off in tests so an invocation never reads the real ~/.vmake.
+	VmakeDir    string
 	LoadPlugins bool
 }
 
-// run executes one command invocation and returns its exit code.
 func run(argv []string, stdout, stderr io.Writer, env runEnv) int {
 	resetProcessState(env)
 	restoreOut := pipeStdout(stdout)

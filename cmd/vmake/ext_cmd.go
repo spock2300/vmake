@@ -254,8 +254,6 @@ func releaseExtensionRepoLocks() {
 	extensionRepoLocks = nil
 }
 
-// pluginCommands holds the commands a plugin registered, so a later
-// invocation can re-add them without re-running the plugin's side effects.
 var pluginCommands []*cobra.Command
 
 func loadPlugins() {

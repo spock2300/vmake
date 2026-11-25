@@ -84,13 +84,7 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 			if depPkg.InstallDir != "" && depPkg.BuildDir == "" {
 				depOutput = filepath.Join(depPkg.InstallDir, "lib", depPlacement.InstallName)
 			}
-			// A PE shared library is linked against its import library; a
-			// prebuilt target ships only the declared file, so consumers link
-			// that file and the placement leaves ImportLib empty.
 			if depPlacement.ImportLib != "" {
-				// Reuse the rule but keep this output base: the placement
-				// resolves against the package source dir, while the dependency
-				// artifact is looked up beside the peer output.
 				depOutput = importLibraryPath(depOutput, s.targetOS(depNode.PkgName), depNode.Target.Kind())
 			}
 			if !fs.FileExists(depOutput) {
@@ -431,12 +425,6 @@ func (s *Scheduler) checkLibDependencies(resolved *ResolvedTarget) {
 			vlog.Verbose("  NOTE %s: library dependency %s provides build ordering/includes only; it is not merged into the %s output", resolved.Node.FullName, filepath.Base(artifact), kind)
 		}
 	}
-}
-
-// getTargetOutputPath projects the placement's output path for callers that
-// only need that one field.
-func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
-	return PlacementFor(node.Target, s.pkgs[node.PkgName], s.targetOS(node.PkgName)).OutputPath
 }
 
 func matchesAny(path string, patterns []string) bool {

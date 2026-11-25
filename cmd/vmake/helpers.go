@@ -18,10 +18,6 @@ func (e *usageError) Error() string { return e.err.Error() }
 
 func (e *usageError) Unwrap() error { return e.err }
 
-// exitError is the panic value a command uses to terminate the invocation. It
-// unwinds through every deferred cleanup before run turns it back into an exit
-// code, so a fatal path no longer skips the restores, closes and releases the
-// command had queued.
 type exitError struct {
 	code  int
 	cause error
@@ -34,8 +30,6 @@ func (e *exitError) Error() string {
 	return fmt.Sprintf("exit status %d", e.code)
 }
 
-// VmakeExitCode marks the signal for internal/scriptcall, which cannot import
-// this package. The method name must not match a standard error's.
 func (e *exitError) VmakeExitCode() int { return e.code }
 
 func fatalErr(err error) {

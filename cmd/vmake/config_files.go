@@ -217,10 +217,7 @@ func newConfigCheckCmd() *cobra.Command {
 }
 
 func checkSingleConfigProfile(cmd *cobra.Command, configOverride string) ([]string, error) {
-	restoreStdout := quietpkg.SilenceStdout()
-	defer restoreStdout()
-	restoreStderr := quietpkg.SilenceStderr()
-	defer restoreStderr()
+	defer quietpkg.Enter(quietpkg.Script)()
 
 	ctx, err := openProject(projectOptions{
 		execution:      cmd.Context(),

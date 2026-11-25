@@ -14,9 +14,6 @@ func main() {
 	Execute()
 }
 
-// loadPluginsForCommand loads installed plugins at most once per process. A
-// later invocation re-adds the recorded commands instead of re-running the
-// plugins, so their toolchain and global-flag registrations happen exactly once.
 func loadPluginsForCommand(args []string) {
 	if pluginsLoaded {
 		return

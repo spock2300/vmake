@@ -63,7 +63,7 @@ func TestPipelineUsesPackageToolchainAndCanonicalDependencyPaths(t *testing.T) {
 					t.Fatalf("cross-toolchain status for %s = %+v", fullName, statuses)
 				}
 			}
-			output := resolveWorkPath(dir, scheduler.getTargetOutputPath(graph.Nodes["q:app"]))
+			output := resolveWorkPath(dir, PlacementFor(graph.Nodes["q:app"].Target, scheduler.pkgs[graph.Nodes["q:app"].PkgName], scheduler.targetOS(graph.Nodes["q:app"].PkgName)).OutputPath)
 			result, err := exec.Command(output).CombinedOutput()
 			if err != nil || strings.TrimSpace(string(result)) != "42" {
 				t.Fatalf("package compiler result %q: %v", result, err)

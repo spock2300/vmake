@@ -5,8 +5,6 @@ import (
 	"reflect"
 )
 
-// exitSignal marks a deliberate command termination. The method name is
-// vmake-specific on purpose: *exec.ExitError already has ExitCode().
 type exitSignal interface {
 	VmakeExitCode() int
 }

@@ -15,8 +15,6 @@ type TargetEdge = build.TargetEdge
 
 type GraphIssue = build.GraphIssue
 
-// IssueFor projects a resolve error onto a graph issue. The kind travels on the
-// error, so this never inspects the message.
 func IssueFor(err error) GraphIssue {
 	kind := build.IssueKindResolve
 	var resolveErr *build.ResolveError

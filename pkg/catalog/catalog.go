@@ -77,9 +77,6 @@ type StatusReader struct {
 	sources   *repo.SourceManager
 }
 
-// RepoAccess is the subset of the repository manager the catalog needs. The
-// production manager satisfies it directly; tests fake it so Search and Show
-// can run without a real ~/.vmake.
 type RepoAccess interface {
 	Exists(name string) bool
 	IsNative(name string) bool
@@ -90,17 +87,12 @@ type RepoAccess interface {
 }
 
 type Env struct {
-	Repo RepoAccess
-	// Commit resolves a working tree's HEAD. Nil falls back to the git CLI.
+	Repo        RepoAccess
 	Commit      func(dir string) (string, error)
 	ProjectDir  string
 	CacheDir    string
 	RepoTrusted func(repoName string) (bool, error)
-	// LoadScript interprets a package's build.go. The caller owns the quiet
-	// scope so this package never touches process output.
-	LoadScript func(buildscript.Source) (*api.Package, error)
-	// Installed names the packages the current install manifest lists.
-	Installed map[string]bool
+	LoadScript  func(buildscript.Source) (*api.Package, error)
 }
 
 func NewStatusReaderAt(projectDir, depsDir, cacheDir string, installed map[string]bool) (*StatusReader, error) {
@@ -198,7 +190,6 @@ func BuildPackageSource(mgr RepoAccess, repoName, pkgName, buildGo, commit strin
 	return src, nil
 }
 
-// loadScript uses the injected loader when the caller provided one.
 func (e Env) commit(dir string) (string, error) {
 	if e.Commit != nil {
 		return e.Commit(dir)
@@ -264,9 +255,6 @@ func ListNativePackagesAt(depsDir, repoName string) ([]string, error) {
 
 func SearchRegistryRepo(env Env, repoName string, opts SearchOptions, statuses *StatusReader) ([]SearchEntry, []string) {
 	mgr := env.Repo
-	if mgr == nil {
-		return nil, []string{fmt.Sprintf("%s: no repository manager configured", repoName)}
-	}
 	names, err := mgr.ListPackages(repoName)
 	if err != nil {
 		return nil, []string{fmt.Sprintf("%s: %v", repoName, err)}
@@ -479,16 +467,12 @@ func TrustWarning(repoName, source string) string {
 	return fmt.Sprintf("build.go is not trusted; run 'vmake repo trust %s'", repoName)
 }
 
-// Catalog is the package catalog opened against one environment. Callers hold
-// it instead of threading Env through every call.
 type Catalog struct {
 	env Env
 }
 
-// Open binds the catalog to env.
 func Open(env Env) *Catalog { return &Catalog{env: env} }
 
-// Search lists packages in one repository.
 func (c *Catalog) Search(repoName string, opts SearchOptions, statuses *StatusReader) ([]SearchEntry, []string) {
 	if c.env.repoIsNative(repoName) {
 		return SearchNativeRepo(c.env, repoName, opts, statuses)
@@ -496,25 +480,20 @@ func (c *Catalog) Search(repoName string, opts SearchOptions, statuses *StatusRe
 	return SearchRegistryRepo(c.env, repoName, opts, statuses)
 }
 
-// Show describes one package.
 func (c *Catalog) Show(repoName, pkgName, version string) (*ShowResult, bool, error) {
 	return ShowPackage(c.env, repoName, pkgName, version)
 }
 
-// Script interprets one package's build.go through the injected loader.
 func (c *Catalog) Script(src buildscript.Source) (*api.Package, error) {
 	return c.env.loadScript(src)
 }
 
 func (e Env) repoIsNative(repoName string) bool {
-	return e.Repo != nil && e.Repo.IsNative(repoName)
+	return e.Repo.IsNative(repoName)
 }
 
 func ShowPackage(env Env, repoName, pkgName, version string) (*ShowResult, bool, error) {
 	mgr := env.Repo
-	if mgr == nil {
-		return nil, true, fmt.Errorf("no repository manager configured")
-	}
 	if !mgr.Exists(repoName) {
 		return nil, true, fmt.Errorf("repository %q not found; run 'vmake repo list'", repoName)
 	}

@@ -102,8 +102,6 @@ func requiresExclusiveStorage(cmd *cobra.Command) bool {
 }
 
 func Execute() {
-	// Pass the effective vmakeDir through so a caller that overrode the package
-	// default before starting the CLI keeps its override across the reset.
 	os.Exit(run(os.Args[1:], nil, nil, runEnv{VmakeDir: vmakeDir, LoadPlugins: true}))
 }
 

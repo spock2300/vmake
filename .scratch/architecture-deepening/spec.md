@@ -57,11 +57,18 @@
 | 04 单一放置值 | `bc0861f` | `PlacementFor` 独占 PE 导入库与 `Prebuilt` 规则；解析阶段内联 `.a` 拼接删除 |
 | 05 类型化错误 kind | `16ab40c` | `build.ResolveError` + `internal/issue` sentinel；两处 `strings.Contains` 报文嗅探删除 |
 | 06 巡检前导 | `41ee663` | `attachInspectionGraphOptions` 单路径；补全复用前导并首次有测试 |
-| 07 包目录接口 | `3c3ddac` `1a5e97a` `1b3fed3` `f6ea3f5` | catalog 不再依赖 pipeline；`RepoAccess` 注入；`Open(env)` 门面；测试 1 → 9 |
+| 07 包目录接口 | `3c3ddac` `da05c16` `1b3fed3` `f6ea3f5` | catalog 不再依赖 pipeline；`RepoAccess` 注入；`Open(env)` 门面；测试 1 → 9 |
 | 08 转发层 | `32faa43` `ebb7cf0` `6319713` `199971a` `40f36aa` `4830a0e` | 单语句转发 28 → 1（剩下那个是组合函数值，非转发） |
-| 09 来源词表 | `1b6f630` + 本轮 | `resolver.SourceKind` + `GitCompatName`；四处生产者与 catalog 字面量归位；`local ≡ git` 进入 INSPECT.md、技能与 GLOSSARY |
+| 09 来源词表 | `1b6f630` `545b45c` | `resolver.SourceKind` + `GitCompatName`；四处生产者与 catalog 字面量归位；`local ≡ git` 进入 INSPECT.md、技能与 GLOSSARY |
 
 全部门禁：`go build`、全量 `go vet`、`./cmd/vmake ./pkg/... ./internal/...`、9 个夹具字节一致性、`TestSkill*`、`vmake skill install`。
+
+**未完成的验收项（如实记录，不算通过）**：
+
+- 03：`ProbeSilent`/`Script` 意图已落，`doctor` 与 `config check` 改成一次 `defer quiet.Enter(...)()`；`inspect`/`deps graph`/`withReport` 仍按需分段恢复（`inspect` 在函数中途恢复 stderr 再写 JSON），所以"12 处手工堆叠全部消失"只做到一部分。
+- 06：`render` 仍收 `*pipeline.UnifiedGraph`（`deps_graph_cmd.go`），因为 `pipeline.WhyQuery` 需要整张图；DD-40 决策 4 的"只读 `inspection.GraphFacts()`"未实现。补全复用 `openDepsInspection` 而非 `runDepsInspection`。"blocked-write 与 inspect 一致"的验收测试未补。
+- 04/05/09：`inspect`/`deps check --json` 的 9 夹具字节一致性由 `test_data/_snapshot` 覆盖（`baseline/` 未改动即为零漂移），但没有把两命令的对照产物提交进仓库。
+- 08：指标达成（28 → 1），但 DD-40 决策 7 写的"10 个测试搬进 `pkg/pipeline`"与实际不符——实际是 2 个进 `pkg/catalog`、2 个进 `pkg/pipeline`、其余端到端 CLI 测试原地保留只改调用目标。
 
 ## 验证注意事项（本轮实测）
 

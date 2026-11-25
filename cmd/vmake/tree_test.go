@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"io"
-
-	"github.com/spf13/cobra"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	vlog "github.com/spock2300/vmake/pkg/log"
 )

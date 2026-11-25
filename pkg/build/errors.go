@@ -29,8 +29,6 @@ func wrapTargetError(target, stage string, err error) error {
 	return &TargetError{Target: target, Stage: stage, Err: err}
 }
 
-// Issue kind values. They are the documented `kind` of a graph issue, so they
-// stay strings and keep their current spelling.
 const (
 	IssueKindMissingDependency  = "missing-dependency"
 	IssueKindPackageCycle       = "package-cycle"
@@ -39,8 +37,6 @@ const (
 	IssueKindResolve            = "resolve"
 )
 
-// ResolveError carries the kind of a graph-resolution failure so callers do not
-// have to recognise the message text.
 type ResolveError struct {
 	Kind string
 	Err  error
