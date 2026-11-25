@@ -453,8 +453,42 @@ func TrustWarning(repoName, source string) string {
 	return fmt.Sprintf("build.go is not trusted; run 'vmake repo trust %s'", repoName)
 }
 
+// Catalog is the package catalog opened against one environment. Callers hold
+// it instead of threading Env through every call.
+type Catalog struct {
+	env Env
+}
+
+// Open binds the catalog to env.
+func Open(env Env) *Catalog { return &Catalog{env: env} }
+
+// Search lists packages in one repository.
+func (c *Catalog) Search(repoName string, opts SearchOptions, statuses *StatusReader) ([]SearchEntry, []string) {
+	if c.env.repoIsNative(repoName) {
+		return SearchNativeRepo(c.env, repoName, opts, statuses)
+	}
+	return SearchRegistryRepo(c.env, repoName, opts, statuses)
+}
+
+// Show describes one package.
+func (c *Catalog) Show(repoName, pkgName, version string) (*ShowResult, bool, error) {
+	return ShowPackage(c.env, repoName, pkgName, version)
+}
+
+// Script interprets one package's build.go through the injected loader.
+func (c *Catalog) Script(src buildscript.Source) (*api.Package, error) {
+	return c.env.loadScript(src)
+}
+
+func (e Env) repoIsNative(repoName string) bool {
+	return e.RepoManager != nil && e.RepoManager.IsNative(repoName)
+}
+
 func ShowPackage(env Env, repoName, pkgName, version string) (*ShowResult, bool, error) {
 	mgr := env.RepoManager
+	if mgr == nil {
+		return nil, true, fmt.Errorf("no repository manager configured")
+	}
 	if !mgr.Exists(repoName) {
 		return nil, true, fmt.Errorf("repository %q not found; run 'vmake repo list'", repoName)
 	}

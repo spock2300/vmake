@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -44,5 +45,20 @@ func TestEnvLoadScriptPrefersInjectedLoader(t *testing.T) {
 	}
 	if !called || pkg == nil {
 		t.Fatalf("injected loader was not used: called=%v pkg=%v", called, pkg)
+	}
+}
+
+func TestCatalogScriptUsesTheInjectedLoader(t *testing.T) {
+	c := Open(Env{LoadScript: func(buildscript.Source) (*api.Package, error) {
+		return nil, errors.New("interpretation failed")
+	}})
+	if _, err := c.Script(buildscript.Source{}); err == nil {
+		t.Fatal("Catalog.Script swallowed the loader error")
+	}
+}
+
+func TestShowRejectsAnEnvironmentWithoutARepositoryManager(t *testing.T) {
+	if _, _, err := Open(Env{}).Show("missing", "pkg", ""); err == nil {
+		t.Fatal("Show accepted an environment with no repository manager")
 	}
 }

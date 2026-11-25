@@ -50,3 +50,11 @@
 2. 验收里"测试覆盖 registry/native 的 `Search`、`Show`、`Script` 失败路径"只做到 `loadScript`。尝试给 `ShowPackage` 写空 `Env` 测试时发现它会 nil-deref（`catalog.go:458`，`Env.RepoManager` 为 nil）——这是既有行为，说明该函数仍假设调用方给全依赖，正是本卡想根除的东西；要真正可测，得先有 `Open(env)` 与可注入的仓库访问。
 
 结论：依赖方向已经掰正（catalog 现在是叶子），`Search`/`Show` 的接口收敛留作本卡的剩余部分。
+
+## 第二段记录
+
+- 引入 `catalog.Open(env) *Catalog` 与三个方法 `Search(repo, opts, statuses)`、`Show(repo, pkg, version)`、`Script(src)`；`Search` 依 `Env.repoIsNative` 分派 registry/native。这是薄门面：包级函数保留，现有调用方未迁。
+- `ShowPackage` 在 `Env.RepoManager == nil` 时返回 error 而不是 nil-deref——原来它假设调用方喂齐依赖，这让任何"不完整 Env"测试都直接 panic。
+- 新增两个测试：`TestCatalogScriptUsesTheInjectedLoader`（假加载器，错误透传）、`TestShowRejectsAnEnvironmentWithoutARepositoryManager`。
+
+仍未做：`cmd/vmake` 的 18 处 `catalog.*` 调用迁到 `Open(env).*`；以及 registry/native 的 `Search` 覆盖（需要可注入的仓库访问，`repo.RepoManager` 目前只有真实目录实现）。
