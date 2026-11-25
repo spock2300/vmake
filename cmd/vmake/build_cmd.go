@@ -106,9 +106,6 @@ func checkoutManifestLocals(ctx *RuntimeContext, mf *installManifest) error {
 	return pipeline.CheckoutManifestLocals(ctx, mf)
 }
 
-func manifestProjectDir(ctx *RuntimeContext) (string, error) {
-	return pipeline.ManifestProjectDir(ctx)
-}
 
 func resolveManifestEntryPath(projectDir, entryPath string) (string, error) {
 	return pipeline.ResolveManifestEntryPath(projectDir, entryPath)

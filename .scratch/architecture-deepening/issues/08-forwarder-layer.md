@@ -89,3 +89,15 @@ S1–S5 与 07 **无关**，可先落；只有 S6 依赖 07 的 cmd 迁移（同
 - 单行转发计数：**19 → 15**（累计 28 → 15）。
 - 验证：build/vet 干净，`./cmd/vmake ./pkg/... ./internal/...` 全绿。
 - 剩余：S1 其余 6 个（`manifestProjectDir` 死代码、`resolveManifestEntryPath`、`installOnePackage`、`writeManifest`、`remainingBuildDirectories`、`checkoutLocal`、`cleanAllRemoteOutputs`）、S2（9 个 pipeline 转发、16 处）。
+
+## 进展（`manifestProjectDir` 死代码）
+
+删除唯一完全无引用的转发 `manifestProjectDir`（`build_cmd.go`）。单行转发计数 **15 → 14**（累计 28 → 14）。build/vet 与全量套件绿。
+
+### 下一步的实测情况（重要）
+
+S1 剩下的 7 个不是"搬测试"那么机械。实际内容是：
+
+- `build_install_test.go`（245 行，4 个测试）与 `build_manifest_test.go`（230 行，7 个测试）都是**端到端 CLI 测试**——它们通过 `run()`/子进程建真实工程再断言，而不是直接调 `pipeline.InstallOnePackage`。搬到 `pkg/pipeline` 等于把 CLI 测试改写成流水线单测，plan-08 的映射里已把其中 3 条标为 "rewrite"。
+- 因此 S1 的正确切法不是"移动文件"，而是**先决定每个测试的归宿**：(a) 保留为命令测试但内联掉转发器（零搬家，S2 与它合并）；(b) 重写为 `pkg/pipeline` 单测（覆盖更细但要重写 475 行）。两种都不与"逐字搬"等价。
+- 建议下一轮先做 S2 的"内联"部分（9 个 pipeline 转发、16 处）并同步把 `cmd` 测试改为直接调 `pipeline.*`——这不会删除任何测试，且让 S1 的删除变成"改测试引用名"而不是"搬家"。这是本轮验证出来的更安全顺序。
