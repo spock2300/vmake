@@ -28,3 +28,13 @@ DD-21 让 `build.PlacementFor` 成为唯一的放置值，但解析阶段仍在�
 ## 涉及文件
 
 `pkg/build/artifact.go`、`scheduler_resolve.go`、`linker.go`、`link_action.go`、`artifact_test.go`（新增）。
+
+## 实现记录
+
+- `PlacementFor` 现在只在 `target.Prebuilt() == ""` 时设 `ImportLib`；规则因此只有一处。
+- 解析阶段的两个 `getTargetOutputPath` 调用点改为消费放置值；该函数保留为**纯投影**（一行 `PlacementFor(...).OutputPath`），因为 8 处测试直接用它，删掉只会制造 churn。
+- 依赖扫描里那处内联 `depOutput += ".a"` 删除。改为：先取放置值，若 `ImportLib != ""` 则用 `importLibraryPath(depOutput, …)` 对**该依赖自己的输出基**套用同一条规则——不能直接用 `placement.ImportLib`，因为放置值里的导入库按包源目录解析，而依赖制品是在同伴输出旁边查找的（`TestSchedulerPackagePlatformArtifacts` 抓到了这个差异：相对基变成源目录绝对路径后 `dependency artifact missing`）。
+- 新增 `TestArtifactPlacementPrebuiltSharedHasNoImportLibrary`：预编译 shared 无导入库、非预编译有 `.a`、两者 `OutputPath` 相同。
+- `grep '"+ \".a\""' pkg/build` 为零：`.a` 只由 `importLibraryPath` 产生。
+
+未做（按票）：不把解析阶段接进 `targetOutcome`。

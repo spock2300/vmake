@@ -79,18 +79,19 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 				result.artifacts = append(result.artifacts, artifact)
 			}
 		} else if depNode.Target.Kind() != api.TargetVoid {
-			var depOutput string
+			depPlacement := PlacementFor(depNode.Target, depPkg, s.targetOS(depNode.PkgName))
+			depOutput := depPlacement.OutputPath
 			if depPkg.InstallDir != "" && depPkg.BuildDir == "" {
-				depOutput = filepath.Join(depPkg.InstallDir, "lib", targetFilename(depNode.Target.Kind(), depNode.Target.Name(), s.targetOS(depNode.PkgName)))
-			} else {
-				depOutput = s.getTargetOutputPath(depNode)
+				depOutput = filepath.Join(depPkg.InstallDir, "lib", depPlacement.InstallName)
 			}
-			// A PE shared library is linked against its import library, which
-			// LinkShared emits next to the DLL as libfoo.dll.a. Prebuilt
-			// targets ship only the declared file, so consumers link the DLL
-			// itself.
-			if s.targetOS(depNode.PkgName) == "windows" && depNode.Target.Kind() == api.TargetShared && depNode.Target.Prebuilt() == "" {
-				depOutput += ".a"
+			// A PE shared library is linked against its import library; a
+			// prebuilt target ships only the declared file, so consumers link
+			// that file and the placement leaves ImportLib empty.
+			if depPlacement.ImportLib != "" {
+				// Reuse the rule but keep this output base: the placement
+				// resolves against the package source dir, while the dependency
+				// artifact is looked up beside the peer output.
+				depOutput = importLibraryPath(depOutput, s.targetOS(depNode.PkgName), depNode.Target.Kind())
 			}
 			if !fs.FileExists(depOutput) {
 				return nil, fmt.Errorf("dependency artifact missing: %s (was the dependency target %s built?)", depOutput, depName)
@@ -216,7 +217,7 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 		}
 	}
 
-	resolved.OutputPath = s.getTargetOutputPath(node)
+	resolved.OutputPath = PlacementFor(node.Target, s.pkgs[node.PkgName], s.targetOS(node.PkgName)).OutputPath
 
 	genRules := node.Target.GenRules()
 	needGenerated := len(genRules) > 0 || (pkg != nil && pkg.GenConfigHeader())
@@ -432,8 +433,10 @@ func (s *Scheduler) checkLibDependencies(resolved *ResolvedTarget) {
 	}
 }
 
+// getTargetOutputPath projects the placement's output path for callers that
+// only need that one field.
 func (s *Scheduler) getTargetOutputPath(node *BuildNode) string {
-	return s.pkgs[node.PkgName].OutputPath(targetFilename(node.Target.Kind(), node.Target.Name(), s.targetOS(node.PkgName)))
+	return PlacementFor(node.Target, s.pkgs[node.PkgName], s.targetOS(node.PkgName)).OutputPath
 }
 
 func matchesAny(path string, patterns []string) bool {

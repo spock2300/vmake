@@ -45,3 +45,20 @@ func TestArtifactPlacementForObjectUsesKindDir(t *testing.T) {
 		t.Fatalf("install name = %q", placement.InstallName)
 	}
 }
+
+func TestArtifactPlacementPrebuiltSharedHasNoImportLibrary(t *testing.T) {
+	info := &PkgInfo{PkgDirs: api.PkgDirs{SourceDir: "/src"}}
+
+	built := PlacementFor(api.NewTargetRegistry().Target("app").SetKind(api.TargetShared), info, "windows")
+	if want := filepath.Join("/src", "build", "libapp.dll.a"); built.ImportLib != want {
+		t.Fatalf("built import lib = %q, want %q", built.ImportLib, want)
+	}
+
+	prebuilt := PlacementFor(api.NewTargetRegistry().Target("app").SetKind(api.TargetShared).SetPrebuilt("shipped/libapp.dll"), info, "windows")
+	if prebuilt.ImportLib != "" {
+		t.Fatalf("prebuilt import lib = %q, want none", prebuilt.ImportLib)
+	}
+	if prebuilt.OutputPath != built.OutputPath {
+		t.Fatalf("prebuilt output = %q, want %q", prebuilt.OutputPath, built.OutputPath)
+	}
+}

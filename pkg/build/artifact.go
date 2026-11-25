@@ -36,7 +36,7 @@ func PlacementFor(target *api.Target, pkgInfo *PkgInfo, targetOS string) Artifac
 	}
 	placement.OutputPath = pkgInfo.OutputPath(placement.InstallName)
 	placement.PostLinkOutputs = postLinkOutputPaths(target, pkgInfo.SourceDir, placement.OutputPath)
-	if placement.OutputPath != "" {
+	if placement.OutputPath != "" && target.Prebuilt() == "" {
 		placement.ImportLib = importLibraryPath(pkgInfo.ResolvePath(placement.OutputPath), targetOS, kind)
 	}
 	if pkgInfo.InstallDir != "" {
