@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/buildreport"
 	"github.com/spock2300/vmake/pkg/pipeline"
 )
 
@@ -46,7 +47,7 @@ func runClean(cmd *cobra.Command, args []string) {
 		defer closeProject(ctx)
 	}
 	if ok || cleanAllFlag {
-		fatalErr(invalidateBuildReport())
+		fatalErr(buildreport.InvalidateReports(findProjectDir()))
 	}
 	fatalErr(pipeline.RunClean(ctx, ok, cleanAllFlag))
 }
@@ -57,8 +58,4 @@ func collectCleanEntries(ctx *RuntimeContext) []pkgCleanEntry {
 
 func executeCleanHooks(ctx *RuntimeContext, localOnly, skipUnresolved, filterDeps bool) error {
 	return pipeline.ExecuteCleanHooks(ctx, localOnly, skipUnresolved, filterDeps)
-}
-
-func removeIfExists(path, pkgName, label string, isDir bool) {
-	pipeline.RemoveIfExists(path, pkgName, label, isDir)
 }

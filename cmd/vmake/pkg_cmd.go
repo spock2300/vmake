@@ -14,6 +14,7 @@ import (
 	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/gitcmd"
+	"github.com/spock2300/vmake/pkg/buildreport"
 	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/repo"
@@ -163,7 +164,7 @@ var pkgCleanCmd = &cobra.Command{
 		if strings.Contains(pkgName, "/") {
 			fatalMsg("Error: sub-packages are cleaned through their parent package: %s", pkgRef)
 		}
-		fatalErr(invalidateBuildReport())
+		fatalErr(buildreport.InvalidateReports(findProjectDir()))
 
 		sourceMgr := repo.NewSourceManager(getDepsDir(), getCacheDir()).WithSession(commandStorageLocks())
 		fatalErr(sourceMgr.CleanOutputs(repo.PackageTreeKey(repoName, pkgName)))

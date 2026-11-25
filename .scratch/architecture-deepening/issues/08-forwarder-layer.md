@@ -56,3 +56,11 @@ S1–S5 与 07 **无关**，可先落；只有 S6 依赖 07 的 cmd 迁移（同
 **陷阱（已读代码确认）**：`buildTestOutputLimit`/`Marker` 仍被 `TestTestReportTruncatesLongOutput` 使用，只删 `boundedTestOutput`；`completion.go` 没有 import `catalog`，内联 `listNativePackagesAt` 时要补；删完会有 5 个未用 import（`context`@build_cmd、`api`@clean、`api`@test_cmd、`api/build/resolver`@build_install、`repo/plugin`@helpers）；`pkg/pipeline` 不 import `pkg/catalog`，所以 catalog 的测试必须留在 `pkg/catalog`；`writePkgTestFile` 只存在于 `pkg_discover_test.go`，搬 catalog 测试时要复制过去。
 
 **已定决策**：接受修正后的指标（26→0）；`getRepoManager`/`getPluginManager` 一并内联（否则"零转发"不成立）；S6 等 07 落地后做。
+
+## 进展（S3 + S5 已落地）
+
+- 内联 `beginBuildReport`、`invalidateBuildReport`（buildreport 转发，1 + 3 个生产点），`clean.go`/`distclean.go`/`pkg_cmd.go` 补 `buildreport` import。
+- 删除 `removeIfExists`（void 转发），`distclean.go` 三处直接调 `pipeline.RemoveIfExists`，补 `pipeline` import。
+- 单行转发计数：**28 → 23**（AST 口径）。
+- 验证：`go build`/`go vet` 干净，`TestClean*`/`TestDistclean`/`TestPkgClean*`/`TestBuildReport*` 全绿，`./cmd/vmake ./pkg/... ./internal/...` 无失败。
+- 剩余按计划：S1（10 个零生产转发 + 4 个新测试文件 + 删 2 个测试文件）、S2（9 个 pipeline 转发内联 16 处）、S4（`getRepoManager`/`getPluginManager` 24 处）、S6（catalog 5 个，依赖 07 已就绪）。

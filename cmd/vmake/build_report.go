@@ -13,7 +13,7 @@ func withBuildReport(run func(*buildreport.Report) error) error {
 }
 
 func withReport(command string, run func(*buildreport.Report) error) (err error) {
-	report, err := beginBuildReport(command)
+	report, err := buildreport.Begin(findProjectDir(), command, currentCommandSession().configSelector)
 	if err != nil {
 		return err
 	}
@@ -44,12 +44,4 @@ func withReport(command string, run func(*buildreport.Report) error) (err error)
 		}
 	}()
 	return run(report)
-}
-
-func beginBuildReport(command string) (*buildreport.Report, error) {
-	return buildreport.Begin(findProjectDir(), command, currentCommandSession().configSelector)
-}
-
-func invalidateBuildReport() error {
-	return buildreport.InvalidateReports(findProjectDir())
 }

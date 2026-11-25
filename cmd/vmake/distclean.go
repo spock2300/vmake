@@ -6,7 +6,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/pkg/buildreport"
 	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/pipeline"
 )
 
 var distCleanPurgeSources bool
@@ -29,7 +31,7 @@ to purge individual packages.`,
 
 func runDistClean(cmd *cobra.Command, args []string) {
 	commandStorageLocks()
-	fatalErr(invalidateBuildReport())
+	fatalErr(buildreport.InvalidateReports(findProjectDir()))
 	ctx, ok := openProjectBestEffort(projectOptions{softGitignore: true})
 	defer closeProject(ctx)
 	if ok {
@@ -45,12 +47,12 @@ func runDistClean(cmd *cobra.Command, args []string) {
 		vlog.Error("Error: %v", err)
 	}
 
-	removeIfExists(filepath.Join(ctx.Paths.ProjectDir, "build", "compile_commands.json"), "", "compile_commands.json", false)
+	pipeline.RemoveIfExists(filepath.Join(ctx.Paths.ProjectDir, "build", "compile_commands.json"), "", "compile_commands.json", false)
 
-	removeIfExists(filepath.Join(ctx.Paths.ProjectDir, "install"), "", "install/", true)
+	pipeline.RemoveIfExists(filepath.Join(ctx.Paths.ProjectDir, "install"), "", "install/", true)
 
 	if distCleanPurgeSources {
-		removeIfExists(getDepsDir(), "", ".vmake_deps/", true)
+		pipeline.RemoveIfExists(getDepsDir(), "", ".vmake_deps/", true)
 	} else if fs.FileExists(getDepsDir()) {
 		vlog.Info("Kept downloaded sources under .vmake_deps/ (use --purge-sources to remove them)")
 	}
