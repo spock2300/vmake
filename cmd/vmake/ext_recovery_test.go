@@ -44,18 +44,12 @@ func extensionCommand(t *testing.T, dir, workDir string, args ...string) (string
 
 func extensionCommandEnv(t *testing.T, dir, workDir string, extraEnv []string, args ...string) (string, error) {
 	t.Helper()
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
+	stdout, stderr, code := runSubprocess(t, workDir, dir, extraEnv, args...)
+	if code != 0 {
+		return stdout + stderr, fmt.Errorf("exit status %d", code)
 	}
-	commandArgs := append([]string{"-test.run=^TestExtensionBootstrapChild$", "--"}, args...)
-	cmd := exec.Command(exe, commandArgs...)
-	cmd.Env = append(os.Environ(), append([]string{"VMAKE_TEST_EXT_DIR=" + dir}, extraEnv...)...)
-	cmd.Dir = workDir
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	return stdout + stderr, nil
 }
-
 func writeExtensionFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {

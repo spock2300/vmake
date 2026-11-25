@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -21,21 +20,6 @@ import (
 	"github.com/spock2300/vmake/pkg/resolver"
 )
 
-func TestInspectBootstrapChild(t *testing.T) {
-	dir := os.Getenv("VMAKE_TEST_INSPECT_DIR")
-	if dir == "" {
-		return
-	}
-	separator := slices.Index(os.Args, "--")
-	if separator < 0 {
-		t.Fatal("missing command arguments")
-	}
-	vmakeDir = dir
-	os.Args = append([]string{"vmake"}, os.Args[separator+1:]...)
-	main()
-	os.Exit(0)
-}
-
 func runInspectCommand(t *testing.T, projectDir string, args ...string) (string, string, int) {
 	t.Helper()
 	return runInspectCommandWithState(t, projectDir, canonicalTempDir(t), args...)
@@ -43,31 +27,10 @@ func runInspectCommand(t *testing.T, projectDir string, args ...string) (string,
 
 func runInspectCommandWithState(t *testing.T, projectDir, vmakeDir string, args ...string) (string, string, int) {
 	t.Helper()
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	commandArgs := append([]string{"-test.run=^TestInspectBootstrapChild$", "--"}, args...)
-	cmd := exec.Command(exe, commandArgs...)
-	cmd.Dir = projectDir
-	cmd.Env = append(os.Environ(),
-		"VMAKE_TEST_INSPECT_DIR="+vmakeDir,
-		"VMAKE_CACHE="+canonicalTempDir(t),
+	return runCLI(t, projectDir, vmakeDir, []string{
+		"VMAKE_CACHE=" + canonicalTempDir(t),
 		"VMAKE_TRUST_ALL=1",
-	)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err = cmd.Run()
-	code := 0
-	if err != nil {
-		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) {
-			t.Fatalf("run inspect: %v", err)
-		}
-		code = exitErr.ExitCode()
-	}
-	return stdout.String(), stderr.String(), code
+	}, args...)
 }
 
 func decodeInspectEnvelope(t *testing.T, stdout string) *inspectEnvelope {

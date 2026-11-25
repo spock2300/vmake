@@ -1,10 +1,7 @@
 package main
 
 import (
-	"bytes"
-	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -635,50 +632,13 @@ func shadowedTreeSnapshot(t *testing.T, root string) []string {
 	return paths
 }
 
-func TestShadowedRootBootstrapChild(t *testing.T) {
-	dir := os.Getenv("VMAKE_TEST_SHADOW_DIR")
-	if dir == "" {
-		return
-	}
-	separator := slices.Index(os.Args, "--")
-	if separator < 0 {
-		t.Fatal("missing command arguments")
-	}
-	vmakeDir = dir
-	os.Args = append([]string{"vmake"}, os.Args[separator+1:]...)
-	main()
-	os.Exit(0)
-}
-
 func runShadowedRootCommand(t *testing.T, workDir string, args ...string) (string, string, int) {
 	t.Helper()
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	commandArgs := append([]string{"-test.run=^TestShadowedRootBootstrapChild$", "--"}, args...)
-	cmd := exec.Command(exe, commandArgs...)
-	cmd.Dir = workDir
-	cmd.Env = append(os.Environ(),
-		"VMAKE_TEST_SHADOW_DIR="+canonicalTempDir(t),
-		"VMAKE_CACHE="+canonicalTempDir(t),
+	return runCLI(t, workDir, canonicalTempDir(t), []string{
+		"VMAKE_CACHE=" + canonicalTempDir(t),
 		"VMAKE_TRUST_ALL=1",
-	)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err = cmd.Run()
-	code := 0
-	if err != nil {
-		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) {
-			t.Fatalf("run %v: %v", args, err)
-		}
-		code = exitErr.ExitCode()
-	}
-	return stdout.String(), stderr.String(), code
+	}, args...)
 }
-
 func TestShadowedRootRejectsHardRootCommands(t *testing.T) {
 	for _, command := range []string{"build", "inspect"} {
 		t.Run(command, func(t *testing.T) {

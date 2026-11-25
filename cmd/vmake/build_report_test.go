@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -235,21 +234,6 @@ func TestBuildReportPanicCannotPublishSuccess(t *testing.T) {
 	}
 }
 
-func TestBuildReportBootstrapChild(t *testing.T) {
-	dir := os.Getenv("VMAKE_TEST_BUILD_DIR")
-	if dir == "" {
-		return
-	}
-	separator := slices.Index(os.Args, "--")
-	if separator < 0 {
-		t.Fatal("missing command arguments")
-	}
-	vmakeDir = dir
-	os.Args = append([]string{"vmake"}, os.Args[separator+1:]...)
-	main()
-	os.Exit(0)
-}
-
 func TestBoundedTestOutputUTF8Boundary(t *testing.T) {
 	keep := buildTestOutputLimit - len(buildTestOutputMarker)
 	input := "head-" + "中" + strings.Repeat("b", keep-1)
@@ -275,31 +259,8 @@ func runBuildCommand(t *testing.T, projectDir string, args ...string) (string, s
 
 func runBuildCommandEnv(t *testing.T, projectDir string, extraEnv []string, args ...string) (string, string, int) {
 	t.Helper()
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	commandArgs := append([]string{"-test.run=^TestBuildReportBootstrapChild$", "--"}, args...)
-	cmd := exec.Command(exe, commandArgs...)
-	cmd.Dir = projectDir
-	cmd.Env = append(os.Environ(),
-		"VMAKE_TEST_BUILD_DIR="+canonicalTempDir(t),
-		"VMAKE_CACHE="+canonicalTempDir(t),
-	)
-	cmd.Env = append(cmd.Env, extraEnv...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err = cmd.Run()
-	code := 0
-	if err != nil {
-		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) {
-			t.Fatalf("run build: %v", err)
-		}
-		code = exitErr.ExitCode()
-	}
-	return stdout.String(), stderr.String(), code
+	env := append([]string{"VMAKE_CACHE=" + canonicalTempDir(t)}, extraEnv...)
+	return runCLI(t, projectDir, canonicalTempDir(t), env, args...)
 }
 
 func writeBuildReportProject(t *testing.T, source string) string {
