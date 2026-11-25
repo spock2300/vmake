@@ -22,3 +22,13 @@
 - `go test ./cmd/vmake` 全绿，并记录新的 wall time（基线 59.6s）。
 - 子进程调用数从 211 降到约 60，且全部经由 `runSubprocess`。
 - 不允许删除测试来达成降数；每个被翻面的测试保留原有断言。
+
+## 实现记录
+
+- 新增 `cmd/vmake/cli_test.go`：`runCLI`（进程内，`t.Setenv` + 进出目录 + 双缓冲）与 `runSubprocess`（唯一 spawn 入口，走 `TestExtensionBootstrapChild`）。
+- 翻面：`runInspectCommandWithState`、`runBuildCommandEnv`、`runShadowedRootCommand` 现在直接调 `run()`。删除 `TestInspectBootstrapChild`、`TestBuildReportBootstrapChild`、`TestShadowedRootBootstrapChild` 三个重复子进程入口。
+- 保留子进程：`extensionCommandEnv` 改走 `runSubprocess`（插件/信任/扩展/平台类共 ~54 处），因为它们改的是进程级 toolchain 状态；`TestOwnerInterruptChild` 与 `TestExtensionBootstrapChild` 各留一个。
+- 新增 `TestCommandProcessBoundary`：唯一钉住进程边界的测试（真实 `os.Exit`、真实 fd：`version` 退出 0 且写真实 stdout，`build --no-such-flag` 退出 2 且写真实 stderr）。真实二进制本身由 `_snapshot` 覆盖。
+- 剩余 spawn：20 处 `exec.Command`（含 `exec.LookPath` 之类非 spawn 调用与中断测试）。
+
+实测：`go test ./cmd/vmake` **57.5s**（翻面前 59.9s）。提速有限，因为构建类测试本身要真的跑编译器；这张卡的价值是缝合面而不是墙钟时间——90 处 inspect 断言现在走 `run()`，且不再为每条命令付一次测试二进制启动。
