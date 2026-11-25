@@ -84,7 +84,7 @@ func openDepsInspection(execution context.Context, root string, overrides []insp
 
 // runDepsInspection opens the shared preamble and hands the built graph to
 // render with the process streams restored.
-func runDepsInspection(execution context.Context, overrides []inspectOverride, includeAll, jsonOut, locked, offline bool, render func(*RuntimeContext, *pipeline.UnifiedGraph) error) error {
+func runDepsInspection(execution context.Context, overrides []inspectOverride, includeAll, jsonOut, locked, offline bool, render func(*RuntimeContext, *pipeline.Inspection, *pipeline.UnifiedGraph) error) error {
 	root, err := resolveProjectRoot()
 	if err != nil {
 		if errors.Is(err, errNotInProject) {
@@ -97,12 +97,12 @@ func runDepsInspection(execution context.Context, overrides []inspectOverride, i
 		return unwrapDepsOpenErr(err)
 	}
 	defer session.Close()
-	g := attachInspectionGraphOptions(session.ctx, session.inspection, pipeline.GraphOptions{IncludeAll: includeAll, DeclareTargets: true}, nil)
+	graph := attachInspectionGraphOptions(session.ctx, session.inspection, pipeline.GraphOptions{IncludeAll: includeAll, DeclareTargets: true}, nil)
 	restore()
 	if err := session.inspection.GraphError(); err != nil {
 		return err
 	}
-	return render(session.ctx, g)
+	return render(session.ctx, session.inspection, graph)
 }
 
 func newDepsGraphCmd() *cobra.Command {
@@ -140,8 +140,8 @@ dot|mermaid to render Graphviz DOT or Mermaid flowcharts.`,
 			if err != nil {
 				return &usageError{err: err}
 			}
-			return runDepsInspection(cmd.Context(), overrides, includeAll, jsonOut, locked, offline, func(_ *RuntimeContext, g *pipeline.UnifiedGraph) error {
-				facts := g.Facts()
+			return runDepsInspection(cmd.Context(), overrides, includeAll, jsonOut, locked, offline, func(_ *RuntimeContext, inspection *pipeline.Inspection, _ *pipeline.UnifiedGraph) error {
+				facts := inspection.GraphFacts()
 				if jsonOut {
 					return writeDepsJSON(cmd.OutOrStdout(), &depsGraphEnvelope{
 						SchemaVersion: 1,
@@ -197,9 +197,9 @@ OnBuild target edge that introduced each hop.`,
 			if err != nil {
 				return &usageError{err: err}
 			}
-			return runDepsInspection(cmd.Context(), overrides, false, jsonOut, locked, offline, func(ctx *RuntimeContext, g *pipeline.UnifiedGraph) error {
-				res := pipeline.WhyQuery(ctx, g, query, allPaths)
-				facts := g.Facts()
+			return runDepsInspection(cmd.Context(), overrides, false, jsonOut, locked, offline, func(ctx *RuntimeContext, inspection *pipeline.Inspection, graph *pipeline.UnifiedGraph) error {
+				res := pipeline.WhyQuery(ctx, graph, query, allPaths)
+				facts := inspection.GraphFacts()
 				if jsonOut {
 					if err := writeDepsJSON(cmd.OutOrStdout(), &depsWhyEnvelope{
 						SchemaVersion: 1,

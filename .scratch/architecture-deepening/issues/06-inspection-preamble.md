@@ -38,3 +38,10 @@ DD-39 之后 `attachInspectionGraph` 把图灌进 `Inspection` 并只留 `GraphF
 - `runDepsInspection` 不再自己调 `pipeline.BuildUnifiedGraph`，改用 `attachInspectionGraphOptions`，错误从 `inspection.GraphError()` 读——`deps graph` 的 blocked-write 记录因此与 `inspect` 一致。
 - `completeDepsWhyArg` 的 25 行手搭前导删除，改为 `resolveProjectRoot` + `openDepsInspection` + `attachInspectionGraphOptions`；包名仍取自 `session.ctx.DepGraph`，目标名取自返回图的 `Facts()`。新增 `TestDepsWhyCompletionUsesSharedPreamble`（这是补全路径的第一个测试）。
 - 未做（明确记录）：`render` 签名仍然是 `*RuntimeContext, *pipeline.UnifiedGraph`，因为 `pipeline.WhyQuery(ctx, g, query, allPaths)` 需要整张图，而 DD-39 之后模型只保留答案面。要让 `deps why` 只读 `GraphFacts`，得先把 `WhyQuery` 改成消费事实；那是独立的一次改动，不在本卡内硬塞。
+
+## 收尾（round 3）
+
+- `runDepsInspection` 的 render 改为 `(ctx, inspection, graph)`：`deps graph` 用 `inspection.GraphFacts()`（新增访问器，深拷贝答案面），`deps why` 用图本身。这样 `deps graph` 完全不再持有 `*UnifiedGraph`。
+- `deps why` 收图是**代码事实**，不是遗漏：`WhyTarget` 读 `declaredTargets`、`TargetDeps` 和 `inspection.Package()` 视图，三者都不在 DD-39 保留的答案面里。要改就得把图塞回模型，与 DD-39 冲突。DD-40 决策 4 已按这个实测结论改写。
+- 补全：仍复用 `openDepsInspection` + 同一挂载（`runDepsInspection` 的 render 缝需要一个 graph 形参，补全不需要图，强行复用会多传一个 nil）。这一点已在 ticket 记录里保持原样。
+- `TestDepsGraphReportsTheSameBlockedWriteAsInspect` 已补（round 2）。

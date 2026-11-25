@@ -82,6 +82,25 @@ func (in *Inspection) GraphError() error {
 	return in.graphErr
 }
 
+// GraphFacts returns a copy of the attached graph's answer surface.
+func (in *Inspection) GraphFacts() GraphFacts {
+	if in == nil {
+		return GraphFacts{}
+	}
+	facts := in.graphFacts
+	facts.Packages = append([]string(nil), facts.Packages...)
+	facts.Roots = append([]string(nil), facts.Roots...)
+	facts.Targets = append([]string(nil), facts.Targets...)
+	facts.PackageEdges = append([]PackageEdge(nil), facts.PackageEdges...)
+	facts.TargetEdges = append([]TargetEdge(nil), facts.TargetEdges...)
+	facts.Issues = append([]GraphIssue(nil), facts.Issues...)
+	facts.PackageDeps = make(map[string][]string, len(in.graphFacts.PackageDeps))
+	for k, v := range in.graphFacts.PackageDeps {
+		facts.PackageDeps[k] = append([]string(nil), v...)
+	}
+	return facts
+}
+
 func (in *Inspection) GraphRoots() []string {
 	return append([]string(nil), in.graphFacts.Roots...)
 }
