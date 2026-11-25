@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -321,20 +322,36 @@ func TestEgoGraph_UpstreamIsDependenciesDownstreamIsDependents(t *testing.T) {
 
 	m.jumpToMatch("hl/hl-mcu-sdk", "")
 	ego := m.egoGraphData()
-	if len(ego.Deps) != 0 {
-		t.Fatalf("hl/hl-mcu-sdk declares no dependencies, got %v", ego.Deps)
+	if len(ego.Upstream) != 0 {
+		t.Fatalf("hl/hl-mcu-sdk declares no dependencies, got %v", ego.Upstream)
 	}
-	if len(ego.Callers) == 0 {
+	if len(ego.Downstream) == 0 {
 		t.Fatal("hl/hl-mcu-sdk must list the packages that depend on it")
 	}
-	boxes := m.layout().egoBoxes
-	if len(boxes) != len(ego.Callers) {
-		t.Fatalf("expected %d dependent cards, got %d", len(ego.Callers), len(boxes))
+	badge := stripAnsi(m.renderEgoSummaryBadge(ego))
+	if want := fmt.Sprintf("↑0 ↓%d", len(ego.Downstream)); badge != want {
+		t.Fatalf("summary badge = %q, want %q", badge, want)
 	}
+	boxes := m.layout().egoBoxes
+	callers := make(map[string]bool, len(ego.Downstream))
+	for _, c := range ego.Downstream {
+		callers[c.PkgName] = true
+	}
+	cards := 0
 	for _, box := range boxes {
+		if box.isMore {
+			continue
+		}
 		if box.isUpstream {
 			t.Fatalf("dependent %q rendered in the upstream column", box.pkgName)
 		}
+		if !callers[box.pkgName] {
+			t.Fatalf("rendered dependent card %q is not a dependent of hl/hl-mcu-sdk", box.pkgName)
+		}
+		cards++
+	}
+	if cards == 0 {
+		t.Fatal("hl/hl-mcu-sdk must render at least one dependent card")
 	}
 	view := stripAnsi(m.View())
 	if !strings.Contains(view, "（无上游依赖）") {
@@ -346,20 +363,36 @@ func TestEgoGraph_UpstreamIsDependenciesDownstreamIsDependents(t *testing.T) {
 
 	m.jumpToMatch("firmware", "")
 	ego = m.egoGraphData()
-	if len(ego.Deps) == 0 {
+	if len(ego.Upstream) == 0 {
 		t.Fatal("firmware declares dependencies")
 	}
-	if len(ego.Callers) != 0 {
-		t.Fatalf("nothing depends on firmware, got %v", ego.Callers)
+	if len(ego.Downstream) != 0 {
+		t.Fatalf("nothing depends on firmware, got %v", ego.Downstream)
+	}
+	badge = stripAnsi(m.renderEgoSummaryBadge(ego))
+	if want := fmt.Sprintf("↑%d ↓0", len(ego.Upstream)); badge != want {
+		t.Fatalf("summary badge = %q, want %q", badge, want)
 	}
 	boxes = m.layout().egoBoxes
-	if len(boxes) != len(ego.Deps) {
-		t.Fatalf("expected %d dependency cards, got %d", len(ego.Deps), len(boxes))
+	deps := make(map[string]bool, len(ego.Upstream))
+	for _, d := range ego.Upstream {
+		deps[d.PkgName] = true
 	}
+	cards = 0
 	for _, box := range boxes {
+		if box.isMore {
+			continue
+		}
 		if !box.isUpstream {
 			t.Fatalf("dependency %q rendered in the downstream column", box.pkgName)
 		}
+		if !deps[box.pkgName] {
+			t.Fatalf("rendered dependency card %q is not a dependency of firmware", box.pkgName)
+		}
+		cards++
+	}
+	if cards == 0 {
+		t.Fatal("firmware must render at least one dependency card")
 	}
 	view = stripAnsi(m.View())
 	if !strings.Contains(view, "（无下游依赖）") {
@@ -367,5 +400,125 @@ func TestEgoGraph_UpstreamIsDependenciesDownstreamIsDependents(t *testing.T) {
 	}
 	if !strings.Contains(view, "]◄") || strings.Contains(view, "╢◄") {
 		t.Fatalf("expected the wires to firmware to point at its dependencies:\n%s", view)
+	}
+}
+
+func gutterRoleFor(m *Model, pkg string) gutterRole {
+	roles := m.gutterRoles()
+	for i, node := range m.flat {
+		if node.PkgName == pkg {
+			return roles[i]
+		}
+	}
+	return gutterNone
+}
+
+func TestEgoGraph_SideMarkersAndControlsMatchColumns(t *testing.T) {
+	if got, _ := sideNeighborGlyph(true, true, true); got != "◀" {
+		t.Fatalf("active upstream glyph = %q, want ◀", got)
+	}
+	if got, _ := sideNeighborGlyph(true, true, false); got != "▶" {
+		t.Fatalf("active downstream glyph = %q, want ▶", got)
+	}
+
+	m := buildHLDemoCleanTestModel()
+	m.width = 150
+	m.height = 30
+
+	m.jumpToMatch("hl/hl-mcu-sdk", "")
+	if got := gutterRoleFor(&m, "firmware"); got != gutterDownstream {
+		t.Fatalf("firmware row role in dependents view = %v, want gutterDownstream", got)
+	}
+	m.handleKey(keyRunes("}"))
+	if !m.downEdgeSelected || m.downEdgeIdx != 1 {
+		t.Fatalf("pressing } must cycle downstream edges: selected=%v idx=%d", m.downEdgeSelected, m.downEdgeIdx)
+	}
+
+	m.jumpToMatch("firmware", "")
+	if got := gutterRoleFor(&m, "board"); got != gutterUpstream {
+		t.Fatalf("board row role in dependency view = %v, want gutterUpstream", got)
+	}
+	m.handleKey(keyRunes("{"))
+	if m.upEdgeIdx != 1 {
+		t.Fatalf("pressing { must cycle upstream edges, got idx=%d", m.upEdgeIdx)
+	}
+
+	s := m.layout()
+	leftX := s.treeW + 1
+	if leftX >= s.treeW+s.optionsW/2 {
+		t.Fatalf("test viewport too narrow for two ego halves: treeW=%d optionsW=%d", s.treeW, s.optionsW)
+	}
+	m.handleMouse(mouseTestWheel(leftX, s.headerH+1, true))
+	if m.upEdgeIdx != 2 {
+		t.Fatalf("wheel on the upstream half changed upEdgeIdx to %d, want 2", m.upEdgeIdx)
+	}
+	m.downEdgeSelected = false
+	m.downEdgeIdx = 0
+	m.handleMouse(mouseTestWheel(s.treeW+s.optionsW/2+1, s.headerH+1, true))
+	if !m.downEdgeSelected || m.downEdgeIdx != 1 {
+		t.Fatalf("wheel on the downstream half: selected=%v idx=%d, want true/1", m.downEdgeSelected, m.downEdgeIdx)
+	}
+}
+
+func TestEgoGraph_MoreRowClicksCycleCorrectSide(t *testing.T) {
+	m := buildHLDemoCleanTestModel()
+	m.width = 150
+	m.height = 22
+
+	m.jumpToMatch("hl/hl-mcu-sdk", "")
+	s := m.layout()
+	var more *egoNodeHitbox
+	for i := range s.egoBoxes {
+		if s.egoBoxes[i].isMore && !s.egoBoxes[i].isUpstream {
+			more = &s.egoBoxes[i]
+			break
+		}
+	}
+	if more == nil {
+		t.Fatalf("expected a downstream more row in the ego graph:\n%s", stripAnsi(m.View()))
+	}
+	m.handleMouse(mouseTestClick(s.graphLeft+more.x+1, s.headerH+more.y))
+	if !m.downEdgeSelected || m.downEdgeIdx != 1 {
+		t.Fatalf("clicking the downstream more row: selected=%v idx=%d, want true/1", m.downEdgeSelected, m.downEdgeIdx)
+	}
+
+	m.jumpToMatch("firmware", "")
+	s = m.layout()
+	more = nil
+	for i := range s.egoBoxes {
+		if s.egoBoxes[i].isMore && s.egoBoxes[i].isUpstream {
+			more = &s.egoBoxes[i]
+			break
+		}
+	}
+	if more == nil {
+		t.Fatalf("expected an upstream more row in the ego graph:\n%s", stripAnsi(m.View()))
+	}
+	m.handleMouse(mouseTestClick(s.graphLeft+more.x+1, s.headerH+more.y))
+	if m.upEdgeIdx != 1 {
+		t.Fatalf("clicking the upstream more row changed upEdgeIdx to %d, want 1", m.upEdgeIdx)
+	}
+}
+
+func TestEgoGraph_EnglishColumnLabels(t *testing.T) {
+	m := buildHLDemoCleanTestModel()
+	m.width = 150
+	m.height = 30
+	m.language = languageEnglish
+
+	m.jumpToMatch("hl/hl-mcu-sdk", "")
+	view := stripAnsi(m.View())
+	for _, want := range []string{"Upstream (Depends On)", "Downstream (Used By)", "(no dependencies)"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected %q in English ego graph:\n%s", want, view)
+		}
+	}
+
+	m.jumpToMatch("firmware", "")
+	view = stripAnsi(m.View())
+	for _, want := range []string{"Upstream (Depends On)", "Downstream (Used By)", "(no callers)"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected %q in English ego graph:\n%s", want, view)
+		}
 	}
 }

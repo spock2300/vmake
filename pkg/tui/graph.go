@@ -31,18 +31,18 @@ type egoNeighbor struct {
 }
 
 type egoGraphView struct {
-	FocalPkg     string
-	FocalLabel   string
-	FocalOpts    int
-	FocalMod     bool
-	FocalActive  bool
-	FocalIsRoot  bool
-	IsGlobal     bool
-	IsGroup      bool
-	Callers      []egoNeighbor
-	Deps         []egoNeighbor
-	ActiveCaller int
-	ActiveDep    int
+	FocalPkg         string
+	FocalLabel       string
+	FocalOpts        int
+	FocalMod         bool
+	FocalActive      bool
+	FocalIsRoot      bool
+	IsGlobal         bool
+	IsGroup          bool
+	Upstream         []egoNeighbor
+	Downstream       []egoNeighbor
+	ActiveUpstream   int
+	ActiveDownstream int
 }
 
 func isSyntheticGroupPkg(pkgName string) bool {
@@ -705,26 +705,26 @@ func (m *Model) egoGraphData() egoGraphView {
 			activeCaller = ((m.downEdgeIdx % len(roots)) + len(roots)) % len(roots)
 		}
 		return egoGraphView{
-			FocalPkg:     GlobalPkgName,
-			FocalLabel:   m.packageLabel(GlobalPkgName),
-			FocalOpts:    m.optCountFor(GlobalPkgName),
-			FocalMod:     m.pkgHasModified(GlobalPkgName),
-			FocalActive:  true,
-			IsGlobal:     true,
-			Callers:      roots,
-			ActiveCaller: activeCaller,
-			ActiveDep:    -1,
+			FocalPkg:         GlobalPkgName,
+			FocalLabel:       m.packageLabel(GlobalPkgName),
+			FocalOpts:        m.optCountFor(GlobalPkgName),
+			FocalMod:         m.pkgHasModified(GlobalPkgName),
+			FocalActive:      true,
+			IsGlobal:         true,
+			Downstream:       roots,
+			ActiveUpstream:   -1,
+			ActiveDownstream: activeCaller,
 		}
 	}
 
 	if isSyntheticGroupPkg(focal) {
 		return egoGraphView{
-			FocalPkg:     focal,
-			FocalLabel:   m.packageLabel(focal),
-			FocalActive:  focal == RemoteGroupPkgName,
-			IsGroup:      true,
-			ActiveCaller: -1,
-			ActiveDep:    -1,
+			FocalPkg:         focal,
+			FocalLabel:       m.packageLabel(focal),
+			FocalActive:      focal == RemoteGroupPkgName,
+			IsGroup:          true,
+			ActiveUpstream:   -1,
+			ActiveDownstream: -1,
 		}
 	}
 
@@ -786,16 +786,16 @@ func (m *Model) egoGraphData() egoGraphView {
 		focalLbl = shortPkgDisplayName(focal, m.localPkgSet)
 	}
 	return egoGraphView{
-		FocalPkg:     focal,
-		FocalLabel:   focalLbl,
-		FocalOpts:    m.optCountFor(focal),
-		FocalMod:     m.pkgHasModified(focal),
-		FocalActive:  m.isActivePkg(focal),
-		FocalIsRoot:  m.isRootPkg(focal),
-		Callers:      callers,
-		Deps:         deps,
-		ActiveCaller: activeCaller,
-		ActiveDep:    activeDep,
+		FocalPkg:         focal,
+		FocalLabel:       focalLbl,
+		FocalOpts:        m.optCountFor(focal),
+		FocalMod:         m.pkgHasModified(focal),
+		FocalActive:      m.isActivePkg(focal),
+		FocalIsRoot:      m.isRootPkg(focal),
+		Downstream:       callers,
+		Upstream:         deps,
+		ActiveUpstream:   activeDep,
+		ActiveDownstream: activeCaller,
 	}
 }
 
@@ -818,23 +818,23 @@ func (m *Model) jumpToGraphNeighbor(targetPkg string, pushHistory bool) bool {
 
 func (m *Model) stepUpstream() bool {
 	ego := m.egoGraphData()
-	if len(ego.Deps) == 0 || ego.ActiveDep < 0 {
+	if len(ego.Upstream) == 0 || ego.ActiveUpstream < 0 {
 		return false
 	}
-	return m.jumpToGraphNeighbor(ego.Deps[ego.ActiveDep].PkgName, true)
+	return m.jumpToGraphNeighbor(ego.Upstream[ego.ActiveUpstream].PkgName, true)
 }
 
 func (m *Model) stepDownstream() bool {
 	ego := m.egoGraphData()
 	if ego.IsGlobal {
-		if len(ego.Callers) == 0 || ego.ActiveCaller < 0 {
+		if len(ego.Downstream) == 0 || ego.ActiveDownstream < 0 {
 			return false
 		}
-		return m.jumpToGraphNeighbor(ego.Callers[ego.ActiveCaller].PkgName, true)
+		return m.jumpToGraphNeighbor(ego.Downstream[ego.ActiveDownstream].PkgName, true)
 	}
 	if !m.downEdgeSelected && len(m.navHistory) > 0 {
 		back := m.navHistory[len(m.navHistory)-1]
-		for _, c := range ego.Callers {
+		for _, c := range ego.Downstream {
 			if c.PkgName == back {
 				m.navHistory = m.navHistory[:len(m.navHistory)-1]
 				return m.jumpToGraphNeighbor(back, false)
@@ -845,8 +845,8 @@ func (m *Model) stepDownstream() bool {
 			return m.jumpToGraphNeighbor(GlobalPkgName, false)
 		}
 	}
-	if len(ego.Callers) == 0 || ego.ActiveCaller < 0 {
+	if len(ego.Downstream) == 0 || ego.ActiveDownstream < 0 {
 		return false
 	}
-	return m.jumpToGraphNeighbor(ego.Callers[ego.ActiveCaller].PkgName, false)
+	return m.jumpToGraphNeighbor(ego.Downstream[ego.ActiveDownstream].PkgName, false)
 }
