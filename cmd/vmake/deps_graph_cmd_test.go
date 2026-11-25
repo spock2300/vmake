@@ -818,3 +818,32 @@ func TestDepsWhyCompletionUsesSharedPreamble(t *testing.T) {
 		t.Fatalf("target completion produced no pkg:target entries: %v", targets)
 	}
 }
+
+func TestDepsGraphReportsTheSameBlockedWriteAsInspect(t *testing.T) {
+	dir := t.TempDir()
+	project := filepath.Join(dir, "project")
+	state := filepath.Join(dir, "state")
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+
+import (
+	"os"
+
+	"github.com/spock2300/vmake/pkg/api"
+)
+
+func Main(p *api.Package) {
+	p.SetRoot(true)
+	p.OnBuild(func(ctx *api.BuildContext) {
+		_ = os.WriteFile("blocked.txt", []byte("x"), 0644)
+	})
+}
+`)
+	inspectOut, _ := extensionCommand(t, state, project, "inspect")
+	graphOut, _ := extensionCommand(t, state, project, "deps", "graph")
+	jsonOut, _ := extensionCommand(t, state, project, "deps", "graph", "--json")
+	for _, out := range []string{inspectOut, graphOut, jsonOut} {
+		if !strings.Contains(out, "read-only inspection") || !strings.Contains(out, "blocked.txt") {
+			t.Fatalf("blocked write missing:\n%s", out)
+		}
+	}
+}
