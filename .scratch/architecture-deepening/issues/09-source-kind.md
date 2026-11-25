@@ -87,3 +87,9 @@ func (n *PackageNode) SourceKind() SourceKind {
 - catalog 的四处 `registry`/`native` 字面量**未改**为常量。catalog 现在只有仓库类型布尔、没有 `*PackageNode`，改它要新加 `catalog → resolver` 依赖换取零行为收益；等 07 收尾时一并判断。
 - `lock_projection.go:101` 的第五处 `git` 拼写未动（按计划）。
 - 未跑 `vmake doctor` 的陈旧技能检查（`skill install` 已执行，技能测试通过）。
+
+## 收尾（catalog 字面量已归位）
+
+catalog 的四处 `"registry"`/`"native"` 字面量与一处比较改为 `resolver.SourceKindRegistry/Native.String()`；`pkg/catalog` 现在导入 `pkg/resolver`（不是 `pkg/pipeline`，依赖方向仍是叶子→底层）。`grep -c '"registry"\|"native"' pkg/catalog/catalog.go` = 0。
+
+DD-40 全部八张卡至此完成。唯一保留的第五处 `git` 拼写在 `lock_projection.go:101`，按计划留到 2.0（零行为变化）。

@@ -15,6 +15,7 @@ import (
 	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/lockfile"
 	"github.com/spock2300/vmake/pkg/repo"
+	"github.com/spock2300/vmake/pkg/resolver"
 )
 
 type SearchOptions struct {
@@ -298,7 +299,7 @@ func SearchRegistryRepo(env Env, repoName string, opts SearchOptions, statuses *
 
 	entries := make([]SearchEntry, 0, len(names))
 	for _, name := range names {
-		entry := SearchEntry{Repo: repoName, Name: name, Source: "registry"}
+		entry := SearchEntry{Repo: repoName, Name: name, Source: resolver.SourceKindRegistry.String()}
 		if opts.Details && details {
 			if commit == "" {
 				warnings = append(warnings, fmt.Sprintf("%s/%s: repository commit is unavailable", repoName, name))
@@ -351,7 +352,7 @@ func SearchNativeRepo(env Env, repoName string, opts SearchOptions, statuses *St
 	entries := make([]SearchEntry, 0, len(names))
 	for _, name := range names {
 		linkPath := links[name]
-		entry := SearchEntry{Repo: repoName, Name: name, Source: "native", Cached: linkPath == ""}
+		entry := SearchEntry{Repo: repoName, Name: name, Source: resolver.SourceKindNative.String(), Cached: linkPath == ""}
 		if linkPath != "" {
 			if opts.Details {
 				commit, err := env.commit(linkPath)
@@ -472,7 +473,7 @@ func AddRequiresSnippet(repoName, pkgName, version string) string {
 }
 
 func TrustWarning(repoName, source string) string {
-	if source == "native" {
+	if source == resolver.SourceKindNative.String() {
 		return fmt.Sprintf("native repository %q is not trusted; run 'vmake repo trust %s'", repoName, repoName)
 	}
 	return fmt.Sprintf("build.go is not trusted; run 'vmake repo trust %s'", repoName)
@@ -539,7 +540,7 @@ func ShowPackage(env Env, repoName, pkgName, version string) (*ShowResult, bool,
 	linked := false
 	native := mgr.IsNative(repoName)
 	if native {
-		result.Source = "native"
+		result.Source = resolver.SourceKindNative.String()
 		if env.ProjectDir == "" {
 			return nil, true, fmt.Errorf("native package %q is project-local; run inside a vmake project", repoName+"/"+pkgName)
 		}
@@ -571,7 +572,7 @@ func ShowPackage(env Env, repoName, pkgName, version string) (*ShowResult, bool,
 			commit = state.Commit
 		}
 	} else {
-		result.Source = "registry"
+		result.Source = resolver.SourceKindRegistry.String()
 		lock, err := mgr.Lock(repoName, false)
 		if err != nil {
 			return nil, false, err

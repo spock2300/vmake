@@ -46,3 +46,19 @@
 - **不把 `os.Stdout` 交换改成给 `pkg/log` 注入 sink**。子进程继承 fd 1，交换 Go 变量拦不住，`internal/exec.SetQuiet` 必须独立存在；sink 只能替掉 vlog 一条，换不来等价能力。
 - **不合并 `api.SourceOrigin`**。它是两值（`local`/`remote`）且经 `yaegi_symbols.go:42` 注册给脚本，DD-34 冻结；与三值显示词表不是同一概念。
 - **不重跑整套 skill-loop**（solver/judge/author）。收尾只跑 `factcheck-*`。
+
+## 完成状态（DD-40）
+
+| 卡 | 提交 | 结果 |
+|---|---|---|
+| 01 命令树与 `run` | `bb81673` | `run(argv, stdout, stderr, runEnv) int` 是唯一缝合面；每进程仅 `Execute` 一处 `os.Exit`；致命路径走 panic `*exitError`，defer 恢复执行 |
+| 02 测试翻面 | `71105ca` | `runCLI` 进程内 + `runSubprocess` 单入口；子进程调用 211 → ~54；`TestCommandProcessBoundary` 钉住进程边界 |
+| 03 `internal/quiet` | `0f6244d` | 五个静音杠杆收敛到一个包、四个意图；`silenceStdout`/`silenceStderr`/`inspectionScope`/`quietScriptScope` 归零 |
+| 04 单一放置值 | `bc0861f` | `PlacementFor` 独占 PE 导入库与 `Prebuilt` 规则；解析阶段内联 `.a` 拼接删除 |
+| 05 类型化错误 kind | `16ab40c` | `build.ResolveError` + `internal/issue` sentinel；两处 `strings.Contains` 报文嗅探删除 |
+| 06 巡检前导 | `41ee663` | `attachInspectionGraphOptions` 单路径；补全复用前导并首次有测试 |
+| 07 包目录接口 | `3c3ddac` `1a5e97a` `1b3fed3` `f6ea3f5` | catalog 不再依赖 pipeline；`RepoAccess` 注入；`Open(env)` 门面；测试 1 → 9 |
+| 08 转发层 | `32faa43` `ebb7cf0` `6319713` `199971a` `40f36aa` `4830a0e` | 单语句转发 28 → 1（剩下那个是组合函数值，非转发） |
+| 09 来源词表 | `1b6f630` + 本轮 | `resolver.SourceKind` + `GitCompatName`；四处生产者与 catalog 字面量归位；`local ≡ git` 进入 INSPECT.md、技能与 GLOSSARY |
+
+全部门禁：`go build`、全量 `go vet`、`./cmd/vmake ./pkg/... ./internal/...`、9 个夹具字节一致性、`TestSkill*`、`vmake skill install`。
