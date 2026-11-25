@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
+	quietpkg "github.com/spock2300/vmake/internal/quiet"
 	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
@@ -216,9 +217,9 @@ func newConfigCheckCmd() *cobra.Command {
 }
 
 func checkSingleConfigProfile(cmd *cobra.Command, configOverride string) ([]string, error) {
-	restoreStdout := silenceStdout()
+	restoreStdout := quietpkg.SilenceStdout()
 	defer restoreStdout()
-	restoreStderr := silenceStderr()
+	restoreStderr := quietpkg.SilenceStderr()
 	defer restoreStderr()
 
 	ctx, err := openProject(projectOptions{

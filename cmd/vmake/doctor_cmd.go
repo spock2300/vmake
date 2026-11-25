@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spock2300/vmake/internal/gosrc"
+	quietpkg "github.com/spock2300/vmake/internal/quiet"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
@@ -227,9 +228,9 @@ func checkAutoWire(src buildscript.Source) []doctorFinding {
 }
 
 func resolveDoctorPreferredToolchain(workDir string, _ *config.ConfigFile) string {
-	restoreScope := inspectionScope(true, true)
-	restoreOut := silenceStdout()
-	restoreErr := silenceStderr()
+	restoreScope := quietpkg.ProbeScope(true, true)
+	restoreOut := quietpkg.SilenceStdout()
+	restoreErr := quietpkg.SilenceStderr()
 	defer func() {
 		restoreOut()
 		restoreErr()

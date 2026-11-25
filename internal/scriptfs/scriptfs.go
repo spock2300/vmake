@@ -32,6 +32,11 @@ func SetReadOnly(enabled bool) {
 	blockedMu.Unlock()
 }
 
+// IsReadOnly reports whether interpreted script writes are currently blocked.
+func IsReadOnly() bool {
+	return readOnly.Load()
+}
+
 func TakeBlockedWrites() []string {
 	blockedMu.Lock()
 	defer blockedMu.Unlock()

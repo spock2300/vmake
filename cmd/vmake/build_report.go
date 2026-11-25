@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 
+	quietpkg "github.com/spock2300/vmake/internal/quiet"
 	"github.com/spock2300/vmake/pkg/buildreport"
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
@@ -19,18 +20,7 @@ func withReport(command string, run func(*buildreport.Report) error) (err error)
 	stdout := os.Stdout
 	restoreStdout := func() {}
 	if vlog.IsQuiet() {
-		if devNull, openErr := os.OpenFile(os.DevNull, os.O_WRONLY, 0); openErr == nil {
-			os.Stdout = devNull
-			restored := false
-			restoreStdout = func() {
-				if restored {
-					return
-				}
-				restored = true
-				os.Stdout = stdout
-				devNull.Close()
-			}
-		}
+		restoreStdout = quietpkg.SilenceStdout()
 	}
 	defer func() {
 		defer restoreStdout()

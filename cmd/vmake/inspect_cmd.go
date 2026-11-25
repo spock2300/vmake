@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	quietpkg "github.com/spock2300/vmake/internal/quiet"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/pipeline"
@@ -228,9 +229,9 @@ func runInspect(execution context.Context, setFlags []string, includeTargets boo
 		}
 		return failInspect(envelope, "VMAKE_E_INSPECT", err)
 	}
-	restoreStdout := silenceStdout()
+	restoreStdout := quietpkg.SilenceStdout()
 	defer restoreStdout()
-	restoreStderr := silenceStderr()
+	restoreStderr := quietpkg.SilenceStderr()
 	defer restoreStderr()
 	fail := func(code string, err error) error {
 		restoreStdout()
@@ -260,32 +261,6 @@ func runInspect(execution context.Context, setFlags []string, includeTargets boo
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", diagnostic.Message)
 	}
 	return nil
-}
-
-func silenceStdout() func() {
-	return silenceStream(&os.Stdout)
-}
-
-func silenceStderr() func() {
-	return silenceStream(&os.Stderr)
-}
-
-func silenceStream(stream **os.File) func() {
-	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
-	if err != nil {
-		return func() {}
-	}
-	original := *stream
-	*stream = devNull
-	restored := false
-	return func() {
-		if restored {
-			return
-		}
-		restored = true
-		*stream = original
-		devNull.Close()
-	}
 }
 
 func failInspect(envelope *inspectEnvelope, code string, err error) error {

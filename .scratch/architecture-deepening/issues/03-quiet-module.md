@@ -47,3 +47,22 @@
 ## 涉及文件
 
 新增 `internal/quiet/`。改：`cmd/vmake/inspect_cmd.go`、`inspect_session.go`、`pkg_discover.go`、`doctor_cmd.go`、`deps_graph_cmd.go`、`config_files.go`、`build_report.go`、`root.go`、`pkg/pipeline/config_preview.go`。
+
+## 实现记录
+
+偏离一处：**四个意图而不是三个**。实现时发现"静音流"与"只读/日志"的作用域在现有调用点上是分开的——`openInspection` 只静音日志与脚本写入，`query`/`deps why` 必须在巡检返回之后才打印结果，所以 `Probe` 不能顺带交换流。四个意图各自的杠杆是实测出来的，不是猜的：
+
+| 意图 | 流 | vlog | exec | scriptfs 只读 | 使用者 |
+|---|---|---|---|---|---|
+| `Probe` | — | ✓ | ✓ | ✓ | `openInspection`、`query config` |
+| `ProbeSilent` | ✓ | ✓ | ✓ | ✓ | `deps` 前导、`doctor`、补全 |
+| `Script` | ✓ | — | — | — | `pkg search/show` 解释执行 build.go |
+| `Quiet` | stdout | — | — | — | `-q` 下的 build/test 摘要 |
+
+`ProbeScope(quietLog, quietExec)` 保留历史布尔对，因为 `query config` 传的是 `(true,false)`——把两个杠杆合成一个会改那条命令的行为。
+
+落点：`internal/quiet`（新）+ `internal/scriptfs.IsReadOnly()`（只为钉住契约的只读断言）。`pipeline.EnterQuietReadOnlyScope` 变成 `quiet.ProbeScope` 的薄调用者；`cmd` 的 `silenceStdout/Stderr`、`inspectionScope`、`quietScriptScope`、以及 `withReport` 手写的 devNull 块全部删除。`package main` 里有个 `-q` 的 `quiet bool` 全局，所以 `cmd` 侧以 `quietpkg` 别名导入。
+
+验收 grep：`silenceStdout|silenceStderr|inspectionScope|quietScriptScope` 在 `cmd/`、`pkg/`、`internal/` 的生产代码中为 **0**；`os.DevNull` 只出现在 `internal/quiet`。
+
+测试 `internal/quiet/quiet_test.go` 五个：四个意图各自的杠杆组合（含"不碰不属于自己的杠杆"），以及 restore 连续调用三次幂等。

@@ -1,6 +1,7 @@
 package main
 
 import (
+	quietpkg "github.com/spock2300/vmake/internal/quiet"
 	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/buildreport"
 	"github.com/spock2300/vmake/pkg/pipeline"
@@ -32,7 +33,7 @@ func (e *inspectionStageError) Error() string { return e.err.Error() }
 func (e *inspectionStageError) Unwrap() error { return e.err }
 
 func openInspection(req inspectionRequest) (*inspectionSession, error) {
-	restore := inspectionScope(req.quiet, req.execQuiet)
+	restore := quietpkg.ProbeScope(req.quiet, req.execQuiet)
 	ctx, err := openProject(req.project)
 	if err != nil {
 		restore()
@@ -71,8 +72,4 @@ func (s *inspectionSession) Close() {
 // locked build is also a strict-wrapper build.
 func lockPolicyFor(dryRun, locked, offline bool) resolver.LockPolicy {
 	return resolver.LockPolicy{DryRun: dryRun, Locked: locked, StrictWrapper: locked, Offline: offline}
-}
-
-func inspectionScope(quiet, execQuiet bool) func() {
-	return pipeline.EnterQuietReadOnlyScope(quiet, execQuiet)
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	quietpkg "github.com/spock2300/vmake/internal/quiet"
 	"github.com/spock2300/vmake/pkg/pipeline"
 )
 
@@ -57,10 +58,10 @@ type depsCheckEnvelope struct {
 // Callers restore before writing their output; project-root errors stay with
 // the caller, which owns their per-command reporting.
 func openDepsInspection(execution context.Context, root string, overrides []inspectOverride, jsonOut, locked, offline bool) (*inspectionSession, func(), error) {
-	restoreStdout := silenceStdout()
+	restoreStdout := quietpkg.SilenceStdout()
 	restoreStderr := func() {}
 	if jsonOut {
-		restoreStderr = silenceStderr()
+		restoreStderr = quietpkg.SilenceStderr()
 	}
 	policy := lockPolicyFor(true, locked, offline)
 	quiet := jsonOut || (!verbose && !veryVerbose)
@@ -500,9 +501,9 @@ func completeDepsWhyArg(cmd *cobra.Command, args []string, toComplete string) ([
 	}
 
 	if root, rootErr := resolveProjectRoot(); rootErr == nil {
-		restoreOut := silenceStdout()
-		restoreErr := silenceStderr()
-		restoreScope := inspectionScope(true, true)
+		restoreOut := quietpkg.SilenceStdout()
+		restoreErr := quietpkg.SilenceStderr()
+		restoreScope := quietpkg.ProbeScope(true, true)
 		policy := lockPolicyFor(true, false, true)
 		ctx, err := openProject(projectOptions{root: root, execution: cmd.Context(), policy: &policy, skipGitignore: true})
 		if err == nil {

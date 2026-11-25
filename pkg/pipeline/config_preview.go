@@ -4,28 +4,14 @@ import (
 	"maps"
 	"slices"
 
-	iexec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/internal/quiet"
 	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/config"
-	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
-func EnterQuietReadOnlyScope(quiet, execQuiet bool) func() {
-	scriptfs.SetReadOnly(true)
-	previousLevel := vlog.GetLevel()
-	previousQuiet := iexec.IsQuiet()
-	if quiet {
-		vlog.SetLevel(vlog.Quiet)
-	}
-	if execQuiet {
-		iexec.SetQuiet(true)
-	}
-	return func() {
-		scriptfs.SetReadOnly(false)
-		vlog.SetLevel(previousLevel)
-		iexec.SetQuiet(previousQuiet)
-	}
+func EnterQuietReadOnlyScope(quietLog, quietExec bool) func() {
+	return quiet.ProbeScope(quietLog, quietExec)
 }
 
 func NewConfigPreviewer(ctx *RuntimeContext) func(*config.ConfigFile) (config.Preview, bool) {

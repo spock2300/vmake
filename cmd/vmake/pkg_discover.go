@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	quietpkg "github.com/spock2300/vmake/internal/quiet"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/catalog"
@@ -126,7 +127,7 @@ func searchPackages(opts pkgSearchOptions) (*pkgSearchResult, error) {
 				Repo:       opts.repo,
 				Details:    opts.details,
 				ForProject: opts.forProject,
-			}, statuses, quietScriptScope)
+			}, statuses, quietpkg.Streams)
 		}
 		result.Packages = append(result.Packages, entries...)
 		result.Warnings = append(result.Warnings, warnings...)
@@ -157,26 +158,17 @@ func catalogEnv(mgr *repo.RepoManager) catalog.Env {
 	}
 }
 
-func quietScriptScope() func() {
-	restoreStdout := silenceStdout()
-	restoreStderr := silenceStderr()
-	return func() {
-		restoreStderr()
-		restoreStdout()
-	}
-}
-
 func searchNativeRepo(repoName string, opts pkgSearchOptions, statuses *pkgStatusReader) ([]pkgSearchEntry, []string) {
 	return catalog.SearchNativeRepo(catalogEnv(getRepoManager()), repoName, catalog.SearchOptions{
 		Pattern:    opts.pattern,
 		Repo:       opts.repo,
 		Details:    opts.details,
 		ForProject: opts.forProject,
-	}, statuses, quietScriptScope)
+	}, statuses, quietpkg.Streams)
 }
 
 func loadPackageScript(src buildscript.Source) (*api.Package, error) {
-	return catalog.LoadPackageScript(src, repoScriptTrusted, quietScriptScope)
+	return catalog.LoadPackageScript(src, repoScriptTrusted, quietpkg.Streams)
 }
 
 func listNativePackagesAt(depsDir, repoName string) ([]string, error) {
@@ -184,7 +176,7 @@ func listNativePackagesAt(depsDir, repoName string) ([]string, error) {
 }
 
 func loadPkgShow(repoName, pkgName, version string) (*pkgShowResult, error) {
-	res, isUsage, err := catalog.ShowPackage(catalogEnv(getRepoManager()), repoName, pkgName, version, quietScriptScope)
+	res, isUsage, err := catalog.ShowPackage(catalogEnv(getRepoManager()), repoName, pkgName, version, quietpkg.Streams)
 	if err != nil {
 		if isUsage {
 			return nil, &usageError{err: err}

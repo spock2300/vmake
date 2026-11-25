@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	quietpkg "github.com/spock2300/vmake/internal/quiet"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/resolver"
@@ -96,7 +97,7 @@ func runQueryTargets(execution context.Context) error {
 }
 
 func runQueryConfig(cmd *cobra.Command, args []string) {
-	restoreScope := inspectionScope(true, false)
+	restoreScope := quietpkg.ProbeScope(true, false)
 	defer restoreScope()
 
 	name := args[0]
