@@ -283,7 +283,7 @@ of these files.
 | Field | Type | Meaning |
 |-------|------|---------|
 | `name` | string | Package name |
-| `kind` | string | `local`, `native`, or `registry` |
+| `kind` | string | `local`, `native`, or `registry` — the package source kind (see below) |
 | `repo` | string? | Repository name for remote packages |
 | `version` | string? | Selected version (project pin, lockfile, or native selection); linked packages report `0.0.0-local` |
 | `commit` | string? | Resolved commit for remote packages; linked packages report the link tree HEAD |

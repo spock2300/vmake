@@ -153,7 +153,7 @@ func searchPackages(opts pkgSearchOptions) (*pkgSearchResult, error) {
 
 func catalogEnv(mgr *repo.RepoManager) catalog.Env {
 	return catalog.Env{
-		Repo:       mgr,
+		Repo:        mgr,
 		ProjectDir:  findProjectDirSoft(),
 		CacheDir:    getCacheDir(),
 		RepoTrusted: repoScriptTrusted,

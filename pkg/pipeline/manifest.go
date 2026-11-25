@@ -76,7 +76,7 @@ func WriteManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 			packages = append(packages, InstallManifestEntry{
 				Name:    name,
 				Version: prov.version,
-				Source:  "local",
+				Source:  resolver.SourceKindLocal.String(),
 				Ref:     prov.ref,
 				Path:    relPath,
 			})
@@ -89,12 +89,12 @@ func WriteManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 		entry := InstallManifestEntry{
 			Name:    name,
 			Version: ip.Version,
-			Source:  "registry",
+			Source:  resolver.SourceKindRegistry.String(),
 		}
 		if node.Source != nil && node.Source.Link != nil {
-			entry.Source = "registry"
+			entry.Source = resolver.SourceKindRegistry.String()
 			if node.IsNative() {
-				entry.Source = "native"
+				entry.Source = resolver.SourceKindNative.String()
 				entry.URL = node.Native.GitURL
 			} else if node.Pkg != nil {
 				if urls := node.Pkg.GitURLs(); len(urls) > 0 {
@@ -108,7 +108,7 @@ func WriteManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 			continue
 		}
 		if node.IsNative() {
-			entry.Source = "native"
+			entry.Source = resolver.SourceKindNative.String()
 			entry.URL = node.Native.GitURL
 			if ref, ok := node.Native.Versions[ip.Version]; ok {
 				entry.Ref = ref

@@ -184,7 +184,8 @@ nothing. The build appends each entry as `-D<entry>` to both the C and C++
 project flags after the package-declared globals; a `false` boolean emits no
 define.
 
-Each `packages` entry has `name`, `kind` (`local`/`native`/`registry`),
+Each `packages` entry has `name`, `kind` (`local`/`native`/`registry`; a `local`
+package is spelled `git` under `vmake deps status --json`),
 `needed`, `sourcePresent`, `deps`, optional remote
 `repo`/`version`/`commit`/`url`, local `path` and absolute `sourceDir`,
 optional `linked`/`linkPath` for `pkg link` packages (version is then

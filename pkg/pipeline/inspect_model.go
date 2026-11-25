@@ -254,16 +254,6 @@ func graphDiagnostic(issue GraphIssue) Diagnostic {
 	}
 }
 
-func packageKind(node *resolver.PackageNode) string {
-	if node.IsLocal() {
-		return "local"
-	}
-	if node.IsNative() {
-		return "native"
-	}
-	return "registry"
-}
-
 func nativeSelected(node *resolver.PackageNode) string {
 	if node.Native != nil {
 		return node.Native.Selected

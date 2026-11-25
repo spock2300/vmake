@@ -129,12 +129,7 @@ func InspectDepsStatus(ctx *RuntimeContext) (_ *DepsStatusReport, err error) {
 			continue
 		}
 
-		sourceKind := "registry"
-		if node.IsLocal() {
-			sourceKind = "git"
-		} else if node.IsNative() {
-			sourceKind = "native"
-		}
+		sourceKind := node.SourceKind()
 
 		constraints := make([]string, 0, len(node.Constraints))
 		constraints = append(constraints, node.Constraints...)
@@ -155,7 +150,7 @@ func InspectDepsStatus(ctx *RuntimeContext) (_ *DepsStatusReport, err error) {
 			}
 			packages = append(packages, DepPackageStatus{
 				Name:         name,
-				Source:       sourceKind,
+				Source:       sourceKind.GitCompatName(),
 				Version:      resolver.LocalLinkVersion,
 				Commit:       commit,
 				Constraints:  constraints,
@@ -225,7 +220,7 @@ func InspectDepsStatus(ctx *RuntimeContext) (_ *DepsStatusReport, err error) {
 		cached := sourceMgr.HasCachedCommit(urls, commit)
 
 		wrapperOutdated := false
-		if sourceKind == "registry" && hasLock && locked.WrapperCommit != "" && ctx.Paths != nil && ctx.Paths.ReposDir != "" {
+		if sourceKind == resolver.SourceKindRegistry && hasLock && locked.WrapperCommit != "" && ctx.Paths != nil && ctx.Paths.ReposDir != "" {
 			if repoName, _, ok := api.SplitPackageRef(name); ok {
 				mgr := repo.NewRepoManager(ctx.Paths.ReposDir)
 				if mgr.Exists(repoName) {
@@ -251,7 +246,7 @@ func InspectDepsStatus(ctx *RuntimeContext) (_ *DepsStatusReport, err error) {
 
 		packages = append(packages, DepPackageStatus{
 			Name:         name,
-			Source:       sourceKind,
+			Source:       sourceKind.GitCompatName(),
 			Version:      version,
 			Commit:       commit,
 			Constraints:  constraints,

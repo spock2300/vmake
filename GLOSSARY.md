@@ -31,3 +31,7 @@ _Avoid_: 包索引, 全局仓库表
 **项目模型** (resolved project model):
 工程解析完成、尚未构建时一次性构造的项目视图，包含包、目标、配置、依赖边与诊断；构造完成后只读。
 _Avoid_: 巡检, 快照, 检查结果, 构建计划
+
+**包来源类型** (package source kind):
+一个包源码的三分法——`local`（工程内）、`native`（原生仓库包）、`registry`（registry 仓库包）。
+_Avoid_: 源类型字符串, origin, source type

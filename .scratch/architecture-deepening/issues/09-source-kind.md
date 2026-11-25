@@ -78,3 +78,12 @@ func (n *PackageNode) SourceKind() SourceKind {
 **其它实测事实**：`deps status` 的 `Source` 目前**没有任何测试钉住**；catalog 没有 `*PackageNode`，只有 `repoName` + `Env.repoIsNative`，所以它保留分支、只共享拼写；`resolver` 不依赖 catalog/pipeline，加依赖不成环；linked 远端包在 `resolver.go:528` 是 `api.SourceRemote`，直接调 `SourceKind()` 不会把 registry/native 弄错；`lock_projection.go:101` 还有第五处 `git` 拼写，本次**不动**（零行为变化，后续一行）。
 
 **已定决策**：接受 catalog 依赖 `pkg/resolver` 取常量；`lock_projection` 的词表延后；第 6 步用扩展既有测试而不是新起子进程测试。
+
+## 实现记录
+
+已落地：`pkg/resolver.SourceKind` + `String()`/`GitCompatName()` + `PackageNode.SourceKind()`；inspect（删除 `packageKind`）、deps（`Source: GitCompatName()`、registry 比较）、manifest 写入侧全部改用它；`docs/INSPECT.md` 新增 "Package source kind" 段说明 `local ≡ git`；技能 `references/inspect.md` 加操作者视角的一句；`GLOSSARY.md` 新增「包来源类型」。`deps_cmd_test.go` 加了 `got.Source != "git"` 断言——9 个夹具的 `deps status` 全是 `packages: []`，字节对照抓不到这个回归，只有这条断言能守。
+
+偏离/未做：
+- catalog 的四处 `registry`/`native` 字面量**未改**为常量。catalog 现在只有仓库类型布尔、没有 `*PackageNode`，改它要新加 `catalog → resolver` 依赖换取零行为收益；等 07 收尾时一并判断。
+- `lock_projection.go:101` 的第五处 `git` 拼写未动（按计划）。
+- 未跑 `vmake doctor` 的陈旧技能检查（`skill install` 已执行，技能测试通过）。

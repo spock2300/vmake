@@ -174,7 +174,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		packageOptionDefs[name] = ctx.PackageOptions(name)
 		if opts.Facts {
 			facts := PackageFacts{
-				Kind:          packageKind(node),
+				Kind:          node.SourceKind().String(),
 				NativeVersion: nativeSelected(node),
 				SourcePresent: IsPackageSourcePresent(ctx, name, node),
 				Deps:          dedupeStrings(node.Deps),
