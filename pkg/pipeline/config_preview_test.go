@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
@@ -45,6 +46,11 @@ func TestNewConfigPreviewerEvaluatesDraftWithoutMutatingEagerGraph(t *testing.T)
 	}
 	if err := runConfigPhase(s.ctx); err != nil {
 		t.Fatal(err)
+	}
+
+	s.ctx.ConfigPath = filepath.Join(s.ctx.WorkDir, "configs", "wifi-ble.json")
+	if wb := NewConfigWorkbench(s.ctx); wb == nil || wb.ConfigFile != "configs/wifi-ble.json" {
+		t.Fatalf("NewConfigWorkbench ConfigFile = %v, want configs/wifi-ble.json", wb)
 	}
 
 	preview := NewConfigPreviewer(s.ctx)

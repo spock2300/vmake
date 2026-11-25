@@ -357,8 +357,8 @@ func TestEgoGraph_UpstreamIsDependenciesDownstreamIsDependents(t *testing.T) {
 	if !strings.Contains(view, "（无上游依赖）") {
 		t.Fatalf("expected an empty upstream column for a package without dependencies:\n%s", view)
 	}
-	if !strings.Contains(view, "╢◄") || strings.Contains(view, "]◄") {
-		t.Fatalf("expected the wires from the dependents to point at hl/hl-mcu-sdk:\n%s", view)
+	if !strings.Contains(view, "╟─") || !strings.Contains(view, "►[") || strings.Contains(view, "◄") || strings.Contains(view, "╢") {
+		t.Fatalf("expected outward ╟ connector and rightward ► wires into dependents of hl/hl-mcu-sdk:\n%s", view)
 	}
 
 	m.jumpToMatch("firmware", "")
@@ -398,8 +398,14 @@ func TestEgoGraph_UpstreamIsDependenciesDownstreamIsDependents(t *testing.T) {
 	if !strings.Contains(view, "（无下游依赖）") {
 		t.Fatalf("expected an empty downstream column for a package nothing depends on:\n%s", view)
 	}
-	if !strings.Contains(view, "]◄") || strings.Contains(view, "╢◄") {
-		t.Fatalf("expected the wires to firmware to point at its dependencies:\n%s", view)
+	if !strings.Contains(view, "►╢") || strings.Contains(view, "◄") || strings.Contains(view, "╟") {
+		t.Fatalf("expected rightward ► wire into outward ╢ connector on firmware:\n%s", view)
+	}
+
+	m.jumpToMatch("board-py32f539-evb", "")
+	view = stripAnsi(m.View())
+	if !strings.Contains(view, "►╢") || !strings.Contains(view, "╟─") || (!strings.Contains(view, "►[") && !strings.Contains(view, "►┤")) || strings.Contains(view, "◄") {
+		t.Fatalf("expected middle node board-py32f539-evb to connect ►╢ on left and ╟─ ... ► on right:\n%s", view)
 	}
 }
 
@@ -414,11 +420,17 @@ func gutterRoleFor(m *Model, pkg string) gutterRole {
 }
 
 func TestEgoGraph_SideMarkersAndControlsMatchColumns(t *testing.T) {
-	if got, _ := sideNeighborGlyph(true, true, true); got != "◀" {
-		t.Fatalf("active upstream glyph = %q, want ◀", got)
+	if got, _ := sideNeighborGlyph(true, true, true); got != "▶" {
+		t.Fatalf("active upstream glyph = %q, want ▶", got)
 	}
 	if got, _ := sideNeighborGlyph(true, true, false); got != "▶" {
 		t.Fatalf("active downstream glyph = %q, want ▶", got)
+	}
+	if got, _ := sideNeighborGlyph(false, true, false); got != "▷" {
+		t.Fatalf("inactive highlighted glyph = %q, want ▷", got)
+	}
+	if got, _ := sideNeighborGlyph(false, false, false); got != "◌" {
+		t.Fatalf("inactive unhighlighted glyph = %q, want ◌", got)
 	}
 
 	m := buildHLDemoCleanTestModel()
@@ -521,4 +533,84 @@ func TestEgoGraph_EnglishColumnLabels(t *testing.T) {
 			t.Fatalf("expected %q in English ego graph:\n%s", want, view)
 		}
 	}
+}
+
+func TestTreeLayout_DistinguishesActiveNoOptAndInactiveEdges(t *testing.T) {
+	base := buildHLDemoCleanTestModel()
+	initPrev := config.Preview{
+		Roots: []string{"firmware"},
+		ActivePackages: map[string]bool{
+			"firmware":           true,
+			"board-py32f539-evb": true,
+			"board":              true,
+			"hl/hl-mcu-sdk":      true,
+		},
+		ActiveDeps: map[string][]string{
+			"firmware":           {"hl/hl-mcu-sdk", "board", "board-py32f539-evb"},
+			"board-py32f539-evb": {"hl/hl-mcu-sdk", "board"},
+			"board":              {"hl/hl-mcu-sdk"},
+		},
+	}
+	m := NewModel(Input{
+		WorkDir: "/home/spock/git/hl-demo-clean",
+		Workbench: &config.Workbench{
+			Packages:         mkSources("hl-demo-clean", "firmware", "target-app", "board", "board-py32f539-evb", "lvgl-demos", "common"),
+			Deps:             base.deps,
+			Options:          base.ed().Options,
+			FocusActive:      true,
+			InitialPreview:   initPrev,
+			CurrentToolchain: "arm-none-eabi",
+			GlobalOptions:    base.ed().GlobalOptions,
+			GlobalValues:     map[string]any{},
+		},
+	})
+	m.language = languageChinese
+	m.width = 140
+	m.height = 40
+	m.expandAll()
+
+	t.Run("firmware_upstream_and_unrelated", func(t *testing.T) {
+		m.jumpToMatch("firmware", "")
+		m.focusArea = 1
+		tree := stripAnsi(m.layout().treeContent)
+		if !strings.Contains(tree, "◌ py32f539") {
+			t.Fatalf("inactive unrelated package py32f539 should use ◌:\n%s", tree)
+		}
+		if !strings.Contains(tree, "◁ lvgl-demos") || !strings.Contains(tree, "◁ cherryusb") {
+			t.Fatalf("inactive upstream dependencies lvgl-demos and cherryusb should use ◁:\n%s", tree)
+		}
+	})
+
+	t.Run("sdk_active_and_inactive_downstream", func(t *testing.T) {
+		m.jumpToMatch("hl/hl-mcu-sdk", "")
+		m.focusArea = 1
+		tree := stripAnsi(m.layout().treeContent)
+		if !strings.Contains(tree, "◆ hl/hl-mcu-sdk") {
+			t.Fatalf("selected hl/hl-mcu-sdk should show ◆:\n%s", tree)
+		}
+		if !strings.Contains(tree, "▶ board") {
+			t.Fatalf("active 0-option downstream board should show ▶:\n%s", tree)
+		}
+		if !strings.Contains(tree, "▷ target-app") {
+			t.Fatalf("inactive downstream target-app should show ▷:\n%s", tree)
+		}
+		if !strings.Contains(tree, "◌ cherryusb") {
+			t.Fatalf("inactive unrelated cherryusb should show ◌:\n%s", tree)
+		}
+	})
+
+	t.Run("global_active_no_opt_vs_inactive", func(t *testing.T) {
+		m.jumpToMatch(GlobalPkgName, "")
+		m.focusArea = 1
+		tree := stripAnsi(m.layout().treeContent)
+		if !strings.Contains(tree, "○ hl/hl-mcu-sdk") {
+			t.Fatalf("active 0-option package hl/hl-mcu-sdk should use ○ (not ◌):\n%s", tree)
+		}
+		if !strings.Contains(tree, "○ board") {
+			t.Fatalf("active 0-option package board should use ○ (not ◌):\n%s", tree)
+		}
+		if !strings.Contains(tree, "◌ target-app") {
+			t.Fatalf("inactive package target-app should use ◌:\n%s", tree)
+		}
+	})
 }

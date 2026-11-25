@@ -30,10 +30,10 @@ type screen struct {
 	optionContent   string
 	optionRows      []panelRowTarget
 	optionViewport  bool
-	descRowOffset   int
 	optOff          int
 
 	languageSelector dialogRect
+	descRow          dialogRect
 
 	mainH int
 
@@ -47,17 +47,32 @@ type screen struct {
 	detailOff   int
 }
 
+type chromeLayout struct {
+	header   string
+	footer   string
+	headerH  int
+	footerH  int
+	contentH int
+	descRow  dialogRect
+}
+
+type headerMetrics struct {
+	selector string
+	style    lipgloss.Style
+	headerW  int
+	leftW    int
+}
+
 type treeLayout struct {
 	content string
 	rows    []panelRowTarget
 }
 
 type optionLayout struct {
-	content       string
-	rows          []panelRowTarget
-	descRowOffset int
-	off           int
-	viewport      bool
+	content  string
+	rows     []panelRowTarget
+	off      int
+	viewport bool
 }
 
 func tooSmallSize(width, height int) bool {
@@ -98,8 +113,8 @@ func (m *Model) tooSmallView() string {
 }
 
 func (m *Model) fillNormal(s *screen) {
-	header, footer, headerH, footerH, contentH := m.chrome()
-	s.headerH, s.footerH, s.contentH = headerH, footerH, contentH
+	ch := m.chrome()
+	s.headerH, s.footerH, s.contentH, s.descRow = ch.headerH, ch.footerH, ch.contentH, ch.descRow
 	roles := m.gutterRoles()
 	tree := m.treeLayout(s.contentH, roles)
 	s.treeContent, s.treeRows = tree.content, tree.rows
@@ -122,7 +137,7 @@ func (m *Model) fillNormal(s *screen) {
 		s.optionsTopY = s.headerH + s.graphH
 		opt := m.optionLayout(s.contentH)
 		s.optionContent, s.optionRows = opt.content, opt.rows
-		s.descRowOffset, s.optOff, s.optionViewport = opt.descRowOffset, opt.off, opt.viewport
+		s.optOff, s.optionViewport = opt.off, opt.viewport
 		optPanel := optionStyle.MaxHeight(max(1, s.contentH-s.graphH)).Render(s.optionContent)
 		rightCol = lipgloss.JoinVertical(lipgloss.Left, graphPanel, optPanel)
 	} else {
@@ -130,7 +145,7 @@ func (m *Model) fillNormal(s *screen) {
 		s.optionsTopY = s.headerH
 		opt := m.optionLayout(s.contentH)
 		s.optionContent, s.optionRows = opt.content, opt.rows
-		s.descRowOffset, s.optOff, s.optionViewport = opt.descRowOffset, opt.off, opt.viewport
+		s.optOff, s.optionViewport = opt.off, opt.viewport
 		rightCol = optionStyle.MaxHeight(s.contentH).Render(s.optionContent)
 	}
 	for i := range s.treeRows {
@@ -141,7 +156,7 @@ func (m *Model) fillNormal(s *screen) {
 	}
 	main := lipgloss.JoinHorizontal(lipgloss.Top, treePanel, rightCol)
 	s.mainH = lipgloss.Height(main)
-	s.view = lipgloss.JoinVertical(lipgloss.Left, header, main, footer)
+	s.view = lipgloss.JoinVertical(lipgloss.Left, ch.header, main, ch.footer)
 }
 
 func (m *Model) fillOverlay(s *screen) {
@@ -153,9 +168,9 @@ func (m *Model) fillOverlay(s *screen) {
 	}
 }
 
-func (m *Model) chrome() (header, footer string, headerH, footerH, contentH int) {
-	header = m.renderHeaderWithin(0)
-	footer = m.renderFooterWithin(0)
+func (m *Model) chrome() chromeLayout {
+	header, descRow := m.renderHeaderWithDesc(0, true)
+	footer := m.renderFooterWithin(0)
 	treeStyle := treePanelStyle(m.focusArea == 0, m.treePanelWidth())
 	optionStyle := optionsPanelStyle(m.focusArea == 1, m.optionsPanelWidth())
 	minTreeHeight := 2 + treeStyle.GetVerticalFrameSize()
@@ -163,15 +178,24 @@ func (m *Model) chrome() (header, footer string, headerH, footerH, contentH int)
 		minTreeHeight++
 	}
 	minMainHeight := max(minTreeHeight, 2+optionStyle.GetVerticalFrameSize())
+	if lipgloss.Height(header)+lipgloss.Height(footer)+max(minMainHeight, 3) > m.height {
+		header, descRow = m.renderHeaderWithDesc(0, false)
+	}
 	if lipgloss.Height(header)+lipgloss.Height(footer)+minMainHeight > m.height {
 		minFooterHeight := 1 + footerBorderStyle().GetVerticalFrameSize()
-		header = m.renderHeaderWithin(m.height - minMainHeight - minFooterHeight)
+		header, descRow = m.renderHeaderWithDesc(m.height-minMainHeight-minFooterHeight, false)
 		footer = m.renderFooterWithin(m.height - minMainHeight - lipgloss.Height(header))
 	}
-	headerH = lipgloss.Height(header)
-	footerH = lipgloss.Height(footer)
-	contentH = max(1, m.height-headerH-footerH)
-	return
+	headerH := lipgloss.Height(header)
+	footerH := lipgloss.Height(footer)
+	return chromeLayout{
+		header:   header,
+		footer:   footer,
+		headerH:  headerH,
+		footerH:  footerH,
+		contentH: max(1, m.height-headerH-footerH),
+		descRow:  descRow,
+	}
 }
 
 func treePanelHeight(contentH int, filtered bool) int {
@@ -293,27 +317,10 @@ func (m *Model) treeLayout(contentH int, roles []gutterRole) treeLayout {
 
 		isSelected := i == m.treeCursor
 		isFocused := m.focusArea == 0
+		isInactive := node.PkgName == InactiveGroupPkgName || (!node.IsGroup && !m.isActivePkg(node.PkgName))
+		isActiveNoOpt := !node.IsGroup && node.PkgName != GlobalPkgName && m.isActivePkg(node.PkgName) && !m.hasPkgConfig(node.PkgName)
 
-		icon := "●"
-		if node.PkgName == GlobalPkgName {
-			icon = "◈"
-		} else if len(node.Children) > 0 {
-			if node.Expanded {
-				icon = "▾"
-			} else {
-				icon = "▸"
-			}
-		} else if role == gutterFocal || isSelected {
-			icon = "◆"
-		} else if role == gutterUpstream {
-			icon = "◀"
-		} else if role == gutterDownstream {
-			icon = "▶"
-		} else if !m.isActivePkg(node.PkgName) || (!m.hasPkgConfig(node.PkgName) && !node.IsGroup) {
-			icon = "◌"
-		} else if node.IsExternal {
-			icon = "○"
-		}
+		icon, iconStyle := treeRowIconAndStyle(node, role, isSelected, isInactive, isActiveNoOpt)
 
 		name := node.Name
 		if node.PkgName == GlobalPkgName || isSyntheticGroupPkg(node.PkgName) {
@@ -348,16 +355,19 @@ func (m *Model) treeLayout(contentH int, roles []gutterRole) treeLayout {
 		}
 
 		if !isSelected || !isFocused {
-			if node.PkgName == InactiveGroupPkgName || (!node.IsGroup && !m.isActivePkg(node.PkgName)) {
-				name = externalPkgStyle.Render(name)
-			} else if node.IsExternal {
-				name = externalPkgStyle.Render(name)
+			switch {
+			case isInactive:
+				name = inactivePkgStyle.Render(name)
+			case isActiveNoOpt:
+				name = treeActiveNoOptNameStyle.Render(name)
+			case node.IsExternal:
+				name = treeActiveRemoteNameStyle.Render(name)
 			}
 		}
 
 		if count > 0 {
-			if node.PkgName == InactiveGroupPkgName {
-				name += externalPkgStyle.Render(fmt.Sprintf(" (%d)", count))
+			if isInactive {
+				name += inactivePkgStyle.Render(fmt.Sprintf(" (%d)", count))
 			} else {
 				name += countBadgeStyle.Render(fmt.Sprintf(" (%d)", count))
 			}
@@ -366,20 +376,17 @@ func (m *Model) treeLayout(contentH int, roles []gutterRole) treeLayout {
 			name += modifiedMarkStyle.Render(" *")
 		}
 
+		prefix := node.Prefix
 		if !(isSelected && isFocused) {
-			switch role {
-			case gutterFocal:
-				icon = trackFocalStyle.Render(icon)
-			case gutterUpstream:
-				icon = trackUpstreamActiveStyle.Render(icon)
-			case gutterDownstream:
-				icon = trackDownstreamStyle.Render(icon)
-			case gutterUpstreamInactive, gutterDownstreamInactive:
-				icon = trackPassStyle.Render(icon)
+			if prefix != "" {
+				prefix = treeBranchStyle.Render(prefix)
+			}
+			if iconStyle != nil {
+				icon = iconStyle.Render(icon)
 			}
 		}
 
-		line := indent + node.Prefix + icon + " " + name
+		line := indent + prefix + icon + " " + name
 
 		if isSelected && isFocused {
 			line = selectedRowStyle.Render(line)
@@ -411,7 +418,7 @@ func (m *Model) optionLayout(contentH int) optionLayout {
 	if m.selectedPkg != "" && !isSyntheticGroupPkg(m.selectedPkg) {
 		var badges []string
 		if !m.isActivePkg(m.selectedPkg) {
-			badges = append(badges, externalPkgStyle.Render("◌ "+m.text(textInactiveBadge)))
+			badges = append(badges, inactivePkgStyle.Render("◌ "+m.text(textInactiveBadge)))
 		}
 		if mc := m.pkgModifiedCount(m.selectedPkg); mc > 0 {
 			badges = append(badges, modifiedMarkStyle.Render(fmt.Sprintf("* %d", mc)))
@@ -431,11 +438,6 @@ func (m *Model) optionLayout(contentH int) optionLayout {
 	}
 	var b strings.Builder
 	b.WriteString(lipgloss.NewStyle().MaxWidth(contentW).Render(titleLine) + "\n")
-
-	if m.optionsContentHeight(contentH) >= 3 {
-		b.WriteString(m.renderDescriptionRow())
-		out.descRowOffset = 1
-	}
 
 	if m.selectedPkg == "" {
 		b.WriteString(lipgloss.PlaceHorizontal(m.width-m.treeWidth-6, lipgloss.Center, m.text(textSelectPackage)))
@@ -471,7 +473,7 @@ func (m *Model) optionLayout(contentH int) optionLayout {
 		}
 	}
 
-	panelH := m.optionsContentHeight(contentH) - 1 - out.descRowOffset
+	panelH := m.optionsContentHeight(contentH) - 1
 	if panelH < 1 {
 		panelH = 1
 	}
@@ -488,7 +490,7 @@ func (m *Model) optionLayout(contentH int) optionLayout {
 
 	for i := start; i < end; i++ {
 		line := allRows[i]
-		out.rows = append(out.rows, panelRowTarget{y: i - start + 1 + out.descRowOffset, height: 1, index: line.row.navIdx})
+		out.rows = append(out.rows, panelRowTarget{y: i - start + 1, height: 1, index: line.row.navIdx})
 		b.WriteString(line.text + "\n")
 	}
 
@@ -549,20 +551,80 @@ func (m *Model) gutterRoles() []gutterRole {
 	return roles
 }
 
-func (m *Model) headerSelector() (string, lipgloss.Style, int) {
-	languageSelector := languageSelectorStyle.Render("[" + m.text(textLanguage) + ": " + m.languageLabel() + " ▼]")
-	headerStyle := headerBorderStyle(true).Width(m.width - 4)
-	headerWidth := headerStyle.GetWidth() - headerStyle.GetHorizontalFrameSize()
-	leftWidth := max(1, headerWidth-lipgloss.Width(languageSelector)-2)
-	return languageSelector, headerStyle, leftWidth
+func gutterRoleStyle(role gutterRole) *lipgloss.Style {
+	switch role {
+	case gutterFocal:
+		return &trackFocalStyle
+	case gutterUpstream:
+		return &trackUpstreamActiveStyle
+	case gutterDownstream:
+		return &trackDownstreamStyle
+	case gutterUpstreamInactive:
+		return &trackUpstreamInactiveStyle
+	case gutterDownstreamInactive:
+		return &trackDownstreamInactiveStyle
+	default:
+		return nil
+	}
+}
+
+func treeRowIconAndStyle(node *TreeNode, role gutterRole, isSelected, isInactive, isActiveNoOpt bool) (string, *lipgloss.Style) {
+	roleStyle := gutterRoleStyle(role)
+	switch {
+	case node.PkgName == GlobalPkgName:
+		return "◈", &trackFocalStyle
+	case len(node.Children) > 0:
+		icon := "▸"
+		if node.Expanded {
+			icon = "▾"
+		}
+		if roleStyle != nil {
+			return icon, roleStyle
+		}
+		if isInactive {
+			return icon, &treeInactiveIconStyle
+		}
+		return icon, &treeGroupIconStyle
+	case role == gutterFocal || isSelected:
+		return "◆", &trackFocalStyle
+	case role == gutterUpstream:
+		return "◀", roleStyle
+	case role == gutterDownstream:
+		return "▶", roleStyle
+	case role == gutterUpstreamInactive:
+		return "◁", roleStyle
+	case role == gutterDownstreamInactive:
+		return "▷", roleStyle
+	case isInactive:
+		return "◌", &treeInactiveIconStyle
+	case isActiveNoOpt:
+		return "○", &treeActiveNoOptIconStyle
+	case node.IsExternal:
+		return "○", &treeActiveRemoteIconStyle
+	default:
+		return "●", &treeActiveLocalIconStyle
+	}
+}
+
+func (m *Model) headerSelector() headerMetrics {
+	selector := languageSelectorStyle.Render("[" + m.text(textLanguage) + ": " + m.languageLabel() + " ▼]")
+	style := headerBorderStyle(true).Width(m.width - 4)
+	headerW := style.GetWidth() - style.GetHorizontalFrameSize()
+	leftW := max(1, headerW-lipgloss.Width(selector)-2)
+	return headerMetrics{
+		selector: selector,
+		style:    style,
+		headerW:  headerW,
+		leftW:    leftW,
+	}
 }
 
 func (m *Model) languageSelectorRect() dialogRect {
-	languageSelector, headerStyle, leftWidth := m.headerSelector()
+	hm := m.headerSelector()
 	return dialogRect{
-		x:      headerStyle.GetBorderLeftSize() + headerStyle.GetPaddingLeft() + leftWidth + 2,
-		y:      headerStyle.GetBorderTopSize() + headerStyle.GetPaddingTop(),
-		width:  lipgloss.Width(languageSelector),
+		x:      hm.style.GetBorderLeftSize() + hm.style.GetPaddingLeft() + hm.leftW + 2,
+		y:      hm.style.GetBorderTopSize() + hm.style.GetPaddingTop(),
+		width:  lipgloss.Width(hm.selector),
 		height: 1,
 	}
 }
@@ -577,16 +639,6 @@ func (s screen) optionRowAt(x, y int) (int, bool) {
 		}
 	}
 	return 0, false
-}
-
-func (s screen) descriptionRowAt(x, y int) bool {
-	if s.descRowOffset == 0 {
-		return false
-	}
-	if x < s.optionsLeft || x >= s.optionsLeft+s.optionsW {
-		return false
-	}
-	return y == s.optionsTopY+1
 }
 
 func (s screen) egoHitAt(mx, my int) (egoNodeHitbox, bool) {

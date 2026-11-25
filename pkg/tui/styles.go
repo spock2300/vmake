@@ -67,7 +67,7 @@ var (
 				Foreground(colorDropdown).
 				Bold(true)
 
-	externalPkgStyle = lipgloss.NewStyle().
+	inactivePkgStyle = lipgloss.NewStyle().
 				Foreground(colorMuted)
 
 	confirmStyle = lipgloss.NewStyle().
@@ -140,8 +140,35 @@ var (
 	trackDownstreamStyle = lipgloss.NewStyle().
 				Foreground(colorSuccess)
 
-	trackPassStyle = lipgloss.NewStyle().
-			Foreground(colorMuted)
+	trackUpstreamInactiveStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("#3D7A8A"))
+
+	trackDownstreamInactiveStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("#3B7A62"))
+
+	treeBranchStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#4E5166"))
+
+	treeActiveLocalIconStyle = lipgloss.NewStyle().
+					Foreground(colorSuccess)
+
+	treeActiveRemoteIconStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("#00A8CC"))
+
+	treeActiveRemoteNameStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("#BAC2DE"))
+
+	treeGroupIconStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#BAC2DE"))
+
+	treeActiveNoOptIconStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("#5E9E8A"))
+
+	treeActiveNoOptNameStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("#A6ADC8"))
+
+	treeInactiveIconStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#585B70"))
 
 	canvasFocalHexStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#9D65FF")).

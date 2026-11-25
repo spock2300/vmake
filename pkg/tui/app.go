@@ -178,6 +178,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		if m.descEditing && (tooSmallSize(m.width, m.height) || m.layout().descRow.height == 0) {
+			m.descEditing = false
+		}
 		m.ensureTreeCursorVisible()
 		return m, nil
 	}
@@ -254,6 +257,11 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "shift+tab":
 		m.focusArea = (m.focusArea - 1 + 2) % 2
+		return m, nil
+	case "D":
+		if m.layout().descRow.height > 0 {
+			m.startDescriptionEdit()
+		}
 		return m, nil
 	}
 
@@ -349,6 +357,10 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	mx, my := msg.X, msg.Y
 	if mouseLeftPress(msg) && s.languageSelector.contains(mx, my) {
 		m.openLanguageSelector()
+		return m, nil
+	}
+	if mouseLeftPress(msg) && s.descRow.contains(mx, my) {
+		m.startDescriptionEdit()
 		return m, nil
 	}
 	if my < s.headerH || my >= s.headerH+s.mainH {
@@ -635,10 +647,6 @@ func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "?", "d":
 		if m.optCursor < len(visible) {
 			m.openDetailOverlay(visible[m.optCursor])
-		}
-	case "D":
-		if m.layout().descRowOffset == 1 {
-			m.startDescriptionEdit()
 		}
 	case " ", "enter", "right", "l":
 		m.handleOptionAction(visible, presetIdx, false, msg.String())
@@ -941,10 +949,11 @@ func (m *Model) View() string {
 }
 
 func (m *Model) renderHeader() string {
-	return m.renderHeaderWithin(0)
+	header, _ := m.renderHeaderWithDesc(0, true)
+	return header
 }
 
-func (m *Model) renderHeaderWithin(maxHeight int) string {
+func (m *Model) renderHeaderWithDesc(maxHeight int, includeDesc bool) (string, dialogRect) {
 	title := titleStyle.Padding(0).Render("◆ " + m.text(textVMakeConfiguration))
 
 	var rightParts []string
@@ -955,33 +964,61 @@ func (m *Model) renderHeaderWithin(maxHeight int) string {
 		n := m.modifiedCount()
 		rightParts = append(rightParts, modifiedBadgeStyle.Render(m.textf(textModified, n)))
 	}
-	languageSelector, headerStyle, leftWidth := m.headerSelector()
+	hm := m.headerSelector()
 	rightPart := strings.Join(rightParts, "  ")
 
 	leftContent := title
 	if rightPart != "" {
-		if lipgloss.Width(title)+2+lipgloss.Width(rightPart) <= leftWidth {
-			leftContent += lipgloss.PlaceHorizontal(leftWidth-lipgloss.Width(title), lipgloss.Right, rightPart)
+		if lipgloss.Width(title)+2+lipgloss.Width(rightPart) <= hm.leftW {
+			leftContent += lipgloss.PlaceHorizontal(hm.leftW-lipgloss.Width(title), lipgloss.Right, rightPart)
 		} else {
 			leftContent += "\n" + rightPart
 		}
 	}
-	leftStyle := lipgloss.NewStyle().Width(leftWidth)
+	leftStyle := lipgloss.NewStyle().Width(hm.leftW)
 	if maxHeight > 0 {
-		leftStyle = leftStyle.MaxHeight(max(1, maxHeight-headerStyle.GetVerticalFrameSize()))
+		leftStyle = leftStyle.MaxHeight(max(1, maxHeight-hm.style.GetVerticalFrameSize()))
 	}
 	left := leftStyle.Render(leftContent)
-	headerContent := lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", languageSelector)
+	topRow := lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", hm.selector)
+	headerContent := topRow
 
-	return headerStyle.Render(headerContent)
+	var descRect dialogRect
+	if includeDesc && hm.headerW > 0 {
+		descLine := m.renderDescriptionRow(hm.headerW)
+		descRect = dialogRect{
+			x:      hm.style.GetBorderLeftSize() + hm.style.GetPaddingLeft(),
+			y:      hm.style.GetBorderTopSize() + hm.style.GetPaddingTop() + lipgloss.Height(topRow),
+			width:  hm.headerW,
+			height: 1,
+		}
+		headerContent = topRow + "\n" + descLine
+	}
+
+	return hm.style.Render(headerContent), descRect
 }
 
-func (m *Model) renderDescriptionRow() string {
-	contentWidth := m.optionsContentWidth()
-	label := m.text(textDescription) + ":"
-	valueWidth := contentWidth - lipgloss.Width(label) - 2
+func (m *Model) descriptionLabel(contentWidth int) string {
+	base := m.text(textDescription)
+	if m.configFile == "" {
+		return base + ":"
+	}
+	full := fmt.Sprintf("%s [%s]:", base, m.configFile)
+	if contentWidth-lipgloss.Width(full)-1 >= 16 {
+		return full
+	}
+	short := fmt.Sprintf("%s [%s]:", base, filepath.Base(m.configFile))
+	if contentWidth-lipgloss.Width(short)-1 >= 16 {
+		return short
+	}
+	return base + ":"
+}
+
+func (m *Model) renderDescriptionRow(contentWidth int) string {
+	label := m.descriptionLabel(contentWidth)
+	valueWidth := contentWidth - lipgloss.Width(label) - 1
 	if valueWidth < 1 {
-		valueWidth = 1
+		return lipgloss.NewStyle().MaxWidth(contentWidth).Render(groupStyle.Render(truncateDisplay(label, contentWidth)))
 	}
 	var value string
 	switch {
@@ -990,10 +1027,10 @@ func (m *Model) renderDescriptionRow() string {
 	case m.ed().Desc != "":
 		value = optionDescStyle.Render(truncateDisplay(sanitizeDescription(m.ed().Desc), valueWidth))
 	default:
-		value = optionDescStyle.Render(m.text(textDescriptionNotSet))
+		value = optionDescStyle.Render(truncateDisplay(m.text(textDescriptionNotSet), valueWidth))
 	}
 	line := groupStyle.Render(label) + " " + value
-	return lipgloss.NewStyle().MaxWidth(contentWidth).Render(line) + "\n"
+	return lipgloss.NewStyle().MaxWidth(contentWidth).Render(line)
 }
 
 type rowKind int
@@ -1242,7 +1279,7 @@ func (m *Model) renderFooterWithin(maxHeight int) string {
 		helpText = renderHelpEntries([]helpEntry{
 			{"↑↓", m.text(textNavigate)}, {"[]", m.text(textStepDeps)}, {"{}", m.text(textCycleEdges)}, {"←→", m.text(textCollapseExpand)},
 			{"/", m.text(textSearch)}, {"z/Z", m.text(textCollapseExpandAll)}, {"H", m.text(textHideEmpty)},
-			{"Tab", m.text(textOptions)}, {"Ctrl+S", m.text(textSave)}, {"Esc", m.text(textCancel)},
+			{"D", m.text(textDescriptionEdit)}, {"Tab", m.text(textOptions)}, {"Ctrl+S", m.text(textSave)}, {"Esc", m.text(textCancel)},
 		})
 	} else {
 		helpText = renderHelpEntries([]helpEntry{

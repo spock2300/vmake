@@ -28,6 +28,7 @@ type Workbench struct {
 	GlobalValues     map[string]any
 	ChipProfiles     map[string]api.ChipProfile
 	KConfigs         map[string][]*api.KConfigEntry
+	ConfigFile       string
 	Description      string
 	DisplayDefaults  func(toolchain string) map[string]any
 }

@@ -28,15 +28,18 @@ func descriptionModel() Model {
 
 func TestDescriptionDisplayAndEdit(t *testing.T) {
 	m := descriptionModel()
-	view := stripAnsi(m.layout().optionContent)
-	if !strings.Contains(view, "Description: old") || m.layout().descRowOffset != 1 {
-		t.Fatalf("description row missing (offset=%d):\n%s", m.layout().descRowOffset, view)
+	view := stripAnsi(m.View())
+	if !strings.Contains(view, "Config Description: old") || m.layout().descRow.height != 1 {
+		t.Fatalf("description row missing (rect=%+v):\n%s", m.layout().descRow, view)
+	}
+	if optView := stripAnsi(m.layout().optionContent); strings.Contains(optView, "Description:") {
+		t.Fatalf("config description should live in header, not inside package options:\n%s", optView)
 	}
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
 	if !m.descEditing {
 		t.Fatal("D did not start description editing")
 	}
-	if view := stripAnsi(m.layout().optionContent); !strings.Contains(view, "old▎") {
+	if view := stripAnsi(m.View()); !strings.Contains(view, "old▎") {
 		t.Fatalf("edit field missing:\n%s", view)
 	}
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" new")})
@@ -47,8 +50,43 @@ func TestDescriptionDisplayAndEdit(t *testing.T) {
 	if m.descEditing || m.ed().Desc != "old new" || !m.ed().HasChanges() || m.modifiedCount() != 1 {
 		t.Fatalf("after edit: editing=%t description=%q changes=%t count=%d", m.descEditing, m.ed().Desc, m.ed().HasChanges(), m.modifiedCount())
 	}
-	if view := stripAnsi(m.layout().optionContent); !strings.Contains(view, "Description: old new") {
+	if view := stripAnsi(m.View()); !strings.Contains(view, "Config Description: old new") {
 		t.Fatalf("edited description not rendered:\n%s", view)
+	}
+}
+
+func TestDescriptionShowsConfigFileAndEditsFromTreeFocus(t *testing.T) {
+	m := descriptionModel()
+	m.focusArea = 0
+	m.configFile = "configs/py32f539/evb/wifi-ble.json"
+	m.language = languageChinese
+	m.ed().Desc = "无线诊断固件"
+	m.ed().OrigDesc = m.ed().Desc
+
+	view := stripAnsi(m.View())
+	want := "配置说明 [configs/py32f539/evb/wifi-ble.json]: 无线诊断固件"
+	if !strings.Contains(view, want) {
+		t.Fatalf("expected %q in header:\n%s", want, view)
+	}
+	if optView := stripAnsi(m.layout().optionContent); strings.Contains(optView, "配置说明") || strings.Contains(optView, "无线诊断固件") {
+		t.Fatalf("package options panel must not display config description:\n%s", optView)
+	}
+	if !strings.Contains(view, "D 编辑说明") {
+		t.Fatalf("tree-focus footer should advertise D description shortcut:\n%s", view)
+	}
+	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
+	if !m.descEditing {
+		t.Fatal("D should start description editing even when package tree is focused")
+	}
+
+	if got := m.descriptionLabel(100); got != "配置说明 [configs/py32f539/evb/wifi-ble.json]:" {
+		t.Fatalf("wide descriptionLabel = %q", got)
+	}
+	if got := m.descriptionLabel(50); got != "配置说明 [wifi-ble.json]:" {
+		t.Fatalf("medium descriptionLabel = %q", got)
+	}
+	if got := m.descriptionLabel(30); got != "配置说明:" {
+		t.Fatalf("narrow descriptionLabel = %q", got)
 	}
 }
 
@@ -86,23 +124,51 @@ func TestDescriptionInputFiltersControlRunes(t *testing.T) {
 
 func TestDescriptionRowHiddenOnTinyLayout(t *testing.T) {
 	m := descriptionModel()
-	m.height = m.layout().headerH + m.layout().footerH + 2
-	if m.layout().descRowOffset != 0 {
-		t.Fatalf("description row offset = %d, want 0", m.layout().descRowOffset)
+	m.Update(tea.WindowSizeMsg{Width: 60, Height: 8})
+	if m.layout().tooSmall {
+		t.Fatal("60x8 should remain a live compact layout, not tooSmall")
+	}
+	if m.layout().descRow.height != 0 {
+		t.Fatalf("description row height = %d, want 0", m.layout().descRow.height)
+	}
+	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
+	if m.descEditing {
+		t.Fatal("D must not start description editing when description row is hidden")
+	}
+}
+
+func TestDescriptionEditCancelsWhenResizeHidesRow(t *testing.T) {
+	m := descriptionModel()
+	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
+	if !m.descEditing {
+		t.Fatal("D did not start description editing")
+	}
+	m.Update(tea.WindowSizeMsg{Width: 60, Height: 8})
+	if m.descEditing {
+		t.Fatal("shrinking terminal to hide description row must exit descEditing")
 	}
 }
 
 func TestDescriptionRowClickStartsEditing(t *testing.T) {
-	m := descriptionModel()
-	m.View()
-	if m.layout().descRowOffset != 1 {
-		t.Fatalf("description row offset = %d, want 1", m.layout().descRowOffset)
-	}
-	x := m.layout().treeW + 3
-	y := m.layout().headerH + 1
-	m.Update(tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
-	if !m.descEditing {
-		t.Fatal("click did not start description editing")
+	for _, tc := range []struct {
+		name    string
+		width   int
+		workDir string
+	}{
+		{name: "single_line_header", width: 100, workDir: "/w"},
+		{name: "wrapped_header", width: 70, workDir: "/home/user/projects/very/deeply/nested/firmware/working/directory"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := descriptionModel()
+			m.width = tc.width
+			m.workDir = tc.workDir
+			view := m.View()
+			x, y := mouseTestPosition(t, view, "Config Description: old")
+			m.Update(tea.MouseMsg{X: x + 2, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+			if !m.descEditing {
+				t.Fatalf("click on rendered description (%d,%d) did not start editing (rect=%+v):\n%s", x+2, y, m.layout().descRow, stripAnsi(view))
+			}
+		})
 	}
 }
 
@@ -110,12 +176,12 @@ func TestDescriptionLoadedMultilineIsSanitized(t *testing.T) {
 	m := descriptionModel()
 	m.ed().Desc = "short\nsecond"
 	m.ed().OrigDesc = m.ed().Desc
-	view := stripAnsi(m.layout().optionContent)
-	if !strings.Contains(view, "Description: short second") {
-		t.Fatalf("multiline description not collapsed for display:\n%s", view)
+	header := stripAnsi(m.renderHeader())
+	if !strings.Contains(header, "Config Description: short second") {
+		t.Fatalf("multiline description not collapsed for display:\n%s", header)
 	}
-	if lines := strings.Split(strings.TrimRight(view, "\n"), "\n"); len(lines) != 4 {
-		t.Fatalf("description row occupied %d lines, want 4 total:\n%s", len(lines), view)
+	if lines := strings.Split(strings.TrimRight(header, "\n"), "\n"); len(lines) != 3 {
+		t.Fatalf("header occupied %d lines, want 3 (title + description + border):\n%s", len(lines), header)
 	}
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
 	if m.descInput != "short second" {

@@ -261,7 +261,7 @@ func (m *Model) egoGraphBody(contentH int) (string, []egoNodeHitbox) {
 		cv.stampCenteredNote(col0X, focalMidY, col0W, m.text(textNoUpstream), &optionDescStyle)
 	default:
 		ports := m.stampSideColumn(cv, col0X, col0W, bodyTopRow, focalMidY, ego.Upstream, ego.ActiveUpstream, true, &boxes)
-		cv.drawChannelBus(col0X+col0W, gapW, ports, focalMidY, false, &egoWireUpstreamStyle, &egoWireInactiveStyle)
+		cv.drawChannelBus(col0X+col0W, gapW, ports, focalMidY, true, &egoWireUpstreamStyle, &egoWireInactiveStyle)
 	}
 
 	switch {
@@ -275,7 +275,7 @@ func (m *Model) egoGraphBody(contentH int) (string, []egoNodeHitbox) {
 		}
 	default:
 		ports := m.stampSideColumn(cv, col2X, col2W, bodyTopRow, focalMidY, ego.Downstream, ego.ActiveDownstream, false, &boxes)
-		cv.drawChannelBus(col1X+col1W, gapW, ports, focalMidY, true, &egoWireDownstreamStyle, &egoWireInactiveStyle)
+		cv.drawChannelBus(col1X+col1W, gapW, ports, focalMidY, false, &egoWireDownstreamStyle, &egoWireInactiveStyle)
 	}
 
 	cv.materializeWires()
@@ -411,11 +411,14 @@ func (m *Model) stampSideColumn(
 
 func sideNeighborGlyph(active, highlighted, upstream bool) (string, *lipgloss.Style) {
 	if !active {
+		if highlighted {
+			return "▷", &egoInactiveCardStyle
+		}
 		return "◌", &egoInactiveCardStyle
 	}
 	if upstream {
 		if highlighted {
-			return "◀", &egoUpstreamBorderActiveStyle
+			return "▶", &egoUpstreamBorderActiveStyle
 		}
 		return "●", &egoUpstreamBorderStyle
 	}
@@ -445,10 +448,10 @@ func (cv *egoCanvas) stampFocalCard(x0, y0, w int, ego egoGraphView) {
 	leftMid := '║'
 	rightMid := '║'
 	if len(ego.Upstream) > 0 {
-		leftMid = '╟'
+		leftMid = '╢'
 	}
 	if len(ego.Downstream) > 0 {
-		rightMid = '╢'
+		rightMid = '╟'
 	}
 	cv.put(x0, y0+1, leftMid, bdr)
 	cv.put(x0+w-1, y0+1, rightMid, bdr)
@@ -564,11 +567,11 @@ func (cv *egoCanvas) stampCenteredNote(colX, y, colW int, text string, style *li
 	}
 }
 
-func (cv *egoCanvas) drawChannelBus(gapX, gapW int, ports []busPort, focalY int, arrowAtFocal bool, activeStyle, inactiveStyle *lipgloss.Style) {
+func (cv *egoCanvas) drawChannelBus(gapX, gapW int, ports []busPort, focalY int, intoFocal bool, activeStyle, inactiveStyle *lipgloss.Style) {
 	if len(ports) == 0 || gapW < 2 {
 		return
 	}
-	trunkX := gapX + gapW/2
+	trunkX := gapX + (gapW-1)/2
 	farX := gapX + gapW - 1
 
 	for pass := 0; pass < 2; pass++ {
@@ -584,19 +587,19 @@ func (cv *egoCanvas) drawChannelBus(gapX, gapW int, ports []busPort, focalY int,
 			if p.active != wantActive {
 				continue
 			}
-			nearY, farY := p.y, focalY
-			if arrowAtFocal {
-				nearY, farY = focalY, p.y
+			nearY, farY := focalY, p.y
+			if intoFocal {
+				nearY, farY = p.y, focalY
 			}
-			cv.putArrow(gapX, nearY, '◄', prio, st)
+			for x := gapX; x < trunkX; x++ {
+				cv.addWire(x, nearY, dirLeft|dirRight, prio, st)
+			}
 			if nearY == farY {
-				for x := gapX + 1; x <= farX; x++ {
+				for x := trunkX; x < farX; x++ {
 					cv.addWire(x, nearY, dirLeft|dirRight, prio, st)
 				}
+				cv.putArrow(farX, farY, '►', prio, st)
 				continue
-			}
-			for x := gapX + 1; x < trunkX; x++ {
-				cv.addWire(x, nearY, dirLeft|dirRight, prio, st)
 			}
 			if nearY < farY {
 				cv.addWire(trunkX, nearY, dirLeft|dirDown, prio, st)
@@ -611,9 +614,10 @@ func (cv *egoCanvas) drawChannelBus(gapX, gapW int, ports []busPort, focalY int,
 				}
 				cv.addWire(trunkX, farY, dirDown|dirRight, prio, st)
 			}
-			for x := trunkX + 1; x <= farX; x++ {
+			for x := trunkX + 1; x < farX; x++ {
 				cv.addWire(x, farY, dirLeft|dirRight, prio, st)
 			}
+			cv.putArrow(farX, farY, '►', prio, st)
 		}
 	}
 }

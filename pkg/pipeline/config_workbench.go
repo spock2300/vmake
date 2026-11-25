@@ -32,6 +32,10 @@ func NewConfigWorkbench(ctx *RuntimeContext) *config.Workbench {
 			})
 		}
 	}
+	configFile := ""
+	if ctx.ConfigPath != "" {
+		configFile = configFileFor(ctx.WorkDir, ctx.ConfigPath)
+	}
 	workbench := &config.Workbench{
 		Packages:         packages,
 		Deps:             deps,
@@ -44,6 +48,7 @@ func NewConfigWorkbench(ctx *RuntimeContext) *config.Workbench {
 		GlobalValues:     config.BuildGlobalValues(ctx.Config),
 		ChipProfiles:     ctx.ChipProfiles(),
 		KConfigs:         ctx.KConfigs(),
+		ConfigFile:       configFile,
 		Description:      ctx.Config.Description,
 		DisplayDefaults:  ToolchainTargetDefaults,
 	}

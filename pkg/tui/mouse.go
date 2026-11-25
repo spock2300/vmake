@@ -70,7 +70,7 @@ func (m *Model) handleDescriptionMouse(msg tea.MouseMsg, s screen) (tea.Model, t
 	if !mouseLeftPress(msg) {
 		return m, nil
 	}
-	if !s.descriptionRowAt(msg.X, msg.Y) {
+	if !s.descRow.contains(msg.X, msg.Y) {
 		m.descEditing = false
 	}
 	return m, nil
@@ -121,10 +121,6 @@ func (m *Model) optionRows() ([]optionRow, int, int) {
 }
 
 func (m *Model) handleMouseOptionClick(msg tea.MouseMsg, s screen) (tea.Model, tea.Cmd) {
-	if s.descriptionRowAt(msg.X, msg.Y) {
-		m.startDescriptionEdit()
-		return m, nil
-	}
 	index, ok := s.optionRowAt(msg.X, msg.Y)
 	if !ok {
 		return m, nil

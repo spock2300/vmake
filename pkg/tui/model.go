@@ -57,6 +57,7 @@ type Model struct {
 	confirmQuit bool
 	confirmBtn  int
 	workDir     string
+	configFile  string
 	language    language
 
 	descEditing bool
@@ -120,6 +121,7 @@ func NewModel(in Input) Model {
 		optCursor:     0,
 		focusArea:     0,
 		workDir:       in.WorkDir,
+		configFile:    wb.ConfigFile,
 		language:      systemLanguage(),
 		optCounts:     computeOptCounts(wb.Options, wb.GlobalOptions),
 		deps:          normalizeGraphDeps(wb.Packages, wb.Deps),
@@ -849,7 +851,7 @@ func (m *Model) totalOptRows() int {
 }
 
 func (m *Model) ensureTreeCursorVisible() {
-	_, _, _, _, contentH := m.chrome()
+	contentH := m.chrome().contentH
 	drawH := treeItemRows(contentH, m.filterActive || m.filterInput != "", len(m.flat))
 	total := len(m.flat)
 	if total == 0 {
