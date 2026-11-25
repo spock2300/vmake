@@ -73,3 +73,17 @@
 ## 验证注意事项（本轮实测）
 
 **不要把 `test_data/_snapshot` 全量套件与 `go test ./cmd/vmake` 并行跑**。两者都会在 `test_data/*` 夹具里删除/生成 `build`、`install`、`vendor` 与 `.vmake`，并行时会互相踩到：本轮并行执行时 `TestInspectFixtures` 报失败，串行重跑即通过（`TestSnapshotsTestData` 只剩 11/13/25 三个已知前置缺失）。并行执行时看到这条失败，先串行复跑再判断是否为回归。
+
+## 最终验证证据（收尾）
+
+- `CGO_ENABLED=0 go build -o vmake ./cmd/vmake`：通过。
+- `CGO_ENABLED=0 go vet ./cmd/vmake/... ./pkg/... ./internal/...`：无输出。
+- `CGO_ENABLED=0 go test ./cmd/vmake ./pkg/... ./internal/...`：无失败。
+- `(cd test_data/_snapshot && go test)`（`HOME`/`GOCACHE` 指到临时目录）：48.7s，**只有 11/13/25 失败**，即 AGENTS.md 记录的前置缺失（`official/tinyexpr` 未注册、`test_build` 原生仓库未建、25 需先跑 `setup.sh`）；其余夹具零漂移，说明 `build`/`install`/`manifest`/`compile_commands` 的行为未变。
+- `go test ./cmd/vmake -run '^TestSkill'`：通过（技能文档与 CLI 一致）；`vmake skill install` 已执行。
+- 不要并行跑 `_snapshot` 与 `./cmd/vmake`（二者都改 `test_data/*` 夹具），见上面的验证注意事项。
+
+## 遗留的两处"按设计不收敛"（不是缺口）
+
+1. **03**：`inspect` 必须在写 JSON 前恢复 stderr、`deps graph` 只在 `--json` 时静音 stderr、`withReport` 在 panic 分支恢复 stdout——这三处是行为约束，收成单个 `Enter` 会让输出跑到错误的位置。静音杠杆本身已全部归 `internal/quiet`。
+2. **06**：`deps why` 收图，因为 `WhyTarget` 依赖 `declaredTargets`/`TargetDeps`/`inspection.Package()`，三者不在 DD-39 的答案面里。DD-40 决策 4 已按实测改写，`deps graph` 已完全走 `inspection.GraphFacts()`。
