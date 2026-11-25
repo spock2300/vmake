@@ -101,3 +101,22 @@ S1 剩下的 7 个不是"搬测试"那么机械。实际内容是：
 - `build_install_test.go`（245 行，4 个测试）与 `build_manifest_test.go`（230 行，7 个测试）都是**端到端 CLI 测试**——它们通过 `run()`/子进程建真实工程再断言，而不是直接调 `pipeline.InstallOnePackage`。搬到 `pkg/pipeline` 等于把 CLI 测试改写成流水线单测，plan-08 的映射里已把其中 3 条标为 "rewrite"。
 - 因此 S1 的正确切法不是"移动文件"，而是**先决定每个测试的归宿**：(a) 保留为命令测试但内联掉转发器（零搬家，S2 与它合并）；(b) 重写为 `pkg/pipeline` 单测（覆盖更细但要重写 475 行）。两种都不与"逐字搬"等价。
 - 建议下一轮先做 S2 的"内联"部分（9 个 pipeline 转发、16 处）并同步把 `cmd` 测试改为直接调 `pipeline.*`——这不会删除任何测试，且让 S1 的删除变成"改测试引用名"而不是"搬家"。这是本轮验证出来的更安全顺序。
+
+## 完成（S1/S2/S6 全部落地）
+
+按上一轮验证出的更安全顺序执行：**先内联、再改测试引用**，因此没有搬移任何测试文件——475 行的端到端 CLI 测试原地保留，只把调用目标从转发器换成 `pipeline.*`。
+
+| 删除的转发 | 处理 |
+|---|---|
+| `loadInstallManifest`、`importManifestIntoLock`、`checkoutManifestLocals`、`resolveManifestEntryPath` | 调用点改 `pipeline.*`；`importManifestIntoLock` 的 `findProjectDir()`/`getLockfilePath()` 实参回到调用点 |
+| `installOnePackage`、`validateInstallPrefix`、`writeManifest` | 同上；`installOnePackage` 末尾的 `prefixFlag` 回到调用点 |
+| `cleanPackages`、`remainingBuildDirectories`、`collectCleanEntries`、`executeCleanHooks`、`cleanAllRemoteOutputs` | 同上（含 void 那个） |
+| `runBuildPhase` | 调用点改 `pipeline.RunBuild` |
+| `checkoutLocal` | 调用点改 `pipeline.CheckoutManifestLocalEntry(project, nil, entry)` |
+| `manifestProjectDir` | 无引用，直接删 |
+
+**指标**：函数体只有一条 `return <项目包>.X(...)` 的函数 **28 → 1**。剩下的 `newPkgRef` 不是转发——它组合 `api.NewPackage().SetRepo().SetName()`，且被当作函数值使用（`manifest_cmd.go:81`），保留。
+
+**保留的组合型助手**（不止一条语句，不符合转发定义）：`executeInstall`（组装 `InstallOptions`）、`installStorageRoots`、`catalogEnv`、`loadPackageScript`（包 quiet 作用域）、`newPkgRef`。
+
+验证：build/vet 干净；`./cmd/vmake`、`./pkg/... ./internal/...` 全绿；快照 6 个夹具 PASS（`build`/`install` 路径改动的直接覆盖）。

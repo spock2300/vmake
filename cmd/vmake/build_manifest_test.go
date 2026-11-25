@@ -11,6 +11,7 @@ import (
 	"github.com/spock2300/vmake/internal/jsonio"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/pipeline"
 	repoPkg "github.com/spock2300/vmake/pkg/repo"
 	"github.com/spock2300/vmake/pkg/resolver"
 )
@@ -30,7 +31,7 @@ func TestManifestRecordsNativeOwnerWithoutSubpackageVersions(t *testing.T) {
 		"native/root/sub": {Version: "1.0.0"},
 	}}
 	prefix := t.TempDir()
-	if err := writeManifest(ctx, result, prefix); err != nil {
+	if err := pipeline.WriteManifest(ctx, result, prefix); err != nil {
 		t.Fatal(err)
 	}
 	var manifest installManifest
@@ -92,7 +93,7 @@ func TestCheckoutManifestLocalsSkipsManagedGitSources(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := checkoutManifestLocals(ctx, &mf); err != nil {
+	if err := pipeline.CheckoutManifestLocals(ctx, &mf); err != nil {
 		t.Fatalf("managed git source must not be checked out: %v", err)
 	}
 	commit, err := repoPkg.GetCurrentCommit(project)
@@ -113,21 +114,21 @@ func TestResolveManifestEntryPathUsesProjectRoot(t *testing.T) {
 	if err := os.MkdirAll(project, 0755); err != nil {
 		t.Fatal(err)
 	}
-	got, err := resolveManifestEntryPath(project, filepath.Join("src", "pkg"))
+	got, err := pipeline.ResolveManifestEntryPath(project, filepath.Join("src", "pkg"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := filepath.Join(project, "src", "pkg"); got != want {
 		t.Fatalf("resolved path = %q, want %q", got, want)
 	}
-	got, err = resolveManifestEntryPath(project, filepath.Join("src", "..", "lib"))
+	got, err = pipeline.ResolveManifestEntryPath(project, filepath.Join("src", "..", "lib"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := filepath.Join(project, "lib"); got != want {
 		t.Fatalf("normalized path = %q, want %q", got, want)
 	}
-	if _, err := resolveManifestEntryPath(project, filepath.Join("..", "outside")); err == nil {
+	if _, err := pipeline.ResolveManifestEntryPath(project, filepath.Join("..", "outside")); err == nil {
 		t.Fatal("path escaping the project was accepted")
 	}
 }
@@ -136,7 +137,7 @@ func TestCheckoutLocalRejectsEscapingPaths(t *testing.T) {
 	project := t.TempDir()
 	for _, path := range []string{filepath.Join("..", "outside"), ""} {
 		entry := installManifestEntry{Name: "local/pkg", Source: "local", Ref: strings.Repeat("0", 40), Path: path}
-		if err := checkoutLocal(project, entry); err == nil {
+		if err := pipeline.CheckoutManifestLocalEntry(project, nil, entry); err == nil {
 			t.Errorf("checkoutLocal accepted manifest path %q", path)
 		}
 	}
@@ -163,7 +164,7 @@ func TestCheckoutLocalAcceptsRootPackage(t *testing.T) {
 	runGitLine(t, project, "commit", "-q", "-m", "v2")
 
 	entry := installManifestEntry{Name: "app", Source: "local", Ref: first, Path: "."}
-	if err := checkoutLocal(project, entry); err != nil {
+	if err := pipeline.CheckoutManifestLocalEntry(project, nil, entry); err != nil {
 		t.Fatalf("checkoutLocal rejected a root package manifest entry: %v", err)
 	}
 	if data, err := os.ReadFile(filepath.Join(project, "build.go")); err != nil || string(data) != "package main\n" {
@@ -181,7 +182,7 @@ func TestCheckoutManifestLocalsRejectsPathNotMatchingPackage(t *testing.T) {
 		"local/plain": resolver.NewPackageNode("local/plain", buildscript.NewSource("local/plain", "build.go", project, api.SourceLocal), api.NewPackage()),
 	}}}
 	entry := installManifestEntry{Name: "local/plain", Source: "local", Ref: strings.Repeat("0", 40), Path: "other"}
-	if err := checkoutManifestLocals(ctx, &installManifest{Packages: []installManifestEntry{entry}}); err == nil {
+	if err := pipeline.CheckoutManifestLocals(ctx, &installManifest{Packages: []installManifestEntry{entry}}); err == nil {
 		t.Fatal("manifest path not matching the package source was accepted")
 	}
 }
@@ -213,7 +214,7 @@ func Main(p *api.Package) {
 	}
 
 	entry := installManifestEntry{Name: "managed", Source: "local", Ref: strings.Repeat("0", 40), Path: "."}
-	if err := checkoutLocal(project, entry); err != nil {
+	if err := pipeline.CheckoutManifestLocalEntry(project, nil, entry); err != nil {
 		t.Fatalf("checkoutLocal failed on managed SetGit local package: %v", err)
 	}
 	after, err := repoPkg.GetCurrentCommit(project)
@@ -224,7 +225,7 @@ func Main(p *api.Package) {
 	if err := os.WriteFile(filepath.Join(project, "build.go"), []byte("package main\nfunc Main(\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkoutLocal(project, entry); err == nil || !strings.Contains(err.Error(), "load build.go") {
+	if err := pipeline.CheckoutManifestLocalEntry(project, nil, entry); err == nil || !strings.Contains(err.Error(), "load build.go") {
 		t.Fatalf("expected load build.go error, got %v", err)
 	}
 }

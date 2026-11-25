@@ -37,10 +37,6 @@ type RuntimeContext = pipeline.RuntimeContext
 type BuildOptions = pipeline.BuildOptions
 type BuildResult = pipeline.BuildResult
 
-func runBuildPhase(ctx *RuntimeContext, opts BuildOptions) (*BuildResult, error) {
-	return pipeline.RunBuild(ctx, opts)
-}
-
 var RootCmd = &cobra.Command{
 	Use:   "vmake",
 	Short: "VMake - A Go-based C/C++ build system",

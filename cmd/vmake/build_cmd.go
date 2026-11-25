@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 
@@ -37,11 +36,11 @@ func withResolvedProject(execution *RuntimeContext, run func(*RuntimeContext) er
 		var mf *installManifest
 		if manifestFlag != "" {
 			var err error
-			mf, err = loadInstallManifest(manifestFlag)
+			mf, err = pipeline.LoadInstallManifest(manifestFlag)
 			if err != nil {
 				return err
 			}
-			if err := importManifestIntoLock(execution.Context, mf); err != nil {
+			if err := pipeline.ImportManifestIntoLock(execution.Context, findProjectDir(), getLockfilePath(), mf); err != nil {
 				return err
 			}
 		}
@@ -51,7 +50,7 @@ func withResolvedProject(execution *RuntimeContext, run func(*RuntimeContext) er
 		}
 		defer closeProject(ctx)
 		if mf != nil {
-			if err := checkoutManifestLocals(ctx, mf); err != nil {
+			if err := pipeline.CheckoutManifestLocals(ctx, mf); err != nil {
 				return err
 			}
 		}
@@ -72,11 +71,11 @@ func runReportedBuild(ctx *RuntimeContext, report *buildreport.Report, opts Buil
 		if prefix == "" && projectDir != "" {
 			prefix = filepath.Join(projectDir, "install")
 		}
-		if err := validateInstallPrefix(prefix, projectDir, installStorageRoots(ctx)...); err != nil {
+		if err := pipeline.ValidateInstallPrefix(prefix, projectDir, installStorageRoots(ctx)...); err != nil {
 			return nil, err
 		}
 	}
-	result, err := runBuildPhase(ctx, opts)
+	result, err := pipeline.RunBuild(ctx, opts)
 	if err != nil {
 		if result != nil {
 			report.Partial(ctx, result, err)
@@ -92,21 +91,4 @@ func runReportedBuild(ctx *RuntimeContext, report *buildreport.Report, opts Buil
 		return nil, err
 	}
 	return result, nil
-}
-
-func loadInstallManifest(path string) (*installManifest, error) {
-	return pipeline.LoadInstallManifest(path)
-}
-
-func importManifestIntoLock(ctx context.Context, mf *installManifest) error {
-	return pipeline.ImportManifestIntoLock(ctx, findProjectDir(), getLockfilePath(), mf)
-}
-
-func checkoutManifestLocals(ctx *RuntimeContext, mf *installManifest) error {
-	return pipeline.CheckoutManifestLocals(ctx, mf)
-}
-
-
-func resolveManifestEntryPath(projectDir, entryPath string) (string, error) {
-	return pipeline.ResolveManifestEntryPath(projectDir, entryPath)
 }

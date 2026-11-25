@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/spock2300/vmake/pkg/buildreport"
 	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/pipeline"
 
 	"github.com/spf13/cobra"
 )
@@ -31,10 +32,10 @@ func runRebuild(cmd *cobra.Command, args []string) error {
 func executeCleanLocal(ctx *RuntimeContext) {
 	vlog.Info("")
 	vlog.Info("Executing OnClean...")
-	if err := executeCleanHooks(ctx, true, true, true); err != nil {
+	if err := pipeline.ExecuteCleanHooks(ctx, true, true, true); err != nil {
 		vlog.Error("Skipping OnClean: %v", err)
 	}
-	if err := cleanPackages(collectCleanEntries(ctx), ctx, false); err != nil {
+	if err := pipeline.CleanPackages(pipeline.CollectCleanEntries(ctx), ctx, false); err != nil {
 		vlog.Error("Error: %v", err)
 	}
 }

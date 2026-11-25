@@ -23,7 +23,7 @@ var manifestShowCmd = &cobra.Command{
 	Short: "Show manifest contents",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		mf, err := loadInstallManifest(args[0])
+		mf, err := pipeline.LoadInstallManifest(args[0])
 		fatalErr(err)
 
 		fmt.Printf("VMake:     %s\n", mf.VMake)
@@ -69,7 +69,7 @@ var manifestCheckoutCmd = &cobra.Command{
 			filterName = args[1]
 		}
 
-		mf, err := loadInstallManifest(manifestPath)
+		mf, err := pipeline.LoadInstallManifest(manifestPath)
 		fatalErr(err)
 
 		base := findProjectDir()
@@ -80,8 +80,4 @@ var manifestCheckoutCmd = &cobra.Command{
 
 		fatalErr(pipeline.CheckoutManifest(base, sourceMgr, newPkgRef, mf, filterName))
 	},
-}
-
-func checkoutLocal(projectDir string, entry installManifestEntry) error {
-	return pipeline.CheckoutManifestLocalEntry(projectDir, nil, entry)
 }

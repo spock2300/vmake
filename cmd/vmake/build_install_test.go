@@ -9,6 +9,7 @@ import (
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/config"
+	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/resolver"
 )
 
@@ -37,7 +38,7 @@ func TestInstallReusesBuildDeclaration(t *testing.T) {
 	dirs := map[string]*api.PkgDirs{"app": {SourceDir: root, BuildDir: filepath.Join(root, "build")}}
 	result := &BuildResult{AllTargets: targets, Graph: graph, PkgDirs: dirs, BuildCtxs: map[string]*api.BuildContext{"app": declared}}
 	installer := build.NewArtifactInstaller(graph, dirs, filepath.Join(root, "install"))
-	if err := installOnePackage(ctx, "app", &resolver.PackageNode{Pkg: pkg}, result, installer, nil, map[string]*api.Option{}); err != nil {
+	if err := pipeline.InstallOnePackage(ctx, "app", &resolver.PackageNode{Pkg: pkg}, result, installer, nil, map[string]*api.Option{}, prefixFlag); err != nil {
 		t.Fatal(err)
 	}
 	if err := installer.InstallAll(nil); err != nil {
@@ -58,36 +59,36 @@ func TestValidateInstallPrefixRejectsDestructiveTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, prefix := range []string{"", project, root, filepath.Dir(root)} {
-		if err := validateInstallPrefix(prefix, project); err == nil {
-			t.Errorf("validateInstallPrefix(%q) accepted a destructive target", prefix)
+		if err := pipeline.ValidateInstallPrefix(prefix, project); err == nil {
+			t.Errorf("pipeline.ValidateInstallPrefix(%q) accepted a destructive target", prefix)
 		}
 	}
-	if err := validateInstallPrefix(filepath.Join(project, "src"), project); err == nil {
+	if err := pipeline.ValidateInstallPrefix(filepath.Join(project, "src"), project); err == nil {
 		t.Errorf("project subdirectory accepted as install prefix")
 	}
 	if cwd, err := os.Getwd(); err == nil {
-		if err := validateInstallPrefix(cwd, project); err == nil {
+		if err := pipeline.ValidateInstallPrefix(cwd, project); err == nil {
 			t.Errorf("current working directory accepted as install prefix")
 		}
 	}
-	if err := validateInstallPrefix(filepath.Join(project, "install"), project); err != nil {
+	if err := pipeline.ValidateInstallPrefix(filepath.Join(project, "install"), project); err != nil {
 		t.Errorf("project-local prefix rejected: %v", err)
 	}
-	if err := validateInstallPrefix(filepath.Join(project, "install", "nested"), project); err != nil {
+	if err := pipeline.ValidateInstallPrefix(filepath.Join(project, "install", "nested"), project); err != nil {
 		t.Errorf("default install subdirectory rejected: %v", err)
 	}
 	storage := filepath.Join(root, "vmake-state")
 	if err := os.MkdirAll(filepath.Join(storage, "cache"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateInstallPrefix(filepath.Join(storage, "cache"), project, storage); err == nil {
+	if err := pipeline.ValidateInstallPrefix(filepath.Join(storage, "cache"), project, storage); err == nil {
 		t.Error("vmake storage subdirectory accepted as install prefix")
 	}
 	regular := filepath.Join(root, "not-a-directory")
 	if err := os.WriteFile(regular, []byte("keep"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateInstallPrefix(regular, project); err == nil {
+	if err := pipeline.ValidateInstallPrefix(regular, project); err == nil {
 		t.Error("regular file accepted as install prefix")
 	}
 	nonEmpty := filepath.Join(root, "existing-custom")
@@ -97,29 +98,29 @@ func TestValidateInstallPrefixRejectsDestructiveTargets(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(nonEmpty, "keep"), []byte("keep"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateInstallPrefix(nonEmpty, project); err == nil {
+	if err := pipeline.ValidateInstallPrefix(nonEmpty, project); err == nil {
 		t.Error("non-empty custom install prefix accepted without an ownership marker")
 	}
 	if err := os.WriteFile(filepath.Join(nonEmpty, installOwnershipMarker), []byte("vmake\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateInstallPrefix(nonEmpty, project); err != nil {
+	if err := pipeline.ValidateInstallPrefix(nonEmpty, project); err != nil {
 		t.Errorf("owned custom install prefix rejected: %v", err)
 	}
 	empty := filepath.Join(root, "empty-custom")
 	if err := os.MkdirAll(empty, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateInstallPrefix(empty, project); err != nil {
+	if err := pipeline.ValidateInstallPrefix(empty, project); err != nil {
 		t.Errorf("empty custom install prefix rejected: %v", err)
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		if err := validateInstallPrefix(home, project); err == nil {
+		if err := pipeline.ValidateInstallPrefix(home, project); err == nil {
 			t.Errorf("home directory accepted as install prefix")
 		}
 	}
 	if runtime.GOOS != "windows" {
-		if err := validateInstallPrefix(string(filepath.Separator), project); err == nil {
+		if err := pipeline.ValidateInstallPrefix(string(filepath.Separator), project); err == nil {
 			t.Errorf("filesystem root accepted as install prefix")
 		}
 	}
@@ -138,13 +139,13 @@ func TestValidateInstallPrefixFollowsSymlinkedDirectory(t *testing.T) {
 	if err := os.Symlink(outside, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if err := validateInstallPrefix(link, project); err != nil {
+	if err := pipeline.ValidateInstallPrefix(link, project); err != nil {
 		t.Fatalf("symlinked install directory rejected: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(outside, "keep"), []byte("keep"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateInstallPrefix(link, project); err == nil {
+	if err := pipeline.ValidateInstallPrefix(link, project); err == nil {
 		t.Error("non-empty symlinked install directory accepted without an ownership marker")
 	}
 	fileTarget := filepath.Join(root, "file-target")
@@ -155,7 +156,7 @@ func TestValidateInstallPrefixFollowsSymlinkedDirectory(t *testing.T) {
 	if err := os.Symlink(fileTarget, fileLink); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateInstallPrefix(fileLink, project); err == nil {
+	if err := pipeline.ValidateInstallPrefix(fileLink, project); err == nil {
 		t.Error("symlink to a regular file accepted as install prefix")
 	}
 }
@@ -220,7 +221,7 @@ func TestInstallPrefixPriority(t *testing.T) {
 			}}
 			result := &BuildResult{AllTargets: targets, Graph: graph, PkgDirs: dirs, Layouts: layouts, TargetPlacements: placements, BuildCtxs: map[string]*api.BuildContext{"app": declared}}
 			installer := build.NewArtifactInstaller(graph, dirs, installerPrefix)
-			if err := installOnePackage(ctx, "app", &resolver.PackageNode{Pkg: pkg}, result, installer, nil, map[string]*api.Option{}); err != nil {
+			if err := pipeline.InstallOnePackage(ctx, "app", &resolver.PackageNode{Pkg: pkg}, result, installer, nil, map[string]*api.Option{}, prefixFlag); err != nil {
 				t.Fatal(err)
 			}
 			if err := installer.InstallAll(nil); err != nil {

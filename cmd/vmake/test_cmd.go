@@ -39,7 +39,7 @@ func runTest(cmd *cobra.Command, args []string) error {
 			if err := pipeline.ValidateTestProject(ctx); err != nil {
 				return err
 			}
-			result, err := runBuildPhase(ctx, BuildOptions{IncludeTests: true, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag})
+			result, err := pipeline.RunBuild(ctx, BuildOptions{IncludeTests: true, Jobs: jobsFlag, KeepGoing: keepGoingFlag, Explain: explainFlag})
 			if err != nil {
 				if result != nil {
 					report.Partial(ctx, result, err)

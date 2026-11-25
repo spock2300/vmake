@@ -57,7 +57,7 @@ func TestCleanPackagesRemovesOnlyActiveBuildDirectory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := cleanPackages([]pkgCleanEntry{{Dir: root, Name: "app"}}, ctx, false); err != nil {
+	if err := pipeline.CleanPackages([]pkgCleanEntry{{Dir: root, Name: "app"}}, ctx, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(active); !os.IsNotExist(err) {
@@ -97,7 +97,7 @@ func TestCleanPackagesKeepsOtherConfigurationsWhenActiveMissing(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(decoy, "artifact.o"), []byte("data"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := cleanPackages([]pkgCleanEntry{{Dir: root, Name: "app"}}, ctx, false); err != nil {
+	if err := pipeline.CleanPackages([]pkgCleanEntry{{Dir: root, Name: "app"}}, ctx, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(decoy); err != nil {
@@ -159,7 +159,7 @@ func TestCleanPackagesSkipsUnresolvedPackageToolchain(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := cleanPackages([]pkgCleanEntry{{Dir: root, Name: "app"}, {Dir: otherDir, Name: "other"}}, ctx, false); err != nil {
+	if err := pipeline.CleanPackages([]pkgCleanEntry{{Dir: root, Name: "app"}, {Dir: otherDir, Name: "other"}}, ctx, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(active); !os.IsNotExist(err) {
@@ -196,7 +196,7 @@ func TestCleanHooksRecoverScriptError(t *testing.T) {
 	r.Graph().Packages["app"] = resolver.NewPackageNode("app", buildscript.NewSource("app", path, root, api.SourceLocal), pkg)
 	r.Graph().Order = []string{"app"}
 	ctx := &RuntimeContext{Resolver: r, DepGraph: r.Graph(), Config: &config.ConfigFile{Global: &config.GlobalConfig{Toolchain: tcName}}, Paths: &pipeline.Paths{ProjectDir: root}}
-	err = executeCleanHooks(ctx, false, true, true)
+	err = pipeline.ExecuteCleanHooks(ctx, false, true, true)
 	var scriptErr *api.BuildScriptError
 	if !errors.As(err, &scriptErr) {
 		t.Fatalf("OnClean error was not returned: %v", err)
@@ -212,7 +212,7 @@ func TestCleanAllLinkedOutputs(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(out, "artifact.o"), []byte("x"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	cleanAllRemoteOutputs(dep, map[string]string{"native/pkg": "/tmp/linked"})
+	pipeline.CleanAllRemoteOutputs(dep, map[string]string{"native/pkg": "/tmp/linked"})
 	if _, err := os.Stat(filepath.Join(out, "artifact.o")); !os.IsNotExist(err) {
 		t.Fatalf("linked output was not cleaned: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestCleanAllRemoteOutputsFindsNestedTrees(t *testing.T) {
 	writeTree(top)
 	writeTree(nested)
 
-	cleanAllRemoteOutputs(dep, nil)
+	pipeline.CleanAllRemoteOutputs(dep, nil)
 
 	for _, root := range []string{top, nested} {
 		out := filepath.Join(root, "out")
@@ -305,7 +305,7 @@ func TestCleanHooksWithoutFilterRunForUnneededPackages(t *testing.T) {
 		Config: &config.ConfigFile{Global: &config.GlobalConfig{Toolchain: "host"}},
 		Paths:  &pipeline.Paths{ProjectDir: root, DepsDir: filepath.Join(root, ".vmake_deps"), CacheDir: filepath.Join(root, "cache")},
 	}
-	if err := executeCleanHooks(ctx, false, true, false); err != nil {
+	if err := pipeline.ExecuteCleanHooks(ctx, false, true, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(marker); err != nil {
@@ -411,7 +411,7 @@ func TestRemainingBuildDirectoriesCountsOtherConfigurations(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := remainingBuildDirectories(ctx, func(name string) *api.PkgDirs { return dirs[name] }); got != 2 {
+	if got := pipeline.RemainingBuildDirectories(ctx, func(name string) *api.PkgDirs { return dirs[name] }); got != 2 {
 		t.Fatalf("remaining build directories = %d, want 2", got)
 	}
 }
