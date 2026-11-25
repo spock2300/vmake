@@ -11,6 +11,8 @@ import (
 	"github.com/spock2300/vmake/internal/truststore"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/plugin"
+	"github.com/spock2300/vmake/pkg/repo"
 )
 
 const (
@@ -32,7 +34,7 @@ func trustAllEnabled() bool {
 }
 
 func repoTrustURL(name string) (string, error) {
-	mgr := getRepoManager()
+	mgr := repo.NewRepoManager(getReposDir())
 	if !mgr.Exists(name) {
 		return "", nil
 	}
@@ -100,7 +102,7 @@ func repoScriptTrusted(name string) (bool, error) {
 }
 
 func addTrustedRepo(name string) error {
-	mgr := getRepoManager()
+	mgr := repo.NewRepoManager(getReposDir())
 	lock, err := mgr.Lock(name, true)
 	if err != nil {
 		return err
@@ -151,7 +153,7 @@ func extensionTrusted(name string) (bool, error) {
 	if trustAllEnabled() {
 		return true, nil
 	}
-	mgr := getPluginManager()
+	mgr := plugin.NewManager(vmakeDir)
 	if !mgr.Exists(name) {
 		return false, nil
 	}
@@ -163,7 +165,7 @@ func extensionTrusted(name string) (bool, error) {
 }
 
 func trustExtension(name string) error {
-	mgr := getPluginManager()
+	mgr := plugin.NewManager(vmakeDir)
 	lock, err := mgr.LockRepo(name, true)
 	if err != nil {
 		return err

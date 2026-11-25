@@ -499,7 +499,7 @@ func validateRequestedPackagesInGraph(ctx *RuntimeContext, requested []string) e
 }
 
 func refreshRegistryReposForUpdate(requested []string) error {
-	mgr := getRepoManager()
+	mgr := repo.NewRepoManager(getReposDir())
 	filter := make(map[string]bool)
 	for _, pkgName := range requested {
 		if repoName, _, ok := strings.Cut(pkgName, "/"); ok && repoName != "" {

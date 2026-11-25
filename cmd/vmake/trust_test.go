@@ -10,6 +10,7 @@ import (
 	"github.com/spock2300/vmake/internal/truststore"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/plugin"
 	repoPkg "github.com/spock2300/vmake/pkg/repo"
 )
 
@@ -159,7 +160,7 @@ func TestRepoTrustUsesOriginURL(t *testing.T) {
 	if err := addTrustedRepo("testrepo"); err != nil {
 		t.Fatal(err)
 	}
-	got, err := getRepoManager().URL("testrepo")
+	got, err := repoPkg.NewRepoManager(getReposDir()).URL("testrepo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +224,7 @@ func TestRepoUpdateKeepsTrust(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mgr := getRepoManager()
+	mgr := repoPkg.NewRepoManager(getReposDir())
 	lock, err := mgr.Lock("testrepo", true)
 	if err != nil {
 		t.Fatal(err)
@@ -372,14 +373,14 @@ func TestExtensionUpdateKeepsTrust(t *testing.T) {
 	runGitLine(t, work, "add", "-A")
 	runGitLine(t, work, "commit", "-q", "-m", "v2")
 	runGitLine(t, work, "push", "-q", "origin", "master")
-	before, err := getPluginManager().Commit("ext")
+	before, err := plugin.NewManager(vmakeDir).Commit("ext")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := updateExtensionRepo(getPluginManager(), "ext"); err != nil {
+	if err := updateExtensionRepo(plugin.NewManager(vmakeDir), "ext"); err != nil {
 		t.Fatal(err)
 	}
-	after, err := getPluginManager().Commit("ext")
+	after, err := plugin.NewManager(vmakeDir).Commit("ext")
 	if err != nil {
 		t.Fatal(err)
 	}

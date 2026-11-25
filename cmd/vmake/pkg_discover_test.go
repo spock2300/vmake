@@ -39,7 +39,7 @@ func TestSearchNativeRepoWarnsWhenNothingCached(t *testing.T) {
 	}
 	writePkgTestFile(t, filepath.Join(projectOverride, "configs", "default.json"), `{"version":"1"}`)
 
-	entries, warnings := catalog.SearchNativeRepo(catalogEnv(getRepoManager()), "test_build", catalog.SearchOptions{}, nil)
+	entries, warnings := catalog.SearchNativeRepo(catalogEnv(repo.NewRepoManager(getReposDir())), "test_build", catalog.SearchOptions{}, nil)
 	if len(entries) != 0 {
 		t.Fatalf("entries = %+v", entries)
 	}

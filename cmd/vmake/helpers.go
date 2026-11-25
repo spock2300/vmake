@@ -10,8 +10,6 @@ import (
 	"github.com/spock2300/vmake/internal/gitstore"
 	"github.com/spock2300/vmake/pkg/api"
 	vlog "github.com/spock2300/vmake/pkg/log"
-	"github.com/spock2300/vmake/pkg/plugin"
-	"github.com/spock2300/vmake/pkg/repo"
 )
 
 type usageError struct{ err error }
@@ -76,14 +74,6 @@ func exitWithError(err error) {
 
 func exitWithCode(code int) {
 	panic(&exitError{code: code})
-}
-
-func getRepoManager() *repo.RepoManager {
-	return repo.NewRepoManager(getReposDir())
-}
-
-func getPluginManager() *plugin.Manager {
-	return plugin.NewManager(vmakeDir)
 }
 
 func newPkgRef(repoName, pkgName string) *api.Package {

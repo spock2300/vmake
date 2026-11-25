@@ -204,15 +204,15 @@ func completeSliceField[T any](items []T, getName func(T) string) ([]string, cob
 }
 
 func completeRepoName(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	return completeSliceField(getRepoManager().ListInfo(), func(i repo.RepoInfo) string { return i.Name })
+	return completeSliceField(repo.NewRepoManager(getReposDir()).ListInfo(), func(i repo.RepoInfo) string { return i.Name })
 }
 
 func completeExtRepoName(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	return completeSliceField(getPluginManager().ListRepos(), func(r plugin.ExtensionRepo) string { return r.Name })
+	return completeSliceField(plugin.NewManager(vmakeDir).ListRepos(), func(r plugin.ExtensionRepo) string { return r.Name })
 }
 
 func completeCatalogPkgRef(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	mgr := getRepoManager()
+	mgr := repo.NewRepoManager(getReposDir())
 	depsDir := ""
 	if projectDir := findProjectDirSoft(); projectDir != "" {
 		depsDir = filepath.Join(projectDir, ".vmake_deps")

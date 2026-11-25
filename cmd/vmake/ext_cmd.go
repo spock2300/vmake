@@ -36,7 +36,7 @@ var extRemoveCmd = &cobra.Command{
 }
 
 func removeExtensionRepo(name string) error {
-	mgr := getPluginManager()
+	mgr := plugin.NewManager(vmakeDir)
 	lock, err := mgr.LockRepo(name, true)
 	if err != nil {
 		return err
@@ -64,7 +64,7 @@ var extUntrustCmd = &cobra.Command{
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		name := args[0]
-		lock, err := getPluginManager().LockRepo(name, true)
+		lock, err := plugin.NewManager(vmakeDir).LockRepo(name, true)
 		fatalErr(err)
 		defer lock.Release()
 		fatalErr(revokeExtension(name))
@@ -89,7 +89,7 @@ var extProvisionCmd = &cobra.Command{
 
 func runExtAdd(cmd *cobra.Command, args []string) {
 	name, gitURL := args[0], args[1]
-	mgr := getPluginManager()
+	mgr := plugin.NewManager(vmakeDir)
 	fatalErr(mgr.AddRepo(name, gitURL))
 	fmt.Printf("Added extension repository '%s' from %s\n", name, gitURL)
 	if confirmTrust(fmt.Sprintf("The extension repository %q provides code that vmake will execute (full system access). Trusting it also trusts all future updates.", name)) {
@@ -112,7 +112,7 @@ func runExtAdd(cmd *cobra.Command, args []string) {
 }
 
 func runExtList(cmd *cobra.Command, args []string) {
-	mgr := getPluginManager()
+	mgr := plugin.NewManager(vmakeDir)
 	repos := mgr.ListRepos()
 	if len(repos) == 0 {
 		fmt.Println("No extension repositories found")
@@ -146,7 +146,7 @@ func runExtList(cmd *cobra.Command, args []string) {
 }
 
 func runExtUpdate(cmd *cobra.Command, args []string) {
-	mgr := getPluginManager()
+	mgr := plugin.NewManager(vmakeDir)
 	if len(args) == 1 {
 		name := args[0]
 		fmt.Printf("Updating extension repository '%s'...\n", name)
@@ -172,7 +172,7 @@ func runExtUpdate(cmd *cobra.Command, args []string) {
 
 func runExtProvision(cmd *cobra.Command, args []string) {
 	name := args[0]
-	mgr := getPluginManager()
+	mgr := plugin.NewManager(vmakeDir)
 	if !mgr.Exists(name) {
 		fatalErr(fmt.Errorf("extension repository '%s' not found", name))
 	}
@@ -259,7 +259,7 @@ func releaseExtensionRepoLocks() {
 var pluginCommands []*cobra.Command
 
 func loadPlugins() {
-	mgr := getPluginManager()
+	mgr := plugin.NewManager(vmakeDir)
 	tcMgr := toolchain.GetManager()
 	trusted := make(map[string]bool)
 	for _, repo := range mgr.ListRepos() {

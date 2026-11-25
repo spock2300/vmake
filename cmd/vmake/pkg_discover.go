@@ -81,7 +81,7 @@ func runPkgShow(cmd *cobra.Command, args []string) error {
 }
 
 func searchPackages(opts pkgSearchOptions) (*pkgSearchResult, error) {
-	mgr := getRepoManager()
+	mgr := repo.NewRepoManager(getReposDir())
 	infos := mgr.ListInfo()
 	if opts.repo != "" {
 		found := false
@@ -122,7 +122,7 @@ func searchPackages(opts pkgSearchOptions) (*pkgSearchResult, error) {
 		var entries []pkgSearchEntry
 		var warnings []string
 		if info.Native {
-			entries, warnings = catalog.SearchNativeRepo(catalogEnv(getRepoManager()), info.Name, catalog.SearchOptions{
+			entries, warnings = catalog.SearchNativeRepo(catalogEnv(repo.NewRepoManager(getReposDir())), info.Name, catalog.SearchOptions{
 				Pattern:    opts.pattern,
 				Repo:       opts.repo,
 				Details:    opts.details,
@@ -173,7 +173,7 @@ func loadPackageScript(src buildscript.Source) (*api.Package, error) {
 }
 
 func loadPkgShow(repoName, pkgName, version string) (*pkgShowResult, error) {
-	res, isUsage, err := catalog.Open(catalogEnv(getRepoManager())).Show(repoName, pkgName, version)
+	res, isUsage, err := catalog.Open(catalogEnv(repo.NewRepoManager(getReposDir()))).Show(repoName, pkgName, version)
 	if err != nil {
 		if isUsage {
 			return nil, &usageError{err: err}

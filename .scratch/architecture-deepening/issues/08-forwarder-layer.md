@@ -72,3 +72,11 @@ S1–S5 与 07 **无关**，可先落；只有 S6 依赖 07 的 cmd 迁移（同
 - 单行转发计数：**23 → 21**。
 - 剩余：S1（10 个零生产 + 4 个新测试文件 + 删 2 个测试文件，最大一块）、S2（9 个 pipeline 转发、16 处）、S4（`getRepoManager`/`getPluginManager`、24 处）、S6 余下（`sortedPackageVersions`/`addRequiresSnippet`，只被测试调用，需随测试搬去 `pkg/catalog`）。
 - 验证：build/vet 干净，`TestPkg*`/`TestSearch*`/`TestShow*`/`TestCompletion*`/`TestNative*` 全绿，全量套件无失败。
+
+## 进展（S4：两个存储根工厂）
+
+- 删除 `getRepoManager()`/`getPluginManager()`，24 个生产点与 5 个测试点改为直接 `repo.NewRepoManager(getReposDir())` / `plugin.NewManager(vmakeDir)`。
+- 连带的 import 收拾：`repo_cmd.go` 补 `pkg/repo`；`completion.go` 已有；`helpers.go`/`ext_cmd.go` 去掉变为多余的导入；`build_manifest_test.go`/`trust_test.go` 用的是 `repoPkg` 别名，需用 `repoPkg.NewRepoManager`。
+- 单行转发计数：**21 → 19**（累计 28 → 19）。
+- 验证：build/vet 干净，`TestTrust*`/`TestRepo*`/`TestExt*`/`TestCompletion*`/`TestPkg*` 全绿，全量套件无失败。
+- 剩余：S1（10 个零生产转发 + 4 个新测试文件 + 删 2 个测试文件，最大且必须一次做完）、S2（9 个 pipeline 转发、16 处，依赖 S1）、S6 余（`sortedPackageVersions`/`addRequiresSnippet`，随测试搬去 `pkg/catalog`）。

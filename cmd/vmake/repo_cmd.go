@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/repo"
 )
 
 var repoAddNative bool
@@ -25,7 +26,7 @@ var repoAddCmd = &cobra.Command{
 	Args: cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		name, url := args[0], args[1]
-		mgr := getRepoManager()
+		mgr := repo.NewRepoManager(getReposDir())
 		if repoAddNative {
 			fatalErr(mgr.AddNative(name, url))
 			fmt.Printf("Added native repository '%s' with URL template '%s'\n", name, url)
@@ -58,7 +59,7 @@ var repoUntrustCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		name := args[0]
-		lock, ok := getRepoManager().Lock(name, true)
+		lock, ok := repo.NewRepoManager(getReposDir()).Lock(name, true)
 		fatalErr(ok)
 		defer lock.Release()
 		fatalErr(removeTrustedRepo(name))
@@ -67,7 +68,7 @@ var repoUntrustCmd = &cobra.Command{
 }
 
 var repoRemoveCmd = newActionCmd("remove <name>", "Remove a package repository", "Removed", "repository", func(name string) error {
-	mgr := getRepoManager()
+	mgr := repo.NewRepoManager(getReposDir())
 	lock, err := mgr.Lock(name, true)
 	if err != nil {
 		return err
@@ -84,14 +85,14 @@ var repoListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all package repositories",
 	Run: func(cmd *cobra.Command, args []string) {
-		infos := getRepoManager().ListInfo()
+		infos := repo.NewRepoManager(getReposDir()).ListInfo()
 		if len(infos) == 0 {
 			fmt.Println("No repositories found")
 			return
 		}
 
 		fmt.Println("Repositories:")
-		mgr := getRepoManager()
+		mgr := repo.NewRepoManager(getReposDir())
 		for _, info := range infos {
 			if info.Native {
 				fmt.Printf("  %s (native)\n", info.Name)
@@ -113,7 +114,7 @@ var repoUpdateCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		name := args[0]
-		mgr := getRepoManager()
+		mgr := repo.NewRepoManager(getReposDir())
 		lock, err := mgr.Lock(name, true)
 		fatalErr(err)
 		defer lock.Release()
