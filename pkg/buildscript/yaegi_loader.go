@@ -1,6 +1,7 @@
 package buildscript
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -14,6 +15,9 @@ import (
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
+
+// ErrNoEntryPoint reports a build script that declares no Main function.
+var ErrNoEntryPoint = errors.New("build script has no Main function")
 
 func yaegiExports() interp.Exports {
 	return interp.Exports{
@@ -90,7 +94,7 @@ func loadBuildScript(src Source) (_ *api.Package, err error) {
 
 	v, err := i.Eval("Main")
 	if err != nil {
-		return nil, fmt.Errorf("yaegi lookup Main in %s: %w", src.Name, err)
+		return nil, fmt.Errorf("%w: yaegi lookup Main in %s: %v", ErrNoEntryPoint, src.Name, err)
 	}
 	mainFunc, ok := v.Interface().(func(*api.Package))
 	if !ok {

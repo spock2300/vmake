@@ -3,6 +3,8 @@ package api
 import (
 	"fmt"
 	"strings"
+
+	"github.com/spock2300/vmake/internal/issue"
 )
 
 type RequireFunc func(ctx *RequireContext)
@@ -103,8 +105,8 @@ func parseRequire(dep string) (name, constraint string) {
 func CheckCycle(path []string, current string) error {
 	for i, p := range path {
 		if p == current {
-			return fmt.Errorf("circular dependency: %s -> %s",
-				strings.Join(path[i:], " -> "), current)
+			return fmt.Errorf("%w: %s -> %s",
+				issue.ErrCircularDependency, strings.Join(path[i:], " -> "), current)
 		}
 	}
 	return nil

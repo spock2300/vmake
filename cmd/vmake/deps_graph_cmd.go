@@ -269,7 +269,7 @@ Exits 0 when clean and 1 when any violation is detected.`,
 				}
 				if jsonOut {
 					return finishDepsCheck(cmd.OutOrStdout(), true, &pipeline.DepsCheckReport{
-						Issues: []pipeline.GraphIssue{classifyResolveIssue(errNotInProject)},
+						Issues: []pipeline.GraphIssue{pipeline.IssueFor(errNotInProject)},
 					})
 				}
 				return errNotInProject
@@ -281,7 +281,7 @@ Exits 0 when clean and 1 when any violation is detected.`,
 				if errors.As(err, &overrideErr) {
 					return &usageError{err: overrideErr.err}
 				}
-				issue := classifyResolveIssue(err)
+				issue := pipeline.IssueFor(err)
 				return finishDepsCheck(cmd.OutOrStdout(), jsonOut, &pipeline.DepsCheckReport{
 					Issues: []pipeline.GraphIssue{issue},
 				})
@@ -290,7 +290,7 @@ Exits 0 when clean and 1 when any violation is detected.`,
 			report, err := pipeline.CheckProjectDeps(session.ctx, session.inspection)
 			restore()
 			if err != nil {
-				issue := classifyResolveIssue(err)
+				issue := pipeline.IssueFor(err)
 				return finishDepsCheck(cmd.OutOrStdout(), jsonOut, &pipeline.DepsCheckReport{
 					Issues: []pipeline.GraphIssue{issue},
 				})
@@ -325,22 +325,6 @@ func warnTargetDeclareIssues(w io.Writer, facts pipeline.GraphFacts) {
 			continue
 		}
 		fmt.Fprintf(w, "Warning: %s\n", iss.Message)
-	}
-}
-
-func classifyResolveIssue(err error) pipeline.GraphIssue {
-	msg := err.Error()
-	kind := "resolve"
-	switch {
-	case strings.Contains(msg, "circular dependency"):
-		kind = "package-cycle"
-	case strings.Contains(msg, "internal package"):
-		kind = "internal-visibility"
-	}
-	return pipeline.GraphIssue{
-		Severity: "error",
-		Kind:     kind,
-		Message:  msg,
 	}
 }
 

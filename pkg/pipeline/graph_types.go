@@ -1,8 +1,10 @@
 package pipeline
 
 import (
+	"errors"
 	"strings"
 
+	"github.com/spock2300/vmake/internal/issue"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 )
@@ -12,6 +14,20 @@ type PackageEdge = build.PackageEdge
 type TargetEdge = build.TargetEdge
 
 type GraphIssue = build.GraphIssue
+
+// IssueFor projects a resolve error onto a graph issue. The kind travels on the
+// error, so this never inspects the message.
+func IssueFor(err error) GraphIssue {
+	kind := build.IssueKindResolve
+	var resolveErr *build.ResolveError
+	switch {
+	case errors.As(err, &resolveErr):
+		kind = resolveErr.Kind
+	case errors.Is(err, issue.ErrCircularDependency):
+		kind = build.IssueKindPackageCycle
+	}
+	return GraphIssue{Severity: "error", Kind: kind, Message: err.Error()}
+}
 
 type UnifiedGraph struct {
 	Roots        []string            `json:"roots"`

@@ -43,3 +43,15 @@ default:                                            kind = "resolve"
 ## 涉及文件
 
 `pkg/build/errors.go`、`graph.go`、`pkg/buildscript/`（加载错误）、`pkg/pipeline/manifest.go`、`graph_check.go`、`cmd/vmake/deps_graph_cmd.go`。
+
+## 实现记录
+
+- `pkg/build`：新增五个 kind 常量与 `ResolveError{Kind, Err}`；`packageCycleError`、子图自环、`checkInternalVisibility`、strict 的 `dependency not found` 现在都返回类型化错误。`GraphIssue.Kind` 仍是 `string`，JSON 不变。
+- 发现 `deps check` 的包环实际来自 `pkg/api.CheckCycle`（`circular dependency: a -> b -> a`，措辞里没有 "package"），不是 `pkg/build`。把 sentinel 放进新的叶子包 `internal/issue`，而不是 `pkg/api`——放进 api 会成为脚本可见符号，`TestYaegiSymbolsComplete` 与 `TestScriptMethodManifestMatchesVisibleSurface` 都会失败（实测过：注册一个 error 值会把具体的 error 类型连同 `Error()` 方法暴露给脚本）。`CheckCycle` 用 `%w` 包住 sentinel，报文逐字节不变。
+- `pkg/buildscript`：`ErrNoEntryPoint`，`yaegi lookup Main` 失败时用 `%w` 返回；`manifest.go` 改用 `errors.Is`。
+- `pkg/pipeline.IssueFor` 是唯一的映射：`errors.As(*build.ResolveError)` 取 kind，`errors.Is(issue.ErrCircularDependency)` 归为 package-cycle，其余为 `resolve`；`Message` 始终是 `err.Error()`。
+- `cmd/vmake` 的 `classifyResolveIssue` 与两处 `strings.Contains` 删除。
+
+验收 grep：`strings.Contains(msg` / `strings.Contains(…"…dependency"` 在 `cmd/`、`pkg/`、`internal/` 生产代码为 0。
+
+测试：`TestIssueForReadsTypedKindsNotMessages` 覆盖四个 ResolveError kind、require 环、以及一个含 "circular dependency" 字样但**未类型化**的错误必须落到 `resolve`——最后这条正是"不靠报文"的判据。

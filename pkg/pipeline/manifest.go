@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -390,7 +391,7 @@ func detectLocalManagedGit(projectDir, name, sourceDir, scriptPath string) ([]st
 	src.Script = opts
 	pkg, err := buildscript.LoadBuildScript(src)
 	if err != nil {
-		if strings.Contains(err.Error(), "yaegi lookup Main") {
+		if errors.Is(err, buildscript.ErrNoEntryPoint) {
 			return nil, false, nil
 		}
 		return nil, false, fmt.Errorf("load build.go: %w", err)

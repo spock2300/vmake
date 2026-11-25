@@ -91,11 +91,14 @@ func checkInternalVisibility(pkgMeta map[string]PkgBuildMeta, fromPkg, toPkg str
 	if fromPkg == "" || toPkg == "" || fromPkg == toPkg {
 		return nil
 	}
-	return pkgvis.CheckInternal(fromPkg, visibilityPathFor(pkgMeta, fromPkg), toPkg, visibilityPathFor(pkgMeta, toPkg))
+	if err := pkgvis.CheckInternal(fromPkg, visibilityPathFor(pkgMeta, fromPkg), toPkg, visibilityPathFor(pkgMeta, toPkg)); err != nil {
+		return &ResolveError{Kind: IssueKindInternalVisibility, Err: err}
+	}
+	return nil
 }
 
 func packageCycleError(cycle []string, reasons map[[2]string][]string) error {
-	msg := fmt.Sprintf("package circular dependency detected: %s", strings.Join(cycle, " -> "))
+	errMsg := fmt.Sprintf("package circular dependency detected: %s", strings.Join(cycle, " -> "))
 	details := make([]string, 0, len(cycle))
 	for i := 0; i+1 < len(cycle); i++ {
 		if rs := reasons[[2]string{cycle[i], cycle[i+1]}]; len(rs) > 0 {
@@ -103,9 +106,9 @@ func packageCycleError(cycle []string, reasons map[[2]string][]string) error {
 		}
 	}
 	if len(details) > 0 {
-		msg = fmt.Sprintf("%s (%s)", msg, strings.Join(details, ", "))
+		errMsg = fmt.Sprintf("%s (%s)", errMsg, strings.Join(details, ", "))
 	}
-	return errors.New(msg)
+	return &ResolveError{Kind: IssueKindPackageCycle, Err: errors.New(errMsg)}
 }
 
 func (g *BuildGraph) GetNode(name string) (*BuildNode, error) {
@@ -698,7 +701,7 @@ func validatePackageGraph(
 		for _, sub := range meta.SubGraphs {
 			resolved := resolver.resolveDepPkgName(fromPkg, sub)
 			if resolved == fromPkg {
-				return fmt.Errorf("package circular dependency detected: %s -> %s (%s -> BuildSubGraph(%s))", fromPkg, fromPkg, fromPkg, resolved)
+				return &ResolveError{Kind: IssueKindPackageCycle, Err: fmt.Errorf("package circular dependency detected: %s -> %s (%s -> BuildSubGraph(%s))", fromPkg, fromPkg, fromPkg, resolved)}
 			}
 			if err := addEdge(fromPkg, resolved, fmt.Sprintf("%s -> BuildSubGraph(%s)", fromPkg, resolved)); err != nil {
 				return err
@@ -950,7 +953,7 @@ func (d *depResolver) resolveDepSpec(dep string, currentPkg string, path []strin
 	case depKindCrossTarget:
 		if _, exists := d.nodes[c.targetFull]; !exists {
 			hint := subPackageHint(currentPkg, c.rawPkg, c.pkg, d.subParents)
-			return nil, nil, fmt.Errorf("dependency not found: %s (resolved: %s)%s", dep, c.targetFull, hint)
+			return nil, nil, &ResolveError{Kind: IssueKindMissingDependency, Err: fmt.Errorf("dependency not found: %s (resolved: %s)%s", dep, c.targetFull, hint)}
 		}
 		return []string{c.targetFull}, []string{c.targetFull}, nil
 	case depKindPackageRef:
@@ -964,7 +967,7 @@ func (d *depResolver) resolveDepSpec(dep string, currentPkg string, path []strin
 		}
 		return all, direct, nil
 	default:
-		return nil, nil, fmt.Errorf("dependency not found: %s", dep)
+		return nil, nil, &ResolveError{Kind: IssueKindMissingDependency, Err: fmt.Errorf("dependency not found: %s", dep)}
 	}
 }
 

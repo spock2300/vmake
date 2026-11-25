@@ -1,9 +1,12 @@
 package pipeline
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/spock2300/vmake/internal/issue"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 )
@@ -131,5 +134,28 @@ func TestAuditBuildGraphReportsPackageAndTargetCycles(t *testing.T) {
 	}
 	if pkgCycles != 1 || targetCycles != 1 {
 		t.Fatalf("issues = %+v, want 1 package-cycle and 1 target-cycle", bg.Issues)
+	}
+}
+
+func TestIssueForReadsTypedKindsNotMessages(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"missing dependency", &build.ResolveError{Kind: build.IssueKindMissingDependency, Err: errors.New("whatever")}, "missing-dependency"},
+		{"package cycle", &build.ResolveError{Kind: build.IssueKindPackageCycle, Err: errors.New("whatever")}, "package-cycle"},
+		{"target cycle", &build.ResolveError{Kind: build.IssueKindTargetCycle, Err: errors.New("whatever")}, "target-cycle"},
+		{"internal visibility", &build.ResolveError{Kind: build.IssueKindInternalVisibility, Err: errors.New("whatever")}, "internal-visibility"},
+		{"require cycle", fmt.Errorf("%w: a -> b", issue.ErrCircularDependency), "package-cycle"},
+		{"untyped", errors.New("circular dependency detected by nobody"), "resolve"},
+	}
+	for _, tc := range cases {
+		if got := IssueFor(tc.err).Kind; got != tc.want {
+			t.Errorf("%s: kind = %q, want %q", tc.name, got, tc.want)
+		}
+		if got := IssueFor(tc.err).Message; got != tc.err.Error() {
+			t.Errorf("%s: message = %q, want %q", tc.name, got, tc.err.Error())
+		}
 	}
 }
