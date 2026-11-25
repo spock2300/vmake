@@ -13,7 +13,6 @@ import (
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/lockfile"
-	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/repo"
 )
 
@@ -81,22 +80,20 @@ type Env struct {
 	ProjectDir  string
 	CacheDir    string
 	RepoTrusted func(repoName string) (bool, error)
+	// LoadScript interprets a package's build.go. The caller owns the quiet
+	// scope so this package never touches process output.
+	LoadScript func(buildscript.Source) (*api.Package, error)
+	// Installed names the packages the current install manifest lists.
+	Installed map[string]bool
 }
 
-func NewStatusReaderAt(projectDir, depsDir, cacheDir string) (*StatusReader, error) {
+func NewStatusReaderAt(projectDir, depsDir, cacheDir string, installed map[string]bool) (*StatusReader, error) {
 	lock, err := lockfile.Load(filepath.Join(projectDir, ".vmake", lockfile.LockfileName))
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("load lockfile: %w", err)
 	}
-	installed := make(map[string]bool)
-	manifest, err := pipeline.LoadInstallManifest(filepath.Join(projectDir, "install", "manifest.json"))
-	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("load install manifest: %w", err)
-	}
-	if manifest != nil {
-		for _, entry := range manifest.Packages {
-			installed[entry.Name] = true
-		}
+	if installed == nil {
+		installed = map[string]bool{}
 	}
 	return &StatusReader{
 		lock:      lock,
@@ -185,11 +182,15 @@ func BuildPackageSource(mgr *repo.RepoManager, repoName, pkgName, buildGo, commi
 	return src, nil
 }
 
-func LoadPackageScript(src buildscript.Source, repoTrusted func(repoName string) (bool, error), quietScope func() func()) (*api.Package, error) {
-	if quietScope != nil {
-		restore := quietScope()
-		defer restore()
+// loadScript uses the injected loader when the caller provided one.
+func (e Env) loadScript(src buildscript.Source) (*api.Package, error) {
+	if e.LoadScript != nil {
+		return e.LoadScript(src)
 	}
+	return LoadPackageScript(src, e.RepoTrusted)
+}
+
+func LoadPackageScript(src buildscript.Source, repoTrusted func(repoName string) (bool, error)) (*api.Package, error) {
 	scriptfs.SetReadOnly(true)
 	defer scriptfs.SetReadOnly(false)
 
@@ -238,7 +239,7 @@ func ListNativePackagesAt(depsDir, repoName string) ([]string, error) {
 	return names, nil
 }
 
-func SearchRegistryRepo(env Env, repoName string, opts SearchOptions, statuses *StatusReader, quietScope func() func()) ([]SearchEntry, []string) {
+func SearchRegistryRepo(env Env, repoName string, opts SearchOptions, statuses *StatusReader) ([]SearchEntry, []string) {
 	mgr := env.RepoManager
 	names, err := mgr.ListPackages(repoName)
 	if err != nil {
@@ -280,7 +281,7 @@ func SearchRegistryRepo(env Env, repoName string, opts SearchOptions, statuses *
 				warnings = append(warnings, fmt.Sprintf("%s/%s: %v", repoName, name, err))
 			} else if src, err := BuildPackageSource(mgr, repoName, name, buildGo, commit, false, false); err != nil {
 				warnings = append(warnings, fmt.Sprintf("%s/%s: %v", repoName, name, err))
-			} else if interpreted, err := LoadPackageScript(src, env.RepoTrusted, quietScope); err != nil {
+			} else if interpreted, err := env.loadScript(src); err != nil {
 				warnings = append(warnings, fmt.Sprintf("%s/%s: %v", repoName, name, err))
 			} else {
 				ApplySearchMetadata(&entry, interpreted, nil)
@@ -294,7 +295,7 @@ func SearchRegistryRepo(env Env, repoName string, opts SearchOptions, statuses *
 	return entries, warnings
 }
 
-func SearchNativeRepo(env Env, repoName string, opts SearchOptions, statuses *StatusReader, quietScope func() func()) ([]SearchEntry, []string) {
+func SearchNativeRepo(env Env, repoName string, opts SearchOptions, statuses *StatusReader) ([]SearchEntry, []string) {
 	if env.ProjectDir == "" {
 		return nil, []string{fmt.Sprintf("native repository %q has no global catalog; run inside a project to see cached packages", repoName)}
 	}
@@ -333,7 +334,7 @@ func SearchNativeRepo(env Env, repoName string, opts SearchOptions, statuses *St
 					warnings = append(warnings, fmt.Sprintf("%s/%s: %v", repoName, name, err))
 				} else if src, err := BuildPackageSource(env.RepoManager, repoName, name, filepath.Join(linkPath, "build.go"), commit, true, true); err != nil {
 					warnings = append(warnings, fmt.Sprintf("%s/%s: %v", repoName, name, err))
-				} else if interpreted, err := LoadPackageScript(src, env.RepoTrusted, quietScope); err != nil {
+				} else if interpreted, err := env.loadScript(src); err != nil {
 					warnings = append(warnings, fmt.Sprintf("%s/%s: %v", repoName, name, err))
 				} else {
 					ApplySearchMetadata(&entry, interpreted, nil)
@@ -360,7 +361,7 @@ func SearchNativeRepo(env Env, repoName string, opts SearchOptions, statuses *St
 					buildGo := filepath.Join(depsDir, repoName, name, "src", "build.go")
 					if src, err := BuildPackageSource(env.RepoManager, repoName, name, buildGo, state.Commit, true, false); err != nil {
 						warnings = append(warnings, fmt.Sprintf("%s/%s: %v", repoName, name, err))
-					} else if interpreted, err := LoadPackageScript(src, env.RepoTrusted, quietScope); err != nil {
+					} else if interpreted, err := env.loadScript(src); err != nil {
 						warnings = append(warnings, fmt.Sprintf("%s/%s: %v", repoName, name, err))
 					} else {
 						ApplySearchMetadata(&entry, interpreted, state)
@@ -452,7 +453,7 @@ func TrustWarning(repoName, source string) string {
 	return fmt.Sprintf("build.go is not trusted; run 'vmake repo trust %s'", repoName)
 }
 
-func ShowPackage(env Env, repoName, pkgName, version string, quietScope func() func()) (*ShowResult, bool, error) {
+func ShowPackage(env Env, repoName, pkgName, version string) (*ShowResult, bool, error) {
 	mgr := env.RepoManager
 	if !mgr.Exists(repoName) {
 		return nil, true, fmt.Errorf("repository %q not found; run 'vmake repo list'", repoName)
@@ -543,7 +544,7 @@ func ShowPackage(env Env, repoName, pkgName, version string, quietScope func() f
 		if err != nil {
 			return nil, false, fmt.Errorf("script options for %s: %w", filepath.Dir(buildGo), err)
 		}
-		interpreted, err = LoadPackageScript(src, env.RepoTrusted, quietScope)
+		interpreted, err = env.loadScript(src)
 		if err != nil {
 			return nil, false, fmt.Errorf("read metadata from %s: %w", buildGo, err)
 		}

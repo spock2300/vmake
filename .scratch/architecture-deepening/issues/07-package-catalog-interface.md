@@ -34,3 +34,19 @@
 ## 涉及文件
 
 `pkg/catalog/catalog.go`、`catalog_test.go`（重写）、`cmd/vmake/pkg_cmd.go`、`pkg_discover.go`。
+
+## 实现记录（部分落地）
+
+已完成这张卡的核心目标——**依赖切断与效果闭包移除**：
+
+- `pkg/catalog` **不再导入 `pkg/pipeline`**（验收 grep 为 0）。它唯一用到的 `pipeline.LoadInstallManifest` 移到 `cmd/vmake/pkg_discover.go`：调用方读好安装清单，把 `installed map[string]bool` 传给 `catalog.NewStatusReaderAt`。
+- `Env` 增加两个字段：`LoadScript func(buildscript.Source) (*api.Package, error)` 与 `Installed`。`Env.loadScript` 优先用注入的加载器。
+- `quietScope func() func()` 参数从 `LoadPackageScript`/`SearchRegistryRepo`/`SearchNativeRepo`/`ShowPackage` 全部删除（验收 grep 为 0）。静音改由 `cmd` 的 `loadPackageScript` 用 `quietpkg.Enter(quietpkg.Script)` 包裹——这正是 03 落地后才可能的形状。
+- 测试：新增 `TestEnvLoadScriptPrefersInjectedLoader`（用假加载器，不需要 yaegi）。
+
+未完成（明确记录，下一轮继续）：
+
+1. **`Open(env) *Catalog` + `Search`/`Show`/`Script` 方法形态**尚未引入；现在仍是包级函数 + `Env` 首参。
+2. 验收里"测试覆盖 registry/native 的 `Search`、`Show`、`Script` 失败路径"只做到 `loadScript`。尝试给 `ShowPackage` 写空 `Env` 测试时发现它会 nil-deref（`catalog.go:458`，`Env.RepoManager` 为 nil）——这是既有行为，说明该函数仍假设调用方给全依赖，正是本卡想根除的东西；要真正可测，得先有 `Open(env)` 与可注入的仓库访问。
+
+结论：依赖方向已经掰正（catalog 现在是叶子），`Search`/`Show` 的接口收敛留作本卡的剩余部分。

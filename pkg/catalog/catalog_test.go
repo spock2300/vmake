@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/buildscript"
 )
 
 func TestBuildPackageSourceUsesCachedNativeSrcDirAsModuleRoot(t *testing.T) {
@@ -26,5 +29,20 @@ func TestBuildPackageSourceUsesCachedNativeSrcDirAsModuleRoot(t *testing.T) {
 	}
 	if src.Script.ModuleRoot != srcDir || src.Script.ModulePath != "example.com/libfoo" {
 		t.Fatalf("Script = %+v, want ModuleRoot=%q ModulePath=example.com/libfoo", src.Script, srcDir)
+	}
+}
+
+func TestEnvLoadScriptPrefersInjectedLoader(t *testing.T) {
+	called := false
+	env := Env{LoadScript: func(buildscript.Source) (*api.Package, error) {
+		called = true
+		return api.NewPackage().SetName("fake"), nil
+	}}
+	pkg, err := env.loadScript(buildscript.Source{})
+	if err != nil {
+		t.Fatalf("loadScript: %v", err)
+	}
+	if !called || pkg == nil {
+		t.Fatalf("injected loader was not used: called=%v pkg=%v", called, pkg)
 	}
 }

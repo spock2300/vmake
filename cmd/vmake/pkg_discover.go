@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/catalog"
+	"github.com/spock2300/vmake/pkg/pipeline"
 	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/repo"
 )
@@ -127,7 +129,7 @@ func searchPackages(opts pkgSearchOptions) (*pkgSearchResult, error) {
 				Repo:       opts.repo,
 				Details:    opts.details,
 				ForProject: opts.forProject,
-			}, statuses, quietpkg.Streams)
+			}, statuses)
 		}
 		result.Packages = append(result.Packages, entries...)
 		result.Warnings = append(result.Warnings, warnings...)
@@ -155,6 +157,7 @@ func catalogEnv(mgr *repo.RepoManager) catalog.Env {
 		ProjectDir:  findProjectDirSoft(),
 		CacheDir:    getCacheDir(),
 		RepoTrusted: repoScriptTrusted,
+		LoadScript:  loadPackageScript,
 	}
 }
 
@@ -164,11 +167,13 @@ func searchNativeRepo(repoName string, opts pkgSearchOptions, statuses *pkgStatu
 		Repo:       opts.repo,
 		Details:    opts.details,
 		ForProject: opts.forProject,
-	}, statuses, quietpkg.Streams)
+	}, statuses)
 }
 
 func loadPackageScript(src buildscript.Source) (*api.Package, error) {
-	return catalog.LoadPackageScript(src, repoScriptTrusted, quietpkg.Streams)
+	restore := quietpkg.Enter(quietpkg.Script)
+	defer restore()
+	return catalog.LoadPackageScript(src, repoScriptTrusted)
 }
 
 func listNativePackagesAt(depsDir, repoName string) ([]string, error) {
@@ -176,7 +181,7 @@ func listNativePackagesAt(depsDir, repoName string) ([]string, error) {
 }
 
 func loadPkgShow(repoName, pkgName, version string) (*pkgShowResult, error) {
-	res, isUsage, err := catalog.ShowPackage(catalogEnv(getRepoManager()), repoName, pkgName, version, quietpkg.Streams)
+	res, isUsage, err := catalog.ShowPackage(catalogEnv(getRepoManager()), repoName, pkgName, version)
 	if err != nil {
 		if isUsage {
 			return nil, &usageError{err: err}
@@ -195,7 +200,17 @@ func newPkgStatusReader() (*pkgStatusReader, error) {
 }
 
 func newPkgStatusReaderAt(projectDir, depsDir, cacheDir string) (*pkgStatusReader, error) {
-	return catalog.NewStatusReaderAt(projectDir, depsDir, cacheDir)
+	installed := map[string]bool{}
+	manifest, err := pipeline.LoadInstallManifest(filepath.Join(projectDir, "install", "manifest.json"))
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("load install manifest: %w", err)
+	}
+	if manifest != nil {
+		for _, entry := range manifest.Packages {
+			installed[entry.Name] = true
+		}
+	}
+	return catalog.NewStatusReaderAt(projectDir, depsDir, cacheDir, installed)
 }
 
 func pkgEntryMatches(entry pkgSearchEntry, pattern string) bool {
