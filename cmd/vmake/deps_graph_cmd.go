@@ -97,9 +97,9 @@ func runDepsInspection(execution context.Context, overrides []inspectOverride, i
 		return unwrapDepsOpenErr(err)
 	}
 	defer session.Close()
-	g, err := pipeline.BuildUnifiedGraph(session.ctx, session.inspection, pipeline.GraphOptions{IncludeAll: includeAll, DeclareTargets: true})
+	g := attachInspectionGraphOptions(session.ctx, session.inspection, pipeline.GraphOptions{IncludeAll: includeAll, DeclareTargets: true}, nil)
 	restore()
-	if err != nil {
+	if err := session.inspection.GraphError(); err != nil {
 		return err
 	}
 	return render(session.ctx, g)
@@ -484,31 +484,29 @@ func completeDepsWhyArg(cmd *cobra.Command, args []string, toComplete string) ([
 		add(s)
 	}
 
-	if root, rootErr := resolveProjectRoot(); rootErr == nil {
-		restoreOut := quietpkg.SilenceStdout()
-		restoreErr := quietpkg.SilenceStderr()
-		restoreScope := quietpkg.ProbeScope(true, true)
-		policy := lockPolicyFor(true, false, true)
-		ctx, err := openProject(projectOptions{root: root, execution: cmd.Context(), policy: &policy, skipGitignore: true})
-		if err == nil {
-			for name := range ctx.DepGraph.Packages {
-				add(name)
-			}
-			if strings.Contains(toComplete, ":") {
-				if inspection, inspErr := pipeline.InspectWithOptions(ctx, pipeline.InspectOptions{FilterDeps: true}); inspErr == nil {
-					if g, gErr := pipeline.BuildUnifiedGraph(ctx, inspection, pipeline.GraphOptions{IncludeAll: true, DeclareTargets: true}); gErr == nil {
-						for _, t := range g.Facts().Targets {
-							add(t)
-						}
-					}
-				}
-			}
-			closeProject(ctx)
-		}
-		restoreScope()
-		restoreErr()
-		restoreOut()
+	root, rootErr := resolveProjectRoot()
+	if rootErr != nil {
+		sort.Strings(refs)
+		return refs, cobra.ShellCompDirectiveNoFileComp
 	}
+	session, restore, err := openDepsInspection(cmd.Context(), root, nil, true, false, true)
+	if err != nil {
+		sort.Strings(refs)
+		return refs, cobra.ShellCompDirectiveNoFileComp
+	}
+	defer session.Close()
+	for name := range session.ctx.DepGraph.Packages {
+		add(name)
+	}
+	if strings.Contains(toComplete, ":") {
+		g := attachInspectionGraphOptions(session.ctx, session.inspection, pipeline.GraphOptions{IncludeAll: true, DeclareTargets: true}, nil)
+		if g != nil {
+			for _, target := range g.Facts().Targets {
+				add(target)
+			}
+		}
+	}
+	restore()
 
 	sort.Strings(refs)
 	return refs, cobra.ShellCompDirectiveNoFileComp

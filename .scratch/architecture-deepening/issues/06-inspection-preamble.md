@@ -31,3 +31,10 @@ DD-39 之后 `attachInspectionGraph` 把图灌进 `Inspection` 并只留 `GraphF
 ## 涉及文件
 
 `cmd/vmake/deps_graph_cmd.go`、`inspect_session.go`、`inspect_cmd.go`（`attachInspectionGraphOptions` 的可复用性），`pkg/pipeline/graph_query.go`（如需 `GraphFacts` 访问器）。
+
+## 实现记录
+
+- `attachInspectionGraphOptions` 现在返回构造出的图（仍把图灌进模型、只保留答案面），因此"图挂载"只有一条路径，`OnBlockedWrite` 也顺带在 `deps` 系生效。
+- `runDepsInspection` 不再自己调 `pipeline.BuildUnifiedGraph`，改用 `attachInspectionGraphOptions`，错误从 `inspection.GraphError()` 读——`deps graph` 的 blocked-write 记录因此与 `inspect` 一致。
+- `completeDepsWhyArg` 的 25 行手搭前导删除，改为 `resolveProjectRoot` + `openDepsInspection` + `attachInspectionGraphOptions`；包名仍取自 `session.ctx.DepGraph`，目标名取自返回图的 `Facts()`。新增 `TestDepsWhyCompletionUsesSharedPreamble`（这是补全路径的第一个测试）。
+- 未做（明确记录）：`render` 签名仍然是 `*RuntimeContext, *pipeline.UnifiedGraph`，因为 `pipeline.WhyQuery(ctx, g, query, allPaths)` 需要整张图，而 DD-39 之后模型只保留答案面。要让 `deps why` 只读 `GraphFacts`，得先把 `WhyQuery` 改成消费事实；那是独立的一次改动，不在本卡内硬塞。

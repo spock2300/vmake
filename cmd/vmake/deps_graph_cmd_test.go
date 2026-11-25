@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/spock2300/vmake/pkg/pipeline"
 )
 
@@ -780,5 +782,39 @@ func TestWarnTargetDeclareIssuesFollowsActiveSet(t *testing.T) {
 		if strings.Contains(got, unwanted) {
 			t.Fatalf("unexpected warning %q in %q", unwanted, got)
 		}
+	}
+}
+
+func TestDepsWhyCompletionUsesSharedPreamble(t *testing.T) {
+	project := writeRootedGraphProject(t, canonicalTempDir(t))
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(project); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(previous)
+	t.Setenv("VMAKE_CACHE", canonicalTempDir(t))
+	t.Setenv("VMAKE_TRUST_ALL", "1")
+	vmakeDir = canonicalTempDir(t)
+
+	cmd, _, err := RootCmd.Find([]string{"deps", "why"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	packages, directive := completeDepsWhyArg(cmd, nil, "")
+	if directive != cobra.ShellCompDirectiveNoFileComp || len(packages) == 0 {
+		t.Fatalf("package completion = %v / %v", packages, directive)
+	}
+	targets, _ := completeDepsWhyArg(cmd, nil, "app:")
+	found := false
+	for _, candidate := range targets {
+		if strings.Contains(candidate, ":") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("target completion produced no pkg:target entries: %v", targets)
 	}
 }

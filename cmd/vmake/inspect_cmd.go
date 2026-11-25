@@ -321,10 +321,11 @@ func attachInspectionGraph(ctx *RuntimeContext, inspection *pipeline.Inspection,
 	}, nil)
 }
 
-func attachInspectionGraphOptions(ctx *RuntimeContext, inspection *pipeline.Inspection, opts pipeline.GraphOptions, onBlockedWrite func(pkg string, messages []string)) {
+func attachInspectionGraphOptions(ctx *RuntimeContext, inspection *pipeline.Inspection, opts pipeline.GraphOptions, onBlockedWrite func(pkg string, messages []string)) *pipeline.UnifiedGraph {
 	opts.OnBlockedWrite = onBlockedWrite
 	graph, graphErr := pipeline.BuildUnifiedGraph(ctx, inspection, opts)
 	inspection.AttachGraph(ctx, graph, graphErr)
+	return graph
 }
 
 func buildInspectData(ctx *RuntimeContext, inspection *pipeline.Inspection, includeTargets bool) (*inspectData, []inspectDiagnostic) {
