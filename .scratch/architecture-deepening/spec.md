@@ -62,3 +62,7 @@
 | 09 来源词表 | `1b6f630` + 本轮 | `resolver.SourceKind` + `GitCompatName`；四处生产者与 catalog 字面量归位；`local ≡ git` 进入 INSPECT.md、技能与 GLOSSARY |
 
 全部门禁：`go build`、全量 `go vet`、`./cmd/vmake ./pkg/... ./internal/...`、9 个夹具字节一致性、`TestSkill*`、`vmake skill install`。
+
+## 验证注意事项（本轮实测）
+
+**不要把 `test_data/_snapshot` 全量套件与 `go test ./cmd/vmake` 并行跑**。两者都会在 `test_data/*` 夹具里删除/生成 `build`、`install`、`vendor` 与 `.vmake`，并行时会互相踩到：本轮并行执行时 `TestInspectFixtures` 报失败，串行重跑即通过（`TestSnapshotsTestData` 只剩 11/13/25 三个已知前置缺失）。并行执行时看到这条失败，先串行复跑再判断是否为回归。
