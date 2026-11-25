@@ -66,6 +66,15 @@ func VisibilityPath(isLocal bool, pkgID, projectRoot, pkgDir string) string {
 	return localRootPrefix + "/" + slash
 }
 
+type InternalUseError struct {
+	From string
+	To   string
+}
+
+func (e *InternalUseError) Error() string {
+	return fmt.Sprintf("use of internal package %q not allowed from package %q", e.To, e.From)
+}
+
 func CheckInternal(fromID, fromVisPath, toID, toVisPath string) error {
 	if fromID == toID || toVisPath == "" || fromVisPath == "" {
 		return nil
@@ -93,5 +102,5 @@ func CheckInternal(fromID, fromVisPath, toID, toVisPath string) error {
 	if normFrom == parentPrefix || strings.HasPrefix(normFrom, parentPrefix+"/") {
 		return nil
 	}
-	return fmt.Errorf("use of internal package %q not allowed from package %q", toID, fromID)
+	return &InternalUseError{From: fromID, To: toID}
 }

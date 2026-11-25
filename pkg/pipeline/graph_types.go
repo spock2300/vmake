@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/spock2300/vmake/internal/issue"
+	"github.com/spock2300/vmake/internal/pkgvis"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 )
@@ -18,11 +19,14 @@ type GraphIssue = build.GraphIssue
 func IssueFor(err error) GraphIssue {
 	kind := build.IssueKindResolve
 	var resolveErr *build.ResolveError
+	var internalErr *pkgvis.InternalUseError
 	switch {
 	case errors.As(err, &resolveErr):
 		kind = resolveErr.Kind
 	case errors.Is(err, issue.ErrCircularDependency):
 		kind = build.IssueKindPackageCycle
+	case errors.As(err, &internalErr):
+		kind = build.IssueKindInternalVisibility
 	}
 	return GraphIssue{Severity: "error", Kind: kind, Message: err.Error()}
 }

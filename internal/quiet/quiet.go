@@ -15,7 +15,6 @@ const (
 	Probe Intent = iota
 	ProbeSilent
 	Script
-	Quiet
 )
 
 func Enter(intent Intent) func() {
@@ -26,14 +25,12 @@ func Enter(intent Intent) func() {
 		return combine(ProbeScope(true, true), Streams())
 	case Script:
 		return Streams()
-	case Quiet:
-		return SilenceStdout()
 	}
 	return func() {}
 }
 
 func ProbeScope(quietLog, quietExec bool) func() {
-	scriptfs.SetReadOnly(true)
+	restoreReadOnly := ReadOnly()
 	previousLevel := vlog.GetLevel()
 	previousExecQuiet := iexec.IsQuiet()
 	if quietLog {
@@ -45,10 +42,28 @@ func ProbeScope(quietLog, quietExec bool) func() {
 	var once sync.Once
 	return func() {
 		once.Do(func() {
-			scriptfs.SetReadOnly(false)
+			restoreReadOnly()
 			vlog.SetLevel(previousLevel)
 			iexec.SetQuiet(previousExecQuiet)
 		})
+	}
+}
+
+func ReadOnly() func() {
+	previous := scriptfs.IsReadOnly()
+	scriptfs.SetReadOnly(true)
+	var once sync.Once
+	return func() {
+		once.Do(func() { scriptfs.SetReadOnly(previous) })
+	}
+}
+
+func LogQuiet() func() {
+	previous := vlog.GetLevel()
+	vlog.SetLevel(vlog.Quiet)
+	var once sync.Once
+	return func() {
+		once.Do(func() { vlog.SetLevel(previous) })
 	}
 }
 

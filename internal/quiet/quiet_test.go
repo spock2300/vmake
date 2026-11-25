@@ -61,19 +61,29 @@ func TestEnterScriptLeavesLogLeversAlone(t *testing.T) {
 	restore()
 }
 
-func TestEnterQuietSilencesStdoutOnly(t *testing.T) {
+func TestReadOnlyRestoresThePreviousScope(t *testing.T) {
 	reset(t)
-	stdout, stderr := os.Stdout, os.Stderr
-	restore := Enter(Quiet)
-	if os.Stdout == stdout {
-		t.Fatal("Quiet did not swap stdout")
+	outer := ReadOnly()
+	inner := ReadOnly()
+	inner()
+	if !scriptfs.IsReadOnly() {
+		t.Fatal("the inner restore cleared the outer read-only scope")
 	}
-	if os.Stderr != stderr {
-		t.Fatal("Quiet swapped stderr; the log must still reach it")
+	outer()
+	if scriptfs.IsReadOnly() {
+		t.Fatal("the outer restore did not clear the read-only scope")
+	}
+}
+
+func TestLogQuietRestoresThePreviousLevel(t *testing.T) {
+	reset(t)
+	restore := LogQuiet()
+	if vlog.GetLevel() != vlog.Quiet {
+		t.Fatalf("level = %v, want Quiet", vlog.GetLevel())
 	}
 	restore()
-	if os.Stdout != stdout {
-		t.Fatal("Quiet did not restore stdout")
+	if vlog.GetLevel() != vlog.Normal {
+		t.Fatalf("level = %v, want Normal", vlog.GetLevel())
 	}
 }
 

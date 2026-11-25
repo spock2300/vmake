@@ -9,6 +9,7 @@ import (
 
 	"github.com/spock2300/vmake/internal/flock"
 	"github.com/spock2300/vmake/internal/fs"
+	"github.com/spock2300/vmake/internal/quiet"
 	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
@@ -205,8 +206,8 @@ func (e Env) loadScript(src buildscript.Source) (*api.Package, error) {
 }
 
 func LoadPackageScript(src buildscript.Source, repoTrusted func(repoName string) (bool, error)) (*api.Package, error) {
-	scriptfs.SetReadOnly(true)
-	defer scriptfs.SetReadOnly(false)
+	restoreReadOnly := quiet.ReadOnly()
+	defer restoreReadOnly()
 
 	interpreted, err := buildscript.LoadBuildScriptWithTrust(src, func(loadSrc buildscript.Source) error {
 		if repoTrusted == nil {
@@ -474,7 +475,7 @@ type Catalog struct {
 func Open(env Env) *Catalog { return &Catalog{env: env} }
 
 func (c *Catalog) Search(repoName string, opts SearchOptions, statuses *StatusReader) ([]SearchEntry, []string) {
-	if c.env.repoIsNative(repoName) {
+	if c.env.Repo.IsNative(repoName) {
 		return SearchNativeRepo(c.env, repoName, opts, statuses)
 	}
 	return SearchRegistryRepo(c.env, repoName, opts, statuses)
@@ -486,10 +487,6 @@ func (c *Catalog) Show(repoName, pkgName, version string) (*ShowResult, bool, er
 
 func (c *Catalog) Script(src buildscript.Source) (*api.Package, error) {
 	return c.env.loadScript(src)
-}
-
-func (e Env) repoIsNative(repoName string) bool {
-	return e.Repo.IsNative(repoName)
 }
 
 func ShowPackage(env Env, repoName, pkgName, version string) (*ShowResult, bool, error) {

@@ -9,9 +9,6 @@ import (
 	"testing"
 )
 
-// runCLI executes one command in-process and returns its streams and exit code.
-// It restores the working directory before returning, matching the behaviour of
-// the subprocess helpers it replaces.
 func runCLI(t *testing.T, workDir, vmakeDir string, env []string, args ...string) (string, string, int) {
 	t.Helper()
 	for _, kv := range env {
@@ -36,26 +33,26 @@ func runCLI(t *testing.T, workDir, vmakeDir string, env []string, args ...string
 	return stdout.String(), stderr.String(), code
 }
 
-// runSubprocess is the only place a test may spawn a real vmake process. The
-// plugin, trust and interrupt tests need it because they mutate process-wide
-// toolchain state that DD-40 leaves process-scoped.
-func runSubprocess(t *testing.T, workDir, vmakeDir string, env []string, args ...string) (string, string, int) {
+func newSubprocess(t *testing.T, child, workDir string, env []string, args ...string) *exec.Cmd {
 	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	commandArgs := append([]string{"-test.run=^TestExtensionBootstrapChild$", "--"}, args...)
-	cmd := exec.Command(exe, commandArgs...)
+	cmd := exec.Command(exe, append([]string{"-test.run=^" + child + "$", "--"}, args...)...)
 	cmd.Dir = workDir
-	cmd.Env = append(os.Environ(), "VMAKE_TEST_EXT_DIR="+vmakeDir)
-	cmd.Env = append(cmd.Env, env...)
+	cmd.Env = append(os.Environ(), env...)
+	return cmd
+}
+
+func runSubprocess(t *testing.T, workDir, vmakeDir string, env []string, args ...string) (string, string, int) {
+	t.Helper()
+	cmd := newSubprocess(t, "TestExtensionBootstrapChild", workDir, append([]string{"VMAKE_TEST_EXT_DIR=" + vmakeDir}, env...), args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err = cmd.Run()
 	code := 0
-	if err != nil {
+	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) {
 			t.Fatalf("run %v: %v", args, err)
@@ -65,9 +62,6 @@ func runSubprocess(t *testing.T, workDir, vmakeDir string, env []string, args ..
 	return stdout.String(), stderr.String(), code
 }
 
-// TestCommandProcessBoundary pins the one thing an in-process call cannot
-// cover: a real exit status through os.Exit, and real file descriptors. The
-// snapshot suite covers the shipped binary itself.
 func TestCommandProcessBoundary(t *testing.T) {
 	workDir := t.TempDir()
 	stdout, stderr, code := runSubprocess(t, workDir, canonicalTempDir(t), nil, "version")

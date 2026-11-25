@@ -82,7 +82,7 @@ func (s *Scheduler) collectDepArtifacts(node *BuildNode) (*depResolveResult, err
 			depPlacement := PlacementFor(depNode.Target, depPkg, s.targetOS(depNode.PkgName))
 			depOutput := depPlacement.OutputPath
 			if depPkg.InstallDir != "" && depPkg.BuildDir == "" {
-				depOutput = filepath.Join(depPkg.InstallDir, "lib", depPlacement.InstallName)
+				depOutput = filepath.Join(depPlacement.StageLibDir, depPlacement.InstallName)
 			}
 			if depPlacement.ImportLib != "" {
 				depOutput = importLibraryPath(depOutput, s.targetOS(depNode.PkgName), depNode.Target.Kind())

@@ -214,7 +214,7 @@ func TestFindEnclosingProjectRoot(t *testing.T) {
 }
 
 func TestLoadResolveParamsUsesProjectRootFromPackageSubdir(t *testing.T) {
-	resetResolveTestGlobals(t)
+	arrangeResolveTestGlobals(t)
 	root := canonicalTempDir(t)
 	makePathsTestDir(t, filepath.Join(root, ".vmake"))
 	writePathsTestFile(t, filepath.Join(root, "build.go"), "package main\n")
@@ -359,7 +359,7 @@ func TestSearchProjectDirNestedVmakeBeatsGitRoot(t *testing.T) {
 }
 
 func TestLoadResolveParamsUsesProjectOverride(t *testing.T) {
-	resetResolveTestGlobals(t)
+	arrangeResolveTestGlobals(t)
 	project := canonicalTempDir(t)
 	makePathsTestDir(t, filepath.Join(project, ".vmake"))
 	writePathsTestFile(t, filepath.Join(project, "build.go"), "package main\n")
@@ -386,7 +386,7 @@ func TestLoadResolveParamsUsesProjectOverride(t *testing.T) {
 }
 
 func TestFindProjectDirOverrideRelative(t *testing.T) {
-	resetResolveTestGlobals(t)
+	arrangeResolveTestGlobals(t)
 	parent := canonicalTempDir(t)
 	project := filepath.Join(parent, "工程 space")
 	makePathsTestDir(t, filepath.Join(project, ".vmake"))

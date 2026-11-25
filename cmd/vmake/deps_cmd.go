@@ -11,9 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	quietpkg "github.com/spock2300/vmake/internal/quiet"
 	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/lockfile"
-	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/repo"
 	"github.com/spock2300/vmake/pkg/resolver"
@@ -80,7 +80,7 @@ availability.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jsonOut {
-				vlog.SetLevel(vlog.Quiet)
+				defer quietpkg.LogQuiet()()
 			}
 			policy := lockPolicyFor(true, false, false)
 			ctx, err := openProject(projectOptions{execution: cmd.Context(), policy: &policy})
@@ -129,7 +129,7 @@ and recorded in .vmake/vmake.lock, and stale lock entries are pruned.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jsonOut {
-				vlog.SetLevel(vlog.Quiet)
+				defer quietpkg.LogQuiet()()
 			}
 			policy := resolver.LockPolicy{}
 			ctx, err := openProject(projectOptions{execution: cmd.Context(), policy: &policy})
@@ -172,7 +172,7 @@ writing a persistent pin to .vmake/project.json.`,
 		ValidArgsFunction: completeDepsPkgRef,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jsonOut {
-				vlog.SetLevel(vlog.Quiet)
+				defer quietpkg.LogQuiet()()
 			}
 			if refreshRepos && dryRun {
 				return &usageError{err: fmt.Errorf("--refresh-repos cannot be combined with --dry-run")}
@@ -242,7 +242,7 @@ Project pins are shared by all configurations in configs/ and prevent bare
 		ValidArgsFunction: completeDepsPkgRef,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jsonOut {
-				vlog.SetLevel(vlog.Quiet)
+				defer quietpkg.LogQuiet()()
 			}
 			pkgName, target, hasTarget, err := splitDepTargetArg(args[0])
 			if err != nil {
@@ -319,7 +319,7 @@ satisfies build.go constraints.`,
 		ValidArgsFunction: completeDepsPkgRef,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jsonOut {
-				vlog.SetLevel(vlog.Quiet)
+				defer quietpkg.LogQuiet()()
 			}
 			pkgName := strings.TrimSpace(args[0])
 			if pkgName == "" || strings.Contains(pkgName, "@") {
@@ -371,7 +371,7 @@ without contacting upstream git remotes.`,
 		ValidArgsFunction: completeDepsPkgRef,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jsonOut {
-				vlog.SetLevel(vlog.Quiet)
+				defer quietpkg.LogQuiet()()
 			}
 			if fetchAll && len(args) > 0 {
 				return &usageError{err: fmt.Errorf("cannot combine package arguments with --all")}

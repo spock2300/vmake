@@ -30,10 +30,6 @@ func TestBuildInterruptReapsProcessesAndAllowsRetry(t *testing.T) {
 	if err != nil {
 		t.Skip(err)
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, stage := range []string{"compile", "link", "postlink", "helper"} {
 		for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
 			t.Run(stage+"/"+sig.String(), func(t *testing.T) {
@@ -100,11 +96,9 @@ func Main(p *api.Package) {
 				writeExtensionFile(t, filepath.Join(project, "one.c"), "int one(void) { return 1; }\n")
 				writeExtensionFile(t, filepath.Join(project, "two.c"), "int two(void) { return 2; }\n")
 				writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{"version":"1","global":{"toolchain":"interrupt"},"entries":{}}`)
-				args := []string{"-test.run=^TestExtensionBootstrapChild$", "--", "build", "-i", "-k", "-j2"}
-				env := append(os.Environ(), "VMAKE_TEST_EXT_DIR="+home, "VMAKE_CACHE="+filepath.Join(dir, "cache"), "VMAKE_TRUST_ALL=1", "VMAKE_INTERRUPT_PROJECT="+project, "VMAKE_INTERRUPT_STAGE="+stage)
-				cmd := exec.Command(exe, args...)
-				cmd.Dir = project
-				cmd.Env = env
+				args := []string{"build", "-i", "-k", "-j2"}
+				env := []string{"VMAKE_TEST_EXT_DIR=" + home, "VMAKE_CACHE=" + filepath.Join(dir, "cache"), "VMAKE_TRUST_ALL=1", "VMAKE_INTERRUPT_PROJECT=" + project, "VMAKE_INTERRUPT_STAGE=" + stage}
+				cmd := newSubprocess(t, "TestExtensionBootstrapChild", project, env, args...)
 				cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 				var out bytes.Buffer
 				cmd.Stdout = &out
@@ -197,9 +191,7 @@ func Main(p *api.Package) {
 				if err := os.Remove(filepath.Join(project, "block")); err != nil {
 					t.Fatal(err)
 				}
-				retry := exec.Command(exe, args...)
-				retry.Dir = project
-				retry.Env = env
+				retry := newSubprocess(t, "TestExtensionBootstrapChild", project, env, args...)
 				if data, err := retry.CombinedOutput(); err != nil {
 					t.Fatalf("retry: %v\n%s", err, data)
 				}

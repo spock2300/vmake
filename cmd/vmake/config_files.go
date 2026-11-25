@@ -8,11 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	iexec "github.com/spock2300/vmake/internal/exec"
 	quietpkg "github.com/spock2300/vmake/internal/quiet"
 	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/config"
-	vlog "github.com/spock2300/vmake/pkg/log"
 	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/resolver"
 )
@@ -178,10 +176,7 @@ func newConfigCheckCmd() *cobra.Command {
 			}
 
 			out := cmd.OutOrStdout()
-			scriptfs.SetReadOnly(true)
-			defer scriptfs.SetReadOnly(false)
-			vlog.SetLevel(vlog.Quiet)
-			iexec.SetQuiet(true)
+			defer quietpkg.Enter(quietpkg.Probe)()
 
 			failed := 0
 			for _, target := range targets {

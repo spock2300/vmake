@@ -53,7 +53,8 @@ func TestRunResetsFlagDefaultsBetweenInvocations(t *testing.T) {
 
 func TestRunResetsProcessScopedState(t *testing.T) {
 	cachedProjectDir = "/stale/project"
-	activeCommandSession = &commandSession{}
+	stale := &commandSession{}
+	activeCommandSession = stale
 
 	var out, errOut bytes.Buffer
 	if code := run([]string{"version"}, &out, &errOut, runEnv{}); code != 0 {
@@ -62,8 +63,11 @@ func TestRunResetsProcessScopedState(t *testing.T) {
 	if cachedProjectDir != "" {
 		t.Fatalf("cachedProjectDir = %q, want empty", cachedProjectDir)
 	}
-	if activeCommandSession == nil || activeCommandSession.storage != nil {
-		t.Fatalf("command session was not replaced and closed: %+v", activeCommandSession)
+	if activeCommandSession != nil {
+		t.Fatalf("command session survived the run: %+v", activeCommandSession)
+	}
+	if stale.storage != nil {
+		t.Fatal("stale command session was not closed")
 	}
 }
 
@@ -91,17 +95,46 @@ func TestRunReturnsUsageExitCode(t *testing.T) {
 	if code := run([]string{"version"}, &out, &errOut, runEnv{}); code != 0 {
 		t.Fatalf("version exit code = %d, want 0", code)
 	}
-	out.Reset()
-	errOut.Reset()
 	if code := run([]string{"build", "--no-such-flag"}, &out, &errOut, runEnv{}); code != 2 {
 		t.Fatalf("unknown flag exit code = %d, want 2", code)
 	}
-	out.Reset()
-	errOut.Reset()
-	// An unknown command is a plain error, not a usage error: cobra reports it
-	// after the flag/argument validators have already passed.
+}
+
+func TestUnknownCommandIsPlainError(t *testing.T) {
+	var out, errOut bytes.Buffer
 	if code := run([]string{"no-such-command"}, &out, &errOut, runEnv{}); code != 1 {
 		t.Fatalf("unknown command exit code = %d, want 1", code)
+	}
+}
+
+func TestCommandTreeRebuildsChildrenOnce(t *testing.T) {
+	for i := 0; i < 2; i++ {
+		var out, errOut bytes.Buffer
+		if code := run([]string{"version"}, &out, &errOut, runEnv{}); code != 0 {
+			t.Fatalf("run %d exit code = %d", i, code)
+		}
+	}
+	if got, want := len(pkgCmd.Commands()), 6; got != want {
+		t.Fatalf("pkg subcommands = %d, want %d", got, want)
+	}
+}
+
+func TestWrappedArgsDoNotAccumulate(t *testing.T) {
+	runTwice := func() int {
+		for i := 0; i < 2; i++ {
+			var out, errOut bytes.Buffer
+			if code := run([]string{"version"}, &out, &errOut, runEnv{}); code != 0 {
+				t.Fatalf("run %d exit code = %d", i, code)
+			}
+		}
+		return len(wrappedArgs)
+	}
+	first := runTwice()
+	if first == 0 {
+		t.Fatal("no command arguments were wrapped")
+	}
+	if second := runTwice(); second != first {
+		t.Fatalf("wrapped command count grew from %d to %d", first, second)
 	}
 }
 

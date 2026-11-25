@@ -105,23 +105,33 @@ func Execute() {
 	os.Exit(run(os.Args[1:], nil, nil, runEnv{VmakeDir: vmakeDir, LoadPlugins: true}))
 }
 
-var wrappedArgs = make(map[*cobra.Command]bool)
+var wrappedArgs = make(map[*cobra.Command]cobra.PositionalArgs)
 
 func wrapCommandArgs(cmd *cobra.Command) {
 	for _, child := range cmd.Commands() {
 		wrapCommandArgs(child)
 	}
-	if cmd.Args == nil || wrappedArgs[cmd] {
+	if cmd.Args == nil {
 		return
 	}
-	wrappedArgs[cmd] = true
+	if _, ok := wrappedArgs[cmd]; ok {
+		return
+	}
 	validate := cmd.Args
+	wrappedArgs[cmd] = validate
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if err := validate(cmd, args); err != nil {
 			return &usageError{err: err}
 		}
 		return nil
 	}
+}
+
+func unwrapCommandArgs() {
+	for cmd, original := range wrappedArgs {
+		cmd.Args = original
+	}
+	clear(wrappedArgs)
 }
 
 func pipelinePathsAt(workDir string) *pipeline.Paths {

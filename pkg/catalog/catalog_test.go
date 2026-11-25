@@ -59,9 +59,6 @@ func TestCatalogScriptUsesTheInjectedLoader(t *testing.T) {
 	}
 }
 
-// fakeRepo satisfies RepoAccess without a real ~/.vmake. The lock is a real
-// flock in a temp dir: flock.FileLock has unexported fields and Release
-// panics on nil.
 type fakeRepo struct {
 	exists   map[string]bool
 	native   map[string]bool
@@ -165,6 +162,27 @@ func TestSearchNativeRepoNeedsAProject(t *testing.T) {
 	}
 }
 
+func TestSearchNativeRepoListsCachedPackages(t *testing.T) {
+	project := t.TempDir()
+	srcDir := filepath.Join(project, ".vmake_deps", "native", "libfoo", "src")
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "build.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	repo := newFakeRegistry(t, true)
+	repo.exists["native"] = true
+	repo.native["native"] = true
+	entries, warnings := Open(fakeEnv(repo, project)).Search("native", SearchOptions{}, nil)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	if len(entries) != 1 || entries[0].Name != "libfoo" || entries[0].Source != "native" || !entries[0].Cached {
+		t.Fatalf("entries = %+v", entries)
+	}
+}
+
 func TestShowRegistryPackage(t *testing.T) {
 	repo := newFakeRegistry(t, true)
 	res, isUsage, err := Open(fakeEnv(repo, "")).Show("official", "zlib", "")
@@ -176,20 +194,21 @@ func TestShowRegistryPackage(t *testing.T) {
 	}
 }
 
-func TestShowFailuresAreUsageErrors(t *testing.T) {
+func TestShowUnknownRepositoryIsUsageError(t *testing.T) {
 	repo := newFakeRegistry(t, true)
-	env := fakeEnv(repo, "")
-	cases := []struct{ name, repo, pkg, version string }{
-		{"unknown repo", "missing", "zlib", ""},
-		{"unknown package", "official", "nope", ""},
+	_, isUsage, err := Open(fakeEnv(repo, "")).Show("missing", "zlib", "")
+	if err == nil {
+		t.Fatal("Show(missing/zlib) reported success")
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, isUsage, err := Open(env).Show(tc.repo, tc.pkg, tc.version)
-			if err == nil && !isUsage {
-				t.Fatalf("Show(%s/%s@%s) reported success", tc.repo, tc.pkg, tc.version)
-			}
-		})
+	if !isUsage {
+		t.Fatalf("unknown repository was not reported as a usage error: %v", err)
+	}
+}
+
+func TestShowUnknownPackageFails(t *testing.T) {
+	repo := newFakeRegistry(t, true)
+	if _, _, err := Open(fakeEnv(repo, "")).Show("official", "nope", ""); err == nil {
+		t.Fatal("Show(official/nope) reported success")
 	}
 }
 

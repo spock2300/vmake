@@ -64,7 +64,7 @@ Phase 3: OnBuild (pipeline.RunBuild)
 - 包位置与制品：`pipeline.packageLocation` 统一 `OwnerTreeRoot`/`PackageRoot`/`SourceTree`/`ThirdPartyRoot`/`TreeRoot`；`build.PlacementFor`（`Scheduler.placementFor` 委托）统一产物、PE import library、暂存与安装路径，`inspect`/`check-symbols`/`test` 复用同一构造器。
 - 依赖字符串：`build.ParseDependencyRef`（`parseDependencyRef` 的导出形式）是 `target`/`pkg:target`/`pkg/sub:target`/`pkg:*` 的唯一解析，graph/subgraph/`pkg/pipeline` 边投影/命令层共用；`build.NewBuildGraph`（严格模式）与 `build.AuditBuildGraph`（无错审计模式，供 `pipeline.BuildUnifiedGraph` 与 `CheckProjectDeps` 共用）共享 `pkg/build/graph.go` 的单遍展开引擎 `resolveDepSpec`，统一目标存在性校验、`Unmaterialized` 容忍、`internal/` 可见性与环诊断（DD-22、DD-36）。
 - 阶段写模型：`Require` 直接设置 `Resolver`/`DepGraph`，`prepareBuild` 用返回值传递 needed/effective flags，`applyConfiguration` 把 `Configure` 结果字段拷回上下文；`RuntimeContext.Configuration()` 是读取时派生的视图（每次调用克隆容器 map/slice），不再维护快照，`Resolution`/`Preparation` 两个零生产读者的镜像类型已删除。`Configure` 在上下文浅拷贝上执行、成功才提交配置结果。
-- 检查命令会话：`cmd/vmake/inspect_session.go:openInspection` 统一根解析（`resolveProjectRoot`，无进程缓存）、只读作用域、`openProject`、`InspectWithOptions(FilterDeps)`、blocked-write 收集与 resolver 关闭；`inspectionScope` 统一 quiet/只读状态并恢复。inspect/query/query targets/check-symbols/deps graph|why|check 只保留输出 schema、诊断文案与错误映射。
+- 检查命令会话：`cmd/vmake/inspect_session.go:openInspection` 统一根解析（`resolveProjectRoot`，无进程缓存）、只读作用域、`openProject`、`InspectWithOptions(FilterDeps)`、blocked-write 收集与 resolver 关闭；`quiet.ProbeScope` 统一 quiet/只读状态并恢复。inspect/query/query targets/check-symbols/deps graph|why|check 只保留输出 schema、诊断文案与错误映射。
 
 
 ### Clean Pipeline

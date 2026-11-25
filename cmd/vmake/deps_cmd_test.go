@@ -182,8 +182,6 @@ func Main(p *api.Package) {
 	if got := byName["blob"]; got.Version != "" || got.Commit != blobCommit1 || got.Pinned != "" {
 		t.Fatalf("untagged status = %+v, want commit %s and no version", got, blobCommit1)
 	}
-	// A local package stays "git" in deps status for 1.x; the fixtures all
-	// report zero packages, so byte identity cannot catch a rename.
 	if got := byName["blob"]; got.Source != "git" {
 		t.Fatalf("local package source = %q, want the 1.x spelling git", got.Source)
 	}

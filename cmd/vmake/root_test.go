@@ -54,36 +54,20 @@ func TestNewRuntimeContextPreservesParams(t *testing.T) {
 	}
 }
 
-func resetResolveTestGlobals(t *testing.T) {
+func arrangeResolveTestGlobals(t *testing.T) {
 	t.Helper()
-	oldProjectDir := cachedProjectDir
-	oldVmakeDir := vmakeDir
-	oldOverride := projectOverride
-	oldConfigFlag := configFlag
-	oldSetFlags := setFlags
-	oldUnsetFlags := unsetFlags
-	oldEphemeralSetFlags := ephemeralSetFlags
-	cachedProjectDir = ""
-	vmakeDir = t.TempDir()
+	resetProcessState(runEnv{VmakeDir: t.TempDir()})
 	projectOverride = ""
 	configFlag = ""
 	setFlags = nil
 	unsetFlags = nil
 	ephemeralSetFlags = nil
-	t.Cleanup(func() {
-		cachedProjectDir = oldProjectDir
-		vmakeDir = oldVmakeDir
-		projectOverride = oldOverride
-		configFlag = oldConfigFlag
-		setFlags = oldSetFlags
-		unsetFlags = oldUnsetFlags
-		ephemeralSetFlags = oldEphemeralSetFlags
-	})
+	t.Cleanup(func() { resetProcessState(runEnv{}) })
 	t.Setenv("VMAKE_CACHE", t.TempDir())
 }
 
 func TestLoadResolveParams(t *testing.T) {
-	resetResolveTestGlobals(t)
+	arrangeResolveTestGlobals(t)
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".vmake"), 0755); err != nil {
 		t.Fatal(err)
@@ -127,7 +111,7 @@ func TestLoadResolveParams(t *testing.T) {
 }
 
 func TestLoadResolveParamsSoftGitignore(t *testing.T) {
-	resetResolveTestGlobals(t)
+	arrangeResolveTestGlobals(t)
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".vmake"), 0755); err != nil {
 		t.Fatal(err)

@@ -27,7 +27,7 @@ func TestCommandSessionCapturesAmbientFlags(t *testing.T) {
 }
 
 func TestCommandSessionCachesAndClosesStorage(t *testing.T) {
-	resetResolveTestGlobals(t)
+	arrangeResolveTestGlobals(t)
 	project := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(project, ".vmake"), 0755); err != nil {
 		t.Fatal(err)

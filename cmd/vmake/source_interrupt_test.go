@@ -51,10 +51,6 @@ func TestBuildSourceInterruptReapsGitAndRetries(t *testing.T) {
 	if err != nil {
 		t.Skip(err)
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
 		t.Run(sig.String(), func(t *testing.T) {
 			dir := t.TempDir()
@@ -91,10 +87,9 @@ exec REAL "$@"
 			if err := os.WriteFile(filepath.Join(dir, "git"), []byte(wrapper), 0755); err != nil {
 				t.Fatal(err)
 			}
-			args := []string{"-test.run=^TestExtensionBootstrapChild$", "--", "build", "-k"}
-			env := append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "VMAKE_TEST_EXT_DIR="+filepath.Join(dir, "home"), "VMAKE_CACHE="+filepath.Join(dir, "cache"), "VMAKE_TRUST_ALL=1", "VMAKE_SOURCE_INTERRUPT_DIR="+dir)
-			cmd := exec.Command(exe, args...)
-			cmd.Dir, cmd.Env = project, env
+			args := []string{"build", "-k"}
+			env := []string{"PATH=" + dir + ":" + os.Getenv("PATH"), "VMAKE_TEST_EXT_DIR=" + filepath.Join(dir, "home"), "VMAKE_CACHE=" + filepath.Join(dir, "cache"), "VMAKE_TRUST_ALL=1", "VMAKE_SOURCE_INTERRUPT_DIR=" + dir}
+			cmd := newSubprocess(t, "TestExtensionBootstrapChild", project, env, args...)
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 			var output bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &output, &output
@@ -135,8 +130,7 @@ exec REAL "$@"
 			if err := os.Remove(filepath.Join(dir, "block")); err != nil {
 				t.Fatal(err)
 			}
-			retry := exec.Command(exe, args...)
-			retry.Dir, retry.Env = project, env
+			retry := newSubprocess(t, "TestExtensionBootstrapChild", project, env, args...)
 			if out, err := retry.CombinedOutput(); err != nil {
 				t.Fatalf("retry: %v\n%s", err, out)
 			}
@@ -179,8 +173,7 @@ func TestOwnerLockWaitInterruptsBeforeOwnerReleases(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer held.Release()
-			cmd := exec.Command(os.Args[0], "-test.run=^TestOwnerInterruptChild$")
-			cmd.Env = append(os.Environ(), "VMAKE_OWNER_INTERRUPT_DIR="+dir)
+			cmd := newSubprocess(t, "TestOwnerInterruptChild", "", []string{"VMAKE_OWNER_INTERRUPT_DIR=" + dir})
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 			var output bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &output, &output

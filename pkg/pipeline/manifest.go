@@ -13,6 +13,7 @@ import (
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/gitcmd"
 	"github.com/spock2300/vmake/internal/jsonio"
+	"github.com/spock2300/vmake/internal/quiet"
 	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
@@ -378,10 +379,10 @@ func CheckoutManifestLocalEntry(projectDir string, sourceMgr *repo.SourceManager
 }
 
 func detectLocalManagedGit(projectDir, name, sourceDir, scriptPath string) ([]string, bool, error) {
-	scriptfs.SetReadOnly(true)
+	restoreReadOnly := quiet.ReadOnly()
 	defer func() {
 		scriptfs.TakeBlockedWrites()
-		scriptfs.SetReadOnly(false)
+		restoreReadOnly()
 	}()
 	opts, err := buildscript.DetectScriptOptions(sourceDir, projectDir)
 	if err != nil {

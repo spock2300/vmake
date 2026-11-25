@@ -28,8 +28,9 @@ func run(argv []string, stdout, stderr io.Writer, env runEnv) int {
 	prepareRoot(argv, context.Background(), env.LoadPlugins)
 	code, err := executeRoot()
 	releaseExtensionRepoLocks()
-	if activeCommandSession != nil {
-		if closeErr := activeCommandSession.close(); err == nil {
+	if session := activeCommandSession; session != nil {
+		activeCommandSession = nil
+		if closeErr := session.close(); err == nil {
 			err = closeErr
 		}
 	}
@@ -40,6 +41,7 @@ func run(argv []string, stdout, stderr io.Writer, env runEnv) int {
 }
 
 func prepareRoot(argv []string, ctx context.Context, loadPlugins bool) {
+	unwrapCommandArgs()
 	resetCommandTree(RootCmd)
 	installCommands()
 	RootCmd.SetArgs(argv)
@@ -53,8 +55,6 @@ func prepareRoot(argv []string, ctx context.Context, loadPlugins bool) {
 	wrapCommandArgs(RootCmd)
 }
 
-// resetCommandTree must recurse: a detached parent would otherwise keep a
-// stale, flagless copy of each child ahead of the freshly built one.
 func resetCommandTree(cmd *cobra.Command) {
 	for _, child := range cmd.Commands() {
 		resetCommandTree(child)

@@ -82,7 +82,6 @@ func (in *Inspection) GraphError() error {
 	return in.graphErr
 }
 
-// GraphFacts returns a copy of the attached graph's answer surface.
 func (in *Inspection) GraphFacts() GraphFacts {
 	if in == nil {
 		return GraphFacts{}

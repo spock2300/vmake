@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/spock2300/vmake/internal/issue"
+	"github.com/spock2300/vmake/internal/pkgvis"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 )
@@ -147,6 +148,7 @@ func TestIssueForReadsTypedKindsNotMessages(t *testing.T) {
 		{"package cycle", &build.ResolveError{Kind: build.IssueKindPackageCycle, Err: errors.New("whatever")}, "package-cycle"},
 		{"target cycle", &build.ResolveError{Kind: build.IssueKindTargetCycle, Err: errors.New("whatever")}, "target-cycle"},
 		{"internal visibility", &build.ResolveError{Kind: build.IssueKindInternalVisibility, Err: errors.New("whatever")}, "internal-visibility"},
+		{"internal visibility raised by pkgvis alone", &pkgvis.InternalUseError{From: "app", To: "sdk/internal/driver"}, "internal-visibility"},
 		{"require cycle", fmt.Errorf("%w: a -> b", issue.ErrCircularDependency), "package-cycle"},
 		{"untyped", errors.New("circular dependency detected by nobody"), "resolve"},
 	}

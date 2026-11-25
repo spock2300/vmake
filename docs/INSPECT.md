@@ -283,7 +283,7 @@ of these files.
 | Field | Type | Meaning |
 |-------|------|---------|
 | `name` | string | Package name |
-| `kind` | string | `local`, `native`, or `registry` — the package source kind (see below) |
+| `kind` | string | Package source kind: `local` (in-project), `native` (native repository package), or `registry` (registry repository package); `vmake deps status --json` keeps the 1.x spelling `git` for `local` |
 | `repo` | string? | Repository name for remote packages |
 | `version` | string? | Selected version (project pin, lockfile, or native selection); linked packages report `0.0.0-local` |
 | `commit` | string? | Resolved commit for remote packages; linked packages report the link tree HEAD |
