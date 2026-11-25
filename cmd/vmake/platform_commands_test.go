@@ -8,24 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
-
-func TestTestExecutionRejectsCrossTargets(t *testing.T) {
-	for _, platform := range []api.Platform{
-		{OS: "none", Triple: "arm-none-eabi"},
-		{OS: "linux", Triple: "aarch64-linux-gnu"},
-		{OS: "windows"},
-	} {
-		if err := validateTestExecution(platform, "linux"); err == nil || !strings.Contains(err.Error(), "vmake build --tests") {
-			t.Errorf("platform %v: %v", platform, err)
-		}
-	}
-	if err := validateTestExecution(api.Platform{OS: "linux"}, "linux"); err != nil {
-		t.Fatal(err)
-	}
-}
 
 func TestDoctorChecksSelectedToolsWithoutNativeGCC(t *testing.T) {
 	program, err := os.Executable()

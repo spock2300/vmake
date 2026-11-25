@@ -80,3 +80,12 @@ S1–S5 与 07 **无关**，可先落；只有 S6 依赖 07 的 cmd 迁移（同
 - 单行转发计数：**21 → 19**（累计 28 → 19）。
 - 验证：build/vet 干净，`TestTrust*`/`TestRepo*`/`TestExt*`/`TestCompletion*`/`TestPkg*` 全绿，全量套件无失败。
 - 剩余：S1（10 个零生产转发 + 4 个新测试文件 + 删 2 个测试文件，最大且必须一次做完）、S2（9 个 pipeline 转发、16 处，依赖 S1）、S6 余（`sortedPackageVersions`/`addRequiresSnippet`，随测试搬去 `pkg/catalog`）。
+
+## 进展（S6 余 + S1 的头两项）
+
+- `sortedPackageVersions`/`addRequiresSnippet`：测试搬进 `pkg/catalog/catalog_test.go`（改为无条件名），两个转发删除。
+- `validateTestExecution`/`boundedTestOutput`：新建 `pkg/pipeline/test_runner_test.go`，测试搬入并改用 `BuildTestOutputLimit`/`BuildTestOutputMarker`/`ValidateTestExecution`/`BoundedTestOutput`；两个转发删除。`cmd` 侧 `TestTestReportTruncatesLongOutput` 仍用 cmd 的常量（保留）。
+- 连带的未用 import：`test_cmd.go` 去 `api`；`platform_commands_test.go` 去 `api`。
+- 单行转发计数：**19 → 15**（累计 28 → 15）。
+- 验证：build/vet 干净，`./cmd/vmake ./pkg/... ./internal/...` 全绿。
+- 剩余：S1 其余 6 个（`manifestProjectDir` 死代码、`resolveManifestEntryPath`、`installOnePackage`、`writeManifest`、`remainingBuildDirectories`、`checkoutLocal`、`cleanAllRemoteOutputs`）、S2（9 个 pipeline 转发、16 处）。

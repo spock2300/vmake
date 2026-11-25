@@ -5,7 +5,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildreport"
 	"github.com/spock2300/vmake/pkg/pipeline"
 )
@@ -60,17 +59,9 @@ func runTest(cmd *cobra.Command, args []string) error {
 	})
 }
 
-func validateTestExecution(platform api.Platform, hostOS string) error {
-	return pipeline.ValidateTestExecution(platform, hostOS)
-}
-
 type testResult = pipeline.TestResult
 
 const (
 	buildTestOutputLimit  = pipeline.BuildTestOutputLimit
 	buildTestOutputMarker = pipeline.BuildTestOutputMarker
 )
-
-func boundedTestOutput(output string) string {
-	return pipeline.BoundedTestOutput(output)
-}

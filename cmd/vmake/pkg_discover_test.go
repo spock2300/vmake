@@ -123,34 +123,6 @@ func TestPkgEntryMatches(t *testing.T) {
 	}
 }
 
-func TestSortedPackageVersions(t *testing.T) {
-	pkg := api.NewPackage().
-		AddVersion("1.2.13", "v1.2.13").
-		AddVersion("1.3.1", "v1.3.1").
-		AddVersion("1.0.0", "v1.0.0")
-	got := sortedPackageVersions(pkg)
-	want := []string{"1.3.1", "1.2.13", "1.0.0"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("versions = %v, want %v", got, want)
-	}
-}
-
-func TestAddRequiresSnippet(t *testing.T) {
-	for _, test := range []struct {
-		version string
-		want    string
-	}{
-		{"1.3.1", `p.AddRequires("official/zlib >= 1.3")`},
-		{"v2.0.0", `p.AddRequires("official/zlib >= 2.0")`},
-		{"latest", `p.AddRequires("official/zlib")`},
-		{"", `p.AddRequires("official/zlib")`},
-	} {
-		if got := addRequiresSnippet("official", "zlib", test.version); got != test.want {
-			t.Errorf("version %q: %q, want %q", test.version, got, test.want)
-		}
-	}
-}
-
 func TestSplitPkgShowArg(t *testing.T) {
 	repoName, pkgName, version, err := splitPkgShowArg("official/zlib@1.3.1")
 	if err != nil {

@@ -205,14 +205,6 @@ func newPkgStatusReaderAt(projectDir, depsDir, cacheDir string) (*pkgStatusReade
 	return catalog.NewStatusReaderAt(projectDir, depsDir, cacheDir, installed)
 }
 
-func sortedPackageVersions(pkg *api.Package) []string {
-	return catalog.SortedPackageVersions(pkg)
-}
-
-func addRequiresSnippet(repoName, pkgName, version string) string {
-	return catalog.AddRequiresSnippet(repoName, pkgName, version)
-}
-
 func splitPkgShowArg(arg string) (string, string, string, error) {
 	version := ""
 	if idx := strings.LastIndex(arg, "@"); idx > 0 {
