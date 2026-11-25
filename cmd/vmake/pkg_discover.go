@@ -16,8 +16,8 @@ import (
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/catalog"
-	"github.com/spock2300/vmake/pkg/pipeline"
 	vlog "github.com/spock2300/vmake/pkg/log"
+	"github.com/spock2300/vmake/pkg/pipeline"
 	"github.com/spock2300/vmake/pkg/repo"
 )
 
