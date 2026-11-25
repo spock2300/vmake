@@ -26,16 +26,6 @@ var configCmd = &cobra.Command{
 	Run:   runConfig,
 }
 
-func init() {
-	addConfigFlag(configCmd)
-	configCmd.Flags().StringArrayVarP(&setFlags, "set", "s", nil,
-		"Set option value non-interactively (format: [pkg/]option=value)")
-	configCmd.Flags().StringArrayVarP(&unsetFlags, "unset", "u", nil,
-		"Remove explicit option override and revert to default (format: [pkg/]option)")
-	RootCmd.AddCommand(configCmd)
-	configCmd.AddCommand(newConfigListCmd(), newConfigUseCmd(), newConfigCopyCmd(), newConfigDescribeCmd(), newConfigCheckCmd())
-}
-
 func runConfig(cmd *cobra.Command, args []string) {
 	ctx := mustOpenProject(projectOptions{})
 	defer closeProject(ctx)
@@ -89,24 +79,21 @@ func runModifyConfig(ctx *RuntimeContext, sets []string, unsets []string) {
 	for _, f := range sets {
 		pkgName, optName, rawVal, err := config.ParseSetFlag(f)
 		if err != nil {
-			vlog.Error("Error: %v", err)
-			os.Exit(1)
+			fatalErr(err)
 		}
 		req.Sets = append(req.Sets, pipeline.SetItem{Pkg: pkgName, Opt: optName, Raw: rawVal})
 	}
 	for _, f := range unsets {
 		pkgName, optName, err := config.ParseUnsetFlag(f)
 		if err != nil {
-			vlog.Error("Error: %v", err)
-			os.Exit(1)
+			fatalErr(err)
 		}
 		req.Unsets = append(req.Unsets, pipeline.UnsetItem{Pkg: pkgName, Opt: optName})
 	}
 
 	changes, err := pipeline.MutateConfig(ctx, req)
 	if err != nil {
-		vlog.Error("Error: %v", err)
-		os.Exit(1)
+		fatalErr(err)
 	}
 
 	config.PruneEmptyEntries(ctx.Config)

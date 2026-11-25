@@ -285,26 +285,3 @@ func ensureLocalLinkIgnored(projectDir string) error {
 }
 
 var pkgCleanAll bool
-
-func init() {
-	pkgCmd.AddCommand(pkgListCmd)
-	pkgCmd.AddCommand(pkgSearchCmd)
-	pkgCmd.AddCommand(pkgShowCmd)
-	pkgCmd.AddCommand(pkgCleanCmd)
-	pkgCmd.AddCommand(pkgLinkCmd)
-	pkgCmd.AddCommand(pkgUnlinkCmd)
-	RootCmd.AddCommand(pkgCmd)
-
-	pkgCleanCmd.Flags().BoolVarP(&pkgCleanAll, "all", "a", false, "also clean source code")
-	pkgSearchCmd.Flags().StringVar(&pkgSearchRepo, "repo", "", "limit the search to one repository")
-	pkgSearchCmd.Flags().BoolVar(&pkgSearchDetails, "details", false, "read build.go; also match description, license and version")
-	pkgSearchCmd.Flags().BoolVar(&pkgSearchForProject, "for-project", false, "include cached, locked and installed status")
-	pkgSearchCmd.Flags().BoolVar(&pkgSearchJSON, "json", false, "print machine-readable JSON")
-	pkgShowCmd.Flags().BoolVar(&pkgShowForProject, "for-project", false, "include cached, locked and installed status")
-	pkgShowCmd.Flags().BoolVar(&pkgShowJSON, "json", false, "print machine-readable JSON")
-
-	pkgCleanCmd.ValidArgsFunction = completePkgRef
-	pkgUnlinkCmd.ValidArgsFunction = completePkgRef
-	pkgShowCmd.ValidArgsFunction = completeCatalogPkgRef
-	pkgSearchCmd.RegisterFlagCompletionFunc("repo", completeRepoName)
-}

@@ -87,16 +87,6 @@ var extProvisionCmd = &cobra.Command{
 	Args: cobra.ExactArgs(1), Run: runExtProvision,
 }
 
-func init() {
-	RootCmd.AddCommand(extCmd)
-	extCmd.AddCommand(extAddCmd, extRemoveCmd, extListCmd, extUpdateCmd, extProvisionCmd, extTrustCmd, extUntrustCmd)
-	extRemoveCmd.ValidArgsFunction = completeExtRepoName
-	extUpdateCmd.ValidArgsFunction = completeExtRepoName
-	extProvisionCmd.ValidArgsFunction = completeExtRepoName
-	extTrustCmd.ValidArgsFunction = completeExtRepoName
-	extUntrustCmd.ValidArgsFunction = completeExtRepoName
-}
-
 func runExtAdd(cmd *cobra.Command, args []string) {
 	name, gitURL := args[0], args[1]
 	mgr := getPluginManager()
@@ -264,6 +254,10 @@ func releaseExtensionRepoLocks() {
 	extensionRepoLocks = nil
 }
 
+// pluginCommands holds the commands a plugin registered, so a later
+// invocation can re-add them without re-running the plugin's side effects.
+var pluginCommands []*cobra.Command
+
 func loadPlugins() {
 	mgr := getPluginManager()
 	tcMgr := toolchain.GetManager()
@@ -330,7 +324,7 @@ func loadPlugins() {
 			vlog.Error("plugin %s initialization: %v", p.PluginName, err)
 			continue
 		}
-		RootCmd.AddCommand(pluginCmd)
+		pluginCommands = append(pluginCommands, pluginCmd)
 	}
 	for _, err := range tcMgr.ToolchainErrors() {
 		vlog.Error("Unavailable toolchain: %s", formatToolchainDefinitionError(err))

@@ -41,16 +41,6 @@ Examples:
 	Run:  runGitTag,
 }
 
-func init() {
-	gitTagCmd.Flags().BoolVar(&gitTagMinor, "minor", false, "bump minor version")
-	gitTagCmd.Flags().BoolVar(&gitTagMajor, "major", false, "bump major version")
-	gitTagCmd.Flags().BoolVar(&gitTagNoPush, "no-push", false, "create tags without pushing")
-	gitTagCmd.Flags().StringVarP(&gitTagMsg, "message", "m", "", "custom tag message")
-
-	gitCmd.AddCommand(gitTagCmd)
-	RootCmd.AddCommand(gitCmd)
-}
-
 func runGitTag(cmd *cobra.Command, args []string) {
 	fatalErr(checkStagedChanges())
 

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,23 +24,13 @@ var (
 	vmakeDir    string
 )
 
+var defaultVmakeDir string
+
 func init() {
 	homeDir, _ := os.UserHomeDir()
-	vmakeDir = filepath.Join(homeDir, ".vmake")
-	RootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
-	RootCmd.PersistentFlags().BoolVarP(&veryVerbose, "very-verbose", "V", false, "very verbose output")
-	RootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "quiet mode")
-	RootCmd.PersistentFlags().BoolVarP(&yesFlag, "yes", "y", false, "assume yes for interactive prompts (e.g. trusting repositories; trust persists for future updates)")
-	RootCmd.PersistentFlags().StringVarP(&projectOverride, "project", "C", "", "project root directory (default: search upward from the current directory)")
-	addConfigFlag(RootCmd)
-	RootCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
-		return &usageError{err: err}
-	})
-	RootCmd.AddCommand(newQueryCmd())
-	RootCmd.AddCommand(newInspectCmd())
-	RootCmd.AddCommand(newCheckSymbolsCmd())
-	RootCmd.AddCommand(newInitEditorCmd())
-	RootCmd.AddCommand(newDepsCmd())
+	defaultVmakeDir = filepath.Join(homeDir, ".vmake")
+	vmakeDir = defaultVmakeDir
+	installCommands()
 }
 
 type RuntimeContext = pipeline.RuntimeContext
@@ -76,6 +65,8 @@ It uses Go buildscripts for configuration and provides a TUI for option manageme
 			vlog.SetLevel(vlog.VerboseLevel)
 		case quiet:
 			vlog.SetLevel(vlog.Quiet)
+		default:
+			vlog.SetLevel(vlog.Normal)
 		}
 		exec.SetQuiet(vlog.IsQuiet())
 		if len(gitUserlandDirs) > 0 {
@@ -115,31 +106,21 @@ func requiresExclusiveStorage(cmd *cobra.Command) bool {
 }
 
 func Execute() {
-	wrapCommandArgs(RootCmd)
-	err := RootCmd.Execute()
-	releaseExtensionRepoLocks()
-	if activeCommandSession != nil {
-		closeErr := activeCommandSession.close()
-		if err == nil {
-			err = closeErr
-		}
-	}
-	if err != nil {
-		var interrupted *buildInterrupted
-		if errors.As(err, &interrupted) {
-			exitWithCode(interrupted.code)
-		}
-		exitWithError(err)
-	}
+	// Pass the effective vmakeDir through so a caller that overrode the package
+	// default before starting the CLI keeps its override across the reset.
+	os.Exit(run(os.Args[1:], nil, nil, runEnv{VmakeDir: vmakeDir, LoadPlugins: true}))
 }
+
+var wrappedArgs = make(map[*cobra.Command]bool)
 
 func wrapCommandArgs(cmd *cobra.Command) {
 	for _, child := range cmd.Commands() {
 		wrapCommandArgs(child)
 	}
-	if cmd.Args == nil {
+	if cmd.Args == nil || wrappedArgs[cmd] {
 		return
 	}
+	wrappedArgs[cmd] = true
 	validate := cmd.Args
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if err := validate(cmd, args); err != nil {

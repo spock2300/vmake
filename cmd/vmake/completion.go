@@ -56,19 +56,6 @@ var completionInstallCmd = &cobra.Command{
 	Run: runCompletionInstall,
 }
 
-func init() {
-	shells = map[string]shellHandler{
-		"bash":       {func(w io.Writer) { RootCmd.GenBashCompletionV2(w, true) }, installBashCompletion},
-		"zsh":        {func(w io.Writer) { RootCmd.GenZshCompletion(w) }, installZshCompletion},
-		"fish":       {func(w io.Writer) { RootCmd.GenFishCompletion(w, true) }, installFishCompletion},
-		"powershell": {func(w io.Writer) { RootCmd.GenPowerShellCompletionWithDesc(w) }, nil},
-	}
-	RootCmd.CompletionOptions.DisableDefaultCmd = true
-	completionInstallCmd.Flags().StringVar(&completionShell, "shell", "", "override shell detection (bash, zsh, fish)")
-	completionCmd.AddCommand(completionInstallCmd)
-	RootCmd.AddCommand(completionCmd)
-}
-
 func generateCompletion(shell string, w io.Writer) {
 	entry, ok := shells[shell]
 	if !ok || entry.generate == nil {

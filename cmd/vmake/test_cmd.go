@@ -29,11 +29,6 @@ interrupting vmake with SIGINT/SIGTERM exits 130/143.`,
 	RunE: runTest,
 }
 
-func init() {
-	RootCmd.AddCommand(testCmd)
-	addTestFlags(testCmd)
-}
-
 func runTest(cmd *cobra.Command, args []string) error {
 	commandStorageLocks()
 	return withReport(buildreport.CommandTest, func(report *buildreport.Report) error {

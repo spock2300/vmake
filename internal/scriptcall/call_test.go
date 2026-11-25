@@ -34,3 +34,27 @@ func TestRecoverPreservesErrorValues(t *testing.T) {
 		t.Fatalf("error = %v, want %v", err, want)
 	}
 }
+
+type exitSignalPanic struct{ code int }
+
+func (e exitSignalPanic) Error() string      { return "exit" }
+func (e exitSignalPanic) VmakeExitCode() int { return e.code }
+
+func TestRecoverReraisesExitSignal(t *testing.T) {
+	defer func() {
+		value := recover()
+		signal, ok := value.(exitSignalPanic)
+		if !ok {
+			t.Fatalf("panic value = %v, want the original exit signal", value)
+		}
+		if signal.VmakeExitCode() != 2 {
+			t.Fatalf("exit code = %d, want 2", signal.VmakeExitCode())
+		}
+	}()
+	var err error
+	func() {
+		defer Recover(&err)
+		panic(exitSignalPanic{code: 2})
+	}()
+	t.Fatalf("exit signal was swallowed into %v", err)
+}

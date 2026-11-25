@@ -10,23 +10,6 @@ import (
 
 var repoAddNative bool
 
-func init() {
-	repoCmd.AddCommand(repoAddCmd)
-	repoCmd.AddCommand(repoRemoveCmd)
-	repoCmd.AddCommand(repoListCmd)
-	repoCmd.AddCommand(repoUpdateCmd)
-	repoCmd.AddCommand(repoTrustCmd)
-	repoCmd.AddCommand(repoUntrustCmd)
-	RootCmd.AddCommand(repoCmd)
-
-	repoAddCmd.Flags().BoolVarP(&repoAddNative, "native", "n", false, "add a native repository (URL template with {name} placeholder)")
-
-	repoRemoveCmd.ValidArgsFunction = completeRepoName
-	repoUpdateCmd.ValidArgsFunction = completeRepoName
-	repoTrustCmd.ValidArgsFunction = completeRepoName
-	repoUntrustCmd.ValidArgsFunction = completeRepoName
-}
-
 var repoCmd = &cobra.Command{
 	Use:   "repo",
 	Short: "Manage package repositories",

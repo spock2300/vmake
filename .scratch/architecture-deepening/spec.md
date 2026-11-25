@@ -1,0 +1,48 @@
+# 架构深化第二轮（architecture-deepening）
+
+## 目标
+
+把 2026-11-24 架构复盘的 8 个候选落成实现。全部属于**结构调整**：不改命令行语义、不改 JSON 契约、不改脚本 API（DD-34）。
+
+## 基线（实测，非估算）
+
+| 度量 | 值 |
+|---|---|
+| `go test ./cmd/vmake` | 59.6s / 279 个 Test / 43 个测试文件 |
+| `pkg/` + `internal/` 合计 | ≈42s / 42k 生产代码行 |
+| 命令级子进程调用 | **211** 处（203 个助手调用 + 8 处直接 `os.Executable()`），分布在 21 个文件 |
+| 直接写包级 flag/状态全局 | 52 处 / 10 个文件 |
+| 包级可变全局（cmd） | 111 个 = 49 个 `*cobra.Command` 单例 + 38 个 pflag 目标 + 24 个其他 |
+| pflag 注册表达式 | 75 个，51 个不同目标（38 全局 + 13 函数局部） |
+| `func init()`（cmd） | 20 个；`RootCmd.AddCommand` 24 处（1 处在运行时由 `loadPlugins` 追加） |
+| 致命路径 | 108 个调用点 / 47 个生产函数 / 12 个 `os.Exit` 位置 |
+| 生产代码 `defer` | 45 处（12 个 `closeProject`、7 个 session close、6 个 restore） |
+
+## 顺序
+
+`01 → 02 → 03 → 04 → 05 → 06 → 07 → 08 → 09`（见 `issues/`）。依赖只有三条：02 依赖 01，06 依赖 01，08 依赖 01 与 07。
+
+## 验收（每张 ticket 都适用）
+
+1. `CGO_ENABLED=0 go build -o vmake ./cmd/vmake`
+2. `CGO_ENABLED=0 go vet`（改动涉及的包）
+3. `CGO_ENABLED=0 go test`（改动涉及的包）
+4. `(cd test_data/_snapshot && go test)` 全量零漂移
+5. 触及推导或输出的 ticket（04、05、09）额外要求 9 个夹具的 `vmake inspect` 与 `vmake deps check --json` 输出逐字节相同：
+   `01_simple_c`、`02_with_config`、`03_multi_target`、`05_conditional`、`15_subgraph_siblings`、`18_config_header`、`19_config_defines`、`20_config_propagate`、`21_root_package`
+6. 新测试只落在新的缝合面上；不允许为保住旧结构而把测试写成对已删函数的包装
+
+## 已定政策
+
+- **缝合面位置**：`run()` 留在 `cmd/vmake`，不新建 `internal/cli`。第二个消费者出现前不抽包。
+- **fatal 路径**：`fatalErr`/`fatalMsg`/`fatalUsage`/`fatalResolveRoot` 改为 panic 一个 `*exitError`，`Execute()` 边界 recover 并返回退出码。108 个调用点不变。
+- **过程级状态**：`run()` 入口复位 `cachedProjectDir`、`activeCommandSession`、`extensionRepoLocks`；`vmakeDir` 改由 `runEnv` 传入。
+- **测试策略**：助手整体翻面成进程内调用；保留**一个**子进程冒烟测试钉住进程边界；插件/信任/扩展类测试（约 60 处）保留一个统一的 `runSubprocess` 助手。
+- **落档**：本 spec + `issues/` 存计划；实现记录进 `docs/DESIGN_DECISIONS.md`（DD-40）。
+
+## 明确不做
+
+- **不立"toolchain 管理器可重置"的卡片**。`pkg/toolchain.defaultManager` 在 `sync.Once` 后面，重置它要改 1113 行包的构造方式，而按上面的测试策略没有任何测试需要干净的管理器。管理器是**进程级、不可重置**，写成 DD-40 的显式约束。等出现第二个消费者再议。
+- **不把 `os.Stdout` 交换改成给 `pkg/log` 注入 sink**。子进程继承 fd 1，交换 Go 变量拦不住，`internal/exec.SetQuiet` 必须独立存在；sink 只能替掉 vlog 一条，换不来等价能力。
+- **不合并 `api.SourceOrigin`**。它是两值（`local`/`remote`）且经 `yaegi_symbols.go:42` 注册给脚本，DD-34 冻结；与三值显示词表不是同一概念。
+- **不重跑整套 skill-loop**（solver/judge/author）。收尾只跑 `factcheck-*`。

@@ -74,14 +74,6 @@ var skillPathCmd = &cobra.Command{
 	},
 }
 
-func init() {
-	skillInstallCmd.Flags().StringP("project", "p", "", "Also install to <dir>/.agents/skills/ (path used verbatim)")
-	skillCmd.AddCommand(skillInstallCmd)
-	skillCmd.AddCommand(skillUninstallCmd)
-	skillCmd.AddCommand(skillPathCmd)
-	RootCmd.AddCommand(skillCmd)
-}
-
 func getSkillPath() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".agents", "skills", "vmake")

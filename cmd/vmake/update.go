@@ -25,10 +25,6 @@ Examples:
 	Run: runUpdate,
 }
 
-func init() {
-	RootCmd.AddCommand(updateCmd)
-}
-
 func runUpdate(cmd *cobra.Command, args []string) {
 	fmt.Printf("Current version: %s\n", version.Version)
 

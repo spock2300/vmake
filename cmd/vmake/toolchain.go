@@ -32,14 +32,6 @@ If no name is provided, shows the built-in fallback toolchain (host).`,
 	Run: runToolchainShow,
 }
 
-func init() {
-	RootCmd.AddCommand(toolchainCmd)
-	toolchainCmd.AddCommand(toolchainListCmd)
-	toolchainCmd.AddCommand(toolchainShowCmd)
-
-	toolchainShowCmd.ValidArgsFunction = completeToolchain
-}
-
 func runToolchainList(cmd *cobra.Command, args []string) {
 	mgr := toolchain.GetManager()
 	toolchains, err := mgr.ListToolchains()

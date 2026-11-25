@@ -19,12 +19,6 @@ them too.`,
 	Run: runClean,
 }
 
-func init() {
-	RootCmd.AddCommand(cleanCmd)
-	addConfigFlag(cleanCmd)
-	cleanCmd.Flags().BoolVar(&cleanAllFlag, "all", false, "clean build outputs for every configuration")
-}
-
 type pkgCleanEntry = pipeline.PkgCleanEntry
 
 func cleanPackages(entries []pkgCleanEntry, ctx *RuntimeContext, cleanAll bool) error {

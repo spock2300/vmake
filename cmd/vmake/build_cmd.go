@@ -18,12 +18,6 @@ var buildCmd = &cobra.Command{
 	RunE:  runBuild,
 }
 
-func init() {
-	RootCmd.AddCommand(buildCmd)
-	addInstallFlags(buildCmd)
-	addBuildFlags(buildCmd)
-}
-
 func runBuild(cmd *cobra.Command, args []string) error {
 	commandStorageLocks()
 	return withBuildReport(func(report *buildreport.Report) error {

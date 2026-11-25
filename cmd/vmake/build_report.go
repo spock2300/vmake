@@ -34,6 +34,18 @@ func withReport(command string, run func(*buildreport.Report) error) (err error)
 	}
 	defer func() {
 		defer restoreStdout()
+		if r := recover(); r != nil {
+			// A fatal inside the command unwinds through here. Record the
+			// failure before re-raising, otherwise the report would be
+			// finished with a nil error and claim success.
+			if _, ok := r.(*exitError); ok {
+				reportErr := r.(error)
+				report.Finish(&reportErr)
+				restoreStdout()
+				buildreport.PrintSummary(stdout, report, reportErr)
+			}
+			panic(r)
+		}
 		report.Finish(&err)
 		restoreStdout()
 		buildreport.PrintSummary(stdout, report, err)

@@ -40,13 +40,6 @@ but may become errors in future vmake versions:
 	},
 }
 
-func init() {
-	RootCmd.AddCommand(doctorCmd)
-	addConfigFlag(doctorCmd)
-	doctorCmd.Flags().StringVar(&toolchainFlag, "toolchain", "", "toolchain to diagnose (default: active config, chip PreferredToolchain, or host)")
-	doctorCmd.RegisterFlagCompletionFunc("toolchain", completeToolchain)
-}
-
 type doctorFinding struct {
 	Severity string `json:"severity"`
 	Category string `json:"category"`
@@ -57,7 +50,7 @@ type doctorFinding struct {
 func runDoctor() {
 	startDir, err := os.Getwd()
 	if err != nil {
-		vlog.Fatal("getwd: %v", err)
+		fatalMsg("getwd: %v", err)
 	}
 
 	workDir := startDir
@@ -66,12 +59,12 @@ func runDoctor() {
 	}
 	cfg, _, err := config.LoadProjectWithOverride(workDir, configFlag)
 	if err != nil {
-		vlog.Fatal("load project config: %v", err)
+		fatalMsg("load project config: %v", err)
 	}
 	nested := checkNestedProjectMarker(startDir, workDir)
 	sources, err := buildscript.Scan(workDir)
 	if err != nil {
-		vlog.Fatal("scan: %v", err)
+		fatalMsg("scan: %v", err)
 	}
 	fallbackTC := ""
 	if toolchainFlag == "" && (cfg.Global == nil || cfg.Global.Toolchain == "") && len(nested) == 0 && len(sources) > 0 {
@@ -88,7 +81,7 @@ func runDoctor() {
 
 	if len(sources) == 0 {
 		reportDoctorFindings(workDir, findings)
-		vlog.Fatal("no build.go files found")
+		fatalMsg("no build.go files found")
 	}
 
 	rootCount := 0
@@ -164,7 +157,7 @@ func reportDoctorFindings(workDir string, findings []doctorFinding) {
 	}
 	vlog.Info("Summary: %d error(s), %d warning(s)", errors, warns)
 	if errors > 0 {
-		os.Exit(1)
+		exitWithCode(1)
 	}
 }
 

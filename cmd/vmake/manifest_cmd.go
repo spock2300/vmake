@@ -85,9 +85,3 @@ var manifestCheckoutCmd = &cobra.Command{
 func checkoutLocal(projectDir string, entry installManifestEntry) error {
 	return pipeline.CheckoutManifestLocalEntry(projectDir, nil, entry)
 }
-
-func init() {
-	manifestCmd.AddCommand(manifestShowCmd)
-	manifestCmd.AddCommand(manifestCheckoutCmd)
-	RootCmd.AddCommand(manifestCmd)
-}

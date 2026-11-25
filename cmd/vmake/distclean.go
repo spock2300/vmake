@@ -27,11 +27,6 @@ to purge individual packages.`,
 	Run: runDistClean,
 }
 
-func init() {
-	RootCmd.AddCommand(distCleanCmd)
-	distCleanCmd.Flags().BoolVar(&distCleanPurgeSources, "purge-sources", false, "also remove downloaded package sources under .vmake_deps")
-}
-
 func runDistClean(cmd *cobra.Command, args []string) {
 	commandStorageLocks()
 	fatalErr(invalidateBuildReport())

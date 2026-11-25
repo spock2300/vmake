@@ -1,27 +1,41 @@
 package main
 
 import (
-	"os"
-
 	"github.com/spock2300/vmake/internal/gitusr"
 )
 
-var gitUserlandDirs []string
+var (
+	gitUserlandDirs []string
+	pluginsLoaded   bool
+)
 
 func main() {
 	gitUserlandDirs = gitusr.SetupProcessEnv()
-	loadPluginsForCommand(os.Args[1:])
 	Execute()
 }
 
+// loadPluginsForCommand loads installed plugins at most once per process. A
+// later invocation re-adds the recorded commands instead of re-running the
+// plugins, so their toolchain and global-flag registrations happen exactly once.
 func loadPluginsForCommand(args []string) {
+	if pluginsLoaded {
+		return
+	}
+	if !commandNeedsPlugins(args) {
+		return
+	}
+	pluginsLoaded = true
+	loadPlugins()
+}
+
+func commandNeedsPlugins(args []string) bool {
 	cmd, _, err := RootCmd.Find(args)
 	if err == nil {
 		for current := cmd; current != nil; current = current.Parent() {
 			if current == extCmd || current == cacheCmd {
-				return
+				return false
 			}
 		}
 	}
-	loadPlugins()
+	return true
 }

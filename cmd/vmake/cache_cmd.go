@@ -60,11 +60,6 @@ var cacheRemoveCmd = &cobra.Command{
 	},
 }
 
-func init() {
-	RootCmd.AddCommand(cacheCmd)
-	cacheCmd.AddCommand(cacheListCmd, cacheRemoveCmd)
-}
-
 func confirmCacheRemoval(url string, in *os.File) (bool, error) {
 	if in == nil {
 		return false, fmt.Errorf("cache remove requires --yes when stdin is unavailable")

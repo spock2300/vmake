@@ -1,0 +1,33 @@
+# 06 — 巡检前导只有一个答案
+
+**Status:** ready-for-agent
+**Type:** task
+**Card:** 4
+**Blocked by:** 01
+
+## 为什么
+
+AGENTS.md 写明"`openInspection` 是巡检命令的唯一前导……不要把前导复制进命令"，但今天有三条起点：
+
+1. `openInspection`（`inspect_session.go:34-64`）——被认可的那条。
+2. `openDepsInspection` + `runDepsInspection`（`deps_graph_cmd.go:59-105`）——重新推导 policy 与 quiet，自己静音、自己恢复，并且**绕过** `attachInspectionGraph` 直接调 `pipeline.BuildUnifiedGraph`，因此不经 `OnBlockedWrite` 记录。
+3. `completeDepsWhyArg`（`deps_graph_cmd.go:484-529`）——25 行手搭：三套 restore、`lockPolicyFor`、`openProject`、`InspectWithOptions`、`BuildUnifiedGraph`、`closeProject`。只在交互补全时可达，因此无测试。
+
+DD-39 之后 `attachInspectionGraph` 把图灌进 `Inspection` 并只留 `GraphFacts`，而 `runDepsInspection` 仍自己持有 `*UnifiedGraph` 渲染——这正是模型只留答案面之后残留的旁路。
+
+## 做什么
+
+1. `openDepsInspection` / `runDepsInspection` 收薄成 `openInspection` 的调用者。
+2. `deps graph`/`deps why` 走 `attachInspectionGraphOptions`，渲染只读 `inspection.GraphFacts()`；`runDepsInspection` 的 `render` 签名从 `*UnifiedGraph` 改为读模型。
+3. 补全复用 `runDepsInspection`，把它自己的收集器作为 render 传入——**不新增 output intent 参数**（`render` 已经是那个缝）。
+4. 删除 `completeDepsWhyArg` 里手搭的 25 行。
+
+## 验收
+
+- 通用 6 条，包含 `deps graph` / `deps why` / `deps check` 输出逐字节相同（`--json` 与文本两种）。
+- 新测试：补全路径在进程内可调用，断言 `pkg` 与 `pkg:` 两种前缀的候选项集合（今天完全无测试）。
+- 新测试：`deps graph` 的 blocked-write 记录与 `inspect` 一致（钉住第 2 条）。
+
+## 涉及文件
+
+`cmd/vmake/deps_graph_cmd.go`、`inspect_session.go`、`inspect_cmd.go`（`attachInspectionGraphOptions` 的可复用性），`pkg/pipeline/graph_query.go`（如需 `GraphFacts` 访问器）。

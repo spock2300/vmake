@@ -5,13 +5,24 @@ import (
 	"reflect"
 )
 
+// exitSignal marks a deliberate command termination. The method name is
+// vmake-specific on purpose: *exec.ExitError already has ExitCode().
+type exitSignal interface {
+	VmakeExitCode() int
+}
+
 func Recover(err *error) {
-	if value := recover(); value != nil {
-		if recovered, ok := value.(error); ok && !isNilError(recovered) {
-			*err = recovered
-		} else {
-			*err = fmt.Errorf("script panic: %v", value)
-		}
+	value := recover()
+	if value == nil {
+		return
+	}
+	if _, ok := value.(exitSignal); ok {
+		panic(value)
+	}
+	if recovered, ok := value.(error); ok && !isNilError(recovered) {
+		*err = recovered
+	} else {
+		*err = fmt.Errorf("script panic: %v", value)
 	}
 }
 

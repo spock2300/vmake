@@ -14,12 +14,6 @@ var rebuildCmd = &cobra.Command{
 	RunE:  runRebuild,
 }
 
-func init() {
-	RootCmd.AddCommand(rebuildCmd)
-	addInstallFlags(rebuildCmd)
-	addBuildFlags(rebuildCmd)
-}
-
 func runRebuild(cmd *cobra.Command, args []string) error {
 	commandStorageLocks()
 	return withBuildReport(func(report *buildreport.Report) error {
