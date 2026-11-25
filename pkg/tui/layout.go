@@ -536,13 +536,13 @@ func (m *Model) gutterRoles() []gutterRole {
 			}
 		}
 		switch {
-		case activeCaller:
-			roles[i] = gutterUpstream
 		case activeDep:
+			roles[i] = gutterUpstream
+		case activeCaller:
 			roles[i] = gutterDownstream
-		case anyCaller:
-			roles[i] = gutterUpstreamInactive
 		case anyDep:
+			roles[i] = gutterUpstreamInactive
+		case anyCaller:
 			roles[i] = gutterDownstreamInactive
 		}
 	}

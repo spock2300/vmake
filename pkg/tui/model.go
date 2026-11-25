@@ -83,17 +83,17 @@ type Model struct {
 	filterActive bool
 	filterInput  string
 
-	deps           map[string][]string
-	preview        config.Preview
-	focusActive    bool
-	baseConfig     *config.ConfigFile
-	previewFn      func(cfg *config.ConfigFile) (config.Preview, bool)
-	localPkgOrder  []string
-	localPkgSet    map[string]bool
-	navHistory     []string
-	upEdgeIdx      int
-	downEdgeIdx    int
-	upEdgeSelected bool
+	deps             map[string][]string
+	preview          config.Preview
+	focusActive      bool
+	baseConfig       *config.ConfigFile
+	previewFn        func(cfg *config.ConfigFile) (config.Preview, bool)
+	localPkgOrder    []string
+	localPkgSet      map[string]bool
+	navHistory       []string
+	upEdgeIdx        int
+	downEdgeIdx      int
+	downEdgeSelected bool
 }
 
 type overlayKind int

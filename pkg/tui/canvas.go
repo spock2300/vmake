@@ -8,11 +8,11 @@ import (
 )
 
 type egoNodeHitbox struct {
-	pkgName string
-	x, y    int
-	w, h    int
-	isMore  bool
-	isDep   bool
+	pkgName    string
+	x, y       int
+	w, h       int
+	isMore     bool
+	isUpstream bool
 }
 
 type canvasCell struct {
@@ -46,19 +46,19 @@ var (
 	egoWireInactiveStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#4E5166"))
 
-	egoCallerBorderActiveStyle = lipgloss.NewStyle().
+	egoUpstreamBorderActiveStyle = lipgloss.NewStyle().
 					Foreground(lipgloss.Color("#00D9FF")).
 					Bold(true)
 
-	egoCallerBorderStyle = lipgloss.NewStyle().
+	egoUpstreamBorderStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#00A8CC"))
 
-	egoDepBorderActiveStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#00D4AA")).
-				Bold(true)
+	egoDownstreamBorderActiveStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("#00D4AA")).
+					Bold(true)
 
-	egoDepBorderStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#04B575"))
+	egoDownstreamBorderStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("#04B575"))
 
 	egoInactiveCardStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#585B70"))
@@ -257,25 +257,25 @@ func (m *Model) egoGraphBody(contentH int) (string, []egoNodeHitbox) {
 			}
 		}
 		cv.stampCenteredNote(col0X, focalMidY, col0W, m.textf(textGlobalScope, activeTotal), &optionDescStyle)
-	case ego.IsGroup:
+	case ego.IsGroup || len(ego.Deps) == 0:
 		cv.stampCenteredNote(col0X, focalMidY, col0W, m.text(textNoUpstream), &optionDescStyle)
-	case len(ego.Callers) == 0:
-		if ego.FocalIsRoot {
-			cv.stampCenteredNote(col0X, focalMidY, col0W, "★ "+m.text(textRootEntry), &countBadgeStyle)
-			cv.drawChannelBus(col0X+col0W, gapW, []busPort{{y: focalMidY, active: true}}, focalMidY, true, &egoWireUpstreamStyle, &egoWireInactiveStyle)
-		} else {
-			cv.stampCenteredNote(col0X, focalMidY, col0W, m.text(textNoUpstream), &optionDescStyle)
-		}
 	default:
-		ports := m.stampSideColumn(cv, col0X, col0W, bodyTopRow, focalMidY, ego.Callers, ego.ActiveCaller, false, &boxes)
+		ports := m.stampSideColumn(cv, col0X, col0W, bodyTopRow, focalMidY, ego.Deps, ego.ActiveDep, true, &boxes)
 		cv.drawChannelBus(col0X+col0W, gapW, ports, focalMidY, true, &egoWireUpstreamStyle, &egoWireInactiveStyle)
 	}
 
 	switch {
-	case ego.IsGroup || len(ego.Deps) == 0:
+	case ego.IsGroup:
 		cv.stampCenteredNote(col2X, focalMidY, col2W, m.text(textNoDownstream), &optionDescStyle)
+	case len(ego.Callers) == 0:
+		if ego.FocalIsRoot {
+			cv.stampCenteredNote(col2X, focalMidY, col2W, "★ "+m.text(textRootEntry), &countBadgeStyle)
+			cv.drawChannelBus(col1X+col1W, gapW, []busPort{{y: focalMidY, active: true}}, focalMidY, false, &egoWireDownstreamStyle, &egoWireInactiveStyle)
+		} else {
+			cv.stampCenteredNote(col2X, focalMidY, col2W, m.text(textNoDownstream), &optionDescStyle)
+		}
 	default:
-		ports := m.stampSideColumn(cv, col2X, col2W, bodyTopRow, focalMidY, ego.Deps, ego.ActiveDep, true, &boxes)
+		ports := m.stampSideColumn(cv, col2X, col2W, bodyTopRow, focalMidY, ego.Callers, ego.ActiveCaller, false, &boxes)
 		cv.drawChannelBus(col1X+col1W, gapW, ports, focalMidY, false, &egoWireDownstreamStyle, &egoWireInactiveStyle)
 	}
 
@@ -298,16 +298,16 @@ func (m *Model) renderEgoSummaryBadge(ego egoGraphView) string {
 		return ""
 	}
 	actUp, inactUp := 0, 0
-	for _, c := range ego.Callers {
-		if c.Active {
+	for _, d := range ego.Deps {
+		if d.Active {
 			actUp++
 		} else {
 			inactUp++
 		}
 	}
 	actDown, inactDown := 0, 0
-	for _, d := range ego.Deps {
-		if d.Active {
+	for _, c := range ego.Callers {
+		if c.Active {
 			actDown++
 		} else {
 			inactDown++
@@ -344,21 +344,21 @@ func (m *Model) stampSideColumn(
 	focalMidY int,
 	items []egoNeighbor,
 	activeIdx int,
-	isDep bool,
+	upstream bool,
 	boxes *[]egoNodeHitbox,
 ) []busPort {
 	if len(items) == 1 && cv.h >= 3 {
 		topY := clamp(focalMidY-1, 0, cv.h-3)
 		midY := topY + 1
 		it := items[0]
-		cv.stampRoundedSideCard(colX, topY, colW, it, activeIdx == 0, isDep)
+		cv.stampRoundedSideCard(colX, topY, colW, it, activeIdx == 0, upstream)
 		*boxes = append(*boxes, egoNodeHitbox{
-			pkgName: it.PkgName,
-			x:       colX,
-			y:       bodyTopRow + topY,
-			w:       colW,
-			h:       3,
-			isDep:   isDep,
+			pkgName:    it.PkgName,
+			x:          colX,
+			y:          bodyTopRow + topY,
+			w:          colW,
+			h:          3,
+			isUpstream: upstream,
 		})
 		return []busPort{{y: midY, active: it.Active}}
 	}
@@ -370,14 +370,14 @@ func (m *Model) stampSideColumn(
 		var ports []busPort
 		for i, it := range items {
 			ty := topYs[i]
-			cv.stampRoundedSideCard(colX, ty, colW, it, activeIdx == i, isDep)
+			cv.stampRoundedSideCard(colX, ty, colW, it, activeIdx == i, upstream)
 			*boxes = append(*boxes, egoNodeHitbox{
-				pkgName: it.PkgName,
-				x:       colX,
-				y:       bodyTopRow + ty,
-				w:       colW,
-				h:       3,
-				isDep:   isDep,
+				pkgName:    it.PkgName,
+				x:          colX,
+				y:          bodyTopRow + ty,
+				w:          colW,
+				h:          3,
+				isUpstream: upstream,
 			})
 			ports = append(ports, busPort{y: ty + 1, active: it.Active})
 		}
@@ -399,15 +399,15 @@ func (m *Model) stampSideColumn(
 			break
 		}
 		it := items[idx]
-		icon, bdrStyle := sideNeighborGlyph(it.Active, idx == activeIdx, isDep)
+		icon, bdrStyle := sideNeighborGlyph(it.Active, idx == activeIdx, upstream)
 		cv.stampPillNode(colX, y, colW, icon, it.Label, it.OptCount, it.Modified, it.Active, idx == activeIdx, bdrStyle)
 		*boxes = append(*boxes, egoNodeHitbox{
-			pkgName: it.PkgName,
-			x:       colX,
-			y:       bodyTopRow + y,
-			w:       colW,
-			h:       1,
-			isDep:   isDep,
+			pkgName:    it.PkgName,
+			x:          colX,
+			y:          bodyTopRow + y,
+			w:          colW,
+			h:          1,
+			isUpstream: upstream,
 		})
 		ports = append(ports, busPort{y: y, active: it.Active})
 	}
@@ -417,32 +417,32 @@ func (m *Model) stampSideColumn(
 		if moreY < cv.h {
 			cv.stampCenteredNote(colX, moreY, colW, m.textf(textMoreItems, hidden), &scrollIndicatorStyle)
 			*boxes = append(*boxes, egoNodeHitbox{
-				x:      colX,
-				y:      bodyTopRow + moreY,
-				w:      colW,
-				h:      1,
-				isMore: true,
-				isDep:  isDep,
+				x:          colX,
+				y:          bodyTopRow + moreY,
+				w:          colW,
+				h:          1,
+				isMore:     true,
+				isUpstream: upstream,
 			})
 		}
 	}
 	return ports
 }
 
-func sideNeighborGlyph(active, highlighted, isDep bool) (string, *lipgloss.Style) {
+func sideNeighborGlyph(active, highlighted, upstream bool) (string, *lipgloss.Style) {
 	if !active {
 		return "◌", &egoInactiveCardStyle
 	}
-	if isDep {
+	if upstream {
 		if highlighted {
-			return "▶", &egoDepBorderActiveStyle
+			return "▶", &egoUpstreamBorderActiveStyle
 		}
-		return "●", &egoDepBorderStyle
+		return "●", &egoUpstreamBorderStyle
 	}
 	if highlighted {
-		return "◀", &egoCallerBorderActiveStyle
+		return "◀", &egoDownstreamBorderActiveStyle
 	}
-	return "●", &egoCallerBorderStyle
+	return "●", &egoDownstreamBorderStyle
 }
 
 func (cv *egoCanvas) stampFocalCard(x0, y0, w int, ego egoGraphView) {
@@ -464,10 +464,10 @@ func (cv *egoCanvas) stampFocalCard(x0, y0, w int, ego egoGraphView) {
 	}
 	leftMid := '║'
 	rightMid := '║'
-	if len(ego.Callers) > 0 || ego.FocalIsRoot {
+	if len(ego.Deps) > 0 {
 		leftMid = '╟'
 	}
-	if len(ego.Deps) > 0 {
+	if len(ego.Callers) > 0 || ego.FocalIsRoot {
 		rightMid = '╢'
 	}
 	cv.put(x0, y0+1, leftMid, bdr)
@@ -475,11 +475,11 @@ func (cv *egoCanvas) stampFocalCard(x0, y0, w int, ego egoGraphView) {
 	cv.stampCardInnerContent(x0+2, y0+1, w-4, "◆", ego.FocalLabel, ego.FocalOpts, ego.FocalMod, ego.FocalActive, true, bdr)
 }
 
-func (cv *egoCanvas) stampRoundedSideCard(x0, y0, w int, it egoNeighbor, highlighted, isDep bool) {
+func (cv *egoCanvas) stampRoundedSideCard(x0, y0, w int, it egoNeighbor, highlighted, upstream bool) {
 	if w < 6 || y0 < 0 || y0+2 >= cv.h {
 		return
 	}
-	icon, bdr := sideNeighborGlyph(it.Active, highlighted, isDep)
+	icon, bdr := sideNeighborGlyph(it.Active, highlighted, upstream)
 	cv.put(x0, y0, '╭', bdr)
 	cv.put(x0+w-1, y0, '╮', bdr)
 	cv.put(x0, y0+2, '╰', bdr)
@@ -490,10 +490,10 @@ func (cv *egoCanvas) stampRoundedSideCard(x0, y0, w int, it egoNeighbor, highlig
 		cv.put(x0+dx, y0+1, ' ', nil)
 	}
 	leftMid, rightMid := '│', '│'
-	if isDep {
-		leftMid = '┤'
-	} else {
+	if upstream {
 		rightMid = '├'
+	} else {
+		leftMid = '┤'
 	}
 	cv.put(x0, y0+1, leftMid, bdr)
 	cv.put(x0+w-1, y0+1, rightMid, bdr)

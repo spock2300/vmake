@@ -378,11 +378,11 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		} else if inGraph {
 			if hit, ok := s.egoHitAt(mx, my); ok {
 				if hit.isMore {
-					if hit.isDep {
-						m.downEdgeIdx++
-					} else {
-						m.upEdgeSelected = true
+					if hit.isUpstream {
 						m.upEdgeIdx++
+					} else {
+						m.downEdgeSelected = true
+						m.downEdgeIdx++
 					}
 				} else if hit.pkgName != "" {
 					m.jumpToGraphNeighbor(hit.pkgName, true)
@@ -400,9 +400,9 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			delta := mouseWheel(msg)
 			midX := s.treeW + s.optionsW/2
 			if mx < midX {
-				m.upEdgeSelected = true
 				m.upEdgeIdx += delta
 			} else {
+				m.downEdgeSelected = true
 				m.downEdgeIdx += delta
 			}
 		} else {
@@ -424,7 +424,7 @@ func (m *Model) moveTreeCursor(delta int) {
 	m.navHistory = nil
 	m.upEdgeIdx = 0
 	m.downEdgeIdx = 0
-	m.upEdgeSelected = false
+	m.downEdgeSelected = false
 	m.treeCursor = next
 	m.selectCurrentNode()
 	m.ensureTreeCursorVisible()
@@ -554,9 +554,9 @@ func (m *Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "]":
 		m.stepDownstream()
 	case "{":
-		m.upEdgeSelected = true
 		m.upEdgeIdx++
 	case "}":
+		m.downEdgeSelected = true
 		m.downEdgeIdx++
 	case "enter", " ":
 		if m.treeCursor < len(m.flat) && len(m.flat[m.treeCursor].Children) > 0 {
@@ -649,9 +649,9 @@ func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "]":
 		m.stepDownstream()
 	case "{":
-		m.upEdgeSelected = true
 		m.upEdgeIdx++
 	case "}":
+		m.downEdgeSelected = true
 		m.downEdgeIdx++
 	}
 	return m, nil

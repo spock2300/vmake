@@ -233,15 +233,15 @@ func TestWorkbench_ThreeZonesTraversalAndLivePreview(t *testing.T) {
 
 	m.jumpToMatch("firmware", "")
 	fullView := stripAnsi(m.View())
-	for _, want := range []string{"依赖关系 · firmware", "上游 (被谁依赖)", "当前选中包", "下游 (直接依赖)", "选项 · firmware", "usb", "{}"} {
+	for _, want := range []string{"依赖关系 · firmware", "上游 (直接依赖)", "当前选中包", "下游 (被谁依赖)", "选项 · firmware", "usb", "{}"} {
 		if !strings.Contains(fullView, want) {
 			t.Fatalf("expected %q simultaneously visible in workbench View():\n%s", want, fullView)
 		}
 	}
 
-	m.handleKey(keyRunes("]"))
+	m.handleKey(keyRunes("["))
 	if m.selectedPkg != "board-py32f539-evb" {
-		t.Fatalf("pressing ] from firmware should jump to board-py32f539-evb, got %q", m.selectedPkg)
+		t.Fatalf("pressing [ from firmware should jump to its dependency board-py32f539-evb, got %q", m.selectedPkg)
 	}
 	boardView := stripAnsi(m.View())
 	for _, want := range []string{"依赖关系 · board-py32f539-evb", "[← firmware]", "← 派生 1 项"} {
@@ -250,9 +250,9 @@ func TestWorkbench_ThreeZonesTraversalAndLivePreview(t *testing.T) {
 		}
 	}
 
-	m.handleKey(keyRunes("["))
+	m.handleKey(keyRunes("]"))
 	if m.selectedPkg != "firmware" {
-		t.Fatalf("pressing [ should return to firmware, got %q", m.selectedPkg)
+		t.Fatalf("pressing ] should return to the dependent firmware, got %q", m.selectedPkg)
 	}
 	m.setValue("usb", true)
 	afterToggleTree := stripAnsi(m.layout().treeContent)
@@ -271,9 +271,9 @@ func TestWorkbench_ThreeZonesTraversalAndLivePreview(t *testing.T) {
 	if !m.jumpToGraphNeighbor("board", true) || m.selectedPkg != "board" || m.hideEmptyPkgs {
 		t.Fatalf("jumping to 0-option neighbor board with H active should unhide and select board, got selected=%q hideEmpty=%v", m.selectedPkg, m.hideEmptyPkgs)
 	}
-	m.handleKey(keyRunes("{"))
-	if !m.upEdgeSelected {
-		t.Fatal("pressing { should enable explicit upstream caller selection")
+	m.handleKey(keyRunes("}"))
+	if !m.downEdgeSelected {
+		t.Fatal("pressing } should enable explicit downstream caller selection")
 	}
 
 	m.handleKey(keyRunes("z"))
@@ -311,5 +311,53 @@ func TestWorkbench_ThreeZonesTraversalAndLivePreview(t *testing.T) {
 	}
 	if m.selectedPkg != "lvgl-demos" {
 		t.Fatalf("clicking lvgl-demos card in Ego-Graph should select lvgl-demos, got %q", m.selectedPkg)
+	}
+}
+
+func TestEgoGraph_UpstreamIsDependenciesDownstreamIsDependents(t *testing.T) {
+	m := buildHLDemoCleanTestModel()
+	m.width = 150
+	m.height = 30
+
+	m.jumpToMatch("hl/hl-mcu-sdk", "")
+	ego := m.egoGraphData()
+	if len(ego.Deps) != 0 {
+		t.Fatalf("hl/hl-mcu-sdk declares no dependencies, got %v", ego.Deps)
+	}
+	if len(ego.Callers) == 0 {
+		t.Fatal("hl/hl-mcu-sdk must list the packages that depend on it")
+	}
+	boxes := m.layout().egoBoxes
+	if len(boxes) != len(ego.Callers) {
+		t.Fatalf("expected %d dependent cards, got %d", len(ego.Callers), len(boxes))
+	}
+	for _, box := range boxes {
+		if box.isUpstream {
+			t.Fatalf("dependent %q rendered in the upstream column", box.pkgName)
+		}
+	}
+	if view := stripAnsi(m.View()); !strings.Contains(view, "（无上游依赖）") {
+		t.Fatalf("expected an empty upstream column for a package without dependencies:\n%s", view)
+	}
+
+	m.jumpToMatch("firmware", "")
+	ego = m.egoGraphData()
+	if len(ego.Deps) == 0 {
+		t.Fatal("firmware declares dependencies")
+	}
+	if len(ego.Callers) != 0 {
+		t.Fatalf("nothing depends on firmware, got %v", ego.Callers)
+	}
+	boxes = m.layout().egoBoxes
+	if len(boxes) != len(ego.Deps) {
+		t.Fatalf("expected %d dependency cards, got %d", len(ego.Deps), len(boxes))
+	}
+	for _, box := range boxes {
+		if !box.isUpstream {
+			t.Fatalf("dependency %q rendered in the downstream column", box.pkgName)
+		}
+	}
+	if view := stripAnsi(m.View()); !strings.Contains(view, "（无下游依赖）") {
+		t.Fatalf("expected an empty downstream column for a package nothing depends on:\n%s", view)
 	}
 }

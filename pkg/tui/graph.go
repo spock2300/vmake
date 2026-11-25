@@ -700,9 +700,9 @@ func (m *Model) egoGraphData() egoGraphView {
 			}
 		}
 		sortNeighbors(roots)
-		activeDep := -1
+		activeCaller := -1
 		if len(roots) > 0 {
-			activeDep = ((m.downEdgeIdx % len(roots)) + len(roots)) % len(roots)
+			activeCaller = ((m.downEdgeIdx % len(roots)) + len(roots)) % len(roots)
 		}
 		return egoGraphView{
 			FocalPkg:     GlobalPkgName,
@@ -711,9 +711,9 @@ func (m *Model) egoGraphData() egoGraphView {
 			FocalMod:     m.pkgHasModified(GlobalPkgName),
 			FocalActive:  true,
 			IsGlobal:     true,
-			Deps:         roots,
-			ActiveCaller: -1,
-			ActiveDep:    activeDep,
+			Callers:      roots,
+			ActiveCaller: activeCaller,
+			ActiveDep:    -1,
 		}
 	}
 
@@ -763,7 +763,7 @@ func (m *Model) egoGraphData() egoGraphView {
 
 	activeCaller := -1
 	if len(callers) > 0 {
-		if !m.upEdgeSelected && len(m.navHistory) > 0 {
+		if !m.downEdgeSelected && len(m.navHistory) > 0 {
 			back := m.navHistory[len(m.navHistory)-1]
 			for i, c := range callers {
 				if c.PkgName == back {
@@ -773,12 +773,12 @@ func (m *Model) egoGraphData() egoGraphView {
 			}
 		}
 		if activeCaller < 0 {
-			activeCaller = ((m.upEdgeIdx % len(callers)) + len(callers)) % len(callers)
+			activeCaller = ((m.downEdgeIdx % len(callers)) + len(callers)) % len(callers)
 		}
 	}
 	activeDep := -1
 	if len(deps) > 0 {
-		activeDep = ((m.downEdgeIdx % len(deps)) + len(deps)) % len(deps)
+		activeDep = ((m.upEdgeIdx % len(deps)) + len(deps)) % len(deps)
 	}
 
 	focalLbl := shortNames[focal]
@@ -812,11 +812,11 @@ func (m *Model) jumpToGraphNeighbor(targetPkg string, pushHistory bool) bool {
 	}
 	m.upEdgeIdx = 0
 	m.downEdgeIdx = 0
-	m.upEdgeSelected = false
+	m.downEdgeSelected = false
 	return true
 }
 
-func (m *Model) stepDownstream() bool {
+func (m *Model) stepUpstream() bool {
 	ego := m.egoGraphData()
 	if len(ego.Deps) == 0 || ego.ActiveDep < 0 {
 		return false
@@ -824,13 +824,16 @@ func (m *Model) stepDownstream() bool {
 	return m.jumpToGraphNeighbor(ego.Deps[ego.ActiveDep].PkgName, true)
 }
 
-func (m *Model) stepUpstream() bool {
+func (m *Model) stepDownstream() bool {
 	ego := m.egoGraphData()
-	if !m.upEdgeSelected && len(m.navHistory) > 0 {
-		back := m.navHistory[len(m.navHistory)-1]
-		if ego.IsGlobal {
+	if ego.IsGlobal {
+		if len(ego.Callers) == 0 || ego.ActiveCaller < 0 {
 			return false
 		}
+		return m.jumpToGraphNeighbor(ego.Callers[ego.ActiveCaller].PkgName, true)
+	}
+	if !m.downEdgeSelected && len(m.navHistory) > 0 {
+		back := m.navHistory[len(m.navHistory)-1]
 		for _, c := range ego.Callers {
 			if c.PkgName == back {
 				m.navHistory = m.navHistory[:len(m.navHistory)-1]
