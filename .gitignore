@@ -32,3 +32,4 @@ test_data/a.log
 /examples/plugins/.git/
 
 test_data/25_subpackage/.fixture/
+.scratch/
