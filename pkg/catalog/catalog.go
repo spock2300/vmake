@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spock2300/vmake/internal/flock"
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/scriptfs"
 	"github.com/spock2300/vmake/pkg/api"
@@ -75,8 +76,22 @@ type StatusReader struct {
 	sources   *repo.SourceManager
 }
 
+// RepoAccess is the subset of the repository manager the catalog needs. The
+// production manager satisfies it directly; tests fake it so Search and Show
+// can run without a real ~/.vmake.
+type RepoAccess interface {
+	Exists(name string) bool
+	IsNative(name string) bool
+	ListPackages(repo string) ([]string, error)
+	FindPackageGo(repo, name string) (string, error)
+	Path(name string) string
+	Lock(name string, exclusive bool) (*flock.FileLock, error)
+}
+
 type Env struct {
-	RepoManager *repo.RepoManager
+	Repo RepoAccess
+	// Commit resolves a working tree's HEAD. Nil falls back to the git CLI.
+	Commit      func(dir string) (string, error)
 	ProjectDir  string
 	CacheDir    string
 	RepoTrusted func(repoName string) (bool, error)
@@ -152,7 +167,7 @@ func StatusText(status *Status) string {
 	return strings.Join(parts, ", ")
 }
 
-func BuildPackageSource(mgr *repo.RepoManager, repoName, pkgName, buildGo, commit string, native, linked bool) (buildscript.Source, error) {
+func BuildPackageSource(mgr RepoAccess, repoName, pkgName, buildGo, commit string, native, linked bool) (buildscript.Source, error) {
 	dir := filepath.Dir(buildGo)
 	src := buildscript.Source{
 		Name:   repoName + "/" + pkgName,
@@ -183,6 +198,13 @@ func BuildPackageSource(mgr *repo.RepoManager, repoName, pkgName, buildGo, commi
 }
 
 // loadScript uses the injected loader when the caller provided one.
+func (e Env) commit(dir string) (string, error) {
+	if e.Commit != nil {
+		return e.Commit(dir)
+	}
+	return repo.GetCurrentCommit(dir)
+}
+
 func (e Env) loadScript(src buildscript.Source) (*api.Package, error) {
 	if e.LoadScript != nil {
 		return e.LoadScript(src)
@@ -240,7 +262,10 @@ func ListNativePackagesAt(depsDir, repoName string) ([]string, error) {
 }
 
 func SearchRegistryRepo(env Env, repoName string, opts SearchOptions, statuses *StatusReader) ([]SearchEntry, []string) {
-	mgr := env.RepoManager
+	mgr := env.Repo
+	if mgr == nil {
+		return nil, []string{fmt.Sprintf("%s: no repository manager configured", repoName)}
+	}
 	names, err := mgr.ListPackages(repoName)
 	if err != nil {
 		return nil, []string{fmt.Sprintf("%s: %v", repoName, err)}
@@ -255,7 +280,7 @@ func SearchRegistryRepo(env Env, repoName string, opts SearchOptions, statuses *
 			warnings = append(warnings, fmt.Sprintf("%s: %v", repoName, err))
 		} else {
 			defer lock.Release()
-			commit, err = repo.GetCurrentCommit(mgr.Path(repoName))
+			commit, err = env.commit(mgr.Path(repoName))
 			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("%s: %v", repoName, err))
 			} else {
@@ -329,10 +354,10 @@ func SearchNativeRepo(env Env, repoName string, opts SearchOptions, statuses *St
 		entry := SearchEntry{Repo: repoName, Name: name, Source: "native", Cached: linkPath == ""}
 		if linkPath != "" {
 			if opts.Details {
-				commit, err := repo.GetCurrentCommit(linkPath)
+				commit, err := env.commit(linkPath)
 				if err != nil {
 					warnings = append(warnings, fmt.Sprintf("%s/%s: %v", repoName, name, err))
-				} else if src, err := BuildPackageSource(env.RepoManager, repoName, name, filepath.Join(linkPath, "build.go"), commit, true, true); err != nil {
+				} else if src, err := BuildPackageSource(env.Repo, repoName, name, filepath.Join(linkPath, "build.go"), commit, true, true); err != nil {
 					warnings = append(warnings, fmt.Sprintf("%s/%s: %v", repoName, name, err))
 				} else if interpreted, err := env.loadScript(src); err != nil {
 					warnings = append(warnings, fmt.Sprintf("%s/%s: %v", repoName, name, err))
@@ -359,7 +384,7 @@ func SearchNativeRepo(env Env, repoName string, opts SearchOptions, statuses *St
 					warnings = append(warnings, fmt.Sprintf("native package %q is not trusted; details omitted (run 'vmake repo trust %s')", repoName+"/"+name, repoName))
 				} else {
 					buildGo := filepath.Join(depsDir, repoName, name, "src", "build.go")
-					if src, err := BuildPackageSource(env.RepoManager, repoName, name, buildGo, state.Commit, true, false); err != nil {
+					if src, err := BuildPackageSource(env.Repo, repoName, name, buildGo, state.Commit, true, false); err != nil {
 						warnings = append(warnings, fmt.Sprintf("%s/%s: %v", repoName, name, err))
 					} else if interpreted, err := env.loadScript(src); err != nil {
 						warnings = append(warnings, fmt.Sprintf("%s/%s: %v", repoName, name, err))
@@ -481,11 +506,11 @@ func (c *Catalog) Script(src buildscript.Source) (*api.Package, error) {
 }
 
 func (e Env) repoIsNative(repoName string) bool {
-	return e.RepoManager != nil && e.RepoManager.IsNative(repoName)
+	return e.Repo != nil && e.Repo.IsNative(repoName)
 }
 
 func ShowPackage(env Env, repoName, pkgName, version string) (*ShowResult, bool, error) {
-	mgr := env.RepoManager
+	mgr := env.Repo
 	if mgr == nil {
 		return nil, true, fmt.Errorf("no repository manager configured")
 	}
@@ -525,7 +550,7 @@ func ShowPackage(env Env, repoName, pkgName, version string) (*ShowResult, bool,
 				if !fs.FileExists(buildGo) {
 					return nil, false, fmt.Errorf("linked native package '%s/%s' has no build.go in %s", repoName, pkgName, link)
 				}
-				commit, loadErr = repo.GetCurrentCommit(link)
+				commit, loadErr = env.commit(link)
 				if loadErr != nil {
 					return nil, false, loadErr
 				}
@@ -556,7 +581,7 @@ func ShowPackage(env Env, repoName, pkgName, version string) (*ShowResult, bool,
 		if err != nil {
 			return nil, false, err
 		}
-		commit, err = repo.GetCurrentCommit(mgr.Path(repoName))
+		commit, err = env.commit(mgr.Path(repoName))
 		if err != nil {
 			return nil, false, err
 		}

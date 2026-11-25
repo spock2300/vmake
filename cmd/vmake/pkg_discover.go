@@ -124,7 +124,7 @@ func searchPackages(opts pkgSearchOptions) (*pkgSearchResult, error) {
 		if info.Native {
 			entries, warnings = searchNativeRepo(info.Name, opts, statuses)
 		} else {
-			entries, warnings = catalog.SearchRegistryRepo(catalogEnv(mgr), info.Name, catalog.SearchOptions{
+			entries, warnings = catalog.Open(catalogEnv(mgr)).Search(info.Name, catalog.SearchOptions{
 				Pattern:    opts.pattern,
 				Repo:       opts.repo,
 				Details:    opts.details,
@@ -153,7 +153,7 @@ func searchPackages(opts pkgSearchOptions) (*pkgSearchResult, error) {
 
 func catalogEnv(mgr *repo.RepoManager) catalog.Env {
 	return catalog.Env{
-		RepoManager: mgr,
+		Repo:       mgr,
 		ProjectDir:  findProjectDirSoft(),
 		CacheDir:    getCacheDir(),
 		RepoTrusted: repoScriptTrusted,
@@ -181,7 +181,7 @@ func listNativePackagesAt(depsDir, repoName string) ([]string, error) {
 }
 
 func loadPkgShow(repoName, pkgName, version string) (*pkgShowResult, error) {
-	res, isUsage, err := catalog.ShowPackage(catalogEnv(getRepoManager()), repoName, pkgName, version)
+	res, isUsage, err := catalog.Open(catalogEnv(getRepoManager())).Show(repoName, pkgName, version)
 	if err != nil {
 		if isUsage {
 			return nil, &usageError{err: err}

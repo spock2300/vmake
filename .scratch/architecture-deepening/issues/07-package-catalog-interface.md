@@ -58,3 +58,22 @@
 - 新增两个测试：`TestCatalogScriptUsesTheInjectedLoader`（假加载器，错误透传）、`TestShowRejectsAnEnvironmentWithoutARepositoryManager`。
 
 仍未做：`cmd/vmake` 的 18 处 `catalog.*` 调用迁到 `Open(env).*`；以及 registry/native 的 `Search` 覆盖（需要可注入的仓库访问，`repo.RepoManager` 目前只有真实目录实现）。
+## 可执行计划（planner 复核版，取代上面所有估算）
+
+探针结论：**"18 处调用点"是错的**。18 个 `catalog.` token 里只有 **2 处**是门面调用（`pkg_discover.go` 的 search 与 show）；其余是类型别名、`LoadPackageScript`（它本身就是被注入的 loader）、`NewStatusReaderAt`、`ListNativePackagesAt` 与纯辅助函数，必须留在包级。`GetNativeURL` 未被 catalog 使用。
+
+| # | 改动 | 验证 | 期望 |
+|---|---|---|---|
+| 1 | `catalog.Env.Repo` 改为 6 方法接口 `RepoAccess`（`Exists`/`IsNative`/`ListPackages`/`FindPackageGo`/`Path`/`Lock`）+ `Env.Commit func` 回落；`ShowPackage`/`SearchRegistryRepo` 加 nil 守卫 | build+vet+`go test ./pkg/catalog ./cmd/vmake` | 编译通过，行为不变 |
+| 2 | 4 处 `repo.GetCurrentCommit` 走 `env.commit` | 同上 | 同上 |
+| 3 | `cmd` 两处真门面调用改 `catalog.Open(catalogEnv(mgr)).Search/Show`；`catalogEnv` 字段名 `RepoManager`→`Repo` | 字节对照 | 6/6 IDENTICAL |
+| 4 | `pkg/catalog/catalog_test.go` 加假 `RepoAccess`：`TestSearchRegistryRepoMetadata`、`TestSearchNativeRepoFromState`、`TestSearchNativeRepoWithoutProject`、`TestShowRegistrySuccess`、表驱动 `TestShowFailures` | `go test ./pkg/catalog -count=1` | 无需 yaegi/git/网络 |
+| 5 | DD-40 item 8 改写（接口例外、`NewStatusReaderAt` 留在 catalog）；本文件补完成记录 | grep + 快照 | `grep -rn 'pkg/pipeline\|quietScope\|RepoManager' pkg/catalog` = 0 |
+
+**假实现的硬约束（实测）**：`flock.FileLock` 字段不可导出且 `Release` 对 nil 会 panic，所以假 `Lock` 必须在 `t.TempDir()` 里拿真锁；`catalogEnv` 是 eager 的（调用即执行 `findProjectDirSoft`，后者在 `projectOverride` 非法时 `fatalUsage` panic），所以假实现只能经 `Env` 字面量注入，不能经 cmd。
+
+**字节对照（一次 bash 内完成，`/tmp` 每次调用会重置）**：把基线 commit `git archive` 到 `/tmp/vb/src` 并构建 `/tmp/vb/old`，与当前树构建的 `/tmp/vb/new` 对比 6 条命令（`pkg search --json`、`--details`、`--details --for-project`、`pkg show official/zlib --json`、`pkg show official/zlib`、`pkg show myrepo/libfoo --json`），必须无 diff。夹具用 `/tmp/vh/home/.vmake/repos` 下的假仓库 + 假 `state.json`，`HOME`/`VMAKE_CACHE` 必须指到 `/tmp/vh`。
+
+**已定决策**：接受 6 方法接口（AGENTS.md "回调优先" 的显式例外，记入 DD-40）；`Env.Commit` 用函数字段（先例 `Env.LoadScript`）；`Env.Installed` 是死字段，保留不动；`Search` 内部**不做** pattern/repo 过滤（过滤在 cmd，重复过滤会改输出）。
+
+**不在本卡**：把 `NewStatusReaderAt` 移出 catalog（DD-40 措辞问题）；linked-native `Show` 测试；快照基线更新。

@@ -32,3 +32,27 @@ DD-36 把安装、清理、清单、测试生命周期推进了 `pkg/pipeline`�
 ## 涉及文件
 
 `cmd/vmake/build_install.go`、`build_cmd.go`、`clean.go`、`pkg_discover.go`、`test_cmd.go`、`build_report.go`、`helpers.go`、`inspect_session.go`、`manifest_cmd.go`、`root.go`，以及对应测试。
+## 可执行计划（planner 复核版，取代上面的估算）
+
+**重新清点（AST，非 grep）**：单行转发 **28 个**（26 个 `return <pkg.X>` + 2 个 void），不是 27 也不是 31。构成：17 pipeline、5 catalog、2 buildreport、1 repo、1 plugin、2 void。零生产调用点：**10 个返回 + 1 个 void**；有生产调用点：17。
+
+两个原始 ticket 的错误：`newPkgRef`（`helpers.go:89`）**不是死代码**——`manifest_cmd.go:81` 把它当函数值用；`manifestProjectDir` 是唯一完全死的。指标也要改：字面 grep 从 31 降到 **6**，那 6 个是 `return pipeline.ResolveParams` 的错误返回，不是转发。正确指标是"函数体只有一条 `return <项目包>.X(...)`"的函数数：**26 → 0**（含 2 个 void 则 28 → 0）。
+
+| # | 改动 | 验证 | 期望 |
+|---|---|---|---|
+| S0 | 无编辑：基线构建 `/tmp/vmake-base`，在 `test_data/01_simple_c` 跑 `build --install`+`clean`、`03_multi_target` 跑 `test`，落盘输出；跑一次快照 | — | 仅 11/13/25 失败 |
+| S1 | 删 `manifestProjectDir` + 8 个 pipeline 零生产转发 + `cleanAllRemoteOutputs`；新建 `pkg/pipeline/{manifest,install,clean,test_runner}_test.go`；删 `cmd/vmake/build_manifest_test.go`、`build_install_test.go` | build+vet+`go test ./cmd/vmake ./pkg/pipeline` | 绿；28→19 |
+| S2 | 内联 9 个 pipeline 有生产调用点的转发（16 处）；把 `checkoutManifestLocals`/`validateInstallPrefix`/`cleanPackages`/`executeCleanHooks` 的测试并入 S1 文件；删 `installManifestEntry`/`installOwnershipMarker` 别名 | 同上 | 19→10 |
+| S3 | 内联 2 个 buildreport 转发；给 `clean.go`/`distclean.go`/`pkg_cmd.go` 补 `buildreport` import | build+vet | 10→8 |
+| S4 | 内联 `getRepoManager`/`getPluginManager`（24 生产 + 5 测试点） | build+vet+cmd 测试 | 8→6 |
+| S5 | 内联 `removeIfExists` | build | 6→5 |
+| S6 | **依赖 07**：搬 6 个 catalog 测试、删 5 个 catalog 转发（1 处内联） | build+catalog 测试 | 5→0 |
+| S7 | 全量门禁 + 与 S0 字节对照 + 逐名 `grep -r <name> cmd/ pkg/` = 0 + AST 计数 = 0 | — | 全 IDENTICAL |
+
+S1–S5 与 07 **无关**，可先落；只有 S6 依赖 07 的 cmd 迁移（同一文件 `pkg_discover.go` 会有文本冲突）。
+
+**搬家清单（10 条，已核过无重名/无辅助函数冲突）**：`resolveManifestEntryPath`/`writeManifest`/`checkoutLocal` → `pkg/pipeline/manifest_test.go`；`installOnePackage`/`validateInstallPrefix` → `install_test.go`；`cleanPackages`/`executeCleanHooks`/`remainingBuildDirectories` → `clean_test.go`；`sortedPackageVersions`/`addRequiresSnippet`/`loadPackageScript` → `pkg/catalog/catalog_test.go`；`validateTestExecution`/`boundedTestOutput` → `pkg/pipeline/test_runner_test.go`。`bm` 里的测试体已经用 `RuntimeContext`/`BuildResult` 别名，因此近乎逐字搬。
+
+**陷阱（已读代码确认）**：`buildTestOutputLimit`/`Marker` 仍被 `TestTestReportTruncatesLongOutput` 使用，只删 `boundedTestOutput`；`completion.go` 没有 import `catalog`，内联 `listNativePackagesAt` 时要补；删完会有 5 个未用 import（`context`@build_cmd、`api`@clean、`api`@test_cmd、`api/build/resolver`@build_install、`repo/plugin`@helpers）；`pkg/pipeline` 不 import `pkg/catalog`，所以 catalog 的测试必须留在 `pkg/catalog`；`writePkgTestFile` 只存在于 `pkg_discover_test.go`，搬 catalog 测试时要复制过去。
+
+**已定决策**：接受修正后的指标（26→0）；`getRepoManager`/`getPluginManager` 一并内联（否则"零转发"不成立）；S6 等 07 落地后做。
