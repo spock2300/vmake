@@ -58,9 +58,8 @@ type Manifest struct {
 	DevRoots      []string              `json:"dev_roots,omitempty"`
 	Repos         map[string]RepoSpec   `json:"repos,omitempty"`
 	Modules       map[string]ModuleSpec `json:"modules,omitempty"`
-	Exports       map[string]string     `json:"exports,omitempty"`
-	Sources       map[string]string     `json:"sources,omitempty"`
-	SealedSources map[string]string     `json:"sealed_sources,omitempty"`
+	Exports  map[string]string     `json:"exports,omitempty"`
+	Sources  map[string]string     `json:"sources,omitempty"`
 }
 
 func LoadManifest(rootDir string) (*Manifest, bool, error) {
@@ -116,9 +115,6 @@ func (m *Manifest) Validate(path string) error {
 		}
 	}
 	if err := validateExports(path, m.Exports); err != nil {
-		return err
-	}
-	if err := validateSealedSources(path, m.SealedSources); err != nil {
 		return err
 	}
 	for srcPkg, raw := range m.Sources {
@@ -224,42 +220,6 @@ func validateExports(path string, exports map[string]string) error {
 		seenTargets[target] = key
 	}
 	return nil
-}
-
-func validateSealedSources(path string, sealed map[string]string) error {
-	for pkgKey, rawDir := range sealed {
-		if err := api.ValidatePackageRef(pkgKey); err != nil {
-			return fmt.Errorf("%s: sealed_sources key %q: %w", path, pkgKey, err)
-		}
-		if !api.IsLocalPackageID(pkgKey) {
-			return fmt.Errorf("%s: sealed_sources key %q must be a local package starting with '//'", path, pkgKey)
-		}
-		d := strings.TrimSpace(rawDir)
-		if d == "" || filepath.IsAbs(d) || strings.HasPrefix(d, "/") || strings.Contains(d, ":") {
-			return fmt.Errorf("%s: sealed_sources[%q]: path %q must be a relative directory inside the container", path, pkgKey, rawDir)
-		}
-		clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(d)))
-		if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
-			return fmt.Errorf("%s: sealed_sources[%q]: path %q escapes the container root", path, pkgKey, rawDir)
-		}
-	}
-	return nil
-}
-
-func (m *Manifest) SealedSource(relPath string) (string, bool) {
-	if m == nil || len(m.SealedSources) == 0 {
-		return "", false
-	}
-	relPath = strings.Trim(filepath.ToSlash(relPath), "/")
-	key := api.LocalContainerID
-	if relPath != "" {
-		key = api.LocalContainerID + relPath
-	}
-	raw, ok := m.SealedSources[key]
-	if !ok {
-		return "", false
-	}
-	return filepath.ToSlash(filepath.Clean(filepath.FromSlash(strings.TrimSpace(raw)))), true
 }
 
 func (m *Manifest) HasExports() bool {

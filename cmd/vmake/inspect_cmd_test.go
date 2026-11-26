@@ -1945,33 +1945,25 @@ func Main(p *api.Package) {
 	}
 }
 
-func TestInspectExposesPackageDirSrcDirSealedAndInternalOption(t *testing.T) {
+func TestInspectExposesPackageDirSrcDirAndInternalOption(t *testing.T) {
 	project := filepath.Join(canonicalTempDir(t), "proj")
-	writeExtensionFile(t, filepath.Join(project, "vmake.json"), `{
-  "roots": ["//"],
-  "sealed_sources": {
-    "//vendor_pkg": "sealed_tree/vendor_src"
-  }
-}`)
-	writeExtensionFile(t, filepath.Join(project, "sealed_tree", "vendor_src", "v.c"), "int v(void) { return 1; }\n")
-	writeExtensionFile(t, filepath.Join(project, "vendor_pkg", "build.go"), `package main
+	writeExtensionFile(t, filepath.Join(project, "vmake.json"), `{"roots": ["//"]}`)
+	writeExtensionFile(t, filepath.Join(project, "sub", "v.c"), "int v(void) { return 1; }\n")
+	writeExtensionFile(t, filepath.Join(project, "sub", "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-	p.OnPackage(func(p *api.Package) {
-		p.SetGit("https://unreachable.invalid/vendor.git")
-	})
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.Option("secret").SetType(api.OptionBool).SetDefault(false).SetInternal(true)
 	})
 	p.OnBuild(func(ctx *api.BuildContext) {
-		ctx.Target("vlib").SetKind(api.TargetStatic).AddFiles(p.SrcDir() + "/v.c")
+		ctx.Target("vlib").SetKind(api.TargetStatic).AddFiles("v.c")
 	})
 }
 `)
 	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
-	p.AddRequires("//vendor_pkg")
+	p.AddRequires("//sub")
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("app").SetKind(api.TargetVoid).UseRequires()
 	})
@@ -1986,17 +1978,13 @@ func Main(p *api.Package) {
 	if data == nil {
 		t.Fatal("inspect returned nil data")
 	}
-	vp := inspectPackageNamed(t, data, "//vendor_pkg")
-	wantPkgDir := filepath.Join(project, "vendor_pkg")
-	wantSrcDir := filepath.Join(project, "sealed_tree", "vendor_src")
-	if filepath.Clean(vp.PackageDir) != filepath.Clean(wantPkgDir) {
-		t.Errorf("packageDir = %q, want %q", vp.PackageDir, wantPkgDir)
+	vp := inspectPackageNamed(t, data, "//sub")
+	wantDir := filepath.Join(project, "sub")
+	if filepath.Clean(vp.PackageDir) != filepath.Clean(wantDir) {
+		t.Errorf("packageDir = %q, want %q", vp.PackageDir, wantDir)
 	}
-	if filepath.Clean(vp.SrcDir) != filepath.Clean(wantSrcDir) {
-		t.Errorf("srcDir = %q, want %q", vp.SrcDir, wantSrcDir)
-	}
-	if !vp.Sealed {
-		t.Errorf("sealed = false, want true")
+	if filepath.Clean(vp.SrcDir) != filepath.Clean(wantDir) {
+		t.Errorf("srcDir = %q, want %q", vp.SrcDir, wantDir)
 	}
 	secretDef, ok := vp.OptionDefs["secret"]
 	if !ok || !secretDef.Internal {

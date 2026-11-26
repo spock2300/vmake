@@ -189,7 +189,7 @@ Each `packages` entry has `name`, `kind` (`local`/`native`/`registry`; a `local`
 package is spelled `git` under `vmake deps status --json`),
 `needed`, `sourcePresent`, `deps`, optional remote
 `repo`/`version`/`commit`/`url`, local `path`, absolute `sourceDir`,
-`packageDir` (directory containing `build.go`), `srcDir` (materialized or sealed source tree backing `p.SrcDir()`), optional `sealed` (`true` when served from container `sealed_sources`),
+`packageDir` (directory containing `build.go`), `srcDir` (materialized or linked source tree backing `p.SrcDir()`),
 optional `linked`/`linkPath` for `pkg link` packages (version is then
 `0.0.0-local` and commit is the linked tree HEAD), `description`, `toolchain`, `platform` (`{targetOs, targetTriple}` resolved for that package; `targetOs` is the host OS when unset), `options` (effective values), `optionDefs`
 (object keyed by option name with `{type, default?, description?,

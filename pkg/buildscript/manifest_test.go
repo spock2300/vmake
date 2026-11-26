@@ -110,24 +110,6 @@ func TestLoadManifestAndEffectiveRoots(t *testing.T) {
 		}
 	})
 
-	t.Run("sealed_sources parse and validate", func(t *testing.T) {
-		dir := t.TempDir()
-		content := `{"sealed_sources": {"//system/freertos/lvgl": "vendor/lvgl"}}`
-		if err := os.WriteFile(filepath.Join(dir, ManifestFileName), []byte(content), 0644); err != nil {
-			t.Fatal(err)
-		}
-		m, _, err := LoadManifest(dir)
-		if err != nil {
-			t.Fatalf("LoadManifest: %v", err)
-		}
-		if rel, ok := m.SealedSource("system/freertos/lvgl"); !ok || rel != "vendor/lvgl" {
-			t.Fatalf("SealedSource = (%q, %v), want (vendor/lvgl, true)", rel, ok)
-		}
-		if _, ok := m.SealedSource("other"); ok {
-			t.Fatal("unexpected SealedSource match")
-		}
-	})
-
 	t.Run("dev_roots used when roots omitted and validated", func(t *testing.T) {
 		dir := t.TempDir()
 		content := `{"dev_roots": ["//tests/target-app"]}`
@@ -218,9 +200,6 @@ func TestLoadManifestAndEffectiveRoots(t *testing.T) {
 			`{"modules": {"hl/sdk": {"path": "/abs/sdk"}}}`,
 			`{"repos": {"hl": {"native": "https://example.com/no-placeholder"}}}`,
 			`{"repos": {"bad/name": {"native": "https://example.com/{name}"}}}`,
-			`{"sealed_sources": {"not-local": "vendor/x"}}`,
-			`{"sealed_sources": {"//a": "../escape"}}`,
-			`{"sealed_sources": {"//a": "/abs/vendor"}}`,
 			`{"sources": {"bare": ">=1.0.0"}}`,
 		}
 		for _, body := range cases {

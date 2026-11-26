@@ -292,7 +292,7 @@ func InspectDepsStatus(ctx *RuntimeContext) (_ *DepsStatusReport, err error) {
 	// 2. Independent SetGit sources (local, registry, native members).
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
-		if node == nil || !node.HasActiveOwnGit() {
+		if node == nil || !node.HasOwnGit() {
 			continue
 		}
 		seenSources[name] = true
@@ -521,7 +521,7 @@ func FetchDeps(ctx *RuntimeContext, pkgs []string, all bool, offline bool, onFet
 			continue
 		}
 		node := ctx.DepGraph.Packages[name]
-		if node == nil || !node.HasActiveOwnGit() {
+		if node == nil || !node.HasOwnGit() {
 			continue
 		}
 		if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {

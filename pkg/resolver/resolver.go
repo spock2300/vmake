@@ -64,17 +64,15 @@ func (c *ContainerNode) IsLinked() bool    { return c != nil && c.Link != nil &&
 func (c *ContainerNode) IsLocalPath() bool { return c != nil && c.LocalPath }
 
 type PackageNode struct {
-	ID              string
-	Container       string
-	RelPath         string
-	Kind            SourceKind
-	Exported        bool
-	SealedSourceRel string
-	SealedSourceDir string
-	Source          *buildscript.Source
-	Pkg             *api.Package
-	Deps            []string
-	Constraints     []string
+	ID          string
+	Container   string
+	RelPath     string
+	Kind        SourceKind
+	Exported    bool
+	Source      *buildscript.Source
+	Pkg         *api.Package
+	Deps        []string
+	Constraints []string
 }
 
 type ExportVisibilityError struct {
@@ -133,23 +131,6 @@ func (n *PackageNode) SourceKind() SourceKind {
 
 func (n *PackageNode) HasOwnGit() bool {
 	return n != nil && n.Pkg != nil && len(n.Pkg.GitURLs()) > 0
-}
-
-func (n *PackageNode) IsSealed() bool {
-	if n == nil || n.SealedSourceDir == "" {
-		return false
-	}
-	if n.Source != nil && n.Source.Link != nil && n.Source.Link.LocalSource {
-		return false
-	}
-	return true
-}
-
-// HasActiveOwnGit reports whether the package needs external SetGit source
-// materialization and lock tracking (i.e. declares SetGit and is not sealed by
-// its module container).
-func (n *PackageNode) HasActiveOwnGit() bool {
-	return n.HasOwnGit() && !n.IsSealed()
 }
 
 type Graph struct {
@@ -584,20 +565,6 @@ func (r *Resolver) resolvePackage(pkgID string, container *ContainerNode, relPat
 	r.sources[pkgID] = src
 	node := NewPackageNode(pkgID, container.ID, relPath, container.Kind, src, pkg)
 	node.Exported = container.IsLocal() || container.Manifest == nil || !container.Manifest.HasExports() || container.Manifest.IsExportedRelPath(relPath)
-	if container.Manifest != nil {
-		if sealedRel, ok := container.Manifest.SealedSource(relPath); ok {
-			rawSealed := filepath.Clean(filepath.Join(container.Dir, filepath.FromSlash(sealedRel)))
-			absSealed, escaped, err := resolveContainedDir(container.Dir, rawSealed)
-			if err != nil {
-				return nil, nil, fmt.Errorf("sealed source %q for package %s not found at %s", sealedRel, pkgID, rawSealed)
-			}
-			if escaped {
-				return nil, nil, fmt.Errorf("sealed source %q for package %s escapes container root %s", sealedRel, pkgID, container.Dir)
-			}
-			node.SealedSourceRel = sealedRel
-			node.SealedSourceDir = absSealed
-		}
-	}
 	r.graph.Packages[pkgID] = node
 
 	if restart, err := r.recurseDeps(node, container, path, knownConstraints); err != nil || restart != nil {
@@ -1269,7 +1236,7 @@ func (r *Resolver) validateAllSourceNodes() error {
 }
 
 func (r *Resolver) validateSourceNodeConstraints(node *PackageNode) error {
-	if node == nil || node.Pkg == nil || !node.HasActiveOwnGit() {
+	if node == nil || node.Pkg == nil || !node.HasOwnGit() {
 		return nil
 	}
 	if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {

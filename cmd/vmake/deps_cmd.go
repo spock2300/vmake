@@ -536,7 +536,7 @@ func validateRequestedPackagesInGraph(ctx *RuntimeContext, requested []string) e
 		if node == nil {
 			return fmt.Errorf("container or package %q is not in the project dependency graph", name)
 		}
-		if node.HasActiveOwnGit() {
+		if node.HasOwnGit() {
 			continue
 		}
 		if node.IsNative() && node.Container != "" {

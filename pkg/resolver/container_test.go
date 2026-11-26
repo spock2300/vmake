@@ -2,7 +2,6 @@ package resolver
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -344,65 +343,6 @@ func TestLocalPathAndSelfContainedManifestRepos(t *testing.T) {
 	}
 	if rOver.Graph().Packages["selforg/mother/override_only"] == nil {
 		t.Fatal("expected global repo override to take precedence over manifest repos")
-	}
-}
-
-func TestSealedSourcesInNativeContainer(t *testing.T) {
-	bare := writeContainerRepo(t, map[string]string{
-		"vmake.json": `{"sealed_sources": {"//lib": "vendor/lib"}}`,
-		"lib/build.go": `package main
-import "github.com/spock2300/vmake/pkg/api"
-func Main(p *api.Package) {
-	p.OnPackage(func(p *api.Package) {
-		p.SetGit("https://unreachable.invalid/lib.git")
-		p.AddVersion("1.0.0", "deadbeef")
-		p.AddPatches("fix.patch")
-	})
-}
-`,
-		"vendor/lib/lib.h": "#define SEALED_VAL 42\n",
-	})
-	r := newContainerTestResolver(t, bare)
-	project := writeLocalProject(t, map[string]string{"testnative/mother": "*"}, nil, "testnative/mother/lib")
-	if err := r.ResolveProject(project, nil); err != nil {
-		t.Fatalf("ResolveProject(sealed): %v", err)
-	}
-	node := r.Graph().Packages["testnative/mother/lib"]
-	if node == nil || !node.IsSealed() || node.HasActiveOwnGit() {
-		t.Fatalf("sealed node = %+v (IsSealed=%v HasActiveOwnGit=%v)", node, node.IsSealed(), node.HasActiveOwnGit())
-	}
-	if node.SealedSourceRel != "vendor/lib" || !strings.HasSuffix(node.SealedSourceDir, filepath.Join("vendor", "lib")) {
-		t.Fatalf("sealed paths = (%q, %q)", node.SealedSourceRel, node.SealedSourceDir)
-	}
-	r.Close()
-
-	badBare := writeContainerRepo(t, map[string]string{
-		"vmake.json":   `{"sealed_sources": {"//lib": "vendor/missing"}}`,
-		"lib/build.go": emptyPackageMain,
-	})
-	r2 := newContainerTestResolver(t, badBare)
-	badProj := writeLocalProject(t, map[string]string{"testnative/mother": "*"}, nil, "testnative/mother/lib")
-	if err := r2.ResolveProject(badProj, nil); err == nil || !strings.Contains(err.Error(), "sealed source") {
-		t.Fatalf("expected missing sealed source error, got %v", err)
-	}
-	r2.Close()
-
-	outsideDir := canonicalTempDir(t)
-	escapeProj := canonicalTempDir(t)
-	writeProjectFiles(t, escapeProj, map[string]string{
-		"vmake.json":   `{"roots": ["//lib"], "sealed_sources": {"//lib": "vendor/escape"}}`,
-		"lib/build.go": emptyPackageMain,
-	})
-	if err := os.MkdirAll(filepath.Join(escapeProj, "vendor"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(outsideDir, filepath.Join(escapeProj, "vendor", "escape")); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
-	rEsc := newTrustedTestResolver(repo.NewRepoManager(canonicalTempDir(t)), canonicalTempDir(t))
-	defer rEsc.Close()
-	if err := rEsc.ResolveProject(escapeProj, nil); err == nil || !strings.Contains(err.Error(), "escapes container root") {
-		t.Fatalf("expected symlink escape error for sealed_sources, got %v", err)
 	}
 }
 

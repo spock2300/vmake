@@ -201,7 +201,7 @@ CLI：`vmake pkg list|search|show|clean|link|unlink`、`vmake deps status|sync|u
 
 ```
 project/
-├── vmake.json                     # 模块清单（roots / dev_roots / exports / repos / modules / sources / sealed_sources）
+├── vmake.json                     # 模块清单（roots / dev_roots / exports / repos / modules / sources）
 ├── build.go                       # 根构建包脚本（可选，有则 ID 为 "//"）
 ├── configs/                       # 受版本控制的构建配置（稀疏显式意图）
 │   ├── default.json               # 默认配置（或由 .vmake/project.json default_config 指定）
@@ -234,7 +234,7 @@ project/
         └── <target>               # 最终产物
 ```
 
-`vmake.lock`（schema `version: 2`）分 `containers`（原生模块容器与 registry 仓库容器的 `kind`/`version`/`commit`/`source`）与 `sources`（registry 包与各构建包未封存 `SetGit` 独立上游源码的 `version`/`commit`/`source`）两个节。普通构建、`vmake deps sync` 与 `vmake deps update` 采用多 SKU 渐进式保留策略（更新当前激活条目，保留其他配置的历史条目，`--locked` 同样容忍非激活条目），仅显式执行 `vmake deps prune` 或 `--prune` 时裁剪失效条目；本地路径容器（`modules` 中的 `{"path": ...}`）与 `sealed_sources` 封存源码不写入 `vmake.lock`。被 `pkg link` 的容器或源码保留旧 lock 条目，但 link 期间不读取、不校验、不重写；`vmake deps` 写操作跳过这些条目。
+`vmake.lock`（schema `version: 2`）分 `containers`（原生模块容器与 registry 仓库容器的 `kind`/`version`/`commit`/`source`）与 `sources`（registry 包与各构建包 `SetGit` 独立上游源码的 `version`/`commit`/`source`）两个节。普通构建、`vmake deps sync` 与 `vmake deps update` 采用多 SKU 渐进式保留策略（更新当前激活条目，保留其他配置的历史条目，`--locked` 同样容忍非激活条目），仅显式执行 `vmake deps prune` 或 `--prune` 时裁剪失效条目；本地路径容器（`modules` 中的 `{"path": ...}`）不写入 `vmake.lock`。被 `pkg link` 的容器或源码保留旧 lock 条目，但 link 期间不读取、不校验、不重写；`vmake deps` 写操作跳过这些条目。
 
 `project.json` 保存工程默认配置与全工程共享的依赖 pin（`vmake deps pin|unpin`）：
 

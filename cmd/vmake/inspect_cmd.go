@@ -110,7 +110,6 @@ type inspectPackage struct {
 	Path          string                      `json:"path,omitempty"`
 	PackageDir    string                      `json:"packageDir,omitempty"`
 	SrcDir        string                      `json:"srcDir,omitempty"`
-	Sealed        bool                        `json:"sealed,omitempty"`
 	SourceDir     string                      `json:"sourceDir,omitempty"`
 	SourcePresent bool                        `json:"sourcePresent"`
 	Linked        bool                        `json:"linked,omitempty"`
@@ -424,7 +423,6 @@ func encodeInspect(inspection *pipeline.Inspection, includeTargets bool) (*inspe
 			Path:          facts.Path,
 			PackageDir:    facts.PackageDir,
 			SrcDir:        facts.SrcDir,
-			Sealed:        facts.Sealed,
 			SourceDir:     view.SourceDir(),
 			SourcePresent: facts.SourcePresent,
 			Linked:        facts.Linked,

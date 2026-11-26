@@ -292,8 +292,7 @@ of these files.
 | `path` | string? | Local packages: source directory relative to `root` (slash-separated) |
 | `sourceDir` | string? | Absolute source directory; a linked package reports its local working tree |
 | `packageDir` | string? | Absolute package root directory containing `build.go` (`SourceDir()`) |
-| `srcDir` | string? | Absolute active source tree (`SrcDir()`), including `SetGit` worktrees, linked trees, and `sealed_sources` directories |
-| `sealed` | bool? | Present and true when served from container `sealed_sources` (false/omitted when overridden by `pkg link`) |
+| `srcDir` | string? | Absolute active source tree (`SrcDir()`), including `SetGit` worktrees and linked trees |
 | `sourcePresent` | bool | Whether the expected source tree exists and is non-empty (see `VMAKE_W_SOURCE_MISSING`) |
 | `linked` | bool? | Present and true when `vmake pkg link` supplies the package source |
 | `linkPath` | string? | Absolute linked source path when `linked` is true |

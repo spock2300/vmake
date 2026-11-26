@@ -159,7 +159,7 @@ func (s *sourceStage) layoutFactsFor(name string) (LayoutFacts, error) {
 		if commit == "" && c != nil {
 			commit = c.Commit
 		}
-		if node.HasActiveOwnGit() && s.sourceVersions[name] != "" {
+		if node.HasOwnGit() && s.sourceVersions[name] != "" {
 			if version != "" {
 				version = version + "+" + s.sourceVersions[name]
 			} else {

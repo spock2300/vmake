@@ -176,7 +176,6 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 				NativeVersion: nativeSelected(ctx, node),
 				PackageDir:    loc.PackageRoot,
 				SrcDir:        loc.SourceTree,
-				Sealed:        loc.Sealed,
 				SourcePresent: IsPackageSourcePresent(ctx, name, node),
 				Deps:          dedupeStrings(node.Deps),
 			}
@@ -184,7 +183,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 				if rel, err := filepath.Rel(root, node.Source.Dir); err == nil {
 					facts.Path = filepath.ToSlash(rel)
 				}
-				if node.HasActiveOwnGit() {
+				if node.HasOwnGit() {
 					localGitMetadata(ctx, name, node, &facts)
 				}
 			} else {
@@ -258,13 +257,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		loc := ctx.packageLocation(name, node)
 		if node.IsLocal() {
 			sourceLink := ""
-			if loc.Sealed {
-				if info, err := os.Stat(loc.SourceTree); err != nil || !info.IsDir() {
-					markNotReady()
-					continue
-				}
-				node.Pkg.SetSrcDir(loc.SourceTree)
-			} else if node.HasOwnGit() {
+			if node.HasOwnGit() {
 				if loc.Linked {
 					sourceLink = node.Source.Link.Path
 					node.Pkg.SetSrcDir(loc.SourceTree)
@@ -309,12 +302,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 				markNotReady()
 				continue
 			}
-			if loc.Sealed {
-				if info, err := os.Stat(loc.SourceTree); err != nil || !info.IsDir() {
-					markNotReady()
-					continue
-				}
-			} else if node.HasOwnGit() {
+			if node.HasOwnGit() {
 				if loc.Linked {
 					srcVer := resolver.LocalLinkVersion
 					if version != "" {
@@ -380,7 +368,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		}
 		pkgDirs[name] = &layout.Dirs
 		layouts[name] = &layout
-		if node.IsNative() && (node.HasOwnGit() || loc.Sealed) && node.Pkg != nil {
+		if node.IsNative() && node.HasOwnGit() && node.Pkg != nil {
 			node.Pkg.SetSrcDir(loc.SourceTree)
 		}
 	}

@@ -338,13 +338,12 @@ AddRequires          1. 解析模块容器 ID (<repo>/<module>)   LoadBuildScrip
 4. `repo.FilterValidVersions` 过滤有效 semver
 5. `selectNativeContainerVersion`（`vmake deps pin` / 根 `vmake.json` 精确覆盖 `=ver` 或 40 位 SHA → `vmake.lock` → `repo.SelectNativeVersionMulti` 求全部约束交集并选最高匹配版本；交集为空且无覆盖则报冲突）
 6. `sourceMgr.EnsureSource`（ResolveOnly）把选中 ref/commit 的浅工作树物化到 `.vmake_deps/<repo>/<module>/src`：对象优先来自共享内容寻址缓存，缓存未命中或 ref 解析仍访问上游；Phase 3 在同一棵树上恢复并应用补丁
-7. 加载容器根 `vmake.json`（可选）收集传递 `modules`/`sources`/`repos`/`exports`/`sealed_sources`，并在 `<tree>/src/<relPath>` 按路径加载目标构建包的 `build.go`
+7. 加载容器根 `vmake.json`（可选）收集传递 `modules`/`sources`/`repos`/`exports`，并在 `<tree>/src/<relPath>` 按路径加载目标构建包的 `build.go`
 8. 若容器声明了 `exports` 白名单（1 对 1 映射到容器内路径），对外仅允许引用/配置已导出的包，容器内 `"//<rel>"` 经 `Graph.CanonicalPackageRef` 归一化到同一 `PackageNode.ID` 防止双重加载；未声明 `exports` 时保持全量可导入的向后兼容行为
-9. 若容器声明了 `sealed_sources`，对应包的 `SrcDir()` 直接指向容器内封存目录，跳过上游 `SetGit` 拉取与 `AddPatches`，也不写入消费者 `vmake.lock`（显式 `vmake pkg link` 优先级仍高于 `sealed_sources`）
-10. 注册 `ContainerNode` 到 `graph.Containers` 并注册 `PackageNode` 到 `graph.Packages`；支持在 `modules` 中声明本地路径容器 `{"path": "./..."}` 以及在 `vmake.json` 中自描述 `"repos"`（全局 `~/.vmake/repos` 优先覆盖）
-11. 仍在 Phase 1：`PreparePackage` 用 yaegi 加载 `build.go`，随后 `recurseDeps` 继续按路径懒加载依赖
+9. 注册 `ContainerNode` 到 `graph.Containers` 并注册 `PackageNode` 到 `graph.Packages`；支持在 `modules` 中声明本地路径容器 `{"path": "./..."}` 以及在 `vmake.json` 中自描述 `"repos"`（全局 `~/.vmake/repos` 优先覆盖）
+10. 仍在 Phase 1：`PreparePackage` 用 yaegi 加载 `build.go`，随后 `recurseDeps` 继续按路径懒加载依赖
 
-完整封存容器、容器导出表、`dev_roots`、内部选项（`SetInternal`）与多 SKU 渐进式锁保留（`vmake deps prune`）的设计决议见 `docs/adr/0002-container-encapsulation-and-sealed-delivery.md`。
+容器导出表、`dev_roots`、内部选项（`SetInternal`）、自描述 `repos`/本地路径容器与多 SKU 渐进式锁保留（`vmake deps prune`）的设计决议见 `docs/adr/0002-container-encapsulation.md`。
 
 ### 本地源码 link (`vmake pkg link`)
 

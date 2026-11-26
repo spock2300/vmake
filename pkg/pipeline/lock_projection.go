@@ -209,7 +209,7 @@ func (s *sourceStage) lockDecisions() ([]lockDecision, error) {
 			continue
 		}
 		node := s.rc.ctx.DepGraph.Packages[name]
-		if node == nil || !node.HasActiveOwnGit() || decidedSources[name] {
+		if node == nil || !node.HasOwnGit() || decidedSources[name] {
 			continue
 		}
 		if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {
@@ -256,7 +256,7 @@ func (s *sourceStage) lockDecisions() ([]lockDecision, error) {
 			if decidedSources[name] || processedSources[name] {
 				continue
 			}
-			if node := s.rc.ctx.DepGraph.Packages[name]; node != nil && !node.HasActiveOwnGit() {
+			if node := s.rc.ctx.DepGraph.Packages[name]; node != nil && !node.HasOwnGit() {
 				continue
 			}
 			decisions = append(decisions, keepSourceLockDecision(name))

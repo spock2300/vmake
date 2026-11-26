@@ -22,11 +22,6 @@ func (s *sourceStage) preparePackageWorkspace(name string) error {
 	}
 	loc := s.rc.ctx.packageLocation(name, node)
 
-	if node.IsSealed() {
-		node.Pkg.SetDirs(*dirs)
-		node.Pkg.SetSrcDir(loc.SourceTree)
-		return nil
-	}
 	if !node.HasOwnGit() {
 		oldSourceDir := node.Pkg.SourceDir()
 		node.Pkg.SetDirs(*dirs)
@@ -111,7 +106,7 @@ func rebindRemoteSrcDir(ctx *RuntimeContext, node *resolver.PackageNode, dirs *a
 // (local, registry, or native member) into the given source root.
 func (s *sourceStage) selectPackageSourceRoot(name, sourceRoot string) error {
 	node := s.rc.ctx.DepGraph.Packages[name]
-	if node == nil || !node.HasActiveOwnGit() {
+	if node == nil || !node.HasOwnGit() {
 		return nil
 	}
 	if s.sourceCommits[name] != "" {
@@ -135,7 +130,7 @@ func (s *sourceStage) selectPackageSourceRoot(name, sourceRoot string) error {
 }
 
 func (s *sourceStage) resolvePackageSourceVersion(name string, node *resolver.PackageNode) (string, string, string, error) {
-	if node == nil || !node.HasActiveOwnGit() {
+	if node == nil || !node.HasOwnGit() {
 		return "", "", "", nil
 	}
 	decision := s.rc.ctx.lockQuery().Sources().Decide(name, "", "")
@@ -203,7 +198,7 @@ func (s *sourceStage) resolvePackageSourceVersion(name string, node *resolver.Pa
 }
 
 func existingLocalSourceCommit(node *resolver.PackageNode) (string, error) {
-	if !node.HasActiveOwnGit() {
+	if !node.HasOwnGit() {
 		return "", nil
 	}
 	if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {
