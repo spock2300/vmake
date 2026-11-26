@@ -85,6 +85,7 @@ type inspectOptionDef struct {
 	Values      []string `json:"values,omitempty"`
 	Group       string   `json:"group,omitempty"`
 	Internal    bool     `json:"internal,omitempty"`
+	Advanced    bool     `json:"advanced,omitempty"`
 }
 
 type inspectContainer struct {
@@ -564,6 +565,7 @@ func inspectOptionDefs(opts map[string]*api.Option) map[string]inspectOptionDef 
 			Values:      append([]string(nil), opt.Values()...),
 			Group:       opt.Group(),
 			Internal:    opt.IsInternal(),
+			Advanced:    opt.IsAdvanced(),
 		}
 	}
 	if len(defs) == 0 {

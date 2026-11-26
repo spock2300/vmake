@@ -19,6 +19,7 @@ var translations = map[language]map[textID]string{
 		textContainerID: "container", textContainerKind: "kind", textContainerVersion: "version", textContainerLink: "linked",
 		textGroupPackages: "packages", textGroupSummaryCount: "%d active / %d total (%d configurable)",
 		textGroupHint: "Enter/→ expand or collapse · ↓ select package",
+		textAdvanced: "advanced", textAdvancedHiddenBadge: "a: +%d adv", textAdvancedShownBadge: "a: adv on", textNoBasicOptions: "No basic options (%d advanced hidden — press 'a' to show)",
 	},
 	languageChinese: {
 		textDetailScrollHint:   "↑↓/滚轮滚动",
@@ -38,5 +39,6 @@ var translations = map[language]map[textID]string{
 		textContainerID: "容器", textContainerKind: "类型", textContainerVersion: "版本", textContainerLink: "本地链接",
 		textGroupPackages: "包含包", textGroupSummaryCount: "%d 个生效 / 共 %d 个（%d 个可配置）",
 		textGroupHint: "Enter/→ 展开或折叠 · ↓ 选择软件包",
+		textAdvanced: "高级选项", textAdvancedHiddenBadge: "a: +%d 高级", textAdvancedShownBadge: "a: 含高级", textNoBasicOptions: "无常规选项（已折叠 %d 个高级项，按 a 展开）",
 	},
 }

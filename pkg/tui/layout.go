@@ -426,6 +426,11 @@ func (m *Model) optionLayout(contentH int) optionLayout {
 		if dc := m.pkgDerivedCount(m.selectedPkg); dc > 0 {
 			badges = append(badges, derivedFromStyle.Render(m.textf(textDerivedBadge, dc)))
 		}
+		if hiddenAdv := m.hiddenAdvancedCount(); hiddenAdv > 0 {
+			badges = append(badges, optionDescStyle.Render(m.textf(textAdvancedHiddenBadge, hiddenAdv)))
+		} else if m.showAdvanced && m.hasAdvancedOptions() {
+			badges = append(badges, optionDescStyle.Render(m.text(textAdvancedShownBadge)))
+		}
 		if len(badges) > 0 {
 			rightStr := strings.Join(badges, "  ")
 			if lipgloss.Width(titleLine)+2+lipgloss.Width(rightStr) <= contentW {
@@ -455,7 +460,11 @@ func (m *Model) optionLayout(contentH int) optionLayout {
 	hasKConfig := m.hasKConfig()
 
 	if len(visible) == 0 && !hasKConfig {
-		b.WriteString(m.text(textNoOptions))
+		if hiddenAdv := m.hiddenAdvancedCount(); hiddenAdv > 0 {
+			b.WriteString(optionDescStyle.Render(m.textf(textNoBasicOptions, hiddenAdv)))
+		} else {
+			b.WriteString(m.text(textNoOptions))
+		}
 		out.content = b.String()
 		return out
 	}

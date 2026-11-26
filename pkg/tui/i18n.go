@@ -97,6 +97,10 @@ const (
 	textGroupPackages      textID = "group_packages"
 	textGroupSummaryCount  textID = "group_summary_count"
 	textGroupHint          textID = "group_hint"
+	textAdvanced           textID = "advanced"
+	textAdvancedHiddenBadge textID = "advanced_hidden_badge"
+	textAdvancedShownBadge textID = "advanced_shown_badge"
+	textNoBasicOptions     textID = "no_basic_options"
 )
 
 func (m *Model) text(id textID) string {

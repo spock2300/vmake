@@ -344,11 +344,12 @@ p.OnConfig(func(ctx *api.ConfigContext) {
     ctx.Option("rx_buf_size").SetDefault(1024).SetDescription("RX buffer bytes")     // Inferred OptionInt
     ctx.Option("log_level").SetDefault("info").SetValues("debug", "info", "error")   // Inferred OptionChoice
     ctx.Option("custom_ld").SetDefault("board.ld")                                   // Inferred OptionString
-    ctx.Option("internal_knob").SetDefault(false).SetInternal(true)                  // Container-internal only (hidden across container seams)
+    ctx.Option("cache_size").SetDefault(16).SetAdvanced(true)                        // Advanced tuning knob (collapsed in TUI by default, press 'a'; always overridable via -s/configs)
+    ctx.Option("internal_knob").SetDefault(false).SetInternal(true)                  // Container-internal only (hidden and blocked across container seams)
 })
 ```
 
-Container-internal options (`SetInternal(true)`) may only be configured or read within the same container (e.g. via `OnConfigureDeps`); external consumers cannot set them in `configs/*.json`, CLI `--set`, `OnConfigureDeps`, or cross-package reads, and the TUI workbench hides them. `GlobalOption` cannot be marked internal.
+Advanced options (`SetAdvanced(true)`) are a display tier only: the TUI hides unmodified default-valued advanced options by default (press `a` to toggle; explicitly configured advanced options stay visible), while CLI `--set`, `configs/*.json`, and `OnConfigureDeps` always allow overriding them. Container-internal options (`SetInternal(true)`) may only be configured or read within the same container (e.g. via `OnConfigureDeps`); external consumers cannot set them in `configs/*.json`, CLI `--set`, `OnConfigureDeps`, or cross-package reads, and the TUI workbench hides them. `GlobalOption` cannot be marked internal.
 
 ### Multiple Project Configurations
 

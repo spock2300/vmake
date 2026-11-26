@@ -84,6 +84,7 @@ type Model struct {
 	optOff    int
 
 	hideEmptyPkgs bool
+	showAdvanced  bool
 	optCounts     map[string]int
 
 	overlay      overlayKind
@@ -380,10 +381,26 @@ func (m *Model) jumpToMatch(pkgName, optName string) bool {
 	m.selectCurrentNode()
 	if optName != "" {
 		visible := m.visibleOptions()
+		found := false
 		for i, item := range visible {
 			if item.Name == optName {
 				m.optCursor = i
+				found = true
 				break
+			}
+		}
+		if !found && !m.showAdvanced {
+			for _, item := range m.optItems {
+				if item.Name == optName && item.Opt != nil && item.Opt.IsAdvanced() {
+					m.showAdvanced = true
+					for i, v := range m.visibleOptions() {
+						if v.Name == optName {
+							m.optCursor = i
+							break
+						}
+					}
+					break
+				}
 			}
 		}
 	}
@@ -839,7 +856,37 @@ func (m *Model) visibleOptions() []OptionItem {
 }
 
 func (m *Model) shouldShow(opt *api.Option) bool {
-	return m.ed().Visible(m.selectedPkg, opt)
+	if !m.ed().Visible(m.selectedPkg, opt) {
+		return false
+	}
+	if opt != nil && opt.IsAdvanced() && !m.showAdvanced {
+		if !m.isOptionModified(opt.Name()) && !m.ed().IsExplicit(m.selectedPkg, opt.Name()) {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *Model) hiddenAdvancedCount() int {
+	if m.showAdvanced {
+		return 0
+	}
+	n := 0
+	for _, item := range m.optItems {
+		if item.Opt != nil && item.Opt.IsAdvanced() && m.ed().Visible(m.selectedPkg, item.Opt) && !m.shouldShow(item.Opt) {
+			n++
+		}
+	}
+	return n
+}
+
+func (m *Model) hasAdvancedOptions() bool {
+	for _, item := range m.optItems {
+		if item.Opt != nil && item.Opt.IsAdvanced() && m.ed().Visible(m.selectedPkg, item.Opt) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) hasKConfig() bool {

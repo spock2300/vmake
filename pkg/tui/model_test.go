@@ -213,6 +213,59 @@ func TestVisibleOptions_FiltersByShowIf(t *testing.T) {
 	}
 }
 
+func TestVisibleOptions_HidesAdvancedUntilToggledOrExplicit(t *testing.T) {
+	opts := map[string]map[string]*api.Option{
+		"app": {
+			"basic":    mkOpt("basic", api.OptionBool, false),
+			"adv_def":  mkOpt("adv_def", api.OptionInt, 64).SetAdvanced(true),
+			"adv_expl": mkOpt("adv_expl", api.OptionInt, 32).SetAdvanced(true),
+		},
+	}
+	explicit := map[string]map[string]any{
+		"app": {"adv_expl": 128},
+	}
+	m := testModel(mkSources("app"), map[string][]string{}, opts, explicit, "/work", "", nil, nil, nil)
+	m.selectedPkg = "app"
+	m.buildOptionItems()
+
+	// By default, unmodified default-valued advanced options are hidden, while
+	// explicitly configured advanced options stay visible so overrides remain clear.
+	vis := m.visibleOptions()
+	if got := names(vis); len(got) != 2 || got[0] != "adv_expl" || got[1] != "basic" {
+		t.Fatalf("default visible = %v, want [adv_expl basic]", got)
+	}
+	if got := m.hiddenAdvancedCount(); got != 1 {
+		t.Fatalf("hiddenAdvancedCount() = %d, want 1", got)
+	}
+
+	// Pressing 'a' toggles advanced options visible.
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if !m.showAdvanced {
+		t.Fatal("expected showAdvanced=true after pressing 'a'")
+	}
+	if got := names(m.visibleOptions()); len(got) != 3 {
+		t.Fatalf("after 'a', visible = %v, want 3 options", got)
+	}
+	if got := m.hiddenAdvancedCount(); got != 0 {
+		t.Fatalf("after 'a', hiddenAdvancedCount() = %d, want 0", got)
+	}
+
+	// Toggling off hides adv_def again; jumpToMatch auto-reveals it.
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if m.showAdvanced {
+		t.Fatal("expected showAdvanced=false after second 'a'")
+	}
+	if !m.jumpToMatch("app", "adv_def") {
+		t.Fatal("jumpToMatch(app, adv_def) failed")
+	}
+	if !m.showAdvanced {
+		t.Fatal("jumpToMatch to hidden advanced option should enable showAdvanced")
+	}
+	if vis := m.visibleOptions(); m.optCursor < 0 || m.optCursor >= len(vis) || vis[m.optCursor].Name != "adv_def" {
+		t.Fatalf("optCursor = %d (vis=%v), want adv_def", m.optCursor, names(vis))
+	}
+}
+
 func names(items []OptionItem) []string {
 	var out []string
 	for _, it := range items {

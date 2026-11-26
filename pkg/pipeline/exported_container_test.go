@@ -60,6 +60,7 @@ func Main(p *api.Package) {
 	p.AddRequires("//internal/calc")
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.Option("scale").SetDefault(2)
+		ctx.Option("extra_bias").SetDefault(0).SetAdvanced(true)
 	})
 	p.OnConfigureDeps(func(ctx *api.DepConfigContext) {
 		ctx.SetDefault("//internal/calc", "factor", ctx.Int("scale")*10)
@@ -215,6 +216,14 @@ int main(void) { return calc_val() == 27 ? 0 : 1; }
 	defer ctxLocked.Resolver.Close()
 	if _, err := RunBuild(ctxLocked, BuildOptions{}); err != nil {
 		t.Fatalf("locked+offline rebuild failed: %v", err)
+	}
+
+	ctxLocked.Config.SetOption("selforg/sdk/math", "extra_bias", 4)
+	if err := ValidateConfigValues(ctxLocked, nil); err != nil {
+		t.Fatalf("external consumer must be allowed to override SetAdvanced option: %v", err)
+	}
+	if _, opt, err := ResolveSetPackageOption(ctxLocked, "selforg/sdk/math", "extra_bias"); err != nil || !opt.IsAdvanced() {
+		t.Fatalf("ResolveSetPackageOption(advanced) = opt=%v err=%v, want allowed advanced option", opt, err)
 	}
 
 	ctxLocked.Config.SetOption("selforg/sdk/internal/calc", "factor", 99)

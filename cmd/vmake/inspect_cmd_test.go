@@ -1954,6 +1954,7 @@ import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {
 	p.OnConfig(func(ctx *api.ConfigContext) {
 		ctx.Option("secret").SetType(api.OptionBool).SetDefault(false).SetInternal(true)
+		ctx.Option("tune").SetDefault(16).SetAdvanced(true)
 	})
 	p.OnBuild(func(ctx *api.BuildContext) {
 		ctx.Target("vlib").SetKind(api.TargetStatic).AddFiles("v.c")
@@ -1989,5 +1990,9 @@ func Main(p *api.Package) {
 	secretDef, ok := vp.OptionDefs["secret"]
 	if !ok || !secretDef.Internal {
 		t.Errorf("optionDefs[secret] = %+v, want Internal=true", secretDef)
+	}
+	tuneDef, ok := vp.OptionDefs["tune"]
+	if !ok || !tuneDef.Advanced || tuneDef.Internal {
+		t.Errorf("optionDefs[tune] = %+v, want Advanced=true Internal=false", tuneDef)
 	}
 }

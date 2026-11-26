@@ -439,3 +439,18 @@ func TestOptionSetInternal(t *testing.T) {
 		t.Fatal("expected ValidateOption to reject global + internal option")
 	}
 }
+
+func TestOptionSetAdvanced(t *testing.T) {
+	cfg := NewConfigContext("pkg")
+	opt := cfg.Option("cache_size").SetDefault(16).SetAdvanced(true)
+	if !opt.IsAdvanced() {
+		t.Fatal("expected IsAdvanced() == true")
+	}
+	if err := ValidateOption(opt); err != nil {
+		t.Fatalf("ValidateOption(advanced): %v", err)
+	}
+	gopt := cfg.GlobalOption("extra_tuning").SetDefault(0).SetAdvanced(true)
+	if err := ValidateOption(gopt); err != nil {
+		t.Fatalf("ValidateOption(global+advanced): %v", err)
+	}
+}

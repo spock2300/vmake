@@ -263,6 +263,27 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.startDescriptionEdit()
 		}
 		return m, nil
+	case "a":
+		curOpt := ""
+		if vis := m.visibleOptions(); m.optCursor >= 0 && m.optCursor < len(vis) {
+			curOpt = vis[m.optCursor].Name
+		}
+		m.showAdvanced = !m.showAdvanced
+		if curOpt != "" {
+			for i, item := range m.visibleOptions() {
+				if item.Name == curOpt {
+					m.optCursor = i
+					break
+				}
+			}
+		}
+		if total := m.totalOptRows(); total == 0 {
+			m.optCursor = 0
+		} else if m.optCursor >= total {
+			m.optCursor = total - 1
+		}
+		m.syncScroll()
+		return m, nil
 	}
 
 	if m.focusArea == 0 {
@@ -1311,7 +1332,7 @@ func (m *Model) renderFooterWithin(maxHeight int) string {
 		helpText = renderHelpEntries([]helpEntry{
 			{"↑↓", m.text(textNavigate)}, {"←→", m.text(textCycleValue)}, {"Space/Enter", m.text(textEdit)},
 			{"[]", m.text(textStepDeps)}, {"{}", m.text(textCycleEdges)}, {"r", m.text(textReset)}, {"R", m.text(textDefault)},
-			{"?", m.text(textDetail)}, {"D", m.text(textDescriptionEdit)},
+			{"a", m.text(textAdvanced)}, {"?", m.text(textDetail)}, {"D", m.text(textDescriptionEdit)},
 			{"Tab", m.text(textPackages)}, {"Ctrl+S", m.text(textSave)}, {"Esc", m.text(textBack)},
 		})
 	}
