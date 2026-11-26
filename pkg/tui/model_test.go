@@ -229,10 +229,11 @@ func TestVisibleOptions_HidesAdvancedUntilToggledOrExplicit(t *testing.T) {
 	m.buildOptionItems()
 
 	// By default, unmodified default-valued advanced options are hidden, while
-	// explicitly configured advanced options stay visible so overrides remain clear.
+	// explicitly configured advanced options stay visible (grouped under Advanced
+	// after basic General options) so overrides remain clear.
 	vis := m.visibleOptions()
-	if got := names(vis); len(got) != 2 || got[0] != "adv_expl" || got[1] != "basic" {
-		t.Fatalf("default visible = %v, want [adv_expl basic]", got)
+	if got := names(vis); len(got) != 2 || got[0] != "basic" || got[1] != "adv_expl" {
+		t.Fatalf("default visible = %v, want [basic adv_expl]", got)
 	}
 	if got := m.hiddenAdvancedCount(); got != 1 {
 		t.Fatalf("hiddenAdvancedCount() = %d, want 1", got)

@@ -98,7 +98,7 @@ func (m *Model) optionRows() ([]optionRow, int, int) {
 	}
 	valWidth = min(valWidth, maxValW)
 
-	rows := make([]optionRow, 0, len(visible)+2)
+	rows := make([]optionRow, 0, len(visible)+3)
 	navIdx := 0
 	group := ""
 	for _, item := range visible {
@@ -107,6 +107,11 @@ func (m *Model) optionRows() ([]optionRow, int, int) {
 			rows = append(rows, optionRow{kind: rowGroup, navIdx: -1, text: group})
 		}
 		rows = append(rows, optionRow{kind: rowOption, navIdx: navIdx, item: item})
+		navIdx++
+	}
+
+	if m.hasAdvancedToggleRow() {
+		rows = append(rows, optionRow{kind: rowAdvancedToggle, navIdx: navIdx})
 		navIdx++
 	}
 
@@ -142,10 +147,14 @@ func (m *Model) optionLines() []optionLine {
 				group = m.text(textGeneral)
 			} else if group == "Global" {
 				group = m.text(textGlobal)
+			} else if group == "Advanced" {
+				group = m.text(textAdvancedGroup)
 			}
 			text = groupStyle.Render("── " + group + " " + strings.Repeat("─", max(nameWidth+valWidth+2-lipgloss.Width(group), 3)))
 		case rowOption:
 			text = m.renderOptionAligned(row.item, selected, nameWidth, valWidth)
+		case rowAdvancedToggle:
+			text = m.renderAdvancedToggleRow(selected)
 		case rowPreset:
 			text = m.renderPresetRow(selected, nameWidth, valWidth)
 		case rowMenuconfig:

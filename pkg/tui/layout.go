@@ -32,8 +32,10 @@ type screen struct {
 	optionViewport  bool
 	optOff          int
 
-	languageSelector dialogRect
-	descRow          dialogRect
+	languageSelector  dialogRect
+	advancedToggle    dialogRect
+	optAdvancedToggle dialogRect
+	descRow           dialogRect
 
 	mainH int
 
@@ -57,10 +59,12 @@ type chromeLayout struct {
 }
 
 type headerMetrics struct {
-	selector string
-	style    lipgloss.Style
-	headerW  int
-	leftW    int
+	selector     string
+	advToggle    string
+	langSelector string
+	style        lipgloss.Style
+	headerW      int
+	leftW        int
 }
 
 type treeLayout struct {
@@ -69,10 +73,11 @@ type treeLayout struct {
 }
 
 type optionLayout struct {
-	content  string
-	rows     []panelRowTarget
-	off      int
-	viewport bool
+	content   string
+	rows      []panelRowTarget
+	advToggle dialogRect
+	off       int
+	viewport  bool
 }
 
 func tooSmallSize(width, height int) bool {
@@ -126,7 +131,9 @@ func (m *Model) fillNormal(s *screen) {
 	s.optionsContentW = m.optionsContentWidth()
 	s.optionsLeft = s.treeW + optionStyle.GetBorderLeftSize()
 	s.languageSelector = m.languageSelectorRect()
+	s.advancedToggle = m.advancedToggleRect()
 	var rightCol string
+	var opt optionLayout
 	if egoInner := m.egoGraphInnerHeight(s.contentH); egoInner > 0 {
 		graphStyle := egoGraphPanelStyle(m.focusArea == 0, s.optionsW)
 		graphContent, boxes := m.egoGraphBody(s.contentH)
@@ -135,7 +142,7 @@ func (m *Model) fillNormal(s *screen) {
 		s.egoBoxes = boxes
 		s.graphLeft = s.treeW + graphStyle.GetBorderLeftSize() + graphStyle.GetPaddingLeft()
 		s.optionsTopY = s.headerH + s.graphH
-		opt := m.optionLayout(s.contentH)
+		opt = m.optionLayout(s.contentH)
 		s.optionContent, s.optionRows = opt.content, opt.rows
 		s.optOff, s.optionViewport = opt.off, opt.viewport
 		optPanel := optionStyle.MaxHeight(max(1, s.contentH-s.graphH)).Render(s.optionContent)
@@ -143,10 +150,18 @@ func (m *Model) fillNormal(s *screen) {
 	} else {
 		s.graphH = 0
 		s.optionsTopY = s.headerH
-		opt := m.optionLayout(s.contentH)
+		opt = m.optionLayout(s.contentH)
 		s.optionContent, s.optionRows = opt.content, opt.rows
 		s.optOff, s.optionViewport = opt.off, opt.viewport
 		rightCol = optionStyle.MaxHeight(s.contentH).Render(s.optionContent)
+	}
+	if opt.advToggle.width > 0 {
+		s.optAdvancedToggle = dialogRect{
+			x:      s.optionsLeft + optionStyle.GetPaddingLeft() + opt.advToggle.x,
+			y:      s.optionsTopY + optionStyle.GetBorderTopSize() + optionStyle.GetPaddingTop() + opt.advToggle.y,
+			width:  opt.advToggle.width,
+			height: opt.advToggle.height,
+		}
 	}
 	for i := range s.treeRows {
 		s.treeRows[i].y += s.headerH
@@ -426,16 +441,31 @@ func (m *Model) optionLayout(contentH int) optionLayout {
 		if dc := m.pkgDerivedCount(m.selectedPkg); dc > 0 {
 			badges = append(badges, derivedFromStyle.Render(m.textf(textDerivedBadge, dc)))
 		}
+		var advBtn string
 		if hiddenAdv := m.hiddenAdvancedCount(); hiddenAdv > 0 {
-			badges = append(badges, optionDescStyle.Render(m.textf(textAdvancedHiddenBadge, hiddenAdv)))
+			advBtn = languageSelectorStyle.Render("[" + m.textf(textAdvancedHiddenBadge, hiddenAdv) + "]")
 		} else if m.showAdvanced && m.hasAdvancedOptions() {
-			badges = append(badges, optionDescStyle.Render(m.text(textAdvancedShownBadge)))
+			advBtn = optionNameStyle.Bold(true).Render("[" + m.text(textAdvancedShownBadge) + "]")
 		}
-		if len(badges) > 0 {
+		if advBtn != "" {
+			badges = append(badges, advBtn)
+		}
+		for len(badges) > 0 {
 			rightStr := strings.Join(badges, "  ")
 			if lipgloss.Width(titleLine)+2+lipgloss.Width(rightStr) <= contentW {
 				titleLine += lipgloss.PlaceHorizontal(contentW-lipgloss.Width(titleLine), lipgloss.Right, rightStr)
+				if advBtn != "" {
+					advW := lipgloss.Width(advBtn)
+					out.advToggle = dialogRect{x: contentW - advW, y: 0, width: advW, height: 1}
+				}
+				break
 			}
+			// Drop secondary badges before dropping the interactive advanced toggle.
+			if advBtn != "" && len(badges) > 1 {
+				badges = badges[1:]
+				continue
+			}
+			break
 		}
 	}
 	var b strings.Builder
@@ -459,12 +489,8 @@ func (m *Model) optionLayout(contentH int) optionLayout {
 	visible := m.visibleOptions()
 	hasKConfig := m.hasKConfig()
 
-	if len(visible) == 0 && !hasKConfig {
-		if hiddenAdv := m.hiddenAdvancedCount(); hiddenAdv > 0 {
-			b.WriteString(optionDescStyle.Render(m.textf(textNoBasicOptions, hiddenAdv)))
-		} else {
-			b.WriteString(m.text(textNoOptions))
-		}
+	if len(visible) == 0 && !hasKConfig && !m.hasAdvancedToggleRow() {
+		b.WriteString(m.text(textNoOptions))
 		out.content = b.String()
 		return out
 	}
@@ -696,24 +722,59 @@ func treeRowIconAndStyle(node *TreeNode, role gutterRole, isSelected, isInactive
 }
 
 func (m *Model) headerSelector() headerMetrics {
-	selector := languageSelectorStyle.Render("[" + m.text(textLanguage) + ": " + m.languageLabel() + " ▼]")
+	langSelector := languageSelectorStyle.Render("[" + m.text(textLanguage) + ": " + m.languageLabel() + " ▼]")
 	style := headerBorderStyle(true).Width(m.width - 4)
 	headerW := style.GetWidth() - style.GetHorizontalFrameSize()
+	var advToggle string
+	if m.projectHasAdvancedOptions() {
+		var btn string
+		if m.showAdvanced {
+			btn = optionNameStyle.Bold(true).Render("[● " + m.text(textAllOptions) + "]")
+		} else {
+			btn = languageSelectorStyle.Render("[○ " + m.text(textAllOptions) + "]")
+		}
+		if headerW >= lipgloss.Width(btn)+1+lipgloss.Width(langSelector)+18 {
+			advToggle = btn
+		}
+	}
+	selector := langSelector
+	if advToggle != "" {
+		selector = advToggle + " " + langSelector
+	}
 	leftW := max(1, headerW-lipgloss.Width(selector)-2)
 	return headerMetrics{
-		selector: selector,
-		style:    style,
-		headerW:  headerW,
-		leftW:    leftW,
+		selector:     selector,
+		advToggle:    advToggle,
+		langSelector: langSelector,
+		style:        style,
+		headerW:      headerW,
+		leftW:        leftW,
+	}
+}
+
+func (m *Model) advancedToggleRect() dialogRect {
+	hm := m.headerSelector()
+	if hm.advToggle == "" {
+		return dialogRect{}
+	}
+	return dialogRect{
+		x:      hm.style.GetBorderLeftSize() + hm.style.GetPaddingLeft() + hm.leftW + 2,
+		y:      hm.style.GetBorderTopSize() + hm.style.GetPaddingTop(),
+		width:  lipgloss.Width(hm.advToggle),
+		height: 1,
 	}
 }
 
 func (m *Model) languageSelectorRect() dialogRect {
 	hm := m.headerSelector()
+	offset := 0
+	if hm.advToggle != "" {
+		offset = lipgloss.Width(hm.advToggle) + 1
+	}
 	return dialogRect{
-		x:      hm.style.GetBorderLeftSize() + hm.style.GetPaddingLeft() + hm.leftW + 2,
+		x:      hm.style.GetBorderLeftSize() + hm.style.GetPaddingLeft() + hm.leftW + 2 + offset,
 		y:      hm.style.GetBorderTopSize() + hm.style.GetPaddingTop(),
-		width:  lipgloss.Width(hm.selector),
+		width:  lipgloss.Width(hm.langSelector),
 		height: 1,
 	}
 }

@@ -705,7 +705,11 @@ func groupAndSortOptions(opts map[string]*api.Option) []OptionItem {
 	for name, opt := range opts {
 		group := opt.Group()
 		if group == "" {
-			group = "General"
+			if opt.IsAdvanced() {
+				group = "Advanced"
+			} else {
+				group = "General"
+			}
 		}
 		groups[group] = append(groups[group], OptionItem{Name: name, Group: group, Opt: opt})
 	}
@@ -713,7 +717,16 @@ func groupAndSortOptions(opts map[string]*api.Option) []OptionItem {
 	for g := range groups {
 		groupNames = append(groupNames, g)
 	}
-	sort.Strings(groupNames)
+	sort.Slice(groupNames, func(i, j int) bool {
+		a, b := groupNames[i], groupNames[j]
+		if a == "Advanced" && b != "Advanced" {
+			return false
+		}
+		if b == "Advanced" && a != "Advanced" {
+			return true
+		}
+		return a < b
+	})
 	var items []OptionItem
 	for _, g := range groupNames {
 		gItems := groups[g]
@@ -881,9 +894,35 @@ func (m *Model) hiddenAdvancedCount() int {
 }
 
 func (m *Model) hasAdvancedOptions() bool {
+	return m.advancedOptionCount() > 0
+}
+
+func (m *Model) advancedOptionCount() int {
+	n := 0
 	for _, item := range m.optItems {
 		if item.Opt != nil && item.Opt.IsAdvanced() && m.ed().Visible(m.selectedPkg, item.Opt) {
+			n++
+		}
+	}
+	return n
+}
+
+func (m *Model) hasAdvancedToggleRow() bool {
+	return m.hiddenAdvancedCount() > 0 || (m.showAdvanced && m.hasAdvancedOptions())
+}
+
+func (m *Model) projectHasAdvancedOptions() bool {
+	ed := m.ed()
+	for _, opt := range ed.GlobalOptions {
+		if opt != nil && opt.IsAdvanced() {
 			return true
+		}
+	}
+	for _, pkgOpts := range ed.Options {
+		for _, opt := range pkgOpts {
+			if opt != nil && opt.IsAdvanced() {
+				return true
+			}
 		}
 	}
 	return false
@@ -929,6 +968,9 @@ func (m *Model) presetOptions() []string {
 func (m *Model) totalOptRows() int {
 	visible := m.visibleOptions()
 	n := len(visible)
+	if m.hasAdvancedToggleRow() {
+		n++
+	}
 	if m.hasKConfig() {
 		if m.hasPresets() {
 			n += 2

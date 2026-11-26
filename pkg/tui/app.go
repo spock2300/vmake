@@ -264,25 +264,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "a":
-		curOpt := ""
-		if vis := m.visibleOptions(); m.optCursor >= 0 && m.optCursor < len(vis) {
-			curOpt = vis[m.optCursor].Name
-		}
-		m.showAdvanced = !m.showAdvanced
-		if curOpt != "" {
-			for i, item := range m.visibleOptions() {
-				if item.Name == curOpt {
-					m.optCursor = i
-					break
-				}
-			}
-		}
-		if total := m.totalOptRows(); total == 0 {
-			m.optCursor = 0
-		} else if m.optCursor >= total {
-			m.optCursor = total - 1
-		}
-		m.syncScroll()
+		m.toggleAdvanced()
 		return m, nil
 	}
 
@@ -290,6 +272,28 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleTreeKey(msg)
 	}
 	return m.handleOptionsKey(msg)
+}
+
+func (m *Model) toggleAdvanced() {
+	curOpt := ""
+	if vis := m.visibleOptions(); m.optCursor >= 0 && m.optCursor < len(vis) {
+		curOpt = vis[m.optCursor].Name
+	}
+	m.showAdvanced = !m.showAdvanced
+	if curOpt != "" {
+		for i, item := range m.visibleOptions() {
+			if item.Name == curOpt {
+				m.optCursor = i
+				break
+			}
+		}
+	}
+	if total := m.totalOptRows(); total == 0 {
+		m.optCursor = 0
+	} else if m.optCursor >= total {
+		m.optCursor = total - 1
+	}
+	m.syncScroll()
 }
 
 func (m *Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -376,6 +380,10 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 
 	mx, my := msg.X, msg.Y
+	if mouseLeftPress(msg) && s.advancedToggle.contains(mx, my) {
+		m.toggleAdvanced()
+		return m, nil
+	}
 	if mouseLeftPress(msg) && s.languageSelector.contains(mx, my) {
 		m.openLanguageSelector()
 		return m, nil
@@ -423,6 +431,10 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			}
 		} else {
 			m.focusArea = 1
+			if s.optAdvancedToggle.contains(mx, my) {
+				m.toggleAdvanced()
+				return m, nil
+			}
 			return m.handleMouseOptionClick(msg, s)
 		}
 	case mouseWheel(msg) != 0:
@@ -579,7 +591,7 @@ func (m *Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cur.Expanded = true
 			m.rebuildFlat()
 			m.ensureTreeCursorVisible()
-		} else if !m.isGroupSelected() && (len(m.visibleOptions()) > 0 || m.hasKConfig()) {
+		} else if !m.isGroupSelected() && (len(m.visibleOptions()) > 0 || m.hasAdvancedToggleRow() || m.hasKConfig()) {
 			m.focusArea = 1
 		}
 	case "[":
@@ -652,7 +664,13 @@ func (m *Model) selectCurrentNode() {
 
 func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	visible := m.visibleOptions()
-	presetIdx := len(visible)
+	advToggleIdx := -1
+	nextIdx := len(visible)
+	if m.hasAdvancedToggleRow() {
+		advToggleIdx = nextIdx
+		nextIdx++
+	}
+	presetIdx := nextIdx
 
 	menuconfigIdx := -1
 	if m.hasKConfig() {
@@ -660,6 +678,11 @@ func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.hasPresets() {
 			menuconfigIdx = presetIdx + 1
 		}
+	}
+
+	if advToggleIdx >= 0 && m.optCursor == advToggleIdx && (msg.String() == "enter" || msg.String() == " ") {
+		m.toggleAdvanced()
+		return m, nil
 	}
 
 	if menuconfigIdx >= 0 && m.optCursor == menuconfigIdx && msg.String() == "enter" {
@@ -1085,6 +1108,7 @@ type rowKind int
 const (
 	rowGroup rowKind = iota
 	rowOption
+	rowAdvancedToggle
 	rowPreset
 	rowMenuconfig
 )
@@ -1268,6 +1292,26 @@ func truncateRunes(s string, max int) string {
 	return string(out)
 }
 
+func (m *Model) renderAdvancedToggleRow(selected bool) string {
+	var label string
+	var style lipgloss.Style
+	if hiddenAdv := m.hiddenAdvancedCount(); hiddenAdv > 0 {
+		label = m.textf(textShowAdvancedRow, hiddenAdv)
+		style = languageSelectorStyle
+	} else {
+		label = m.textf(textHideAdvancedRow, m.advancedOptionCount())
+		style = optionNameStyle.Bold(true)
+	}
+	if selected {
+		text := style.Background(colorHighlight).Render("  " + label)
+		if tail := m.optionsContentWidth() - lipgloss.Width(text); tail > 0 {
+			text += selectedRowStyle.Render(strings.Repeat(" ", tail))
+		}
+		return text
+	}
+	return "  " + style.Render(label)
+}
+
 func (m *Model) renderPresetRow(selected bool, nameW, valW int) string {
 	presetName := m.currentPreset()
 	name := m.text(textPreset)
@@ -1323,16 +1367,23 @@ func (m *Model) renderFooterWithin(maxHeight int) string {
 			{"Enter", m.text(textConfirm)}, {"Esc", m.text(textCancel)},
 		})
 	} else if m.focusArea == 0 {
-		helpText = renderHelpEntries([]helpEntry{
+		entries := []helpEntry{
 			{"↑↓", m.text(textNavigate)}, {"[]", m.text(textStepDeps)}, {"{}", m.text(textCycleEdges)}, {"←→", m.text(textCollapseExpand)},
 			{"/", m.text(textSearch)}, {"z/Z", m.text(textCollapseExpandAll)}, {"H", m.text(textHideEmpty)},
-			{"D", m.text(textDescriptionEdit)}, {"Tab", m.text(textOptions)}, {"Ctrl+S", m.text(textSave)}, {"Esc", m.text(textCancel)},
-		})
+		}
+		if m.projectHasAdvancedOptions() {
+			entries = append(entries, helpEntry{"a", m.text(textAllOptions)})
+		}
+		entries = append(entries,
+			helpEntry{"D", m.text(textDescriptionEdit)}, helpEntry{"Tab", m.text(textOptions)},
+			helpEntry{"Ctrl+S", m.text(textSave)}, helpEntry{"Esc", m.text(textCancel)},
+		)
+		helpText = renderHelpEntries(entries)
 	} else {
 		helpText = renderHelpEntries([]helpEntry{
 			{"↑↓", m.text(textNavigate)}, {"←→", m.text(textCycleValue)}, {"Space/Enter", m.text(textEdit)},
 			{"[]", m.text(textStepDeps)}, {"{}", m.text(textCycleEdges)}, {"r", m.text(textReset)}, {"R", m.text(textDefault)},
-			{"a", m.text(textAdvanced)}, {"?", m.text(textDetail)}, {"D", m.text(textDescriptionEdit)},
+			{"a", m.text(textAllOptions)}, {"?", m.text(textDetail)}, {"D", m.text(textDescriptionEdit)},
 			{"Tab", m.text(textPackages)}, {"Ctrl+S", m.text(textSave)}, {"Esc", m.text(textBack)},
 		})
 	}
