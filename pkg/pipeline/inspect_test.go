@@ -462,3 +462,69 @@ func TestTargetDepsOfCanonicalizesIntraContainerRefs(t *testing.T) {
 		t.Fatalf("targetDepsOf(local) = %v, want %v", gotLocal, wantLocal)
 	}
 }
+
+func TestInspectFactsExposePackageDirAndSrcDir(t *testing.T) {
+	skipWithoutHostTools(t)
+	s := sessionFixture(t)
+	containerID := "native/sdk"
+	member := "system/lvgl"
+	name := containerID + "/" + member
+	tree := remoteTreeDir(s.ctx, containerID)
+	pkgDir := filepath.Join(tree, "src", filepath.FromSlash(member))
+	if err := os.MkdirAll(pkgDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "build.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	wantSrcDir := filepath.Join(tree, "third_party", build.MemberDir(member), "src")
+	if err := os.MkdirAll(wantSrcDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wantSrcDir, "lvgl.h"), []byte("// lvgl\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s.ctx.DepGraph.Containers[containerID] = &resolver.ContainerNode{
+		ID:      containerID,
+		Repo:    "native",
+		Kind:    resolver.SourceKindNative,
+		Dir:     filepath.Join(tree, "src"),
+		URL:     "https://example.invalid/sdk.git",
+		Version: "1.0.0",
+		Commit:  "owner-commit",
+	}
+	src := buildscript.NewSource(name, filepath.Join(pkgDir, "build.go"), pkgDir, api.SourceRemote)
+	src.Container = containerID
+	src.RelPath = member
+	pkg := api.NewPackage().SetName(name)
+	pkg.SetGit("https://example.invalid/lvgl.git").AddVersion("9.6.0", "deadbeef")
+	s.ctx.DepGraph.Packages[name] = resolver.NewPackageNode(name, containerID, member, resolver.SourceKindNative, src, pkg)
+	delete(s.ctx.DepGraph.Packages, "//dep")
+	s.ctx.DepGraph.Order = []string{name, "//app"}
+	s.ctx.DepGraph.Roots = []string{"//app"}
+	s.ctx.DepGraph.Packages["//app"].Deps = []string{name}
+
+	inspection, err := InspectWithOptions(s.ctx, InspectOptions{Facts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	appFacts, ok := inspection.Facts("//app")
+	if !ok {
+		t.Fatal("missing facts for //app")
+	}
+	appDir := s.ctx.DepGraph.Packages["//app"].Source.Dir
+	if appFacts.PackageDir != appDir || appFacts.SrcDir != appDir {
+		t.Fatalf("//app dirs = (%q, %q), want (%q, %q)", appFacts.PackageDir, appFacts.SrcDir, appDir, appDir)
+	}
+	lvglFacts, ok := inspection.Facts(name)
+	if !ok {
+		t.Fatalf("missing facts for %s", name)
+	}
+	if lvglFacts.PackageDir != pkgDir {
+		t.Fatalf("%s PackageDir = %q, want %q", name, lvglFacts.PackageDir, pkgDir)
+	}
+	if lvglFacts.SrcDir != wantSrcDir {
+		t.Fatalf("%s SrcDir = %q, want %q", name, lvglFacts.SrcDir, wantSrcDir)
+	}
+}

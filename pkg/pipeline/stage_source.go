@@ -91,6 +91,13 @@ func (s *sourceStage) prepareNativeContainer(id string, c *resolver.ContainerNod
 		vlog.Verbose("  %s@%s (linked %s)", id, version, c.Link.Path)
 		return nil
 	}
+	if c.IsLocalPath() {
+		s.containerVersions[id] = c.Version
+		s.containerCommits[id] = c.Commit
+		s.containerTrees[id] = remoteTreeDir(s.rc.ctx, id)
+		vlog.Verbose("  %s@%s (path %s)", id, c.Version, c.Dir)
+		return nil
+	}
 
 	decision := s.rc.ctx.lockQuery().Containers().Decide(id, c.Version, c.Commit)
 	pinned := decision.Provenance == resolver.ProvenanceTargetCommit ||
@@ -182,7 +189,7 @@ func (s *sourceStage) preparePackages(downloadLog *sourceDownloadLog) error {
 
 		loc := s.rc.ctx.packageLocation(name, node)
 
-		if node.HasOwnGit() {
+		if node.HasActiveOwnGit() {
 			if loc.Linked {
 				version := resolver.LocalLinkVersion
 				s.sourceVersions[name] = version
@@ -259,7 +266,7 @@ func (s *sourceStage) verifyLockBeforePrepare() error {
 	sort.Strings(containerIDs)
 	for _, id := range containerIDs {
 		c := s.rc.ctx.DepGraph.Containers[id]
-		if c == nil || c.IsLocal() || c.IsLinked() {
+		if c == nil || c.IsLocal() || c.IsLinked() || c.IsLocalPath() {
 			continue
 		}
 		if s.rc.ctx.Lock == nil || s.rc.ctx.Lock.IsEmpty() {
@@ -291,7 +298,7 @@ func (s *sourceStage) verifyLockBeforePrepare() error {
 			continue
 		}
 		node := s.rc.ctx.DepGraph.Packages[name]
-		if node == nil || !node.HasOwnGit() {
+		if node == nil || !node.HasActiveOwnGit() {
 			continue
 		}
 		if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {
@@ -423,7 +430,7 @@ func (s *sourceStage) sourceRequestReady(req repo.SourceRequest) bool {
 }
 
 func (s *sourceStage) ownGitSourceNeedsMaterialization(name, sourceRoot string, node *resolver.PackageNode) bool {
-	if !node.HasOwnGit() {
+	if !node.HasActiveOwnGit() {
 		return false
 	}
 	req, err := s.sourceRequestFor(name, node, sourceRoot)
@@ -436,7 +443,7 @@ func (s *sourceStage) ownGitSourceNeedsMaterialization(name, sourceRoot string, 
 func (s *sourceStage) applyPatchesToNeeded() error {
 	for _, name := range s.rc.ctx.Resolver.GetOrder() {
 		node := s.rc.ctx.DepGraph.Packages[name]
-		if !s.conf.needed[name] || node == nil || node.Pkg == nil || node.Source == nil {
+		if !s.conf.needed[name] || node == nil || node.Pkg == nil || node.Source == nil || node.IsSealed() {
 			continue
 		}
 		if len(node.Pkg.GetPatches()) == 0 {
@@ -454,7 +461,7 @@ func (s *sourceStage) applyPatchesToNeeded() error {
 // recreates a clean tree instead of reusing a partially patched one.
 func (s *sourceStage) applyPatchesFor(name string) error {
 	node := s.rc.ctx.DepGraph.Packages[name]
-	if node == nil || node.Pkg == nil {
+	if node == nil || node.Pkg == nil || node.IsSealed() {
 		return nil
 	}
 	if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource && pathWithin(node.Source.Link.Path, node.Pkg.SrcDir()) {

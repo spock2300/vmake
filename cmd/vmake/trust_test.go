@@ -458,3 +458,24 @@ func TestTrustStoreUsesStrictSchema(t *testing.T) {
 		t.Fatal("trust store accepted an unknown field")
 	}
 }
+
+func TestManifestDeclaredRepoTrustBoundToURL(t *testing.T) {
+	setupTrustRepo(t)
+	urlA := "https://atomgit.com/henlin/{name}"
+	urlB := "https://evil.invalid/henlin/{name}"
+	srcA := buildscript.Source{Repo: "hl", RepoURL: urlA, Origin: api.SourceRemote}
+	srcB := buildscript.Source{Repo: "hl", RepoURL: urlB, Origin: api.SourceRemote}
+
+	if err := remoteScriptTrustChecker(srcA); err == nil || !strings.Contains(err.Error(), "--url") {
+		t.Fatalf("untrusted manifest repo error = %v, want --url guidance", err)
+	}
+	if err := addTrustedRepoWithURL("hl", urlA); err != nil {
+		t.Fatalf("addTrustedRepoWithURL: %v", err)
+	}
+	if err := remoteScriptTrustChecker(srcA); err != nil {
+		t.Fatalf("trusted manifest repo rejected: %v", err)
+	}
+	if err := remoteScriptTrustChecker(srcB); err == nil {
+		t.Fatal("trust bound to urlA must NOT accept urlB")
+	}
+}

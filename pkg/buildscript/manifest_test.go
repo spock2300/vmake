@@ -61,20 +61,141 @@ func TestLoadManifestAndEffectiveRoots(t *testing.T) {
 		if err != nil || !reflect.DeepEqual(roots, []string{"//firmware"}) {
 			t.Fatalf("EffectiveRoots = (%v, %v)", roots, err)
 		}
-		cid, rel, c, ok := m.MatchModule("hl/hl-mcu-sdk/system/uniface")
-		if !ok || cid != "hl/hl-mcu-sdk" || rel != "system/uniface" || c != ">=1.0.0" {
-			t.Fatalf("MatchModule(native sub) = (%q, %q, %q, %v)", cid, rel, c, ok)
+		cid, rel, spec, ok := m.MatchModule("hl/hl-mcu-sdk/system/uniface")
+		if !ok || cid != "hl/hl-mcu-sdk" || rel != "system/uniface" || spec.Version != ">=1.0.0" {
+			t.Fatalf("MatchModule(native sub) = (%q, %q, %+v, %v)", cid, rel, spec, ok)
 		}
-		cid, rel, c, ok = m.MatchModule("hl/hl-mcu-sdk")
-		if !ok || cid != "hl/hl-mcu-sdk" || rel != "" || c != ">=1.0.0" {
-			t.Fatalf("MatchModule(native root) = (%q, %q, %q, %v)", cid, rel, c, ok)
+		cid, rel, spec, ok = m.MatchModule("hl/hl-mcu-sdk")
+		if !ok || cid != "hl/hl-mcu-sdk" || rel != "" || spec.Version != ">=1.0.0" {
+			t.Fatalf("MatchModule(native root) = (%q, %q, %+v, %v)", cid, rel, spec, ok)
 		}
-		cid, rel, c, ok = m.MatchModule("official/tinyexpr")
-		if !ok || cid != "official" || rel != "tinyexpr" || c != "*" {
-			t.Fatalf("MatchModule(registry) = (%q, %q, %q, %v)", cid, rel, c, ok)
+		cid, rel, spec, ok = m.MatchModule("official/tinyexpr")
+		if !ok || cid != "official" || rel != "tinyexpr" || spec.Version != "*" {
+			t.Fatalf("MatchModule(registry) = (%q, %q, %+v, %v)", cid, rel, spec, ok)
 		}
 		if _, _, _, ok := m.MatchModule("other/pkg"); ok {
 			t.Fatal("undeclared module should not match")
+		}
+	})
+
+	t.Run("repos and local path modules parse and validate", func(t *testing.T) {
+		dir := t.TempDir()
+		content := `{
+			"roots": ["//app"],
+			"repos": {
+				"hl": {"native": "https://atomgit.com/henlin/{name}"}
+			},
+			"modules": {
+				"hl/sdk": {"version": ">=1.0.0"},
+				"local/sdk": {"path": "./vendor/sdk"}
+			}
+		}`
+		if err := os.WriteFile(filepath.Join(dir, ManifestFileName), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		m, _, err := LoadManifest(dir)
+		if err != nil {
+			t.Fatalf("LoadManifest: %v", err)
+		}
+		if m.Repos["hl"].Native != "https://atomgit.com/henlin/{name}" {
+			t.Fatalf("repos = %+v", m.Repos)
+		}
+		cid, rel, spec, ok := m.MatchModule("local/sdk/core")
+		if !ok || cid != "local/sdk" || rel != "core" || spec.Path != "./vendor/sdk" {
+			t.Fatalf("MatchModule(path) = (%q, %q, %+v, %v)", cid, rel, spec, ok)
+		}
+		cid, rel, spec, ok = m.MatchModule("hl/sdk/core")
+		if !ok || cid != "hl/sdk" || rel != "core" || spec.Version != ">=1.0.0" {
+			t.Fatalf("MatchModule(obj version) = (%q, %q, %+v, %v)", cid, rel, spec, ok)
+		}
+	})
+
+	t.Run("sealed_sources parse and validate", func(t *testing.T) {
+		dir := t.TempDir()
+		content := `{"sealed_sources": {"//system/freertos/lvgl": "vendor/lvgl"}}`
+		if err := os.WriteFile(filepath.Join(dir, ManifestFileName), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		m, _, err := LoadManifest(dir)
+		if err != nil {
+			t.Fatalf("LoadManifest: %v", err)
+		}
+		if rel, ok := m.SealedSource("system/freertos/lvgl"); !ok || rel != "vendor/lvgl" {
+			t.Fatalf("SealedSource = (%q, %v), want (vendor/lvgl, true)", rel, ok)
+		}
+		if _, ok := m.SealedSource("other"); ok {
+			t.Fatal("unexpected SealedSource match")
+		}
+	})
+
+	t.Run("dev_roots used when roots omitted and validated", func(t *testing.T) {
+		dir := t.TempDir()
+		content := `{"dev_roots": ["//tests/target-app"]}`
+		if err := os.WriteFile(filepath.Join(dir, ManifestFileName), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		m, exists, err := LoadManifest(dir)
+		if err != nil || !exists {
+			t.Fatalf("LoadManifest = (%+v, %v, %v)", m, exists, err)
+		}
+		roots, err := m.EffectiveRoots(dir)
+		if err != nil || !reflect.DeepEqual(roots, []string{"//tests/target-app"}) {
+			t.Fatalf("EffectiveRoots = (%v, %v), want [//tests/target-app]", roots, err)
+		}
+	})
+
+	t.Run("roots takes precedence over dev_roots", func(t *testing.T) {
+		dir := t.TempDir()
+		content := `{"roots": ["//app"], "dev_roots": ["//tests/runner"]}`
+		if err := os.WriteFile(filepath.Join(dir, ManifestFileName), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		m, _, err := LoadManifest(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		roots, err := m.EffectiveRoots(dir)
+		if err != nil || !reflect.DeepEqual(roots, []string{"//app"}) {
+			t.Fatalf("EffectiveRoots = (%v, %v), want [//app]", roots, err)
+		}
+	})
+
+	t.Run("exports whitelist resolution and uniqueness", func(t *testing.T) {
+		dir := t.TempDir()
+		content := `{
+			"exports": {
+				".": "//system",
+				"graphics": "//sdk/graphics",
+				"drivers/ek79007": "//system/driver/panel/ek79007"
+			}
+		}`
+		if err := os.WriteFile(filepath.Join(dir, ManifestFileName), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		m, _, err := LoadManifest(dir)
+		if err != nil {
+			t.Fatalf("LoadManifest: %v", err)
+		}
+		if !m.HasExports() {
+			t.Fatal("expected HasExports() == true")
+		}
+		if rel, ok := m.ResolveExport("graphics"); !ok || rel != "sdk/graphics" {
+			t.Fatalf("ResolveExport(graphics) = (%q, %v), want (sdk/graphics, true)", rel, ok)
+		}
+		if rel, ok := m.ResolveExport(""); !ok || rel != "system" {
+			t.Fatalf("ResolveExport(root) = (%q, %v), want (system, true)", rel, ok)
+		}
+		if _, ok := m.ResolveExport("sdk/graphics"); ok {
+			t.Fatal("unexported raw path sdk/graphics must be rejected when exports is present")
+		}
+		if id := m.CanonicalPackageID("hl/sdk", "sdk/graphics"); id != "hl/sdk/graphics" {
+			t.Fatalf("CanonicalPackageID(sdk/graphics) = %q, want hl/sdk/graphics", id)
+		}
+		if id := m.CanonicalPackageID("hl/sdk", "system"); id != "hl/sdk" {
+			t.Fatalf("CanonicalPackageID(system) = %q, want hl/sdk", id)
+		}
+		if id := m.CanonicalPackageID("hl/sdk", "system/internal-leaf"); id != "hl/sdk/system/internal-leaf" {
+			t.Fatalf("CanonicalPackageID(unexported) = %q, want hl/sdk/system/internal-leaf", id)
 		}
 	})
 
@@ -83,8 +204,23 @@ func TestLoadManifestAndEffectiveRoots(t *testing.T) {
 			`{"roots": ["firmware"]}`,
 			`{"roots": ["hl/sdk"]}`,
 			`{"roots": ["//a", "//a"]}`,
+			`{"dev_roots": ["tests"]}`,
+			`{"dev_roots": ["hl/sdk"]}`,
+			`{"dev_roots": ["//t", "//t"]}`,
+			`{"exports": {"//bad": "//a"}}`,
+			`{"exports": {"../escape": "//a"}}`,
+			`{"exports": {"a:b": "//a"}}`,
+			`{"exports": {"a": "not-local"}}`,
+			`{"exports": {"a": "//same", "b": "//same"}}`,
 			`{"modules": {"//": "*"}}`,
 			`{"modules": {"hl/sdk": "not-a-constraint"}}`,
+			`{"modules": {"hl/sdk": {"path": "./sdk", "version": "^1.0.0"}}}`,
+			`{"modules": {"hl/sdk": {"path": "/abs/sdk"}}}`,
+			`{"repos": {"hl": {"native": "https://example.com/no-placeholder"}}}`,
+			`{"repos": {"bad/name": {"native": "https://example.com/{name}"}}}`,
+			`{"sealed_sources": {"not-local": "vendor/x"}}`,
+			`{"sealed_sources": {"//a": "../escape"}}`,
+			`{"sealed_sources": {"//a": "/abs/vendor"}}`,
 			`{"sources": {"bare": ">=1.0.0"}}`,
 		}
 		for _, body := range cases {
@@ -95,6 +231,49 @@ func TestLoadManifestAndEffectiveRoots(t *testing.T) {
 			if _, _, err := LoadManifest(dir); err == nil {
 				t.Errorf("LoadManifest(%s) = nil error, want error", body)
 			}
+		}
+	})
+	t.Run("empty exports map blocks all paths while omitted exports stays open", func(t *testing.T) {
+		openDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(openDir, ManifestFileName), []byte(`{"roots":["//"]}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		openM, _, err := LoadManifest(openDir)
+		if err != nil {
+			t.Fatalf("LoadManifest(open): %v", err)
+		}
+		if openM.HasExports() {
+			t.Fatal("omitted exports must have HasExports() == false")
+		}
+
+		closedDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(closedDir, ManifestFileName), []byte(`{"exports":{}}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		closedM, _, err := LoadManifest(closedDir)
+		if err != nil {
+			t.Fatalf("LoadManifest(empty exports): %v", err)
+		}
+		if !closedM.HasExports() {
+			t.Fatal("explicit empty exports must have HasExports() == true")
+		}
+		if _, ok := closedM.ResolveExport("anything"); ok {
+			t.Fatal("empty exports must deny all paths")
+		}
+
+		collDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(collDir, ManifestFileName), []byte(`{"exports":{"core":"//sdk/core"}}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		collM, _, err := LoadManifest(collDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if key, target, collides := collM.ExportKeyCollision("core"); !collides || key != "core" || target != "//sdk/core" {
+			t.Fatalf("ExportKeyCollision(core) = (%q,%q,%v), want collision", key, target, collides)
+		}
+		if _, _, collides := collM.ExportKeyCollision("sdk/core"); collides {
+			t.Fatal("exported target sdk/core must not report collision")
 		}
 	})
 }

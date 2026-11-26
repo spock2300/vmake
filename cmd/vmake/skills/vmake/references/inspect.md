@@ -153,7 +153,7 @@ writes on `p.DryRun()`. The guard covers the wrapped symbols only.
 | `globalCFlags`, `globalCxxFlags`, `globalLdFlags`, `globalLinks` | Global `AddGlobal*` declarations from needed packages in package/declaration order; duplicates preserved; omitted when empty |
 | `globalDefines` | Auto-exported global-option macros as `NAME=value`, sorted, without `-D`; omitted when empty |
 | `overrides` | Typed `--set` values keyed `[package:]option`; omitted when unused |
-| `roots` | Active configuration `"root"`/`"roots"` when set, else `vmake.json` `"roots"` (or `"//"` when root `build.go` exists), otherwise needed local packages that no needed package depends on, sorted |
+| `roots` | Active configuration `"root"`/`"roots"` when set, else `vmake.json` `"roots"` (or `"dev_roots"` when local and `roots` is omitted, or `"//"` when root `build.go` exists), otherwise needed local packages that no needed package depends on, sorted |
 | `containers` | Resolved module containers (`{id, kind, repo?, version?, commit?, url?, dir?, linked?, linkPath?}`), sorted by ID |
 | `packages` | Resolved package entries, sorted by name (each carries `container` identifying its owning container) |
 | `graph` | Package dependency edges `{from, to}`, sorted (merges `OnRequire`, cross-package target `AddDeps`/`UseRequires`, and `BuildSubGraph` edges; `--no-targets` reports `OnRequire` edges only). Edges may also carry `kinds` and `via`, matching `vmake deps graph` |
@@ -188,11 +188,12 @@ define.
 Each `packages` entry has `name`, `kind` (`local`/`native`/`registry`; a `local`
 package is spelled `git` under `vmake deps status --json`),
 `needed`, `sourcePresent`, `deps`, optional remote
-`repo`/`version`/`commit`/`url`, local `path` and absolute `sourceDir`,
+`repo`/`version`/`commit`/`url`, local `path`, absolute `sourceDir`,
+`packageDir` (directory containing `build.go`), `srcDir` (materialized or sealed source tree backing `p.SrcDir()`), optional `sealed` (`true` when served from container `sealed_sources`),
 optional `linked`/`linkPath` for `pkg link` packages (version is then
 `0.0.0-local` and commit is the linked tree HEAD), `description`, `toolchain`, `platform` (`{targetOs, targetTriple}` resolved for that package; `targetOs` is the host OS when unset), `options` (effective values), `optionDefs`
-(object keyed by option name with the same `{type, default?, description?,
-values?, group?}` schema), and `targets` (needed packages that declare targets;
+(object keyed by option name with `{type, default?, description?,
+values?, group?, internal?}`), and `targets` (needed packages that declare targets;
 omitted for every package with `--no-targets`). `sourcePresent` is false when
 the expected source tree is missing or empty; that package also gets a
 `VMAKE_W_SOURCE_MISSING` warning when it is needed.

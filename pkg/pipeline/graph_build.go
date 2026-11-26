@@ -57,14 +57,7 @@ func BuildUnifiedGraph(ctx *RuntimeContext, inspection *Inspection, opts GraphOp
 			visPath = ctx.Resolver.VisibilityPath(name)
 		}
 		present := IsPackageSourcePresent(ctx, name, node)
-		meta := build.PkgBuildMeta{
-			Origin:         node.Source.Origin,
-			Container:      node.Container,
-			Linked:         node.Source.Link != nil,
-			Deps:           append([]string(nil), node.Deps...),
-			VisPath:        visPath,
-			Unmaterialized: !present,
-		}
+		meta := pkgBuildMetaFor(ctx, node, visPath, !present)
 		if !present && included[name] {
 			g.unmaterialized[name] = true
 		}

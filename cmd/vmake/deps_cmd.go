@@ -35,6 +35,7 @@ package/target dependency graphs, .vmake/project.json pins, .vmake/vmake.lock,
 		newDepsCheckCmd(),
 		newDepsSyncCmd(),
 		newDepsUpdateCmd(),
+		newDepsPruneCmd(),
 		newDepsPinCmd(),
 		newDepsUnpinCmd(),
 		newDepsFetchCmd(),
@@ -118,6 +119,7 @@ availability.`,
 
 func newDepsSyncCmd() *cobra.Command {
 	var jsonOut bool
+	var prune bool
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Synchronize working trees and vmake.lock without floating locked packages",
@@ -126,7 +128,8 @@ requirements and .vmake/project.json pins.
 
 Already-locked packages that satisfy current constraints and pins keep their
 locked commit; newly added or newly re-pinned packages are resolved, fetched
-and recorded in .vmake/vmake.lock, and stale lock entries are pruned.`,
+and recorded in .vmake/vmake.lock. Existing entries for inactive configurations
+are retained unless --prune is passed (or run 'vmake deps prune').`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jsonOut {
@@ -138,7 +141,7 @@ and recorded in .vmake/vmake.lock, and stale lock entries are pruned.`,
 				return err
 			}
 			defer closeProject(ctx)
-			res, err := pipeline.SyncOrUpdateDeps(ctx, false)
+			res, err := pipeline.SyncOrUpdateDepsWithOptions(ctx, pipeline.DepsSyncOptions{Prune: prune})
 			if err != nil {
 				return err
 			}
@@ -149,6 +152,46 @@ and recorded in .vmake/vmake.lock, and stale lock entries are pruned.`,
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&prune, "prune", false, "remove lock entries not needed by the active configuration")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print machine-readable JSON")
+	return cmd
+}
+
+func newDepsPruneCmd() *cobra.Command {
+	var dryRun bool
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "prune",
+		Short: "Remove lockfile entries not needed by the active configuration",
+		Long: `Prune entries from .vmake/vmake.lock that are not required by the active
+configuration while keeping active locked dependencies unchanged.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if jsonOut {
+				defer quietpkg.LogQuiet()()
+			}
+			policy := resolver.LockPolicy{DryRun: dryRun}
+			ctx, err := openProject(projectOptions{execution: cmd.Context(), policy: &policy})
+			if err != nil {
+				return err
+			}
+			defer closeProject(ctx)
+			res, err := pipeline.SyncOrUpdateDepsWithOptions(ctx, pipeline.DepsSyncOptions{DryRun: dryRun, Prune: true})
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				return writeDepsUpdateJSON(cmd.OutOrStdout(), "deps prune", res)
+			}
+			action := "Pruned"
+			if dryRun {
+				action = "Would prune"
+			}
+			printDepsUpdateSummary(cmd.OutOrStdout(), action, res, ctx.SourceLinks)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview lockfile pruning without modifying vmake.lock")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "print machine-readable JSON")
 	return cmd
 }
@@ -156,6 +199,7 @@ and recorded in .vmake/vmake.lock, and stale lock entries are pruned.`,
 func newDepsUpdateCmd() *cobra.Command {
 	var dryRun bool
 	var refreshRepos bool
+	var prune bool
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "update [pkg[@version|commit]...]",
@@ -204,7 +248,7 @@ writing a persistent pin to .vmake/project.json.`,
 			if err := validateRequestedPackagesInGraph(ctx, requested); err != nil {
 				return err
 			}
-			res, err := pipeline.SyncOrUpdateDeps(ctx, dryRun)
+			res, err := pipeline.SyncOrUpdateDepsWithOptions(ctx, pipeline.DepsSyncOptions{DryRun: dryRun, Prune: prune})
 			if err != nil {
 				return err
 			}
@@ -224,6 +268,7 @@ writing a persistent pin to .vmake/project.json.`,
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview lockfile changes without modifying .vmake_deps/ or vmake.lock")
 	cmd.Flags().BoolVar(&refreshRepos, "refresh-repos", false, "git pull registered package repositories before resolving")
+	cmd.Flags().BoolVar(&prune, "prune", false, "remove lock entries not needed by the active configuration")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "print machine-readable JSON")
 	return cmd
 }
@@ -491,7 +536,7 @@ func validateRequestedPackagesInGraph(ctx *RuntimeContext, requested []string) e
 		if node == nil {
 			return fmt.Errorf("container or package %q is not in the project dependency graph", name)
 		}
-		if node.HasOwnGit() {
+		if node.HasActiveOwnGit() {
 			continue
 		}
 		if node.IsNative() && node.Container != "" {

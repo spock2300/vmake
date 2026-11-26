@@ -1944,3 +1944,62 @@ func Main(p *api.Package) {
 		t.Fatalf("gen target inputs/outputs = %+v", gen)
 	}
 }
+
+func TestInspectExposesPackageDirSrcDirSealedAndInternalOption(t *testing.T) {
+	project := filepath.Join(canonicalTempDir(t), "proj")
+	writeExtensionFile(t, filepath.Join(project, "vmake.json"), `{
+  "roots": ["//"],
+  "sealed_sources": {
+    "//vendor_pkg": "sealed_tree/vendor_src"
+  }
+}`)
+	writeExtensionFile(t, filepath.Join(project, "sealed_tree", "vendor_src", "v.c"), "int v(void) { return 1; }\n")
+	writeExtensionFile(t, filepath.Join(project, "vendor_pkg", "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+	p.OnPackage(func(p *api.Package) {
+		p.SetGit("https://unreachable.invalid/vendor.git")
+	})
+	p.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.Option("secret").SetType(api.OptionBool).SetDefault(false).SetInternal(true)
+	})
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("vlib").SetKind(api.TargetStatic).AddFiles(p.SrcDir() + "/v.c")
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+	p.AddRequires("//vendor_pkg")
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetVoid).UseRequires()
+	})
+}
+`)
+
+	stdout, stderr, code := runInspectCommand(t, project, "inspect")
+	if code != 0 || stderr != "" {
+		t.Fatalf("inspect exit = %d, stderr = %q\n%s", code, stderr, stdout)
+	}
+	data := decodeInspectEnvelope(t, stdout).Data
+	if data == nil {
+		t.Fatal("inspect returned nil data")
+	}
+	vp := inspectPackageNamed(t, data, "//vendor_pkg")
+	wantPkgDir := filepath.Join(project, "vendor_pkg")
+	wantSrcDir := filepath.Join(project, "sealed_tree", "vendor_src")
+	if filepath.Clean(vp.PackageDir) != filepath.Clean(wantPkgDir) {
+		t.Errorf("packageDir = %q, want %q", vp.PackageDir, wantPkgDir)
+	}
+	if filepath.Clean(vp.SrcDir) != filepath.Clean(wantSrcDir) {
+		t.Errorf("srcDir = %q, want %q", vp.SrcDir, wantSrcDir)
+	}
+	if !vp.Sealed {
+		t.Errorf("sealed = false, want true")
+	}
+	secretDef, ok := vp.OptionDefs["secret"]
+	if !ok || !secretDef.Internal {
+		t.Errorf("optionDefs[secret] = %+v, want Internal=true", secretDef)
+	}
+}

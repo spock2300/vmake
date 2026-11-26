@@ -6,7 +6,6 @@ import (
 	"maps"
 	"sort"
 
-	"github.com/spock2300/vmake/internal/pkgvis"
 	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
@@ -246,7 +245,7 @@ func applyNodeConfigureDeps(
 		if targetPkg == name || !canReachDependency(ctx.DepGraph, name, targetPkg) {
 			return "", nil, fmt.Errorf("%s: OnConfigureDeps cannot configure %q because %s does not depend on it", name, targetPkg, name)
 		}
-		if err := pkgvis.CheckInternal(name, ctx.Resolver.VisibilityPath(name), targetPkg, ctx.Resolver.VisibilityPath(targetPkg)); err != nil {
+		if err := checkPackageVisibility(ctx, name, targetPkg); err != nil {
 			return "", nil, err
 		}
 		targetOpts := ctx.allOptions[targetPkg]
@@ -260,12 +259,18 @@ func applyNodeConfigureDeps(
 	depCtx := api.NewDepConfigContext(name, srcDir, vals, opts)
 	api.BindSetConfigLookup(&depCtx.ConfigAccessor, newConfigLookup(ctx, name, globalValues, nil))
 	api.BindSetOptionExists(depCtx, func(depPkg, option string) (bool, error) {
-		_, targetOpts, err := resolveTarget(depPkg)
+		targetPkg, targetOpts, err := resolveTarget(depPkg)
 		if err != nil {
 			return false, err
 		}
 		opt := targetOpts[option]
-		return opt != nil && !opt.IsGlobal(), nil
+		if opt == nil || opt.IsGlobal() {
+			return false, nil
+		}
+		if opt.IsInternal() && packageContainerID(ctx, name) != packageContainerID(ctx, targetPkg) {
+			return false, nil
+		}
+		return true, nil
 	})
 	api.BindPackageExecConfigureDepsFuncs(node.Pkg, srcDir, func(fn api.ConfigureDepsFunc) {
 		fn(depCtx)
@@ -281,6 +286,9 @@ func applyNodeConfigureDeps(
 		}
 		if opt.IsGlobal() {
 			return fmt.Errorf("%s: OnConfigureDeps cannot set global option %q on %q", name, def.Option, targetPkg)
+		}
+		if opt.IsInternal() && packageContainerID(ctx, name) != packageContainerID(ctx, targetPkg) {
+			return fmt.Errorf("%s: OnConfigureDeps cannot set internal option %q on %q (internal to container %q)", name, def.Option, targetPkg, packageContainerID(ctx, targetPkg))
 		}
 		normVal := api.NormalizeOptionValue(opt, def.Value)
 		if err := api.ValidateOptionValue(opt, normVal); err != nil {

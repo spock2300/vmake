@@ -13,7 +13,7 @@ var scriptMethodAllowlist = map[string][]string{
 	"InstallItemHolder": {"AddInstalls", "GetInstallFilter", "GetInstallItems", "SetInstallFilter"},
 	"InstalledPackage":  {"UpdateLibDir"},
 	"KConfigEntry":      {"AddPreset", "ConfigPath", "DefaultPreset", "Description", "MenuconfigArgs", "MenuconfigCmd", "Name", "Patches", "Presets", "SelectPreset", "SelectedPreset", "SetConfigPath", "SetDefaultPreset", "SetDescription", "SetKConfigPatches", "SetMenuconfigCmd", "SetSrcDir", "SrcDir"},
-	"Option":            {"Default", "Description", "ExportDefine", "ExportDefineSet", "Group", "IsGlobal", "MacroDefines", "MacroName", "Name", "OnApply", "SetDefault", "SetDescription", "SetExportDefine", "SetGroup", "SetMacroName", "SetOnApply", "SetShowIf", "SetType", "SetValues", "ShowIf", "Type", "Values"},
+	"Option":            {"Default", "Description", "ExportDefine", "ExportDefineSet", "Group", "IsGlobal", "IsInternal", "MacroDefines", "MacroName", "Name", "OnApply", "SetDefault", "SetDescription", "SetExportDefine", "SetGroup", "SetInternal", "SetMacroName", "SetOnApply", "SetShowIf", "SetType", "SetValues", "ShowIf", "Type", "Values"},
 	"OptionBool":        {"String"},
 	"OptionChoice":      {"String"},
 	"OptionInt":         {"String"},

@@ -501,6 +501,9 @@ func ValidateOption(o *Option) error {
 	if strings.ContainsAny(o.name, "/:") {
 		return fmt.Errorf("option name %q must not contain '/' or ':'", o.name)
 	}
+	if o.IsGlobal() && o.IsInternal() {
+		return fmt.Errorf("option %q cannot be both global and internal", o.name)
+	}
 	if o.macroName != "" {
 		if strings.Contains(o.macroName, "%") {
 			if strings.Count(o.macroName, "%") != 1 || (!strings.Contains(o.macroName, "%s") && !strings.Contains(o.macroName, "%v")) {

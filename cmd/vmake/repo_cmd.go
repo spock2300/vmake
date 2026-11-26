@@ -9,7 +9,10 @@ import (
 	"github.com/spock2300/vmake/pkg/repo"
 )
 
-var repoAddNative bool
+var (
+	repoAddNative    bool
+	repoTrustURLFlag string
+)
 
 var repoCmd = &cobra.Command{
 	Use:   "repo",
@@ -49,7 +52,7 @@ var repoTrustCmd = &cobra.Command{
 	Short: "Trust a repository and its future updates",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		fatalErr(addTrustedRepo(args[0]))
+		fatalErr(addTrustedRepoWithURL(args[0], repoTrustURLFlag))
 	},
 }
 

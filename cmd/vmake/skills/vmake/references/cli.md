@@ -24,10 +24,11 @@ extension plugin commands appear here too. For plugin details, run
     `vmake deps fetch [pkg...] [--all --json --offline]` - Materialize locked dependency sources into .vmake_deps/ without building
     `vmake deps graph [--all --format <value> --json --locked --offline --set <value> -s --targets]` - Print the unified package or target dependency graph
     `vmake deps pin <pkg>@<version|commit> [--dry-run --json]` - Pin a dependency version or commit in .vmake/project.json and vmake.lock
+    `vmake deps prune [--dry-run --json]` - Remove lockfile entries not needed by the active configuration
     `vmake deps status [--json]` - Show unified dependency state across lock, pins, working trees and cache
-    `vmake deps sync [--json]` - Synchronize working trees and vmake.lock without floating locked packages
+    `vmake deps sync [--json --prune]` - Synchronize working trees and vmake.lock without floating locked packages
     `vmake deps unpin <pkg> [--json]` - Remove a dependency pin from .vmake/project.json
-    `vmake deps update [pkg[@version|commit]...] [--dry-run --json --refresh-repos]` - Re-resolve dependencies and rewrite vmake.lock
+    `vmake deps update [pkg[@version|commit]...] [--dry-run --json --prune --refresh-repos]` - Re-resolve dependencies and rewrite vmake.lock
     `vmake deps why <pkg|pkg:target> [--all --json --locked --offline --set <value> -s]` - Explain why a package or target is needed by the root build
   `vmake distclean [--purge-sources]` - Deep clean all build artifacts
   `vmake doctor [--config <value> -c --toolchain <value>]` - Diagnose platform prerequisites and build.go patterns
@@ -61,7 +62,7 @@ extension plugin commands appear here too. For plugin details, run
     `vmake repo add <name> <git-url-or-template> [--native -n]` - Add a package repository
     `vmake repo list` - List all package repositories
     `vmake repo remove <name>` - Remove a package repository
-    `vmake repo trust <name>` - Trust a repository and its future updates
+    `vmake repo trust <name> [--url <value>]` - Trust a repository and its future updates
     `vmake repo untrust <name>` - Revoke trust for a repository
     `vmake repo update <name>` - Update a package repository
   `vmake skill` - Manage AI coding assistant skills

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/spock2300/vmake/internal/gitstore"
 	"github.com/spock2300/vmake/pkg/api"
 )
 
@@ -18,11 +19,48 @@ type ScriptSection struct {
 	Root   string `json:"root,omitempty"`
 }
 
+type RepoSpec struct {
+	Native string `json:"native,omitempty"`
+}
+
+type ModuleSpec struct {
+	Version string `json:"version,omitempty"`
+	Path    string `json:"path,omitempty"`
+}
+
+func (m *ModuleSpec) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		m.Version = s
+		m.Path = ""
+		return nil
+	}
+	type alias ModuleSpec
+	var obj alias
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return fmt.Errorf("module spec must be a version constraint string or {\"version\"|\"path\"} object: %w", err)
+	}
+	*m = ModuleSpec(obj)
+	return nil
+}
+
+func (m ModuleSpec) MarshalJSON() ([]byte, error) {
+	if m.Path == "" {
+		return json.Marshal(m.Version)
+	}
+	type alias ModuleSpec
+	return json.Marshal(alias(m))
+}
+
 type Manifest struct {
-	Script  *ScriptSection    `json:"script,omitempty"`
-	Roots   []string          `json:"roots,omitempty"`
-	Modules map[string]string `json:"modules,omitempty"`
-	Sources map[string]string `json:"sources,omitempty"`
+	Script        *ScriptSection        `json:"script,omitempty"`
+	Roots         []string              `json:"roots,omitempty"`
+	DevRoots      []string              `json:"dev_roots,omitempty"`
+	Repos         map[string]RepoSpec   `json:"repos,omitempty"`
+	Modules       map[string]ModuleSpec `json:"modules,omitempty"`
+	Exports       map[string]string     `json:"exports,omitempty"`
+	Sources       map[string]string     `json:"sources,omitempty"`
+	SealedSources map[string]string     `json:"sealed_sources,omitempty"`
 }
 
 func LoadManifest(rootDir string) (*Manifest, bool, error) {
@@ -48,29 +86,40 @@ func (m *Manifest) Validate(path string) error {
 	if m == nil {
 		return nil
 	}
-	seenRoots := make(map[string]bool, len(m.Roots))
-	for _, root := range m.Roots {
-		if err := api.ValidatePackageRef(root); err != nil {
-			return fmt.Errorf("%s: roots entry %q: %w", path, root, err)
-		}
-		if !api.IsLocalPackageID(root) {
-			return fmt.Errorf("%s: roots entry %q must be a local package starting with '//'", path, root)
-		}
-		if seenRoots[root] {
-			return fmt.Errorf("%s: duplicate roots entry %q", path, root)
-		}
-		seenRoots[root] = true
+	if err := validateLocalRootList(path, "roots", m.Roots); err != nil {
+		return err
 	}
-	for mod, raw := range m.Modules {
+	if err := validateLocalRootList(path, "dev_roots", m.DevRoots); err != nil {
+		return err
+	}
+	for repoName, spec := range m.Repos {
+		if err := gitstore.ValidateName(repoName); err != nil {
+			return fmt.Errorf("%s: repos key %q: %w", path, repoName, err)
+		}
+		tmpl := strings.TrimSpace(spec.Native)
+		if tmpl == "" {
+			return fmt.Errorf("%s: repos[%q] must specify a non-empty \"native\" URL template", path, repoName)
+		}
+		if !strings.Contains(tmpl, "{name}") {
+			return fmt.Errorf("%s: repos[%q].native %q must contain the {name} placeholder", path, repoName, spec.Native)
+		}
+	}
+	for mod, spec := range m.Modules {
 		if mod == api.LocalContainerID {
 			return fmt.Errorf("%s: modules key %q must be an external container ID", path, mod)
 		}
 		if err := api.ValidateContainerID(mod); err != nil {
 			return fmt.Errorf("%s: modules key %q: %w", path, mod, err)
 		}
-		if err := validateConstraint(raw); err != nil {
+		if err := validateModuleSpec(spec); err != nil {
 			return fmt.Errorf("%s: modules[%q]: %w", path, mod, err)
 		}
+	}
+	if err := validateExports(path, m.Exports); err != nil {
+		return err
+	}
+	if err := validateSealedSources(path, m.SealedSources); err != nil {
+		return err
 	}
 	for srcPkg, raw := range m.Sources {
 		if err := api.ValidatePackageRef(srcPkg); err != nil {
@@ -81,6 +130,21 @@ func (m *Manifest) Validate(path string) error {
 		}
 	}
 	return nil
+}
+
+func validateModuleSpec(spec ModuleSpec) error {
+	p := strings.TrimSpace(spec.Path)
+	v := strings.TrimSpace(spec.Version)
+	if p != "" {
+		if v != "" {
+			return fmt.Errorf("cannot specify both \"path\" and \"version\"")
+		}
+		if filepath.IsAbs(p) || strings.HasPrefix(p, "/") {
+			return fmt.Errorf("path %q must be relative to the project root", spec.Path)
+		}
+		return nil
+	}
+	return validateConstraint(v)
 }
 
 func validateConstraint(raw string) error {
@@ -110,35 +174,246 @@ func isHexCommit(s string) bool {
 	return true
 }
 
+func validateLocalRootList(path, field string, roots []string) error {
+	seen := make(map[string]bool, len(roots))
+	for _, root := range roots {
+		if err := api.ValidatePackageRef(root); err != nil {
+			return fmt.Errorf("%s: %s entry %q: %w", path, field, root, err)
+		}
+		if !api.IsLocalPackageID(root) {
+			return fmt.Errorf("%s: %s entry %q must be a local package starting with '//'", path, field, root)
+		}
+		if seen[root] {
+			return fmt.Errorf("%s: duplicate %s entry %q", path, field, root)
+		}
+		seen[root] = true
+	}
+	return nil
+}
+
+func validateExportKey(key string) error {
+	if key == "." {
+		return nil
+	}
+	if key == "" || strings.HasPrefix(key, "/") || strings.HasSuffix(key, "/") || strings.Contains(key, ":") || strings.Contains(key, "\\") || strings.Contains(key, "//") {
+		return fmt.Errorf("invalid export name %q (use '.' or a clean relative path without leading/trailing '/')", key)
+	}
+	for _, seg := range strings.Split(key, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return fmt.Errorf("invalid export name %q (path segments must not be empty, '.' or '..')", key)
+		}
+	}
+	return nil
+}
+
+func validateExports(path string, exports map[string]string) error {
+	seenTargets := make(map[string]string, len(exports))
+	for key, target := range exports {
+		if err := validateExportKey(key); err != nil {
+			return fmt.Errorf("%s: exports[%q]: %w", path, key, err)
+		}
+		if err := api.ValidatePackageRef(target); err != nil {
+			return fmt.Errorf("%s: exports[%q] target %q: %w", path, key, target, err)
+		}
+		if !api.IsLocalPackageID(target) {
+			return fmt.Errorf("%s: exports[%q] target %q must be a local package starting with '//'", path, key, target)
+		}
+		if prev, dup := seenTargets[target]; dup {
+			return fmt.Errorf("%s: exports[%q] and exports[%q] both target %q; export targets must be unique", path, prev, key, target)
+		}
+		seenTargets[target] = key
+	}
+	return nil
+}
+
+func validateSealedSources(path string, sealed map[string]string) error {
+	for pkgKey, rawDir := range sealed {
+		if err := api.ValidatePackageRef(pkgKey); err != nil {
+			return fmt.Errorf("%s: sealed_sources key %q: %w", path, pkgKey, err)
+		}
+		if !api.IsLocalPackageID(pkgKey) {
+			return fmt.Errorf("%s: sealed_sources key %q must be a local package starting with '//'", path, pkgKey)
+		}
+		d := strings.TrimSpace(rawDir)
+		if d == "" || filepath.IsAbs(d) || strings.HasPrefix(d, "/") || strings.Contains(d, ":") {
+			return fmt.Errorf("%s: sealed_sources[%q]: path %q must be a relative directory inside the container", path, pkgKey, rawDir)
+		}
+		clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(d)))
+		if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+			return fmt.Errorf("%s: sealed_sources[%q]: path %q escapes the container root", path, pkgKey, rawDir)
+		}
+	}
+	return nil
+}
+
+func (m *Manifest) SealedSource(relPath string) (string, bool) {
+	if m == nil || len(m.SealedSources) == 0 {
+		return "", false
+	}
+	relPath = strings.Trim(filepath.ToSlash(relPath), "/")
+	key := api.LocalContainerID
+	if relPath != "" {
+		key = api.LocalContainerID + relPath
+	}
+	raw, ok := m.SealedSources[key]
+	if !ok {
+		return "", false
+	}
+	return filepath.ToSlash(filepath.Clean(filepath.FromSlash(strings.TrimSpace(raw)))), true
+}
+
+func (m *Manifest) HasExports() bool {
+	return m != nil && m.Exports != nil
+}
+
+func (m *Manifest) ExportNames() []string {
+	if !m.HasExports() {
+		return nil
+	}
+	names := make([]string, 0, len(m.Exports))
+	for k := range m.Exports {
+		names = append(names, k)
+	}
+	slices.Sort(names)
+	return names
+}
+
+func (m *Manifest) ResolveExport(reqRelPath string) (string, bool) {
+	reqRelPath = strings.Trim(filepath.ToSlash(reqRelPath), "/")
+	if !m.HasExports() {
+		return reqRelPath, true
+	}
+	key := reqRelPath
+	if key == "" {
+		key = "."
+	}
+	target, ok := m.Exports[key]
+	if !ok {
+		return "", false
+	}
+	rel, _ := api.LocalRelPath(target)
+	return rel, true
+}
+
+func (m *Manifest) ExportKeyForRelPath(relPath string) (string, bool) {
+	if !m.HasExports() {
+		return "", false
+	}
+	relPath = strings.Trim(filepath.ToSlash(relPath), "/")
+	want := api.LocalContainerID
+	if relPath != "" {
+		want = api.LocalContainerID + relPath
+	}
+	for k, target := range m.Exports {
+		if target == want {
+			if k == "." {
+				return "", true
+			}
+			return k, true
+		}
+	}
+	return "", false
+}
+
+func (m *Manifest) IsExportedRelPath(relPath string) bool {
+	if !m.HasExports() {
+		return true
+	}
+	_, ok := m.ExportKeyForRelPath(relPath)
+	return ok
+}
+
+func (m *Manifest) ExportKeyCollision(relPath string) (string, string, bool) {
+	if !m.HasExports() {
+		return "", "", false
+	}
+	if _, exported := m.ExportKeyForRelPath(relPath); exported {
+		return "", "", false
+	}
+	relPath = strings.Trim(filepath.ToSlash(relPath), "/")
+	key := relPath
+	if key == "" {
+		key = "."
+	}
+	if target, ok := m.Exports[key]; ok {
+		return key, target, true
+	}
+	return "", "", false
+}
+
+func (m *Manifest) CanonicalPackageID(containerID, relPath string) string {
+	relPath = strings.Trim(filepath.ToSlash(relPath), "/")
+	if containerID == "" || containerID == api.LocalContainerID {
+		if relPath == "" {
+			return api.LocalContainerID
+		}
+		return api.LocalContainerID + relPath
+	}
+	if m.HasExports() {
+		if expKey, ok := m.ExportKeyForRelPath(relPath); ok {
+			if expKey == "" {
+				return containerID
+			}
+			return containerID + "/" + expKey
+		}
+	}
+	if relPath == "" {
+		return containerID
+	}
+	return containerID + "/" + relPath
+}
+
+func (m *Manifest) InternalRefMap(containerID string) map[string]string {
+	if !m.HasExports() || containerID == "" || containerID == api.LocalContainerID {
+		return nil
+	}
+	out := make(map[string]string, len(m.Exports))
+	for k, target := range m.Exports {
+		if k == "." {
+			out[target] = containerID
+		} else {
+			out[target] = containerID + "/" + k
+		}
+	}
+	return out
+}
+
 func (m *Manifest) EffectiveRoots(rootDir string) ([]string, error) {
 	if m != nil && len(m.Roots) > 0 {
 		return slices.Clone(m.Roots), nil
 	}
+	if m != nil && len(m.DevRoots) > 0 {
+		return slices.Clone(m.DevRoots), nil
+	}
 	if _, err := os.Stat(filepath.Join(rootDir, "build.go")); err == nil {
 		return []string{api.LocalContainerID}, nil
 	}
-	return nil, fmt.Errorf("no roots declared in %s and no root build.go found in %s", ManifestFileName, rootDir)
+	return nil, fmt.Errorf("no roots or dev_roots declared in %s and no root build.go found in %s", ManifestFileName, rootDir)
 }
 
-func (m *Manifest) MatchModule(ref string) (containerID, relPath, constraint string, ok bool) {
+func (m *Manifest) MatchModule(ref string) (containerID, relPath string, spec ModuleSpec, ok bool) {
 	if m == nil || len(m.Modules) == 0 || ref == "" || api.IsLocalPackageID(ref) {
-		return "", "", "", false
+		return "", "", ModuleSpec{}, false
 	}
 	bestLen := -1
-	for mod, c := range m.Modules {
+	for mod, rawSpec := range m.Modules {
+		trimmed := ModuleSpec{
+			Version: strings.TrimSpace(rawSpec.Version),
+			Path:    strings.TrimSpace(rawSpec.Path),
+		}
 		if ref == mod {
 			if len(mod) > bestLen {
 				bestLen = len(mod)
-				containerID, relPath, constraint, ok = mod, "", strings.TrimSpace(c), true
+				containerID, relPath, spec, ok = mod, "", trimmed, true
 			}
 			continue
 		}
 		if strings.HasPrefix(ref, mod+"/") && len(mod) > bestLen {
 			bestLen = len(mod)
-			containerID, relPath, constraint, ok = mod, strings.TrimPrefix(ref, mod+"/"), strings.TrimSpace(c), true
+			containerID, relPath, spec, ok = mod, strings.TrimPrefix(ref, mod+"/"), trimmed, true
 		}
 	}
-	return containerID, relPath, constraint, ok
+	return containerID, relPath, spec, ok
 }
 
 func LoadPackageSource(rootDir, containerID, relPath string, origin api.SourceOrigin) (*Source, error) {

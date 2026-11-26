@@ -291,6 +291,9 @@ of these files.
 | `url` | string? | Resolved source URL for remote packages |
 | `path` | string? | Local packages: source directory relative to `root` (slash-separated) |
 | `sourceDir` | string? | Absolute source directory; a linked package reports its local working tree |
+| `packageDir` | string? | Absolute package root directory containing `build.go` (`SourceDir()`) |
+| `srcDir` | string? | Absolute active source tree (`SrcDir()`), including `SetGit` worktrees, linked trees, and `sealed_sources` directories |
+| `sealed` | bool? | Present and true when served from container `sealed_sources` (false/omitted when overridden by `pkg link`) |
 | `sourcePresent` | bool | Whether the expected source tree exists and is non-empty (see `VMAKE_W_SOURCE_MISSING`) |
 | `linked` | bool? | Present and true when `vmake pkg link` supplies the package source |
 | `linkPath` | string? | Absolute linked source path when `linked` is true |
@@ -301,7 +304,7 @@ of these files.
 | `toolchain` | string? | Per-package toolchain, present for needed packages |
 | `platform` | object | Per-package resolved target platform `{targetOs, targetTriple}`; both keys are always present and `targetOs` is the host OS when no target OS is configured |
 | `options` | object? | Declared options of this package with effective values (global declarations included); omitted when none |
-| `optionDefs` | object? | Declared package options keyed by option name with `{type, default?, description?, values?, group?}`; omitted when none |
+| `optionDefs` | object? | Declared package options keyed by option name with `{type, default?, description?, values?, group?, internal?}`; omitted when none |
 | `deps` | array | Package dependency names, sorted (includes cross-package target and `BuildSubGraph` edges unless `--no-targets` is set); always present |
 | `targets` | array? | Declared targets; present only for needed packages and omitted when the package declares none, its source tree is missing, or inspect runs with `--no-targets` |
 

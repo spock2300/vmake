@@ -36,6 +36,7 @@ type sourceStage struct {
 	offline           bool
 	locked            bool
 	dryRun            bool
+	pruneLock         bool
 	dryRunDepsDir     string
 }
 

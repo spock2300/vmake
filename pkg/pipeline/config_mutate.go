@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/spock2300/vmake/internal/pkgvis"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/config"
 )
@@ -42,6 +41,25 @@ func (c AppliedChange) Key() string {
 	return c.Pkg + ":" + c.Opt
 }
 
+func packageContainerID(ctx *RuntimeContext, pkgName string) string {
+	if ctx != nil && ctx.DepGraph != nil {
+		if node := ctx.DepGraph.Packages[pkgName]; node != nil && node.Container != "" {
+			return node.Container
+		}
+	}
+	if api.IsLocalPackageID(pkgName) {
+		return api.LocalContainerID
+	}
+	return ""
+}
+
+func isExternalInternalOption(ctx *RuntimeContext, pkgName string, opt *api.Option) bool {
+	if opt == nil || !opt.IsInternal() {
+		return false
+	}
+	return packageContainerID(ctx, pkgName) != api.LocalContainerID
+}
+
 func ResolveSetPackageOption(ctx *RuntimeContext, pkgName, optName string) (string, *api.Option, error) {
 	if pkgName == "" {
 		var globals map[string]*api.Option
@@ -57,10 +75,8 @@ func ResolveSetPackageOption(ctx *RuntimeContext, pkgName, optName string) (stri
 	}
 
 	resolvedPkg := pkgName
-	if ctx != nil && ctx.Resolver != nil {
-		if err := pkgvis.CheckInternal("@local", "@local", resolvedPkg, ctx.Resolver.VisibilityPath(resolvedPkg)); err != nil {
-			return "", nil, err
-		}
+	if err := checkPackageVisibility(ctx, "@local", resolvedPkg); err != nil {
+		return "", nil, err
 	}
 	var pkgOpts map[string]*api.Option
 	var hasOpts bool
@@ -88,11 +104,14 @@ func ResolveSetPackageOption(ctx *RuntimeContext, pkgName, optName string) (stri
 
 	opt, ok := pkgOpts[optName]
 	if !ok {
-		available := sortedOptionNames(pkgOpts)
+		available := sortedVisibleOptionNames(ctx, resolvedPkg, pkgOpts)
 		return "", nil, fmt.Errorf("option %q not found in package %q (available: %s)", optName, resolvedPkg, strings.Join(available, ", "))
 	}
 	if opt.IsGlobal() {
 		return "", nil, fmt.Errorf("option %q in package %q is global; set it without a package prefix: %s=...", optName, resolvedPkg, optName)
+	}
+	if isExternalInternalOption(ctx, resolvedPkg, opt) {
+		return "", nil, fmt.Errorf("option %q in package %q is internal to container %q and cannot be set externally", optName, resolvedPkg, packageContainerID(ctx, resolvedPkg))
 	}
 	return resolvedPkg, opt, nil
 }
@@ -161,6 +180,17 @@ func MutateConfig(ctx *RuntimeContext, req ConfigMutation) ([]AppliedChange, err
 
 func sortedOptionNames(opts map[string]*api.Option) []string {
 	return slices.Sorted(maps.Keys(opts))
+}
+
+func sortedVisibleOptionNames(ctx *RuntimeContext, pkgName string, opts map[string]*api.Option) []string {
+	keys := make([]string, 0, len(opts))
+	for k, opt := range opts {
+		if opt != nil && !opt.IsGlobal() && !isExternalInternalOption(ctx, pkgName, opt) {
+			keys = append(keys, k)
+		}
+	}
+	slices.Sort(keys)
+	return keys
 }
 
 func sortedPackageNames(pkgs map[string]map[string]*api.Option) []string {

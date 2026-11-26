@@ -31,6 +31,9 @@ type Source struct {
 	// Repo is the remote repository name the script originates from
 	// ("official", "mynative"). Empty for local project scripts.
 	Repo string
+	// RepoURL is the repository URL or native URL template when the repository
+	// is declared in vmake.json "repos" rather than registered globally.
+	RepoURL string
 	// URL identifies the remote script's source. Commit records the exact
 	// revision being loaded; trust is bound to the repository identity instead.
 	URL    string

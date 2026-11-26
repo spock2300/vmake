@@ -430,3 +430,130 @@ func Main(p *api.Package) {
 		t.Fatalf("deps update --dry-run mutated working tree: %q, %v", data, err)
 	}
 }
+
+func TestDepsPruneAndMultiSKULockRetention(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	root := t.TempDir()
+	state := filepath.Join(root, "state")
+	cacheDir := filepath.Join(root, "cache")
+	project := filepath.Join(root, "project")
+	writeHealthyDefinition(t, filepath.Join(state, "extensions", "fixture", "healthy", "toolchain.json"), "healthy")
+
+	for _, name := range []string{"liba", "libb"} {
+		createDepsTestGitRepo(t, filepath.Join(root, "upstreams", name), map[string]string{
+			"build.go": `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("` + name + `").SetKind(api.TargetVoid)
+	})
+}
+`,
+		}, "v1.0.0")
+	}
+
+	run := func(args ...string) (string, error) {
+		t.Helper()
+		return extensionCommandEnv(t, state, project, []string{
+			"VMAKE_TRUST_ALL=1",
+			"VMAKE_CACHE=" + cacheDir,
+		}, args...)
+	}
+	mustRun := func(args ...string) string {
+		t.Helper()
+		out, err := run(args...)
+		if err != nil {
+			t.Fatalf("%v failed: %v\n%s", args, err, out)
+		}
+		return out
+	}
+
+	if err := os.MkdirAll(project, 0755); err != nil {
+		t.Fatal(err)
+	}
+	mustRun("repo", "add", "--native", "testnative", filepath.ToSlash(filepath.Join(root, "upstreams"))+"/{name}")
+	writeExtensionFile(t, filepath.Join(project, "vmake.json"), `{
+  "roots": ["//"],
+  "modules": {
+    "testnative/liba": "*",
+    "testnative/libb": "*"
+  }
+}`)
+	writeExtensionFile(t, filepath.Join(project, "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+	p.OnConfig(func(ctx *api.ConfigContext) {
+		ctx.GlobalOption("sku").SetType(api.OptionChoice).SetValues("a", "b").SetDefault("a")
+	})
+	p.OnRequire(func(ctx *api.RequireContext) {
+		if ctx.When("sku", "a") {
+			ctx.AddRequires("testnative/liba")
+		}
+		if ctx.When("sku", "b") {
+			ctx.AddRequires("testnative/libb")
+		}
+	})
+	p.OnBuild(func(ctx *api.BuildContext) {
+		ctx.Target("app").SetKind(api.TargetVoid).UseRequires()
+	})
+}
+`)
+	writeExtensionFile(t, filepath.Join(project, "configs", "default.json"), `{"version":"1","global":{"toolchain":"healthy","mode":"release","options":{"sku":"a"}},"entries":{}}`)
+	writeExtensionFile(t, filepath.Join(project, "configs", "sku_b.json"), `{"version":"1","global":{"toolchain":"healthy","mode":"release","options":{"sku":"b"}},"entries":{}}`)
+
+	lockPath := filepath.Join(project, ".vmake", "vmake.lock")
+	mustRun("deps", "sync")
+	mustRun("deps", "sync", "-c", "configs/sku_b.json")
+
+	lk, err := lockfile.Load(lockPath)
+	if err != nil {
+		t.Fatalf("load lockfile: %v", err)
+	}
+	if _, ok := lk.GetContainer("testnative/liba"); !ok {
+		t.Fatalf("expected inactive SKU container testnative/liba retained, got %+v", lk.Containers)
+	}
+	if _, ok := lk.GetContainer("testnative/libb"); !ok {
+		t.Fatalf("expected active SKU container testnative/libb locked, got %+v", lk.Containers)
+	}
+
+	mustRun("build", "--locked")
+
+	dryJSON := mustRun("deps", "prune", "--dry-run", "--json")
+	var dryRes depsUpdateEnvelope
+	if err := json.Unmarshal([]byte(dryJSON), &dryRes); err != nil {
+		t.Fatalf("unmarshal dry-run prune json: %v\n%s", err, dryJSON)
+	}
+	if !dryRes.DryRun || dryRes.Command != "deps prune" || len(dryRes.Changes) != 1 ||
+		dryRes.Changes[0].Kind != "removed" || dryRes.Changes[0].Name != "testnative/libb" {
+		t.Fatalf("dry-run prune result = %+v, want DryRun=true removing testnative/libb", dryRes)
+	}
+	lkAfterDry, err := lockfile.Load(lockPath)
+	if err != nil {
+		t.Fatalf("load lockfile after dry-run: %v", err)
+	}
+	if _, ok := lkAfterDry.GetContainer("testnative/libb"); !ok {
+		t.Fatal("deps prune --dry-run mutated vmake.lock")
+	}
+
+	pruneJSON := mustRun("deps", "prune", "--json")
+	var pruneRes depsUpdateEnvelope
+	if err := json.Unmarshal([]byte(pruneJSON), &pruneRes); err != nil {
+		t.Fatalf("unmarshal prune json: %v\n%s", err, pruneJSON)
+	}
+	if pruneRes.DryRun || pruneRes.Command != "deps prune" || len(pruneRes.Changes) != 1 ||
+		pruneRes.Changes[0].Kind != "removed" || pruneRes.Changes[0].Name != "testnative/libb" {
+		t.Fatalf("prune result = %+v", pruneRes)
+	}
+	lkAfterPrune, err := lockfile.Load(lockPath)
+	if err != nil {
+		t.Fatalf("load lockfile after prune: %v", err)
+	}
+	if _, ok := lkAfterPrune.GetContainer("testnative/libb"); ok {
+		t.Fatal("deps prune did not remove inactive container testnative/libb")
+	}
+	if _, ok := lkAfterPrune.GetContainer("testnative/liba"); !ok {
+		t.Fatal("deps prune unexpectedly removed active container testnative/liba")
+	}
+}

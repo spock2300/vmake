@@ -159,7 +159,7 @@ func (s *sourceStage) layoutFactsFor(name string) (LayoutFacts, error) {
 		if commit == "" && c != nil {
 			commit = c.Commit
 		}
-		if node.HasOwnGit() && s.sourceVersions[name] != "" {
+		if node.HasActiveOwnGit() && s.sourceVersions[name] != "" {
 			if version != "" {
 				version = version + "+" + s.sourceVersions[name]
 			} else {
@@ -230,7 +230,7 @@ func (s *sourceStage) makeLayout(name string, tools *build.ResolvedTools) (build
 		tree = loc.OwnerTreeRoot
 	}
 	sourceOverride := ""
-	if loc.ContainerLinked || (node.IsRegistry() && loc.Linked) {
+	if loc.ContainerLinked || loc.ContainerLocalPath || (node.IsRegistry() && loc.Linked) {
 		sourceOverride = loc.PackageRoot
 	}
 	return layoutFor(layoutInput{

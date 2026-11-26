@@ -84,6 +84,7 @@ type inspectOptionDef struct {
 	Description string   `json:"description,omitempty"`
 	Values      []string `json:"values,omitempty"`
 	Group       string   `json:"group,omitempty"`
+	Internal    bool     `json:"internal,omitempty"`
 }
 
 type inspectContainer struct {
@@ -107,6 +108,9 @@ type inspectPackage struct {
 	Commit        string                      `json:"commit,omitempty"`
 	URL           string                      `json:"url,omitempty"`
 	Path          string                      `json:"path,omitempty"`
+	PackageDir    string                      `json:"packageDir,omitempty"`
+	SrcDir        string                      `json:"srcDir,omitempty"`
+	Sealed        bool                        `json:"sealed,omitempty"`
 	SourceDir     string                      `json:"sourceDir,omitempty"`
 	SourcePresent bool                        `json:"sourcePresent"`
 	Linked        bool                        `json:"linked,omitempty"`
@@ -418,6 +422,9 @@ func encodeInspect(inspection *pipeline.Inspection, includeTargets bool) (*inspe
 			Commit:        facts.Commit,
 			URL:           facts.URL,
 			Path:          facts.Path,
+			PackageDir:    facts.PackageDir,
+			SrcDir:        facts.SrcDir,
+			Sealed:        facts.Sealed,
 			SourceDir:     view.SourceDir(),
 			SourcePresent: facts.SourcePresent,
 			Linked:        facts.Linked,
@@ -558,6 +565,7 @@ func inspectOptionDefs(opts map[string]*api.Option) map[string]inspectOptionDef 
 			Description: opt.Description(),
 			Values:      append([]string(nil), opt.Values()...),
 			Group:       opt.Group(),
+			Internal:    opt.IsInternal(),
 		}
 	}
 	if len(defs) == 0 {

@@ -94,7 +94,7 @@ func isSilentResolveCmd(cmd *cobra.Command) bool {
 func requiresExclusiveStorage(cmd *cobra.Command) bool {
 	for current := cmd; current != nil; current = current.Parent() {
 		switch current.Name() {
-		case "clean", "distclean", "rebuild", "update", "sync", "pin", "unpin", "fetch":
+		case "clean", "distclean", "rebuild", "update", "sync", "prune", "pin", "unpin", "fetch":
 			return true
 		}
 	}

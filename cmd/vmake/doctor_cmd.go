@@ -115,7 +115,7 @@ func runDoctor() {
 		}
 	}
 
-	explicitRoots := manifest != nil && len(manifest.Roots) > 0
+	explicitRoots := manifest != nil && (len(manifest.Roots) > 0 || len(manifest.DevRoots) > 0)
 	cfgRoots := cfg != nil && (cfg.Root != "" || len(cfg.Roots) > 0)
 	if !explicitRoots && !cfgRoots && !hasRootBuildGo && len(sources) > 1 {
 		findings = append(findings, doctorFinding{

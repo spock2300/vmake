@@ -57,7 +57,7 @@ CLI：`vmake repo add|remove|list|update|trust|untrust`
 
 工作树存放在项目内（见下节），物化时按需 `git ls-remote` 解析版本、把所选 ref/commit 的对象按 depth=1 抓进 `cache/git/` 并锚定，再从缓存本地 fetch 出工作树。命中缓存后不触网只适用于 **commit 已固定且对象已缓存** 的请求；需要解析版本/ref 的请求仍可能先访问上游（失败时可用缓存记录的 ref→commit 或现有树离线兜底），默认分支 HEAD 物化直接 clone 上游，缓存未命中或服务器拒绝按 SHA fetch 时回退到上游/full clone。缓存缺失/损坏或 URL 变化会在锁内重建；上游不可达且无缓存兜底时构建会失败。
 
-需要加载项目解析输入的命令先取得 `project/.vmake/_locks/project.lock`（独占）：任何会解析依赖的命令都可能物化源码树或创建源码链接，因此同工程命令串行（`doctor`、`pkg list`、`pkg search`、`pkg show`、`manifest show` 等不经过 `loadResolveParams` 的命令除外）。全局缓存的生命周期锁在构建/读取时共享，在 `clean`/`distclean`/`pkg clean`/`rebuild` 和 `deps sync|update|pin|unpin|fetch` 时独占（`requiresExclusiveStorage`）；`ext update`/`repo update` 不经过该存储会话。同一棵树在同一时间只允许一个物化操作（`tree_<hash>.lock`），每个缓存 bare 仓库的写入与 checkout 由 `cache_<urlhash 前16位>.lock` 串行（不同 URL 不同锁）。构建与 `deps` 写操作在 `Require`/`Configure` 完成后的配置阶段取得所需外部模块容器（`<repo>/<module>` 或 `<repo>`）的 `owner_<sha256(name)>.lock`，并持有到命令结束，而不是整个命令期间。
+需要加载项目解析输入的命令先取得 `project/.vmake/_locks/project.lock`（独占）：任何会解析依赖的命令都可能物化源码树或创建源码链接，因此同工程命令串行（`doctor`、`pkg list`、`pkg search`、`pkg show`、`manifest show` 等不经过 `loadResolveParams` 的命令除外）。全局缓存的生命周期锁在构建/读取时共享，在 `clean`/`distclean`/`pkg clean`/`rebuild` 和 `deps sync|update|prune|pin|unpin|fetch` 时独占（`requiresExclusiveStorage`）；`ext update`/`repo update` 不经过该存储会话。同一棵树在同一时间只允许一个物化操作（`tree_<hash>.lock`），每个缓存 bare 仓库的写入与 checkout 由 `cache_<urlhash 前16位>.lock` 串行（不同 URL 不同锁）。构建与 `deps` 写操作在 `Require`/`Configure` 完成后的配置阶段取得所需外部模块容器（`<repo>/<module>` 或 `<repo>`）的 `owner_<sha256(name)>.lock`，并持有到命令结束，而不是整个命令期间。
 
 网络 git 操作默认超时 30 分钟；clone/fetch 在传输阶段把 git 进度实时透传到终端，而 `git ls-remote` 本身没有进度输出。解析依赖或物化包源码的命令（如 `build`/`rebuild`/`deps sync`/`deps update`/`deps pin`/`deps fetch`）会在解析 ref、列举 native 版本或尝试每个源 URL 前先打印一行状态（包名/树键、已知的目标 ref/commit、源 URL），便于判断当前步骤；缓存命中时这行也可能出现，但通常不触网。这些状态行与 git 进度都在 `-q` 下静默，`query`/`check-symbols` 固定静默。状态行不是心跳：`git ls-remote`、建立连接和服务端枚举对象期间 git 自身没有输出，可能一直静默到操作完成或触发 `VMAKE_GIT_TIMEOUT`。网络较慢时可提高上限：
 
@@ -102,7 +102,7 @@ CLI：`vmake cache list` 查看缓存命名空间，`vmake cache remove <url>` �
 ```
 
 - 记录键是 `kind:name`；同一仓库后续的新 commit/新 package 继续使用同一条记录，不再逐 commit 授权。
-- 包仓库由 `vmake repo trust|untrust <name>` 管理；registry 和 native 都可用，`repo trust` 不需要提交或已解析的 package commit。`repo update`/`deps update` 保持信任，`repo remove`/`untrust` 撤销。native 记录的 URL 是 `repo.json` 中的 URL 模板。
+- 包仓库由 `vmake repo trust|untrust <name>` 管理；registry 和 native 都可用，`repo trust` 不需要提交或已解析的 package commit。`repo update`/`deps update` 保持信任，`repo remove`/`untrust` 撤销。native 记录的 URL 是 `repo.json` 中的 URL 模板；对在项目 `vmake.json` `"repos"` 中自描述声明的 native 仓库，同样受信任门控并绑定 `(repo, url-template)`，可通过 `vmake repo trust <name> --url <template>` 预先授权（无需先全局 `repo add`）。
 - 扩展仓库由 `vmake ext trust|untrust <name>` 管理；`ext add` 可交互确认，`ext update` 保持信任，`ext remove`/`untrust` 撤销，`ext provision` 安装当前宿主有 `installations` 条目的工具链。扩展不要求工作树干净；本地修改随仓库信任一起执行。
 - 记录中保存了 URL 且与当前仓库 URL（registry 的 `remote.origin.url`、native 的 URL 模板、扩展的 origin URL）不一致时视为未信任，需要重新 `trust`。正常 update 不改变 URL；仓库没有配置 origin 时退化为按名称信任（`repo trust` 会提示），registry 仓库配置无法读取时按错误处理。
 - 信任文件损坏（version 2 的 JSON 无效）时，包脚本/插件不会执行；旧版本文件按空库处理。`VMAKE_TRUST_ALL=1` 可跳过信任检查（仅限 CI/测试；它同时影响包仓库和扩展仓库）。
@@ -193,7 +193,7 @@ toolchains/<host-os>/<host-arch>/<name>/<version>/
 `vmake clean` 只删除当前配置的构建键目录，`clean --all` 删除所有配置的产物（包括 `pkg link` 包在 `.vmake_deps` 下的 `out/`），两者都保留 `.vmake_deps/` 源码树和 `.vmake/local.json`；`vmake distclean` 同样保留下载的工作树（下次构建直接复用，不重新下载），只有加 `--purge-sources` 才删除整个 `.vmake_deps/`。`pkg link` 已删除的 `src`/`state.json` 不会由 clean/distclean 恢复；unlink 后下一次构建重新物化。`vmake pkg clean <pkg>` 删除单个包的构建产物，`-a` 连工作树一并删除但不删除 link 记录；下次构建会重新物化该树，但共享对象缓存已有该 commit 时无需重新下载对象（版本/ref 解析仍可能访问上游）。该命令也会删除 `build/vmake-build.json` 与 `build/vmake-test.json`。
 
 源码：`cmd/vmake/paths.go` (`getDepsDir`, `findProjectDir`), `pkg/repo/source.go`, `pkg/repo/storage.go`
-CLI：`vmake pkg list|search|show|clean|link|unlink`、`vmake deps status|sync|update|pin|unpin|fetch`
+CLI：`vmake pkg list|search|show|clean|link|unlink`、`vmake deps status|sync|update|prune|pin|unpin|fetch`
 
 ## 项目目录
 
@@ -201,7 +201,7 @@ CLI：`vmake pkg list|search|show|clean|link|unlink`、`vmake deps status|sync|u
 
 ```
 project/
-├── vmake.json                     # 模块清单（roots / modules / sources，多包工程或外部版本约束必填）
+├── vmake.json                     # 模块清单（roots / dev_roots / exports / repos / modules / sources / sealed_sources）
 ├── build.go                       # 根构建包脚本（可选，有则 ID 为 "//"）
 ├── configs/                       # 受版本控制的构建配置（稀疏显式意图）
 │   ├── default.json               # 默认配置（或由 .vmake/project.json default_config 指定）
@@ -234,7 +234,7 @@ project/
         └── <target>               # 最终产物
 ```
 
-`vmake.lock`（schema `version: 2`）分 `containers`（原生模块容器与 registry 仓库容器的 `kind`/`version`/`commit`/`source`）与 `sources`（registry 包与各构建包 `SetGit` 独立上游源码的 `version`/`commit`/`source`）两个节；被 `pkg link` 的容器或源码保留旧 lock 条目，但 link 期间不读取、不校验、不重写；`vmake deps` 写操作跳过这些条目。
+`vmake.lock`（schema `version: 2`）分 `containers`（原生模块容器与 registry 仓库容器的 `kind`/`version`/`commit`/`source`）与 `sources`（registry 包与各构建包未封存 `SetGit` 独立上游源码的 `version`/`commit`/`source`）两个节。普通构建、`vmake deps sync` 与 `vmake deps update` 采用多 SKU 渐进式保留策略（更新当前激活条目，保留其他配置的历史条目，`--locked` 同样容忍非激活条目），仅显式执行 `vmake deps prune` 或 `--prune` 时裁剪失效条目；本地路径容器（`modules` 中的 `{"path": ...}`）与 `sealed_sources` 封存源码不写入 `vmake.lock`。被 `pkg link` 的容器或源码保留旧 lock 条目，但 link 期间不读取、不校验、不重写；`vmake deps` 写操作跳过这些条目。
 
 `project.json` 保存工程默认配置与全工程共享的依赖 pin（`vmake deps pin|unpin`）：
 

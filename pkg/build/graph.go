@@ -13,13 +13,16 @@ import (
 )
 
 type PkgBuildMeta struct {
-	Origin         api.SourceOrigin
-	Container      string
-	Linked         bool
-	Deps           []string
-	SubGraphs      []string
-	VisPath        string
-	Unmaterialized bool
+	Origin              api.SourceOrigin
+	Container           string
+	Linked              bool
+	Deps                []string
+	SubGraphs           []string
+	VisPath             string
+	Unmaterialized      bool
+	Exported            bool
+	ContainerHasExports bool
+	InternalRefMap      map[string]string
 }
 
 func (m PkgBuildMeta) IsRemote() bool {
@@ -87,12 +90,34 @@ func declaredTargetDeps(target *api.Target, meta PkgBuildMeta) []string {
 	return append(reqDeps, deps...)
 }
 
+func canonicalizeBuildPkgRef(pkgMeta map[string]PkgBuildMeta, fromPkg, rawPkg string) string {
+	meta := pkgMeta[fromPkg]
+	if len(meta.InternalRefMap) > 0 {
+		if mapped, ok := meta.InternalRefMap[rawPkg]; ok {
+			return mapped
+		}
+	}
+	return api.CanonicalizePackageRef(meta.Container, rawPkg)
+}
+
 func checkInternalVisibility(pkgMeta map[string]PkgBuildMeta, fromPkg, toPkg string) error {
 	if fromPkg == "" || toPkg == "" || fromPkg == toPkg {
 		return nil
 	}
 	if err := pkgvis.CheckInternal(fromPkg, visibilityPathFor(pkgMeta, fromPkg), toPkg, visibilityPathFor(pkgMeta, toPkg)); err != nil {
 		return &ResolveError{Kind: IssueKindInternalVisibility, Err: err}
+	}
+	if toMeta, ok := pkgMeta[toPkg]; ok && toMeta.ContainerHasExports && !toMeta.Exported {
+		fromContainer := pkgMeta[fromPkg].Container
+		if fromContainer == "" && api.IsLocalPackageID(fromPkg) {
+			fromContainer = api.LocalContainerID
+		}
+		if fromContainer != toMeta.Container {
+			return &ResolveError{
+				Kind: IssueKindInternalVisibility,
+				Err:  fmt.Errorf("use of non-exported package %q in container %q not allowed from package %q", toPkg, toMeta.Container, fromPkg),
+			}
+		}
 	}
 	return nil
 }
@@ -981,7 +1006,7 @@ func (d *depResolver) resolveDirectPackageRef(pkgRef string, path []string) ([]s
 }
 
 func (d *depResolver) resolveDepPkgName(currentPkg, depName string) string {
-	return api.CanonicalizePackageRef(d.pkgMeta[currentPkg].Container, depName)
+	return canonicalizeBuildPkgRef(d.pkgMeta, currentPkg, depName)
 }
 
 func (d *depResolver) resolvePackageRef(pkgRef string, path []string) ([]string, error) {

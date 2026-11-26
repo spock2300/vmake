@@ -11,6 +11,7 @@ import (
 	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/internal/storage"
 	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/lockfile"
@@ -172,8 +173,49 @@ func canonicalPkgRef(ctx *RuntimeContext, fromPkg, rawRef string) string {
 		if node := ctx.DepGraph.Packages[fromPkg]; node != nil && node.Container != "" {
 			container = node.Container
 		}
+		return ctx.DepGraph.CanonicalPackageRef(container, rawRef)
 	}
 	return api.CanonicalizePackageRef(container, rawRef)
+}
+
+func checkPackageVisibility(ctx *RuntimeContext, fromPkg, toPkg string) error {
+	if ctx == nil || fromPkg == "" || toPkg == "" || fromPkg == toPkg {
+		return nil
+	}
+	if ctx.Resolver != nil {
+		fromVis := ctx.Resolver.VisibilityPath(fromPkg)
+		if fromPkg == "@local" {
+			fromVis = "@local"
+		}
+		if err := pkgvis.CheckInternal(fromPkg, fromVis, toPkg, ctx.Resolver.VisibilityPath(toPkg)); err != nil {
+			return err
+		}
+	}
+	if ctx.DepGraph != nil {
+		if err := ctx.DepGraph.CheckExportVisibility(fromPkg, toPkg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func pkgBuildMetaFor(ctx *RuntimeContext, node *resolver.PackageNode, visPath string, unmaterialized bool) build.PkgBuildMeta {
+	meta := build.PkgBuildMeta{
+		Origin:         node.Source.Origin,
+		Container:      node.Container,
+		Linked:         node.Source.Link != nil,
+		Deps:           append([]string(nil), node.Deps...),
+		VisPath:        visPath,
+		Unmaterialized: unmaterialized,
+		Exported:       node.Exported,
+	}
+	if ctx != nil && ctx.DepGraph != nil && node.Container != "" {
+		if c := ctx.DepGraph.Containers[node.Container]; c != nil && !c.IsLocal() && c.Manifest != nil && c.Manifest.HasExports() {
+			meta.ContainerHasExports = true
+			meta.InternalRefMap = c.Manifest.InternalRefMap(c.ID)
+		}
+	}
+	return meta
 }
 
 func visibleGlobalOptionsFor(node *resolver.PackageNode, pkgOpts, globalOptions map[string]*api.Option) map[string]*api.Option {
@@ -244,8 +286,8 @@ func newConfigLookup(ctx *RuntimeContext, currentPkg string, base map[string]any
 		if ctx.DepGraph.Packages[pkg] == nil {
 			return nil, nil, fmt.Errorf("package %q is not in the resolved dependency graph", pkg)
 		}
-		if currentPkg != "" && ctx.Resolver != nil {
-			if err := pkgvis.CheckInternal(currentPkg, ctx.Resolver.VisibilityPath(currentPkg), pkg, ctx.Resolver.VisibilityPath(pkg)); err != nil {
+		if currentPkg != "" {
+			if err := checkPackageVisibility(ctx, currentPkg, pkg); err != nil {
 				return nil, nil, err
 			}
 		}
@@ -255,6 +297,9 @@ func newConfigLookup(ctx *RuntimeContext, currentPkg string, base map[string]any
 			opts = node.Pkg.GetOptions()
 		}
 		opt := opts[name]
+		if opt != nil && opt.IsInternal() && currentPkg != "" && packageContainerID(ctx, currentPkg) != packageContainerID(ctx, pkg) {
+			return nil, nil, fmt.Errorf("option %q in package %q is internal to container %q and cannot be read from %q", name, pkg, packageContainerID(ctx, pkg), currentPkg)
+		}
 		if opt == nil {
 			if gOpt := ctx.globalOptions[name]; gOpt != nil && gOpt.ExportDefine() {
 				opt = gOpt
@@ -374,8 +419,8 @@ func applyBuildContextConfig(buildCtx *api.BuildContext, node *resolver.PackageN
 	var resolvedImports []string
 	for _, depName := range buildCtx.ImportConfigs() {
 		resolved := canonicalPkgRef(ctx, currentPkg, depName)
-		if currentPkg != "" && ctx.Resolver != nil {
-			if err := pkgvis.CheckInternal(currentPkg, ctx.Resolver.VisibilityPath(currentPkg), resolved, ctx.Resolver.VisibilityPath(resolved)); err != nil {
+		if currentPkg != "" {
+			if err := checkPackageVisibility(ctx, currentPkg, resolved); err != nil {
 				panic(&api.BuildScriptError{Package: currentPkg, Op: "ImportConfig", Err: err})
 			}
 		}
@@ -383,13 +428,20 @@ func applyBuildContextConfig(buildCtx *api.BuildContext, node *resolver.PackageN
 	}
 	if buildCtx.GenConfigDefines() && node.Pkg != nil {
 		var importPkgs []*api.Package
+		pkgContainer := make(map[*api.Package]string, len(resolvedImports))
 		for _, resolved := range resolvedImports {
 			depNode := ctx.DepGraph.Packages[resolved]
 			if depNode != nil && depNode.Pkg != nil {
 				importPkgs = append(importPkgs, depNode.Pkg)
+				pkgContainer[depNode.Pkg] = depNode.Container
 			}
 		}
-		mergedOpts, mergedVals := api.MergeImportedOptions(api.BindOptions(&node.Pkg.ConfigAccessor), api.BindCfgVals(&node.Pkg.ConfigAccessor), importPkgs)
+		mergedOpts, mergedVals := api.BindMergeImportedOptions(
+			api.BindOptions(&node.Pkg.ConfigAccessor),
+			api.BindCfgVals(&node.Pkg.ConfigAccessor),
+			importPkgs,
+			func(dep *api.Package) bool { return pkgContainer[dep] != node.Container },
+		)
 		defines := api.ConfigToDefines(mergedOpts, mergedVals)
 		args := make([]any, len(defines))
 		for i, d := range defines {

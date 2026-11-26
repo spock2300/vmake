@@ -52,6 +52,11 @@ func remoteScriptTrustChecker(src buildscript.Source) error {
 	if err != nil {
 		return err
 	}
+	fromManifest := false
+	if repoURL == "" && src.RepoURL != "" {
+		repoURL = src.RepoURL
+		fromManifest = true
+	}
 	store, err := openTrustStore()
 	if err != nil {
 		return err
@@ -64,7 +69,13 @@ func remoteScriptTrustChecker(src buildscript.Source) error {
 		return nil
 	}
 	subject := fmt.Sprintf("The repository %q provides build.go scripts that vmake will execute (full system access). Trusting it also trusts all future updates.", src.Repo)
+	if fromManifest && repoURL != "" {
+		subject = fmt.Sprintf("The repository %q (%s) provides build.go scripts that vmake will execute (full system access). Trusting it also trusts all future updates.", src.Repo, repoURL)
+	}
 	if !confirmTrust(subject) {
+		if fromManifest && repoURL != "" {
+			return fmt.Errorf("its build.go scripts are not trusted; run 'vmake repo trust %s --url %q' after reviewing the repository", src.Repo, repoURL)
+		}
 		return fmt.Errorf("its build.go scripts are not trusted; run 'vmake repo trust %s' after reviewing the repository", src.Repo)
 	}
 	return store.Trust(trustKindRepo, src.Repo, repoURL)
@@ -102,18 +113,31 @@ func repoScriptTrusted(name string) (bool, error) {
 }
 
 func addTrustedRepo(name string) error {
-	mgr := repo.NewRepoManager(getReposDir())
-	lock, err := mgr.Lock(name, true)
-	if err != nil {
+	return addTrustedRepoWithURL(name, "")
+}
+
+func addTrustedRepoWithURL(name, explicitURL string) error {
+	if err := gitstore.ValidateName(name); err != nil {
 		return err
 	}
-	defer lock.Release()
-	if !mgr.Exists(name) {
-		return fmt.Errorf("repository %q not found", name)
-	}
-	repoURL, err := repoTrustURL(name)
-	if err != nil {
-		return err
+	explicitURL = strings.TrimSpace(explicitURL)
+	var repoURL string
+	if explicitURL != "" {
+		repoURL = explicitURL
+	} else {
+		mgr := repo.NewRepoManager(getReposDir())
+		lock, err := mgr.Lock(name, true)
+		if err != nil {
+			return err
+		}
+		defer lock.Release()
+		if !mgr.Exists(name) {
+			return fmt.Errorf("repository %q not found (pass --url <url-template> to trust a repository declared in vmake.json)", name)
+		}
+		repoURL, err = repoTrustURL(name)
+		if err != nil {
+			return err
+		}
 	}
 	store, err := openTrustStore()
 	if err != nil {

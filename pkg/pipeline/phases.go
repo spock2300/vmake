@@ -368,6 +368,9 @@ func runConfigPhase(ctx *RuntimeContext) error {
 			return err
 		}
 	}
+	if err := validateConfigVisibility(ctx); err != nil {
+		return err
+	}
 	resolvePreviewDerivedOptions(ctx)
 	applyAllConfigCallbacks(ctx)
 	return updateGlobalMacroDefines(ctx)

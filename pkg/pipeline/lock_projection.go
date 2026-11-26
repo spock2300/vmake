@@ -103,8 +103,10 @@ func keepSourceLockDecision(name string) lockDecision {
 // validator share.
 func (s *sourceStage) lockDecisions() ([]lockDecision, error) {
 	var decisions []lockDecision
-	keptContainers := make(map[string]bool)
-	keptSources := make(map[string]bool)
+	decidedContainers := make(map[string]bool)
+	decidedSources := make(map[string]bool)
+	processedContainers := make(map[string]bool)
+	processedSources := make(map[string]bool)
 
 	if s.rc.ctx.Lock != nil {
 		linkNames := make([]string, 0, len(s.rc.ctx.SourceLinks))
@@ -115,11 +117,11 @@ func (s *sourceStage) lockDecisions() ([]lockDecision, error) {
 		for _, name := range linkNames {
 			if _, ok := s.rc.ctx.Lock.GetContainer(name); ok {
 				decisions = append(decisions, keepContainerLockDecision(name))
-				keptContainers[name] = true
+				decidedContainers[name] = true
 			}
 			if _, ok := s.rc.ctx.Lock.GetSource(name); ok {
 				decisions = append(decisions, keepSourceLockDecision(name))
-				keptSources[name] = true
+				decidedSources[name] = true
 			}
 		}
 	}
@@ -140,9 +142,10 @@ func (s *sourceStage) lockDecisions() ([]lockDecision, error) {
 	sort.Strings(containerIDs)
 	for _, id := range containerIDs {
 		c := s.rc.ctx.DepGraph.Containers[id]
-		if c == nil || c.IsLocal() || c.IsLinked() || keptContainers[id] {
+		if c == nil || c.IsLocal() || c.IsLinked() || c.IsLocalPath() || decidedContainers[id] {
 			continue
 		}
+		processedContainers[id] = true
 		if c.IsRegistry() {
 			commit := s.containerCommits[id]
 			if commit == "" {
@@ -159,6 +162,7 @@ func (s *sourceStage) lockDecisions() ([]lockDecision, error) {
 				if s.rc.ctx.Lock != nil && !s.rc.ctx.isLockIgnoredFor(id) {
 					if _, ok := s.rc.ctx.Lock.GetContainer(id); ok {
 						decisions = append(decisions, keepContainerLockDecision(id))
+						decidedContainers[id] = true
 					}
 				}
 				continue
@@ -169,6 +173,7 @@ func (s *sourceStage) lockDecisions() ([]lockDecision, error) {
 				Commit:  commit,
 				Source:  resolver.SourceKindRegistry.String(),
 			})
+			decidedContainers[id] = true
 			continue
 		}
 		if c.IsNative() {
@@ -178,6 +183,7 @@ func (s *sourceStage) lockDecisions() ([]lockDecision, error) {
 				if s.rc.ctx.Lock != nil && !s.rc.ctx.isLockIgnoredFor(id) {
 					if _, ok := s.rc.ctx.Lock.GetContainer(id); ok {
 						decisions = append(decisions, keepContainerLockDecision(id))
+						decidedContainers[id] = true
 						continue
 					}
 				}
@@ -194,6 +200,7 @@ func (s *sourceStage) lockDecisions() ([]lockDecision, error) {
 				Commit:  commit,
 				Source:  resolver.SourceKindNative.String(),
 			})
+			decidedContainers[id] = true
 		}
 	}
 
@@ -202,18 +209,20 @@ func (s *sourceStage) lockDecisions() ([]lockDecision, error) {
 			continue
 		}
 		node := s.rc.ctx.DepGraph.Packages[name]
-		if node == nil || !node.HasOwnGit() || keptSources[name] {
+		if node == nil || !node.HasActiveOwnGit() || decidedSources[name] {
 			continue
 		}
 		if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {
 			continue
 		}
+		processedSources[name] = true
 		version := s.sourceVersions[name]
 		commit := s.sourceCommits[name]
 		if version == "" && commit == "" {
 			if s.rc.ctx.Lock != nil && !s.rc.ctx.isLockIgnoredFor(name) {
 				if _, ok := s.rc.ctx.Lock.GetSource(name); ok {
 					decisions = append(decisions, keepSourceLockDecision(name))
+					decidedSources[name] = true
 				}
 			}
 			continue
@@ -229,6 +238,30 @@ func (s *sourceStage) lockDecisions() ([]lockDecision, error) {
 			Commit:  commit,
 			URL:     url,
 		})
+		decidedSources[name] = true
+	}
+
+	if !s.pruneLock && s.rc.ctx.Lock != nil {
+		for _, id := range s.rc.ctx.Lock.SortedContainerNames() {
+			if decidedContainers[id] || processedContainers[id] {
+				continue
+			}
+			if c := s.rc.ctx.DepGraph.Containers[id]; c != nil && (c.IsLocal() || c.IsLocalPath()) {
+				continue
+			}
+			decisions = append(decisions, keepContainerLockDecision(id))
+			decidedContainers[id] = true
+		}
+		for _, name := range s.rc.ctx.Lock.SortedSourceNames() {
+			if decidedSources[name] || processedSources[name] {
+				continue
+			}
+			if node := s.rc.ctx.DepGraph.Packages[name]; node != nil && !node.HasActiveOwnGit() {
+				continue
+			}
+			decisions = append(decisions, keepSourceLockDecision(name))
+			decidedSources[name] = true
+		}
 	}
 
 	return decisions, nil

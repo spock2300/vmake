@@ -88,7 +88,7 @@ func WriteManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 				Ref:     prov.ref,
 				Path:    filepath.ToSlash(relPath),
 			}
-			if node.HasOwnGit() {
+			if node.HasActiveOwnGit() {
 				if urls := node.Pkg.GitURLs(); len(urls) > 0 {
 					entry.URL = urls[0]
 				}
@@ -123,6 +123,14 @@ func WriteManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 						entry.Linked = true
 						entry.LinkPath = c.Link.Path
 						entry.Ref = c.Link.Commit
+					} else if c.IsLocalPath() {
+						entry.Version = c.Version
+						entry.Ref = c.Commit
+						if rel, err := filepath.Rel(base, c.Dir); err == nil {
+							entry.Path = filepath.ToSlash(rel)
+						} else {
+							entry.Path = c.Dir
+						}
 					} else {
 						if ref, ok := c.Versions[c.Version]; ok && ref != "" {
 							entry.Ref = ref
@@ -133,8 +141,8 @@ func WriteManifest(ctx *RuntimeContext, result *BuildResult, effectivePrefix str
 					packages = append(packages, entry)
 				}
 			}
-			// If this native member also has its own SetGit source, record it orthogonally.
-			if node.HasOwnGit() {
+			// If this native member also has its own active (unsealed) SetGit source, record it orthogonally.
+			if node.HasActiveOwnGit() {
 				entry := InstallManifestEntry{
 					Name:   name,
 					Source: "git",

@@ -77,8 +77,16 @@ func TestBuildLockfileProjectionMatrix(t *testing.T) {
 		if !ok || c.Version != "1.2.3" || c.Commit != "commit-native" || c.Source != "native" {
 			t.Fatalf("container = %+v, %v", c, ok)
 		}
-		if _, stale := got.GetContainer("gone/mod"); stale {
-			t.Fatal("stale container should be pruned")
+		if _, retained := got.GetContainer("gone/mod"); !retained {
+			t.Fatal("inactive container should be retained by default (multi-SKU lock retention)")
+		}
+		s.pruneLock = true
+		pruned, err := s.buildLockfile()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, stale := pruned.GetContainer("gone/mod"); stale {
+			t.Fatal("stale container should be pruned when pruneLock is enabled")
 		}
 	})
 

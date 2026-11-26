@@ -33,37 +33,62 @@ func (k SourceKind) String() string { return string(k) }
 // selection is fully local and ignores lock/config pins, tags and constraints.
 const LocalLinkVersion = "0.0.0-local"
 
+// LocalPathVersion identifies a module container loaded from a relative path
+// declared in vmake.json "modules".
+const LocalPathVersion = "0.0.0-path"
+
 // ContainerNode represents a resolved module container: the local project
 // ("//"), a versioned native Git repository ("<repo>/<module>"), or a registry
 // wrapper repository ("<repo>").
 type ContainerNode struct {
-	ID          string
-	Repo        string
-	Kind        SourceKind
-	Dir         string
-	URL         string
-	Version     string
-	Commit      string
-	Versions    map[string]string
-	Link        *buildscript.SourceLink
-	Manifest    *buildscript.Manifest
-	Constraints []string
+	ID              string
+	Repo            string
+	RepoURL         string
+	Kind            SourceKind
+	Dir             string
+	URL             string
+	Version         string
+	Commit          string
+	Versions        map[string]string
+	Link             *buildscript.SourceLink
+	LocalPath        bool
+	DeclaredByRemote bool
+	Manifest         *buildscript.Manifest
+	Constraints     []string
 }
 
-func (c *ContainerNode) IsLocal() bool    { return c != nil && c.Kind == SourceKindLocal }
-func (c *ContainerNode) IsNative() bool   { return c != nil && c.Kind == SourceKindNative }
-func (c *ContainerNode) IsRegistry() bool { return c != nil && c.Kind == SourceKindRegistry }
-func (c *ContainerNode) IsLinked() bool   { return c != nil && c.Link != nil && c.Link.Path != "" }
+func (c *ContainerNode) IsLocal() bool     { return c != nil && c.Kind == SourceKindLocal }
+func (c *ContainerNode) IsNative() bool    { return c != nil && c.Kind == SourceKindNative }
+func (c *ContainerNode) IsRegistry() bool  { return c != nil && c.Kind == SourceKindRegistry }
+func (c *ContainerNode) IsLinked() bool    { return c != nil && c.Link != nil && c.Link.Path != "" }
+func (c *ContainerNode) IsLocalPath() bool { return c != nil && c.LocalPath }
 
 type PackageNode struct {
-	ID          string
-	Container   string
-	RelPath     string
-	Kind        SourceKind
-	Source      *buildscript.Source
-	Pkg         *api.Package
-	Deps        []string
-	Constraints []string
+	ID              string
+	Container       string
+	RelPath         string
+	Kind            SourceKind
+	Exported        bool
+	SealedSourceRel string
+	SealedSourceDir string
+	Source          *buildscript.Source
+	Pkg             *api.Package
+	Deps            []string
+	Constraints     []string
+}
+
+type ExportVisibilityError struct {
+	From      string
+	To        string
+	Container string
+	Exported  []string
+}
+
+func (e *ExportVisibilityError) Error() string {
+	if len(e.Exported) > 0 {
+		return fmt.Sprintf("package %q is not exported by container %q (requested by %s; exported: %s)", e.To, e.Container, e.From, strings.Join(e.Exported, ", "))
+	}
+	return fmt.Sprintf("package %q is not exported by container %q (requested by %s)", e.To, e.Container, e.From)
 }
 
 func NewPackageNode(id, container, relPath string, kind SourceKind, src *buildscript.Source, pkg *api.Package) *PackageNode {
@@ -110,6 +135,23 @@ func (n *PackageNode) HasOwnGit() bool {
 	return n != nil && n.Pkg != nil && len(n.Pkg.GitURLs()) > 0
 }
 
+func (n *PackageNode) IsSealed() bool {
+	if n == nil || n.SealedSourceDir == "" {
+		return false
+	}
+	if n.Source != nil && n.Source.Link != nil && n.Source.Link.LocalSource {
+		return false
+	}
+	return true
+}
+
+// HasActiveOwnGit reports whether the package needs external SetGit source
+// materialization and lock tracking (i.e. declares SetGit and is not sealed by
+// its module container).
+func (n *PackageNode) HasActiveOwnGit() bool {
+	return n.HasOwnGit() && !n.IsSealed()
+}
+
 type Graph struct {
 	Containers        map[string]*ContainerNode
 	Packages          map[string]*PackageNode
@@ -117,6 +159,56 @@ type Graph struct {
 	Order             []string
 	SourceConstraints map[string][]string
 	frozen            bool
+}
+
+// CanonicalPackageRef resolves a raw package reference written inside
+// callerContainerID to its single canonical PackageNode.ID in this graph,
+// honoring container export tables so exported packages never load twice.
+func (g *Graph) CanonicalPackageRef(callerContainerID, rawRef string) string {
+	if !api.IsLocalPackageID(rawRef) || callerContainerID == "" || callerContainerID == api.LocalContainerID {
+		return api.CanonicalizePackageRef(callerContainerID, rawRef)
+	}
+	if g != nil {
+		if c := g.Containers[callerContainerID]; c != nil && c.Manifest != nil && c.Manifest.HasExports() {
+			rel, _ := api.LocalRelPath(rawRef)
+			return c.Manifest.CanonicalPackageID(callerContainerID, rel)
+		}
+	}
+	return api.CanonicalizePackageRef(callerContainerID, rawRef)
+}
+
+// CheckExportVisibility enforces container export whitelists across containers.
+// fromPkg may be "@local" for project-level config/CLI operations.
+func (g *Graph) CheckExportVisibility(fromPkg, toPkg string) error {
+	if g == nil || fromPkg == "" || toPkg == "" || fromPkg == toPkg {
+		return nil
+	}
+	toNode := g.Packages[toPkg]
+	if toNode == nil || toNode.Container == "" || toNode.Container == api.LocalContainerID {
+		return nil
+	}
+	toContainer := g.Containers[toNode.Container]
+	if toContainer == nil || toContainer.IsLocal() || toContainer.Manifest == nil || !toContainer.Manifest.HasExports() {
+		return nil
+	}
+	if toNode.Exported {
+		return nil
+	}
+	fromContainer := ""
+	if fromPkg == "@local" || api.IsLocalPackageID(fromPkg) {
+		fromContainer = api.LocalContainerID
+	} else if fromNode := g.Packages[fromPkg]; fromNode != nil {
+		fromContainer = fromNode.Container
+	}
+	if fromContainer == toNode.Container {
+		return nil
+	}
+	return &ExportVisibilityError{
+		From:      fromPkg,
+		To:        toPkg,
+		Container: toNode.Container,
+		Exported:  toContainer.Manifest.ExportNames(),
+	}
 }
 
 func NewGraph() *Graph {
@@ -353,8 +445,11 @@ func (r *Resolver) ResolveProject(projectDir string, rootOverrides []string) err
 
 	knownConstraints := make(map[string][]string)
 	r.rootExactOverrides = make(map[string]string)
-	for mod, raw := range manifest.Modules {
-		if c := normalizeConstraint(raw); c != "" {
+	for mod, spec := range manifest.Modules {
+		if spec.Path != "" {
+			continue
+		}
+		if c := normalizeConstraint(spec.Version); c != "" {
 			knownConstraints[mod] = appendUnique(knownConstraints[mod], c)
 			if isExactConstraint(c) {
 				r.rootExactOverrides[mod] = c
@@ -433,11 +528,14 @@ func (r *Resolver) FilterDeps(id string, cfgVals map[string]any, options map[str
 	deps := pkg.GetRequires().Get()
 	newDeps := make([]string, 0, len(deps))
 	for _, req := range deps {
-		resolved := api.CanonicalizePackageRef(node.Container, req.Name)
+		resolved := r.graph.CanonicalPackageRef(node.Container, req.Name)
 		if _, ok := r.graph.Packages[resolved]; !ok {
 			return fmt.Errorf("dependency %q (required by %s) not found in dependency graph; declare it unconditionally in OnRequire (use ctx.When() for config-conditional requires)", req.Name, id)
 		}
 		if err := pkgvis.CheckInternal(id, r.VisibilityPath(id), resolved, r.VisibilityPath(resolved)); err != nil {
+			return err
+		}
+		if err := r.graph.CheckExportVisibility(id, resolved); err != nil {
 			return err
 		}
 		newDeps = append(newDeps, resolved)
@@ -447,10 +545,22 @@ func (r *Resolver) FilterDeps(id string, cfgVals map[string]any, options map[str
 }
 
 func (r *Resolver) resolvePackage(pkgID string, container *ContainerNode, relPath string, path []string, knownConstraints map[string][]string) (*PackageNode, *constraintRestart, error) {
+	if !container.IsLocal() && container.Manifest != nil {
+		if expKey, expTarget, collides := container.Manifest.ExportKeyCollision(relPath); collides {
+			internalRef := api.LocalContainerID
+			if relPath != "" {
+				internalRef = api.LocalContainerID + strings.Trim(filepath.ToSlash(relPath), "/")
+			}
+			return nil, nil, fmt.Errorf("package %q in container %s collides with export %q -> %q; rename the export key or move the internal package", internalRef, container.ID, expKey, expTarget)
+		}
+	}
 	if err := api.CheckCycle(path, pkgID); err != nil {
 		return nil, nil, err
 	}
 	if node, exists := r.graph.Packages[pkgID]; exists {
+		if node.Container != container.ID || strings.Trim(filepath.ToSlash(node.RelPath), "/") != strings.Trim(filepath.ToSlash(relPath), "/") {
+			return nil, nil, fmt.Errorf("package ID %q collision between %s (%s) and %s (%s)", pkgID, node.Container, node.RelPath, container.ID, relPath)
+		}
 		return node, nil, nil
 	}
 
@@ -473,6 +583,21 @@ func (r *Resolver) resolvePackage(pkgID string, container *ContainerNode, relPat
 
 	r.sources[pkgID] = src
 	node := NewPackageNode(pkgID, container.ID, relPath, container.Kind, src, pkg)
+	node.Exported = container.IsLocal() || container.Manifest == nil || !container.Manifest.HasExports() || container.Manifest.IsExportedRelPath(relPath)
+	if container.Manifest != nil {
+		if sealedRel, ok := container.Manifest.SealedSource(relPath); ok {
+			rawSealed := filepath.Clean(filepath.Join(container.Dir, filepath.FromSlash(sealedRel)))
+			absSealed, escaped, err := resolveContainedDir(container.Dir, rawSealed)
+			if err != nil {
+				return nil, nil, fmt.Errorf("sealed source %q for package %s not found at %s", sealedRel, pkgID, rawSealed)
+			}
+			if escaped {
+				return nil, nil, fmt.Errorf("sealed source %q for package %s escapes container root %s", sealedRel, pkgID, container.Dir)
+			}
+			node.SealedSourceRel = sealedRel
+			node.SealedSourceDir = absSealed
+		}
+	}
 	r.graph.Packages[pkgID] = node
 
 	if restart, err := r.recurseDeps(node, container, path, knownConstraints); err != nil || restart != nil {
@@ -537,26 +662,152 @@ func (r *Resolver) resolveDepTarget(callerID string, callerContainer *ContainerN
 	}
 	if api.IsLocalPackageID(rawRef) {
 		relPath, _ := api.LocalRelPath(rawRef)
-		depID := api.CanonicalizePackageRef(callerContainer.ID, rawRef)
+		depID := r.graph.CanonicalPackageRef(callerContainer.ID, rawRef)
 		return callerContainer, depID, relPath, nil, nil
 	}
 	if callerContainer.Kind == SourceKindRegistry && strings.HasPrefix(rawRef, callerContainer.ID+"/") {
 		return callerContainer, rawRef, strings.TrimPrefix(rawRef, callerContainer.ID+"/"), nil, nil
 	}
-	targetContainerID, relPath, rawConstraint, ok := callerContainer.Manifest.MatchModule(rawRef)
+	targetContainerID, relPath, modSpec, ok := callerContainer.Manifest.MatchModule(rawRef)
 	if !ok {
 		manifestHint := filepath.Join(callerContainer.Dir, buildscript.ManifestFileName)
 		return nil, "", "", nil, fmt.Errorf("package %s requires %q, which does not match any module declared in %s; add the container to \"modules\" in vmake.json", callerID, rawRef, manifestHint)
 	}
-	depContainer, restart, err := r.ensureContainer(targetContainerID, normalizeConstraint(rawConstraint), callerID, knownConstraints)
+	var (
+		depContainer *ContainerNode
+		restart      *constraintRestart
+		err          error
+	)
+	if modSpec.Path != "" {
+		depContainer, err = r.ensureLocalPathContainer(callerContainer, targetContainerID, modSpec.Path)
+	} else {
+		depContainer, restart, err = r.ensureContainer(callerContainer, targetContainerID, normalizeConstraint(modSpec.Version), callerID, knownConstraints)
+	}
 	if err != nil || restart != nil {
 		return nil, "", "", restart, err
+	}
+	if depContainer.Manifest != nil && depContainer.Manifest.HasExports() {
+		diskRel, allowed := depContainer.Manifest.ResolveExport(relPath)
+		if !allowed {
+			return nil, "", "", nil, &ExportVisibilityError{
+				From:      callerID,
+				To:        rawRef,
+				Container: depContainer.ID,
+				Exported:  depContainer.Manifest.ExportNames(),
+			}
+		}
+		relPath = diskRel
 	}
 	return depContainer, rawRef, relPath, nil, nil
 }
 
-func (r *Resolver) ensureContainer(containerID, incomingConstraint, requirer string, knownConstraints map[string][]string) (*ContainerNode, *constraintRestart, error) {
+func resolveContainedDir(rootDir, targetPath string) (string, bool, error) {
+	info, err := os.Stat(targetPath)
+	if err != nil || !info.IsDir() {
+		if err == nil {
+			err = fmt.Errorf("%s is not a directory", targetPath)
+		}
+		return "", false, err
+	}
+	realRoot := filepath.Clean(rootDir)
+	if resolved, err := filepath.EvalSymlinks(rootDir); err == nil {
+		realRoot = filepath.Clean(resolved)
+	}
+	realTarget, err := filepath.EvalSymlinks(targetPath)
+	if err != nil {
+		return "", false, err
+	}
+	realTarget = filepath.Clean(realTarget)
+	rel, err := filepath.Rel(realRoot, realTarget)
+	if err != nil || rel == ".." || strings.HasPrefix(filepath.ToSlash(rel), "../") || filepath.IsAbs(rel) {
+		return realTarget, true, nil
+	}
+	return realTarget, false, nil
+}
+
+func (r *Resolver) ensureLocalPathContainer(callerContainer *ContainerNode, containerID, relDir string) (*ContainerNode, error) {
+	repoName, _, _ := api.SplitPackageRef(containerID)
+	if linkPath, ok := r.sourceLink(containerID); ok {
+		if c, exists := r.graph.Containers[containerID]; exists {
+			return c, nil
+		}
+		c, err := r.resolveLinkedNativeContainer(containerID, repoName, linkPath, "", nil)
+		if err != nil {
+			return nil, err
+		}
+		r.graph.Containers[containerID] = c
+		r.mergeSourceConstraints(c)
+		return c, nil
+	}
+	rawAbs := filepath.Clean(filepath.Join(callerContainer.Dir, filepath.FromSlash(relDir)))
+	absPath, escaped, err := resolveContainedDir(callerContainer.Dir, rawAbs)
+	if err != nil {
+		return nil, fmt.Errorf("local path container %s directory %s not found", containerID, rawAbs)
+	}
+	if !callerContainer.IsLocal() && escaped {
+		return nil, fmt.Errorf("container %s path %q escapes parent container %s", containerID, relDir, callerContainer.ID)
+	}
 	if c, exists := r.graph.Containers[containerID]; exists {
+		if c.IsLinked() {
+			return c, nil
+		}
+		if !c.IsLocalPath() || filepath.Clean(c.Dir) != filepath.Clean(absPath) {
+			return nil, fmt.Errorf("container %s conflicts between local path %s and already-resolved source %s", containerID, absPath, c.Dir)
+		}
+		return c, nil
+	}
+	manifest, _, err := buildscript.LoadManifest(absPath)
+	if err != nil {
+		return nil, err
+	}
+	commit, err := repo.GetCurrentCommitContext(r.ctx, absPath)
+	if err != nil || commit == "" {
+		commit = "local-path"
+	}
+	declaredByRemote := !callerContainer.IsLocal() && (!callerContainer.IsLocalPath() || callerContainer.DeclaredByRemote)
+	repoURL := ""
+	if declaredByRemote {
+		repoName = callerContainer.Repo
+		repoURL = callerContainer.RepoURL
+	}
+	c := &ContainerNode{
+		ID:               containerID,
+		Repo:             repoName,
+		RepoURL:          repoURL,
+		Kind:             SourceKindNative,
+		Dir:              absPath,
+		Version:          LocalPathVersion,
+		Commit:           commit,
+		LocalPath:        true,
+		DeclaredByRemote: declaredByRemote,
+		Manifest:         manifest,
+	}
+	r.graph.Containers[containerID] = c
+	r.mergeSourceConstraints(c)
+	return c, nil
+}
+
+func (r *Resolver) manifestNativeRepoURL(callerContainer *ContainerNode, repoName string) string {
+	if callerContainer != nil && callerContainer.Manifest != nil {
+		if spec, ok := callerContainer.Manifest.Repos[repoName]; ok && strings.TrimSpace(spec.Native) != "" {
+			return strings.TrimSpace(spec.Native)
+		}
+	}
+	if r.graph != nil {
+		if root := r.graph.Containers[api.LocalContainerID]; root != nil && root.Manifest != nil {
+			if spec, ok := root.Manifest.Repos[repoName]; ok && strings.TrimSpace(spec.Native) != "" {
+				return strings.TrimSpace(spec.Native)
+			}
+		}
+	}
+	return ""
+}
+
+func (r *Resolver) ensureContainer(callerContainer *ContainerNode, containerID, incomingConstraint, requirer string, knownConstraints map[string][]string) (*ContainerNode, *constraintRestart, error) {
+	if c, exists := r.graph.Containers[containerID]; exists {
+		if c.IsLocalPath() {
+			return nil, nil, fmt.Errorf("container %s conflicts between versioned module %q (from %s) and local path container %s", containerID, incomingConstraint, requirer, c.Dir)
+		}
 		restart, err := r.applyContainerConstraint(c, incomingConstraint, requirer)
 		if err != nil || restart != nil {
 			return nil, restart, err
@@ -564,16 +815,12 @@ func (r *Resolver) ensureContainer(containerID, incomingConstraint, requirer str
 		return c, nil, nil
 	}
 
-	if r.repoMgr == nil {
-		return nil, nil, fmt.Errorf("resolve container %s: no repository manager configured", containerID)
-	}
-
 	constraints := slices.Clone(knownConstraints[containerID])
 	if incomingConstraint != "" {
 		constraints = appendUnique(constraints, incomingConstraint)
 	}
 
-	c, err := externalAdapterForID(containerID).resolveContainer(r, containerID, constraints)
+	c, err := externalAdapterForID(containerID).resolveContainer(r, callerContainer, containerID, constraints)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -637,10 +884,18 @@ func (r *Resolver) resolveNativeContainer(containerID, repoName, modName string,
 	if err != nil {
 		return nil, err
 	}
+	return r.resolveNativeContainerWithURL(containerID, repoName, modName, urlTemplate, "", constraints)
+}
+
+func (r *Resolver) resolveNativeContainerWithURL(containerID, repoName, modName, urlTemplate, manifestRepoURL string, constraints []string) (*ContainerNode, error) {
 	gitURL := repo.ResolveNativeURL(urlTemplate, modName)
 
 	if linkPath, ok := r.sourceLink(containerID); ok {
-		return r.resolveLinkedNativeContainer(containerID, repoName, linkPath, gitURL, constraints)
+		c, err := r.resolveLinkedNativeContainer(containerID, repoName, linkPath, gitURL, constraints)
+		if err == nil && c != nil {
+			c.RepoURL = manifestRepoURL
+		}
+		return c, err
 	}
 	if r.sourceMgr == nil {
 		return nil, fmt.Errorf("resolver for %s has no source manager configured", containerID)
@@ -658,6 +913,7 @@ func (r *Resolver) resolveNativeContainer(containerID, repoName, modName string,
 	var (
 		commitConstraint  string
 		semverConstraints []string
+		err               error
 	)
 	if !hasExplicitPin {
 		commitConstraint, semverConstraints, err = SplitConstraints(containerID, effectiveConstraints)
@@ -756,6 +1012,7 @@ func (r *Resolver) resolveNativeContainer(containerID, repoName, modName string,
 	return &ContainerNode{
 		ID:          containerID,
 		Repo:        repoName,
+		RepoURL:     manifestRepoURL,
 		Kind:        SourceKindNative,
 		Dir:         res.SrcDir,
 		URL:         gitURL,
@@ -813,7 +1070,7 @@ func (r *Resolver) applyContainerConstraint(c *ContainerNode, incoming, requirer
 	if !slices.Contains(c.Constraints, incoming) {
 		c.Constraints = append(c.Constraints, incoming)
 	}
-	if c.Kind != SourceKindNative || c.IsLinked() || r.hasContainerOverride(c.ID) {
+	if c.Kind != SourceKindNative || c.IsLinked() || c.IsLocalPath() || r.hasContainerOverride(c.ID) {
 		return nil, nil
 	}
 	commitConstraint, semverConstraints, err := SplitConstraints(c.ID, c.Constraints)
@@ -981,7 +1238,7 @@ func (r *Resolver) mergeSourceConstraints(c *ContainerNode) {
 	}
 	sort.Strings(keys)
 	for _, rawKey := range keys {
-		pkgID := api.CanonicalizePackageRef(c.ID, rawKey)
+		pkgID := r.graph.CanonicalPackageRef(c.ID, rawKey)
 		norm := normalizeConstraint(c.Manifest.Sources[rawKey])
 		if norm == "" {
 			continue
@@ -1012,7 +1269,7 @@ func (r *Resolver) validateAllSourceNodes() error {
 }
 
 func (r *Resolver) validateSourceNodeConstraints(node *PackageNode) error {
-	if node == nil || node.Pkg == nil || !node.HasOwnGit() {
+	if node == nil || node.Pkg == nil || !node.HasActiveOwnGit() {
 		return nil
 	}
 	if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {

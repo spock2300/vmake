@@ -95,6 +95,8 @@ func resetProcessState(env runEnv) {
 	cachedProjectDir = ""
 	activeCommandSession = nil
 	extensionRepoLocks = nil
+	repoAddNative = false
+	repoTrustURLFlag = ""
 	if env.VmakeDir != "" {
 		vmakeDir = env.VmakeDir
 	} else {
@@ -277,6 +279,7 @@ func installRepoCommand() {
 	RootCmd.AddCommand(repoCmd)
 
 	repoAddCmd.Flags().BoolVarP(&repoAddNative, "native", "n", false, "add a native repository (URL template with {name} placeholder)")
+	repoTrustCmd.Flags().StringVar(&repoTrustURLFlag, "url", "", "URL or native URL template for a repository declared in vmake.json")
 
 	repoRemoveCmd.ValidArgsFunction = completeRepoName
 	repoUpdateCmd.ValidArgsFunction = completeRepoName

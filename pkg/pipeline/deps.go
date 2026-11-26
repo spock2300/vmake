@@ -18,8 +18,18 @@ type DepsUpdateResult struct {
 	DryRun  bool              `json:"dryRun"`
 }
 
-func SyncOrUpdateDeps(ctx *RuntimeContext, dryRun bool) (_ *DepsUpdateResult, err error) {
+type DepsSyncOptions struct {
+	DryRun bool
+	Prune  bool
+}
+
+func SyncOrUpdateDeps(ctx *RuntimeContext, dryRun bool) (*DepsUpdateResult, error) {
+	return SyncOrUpdateDepsWithOptions(ctx, DepsSyncOptions{DryRun: dryRun})
+}
+
+func SyncOrUpdateDepsWithOptions(ctx *RuntimeContext, opts DepsSyncOptions) (_ *DepsUpdateResult, err error) {
 	defer scriptcall.Recover(&err)
+	dryRun := opts.DryRun
 	needed, err := resolveNeeded(ctx, true, true)
 	if err != nil {
 		return nil, err
@@ -47,6 +57,7 @@ func SyncOrUpdateDeps(ctx *RuntimeContext, dryRun bool) (_ *DepsUpdateResult, er
 	}
 
 	src := newSourceStage(rc, conf)
+	src.pruneLock = opts.Prune
 	if dryRun {
 		tmpDir, err := os.MkdirTemp("", "vmake-deps-dryrun-*")
 		if err != nil {
@@ -147,6 +158,22 @@ func InspectDepsStatus(ctx *RuntimeContext) (_ *DepsStatusReport, err error) {
 		linked := ""
 		if ctx.SourceLinks != nil {
 			linked = ctx.SourceLinks[id]
+		}
+		if c.IsLocalPath() {
+			packages = append(packages, DepPackageStatus{
+				Section:      string(resolver.LockSectionContainer),
+				Name:         id,
+				Source:       "path",
+				Version:      c.Version,
+				Commit:       c.Commit,
+				Constraints:  constraints,
+				Linked:       c.Dir,
+				Dirty:        repo.IsDirtyContext(ctx.Context, c.Dir),
+				Materialized: true,
+				Cached:       false,
+				State:        "path",
+			})
+			continue
 		}
 		if linked != "" {
 			commit := c.Commit
@@ -265,7 +292,7 @@ func InspectDepsStatus(ctx *RuntimeContext) (_ *DepsStatusReport, err error) {
 	// 2. Independent SetGit sources (local, registry, native members).
 	for _, name := range ctx.Resolver.GetOrder() {
 		node := ctx.DepGraph.Packages[name]
-		if node == nil || !node.HasOwnGit() {
+		if node == nil || !node.HasActiveOwnGit() {
 			continue
 		}
 		seenSources[name] = true
@@ -473,7 +500,7 @@ func FetchDeps(ctx *RuntimeContext, pkgs []string, all bool, offline bool, onFet
 	sort.Strings(containerIDs)
 	for _, id := range containerIDs {
 		c := ctx.DepGraph.Containers[id]
-		if c == nil || !c.IsNative() || c.IsLinked() {
+		if c == nil || !c.IsNative() || c.IsLinked() || c.IsLocalPath() {
 			continue
 		}
 		tree := src.containerTrees[id]
@@ -494,7 +521,7 @@ func FetchDeps(ctx *RuntimeContext, pkgs []string, all bool, offline bool, onFet
 			continue
 		}
 		node := ctx.DepGraph.Packages[name]
-		if node == nil || !node.HasOwnGit() {
+		if node == nil || !node.HasActiveOwnGit() {
 			continue
 		}
 		if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource {

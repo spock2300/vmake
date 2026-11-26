@@ -10,7 +10,7 @@ import (
 func CollectSubGraphPackages(rootPkg string, pkgMeta map[string]PkgBuildMeta, allTargets map[string]map[string]*api.Target, needed map[string]bool) map[string]bool {
 	visited := make(map[string]bool)
 	resolvePkg := func(currentPkg, depPkg string) string {
-		return api.CanonicalizePackageRef(pkgMeta[currentPkg].Container, depPkg)
+		return canonicalizeBuildPkgRef(pkgMeta, currentPkg, depPkg)
 	}
 	var visit func(pkgName string)
 	visit = func(pkgName string) {

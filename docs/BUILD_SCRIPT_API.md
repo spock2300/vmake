@@ -381,6 +381,7 @@ func (o *Option) SetMacroName(name string) *Option         // 自定义宏名（
 func (o *Option) SetShowIf(fn func(ctx *ConfigContext) bool) *Option  // 条件显示
 func (o *Option) SetOnApply(fn func(ctx *ConfigContext, val any)) *Option  // 选项值解析后的回调；按选项名排序执行，非声明顺序
 func (o *Option) SetGroup(group string) *Option            // SetGroup(api.GroupGlobal)（"Global"）使选项成为全局选项
+func (o *Option) SetInternal(internal bool) *Option        // 标记为容器内部选项：禁止跨容器读写/配置/TUI 暴露（GlobalOption 不可标记为 internal）
 
 // 获取方法
 func (o *Option) Name() string
@@ -392,6 +393,7 @@ func (o *Option) Group() string
 func (o *Option) ShowIf() func(ctx *ConfigContext) bool
 func (o *Option) OnApply() func(ctx *ConfigContext, val any)
 func (o *Option) IsGlobal() bool
+func (o *Option) IsInternal() bool
 func (o *Option) MacroName() string
 func (o *Option) MacroDefines(val any) ([]string, error)  // 宏的 -D 内容，不含 "-D" 前缀
 

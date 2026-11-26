@@ -47,7 +47,7 @@ func resolvePackageTools(ctx *RuntimeContext, name string, tc *toolchain.Toolcha
 }
 
 func patchHashForNode(name string, node *resolver.PackageNode) (string, error) {
-	if node == nil || node.Pkg == nil || len(node.Pkg.GetPatches()) == 0 {
+	if node == nil || node.Pkg == nil || node.IsSealed() || len(node.Pkg.GetPatches()) == 0 {
 		return "", nil
 	}
 	h, err := repo.PatchSetHash(node.Pkg)
@@ -60,6 +60,9 @@ func patchHashForNode(name string, node *resolver.PackageNode) (string, error) {
 func containerVersionKey(ctx *RuntimeContext, containerID string, c *resolver.ContainerNode) (string, string, bool) {
 	if c != nil && c.IsLinked() {
 		return resolver.LocalLinkVersion, c.Link.Commit, true
+	}
+	if c != nil && c.IsLocalPath() {
+		return c.Version, c.Commit, true
 	}
 	nativeSelected, nativeCommit := "", ""
 	if c != nil {

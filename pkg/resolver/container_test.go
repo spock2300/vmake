@@ -2,12 +2,14 @@ package resolver
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/repo"
 )
 
@@ -108,6 +110,299 @@ func TestResolveNativeContainerWithoutRootBuildGoLazily(t *testing.T) {
 	}
 	if subA.Source.Origin != api.SourceRemote || subA.Source.Repo != "testnative" {
 		t.Fatalf("sub_a source = %+v", subA.Source)
+	}
+}
+
+func TestDevRootsUsedLocallyAndIgnoredExternally(t *testing.T) {
+	sdkFiles := map[string]string{
+		"vmake.json":           `{"dev_roots": ["//tests/runner"]}`,
+		"lib/build.go":         emptyPackageMain,
+		"tests/runner/build.go": requirePackageMain("//lib"),
+	}
+	localSDK := canonicalTempDir(t)
+	writeProjectFiles(t, localSDK, sdkFiles)
+	localResolver := newTrustedTestResolver(repo.NewRepoManager(canonicalTempDir(t)), canonicalTempDir(t))
+	defer localResolver.Close()
+	if err := localResolver.ResolveProject(localSDK, nil); err != nil {
+		t.Fatalf("local ResolveProject with dev_roots failed: %v", err)
+	}
+	if localResolver.Graph().Packages["//tests/runner"] == nil || localResolver.Graph().Packages["//lib"] == nil {
+		t.Fatalf("local dev_roots packages = %v", localResolver.Graph().Order)
+	}
+
+	bare := writeContainerRepo(t, sdkFiles)
+	extResolver := newContainerTestResolver(t, bare)
+	project := writeLocalProject(t, map[string]string{"testnative/mother": "*"}, nil, "testnative/mother/lib")
+	if err := extResolver.ResolveProject(project, nil); err != nil {
+		t.Fatalf("external ResolveProject failed: %v", err)
+	}
+	if extResolver.Graph().Packages["testnative/mother/lib"] == nil {
+		t.Fatal("expected testnative/mother/lib in graph")
+	}
+	if extResolver.Graph().Packages["testnative/mother/tests/runner"] != nil {
+		t.Fatal("dev_roots package must not be loaded when consumed externally")
+	}
+}
+
+func TestContainerExportsWhitelistAndSingleIdentity(t *testing.T) {
+	bare := writeContainerRepo(t, map[string]string{
+		"vmake.json": `{
+			"exports": {
+				"core": "//system/core",
+				"graphics": "//sdk/graphics"
+			}
+		}`,
+		"sdk/graphics/build.go": requirePackageMain("//system/freertos/lvgl", "//system/core"),
+		"system/core/build.go":  emptyPackageMain,
+		"system/freertos/lvgl/build.go": emptyPackageMain,
+	})
+
+	r := newContainerTestResolver(t, bare)
+	project := writeLocalProject(t, map[string]string{"testnative/mother": "*"}, nil, "testnative/mother/graphics")
+	if err := r.ResolveProject(project, nil); err != nil {
+		t.Fatalf("ResolveProject(exported): %v", err)
+	}
+	gfx := r.Graph().Packages["testnative/mother/graphics"]
+	if gfx == nil || gfx.RelPath != "sdk/graphics" || !gfx.Exported {
+		t.Fatalf("graphics node = %+v", gfx)
+	}
+	if api.BindPackageName(gfx.Pkg) != "testnative/mother/graphics" {
+		t.Fatalf("graphics pkg name = %q, want testnative/mother/graphics", api.BindPackageName(gfx.Pkg))
+	}
+	core := r.Graph().Packages["testnative/mother/core"]
+	if core == nil || core.RelPath != "system/core" || !core.Exported {
+		t.Fatalf("core node = %+v", core)
+	}
+	if r.Graph().Packages["testnative/mother/system/core"] != nil {
+		t.Fatal("exported package was loaded twice under its internal path")
+	}
+	lvgl := r.Graph().Packages["testnative/mother/system/freertos/lvgl"]
+	if lvgl == nil || lvgl.Exported {
+		t.Fatalf("unexported internal dep = %+v", lvgl)
+	}
+	if err := r.Graph().CheckExportVisibility("//", "testnative/mother/system/freertos/lvgl"); err == nil {
+		t.Fatal("CheckExportVisibility should reject external access to non-exported package")
+	}
+	if err := r.Graph().CheckExportVisibility("testnative/mother/graphics", "testnative/mother/system/freertos/lvgl"); err != nil {
+		t.Fatalf("intra-container CheckExportVisibility should succeed, got %v", err)
+	}
+
+	r.Close()
+	r2 := newContainerTestResolver(t, bare)
+	badProject := writeLocalProject(t, map[string]string{"testnative/mother": "*"}, nil, "testnative/mother/system/freertos/lvgl")
+	if err := r2.ResolveProject(badProject, nil); err == nil || !strings.Contains(err.Error(), "not exported") {
+		t.Fatalf("expected non-exported error, got %v", err)
+	}
+	r2.Close()
+
+	emptyBare := writeContainerRepo(t, map[string]string{
+		"vmake.json":   `{"exports": {}}`,
+		"lib/build.go": emptyPackageMain,
+	})
+	rEmpty := newContainerTestResolver(t, emptyBare)
+	emptyProj := writeLocalProject(t, map[string]string{"testnative/mother": "*"}, nil, "testnative/mother/lib")
+	if err := rEmpty.ResolveProject(emptyProj, nil); err == nil || !strings.Contains(err.Error(), "not exported") {
+		t.Fatalf("expected empty exports {} to deny external import, got %v", err)
+	}
+	rEmpty.Close()
+
+	collBare := writeContainerRepo(t, map[string]string{
+		"vmake.json":        `{"exports": {"core": "//sdk/core"}}`,
+		"sdk/core/build.go": requirePackageMain("//core"),
+		"core/build.go":     emptyPackageMain,
+	})
+	rColl := newContainerTestResolver(t, collBare)
+	collProj := writeLocalProject(t, map[string]string{"testnative/mother": "*"}, nil, "testnative/mother/core")
+	if err := rColl.ResolveProject(collProj, nil); err == nil || !strings.Contains(err.Error(), "collides with export") {
+		t.Fatalf("expected export collision error, got %v", err)
+	}
+	rColl.Close()
+}
+
+func TestLocalPathAndSelfContainedManifestRepos(t *testing.T) {
+	project := canonicalTempDir(t)
+	writeProjectFiles(t, project, map[string]string{
+		"vmake.json": `{
+			"roots": ["//app"],
+			"modules": {
+				"vendor/sdk": {"path": "./third_party/sdk"}
+			}
+		}`,
+		"app/build.go":                            requirePackageMain("vendor/sdk/core"),
+		"third_party/sdk/vmake.json":              `{"exports": {"core": "//internal/core"}}`,
+		"third_party/sdk/internal/core/build.go":  emptyPackageMain,
+	})
+	rPath := newTrustedTestResolver(repo.NewRepoManager(canonicalTempDir(t)), canonicalTempDir(t))
+	defer rPath.Close()
+	if err := rPath.ResolveProject(project, nil); err != nil {
+		t.Fatalf("ResolveProject(local path container): %v", err)
+	}
+	c := rPath.Graph().Containers["vendor/sdk"]
+	if c == nil || !c.IsLocalPath() || c.Dir != filepath.Join(project, "third_party", "sdk") {
+		t.Fatalf("local path container = %+v", c)
+	}
+	core := rPath.Graph().Packages["vendor/sdk/core"]
+	if core == nil || core.RelPath != "internal/core" || !core.Exported {
+		t.Fatalf("vendor/sdk/core = %+v", core)
+	}
+
+	linkedSDK := canonicalTempDir(t)
+	writeProjectFiles(t, linkedSDK, map[string]string{
+		"vmake.json":               `{"exports": {"core": "//linked_core"}}`,
+		"linked_core/build.go":     emptyPackageMain,
+	})
+	gitCmd(t, linkedSDK, "init", "-q", "-b", "master")
+	gitCmd(t, linkedSDK, "config", "user.email", "test@example.com")
+	gitCmd(t, linkedSDK, "config", "user.name", "test")
+	gitCmd(t, linkedSDK, "add", "-A")
+	gitCmd(t, linkedSDK, "commit", "-q", "-m", "init")
+	rLink := newTrustedTestResolver(repo.NewRepoManager(canonicalTempDir(t)), canonicalTempDir(t))
+	rLink.SetSourceLinks(map[string]string{"vendor/sdk": linkedSDK})
+	defer rLink.Close()
+	if err := rLink.ResolveProject(project, nil); err != nil {
+		t.Fatalf("ResolveProject(linked override of local path container): %v", err)
+	}
+	if lc := rLink.Graph().Containers["vendor/sdk"]; lc == nil || !lc.IsLinked() || lc.Dir != linkedSDK {
+		t.Fatalf("linked override container = %+v, want Dir=%s", lc, linkedSDK)
+	}
+
+	conflictProj := canonicalTempDir(t)
+	writeProjectFiles(t, conflictProj, map[string]string{
+		"vmake.json": `{
+			"roots": ["//app"],
+			"modules": {
+				"vendor/sub": {"path": "./sub"},
+				"vendor/sdk": {"path": "./sdk_a"}
+			}
+		}`,
+		"app/build.go":        requirePackageMain("vendor/sdk/lib", "vendor/sub/user"),
+		"sdk_a/lib/build.go":  emptyPackageMain,
+		"sdk_b/lib/build.go":  emptyPackageMain,
+		"sub/vmake.json":      `{"modules": {"vendor/sdk": {"path": "../sdk_b"}}}`,
+		"sub/user/build.go":   requirePackageMain("vendor/sdk/lib"),
+	})
+	rConf := newTrustedTestResolver(repo.NewRepoManager(canonicalTempDir(t)), canonicalTempDir(t))
+	defer rConf.Close()
+	if err := rConf.ResolveProject(conflictProj, nil); err == nil {
+		t.Fatal("expected conflict/escape error for conflicting local path containers")
+	}
+
+	bare := writeContainerRepo(t, map[string]string{
+		"sub/build.go": emptyPackageMain,
+	})
+	template := strings.TrimSuffix(bare, "mother.git") + "{name}.git"
+	selfProj := canonicalTempDir(t)
+	writeProjectFiles(t, selfProj, map[string]string{
+		"vmake.json": fmt.Sprintf(`{
+			"roots": ["//app"],
+			"repos": {"selforg": {"native": %q}},
+			"modules": {"selforg/mother": ">=1.0.0"}
+		}`, template),
+		"app/build.go": requirePackageMain("selforg/mother/sub"),
+	})
+	var seenRepoURL string
+	rSelf := NewResolver(repo.NewRepoManager(canonicalTempDir(t)), canonicalTempDir(t))
+	rSelf.SetSourceManager(repo.NewSourceManager(canonicalTempDir(t), canonicalTempDir(t)))
+	rSelf.SetTrustChecker(func(src buildscript.Source) error {
+		seenRepoURL = src.RepoURL
+		return nil
+	})
+	defer rSelf.Close()
+	if err := rSelf.ResolveProject(selfProj, nil); err != nil {
+		t.Fatalf("ResolveProject(self-contained repos): %v", err)
+	}
+	if seenRepoURL != template {
+		t.Fatalf("trust checker saw RepoURL = %q, want %q", seenRepoURL, template)
+	}
+	if rSelf.Graph().Packages["selforg/mother/sub"] == nil {
+		t.Fatal("expected selforg/mother/sub in graph")
+	}
+
+	overrideBare := writeContainerRepo(t, map[string]string{
+		"override_only/build.go": emptyPackageMain,
+	})
+	overrideTemplate := strings.TrimSuffix(overrideBare, "mother.git") + "{name}.git"
+	overrideReposDir := canonicalTempDir(t)
+	overrideMgr := repo.NewRepoManager(overrideReposDir)
+	if err := overrideMgr.AddNative("selforg", overrideTemplate); err != nil {
+		t.Fatal(err)
+	}
+	overrideProj := canonicalTempDir(t)
+	writeProjectFiles(t, overrideProj, map[string]string{
+		"vmake.json": fmt.Sprintf(`{
+			"roots": ["//app"],
+			"repos": {"selforg": {"native": %q}},
+			"modules": {"selforg/mother": ">=1.0.0"}
+		}`, template),
+		"app/build.go": requirePackageMain("selforg/mother/override_only"),
+	})
+	rOver := newTrustedTestResolver(overrideMgr, canonicalTempDir(t))
+	rOver.SetSourceManager(repo.NewSourceManager(canonicalTempDir(t), canonicalTempDir(t)))
+	defer rOver.Close()
+	if err := rOver.ResolveProject(overrideProj, nil); err != nil {
+		t.Fatalf("global repo override failed: %v", err)
+	}
+	if rOver.Graph().Packages["selforg/mother/override_only"] == nil {
+		t.Fatal("expected global repo override to take precedence over manifest repos")
+	}
+}
+
+func TestSealedSourcesInNativeContainer(t *testing.T) {
+	bare := writeContainerRepo(t, map[string]string{
+		"vmake.json": `{"sealed_sources": {"//lib": "vendor/lib"}}`,
+		"lib/build.go": `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+	p.OnPackage(func(p *api.Package) {
+		p.SetGit("https://unreachable.invalid/lib.git")
+		p.AddVersion("1.0.0", "deadbeef")
+		p.AddPatches("fix.patch")
+	})
+}
+`,
+		"vendor/lib/lib.h": "#define SEALED_VAL 42\n",
+	})
+	r := newContainerTestResolver(t, bare)
+	project := writeLocalProject(t, map[string]string{"testnative/mother": "*"}, nil, "testnative/mother/lib")
+	if err := r.ResolveProject(project, nil); err != nil {
+		t.Fatalf("ResolveProject(sealed): %v", err)
+	}
+	node := r.Graph().Packages["testnative/mother/lib"]
+	if node == nil || !node.IsSealed() || node.HasActiveOwnGit() {
+		t.Fatalf("sealed node = %+v (IsSealed=%v HasActiveOwnGit=%v)", node, node.IsSealed(), node.HasActiveOwnGit())
+	}
+	if node.SealedSourceRel != "vendor/lib" || !strings.HasSuffix(node.SealedSourceDir, filepath.Join("vendor", "lib")) {
+		t.Fatalf("sealed paths = (%q, %q)", node.SealedSourceRel, node.SealedSourceDir)
+	}
+	r.Close()
+
+	badBare := writeContainerRepo(t, map[string]string{
+		"vmake.json":   `{"sealed_sources": {"//lib": "vendor/missing"}}`,
+		"lib/build.go": emptyPackageMain,
+	})
+	r2 := newContainerTestResolver(t, badBare)
+	badProj := writeLocalProject(t, map[string]string{"testnative/mother": "*"}, nil, "testnative/mother/lib")
+	if err := r2.ResolveProject(badProj, nil); err == nil || !strings.Contains(err.Error(), "sealed source") {
+		t.Fatalf("expected missing sealed source error, got %v", err)
+	}
+	r2.Close()
+
+	outsideDir := canonicalTempDir(t)
+	escapeProj := canonicalTempDir(t)
+	writeProjectFiles(t, escapeProj, map[string]string{
+		"vmake.json":   `{"roots": ["//lib"], "sealed_sources": {"//lib": "vendor/escape"}}`,
+		"lib/build.go": emptyPackageMain,
+	})
+	if err := os.MkdirAll(filepath.Join(escapeProj, "vendor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(escapeProj, "vendor", "escape")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	rEsc := newTrustedTestResolver(repo.NewRepoManager(canonicalTempDir(t)), canonicalTempDir(t))
+	defer rEsc.Close()
+	if err := rEsc.ResolveProject(escapeProj, nil); err == nil || !strings.Contains(err.Error(), "escapes container root") {
+		t.Fatalf("expected symlink escape error for sealed_sources, got %v", err)
 	}
 }
 

@@ -15,6 +15,7 @@ type Option struct {
 	macroName       string
 	noExportDefine  bool
 	exportDefineSet bool
+	internal        bool
 }
 
 func (o *Option) SetType(t OptionType) *Option {
@@ -77,6 +78,11 @@ func (o *Option) SetExportDefine(export bool) *Option {
 	return o
 }
 
+func (o *Option) SetInternal(internal bool) *Option {
+	o.internal = internal
+	return o
+}
+
 func (o *Option) Name() string                               { return o.name }
 func (o *Option) Type() OptionType                           { return o.optType }
 func (o *Option) Default() any                               { return o.defaultVal }
@@ -89,3 +95,4 @@ func (o *Option) MacroName() string                          { return o.macroNam
 func (o *Option) ExportDefine() bool                         { return !o.noExportDefine }
 func (o *Option) ExportDefineSet() bool                      { return o.exportDefineSet }
 func (o *Option) IsGlobal() bool                             { return o.group == GroupGlobal }
+func (o *Option) IsInternal() bool                           { return o.internal }

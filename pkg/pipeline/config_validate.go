@@ -15,9 +15,47 @@ func ValidateConfigValues(ctx *RuntimeContext, needed NeededSet) error {
 	return validateConfigValuesInternal(ctx, needed, false)
 }
 
+func validateConfigVisibility(ctx *RuntimeContext) error {
+	if ctx == nil || ctx.Config == nil || len(ctx.Config.Entries) == 0 {
+		return nil
+	}
+	pkgNames := make([]string, 0, len(ctx.Config.Entries))
+	for pkgName := range ctx.Config.Entries {
+		pkgNames = append(pkgNames, pkgName)
+	}
+	sort.Strings(pkgNames)
+	for _, pkgName := range pkgNames {
+		entry := ctx.Config.Entries[pkgName]
+		if entry == nil {
+			continue
+		}
+		if err := checkPackageVisibility(ctx, "@local", pkgName); err != nil {
+			return fmt.Errorf("entries.%s: %w", pkgName, err)
+		}
+		pkgOpts := ctx.allOptions[pkgName]
+		if len(entry.Options) == 0 || len(pkgOpts) == 0 {
+			continue
+		}
+		optNames := make([]string, 0, len(entry.Options))
+		for k := range entry.Options {
+			optNames = append(optNames, k)
+		}
+		sort.Strings(optNames)
+		for _, k := range optNames {
+			if opt := pkgOpts[k]; opt != nil && !opt.IsGlobal() && isExternalInternalOption(ctx, pkgName, opt) {
+				return fmt.Errorf("entries.%s.options.%s: option is internal to container %q and cannot be set externally", pkgName, k, packageContainerID(ctx, pkgName))
+			}
+		}
+	}
+	return nil
+}
+
 func validateConfigValuesInternal(ctx *RuntimeContext, needed NeededSet, checkToolchain bool) error {
 	if ctx == nil || ctx.Config == nil {
 		return nil
+	}
+	if err := validateConfigVisibility(ctx); err != nil {
+		return err
 	}
 	if rootOverrides := configRootOverrides(ctx); len(rootOverrides) > 0 && ctx.DepGraph != nil {
 		if _, err := computeRootSeeds(ctx.DepGraph, rootOverrides); err != nil {
@@ -74,6 +112,9 @@ func validateConfigValuesInternal(ctx *RuntimeContext, needed NeededSet, checkTo
 		if entry == nil {
 			continue
 		}
+		if err := checkPackageVisibility(ctx, "@local", pkgName); err != nil {
+			return fmt.Errorf("entries.%s: %w", pkgName, err)
+		}
 		pkgOpts := ctx.allOptions[pkgName]
 		optNames := make([]string, 0, len(entry.Options))
 		for k := range entry.Options {
@@ -103,6 +144,9 @@ func validateConfigValuesInternal(ctx *RuntimeContext, needed NeededSet, checkTo
 				continue
 			}
 			if opt := pkgOpts[k]; opt != nil && !opt.IsGlobal() {
+				if isExternalInternalOption(ctx, pkgName, opt) {
+					return fmt.Errorf("entries.%s.options.%s: option is internal to container %q and cannot be set externally", pkgName, k, packageContainerID(ctx, pkgName))
+				}
 				norm := api.NormalizeOptionValue(opt, val)
 				if err := api.ValidateOptionValue(opt, norm); err != nil {
 					return fmt.Errorf("entries.%s.options.%s: %w", pkgName, k, err)
@@ -180,6 +224,10 @@ func ValidateConfigStrict(ctx *RuntimeContext) ([]string, error) {
 			issues = append(issues, fmt.Sprintf("entries.%s: package is not reachable from active root", pkgName))
 			continue
 		}
+		if err := checkPackageVisibility(ctx, "@local", pkgName); err != nil {
+			issues = append(issues, fmt.Sprintf("entries.%s: %v", pkgName, err))
+			continue
+		}
 		pkgOpts := ctx.allOptions[pkgName]
 		optNames := make([]string, 0, len(entry.Options))
 		for k := range entry.Options {
@@ -196,7 +244,7 @@ func ValidateConfigStrict(ctx *RuntimeContext) ([]string, error) {
 					issues = append(issues, fmt.Sprintf("entries.%s.options.%s: option is global; set it under global instead", pkgName, k))
 					continue
 				}
-				avail := sortedNonGlobalOptMapKeys(pkgOpts)
+				avail := sortedVisibleOptionNames(ctx, pkgName, pkgOpts)
 				if len(avail) == 0 {
 					issues = append(issues, fmt.Sprintf("entries.%s.options.%s: unknown option (package declares no options)", pkgName, k))
 				} else {
@@ -206,6 +254,8 @@ func ValidateConfigStrict(ctx *RuntimeContext) ([]string, error) {
 			}
 			if opt.IsGlobal() {
 				issues = append(issues, fmt.Errorf("entries.%s.options.%s: option is global; set it under global instead", pkgName, k).Error())
+			} else if isExternalInternalOption(ctx, pkgName, opt) {
+				issues = append(issues, fmt.Sprintf("entries.%s.options.%s: option is internal to container %q and cannot be set externally", pkgName, k, packageContainerID(ctx, pkgName)))
 			}
 		}
 		if (entry.KConfig != "" || entry.SelectedPreset != "") && len(ctx.allKConfigs[pkgName]) == 0 {
@@ -253,17 +303,6 @@ func sortedOptMapKeys(opts map[string]*api.Option) []string {
 	keys := make([]string, 0, len(opts))
 	for k := range opts {
 		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func sortedNonGlobalOptMapKeys(opts map[string]*api.Option) []string {
-	keys := make([]string, 0, len(opts))
-	for k, opt := range opts {
-		if opt != nil && !opt.IsGlobal() {
-			keys = append(keys, k)
-		}
 	}
 	sort.Strings(keys)
 	return keys

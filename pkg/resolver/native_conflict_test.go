@@ -86,8 +86,12 @@ func writeTaggedNativeModule(t *testing.T, bareDest string, files map[string]str
 func writeLocalProject(t *testing.T, modules, sources map[string]string, reqs ...string) string {
 	t.Helper()
 	dir := canonicalTempDir(t)
+	modSpecs := make(map[string]buildscript.ModuleSpec, len(modules))
+	for k, v := range modules {
+		modSpecs[k] = buildscript.ModuleSpec{Version: v}
+	}
 	manifest := buildscript.Manifest{
-		Modules: modules,
+		Modules: modSpecs,
 		Sources: sources,
 	}
 	data, err := json.MarshalIndent(manifest, "", "  ")

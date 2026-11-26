@@ -55,6 +55,9 @@ type PackageFacts struct {
 	Commit        string
 	URL           string
 	Path          string
+	PackageDir    string
+	SrcDir        string
+	Sealed        bool
 	SourcePresent bool
 	Linked        bool
 	LinkPath      string
@@ -399,7 +402,7 @@ func remoteMetadata(ctx *RuntimeContext, name string, node *resolver.PackageNode
 		if c != nil && facts.URL == "" {
 			facts.URL = c.URL
 		}
-		if node.HasOwnGit() {
+		if node.HasActiveOwnGit() {
 			applyOwnGitMetadata(ctx, name, node, facts, false)
 			return
 		}

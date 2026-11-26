@@ -10,6 +10,7 @@ import (
 	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/gitcmd"
 	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/repo"
 )
 
@@ -66,6 +67,18 @@ func ValidateSourceLink(ctx context.Context, projectDir, depsDir, reposDir, name
 	}
 	mgr := repo.NewRepoManager(reposDir)
 	if !mgr.Exists(repoName) {
+		manifest, _, err := buildscript.LoadManifest(projectDir)
+		if err != nil {
+			return "", err
+		}
+		if manifest != nil {
+			if _, ok := manifest.Repos[repoName]; ok {
+				return abs, nil
+			}
+			if _, _, modSpec, ok := manifest.MatchModule(name); ok && modSpec.Path != "" {
+				return abs, nil
+			}
+		}
 		return "", fmt.Errorf("repository %q not found; run 'vmake repo list'", repoName)
 	}
 	if !mgr.IsNative(repoName) {

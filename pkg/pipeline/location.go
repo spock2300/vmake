@@ -24,17 +24,19 @@ import (
 //	Linked          true when SourceTree is directly user-linked
 //	ContainerLinked true when the native container is user-linked
 type packageLocation struct {
-	Name            string
-	Container       string
-	Owner           string
-	Member          string
-	OwnerTreeRoot   string
-	PackageRoot     string
-	SourceTree      string
-	ThirdPartyRoot  string
-	TreeRoot        string
-	Linked          bool
-	ContainerLinked bool
+	Name               string
+	Container          string
+	Owner              string
+	Member             string
+	OwnerTreeRoot      string
+	PackageRoot        string
+	SourceTree         string
+	ThirdPartyRoot     string
+	TreeRoot           string
+	Linked             bool
+	ContainerLinked    bool
+	ContainerLocalPath bool
+	Sealed             bool
 }
 
 func (ctx *RuntimeContext) packageLocation(name string, node *resolver.PackageNode) packageLocation {
@@ -52,7 +54,10 @@ func (ctx *RuntimeContext) packageLocation(name string, node *resolver.PackageNo
 		loc.Member = rel
 		loc.PackageRoot = node.Source.Dir
 		loc.SourceTree = node.Source.Dir
-		if node.HasOwnGit() {
+		if node.IsSealed() {
+			loc.Sealed = true
+			loc.SourceTree = node.SealedSourceDir
+		} else if node.HasOwnGit() {
 			if node.Source.Link != nil && node.Source.Link.LocalSource {
 				loc.Linked = true
 				loc.SourceTree = node.Source.Link.Path
@@ -79,14 +84,24 @@ func (ctx *RuntimeContext) packageLocation(name string, node *resolver.PackageNo
 			c = ctx.DepGraph.Containers[containerID]
 		}
 		containerLinked := (c != nil && c.IsLinked()) || (node.Source.Link != nil && node.Source.Link.Native)
+		containerLocalPath := c != nil && c.IsLocalPath()
 		loc.ContainerLinked = containerLinked
-		if containerLinked {
+		loc.ContainerLocalPath = containerLocalPath
+		if containerLinked || containerLocalPath {
 			loc.PackageRoot = node.Source.Dir
 		} else {
 			loc.PackageRoot = filepath.Join(loc.OwnerTreeRoot, "src", filepath.FromSlash(loc.Member))
 		}
 
-		if node.HasOwnGit() {
+		if node.IsSealed() {
+			loc.Sealed = true
+			if containerLinked || containerLocalPath {
+				loc.SourceTree = node.SealedSourceDir
+			} else {
+				loc.SourceTree = filepath.Join(loc.OwnerTreeRoot, "src", filepath.FromSlash(node.SealedSourceRel))
+			}
+			loc.TreeRoot = loc.OwnerTreeRoot
+		} else if node.HasOwnGit() {
 			if node.Source.Link != nil && node.Source.Link.LocalSource {
 				loc.Linked = true
 				loc.SourceTree = node.Source.Link.Path

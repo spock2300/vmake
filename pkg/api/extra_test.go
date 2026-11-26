@@ -424,3 +424,18 @@ func TestDepPackageDir(t *testing.T) {
 		t.Fatalf("DepPackageDir = %q, want /ws/dep", got)
 	}
 }
+
+func TestOptionSetInternal(t *testing.T) {
+	cfg := NewConfigContext("pkg")
+	opt := cfg.Option("pool_size").SetDefault(4096).SetInternal(true)
+	if !opt.IsInternal() {
+		t.Fatal("expected IsInternal() == true")
+	}
+	if err := ValidateOption(opt); err != nil {
+		t.Fatalf("ValidateOption(internal): %v", err)
+	}
+	gopt := cfg.GlobalOption("chip").SetInternal(true)
+	if err := ValidateOption(gopt); err == nil {
+		t.Fatal("expected ValidateOption to reject global + internal option")
+	}
+}

@@ -328,7 +328,7 @@ func (s *Scheduler) resolveDependencyLinkerScript(node *BuildNode) (string, erro
 				if !ref.HasTarget && !ref.IsPackagePath() {
 					continue
 				}
-				depPkg := api.CanonicalizePackageRef(s.graph.PkgMeta[n.PkgName].Container, ref.Package)
+				depPkg := canonicalizeBuildPkgRef(s.graph.PkgMeta, n.PkgName, ref.Package)
 				if depPkg != "" && depPkg != n.PkgName {
 					if _, ok := s.graph.PkgMeta[depPkg]; ok && !seenPkgs[depPkg] {
 						seenPkgs[depPkg] = true
@@ -442,12 +442,25 @@ func matchesAny(path string, patterns []string) bool {
 
 func (s *Scheduler) generateConfigHeader(pkg *api.Package, generatedDir string) error {
 	var importPkgs []*api.Package
+	pkgContainer := make(map[*api.Package]string, len(pkg.ImportConfigs()))
+	curContainer := ""
+	if s.graph != nil {
+		curContainer = s.graph.PkgMeta[api.BindPackageName(pkg)].Container
+	}
 	for _, depName := range pkg.ImportConfigs() {
 		if depPkg := s.packages[depName]; depPkg != nil {
 			importPkgs = append(importPkgs, depPkg)
+			if s.graph != nil {
+				pkgContainer[depPkg] = s.graph.PkgMeta[depName].Container
+			}
 		}
 	}
-	mergedOpts, mergedVals := api.MergeImportedOptions(api.BindOptions(&pkg.ConfigAccessor), api.BindCfgVals(&pkg.ConfigAccessor), importPkgs)
+	mergedOpts, mergedVals := api.BindMergeImportedOptions(
+		api.BindOptions(&pkg.ConfigAccessor),
+		api.BindCfgVals(&pkg.ConfigAccessor),
+		importPkgs,
+		func(dep *api.Package) bool { return pkgContainer[dep] != curContainer },
+	)
 	content := api.ConfigToHeader(mergedOpts, mergedVals)
 	return api.WriteConfigHeader(generatedDir, content)
 }

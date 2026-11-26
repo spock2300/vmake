@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/spock2300/vmake/internal/pkgvis"
 	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
@@ -28,13 +27,7 @@ func (s *declareStage) executeOnBuild() error {
 		if !s.conf.needed[name] || node.Source == nil {
 			continue
 		}
-		s.pkgMetaMap[name] = build.PkgBuildMeta{
-			Origin:    node.Source.Origin,
-			Container: node.Container,
-			Linked:    node.Source.Link != nil,
-			Deps:      node.Deps,
-			VisPath:   s.rc.ctx.Resolver.VisibilityPath(name),
-		}
+		s.pkgMetaMap[name] = pkgBuildMetaFor(s.rc.ctx, node, s.rc.ctx.Resolver.VisibilityPath(name), false)
 	}
 
 	if err := s.executeMainPackages(s.conf.needed); err != nil {
@@ -141,13 +134,8 @@ func (s *declareStage) buildSubGraph(currentPkg, rootPkg string) (err error) {
 	if !s.conf.needed[rootPkg] {
 		return fmt.Errorf("subgraph package %s not found in required packages", rootPkg)
 	}
-	if currentPkg != "" && s.rc.ctx.Resolver != nil {
-		if err := pkgvis.CheckInternal(
-			currentPkg,
-			s.rc.ctx.Resolver.VisibilityPath(currentPkg),
-			rootPkg,
-			s.rc.ctx.Resolver.VisibilityPath(rootPkg),
-		); err != nil {
+	if currentPkg != "" {
+		if err := checkPackageVisibility(s.rc.ctx, currentPkg, rootPkg); err != nil {
 			return err
 		}
 	}
@@ -239,8 +227,8 @@ func (s *declareStage) computeDepSrcDir(currentPkg, depRef string) string {
 	if pkgName == "" || s.source.pkgDirs[pkgName] == nil {
 		return ""
 	}
-	if currentPkg != "" && s.rc.ctx.Resolver != nil {
-		if err := pkgvis.CheckInternal(currentPkg, s.rc.ctx.Resolver.VisibilityPath(currentPkg), pkgName, s.rc.ctx.Resolver.VisibilityPath(pkgName)); err != nil {
+	if currentPkg != "" {
+		if err := checkPackageVisibility(s.rc.ctx, currentPkg, pkgName); err != nil {
 			panic(&api.BuildScriptError{Package: currentPkg, Op: "DepSrcDir", Err: err})
 		}
 	}
@@ -307,8 +295,8 @@ func (s *declareStage) computeDepOutput(currentPkg, depRef string) string {
 	if pd == nil {
 		return ""
 	}
-	if currentPkg != "" && s.rc.ctx.Resolver != nil {
-		if err := pkgvis.CheckInternal(currentPkg, s.rc.ctx.Resolver.VisibilityPath(currentPkg), pkgName, s.rc.ctx.Resolver.VisibilityPath(pkgName)); err != nil {
+	if currentPkg != "" {
+		if err := checkPackageVisibility(s.rc.ctx, currentPkg, pkgName); err != nil {
 			panic(&api.BuildScriptError{Package: currentPkg, Op: "DepOutput", Err: err})
 		}
 	}

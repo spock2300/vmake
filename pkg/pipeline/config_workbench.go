@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/config"
 )
@@ -9,10 +10,36 @@ func NewConfigWorkbench(ctx *RuntimeContext) *config.Workbench {
 	if ctx == nil || ctx.Resolver == nil || ctx.DepGraph == nil || ctx.Config == nil {
 		return nil
 	}
-	options := ctx.AllOptions()
-	values := make(map[string]map[string]any, len(options))
-	for pkgName := range options {
-		values[pkgName] = config.GetEntry(ctx.Config, pkgName).Options
+	rawOptions := ctx.AllOptions()
+	options := make(map[string]map[string]*api.Option, len(rawOptions))
+	values := make(map[string]map[string]any, len(rawOptions))
+	for pkgName, pkgOpts := range rawOptions {
+		if checkPackageVisibility(ctx, "@local", pkgName) != nil {
+			continue
+		}
+		visible := make(map[string]*api.Option, len(pkgOpts))
+		for optName, opt := range pkgOpts {
+			if isExternalInternalOption(ctx, pkgName, opt) {
+				continue
+			}
+			visible[optName] = opt
+		}
+		if len(visible) == 0 {
+			continue
+		}
+		options[pkgName] = visible
+		rawVals := config.GetEntry(ctx.Config, pkgName).Options
+		if len(rawVals) > 0 {
+			filtered := make(map[string]any, len(rawVals))
+			for k, v := range rawVals {
+				if _, ok := visible[k]; ok {
+					filtered[k] = v
+				}
+			}
+			values[pkgName] = filtered
+		} else {
+			values[pkgName] = map[string]any{}
+		}
 	}
 	var packages []buildscript.Source
 	deps := make(map[string][]string)
@@ -22,7 +49,16 @@ func NewConfigWorkbench(ctx *RuntimeContext) *config.Workbench {
 		if node == nil {
 			continue
 		}
-		deps[name] = node.Deps
+		if checkPackageVisibility(ctx, "@local", name) != nil {
+			continue
+		}
+		var visibleDeps []string
+		for _, dep := range node.Deps {
+			if checkPackageVisibility(ctx, "@local", dep) == nil {
+				visibleDeps = append(visibleDeps, dep)
+			}
+		}
+		deps[name] = visibleDeps
 		if node.Container != "" {
 			pkgContainer[name] = node.Container
 		}
@@ -36,6 +72,32 @@ func NewConfigWorkbench(ctx *RuntimeContext) *config.Workbench {
 				Origin:    node.Source.Origin,
 				Script:    node.Source.Script,
 			})
+		}
+	}
+	rawKConfigs := ctx.KConfigs()
+	kconfigs := make(map[string][]*api.KConfigEntry, len(rawKConfigs))
+	for pkgName, list := range rawKConfigs {
+		if checkPackageVisibility(ctx, "@local", pkgName) != nil {
+			continue
+		}
+		kconfigs[pkgName] = list
+	}
+	rawDerived := ctx.DerivedOptions()
+	derived := make(map[string]map[string]any, len(rawDerived))
+	for pkgName, vals := range rawDerived {
+		if checkPackageVisibility(ctx, "@local", pkgName) != nil {
+			continue
+		}
+		pkgOpts := rawOptions[pkgName]
+		filtered := make(map[string]any, len(vals))
+		for optName, val := range vals {
+			if opt := pkgOpts[optName]; opt != nil && isExternalInternalOption(ctx, pkgName, opt) {
+				continue
+			}
+			filtered[optName] = val
+		}
+		if len(filtered) > 0 {
+			derived[pkgName] = filtered
 		}
 	}
 	containers := make(map[string]config.WorkbenchContainer, len(ctx.DepGraph.Containers))
@@ -66,13 +128,13 @@ func NewConfigWorkbench(ctx *RuntimeContext) *config.Workbench {
 		PackageContainer: pkgContainer,
 		Options:          options,
 		Values:           values,
-		DerivedOptions:   ctx.DerivedOptions(),
+		DerivedOptions:   derived,
 		BaseConfig:       ctx.Config.Clone(),
 		CurrentToolchain: ResolveToolchainName(ctx.Config, "", ctx.PreferredToolchain),
 		GlobalOptions:    ctx.GlobalOptions(),
 		GlobalValues:     config.BuildGlobalValues(ctx.Config),
 		ChipProfiles:     ctx.ChipProfiles(),
-		KConfigs:         ctx.KConfigs(),
+		KConfigs:         kconfigs,
 		ConfigFile:       configFile,
 		Description:      ctx.Config.Description,
 		DisplayDefaults:  ToolchainTargetDefaults,

@@ -61,8 +61,9 @@ vmake deps status                      # Show dependency versions, pins, working
 vmake deps graph                       # Unified dependency graph (--targets, --format dot, --format mermaid, --json)
 vmake deps why <pkg>                   # Dependency chain from root to <pkg> or <pkg>:<target> (--all, --json)
 vmake deps check                       # Audit DAG cycles, internal/ visibility, and header boundaries
-vmake deps sync                        # Reconcile working trees and vmake.lock without floating locked packages
-vmake deps update [<pkg>[@<ver|commit>]] [--dry-run] [--refresh-repos] # Re-resolve all or selected dependencies in vmake.lock
+vmake deps sync [--prune]              # Reconcile working trees and vmake.lock without floating locked packages
+vmake deps update [<pkg>[@<ver|commit>]] [--dry-run] [--refresh-repos] [--prune] # Re-resolve all or selected dependencies in vmake.lock
+vmake deps prune [--dry-run] [--json]  # Remove lock entries not needed by the active configuration
 vmake deps pin <pkg>@<ver|commit>      # Pin a dependency version/commit in .vmake/project.json and vmake.lock
 vmake deps unpin <pkg>                 # Remove a dependency pin from .vmake/project.json
 vmake deps fetch [pkg...] [--all] [--offline] # Materialize locked dependency sources without building
@@ -211,7 +212,7 @@ VMake 2.0 separates **module containers** (distribution, versioning, and git che
 
 | Type | Canonical ID / Manifest | Characteristics |
 | --- | --- | --- |
-| **Root Manifest** | `vmake.json` | Declares `roots` (entry packages, default `["//"]` if root `build.go` exists), `modules` (container version constraints, e.g. `"official": "*"`, `"myrepo/sdk": ">=1.0.0"`), and `sources` (constraints for `SetGit` packages) |
+| **Root Manifest** | `vmake.json` | Declares `roots` (entry packages, default `["//"]` if root `build.go` exists), `dev_roots` (local-only entry packages when `roots` is omitted; ignored externally), `exports` (public package whitelist across container boundaries), `repos` (self-contained native repo URL templates), `modules` (container version constraints or local `{"path": "./..."}`), `sources` (constraints for `SetGit` packages), and `sealed_sources` (vendored/pre-patched source trees inside the container) |
 | **Local Package** | `"//"` (root) or `"//<rel/path>"` | Identified strictly by path relative to the workspace root (e.g. `"//libs/math"`, `"//apps/cli"`). Loaded lazily from `roots` and `AddRequires` |
 | **Native Module Container** | `<repo>/<module>` (members `<repo>/<module>[/<rel/path>]`) | Git repo registered via `vmake repo add --native`; no root `build.go` is required. Members load lazily by path; intra-container references use `"//<rel/path>"` which resolves inside the same container |
 | **Registry Package** | `<repo>/<pkg>` (container `<repo>`) | Wrapper `build.go` under `~/.vmake/repos/<repo>/packages/<first-char>/<pkg>/`; declare `"<repo>": "*"` in `vmake.json` `modules`, and optional source constraint in `sources` |
@@ -312,12 +313,16 @@ Multi-package workspaces and projects with external dependencies declare a root 
 ```
 
 - `roots`: entry package IDs (`"//"` or `"//<rel/path>"`). Optional when a root `build.go` exists (defaults to `["//"]`).
-- `modules`: external containers required by this module and their version constraints (`"*"` for registry repositories, semver constraints for native containers). A native container does **not** need a root `build.go`; consumers can require `"myrepo/sdk/hal"` directly as long as `"myrepo/sdk"` is declared in `modules`.
+- `dev_roots`: local-only entry packages active when this container is opened as the root workspace and `roots` is omitted (for example SDK internal hardware self-tests); ignored when another project consumes the container externally.
+- `exports`: optional container public surface whitelist (`{"publicName": "//internal/rel"}`, 1-to-1). When present, external consumers may only depend on or configure listed export names (`<container>/<publicName>`); unlisted members remain private to the container. When omitted, all non-`internal/` members remain directly importable.
+- `repos`: optional self-contained native repository declarations (`{"myrepo": {"native": "https://.../myrepo/{name}.git"}}`), allowing projects to build without prior global `vmake repo add --native` (global `~/.vmake/repos` still overrides; trust is still required and bound to `(repo, url-template)` via `vmake repo trust <name> --url <template>`).
+- `modules`: external containers required by this module and their version constraints (`"*"` for registry repositories, semver constraints for native containers, or object form `{"version": ">=1.2.0"}` / `{"path": "../sdk"}` for local path containers that do not lock in `vmake.lock`). A native container does **not** need a root `build.go`; consumers can require `"myrepo/sdk/hal"` directly as long as `"myrepo/sdk"` is declared in `modules`.
 - `sources`: optional version constraints for independent `SetGit` upstream sources (registry packages, local `SetGit` packages, or native `SetGit` members).
+- `sealed_sources`: optional map from package ID (`"//..."`) to a pre-fetched, pre-patched relative directory inside the container. Sealed packages resolve `p.SrcDir()` directly to that bundled tree, skip upstream `SetGit` fetches and `AddPatches`, omit the upstream source from consumer `vmake.lock` and `deps status`, and report `sealed: true` in `vmake inspect` (an explicit `vmake pkg link` still overrides).
 
 ### Version Constraints & `vmake.lock` (v2)
 
-Constraints in `vmake.json` (`modules` and `sources`) support one operator plus one version (`>=`, `>`, `<=`, `<`, `=`, `~`; `"*"` means any stable version). `>=`/`>` are major-locked when the major is > 0; `<=`/`<` are not. Prereleases match only when the constraint pins a prerelease of the same `major.minor.patch`. A bare version is `>=`, and exact selection requires `=`. When multiple modules constrain the same container, VMake intersects all constraints across the diamond and selects the highest satisfying tag (or fails on conflict). Registry packages (and local/native `SetGit` packages) without declared versions track the default branch and lock its resolved `HEAD` commit with `version: ""`. `.vmake/vmake.lock` uses schema `version: 2` with separate `containers` (native/registry container versions & commits) and `sources` (independent `SetGit` packages). Project-wide pins are managed via `vmake deps pin <target>@<ver|commit>` (`pins` in `.vmake/project.json`). While linked via `pkg link`, the preserved lock entry is ignored and `vmake deps update` keeps it; after `pkg unlink`, run `vmake deps update` to re-resolve versions.
+Constraints in `vmake.json` (`modules` and `sources`) support one operator plus one version (`>=`, `>`, `<=`, `<`, `=`, `~`; `"*"` means any stable version). `>=`/`>` are major-locked when the major is > 0; `<=`/`<` are not. Prereleases match only when the constraint pins a prerelease of the same `major.minor.patch`. A bare version is `>=`, and exact selection requires `=`. When multiple modules constrain the same container, VMake intersects all constraints across the diamond and selects the highest satisfying tag (or fails on conflict). Registry packages (and local/native `SetGit` packages) without declared versions track the default branch and lock its resolved `HEAD` commit with `version: ""`. `.vmake/vmake.lock` uses schema `version: 2` with separate `containers` (native/registry container versions & commits) and `sources` (independent `SetGit` packages). Multi-SKU projects share one `vmake.lock` incrementally: normal builds, `vmake deps sync`, and `vmake deps update` retain lock entries belonging to inactive configurations (and `--locked` tolerates them); run `vmake deps prune` (or pass `--prune` to `deps sync`/`deps update`) to remove unused entries. Project-wide pins are managed via `vmake deps pin <target>@<ver|commit>` (`pins` in `.vmake/project.json`). While linked via `pkg link`, the preserved lock entry is ignored and `vmake deps update` keeps it; after `pkg unlink`, run `vmake deps update` to re-resolve versions.
 
 ### OnRequire Two-Phase Execution
 
@@ -340,8 +345,11 @@ p.OnConfig(func(ctx *api.ConfigContext) {
     ctx.Option("rx_buf_size").SetDefault(1024).SetDescription("RX buffer bytes")     // Inferred OptionInt
     ctx.Option("log_level").SetDefault("info").SetValues("debug", "info", "error")   // Inferred OptionChoice
     ctx.Option("custom_ld").SetDefault("board.ld")                                   // Inferred OptionString
+    ctx.Option("internal_knob").SetDefault(false).SetInternal(true)                  // Container-internal only (hidden across container seams)
 })
 ```
+
+Container-internal options (`SetInternal(true)`) may only be configured or read within the same container (e.g. via `OnConfigureDeps`); external consumers cannot set them in `configs/*.json`, CLI `--set`, `OnConfigureDeps`, or cross-package reads, and the TUI workbench hides them. `GlobalOption` cannot be marked internal.
 
 ### Multiple Project Configurations
 
@@ -488,7 +496,7 @@ For in-source Makefiles, pass an absolute path with forward slashes: `p.Make("-C
 vmake repo add <name> <url>          # Register a registry package repository
 vmake repo add --native <name> <url> # Register a native VMake repository
 vmake repo update <name>             # Pull latest definitions for a registry repository
-vmake repo trust <name>              # Trust a repository and its future updates
+vmake repo trust <name> [--url <template>] # Trust a repository (or manifest-declared repo URL) and its future updates
 vmake ext add <name> <url>           # Add an extension repository (plugins/toolchains)
 vmake ext trust <name>               # Trust an extension and its future updates
 vmake ext provision <name>           # Install toolchains declared for the current host

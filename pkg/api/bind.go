@@ -90,6 +90,42 @@ func BindPackageExecConfigureDepsFuncs(p *Package, dir string, fn func(Configure
 	p.hostExecConfigureDepsFuncs(dir, fn)
 }
 
+func BindMergeImportedOptions(localOpts map[string]*Option, localVals map[string]any, pkgs []*Package, crossContainer func(*Package) bool) (map[string]*Option, map[string]any) {
+	mergedOpts := make(map[string]*Option, len(localOpts))
+	mergedVals := make(map[string]any, len(localVals))
+	for k, v := range localOpts {
+		mergedOpts[k] = v
+	}
+	for k, v := range localVals {
+		mergedVals[k] = v
+	}
+	for _, dep := range pkgs {
+		if dep == nil {
+			continue
+		}
+		cross := crossContainer != nil && crossContainer(dep)
+		for k, opt := range dep.options {
+			if cross && opt != nil && opt.IsInternal() {
+				continue
+			}
+			if _, exists := mergedOpts[k]; !exists {
+				mergedOpts[k] = opt
+			}
+		}
+		for k, val := range dep.cfgVals {
+			if cross {
+				if opt := dep.options[k]; opt != nil && opt.IsInternal() {
+					continue
+				}
+			}
+			if _, exists := mergedVals[k]; !exists {
+				mergedVals[k] = val
+			}
+		}
+	}
+	return mergedOpts, mergedVals
+}
+
 func BindPackageExecInstallFuncs(p *Package, dir string, fn func(InstallFunc)) {
 	p.hostExecInstallFuncs(dir, fn)
 }
