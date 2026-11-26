@@ -12,6 +12,7 @@ import (
 
 	iexec "github.com/spock2300/vmake/internal/exec"
 	"github.com/spock2300/vmake/internal/gitcmd"
+	"github.com/spock2300/vmake/pkg/api"
 )
 
 var (
@@ -34,7 +35,7 @@ var gitTagCmd = &cobra.Command{
 Examples:
   vmake git tag              Bump patch version (v1.0.0 -> v1.0.1)
   vmake git tag --minor      Bump minor version (v1.0.0 -> v1.1.0)
-  vmake git tag --major      Bump major version (v1.0.0 -> v2.0.0)
+  vmake git tag --major      Bump major version (requires a /vN module path)
   vmake git tag v1.2.3       Create specific version
   vmake git tag --no-push    Create tags without pushing`,
 	Args: cobra.MaximumNArgs(1),
@@ -55,6 +56,7 @@ func runGitTag(cmd *cobra.Command, args []string) {
 		newVersion, err = bumpVersion(latestTag, gitTagMajor, gitTagMinor)
 		fatalErr(err)
 	}
+	fatalErr(validateTagVersion(newVersion))
 
 	msg := gitTagMsg
 	if msg == "" {
@@ -151,6 +153,17 @@ func normalizeVersion(s string) (string, error) {
 		s = "v" + s
 	}
 	return s, nil
+}
+
+func validateTagVersion(version string) error {
+	pv, ok := api.ParseVersion(version)
+	if !ok {
+		return fmt.Errorf("invalid version format '%s', expected vX.Y.Z", version)
+	}
+	if !versionMajorCompatible(pv.Major) {
+		return fmt.Errorf("version %s does not match module path %s (major %d); major releases require a /vN module path", version, moduleRoot, moduleMajor())
+	}
+	return nil
 }
 
 func bumpVersion(tag string, major, minor bool) (string, error) {

@@ -2,17 +2,21 @@ package main
 
 import (
 	"fmt"
+	"path"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
-	"github.com/spock2300/vmake/internal/gitcmd"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/version"
 )
 
-const modulePath = "github.com/spock2300/vmake/cmd/vmake"
+const (
+	moduleRoot = "github.com/spock2300/vmake"
+	modulePath = moduleRoot + "/cmd/vmake"
+)
 
 var updateCmd = &cobra.Command{
 	Use:   "update [version]",
@@ -34,8 +38,9 @@ func runUpdate(cmd *cobra.Command, args []string) {
 	targetVer := ""
 	if len(args) > 0 {
 		targetVer = args[0]
+		fatalErr(validateRequestedVersion(targetVer))
 	} else {
-		versions, err := listAvailableVersions()
+		versions, err := listAvailableVersions(goCmd)
 		fatalErr(err)
 		targetVer = pickLatestStable(versions)
 		fmt.Printf("Available versions: %s\n", strings.Join(versions, " "))
@@ -47,39 +52,27 @@ func runUpdate(cmd *cobra.Command, args []string) {
 	fmt.Printf("Update to %s completed!\n", targetVer)
 }
 
-func listAvailableVersions() ([]string, error) {
-	gitCmd, err := iexec.LookPath("git")
+func listAvailableVersions(goCmd string) ([]string, error) {
+	output, err := iexec.RunWithOptions(goCmd, []string{"list", "-m", "-versions", moduleRoot}, iexec.RunOptions{Quiet: true})
 	if err != nil {
-		return nil, fmt.Errorf("git not found: %w", err)
+		return nil, fmt.Errorf("failed to list module versions: %w", err)
 	}
-	output, err := iexec.RunWithOptions(gitCmd, gitcmd.Args("ls-remote", "--tags", "https://github.com/spock2300/vmake.git"), iexec.RunOptions{Quiet: true})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list remote tags: %w", err)
-	}
-	var tags []string
-	for _, line := range strings.Split(iexec.TrimOutput(output), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasSuffix(line, "^{}") {
-			continue
-		}
-		idx := strings.Index(line, "refs/tags/")
-		if idx < 0 {
-			continue
-		}
-		tag := line[idx+len("refs/tags/"):]
-		tags = append(tags, tag)
-	}
-	if len(tags) == 0 {
+	return parseModuleVersions(iexec.TrimOutput(output))
+}
+
+func parseModuleVersions(output string) ([]string, error) {
+	fields := strings.Fields(output)
+	if len(fields) < 2 || fields[0] != moduleRoot {
 		return nil, fmt.Errorf("no published versions found")
 	}
-	return tags, nil
+	return fields[1:], nil
 }
 
 func pickLatestStable(versions []string) string {
 	var stable []string
 	for _, v := range versions {
 		pv, ok := api.ParseVersion(v)
-		if ok && pv.Pre == "" {
+		if ok && pv.Pre == "" && versionMajorCompatible(pv.Major) {
 			stable = append(stable, v)
 		}
 	}
@@ -88,4 +81,30 @@ func pickLatestStable(versions []string) string {
 		fatalMsg("no stable version available")
 	}
 	return result
+}
+
+func validateRequestedVersion(v string) error {
+	pv, ok := api.ParseVersion(v)
+	if !ok {
+		return nil
+	}
+	if !versionMajorCompatible(pv.Major) {
+		return fmt.Errorf("version %s is not installable from %s: module path requires major version %d", v, modulePath, moduleMajor())
+	}
+	return nil
+}
+
+func versionMajorCompatible(major int) bool {
+	want := moduleMajor()
+	return major == want || (want == 1 && major == 0)
+}
+
+func moduleMajor() int {
+	base := path.Base(moduleRoot)
+	if len(base) > 1 && base[0] == 'v' {
+		if major, err := strconv.Atoi(base[1:]); err == nil && major >= 2 {
+			return major
+		}
+	}
+	return 1
 }
