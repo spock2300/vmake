@@ -119,7 +119,7 @@ must be a literal filename (no commas, wildcards, or surrounding whitespace);
 for `http`, it must still be a single path component. `format` is optional
 (`tar.gz`, `tar.xz`, `tar.bz2`, `zip`; auto-detected when empty).
 The top-level `version` is required when `installations` is present. Unknown
-fields are rejected, including the legacy `host`/`install` fields and
+fields are rejected, including the unsupported `host`/`install` fields and
 `default_flags`.
 
 Rules:

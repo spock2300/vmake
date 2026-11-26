@@ -92,12 +92,6 @@ func TestConfigureArgsLanguageAwareCompilerInjection(t *testing.T) {
 			absent:     []string{"CMAKE_CXX_COMPILER", "CMAKE_ASM_COMPILER", "CMAKE_CXX_COMPILER_TARGET", "CMAKE_ASM_COMPILER_TARGET"},
 		},
 		{
-			name:       "legacy c only",
-			cmakelists: "cmake_minimum_required(VERSION 3.20)\nproject(conly C)\n",
-			want:       []string{"CMAKE_C_COMPILER", "CMAKE_C_COMPILER_TARGET", "CMAKE_AR", "CMAKE_RANLIB", "CMAKE_STRIP", "CMAKE_OBJCOPY", "CMAKE_NM"},
-			absent:     []string{"CMAKE_CXX_COMPILER", "CMAKE_ASM_COMPILER", "CMAKE_CXX_COMPILER_TARGET", "CMAKE_ASM_COMPILER_TARGET"},
-		},
-		{
 			name:       "cxx only",
 			cmakelists: "cmake_minimum_required(VERSION 3.20)\nproject(cxxonly LANGUAGES CXX)\n",
 			want:       []string{"CMAKE_CXX_COMPILER", "CMAKE_CXX_COMPILER_TARGET", "CMAKE_AR", "CMAKE_RANLIB", "CMAKE_STRIP", "CMAKE_OBJCOPY", "CMAKE_NM"},
@@ -342,7 +336,7 @@ func TestProjectLanguages(t *testing.T) {
 		ok         bool
 	}{
 		{"languages", "project(app LANGUAGES C CXX)\n", []string{"C", "CXX"}, true},
-		{"legacy", "project(app C Fortran)\n", []string{"C", "FORTRAN"}, true},
+		{"languages without keyword", "project(app C Fortran)\n", nil, false},
 		{"keywords stop the list", "project(app LANGUAGES C VERSION 1.0 DESCRIPTION x)\n", []string{"C"}, true},
 		{"variable is unparseable", "project(app LANGUAGES ${LANGS})\n", nil, false},
 		{"enable language", "project(app LANGUAGES C)\nenable_language(ASM)\n", nil, false},

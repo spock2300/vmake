@@ -115,14 +115,14 @@ func TestExtensionDefinitionsFailIndependently(t *testing.T) {
 	repo := filepath.Join(dir, "extensions", "fixture")
 	writeExtensionLoader(t, repo)
 	writeHealthyDefinition(t, filepath.Join(repo, "healthy", "toolchain.json"), "healthy")
-	writeExtensionFile(t, filepath.Join(repo, "legacy", "toolchain.json"), `{"name":"broken","host":"old-triple"}`)
+	writeExtensionFile(t, filepath.Join(repo, "old-fields", "toolchain.json"), `{"name":"broken","host":"old-triple"}`)
 	writeExtensionFile(t, filepath.Join(repo, "unknown", "toolchain.json"), `{"name":"untrustworthy",`)
 	writeExtensionFile(t, filepath.Join(repo, "unsupported", "toolchain.json"), `{"name":"unsupported","version":"1","installations":{"unsupported-host/amd64":{"method":"lfs","file":"archive.zip","root_dir":"."}}}`)
 	out, err := extensionCommand(t, dir, dir, "toolchain", "list")
 	if err != nil {
 		t.Fatalf("list: %v\n%s", err, out)
 	}
-	for _, want := range []string{"healthy", "Unavailable toolchains:", "broken [fixture/legacy/toolchain.json]", "fixture/unknown/toolchain.json [unidentified]", "no installation for host " + runtime.GOOS + "/" + runtime.GOARCH} {
+	for _, want := range []string{"healthy", "Unavailable toolchains:", "broken [fixture/old-fields/toolchain.json]", "fixture/unknown/toolchain.json [unidentified]", "no installation for host " + runtime.GOOS + "/" + runtime.GOARCH} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("list missing %q:\n%s", want, out)
 		}

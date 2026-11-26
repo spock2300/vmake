@@ -71,7 +71,7 @@ func LoadToolchainDef(path string) (*ToolchainDef, error) {
 	}
 	for _, field := range []string{"host", "install"} {
 		if _, ok := fields[field]; ok {
-			return nil, &DefinitionError{name: name, path: path, err: fmt.Errorf("legacy field %q is unsupported; use installations keyed by host OS/architecture", field)}
+			return nil, &DefinitionError{name: name, path: path, err: fmt.Errorf("field %q is unsupported; use installations keyed by host OS/architecture", field)}
 		}
 	}
 	for _, field := range []string{"default_flags"} {

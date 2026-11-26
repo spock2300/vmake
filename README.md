@@ -304,7 +304,7 @@ vmake ext add <name> <git-url>
 
 2. Plugins are auto-discovered and interpreted on the next run. Restart vmake to use new commands.
 
-Toolchain definitions load independently. Invalid or legacy manifests and definitions
+Toolchain definitions load independently. Invalid manifests and definitions
 without an installation for the current host are reported by `vmake toolchain list`;
 healthy toolchains remain available. Selecting an invalid toolchain fails with its
 original error and never switches to the host toolchain. The built-in `vmake ext`

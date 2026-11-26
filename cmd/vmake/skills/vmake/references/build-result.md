@@ -136,8 +136,7 @@ outcome.
   in a test program resolve there.
 - `vmake test` also prints one overall stdout line: `Tests succeeded: N/M
   passed in <duration> (buildId=...)`, `Tests succeeded: no test targets
-  (buildId=...)`, or `Tests failed: <error>`. The legacy `N/M test(s) passed`
-  wording is not used. Per-test `PASS`/`FAIL` lines remain.
+  (buildId=...)`, or `Tests failed: <error>`. Per-test `PASS`/`FAIL` lines remain.
 - A failing test makes `status` `failed` with `error: "N test(s) failed"` and a
   non-zero exit; the report keeps `summary` test counts because the build phase
   completed. A test-stage failure with no build diagnostic (failed test or

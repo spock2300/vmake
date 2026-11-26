@@ -220,7 +220,7 @@ func sliceEqual(a, b []string) bool {
 	return true
 }
 
-func TestHashGlobalFlagsMatchesLegacyDigest(t *testing.T) {
+func TestHashGlobalFlagsStableDigest(t *testing.T) {
 	flags := [4][]string{
 		{"-DFOO", "-I/inc"},
 		{"-DBAR"},
@@ -228,7 +228,7 @@ func TestHashGlobalFlagsMatchesLegacyDigest(t *testing.T) {
 		{"m"},
 	}
 	if got, want := HashGlobalFlags(flags), "1523b5449d88a2f0"; got != want {
-		t.Fatalf("HashGlobalFlags = %q, want legacy digest %q", got, want)
+		t.Fatalf("HashGlobalFlags = %q, want digest %q", got, want)
 	}
 	if HashGlobalFlags(flags) == HashGlobalFlags([4][]string{}) {
 		t.Fatal("empty and non-empty global flags share a hash")

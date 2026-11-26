@@ -5,8 +5,7 @@
 dry-run `OnBuild` target declaration only: it never compiles, links, installs,
 or writes `build/`, `install/`, or `configs/*.json` itself. With
 `--no-targets`, dry-run `OnBuild` target declaration is skipped entirely.
-Resolution may still initialize `.vmake/layout` and extend `.gitignore` with
-`.vmake_deps/`.
+Resolution may still extend `.gitignore` with `.vmake_deps/`.
 During dry-run
 declaration it also disables interpreted-script file writes through the wrapped
 `os` APIs (see **Read-only dry-run** below), so a callback that tries to write

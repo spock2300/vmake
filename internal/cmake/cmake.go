@@ -123,10 +123,9 @@ func configureDir(s Settings, extra []string) string {
 }
 
 // projectLanguages returns the languages declared by the source tree's
-// project() command, parsing both the LANGUAGES form and the legacy
-// project(<name> <language>...) form. ok is false when CMakeLists.txt is
-// missing, has no project() call, or no language list is parseable; callers
-// then keep the unconditional compiler injection.
+// project() command, parsing the LANGUAGES form. ok is false when
+// CMakeLists.txt is missing, has no project() call, or no LANGUAGES list is
+// parseable; callers then keep the unconditional compiler injection.
 func projectLanguages(srcDir string) (map[string]bool, bool) {
 	data, err := os.ReadFile(filepath.Join(srcDir, "CMakeLists.txt"))
 	if err != nil {
@@ -163,20 +162,6 @@ func projectLanguages(srcDir string) (map[string]bool, bool) {
 			return nil, false
 		}
 		return languages, true
-	}
-	// The legacy form project(<name> <language>...) has no LANGUAGES keyword.
-	if len(args) > 0 {
-		languages := make(map[string]bool)
-		for _, language := range args[1:] {
-			canonical, ok := cmakeLanguageNames[language]
-			if !ok {
-				break
-			}
-			languages[canonical] = true
-		}
-		if len(languages) > 0 {
-			return languages, true
-		}
 	}
 	return nil, false
 }

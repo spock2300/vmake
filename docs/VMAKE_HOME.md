@@ -32,7 +32,7 @@
                     └── build.go
 ```
 
-旧版布局（`~/.vmake/sources`、旧全局信任文件 `~/.vmake/config.json`、`cache/v2`、`cache/_localgit`、`cache/mirrors`、项目 `vmake_deps/`）会在升级后首次执行加载项目配置/依赖的命令时清理（`loadResolveParams` 中的 `cleanupLegacyStorage`；`doctor`、`pkg list`、`pkg search`、`pkg show`、`toolchain list`、`manifest show` 等不经过该路径的命令不会触发），依赖重新物化；旧的信任记录不迁移，`~/.vmake/config.json` 删除后需重新 `vmake repo trust` / `vmake ext trust`，或在下一次构建的确认提示中授权。当前 `trust.json` 只读取 version 2；旧版本文件按空库处理并在下一次写入时重建。不提供兼容迁移（布局标记 `.vmake/layout`，见 `cmd/vmake/storage.go`）。`cache/git/` 是当前布局，升级时不删除。
+旧版布局目录（`~/.vmake/sources`、`~/.vmake/config.json`、`cache/v2`、`cache/_localgit`、`cache/mirrors`、项目 `vmake_deps/`）不再自动清理；需要时手动删除。`trust.json` 只读取 version 2；旧版本文件按空库处理并在下一次写入时重建。`cache/git/` 是当前布局。
 
 ## repos/
 

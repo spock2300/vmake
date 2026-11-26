@@ -21,7 +21,7 @@ func TestListGoFilesBuildConstraints(t *testing.T) {
 		"combined_windows_amd64.go": "package main\n",
 		"tag_windows.go":            "//go:build windows && amd64\n\npackage main\n",
 		"tag_unix.go":               "//go:build unix\n\npackage main\n",
-		"tag_legacy.go":             "// +build linux,arm64\n\npackage main\n",
+		"tag_plusbuild.go":          "// +build linux,arm64\n\npackage main\n",
 		"tag_custom.go":             "//go:build customtag\n\npackage main\n",
 		"tag_cgo.go":                "//go:build cgo\n\npackage main\n",
 		"without_cgo.go":            "//go:build !cgo\n\npackage main\n",
@@ -41,7 +41,7 @@ func TestListGoFilesBuildConstraints(t *testing.T) {
 		want   []string
 	}{
 		{"windows", "amd64", []string{"arch_amd64.go", "build.go", "combined_windows_amd64.go", "platform_windows.go", "tag_windows.go", "without_cgo.go"}},
-		{"linux", "arm64", []string{"arch_arm64.go", "build.go", "platform_linux.go", "tag_legacy.go", "tag_unix.go", "without_cgo.go"}},
+		{"linux", "arm64", []string{"arch_arm64.go", "build.go", "platform_linux.go", "tag_plusbuild.go", "tag_unix.go", "without_cgo.go"}},
 	} {
 		t.Run(test.goos+"/"+test.goarch, func(t *testing.T) {
 			ctx := build.Default

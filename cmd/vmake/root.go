@@ -161,7 +161,6 @@ func loadResolveParamsAt(workDir string, ignoreLock bool, softGitignore bool, sk
 			vlog.Error("gitignore: %v", err)
 		}
 	}
-	cleanupLegacyStorage()
 	paths := pipelinePathsAt(workDir)
 	lock, err := lockfile.LoadOrCreate(paths.LockPath)
 	if err != nil {

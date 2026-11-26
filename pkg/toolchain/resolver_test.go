@@ -97,7 +97,7 @@ func TestManagerIsolatesDefinitionErrors(t *testing.T) {
 	root := t.TempDir()
 	badPath := filepath.Join(root, "a-broken", "toolchain.json")
 	unknownPath := filepath.Join(root, "z-unknown", "toolchain.json")
-	cause := errors.New("legacy field install")
+	cause := errors.New("unsupported field install")
 	mgr.RegisterToolchainError("broken", badPath, cause)
 	mgr.RegisterToolchainError("", unknownPath, errors.New("invalid JSON"))
 	mgr.RegisterToolchainError("broken", badPath, cause)

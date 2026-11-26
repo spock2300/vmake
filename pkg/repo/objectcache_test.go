@@ -784,11 +784,11 @@ func TestObjectCacheRemoveRejectsEmptyURL(t *testing.T) {
 func TestObjectCacheListHidesStaleNormalization(t *testing.T) {
 	c := NewObjectCache(t.TempDir())
 	url := "/tmp/local/repo.git"
-	legacyDir := c.repoPath(strings.TrimSuffix(url, ".git"))
-	if err := os.MkdirAll(legacyDir, 0755); err != nil {
+	staleDir := c.repoPath(strings.TrimSuffix(url, ".git"))
+	if err := os.MkdirAll(staleDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.saveMeta(legacyDir, newCacheMeta(url)); err != nil {
+	if err := c.saveMeta(staleDir, newCacheMeta(url)); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := c.List()

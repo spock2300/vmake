@@ -35,10 +35,10 @@ func TestInstallationSelectsHost(t *testing.T) {
 	}
 }
 
-func TestLoadToolchainDefRejectsLegacyAndIncompleteDefinitions(t *testing.T) {
+func TestLoadToolchainDefRejectsUnsupportedAndIncompleteDefinitions(t *testing.T) {
 	for _, test := range []struct{ name, data, want string }{
-		{"host", `{"name":"arm","target_os":"none","host":"arm-none-eabi"}`, "legacy field \"host\""},
-		{"install", `{"name":"arm","target_os":"none","install":null}`, "legacy field \"install\""},
+		{"host", `{"name":"arm","target_os":"none","host":"arm-none-eabi"}`, "field \"host\""},
+		{"install", `{"name":"arm","target_os":"none","install":null}`, "field \"install\""},
 		{"flags", `{"name":"arm","default_flags":{}}`, "build.go"},
 		{"root", `{"name":"arm","version":"1","installations":{"linux/amd64":{"method":"lfs","file":"a.zip"}}}`, "root_dir"},
 		{"version", `{"name":"arm","installations":{"linux/amd64":{"method":"lfs","file":"a.zip","root_dir":"."}}}`, "version"},
@@ -86,13 +86,13 @@ func TestToolchainInstallationIsHostIsolated(t *testing.T) {
 	def := testToolchainDef()
 	def.Installations[runtime.GOOS+"/"+runtime.GOARCH] = InstallConfig{Method: "lfs", File: "archive.zip", RootDir: "."}
 	root := t.TempDir()
-	legacy := filepath.Join(root, def.Name+"-"+def.Version)
-	if err := os.MkdirAll(legacy, 0755); err != nil {
+	oldLayout := filepath.Join(root, def.Name+"-"+def.Version)
+	if err := os.MkdirAll(oldLayout, 0755); err != nil {
 		t.Fatal(err)
 	}
 	tc, err := def.ToToolchain(root)
 	if err != nil || tc.InstallPath != "" {
-		t.Fatalf("legacy installation accepted: %v, %v", tc, err)
+		t.Fatalf("old-layout installation accepted: %v, %v", tc, err)
 	}
 	want := filepath.Join(root, runtime.GOOS, runtime.GOARCH, def.Name, def.Version)
 	if err := os.MkdirAll(want, 0755); err != nil {
@@ -117,7 +117,7 @@ func TestScanRepoToolchainsReportsInvalidDefinition(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "toolchain.json"), []byte(`{"name":"arm","host":"arm"}`), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ScanRepoToolchains(root); err == nil || !strings.Contains(err.Error(), "legacy") {
+	if _, err := ScanRepoToolchains(root); err == nil || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("scan silently skipped invalid definition: %v", err)
 	}
 }

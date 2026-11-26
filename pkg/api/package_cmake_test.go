@@ -246,12 +246,6 @@ func TestCMakeConfigureLanguageAwareCompilerInjection(t *testing.T) {
 			absent:     []string{"CMAKE_CXX_COMPILER", "CMAKE_ASM_COMPILER", "CMAKE_CXX_COMPILER_TARGET", "CMAKE_ASM_COMPILER_TARGET"},
 		},
 		{
-			name:       "legacy c only",
-			cmakelists: "cmake_minimum_required(VERSION 3.20)\nproject(conly C)\n",
-			want:       []string{"CMAKE_C_COMPILER", "CMAKE_C_COMPILER_TARGET", "CMAKE_AR", "CMAKE_RANLIB", "CMAKE_STRIP", "CMAKE_OBJCOPY", "CMAKE_NM"},
-			absent:     []string{"CMAKE_CXX_COMPILER", "CMAKE_ASM_COMPILER", "CMAKE_CXX_COMPILER_TARGET", "CMAKE_ASM_COMPILER_TARGET"},
-		},
-		{
 			name:       "cxx only",
 			cmakelists: "cmake_minimum_required(VERSION 3.20)\nproject(cxxonly LANGUAGES CXX)\n",
 			want:       []string{"CMAKE_CXX_COMPILER", "CMAKE_CXX_COMPILER_TARGET", "CMAKE_AR", "CMAKE_RANLIB", "CMAKE_STRIP", "CMAKE_OBJCOPY", "CMAKE_NM"},
@@ -370,7 +364,6 @@ func TestCMakeConfigureCOnlyOmitsUnusedCompilerWarning(t *testing.T) {
 		project string
 	}{
 		{"languages keyword", "project(conly LANGUAGES C)"},
-		{"legacy form", "project(conly C)"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			source := t.TempDir()

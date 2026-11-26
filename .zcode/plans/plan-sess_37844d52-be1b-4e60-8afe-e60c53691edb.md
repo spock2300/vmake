@@ -266,29 +266,25 @@ build.go 脚本里的相对路径语义（`os.Stat("src/foo.c")`、`p.Run("make"
 
 ---
 
-## 阶段 6：Legacy Fallback 清理（P2，~1 天）
+## 阶段 6：兼容回退清理（P2，~1 天）
 
 **目标**：消除与「No Fallbacks」原则自相矛盾的代码。
 
 ### 改动
-1. **`cmd/vmake/build_config.go` `computeReachable`**（L18-93）：
-   - 删除 `VMAKE_LEGACY_ROOT` 启发式分支（L37-77）
-   - 强制要求显式 `SetRoot(true)`；若无任何包声明 root，`vlog.Fatal` 并提示「no package declared SetRoot(true)」
-2. **`cmd/vmake/build_phase.go` `downloadRemoteSources`**（L246-252）：
+1. **`cmd/vmake/build_phase.go` `downloadRemoteSources`**（L246-252）：
    - 删除 `ParseBuildGo` 正则 fallback 分支
    - 当 `node.Pkg == nil && !node.Native` 时，直接返回错误「package %s has no resolved metadata; ensure build.go loads correctly」
-3. **`pkg/build/compiler.go` `IsSourceValid`**（L104-138）：
+2. **`pkg/build/compiler.go` `IsSourceValid`**（L104-138）：
    - `ParseDepFile` 错误：返回 `(false, nil, err)`，由调用方决定是否重建
    - `os.Stat(src)` 错误：区分 `os.IsNotExist`（视为需重建）与其他错误（向上传播）
-4. **`pkg/build/install.go` `installTarget`**（L103）：
+3. **`pkg/build/install.go` `installTarget`**（L103）：
    - output 缺失时改为返回 `fmt.Errorf("install: target %s output missing: %s", name, path)` 而非静默跳过
    - 但 `pkgInfo` 缺失仍可跳过（这是合法情况）
-5. **`copyPublicIncludes`**（L152）：stat 错误区分 NotExist（continue）与其他（return err）
+4. **`copyPublicIncludes`**（L152）：stat 错误区分 NotExist（continue）与其他（return err）
 
 ### 验证
 ```bash
 go test ./pkg/build/...
-# 测试 VMAKE_LEGACY_ROOT 已移除（环境变量应无效）
 # 集成测试：确认所有 test_data 仍通过（它们都应已有 SetRoot 或满足新规则）
 ```
 
@@ -347,7 +343,7 @@ go test ./pkg/api/...
                           │                            │                          │
                           └────────────────────────────┴──────────────────────────┴─→ 阶段 4 (os.Chdir 内部)
                                                                                        │
-                                                                                       └─→ 阶段 6 (legacy fallback)
+                                                                                       └─→ 阶段 6 (兼容回退)
                                                                                        │
                                                                                        └─→ 阶段 7 (Package 拆分)
                                                                                        │

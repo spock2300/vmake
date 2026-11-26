@@ -172,7 +172,7 @@ func TestToolchainDiagnosticsPreserveInvalidSelection(t *testing.T) {
 	}
 	mgr := toolchain.GetManager()
 	path := filepath.Join(t.TempDir(), "toolchain.json")
-	mgr.RegisterToolchainError("broken", path, errors.New("legacy field install"))
+	mgr.RegisterToolchainError("broken", path, errors.New("unsupported field install"))
 	mgr.RegisterToolchainError("", filepath.Join(t.TempDir(), "unknown.json"), errors.New("invalid JSON"))
 	global := map[string]*api.Option{"toolchain": (&api.Option{}).SetType(api.OptionChoice).SetDefault("host").SetValues("host")}
 	m := testModel(nil, nil, nil, nil, t.TempDir(), "broken", global, nil, nil)
@@ -182,7 +182,7 @@ func TestToolchainDiagnosticsPreserveInvalidSelection(t *testing.T) {
 	}
 	m.width = 120
 	footer := m.renderFooter()
-	for _, want := range []string{"2 unavailable toolchain definitions", "vmake toolchain list", "broken", "legacy field install"} {
+	for _, want := range []string{"2 unavailable toolchain definitions", "vmake toolchain list", "broken", "unsupported field install"} {
 		if !strings.Contains(footer, want) {
 			t.Fatalf("footer missing %q: %s", want, footer)
 		}
