@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	internalfs "github.com/spock2300/vmake/internal/fs"
 )
 
 func TestEnsureSourceRejectsSymlinkedSrc(t *testing.T) {
@@ -24,7 +26,7 @@ func TestEnsureSourceRejectsSymlinkedSrc(t *testing.T) {
 	}
 }
 
-func TestCleanOutputsRejectsSymlinkedTreeRoot(t *testing.T) {
+func TestValidateManagedPathRejectsSymlinkedTreeRoot(t *testing.T) {
 	depDir := t.TempDir()
 	target := t.TempDir()
 	if err := os.MkdirAll(filepath.Dir(filepath.Join(depDir, "native", "pkg")), 0755); err != nil {
@@ -33,8 +35,7 @@ func TestCleanOutputsRejectsSymlinkedTreeRoot(t *testing.T) {
 	if err := os.Symlink(target, filepath.Join(depDir, "native", "pkg")); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	mgr := NewSourceManager(depDir, t.TempDir())
-	if err := mgr.CleanOutputs("native/pkg"); err == nil || !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("CleanOutputs error = %v, want symlink rejection", err)
+	if err := internalfs.ValidateManagedPath(depDir, filepath.Join(depDir, "native", "pkg")); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("ValidateManagedPath error = %v, want symlink rejection", err)
 	}
 }

@@ -335,12 +335,16 @@ func CheckoutManifestLocals(ctx *RuntimeContext, mf *InstallManifest) error {
 }
 
 func CheckoutManifest(
-	projectDir string,
+	projectDir, depsDir string,
 	sourceMgr *repo.SourceManager,
 	newPkgRef func(repoName, pkgName string) *api.Package,
 	mf *InstallManifest,
 	filterName string,
 ) error {
+	workspace, err := NewSourceWorkspaceFromProject(projectDir, depsDir)
+	if err != nil {
+		return err
+	}
 	found := false
 	for _, entry := range mf.Packages {
 		if filterName != "" && entry.Name != filterName {
@@ -358,7 +362,7 @@ func CheckoutManifest(
 				return err
 			}
 		case "native", "registry", "git":
-			CheckoutManifestRemoteEntry(sourceMgr, newPkgRef, entry)
+			CheckoutManifestRemoteEntry(sourceMgr, workspace, newPkgRef, entry)
 		default:
 			fmt.Printf("  SKIP %s (unknown source: %s)\n", entry.Name, entry.Source)
 		}
@@ -371,11 +375,16 @@ func CheckoutManifest(
 
 func CheckoutManifestRemoteEntry(
 	sourceMgr *repo.SourceManager,
+	workspace *SourceWorkspace,
 	newPkgRef func(repoName, pkgName string) *api.Package,
 	entry InstallManifestEntry,
 ) {
 	if entry.Ref == "" {
 		fmt.Printf("  SKIP %s (no ref recorded)\n", entry.Name)
+		return
+	}
+	if sourceMgr == nil || workspace == nil {
+		fmt.Printf("  FAIL %s (source manager unavailable)\n", entry.Name)
 		return
 	}
 	repoName, pkgName, ok := api.SplitPackageRef(entry.Name)
@@ -394,17 +403,15 @@ func CheckoutManifestRemoteEntry(
 		urls = []string{entry.URL}
 	}
 	req := repo.SourceRequest{
-		Key:  repo.PackageTreeKey(repoName, pkgName),
 		URLs: urls,
 		Ref:  entry.Ref,
 	}
-	if entry.Source == "git" {
-		if thirdPartyRoot, ok := managedThirdPartyRoot(sourceMgr, "", entry.Name); ok {
-			req.Key = entry.Name
-			req.Root = thirdPartyRoot
-		}
+	source, err := workspace.Package(entry.Name)
+	if err != nil {
+		fmt.Printf("  FAIL %s (%v)\n", entry.Name, err)
+		return
 	}
-	if _, err := sourceMgr.EnsureSource(req); err != nil {
+	if _, err := source.Ensure(req, sourceMgr); err != nil {
 		fmt.Printf("  FAIL %s (%v)\n", entry.Name, err)
 		return
 	}

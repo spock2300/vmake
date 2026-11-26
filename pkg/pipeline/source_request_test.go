@@ -14,7 +14,7 @@ func TestSourceRequestProjectionLocalSetGitUsesLocalURLRefresh(t *testing.T) {
 	upstream := initGitRepo(t, map[string]string{"build.go": "package main\n"})
 	node.Pkg.SetGit(upstream)
 
-	req, err := s.sourceStage.sourceRequestFor("//app", node, "")
+	req, err := s.sourceStage.sourceRequestFor("//app", node, s.ctx.packageSource("//app", node))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestSourceRequestProjectionKeepsTargetCommitRef(t *testing.T) {
 	commit := strings.Repeat("a", 40)
 	s.ctx.LockPolicy.Targets = map[string]string{"//app": commit}
 
-	req, err := s.sourceStage.sourceRequestFor("//app", node, "")
+	req, err := s.sourceStage.sourceRequestFor("//app", node, s.ctx.packageSource("//app", node))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestSourceRequestProjectionPinnedVersion(t *testing.T) {
 	node.Pkg.SetGit(upstream).AddVersion("1.0.0", "v1.0.0")
 	node.Constraints = []string{"=1.0.0"}
 
-	req, err := s.sourceStage.sourceRequestFor("//app", node, "")
+	req, err := s.sourceStage.sourceRequestFor("//app", node, s.ctx.packageSource("//app", node))
 	if err != nil {
 		t.Fatal(err)
 	}

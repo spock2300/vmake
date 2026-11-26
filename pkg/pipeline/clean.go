@@ -67,7 +67,7 @@ func CleanPackagesInspection(entries []PkgCleanEntry, ctx *RuntimeContext, clean
 		for _, pkg := range entries {
 			CleanAllBuildDirs(pkg.Dir, pkg.Name)
 		}
-		CleanAllRemoteOutputs(ctx.Paths.DepsDir, ctx.SourceLinks)
+		NewSourceWorkspace(ctx).ReleaseOutputsAll()
 		vlog.Info("Clean completed!")
 		return nil, nil
 	}
@@ -165,29 +165,6 @@ func RemoveStaleCompileDatabase(ctx *RuntimeContext) {
 		return
 	}
 	RemoveIfExists(filepath.Join(ctx.Paths.ProjectDir, "build", "compile_commands.json"), "", "build/compile_commands.json", false)
-}
-
-func CleanAllRemoteOutputs(depDir string, links map[string]string) {
-	_ = filepath.WalkDir(depDir, func(path string, entry os.DirEntry, err error) error {
-		if err != nil || entry.IsDir() || entry.Name() != "state.json" {
-			return nil
-		}
-		root := filepath.Dir(path)
-		CleanOutputDirs(filepath.Join(root, "out"), filepath.Base(root))
-		return nil
-	})
-	for name := range links {
-		if api.IsLocalPackageID(name) {
-			continue
-		}
-		owner := name
-		if repoName, rest, ok := api.SplitPackageRef(name); ok {
-			if mod, _, hasMember := strings.Cut(rest, "/"); hasMember {
-				owner = repoName + "/" + mod
-			}
-		}
-		CleanOutputDirs(filepath.Join(depDir, filepath.FromSlash(owner), "out"), owner)
-	}
 }
 
 func CleanOutputDirs(outDir, pkgName string) {

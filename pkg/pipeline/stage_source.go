@@ -187,10 +187,10 @@ func (s *sourceStage) preparePackages(downloadLog *sourceDownloadLog) error {
 		}
 		s.patchHashes[name] = patchHash
 
-		loc := s.rc.ctx.packageLocation(name, node)
+		source := s.rc.ctx.packageSource(name, node)
 
 		if node.HasOwnGit() {
-			if loc.Linked {
+			if source.Linked() {
 				version := resolver.LocalLinkVersion
 				s.sourceVersions[name] = version
 				s.sourceCommits[name] = node.Source.Link.Commit
@@ -198,16 +198,15 @@ func (s *sourceStage) preparePackages(downloadLog *sourceDownloadLog) error {
 				s.patchHashes[name] = ""
 				vlog.Verbose("  %s@%s (linked %s)", name, version, node.Source.Link.Path)
 			} else {
-				materializeRoot := loc.ThirdPartyRoot
-				if s.ownGitSourceNeedsMaterialization(name, materializeRoot, node) {
+				if s.ownGitSourceNeedsMaterialization(name, source, node) {
 					downloadLog.print()
 				}
-				if err := s.selectPackageSourceRoot(name, materializeRoot); err != nil {
+				if err := s.selectPackageSourceRoot(name, source); err != nil {
 					return fmt.Errorf("select source for %s: %w", name, err)
 				}
 			}
 		} else if node.IsRegistry() {
-			if loc.Linked {
+			if source.Linked() {
 				s.sourceVersions[name] = resolver.LocalLinkVersion
 				s.sourceCommits[name] = node.Source.Link.Commit
 				s.sourceSeeds[name] = node.Source.Link.Path
@@ -429,11 +428,11 @@ func (s *sourceStage) sourceRequestReady(req repo.SourceRequest) bool {
 	return !manager.WouldMaterialize(req)
 }
 
-func (s *sourceStage) ownGitSourceNeedsMaterialization(name, sourceRoot string, node *resolver.PackageNode) bool {
+func (s *sourceStage) ownGitSourceNeedsMaterialization(name string, source *PackageSource, node *resolver.PackageNode) bool {
 	if !node.HasOwnGit() {
 		return false
 	}
-	req, err := s.sourceRequestFor(name, node, sourceRoot)
+	req, err := s.sourceRequestFor(name, node, source)
 	if err != nil {
 		return true
 	}
@@ -489,7 +488,11 @@ func (s *sourceStage) clearPatchState(name string) {
 }
 
 func (s *sourceStage) treeRootFor(name string) string {
-	return packageTreeRoot(s.rc.ctx, name, s.rc.ctx.DepGraph.Packages[name])
+	source := s.rc.ctx.packageSource(name, s.rc.ctx.DepGraph.Packages[name])
+	if source == nil {
+		return ""
+	}
+	return source.TreeRoot()
 }
 
 func (s *sourceStage) restoreKConfigs() error {

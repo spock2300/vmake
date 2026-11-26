@@ -78,6 +78,6 @@ var manifestCheckoutCmd = &cobra.Command{
 			WithSession(commandStorageLocks()).
 			WithContext(context.Background())
 
-		fatalErr(pipeline.CheckoutManifest(base, sourceMgr, newPkgRef, mf, filterName))
+		fatalErr(pipeline.CheckoutManifest(base, getDepsDir(), sourceMgr, newPkgRef, mf, filterName))
 	},
 }

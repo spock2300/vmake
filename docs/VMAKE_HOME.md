@@ -192,7 +192,7 @@ toolchains/<host-os>/<host-arch>/<name>/<version>/
 
 `vmake clean` 只删除当前配置的构建键目录，`clean --all` 删除所有配置的产物（包括 `pkg link` 包在 `.vmake_deps` 下的 `out/`），两者都保留 `.vmake_deps/` 源码树和 `.vmake/local.json`；`vmake distclean` 同样保留下载的工作树（下次构建直接复用，不重新下载），只有加 `--purge-sources` 才删除整个 `.vmake_deps/`。`pkg link` 已删除的 `src`/`state.json` 不会由 clean/distclean 恢复；unlink 后下一次构建重新物化。`vmake pkg clean <pkg>` 删除单个包的构建产物，`-a` 连工作树一并删除但不删除 link 记录；下次构建会重新物化该树，但共享对象缓存已有该 commit 时无需重新下载对象（版本/ref 解析仍可能访问上游）。该命令也会删除 `build/vmake-build.json` 与 `build/vmake-test.json`。
 
-源码：`cmd/vmake/paths.go` (`getDepsDir`, `findProjectDir`), `pkg/repo/source.go`, `pkg/repo/storage.go`
+源码：`cmd/vmake/paths.go` (`getDepsDir`, `findProjectDir`), `pkg/pipeline/source_workspace.go`, `pkg/repo/source.go`, `pkg/repo/storage.go`
 CLI：`vmake pkg list|search|show|clean|link|unlink`、`vmake deps status|sync|update|prune|pin|unpin|fetch`
 
 ## 项目目录

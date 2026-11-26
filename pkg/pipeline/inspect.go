@@ -89,7 +89,11 @@ func ExpectedPackageSourceDir(ctx *RuntimeContext, name string, node *resolver.P
 	if ctx == nil {
 		return ""
 	}
-	return packageSourceTree(ctx, name, node)
+	source := ctx.packageSource(name, node)
+	if source == nil {
+		return ""
+	}
+	return source.SourceTree()
 }
 
 func IsPackageSourcePresent(ctx *RuntimeContext, name string, node *resolver.PackageNode) bool {
@@ -169,13 +173,13 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		nameSet[name] = true
 		packageOptionDefs[name] = ctx.PackageOptions(name)
 		if opts.Facts {
-			loc := ctx.packageLocation(name, node)
+			source := ctx.packageSource(name, node)
 			facts := PackageFacts{
 				Kind:          node.SourceKind().String(),
 				Container:     node.Container,
 				NativeVersion: nativeSelected(ctx, node),
-				PackageDir:    loc.PackageRoot,
-				SrcDir:        loc.SourceTree,
+				PackageDir:    source.PackageRoot(),
+				SrcDir:        source.SourceTree(),
 				SourcePresent: IsPackageSourcePresent(ctx, name, node),
 				Deps:          dedupeStrings(node.Deps),
 			}
@@ -254,13 +258,13 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 			pkgDirs[name] = &layout.Dirs
 			layouts[name] = &layout
 		}
-		loc := ctx.packageLocation(name, node)
+		source := ctx.packageSource(name, node)
 		if node.IsLocal() {
 			sourceLink := ""
 			if node.HasOwnGit() {
-				if loc.Linked {
+				if source.Linked() {
 					sourceLink = node.Source.Link.Path
-					node.Pkg.SetSrcDir(loc.SourceTree)
+					node.Pkg.SetSrcDir(source.SourceTree())
 				} else if !DetectExistingSrcDir(node) {
 					markNotReady()
 					continue
@@ -287,7 +291,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 			layouts[name] = &layout
 			continue
 		}
-		if info, err := os.Stat(loc.PackageRoot); err != nil || !info.IsDir() {
+		if info, err := os.Stat(source.PackageRoot()); err != nil || !info.IsDir() {
 			markNotReady()
 			continue
 		}
@@ -303,7 +307,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 				continue
 			}
 			if node.HasOwnGit() {
-				if loc.Linked {
+				if source.Linked() {
 					srcVer := resolver.LocalLinkVersion
 					if version != "" {
 						version = version + "+" + srcVer
@@ -312,12 +316,12 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 					}
 					commit = sourceCommitKey(commit, node.Source.Link.Commit)
 				} else {
-					if info, err := os.Stat(loc.SourceTree); err != nil || !info.IsDir() {
+					if info, err := os.Stat(source.SourceTree()); err != nil || !info.IsDir() {
 						markNotReady()
 						continue
 					}
 					sourceMgr := repo.NewSourceManager(ctx.Paths.DepsDir, ctx.Paths.CacheDir).WithSession(ctx.Locks).WithContext(ctx.Context)
-					sourceCommit := sourceMgr.CommitAt(loc.TreeRoot)
+					sourceCommit := sourceMgr.CommitAt(source.TreeRoot())
 					if sourceCommit == "" {
 						markNotReady()
 						continue
@@ -348,14 +352,11 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		if node.Source.Link != nil {
 			sourceLink = node.Source.Link.Path
 		}
-		sourceOverride := ""
-		if loc.ContainerLinked || loc.ContainerLocalPath || (node.IsRegistry() && loc.Linked) {
-			sourceOverride = loc.PackageRoot
-		}
+		sourceOverride := source.SourceOverride()
 		layout, err := layoutFor(layoutInput{
-			PkgRoot:        loc.OwnerTreeRoot,
+			PkgRoot:        source.OwnerTreeRoot(),
 			SourceOverride: sourceOverride,
-			Member:         loc.Member,
+			Member:         source.Member(),
 			CCKey:          tools.CCKey(),
 			Mode:           pre.cfg.Mode,
 			Options:        pkgOptions,
@@ -369,7 +370,7 @@ func InspectWithOptions(ctx *RuntimeContext, opts InspectOptions) (_ *Inspection
 		pkgDirs[name] = &layout.Dirs
 		layouts[name] = &layout
 		if node.IsNative() && node.HasOwnGit() && node.Pkg != nil {
-			node.Pkg.SetSrcDir(loc.SourceTree)
+			node.Pkg.SetSrcDir(source.SourceTree())
 		}
 	}
 

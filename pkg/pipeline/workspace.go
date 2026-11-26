@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/spock2300/vmake/internal/fs"
-	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/repo"
 	"github.com/spock2300/vmake/pkg/resolver"
 )
@@ -20,91 +18,21 @@ func (s *sourceStage) preparePackageWorkspace(name string) error {
 	if node == nil || node.Pkg == nil || dirs == nil {
 		return nil
 	}
-	loc := s.rc.ctx.packageLocation(name, node)
-
-	if !node.HasOwnGit() {
-		oldSourceDir := node.Pkg.SourceDir()
-		node.Pkg.SetDirs(*dirs)
-		if !node.IsLocal() {
-			return rebindRemoteSrcDir(s.rc.ctx, node, dirs, oldSourceDir, name)
-		}
-		return nil
+	source := s.rc.ctx.packageSource(name, node)
+	if source == nil {
+		return fmt.Errorf("package %s has no source placement", name)
 	}
-
-	if !loc.Linked {
-		if err := s.selectPackageSourceRoot(name, loc.ThirdPartyRoot); err != nil {
+	if node.HasOwnGit() && !source.Linked() {
+		if err := s.selectPackageSourceRoot(name, source); err != nil {
 			return err
 		}
 	}
-
-	oldSourceDir := node.Pkg.SourceDir()
-	node.Pkg.SetDirs(*dirs)
-
-	if node.IsLocal() {
-		if loc.Linked {
-			node.Pkg.SetSrcDir(loc.SourceTree)
-			return nil
-		}
-		treeSrc := s.sourceSeeds[name]
-		if treeSrc == "" {
-			return fmt.Errorf("package %s has no materialized source tree", name)
-		}
-		if s.dryRun {
-			node.Pkg.SetSrcDir(treeSrc)
-			return nil
-		}
-		link := filepath.Join(node.Source.Dir, "src")
-		if err := fs.EnsureSymlink(link, treeSrc); err != nil {
-			return err
-		}
-		node.Pkg.SetSrcDir(link)
-		return nil
-	}
-
-	if node.IsRegistry() {
-		return rebindRemoteSrcDir(s.rc.ctx, node, dirs, oldSourceDir, name)
-	}
-
-	// Native container member with its own SetGit source.
-	if err := rebindRemoteSrcDir(s.rc.ctx, node, dirs, oldSourceDir, name); err != nil {
-		return err
-	}
-	if loc.Linked {
-		node.Pkg.SetSrcDir(loc.SourceTree)
-		return nil
-	}
-	if s.dryRun && s.sourceSeeds[name] != "" {
-		node.Pkg.SetSrcDir(s.sourceSeeds[name])
-		return nil
-	}
-	node.Pkg.SetSrcDir(loc.SourceTree)
-	return nil
-}
-
-// rebindRemoteSrcDir keeps an explicit SrcDir mapping valid when the package
-// tree moves: paths inside the old repository root are rebased onto the new
-// one, paths outside are left untouched.
-func rebindRemoteSrcDir(ctx *RuntimeContext, node *resolver.PackageNode, dirs *api.PkgDirs, oldSourceDir, name string) error {
-	raw := node.Pkg.SrcDirRaw()
-	if raw == "" || node.Source == nil {
-		return nil
-	}
-	oldRoot := oldSourceDir
-	if oldRoot == "" {
-		oldRoot = node.Source.Dir
-	}
-	member := remoteMemberPath(ctx, name)
-	rebased, err := rebaseSourcePath(raw, oldRoot, dirs.SourceDir, member, node.Source.Dir)
-	if err != nil {
-		return err
-	}
-	node.Pkg.SetSrcDir(rebased)
-	return nil
+	return source.Bind(node.Pkg, *dirs, s.sourceSeeds[name], s.dryRun)
 }
 
 // selectPackageSourceRoot materializes the package's own SetGit repository
-// (local, registry, or native member) into the given source root.
-func (s *sourceStage) selectPackageSourceRoot(name, sourceRoot string) error {
+// (local, registry, or native member) into the placement's source root.
+func (s *sourceStage) selectPackageSourceRoot(name string, source *PackageSource) error {
 	node := s.rc.ctx.DepGraph.Packages[name]
 	if node == nil || !node.HasOwnGit() {
 		return nil
@@ -115,7 +43,7 @@ func (s *sourceStage) selectPackageSourceRoot(name, sourceRoot string) error {
 	if node.IsLocal() && hasUnmanagedSourceDir(node) {
 		return fmt.Errorf("SetGit source %s already exists as a real directory; move it aside before creating a managed source link", filepath.Join(node.Source.Dir, "src"))
 	}
-	req, err := s.sourceRequestFor(name, node, sourceRoot)
+	req, err := s.sourceRequestFor(name, node, source)
 	if err != nil {
 		return err
 	}

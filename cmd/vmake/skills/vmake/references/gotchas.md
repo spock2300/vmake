@@ -86,7 +86,7 @@ p.AddPatches("patches/fix-cross.patch", "patches/disable-avx.patch")
 - `SetPatches(paths ...string)` — replace the entire patch list
 - `SetSubmodules(true)` — clone git submodules before applying patches
 - **Remote packages**: patches apply in place to the package's single working tree at `.vmake_deps/<repo>/<owner>/src[/<member>]` (a native member carrying its own repository gets its own tree under the member directory). Ordered patch content contributes to the build key; a changed patch set restores the tree to its pinned commit before patches are applied.
-- **Local packages**: ordinary local sources are patched in place. Local SetGit uses the `.vmake_deps/local/<pkg>/src` working tree exposed through `SrcDir()`. Already-applied patches are detected and skipped.
+- **Local packages**: ordinary local sources are patched in place. Local SetGit uses the `.vmake_deps/local/<memberDir>/src` working tree exposed through `SrcDir()`. Already-applied patches are detected and skipped.
 - Patch files are relative to the directory containing the package's `build.go`.
 
 Use this when wrapping a library that needs compilation fixes (e.g., cross-compilation `CFLAGS` in a Makefile, missing `#include` guards, hardcoded toolchain assumptions). Raw `os.WriteFile` patching (shown above) is better for simple single-line changes; git patches handle multi-file, multi-line modifications reliably.

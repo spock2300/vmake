@@ -289,7 +289,7 @@ func TestEnsureSourceOfflineReuseAfterCachePurge(t *testing.T) {
 	}
 }
 
-func TestCleanSourceRemovesTree(t *testing.T) {
+func TestCleanTreeRemovesTree(t *testing.T) {
 	requireGit(t)
 	src := writePatchableSource(t)
 	runGit(t, src, "tag", "v1.0.0")
@@ -297,11 +297,11 @@ func TestCleanSourceRemovesTree(t *testing.T) {
 	if _, err := m.EnsureSource(SourceRequest{Key: "native/sample", URLs: []string{src}, Ref: "v1.0.0"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.CleanSource("native", "sample"); err != nil {
+	if err := m.CleanTree("native/sample"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(m.TreeDir("native/sample")); !os.IsNotExist(err) {
-		t.Fatalf("tree survived CleanSource: %v", err)
+		t.Fatalf("tree survived CleanTree: %v", err)
 	}
 }
 

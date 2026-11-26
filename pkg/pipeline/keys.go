@@ -304,15 +304,6 @@ func (k pkgKey) buildKeyE() (string, error) {
 	return build.BuildKeyE(k.ccKey, k.mode, k.options, k.extra)
 }
 
-func remoteMemberPath(ctx *RuntimeContext, name string) string {
-	if ctx != nil && ctx.DepGraph != nil {
-		if node := ctx.DepGraph.Packages[name]; node != nil && node.IsNative() {
-			return node.RelPath
-		}
-	}
-	return ""
-}
-
 func remoteOwnerName(ctx *RuntimeContext, name string) string {
 	if ctx != nil && ctx.DepGraph != nil {
 		if node := ctx.DepGraph.Packages[name]; node != nil && node.IsNative() && node.Container != "" {
@@ -354,7 +345,7 @@ func rebaseKConfigSourceDirs(ctx *RuntimeContext, name, oldRoot, newRoot string)
 	member, seedRoot := "", oldRoot
 	if ctx.DepGraph != nil {
 		if node := ctx.DepGraph.Packages[name]; node != nil && !node.IsLocal() && node.Source != nil {
-			member = remoteMemberPath(ctx, name)
+			member = node.RelPath
 			seedRoot = node.Source.Dir
 		}
 	}

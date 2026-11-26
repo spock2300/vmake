@@ -278,7 +278,7 @@ func hasChildBuildGo(dir string) bool {
 }
 
 // getDepsDir is the project-local single-source directory. Each package owns
-// exactly one working tree under it (<repo>/<pkg>/src or local/<pkg>/src).
+// exactly one working tree under it (<repo>/<pkg>/src or local/<memberDir>/src).
 func getDepsDir() string {
 	return getDepsDirAt(findProjectDir())
 }

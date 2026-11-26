@@ -62,7 +62,7 @@ func layoutFor(in layoutInput) (build.PackageLayout, error) {
 			Ready:    true,
 		}, nil
 	}
-	output := filepath.Join(in.PkgRoot, "out", build.MemberDir(member), build.KeyDir(buildKey))
+	output := filepath.Join(memberOutputDir(in.PkgRoot, member), build.KeyDir(buildKey))
 	return build.PackageLayout{
 		Dirs: api.PkgDirs{
 			SourceDir:  sourceDir,
@@ -88,13 +88,6 @@ func (s *sourceStage) setPackageLayout(name string, tools *build.ResolvedTools) 
 	}
 	s.setLayout(name, layout)
 	return nil
-}
-
-func (s *sourceStage) finalizePackageSource(name, sourceRoot string, tools *build.ResolvedTools) error {
-	if err := s.selectPackageSourceRoot(name, sourceRoot); err != nil {
-		return fmt.Errorf("select source for %s: %w", name, err)
-	}
-	return s.setPackageLayout(name, tools)
 }
 
 func (s *sourceStage) rebindLayout(name string, layout build.PackageLayout) error {
@@ -219,24 +212,23 @@ func (s *sourceStage) makeLayout(name string, tools *build.ResolvedTools) (build
 			Ready:     ready,
 		})
 	}
-	loc := s.rc.ctx.packageLocation(name, node)
+	loc := s.rc.ctx.packageSource(name, node)
+	if loc == nil {
+		return build.PackageLayout{}, fmt.Errorf("package %s has no source placement", name)
+	}
 	tree := ""
 	if node.IsNative() {
 		tree = s.containerTrees[node.Container]
-	} else if !loc.Linked && s.sourceSeeds[name] != "" {
+	} else if !loc.Linked() && s.sourceSeeds[name] != "" {
 		tree = filepath.Dir(s.sourceSeeds[name])
 	}
 	if tree == "" {
-		tree = loc.OwnerTreeRoot
-	}
-	sourceOverride := ""
-	if loc.ContainerLinked || loc.ContainerLocalPath || (node.IsRegistry() && loc.Linked) {
-		sourceOverride = loc.PackageRoot
+		tree = loc.OwnerTreeRoot()
 	}
 	return layoutFor(layoutInput{
 		PkgRoot:        tree,
-		SourceOverride: sourceOverride,
-		Member:         loc.Member,
+		SourceOverride: loc.SourceOverride(),
+		Member:         loc.Member(),
 		CCKey:          ccKey,
 		Mode:           mode,
 		Options:        s.conf.allPkgOptions[name],

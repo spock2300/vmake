@@ -35,18 +35,21 @@ func locationTestNode(name, container, rel string, kind resolver.SourceKind, dir
 	return resolver.NewPackageNode(name, container, rel, kind, src, api.NewPackage().SetName(name))
 }
 
-func TestPackageLocationMatrix(t *testing.T) {
+func TestSourceWorkspacePlacementMatrix(t *testing.T) {
 	root := t.TempDir()
 
 	t.Run("local plain", func(t *testing.T) {
 		node := locationTestNode("//plain", "//", "plain", resolver.SourceKindLocal, filepath.Join(root, "plain"))
 		ctx := locationTestContext(t, node)
-		loc := ctx.packageLocation("//plain", node)
-		if loc.PackageRoot != filepath.Join(root, "plain") || loc.SourceTree != loc.PackageRoot {
-			t.Fatalf("loc = %+v", loc)
+		source := ctx.packageSource("//plain", node)
+		if source.PackageRoot() != filepath.Join(root, "plain") || source.SourceTree() != source.PackageRoot() {
+			t.Fatalf("source = %+v", source)
 		}
-		if loc.TreeRoot != "" {
-			t.Fatalf("plain local tree root = %q, want empty", loc.TreeRoot)
+		if source.TreeRoot() != "" {
+			t.Fatalf("plain local tree root = %q, want empty", source.TreeRoot())
+		}
+		if source.Disposition() != SourceDispositionUnlinked {
+			t.Fatalf("disposition = %s, want unlinked", source.Disposition())
 		}
 	})
 
@@ -54,31 +57,39 @@ func TestPackageLocationMatrix(t *testing.T) {
 		node := locationTestNode("//git", "//", "git", resolver.SourceKindLocal, filepath.Join(root, "git"))
 		node.Pkg.SetGit("https://example.invalid/git.git")
 		ctx := locationTestContext(t, node)
-		loc := ctx.packageLocation("//git", node)
-		if loc.PackageRoot != filepath.Join(root, "git") {
-			t.Fatalf("package root = %q", loc.PackageRoot)
+		source := ctx.packageSource("//git", node)
+		if source.PackageRoot() != filepath.Join(root, "git") {
+			t.Fatalf("package root = %q", source.PackageRoot())
 		}
-		if loc.SourceTree != filepath.Join(root, "git", "src") {
-			t.Fatalf("source tree = %q", loc.SourceTree)
+		if source.SourceTree() != filepath.Join(root, "git", "src") {
+			t.Fatalf("source tree = %q", source.SourceTree())
 		}
-		if loc.TreeRoot != filepath.Join(ctx.Paths.DepsDir, "local", build.MemberDir("git")) {
-			t.Fatalf("tree root = %q", loc.TreeRoot)
+		if source.TreeRoot() != filepath.Join(ctx.Paths.DepsDir, "local", build.MemberDir("git")) {
+			t.Fatalf("tree root = %q", source.TreeRoot())
+		}
+		if source.BuildRoot() != filepath.Join(root, "git") {
+			t.Fatalf("build root = %q", source.BuildRoot())
 		}
 	})
 
 	t.Run("native member plain", func(t *testing.T) {
-		node := locationTestNode("repo/sdk/sub", "repo/sdk", "sub", resolver.SourceKindNative, "/tmp/remote/sub")
-		ctx := locationTestContext(t, node)
-		loc := ctx.packageLocation("repo/sdk/sub", node)
-		wantRoot := filepath.Join(ctx.Paths.DepsDir, "repo", "sdk")
-		if loc.OwnerTreeRoot != wantRoot {
-			t.Fatalf("owner tree = %q, want %q", loc.OwnerTreeRoot, wantRoot)
+		ctx := locationTestContext(t)
+		ownerRoot := filepath.Join(ctx.Paths.DepsDir, "repo", "sdk")
+		node := locationTestNode("repo/sdk/sub", "repo/sdk", "sub", resolver.SourceKindNative, filepath.Join(ownerRoot, "src", "sub"))
+		ctx.DepGraph.Packages[node.ID] = node
+		ctx.DepGraph.Order = append(ctx.DepGraph.Order, node.ID)
+		source := ctx.packageSource("repo/sdk/sub", node)
+		if source.OwnerTreeRoot() != ownerRoot {
+			t.Fatalf("owner tree = %q, want %q", source.OwnerTreeRoot(), ownerRoot)
 		}
-		if loc.PackageRoot != filepath.Join(wantRoot, "src", "sub") || loc.SourceTree != loc.PackageRoot {
-			t.Fatalf("loc = %+v", loc)
+		if source.PackageRoot() != filepath.Join(ownerRoot, "src", "sub") || source.SourceTree() != source.PackageRoot() {
+			t.Fatalf("source = %+v", source)
 		}
-		if loc.TreeRoot != wantRoot {
-			t.Fatalf("tree root = %q", loc.TreeRoot)
+		if source.TreeRoot() != ownerRoot {
+			t.Fatalf("tree root = %q", source.TreeRoot())
+		}
+		if source.BuildRoot() != node.Source.Dir {
+			t.Fatalf("build root = %q, want %q", source.BuildRoot(), node.Source.Dir)
 		}
 	})
 
@@ -86,41 +97,90 @@ func TestPackageLocationMatrix(t *testing.T) {
 		node := locationTestNode("repo/sdk/third/lvgl", "repo/sdk", "third/lvgl", resolver.SourceKindNative, "/tmp/remote/third/lvgl")
 		node.Pkg.SetGit("https://example.invalid/lvgl.git")
 		ctx := locationTestContext(t, node)
-		loc := ctx.packageLocation("repo/sdk/third/lvgl", node)
+		source := ctx.packageSource("repo/sdk/third/lvgl", node)
 		wantTP := filepath.Join(ctx.Paths.DepsDir, "repo", "sdk", "third_party", build.MemberDir("third/lvgl"))
-		if loc.ThirdPartyRoot != wantTP || loc.TreeRoot != wantTP || loc.SourceTree != filepath.Join(wantTP, "src") {
-			t.Fatalf("own-Git native member loc = %+v, want third_party %q", loc, wantTP)
+		if source.ThirdPartyRoot() != wantTP || source.TreeRoot() != wantTP || source.SourceTree() != filepath.Join(wantTP, "src") {
+			t.Fatalf("own-Git native member source = %+v, want third_party %q", source, wantTP)
 		}
-		if loc.Linked {
+		if source.Linked() {
 			t.Fatalf("unlinked own-Git member must have Linked=false")
 		}
 	})
 
-	t.Run("linked native container", func(t *testing.T) {
-		node := locationTestNode("link/sdk/sub", "link/sdk", "sub", resolver.SourceKindNative, "/tmp/link/sub")
-		node.Source.Link = &buildscript.SourceLink{Path: "/tmp/link/sub", Native: true, LocalSource: true}
+	t.Run("directly linked native member", func(t *testing.T) {
+		node := locationTestNode("link/sdk/sub", "link/sdk", "sub", resolver.SourceKindNative, "/tmp/link/sdk/sub")
+		node.Pkg.SetGit("https://example.invalid/sub.git")
+		node.Source.Link = &buildscript.SourceLink{Path: "/tmp/external/sub", Native: true, LocalSource: true}
 		ctx := locationTestContext(t, node)
-		loc := ctx.packageLocation("link/sdk/sub", node)
-		if !loc.Linked || !loc.ContainerLinked || loc.PackageRoot != "/tmp/link/sub" || loc.SourceTree != "/tmp/link/sub" {
-			t.Fatalf("loc = %+v", loc)
+		source := ctx.packageSource("link/sdk/sub", node)
+		if !source.Linked() || !source.ContainerLinked() || source.PackageRoot() != "/tmp/link/sdk/sub" || source.SourceTree() != "/tmp/external/sub" {
+			t.Fatalf("source = %+v", source)
 		}
-		if loc.TreeRoot != filepath.Join(ctx.Paths.DepsDir, "link", "sdk") {
-			t.Fatalf("tree root = %q", loc.TreeRoot)
+		if source.TreeRoot() != filepath.Join(ctx.Paths.DepsDir, "link", "sdk") {
+			t.Fatalf("tree root = %q", source.TreeRoot())
+		}
+		if source.Disposition() != SourceDispositionLinked {
+			t.Fatalf("disposition = %s, want source-linked", source.Disposition())
+		}
+	})
+
+	t.Run("plain member of linked container", func(t *testing.T) {
+		node := locationTestNode("link/sdk/plain", "link/sdk", "plain", resolver.SourceKindNative, "/tmp/link/sdk/plain")
+		node.Source.Link = &buildscript.SourceLink{Path: node.Source.Dir, Native: true, LocalSource: true}
+		ctx := locationTestContext(t, node)
+		source := ctx.packageSource("link/sdk/plain", node)
+		if !source.Linked() || !source.ContainerLinked() {
+			t.Fatalf("source = %+v, want container-linked", source)
+		}
+		if source.Disposition() != SourceDispositionContainerLinked {
+			t.Fatalf("disposition = %s, want container-linked", source.Disposition())
+		}
+	})
+
+	t.Run("linked native container", func(t *testing.T) {
+		node := locationTestNode("link/sdk", "link/sdk", "", resolver.SourceKindNative, "/tmp/link/sdk")
+		node.Source.Link = &buildscript.SourceLink{Path: node.Source.Dir, Native: true, LocalSource: true}
+		ctx := locationTestContext(t, node)
+		source := ctx.packageSource("link/sdk", node)
+		if !source.Linked() || !source.ContainerLinked() {
+			t.Fatalf("source = %+v, want container-linked", source)
+		}
+		if source.Disposition() != SourceDispositionContainerLinked {
+			t.Fatalf("disposition = %s, want container-linked", source.Disposition())
+		}
+	})
+
+	t.Run("linked container own-Git member", func(t *testing.T) {
+		node := locationTestNode("link/sdk/kernel", "link/sdk", "system/freertos/kernel", resolver.SourceKindNative, "/tmp/link/system/freertos/kernel")
+		node.Pkg.SetGit("https://example.invalid/kernel.git")
+		node.Source.Link = &buildscript.SourceLink{Path: node.Source.Dir, Native: true, LocalSource: false}
+		ctx := locationTestContext(t, node)
+		source := ctx.packageSource("link/sdk/kernel", node)
+		wantTP := filepath.Join(ctx.Paths.DepsDir, "link", "sdk", "third_party", build.MemberDir("system/freertos/kernel"))
+		if source.Linked() || source.ThirdPartyRoot() != wantTP || source.SourceTree() != filepath.Join(wantTP, "src") {
+			t.Fatalf("linked-container own-Git source = %+v, want third_party %q", source, wantTP)
+		}
+		if source.Disposition() != SourceDispositionContainerLinkedOwnGit {
+			t.Fatalf("disposition = %s, want container-linked-own-git", source.Disposition())
 		}
 	})
 
 	t.Run("registry package", func(t *testing.T) {
-		node := locationTestNode("official/tinyexpr", "official", "tinyexpr", resolver.SourceKindRegistry, "/repos/official/packages/t/tinyexpr")
+		registryDir := filepath.Join(root, "repos", "official", "packages", "t", "tinyexpr")
+		node := locationTestNode("official/tinyexpr", "official", "tinyexpr", resolver.SourceKindRegistry, registryDir)
 		ctx := locationTestContext(t, node)
-		loc := ctx.packageLocation("official/tinyexpr", node)
+		source := ctx.packageSource("official/tinyexpr", node)
 		wantRoot := filepath.Join(ctx.Paths.DepsDir, "official", "tinyexpr")
-		if loc.OwnerTreeRoot != wantRoot || loc.PackageRoot != filepath.Join(wantRoot, "src") {
-			t.Fatalf("registry loc = %+v", loc)
+		if source.OwnerTreeRoot() != wantRoot || source.PackageRoot() != filepath.Join(wantRoot, "src") {
+			t.Fatalf("registry source = %+v", source)
+		}
+		if source.BuildRoot() != registryDir {
+			t.Fatalf("registry build root = %q, want %q", source.BuildRoot(), registryDir)
 		}
 	})
 }
 
-func TestCleanLinkedMaterializedSourceResolvesExportAlias(t *testing.T) {
+func TestSourceWorkspaceReleaseSourceResolvesExportAlias(t *testing.T) {
 	root := t.TempDir()
 	projectDir := filepath.Join(root, "consumer")
 	sdkDir := filepath.Join(root, "sdk")
@@ -142,19 +202,34 @@ func TestCleanLinkedMaterializedSourceResolvesExportAlias(t *testing.T) {
 	}
 
 	sourceMgr := repo.NewSourceManager(depsDir, cacheDir)
-	realTree := filepath.Join(sourceMgr.TreeDir(repo.PackageTreeKey("org", "sdk")), "third_party", build.MemberDir("system/freertos/lvgl"))
-	if err := os.MkdirAll(filepath.Join(realTree, "src"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(realTree, "src", "lv.c"), []byte("int lv;\n"), 0644); err != nil {
-		t.Fatal(err)
+	ownerRoot := sourceMgr.TreeDir(repo.PackageTreeKey("org", "sdk"))
+	realTree := filepath.Join(ownerRoot, "third_party", build.MemberDir("system/freertos/lvgl"))
+	wrongTree := filepath.Join(ownerRoot, "third_party", build.MemberDir("lvgl"))
+	for _, dir := range []string{realTree, wrongTree} {
+		if err := os.MkdirAll(filepath.Join(dir, "src"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "src", "marker.c"), []byte("marker\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	if err := CleanLinkedMaterializedSource(sourceMgr, projectDir, "org/sdk/lvgl"); err != nil {
-		t.Fatalf("CleanLinkedMaterializedSource: %v", err)
+	workspace, err := NewSourceWorkspaceFromProject(projectDir, depsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := workspace.Package("org/sdk/lvgl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := source.ReleaseSource(sourceMgr); err != nil {
+		t.Fatalf("ReleaseSource: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(realTree, "src")); !os.IsNotExist(err) {
 		t.Fatalf("expected aliased exported SetGit src dir %s to be removed, stat err = %v", filepath.Join(realTree, "src"), err)
+	}
+	if _, err := os.Stat(filepath.Join(wrongTree, "src", "marker.c")); err != nil {
+		t.Fatalf("wrong alias tree was touched: %v", err)
 	}
 }
 

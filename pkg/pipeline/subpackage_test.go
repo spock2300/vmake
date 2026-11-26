@@ -242,15 +242,15 @@ func TestRemoteOwnerAndMemberPathNested(t *testing.T) {
 	rootSrc := buildscript.NewSource("native/root", "build.go", canonicalTempDir(t), api.SourceRemote)
 	rootSrc.Container = "native/root"
 	r.Graph().Packages["native/root"] = resolver.NewPackageNode("native/root", "native/root", "", resolver.SourceKindNative, rootSrc, api.NewPackage())
-	ctx := &RuntimeContext{Resolver: r, DepGraph: r.Graph()}
+	ctx := &RuntimeContext{Resolver: r, DepGraph: r.Graph(), Paths: &Paths{DepsDir: canonicalTempDir(t)}}
 
 	if got := remoteOwnerName(ctx, "native/root/a/b"); got != "native/root" {
 		t.Fatalf("owner = %q, want native/root", got)
 	}
-	if got := remoteMemberPath(ctx, "native/root/a/b"); got != "a/b" {
+	if got := ctx.packageSource("native/root/a/b", r.Graph().Packages["native/root/a/b"]).Member(); got != "a/b" {
 		t.Fatalf("member = %q, want a/b", got)
 	}
-	if got := remoteMemberPath(ctx, "native/root"); got != "" {
+	if got := ctx.packageSource("native/root", r.Graph().Packages["native/root"]).Member(); got != "" {
 		t.Fatalf("root member = %q, want empty", got)
 	}
 }

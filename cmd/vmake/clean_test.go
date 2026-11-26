@@ -207,67 +207,6 @@ func TestCleanHooksRecoverScriptError(t *testing.T) {
 	}
 }
 
-func TestCleanAllLinkedOutputs(t *testing.T) {
-	dep := t.TempDir()
-	out := filepath.Join(dep, "native", "pkg", "out", "owner", "buildkey", "build")
-	if err := os.MkdirAll(out, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(out, "artifact.o"), []byte("x"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	pipeline.CleanAllRemoteOutputs(dep, map[string]string{"native/pkg": "/tmp/linked"})
-	if _, err := os.Stat(filepath.Join(out, "artifact.o")); !os.IsNotExist(err) {
-		t.Fatalf("linked output was not cleaned: %v", err)
-	}
-}
-
-func TestCleanAllRemoteOutputsFindsNestedTrees(t *testing.T) {
-	dep := t.TempDir()
-	writeTree := func(root string) {
-		t.Helper()
-		if err := os.MkdirAll(filepath.Join(root, "src"), 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, "state.json"), []byte("{}"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		out := filepath.Join(root, "out", "owner", "buildkey", "build")
-		if err := os.MkdirAll(out, 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(out, "artifact.o"), []byte("x"), 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	top := filepath.Join(dep, "native", "root")
-	nested := filepath.Join(top, "src", "member")
-	writeTree(top)
-	writeTree(nested)
-
-	pipeline.CleanAllRemoteOutputs(dep, nil)
-
-	for _, root := range []string{top, nested} {
-		out := filepath.Join(root, "out")
-		owners, err := os.ReadDir(out)
-		if err != nil {
-			t.Fatalf("out under %s missing: %v", root, err)
-		}
-		for _, owner := range owners {
-			builds, err := os.ReadDir(filepath.Join(out, owner.Name()))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(builds) != 0 {
-				t.Fatalf("outputs under %s survived: %v", root, builds)
-			}
-		}
-		if _, err := os.Stat(filepath.Join(root, "src")); err != nil {
-			t.Fatalf("source under %s was removed: %v", root, err)
-		}
-	}
-}
-
 func TestValidPkgRefComponent(t *testing.T) {
 	for _, good := range []string{"official", "zlib", "a.b", "x-y_1"} {
 		if !validPkgRefComponent(good) {

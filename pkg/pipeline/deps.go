@@ -308,8 +308,8 @@ func InspectDepsStatus(ctx *RuntimeContext) (_ *DepsStatusReport, err error) {
 		if ctx.Pins != nil {
 			pinned = ctx.Pins[name]
 		}
-		loc := ctx.packageLocation(name, node)
-		if loc.Linked && node.Source != nil && node.Source.Link != nil {
+		source := ctx.packageSource(name, node)
+		if source.Linked() && node.Source != nil && node.Source.Link != nil {
 			linked := node.Source.Link.Path
 			packages = append(packages, DepPackageStatus{
 				Section:      string(resolver.LockSectionSource),
@@ -352,7 +352,7 @@ func InspectDepsStatus(ctx *RuntimeContext) (_ *DepsStatusReport, err error) {
 			pinMismatch = problem.Pin != ""
 		}
 
-		treeCommit := sourceMgr.CommitAt(loc.TreeRoot)
+		treeCommit := sourceMgr.CommitAt(source.TreeRoot())
 		materialized := false
 		if commit != "" {
 			materialized = treeCommit != "" && treeCommit == commit
@@ -360,7 +360,7 @@ func InspectDepsStatus(ctx *RuntimeContext) (_ *DepsStatusReport, err error) {
 			commit = treeCommit
 			materialized = true
 		}
-		dirty := materialized && repo.IsDirtyContext(ctx.Context, filepath.Join(loc.TreeRoot, "src"))
+		dirty := materialized && repo.IsDirtyContext(ctx.Context, filepath.Join(source.TreeRoot(), "src"))
 		cached := sourceMgr.HasCachedCommit(node.Pkg.GitURLs(), commit)
 
 		state := "locked"

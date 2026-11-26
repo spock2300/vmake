@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"fmt"
 	"path/filepath"
 
 	"github.com/spock2300/vmake/pkg/api"
@@ -44,6 +45,9 @@ func makeRemotePkgDirs(pkgRoot, member string, key pkgKey) *api.PkgDirs {
 
 func (s *sourceStage) selectPackageSource(name string) error {
 	node := s.rc.ctx.DepGraph.Packages[name]
-	loc := s.rc.ctx.packageLocation(name, node)
-	return s.selectPackageSourceRoot(name, loc.ThirdPartyRoot)
+	source := s.rc.ctx.packageSource(name, node)
+	if source == nil {
+		return fmt.Errorf("package %s has no source placement", name)
+	}
+	return s.selectPackageSourceRoot(name, source)
 }

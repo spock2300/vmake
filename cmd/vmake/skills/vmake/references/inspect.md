@@ -101,12 +101,10 @@ Failure (no `data`, exit 1):
   is 0. Inspect checks the tree without fetching, linking, or writing
   `.vmake_deps`, though native remote resolution during `Require` may still
   materialize a tree. Local `SetGit` packages use `<package>/src`, remote
-  packages `.vmake_deps/<repo>/<owner>/src[/<member>]` (or
-  `.vmake_deps/<repo>/<owner>/src/<member>/src` when a native member has its own
-  repository); linked packages use their link path, and a native member with its
-  own repository under a linked parent uses
-  `.vmake_deps/<owner>/third_party/<member>/src`. Plain local packages use their
-  package directory. `vmake query` and `vmake query targets`
+  packages `.vmake_deps/<repo>/<owner>/src[/<member>]`; linked packages use
+  their link path, and a native member with its own repository uses
+  `.vmake_deps/<owner>/third_party/<memberDir>/src`. Plain local packages use
+  their package directory. `vmake query` and `vmake query targets`
   print the same `Warning: ...` lines to stderr for missing needed packages
   while their tree or target list stays unchanged on stdout and they exit 0.
   Query also leaves such packages untargeted without running their dry-run

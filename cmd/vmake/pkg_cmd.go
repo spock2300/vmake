@@ -160,18 +160,15 @@ var pkgCleanCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		pkgRef := args[0]
-		repoName, pkgName := mustSplitPkgRef(pkgRef)
+		_, pkgName := mustSplitPkgRef(pkgRef)
 		if strings.Contains(pkgName, "/") {
 			fatalMsg("Error: sub-packages are cleaned through their parent package: %s", pkgRef)
 		}
 		fatalErr(buildreport.InvalidateReports(findProjectDir()))
 
-		sourceMgr := repo.NewSourceManager(getDepsDir(), getCacheDir()).WithSession(commandStorageLocks())
-		fatalErr(sourceMgr.CleanOutputs(repo.PackageTreeKey(repoName, pkgName)))
+		fatalErr(pipeline.CleanPackage(findProjectDir(), getDepsDir(), pkgRef, pkgCleanAll))
 		fmt.Printf("Cleaned outputs for '%s'\n", pkgRef)
-
 		if pkgCleanAll {
-			fatalErr(sourceMgr.CleanSource(repoName, pkgName))
 			fmt.Printf("Cleaned source for '%s'\n", pkgRef)
 		}
 	},
@@ -213,7 +210,11 @@ After unlink, the next build uses the existing lock entry when present.`,
 		fatalErr(config.SaveLocal(projectDir, local))
 
 		sourceMgr := repo.NewSourceManager(getDepsDir(), getCacheDir()).WithSession(commandStorageLocks())
-		if err := pipeline.CleanLinkedMaterializedSource(sourceMgr, projectDir, name); err != nil {
+		workspace, err := pipeline.NewSourceWorkspaceFromProject(projectDir, getDepsDir())
+		fatalErr(err)
+		source, err := workspace.Package(name)
+		fatalErr(err)
+		if err := source.ReleaseSource(sourceMgr); err != nil {
 			fatalErr(fmt.Errorf("link saved for %s, but removing materialized source failed: %w", name, err))
 		}
 		fmt.Printf("Linked %s -> %s\n", name, abs)

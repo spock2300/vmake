@@ -48,6 +48,14 @@ _Avoid_: 子包, 成员包, 模块
 构建包通过 `SetGit` 声明的独立第三方上游 Git 源码，与脚本所在模块容器正交地参与锁文件、安装清单与单包源码链接。
 _Avoid_: 自带 git 子包, own-Git 子包, 第三方子包
 
+**物化源码工作区** (source workspace):
+工程内负责构建包源码树、独立上游源码树、输出根与链接状态的模块；对每个构建包给出唯一 placement，并负责 ensure、bind 与 release。
+_Avoid_: 缓存目录, 工作区目录, source tree
+
+**源码链接状态** (source link disposition):
+物化源码工作区对“源码从哪来”的分类——未链接、源码直接链接、模块容器链接、容器链接下的独立上游源码（`ContainerLinkedOwnGit`）；它不同于包来源类型（local/native/registry）。
+_Avoid_: 来源类型, source kind, link 四元组
+
 **容器导出表** (container exports):
 模块容器声明的对外公开逻辑身份与内部构建包路径的映射白名单；存在时未导出的构建包跨容器默认私有。
 _Avoid_: 别名表, 快捷路径, 路由表

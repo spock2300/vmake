@@ -76,3 +76,52 @@ func TestListPackageSources(t *testing.T) {
 		}
 	}
 }
+
+func TestPkgCleanReleasesOutputsAndTree(t *testing.T) {
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, "vmake.json"), []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(project, ".vmake"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".vmake", "local.json"), []byte("{"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	tree := filepath.Join(project, ".vmake_deps", "official", "zlib")
+	out := filepath.Join(tree, "out", "owner", "key", "build", "zlib.o")
+	src := filepath.Join(tree, "src", "tasks.c")
+	state := filepath.Join(tree, "state.json")
+	for _, path := range []string{out, src, state} {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("content\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := []string{"VMAKE_CACHE=" + canonicalTempDir(t)}
+	if stdout, stderr, code := runCLI(t, project, canonicalTempDir(t), env, "pkg", "clean", "official/zlib"); code != 0 {
+		t.Fatalf("pkg clean exit = %d, stdout = %q, stderr = %q", code, stdout, stderr)
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Fatalf("output %s survived pkg clean", out)
+	}
+	for _, path := range []string{src, state} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("source %s was removed by pkg clean: %v", path, err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(out), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(out, []byte("content\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if stdout, stderr, code := runCLI(t, project, canonicalTempDir(t), env, "pkg", "clean", "official/zlib", "--all"); code != 0 {
+		t.Fatalf("pkg clean --all exit = %d, stdout = %q, stderr = %q", code, stdout, stderr)
+	}
+	if _, err := os.Stat(tree); !os.IsNotExist(err) {
+		t.Fatalf("tree %s survived pkg clean --all", tree)
+	}
+}

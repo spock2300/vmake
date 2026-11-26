@@ -25,7 +25,7 @@ func TestCleanMaterializedSourceKeepsOutputsAndThirdParty(t *testing.T) {
 		}
 	}
 
-	if err := manager.CleanMaterializedSource("native", "sample"); err != nil {
+	if err := manager.CleanMaterializedSourceAt(root); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{

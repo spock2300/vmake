@@ -64,7 +64,7 @@
 ## DD-5: 单工作树与按需浅克隆
 
 - 状态: accepted（v4；"每包一棵工作树"保留，跨工程共享镜像部分由 DD-6 取代）
-- 决策: 不再维护共享 bare 镜像。每个包在项目内只物化一棵工作树：远程包 `<project>/.vmake_deps/<repo>/<owner>/src[/<member>]`，本地 SetGit 包 `.vmake_deps/local/<pkg>/src` 并由 `<pkgDir>/src` 链接。未复用锁定工作树时，native 包版本发现用一次 `git ls-remote`（只传 ref 列表，不传对象），物化时按 depth=1 检出所选 ref（v5 起对象优先来自 DD-6 的共享缓存；ref 解析与未命中仍访问上游）：tag 用 `refs/tags/<tag>` 命名空间（annotated tag 取 peeled commit），branch 存到 `refs/remotes/origin/<name>`，只有 commit 时按 SHA 抓取（服务端不支持时回退全量 clone）。子模块同样 `--depth 1`。本地 SetGit 包也走同一条 fetch 路径；普通本地包直接使用其源码目录。
+- 决策: 不再维护共享 bare 镜像。每个包在项目内只物化一棵工作树：远程包 `<project>/.vmake_deps/<repo>/<owner>/src[/<member>]`，本地 SetGit 包 `.vmake_deps/local/<memberDir>/src` 并由 `<pkgDir>/src` 链接。未复用锁定工作树时，native 包版本发现用一次 `git ls-remote`（只传 ref 列表，不传对象），物化时按 depth=1 检出所选 ref（v5 起对象优先来自 DD-6 的共享缓存；ref 解析与未命中仍访问上游）：tag 用 `refs/tags/<tag>` 命名空间（annotated tag 取 peeled commit），branch 存到 `refs/remotes/origin/<name>`，只有 commit 时按 SHA 抓取（服务端不支持时回退全量 clone）。子模块同样 `--depth 1`。本地 SetGit 包也走同一条 fetch 路径；普通本地包直接使用其源码目录。
 - 决策: 目标 commit 已检出且上游 URL 未变时就地恢复（`checkout --force --detach` + `clean -fdx`），已锁定 commit 的补丁集变化不重新抓取对象；不同 commit 或上游 URL 变化时整树重建。树身份包含共享同一棵树的 native 子包（无独立仓库且本次 needed）的补丁集，其中任一补丁变化都会重置该树，避免在已打补丁的 checkout 上叠加。补丁、Kconfig `.config` 与脚本内源码改动都作用在这一棵树上。会解析工程或写工程状态的命令持有独占工程锁（解析阶段可能物化源码树/链接），同一工程的命令串行执行；每棵树另有 `tree_<hash>.lock` 串行物化。
 - 理由: 完整镜像的首次构建要下载整库历史（FreeRTOS-Kernel 等仓库在大陆网络下极慢甚至超时）；`ls-remote` + depth=1 只下载所选版本的快照。当时放弃了跨工程共享镜像：跨工程共享由 DD-6（v5）以内容寻址对象缓存恢复，工作树仍按 depth=1 从该缓存本地 checkout；离线能力不再仅限已有工作树。旧 `cache/mirrors`、`cache/v2`、`vmake_deps` 在布局升级时整体删除，不提供兼容迁移。
 
@@ -181,6 +181,7 @@
 - 状态: accepted
 - 背景: 同一个包存在四套路径公式：`ExpectedPackageSourceDir`（实际源码树）、`effectiveSourceDir`（build.go/头文件基址）、`layoutFor` 的 `PkgRoot/src/member`、`preparePackageWorkspace`；再加上 `remoteTreeDir`/`PackageTreeKey`/`treeRootFor` 三种 tree 约定，inspect 与 build 可能给出不同答案。
 - 决策: `pkg/pipeline/location.go` 的 `packageLocation` 是唯一推导：`OwnerTreeRoot`（远程树容器）、`PackageRoot`（build.go/头文件基址）、`SourceTree`（实际源码树）、`ThirdPartyRoot`（linked native own-Git 成员）、`TreeRoot`（state/patch 树）。`ExpectedPackageSourceDir`、`effectiveSourceDir`、`treeRootFor`、`linkedThirdPartyRoot` 与 inspect 的远程分支都委托它。`SourceDir()` 与 `SrcDir()` 的差异（包根 vs 实际源码树）保持显式。
+- 修订（2026-11-26）: `SourceWorkspace`/`PackageSource` 成为唯一导出接口；`packageLocation` 降为内部 resolved-model 实现，不再被 command/link/manifest 直接使用。`managedThirdPartyRoot`、`CleanLinkedMaterializedSource` 与 `CleanAllRemoteOutputs` 删除，统一由 `SourceWorkspace` 的 placement/ensure/bind/release 承担；见 DD-41。
 - 理由: inspect、query、clean、build 共享一套路径语义；新增 own-Git/link 组合只改一处。
 - 涉及代码: `pkg/pipeline/location.go`, `pkg/pipeline/inspect.go`, `pkg/pipeline/source_link.go`, `pkg/pipeline/stage_source.go`, `pkg/pipeline/workspace.go`。
 
@@ -380,6 +381,21 @@
 - 顺序与验收: 顺序 `命令层(1a,1b) → 静音 → 放置 → 错误 kind → 前导 → 包目录 → 转发层 → 来源词表`；依赖只有三条：1b 依赖 1a，前导依赖 1a，转发层依赖 1a 与包目录。每步都必须过 `go build` + scoped `go vet` + scoped `go test` + `test_data/_snapshot` 全量零漂移；触及推导或输出的（放置、错误 kind、来源词表）额外要求 9 个夹具的 `inspect` 与 `deps check --json` 逐字节相同。新测试只落在新缝合面上。计划与逐卡验收见 `.scratch/architecture-deepening/`（后续卡片才触及的文件列在该目录的 issue 里）。
 - 约束: `pkg/toolchain.defaultManager` 在 `sync.Once` 后面，**是进程级、不可重置**——重置它要改 1113 行包的构造方式，而按测试策略没有任何测试需要干净的管理器（插件/信任/扩展类测试保留子进程路径）。不把流交换改成给 `pkg/log` 注入 sink（子进程 fd 拦不住，sink 换不来等价能力）。不合并 `api.SourceOrigin`（两值、经 `yaegi_symbols.go` 注册给脚本、DD-34 冻结，与三值显示词表不是同一概念）。收尾只跑 `scripts/skill-loop/run.sh` 的 `factcheck-*`，不跑 solver/judge 全流程。
 - 涉及代码: `cmd/vmake/`（全部命令文件、`root.go`、`main.go`、`helpers.go`、`session.go`、`paths.go`、`build_report.go`）、`internal/scriptcall/`、`pkg/build/{artifact,scheduler_resolve,linker,graph,errors}.go`、`pkg/buildscript/`、`pkg/pipeline/{install,manifest,graph_check,inspect_model,deps,config_preview}.go`、`pkg/resolver/resolver.go`、`pkg/catalog/`、`pkg/toolchain/manager.go`、`pkg/plugin/`、`docs/INSPECT.md`、`cmd/vmake/skills/vmake/references/inspect.md`、`GLOSSARY.md`、`.scratch/architecture-deepening/`（后续卡片才触及的文件列在该目录的 issue 里）。
+
+## DD-41: 物化源码工作区统一放置、绑定与回收
+
+- 状态: accepted
+- 背景: `packageLocation` 名义上是唯一推导，但清理、link、manifest checkout 各自重新拼 `.vmake_deps` 路径：`managedThirdPartyRoot` 用 `SourceManager.TreeDir` + export manifest 重推 third_party，`CleanLinkedMaterializedSource` 重推 link 清理目标，`sourceRequestFor` 重推 local key，`manifest checkout` 对 linked 容器的导出别名传空 projectDir，实际会物化到 `third_party/kernel-<hash>` 而不是 `third_party/system-freertos-kernel-<hash>`。同时 `layout.go` 与 `inspect.go` 逐字复制 `SourceOverride` 条件，`PackageSource` 只是三字段数据包。
+- 决策:
+  1. `pkg/pipeline/source_workspace.go` 的 `SourceWorkspace` 是唯一的 source placement/lifecycle module；`NewSourceWorkspace(ctx)` 服务 resolved model，`NewSourceWorkspaceFromProject(projectDir, depsDir)` 服务 link cleanup / manifest checkout 这类无图调用。`Package(name)` 给出一个 `PackageSource` handle。
+  2. `SourceDisposition` 命名四个链接状态：`Unlinked`、`SourceLinked`、`ContainerLinked`、`ContainerLinkedOwnGit`。最后者是 linked native container 内的 own-Git member，也是消费方 `third_party` 物化的触发条件；调用方不再分支 `SourceLink{Path,Commit,Native,LocalSource}` 四元组。
+  3. handle 保留 `OwnerTreeRoot`/`PackageRoot`/`BuildRoot`/`SourceTree`/`ThirdPartyRoot`/`TreeRoot`/`OutputDir`（内部 `outputRoot`）；`BuildRoot` 是 `packageSourceDirs` 的 `build.go` 基址，`PackageRoot`/`SourceTree` 是 inspect/`SrcDir()` 的语义，二者不合并。`SourceOverride` 只在 handle 中计算一次。`layoutFor` 的 member 输出根与 `PackageSource.OutputDir`（member 非空）共用 `memberOutputDir` 投影 `<base>/out/<memberDir>`；容器级 `OutputDir`（member 为空）是 `<owner>/out`，用于释放全部成员输出；`layoutFor` 只追加 `<keyDir>`。
+  4. `PackageSource.Ensure(req)` 只填 placement 派生的 `Key`/`Root`，由调用方的 `*repo.SourceManager` 执行；版本/ref/commit/patch/submodule/refresh 仍由 `sourceRequestFor` 决定。`Bind(pkg, dirs, seed, dryRun)` 拥有 `<pkgDir>/src` symlink、`SetSrcDir`、raw `SrcDir` rebase 与 dry-run 映射。`ReleaseSource`（保留 outputs/兄弟 third_party）、`ReleaseOutputs`、`ReleaseAll` 是三个清理意图；`SourceWorkspace.ReleaseOutputsAll` 用原始 `Trees()` 扫描 inactive/旧树输出。
+  5. `packageLocation` 保留为 resolved-model 内部实现；`managedThirdPartyRoot`、`CleanLinkedMaterializedSource`、`CleanAllRemoteOutputs` 以及低层 `CleanOutputs`/`CleanSource`/`CleanMaterializedSource` 包装删除。`manifest.CheckoutManifestRemoteEntry` 改用 disk workspace，`pkg link`/`pkg clean` 改用 `ReleaseSource`/`ReleaseOutputs`/`ReleaseAll`，`layoutFor`/`inspect` 改用 handle 的 `SourceOverride`/`Member`/`SourceTree`/`TreeRoot`。`internal/fs.ValidateManagedPath` 是共享的跨包路径守卫；`CheckoutManifest` 显式接收 depsDir，不再导出 `SourceManager.DepDir`。
+- 理由: 一处布局语法、一个测试面；manifest checkout 的别名 bug 与 link cleanup 的 build-vs-clean 分歧由同一 handle 消除。`SourceDir()`/`SrcDir()` 的既有语义与 DD-19 的路径值不变。
+- 不改: ADR-0001/DD-5/DD-6/DD-8 的 per-project 工作树与 link 语义；inactive tree 的 inventory/GC、`pkg link` 事务回滚、跨工程 CoW/共享 checkout 留作后续。
+- 验证: `pkg/pipeline` placement matrix（含 `ContainerLinkedOwnGit`）、disk export alias、三个 release 意图与 `pkg clean`/`distclean`；`cmd/vmake` 全量；`test_data/_snapshot` 零漂移；`hl-demo-clean/tests/run-vmake-source-paths.py` 在真实 linked SDK + 清空 `.vmake_deps` 后走红/绿。
+- 涉及代码: `pkg/pipeline/source_workspace.go`, `source_request.go`, `workspace.go`, `layout.go`, `inspect.go`, `manifest.go`, `build_job.go`, `clean.go`, `pkg/repo/source.go`, `cmd/vmake/pkg_cmd.go`, `cmd/vmake/clean_test.go`, `cmd/vmake/skills/vmake/references/*`, `AGENTS.md`, `GLOSSARY.md`, `docs/VMAKE_HOME.md`, `docs/ARCHITECTURE.md`.
 
 ## 已知限制 / 待议
 
