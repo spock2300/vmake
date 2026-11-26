@@ -624,7 +624,7 @@ func printDepsStatusTable(w io.Writer, report *pipeline.DepsStatusReport) error 
 		return err
 	}
 	if len(report.StaleLockEntries) > 0 {
-		fmt.Fprintf(w, "\nStale lockfile entries (run 'vmake deps sync' to prune): %s\n", strings.Join(report.StaleLockEntries, ", "))
+		fmt.Fprintf(w, "\nStale lockfile entries (run 'vmake deps prune' to prune): %s\n", strings.Join(report.StaleLockEntries, ", "))
 	}
 	return nil
 }

@@ -221,4 +221,9 @@ int main(void) { return calc_val() == 27 ? 0 : 1; }
 	if err := ValidateConfigValues(ctxLocked, nil); err == nil {
 		t.Fatal("external consumer must not configure non-exported package")
 	}
+	if _, _, err := ResolveSetPackageOption(ctxLocked, "selforg/sdk/sdk/math", "scale"); err == nil {
+		t.Fatal("raw internal path of exported package must be rejected")
+	} else if strings.Contains(err.Error(), "selforg/sdk/internal/calc") {
+		t.Fatalf("available package list must not leak unexported internal packages: %v", err)
+	}
 }

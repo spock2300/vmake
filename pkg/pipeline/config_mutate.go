@@ -95,7 +95,7 @@ func ResolveSetPackageOption(ctx *RuntimeContext, pkgName, optName string) (stri
 		if ctx != nil {
 			allOpts = ctx.allOptions
 		}
-		available := sortedPackageNames(allOpts)
+		available := sortedVisiblePackageNames(ctx, allOpts)
 		if len(available) == 0 {
 			return "", nil, fmt.Errorf("package %q not found", pkgName)
 		}
@@ -193,6 +193,13 @@ func sortedVisibleOptionNames(ctx *RuntimeContext, pkgName string, opts map[stri
 	return keys
 }
 
-func sortedPackageNames(pkgs map[string]map[string]*api.Option) []string {
-	return slices.Sorted(maps.Keys(pkgs))
+func sortedVisiblePackageNames(ctx *RuntimeContext, pkgs map[string]map[string]*api.Option) []string {
+	keys := make([]string, 0, len(pkgs))
+	for pkgName := range pkgs {
+		if checkPackageVisibility(ctx, "@local", pkgName) == nil {
+			keys = append(keys, pkgName)
+		}
+	}
+	slices.Sort(keys)
+	return keys
 }
