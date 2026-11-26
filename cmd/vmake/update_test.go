@@ -56,18 +56,27 @@ func TestValidateTagVersion(t *testing.T) {
 	}
 }
 
-func TestParseModuleVersions(t *testing.T) {
-	got, err := parseModuleVersions(moduleRoot + " v1.0.0 v1.1.0")
-	if err != nil {
-		t.Fatalf("parseModuleVersions: %v", err)
+func TestParseRemoteTags(t *testing.T) {
+	output := strings.Join([]string{
+		"aaa\trefs/tags/v1.0.0",
+		"bbb\trefs/tags/v1.0.0^{}",
+		"ccc\trefs/tags/v1.1.0",
+		"ddd\trefs/tags/v2.0.0",
+		"eee\trefs/tags/latest",
+		"fff\trefs/heads/master",
+		"",
+	}, "\n")
+	got := strings.Join(parseRemoteTags(output), " ")
+	if want := "v1.0.0 v1.1.0 v2.0.0 latest"; got != want {
+		t.Fatalf("parseRemoteTags = %q, want %q", got, want)
 	}
-	if strings.Join(got, " ") != "v1.0.0 v1.1.0" {
-		t.Fatalf("parseModuleVersions = %v", got)
-	}
-	for _, output := range []string{moduleRoot, "other/module v1.0.0", ""} {
-		if _, err := parseModuleVersions(output); err == nil {
-			t.Errorf("parseModuleVersions(%q) = nil error, want error", output)
-		}
+}
+
+func TestCompatibleVersions(t *testing.T) {
+	versions := []string{"latest", "v0.9.0", "v1.0.0", "v1.1.0-rc.1", "v2.0.0", "not-a-version"}
+	got := strings.Join(compatibleVersions(versions), " ")
+	if want := "v0.9.0 v1.0.0 v1.1.0-rc.1"; got != want {
+		t.Fatalf("compatibleVersions = %q, want %q", got, want)
 	}
 }
 

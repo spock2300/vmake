@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	iexec "github.com/spock2300/vmake/internal/exec"
+	"github.com/spock2300/vmake/internal/gitcmd"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/version"
 )
@@ -40,7 +41,7 @@ func runUpdate(cmd *cobra.Command, args []string) {
 		targetVer = args[0]
 		fatalErr(validateRequestedVersion(targetVer))
 	} else {
-		versions, err := listAvailableVersions(goCmd)
+		versions, err := listAvailableVersions()
 		fatalErr(err)
 		targetVer = pickLatestStable(versions)
 		fmt.Printf("Available versions: %s\n", strings.Join(versions, " "))
@@ -52,20 +53,46 @@ func runUpdate(cmd *cobra.Command, args []string) {
 	fmt.Printf("Update to %s completed!\n", targetVer)
 }
 
-func listAvailableVersions(goCmd string) ([]string, error) {
-	output, err := iexec.RunWithOptions(goCmd, []string{"list", "-m", "-versions", moduleRoot}, iexec.RunOptions{Quiet: true})
+func listAvailableVersions() ([]string, error) {
+	gitCmd, err := iexec.LookPath("git")
 	if err != nil {
-		return nil, fmt.Errorf("failed to list module versions: %w", err)
+		return nil, fmt.Errorf("git not found: %w", err)
 	}
-	return parseModuleVersions(iexec.TrimOutput(output))
-}
-
-func parseModuleVersions(output string) ([]string, error) {
-	fields := strings.Fields(output)
-	if len(fields) < 2 || fields[0] != moduleRoot {
+	output, err := iexec.RunWithOptions(gitCmd, gitcmd.Args("ls-remote", "--tags", "https://"+moduleRoot+".git"), iexec.RunOptions{Quiet: true})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list remote tags: %w", err)
+	}
+	versions := compatibleVersions(parseRemoteTags(iexec.TrimOutput(output)))
+	if len(versions) == 0 {
 		return nil, fmt.Errorf("no published versions found")
 	}
-	return fields[1:], nil
+	return versions, nil
+}
+
+func parseRemoteTags(output string) []string {
+	var tags []string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasSuffix(line, "^{}") {
+			continue
+		}
+		idx := strings.Index(line, "refs/tags/")
+		if idx < 0 {
+			continue
+		}
+		tags = append(tags, line[idx+len("refs/tags/"):])
+	}
+	return tags
+}
+
+func compatibleVersions(versions []string) []string {
+	var compatible []string
+	for _, v := range versions {
+		if pv, ok := api.ParseVersion(v); ok && versionMajorCompatible(pv.Major) {
+			compatible = append(compatible, v)
+		}
+	}
+	return compatible
 }
 
 func pickLatestStable(versions []string) string {
